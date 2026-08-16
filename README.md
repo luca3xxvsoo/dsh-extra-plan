@@ -12,23 +12,32 @@
 
 ## 1. 安装方式（面向 DSH 环境）
 
-> 前置条件：已安装 DeepSeek Harness（DSH）。默认 DSH_HOME = `~/.dsh`（可被环境变量 `DSH_HOME` 覆盖）。
+> 前置条件：已安装 DeepSeek Harness（DSH）。默认 DSH_HOME = `%USERPROFILE%\.dsh`（Windows 下复制粘贴到资源管理器地址栏或 CMD 回车即可访问；可被环境变量 `DSH_HOME` 覆盖——若你自定义了 DSH_HOME 环境变量，直接用 `%DSH_HOME%` 替换路径前缀即可）。
 
 > 本仓库以源码文件形式发布（不提供 zip 压缩包），安装 = 把文件复制到你的 DSH_HOME 对应位置。本模式不依赖任何第三方包，仅使用 DSH 自带宿主组件。
 
 ### 步骤（手动复制，约 1 分钟）
 
 1. 克隆或下载本仓库到本地；
-2. 复制 `dsh-extra-plan/.agent-presets/extra-plan/` 整个目录 → `DSH_HOME/.agent-presets/` 下（与已有的 `.agent-presets` 合并，最终得到 `DSH_HOME/.agent-presets/extra-plan/preset.yml` 与 `agent.cordis.yml`）；
-3. 复制 `dsh-extra-plan/profiles/web/node_modules/@local/` 下的两个包 `dsh-extra-plan` 与 `dsh-executor-spawn` → 你所用 profile 的 `node_modules/@local/` 下：
-   - 默认 profile 为 `web`：`DSH_HOME/profiles/web/node_modules/@local/`
-   - 若你的 DSH 使用其他 profile 名，请对应放置到 `DSH_HOME/profiles/<你的profile>/node_modules/@local/`
+2. 复制 `dsh-extra-plan/.agent-presets/extra-plan/` 整个目录 → `%USERPROFILE%\.dsh\.agent-presets\` 下（与已有的 `.agent-presets` 合并，最终得到 `%USERPROFILE%\.dsh\.agent-presets\extra-plan\preset.yml` 与 `agent.cordis.yml`）；
+3. 复制 `dsh-extra-plan/profiles/web/node_modules/@local/` 下的包 → 你所用 profile 的 `node_modules/@local/` 下：
+   - 必装：`dsh-extra-plan`（模式核心插件）与 `dsh-executor-spawn`（执行者委托层）；
+   - 可选：`dsh-flash-guide`（flash 模型近场引导插件，见下方「可选模块」说明；不装不影响本模式核心功能）；
+   - 默认 profile 为 `web`：`%USERPROFILE%\.dsh\profiles\web\node_modules\@local\`
+   - 若你的 DSH 使用其他 profile 名，请对应放置到 `%USERPROFILE%\.dsh\profiles\<你的profile>\node_modules\@local\`
 4. **重启 web 进程**使插件生效（插件在启动时挂载，重启后才会被加载）；
 5. 新建会话，在预设列表中选择「按需规划模式」即可使用。
+
+### 可选模块：dsh-flash-guide
+
+**模块背景**：dsh-extra-plan 与 dsh-router-standard 经测试无法兼容，故仿照 dsh-router-standard 的引导机制制作本模块。
+
+对模型为 flash 的 agent（主会话 + flash 执行者子代理），在每条真实用户消息后自动注入一条固定引导文本——简单任务用快速收敛版、复杂任务用深度决策版（带 flash 回顾/反跑题锚）；pro 规划子代理（非 flash 模型）自动排除、验收复核者跳过。零工具注册、不改 extra-plan 任何行为
 
 ### 验证（可选）
 
 - 运行仓库根目录的闸门测试：`node test-extra-plan-gate.mjs`（验证三级机械闸门机制）；
+
 - 或运行 `pe-test/tools/validate-extra-plan-preset.mjs` 校验预设结构是否符合预期。
 
 ## 1. 设计原则
@@ -86,7 +95,7 @@
 ## 3. 注意事项
 
 1. **思考力度完全继承、不设下限**：子代理 reasoningEffort = 主会话配置值（主 high → 子 high；主 max → 子 max；主 low → 子 low）。力度配低导致的规划质量问题由用户自行承担。
-2. **usage 账本**：**保留**——本模式成本 A/B 的唯一计量工具（行 = 一次 LLM 调用，hit/miss/out 三列，写 ledger.jsonl、sessionId 区分；成本≈零）。
+2. **usage 账本**：——本模式成本 A/B 的唯一计量工具（行 = 一次 LLM 调用，hit/miss/out 三列，写 ledger.jsonl、sessionId 区分；成本≈零）。
 3. **pro 规划子代理必须带 anchored 引导**（白话解释见 §4）。
 4. **动手前必须路由确认**：每次主会话准备动手（直接执行或启用 pro 规划）前必须弹三选一 ask——选项固定为「直接执行」「进行pro规划」「不同意」（主会话思考后的选择排第一），由用户确认，避免主会话判断错误；选「不同意」则主会话不动作、转对话询问意见；路由与澄清**分两次提问**（先路由，选了 pro 规划再澄清意图）。空白回复（跳过本题）、取消/中断一律视为未确认。
 5. **规划疑问必须能往返**：规划子代理的疑问 → 主会话原样转达用户 → 用户答复 → 主会话原样转回同一子代理（多轮可往返）；主会话不得代答或改写；非阻塞歧义记入「待确认假设清单」随方案确认。
@@ -97,8 +106,8 @@
 
 ## 4. anchored 引导（白话解释）
 
-- **行为**：新会话的第一条模型请求只拿到一句极简提示词（"You are a helpful software engineer assistant."）、被清空的历史上下文、以及收窄到 shell + read 的工具目录；模型做出第一个工具调用后，下一条请求自动恢复完整 persona 与完整工具目录。
 - **动机**：参考了dsh-anchored-standard，第一请求就塞进全量 persona + 全量工具，模型容易想太多/被带偏（"降智"）；先小后全更稳。
+- **行为**：新会话的第一条模型请求只拿到一句极简提示词（"You are a helpful software engineer assistant."）、被清空的历史上下文、以及收窄到 shell + read 的工具目录；模型做出第一个工具调用后，下一条请求自动恢复完整 persona 与完整工具目录。
 - **本模式应用于两处**：主会话新会话首轮（流程 ②）+ pro 规划子代理每次首启（流程 ⑦）。continuable 续轮不重新引导（resume 不回退），只在首次创建时生效。
 - **成本**：每处首次引导 = 多 1 次模型请求（规划子代理是 pro 价）。
 - **默认开启**（主会话 + 规划子代理都开）。
@@ -136,7 +145,10 @@ dsh-extra-plan/
 │           ├── dsh-extra-plan/        # 模式核心插件（三级闸门/探查上限/save_plan 等）
 │           │   ├── index.js
 │           │   └── package.json
-│           └── dsh-executor-spawn/    # 执行者委托层（workflow/ralph worker 注入）
+│           ├── dsh-executor-spawn/    # 执行者委托层（workflow/ralph worker 注入）
+│           │   ├── index.js
+│           │   └── package.json
+│           └── dsh-flash-guide/       # 可选模块：flash 模型近场引导（不装不影响核心）
 │               ├── index.js
 │               └── package.json
 └── pe-test/tools/                     # 自检/取证工具（8 个）
