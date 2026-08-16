@@ -1,0 +1,183 @@
+// reviewer pwsh 写动词拦截（工具目录判定）验证：
+// ①纯函数断言（catalogHasWriteTools / isReadOnlyChildByCatalog）
+// ②预设静态断言（agent.cordis.yml 三行子代理 deny 清单）
+// ③真实监听器拦截行为（mock ctx 走插件 apply 注册的 assemble/pre-execute）
+// ④回归（主会话路由闸门、planner 拦截、anchored 引导收窄）
+import { pathToFileURL } from 'node:url'
+import { createRequire } from 'node:module'
+import { readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+
+const DSH_HOME = (process.env.DSH_HOME || homedir() + '/.dsh').replaceAll('\\', '/')
+const PLUGIN_PATH = DSH_HOME + '/profiles/web/node_modules/@local/dsh-extra-plan/index.js'
+const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
+const decisions = plugin.decisions
+const { catalogHasWriteTools, isReadOnlyChildByCatalog } = decisions
+
+let pass = 0
+let fail = 0
+function check(name, got, expected) {
+  const okResult = JSON.stringify(got) === JSON.stringify(expected)
+  if (okResult) { pass += 1 } else { fail += 1 }
+  console.log(`${okResult ? 'PASS' : 'FAIL'}  ${name}  (期望 ${JSON.stringify(expected)}, 实际 ${JSON.stringify(got)})`)
+}
+function checkTrue(name, got) {
+  const okResult = got === true
+  if (okResult) { pass += 1 } else { fail += 1 }
+  console.log(`${okResult ? 'PASS' : 'FAIL'}  ${name}  (期望 true, 实际 ${JSON.stringify(got)})`)
+}
+
+// ── ① 纯函数断言（[任务5]） ────────────────────────────────────────────
+check('G1 catalogHasWriteTools 只读目录 → false', catalogHasWriteTools(['read', 'pwsh']), false)
+check('G2 catalogHasWriteTools 含 write → true', catalogHasWriteTools(['read', 'write']), true)
+check('G3 catalogHasWriteTools 含 edit → true', catalogHasWriteTools(['read', 'edit']), true)
+check('G4 catalogHasWriteTools 元素缺 name → false', catalogHasWriteTools([{ name: 'read' }]), false)
+check('G5 catalogHasWriteTools([]) → false', catalogHasWriteTools([]), false)
+check('G6 catalogHasWriteTools(undefined) → false', catalogHasWriteTools(undefined), false)
+check('G7 isReadOnlyChildByCatalog 只读目录 → true', isReadOnlyChildByCatalog(['read', 'pwsh']), true)
+check('G8 isReadOnlyChildByCatalog 含 write → false', isReadOnlyChildByCatalog(['write', 'read']), false)
+check('G9 isReadOnlyChildByCatalog 含 edit → false', isReadOnlyChildByCatalog(['edit']), false)
+check('G10 isReadOnlyChildByCatalog([]) → false', isReadOnlyChildByCatalog([]), false)
+
+// ── ② 预设静态断言（[任务4]，读文件核对，不跑装配） ────────────────────
+const require = createRequire(DSH_HOME + '/profiles/web/node_modules/package.json')
+const yaml = require('js-yaml')
+const JsExpr = new yaml.Type('tag:yaml.org,2002:js', { kind: 'scalar', resolve: () => true, construct: (data) => data })
+const schema = yaml.JSON_SCHEMA.extend(JsExpr)
+const presetFile = DSH_HOME + '/.agent-presets/extra-plan/agent.cordis.yml'
+let rows
+try {
+  rows = yaml.load(readFileSync(presetFile, 'utf8'), { schema })
+} catch (error) {
+  console.error(`FAIL  YAML 解析失败: ${error.message}`)
+  process.exit(1)
+}
+console.log(`PASS  YAML 解析成功（${Array.isArray(rows) ? rows.length : '非数组!'} 行）`)
+
+function flatten(list) {
+  const out = []
+  for (const r of list) {
+    if (r === null || typeof r !== 'object') continue
+    out.push(r)
+    if (r.group === true && Array.isArray(r.config)) out.push(...flatten(r.config))
+  }
+  return out
+}
+const all = flatten(rows)
+function checkDeny(id, expectCount, mustContain, mustNotContain, label) {
+  const row = all.find((r) => r.id === id)
+  const deny = row !== undefined && row.config !== undefined && Array.isArray(row.config.toolFilter.deny) ? row.config.toolFilter.deny : null
+  if (deny === null) {
+    fail += 1
+    console.log(`FAIL  ${label} 缺 toolFilter.deny`)
+    return
+  }
+  const okCount = expectCount === null || deny.length === expectCount
+  const okContains = mustContain.every((n) => deny.includes(n))
+  const okExcludes = mustNotContain.every((n) => !deny.includes(n))
+  if (okCount && okContains && okExcludes) {
+    pass += 1
+    console.log(`PASS  ${label}（${deny.length} 项${mustContain.length > 0 ? '，含 ' + mustContain.join('/') : ''}${mustNotContain.length > 0 ? '，不含 ' + mustNotContain.join('/') : ''}）`)
+  } else {
+    fail += 1
+    console.log(`FAIL  ${label}（实际 ${deny.length} 项: ${deny.join(', ')}）`)
+  }
+}
+checkDeny('tool-subagent-review', 12, ['write', 'edit'], [], 'reviewer deny 恰 12 项且含 write/edit')
+checkDeny('tool-subagent', 10, [], ['write', 'edit'], 'executor deny 恰 10 项且不含 write/edit')
+checkDeny('tool-subagent-plan', null, ['write', 'edit'], [], 'planner deny 含 write/edit')
+
+// ── ③ 真实监听器拦截行为（[任务5]，mock ctx 走插件 apply） ─────────────
+function makeHarness(config) {
+  const listeners = {}
+  const ctx = {
+    get: () => undefined,
+    on: (name, fn) => {
+      if (listeners[name] === undefined) listeners[name] = []
+      listeners[name].push(fn)
+    },
+  }
+  plugin.apply(ctx, config)
+  return listeners
+}
+const harness = makeHarness({ anchoredBootstrap: false })
+const harnessBoot = makeHarness({ anchoredBootstrap: true })
+
+const childAgent = (id) => ({
+  session: {
+    header: { id, origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' },
+    events: [],
+    append: () => {},
+  },
+  options: {},
+  ctx: undefined,
+})
+const mainAgent = {
+  session: { header: { id: 'main-1', cwd: 'C:/work' }, events: [] },
+  options: {},
+  ctx: undefined,
+}
+const plannerAgent = {
+  session: { header: { id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, events: [] },
+  options: { model: 'deepseek-v4-pro' },
+  ctx: undefined,
+}
+
+async function assemble(listeners, agent, tools) {
+  const entry = listeners['system-prompt/assemble']
+  if (entry === undefined || entry.length === 0) throw new Error('assemble 监听器未注册')
+  return await entry[0](null, { agent }, async () => ({ tools, sections: [], contexts: [] }))
+}
+function preExecute(listeners, agent, name, argumentsObj) {
+  const entry = listeners['tools/pre-execute']
+  if (entry === undefined || entry.length === 0) throw new Error('pre-execute 监听器未注册')
+  return entry[0]({ agent, name, arguments: argumentsObj }, () => ({ kind: 'allow' }))
+}
+
+// 只读目录（reviewer 类）：pwsh 写 → deny；pwsh 只读 → 放行；write/edit → deny
+const reviewer = childAgent('reviewer-1')
+await assemble(harness, reviewer, [{ name: 'read' }, { name: 'glob' }, { name: 'grep' }, { name: 'pwsh' }])
+let r = preExecute(harness, reviewer, 'pwsh', { command: 'New-Item x.txt' })
+checkTrue('R1 reviewer pwsh New-Item → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('验收复核者只读'))
+checkTrue('R2 reviewer pwsh deny 文案含只读限定', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('pwsh 仅限只读探查命令，禁止创建/修改/删除文件'))
+r = preExecute(harness, reviewer, 'pwsh', { command: 'Set-Content a.txt x' })
+checkTrue('R3 reviewer pwsh Set-Content → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('验收复核者只读'))
+r = preExecute(harness, reviewer, 'pwsh', { command: 'Get-ChildItem' })
+checkTrue('R4 reviewer pwsh Get-ChildItem → 放行', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, reviewer, 'write', {})
+checkTrue('R5 reviewer write → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('验收复核者只读'))
+r = preExecute(harness, reviewer, 'edit', {})
+checkTrue('R6 reviewer edit → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('验收复核者只读'))
+
+// 执行者目录（含 write/edit）：缓存未命中 → 放行（现状不变）
+const executor = childAgent('executor-1')
+await assemble(harness, executor, [{ name: 'read' }, { name: 'write' }, { name: 'edit' }, { name: 'pwsh' }])
+r = preExecute(harness, executor, 'pwsh', { command: 'New-Item x.txt' })
+checkTrue('R7 executor pwsh New-Item → 放行（现状不变）', r !== null && r !== undefined && r.kind === 'allow')
+
+// 缓存未装配（目录尚未记录）→ 放行（fail-open，不误伤）
+const fresh = childAgent('fresh-1')
+r = preExecute(harness, fresh, 'write', {})
+checkTrue('R8 缓存未命中（未装配）→ 放行 fail-open', r !== null && r !== undefined && r.kind === 'allow')
+
+// ── ④ 回归 ────────────────────────────────────────────────────────────
+// 主会话路由未确认：write/pwsh 写拦截不变（bootstrapOn=false 下同样生效）
+r = preExecute(harness, mainAgent, 'write', {})
+checkTrue('R9 主会话路由未确认 write → deny（回归）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认/计划未批准'))
+r = preExecute(harness, mainAgent, 'pwsh', { command: 'New-Item x.txt' })
+checkTrue('R10 主会话路由未确认 pwsh 写 → deny（回归）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认/计划未批准'))
+
+// planner 分支拦截照旧（write deny 文案含「规划子代理只读」）
+r = preExecute(harness, plannerAgent, 'write', {})
+checkTrue('R11 planner write → deny（回归）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划子代理只读'))
+
+// bootstrapOn=true：主会话/规划子代理首轮目录收窄为 shell+read；executor 不引导
+const bootMain = await assemble(harnessBoot, mainAgent, [{ name: 'read' }, { name: 'pwsh' }, { name: 'write' }, { name: 'glob' }])
+check('R12 bootstrapOn=true 主会话首轮收窄为 shell+read', Array.isArray(bootMain.tools) ? bootMain.tools.map((t) => t.name).sort() : null, ['pwsh', 'read'])
+const bootPlanner = await assemble(harnessBoot, plannerAgent, [{ name: 'read' }, { name: 'pwsh' }, { name: 'write' }])
+check('R13 bootstrapOn=true planner 首轮收窄为 shell+read', Array.isArray(bootPlanner.tools) ? bootPlanner.tools.map((t) => t.name).sort() : null, ['pwsh', 'read'])
+const bootExecutor = await assemble(harnessBoot, executor, [{ name: 'read' }, { name: 'pwsh' }, { name: 'write' }])
+check('R14 bootstrapOn=true executor 不引导（目录原样）', Array.isArray(bootExecutor.tools) ? bootExecutor.tools.map((t) => t.name).sort() : null, ['pwsh', 'read', 'write'])
+
+console.log(`\n通过 ${pass}, 失败 ${fail}`)
+process.exit(fail === 0 ? 0 : 1)

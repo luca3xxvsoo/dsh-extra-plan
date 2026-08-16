@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.pyc
+
+# 压缩包与备份（本仓库以源码形式发布，不提交 zip/bak）
+*.zip
+*.bak
+
+# 本地运行产物（任务档案/探查线索/方案验收，由 save_plan/save_probe 生成）
+.extra-plan/
+
+# 系统
+Thumbs.db
+.DS_Store
