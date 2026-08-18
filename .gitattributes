@@ -1,2 +1,9 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# 文本文件统一 LF 换行符（跨平台兼容）
+* text=auto eol=lf
+# YAML / Markdown / JS / JSON 强制 LF
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.mjs text eol=lf

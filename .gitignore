@@ -1,14 +1,13 @@
-# Python
-__pycache__/
-*.pyc
+# 依赖
+node_modules/
 
-# 压缩包与备份（本仓库以源码形式发布，不提交 zip/bak）
-*.zip
-*.bak
-
-# 本地运行产物（任务档案/探查线索/方案验收，由 save_plan/save_probe 生成）
+# extra-plan 落盘目录（save_plan 方案/验收双文件、save_probe 线索文件）
 .extra-plan/
+.git/
 
-# 系统
-Thumbs.db
+# 日志
+*.log
+
+# 跨平台系统杂项
 .DS_Store
+Thumbs.db
