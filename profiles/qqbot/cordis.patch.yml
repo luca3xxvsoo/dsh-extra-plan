@@ -1,0 +1,15 @@
+# QQ Bot 凭据（扫码绑定自动生成）
+- id: im-qqbot
+  config:
+    appId: 'xxx'
+    appSecret: xxx
+    preset: extra-plan
+- insert:
+    - id: qqbot-user-questions
+      name: '@local/dsh-qqbot-user-questions'
+    - id: agent-presets
+      name: '@deepseek-ai/dsh-agent-presets'
+      config:
+        default: extra-plan
+    - id: flash-guide
+      name: '@local/dsh-flash-guide'
