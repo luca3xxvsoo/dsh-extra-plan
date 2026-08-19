@@ -34,11 +34,25 @@
 
 对模型为 flash 的 agent（主会话 + flash 执行者子代理），在每条真实用户消息后自动注入一条固定引导文本——简单任务用快速收敛版、复杂任务用深度决策版（带 flash 回顾/反跑题锚）；pro 规划子代理（非 flash 模型）自动排除、验收复核者跳过。零工具注册、不改 extra-plan 任何行为
 
+
+**安装方式（共 2 步）**：
+
+1. **复制 dsh-flash-guide 包到 web profile**：
+   ```powershell
+   Copy-Item -Recurse -Force "<仓库>\profiles\web\node_modules\@local\dsh-flash-guide" "$env:USERPROFILE\.dsh\profiles\web\node_modules\@local\"
+   ```
+
+2. **增加 web 的 `cordis.patch.yml`**（`<DSH_HOME>\profiles\web\cordis.patch.yml`）：
+
+- insert:
+    - id: flash-guide
+      name: '@local/dsh-flash-guide'
+
 ### 可选模块：dsh-qqbot-user-questions
 
 **模块背景**：dsh-qqbot（腾讯官方 QQ Bot IM 插件）在默认配置下不挂任何 agent 预设；而 extra-plan 的核心交互（路由确认 / 澄清 / 批准三阶段问话）依赖 `ask_user_question` 的 UI 应答者，QQbot 无此 UI，直接挂载会导致问答无法完成。本可选插件为 qqbot 提供 `userQuestions` provider，把 `ask_user_question` 的问题以**文字列表**发到 QQ、等待用户回复，让 extra-plan 在 QQbot 上保持完整的三阶段问答与闸门语义。
 
-**安装方式（共 5 步）**：
+**安装方式（共 3 步）**：
 
 1. **复制 @local 四个包到 qqbot profile**（源为仓库内的 `profiles\web\node_modules\@local\`，目标 `<DSH_HOME>` 默认 `%USERPROFILE%\.dsh`）：
    ```powershell
@@ -55,10 +69,25 @@
    ctx.provide('qqbot.sessionManager', manager);
    ```
 
-3. **修改 qqbot 的 `cordis.patch.yml`**（`<DSH_HOME>\profiles\qqbot\cordis.patch.yml`）：
-   - `im-qqbot` 配置中新增 `preset: extra-plan`；
-   - 追加 `agent-presets` 服务行（`name: '@deepseek-ai/dsh-agent-presets'`、`default: extra-plan`）；
-   - 追加本插件行（`id: qqbot-user-questions`、`name: '@local/dsh-qqbot-user-questions'`）。
+3. **增加 qqbot 的 `cordis.patch.yml`**（`<DSH_HOME>\profiles\qqbot\cordis.patch.yml`）：其中approvalEnabled为支持越权，true为支持
+
+- id: im-qqbot
+  config:
+    appId: 'xxx'
+    appSecret: xxx
+    preset: extra-plan
+- insert:
+    - id: qqbot-user-questions
+      name: '@local/dsh-qqbot-user-questions'
+      config:
+        approvalEnabled: false
+    - id: agent-presets
+      name: '@deepseek-ai/dsh-agent-presets'
+      config:
+        default: extra-plan
+    - id: flash-guide
+      name: '@local/dsh-flash-guide'
+
 
 **前提说明**：本模块涉及对 dsh-qqbot 源码的最小改动（2 行 `ctx.provide`），需使用者自行评估。
 
