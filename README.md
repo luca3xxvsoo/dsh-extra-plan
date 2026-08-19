@@ -152,18 +152,27 @@
 
 ```
 dsh-extra-plan/
-├── README.md                          # 本文档（模式介绍 + 安装方式）
-├── LICENSE                            # MIT 许可
-├── agent_extra_plan_export.py         # 维护者工具：从本机 DSH_HOME 打包 6 文件为 zip
-├── agent_extra_plan_import.py         # 维护者工具：把 agent_extra_plan.zip 解压安装到目标 DSH_HOME
-├── 按需规划模式测试方案.md              # 内部测试方案文档
-├── extra-plan涉及文件路径.md           # 涉及文件路径清单（本机路径已脱敏）
 ├── .agent-presets/
 │   └── extra-plan/
 │       ├── preset.yml                 # 预设元信息（GUI 显示名称与描述）
 │       └── agent.cordis.yml           # 预设主配置（persona/工具/插件行/delegation）
 ├── profiles/
-│   └── web/
+│   ├── web/
+│   │   ├── cordis.patch.yml           # 该文件需增加内容参考（请勿覆盖）
+│   │   └── node_modules/@local/
+│   │       ├── dsh-extra-plan/        # 模式核心插件（三级闸门/探查上限/save_plan 等）
+│   │       │   ├── index.js
+│   │       │   └── package.json
+│   │       ├── dsh-executor-spawn/    # 执行者委托层（workflow/ralph worker 注入）
+│   │       │   ├── index.js
+│   │       │   └── package.json
+│   │       └── dsh-flash-guide/       # 可选模块：flash 模型近场引导（不装不影响核心）
+│   │           ├── index.js
+│   │           └── package.json
+│   └── qqbot/                         # 兼容qqbot用的，没有可无视
+│       ├── cordis.patch.yml           # 该文件需增加内容参考（请勿覆盖）
+│       ├── node_modules/@tencent-connect/dsh-qqbot/dist/gateway/
+│       │   └── bootstrap.js           # 修改好的文件
 │       └── node_modules/@local/
 │           ├── dsh-extra-plan/        # 模式核心插件（三级闸门/探查上限/save_plan 等）
 │           │   ├── index.js
@@ -177,17 +186,22 @@ dsh-extra-plan/
 │           └── dsh-qqbot-user-questions/ # 可选模块：QQbot 上保留 extra-plan 完整问答（见 §1 可选模块）
 │               ├── index.js
 │               └── package.json
-└── pe-test/tools/                     # 自检/取证工具（8 个）
-    ├── validate-extra-plan-preset.mjs     # 预设静态校验（YAML 语法 + deny 清单存在性）
-    ├── validate-save-probe-gate.mjs       # save_probe 注册层 + 硬闸门五态 + planner 预算回归验证
-    ├── validate-reviewer-pwsh-guard.mjs   # reviewer pwsh 写动词拦截验证
-    ├── smoke-forensics-extra-plan.mjs     # extra-plan 冒烟会话取证
-    ├── saveplan-forensics.mjs             # save_plan call/result 配对取证
-    ├── ledger-summary.mjs                 # usage 账本聚合（P3 A/B 读数）
-    ├── print-header-tools.mjs             # 打印会话 request/header 的 tools 列表
-    ├── test-extra-plan-gate.mjs           # 闸门机制测试（node 直接运行）
-    ├── test-cross-platform.mjs            # 跨平台只读防线测试（bash/pwsh 写命令拦截，三平台通用）
-    └── decode-session.mjs                 # 解码单个会话日志（事件统计/plan/mode 摘要）
+│── pe-test/tools/                     # 自检/取证工具（8 个）
+│   ├── validate-extra-plan-preset.mjs     # 预设静态校验（YAML 语法 + deny 清单存在性）
+│   ├── validate-save-probe-gate.mjs       # save_probe 注册层 + 硬闸门五态 + planner 预算回归验证
+│   ├── validate-reviewer-pwsh-guard.mjs   # reviewer pwsh 写动词拦截验证
+│   ├── smoke-forensics-extra-plan.mjs     # extra-plan 冒烟会话取证
+│   ├── saveplan-forensics.mjs             # save_plan call/result 配对取证
+│   ├── ledger-summary.mjs                 # usage 账本聚合（P3 A/B 读数）
+│   ├── print-header-tools.mjs             # 打印会话 request/header 的 tools 列表
+│   ├── test-extra-plan-gate.mjs           # 闸门机制测试（node 直接运行）
+│   ├── test-cross-platform.mjs            # 跨平台只读防线测试（bash/pwsh 写命令拦截，三平台通用）
+│   └── decode-session.mjs                 # 解码单个会话日志（事件统计/plan/mode 摘要）
+├── agent_extra_plan_export.py         # 维护者工具：从本机 DSH_HOME 打包 6 个核心文件 文件为 zip
+├── agent_extra_plan_import.py         # 维护者工具：把 agent_extra_plan.zip 解压安装到目标 DSH_HOME
+├── 按需规划模式测试方案.md              # 内部测试方案文档
+├── README.md                          # 本文档（模式介绍 + 安装方式）
+└── LICENSE                            # MIT 许可
 ```
 
 ## 7. 许可
