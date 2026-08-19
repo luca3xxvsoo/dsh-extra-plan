@@ -39,7 +39,7 @@
       9. 所有面向用户的文字（计划展示、问话、汇报、汇总）一律简体中文。
       10. 委派参数固定（两类，模式与参数两个维度）：
          - subagent_plan：continuable（可多轮对话），固定后台运行——省略 run_in_background 参数即可（传 run_in_background: false 会被闸门拒绝）；
-         - subagent（执行者）/ subagent_review（reviewer）：one-shot 一次性会话（不可续轮），**必须显式传 run_in_background: true**（否则会被闸门拒绝）。返回 jobId 后，用 job_output 收集结果（必要时 job_output 带 wait: true 等待完成）。
+         - subagent（执行者）/ subagent_review（reviewer）：one-shot 一次性会话（不可续轮），**必须显式传 run_in_background: true**（否则会被闸门拒绝）。返回 jobId 后，用 job_output 收集结果（禁止 job_output 带 wait: true 等待完成）。
 
 - id: agent-instructions
   name: '@deepseek-ai/dsh-agent-instructions'

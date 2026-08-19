@@ -7,6 +7,9 @@
 - insert:
     - id: qqbot-user-questions
       name: '@local/dsh-qqbot-user-questions'
+      # 开启是否支持越权 true为支持
+      config:
+        approvalEnabled: false
     - id: agent-presets
       name: '@deepseek-ai/dsh-agent-presets'
       config:
