@@ -34,6 +34,34 @@
 
 对模型为 flash 的 agent（主会话 + flash 执行者子代理），在每条真实用户消息后自动注入一条固定引导文本——简单任务用快速收敛版、复杂任务用深度决策版（带 flash 回顾/反跑题锚）；pro 规划子代理（非 flash 模型）自动排除、验收复核者跳过。零工具注册、不改 extra-plan 任何行为
 
+### 可选模块：dsh-qqbot-user-questions
+
+**模块背景**：dsh-qqbot（腾讯官方 QQ Bot IM 插件）在默认配置下不挂任何 agent 预设；而 extra-plan 的核心交互（路由确认 / 澄清 / 批准三阶段问话）依赖 `ask_user_question` 的 UI 应答者，QQbot 无此 UI，直接挂载会导致问答无法完成。本可选插件为 qqbot 提供 `userQuestions` provider，把 `ask_user_question` 的问题以**文字列表**发到 QQ、等待用户回复，让 extra-plan 在 QQbot 上保持完整的三阶段问答与闸门语义。
+
+**安装方式（共 5 步）**：
+
+1. **复制 @local 四个包到 qqbot profile**（源为仓库内的 `profiles\web\node_modules\@local\`，目标 `<DSH_HOME>` 默认 `%USERPROFILE%\.dsh`）：
+   ```powershell
+   New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.dsh\profiles\qqbot\node_modules\@local"
+   Copy-Item -Recurse -Force "<仓库>\profiles\web\node_modules\@local\dsh-extra-plan" "$env:USERPROFILE\.dsh\profiles\qqbot\node_modules\@local\"
+   Copy-Item -Recurse -Force "<仓库>\profiles\web\node_modules\@local\dsh-executor-spawn" "$env:USERPROFILE\.dsh\profiles\qqbot\node_modules\@local\"
+   Copy-Item -Recurse -Force "<仓库>\profiles\web\node_modules\@local\dsh-flash-guide" "$env:USERPROFILE\.dsh\profiles\qqbot\node_modules\@local\"
+   Copy-Item -Recurse -Force "<仓库>\profiles\web\node_modules\@local\dsh-qqbot-user-questions" "$env:USERPROFILE\.dsh\profiles\qqbot\node_modules\@local\"
+   ```
+
+2. **修改 dsh-qqbot 的 `bootstrap.js`**（`<DSH_HOME>\profiles\qqbot\node_modules\@tencent-connect\dsh-qqbot\dist\gateway\bootstrap.js`）：在 `new QQBot({...})` 闭合 `});` 之后、`logger.info(...)` 之前插入两行：
+   ```js
+   ctx.provide('qqbot.bot', bot);
+   ctx.provide('qqbot.sessionManager', manager);
+   ```
+
+3. **修改 qqbot 的 `cordis.patch.yml`**（`<DSH_HOME>\profiles\qqbot\cordis.patch.yml`）：
+   - `im-qqbot` 配置中新增 `preset: extra-plan`；
+   - 追加 `agent-presets` 服务行（`name: '@deepseek-ai/dsh-agent-presets'`、`default: extra-plan`）；
+   - 追加本插件行（`id: qqbot-user-questions`、`name: '@local/dsh-qqbot-user-questions'`）。
+
+**前提说明**：本模块涉及对 dsh-qqbot 源码的最小改动（2 行 `ctx.provide`），需使用者自行评估。
+
 ### 平台实测说明
 
 跨平台兼容改造的**逻辑层**已由 `test-cross-platform.mjs` 验证（本仓库 Windows 环境实测 68 用例全过，脚本三平台通用）；但**完整运行时**（DSH 实际加载本预设 + 真实 bash/pwsh 行为）目前仅在 **Windows 环境实测正常**，**Linux/macOS 尚未在真实环境验证**。建议部署到 Linux/macOS 前用 GitHub Actions 三平台矩阵或 WSL2 补充实测；如发现兼容问题，欢迎反馈。
@@ -143,7 +171,10 @@ dsh-extra-plan/
 │           ├── dsh-executor-spawn/    # 执行者委托层（workflow/ralph worker 注入）
 │           │   ├── index.js
 │           │   └── package.json
-│           └── dsh-flash-guide/       # 可选模块：flash 模型近场引导（不装不影响核心）
+│           ├── dsh-flash-guide/       # 可选模块：flash 模型近场引导（不装不影响核心）
+│           │   ├── index.js
+│           │   └── package.json
+│           └── dsh-qqbot-user-questions/ # 可选模块：QQbot 上保留 extra-plan 完整问答（见 §1 可选模块）
 │               ├── index.js
 │               └── package.json
 └── pe-test/tools/                     # 自检/取证工具（8 个）
