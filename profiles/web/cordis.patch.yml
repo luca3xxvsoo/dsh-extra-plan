@@ -1,0 +1,4 @@
+# 增加而不是覆盖
+- insert:
+    - id: flash-guide
+      name: '@local/dsh-flash-guide'
