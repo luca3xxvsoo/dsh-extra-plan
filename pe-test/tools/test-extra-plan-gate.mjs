@@ -8,6 +8,16 @@ const PLUGIN_PATH = DSH_HOME + '/profiles/web/node_modules/@local/dsh-extra-plan
 const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
 const {
   CHANNEL_BROKEN_CODES,
+  ROUTE_WORD_DIRECT,
+  ROUTE_WORD_PLAN,
+  ROUTE_WORD_DISAGREE,
+  APPROVAL_WORD_APPROVE,
+  APPROVAL_WORD_REPLAN,
+  ROUTE_OPTIONS_TEXT,
+  APPROVAL_OPTIONS_TEXT,
+  routeDenyReason,
+  planDenyReason,
+  approvalDenyReason,
   isSubagentChild,
   isLiveDelegation,
   childPolicyNeedsFloor,
@@ -212,6 +222,15 @@ const BR = [
   ['BR14 budget=3 remaining=2 → 空串(全程不提示)', budgetReminderText(2, 3, 3), ''],
 ]
 for (const [name, got, expected] of BR) check(name, got, expected)
+
+// ── DR 系列:deny 提示模板与闸门词表同源（v0.1.8） ─────────────────────
+const DR = [
+  ['DR1 routeDenyReason 含三个路由词', routeDenyReason('write/edit').includes(ROUTE_WORD_DIRECT) && routeDenyReason('write/edit').includes(ROUTE_WORD_PLAN) && routeDenyReason('write/edit').includes(ROUTE_WORD_DISAGREE), true],
+  ['DR2 planDenyReason 含三个路由词', planDenyReason('subagent_plan').includes(ROUTE_WORD_DIRECT) && planDenyReason('subagent_plan').includes(ROUTE_WORD_PLAN) && planDenyReason('subagent_plan').includes(ROUTE_WORD_DISAGREE), true],
+  ['DR3 approvalDenyReason 含三个批准词', approvalDenyReason('subagent').includes(APPROVAL_WORD_APPROVE) && approvalDenyReason('subagent').includes(APPROVAL_WORD_REPLAN) && approvalDenyReason('subagent').includes(ROUTE_WORD_DISAGREE), true],
+  ['DR4 approvalDenyReason 不误用路由词集合', !approvalDenyReason('subagent').includes(ROUTE_WORD_DIRECT), true],
+]
+for (const [name, got, expected] of DR) check(name, got, expected)
 
 // ── BD 系列:budgetExhaustedReason（deny 文案,v0.1.6） ───────────────────
 const BD = [

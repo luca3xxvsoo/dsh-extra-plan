@@ -1,6 +1,7 @@
 # extra-plan 落盘目录（save_plan 方案/验收双文件、save_probe 线索文件）
 .extra-plan/
 .git/
+bak/
 
 # 日志
 *.log
