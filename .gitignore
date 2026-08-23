@@ -2,6 +2,9 @@
 .extra-plan/
 .git/
 bak/
+必装/
+选装/
+dsh-extra-plan/
 
 # 日志
 *.log
@@ -9,3 +12,4 @@ bak/
 # 跨平台系统杂项
 .DS_Store
 Thumbs.db
+dsh-extra-plan.zip

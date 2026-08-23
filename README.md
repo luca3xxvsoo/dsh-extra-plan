@@ -2,35 +2,29 @@
 
 > 本文档介绍「按需规划模式」（预设 extra-plan）的机制与用法
 
-> 本仓库为可安装源码版：clone 后按 §1 安装方式部署到本地 DSH 环境即可使用。
-
 ## 0. 一句话概述
 
 **作者从reasonix得到的灵感，实现主动可控进行pro规划的agent模板**（适合控制欲强的用户）
 
-**按需规划模式（extra-plan）**：主会话模型由用户手动切换；**每次动手前主会话先弹三选一路由确认**（直接执行 / 进行pro规划 / 不同意），用户点哪条走哪条——直行路径主会话直接干；规划路径先澄清意图，再启用 **pro 规划子代理**（只读 + anchored 引导）产出规划方案（**含逐条机械可核对的验收标准清单**），用户批准后执行（子代理执行 + 验收复核；主会话不直改文件）。规划按需发生——简单任务全程零 pro，复杂任务 pro 只出现在规划子代理。
+**按需规划模式（extra-plan）**：主会话模型由用户手动切换；**每次动手前主会话先弹三选一路由确认**（直接执行 / 进行pro规划 / 不同意），用户点哪条走哪条——直行路径主会话直接干；规划路径先澄清意图，再启用 **pro 规划子代理**（只读 + anchored 引导）产出规划方案（**含逐条机械可核对的验收标准清单**），用户批准后执行（子代理执行 + 验收复核；主会话不直改文件）。规划按需发生——简单任务全程零 pro，复杂任务 pro 只出现在规划子代理
 
 ## 1. 安装方式（面向 DSH 环境用户）
 
 > 前置条件：已安装 DeepSeek Harness（DSH）。默认 DSH_HOME = `~/.dsh`（可被环境变量 `DSH_HOME` 覆盖）。Win环境默认 DSH_HOME = `%USERPROFILE%\.dsh`
-> 本仓库以源码文件形式发布（不提供 zip 压缩包），安装 = 把文件复制到你的 DSH_HOME 对应位置。本模式不依赖任何第三方包，仅使用 DSH 自带宿主组件。
 
-### 步骤（手动复制，约 1 分钟）
+### 步骤
 
-1. 克隆或下载本仓库到本地；
-2. 复制 `dsh-extra-plan/.agent-presets/extra-plan/` 整个目录 → `DSH_HOME/.agent-presets/` 下（与已有的 `.agent-presets` 合并，最终得到 `DSH_HOME/.agent-presets/extra-plan/preset.yml` 与 `agent.cordis.yml`）；
-3. 复制 `dsh-extra-plan/profiles/web/node_modules/@local/` 下的两个包 `dsh-extra-plan` 与 `dsh-executor-spawn` → 你所用 profile 的 `node_modules/@local/` 下：
-   - 默认 profile 为 `web`：`DSH_HOME/profiles/web/node_modules/@local/`
-   - 若你的 DSH 使用其他 profile 名，请对应放置到 `DSH_HOME/profiles/<你的profile>/node_modules/@local/`
-4. **重启 DSH 进程**使插件生效（插件在启动时挂载，重启后才会被加载）：
-   - **Windows**：关闭并重新运行 DSH Web 进程（如退出终端/停止服务后重新启动 DSH）；
-   - **Linux/macOS**：`pkill -f dsh` 后重新启动，或使用 systemd/supervisor 管理的服务重启命令（如 `systemctl restart dsh` / `supervisorctl restart dsh`）。
-5. 新建会话，在预设列表中选择「按需规划模式」即可使用。
-
+1. 从Release下载压缩包dsh-extra-plan.zip并解压
+2. 将 `必装/.dsh/` 中的文件夹复制进DSH_HOME
+3. （可选）编辑 `DSH_HOME/.agent-presets/extra-plan/agent.cordis.yml`，将 plannerModel 改为实际使用的pro规划模型（默认为deepseek-v4-pro）
+4. （可选）将 `flash-guide/.dsh/` 中的文件夹复制进DSH_HOME，并参考cordis.patch.yml.example修改 `DSH_HOME/profiles/web/cordis.patch.yml`
+5. （可选）将 `qqbot-user-questions/.dsh/` 中的文件夹复制进DSH_HOME，并参考cordis.patch.yml.example修改 `DSH_HOME/profiles/qqbot/cordis.patch.yml`
+6. **重启 DSH 进程**使插件生效
+7. 新建会话，在预设列表中选择「按需规划模式」即可使用
 
 ### 可选模块：dsh-flash-guide
 
-**模块背景**：dsh-extra-plan 与 dsh-router-standard 经测试无法兼容，故仿照 dsh-router-standard 的引导机制制作本模块。
+**模块背景**：dsh-extra-plan 与 dsh-router-standard 经测试无法兼容，故仿照 dsh-router-standard 的引导机制制作本模块
 
 根据模型名称包含deepseek-v4-flash的主会话/子代理，在每条真实用户消息后自动注入一条固定引导文本——简单任务用快速收敛版、复杂任务用深度决策版（带回顾/反跑题锚）；模型名称不包含的会话自动排除
 
@@ -38,148 +32,97 @@
 
 零工具注册、不改 extra-plan 任何行为
 
-
-**安装方式（共 2 步）**：
-
-1. **复制 dsh-flash-guide 包到 web profile**：
-   ```powershell
-   Copy-Item -Recurse -Force "<仓库>\profiles\web\node_modules\@local\dsh-flash-guide" "$env:USERPROFILE\.dsh\profiles\web\node_modules\@local\"
-   ```
-
-2. **增加 web 的 `cordis.patch.yml`**（`<DSH_HOME>\profiles\web\cordis.patch.yml`）：
-
-- insert:
-    - id: flash-guide
-      name: '@local/dsh-flash-guide'
-
 ### 可选模块：dsh-qqbot-user-questions
 
-**模块背景**：dsh-qqbot（腾讯官方 QQ Bot IM 插件）在默认配置下不挂任何 agent 预设；而 extra-plan 的核心交互（路由确认 / 澄清 / 批准三阶段问话）依赖 `ask_user_question` 的 UI 应答者，QQbot 无此 UI，直接挂载会导致问答无法完成。本可选插件为 qqbot 提供 `userQuestions` provider，把 `ask_user_question` 的问题以**文字列表**发到 QQ、等待用户回复，让 extra-plan 在 QQbot 上保持完整的三阶段问答与闸门语义。并且可以用命令 /优先对话 ，在AI连续调用工具的长任务的场景对队列中第一个对话进行边界插入。
+**模块背景**：dsh-qqbot（腾讯官方 QQ Bot IM 插件）在默认配置下不挂任何 agent 预设；而 extra-plan 的核心交互（路由确认 / 澄清 / 批准三阶段问话）依赖 `ask_user_question` 的 UI 应答者，QQbot 无此 UI，直接挂载会导致问答无法完成。本可选插件为 qqbot 提供 `userQuestions` provider，把 `ask_user_question` 的问题以**文字列表**发到 QQ、等待用户回复，让 extra-plan 在 QQbot 上保持完整的三阶段问答与闸门语义。并且可以用命令 /优先对话 ，在AI连续调用工具的长任务的场景对队列中第一个对话进行边界插入
 
-**安装方式（共 3 步）**：
-
-1. **复制 @local 四个包到 qqbot profile**（源为仓库内的 `profiles\web\node_modules\@local\`，目标 `<DSH_HOME>` 默认 `%USERPROFILE%\.dsh`）：
-   ```powershell
-   New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.dsh\profiles\qqbot\node_modules\@local"
-   Copy-Item -Recurse -Force "<仓库>\profiles\web\node_modules\@local\dsh-extra-plan" "$env:USERPROFILE\.dsh\profiles\qqbot\node_modules\@local\"
-   Copy-Item -Recurse -Force "<仓库>\profiles\web\node_modules\@local\dsh-executor-spawn" "$env:USERPROFILE\.dsh\profiles\qqbot\node_modules\@local\"
-   Copy-Item -Recurse -Force "<仓库>\profiles\web\node_modules\@local\dsh-flash-guide" "$env:USERPROFILE\.dsh\profiles\qqbot\node_modules\@local\"
-   Copy-Item -Recurse -Force "<仓库>\profiles\web\node_modules\@local\dsh-qqbot-user-questions" "$env:USERPROFILE\.dsh\profiles\qqbot\node_modules\@local\"
-   ```
-
-2. **修改 dsh-qqbot 的 `bootstrap.js`**（`<DSH_HOME>\profiles\qqbot\node_modules\@tencent-connect\dsh-qqbot\dist\gateway\bootstrap.js`）：在 `new QQBot({...})` 闭合 `});` 之后、`logger.info(...)` 之前插入两行：
-   ```js
-   ctx.provide('qqbot.bot', bot);
-   ctx.provide('qqbot.sessionManager', manager);
-   ```
-
-3. **增加 qqbot 的 `cordis.patch.yml`**（`<DSH_HOME>\profiles\qqbot\cordis.patch.yml`）：其中approvalEnabled为支持越权，true为支持
-
-- id: im-qqbot
-  config:
-    appId: 'xxx'
-    appSecret: xxx
-    preset: extra-plan
-- insert:
-    - id: qqbot-user-questions
-      name: '@local/dsh-qqbot-user-questions'
-      config:
-        approvalEnabled: false
-    - id: agent-presets
-      name: '@deepseek-ai/dsh-agent-presets'
-      config:
-        default: extra-plan
-    - id: flash-guide
-      name: '@local/dsh-flash-guide'
-
-
-**前提说明**：本模块涉及对 dsh-qqbot 源码的最小改动（2 行 `ctx.provide`），需使用者自行评估。
+**前提说明**：本模块涉及对 dsh-qqbot 源码的最小改动（2 行 `ctx.provide`），需使用者自行评估
 
 ### 平台实测说明
 
-跨平台兼容改造的**逻辑层**已由 `test-cross-platform.mjs` 验证（本仓库 Windows 环境实测 68 用例全过，脚本三平台通用）；但**完整运行时**（DSH 实际加载本预设 + 真实 bash/pwsh 行为）目前仅在 **Windows 环境实测正常**，**Linux/macOS 尚未在真实环境验证**。建议部署到 Linux/macOS 前用 GitHub Actions 三平台矩阵或 WSL2 补充实测；如发现兼容问题，欢迎反馈。
+跨平台兼容改造的**逻辑层**已由 `test-cross-platform.mjs` 验证（本仓库 Windows 环境实测 68 用例全过，脚本三平台通用）；但**完整运行时**（DSH 实际加载本预设 + 真实 bash/pwsh 行为）目前仅在 **Windows 环境实测正常**，**Linux/macOS 尚未在真实环境验证**。建议部署到 Linux/macOS 前用 GitHub Actions 三平台矩阵或 WSL2 补充实测；如发现兼容问题，欢迎反馈
 
 ## 1. 设计原则
-1. **规划按需（plan-on-demand）**：通过ask_user_question可选进入pro规划模式。
-2. **三级机械锚点（硬闸门，会话状态机维护）**：状态 = 无路由 → 直行 / 规划中 → 计划已批准；每条新人类消息重置闸门状态（问答续流豁免：向存续pro规划子代理的 send_message 放行不依赖路由/批准状态，见场景走查）。**无路由**：禁写（write/edit/shell 写命令）且禁一切委派；**规划中未澄清**：禁派规划子代理；**未获批准**：禁派执行类子代理（subagent/fork/workflow/ralph）；**计划已批准**：主会话禁改工作区内文件（write/edit/shell 写被 deny，机械强制走执行者；仅放行越界操作 shell + sandbox_permissions 与执行/验收委派）；**直行态**：只放行主会话写工具、委派恒拒（直行路径不存在计划批准锚点，机械保证"点直行 = 不派子代理"）。路由/批准两个 ask 选项固定枚举并由运行时验词；「不同意」、空白回复（跳过本题）、取消/中断、解析失败一律视为未确认（见 §2 ④⑤⑧）。
-3. **规划子代理只读、continuable、永不执行**；执行永远发生在用户批准后，经执行者执行、主会话可见范围内。
-4. **计划原样回传**：主会话只转发不改写（防信息逐跳损失）。
+1. **规划按需（plan-on-demand）**：通过ask_user_question可选进入pro规划模式
+2. **三级机械锚点（硬闸门，会话状态机维护）**：状态 = 无路由 → 直行 / 规划中 → 计划已批准；每条新人类消息重置闸门状态（问答续流豁免：向存续pro规划子代理的 send_message 放行不依赖路由/批准状态，见场景走查）。**无路由**：禁写（write/edit/shell 写命令）且禁一切委派；**规划中未澄清**：禁派规划子代理；**未获批准**：禁派执行类子代理（subagent/fork/workflow/ralph）；**计划已批准**：主会话禁改工作区内文件（write/edit/shell 写被 deny，机械强制走执行者；仅放行越界操作 shell + sandbox_permissions 与执行/验收委派）；**直行态**：只放行主会话写工具、委派恒拒（直行路径不存在计划批准锚点，机械保证"点直行 = 不派子代理"）。路由/批准两个 ask 选项固定枚举并由运行时验词；「不同意」、空白回复（跳过本题）、取消/中断、解析失败一律视为未确认（见 §2 ④⑤⑧）
+3. **规划子代理只读、continuable、永不执行**；执行永远发生在用户批准后，经执行者执行、主会话可见范围内
+4. **计划原样回传**：主会话只转发不改写（防信息逐跳损失）
 
 ## 2. 完整流程
 
-① 用户以按需规划模式进入：主会话模型由用户手动选择（推荐便宜模型），规划子代理模型默认为deepseek-v4-pro（配置路径.agent-presets/extra-plan/agent.cordis.yml/plannerModel），执行/验收子代理模型与主会话一致；
+① 用户以按需规划模式进入
 
-② anchored 引导（主会话新会话首轮）：极简提示词 + 清空运行时上下文 + 仅 shell/read 工具；模型完成首个工具调用后自动恢复全量 persona 与完整工具目录。
+② anchored 引导（主会话新会话首轮）：极简提示词 + 清空运行时上下文 + 仅 shell/read 工具；模型完成首个工具调用后自动恢复全量 persona 与完整工具目录
 
-③ 用户提出需求 → 主会话只读探查思考（read/glob/grep/web_search、shell 只读命令（Windows 用 pwsh、Linux/macOS 用 bash））→ 形成路线倾向（直接执行 / 进行pro规划）。
+③ 用户提出需求 → 主会话只读探查思考（read/glob/grep/web_search、shell 只读命令（Windows 用 pwsh、Linux/macOS 用 bash））→ 形成路线倾向（直接执行 / 进行pro规划）
 
 ④ **路由确认（每次动手前必问，硬闸门）**：ask_user_question 三选一，选项**固定枚举**为「直接执行」「进行pro规划」「不同意」（选项顺序 = 主会话思考后的选择在前）；运行时解析 answers 的 selected 值验词——三个词都认不出、**空白回复（跳过本题）、用户取消/中断提问** → 一律视为**未确认**、不放行，注入提示让主会话重新提问（防死锁仅提问通道级错误码放行）：
-   - 选「直接执行」→ **直行态**：主会话用全套工具亲自执行，完工自查后汇报 → 转 ⑪；此态委派恒拒（主会话不能派子代理）；
-   - 选「进行pro规划」→ **规划态** → 进 ⑤；
-   - 选「不同意」→ 主会话**不动作**（不写、不委派），转对话询问你的意见（改需求/停止/其他），闸门保持未确认，直到你重新表态或发新消息重走路由。
+   - 选「直接执行」→ **直行态**：主会话用全套工具亲自执行，完工自查后汇报 → 转 ⑪；此态委派恒拒（主会话不能派子代理）
+   - 选「进行pro规划」→ **规划态** → 进 ⑤
+   - 选「不同意」→ 主会话**不动作**（不写、不委派），转对话询问你的意见（改需求/停止/其他），闸门保持未确认，直到你重新表态或发新消息重走路由
 
-⑤ **澄清意图**：ask_user_question 提最关键的 1~3 个问题、给出候选选项（直行路径无此步；空白回复/取消/中断视为**未澄清**、不放行，同 ④ 口径）。
+⑤ **澄清意图**：ask_user_question 提最关键的 1~3 个问题、给出候选选项（直行路径无此步；空白回复/取消/中断视为**未澄清**、不放行，同 ④ 口径）
 
-⑥ **探查线索落盘（save_probe）**：主会话把本轮只读探查留下的「线索地图」经专用工具 save_probe 落盘为 `.extra-plan\` 下**单个文件** `线索-<任务名>-<时间戳>.md`——只含四类**定位线索**：文件地图（fileMap）/ 重点区域（focusAreas）/ 排除项（exclusions）/ 背景与意图（background），**不含证据**（行号/数值/文案摘录），pro 子代理不得把线索文件内容当作【已探查核实】证据。随后委派 subagent_plan 时在 prompt 中**带上线索文件路径**并说明「先 read 线索文件、再按需补查」（避免重复探查）。save_probe 只在主会话工具目录注册（规划子代理/执行者/验收复核者 不可见），放行条件与 subagent_plan 一致：路由确认选「进行pro规划」且澄清完成。
+⑥ **探查线索落盘（save_probe）**：主会话把本轮只读探查留下的「线索地图」经专用工具 save_probe 落盘为 `.extra-plan\` 下**单个文件** `线索-<任务名>-<时间戳>.md`——只含四类**定位线索**：文件地图（fileMap）/ 重点区域（focusAreas）/ 排除项（exclusions）/ 背景与意图（background），**不含证据**（行号/数值/文案摘录），pro 子代理不得把线索文件内容当作【已探查核实】证据。随后委派 subagent_plan 时在 prompt 中**带上线索文件路径**并说明「先 read 线索文件、再按需补查」（避免重复探查）。save_probe 只在主会话工具目录注册（规划子代理/执行者/验收复核者 不可见），放行条件与 subagent_plan 一致：路由确认选「进行pro规划」且澄清完成
 
 ⑦ 启用 pro 规划子代理（subagent_plan 工具）：
-   - **委派参数固定**：subagent_plan 为 continuable（可多轮对话），固定后台运行，委派时省略 run_in_background 参数（默认后台；传 run_in_background: false 会被闸门 deny）；
-   - 子代理首启同样走 anchored 引导（首请求极简；首个工具调用后恢复完整规划 persona + 只读全目录）；
-   - 只读探查：read/glob/grep、shell 只读命令（Windows 用 pwsh、Linux/macOS 用 bash）/web_search；
+   - **委派参数固定**：subagent_plan 为 continuable（可多轮对话），固定后台运行，委派时省略 run_in_background 参数（默认后台；传 run_in_background: false 会被闸门 deny）
+   - 子代理首启同样走 anchored 引导（首请求极简；首个工具调用后恢复完整规划 persona + 只读全目录）
+   - 只读探查：read/glob/grep、shell 只读命令（Windows 用 pwsh、Linux/macOS 用 bash）/web_search
    - **探查硬上限**：规划子代理只读探查有机械预算（默认 18 次工具调用，成功上限 = 预算值）；**每轮开局告知预算**：初始任务/续轮转达消息末尾自动拼接「本轮探查预算上限为 {预算值} 次工具调用」（拼在附加指令之前，附加指令留空也生效）；**剩 3 次提醒收尾**：剩余次数 ≤3 时注入一次「本轮探查预算还剩 {剩余数} 次，请收紧探查、规划收尾，未查项记入待确认假设清单」提示（每轮只注入一次；预算值 ≤3 时不注入）；**预算耗尽** → 拒绝后续工具调用并注入带数字指令「探查预算已耗尽（本轮已用 {已成功次数}/{预算值}）：…」（预算 18 时：第 18 次调用成功、第 19 次尝试才被拒——"剩 3 次 = 还能成功 3 次"），硬性止住"越探越远/想太久"。预算自最近一条主会话发往规划子代理的消息起计，**每条主会话转达消息（你的意见/疑问答复）= 一次预算重置 = 授权继续探查**；预算耗尽收敛时，方案须标注哪些步骤已探查核实、哪些未探查待确认；**在哪改**：`agent.cordis.yml` 中 `@local/dsh-extra-plan` 插件行 config 的 `exploreBudget`
    - **规划任务附加指令（）**：主会话每次委派 subagent_plan（含 NOT_RESUMABLE 重派）时，程序把初始任务消息机械拼接为「**任务要求 + 空行 + 配置文本**」再投递（初始任务 kind=user 与续轮转达 kind=coordinator 均追加；运行时快照 kind=plugin 不追加）。配置位置与 exploreBudget 同在 `@local/dsh-extra-plan` 插件行 config 块，**空串=不追加**（例值见预设注释）。宿主依据：exec.arguments 与消息对象在宿主侧均 deepFreeze 不可原地改，拼接走子代理 agent/pre-step 消息替换通道（与 agent-instructions 基线注入同通道，拼接入会话日志、全历史可见）。**在哪改**：`agent.cordis.yml` 中 `@local/dsh-extra-plan` 插件行 config 的 `plannerPromptSuffix`
-   - 产出：**规划方案 + 验收标准清单**（规划与验收都必须是逐条机械可核对的条目——验收哪些地方：文件路径/行号/数值/文案/禁止项，供执行者自验证与 reviewer 逐条核对）。每条步骤标注探查状态【已探查核实】/【未探查·待确认】——未探查只写假设、不得编造具体内容；验收清单对未探查步骤标「验收口径待确认」；预算耗尽收敛时按已探查程度如实标注（prompt 级约束，无硬闸，兜底=用户批准看全文 + reviewer，边界 #17 口径）。**规划方案与待确认假设清单用大白话写**（少专业术语、面向用户可读，必须用术语时括号补白话解释），验收清单保持机械精确（路径/行号/数值照实写）不受大白话影响；阻塞性疑问停轮输出同用大白话。
+   - 产出：**规划方案 + 验收标准清单**（规划与验收都必须是逐条机械可核对的条目——验收哪些地方：文件路径/行号/数值/文案/禁止项，供执行者自验证与 reviewer 逐条核对）。每条步骤标注探查状态【已探查核实】/【未探查·待确认】——未探查只写假设、不得编造具体内容；验收清单对未探查步骤标「验收口径待确认」；预算耗尽收敛时按已探查程度如实标注（prompt 级约束，无硬闸，兜底=用户批准看全文 + reviewer，边界 #17 口径）。**规划方案与待确认假设清单用大白话写**（少专业术语、面向用户可读，必须用术语时括号补白话解释），验收清单保持机械精确（路径/行号/数值照实写）不受大白话影响；阻塞性疑问停轮输出同用大白话
    - **方案落盘（save_plan 专用工具）**：规划子代理把产出经专用工具 save_plan 写入工作区固定目录 `.extra-plan\`，**双文件**：`方案-<任务名>-<yyyyMMddHHmmss>.md`（规划方案 + 待确认假设清单）与 `验收-<任务名>-<yyyyMMddHHmmss>.md`（验收标准清单，每条带对应任务编号）。**程序定死双写**（两个 payload 必填 + 原子写入、崩溃自愈），保证两个文件要么都写成、要么都不写。该工具只出现在规划子代理的工具目录——规划子代理 = 只读 + 仅可落盘。落盘成功后在输出中给出两个文件路径
    - **疑问往返通道**：规划中遇到阻塞性关键疑问 → 子代理暂停当轮、把疑问作为当轮输出；主会话**原样**向用户展示问题 → 用户答复 → 主会话**原样** send_message 回同一子代理继续规划（可多轮，直到产出终案）。非阻塞歧义禁止提问，统一记入方案末尾的「待确认假设清单」，随方案在 ⑧ 一并请用户确认。主会话只转发、不代答、不改写
-   - 用户可随时中断：说「取消规划」或改选直行 → 主会话 interrupt_agent 停止子代理当前轮次（interrupt 仅停轮、不销毁会话，子代理仍存续、可随时唤醒），回到 ④ 重新路由确认后再动手。
+   - 用户可随时中断：说「取消规划」或改选直行 → 主会话 interrupt_agent 停止子代理当前轮次（interrupt 仅停轮、不销毁会话，子代理仍存续、可随时唤醒），回到 ④ 重新路由确认后再动手
 
 ⑧ 计划回传 → 主会话读取**两个**方案文件、**原样**展示其内容 + ask 确认，选项**固定枚举**三个词：「同意执行」「转交pro规划」「不同意」；**同一次问话附第二个可空文本问题「修改意见」**（供选转交/不同意时填写）。运行时验词：
-   - 含「同意执行」→ **计划已批准** → ⑨；
-   - 含「转交pro规划」→ 向**同一**规划子代理（continuable）send_message 注入「原方案 + 修改意见（意见框内容；留空则用固定话术"请自查并说明你认为用户可能关注的点"）+ 既有两个方案文件路径」续轮 → 覆盖更新同一对文件 → 回到 ⑧（吃前缀缓存，不回炉冷启动）；若规划子代理断连（send_message 报 NOT_RESUMABLE）→ 先 list_agents 确认，再重新 subagent_plan 委派续轮（prompt 给既有方案文件路径与意见，说明接管续轮）；
-   - 含「不同意」→ 读取「修改意见」问题的填写内容，交主会话按你的意见处理（通常即转交续轮或停止，以你的意见为准）；
-   - **空白回复（跳过本题）、取消/中断、三个词都认不出** → 一律视为**未批准**、不放行、提示重新提问（通道级错误码白名单放行）。
+   - 含「同意执行」→ **计划已批准** → ⑨
+   - 含「转交pro规划」→ 向**同一**规划子代理（continuable）send_message 注入「原方案 + 修改意见（意见框内容；留空则用固定话术"请自查并说明你认为用户可能关注的点"）+ 既有两个方案文件路径」续轮 → 覆盖更新同一对文件 → 回到 ⑧（吃前缀缓存，不回炉冷启动）；若规划子代理断连（send_message 报 NOT_RESUMABLE）→ 先 list_agents 确认，再重新 subagent_plan 委派续轮（prompt 给既有方案文件路径与意见，说明接管续轮）
+   - 含「不同意」→ 读取「修改意见」问题的填写内容，交主会话按你的意见处理（通常即转交续轮或停止，以你的意见为准）
+   - **空白回复（跳过本题）、取消/中断、三个词都认不出** → 一律视为**未批准**、不放行、提示重新提问（通道级错误码白名单放行）
 
 ⑨ 执行（方案批准后）：
-   - 一律经执行子代理（subagent）执行：主会话 write/edit 与 shell 写命令被闸门 deny，机械强制走执行者（小任务也不例外）；委派 prompt 给两个方案文件路径，执行者读「方案」文件获取任务、读「验收」文件获取验收标准做自验证，以文件内容为准；完工自验证 + ≤15 行汇报；越界需求写入汇报清单，不自行尝试；
-   - **委派参数固定**：subagent 为 one-shot 一次性会话（不可续轮），必须显式传 run_in_background: true 以后台 job 运行（省略/传 false 被闸门 deny），返回 jobId 用 job_output 收集结果；
-   - **越界步骤统一由主会话执行**：先普通 shell 尝试拿拒绝标记，同轮带 sandbox_permissions（danger-full-access）重试 → 审批弹窗推给用户（仅主会话为 workspace-write + ask 权限档时有效）。
+   - 一律经执行子代理（subagent）执行：主会话 write/edit 与 shell 写命令被闸门 deny，机械强制走执行者（小任务也不例外）；委派 prompt 给两个方案文件路径，执行者读「方案」文件获取任务、读「验收」文件获取验收标准做自验证，以文件内容为准；完工自验证 + ≤15 行汇报；越界需求写入汇报清单，不自行尝试
+   - **委派参数固定**：subagent 为 one-shot 一次性会话（不可续轮），必须显式传 run_in_background: true 以后台 job 运行（省略/传 false 被闸门 deny），返回 jobId 用 job_output 收集结果
+   - **越界步骤统一由主会话执行**：先普通 shell 尝试拿拒绝标记，同轮带 sandbox_permissions（danger-full-access）重试 → 审批弹窗推给用户（仅主会话为 workspace-write + ask 权限档时有效）
 
-⑩ 验收：subagent_review（验收复核者，one-shot 一次性会话、不可续轮，必须显式传 run_in_background: true 以后台 job 运行，返回 jobId 用 job_output 收集）**只读「验收」文件（按路径读取、以文件内容为准）**逐条核对——「通过」采纳并汇总；「不通过」把问题清单修正进执行委派重派（最多 2 轮）；**两轮仍不通过 → 收集两轮不通过原因、原样返回给你，由你决策**（停止 / 转交pro规划修改方案 / 其他指示）。规划子代理在批准后保留（供续轮），任务你拍板结束后 interrupt 停止其当前轮次——**interrupt 仅停轮、不销毁会话**，continuable 子代理仍存续，可随时 send_message 唤醒续轮（不再需要时保持闲置即可）。
+⑩ 验收：subagent_review（验收复核者，one-shot 一次性会话、不可续轮，必须显式传 run_in_background: true 以后台 job 运行，返回 jobId 用 job_output 收集）**只读「验收」文件（按路径读取、以文件内容为准）**逐条核对——「通过」采纳并汇总；「不通过」把问题清单修正进执行委派重派（最多 2 轮）；**两轮仍不通过 → 收集两轮不通过原因、原样返回给你，由你决策**（停止 / 转交pro规划修改方案 / 其他指示）。规划子代理在批准后保留（供续轮），任务你拍板结束后 interrupt 停止其当前轮次——**interrupt 仅停轮、不销毁会话**，continuable 子代理仍存续，可随时 send_message 唤醒续轮（不再需要时保持闲置即可）
 
-⑪ 下一条用户消息 → 回到 ③（每条动手消息都重新路由确认，含"继续"类消息）。
+⑪ 下一条用户消息 → 回到 ③（每条动手消息都重新路由确认，含"继续"类消息）
 
 ## 3. 注意事项
 
-1. **思考力度完全继承、不设下限**：子代理 reasoningEffort = 主会话配置值（主 high → 子 high；主 max → 子 max；主 low → 子 low）。力度配低导致的规划质量问题由用户自行承担。
-2. **usage 账本**：——本模式成本 A/B 的唯一计量工具（行 = 一次 LLM 调用，hit/miss/out 三列，写 ledger.jsonl、sessionId 区分；成本≈零）。
-3. **pro 规划子代理必须带 anchored 引导**（白话解释见 §4）。
-4. **动手前必须路由确认**：每次主会话准备动手（直接执行或启用 pro 规划）前必须弹三选一 ask——选项固定为「直接执行」「进行pro规划」「不同意」（主会话思考后的选择排第一），由用户确认，避免主会话判断错误；选「不同意」则主会话不动作、转对话询问意见；路由与澄清**分两次提问**（先路由，选了 pro 规划再澄清意图）。空白回复（跳过本题）、取消/中断一律视为未确认。
-5. **规划疑问必须能往返**：规划子代理的疑问 → 主会话原样转达用户 → 用户答复 → 主会话原样转回同一子代理（多轮可往返）；主会话不得代答或改写；非阻塞歧义记入「待确认假设清单」随方案确认。
-6. **规划探查硬上限**：给规划子代理设机械探查预算，超预算自动停车、基于已知信息收敛产出；配合力度旋钮（继承主会话配置，想更快就调低力度）与观察/打断（UI 实时看子代理动作，偏了 interrupt_agent 打断后 send_message 纠偏）——不靠加子代理层解决。
-7. **越界操作必须有效回传**：规划/执行子代理的审批在委派边界固定 never——越界写需求一律整理成清单回传（不尝试、不重试），由主会话统一走审批通道执行；规划子代理无写工具 + shell 写动词闸门，机械上不会因默认禁止的权限反复受阻。
-8. **方案文件机制**：规划子代理经 save_plan 专用工具落盘 `.extra-plan\` **双文件**（方案 / 验收，内容不经 主会话/执行者 手，保真靠构造）；**程序定死双写**；批准时两个文件都展示；执行者读两文件（自验证依据）、验收复核者 只读验收文件；文件为任务档案，清理时机用户自定。主会话的 save_probe 探查线索文件同样落在 `.extra-plan\`（单文件，与方案/验收双文件区分）。
-9. **语言约定**：思考（reasoning）与面向用户的文字**一律简体中文**（主会话/规划子代理/执行者/验收复核者 四 persona 均硬约束；**anchored 引导期不适用，全量 persona 恢复后生效**——引导期极简英文句是有意设计）；规划方案与待确认假设清单**用大白话写**（少专业术语、面向用户可读，必须用术语时括号补白话解释，避免用户看不懂反复提问多耗 token），验收清单保持机械精确不受影响，阻塞性疑问停轮输出同用大白话。
+1. **思考力度完全继承、不设下限**：子代理 reasoningEffort = 主会话配置值（主 high → 子 high；主 max → 子 max；主 low → 子 low）。力度配低导致的规划质量问题由用户自行承担
+2. **usage 账本**：——本模式成本 A/B 的唯一计量工具（行 = 一次 LLM 调用，hit/miss/out 三列，写 ledger.jsonl、sessionId 区分；成本≈零）
+3. **pro 规划子代理必须带 anchored 引导**（白话解释见 §4）
+4. **动手前必须路由确认**：每次主会话准备动手（直接执行或启用 pro 规划）前必须弹三选一 ask——选项固定为「直接执行」「进行pro规划」「不同意」（主会话思考后的选择排第一），由用户确认，避免主会话判断错误；选「不同意」则主会话不动作、转对话询问意见；路由与澄清**分两次提问**（先路由，选了 pro 规划再澄清意图）。空白回复（跳过本题）、取消/中断一律视为未确认
+5. **规划疑问必须能往返**：规划子代理的疑问 → 主会话原样转达用户 → 用户答复 → 主会话原样转回同一子代理（多轮可往返）；主会话不得代答或改写；非阻塞歧义记入「待确认假设清单」随方案确认
+6. **规划探查硬上限**：给规划子代理设机械探查预算，超预算自动停车、基于已知信息收敛产出；配合力度旋钮（继承主会话配置，想更快就调低力度）与观察/打断（UI 实时看子代理动作，偏了 interrupt_agent 打断后 send_message 纠偏）——不靠加子代理层解决
+7. **越界操作必须有效回传**：规划/执行子代理的审批在委派边界固定 never——越界写需求一律整理成清单回传（不尝试、不重试），由主会话统一走审批通道执行；规划子代理无写工具 + shell 写动词闸门，机械上不会因默认禁止的权限反复受阻
+8. **方案文件机制**：规划子代理经 save_plan 专用工具落盘 `.extra-plan\` **双文件**（方案 / 验收，内容不经 主会话/执行者 手，保真靠构造）；**程序定死双写**；批准时两个文件都展示；执行者读两文件（自验证依据）、验收复核者 只读验收文件；文件为任务档案，清理时机用户自定。主会话的 save_probe 探查线索文件同样落在 `.extra-plan\`（单文件，与方案/验收双文件区分）
+9. **语言约定**：思考（reasoning）与面向用户的文字**一律简体中文**（主会话/规划子代理/执行者/验收复核者 四 persona 均硬约束；**anchored 引导期不适用，全量 persona 恢复后生效**——引导期极简英文句是有意设计）；规划方案与待确认假设清单**用大白话写**（少专业术语、面向用户可读，必须用术语时括号补白话解释，避免用户看不懂反复提问多耗 token），验收清单保持机械精确不受影响，阻塞性疑问停轮输出同用大白话
 
 ## 4. anchored 引导（白话解释）
 
-- **动机**：参考了dsh-anchored-standard，第一请求就塞进全量 persona + 全量工具，模型容易想太多/被带偏（"降智"）；先小后全更稳。
-- **行为**：新会话的第一条模型请求只拿到一句极简提示词（"You are a helpful software engineer assistant."）、被清空的历史上下文、以及收窄到 shell + read 的工具目录；模型做出第一个工具调用后，下一条请求自动恢复完整 persona 与完整工具目录。
-- **动机（用户经验判断）**：第一请求就塞进全量 persona + 全量工具，模型容易想太多/被带偏（"降智"）；先小后全更稳。
-- **本模式应用于两处**：主会话新会话首轮（流程 ②）+ pro 规划子代理每次首启（流程 ⑦）。continuable 续轮不重新引导（resume 不回退），只在首次创建时生效。
-- **成本**：每处首次引导 = 多 1 次模型请求（规划子代理是 pro 价）。
-- **默认开启**（主会话 + 规划子代理都开）。
+- **动机**：参考了dsh-anchored-standard，第一请求就塞进全量 persona + 全量工具，模型容易想太多/被带偏（"降智"）；先小后全更稳
+- **行为**：新会话的第一条模型请求只拿到一句极简提示词（"You are a helpful software engineer assistant."）、被清空的历史上下文、以及收窄到 shell + read 的工具目录；模型做出第一个工具调用后，下一条请求自动恢复完整 persona 与完整工具目录
+- **动机（用户经验判断）**：第一请求就塞进全量 persona + 全量工具，模型容易想太多/被带偏（"降智"）；先小后全更稳
+- **本模式应用于两处**：主会话新会话首轮（流程 ②）+ pro 规划子代理每次首启（流程 ⑦）。continuable 续轮不重新引导（resume 不回退），只在首次创建时生效
+- **成本**：每处首次引导 = 多 1 次模型请求（规划子代理是 pro 价）
+- **默认开启**（主会话 + 规划子代理都开）
 
 ## 5. 实现补充说明（代码超集项，主线未展开的细节）
 
-> 以下均为插件 `@local/dsh-extra-plan` 已实现、但主线文档未展开的细节（无行为冲突，仅补记供查阅）。
+> 以下均为插件 `@local/dsh-extra-plan` 已实现、但主线文档未展开的细节（无行为冲突，仅补记供查阅）
 
-1. **模型请求失败诊断**：插件监听 `agent/request-error`，把失败的错误链（cause 链逐行、含包装码如 TRANSPORT）**只记录不干预**地追加写入诊断文件 `extra-plan-request-errors.jsonl`（默认在 DSH_HOME 下；可用 config 的 `diagFile` 改路径）。用途：定位"子代理请求流中断"类问题的真实底层错误（v0.1.3 教训——TRANSPORT 只是包装码，根因要挖 cause 链）。
-2. **save_plan / save_probe 实现细节**：二者共用同一公共原子落盘函数（mkdir → tmp 写 → journal → rename → 清 journal；崩溃后下次调用按残留 journal 自愈补完），单次落盘均有 30 秒超时保护（timeoutMs 30000）；文件名时间戳格式为 `yyyyMMddHHmmss`（本地时间）。save_probe 差异点：落盘**单个**线索文件（`线索-<base>.md`，与 save_plan 的「方案/验收」双文件区分）；四字段（fileMap/focusAreas/exclusions/background）必填，条目数上限：文件地图/重点区域各 20 条、排除项/背景与意图各 10 条；单条长度与总量上限（总量约 4KB、≤4096 字符）；fileMap/focusAreas 的 path 做真实存在性校验（相对按工作区解析、绝对原样；排除项允许概念边界、不校验）；只注册在主会话层（规划子代理/执行者/验收复核者 不可见）；硬闸门放行条件与 subagent_plan 一致（route=plan 且已澄清）。
+1. **模型请求失败诊断**：插件监听 `agent/request-error`，把失败的错误链（cause 链逐行、含包装码如 TRANSPORT）**只记录不干预**地追加写入诊断文件 `extra-plan-request-errors.jsonl`（默认在 DSH_HOME 下；可用 config 的 `diagFile` 改路径）。用途：定位"子代理请求流中断"类问题的真实底层错误（v0.1.3 教训——TRANSPORT 只是包装码，根因要挖 cause 链）
+2. **save_plan / save_probe 实现细节**：二者共用同一公共原子落盘函数（mkdir → tmp 写 → journal → rename → 清 journal；崩溃后下次调用按残留 journal 自愈补完），单次落盘均有 30 秒超时保护（timeoutMs 30000）；文件名时间戳格式为 `yyyyMMddHHmmss`（本地时间）。save_probe 差异点：落盘**单个**线索文件（`线索-<base>.md`，与 save_plan 的「方案/验收」双文件区分）；四字段（fileMap/focusAreas/exclusions/background）必填，条目数上限：文件地图/重点区域各 20 条、排除项/背景与意图各 10 条；单条长度与总量上限（总量约 4KB、≤4096 字符）；fileMap/focusAreas 的 path 做真实存在性校验（相对按工作区解析、绝对原样；排除项允许概念边界、不校验）；只注册在主会话层（规划子代理/执行者/验收复核者 不可见）；硬闸门放行条件与 subagent_plan 一致（route=plan 且已澄清）
 3. **四通道委派细节**：workflow 与 ralph 的 worker 经薄委托层 `executor-spawn`（独立 provider 名 `extra-executor-spawn`）统一注入执行者 deny 清单（含 subagent_plan 防 worker 再规划）；ralph 的 maxRounds 为 64。
-4. **usage 账本超集**：每行除 hit/miss/out 三列外还记录 model 字段（该次调用的模型名）；进度用游标文件（`ledger.cursor.json`，路径同账本名替换 `.jsonl`）持久化 `(sessionId,seq)`，(sessionId,seq) 去重保证与共用同一账本的插件实例间安全。
-5. **防御性拦截**：主会话硬闸门对 `subagent_fork` 工具名也做"计划未批准即拒"拦截（本预设没有 fork 工具行——不列 deny 是 R2 教训，但 pre-execute 仍防御性覆盖该名字，无副作用）。
-6. **子代理沙箱下限**：委派创建的子代理若被会话级或部署默认策略判为 read-only，插件自动抬升为 workspace-write（`childPolicyNeedsFloor`），保证执行者/规划子代理在委派边界（审批固定 never）不会因权限档过低反复受阻。
-7. **委派参数机械固定**：subagent_plan 传 run_in_background: false 被 deny（continuable 固定后台）；subagent / subagent_review 必须显式 run_in_background: true（one-shot 后台 job）；approved 态主会话 write/edit 与 shell 写被 deny。
+4. **usage 账本超集**：每行除 hit/miss/out 三列外还记录 model 字段（该次调用的模型名）；进度用游标文件（`ledger.cursor.json`，路径同账本名替换 `.jsonl`）持久化 `(sessionId,seq)`，(sessionId,seq) 去重保证与共用同一账本的插件实例间安全
+5. **防御性拦截**：主会话硬闸门对 `subagent_fork` 工具名也做"计划未批准即拒"拦截（本预设没有 fork 工具行——不列 deny 是 R2 教训，但 pre-execute 仍防御性覆盖该名字，无副作用）
+6. **子代理沙箱下限**：委派创建的子代理若被会话级或部署默认策略判为 read-only，插件自动抬升为 workspace-write（`childPolicyNeedsFloor`），保证执行者/规划子代理在委派边界（审批固定 never）不会因权限档过低反复受阻
+7. **委派参数机械固定**：subagent_plan 传 run_in_background: false 被 deny（continuable 固定后台）；subagent / subagent_review 必须显式 run_in_background: true（one-shot 后台 job）；approved 态主会话 write/edit 与 shell 写被 deny
 
 ## 6. 仓库结构
 
@@ -239,4 +182,4 @@ dsh-extra-plan/
 
 ## 7. 许可
 
-本项目基于 **MIT License** 发布（与插件 `package.json` 中 `license: MIT` 声明一致），详见 `LICENSE` 文件。
+本项目基于 **MIT License** 发布（与插件 `package.json` 中 `license: MIT` 声明一致），详见 `LICENSE` 文件
