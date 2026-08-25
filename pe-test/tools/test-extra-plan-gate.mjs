@@ -2,9 +2,7 @@
 // 直接 import 插件导出的 decisions（与 index.js 同一份实现，无复制品）——
 // 插件模块顶层无副作用，可在纯 Node 环境加载。
 import { pathToFileURL, fileURLToPath } from 'node:url'
-import { homedir } from 'node:os'
-const DSH_HOME = (process.env.DSH_HOME || homedir() + '/.dsh').replaceAll('\\', '/')
-const PLUGIN_PATH = DSH_HOME + '/profiles/web/node_modules/@local/dsh-extra-plan/index.js'
+const PLUGIN_PATH = fileURLToPath(new URL('../../profiles/web/node_modules/@local/dsh-extra-plan/index.js', import.meta.url))
 const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
 const {
   CHANNEL_BROKEN_CODES,
@@ -26,6 +24,12 @@ const {
   pwshMutationMatches,
   labelsOfCallData,
   askKindOf,
+  askKindOfRelaxed,
+  isExactGateSet,
+  isPartialGateSet,
+  categorizeGateAsk,
+  gateAskDenyReason,
+  validateGateAskStructure,
   matchRouteLabel,
   matchApprovalLabel,
   parseAskResultData,
@@ -125,6 +129,48 @@ const F = [
 for (const [name, events, expected] of F) {
   check(name, deriveFlowState(events), expected)
 }
+
+// ── GK 系列:三分法 gate ask 分类（categorizeGateAsk） ────────────────────
+const wordRouteArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '直接执行' }] }] })
+const wordApproveArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '同意执行' }] }] })
+const twoWordRouteArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '直接执行' }, { label: '进行pro规划' }] }] })
+const GK = [
+  ['GK1 标准三词路由 ask → standard', categorizeGateAsk(['直接执行', '进行pro规划', '不同意']), 'standard'],
+  ['GK2 标准三词批准 ask → standard', categorizeGateAsk(['同意执行', '转交pro规划', '不同意']), 'standard'],
+  ['GK3 单词路由 ask（只有「直接执行」）→ malformed', categorizeGateAsk(['直接执行']), 'malformed'],
+  ['GK4 两词路由 ask（缺「不同意」）→ malformed', categorizeGateAsk(['直接执行', '进行pro规划']), 'malformed'],
+  ['GK5 纯澄清 ask → ordinary', categorizeGateAsk(['方案A', '方案B']), 'ordinary'],
+  ['GK6 带 (Recommended) 后缀的路由 ask → standard', categorizeGateAsk(['直接执行 (Recommended)', '进行pro规划 (Recommended)', '不同意 (Recommended)']), 'standard'],
+  ['GK7 带（推荐）后缀的批准 ask → standard', categorizeGateAsk(['同意执行（推荐）', '转交pro规划（推荐）', '不同意（推荐）']), 'standard'],
+  ['GK8 带 (recommended) 小写后缀 → standard', categorizeGateAsk(['直接执行 (recommended)', '进行pro规划 (recommended)', '不同意 (recommended)']), 'standard'],
+  ['GK9 非白名单变体（! 等额外字符）→ malformed', categorizeGateAsk(['直接执行!', '进行pro规划', '不同意']), 'malformed'],
+  ['GK10 方括号后缀 [推荐] → malformed', categorizeGateAsk(['直接执行 [推荐]', '进行pro规划 [推荐]', '不同意 [推荐]']), 'malformed'],
+]
+for (const [name, got, expected] of GK) check(name, got, expected)
+
+// ── GM 系列:gate ask deny 文案（gateAskDenyReason） ──────────────────────
+const GM = [
+  ['GM1 单词路由 deny 文案含标准模板', gateAskDenyReason(['直接执行']).includes('路由 ask 选项固定为') && gateAskDenyReason(['直接执行']).includes('批准 ask 选项固定为'), true],
+  ['GM2 单词路由 deny 文案含具体缺项', gateAskDenyReason(['直接执行']).includes('进行pro规划') && gateAskDenyReason(['直接执行']).includes('不同意'), true],
+  ['GM3 非白名单变体 deny 不含「缺少：」且含推荐标记范围提示', !gateAskDenyReason(['直接执行!', '进行pro规划', '不同意']).includes('缺少：') && gateAskDenyReason(['直接执行!', '进行pro规划', '不同意']).includes('推荐标记仅限'), true],
+]
+for (const [name, got, expected] of GM) check(name, got, expected)
+
+// ── F 系列补充:单词副作用修复（deriveFlowState + askKindOfRelaxed） ──────
+const F21 = [
+  ['F21 单词路由 ask 答「直接执行」→ route=direct', [um(), call('ask_user_question', 'a1', wordRouteArgs), ok('a1', answer(['直接执行']))], { route: 'direct', clarified: false, approved: false, channelBroken: false }],
+  ['F22 单词批准 ask 答「同意执行」→ approved=true', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A'])), call('ask_user_question', 'a3', wordApproveArgs), ok('a3', answer(['同意执行']))], { route: 'plan', clarified: true, approved: true, channelBroken: false }],
+]
+for (const [name, events, expected] of F21) {
+  check(name, deriveFlowState(events), expected)
+}
+
+// ── GL 系列:结构校验纯函数（validateGateAskStructure） ────────────────────
+const GL = [
+  ['GL1 路由 ask 恰好 1 个问题 → 通过', validateGateAskStructure('route', [{ id: 'q1', question: '请选择', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }]), null],
+  ['GL2 批准 ask 仅 1 个问题缺修改意见 → 不通过，含"修改意见"', validateGateAskStructure('approve', [{ id: 'q1', question: '请选择', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }]) !== null && validateGateAskStructure('approve', [{ id: 'q1', question: '请选择', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }]).includes('修改意见'), true],
+]
+for (const [name, got, expected] of GL) check(name, got, expected)
 
 // ── P 系列:plannerChildIdsOf ───────────────────────────────────────────
 const planCall = (cid) => call('subagent_plan', cid)
@@ -377,5 +423,5 @@ check('RENDER8 线索 Markdown 四节标题', ['## 一、文件地图', '## 二�
 check('RENDER9 fileMap/focusAreas 渲染（range 有则带括号）', probeMd.includes(`- ${EXISTING}：主文档`) && probeMd.includes(`- ${EXISTING}：重点`) && probeWithRangeMd.includes(`- ${EXISTING}（L12-34）：重点`), true)
 check('RENDER10 exclusions/background 渲染', probeNoScopeMd.includes('- （未指明范围）：排除说明') && probeMd.includes('- node_modules：无关') && probeMd.includes('- 背景：细节'), true)
 
-console.log(`\n通过 ${pass}/${K.length + M.length + F.length + P.length + C.length + CU.length + AP.length + BN.length + 2 + BR.length + BD.length + BE.length + S.length + 1 + PW.length + 2 + D.length + 3 + 3 + PR.length + 7}, 失败 ${fail}`)
+console.log(`\n通过 ${pass}/${K.length + M.length + F.length + GK.length + GM.length + F21.length + GL.length + P.length + C.length + CU.length + AP.length + BN.length + 2 + BR.length + BD.length + BE.length + S.length + 1 + PW.length + 2 + D.length + 3 + 3 + PR.length + 7}, 失败 ${fail}`)
 process.exit(fail === 0 ? 0 : 1)

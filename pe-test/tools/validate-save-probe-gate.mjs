@@ -6,13 +6,12 @@
 // ③planner 预算回归（v1 口径）：12 次耗尽后 read（含线索文件路径）仍 deny
 //   （reason 含「探查预算已耗尽」）、save_plan 仍 allow——不引入任何预算豁免。
 // ④执行层冒烟（真实落盘）：save_plan 双写 / save_probe 单写 + journal 双形状自愈。
-import { pathToFileURL } from 'node:url'
+import { pathToFileURL, fileURLToPath } from 'node:url'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-const DSH_HOME = (process.env.DSH_HOME || homedir() + '/.dsh').replaceAll('\\', '/')
-const PLUGIN_PATH = DSH_HOME + '/profiles/web/node_modules/@local/dsh-extra-plan/index.js'
+const PLUGIN_PATH = fileURLToPath(new URL('../../profiles/web/node_modules/@local/dsh-extra-plan/index.js', import.meta.url))
 const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
 
 let pass = 0

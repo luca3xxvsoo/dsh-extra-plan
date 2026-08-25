@@ -32,9 +32,15 @@
 
 ### 可选模块：dsh-qqbot-user-questions
 
-**模块背景**：dsh-qqbot（腾讯官方 QQ Bot IM 插件）在默认配置下不挂任何 agent 预设；而 extra-plan 的核心交互（路由确认 / 澄清 / 批准三阶段问话）依赖 `ask_user_question` 的 UI 应答者，QQbot 无此 UI，直接挂载会导致问答无法完成。本可选插件为 qqbot 提供 `userQuestions` provider，把 `ask_user_question` 的问题以**文字列表**发到 QQ、等待用户回复，让 extra-plan 在 QQbot 上保持完整的三阶段问答与闸门语义。并且可以用命令 /优先对话 ，在AI连续调用工具的长任务的场景对队列中第一个对话进行边界插入
+**模块背景**：dsh-qqbot（腾讯官方 QQ Bot IM 插件）在默认配置下不挂任何 agent 预设；而 extra-plan 的核心交互（路由确认 / 澄清 / 批准三阶段问话）依赖 `ask_user_question` 的 UI 应答者，QQbot 无此 UI，直接挂载会导致问答无法完成。本可选插件为 qqbot 提供 `userQuestions` provider，把 `ask_user_question` 的问题以**文字列表**发到 QQ、等待用户回复，让 extra-plan 在 QQbot 上保持完整的三阶段问答与闸门语义。并且可以用命令 /优先对话 ，在AI连续调用工具的长任务的场景对指定对话进行边界插入
 
-**前提说明**：本模块涉及对 dsh-qqbot 源码的最小改动（2 行 `ctx.provide`），需使用者自行评估
+**优先对话触发模式**：
+
+1.输入 /优先对话：将队列中第一个对话进行边界插入
+
+2.输入 /优先对话 对话内容：将对话内容进行边界插入
+
+**前提说明**：本模块涉及对 dsh-qqbot 源码的最小改动，需使用者自行评估
 
 ### 平台实测说明
 
@@ -134,33 +140,35 @@
 dsh-extra-plan/
 ├── .agent-presets/
 │   └── extra-plan/
-│       ├── preset.yml                 # 预设元信息（GUI 显示名称与描述）
-│       └── agent.cordis.yml           # 预设主配置（persona/工具/插件行/delegation）
+│       ├── preset.yml                    # 预设元信息（GUI 显示名称与描述）
+│       └── agent.cordis.yml              # 预设主配置（persona/工具/插件行/delegation）
 ├── profiles/
 │   ├── web/
-│   │   ├── cordis.patch.yml.example   # 该文件需增加内容参考
+│   │   ├── cordis.patch.yml.example      # 该文件需增加内容参考
 │   │   └── node_modules/@local/
-│   │       ├── dsh-extra-plan/        # 模式核心插件（三级闸门/探查上限/save_plan 等）
+│   │       ├── dsh-extra-plan/           # 模式核心插件（三级闸门/探查上限/save_plan 等）
 │   │       │   ├── index.js
 │   │       │   └── package.json
-│   │       ├── dsh-executor-spawn/    # 执行者委托层（workflow/ralph worker 注入）
+│   │       ├── dsh-executor-spawn/       # 执行者委托层（workflow/ralph worker 注入）
 │   │       │   ├── index.js
 │   │       │   └── package.json
-│   │       └── dsh-flash-guide/       # 可选模块：flash 模型近场引导（不装不影响核心）
+│   │       └── dsh-flash-guide/          # 可选模块：flash 模型近场引导（不装不影响核心）
 │   │           ├── index.js
 │   │           └── package.json
-│   └── qqbot/                         # 兼容qqbot用的，没有可无视
-│       ├── cordis.patch.yml.example   # 该文件需增加内容参考
+│   └── qqbot/                            # 兼容qqbot用的，没有可无视
+│       ├── cordis.patch.yml.example      # 该文件需增加内容参考
 │       ├── node_modules/@tencent-connect/dsh-qqbot/dist/gateway/
-│       │   └── bootstrap.js           # 修改好的文件
+│       │   └── bootstrap.js              # 修改好的文件   最小必须注入：ctx.provide
+│       ├── node_modules/@tencent-connect/dsh-qqbot/dist/transport/
+│       │   └── outbound.js               # 修改好的文件   放行新增的工具show_file：用该工具调用方案/验收.md节约token
 │       └── node_modules/@local/
-│           ├── dsh-extra-plan/        # 模式核心插件（三级闸门/探查上限/save_plan 等）
+│           ├── dsh-extra-plan/           # 模式核心插件（三级闸门/探查上限/save_plan 等）
 │           │   ├── index.js
 │           │   └── package.json
-│           ├── dsh-executor-spawn/    # 执行者委托层（workflow/ralph worker 注入）
+│           ├── dsh-executor-spawn/       # 执行者委托层（workflow/ralph worker 注入）
 │           │   ├── index.js
 │           │   └── package.json
-│           ├── dsh-flash-guide/       # 可选模块：flash 模型近场引导（不装不影响核心）
+│           ├── dsh-flash-guide/          # 可选模块：flash 模型近场引导（不装不影响核心）
 │           │   ├── index.js
 │           │   └── package.json
 │           └── dsh-qqbot-user-questions/ # 可选模块：QQbot 上保留 extra-plan 完整问答（见 §1 可选模块）
