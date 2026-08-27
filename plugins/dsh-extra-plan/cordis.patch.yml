@@ -1,4 +1,2 @@
-# 增加而不是覆盖
-- insert:
-    - id: extra-plan-preset-sync
-      name: '@local/dsh-extra-plan/preset-sync'
+# 预设分发已迁移至 postinstall（scripts/distribute-preset.mjs，安装时一次性执行）：
+# 本 bundle patch 不再 insert 任何启动组件——保持空层（免去 add 时的 bundle-less 警告）。

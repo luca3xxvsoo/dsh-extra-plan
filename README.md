@@ -24,7 +24,8 @@ dsh plugin --profile web add `
   'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan' `
   'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan-settings' `
   'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-executor-spawn' `
-  'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-flash-guide'
+  'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-flash-guide' `
+  --allow-build=@local/dsh-extra-plan
 ```
 2. qqbot兼容插件安装 (选装)
 ```powershell 7+
@@ -34,7 +35,7 @@ dsh plugin --profile qqbot add `
   'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-executor-spawn' `
   'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-flash-guide' `
   'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-qqbot-user-questions' `
-  --allow-build=@local/dsh-qqbot-user-questions
+  --allow-build=@local/dsh-extra-plan,@local/dsh-qqbot-user-questions
 ```
 3. **重启 DSH 进程**使插件生效
 4. 新建会话，在预设列表中选择「按需规划模式」即可使用
@@ -92,7 +93,7 @@ dsh-extra-plan/
 │   │   │   ├── agent.cordis.yml                        # 预设主配置（persona/工具/插件行/delegation）
 │   │   │   ├── preset.yml                              # 预设元信息（GUI 显示名称与描述）
 │   │   │   └── dist-manifest.json                                
-│   │   ├── lib/preset-sync.js                          # 自动分发 .agent-presets 脚本
+│   │   ├── scripts/distribute-preset.mjs               # 自动分发 .agent-presets 脚本
 │   │   ├── cordis.patch.yml                                      
 │   │   ├── index.js                                    
 │   │   └── package.json                            
