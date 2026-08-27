@@ -5,6 +5,8 @@
       # 是否支持越权 true为支持
       config:
         approvalEnabled: false
+    - id: qqbot-patch-sync
+      name: '@local/dsh-qqbot-user-questions/patch-sync'
     - id: agent-presets
       name: '@deepseek-ai/dsh-agent-presets'
       config:
