@@ -9,6 +9,10 @@
 // - 目标内容 hash == 当前发行物 hash → 跳过（幂等，0 写入）
 // - 任何不一致（含用户手工改动）→ 整目录覆盖为发行物（先删旧再原子改名）
 //
+// 💡 诊断版（双通道）：所有关键路径同时写入 %TEMP%/preset-sync.log
+// （不依赖 DSH logger / stdout / 托盘重定向——定位真实环境静默失效用）。
+// 定位完成后将移除 🔍 通道，只保留 logger 正常日志。
+//
 // 实现依据（官方 @deepseek-ai/dsh-agent-presets 已核实语义）：
 // - user root 恒在 roots 尾（lib/index.js L851-854，USER_PRESET_DIR='.agent-presets'）；
 // - 分发目标只能是 user root（无插件注册 shipped root 的口子，discovery.js L28-32）；
@@ -19,7 +23,8 @@
 //   仅识别匹配 PRESET_ID 的目录名；临时目录名前缀 .tmp- 自动被跳过）。
 // - 失败降级：未挂 agentPresets / 不可写 / 任何异常 → warn 跳过，不阻断 profile 启动。
 import { createHash } from 'node:crypto'
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -30,9 +35,22 @@ const MANIFEST_NAME = 'dist-manifest.json'
 const TMP_PREFIX = '.tmp-'
 const CORE_FILES = ['preset.yml', 'agent.cordis.yml']
 const KNOWN_FILES = new Set([...CORE_FILES, MANIFEST_NAME])
+// 💡 诊断版：独立日志文件（不依赖任何宿主日志通道）
+const DIAG_FILE = join(tmpdir(), 'preset-sync.log')
 
 // 资产目录：本模块位于包内 lib/，资产在其 ../assets/presets/extra-plan/
 const ASSET_DIR = join(fileURLToPath(new URL('..', import.meta.url)), 'assets', 'presets', PRESET_ID)
+
+/** 💡 诊断版：双通道日志（文件 + ctx.logger）。 */
+function diag(ctx, level, message) {
+  try {
+    appendFileSync(DIAG_FILE, `[${new Date().toISOString()}] [${level}] ${message}\n`, 'utf8')
+  } catch {
+    /* 尽力而为 */
+  }
+  if (level === 'INFO') ctx.logger.info(`[preset-sync] ${message}`)
+  else ctx.logger.warn(`[preset-sync] ${message}`)
+}
 
 /** sha256(preset.yml || agent.cordis.yml)，固定顺序，作为发行物内容 hash。 */
 function contentHash(dir) {
@@ -66,8 +84,7 @@ function syncPreset(ctx, presets) {
   // 与 authoring.js L58-64 writableRoot 同一定位：第一个 trust === 'user' 的 root
   const userRoot = (presets.roots ?? []).find((root) => root?.trust === 'user' && typeof root.path === 'string')
   if (userRoot === undefined) {
-    // 🔍 诊断版：未找到 user root——此前静默，现在打印 roots 全量
-    ctx.logger.warn(`[preset-sync] 🔍 未找到 trust==='user' 的 root（roots=${JSON.stringify(presets.roots)}）`)
+    diag(ctx, 'WARN', `未找到 trust==='user' 的 root（roots=${JSON.stringify(presets.roots)}）`)
     return
   }
 
@@ -76,38 +93,36 @@ function syncPreset(ctx, presets) {
 
   if (!existsSync(targetDir)) {
     writeTarget(targetDir, distHash)
-    ctx.logger.info(`[preset-sync] 已分发预设「按需规划模式」→ ${targetDir}`)
+    diag(ctx, 'INFO', `已分发预设「按需规划模式」→ ${targetDir}`)
     return
   }
   // 目录纯净且内容一致才幂等跳过；发行物之外的任何文件/任何内容差异 → 完全覆盖
   const strangers = readdirSync(targetDir).filter((f) => !f.startsWith(TMP_PREFIX) && !KNOWN_FILES.has(f))
   if (strangers.length === 0 && contentHash(targetDir) === distHash) {
-    // 🔍 诊断版：确认组件本次运行到了幂等分支（证明组件确实被加载执行）
-    ctx.logger.info(`[preset-sync] 🔍 运行确认：目标目录已与发行物一致（幂等跳过）：${targetDir}`)
+    diag(ctx, 'INFO', `运行确认：目标目录已与发行物一致（幂等跳过）：${targetDir}`)
     return
   }
   // 任何不一致（含用户改动、多余文件）→ 完全覆盖为当前发行物
   writeTarget(targetDir, distHash)
-  ctx.logger.info(`[preset-sync] 预设「按需规划模式」已覆盖为当前发行物 → ${targetDir}`)
+  diag(ctx, 'INFO', `预设「按需规划模式」已覆盖为当前发行物 → ${targetDir}`)
 }
 
 export function apply(ctx) {
+  diag(ctx, 'INFO', `apply 开始执行（组件已加载）cwd=${process.cwd()}`)
   let presets
   try {
     presets = ctx.inject(['agentPresets'])
   } catch (err) {
-    // 🔍 诊断版：宿主未挂 agent-presets 服务（或注入失败）——此前静默，现在打印原因
-    ctx.logger.warn(`[preset-sync] 🔍 inject agentPresets 失败（原为静默）：${err instanceof Error ? err.message : String(err)}`)
+    diag(ctx, 'WARN', `inject agentPresets 失败：${err instanceof Error ? err.message : String(err)}`)
     return
   }
   try {
     if (presets.authorable !== true) {
-      // 🔍 诊断版：authorable 非真——此前静默，现在打印判定与 roots 全量
-      ctx.logger.warn(`[preset-sync] 🔍 authorable=${String(presets.authorable)}（非 true，user root 缺失？）roots=${JSON.stringify(presets.roots)}`)
+      diag(ctx, 'WARN', `authorable=${String(presets.authorable)}（非 true，user root 缺失？）roots=${JSON.stringify(presets.roots)} instance=${presets?.constructor?.name}`)
       return
     }
     syncPreset(ctx, presets)
   } catch (err) {
-    ctx.logger.warn(`[preset-sync] 🔍 预设分发失败（诊断版，原为静默）：${err instanceof Error ? err.message : String(err)}`)
+    diag(ctx, 'WARN', `预设分发失败：${err instanceof Error ? err.message : String(err)}`)
   }
 }
