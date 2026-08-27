@@ -65,7 +65,11 @@ function writeTarget(targetDir, distHash) {
 function syncPreset(ctx, presets) {
   // 与 authoring.js L58-64 writableRoot 同一定位：第一个 trust === 'user' 的 root
   const userRoot = (presets.roots ?? []).find((root) => root?.trust === 'user' && typeof root.path === 'string')
-  if (userRoot === undefined) return
+  if (userRoot === undefined) {
+    // 🔍 诊断版：未找到 user root——此前静默，现在打印 roots 全量
+    ctx.logger.warn(`[preset-sync] 🔍 未找到 trust==='user' 的 root（roots=${JSON.stringify(presets.roots)}）`)
+    return
+  }
 
   const targetDir = join(userRoot.path, PRESET_ID)
   const distHash = contentHash(ASSET_DIR)
@@ -77,7 +81,11 @@ function syncPreset(ctx, presets) {
   }
   // 目录纯净且内容一致才幂等跳过；发行物之外的任何文件/任何内容差异 → 完全覆盖
   const strangers = readdirSync(targetDir).filter((f) => !f.startsWith(TMP_PREFIX) && !KNOWN_FILES.has(f))
-  if (strangers.length === 0 && contentHash(targetDir) === distHash) return
+  if (strangers.length === 0 && contentHash(targetDir) === distHash) {
+    // 🔍 诊断版：确认组件本次运行到了幂等分支（证明组件确实被加载执行）
+    ctx.logger.info(`[preset-sync] 🔍 运行确认：目标目录已与发行物一致（幂等跳过）：${targetDir}`)
+    return
+  }
   // 任何不一致（含用户改动、多余文件）→ 完全覆盖为当前发行物
   writeTarget(targetDir, distHash)
   ctx.logger.info(`[preset-sync] 预设「按需规划模式」已覆盖为当前发行物 → ${targetDir}`)
@@ -87,14 +95,19 @@ export function apply(ctx) {
   let presets
   try {
     presets = ctx.inject(['agentPresets'])
-  } catch {
-    // 宿主未挂 agent-presets 服务：静默跳过（profile 不受影响）
+  } catch (err) {
+    // 🔍 诊断版：宿主未挂 agent-presets 服务（或注入失败）——此前静默，现在打印原因
+    ctx.logger.warn(`[preset-sync] 🔍 inject agentPresets 失败（原为静默）：${err instanceof Error ? err.message : String(err)}`)
     return
   }
   try {
-    if (presets.authorable !== true) return
+    if (presets.authorable !== true) {
+      // 🔍 诊断版：authorable 非真——此前静默，现在打印判定与 roots 全量
+      ctx.logger.warn(`[preset-sync] 🔍 authorable=${String(presets.authorable)}（非 true，user root 缺失？）roots=${JSON.stringify(presets.roots)}`)
+      return
+    }
     syncPreset(ctx, presets)
   } catch (err) {
-    ctx.logger.warn(`[preset-sync] 预设分发失败（已跳过，不影响其他组件）：${err instanceof Error ? err.message : String(err)}`)
+    ctx.logger.warn(`[preset-sync] 🔍 预设分发失败（诊断版，原为静默）：${err instanceof Error ? err.message : String(err)}`)
   }
 }
