@@ -63,7 +63,7 @@ for (const row of subagentRows) {
 }
 
 for (const inner of all) {
-  if (inner.name === '@local/dsh-executor-spawn') {
+  if (inner.name === '@local/dsh-extra-plan/executor-spawn') {
     const deny = inner.config && Array.isArray(inner.config.deny) ? inner.config.deny : []
     checkDeny('executor-spawn deny', deny)
   }
@@ -74,7 +74,7 @@ const names = all.map((r) => (typeof r.name === 'string' ? r.name : ''))
 const required = [
   '@deepseek-ai/dsh-persona', '@local/dsh-extra-plan', '@deepseek-ai/dsh-tool-ask-user',
   '@deepseek-ai/dsh-tool-subagent', '@deepseek-ai/dsh-tool-subagent-control',
-  '@deepseek-ai/dsh-tool-subagent-control/list-agents', '@local/dsh-executor-spawn',
+  '@deepseek-ai/dsh-tool-subagent-control/list-agents', '@local/dsh-extra-plan/executor-spawn',
   '@deepseek-ai/dsh-workflow-worker-thread', '@deepseek-ai/dsh-tool-workflow',
   '@deepseek-ai/dsh-tool-ralph', '@deepseek-ai/dsh-compaction-basic',
 ]

@@ -6,11 +6,16 @@
   "main": "index.js",
   "exports": {
     ".": "./index.js",
+    "./settings": "./lib/settings.js",
+    "./executor-spawn": "./lib/executor-spawn.js",
+    "./flash-guide": "./lib/flash-guide.js",
+    "./client": "./lib/client.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
   "files": [
     "index.js",
+    "lib/",
     "scripts/distribute-preset.mjs",
     "cordis.patch.yml",
     "assets/presets/"
@@ -23,11 +28,17 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-runtime"
+      ]
     }
   },
   "dependencies": {
-    "@local/dsh-extra-plan-settings": "luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan-settings",
-    "@local/dsh-executor-spawn": "luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-executor-spawn",
-    "@local/dsh-flash-guide": "luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-flash-guide"
+    "js-yaml": "^4.2.0"
   }
 }

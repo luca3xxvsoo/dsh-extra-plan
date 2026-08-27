@@ -109,7 +109,7 @@
 
 # dsh web界面配置插件
 - id: extra-plan-settings
-  name: '@local/dsh-extra-plan-settings'
+  name: '@local/dsh-extra-plan/settings'
 
 # ── compaction ──────────────────────────────────────────────────────────────
 
@@ -253,7 +253,7 @@
     # subagent_plan 防 worker 再规划；save_plan 不可见无需列）；模型不注入，
     # worker 由宿主继承父会话当前模型（请求显式指定 model 时优先）。
     - id: executor-spawn
-      name: '@local/dsh-executor-spawn'
+      name: '@local/dsh-extra-plan/executor-spawn'
       config:
         providerName: extra-executor-spawn
         delegate: spawn

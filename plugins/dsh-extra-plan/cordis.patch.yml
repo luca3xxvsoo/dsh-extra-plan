@@ -3,4 +3,4 @@
 # 随主包安装并由主包代挂；用户可在 设置 → 插件 → dsh-extra-plan-settings 中开关。
 - insert:
     - id: flash-guide
-      name: '@local/dsh-flash-guide'
+      name: '@local/dsh-extra-plan/flash-guide'
