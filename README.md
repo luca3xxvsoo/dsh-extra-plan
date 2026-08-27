@@ -14,22 +14,26 @@
 
 ### 安装步骤
 
-1. 核心安装(必装)
-```sh
-dsh plugin --profile web add \
-  luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan \
-  luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan-settings \
-  luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-executor-spawn \
-  luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-flash-guide
+0. 安装 git/minigit (已安装可忽略)
+```powershell 7+
+winget install --id Git.MinGit --exact --source winget
 ```
-2. qqbot兼容插件安装(选装)
-```sh
-dsh plugin --profile qqbot add \
-  luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan \
-  luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan-settings \
-  luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-executor-spawn \
-  luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-flash-guide \
-  luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-qqbot-user-questions \
+1. 核心安装(必装)
+```powershell 7+
+dsh plugin --profile web add `
+  'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan' `
+  'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan-settings' `
+  'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-executor-spawn' `
+  'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-flash-guide'
+```
+2. qqbot兼容插件安装 (选装)
+```powershell 7+
+dsh plugin --profile qqbot add `
+  'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan' `
+  'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan-settings' `
+  'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-executor-spawn' `
+  'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-flash-guide' `
+  'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-qqbot-user-questions' `
   --allow-build=@local/dsh-qqbot-user-questions
 ```
 3. **重启 DSH 进程**使插件生效
@@ -48,16 +52,16 @@ dsh plugin --profile qqbot add \
 ### 卸载步骤
 
 1. 核心卸载
-```sh
+```powershell 7+
 dsh plugin --profile web remove @local/dsh-extra-plan @local/dsh-extra-plan-settings @local/dsh-executor-spawn @local/dsh-flash-guide
 ```
 2. 手动删除DSH_HOME/.agent-presets/extra-plan/
-3. qqbot兼容插件卸载(如装)
-```sh
+3. qqbot兼容插件卸载 (如装)
+```powershell 7+
 dsh plugin --profile qqbot remove @local/dsh-extra-plan @local/dsh-extra-plan-settings @local/dsh-executor-spawn @local/dsh-flash-guide @local/dsh-qqbot-user-questions
 ```
-4. qqbot兼容插件替换文件还原：
-```sh
+4. qqbot兼容插件替换文件还原 (如装)
+```
 DSH_HOME/profiles/qqbot/node_modules/@tencent-connect/dsh-qqbot/dist/gateway/bootstrap.js.orig -> bootstrap.js
 DSH_HOME/profiles/qqbot/node_modules/@tencent-connect/dsh-qqbot/dist/transport/outbound.js.orig -> outbound.js
 ```

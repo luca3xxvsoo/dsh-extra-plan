@@ -1,0 +1,4 @@
+# 增加而不是覆盖
+- insert:
+    - id: extra-plan-preset-sync
+      name: '@local/dsh-extra-plan/preset-sync'

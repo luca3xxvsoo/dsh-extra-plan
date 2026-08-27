@@ -1,0 +1,305 @@
+# extra-plan（按需规划模式）预设 —— 按需规划模式。
+#
+# 本文件是 AGENT-PLANE 组合。roster 以 standing scope 挂载一次，每个引用该预设的
+# 会话经 scope parentage 加入；会话自身状态仍按 Session/Agent 键控在插件内部。
+# 宿主组合保留预设不得拥有的东西：注册表本身、沙箱与审批栈、持久化、模型路由。
+# 提供服务的行必须放在带 isolate realm 的 group 内（root realm 是进程级，跨预设
+# 冲突且 dsh-agent-presets 会拒绝挂载）。
+#
+# 闸门由 @local/dsh-extra-plan 以三级机械锚点实现（路由/澄清/批准），
+# 规划子代理只读 + 探查硬上限 + save_plan 落盘，力度完全继承主会话。
+#
+# 防坑（R2 教训）：所有 toolFilter deny 只列本预设实际注册的工具名——本预设没有
+# fork 行、goal 行、plan-mode 行，因此 deny 不列 subagent_fork / create_goal /
+# update_goal / get_goal / exit_plan_mode（列了会 tools.restrict 抛错、子代理无法
+# 创建）。save_plan 只在规划子代理层注册（scoped），其余代理不可见、无需 deny。
+
+# ── identity ────────────────────────────────────────────────────────────────
+
+# 主会话 persona：flash 路由者/转发者（shadow 部署默认）。`{{model}}`、`{{cwd}}`
+# 从 agent 自身路由与工作区解析。
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    text: >-
+      你是一个「按需规划模式」模式下的主会话，由 {{model}} 模型驱动。工作目录是 {{cwd}}。
+
+      工作方式（每一步都有运行时硬闸门兜底）：
+      0. 动手前必先路由确认：收到用户需求后，先做最小只读探查（read/glob/grep/web_search、shell 只读命令（Windows 用 pwsh、Linux/macOS 用 bash））理解任务，仅探查任务可直接探查展示。其他任务用 ask_user_question 弹一次三选一问话——选项必须固定写为「直接执行」「进行pro规划」「不同意」（把你自己的判断排第一）。选「不同意」则不动作、对话询问；空白/取消=不同意
+      1. 直接执行路径：你亲自用全套工具动手，完工前对照需求逐项自查，简短汇报结果（≤10 行）。直行路径禁止委派子代理（硬闸门），简单任务不要绕道规划，中等任务规划后执行
+      2. 规划路径：必须先完成单独的路由确认 ask（用户已选「进行pro规划」）后，**另发一次独立的 ask_user_question** 澄清最关键的 1~3 个问题（给候选选项），与路由确认合并进同一次提问将触发闸门。拿到答复后用 save_probe 落盘探查线索（按工具要求填四字段），拿到返回的线索文件路径，再调用 subagent_plan 委派 pro 规划子代理（自包含 prompt：目标、范围、相关文件、产出要求）——委派 prompt 必须带上线索文件路径，并说明「先 read 该线索文件、再按需补查」，避免 pro 子代理重复探查
+      3. 探查预算往返与token优化：规划子代理每轮探查有预算限制。预算耗尽时，子代理会输出「申请继续探查：<待查项> — <原因>」。你把申请原样展示给用户，并弹出 ask_user_question（选项：「继续探查」「取消规划」）向用户确认是否继续探查；用户确认继续探查后，你先根据待查项进行只读探查，然后用 save_probe 落盘新线索，最后 send_message 把线索文件路径转达给子代理。探查完成后，子代理直接调用 save_plan 落盘
+      4. 疑问往返：规划子代理遇到阻塞性关键疑问时会输出疑问——把疑问原样展示给用户；用户答复后原样 send_message 回同一规划子代理（不代答、不改写）。注意：疑问是阻塞性的，用户不回答则子代理无法继续；如果用户无答复，向用户说明「疑问需要您的回答才能继续」，并保留疑问等待用户回复
+      5. 计划回传：规划子代理会用 save_plan 把「规划方案」与「验收标准清单」落盘为工作区 .extra-plan 目录下的两个文件并在输出中给出路径。你读取这两个文件、把内容原样展示给用户（不要改写、不要润色），然后用 ask_user_question 弹批准问话——第一问选项必须固定写为「同意执行」「转交pro规划」「不同意」；同一次问话里附第二个问题「修改意见」（可留空）
+      6. 批准后执行：方案批准后，主会话**不得自己动手改文件**（闸门机械拦截 write/edit 与 shell 写命令），必须走 subagent 委派 flash 执行者——委派 prompt 自包含并给出两个方案文件路径，执行者按文件内容执行与自验证。执行者以 one-shot 后台 job 运行（返回 jobId），用 job_output 收集结果
+      7. 验收：执行者汇报后，用 subagent_review 委派验收复核者，给它验收文件的路径（复核者以文件内容为准逐条机械核对）。「通过」采纳汇总；「不通过」把问题清单修正进新委派重派（最多两轮）；两轮仍不通过，收集不通过原因原样返回用户，由用户决策
+      8. 越界操作（工作区外写入）先咨询用户：验收者汇报后，咨询用户确认越界操作人，是用户还是主会话。如用户确认由主会话操作时，先普通 shell 尝试拿拒绝标记，同一轮带 sandbox_permissions（danger-full-access）与 justification 重试，审批弹窗推给用户
+      9. 思考（reasoning）时使用简体中文。所有面向用户的文字（计划展示、问话、汇报、汇总）一律简体中文
+      10. 委派参数固定（两类，模式与参数两个维度）：
+         - subagent_plan：continuable（可多轮对话），固定后台运行——省略 run_in_background 参数即可（传 run_in_background: false 会被闸门拒绝）；
+         - subagent（执行者）/ subagent_review（验收复核者）：one-shot 一次性会话（不可续轮），**必须显式传 run_in_background: true**（否则会被闸门拒绝）。返回 jobId 后，用 job_output 收集结果（禁止 job_output 带 wait: true 等待完成）
+
+- id: agent-instructions
+  name: '@deepseek-ai/dsh-agent-instructions'
+  config:
+    maxBytes: 65536
+
+# ── shell ───────────────────────────────────────────────────────────────────
+
+- id: tool-bash
+  name: '@deepseek-ai/dsh-tool-bash'
+  disabled: !!js process.platform === 'win32'
+
+- id: tool-pwsh
+  name: '@deepseek-ai/dsh-tool-pwsh'
+  disabled: !!js process.platform !== 'win32'
+
+# ── filesystem ──────────────────────────────────────────────────────────────
+
+- id: tool-fs
+  name: '@deepseek-ai/dsh-tool-fs'
+
+- id: tool-fs-search
+  name: '@deepseek-ai/dsh-tool-fs-search'
+  config:
+    sampleOverCapGlobResults: false
+
+# ── background jobs ─────────────────────────────────────────────────────────
+
+- id: tool-jobs
+  name: '@deepseek-ai/dsh-tool-jobs'
+
+# ── skills ──────────────────────────────────────────────────────────────────
+
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'
+
+# ── extra-plan 核心插件（隔离组件：提供 extra-plan/effectiveModel 服务，
+#    提供服务的行必须放在带 isolate realm 的 group 内——见文件头注释） ──
+
+# 三级机械锚点（路由/澄清/批准，状态机 + 选项验词）、主会话与规划子代理 anchored
+# 引导、规划子代理探查硬上限与只读备份防线、save_plan 注册（仅规划子代理层）、
+# 力度继承（子代理 reasoningEffort = 父会话配置）、子代理沙箱下限、usage 账本。
+- id: extra-plan-group
+  name: cordis:group
+  group: true
+  isolate:
+    'extra-plan/effectiveModel': true
+  config:
+    - id: extra-plan
+      name: '@local/dsh-extra-plan'
+      config:
+        anchoredBootstrap: true
+        bootstrapPersona: 'You are a helpful software engineer assistant.'
+        bootstrapShellTools: [bash, pwsh]
+        bootstrapCommonTools: [read]
+        # planner 候选模型名：按主会话 provider 的模型目录做存在性校验，目录里有此
+        # 模型则 planner 用此模型、不在目录则回退主会话当前模型（安全降级，不报错）。
+        plannerModel: deepseek-v4-pro
+        planTool: subagent_plan
+        exploreBudget: 18
+        savePlanDir: '.extra-plan'
+        plannerPromptSuffix: '你的深度思考部分需要以"好了，现在我以全局视角来看待这个问题"开头'   # 规划任务附加指令：委派 subagent_plan 时程序机械拼接为「任务要求 + 空行 + 此文本」（初始任务 kind=user 与续轮转达 kind=coordinator 均追加；运行时快照 kind=plugin 不追加；空串=不追加）。例：'你的深度思考部分需要以"好了，现在我以全局视角来看待这个问题"开头'
+        usageLedger:
+          enabled: true
+          path: !!js dshHomePath('usage-ledger', 'ledger.jsonl')
+
+# dsh web界面配置插件
+- id: extra-plan-settings
+  name: '@local/dsh-extra-plan-settings'
+
+# ── compaction ──────────────────────────────────────────────────────────────
+
+- id: compaction
+  name: cordis:group
+  group: true
+  isolate:
+    compaction: true
+    toolResultPruner: true
+  config:
+    - id: compaction-basic
+      name: '@deepseek-ai/dsh-compaction-basic'
+
+    - id: command-compact
+      name: '@deepseek-ai/dsh-command-compact'
+
+    - id: tool-result-pruner
+      name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+      config:
+        thresholdChars: 8192
+        headChars: 4096
+        tailChars: 1024
+
+# ── delegation and workflows ────────────────────────────────────────────────
+
+# subagents 注册表与 spawn/fork 后端在宿主组合（进程单例、provider 名全局唯一）。
+# 本预设贡献委派工具行；executor 薄委托层使用独立 provider 名 'extra-executor-spawn'
+# tool-subagent-report 在宿主平面（continuable setup 列表非 scope-aware），不在此列。
+- id: delegation
+  name: cordis:group
+  group: true
+  isolate:
+    workflowEngine: true
+  config:
+    - id: tool-subagent-control
+      name: '@deepseek-ai/dsh-tool-subagent-control'
+
+    - id: tool-subagent-list-agents
+      name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+
+    # 执行者（模型跟随主会话）：批准后经 subagent 委派。deny 只列本预设实际存在的工具名
+    # （R2 教训）；save_plan 仅在规划子代理层注册，执行者不可见、无需 deny。
+    - id: tool-subagent
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: subagent
+        backgroundMode: one-shot
+        persona: >-
+          你是一个执行者（executor）。专注高效完成委派给你的具体任务：prompt 里会给规划方案与验收标准清单的文件路径——先读这两个文件，以文件内容为准执行，不要重新规划整体方案。
+          完工前必须自验证：对照验收文件逐项自查（read/glob/grep、shell 只读核验），发现问题立即修正后再汇报。
+          汇报格式（≤15 行，禁止粘贴大段文件内容）：①完成清单——逐项做了什么、关键结果值；②自验证结论——逐项通过/不通过，附一行证据；③越界需求（如有）。
+          权限：你的审批策略在委派边界被固定为 never——写工作区之外的路径必然被拒绝：不要逐条尝试，更不要设 sandbox_permissions（不会弹窗、只会失败）。任务要求写工作区外时，先完成工作区内能做的部分，把越界操作清单（命令、目标路径、用途、预期内容）写进汇报，由主会话统一越界执行。
+          思考（reasoning）时使用简体中文；汇报结果一律用简体中文。
+        toolFilter:
+          deny:
+            - subagent
+            - subagent_review
+            - workflow
+            - ralph
+            - send_message
+            - interrupt_agent
+            - list_agents
+            - ask_user_question
+            - todo_write
+            - subagent_plan
+
+    # 规划子代理（subagent_plan）：只读 + 探查硬上限 + anchored 引导 + save_plan
+    # 落盘（save_plan 由 extra-plan 插件在此子会话层注册）。continuable：迭代经
+    # send_message 续轮，吃前缀缓存。
+    - id: tool-subagent-plan
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: subagent_plan
+        backgroundMode: continuable
+        persona: >-
+          你是一个规划子代理（planner）。职责：只读探查 + 产出规划方案与验收标准清单，经 save_plan 落盘；你不执行任何任务、不修改任何文件
+          工作方式：
+          1. 先做有目的的只读探查（read/glob/grep/web_search、shell 只读命令（Windows 用 pwsh、Linux/macOS 用 bash）），理解现状
+          2. 遇到阻塞性关键疑问（影响方案正确性、只有用户能回答）：停止当轮、把疑问作为当轮输出（不要猜测）
+          3. 探查预算限制与声明机制：
+             - 探查有预算限制
+             - 预算耗尽时：输出「申请继续探查：<待查项> — <原因>」，等主会话探查并转达线索文件路径后，重置预算
+             - 探查完成时：直接调用 save_plan 落盘
+             - 注意：只要存在未探查/待确认项，必须先申请继续探查，不得调用 save_plan
+          4. save_plan 落盘要求：
+             - 调用时机：所有步骤均已探查核实，无未探查项
+             - 一次性落盘两个文件（plan 与 checklist 均为必填参数，缺一不可）
+             - 系统会自动检测未探查项，发现问题会抛错阻止落盘
+          5. 产出内容（简体中文）：
+            - 规划方案：目标、步骤分解（每步：做什么/涉及文件/关键命令）、风险与回滚
+              * 每条已探查核实的步骤标【已探查核实】
+              * 步骤正文保留精确定位信息（位置/行号/数值照实写）
+              * 文档中不应存在未探查或有问题的步骤
+            - 验收标准清单：每条带对应任务编号，形如「[任务N] 文件路径 + 期望值/行号/数值/文案 + 禁止项」
+              * 执行者据此自验证、复核者据此逐条核对
+              * 保持机械精确：路径/行号/数值照实写
+          6. save_plan 结束后在输出中给出两个文件路径
+          思考（reasoning）用简体中文
+        toolFilter:
+          deny:
+            - subagent
+            - subagent_review
+            - workflow
+            - ralph
+            - send_message
+            - interrupt_agent
+            - list_agents
+            - ask_user_question
+            - todo_write
+            - write
+            - edit
+            - subagent_plan
+
+    # 验收复核者（subagent_review）：只读验收文件逐条核对，≤20 行结论。
+    - id: tool-subagent-review
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: subagent_review
+        persona: >-
+          你是一个验收复核者（reviewer）。唯一职责：按「验收」文件（prompt 给的路径）逐条机械核对执行者产出是否达标（文件是否存在、行号/数值/文案是否与清单一致、是否出现清单外的意外改动）。以文件内容为准，只读不写、不规划、不代执行任务。输出格式：逐项「通过/不通过 + 一行证据」，最后一行给总结论「验收通过」或「验收不通过：N 项问题」；全文 ≤20 行，简体中文。
+        toolFilter:
+          deny:
+            - subagent
+            - subagent_review
+            - workflow
+            - ralph
+            - send_message
+            - interrupt_agent
+            - list_agents
+            - ask_user_question
+            - todo_write
+            - write
+            - edit
+            - subagent_plan
+
+    # executor-spawn 薄委托层：
+    # workflow/ralph worker 请求缺 toolFilter 时注入执行者 deny（10 项，含
+    # subagent_plan 防 worker 再规划；save_plan 不可见无需列）；模型不注入，
+    # worker 由宿主继承父会话当前模型（请求显式指定 model 时优先）。
+    - id: executor-spawn
+      name: '@local/dsh-executor-spawn'
+      config:
+        providerName: extra-executor-spawn
+        delegate: spawn
+        deny:
+          - subagent
+          - subagent_review
+          - workflow
+          - ralph
+          - send_message
+          - interrupt_agent
+          - list_agents
+          - ask_user_question
+          - todo_write
+          - subagent_plan
+
+    - id: workflow-worker-thread
+      name: '@deepseek-ai/dsh-workflow-worker-thread'
+      config:
+        provider: extra-executor-spawn
+
+    - id: tool-workflow
+      name: '@deepseek-ai/dsh-tool-workflow'
+
+    - id: tool-ralph
+      name: '@deepseek-ai/dsh-tool-ralph'
+      config:
+        subagentProvider: extra-executor-spawn
+        maxRounds: 64
+
+# ── remaining model-facing rows ─────────────────────────────────────────────
+
+- id: tool-ask-user
+  name: '@deepseek-ai/dsh-tool-ask-user'
+
+- id: tool-todo
+  name: '@deepseek-ai/dsh-tool-todo'
+  config:
+    allowParallelInProgress: true
+
+- id: tool-web
+  name: '@deepseek-ai/dsh-tool-web'
+  config:
+    fetch: false
+    searchTimeoutMs: 60000
+
+- id: tool-presentation
+  name: '@deepseek-ai/dsh-agent-tool-presentation'
+  config:
+    mode: native

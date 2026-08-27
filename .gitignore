@@ -1,10 +1,6 @@
 # extra-plan 落盘目录（save_plan 方案/验收双文件、save_probe 线索文件）
 .extra-plan/
 .git/
-bak/
-必装/
-选装/
-dsh-extra-plan/
 
 # 日志
 *.log
@@ -12,4 +8,3 @@ dsh-extra-plan/
 # 跨平台系统杂项
 .DS_Store
 Thumbs.db
-dsh-extra-plan.zip
