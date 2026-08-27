@@ -43,12 +43,12 @@ dsh plugin --profile qqbot add 'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-ext
 
 1. 核心卸载
 ```powershell 7+
-dsh plugin --profile web remove @local/dsh-extra-plan @local/dsh-extra-plan-settings @local/dsh-executor-spawn @local/dsh-flash-guide
+dsh plugin --profile web remove @local/dsh-extra-plan
 ```
 2. 手动删除DSH_HOME/.agent-presets/extra-plan/
 3. qqbot兼容插件卸载 (如装)
 ```powershell 7+
-dsh plugin --profile qqbot remove @local/dsh-extra-plan @local/dsh-extra-plan-settings @local/dsh-executor-spawn @local/dsh-flash-guide @local/dsh-qqbot-user-questions
+dsh plugin --profile qqbot remove @local/dsh-extra-plan @local/dsh-qqbot-user-questions
 ```
 4. qqbot兼容插件替换文件还原 (如装)
 ```
@@ -62,13 +62,16 @@ DSH_HOME/profiles/qqbot/node_modules/@tencent-connect/dsh-qqbot/dist/transport/o
 跨平台兼容改造的**逻辑层**已由 `test-cross-platform.mjs` 验证（本仓库 Windows 环境实测 68 用例全过，脚本三平台通用）；但**完整运行时**（DSH 实际加载本预设 + 真实 bash/pwsh 行为）目前仅在 **Windows 环境实测正常**，**Linux/macOS 尚未在真实环境验证**。建议部署到 Linux/macOS 前用 GitHub Actions 三平台矩阵或 WSL2 补充实测；如发现兼容问题，欢迎反馈
 
 ## 2. 可配置项
-DSH web界面 -> 设置 -> 插件 -> EXTRA PLAN
+DSH web界面 -> 设置 -> 插件 -> 插件配置 -> 按需规划模式配置
 
 **pro规划**：
   - 使用模型：未匹配/置空时：使用主会话模型
   - 额外引导：在主会话发送给pro规划的任务结尾，拼接上的内容。可能能增加pro规划的智商（未验证）。可置空
   - 探查额度：默认18轮
-  - anchored开关：是否开启dsh-anchored-standard同款引导
+  - anchored开关：是否开启 dsh-anchored-standard 同款引导
+  - flash 引导：是否开启 deepseek-v4-flash 智商引导
+  - web_fetch开关：是否开启web_fetch
+  - 工具呈现模式：是否开启PTC模式
 
 **qqbot兼容插件**：越权申请开关。仅在qqbot进程运行时显示
 
@@ -82,19 +85,14 @@ dsh-extra-plan/
 │   │   │   ├── agent.cordis.yml                        # 预设主配置（persona/工具/插件行/delegation）
 │   │   │   ├── preset.yml                              # 预设元信息（GUI 显示名称与描述）
 │   │   │   └── dist-manifest.json                                
+│   │   ├── lib/                                        # 设置界面
+│   │   │   ├── client.js                               # dsh web界面配置插件
+│   │   │   ├── settings.js                             # dsh web界面配置插件
+│   │   │   ├── executor-spawn.js                       # 执行者委托层（workflow/ralph worker 注入）
+│   │   │   └── flash-guide.js                          # flash 模型近场引导
 │   │   ├── scripts/distribute-preset.mjs               # 自动分发 .agent-presets 脚本
 │   │   ├── cordis.patch.yml                                      
 │   │   ├── index.js                                    
-│   │   └── package.json                            
-│   ├── dsh-extra-plan-settings/                        # dsh web界面配置插件
-│   │   ├── index.js              
-│   │   ├── package.json              
-│   │   └── lib/client.js              
-│   ├── dsh-executor-spawn/                             # 执行者委托层（workflow/ralph worker 注入）
-│   │   ├── index.js              
-│   │   └── package.json              
-│   ├── dsh-flash-guide/                                # flash 模型近场引导
-│   │   ├── index.js
 │   │   └── package.json
 │   └── dsh-qqbot-user-questions/                       # 可选模块：QQbot 上保留 extra-plan 完整问答
 │       ├── patches/@tencent-connect-dsh-qqbot/dist/    # 自动分发 qqbot插件修改 内容
