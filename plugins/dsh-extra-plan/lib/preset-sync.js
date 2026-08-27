@@ -9,9 +9,10 @@
 // - 目标内容 hash == 当前发行物 hash → 跳过（幂等，0 写入）
 // - 任何不一致（含用户手工改动）→ 整目录覆盖为发行物（先删旧再原子改名）
 //
-// 💡 诊断版（双通道）：所有关键路径同时写入 %TEMP%/preset-sync.log
-// （不依赖 DSH logger / stdout / 托盘重定向——定位真实环境静默失效用）。
-// 定位完成后将移除 🔍 通道，只保留 logger 正常日志。
+// 注入语义（踩坑记录）：这版 cordis 的 ctx.inject 是「回调式注入装载器」
+// （inject(服务数组, 回调) → plugin()），不是同步取值 API；同步取值应读
+// ctx.<service> 属性或使用回调式注入（本组件使用后者，与 dsh-agent-presets
+// L855-857 同款，且等待服务就绪）。
 //
 // 实现依据（官方 @deepseek-ai/dsh-agent-presets 已核实语义）：
 // - user root 恒在 roots 尾（lib/index.js L851-854，USER_PRESET_DIR='.agent-presets'）；
@@ -21,10 +22,9 @@
 // - discovery 每次调用重读 roots（discovery.js L5-6），新建会话即刻可见，无需重启；
 // - 先写 .tmp- 临时目录再改名，保证半个目录对 discovery 不可见（discovery.js L148-150
 //   仅识别匹配 PRESET_ID 的目录名；临时目录名前缀 .tmp- 自动被跳过）。
-// - 失败降级：未挂 agentPresets / 不可写 / 任何异常 → warn 跳过，不阻断 profile 启动。
+// - 失败降级：服务未就绪（回调不触发）/ 不可写 / 任何异常 → warn 跳过，不阻断 profile 启动。
 import { createHash } from 'node:crypto'
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -35,22 +35,9 @@ const MANIFEST_NAME = 'dist-manifest.json'
 const TMP_PREFIX = '.tmp-'
 const CORE_FILES = ['preset.yml', 'agent.cordis.yml']
 const KNOWN_FILES = new Set([...CORE_FILES, MANIFEST_NAME])
-// 💡 诊断版：独立日志文件（不依赖任何宿主日志通道）
-const DIAG_FILE = join(tmpdir(), 'preset-sync.log')
 
 // 资产目录：本模块位于包内 lib/，资产在其 ../assets/presets/extra-plan/
 const ASSET_DIR = join(fileURLToPath(new URL('..', import.meta.url)), 'assets', 'presets', PRESET_ID)
-
-/** 💡 诊断版：双通道日志（文件 + ctx.logger）。 */
-function diag(ctx, level, message) {
-  try {
-    appendFileSync(DIAG_FILE, `[${new Date().toISOString()}] [${level}] ${message}\n`, 'utf8')
-  } catch {
-    /* 尽力而为 */
-  }
-  if (level === 'INFO') ctx.logger.info(`[preset-sync] ${message}`)
-  else ctx.logger.warn(`[preset-sync] ${message}`)
-}
 
 /** sha256(preset.yml || agent.cordis.yml)，固定顺序，作为发行物内容 hash。 */
 function contentHash(dir) {
@@ -84,7 +71,7 @@ function syncPreset(ctx, presets) {
   // 与 authoring.js L58-64 writableRoot 同一定位：第一个 trust === 'user' 的 root
   const userRoot = (presets.roots ?? []).find((root) => root?.trust === 'user' && typeof root.path === 'string')
   if (userRoot === undefined) {
-    diag(ctx, 'WARN', `未找到 trust==='user' 的 root（roots=${JSON.stringify(presets.roots)}）`)
+    ctx.logger.warn(`[preset-sync] 未找到 trust==='user' 的 root，跳过预设分发`)
     return
   }
 
@@ -93,37 +80,29 @@ function syncPreset(ctx, presets) {
 
   if (!existsSync(targetDir)) {
     writeTarget(targetDir, distHash)
-    diag(ctx, 'INFO', `已分发预设「按需规划模式」→ ${targetDir}`)
+    ctx.logger.info(`[preset-sync] 已分发预设「按需规划模式」→ ${targetDir}`)
     return
   }
   // 目录纯净且内容一致才幂等跳过；发行物之外的任何文件/任何内容差异 → 完全覆盖
   const strangers = readdirSync(targetDir).filter((f) => !f.startsWith(TMP_PREFIX) && !KNOWN_FILES.has(f))
-  if (strangers.length === 0 && contentHash(targetDir) === distHash) {
-    diag(ctx, 'INFO', `运行确认：目标目录已与发行物一致（幂等跳过）：${targetDir}`)
-    return
-  }
+  if (strangers.length === 0 && contentHash(targetDir) === distHash) return
   // 任何不一致（含用户改动、多余文件）→ 完全覆盖为当前发行物
   writeTarget(targetDir, distHash)
-  diag(ctx, 'INFO', `预设「按需规划模式」已覆盖为当前发行物 → ${targetDir}`)
+  ctx.logger.info(`[preset-sync] 预设「按需规划模式」已覆盖为当前发行物 → ${targetDir}`)
 }
 
 export function apply(ctx) {
-  diag(ctx, 'INFO', `apply 开始执行（组件已加载）cwd=${process.cwd()}`)
-  // 注：这版 cordis 的 ctx.inject 是「回调式注入装载器」（inject, callback → plugin()）；
-  // 同步取值应为 ctx.agentPresets 属性读（Context 代理走服务解析）或官方回调式
-  // ctx.inject(['agentPresets'], (injectedCtx) => …)（等待服务就绪）。
-  // 本组件使用回调式（与 dsh-agent-presets 自身 L855-857 一致）；文件系统写入不受
-  // injectedCtx 的 traceable shadow 影响。
+  // 回调式注入（见文件头踩坑记录）：服务就绪后执行分发；未就绪则不触发（等效静默）
   ctx.inject(['agentPresets'], (injectedCtx) => {
     try {
       const presets = injectedCtx.agentPresets
       if (presets.authorable !== true) {
-        diag(injectedCtx, 'WARN', `authorable=${String(presets.authorable)}（非 true，user root 缺失？）roots=${JSON.stringify(presets.roots)} instance=${presets?.constructor?.name}`)
+        injectedCtx.logger.warn(`[preset-sync] agentPresets 不可写（authorable=false），跳过预设分发`)
         return
       }
       syncPreset(injectedCtx, presets)
     } catch (err) {
-      diag(injectedCtx, 'WARN', `预设分发失败：${err instanceof Error ? err.message : String(err)}`)
+      injectedCtx.logger.warn(`[preset-sync] 预设分发失败（已跳过，不影响其他组件）：${err instanceof Error ? err.message : String(err)}`)
     }
   })
 }
