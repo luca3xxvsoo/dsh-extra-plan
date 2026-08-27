@@ -109,20 +109,21 @@ function syncPreset(ctx, presets) {
 
 export function apply(ctx) {
   diag(ctx, 'INFO', `apply 开始执行（组件已加载）cwd=${process.cwd()}`)
-  let presets
-  try {
-    presets = ctx.inject(['agentPresets'])
-  } catch (err) {
-    diag(ctx, 'WARN', `inject agentPresets 失败：${err instanceof Error ? err.message : String(err)}`)
-    return
-  }
-  try {
-    if (presets.authorable !== true) {
-      diag(ctx, 'WARN', `authorable=${String(presets.authorable)}（非 true，user root 缺失？）roots=${JSON.stringify(presets.roots)} instance=${presets?.constructor?.name}`)
-      return
+  // 注：这版 cordis 的 ctx.inject 是「回调式注入装载器」（inject, callback → plugin()）；
+  // 同步取值应为 ctx.agentPresets 属性读（Context 代理走服务解析）或官方回调式
+  // ctx.inject(['agentPresets'], (injectedCtx) => …)（等待服务就绪）。
+  // 本组件使用回调式（与 dsh-agent-presets 自身 L855-857 一致）；文件系统写入不受
+  // injectedCtx 的 traceable shadow 影响。
+  ctx.inject(['agentPresets'], (injectedCtx) => {
+    try {
+      const presets = injectedCtx.agentPresets
+      if (presets.authorable !== true) {
+        diag(injectedCtx, 'WARN', `authorable=${String(presets.authorable)}（非 true，user root 缺失？）roots=${JSON.stringify(presets.roots)} instance=${presets?.constructor?.name}`)
+        return
+      }
+      syncPreset(injectedCtx, presets)
+    } catch (err) {
+      diag(injectedCtx, 'WARN', `预设分发失败：${err instanceof Error ? err.message : String(err)}`)
     }
-    syncPreset(ctx, presets)
-  } catch (err) {
-    diag(ctx, 'WARN', `预设分发失败：${err instanceof Error ? err.message : String(err)}`)
-  }
+  })
 }
