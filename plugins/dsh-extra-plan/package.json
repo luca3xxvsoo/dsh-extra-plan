@@ -9,6 +9,7 @@
     "./settings": "./lib/settings.js",
     "./executor-spawn": "./lib/executor-spawn.js",
     "./flash-guide": "./lib/flash-guide.js",
+    "./preset-sync": "./lib/preset-sync.js",
     "./client": "./lib/client.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"

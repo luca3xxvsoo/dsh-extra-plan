@@ -1,6 +1,8 @@
-# 预设分发已迁移至 postinstall（scripts/distribute-preset.mjs，安装时一次性执行）：
-# 本 bundle patch 注册 flash-guide（flash 近场引导）：flash-guide 不再单独上架，
-# 随主包安装并由主包代挂；用户可在 设置 → 插件 → dsh-extra-plan-settings 中开关。
+# 预设分发：postinstall（scripts/distribute-preset.mjs，安装时一次性执行）为主，
+# lib/preset-sync.js 为启动自愈兜底（pnpm 跳过构建时重启后自动核对/就位）。
+# 本 bundle patch 注册两个 host 平面组件：extra-plan-preset-sync（自愈）与 flash-guide（近场引导）。
 - insert:
+    - id: extra-plan-preset-sync
+      name: '@local/dsh-extra-plan/preset-sync'
     - id: flash-guide
       name: '@local/dsh-extra-plan/flash-guide'
