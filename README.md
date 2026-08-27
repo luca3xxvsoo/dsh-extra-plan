@@ -25,7 +25,7 @@ dsh plugin --profile web add `
   'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan-settings' `
   'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-executor-spawn' `
   'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-flash-guide' `
-  --allow-build=@local/dsh-extra-plan
+  --allow-build='@local/dsh-extra-plan@git+https://github.com/luca3xxvsoo/dsh-extra-plan.git'
 ```
 2. qqbot兼容插件安装 (选装)
 ```powershell 7+
@@ -35,7 +35,7 @@ dsh plugin --profile qqbot add `
   'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-executor-spawn' `
   'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-flash-guide' `
   'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-qqbot-user-questions' `
-  --allow-build=@local/dsh-extra-plan,@local/dsh-qqbot-user-questions
+  --allow-build='@local/dsh-extra-plan@git+https://github.com/luca3xxvsoo/dsh-extra-plan.git,@local/dsh-qqbot-user-questions@git+https://github.com/luca3xxvsoo/dsh-extra-plan.git'
 ```
 3. **重启 DSH 进程**使插件生效
 4. 新建会话，在预设列表中选择「按需规划模式」即可使用
