@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({
-  id: "@local/dsh-extra-plan-settings",
+  id: "@local/dsh-extra-plan",
   factory: (require) => {
     var module = { exports: {} };
     var exports = module.exports;
