@@ -1,12 +1,12 @@
-// @local/dsh-extra-plan postinstall —— 安装时一次性分发预设资产（dsh 启动自愈兜底见 lib/preset-sync.js，
-// 二者共用同一三态判定）。
+// @local/dsh-extra-plan postinstall —— 安装时一次性分发预设资产（与 dsh-qqbot-user-questions 的
+// apply-patch.mjs 同构：下载安装完成即执行一次，之后永不运行）。
 //
-// 行为（三态，与本机改动兼容）：
-// - 目标 <DSH_HOME>/.agent-presets/extra-plan/ 不存在 → 全量写入（written）；
-// - manifest.distHash 为历史发行值且目录内容与记录一致（纯旧分发物）→ 覆盖为当前发行物（upgraded）；
-// - 其余（manifest 缺失/损坏、内容与记录不符 = 用户改动）→ 跳过写入，保留本机改动（skipped）；
-// 写入 manifest {format, distHash}（记录当前发行 hash）。发布新版本：用户重新 dsh plugin add
-// → postinstall 再跑一次 → 新预设就位。失败降级：任何异常只打印一行说明（exit 0，不阻断安装）。
+// 行为：
+// - 目标 <DSH_HOME>/.agent-presets/extra-plan/：不存在 → 全量写入；已存在（旧 zip 残留/旧版本）
+//   → 覆盖为当前发行物（安装即重置）；写入 manifest {format, distHash}（记录当前发行 hash）；
+// - 之后**没有任何机制再检查/覆盖本机改动**（"发完即退役"天然成立：本机任意改动永不被碰）；
+// - 发布新版本：用户重新 dsh plugin add → postinstall 再跑一次 → 新预设就位。
+// - 失败降级：任何异常只打印一行说明（exit 0，不阻断安装）。
 //
 // 定位：脚本位于安装现场 <profile>/node_modules/@local/dsh-extra-plan/scripts/，
 // 资产在其 ../assets/presets/extra-plan/；DSH_HOME 取 $DSH_HOME（环境变量）否则 ~/.dsh。
@@ -36,18 +36,6 @@ function contentHash(dir) {
   return h.digest('hex')
 }
 
-/** 读目标目录 manifest 的 distHash；缺失/损坏返回 null。 */
-function readManifest(targetDir) {
-  const p = join(targetDir, MANIFEST_NAME)
-  if (!existsSync(p)) return null
-  try {
-    const m = JSON.parse(readFileSync(p, 'utf8'))
-    return m !== null && typeof m === 'object' && typeof m.distHash === 'string' ? m.distHash : null
-  } catch {
-    return null
-  }
-}
-
 /** 全量写目标目录：先写 .tmp- 临时目录，再「删旧 + 改名」两步原子完成。 */
 function writeTarget(targetDir, distHash) {
   const parent = dirname(targetDir)
@@ -64,31 +52,12 @@ function writeTarget(targetDir, distHash) {
   }
 }
 
-/**
- * 安装时一次性分发（导出便于冒烟测试）。三态判定照 lib/preset-sync.js：
- * 不存在 → 写入；旧分发物（distHash 为历史值且内容一致）→ 覆盖升级；
- * 其余（用户改动）→ 跳过写入；已是当前发行 → 幂等静默。
- * @returns 'written' | 'upgraded' | 'idle' | 'skipped'
- */
+/** 安装时一次性分发（导出便于冒烟测试）。 */
 export function distribute(dshHome) {
   const targetDir = join(dshHome, '.agent-presets', PRESET_ID)
   const distHash = contentHash(ASSET_DIR)
-  if (distHash === null) return 'idle'
-  if (!existsSync(targetDir)) {
-    writeTarget(targetDir, distHash)
-    process.stdout.write(`[dsh-extra-plan] 预设「按需规划模式」已分发（安装时一次性）→ ${targetDir}\n`)
-    return 'written'
-  }
-  const recorded = readManifest(targetDir)
-  const targetHash = contentHash(targetDir)
-  if (recorded === distHash && targetHash === distHash) return 'idle' // 已是当前发行
-  if (recorded !== null && targetHash !== null && targetHash === recorded) {
-    writeTarget(targetDir, distHash)
-    process.stdout.write(`[dsh-extra-plan] 预设分发升级：旧分发物已覆盖为新发行 → ${targetDir}\n`)
-    return 'upgraded'
-  }
-  process.stdout.write(`[dsh-extra-plan] 预设分发跳过：检测到本机改动，保留 ${targetDir}\n`)
-  return 'skipped'
+  writeTarget(targetDir, distHash)
+  process.stdout.write(`[dsh-extra-plan] 预设「按需规划模式」已分发（安装时一次性）→ ${targetDir}\n`)
 }
 
 // CLI 入口：postinstall 直接运行本脚本。

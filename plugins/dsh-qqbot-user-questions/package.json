@@ -6,13 +6,11 @@
   "main": "index.js",
   "exports": {
     ".": "./index.js",
-    "./patch-sync": "./lib/patch-sync.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
   "files": [
     "index.js",
-    "lib/",
     "cordis.patch.yml",
     "patches/",
     "scripts/"
