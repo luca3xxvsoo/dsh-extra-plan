@@ -1,18 +1,11 @@
-# QQ Bot 凭据（扫码绑定自动生成）
-- id: im-qqbot
-  config:
-    appId: 'xxx'
-    appSecret: xxx
-    preset: extra-plan
+# 增加而不是覆盖
 - insert:
     - id: qqbot-user-questions
       name: '@local/dsh-qqbot-user-questions'
-      # 开启是否支持越权 true为支持
+      # 是否支持越权 true为支持
       config:
         approvalEnabled: false
     - id: agent-presets
       name: '@deepseek-ai/dsh-agent-presets'
       config:
         default: extra-plan
-    - id: flash-guide
-      name: '@local/dsh-flash-guide'

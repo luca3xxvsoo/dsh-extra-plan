@@ -22,7 +22,7 @@
 // 说明：本脚本只依赖 Node 标准库与 decisions 导出，不做任何文件写操作。
 // ============================================================================
 
-import { decisions } from './dsh-extra-plan/index.js'
+import { decisions } from '../../plugins/dsh-extra-plan/index.js'
 
 const {
   BASH_MUTATION,
@@ -91,6 +91,7 @@ const bashShouldDeny = [
   'mv a.txt b.txt',
   'cp -r src/ dst/',
   'chown user:group file.txt',
+  'nano notes.txt',       // 文本编辑器写文件：拦截（v0.1.7 起 BASH_MUTATION 覆盖 nano/vim/vi）
 ]
 for (const cmd of bashShouldDeny) check(`应拦截 bash: ${cmd}`, gateDeny(bashExec(cmd)) === true)
 
@@ -118,7 +119,6 @@ const bashShouldAllow = [
   'env | grep PATH',
   'pwd',
   'whoami',
-  'nano notes.txt',      // 已知边界：文本编辑器不拦截（严格对等）
   'tar -tf archive.tar', // 已知边界：tar 只读列目录不拦截
   'npm ls --depth=0',    // 已知边界：npm 只读子命令不拦截
   "sed 's/-i/x/' file.txt", // sed 只读输出，参数含 -i 字符串不误拦（收紧后）

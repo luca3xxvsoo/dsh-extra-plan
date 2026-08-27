@@ -2,7 +2,7 @@
 // 直接 import 插件导出的 decisions（与 index.js 同一份实现，无复制品）——
 // 插件模块顶层无副作用，可在纯 Node 环境加载。
 import { pathToFileURL, fileURLToPath } from 'node:url'
-const PLUGIN_PATH = fileURLToPath(new URL('../../profiles/web/node_modules/@local/dsh-extra-plan/index.js', import.meta.url))
+const PLUGIN_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/index.js', import.meta.url))
 const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
 const {
   CHANNEL_BROKEN_CODES,
@@ -244,17 +244,17 @@ for (const [name, got, expected] of BN) {
   const text = got !== undefined && got.content !== undefined && got.content[0] !== undefined ? got.content[0].text : undefined
   check(name, text, expected)
 }
-check('BN7 budgetNoticeText(18) 全文等值', NOTICE18, '本轮探查预算上限为 18 次工具调用')
-check('BN8 budgetNoticeText(12) 全文等值', NOTICE12, '本轮探查预算上限为 12 次工具调用')
+check('BN7 budgetNoticeText(18) 全文等值', NOTICE18, '本轮探查预算上限为 18 次工具调用。预算耗尽时输出「申请继续探查：<待查项> — <原因>」，主会话将探查待查项并转达线索文件路径，你读取线索继续工作。探查完成后直接调用 save_plan 落盘（系统会自动检测未探查项）')
+check('BN8 budgetNoticeText(12) 全文等值', NOTICE12, '本轮探查预算上限为 12 次工具调用。预算耗尽时输出「申请继续探查：<待查项> — <原因>」，主会话将探查待查项并转达线索文件路径，你读取线索继续工作。探查完成后直接调用 save_plan 落盘（系统会自动检测未探查项）')
 
 // ── BR 系列:budgetReminderText / budgetReminderMessage / budgetReminderSent ──
 const REMIND3 = budgetReminderText(3, 18, BUDGET_REMINDER_THRESHOLD)
 const MARKER = '本轮探查预算还剩 '
 const remEvent = (text) => ({ type: 'user/message', data: { source: { kind: 'plugin' }, content: [{ type: 'text', text }] } })
 const BR = [
-  ['BR1 remaining=3 → 提示', budgetReminderText(3, 18, 3), '本轮探查预算还剩 3 次，请收紧探查、规划收尾，未查项记入待确认假设清单'],
-  ['BR2 remaining=2 → 提示', budgetReminderText(2, 18, 3), '本轮探查预算还剩 2 次，请收紧探查、规划收尾，未查项记入待确认假设清单'],
-  ['BR3 remaining=1 → 提示', budgetReminderText(1, 18, 3), '本轮探查预算还剩 1 次，请收紧探查、规划收尾，未查项记入待确认假设清单'],
+  ['BR1 remaining=3 → 提示', budgetReminderText(3, 18, 3), '本轮探查预算还剩 3 次'],
+  ['BR2 remaining=2 → 提示', budgetReminderText(2, 18, 3), '本轮探查预算还剩 2 次'],
+  ['BR3 remaining=1 → 提示', budgetReminderText(1, 18, 3), '本轮探查预算还剩 1 次'],
   ['BR4 remaining=4 → 空串', budgetReminderText(4, 18, 3), ''],
   ['BR5 remaining=0 → 空串', budgetReminderText(0, 18, 3), ''],
   ['BR6 remaining=15 → 空串', budgetReminderText(15, 18, 3), ''],
@@ -264,7 +264,7 @@ const BR = [
   ['BR10 marker 在锚点前 → false(新一轮重置)', budgetReminderSent([remEvent('本轮探查预算还剩 3 次，请收紧探查、规划收尾，未查项记入待确认假设清单'), umk('coordinator')], MARKER), false],
   ['BR11 锚点后无 marker → false', budgetReminderSent([umk('user'), umk('plugin')], MARKER), false],
   ['BR12 budget=3 → 空串(不提示)', budgetReminderText(3, 3, 3), ''],
-  ['BR13 budget=4 remaining=3 → 提示', budgetReminderText(3, 4, 3), '本轮探查预算还剩 3 次，请收紧探查、规划收尾，未查项记入待确认假设清单'],
+  ['BR13 budget=4 remaining=3 → 提示', budgetReminderText(3, 4, 3), '本轮探查预算还剩 3 次'],
   ['BR14 budget=3 remaining=2 → 空串(全程不提示)', budgetReminderText(2, 3, 3), ''],
 ]
 for (const [name, got, expected] of BR) check(name, got, expected)
@@ -280,7 +280,7 @@ for (const [name, got, expected] of DR) check(name, got, expected)
 
 // ── BD 系列:budgetExhaustedReason（deny 文案,v0.1.6） ───────────────────
 const BD = [
-  ['BD1 (18,18) 全文等值', budgetExhaustedReason(18, 18), '探查预算已耗尽（本轮已用 18/18）：停止进一步探查，基于已知信息产出规划方案与验收标准清单（含待确认假设清单）并调用 save_plan 落盘。方案须逐条标注【已探查核实】/【未探查·待确认】，未探查部分只能写为待确认假设、不得编造具体内容；用户下一条消息（意见转达/疑问答复）到达时探查预算将重置，阻塞性问题可停轮提出。'],
+  ['BD1 (18,18) 全文等值', budgetExhaustedReason(18, 18), '探查预算已耗尽（本轮已用 18/18）：输出「申请继续探查：<待查项> — <原因>」。主会话将探查待查项并转达线索文件路径，你读取线索继续工作。探查完成则直接调用 save_plan 落盘。'],
   ['BD2 (12,12) 含 12/12', budgetExhaustedReason(12, 12).includes('本轮已用 12/12'), true],
   ['BD3 (17,18) 含 17/18', budgetExhaustedReason(17, 18).includes('本轮已用 17/18'), true],
 ]

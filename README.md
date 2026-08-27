@@ -8,37 +8,60 @@
 
 **按需规划模式（extra-plan）**：会话未经用户同意时，模型仅可调用只读工具探查。且可调用pro规划子代理，使用高质量模型生成规划验收方案。
 
-## 1. 安装方式（面向 DSH 环境用户）
+## 1. 安装及卸载方式（面向 DSH 环境用户）
 
 > 前置条件：已安装 DeepSeek Harness（DSH）。默认 DSH_HOME = `~/.dsh`（可被环境变量 `DSH_HOME` 覆盖）。Win环境默认 DSH_HOME = `%USERPROFILE%\.dsh`
 
-### 步骤
+### 安装步骤
 
-1. 从Release下载压缩包dsh-extra-plan.zip并解压
-2. 将 `必装/.dsh/` 中的文件夹复制进DSH_HOME
-3. （可选）编辑 `DSH_HOME/.agent-presets/extra-plan/agent.cordis.yml`，将 plannerModel 改为实际使用的pro规划模型（默认为deepseek-v4-pro）
-4. （可选）将 `flash-guide/.dsh/` 中的文件夹复制进DSH_HOME，并参考cordis.patch.yml.example修改 `DSH_HOME/profiles/web/cordis.patch.yml`
-5. （可选）将 `qqbot-user-questions/.dsh/` 中的文件夹复制进DSH_HOME，并参考cordis.patch.yml.example修改 `DSH_HOME/profiles/qqbot/cordis.patch.yml`
-6. **重启 DSH 进程**使插件生效
-7. 新建会话，在预设列表中选择「按需规划模式」即可使用
-
-### 可选模块：dsh-flash-guide
-
-**模块背景**：dsh-extra-plan 与 dsh-router-standard 经测试无法兼容，故仿照 dsh-router-standard 的引导机制制作本模块
-
-根据模型名称包含deepseek-v4-flash的主会话/子代理，在每条真实用户消息后自动注入一条固定引导文本——简单任务用快速收敛版、复杂任务用深度决策版（带回顾/反跑题锚）；模型名称不包含的会话自动排除。零工具注册、不改 extra-plan 任何行为
-
-主会话如发生模型切换，切换后第一次flash-guide错误注入暂无法解决
+1. 核心安装(必装)
+```sh
+dsh plugin --profile web add \
+  luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan \
+  luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan-settings \
+  luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-executor-spawn \
+  luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-flash-guide
+```
+2. qqbot兼容插件安装(选装)
+```sh
+dsh plugin --profile qqbot add \
+  luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan \
+  luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan-settings \
+  luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-executor-spawn \
+  luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-flash-guide \
+  luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-qqbot-user-questions \
+  --allow-build=@local/dsh-qqbot-user-questions
+```
+3. **重启 DSH 进程**使插件生效
+4. 新建会话，在预设列表中选择「按需规划模式」即可使用
 
 ### 可选模块：dsh-qqbot-user-questions
 
-**模块背景**：dsh-qqbot（腾讯官方 QQ Bot IM 插件）在默认配置下不挂任何 agent 预设；而 extra-plan 的核心交互（路由确认 / 澄清 / 批准三阶段问话）依赖 `ask_user_question` 的 UI 应答者，QQbot 无此 UI，直接挂载会导致问答无法完成。本可选插件为 qqbot 提供 `userQuestions` provider，把 `ask_user_question` 的问题以**文字列表**发到 QQ、等待用户回复，让 extra-plan 在 QQbot 上保持完整的三阶段问答与闸门语义。并且可以用命令 /优先对话 ，在AI连续调用工具的长任务的场景对指定对话进行边界插入
+**模块背景**：dsh-qqbot（腾讯官方 QQ Bot IM 插件）在默认配置下不挂任何 agent 预设；而 extra-plan 的核心交互（路由确认 / 澄清 / 批准三阶段问话）依赖 `ask_user_question` 的 UI 应答者，QQbot 无此 UI，直接挂载会导致问答无法完成。本可选插件为 qqbot 提供**文字列表**发到 QQ、等待用户回复，让 extra-plan 在 QQbot 上保持完整的三阶段问答与闸门语义。并且可以用命令 /优先对话 ，在AI连续调用工具的长任务的场景对指定对话进行边界插入
 
 **优先对话触发模式**：
   - /优先对话：将队列中第一个对话进行边界插入
   - /优先对话 对话内容：将对话内容进行边界插入
 
 **前提说明**：本模块涉及对 dsh-qqbot 源码的最小改动，需使用者自行评估
+
+### 卸载步骤
+
+1. 核心卸载
+```sh
+dsh plugin --profile web remove @local/dsh-extra-plan @local/dsh-extra-plan-settings @local/dsh-executor-spawn @local/dsh-flash-guide
+```
+2. 手动删除DSH_HOME/.agent-presets/extra-plan/
+3. qqbot兼容插件卸载(如装)
+```sh
+dsh plugin --profile qqbot remove @local/dsh-extra-plan @local/dsh-extra-plan-settings @local/dsh-executor-spawn @local/dsh-flash-guide @local/dsh-qqbot-user-questions
+```
+4. qqbot兼容插件替换文件还原：
+```sh
+DSH_HOME/profiles/qqbot/node_modules/@tencent-connect/dsh-qqbot/dist/gateway/bootstrap.js.orig -> bootstrap.js
+DSH_HOME/profiles/qqbot/node_modules/@tencent-connect/dsh-qqbot/dist/transport/outbound.js.orig -> outbound.js
+```
+5. **重启 DSH 进程**
 
 ### 平台实测说明
 
@@ -59,64 +82,49 @@ DSH web界面 -> 设置 -> 插件 -> EXTRA PLAN
 
 ```
 dsh-extra-plan/
-├── .agent-presets/
-│   └── extra-plan/
-│       ├── preset.yml                    # 预设元信息（GUI 显示名称与描述）
-│       └── agent.cordis.yml              # 预设主配置（persona/工具/插件行/delegation）
-├── profiles/
-│   ├── web/
-│   │   ├── cordis.patch.yml.example      # 该文件需增加内容参考
-│   │   └── node_modules/@local/
-│   │       ├── dsh-extra-plan/           # 模式核心插件（三级闸门/探查上限/save_plan 等）
-│   │       │   ├── index.js
-│   │       │   └── package.json
-│   │       ├── dsh-extra-plan-settings/  # dsh web界面配置插件
-│   │       │   ├── index.js
-│   │       │   ├── package.json
-│   │       │   └── lib/client.js
-│   │       ├── dsh-executor-spawn/       # 执行者委托层（workflow/ralph worker 注入）
-│   │       │   ├── index.js
-│   │       │   └── package.json
-│   │       └── dsh-flash-guide/          # 可选模块：flash 模型近场引导（不装不影响核心）
-│   │           ├── index.js
-│   │           └── package.json
-│   └── qqbot/                            # 兼容qqbot用的，没有可无视
-│       ├── cordis.patch.yml.example      # 该文件需增加内容参考
-│       ├── node_modules/@tencent-connect/dsh-qqbot/dist/gateway/
-│       │   └── bootstrap.js              # 修改好的文件   最小必须注入：ctx.provide
-│       ├── node_modules/@tencent-connect/dsh-qqbot/dist/transport/
-│       │   └── outbound.js               # 修改好的文件   放行新增的工具show_file：用该工具调用方案/验收.md节约token
-│       └── node_modules/@local/
-│           ├── dsh-extra-plan/           # 模式核心插件（三级闸门/探查上限/save_plan 等）
-│           │   ├── index.js
-│           │   └── package.json
-│           ├── dsh-extra-plan-settings/  # dsh web界面配置插件 虽然qq没有但是不放进去会无法使用
-│           │   ├── index.js
-│           │   ├── package.json
-│           │   └── lib/client.js
-│           ├── dsh-executor-spawn/       # 执行者委托层（workflow/ralph worker 注入）
-│           │   ├── index.js
-│           │   └── package.json
-│           ├── dsh-flash-guide/          # 可选模块：flash 模型近场引导（不装不影响核心）
-│           │   ├── index.js
-│           │   └── package.json
-│           └── dsh-qqbot-user-questions/ # 可选模块：QQbot 上保留 extra-plan 完整问答（见 §1 可选模块）
-│               ├── index.js
-│               └── package.json
-│── pe-test/tools/                         # 自检/取证工具（8 个）
-│   ├── validate-extra-plan-preset.mjs     # 预设静态校验（YAML 语法 + deny 清单存在性）
-│   ├── validate-save-probe-gate.mjs       # save_probe 注册层 + 硬闸门五态 + planner 预算回归验证
-│   ├── validate-reviewer-pwsh-guard.mjs   # reviewer pwsh 写动词拦截验证
-│   ├── smoke-forensics-extra-plan.mjs     # extra-plan 冒烟会话取证
-│   ├── saveplan-forensics.mjs             # save_plan call/result 配对取证
-│   ├── ledger-summary.mjs                 # usage 账本聚合（P3 A/B 读数）
-│   ├── print-header-tools.mjs             # 打印会话 request/header 的 tools 列表
-│   ├── test-extra-plan-gate.mjs           # 闸门机制测试（node 直接运行）
-│   ├── test-cross-platform.mjs            # 跨平台只读防线测试（bash/pwsh 写命令拦截，三平台通用）
-│   └── decode-session.mjs                 # 解码单个会话日志（事件统计/plan/mode 摘要）
-├── 按需规划模式测试方案.md                  # 内部测试方案文档
-├── README.md                              # 本文档（模式介绍 + 安装方式）
-└── LICENSE                                # MIT 许可
+├── plugins/              
+│   ├── dsh-extra-plan/                                 # 模式核心插件（三级闸门/探查上限/save_plan 等）
+│   │   ├── assets/presets/extra-plan/                  # 自动分发 .agent-presets 内容   
+│   │   │   ├── agent.cordis.yml                        # 预设主配置（persona/工具/插件行/delegation）
+│   │   │   ├── preset.yml                              # 预设元信息（GUI 显示名称与描述）
+│   │   │   └── dist-manifest.json                                
+│   │   ├── lib/preset-sync.js                          # 自动分发 .agent-presets 脚本
+│   │   ├── cordis.patch.yml                                      
+│   │   ├── index.js                                    
+│   │   └── package.json                            
+│   ├── dsh-extra-plan-settings/                        # dsh web界面配置插件
+│   │   ├── index.js              
+│   │   ├── package.json              
+│   │   └── lib/client.js              
+│   ├── dsh-executor-spawn/                             # 执行者委托层（workflow/ralph worker 注入）
+│   │   ├── index.js              
+│   │   └── package.json              
+│   ├── dsh-flash-guide/                                # flash 模型近场引导
+│   │   ├── index.js
+│   │   └── package.json
+│   └── dsh-qqbot-user-questions/                       # 可选模块：QQbot 上保留 extra-plan 完整问答
+│       ├── patches/@tencent-connect-dsh-qqbot/dist/    # 自动分发 qqbot插件修改 内容
+│       │   ├── gateway/bootstrap.js                    # 修改好的文件 最小必须注入：ctx.provide
+│       │   └── transport/outbound.js                   # 修改好的文件 放行新增的工具show_file：用该工具调用方案/验收.md节约token
+│       ├── scripts/apply-patch.mjs                     # 自动分发 qqbot插件修改 脚本
+│       ├── cordis.patch.yml                        
+│       ├── index.js                      
+│       └── package.json        
+├── pe-test/tools/                        # 自检/取证工具
+│   ├── validate-extra-plan-preset.mjs    # 预设静态校验（YAML 语法 + deny 清单存在性）
+│   ├── validate-save-probe-gate.mjs      # save_probe 注册层 + 硬闸门五态 + planner 预算回归验证
+│   ├── validate-reviewer-pwsh-guard.mjs  # reviewer pwsh 写动词拦截验证
+│   ├── smoke-forensics-extra-plan.mjs    # extra-plan 冒烟会话取证
+│   ├── saveplan-forensics.mjs            # save_plan call/result 配对取证
+│   ├── ledger-summary.mjs                # usage 账本聚合（P3 A/B 读数）
+│   ├── print-header-tools.mjs            # 打印会话 request/header 的 tools 列表
+│   ├── test-extra-plan-gate.mjs          # 闸门机制测试（node 直接运行）
+│   ├── test-cross-platform.mjs           # 跨平台只读防线测试（bash/pwsh 写命令拦截，三平台通用）
+│   ├── decode-session.mjs                # 解码单个会话日志（事件统计/plan/mode 摘要）
+│   └── readme.md
+├── 按需规划模式测试方案.md                 # 内部测试方案文档
+├── README.md                             # 本文档（模式介绍 + 安装方式）
+└── LICENSE                               # MIT 许可
 ```
 
 ## 4. 完整流程
@@ -139,7 +147,7 @@ dsh-extra-plan/
   - 只含四类**定位线索**：文件地图（fileMap）/ 重点区域（focusAreas）/ 排除项（exclusions）/ 背景与意图（background），**不含证据**（行号/数值/文案摘录）
 
 ⑦ 启用 pro 规划子代理（subagent_plan 工具）：
-   - **探查硬上限**：规划子代理只读探查有机械预算（默认 18 次工具调用，成功上限 = 预算值）；**每轮开局告知预算**：初始任务/续轮转达消息末尾自动拼接「本轮探查预算上限为 {预算值} 次工具调用」（拼在附加指令之前，附加指令留空也生效）；**剩 3 次提醒收尾**：剩余次数 ≤3 时注入一次「本轮探查预算还剩 {剩余数} 次，请收紧探查、规划收尾，未查项记入待确认假设清单」提示（每轮只注入一次；预算值 ≤3 时不注入）；**预算耗尽** → 拒绝后续工具调用并注入带数字指令「探查预算已耗尽（本轮已用 {已成功次数}/{预算值}）：…」（预算 18 时：第 18 次调用成功、第 19 次尝试才被拒——"剩 3 次 = 还能成功 3 次"），硬性止住"越探越远/想太久"。预算自最近一条主会话发往规划子代理的消息起计，**每条主会话转达消息（你的意见/疑问答复）= 一次预算重置 = 授权继续探查**
+   - **探查硬上限**：规划子代理只读探查有机械预算（默认 18 次工具调用，成功上限 = 预算值）；**每轮开局告知预算**：初始任务/续轮转达消息末尾自动拼接「本轮探查预算上限为 {预算值} 次工具调用」（拼在附加指令之前，附加指令留空也生效）；**剩 3 次提醒收尾**：剩余次数 ≤3 时注入一次「本轮探查预算还剩 {剩余数} 次」提示（每轮只注入一次；预算值 ≤3 时不注入）；**预算耗尽** → 拒绝后续工具调用并注入带数字指令「探查预算已耗尽（本轮已用 {已成功次数}/{预算值}）：…」，硬性止住"越探越远/想太久"。预算自最近一条主会话发往规划子代理的消息起计，**每条主会话转达消息（你的意见/疑问答复）= 一次预算重置 = 授权继续探查**
    - 产出：**规划方案 + 验收标准清单**
    - **方案落盘（save_plan 专用工具）**：规划子代理把产出经专用工具 save_plan 写入工作区固定目录 `.extra-plan\`，**双文件**：`方案-<任务名>-<yyyyMMddHHmmss>.md`（规划方案 + 待确认假设清单）与 `验收-<任务名>-<yyyyMMddHHmmss>.md`（验收标准清单，每条带对应任务编号）。**程序定死双写**（两个 payload 必填 + 原子写入、崩溃自愈），保证两个文件要么都写成、要么都不写。该工具只出现在规划子代理的工具目录——规划子代理 = 只读 + 仅可落盘。落盘成功后在输出中给出两个文件路径
    - **疑问往返通道**：规划中遇到阻塞性关键疑问 → 子代理暂停当轮、把疑问作为当轮输出；主会话**原样**向用户展示问题 → 用户答复 → 主会话**原样** send_message 回同一子代理继续规划（可多轮，直到产出终案）。主会话只转发、不代答、不改写
@@ -160,4 +168,4 @@ dsh-extra-plan/
 
 ## 5. 许可
 
-本项目基于 **MIT License** 发布（与插件 `package.json` 中 `license: MIT` 声明一致），详见 `LICENSE` 文件
+本项目基于 **MIT License** 发布

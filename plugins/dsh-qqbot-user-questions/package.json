@@ -1,0 +1,26 @@
+{
+  "name": "@local/dsh-qqbot-user-questions",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "patches/",
+    "scripts/"
+  ],
+  "scripts": {
+    "postinstall": "node scripts/apply-patch.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
