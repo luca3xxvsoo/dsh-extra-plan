@@ -6,17 +6,11 @@
   "main": "index.js",
   "exports": {
     ".": "./index.js",
-    "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
   "files": [
-    "index.js",
-    "cordis.patch.yml"
+    "index.js"
   ],
   "license": "MIT",
-  "dsh": {
-    "bundle": {
-      "patch": "./cordis.patch.yml"
-    }
-  }
+  "repository": "git+https://github.com/luca3xxvsoo/dsh-extra-plan.git"
 }

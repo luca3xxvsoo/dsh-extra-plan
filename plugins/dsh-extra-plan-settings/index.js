@@ -6,7 +6,7 @@
 // webServer 通过 ctx.inject(['webServer'], ...) 条件注册，非 web profile 优雅降级为 no-op。
 
 import yaml from 'js-yaml'
-import { readFileSync, writeFileSync, mkdirSync, renameSync, existsSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync, renameSync, existsSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { settingsNamespace } from '@deepseek-ai/dsh-settings'
@@ -36,6 +36,30 @@ function dshHomeDir(ctx) {
   const fromEnv = process.env.DSH_HOME
   if (typeof fromEnv === 'string' && fromEnv.trim() !== '') return fromEnv.trim()
   return join(process.env.USERPROFILE || process.env.HOME || '', '.dsh')
+}
+
+// 找出安装了主包（@local/dsh-extra-plan）的 profile 名列表。
+function mainPluginProfiles(dshHome) {
+  const root = join(dshHome, 'profiles')
+  if (!existsSync(root)) return []
+  const out = []
+  for (const name of readdirSync(root)) {
+    const probe = join(root, name, 'node_modules', '@local', 'dsh-extra-plan')
+    if (existsSync(probe)) out.push(name)
+  }
+  return out
+}
+
+// 读取 profile 用户层 cordis.patch.yml 中 flash-guide 的 id-targeted 条目。
+function readFlashGuideConfig(file) {
+  const items = existsSync(file) ? yaml.load(readFileSync(file, 'utf8'), { schema: patchSchema }) : []
+  const list = Array.isArray(items) ? items : []
+  for (const item of list) {
+    if (item && typeof item === 'object' && item.id === 'flash-guide') {
+      return { list, item }
+    }
+  }
+  return { list, item: null }
 }
 
 function agentCordisPath(ctx) {
@@ -349,6 +373,55 @@ function createApiHandler(ctx) {
           })
         } catch (err) {
           return json(res, 500, { error: 'failed to write cordis.patch.yml: ' + String((err && err.message) || err) })
+        }
+      }
+
+      // ── flash-guide 开关 ──
+
+      if (req.method === 'GET' && path === '/api/dsh-extra-plan-settings/flash-guide-config') {
+        try {
+          const profiles = mainPluginProfiles(dshHomeDir(ctx))
+          if (profiles.length === 0) {
+            return json(res, 200, { available: false, disabled: false })
+          }
+          let allDisabled = true
+          for (const profile of profiles) {
+            const file = join(dshHomeDir(ctx), 'profiles', profile, 'cordis.patch.yml')
+            const { item } = readFlashGuideConfig(file)
+            if (!item || item.disabled !== true) {
+              allDisabled = false
+              break
+            }
+          }
+          return json(res, 200, { available: true, disabled: allDisabled })
+        } catch (err) {
+          return json(res, 500, { error: 'failed to read flash-guide config: ' + String((err && err.message) || err) })
+        }
+      }
+
+      if (req.method === 'PUT' && path === '/api/dsh-extra-plan-settings/flash-guide-config') {
+        const body = await readJsonBody(req)
+        if (typeof body.disabled !== 'boolean') {
+          return json(res, 400, { error: 'disabled must be a boolean' })
+        }
+        try {
+          const profiles = mainPluginProfiles(dshHomeDir(ctx))
+          if (profiles.length === 0) {
+            return json(res, 404, { error: 'extra-plan main plugin not installed in any profile' })
+          }
+          for (const profile of profiles) {
+            const file = join(dshHomeDir(ctx), 'profiles', profile, 'cordis.patch.yml')
+            const { list, item } = readFlashGuideConfig(file)
+            if (item) {
+              item.disabled = body.disabled
+            } else {
+              list.push({ id: 'flash-guide', disabled: body.disabled })
+            }
+            writeYaml(file, list)
+          }
+          return json(res, 200, { disabled: body.disabled })
+        } catch (err) {
+          return json(res, 500, { error: 'failed to write flash-guide config: ' + String((err && err.message) || err) })
         }
       }
 

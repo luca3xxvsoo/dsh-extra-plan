@@ -13,17 +13,21 @@
     "index.js",
     "scripts/distribute-preset.mjs",
     "cordis.patch.yml",
-    "assets/presets/",
-    "README.md"
+    "assets/presets/"
   ],
   "scripts": {
     "postinstall": "node scripts/distribute-preset.mjs"
   },
   "license": "MIT",
+  "repository": "git+https://github.com/luca3xxvsoo/dsh-extra-plan.git",
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
   },
-  "dependencies": {}
+  "dependencies": {
+    "@local/dsh-extra-plan-settings": "luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan-settings",
+    "@local/dsh-executor-spawn": "luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-executor-spawn",
+    "@local/dsh-flash-guide": "luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-flash-guide"
+  }
 }

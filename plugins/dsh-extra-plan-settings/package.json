@@ -28,6 +28,7 @@
     "lib/client.js"
   ],
   "license": "MIT",
+  "repository": "git+https://github.com/luca3xxvsoo/dsh-extra-plan.git",
   "dependencies": {
     "js-yaml": "^4.2.0"
   }

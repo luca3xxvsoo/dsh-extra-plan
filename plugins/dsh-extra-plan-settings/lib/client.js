@@ -10,6 +10,7 @@ window.__ModuleLoader__.load({
     const PRO_CONFIG_URL = "/api/dsh-extra-plan-settings/pro-config";
     const QQBOT_STATUS_URL = "/api/dsh-extra-plan-settings/qqbot-status";
     const QQBOT_CONFIG_URL = "/api/dsh-extra-plan-settings/qqbot-config";
+    const FLASHGUIDE_CONFIG_URL = "/api/dsh-extra-plan-settings/flash-guide-config";
 
     const zh = {
       cardTitle: "按需规划模式配置",
@@ -33,6 +34,9 @@ window.__ModuleLoader__.load({
       qqbotSection: "qqbot兼容插件",
       qqbotUnavailable: "qqbot 环境未就绪，不展示配置项。",
       approvalEnabled: "越权申请开关",
+      flashGuideSection: "flash 引导",
+      flashGuideUnavailable: "主插件未安装，不展示配置项。",
+      flashGuideEnabled: "启用 flash 引导",
       configLoadFailed: "配置加载失败："
     };
 
@@ -58,6 +62,9 @@ window.__ModuleLoader__.load({
       qqbotSection: "QQ Bot Compat",
       qqbotUnavailable: "QQ Bot environment is not ready. No configuration items are displayed.",
       approvalEnabled: "Approval Required",
+      flashGuideSection: "Flash Guide",
+      flashGuideUnavailable: "Main plugin is not installed. No configuration items are displayed.",
+      flashGuideEnabled: "Enable Flash Guide",
       configLoadFailed: "Config load failed: "
     };
 
@@ -359,6 +366,100 @@ window.__ModuleLoader__.load({
         );
       }
 
+      function FlashGuideConfigTab() {
+        const [status, setStatus] = React.useState("loading"); // loading | ready | unavailable | error
+        const [disabled, setDisabled] = React.useState(false);
+        const [saving, setSaving] = React.useState(false);
+        const [message, setMessage] = React.useState({ kind: "", text: "" });
+
+        React.useEffect(function () {
+          let cancelled = false;
+          fetch(FLASHGUIDE_CONFIG_URL, { headers: { accept: "application/json" } })
+            .then(function (res) {
+              return res.json().catch(function () { return {}; }).then(function (data) {
+                if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+                return data;
+              });
+            })
+            .then(function (data) {
+              if (cancelled) return;
+              if (data.available !== true) {
+                setStatus("unavailable");
+                return;
+              }
+              setDisabled(data.disabled === true);
+              setStatus("ready");
+            })
+            .catch(function () {
+              if (cancelled) return;
+              setStatus("error");
+            });
+          return function () { cancelled = true; };
+        }, []);
+
+        async function save() {
+          if (status !== "ready" || saving) return;
+          setSaving(true);
+          setMessage({ kind: "", text: "" });
+          try {
+            const res = await fetch(FLASHGUIDE_CONFIG_URL, {
+              method: "PUT",
+              headers: { "content-type": "application/json", "accept": "application/json" },
+              body: JSON.stringify({ disabled: disabled })
+            });
+            const data = await res.json().catch(function () { return {}; });
+            if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+            setMessage({ kind: "ok", text: t("saved") });
+          } catch (e) {
+            setMessage({ kind: "error", text: t("saveFailed") + " " + String((e && e.message) || e) });
+          } finally {
+            setSaving(false);
+          }
+        }
+
+        if (status === "unavailable") {
+          return el("div", { className: "esp-section" },
+            el("p", { className: "esp-sectionTitle" }, t("flashGuideSection")),
+            el("p", { className: "esp-hint" }, t("flashGuideUnavailable"))
+          );
+        }
+        if (status === "loading") {
+          return el("div", { className: "esp-section" },
+            el("p", { className: "esp-sectionTitle" }, t("flashGuideSection")),
+            el("p", { className: "esp-empty" }, t("loading"))
+          );
+        }
+        if (status === "error") {
+          return el("div", { className: "esp-section" },
+            el("p", { className: "esp-sectionTitle" }, t("flashGuideSection")),
+            el("p", { className: "esp-err" }, t("configLoadFailed"))
+          );
+        }
+
+        return el("div", { className: "esp-section" },
+          el("p", { className: "esp-sectionTitle" }, t("flashGuideSection")),
+          el("label", { className: "esp-field" },
+            el("span", { className: "esp-label" }, t("flashGuideEnabled")),
+            el("select", {
+              className: "esp-select",
+              value: disabled ? "true" : "false",
+              onChange: function (e) { setDisabled(e.target.value === "true"); }
+            },
+              el("option", { value: "true" }, "True"),
+              el("option", { value: "false" }, "False")
+            )
+          ),
+          message.text ? el("p", { className: message.kind === "ok" ? "esp-ok" : "esp-err" }, message.text) : null,
+          el("div", { className: "esp-actions" },
+            el("button", {
+              className: "esp-btn esp-btnPrimary",
+              disabled: saving,
+              onClick: save
+            }, saving ? t("saving") : t("save"))
+          )
+        );
+      }
+
       function ExtraPlanCard() {
         const [open, setOpen] = React.useState(false);
 
@@ -393,7 +494,8 @@ window.__ModuleLoader__.load({
       function ExtraPlanSettingsTab() {
         return el("div", { className: "esp-wrap" },
           el(ProConfigTab),
-          el(QqbotConfigTab)
+          el(QqbotConfigTab),
+          el(FlashGuideConfigTab)
         );
       }
 

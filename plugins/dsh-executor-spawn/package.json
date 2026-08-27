@@ -7,5 +7,6 @@
   "exports": {
     ".": "./index.js"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "repository": "git+https://github.com/luca3xxvsoo/dsh-extra-plan.git"
 }
