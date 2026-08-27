@@ -13,7 +13,7 @@
 import { createHash } from 'node:crypto'
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const PRESET_ID = 'extra-plan'
@@ -60,8 +60,18 @@ export function distribute(dshHome) {
   process.stdout.write(`[dsh-extra-plan] 预设「按需规划模式」已分发（安装时一次性）→ ${targetDir}\n`)
 }
 
-// CLI 入口：postinstall 直接运行本脚本
-if (process.argv[1] && import.meta.url === new URL(`file:///${process.argv[1].replace(/\\/g, '/')}`).href) {
+// CLI 入口：postinstall 直接运行本脚本。
+// pnpm 以「相对路径」调用（`node scripts/distribute-preset.mjs`，cwd=包目录），
+// 故用 resolve 归一化后再与 import.meta.url 比较（Windows 下忽略大小写）。
+const invokedAsMain = (() => {
+  if (!process.argv[1]) return false
+  const called = resolve(process.argv[1])
+  const self = fileURLToPath(import.meta.url)
+  return process.platform === 'win32'
+    ? called.toLowerCase() === self.toLowerCase()
+    : called === self
+})()
+if (invokedAsMain) {
   const dshHome = process.env.DSH_HOME === undefined || process.env.DSH_HOME === ''
     ? join(homedir(), '.dsh')
     : process.env.DSH_HOME
