@@ -28,10 +28,12 @@ const JsExpr = new yaml.Type('tag:yaml.org,2002:js', {
 })
 const patchSchema = yaml.JSON_SCHEMA.extend(JsExpr)
 
-// 从 ctx.settings.documentPath 解析 DSH_HOME（settings.yaml 位于 DSH_HOME 根目录）。
+// 从 ctx 的 settings 文档路径解析 DSH_HOME（settings.yaml 位于 DSH_HOME 根目录）。
+// 注意：host 平面 inject=[] 下只能用 ctx.get('settings')（可选查找）；直接读
+// ctx.settings 会被宿主 ctx 守卫以「未声明服务」抛错（API 500）。
 function dshHomeDir(ctx) {
-  const settings = ctx.settings
-  const doc = settings && typeof settings.documentPath === 'string' ? settings.documentPath : ''
+  const settings = ctx.get('settings')
+  const doc = settings !== undefined && settings !== null && typeof settings.documentPath === 'string' ? settings.documentPath : ''
   if (doc !== '') return dirname(doc)
   const fromEnv = process.env.DSH_HOME
   if (typeof fromEnv === 'string' && fromEnv.trim() !== '') return fromEnv.trim()
