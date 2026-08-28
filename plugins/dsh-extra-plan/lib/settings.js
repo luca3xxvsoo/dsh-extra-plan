@@ -175,6 +175,52 @@ function writeYaml(file, data) {
   renameSync(tmp, file)
 }
 
+// ── 文本级直接写入（零格式扰动）：只替换目标行，注释/!!js/其他行字节原样 ──
+
+// YAML 标量序列化：布尔/数字/安全字符不加引号；其余单引号包裹（内部 ' 双写）。
+function yamlScalar(v) {
+  const s = String(v)
+  if (/^(true|false|null|~|-?\d+(?:\.\d+)?)$/.test(s)) return s
+  if (/^[A-Za-z0-9_\-./@]+$/.test(s)) return s
+  return "'" + s.replace(/'/g, "''") + "'"
+}
+
+// 在文本中定位 `- id: <rowId>` 行（任意缩进），向后（最多 40 行）找第一个
+// `<field>: ` 行并只替换该行的值；找不到返回 null（调用方按错误处理）。
+function patchRowField(text, rowId, field, value) {
+  const lines = text.split('\n')
+  const rowRe = new RegExp('^\\s*- id: ' + rowId + '\\s*$')
+  const start = lines.findIndex((l) => rowRe.test(l))
+  if (start === -1) return null
+  const fieldRe = new RegExp('^(\\s*)' + field + ': .*$')
+  const v = yamlScalar(value)
+  for (let i = start + 1; i < lines.length && i <= start + 40; i += 1) {
+    if (fieldRe.test(lines[i])) {
+      lines[i] = lines[i].replace(/:\s.*$/, ': ' + v)
+      return lines.join('\n')
+    }
+  }
+  return null
+}
+
+// 原子文本写回（tmp + rename）。
+function writeTextAtomic(file, content) {
+  const dir = dirname(file)
+  mkdirSync(dir, { recursive: true })
+  const tmp = file + '.tmp-' + process.pid
+  writeFileSync(tmp, content, 'utf8')
+  renameSync(tmp, file)
+}
+
+// 文件级文本补丁：读文件 → patchRowField → 写回；找不到行返回 false。
+function patchFileField(file, rowId, field, value) {
+  const text = readFileSync(file, 'utf8')
+  const next = patchRowField(text, rowId, field, value)
+  if (next === null) return false
+  writeTextAtomic(file, next)
+  return true
+}
+
 // 读取 cordis.patch.yml 并找到 qqbot-user-questions 条目。
 function readQqbotConfig(file) {
   const content = readFileSync(file, 'utf8')
@@ -279,38 +325,36 @@ function createApiHandler(ctx) {
             return json(res, 404, { error: 'extra-plan plugin not found in agent.cordis.yml' })
           }
 
-          // 原地修改
-          entry.config.plannerModel = body.plannerModel.trim()
-          entry.config.plannerPromptSuffix = typeof body.plannerPromptSuffix === 'string'
-            ? body.plannerPromptSuffix
-            : ''
-          entry.config.exploreBudget = budget
+          // ── 文本级直接写入：仅目标行变化，其余字节（注释/!!js/格式）零扰动 ──
+          let text = readFileSync(file, 'utf8')
+          let touched = false
+          const apply = (rowId, field, value) => {
+            const next = patchRowField(text, rowId, field, value)
+            if (next === null) return false
+            text = next
+            touched = true
+            return true
+          }
+          if (!apply('extra-plan', 'plannerModel', body.plannerModel.trim())) {
+            return json(res, 404, { error: 'extra-plan plugin not found in agent.cordis.yml' })
+          }
+          apply('extra-plan', 'plannerPromptSuffix', typeof body.plannerPromptSuffix === 'string' ? body.plannerPromptSuffix : '')
+          apply('extra-plan', 'exploreBudget', String(budget))
           if (typeof body.anchoredBootstrap === 'boolean') {
-            entry.config.anchoredBootstrap = body.anchoredBootstrap
+            apply('extra-plan', 'anchoredBootstrap', body.anchoredBootstrap ? 'true' : 'false')
           }
-
-          // 写入 tool-web 的 fetch 配置
           if (typeof body.webFetch === 'boolean') {
-            const toolWebResult = readToolWebConfig(file)
-            if (toolWebResult.entry && toolWebResult.entry.config) {
-              toolWebResult.entry.config.fetch = body.webFetch
-            }
+            apply('tool-web', 'fetch', body.webFetch ? 'true' : 'false')
           }
-
-          // 写入 tool-presentation 的 mode 配置
           if (typeof body.toolPresentationMode === 'string' && ['native', 'both', 'code'].includes(body.toolPresentationMode)) {
-            const toolPresentationResult = readToolPresentationConfig(file)
-            if (toolPresentationResult.entry && toolPresentationResult.entry.config) {
-              toolPresentationResult.entry.config.mode = body.toolPresentationMode
-            }
+            apply('tool-presentation', 'mode', body.toolPresentationMode)
           }
-
-          writeYaml(file, plugins)
+          if (touched) writeTextAtomic(file, text)
           return json(res, 200, {
-            plannerModel: entry.config.plannerModel,
-            plannerPromptSuffix: entry.config.plannerPromptSuffix,
-            exploreBudget: entry.config.exploreBudget,
-            anchoredBootstrap: entry.config.anchoredBootstrap === true,
+            plannerModel: body.plannerModel.trim(),
+            plannerPromptSuffix: typeof body.plannerPromptSuffix === 'string' ? body.plannerPromptSuffix : '',
+            exploreBudget: budget,
+            anchoredBootstrap: body.anchoredBootstrap === true,
             webFetch: typeof body.webFetch === 'boolean' ? body.webFetch : false,
             toolPresentationMode: typeof body.toolPresentationMode === 'string' ? body.toolPresentationMode : 'native'
           })
@@ -363,15 +407,11 @@ function createApiHandler(ctx) {
 
         const file = cordisPatchPath(ctx)
         try {
-          const { patches, entry } = readQqbotConfig(file)
-          if (!entry) {
+          if (!patchFileField(file, 'qqbot-user-questions', 'approvalEnabled', body.approvalEnabled ? 'true' : 'false')) {
             return json(res, 404, { error: 'qqbot-user-questions not found in cordis.patch.yml' })
           }
-
-          entry.config.approvalEnabled = body.approvalEnabled
-          writeYaml(file, patches)
           return json(res, 200, {
-            approvalEnabled: entry.config.approvalEnabled
+            approvalEnabled: body.approvalEnabled
           })
         } catch (err) {
           return json(res, 500, { error: 'failed to write cordis.patch.yml: ' + String((err && err.message) || err) })
@@ -413,13 +453,12 @@ function createApiHandler(ctx) {
           }
           for (const profile of profiles) {
             const file = join(dshHomeDir(ctx), 'profiles', profile, 'cordis.patch.yml')
-            const { list, item } = readFlashGuideConfig(file)
-            if (item) {
-              item.disabled = body.disabled
-            } else {
-              list.push({ id: 'flash-guide', disabled: body.disabled })
+            if (!patchFileField(file, 'flash-guide', 'disabled', body.disabled ? 'true' : 'false')) {
+              // 条目缺失：文件末尾追加一条（保持旧"push 新条目"语义）
+              const existing = existsSync(file) ? readFileSync(file, 'utf8') : ''
+              const sep = existing === '' ? '' : (existing.endsWith('\n') ? '' : '\n')
+              writeTextAtomic(file, existing + sep + '- id: flash-guide\n  disabled: ' + yamlScalar(body.disabled) + '\n')
             }
-            writeYaml(file, list)
           }
           return json(res, 200, { disabled: body.disabled })
         } catch (err) {
