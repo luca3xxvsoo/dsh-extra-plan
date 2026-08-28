@@ -104,6 +104,8 @@ dsh-extra-plan/
 │       └── package.json        
 ├── pe-test/tools/                        # 自检/取证工具
 │   ├── validate-extra-plan-preset.mjs    # 预设静态校验（YAML 语法 + deny 清单存在性）
+│   ├── validate-preset-sync.mjs          # 自愈校验
+│   ├── validate-distribute-preset.mjs    # 自愈校验2
 │   ├── validate-save-probe-gate.mjs      # save_probe 注册层 + 硬闸门五态 + planner 预算回归验证
 │   ├── validate-reviewer-pwsh-guard.mjs  # reviewer pwsh 写动词拦截验证
 │   ├── smoke-forensics-extra-plan.mjs    # extra-plan 冒烟会话取证

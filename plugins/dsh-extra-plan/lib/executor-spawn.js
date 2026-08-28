@@ -62,6 +62,9 @@ export function apply(ctx, config) {
   const defaultFilter = { deny }
   // agentOptions 透传：请求自带 agentOptions 时保留其字段（含显式 model，优先）；
   // 否则新建空对象，模型由宿主按父会话继承。
+  // 注：宿主 resolveChildAgentOptions（dsh-subagent L501-512）用对象展开合并
+  // （...requested），空对象 {} 与 undefined 等价——父会话 provider/model/maxTokens
+  // 全部继承，不会被空对象屏蔽；显式键才覆盖父值。
   const defaultedAgentOptions = (request) => {
     const base = request.agentOptions !== undefined && request.agentOptions !== null
       ? { ...request.agentOptions } : {}

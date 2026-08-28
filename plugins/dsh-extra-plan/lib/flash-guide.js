@@ -154,7 +154,6 @@ export function apply(ctx) {
       : undefined
     const model = typeof svc === 'function' ? await svc(agent) : modelOf(agent)
     if (!shouldGuide(model)) {
-      // console.log(`flash-guide: skip session=${sessionId} model=${model} (non-flash)`)
       return decision
     }
     // Host message objects are deepFrozen — build a NEW array and insert from
@@ -165,7 +164,6 @@ export function apply(ctx) {
       const text = extractText(messages[indexes[i]])
       if (!text.trim()) continue
       messages.splice(indexes[i] + 1, 0, buildGuideMessage(text))
-      // console.log(`flash-guide: inject session=${sessionId} model=${model} tier=${isComplexTask(text) ? 'deep' : 'weak'}`)
     }
     return { ...decision, messages }
   })

@@ -1167,7 +1167,7 @@ export function apply(ctx, config) {
       parameters: {
         type: 'object',
         properties: {
-          plan: { type: 'string', description: '规划方案全文（含待确认假设清单，Markdown）' },
+          plan: { type: 'string', description: '规划方案全文（含假设时须全部已确认，Markdown）' },
           checklist: { type: 'string', description: '验收标准清单全文（逐条机械可核对、每条带对应任务编号，Markdown）' },
           taskName: { type: 'string', description: '可选任务短名（≤32 字；插件会净化，勿传路径）' },
         },

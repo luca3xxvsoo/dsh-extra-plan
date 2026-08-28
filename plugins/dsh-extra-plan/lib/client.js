@@ -448,7 +448,8 @@ window.__ModuleLoader__.load({
       ctx.slots.register({
         name: "settings.plugin.item",
         key: "dsh-extra-plan",
-        locale: NS
+        locale: NS,
+        inject: () => {}
       }, ExtraPlanCard);
     }
 
