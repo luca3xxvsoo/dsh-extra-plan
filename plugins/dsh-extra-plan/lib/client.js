@@ -449,7 +449,7 @@ window.__ModuleLoader__.load({
         name: "settings.plugin.item",
         key: "dsh-extra-plan",
         locale: NS,
-        inject: () => {}
+        inject: () => ({})
       }, ExtraPlanCard);
     }
 
