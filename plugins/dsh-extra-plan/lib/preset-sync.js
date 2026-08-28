@@ -1,9 +1,8 @@
 // host 平面自愈组件：dsh 启动时核对 .agent-presets/extra-plan，保证「一次安装」后
-// 预设必然就位（postinstall 被 pnpm 判定跳过时的兜底）。语义与「发完即退役」兼容：
-// - 目标不存在            → 全量写入（自愈）
-// - 旧分发记录（manifest.distHash 为历史值且内容与记录一致）→ 覆盖为新发行物（链式升级）
-// - 当前发行记录           → 幂等无操作
-// - 其他（distHash null/缺失/内容与记录不符 = 用户手动改动）→ 绝不碰
+// 预设必然就位（postinstall 被 pnpm 判定跳过时的兜底）。新版本下发 = 覆盖：
+// - 目标不存在            → 全量写入（written）
+// - 记录 == 当前发行       → 幂等无操作（idle；同版本内手改 → 保留，不碰）
+// - 其余（跨版本下发 / 记录缺失 / 记录≠当前版）→ 覆盖为新发行物（upgraded；手改过的旧版同样覆盖）
 // 任何异常只静默跳过（不阻断 profile 启动）。
 import { createHash } from 'node:crypto'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
@@ -65,7 +64,7 @@ function writeFull(targetDir, distHash) {
 
 /**
  * 运行一次自愈核对（导出便于单测）。
- * @returns 'written' | 'upgraded' | 'idle' | 'skipped'
+ * @returns 'written' | 'upgraded' | 'idle'
  */
 export function syncPreset(dshHome) {
   const targetDir = join(dshHome, '.agent-presets', PRESET_ID)
@@ -76,13 +75,9 @@ export function syncPreset(dshHome) {
     return 'written'
   }
   const recorded = readManifest(targetDir)
-  const targetHash = contentHash(targetDir)
-  if (recorded === currentHash && targetHash === currentHash) return 'idle' // 已是当前发行
-  if (recorded !== null && targetHash !== null && targetHash === recorded) {
-    writeFull(targetDir, currentHash)
-    return 'upgraded'
-  }
-  return 'skipped' // 用户改动/手动拷贝 → 不碰
+  if (recorded === currentHash) return 'idle' // 已是当前发行；同版本内手改 → 保留，不碰
+  writeFull(targetDir, currentHash) // 跨版本下发或记录缺失 → 一律覆盖为当前发行
+  return 'upgraded'
 }
 
 export const name = 'extra-plan-preset-sync'
