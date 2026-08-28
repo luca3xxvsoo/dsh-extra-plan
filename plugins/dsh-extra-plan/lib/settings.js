@@ -13,7 +13,7 @@ import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 import z from '@deepseek-ai/schemastery'
 
 export const name = 'dsh-extra-plan-settings'
-export const inject = ['settings']
+export const inject = []
 
 const EXTRA_PLAN_NS = settingsNamespace('dsh-extra-plan')
 const ExtraPlanSettingsSchema = z.object({})
@@ -433,8 +433,11 @@ function createApiHandler(ctx) {
 }
 
 export function apply(ctx) {
-  // 注册 settings 命名空间，使前端 settings.plugin.item 能发现此插件
-  ctx.settings.register(EXTRA_PLAN_NS, ExtraPlanSettingsSchema)
+  // 注册 settings 命名空间（回调式：settings 服务存在才注册，缺席优雅跳过——
+  // 与官方 installSettingsSection 同构。host 平面挂载，宿主常驻服务，配置保存不依赖开会话）。
+  ctx.inject(['settings'], (sctx) => {
+    sctx.settings.register(EXTRA_PLAN_NS, ExtraPlanSettingsSchema)
+  })
 
   // 条件注册路由：仅在 webServer 可用时生效（优雅降级）。
   ctx.inject(['webServer'], (webCtx) => {

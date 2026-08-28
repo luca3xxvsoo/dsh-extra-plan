@@ -107,10 +107,6 @@
           enabled: true
           path: !!js dshHomePath('usage-ledger', 'ledger.jsonl')
 
-# dsh web界面配置插件
-- id: extra-plan-settings
-  name: '@local/dsh-extra-plan/settings'
-
 # ── compaction ──────────────────────────────────────────────────────────────
 
 - id: compaction

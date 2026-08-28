@@ -1,8 +1,11 @@
 # 预设分发：postinstall（scripts/distribute-preset.mjs，安装时一次性执行）为主，
 # lib/preset-sync.js 为启动自愈兜底（pnpm 跳过构建时重启后自动核对/就位）。
-# 本 bundle patch 注册两个 host 平面组件：extra-plan-preset-sync（自愈）与 flash-guide（近场引导）。
+# 本 bundle patch 注册三个 host 平面组件：extra-plan-preset-sync（自愈）、
+# extra-plan-settings（设置卡 API 常驻 host——配置保存不依赖开会话）与 flash-guide（近场引导）。
 - insert:
     - id: extra-plan-preset-sync
       name: '@local/dsh-extra-plan/preset-sync'
+    - id: extra-plan-settings
+      name: '@local/dsh-extra-plan/settings'
     - id: flash-guide
       name: '@local/dsh-extra-plan/flash-guide'
