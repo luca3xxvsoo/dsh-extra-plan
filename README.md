@@ -104,6 +104,10 @@ dsh-extra-plan/
 │       └── package.json        
 ├── pe-test/tools/                                      # 自检/取证工具
 │   ├── README.md/                                      # 自检/取证工具介绍
+│   ├── _shared/                                        
+│   │   ├── zstd-frames.mjs  
+│   │   ├── session-finder.mjs  
+│   │   └── preset-hash.mjs         
 │   └── tools/                                 
 │       ├── 一键step测试.mjs                             # 可以通过输入真实session_id进行测试
 │       ├── step-00-跨平台写拦截.mjs
