@@ -82,14 +82,18 @@ for (const req of required) {
   if (names.includes(req)) { pass += 1 } else { fail += 1; console.log(`FAIL  缺少行: ${req}`) }
 }
 const planRow = subagentRows.find((r) => r.config && r.config.toolName === 'subagent_plan')
-if (planRow !== undefined && planRow.config && planRow.config.agentOptions && planRow.config.agentOptions.model === 'deepseek-v4-pro') {
+const pluginRow = all.find((r) => r.name === '@local/dsh-extra-plan')
+const plannerModel = pluginRow !== undefined && pluginRow.config && typeof pluginRow.config.plannerModel === 'string' ? pluginRow.config.plannerModel : ''
+// 宽松化（修复已知预存 FAIL）：具体型号由设置页配置（plannerModel），此处只验证
+// 「subagent_plan 行存在 + 模型配置项非空」；旧断言查找 agentOptions.model===deepseek-v4-pro，
+// 该字段结构已不存在且写死型号会在用户改模型时误报。
+if (planRow !== undefined && plannerModel !== '') {
   pass += 1
-  console.log('PASS  subagent_plan 行 model=deepseek-v4-pro、continuable')
+  console.log(`PASS  subagent_plan 行存在、plannerModel 已配置（=${plannerModel}）`)
 } else {
   fail += 1
-  console.log('FAIL  subagent_plan 行缺 pro 模型配置')
+  console.log('FAIL  subagent_plan 行或 plannerModel 配置缺失')
 }
-const pluginRow = all.find((r) => r.name === '@local/dsh-extra-plan')
 if (pluginRow !== undefined && pluginRow.config && pluginRow.config.usageLedger && pluginRow.config.usageLedger.enabled === true && pluginRow.config.anchoredBootstrap === true && typeof pluginRow.config.plannerPromptSuffix === 'string') {
   pass += 1
   console.log('PASS  extra-plan 插件行 config 完整（anchoredBootstrap/usageLedger 开启、plannerPromptSuffix 存在）')

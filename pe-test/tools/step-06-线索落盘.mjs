@@ -27,7 +27,7 @@ function checkTrue(name, got) {
   console.log(`${okResult ? 'PASS' : 'FAIL'}  ${name}  (期望 true, 实际 ${JSON.stringify(got)})`)
 }
 
-// ── 事件构造（同 test-extra-plan-gate.mjs 真实形状） ─────────────────────
+// ── 事件构造（同 step-00-全流程回归.mjs 真实形状） ─────────────────────
 const DESC = { type: 'subagent/descriptor', data: { mode: 'continuable' } }
 const um = () => ({ type: 'user/message', data: { source: { kind: 'user' } } })
 const umk = (kind) => ({ type: 'user/message', data: { source: { kind } } })

@@ -127,6 +127,22 @@ const BASH_MUTATION = /\b(rm|mv|cp|mkdir|rmdir|touch|tee|chmod|chown|ln)\b(?=\s|
 
 // ── 纯判定函数（模块顶层；经 decisions 导出供场景测试直接复用，防复制漂移） ──
 
+// 显式路由判定（对齐官方 model-selection.ts L118-119 routeChanged 口径：
+// provider 或 model 任一与父值不同即视为显式）。空串/undefined 视为「无选择」。
+function isExplicitRoute(rProvider, rModel, pProvider, pModel) {
+  const rp = typeof rProvider === 'string' && rProvider !== '' ? rProvider : undefined
+  const rm = typeof rModel === 'string' && rModel !== '' ? rModel : undefined
+  if (rp !== undefined && (rp !== pProvider || rm !== pModel)) return true
+  if (rm !== undefined && rm !== pModel) return true
+  return false
+}
+
+// 显式 effort 判定（对齐官方 L189-190）：只有 resolved 存在且 ≠ 父值才算显式；
+// undefined/空串（adapter 默认被 requestProposal 剥除后）不算显式。
+function isExplicitEffort(rEffort, pEffort) {
+  return typeof rEffort === 'string' && rEffort !== '' && rEffort !== pEffort
+}
+
 // 可靠子代理识别（持久标记）：优先 session.header，日志 descriptor 扫描兜底。
 function isSubagentChild(agent) {
   if (agent === undefined || agent === null) return false
@@ -817,6 +833,8 @@ export const decisions = {
   ROUTE_CONFIRM_TEXT,
   APPROVAL_CONFIRM_TEXT,
   isSubagentChild,
+  isExplicitRoute,
+  isExplicitEffort,
   isLiveDelegation,
   childPolicyNeedsFloor,
   isBootstrapPhase,
@@ -1541,6 +1559,15 @@ export function apply(ctx, config) {
   //    快照）。one-shot（执行者/验收者）直接继承当前值；planner（continuable）的
   //    有效模型在 assemble 阶段由 resolvePlannerEntry 单点解析并缓存（本钩子只读
   //    缓存，不再做模型目录查询）：已创建的 planner 不随父会话改模型而变。
+  //    显式选择不覆盖：resolved（next() 结果，首请求=创建时 AgentOptions、后续请求=
+  //    logged header）的 provider/model 与父会话当前值不同 → 视为显式（官方
+  //    routeChanged 口径）→ 不注入；未显式维持现状注入。父会话在子代理运行期间
+  //    切换模型 → 子代理保持创建时值（planner 已有 entry 缓存同语义，one-shot 亦冻结）。
+  //    effort：resolved 存在且 ≠ 父值 → 显式不注入；路由显式且 resolved 无 effort →
+  //    不注入（对齐官方 routeChanged 清 effort）；其余维持父 effort 继承（现状）。
+  //    rc.1 兼容：rc.1 无模型选择机制，resolved 恒为父继承值 → route/effort 恒未显式
+  //    → 全部走现状注入，行为与 rc.1 完全一致；唯一变化：workflow/ralph 脚本显式
+  //    传的 model 不再被覆盖（与 executor-spawn.js L61-67 注释「显式 model 优先」对齐）。
   ctx.on('agent/request', async (payload, next) => {
     const resolved = await next()
     if (selfAgent === undefined || !isSubagentChild(selfAgent)) return resolved
@@ -1560,6 +1587,9 @@ export function apply(ctx, config) {
     const parentProvider = typeof pcfg.provider === 'string' && pcfg.provider !== '' ? pcfg.provider : undefined
     const parentModel = typeof pcfg.model === 'string' && pcfg.model !== '' ? pcfg.model : undefined
     const parentMaxTokens = typeof pcfg.maxTokens === 'number' && pcfg.maxTokens > 0 ? pcfg.maxTokens : undefined
+    const resolvedProvider = typeof resolved.provider === 'string' ? resolved.provider : ''
+    const resolvedModel = typeof resolved.model === 'string' ? resolved.model : ''
+    const resolvedEffort = typeof resolved.reasoningEffort === 'string' ? resolved.reasoningEffort : ''
     let provider = parentProvider
     let model = parentModel
     let maxTokens = parentMaxTokens
@@ -1577,12 +1607,19 @@ export function apply(ctx, config) {
         maxTokens = parentMaxTokens
       }
     }
+    const parentEffort = typeof pcfg.reasoningEffort === 'string' ? pcfg.reasoningEffort : ''
+    const routeExplicit = isExplicitRoute(resolvedProvider, resolvedModel, parentProvider, parentModel)
+    const effortExplicit = isExplicitEffort(resolvedEffort, parentEffort)
     const nextConfig = { ...resolved }
-    if (model !== undefined) nextConfig.model = model
-    if (provider !== undefined) nextConfig.provider = provider
+    if (!routeExplicit) {
+      // 未显式：现状注入（与改动前 L1581-1582 逐字节等价）
+      if (model !== undefined) nextConfig.model = model
+      if (provider !== undefined) nextConfig.provider = provider
+    }
+    // maxTokens 保持现状无条件继承（官方显式接口无 maxTokens，不做判定）
     if (maxTokens !== undefined) nextConfig.maxTokens = maxTokens
-    const effort = typeof pcfg.reasoningEffort === 'string' ? pcfg.reasoningEffort : ''
-    if (effort !== '') nextConfig.reasoningEffort = effort
+    const suppressEffort = effortExplicit || (routeExplicit && resolvedEffort === '')
+    if (parentEffort !== '' && !suppressEffort) nextConfig.reasoningEffort = parentEffort
     return nextConfig
   })
 

@@ -3,7 +3,9 @@
 // 只读 + 内存，不写任何文件。
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-const require = createRequire('C:/Users/SheepToken/.dsh/profiles/web/node_modules/package.json')
+import { homedir } from 'node:os'
+const DSH_HOME = (process.env.DSH_HOME || homedir() + '/.dsh').replaceAll('\\', '/')
+const require = createRequire(DSH_HOME + '/profiles/web/node_modules/package.json')
 const yaml = require('js-yaml')
 
 const JsExpr = new yaml.Type('tag:yaml.org,2002:js', {
@@ -42,7 +44,7 @@ function check(label, expected, actual) {
   else { fail += 1; console.log(`FAIL  ${label}: 期望 ${expected} 实际 ${actual}`) }
 }
 
-const file = 'C:/Users/SheepToken/.dsh/.agent-presets/extra-plan/agent.cordis.yml'
+const file = DSH_HOME + '/.agent-presets/extra-plan/agent.cordis.yml'
 const orig = readFileSync(file, 'utf8')
 let t = orig
 const patches = [
@@ -58,13 +60,15 @@ for (const [rowId, field, value] of patches) {
   check(`patch ${rowId}.${field} 命中`, true, next !== null)
   if (next !== null) t = next
 }
-// diff 行数（应恰为 6 行，且都是目标行）
+// diff 行（宽松化：应为目标字段行，且行数不超过补丁字段数；同值补丁允许不产生 diff）
 const a = orig.split('\n'); const b = t.split('\n')
 let diff = 0; const diffLines = []
 for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
   if (a[i] !== b[i]) { diff += 1; diffLines.push(`L${i + 1}: [${a[i]}] -> [${b[i]}]`) }
 }
-check('diff 行数 = 6（仅目标行）', 6, diff)
+const targetFields = ['plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'anchoredBootstrap', 'fetch', 'mode']
+check('diff 行均为目标字段行', true, diffLines.every((d) => targetFields.some((f) => d.includes(f + ':'))))
+check('diff 行数不超过补丁字段数', true, diff <= 6)
 for (const d of diffLines) console.log('  ' + d)
 // yaml 语义
 const data = yaml.load(t, { schema })

@@ -102,21 +102,24 @@ dsh-extra-plan/
 │       ├── cordis.patch.yml                        
 │       ├── index.js                      
 │       └── package.json        
-├── pe-test/tools/                        # 自检/取证工具
-│   ├── validate-extra-plan-preset.mjs    # 预设静态校验（YAML 语法 + deny 清单存在性）
-│   ├── validate-preset-sync.mjs          # 自愈校验
-│   ├── validate-distribute-preset.mjs    # 自愈校验2
-│   ├── validate-save-probe-gate.mjs      # save_probe 注册层 + 硬闸门五态 + planner 预算回归验证
-│   ├── validate-reviewer-pwsh-guard.mjs  # reviewer pwsh 写动词拦截验证
-│   ├── smoke-forensics-extra-plan.mjs    # extra-plan 冒烟会话取证
-│   ├── saveplan-forensics.mjs            # save_plan call/result 配对取证
-│   ├── ledger-summary.mjs                # usage 账本聚合（P3 A/B 读数）
-│   ├── print-header-tools.mjs            # 打印会话 request/header 的 tools 列表
-│   ├── test-extra-plan-gate.mjs          # 闸门机制测试（node 直接运行）
-│   ├── test-cross-platform.mjs           # 跨平台只读防线测试（bash/pwsh 写命令拦截，三平台通用）
-│   ├── decode-session.mjs                # 解码单个会话日志（事件统计/plan/mode 摘要）
-│   └── readme.md
-├── 按需规划模式测试方案.md                 # 内部测试方案文档
+├── pe-test/tools/                                      # 自检/取证工具
+│   ├── README.md/                                      # 自检/取证工具介绍
+│   └── tools/                                 
+│       ├── 一键step测试.mjs                             # 可以通过输入真实session_id进行测试
+│       ├── step-00-跨平台写拦截.mjs
+│       ├── step-00-全流程回归.mjs
+│       ├── step-01-安装分发.mjs
+│       ├── step-01-安装同步.mjs
+│       ├── step-01-设置页配置.mjs
+│       ├── step-01-预设完整性.mjs
+│       ├── step-04-工具清单查看.mjs
+│       ├── step-04-路由与写闸门.mjs
+│       ├── step-05-会话解码.mjs
+│       ├── step-06-线索落盘.mjs
+│       ├── step-06-真实会话查看.mjs
+│       ├── step-08-方案配对查看.mjs
+│       ├── step-99-用量统计.mjs
+│       └── readme.md
 ├── README.md                             # 本文档（模式介绍 + 安装方式）
 └── LICENSE                               # MIT 许可
 ```

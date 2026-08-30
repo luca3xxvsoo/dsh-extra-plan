@@ -1,13 +1,18 @@
-// saveplan-forensics.mjs — 精确定位 save_plan 的 call/result 配对与错误
+// step-08-方案配对查看.mjs（原 saveplan-forensics.mjs）— 精确定位 save_plan 的 call/result 配对与错误
+// 用法: node step-08-方案配对查看.mjs [sessions-dir|会话目录名|路径]
 import fs from 'node:fs'
-import { homedir } from 'node:os'
-const DSH_HOME = (process.env.DSH_HOME || homedir() + '/.dsh').replaceAll('\\', '/')
-const base = DSH_HOME + '/sessions/--E-Soft-AI~9879~76EE-extra-plan-smoke--'
-for (const dir of fs.readdirSync(base)) {
-  const decoded = `${base}/${dir}/decoded.txt`
-  if (!fs.existsSync(decoded)) continue
+import path from 'node:path'
+import { framesOf, decodeText } from './_shared/zstd-frames.mjs'
+import { findSession } from './_shared/session-finder.mjs'
+
+const found = findSession(process.argv[2])
+if (found.kind === 'notfound') { console.error('dir not found:', found.arg); process.exit(1) }
+if (found.kind === 'none') { console.error('未发现使用过按需规划模式的会话'); process.exit(1) }
+for (const dir of found.dirs) {
   console.log(`===== ${dir} =====`)
-  const lines = fs.readFileSync(decoded, 'utf8').split('\n')
+  const buf = fs.readFileSync(path.join(found.base, dir, 'session.jsonl.zstd'))
+  const lines = []
+  for (const f of framesOf(buf)) lines.push(...decodeText(buf, f).split('\n'))
   const calls = new Map()
   for (let i = 0; i < lines.length; i++) {
     let ev

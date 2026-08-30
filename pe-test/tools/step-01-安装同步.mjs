@@ -8,25 +8,10 @@ import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { syncPreset } from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
+import { contentHash, readManifest, writeManifest } from './_shared/preset-hash.mjs'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 const ASSET_DIR = join(HERE, '..', '..', 'plugins', 'dsh-extra-plan', 'assets', 'presets', 'extra-plan')
-
-function contentHash(dir) {
-  const h = createHash('sha256')
-  for (const file of ['preset.yml', 'agent.cordis.yml']) {
-    const p = join(dir, file)
-    if (!existsSync(p)) return null
-    h.update(readFileSync(p))
-  }
-  return h.digest('hex')
-}
-function readManifest(dir) {
-  try { const m = JSON.parse(readFileSync(join(dir, 'dist-manifest.json'), 'utf8')); return m.distHash } catch { return null }
-}
-function writeManifest(dir, hash) {
-  writeFileSync(join(dir, 'dist-manifest.json'), JSON.stringify({ format: 1, distHash: hash }, null, 2) + '\n')
-}
 
 let pass = 0
 let fail = 0

@@ -96,6 +96,9 @@ function makeHarness(config) {
       if (listeners[name] === undefined) listeners[name] = []
       listeners[name].push(fn)
     },
+    // 修复（mock 契约补齐）：真实宿主 ctx 有 provide（插件 apply 顶层注册只读服务如
+    // extra-plan/effectiveModel），mock 缺此方法导致 apply 抛 TypeError；与 step-06 同款写法。
+    provide: (name, value) => { ctx[name] = value },
   }
   plugin.apply(ctx, config)
   return listeners
@@ -117,8 +120,13 @@ const mainAgent = {
   options: {},
   ctx: undefined,
 }
+// 修复（mock 数据补齐）：插件判定 planner 身份要求会话 events 含
+// subagent/descriptor 事件且 data.mode === 'continuable'（与 step-06-线索落盘同款 DESC）。
+// 缺此事件时 planner 被误判为普通执行者，R11（planner write 应 deny）与 R13（收窄）走错分支。
+const DESC = { type: 'subagent/descriptor', data: { mode: 'continuable' } }
+
 const plannerAgent = {
-  session: { header: { id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, events: [] },
+  session: { header: { id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, events: [DESC] },
   options: { model: 'deepseek-v4-pro' },
   ctx: undefined,
 }
