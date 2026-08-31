@@ -707,6 +707,13 @@ export const PROBE_LIMITS = {
   maxDetailLen: 300,
   maxTotalChars: 4096,
   rangePattern: '^L?\\d+(?:-\\d+)?$',
+  maxEvidenceEntries: 40,
+  maxEvidenceLineLen: 20,
+  maxEvidenceValueLen: 120,
+  maxEvidenceTextLen: 400,
+  maxEvidenceNoteLen: 200,
+  maxEvidenceTotalChars: 8192,
+  evidenceLinePattern: '^L?\\d+$',
 }
 
 // save_probe 机械校验（纯函数，导出供测试）：四字段必为数组；条目数/单条长度/
@@ -759,6 +766,41 @@ function validateProbe(args, cwd) {
     if (typeof item.detail !== 'string') return `save_probe: background[${i}].detail 必须是字符串`
     if (item.detail.length > PROBE_LIMITS.maxDetailLen) return `save_probe: background[${i}].detail 长度 ${item.detail.length} 超过上限 ${PROBE_LIMITS.maxDetailLen}`
   }
+  if (args.evidence !== undefined && args.evidence !== null) {
+    if (!Array.isArray(args.evidence)) return 'save_probe: evidence 必须是数组'
+    if (args.evidence.length > PROBE_LIMITS.maxEvidenceEntries) return `save_probe: evidence 条目数 ${args.evidence.length} 超过上限 ${PROBE_LIMITS.maxEvidenceEntries}`
+    for (let i = 0; i < args.evidence.length; i += 1) {
+      const item = args.evidence[i]
+      if (item === null || typeof item !== 'object') return `save_probe: evidence[${i}] 必须是对象`
+      if (typeof item.path !== 'string') return `save_probe: evidence[${i}].path 类型错误（应为字符串）`
+      if (item.path.length > PROBE_LIMITS.maxPathLen) return `save_probe: evidence[${i}].path 长度 ${item.path.length} 超过上限 ${PROBE_LIMITS.maxPathLen}`
+      if (!existsSync(probePathOf(cwd, item.path))) return `save_probe: evidence[${i}].path 不存在：${item.path}`
+      if (item.line !== undefined && item.line !== null && item.line !== '') {
+        if (typeof item.line !== 'string') return `save_probe: evidence[${i}].line 类型错误（应为字符串）`
+        if (item.line.length > PROBE_LIMITS.maxEvidenceLineLen) return `save_probe: evidence[${i}].line 长度 ${item.line.length} 超过上限 ${PROBE_LIMITS.maxEvidenceLineLen}`
+        if (!new RegExp(PROBE_LIMITS.evidenceLinePattern, 'i').test(item.line)) return `save_probe: evidence[${i}].line 非法：${item.line}（应为行号，如 12 或 L12）`
+      }
+      if (item.value !== undefined && item.value !== null && item.value !== '') {
+        if (typeof item.value !== 'string') return `save_probe: evidence[${i}].value 类型错误（应为字符串）`
+        if (item.value.length > PROBE_LIMITS.maxEvidenceValueLen) return `save_probe: evidence[${i}].value 长度 ${item.value.length} 超过上限 ${PROBE_LIMITS.maxEvidenceValueLen}`
+      }
+      if (item.text !== undefined && item.text !== null && item.text !== '') {
+        if (typeof item.text !== 'string') return `save_probe: evidence[${i}].text 类型错误（应为字符串）`
+        if (item.text.length > PROBE_LIMITS.maxEvidenceTextLen) return `save_probe: evidence[${i}].text 长度 ${item.text.length} 超过上限 ${PROBE_LIMITS.maxEvidenceTextLen}`
+      }
+      if (item.note !== undefined && item.note !== null && item.note !== '') {
+        if (typeof item.note !== 'string') return `save_probe: evidence[${i}].note 类型错误（应为字符串）`
+        if (item.note.length > PROBE_LIMITS.maxEvidenceNoteLen) return `save_probe: evidence[${i}].note 长度 ${item.note.length} 超过上限 ${PROBE_LIMITS.maxEvidenceNoteLen}`
+      }
+      if ((item.line === undefined || item.line === null || item.line === '') &&
+          (item.value === undefined || item.value === null || item.value === '') &&
+          (item.text === undefined || item.text === null || item.text === '')) {
+        return `save_probe: evidence[${i}] 须至少提供 line/value/text 之一`
+      }
+    }
+    const evTotal = JSON.stringify(args.evidence).length
+    if (evTotal > PROBE_LIMITS.maxEvidenceTotalChars) return `save_probe: evidence 总量 ${evTotal} 字符超过上限 ${PROBE_LIMITS.maxEvidenceTotalChars}`
+  }
   const total = JSON.stringify({ fileMap: args.fileMap, focusAreas: args.focusAreas, exclusions: args.exclusions, background: args.background }).length
   if (total > PROBE_LIMITS.maxTotalChars) return `save_probe: 四字段总量 ${total} 字符超过上限 ${PROBE_LIMITS.maxTotalChars}`
   return null
@@ -770,12 +812,18 @@ function probePathOf(cwd, p) {
   return resolve(join(cwd, p))
 }
 
-// 线索 Markdown 渲染（模板固定）：标题 + 卷首声明 + 四节。导出供测试核对内容契约。
+// 线索/证据报告 Markdown 渲染（模板固定）：标题 + 卷首声明 + 四节；evidence 非空时
+// 标题/卷首切换为证据报告语义并追加「## 五、证据」节。导出供测试核对内容契约。
 function renderProbeMarkdown(args) {
+  const hasEvidence = Array.isArray(args.evidence) && args.evidence.length > 0
   const lines = []
-  lines.push('# 探查线索（save_probe 落盘，非结论）')
+  lines.push(hasEvidence ? '# 探查证据报告（探查者 save_probe 落盘）' : '# 探查线索（save_probe 落盘，非结论）')
   lines.push('')
-  lines.push('> 本文件只有定位线索、没有证据；不得引用本文件的行号/数值/文案作为【已探查核实】证据——证据须由 pro 规划子代理自行 read/glob/grep 核实')
+  if (hasEvidence) {
+    lines.push('> 本文件为探查者已核实的证据报告：行号/数值/文案照实记录，可被规划子代理作为【探查者已核实】证据引用（引用时在方案中注明「证据来源：本文件路径」）')
+  } else {
+    lines.push('> 本文件只有定位线索、没有证据；不得引用本文件的行号/数值/文案作为【已探查核实】证据——证据须由 pro 规划子代理自行 read/glob/grep 核实')
+  }
   lines.push('')
   lines.push('## 一、文件地图')
   for (const item of args.fileMap) lines.push(`- ${item.path}：${item.relation}`)
@@ -793,12 +841,39 @@ function renderProbeMarkdown(args) {
   lines.push('## 四、背景与意图')
   for (const item of args.background) lines.push(`- ${item.topic}：${item.detail}`)
   lines.push('')
+  if (hasEvidence) {
+    lines.push('## 五、证据')
+    for (const item of args.evidence) {
+      let line = `- ${item.path}`
+      if (item.line !== undefined && item.line !== null && item.line !== '') line += `（${item.line}）`
+      line += '：'
+      if (item.value !== undefined && item.value !== null && item.value !== '') line += item.value
+      if (item.text !== undefined && item.text !== null && item.text !== '') line += `｜${item.text}`
+      if (item.note !== undefined && item.note !== null && item.note !== '') line += `｜${item.note}`
+      lines.push(line)
+    }
+    lines.push('')
+  }
   return lines.join('\n')
 }
 
+// 提取方案中【探查者已核实】标注引用的证据文件路径（纯函数，导出供测试）。
+// 契约：标注行须含「证据：<路径>」（如：【探查者已核实】·证据：.extra-plan/证据-xxx.md）。
+const PROBE_EVIDENCE_RE = /【探查者已核实】[^\n]*?证据[：:]\s*([^\s，。；）】\n]+)/g
+export function extractProbeEvidenceRefs(plan) {
+  if (typeof plan !== 'string' || plan === '') return []
+  const refs = []
+  for (const m of plan.matchAll(PROBE_EVIDENCE_RE)) {
+    const p = m[1].trim()
+    if (p !== '' && !refs.includes(p)) refs.push(p)
+  }
+  return refs
+}
+
 // save_probe 结果的模型可见内容（与 renderSavePlan 同契约：ContentBlock[]）。
-function renderSaveProbe(value) {
-  return [{ type: 'text', text: '探查线索已落盘：\n- ' + value.path }]
+// hasEvidence 二参由 output.render 传入（args.evidence 非空）；缺省走线索文案。
+function renderSaveProbe(value, hasEvidence) {
+  return [{ type: 'text', text: (hasEvidence === true ? '探查证据报告已落盘：\n- ' : '探查线索已落盘：\n- ') + value.path }]
 }
 
 // 工具目录判定：目录里是否存在 write/edit（reviewer 预设 deny 后目录里没有
@@ -814,6 +889,100 @@ function catalogHasWriteTools(tools) {
 // 只读子代理（reviewer）判定：目录非空且不含 write/edit。
 function isReadOnlyChildByCatalog(tools) {
   return Array.isArray(tools) && tools.length > 0 && !catalogHasWriteTools(tools)
+}
+
+// probe（探查者）子代理模型跟随顶层主会话：沿 parentSession 链上溯（probe→planner→
+// 主会话，多级委派亦逐层追溯），取顶层主会话 requestHeader().config 作为
+// provider/model/maxTokens 注入源（不再取直接父/委派方值）。链任一层断裂（get 失败/
+// requestHeader 非函数或抛异常/config 为 null/depth 达 8 上限）→ 整体回退直接父会话
+// config（与钩子改动前行为逐字节等价），整段不抛错。注入判定沿现状口径：routeExplicit
+// 基准为直接父（isExplicitRoute 复用）、maxTokens 无条件继承、effort 取直接父
+// reasoningEffort（顶层 effort 不渗入）。模块顶层纯函数：不引用 probeParents/
+// plannerModelCache/plannerModel/ctx 闭包变量；经 decisions 导出供场景测试直接复用。
+async function resolveProbeRequestInjection(agent, agents, resolved) {
+  // 1) 直接父解析（等价钩子改动前 L1691-1706 防御；requestHeader 异常亦吞）
+  if (agent === undefined || agent === null || agent.session === undefined || agent.session === null) return resolved
+  const agentHeader = agent.session.header !== undefined && agent.session.header !== null ? agent.session.header : null
+  const parentSession = agentHeader !== null ? agentHeader.parentSession : undefined
+  if (typeof parentSession !== 'string') return resolved
+  if (agents === undefined) return resolved
+  let parent
+  try {
+    parent = agents.get(parentSession)
+  } catch (error) {
+    parent = undefined
+  }
+  if (parent === undefined) return resolved
+  let parentHeader
+  if (parent.session !== undefined && parent.session !== null && typeof parent.session.requestHeader === 'function') {
+    try {
+      parentHeader = parent.session.requestHeader()
+    } catch (error) {
+      parentHeader = undefined
+    }
+  }
+  const parentConfig = parentHeader !== undefined && parentHeader.config !== undefined && parentHeader.config !== null ? parentHeader.config : null
+  if (parentConfig === null) return resolved
+  const parentProvider = typeof parentConfig.provider === 'string' && parentConfig.provider !== '' ? parentConfig.provider : undefined
+  const parentModel = typeof parentConfig.model === 'string' && parentConfig.model !== '' ? parentConfig.model : undefined
+  const parentMaxTokens = typeof parentConfig.maxTokens === 'number' && parentConfig.maxTokens > 0 ? parentConfig.maxTokens : undefined
+
+  // 2) 链上溯取顶层主会话 config：isSubagentChild(cur)===false 即正常终止（停在 cur）；
+  //    读 cur 的 parentSession 非 string → 终止；get 失败/requestHeader 非函数或抛异常/
+  //    config 为 null/depth 达 8 上限 → broken 回退（sourceConfig 保持直接父 config）。
+  let sourceConfig = parentConfig
+  let cur = parent
+  let broken = false
+  let depth = 0
+  while (!broken) {
+    if (!isSubagentChild(cur)) break
+    const curHeader = cur.session !== undefined && cur.session !== null && cur.session.header !== undefined && cur.session.header !== null ? cur.session.header : null
+    const pid = curHeader !== null ? curHeader.parentSession : undefined
+    if (typeof pid !== 'string') break
+    let up
+    try {
+      up = agents.get(pid)
+    } catch (error) {
+      up = undefined
+    }
+    if (up === undefined) { broken = true; break }
+    let upHeader
+    if (up.session !== undefined && up.session !== null && typeof up.session.requestHeader === 'function') {
+      try {
+        upHeader = up.session.requestHeader()
+      } catch (error) {
+        upHeader = undefined
+      }
+    }
+    const upConfig = upHeader !== undefined && upHeader.config !== undefined && upHeader.config !== null ? upHeader.config : null
+    if (upConfig === null) { broken = true; break }
+    cur = up
+    sourceConfig = upConfig
+    depth += 1
+    if (depth >= 8) { broken = true; break }
+  }
+  if (broken) sourceConfig = parentConfig
+  const sourceProvider = typeof sourceConfig.provider === 'string' && sourceConfig.provider !== '' ? sourceConfig.provider : undefined
+  const sourceModel = typeof sourceConfig.model === 'string' && sourceConfig.model !== '' ? sourceConfig.model : undefined
+  const sourceMaxTokens = typeof sourceConfig.maxTokens === 'number' && sourceConfig.maxTokens > 0 ? sourceConfig.maxTokens : undefined
+
+  // 3) 注入应用（与钩子改动前 L1707-1739 语义等价；唯一差异：来源为 sourceConfig）
+  const resolvedProvider = typeof resolved.provider === 'string' ? resolved.provider : ''
+  const resolvedModel = typeof resolved.model === 'string' ? resolved.model : ''
+  const resolvedEffort = typeof resolved.reasoningEffort === 'string' ? resolved.reasoningEffort : ''
+  const routeExplicit = isExplicitRoute(resolvedProvider, resolvedModel, parentProvider, parentModel)
+  const parentEffort = typeof parentConfig.reasoningEffort === 'string' ? parentConfig.reasoningEffort : ''
+  const effortExplicit = isExplicitEffort(resolvedEffort, parentEffort)
+  const nextConfig = { ...resolved }
+  if (!routeExplicit) {
+    if (sourceModel !== undefined) nextConfig.model = sourceModel
+    if (sourceProvider !== undefined) nextConfig.provider = sourceProvider
+  }
+  // maxTokens 保持现状无条件继承（官方显式接口无 maxTokens，不做判定）
+  if (sourceMaxTokens !== undefined) nextConfig.maxTokens = sourceMaxTokens
+  const suppressEffort = effortExplicit || (routeExplicit && resolvedEffort === '')
+  if (parentEffort !== '' && !suppressEffort) nextConfig.reasoningEffort = parentEffort
+  return nextConfig
 }
 
 // 供场景测试直接复用（消除"复制品"漂移）。模块顶层无副作用，纯 Node 可 import。
@@ -877,6 +1046,8 @@ export const decisions = {
   validateProbe,
   renderSaveProbe,
   renderProbeMarkdown,
+  extractProbeEvidenceRefs,
+  resolveProbeRequestInjection,
 }
 
 export const name = 'extra-plan'
@@ -1014,6 +1185,16 @@ export function apply(ctx, config) {
       }
     }
     return false
+  }
+
+  // 探查子代理：子会话且父会话曾成功放行 subagent_probe（probeParents 记录）。
+  // descriptor 不携带 toolName（one-shot 仅 version/mode/provider/label），
+  // 无法从子会话自身区分探查者/执行者/验收者——父会话侧放行记录是唯一可靠信号。
+  function isProbeChild(agent) {
+    if (!isSubagentChild(agent)) return false
+    const header = agent.session.header
+    const parentSession = header !== undefined && header !== null ? header.parentSession : undefined
+    return typeof parentSession === 'string' && probeParents.has(parentSession)
   }
 
   // ── planner 模型单点解析 + effectiveModel 只读服务 ──
@@ -1181,7 +1362,7 @@ export function apply(ctx, config) {
   function defineSavePlan() {
     return {
       name: 'save_plan',
-      description: '落盘规划方案与验收标准清单（原子双写，两个文件必填）。存在未探查项时禁止调用。不得编造内容、数值或行号。返回文件路径',
+      description: '落盘规划方案与验收标准清单（原子双写，两个文件必填）。存在未探查项时禁止调用。不得编造内容、数值或行号。【探查者已核实】步骤须注明证据来源文件路径（探查者 save_probe 落盘的证据报告），插件将校验文件存在且为证据报告。返回文件路径',
       parameters: {
         type: 'object',
         properties: {
@@ -1212,6 +1393,14 @@ export function apply(ctx, config) {
         const session = exec.agent !== undefined && exec.agent !== null ? exec.agent.session : undefined
         const cwd = session !== undefined && session !== null && session.header !== undefined && typeof session.header.cwd === 'string' ? session.header.cwd : ''
         if (cwd === '') throw new Error('save_plan: 会话缺少工作区路径，无法落盘')
+        // 【探查者已核实】证据校验：方案中标注引用的证据文件必须真实存在、且为探查者
+        // save_probe 落盘的证据报告（标题含「探查证据报告」），杜绝编造证据引用。
+        for (const ref of extractProbeEvidenceRefs(plan)) {
+          const resolved = probePathOf(cwd, ref)
+          if (!existsSync(resolved)) throw new Error(`save_plan: 【探查者已核实】证据文件不存在：${ref}`)
+          const head = readFileSync(resolved, 'utf8').slice(0, 200)
+          if (!head.includes('探查证据报告')) throw new Error(`save_plan: 【探查者已核实】证据文件非探查者落盘（缺「探查证据报告」标题）：${ref}`)
+        }
         const dir = resolve(join(cwd, savePlanDir))
         const nameSeg = sanitizeTaskName(args.taskName)
         const ts = timestamp()
@@ -1252,13 +1441,13 @@ export function apply(ctx, config) {
   const savePlanRegistered = new WeakSet()
   function registerSavePlan(agent) { registerTool(savePlanRegistered, 'save_plan', defineSavePlan, agent) }
 
-  // ── save_probe：只注册于主会话层（session-start + pre-step 幂等兜底） ──
-  // 主会话只读探查后经 save_probe 把「线索地图」落盘为 .extra-plan 下单个
-  // Markdown 文件（四类定位线索，不含证据）；规划子代理/执行者/reviewer 不可见。
+  // ── save_probe：注册于主会话层 + 探查子代理层（scoped；session-start + pre-step 幂等兜底） ──
+  // 主会话/探查子代理只读探查后经 save_probe 把「线索地图（可含证据报告）」落盘为
+  // .extra-plan 下单个 Markdown 文件（四类定位线索，可选五、证据）；执行者/验收者不可见。
   function defineSaveProbe() {
     return {
       name: 'save_probe',
-      description: '把主会话本轮只读探查留下的「线索地图」经 save_probe 落盘为工作区 .extra-plan 目录下的单个 Markdown 文件（探查线索，非结论）：四类定位线索——文件地图（fileMap）/ 重点区域（focusAreas）/ 排除项（exclusions）/ 背景与意图（background）。只写定位线索（路径/范围/关系/备注），不含证据（行号/数值/文案摘录）——pro 规划子代理（subagent_plan）不得把本文件内容当作【已探查核实】证据。落盘成功后返回线索文件路径；委派 subagent_plan 时请在 prompt 中带上该路径，说明先 read 线索文件再按需补查',
+      description: '把只读探查结果经 save_probe 落盘为工作区 .extra-plan 目录下的单个 Markdown 文件：四类定位线索——文件地图（fileMap）/ 重点区域（focusAreas）/ 排除项（exclusions）/ 背景与意图（background），可选证据数组（evidence：探查者把核实过的行号/数值/文案照实写入；主会话线索模式可不传）。主会话线索模式只写定位线索（路径/范围/关系/备注），不含证据（行号/数值/文案摘录）——pro 规划子代理（subagent_plan）不得把线索文件内容当作【已探查核实】证据；探查子代理传 evidence 时落盘为证据报告（行号/数值/文案照实记录，可被规划子代理作为【探查者已核实】证据引用）。落盘成功后返回文件路径；委派 subagent_plan 时请在 prompt 中带上该路径，说明先 read 文件再按需补查',
       parameters: {
         type: 'object',
         properties: {
@@ -1315,6 +1504,22 @@ export function apply(ctx, config) {
               additionalProperties: false,
             },
           },
+          evidence: {
+            type: 'array',
+            description: '可选证据数组（探查子代理 save_probe 落盘证据报告用；主会话线索模式可不传）：探查者把核实过的行号/数值/文案照实写入——每项 {path 必填, line?, value?, text?, note?}，path 必须真实存在，line/value/text 至少一个（line ≤20 字如 12 或 L12，value ≤120 字，text ≤400 字，note ≤200 字，至多 40 条）',
+            items: {
+              type: 'object',
+              properties: {
+                path: { type: 'string', description: '被核实文件路径（相对工作区或绝对路径，必须真实存在）' },
+                line: { type: 'string', description: '可选行号（如 12 或 L12）' },
+                value: { type: 'string', description: '可选核实值（≤120 字）' },
+                text: { type: 'string', description: '可选原文摘录（≤400 字）' },
+                note: { type: 'string', description: '可选备注（≤200 字）' },
+              },
+              required: ['path'],
+              additionalProperties: false,
+            },
+          },
           taskName: { type: 'string', description: '可选任务短名（≤32 字；插件会净化，勿传路径）' },
         },
         required: ['fileMap', 'focusAreas', 'exclusions', 'background'],
@@ -1328,7 +1533,7 @@ export function apply(ctx, config) {
           additionalProperties: false,
         },
         render(args, value) {
-          return renderSaveProbe(value)
+          return renderSaveProbe(value, Array.isArray(args.evidence) && args.evidence.length > 0)
         },
       },
       timeoutMs: 30000,
@@ -1426,17 +1631,23 @@ export function apply(ctx, config) {
   const showFileRegistered = new WeakSet()
   function registerShowFile(agent) { registerTool(showFileRegistered, 'show_file', defineShowFile, agent) }
 
+  // 探查者放行记录：父会话（主会话）曾成功放行 subagent_probe 的会话 id 集合。
+  // 子会话凭 header.parentSession 反查——父会话侧放行记录是识别探查者的唯一可靠信号。
+  const probeParents = new Set()
+
   let selfAgent = undefined
 
   // 1) 会话启动：子代理基线（账本 + 沙箱下限）；规划子代理注册 save_plan；
-  //    主会话注册 save_probe 与 show_file（recompose 不重发 session-start，pre-step 兜底）。
+  //    主会话与探查子代理注册 save_probe（scoped）；主会话注册 show_file
+  //    （recompose 不重发 session-start，pre-step 兜底）。
   ctx.on('agent/session-start', (payload) => {
     const agent = payload.agent
     if (agent === undefined) return
     selfAgent = agent
     childBaseline(agent)
     if (isPlannerChild(agent)) registerSavePlan(agent)
-    if (!isSubagentChild(agent)) { registerSaveProbe(agent); registerShowFile(agent) }
+    if (!isSubagentChild(agent) || isProbeChild(agent)) { registerSaveProbe(agent) }
+    if (!isSubagentChild(agent)) registerShowFile(agent)
   })
 
   // 2) pre-step：账本补记（会话最终消息的行延迟到此）；规划子代理初始任务与
@@ -1447,7 +1658,8 @@ export function apply(ctx, config) {
     if (payload.agent !== undefined) {
       selfAgent = payload.agent
       childBaseline(payload.agent)
-      if (!isSubagentChild(payload.agent)) { registerSaveProbe(payload.agent); registerShowFile(payload.agent) }
+      if (!isSubagentChild(payload.agent) || isProbeChild(payload.agent)) { registerSaveProbe(payload.agent) }
+      if (!isSubagentChild(payload.agent)) registerShowFile(payload.agent)
     }
     const decision = await next()
     if (decision.kind !== 'enter') return decision
@@ -1607,6 +1819,11 @@ export function apply(ctx, config) {
         maxTokens = parentMaxTokens
       }
     }
+    // probe（探查者）特判：模型跟随顶层主会话（resolveProbeRequestInjection 内沿
+    // parentSession 链上溯）；early return 不读 plannerModelCache，planner 分支不受影响。
+    if (isProbeChild(selfAgent)) {
+      return await resolveProbeRequestInjection(selfAgent, agents, resolved)
+    }
     const parentEffort = typeof pcfg.reasoningEffort === 'string' ? pcfg.reasoningEffort : ''
     const routeExplicit = isExplicitRoute(resolvedProvider, resolvedModel, parentProvider, parentModel)
     const effortExplicit = isExplicitEffort(resolvedEffort, parentEffort)
@@ -1648,16 +1865,18 @@ export function apply(ctx, config) {
       return next()
     }
     if (child) {
-      // reviewer（只读子代理，目录判定命中缓存）：write/edit 与 pwsh 写命令一律拒绝。
+      // 只读子代理（reviewer/probe，目录判定命中缓存）：write/edit 与 pwsh/bash 写命令
+      // 一律拒绝；文案按 isProbeChild 区分（probe 走「探查者只读」，reviewer 文案逐字保持）。
       if (!planner && readOnlyChildren.has(agent)) {
+        const probe = isProbeChild(agent)
         if (exec.name === 'write' || exec.name === 'edit') {
-          return { kind: 'deny', reason: '验收复核者只读：验收复核不修改任何文件，write/edit 一律禁止（工具目录判定）' }
+          return { kind: 'deny', reason: probe ? '探查者只读：探查不修改任何文件，write/edit 一律禁止（工具目录判定）' : '验收复核者只读：验收复核不修改任何文件，write/edit 一律禁止（工具目录判定）' }
         }
         if (exec.name === 'pwsh' && pwshMutationMatches(exec)) {
-          return { kind: 'deny', reason: '验收复核者只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件' }
+          return { kind: 'deny', reason: probe ? '探查者只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件' : '验收复核者只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件' }
         }
         if (exec.name === 'bash' && bashMutationMatches(exec)) {
-          return { kind: 'deny', reason: '验收复核者只读：bash 仅限只读探查命令，禁止创建/修改/删除文件' }
+          return { kind: 'deny', reason: probe ? '探查者只读：bash 仅限只读探查命令，禁止创建/修改/删除文件' : '验收复核者只读：bash 仅限只读探查命令，禁止创建/修改/删除文件' }
         }
       }
       return next() // 执行者子代理豁免（目录含 write/edit，缓存未命中）
@@ -1726,6 +1945,15 @@ export function apply(ctx, config) {
       if (!escape && (state.route !== 'plan' || state.clarified !== true)) {
         return { kind: 'deny', reason: planDenyReason('save_probe') }
       }
+      return next()
+    }
+    // 探查者委派属只读探查能力（与 read/glob/grep 同级）：任意路由状态放行，
+    // 仅强制 one-shot 固定后台（与 subagent/subagent_review 同机械闸门口径）。
+    if (name === 'subagent_probe') {
+      if (exec.arguments.run_in_background !== true) {
+        return { kind: 'deny', reason: '探查者必须后台运行：请显式传 run_in_background: true（one-shot 一次性会话，返回 jobId 后用 job_output 收集结果）' }
+      }
+      probeParents.add(agent.session.header.id)
       return next()
     }
     if (name === 'subagent' || name === 'subagent_fork' || name === 'workflow' || name === 'ralph' || name === 'subagent_review') {

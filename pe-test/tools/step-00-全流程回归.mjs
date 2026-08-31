@@ -53,6 +53,8 @@ const {
   validateProbe,
   renderSaveProbe,
   renderProbeMarkdown,
+  extractProbeEvidenceRefs,
+  resolveProbeRequestInjection,
 } = plugin.decisions
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 
@@ -402,6 +404,15 @@ const PR = [
   ['PR19 range 12 → 过', { ...validProbe(), focusAreas: [{ path: EXISTING, range: '12', note: 'n' }] }, 'pass'],
   ['PR20 range L12-34 → 过', { ...validProbe(), focusAreas: [{ path: EXISTING, range: 'L12-34', note: 'n' }] }, 'pass'],
   ['PR21 exclusions scope 概念边界（不校验存在性）→ 过', { ...validProbe(), exclusions: [{ scope: '某概念边界', note: 'n' }] }, 'pass'],
+  ['PR22 evidence 非数组 → 拒', { ...validProbe(), evidence: 'not-array' }, 'reject'],
+  ['PR23 evidence 41 条 → 拒', { ...validProbe(), evidence: Array.from({ length: 41 }, (_, i) => ({ path: EXISTING, value: `v${i}` })) }, 'reject'],
+  ['PR24 evidence[0] 缺 line/value/text → 拒', { ...validProbe(), evidence: [{ path: EXISTING }] }, 'reject'],
+  ['PR25 evidence[0].line 非法（如 L12-x）→ 拒', { ...validProbe(), evidence: [{ path: EXISTING, line: 'L12-x', value: 'v' }] }, 'reject'],
+  ['PR26 evidence[0].path 不存在 → 拒并指明', { ...validProbe(), evidence: [{ path: '不存在-证据-xyz.md', value: 'v' }] }, 'reject-with', '不存在'],
+  ['PR27 evidence[0].line 含区间（L12-34）→ 拒', { ...validProbe(), evidence: [{ path: EXISTING, line: 'L12-34', value: 'v' }] }, 'reject'],
+  ['PR28 evidence 合法（path 存在 + line/value/text 之一）→ 过', { ...validProbe(), evidence: [{ path: EXISTING, line: 'L12', value: 'v', text: 't', note: 'n' }] }, 'pass'],
+  ['PR29 evidence 总量超 maxEvidenceTotalChars → 拒', { ...validProbe(), evidence: Array.from({ length: 20 }, () => ({ path: EXISTING, text: 't'.repeat(400) })) }, 'reject'],
+  ['PR30 evidence 未传 → 过（旧调用不变）', validProbe(), 'pass'],
 ]
 for (const [name, args, mode, substr] of PR) {
   const got = validateProbe(args, HERE)
@@ -423,5 +434,51 @@ check('RENDER8 线索 Markdown 四节标题', ['## 一、文件地图', '## 二�
 check('RENDER9 fileMap/focusAreas 渲染（range 有则带括号）', probeMd.includes(`- ${EXISTING}：主文档`) && probeMd.includes(`- ${EXISTING}：重点`) && probeWithRangeMd.includes(`- ${EXISTING}（L12-34）：重点`), true)
 check('RENDER10 exclusions/background 渲染', probeNoScopeMd.includes('- （未指明范围）：排除说明') && probeMd.includes('- node_modules：无关') && probeMd.includes('- 背景：细节'), true)
 
-console.log(`\n通过 ${pass}/${K.length + M.length + F.length + GK.length + GM.length + F21.length + GL.length + P.length + C.length + CU.length + AP.length + BN.length + 2 + BR.length + BD.length + BE.length + S.length + 1 + PW.length + 2 + D.length + 3 + 3 + PR.length + 7}, 失败 ${fail}`)
+// ── RENDER11+ 系列:renderProbeMarkdown / renderSaveProbe 证据报告契约（v0.2） ──
+const probeEvMd = renderProbeMarkdown({ ...validProbe(), evidence: [{ path: EXISTING, line: 'L12', value: 'v', text: 't', note: 'n' }] })
+check('RENDER11 证据报告 Markdown 标题与卷首声明', probeEvMd.includes('# 探查证据报告（探查者 save_probe 落盘）') && probeEvMd.includes('探查者已核实的证据报告') && probeEvMd.includes('【探查者已核实】证据引用'), true)
+check('RENDER12 证据报告含「## 五、证据」节与条目渲染', probeEvMd.includes('## 五、证据') && probeEvMd.includes(`- ${EXISTING}（L12）：v｜t｜n`), true)
+check('RENDER13 无 evidence 时标题仍为线索模板（回退契约）', probeMd.includes('# 探查线索（save_probe 落盘，非结论）') && !probeMd.includes('探查证据报告') && !probeMd.includes('## 五、证据'), true)
+check('RENDER14 renderSaveProbe(含 evidence) 文案含「探查证据报告已落盘」', renderSaveProbe({ path: 'C:/w/.extra-plan/证据-x.md' }, true)[0].text.includes('探查证据报告已落盘'), true)
+check('RENDER15 renderSaveProbe(无 evidence) 文案仍为「探查线索已落盘」（回退契约）', renderSaveProbe({ path: 'C:/w/.extra-plan/证据-x.md' })[0].text.includes('探查线索已落盘') && renderSaveProbe({ path: 'C:/w/.extra-plan/证据-x.md' }, true)[0].text.includes('C:/w/.extra-plan/证据-x.md'), true)
+
+// ── E 系列:extractProbeEvidenceRefs（save_plan 证据引用提取纯函数） ───────────
+const E = [
+  ['E1 空串 → []', extractProbeEvidenceRefs(''), []],
+  ['E2 无标记 → []', extractProbeEvidenceRefs('普通方案文本，无证据标记'), []],
+  ['E3 标准标注 → 提取路径', extractProbeEvidenceRefs('步骤1：【探查者已核实】·证据：.extra-plan/证据-a.md'), ['.extra-plan/证据-a.md']],
+  ['E4 行内多标记去重 → 唯一数组', extractProbeEvidenceRefs('【探查者已核实】·证据：证据-a.md 与【探查者已核实】·证据：证据-a.md'), ['证据-a.md']],
+  ['E5 无「证据：」前缀的标注 → 不提取', extractProbeEvidenceRefs('【探查者已核实】步骤已完成'), []],
+]
+for (const [name, got, expected] of E) check(name, got, expected)
+
+// ── RP 系列:resolveProbeRequestInjection（探查者模型跟随顶层主会话） ──
+const mainCfg = { provider: 'p-main', model: 'model-main', maxTokens: 8192, reasoningEffort: 'high' }
+const plannerCfg = { provider: 'p-pro', model: 'deepseek-v4-pro', maxTokens: 16384 }
+const topMain = () => ({ session: { header: { origin: 'main' }, requestHeader: () => ({ config: mainCfg }) } })
+const midPlanner = () => ({ session: { header: { origin: 'subagent', delegationDepth: 1, parentSession: 'main-id' }, requestHeader: () => ({ config: plannerCfg }) } })
+const probeAgent = (parentSession) => ({ session: { header: { origin: 'subagent', delegationDepth: 2, parentSession }, requestHeader: () => ({ config: plannerCfg }) } })
+const registryOf = (map) => ({ get: (id) => map.get(id) })
+const RP_FULL_REG = registryOf(new Map([['main-id', topMain()], ['planner-id', midPlanner()]]))
+const RP = [
+  ['RP1 planner 委派 probe → 注入顶层主会话 provider/model/maxTokens', async () => {
+    const out = await resolveProbeRequestInjection(probeAgent('planner-id'), RP_FULL_REG, { provider: 'p-pro', model: 'deepseek-v4-pro', maxTokens: 16384 })
+    return { provider: out.provider, model: out.model, maxTokens: out.maxTokens }
+  }, { provider: 'p-main', model: 'model-main', maxTokens: 8192 }],
+  ['RP2 probe resolved 显式 provider/model → 不被覆盖（maxTokens 仍无条件继承顶层）', async () => {
+    const out = await resolveProbeRequestInjection(probeAgent('planner-id'), RP_FULL_REG, { provider: 'p-custom', model: 'model-custom' })
+    return { provider: out.provider, model: out.model, maxTokens: out.maxTokens }
+  }, { provider: 'p-custom', model: 'model-custom', maxTokens: 8192 }],
+  ['RP3 上溯链断裂（main-id 不存在）→ 回退直接父会话值', async () => {
+    const out = await resolveProbeRequestInjection(probeAgent('planner-id'), registryOf(new Map([['planner-id', midPlanner()]])), { provider: 'p-pro', model: 'deepseek-v4-pro', maxTokens: 16384 })
+    return { provider: out.provider, model: out.model, maxTokens: out.maxTokens }
+  }, { provider: 'p-pro', model: 'deepseek-v4-pro', maxTokens: 16384 }],
+  ['RP4 effort 仍以直接父为准（顶层 high 不渗入）→ 不注入 effort', async () => {
+    const out = await resolveProbeRequestInjection(probeAgent('planner-id'), RP_FULL_REG, { provider: 'p-pro', model: 'deepseek-v4-pro' })
+    return typeof out.reasoningEffort === 'string' ? out.reasoningEffort : ''
+  }, ''],
+]
+for (const [name, fn, expected] of RP) { check(name, await fn(), expected) }
+
+console.log(`\n通过 ${pass}/${K.length + M.length + F.length + GK.length + GM.length + F21.length + GL.length + P.length + C.length + CU.length + AP.length + BN.length + 2 + BR.length + DR.length + BD.length + BE.length + S.length + 1 + PW.length + 2 + D.length + 3 + 3 + PR.length + 7 + 5 + E.length + RP.length}, 失败 ${fail}`)
 process.exit(fail === 0 ? 0 : 1)

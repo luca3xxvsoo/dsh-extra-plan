@@ -35,7 +35,7 @@ for (const dir of found.dirs) {
           let cmd = ''
           try { cmd = JSON.parse(data.arguments || '{}').command ?? '' } catch { cmd = String(data.arguments) }
           console.log(`L${lineNo} PWSH-CALL ${trunc(cmd, 220)}`)
-        } else if (data.name === 'subagent_plan' || data.name === 'ask_user_question' || data.name === 'send_message' || data.name === 'subagent' || data.name === 'subagent_review') {
+        } else if (data.name === 'subagent_plan' || data.name === 'ask_user_question' || data.name === 'send_message' || data.name === 'subagent' || data.name === 'subagent_review' || data.name === 'subagent_probe') {
           console.log(`L${lineNo} CALL ${data.name} ${trunc(data.arguments, 220)}`)
         }
       } else if (t === 'tool/result') {

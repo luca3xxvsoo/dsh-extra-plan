@@ -1,4 +1,4 @@
-// @local/dsh-executor-spawn (v1.3)
+// @local/dsh-executor-spawn (v1.4)
 // 规划者·执行者模式专用子代理 provider：包一层宿主 spawn provider，
 // 给经它派出的子代理默认注入执行者工具裁剪（deny 委派/追问/目标/计划类工具）。
 // 模型不再注入（v1.3：子会话模型跟随父会话）——worker 请求不带 model 时由宿主
@@ -27,11 +27,13 @@ export const inject = ['subagents']
 
 // 与预设 tool-subagent / tool-subagent-fork 行的执行者 deny 清单保持一致
 // （修复判据：worker/fork 请求头 tools 不含委派类工具，与常规执行者一致）；
-// v1.2 起含 subagent_review（P2 验收复核者）防 worker 委派复核者。
+// v1.2 起含 subagent_review（P2 验收复核者）防 worker 委派复核者；
+// v1.4 起含 subagent_probe（探查者）防 worker 委派探查者。
 const DEFAULT_DENY = [
   'subagent',
   'subagent_fork',
   'subagent_review',
+  'subagent_probe',
   'workflow',
   'ralph',
   'send_message',

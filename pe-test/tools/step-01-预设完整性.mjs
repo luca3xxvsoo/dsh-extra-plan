@@ -25,7 +25,7 @@ console.log(`PASS  YAML 解析成功（${Array.isArray(rows) ? rows.length : '�
 
 // extra-plan 预设实际注册的委派/文件类工具名（deny 只允许列这些名字）
 const registered = new Set([
-  'subagent', 'subagent_review', 'subagent_plan', 'workflow', 'ralph',
+  'subagent', 'subagent_review', 'subagent_probe', 'subagent_plan', 'workflow', 'ralph',
   'send_message', 'interrupt_agent', 'list_agents', 'ask_user_question',
   'todo_write', 'write', 'edit', 'read', 'glob', 'grep', 'pwsh', 'web_search',
 ])
@@ -82,6 +82,14 @@ for (const req of required) {
   if (names.includes(req)) { pass += 1 } else { fail += 1; console.log(`FAIL  缺少行: ${req}`) }
 }
 const planRow = subagentRows.find((r) => r.config && r.config.toolName === 'subagent_plan')
+const probeRow = subagentRows.find((r) => r.config && r.config.toolName === 'subagent_probe')
+if (probeRow !== undefined && probeRow.config.backgroundMode === 'one-shot' && probeRow.config.provider === 'spawn' && Array.isArray(probeRow.config.toolFilter.deny) && probeRow.config.toolFilter.deny.includes('subagent_probe')) {
+  pass += 1
+  console.log(`PASS  subagent_probe 行存在（one-shot/spawn/deny 含 subagent_probe，${probeRow.config.toolFilter.deny.length} 项）`)
+} else {
+  fail += 1
+  console.log('FAIL  subagent_probe 行缺失或配置不完整（须 one-shot/spawn/deny 含 subagent_probe）')
+}
 const pluginRow = all.find((r) => r.name === '@local/dsh-extra-plan')
 const plannerModel = pluginRow !== undefined && pluginRow.config && typeof pluginRow.config.plannerModel === 'string' ? pluginRow.config.plannerModel : ''
 // 宽松化（修复已知预存 FAIL）：具体型号由设置页配置（plannerModel），此处只验证

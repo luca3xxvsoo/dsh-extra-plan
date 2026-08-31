@@ -83,9 +83,10 @@ function checkDeny(id, expectCount, mustContain, mustNotContain, label) {
     console.log(`FAIL  ${label}（实际 ${deny.length} 项: ${deny.join(', ')}）`)
   }
 }
-checkDeny('tool-subagent-review', 12, ['write', 'edit'], [], 'reviewer deny 恰 12 项且含 write/edit')
-checkDeny('tool-subagent', 10, [], ['write', 'edit'], 'executor deny 恰 10 项且不含 write/edit')
-checkDeny('tool-subagent-plan', null, ['write', 'edit'], [], 'planner deny 含 write/edit')
+checkDeny('tool-subagent-review', 13, ['write', 'edit', 'subagent_probe'], [], 'reviewer deny 恰 13 项且含 write/edit/subagent_probe')
+checkDeny('tool-subagent', 11, ['subagent_probe'], ['write', 'edit'], 'executor deny 恰 11 项、不含 write/edit、含 subagent_probe')
+checkDeny('tool-subagent-plan', null, ['write', 'edit'], ['subagent_probe'], 'planner deny 含 write/edit 且不含 subagent_probe')
+checkDeny('tool-subagent-probe', 13, ['write', 'edit', 'subagent_probe'], ['subagent_fork'], 'probe deny 恰 13 项且含 write/edit/subagent_probe、不含 subagent_fork')
 
 // ── ③ 真实监听器拦截行为（[任务5]，mock ctx 走插件 apply） ─────────────
 function makeHarness(config) {
@@ -186,6 +187,47 @@ const bootPlanner = await assemble(harnessBoot, plannerAgent, [{ name: 'read' },
 check('R13 bootstrapOn=true planner 首轮收窄为 shell+read', Array.isArray(bootPlanner.tools) ? bootPlanner.tools.map((t) => t.name).sort() : null, ['pwsh', 'read'])
 const bootExecutor = await assemble(harnessBoot, executor, [{ name: 'read' }, { name: 'pwsh' }, { name: 'write' }])
 check('R14 bootstrapOn=true executor 不引导（目录原样）', Array.isArray(bootExecutor.tools) ? bootExecutor.tools.map((t) => t.name).sort() : null, ['pwsh', 'read', 'write'])
+
+// ── ⑤ 探查子代理（subagent_probe）行为断言（R15-R21，任意路由状态放行） ──
+// 事件构造辅助（同 step-00 F 系列形状：user/message + ask_user_question call/result）
+const umE = () => ({ type: 'user/message', data: { source: { kind: 'user' } } })
+const callE = (name, cid, argumentsStr = '{}') => ({ type: 'tool/call', data: { name, callId: cid, arguments: argumentsStr } })
+const okE = (cid, text) => ({ type: 'tool/result', data: { message: { content: [{ type: 'tool-result', toolCallId: cid, content: [{ type: 'text', text }] }] } } })
+const routeArgsE = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }] })
+const clarifyArgsE = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '方案A' }, { label: '方案B' }] }] })
+const answerE = (labels) => JSON.stringify({ answers: labels.map((l) => ({ id: 'q1', selected: [l] })) })
+const mainWithEvents = (events) => ({ session: { header: { id: 'main-1', cwd: 'C:/work' }, events }, options: {}, ctx: undefined })
+
+// direct 态：路由已确认「直接执行」；无确认态：无事件；plan+clarified 态：规划+澄清完成
+const directMain = mainWithEvents([umE(), callE('ask_user_question', 'a1', routeArgsE), okE('a1', answerE(['直接执行']))])
+const noneMain = mainWithEvents([])
+const planMain = mainWithEvents([umE(), callE('ask_user_question', 'a1', routeArgsE), okE('a1', answerE(['进行pro规划'])), callE('ask_user_question', 'a2', clarifyArgsE), okE('a2', answerE(['方案A']))])
+
+// R18：direct 态派探查者（run_in_background: true）→ 放行（同时把 main-1 记入 probeParents，
+// 供 R15-R17 的 probe 子会话经 header.parentSession 反查命中）
+r = preExecute(harness, directMain, 'subagent_probe', { run_in_background: true })
+checkTrue('R18 主会话 direct 态 subagent_probe(run_in_background: true) → 放行', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, directMain, 'subagent_probe', {})
+checkTrue('R19 主会话 direct 态 subagent_probe(缺 run_in_background) → deny 且文案含 run_in_background: true', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('run_in_background: true'))
+r = preExecute(harness, noneMain, 'subagent_probe', { run_in_background: true })
+checkTrue('R20 主会话无路由确认态 subagent_probe(run_in_background: true) → 放行（任意状态放行）', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, planMain, 'subagent_probe', { run_in_background: true })
+checkTrue('R21 主会话 plan+clarified 态 subagent_probe(run_in_background: true) → 放行', r !== null && r !== undefined && r.kind === 'allow')
+
+// probe 子会话（parentSession=main-1 已在 probeParents）：write → probe 文案 deny；
+// pwsh 只读 → 放行；save_probe → 放行（child 分支不拦）
+const probeAgent = {
+  session: { header: { id: 'probe-1', origin: 'subagent', delegationDepth: 1, parentSession: 'main-1', cwd: 'C:/work' }, events: [] },
+  options: {},
+  ctx: undefined,
+}
+await assemble(harness, probeAgent, [{ name: 'read' }, { name: 'glob' }, { name: 'grep' }, { name: 'pwsh' }, { name: 'save_probe' }])
+r = preExecute(harness, probeAgent, 'write', {})
+checkTrue('R15 probe 会话 write → deny 且文案含「探查者只读」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('探查者只读'))
+r = preExecute(harness, probeAgent, 'pwsh', { command: 'Get-ChildItem' })
+checkTrue('R16 probe 会话 pwsh 只读 → 放行', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, probeAgent, 'save_probe', { fileMap: [], focusAreas: [], exclusions: [], background: [] })
+checkTrue('R17 probe 会话 save_probe → 放行', r !== null && r !== undefined && r.kind === 'allow')
 
 console.log(`\n通过 ${pass}, 失败 ${fail}`)
 process.exit(fail === 0 ? 0 : 1)
