@@ -48,13 +48,13 @@
 //     - save_probe 工具只注册在主会话层（session-start + pre-step 幂等兜底），
 //       规划子代理/执行者/reviewer 不可见；
 //     - 探查硬上限：自最近一条主会话发往本子代理的消息（初始任务
-//       kind=user / send_message 续轮转达 kind=coordinator；用户不直接对话
+//       kind=user / send_message 续轮转达 kind=coordinator（0.1.1）/agent-message（alpha5）；用户不直接对话
 //       子代理）起的 tool/call（含 save_plan）≥ exploreBudget 后拒绝后续
 //       工具调用并注入收敛指令；每条主会话转达消息重置预算（=用户授权继续
 //       探查）；save_plan 与运行时上下文快照（kind=plugin）不重置；
 //     - write/edit 与 pwsh 写命令拒绝（toolFilter 之外的备份防线）。
 //     - plannerPromptSuffix 配置：委派的初始任务消息（kind=user）与续轮转达
-//       （kind=coordinator）末尾机械拼接「\n\n + 配置文本」（任务要求 + 回车换行
+//       （kind=coordinator（0.1.1）/agent-message（alpha5））末尾机械拼接「\n\n + 配置文本」（任务要求 + 回车换行
 //       + 文本）；运行时快照（kind=plugin）不追加。
 //  3) anchored 引导（默认开）：主会话与规划子代理在首个 tool/call 落盘前，
 //     装配级注入极简 persona、清空运行时上下文、目录收窄为 shell + read；
@@ -528,7 +528,7 @@ function toolCallCount(events, skipNames) {
 }
 
 // 探查预算锚点计数：自最近一条主会话发往本子代理的消息（初始任务
-// kind=user，或 send_message 续轮转达 kind=coordinator）之后的 tool/call
+// kind=user，或 send_message 续轮转达 kind=coordinator/agent-message（0.1.1/alpha5）之后的 tool/call
 // 数。用户不直接对话子代理，这两类消息均由主会话触发——每条 = 一次用户
 // 授权（预算重置）；运行时上下文快照（kind=plugin）不构成锚点。无锚点时
 // 与 toolCallCount 同口径。
@@ -540,7 +540,7 @@ function toolCallsSinceUser(events, skipNames) {
     if (e === null || typeof e !== 'object' || e.type !== 'user/message') continue
     const d = e.data
     const kind = d !== null && typeof d === 'object' && d.source !== null && typeof d.source === 'object' ? d.source.kind : ''
-    if (kind === 'user' || kind === 'coordinator') {
+    if (kind === 'user' || kind === 'coordinator' || kind === 'agent-message') {
       anchor = i
       break
     }
@@ -561,7 +561,7 @@ function jobOutputCallsForJob(events, jobId) {
     if (e === null || typeof e !== 'object' || e.type !== 'user/message') continue
     const d = e.data
     const kind = d !== null && typeof d === 'object' && d.source !== null && typeof d.source === 'object' ? d.source.kind : ''
-    if (kind === 'user' || kind === 'coordinator') {
+    if (kind === 'user' || kind === 'coordinator' || kind === 'agent-message') {
       anchor = i
       break
     }
@@ -582,7 +582,7 @@ function jobOutputCallsForJob(events, jobId) {
 }
 
 // 规划任务附加指令拼接（v0.1.5）：主会话委派 subagent_plan 的初始任务消息
-// （source.kind=user）与 send_message 续轮转达（source.kind=coordinator）末尾
+// （source.kind=user）与 send_message 续轮转达（source.kind=coordinator/agent-message，0.1.1/alpha5）末尾
 // 机械追加配置文本——「任务要求 + 空行 + 配置文本」。运行时快照（kind=plugin）
 // 不追加；非单文本块或已含后缀时原样返回（幂等）。返回新消息（宿主消息对象
 // deepFreeze，不可原地改）。
@@ -590,7 +590,7 @@ function appendSuffixBlock(message, text) {
   if (text === '') return message
   if (message === null || typeof message !== 'object') return message
   const src = message.source
-  if (src === null || typeof src !== 'object' || (src.kind !== 'user' && src.kind !== 'coordinator')) return message
+  if (src === null || typeof src !== 'object' || (src.kind !== 'user' && src.kind !== 'coordinator' && src.kind !== 'agent-message')) return message
   if (!Array.isArray(message.content) || message.content.length !== 1) return message
   const block = message.content[0]
   if (block === null || typeof block !== 'object' || block.type !== 'text' || typeof block.text !== 'string') return message
@@ -608,7 +608,7 @@ function budgetNoticeText(budget) {
   return `本轮探查预算上限为 ${budget} 次工具调用。预算耗尽时输出「申请继续探查：<待查项> — <原因>」，主会话将探查待查项并转达线索文件路径，你读取线索继续工作。探查完成后直接调用 save_plan 落盘（系统会自动检测未探查项）`
 }
 
-// 预算告知拼接：结构同 withPlannerPromptSuffix（kind 限定 user/coordinator、
+// 预算告知拼接：结构同 withPlannerPromptSuffix（kind 限定 user/coordinator/agent-message、
 // 单文本块、已含则幂等、返回新对象不原地改）。
 function withBudgetNotice(message, notice) { return appendSuffixBlock(message, notice) }
 
@@ -619,12 +619,12 @@ function budgetReminderText(remaining, budget, threshold) {
   return `本轮探查预算还剩 ${remaining} 次`
 }
 
-// 阈值提示消息：kind 必须为 'plugin'（锚点规则只认 user/coordinator，kind=user 会误重置预算）。
+// 阈值提示消息：kind 必须为 'plugin'（锚点规则只认 user/coordinator/agent-message，kind=user 会误重置预算）。
 function budgetReminderMessage(reminder) {
   return { source: { kind: 'plugin', plugin: 'dsh-extra-plan' }, content: [{ type: 'text', text: reminder }] }
 }
 
-// 阈值提示幂等：自最近一条 user/coordinator 锚点之后是否已注入过含 marker 的消息
+// 阈值提示幂等：自最近一条 user/coordinator/agent-message 锚点之后是否已注入过含 marker 的消息
 // （无锚点全量扫描；元素缺 content 按无命中处理、不抛异常）。天然每轮重置。
 function budgetReminderSent(events, marker) {
   if (!Array.isArray(events)) return false
@@ -634,7 +634,7 @@ function budgetReminderSent(events, marker) {
     if (e === null || typeof e !== 'object' || e.type !== 'user/message') continue
     const d = e.data
     const kind = d !== null && typeof d === 'object' && d.source !== null && typeof d.source === 'object' ? d.source.kind : ''
-    if (kind === 'user' || kind === 'coordinator') {
+    if (kind === 'user' || kind === 'coordinator' || kind === 'agent-message') {
       anchor = i
       break
     }
@@ -1970,7 +1970,7 @@ export function apply(ctx, config) {
     }
     if (name === 'send_message') {
       const args = exec.arguments
-      const target = args !== undefined && args !== null && typeof args === 'object' && typeof args.subagent_id === 'string' ? args.subagent_id : ''
+      const target = args !== undefined && args !== null && typeof args === 'object' ? (typeof args.subagent_id === 'string' ? args.subagent_id : (typeof args.agent_id === 'string' ? args.agent_id : '')) : ''
       const plannerIds = plannerChildIdsOf(agent.session.events)
       if (!escape && !plannerIds.includes(target)) {
         return { kind: 'deny', reason: 'send_message 未放行：目标子代理为 one-shot 一次性会话，不可续轮；仅 continuable 规划子代理可接收 send_message 续轮转达' }

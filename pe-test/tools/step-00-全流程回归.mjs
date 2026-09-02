@@ -182,6 +182,8 @@ const P = [
   ['P3 plan 结果错误 → 空', [um(), planCall('p1'), err('p1', 'GATED')], []],
   ['P4 uuid 形态 → 提取', [um(), planCall('p1'), ok('p1', 'child 6b9d2f8a-1c3e-4f5a-9b7d-0e2c8a4f6d10 已启动')], ['6b9d2f8a-1c3e-4f5a-9b7d-0e2c8a4f6d10']],
   ['P5 非 plan 调用的结果忽略', [um(), call('subagent', 'x1'), ok('x1', 'session-ffffffff')], []],
+  ['P6 alpha5 精确形态 started subagent <uuid> → 提取', [um(), planCall('p1'), ok('p1', 'started subagent 6b9d2f8a-1c3e-4f5a-9b7d-0e2c8a4f6d10')], ['6b9d2f8a-1c3e-4f5a-9b7d-0e2c8a4f6d10']],
+  ['P7 one-shot jobId 形态 subagent-N 不混入白名单', [um(), planCall('p1'), ok('p1', 'started background subagent job subagent-3')], []],
 ]
 for (const [name, events, expected] of P) {
   check(name, plannerChildIdsOf(events), expected)
@@ -207,6 +209,7 @@ const CU = [
   ['CU5 多个 coordinator → 最后一个为锚', [umk('user'), call('read', 'a1'), umk('coordinator'), call('glob', 'b1'), umk('coordinator'), call('pwsh', 'c1')], new Set([]), 1],
   ['CU6 锚点后 save_plan 跳过仍生效', [umk('user'), call('read', 'a1'), call('save_plan', 's1'), call('glob', 'b1')], new Set(['save_plan']), 2],
   ['CU7 锚点后无调用 → 0(授权即重置)', [umk('user'), call('read', 'a1'), umk('coordinator')], new Set([]), 0],
+  ['CU8 kind=agent-message 锚点(alpha5 续轮转达) → 重置只计其后', [umk('user'), call('read', 'a1'), umk('agent-message'), call('glob', 'b1')], new Set([]), 1],
 ]
 for (const [name, events, skip, expected] of CU) {
   check(name, toolCallsSinceUser(events, skip), expected)
@@ -224,6 +227,7 @@ const AP = [
   ['AP7 缺 source → 原样', { content: [{ type: 'text', text: '任务A' }] }, '后缀X', '任务A'],
   ['AP8 kind=coordinator 已含后缀 → 不重复拼', msgOf('coordinator', '意见\n\n后缀X'), '后缀X', '意见\n\n后缀X'],
   ['AP9 kind=coordinator 多块 → 原样', { source: { kind: 'coordinator' }, content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] }, '后缀X', 'a'],
+  ['AP10 kind=agent-message(alpha5 续轮转达) → 拼接', msgOf('agent-message', '意见'), '后缀X', '意见\n\n后缀X'],
 ]
 for (const [name, message, suffix, expected] of AP) {
   const got = withPlannerPromptSuffix(message, suffix)
