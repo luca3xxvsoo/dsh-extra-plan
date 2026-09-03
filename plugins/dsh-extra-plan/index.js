@@ -1223,12 +1223,16 @@ export function apply(ctx, config) {
   // 全文件只在此函数内（解析点唯一 = 函数唯一）。
   const plannerModelCache = new WeakMap()
 
-  // 单点解析（唯一解析点）：查缓存有则直接返回；无则找父会话、
-  // 取 parent.requestHeader().config 的 provider/model/maxTokens，并用
-  // ctx.get('llm') 的模型目录查询判断 plannerModel 是否在目录里
-  // （在则用 plannerModel，否则用父会话当前 model）。解析整体 try/catch：
-  // 异常时回退为"父会话当前值"（视为目录里没有 plannerModel），不抛；结果
-  // 写缓存并返回。assemble 钩子与 effectiveModel 服务兜底都只调本函数。
+  // 单点解析（唯一解析点）：查缓存有则直接返回；无则解析并写缓存。
+  // 模型优先级：plannerModel（设置页显式配置，规划子代理专用）> 父会话当前
+  // model；provider/maxTokens 取自父会话 requestHeader().config（父会话空闲时
+  // 取不到 → undefined，注入时跳过、保留 spawn 描述符默认值）。
+  // 2026-09-03 修复：不再依赖 llm 模型目录命中（目录是 advisory：未列出 id 仍
+  // 原样传递，dsh-llm-deepseek 文档口径）与父会话进行中请求头——旧逻辑在父会话
+  // 空闲（后台规划时必然如此）时 provider 为空、查询被跳过，导致 plannerModel
+  // 永不生效、回退主会话默认模型（flash）；现改为显式配置直接生效。
+  // 解析整体 try/catch：异常时保持已取到的值，不抛；assemble 钩子与
+  // effectiveModel 服务兜底都只调本函数。
   async function resolvePlannerEntry(agent) {
     const cached = plannerModelCache.get(agent)
     if (cached !== undefined) return cached
@@ -1252,19 +1256,13 @@ export function apply(ctx, config) {
             provider = typeof pcfg.provider === 'string' && pcfg.provider !== '' ? pcfg.provider : undefined
             model = typeof pcfg.model === 'string' && pcfg.model !== '' ? pcfg.model : undefined
             maxTokens = typeof pcfg.maxTokens === 'number' && pcfg.maxTokens > 0 ? pcfg.maxTokens : undefined
-            if (provider !== undefined && plannerModel !== '') {
-              const llm = ctx.get('llm')
-              const models = llm !== undefined && typeof llm.listModels === 'function' ? await llm.listModels(provider) : undefined
-              if (Array.isArray(models) && models.some((m) => m !== null && typeof m === 'object' && m.id === plannerModel)) {
-                model = plannerModel
-              }
-            }
           }
         }
       }
+      // 规划子代理模型 = 设置页 plannerModel（显式配置优先，父空闲时也能生效）
+      if (plannerModel !== '') model = plannerModel
     } catch (error) {
-      // 解析异常：回退为"父会话当前值"（provider/model/maxTokens 保持已取到
-      // 的值或 undefined，视为目录里没有 plannerModel），不抛、不崩调用方。
+      // 解析异常：保持已取到的值（provider/maxTokens 可能 undefined），不抛、不崩调用方。
     }
     const entry = { provider, model, maxTokens }
     plannerModelCache.set(agent, entry)
