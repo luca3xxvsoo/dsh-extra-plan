@@ -50,18 +50,6 @@ function mainPluginProfiles(dshHome) {
   return out
 }
 
-// 读取 profile 用户层 cordis.patch.yml 中 flash-guide 的 id-targeted 条目。
-function readFlashGuideConfig(file) {
-  const items = existsSync(file) ? yaml.load(readFileSync(file, 'utf8'), { schema: patchSchema }) : []
-  const list = Array.isArray(items) ? items : []
-  for (const item of list) {
-    if (item && typeof item === 'object' && item.id === 'flash-guide') {
-      return { list, item }
-    }
-  }
-  return { list, item: null }
-}
-
 function agentCordisPath(ctx) {
   return join(dshHomeDir(ctx), '.agent-presets', 'extra-plan', 'agent.cordis.yml')
 }
@@ -424,16 +412,12 @@ function createApiHandler(ctx) {
           if (profiles.length === 0) {
             return json(res, 200, { available: false, disabled: false })
           }
-          let allDisabled = true
-          for (const profile of profiles) {
-            const file = join(dshHomeDir(ctx), 'profiles', profile, 'cordis.patch.yml')
-            const { item } = readFlashGuideConfig(file)
-            if (!item || item.disabled !== true) {
-              allDisabled = false
-              break
-            }
-          }
-          return json(res, 200, { available: true, disabled: allDisabled })
+          // 开关已迁入 agent.cordis.yml extra-plan 插件 config 区（flashGuideEnabled，
+          // 模板默认 true=启用）。兜底：文件缺失/条目缺失/字段缺失 → disabled=false。
+          const file = agentCordisPath(ctx)
+          const { entry } = existsSync(file) ? readExtraPlanConfig(file) : { entry: null }
+          const disabled = entry !== null && entry.config && entry.config.flashGuideEnabled === false
+          return json(res, 200, { available: true, disabled })
         } catch (err) {
           return json(res, 500, { error: 'failed to read flash-guide config: ' + String((err && err.message) || err) })
         }
@@ -445,18 +429,12 @@ function createApiHandler(ctx) {
           return json(res, 400, { error: 'disabled must be a boolean' })
         }
         try {
-          const profiles = mainPluginProfiles(dshHomeDir(ctx))
-          if (profiles.length === 0) {
-            return json(res, 404, { error: 'extra-plan main plugin not installed in any profile' })
-          }
-          for (const profile of profiles) {
-            const file = join(dshHomeDir(ctx), 'profiles', profile, 'cordis.patch.yml')
-            if (!patchFileField(file, 'flash-guide', 'disabled', body.disabled ? 'true' : 'false')) {
-              // 条目缺失：文件末尾追加一条（保持旧"push 新条目"语义）
-              const existing = existsSync(file) ? readFileSync(file, 'utf8') : ''
-              const sep = existing === '' ? '' : (existing.endsWith('\n') ? '' : '\n')
-              writeTextAtomic(file, existing + sep + '- id: flash-guide\n  disabled: ' + yamlScalar(body.disabled) + '\n')
-            }
+          // 文本级直接写入 agent.cordis.yml extra-plan 插件 config 区：只改
+          // flashGuideEnabled 目标行（模板预置默认 true），!!js/注释/其他行
+          // 字节零扰动；不再遍历各 profile 写 cordis.patch.yml。
+          const file = agentCordisPath(ctx)
+          if (!patchFileField(file, 'extra-plan', 'flashGuideEnabled', body.disabled ? 'false' : 'true')) {
+            return json(res, 404, { error: 'extra-plan plugin not found in agent.cordis.yml' })
           }
           return json(res, 200, { disabled: body.disabled })
         } catch (err) {

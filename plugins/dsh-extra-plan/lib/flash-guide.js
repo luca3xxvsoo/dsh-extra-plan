@@ -137,6 +137,14 @@ export function apply(ctx) {
     if (!shouldGuide(model)) {
       return decision
     }
+    // flash 引导开关（extra-plan 预设 config.flashGuideEnabled，经宿主
+    // agentPresets.serviceFor 读取）：关闭时不注入引导；服务缺席（旧版
+    // extra-plan / 非本预设会话）不拦截，维持现状。
+    const flagSvc = presets.serviceFor(agent, 'extra-plan/flashGuideEnabled')
+    if (typeof flagSvc === 'function') {
+      const enabled = await flagSvc(agent)
+      if (enabled === false) return decision
+    }
     // Host message objects are deepFrozen — build a NEW array and insert from
     // the back so earlier indexes stay valid. Each real user message is
     // claimed exactly once, so every one gets exactly one guide.

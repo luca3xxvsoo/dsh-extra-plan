@@ -1315,6 +1315,13 @@ export function apply(ctx, config) {
   // 与其它插件的 apply 先后无关。
   ctx.provide('extra-plan/effectiveModel', effectiveModel)
 
+  // flashGuideEnabled：flash 引导开关只读服务（flash-guide 消费）。
+  // 默认启用：config 未给字段视为 true（与旧「无 disabled 条目即启用」语义一致）。
+  function flashGuideEnabled() {
+    return cfg.flashGuideEnabled !== false
+  }
+  ctx.provide('extra-plan/flashGuideEnabled', flashGuideEnabled)
+
   function floorChildPolicy(agent) {
     if (childPolicyNeedsFloor(agent.session, sandboxPolicy)) {
       agent.session.append('sandbox/mode', { mode: 'workspace-write', source: 'delegation' })

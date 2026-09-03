@@ -62,6 +62,34 @@ function writeFull(targetDir, distHash) {
   }
 }
 
+/** 跨版本升级后：幂等移除各 profile 用户层 cordis.patch.yml 的 flash-guide 旧条目。
+ *  仅删 `- id: flash-guide` 整行及其后续缩进行（直至下一个顶格行）；无条目不动文件；
+ *  任何异常静默（清理失败不阻断启动）。 */
+function cleanupLegacyFlashGuidePatches(dshHome) {
+  try {
+    const root = join(dshHome, 'profiles')
+    if (!existsSync(root)) return
+    for (const name of readdirSync(root)) {
+      const file = join(root, name, 'cordis.patch.yml')
+      if (!existsSync(file)) continue
+      const text = readFileSync(file, 'utf8')
+      const lines = text.split('\n')
+      const out = []
+      let skipping = false
+      for (const line of lines) {
+        if (!skipping && /^-\s*id:\s*flash-guide\s*$/.test(line)) { skipping = true; continue }
+        if (skipping) {
+          if (/^\S/.test(line)) { skipping = false }        // 顶格行（注释/下一条目）→ 结束删除区
+          else { continue }                                  // 缩进行（disabled 等属性）→ 删除
+        }
+        out.push(line)
+      }
+      const next = out.join('\n')
+      if (next !== text) writeFileSync(file, next, 'utf8')   // 幂等：无条目不动文件
+    }
+  } catch { /* 静默 */ }
+}
+
 /**
  * 运行一次自愈核对（导出便于单测）。
  * @returns 'written' | 'upgraded' | 'idle'
@@ -77,6 +105,7 @@ export function syncPreset(dshHome) {
   const recorded = readManifest(targetDir)
   if (recorded === currentHash) return 'idle' // 已是当前发行；同版本内手改 → 保留，不碰
   writeFull(targetDir, currentHash) // 跨版本下发或记录缺失 → 一律覆盖为当前发行
+  cleanupLegacyFlashGuidePatches(dshHome)
   return 'upgraded'
 }
 
