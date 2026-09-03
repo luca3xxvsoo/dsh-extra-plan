@@ -718,21 +718,21 @@ const DISPLAY_GUIDE = '> **展示指引**：向用户展示时，使用 show_fil
 // ── save_probe：探查线索落盘的机械上限（导出供测试，防复制漂移） ──
 // 条目数/单条长度/总量均为设计值；调整须同步 PROBE_LIMITS、测试、文档三处。
 export const PROBE_LIMITS = {
-  maxEntries: { fileMap: 20, focusAreas: 20, exclusions: 10, background: 10 },
-  maxPathLen: 512,
+  maxEntries: { fileMap: 50, focusAreas: 50, exclusions: 20, background: 20 },
+  maxPathLen: 1024,
   maxRangeLen: 20,
-  maxRelationLen: 200,
-  maxNoteLen: 200,
-  maxTopicLen: 80,
-  maxDetailLen: 300,
-  maxTotalChars: 4096,
+  maxRelationLen: 400,
+  maxNoteLen: 400,
+  maxTopicLen: 120,
+  maxDetailLen: 600,
+  maxTotalChars: 20000,
   rangePattern: '^L?\\d+(?:-\\d+)?$',
-  maxEvidenceEntries: 40,
+  maxEvidenceEntries: 80,
   maxEvidenceLineLen: 20,
-  maxEvidenceValueLen: 120,
-  maxEvidenceTextLen: 400,
-  maxEvidenceNoteLen: 200,
-  maxEvidenceTotalChars: 8192,
+  maxEvidenceValueLen: 240,
+  maxEvidenceTextLen: 800,
+  maxEvidenceNoteLen: 400,
+  maxEvidenceTotalChars: 32000,
   evidenceLinePattern: '^L?\\d+$',
 }
 
@@ -1475,7 +1475,7 @@ export function apply(ctx, config) {
   function defineSaveProbe() {
     return {
       name: 'save_probe',
-      description: '把只读探查结果经 save_probe 落盘为工作区 .extra-plan 目录下的单个 Markdown 文件：四类定位线索——文件地图（fileMap）/ 重点区域（focusAreas）/ 排除项（exclusions）/ 背景与意图（background），可选证据数组（evidence：探查者把核实过的行号/数值/文案照实写入；主会话线索模式可不传）。主会话线索模式只写定位线索（路径/范围/关系/备注），不含证据（行号/数值/文案摘录）——pro 规划子代理（subagent_plan）不得把线索文件内容当作【已探查核实】证据；探查子代理传 evidence 时落盘为证据报告（行号/数值/文案照实记录，可被规划子代理作为【探查者已核实】证据引用）。落盘成功后返回文件路径；委派 subagent_plan 时请在 prompt 中带上该路径，说明先 read 文件再按需补查',
+      description: '把只读探查结果经 save_probe 落盘为工作区 .extra-plan 目录下的单个 Markdown 文件：四类定位线索——文件地图（fileMap）/ 重点区域（focusAreas）/ 排除项（exclusions）/ 背景与意图（background），可选证据数组（evidence：探查者把核实过的行号/数值/文案照实写入；主会话线索模式可不传）。主会话线索模式只写定位线索（路径/范围/关系/备注），不含证据（行号/数值/文案摘录）——pro 规划子代理（subagent_plan）不得把线索文件内容当作【已探查核实】证据；探查子代理传 evidence 时落盘为证据报告（行号/数值/文案照实记录，可被规划子代理作为【探查者已核实】证据引用）。落盘成功后返回文件路径；委派 subagent_plan 时请在 prompt 中带上该路径，说明先 read 文件再按需补查。落盘规则：fileMap/focusAreas 各 ≤50 条、exclusions/background 各 ≤20 条、evidence ≤80 条；四字段 JSON 总量 ≤20000、evidence JSON 总量 ≤32000（按 JSON 序列化长度计，键名/引号/逗号均计入）；fileMap/focusAreas/evidence 的 path 必须真实存在（相对按工作区解析）；range 格式 12 或 L12-34；evidence.line 为单个行号（12 或 L12，不含区间）；evidence 每项 line/value/text 至少其一；超限会拒绝（不静默截断），先压缩概括或分多次落盘。',
       parameters: {
         type: 'object',
         properties: {
@@ -1486,7 +1486,7 @@ export function apply(ctx, config) {
               type: 'object',
               properties: {
                 path: { type: 'string', description: '文件路径（相对工作区或绝对路径，必须真实存在）' },
-                relation: { type: 'string', description: '该文件与任务的关系（≤200 字）' },
+                relation: { type: 'string', description: '该文件与任务的关系（≤400 字）' },
               },
               required: ['path', 'relation'],
               additionalProperties: false,
@@ -1500,7 +1500,7 @@ export function apply(ctx, config) {
               properties: {
                 path: { type: 'string', description: '文件路径（必须真实存在）' },
                 range: { type: 'string', description: '可选行号范围（如 12 或 L12-34）' },
-                note: { type: 'string', description: '该区域的重点与补查方向（≤200 字）' },
+                note: { type: 'string', description: '该区域的重点与补查方向（≤400 字）' },
               },
               required: ['path', 'note'],
               additionalProperties: false,
@@ -1513,7 +1513,7 @@ export function apply(ctx, config) {
               type: 'object',
               properties: {
                 scope: { type: 'string', description: '可选排除范围描述' },
-                note: { type: 'string', description: '排除原因（≤200 字）' },
+                note: { type: 'string', description: '排除原因（≤400 字）' },
               },
               required: ['note'],
               additionalProperties: false,
@@ -1525,8 +1525,8 @@ export function apply(ctx, config) {
             items: {
               type: 'object',
               properties: {
-                topic: { type: 'string', description: '背景主题（≤80 字）' },
-                detail: { type: 'string', description: '背景/意图细节（≤300 字）' },
+                topic: { type: 'string', description: '背景主题（≤120 字）' },
+                detail: { type: 'string', description: '背景/意图细节（≤600 字）' },
               },
               required: ['topic', 'detail'],
               additionalProperties: false,
@@ -1534,15 +1534,15 @@ export function apply(ctx, config) {
           },
           evidence: {
             type: 'array',
-            description: '可选证据数组（探查子代理 save_probe 落盘证据报告用；主会话线索模式可不传）：探查者把核实过的行号/数值/文案照实写入——每项 {path 必填, line?, value?, text?, note?}，path 必须真实存在，line/value/text 至少一个（line ≤20 字如 12 或 L12，value ≤120 字，text ≤400 字，note ≤200 字，至多 40 条）',
+            description: '可选证据数组（探查子代理 save_probe 落盘证据报告用；主会话线索模式可不传）：探查者把核实过的行号/数值/文案照实写入——每项 {path 必填, line?, value?, text?, note?}，path 必须真实存在，line/value/text 至少一个（line ≤20 字如 12 或 L12，value ≤240 字，text ≤800 字，note ≤400 字，至多 80 条）',
             items: {
               type: 'object',
               properties: {
                 path: { type: 'string', description: '被核实文件路径（相对工作区或绝对路径，必须真实存在）' },
                 line: { type: 'string', description: '可选行号（如 12 或 L12）' },
-                value: { type: 'string', description: '可选核实值（≤120 字）' },
-                text: { type: 'string', description: '可选原文摘录（≤400 字）' },
-                note: { type: 'string', description: '可选备注（≤200 字）' },
+                value: { type: 'string', description: '可选核实值（≤240 字）' },
+                text: { type: 'string', description: '可选原文摘录（≤800 字）' },
+                note: { type: 'string', description: '可选备注（≤400 字）' },
               },
               required: ['path'],
               additionalProperties: false,
