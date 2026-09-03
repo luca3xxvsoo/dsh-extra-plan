@@ -1,4 +1,5 @@
 // @local/dsh-extra-plan (v0.1.7)
+// v2（2026-09-04）：agent/request planner 前置注入
 // 额外规划模式（extra-plan 预设专用）：按需规划 + 三级机械锚点（路由/澄清/批准）
 // + 主会话与规划子代理 anchored 引导 + 规划子代理探查硬上限 + 力度继承 +
 // save_plan 方案落盘（原子双写）+ 子代理沙箱下限 + usage 账本。
@@ -1817,6 +1818,36 @@ export function apply(ctx, config) {
   ctx.on('agent/request', async (payload, next) => {
     const resolved = await next()
     if (payload.agent === undefined || !isSubagentChild(payload.agent)) return resolved
+    // planner 模型注入（修复 v2）：在父会话 header 处理之前生效——planner 使用
+    // 设置页 plannerModel（resolvePlannerEntry 现场解析/缓存）；不再依赖父 header
+    // 非空与 WeakMap 缓存命中（断点①pcfg-null 早退 ②缓存 miss 回退父值 均已消除）。
+    if (isPlannerChild(payload.agent)) {
+      const entry = await resolvePlannerEntry(payload.agent)
+      const nextConfig = { ...resolved }
+      if (entry.model !== undefined) nextConfig.model = entry.model
+      if (entry.provider !== undefined) nextConfig.provider = entry.provider
+      if (entry.maxTokens !== undefined) nextConfig.maxTokens = entry.maxTokens
+      // effort 继承（验收补遗）：保持「力度完全继承主会话」（agent.cordis.yml 设计）；
+      // 原钩子尾部的 effort 继承对 planner 已不可达（前置早退）。
+      try {
+        const agents = ctx.get('agents')
+        let parent
+        try {
+          parent = agents !== undefined ? agents.get(payload.agent.session.header.parentSession) : undefined
+        } catch (error) {
+          parent = undefined
+        }
+        if (parent !== undefined) {
+          const header = typeof parent.session.requestHeader === 'function' ? parent.session.requestHeader() : undefined
+          const pcfg = header !== undefined && header.config !== undefined && header.config !== null ? header.config : null
+          const parentEffort = pcfg !== null && typeof pcfg.reasoningEffort === 'string' ? pcfg.reasoningEffort : ''
+          if (parentEffort !== '') nextConfig.reasoningEffort = parentEffort
+        }
+      } catch (error) {
+        // effort 取不到则不注入（与尾部继承的宽松语义一致）
+      }
+      return nextConfig
+    }
     const parentSession = payload.agent.session.header.parentSession
     if (typeof parentSession !== 'string') return resolved
     const agents = ctx.get('agents')
