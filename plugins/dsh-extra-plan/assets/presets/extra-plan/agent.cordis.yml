@@ -109,7 +109,7 @@
         exploreBudget: 18
         savePlanDir: '.extra-plan'
         plannerPromptSuffix: '你的深度思考部分需要以"好了，现在我以全局视角来看待这个问题"开头'
-        flashGuideEnabled: true
+        flashGuideEnabled: false
         usageLedger:
           enabled: true
           path: !!js dshHomePath('usage-ledger', 'ledger.jsonl')
