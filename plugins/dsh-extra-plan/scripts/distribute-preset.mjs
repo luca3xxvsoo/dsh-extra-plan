@@ -45,8 +45,14 @@ function writeTarget(targetDir, distHash) {
   try {
     for (const file of readdirSync(ASSET_DIR)) copyFileSync(join(ASSET_DIR, file), join(tmp, file))
     writeFileSync(join(tmp, MANIFEST_NAME), JSON.stringify({ format: 1, distHash }, null, 2) + '\n')
-    if (existsSync(targetDir)) rmSync(targetDir, { recursive: true, force: true })
-    renameSync(tmp, targetDir)
+    try {
+      if (existsSync(targetDir)) rmSync(targetDir, { recursive: true, force: true })
+      renameSync(tmp, targetDir)
+    } catch {
+      mkdirSync(targetDir, { recursive: true })
+      for (const file of readdirSync(tmp)) copyFileSync(join(tmp, file), join(targetDir, file))
+      rmSync(tmp, { recursive: true, force: true })
+    }
   } catch (err) {
     rmSync(tmp, { recursive: true, force: true })
     throw err

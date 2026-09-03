@@ -9,13 +9,14 @@ import yaml from 'js-yaml'
 import { readFileSync, writeFileSync, mkdirSync, renameSync, existsSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { settingsNamespace } from '@deepseek-ai/dsh-settings'
+// import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 import z from '@deepseek-ai/schemastery'
 
 export const name = 'dsh-extra-plan-settings'
 export const inject = []
 
-const EXTRA_PLAN_NS = settingsNamespace('dsh-extra-plan')
+// const EXTRA_PLAN_NS = settingsNamespace('dsh-extra-plan')
+const EXTRA_PLAN_NS = 'dsh-extra-plan'
 const ExtraPlanSettingsSchema = z.object({})
 
 // YAML schema 支持 !!js 表达式，确保 agent.cordis.yml 中 !!js 往返不丢失。
@@ -32,9 +33,6 @@ const patchSchema = yaml.JSON_SCHEMA.extend(JsExpr)
 // 注意：host 平面 inject=[] 下只能用 ctx.get('settings')（可选查找）；直接读
 // ctx.settings 会被宿主 ctx 守卫以「未声明服务」抛错（API 500）。
 function dshHomeDir(ctx) {
-  const settings = ctx.get('settings')
-  const doc = settings !== undefined && settings !== null && typeof settings.documentPath === 'string' ? settings.documentPath : ''
-  if (doc !== '') return dirname(doc)
   const fromEnv = process.env.DSH_HOME
   if (typeof fromEnv === 'string' && fromEnv.trim() !== '') return fromEnv.trim()
   return join(process.env.USERPROFILE || process.env.HOME || '', '.dsh')

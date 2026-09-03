@@ -94,24 +94,6 @@ export function shouldGuide(model) {
 
 // ── internal helpers (patterns verbatim from @local/dsh-extra-plan) ─────────
 
-/** Model id of an agent: agent.options.model, fallback to
- *  session.requestHeader().config.model (extra-plan L602-608). Kept ONLY as
- *  the fallback path when the extra-plan/effectiveModel service is absent
- *  (e.g. a profile without extra-plan installed); the primary decision now
- *  reads the service at pre-step runtime. */
-function modelOf(agent) {
-  if (agent === undefined || agent === null) return undefined
-  const opts = agent.options
-  let model = opts !== undefined && typeof opts.model === 'string' ? opts.model : undefined
-  if (model === undefined && agent.session !== undefined && typeof agent.session.requestHeader === 'function') {
-    try {
-      const header = agent.session.requestHeader()
-      model = header !== undefined && header.config !== undefined && typeof header.config.model === 'string' ? header.config.model : undefined
-    } catch { /* header unavailable: silent skip */ }
-  }
-  return model
-}
-
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'flash-guide'
 
@@ -143,16 +125,15 @@ export function apply(ctx) {
     const agent = payload.agent ?? lastAgent
     if (agent === undefined || agent === null) return decision
     const session = agent.session
-    const sessionId = session !== undefined && session !== null ? session.id : '?'
     // 有效模型判定：经宿主公开 API 读 extra-plan 隔离组内注册的服务
     // （agentPresets.serviceFor(agent, name)，专为「持有 agent 的外部调用者
     // 读取会话级预设服务」设计）；服务缺席（未装 extra-plan / agent 未挂预设 /
-    // 该预设无此服务）时降级为老 modelOf 判定。
+    // 该预设无此服务）时直接跳过，不注入引导（非 extra-plan 会话不受影响）。
     const presets = ctx.get('agentPresets')
-    const svc = presets !== undefined && presets !== null && typeof presets.serviceFor === 'function'
-      ? presets.serviceFor(agent, 'extra-plan/effectiveModel')
-      : undefined
-    const model = typeof svc === 'function' ? await svc(agent) : modelOf(agent)
+    if (presets === undefined || presets === null || typeof presets.serviceFor !== 'function') return decision
+    const svc = presets.serviceFor(agent, 'extra-plan/effectiveModel')
+    if (typeof svc !== 'function') return decision
+    const model = await svc(agent)
     if (!shouldGuide(model)) {
       return decision
     }

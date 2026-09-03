@@ -83,14 +83,12 @@ window.__ModuleLoader__.load({
       '.esp-hint{color:var(--dsw-alias-label-tertiary);font-size:12px;margin:0}' +
       '.esp-empty{color:var(--dsw-alias-label-tertiary);font-size:13px;margin:0}';
 
-    if (typeof document !== "undefined" && document.querySelector("style[data-plugin=" + JSON.stringify("dsh-extra-plan-settings") + "]") === null) {
+    function apply(ctx) {
       const tag = document.createElement("style");
       tag.dataset.plugin = "dsh-extra-plan-settings";
       tag.textContent = css;
       document.head.appendChild(tag);
-    }
-
-    function apply(ctx) {
+      ctx.effect(() => () => tag.remove(), "dsh-extra-plan-settings: css");
       const el = React.createElement;
       const t = ctx.locale.bind(NS);
 

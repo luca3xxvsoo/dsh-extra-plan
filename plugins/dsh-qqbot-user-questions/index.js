@@ -26,10 +26,8 @@ export function apply(ctx, config) {
   // ── 1.5) 解析会话持久化 root（先 A 后 B 探测回退，均不可用则跳过文件删除）──
   // 方式 A：ctx.sessionPersistence.root（绝对路径）；方式 B：~/.dsh/sessions
   function resolveRoot(ctx) {
-    const rootA = ctx.get('sessionPersistence')?.root
-    if (rootA && existsSync(rootA)) return rootA
-    const rootB = join(homedir(), '.dsh', 'sessions')
-    if (existsSync(rootB)) return rootB
+    const root = join(homedir(), '.dsh', 'sessions')
+    if (existsSync(root)) return root
     console.warn('[dsh-qqbot-user-questions] 未找到可用的会话持久化目录，bot-reset/bot-new 将跳过文件删除')
     return null
   }
