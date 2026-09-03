@@ -89,6 +89,7 @@
   group: true
   isolate:
     'extra-plan/effectiveModel': true
+    'extra-plan/flashGuideEnabled': true
   config:
     - id: extra-plan
       name: '@local/dsh-extra-plan'
@@ -104,6 +105,7 @@
         exploreBudget: 18
         savePlanDir: '.extra-plan'
         plannerPromptSuffix: '你的深度思考部分需要以"好了，现在我以全局视角来看待这个问题"开头'   # 规划任务附加指令：委派 subagent_plan 时程序机械拼接为「任务要求 + 空行 + 此文本」（初始任务 kind=user 与续轮转达 kind=coordinator 均追加；运行时快照 kind=plugin 不追加；空串=不追加）。例：'你的深度思考部分需要以"好了，现在我以全局视角来看待这个问题"开头'
+        flashGuideEnabled: true
         usageLedger:
           enabled: true
           path: !!js dshHomePath('usage-ledger', 'ledger.jsonl')
