@@ -23,6 +23,9 @@ winget install --id Git.MinGit --exact --source winget
 dsh plugin --profile web add 'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan' --allow-build='@local/dsh-extra-plan@git+https://github.com/luca3xxvsoo/dsh-extra-plan.git'
 ```
 2. qqbot兼容插件安装 (选装)
+
+**装前注意**：支持v0.1.0，可能支持v0.4.0 86804a8版，不支持v0.4.0 56db053版及后续。v0.4.0 56db053版对ask_user_question、越权审批有原生支持，但是作者发现的时候npm只有86804a8版，所以暂不修改
+
 ```powershell 7+
 dsh plugin --profile qqbot add 'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan' 'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-qqbot-user-questions' --allow-build='@local/dsh-extra-plan@git+https://github.com/luca3xxvsoo/dsh-extra-plan.git' --allow-build='@local/dsh-qqbot-user-questions@git+https://github.com/luca3xxvsoo/dsh-extra-plan.git'
 ```
