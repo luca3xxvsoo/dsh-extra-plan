@@ -114,15 +114,13 @@
           enabled: true
           path: !!js dshHomePath('usage-ledger', 'ledger.jsonl')
 
-    # 启动自愈：核对 .agent-presets/extra-plan 文件，保证预设就位（幂等）。
-    - id: extra-plan-preset-sync
-      name: '@local/dsh-extra-plan/preset-sync'
-
-    # 注：extra-plan-settings（设置页 API + settings 命名空间注册）不在 agent 预设
-    # 挂载——settings 命名空间必须由宿主平面插件注册（settings.service 的 describe()
-    # 是「设置→插件→插件配置」列表的 served 依据，官方插件均如此），且宿主平面
-    # 注册与 agent 预设注册若同时存在会触发 duplicate registration。该行位于 profile
-    # 的 cordis.patch.yml（insert 列表），见「回退预案-发布前.md」迁移记录。
+    # 注：宿主平面组件（extra-plan-settings 设置页 API + settings 命名空间注册、
+    # extra-plan-preset-sync 预设自愈核对）不在 agent 预设挂载——settings 命名空间
+    # 必须由宿主平面插件注册（settings.service 的 describe() 是「设置→插件→插件配置」
+    # 列表的 served 依据，官方插件均如此），且宿主平面注册与 agent 预设注册若同时存在
+    # 会触发 duplicate registration；preset-sync 须在 DSH 启动时即核对预设（挂 agent 预设
+    # 内则要「预设已就位并开会话」才触发，兜底死锁）。两行均位于插件 bundle patch
+    # （cordis.patch.yml insert 列表），随安装自动就位。本组内仅保留会话级 flash-guide。
 
     # flash 近场引导：在 flash 模型 agent 的 pre-step 中注入引导文本。
     - id: flash-guide

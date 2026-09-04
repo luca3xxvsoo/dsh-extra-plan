@@ -1,14 +1,20 @@
 # 预设分发：postinstall（scripts/distribute-preset.mjs，安装时一次性执行）为主，
 # lib/preset-sync.js 为启动自愈兜底（pnpm 跳过构建时重启后自动核对/就位）。
 #
-# v0.1.2-rc1 迁移：preset-sync、settings、flash-guide 三个插件已改为按 agent 预设
-# 注册（见 assets/presets/extra-plan/agent.cordis.yml 的 extra-plan-group 组内行），
-# 参考 executor-spawn 的会话级注册方式。
+# v0.1.2-rc1 迁移（0d435c0）曾把 preset-sync/settings 挪出本 bundle patch；本版
+# 已回归——宿主平面组件必须随 bundle patch 注册才「安装即用」：settings 是 web
+# 服务级单例（挂 agent 预设会 duplicate registration），preset-sync 须在 DSH 启动时
+# 即核对预设（挂在 agent 预设内则要「预设已就位并开会话」才触发，兜底死锁）。
+# 会话级组件（flash-guide 近场引导）留在 agent 预设（agent.cordis.yml 组内行）。
 #
-# 本 bundle patch 只保留 client-bridge：一个相对路径空壳插件行，指向本包内的
-# lib/client-bridge.js（不新建包，功能全部留在 @local/dsh-extra-plan 内）。
-# 作用是让 clientModules 扫描到本包 package.json 的 dsh.client 声明并加载
-# lib/client.js（settings 卡片 UI）。
+# 本 bundle patch 注册三个宿主平面组件：
+#  - dsh-extra-plan-client-bridge：一个相对路径空壳插件行，指向本包内的
+#    lib/client-bridge.js（不新建包，功能全部留在 @local/dsh-extra-plan 内）。
+#    作用是让 clientModules 扫描到本包 package.json 的 dsh.client 声明并加载
+#    lib/client.js（settings 卡片 UI）。
+#  - dsh-extra-plan-settings：设置页 API + settings 命名空间（服务级单例，须宿主平面）。
+#  - extra-plan-preset-sync：启动时核对 .agent-presets/extra-plan（postinstall 被
+#    pnpm 阻止 / 预设缺失 / 跨版本分发时的兜底）。
 # 原理（读 dsh-app-boot 源码 anchorInsertedPluginNames 确认）：
 #   - patch 行里 ./ 开头的相对路径会被绝对化为「相对于本 patch 文件所在目录」
 #     （即 @local/dsh-extra-plan/ 包目录），所以写 './lib/client-bridge.js'。
@@ -20,3 +26,7 @@
 - insert:
     - id: dsh-extra-plan-client-bridge
       name: './lib/client-bridge.js'
+    - id: dsh-extra-plan-settings
+      name: '@local/dsh-extra-plan/settings'
+    - id: extra-plan-preset-sync
+      name: '@local/dsh-extra-plan/preset-sync'

@@ -1,4 +1,4 @@
-// @local/dsh-extra-plan (v0.1.6)
+// @local/dsh-extra-plan (v0.1.7)
 // v2（2026-09-04）：agent/request planner 前置注入
 // 额外规划模式（extra-plan 预设专用）：按需规划 + 三级机械锚点（路由/澄清/批准）
 // + 主会话与规划子代理 anchored 引导 + 规划子代理探查硬上限 + 力度继承 +

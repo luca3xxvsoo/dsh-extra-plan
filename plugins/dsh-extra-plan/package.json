@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-extra-plan",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "额外规划模式（extra-plan 预设专用）：按需规划 + 三级机械锚点（路由/澄清/批准）+ anchored 引导（主会话与规划子代理）+ 规划子代理探查硬上限 + 力度继承 + save_plan 方案落盘（原子双写）+ 子代理沙箱下限 + usage 账本。Mounted by the extra-plan preset; 预设资产经 postinstall 在安装时一次性分发到 DSH_HOME/.agent-presets/extra-plan/（发完即退役，永不覆盖本机改动）。",
   "type": "module",
   "main": "index.js",
