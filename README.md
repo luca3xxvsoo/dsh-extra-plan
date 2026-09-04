@@ -18,7 +18,7 @@
 ```powershell 7+
 winget install --id Git.MinGit --exact --source winget
 ```
-1. 核心安装(必装)
+1. 核心安装(必装,仅保证支持dsh v0.1.2-rc.1)
 ```powershell 7+
 dsh plugin --profile web add 'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan' --allow-build='@local/dsh-extra-plan@git+https://github.com/luca3xxvsoo/dsh-extra-plan.git'
 ```
