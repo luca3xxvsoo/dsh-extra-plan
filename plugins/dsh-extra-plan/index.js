@@ -253,7 +253,7 @@ function mutationMatches(commandOf, exec, regex) {
 function pwshMutationMatches(exec) { return mutationMatches(pwshCommandOf, exec, PWSH_MUTATION) }
 function bashMutationMatches(exec) { return mutationMatches(bashCommandOf, exec, BASH_MUTATION) }
 
-// 从 ask_user_question 的 tool/call 事件解析选项标签集。
+// 从 ask_user_question 的 tool/call 事件解析选项标签集——只收首问 questions[0] 的选项标签（第二问「修改意见」为纯文本输入，其选项不进入验词集合）。
 // 事件里 arguments 是 JSON 字符串；解析失败返回 null（跳过该调用的分类）。
 function labelsOfCallData(data) {
   if (data === null || typeof data !== 'object') return null
@@ -265,11 +265,10 @@ function labelsOfCallData(data) {
   }
   if (parsed === null || !Array.isArray(parsed.questions)) return null
   const labels = []
-  for (const q of parsed.questions) {
-    if (q === null || typeof q !== 'object' || !Array.isArray(q.options)) continue
-    for (const opt of q.options) {
-      if (opt !== null && typeof opt === 'object' && typeof opt.label === 'string') labels.push(opt.label)
-    }
+  const q = parsed.questions[0]
+  if (q === null || typeof q !== 'object' || !Array.isArray(q.options)) return labels
+  for (const opt of q.options) {
+    if (opt !== null && typeof opt === 'object' && typeof opt.label === 'string') labels.push(opt.label)
   }
   return labels
 }
@@ -348,6 +347,7 @@ function gateAskDenyReason(labels) {
 
 // 结构校验纯函数：校验标准 ask 的 questions 结构是否符合规范。
 // kind='route'：须恰好 1 个问题；kind='approve'：须至少 2 个问题（第二个为修改意见可空）。
+// kind='approve' 追加：第二问（questions[1]）起不得带非空 options（修改意见必须纯文本输入）。
 // 通过返回 null，不通过返回 deny reason 字符串（含"修改意见"提示）。
 function validateGateAskStructure(kind, questions) {
   if (!Array.isArray(questions)) return 'ask 结构错误：缺少 questions 数组'
@@ -357,6 +357,12 @@ function validateGateAskStructure(kind, questions) {
   }
   if (kind === 'approve') {
     if (questions.length < 2) return `批准 ask 结构错误：须至少 2 个问题（第一个为批准选项固定为${APPROVAL_OPTIONS_TEXT}，第二个为修改意见可空），当前 ${questions.length} 个问题`
+    for (let i = 1; i < questions.length; i += 1) {
+      const q = questions[i]
+      if (q !== null && typeof q === 'object' && Array.isArray(q.options) && q.options.length > 0) {
+        return `批准 ask 结构错误：第 ${i + 1} 个问题（修改意见）必须为纯文本输入，不得提供选项（预设选项不符合用户想法），当前带 ${q.options.length} 个选项。请改为纯文本大文本框、去掉 options`
+      }
+    }
     return null
   }
   return `ask 结构错误：未知的 ask 类型 "${kind}"。`
@@ -2031,7 +2037,8 @@ export function apply(ctx, config) {
         if (category === 'malformed') {
           const denyMsg = gateAskDenyReason(labels)
           // 同时检查结构错误，合并为一条报错，一次性告知模型两个问题
-          const kind = isPartialGateSet(labels, ROUTE_GATE_SET) ? 'route' : 'approve'
+          const kind = askKindOfRelaxed(labels) === 'approve' ? 'approve' : 'route'
+          // kind 按特异性判定（复用 askKindOfRelaxed 语义）：批准特异词→approve；路由特异词或仅共享「不同意」→route
           const args = exec.arguments
           const questions = args !== undefined && args !== null && typeof args === 'object' ? args.questions : undefined
           const structErr = validateGateAskStructure(kind, questions)

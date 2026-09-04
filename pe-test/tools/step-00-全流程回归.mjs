@@ -91,6 +91,22 @@ for (const [name, data, expected] of K) {
   check(name, labels === null ? null : askKindOf(labels), expected)
 }
 
+// ── LQ 系列:labelsOfCallData 只收首问（第二问选项不进入验词集合） ─────────
+const lqTwoQArgsJson = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }, { id: 'q2', question: '修改意见', options: [{ label: '无' }, { label: '有意见（填写）' }] }] })
+const lqTwoQArgsObj = { questions: [{ id: 'q1', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }, { id: 'q2', question: '修改意见', options: [{ label: '无' }] }] }
+const lqSecondOnlyArgs = JSON.stringify({ questions: [{ id: 'q1', question: '同意执行？' }, { id: 'q2', question: '修改意见', options: [{ label: '无' }] }] })
+const lqOneQArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }] })
+const LQ = [
+  ['LQ1 两问带选项（JSON 字符串 arguments）→ 只收首问三词', { name: 'ask_user_question', callId: 'lq1', arguments: lqTwoQArgsJson }, ['同意执行', '转交pro规划', '不同意']],
+  ['LQ2 两问带选项（对象形态 arguments）→ 只收首问三词', { name: 'ask_user_question', callId: 'lq2', arguments: lqTwoQArgsObj }, ['同意执行', '转交pro规划', '不同意']],
+  ['LQ3 首问无 options、第二问有 options → 空（不兜底收集）', { name: 'ask_user_question', callId: 'lq3', arguments: lqSecondOnlyArgs }, []],
+  ['LQ4 单问批准三词 → 三词（现状保持）', { name: 'ask_user_question', callId: 'lq4', arguments: lqOneQArgs }, ['同意执行', '转交pro规划', '不同意']],
+  ['LQ5 questions 为空数组 → 空', { name: 'ask_user_question', callId: 'lq5', arguments: '{"questions":[]}' }, []],
+]
+for (const [name, data, expected] of LQ) {
+  check(name, labelsOfCallData(data), expected)
+}
+
 // ── M 系列:验词映射 ────────────────────────────────────────────────────
 const M = [
   ['M1 路由词「直接执行」→ direct', matchRouteLabel(['直接执行']), 'direct'],
@@ -169,9 +185,15 @@ for (const [name, events, expected] of F21) {
 }
 
 // ── GL 系列:结构校验纯函数（validateGateAskStructure） ────────────────────
+const glApproveQ1 = [{ id: 'q1', question: '请选择', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }]
 const GL = [
   ['GL1 路由 ask 恰好 1 个问题 → 通过', validateGateAskStructure('route', [{ id: 'q1', question: '请选择', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }]), null],
   ['GL2 批准 ask 仅 1 个问题缺修改意见 → 不通过，含"修改意见"', validateGateAskStructure('approve', [{ id: 'q1', question: '请选择', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }]) !== null && validateGateAskStructure('approve', [{ id: 'q1', question: '请选择', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }]).includes('修改意见'), true],
+  ['GL3 批准第二问带非空 options → 拒（含修改意见/纯文本/不得提供选项）', (() => { const r = validateGateAskStructure('approve', [...glApproveQ1, { id: 'q2', question: '修改意见', options: [{ label: '无' }] }]); return r !== null && r.includes('修改意见') && r.includes('纯文本') && r.includes('不得提供选项') })(), true],
+  ['GL4 批准第二问 options:[] → 通过（空数组=纯文本框）', validateGateAskStructure('approve', [...glApproveQ1, { id: 'q2', question: '修改意见', options: [] }]), null],
+  ['GL5 批准第二问无 options 字段 → 通过', validateGateAskStructure('approve', [...glApproveQ1, { id: 'q2', question: '修改意见' }]), null],
+  ['GL6 批准第三问带 options → 拒（第二问起全部校验）', (() => { const r = validateGateAskStructure('approve', [...glApproveQ1, { id: 'q2', question: '修改意见' }, { id: 'q3', question: '补充', options: [{ label: 'x' }] }]); return r !== null && r.includes('纯文本') })(), true],
+  ['GL7 路由 2 问 → 仍拒含「须恰好 1 个问题」（route 分支零改动回归）', (() => { const r = validateGateAskStructure('route', [...glApproveQ1, { id: 'q2', question: '补充' }]); return r !== null && r.includes('须恰好 1 个问题') })(), true],
 ]
 for (const [name, got, expected] of GL) check(name, got, expected)
 
@@ -483,5 +505,40 @@ const RP = [
 ]
 for (const [name, fn, expected] of RP) { check(name, await fn(), expected) }
 
-console.log(`\n通过 ${pass}/${K.length + M.length + F.length + GK.length + GM.length + F21.length + GL.length + P.length + C.length + CU.length + AP.length + BN.length + 2 + BR.length + DR.length + BD.length + BE.length + S.length + 1 + PW.length + 2 + D.length + 3 + 3 + PR.length + 7 + 5 + E.length + RP.length}, 失败 ${fail}`)
+// ── AS 系列:pre-execute 整链（mock ctx 走插件 apply；harness 模式同 step-04 L92-106/L140-144） ──
+function makeAskHarness() {
+  const listeners = {}
+  const ctx = {
+    get: () => undefined,
+    on: (name, fn) => {
+      if (listeners[name] === undefined) listeners[name] = []
+      listeners[name].push(fn)
+    },
+    provide: (name, value) => { ctx[name] = value },
+  }
+  plugin.apply(ctx, { anchoredBootstrap: false })
+  return listeners
+}
+const askHarness = makeAskHarness()
+const askMainAgent = {
+  session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => [] },
+  options: {},
+  ctx: undefined,
+}
+function askPreExecute(name, argumentsObj) {
+  const entry = askHarness['tools/pre-execute']
+  if (entry === undefined || entry.length === 0) throw new Error('pre-execute 监听器未注册')
+  return entry[0]({ agent: askMainAgent, name, arguments: argumentsObj }, () => ({ kind: 'allow' }))
+}
+const askStandardQ1 = [{ id: 'q1', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }]
+const AS = [
+  ['AS1 首问标准三词+第二问带选项 → deny 且含「纯文本」、不含「一并修正」（standard 单报路径）', (() => { const r = askPreExecute('ask_user_question', { questions: [...askStandardQ1, { id: 'q2', question: '修改意见', options: [{ label: '无' }, { label: '有意见（填写）' }] }] }); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('纯文本') && !String(r.reason).includes('一并修正') })(), true],
+  ['AS2 首问标准三词+第二问无 options → allow', (() => { const r = askPreExecute('ask_user_question', { questions: [...askStandardQ1, { id: 'q2', question: '修改意见' }] }); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
+  ['AS3 首问非白名单变体+第二问无 options → deny 含「推荐标记仅限」、不含「路由 ask 结构错误」（kind 特异性回归）', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', options: [{ label: '同意执行!' }, { label: '转交pro规划' }, { label: '不同意' }] }, { id: 'q2', question: '修改意见' }] }); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('推荐标记仅限') && !String(r.reason).includes('路由 ask 结构错误') })(), true],
+  ['AS4 单问「同意执行!」变体 → deny 含「批准 ask 结构错误」与「修改意见」（approve 模板正向）', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', options: [{ label: '同意执行!' }] }] }); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('批准 ask 结构错误') && String(r.reason).includes('修改意见') })(), true],
+  ['AS5 单问路由变体（直接执行!）→ deny 且不含「结构错误」（route 特异不回归）', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', options: [{ label: '直接执行!' }, { label: '进行pro规划' }, { label: '不同意' }] }] }); return r !== null && r !== undefined && r.kind === 'deny' && !String(r.reason).includes('结构错误') })(), true],
+]
+for (const [name, got, expected] of AS) check(name, got, expected)
+
+console.log(`\n通过 ${pass}/${K.length + M.length + F.length + GK.length + GM.length + F21.length + GL.length + P.length + C.length + CU.length + AP.length + BN.length + 2 + BR.length + DR.length + BD.length + BE.length + S.length + 1 + PW.length + 2 + D.length + 3 + 3 + PR.length + 7 + 5 + E.length + RP.length + LQ.length + AS.length}, 失败 ${fail}`)
 process.exit(fail === 0 ? 0 : 1)
