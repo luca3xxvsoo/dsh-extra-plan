@@ -145,6 +145,7 @@ const GK = [
   ['GK6 带 (Recommended) 后缀的路由 ask → standard', categorizeGateAsk(['直接执行 (Recommended)', '进行pro规划 (Recommended)', '不同意 (Recommended)']), 'standard'],
   ['GK7 带（推荐）后缀的批准 ask → standard', categorizeGateAsk(['同意执行（推荐）', '转交pro规划（推荐）', '不同意（推荐）']), 'standard'],
   ['GK8 带 (recommended) 小写后缀 → standard', categorizeGateAsk(['直接执行 (recommended)', '进行pro规划 (recommended)', '不同意 (recommended)']), 'standard'],
+  ['GK8b 无空格半角（推荐）后缀 → standard', categorizeGateAsk(['直接执行(推荐)', '进行pro规划(推荐)', '不同意(推荐)']), 'standard'],
   ['GK9 非白名单变体（! 等额外字符）→ malformed', categorizeGateAsk(['直接执行!', '进行pro规划', '不同意']), 'malformed'],
   ['GK10 方括号后缀 [推荐] → malformed', categorizeGateAsk(['直接执行 [推荐]', '进行pro规划 [推荐]', '不同意 [推荐]']), 'malformed'],
 ]
@@ -177,7 +178,7 @@ for (const [name, got, expected] of GL) check(name, got, expected)
 // ── P 系列:plannerChildIdsOf ───────────────────────────────────────────
 const planCall = (cid) => call('subagent_plan', cid)
 const P = [
-  ['P1 plan 结果含 session-id → 提取', [um(), planCall('p1'), ok('p1', '已启动规划子代理 session-abc12345，可 send_message 继续')], ['session-abc12345']],
+  ['P1 plan 结果含 uuid 形态 id → 提取', [um(), planCall('p1'), ok('p1', '已启动规划子代理 3a7c1e5b-9d2f-4e8a-b6c4-1f0e9d8c7b6a，可 send_message 继续')], ['3a7c1e5b-9d2f-4e8a-b6c4-1f0e9d8c7b6a']],
   ['P2 plan 结果无 id → 空', [um(), planCall('p1'), ok('p1', '规划子代理已启动')], []],
   ['P3 plan 结果错误 → 空', [um(), planCall('p1'), err('p1', 'GATED')], []],
   ['P4 uuid 形态 → 提取', [um(), planCall('p1'), ok('p1', 'child 6b9d2f8a-1c3e-4f5a-9b7d-0e2c8a4f6d10 已启动')], ['6b9d2f8a-1c3e-4f5a-9b7d-0e2c8a4f6d10']],

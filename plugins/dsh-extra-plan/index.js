@@ -1,4 +1,4 @@
-// @local/dsh-extra-plan (v0.1.7)
+// @local/dsh-extra-plan (v0.1.8)
 // v2（2026-09-04）：agent/request planner 前置注入
 // 额外规划模式（extra-plan 预设专用）：按需规划 + 三级机械锚点（路由/澄清/批准）
 // + 主会话与规划子代理 anchored 引导 + 规划子代理探查硬上限 + 力度继承 +
@@ -8,13 +8,15 @@
 // 1. session.header.origin/delegationDepth 在会话创建时即已冻结可用；
 // 2. tools/pre-execute 的 exec.arguments 是已解析的对象，不是 JSON 字符串；
 //    会话事件里 tool/call 的 data.arguments 则是 JSON 字符串；
-// 3. 子代理判定禁用 agents.roots()：continuable 子代理注册表 owner 为 undefined
-//    会被当根（v11 M1 教训）——一律用「子代理标记 + 父会话存活」公式；
+// 3. 子代理判定已弃用 agents.roots()（v0.1.2-rc.1 真实机制：子代理 runtime
+//    owner=父，agent-loop enter(agent, ownerCtx.agent)——按 owner 的根判定不会
+//    把子代理当根）——一律用「子代理标记 + 父会话存活」公式；
 // 4. ask_user_question 答案以 tool/result 回流（tool-result 信封的 toolCallId
 //    与 tool/call 的 callId 精确配对），渲染文本为 {"answers":[...]} JSON；
-//    提问通道级错误码仅 NO_PROVIDER / CALLER_NOT_LIVE / DELEGATED_CALLER；
-//    用户取消（ASK_CANCELLED）/中断（ASK_ABORTED）/参数错误（EMPTY_QUESTIONS）
-//    不是通道故障；
+//    提问通道级错误码全集（v0.1.2-rc.1 实际）：ASK_ABORTED / EMPTY_QUESTIONS /
+//    CALLER_NOT_LIVE / DELEGATED_CALLER / BAD_INTENT / NO_PROVIDER；宿主无独立
+//    取消码（取消/中断统一以 ASK_ABORTED 上报）；BAD_INTENT 为新增码、非通道
+//    故障，落入 else 分支重置 route/approved（安全方向）；
 // 5. preStep 先装配后 pre-step——目录裁剪/引导一律走 system-prompt/assemble
 //    装配级过滤（await next() 后替换），与时序无关、每次请求（含首个）生效；
 // 6. web 会话先按默认预设发布、约 3 秒后 recompose 且不重发 agent/session-start
@@ -25,9 +27,11 @@
 // 8. dsh-subagent 在委派边界把子代理审批固定为 never；沙箱下限需插件补种
 //    （childPolicyNeedsFloor，F 系列用例已测）；
 // 9. AgentOptions 无 reasoningEffort 字段，子代理思考力度默认取 llm-deepseek
-//    适配器默认（max）——力度继承须在子会话 agent/request 瀑布上注入
-//    （本插件监听器注册早于宿主 api-proxy 的 installModelSelection，位于
-//    瀑布外层，注入在 next() 解析后执行，最终生效）。
+//    适配器默认（max）——力度继承须在子会话 agent/request 瀑布上注入。
+//    真实机制：宿主 installModelSelection 仅由主会话侧会话控制器安装
+//    （setup: installSelection 先于 presets.mount），其 agent/request 钩子无条件
+//    覆写 provider/model/reasoningEffort（剥除 resolved 的 effort）；子代理瀑布
+//    不安装该监听器 → 插件注入在 next() 解析后执行并最终生效。
 //
 // 行为：
 //  1) 三级机械锚点（主会话，硬闸门，tools/pre-execute）：
@@ -279,8 +283,9 @@ const FREE_TOOLS = new Set(['save_plan', 'report', 'send_message'])
 
 // 白名单后缀剥离：把选项标签末尾的推荐标记去掉，用于精确匹配前净化。
 // 四种白名单后缀：(Recommended)、（Recommended）、(推荐)、（推荐）；英文不区分大小写。
+// 对齐前端 parseRecommendedLabel（本轮）：后缀前后任意空白、半角组不再要求前置空格。
 function normalizeLabel(label) {
-  return label.trim().replace(/ \((?:recommended|推荐)\)$/i, '').replace(/（(?:recommended|推荐)）$/i, '').trim()
+  return label.trim().replace(/\s*(?:\((?:recommended|推荐)\)|（(?:recommended|推荐)）)\s*$/i, '').trim()
 }
 
 // 三分法判定：labels 集合是否与 gateSet 集合完全相等（精确字符串比较，不用 indexOf）。
@@ -516,7 +521,7 @@ function deriveFlowState(events) {
 }
 
 // 从事件里提取存续的规划子代理 id（subagent_plan 的 call/result 精确配对，
-// 从结果文本提取会话 id：session-<hex> 或 uuid 形态）。纯事件推导，重启不丢。
+// 从结果文本提取会话 id：仅 uuid 形态（宿主 subagent_plan 结果文本 'started subagent <uuid>'）。纯事件推导，重启不丢。
 function plannerChildIdsOf(events) {
   const ids = []
   if (!Array.isArray(events)) return ids
@@ -544,8 +549,7 @@ function plannerChildIdsOf(events) {
       }
     }
     if (text === '') continue
-    let matched = text.match(/session-[0-9a-f]{8,}/i)
-    if (matched === null) matched = text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)
+    const matched = text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)
     if (matched !== null && !ids.includes(matched[0])) ids.push(matched[0])
   }
   return ids
@@ -1119,7 +1123,8 @@ export function apply(ctx, config) {
   const usageCursors = new Map()
   let usageCursorsLoaded = false
   // job_output 同轮防重复：内存计数器（Map<sessionId, Map<jobId, 1>>）
-  // 替代 session.events 推导——当前轮次 tool/call 在 pre-execute 阶段尚未写入 events
+  // 替代 session.events 推导——tool/call 先落盘、后 pre-execute（宿主 agent-loop 先
+  // appendToolCall 后 scheduler.prepare）；jobOutputCallCounters 内存计数器不依赖该时序。
   const jobOutputCallCounters = new Map()
   const jobOutputLastAnchors = new Map() // sessionId → 上次锚点索引
   async function foldUsage(agent, role) {
@@ -1434,6 +1439,9 @@ export function apply(ctx, config) {
       },
       timeoutMs: 30000,
       async execute(args, exec) {
+        if (args === null || typeof args !== 'object' || typeof args.plan !== 'string' || args.plan.length < 200 || typeof args.checklist !== 'string' || args.checklist.length < 200) {
+          throw new Error('save_plan: plan/checklist 参数缺失或内容过短（未收到合法参数；调用参数须为合法 JSON，请检查后重试）')
+        }
         const plan = args.plan || ''
         if (/【未探查·待确认】/.test(plan) || /待确认假设清单/.test(plan)) {
           throw new Error('save_plan: 方案中包含【未探查·待确认】步骤或「待确认假设清单」。请先申请追加预算继续探查，确认所有项均已探查核实后再调用 save_plan')
@@ -1827,6 +1835,10 @@ export function apply(ctx, config) {
   //    快照）。one-shot（执行者/验收者）直接继承当前值；planner（continuable）的
   //    有效模型在 assemble 阶段由 resolvePlannerEntry 单点解析并缓存（本钩子只读
   //    缓存，不再做模型目录查询）：已创建的 planner 不随父会话改模型而变。
+  //    真实机制（注释订正）：宿主 installModelSelection 仅由主会话侧会话控制器安装
+  //    （setup: installSelection 先于 presets.mount），其 agent/request 钩子无条件
+  //    覆写 provider/model/reasoningEffort（剥除 resolved 的 effort）；子代理瀑布不安装
+  //    该监听器 → 本插件注入在 next() 解析后执行并最终生效。
   //    显式选择不覆盖：resolved（next() 结果，首请求=创建时 AgentOptions、后续请求=
   //    logged header）的 provider/model 与父会话当前值不同 → 视为显式（官方
   //    routeChanged 口径）→ 不注入；未显式维持现状注入。父会话在子代理运行期间
@@ -2097,7 +2109,7 @@ export function apply(ctx, config) {
     if (name === 'send_message') {
       const args = exec.arguments
       const target = args !== undefined && args !== null && typeof args === 'object'
-        ? (typeof args.agent_id === 'string' ? args.agent_id : (typeof args.subagent_id === 'string' ? args.subagent_id : ''))
+        ? (typeof args.agent_id === 'string' ? args.agent_id : '')
         : ''
       const plannerIds = plannerChildIdsOf(sessionEvents(agent.session))
       if (!escape && !plannerIds.includes(target)) {

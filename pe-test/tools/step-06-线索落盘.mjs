@@ -182,7 +182,7 @@ try {
   const stalePlan = join(ep, '方案-stale.md')
   writeFileSync(join(ep, '.journal-stale.json'), JSON.stringify({ planTmp: join(ep, '方案-stale.md.tmp-x'), checkTmp: join(ep, '验收-stale.md.tmp-x'), planFile: stalePlan, checkFile: join(ep, '验收-stale.md') }))
   writeFileSync(join(ep, '方案-stale.md.tmp-x'), '旧残留')
-  const planResult = await savePlanDef.execute({ plan: '新方案', checklist: '新验收', taskName: 'smoke2' }, execFake(work))
+  const planResult = await savePlanDef.execute({ plan: 'p'.repeat(300), checklist: 'c'.repeat(300), taskName: 'smoke2' }, execFake(work))
   const tsMatch = (p) => (String(p).match(/(\d{14})\.md$/) || [])[1]
   checkTrue('S21 save_plan 双文件落盘成功（同 timestamp）', Array.isArray(planResult.paths) && planResult.paths.length === 2 && existsSync(planResult.paths[0]) && existsSync(planResult.paths[1]) && tsMatch(planResult.paths[0]) === tsMatch(planResult.paths[1]))
   checkTrue('S22 旧形状 journal 残留被补完（方案-stale.md 存在）', existsSync(stalePlan))
@@ -196,6 +196,24 @@ try {
   await saveProbeDef.execute({ taskName: 'stale', fileMap: [{ path: 'a.txt', relation: 'r' }], focusAreas: [], exclusions: [], background: [] }, execFake(work))
   checkTrue('S24 新形状 journal 残留被补完（线索-stale.md 存在）', existsSync(staleFile))
   checkTrue('S25 补完后无残留 .tmp/.journal', readdirSync(ep).every((n) => !n.startsWith('.tmp-') && !n.startsWith('.journal-')))
+  const emptyArgsReject = await (async () => {
+    try {
+      await savePlanDef.execute({}, execFake(work))
+      return false
+    } catch (error) {
+      return String(error.message).includes('save_plan')
+    }
+  })()
+  checkTrue('S26 空参数防护：execute({}) 抛错且文案含 save_plan', emptyArgsReject)
+  const shortArgsReject = await (async () => {
+    try {
+      await savePlanDef.execute({ plan: 'x', checklist: 'y' }, execFake(work))
+      return false
+    } catch (error) {
+      return String(error.message).includes('内容过短')
+    }
+  })()
+  checkTrue('S27 超短参数防护：execute 抛错且文案含 内容过短', shortArgsReject)
 } finally {
   rmSync(tmpRoot, { recursive: true, force: true })
 }

@@ -101,7 +101,7 @@ export const name = 'flash-guide'
 export const inject = []
 
 export function apply(ctx) {
-  let lastAgent // last assembled agent; pre-step payload carries no agent field
+  let lastAgent // last assembled agent; agent 已 fused 注入（pre-step payload 经 agentEvents fused 含 agent 字段，dsh-agent）；lastAgent 保留为 assemble 刷新兜底
 
   // Per-assembly refresh: web sessions recompose (agent objects rebuilt), so
   // lastAgent must track the live handle used as the pre-step payload fallback.
