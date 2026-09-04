@@ -49,13 +49,13 @@
 //     - save_probe 工具只注册在主会话层（session-start + pre-step 幂等兜底），
 //       规划子代理/执行者/reviewer 不可见；
 //     - 探查硬上限：自最近一条主会话发往本子代理的消息（初始任务
-//       kind=user / send_message 续轮转达 kind=coordinator；用户不直接对话
+//       kind=user / send_message 续轮转达 kind=agent-message；用户不直接对话
 //       子代理）起的 tool/call（含 save_plan）≥ exploreBudget 后拒绝后续
 //       工具调用并注入收敛指令；每条主会话转达消息重置预算（=用户授权继续
 //       探查）；save_plan 与运行时上下文快照（kind=plugin）不重置；
 //     - write/edit 与 pwsh 写命令拒绝（toolFilter 之外的备份防线）。
 //     - plannerPromptSuffix 配置：委派的初始任务消息（kind=user）与续轮转达
-//       （kind=coordinator）末尾机械拼接「\n\n + 配置文本」（任务要求 + 回车换行
+//       （kind=agent-message）末尾机械拼接「\n\n + 配置文本」（任务要求 + 回车换行
 //       + 文本）；运行时快照（kind=plugin）不追加。
 //  3) anchored 引导（默认开）：主会话与规划子代理在首个 tool/call 落盘前，
 //     装配级注入极简 persona、清空运行时上下文、目录收窄为 shell + read；
@@ -146,18 +146,13 @@ const BASH_MUTATION = /\b(rm|mv|cp|mkdir|rmdir|touch|tee|chmod|chown|ln)\b(?=\s|
 
 // ── 纯判定函数（模块顶层；经 decisions 导出供场景测试直接复用，防复制漂移） ──
 
-// 会话事件快照统一读取（v0.1.2-rc.1 兼容修复）：
-// - v0.1.1-rc.2：Session 提供 `get events()`（冻结全量快照）；
-// - v0.1.2-rc.1：`events` 已移除，替代 API 为 `snapshotEvents()`（无参=全量冻结数组，
-//   有快照缓存，语义与旧 events getter 等价；另有 eventAt(seq) 供单点读取）；
-// - pe-test 的 mock session 以普通数组属性 `events: []` 手构造（无 snapshotEvents 方法）。
-// 判定顺序：`Array.isArray(session.events)` 优先（旧版 getter + mock 天然命中）→
-// 不存在时回退 `session.snapshotEvents()`（新版）→ 均无返回 []（各调用点已有
-// Array.isArray/长度防御，空数组语义安全；时序上不抛错、不崩网关）。
+// 会话事件快照统一读取（v0.1.2-rc.1 单版本口径）：
+// `events` 已移除，替代 API 为 `snapshotEvents()`（无参=全量冻结数组，
+// 有快照缓存，语义与旧 events getter 等价；另有 eventAt(seq) 供单点读取）；
+// 均无返回 []（各调用点已有 Array.isArray/长度防御，空数组语义安全；
+// 时序上不抛错、不崩网关）。
 function sessionEvents(session) {
   if (session === undefined || session === null) return []
-  const events = session.events
-  if (Array.isArray(events)) return events
   if (typeof session.snapshotEvents === 'function') return session.snapshotEvents()
   return []
 }
@@ -571,7 +566,7 @@ function toolCallCount(events, skipNames) {
 }
 
 // 探查预算锚点计数：自最近一条主会话发往本子代理的消息（初始任务
-// kind=user，或 send_message 续轮转达 kind=coordinator）之后的 tool/call
+// kind=user，或 send_message 续轮转达 kind=agent-message）之后的 tool/call
 // 数。用户不直接对话子代理，这两类消息均由主会话触发——每条 = 一次用户
 // 授权（预算重置）；运行时上下文快照（kind=plugin）不构成锚点。无锚点时
 // 与 toolCallCount 同口径。
@@ -583,7 +578,7 @@ function toolCallsSinceUser(events, skipNames) {
     if (e === null || typeof e !== 'object' || e.type !== 'user/message') continue
     const d = e.data
     const kind = d !== null && typeof d === 'object' && d.source !== null && typeof d.source === 'object' ? d.source.kind : ''
-    if (kind === 'user' || kind === 'coordinator') {
+    if (kind === 'user' || kind === 'coordinator' || kind === 'agent-message') {
       anchor = i
       break
     }
@@ -604,7 +599,7 @@ function jobOutputCallsForJob(events, jobId) {
     if (e === null || typeof e !== 'object' || e.type !== 'user/message') continue
     const d = e.data
     const kind = d !== null && typeof d === 'object' && d.source !== null && typeof d.source === 'object' ? d.source.kind : ''
-    if (kind === 'user' || kind === 'coordinator') {
+    if (kind === 'user' || kind === 'coordinator' || kind === 'agent-message') {
       anchor = i
       break
     }
@@ -625,7 +620,7 @@ function jobOutputCallsForJob(events, jobId) {
 }
 
 // 规划任务附加指令拼接（v0.1.5）：主会话委派 subagent_plan 的初始任务消息
-// （source.kind=user）与 send_message 续轮转达（source.kind=coordinator）末尾
+// （source.kind=user）与 send_message 续轮转达（source.kind=agent-message）末尾
 // 机械追加配置文本——「任务要求 + 空行 + 配置文本」。运行时快照（kind=plugin）
 // 不追加；非单文本块或已含后缀时原样返回（幂等）。返回新消息（宿主消息对象
 // deepFreeze，不可原地改）。
@@ -633,7 +628,7 @@ function appendSuffixBlock(message, text) {
   if (text === '') return message
   if (message === null || typeof message !== 'object') return message
   const src = message.source
-  if (src === null || typeof src !== 'object' || (src.kind !== 'user' && src.kind !== 'coordinator')) return message
+  if (src === null || typeof src !== 'object' || (src.kind !== 'user' && src.kind !== 'coordinator' && src.kind !== 'agent-message')) return message
   if (!Array.isArray(message.content) || message.content.length !== 1) return message
   const block = message.content[0]
   if (block === null || typeof block !== 'object' || block.type !== 'text' || typeof block.text !== 'string') return message
@@ -651,7 +646,7 @@ function budgetNoticeText(budget) {
   return `本轮探查预算上限为 ${budget} 次工具调用。预算耗尽时输出「申请继续探查：<待查项> — <原因>」，主会话将探查待查项并转达线索文件路径，你读取线索继续工作。探查完成后直接调用 save_plan 落盘（系统会自动检测未探查项）`
 }
 
-// 预算告知拼接：结构同 withPlannerPromptSuffix（kind 限定 user/coordinator、
+// 预算告知拼接：结构同 withPlannerPromptSuffix（kind 限定 user/coordinator/agent-message、
 // 单文本块、已含则幂等、返回新对象不原地改）。
 function withBudgetNotice(message, notice) { return appendSuffixBlock(message, notice) }
 
@@ -662,12 +657,12 @@ function budgetReminderText(remaining, budget, threshold) {
   return `本轮探查预算还剩 ${remaining} 次`
 }
 
-// 阈值提示消息：kind 必须为 'plugin'（锚点规则只认 user/coordinator，kind=user 会误重置预算）。
+// 阈值提示消息：kind 必须为 'plugin'（锚点规则只认 user/coordinator/agent-message，kind=user 会误重置预算）。
 function budgetReminderMessage(reminder) {
   return { source: { kind: 'plugin', plugin: 'dsh-extra-plan' }, content: [{ type: 'text', text: reminder }] }
 }
 
-// 阈值提示幂等：自最近一条 user/coordinator 锚点之后是否已注入过含 marker 的消息
+// 阈值提示幂等：自最近一条 user/coordinator/agent-message 锚点之后是否已注入过含 marker 的消息
 // （无锚点全量扫描；元素缺 content 按无命中处理、不抛异常）。天然每轮重置。
 function budgetReminderSent(events, marker) {
   if (!Array.isArray(events)) return false
@@ -677,7 +672,7 @@ function budgetReminderSent(events, marker) {
     if (e === null || typeof e !== 'object' || e.type !== 'user/message') continue
     const d = e.data
     const kind = d !== null && typeof d === 'object' && d.source !== null && typeof d.source === 'object' ? d.source.kind : ''
-    if (kind === 'user' || kind === 'coordinator') {
+    if (kind === 'user' || kind === 'coordinator' || kind === 'agent-message') {
       anchor = i
       break
     }
@@ -1838,9 +1833,6 @@ export function apply(ctx, config) {
   //    切换模型 → 子代理保持创建时值（planner 已有 entry 缓存同语义，one-shot 亦冻结）。
   //    effort：resolved 存在且 ≠ 父值 → 显式不注入；路由显式且 resolved 无 effort →
   //    不注入（对齐官方 routeChanged 清 effort）；其余维持父 effort 继承（现状）。
-  //    rc.1 兼容：rc.1 无模型选择机制，resolved 恒为父继承值 → route/effort 恒未显式
-  //    → 全部走现状注入，行为与 rc.1 完全一致；唯一变化：workflow/ralph 脚本显式
-  //    传的 model 不再被覆盖（与 executor-spawn.js L61-67 注释「显式 model 优先」对齐）。
   ctx.on('agent/request', async (payload, next) => {
     const resolved = await next()
     if (payload.agent === undefined || !isSubagentChild(payload.agent)) return resolved
@@ -1951,7 +1943,7 @@ export function apply(ctx, config) {
         if (e === null || typeof e !== 'object' || e.type !== 'user/message') continue
         const d = e.data
         const kind = d !== null && typeof d === 'object' && d.source !== null && typeof d.source === 'object' ? d.source.kind : ''
-        if (kind === 'user' || kind === 'coordinator') {
+        if (kind === 'user' || kind === 'coordinator' || kind === 'agent-message') {
           currentAnchor = i
           break
         }

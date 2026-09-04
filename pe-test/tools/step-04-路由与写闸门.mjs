@@ -110,14 +110,14 @@ const harnessBoot = makeHarness({ anchoredBootstrap: true })
 const childAgent = (id) => ({
   session: {
     header: { id, origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' },
-    events: [],
+    snapshotEvents: () => [],
     append: () => {},
   },
   options: {},
   ctx: undefined,
 })
 const mainAgent = {
-  session: { header: { id: 'main-1', cwd: 'C:/work' }, events: [] },
+  session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => [] },
   options: {},
   ctx: undefined,
 }
@@ -127,7 +127,7 @@ const mainAgent = {
 const DESC = { type: 'subagent/descriptor', data: { mode: 'continuable' } }
 
 const plannerAgent = {
-  session: { header: { id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, events: [DESC] },
+  session: { header: { id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => [DESC] },
   options: { model: 'deepseek-v4-pro' },
   ctx: undefined,
 }
@@ -196,7 +196,7 @@ const okE = (cid, text) => ({ type: 'tool/result', data: { message: { content: [
 const routeArgsE = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }] })
 const clarifyArgsE = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '方案A' }, { label: '方案B' }] }] })
 const answerE = (labels) => JSON.stringify({ answers: labels.map((l) => ({ id: 'q1', selected: [l] })) })
-const mainWithEvents = (events) => ({ session: { header: { id: 'main-1', cwd: 'C:/work' }, events }, options: {}, ctx: undefined })
+const mainWithEvents = (events) => ({ session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => events }, options: {}, ctx: undefined })
 
 // direct 态：路由已确认「直接执行」；无确认态：无事件；plan+clarified 态：规划+澄清完成
 const directMain = mainWithEvents([umE(), callE('ask_user_question', 'a1', routeArgsE), okE('a1', answerE(['直接执行']))])
@@ -217,7 +217,7 @@ checkTrue('R21 主会话 plan+clarified 态 subagent_probe(run_in_background: tr
 // probe 子会话（parentSession=main-1 已在 probeParents）：write → probe 文案 deny；
 // pwsh 只读 → 放行；save_probe → 放行（child 分支不拦）
 const probeAgent = {
-  session: { header: { id: 'probe-1', origin: 'subagent', delegationDepth: 1, parentSession: 'main-1', cwd: 'C:/work' }, events: [] },
+  session: { header: { id: 'probe-1', origin: 'subagent', delegationDepth: 1, parentSession: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => [] },
   options: {},
   ctx: undefined,
 }

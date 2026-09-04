@@ -202,11 +202,12 @@ const umk = (kind) => ({ type: 'user/message', data: { source: { kind } } })
 const CU = [
   ['CU1 无用户消息 → 与全量计数同口径', [call('read', 'c1'), call('glob', 'c2')], new Set([]), 2],
   ['CU2 kind=user 锚点(初始任务) → 只计其后', [call('read', 'a1'), umk('user'), call('glob', 'b1'), call('pwsh', 'b2')], new Set([]), 2],
-  ['CU3 kind=coordinator 锚点(续轮转达) → 重置只计其后', [umk('user'), call('read', 'a1'), umk('coordinator'), call('glob', 'b1')], new Set([]), 1],
+  ['CU3 kind=agent-message 锚点(续轮转达) → 重置只计其后', [umk('user'), call('read', 'a1'), umk('agent-message'), call('glob', 'b1')], new Set([]), 1],
   ['CU4 kind=plugin(运行时快照) → 不构成锚点', [umk('user'), call('read', 'a1'), umk('plugin'), call('glob', 'b1')], new Set([]), 2],
-  ['CU5 多个 coordinator → 最后一个为锚', [umk('user'), call('read', 'a1'), umk('coordinator'), call('glob', 'b1'), umk('coordinator'), call('pwsh', 'c1')], new Set([]), 1],
+  ['CU5 多个 agent-message → 最后一个为锚', [umk('user'), call('read', 'a1'), umk('agent-message'), call('glob', 'b1'), umk('agent-message'), call('pwsh', 'c1')], new Set([]), 1],
   ['CU6 锚点后 save_plan 跳过仍生效', [umk('user'), call('read', 'a1'), call('save_plan', 's1'), call('glob', 'b1')], new Set(['save_plan']), 2],
-  ['CU7 锚点后无调用 → 0(授权即重置)', [umk('user'), call('read', 'a1'), umk('coordinator')], new Set([]), 0],
+  ['CU7 锚点后无调用 → 0(授权即重置)', [umk('user'), call('read', 'a1'), umk('agent-message')], new Set([]), 0],
+  ['CU8 kind=agent-instructions(系统指令) → 不构成锚点', [umk('user'), call('read', 'a1'), umk('agent-instructions'), call('glob', 'b1')], new Set([]), 2],
 ]
 for (const [name, events, skip, expected] of CU) {
   check(name, toolCallsSinceUser(events, skip), expected)
@@ -217,13 +218,14 @@ const msgOf = (kind, text) => ({ source: { kind }, content: [{ type: 'text', tex
 const AP = [
   ['AP1 空后缀 → 原样', msgOf('user', '任务A'), '', '任务A'],
   ['AP2 kind=user 单文本 → 拼接', msgOf('user', '任务A'), '后缀X', '任务A\n\n后缀X'],
-  ['AP3 kind=coordinator(续轮转达) → 拼接', msgOf('coordinator', '意见'), '后缀X', '意见\n\n后缀X'],
+  ['AP3 kind=agent-message(续轮转达) → 拼接', msgOf('agent-message', '意见'), '后缀X', '意见\n\n后缀X'],
   ['AP4 kind=plugin(运行时快照) → 不拼', msgOf('plugin', '快照'), '后缀X', '快照'],
   ['AP5 多块内容 → 原样', { source: { kind: 'user' }, content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] }, '后缀X', 'a'],
   ['AP6 已含后缀 → 不重复拼', msgOf('user', '任务A\n\n后缀X'), '后缀X', '任务A\n\n后缀X'],
   ['AP7 缺 source → 原样', { content: [{ type: 'text', text: '任务A' }] }, '后缀X', '任务A'],
-  ['AP8 kind=coordinator 已含后缀 → 不重复拼', msgOf('coordinator', '意见\n\n后缀X'), '后缀X', '意见\n\n后缀X'],
-  ['AP9 kind=coordinator 多块 → 原样', { source: { kind: 'coordinator' }, content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] }, '后缀X', 'a'],
+  ['AP8 kind=agent-message 已含后缀 → 不重复拼', msgOf('agent-message', '意见\n\n后缀X'), '后缀X', '意见\n\n后缀X'],
+  ['AP9 kind=agent-message 多块 → 原样', { source: { kind: 'agent-message' }, content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] }, '后缀X', 'a'],
+  ['AP10 kind=agent-instructions → 不拼', msgOf('agent-instructions', '指令'), '后缀X', '指令'],
 ]
 for (const [name, message, suffix, expected] of AP) {
   const got = withPlannerPromptSuffix(message, suffix)
@@ -236,7 +238,7 @@ const NOTICE18 = budgetNoticeText(18)
 const NOTICE12 = budgetNoticeText(12)
 const BN = [
   ['BN1 user 单文本 → 拼接告知', withBudgetNotice(msgOf('user', '任务A'), NOTICE18), '任务A\n\n' + NOTICE18],
-  ['BN2 coordinator 单文本 → 拼接告知', withBudgetNotice(msgOf('coordinator', '意见'), NOTICE18), '意见\n\n' + NOTICE18],
+  ['BN2 agent-message 单文本 → 拼接告知', withBudgetNotice(msgOf('agent-message', '意见'), NOTICE18), '意见\n\n' + NOTICE18],
   ['BN3 kind=plugin → 原样', withBudgetNotice(msgOf('plugin', '快照'), NOTICE18), '快照'],
   ['BN4 多块内容 → 原样', withBudgetNotice({ source: { kind: 'user' }, content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] }, NOTICE18), 'a'],
   ['BN5 已含告知 → 不重复拼', withBudgetNotice(msgOf('user', '任务A\n\n' + NOTICE18), NOTICE18), '任务A\n\n' + NOTICE18],
@@ -263,7 +265,7 @@ const BR = [
   ['BR7 budgetReminderMessage 形状', JSON.stringify(budgetReminderMessage(REMIND3)), JSON.stringify({ source: { kind: 'plugin', plugin: 'dsh-extra-plan' }, content: [{ type: 'text', text: REMIND3 }] })],
   ['BR8 无事件 → false', budgetReminderSent([], MARKER), false],
   ['BR9 锚点后含 marker → true', budgetReminderSent([umk('user'), remEvent('本轮探查预算还剩 3 次，请收紧探查、规划收尾，未查项记入待确认假设清单')], MARKER), true],
-  ['BR10 marker 在锚点前 → false(新一轮重置)', budgetReminderSent([remEvent('本轮探查预算还剩 3 次，请收紧探查、规划收尾，未查项记入待确认假设清单'), umk('coordinator')], MARKER), false],
+  ['BR10 marker 在锚点前 → false(新一轮重置)', budgetReminderSent([remEvent('本轮探查预算还剩 3 次，请收紧探查、规划收尾，未查项记入待确认假设清单'), umk('agent-message')], MARKER), false],
   ['BR11 锚点后无 marker → false', budgetReminderSent([umk('user'), umk('plugin')], MARKER), false],
   ['BR12 budget=3 → 空串(不提示)', budgetReminderText(3, 3, 3), ''],
   ['BR13 budget=4 remaining=3 → 提示', budgetReminderText(3, 4, 3), '本轮探查预算还剩 3 次'],
@@ -325,19 +327,19 @@ const PW = [
 for (const [name, exec, expected] of PW) check(name, pwshMutationMatches(exec), expected)
 
 // ── B 系列:isBootstrapPhase ────────────────────────────────────────────
-const agentWithEvents = (events) => ({ session: { header: {}, events } })
+const agentWithEvents = (events) => ({ session: { header: {}, snapshotEvents: () => events } })
 check('B1 无 tool/call → 引导期', isBootstrapPhase(agentWithEvents([])), true)
 check('B2 有 tool/call → 已晋升', isBootstrapPhase(agentWithEvents([call('read', 'b1')])), false)
 
 // ── D 系列:子代理判定成分 ──────────────────────────────────────────────
-const childAgent = (parentSession, origin = 'subagent') => ({ session: { header: { origin, delegationDepth: 1, parentSession }, events: [] } })
-const plannerAgent = () => ({ session: { header: {}, events: [] } })
+const childAgent = (parentSession, origin = 'subagent') => ({ session: { header: { origin, delegationDepth: 1, parentSession }, snapshotEvents: () => [] } })
+const plannerAgent = () => ({ session: { header: {}, snapshotEvents: () => [] } })
 const registry = (liveIds) => ({ get: (id) => (liveIds.has(id) ? {} : undefined) })
 const D = [
   ['D1 规划者(无标记) → 非执行者', plannerAgent(), registry(new Set(['p1'])), false],
   ['D2 子代理+父存活 → 执行者', childAgent('p1'), registry(new Set(['p1'])), true],
   ['D3 子代理+父不在 → 恢复为根', childAgent('p1'), registry(new Set([])), false],
-  ['D4 缺 parentSession → 偏安全豁免', { session: { header: { origin: 'subagent', delegationDepth: 1 }, events: [] } }, registry(new Set([])), true],
+  ['D4 缺 parentSession → 偏安全豁免', { session: { header: { origin: 'subagent', delegationDepth: 1 }, snapshotEvents: () => [] } }, registry(new Set([])), true],
 ]
 for (const [name, agent, agents, expected] of D) {
   check(name, isSubagentChild(agent) && isLiveDelegation(agent, agents), expected)

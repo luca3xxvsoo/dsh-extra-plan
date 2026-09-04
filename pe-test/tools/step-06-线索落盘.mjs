@@ -59,9 +59,9 @@ const toolsMock = { register: (t) => registered.push(t) }
 const agentCtx = { get: (name) => (name === 'tools' ? toolsMock : undefined) }
 const harness = makeHarness({ anchoredBootstrap: false }, toolsMock)
 
-const mainAgent = { session: { header: { id: 'main-1', cwd: 'C:/work' }, events: [] }, options: {}, ctx: agentCtx }
-const plannerAgent = { session: { header: { id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, events: [DESC] }, options: { model: 'deepseek-v4-pro' }, ctx: agentCtx }
-const executorAgent = { session: { header: { id: 'exec-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, events: [] }, options: {}, ctx: agentCtx }
+const mainAgent = { session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => [] }, options: {}, ctx: agentCtx }
+const plannerAgent = { session: { header: { id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => [DESC] }, options: { model: 'deepseek-v4-pro' }, ctx: agentCtx }
+const executorAgent = { session: { header: { id: 'exec-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => [] }, options: {}, ctx: agentCtx }
 
 function fireSessionStart(listeners, agent) {
   const entry = listeners['agent/session-start']
@@ -106,7 +106,7 @@ const FIVE = [
   ['S10 channelBroken → allow（逃生）', [um(), call('ask_user_question', 'a1', routeArgs), err('a1', 'NO_PROVIDER')], 'allow'],
 ]
 for (const [name, events, expected] of FIVE) {
-  const agent = { session: { header: { id: 'main-1', cwd: 'C:/work' }, events }, options: {}, ctx: agentCtx }
+  const agent = { session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => events }, options: {}, ctx: agentCtx }
   const r = preExecute(harness, agent, 'save_probe', {})
   if (expected === 'deny') {
     checkTrue(`${name}`, r !== null && r !== undefined && r.kind === 'deny')
@@ -118,7 +118,7 @@ for (const [name, events, expected] of FIVE) {
 // ── ③ planner 预算回归（v1 口径，[任务4.3]/[任务7.4]） ───────────────────
 const plannerEvents = [DESC, umk('user')]
 for (let i = 0; i < 20; i += 1) plannerEvents.push(call('read', `r${i}`))
-const exhaustedPlanner = { session: { header: { id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, events: plannerEvents }, options: { model: 'deepseek-v4-pro' }, ctx: agentCtx }
+const exhaustedPlanner = { session: { header: { id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => plannerEvents }, options: { model: 'deepseek-v4-pro' }, ctx: agentCtx }
 let r = preExecute(harness, exhaustedPlanner, 'read', { file_path: 'C:/work/.extra-plan/线索-x-20260816090000.md' })
 checkTrue('S11 预算耗尽后 read 线索文件 → deny（read 线索计入预算，v1 口径）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('探查预算已耗尽'))
 r = preExecute(harness, exhaustedPlanner, 'save_plan', { plan: 'p', checklist: 'c' })
@@ -126,13 +126,17 @@ checkTrue('S12 预算耗尽后 save_plan → allow（跳过名单仍仅 save_pla
 // 12 次内（含线索文件 read 共 12 次）不拒绝——预算边界恰好在第 13 次触发
 const plannerEvents11 = [DESC, umk('user')]
 for (let i = 0; i < 11; i += 1) plannerEvents11.push(call('read', `q${i}`))
-const planner11 = { session: { header: { id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, events: plannerEvents11 }, options: { model: 'deepseek-v4-pro' }, ctx: agentCtx }
+const planner11 = { session: { header: { id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => plannerEvents11 }, options: { model: 'deepseek-v4-pro' }, ctx: agentCtx }
 r = preExecute(harness, planner11, 'read', { file_path: 'C:/work/.extra-plan/线索-x-20260816090000.md' })
 checkTrue('S13 第 12 次 read（线索文件）→ allow（读线索 1 次 = 预算减 1，剩 0 次余量）', r !== null && r !== undefined && r.kind === 'allow')
+const plannerEventsWithTransfer = [...plannerEvents, umk('agent-message')]
+const transferredPlanner = { session: { header: { id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => plannerEventsWithTransfer }, options: { model: 'deepseek-v4-pro' }, ctx: agentCtx }
+r = preExecute(harness, transferredPlanner, 'read', { file_path: 'C:/work/.extra-plan/线索-x-20260816090000.md' })
+checkTrue('S14 预算耗尽后收到 agent-message 转达 → 预算重置 read allow', r !== null && r !== undefined && r.kind === 'allow')
 
 // ── ④ 执行层冒烟（真实落盘：原子双写/单写 + journal 双形状自愈，[任务1]） ──
-const smokeMain = { session: { header: { id: 'smoke-main', cwd: 'C:/work' }, events: [] }, options: {}, ctx: agentCtx }
-const smokePlanner = { session: { header: { id: 'smoke-planner', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, events: [DESC] }, options: { model: 'deepseek-v4-pro' }, ctx: agentCtx }
+const smokeMain = { session: { header: { id: 'smoke-main', cwd: 'C:/work' }, snapshotEvents: () => [] }, options: {}, ctx: agentCtx }
+const smokePlanner = { session: { header: { id: 'smoke-planner', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => [DESC] }, options: { model: 'deepseek-v4-pro' }, ctx: agentCtx }
 registered.length = 0
 fireSessionStart(harness, smokeMain)
 const saveProbeDef = registered.find((t) => t.name === 'save_probe')

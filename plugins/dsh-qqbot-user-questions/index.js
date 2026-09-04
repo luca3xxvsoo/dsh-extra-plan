@@ -169,10 +169,9 @@ export function apply(ctx, config) {
     return  // 短路，消息不会到达 dsh-qqbot 的 message 事件处理器
   })
 
-  // ── 2) 注册 userQuestions provider（双版本兼容）──
-  // v0.1.1-rc.2：userQuestions.registerProvider({ ask }) 旧 API（返回卸载函数）；
-  // v0.1.2-rc.1：registerProvider 已删除，应答者 = ctx.on('user-questions/request', handler)
-  //（不调 next 即认领；handler throw 向上传播，NO_PROVIDER 口径两版等价）。
+  // ── 2) 注册 userQuestions provider ──
+  // 应答者 = ctx.on('user-questions/request', handler)（不调 next 即认领；
+  // handler throw 向上传播，NO_PROVIDER 口径）。
   async function providerAsk(request) {
     // 2a) 从 agent 反查 QQ peer（使用 SessionManager 现成方法 L295-301）
     const record = manager.findByAgent(request.agent)
@@ -221,12 +220,7 @@ export function apply(ctx, config) {
       pending.set(key, entry)
     })
   }
-  let dispose
-  if (typeof userQuestions.registerProvider === 'function') {
-    dispose = userQuestions.registerProvider({ ask: providerAsk })
-  } else {
-    dispose = ctx.on('user-questions/request', async (request, next) => providerAsk(request))
-  }
+  const dispose = ctx.on('user-questions/request', async (request, next) => providerAsk(request))
 
   // ── 2.5) 注册审批 answerer（受开关控制，默认关闭）──
   // ctx.on('approval/request') 是标准事件监听：服务未安装时事件永不触发，不会报错。
