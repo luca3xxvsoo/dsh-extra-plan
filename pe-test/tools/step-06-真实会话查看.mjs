@@ -4,9 +4,8 @@
 //       subagent_plan/ask 调用与结果摘要、error/retry 相关事件。
 import fs from 'node:fs'
 import path from 'node:path'
-import { zstdDecompressSync } from 'node:zlib'
-import { framesOf } from './_shared/zstd-frames.mjs'
-import { findSession } from './_shared/session-finder.mjs'
+import { framesOf, decodeText } from '../_shared/zstd-frames.mjs'
+import { findSession } from '../_shared/session-finder.mjs'
 
 const found = findSession(process.argv[2])
 if (found.kind === 'notfound') { console.error('dir not found:', found.arg); process.exit(1) }
@@ -17,7 +16,7 @@ for (const dir of found.dirs) {
   const buf = fs.readFileSync(path.join(found.base, dir, 'session.jsonl.zstd'))
   let lineNo = 0
   for (const f of framesOf(buf)) {
-    const text = zstdDecompressSync(buf.subarray(f.start, f.end)).toString('utf8')
+    const text = decodeText(buf, f)
     for (const raw of text.split('\n')) {
       lineNo++
       const line = raw.trim()

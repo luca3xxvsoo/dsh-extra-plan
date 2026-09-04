@@ -58,7 +58,7 @@ const {
 } = plugin.decisions
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 
-// ── 事件构造（真实形状，同 test-review-gate.mjs） ──────────────────────
+// ── 事件构造（真实形状，同 step-06-线索落盘.mjs / step-04-路由与写闸门.mjs 的事件构造函数，三处同构见 R6） ───
 const um = () => ({ type: 'user/message', data: { source: { kind: 'user' } } })
 const call = (name, cid, argumentsStr = '{}') => ({ type: 'tool/call', data: { name, callId: cid, arguments: argumentsStr } })
 const ok = (cid, text) => ({ type: 'tool/result', data: { message: { content: [{ type: 'tool-result', toolCallId: cid, content: [{ type: 'text', text }] }] } } })

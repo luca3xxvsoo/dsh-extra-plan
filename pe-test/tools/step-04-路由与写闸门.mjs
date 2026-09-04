@@ -172,9 +172,9 @@ checkTrue('R8 缓存未命中（未装配）→ 放行 fail-open', r !== null &&
 // ── ④ 回归 ────────────────────────────────────────────────────────────
 // 主会话路由未确认：write/pwsh 写拦截不变（bootstrapOn=false 下同样生效）
 r = preExecute(harness, mainAgent, 'write', {})
-checkTrue('R9 主会话路由未确认 write → deny（回归）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认/计划未批准'))
+checkTrue('R9 主会话路由未确认 write → deny（回归）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认'))
 r = preExecute(harness, mainAgent, 'pwsh', { command: 'New-Item x.txt' })
-checkTrue('R10 主会话路由未确认 pwsh 写 → deny（回归）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认/计划未批准'))
+checkTrue('R10 主会话路由未确认 pwsh 写 → deny（回归）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认'))
 
 // planner 分支拦截照旧（write deny 文案含「规划子代理只读」）
 r = preExecute(harness, plannerAgent, 'write', {})

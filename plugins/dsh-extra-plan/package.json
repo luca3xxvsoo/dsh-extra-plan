@@ -11,6 +11,7 @@
     "./flash-guide": "./lib/flash-guide.js",
     "./preset-sync": "./lib/preset-sync.js",
     "./client": "./lib/client.js",
+    "./client-bridge": "./lib/client-bridge.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
@@ -19,7 +20,8 @@
     "lib/",
     "scripts/distribute-preset.mjs",
     "cordis.patch.yml",
-    "assets/presets/"
+    "assets/presets/extra-plan/preset.yml",
+    "assets/presets/extra-plan/agent.cordis.yml"
   ],
   "scripts": {
     "postinstall": "node scripts/distribute-preset.mjs"

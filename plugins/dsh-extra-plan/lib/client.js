@@ -121,7 +121,7 @@ window.__ModuleLoader__.load({
           return function () { cancelled = true; };
         }, []);
 
-        // flash 引导开关：随 pro规划区一起加载（数据源独立：profile 用户层 disabled 条目）。
+        // flash 引导开关：随 pro规划区一起加载（数据源独立：agent.cordis.yml extra-plan 插件 config 区 flashGuideEnabled 字段，见 settings.js flash-guide-config 端点）。
         React.useEffect(function () {
           let cancelled = false;
           fetch(FLASHGUIDE_CONFIG_URL, { headers: { accept: "application/json" } })
@@ -421,12 +421,23 @@ window.__ModuleLoader__.load({
         );
       }
 
-      ctx.slots.register({
-        name: "settings.plugin.item",
-        key: "dsh-extra-plan",
-        locale: NS,
-        inject: () => ({})
-      }, ExtraPlanCard);
+      // 注册在 settings.plugin.item 插槽（「插件配置」tab 的卡片插槽），
+      // key 与 settings 命名空间名一致。此插槽与 DSH 内置 BashCard 等同一插槽。
+      // ConfigurablePluginsTab 取 settings 命名空间列表与已注册 card key 的交集
+      // 来决定渲染哪些卡片。
+      //
+      // 使用 ctx.slots.inject 而非 ctx.slots.register：inject 等待插槽被声明
+      // 后再注册（DSH 内置卡片、dsh-web-search-netflying 等均用此模式）。
+      // register 是立即注册，在 v0.1.2-rc1 中 settings.plugin.item 插槽声明
+      // 晚于本 client.js 加载，立即注册被丢弃。
+      ctx.slots.inject("settings.plugin.item", function* () {
+        yield ctx.slots.register({
+          name: "settings.plugin.item",
+          key: "dsh-extra-plan",
+          locale: NS,
+          inject: () => ({})
+        }, ExtraPlanCard);
+      });
     }
 
     exports.apply = apply;

@@ -1,5 +1,5 @@
-// run-steps.mjs — pe-test 一键体检
-// 用法: node run-steps.mjs
+// 一键step测试.mjs — pe-test 一键体检
+// 用法: node 一键step测试.mjs
 // 说明: 自动运行全部「自动判定项」，把结果（通过/失败/已知预存问题/人眼项）写入
 //       pe-test/reports/测试报告-<时间戳>.md 并在控制台输出摘要。
 // 前置: 本工具设计为在完整目录（pe-test 与 plugins/ 同级，即 dsh-extra-plan 仓库根）运行；
@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { join, dirname, relative } from 'node:path'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import { findSession } from './_shared/session-finder.mjs'
+import { findSession } from '../_shared/session-finder.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO_PLUGIN = join(HERE, '..', '..', 'plugins', 'dsh-extra-plan', 'index.js')

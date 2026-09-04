@@ -1,4 +1,4 @@
-// ledger-summary.mjs — usage 账本聚合工具（P3 A/B 读数）。
+// step-99-用量统计.mjs（原 ledger-summary.mjs）— usage 账本聚合工具（P3 A/B 读数）。
 // 用法：node step-99-用量统计.mjs <ledger.jsonl>
 // 输出：按 sessionId/role/model 分组统计 行数(调用次数)/hit(输入命中)/miss(输入未命中)/
 //       out(输出) 合计，并按单价估算花费（pro 输入3/输出6，flash 输入1/输出2，

@@ -17,6 +17,10 @@ export const inject = []
 
 // const EXTRA_PLAN_NS = settingsNamespace('dsh-extra-plan')
 const EXTRA_PLAN_NS = 'dsh-extra-plan'
+// 空 schema：本插件配置无 schema 化字段（字段读写由 API 层手动完成）。
+// 必须保留注册——宿主设置页「按需规划模式配置」卡片 = settings.plugin.item 卡片
+// key（'dsh-extra-plan'，client.js L436）与 settings describe() 已注册命名空间
+// （EXTRA_PLAN_NS）的交集；注销本行（或 L431）即卡片消失。
 const ExtraPlanSettingsSchema = z.object({})
 
 // YAML schema 支持 !!js 表达式，确保 agent.cordis.yml 中 !!js 往返不丢失。
@@ -137,15 +141,19 @@ function readToolWebConfig(file) {
   return { plugins, entry: null }
 }
 
+// ── 死代码（2026-09 保留说明）：writeYaml 全文件零调用、未导出（本文件导出面仅
+// name/inject/apply）。现行写入一律走 writeTextAtomic/patchFileField（文本级零格式
+// 扰动，见下）；本函数走 yaml.dump 会整体重排文件，与现行路径语义冲突，故废弃。
+// 处置：注释保留（不删除），供对照回退。
 // 原子写入 YAML：先写 tmp 文件再 rename。
-function writeYaml(file, data) {
+/* function writeYaml(file, data) {
   const dir = dirname(file)
   mkdirSync(dir, { recursive: true })
   const content = yaml.dump(data, { schema: patchSchema, noRefs: true, lineWidth: -1 })
   const tmp = file + '.tmp-' + process.pid
   writeFileSync(tmp, content, 'utf8')
   renameSync(tmp, file)
-}
+} */
 
 // ── 文本级直接写入（零格式扰动）：只替换目标行，注释/!!js/其他行字节原样 ──
 

@@ -23,15 +23,14 @@ export function apply(ctx, config) {
   const manager = ctx['qqbot.sessionManager']
   const userQuestions = ctx.userQuestions
 
-  // ── 1.5) 解析会话持久化 root（先 A 后 B 探测回退，均不可用则跳过文件删除）──
-  // 方式 A：ctx.sessionPersistence.root（绝对路径）；方式 B：~/.dsh/sessions
-  function resolveRoot(ctx) {
+  // ── 1.5) 解析会话持久化 root（~/.dsh/sessions 探测，不存在则跳过文件删除）──
+  function resolveRoot() {
     const root = join(homedir(), '.dsh', 'sessions')
     if (existsSync(root)) return root
     console.warn('[dsh-qqbot-user-questions] 未找到可用的会话持久化目录，bot-reset/bot-new 将跳过文件删除')
     return null
   }
-  const root = resolveRoot(ctx)
+  const root = resolveRoot()
 
   // ── 1.6) Monkey-patch manager.remove：清内存之外额外删除持久化会话目录 ──
   // bot-reset/bot-clear/bot-new 都会调用 manager.remove（slashCommand 短路中间件链，
@@ -170,57 +169,64 @@ export function apply(ctx, config) {
     return  // 短路，消息不会到达 dsh-qqbot 的 message 事件处理器
   })
 
-  // ── 2) 注册 userQuestions provider ──
-  const dispose = userQuestions.registerProvider({
-    async ask(request) {
-      // 2a) 从 agent 反查 QQ peer（使用 SessionManager 现成方法 L295-301）
-      const record = manager.findByAgent(request.agent)
-      if (record === undefined) {
-        throw new UserQuestionError(
-          '无法找到该 agent 对应的 QQ 会话',
-          'NO_PROVIDER'
-        )
-      }
-      const scope = record.scope
-      const peerId = record.peerId
-      const key = `${scope}:${peerId}`
-
-      // 2b) 空数组防御：没有问题直接返回空答案（不发送消息）
-      if (!request.questions.length) return { answers: [] }
-
-      // 2c) 只格式化并发送第一个问题，后续问题在队列中逐题询问
-      const { text } = formatSingleQuestion(request.questions[0], 1, request.questions.length)
-      await bot.sendText({ scope, targetId: peerId }, text)
-
-      // 2d) 等待用户回复（Promise，逐题推进）
-      // 队列式 entry：questionIndex 指向当前问题，collectedAnswers 累积答案；
-      // 全部答完后由 middleware 清理 pending 并 resolve({ answers })
-      return new Promise((resolve, reject) => {
-        const entry = {
-          resolve, reject,
-          signal: request.signal,
-          questions: request.questions,
-          questionIndex: 0,
-          collectedAnswers: [],
-          cleanupSignal: undefined,
-          scope, peerId,
-        }
-
-        // signal abort 处理（与 dsh 原生一致：无超时，取消靠 exec.signal）
-        if (request.signal) {
-          const onAbort = () => {
-            pending.delete(key)
-            reject(new UserQuestionError('ask_user_question 被取消', 'ASK_ABORTED'))
-          }
-          request.signal.addEventListener('abort', onAbort, { once: true })
-          entry.cleanupSignal = () =>
-            request.signal.removeEventListener('abort', onAbort)
-        }
-
-        pending.set(key, entry)
-      })
+  // ── 2) 注册 userQuestions provider（双版本兼容）──
+  // v0.1.1-rc.2：userQuestions.registerProvider({ ask }) 旧 API（返回卸载函数）；
+  // v0.1.2-rc.1：registerProvider 已删除，应答者 = ctx.on('user-questions/request', handler)
+  //（不调 next 即认领；handler throw 向上传播，NO_PROVIDER 口径两版等价）。
+  async function providerAsk(request) {
+    // 2a) 从 agent 反查 QQ peer（使用 SessionManager 现成方法 L295-301）
+    const record = manager.findByAgent(request.agent)
+    if (record === undefined) {
+      throw new UserQuestionError(
+        '无法找到该 agent 对应的 QQ 会话',
+        'NO_PROVIDER'
+      )
     }
-  })
+    const scope = record.scope
+    const peerId = record.peerId
+    const key = `${scope}:${peerId}`
+
+    // 2b) 空数组防御：没有问题直接返回空答案（不发送消息）
+    if (!request.questions.length) return { answers: [] }
+
+    // 2c) 只格式化并发送第一个问题，后续问题在队列中逐题询问
+    const { text } = formatSingleQuestion(request.questions[0], 1, request.questions.length)
+    await bot.sendText({ scope, targetId: peerId }, text)
+
+    // 2d) 等待用户回复（Promise，逐题推进）
+    // 队列式 entry：questionIndex 指向当前问题，collectedAnswers 累积答案；
+    // 全部答完后由 middleware 清理 pending 并 resolve({ answers })
+    return new Promise((resolve, reject) => {
+      const entry = {
+        resolve, reject,
+        signal: request.signal,
+        questions: request.questions,
+        questionIndex: 0,
+        collectedAnswers: [],
+        cleanupSignal: undefined,
+        scope, peerId,
+      }
+
+      // signal abort 处理（与 dsh 原生一致：无超时，取消靠 exec.signal）
+      if (request.signal) {
+        const onAbort = () => {
+          pending.delete(key)
+          reject(new UserQuestionError('ask_user_question 被取消', 'ASK_ABORTED'))
+        }
+        request.signal.addEventListener('abort', onAbort, { once: true })
+        entry.cleanupSignal = () =>
+          request.signal.removeEventListener('abort', onAbort)
+      }
+
+      pending.set(key, entry)
+    })
+  }
+  let dispose
+  if (typeof userQuestions.registerProvider === 'function') {
+    dispose = userQuestions.registerProvider({ ask: providerAsk })
+  } else {
+    dispose = ctx.on('user-questions/request', async (request, next) => providerAsk(request))
+  }
 
   // ── 2.5) 注册审批 answerer（受开关控制，默认关闭）──
   // ctx.on('approval/request') 是标准事件监听：服务未安装时事件永不触发，不会报错。
@@ -359,6 +365,9 @@ function formatApprovalMessage(req) {
  * 复刻 dsh-session-persistence-jsonl 的 encodeSegment（纯函数）：
  * `.` → ~002E、`..` → ~002E~002E；安全字符 [A-Za-z0-9._-]（除 ~ 外）保持原样；
  * 其余字符编码为 ~XXXX（四位大写十六进制）。空字符串抛错。
+ * 保留原因：上游 @deepseek-ai/dsh-session-persistence-jsonl（0.1.2-rc.1）未公开导出
+ * 此函数（仅导出 JsonlCompressionSchema/JsonlSessionPersistence），且本插件无
+ * dependencies（自包含）无法依赖上游——上游语义变更须同步对齐（上游 lib/index.js L92）。
  */
 function encodeSegment(raw) {
   if (raw.length === 0) throw new Error('cannot encode an empty path segment')
@@ -378,6 +387,7 @@ function encodeSegment(raw) {
  * 复刻 dsh-session-persistence-jsonl 的 projectKey（纯函数）：
  * 分隔符 / \ : → '-'（连续只保留一个）；安全字符 [A-Za-z0-9._-]（除 ~ 外）保持原样；
  * 其余字符编码为 ~XXXX；结果 -- 前后缀、去开头 '-'、截断 251。空字符串抛错。
+ * 保留原因：同 encodeSegment（上游未导出 + 本插件自包含）；上游语义变更须同步对齐（上游 L114）。
  */
 function projectKey(cwd) {
   if (cwd.length === 0) throw new Error('cannot encode an empty project path')
@@ -403,7 +413,7 @@ function projectKey(cwd) {
 /**
  * 删除主会话的整个持久化目录：<root>/<projectKey(process.cwd())>/<encodeSegment(sessionId)>/。
  * 删除整个目录（含 session.jsonl.zstd 及任何其他会话产物）。try/catch 幂等：
- * ENOENT 忽略，其他错误打 console.error 日志，不向调用方抛错。
+ * rm 已带 force:true（ENOENT 不会抛出），任何错误打 console.error 日志，不向调用方抛错。
  */
 async function deleteSessionDir(sessionId, root) {
   try {
@@ -413,8 +423,6 @@ async function deleteSessionDir(sessionId, root) {
     const sessionDir = join(root, project, encoded)
     await rm(sessionDir, { recursive: true, force: true })
   } catch (err) {
-    if (err.code !== 'ENOENT') {
-      console.error('[dsh-qqbot-user-questions] 删除会话目录失败:', err.message)
-    }
+    console.error('[dsh-qqbot-user-questions] 删除会话目录失败:', err.message)
   }
 }

@@ -1,4 +1,4 @@
-// @local/dsh-extra-plan (v0.1.7)
+// @local/dsh-extra-plan (v0.1.6)
 // v2（2026-09-04）：agent/request planner 前置注入
 // 额外规划模式（extra-plan 预设专用）：按需规划 + 三级机械锚点（路由/澄清/批准）
 // + 主会话与规划子代理 anchored 引导 + 规划子代理探查硬上限 + 力度继承 +
@@ -146,6 +146,22 @@ const BASH_MUTATION = /\b(rm|mv|cp|mkdir|rmdir|touch|tee|chmod|chown|ln)\b(?=\s|
 
 // ── 纯判定函数（模块顶层；经 decisions 导出供场景测试直接复用，防复制漂移） ──
 
+// 会话事件快照统一读取（v0.1.2-rc.1 兼容修复）：
+// - v0.1.1-rc.2：Session 提供 `get events()`（冻结全量快照）；
+// - v0.1.2-rc.1：`events` 已移除，替代 API 为 `snapshotEvents()`（无参=全量冻结数组，
+//   有快照缓存，语义与旧 events getter 等价；另有 eventAt(seq) 供单点读取）；
+// - pe-test 的 mock session 以普通数组属性 `events: []` 手构造（无 snapshotEvents 方法）。
+// 判定顺序：`Array.isArray(session.events)` 优先（旧版 getter + mock 天然命中）→
+// 不存在时回退 `session.snapshotEvents()`（新版）→ 均无返回 []（各调用点已有
+// Array.isArray/长度防御，空数组语义安全；时序上不抛错、不崩网关）。
+function sessionEvents(session) {
+  if (session === undefined || session === null) return []
+  const events = session.events
+  if (Array.isArray(events)) return events
+  if (typeof session.snapshotEvents === 'function') return session.snapshotEvents()
+  return []
+}
+
 // 显式路由判定（对齐官方 model-selection.ts L118-119 routeChanged 口径：
 // provider 或 model 任一与父值不同即视为显式）。空串/undefined 视为「无选择」。
 function isExplicitRoute(rProvider, rModel, pProvider, pModel) {
@@ -172,7 +188,7 @@ function isSubagentChild(agent) {
     if (header.origin === 'subagent') return true
     if (typeof header.delegationDepth === 'number' && header.delegationDepth > 0) return true
   }
-  const events = session.events
+  const events = sessionEvents(session)
   if (!Array.isArray(events)) return false
   for (const event of events) {
     if (event !== null && typeof event === 'object' && event.type === 'subagent/descriptor') return true
@@ -208,7 +224,7 @@ function isBootstrapPhase(agent) {
   if (agent === undefined || agent === null) return false
   const session = agent.session
   if (session === undefined || session === null) return false
-  const events = session.events
+  const events = sessionEvents(session)
   if (!Array.isArray(events)) return false
   return !events.some((event) => event !== null && typeof event === 'object' && event.type === 'tool/call')
 }
@@ -262,6 +278,9 @@ function labelsOfCallData(data) {
 // 路由 ask 与批准 ask 的标准词集合（用于三分法判定）。
 const ROUTE_GATE_SET = new Set([ROUTE_WORD_DIRECT, ROUTE_WORD_PLAN, ROUTE_WORD_DISAGREE])
 const APPROVAL_GATE_SET = new Set([APPROVAL_WORD_APPROVE, APPROVAL_WORD_REPLAN, ROUTE_WORD_DISAGREE])
+
+// 免计瀑布预算的工具白名单（planner 预算计数与 pre-execute 闸门豁免共用）。
+const FREE_TOOLS = new Set(['save_plan', 'report', 'send_message'])
 
 // 白名单后缀剥离：把选项标签末尾的推荐标记去掉，用于精确匹配前净化。
 // 四种白名单后缀：(Recommended)、（Recommended）、(推荐)、（推荐）；英文不区分大小写。
@@ -343,6 +362,9 @@ function validateGateAskStructure(kind, questions) {
   return `ask 结构错误：未知的 ask 类型 "${kind}"。`
 }
 
+// 测试契约 API（非死代码）：运行时状态机只用 askKindOfRelaxed（见 L487），本严格版
+// 仅经 decisions 导出（L1052）供 pe-test step-00-全流程回归.mjs L91 调用（K1-K5）。
+// 删除定义会使 decisions 顶层求值 ReferenceError（index.js 模块加载即崩）——保留。
 // ask 分类：路由 ask（同时含「直接执行」「进行pro规划」）、批准 ask（含
 // 「同意执行」）、其余视为澄清 ask。persona 约定选项措辞固定。
 function askKindOf(labels) {
@@ -921,7 +943,7 @@ function isReadOnlyChildByCatalog(tools) {
 // reasoningEffort（顶层 effort 不渗入）。模块顶层纯函数：不引用 probeParents/
 // plannerModelCache/plannerModel/ctx 闭包变量；经 decisions 导出供场景测试直接复用。
 async function resolveProbeRequestInjection(agent, agents, resolved) {
-  // 1) 直接父解析（等价钩子改动前 L1691-1706 防御；requestHeader 异常亦吞）
+  // 1) 直接父解析（防御 requestHeader 异常；重构前为内联逻辑，现抽为独立函数）
   if (agent === undefined || agent === null || agent.session === undefined || agent.session === null) return resolved
   const agentHeader = agent.session.header !== undefined && agent.session.header !== null ? agent.session.header : null
   const parentSession = agentHeader !== null ? agentHeader.parentSession : undefined
@@ -987,7 +1009,7 @@ async function resolveProbeRequestInjection(agent, agents, resolved) {
   const sourceModel = typeof sourceConfig.model === 'string' && sourceConfig.model !== '' ? sourceConfig.model : undefined
   const sourceMaxTokens = typeof sourceConfig.maxTokens === 'number' && sourceConfig.maxTokens > 0 ? sourceConfig.maxTokens : undefined
 
-  // 3) 注入应用（与钩子改动前 L1707-1739 语义等价；唯一差异：来源为 sourceConfig）
+  // 3) 注入应用（唯一差异：来源为 sourceConfig）
   const resolvedProvider = typeof resolved.provider === 'string' ? resolved.provider : ''
   const resolvedModel = typeof resolved.model === 'string' ? resolved.model : ''
   const resolvedEffort = typeof resolved.reasoningEffort === 'string' ? resolved.reasoningEffort : ''
@@ -1101,11 +1123,15 @@ export function apply(ctx, config) {
   let ledgerWarned = false
   const usageCursors = new Map()
   let usageCursorsLoaded = false
+  // job_output 同轮防重复：内存计数器（Map<sessionId, Map<jobId, 1>>）
+  // 替代 session.events 推导——当前轮次 tool/call 在 pre-execute 阶段尚未写入 events
+  const jobOutputCallCounters = new Map()
+  const jobOutputLastAnchors = new Map() // sessionId → 上次锚点索引
   async function foldUsage(agent, role) {
     if (!ledgerOn || ledgerPath === '') return
     const session = agent.session
     if (session === undefined || session === null) return
-    const events = session.events
+    const events = sessionEvents(session)
     if (!Array.isArray(events)) return
     try {
       if (!usageCursorsLoaded) {
@@ -1196,7 +1222,7 @@ export function apply(ctx, config) {
     if (!isSubagentChild(agent)) return false
     const session = agent.session
     if (session === undefined || session === null) return false
-    const events = session.events
+    const events = sessionEvents(session)
     if (!Array.isArray(events)) return false
     for (const event of events) {
       if (event !== null && typeof event === 'object' && event.type === 'subagent/descriptor'
@@ -1694,10 +1720,10 @@ export function apply(ctx, config) {
     if (!Array.isArray(decision.messages)) return decision
     // 预算告知（先于 suffix 拼接，suffix 为空也生效）+ 阈值提示（剩余 ≤3 且未注入过时追加一条）。
     const budgetNotice = budgetNoticeText(exploreBudget)
-    const used = toolCallsSinceUser(selfAgent.session.events, new Set(['save_plan', 'report', 'send_message']))
+    const used = toolCallsSinceUser(sessionEvents(selfAgent.session), FREE_TOOLS)
     const reminder = budgetReminderText(exploreBudget - used, exploreBudget, BUDGET_REMINDER_THRESHOLD)
     let messages = decision.messages.map((message) => withPlannerPromptSuffix(withBudgetNotice(message, budgetNotice), plannerPromptSuffix))
-    if (reminder !== '' && !budgetReminderSent(selfAgent.session.events, '本轮探查预算还剩 ')) {
+    if (reminder !== '' && !budgetReminderSent(sessionEvents(selfAgent.session), '本轮探查预算还剩 ')) {
       messages = [...messages, budgetReminderMessage(reminder)]
     }
     return { ...decision, messages }
@@ -1870,7 +1896,13 @@ export function apply(ctx, config) {
     let provider = parentProvider
     let model = parentModel
     let maxTokens = parentMaxTokens
-    if (isPlannerChild(payload.agent)) {
+    // ── 死代码（2026-09 保留说明）：本 if 块不可达——
+    // 上方 planner 分支（L1840 isPlannerChild → L1865 必然 return nextConfig）已提前返回；
+    // isPlannerChild 为纯只读函数（L1211-1225，无副作用），同一 payload.agent 二次判定结果
+    // 恒同 → 此处恒 false。且本块 else 回退（parentProvider/parentModel/parentMaxTokens）
+    // 与不进入分支时 L1886-1888 的初值逐字等价（作者注释亦自认「理论不可达」）。
+    // 处置：整块注释保留（不删除），供对照回退。
+    /* if (isPlannerChild(payload.agent)) {
       const entry = plannerModelCache.get(payload.agent)
       if (entry !== undefined) {
         provider = entry.provider
@@ -1883,7 +1915,7 @@ export function apply(ctx, config) {
         model = parentModel
         maxTokens = parentMaxTokens
       }
-    }
+    } */
     // probe（探查者）特判：模型跟随顶层主会话（resolveProbeRequestInjection 内沿
     // parentSession 链上溯）；early return 不读 plannerModelCache，planner 分支不受影响。
     if (isProbeChild(payload.agent)) {
@@ -1894,7 +1926,7 @@ export function apply(ctx, config) {
     const effortExplicit = isExplicitEffort(resolvedEffort, parentEffort)
     const nextConfig = { ...resolved }
     if (!routeExplicit) {
-      // 未显式：现状注入（与改动前 L1581-1582 逐字节等价）
+      // 未显式：现状注入（模型/提供商跟随父会话）
       if (model !== undefined) nextConfig.model = model
       if (provider !== undefined) nextConfig.provider = provider
     }
@@ -1909,8 +1941,46 @@ export function apply(ctx, config) {
   ctx.on('tools/pre-execute', (exec, next) => {
     if (exec.agent === undefined) return next()
     const agent = exec.agent
+    // job_output 计数器锚点重置：新用户消息或 send_message 续轮转达时清空该 session 的计数器
+    {
+      const sessId = agent.session.header.id
+      const events = sessionEvents(agent.session)
+      let currentAnchor = -1
+      for (let i = events.length - 1; i >= 0; i -= 1) {
+        const e = events[i]
+        if (e === null || typeof e !== 'object' || e.type !== 'user/message') continue
+        const d = e.data
+        const kind = d !== null && typeof d === 'object' && d.source !== null && typeof d.source === 'object' ? d.source.kind : ''
+        if (kind === 'user' || kind === 'coordinator') {
+          currentAnchor = i
+          break
+        }
+      }
+      const lastAnchor = jobOutputLastAnchors.get(sessId)
+      if (lastAnchor !== currentAnchor) {
+        jobOutputCallCounters.delete(sessId)
+        jobOutputLastAnchors.set(sessId, currentAnchor)
+      }
+    }
     const child = childBaseline(agent)
     const planner = isPlannerChild(agent)
+    // 探查者委派属只读探查能力（与 read/glob/grep 同级）：任意路由状态放行，
+    // 仅强制 one-shot 固定后台（与 subagent/subagent_review 同机械闸门口径）。
+    // 置于 planner/child 判定之前：planner 委派 subagent_probe 时同样记录放行
+    // （否则探查子会话 isProbeChild 查直接父=planner 无法命中，模型回落为直接父）。
+    if (exec.name === 'subagent_probe') {
+      if (exec.arguments.run_in_background !== true) {
+        return { kind: 'deny', reason: '探查者必须后台运行：请显式传 run_in_background: true（one-shot 一次性会话，返回 jobId 后用 job_output 收集结果）' }
+      }
+      if (planner && !FREE_TOOLS.has(exec.name)) {
+        const used = toolCallsSinceUser(sessionEvents(agent.session), FREE_TOOLS)
+        if (budgetExceeded(used, exploreBudget)) {
+          return { kind: 'deny', reason: budgetExhaustedReason(Math.min(used - 1, exploreBudget), exploreBudget) }
+        }
+      }
+      probeParents.add(agent.session.header.id)
+      return next()
+    }
     if (planner) {
       if (exec.name === 'write' || exec.name === 'edit') {
         return { kind: 'deny', reason: '规划子代理只读：方案经 save_plan 落盘，其余写入一律禁止（toolFilter 之外的第二道防线）' }
@@ -1921,9 +1991,8 @@ export function apply(ctx, config) {
       if (exec.name === 'bash' && bashMutationMatches(exec)) {
         return { kind: 'deny', reason: '规划子代理只读：bash 仅限只读探查命令，禁止创建/修改/删除文件' }
       }
-      const FREE_TOOLS = new Set(['save_plan', 'report', 'send_message'])
       if (!FREE_TOOLS.has(exec.name)) {
-        const used = toolCallsSinceUser(agent.session.events, FREE_TOOLS)
+        const used = toolCallsSinceUser(sessionEvents(agent.session), FREE_TOOLS)
         if (budgetExceeded(used, exploreBudget)) {
           return { kind: 'deny', reason: budgetExhaustedReason(Math.min(used - 1, exploreBudget), exploreBudget) }
         }
@@ -1948,7 +2017,7 @@ export function apply(ctx, config) {
       return next() // 执行者子代理豁免（目录含 write/edit，缓存未命中）
     }
 
-    const state = deriveFlowState(agent.session.events)
+    const state = deriveFlowState(sessionEvents(agent.session))
     const escape = state.channelBroken === true
     const name = exec.name
     if (name === ASK_TOOL) {
@@ -2021,15 +2090,6 @@ export function apply(ctx, config) {
       }
       return next()
     }
-    // 探查者委派属只读探查能力（与 read/glob/grep 同级）：任意路由状态放行，
-    // 仅强制 one-shot 固定后台（与 subagent/subagent_review 同机械闸门口径）。
-    if (name === 'subagent_probe') {
-      if (exec.arguments.run_in_background !== true) {
-        return { kind: 'deny', reason: '探查者必须后台运行：请显式传 run_in_background: true（one-shot 一次性会话，返回 jobId 后用 job_output 收集结果）' }
-      }
-      probeParents.add(agent.session.header.id)
-      return next()
-    }
     if (name === 'subagent' || name === 'subagent_fork' || name === 'workflow' || name === 'ralph' || name === 'subagent_review') {
       if (!escape && state.approved !== true) {
         return { kind: 'deny', reason: approvalDenyReason(name, state) }
@@ -2044,8 +2104,10 @@ export function apply(ctx, config) {
     }
     if (name === 'send_message') {
       const args = exec.arguments
-      const target = args !== undefined && args !== null && typeof args === 'object' && typeof args.subagent_id === 'string' ? args.subagent_id : ''
-      const plannerIds = plannerChildIdsOf(agent.session.events)
+      const target = args !== undefined && args !== null && typeof args === 'object'
+        ? (typeof args.agent_id === 'string' ? args.agent_id : (typeof args.subagent_id === 'string' ? args.subagent_id : ''))
+        : ''
+      const plannerIds = plannerChildIdsOf(sessionEvents(agent.session))
       if (!escape && !plannerIds.includes(target)) {
         return { kind: 'deny', reason: 'send_message 未放行：目标子代理为 one-shot 一次性会话，不可续轮；仅 continuable 规划子代理可接收 send_message 续轮转达' }
       }
@@ -2057,13 +2119,19 @@ export function apply(ctx, config) {
       if (args !== undefined && args !== null && typeof args === 'object' && args.wait === true) {
         return { kind: 'deny', reason: 'job_output 禁止带 wait: true 前台等待。请省略 wait 参数或设 wait: false，job 完成后会收到通知' }
       }
-      // 闸门 2：禁止同一 jobId 连续调用（防轮询）
+      // 闸门 2：禁止同一 jobId 连续调用（防轮询）——内存计数器替代 events 推导
       const jobId = args !== undefined && args !== null && typeof args === 'object' ? args.job_id : undefined
       if (typeof jobId === 'string') {
-        const calls = jobOutputCallsForJob(agent.session.events, jobId)
-        if (calls > 0) {
+        const sessId = agent.session.header.id
+        let perSession = jobOutputCallCounters.get(sessId)
+        if (perSession === undefined) {
+          perSession = new Map()
+          jobOutputCallCounters.set(sessId, perSession)
+        }
+        if (perSession.has(jobId)) {
           return { kind: 'deny', reason: `job_output 禁止对同一 job 重复调用。job "${jobId}" 在本轮已调用过，请等待通知或使用 job_list 查看状态` }
         }
+        perSession.set(jobId, 1)
       }
       return next()
     }

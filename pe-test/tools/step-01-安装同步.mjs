@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { syncPreset } from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
-import { contentHash, readManifest, writeManifest } from './_shared/preset-hash.mjs'
+import { contentHash, readManifest, writeManifest } from '../_shared/preset-hash.mjs'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 const ASSET_DIR = join(HERE, '..', '..', 'plugins', 'dsh-extra-plan', 'assets', 'presets', 'extra-plan')

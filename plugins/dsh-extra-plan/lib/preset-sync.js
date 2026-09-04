@@ -18,7 +18,7 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const ASSET_DIR = join(HERE, '..', 'assets', 'presets', PRESET_ID)
 
 /** sha256(preset.yml || agent.cordis.yml)，固定顺序；任一缺失返回 null。 */
-function contentHash(dir) {
+export function contentHash(dir) {
   const h = createHash('sha256')
   for (const file of CORE_FILES) {
     const p = join(dir, file)
@@ -29,7 +29,7 @@ function contentHash(dir) {
 }
 
 /** 读目标目录 manifest 的 distHash；缺失/损坏返回 null。 */
-function readManifest(targetDir) {
+export function readManifest(targetDir) {
   const p = join(targetDir, MANIFEST_NAME)
   if (!existsSync(p)) return null
   try {
@@ -41,12 +41,12 @@ function readManifest(targetDir) {
 }
 
 /** 全量写目标目录：tmp 暂存 → 删旧+改名；删除/改名失败兜底为逐文件覆盖。 */
-function writeFull(targetDir, distHash) {
+export function writeFull(targetDir, distHash) {
   const parent = dirname(targetDir)
   const tmp = join(parent, `.tmp-${PRESET_ID}-${process.pid}-${Date.now()}`)
   mkdirSync(tmp, { recursive: true })
   try {
-    for (const file of readdirSync(ASSET_DIR)) copyFileSync(join(ASSET_DIR, file), join(tmp, file))
+    for (const file of CORE_FILES) copyFileSync(join(ASSET_DIR, file), join(tmp, file))
     writeFileSync(join(tmp, MANIFEST_NAME), JSON.stringify({ format: 1, distHash }, null, 2) + '\n')
     try {
       if (existsSync(targetDir)) rmSync(targetDir, { recursive: true, force: true })

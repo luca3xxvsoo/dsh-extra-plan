@@ -15,7 +15,7 @@
 
 **一键体检**（推荐）：
 ```
-node pe-test/tools/run-steps.mjs
+node pe-test/tools/一键step测试.mjs
 ```
 → 自动跑全部「自动判定项」（8 个），结果保存到 `pe-test/reports/测试报告-<时间>.md`
 → 跑之前先确认：**在完整目录（pe-test 与 plugins 同级 = 仓库根）下运行**才有完整结果

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// test-cross-platform.mjs —— 跨平台只读防线测试（纯 Node，三平台通用）
+// step-00-跨平台写拦截.mjs —— 跨平台只读防线测试（纯 Node，三平台通用）
 // ============================================================================
 // 用途：验证 extra-plan 的 bash/pwsh 写命令拦截逻辑（decisions 纯函数）在
 //       Windows / Linux / macOS 上行为一致。deny 决策完全由 decisions 导出的
@@ -7,17 +7,17 @@
 //       分支会正确拦截/放行」的全部逻辑层。
 //
 // 用法（三平台一致）：
-//   node test-cross-platform.mjs
+//   node step-00-跨平台写拦截.mjs
 //   全部通过退出码 0；任一失败退出码 1（可接入 CI）。
 //
 // 在 GitHub Actions 中（.github/workflows）跑三平台矩阵：
 //   strategy: { matrix: { os: [ubuntu-latest, macos-latest, windows-latest] } }
 //   runs-on: ${{ matrix.os }}
-//   steps: checkout → node-version 20 → run: node test-cross-platform.mjs
+//   steps: checkout → node-version 20 → run: node step-00-跨平台写拦截.mjs
 //   （可追加真实 shell 冒烟：bash 平台跑 bash -c "..."、Windows 跑 pwsh -c "..."）
 //
 // 在 WSL2 中跑（本地真 Linux）：
-//   wsl -e bash -lc "cd <工作区>/extra-plan && node test-cross-platform.mjs"
+//   wsl -e bash -lc "cd <工作区>/extra-plan && node step-00-跨平台写拦截.mjs"
 //
 // 说明：本脚本只依赖 Node 标准库与 decisions 导出，不做任何文件写操作。
 // ============================================================================

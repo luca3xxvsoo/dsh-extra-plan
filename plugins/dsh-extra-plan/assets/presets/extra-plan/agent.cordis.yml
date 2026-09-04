@@ -27,13 +27,13 @@
       每一步都有机械闸门兜底——违反流程的工具调用会被拒绝，请严格遵守
     
       决策流程：
-      - 收到需求后，先只读探查。仅探查任务直接展示，无需路由确认
-      - 简单任务（涉及对象 ≤3、每个 ≤1000 行）→ 自己探查；复杂或信息不足 → 委派探查者（subagent_probe，后台 one-shot）
-      - 探查后用 ask_user_question 弹一次三选一，选项固定为「直接执行」「进行pro规划」「不同意」。把你的推荐排第一
-      - 选「直接执行」→ 亲自动手，完工自查，简汇报 ≤10 行。禁止委派子代理
+      - 收到需求后，理解用户需求。并从涉及对象数、涉及代码行数、信息完整度评估需求复杂度
+      - 需求复杂度评估完成后，用ask_user_question 弹一次二选一。选项固定为「主会话探查」「探查者探查」。把你的推荐排第一
+      - 探查结束后，汇总探查结果，展示初版方案。并用 ask_user_question 弹一次三选一，选项固定为「直接执行」「进行pro规划」「不同意」。把你的推荐排第一
+      - 选「直接执行」：亲自动手，完工自查，简汇报 ≤10 行
       - 选「进行pro规划」：
         · 先另发一次 ask 澄清 1-3 个关键问题（给候选选项）
-        · 用 save_probe 落盘探查线索（规则见工具描述：path 须真实存在、range/line 格式、超限先压缩或分批），拿到路径后委派 subagent_plan 规划子代理（prompt 带上线索文件路径，说明「先 read 再补查」）
+        · 用 save_probe 落盘探查线索（落盘前自查：path 必须真实存在、range 格式 12 或 L12-34、evidence.line 单个行号（不含区间）、每项 evidence 须 line/value/text 至少其一，超出工具描述上限先压缩或分批落盘），拿到路径后委派 subagent_plan 规划子代理（prompt 带上线索文件路径，说明「先 read 再补查」）
         · 规划完成后读取方案/验收文件，原样展示，弹批准 ask（选项固定：同意执行/转交pro规划/不同意，附第二个问题「修改意见」可留空）
         · 批准后：不得自己改文件，委派 subagent 执行者（后台 one-shot）→ 完成后委派 subagent_review 验收 → 不通过则修正重派（最多两轮）→ 两轮仍不通过原样返回用户
         · 规划子代理预算耗尽时输出「申请继续探查」，原样展示 + 弹 ask 确认后，探查/委派探查者 → save_probe → send_message 转达
@@ -113,6 +113,20 @@
         usageLedger:
           enabled: true
           path: !!js dshHomePath('usage-ledger', 'ledger.jsonl')
+
+    # 启动自愈：核对 .agent-presets/extra-plan 文件，保证预设就位（幂等）。
+    - id: extra-plan-preset-sync
+      name: '@local/dsh-extra-plan/preset-sync'
+
+    # 注：extra-plan-settings（设置页 API + settings 命名空间注册）不在 agent 预设
+    # 挂载——settings 命名空间必须由宿主平面插件注册（settings.service 的 describe()
+    # 是「设置→插件→插件配置」列表的 served 依据，官方插件均如此），且宿主平面
+    # 注册与 agent 预设注册若同时存在会触发 duplicate registration。该行位于 profile
+    # 的 cordis.patch.yml（insert 列表），见「回退预案-发布前.md」迁移记录。
+
+    # flash 近场引导：在 flash 模型 agent 的 pre-step 中注入引导文本。
+    - id: flash-guide
+      name: '@local/dsh-extra-plan/flash-guide'
 
 # ── compaction ──────────────────────────────────────────────────────────────
 

@@ -25,10 +25,9 @@
 export const name = 'executor-spawn'
 export const inject = ['subagents']
 
-// 与预设 tool-subagent / tool-subagent-fork 行的执行者 deny 清单保持一致
-// （修复判据：worker/fork 请求头 tools 不含委派类工具，与常规执行者一致）；
-// v1.2 起含 subagent_review（P2 验收复核者）防 worker 委派复核者；
-// v1.4 起含 subagent_probe（探查者）防 worker 委派探查者。
+// DEFAULT_DENY 仅作 fallback：预设 agent.cordis.yml 的 executor-spawn 行恒提供
+// config.deny（11 项，含 subagent_plan），预设加载路径下本清单不可达；不一致以
+// config.deny 为准。本常量不随预设同步（是否收敛为 11 项另议，本批不改代码）。
 const DEFAULT_DENY = [
   'subagent',
   'subagent_fork',
