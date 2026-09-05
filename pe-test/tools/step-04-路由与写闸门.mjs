@@ -12,7 +12,7 @@ const DSH_HOME = (process.env.DSH_HOME || homedir() + '/.dsh').replaceAll('\\', 
 const PLUGIN_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/index.js', import.meta.url))
 const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
 const decisions = plugin.decisions
-const { catalogHasWriteTools, isReadOnlyChildByCatalog } = decisions
+const { catalogHasWriteTools, isReadOnlyChildByCatalog, routeDenyReason } = decisions
 
 let pass = 0
 let fail = 0
@@ -277,13 +277,13 @@ const writeCode = { code: "await writeFileSync('x', '1')", description: '写文�
 const readOnlyCode = { code: "await readFileSync('x', 'utf8')", description: '只读' }
 
 r = preExecute(harness, noneMain, 'run_code', readOnlyCode)
-checkTrue('R28 主会话 none 态 run_code（纯只读）→ deny 且文案含「路由未确认：run_code」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认：run_code'))
+checkTrue('R28 主会话 none 态 run_code（纯只读）→ 放行（终版：无写模式放行，ptc 死锁解除）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, noneMain, 'run_code', writeCode)
-checkTrue('R29 主会话 none 态 run_code（含写）→ deny（主会话不看 code，同文案）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认：run_code'))
+checkTrue('R29 主会话 none 态 run_code（含写）→ deny 且文案与直呼 write/edit 逐字一致', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === routeDenyReason('write/edit', { route: 'none' }))
 r = preExecute(harness, directMain, 'run_code', writeCode)
 checkTrue('R30 主会话 direct 态 run_code（含写）→ 放行', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, planMain, 'run_code', readOnlyCode)
-checkTrue('R31 主会话 plan+clarified 态 run_code → deny（规划态不可直做）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划态下主会话不可写文件：run_code'))
+checkTrue('R31 主会话 plan+clarified 态 run_code（纯只读）→ 放行（终版：无写模式放行）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, approvedMain, 'run_code', readOnlyCode)
 checkTrue('R32 主会话 approved 态 run_code → deny 且文案含「方案已批准，执行请走 subagent 委派执行者」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('方案已批准，执行请走 subagent 委派执行者'))
 r = preExecute(harness, escapeMain, 'run_code', writeCode)
@@ -304,6 +304,22 @@ r = preExecute(harness, probeAgent, 'run_code', writeCode)
 checkTrue('R40 probe（只读目录+放行记录）run_code 含写 → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('只读角色仅允许只读探查'))
 r = preExecute(harness, fresh, 'run_code', writeCode)
 checkTrue('R41 缓存未命中子代理 run_code → 放行（fail-open）', r !== null && r !== undefined && r.kind === 'allow')
+
+// ── ⑨ R-ptc 系列:F7' 终版修订（ptc 死锁解除 + 嵌套瀑布等价） ───────────────
+const nestedAskCode = { code: "const ans = await tools.ask_user_question({ questions: [{ id: 'q1', options: ['直接执行', '进行pro规划', '不同意'] }] })", description: '嵌套ask' }
+const nestedPlanCode = { code: "await tools.subagent_plan({ task: '规划', run_in_background: true })", description: '嵌套规划委派' }
+const nestedProbeCode = { code: "await tools.subagent_probe({ run_in_background: true })", description: '嵌套探查委派' }
+
+r = preExecute(harness, noneMain, 'run_code', nestedAskCode)
+checkTrue('R42 主会话 none 态 run_code（code 含嵌套 ask_user_question）→ 放行（外壳不拦嵌套，嵌套 ask 由瀑布判定）', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, noneMain, 'run_code', nestedPlanCode)
+checkTrue('R43 主会话 none 态 run_code（code 含嵌套 subagent_plan）→ 放行（外壳无写命中，嵌套委派由瀑布判定）', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, noneMain, 'subagent_plan', { run_in_background: true })
+checkTrue('R44 主会话 none 态直呼 subagent_plan（嵌套瀑布等价）→ deny 且文案含「子代理未放行：subagent_plan」（route 不符，与嵌套调用同文案）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('子代理未放行：subagent_plan'))
+r = preExecute(harness, noneMain, 'run_code', nestedProbeCode)
+checkTrue('R45 主会话 none 态 run_code（code 含嵌套 subagent_probe）→ 放行（外壳不拦嵌套探查委派）', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, planMain, 'run_code', writeCode)
+checkTrue('R46 主会话 plan+clarified 态 run_code（含写）→ deny 且文案与直呼 write 逐字一致（含「规划态下主会话不可写文件」）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === routeDenyReason('write/edit', { route: 'plan' }))
 
 console.log(`\n通过 ${pass}, 失败 ${fail}`)
 process.exit(fail === 0 ? 0 : 1)

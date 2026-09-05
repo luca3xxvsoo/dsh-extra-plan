@@ -1193,8 +1193,14 @@ async function resolveProbeRequestInjection(agent, agents, resolved) {
 }
 
 // F7' run_code 统一审查纯函数：返回 null=放行，非 null=deny reason。
-// - 主会话：escape（channelBroken）放行；route='direct' 放行；approved=true 拒；
-//   none/plan 拒（routeDenyReason 复用，run_code 按 write 同级）；
+// - 主会话（终版：内容扫描/模拟审核，按角色=普通流程等价判定）：
+//   escape（channelBroken）放行；route='direct' 放行；approved=true 拒（文案不变）；
+//   none/plan → 静态扫描 code：无写模式命中（纯只读、嵌套 ask/subagent_plan/
+//   subagent_probe/save_probe 等工具调用）→ 放行（ptc 死锁解除）；含写模式 → 拒且
+//   文案与直呼 write/edit 完全一致（routeDenyReason('write/edit', state) 复用，
+//   plan 态天然产出「规划态下主会话不可写文件」、none 态天然产出「路由未确认」，
+//   不新造文案）。嵌套工具调用不命中扫描黑名单 → 外壳放行、不重复拦，由嵌套
+//   调用自身的 pre-execute 瀑布按各工具闸门判定（文案与直呼一致，F1 桥接已生效）。
 // - 子代理：readonlyChild=true（planner/probe/reviewer）静态扫描 code，含写拒、纯只读放行；
 //   readonlyChild=false（执行者/缓存未命中）放行。
 function runCodeDenyReason(agent, exec, state, readonlyChild) {
@@ -1206,7 +1212,10 @@ function runCodeDenyReason(agent, exec, state, readonlyChild) {
     if (state.approved === true) {
       return '方案已批准，执行请走 subagent 委派执行者。run_code 按 write 同级：主会话直做须在路由确认「直接执行」后'
     }
-    return routeDenyReason('run_code', state)
+    if (hits.length > 0) {
+      return routeDenyReason('write/edit', state)
+    }
+    return null
   }
   if (readonlyChild === true && hits.length > 0) {
     return `只读角色仅允许只读探查：run_code 代码命中写模式特征 ${hits.length} 处（${hits.slice(0, 3).join('、')}${hits.length > 3 ? ' 等' : ''}）。请改用 read/glob/grep 或 shell 只读命令`

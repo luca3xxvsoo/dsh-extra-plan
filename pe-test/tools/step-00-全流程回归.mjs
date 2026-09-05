@@ -632,5 +632,20 @@ for (const [name, code, expected] of H) {
   check(name, codeMutationHints(code), expected)
 }
 
-console.log(`\n通过 ${pass}/${K.length + M.length + F.length + GK.length + GM.length + F21.length + GL.length + P.length + C.length + CU.length + AP.length + BN.length + 2 + BR.length + DR.length + BD.length + BE.length + S.length + 1 + PW.length + 2 + D.length + 3 + 3 + PR.length + 7 + 5 + E.length + RP.length + LQ.length + AS.length + FC.length + PC.length + CC.length + CUCODE.length + CLC.length + H.length}, 失败 ${fail}`)
+// ── I 系列:runCodeDenyReason 主会话分支（F7' 终版修订:内容扫描/模拟审核） ─────
+const mainAgentFx = { session: { header: { id: 'main-1' }, snapshotEvents: () => [] } }
+const readOnlyCodeFx = "await readFileSync('x', 'utf8')"
+const writeCodeFx = "await writeFileSync('x', '1')"
+const noneStateFx = { route: 'none', clarified: false, approved: false, channelBroken: false }
+const planStateFx = { route: 'plan', clarified: true, approved: false, channelBroken: false }
+const I = [
+  ['I1 主会话 none+纯只读 → 放行(null)', readOnlyCodeFx, noneStateFx, null],
+  ['I2 主会话 none+含写 → routeDenyReason(write/edit) 逐字一致', writeCodeFx, noneStateFx, routeDenyReason('write/edit', { route: 'none' })],
+  ['I3 主会话 plan+含写 → routeDenyReason(write/edit) 逐字一致（含「规划态下主会话不可写文件」）', writeCodeFx, planStateFx, routeDenyReason('write/edit', { route: 'plan' })],
+]
+for (const [name, code, state, expected] of I) {
+  check(name, runCodeDenyReason(mainAgentFx, { arguments: { code } }, state, false), expected)
+}
+
+console.log(`\n通过 ${pass}/${K.length + M.length + F.length + GK.length + GM.length + F21.length + GL.length + P.length + C.length + CU.length + AP.length + BN.length + 2 + BR.length + DR.length + BD.length + BE.length + S.length + 1 + PW.length + 2 + D.length + 3 + 3 + PR.length + 7 + 5 + E.length + RP.length + LQ.length + AS.length + FC.length + PC.length + CC.length + CUCODE.length + CLC.length + H.length + I.length}, 失败 ${fail}`)
 process.exit(fail === 0 ? 0 : 1)
