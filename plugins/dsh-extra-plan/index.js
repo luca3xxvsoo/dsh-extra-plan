@@ -43,9 +43,7 @@
 //       （save_probe 与 subagent_plan 同条件放行，v3 口径）；
 //     - 计划已批准（approved）：放行执行类委派（subagent/subagent_fork/
 //       workflow/ralph/subagent_review）与写工具；
-//     - send_message：仅向 planner 白名单（存续规划子代理）放行（机械白名单，
-//       不依赖 approved 态），其余目标一律 deny（执行者/reviewer 为 one-shot
-//       一次性会话不可续轮）；
+//     - send_message：完全放行（目标合法性由宿主校验；续轮转达语义不变）；
 //     - 空白回复（answers:[]）/取消/中断/验词失败一律视为未确认；仅提问
 //       通道级错误码白名单逃生放行（防死锁，v11 口径）。
 //  2) 规划子代理（subagent_plan 创建、model=pro 的子会话）：
@@ -624,6 +622,7 @@ function deriveFlowState(events) {
   return state
 }
 
+// 白名单检查已删除（send_message 完全放行）；本函数保留供 step-00 P/PC 系列测试引用。
 // 从事件里提取存续的规划子代理 id（subagent_plan 的 call/result 精确配对，
 // 从结果文本提取会话 id：仅 uuid 形态（宿主 subagent_plan 结果文本 'started subagent <uuid>'）。纯事件推导，重启不丢。
 function plannerChildIdsOf(events) {
@@ -1096,9 +1095,8 @@ function renderSaveProbe(value, hasEvidence) {
   return [{ type: 'text', text: (hasEvidence === true ? '探查证据报告已落盘：\n- ' : '探查线索已落盘：\n- ') + value.path }]
 }
 
-// 工具目录判定：目录里是否存在 write/edit（reviewer 预设 deny 后目录里没有
-// write/edit——据此机械识别只读角色；执行者目录含 write/edit，不受影响）。
-// 元素支持两种形状：字符串工具名、{ name } 对象（装配目录为对象形状）。
+// 工具集判定（真实工具集 tools.schemas，restrict 后非折叠；目录判定保留为 schemas 不可得时的回落）。
+// 元素支持两种形状：字符串工具名、{ name } 对象（装配目录/工具集均为对象形状）。
 function catalogHasWriteTools(tools) {
   if (!Array.isArray(tools)) return false
   return tools.some((tool) =>
@@ -1111,12 +1109,30 @@ function isReadOnlyChildByCatalog(tools) {
   return Array.isArray(tools) && tools.length > 0 && !catalogHasWriteTools(tools)
 }
 
+// 工具集判定：真实工具集（tools.schemas，restrict 后非折叠）是否含 write/edit——
+// 含 write/edit=可写（executor），无 write/edit=只读（probe/reviewer）。
+// 形状约定与 catalogHasWriteTools 同（字符串元素 / { name } 对象）；非数组 → false。
+function schemasHasWriteTools(schemas) {
+  if (!Array.isArray(schemas)) return false
+  return schemas.some((tool) =>
+    (typeof tool === 'string' && (tool === 'write' || tool === 'edit')) ||
+    (tool !== null && typeof tool === 'object' && (tool.name === 'write' || tool.name === 'edit')))
+}
+
+// 工具集判定：真实工具集是否含指定工具名（save_probe 信号：仅主会话与认领的 probe 子代理注册）。
+// 形状约定同上；非数组 → false。
+function schemasHasTool(schemas, toolName) {
+  if (!Array.isArray(schemas)) return false
+  return schemas.some((tool) =>
+    (typeof tool === 'string' && tool === toolName) ||
+    (tool !== null && typeof tool === 'object' && tool.name === toolName))
+}
+
 // ptc 折叠目录判定：ptc 模式 wireSchemas 塌缩为仅 [run_code]（dsh-tools types/index.js L410-414），
 // 此时目录无 write/edit 不代表只读角色（executor/reviewer/probe 目录同为 [run_code]）；both=全部+run_code、
-// native=无 run_code 均不折叠。折叠时目录信号不可用 → 只读判定退化为角色信号：probe 有父会话放行记录
-// （probeParents）判只读；executor/reviewer 无法区分（descriptor one-shot 仅 version/mode/provider/label，
-// label=模型任务描述）→ 默认不判只读，reviewer 的 write/edit 由目录层 deny 兜底（预设 reviewer deny
-// 14 项含 write/edit；ptc 绑定面 registry.schemas 枚举不含 write/edit → 程序内 tools.write 不存在）。
+// native=无 run_code 均不折叠。折叠时目录信号不可用 → 只读判定改用真实工具集
+// （schemas(agent) 不受折叠影响）：含 write/edit=可写（executor），无 write/edit=只读（probe/reviewer），
+// reviewer 的 write/edit 由目录层 deny 兜底。
 function catalogIsCollapsed(tools) {
   if (!Array.isArray(tools) || tools.length !== 1) return false
   const only = tools[0]
@@ -1130,8 +1146,8 @@ function catalogIsCollapsed(tools) {
 // requestHeader 非函数或抛异常/config 为 null/depth 达 8 上限）→ 整体回退直接父会话
 // config（与钩子改动前行为逐字节等价），整段不抛错。注入判定沿现状口径：routeExplicit
 // 基准为直接父（isExplicitRoute 复用）、maxTokens 无条件继承、effort 取直接父
-// reasoningEffort（顶层 effort 不渗入）。模块顶层纯函数：不引用 probeParents/
-// plannerModelCache/plannerModel/ctx 闭包变量；经 decisions 导出供场景测试直接复用。
+// reasoningEffort（顶层 effort 不渗入）。模块顶层纯函数：不引用 probeClaimFor/
+// pendingProbeClaims/plannerModelCache/plannerModel/ctx 闭包变量；经 decisions 导出供场景测试直接复用。
 async function resolveProbeRequestInjection(agent, agents, resolved) {
   // 1) 直接父解析（防御 requestHeader 异常；重构前为内联逻辑，现抽为独立函数）
   if (agent === undefined || agent === null || agent.session === undefined || agent.session === null) return resolved
@@ -1480,7 +1496,7 @@ function childReadonlyGateReason(exec, probe) {
 
 // ④ 主会话段（现 L2293-2430 纯部分，分支顺序逐字同序）：
 //    ask → write/edit → cordis 6 只读 → cordis_run → pwsh/bash → planToolName
-//    → save_probe → subagent 族 → send_message → run_code（调 runCodeGroupDenyReason，depth+1）
+//    → save_probe → subagent 族 → run_code（调 runCodeGroupDenyReason，depth+1）
 //    → job_output（wait 检查 + 计数器查重，只读不写入；set 由 listener 放行路径执行）→ null。
 //    gateCtx: { events, planToolName, jobOutputCallCounters, runCodeDepth }。
 function mainGateReason(state, exec, gateCtx) {
@@ -1585,18 +1601,6 @@ function mainGateReason(state, exec, gateCtx) {
       const args = exec.arguments
       if (args !== undefined && args !== null && typeof args === 'object' && args.run_in_background !== true) {
         return '执行者/reviewer 必须后台运行：请显式传 run_in_background: true（one-shot 一次性会话，返回 jobId 后用 job_output 收集结果）'
-      }
-    }
-    return null
-  }
-  if (name === 'send_message') {
-    // 参数不可解析（组判定 vExec 传字符串）时跳过目标检查（运行时瀑布兜底）
-    const args = exec.arguments
-    if (args !== undefined && args !== null && typeof args === 'object') {
-      const target = typeof args.agent_id === 'string' ? args.agent_id : ''
-      const plannerIds = plannerChildIdsOf(events)
-      if (!escape && !plannerIds.includes(target)) {
-        return 'send_message 未放行：目标子代理为 one-shot 一次性会话，不可续轮；仅 continuable 规划子代理可接收 send_message 续轮转达'
       }
     }
     return null
@@ -1737,6 +1741,8 @@ export const decisions = {
   catalogHasWriteTools,
   isReadOnlyChildByCatalog,
   catalogIsCollapsed,
+  schemasHasWriteTools,
+  schemasHasTool,
   labelsOfCallData,
   askKindOf,
   askKindOfRelaxed,
@@ -1928,14 +1934,27 @@ export function apply(ctx, config) {
     return false
   }
 
-  // 探查子代理：子会话且父会话曾成功放行 subagent_probe（probeParents 记录）。
-  // descriptor 不携带 toolName（one-shot 仅 version/mode/provider/label），
-  // 无法从子会话自身区分探查者/执行者/验收者——父会话侧放行记录是唯一可靠信号。
-  function isProbeChild(agent) {
-    if (!isSubagentChild(agent)) return false
-    const header = agent.session.header
-    const parentSession = header !== undefined && header !== null ? header.parentSession : undefined
-    return typeof parentSession === 'string' && probeParents.has(parentSession)
+  // 真实工具集防御取数：agent/agent.ctx 缺失、ctx.get('tools') 非对象、schemas 非函数、
+  // 调用抛异常 → 一律返回 undefined；否则返回 schemas(agent)（数组；非数组视为不可得）。
+  // 不缓存：保证 restrict 后状态即时正确；schemas() 为同步投影，每步 assemble 调用成本可忽略。
+  function toolSchemasOf(agent) {
+    if (agent === undefined || agent === null) return undefined
+    const agentCtx = agent.ctx
+    if (agentCtx === undefined || agentCtx === null) return undefined
+    let tools
+    try {
+      tools = typeof agentCtx.get === 'function' ? agentCtx.get('tools') : undefined
+    } catch (error) {
+      tools = undefined
+    }
+    if (tools === undefined || tools === null || typeof tools !== 'object') return undefined
+    if (typeof tools.schemas !== 'function') return undefined
+    try {
+      const schemas = tools.schemas(agent)
+      return Array.isArray(schemas) ? schemas : undefined
+    } catch (error) {
+      return undefined
+    }
   }
 
   // ── planner 模型单点解析 + effectiveModel 只读服务 ──
@@ -2434,9 +2453,27 @@ export function apply(ctx, config) {
   const showFileRegistered = new WeakSet()
   function registerShowFile(agent) { registerTool(showFileRegistered, 'show_file', defineShowFile, agent) }
 
-  // 探查者放行记录：父会话（主会话）曾成功放行 subagent_probe 的会话 id 集合。
-  // 子会话凭 header.parentSession 反查——父会话侧放行记录是识别探查者的唯一可靠信号。
-  const probeParents = new Set()
+  // 放行-认领关联：父会话放行 subagent_probe 后挂「待认领计数」（parentSessionId → 次数），
+  // probe 子会话 session-start/pre-step 经 probeClaimFor 认领：消费计数、标记 probeClaimed、
+  // 注册 save_probe。同父执行者（schemas 含 write/edit）不认领；reviewer 无待认领不认领；
+  // probeClaimed 幂等（session-start 与 pre-step 双入口不双消费）。
+  const probeClaimed = new WeakSet()
+  const pendingProbeClaims = new Map()
+  function probeClaimFor(agent) {
+    if (probeClaimed.has(agent)) return true
+    if (!isSubagentChild(agent)) return false
+    const header = agent.session.header
+    const parentSession = header !== undefined && header !== null ? header.parentSession : undefined
+    if (typeof parentSession !== 'string') return false
+    const pending = pendingProbeClaims.get(parentSession)
+    if (pending === undefined || typeof pending !== 'number' || pending <= 0) return false
+    const schemas = toolSchemasOf(agent)
+    if (schemas === undefined || schemasHasWriteTools(schemas)) return false
+    pendingProbeClaims.set(parentSession, pending - 1)
+    if (pending - 1 <= 0) pendingProbeClaims.delete(parentSession)
+    probeClaimed.add(agent)
+    return true
+  }
 
   let selfAgent = undefined
 
@@ -2449,7 +2486,7 @@ export function apply(ctx, config) {
     selfAgent = agent
     childBaseline(agent)
     if (isPlannerChild(agent)) registerSavePlan(agent)
-    if (!isSubagentChild(agent) || isProbeChild(agent)) { registerSaveProbe(agent) }
+    if (!isSubagentChild(agent) || probeClaimFor(agent)) { registerSaveProbe(agent) }
     if (!isSubagentChild(agent)) registerShowFile(agent)
   })
 
@@ -2461,7 +2498,7 @@ export function apply(ctx, config) {
     if (payload.agent !== undefined) {
       selfAgent = payload.agent
       childBaseline(payload.agent)
-      if (!isSubagentChild(payload.agent) || isProbeChild(payload.agent)) { registerSaveProbe(payload.agent) }
+      if (!isSubagentChild(payload.agent) || probeClaimFor(payload.agent)) { registerSaveProbe(payload.agent) }
       if (!isSubagentChild(payload.agent)) registerShowFile(payload.agent)
     }
     const decision = await next()
@@ -2532,7 +2569,7 @@ export function apply(ctx, config) {
 
   ctx.on('agent/disposed', (payload) => {
     const sessionId = payload.agent?.session?.header?.id
-    if (typeof sessionId === 'string') probeParents.delete(sessionId)
+    if (typeof sessionId === 'string') pendingProbeClaims.delete(sessionId)
   })
 
   // 3) anchored 引导（默认开）：主会话与规划子代理首轮极简；执行者/reviewer 不引导。
@@ -2552,10 +2589,16 @@ export function apply(ctx, config) {
     }
     const planner = isPlannerChild(agent)
     if (isChild(agent) && !planner) {
-      if (catalogIsCollapsed(result.tools)) {
-        // ptc 折叠目录：目录信号不可用；probe 靠委派放行记录判只读，executor/reviewer 默认放行（目录层 deny 兜底）
-        if (isProbeChild(agent)) readOnlyChildren.add(agent)
-        else readOnlyChildren.delete(agent)
+      // 只读分类：优先真实工具集（tools.schemas，restrict 后非折叠）——含 write/edit=可写
+      // （executor，折叠态下同样正确）→ 放行；无 write/edit=只读（probe/reviewer）→ 拦截。
+      // schemas 不可得（防御回落，行为与改造前非折叠态逐项等价）：折叠目录保守放行（目录层
+      // deny 兜底）；非折叠按目录判定（isReadOnlyChildByCatalog）；否则放行。
+      const schemas = toolSchemasOf(agent)
+      if (schemas !== undefined) {
+        if (schemasHasWriteTools(schemas)) readOnlyChildren.delete(agent)
+        else readOnlyChildren.add(agent)
+      } else if (catalogIsCollapsed(result.tools)) {
+        readOnlyChildren.delete(agent)
       } else if (isReadOnlyChildByCatalog(result.tools)) {
         readOnlyChildren.add(agent)
       } else {
@@ -2676,7 +2719,9 @@ export function apply(ctx, config) {
     } */
     // probe（探查者）特判：模型跟随顶层主会话（resolveProbeRequestInjection 内沿
     // parentSession 链上溯）；early return 不读 plannerModelCache，planner 分支不受影响。
-    if (isProbeChild(payload.agent)) {
+    // probe 判定=真实工具集含 save_probe（schemas 投影；save_probe 仅主会话与认领的
+    // probe 子代理注册，执行者/reviewer schemas 无 save_probe）。
+    if (schemasHasTool(toolSchemasOf(payload.agent), 'save_probe')) {
       return await resolveProbeRequestInjection(payload.agent, agents, resolved)
     }
     const parentEffort = typeof pcfg.reasoningEffort === 'string' ? pcfg.reasoningEffort : ''
@@ -2724,12 +2769,13 @@ export function apply(ctx, config) {
     const planner = isPlannerChild(agent)
     // 探查者委派属只读探查能力（与 read/glob/grep 同级）：任意路由状态放行，
     // 仅强制 one-shot 固定后台（与 subagent/subagent_review 同机械闸门口径）。
-    // 置于 planner/child 判定之前：planner 委派 subagent_probe 时同样记录放行
-    // （否则探查子会话 isProbeChild 查直接父=planner 无法命中，模型回落为直接父）。
+    // 置于 planner/child 判定之前：planner 委派 subagent_probe 时同样挂待认领计数
+    // （供子会话 session-start 认领；否则 probe 子会话经 parentSession 无放行痕迹）。
     if (exec.name === 'subagent_probe') {
       const reason = subagentProbeGateReason(exec, planner, sessionEvents(agent.session), exploreBudget)
       if (reason !== null) return { kind: 'deny', reason }
-      probeParents.add(agent.session.header.id)
+      const parentId = agent.session.header.id
+      pendingProbeClaims.set(parentId, (pendingProbeClaims.get(parentId) || 0) + 1)
       return next()
     }
     if (planner) {
@@ -2747,11 +2793,11 @@ export function apply(ctx, config) {
       return next()
     }
     if (child) {
-      // 只读子代理（reviewer/probe，目录判定命中缓存）：write/edit 与 pwsh/bash 写命令
-      // 一律拒绝；文案按 isProbeChild 区分（probe 走「探查者只读」，reviewer 文案逐字保持）。
+      // 只读子代理（reviewer/probe，真实工具集判定命中缓存）：write/edit 与 pwsh/bash 写命令
+      // 一律拒绝；文案按 save_probe 信号区分（probe 走「探查者只读」，reviewer 文案逐字保持）。
       // 注：此段到达时 planner 必已 return（planner 段在前），`!planner` 条件可省略（保留原状）。
       if (!planner && readOnlyChildren.has(agent)) {
-        const probe = isProbeChild(agent)
+        const probe = schemasHasTool(toolSchemasOf(agent), 'save_probe')
         const reason = childReadonlyGateReason(exec, probe)
         if (reason !== null) return { kind: 'deny', reason }
         if (exec.name === 'run_code') {

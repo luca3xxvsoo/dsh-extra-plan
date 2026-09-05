@@ -35,6 +35,8 @@ const {
   parseAskResultData,
   parseDispatchAskResult,
   catalogIsCollapsed,
+  schemasHasWriteTools,
+  schemasHasTool,
   RUNCODE_MUTATION_HINTS,
   codeMutationHints,
   decomposeRunCode,
@@ -224,6 +226,19 @@ const P = [
 for (const [name, events, expected] of P) {
   check(name, plannerChildIdsOf(events), expected)
 }
+
+// ── SW 系列:真实工具集判定纯函数（schemasHasWriteTools / schemasHasTool，方案B） ──
+const SW = [
+  ['SW1 schemasHasWriteTools 对象元素含 write → true', schemasHasWriteTools([{ name: 'read' }, { name: 'write' }]), true],
+  ['SW2 schemasHasWriteTools 无写（pwsh）→ false', schemasHasWriteTools([{ name: 'read' }, { name: 'pwsh' }]), false],
+  ['SW3 schemasHasWriteTools 字符串元素 write → true', schemasHasWriteTools(['write']), true],
+  ['SW4 schemasHasWriteTools([]) → false', schemasHasWriteTools([]), false],
+  ['SW5 schemasHasWriteTools(undefined) → false', schemasHasWriteTools(undefined), false],
+  ['SW6 schemasHasTool 含 save_probe → true', schemasHasTool([{ name: 'save_probe' }], 'save_probe'), true],
+  ['SW7 schemasHasTool 无 save_probe → false', schemasHasTool([{ name: 'read' }], 'save_probe'), false],
+  ['SW8 schemasHasTool(undefined, save_probe) → false', schemasHasTool(undefined, 'save_probe'), false],
+]
+for (const [name, got, expected] of SW) check(name, got, expected)
 
 // ── C 系列:toolCallCount(探查硬上限) ───────────────────────────────────
 const C = [
@@ -701,5 +716,5 @@ for (const [name, role, code, expected] of K) {
   console.log(`${okResult ? 'PASS' : 'FAIL'}  ${name}  (期望 ${JSON.stringify(expected)}, 实际 ${JSON.stringify(got)})`)
 }
 
-console.log(`\n通过 ${pass}/${KA.length + M.length + F.length + GK.length + GM.length + F21.length + GL.length + P.length + C.length + CU.length + AP.length + BN.length + 2 + BR.length + DR.length + BD.length + BE.length + S.length + 1 + PW.length + 2 + D.length + 3 + 3 + PR.length + 7 + 5 + E.length + RP.length + LQ.length + AS.length + FC.length + PC.length + CC.length + CUCODE.length + CLC.length + H.length + I.length + J.length + K.length}, 失败 ${fail}`)
+console.log(`\n通过 ${pass}/${KA.length + M.length + F.length + GK.length + GM.length + F21.length + GL.length + SW.length + P.length + C.length + CU.length + AP.length + BN.length + 2 + BR.length + DR.length + BD.length + BE.length + S.length + 1 + PW.length + 2 + D.length + 3 + 3 + PR.length + 7 + 5 + E.length + RP.length + LQ.length + AS.length + FC.length + PC.length + CC.length + CUCODE.length + CLC.length + H.length + I.length + J.length + K.length}, 失败 ${fail}`)
 process.exit(fail === 0 ? 0 : 1)

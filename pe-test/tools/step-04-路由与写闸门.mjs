@@ -205,8 +205,8 @@ const directMain = mainWithEvents([umE(), callE('ask_user_question', 'a1', route
 const noneMain = mainWithEvents([])
 const planMain = mainWithEvents([umE(), callE('ask_user_question', 'a1', routeArgsE), okE('a1', answerE(['进行pro规划'])), callE('ask_user_question', 'a2', clarifyArgsE), okE('a2', answerE(['方案A']))])
 
-// R18：direct 态派探查者（run_in_background: true）→ 放行（同时把 main-1 记入 probeParents，
-// 供 R15-R17 的 probe 子会话经 header.parentSession 反查命中）
+// R18：direct 态派探查者（run_in_background: true）→ 放行（同时把 main-1 挂「待认领计数」，
+// 供 C1/C2/C2b 认领用例经 parentSession=main-1 消费验证；R15-R17 判读走真实工具集，不依赖认领）
 r = preExecute(harness, directMain, 'subagent_probe', { run_in_background: true })
 checkTrue('R18 主会话 direct 态 subagent_probe(run_in_background: true) → 放行', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, directMain, 'subagent_probe', {})
@@ -216,12 +216,12 @@ checkTrue('R20 主会话无路由确认态 subagent_probe(run_in_background: tru
 r = preExecute(harness, planMain, 'subagent_probe', { run_in_background: true })
 checkTrue('R21 主会话 plan+clarified 态 subagent_probe(run_in_background: true) → 放行', r !== null && r !== undefined && r.kind === 'allow')
 
-// probe 子会话（parentSession=main-1 已在 probeParents）：write → probe 文案 deny；
+// probe 子会话（parentSession=main-1，真实工具集含 save_probe）：write → probe 文案 deny；
 // pwsh 只读 → 放行；save_probe → 放行（child 分支不拦）
 const probeAgent = {
   session: { header: { id: 'probe-1', origin: 'subagent', delegationDepth: 1, parentSession: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => [] },
   options: {},
-  ctx: undefined,
+  ctx: { get: (n) => (n === 'tools' ? { schemas: () => [{ name: 'read' }, { name: 'glob' }, { name: 'grep' }, { name: 'pwsh' }, { name: 'save_probe' }] } : undefined) },
 }
 await assemble(harness, probeAgent, [{ name: 'read' }, { name: 'glob' }, { name: 'grep' }, { name: 'pwsh' }, { name: 'save_probe' }])
 r = preExecute(harness, probeAgent, 'write', {})
@@ -230,6 +230,120 @@ r = preExecute(harness, probeAgent, 'pwsh', { command: 'Get-ChildItem' })
 checkTrue('R16 probe 会话 pwsh 只读 → 放行', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, probeAgent, 'save_probe', { fileMap: [], focusAreas: [], exclusions: [], background: [] })
 checkTrue('R17 probe 会话 save_probe → 放行', r !== null && r !== undefined && r.kind === 'allow')
+
+// ── ⑤b 真实工具集判定（方案B：ptc 折叠误判修复；T1-T8） ──────────────────
+// 子代理夹具工厂：目录与真实工具集（tools.schemas）双信号；schemas 不可得时回落目录判定。
+const childWithSchemas = (id, schemas) => ({
+  session: {
+    header: { id, origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' },
+    snapshotEvents: () => [],
+    append: () => {},
+  },
+  options: {},
+  ctx: { get: (n) => (n === 'tools' ? { schemas: () => schemas } : undefined) },
+})
+// T1 折叠+executor：目录 [run_code]、真实工具集含 write/edit → write 放行（防回归 R39 语义：执行者在折叠目录可写）
+{
+  const t1 = childWithSchemas('t-exec-1', [{ name: 'read' }, { name: 'write' }, { name: 'edit' }])
+  await assemble(harness, t1, [{ name: 'run_code' }])
+  r = preExecute(harness, t1, 'write', {})
+  checkTrue('T1 折叠+executor（schemas 含 write/edit）write → 放行（误判修复）', r !== null && r !== undefined && r.kind === 'allow')
+}
+// T2 折叠+probe：目录 [run_code]、真实工具集无写含 save_probe → write deny 且文案含「探查者只读」
+{
+  const t2 = childWithSchemas('t-probe-1', [{ name: 'read' }, { name: 'glob' }, { name: 'save_probe' }])
+  await assemble(harness, t2, [{ name: 'run_code' }])
+  r = preExecute(harness, t2, 'write', {})
+  checkTrue('T2 折叠+probe（无写含 save_probe）write → deny 且含「探查者只读」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('探查者只读'))
+}
+// T3 折叠+reviewer：目录 [run_code]、真实工具集无写无 save_probe → write deny 且文案含「验收复核者只读」
+{
+  const t3 = childWithSchemas('t-review-1', [{ name: 'read' }, { name: 'glob' }])
+  await assemble(harness, t3, [{ name: 'run_code' }])
+  r = preExecute(harness, t3, 'write', {})
+  checkTrue('T3 折叠+reviewer（无写无 save_probe）write → deny 且含「验收复核者只读」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('验收复核者只读'))
+}
+// T4 非折叠+executor：目录含 write、真实工具集含 write → write 放行
+{
+  const t4 = childWithSchemas('t-exec-2', [{ name: 'read' }, { name: 'write' }])
+  await assemble(harness, t4, [{ name: 'read' }, { name: 'write' }])
+  r = preExecute(harness, t4, 'write', {})
+  checkTrue('T4 非折叠+executor（schemas 含 write）write → 放行', r !== null && r !== undefined && r.kind === 'allow')
+}
+// T5 非折叠+probe：目录无写、真实工具集无写含 save_probe → write deny 且文案含「探查者只读」
+{
+  const t5 = childWithSchemas('t-probe-2', [{ name: 'read' }, { name: 'save_probe' }])
+  await assemble(harness, t5, [{ name: 'read' }, { name: 'glob' }])
+  r = preExecute(harness, t5, 'write', {})
+  checkTrue('T5 非折叠+probe（无写含 save_probe）write → deny 且含「探查者只读」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('探查者只读'))
+}
+// T6 非折叠+reviewer：目录无写、真实工具集无写 → write deny 且文案含「验收复核者只读」
+{
+  const t6 = childWithSchemas('t-review-2', [{ name: 'read' }, { name: 'glob' }])
+  await assemble(harness, t6, [{ name: 'read' }, { name: 'glob' }])
+  r = preExecute(harness, t6, 'write', {})
+  checkTrue('T6 非折叠+reviewer（无写）write → deny 且含「验收复核者只读」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('验收复核者只读'))
+}
+// T7 折叠+schemas 不可得（ctx: undefined）：目录 [run_code] → write 放行（回落 fail-open，同 R25）
+{
+  const t7 = childAgent('t-fresh-1')
+  await assemble(harness, t7, [{ name: 'run_code' }])
+  r = preExecute(harness, t7, 'write', {})
+  checkTrue('T7 折叠+schemas 不可得 write → 放行（回落 fail-open）', r !== null && r !== undefined && r.kind === 'allow')
+}
+// T8 非折叠无写目录+schemas 不可得：目录 [read] → write deny 且含「验收复核者只读」（回落目录判定，同 R26）
+{
+  const t8 = childAgent('t-fresh-2')
+  await assemble(harness, t8, [{ name: 'read' }])
+  r = preExecute(harness, t8, 'write', {})
+  checkTrue('T8 非折叠无写目录+schemas 不可得 write → deny 且含「验收复核者只读」（回落目录判定）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('验收复核者只读'))
+}
+
+// ── ⑤c 认领（放行→待认领计数→probe 子会话 session-start 认领并注册 save_probe；C1-C3） ──
+const claimTools = (record, schemas) => ({
+  register: (def) => { record.push(def.name) },
+  schemas: (agent) => schemas,
+})
+const claimChild = (id, parentSession, tools) => ({
+  session: {
+    header: { id, origin: 'subagent', delegationDepth: 1, parentSession, cwd: 'C:/work' },
+    snapshotEvents: () => [],
+    append: () => {},
+  },
+  options: {},
+  ctx: { get: (n) => (n === 'tools' ? tools : undefined) },
+})
+const sessionStart = (listeners, agent) => {
+  const entry = listeners['agent/session-start']
+  if (entry === undefined || entry.length === 0) throw new Error('session-start 监听器未注册')
+  for (const fn of entry) fn({ agent })
+}
+// C1 probe 子会话（parent=main-1 已有 R18/R20/R21 放行累计的待认领计数、schemas 无写）→ 注册 save_probe
+{
+  const c1Registered = []
+  const c1Probe = claimChild('probe-c1', 'main-1', claimTools(c1Registered, [{ name: 'read' }, { name: 'save_probe' }]))
+  sessionStart(harness, c1Probe)
+  checkTrue('C1 probe 子会话（parent=main-1 有待认领计数）session-start → save_probe 已注册', c1Registered.includes('save_probe'))
+}
+// C2 executor 子会话（schemas 含写、同父 main-1）→ 不注册且不消费
+{
+  const c2Registered = []
+  const c2Exec = claimChild('exec-c2', 'main-1', claimTools(c2Registered, [{ name: 'read' }, { name: 'write' }]))
+  sessionStart(harness, c2Exec)
+  checkTrue('C2 executor 子会话（schemas 含写）session-start → 不注册', !c2Registered.includes('save_probe'))
+  // 不消费验证：同父再触发 probe 子会话仍可认领（计数未被 C2 消耗）
+  const c2bRegistered = []
+  const c2bProbe = claimChild('probe-c2b', 'main-1', claimTools(c2bRegistered, [{ name: 'read' }, { name: 'save_probe' }]))
+  sessionStart(harness, c2bProbe)
+  checkTrue('C2b 同父再触发 probe 子会话 → 仍可认领（C2 未消费计数）', c2bRegistered.includes('save_probe'))
+}
+// C3 reviewer 子会话（schemas 无写、parent=parent-1 无 pending）→ 不注册
+{
+  const c3Registered = []
+  const c3Rev = claimChild('review-c3', 'parent-1', claimTools(c3Registered, [{ name: 'read' }, { name: 'glob' }]))
+  sessionStart(harness, c3Rev)
+  checkTrue('C3 reviewer 子会话（无 pending）session-start → 不注册', !c3Registered.includes('save_probe'))
+}
 
 // ── ⑥ R-code 系列:F1 桥接（run_code 内嵌套 ask 驱动状态机） ──────────────
 // 嵌套事件 fixture（同 step-00 F-code 系形状）：code-dispatch-start 的 arguments 为对象形态，
@@ -365,9 +479,9 @@ checkTrue('R59 workflow 批准放行 → allow', r !== null && r !== undefined &
 r = preExecute(harness, approvedMain, 'ralph', {})
 checkTrue('R60 ralph 批准放行 → allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, noneMain, 'send_message', { agent_id: 'session-x', message: 'hi' })
-checkTrue('R61 send_message 非 planner 目标 → deny 且含「send_message 未放行」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('send_message 未放行'))
+checkTrue('R61 send_message 任意目标 → allow（白名单已删除）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, planChildMain, 'send_message', { agent_id: '3a7c1e5b-9d2f-4e8a-b6c4-1f0e9d8c7b6a', message: 'hi' })
-checkTrue('R62 send_message planner 目标 → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R62 send_message planner 目标 → allow（白名单已删除后语义不变）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, mainAgent, 'job_output', { job_id: 'j1', wait: true })
 checkTrue('R63 job_output wait → deny 且含「job_output 禁止带 wait: true」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止带 wait: true'))
 r = preExecute(harness, mainAgent, 'job_output', { job_id: 'j1' })
@@ -405,7 +519,7 @@ checkTrue('R79 subagent_plan 前台参数 → deny 且含「规划子代理不�
 r = preExecute(harness, noneMain, 'cordis_inspect_query', {})
 checkTrue('R80 cordis 只读族 → allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, noneMain, 'run_code', smCode)
-checkTrue('R81 组内 send_message 成员 → deny 且含「send_message 未放行」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('send_message 未放行'))
+checkTrue('R81 组内 send_message 成员 → allow（白名单已删除，组判定放行）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, approvedMain, 'run_code', revCode)
 checkTrue('R82 组内 subagent_review 成员（批准+后台）→ allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, noneMain, 'run_code', joCode)
