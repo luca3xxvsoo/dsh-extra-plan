@@ -27,7 +27,7 @@ console.log(`PASS  YAML 解析成功（${Array.isArray(rows) ? rows.length : '�
 const registered = new Set([
   'subagent', 'subagent_review', 'subagent_probe', 'subagent_plan', 'workflow', 'ralph',
   'send_message', 'interrupt_agent', 'list_agents', 'ask_user_question',
-  'todo_write', 'write', 'edit', 'read', 'glob', 'grep', 'pwsh', 'web_search',
+  'todo_write', 'write', 'edit', 'read', 'glob', 'grep', 'pwsh', 'web_search', 'cordis_run',
 ])
 
 let pass = 0
@@ -76,7 +76,7 @@ const required = [
   '@deepseek-ai/dsh-tool-subagent', '@deepseek-ai/dsh-tool-subagent-control',
   '@deepseek-ai/dsh-tool-subagent-control/list-agents', '@local/dsh-extra-plan/executor-spawn',
   '@deepseek-ai/dsh-workflow-worker-thread', '@deepseek-ai/dsh-tool-workflow',
-  '@deepseek-ai/dsh-tool-ralph', '@deepseek-ai/dsh-compaction-basic',
+  '@deepseek-ai/dsh-tool-ralph', '@deepseek-ai/dsh-compaction-basic', '@deepseek-ai/dsh-tool-cordis',
 ]
 for (const req of required) {
   if (names.includes(req)) { pass += 1 } else { fail += 1; console.log(`FAIL  缺少行: ${req}`) }

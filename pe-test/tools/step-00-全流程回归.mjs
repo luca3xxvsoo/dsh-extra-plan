@@ -296,7 +296,7 @@ const BR = [
 ]
 for (const [name, got, expected] of BR) check(name, got, expected)
 
-// ── DR 系列:deny 提示模板与闸门词表同源（v0.1.8） ─────────────────────
+// ── DR 系列:deny 提示模板与闸门词表同源（v0.1.9） ─────────────────────
 const DR = [
   ['DR1 routeDenyReason 含三个路由词', routeDenyReason('write/edit').includes(ROUTE_WORD_DIRECT) && routeDenyReason('write/edit').includes(ROUTE_WORD_PLAN) && routeDenyReason('write/edit').includes(ROUTE_WORD_DISAGREE), true],
   ['DR2 planDenyReason 含三个路由词', planDenyReason('subagent_plan').includes(ROUTE_WORD_DIRECT) && planDenyReason('subagent_plan').includes(ROUTE_WORD_PLAN) && planDenyReason('subagent_plan').includes(ROUTE_WORD_DISAGREE), true],
@@ -537,6 +537,9 @@ const AS = [
   ['AS3 首问非白名单变体+第二问无 options → deny 含「推荐标记仅限」、不含「路由 ask 结构错误」（kind 特异性回归）', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', options: [{ label: '同意执行!' }, { label: '转交pro规划' }, { label: '不同意' }] }, { id: 'q2', question: '修改意见' }] }); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('推荐标记仅限') && !String(r.reason).includes('路由 ask 结构错误') })(), true],
   ['AS4 单问「同意执行!」变体 → deny 含「批准 ask 结构错误」与「修改意见」（approve 模板正向）', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', options: [{ label: '同意执行!' }] }] }); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('批准 ask 结构错误') && String(r.reason).includes('修改意见') })(), true],
   ['AS5 单问路由变体（直接执行!）→ deny 且不含「结构错误」（route 特异不回归）', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', options: [{ label: '直接执行!' }, { label: '进行pro规划' }, { label: '不同意' }] }] }); return r !== null && r !== undefined && r.kind === 'deny' && !String(r.reason).includes('结构错误') })(), true],
+  ['AS6 cordis_run 路由未确认 → deny 含「路由未确认：cordis_run」与「须先 ask_user_question 路由确认」', (() => { const r = askPreExecute('cordis_run', {}); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认：cordis_run') && String(r.reason).includes('须先 ask_user_question 路由确认') })(), true],
+  ['AS7 cordis_define 路由未确认 → allow', (() => { const r = askPreExecute('cordis_define', {}); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
+  ['AS8 cordis_inspect_list 路由未确认 → allow', (() => { const r = askPreExecute('cordis_inspect_list', {}); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
 ]
 for (const [name, got, expected] of AS) check(name, got, expected)
 

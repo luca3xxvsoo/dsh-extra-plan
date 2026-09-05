@@ -1,4 +1,4 @@
-// @local/dsh-extra-plan (v0.1.8)
+// @local/dsh-extra-plan (v0.1.9)
 // v2（2026-09-04）：agent/request planner 前置注入
 // 额外规划模式（extra-plan 预设专用）：按需规划 + 三级机械锚点（路由/澄清/批准）
 // + 主会话与规划子代理 anchored 引导 + 规划子代理探查硬上限 + 力度继承 +
@@ -1353,6 +1353,59 @@ export function apply(ctx, config) {
   }
   ctx.provide('extra-plan/flashGuideEnabled', flashGuideEnabled)
 
+  // ── cordis 官方技能引用（runtime-skill 注册，零副本） ──
+  // 从官方 agentPresets 服务 resolve('cordis') 拿 shipped 预设真实路径
+  // （path=.../presets/cordis/agent.cordis.yml，目录=dirname(path)），读取官方
+  // skills/ 下两个 SKILL.md 原文，把 name/description/content 注册为 runtime
+  // skill 进本插件所在 standing 层（scopeOf(调用者 ctx)）——extra-plan 主会话
+  // 经 tool-skill 的 list/get（scope=agent，链上合并 standing 层）可见、可 load。
+  // 失败降级：任一环节异常仅 console.warn，不影响闸门与其余功能。
+  const agentPresets = ctx.get('agentPresets')
+  const skills = ctx.get('skills')
+  if (agentPresets !== undefined && skills !== undefined) {
+    ctx.effect(() => {
+      let dead = false
+      const disposers = []
+      agentPresets.resolve('cordis').then((preset) => {
+        if (dead || preset === undefined || preset === null) return
+        if (typeof preset.path !== 'string' || preset.path === '') return
+        const skillsDir = join(dirname(preset.path), 'skills')
+        for (const id of ['editing-cordis-compositions', 'cordis-plugin-development']) {
+          const file = join(skillsDir, id, 'SKILL.md')
+          if (!existsSync(file)) continue
+          const text = readFileSync(file, 'utf8')
+          const meta = parseSkillFrontmatter(text)
+          if (meta.name === '' || meta.description === '') continue
+          disposers.push(skills.register({
+            name: meta.name,
+            description: meta.description,
+            source: file,
+            path: file,
+            content: text,
+          }))
+        }
+      }).catch((error) => {
+        console.warn(`extra-plan: 官方 cordis 技能引用失败（${error instanceof Error ? error.message : String(error)}）`)
+      })
+      return () => {
+        dead = true
+        for (const dispose of disposers) dispose()
+      }
+    })
+  }
+
+  // 提取 SKILL.md 头部 frontmatter 的 name/description（官方两文件仅这两个字段）。
+  function parseSkillFrontmatter(text) {
+    let name = ''
+    let description = ''
+    for (const line of text.split(/\r?\n/)) {
+      if (name === '' && line.startsWith('name:')) name = line.slice('name:'.length).trim()
+      else if (description === '' && line.startsWith('description:')) description = line.slice('description:'.length).trim()
+      else if (name !== '' && description !== '') break
+    }
+    return { name, description }
+  }
+
   function floorChildPolicy(agent) {
     if (childPolicyNeedsFloor(agent.session, sandboxPolicy)) {
       agent.session.append('sandbox/mode', { mode: 'workspace-write', source: 'delegation' })
@@ -2065,6 +2118,20 @@ export function apply(ctx, config) {
       // 新增：approved 态下，主会话不得自己动手改工作区内文件
       if (!escape && state.approved === true && state.route !== 'direct') {
         return { kind: 'deny', reason: '方案已批准，执行请走 subagent 委派 flash 执行者（读方案/验收文件执行）。主会话直做仅限越界操作（工作区外写入，走 shell（Windows 用 pwsh、Linux/macOS 用 bash）+ sandbox_permissions）' }
+      }
+      return next()
+    }
+    // cordis（官方创造模式工具集，只读引用）：6 个只读/暂存工具任意路由状态放行
+    // （inspect_* 只读；define 只存源码+语法校验不执行；stop/undefine 无对象可操作）；
+    // cordis_run 是唯一执行口（模型 JS 求值+挂载临时插件，纯内存、会话级、重启即失）
+    // ——与 write/edit 同规则：路由未确认拒绝，批准/直行放行。执行者/规划/验收/探查
+    // 子代理侧由 agent.cordis.yml 的 toolFilter.deny 禁 cordis_run（其余 cordis 放行）。
+    if (name === 'cordis_inspect_list' || name === 'cordis_inspect_query' || name === 'cordis_inspect_self' || name === 'cordis_define' || name === 'cordis_stop' || name === 'cordis_undefine') {
+      return next()
+    }
+    if (name === 'cordis_run') {
+      if (!escape && state.route !== 'direct' && state.approved !== true) {
+        return { kind: 'deny', reason: `路由未确认：cordis_run。cordis 只读/暂存工具（cordis_inspect_*、cordis_define、cordis_stop、cordis_undefine）可随时使用；cordis_run 会在会话内执行模型 JS 并挂载临时插件，${ROUTE_CONFIRM_TEXT}，用户批准后才可动手` }
       }
       return next()
     }

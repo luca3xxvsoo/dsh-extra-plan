@@ -44,6 +44,8 @@
       - subagent / subagent_review：one-shot，必须传 run_in_background: true，用 job_output 收集
       - subagent_probe：one-shot，必须传 run_in_background: true。prompt 说明「只读探查、save_probe 落盘证据报告、回主会话只给路径+2-3 行摘要」
 
+      官方预设禁令：创建或修改 agent 预设必须复制现有预设为副本、再在副本上改动；禁止编辑或删除官方安装的预设与官方文件（官方 cordis 预设与其技能仅只读引用，不复制不改写）
+
 - id: agent-instructions
   name: '@deepseek-ai/dsh-agent-instructions'
   config:
@@ -192,6 +194,7 @@
             - ask_user_question
             - todo_write
             - subagent_plan
+            - cordis_run
 
     # 规划子代理（subagent_plan）：只读 + 探查硬上限 + anchored 引导 + save_plan
     # 落盘（save_plan 由 extra-plan 插件在此子会话层注册）。continuable：迭代经
@@ -242,6 +245,7 @@
             - write
             - edit
             - subagent_plan
+            - cordis_run
 
     # 验收复核者（subagent_review）：只读验收文件逐条核对，≤20 行结论。
     - id: tool-subagent-review
@@ -266,6 +270,7 @@
             - write
             - edit
             - subagent_plan
+            - cordis_run
 
     # 探查子代理（subagent_probe）：只读探查 + save_probe 落盘【含证据报告】
     # one-shot（不可续轮）；模型跟随主会话（不配 agentOptions，显式指定优先）
@@ -298,9 +303,10 @@
             - subagent_plan
             - write
             - edit
+            - cordis_run
 
     # executor-spawn 薄委托层：
-    # workflow/ralph worker 请求缺 toolFilter 时注入执行者 deny（11 项，含
+    # workflow/ralph worker 请求缺 toolFilter 时注入执行者 deny（12 项，含 cordis_run、含
     # subagent_plan 防 worker 再规划、含 subagent_probe 防 worker 委派探查者；
     # save_plan 不可见无需列）；模型不注入，worker 由宿主继承父会话当前模型
     # （请求显式指定 model 时优先）。
@@ -321,6 +327,7 @@
           - ask_user_question
           - todo_write
           - subagent_plan
+          - cordis_run
 
     - id: workflow-worker-thread
       name: '@deepseek-ai/dsh-workflow-worker-thread'
@@ -356,3 +363,13 @@
   name: '@deepseek-ai/dsh-agent-tool-presentation'
   config:
     mode: native
+
+# ── cordis（官方创造模式工具集，只读引用官方包） ──────────────────────────
+
+# 7 工具：cordis_inspect_list/query/self 只读；cordis_define 只存源码+语法校验、
+# 不执行；cordis_stop/cordis_undefine 无对象可操作。cordis_run 是唯一执行口
+# （模型 JS 求值+挂载临时插件，纯内存、会话级、重启即失）——主会话由插件硬闸门
+# 按 write/edit 同规则管控（路由未确认拒绝、批准/直行放行）；执行者/规划/验收/
+# 探查四子代理由 toolFilter.deny 禁 cordis_run，其余 cordis 工具放行。
+- id: tool-cordis
+  name: '@deepseek-ai/dsh-tool-cordis'

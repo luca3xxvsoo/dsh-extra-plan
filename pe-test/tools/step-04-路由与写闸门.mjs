@@ -83,10 +83,10 @@ function checkDeny(id, expectCount, mustContain, mustNotContain, label) {
     console.log(`FAIL  ${label}（实际 ${deny.length} 项: ${deny.join(', ')}）`)
   }
 }
-checkDeny('tool-subagent-review', 13, ['write', 'edit', 'subagent_probe'], [], 'reviewer deny 恰 13 项且含 write/edit/subagent_probe')
-checkDeny('tool-subagent', 11, ['subagent_probe'], ['write', 'edit'], 'executor deny 恰 11 项、不含 write/edit、含 subagent_probe')
-checkDeny('tool-subagent-plan', null, ['write', 'edit'], ['subagent_probe'], 'planner deny 含 write/edit 且不含 subagent_probe')
-checkDeny('tool-subagent-probe', 13, ['write', 'edit', 'subagent_probe'], ['subagent_fork'], 'probe deny 恰 13 项且含 write/edit/subagent_probe、不含 subagent_fork')
+checkDeny('tool-subagent-review', 14, ['write', 'edit', 'subagent_probe', 'cordis_run'], [], 'reviewer deny 恰 14 项且含 write/edit/subagent_probe/cordis_run')
+checkDeny('tool-subagent', 12, ['subagent_probe', 'cordis_run'], ['write', 'edit'], 'executor deny 恰 12 项、不含 write/edit、含 subagent_probe/cordis_run')
+checkDeny('tool-subagent-plan', null, ['write', 'edit', 'cordis_run'], ['subagent_probe'], 'planner deny 含 write/edit/cordis_run 且不含 subagent_probe')
+checkDeny('tool-subagent-probe', 14, ['write', 'edit', 'subagent_probe', 'cordis_run'], ['subagent_fork'], 'probe deny 恰 14 项且含 write/edit/subagent_probe/cordis_run、不含 subagent_fork')
 
 // ── ③ 真实监听器拦截行为（[任务5]，mock ctx 走插件 apply） ─────────────
 function makeHarness(config) {
