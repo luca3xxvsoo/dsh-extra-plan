@@ -469,6 +469,40 @@ function parseAskResultData(data) {
   return { callId, kind: 'ok', answersLen, selected }
 }
 
+// 解析一次嵌套 ask 的结果（tool/code-dispatch 事件，run_code 程序内嵌套调用）。
+// data.content 直接是 ContentBlock 数组（无 tool/result 的 tool-result 外层）。
+// 返回（与 parseAskResultData 同构）：
+//   { callId, kind: 'ok', answersLen, selected } —— 正常答复（answersLen=0 为空白回复）
+//   { callId, kind: 'error', code } —— isError===true（嵌套层无错误码 → code=''）
+//   { callId: undefined } —— 防御（subCallId 非 string）
+function parseDispatchAskResult(data) {
+  if (data === null || typeof data !== 'object') return { callId: undefined }
+  const callId = data.subCallId
+  if (typeof callId !== 'string') return { callId: undefined }
+  if (data.isError === true) {
+    return { callId, kind: 'error', code: '' }
+  }
+  let answersLen = 0
+  const selected = []
+  if (Array.isArray(data.content)) {
+    for (const block of data.content) {
+      if (block !== null && typeof block === 'object' && block.type === 'text' && typeof block.text === 'string') {
+        let parsed = null
+        try { parsed = JSON.parse(block.text) } catch (error) { /* 非 JSON，跳过 */ }
+        if (parsed !== null && parsed !== undefined && Array.isArray(parsed.answers)) {
+          answersLen = parsed.answers.length
+          for (const answer of parsed.answers) {
+            if (answer !== null && typeof answer === 'object' && Array.isArray(answer.selected)) {
+              for (const label of answer.selected) if (typeof label === 'string') selected.push(label)
+            }
+          }
+        }
+      }
+    }
+  }
+  return { callId, kind: 'ok', answersLen, selected }
+}
+
 // 三级锚点状态机（纯函数，自最近一条人类消息起的事件推导）：
 //   route: 'none' | 'direct' | 'plan'（「不同意」→ 回 'none'，保持未确认）
 //   clarified: 是否有完成的澄清问答（空白回复不算）
@@ -497,6 +531,36 @@ function deriveFlowState(events) {
         e.data.name === ASK_TOOL && typeof e.data.callId === 'string') {
       const labels = labelsOfCallData(e.data)
       if (labels !== null) asks.set(e.data.callId, askKindOfRelaxed(labels))
+      continue
+    }
+    if (e.type === 'tool/code-dispatch-start' && e.data !== null && typeof e.data === 'object' &&
+        e.data.name === ASK_TOOL && typeof e.data.subCallId === 'string') {
+      const labels = labelsOfCallData(e.data)
+      if (labels !== null) asks.set(e.data.subCallId, askKindOfRelaxed(labels))
+      continue
+    }
+    if (e.type === 'tool/code-dispatch' && e.data !== null && typeof e.data === 'object' &&
+        typeof e.data.subCallId === 'string') {
+      const result = parseDispatchAskResult(e.data)
+      if (result.callId === undefined || !asks.has(result.callId)) continue
+      if (result.kind === 'error') {
+        if (CHANNEL_BROKEN_CODES.has(result.code)) state.channelBroken = true
+        else { state.route = 'none'; state.approved = false }
+        continue
+      }
+      const kind = asks.get(result.callId)
+      if (kind === 'route') {
+        const matched = matchRouteLabel(result.selected)
+        if (matched === 'direct') state.route = 'direct'
+        else if (matched === 'plan') state.route = 'plan'
+        else state.route = 'none'
+      } else if (kind === 'clarify') {
+        if (result.answersLen > 0) state.clarified = true
+      } else if (kind === 'approve') {
+        const matched = matchApprovalLabel(result.selected)
+        if (matched === 'approve') state.approved = true
+        else state.approved = false
+      }
       continue
     }
     if (e.type !== 'tool/result') continue
@@ -539,6 +603,25 @@ function plannerChildIdsOf(events) {
       calls.add(e.data.callId)
       continue
     }
+    if (e.type === 'tool/code-dispatch-start' && e.data !== null && typeof e.data === 'object' &&
+        e.data.name === 'subagent_plan' && typeof e.data.subCallId === 'string') {
+      calls.add(e.data.subCallId)
+      continue
+    }
+    if (e.type === 'tool/code-dispatch' && e.data !== null && typeof e.data === 'object' &&
+        typeof e.data.subCallId === 'string' && calls.has(e.data.subCallId)) {
+      let text = ''
+      if (Array.isArray(e.data.content)) {
+        for (const block of e.data.content) {
+          if (block !== null && typeof block === 'object' && block.type === 'text' && typeof block.text === 'string') text += block.text
+        }
+      }
+      if (text !== '') {
+        const matched = text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)
+        if (matched !== null && !ids.includes(matched[0])) ids.push(matched[0])
+      }
+      continue
+    }
     if (e.type !== 'tool/result') continue
     const result = parseAskResultData(e.data)
     if (result.callId === undefined || !calls.has(result.callId)) continue
@@ -566,6 +649,13 @@ function toolCallCount(events, skipNames) {
   if (!Array.isArray(events)) return 0
   let count = 0
   for (const e of events) {
+    if (e !== null && typeof e === 'object' && e.type === 'tool/code-dispatch-start') {
+      const d = e.data
+      if (d === null || typeof d !== 'object' || typeof d.name !== 'string') continue
+      if (skipNames !== undefined && skipNames.has(d.name)) continue
+      count += 1
+      continue
+    }
     if (e === null || typeof e !== 'object' || e.type !== 'tool/call') continue
     const d = e.data
     if (d === null || typeof d !== 'object' || typeof d.name !== 'string') continue
@@ -961,6 +1051,19 @@ function isReadOnlyChildByCatalog(tools) {
   return Array.isArray(tools) && tools.length > 0 && !catalogHasWriteTools(tools)
 }
 
+// ptc 折叠目录判定：ptc 模式 wireSchemas 塌缩为仅 [run_code]（dsh-tools types/index.js L410-414），
+// 此时目录无 write/edit 不代表只读角色（executor/reviewer/probe 目录同为 [run_code]）；both=全部+run_code、
+// native=无 run_code 均不折叠。折叠时目录信号不可用 → 只读判定退化为角色信号：probe 有父会话放行记录
+// （probeParents）判只读；executor/reviewer 无法区分（descriptor one-shot 仅 version/mode/provider/label，
+// label=模型任务描述）→ 默认不判只读，reviewer 的 write/edit 由目录层 deny 兜底（预设 reviewer deny
+// 14 项含 write/edit；ptc 绑定面 registry.schemas 枚举不含 write/edit → 程序内 tools.write 不存在）。
+function catalogIsCollapsed(tools) {
+  if (!Array.isArray(tools) || tools.length !== 1) return false
+  const only = tools[0]
+  return (typeof only === 'string' && only === 'run_code') ||
+    (only !== null && typeof only === 'object' && only.name === 'run_code')
+}
+
 // probe（探查者）子代理模型跟随顶层主会话：沿 parentSession 链上溯（probe→planner→
 // 主会话，多级委派亦逐层追溯），取顶层主会话 requestHeader().config 作为
 // provider/model/maxTokens 注入源（不再取直接父/委派方值）。链任一层断裂（get 失败/
@@ -1081,6 +1184,7 @@ export const decisions = {
   pwshMutationMatches,
   catalogHasWriteTools,
   isReadOnlyChildByCatalog,
+  catalogIsCollapsed,
   labelsOfCallData,
   askKindOf,
   askKindOfRelaxed,
@@ -1092,6 +1196,7 @@ export const decisions = {
   matchRouteLabel,
   matchApprovalLabel,
   parseAskResultData,
+  parseDispatchAskResult,
   deriveFlowState,
   plannerChildIdsOf,
   toolCallCount,
@@ -1886,8 +1991,15 @@ export function apply(ctx, config) {
     }
     const planner = isPlannerChild(agent)
     if (isChild(agent) && !planner) {
-      if (isReadOnlyChildByCatalog(result.tools)) readOnlyChildren.add(agent)
-      else readOnlyChildren.delete(agent)
+      if (catalogIsCollapsed(result.tools)) {
+        // ptc 折叠目录：目录信号不可用；probe 靠委派放行记录判只读，executor/reviewer 默认放行（目录层 deny 兜底）
+        if (isProbeChild(agent)) readOnlyChildren.add(agent)
+        else readOnlyChildren.delete(agent)
+      } else if (isReadOnlyChildByCatalog(result.tools)) {
+        readOnlyChildren.add(agent)
+      } else {
+        readOnlyChildren.delete(agent)
+      }
     }
     if (!bootstrapOn) return result
     if (isChild(agent) && !planner) return result

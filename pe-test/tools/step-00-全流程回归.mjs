@@ -33,6 +33,8 @@ const {
   matchRouteLabel,
   matchApprovalLabel,
   parseAskResultData,
+  parseDispatchAskResult,
+  catalogIsCollapsed,
   deriveFlowState,
   plannerChildIdsOf,
   toolCallCount,
@@ -69,6 +71,15 @@ const clarifyArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: 
 const answer = (labels) => JSON.stringify({ answers: labels.map((l) => ({ id: 'q1', selected: [l] })) })
 const customAnswer = '{"answers":[{"id":"q1","custom":"改成XX"}]}'
 const emptyAnswer = '{"answers":[]}'
+// 嵌套事件 fixture（run_code 程序内嵌套调用，混合模式桥接 F1-F4）：
+// code-dispatch-start 的 data={rootCallId,parentCallId,subCallId,name,arguments}（arguments 为对象形态，
+// 与直呼 call 的 arguments JSON 字符串形态区别）；code-dispatch 的 data 另含 isError+content
+// （content 直接是 ContentBlock 数组，无 tool/result 的 tool-result 外层）。
+const cdStart = (name, sid, argsObj) => ({ type: 'tool/code-dispatch-start', data: { rootCallId: 'r1', parentCallId: 'pc1', subCallId: sid, name, arguments: argsObj } })
+const cdEnd = (sid, text, isError = false) => ({ type: 'tool/code-dispatch', data: { rootCallId: 'r1', parentCallId: 'pc1', subCallId: sid, name: 'ask_user_question', arguments: {}, isError, content: [{ type: 'text', text }] } })
+const nestedRouteArgs = { questions: [{ id: 'q1', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }] }
+const nestedApprovalArgs = { questions: [{ id: 'q1', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }] }
+const nestedClarifyArgs = { questions: [{ id: 'q1', options: [{ label: '方案A' }, { label: '方案B' }] }] }
 
 let pass = 0
 let fail = 0
@@ -546,5 +557,61 @@ const AS = [
 ]
 for (const [name, got, expected] of AS) check(name, got, expected)
 
-console.log(`\n通过 ${pass}/${K.length + M.length + F.length + GK.length + GM.length + F21.length + GL.length + P.length + C.length + CU.length + AP.length + BN.length + 2 + BR.length + DR.length + BD.length + BE.length + S.length + 1 + PW.length + 2 + D.length + 3 + 3 + PR.length + 7 + 5 + E.length + RP.length + LQ.length + AS.length}, 失败 ${fail}`)
+// ── F-code 系列:deriveFlowState 识别 run_code 内嵌套 ask（F1 桥接） ─────────
+const FC = [
+  ['FC1 嵌套路由答「直接执行」→ direct', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['直接执行']))], { route: 'direct', clarified: false, approved: false, channelBroken: false }],
+  ['FC2 嵌套路由答「进行pro规划」→ plan', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['进行pro规划']))], { route: 'plan', clarified: false, approved: false, channelBroken: false }],
+  ['FC3 嵌套路由答「不同意」→ none', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['不同意']))], { route: 'none', clarified: false, approved: false, channelBroken: false }],
+  ['FC4 嵌套澄清自定义答复 → clarified', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['进行pro规划'])), cdStart('ask_user_question', 'n2', nestedClarifyArgs), cdEnd('n2', customAnswer)], { route: 'plan', clarified: true, approved: false, channelBroken: false }],
+  ['FC5 嵌套批准「同意执行」→ approved', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['进行pro规划'])), cdStart('ask_user_question', 'n2', nestedClarifyArgs), cdEnd('n2', answer(['方案A'])), cdStart('ask_user_question', 'n3', nestedApprovalArgs), cdEnd('n3', answer(['同意执行']))], { route: 'plan', clarified: true, approved: true, channelBroken: false }],
+  ['FC6 嵌套空白 answers:[] → 全默认', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', emptyAnswer)], { route: 'none', clarified: false, approved: false, channelBroken: false }],
+  ['FC7 嵌套 isError:true → route=none+approved=false', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', 'Error: ask failed', true)], { route: 'none', clarified: false, approved: false, channelBroken: false }],
+  ['FC8 直呼+嵌套混排互不干扰（后答生效）', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['直接执行'])), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划']))], { route: 'plan', clarified: false, approved: false, channelBroken: false }],
+]
+for (const [name, events, expected] of FC) {
+  check(name, deriveFlowState(events), expected)
+}
+
+// ── P-code 系列:plannerChildIdsOf 识别嵌套 subagent_plan（F3 桥接） ─────────
+const PC = [
+  ['PC1 嵌套 plan 结果含 uuid → 提取', [um(), cdStart('subagent_plan', 'p1', {}), cdEnd('p1', 'started subagent 3a7c1e5b-9d2f-4e8a-b6c4-1f0e9d8c7b6a')], ['3a7c1e5b-9d2f-4e8a-b6c4-1f0e9d8c7b6a']],
+  ['PC2 嵌套 plan 结果 isError → 空', [um(), cdStart('subagent_plan', 'p1', {}), cdEnd('p1', 'Error: gated', true)], []],
+  ['PC3 非 subagent_plan 的 code-dispatch 忽略', [um(), cdStart('write', 'w1', {}), cdEnd('w1', 'started subagent 3a7c1e5b-9d2f-4e8a-b6c4-1f0e9d8c7b6a')], []],
+]
+for (const [name, events, expected] of PC) {
+  check(name, plannerChildIdsOf(events), expected)
+}
+
+// ── C-code/CU-code 系列:toolCallCount / toolCallsSinceUser 计入嵌套调用（F2 桥接） ──
+const CC = [
+  ['CC1 单 cdStart 计 1', [cdStart('read', 'n1', {})], new Set([]), 1],
+  ['CC2 tool/call×2+cdStart×2 → 4', [call('read', 'c1'), call('glob', 'c2'), cdStart('pwsh', 'n1', {}), cdStart('read', 'n2', {})], new Set([]), 4],
+  ['CC3 skipNames 含 save_plan → 嵌套 save_plan 排除', [cdStart('save_plan', 'n1', {}), cdStart('read', 'n2', {})], new Set(['save_plan']), 1],
+  ['CC4 嵌套 skipNames 白名单不含 → 仍计 1', [cdStart('send_message', 'n1', {}), cdStart('report', 'n2', {}), cdStart('read', 'n3', {})], new Set(['save_plan', 'send_message', 'report']), 1],
+]
+for (const [name, events, skip, expected] of CC) {
+  check(name, toolCallCount(events, skip), expected)
+}
+
+const CUCODE = [
+  ['CUC1 kind=user 锚点后嵌套计数', [umk('user'), cdStart('read', 'n1', {}), cdStart('glob', 'n2', {})], new Set([]), 2],
+  ['CUC2 锚点后直呼+嵌套混合计数', [umk('user'), call('read', 'a1'), cdStart('pwsh', 'n1', {})], new Set([]), 2],
+]
+for (const [name, events, skip, expected] of CUCODE) {
+  check(name, toolCallsSinceUser(events, skip), expected)
+}
+
+// ── CLC 系列:catalogIsCollapsed（ptc 折叠目录判定，F4 桥接） ───────────────
+const CLC = [
+  ['CLC1 [{name:run_code}] → true(ptc 折叠形态)', [{ name: 'run_code' }], true],
+  ['CLC2 [run_code] → true(字符串形状折叠)', ['run_code'], true],
+  ['CLC3 [{name:read}] → false', [{ name: 'read' }], false],
+  ['CLC4 [{name:run_code},{name:read}] → false(both 形态不折叠)', [{ name: 'run_code' }, { name: 'read' }], false],
+  ['CLC5 [write,edit] → false', ['write', 'edit'], false],
+]
+for (const [name, tools, expected] of CLC) {
+  check(name, catalogIsCollapsed(tools), expected)
+}
+
+console.log(`\n通过 ${pass}/${K.length + M.length + F.length + GK.length + GM.length + F21.length + GL.length + P.length + C.length + CU.length + AP.length + BN.length + 2 + BR.length + DR.length + BD.length + BE.length + S.length + 1 + PW.length + 2 + D.length + 3 + 3 + PR.length + 7 + 5 + E.length + RP.length + LQ.length + AS.length + FC.length + PC.length + CC.length + CUCODE.length + CLC.length}, 失败 ${fail}`)
 process.exit(fail === 0 ? 0 : 1)

@@ -128,6 +128,7 @@ dsh-extra-plan/
 │       ├── step-99-用量统计.mjs
 │       └── readme.md
 ├── README.md                             # 本文档（模式介绍 + 安装方式）
+├── READAI.md                             # 给AI看的文档
 └── LICENSE                               # MIT 许可
 ```
 

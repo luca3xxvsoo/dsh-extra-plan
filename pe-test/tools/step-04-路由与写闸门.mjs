@@ -229,5 +229,44 @@ checkTrue('R16 probe 会话 pwsh 只读 → 放行', r !== null && r !== undefin
 r = preExecute(harness, probeAgent, 'save_probe', { fileMap: [], focusAreas: [], exclusions: [], background: [] })
 checkTrue('R17 probe 会话 save_probe → 放行', r !== null && r !== undefined && r.kind === 'allow')
 
+// ── ⑥ R-code 系列:F1 桥接（run_code 内嵌套 ask 驱动状态机） ──────────────
+// 嵌套事件 fixture（同 step-00 F-code 系形状）：code-dispatch-start 的 arguments 为对象形态，
+// code-dispatch 的 content 直接是 ContentBlock 数组（无 tool-result 外层）。
+const cdStartE = (name, sid, argsObj) => ({ type: 'tool/code-dispatch-start', data: { rootCallId: 'r1', parentCallId: 'pc1', subCallId: sid, name, arguments: argsObj } })
+const cdEndE = (sid, text, isError = false) => ({ type: 'tool/code-dispatch', data: { rootCallId: 'r1', parentCallId: 'pc1', subCallId: sid, name: 'ask_user_question', arguments: {}, isError, content: [{ type: 'text', text }] } })
+const nestedRouteE = { questions: [{ id: 'q1', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }] }
+const nestedClarifyE = { questions: [{ id: 'q1', options: [{ label: '方案A' }, { label: '方案B' }] }] }
+const nestedApprovalE = { questions: [{ id: 'q1', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }] }
+const nestedCustomE = '{"answers":[{"id":"q1","custom":"改成XX"}]}'
+
+const nestedDirectMain = mainWithEvents([umE(), cdStartE('ask_user_question', 'n1', nestedRouteE), cdEndE('n1', answerE(['直接执行']))])
+const nestedPlanMain = mainWithEvents([umE(), cdStartE('ask_user_question', 'n1', nestedRouteE), cdEndE('n1', answerE(['进行pro规划'])), cdStartE('ask_user_question', 'n2', nestedClarifyE), cdEndE('n2', nestedCustomE)])
+const nestedApproveMain = mainWithEvents([umE(), cdStartE('ask_user_question', 'n1', nestedRouteE), cdEndE('n1', answerE(['进行pro规划'])), cdStartE('ask_user_question', 'n2', nestedClarifyE), cdEndE('n2', answerE(['方案A'])), cdStartE('ask_user_question', 'n3', nestedApprovalE), cdEndE('n3', answerE(['同意执行']))])
+
+r = preExecute(harness, nestedDirectMain, 'write', {})
+checkTrue('R22 嵌套路由答「直接执行」→ write 放行（F1 桥接）', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, nestedPlanMain, 'subagent_plan', {})
+checkTrue('R23 嵌套路由 plan+嵌套澄清 → subagent_plan 放行（F1 桥接）', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, nestedApproveMain, 'subagent', { run_in_background: true })
+checkTrue('R24 嵌套批准「同意执行」→ subagent 委派放行（F1 桥接）', r !== null && r !== undefined && r.kind === 'allow')
+
+// ── ⑦ R-code 系列:F4 桥接（ptc 折叠目录只读判定退化为角色信号） ──────────
+// ptc 折叠形态（wireSchemas 塌缩为仅 [run_code]）：修复前 executor 被误判只读恒拒 write；
+// 修复后目录信号不可用 → 非 probe 默认放行（目录层 deny 兜底）。
+const ptcExecutor = childAgent('ptc-executor-1')
+await assemble(harness, ptcExecutor, [{ name: 'run_code' }])
+r = preExecute(harness, ptcExecutor, 'write', {})
+checkTrue('R25 ptc 折叠目录 executor write → 放行（F4 桥接：不再误判只读）', r !== null && r !== undefined && r.kind === 'allow')
+// 只读目录（非折叠形态）：原判定路径不受影响，write → deny 且文案含「只读」
+const roCatalogChild = childAgent('ro-catalog-1')
+await assemble(harness, roCatalogChild, [{ name: 'read' }])
+r = preExecute(harness, roCatalogChild, 'write', {})
+checkTrue('R26 只读目录 write → deny 且文案含「只读」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('只读'))
+// 含 write 目录（非折叠形态）：write → 放行
+const rwCatalogChild = childAgent('rw-catalog-1')
+await assemble(harness, rwCatalogChild, [{ name: 'read' }, { name: 'write' }])
+r = preExecute(harness, rwCatalogChild, 'write', {})
+checkTrue('R27 含 write 目录 write → 放行', r !== null && r !== undefined && r.kind === 'allow')
+
 console.log(`\n通过 ${pass}, 失败 ${fail}`)
 process.exit(fail === 0 ? 0 : 1)
