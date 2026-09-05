@@ -106,12 +106,18 @@ dsh-extra-plan/
 │       ├── cordis.patch.yml                        
 │       ├── index.js                      
 │       └── package.json        
-├── pe-test/tools/                                      # 自检/取证工具
+├── pe-test/                                            # 自检/取证工具
 │   ├── README.md/                                      # 自检/取证工具介绍
 │   ├── _shared/                                        
 │   │   ├── zstd-frames.mjs  
 │   │   ├── session-finder.mjs  
-│   │   └── preset-hash.mjs         
+│   │   └── preset-hash.mjs      
+│   │── docs/                                           # AI文档
+│   │   ├── ai-概览.md  
+│   │   ├── ai-机制设计.md  
+│   │   ├── ai-流程备查.md  
+│   │   ├── ai-维护手册.md  
+│   │   └── ai-代码地图.md         
 │   └── tools/                                 
 │       ├── 一键step测试.mjs                             # 可以通过输入真实session_id进行测试
 │       ├── step-00-跨平台写拦截.mjs
@@ -127,10 +133,11 @@ dsh-extra-plan/
 │       ├── step-06-真实会话查看.mjs
 │       ├── step-08-方案配对查看.mjs
 │       ├── step-99-用量统计.mjs
+│       ├── 代码地图生成.mjs                           
 │       └── readme.md
-├── README.md                             # 本文档（模式介绍 + 安装方式）
-├── READAI.md                             # 给AI看的文档
-└── LICENSE                               # MIT 许可
+├── README.md                                            # 本文档（模式介绍 + 安装方式）
+├── READAI.md                                            # AI 入口导航（分层）
+└── LICENSE                                              # MIT 许可
 ```
 
 ## 4. 详细说明
