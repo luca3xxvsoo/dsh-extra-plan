@@ -35,6 +35,9 @@ const {
   parseAskResultData,
   parseDispatchAskResult,
   catalogIsCollapsed,
+  RUNCODE_MUTATION_HINTS,
+  codeMutationHints,
+  runCodeDenyReason,
   deriveFlowState,
   plannerChildIdsOf,
   toolCallCount,
@@ -613,5 +616,21 @@ for (const [name, tools, expected] of CLC) {
   check(name, catalogIsCollapsed(tools), expected)
 }
 
-console.log(`\n通过 ${pass}/${K.length + M.length + F.length + GK.length + GM.length + F21.length + GL.length + P.length + C.length + CU.length + AP.length + BN.length + 2 + BR.length + DR.length + BD.length + BE.length + S.length + 1 + PW.length + 2 + D.length + 3 + 3 + PR.length + 7 + 5 + E.length + RP.length + LQ.length + AS.length + FC.length + PC.length + CC.length + CUCODE.length + CLC.length}, 失败 ${fail}`)
+// ── H 系列:codeMutationHints（F7' run_code 静态扫描误杀调优） ──────────────
+const H = [
+  ['H1 writeFileSync → 命中 fs-write', "await writeFileSync('/tmp/x', 'data')", ['fs-write']],
+  ['H2 require(child_process)+spawn → 命中两项', "require('child_process').spawn('ls')", ['child-process-import', 'child-process-call']],
+  ['H3 eval → 命中 eval-function', "eval('1+1')", ['eval-function']],
+  ['H4 process.binding → 命中', "process.binding('fs')", ['process-binding']],
+  ['H5 require node:vm → 命中', "require('node:vm')", ['node-vm']],
+  ['H6 纯只读代码 → 不命中', "const fs = require('node:fs'); fs.readFileSync('x', 'utf8')", []],
+  ['H7 空串/非字符串 → 不命中', '', []],
+  ['H8 node:fs 只读方法族（readFile/readdir/stat/access）→ 不命中（白名单例外）', "await readFile('x'); await readdir('d'); await stat('x')", []],
+  ['H9 code 缺失（undefined）→ 不命中', undefined, []],
+]
+for (const [name, code, expected] of H) {
+  check(name, codeMutationHints(code), expected)
+}
+
+console.log(`\n通过 ${pass}/${K.length + M.length + F.length + GK.length + GM.length + F21.length + GL.length + P.length + C.length + CU.length + AP.length + BN.length + 2 + BR.length + DR.length + BD.length + BE.length + S.length + 1 + PW.length + 2 + D.length + 3 + 3 + PR.length + 7 + 5 + E.length + RP.length + LQ.length + AS.length + FC.length + PC.length + CC.length + CUCODE.length + CLC.length + H.length}, 失败 ${fail}`)
 process.exit(fail === 0 ? 0 : 1)

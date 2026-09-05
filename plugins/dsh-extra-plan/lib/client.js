@@ -21,6 +21,10 @@ window.__ModuleLoader__.load({
       exploreBudget: "探查额度",
       anchoredBootstrap: "anchored开关",
       webFetch: "web_fetch开关",
+      toolPresentationMode: "工具呈现模式",
+      toolPresentationModeNative: "默认",
+      toolPresentationModeBoth: "混合",
+      toolPresentationModePtc: "纯PTC模式",
       save: "保存",
       saving: "保存中…",
       saved: "已保存，需重启 Harness 后生效",
@@ -43,6 +47,10 @@ window.__ModuleLoader__.load({
       exploreBudget: "Explore Budget",
       anchoredBootstrap: "Anchored Bootstrap",
       webFetch: "Web Fetch",
+      toolPresentationMode: "Tool Presentation Mode",
+      toolPresentationModeNative: "Native",
+      toolPresentationModeBoth: "Both",
+      toolPresentationModePtc: "Pure PTC",
       save: "Save",
       saving: "Saving…",
       saved: "Saved. Restart Harness to take effect.",
@@ -110,7 +118,8 @@ window.__ModuleLoader__.load({
                 plannerPromptSuffix: typeof data.plannerPromptSuffix === "string" ? data.plannerPromptSuffix : "",
                 exploreBudget: typeof data.exploreBudget === "number" ? data.exploreBudget : 18,
                 anchoredBootstrap: data.anchoredBootstrap === true,
-                webFetch: data.webFetch === true
+                webFetch: data.webFetch === true,
+                toolPresentationMode: typeof data.toolPresentationMode === "string" && ["native", "ptc", "both"].includes(data.toolPresentationMode) ? data.toolPresentationMode : "native"
               });
               setConfigStatus("ready");
             })
@@ -158,7 +167,8 @@ window.__ModuleLoader__.load({
             plannerPromptSuffix: String(draft.plannerPromptSuffix),
             exploreBudget: Number(draft.exploreBudget),
             anchoredBootstrap: draft.anchoredBootstrap === true,
-            webFetch: draft.webFetch === true
+            webFetch: draft.webFetch === true,
+            toolPresentationMode: draft.toolPresentationMode || "native"
           };
           try {
             const res = await fetch(PRO_CONFIG_URL, {
@@ -265,6 +275,18 @@ window.__ModuleLoader__.load({
             },
               el("option", { value: "true" }, "True"),
               el("option", { value: "false" }, "False")
+            )
+          ),
+          el("label", { className: "esp-field" },
+            el("span", { className: "esp-label" }, t("toolPresentationMode")),
+            el("select", {
+              className: "esp-select",
+              value: draft.toolPresentationMode || "native",
+              onChange: function (e) { setField("toolPresentationMode", e.target.value); }
+            },
+              el("option", { value: "native" }, t("toolPresentationModeNative")),
+              el("option", { value: "both" }, t("toolPresentationModeBoth")),
+              el("option", { value: "ptc" }, t("toolPresentationModePtc"))
             )
           ),
           message.text ? el("p", { className: message.kind === "ok" ? "esp-ok" : "esp-err" }, message.text) : null,

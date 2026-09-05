@@ -75,6 +75,7 @@ DSH web界面 -> 设置 -> 插件 -> 插件配置 -> 按需规划模式配置
   - anchored开关：是否开启 dsh-anchored-standard 同款引导
   - flash 引导：是否开启 deepseek-v4-flash 智商引导
   - web_fetch开关：是否开启web_fetch
+  - 工具呈现模式：工具呈现方式切换（默认/混合/纯PTC，对应 native/both/ptc，重启后生效）
 
 **探查子代理**：探查者模型跟随主会话（显式指定优先），无独立配置项（默认不加）
 

@@ -2,11 +2,32 @@
 // 断言：①仅目标行变化（diff 行数=6）②yaml 语义正确（fetch/mode/budget 等）③原文本其余字节不变。
 // 只读 + 内存，不写任何文件。
 import { readFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
+import { createRequire, registerHooks } from 'node:module'
 import { homedir } from 'node:os'
+import { pathToFileURL } from 'node:url'
 const DSH_HOME = (process.env.DSH_HOME || homedir() + '/.dsh').replaceAll('\\', '/')
 const require = createRequire(DSH_HOME + '/profiles/web/node_modules/package.json')
 const yaml = require('js-yaml')
+
+// F8：import settings.js 需解析 js-yaml / @deepseek-ai/schemastery（仓库无 node_modules，
+// 直接 import 会 "Cannot find package"）——用 module.registerHooks 把这两个裸说明符映射到
+// 安装侧 profile 的 node_modules（进程级解析钩子，仅测试进程内存生效，不落盘不改仓库）。
+// 注意：目标 URL 须在钩子注册前预计算（钩子内再 require.resolve 触发递归栈溢出）。
+const PACKAGE_MODULE_URLS = new Map([
+  ['js-yaml', pathToFileURL(require.resolve('js-yaml')).href],
+  ['@deepseek-ai/schemastery', pathToFileURL(require.resolve('@deepseek-ai/schemastery')).href],
+])
+if (typeof registerHooks === 'function') {
+  registerHooks({
+    resolve(specifier, context, next) {
+      const mapped = PACKAGE_MODULE_URLS.get(specifier)
+      if (mapped !== undefined) return { url: mapped, shortCircuit: true }
+      return next(specifier, context)
+    },
+  })
+}
+const settingsModule = await import(new URL('../../plugins/dsh-extra-plan/lib/settings.js', import.meta.url).href)
+const TOOL_PRESENTATION_MODES = settingsModule.TOOL_PRESENTATION_MODES
 
 const JsExpr = new yaml.Type('tag:yaml.org,2002:js', {
   kind: 'scalar', resolve: (d) => typeof d === 'string', construct: (d) => ({ __jsExpr: d }),
@@ -54,6 +75,7 @@ const patches = [
   ['extra-plan', 'anchoredBootstrap', 'false'],
   ['tool-web', 'fetch', 'true'],
   ['tool-presentation', 'mode', 'both'],
+  ['tool-presentation', 'mode', 'ptc'],
 ]
 for (const [rowId, field, value] of patches) {
   const next = patchRowField(t, rowId, field, value)
@@ -78,13 +100,23 @@ const rp = rows.find((r) => r && r.id === 'tool-presentation')
 const eg = rows.find((r) => r && r.id === 'extra-plan-group')
 const en = eg && Array.isArray(eg.config) ? eg.config.find((c) => c && c.id === 'extra-plan') : null
 check('fetch === true', true, rw?.config?.fetch === true)
-check('mode === both', true, rp?.config?.mode === 'both')
+check('mode === ptc（ptc 补丁覆盖 both，F8 ptc 值可写入）', true, rp?.config?.mode === 'ptc')
+// both 值单独补丁仍可写入（与 ptc 并存验证，终值由末条补丁决定）
+const dataBothOnly = yaml.load(patchRowField(orig, 'tool-presentation', 'mode', 'both'), { schema })
+const rpBothOnly = (Array.isArray(dataBothOnly) ? dataBothOnly : []).find((r) => r && r.id === 'tool-presentation')
+check('mode === both（both 值可写入）', true, rpBothOnly?.config?.mode === 'both')
 check('exploreBudget === 25', true, en?.config?.exploreBudget === 25)
 check('anchoredBootstrap === false', true, en?.config?.anchoredBootstrap === false)
 check('plannerPromptSuffix === x: y', true, en?.config?.plannerPromptSuffix === 'x: y')
 // 缺失字段/缺失行的行为
 check('未知行 → null', true, patchRowField(orig, 'no-such-row', 'x', '1') === null)
 check('已知行未知字段 → null', true, patchRowField(orig, 'tool-web', 'no-such-field', '1') === null)
+
+// ── F8 断言组：TOOL_PRESENTATION_MODES 与 设置页 mode select 防回归 ──────
+check('TOOL_PRESENTATION_MODES 恰为 native/ptc/both 三值', true, Array.isArray(TOOL_PRESENTATION_MODES) && TOOL_PRESENTATION_MODES.length === 3 && TOOL_PRESENTATION_MODES[0] === 'native' && TOOL_PRESENTATION_MODES[1] === 'ptc' && TOOL_PRESENTATION_MODES[2] === 'both')
+check('TOOL_PRESENTATION_MODES 不含历史 code 值', true, !TOOL_PRESENTATION_MODES.includes('code'))
+const clientText = readFileSync(new URL('../../plugins/dsh-extra-plan/lib/client.js', import.meta.url), 'utf8')
+check('client.js mode select 选项为 native/both/ptc（不含 code）', true, clientText.includes('value: "ptc"') && !clientText.includes('value: "code"'))
 
 console.log(`\n通过 ${pass}, 失败 ${fail}`)
 process.exit(fail === 0 ? 0 : 1)

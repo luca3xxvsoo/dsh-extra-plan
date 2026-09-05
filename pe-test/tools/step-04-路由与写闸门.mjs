@@ -3,13 +3,13 @@
 // ②预设静态断言（agent.cordis.yml 三行子代理 deny 清单）
 // ③真实监听器拦截行为（mock ctx 走插件 apply 注册的 assemble/pre-execute）
 // ④回归（主会话路由闸门、planner 拦截、anchored 引导收窄）
-import { pathToFileURL } from 'node:url'
+import { pathToFileURL, fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 
 const DSH_HOME = (process.env.DSH_HOME || homedir() + '/.dsh').replaceAll('\\', '/')
-const PLUGIN_PATH = DSH_HOME + '/profiles/web/node_modules/@local/dsh-extra-plan/index.js'
+const PLUGIN_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/index.js', import.meta.url))
 const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
 const decisions = plugin.decisions
 const { catalogHasWriteTools, isReadOnlyChildByCatalog } = decisions
@@ -193,8 +193,10 @@ check('R14 bootstrapOn=true executor 不引导（目录原样）', Array.isArray
 const umE = () => ({ type: 'user/message', data: { source: { kind: 'user' } } })
 const callE = (name, cid, argumentsStr = '{}') => ({ type: 'tool/call', data: { name, callId: cid, arguments: argumentsStr } })
 const okE = (cid, text) => ({ type: 'tool/result', data: { message: { content: [{ type: 'tool-result', toolCallId: cid, content: [{ type: 'text', text }] }] } } })
+const errE = (cid, code) => ({ type: 'tool/result', data: { error: { name: 'Error', code }, message: { content: [{ type: 'tool-result', toolCallId: cid, content: [] }] } } })
 const routeArgsE = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }] })
 const clarifyArgsE = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '方案A' }, { label: '方案B' }] }] })
+const approvalArgsE = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }] })
 const answerE = (labels) => JSON.stringify({ answers: labels.map((l) => ({ id: 'q1', selected: [l] })) })
 const mainWithEvents = (events) => ({ session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => events }, options: {}, ctx: undefined })
 
@@ -267,6 +269,41 @@ const rwCatalogChild = childAgent('rw-catalog-1')
 await assemble(harness, rwCatalogChild, [{ name: 'read' }, { name: 'write' }])
 r = preExecute(harness, rwCatalogChild, 'write', {})
 checkTrue('R27 含 write 目录 write → 放行', r !== null && r !== undefined && r.kind === 'allow')
+
+// ── ⑧ R-code 系列:F7'（run_code 统一审查关口） ────────────────────────────
+const approvedMain = mainWithEvents([umE(), callE('ask_user_question', 'a1', routeArgsE), okE('a1', answerE(['进行pro规划'])), callE('ask_user_question', 'a2', clarifyArgsE), okE('a2', answerE(['方案A'])), callE('ask_user_question', 'a3', approvalArgsE), okE('a3', answerE(['同意执行']))])
+const escapeMain = mainWithEvents([umE(), callE('ask_user_question', 'a1', routeArgsE), errE('a1', 'NO_PROVIDER')])
+const writeCode = { code: "await writeFileSync('x', '1')", description: '写文件' }
+const readOnlyCode = { code: "await readFileSync('x', 'utf8')", description: '只读' }
+
+r = preExecute(harness, noneMain, 'run_code', readOnlyCode)
+checkTrue('R28 主会话 none 态 run_code（纯只读）→ deny 且文案含「路由未确认：run_code」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认：run_code'))
+r = preExecute(harness, noneMain, 'run_code', writeCode)
+checkTrue('R29 主会话 none 态 run_code（含写）→ deny（主会话不看 code，同文案）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认：run_code'))
+r = preExecute(harness, directMain, 'run_code', writeCode)
+checkTrue('R30 主会话 direct 态 run_code（含写）→ 放行', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, planMain, 'run_code', readOnlyCode)
+checkTrue('R31 主会话 plan+clarified 态 run_code → deny（规划态不可直做）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划态下主会话不可写文件：run_code'))
+r = preExecute(harness, approvedMain, 'run_code', readOnlyCode)
+checkTrue('R32 主会话 approved 态 run_code → deny 且文案含「方案已批准，执行请走 subagent 委派执行者」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('方案已批准，执行请走 subagent 委派执行者'))
+r = preExecute(harness, escapeMain, 'run_code', writeCode)
+checkTrue('R33 主会话 channelBroken 逃生态 run_code → 放行（escape）', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, plannerAgent, 'run_code', readOnlyCode)
+checkTrue('R34 planner run_code 纯只读 → 放行', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, plannerAgent, 'run_code', writeCode)
+checkTrue('R35 planner run_code 含写 → deny 且文案含「只读角色仅允许只读探查」与「命中」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('只读角色仅允许只读探查') && String(r.reason).includes('命中'))
+r = preExecute(harness, reviewer, 'run_code', writeCode)
+checkTrue('R36 reviewer（只读目录）run_code 含写 → deny（同文案）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('只读角色仅允许只读探查'))
+r = preExecute(harness, reviewer, 'run_code', readOnlyCode)
+checkTrue('R37 reviewer run_code 纯只读 → 放行', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, executor, 'run_code', writeCode)
+checkTrue('R38 executor（含写目录）run_code 含写 → 放行（执行者豁免）', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, ptcExecutor, 'run_code', writeCode)
+checkTrue('R39 ptc 折叠目录 executor run_code 含写 → 放行（折叠默认放行）', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, probeAgent, 'run_code', writeCode)
+checkTrue('R40 probe（只读目录+放行记录）run_code 含写 → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('只读角色仅允许只读探查'))
+r = preExecute(harness, fresh, 'run_code', writeCode)
+checkTrue('R41 缓存未命中子代理 run_code → 放行（fail-open）', r !== null && r !== undefined && r.kind === 'allow')
 
 console.log(`\n通过 ${pass}, 失败 ${fail}`)
 process.exit(fail === 0 ? 0 : 1)

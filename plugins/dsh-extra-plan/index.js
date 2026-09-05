@@ -148,6 +148,22 @@ const PWSH_MUTATION = /\b(New-Item|Remove-Item|Rename-Item|Move-Item|Copy-Item|S
 //   （Linux 待真机验证）。
 const BASH_MUTATION = /\b(rm|mv|cp|mkdir|rmdir|touch|tee|chmod|chown|ln)\b(?=\s|$|\/)|git\s+(add|commit|checkout|switch|restore|clean|rm|mv|reset)\b|sed\s+(?:--in-place\b|(?:-[A-Za-z]*\s+)*-i\b)|(?:[0-9]?>>?(?!&\d)|&>|>&(?!\d))|\b(install|rsync|truncate|fallocate|shred)\b|\bdd\b[^|]*\sof=|wget\s+.*-O\b|curl\s+.*-o\b|\bvi(m)?\s+\S|\bnano\s+\S|tar\s+-[A-Za-z]*c|\bzip\b/i
 
+// run_code 静态写模式扫描黑名单（F7'，自写正则无依赖）：防偶然写；防刻意绕过有限
+// （动态 require/Function 构造/编码拼串不覆盖，见风险 R1）。白名单例外=不在黑名单：
+// node:fs 只读方法族（readFileSync/readdirSync/statSync/existsSync/accessSync/readFile/
+// readdir/stat/access/realpath/lstat 等）天然不命中。
+const RUNCODE_MUTATION_HINTS = [
+  { id: 'fs-write', re: /\b(?:writeFileSync|appendFileSync|unlinkSync|rmSync|rmdirSync|mkdirSync|renameSync|copyFileSync|truncateSync|chmodSync|chownSync|symlinkSync|linkSync|mkdtempSync|createWriteStream|watch)\s*\(/ },
+  { id: 'fs-promise-write', re: /\b(?:writeFile|appendFile|unlink|rm|rmdir|mkdir|rename|copyFile|truncate|chmod|chown|symlink|link|mkdtemp)\s*\(/ },
+  { id: 'child-process-import', re: /(?:require\s*\(\s*['"](?:child_process|node:child_process)['"]\s*\))|(?:from\s+['"](?:child_process|node:child_process)['"])/ },
+  { id: 'child-process-call', re: /\b(?:execSync|execFileSync|spawnSync|spawn|execFile|fork)\s*\(/ },
+  { id: 'net-http-server', re: /(?:require\s*\(\s*['"](?:net|node:net|http|node:http)['"]\s*\))|(?:from\s+['"](?:net|node:net|http|node:http)['"])|\b(?:createServer|listen)\s*\(/ },
+  { id: 'eval-function', re: /\b(?:eval|Function)\s*\(/ },
+  { id: 'process-binding', re: /\bprocess\s*\.\s*binding\s*\(/ },
+  { id: 'dlopen', re: /\bprocess\s*\.\s*dlopen\s*\(/ },
+  { id: 'node-vm', re: /(?:require\s*\(\s*['"]node:vm['"]\s*\))|(?:from\s+['"]node:vm['"])|\b(?:runInThisContext|runInNewContext|runInContext|compileFunction)\s*\(/ },
+]
+
 // ── 纯判定函数（模块顶层；经 decisions 导出供场景测试直接复用，防复制漂移） ──
 
 // 会话事件快照统一读取（v0.1.2-rc.1 单版本口径）：
@@ -252,6 +268,24 @@ function mutationMatches(commandOf, exec, regex) {
 }
 function pwshMutationMatches(exec) { return mutationMatches(pwshCommandOf, exec, PWSH_MUTATION) }
 function bashMutationMatches(exec) { return mutationMatches(bashCommandOf, exec, BASH_MUTATION) }
+
+// run_code 的 code 文本提取（exec.arguments.code 字符串；防御非字符串返回 ''）。
+function runCodeTextOf(exec) {
+  const args = exec !== null && exec !== undefined ? exec.arguments : undefined
+  const code = args !== null && typeof args === 'object' ? args.code : undefined
+  return typeof code === 'string' ? code : ''
+}
+
+// 静态扫描 code 返回命中的 hint id 列表（去重、按 RUNCODE_MUTATION_HINTS 顺序）。
+function codeMutationHints(code) {
+  const text = typeof code === 'string' ? code : ''
+  if (text === '') return []
+  const hits = []
+  for (const hint of RUNCODE_MUTATION_HINTS) {
+    if (hint.re.test(text)) hits.push(hint.id)
+  }
+  return hits
+}
 
 // 从 ask_user_question 的 tool/call 事件解析选项标签集——只收首问 questions[0] 的选项标签（第二问「修改意见」为纯文本输入，其选项不进入验词集合）。
 // 事件里 arguments 是 JSON 字符串；解析失败返回 null（跳过该调用的分类）。
@@ -1158,6 +1192,28 @@ async function resolveProbeRequestInjection(agent, agents, resolved) {
   return nextConfig
 }
 
+// F7' run_code 统一审查纯函数：返回 null=放行，非 null=deny reason。
+// - 主会话：escape（channelBroken）放行；route='direct' 放行；approved=true 拒；
+//   none/plan 拒（routeDenyReason 复用，run_code 按 write 同级）；
+// - 子代理：readonlyChild=true（planner/probe/reviewer）静态扫描 code，含写拒、纯只读放行；
+//   readonlyChild=false（执行者/缓存未命中）放行。
+function runCodeDenyReason(agent, exec, state, readonlyChild) {
+  const hits = codeMutationHints(runCodeTextOf(exec))
+  if (!isSubagentChild(agent)) {
+    const escape = state !== null && state !== undefined && state.channelBroken === true
+    if (escape) return null
+    if (state.route === 'direct') return null
+    if (state.approved === true) {
+      return '方案已批准，执行请走 subagent 委派执行者。run_code 按 write 同级：主会话直做须在路由确认「直接执行」后'
+    }
+    return routeDenyReason('run_code', state)
+  }
+  if (readonlyChild === true && hits.length > 0) {
+    return `只读角色仅允许只读探查：run_code 代码命中写模式特征 ${hits.length} 处（${hits.slice(0, 3).join('、')}${hits.length > 3 ? ' 等' : ''}）。请改用 read/glob/grep 或 shell 只读命令`
+  }
+  return null
+}
+
 // 供场景测试直接复用（消除"复制品"漂移）。模块顶层无副作用，纯 Node 可 import。
 export const decisions = {
   CHANNEL_BROKEN_CODES,
@@ -1222,6 +1278,9 @@ export const decisions = {
   renderSaveProbe,
   renderProbeMarkdown,
   extractProbeEvidenceRefs,
+  RUNCODE_MUTATION_HINTS,
+  codeMutationHints,
+  runCodeDenyReason,
   resolveProbeRequestInjection,
 }
 
@@ -2194,6 +2253,10 @@ export function apply(ctx, config) {
           return { kind: 'deny', reason: budgetExhaustedReason(Math.min(used - 1, exploreBudget), exploreBudget) }
         }
       }
+      if (exec.name === 'run_code') {
+        const reason = runCodeDenyReason(agent, exec, undefined, true)
+        if (reason !== null) return { kind: 'deny', reason }
+      }
       return next()
     }
     if (child) {
@@ -2209,6 +2272,10 @@ export function apply(ctx, config) {
         }
         if (exec.name === 'bash' && bashMutationMatches(exec)) {
           return { kind: 'deny', reason: probe ? '探查者只读：bash 仅限只读探查命令，禁止创建/修改/删除文件' : '验收复核者只读：bash 仅限只读探查命令，禁止创建/修改/删除文件' }
+        }
+        if (exec.name === 'run_code') {
+          const reason = runCodeDenyReason(agent, exec, undefined, true)
+          if (reason !== null) return { kind: 'deny', reason }
         }
       }
       return next() // 执行者子代理豁免（目录含 write/edit，缓存未命中）
@@ -2324,6 +2391,10 @@ export function apply(ctx, config) {
         return { kind: 'deny', reason: 'send_message 未放行：目标子代理为 one-shot 一次性会话，不可续轮；仅 continuable 规划子代理可接收 send_message 续轮转达' }
       }
       return next()
+    }
+    if (exec.name === 'run_code') {
+      const reason = runCodeDenyReason(agent, exec, state, false)
+      if (reason !== null) return { kind: 'deny', reason }
     }
     if (name === 'job_output') {
       const args = exec.arguments

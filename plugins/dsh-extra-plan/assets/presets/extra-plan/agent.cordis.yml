@@ -360,6 +360,7 @@
     fetch: false
     searchTimeoutMs: 60000
 
+# ['native','ptc','both']
 - id: tool-presentation
   name: '@deepseek-ai/dsh-agent-tool-presentation'
   config:

@@ -23,6 +23,10 @@ const EXTRA_PLAN_NS = 'dsh-extra-plan'
 // （EXTRA_PLAN_NS）的交集；注销本行（或 L431）即卡片消失。
 const ExtraPlanSettingsSchema = z.object({})
 
+// 工具呈现模式合法值（官方枚举适配：'native'|'ptc'|'both'，历史 'code' 值弃用；
+// 供设置页 UI 与 pe-test step-01 断言共用）。
+export const TOOL_PRESENTATION_MODES = ['native', 'ptc', 'both']
+
 // YAML schema 支持 !!js 表达式，确保 agent.cordis.yml 中 !!js 往返不丢失。
 const JsExpr = new yaml.Type('tag:yaml.org,2002:js', {
   kind: 'scalar',
@@ -135,6 +139,20 @@ function readToolWebConfig(file) {
 
   for (const plugin of plugins) {
     if (plugin && plugin.id === 'tool-web') {
+      return { plugins, entry: plugin }
+    }
+  }
+  return { plugins, entry: null }
+}
+
+// 读取 agent.cordis.yml 并找到 tool-presentation 配置（用于工具呈现模式选择）。
+function readToolPresentationConfig(file) {
+  const content = readFileSync(file, 'utf8')
+  const data = yaml.load(content, { schema: patchSchema })
+  const plugins = Array.isArray(data) ? data : []
+
+  for (const plugin of plugins) {
+    if (plugin && plugin.id === 'tool-presentation') {
       return { plugins, entry: plugin }
     }
   }
@@ -265,13 +283,19 @@ function createApiHandler(ctx) {
           const webFetch = toolWebResult.entry && toolWebResult.entry.config 
             ? toolWebResult.entry.config.fetch === true 
             : false
+          // 读取 tool-presentation 的 mode 配置（native/ptc/both）
+          const toolPresentationResult = readToolPresentationConfig(file)
+          const toolPresentationMode = toolPresentationResult.entry && toolPresentationResult.entry.config
+            ? toolPresentationResult.entry.config.mode
+            : 'native'
 
           return json(res, 200, {
             plannerModel: typeof config.plannerModel === 'string' ? config.plannerModel : '',
             plannerPromptSuffix: typeof config.plannerPromptSuffix === 'string' ? config.plannerPromptSuffix : '',
             exploreBudget: typeof config.exploreBudget === 'number' ? config.exploreBudget : 0,
             anchoredBootstrap: config.anchoredBootstrap === true,
-            webFetch: webFetch
+            webFetch: webFetch,
+            toolPresentationMode: toolPresentationMode
           })
         } catch (err) {
           return json(res, 500, { error: 'failed to read agent.cordis.yml: ' + String((err && err.message) || err) })
@@ -319,13 +343,17 @@ function createApiHandler(ctx) {
           if (typeof body.webFetch === 'boolean') {
             apply('tool-web', 'fetch', body.webFetch ? 'true' : 'false')
           }
+          if (typeof body.toolPresentationMode === 'string' && TOOL_PRESENTATION_MODES.includes(body.toolPresentationMode)) {
+            apply('tool-presentation', 'mode', body.toolPresentationMode)
+          }
           if (touched) writeTextAtomic(file, text)
           return json(res, 200, {
             plannerModel: body.plannerModel.trim(),
             plannerPromptSuffix: typeof body.plannerPromptSuffix === 'string' ? body.plannerPromptSuffix : '',
             exploreBudget: budget,
             anchoredBootstrap: body.anchoredBootstrap === true,
-            webFetch: typeof body.webFetch === 'boolean' ? body.webFetch : false
+            webFetch: typeof body.webFetch === 'boolean' ? body.webFetch : false,
+            toolPresentationMode: typeof body.toolPresentationMode === 'string' && TOOL_PRESENTATION_MODES.includes(body.toolPresentationMode) ? body.toolPresentationMode : 'native'
           })
         } catch (err) {
           return json(res, 500, { error: 'failed to write agent.cordis.yml: ' + String((err && err.message) || err) })
