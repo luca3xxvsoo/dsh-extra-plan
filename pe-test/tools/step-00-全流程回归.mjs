@@ -37,7 +37,8 @@ const {
   catalogIsCollapsed,
   RUNCODE_MUTATION_HINTS,
   codeMutationHints,
-  runCodeDenyReason,
+  decomposeRunCode,
+  runCodeGroupDenyReason,
   deriveFlowState,
   plannerChildIdsOf,
   toolCallCount,
@@ -92,15 +93,15 @@ function check(name, got, expected) {
   console.log(`${okResult ? 'PASS' : 'FAIL'}  ${name}  (期望 ${JSON.stringify(expected)}, 实际 ${JSON.stringify(got)})`)
 }
 
-// ── K 系列:ask 分类与参数解析 ───────────────────────────────────────────
-const K = [
+// ── KA 系列:ask 分类与参数解析（v4 更名：原 K 系列让位于子代理角色组判定 K 系列；断言内容逐字不变） ──
+const KA = [
   ['K1 路由 ask(含直行+规划词) → route', { name: 'ask_user_question', callId: 'k1', arguments: routeArgs }, 'route'],
   ['K2 批准 ask(含同意执行) → approve', { name: 'ask_user_question', callId: 'k2', arguments: approvalArgs }, 'approve'],
   ['K3 澄清 ask(自由选项) → clarify', { name: 'ask_user_question', callId: 'k3', arguments: clarifyArgs }, 'clarify'],
   ['K4 参数无法解析 → null(跳过)', { name: 'ask_user_question', callId: 'k4', arguments: 'not-json' }, null],
   ['K5 无 questions 字段 → null', { name: 'ask_user_question', callId: 'k5', arguments: '{}' }, null],
 ]
-for (const [name, data, expected] of K) {
+for (const [name, data, expected] of KA) {
   const labels = labelsOfCallData(data)
   check(name, labels === null ? null : askKindOf(labels), expected)
 }
@@ -632,20 +633,67 @@ for (const [name, code, expected] of H) {
   check(name, codeMutationHints(code), expected)
 }
 
-// ── I 系列:runCodeDenyReason 主会话分支（F7' 终版修订:内容扫描/模拟审核） ─────
-const mainAgentFx = { session: { header: { id: 'main-1' }, snapshotEvents: () => [] } }
+// ── I 系列:runCodeGroupDenyReason 主会话组判定（F7' v4:拆解 → 组判定 → 聚合） ──
 const readOnlyCodeFx = "await readFileSync('x', 'utf8')"
 const writeCodeFx = "await writeFileSync('x', '1')"
 const noneStateFx = { route: 'none', clarified: false, approved: false, channelBroken: false }
 const planStateFx = { route: 'plan', clarified: true, approved: false, channelBroken: false }
+const approvedStateFx = { route: 'plan', clarified: true, approved: true, channelBroken: false }
+const mainGroupReason = (state, code) => runCodeGroupDenyReason(state, { arguments: { code } }, { kind: 'main' }, {})
 const I = [
   ['I1 主会话 none+纯只读 → 放行(null)', readOnlyCodeFx, noneStateFx, null],
-  ['I2 主会话 none+含写 → routeDenyReason(write/edit) 逐字一致', writeCodeFx, noneStateFx, routeDenyReason('write/edit', { route: 'none' })],
-  ['I3 主会话 plan+含写 → routeDenyReason(write/edit) 逐字一致（含「规划态下主会话不可写文件」）', writeCodeFx, planStateFx, routeDenyReason('write/edit', { route: 'plan' })],
+  ['I2 主会话 none+裸写 → 聚合含 routeDenyReason(write/edit,{route:none}) 全文', writeCodeFx, noneStateFx, [routeDenyReason('write/edit', { route: 'none' })]],
+  ['I3 主会话 plan+裸写 → 聚合含 routeDenyReason(write/edit,{route:plan}) 全文（含「规划态下主会话不可写文件」）', writeCodeFx, planStateFx, [routeDenyReason('write/edit', { route: 'plan' })]],
+  ['I4 主会话 approved+纯只读 → 放行(null)（v4:组空全过，ptc 死锁解除）', readOnlyCodeFx, approvedStateFx, null],
+  ['I5 主会话 approved+裸写 → 聚合含「方案已批准，执行请走 subagent 委派」', writeCodeFx, approvedStateFx, ['方案已批准，执行请走 subagent 委派']],
+  ['I6 主会话 approved+tools.subagent(run_in_background:true) → 放行(null)', "await tools.subagent({ task: 'x', run_in_background: true })", approvedStateFx, null],
+  ['I7 主会话 none+裸写+subagent_plan → 聚合同时含两条子文案', "await writeFileSync('x', '1'); await tools.subagent_plan({ task: '规划', run_in_background: true })", noneStateFx, [routeDenyReason('write/edit', { route: 'none' }), planDenyReason('subagent_plan', { route: 'none' })]],
 ]
 for (const [name, code, state, expected] of I) {
-  check(name, runCodeDenyReason(mainAgentFx, { arguments: { code } }, state, false), expected)
+  const got = mainGroupReason(state, code)
+  const okResult = expected === null ? got === null : typeof got === 'string' && expected.every((s) => got.includes(s))
+  if (okResult) { pass += 1 } else { fail += 1 }
+  console.log(`${okResult ? 'PASS' : 'FAIL'}  ${name}  (期望 ${JSON.stringify(expected)}, 实际 ${JSON.stringify(got)})`)
 }
 
-console.log(`\n通过 ${pass}/${K.length + M.length + F.length + GK.length + GM.length + F21.length + GL.length + P.length + C.length + CU.length + AP.length + BN.length + 2 + BR.length + DR.length + BD.length + BE.length + S.length + 1 + PW.length + 2 + D.length + 3 + 3 + PR.length + 7 + 5 + E.length + RP.length + LQ.length + AS.length + FC.length + PC.length + CC.length + CUCODE.length + CLC.length + H.length + I.length}, 失败 ${fail}`)
+// ── J 系列:decomposeRunCode 拆解器（F7' v4 静态预审，返回 {members,dynamic} 全文） ──
+const J = [
+  ['J1 单工具 await 提取（JSON 参数可解析）', "await tools.read({ \"file_path\": \"x\" })", { members: [{ kind: 'tool', name: 'read', argsParsed: true, args: { file_path: 'x' }, argsText: '{ "file_path": "x" }' }], dynamic: false }],
+  ['J2 多工具+多行嵌套参数', "await tools.read({ \"file_path\": \"x\" })\nawait tools.glob({ \"pattern\": \"**/*.md\" })", { members: [{ kind: 'tool', name: 'read', argsParsed: true, args: { file_path: 'x' }, argsText: '{ "file_path": "x" }' }, { kind: 'tool', name: 'glob', argsParsed: true, args: { pattern: '**/*.md' }, argsText: '{ "pattern": "**/*.md" }' }], dynamic: false }],
+  ['J3 参数内括号字符串不干扰配平（单引号参数不可解析但 innerText 完整）', "await tools.read({ path: 'a)(' })", { members: [{ kind: 'tool', name: 'read', argsParsed: false, args: null, argsText: "{ path: 'a)(' }" }], dynamic: false }],
+  ['J4 字符串内 tools.read 不提取', "const s = 'tools.read({ file_path: 1 })'", { members: [], dynamic: false }],
+  ['J5 注释内 tools.write 不提取', "// tools.write({})\nreadFileSync('x')", { members: [], dynamic: false }],
+  ['J6 同名同参去重→1 项', "tools.read({ \"file_path\": \"x\" }); tools.read({ \"file_path\": \"x\" })", { members: [{ kind: 'tool', name: 'read', argsParsed: true, args: { file_path: 'x' }, argsText: '{ "file_path": "x" }' }], dynamic: false }],
+  ['J7 同名不同参保留→2 项', "tools.read({ \"file_path\": \"x\" }); tools.read({ \"file_path\": \"y\" })", { members: [{ kind: 'tool', name: 'read', argsParsed: true, args: { file_path: 'x' }, argsText: '{ "file_path": "x" }' }, { kind: 'tool', name: 'read', argsParsed: true, args: { file_path: 'y' }, argsText: '{ "file_path": "y" }' }], dynamic: false }],
+  ['J8 参数不可解析（变量）→argsParsed:false', 'tools.read(args)', { members: [{ kind: 'tool', name: 'read', argsParsed: false, args: null, argsText: 'args' }], dynamic: false }],
+  ['J9 裸写 writeFileSync→{kind:bare-write,name:write,hints:[fs-write]}', "await writeFileSync('x', '1')", { members: [{ kind: 'bare-write', name: 'write', hints: ['fs-write'] }], dynamic: false }],
+  ['J10 工具+裸写同现→2 项且裸写排末尾', "tools.read({ \"file_path\": \"x\" }); writeFileSync('x', '1')", { members: [{ kind: 'tool', name: 'read', argsParsed: true, args: { file_path: 'x' }, argsText: '{ "file_path": "x" }' }, { kind: 'bare-write', name: 'write', hints: ['fs-write'] }], dynamic: false }],
+  ['J11 tools[\'write\'] 字面量方括号→静态名 write', "await tools['write']({ \"file_path\": \"x\", \"content\": \"1\" })", { members: [{ kind: 'tool', name: 'write', argsParsed: true, args: { file_path: 'x', content: '1' }, argsText: '{ "file_path": "x", "content": "1" }' }], dynamic: false }],
+  ['J12 tools[name](...)→members=[] 且 dynamic=true', "const name = 'read'; tools[name]({ file_path: 'x' })", { members: [], dynamic: true }],
+  ['J13 空 code→{members:[],dynamic:false}', '', { members: [], dynamic: false }],
+  ['J14 纯只读裸代码→空组', "await readFileSync('x', 'utf8')", { members: [], dynamic: false }],
+]
+for (const [name, code, expected] of J) {
+  check(name, decomposeRunCode(code), expected)
+}
+
+// ── K 系列:子代理角色组判定（F7' v4;role = {kind:'planner'}/{kind:'child',readOnly,probe}） ──
+const K = [
+  ['K1 planner+裸写 → 聚合含「只读角色仅允许只读探查」与「命中」', { kind: 'planner' }, writeCodeFx, ['只读角色仅允许只读探查', '命中']],
+  ['K2 planner+tools.write → 聚合含「规划子代理只读」', { kind: 'planner' }, "await tools.write({ file_path: 'x', content: '1' })", ['规划子代理只读']],
+  ['K3 planner+纯只读 → 放行(null)', { kind: 'planner' }, readOnlyCodeFx, null],
+  ['K4 child-probe+裸写 → 聚合含「只读角色仅允许只读探查」', { kind: 'child', readOnly: true, probe: true }, writeCodeFx, ['只读角色仅允许只读探查']],
+  ['K5 child-probe+tools.write → 聚合含「探查者只读」', { kind: 'child', readOnly: true, probe: true }, "await tools.write({ file_path: 'x', content: '1' })", ['探查者只读']],
+  ['K6 child-reviewer+tools.write → 聚合含「验收复核者只读」', { kind: 'child', readOnly: true, probe: false }, "await tools.write({ file_path: 'x', content: '1' })", ['验收复核者只读']],
+  ['K7 执行者+裸写 → 放行(null)', { kind: 'child', readOnly: false, probe: false }, writeCodeFx, null],
+  ['K8 执行者+tools.write → 放行(null)', { kind: 'child', readOnly: false, probe: false }, "await tools.write({ file_path: 'x', content: '1' })", null],
+]
+for (const [name, role, code, expected] of K) {
+  const got = runCodeGroupDenyReason(undefined, { arguments: { code } }, role, {})
+  const okResult = expected === null ? got === null : typeof got === 'string' && expected.every((s) => got.includes(s))
+  if (okResult) { pass += 1 } else { fail += 1 }
+  console.log(`${okResult ? 'PASS' : 'FAIL'}  ${name}  (期望 ${JSON.stringify(expected)}, 实际 ${JSON.stringify(got)})`)
+}
+
+console.log(`\n通过 ${pass}/${KA.length + M.length + F.length + GK.length + GM.length + F21.length + GL.length + P.length + C.length + CU.length + AP.length + BN.length + 2 + BR.length + DR.length + BD.length + BE.length + S.length + 1 + PW.length + 2 + D.length + 3 + 3 + PR.length + 7 + 5 + E.length + RP.length + LQ.length + AS.length + FC.length + PC.length + CC.length + CUCODE.length + CLC.length + H.length + I.length + J.length + K.length}, 失败 ${fail}`)
 process.exit(fail === 0 ? 0 : 1)

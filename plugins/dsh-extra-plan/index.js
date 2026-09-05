@@ -1192,35 +1192,496 @@ async function resolveProbeRequestInjection(agent, agents, resolved) {
   return nextConfig
 }
 
-// F7' run_code 统一审查纯函数：返回 null=放行，非 null=deny reason。
-// - 主会话（终版：内容扫描/模拟审核，按角色=普通流程等价判定）：
-//   escape（channelBroken）放行；route='direct' 放行；approved=true 拒（文案不变）；
-//   none/plan → 静态扫描 code：无写模式命中（纯只读、嵌套 ask/subagent_plan/
-//   subagent_probe/save_probe 等工具调用）→ 放行（ptc 死锁解除）；含写模式 → 拒且
-//   文案与直呼 write/edit 完全一致（routeDenyReason('write/edit', state) 复用，
-//   plan 态天然产出「规划态下主会话不可写文件」、none 态天然产出「路由未确认」，
-//   不新造文案）。嵌套工具调用不命中扫描黑名单 → 外壳放行、不重复拦，由嵌套
-//   调用自身的 pre-execute 瀑布按各工具闸门判定（文案与直呼一致，F1 桥接已生效）。
-// - 子代理：readonlyChild=true（planner/probe/reviewer）静态扫描 code，含写拒、纯只读放行；
-//   readonlyChild=false（执行者/缓存未命中）放行。
-function runCodeDenyReason(agent, exec, state, readonlyChild) {
-  const hits = codeMutationHints(runCodeTextOf(exec))
-  if (!isSubagentChild(agent)) {
-    const escape = state !== null && state !== undefined && state.channelBroken === true
-    if (escape) return null
-    if (state.route === 'direct') return null
-    if (state.approved === true) {
-      return '方案已批准，执行请走 subagent 委派执行者。run_code 按 write 同级：主会话直做须在路由确认「直接执行」后'
+// ── F7' v4：run_code 拆解器 + 闸门纯函数抽取 + 组判定/聚合（单一真源） ──
+// 说明（重构原则）：listener 各分段的纯粹判定部分抽取为模块顶层纯函数；普通工具
+// 路径（native/both 直呼）与组判定成员路径调用「同一函数」，文案字面量唯一出处，
+// 杜绝复制漂移。所有闭包依赖（exploreBudget、planToolName、jobOutputCallCounters、
+// probe）改为参数/ctx 传入。抽函数内分支顺序与改前 listener 逐字同序。
+
+// 遮蔽代码中的字符串字面量（'...'/"..."/`...`）与注释（//、/* */）为等长空格
+// （保留换行/回车），消除字符串/注释内 tools.xxx 或裸写词的误提取；遮蔽后无引号，
+// 后续括号配平不受字符串内括号干扰（未闭合字符串/注释保守遮蔽至末尾）。
+function maskCodeLiteralsAndComments(code) {
+  const text = typeof code === 'string' ? code : ''
+  const chars = text.split('')
+  const n = chars.length
+  let i = 0
+  while (i < n) {
+    const ch = chars[i]
+    if (ch === "'" || ch === '"' || ch === '`') {
+      const quote = ch
+      let j = i + 1
+      while (j < n) {
+        if (chars[j] === '\\') { j += 2; continue }
+        if (chars[j] === quote) break
+        j += 1
+      }
+      const end = j < n ? j : n - 1
+      for (let k = i; k <= end; k += 1) { if (chars[k] !== '\n' && chars[k] !== '\r') chars[k] = ' ' }
+      i = j < n ? j + 1 : n
+      continue
     }
-    if (hits.length > 0) {
-      return routeDenyReason('write/edit', state)
+    if (ch === '/' && i + 1 < n && chars[i + 1] === '/') {
+      let j = i
+      while (j < n && chars[j] !== '\n') j += 1
+      for (let k = i; k < j; k += 1) { if (chars[k] !== '\n' && chars[k] !== '\r') chars[k] = ' ' }
+      i = j
+      continue
+    }
+    if (ch === '/' && i + 1 < n && chars[i + 1] === '*') {
+      let j = i + 2
+      while (j + 1 < n && !(chars[j] === '*' && chars[j + 1] === '/')) j += 1
+      const end = j + 1 < n ? j + 1 : n - 1
+      for (let k = i; k <= end; k += 1) { if (chars[k] !== '\n' && chars[k] !== '\r') chars[k] = ' ' }
+      i = j + 2
+      continue
+    }
+    i += 1
+  }
+  return chars.join('')
+}
+
+// 从 '（' 起括号配平（计数 ( ) [ ] { }，遮蔽后无字符串干扰）取参数切片：
+// 在遮蔽文本上配平，innerText 取原文本（JSON.parse 需要原始字面量）。
+// 返回 { closeIdx（配平闭括号索引，未闭合取文本末尾）, innerText }。
+function sliceBalancedArgs(maskedText, text, parenIdx) {
+  let depth = 0
+  let i = parenIdx
+  while (i < maskedText.length) {
+    const ch = maskedText[i]
+    if (ch === '(') depth += 1
+    else if (ch === ')') { depth -= 1; if (depth === 0) break }
+    else if (ch === '[') depth += 1
+    else if (ch === ']') depth -= 1
+    else if (ch === '{') depth += 1
+    else if (ch === '}') depth -= 1
+    i += 1
+  }
+  const closeIdx = i < maskedText.length ? i : text.length - 1
+  const innerText = text.slice(parenIdx + 1, i < maskedText.length ? i : text.length)
+  return { closeIdx, innerText }
+}
+
+// 拆解 run_code 的 code 文本为工具组（静态预审用）。返回 { members, dynamic }：
+// members = 去重后的组员数组（按出现顺序；裸写伪成员固定排末尾）；
+// dynamic = 是否出现静态不可解析的动态工具访问（tools[var] 等）——不计入组，运行时瀑布兜底。
+// 组员形状：
+//   { kind:'tool', name, argsParsed:boolean, args:object|null, argsText:string }（参数不可解析时 argsParsed:false）
+//   { kind:'bare-write', name:'write', hints:string[] }（裸写伪工具）
+// 边界与兜底（写入注释，运行时瀑布兜底）：动态访问 tools[var]/运行时拼名、参数不可解析、
+// 嵌套 run_code 深度超限、eval/Function 动态代码——静态不可解析时不产生成员 → 组判定放行
+// → 运行时嵌套调用自身进入 tools/pre-execute 瀑布按直呼闸门拦截（文案同源），安全方向。
+function decomposeRunCode(code) {
+  const text = typeof code === 'string' ? code : ''
+  const members = []
+  let dynamic = false
+  if (text === '') return { members, dynamic }
+  const masked = maskCodeLiteralsAndComments(text)
+  const n = text.length
+  const occupied = new Array(n).fill(false)
+  const seen = new Set()
+  const addMember = (member) => {
+    // 去重键 = name + '\u0001' + (argsParsed ? JSON.stringify(args) : '#raw:' + argsText)。
+    // 设计理由：闸门判定结果完全由 name+arguments 决定（参数依赖检查：run_in_background/
+    // wait/sandbox_permissions/agent_id/command/questions）；同名同参重复调用判定恒同 →
+    // 合并去重，避免重复报错行；同名不同参必须各自判定（如 subagent_probe 带/不带
+    // run_in_background）；不可解析参数同名合并（参数依赖检查被跳过，判定结果与具体
+    // 参数无关）。已注明边界：JSON.stringify 依赖键序，键序不同但语义相同的字面量
+    // 视为不同成员（各自判定，安全方向）。
+    const key = member.kind === 'bare-write'
+      ? 'bare-write\u0001' + member.hints.join('\u0001')
+      : member.name + '\u0001' + (member.argsParsed ? JSON.stringify(member.args) : '#raw:' + member.argsText)
+    if (seen.has(key)) return
+    seen.add(key)
+    members.push(member)
+  }
+  const markRange = (start, end) => {
+    for (let k = start; k <= end && k < occupied.length; k += 1) occupied[k] = true
+  }
+  const isIdChar = (ch) => ch !== undefined && /[A-Za-z0-9_$]/.test(ch)
+  let i = 0
+  while (i < n) {
+    const ch = text[i]
+    // ① 跳过字符串字面量与注释（遮蔽版 masked 已把对应位置留空格；扫描须在原序列
+    //    上跳过起始符，避免把字符串/注释内的 tools.xxx 当调用提取）
+    if (ch === "'" || ch === '"' || ch === '`') {
+      const quote = ch
+      let j = i + 1
+      while (j < n) {
+        if (text[j] === '\\') { j += 2; continue }
+        if (text[j] === quote) break
+        j += 1
+      }
+      i = j < n ? j + 1 : n
+      continue
+    }
+    if (ch === '/' && i + 1 < n && text[i + 1] === '/') {
+      while (i < n && text[i] !== '\n') i += 1
+      continue
+    }
+    if (ch === '/' && i + 1 < n && text[i + 1] === '*') {
+      const end = text.indexOf('*/', i + 2)
+      i = end === -1 ? n : end + 2
+      continue
+    }
+    // ② 提取工具调用（含 await 前缀无关；支持 tools.xxx(...) 与 tools['xxx'](...)/
+    //    tools["xxx"](...) 字面量方括号）；③ tools[ 的非字面量方括号访问
+    //    （如 tools[var]、tools[`x`]）→ dynamic = true，不产生成员。
+    if (text.startsWith('tools', i) && !(i > 0 && isIdChar(text[i - 1]))) {
+      let j = i + 5
+      while (j < n && /\s/.test(text[j])) j += 1
+      let name
+      let parenIdx = -1
+      if (text[j] === '.') {
+        j += 1
+        while (j < n && /\s/.test(text[j])) j += 1
+        const m = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(text.slice(j))
+        if (m !== null) {
+          name = m[0]
+          let k = j + name.length
+          while (k < n && /\s/.test(text[k])) k += 1
+          if (text[k] === '(') parenIdx = k
+        }
+      } else if (text[j] === '[') {
+        j += 1
+        while (j < n && /\s/.test(text[j])) j += 1
+        const q = text[j]
+        if (q === "'" || q === '"') {
+          let k = j + 1
+          while (k < n && text[k] !== q) { if (text[k] === '\\') k += 1; k += 1 }
+          const lit = text.slice(j + 1, k)
+          if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(lit) && k < n) {
+            k += 1
+            while (k < n && /\s/.test(text[k])) k += 1
+            if (text[k] === ']') {
+              k += 1
+              while (k < n && /\s/.test(text[k])) k += 1
+              if (text[k] === '(') { name = lit; parenIdx = k }
+            }
+          }
+          // 字面量名非法或形态不符 → 静态不可解析
+          if (name === undefined) dynamic = true
+        } else {
+          // tools[var] / tools[`x`] / tools[expr] → 动态访问
+          dynamic = true
+        }
+      }
+      if (name !== undefined && parenIdx !== -1) {
+        // 自 '(' 起括号配平（遮蔽后无字符串干扰），取参数原文 innerText
+        const bal = sliceBalancedArgs(masked, text, parenIdx)
+        const innerText = bal.innerText.trim()
+        // ④ 参数解析：JSON.parse(innerText) 成功且为对象 → argsParsed=true；
+        //    否则 argsParsed=false、argsText=innerText（标记「参数不可解析」）。
+        let argsParsed = false
+        let args = null
+        if (innerText !== '') {
+          try {
+            const parsed = JSON.parse(innerText)
+            if (parsed !== null && typeof parsed === 'object') { args = parsed; argsParsed = true }
+          } catch (error) { /* 非 JSON：参数不可解析 */ }
+        }
+        addMember({ kind: 'tool', name, argsParsed, args: argsParsed ? args : null, argsText: innerText })
+        markRange(i, bal.closeIdx)
+        i = bal.closeIdx + 1
+        continue
+      }
+    }
+    i += 1
+  }
+  // ⑥ 裸写扫描：对遮蔽后文本中已提取工具调用区间之外的剩余片段跑 codeMutationHints
+  //    （复用 RUNCODE_MUTATION_HINTS）→ hits 非空 → 追加一个 { kind:'bare-write',
+  //    name:'write', hints:hits } 成员（排末尾；多个裸写命中合并为一个）。
+  //    与 v2 差异说明：v2 对全文本扫描（含嵌套工具调用参数字符串内的裸写词）；v4 屏蔽
+  //    工具调用区间后再扫，杜绝「tools.write({ content: "writeFileSync(...)" }) 的参
+  //    数字符串被误判为裸写」，属精确化改进；不影响 R35/R36/R40（它们用裸 writeFileSync
+  //    直写，仍命中）。
+  const restChars = masked.split('')
+  for (let k = 0; k < occupied.length; k += 1) { if (occupied[k]) restChars[k] = ' ' }
+  const hints = codeMutationHints(restChars.join(''))
+  if (hints.length > 0) addMember({ kind: 'bare-write', name: 'write', hints })
+  return { members, dynamic }
+}
+
+// ① subagent_probe 分支（现 L2236-2248 纯部分）：run_in_background 检查 + planner 预算检查。
+// 参数不可解析（组判定 vExec 传字符串）时跳过 run_in_background 检查（运行时瀑布兜底）。
+function subagentProbeGateReason(exec, isPlanner, events, exploreBudget) {
+  const args = exec !== undefined && exec !== null ? exec.arguments : undefined
+  if (args !== undefined && args !== null && typeof args === 'object' && args.run_in_background !== true) {
+    return '探查者必须后台运行：请显式传 run_in_background: true（one-shot 一次性会话，返回 jobId 后用 job_output 收集结果）'
+  }
+  if (isPlanner && !FREE_TOOLS.has(exec.name)) {
+    const used = toolCallsSinceUser(events !== undefined ? events : [], FREE_TOOLS)
+    if (budgetExceeded(used, exploreBudget)) {
+      return budgetExhaustedReason(Math.min(used - 1, exploreBudget), exploreBudget)
+    }
+  }
+  return null
+}
+
+// ② planner 分支（现 L2249-2264 纯部分）：write/edit → pwsh → bash → 预算；不含 run_code（由调用方处理）。
+function plannerGateReason(exec, events, exploreBudget) {
+  if (exec.name === 'write' || exec.name === 'edit') {
+    return '规划子代理只读：方案经 save_plan 落盘，其余写入一律禁止（toolFilter 之外的第二道防线）'
+  }
+  if (exec.name === 'pwsh' && pwshMutationMatches(exec)) {
+    return '规划子代理只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件'
+  }
+  if (exec.name === 'bash' && bashMutationMatches(exec)) {
+    return '规划子代理只读：bash 仅限只读探查命令，禁止创建/修改/删除文件'
+  }
+  if (!FREE_TOOLS.has(exec.name)) {
+    const used = toolCallsSinceUser(events !== undefined ? events : [], FREE_TOOLS)
+    if (budgetExceeded(used, exploreBudget)) {
+      return budgetExhaustedReason(Math.min(used - 1, exploreBudget), exploreBudget)
+    }
+  }
+  return null
+}
+
+// ③ child 只读块（现 L2274-2289 纯部分）：write/edit → pwsh → bash；probe 布尔选文案；不含 run_code。
+function childReadonlyGateReason(exec, probe) {
+  if (exec.name === 'write' || exec.name === 'edit') {
+    return probe ? '探查者只读：探查不修改任何文件，write/edit 一律禁止（工具目录判定）' : '验收复核者只读：验收复核不修改任何文件，write/edit 一律禁止（工具目录判定）'
+  }
+  if (exec.name === 'pwsh' && pwshMutationMatches(exec)) {
+    return probe ? '探查者只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件' : '验收复核者只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件'
+  }
+  if (exec.name === 'bash' && bashMutationMatches(exec)) {
+    return probe ? '探查者只读：bash 仅限只读探查命令，禁止创建/修改/删除文件' : '验收复核者只读：bash 仅限只读探查命令，禁止创建/修改/删除文件'
+  }
+  return null
+}
+
+// ④ 主会话段（现 L2293-2430 纯部分，分支顺序逐字同序）：
+//    ask → write/edit → cordis 6 只读 → cordis_run → pwsh/bash → planToolName
+//    → save_probe → subagent 族 → send_message → run_code（调 runCodeGroupDenyReason，depth+1）
+//    → job_output（wait 检查 + 计数器查重，只读不写入；set 由 listener 放行路径执行）→ null。
+//    gateCtx: { events, planToolName, jobOutputCallCounters, runCodeDepth }。
+function mainGateReason(state, exec, gateCtx) {
+  const ctx = gateCtx !== undefined && gateCtx !== null ? gateCtx : {}
+  const events = ctx.events !== undefined && ctx.events !== null ? ctx.events : []
+  const planToolName = typeof ctx.planToolName === 'string' && ctx.planToolName !== '' ? ctx.planToolName : 'subagent_plan'
+  state = state !== undefined && state !== null ? state : { route: 'none', clarified: false, approved: false, channelBroken: false }
+  const escape = state.channelBroken === true
+  const name = exec !== undefined && exec !== null && typeof exec.name === 'string' ? exec.name : ''
+  if (name === ASK_TOOL) {
+    const labels = labelsOfCallData(exec)
+    if (labels !== null) {
+      const category = categorizeGateAsk(labels)
+      if (category === 'malformed') {
+        const denyMsg = gateAskDenyReason(labels)
+        // 同时检查结构错误，合并为一条报错，一次性告知模型两个问题
+        const kind = askKindOfRelaxed(labels) === 'approve' ? 'approve' : 'route'
+        // kind 按特异性判定（复用 askKindOfRelaxed 语义）：批准特异词→approve；路由特异词或仅共享「不同意」→route
+        const args = exec.arguments
+        const questions = args !== undefined && args !== null && typeof args === 'object' ? args.questions : undefined
+        const structErr = validateGateAskStructure(kind, questions)
+        if (structErr !== null) {
+          return `${denyMsg.replace(/请按标准模板重提$/, '')}同时，${structErr} 请一并修正后重提。`
+        }
+        return denyMsg
+      }
+      if (category === 'standard') {
+        const kind = isExactGateSet(labels, ROUTE_GATE_SET) ? 'route' : 'approve'
+        const args = exec.arguments
+        const questions = args !== undefined && args !== null && typeof args === 'object' ? args.questions : undefined
+        const structErr = validateGateAskStructure(kind, questions)
+        if (structErr !== null) return structErr
+      }
+      // 'ordinary' → 放行；'standard' 结构校验通过 → 放行
     }
     return null
   }
-  if (readonlyChild === true && hits.length > 0) {
-    return `只读角色仅允许只读探查：run_code 代码命中写模式特征 ${hits.length} 处（${hits.slice(0, 3).join('、')}${hits.length > 3 ? ' 等' : ''}）。请改用 read/glob/grep 或 shell 只读命令`
+  if (name === 'write' || name === 'edit') {
+    if (!escape && state.route !== 'direct' && state.approved !== true) {
+      return routeDenyReason('write/edit', state)
+    }
+    // 新增：approved 态下，主会话不得自己动手改工作区内文件
+    if (!escape && state.approved === true && state.route !== 'direct') {
+      return '方案已批准，执行请走 subagent 委派 flash 执行者（读方案/验收文件执行）。主会话直做仅限越界操作（工作区外写入，走 shell（Windows 用 pwsh、Linux/macOS 用 bash）+ sandbox_permissions）'
+    }
+    return null
+  }
+  // cordis（官方创造模式工具集，只读引用）：6 个只读/暂存工具任意路由状态放行
+  // （inspect_* 只读；define 只存源码+语法校验不执行；stop/undefine 无对象可操作）；
+  // cordis_run 是唯一执行口（模型 JS 求值+挂载临时插件，纯内存、会话级、重启即失）
+  // ——与 write/edit 同规则：路由未确认拒绝，批准/直行放行。执行者/规划/验收/探查
+  // 子代理侧由 agent.cordis.yml 的 toolFilter.deny 禁 cordis_run（其余 cordis 放行）。
+  if (name === 'cordis_inspect_list' || name === 'cordis_inspect_query' || name === 'cordis_inspect_self' || name === 'cordis_define' || name === 'cordis_stop' || name === 'cordis_undefine') {
+    return null
+  }
+  if (name === 'cordis_run') {
+    if (!escape && state.route !== 'direct' && state.approved !== true) {
+      return `路由未确认：cordis_run。cordis 只读/暂存工具（cordis_inspect_*、cordis_define、cordis_stop、cordis_undefine）可随时使用；cordis_run 会在会话内执行模型 JS 并挂载临时插件，${ROUTE_CONFIRM_TEXT}，用户批准后才可动手`
+    }
+    return null
+  }
+  const isPwshMutation = name === 'pwsh' && pwshMutationMatches(exec)
+  const isBashMutation = name === 'bash' && bashMutationMatches(exec)
+  if (isPwshMutation || isBashMutation) {
+    const shellLabel = isBashMutation ? 'bash' : 'pwsh'
+    if (!escape && state.route !== 'direct' && state.approved !== true) {
+      return routeDenyReason(shellLabel, state)
+    }
+    // 新增：approved 态下，shell 写命令需区分工作区内/越界（pwsh 与 bash 同口径）
+    if (!escape && state.approved === true && state.route !== 'direct') {
+      const args = exec.arguments
+      const hasEscalation = args !== undefined && args !== null && typeof args === 'object' && typeof args.sandbox_permissions === 'string'
+      if (!hasEscalation) {
+        return '方案已批准，工作区内写入请走 subagent 委派执行者。越界操作（工作区外写入）请带 sandbox_permissions 参数（如 sandbox_permissions: "workspace-write"）与 justification 重试'
+      }
+    }
+    return null
+  }
+  if (name === planToolName) {
+    if (!escape && (state.route !== 'plan' || state.clarified !== true)) {
+      return planDenyReason('subagent_plan', state)
+    }
+    // 新增：continuable 默认后台，传 false 是试图前台等待绕开续轮
+    const args = exec.arguments
+    if (args !== undefined && args !== null && typeof args === 'object' && args.run_in_background === false) {
+      return '规划子代理不可前台等待：run_in_background 参数不得传 false（continuable 固定后台运行）。请移除 run_in_background: false 或省略该参数'
+    }
+    return null
+  }
+  if (name === 'save_probe') {
+    if (!escape && (state.route !== 'plan' || state.clarified !== true)) {
+      return planDenyReason('save_probe', state)
+    }
+    return null
+  }
+  if (name === 'subagent' || name === 'subagent_fork' || name === 'workflow' || name === 'ralph' || name === 'subagent_review') {
+    if (!escape && state.approved !== true) {
+      return approvalDenyReason(name, state)
+    }
+    // 新增：one-shot 默认前台，需模型显式传 true 走后台 job
+    if (name === 'subagent' || name === 'subagent_review') {
+      const args = exec.arguments
+      if (args !== undefined && args !== null && typeof args === 'object' && args.run_in_background !== true) {
+        return '执行者/reviewer 必须后台运行：请显式传 run_in_background: true（one-shot 一次性会话，返回 jobId 后用 job_output 收集结果）'
+      }
+    }
+    return null
+  }
+  if (name === 'send_message') {
+    // 参数不可解析（组判定 vExec 传字符串）时跳过目标检查（运行时瀑布兜底）
+    const args = exec.arguments
+    if (args !== undefined && args !== null && typeof args === 'object') {
+      const target = typeof args.agent_id === 'string' ? args.agent_id : ''
+      const plannerIds = plannerChildIdsOf(events)
+      if (!escape && !plannerIds.includes(target)) {
+        return 'send_message 未放行：目标子代理为 one-shot 一次性会话，不可续轮；仅 continuable 规划子代理可接收 send_message 续轮转达'
+      }
+    }
+    return null
+  }
+  if (name === 'run_code') {
+    return runCodeGroupDenyReason(state, exec, { kind: 'main' }, { events, planToolName, jobOutputCallCounters: ctx.jobOutputCallCounters, runCodeDepth: (typeof ctx.runCodeDepth === 'number' ? ctx.runCodeDepth : 0) + 1 })
+  }
+  if (name === 'job_output') {
+    const args = exec.arguments
+    // 闸门 1：禁止 wait: true 前台等待（参数不可解析时跳过，运行时瀑布兜底）
+    if (args !== undefined && args !== null && typeof args === 'object' && args.wait === true) {
+      return 'job_output 禁止带 wait: true 前台等待。请省略 wait 参数或设 wait: false，job 完成后会收到通知'
+    }
+    // 闸门 2：禁止同一 jobId 连续调用（防轮询）——内存计数器替代 events 推导。
+    // 只读查重（写入由 listener 放行路径执行，时序等价）；组判定成员无会话上下文时
+    // 跳过（运行时瀑布兜底）。
+    if (args !== undefined && args !== null && typeof args === 'object' && typeof args.job_id === 'string') {
+      const execAgent = exec !== undefined && exec !== null ? exec.agent : undefined
+      const header = execAgent !== undefined && execAgent !== null && execAgent.session !== undefined && execAgent.session !== null ? execAgent.session.header : undefined
+      const sessId = header !== undefined && header !== null ? header.id : undefined
+      const counters = ctx.jobOutputCallCounters
+      if (typeof sessId === 'string' && counters !== undefined && counters !== null) {
+        const perSession = counters.get(sessId)
+        if (perSession !== undefined && perSession !== null && perSession.has(args.job_id)) {
+          return `job_output 禁止对同一 job 重复调用。job "${args.job_id}" 在本轮已调用过，请等待通知或使用 job_list 查看状态`
+        }
+      }
+    }
+    return null
   }
   return null
+}
+
+// 组判定：run_code 拆解 → 逐成员走「与直呼完全相同的闸门」→ 聚合拒绝。
+// state：主会话 flow state（role.kind==='main' 时必传；其它角色忽略）；缺省归一化为
+// { route:'none', clarified:false, approved:false, channelBroken:false }。
+// role：{ kind:'main' } | { kind:'planner' } | { kind:'child', readOnly:boolean, probe:boolean }。
+// gateCtx 缺省：{ events:[], planToolName:'subagent_plan', jobOutputCallCounters:new Map(),
+// exploreBudget:18, runCodeDepth:0 }。
+// 返回 null=放行；非 null=聚合拒绝文案。
+function runCodeGroupDenyReason(state, exec, role, gateCtx) {
+  const ctx = {
+    events: [],
+    planToolName: 'subagent_plan',
+    jobOutputCallCounters: new Map(),
+    exploreBudget: 18,
+    runCodeDepth: 0,
+    ...(gateCtx !== undefined && gateCtx !== null ? gateCtx : {}),
+  }
+  const st = state !== undefined && state !== null
+    ? state
+    : { route: 'none', clarified: false, approved: false, channelBroken: false }
+  const r = role !== undefined && role !== null && typeof role === 'object' && typeof role.kind === 'string' ? role : { kind: 'main' }
+  const roleKind = r.kind
+  const members = []
+  const denies = []
+  const visit = (codeArg, depth) => {
+    const decomposed = decomposeRunCode(codeArg)
+    for (const member of decomposed.members) {
+      // 嵌套 run_code 成员展平：depth>=1 或参数不可解析 → 跳过（运行时瀑布兜底）；
+      // 否则递归拆解 member.args.code 并原位展平（子成员按 role 继续判定）。
+      if (member.name === 'run_code' && member.kind === 'tool') {
+        if (depth >= 1 || !member.argsParsed || member.args === null || typeof member.args.code !== 'string') continue
+        visit(member.args.code, depth + 1)
+        continue
+      }
+      members.push(member)
+      const vExec = member.kind === 'bare-write'
+        ? { name: 'write', bare: true, hints: member.hints, arguments: {} }
+        : { name: member.name, arguments: member.argsParsed ? member.args : member.argsText }
+      let reason = null
+      if (member.name === 'subagent_probe') {
+        reason = subagentProbeGateReason(vExec, roleKind === 'planner', ctx.events !== undefined ? ctx.events : [], ctx.exploreBudget)
+      } else if (member.kind === 'bare-write') {
+        // 裸写成员按角色分流：只读角色保留 v2 共享文案（hits 拼写与现 L1221 逐字同构）；
+        // 主会话走 write/edit 闸门（routeDenyReason 与 approved 文案）；
+        // 执行者（child 非只读）豁免。
+        if (roleKind === 'planner' || (roleKind === 'child' && r.readOnly === true)) {
+          const h = member.hints
+          reason = `只读角色仅允许只读探查：run_code 代码命中写模式特征 ${h.length} 处（${h.slice(0, 3).join('、')}${h.length > 3 ? ' 等' : ''}）。请改用 read/glob/grep 或 shell 只读命令`
+        } else if (roleKind === 'main') {
+          reason = mainGateReason(st, vExec, ctx)
+        } // 执行者豁免：reason 保持 null
+      } else if (roleKind === 'planner') {
+        reason = plannerGateReason(vExec, ctx.events !== undefined ? ctx.events : [], ctx.exploreBudget)
+      } else if (roleKind === 'child') {
+        reason = r.readOnly === true ? childReadonlyGateReason(vExec, r.probe === true) : null
+      } else {
+        reason = mainGateReason(st, vExec, ctx)
+      }
+      if (reason !== null) denies.push({ member, reason })
+    }
+  }
+  visit(runCodeTextOf(exec), ctx.runCodeDepth)
+  if (denies.length === 0) return null
+  return aggregateRunCodeDenyReason(members, denies)
+}
+
+// 聚合报错（统一格式，任何一次组判定拒绝均用此格式；子文案逐字不变）：
+// header 一行（组规模 + 触发明细计数 + 「全通过才放行」语义）+ 逐行 `- <标签>: <子文案>`；
+// 标签规则：普通成员=工具名；裸写=`write（裸写特征：<hints 顿号连接>）`；
+// 参数不可解析=`<工具名>（参数不可解析）`；行序=组员顺序（展平后）；子文案来自闸门函数原返回值。
+function aggregateRunCodeDenyReason(members, denies) {
+  const lines = [`run_code 拆解预审未通过：工具组共 ${members.length} 项（去重后），${denies.length} 项触发闸门，任一触发即整体拒绝：`]
+  for (const d of denies) {
+    let label = d.member.name
+    if (d.member.kind === 'bare-write') label = `write（裸写特征：${d.member.hints.join('、')}）`
+    else if (!d.member.argsParsed) label = `${d.member.name}（参数不可解析）`
+    lines.push(`- ${label}: ${d.reason}`)
+  }
+  return lines.join('\n')
 }
 
 // 供场景测试直接复用（消除"复制品"漂移）。模块顶层无副作用，纯 Node 可 import。
@@ -1289,7 +1750,13 @@ export const decisions = {
   extractProbeEvidenceRefs,
   RUNCODE_MUTATION_HINTS,
   codeMutationHints,
-  runCodeDenyReason,
+  decomposeRunCode,
+  runCodeGroupDenyReason,
+  subagentProbeGateReason,
+  plannerGateReason,
+  childReadonlyGateReason,
+  mainGateReason,
+  aggregateRunCodeDenyReason,
   resolveProbeRequestInjection,
 }
 
@@ -2234,198 +2701,49 @@ export function apply(ctx, config) {
     // 置于 planner/child 判定之前：planner 委派 subagent_probe 时同样记录放行
     // （否则探查子会话 isProbeChild 查直接父=planner 无法命中，模型回落为直接父）。
     if (exec.name === 'subagent_probe') {
-      if (exec.arguments.run_in_background !== true) {
-        return { kind: 'deny', reason: '探查者必须后台运行：请显式传 run_in_background: true（one-shot 一次性会话，返回 jobId 后用 job_output 收集结果）' }
-      }
-      if (planner && !FREE_TOOLS.has(exec.name)) {
-        const used = toolCallsSinceUser(sessionEvents(agent.session), FREE_TOOLS)
-        if (budgetExceeded(used, exploreBudget)) {
-          return { kind: 'deny', reason: budgetExhaustedReason(Math.min(used - 1, exploreBudget), exploreBudget) }
-        }
-      }
+      const reason = subagentProbeGateReason(exec, planner, sessionEvents(agent.session), exploreBudget)
+      if (reason !== null) return { kind: 'deny', reason }
       probeParents.add(agent.session.header.id)
       return next()
     }
     if (planner) {
-      if (exec.name === 'write' || exec.name === 'edit') {
-        return { kind: 'deny', reason: '规划子代理只读：方案经 save_plan 落盘，其余写入一律禁止（toolFilter 之外的第二道防线）' }
-      }
-      if (exec.name === 'pwsh' && pwshMutationMatches(exec)) {
-        return { kind: 'deny', reason: '规划子代理只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件' }
-      }
-      if (exec.name === 'bash' && bashMutationMatches(exec)) {
-        return { kind: 'deny', reason: '规划子代理只读：bash 仅限只读探查命令，禁止创建/修改/删除文件' }
-      }
-      if (!FREE_TOOLS.has(exec.name)) {
-        const used = toolCallsSinceUser(sessionEvents(agent.session), FREE_TOOLS)
-        if (budgetExceeded(used, exploreBudget)) {
-          return { kind: 'deny', reason: budgetExhaustedReason(Math.min(used - 1, exploreBudget), exploreBudget) }
-        }
-      }
+      const reason = plannerGateReason(exec, sessionEvents(agent.session), exploreBudget)
+      if (reason !== null) return { kind: 'deny', reason }
       if (exec.name === 'run_code') {
-        const reason = runCodeDenyReason(agent, exec, undefined, true)
-        if (reason !== null) return { kind: 'deny', reason }
+        const runReason = runCodeGroupDenyReason(undefined, exec, { kind: 'planner' }, { events: sessionEvents(agent.session), exploreBudget })
+        if (runReason !== null) return { kind: 'deny', reason: runReason }
       }
       return next()
     }
     if (child) {
       // 只读子代理（reviewer/probe，目录判定命中缓存）：write/edit 与 pwsh/bash 写命令
       // 一律拒绝；文案按 isProbeChild 区分（probe 走「探查者只读」，reviewer 文案逐字保持）。
+      // 注：此段到达时 planner 必已 return（planner 段在前），`!planner` 条件可省略（保留原状）。
       if (!planner && readOnlyChildren.has(agent)) {
         const probe = isProbeChild(agent)
-        if (exec.name === 'write' || exec.name === 'edit') {
-          return { kind: 'deny', reason: probe ? '探查者只读：探查不修改任何文件，write/edit 一律禁止（工具目录判定）' : '验收复核者只读：验收复核不修改任何文件，write/edit 一律禁止（工具目录判定）' }
-        }
-        if (exec.name === 'pwsh' && pwshMutationMatches(exec)) {
-          return { kind: 'deny', reason: probe ? '探查者只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件' : '验收复核者只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件' }
-        }
-        if (exec.name === 'bash' && bashMutationMatches(exec)) {
-          return { kind: 'deny', reason: probe ? '探查者只读：bash 仅限只读探查命令，禁止创建/修改/删除文件' : '验收复核者只读：bash 仅限只读探查命令，禁止创建/修改/删除文件' }
-        }
+        const reason = childReadonlyGateReason(exec, probe)
+        if (reason !== null) return { kind: 'deny', reason }
         if (exec.name === 'run_code') {
-          const reason = runCodeDenyReason(agent, exec, undefined, true)
-          if (reason !== null) return { kind: 'deny', reason }
+          const runReason = runCodeGroupDenyReason(undefined, exec, { kind: 'child', readOnly: true, probe }, {})
+          if (runReason !== null) return { kind: 'deny', reason: runReason }
         }
       }
       return next() // 执行者子代理豁免（目录含 write/edit，缓存未命中）
     }
 
     const state = deriveFlowState(sessionEvents(agent.session))
-    const escape = state.channelBroken === true
-    const name = exec.name
-    if (name === ASK_TOOL) {
-      const labels = labelsOfCallData(exec)
-      if (labels !== null) {
-        const category = categorizeGateAsk(labels)
-        if (category === 'malformed') {
-          const denyMsg = gateAskDenyReason(labels)
-          // 同时检查结构错误，合并为一条报错，一次性告知模型两个问题
-          const kind = askKindOfRelaxed(labels) === 'approve' ? 'approve' : 'route'
-          // kind 按特异性判定（复用 askKindOfRelaxed 语义）：批准特异词→approve；路由特异词或仅共享「不同意」→route
-          const args = exec.arguments
-          const questions = args !== undefined && args !== null && typeof args === 'object' ? args.questions : undefined
-          const structErr = validateGateAskStructure(kind, questions)
-          if (structErr !== null) {
-            return { kind: 'deny', reason: `${denyMsg.replace(/请按标准模板重提$/, '')}同时，${structErr} 请一并修正后重提。` }
-          }
-          return { kind: 'deny', reason: denyMsg }
-        }
-        if (category === 'standard') {
-          const kind = isExactGateSet(labels, ROUTE_GATE_SET) ? 'route' : 'approve'
-          const args = exec.arguments
-          const questions = args !== undefined && args !== null && typeof args === 'object' ? args.questions : undefined
-          const structErr = validateGateAskStructure(kind, questions)
-          if (structErr !== null) return { kind: 'deny', reason: structErr }
-        }
-        // 'ordinary' → 放行；'standard' 结构校验通过 → 放行
-      }
-      return next()
-    }
-    if (name === 'write' || name === 'edit') {
-      if (!escape && state.route !== 'direct' && state.approved !== true) {
-        return { kind: 'deny', reason: routeDenyReason('write/edit', state) }
-      }
-      // 新增：approved 态下，主会话不得自己动手改工作区内文件
-      if (!escape && state.approved === true && state.route !== 'direct') {
-        return { kind: 'deny', reason: '方案已批准，执行请走 subagent 委派 flash 执行者（读方案/验收文件执行）。主会话直做仅限越界操作（工作区外写入，走 shell（Windows 用 pwsh、Linux/macOS 用 bash）+ sandbox_permissions）' }
-      }
-      return next()
-    }
-    // cordis（官方创造模式工具集，只读引用）：6 个只读/暂存工具任意路由状态放行
-    // （inspect_* 只读；define 只存源码+语法校验不执行；stop/undefine 无对象可操作）；
-    // cordis_run 是唯一执行口（模型 JS 求值+挂载临时插件，纯内存、会话级、重启即失）
-    // ——与 write/edit 同规则：路由未确认拒绝，批准/直行放行。执行者/规划/验收/探查
-    // 子代理侧由 agent.cordis.yml 的 toolFilter.deny 禁 cordis_run（其余 cordis 放行）。
-    if (name === 'cordis_inspect_list' || name === 'cordis_inspect_query' || name === 'cordis_inspect_self' || name === 'cordis_define' || name === 'cordis_stop' || name === 'cordis_undefine') {
-      return next()
-    }
-    if (name === 'cordis_run') {
-      if (!escape && state.route !== 'direct' && state.approved !== true) {
-        return { kind: 'deny', reason: `路由未确认：cordis_run。cordis 只读/暂存工具（cordis_inspect_*、cordis_define、cordis_stop、cordis_undefine）可随时使用；cordis_run 会在会话内执行模型 JS 并挂载临时插件，${ROUTE_CONFIRM_TEXT}，用户批准后才可动手` }
-      }
-      return next()
-    }
-    const isPwshMutation = name === 'pwsh' && pwshMutationMatches(exec)
-    const isBashMutation = name === 'bash' && bashMutationMatches(exec)
-    if (isPwshMutation || isBashMutation) {
-      const shellLabel = isBashMutation ? 'bash' : 'pwsh'
-      if (!escape && state.route !== 'direct' && state.approved !== true) {
-        return { kind: 'deny', reason: routeDenyReason(shellLabel, state) }
-      }
-      // 新增：approved 态下，shell 写命令需区分工作区内/越界（pwsh 与 bash 同口径）
-      if (!escape && state.approved === true && state.route !== 'direct') {
-        const args = exec.arguments
-        const hasEscalation = args !== undefined && args !== null && typeof args === 'object' && typeof args.sandbox_permissions === 'string'
-        if (!hasEscalation) {
-          return { kind: 'deny', reason: '方案已批准，工作区内写入请走 subagent 委派执行者。越界操作（工作区外写入）请带 sandbox_permissions 参数（如 sandbox_permissions: "workspace-write"）与 justification 重试' }
-        }
-      }
-      return next()
-    }
-    if (name === planToolName) {
-      if (!escape && (state.route !== 'plan' || state.clarified !== true)) {
-        return { kind: 'deny', reason: planDenyReason('subagent_plan', state) }
-      }
-      // 新增：continuable 默认后台，传 false 是试图前台等待绕开续轮
-      if (exec.arguments.run_in_background === false) {
-        return { kind: 'deny', reason: '规划子代理不可前台等待：run_in_background 参数不得传 false（continuable 固定后台运行）。请移除 run_in_background: false 或省略该参数' }
-      }
-      return next()
-    }
-    if (name === 'save_probe') {
-      if (!escape && (state.route !== 'plan' || state.clarified !== true)) {
-        return { kind: 'deny', reason: planDenyReason('save_probe', state) }
-      }
-      return next()
-    }
-    if (name === 'subagent' || name === 'subagent_fork' || name === 'workflow' || name === 'ralph' || name === 'subagent_review') {
-      if (!escape && state.approved !== true) {
-        return { kind: 'deny', reason: approvalDenyReason(name, state) }
-      }
-      // 新增：one-shot 默认前台，需模型显式传 true 走后台 job
-      if (name === 'subagent' || name === 'subagent_review') {
-        if (exec.arguments.run_in_background !== true) {
-          return { kind: 'deny', reason: '执行者/reviewer 必须后台运行：请显式传 run_in_background: true（one-shot 一次性会话，返回 jobId 后用 job_output 收集结果）' }
-        }
-      }
-      return next()
-    }
-    if (name === 'send_message') {
+    const reason = mainGateReason(state, exec, { events: sessionEvents(agent.session), planToolName, jobOutputCallCounters, runCodeDepth: 0 })
+    if (reason !== null) return { kind: 'deny', reason }
+    // 放行副作用：job_output 计数器记录（原 L2414-2427 的 set 部分，仅在放行时执行，时序等价）
+    if (exec.name === 'job_output') {
       const args = exec.arguments
-      const target = args !== undefined && args !== null && typeof args === 'object'
-        ? (typeof args.agent_id === 'string' ? args.agent_id : '')
-        : ''
-      const plannerIds = plannerChildIdsOf(sessionEvents(agent.session))
-      if (!escape && !plannerIds.includes(target)) {
-        return { kind: 'deny', reason: 'send_message 未放行：目标子代理为 one-shot 一次性会话，不可续轮；仅 continuable 规划子代理可接收 send_message 续轮转达' }
-      }
-      return next()
-    }
-    if (exec.name === 'run_code') {
-      const reason = runCodeDenyReason(agent, exec, state, false)
-      if (reason !== null) return { kind: 'deny', reason }
-    }
-    if (name === 'job_output') {
-      const args = exec.arguments
-      // 闸门 1：禁止 wait: true 前台等待
-      if (args !== undefined && args !== null && typeof args === 'object' && args.wait === true) {
-        return { kind: 'deny', reason: 'job_output 禁止带 wait: true 前台等待。请省略 wait 参数或设 wait: false，job 完成后会收到通知' }
-      }
-      // 闸门 2：禁止同一 jobId 连续调用（防轮询）——内存计数器替代 events 推导
       const jobId = args !== undefined && args !== null && typeof args === 'object' ? args.job_id : undefined
       if (typeof jobId === 'string') {
         const sessId = agent.session.header.id
         let perSession = jobOutputCallCounters.get(sessId)
-        if (perSession === undefined) {
-          perSession = new Map()
-          jobOutputCallCounters.set(sessId, perSession)
-        }
-        if (perSession.has(jobId)) {
-          return { kind: 'deny', reason: `job_output 禁止对同一 job 重复调用。job "${jobId}" 在本轮已调用过，请等待通知或使用 job_list 查看状态` }
-        }
+        if (perSession === undefined) { perSession = new Map(); jobOutputCallCounters.set(sessId, perSession) }
         perSession.set(jobId, 1)
       }
-      return next()
     }
     return next()
   })
