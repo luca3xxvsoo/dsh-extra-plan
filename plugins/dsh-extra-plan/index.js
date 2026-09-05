@@ -678,23 +678,49 @@ function plannerChildIdsOf(events) {
   return ids
 }
 
-// 会话内 tool/call 计数（排除 skipNames，如 save_plan/report/send_message）——探查硬上限判据。
+// 会话内 tool/call 成功配对计数（排除 skipNames，如 save_plan/report/send_message）——探查硬上限判据。
+// 成功配对口径（修复A）：直呼 = tool/call + tool/result(ok) 配对计（data.error undefined/null +
+// message.content 内 tool-result 的 toolCallId 命中）；嵌套 = code-dispatch-start +
+// code-dispatch(非 isError) 配对计（subCallId 命中）。被 pre-execute 拒的调用无成功配对，不计。
 function toolCallCount(events, skipNames) {
   if (!Array.isArray(events)) return 0
+  const okCalls = new Set()
+  const okDispatches = new Set()
+  for (const e of events) {
+    if (e === null || typeof e !== 'object') continue
+    if (e.type === 'tool/result') {
+      const d = e.data
+      if (d === null || typeof d !== 'object') continue
+      if (d.error !== undefined && d.error !== null) continue
+      const message = d.message
+      if (message === null || typeof message !== 'object' || !Array.isArray(message.content)) continue
+      for (const outer of message.content) {
+        if (outer !== null && typeof outer === 'object' && outer.type === 'tool-result' && typeof outer.toolCallId === 'string') okCalls.add(outer.toolCallId)
+      }
+      continue
+    }
+    if (e.type === 'tool/code-dispatch') {
+      const d = e.data
+      if (d === null || typeof d !== 'object') continue
+      if (d.isError === true) continue
+      if (typeof d.subCallId === 'string') okDispatches.add(d.subCallId)
+    }
+  }
   let count = 0
   for (const e of events) {
-    if (e !== null && typeof e === 'object' && e.type === 'tool/code-dispatch-start') {
+    if (e === null || typeof e !== 'object') continue
+    if (e.type === 'tool/code-dispatch-start') {
       const d = e.data
       if (d === null || typeof d !== 'object' || typeof d.name !== 'string') continue
       if (skipNames !== undefined && skipNames.has(d.name)) continue
-      count += 1
+      if (typeof d.subCallId === 'string' && okDispatches.has(d.subCallId)) count += 1
       continue
     }
-    if (e === null || typeof e !== 'object' || e.type !== 'tool/call') continue
+    if (e.type !== 'tool/call') continue
     const d = e.data
     if (d === null || typeof d !== 'object' || typeof d.name !== 'string') continue
     if (skipNames !== undefined && skipNames.has(d.name)) continue
-    count += 1
+    if (typeof d.callId === 'string' && okCalls.has(d.callId)) count += 1
   }
   return count
 }
@@ -1411,8 +1437,8 @@ function subagentProbeGateReason(exec, isPlanner, events, exploreBudget) {
   }
   if (isPlanner && !FREE_TOOLS.has(exec.name)) {
     const used = toolCallsSinceUser(events !== undefined ? events : [], FREE_TOOLS)
-    if (budgetExceeded(used, exploreBudget)) {
-      return budgetExhaustedReason(Math.min(used - 1, exploreBudget), exploreBudget)
+    if (budgetExceeded(used + 1, exploreBudget)) {
+      return budgetExhaustedReason(Math.min(used, exploreBudget), exploreBudget)
     }
   }
   return null
@@ -1431,8 +1457,8 @@ function plannerGateReason(exec, events, exploreBudget) {
   }
   if (!FREE_TOOLS.has(exec.name)) {
     const used = toolCallsSinceUser(events !== undefined ? events : [], FREE_TOOLS)
-    if (budgetExceeded(used, exploreBudget)) {
-      return budgetExhaustedReason(Math.min(used - 1, exploreBudget), exploreBudget)
+    if (budgetExceeded(used + 1, exploreBudget)) {
+      return budgetExhaustedReason(Math.min(used, exploreBudget), exploreBudget)
     }
   }
   return null
@@ -2707,10 +2733,15 @@ export function apply(ctx, config) {
       return next()
     }
     if (planner) {
-      const reason = plannerGateReason(exec, sessionEvents(agent.session), exploreBudget)
+      const plannerEvents = sessionEvents(agent.session)
+      let reason = plannerGateReason(exec, plannerEvents, exploreBudget)
+      // 修复B：预算耗尽时 run_code 放行进组判定（收尾豁免）——
+      // plannerGateReason 对 run_code 仅可能因预算耗尽返回非 null（run_code 非 write/edit/pwsh/bash），
+      // 组判定内 FREE_TOOLS 成员放行、非豁免成员按预算拒绝（同源文案含「探查预算已耗尽」）。
+      if (exec.name === 'run_code' && reason !== null) reason = null
       if (reason !== null) return { kind: 'deny', reason }
       if (exec.name === 'run_code') {
-        const runReason = runCodeGroupDenyReason(undefined, exec, { kind: 'planner' }, { events: sessionEvents(agent.session), exploreBudget })
+        const runReason = runCodeGroupDenyReason(undefined, exec, { kind: 'planner' }, { events: plannerEvents, exploreBudget })
         if (runReason !== null) return { kind: 'deny', reason: runReason }
       }
       return next()

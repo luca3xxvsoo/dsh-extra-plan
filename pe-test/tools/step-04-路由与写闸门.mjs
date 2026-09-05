@@ -331,5 +331,88 @@ checkTrue('R50 主会话 none 态 run_code（read 去重×2+subagent_probe(run_i
 r = preExecute(harness, noneMain, 'run_code', { code: "await tools.write({ file_path: 'x', content: '1' })", description: '显式 write' })
 checkTrue('R51 主会话 none 态 run_code（code 含显式 tools.write）→ deny 且聚合含「路由未确认：write/edit」（显式 write 成员与裸写同文案）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认：write/edit'))
 
+// ── ⑩ R52-R84：全闸门补测（预算修复与测试缺口 2026-09-05） ─────────────
+// 预算耗尽场景：18 组成功配对 = 已用 18/18（修复A 成功配对口径；修复B 收尾豁免）。
+const budgetEvents = [DESC, ...Array.from({ length: 18 }, (_, i) => [callE('read', 'b' + i), okE('b' + i, 'ok')]).flat()]
+const budgetPlanner = {
+  session: { header: { id: 'planner-budget', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => budgetEvents },
+  options: { model: 'deepseek-v4-pro' },
+  ctx: undefined,
+}
+const planChildMain = mainWithEvents([umE(), callE('subagent_plan', 'p1', '{}'), okE('p1', '已启动规划子代理 3a7c1e5b-9d2f-4e8a-b6c4-1f0e9d8c7b6a，可 send_message 继续')])
+const freeCode = { code: "await tools.save_plan({ plan: 'p', checklist: 'c' }); await tools.send_message({ agent_id: 'parent', message: '收尾' })", description: 'FREE_TOOLS 组' }
+const readMemberCode = { code: "await tools.read({ file_path: 'x' })", description: '读成员' }
+const smCode = { code: 'await tools.send_message({ "agent_id": "session-x", "message": "hi" })', description: 'send_message 成员' }
+const joCode = { code: 'await tools.job_output({ "job_id": "j1", "wait": true })', description: 'job_output 成员' }
+const revCode = { code: "await tools.subagent_review({ task: '验收', run_in_background: true })", description: 'subagent_review 成员' }
+
+r = preExecute(harness, noneMain, 'subagent_review', {})
+checkTrue('R52 subagent_review 无批准 → deny 且含「执行类委派未放行：subagent_review」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('执行类委派未放行：subagent_review'))
+r = preExecute(harness, approvedMain, 'subagent_review', { run_in_background: true })
+checkTrue('R53 subagent_review 批准放行 → allow', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, approvedMain, 'subagent_review', {})
+checkTrue('R54 subagent_review 缺后台 → deny 且含「执行者/reviewer 必须后台运行」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('执行者/reviewer 必须后台运行'))
+r = preExecute(harness, noneMain, 'subagent_fork', {})
+checkTrue('R55 subagent_fork 无批准 → deny 且含「执行类委派未放行：subagent_fork」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('执行类委派未放行：subagent_fork'))
+r = preExecute(harness, noneMain, 'workflow', {})
+checkTrue('R56 workflow 无批准 → deny 且含「执行类委派未放行：workflow」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('执行类委派未放行：workflow'))
+r = preExecute(harness, noneMain, 'ralph', {})
+checkTrue('R57 ralph 无批准 → deny 且含「执行类委派未放行：ralph」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('执行类委派未放行：ralph'))
+r = preExecute(harness, approvedMain, 'subagent_fork', {})
+checkTrue('R58 subagent_fork 批准放行 → allow', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, approvedMain, 'workflow', {})
+checkTrue('R59 workflow 批准放行 → allow', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, approvedMain, 'ralph', {})
+checkTrue('R60 ralph 批准放行 → allow', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, noneMain, 'send_message', { agent_id: 'session-x', message: 'hi' })
+checkTrue('R61 send_message 非 planner 目标 → deny 且含「send_message 未放行」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('send_message 未放行'))
+r = preExecute(harness, planChildMain, 'send_message', { agent_id: '3a7c1e5b-9d2f-4e8a-b6c4-1f0e9d8c7b6a', message: 'hi' })
+checkTrue('R62 send_message planner 目标 → allow', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, mainAgent, 'job_output', { job_id: 'j1', wait: true })
+checkTrue('R63 job_output wait → deny 且含「job_output 禁止带 wait: true」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止带 wait: true'))
+r = preExecute(harness, mainAgent, 'job_output', { job_id: 'j1' })
+checkTrue('R64 job_output 正常 → allow（并 set 计数器，供 R65 查重）', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, mainAgent, 'job_output', { job_id: 'j1' })
+checkTrue('R65 job_output 同 job 重复 → deny 且含「job_output 禁止对同一 job 重复调用」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止对同一 job 重复调用'))
+r = preExecute(harness, mainAgent, 'job_output', { job_id: 'j2' })
+checkTrue('R66 job_output 不同 job → allow', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, noneMain, 'cordis_run', {})
+checkTrue('R67 cordis_run 未确认 → deny 且含「路由未确认：cordis_run」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认：cordis_run'))
+r = preExecute(harness, approvedMain, 'cordis_run', {})
+checkTrue('R68 cordis_run 批准放行 → allow', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, noneMain, 'save_probe', { fileMap: [], focusAreas: [], exclusions: [], background: [] })
+checkTrue('R69 save_probe 主会话 none 态 → deny 且含「子代理未放行：save_probe」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('子代理未放行：save_probe'))
+r = preExecute(harness, planMain, 'save_probe', { fileMap: [], focusAreas: [], exclusions: [], background: [] })
+checkTrue('R70 save_probe 主会话 plan 态 → allow', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, budgetPlanner, 'read', {})
+checkTrue('R71 planner 预算耗尽 listener 层 → deny 且含「探查预算已耗尽（本轮已用 18/18）」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('探查预算已耗尽（本轮已用 18/18）'))
+r = preExecute(harness, budgetPlanner, 'run_code', freeCode)
+checkTrue('R72 planner 预算耗尽 FREE_TOOLS 组 → allow（修复B 收尾豁免）', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, budgetPlanner, 'run_code', readMemberCode)
+checkTrue('R73 planner 预算耗尽非豁免组 → deny 且含「探查预算已耗尽（本轮已用 18/18）」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('探查预算已耗尽（本轮已用 18/18）'))
+r = preExecute(harness, plannerAgent, 'pwsh', { command: 'New-Item x.txt' })
+checkTrue('R74 planner pwsh 写 → deny 且「规划子代理只读：pwsh 仅限只读探查命令」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划子代理只读：pwsh 仅限只读探查命令'))
+r = preExecute(harness, plannerAgent, 'bash', { command: 'rm -rf x' })
+checkTrue('R75 planner bash 写 → deny 且「规划子代理只读：bash 仅限只读探查命令」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划子代理只读：bash 仅限只读探查命令'))
+r = preExecute(harness, probeAgent, 'bash', { command: 'rm -rf x' })
+checkTrue('R76 probe bash 写 → deny 且「探查者只读：bash 仅限只读探查命令」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('探查者只读：bash 仅限只读探查命令'))
+r = preExecute(harness, plannerAgent, 'send_message', { agent_id: 'parent', message: 'hi' })
+checkTrue('R77 planner send_message → allow（FREE_TOOLS 豁免）', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, probeAgent, 'send_message', { agent_id: 'parent', message: 'hi' })
+checkTrue('R78 probe send_message → allow（child 分支不拦）', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, planMain, 'subagent_plan', { run_in_background: false })
+checkTrue('R79 subagent_plan 前台参数 → deny 且含「规划子代理不可前台等待」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划子代理不可前台等待'))
+r = preExecute(harness, noneMain, 'cordis_inspect_query', {})
+checkTrue('R80 cordis 只读族 → allow', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, noneMain, 'run_code', smCode)
+checkTrue('R81 组内 send_message 成员 → deny 且含「send_message 未放行」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('send_message 未放行'))
+r = preExecute(harness, approvedMain, 'run_code', revCode)
+checkTrue('R82 组内 subagent_review 成员（批准+后台）→ allow', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, noneMain, 'run_code', joCode)
+checkTrue('R83 组内 job_output wait 成员 → deny 且含「job_output 禁止带 wait: true」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止带 wait: true'))
+r = preExecute(harness, noneMain, 'run_code', revCode)
+checkTrue('R84 组内 subagent_review 成员无批准 → deny 且含「执行类委派未放行：subagent_review」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('执行类委派未放行：subagent_review'))
+
+
 console.log(`\n通过 ${pass}, 失败 ${fail}`)
 process.exit(fail === 0 ? 0 : 1)

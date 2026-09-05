@@ -227,9 +227,12 @@ for (const [name, events, expected] of P) {
 
 // ── C 系列:toolCallCount(探查硬上限) ───────────────────────────────────
 const C = [
-  ['C1 计数所有工具调用', [call('read', 'c1'), call('glob', 'c2'), call('pwsh', 'c3'), call('save_plan', 'c4')], new Set([]), 4],
-  ['C2 跳过 save_plan', [call('read', 'c1'), call('glob', 'c2'), call('save_plan', 'c4')], new Set(['save_plan']), 2],
+  ['C1 成功配对计数（skip 空）', [call('read', 'c1'), ok('c1', 'r'), call('glob', 'c2'), ok('c2', 'r'), call('pwsh', 'c3'), ok('c3', 'r'), call('save_plan', 'c4'), ok('c4', 'r')], new Set([]), 4],
+  ['C2 skip save_plan', [call('read', 'c1'), ok('c1', 'r'), call('glob', 'c2'), ok('c2', 'r'), call('pwsh', 'c3'), ok('c3', 'r'), call('save_plan', 'c4'), ok('c4', 'r')], new Set(['save_plan']), 3],
   ['C3 无事件 → 0', [], new Set([]), 0],
+  ['C4 call 无 ok 配对不计', [call('read', 'c1'), call('glob', 'c2')], new Set([]), 0],
+  ['C5 err 结果不计', [call('read', 'c1'), err('c1', 'GATED'), call('glob', 'c2'), ok('c2', 'r')], new Set([]), 1],
+  ['C6 skip 命中且成功配对也不计', [call('save_plan', 'c1'), ok('c1', 'r')], new Set(['save_plan']), 0],
 ]
 for (const [name, events, skip, expected] of C) {
   check(name, toolCallCount(events, skip), expected)
@@ -238,14 +241,15 @@ for (const [name, events, skip, expected] of C) {
 // ── CU 系列:toolCallsSinceUser(主会话转达锚点计数,v0.1.4) ─────────────
 const umk = (kind) => ({ type: 'user/message', data: { source: { kind } } })
 const CU = [
-  ['CU1 无用户消息 → 与全量计数同口径', [call('read', 'c1'), call('glob', 'c2')], new Set([]), 2],
-  ['CU2 kind=user 锚点(初始任务) → 只计其后', [call('read', 'a1'), umk('user'), call('glob', 'b1'), call('pwsh', 'b2')], new Set([]), 2],
-  ['CU3 kind=agent-message 锚点(续轮转达) → 重置只计其后', [umk('user'), call('read', 'a1'), umk('agent-message'), call('glob', 'b1')], new Set([]), 1],
-  ['CU4 kind=plugin(运行时快照) → 不构成锚点', [umk('user'), call('read', 'a1'), umk('plugin'), call('glob', 'b1')], new Set([]), 2],
-  ['CU5 多个 agent-message → 最后一个为锚', [umk('user'), call('read', 'a1'), umk('agent-message'), call('glob', 'b1'), umk('agent-message'), call('pwsh', 'c1')], new Set([]), 1],
-  ['CU6 锚点后 save_plan 跳过仍生效', [umk('user'), call('read', 'a1'), call('save_plan', 's1'), call('glob', 'b1')], new Set(['save_plan']), 2],
-  ['CU7 锚点后无调用 → 0(授权即重置)', [umk('user'), call('read', 'a1'), umk('agent-message')], new Set([]), 0],
-  ['CU8 kind=agent-instructions(系统指令) → 不构成锚点', [umk('user'), call('read', 'a1'), umk('agent-instructions'), call('glob', 'b1')], new Set([]), 2],
+  ['CU1 无用户消息 → 与全量计数同口径', [call('read', 'c1'), ok('c1', 'r'), call('glob', 'c2'), ok('c2', 'r')], new Set([]), 2],
+  ['CU2 kind=user 锚点(初始任务) → 只计其后', [call('read', 'a1'), ok('a1', 'r'), umk('user'), call('glob', 'b1'), ok('b1', 'r'), call('pwsh', 'b2'), ok('b2', 'r')], new Set([]), 2],
+  ['CU3 kind=agent-message 锚点(续轮转达) → 重置只计其后', [umk('user'), call('read', 'a1'), ok('a1', 'r'), umk('agent-message'), call('glob', 'b1'), ok('b1', 'r')], new Set([]), 1],
+  ['CU4 kind=plugin(运行时快照) → 不构成锚点', [umk('user'), call('read', 'a1'), ok('a1', 'r'), umk('plugin'), call('glob', 'b1'), ok('b1', 'r')], new Set([]), 2],
+  ['CU5 多个 agent-message → 最后一个为锚', [umk('user'), call('read', 'a1'), ok('a1', 'r'), umk('agent-message'), call('glob', 'b1'), ok('b1', 'r'), umk('agent-message'), call('pwsh', 'c1'), ok('c1', 'r')], new Set([]), 1],
+  ['CU6 锚点后 save_plan 跳过仍生效', [umk('user'), call('read', 'a1'), ok('a1', 'r'), call('save_plan', 's1'), ok('s1', 'r'), call('glob', 'b1'), ok('b1', 'r')], new Set(['save_plan']), 2],
+  ['CU7 锚点后无调用 → 0(授权即重置)', [umk('user'), call('read', 'a1'), ok('a1', 'r'), umk('agent-message')], new Set([]), 0],
+  ['CU8 kind=agent-instructions(系统指令) → 不构成锚点', [umk('user'), call('read', 'a1'), ok('a1', 'r'), umk('agent-instructions'), call('glob', 'b1'), ok('b1', 'r')], new Set([]), 2],
+  ['CU9 被拒不烧预算', [umk('user'), call('read', 'a1'), err('a1', 'GATED'), call('write', 'w1'), err('w1', 'GATED')], new Set([]), 0],
 ]
 for (const [name, events, skip, expected] of CU) {
   check(name, toolCallsSinceUser(events, skip), expected)
@@ -588,18 +592,20 @@ for (const [name, events, expected] of PC) {
 
 // ── C-code/CU-code 系列:toolCallCount / toolCallsSinceUser 计入嵌套调用（F2 桥接） ──
 const CC = [
-  ['CC1 单 cdStart 计 1', [cdStart('read', 'n1', {})], new Set([]), 1],
-  ['CC2 tool/call×2+cdStart×2 → 4', [call('read', 'c1'), call('glob', 'c2'), cdStart('pwsh', 'n1', {}), cdStart('read', 'n2', {})], new Set([]), 4],
-  ['CC3 skipNames 含 save_plan → 嵌套 save_plan 排除', [cdStart('save_plan', 'n1', {}), cdStart('read', 'n2', {})], new Set(['save_plan']), 1],
-  ['CC4 嵌套 skipNames 白名单不含 → 仍计 1', [cdStart('send_message', 'n1', {}), cdStart('report', 'n2', {}), cdStart('read', 'n3', {})], new Set(['save_plan', 'send_message', 'report']), 1],
+  ['CC1 单 cdStart 计 1', [cdStart('read', 'n1', {}), cdEnd('n1', 'ok')], new Set([]), 1],
+  ['CC2 tool/call×2+cdStart×2 → 4', [call('read', 'c1'), ok('c1', 'r'), call('glob', 'c2'), ok('c2', 'r'), cdStart('pwsh', 'n1', {}), cdEnd('n1', 'ok'), cdStart('read', 'n2', {}), cdEnd('n2', 'ok')], new Set([]), 4],
+  ['CC3 skipNames 含 save_plan → 嵌套 save_plan 排除', [cdStart('save_plan', 'n1', {}), cdEnd('n1', 'ok'), cdStart('read', 'n2', {}), cdEnd('n2', 'ok')], new Set(['save_plan']), 1],
+  ['CC4 嵌套 skipNames 白名单不含 → 仍计 1', [cdStart('send_message', 'n1', {}), cdEnd('n1', 'ok'), cdStart('report', 'n2', {}), cdEnd('n2', 'ok'), cdStart('read', 'n3', {}), cdEnd('n3', 'ok')], new Set(['save_plan', 'send_message', 'report']), 1],
+  ['CC5 dispatch isError 不计', [cdStart('read', 'n1', {}), cdEnd('n1', 'x', true)], new Set([]), 0],
+  ['CC6 start 无 dispatch 不计', [cdStart('read', 'n1', {})], new Set([]), 0],
 ]
 for (const [name, events, skip, expected] of CC) {
   check(name, toolCallCount(events, skip), expected)
 }
 
 const CUCODE = [
-  ['CUC1 kind=user 锚点后嵌套计数', [umk('user'), cdStart('read', 'n1', {}), cdStart('glob', 'n2', {})], new Set([]), 2],
-  ['CUC2 锚点后直呼+嵌套混合计数', [umk('user'), call('read', 'a1'), cdStart('pwsh', 'n1', {})], new Set([]), 2],
+  ['CUC1 kind=user 锚点后嵌套计数', [umk('user'), cdStart('read', 'n1', {}), cdEnd('n1', 'ok'), cdStart('glob', 'n2', {}), cdEnd('n2', 'ok')], new Set([]), 2],
+  ['CUC2 锚点后直呼+嵌套混合计数', [umk('user'), call('read', 'a1'), ok('a1', 'r'), cdStart('pwsh', 'n1', {}), cdEnd('n1', 'ok')], new Set([]), 2],
 ]
 for (const [name, events, skip, expected] of CUCODE) {
   check(name, toolCallsSinceUser(events, skip), expected)
