@@ -327,7 +327,7 @@ for (const [name, got, expected] of BE) check(name, got, expected)
 const S = [
   ['S1 路径穿越被净化', sanitizeTaskName('../x'), 'x'],
   ['S2 空格冒号折为连字符', sanitizeTaskName('A B:测试'), 'A-B-测试'],
-  ['S3 超长截断 32', sanitizeTaskName('a'.repeat(40)), 'a'.repeat(32)],
+  ['S3 超长截断 32', sanitizeTaskName('a'.repeat(PROBE_LIMITS.maxTaskNameLen + 8)), 'a'.repeat(PROBE_LIMITS.maxTaskNameLen)],
   ['S4 非法字符全连字符 → 空', sanitizeTaskName('///'), ''],
   ['S5 非字符串 → 空', sanitizeTaskName(undefined), ''],
   ['S6 空串 → 空', sanitizeTaskName(''), ''],
@@ -392,15 +392,15 @@ const fileMapN = (count) => Array.from({ length: count }, (_, i) => ({ path: EXI
 const focusAreasN = (count) => Array.from({ length: count }, (_, i) => ({ path: EXISTING, note: `重点${i}` }))
 const exclusionsN = (count) => Array.from({ length: count }, (_, i) => ({ note: `排除${i}` }))
 const backgroundN = (count) => Array.from({ length: count }, (_, i) => ({ topic: `主题${i}`, detail: `细节${i}` }))
-// 构造四字段 JSON 总量恰为 target 的合法 probe：先填 background.detail（≤600），
-// 再逐条补 focusAreas.note（每条 ≤400、至多 50 条）——只触发总量校验、不触发单条上限。
+// 构造四字段 JSON 总量恰为 target 的合法 probe：先填 background.detail（≤${PROBE_LIMITS.maxDetailLen}），
+// 再逐条补 focusAreas.note（每条 ≤${PROBE_LIMITS.maxNoteLen}、至多 ${PROBE_LIMITS.maxEntries.focusAreas} 条）——只触发总量校验、不触发单条上限。
 function probeWithTotal(target) {
   const p = { fileMap: [{ path: EXISTING, relation: '' }], focusAreas: [], exclusions: [], background: [{ topic: 't', detail: '' }] }
   while (JSON.stringify(p).length < target) {
     const d = p.background[0].detail
-    if (d.length < 600) { p.background[0].detail += 'x'; continue }
-    if (p.focusAreas.length === 0 || p.focusAreas[p.focusAreas.length - 1].note.length >= 400) {
-      if (p.focusAreas.length >= 50) break
+    if (d.length < PROBE_LIMITS.maxDetailLen) { p.background[0].detail += 'x'; continue }
+    if (p.focusAreas.length === 0 || p.focusAreas[p.focusAreas.length - 1].note.length >= PROBE_LIMITS.maxNoteLen) {
+      if (p.focusAreas.length >= PROBE_LIMITS.maxEntries.focusAreas) break
       p.focusAreas.push({ path: EXISTING, note: '' })
     }
     p.focusAreas[p.focusAreas.length - 1].note += 'x'
@@ -414,14 +414,14 @@ const PR = [
   ['PR4 缺 background → 拒', { ...validProbe(), background: undefined }, 'reject'],
   ['PR5 fileMap 非数组 → 拒', { ...validProbe(), fileMap: 'not-array' }, 'reject'],
   ['PR6 background 非数组 → 拒', { ...validProbe(), background: {} }, 'reject'],
-  ['PR7 fileMap 51 条 → 拒', { ...validProbe(), fileMap: fileMapN(51) }, 'reject'],
-  ['PR8 focusAreas 51 条 → 拒', { ...validProbe(), focusAreas: focusAreasN(51) }, 'reject'],
-  ['PR9 exclusions 21 条 → 拒', { ...validProbe(), exclusions: exclusionsN(21) }, 'reject'],
-  ['PR10 background 21 条 → 拒', { ...validProbe(), background: backgroundN(21) }, 'reject'],
-  ['PR11 path 1025 字符 → 拒', { ...validProbe(), fileMap: [{ path: 'a'.repeat(1025), relation: 'r' }] }, 'reject'],
-  ['PR12 note 401 字符 → 拒', { ...validProbe(), focusAreas: [{ path: EXISTING, note: 'n'.repeat(401) }] }, 'reject'],
-  ['PR13 四字段总量 20001 → 拒', probeWithTotal(20001), 'reject'],
-  ['PR14 四字段总量 20000 → 过', probeWithTotal(20000), 'pass'],
+  ['PR7 fileMap 51 条 → 拒', { ...validProbe(), fileMap: fileMapN(PROBE_LIMITS.maxEntries.fileMap + 1) }, 'reject'],
+  ['PR8 focusAreas 51 条 → 拒', { ...validProbe(), focusAreas: focusAreasN(PROBE_LIMITS.maxEntries.focusAreas + 1) }, 'reject'],
+  ['PR9 exclusions 21 条 → 拒', { ...validProbe(), exclusions: exclusionsN(PROBE_LIMITS.maxEntries.exclusions + 1) }, 'reject'],
+  ['PR10 background 21 条 → 拒', { ...validProbe(), background: backgroundN(PROBE_LIMITS.maxEntries.background + 1) }, 'reject'],
+  ['PR11 path 1025 字符 → 拒', { ...validProbe(), fileMap: [{ path: 'a'.repeat(PROBE_LIMITS.maxPathLen + 1), relation: 'r' }] }, 'reject'],
+  ['PR12 note 401 字符 → 拒', { ...validProbe(), focusAreas: [{ path: EXISTING, note: 'n'.repeat(PROBE_LIMITS.maxNoteLen + 1) }] }, 'reject'],
+  ['PR13 四字段总量 20001 → 拒', probeWithTotal(PROBE_LIMITS.maxTotalChars + 1), 'reject'],
+  ['PR14 四字段总量 20000 → 过', probeWithTotal(PROBE_LIMITS.maxTotalChars), 'pass'],
   ['PR15 path 不存在 → 拒并指明路径', { ...validProbe(), fileMap: [{ path: '不存在-文件-xyz.md', relation: 'r' }] }, 'reject-with', '不存在'],
   ['PR16 path 存在（相对）→ 过', validProbe(), 'pass'],
   ['PR17 path 存在（绝对）→ 过', { ...validProbe(), fileMap: [{ path: HERE + EXISTING, relation: 'r' }] }, 'pass'],
@@ -430,18 +430,21 @@ const PR = [
   ['PR20 range L12-34 → 过', { ...validProbe(), focusAreas: [{ path: EXISTING, range: 'L12-34', note: 'n' }] }, 'pass'],
   ['PR21 exclusions scope 概念边界（不校验存在性）→ 过', { ...validProbe(), exclusions: [{ scope: '某概念边界', note: 'n' }] }, 'pass'],
   ['PR22 evidence 非数组 → 拒', { ...validProbe(), evidence: 'not-array' }, 'reject'],
-  ['PR23 evidence 81 条 → 拒', { ...validProbe(), evidence: Array.from({ length: 81 }, (_, i) => ({ path: EXISTING, value: `v${i}` })) }, 'reject'],
+  ['PR23 evidence 81 条 → 拒', { ...validProbe(), evidence: Array.from({ length: PROBE_LIMITS.maxEvidenceEntries + 1 }, (_, i) => ({ path: EXISTING, value: `v${i}` })) }, 'reject'],
   ['PR24 evidence[0] 缺 line/value/text → 拒', { ...validProbe(), evidence: [{ path: EXISTING }] }, 'reject'],
   ['PR25 evidence[0].line 非法（如 L12-x）→ 拒', { ...validProbe(), evidence: [{ path: EXISTING, line: 'L12-x', value: 'v' }] }, 'reject'],
   ['PR26 evidence[0].path 不存在 → 拒并指明', { ...validProbe(), evidence: [{ path: '不存在-证据-xyz.md', value: 'v' }] }, 'reject-with', '不存在'],
   ['PR27 evidence[0].line 含区间（L12-34）→ 拒', { ...validProbe(), evidence: [{ path: EXISTING, line: 'L12-34', value: 'v' }] }, 'reject'],
   ['PR28 evidence 合法（path 存在 + line/value/text 之一）→ 过', { ...validProbe(), evidence: [{ path: EXISTING, line: 'L12', value: 'v', text: 't', note: 'n' }] }, 'pass'],
-  ['PR29 evidence 总量超 maxEvidenceTotalChars → 拒', { ...validProbe(), evidence: Array.from({ length: 40 }, () => ({ path: EXISTING, text: 't'.repeat(800) })) }, 'reject'],
+  ['PR29 evidence 总量超 maxEvidenceTotalChars → 拒', { ...validProbe(), evidence: Array.from({ length: Math.ceil(PROBE_LIMITS.maxEvidenceTotalChars / PROBE_LIMITS.maxEvidenceTextLen) + 1 }, () => ({ path: EXISTING, text: 't'.repeat(PROBE_LIMITS.maxEvidenceTextLen) })) }, 'reject'],
   ['PR30 evidence 未传 → 过（旧调用不变）', validProbe(), 'pass'],
+  ['PR31 多违规一次性全报（聚合）', { ...validProbe(), fileMap: [{ path: '不存在-聚合-xyz.md', relation: 'r' }], background: [{ topic: 't', detail: 'x'.repeat(PROBE_LIMITS.maxDetailLen + 1) }] }, 'reject-all', ['不存在', 'background[0].detail', '处违规']],
+  ['PR32 evidence.line 区间报错含修正法', { ...validProbe(), evidence: [{ path: EXISTING, line: 'L158-162', value: 'v' }] }, 'reject-all', ['禁止区间', 'evidence.text', '单个行号']],
+  ['PR33 focusAreas.range 非法报错含区间说明', { ...validProbe(), focusAreas: [{ path: EXISTING, range: 'L12-x', note: 'n' }] }, 'reject-all', ['range', '仅 focusAreas.range 允许区间']],
 ]
 for (const [name, args, mode, substr] of PR) {
   const got = validateProbe(args, HERE)
-  const okResult = mode === 'pass' ? got === null : mode === 'reject' ? typeof got === 'string' && got.length > 0 : typeof got === 'string' && got.includes(substr)
+  const okResult = mode === 'pass' ? got === null : mode === 'reject' ? typeof got === 'string' && got.length > 0 : mode === 'reject-all' ? typeof got === 'string' && Array.isArray(substr) && substr.every((s) => got.includes(s)) : typeof got === 'string' && got.includes(substr)
   if (okResult) { pass += 1 } else { fail += 1 }
   console.log(`${okResult ? 'PASS' : 'FAIL'}  ${name}  (实际 ${JSON.stringify(got)})`)
 }

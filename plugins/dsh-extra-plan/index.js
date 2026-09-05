@@ -107,15 +107,15 @@ function planDenyReason(action, state) {
   return `子代理未放行：${action}。${ROUTE_CONFIRM_TEXT}，意图澄清问答后再调用 ${action}`
 }
 function approvalDenyReason(action, state) {
-  if (state && state.route === 'none') {
-    return `执行类委派未放行：${action}。${ROUTE_CONFIRM_TEXT}，路由确认并批准方案后才可委派`
-  }
-  if (state && state.route === 'direct') {
-    return `直行态下不可委派：${action}。「直接执行」已选，请亲自动手完成，禁止委派子代理。如需委派请先让用户重新路由确认选择「进行pro规划」`
-  }
-  if (state && state.route === 'plan') {
-    return `执行类委派未放行：${action}。当前为规划态，请先调用 subagent_plan 完成规划方案，方案经用户批准后才可委派执行者`
-  }
+  // if (state && state.route === 'none') {
+  //   return `执行类委派未放行：${action}。${ROUTE_CONFIRM_TEXT}，路由确认并批准方案后才可委派`
+  // }
+  // if (state && state.route === 'direct') {
+  //   return `直行态下不可委派：${action}。「直接执行」已选，请亲自动手完成，禁止委派子代理。如需委派请先让用户重新路由确认选择「进行pro规划」`
+  // }
+  // if (state && state.route === 'plan') {
+  //   return `执行类委派未放行：${action}。当前为规划态，请先调用 subagent_plan 完成规划方案，方案经用户批准后才可委派执行者`
+  // }
   return `执行类委派未放行：${action}。${APPROVAL_CONFIRM_TEXT}，用户批准后才可委派`
 }
 
@@ -711,15 +711,16 @@ function budgetExceeded(used, budget) {
 }
 
 // 任务短名净化：仅保留安全字符（字母/数字/下划线/连字符/中日韩文字），
-// 其余字符折为连字符；≤32 字；去首尾连字符。净化失败或空串返回 ''（只用时间戳）。
+// 其余字符折为连字符；≤PROBE_LIMITS.maxTaskNameLen 字；去首尾连字符。
+// 净化失败或空串返回 ''（只用时间戳）。
 function sanitizeTaskName(name) {
   if (typeof name !== 'string') return ''
   let out = ''
   for (const ch of name) {
-    if (out.length >= 32) break
+    if (out.length >= PROBE_LIMITS.maxTaskNameLen) break
     out += /[A-Za-z0-9_\-\u4e00-\u9fff]/.test(ch) ? ch : '-'
   }
-  return out.replace(/^-+|-+$/g, '').slice(0, 32)
+  return out.replace(/^-+|-+$/g, '').slice(0, PROBE_LIMITS.maxTaskNameLen)
 }
 
 // 本地时间戳 yyyyMMddHHmmss（文件名唯一性 + 可读性）。
@@ -752,7 +753,7 @@ export const PROBE_LIMITS = {
   maxRelationLen: 400,
   maxNoteLen: 400,
   maxTopicLen: 120,
-  maxDetailLen: 600,
+  maxDetailLen: 1000,
   maxTotalChars: 20000,
   rangePattern: '^L?\\d+(?:-\\d+)?$',
   maxEvidenceEntries: 80,
@@ -762,96 +763,117 @@ export const PROBE_LIMITS = {
   maxEvidenceNoteLen: 400,
   maxEvidenceTotalChars: 32000,
   evidenceLinePattern: '^L?\\d+$',
+  maxTaskNameLen: 32,
 }
+
+// line/range 格式提示统一文案（描述与报错共用；格式正则本体不变）。
+const LINE_FORMAT_HINT = '仅接受单个行号（12 或 L12），禁止区间（如 L158-162），区间信息请写入 evidence.text 并取代表性行号'
+const RANGE_FORMAT_HINT = '仅 focusAreas.range 允许区间（12 或 L12-34）'
 
 // save_probe 机械校验（纯函数，导出供测试）：四字段必为数组；条目数/单条长度/
 // 总量 ≤ 上限；fileMap/focusAreas 的 path 必须真实存在（相对按 cwd 解析、绝对
 // 原样，不要求在工作区内）；focusAreas 的 range 若提供（非空）须匹配 rangePattern。
-// 超限一律「拒绝 + 报错」不静默截断。任一不满足返回错误信息（指明具体哪条/哪个
-// 值/上限），全部满足返回 null。
+// 超限一律「拒绝 + 报错」不静默截断。违规不提前返回：一次性收集全部违规并返回
+// 聚合信息（每条注明字段/下标/当前值/上限），全部满足返回 null。
 function validateProbe(args, cwd) {
   if (args === null || typeof args !== 'object') return 'save_probe: 参数必须是对象（四字段 fileMap/focusAreas/exclusions/background 均为数组）'
+  const violations = []
   const fields = ['fileMap', 'focusAreas', 'exclusions', 'background']
   for (const field of fields) {
-    if (!Array.isArray(args[field])) return `save_probe: ${field} 必须是数组`
+    if (!Array.isArray(args[field])) { violations.push(`save_probe: ${field} 必须是数组`); continue }
     const limit = PROBE_LIMITS.maxEntries[field]
-    if (args[field].length > limit) return `save_probe: ${field} 条目数 ${args[field].length} 超过上限 ${limit}`
+    if (args[field].length > limit) violations.push(`save_probe: ${field} 条目数 ${args[field].length} 超过上限 ${limit}`)
   }
-  for (let i = 0; i < args.fileMap.length; i += 1) {
-    const item = args.fileMap[i]
-    if (item === null || typeof item !== 'object') return `save_probe: fileMap[${i}] 必须是对象`
-    if (typeof item.path !== 'string') return `save_probe: fileMap[${i}].path 必须是字符串`
-    if (item.path.length > PROBE_LIMITS.maxPathLen) return `save_probe: fileMap[${i}].path 长度 ${item.path.length} 超过上限 ${PROBE_LIMITS.maxPathLen}`
-    if (typeof item.relation !== 'string') return `save_probe: fileMap[${i}].relation 必须是字符串`
-    if (item.relation.length > PROBE_LIMITS.maxRelationLen) return `save_probe: fileMap[${i}].relation 长度 ${item.relation.length} 超过上限 ${PROBE_LIMITS.maxRelationLen}`
-    if (!existsSync(probePathOf(cwd, item.path))) return `save_probe: fileMap[${i}].path 不存在：${item.path}`
-  }
-  for (let i = 0; i < args.focusAreas.length; i += 1) {
-    const item = args.focusAreas[i]
-    if (item === null || typeof item !== 'object') return `save_probe: focusAreas[${i}] 必须是对象`
-    if (typeof item.path !== 'string') return `save_probe: focusAreas[${i}].path 必须是字符串`
-    if (item.path.length > PROBE_LIMITS.maxPathLen) return `save_probe: focusAreas[${i}].path 长度 ${item.path.length} 超过上限 ${PROBE_LIMITS.maxPathLen}`
-    if (typeof item.note !== 'string') return `save_probe: focusAreas[${i}].note 必须是字符串`
-    if (item.note.length > PROBE_LIMITS.maxNoteLen) return `save_probe: focusAreas[${i}].note 长度 ${item.note.length} 超过上限 ${PROBE_LIMITS.maxNoteLen}`
-    if (item.range !== undefined && item.range !== null && item.range !== '') {
-      if (typeof item.range !== 'string') return `save_probe: focusAreas[${i}].range 必须是字符串`
-      if (item.range.length > PROBE_LIMITS.maxRangeLen) return `save_probe: focusAreas[${i}].range 长度 ${item.range.length} 超过上限 ${PROBE_LIMITS.maxRangeLen}`
-      if (!new RegExp(PROBE_LIMITS.rangePattern, 'i').test(item.range)) return `save_probe: focusAreas[${i}].range 非法：${item.range}（应为行号，如 12 或 L12-34）`
+  if (Array.isArray(args.fileMap)) {
+    for (let i = 0; i < args.fileMap.length; i += 1) {
+      const item = args.fileMap[i]
+      if (item === null || typeof item !== 'object') { violations.push(`save_probe: fileMap[${i}] 必须是对象`); continue }
+      if (typeof item.path !== 'string') violations.push(`save_probe: fileMap[${i}].path 必须是字符串`)
+      else if (item.path.length > PROBE_LIMITS.maxPathLen) violations.push(`save_probe: fileMap[${i}].path 长度 ${item.path.length} 超过上限 ${PROBE_LIMITS.maxPathLen}`)
+      if (typeof item.relation !== 'string') violations.push(`save_probe: fileMap[${i}].relation 必须是字符串`)
+      else if (item.relation.length > PROBE_LIMITS.maxRelationLen) violations.push(`save_probe: fileMap[${i}].relation 长度 ${item.relation.length} 超过上限 ${PROBE_LIMITS.maxRelationLen}`)
+      if (typeof item.path === 'string' && !existsSync(probePathOf(cwd, item.path))) violations.push(`save_probe: fileMap[${i}].path 不存在：${item.path}`)
     }
-    if (!existsSync(probePathOf(cwd, item.path))) return `save_probe: focusAreas[${i}].path 不存在：${item.path}`
   }
-  for (let i = 0; i < args.exclusions.length; i += 1) {
-    const item = args.exclusions[i]
-    if (item === null || typeof item !== 'object') return `save_probe: exclusions[${i}] 必须是对象`
-    if (typeof item.note !== 'string') return `save_probe: exclusions[${i}].note 必须是字符串`
-    if (item.note.length > PROBE_LIMITS.maxNoteLen) return `save_probe: exclusions[${i}].note 长度 ${item.note.length} 超过上限 ${PROBE_LIMITS.maxNoteLen}`
+  if (Array.isArray(args.focusAreas)) {
+    for (let i = 0; i < args.focusAreas.length; i += 1) {
+      const item = args.focusAreas[i]
+      if (item === null || typeof item !== 'object') { violations.push(`save_probe: focusAreas[${i}] 必须是对象`); continue }
+      if (typeof item.path !== 'string') violations.push(`save_probe: focusAreas[${i}].path 必须是字符串`)
+      else if (item.path.length > PROBE_LIMITS.maxPathLen) violations.push(`save_probe: focusAreas[${i}].path 长度 ${item.path.length} 超过上限 ${PROBE_LIMITS.maxPathLen}`)
+      if (typeof item.note !== 'string') violations.push(`save_probe: focusAreas[${i}].note 必须是字符串`)
+      else if (item.note.length > PROBE_LIMITS.maxNoteLen) violations.push(`save_probe: focusAreas[${i}].note 长度 ${item.note.length} 超过上限 ${PROBE_LIMITS.maxNoteLen}`)
+      if (item.range !== undefined && item.range !== null && item.range !== '') {
+        if (typeof item.range !== 'string') violations.push(`save_probe: focusAreas[${i}].range 必须是字符串`)
+        else if (item.range.length > PROBE_LIMITS.maxRangeLen) violations.push(`save_probe: focusAreas[${i}].range 长度 ${item.range.length} 超过上限 ${PROBE_LIMITS.maxRangeLen}`)
+        else if (!new RegExp(PROBE_LIMITS.rangePattern, 'i').test(item.range)) violations.push(`save_probe: focusAreas[${i}].range 非法：${item.range}（${RANGE_FORMAT_HINT}；正确格式如 12 或 L12-34）`)
+      }
+      if (typeof item.path === 'string' && !existsSync(probePathOf(cwd, item.path))) violations.push(`save_probe: focusAreas[${i}].path 不存在：${item.path}`)
+    }
   }
-  for (let i = 0; i < args.background.length; i += 1) {
-    const item = args.background[i]
-    if (item === null || typeof item !== 'object') return `save_probe: background[${i}] 必须是对象`
-    if (typeof item.topic !== 'string') return `save_probe: background[${i}].topic 必须是字符串`
-    if (item.topic.length > PROBE_LIMITS.maxTopicLen) return `save_probe: background[${i}].topic 长度 ${item.topic.length} 超过上限 ${PROBE_LIMITS.maxTopicLen}`
-    if (typeof item.detail !== 'string') return `save_probe: background[${i}].detail 必须是字符串`
-    if (item.detail.length > PROBE_LIMITS.maxDetailLen) return `save_probe: background[${i}].detail 长度 ${item.detail.length} 超过上限 ${PROBE_LIMITS.maxDetailLen}`
+  if (Array.isArray(args.exclusions)) {
+    for (let i = 0; i < args.exclusions.length; i += 1) {
+      const item = args.exclusions[i]
+      if (item === null || typeof item !== 'object') { violations.push(`save_probe: exclusions[${i}] 必须是对象`); continue }
+      if (typeof item.note !== 'string') violations.push(`save_probe: exclusions[${i}].note 必须是字符串`)
+      else if (item.note.length > PROBE_LIMITS.maxNoteLen) violations.push(`save_probe: exclusions[${i}].note 长度 ${item.note.length} 超过上限 ${PROBE_LIMITS.maxNoteLen}`)
+    }
+  }
+  if (Array.isArray(args.background)) {
+    for (let i = 0; i < args.background.length; i += 1) {
+      const item = args.background[i]
+      if (item === null || typeof item !== 'object') { violations.push(`save_probe: background[${i}] 必须是对象`); continue }
+      if (typeof item.topic !== 'string') violations.push(`save_probe: background[${i}].topic 必须是字符串`)
+      else if (item.topic.length > PROBE_LIMITS.maxTopicLen) violations.push(`save_probe: background[${i}].topic 长度 ${item.topic.length} 超过上限 ${PROBE_LIMITS.maxTopicLen}`)
+      if (typeof item.detail !== 'string') violations.push(`save_probe: background[${i}].detail 必须是字符串`)
+      else if (item.detail.length > PROBE_LIMITS.maxDetailLen) violations.push(`save_probe: background[${i}].detail 长度 ${item.detail.length} 超过上限 ${PROBE_LIMITS.maxDetailLen}`)
+    }
   }
   if (args.evidence !== undefined && args.evidence !== null) {
-    if (!Array.isArray(args.evidence)) return 'save_probe: evidence 必须是数组'
-    if (args.evidence.length > PROBE_LIMITS.maxEvidenceEntries) return `save_probe: evidence 条目数 ${args.evidence.length} 超过上限 ${PROBE_LIMITS.maxEvidenceEntries}`
-    for (let i = 0; i < args.evidence.length; i += 1) {
-      const item = args.evidence[i]
-      if (item === null || typeof item !== 'object') return `save_probe: evidence[${i}] 必须是对象`
-      if (typeof item.path !== 'string') return `save_probe: evidence[${i}].path 类型错误（应为字符串）`
-      if (item.path.length > PROBE_LIMITS.maxPathLen) return `save_probe: evidence[${i}].path 长度 ${item.path.length} 超过上限 ${PROBE_LIMITS.maxPathLen}`
-      if (!existsSync(probePathOf(cwd, item.path))) return `save_probe: evidence[${i}].path 不存在：${item.path}`
-      if (item.line !== undefined && item.line !== null && item.line !== '') {
-        if (typeof item.line !== 'string') return `save_probe: evidence[${i}].line 类型错误（应为字符串）`
-        if (item.line.length > PROBE_LIMITS.maxEvidenceLineLen) return `save_probe: evidence[${i}].line 长度 ${item.line.length} 超过上限 ${PROBE_LIMITS.maxEvidenceLineLen}`
-        if (!new RegExp(PROBE_LIMITS.evidenceLinePattern, 'i').test(item.line)) return `save_probe: evidence[${i}].line 非法：${item.line}（应为行号，如 12 或 L12）`
+    if (!Array.isArray(args.evidence)) {
+      violations.push('save_probe: evidence 必须是数组')
+    } else {
+      if (args.evidence.length > PROBE_LIMITS.maxEvidenceEntries) violations.push(`save_probe: evidence 条目数 ${args.evidence.length} 超过上限 ${PROBE_LIMITS.maxEvidenceEntries}`)
+      for (let i = 0; i < args.evidence.length; i += 1) {
+        const item = args.evidence[i]
+        if (item === null || typeof item !== 'object') { violations.push(`save_probe: evidence[${i}] 必须是对象`); continue }
+        if (typeof item.path !== 'string') violations.push(`save_probe: evidence[${i}].path 类型错误（应为字符串）`)
+        else if (item.path.length > PROBE_LIMITS.maxPathLen) violations.push(`save_probe: evidence[${i}].path 长度 ${item.path.length} 超过上限 ${PROBE_LIMITS.maxPathLen}`)
+        if (typeof item.path === 'string' && !existsSync(probePathOf(cwd, item.path))) violations.push(`save_probe: evidence[${i}].path 不存在：${item.path}`)
+        if (item.line !== undefined && item.line !== null && item.line !== '') {
+          if (typeof item.line !== 'string') violations.push(`save_probe: evidence[${i}].line 类型错误（应为字符串）`)
+          else if (item.line.length > PROBE_LIMITS.maxEvidenceLineLen) violations.push(`save_probe: evidence[${i}].line 长度 ${item.line.length} 超过上限 ${PROBE_LIMITS.maxEvidenceLineLen}（${LINE_FORMAT_HINT}）`)
+          else if (!new RegExp(PROBE_LIMITS.evidenceLinePattern, 'i').test(item.line)) violations.push(`save_probe: evidence[${i}].line 非法：${item.line}（${LINE_FORMAT_HINT}）`)
+        }
+        if (item.value !== undefined && item.value !== null && item.value !== '') {
+          if (typeof item.value !== 'string') violations.push(`save_probe: evidence[${i}].value 类型错误（应为字符串）`)
+          else if (item.value.length > PROBE_LIMITS.maxEvidenceValueLen) violations.push(`save_probe: evidence[${i}].value 长度 ${item.value.length} 超过上限 ${PROBE_LIMITS.maxEvidenceValueLen}`)
+        }
+        if (item.text !== undefined && item.text !== null && item.text !== '') {
+          if (typeof item.text !== 'string') violations.push(`save_probe: evidence[${i}].text 类型错误（应为字符串）`)
+          else if (item.text.length > PROBE_LIMITS.maxEvidenceTextLen) violations.push(`save_probe: evidence[${i}].text 长度 ${item.text.length} 超过上限 ${PROBE_LIMITS.maxEvidenceTextLen}`)
+        }
+        if (item.note !== undefined && item.note !== null && item.note !== '') {
+          if (typeof item.note !== 'string') violations.push(`save_probe: evidence[${i}].note 类型错误（应为字符串）`)
+          else if (item.note.length > PROBE_LIMITS.maxEvidenceNoteLen) violations.push(`save_probe: evidence[${i}].note 长度 ${item.note.length} 超过上限 ${PROBE_LIMITS.maxEvidenceNoteLen}`)
+        }
+        if ((item.line === undefined || item.line === null || item.line === '') &&
+            (item.value === undefined || item.value === null || item.value === '') &&
+            (item.text === undefined || item.text === null || item.text === '')) {
+          violations.push(`save_probe: evidence[${i}] 须至少提供 line/value/text 之一`)
+        }
       }
-      if (item.value !== undefined && item.value !== null && item.value !== '') {
-        if (typeof item.value !== 'string') return `save_probe: evidence[${i}].value 类型错误（应为字符串）`
-        if (item.value.length > PROBE_LIMITS.maxEvidenceValueLen) return `save_probe: evidence[${i}].value 长度 ${item.value.length} 超过上限 ${PROBE_LIMITS.maxEvidenceValueLen}`
-      }
-      if (item.text !== undefined && item.text !== null && item.text !== '') {
-        if (typeof item.text !== 'string') return `save_probe: evidence[${i}].text 类型错误（应为字符串）`
-        if (item.text.length > PROBE_LIMITS.maxEvidenceTextLen) return `save_probe: evidence[${i}].text 长度 ${item.text.length} 超过上限 ${PROBE_LIMITS.maxEvidenceTextLen}`
-      }
-      if (item.note !== undefined && item.note !== null && item.note !== '') {
-        if (typeof item.note !== 'string') return `save_probe: evidence[${i}].note 类型错误（应为字符串）`
-        if (item.note.length > PROBE_LIMITS.maxEvidenceNoteLen) return `save_probe: evidence[${i}].note 长度 ${item.note.length} 超过上限 ${PROBE_LIMITS.maxEvidenceNoteLen}`
-      }
-      if ((item.line === undefined || item.line === null || item.line === '') &&
-          (item.value === undefined || item.value === null || item.value === '') &&
-          (item.text === undefined || item.text === null || item.text === '')) {
-        return `save_probe: evidence[${i}] 须至少提供 line/value/text 之一`
-      }
+      const evTotal = JSON.stringify(args.evidence).length
+      if (evTotal > PROBE_LIMITS.maxEvidenceTotalChars) violations.push(`save_probe: evidence 总量 ${evTotal} 字符超过上限 ${PROBE_LIMITS.maxEvidenceTotalChars}`)
     }
-    const evTotal = JSON.stringify(args.evidence).length
-    if (evTotal > PROBE_LIMITS.maxEvidenceTotalChars) return `save_probe: evidence 总量 ${evTotal} 字符超过上限 ${PROBE_LIMITS.maxEvidenceTotalChars}`
   }
-  const total = JSON.stringify({ fileMap: args.fileMap, focusAreas: args.focusAreas, exclusions: args.exclusions, background: args.background }).length
-  if (total > PROBE_LIMITS.maxTotalChars) return `save_probe: 四字段总量 ${total} 字符超过上限 ${PROBE_LIMITS.maxTotalChars}`
-  return null
+  const allFieldsArrays = fields.every((field) => Array.isArray(args[field]))
+  if (allFieldsArrays) {
+    const total = JSON.stringify({ fileMap: args.fileMap, focusAreas: args.focusAreas, exclusions: args.exclusions, background: args.background }).length
+    if (total > PROBE_LIMITS.maxTotalChars) violations.push(`save_probe: 四字段总量 ${total} 字符超过上限 ${PROBE_LIMITS.maxTotalChars}`)
+  }
+  if (violations.length === 0) return null
+  return `save_probe: 校验不通过，共发现 ${violations.length} 处违规（超限一律拒绝、不静默截断，请逐条修正后重试）：\n- ${violations.join('\n- ')}`
 }
 
 // 探查路径解析：绝对路径原样、相对路径按 cwd 解析（供 validateProbe 存在性校验）。
@@ -1480,7 +1502,7 @@ export function apply(ctx, config) {
         properties: {
           plan: { type: 'string', description: '规划方案全文（含假设时须全部已确认，Markdown）' },
           checklist: { type: 'string', description: '验收标准清单全文（逐条机械可核对、每条带对应任务编号，Markdown）' },
-          taskName: { type: 'string', description: '可选任务短名（≤32 字；插件会净化，勿传路径）' },
+          taskName: { type: 'string', description: `可选任务短名（≤${PROBE_LIMITS.maxTaskNameLen} 字；插件会净化，勿传路径）` },
         },
         required: ['plan', 'checklist'],
         additionalProperties: false,
@@ -1562,7 +1584,7 @@ export function apply(ctx, config) {
   function defineSaveProbe() {
     return {
       name: 'save_probe',
-      description: '把只读探查结果经 save_probe 落盘为工作区 .extra-plan 目录下的单个 Markdown 文件：四类定位线索——文件地图（fileMap）/ 重点区域（focusAreas）/ 排除项（exclusions）/ 背景与意图（background），可选证据数组（evidence：探查者把核实过的行号/数值/文案照实写入；主会话线索模式可不传）。主会话线索模式只写定位线索（路径/范围/关系/备注），不含证据（行号/数值/文案摘录）——pro 规划子代理（subagent_plan）不得把线索文件内容当作【已探查核实】证据；探查子代理传 evidence 时落盘为证据报告（行号/数值/文案照实记录，可被规划子代理作为【探查者已核实】证据引用）。落盘成功后返回文件路径；委派 subagent_plan 时请在 prompt 中带上该路径，说明先 read 文件再按需补查。落盘规则：fileMap/focusAreas 各 ≤50 条、exclusions/background 各 ≤20 条、evidence ≤80 条；四字段 JSON 总量 ≤20000、evidence JSON 总量 ≤32000（按 JSON 序列化长度计，键名/引号/逗号均计入）；fileMap/focusAreas/evidence 的 path 必须真实存在（相对按工作区解析）；range 格式 12 或 L12-34；evidence.line 为单个行号（12 或 L12，不含区间）；evidence 每项 line/value/text 至少其一；超限会拒绝（不静默截断），先压缩概括或分多次落盘。',
+      description: `把只读探查结果经 save_probe 落盘为工作区 .extra-plan 目录下的单个 Markdown 文件：四类定位线索——文件地图（fileMap）/ 重点区域（focusAreas）/ 排除项（exclusions）/ 背景与意图（background），可选证据数组（evidence：探查者把核实过的行号/数值/文案照实写入；主会话线索模式可不传）。主会话线索模式只写定位线索（路径/范围/关系/备注），不含证据（行号/数值/文案摘录）——pro 规划子代理（subagent_plan）不得把线索文件内容当作【已探查核实】证据；探查子代理传 evidence 时落盘为证据报告（行号/数值/文案照实记录，可被规划子代理作为【探查者已核实】证据引用）。落盘成功后返回文件路径；委派 subagent_plan 时请在 prompt 中带上该路径，说明先 read 文件再按需补查。落盘规则：fileMap/focusAreas 各 ≤${PROBE_LIMITS.maxEntries.fileMap} 条、exclusions/background 各 ≤${PROBE_LIMITS.maxEntries.exclusions} 条、evidence ≤${PROBE_LIMITS.maxEvidenceEntries} 条；四字段 JSON 总量 ≤${PROBE_LIMITS.maxTotalChars}、evidence JSON 总量 ≤${PROBE_LIMITS.maxEvidenceTotalChars}（按 JSON 序列化长度计，键名/引号/逗号均计入）；fileMap/focusAreas/evidence 的 path 必须真实存在（相对按工作区解析）；range 提示：${RANGE_FORMAT_HINT}；evidence.line ${LINE_FORMAT_HINT}；evidence 每项 line/value/text 至少其一；超限会拒绝（不静默截断），先压缩概括或分多次落盘。`,
       parameters: {
         type: 'object',
         properties: {
@@ -1573,7 +1595,7 @@ export function apply(ctx, config) {
               type: 'object',
               properties: {
                 path: { type: 'string', description: '文件路径（相对工作区或绝对路径，必须真实存在）' },
-                relation: { type: 'string', description: '该文件与任务的关系（≤400 字）' },
+                relation: { type: 'string', description: `该文件与任务的关系（≤${PROBE_LIMITS.maxRelationLen} 字）` },
               },
               required: ['path', 'relation'],
               additionalProperties: false,
@@ -1586,8 +1608,8 @@ export function apply(ctx, config) {
               type: 'object',
               properties: {
                 path: { type: 'string', description: '文件路径（必须真实存在）' },
-                range: { type: 'string', description: '可选行号范围（如 12 或 L12-34）' },
-                note: { type: 'string', description: '该区域的重点与补查方向（≤400 字）' },
+                range: { type: 'string', description: `可选行号范围；${RANGE_FORMAT_HINT}` },
+                note: { type: 'string', description: `该区域的重点与补查方向（≤${PROBE_LIMITS.maxNoteLen} 字）` },
               },
               required: ['path', 'note'],
               additionalProperties: false,
@@ -1600,7 +1622,7 @@ export function apply(ctx, config) {
               type: 'object',
               properties: {
                 scope: { type: 'string', description: '可选排除范围描述' },
-                note: { type: 'string', description: '排除原因（≤400 字）' },
+                note: { type: 'string', description: `排除原因（≤${PROBE_LIMITS.maxNoteLen} 字）` },
               },
               required: ['note'],
               additionalProperties: false,
@@ -1612,8 +1634,8 @@ export function apply(ctx, config) {
             items: {
               type: 'object',
               properties: {
-                topic: { type: 'string', description: '背景主题（≤120 字）' },
-                detail: { type: 'string', description: '背景/意图细节（≤600 字）' },
+                topic: { type: 'string', description: `背景主题（≤${PROBE_LIMITS.maxTopicLen} 字）` },
+                detail: { type: 'string', description: `背景/意图细节（≤${PROBE_LIMITS.maxDetailLen} 字）` },
               },
               required: ['topic', 'detail'],
               additionalProperties: false,
@@ -1621,21 +1643,21 @@ export function apply(ctx, config) {
           },
           evidence: {
             type: 'array',
-            description: '可选证据数组（探查子代理 save_probe 落盘证据报告用；主会话线索模式可不传）：探查者把核实过的行号/数值/文案照实写入——每项 {path 必填, line?, value?, text?, note?}，path 必须真实存在，line/value/text 至少一个（line ≤20 字如 12 或 L12，value ≤240 字，text ≤800 字，note ≤400 字，至多 80 条）',
+            description: `可选证据数组（探查子代理 save_probe 落盘证据报告用；主会话线索模式可不传）：探查者把核实过的行号/数值/文案照实写入——每项 {path 必填, line?, value?, text?, note?}，path 必须真实存在，line/value/text 至少一个（line ≤${PROBE_LIMITS.maxEvidenceLineLen} 字；${LINE_FORMAT_HINT}，value ≤${PROBE_LIMITS.maxEvidenceValueLen} 字，text ≤${PROBE_LIMITS.maxEvidenceTextLen} 字，note ≤${PROBE_LIMITS.maxEvidenceNoteLen} 字，至多 ${PROBE_LIMITS.maxEvidenceEntries} 条）`,
             items: {
               type: 'object',
               properties: {
                 path: { type: 'string', description: '被核实文件路径（相对工作区或绝对路径，必须真实存在）' },
-                line: { type: 'string', description: '可选行号（如 12 或 L12）' },
-                value: { type: 'string', description: '可选核实值（≤240 字）' },
-                text: { type: 'string', description: '可选原文摘录（≤800 字）' },
-                note: { type: 'string', description: '可选备注（≤400 字）' },
+                line: { type: 'string', description: `可选行号；${LINE_FORMAT_HINT}` },
+                value: { type: 'string', description: `可选核实值（≤${PROBE_LIMITS.maxEvidenceValueLen} 字）` },
+                text: { type: 'string', description: `可选原文摘录（≤${PROBE_LIMITS.maxEvidenceTextLen} 字）` },
+                note: { type: 'string', description: `可选备注（≤${PROBE_LIMITS.maxEvidenceNoteLen} 字）` },
               },
               required: ['path'],
               additionalProperties: false,
             },
           },
-          taskName: { type: 'string', description: '可选任务短名（≤32 字；插件会净化，勿传路径）' },
+          taskName: { type: 'string', description: `可选任务短名（≤${PROBE_LIMITS.maxTaskNameLen} 字；插件会净化，勿传路径）` },
         },
         required: ['fileMap', 'focusAreas', 'exclusions', 'background'],
         additionalProperties: false,
