@@ -8,7 +8,7 @@
 
 ① 用户以按需规划模式进入（会话预设「按需规划模式」）
 
-② anchored 引导（默认开，可配置）：主会话与规划子代理在首个 tool/call 落盘前——装配级注入极简 persona、清空运行时上下文、目录收窄为 shell + read；模型完成首个工具调用后自动恢复全量 persona 与完整工具目录。执行者/验收者子代理不引导。
+② anchored 引导（默认开，可配置）：主会话与规划子代理在首个 tool/call 落盘前——装配级注入极简 persona、清空运行时上下文、目录收窄（有 shell（bash/pwsh）时收窄为 shell + read【run_code 被滤掉】；仅 run_code 的 ptc 模式保留 run_code；无 shell 且无 run_code 跳过并警告一次）；模型完成首个工具调用后自动恢复全量 persona 与完整工具目录。执行者/验收者子代理不引导。
 
 ③ 用户提出需求
 

@@ -28,6 +28,11 @@
 - 是什么：子代理模型/reasoningEffort 继承父会话；plannerModel（设置页显式配置）优先于父会话当前模型；resolvePlannerEntry 单点解析+缓存。
 - 为什么：规划用高质量模型可配置；后台规划时父会话空闲，解析不得依赖「父会话进行中请求头」或模型目录 advisory 命中（2026-09-03 修复）。
 
+## 七、anchored 引导（首轮极简，ptc 兼容）
+- 是什么：主会话与规划子代理在会话首个 tool/call 落盘前（isBootstrapPhase，index.js L236-243），system-prompt/assemble 钩子（约 L2580）装配级注入极简 persona（bootstrapPersona）、清空运行时上下文、目录收窄——有 shell（bash/pwsh，native/both）收窄为 shell + read（run_code 被滤掉）；仅 run_code（ptc 折叠目录）保留 run_code；无 shell 且无 run_code 跳过并每实例警告一次。首个工具调用后每步 assemble 重查事件流 → 恢复全量 persona 与完整目录。执行者/reviewer 子代理不引导。
+- 为什么：「先看再答」防止首轮全量工具目录诱使模型未理解先动手；首轮上下文极简降低首轮发散。
+- 动它：index.js 锚定钩子（触发判定 isBootstrapPhase、目录筛选 shells/runCodes/keep 构造、sections/contexts 收窄）；cfg：anchoredBootstrap/bootstrapPersona/bootstrapShellTools/bootstrapCommonTools。
+
 ## 历史教训索引（细节读指向注释）
 | 编号 | 坑 | 指向 |
 |:--|:--|:--|
@@ -37,6 +42,7 @@
 | v2→v4 | run_code 裸写扫描必须屏蔽已提取工具调用区间后再扫，防「工具参数字符串被误判为裸写」 | index.js decomposeRunCode 尾部注释 |
 | 模型目录 | plannerModel 解析不得依赖 llm 模型目录命中（目录是 advisory：未列出 id 仍原样传递）；旧逻辑父会话空闲时 provider 空导致 plannerModel 永不生效 | index.js resolvePlannerEntry 注释 |
 | 启动预锁 | 不引入启动预锁（启动即重活拖慢会话启动，快通道教训） | index.js 头部注释（约 L74） |
+| PTC×锚定 | ptc 模式 wireSchemas 塌缩为仅 [run_code]，锚定钩子凭 shell 判定 catalog 无 shell → 曾静默跳过（首轮全量 persona+SDK bindings 暴露引发模型误判直调 glob）；2026-09-06 修复：目录含 run_code 亦锚定（无 shell 分支 keep 并入 run_code；有 shell 时 run_code 仍滤除；无 shell 无 run_code 维持跳过+警告） | index.js 头注释（约 L62-64）+ 锚定钩子注释（L2575 附近） |
 
 ---
 

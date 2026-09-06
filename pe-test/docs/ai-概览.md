@@ -22,6 +22,7 @@ dsh 插件「按需规划模式」预设：AI 未经用户同意只能只读探�
 | 探查预算 | index.js budget* 族（budgetNoticeText/budgetReminderText/budgetExhaustedReason 等） | 开局告知/剩3提醒/耗尽往返 |
 | save_probe/save_plan/show_file 工具 | index.js 落盘族（validateProbe/renderProbeMarkdown/atomicCommit/recoverJournals/defineSavePlan 等） | 双写+journal 自愈 |
 | run_code 静态拆解组判定 | index.js decomposeRunCode/runCodeGroupDenyReason | 防绕道闸门 |
+| anchored 引导 | index.js system-prompt/assemble 钩子（约 L2580；isBootstrapPhase/keep 构造） | 首轮极简 persona/目录收窄；ptc 兼容（目录含 run_code 亦锚定；有 shell 时滤 run_code） |
 | 探查者模型注入 | index.js resolveProbeRequestInjection | 上溯父会话配置 |
 | 设置页后端 API | lib/settings.js（createApiHandler 等） | 仅本机环回 |
 | 设置页前端 UI | lib/client.js | 打包器（__ModuleLoader__）格式，无函数级索引 |

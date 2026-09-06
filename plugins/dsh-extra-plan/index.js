@@ -60,7 +60,9 @@
 //       （kind=agent-message）末尾机械拼接「\n\n + 配置文本」（任务要求 + 回车换行
 //       + 文本）；运行时快照（kind=plugin）不追加。
 //  3) anchored 引导（默认开）：主会话与规划子代理在首个 tool/call 落盘前，
-//     装配级注入极简 persona、清空运行时上下文、目录收窄为 shell + read；
+//     装配级注入极简 persona、清空运行时上下文、目录收窄——有 shell（bash/pwsh，
+//     native/both）→ shell + read（run_code 被滤掉）；仅 run_code（ptc 折叠目录）
+//     → run_code；无 shell 且无 run_code → 跳过并每实例警告一次；
 //     执行者/reviewer 子代理不引导。
 //  4) 力度继承：子代理 agent/request 解析后，把 reasoningEffort 改写为父会话
 //     request/header 的 config.reasoningEffort（完全继承、无下限）。
@@ -2573,6 +2575,9 @@ export function apply(ctx, config) {
   })
 
   // 3) anchored 引导（默认开）：主会话与规划子代理首轮极简；执行者/reviewer 不引导。
+  //    ptc 兼容（2026-09-06）：catalog 无 shell 但有 run_code（ptc 折叠目录）同样锚定——
+  //    keep 无 shell 分支并入 run_code（目录收窄为 [run_code]）；有 shell 时 run_code 仍
+  //    被滤掉（keep=shells+read，both/native 现状不变）；无 shell 无 run_code 跳过+警告一次。
   //    钩子常驻（bootstrapOn=false 时也注册）：另负责按装配目录机械识别只读
   //    子代理（reviewer）写入 per-agent 缓存，供 pre-execute 拦截复用；
   //    bootstrapOn=false 时仅记录目录、不改装配产物。
