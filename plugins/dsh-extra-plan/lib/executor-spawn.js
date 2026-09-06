@@ -17,7 +17,7 @@
 // toolFilter 时注入 deny 清单；workflow 引擎行与 ralph 行把 provider 指向
 // 'executor-spawn'，两类 one-shot worker 即与常规执行者一致地被裁剪。
 // fork 由预设 tool-subagent-fork 行自带的 toolFilter 覆盖（宿主 fork
-// provider 已支持 toolFilter，report 与对话继承不受 deny 影响）。
+// provider 已支持 toolFilter，对话继承不受 deny 影响）。
 //
 // 生命周期：与宿主 provider 一致，registerProvider 随进程存活；只有
 // planner-executor 预设引用 'executor-spawn'，其他预设不受影响。

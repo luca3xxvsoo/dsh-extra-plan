@@ -2,13 +2,13 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述与备注由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：AI 定位功能时先在此表按关键词检索函数名/描述，再 read 目标行号区间；函数描述为空（待补充）时请补写。
-> 上次同步：2026-09-06 11:31:06（脚本自动更新时间戳行）
+> 上次同步：2026-09-06 13:06:29（脚本自动更新时间戳行）
 
 ## 文件总览
 
 | 文件 | 行数 | 说明 |
 |:--|--:|:--|
-| plugins/dsh-extra-plan/index.js | 3267 | 模式核心：三级闸门（路由/澄清/批准）+ 探查预算 + save_plan/save_probe/show_file 工具 + 锚点钩子（修改最频繁） |
+| plugins/dsh-extra-plan/index.js | 3279 | 模式核心：三级闸门（路由/澄清/批准）+ 探查预算 + save_plan/save_probe/show_file 工具 + 锚点钩子（修改最频繁） |
 | plugins/dsh-extra-plan/lib/client-bridge.js | 20 | 客户端桥接壳：仅承载 dsh.client 加载路径指向 lib/client.js（apply 空实现） |
 | plugins/dsh-extra-plan/lib/client.js | 484 | dsh web 设置界面 UI（__ModuleLoader__ 打包格式，函数级索引不可用；中/英文案，React） |
 | plugins/dsh-extra-plan/lib/executor-spawn.js | 90 | 执行者子代理 provider：委托宿主 spawn，注入工具 deny（防委派递归/追问） |
@@ -103,33 +103,33 @@
 | plugins/dsh-extra-plan/index.js | jobOutputGateReason | L1855-1877 | job_output 全角色闸门纯函数：wait:true 禁令 + 同 job 重复调用查重（内存计数器）；counters 缺省或 vExec 无 agent（组判定成员）时跳过查重、wait 检查照常 |  |
 | plugins/dsh-extra-plan/index.js | probeDisposalWarning | L1883-1886 | 探查者级联中止告警纯函数：剩余未认领探查者委派数为正整数时返回告警文案（owner disposed + 引擎限制指向官方包）；非正整数返回 null |  |
 | plugins/dsh-extra-plan/index.js | mainGateReason | L1893-2004 | 主会话闸门主分支（ask/write/edit/cordis/plan/probe/subagent/run_code/job_output） |  |
-| plugins/dsh-extra-plan/index.js | runCodeGroupDenyReason | L2014-2079 | run_code 组判定：拆解→成员逐判定→聚合拒绝 |  |
+| plugins/dsh-extra-plan/index.js | runCodeGroupDenyReason | L2014-2090 | run_code 组判定：拆解→成员逐判定→聚合拒绝；预算耗尽白名单把关 |  |
 | plugins/dsh-extra-plan/index.js | visit | L2031-2067 | 递归展平嵌套 run_code（runCodeGroupDenyReason 内闭包） |  |
-| plugins/dsh-extra-plan/index.js | aggregateRunCodeDenyReason | L2085-2096 | 聚合多成员拒绝消息 |  |
-| plugins/dsh-extra-plan/index.js | apply | L2192-3266 | 插件主入口：配置解析/服务注册/工具注册/锚点钩子 |  |
-| plugins/dsh-extra-plan/index.js | foldUsage | L2221-2295 | usage 账本折叠写入（cursor 去重，按 sessionId+seq） |  |
-| plugins/dsh-extra-plan/index.js | isChild | L2300-2308 | 子代理判定（live 校验+误分类警示） |  |
-| plugins/dsh-extra-plan/index.js | isPlannerChild | L2312-2326 | 规划子代理判定（descriptor.mode=continuable） |  |
-| plugins/dsh-extra-plan/index.js | toolSchemasOf | L2331-2349 | 防御式获取 agent 工具 schemas |  |
-| plugins/dsh-extra-plan/index.js | resolvePlannerEntry | L2367-2401 | 规划子代理模型单点解析（plannerModel 优先+父会话配置，带缓存） |  |
-| plugins/dsh-extra-plan/index.js | effectiveModel | L2408-2440 | 任意 agent 有效模型只读服务（planner/child/main 三态） |  |
-| plugins/dsh-extra-plan/index.js | flashGuideEnabled | L2449-2451 | flash 引导开关只读服务 |  |
-| plugins/dsh-extra-plan/index.js | parseSkillFrontmatter | L2496-2505 | SKILL.md frontmatter 的 name/description 解析 |  |
-| plugins/dsh-extra-plan/index.js | floorChildPolicy | L2507-2511 | 子代理沙箱策略抬升（workspace-write） |  |
-| plugins/dsh-extra-plan/index.js | childBaseline | L2513-2519 | 子代理基线（判定/usage/floor 汇总） |  |
-| plugins/dsh-extra-plan/index.js | atomicCommit | L2528-2542 | 原子落盘（tmp→journal→rename→清 journal；save_plan 双写/save_probe 单写共用） |  |
-| plugins/dsh-extra-plan/index.js | recoverJournals | L2546-2570 | journal 崩溃自愈（新旧形状兼容） |  |
-| plugins/dsh-extra-plan/index.js | defineSavePlan | L2572-2635 | save_plan 工具定义（双写必填/证据引用校验） |  |
-| plugins/dsh-extra-plan/index.js | registerTool | L2639-2652 | 工具注册分发 |  |
-| plugins/dsh-extra-plan/index.js | registerSavePlan | L2655 | save_plan 注册（仅规划子代理层） |  |
-| plugins/dsh-extra-plan/index.js | defineSaveProbe | L2660-2773 | save_probe 工具定义 |  |
-| plugins/dsh-extra-plan/index.js | registerSaveProbe | L2776 | save_probe 注册（主会话/探查者/规划子代理按判定） |  |
-| plugins/dsh-extra-plan/index.js | matchWildcard | L2780-2783 | showFilePatterns 通配符匹配 |  |
-| plugins/dsh-extra-plan/index.js | defineShowFile | L2784-2843 | show_file 工具定义（限方案/验收文件） |  |
-| plugins/dsh-extra-plan/index.js | registerShowFile | L2845 | show_file 注册（仅主会话） |  |
-| plugins/dsh-extra-plan/index.js | probeClaimFor | L2853-2867 | 探查子代理预算暂记查核（probe claims） |  |
-| plugins/dsh-extra-plan/index.js | causeChainOf | L2916-2928 | 拒绝原因链解析（子代理继承根因） |  |
-| plugins/dsh-extra-plan/index.js | recordRequestError | L2929-2951 | 记录请求错误诊断到临时目录 |  |
+| plugins/dsh-extra-plan/index.js | aggregateRunCodeDenyReason | L2096-2108 | 聚合多成员拒绝消息 |  |
+| plugins/dsh-extra-plan/index.js | apply | L2204-3278 | 插件主入口：配置解析/服务注册/工具注册/锚点钩子 |  |
+| plugins/dsh-extra-plan/index.js | foldUsage | L2233-2307 | usage 账本折叠写入（cursor 去重，按 sessionId+seq） |  |
+| plugins/dsh-extra-plan/index.js | isChild | L2312-2320 | 子代理判定（live 校验+误分类警示） |  |
+| plugins/dsh-extra-plan/index.js | isPlannerChild | L2324-2338 | 规划子代理判定（descriptor.mode=continuable） |  |
+| plugins/dsh-extra-plan/index.js | toolSchemasOf | L2343-2361 | 防御式获取 agent 工具 schemas |  |
+| plugins/dsh-extra-plan/index.js | resolvePlannerEntry | L2379-2413 | 规划子代理模型单点解析（plannerModel 优先+父会话配置，带缓存） |  |
+| plugins/dsh-extra-plan/index.js | effectiveModel | L2420-2452 | 任意 agent 有效模型只读服务（planner/child/main 三态） |  |
+| plugins/dsh-extra-plan/index.js | flashGuideEnabled | L2461-2463 | flash 引导开关只读服务 |  |
+| plugins/dsh-extra-plan/index.js | parseSkillFrontmatter | L2508-2517 | SKILL.md frontmatter 的 name/description 解析 |  |
+| plugins/dsh-extra-plan/index.js | floorChildPolicy | L2519-2523 | 子代理沙箱策略抬升（workspace-write） |  |
+| plugins/dsh-extra-plan/index.js | childBaseline | L2525-2531 | 子代理基线（判定/usage/floor 汇总） |  |
+| plugins/dsh-extra-plan/index.js | atomicCommit | L2540-2554 | 原子落盘（tmp→journal→rename→清 journal；save_plan 双写/save_probe 单写共用） |  |
+| plugins/dsh-extra-plan/index.js | recoverJournals | L2558-2582 | journal 崩溃自愈（新旧形状兼容） |  |
+| plugins/dsh-extra-plan/index.js | defineSavePlan | L2584-2647 | save_plan 工具定义（双写必填/证据引用校验） |  |
+| plugins/dsh-extra-plan/index.js | registerTool | L2651-2664 | 工具注册分发 |  |
+| plugins/dsh-extra-plan/index.js | registerSavePlan | L2667 | save_plan 注册（仅规划子代理层） |  |
+| plugins/dsh-extra-plan/index.js | defineSaveProbe | L2672-2785 | save_probe 工具定义 |  |
+| plugins/dsh-extra-plan/index.js | registerSaveProbe | L2788 | save_probe 注册（主会话/探查者/规划子代理按判定） |  |
+| plugins/dsh-extra-plan/index.js | matchWildcard | L2792-2795 | showFilePatterns 通配符匹配 |  |
+| plugins/dsh-extra-plan/index.js | defineShowFile | L2796-2855 | show_file 工具定义（限方案/验收文件） |  |
+| plugins/dsh-extra-plan/index.js | registerShowFile | L2857 | show_file 注册（仅主会话） |  |
+| plugins/dsh-extra-plan/index.js | probeClaimFor | L2865-2879 | 探查子代理预算暂记查核（probe claims） |  |
+| plugins/dsh-extra-plan/index.js | causeChainOf | L2928-2940 | 拒绝原因链解析（子代理继承根因） |  |
+| plugins/dsh-extra-plan/index.js | recordRequestError | L2941-2963 | 记录请求错误诊断到临时目录 |  |
 | plugins/dsh-extra-plan/lib/client-bridge.js | apply | L17-19 | 空实现（仅承载 dsh.client 加载路径指向 lib/client.js） |  |
 | plugins/dsh-extra-plan/lib/executor-spawn.js | apply | L49-89 | 插件入口：注册执行者 provider（委托宿主 spawn，注入 deny 工具裁剪） |  |
 | plugins/dsh-extra-plan/lib/executor-spawn.js | defaultedAgentOptions | L69-73 | 执行者 agentOptions 透传（请求自带优先，否则空对象继承父会话） |  |

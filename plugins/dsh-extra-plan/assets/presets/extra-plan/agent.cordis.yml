@@ -162,7 +162,6 @@
 
 # subagents 注册表与 spawn/fork 后端在宿主组合（进程单例、provider 名全局唯一）。
 # 本预设贡献委派工具行；executor 薄委托层使用独立 provider 名 'extra-executor-spawn'
-# tool-subagent-report 在宿主平面（continuable setup 列表非 scope-aware），不在此列。
 - id: delegation
   name: cordis:group
   group: true

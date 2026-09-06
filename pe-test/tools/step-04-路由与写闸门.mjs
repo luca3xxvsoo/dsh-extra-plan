@@ -447,7 +447,7 @@ r = preExecute(harness, noneMain, 'run_code', { code: "await tools.write({ file_
 checkTrue('R51 主会话 none 态 run_code（code 含显式 tools.write）→ deny 且聚合含「路由未确认：write/edit」（显式 write 成员与裸写同文案）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认：write/edit'))
 
 // ── ⑩ R52-R84：全闸门补测（预算修复与测试缺口 2026-09-05） ─────────────
-// 预算耗尽场景：18 组成功配对 = 已用 18/18（修复A 成功配对口径；修复B 收尾豁免）。
+// 预算耗尽场景：18 组成功配对 = 已用 18/18（修复A 成功配对口径；预算耗尽后 run_code 组判定仅放行全 FREE_TOOLS 白名单组）。
 const budgetEvents = [DESC, ...Array.from({ length: 18 }, (_, i) => [callE('read', 'b' + i), okE('b' + i, 'ok')]).flat()]
 const budgetPlanner = {
   session: { header: { id: 'planner-budget', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => budgetEvents },
@@ -502,31 +502,40 @@ checkTrue('R70 save_probe 主会话 plan 态 → allow', r !== null && r !== und
 r = preExecute(harness, budgetPlanner, 'read', {})
 checkTrue('R71 planner 预算耗尽 listener 层 → deny 且含「探查预算已耗尽（本轮已用 18/18）」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('探查预算已耗尽（本轮已用 18/18）'))
 r = preExecute(harness, budgetPlanner, 'run_code', freeCode)
-checkTrue('R72 planner 预算耗尽 FREE_TOOLS 组 → allow（修复B 收尾豁免）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R72 planner 预算耗尽 FREE_TOOLS 组 → allow（白名单放行）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, budgetPlanner, 'run_code', readMemberCode)
-checkTrue('R73 planner 预算耗尽 非豁免组成员（子调用语义）→ allow（容器计费）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R73 planner 预算耗尽 非豁免组成员（read）→ deny 且含「探查预算已耗尽（本轮已用 18/18）」与「仅可调用 save_plan/send_message」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('探查预算已耗尽（本轮已用 18/18）') && String(r.reason).includes('仅可调用 save_plan/send_message'))
+const emptyGroupCode = { code: 'const x = 1', description: '空组（无 tools 调用）' }
+const dynamicMemberCode = { code: "const fn = 'read'\nawait tools[fn]({ file_path: 'x' })", description: '动态访问成员' }
+const spOnlyCode = { code: 'await tools.save_plan({ "plan": "p", "checklist": "c" })', description: '仅 save_plan 成员' }
+r = preExecute(harness, budgetPlanner, 'run_code', emptyGroupCode)
+checkTrue('R74 planner 预算耗尽 空组（无 tools 调用）→ deny 且含「仅可调用 save_plan/send_message」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('探查预算已耗尽（本轮已用 18/18）') && String(r.reason).includes('仅可调用 save_plan/send_message'))
+r = preExecute(harness, budgetPlanner, 'run_code', dynamicMemberCode)
+checkTrue('R74b planner 预算耗尽 动态访问成员（tools[var]）→ deny 且含「仅可调用 save_plan/send_message」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('探查预算已耗尽（本轮已用 18/18）') && String(r.reason).includes('仅可调用 save_plan/send_message'))
+r = preExecute(harness, budgetPlanner, 'run_code', spOnlyCode)
+checkTrue('R75 planner 预算耗尽 仅 save_plan 单成员 → allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, plannerAgent, 'pwsh', { command: 'New-Item x.txt' })
-checkTrue('R74 planner pwsh 写 → deny 且「规划子代理只读：pwsh 仅限只读探查命令」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划子代理只读：pwsh 仅限只读探查命令'))
+checkTrue('R76 planner pwsh 写 → deny 且「规划子代理只读：pwsh 仅限只读探查命令」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划子代理只读：pwsh 仅限只读探查命令'))
 r = preExecute(harness, plannerAgent, 'bash', { command: 'rm -rf x' })
-checkTrue('R75 planner bash 写 → deny 且「规划子代理只读：bash 仅限只读探查命令」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划子代理只读：bash 仅限只读探查命令'))
+checkTrue('R77 planner bash 写 → deny 且「规划子代理只读：bash 仅限只读探查命令」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划子代理只读：bash 仅限只读探查命令'))
 r = preExecute(harness, probeAgent, 'bash', { command: 'rm -rf x' })
-checkTrue('R76 probe bash 写 → deny 且「探查者只读：bash 仅限只读探查命令」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('探查者只读：bash 仅限只读探查命令'))
+checkTrue('R78 probe bash 写 → deny 且「探查者只读：bash 仅限只读探查命令」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('探查者只读：bash 仅限只读探查命令'))
 r = preExecute(harness, plannerAgent, 'send_message', { agent_id: 'parent', message: 'hi' })
-checkTrue('R77 planner send_message → allow（FREE_TOOLS 豁免）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R79 planner send_message → allow（FREE_TOOLS 豁免）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, probeAgent, 'send_message', { agent_id: 'parent', message: 'hi' })
-checkTrue('R78 probe send_message → allow（child 分支不拦）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R80 probe send_message → allow（child 分支不拦）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, planMain, 'subagent_plan', { run_in_background: false })
-checkTrue('R79 subagent_plan 前台参数 → deny 且含「规划子代理不可前台等待」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划子代理不可前台等待'))
+checkTrue('R81 subagent_plan 前台参数 → deny 且含「规划子代理不可前台等待」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划子代理不可前台等待'))
 r = preExecute(harness, noneMain, 'cordis_inspect_query', {})
-checkTrue('R80 cordis 只读族 → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R82 cordis 只读族 → allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, noneMain, 'run_code', smCode)
-checkTrue('R81 组内 send_message 成员 → allow（白名单已删除，组判定放行）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R83 组内 send_message 成员 → allow（白名单已删除，组判定放行）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, approvedMain, 'run_code', revCode)
-checkTrue('R82 组内 subagent_review 成员（批准+后台）→ allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R84 组内 subagent_review 成员（批准+后台）→ allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, noneMain, 'run_code', joCode)
-checkTrue('R83 组内 job_output wait 成员 → deny 且含「job_output 禁止带 wait: true」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止带 wait: true'))
+checkTrue('R85 组内 job_output wait 成员 → deny 且含「job_output 禁止带 wait: true」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止带 wait: true'))
 r = preExecute(harness, noneMain, 'run_code', revCode)
-checkTrue('R84 组内 subagent_review 成员无批准 → deny 且含「执行类委派未放行：subagent_review」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('执行类委派未放行：subagent_review'))
+checkTrue('R86 组内 subagent_review 成员无批准 → deny 且含「执行类委派未放行：subagent_review」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('执行类委派未放行：subagent_review'))
 
 // ── ⑨ ptc 锚定（anchored 引导放宽：无 shell 有 run_code 也锚定；P1-P11） ──
 // ptc 折叠目录 [run_code]（wireSchemas 塌缩）：修复前 shells 为空 → 跳过锚定；
@@ -589,52 +598,52 @@ checkTrue('UC25 runCodeSiteCount：2 调用→2 / 嵌套展平→3', runCodeSite
 checkTrue('UC26 isRunCodeSubCall：parent→true / sub:true→true / 普通→false', isRunCodeSubCall({ parent: Symbol('p') }) === true && isRunCodeSubCall({ sub: true }) === true && isRunCodeSubCall({ name: 'read' }) === false)
 checkTrue('UC27 runCodeDispatchGateReason：18×→null / 19×→拒含「超过上限」 / 无rootCallId→null', (() => { const evs18 = Array.from({ length: 18 }, (_, i) => cdStartE('read', 's' + i, {})); const evs19 = evs18.concat([cdStartE('read', 's19', {})]); return runCodeDispatchGateReason(evs18, { rootCallId: 'r1' }, 18) === null && (() => { const got = runCodeDispatchGateReason(evs19, { rootCallId: 'r1' }, 18); return typeof got === 'string' && got.includes('超过上限') })() && runCodeDispatchGateReason(evs18, {}, 18) === null })())
 
-// ── ⑫ R85-R91：多调用容错硬闸门监听器级（任务3） ──
+// ── ⑫ R87-R93：多调用容错硬闸门监听器级（任务3） ──
 r = preExecute(harnessCatchOn, noneMain, 'run_code', { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })", description: 'UC1 同款' })
-checkTrue('R85 runcodeCatchGate:true 主会话 none 态多调用无容错 → deny 且含「未全部独立容错」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
+checkTrue('R87 runcodeCatchGate:true 主会话 none 态多调用无容错 → deny 且含「未全部独立容错」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
 r = preExecute(harness, noneMain, 'run_code', { code: "const r = await Promise.allSettled([tools.read({ file_path: 'x' }), tools.read({ file_path: 'y' })])", description: 'UC3 同款' })
-checkTrue('R86 主会话 none 态 allSettled → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R88 主会话 none 态 allSettled → allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harnessCatchOn, plannerAgent, 'run_code', { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })", description: 'UC1 同款' })
-checkTrue('R87 runcodeCatchGate:true planner 多调用无容错 → deny 且含「未全部独立容错」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
+checkTrue('R89 runcodeCatchGate:true planner 多调用无容错 → deny 且含「未全部独立容错」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
 await assemble(harnessCatchOn, probeAgent, [{ name: 'read' }, { name: 'glob' }, { name: 'grep' }, { name: 'pwsh' }, { name: 'save_probe' }])
 r = preExecute(harnessCatchOn, probeAgent, 'run_code', { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })", description: 'UC1 同款' })
-checkTrue('R88 runcodeCatchGate:true probe（只读 child）多调用无容错 → deny 且含「未全部独立容错」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
+checkTrue('R90 runcodeCatchGate:true probe（只读 child）多调用无容错 → deny 且含「未全部独立容错」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
 r = preExecute(harness, noneMain, 'run_code', { code: "try { await tools.read({ file_path: 'x' }) } catch (e) {}\ntry { await tools.read({ file_path: 'x' }) } catch (e) {}\ntry { await tools.subagent_probe({ run_in_background: true }) } catch (e) {}", description: '去重组（独立容错）' })
-checkTrue('R89 R50 改造后 → allow（去重后全过语义保持）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R91 R50 改造后 → allow（去重后全过语义保持）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, executor, 'run_code', { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })", description: 'UC1 同款' })
-checkTrue('R90 executor 多调用无容错 → allow（执行者豁免）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R92 executor 多调用无容错 → allow（执行者豁免）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harnessCatchOn, noneMain, 'run_code', { code: "await tools.run_code({ \"code\": \"await tools.read({ file_path: 'x' })\" })\nawait tools.read({ file_path: 'y' })", description: 'UC11 同款' })
-checkTrue('R91 runcodeCatchGate:true 主会话 none 态嵌套展平无容错 → deny 且含「未全部独立容错」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
+checkTrue('R93 runcodeCatchGate:true 主会话 none 态嵌套展平无容错 → deny 且含「未全部独立容错」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
 
-// ── ⑬ R92-R97：job_output 全角色 wait 禁令/查重（任务4/5） ──
+// ── ⑬ R94-R99：job_output 全角色 wait 禁令/查重（任务4/5） ──
 r = preExecute(harness, plannerAgent, 'job_output', { job_id: 'j1', wait: true })
-checkTrue('R92 planner job_output wait → deny 且含「job_output 禁止带 wait: true」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止带 wait: true'))
+checkTrue('R94 planner job_output wait → deny 且含「job_output 禁止带 wait: true」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止带 wait: true'))
 r = preExecute(harness, reviewer, 'job_output', { job_id: 'j1', wait: true })
-checkTrue('R93 reviewer job_output wait → deny 且含「job_output 禁止带 wait: true」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止带 wait: true'))
+checkTrue('R95 reviewer job_output wait → deny 且含「job_output 禁止带 wait: true」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止带 wait: true'))
 r = preExecute(harness, plannerAgent, 'job_output', { job_id: 'j1' })
-checkTrue('R94 planner job_output 正常 → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R96 planner job_output 正常 → allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, plannerAgent, 'job_output', { job_id: 'j1' })
-checkTrue('R94b planner 同 job 再调 → deny 且含「job_output 禁止对同一 job 重复调用」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止对同一 job 重复调用'))
+checkTrue('R96b planner 同 job 再调 → deny 且含「job_output 禁止对同一 job 重复调用」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止对同一 job 重复调用'))
 r = preExecute(harness, plannerAgent, 'job_output', { job_id: 'j2' })
-checkTrue('R94c planner 不同 job → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R96c planner 不同 job → allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, probeAgent, 'job_output', { job_id: 'j1' })
-checkTrue('R95 probeAgent job_output 正常 → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R97 probeAgent job_output 正常 → allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, executor, 'job_output', { job_id: 'j1', wait: true })
-checkTrue('R96 executor job_output wait → allow（执行者豁免保持）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R98 executor job_output wait → allow（执行者豁免保持）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, plannerAgent, 'run_code', joCode)
-checkTrue('R97 planner run_code 组内 job_output wait → deny 且含「job_output 禁止带 wait: true」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止带 wait: true'))
+checkTrue('R99 planner run_code 组内 job_output wait → deny 且含「job_output 禁止带 wait: true」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止带 wait: true'))
 
-// ── ⑭ R98-R103：runcodeCatchGate 开关 + safe 白名单 + 容器计费 + 实例上限（2026-09-06） ──
+// ── ⑭ R100-R105：runcodeCatchGate 开关 + safe 白名单 + 容器计费 + 实例上限（2026-09-06） ──
 r = preExecute(harness, noneMain, 'run_code', { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })", description: 'UC1 同款' })
-checkTrue('R98 默认（runcodeCatchGate 缺省=关）多调用无容错 → allow（默认关放行）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R100 默认（runcodeCatchGate 缺省=关）多调用无容错 → allow（默认关放行）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harnessCatchOn, noneMain, 'run_code', { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })", description: 'UC1 同款' })
-checkTrue('R98b runcodeCatchGate:true 多调用无容错 → deny 且含「未全部独立容错」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
+checkTrue('R100b runcodeCatchGate:true 多调用无容错 → deny 且含「未全部独立容错」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
 r = preExecute(harness, noneMain, 'run_code', { code: "const safe = (p) => p.catch((e) => ({ _error: String(e).slice(0, 200) }))\nawait safe(tools.read({ file_path: 'x' }))\ntry { await tools.read({ file_path: 'y' }) } catch (e) {}", description: 'UC18 同款' })
-checkTrue('R99 safe 白名单监听器级 → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R101 safe 白名单监听器级 → allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harnessCatchOn, noneMain, 'run_code', { code: "const safe = (p) => p.catch((e) => ({ _error: String(e).slice(0, 200) }))\nawait safe(tools.read({ file_path: 'x' }).then(() => tools.read({ file_path: 'y' })))", description: 'UC19 同款' })
-checkTrue('R100 runcodeCatchGate:true safe 实参 2 调用点 → deny 且含「已保护 0 个」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('已保护 0 个'))
+checkTrue('R102 runcodeCatchGate:true safe 实参 2 调用点 → deny 且含「已保护 0 个」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('已保护 0 个'))
 r = preExecute(harness, budgetPlanner, 'read', { file_path: 'x' }, { rootCallId: 'r9', parent: Symbol('r101') })
-checkTrue('R101 planner 子调用（语义）预算 → allow（容器计费）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R103 planner 子调用（语义）预算 → allow（容器计费）', r !== null && r !== undefined && r.kind === 'allow')
 {
   const dgExec = () => ({ rootCallId: 'r1', parent: Symbol('r102') })
   let r102Ok = true
@@ -643,13 +652,13 @@ checkTrue('R101 planner 子调用（语义）预算 → allow（容器计费）'
     if (i <= 18 && !(rr !== null && rr !== undefined && rr.kind === 'allow')) r102Ok = false
     if (i >= 19 && !(rr !== null && rr !== undefined && rr.kind === 'deny' && String(rr.reason).includes('超过上限'))) r102Ok = false
   }
-  checkTrue('R102 单实例子调用循环 100 次 → i≤18 allow、i≥19 deny 且含「超过上限」', r102Ok)
+  checkTrue('R104 单实例子调用循环 100 次 → i≤18 allow、i≥19 deny 且含「超过上限」', r102Ok)
 }
 {
   const plannerMock = plannerAgent
   const longCode = Array.from({ length: 19 }, (_, i) => "await tools.read({ file_path: 'x" + i + "' })").join('\n')
   r = preExecute(harness, plannerMock, 'run_code', { code: longCode, description: '19 行 read 调用' })
-  checkTrue('R103 planner 静态调用点 19 处 → deny 且含「超过单实例子调用上限」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('超过单实例子调用上限'))
+  checkTrue('R105 planner 静态调用点 19 处 → deny 且含「超过单实例子调用上限」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('超过单实例子调用上限'))
 }
 
 console.log(`\n通过 ${pass}, 失败 ${fail}`)

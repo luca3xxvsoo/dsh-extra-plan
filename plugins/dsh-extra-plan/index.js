@@ -312,7 +312,7 @@ const ROUTE_GATE_SET = new Set([ROUTE_WORD_DIRECT, ROUTE_WORD_PLAN, ROUTE_WORD_D
 const APPROVAL_GATE_SET = new Set([APPROVAL_WORD_APPROVE, APPROVAL_WORD_REPLAN, ROUTE_WORD_DISAGREE])
 
 // 免计瀑布预算的工具白名单（planner 预算计数与 pre-execute 闸门豁免共用）。
-const FREE_TOOLS = new Set(['save_plan', 'report', 'send_message'])
+const FREE_TOOLS = new Set(['save_plan', 'send_message'])
 
 // 白名单后缀剥离：把选项标签末尾的推荐标记去掉，用于精确匹配前净化。
 // 四种白名单后缀：(Recommended)、（Recommended）、(推荐)、（推荐）；英文不区分大小写。
@@ -679,7 +679,7 @@ function plannerChildIdsOf(events) {
   return ids
 }
 
-// 会话内 tool/call 成功配对计数（排除 skipNames，如 save_plan/report/send_message）——探查硬上限判据。
+// 会话内 tool/call 成功配对计数（排除 skipNames，如 save_plan/send_message）——探查硬上限判据。
 // 直呼 = tool/call + tool/result(ok) 配对计（data.error undefined/null + message.content 内
 // tool-result 的 toolCallId 命中 + 块级 isError!==true 排除）；code-dispatch（run_code 子调用）
 // 不再计入——容器计费：run_code 本身计 1 次（tool/call+tool/result 配对），子调用由实例上限单独约束。
@@ -2073,6 +2073,17 @@ function runCodeGroupDenyReason(state, exec, role, gateCtx) {
   if (roleKind === 'planner') {
     const siteCount = runCodeSiteCount(runCodeTextOf(exec))
     if (siteCount > ctx.exploreBudget) denies.push({ member: { kind: 'cap', name: 'run_code' }, reason: `run_code 静态调用点 ${siteCount} 处超过单实例子调用上限 ${ctx.exploreBudget}（exploreBudget）：请拆分多个 run_code 或减少单次调用点` })
+    // 新增（T2 修复）：预算耗尽白名单把关——budgetExceeded(toolCallsSinceUser(events, FREE_TOOLS)+1, exploreBudget) 时，
+    // run_code 工具组必须成员组非空且全部 ∈ FREE_TOOLS 才放行；空组/动态访问（decomposeRunCode 置 dynamic）/
+    // 任何非 FREE_TOOLS 成员（含嵌套 run_code、bare-write）→ 拒绝（保守）。拒绝文案=预算耗尽原文+动态拼接白名单。
+    const budgetUsed = toolCallsSinceUser(ctx.events !== undefined ? ctx.events : [], FREE_TOOLS)
+    if (budgetExceeded(budgetUsed + 1, ctx.exploreBudget)) {
+      const budgetDecomposed = decomposeRunCode(runCodeTextOf(exec))
+      const allFree = budgetDecomposed.dynamic !== true && budgetDecomposed.members.length > 0 && budgetDecomposed.members.every((m) => FREE_TOOLS.has(m.name))
+      if (!allFree) {
+        denies.push({ member: { kind: 'budget', name: 'run_code' }, reason: budgetExhaustedReason(Math.min(budgetUsed, ctx.exploreBudget), ctx.exploreBudget) + ` 预算耗尽后 run_code 仅可调用 ${[...FREE_TOOLS].join('/')}，其他工具均不放行` })
+      }
+    }
   }
   if (denies.length === 0) return null
   return aggregateRunCodeDenyReason(members, denies)
@@ -2081,12 +2092,13 @@ function runCodeGroupDenyReason(state, exec, role, gateCtx) {
 // 聚合报错（统一格式，任何一次组判定拒绝均用此格式；子文案逐字不变）：
 // header 一行（组规模 + 触发明细计数 + 「全通过才放行」语义）+ 逐行 `- <标签>: <子文案>`；
 // 标签规则：普通成员=工具名；裸写=`write（裸写特征：<hints 顿号连接>）`；
-// 参数不可解析=`<工具名>（参数不可解析）`；行序=组员顺序（展平后）；子文案来自闸门函数原返回值。
+// 参数不可解析=`<工具名>（参数不可解析）`；行序=组员顺序（展平后）；子文案来自闸门函数原返回值；catch/cap/budget 直接取成员 name。
 function aggregateRunCodeDenyReason(members, denies) {
   const lines = [`run_code 拆解预审未通过：工具组共 ${members.length} 项（去重后），${denies.length} 项触发闸门，任一触发即整体拒绝：`]
   for (const d of denies) {
     if (d.member.kind === 'catch') { lines.push(`- ${d.member.name}: ${d.reason}`); continue }
     if (d.member.kind === 'cap') { lines.push(`- ${d.member.name}: ${d.reason}`); continue }
+    if (d.member.kind === 'budget') { lines.push(`- ${d.member.name}: ${d.reason}`); continue }
     let label = d.member.name
     if (d.member.kind === 'bare-write') label = `write（裸写特征：${d.member.hints.join('、')}）`
     else if (!d.member.argsParsed) label = `${d.member.name}（参数不可解析）`
@@ -3190,9 +3202,9 @@ export function apply(ctx, config) {
     if (planner) {
       const plannerEvents = sessionEvents(agent.session)
       let reason = plannerGateReason(exec, plannerEvents, exploreBudget)
-      // 修复B：预算耗尽时 run_code 放行进组判定（收尾豁免）——
-      // plannerGateReason 对 run_code 仅可能因预算耗尽返回非 null（run_code 非 write/edit/pwsh/bash），
-      // 组判定内 FREE_TOOLS 成员放行、非豁免成员按预算拒绝（同源文案含「探查预算已耗尽」）。
+      // 预算耗尽时 run_code 不在此直拒：plannerGateReason 对 run_code 仅可能因预算耗尽返回非 null
+      // （run_code 非 write/edit/pwsh/bash/job_output），置 null 让预算判定进入组判定——组判定内按白名单把关：
+      // 成员组非空且全部 ∈ FREE_TOOLS 才放行；含非白名单成员或空组/动态访问 → 拒绝（动态拼接文案）。
       if (exec.name === 'run_code' && reason !== null) reason = null
       if (reason !== null) return { kind: 'deny', reason }
       if (exec.name === 'run_code') {

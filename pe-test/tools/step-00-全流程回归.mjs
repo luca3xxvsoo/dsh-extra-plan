@@ -616,7 +616,7 @@ const CC = [
   ['CC1 单 cdStart（容器计费）→ 0', [cdStart('read', 'n1', {}), cdEnd('n1', 'ok')], new Set([]), 0],
   ['CC2 直呼×2+cdStart×2 → 2（子调用不计）', [call('read', 'c1'), ok('c1', 'r'), call('glob', 'c2'), ok('c2', 'r'), cdStart('pwsh', 'n1', {}), cdEnd('n1', 'ok'), cdStart('read', 'n2', {}), cdEnd('n2', 'ok')], new Set([]), 2],
   ['CC3 skipNames 含 save_plan → 嵌套 save_plan 不计（子调用全部不计）', [cdStart('save_plan', 'n1', {}), cdEnd('n1', 'ok'), cdStart('read', 'n2', {}), cdEnd('n2', 'ok')], new Set(['save_plan']), 0],
-  ['CC4 嵌套 skipNames 白名单不含 → 子调用不计（现为 0）', [cdStart('send_message', 'n1', {}), cdEnd('n1', 'ok'), cdStart('report', 'n2', {}), cdEnd('n2', 'ok'), cdStart('read', 'n3', {}), cdEnd('n3', 'ok')], new Set(['save_plan', 'send_message', 'report']), 0],
+  ['CC4 嵌套 skipNames 白名单不含（glob/read）→ 子调用不计（现为 0）', [cdStart('send_message', 'n1', {}), cdEnd('n1', 'ok'), cdStart('glob', 'n2', {}), cdEnd('n2', 'ok'), cdStart('read', 'n3', {}), cdEnd('n3', 'ok')], new Set(['save_plan', 'send_message']), 0],
   ['CC5 dispatch isError 不计（子调用不计）', [cdStart('read', 'n1', {}), cdEnd('n1', 'x', true)], new Set([]), 0],
   ['CC6 start 无 dispatch 不计', [cdStart('read', 'n1', {})], new Set([]), 0],
   ['CC7 容器+子调用混合 → 只计容器 1', [call('read', 'c1'), ok('c1', 'r'), cdStart('read', 'n1', {}), cdEnd('n1', 'ok')], new Set([]), 1],
@@ -741,6 +741,8 @@ for (const [name, code, expected] of J) {
 }
 
 // ── K 系列:子代理角色组判定（F7' v4;role = {kind:'planner'}/{kind:'child',readOnly,probe}） ──
+// 预算耗尽白名单 fixture（T2 修复）：18 组成功配对 = 已用 18/18（与 step-04 budgetEvents 同口径）。
+const budgetEventsFx = [um(), ...Array.from({ length: 18 }, (_, i) => [call('read', 'b' + i), ok('b' + i, 'ok')]).flat()]
 const K = [
   ['K1 planner+裸写 → 聚合含「只读角色仅允许只读探查」与「命中」', { kind: 'planner' }, writeCodeFx, ['只读角色仅允许只读探查', '命中']],
   ['K2 planner+tools.write → 聚合含「规划子代理只读」', { kind: 'planner' }, "await tools.write({ file_path: 'x', content: '1' })", ['规划子代理只读']],
@@ -750,9 +752,11 @@ const K = [
   ['K6 child-reviewer+tools.write → 聚合含「验收复核者只读」', { kind: 'child', readOnly: true, probe: false }, "await tools.write({ file_path: 'x', content: '1' })", ['验收复核者只读']],
   ['K7 执行者+裸写 → 放行(null)', { kind: 'child', readOnly: false, probe: false }, writeCodeFx, null],
   ['K8 执行者+tools.write → 放行(null)', { kind: 'child', readOnly: false, probe: false }, "await tools.write({ file_path: 'x', content: '1' })", null],
+  ['K9 planner+预算耗尽+仅 save_plan 成员 → 放行(null)', { kind: 'planner' }, 'await tools.save_plan({ "plan": "p", "checklist": "c" })', null, { events: budgetEventsFx, exploreBudget: 18 }],
+  ['K10 planner+预算耗尽+read 成员 → 聚合含「探查预算已耗尽（本轮已用 18/18）」与「仅可调用 save_plan/send_message」', { kind: 'planner' }, "await tools.read({ file_path: 'x' })", ['探查预算已耗尽（本轮已用 18/18）', '仅可调用 save_plan/send_message'], { events: budgetEventsFx, exploreBudget: 18 }],
 ]
-for (const [name, role, code, expected] of K) {
-  const got = runCodeGroupDenyReason(undefined, { arguments: { code } }, role, {})
+for (const [name, role, code, expected, gateCtx] of K) {
+  const got = runCodeGroupDenyReason(undefined, { arguments: { code } }, role, gateCtx !== undefined ? gateCtx : {})
   const okResult = expected === null ? got === null : typeof got === 'string' && expected.every((s) => got.includes(s))
   if (okResult) { pass += 1 } else { fail += 1 }
   console.log(`${okResult ? 'PASS' : 'FAIL'}  ${name}  (期望 ${JSON.stringify(expected)}, 实际 ${JSON.stringify(got)})`)
