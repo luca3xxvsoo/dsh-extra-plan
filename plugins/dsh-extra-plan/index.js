@@ -680,15 +680,14 @@ function plannerChildIdsOf(events) {
 }
 
 // 会话内 tool/call 成功配对计数（排除 skipNames，如 save_plan/report/send_message）——探查硬上限判据。
-// 成功配对口径（修复A）：直呼 = tool/call + tool/result(ok) 配对计（data.error undefined/null +
-// message.content 内 tool-result 的 toolCallId 命中）；嵌套 = code-dispatch-start +
-// code-dispatch(非 isError) 配对计（subCallId 命中）。
+// 直呼 = tool/call + tool/result(ok) 配对计（data.error undefined/null + message.content 内
+// tool-result 的 toolCallId 命中 + 块级 isError!==true 排除）；code-dispatch（run_code 子调用）
+// 不再计入——容器计费：run_code 本身计 1 次（tool/call+tool/result 配对），子调用由实例上限单独约束。
 // 修复B（被拒不烧预算）：pre-execute deny 的 tool/result 无 data.error（仅 HarnessError 有 .info），
 // 但 tool-result 块恒带块级 isError:true → 配对判定按块级 isError 排除，被拒调用才真实不计。
 function toolCallCount(events, skipNames) {
   if (!Array.isArray(events)) return 0
   const okCalls = new Set()
-  const okDispatches = new Set()
   for (const e of events) {
     if (e === null || typeof e !== 'object') continue
     if (e.type === 'tool/result') {
@@ -702,23 +701,10 @@ function toolCallCount(events, skipNames) {
       }
       continue
     }
-    if (e.type === 'tool/code-dispatch') {
-      const d = e.data
-      if (d === null || typeof d !== 'object') continue
-      if (d.isError === true) continue
-      if (typeof d.subCallId === 'string') okDispatches.add(d.subCallId)
-    }
   }
   let count = 0
   for (const e of events) {
     if (e === null || typeof e !== 'object') continue
-    if (e.type === 'tool/code-dispatch-start') {
-      const d = e.data
-      if (d === null || typeof d !== 'object' || typeof d.name !== 'string') continue
-      if (skipNames !== undefined && skipNames.has(d.name)) continue
-      if (typeof d.subCallId === 'string' && okDispatches.has(d.subCallId)) count += 1
-      continue
-    }
     if (e.type !== 'tool/call') continue
     const d = e.data
     if (d === null || typeof d !== 'object' || typeof d.name !== 'string') continue
@@ -806,7 +792,7 @@ const BUDGET_REMINDER_THRESHOLD = 3
 
 // 预算告知文本：本轮探查预算上限为 {budget} 次工具调用。
 function budgetNoticeText(budget) {
-  return `本轮探查预算上限为 ${budget} 次工具调用。预算耗尽时输出「申请继续探查：<待查项> — <原因>」，主会话将探查待查项并转达线索文件路径，你读取线索继续工作。探查完成后直接调用 save_plan 落盘（系统会自动检测未探查项）`
+  return `本轮探查预算上限为 ${budget} 次工具调用。探查时 ≥ 2 个独立方向建议优先用 subagent_probe 并行多派探查者。预算耗尽时输出「申请继续探查：<待查项> — <原因>」，主会话将探查待查项并转达线索文件路径，你读取线索继续工作。探查完成后直接调用 save_plan 落盘（系统会自动检测未探查项）`
 }
 
 // 预算告知拼接：结构同 withPlannerPromptSuffix（kind 限定 user/coordinator/agent-message、
@@ -1457,100 +1443,14 @@ function runCodeCatchGateReason(code) {
   const text = typeof code === 'string' ? code : ''
   if (text === '') return null
   const n = text.length
-  // 调用点收集（镜像 decomposeRunCode 提取语义；不去重、只记 {start,end,innerText,name}）。
-  //（等号换行写法：内部辅助不列入代码地图函数索引）
-  const collectSites =
-    (txt, msk) => {
-    const sites = []
-    const tlen = txt.length
-    let i = 0
-    while (i < tlen) {
-      const ch = txt[i]
-      // 跳过字符串字面量与注释（原序列上跳过起始符，避免字符串/注释内 tools.x 当调用提取）
-      if (ch === "'" || ch === '"' || ch === '`') {
-        const quote = ch
-        let j = i + 1
-        while (j < tlen) {
-          if (txt[j] === '\\') { j += 2; continue }
-          if (txt[j] === quote) break
-          j += 1
-        }
-        i = j < tlen ? j + 1 : tlen
-        continue
-      }
-      if (ch === '/' && i + 1 < tlen && txt[i + 1] === '/') {
-        while (i < tlen && txt[i] !== '\n') i += 1
-        continue
-      }
-      if (ch === '/' && i + 1 < tlen && txt[i + 1] === '*') {
-        const end = txt.indexOf('*/', i + 2)
-        i = end === -1 ? tlen : end + 2
-        continue
-      }
-      if (txt.startsWith('tools', i) && !(i > 0 && txt[i - 1] !== undefined && /[A-Za-z0-9_$]/.test(txt[i - 1]))) {
-        let j = i + 5
-        while (j < tlen && /\s/.test(txt[j])) j += 1
-        let name = undefined
-        let parenIdx = -1
-        if (txt[j] === '.') {
-          j += 1
-          while (j < tlen && /\s/.test(txt[j])) j += 1
-          const m = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(txt.slice(j))
-          if (m !== null) {
-            const mName = m[0]
-            let k = j + mName.length
-            while (k < tlen && /\s/.test(txt[k])) k += 1
-            if (txt[k] === '(') { name = mName; parenIdx = k }
-          }
-        } else if (txt[j] === '[') {
-          j += 1
-          while (j < tlen && /\s/.test(txt[j])) j += 1
-          const q = txt[j]
-          if (q === "'" || q === '"') {
-            let k = j + 1
-            while (k < tlen && txt[k] !== q) { if (txt[k] === '\\') k += 1; k += 1 }
-            const lit = txt.slice(j + 1, k)
-            if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(lit) && k < tlen) {
-              k += 1
-              while (k < tlen && /\s/.test(txt[k])) k += 1
-              if (txt[k] === ']') {
-                k += 1
-                while (k < tlen && /\s/.test(txt[k])) k += 1
-                if (txt[k] === '(') { name = lit; parenIdx = k }
-              }
-            }
-          } else {
-            // tools[var]/tools[expr] 动态访问：跳到 ']' 后 ws 再找 '('（找不到 '(' 不计，
-            // 如 const t = tools[fn] 非调用）
-            let k = j
-            let depth = 1
-            while (k < tlen && depth > 0) {
-              if (txt[k] === '[') depth += 1
-              else if (txt[k] === ']') depth -= 1
-              k += 1
-            }
-            while (k < tlen && /\s/.test(txt[k])) k += 1
-            if (txt[k] === '(') parenIdx = k
-          }
-        }
-        if (parenIdx !== -1) {
-          const bal = sliceBalancedArgs(msk, txt, parenIdx)
-          sites.push({ start: i, end: bal.closeIdx, innerText: bal.innerText.trim(), name })
-          i = bal.closeIdx + 1
-          continue
-        }
-      }
-      i += 1
-    }
-    return sites
-  }
+  // 调用点收集：模块顶层 collectRunCodeSites（逻辑自本函数局部 collectSites 逐字提升，见函数定义处）。
   let total = 0
   let protectedCount = 0
   // 单层扫描（嵌套层递归；protection 按层内区间判定，跨层不继承）
   const scanLayer =
     (txt) => {
     const msk = maskCodeLiteralsAndComments(txt)
-    const sites = collectSites(txt, msk)
+    const sites = collectRunCodeSites(txt, msk)
     const tlen = txt.length
     // 嵌套展平：depth 0 的 tools.run_code 且参数 JSON.parse 可解析 → 递归扫 args.code、
     // 该调用点不计入本层；参数不可解析的 run_code 调用点按普通调用点计数。
@@ -1648,12 +1548,253 @@ function runCodeCatchGateReason(code) {
         if (msk.slice(k, k + 5) === 'catch' && (k + 5 >= tlen || (msk[k + 5] === undefined || !/[A-Za-z0-9_$]/.test(msk[k + 5])))) protectedIdx.add(s)
       }
     }
+
+    // ④ safe 白名单保护：匹配 const NAME=(P)=>P.catch(CB) 形态定义（NAME/P/CB 任意标识符、
+    //     body 须恰为 P.catch(...)；let/var/async/花括号 body/空转 body 不入白名单）；
+    //     同名非匹配再定义/赋值扫描剔除（保守：再定义即失效）；
+    //     NAME(...) 实参区间内恰 1 个 tools 调用点→保护该点、≥2 个→均不保护（与 try 块同口径）。
+    const safeWhitelist = new Set()
+    const safeDefPos = new Set()
+    let wi = 0
+    while (wi < tlen) {
+      const wIdx = msk.indexOf('const', wi)
+      if (wIdx === -1) break
+      if (!(wIdx === 0 || !/[A-Za-z0-9_$]/.test(msk[wIdx - 1])) || !(wIdx + 5 >= tlen || !/[A-Za-z0-9_$]/.test(msk[wIdx + 5]))) {
+        wi = wIdx + 5
+        continue
+      }
+      let wk = wIdx + 5
+      while (wk < tlen && /\s/.test(msk[wk])) wk += 1
+      const wa = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(msk.slice(wk))
+      if (wa === null) { wi = wIdx + 5; continue }
+      const wName = wa[0]
+      const wNamePos = wk
+      wk += wName.length
+      while (wk < tlen && /\s/.test(msk[wk])) wk += 1
+      if (msk[wk] !== '=') { wi = wIdx + 5; continue }
+      wk += 1
+      while (wk < tlen && /\s/.test(msk[wk])) wk += 1
+      if (msk[wk] !== '(') { wi = wIdx + 5; continue }
+      wk += 1
+      while (wk < tlen && /\s/.test(msk[wk])) wk += 1
+      const wp = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(msk.slice(wk))
+      if (wp === null) { wi = wIdx + 5; continue }
+      const wParam = wp[0]
+      wk += wParam.length
+      while (wk < tlen && /\s/.test(msk[wk])) wk += 1
+      if (msk[wk] !== ')') { wi = wIdx + 5; continue }
+      wk += 1
+      while (wk < tlen && /\s/.test(msk[wk])) wk += 1
+      if (msk[wk] !== '=' || msk[wk + 1] !== '>') { wi = wIdx + 5; continue }
+      wk += 2
+      while (wk < tlen && /\s/.test(msk[wk])) wk += 1
+      const catchParen = wk + wParam.length + 6
+      if (!(msk.slice(wk, wk + wParam.length) === wParam && msk.slice(wk + wParam.length, wk + wParam.length + 6) === '.catch' && msk[catchParen] === '(' && catchParen < tlen)) {
+        wi = wIdx + 5
+        continue
+      }
+      const wbal = sliceBalancedArgs(msk, txt, catchParen)
+      let wb = wbal.closeIdx + 1
+      while (wb < tlen && (msk[wb] === ' ' || msk[wb] === '\t')) wb += 1
+      const wnext = wb < tlen ? msk[wb] : ''
+      const bodyExtends = wnext !== '' && !(wnext === '\n' || wnext === '\r' || wnext === ';' || wnext === ',' || wnext === ')' || wnext === '}' || wnext === ']')
+      if (bodyExtends) { wi = wIdx + 5; continue }
+      safeWhitelist.add(wName)
+      safeDefPos.add(wNamePos)
+      wi = wbal.closeIdx + 1
+    }
+    // 剔除：whitelist 每名在 masked 上扫「非 idChar 前缀 NAME + ws* =」或「function NAME」出现点；
+    // 该出现点不是上述形状匹配定义 → 删除（同名再定义/赋值即失效，保守方向=拒绝）。
+    for (const wName of safeWhitelist) {
+      let di = 0
+      while (di < tlen) {
+        const dIdx = msk.indexOf(wName, di)
+        if (dIdx === -1) break
+        if (!(dIdx === 0 || !/[A-Za-z0-9_$]/.test(msk[dIdx - 1]))) { di = dIdx + 1; continue }
+        let dk = dIdx + wName.length
+        while (dk < tlen && /\s/.test(msk[dk])) dk += 1
+        let isDefPoint = msk[dk] === '='
+        if (!isDefPoint) {
+          let pb = dIdx - 1
+          while (pb >= 0 && /\s/.test(msk[pb])) pb -= 1
+          if (pb >= 7 && msk.slice(pb - 7, pb + 1) === 'function' && (pb - 8 < 0 || !/[A-Za-z0-9_$]/.test(msk[pb - 8]))) isDefPoint = true
+        }
+        if (isDefPoint && !safeDefPos.has(dIdx)) {
+          safeWhitelist.delete(wName)
+          break
+        }
+        di = dIdx + 1
+      }
+    }
+    // 调用保护：whitelist 每名扫「非 idChar 且非 '.' 前缀 NAME + ws* (」→ 配平取实参区间 →
+    // 区间内 tools 调用点恰 1 个 → 保护；≥2 个 → 均不保护。
+    for (const wName of safeWhitelist) {
+      let ci = 0
+      while (ci < tlen) {
+        const cIdx = msk.indexOf(wName, ci)
+        if (cIdx === -1) break
+        if (!(cIdx === 0 || (!/[A-Za-z0-9_$]/.test(msk[cIdx - 1]) && msk[cIdx - 1] !== '.'))) { ci = cIdx + 1; continue }
+        let ck = cIdx + wName.length
+        while (ck < tlen && /\s/.test(msk[ck])) ck += 1
+        if (msk[ck] !== '(') { ci = cIdx + 1; continue }
+        const cbal = sliceBalancedArgs(msk, txt, ck)
+        const whits = []
+        for (let wj = 0; wj < layerSites.length; wj += 1) {
+          if (layerSites[wj].start >= ck && layerSites[wj].end <= cbal.closeIdx) whits.push(wj)
+        }
+        if (whits.length === 1) protectedIdx.add(whits[0])
+        ci = cIdx + 1
+      }
+    }
     protectedCount += protectedIdx.size
   }
   scanLayer(text)
   if (total < 2) return null
   if (protectedCount === total) return null
-  return 'run_code 内 ' + total + ' 个工具调用未全部独立容错：每个工具调用须各自 try/catch 或 allSettled，保证只有报错的那个失败、其余照常。已保护 ' + protectedCount + ' 个'
+  return 'run_code 内 ' + total + ' 个工具调用未全部独立容错：每个工具调用须各自 try/catch 或 allSettled，保证只有报错的那个失败、其余照常。已保护 ' + protectedCount + ' 个。保护写法：①每个调用独立 try/catch；②放 Promise.allSettled([...]) 数组内；③调用后接 .catch；或定义白名单包装后逐个包裹：const safe = (p) => p.catch((e) => ({ _error: String(e).slice(0, 200) }))，再写 safe(tools.x(...))（safe 参数内恰 1 个调用点才受保护）'
+}
+
+// run_code 调用点收集（镜像 decomposeRunCode 提取语义；不去重、只记 {start,end,innerText,name}）。
+// 自 runCodeCatchGateReason 局部 collectSites 提升为模块顶层（任务1）：字符串/注释跳过、
+// tools./tools['lit']/tools[var] 三类调用点、sliceBalancedArgs 配平；逻辑逐字未动。
+function collectRunCodeSites(txt, msk) {
+    const sites = []
+    const tlen = txt.length
+    let i = 0
+    while (i < tlen) {
+      const ch = txt[i]
+      // 跳过字符串字面量与注释（原序列上跳过起始符，避免字符串/注释内 tools.x 当调用提取）
+      if (ch === "'" || ch === '"' || ch === '`') {
+        const quote = ch
+        let j = i + 1
+        while (j < tlen) {
+          if (txt[j] === '\\') { j += 2; continue }
+          if (txt[j] === quote) break
+          j += 1
+        }
+        i = j < tlen ? j + 1 : tlen
+        continue
+      }
+      if (ch === '/' && i + 1 < tlen && txt[i + 1] === '/') {
+        while (i < tlen && txt[i] !== '\n') i += 1
+        continue
+      }
+      if (ch === '/' && i + 1 < tlen && txt[i + 1] === '*') {
+        const end = txt.indexOf('*/', i + 2)
+        i = end === -1 ? tlen : end + 2
+        continue
+      }
+      if (txt.startsWith('tools', i) && !(i > 0 && txt[i - 1] !== undefined && /[A-Za-z0-9_$]/.test(txt[i - 1]))) {
+        let j = i + 5
+        while (j < tlen && /\s/.test(txt[j])) j += 1
+        let name = undefined
+        let parenIdx = -1
+        if (txt[j] === '.') {
+          j += 1
+          while (j < tlen && /\s/.test(txt[j])) j += 1
+          const m = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(txt.slice(j))
+          if (m !== null) {
+            const mName = m[0]
+            let k = j + mName.length
+            while (k < tlen && /\s/.test(txt[k])) k += 1
+            if (txt[k] === '(') { name = mName; parenIdx = k }
+          }
+        } else if (txt[j] === '[') {
+          j += 1
+          while (j < tlen && /\s/.test(txt[j])) j += 1
+          const q = txt[j]
+          if (q === "'" || q === '"') {
+            let k = j + 1
+            while (k < tlen && txt[k] !== q) { if (txt[k] === '\\') k += 1; k += 1 }
+            const lit = txt.slice(j + 1, k)
+            if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(lit) && k < tlen) {
+              k += 1
+              while (k < tlen && /\s/.test(txt[k])) k += 1
+              if (txt[k] === ']') {
+                k += 1
+                while (k < tlen && /\s/.test(txt[k])) k += 1
+                if (txt[k] === '(') { name = lit; parenIdx = k }
+              }
+            }
+          } else {
+            // tools[var]/tools[expr] 动态访问：跳到 ']' 后 ws 再找 '('（找不到 '(' 不计，
+            // 如 const t = tools[fn] 非调用）
+            let k = j
+            let depth = 1
+            while (k < tlen && depth > 0) {
+              if (txt[k] === '[') depth += 1
+              else if (txt[k] === ']') depth -= 1
+              k += 1
+            }
+            while (k < tlen && /\s/.test(txt[k])) k += 1
+            if (txt[k] === '(') parenIdx = k
+          }
+        }
+        if (parenIdx !== -1) {
+          const bal = sliceBalancedArgs(msk, txt, parenIdx)
+          sites.push({ start: i, end: bal.closeIdx, innerText: bal.innerText.trim(), name })
+          i = bal.closeIdx + 1
+          continue
+        }
+      }
+      i += 1
+    }
+  return sites
+}
+
+// run_code code 静态调用点计数（单实例子调用上限快路径，planner 专属）：run_code 调用点本身不计、
+// 参数 JSON 可解析时递归展开 args.code（镜像 runCodeCatchGateReason 展平口径）；其余调用点各计 1。
+function runCodeSiteCount(code) {
+  const text = typeof code === 'string' ? code : ''
+  if (text === '') return 0
+  const masked = maskCodeLiteralsAndComments(text)
+  const sites = collectRunCodeSites(text, masked)
+  let total = 0
+  for (const site of sites) {
+    if (site.name === 'run_code' && site.innerText !== '') {
+      let parsed = null
+      try { parsed = JSON.parse(site.innerText) } catch (error) { /* 参数不可解析 */ }
+      if (parsed !== null && typeof parsed === 'object' && typeof parsed.code === 'string') {
+        total += runCodeSiteCount(parsed.code)
+        continue
+      }
+    }
+    total += 1
+  }
+  return total
+}
+
+// 子调用语义判定：exec.sub===true（组判定合成成员）或 exec.parent!==undefined（运行时嵌套判定，
+// 与官方 dsh-tools nested 判定同口径）→ true；其余 false（直呼/根 run_code 不算子调用）。
+function isRunCodeSubCall(exec) {
+  if (exec === null || typeof exec !== 'object') return false
+  if (exec.sub === true) return true
+  if (exec.parent !== undefined) return true
+  return false
+}
+
+// 单实例子调用超限文案（T3 逐字；listener 运行时检查与纯函数共用）。
+function runCodeDispatchCapText(rid, count, cap) {
+  return `run_code 实例（rootCallId ${rid}）子调用数 ${count} 超过上限 ${cap}（exploreBudget）：请拆分 run_code 或提高 exploreBudget；循环/动态放大同样受限`
+}
+
+// 运行时单实例上限判定（planner 专属）：统计 events 中 type==='tool/code-dispatch-start' 且
+// data.rootCallId===rid 的条数 count；count>cap → 返回 T3 文案；否则 null。
+// exec.rootCallId 非 string / events 非数组 / cap 非正整数 → null。
+function runCodeDispatchGateReason(events, exec, cap) {
+  const rid = exec !== null && exec !== undefined ? exec.rootCallId : undefined
+  if (typeof rid !== 'string' || !Array.isArray(events)) return null
+  if (!Number.isInteger(cap) || cap <= 0) return null
+  let count = 0
+  for (const e of events) {
+    if (e === null || typeof e !== 'object') continue
+    if (e.type !== 'tool/code-dispatch-start') continue
+    const d = e.data
+    if (d === null || typeof d !== 'object') continue
+    if (d.rootCallId === rid) count += 1
+  }
+  if (count > cap) return runCodeDispatchCapText(rid, count, cap)
+  return null
 }
 
 // ① subagent_probe 分支（现 L2236-2248 纯部分）：run_in_background 检查 + planner 预算检查。
@@ -1663,7 +1804,7 @@ function subagentProbeGateReason(exec, isPlanner, events, exploreBudget) {
   if (args !== undefined && args !== null && typeof args === 'object' && args.run_in_background !== true) {
     return '探查者必须后台运行：请显式传 run_in_background: true（one-shot 一次性会话，返回 jobId 后用 job_output 收集结果）'
   }
-  if (isPlanner && !FREE_TOOLS.has(exec.name)) {
+  if (isPlanner && !FREE_TOOLS.has(exec.name) && !isRunCodeSubCall(exec)) {
     const used = toolCallsSinceUser(events !== undefined ? events : [], FREE_TOOLS)
     if (budgetExceeded(used + 1, exploreBudget)) {
       return budgetExhaustedReason(Math.min(used, exploreBudget), exploreBudget)
@@ -1684,7 +1825,7 @@ function plannerGateReason(exec, events, exploreBudget, jobOutputCallCounters) {
     return '规划子代理只读：bash 仅限只读探查命令，禁止创建/修改/删除文件'
   }
   if (exec.name === 'job_output') return jobOutputGateReason(exec, jobOutputCallCounters)
-  if (!FREE_TOOLS.has(exec.name)) {
+  if (!FREE_TOOLS.has(exec.name) && !isRunCodeSubCall(exec)) {
     const used = toolCallsSinceUser(events !== undefined ? events : [], FREE_TOOLS)
     if (budgetExceeded(used + 1, exploreBudget)) {
       return budgetExhaustedReason(Math.min(used, exploreBudget), exploreBudget)
@@ -1856,7 +1997,7 @@ function mainGateReason(state, exec, gateCtx) {
     return null
   }
   if (name === 'run_code') {
-    return runCodeGroupDenyReason(state, exec, { kind: 'main' }, { events, planToolName, jobOutputCallCounters: ctx.jobOutputCallCounters, runCodeDepth: (typeof ctx.runCodeDepth === 'number' ? ctx.runCodeDepth : 0) + 1 })
+    return runCodeGroupDenyReason(state, exec, { kind: 'main' }, { events, planToolName, jobOutputCallCounters: ctx.jobOutputCallCounters, catchGate: ctx.catchGate, runCodeDepth: (typeof ctx.runCodeDepth === 'number' ? ctx.runCodeDepth : 0) + 1 })
   }
   if (name === 'job_output') return jobOutputGateReason(exec, ctx.jobOutputCallCounters)
   return null
@@ -1867,7 +2008,7 @@ function mainGateReason(state, exec, gateCtx) {
 // { route:'none', clarified:false, approved:false, channelBroken:false }。
 // role：{ kind:'main' } | { kind:'planner' } | { kind:'child', readOnly:boolean, probe:boolean }。
 // gateCtx 缺省：{ events:[], planToolName:'subagent_plan', jobOutputCallCounters:new Map(),
-// exploreBudget:18, runCodeDepth:0 }。
+// exploreBudget:18, runCodeDepth:0, catchGate:false }。
 // 多调用容错硬闸门：成员逐项判定之后、聚合之前执行 runCodeCatchGateReason（教学式文案）。
 // 返回 null=放行；非 null=聚合拒绝文案。
 function runCodeGroupDenyReason(state, exec, role, gateCtx) {
@@ -1877,6 +2018,7 @@ function runCodeGroupDenyReason(state, exec, role, gateCtx) {
     jobOutputCallCounters: new Map(),
     exploreBudget: 18,
     runCodeDepth: 0,
+    catchGate: false,
     ...(gateCtx !== undefined && gateCtx !== null ? gateCtx : {}),
   }
   const st = state !== undefined && state !== null
@@ -1898,8 +2040,8 @@ function runCodeGroupDenyReason(state, exec, role, gateCtx) {
       }
       members.push(member)
       const vExec = member.kind === 'bare-write'
-        ? { name: 'write', bare: true, hints: member.hints, arguments: {} }
-        : { name: member.name, arguments: member.argsParsed ? member.args : member.argsText }
+        ? { name: 'write', bare: true, hints: member.hints, arguments: {}, sub: true }
+        : { name: member.name, arguments: member.argsParsed ? member.args : member.argsText, sub: true }
       let reason = null
       if (member.name === 'subagent_probe') {
         reason = subagentProbeGateReason(vExec, roleKind === 'planner', ctx.events !== undefined ? ctx.events : [], ctx.exploreBudget)
@@ -1924,8 +2066,14 @@ function runCodeGroupDenyReason(state, exec, role, gateCtx) {
     }
   }
   visit(runCodeTextOf(exec), ctx.runCodeDepth)
-  const catchReason = runCodeCatchGateReason(runCodeTextOf(exec))
-  if (catchReason !== null) denies.push({ member: { kind: 'catch', name: 'run_code' }, reason: catchReason })
+  if (ctx.catchGate === true) {
+    const catchReason = runCodeCatchGateReason(runCodeTextOf(exec))
+    if (catchReason !== null) denies.push({ member: { kind: 'catch', name: 'run_code' }, reason: catchReason })
+  }
+  if (roleKind === 'planner') {
+    const siteCount = runCodeSiteCount(runCodeTextOf(exec))
+    if (siteCount > ctx.exploreBudget) denies.push({ member: { kind: 'cap', name: 'run_code' }, reason: `run_code 静态调用点 ${siteCount} 处超过单实例子调用上限 ${ctx.exploreBudget}（exploreBudget）：请拆分多个 run_code 或减少单次调用点` })
+  }
   if (denies.length === 0) return null
   return aggregateRunCodeDenyReason(members, denies)
 }
@@ -1938,6 +2086,7 @@ function aggregateRunCodeDenyReason(members, denies) {
   const lines = [`run_code 拆解预审未通过：工具组共 ${members.length} 项（去重后），${denies.length} 项触发闸门，任一触发即整体拒绝：`]
   for (const d of denies) {
     if (d.member.kind === 'catch') { lines.push(`- ${d.member.name}: ${d.reason}`); continue }
+    if (d.member.kind === 'cap') { lines.push(`- ${d.member.name}: ${d.reason}`); continue }
     let label = d.member.name
     if (d.member.kind === 'bare-write') label = `write（裸写特征：${d.member.hints.join('、')}）`
     else if (!d.member.argsParsed) label = `${d.member.name}（参数不可解析）`
@@ -2016,6 +2165,11 @@ export const decisions = {
   codeMutationHints,
   decomposeRunCode,
   runCodeCatchGateReason,
+  collectRunCodeSites,
+  runCodeSiteCount,
+  isRunCodeSubCall,
+  runCodeDispatchGateReason,
+  runCodeDispatchCapText,
   runCodeGroupDenyReason,
   subagentProbeGateReason,
   plannerGateReason,
@@ -2044,6 +2198,7 @@ export function apply(ctx, config) {
   const savePlanDir = typeof cfg.savePlanDir === 'string' && cfg.savePlanDir !== '' ? cfg.savePlanDir : '.extra-plan'
   const plannerPromptSuffix = typeof cfg.plannerPromptSuffix === 'string' ? cfg.plannerPromptSuffix : ''
   const bootstrapOn = cfg.anchoredBootstrap !== false
+  const catchGateOn = cfg.catchGate === true
   const bootstrapPersona = typeof cfg.bootstrapPersona === 'string' ? cfg.bootstrapPersona : 'You are a helpful software engineer assistant.'
   const bootstrapShellTools = new Set(Array.isArray(cfg.bootstrapShellTools) ? cfg.bootstrapShellTools : ['bash', 'pwsh'])
   const bootstrapCommonTools = new Set(Array.isArray(cfg.bootstrapCommonTools) ? cfg.bootstrapCommonTools : ['read'])
@@ -2062,6 +2217,7 @@ export function apply(ctx, config) {
   // appendToolCall 后 scheduler.prepare）；jobOutputCallCounters 内存计数器不依赖该时序。
   const jobOutputCallCounters = new Map()
   const jobOutputLastAnchors = new Map() // sessionId → 上次锚点索引
+  const subCallCounters = new Map() // rootCallId → 已放行子调用数（单实例上限，planner 专属）
   async function foldUsage(agent, role) {
     if (!ledgerOn || ledgerPath === '') return
     const session = agent.session
@@ -3008,6 +3164,7 @@ export function apply(ctx, config) {
       const lastAnchor = jobOutputLastAnchors.get(sessId)
       if (lastAnchor !== currentAnchor) {
         jobOutputCallCounters.delete(sessId)
+        subCallCounters.clear()
         jobOutputLastAnchors.set(sessId, currentAnchor)
       }
     }
@@ -3020,6 +3177,12 @@ export function apply(ctx, config) {
     if (exec.name === 'subagent_probe') {
       const reason = subagentProbeGateReason(exec, planner, sessionEvents(agent.session), exploreBudget)
       if (reason !== null) return { kind: 'deny', reason }
+      if (planner && isRunCodeSubCall(exec)) {
+        const rid = typeof exec.rootCallId === 'string' ? exec.rootCallId : ''
+        const passed = rid === '' ? 0 : (subCallCounters.get(rid) || 0)
+        if (rid === '' || passed >= exploreBudget) return { kind: 'deny', reason: runCodeDispatchCapText(rid === '' ? '?' : rid, passed + 1, exploreBudget) }
+        subCallCounters.set(rid, passed + 1)
+      }
       const parentId = agent.session.header.id
       pendingProbeClaims.set(parentId, (pendingProbeClaims.get(parentId) || 0) + 1)
       return next()
@@ -3033,7 +3196,7 @@ export function apply(ctx, config) {
       if (exec.name === 'run_code' && reason !== null) reason = null
       if (reason !== null) return { kind: 'deny', reason }
       if (exec.name === 'run_code') {
-        const runReason = runCodeGroupDenyReason(undefined, exec, { kind: 'planner' }, { events: plannerEvents, exploreBudget, jobOutputCallCounters })
+        const runReason = runCodeGroupDenyReason(undefined, exec, { kind: 'planner' }, { events: plannerEvents, exploreBudget, jobOutputCallCounters, catchGate: catchGateOn })
         if (runReason !== null) return { kind: 'deny', reason: runReason }
       }
       if (exec.name === 'job_output') {
@@ -3048,6 +3211,12 @@ export function apply(ctx, config) {
           perSession.set(jobId, 1)
         }
       }
+      if (planner && isRunCodeSubCall(exec)) {
+        const rid = typeof exec.rootCallId === 'string' ? exec.rootCallId : ''
+        const passed = rid === '' ? 0 : (subCallCounters.get(rid) || 0)
+        if (rid === '' || passed >= exploreBudget) return { kind: 'deny', reason: runCodeDispatchCapText(rid === '' ? '?' : rid, passed + 1, exploreBudget) }
+        subCallCounters.set(rid, passed + 1)
+      }
       return next()
     }
     if (child) {
@@ -3059,7 +3228,7 @@ export function apply(ctx, config) {
         const reason = childReadonlyGateReason(exec, probe)
         if (reason !== null) return { kind: 'deny', reason }
         if (exec.name === 'run_code') {
-          const runReason = runCodeGroupDenyReason(undefined, exec, { kind: 'child', readOnly: true, probe }, { jobOutputCallCounters })
+          const runReason = runCodeGroupDenyReason(undefined, exec, { kind: 'child', readOnly: true, probe }, { jobOutputCallCounters, catchGate: catchGateOn })
           if (runReason !== null) return { kind: 'deny', reason: runReason }
         }
         if (exec.name === 'job_output') {
@@ -3079,7 +3248,7 @@ export function apply(ctx, config) {
     }
 
     const state = deriveFlowState(sessionEvents(agent.session))
-    const reason = mainGateReason(state, exec, { events: sessionEvents(agent.session), planToolName, jobOutputCallCounters, runCodeDepth: 0 })
+    const reason = mainGateReason(state, exec, { events: sessionEvents(agent.session), planToolName, jobOutputCallCounters, catchGate: catchGateOn, runCodeDepth: 0 })
     if (reason !== null) return { kind: 'deny', reason }
     // 放行副作用：job_output 计数器记录（原 L2414-2427 的 set 部分，仅在放行时执行，时序等价）
     if (exec.name === 'job_output') {

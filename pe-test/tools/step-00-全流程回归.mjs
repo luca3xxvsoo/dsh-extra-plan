@@ -45,6 +45,9 @@ const {
   plannerChildIdsOf,
   toolCallCount,
   toolCallsSinceUser,
+  isRunCodeSubCall,
+  runCodeDispatchGateReason,
+  runCodeSiteCount,
   withPlannerPromptSuffix,
   BUDGET_REMINDER_THRESHOLD,
   budgetNoticeText,
@@ -610,23 +613,59 @@ for (const [name, events, expected] of PC) {
 
 // ── C-code/CU-code 系列:toolCallCount / toolCallsSinceUser 计入嵌套调用（F2 桥接） ──
 const CC = [
-  ['CC1 单 cdStart 计 1', [cdStart('read', 'n1', {}), cdEnd('n1', 'ok')], new Set([]), 1],
-  ['CC2 tool/call×2+cdStart×2 → 4', [call('read', 'c1'), ok('c1', 'r'), call('glob', 'c2'), ok('c2', 'r'), cdStart('pwsh', 'n1', {}), cdEnd('n1', 'ok'), cdStart('read', 'n2', {}), cdEnd('n2', 'ok')], new Set([]), 4],
-  ['CC3 skipNames 含 save_plan → 嵌套 save_plan 排除', [cdStart('save_plan', 'n1', {}), cdEnd('n1', 'ok'), cdStart('read', 'n2', {}), cdEnd('n2', 'ok')], new Set(['save_plan']), 1],
-  ['CC4 嵌套 skipNames 白名单不含 → 仍计 1', [cdStart('send_message', 'n1', {}), cdEnd('n1', 'ok'), cdStart('report', 'n2', {}), cdEnd('n2', 'ok'), cdStart('read', 'n3', {}), cdEnd('n3', 'ok')], new Set(['save_plan', 'send_message', 'report']), 1],
-  ['CC5 dispatch isError 不计', [cdStart('read', 'n1', {}), cdEnd('n1', 'x', true)], new Set([]), 0],
+  ['CC1 单 cdStart（容器计费）→ 0', [cdStart('read', 'n1', {}), cdEnd('n1', 'ok')], new Set([]), 0],
+  ['CC2 直呼×2+cdStart×2 → 2（子调用不计）', [call('read', 'c1'), ok('c1', 'r'), call('glob', 'c2'), ok('c2', 'r'), cdStart('pwsh', 'n1', {}), cdEnd('n1', 'ok'), cdStart('read', 'n2', {}), cdEnd('n2', 'ok')], new Set([]), 2],
+  ['CC3 skipNames 含 save_plan → 嵌套 save_plan 不计（子调用全部不计）', [cdStart('save_plan', 'n1', {}), cdEnd('n1', 'ok'), cdStart('read', 'n2', {}), cdEnd('n2', 'ok')], new Set(['save_plan']), 0],
+  ['CC4 嵌套 skipNames 白名单不含 → 子调用不计（现为 0）', [cdStart('send_message', 'n1', {}), cdEnd('n1', 'ok'), cdStart('report', 'n2', {}), cdEnd('n2', 'ok'), cdStart('read', 'n3', {}), cdEnd('n3', 'ok')], new Set(['save_plan', 'send_message', 'report']), 0],
+  ['CC5 dispatch isError 不计（子调用不计）', [cdStart('read', 'n1', {}), cdEnd('n1', 'x', true)], new Set([]), 0],
   ['CC6 start 无 dispatch 不计', [cdStart('read', 'n1', {})], new Set([]), 0],
+  ['CC7 容器+子调用混合 → 只计容器 1', [call('read', 'c1'), ok('c1', 'r'), cdStart('read', 'n1', {}), cdEnd('n1', 'ok')], new Set([]), 1],
 ]
 for (const [name, events, skip, expected] of CC) {
   check(name, toolCallCount(events, skip), expected)
 }
 
 const CUCODE = [
-  ['CUC1 kind=user 锚点后嵌套计数', [umk('user'), cdStart('read', 'n1', {}), cdEnd('n1', 'ok'), cdStart('glob', 'n2', {}), cdEnd('n2', 'ok')], new Set([]), 2],
-  ['CUC2 锚点后直呼+嵌套混合计数', [umk('user'), call('read', 'a1'), ok('a1', 'r'), cdStart('pwsh', 'n1', {}), cdEnd('n1', 'ok')], new Set([]), 2],
+  ['CUC1 kind=user 锚点后嵌套计数（子调用不计）→ 0', [umk('user'), cdStart('read', 'n1', {}), cdEnd('n1', 'ok'), cdStart('glob', 'n2', {}), cdEnd('n2', 'ok')], new Set([]), 0],
+  ['CUC2 锚点后直呼+嵌套混合 → 只计直呼 1', [umk('user'), call('read', 'a1'), ok('a1', 'r'), cdStart('pwsh', 'n1', {}), cdEnd('n1', 'ok')], new Set([]), 1],
 ]
 for (const [name, events, skip, expected] of CUCODE) {
   check(name, toolCallsSinceUser(events, skip), expected)
+}
+
+// ── IS 系列:isRunCodeSubCall 子调用语义判定（容器计费 / 实例上限） ──────────
+const IS = [
+  ['IS1 parent 定义 → true', { parent: Symbol('p') }, true],
+  ['IS2 sub:true 合成成员 → true', { sub: true }, true],
+  ['IS3 普通 exec → false', { name: 'read' }, false],
+]
+for (const [name, exec, expected] of IS) {
+  check(name, isRunCodeSubCall(exec), expected)
+}
+
+// ── SCD 系列:runCodeSiteCount 静态调用点计数（单实例上限快路径） ───────────
+const SCD = [
+  ['SCD1 2 调用 → 2', "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })", 2],
+  ['SCD2 嵌套展平 → 3', String.raw`await tools.run_code({ "code": "await tools.read({ file_path: 'a' })\nawait tools.read({ file_path: 'b' })" })\nawait tools.read({ file_path: 'c' })`, 3],
+  ['SCD3 空串 → 0', '', 0],
+  ['SCD4 undefined → 0', undefined, 0],
+]
+for (const [name, code, expected] of SCD) {
+  check(name, runCodeSiteCount(code), expected)
+}
+
+// ── DG 系列:runCodeDispatchGateReason 运行时实例上限判定 ─────────────────
+const dg18 = Array.from({ length: 18 }, (_, i) => cdStart('read', 'd' + i, {}))
+const dg19 = dg18.concat([cdStart('read', 'd19', {})])
+const DG = [
+  ['DG1 18×cdStart + cap18 → null', runCodeDispatchGateReason(dg18, { rootCallId: 'r1' }, 18), null],
+  ['DG2 19×cdStart → 非 null 且含「超过上限」', runCodeDispatchGateReason(dg19, { rootCallId: 'r1' }, 18) !== null && String(runCodeDispatchGateReason(dg19, { rootCallId: 'r1' }, 18)).includes('超过上限'), true],
+  ['DG3 exec 无 rootCallId → null', runCodeDispatchGateReason(dg18, {}, 18), null],
+  ['DG4 cap=0 → null', runCodeDispatchGateReason(dg18, { rootCallId: 'r1' }, 0), null],
+  ['DG5 events 非数组 → null', runCodeDispatchGateReason(null, { rootCallId: 'r1' }, 18), null],
+]
+for (const [name, got, expected] of DG) {
+  check(name, got, expected)
 }
 
 // ── CLC 系列:catalogIsCollapsed（ptc 折叠目录判定，F4 桥接） ───────────────
@@ -719,5 +758,5 @@ for (const [name, role, code, expected] of K) {
   console.log(`${okResult ? 'PASS' : 'FAIL'}  ${name}  (期望 ${JSON.stringify(expected)}, 实际 ${JSON.stringify(got)})`)
 }
 
-console.log(`\n通过 ${pass}/${KA.length + M.length + F.length + GK.length + GM.length + F21.length + GL.length + SW.length + P.length + C.length + CU.length + AP.length + BN.length + 2 + BR.length + DR.length + BD.length + BE.length + S.length + 1 + PW.length + 2 + D.length + 3 + 3 + PR.length + 7 + 5 + E.length + RP.length + LQ.length + AS.length + FC.length + PC.length + CC.length + CUCODE.length + CLC.length + H.length + I.length + J.length + K.length}, 失败 ${fail}`)
+console.log(`\n通过 ${pass}/${KA.length + M.length + F.length + GK.length + GM.length + F21.length + GL.length + SW.length + P.length + C.length + CU.length + AP.length + BN.length + 2 + BR.length + DR.length + BD.length + BE.length + S.length + 1 + PW.length + 2 + D.length + 3 + 3 + PR.length + 7 + 5 + E.length + RP.length + LQ.length + AS.length + FC.length + PC.length + CC.length + CUCODE.length + CLC.length + H.length + I.length + J.length + K.length + IS.length + SCD.length + DG.length}, 失败 ${fail}`)
 process.exit(fail === 0 ? 0 : 1)

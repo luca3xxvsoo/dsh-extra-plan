@@ -20,6 +20,7 @@ window.__ModuleLoader__.load({
       plannerPromptSuffix: "额外引导",
       exploreBudget: "探查额度",
       anchoredBootstrap: "anchored开关",
+      catchGate: "容错闸门",
       webFetch: "web_fetch开关",
       toolPresentationMode: "工具呈现模式",
       toolPresentationModeNative: "默认",
@@ -46,6 +47,7 @@ window.__ModuleLoader__.load({
       plannerPromptSuffix: "Extra Prompt Suffix",
       exploreBudget: "Explore Budget",
       anchoredBootstrap: "Anchored Bootstrap",
+      catchGate: "Catch Gate",
       webFetch: "Web Fetch",
       toolPresentationMode: "Tool Presentation Mode",
       toolPresentationModeNative: "Native",
@@ -118,6 +120,7 @@ window.__ModuleLoader__.load({
                 plannerPromptSuffix: typeof data.plannerPromptSuffix === "string" ? data.plannerPromptSuffix : "",
                 exploreBudget: typeof data.exploreBudget === "number" ? data.exploreBudget : 18,
                 anchoredBootstrap: data.anchoredBootstrap === true,
+                catchGate: data.catchGate === true,
                 webFetch: data.webFetch === true,
                 toolPresentationMode: typeof data.toolPresentationMode === "string" && ["native", "ptc", "both"].includes(data.toolPresentationMode) ? data.toolPresentationMode : "native"
               });
@@ -167,6 +170,7 @@ window.__ModuleLoader__.load({
             plannerPromptSuffix: String(draft.plannerPromptSuffix),
             exploreBudget: Number(draft.exploreBudget),
             anchoredBootstrap: draft.anchoredBootstrap === true,
+            catchGate: draft.catchGate === true,
             webFetch: draft.webFetch === true,
             toolPresentationMode: draft.toolPresentationMode || "native"
           };
@@ -250,6 +254,17 @@ window.__ModuleLoader__.load({
               className: "esp-select",
               value: draft.anchoredBootstrap === true ? "true" : "false",
               onChange: function (e) { setField("anchoredBootstrap", e.target.value === "true"); }
+            },
+              el("option", { value: "true" }, "True"),
+              el("option", { value: "false" }, "False")
+            )
+          ),
+          el("label", { className: "esp-field" },
+            el("span", { className: "esp-label" }, t("catchGate")),
+            el("select", {
+              className: "esp-select",
+              value: draft.catchGate === true ? "true" : "false",
+              onChange: function (e) { setField("catchGate", e.target.value === "true"); }
             },
               el("option", { value: "true" }, "True"),
               el("option", { value: "false" }, "False")

@@ -108,6 +108,7 @@
       name: '@local/dsh-extra-plan'
       config:
         anchoredBootstrap: true
+        catchGate: false
         bootstrapPersona: 'You are a helpful software engineer assistant.'
         bootstrapShellTools: [bash, pwsh]
         bootstrapCommonTools: [read]
