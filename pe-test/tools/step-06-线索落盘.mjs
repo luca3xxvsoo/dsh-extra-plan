@@ -3,7 +3,7 @@
 //   executor 均不注册）
 // ②pre-execute save_probe 五态闸门（none→deny、plan 未澄清→deny、plan 已澄清→allow、
 //   direct→deny、channelBroken→allow；deny 文案含「探查线索未放行」）
-// ③planner 预算回归（v1 口径）：12 次耗尽后 read（含线索文件路径）仍 deny
+// ③planner 预算回归（v1 口径）：18 次成功配对耗尽后 read（含线索文件路径）仍 deny
 //   （reason 含「探查预算已耗尽」）、save_plan 仍 allow——不引入任何预算豁免。
 // ④执行层冒烟（真实落盘）：save_plan 双写 / save_probe 单写 + journal 双形状自愈。
 import { pathToFileURL, fileURLToPath } from 'node:url'
@@ -117,18 +117,24 @@ for (const [name, events, expected] of FIVE) {
 
 // ── ③ planner 预算回归（v1 口径，[任务4.3]/[任务7.4]） ───────────────────
 const plannerEvents = [DESC, umk('user')]
-for (let i = 0; i < 20; i += 1) plannerEvents.push(call('read', `r${i}`))
+for (let i = 0; i < 18; i += 1) {
+  plannerEvents.push(call('read', `r${i}`))
+  plannerEvents.push(ok(`r${i}`, 'ok'))
+}
 const exhaustedPlanner = { session: { header: { id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => plannerEvents }, options: { model: 'deepseek-v4-pro' }, ctx: agentCtx }
 let r = preExecute(harness, exhaustedPlanner, 'read', { file_path: 'C:/work/.extra-plan/线索-x-20260816090000.md' })
 checkTrue('S11 预算耗尽后 read 线索文件 → deny（read 线索计入预算，v1 口径）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('探查预算已耗尽'))
 r = preExecute(harness, exhaustedPlanner, 'save_plan', { plan: 'p', checklist: 'c' })
 checkTrue('S12 预算耗尽后 save_plan → allow（跳过名单仍仅 save_plan）', r !== null && r !== undefined && r.kind === 'allow')
-// 12 次内（含线索文件 read 共 12 次）不拒绝——预算边界恰好在第 13 次触发
+// 11 次成功配对后第 12 次 read（线索文件）不拒绝——12 ≤ 18（exploreBudget 默认）未超预算
 const plannerEvents11 = [DESC, umk('user')]
-for (let i = 0; i < 11; i += 1) plannerEvents11.push(call('read', `q${i}`))
+for (let i = 0; i < 11; i += 1) {
+  plannerEvents11.push(call('read', `q${i}`))
+  plannerEvents11.push(ok(`q${i}`, 'ok'))
+}
 const planner11 = { session: { header: { id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => plannerEvents11 }, options: { model: 'deepseek-v4-pro' }, ctx: agentCtx }
 r = preExecute(harness, planner11, 'read', { file_path: 'C:/work/.extra-plan/线索-x-20260816090000.md' })
-checkTrue('S13 第 12 次 read（线索文件）→ allow（读线索 1 次 = 预算减 1，剩 0 次余量）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('S13 第 12 次 read（线索文件）→ allow（11 配对 + 本次 = 12 ≤ 18 未超预算）', r !== null && r !== undefined && r.kind === 'allow')
 const plannerEventsWithTransfer = [...plannerEvents, umk('agent-message')]
 const transferredPlanner = { session: { header: { id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => plannerEventsWithTransfer }, options: { model: 'deepseek-v4-pro' }, ctx: agentCtx }
 r = preExecute(harness, transferredPlanner, 'read', { file_path: 'C:/work/.extra-plan/线索-x-20260816090000.md' })
