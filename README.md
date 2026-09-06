@@ -80,15 +80,15 @@ DSH_HOME/profiles/qqbot/node_modules/@tencent-connect/dsh-qqbot/dist/transport/o
 DSH web界面 -> 设置 -> 插件 -> 插件配置 -> 按需规划模式配置
 
 **pro规划**：
-  - 使用模型：未匹配/置空时：使用主会话模型
+  - 使用模型：pro规划默认使用模型。未匹配/置空时：使用主会话模型
   - 额外引导：在主会话发送给pro规划的任务结尾，拼接上的内容。可能能增加pro规划的智商（未验证）。可置空
-  - 探查额度：默认18轮
-  - anchored开关：是否开启 dsh-anchored-standard 同款引导
-  - flash 引导：是否开启 deepseek-v4-flash 智商引导
-  - web_fetch开关：是否开启web_fetch
-  - 工具呈现模式：工具呈现方式切换（默认/混合/纯PTC，对应 native/both/ptc，重启后生效）
+  - 探查额度：允许pro规划调用工具的次数，避免后台无限制调用
+  - anchored开关：首轮极简工具 + 提示词
+  - 启用 flash 引导：每轮注入引导词形式，对使用deepseek-v4-flash*模型的角色进行引导。其他模型默认不生效
+  - web_fetch开关：是否开启web_fetch。
+  - 工具呈现模式：工具呈现方式切换（默认/混合/纯PTC模式）
 
-**探查子代理**：探查者模型跟随主会话（显式指定优先），无独立配置项（默认不加）
+**qqbot兼容插件**：越权申请开关。仅在qqbot进程运行时显示
 
 ## 5. 仓库结构
 
