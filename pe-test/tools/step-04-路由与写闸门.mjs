@@ -527,6 +527,36 @@ checkTrue('R83 组内 job_output wait 成员 → deny 且含「job_output 禁止
 r = preExecute(harness, noneMain, 'run_code', revCode)
 checkTrue('R84 组内 subagent_review 成员无批准 → deny 且含「执行类委派未放行：subagent_review」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('执行类委派未放行：subagent_review'))
 
+// ── ⑨ ptc 锚定（anchored 引导放宽：无 shell 有 run_code 也锚定；P1-P11） ──
+// ptc 折叠目录 [run_code]（wireSchemas 塌缩）：修复前 shells 为空 → 跳过锚定；
+// 修复后 keep 在无 shell 分支加入 run_code → tools 收窄为 [run_code]、
+// sections 替换为极简 persona、contexts 清空（SDK bindings 随之端出）。
+{
+  const ptcMain = await assemble(harnessBoot, mainAgent, [{ name: 'run_code' }])
+  check('P1 ptc 主会话首轮 tools 恰为 [run_code]（锚定启用不跳过）', Array.isArray(ptcMain.tools) ? ptcMain.tools.map((t) => t.name) : null, ['run_code'])
+  check('P2 ptc 主会话 sections 恰为极简 persona 单条', ptcMain.sections, [{ name: 'extra-plan-bootstrap', text: 'You are a helpful software engineer assistant.' }])
+  check('P3 ptc 主会话 contexts 清空', ptcMain.contexts, [])
+}
+{
+  const ptcPlanner = await assemble(harnessBoot, plannerAgent, [{ name: 'run_code' }])
+  check('P4 ptc planner 首轮 tools 恰为 [run_code]', Array.isArray(ptcPlanner.tools) ? ptcPlanner.tools.map((t) => t.name) : null, ['run_code'])
+  check('P5 ptc planner sections 恰为极简 persona 单条', ptcPlanner.sections, [{ name: 'extra-plan-bootstrap', text: 'You are a helpful software engineer assistant.' }])
+  check('P6 ptc planner contexts 清空', ptcPlanner.contexts, [])
+}
+{
+  const emptyBoot = await assemble(harnessBoot, mainAgent, [{ name: 'read' }, { name: 'glob' }])
+  check('P7 无 shell 无 run_code → 跳过（tools 原样）', Array.isArray(emptyBoot.tools) ? emptyBoot.tools.map((t) => t.name).sort() : null, ['glob', 'read'])
+  check('P8 无 shell 无 run_code → sections 原样（未注入 persona）', emptyBoot.sections, [])
+}
+{
+  const bothMain = await assemble(harnessBoot, mainAgent, [{ name: 'read' }, { name: 'pwsh' }, { name: 'run_code' }, { name: 'write' }])
+  check('P9 有 shell 目录 run_code 仍被滤掉（keep=shells+read 现状保持）', Array.isArray(bothMain.tools) ? bothMain.tools.map((t) => t.name).sort() : null, ['pwsh', 'read'])
+  check('P10 有 shell 目录 sections 仍为极简 persona 单条', bothMain.sections, [{ name: 'extra-plan-bootstrap', text: 'You are a helpful software engineer assistant.' }])
+}
+{
+  const ptcExecutor = await assemble(harnessBoot, executor, [{ name: 'run_code' }])
+  check('P11 ptc executor 不引导（tools 原样 [run_code]）', Array.isArray(ptcExecutor.tools) ? ptcExecutor.tools.map((t) => t.name) : null, ['run_code'])
+}
 
 console.log(`\n通过 ${pass}, 失败 ${fail}`)
 process.exit(fail === 0 ? 0 : 1)

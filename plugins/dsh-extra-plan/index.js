@@ -2610,14 +2610,15 @@ export function apply(ctx, config) {
     if (!isBootstrapPhase(agent)) return result
     if (!Array.isArray(result.tools) || result.tools.length === 0) return result
     const shells = result.tools.filter((tool) => tool !== null && typeof tool === 'object' && bootstrapShellTools.has(tool.name))
-    if (shells.length === 0) {
+    const runCodes = result.tools.filter((tool) => tool !== null && typeof tool === 'object' && tool.name === 'run_code')
+    if (shells.length === 0 && runCodes.length === 0) {
       if (!bootstrapShellMissingWarned) {
         bootstrapShellMissingWarned = true
-        console.warn('extra-plan: anchoredBootstrap enabled but no bootstrap shell is present in the catalog — bootstrap skipped for this assembly')
+        console.warn('extra-plan: anchoredBootstrap enabled but neither a bootstrap shell nor run_code is present in the catalog — bootstrap skipped for this assembly')
       }
       return result
     }
-    const keep = new Set([...shells.map((tool) => tool.name), ...bootstrapCommonTools])
+    const keep = new Set([...shells.map((tool) => tool.name), ...(shells.length === 0 ? runCodes.map((tool) => tool.name) : []), ...bootstrapCommonTools])
     const tools = result.tools.filter((tool) => tool !== null && typeof tool === 'object' && keep.has(tool.name))
     return {
       ...result,

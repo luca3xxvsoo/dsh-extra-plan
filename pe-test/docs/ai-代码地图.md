@@ -2,13 +2,13 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述与备注由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：AI 定位功能时先在此表按关键词检索函数名/描述，再 read 目标行号区间；函数描述为空（待补充）时请补写。
-> 上次同步：2026-09-05 14:06:43（脚本自动更新时间戳行）
+> 上次同步：2026-09-06 04:32:33（脚本自动更新时间戳行）
 
 ## 文件总览
 
 | 文件 | 行数 | 说明 |
 |:--|--:|:--|
-| plugins/dsh-extra-plan/index.js | 2828 | 模式核心：三级闸门（路由/澄清/批准）+ 探查预算 + save_plan/save_probe/show_file 工具 + 锚点钩子（修改最频繁） |
+| plugins/dsh-extra-plan/index.js | 2829 | 模式核心：三级闸门（路由/澄清/批准）+ 探查预算 + save_plan/save_probe/show_file 工具 + 锚点钩子（修改最频繁） |
 | plugins/dsh-extra-plan/lib/client-bridge.js | 20 | 客户端桥接壳：仅承载 dsh.client 加载路径指向 lib/client.js（apply 空实现） |
 | plugins/dsh-extra-plan/lib/client.js | 469 | dsh web 设置界面 UI（__ModuleLoader__ 打包格式，函数级索引不可用；中/英文案，React） |
 | plugins/dsh-extra-plan/lib/executor-spawn.js | 90 | 执行者子代理 provider：委托宿主 spawn，注入工具 deny（防委派递归/追问） |
@@ -98,7 +98,7 @@
 | plugins/dsh-extra-plan/index.js | runCodeGroupDenyReason | L1644-1700 | run_code 组判定：拆解→成员逐判定→聚合拒绝 |  |
 | plugins/dsh-extra-plan/index.js | visit | L1660-1696 | 递归展平嵌套 run_code（runCodeGroupDenyReason 内闭包） |  |
 | plugins/dsh-extra-plan/index.js | aggregateRunCodeDenyReason | L1706-1715 | 聚合多成员拒绝消息 |  |
-| plugins/dsh-extra-plan/index.js | apply | L1803-2827 | 插件主入口：配置解析/服务注册/工具注册/锚点钩子 |  |
+| plugins/dsh-extra-plan/index.js | apply | L1803-2828 | 插件主入口：配置解析/服务注册/工具注册/锚点钩子 |  |
 | plugins/dsh-extra-plan/index.js | foldUsage | L1830-1904 | usage 账本折叠写入（cursor 去重，按 sessionId+seq） |  |
 | plugins/dsh-extra-plan/index.js | isChild | L1909-1917 | 子代理判定（live 校验+误分类警示） |  |
 | plugins/dsh-extra-plan/index.js | isPlannerChild | L1921-1935 | 规划子代理判定（descriptor.mode=continuable） |  |
