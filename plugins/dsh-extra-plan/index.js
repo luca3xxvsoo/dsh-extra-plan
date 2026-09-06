@@ -1997,7 +1997,7 @@ function mainGateReason(state, exec, gateCtx) {
     return null
   }
   if (name === 'run_code') {
-    return runCodeGroupDenyReason(state, exec, { kind: 'main' }, { events, planToolName, jobOutputCallCounters: ctx.jobOutputCallCounters, catchGate: ctx.catchGate, runCodeDepth: (typeof ctx.runCodeDepth === 'number' ? ctx.runCodeDepth : 0) + 1 })
+    return runCodeGroupDenyReason(state, exec, { kind: 'main' }, { events, planToolName, jobOutputCallCounters: ctx.jobOutputCallCounters, runcodeCatchGate: ctx.runcodeCatchGate, runCodeDepth: (typeof ctx.runCodeDepth === 'number' ? ctx.runCodeDepth : 0) + 1 })
   }
   if (name === 'job_output') return jobOutputGateReason(exec, ctx.jobOutputCallCounters)
   return null
@@ -2008,7 +2008,7 @@ function mainGateReason(state, exec, gateCtx) {
 // { route:'none', clarified:false, approved:false, channelBroken:false }。
 // role：{ kind:'main' } | { kind:'planner' } | { kind:'child', readOnly:boolean, probe:boolean }。
 // gateCtx 缺省：{ events:[], planToolName:'subagent_plan', jobOutputCallCounters:new Map(),
-// exploreBudget:18, runCodeDepth:0, catchGate:false }。
+// exploreBudget:18, runCodeDepth:0, runcodeCatchGate:false }。
 // 多调用容错硬闸门：成员逐项判定之后、聚合之前执行 runCodeCatchGateReason（教学式文案）。
 // 返回 null=放行；非 null=聚合拒绝文案。
 function runCodeGroupDenyReason(state, exec, role, gateCtx) {
@@ -2018,7 +2018,7 @@ function runCodeGroupDenyReason(state, exec, role, gateCtx) {
     jobOutputCallCounters: new Map(),
     exploreBudget: 18,
     runCodeDepth: 0,
-    catchGate: false,
+    runcodeCatchGate: false,
     ...(gateCtx !== undefined && gateCtx !== null ? gateCtx : {}),
   }
   const st = state !== undefined && state !== null
@@ -2066,7 +2066,7 @@ function runCodeGroupDenyReason(state, exec, role, gateCtx) {
     }
   }
   visit(runCodeTextOf(exec), ctx.runCodeDepth)
-  if (ctx.catchGate === true) {
+  if (ctx.runcodeCatchGate === true) {
     const catchReason = runCodeCatchGateReason(runCodeTextOf(exec))
     if (catchReason !== null) denies.push({ member: { kind: 'catch', name: 'run_code' }, reason: catchReason })
   }
@@ -2198,7 +2198,7 @@ export function apply(ctx, config) {
   const savePlanDir = typeof cfg.savePlanDir === 'string' && cfg.savePlanDir !== '' ? cfg.savePlanDir : '.extra-plan'
   const plannerPromptSuffix = typeof cfg.plannerPromptSuffix === 'string' ? cfg.plannerPromptSuffix : ''
   const bootstrapOn = cfg.anchoredBootstrap !== false
-  const catchGateOn = cfg.catchGate === true
+  const runcodeCatchGateOn = cfg.runcodeCatchGate === true
   const bootstrapPersona = typeof cfg.bootstrapPersona === 'string' ? cfg.bootstrapPersona : 'You are a helpful software engineer assistant.'
   const bootstrapShellTools = new Set(Array.isArray(cfg.bootstrapShellTools) ? cfg.bootstrapShellTools : ['bash', 'pwsh'])
   const bootstrapCommonTools = new Set(Array.isArray(cfg.bootstrapCommonTools) ? cfg.bootstrapCommonTools : ['read'])
@@ -3196,7 +3196,7 @@ export function apply(ctx, config) {
       if (exec.name === 'run_code' && reason !== null) reason = null
       if (reason !== null) return { kind: 'deny', reason }
       if (exec.name === 'run_code') {
-        const runReason = runCodeGroupDenyReason(undefined, exec, { kind: 'planner' }, { events: plannerEvents, exploreBudget, jobOutputCallCounters, catchGate: catchGateOn })
+        const runReason = runCodeGroupDenyReason(undefined, exec, { kind: 'planner' }, { events: plannerEvents, exploreBudget, jobOutputCallCounters, runcodeCatchGate: runcodeCatchGateOn })
         if (runReason !== null) return { kind: 'deny', reason: runReason }
       }
       if (exec.name === 'job_output') {
@@ -3228,7 +3228,7 @@ export function apply(ctx, config) {
         const reason = childReadonlyGateReason(exec, probe)
         if (reason !== null) return { kind: 'deny', reason }
         if (exec.name === 'run_code') {
-          const runReason = runCodeGroupDenyReason(undefined, exec, { kind: 'child', readOnly: true, probe }, { jobOutputCallCounters, catchGate: catchGateOn })
+          const runReason = runCodeGroupDenyReason(undefined, exec, { kind: 'child', readOnly: true, probe }, { jobOutputCallCounters, runcodeCatchGate: runcodeCatchGateOn })
           if (runReason !== null) return { kind: 'deny', reason: runReason }
         }
         if (exec.name === 'job_output') {
@@ -3248,7 +3248,7 @@ export function apply(ctx, config) {
     }
 
     const state = deriveFlowState(sessionEvents(agent.session))
-    const reason = mainGateReason(state, exec, { events: sessionEvents(agent.session), planToolName, jobOutputCallCounters, catchGate: catchGateOn, runCodeDepth: 0 })
+    const reason = mainGateReason(state, exec, { events: sessionEvents(agent.session), planToolName, jobOutputCallCounters, runcodeCatchGate: runcodeCatchGateOn, runCodeDepth: 0 })
     if (reason !== null) return { kind: 'deny', reason }
     // 放行副作用：job_output 计数器记录（原 L2414-2427 的 set 部分，仅在放行时执行，时序等价）
     if (exec.name === 'job_output') {

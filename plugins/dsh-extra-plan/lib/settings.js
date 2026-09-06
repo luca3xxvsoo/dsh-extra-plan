@@ -294,7 +294,7 @@ function createApiHandler(ctx) {
             plannerPromptSuffix: typeof config.plannerPromptSuffix === 'string' ? config.plannerPromptSuffix : '',
             exploreBudget: typeof config.exploreBudget === 'number' ? config.exploreBudget : 0,
             anchoredBootstrap: config.anchoredBootstrap === true,
-            catchGate: config.catchGate === true,
+            runcodeCatchGate: config.runcodeCatchGate === true,
             webFetch: webFetch,
             toolPresentationMode: toolPresentationMode
           })
@@ -341,8 +341,8 @@ function createApiHandler(ctx) {
           if (typeof body.anchoredBootstrap === 'boolean') {
             apply('extra-plan', 'anchoredBootstrap', body.anchoredBootstrap ? 'true' : 'false')
           }
-          if (typeof body.catchGate === 'boolean') {
-            apply('extra-plan', 'catchGate', body.catchGate ? 'true' : 'false')
+          if (typeof body.runcodeCatchGate === 'boolean') {
+            apply('extra-plan', 'runcodeCatchGate', body.runcodeCatchGate ? 'true' : 'false')
           }
           if (typeof body.webFetch === 'boolean') {
             apply('tool-web', 'fetch', body.webFetch ? 'true' : 'false')
@@ -356,7 +356,7 @@ function createApiHandler(ctx) {
             plannerPromptSuffix: typeof body.plannerPromptSuffix === 'string' ? body.plannerPromptSuffix : '',
             exploreBudget: budget,
             anchoredBootstrap: body.anchoredBootstrap === true,
-            catchGate: typeof body.catchGate === 'boolean' ? body.catchGate : false,
+            runcodeCatchGate: typeof body.runcodeCatchGate === 'boolean' ? body.runcodeCatchGate : false,
             webFetch: typeof body.webFetch === 'boolean' ? body.webFetch : false,
             toolPresentationMode: typeof body.toolPresentationMode === 'string' && TOOL_PRESENTATION_MODES.includes(body.toolPresentationMode) ? body.toolPresentationMode : 'native'
           })

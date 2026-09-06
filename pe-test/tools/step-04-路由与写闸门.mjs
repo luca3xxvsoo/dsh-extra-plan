@@ -106,7 +106,7 @@ function makeHarness(config) {
 }
 const harness = makeHarness({ anchoredBootstrap: false })
 const harnessBoot = makeHarness({ anchoredBootstrap: true })
-const harnessCatchOn = makeHarness({ catchGate: true })
+const harnessCatchOn = makeHarness({ runcodeCatchGate: true })
 
 const childAgent = (id) => ({
   session: {
@@ -576,8 +576,8 @@ checkTrue('UC12 嵌套各自 try→null', runCodeCatchGateReason("await tools.ru
 checkTrue('UC13 注释/字符串内 tools.x 不计数→null', runCodeCatchGateReason("const s = 'tools.read({ file_path: 1 })'\n// tools.write({})\nawait tools.glob({ pattern: '**/*.md' })") === null)
 checkTrue("UC14 tools['read'] 字面量方括号计数→触发", (() => { const got = runCodeCatchGateReason("await tools['read']({ file_path: 'x' })\nawait tools['read']({ file_path: 'y' })"); return typeof got === 'string' && got.includes('run_code 内 2 个') })())
 checkTrue('UC15 probeDisposalWarning(0)→null 且 (2)→含「2 个未认领探查者委派」', probeDisposalWarning(0) === null && (() => { const got = probeDisposalWarning(2); return typeof got === 'string' && got.includes('2 个未认领探查者委派') })())
-checkTrue('UC16 catchGate:false → null（开关关纯函数）', runCodeGroupDenyReason(undefined, { name: 'run_code', arguments: { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })" } }, { kind: 'main' }, { catchGate: false }) === null)
-checkTrue('UC17 显式 catchGate:true → 拒且含「未全部独立容错」', (() => { const got = runCodeGroupDenyReason(undefined, { name: 'run_code', arguments: { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })" } }, { kind: 'main' }, { catchGate: true }); return typeof got === 'string' && got.includes('未全部独立容错') })())
+checkTrue('UC16 runcodeCatchGate:false → null（开关关纯函数）', runCodeGroupDenyReason(undefined, { name: 'run_code', arguments: { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })" } }, { kind: 'main' }, { runcodeCatchGate: false }) === null)
+checkTrue('UC17 显式 runcodeCatchGate:true → 拒且含「未全部独立容错」', (() => { const got = runCodeGroupDenyReason(undefined, { name: 'run_code', arguments: { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })" } }, { kind: 'main' }, { runcodeCatchGate: true }); return typeof got === 'string' && got.includes('未全部独立容错') })())
 checkTrue('UC18 safe 白名单放行（形态匹配+实参恰 1 调用点）', runCodeCatchGateReason("const safe = (p) => p.catch((e) => ({ _error: String(e).slice(0, 200) }))\nawait safe(tools.read({ file_path: 'x' }))\ntry { await tools.read({ file_path: 'y' }) } catch (e) {}") === null)
 checkTrue('UC19 safe 实参含 2 调用点 → 拒且含「已保护 0 个」', (() => { const got = runCodeCatchGateReason("const safe = (p) => p.catch((e) => ({ _error: String(e).slice(0, 200) }))\nawait safe(tools.read({ file_path: 'x' }).then(() => tools.read({ file_path: 'y' })))"); return typeof got === 'string' && got.includes('已保护 0 个') })())
 checkTrue('UC20 空转 safe (p=>p) → 拒且含「已保护 0 个」', (() => { const got = runCodeCatchGateReason("const safe = (p) => p\nawait safe(tools.read({ file_path: 'x' }))\nawait tools.read({ file_path: 'y' })"); return typeof got === 'string' && got.includes('已保护 0 个') })())
@@ -591,20 +591,20 @@ checkTrue('UC27 runCodeDispatchGateReason：18×→null / 19×→拒含「超过
 
 // ── ⑫ R85-R91：多调用容错硬闸门监听器级（任务3） ──
 r = preExecute(harnessCatchOn, noneMain, 'run_code', { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })", description: 'UC1 同款' })
-checkTrue('R85 catchGate:true 主会话 none 态多调用无容错 → deny 且含「未全部独立容错」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
+checkTrue('R85 runcodeCatchGate:true 主会话 none 态多调用无容错 → deny 且含「未全部独立容错」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
 r = preExecute(harness, noneMain, 'run_code', { code: "const r = await Promise.allSettled([tools.read({ file_path: 'x' }), tools.read({ file_path: 'y' })])", description: 'UC3 同款' })
 checkTrue('R86 主会话 none 态 allSettled → allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harnessCatchOn, plannerAgent, 'run_code', { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })", description: 'UC1 同款' })
-checkTrue('R87 catchGate:true planner 多调用无容错 → deny 且含「未全部独立容错」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
+checkTrue('R87 runcodeCatchGate:true planner 多调用无容错 → deny 且含「未全部独立容错」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
 await assemble(harnessCatchOn, probeAgent, [{ name: 'read' }, { name: 'glob' }, { name: 'grep' }, { name: 'pwsh' }, { name: 'save_probe' }])
 r = preExecute(harnessCatchOn, probeAgent, 'run_code', { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })", description: 'UC1 同款' })
-checkTrue('R88 catchGate:true probe（只读 child）多调用无容错 → deny 且含「未全部独立容错」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
+checkTrue('R88 runcodeCatchGate:true probe（只读 child）多调用无容错 → deny 且含「未全部独立容错」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
 r = preExecute(harness, noneMain, 'run_code', { code: "try { await tools.read({ file_path: 'x' }) } catch (e) {}\ntry { await tools.read({ file_path: 'x' }) } catch (e) {}\ntry { await tools.subagent_probe({ run_in_background: true }) } catch (e) {}", description: '去重组（独立容错）' })
 checkTrue('R89 R50 改造后 → allow（去重后全过语义保持）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, executor, 'run_code', { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })", description: 'UC1 同款' })
 checkTrue('R90 executor 多调用无容错 → allow（执行者豁免）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harnessCatchOn, noneMain, 'run_code', { code: "await tools.run_code({ \"code\": \"await tools.read({ file_path: 'x' })\" })\nawait tools.read({ file_path: 'y' })", description: 'UC11 同款' })
-checkTrue('R91 catchGate:true 主会话 none 态嵌套展平无容错 → deny 且含「未全部独立容错」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
+checkTrue('R91 runcodeCatchGate:true 主会话 none 态嵌套展平无容错 → deny 且含「未全部独立容错」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
 
 // ── ⑬ R92-R97：job_output 全角色 wait 禁令/查重（任务4/5） ──
 r = preExecute(harness, plannerAgent, 'job_output', { job_id: 'j1', wait: true })
@@ -624,15 +624,15 @@ checkTrue('R96 executor job_output wait → allow（执行者豁免保持）', r
 r = preExecute(harness, plannerAgent, 'run_code', joCode)
 checkTrue('R97 planner run_code 组内 job_output wait → deny 且含「job_output 禁止带 wait: true」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止带 wait: true'))
 
-// ── ⑭ R98-R103：catchGate 开关 + safe 白名单 + 容器计费 + 实例上限（2026-09-06） ──
+// ── ⑭ R98-R103：runcodeCatchGate 开关 + safe 白名单 + 容器计费 + 实例上限（2026-09-06） ──
 r = preExecute(harness, noneMain, 'run_code', { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })", description: 'UC1 同款' })
-checkTrue('R98 默认（catchGate 缺省=关）多调用无容错 → allow（默认关放行）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R98 默认（runcodeCatchGate 缺省=关）多调用无容错 → allow（默认关放行）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harnessCatchOn, noneMain, 'run_code', { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })", description: 'UC1 同款' })
-checkTrue('R98b catchGate:true 多调用无容错 → deny 且含「未全部独立容错」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
+checkTrue('R98b runcodeCatchGate:true 多调用无容错 → deny 且含「未全部独立容错」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
 r = preExecute(harness, noneMain, 'run_code', { code: "const safe = (p) => p.catch((e) => ({ _error: String(e).slice(0, 200) }))\nawait safe(tools.read({ file_path: 'x' }))\ntry { await tools.read({ file_path: 'y' }) } catch (e) {}", description: 'UC18 同款' })
 checkTrue('R99 safe 白名单监听器级 → allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harnessCatchOn, noneMain, 'run_code', { code: "const safe = (p) => p.catch((e) => ({ _error: String(e).slice(0, 200) }))\nawait safe(tools.read({ file_path: 'x' }).then(() => tools.read({ file_path: 'y' })))", description: 'UC19 同款' })
-checkTrue('R100 catchGate:true safe 实参 2 调用点 → deny 且含「已保护 0 个」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('已保护 0 个'))
+checkTrue('R100 runcodeCatchGate:true safe 实参 2 调用点 → deny 且含「已保护 0 个」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('已保护 0 个'))
 r = preExecute(harness, budgetPlanner, 'read', { file_path: 'x' }, { rootCallId: 'r9', parent: Symbol('r101') })
 checkTrue('R101 planner 子调用（语义）预算 → allow（容器计费）', r !== null && r !== undefined && r.kind === 'allow')
 {

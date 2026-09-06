@@ -12,7 +12,7 @@
 - 是什么：run_code 能一次做多件事，是绕开「单工具闸门」的后门。静态拆解 code 为工具成员组（decomposeRunCode：扫描 tools.xxx 调用 + 裸写扫描），逐成员走与直呼完全相同的判定，聚合拒绝。
 - 边界：动态访问（tools[var]）、参数不可解析、嵌套超深 → 不产生成员，运行时瀑布兜底（安全方向放行）。
 - 多调用容错硬闸门：code 内 tools.* 调用点（未去重，裸写不计）≥2 时，要求每个调用点独立容错（①独立 try/catch 组——try 块内恰 1 个调用点 ②allSettled([...]) 数组内 ③.catch 链）；不足→教学式聚合拒绝（「run_code 内 N 个工具调用未全部独立容错…已保护 M 个」）。单调用豁免；嵌套 run_code 展平纳入；静态识别失败保守按未保护拒绝。job_output 全角色禁 wait:true（等完成通知）；被 pre-execute 拒绝的调用不计探查预算（配对按 tool-result 块级 isError 排除）。
-- catchGate 开关：cfg.catchGate===true 默认 false（设置页开启，仿 anchoredBootstrap）；开启时 runCodeCatchGateReason 参与组判定（多调用无独立容错拒绝）；仅影响本检查。
+- runcodeCatchGate 开关：cfg.runcodeCatchGate===true 默认 false（设置页开启，仿 anchoredBootstrap）；开启时 runCodeCatchGateReason 参与组判定（多调用无独立容错拒绝）；仅影响本检查。
 - safe 白名单：const NAME=(P)=>P.catch(CB) 形态（任意命名；let/var/async/花括号 body/非 p.catch 形状不入；同名非匹配再定义剔除）；NAME(...) 实参区间恰 1 个 tools 调用点→保护、≥2→不保护（与 try 同口径）；拒绝文案含模板 const safe = (p) => p.catch((e) => ({ _error: String(e).slice(0, 200) }))。
 - 预算容器计费：planner 预算按容器计——run_code 本身计 1 次（tool/call+tool/result 配对），子调用（code-dispatch）不再计入；直呼 1 次 1 计不变；toolCallCount 已删嵌套分支。
 - 单实例子调用上限（planner）：单 run_code 实例子调用 ≤ exploreBudget；静态点计数>上限组判定快路径拒 + 运行时按 rootCallId（内存 Map）聚合超限拒；循环/动态放大同样受限。
@@ -51,7 +51,7 @@
 | 多调用容错 | run_code ≥2 个 tools.* 调用点未独立容错 → 组判定整体拒绝；一个 try 块包 2 个调用不算各自独立保护 | index.js runCodeCatchGateReason 注释 |
 | 被拒不烧预算 | pre-execute deny 的 tool/result 无 data.error（仅 HarnessError 有 .info），成功配对须按块级 isError 排除，否则被拒调用计入探查预算 | index.js toolCallCount 注释 |
 | 探查者级联中止 | planner 轮次结束→activation dispose→jobs-local owner 级联取消 one-shot 探查者 job（owner disposed）；extra-plan 侧只能告警+文档说明，根治需官方包配合 | index.js probeDisposalWarning 注释 |
-| catchGate 开关 | 教学文案螺旋时用户可关闸退避；开关仅影响多调用容错检查，不影响其它闸门 | index.js runCodeGroupDenyReason catchGate 注释 |
+| runcodeCatchGate 开关 | 教学文案螺旋时用户可关闸退避；开关仅影响多调用容错检查，不影响其它闸门 | index.js runCodeGroupDenyReason runcodeCatchGate 注释 |
 | safe 白名单 | 形态匹配（任意命名）兼顾 AI 可写性与防绕性（参数/回调内新增调用点仍被独立计数）；逐字模板对 AI 实际写法过脆 | index.js runCodeCatchGateReason safe 注释 |
 | 容器计费 | run_code 子调用（code-dispatch）不再计入 planner 预算：toolCallCount 删除嵌套分支；预算检查用 isRunCodeSubCall（exec.parent!==undefined）跳过子调用 | index.js toolCallCount 注释 |
 | 实例上限 | 静态计数防不住循环放大（1 点=计 1）：运行时按 rootCallId 内存 Map 聚合，超 exploreBudget 拒 | index.js runCodeDispatchGateReason 注释 |

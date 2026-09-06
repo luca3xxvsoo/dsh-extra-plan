@@ -44,7 +44,7 @@
    - **探查硬上限**（默认 18 次，计数含 save_plan）：每轮开局告知预算；剩余 ≤3 次注入一次「还剩 N 次」提醒（预算值 ≤3 时不注入；每轮只注入一次）；预算耗尽 → 拒绝后续工具调用并注入带数字收敛指令。预算自最近一条主会话发往子代理的消息起计：初始任务/续轮转达（kind=user/agent-message）= 一次重置 = 授权继续；运行时快照（kind=plugin）不重置
    - 预算紧张（剩 ≤3）时优先委派探查者一次性换取信息，再决定是否申请继续探查
    - **run_code 多调用容错硬闸门**：主会话/planner/只读子代理（probe/reviewer）用 run_code 批量调用时，≥2 个 tools.* 调用必须各自 try/catch 或 allSettled 或 .catch（否则组判定拒绝，教学式文案含「已保护 M 个」；执行者子代理豁免=既有架构）；job_output 全角色禁 wait:true——等完成通知唤醒续轮，勿前台等待
-   - **catchGate 开关退避**：run_code 容错闸门教学文案可经设置页开启（默认 false）；开启后多调用无独立容错才被拦截（仅影响本检查）
+   - **runcodeCatchGate 开关退避**：run_code 容错检查教学文案可经设置页开启（默认 false）；开启后多调用无独立容错才被拦截（仅影响本检查）
    - **safe 白名单包装**：run_code 内多调用可定义 const safe = (p) => p.catch((e) => ({ _error: String(e).slice(0, 200) })) 后逐个 safe(tools.x(...)) 包裹（safe 参数内恰 1 个调用点才受保护；函数名任意）
    - **预算容器计费与单实例上限**：planner 预算按容器计（run_code 计 1 次、子调用不计）；单 run_code 实例子调用 ≤ exploreBudget（默认 18），超限运行时拒绝（循环放大同样被拒）
    - **探查者委派**：one-shot 探查者 owner=委派者，planner 轮次结束会被宿主级联取消（owner disposed）——探查者未完成前不要结束本轮；已知引擎限制与修复候选见 ai-机制设计.md 教训索引「探查者级联中止」
