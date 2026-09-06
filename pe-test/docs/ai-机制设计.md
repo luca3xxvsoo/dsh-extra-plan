@@ -11,6 +11,7 @@
 ## 二、run_code 组判定
 - 是什么：run_code 能一次做多件事，是绕开「单工具闸门」的后门。静态拆解 code 为工具成员组（decomposeRunCode：扫描 tools.xxx 调用 + 裸写扫描），逐成员走与直呼完全相同的判定，聚合拒绝。
 - 边界：动态访问（tools[var]）、参数不可解析、嵌套超深 → 不产生成员，运行时瀑布兜底（安全方向放行）。
+- 多调用容错硬闸门：code 内 tools.* 调用点（未去重，裸写不计）≥2 时，要求每个调用点独立容错（①独立 try/catch 组——try 块内恰 1 个调用点 ②allSettled([...]) 数组内 ③.catch 链）；不足→教学式聚合拒绝（「run_code 内 N 个工具调用未全部独立容错…已保护 M 个」）。单调用豁免；嵌套 run_code 展平纳入；静态识别失败保守按未保护拒绝。job_output 全角色禁 wait:true（等完成通知）；被 pre-execute 拒绝的调用不计探查预算（配对按 tool-result 块级 isError 排除）。
 
 ## 三、探查预算（规划子代理）
 - 是什么：机械上限（默认 18 次工具调用）。开局告知 + 剩 3 次提醒 + 耗尽拒绝并注入数字指令；预算自最近一条主会话消息起计，每条转达消息 = 重置 = 授权继续。
@@ -43,6 +44,9 @@
 | 模型目录 | plannerModel 解析不得依赖 llm 模型目录命中（目录是 advisory：未列出 id 仍原样传递）；旧逻辑父会话空闲时 provider 空导致 plannerModel 永不生效 | index.js resolvePlannerEntry 注释 |
 | 启动预锁 | 不引入启动预锁（启动即重活拖慢会话启动，快通道教训） | index.js 头部注释（约 L74） |
 | PTC×锚定 | ptc 模式 wireSchemas 塌缩为仅 [run_code]，锚定钩子凭 shell 判定 catalog 无 shell → 曾静默跳过（首轮全量 persona+SDK bindings 暴露引发模型误判直调 glob）；2026-09-06 修复：目录含 run_code 亦锚定（无 shell 分支 keep 并入 run_code；有 shell 时 run_code 仍滤除；无 shell 无 run_code 维持跳过+警告） | index.js 头注释（约 L62-64）+ 锚定钩子注释（L2575 附近） |
+| 多调用容错 | run_code ≥2 个 tools.* 调用点未独立容错 → 组判定整体拒绝；一个 try 块包 2 个调用不算各自独立保护 | index.js runCodeCatchGateReason 注释 |
+| 被拒不烧预算 | pre-execute deny 的 tool/result 无 data.error（仅 HarnessError 有 .info），成功配对须按块级 isError 排除，否则被拒调用计入探查预算 | index.js toolCallCount 注释 |
+| 探查者级联中止 | planner 轮次结束→activation dispose→jobs-local owner 级联取消 one-shot 探查者 job（owner disposed）；extra-plan 侧只能告警+文档说明，根治需官方包配合 | index.js probeDisposalWarning 注释 |
 
 ---
 

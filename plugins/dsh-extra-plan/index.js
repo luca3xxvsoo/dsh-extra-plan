@@ -682,7 +682,9 @@ function plannerChildIdsOf(events) {
 // 会话内 tool/call 成功配对计数（排除 skipNames，如 save_plan/report/send_message）——探查硬上限判据。
 // 成功配对口径（修复A）：直呼 = tool/call + tool/result(ok) 配对计（data.error undefined/null +
 // message.content 内 tool-result 的 toolCallId 命中）；嵌套 = code-dispatch-start +
-// code-dispatch(非 isError) 配对计（subCallId 命中）。被 pre-execute 拒的调用无成功配对，不计。
+// code-dispatch(非 isError) 配对计（subCallId 命中）。
+// 修复B（被拒不烧预算）：pre-execute deny 的 tool/result 无 data.error（仅 HarnessError 有 .info），
+// 但 tool-result 块恒带块级 isError:true → 配对判定按块级 isError 排除，被拒调用才真实不计。
 function toolCallCount(events, skipNames) {
   if (!Array.isArray(events)) return 0
   const okCalls = new Set()
@@ -696,7 +698,7 @@ function toolCallCount(events, skipNames) {
       const message = d.message
       if (message === null || typeof message !== 'object' || !Array.isArray(message.content)) continue
       for (const outer of message.content) {
-        if (outer !== null && typeof outer === 'object' && outer.type === 'tool-result' && typeof outer.toolCallId === 'string') okCalls.add(outer.toolCallId)
+        if (outer !== null && typeof outer === 'object' && outer.type === 'tool-result' && typeof outer.toolCallId === 'string' && outer.isError !== true) okCalls.add(outer.toolCallId)
       }
       continue
     }
@@ -1446,6 +1448,214 @@ function decomposeRunCode(code) {
   return { members, dynamic }
 }
 
+// run_code 多调用容错硬闸门（v0.1.10）：code 内 tools.* 调用点（未去重、含多行、含动态访问；
+// 裸写 hint 不计）≥2 时，要求每个调用点独立容错（①独立 try/catch 组——try 块内恰 1 个调用点
+// ②allSettled([...]) 数组内 ③调用闭括号后 .catch 链）；不足 → 教学式拒绝（组判定整体拒绝）。
+// 单调用豁免；嵌套 run_code 展平（depth 0 且参数可解析时递归扫 args.code，depth≥1 跳过）纳入；
+// 静态识别失败方向=保守（按未保护拒绝）。decomposeRunCode 契约与 native/both 直呼路径均不变。
+function runCodeCatchGateReason(code) {
+  const text = typeof code === 'string' ? code : ''
+  if (text === '') return null
+  const n = text.length
+  // 调用点收集（镜像 decomposeRunCode 提取语义；不去重、只记 {start,end,innerText,name}）。
+  //（等号换行写法：内部辅助不列入代码地图函数索引）
+  const collectSites =
+    (txt, msk) => {
+    const sites = []
+    const tlen = txt.length
+    let i = 0
+    while (i < tlen) {
+      const ch = txt[i]
+      // 跳过字符串字面量与注释（原序列上跳过起始符，避免字符串/注释内 tools.x 当调用提取）
+      if (ch === "'" || ch === '"' || ch === '`') {
+        const quote = ch
+        let j = i + 1
+        while (j < tlen) {
+          if (txt[j] === '\\') { j += 2; continue }
+          if (txt[j] === quote) break
+          j += 1
+        }
+        i = j < tlen ? j + 1 : tlen
+        continue
+      }
+      if (ch === '/' && i + 1 < tlen && txt[i + 1] === '/') {
+        while (i < tlen && txt[i] !== '\n') i += 1
+        continue
+      }
+      if (ch === '/' && i + 1 < tlen && txt[i + 1] === '*') {
+        const end = txt.indexOf('*/', i + 2)
+        i = end === -1 ? tlen : end + 2
+        continue
+      }
+      if (txt.startsWith('tools', i) && !(i > 0 && txt[i - 1] !== undefined && /[A-Za-z0-9_$]/.test(txt[i - 1]))) {
+        let j = i + 5
+        while (j < tlen && /\s/.test(txt[j])) j += 1
+        let name = undefined
+        let parenIdx = -1
+        if (txt[j] === '.') {
+          j += 1
+          while (j < tlen && /\s/.test(txt[j])) j += 1
+          const m = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(txt.slice(j))
+          if (m !== null) {
+            const mName = m[0]
+            let k = j + mName.length
+            while (k < tlen && /\s/.test(txt[k])) k += 1
+            if (txt[k] === '(') { name = mName; parenIdx = k }
+          }
+        } else if (txt[j] === '[') {
+          j += 1
+          while (j < tlen && /\s/.test(txt[j])) j += 1
+          const q = txt[j]
+          if (q === "'" || q === '"') {
+            let k = j + 1
+            while (k < tlen && txt[k] !== q) { if (txt[k] === '\\') k += 1; k += 1 }
+            const lit = txt.slice(j + 1, k)
+            if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(lit) && k < tlen) {
+              k += 1
+              while (k < tlen && /\s/.test(txt[k])) k += 1
+              if (txt[k] === ']') {
+                k += 1
+                while (k < tlen && /\s/.test(txt[k])) k += 1
+                if (txt[k] === '(') { name = lit; parenIdx = k }
+              }
+            }
+          } else {
+            // tools[var]/tools[expr] 动态访问：跳到 ']' 后 ws 再找 '('（找不到 '(' 不计，
+            // 如 const t = tools[fn] 非调用）
+            let k = j
+            let depth = 1
+            while (k < tlen && depth > 0) {
+              if (txt[k] === '[') depth += 1
+              else if (txt[k] === ']') depth -= 1
+              k += 1
+            }
+            while (k < tlen && /\s/.test(txt[k])) k += 1
+            if (txt[k] === '(') parenIdx = k
+          }
+        }
+        if (parenIdx !== -1) {
+          const bal = sliceBalancedArgs(msk, txt, parenIdx)
+          sites.push({ start: i, end: bal.closeIdx, innerText: bal.innerText.trim(), name })
+          i = bal.closeIdx + 1
+          continue
+        }
+      }
+      i += 1
+    }
+    return sites
+  }
+  let total = 0
+  let protectedCount = 0
+  // 单层扫描（嵌套层递归；protection 按层内区间判定，跨层不继承）
+  const scanLayer =
+    (txt) => {
+    const msk = maskCodeLiteralsAndComments(txt)
+    const sites = collectSites(txt, msk)
+    const tlen = txt.length
+    // 嵌套展平：depth 0 的 tools.run_code 且参数 JSON.parse 可解析 → 递归扫 args.code、
+    // 该调用点不计入本层；参数不可解析的 run_code 调用点按普通调用点计数。
+    const layerSites = []
+    for (const site of sites) {
+      if (site.name === 'run_code' && site.innerText !== '') {
+        let parsed = null
+        try { parsed = JSON.parse(site.innerText) } catch (error) { /* 参数不可解析 */ }
+        if (parsed !== null && typeof parsed === 'object' && typeof parsed.code === 'string') {
+          scanLayer(parsed.code)
+          continue
+        }
+      }
+      layerSites.push(site)
+    }
+    total += layerSites.length
+    const protectedIdx = new Set()
+    const within = (site, a, b) => site.start >= a && site.start <= b
+    // ① try/catch 保护：masked 上扫 try（前后非 idChar）→ 跳过 ws 须 '{' → 配平取块区间；
+    //    块后跳过 ws 须 catch（catch 后一字符非 idChar，兼容 catch(e)/catch{}）；
+    //    该 try 块内恰 1 个调用点 → 该点计入保护；≥2 个 → 均不保护。
+    let ti = 0
+    while (ti < tlen) {
+      const tIdx = msk.indexOf('try', ti)
+      if (tIdx === -1) break
+      if ((tIdx === 0 || (msk[tIdx - 1] === undefined || !/[A-Za-z0-9_$]/.test(msk[tIdx - 1]))) && (tIdx + 3 >= tlen || (msk[tIdx + 3] === undefined || !/[A-Za-z0-9_$]/.test(msk[tIdx + 3])))) {
+        let k = tIdx + 3
+        while (k < tlen && /\s/.test(msk[k])) k += 1
+        if (msk[k] === '{') {
+          // 花括号专用配平（'{' 开头、'}' 归零即断；不用 sliceBalancedArgs——它在 ')' 归零才断，
+          // 会把 try 块区间错误延伸到 catch 的 '(e)'）
+          let depthB = 0
+          let braceClose = -1
+          for (let x = k; x < tlen; x += 1) {
+            if (msk[x] === '{') depthB += 1
+            else if (msk[x] === '}') { depthB -= 1; if (depthB === 0) { braceClose = x; break } }
+          }
+          if (braceClose !== -1) {
+            let c = braceClose + 1
+            while (c < tlen && /\s/.test(msk[c])) c += 1
+            if (msk.slice(c, c + 5) === 'catch' && (c + 5 >= tlen || (msk[c + 5] === undefined || !/[A-Za-z0-9_$]/.test(msk[c + 5])))) {
+              const hits = []
+              for (let s = 0; s < layerSites.length; s += 1) {
+                if (within(layerSites[s], k, braceClose)) hits.push(s)
+              }
+              if (hits.length === 1) protectedIdx.add(hits[0])
+            }
+            ti = braceClose + 1
+            continue
+          }
+        }
+      }
+      ti = tIdx + 3
+    }
+    // ② allSettled 保护：allSettled（前后非 idChar，Promise.allSettled 的 '.' 前缀天然满足）
+    //    → 跳过 ws 须 '(' → 配平取实参区间 → 区间内首个 '[' 起配平取数组区间 → 区间内全部调用点保护。
+    let ai = 0
+    while (ai < tlen) {
+      const aIdx = msk.indexOf('allSettled', ai)
+      if (aIdx === -1) break
+      if (aIdx === 0 || (msk[aIdx - 1] === undefined || !/[A-Za-z0-9_$]/.test(msk[aIdx - 1]))) {
+        let k = aIdx + 10
+        while (k < tlen && /\s/.test(msk[k])) k += 1
+        if (msk[k] === '(') {
+          const bal = sliceBalancedArgs(msk, txt, k)
+          let br = k + 1
+          while (br < bal.closeIdx && /\s/.test(msk[br])) br += 1
+          if (msk[br] === '[') {
+            let depth = 1
+            let ri = br + 1
+            while (ri < bal.closeIdx && depth > 0) {
+              if (msk[ri] === '[') depth += 1
+              else if (msk[ri] === ']') depth -= 1
+              ri += 1
+            }
+            const arrClose = ri - 1
+            for (let s = 0; s < layerSites.length; s += 1) {
+              if (within(layerSites[s], br, arrClose)) protectedIdx.add(s)
+            }
+          }
+          ai = bal.closeIdx + 1
+          continue
+        }
+      }
+      ai = aIdx + 10
+    }
+    // ③ .catch 链保护：对每个调用点，自 closeIdx+1 在 masked 上跳过 ws 后须为 '.' + ws* + catch
+    //    （catch 后一字符非 idChar）→ 该点计入保护（含动态访问调用点）。
+    for (let s = 0; s < layerSites.length; s += 1) {
+      let k = layerSites[s].end + 1
+      while (k < tlen && /\s/.test(msk[k])) k += 1
+      if (msk[k] === '.') {
+        k += 1
+        while (k < tlen && /\s/.test(msk[k])) k += 1
+        if (msk.slice(k, k + 5) === 'catch' && (k + 5 >= tlen || (msk[k + 5] === undefined || !/[A-Za-z0-9_$]/.test(msk[k + 5])))) protectedIdx.add(s)
+      }
+    }
+    protectedCount += protectedIdx.size
+  }
+  scanLayer(text)
+  if (total < 2) return null
+  if (protectedCount === total) return null
+  return 'run_code 内 ' + total + ' 个工具调用未全部独立容错：每个工具调用须各自 try/catch 或 allSettled，保证只有报错的那个失败、其余照常。已保护 ' + protectedCount + ' 个'
+}
+
 // ① subagent_probe 分支（现 L2236-2248 纯部分）：run_in_background 检查 + planner 预算检查。
 // 参数不可解析（组判定 vExec 传字符串）时跳过 run_in_background 检查（运行时瀑布兜底）。
 function subagentProbeGateReason(exec, isPlanner, events, exploreBudget) {
@@ -1463,7 +1673,7 @@ function subagentProbeGateReason(exec, isPlanner, events, exploreBudget) {
 }
 
 // ② planner 分支（现 L2249-2264 纯部分）：write/edit → pwsh → bash → 预算；不含 run_code（由调用方处理）。
-function plannerGateReason(exec, events, exploreBudget) {
+function plannerGateReason(exec, events, exploreBudget, jobOutputCallCounters) {
   if (exec.name === 'write' || exec.name === 'edit') {
     return '规划子代理只读：方案经 save_plan 落盘，其余写入一律禁止（toolFilter 之外的第二道防线）'
   }
@@ -1473,6 +1683,7 @@ function plannerGateReason(exec, events, exploreBudget) {
   if (exec.name === 'bash' && bashMutationMatches(exec)) {
     return '规划子代理只读：bash 仅限只读探查命令，禁止创建/修改/删除文件'
   }
+  if (exec.name === 'job_output') return jobOutputGateReason(exec, jobOutputCallCounters)
   if (!FREE_TOOLS.has(exec.name)) {
     const used = toolCallsSinceUser(events !== undefined ? events : [], FREE_TOOLS)
     if (budgetExceeded(used + 1, exploreBudget)) {
@@ -1483,7 +1694,7 @@ function plannerGateReason(exec, events, exploreBudget) {
 }
 
 // ③ child 只读块（现 L2274-2289 纯部分）：write/edit → pwsh → bash；probe 布尔选文案；不含 run_code。
-function childReadonlyGateReason(exec, probe) {
+function childReadonlyGateReason(exec, probe, jobOutputCallCounters) {
   if (exec.name === 'write' || exec.name === 'edit') {
     return probe ? '探查者只读：探查不修改任何文件，write/edit 一律禁止（工具目录判定）' : '验收复核者只读：验收复核不修改任何文件，write/edit 一律禁止（工具目录判定）'
   }
@@ -1493,7 +1704,44 @@ function childReadonlyGateReason(exec, probe) {
   if (exec.name === 'bash' && bashMutationMatches(exec)) {
     return probe ? '探查者只读：bash 仅限只读探查命令，禁止创建/修改/删除文件' : '验收复核者只读：bash 仅限只读探查命令，禁止创建/修改/删除文件'
   }
+  if (exec.name === 'job_output') return jobOutputGateReason(exec, jobOutputCallCounters)
   return null
+}
+
+// job_output 全角色闸门（v0.1.10）：wait:true 禁令 + 同 job 查重（自原 mainGateReason 分支逐字搬移，
+// 闸门 1/2 文案逐字不变）；counters undefined/null 或 vExec 无 agent（组判定成员）时
+// 跳过查重、wait 检查照常。
+function jobOutputGateReason(exec, jobOutputCallCounters) {
+  const args = exec !== undefined && exec !== null ? exec.arguments : undefined
+  // 闸门 1：禁止 wait: true 前台等待（参数不可解析时跳过，运行时瀑布兜底）
+  if (args !== undefined && args !== null && typeof args === 'object' && args.wait === true) {
+    return 'job_output 禁止带 wait: true 前台等待。请省略 wait 参数或设 wait: false，job 完成后会收到通知'
+  }
+  // 闸门 2：禁止同一 jobId 连续调用（防轮询）——内存计数器替代 events 推导。
+  // 只读查重（写入由 listener 放行路径执行，时序等价）；组判定成员无会话上下文时
+  // 跳过（运行时瀑布兜底）。
+  if (args !== undefined && args !== null && typeof args === 'object' && typeof args.job_id === 'string') {
+    const execAgent = exec !== undefined && exec !== null ? exec.agent : undefined
+    const header = execAgent !== undefined && execAgent !== null && execAgent.session !== undefined && execAgent.session !== null ? execAgent.session.header : undefined
+    const sessId = header !== undefined && header !== null ? header.id : undefined
+    const counters = jobOutputCallCounters
+    if (typeof sessId === 'string' && counters !== undefined && counters !== null) {
+      const perSession = counters.get(sessId)
+      if (perSession !== undefined && perSession !== null && perSession.has(args.job_id)) {
+        return `job_output 禁止对同一 job 重复调用。job "${args.job_id}" 在本轮已调用过，请等待通知或使用 job_list 查看状态`
+      }
+    }
+  }
+  return null
+}
+
+// 探查者级联中止告警（任务C）：planner 轮次结束 → activation dispose → 宿主 jobs-local
+// owner 级联取消 one-shot 探查者 job（owner disposed）——agent/disposed 清理时若仍有
+// 未认领探查者委派计数即告警留痕。已知引擎限制：根治需官方包配合（dsh-jobs-local/
+// dsh-tool-subagent/dsh-subagent），extra-plan 侧只能告警+文档说明（见教训索引）。
+function probeDisposalWarning(remaining) {
+  if (!Number.isInteger(remaining) || remaining <= 0) return null
+  return '规划子代理会话销毁时仍有 ' + remaining + ' 个未认领探查者委派：其后台 job 可能已被宿主级联取消（owner disposed）。已知引擎限制：one-shot 探查者 owner=委派者，级联取消修复需官方包配合（dsh-jobs-local/dsh-tool-subagent/dsh-subagent）'
 }
 
 // ④ 主会话段（现 L2293-2430 纯部分，分支顺序逐字同序）：
@@ -1610,29 +1858,7 @@ function mainGateReason(state, exec, gateCtx) {
   if (name === 'run_code') {
     return runCodeGroupDenyReason(state, exec, { kind: 'main' }, { events, planToolName, jobOutputCallCounters: ctx.jobOutputCallCounters, runCodeDepth: (typeof ctx.runCodeDepth === 'number' ? ctx.runCodeDepth : 0) + 1 })
   }
-  if (name === 'job_output') {
-    const args = exec.arguments
-    // 闸门 1：禁止 wait: true 前台等待（参数不可解析时跳过，运行时瀑布兜底）
-    if (args !== undefined && args !== null && typeof args === 'object' && args.wait === true) {
-      return 'job_output 禁止带 wait: true 前台等待。请省略 wait 参数或设 wait: false，job 完成后会收到通知'
-    }
-    // 闸门 2：禁止同一 jobId 连续调用（防轮询）——内存计数器替代 events 推导。
-    // 只读查重（写入由 listener 放行路径执行，时序等价）；组判定成员无会话上下文时
-    // 跳过（运行时瀑布兜底）。
-    if (args !== undefined && args !== null && typeof args === 'object' && typeof args.job_id === 'string') {
-      const execAgent = exec !== undefined && exec !== null ? exec.agent : undefined
-      const header = execAgent !== undefined && execAgent !== null && execAgent.session !== undefined && execAgent.session !== null ? execAgent.session.header : undefined
-      const sessId = header !== undefined && header !== null ? header.id : undefined
-      const counters = ctx.jobOutputCallCounters
-      if (typeof sessId === 'string' && counters !== undefined && counters !== null) {
-        const perSession = counters.get(sessId)
-        if (perSession !== undefined && perSession !== null && perSession.has(args.job_id)) {
-          return `job_output 禁止对同一 job 重复调用。job "${args.job_id}" 在本轮已调用过，请等待通知或使用 job_list 查看状态`
-        }
-      }
-    }
-    return null
-  }
+  if (name === 'job_output') return jobOutputGateReason(exec, ctx.jobOutputCallCounters)
   return null
 }
 
@@ -1642,6 +1868,7 @@ function mainGateReason(state, exec, gateCtx) {
 // role：{ kind:'main' } | { kind:'planner' } | { kind:'child', readOnly:boolean, probe:boolean }。
 // gateCtx 缺省：{ events:[], planToolName:'subagent_plan', jobOutputCallCounters:new Map(),
 // exploreBudget:18, runCodeDepth:0 }。
+// 多调用容错硬闸门：成员逐项判定之后、聚合之前执行 runCodeCatchGateReason（教学式文案）。
 // 返回 null=放行；非 null=聚合拒绝文案。
 function runCodeGroupDenyReason(state, exec, role, gateCtx) {
   const ctx = {
@@ -1687,9 +1914,9 @@ function runCodeGroupDenyReason(state, exec, role, gateCtx) {
           reason = mainGateReason(st, vExec, ctx)
         } // 执行者豁免：reason 保持 null
       } else if (roleKind === 'planner') {
-        reason = plannerGateReason(vExec, ctx.events !== undefined ? ctx.events : [], ctx.exploreBudget)
+        reason = plannerGateReason(vExec, ctx.events !== undefined ? ctx.events : [], ctx.exploreBudget, ctx.jobOutputCallCounters)
       } else if (roleKind === 'child') {
-        reason = r.readOnly === true ? childReadonlyGateReason(vExec, r.probe === true) : null
+        reason = r.readOnly === true ? childReadonlyGateReason(vExec, r.probe === true, ctx.jobOutputCallCounters) : null
       } else {
         reason = mainGateReason(st, vExec, ctx)
       }
@@ -1697,6 +1924,8 @@ function runCodeGroupDenyReason(state, exec, role, gateCtx) {
     }
   }
   visit(runCodeTextOf(exec), ctx.runCodeDepth)
+  const catchReason = runCodeCatchGateReason(runCodeTextOf(exec))
+  if (catchReason !== null) denies.push({ member: { kind: 'catch', name: 'run_code' }, reason: catchReason })
   if (denies.length === 0) return null
   return aggregateRunCodeDenyReason(members, denies)
 }
@@ -1708,6 +1937,7 @@ function runCodeGroupDenyReason(state, exec, role, gateCtx) {
 function aggregateRunCodeDenyReason(members, denies) {
   const lines = [`run_code 拆解预审未通过：工具组共 ${members.length} 项（去重后），${denies.length} 项触发闸门，任一触发即整体拒绝：`]
   for (const d of denies) {
+    if (d.member.kind === 'catch') { lines.push(`- ${d.member.name}: ${d.reason}`); continue }
     let label = d.member.name
     if (d.member.kind === 'bare-write') label = `write（裸写特征：${d.member.hints.join('、')}）`
     else if (!d.member.argsParsed) label = `${d.member.name}（参数不可解析）`
@@ -1785,12 +2015,15 @@ export const decisions = {
   RUNCODE_MUTATION_HINTS,
   codeMutationHints,
   decomposeRunCode,
+  runCodeCatchGateReason,
   runCodeGroupDenyReason,
   subagentProbeGateReason,
   plannerGateReason,
   childReadonlyGateReason,
   mainGateReason,
   aggregateRunCodeDenyReason,
+  jobOutputGateReason,
+  probeDisposalWarning,
   resolveProbeRequestInjection,
 }
 
@@ -2571,7 +2804,14 @@ export function apply(ctx, config) {
 
   ctx.on('agent/disposed', (payload) => {
     const sessionId = payload.agent?.session?.header?.id
-    if (typeof sessionId === 'string') pendingProbeClaims.delete(sessionId)
+    if (typeof sessionId === 'string') {
+      const pending = pendingProbeClaims.get(sessionId)
+      if (Number.isInteger(pending) && pending > 0) {
+        const warning = probeDisposalWarning(pending)
+        if (warning !== null) console.warn(warning)
+      }
+      pendingProbeClaims.delete(sessionId)
+    }
   })
 
   // 3) anchored 引导（默认开）：主会话与规划子代理首轮极简；执行者/reviewer 不引导。
@@ -2793,8 +3033,20 @@ export function apply(ctx, config) {
       if (exec.name === 'run_code' && reason !== null) reason = null
       if (reason !== null) return { kind: 'deny', reason }
       if (exec.name === 'run_code') {
-        const runReason = runCodeGroupDenyReason(undefined, exec, { kind: 'planner' }, { events: plannerEvents, exploreBudget })
+        const runReason = runCodeGroupDenyReason(undefined, exec, { kind: 'planner' }, { events: plannerEvents, exploreBudget, jobOutputCallCounters })
         if (runReason !== null) return { kind: 'deny', reason: runReason }
+      }
+      if (exec.name === 'job_output') {
+        const jobReason = jobOutputGateReason(exec, jobOutputCallCounters)
+        if (jobReason !== null) return { kind: 'deny', reason: jobReason }
+        const args = exec.arguments
+        const jobId = args !== undefined && args !== null && typeof args === 'object' ? args.job_id : undefined
+        if (typeof jobId === 'string') {
+          const sessId = agent.session.header.id
+          let perSession = jobOutputCallCounters.get(sessId)
+          if (perSession === undefined) { perSession = new Map(); jobOutputCallCounters.set(sessId, perSession) }
+          perSession.set(jobId, 1)
+        }
       }
       return next()
     }
@@ -2807,8 +3059,20 @@ export function apply(ctx, config) {
         const reason = childReadonlyGateReason(exec, probe)
         if (reason !== null) return { kind: 'deny', reason }
         if (exec.name === 'run_code') {
-          const runReason = runCodeGroupDenyReason(undefined, exec, { kind: 'child', readOnly: true, probe }, {})
+          const runReason = runCodeGroupDenyReason(undefined, exec, { kind: 'child', readOnly: true, probe }, { jobOutputCallCounters })
           if (runReason !== null) return { kind: 'deny', reason: runReason }
+        }
+        if (exec.name === 'job_output') {
+          const jobReason = jobOutputGateReason(exec, jobOutputCallCounters)
+          if (jobReason !== null) return { kind: 'deny', reason: jobReason }
+          const args = exec.arguments
+          const jobId = args !== undefined && args !== null && typeof args === 'object' ? args.job_id : undefined
+          if (typeof jobId === 'string') {
+            const sessId = agent.session.header.id
+            let perSession = jobOutputCallCounters.get(sessId)
+            if (perSession === undefined) { perSession = new Map(); jobOutputCallCounters.set(sessId, perSession) }
+            perSession.set(jobId, 1)
+          }
         }
       }
       return next() // 执行者子代理豁免（目录含 write/edit，缓存未命中）

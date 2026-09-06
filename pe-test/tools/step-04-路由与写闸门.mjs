@@ -12,7 +12,7 @@ const DSH_HOME = (process.env.DSH_HOME || homedir() + '/.dsh').replaceAll('\\', 
 const PLUGIN_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/index.js', import.meta.url))
 const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
 const decisions = plugin.decisions
-const { catalogHasWriteTools, isReadOnlyChildByCatalog, routeDenyReason } = decisions
+const { catalogHasWriteTools, isReadOnlyChildByCatalog, routeDenyReason, runCodeCatchGateReason, probeDisposalWarning } = decisions
 
 let pass = 0
 let fail = 0
@@ -440,7 +440,7 @@ r = preExecute(harness, approvedMain, 'run_code', { code: "await tools.subagent(
 checkTrue('R48 主会话 approved 态 run_code（code 含嵌套 tools.subagent(run_in_background:true)）→ 放行（v4：组判定 subagent 闸门 approved 放行，ptc 死锁解除）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, noneMain, 'run_code', { code: "await writeFileSync('x', '1'); await tools.subagent_plan({ task: '规划', run_in_background: true })", description: '多工具组' })
 checkTrue('R49 主会话 none 态 run_code（裸写+subagent_plan 工具组）→ deny 且聚合同时含「路由未确认：write/edit」与「子代理未放行：subagent_plan」（多错误聚合）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认：write/edit') && String(r.reason).includes('子代理未放行：subagent_plan'))
-r = preExecute(harness, noneMain, 'run_code', { code: "await tools.read({ file_path: 'x' }); await tools.read({ file_path: 'x' }); await tools.subagent_probe({ run_in_background: true })", description: '去重组' })
+r = preExecute(harness, noneMain, 'run_code', { code: "try { await tools.read({ file_path: 'x' }) } catch (e) {}\ntry { await tools.read({ file_path: 'x' }) } catch (e) {}\ntry { await tools.subagent_probe({ run_in_background: true }) } catch (e) {}", description: '去重组（独立容错）' })
 checkTrue('R50 主会话 none 态 run_code（read 去重×2+subagent_probe(run_in_background:true)）→ 放行（去重后全过）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, noneMain, 'run_code', { code: "await tools.write({ file_path: 'x', content: '1' })", description: '显式 write' })
 checkTrue('R51 主会话 none 态 run_code（code 含显式 tools.write）→ deny 且聚合含「路由未确认：write/edit」（显式 write 成员与裸写同文案）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认：write/edit'))
@@ -454,7 +454,7 @@ const budgetPlanner = {
   ctx: undefined,
 }
 const planChildMain = mainWithEvents([umE(), callE('subagent_plan', 'p1', '{}'), okE('p1', '已启动规划子代理 3a7c1e5b-9d2f-4e8a-b6c4-1f0e9d8c7b6a，可 send_message 继续')])
-const freeCode = { code: "await tools.save_plan({ plan: 'p', checklist: 'c' }); await tools.send_message({ agent_id: 'parent', message: '收尾' })", description: 'FREE_TOOLS 组' }
+const freeCode = { code: "try { await tools.save_plan({ plan: 'p', checklist: 'c' }) } catch (e) {}\ntry { await tools.send_message({ agent_id: 'parent', message: '收尾' }) } catch (e) {}", description: 'FREE_TOOLS 组' }
 const readMemberCode = { code: "await tools.read({ file_path: 'x' })", description: '读成员' }
 const smCode = { code: 'await tools.send_message({ "agent_id": "session-x", "message": "hi" })', description: 'send_message 成员' }
 const joCode = { code: 'await tools.job_output({ "job_id": "j1", "wait": true })', description: 'job_output 成员' }
@@ -557,6 +557,58 @@ checkTrue('R84 组内 subagent_review 成员无批准 → deny 且含「执行�
   const ptcExecutor = await assemble(harnessBoot, executor, [{ name: 'run_code' }])
   check('P11 ptc executor 不引导（tools 原样 [run_code]）', Array.isArray(ptcExecutor.tools) ? ptcExecutor.tools.map((t) => t.name) : null, ['run_code'])
 }
+
+
+// ── ⑪ UC 系列:runCodeCatchGateReason 纯函数（多调用容错硬闸门，任务1/3） ──
+checkTrue('UC1 ≥2 无保护→拒', (() => { const got = runCodeCatchGateReason("await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })"); return typeof got === 'string' && got.includes('run_code 内 2 个工具调用未全部独立容错') && got.includes('已保护 0 个') })())
+checkTrue('UC2 独立 try 全覆盖→null', runCodeCatchGateReason("try { await tools.read({ file_path: 'x' }) } catch (e) {}\ntry { await tools.read({ file_path: 'y' }) } catch (e) {}") === null)
+checkTrue('UC3 allSettled→null', runCodeCatchGateReason("const r = await Promise.allSettled([tools.read({ file_path: 'x' }), tools.read({ file_path: 'y' })])") === null)
+checkTrue('UC4 .catch 链→null', runCodeCatchGateReason("await tools.read({ file_path: 'x' }).catch(() => {})\nawait tools.read({ file_path: 'y' }).catch(() => {})") === null)
+checkTrue('UC5 部分保护→拒', (() => { const got = runCodeCatchGateReason("try { await tools.read({ file_path: 'x' }) } catch (e) {}\nawait tools.read({ file_path: 'y' })"); return typeof got === 'string' && got.includes('已保护 1 个') })())
+checkTrue('UC6 单调用→null', runCodeCatchGateReason("await tools.read({ file_path: 'x' })") === null)
+checkTrue('UC7 裸写+单调用→null', runCodeCatchGateReason("await writeFileSync('x', '1'); await tools.read({ file_path: 'y' })") === null)
+checkTrue('UC8 动态 tools[var] 计数→触发', (() => { const got = runCodeCatchGateReason("await tools.read({ file_path: 'x' })\nconst fn = 'glob'\nawait tools[fn]({ pattern: '**/*.md' })"); return typeof got === 'string' && got.includes('run_code 内 2 个工具调用未全部独立容错') })())
+checkTrue('UC9 单 try 包 2 调用→拒', (() => { const got = runCodeCatchGateReason("try { await tools.read({ file_path: 'x' }); await tools.read({ file_path: 'y' }) } catch (e) {}"); return typeof got === 'string' && got.includes('已保护 0 个') })())
+checkTrue('UC10 动态+.catch→null', runCodeCatchGateReason("await tools.read({ file_path: 'x' }).catch(() => {})\nconst fn = 'glob'\nawait tools[fn]({ pattern: '**/*.md' }).catch(() => {})") === null)
+checkTrue('UC11 嵌套展平无保护→触发', (() => { const got = runCodeCatchGateReason("await tools.run_code({ \"code\": \"await tools.read({ file_path: 'x' })\" })\nawait tools.read({ file_path: 'y' })"); return typeof got === 'string' && got.includes('run_code 内 2 个工具调用未全部独立容错') })())
+checkTrue('UC12 嵌套各自 try→null', runCodeCatchGateReason("await tools.run_code({ \"code\": \"try { await tools.read({ file_path: 'x' }) } catch (e) {}\" })\ntry { await tools.read({ file_path: 'y' }) } catch (e) {}") === null)
+checkTrue('UC13 注释/字符串内 tools.x 不计数→null', runCodeCatchGateReason("const s = 'tools.read({ file_path: 1 })'\n// tools.write({})\nawait tools.glob({ pattern: '**/*.md' })") === null)
+checkTrue("UC14 tools['read'] 字面量方括号计数→触发", (() => { const got = runCodeCatchGateReason("await tools['read']({ file_path: 'x' })\nawait tools['read']({ file_path: 'y' })"); return typeof got === 'string' && got.includes('run_code 内 2 个') })())
+checkTrue('UC15 probeDisposalWarning(0)→null 且 (2)→含「2 个未认领探查者委派」', probeDisposalWarning(0) === null && (() => { const got = probeDisposalWarning(2); return typeof got === 'string' && got.includes('2 个未认领探查者委派') })())
+
+// ── ⑫ R85-R91：多调用容错硬闸门监听器级（任务3） ──
+r = preExecute(harness, noneMain, 'run_code', { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })", description: 'UC1 同款' })
+checkTrue('R85 主会话 none 态多调用无容错 → deny 且含「未全部独立容错」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
+r = preExecute(harness, noneMain, 'run_code', { code: "const r = await Promise.allSettled([tools.read({ file_path: 'x' }), tools.read({ file_path: 'y' })])", description: 'UC3 同款' })
+checkTrue('R86 主会话 none 态 allSettled → allow', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, plannerAgent, 'run_code', { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })", description: 'UC1 同款' })
+checkTrue('R87 planner 多调用无容错 → deny 且含「未全部独立容错」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
+r = preExecute(harness, probeAgent, 'run_code', { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })", description: 'UC1 同款' })
+checkTrue('R88 probe（只读 child）多调用无容错 → deny 且含「未全部独立容错」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
+r = preExecute(harness, noneMain, 'run_code', { code: "try { await tools.read({ file_path: 'x' }) } catch (e) {}\ntry { await tools.read({ file_path: 'x' }) } catch (e) {}\ntry { await tools.subagent_probe({ run_in_background: true }) } catch (e) {}", description: '去重组（独立容错）' })
+checkTrue('R89 R50 改造后 → allow（去重后全过语义保持）', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, executor, 'run_code', { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })", description: 'UC1 同款' })
+checkTrue('R90 executor 多调用无容错 → allow（执行者豁免）', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, noneMain, 'run_code', { code: "await tools.run_code({ \"code\": \"await tools.read({ file_path: 'x' })\" })\nawait tools.read({ file_path: 'y' })", description: 'UC11 同款' })
+checkTrue('R91 主会话 none 态嵌套展平无容错 → deny 且含「未全部独立容错」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
+
+// ── ⑬ R92-R97：job_output 全角色 wait 禁令/查重（任务4/5） ──
+r = preExecute(harness, plannerAgent, 'job_output', { job_id: 'j1', wait: true })
+checkTrue('R92 planner job_output wait → deny 且含「job_output 禁止带 wait: true」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止带 wait: true'))
+r = preExecute(harness, reviewer, 'job_output', { job_id: 'j1', wait: true })
+checkTrue('R93 reviewer job_output wait → deny 且含「job_output 禁止带 wait: true」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止带 wait: true'))
+r = preExecute(harness, plannerAgent, 'job_output', { job_id: 'j1' })
+checkTrue('R94 planner job_output 正常 → allow', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, plannerAgent, 'job_output', { job_id: 'j1' })
+checkTrue('R94b planner 同 job 再调 → deny 且含「job_output 禁止对同一 job 重复调用」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止对同一 job 重复调用'))
+r = preExecute(harness, plannerAgent, 'job_output', { job_id: 'j2' })
+checkTrue('R94c planner 不同 job → allow', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, probeAgent, 'job_output', { job_id: 'j1' })
+checkTrue('R95 probeAgent job_output 正常 → allow', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, executor, 'job_output', { job_id: 'j1', wait: true })
+checkTrue('R96 executor job_output wait → allow（执行者豁免保持）', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, plannerAgent, 'run_code', joCode)
+checkTrue('R97 planner run_code 组内 job_output wait → deny 且含「job_output 禁止带 wait: true」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止带 wait: true'))
 
 console.log(`\n通过 ${pass}, 失败 ${fail}`)
 process.exit(fail === 0 ? 0 : 1)

@@ -71,6 +71,8 @@ const um = () => ({ type: 'user/message', data: { source: { kind: 'user' } } })
 const call = (name, cid, argumentsStr = '{}') => ({ type: 'tool/call', data: { name, callId: cid, arguments: argumentsStr } })
 const ok = (cid, text) => ({ type: 'tool/result', data: { message: { content: [{ type: 'tool-result', toolCallId: cid, content: [{ type: 'text', text }] }] } } })
 const err = (cid, code) => ({ type: 'tool/result', data: { error: { name: 'Error', ...(code === undefined ? {} : { code }) }, message: { content: [{ type: 'tool-result', toolCallId: cid, content: [] }] } } })
+// 真实 deny 形状（pre-execute 拒绝结果：块级 isError:true、无 data.error——仅 HarnessError 有 .info）
+const deny = (cid, reason) => ({ type: 'tool/result', data: { message: { content: [{ type: 'tool-result', toolCallId: cid, content: [{ type: 'text', text: 'Error: ' + reason }], isError: true }] } } })
 const routeArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }] })
 const approvalArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }] })
 const clarifyArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '方案A' }, { label: '方案B' }] }] })
@@ -248,6 +250,7 @@ const C = [
   ['C4 call 无 ok 配对不计', [call('read', 'c1'), call('glob', 'c2')], new Set([]), 0],
   ['C5 err 结果不计', [call('read', 'c1'), err('c1', 'GATED'), call('glob', 'c2'), ok('c2', 'r')], new Set([]), 1],
   ['C6 skip 命中且成功配对也不计', [call('save_plan', 'c1'), ok('c1', 'r')], new Set(['save_plan']), 0],
+  ['C7 真实 deny 形状（块级 isError、无 data.error）不计', [call('read', 'c1'), deny('c1', 'gated'), call('glob', 'c2'), ok('c2', 'r')], new Set([]), 1],
 ]
 for (const [name, events, skip, expected] of C) {
   check(name, toolCallCount(events, skip), expected)
@@ -264,7 +267,7 @@ const CU = [
   ['CU6 锚点后 save_plan 跳过仍生效', [umk('user'), call('read', 'a1'), ok('a1', 'r'), call('save_plan', 's1'), ok('s1', 'r'), call('glob', 'b1'), ok('b1', 'r')], new Set(['save_plan']), 2],
   ['CU7 锚点后无调用 → 0(授权即重置)', [umk('user'), call('read', 'a1'), ok('a1', 'r'), umk('agent-message')], new Set([]), 0],
   ['CU8 kind=agent-instructions(系统指令) → 不构成锚点', [umk('user'), call('read', 'a1'), ok('a1', 'r'), umk('agent-instructions'), call('glob', 'b1'), ok('b1', 'r')], new Set([]), 2],
-  ['CU9 被拒不烧预算', [umk('user'), call('read', 'a1'), err('a1', 'GATED'), call('write', 'w1'), err('w1', 'GATED')], new Set([]), 0],
+  ['CU9 被拒不烧预算（真实 deny 形状）', [umk('user'), call('read', 'a1'), deny('a1', 'gated'), call('write', 'w1'), deny('w1', 'gated')], new Set([]), 0],
 ]
 for (const [name, events, skip, expected] of CU) {
   check(name, toolCallsSinceUser(events, skip), expected)
