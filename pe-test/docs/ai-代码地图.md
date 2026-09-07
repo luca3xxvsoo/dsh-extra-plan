@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述与备注由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：AI 定位功能时先在此表按关键词检索函数名/描述，再 read 目标行号区间；函数描述为空（待补充）时请补写。
-> 上次同步：2026-09-06 13:06:29（脚本自动更新时间戳行）
+> 上次同步：2026-09-07 14:01:40（脚本自动更新时间戳行）
 
 ## 文件总览
 
@@ -16,7 +16,7 @@
 | plugins/dsh-extra-plan/lib/preset-sync.js | 125 | 预设资产自动下发同步（distHash 比对，幂等） |
 | plugins/dsh-extra-plan/lib/settings.js | 483 | 设置页后端 HTTP API：pro-config/qqbot 状态与配置/flash-guide 读写 |
 | plugins/dsh-extra-plan/scripts/distribute-preset.mjs | 68 | 预设分发脚本（安装/更新时写 DSH_HOME/.agent-presets/extra-plan） |
-| plugins/dsh-qqbot-user-questions/index.js | 423 | QQbot 兼容插件：文字列表 ask 问答 + /优先对话 边界插入 + 审批流 |
+| plugins/dsh-qqbot-user-questions/index.js | 457 | QQbot 兼容插件：文字列表 ask 问答 + /优先对话 边界插入 + 审批流 |
 | plugins/dsh-qqbot-user-questions/patches/@tencent-connect-dsh-qqbot/dist/gateway/bootstrap.js | 75 | qqbot gateway 补丁（最小 ctx.provide 注入；与 .orig 备份配套） |
 | plugins/dsh-qqbot-user-questions/patches/@tencent-connect-dsh-qqbot/dist/transport/outbound.js | 143 | qqbot transport 补丁（show_file 出站放行；与 .orig 备份配套） |
 | plugins/dsh-qqbot-user-questions/scripts/apply-patch.mjs | 108 | 补丁分发脚本：备份 .orig → 覆写补丁 → cordis.patch 合并（幂等） |
@@ -168,15 +168,16 @@
 | plugins/dsh-extra-plan/lib/settings.js | apply | L468 | 插件入口（HTTP 服务注册） |  |
 | plugins/dsh-extra-plan/scripts/distribute-preset.mjs | distribute | L27-44 | 预设分发（hash 比对→写 DSH_HOME/.agent-presets/extra-plan） |  |
 | plugins/dsh-extra-plan/scripts/distribute-preset.mjs | invokedAsMain | L49-56 | 主脚本判定（node 直跑时执行 distribute） |  |
-| plugins/dsh-qqbot-user-questions/index.js | apply | L21-276 | 插件入口：消息中间件/ask 提供者/优先对话/审批流注册 |  |
-| plugins/dsh-qqbot-user-questions/index.js | resolveRoot | L27-32 | 会话根目录解析（记忆库/会话目录） |  |
-| plugins/dsh-qqbot-user-questions/index.js | providerAsk | L175-222 | ask_user_question 提供者（文字列表发 QQ+等待回复） |  |
-| plugins/dsh-qqbot-user-questions/index.js | formatSingleQuestion | L285-304 | 单个问题文字列表格式化 |  |
-| plugins/dsh-qqbot-user-questions/index.js | parseSingleAnswer | L314-335 | 用户数字/文字答案解析 |  |
-| plugins/dsh-qqbot-user-questions/index.js | formatApprovalMessage | L341-356 | 审批消息格式化 |  |
-| plugins/dsh-qqbot-user-questions/index.js | encodeSegment | L366-378 | 路径段编码（~ 转义，session 目录安全） |  |
-| plugins/dsh-qqbot-user-questions/index.js | projectKey | L386-405 | 项目路径编码为可读键 |  |
-| plugins/dsh-qqbot-user-questions/index.js | deleteSessionDir | L412-422 | 删除陈旧会话目录 |  |
+| plugins/dsh-qqbot-user-questions/index.js | apply | L21-277 | 插件入口：消息中间件/ask 提供者/优先对话/审批流注册 |  |
+| plugins/dsh-qqbot-user-questions/index.js | resolveRoot | L28-33 | 会话根目录解析（记忆库/会话目录） |  |
+| plugins/dsh-qqbot-user-questions/index.js | providerAsk | L176-223 | ask_user_question 提供者（文字列表发 QQ+等待回复） |  |
+| plugins/dsh-qqbot-user-questions/index.js | ensureDshExtraPlanLink | L287-312 | 启动时自愈映射：qqbot 的 @local/dsh-extra-plan 指向 web（三层判定：web 缺失提示/建映射/旧真实目录删除重建/已映射跳过；Windows junction） |  |
+| plugins/dsh-qqbot-user-questions/index.js | formatSingleQuestion | L319-338 | 单个问题文字列表格式化 |  |
+| plugins/dsh-qqbot-user-questions/index.js | parseSingleAnswer | L348-369 | 用户数字/文字答案解析 |  |
+| plugins/dsh-qqbot-user-questions/index.js | formatApprovalMessage | L375-390 | 审批消息格式化 |  |
+| plugins/dsh-qqbot-user-questions/index.js | encodeSegment | L400-412 | 路径段编码（~ 转义，session 目录安全） |  |
+| plugins/dsh-qqbot-user-questions/index.js | projectKey | L420-439 | 项目路径编码为可读键 |  |
+| plugins/dsh-qqbot-user-questions/index.js | deleteSessionDir | L446-456 | 删除陈旧会话目录 |  |
 | plugins/dsh-qqbot-user-questions/patches/@tencent-connect-dsh-qqbot/dist/gateway/bootstrap.js | bootstrapGateway | L6-74 | gateway 补丁：最小注入 ctx.provide 使 qqbot-user-questions 插件可挂载 |  |
 | plugins/dsh-qqbot-user-questions/patches/@tencent-connect-dsh-qqbot/dist/transport/outbound.js | OutboundRouter | L10-132 | transport 补丁路由：放行 show_file 出站（方案/验收文件预览） |  |
 | plugins/dsh-qqbot-user-questions/patches/@tencent-connect-dsh-qqbot/dist/transport/outbound.js | createOutboundHandler | L139-142 | 构造放行处理器（show_file 白名单判定） |  |

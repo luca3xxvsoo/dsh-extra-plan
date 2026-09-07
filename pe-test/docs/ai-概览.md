@@ -31,7 +31,7 @@ dsh 插件「按需规划模式」预设：AI 未经用户同意只能只读探�
 | 预设自愈核对 | lib/preset-sync.js | 启动时 hash 比对下发 |
 | 执行者工具裁剪 | lib/executor-spawn.js | E8：覆盖 workflow/ralph worker |
 | 预设本体（persona/deny/descriptor） | assets/presets/extra-plan/agent.cordis.yml | 改预设=改这里（复制副本再改） |
-| qqbot 兼容 | plugins/dsh-qqbot-user-questions/（index.js + patches/* + scripts/apply-patch.mjs） | 文字问答/优先对话/审批流 |
+| qqbot 兼容 | plugins/dsh-qqbot-user-questions/（index.js + patches/* + scripts/apply-patch.mjs） | 文字问答/优先对话/审批流 + 启动时 dsh-extra-plan 映射自愈（@local 指向 web） |
 | 代码地图 | pe-test/docs/ai-代码地图.md + pe-test/tools/代码地图生成.mjs | 函数级索引+增量同步 |
 
 ## 模块关系（数据流）
