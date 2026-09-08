@@ -779,7 +779,9 @@ function appendSuffixBlock(message, text) {
   }
   if (target === -1) return message
   const next = [...message.content]
-  next[target] = { type: 'text', text: next[target].text + '\n\n' + text }
+  const merged = next[target].text + '\n\n' + text
+  // 多块消息（如 DSH 注入英文块在末尾）时，给注入块末尾补空行，避免跨块 join 贴连
+  next[target] = { type: 'text', text: target < next.length - 1 ? merged + '\n\n' : merged }
   return { ...message, content: next }
 }
 function withPlannerPromptSuffix(message, suffix) { return appendSuffixBlock(message, suffix) }

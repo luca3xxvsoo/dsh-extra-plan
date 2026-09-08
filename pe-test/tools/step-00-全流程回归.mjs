@@ -283,11 +283,11 @@ const AP = [
   ['AP2 kind=user 单文本 → 拼接', msgOf('user', '任务A'), '后缀X', '任务A\n\n后缀X'],
   ['AP3 kind=agent-message(续轮转达) → 拼接', msgOf('agent-message', '意见'), '后缀X', '意见\n\n后缀X'],
   ['AP4 kind=plugin(运行时快照) → 不拼', msgOf('plugin', '快照'), '后缀X', '快照'],
-  ['AP5 多块内容 → 拼入第一块', { source: { kind: 'user' }, content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] }, '后缀X', 'a\n\n后缀X'],
+  ['AP5 多块内容 → 拼入第一块（末尾补空行）', { source: { kind: 'user' }, content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] }, '后缀X', 'a\n\n后缀X\n\n'],
   ['AP6 已含后缀 → 不重复拼', msgOf('user', '任务A\n\n后缀X'), '后缀X', '任务A\n\n后缀X'],
   ['AP7 缺 source → 原样', { content: [{ type: 'text', text: '任务A' }] }, '后缀X', '任务A'],
   ['AP8 kind=agent-message 已含后缀 → 不重复拼', msgOf('agent-message', '意见\n\n后缀X'), '后缀X', '意见\n\n后缀X'],
-  ['AP9 kind=agent-message 多块 → 拼入第一块', { source: { kind: 'agent-message' }, content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] }, '后缀X', 'a\n\n后缀X'],
+  ['AP9 kind=agent-message 多块 → 拼入第一块（末尾补空行）', { source: { kind: 'agent-message' }, content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] }, '后缀X', 'a\n\n后缀X\n\n'],
   ['AP10 kind=agent-instructions → 不拼', msgOf('agent-instructions', '指令'), '后缀X', '指令'],
 ]
 for (const [name, message, suffix, expected] of AP) {
@@ -295,7 +295,7 @@ for (const [name, message, suffix, expected] of AP) {
   const text = got !== undefined && got.content !== undefined && got.content[0] !== undefined ? got.content[0].text : undefined
   check(name, text, expected)
 }
-check('AP11 双块任务+DSH英文块 → 拼入第一块、第二块原样', JSON.stringify(withPlannerPromptSuffix({ source: { kind: 'agent-message' }, content: [{ type: 'text', text: '任务' }, { type: 'text', text: 'Your parent agent id is session-xxx.' }] }, '后缀X')), JSON.stringify({ source: { kind: 'agent-message' }, content: [{ type: 'text', text: '任务\n\n后缀X' }, { type: 'text', text: 'Your parent agent id is session-xxx.' }] }))
+check('AP11 双块任务+DSH英文块 → 拼入第一块、第二块原样', JSON.stringify(withPlannerPromptSuffix({ source: { kind: 'agent-message' }, content: [{ type: 'text', text: '任务' }, { type: 'text', text: 'Your parent agent id is session-xxx.' }] }, '后缀X')), JSON.stringify({ source: { kind: 'agent-message' }, content: [{ type: 'text', text: '任务\n\n后缀X\n\n' }, { type: 'text', text: 'Your parent agent id is session-xxx.' }] }))
 
 // ── BN 系列:withBudgetNotice / budgetNoticeText（预算告知拼接,v0.1.6） ──
 const NOTICE18 = budgetNoticeText(18)
@@ -304,7 +304,7 @@ const BN = [
   ['BN1 user 单文本 → 拼接告知', withBudgetNotice(msgOf('user', '任务A'), NOTICE18), '任务A\n\n' + NOTICE18],
   ['BN2 agent-message 单文本 → 拼接告知', withBudgetNotice(msgOf('agent-message', '意见'), NOTICE18), '意见\n\n' + NOTICE18],
   ['BN3 kind=plugin → 原样', withBudgetNotice(msgOf('plugin', '快照'), NOTICE18), '快照'],
-  ['BN4 多块内容 → 拼入第一块', withBudgetNotice({ source: { kind: 'user' }, content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] }, NOTICE18), 'a\n\n' + NOTICE18],
+  ['BN4 多块内容 → 拼入第一块（末尾补空行）', withBudgetNotice({ source: { kind: 'user' }, content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] }, NOTICE18), 'a\n\n' + NOTICE18 + '\n\n'],
   ['BN5 已含告知 → 不重复拼', withBudgetNotice(msgOf('user', '任务A\n\n' + NOTICE18), NOTICE18), '任务A\n\n' + NOTICE18],
   ['BN6 缺 source → 原样', withBudgetNotice({ content: [{ type: 'text', text: '任务A' }] }, NOTICE18), '任务A'],
 ]
