@@ -33,17 +33,6 @@ function dshHomeDir() {
   return join(process.env.USERPROFILE || process.env.HOME || '', '.dsh')
 }
 
-function mainPluginProfiles(dshHome) {
-  const root = join(dshHome, 'profiles')
-  if (!existsSync(root)) return []
-  const out = []
-  for (const profile of readdirSync(root)) {
-    const probe = join(root, profile, 'node_modules', '@local', 'dsh-extra-plan')
-    if (existsSync(probe)) out.push(profile)
-  }
-  return out
-}
-
 function agentCordisPath() {
   return join(dshHomeDir(), '.agent-presets', 'extra-plan', 'agent.cordis.yml')
 }
@@ -167,19 +156,6 @@ function qqbotPatchManagedField(file, value) {
   return true
 }
 
-function flashPayload(file) {
-  const metadata = readAgentMetadata(file)
-  const flashDefinition = SETTING_DEFINITIONS.find((item) => item.ui.separate === 'flash-guide')
-  const field = metadata.fields.find((item) => item.key === flashDefinition.key)
-  const disabled = field === undefined || field.value !== true
-  return {
-    available: true,
-    disabled,
-    field,
-    fields: field === undefined ? [] : [field],
-  }
-}
-
 function createApiHandler() {
   return async (req, res) => {
     if (!isLoopback(req)) return json(res, 403, { error: 'forbidden: loopback only' })
@@ -255,31 +231,6 @@ function createApiHandler() {
           return json(res, 200, { approvalEnabled: body.approvalEnabled })
         } catch (error) {
           return json(res, 500, { error: 'failed to write cordis.patch.yml: ' + String(error && error.message || error) })
-        }
-      }
-
-      if (req.method === 'GET' && path === '/api/dsh-extra-plan-settings/flash-guide-config') {
-        try {
-          if (mainPluginProfiles(dshHomeDir()).length === 0) return json(res, 200, { available: false, disabled: false, fields: [] })
-          return json(res, 200, flashPayload(agentCordisPath()))
-        } catch (error) {
-          return json(res, 500, { error: 'failed to read flash-guide config: ' + String(error && error.message || error) })
-        }
-      }
-
-      if (req.method === 'PUT' && path === '/api/dsh-extra-plan-settings/flash-guide-config') {
-        const body = await readJsonBody(req)
-        if (body === null || typeof body.disabled !== 'boolean') {
-          return json(res, 400, { error: 'disabled must be a boolean' })
-        }
-        try {
-          const definition = getSettingDefinition('flashGuideEnabled')
-          patchManagedFile(agentCordisPath(), [{ definition, value: !body.disabled }])
-          return json(res, 200, flashPayload(agentCordisPath()))
-        } catch (error) {
-          const message = String(error && error.message || error)
-          const status = message.includes(' missing') || message.includes(' ambiguous') ? 404 : 500
-          return json(res, status, { error: 'failed to write flash-guide config: ' + message })
         }
       }
 

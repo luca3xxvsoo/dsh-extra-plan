@@ -5,7 +5,6 @@
 # 已回归——宿主平面组件必须随 bundle patch 注册才「安装即用」：settings 是 web
 # 服务级单例（挂 agent 预设会 duplicate registration），preset-sync 须在 DSH 启动时
 # 即核对预设（挂在 agent 预设内则要「预设已就位并开会话」才触发，兜底死锁）。
-# 会话级组件（flash-guide 近场引导）留在 agent 预设（agent.cordis.yml 组内行）。
 #
 # 本 bundle patch 注册三个宿主平面组件：
 #  - dsh-extra-plan-client-bridge：一个相对路径空壳插件行，指向本包内的

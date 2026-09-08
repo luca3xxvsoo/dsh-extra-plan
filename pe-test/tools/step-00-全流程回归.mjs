@@ -283,11 +283,11 @@ const AP = [
   ['AP2 kind=user 单文本 → 拼接', msgOf('user', '任务A'), '后缀X', '任务A\n\n后缀X'],
   ['AP3 kind=agent-message(续轮转达) → 拼接', msgOf('agent-message', '意见'), '后缀X', '意见\n\n后缀X'],
   ['AP4 kind=plugin(运行时快照) → 不拼', msgOf('plugin', '快照'), '后缀X', '快照'],
-  ['AP5 多块内容 → 原样', { source: { kind: 'user' }, content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] }, '后缀X', 'a'],
+  ['AP5 多块内容 → 拼入第一块', { source: { kind: 'user' }, content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] }, '后缀X', 'a\n\n后缀X'],
   ['AP6 已含后缀 → 不重复拼', msgOf('user', '任务A\n\n后缀X'), '后缀X', '任务A\n\n后缀X'],
   ['AP7 缺 source → 原样', { content: [{ type: 'text', text: '任务A' }] }, '后缀X', '任务A'],
   ['AP8 kind=agent-message 已含后缀 → 不重复拼', msgOf('agent-message', '意见\n\n后缀X'), '后缀X', '意见\n\n后缀X'],
-  ['AP9 kind=agent-message 多块 → 原样', { source: { kind: 'agent-message' }, content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] }, '后缀X', 'a'],
+  ['AP9 kind=agent-message 多块 → 拼入第一块', { source: { kind: 'agent-message' }, content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] }, '后缀X', 'a\n\n后缀X'],
   ['AP10 kind=agent-instructions → 不拼', msgOf('agent-instructions', '指令'), '后缀X', '指令'],
 ]
 for (const [name, message, suffix, expected] of AP) {
@@ -295,6 +295,7 @@ for (const [name, message, suffix, expected] of AP) {
   const text = got !== undefined && got.content !== undefined && got.content[0] !== undefined ? got.content[0].text : undefined
   check(name, text, expected)
 }
+check('AP11 双块任务+DSH英文块 → 拼入第一块、第二块原样', JSON.stringify(withPlannerPromptSuffix({ source: { kind: 'agent-message' }, content: [{ type: 'text', text: '任务' }, { type: 'text', text: 'Your parent agent id is session-xxx.' }] }, '后缀X')), JSON.stringify({ source: { kind: 'agent-message' }, content: [{ type: 'text', text: '任务\n\n后缀X' }, { type: 'text', text: 'Your parent agent id is session-xxx.' }] }))
 
 // ── BN 系列:withBudgetNotice / budgetNoticeText（预算告知拼接,v0.1.6） ──
 const NOTICE18 = budgetNoticeText(18)
@@ -303,7 +304,7 @@ const BN = [
   ['BN1 user 单文本 → 拼接告知', withBudgetNotice(msgOf('user', '任务A'), NOTICE18), '任务A\n\n' + NOTICE18],
   ['BN2 agent-message 单文本 → 拼接告知', withBudgetNotice(msgOf('agent-message', '意见'), NOTICE18), '意见\n\n' + NOTICE18],
   ['BN3 kind=plugin → 原样', withBudgetNotice(msgOf('plugin', '快照'), NOTICE18), '快照'],
-  ['BN4 多块内容 → 原样', withBudgetNotice({ source: { kind: 'user' }, content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] }, NOTICE18), 'a'],
+  ['BN4 多块内容 → 拼入第一块', withBudgetNotice({ source: { kind: 'user' }, content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] }, NOTICE18), 'a\n\n' + NOTICE18],
   ['BN5 已含告知 → 不重复拼', withBudgetNotice(msgOf('user', '任务A\n\n' + NOTICE18), NOTICE18), '任务A\n\n' + NOTICE18],
   ['BN6 缺 source → 原样', withBudgetNotice({ content: [{ type: 'text', text: '任务A' }] }, NOTICE18), '任务A'],
 ]
@@ -311,6 +312,8 @@ for (const [name, got, expected] of BN) {
   const text = got !== undefined && got.content !== undefined && got.content[0] !== undefined ? got.content[0].text : undefined
   check(name, text, expected)
 }
+check('BN9 双块第一块已含告知 → 不重复拼', JSON.stringify(withBudgetNotice({ source: { kind: 'user' }, content: [{ type: 'text', text: 'a\n\n' + NOTICE18 }, { type: 'text', text: 'b' }] }, NOTICE18)), JSON.stringify({ source: { kind: 'user' }, content: [{ type: 'text', text: 'a\n\n' + NOTICE18 }, { type: 'text', text: 'b' }] }))
+check('BN10 content 无 text 块 → 原样', JSON.stringify(withBudgetNotice({ source: { kind: 'user' }, content: [{ type: 'image' }] }, NOTICE18)), JSON.stringify({ source: { kind: 'user' }, content: [{ type: 'image' }] }))
 check('BN7 budgetNoticeText(18) 全文等值', NOTICE18, '本轮探查预算上限为 18 次工具调用。探查时 ≥ 2 个独立方向建议优先用 subagent_probe 并行多派探查者。预算耗尽时输出「申请继续探查：<待查项> — <原因>」，主会话将探查待查项并转达线索文件路径，你读取线索继续工作。探查完成后直接调用 save_plan 落盘（系统会自动检测未探查项）')
 check('BN8 budgetNoticeText(12) 全文等值', NOTICE12, '本轮探查预算上限为 12 次工具调用。探查时 ≥ 2 个独立方向建议优先用 subagent_probe 并行多派探查者。预算耗尽时输出「申请继续探查：<待查项> — <原因>」，主会话将探查待查项并转达线索文件路径，你读取线索继续工作。探查完成后直接调用 save_plan 落盘（系统会自动检测未探查项）')
 
@@ -762,5 +765,5 @@ for (const [name, role, code, expected, gateCtx] of K) {
   console.log(`${okResult ? 'PASS' : 'FAIL'}  ${name}  (期望 ${JSON.stringify(expected)}, 实际 ${JSON.stringify(got)})`)
 }
 
-console.log(`\n通过 ${pass}/${KA.length + M.length + F.length + GK.length + GM.length + F21.length + GL.length + SW.length + P.length + C.length + CU.length + AP.length + BN.length + 2 + BR.length + DR.length + BD.length + BE.length + S.length + 1 + PW.length + 2 + D.length + 3 + 3 + PR.length + 7 + 5 + E.length + RP.length + LQ.length + AS.length + FC.length + PC.length + CC.length + CUCODE.length + CLC.length + H.length + I.length + J.length + K.length + IS.length + SCD.length + DG.length}, 失败 ${fail}`)
+console.log(`\n通过 ${pass}/${KA.length + M.length + F.length + GK.length + GM.length + F21.length + GL.length + SW.length + P.length + C.length + CU.length + AP.length + BN.length + 5 + BR.length + DR.length + BD.length + BE.length + S.length + 1 + PW.length + 2 + D.length + 3 + 3 + PR.length + 7 + 5 + E.length + RP.length + LQ.length + AS.length + FC.length + PC.length + CC.length + CUCODE.length + CLC.length + H.length + I.length + J.length + K.length + IS.length + SCD.length + DG.length}, 失败 ${fail}`)
 process.exit(fail === 0 ? 0 : 1)

@@ -25,7 +25,7 @@ const assetAgent = readFileSync(join(ASSET_DIR, 'agent.cordis.yml'), 'utf8')
 const assetPreset = readFileSync(join(ASSET_DIR, 'preset.yml'), 'utf8')
 const definition = (key) => getSettingDefinition(key)
 const keys = SETTING_DEFINITIONS.map((item) => item.key)
-const expectedKeys = ['plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'anchoredBootstrap', 'runcodeCatchGate', 'flashGuideEnabled', 'webFetch', 'toolPresentationMode']
+const expectedKeys = ['plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'anchoredBootstrap', 'runcodeCatchGate', 'webFetch', 'toolPresentationMode']
 
 let pass = 0
 let fail = 0
@@ -53,7 +53,6 @@ function minimalYaml(overrides = {}, nested = false) {
     '            exploreBudget: ' + value('exploreBudget', '8'),
     '            anchoredBootstrap: ' + value('anchoredBootstrap', 'true'),
     '            runcodeCatchGate: ' + value('runcodeCatchGate', 'false'),
-    '            flashGuideEnabled: ' + value('flashGuideEnabled', 'true'),
   ]
   if (nested) {
     return [
@@ -83,7 +82,6 @@ function minimalYaml(overrides = {}, nested = false) {
     '        exploreBudget: ' + value('exploreBudget', '8'),
     '        anchoredBootstrap: ' + value('anchoredBootstrap', 'true'),
     '        runcodeCatchGate: ' + value('runcodeCatchGate', 'false'),
-    '        flashGuideEnabled: ' + value('flashGuideEnabled', 'true'),
     '- id: tool-web',
     '  config:',
     '    fetch: ' + value('webFetch', 'true'),
@@ -97,15 +95,15 @@ function manifestAt(dist) {
   return JSON.parse(readFileSync(join(dist, 'dist-manifest.json'), 'utf8'))
 }
 
-check('白名单恰有 8 个稳定键', keys.length === 8 && keys.join('|') === expectedKeys.join('|'))
+check('白名单恰有 7 个稳定键', keys.length === 7 && keys.join('|') === expectedKeys.join('|'))
 check('locator 恰为稳定插件 id + config 路径', SETTING_DEFINITIONS.every((item) => item.path === 'config.' + (item.key === 'webFetch' ? 'fetch' : item.key === 'toolPresentationMode' ? 'mode' : item.key)))
 check('禁止项不在白名单且描述不可变', !keys.some((key) => ['approvalEnabled', 'bootstrapPersona', 'bootstrapShellTools', 'bootstrapCommonTools', 'planTool', 'savePlanDir', 'usageLedger', 'searchTimeoutMs'].includes(key)) && Object.isFrozen(SETTING_DEFINITIONS) && SETTING_DEFINITIONS.every((item) => Object.isFrozen(item)))
 check('validator 类型严格且 mode 三项来自描述表', definition('plannerModel').validator('  x  ') && !definition('plannerModel').validator('') && definition('exploreBudget').validator(1) && !definition('exploreBudget').validator('1') && TOOL_PRESENTATION_MODES.join('/') === definition('toolPresentationMode').ui.options.join('/'))
-check('公开 metadata 含 8 项、额度 min=1、控件与 locale', (() => {
+check('公开 metadata 含 7 项、额度 min=1、控件与 locale', (() => {
   const metadata = publicSettingMetadata(assetAgent, assetAgent)
   const budget = metadata.fields.find((field) => field.key === 'exploreBudget')
   const mode = metadata.fields.find((field) => field.key === 'toolPresentationMode')
-  return metadata.fields.length === 8 && budget.min === 1 && budget.control === 'number' && mode.options.join('/') === 'native/ptc/both' && typeof mode.locale === 'string'
+  return metadata.fields.length === 7 && budget.min === 1 && budget.control === 'number' && mode.options.join('/') === 'native/ptc/both' && typeof mode.locale === 'string'
 })())
 
 const allOldValues = {
@@ -114,13 +112,12 @@ const allOldValues = {
   exploreBudget: 23,
   anchoredBootstrap: false,
   runcodeCatchGate: true,
-  flashGuideEnabled: true,
   webFetch: true,
   toolPresentationMode: 'ptc',
 }
 const oldAll = patchAgent(allOldValues)
 const captured = captureSettings(oldAll)
-check('8 个有效旧值全部捕获', Object.keys(captured.values).length === 8 && Object.values(captured.states).every((state) => state === 'captured'))
+check('7 个有效旧值全部捕获', Object.keys(captured.values).length === 7 && Object.values(captured.states).every((state) => state === 'captured'))
 
 const stringSafety = ['true', '123', 'line one\nline two']
 check('字符串 true/数字样字符串/换行保持 string 类型', stringSafety.every((value) => {
@@ -173,7 +170,6 @@ const invalidCases = [
   ['anchoredBootstrap number', 'anchoredBootstrap', '1'],
   ['anchoredBootstrap null', 'anchoredBootstrap', 'null'],
   ['runcodeCatchGate string', 'runcodeCatchGate', "'false'"],
-  ['flashGuideEnabled number', 'flashGuideEnabled', '1'],
   ['webFetch string', 'webFetch', "'true'"],
   ['toolPresentationMode code', 'toolPresentationMode', 'code'],
   ['toolPresentationMode bogus', 'toolPresentationMode', 'bogus'],
@@ -201,7 +197,7 @@ try {
   writeManifest(validDist, 'OLD-VALID-MATRIX')
   check('生产 syncPreset 有效旧值 → upgraded', syncPreset(validHome) === 'upgraded')
   const validManifest = manifestAt(validDist)
-  check('有效迁移 8 项 restored 且 distHash 为厂商 hash', validManifest.format === 2 && validManifest.distHash === contentHash(ASSET_DIR) && validManifest.settingsMigration.source === 'captured' && Object.values(validManifest.settingsMigration.results).every((result) => result === 'restored'))
+  check('有效迁移 7 项 restored 且 distHash 为厂商 hash', validManifest.format === 2 && validManifest.distHash === contentHash(ASSET_DIR) && validManifest.settingsMigration.source === 'captured' && Object.values(validManifest.settingsMigration.results).every((result) => result === 'restored'))
   check('有效迁移后的两份核心结构以新版为底、preset 完整', readFileSync(join(validDist, 'preset.yml'), 'utf8') === assetPreset && readFileSync(join(validDist, 'agent.cordis.yml'), 'utf8') === oldAll)
 
   const oldMissingText = assetAgent.replace('        runcodeCatchGate: false\n', '') + '\n- id: old-custom\n  config:\n    persona: old-only\n'

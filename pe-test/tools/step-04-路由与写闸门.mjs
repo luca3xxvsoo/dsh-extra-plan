@@ -97,8 +97,8 @@ function makeHarness(config) {
       if (listeners[name] === undefined) listeners[name] = []
       listeners[name].push(fn)
     },
-    // 修复（mock 契约补齐）：真实宿主 ctx 有 provide（插件 apply 顶层注册只读服务如
-    // extra-plan/effectiveModel），mock 缺此方法导致 apply 抛 TypeError；与 step-06 同款写法。
+    // 修复（mock 契约补齐）：真实宿主 ctx 有 provide（插件 apply 顶层注册只读服务），
+    // mock 缺此方法导致 apply 抛 TypeError；与 step-06 同款写法。
     provide: (name, value) => { ctx[name] = value },
   }
   plugin.apply(ctx, config)

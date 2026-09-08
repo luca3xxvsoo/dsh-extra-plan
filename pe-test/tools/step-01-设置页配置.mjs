@@ -125,7 +125,6 @@ const oldValues = {
   exploreBudget: 12,
   anchoredBootstrap: false,
   runcodeCatchGate: true,
-  flashGuideEnabled: true,
   webFetch: true,
   toolPresentationMode: 'ptc',
 }
@@ -163,7 +162,7 @@ try {
   ].join('\n') + '\n', 'utf8')
 
   const metadata = publicSettingMetadata(TEMPLATE_AGENT, patchAgent(oldValues))
-  check('共享 metadata 恰有 8 项且默认来自新版模板', metadata.fields.length === 8 && metadata.fields.find((field) => field.key === 'exploreBudget').default === 18 && metadata.fields.find((field) => field.key === 'flashGuideEnabled').default === false)
+  check('共享 metadata 恰有 7 项且默认来自新版模板', metadata.fields.length === 7 && metadata.fields.find((field) => field.key === 'exploreBudget').default === 18)
 
   const routeDefinitions = []
   const settingsRegistrations = []
@@ -206,14 +205,14 @@ try {
   serverStarted = true
 
   const proBefore = await requestJson(port, 'GET', '/api/dsh-extra-plan-settings/pro-config')
-  check('pro-config GET 返回 8 项 metadata 与旧值', proBefore.status === 200 && proBefore.body.fields.length === 8 && valuesFrom(proBefore.body).plannerModel === oldValues.plannerModel && valuesFrom(proBefore.body).toolPresentationMode === oldValues.toolPresentationMode)
+  check('pro-config GET 返回 7 项 metadata 与旧值', proBefore.status === 200 && proBefore.body.fields.length === 7 && valuesFrom(proBefore.body).plannerModel === oldValues.plannerModel && valuesFrom(proBefore.body).toolPresentationMode === oldValues.toolPresentationMode)
   const fieldMap = new Map(proBefore.body.fields.map((field) => [field.key, field]))
-  check('pro metadata 控件/min/mode 由描述表提供', fieldMap.get('exploreBudget').control === 'number' && fieldMap.get('exploreBudget').min === 1 && fieldMap.get('toolPresentationMode').options.join('/') === 'native/ptc/both' && fieldMap.get('flashGuideEnabled').separate === 'flash-guide')
+  check('pro metadata 控件/min/mode 由描述表提供', fieldMap.get('exploreBudget').control === 'number' && fieldMap.get('exploreBudget').min === 1 && fieldMap.get('toolPresentationMode').options.join('/') === 'native/ptc/both')
 
   const beforePut = readFileSync(join(presetDir, 'agent.cordis.yml'), 'utf8')
-  const putBody = { ...newValues, flashGuideEnabled: oldValues.flashGuideEnabled }
+  const putBody = { ...newValues }
   const proPut = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', putBody)
-  check('pro-config PUT 返回更新后的实际 values', proPut.status === 200 && valuesFrom(proPut.body).plannerModel === newValues.plannerModel && valuesFrom(proPut.body).exploreBudget === newValues.exploreBudget && valuesFrom(proPut.body).toolPresentationMode === newValues.toolPresentationMode && valuesFrom(proPut.body).flashGuideEnabled === oldValues.flashGuideEnabled)
+  check('pro-config PUT 返回更新后的实际 values', proPut.status === 200 && valuesFrom(proPut.body).plannerModel === newValues.plannerModel && valuesFrom(proPut.body).exploreBudget === newValues.exploreBudget && valuesFrom(proPut.body).toolPresentationMode === newValues.toolPresentationMode)
   const afterPut = readFileSync(join(presetDir, 'agent.cordis.yml'), 'utf8')
   const changed = diffLines(beforePut, afterPut)
   const managedLeaves = managedDefinitions.map((item) => item.path.split('.').at(-1))
@@ -237,14 +236,6 @@ try {
     check('pro 严格拒绝 ' + label, result.status === 400)
   }
 
-  const flashBefore = await requestJson(port, 'GET', '/api/dsh-extra-plan-settings/flash-guide-config')
-  check('flash-guide GET 返回 metadata 与文件值反向 disabled', flashBefore.status === 200 && flashBefore.body.available === true && flashBefore.body.field.key === 'flashGuideEnabled' && flashBefore.body.disabled === false && flashBefore.body.field.value === true)
-  const flashPut = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/flash-guide-config', { disabled: true })
-  check('flash-guide PUT 反向写入规范键并返回 metadata', flashPut.status === 200 && flashPut.body.disabled === true && flashPut.body.field.value === false)
-  check('flash-guide 文件目标由描述表决定', resolveSetting(parsePresetYaml(readFileSync(join(presetDir, 'agent.cordis.yml'), 'utf8')), definition('flashGuideEnabled'), { aliases: false }).value === false)
-  const invalidFlash = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/flash-guide-config', { disabled: 'true' })
-  check('flash-guide 严格拒绝非 boolean', invalidFlash.status === 400)
-
   const qqStatus = await requestJson(port, 'GET', '/api/dsh-extra-plan-settings/qqbot-status')
   check('qqbot 独立回归 status 可用', qqStatus.status === 200 && qqStatus.body.available === true)
   const qqBefore = await requestJson(port, 'GET', '/api/dsh-extra-plan-settings/qqbot-config')
@@ -255,7 +246,7 @@ try {
   const qqInsert = await requestJson(port, 'GET', '/api/dsh-extra-plan-settings/qqbot-config')
   check('qqbot 旧 insert 形状保持兼容', qqInsert.status === 200 && qqInsert.body.approvalEnabled === true)
   writeFileSync(patchFile, '- id: unrelated\n  config:\n    keep: true\n', 'utf8')
-  check('qqbot 缺条目返回 404 且不影响迁移文件', (await requestJson(port, 'GET', '/api/dsh-extra-plan-settings/qqbot-config')).status === 404 && readFileSync(join(presetDir, 'agent.cordis.yml'), 'utf8').includes('flashGuideEnabled: false'))
+  check('qqbot 缺条目返回 404 且不影响迁移文件', (await requestJson(port, 'GET', '/api/dsh-extra-plan-settings/qqbot-config')).status === 404 && readFileSync(join(presetDir, 'agent.cordis.yml'), 'utf8').includes("plannerModel: 'api-new-model'"))
 
   const clientText = readFileSync(new URL('../../plugins/dsh-extra-plan/lib/client.js', import.meta.url), 'utf8')
   check('client 按 metadata 渲染控件且无硬编码模板路径/默认/枚举值', clientText.includes('setFields(fields)') && clientText.includes('field.options') && clientText.includes('field.min') && !clientText.includes('agent.cordis.yml') && !clientText.includes('value: "native"') && !clientText.includes('value: "ptc"') && !clientText.includes(': 18'))

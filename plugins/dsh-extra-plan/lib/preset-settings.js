@@ -78,11 +78,6 @@ export const SETTING_DEFINITIONS = Object.freeze([
     validator: isBoolean, ui: { control: 'select', options: [true, false], locale: 'runcodeCatchGate' }, locatorAliases: [],
   }),
   setting({
-    key: 'flashGuideEnabled', pluginId: 'extra-plan', path: 'config.flashGuideEnabled', scalarType: 'boolean',
-    validator: isBoolean,
-    ui: { control: 'select', options: [true, false], locale: 'flashGuideEnabled', separate: 'flash-guide' }, locatorAliases: [],
-  }),
-  setting({
     key: 'webFetch', pluginId: 'tool-web', path: 'config.fetch', scalarType: 'boolean',
     validator: isBoolean, ui: { control: 'select', options: [true, false], locale: 'webFetch' }, locatorAliases: [],
   }),

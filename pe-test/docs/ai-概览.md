@@ -27,7 +27,6 @@ dsh 插件「按需规划模式」预设：AI 未经用户同意只能只读探�
 | 探查者模型注入 | index.js resolveProbeRequestInjection | 上溯父会话配置 |
 | 设置页后端 API | lib/settings.js（createApiHandler 等） | 仅本机环回 |
 | 设置页前端 UI | lib/client.js | 打包器（__ModuleLoader__）格式，无函数级索引 |
-| flash 引导 | lib/flash-guide.js | flash 模型近场引导 |
 | 预设自愈核对 | lib/preset-sync.js | 启动时 hash 比对下发 |
 | 执行者工具裁剪 | lib/executor-spawn.js | E8：覆盖 workflow/ralph worker |
 | 预设本体（persona/deny/descriptor） | assets/presets/extra-plan/agent.cordis.yml | 改预设=改这里（复制副本再改） |

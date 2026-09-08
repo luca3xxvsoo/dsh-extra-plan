@@ -84,7 +84,6 @@ DSH web界面 -> 设置 -> 插件 -> 插件配置 -> 按需规划模式配置
   - 额外引导：在主会话发送给pro规划的任务结尾，拼接上的内容。可能能增加pro规划的智商（未验证）。可置空
   - 探查额度：允许pro规划调用工具的次数，避免后台无限制调用
   - anchored开关：首轮极简工具 + 提示词
-  - 启用 flash 引导：每轮注入引导词形式，对使用deepseek-v4-flash*模型的角色进行引导。其他模型默认不生效
   - web_fetch开关：是否开启web_fetch。
   - 工具呈现模式：工具呈现方式切换（默认/混合/纯PTC模式）
   - run_code 容错检查：PTC模式下，增加每个工具调用需要try catch的闸门。通过限制+建议的模式保障仅单个调用报错
@@ -106,8 +105,7 @@ dsh-extra-plan/
 │   │   │   ├── settings.js                             # dsh web界面配置插件
 │   │   │   ├── preset-settings.js                      # 同步旧版本用户设置
 │   │   │   ├── preset-sync.js                          # 自愈插件
-│   │   │   ├── executor-spawn.js                       # 执行者委托层（workflow/ralph worker 注入）
-│   │   │   └── flash-guide.js                          # flash 模型近场引导
+│   │   │   └── executor-spawn.js                       # 执行者委托层（workflow/ralph worker 注入）
 │   │   ├── scripts/distribute-preset.mjs               # 自动分发 .agent-presets 脚本
 │   │   ├── cordis.patch.yml                                      
 │   │   ├── index.js                                    

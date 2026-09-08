@@ -91,8 +91,7 @@
 - id: tool-skill
   name: '@deepseek-ai/dsh-tool-skill'
 
-# ── extra-plan 核心插件（隔离组件：提供 extra-plan/effectiveModel 服务，
-#    提供服务的行必须放在带 isolate realm 的 group 内——见文件头注释） ──
+# ── extra-plan 核心插件 ──
 
 # 三级机械锚点（路由/澄清/批准，状态机 + 选项验词）、主会话与规划子代理 anchored
 # 引导、规划子代理探查硬上限与只读备份防线、save_plan 注册（仅规划子代理层）、
@@ -100,9 +99,6 @@
 - id: extra-plan-group
   name: cordis:group
   group: true
-  isolate:
-    'extra-plan/effectiveModel': true
-    'extra-plan/flashGuideEnabled': true
   config:
     - id: extra-plan
       name: '@local/dsh-extra-plan'
@@ -119,7 +115,6 @@
         exploreBudget: 18
         savePlanDir: '.extra-plan'
         plannerPromptSuffix: '你的深度思考部分需要以"好了，现在我以全局视角来看待这个问题"开头'
-        flashGuideEnabled: false
         usageLedger:
           enabled: true
           path: !!js dshHomePath('usage-ledger', 'ledger.jsonl')
@@ -130,11 +125,7 @@
     # 列表的 served 依据，官方插件均如此），且宿主平面注册与 agent 预设注册若同时存在
     # 会触发 duplicate registration；preset-sync 须在 DSH 启动时即核对预设（挂 agent 预设
     # 内则要「预设已就位并开会话」才触发，兜底死锁）。两行均位于插件 bundle patch
-    # （cordis.patch.yml insert 列表），随安装自动就位。本组内仅保留会话级 flash-guide。
-
-    # flash 近场引导：在 flash 模型 agent 的 pre-step 中注入引导文本。
-    - id: flash-guide
-      name: '@local/dsh-extra-plan/flash-guide'
+    # （cordis.patch.yml insert 列表），随安装自动就位。
 
 # ── compaction ──────────────────────────────────────────────────────────────
 

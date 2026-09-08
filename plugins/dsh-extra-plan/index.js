@@ -769,11 +769,18 @@ function appendSuffixBlock(message, text) {
   if (message === null || typeof message !== 'object') return message
   const src = message.source
   if (src === null || typeof src !== 'object' || (src.kind !== 'user' && src.kind !== 'coordinator' && src.kind !== 'agent-message')) return message
-  if (!Array.isArray(message.content) || message.content.length !== 1) return message
-  const block = message.content[0]
-  if (block === null || typeof block !== 'object' || block.type !== 'text' || typeof block.text !== 'string') return message
-  if (block.text.indexOf(text) !== -1) return message
-  return { ...message, content: [{ type: 'text', text: block.text + '\n\n' + text }] }
+  if (!Array.isArray(message.content)) return message
+  let target = -1
+  for (let i = 0; i < message.content.length; i += 1) {
+    const block = message.content[i]
+    if (block === null || typeof block !== 'object' || block.type !== 'text' || typeof block.text !== 'string') continue
+    if (block.text.indexOf(text) !== -1) return message
+    if (target === -1) target = i
+  }
+  if (target === -1) return message
+  const next = [...message.content]
+  next[target] = { type: 'text', text: next[target].text + '\n\n' + text }
+  return { ...message, content: next }
 }
 function withPlannerPromptSuffix(message, suffix) { return appendSuffixBlock(message, suffix) }
 
@@ -2351,7 +2358,7 @@ export function apply(ctx, config) {
     }
   }
 
-  // ── planner 模型单点解析 + effectiveModel 只读服务 ──
+  // ── planner 模型单点解析 ──
   // plannerModelCache：planner 子代理有效模型条目缓存（key=agent）。上移自原
   // agent/request 钩子：一个 planner 只解析一次、之后固定。模型目录查询调用
   // 全文件只在此函数内（解析点唯一 = 函数唯一）。
@@ -2365,8 +2372,7 @@ export function apply(ctx, config) {
   // 原样传递，dsh-llm-deepseek 文档口径）与父会话进行中请求头——旧逻辑在父会话
   // 空闲（后台规划时必然如此）时 provider 为空、查询被跳过，导致 plannerModel
   // 永不生效、回退主会话默认模型（flash）；现改为显式配置直接生效。
-  // 解析整体 try/catch：异常时保持已取到的值，不抛；assemble 钩子与
-  // effectiveModel 服务兜底都只调本函数。
+  // 解析整体 try/catch：异常时保持已取到的值，不抛；agent/request 钩子只调本函数。
   async function resolvePlannerEntry(agent) {
     const cached = plannerModelCache.get(agent)
     if (cached !== undefined) return cached
@@ -2402,57 +2408,6 @@ export function apply(ctx, config) {
     plannerModelCache.set(agent, entry)
     return entry
   }
-
-  // effectiveModel：任意 agent 的"有效模型"只读服务（flash-guide 等消费）。
-  // 语义三选一：planner → resolvePlannerEntry 后的缓存条目 model（缓存空会
-  // 现场解析并填上）；非 planner 子代理（执行者/验收者，one-shot）→ 父会话
-  // （主会话）当前 requestHeader 的 config.model（拿不到返回 undefined，不写
-  // 缓存）；主会话 → 自身模型（requestHeader 优先，options.model 兜底）。
-  async function effectiveModel(agent) {
-    if (agent === undefined || agent === null) return undefined
-    if (isPlannerChild(agent)) {
-      const entry = await resolvePlannerEntry(agent)
-      return entry !== undefined && entry !== null ? entry.model : undefined
-    }
-    if (isChild(agent)) {
-      const parentSession = agent.session.header.parentSession
-      if (typeof parentSession !== 'string') return undefined
-      const agents = ctx.get('agents')
-      let parent
-      try {
-        parent = agents !== undefined ? agents.get(parentSession) : undefined
-      } catch (error) {
-        parent = undefined
-      }
-      if (parent === undefined) return undefined
-      const header = typeof parent.session.requestHeader === 'function' ? parent.session.requestHeader() : undefined
-      const pcfg = header !== undefined && header.config !== undefined && header.config !== null ? header.config : null
-      if (pcfg === null) return undefined
-      return typeof pcfg.model === 'string' && pcfg.model !== '' ? pcfg.model : undefined
-    }
-    const session = agent.session
-    if (session !== undefined && session !== null && typeof session.requestHeader === 'function') {
-      try {
-        const header = session.requestHeader()
-        const m = header !== undefined && header.config !== undefined && header.config !== null && typeof header.config.model === 'string' && header.config.model !== '' ? header.config.model : undefined
-        if (m !== undefined) return m
-      } catch (error) { /* header 不可用：回落 options.model */ }
-    }
-    const opts = agent.options
-    return opts !== undefined && typeof opts.model === 'string' ? opts.model : undefined
-  }
-
-  // 只读服务注册（二参形式；cordis 同名重复注册会抛错，故用带插件前缀的
-  // `extra-plan/effectiveModel` 防撞）。服务函数在 pre-step 运行时才被消费，
-  // 与其它插件的 apply 先后无关。
-  ctx.provide('extra-plan/effectiveModel', effectiveModel)
-
-  // flashGuideEnabled：flash 引导开关只读服务（flash-guide 消费）。
-  // 默认启用：config 未给字段视为 true（与旧「无 disabled 条目即启用」语义一致）。
-  function flashGuideEnabled() {
-    return cfg.flashGuideEnabled !== false
-  }
-  ctx.provide('extra-plan/flashGuideEnabled', flashGuideEnabled)
 
   // ── cordis 官方技能引用（runtime-skill 注册，零副本） ──
   // 从官方 agentPresets 服务 resolve('cordis') 拿 shipped 预设真实路径
@@ -2985,12 +2940,6 @@ export function apply(ctx, config) {
     const result = await next()
     const agent = context.agent
     if (agent === undefined) return result
-    // planner 模型提前解析：宿主时序 assemble 先于 pre-step 跑（且每步都跑），
-    // 保证 flash-guide 首轮 pre-step 判定时缓存已有值。只对 planner 子代理解析；
-    // one-shot 不入缓存（按主会话当前模型跟随）。异常吞掉，绝不能影响装配返回。
-    if (isChild(agent) && isPlannerChild(agent)) {
-      try { await resolvePlannerEntry(agent) } catch (error) { /* 留空回退，不崩 assemble */ }
-    }
     const planner = isPlannerChild(agent)
     if (isChild(agent) && !planner) {
       // 只读分类：优先真实工具集（tools.schemas，restrict 后非折叠）——含 write/edit=可写
@@ -3035,8 +2984,8 @@ export function apply(ctx, config) {
   // 4) 模型与力度继承：子代理 agent/request 解析后，把 provider/model/maxTokens
   //    与 reasoningEffort 注入为父会话当前配置（requestHeader().config，非创建时
   //    快照）。one-shot（执行者/验收者）直接继承当前值；planner（continuable）的
-  //    有效模型在 assemble 阶段由 resolvePlannerEntry 单点解析并缓存（本钩子只读
-  //    缓存，不再做模型目录查询）：已创建的 planner 不随父会话改模型而变。
+  //    有效模型由 resolvePlannerEntry 现场解析并缓存（本钩子只读缓存，不再做
+  //    模型目录查询）：已创建的 planner 不随父会话改模型而变。
   //    真实机制（注释订正）：宿主 installModelSelection 仅由主会话侧会话控制器安装
   //    （setup: installSelection 先于 presets.mount），其 agent/request 钩子无条件
   //    覆写 provider/model/reasoningEffort（剥除 resolved 的 effort）；子代理瀑布不安装

@@ -10,7 +10,6 @@ window.__ModuleLoader__.load({
     const PRO_CONFIG_URL = "/api/dsh-extra-plan-settings/pro-config";
     const QQBOT_STATUS_URL = "/api/dsh-extra-plan-settings/qqbot-status";
     const QQBOT_CONFIG_URL = "/api/dsh-extra-plan-settings/qqbot-config";
-    const FLASHGUIDE_CONFIG_URL = "/api/dsh-extra-plan-settings/flash-guide-config";
 
     const zh = {
       cardTitle: "按需规划模式配置",
@@ -35,7 +34,6 @@ window.__ModuleLoader__.load({
       qqbotSection: "qqbot兼容插件",
       qqbotUnavailable: "qqbot 环境未就绪，不展示配置项。",
       approvalEnabled: "越权申请开关",
-      flashGuideEnabled: "启用 flash 引导",
       configLoadFailed: "配置加载失败：",
       trueValue: "True",
       falseValue: "False"
@@ -64,7 +62,6 @@ window.__ModuleLoader__.load({
       qqbotSection: "QQ Bot Compat",
       qqbotUnavailable: "QQ Bot environment is not ready. No configuration items are displayed.",
       approvalEnabled: "Approval Required",
-      flashGuideEnabled: "Enable Flash Guide",
       configLoadFailed: "Config load failed: ",
       trueValue: "True",
       falseValue: "False"
@@ -104,9 +101,6 @@ window.__ModuleLoader__.load({
         const [configStatus, setConfigStatus] = React.useState("loading");
         const [draft, setDraft] = React.useState(null);
         const [fields, setFields] = React.useState([]);
-        const [flashStatus, setFlashStatus] = React.useState("loading");
-        const [flashField, setFlashField] = React.useState(null);
-        const [flashDisabled, setFlashDisabled] = React.useState(false);
         const [saving, setSaving] = React.useState(false);
         const [message, setMessage] = React.useState({ kind: "", text: "" });
 
@@ -142,30 +136,6 @@ window.__ModuleLoader__.load({
           return function () { cancelled = true; };
         }, []);
 
-        // flash 引导开关：随 pro规划区一起加载，数据源独立，见 flash-guide-config 端点。
-        React.useEffect(function () {
-          let cancelled = false;
-          fetch(FLASHGUIDE_CONFIG_URL, { headers: { accept: "application/json" } })
-            .then(function (res) {
-              return res.json().catch(function () { return {}; }).then(function (data) {
-                if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
-                return data;
-              });
-            })
-            .then(function (data) {
-              if (cancelled) return;
-              if (data.available !== true) { setFlashStatus("hidden"); return; }
-              setFlashField(data.field || null);
-              setFlashDisabled(data.disabled === true);
-              setFlashStatus("ready");
-            })
-            .catch(function () {
-              if (cancelled) return;
-              setFlashStatus("hidden");
-            });
-          return function () { cancelled = true; };
-        }, []);
-
         function setField(key, value) {
           setDraft(function (prev) { return Object.assign({}, prev, { [key]: value }); });
           setMessage({ kind: "", text: "" });
@@ -189,15 +159,6 @@ window.__ModuleLoader__.load({
             });
             const data = await res.json().catch(function () { return {}; });
             if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
-            if (flashStatus === "ready") {
-              const fRes = await fetch(FLASHGUIDE_CONFIG_URL, {
-                method: "PUT",
-                headers: { "content-type": "application/json", "accept": "application/json" },
-                body: JSON.stringify({ disabled: flashDisabled })
-              });
-              const fData = await fRes.json().catch(function () { return {}; });
-              if (!fRes.ok) throw new Error(fData.error || ("HTTP " + fRes.status));
-            }
             setMessage({ kind: "ok", text: t("saved") });
           } catch (e) {
             setMessage({ kind: "error", text: t("saveFailed") + " " + String((e && e.message) || e) });
@@ -284,21 +245,9 @@ window.__ModuleLoader__.load({
         }
 
         const proFields = fields.filter(function (field) { return field && field.separate === undefined; });
-        const flashReady = flashStatus === "ready" && flashField !== null;
-        const flashOptions = flashField && Array.isArray(flashField.options) ? flashField.options : [];
         return el("div", { className: "esp-section" },
           el("p", { className: "esp-sectionTitle" }, t("proSection")),
           proFields.map(renderField),
-          flashReady ? el("label", { className: "esp-field", key: "flash" },
-            el("span", { className: "esp-label" }, t(flashField.locale)),
-            el("select", {
-              className: "esp-select",
-              value: flashDisabled ? String(false) : String(true),
-              onChange: function (e) { setFlashDisabled(optionValue(flashField, e.target.value) !== true); }
-            }, flashOptions.map(function (option) {
-              return el("option", { key: String(option), value: String(option) }, optionLabel(flashField, option));
-            }))
-          ) : null,
           message.text ? el("p", { className: message.kind === "ok" ? "esp-ok" : "esp-err" }, message.text) : null,
           el("div", { className: "esp-actions" },
             el("button", {

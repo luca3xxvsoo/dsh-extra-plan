@@ -87,15 +87,15 @@ const locatorChecks = SETTING_DEFINITIONS.map((definition) => {
 })
 if (locatorChecks.every((item) => item.parsed.kind === 'ok' && item.textMatches.length === 1)) {
   pass += 1
-  console.log('PASS  设置白名单恰有 8 个唯一 locator（工作区模板）')
+  console.log('PASS  设置白名单恰有 7 个唯一 locator（工作区模板）')
 } else {
   fail += 1
   console.log('FAIL  设置白名单 locator 不完整或有歧义')
 }
 const defaults = Object.fromEntries(locatorChecks.map((item) => [item.definition.key, item.parsed.kind === 'ok' ? item.parsed.value : undefined]))
-if (defaults.plannerModel === 'deepseek-v4-pro' && defaults.exploreBudget === 18 && defaults.anchoredBootstrap === true && defaults.runcodeCatchGate === false && defaults.flashGuideEnabled === false && defaults.webFetch === false && defaults.toolPresentationMode === 'native' && typeof defaults.plannerPromptSuffix === 'string') {
+if (defaults.plannerModel === 'deepseek-v4-pro' && defaults.exploreBudget === 18 && defaults.anchoredBootstrap === true && defaults.runcodeCatchGate === false && defaults.webFetch === false && defaults.toolPresentationMode === 'native' && typeof defaults.plannerPromptSuffix === 'string') {
   pass += 1
-  console.log('PASS  新版模板 8 项默认值来自实际叶值')
+  console.log('PASS  新版模板 7 项默认值来自实际叶值')
 } else {
   fail += 1
   console.log('FAIL  新版模板默认值不符合验收锚点')
