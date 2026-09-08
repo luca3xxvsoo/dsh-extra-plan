@@ -779,12 +779,19 @@ function appendSuffixBlock(message, text) {
   }
   if (target === -1) return message
   const next = [...message.content]
-  const merged = next[target].text + '\n\n' + text
-  // 多块消息（如 DSH 注入英文块在末尾）时，给注入块末尾补空行，避免跨块 join 贴连
-  next[target] = { type: 'text', text: target < next.length - 1 ? merged + '\n\n' : merged }
+  next[target] = { type: 'text', text: next[target].text + '\n' + text }
   return { ...message, content: next }
 }
-function withPlannerPromptSuffix(message, suffix) { return appendSuffixBlock(message, suffix) }
+function withPlannerPromptSuffix(message, suffix) {
+  const r = appendSuffixBlock(message, suffix)
+  // 外层拼接后统一补一次换行：多块消息（DSH 英文块在末尾）时避免跨块 join 贴连；
+  // 幂等（末尾已有 \n 则不再补）；单块消息不受影响。
+  if (!Array.isArray(r.content) || r.content.length <= 1) return r
+  const first = r.content[0]
+  if (first === null || typeof first !== 'object' || first.type !== 'text' || typeof first.text !== 'string') return r
+  if (first.text.endsWith('\n')) return r
+  return { ...r, content: [{ ...first, text: first.text + '\n' }, ...r.content.slice(1)] }
+}
 
 // ── 预算告知/阈值提示（v0.1.6）：规划子代理创建/续轮即知预算上限 ──
 // 阈值固定 3（不进配置文件）
