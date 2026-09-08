@@ -13,6 +13,7 @@
 import { existsSync, copyFileSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { ensureDshExtraPlanLink } from './ensure-dsh-extra-plan-link.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 // scripts/ -> 包根；包根 -> @local；-> node_modules；-> profile 目录
@@ -20,6 +21,8 @@ const PACKAGE_ROOT = join(HERE, '..')
 const DIST_TARGET = join(PACKAGE_ROOT, '..', '..', '@tencent-connect', 'dsh-qqbot', 'dist')
 const PATCHES = join(PACKAGE_ROOT, 'patches', '@tencent-connect-dsh-qqbot', 'dist')
 const PROFILE_DIR = join(PACKAGE_ROOT, '..', '..', '..')
+
+ensureDshExtraPlanLink()
 
 const TARGETS = [
   ['gateway/bootstrap.js'],

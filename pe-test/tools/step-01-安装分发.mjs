@@ -1,62 +1,91 @@
-// distribute（postinstall）三态判定验证：用临时 DSH_HOME 真实调用 distribute，
-// 覆盖矩阵：首次/同版本（含手改保留）/旧版/无记录/收敛。
-// 只读仓库资产（ASSET_DIR 由脚本内定位），临时目录建在系统临时区，跑完清理。
+// distribute（postinstall）调用统一生产 syncPreset 的回归。
+// 夹具全部位于系统临时 DSH_HOME，不读取或写入生产目录。
+
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, appendFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { distribute } from '../../plugins/dsh-extra-plan/scripts/distribute-preset.mjs'
 import { contentHash, readManifest, writeManifest } from '../_shared/preset-hash.mjs'
+import { SETTING_DEFINITIONS, patchYamlScalar } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 const ASSET_DIR = join(HERE, '..', '..', 'plugins', 'dsh-extra-plan', 'assets', 'presets', 'extra-plan')
+const assetAgent = readFileSync(join(ASSET_DIR, 'agent.cordis.yml'), 'utf8')
+const definition = (key) => SETTING_DEFINITIONS.find((item) => item.key === key)
 
 let pass = 0
 let fail = 0
-function check(label, expected, actual) {
-  const ok = expected === actual
-  if (ok) { pass += 1; console.log(`PASS  ${label}`) }
-  else { fail += 1; console.log(`FAIL  ${label}: 期望 ${expected} 实际 ${actual}`) }
+function check(label, condition) {
+  if (condition) { pass += 1; console.log('PASS  ' + label) }
+  else { fail += 1; console.log('FAIL  ' + label) }
 }
 
-const work = mkdtempSync(join(tmpdir(), 'dsh-distribute-'))
+function patchAgent(values) {
+  let text = assetAgent
+  for (const [key, value] of Object.entries(values)) {
+    const patched = patchYamlScalar(text, definition(key), value)
+    if (!patched.ok) throw new Error('fixture patch failed: ' + key)
+    text = patched.text
+  }
+  return text
+}
+
+function manifestAt(dist) {
+  return JSON.parse(readFileSync(join(dist, 'dist-manifest.json'), 'utf8'))
+}
+
+const work = mkdtempSync(join(tmpdir(), 'dsh-distribute-migration-'))
 const home = join(work, 'home')
 const dist = join(home, '.agent-presets', 'extra-plan')
 mkdirSync(home, { recursive: true })
-const cur = contentHash(ASSET_DIR)
-const MARK = '# USER-MODIFIED-MARK-D1'
+const currentHash = contentHash(ASSET_DIR)
+const oldValues = {
+  plannerModel: 'old-distribute-model',
+  plannerPromptSuffix: 'old: suffix',
+  exploreBudget: 7,
+  anchoredBootstrap: false,
+  runcodeCatchGate: true,
+  flashGuideEnabled: true,
+  webFetch: true,
+  toolPresentationMode: 'ptc',
+}
+const expectedOldAgent = patchAgent(oldValues)
+const marker = '# USER-MODIFIED-MARK-D1'
 
 try {
-  // 首次安装
-  check('首次安装 → written', 'written', distribute(home))
-  check('文件就位（内容==当前版）', true, contentHash(dist) === cur)
+  check('首次安装 → written', distribute(home) === 'written')
+  const first = manifestAt(dist)
+  check('首次 manifest format=2', first.format === 2)
+  check('首次审计 source=absent 且恰有 8 项', first.settingsMigration && first.settingsMigration.source === 'absent' && Object.keys(first.settingsMigration.results).length === 8)
+  check('首次厂商 distHash 正确', first.distHash === currentHash && readManifest(dist) === currentHash)
+  check('同版本重装 → idle', distribute(home) === 'idle')
 
-  // 同版本重装
-  check('同版本重装 → idle', 'idle', distribute(home))
+  appendFileSync(join(dist, 'agent.cordis.yml'), '\n' + marker + '\n')
+  check('同版本手改重装 → idle', distribute(home) === 'idle')
+  check('同版本手改保留', readFileSync(join(dist, 'agent.cordis.yml'), 'utf8').includes(marker))
 
-  // 同版本 + 手改（核心：不覆盖）
-  appendFileSync(join(dist, 'agent.cordis.yml'), '\n' + MARK + '\n')
-  check('同版本手改重装 → idle', 'idle', distribute(home))
-  check('手改被保留（标记仍在）', true, readFileSync(join(dist, 'agent.cordis.yml'), 'utf8').includes(MARK))
-  const restored = readFileSync(join(dist, 'agent.cordis.yml'), 'utf8').replace('\n' + MARK + '\n', '\n')
-  writeFileSync(join(dist, 'agent.cordis.yml'), restored)
+  writeFileSync(join(dist, 'agent.cordis.yml'), expectedOldAgent, 'utf8')
+  writeManifest(dist, 'OLD-DISTRIBUTE-HASH')
+  check('旧 format=1 记录 → upgraded', distribute(home) === 'upgraded')
+  const upgraded = manifestAt(dist)
+  check('升级后 8 项有效旧值全部恢复', readFileSync(join(dist, 'agent.cordis.yml'), 'utf8') === expectedOldAgent)
+  check('升级后 manifest format=2/厂商 hash', upgraded.format === 2 && upgraded.distHash === currentHash)
+  check('升级后 audit captured/8 项且不含原始用户值', upgraded.settingsMigration.source === 'captured' && Object.keys(upgraded.settingsMigration.results).length === 8 && !JSON.stringify(upgraded).includes('old-distribute-model'))
 
-  // 旧记录（跨版本下发）
-  writeManifest(dist, 'OLDHASH')
-  check('旧记录 → upgraded', 'upgraded', distribute(home))
-  check('记录纠正为当前版', true, readManifest(dist) === cur)
-
-  // 无记录 → 覆盖
+  writeFileSync(join(dist, 'agent.cordis.yml'), patchAgent({ plannerModel: 'old-without-manifest' }), 'utf8')
   rmSync(join(dist, 'dist-manifest.json'))
-  check('无记录 → upgraded', 'upgraded', distribute(home))
-  check('manifest 重建=当前版', true, readManifest(dist) === cur)
+  check('无 manifest 仍捕获并 upgraded', distribute(home) === 'upgraded')
+  const noManifest = manifestAt(dist)
+  check('无 manifest sourceDistHash=null 且恢复', noManifest.settingsMigration.sourceDistHash === null && readFileSync(join(dist, 'agent.cordis.yml'), 'utf8').includes("plannerModel: 'old-without-manifest'"))
 
-  // 收敛
-  check('收敛 → idle', 'idle', distribute(home))
+  const beforeIdle = [readFileSync(join(dist, 'preset.yml')), readFileSync(join(dist, 'agent.cordis.yml')), readFileSync(join(dist, 'dist-manifest.json'))]
+  check('第二次相同发行 → idle', distribute(home) === 'idle')
+  const afterIdle = [readFileSync(join(dist, 'preset.yml')), readFileSync(join(dist, 'agent.cordis.yml')), readFileSync(join(dist, 'dist-manifest.json'))]
+  check('idle 三个核心字节完全不变', beforeIdle.every((value, index) => value.equals(afterIdle[index])))
 } finally {
   rmSync(work, { recursive: true, force: true })
 }
 
-console.log(`\n通过 ${pass}, 失败 ${fail}`)
+console.log('\n通过 ' + pass + ', 失败 ' + fail)
 process.exit(fail === 0 ? 0 : 1)

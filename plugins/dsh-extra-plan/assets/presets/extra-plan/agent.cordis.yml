@@ -112,8 +112,8 @@
         bootstrapPersona: 'You are a helpful software engineer assistant.'
         bootstrapShellTools: [bash, pwsh]
         bootstrapCommonTools: [read]
-        # planner 候选模型名：按主会话 provider 的模型目录做存在性校验，目录里有此
-        # 模型则 planner 用此模型、不在目录则回退主会话当前模型（安全降级，不报错）。
+        # planner 模型名：非空时由 extra-plan 作为规划子代理的专用 model；
+        # provider/maxTokens 继承父会话；不做模型目录命中校验，具体可用性由宿主处理。
         plannerModel: deepseek-v4-pro
         planTool: subagent_plan
         exploreBudget: 18

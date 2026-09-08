@@ -104,6 +104,8 @@ dsh-extra-plan/
 │   │   ├── lib/                                        # 设置界面
 │   │   │   ├── client.js                               # dsh web界面配置插件
 │   │   │   ├── settings.js                             # dsh web界面配置插件
+│   │   │   ├── preset-settings.js                      # 同步旧版本用户设置
+│   │   │   ├── preset-sync.js                          # 自愈插件
 │   │   │   ├── executor-spawn.js                       # 执行者委托层（workflow/ralph worker 注入）
 │   │   │   └── flash-guide.js                          # flash 模型近场引导
 │   │   ├── scripts/distribute-preset.mjs               # 自动分发 .agent-presets 脚本
@@ -114,7 +116,9 @@ dsh-extra-plan/
 │       ├── patches/@tencent-connect-dsh-qqbot/dist/    # 自动分发 qqbot插件修改 内容
 │       │   ├── gateway/bootstrap.js                    # 修改好的文件 最小必须注入：ctx.provide
 │       │   └── transport/outbound.js                   # 修改好的文件 放行新增的工具show_file：用该工具调用方案/验收.md节约token
-│       ├── scripts/apply-patch.mjs                     # 自动分发 qqbot插件修改 脚本
+│       ├── scripts/                     
+│       │   ├── apply-patch.mjs                         # 自动分发 qqbot插件修改 脚本
+│       │   └── ensure-dsh-extra-plan-link.mjs          # 同步 web 目录下的 dsh-extra-plan
 │       ├── cordis.patch.yml                        
 │       ├── index.js                      
 │       └── package.json        
@@ -136,8 +140,10 @@ dsh-extra-plan/
 │       ├── step-00-全流程回归.mjs
 │       ├── step-01-安装分发.mjs
 │       ├── step-01-安装同步.mjs
+│       ├── step-01-设置迁移.mjs
 │       ├── step-01-设置页配置.mjs
 │       ├── step-01-预设完整性.mjs
+│       ├── step-01-qqbot-安装映射.mjs
 │       ├── step-04-工具清单查看.mjs
 │       ├── step-04-路由与写闸门.mjs
 │       ├── step-05-会话解码.mjs

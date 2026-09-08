@@ -1,77 +1,88 @@
-// preset-sync 自愈三态判定验证：用临时 DSH_HOME 真实调用 syncPreset，
-// 覆盖矩阵 A/F（首次/无记录）、B/D/G（当前版/旧版/记录旧内容新）、
-// C（同版本内手改 → 保留）、E（跨版本+手改 → 覆盖）。
-// 只读仓库资产（ASSET_DIR 由库内定位），临时目录建在系统临时区，跑完清理。
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, appendFileSync } from 'node:fs'
+// syncPreset 启动自愈入口的选择性迁移回归。
+// 全部写入均在系统临时 DSH_HOME，绝不使用真实生产目录。
+
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, appendFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { syncPreset } from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
 import { contentHash, readManifest, writeManifest } from '../_shared/preset-hash.mjs'
+import { SETTING_DEFINITIONS, patchYamlScalar } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 const ASSET_DIR = join(HERE, '..', '..', 'plugins', 'dsh-extra-plan', 'assets', 'presets', 'extra-plan')
+const assetAgent = readFileSync(join(ASSET_DIR, 'agent.cordis.yml'), 'utf8')
+const definition = (key) => SETTING_DEFINITIONS.find((item) => item.key === key)
 
 let pass = 0
 let fail = 0
-function check(label, expected, actual) {
-  const ok = expected === actual
-  if (ok) { pass += 1; console.log(`PASS  ${label}`) }
-  else { fail += 1; console.log(`FAIL  ${label}: 期望 ${expected} 实际 ${actual}`) }
+function check(label, condition) {
+  if (condition) { pass += 1; console.log('PASS  ' + label) }
+  else { fail += 1; console.log('FAIL  ' + label) }
 }
 
-const work = mkdtempSync(join(tmpdir(), 'dsh-preset-sync-'))
+function patchAgent(values) {
+  let text = assetAgent
+  for (const [key, value] of Object.entries(values)) {
+    const patched = patchYamlScalar(text, definition(key), value)
+    if (!patched.ok) throw new Error('fixture patch failed: ' + key)
+    text = patched.text
+  }
+  return text
+}
+
+function manifestAt(dist) {
+  return JSON.parse(readFileSync(join(dist, 'dist-manifest.json'), 'utf8'))
+}
+
+const work = mkdtempSync(join(tmpdir(), 'dsh-sync-migration-'))
 const home = join(work, 'home')
 const dist = join(home, '.agent-presets', 'extra-plan')
 mkdirSync(home, { recursive: true })
-const cur = contentHash(ASSET_DIR)
-const MARK = '# USER-MODIFIED-MARK-7f3a'
+const currentHash = contentHash(ASSET_DIR)
+const oldValues = {
+  plannerModel: 'old-sync-model',
+  plannerPromptSuffix: 'old: sync suffix',
+  exploreBudget: 9,
+  anchoredBootstrap: false,
+  runcodeCatchGate: true,
+  flashGuideEnabled: true,
+  webFetch: true,
+  toolPresentationMode: 'both',
+}
+const expectedOldAgent = patchAgent(oldValues)
 
 try {
-  // A 首次安装（目标不存在）
-  check('A 首次安装 → written', 'written', syncPreset(home))
-  check('A 文件就位（内容==当前版）', true, contentHash(dist) === cur)
+  check('首次自愈 → written', syncPreset(home) === 'written')
+  check('首次 manifest format=2/8 项审计', (() => { const m = manifestAt(dist); return m.format === 2 && m.distHash === currentHash && Object.keys(m.settingsMigration.results).length === 8 })())
+  check('首次第二次 → idle', syncPreset(home) === 'idle')
 
-  // B 当前版未动
-  check('B 二次核对 → idle', 'idle', syncPreset(home))
+  writeFileSync(join(dist, 'agent.cordis.yml'), expectedOldAgent, 'utf8')
+  writeManifest(dist, 'OLD-SYNC-HASH')
+  const profile = join(home, 'profiles', 'sample')
+  mkdirSync(profile, { recursive: true })
+  const patchFile = join(profile, 'cordis.patch.yml')
+  const approval = '    approvalEnabled: true'
+  writeFileSync(patchFile, '- id: flash-guide\n  disabled: true\n- id: keep\n  config:\n' + approval + '\n', 'utf8')
+  check('旧 format=1 记录 → upgraded', syncPreset(home) === 'upgraded')
+  const upgraded = manifestAt(dist)
+  check('升级后全部有效旧值恢复', readFileSync(join(dist, 'agent.cordis.yml'), 'utf8') === expectedOldAgent)
+  check('升级后 format=2/厂商 hash/audit captured', upgraded.format === 2 && upgraded.distHash === currentHash && upgraded.settingsMigration.source === 'captured')
+  check('升级后清理旧 flash 且不碰其他 patch 字段', !readFileSync(patchFile, 'utf8').includes('flash-guide') && readFileSync(patchFile, 'utf8').includes(approval))
 
-  // C 同版本内手改 → 保留
-  appendFileSync(join(dist, 'agent.cordis.yml'), '\n' + MARK + '\n')
-  check('C 同版手改 → idle', 'idle', syncPreset(home))
-  check('C 手改被保留', true, readFileSync(join(dist, 'agent.cordis.yml'), 'utf8').includes(MARK))
-
-  // 恢复手改标记
-  const restored = readFileSync(join(dist, 'agent.cordis.yml'), 'utf8').replace('\n' + MARK + '\n', '\n')
-  writeFileSync(join(dist, 'agent.cordis.yml'), restored)
-
-  // D 旧版未动（记录=旧，内容=当前版可视为"旧版未动"的判据已不读内容）
-  writeManifest(dist, 'OLDHASH')
-  check('D 旧记录 → upgraded', 'upgraded', syncPreset(home))
-  check('D 记录纠正为当前版', true, readManifest(dist) === cur)
-
-  // E 跨版本 + 手改 → 覆盖（手改被重置）
-  writeManifest(dist, 'OLDHASH2')
-  appendFileSync(join(dist, 'agent.cordis.yml'), '\n' + MARK + '\n')
-  check('E 旧版手改 → upgraded', 'upgraded', syncPreset(home))
-  check('E 手改被覆盖（标记消失）', false, readFileSync(join(dist, 'agent.cordis.yml'), 'utf8').includes(MARK))
-  check('E 记录=当前版', true, readManifest(dist) === cur)
-
-  // F 无记录（删 manifest）→ upgraded
+  writeFileSync(join(dist, 'agent.cordis.yml'), patchAgent({ plannerModel: 'old-sync-no-manifest' }), 'utf8')
   rmSync(join(dist, 'dist-manifest.json'))
-  check('F 无记录 → upgraded', 'upgraded', syncPreset(home))
-  check('F manifest 重建=当前版', true, readManifest(dist) === cur)
+  check('无 manifest 仍 upgraded', syncPreset(home) === 'upgraded')
+  const noManifest = manifestAt(dist)
+  check('无 manifest sourceDistHash=null/旧值恢复', noManifest.settingsMigration.sourceDistHash === null && readFileSync(join(dist, 'agent.cordis.yml'), 'utf8').includes("plannerModel: 'old-sync-no-manifest'"))
 
-  // G 记录旧、内容已是当前版 → upgraded（收敛记录）
-  writeManifest(dist, 'OLDHASH3')
-  check('G 记录旧内容新 → upgraded', 'upgraded', syncPreset(home))
-  check('G 记录=当前版', true, readManifest(dist) === cur)
-
-  // 收敛：以上任意覆盖后再次核对 → idle
-  check('收敛 → idle', 'idle', syncPreset(home))
+  const beforeIdle = [readFileSync(join(dist, 'preset.yml')), readFileSync(join(dist, 'agent.cordis.yml')), readFileSync(join(dist, 'dist-manifest.json'))]
+  check('相同 hash 收敛 → idle', syncPreset(home) === 'idle')
+  const afterIdle = [readFileSync(join(dist, 'preset.yml')), readFileSync(join(dist, 'agent.cordis.yml')), readFileSync(join(dist, 'dist-manifest.json'))]
+  check('idle 三个核心字节完全不变且 readManifest 正确', beforeIdle.every((value, index) => value.equals(afterIdle[index])) && readManifest(dist) === currentHash)
 } finally {
   rmSync(work, { recursive: true, force: true })
 }
 
-console.log(`\n通过 ${pass}, 失败 ${fail}`)
+console.log('\n通过 ' + pass + ', 失败 ' + fail)
 process.exit(fail === 0 ? 0 : 1)

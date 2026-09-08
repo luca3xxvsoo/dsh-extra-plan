@@ -10,9 +10,10 @@
 // - dsh-extra-plan/index.js L76-80、L239-258：闸门用 indexOf 包含匹配固定词 label
 import { UserQuestionError } from '@deepseek-ai/dsh-user-questions'
 import { rm } from 'node:fs/promises'
-import { existsSync, lstatSync, mkdirSync, rmSync, symlinkSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { ensureDshExtraPlanLink } from './scripts/ensure-dsh-extra-plan-link.mjs'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
 export const name = 'dsh-qqbot-user-questions'
@@ -278,38 +279,6 @@ export function apply(ctx, config) {
 
 // ── 辅助函数 ──
 
-/**
- * 自愈映射：qqbot profile 的 @local/dsh-extra-plan 指向 web 的同名包（三层判定）。
- * ① web 不存在 → 提示跳过；② qq 不存在 → 建映射；③ qq 存在非映射（旧真实目录）→
- * 删除重建；④ 已是映射 → 不处理。Windows 用 junction（无需管理员权限），
- * 其余平台用 dir symlink。失败仅日志、不阻断插件启动。
- */
-function ensureDshExtraPlanLink() {
-  try {
-    const home = process.env.DSH_HOME || join(homedir(), '.dsh')
-    const webPkg = join(home, 'profiles', 'web', 'node_modules', '@local', 'dsh-extra-plan')
-    const qqPkg = join(home, 'profiles', 'qqbot', 'node_modules', '@local', 'dsh-extra-plan')
-
-    if (!existsSync(webPkg)) {
-      console.warn('[dsh-qqbot-user-questions] 未找到 web 的 dsh-extra-plan，跳过映射')
-      return
-    }
-    if (!existsSync(qqPkg)) {
-      mkdirSync(join(home, 'profiles', 'qqbot', 'node_modules', '@local'), { recursive: true })
-      symlinkSync(webPkg, qqPkg, process.platform === 'win32' ? 'junction' : 'dir')
-      console.log('[dsh-qqbot-user-questions] 已建立映射: qqbot → web')
-      return
-    }
-    if (lstatSync(qqPkg).isSymbolicLink()) {
-      return
-    }
-    rmSync(qqPkg, { recursive: true, force: true })
-    symlinkSync(webPkg, qqPkg, process.platform === 'win32' ? 'junction' : 'dir')
-    console.log('[dsh-qqbot-user-questions] 旧版目录已替换为映射')
-  } catch (err) {
-    console.error('[dsh-qqbot-user-questions] 映射建立失败:', err.message)
-  }
-}
 
 /**
  * 格式化单个问题为发送文本，返回 { text }。

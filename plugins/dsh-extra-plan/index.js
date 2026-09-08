@@ -26,8 +26,8 @@
 //    每个会话各有一份实例，ctx 为该会话 agent 的作用域；
 // 8. dsh-subagent 在委派边界把子代理审批固定为 never；沙箱下限需插件补种
 //    （childPolicyNeedsFloor，F 系列用例已测）；
-// 9. AgentOptions 无 reasoningEffort 字段，子代理思考力度默认取 llm-deepseek
-//    适配器默认（max）——力度继承须在子会话 agent/request 瀑布上注入。
+// 9. 子代理的 reasoningEffort 由 agent/request 瀑布继承；当前 DSH AgentOptions
+//    已声明该字段，实际来源与覆盖规则见下方 agent/request 逻辑。
 //    真实机制：宿主 installModelSelection 仅由主会话侧会话控制器安装
 //    （setup: installSelection 先于 presets.mount），其 agent/request 钩子无条件
 //    覆写 provider/model/reasoningEffort（剥除 resolved 的 effort）；子代理瀑布
@@ -107,15 +107,6 @@ function planDenyReason(action, state) {
   return `子代理未放行：${action}。${ROUTE_CONFIRM_TEXT}，意图澄清问答后再调用 ${action}`
 }
 function approvalDenyReason(action, state) {
-  // if (state && state.route === 'none') {
-  //   return `执行类委派未放行：${action}。${ROUTE_CONFIRM_TEXT}，路由确认并批准方案后才可委派`
-  // }
-  // if (state && state.route === 'direct') {
-  //   return `直行态下不可委派：${action}。「直接执行」已选，请亲自动手完成，禁止委派子代理。如需委派请先让用户重新路由确认选择「进行pro规划」`
-  // }
-  // if (state && state.route === 'plan') {
-  //   return `执行类委派未放行：${action}。当前为规划态，请先调用 subagent_plan 完成规划方案，方案经用户批准后才可委派执行者`
-  // }
   return `执行类委派未放行：${action}。${APPROVAL_CONFIRM_TEXT}，用户批准后才可委派`
 }
 
@@ -3111,26 +3102,6 @@ export function apply(ctx, config) {
     let provider = parentProvider
     let model = parentModel
     let maxTokens = parentMaxTokens
-    // ── 死代码（2026-09 保留说明）：本 if 块不可达——
-    // 上方 planner 分支（L1840 isPlannerChild → L1865 必然 return nextConfig）已提前返回；
-    // isPlannerChild 为纯只读函数（L1211-1225，无副作用），同一 payload.agent 二次判定结果
-    // 恒同 → 此处恒 false。且本块 else 回退（parentProvider/parentModel/parentMaxTokens）
-    // 与不进入分支时 L1886-1888 的初值逐字等价（作者注释亦自认「理论不可达」）。
-    // 处置：整块注释保留（不删除），供对照回退。
-    /* if (isPlannerChild(payload.agent)) {
-      const entry = plannerModelCache.get(payload.agent)
-      if (entry !== undefined) {
-        provider = entry.provider
-        model = entry.model
-        maxTokens = entry.maxTokens
-      } else {
-        // 纯防御：assemble 已填缓存，此处理论不可达；用父会话当前值作为本次
-        // 请求值（本地变量），不写缓存、不做模型目录查询。
-        provider = parentProvider
-        model = parentModel
-        maxTokens = parentMaxTokens
-      }
-    } */
     // probe（探查者）特判：模型跟随顶层主会话（resolveProbeRequestInjection 内沿
     // parentSession 链上溯）；early return 不读 plannerModelCache，planner 分支不受影响。
     // probe 判定=真实工具集含 save_probe（schemas 投影；save_probe 仅主会话与认领的
@@ -3259,8 +3230,9 @@ export function apply(ctx, config) {
       return next() // 执行者子代理豁免（目录含 write/edit，缓存未命中）
     }
 
-    const state = deriveFlowState(sessionEvents(agent.session))
-    const reason = mainGateReason(state, exec, { events: sessionEvents(agent.session), planToolName, jobOutputCallCounters, runcodeCatchGate: runcodeCatchGateOn, runCodeDepth: 0 })
+    const events = sessionEvents(agent.session)
+    const state = deriveFlowState(events)
+    const reason = mainGateReason(state, exec, { events, planToolName, jobOutputCallCounters, runcodeCatchGate: runcodeCatchGateOn, runCodeDepth: 0 })
     if (reason !== null) return { kind: 'deny', reason }
     // 放行副作用：job_output 计数器记录（原 L2414-2427 的 set 部分，仅在放行时执行，时序等价）
     if (exec.name === 'job_output') {

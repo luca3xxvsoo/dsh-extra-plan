@@ -7,7 +7,8 @@
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { join, dirname, relative } from 'node:path'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { findSession } from '../_shared/session-finder.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -19,10 +20,12 @@ const REPORTS_DIR = join(dirname(HERE), 'reports')
 const AUTO = [
   ['step-00-全流程回归.mjs', true, ''],
   ['step-00-跨平台写拦截.mjs', true, ''],
+  ['step-01-设置迁移.mjs', true, ''],
   ['step-01-安装分发.mjs', true, ''],
   ['step-01-安装同步.mjs', true, ''],
   ['step-01-预设完整性.mjs', false, ''],
   ['step-01-设置页配置.mjs', false, ''],
+  ['step-01-qqbot-安装映射.mjs', true, ''],
   ['step-04-路由与写闸门.mjs', true, ''],
   ['step-06-线索落盘.mjs', true, ''],
 ]
@@ -47,8 +50,24 @@ function parseResult(out) {
 }
 
 function runOne(file) {
-  const r = spawnSync(process.execPath, [join(HERE, file)], { encoding: 'utf8', timeout: 120000 })
-  const out = (r.stdout || '') + (r.stderr || '')
+  // Windows 沙箱禁止子进程 stdout/stderr 管道；用系统临时文件保留原有取证语义。
+  const captureDir = mkdtempSync(join(tmpdir(), 'dsh-pe-test-auto-'))
+  const stdoutPath = join(captureDir, 'stdout.log')
+  const stderrPath = join(captureDir, 'stderr.log')
+  const stdoutFd = openSync(stdoutPath, 'w')
+  const stderrFd = openSync(stderrPath, 'w')
+  let r
+  try {
+    r = spawnSync(process.execPath, [join(HERE, file)], {
+      timeout: 120000,
+      stdio: ['ignore', stdoutFd, stderrFd],
+    })
+  } finally {
+    closeSync(stdoutFd)
+    closeSync(stderrFd)
+  }
+  const out = readFileSync(stdoutPath, 'utf8') + readFileSync(stderrPath, 'utf8')
+  rmSync(captureDir, { recursive: true, force: true })
   const stats = parseResult(out)
   const failLines = String(out).split('\n').filter((l) => l.includes('FAIL') || l.includes('Error:')).slice(0, 8)
   return { status: r.status, stats, failLines, error: r.error }

@@ -1,122 +1,273 @@
-// settings.js 文本级写入（patchRowField）验证：读真实 dist 预设，内存补丁 6 字段，
-// 断言：①仅目标行变化（diff 行数=6）②yaml 语义正确（fetch/mode/budget 等）③原文本其余字节不变。
-// 只读 + 内存，不写任何文件。
-import { readFileSync } from 'node:fs'
-import { createRequire, registerHooks } from 'node:module'
-import { homedir } from 'node:os'
-import { pathToFileURL } from 'node:url'
-const DSH_HOME = (process.env.DSH_HOME || homedir() + '/.dsh').replaceAll('\\', '/')
-const require = createRequire(DSH_HOME + '/profiles/web/node_modules/package.json')
-const yaml = require('js-yaml')
+// 设置页 Host API 集成回归：真实 apply + loopback HTTP。
+// agent/preset、profile 与所有写入均来自工作区模板或系统临时 DSH_HOME。
 
-// F8：import settings.js 需解析 js-yaml / @deepseek-ai/schemastery（仓库无 node_modules，
-// 直接 import 会 "Cannot find package"）——用 module.registerHooks 把这两个裸说明符映射到
-// 安装侧 profile 的 node_modules（进程级解析钩子，仅测试进程内存生效，不落盘不改仓库）。
-// 注意：目标 URL 须在钩子注册前预计算（钩子内再 require.resolve 触发递归栈溢出）。
-const PACKAGE_MODULE_URLS = new Map([
-  ['js-yaml', pathToFileURL(require.resolve('js-yaml')).href],
-  ['@deepseek-ai/schemastery', pathToFileURL(require.resolve('@deepseek-ai/schemastery')).href],
+import { createServer, request as httpRequest } from 'node:http'
+import { createRequire, registerHooks } from 'node:module'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+
+const dependencyBases = [
+  import.meta.url,
+  join(process.env.APPDATA || join(homedir(), 'AppData', 'Roaming'), 'npm', 'node_modules', '@deepseek-ai', 'dsh', 'package.json'),
+]
+let dependencyRequire = null
+for (const base of dependencyBases) {
+  try {
+    const candidate = createRequire(base)
+    candidate.resolve('js-yaml')
+    candidate.resolve('@deepseek-ai/schemastery')
+    dependencyRequire = candidate
+    break
+  } catch { /* try the next read-only dependency location */ }
+}
+if (dependencyRequire === null) throw new Error('未找到 settings.js 回归所需依赖')
+const packageModuleUrls = new Map([
+  ['@deepseek-ai/schemastery', pathToFileURL(dependencyRequire.resolve('@deepseek-ai/schemastery')).href],
 ])
 if (typeof registerHooks === 'function') {
   registerHooks({
     resolve(specifier, context, next) {
-      const mapped = PACKAGE_MODULE_URLS.get(specifier)
+      const mapped = packageModuleUrls.get(specifier)
       if (mapped !== undefined) return { url: mapped, shortCircuit: true }
       return next(specifier, context)
     },
   })
 }
+
 const settingsModule = await import(new URL('../../plugins/dsh-extra-plan/lib/settings.js', import.meta.url).href)
-const TOOL_PRESENTATION_MODES = settingsModule.TOOL_PRESENTATION_MODES
+const presetSettings = await import(new URL('../../plugins/dsh-extra-plan/lib/preset-settings.js', import.meta.url).href)
+const {
+  SETTING_DEFINITIONS,
+  getSettingDefinition,
+  parsePresetYaml,
+  patchYamlScalar,
+  publicSettingMetadata,
+  resolveSetting,
+} = presetSettings
 
-const JsExpr = new yaml.Type('tag:yaml.org,2002:js', {
-  kind: 'scalar', resolve: (d) => typeof d === 'string', construct: (d) => ({ __jsExpr: d }),
-  predicate: (d) => d != null && typeof d === 'object' && typeof d.__jsExpr === 'string', represent: (d) => d.__jsExpr,
-})
-const schema = yaml.JSON_SCHEMA.extend(JsExpr)
-
-// —— 与 lib/settings.js 保持一致（防复制漂移：改动须同步）——
-export function yamlScalar(v) {
-  const s = String(v)
-  if (/^(true|false|null|~|-?\d+(?:\.\d+)?)$/.test(s)) return s
-  if (/^[A-Za-z0-9_\-./@]+$/.test(s)) return s
-  return "'" + s.replace(/'/g, "''") + "'"
-}
-export function patchRowField(text, rowId, field, value) {
-  const lines = text.split('\n')
-  const rowRe = new RegExp('^\\s*- id: ' + rowId + '\\s*$')
-  const start = lines.findIndex((l) => rowRe.test(l))
-  if (start === -1) return null
-  const fieldRe = new RegExp('^(\\s*)' + field + ': .*$')
-  const v = yamlScalar(value)
-  for (let i = start + 1; i < lines.length && i <= start + 40; i += 1) {
-    if (fieldRe.test(lines[i])) {
-      lines[i] = lines[i].replace(/:\s.*$/, ': ' + v)
-      return lines.join('\n')
-    }
-  }
-  return null
-}
+const HERE = fileURLToPath(new URL('.', import.meta.url))
+const ASSET_DIR = join(HERE, '..', '..', 'plugins', 'dsh-extra-plan', 'assets', 'presets', 'extra-plan')
+const TEMPLATE_AGENT = readFileSync(join(ASSET_DIR, 'agent.cordis.yml'), 'utf8')
+const TEMPLATE_PRESET = readFileSync(join(ASSET_DIR, 'preset.yml'), 'utf8')
+const definition = (key) => getSettingDefinition(key)
+const managedDefinitions = SETTING_DEFINITIONS.filter((item) => item.ui.separate === undefined)
 
 let pass = 0
 let fail = 0
-function check(label, expected, actual) {
-  if (expected === actual) { pass += 1; console.log(`PASS  ${label}`) }
-  else { fail += 1; console.log(`FAIL  ${label}: 期望 ${expected} 实际 ${actual}`) }
+function check(label, condition) {
+  if (condition) { pass += 1; console.log('PASS  ' + label) }
+  else { fail += 1; console.log('FAIL  ' + label) }
 }
 
-const file = DSH_HOME + '/.agent-presets/extra-plan/agent.cordis.yml'
-const orig = readFileSync(file, 'utf8')
-let t = orig
-const patches = [
-  ['extra-plan', 'plannerModel', 'deepseek-v4.5-pro'],
-  ['extra-plan', 'plannerPromptSuffix', 'x: y'],
-  ['extra-plan', 'exploreBudget', '25'],
-  ['extra-plan', 'anchoredBootstrap', 'false'],
-  ['tool-web', 'fetch', 'true'],
-  ['tool-presentation', 'mode', 'both'],
-  ['tool-presentation', 'mode', 'ptc'],
-]
-for (const [rowId, field, value] of patches) {
-  const next = patchRowField(t, rowId, field, value)
-  check(`patch ${rowId}.${field} 命中`, true, next !== null)
-  if (next !== null) t = next
+function requestJson(port, method, route, value) {
+  const payload = value === undefined ? null : JSON.stringify(value)
+  return new Promise((resolve, reject) => {
+    const headers = { accept: 'application/json' }
+    if (payload !== null) {
+      headers['content-type'] = 'application/json'
+      headers['content-length'] = Buffer.byteLength(payload)
+    }
+    const req = httpRequest({ hostname: '127.0.0.1', port, path: route, method, headers }, (res) => {
+      const chunks = []
+      res.setEncoding('utf8')
+      res.on('data', (chunk) => chunks.push(chunk))
+      res.on('end', () => {
+        const raw = chunks.join('')
+        let body = null
+        try { body = JSON.parse(raw) } catch { /* keep null for assertions */ }
+        resolve({ status: res.statusCode, body, raw })
+      })
+    })
+    req.on('error', reject)
+    if (payload !== null) req.write(payload)
+    req.end()
+  })
 }
-// diff 行（宽松化：应为目标字段行，且行数不超过补丁字段数；同值补丁允许不产生 diff）
-const a = orig.split('\n'); const b = t.split('\n')
-let diff = 0; const diffLines = []
-for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
-  if (a[i] !== b[i]) { diff += 1; diffLines.push(`L${i + 1}: [${a[i]}] -> [${b[i]}]`) }
+
+function diffLines(before, after) {
+  const a = before.split('\n')
+  const b = after.split('\n')
+  const out = []
+  for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
+    if (a[i] !== b[i]) out.push({ line: i + 1, before: a[i], after: b[i] })
+  }
+  return out
 }
-const targetFields = ['plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'anchoredBootstrap', 'fetch', 'mode']
-check('diff 行均为目标字段行', true, diffLines.every((d) => targetFields.some((f) => d.includes(f + ':'))))
-check('diff 行数不超过补丁字段数', true, diff <= 6)
-for (const d of diffLines) console.log('  ' + d)
-// yaml 语义
-const data = yaml.load(t, { schema })
-const rows = Array.isArray(data) ? data : []
-const rw = rows.find((r) => r && r.id === 'tool-web')
-const rp = rows.find((r) => r && r.id === 'tool-presentation')
-const eg = rows.find((r) => r && r.id === 'extra-plan-group')
-const en = eg && Array.isArray(eg.config) ? eg.config.find((c) => c && c.id === 'extra-plan') : null
-check('fetch === true', true, rw?.config?.fetch === true)
-check('mode === ptc（ptc 补丁覆盖 both，F8 ptc 值可写入）', true, rp?.config?.mode === 'ptc')
-// both 值单独补丁仍可写入（与 ptc 并存验证，终值由末条补丁决定）
-const dataBothOnly = yaml.load(patchRowField(orig, 'tool-presentation', 'mode', 'both'), { schema })
-const rpBothOnly = (Array.isArray(dataBothOnly) ? dataBothOnly : []).find((r) => r && r.id === 'tool-presentation')
-check('mode === both（both 值可写入）', true, rpBothOnly?.config?.mode === 'both')
-check('exploreBudget === 25', true, en?.config?.exploreBudget === 25)
-check('anchoredBootstrap === false', true, en?.config?.anchoredBootstrap === false)
-check('plannerPromptSuffix === x: y', true, en?.config?.plannerPromptSuffix === 'x: y')
-// 缺失字段/缺失行的行为
-check('未知行 → null', true, patchRowField(orig, 'no-such-row', 'x', '1') === null)
-check('已知行未知字段 → null', true, patchRowField(orig, 'tool-web', 'no-such-field', '1') === null)
 
-// ── F8 断言组：TOOL_PRESENTATION_MODES 与 设置页 mode select 防回归 ──────
-check('TOOL_PRESENTATION_MODES 恰为 native/ptc/both 三值', true, Array.isArray(TOOL_PRESENTATION_MODES) && TOOL_PRESENTATION_MODES.length === 3 && TOOL_PRESENTATION_MODES[0] === 'native' && TOOL_PRESENTATION_MODES[1] === 'ptc' && TOOL_PRESENTATION_MODES[2] === 'both')
-check('TOOL_PRESENTATION_MODES 不含历史 code 值', true, !TOOL_PRESENTATION_MODES.includes('code'))
-const clientText = readFileSync(new URL('../../plugins/dsh-extra-plan/lib/client.js', import.meta.url), 'utf8')
-check('client.js mode select 选项为 native/both/ptc（不含 code）', true, clientText.includes('value: "ptc"') && !clientText.includes('value: "code"'))
+function patchAgent(values) {
+  let text = TEMPLATE_AGENT
+  for (const [key, value] of Object.entries(values)) {
+    const patched = patchYamlScalar(text, definition(key), value)
+    if (!patched.ok) throw new Error('fixture patch failed: ' + key)
+    text = patched.text
+  }
+  return text
+}
 
-console.log(`\n通过 ${pass}, 失败 ${fail}`)
+function valuesFrom(payload) {
+  return payload && payload.values && typeof payload.values === 'object' ? payload.values : {}
+}
+
+const previousDshHome = process.env.DSH_HOME
+const fixtureHome = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-settings-'))
+const presetDir = join(fixtureHome, '.agent-presets', 'extra-plan')
+const webPlugin = join(fixtureHome, 'profiles', 'web', 'node_modules', '@local', 'dsh-extra-plan')
+const qqbotDir = join(fixtureHome, 'profiles', 'qqbot')
+const qqbotQuestionsDir = join(qqbotDir, 'node_modules', '@local', 'dsh-qqbot-user-questions')
+let server = null
+let serverStarted = false
+
+const oldValues = {
+  plannerModel: 'api-old-model',
+  plannerPromptSuffix: 'api old suffix',
+  exploreBudget: 12,
+  anchoredBootstrap: false,
+  runcodeCatchGate: true,
+  flashGuideEnabled: true,
+  webFetch: true,
+  toolPresentationMode: 'ptc',
+}
+const newValues = {
+  plannerModel: 'api-new-model',
+  plannerPromptSuffix: 'new: suffix',
+  exploreBudget: 31,
+  anchoredBootstrap: true,
+  runcodeCatchGate: false,
+  webFetch: false,
+  toolPresentationMode: 'both',
+}
+
+try {
+  process.env.DSH_HOME = fixtureHome
+  mkdirSync(presetDir, { recursive: true })
+  mkdirSync(webPlugin, { recursive: true })
+  mkdirSync(qqbotQuestionsDir, { recursive: true })
+  writeFileSync(join(presetDir, 'preset.yml'), TEMPLATE_PRESET, 'utf8')
+  writeFileSync(join(presetDir, 'agent.cordis.yml'), patchAgent(oldValues), 'utf8')
+  writeFileSync(join(qqbotDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: ['@tencent-connect/dsh-qqbot'] } } }), 'utf8')
+  const patchFile = join(qqbotDir, 'cordis.patch.yml')
+  const topIdLine = '- id: qqbot-user-questions              # top-level config'
+  writeFileSync(patchFile, [
+    topIdLine,
+    '  config:',
+    '    approvalEnabled: true',
+    '- id: unrelated',
+    '  config:',
+    '    keep: unchanged',
+    '- insert:',
+    '  - id: qqbot-user-questions',
+    '    config:',
+    '      approvalEnabled: false',
+  ].join('\n') + '\n', 'utf8')
+
+  const metadata = publicSettingMetadata(TEMPLATE_AGENT, patchAgent(oldValues))
+  check('共享 metadata 恰有 8 项且默认来自新版模板', metadata.fields.length === 8 && metadata.fields.find((field) => field.key === 'exploreBudget').default === 18 && metadata.fields.find((field) => field.key === 'flashGuideEnabled').default === false)
+
+  const routeDefinitions = []
+  const settingsRegistrations = []
+  const mockContext = {
+    inject(deps, callback) {
+      if (deps[0] === 'settings') {
+        callback({ settings: { register: (name) => settingsRegistrations.push(name) } })
+        return
+      }
+      if (deps[0] === 'webServer') {
+        callback({
+          effect: (effectFn) => effectFn(),
+          webServer: {
+            register: (definition) => { routeDefinitions.push(definition); return () => {} },
+          },
+        })
+        return
+      }
+      throw new Error('unexpected dependency: ' + deps.join(','))
+    },
+  }
+  settingsModule.apply(mockContext)
+  const route = routeDefinitions.find((item) => item.path === '/api/dsh-extra-plan-settings')
+  check('真实 apply 注册设置路由与命名空间', route !== undefined && typeof route.handler === 'function' && settingsRegistrations.includes('dsh-extra-plan'))
+  if (route === undefined || typeof route.handler !== 'function') throw new Error('真实设置 handler 未注册')
+
+  const handler = route.handler
+  server = createServer((req, res) => {
+    Promise.resolve(handler(req, res)).catch((error) => {
+      if (!res.headersSent) {
+        res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: String(error && error.message || error) }))
+      }
+    })
+  })
+  const port = await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => resolve(server.address().port))
+  })
+  serverStarted = true
+
+  const proBefore = await requestJson(port, 'GET', '/api/dsh-extra-plan-settings/pro-config')
+  check('pro-config GET 返回 8 项 metadata 与旧值', proBefore.status === 200 && proBefore.body.fields.length === 8 && valuesFrom(proBefore.body).plannerModel === oldValues.plannerModel && valuesFrom(proBefore.body).toolPresentationMode === oldValues.toolPresentationMode)
+  const fieldMap = new Map(proBefore.body.fields.map((field) => [field.key, field]))
+  check('pro metadata 控件/min/mode 由描述表提供', fieldMap.get('exploreBudget').control === 'number' && fieldMap.get('exploreBudget').min === 1 && fieldMap.get('toolPresentationMode').options.join('/') === 'native/ptc/both' && fieldMap.get('flashGuideEnabled').separate === 'flash-guide')
+
+  const beforePut = readFileSync(join(presetDir, 'agent.cordis.yml'), 'utf8')
+  const putBody = { ...newValues, flashGuideEnabled: oldValues.flashGuideEnabled }
+  const proPut = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', putBody)
+  check('pro-config PUT 返回更新后的实际 values', proPut.status === 200 && valuesFrom(proPut.body).plannerModel === newValues.plannerModel && valuesFrom(proPut.body).exploreBudget === newValues.exploreBudget && valuesFrom(proPut.body).toolPresentationMode === newValues.toolPresentationMode && valuesFrom(proPut.body).flashGuideEnabled === oldValues.flashGuideEnabled)
+  const afterPut = readFileSync(join(presetDir, 'agent.cordis.yml'), 'utf8')
+  const changed = diffLines(beforePut, afterPut)
+  const managedLeaves = managedDefinitions.map((item) => item.path.split('.').at(-1))
+  check('pro PUT 只改描述表登记的标量行', changed.length === managedDefinitions.length && changed.every((item) => managedLeaves.some((leaf) => item.after.includes(leaf + ':'))))
+  const parsedAfterPut = parsePresetYaml(afterPut)
+  check('pro PUT 目标文件 7 项由稳定 locator 读取', managedDefinitions.every((item) => {
+    const value = resolveSetting(parsedAfterPut, item, { aliases: false })
+    return value.kind === 'ok' && value.value === (item.key === 'plannerModel' ? newValues.plannerModel : newValues[item.key])
+  }))
+
+  const invalidBodies = [
+    ['plannerModel 空白', { plannerModel: '   ' }],
+    ['exploreBudget 0', { exploreBudget: 0 }],
+    ['plannerPromptSuffix 非 string', { plannerPromptSuffix: 1 }],
+    ['anchoredBootstrap string', { anchoredBootstrap: 'true' }],
+    ['webFetch number', { webFetch: 1 }],
+    ['toolPresentationMode code', { toolPresentationMode: 'code' }],
+  ]
+  for (const [label, invalid] of invalidBodies) {
+    const result = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { ...newValues, ...invalid })
+    check('pro 严格拒绝 ' + label, result.status === 400)
+  }
+
+  const flashBefore = await requestJson(port, 'GET', '/api/dsh-extra-plan-settings/flash-guide-config')
+  check('flash-guide GET 返回 metadata 与文件值反向 disabled', flashBefore.status === 200 && flashBefore.body.available === true && flashBefore.body.field.key === 'flashGuideEnabled' && flashBefore.body.disabled === false && flashBefore.body.field.value === true)
+  const flashPut = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/flash-guide-config', { disabled: true })
+  check('flash-guide PUT 反向写入规范键并返回 metadata', flashPut.status === 200 && flashPut.body.disabled === true && flashPut.body.field.value === false)
+  check('flash-guide 文件目标由描述表决定', resolveSetting(parsePresetYaml(readFileSync(join(presetDir, 'agent.cordis.yml'), 'utf8')), definition('flashGuideEnabled'), { aliases: false }).value === false)
+  const invalidFlash = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/flash-guide-config', { disabled: 'true' })
+  check('flash-guide 严格拒绝非 boolean', invalidFlash.status === 400)
+
+  const qqStatus = await requestJson(port, 'GET', '/api/dsh-extra-plan-settings/qqbot-status')
+  check('qqbot 独立回归 status 可用', qqStatus.status === 200 && qqStatus.body.available === true)
+  const qqBefore = await requestJson(port, 'GET', '/api/dsh-extra-plan-settings/qqbot-config')
+  check('qqbot approvalEnabled 仍只走独立 patch API', qqBefore.status === 200 && qqBefore.body.approvalEnabled === true)
+  const qqPut = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/qqbot-config', { approvalEnabled: false })
+  check('qqbot patch PUT 保留顶层 id 注释', qqPut.status === 200 && qqPut.body.approvalEnabled === false && readFileSync(patchFile, 'utf8').includes(topIdLine) && readFileSync(patchFile, 'utf8').includes('    approvalEnabled: false'))
+  writeFileSync(patchFile, '- insert:\n  - id: qqbot-user-questions\n    config:\n      approvalEnabled: true\n', 'utf8')
+  const qqInsert = await requestJson(port, 'GET', '/api/dsh-extra-plan-settings/qqbot-config')
+  check('qqbot 旧 insert 形状保持兼容', qqInsert.status === 200 && qqInsert.body.approvalEnabled === true)
+  writeFileSync(patchFile, '- id: unrelated\n  config:\n    keep: true\n', 'utf8')
+  check('qqbot 缺条目返回 404 且不影响迁移文件', (await requestJson(port, 'GET', '/api/dsh-extra-plan-settings/qqbot-config')).status === 404 && readFileSync(join(presetDir, 'agent.cordis.yml'), 'utf8').includes('flashGuideEnabled: false'))
+
+  const clientText = readFileSync(new URL('../../plugins/dsh-extra-plan/lib/client.js', import.meta.url), 'utf8')
+  check('client 按 metadata 渲染控件且无硬编码模板路径/默认/枚举值', clientText.includes('setFields(fields)') && clientText.includes('field.options') && clientText.includes('field.min') && !clientText.includes('agent.cordis.yml') && !clientText.includes('value: "native"') && !clientText.includes('value: "ptc"') && !clientText.includes(': 18'))
+} catch (error) {
+  fail += 1
+  console.error('FAIL  设置页 HTTP 回归异常: ' + String(error && error.stack || error))
+} finally {
+  if (server !== null && serverStarted) await new Promise((resolve) => server.close(() => resolve()))
+  if (previousDshHome === undefined) delete process.env.DSH_HOME
+  else process.env.DSH_HOME = previousDshHome
+  rmSync(fixtureHome, { recursive: true, force: true })
+}
+
+console.log('\n通过 ' + pass + ', 失败 ' + fail)
 process.exit(fail === 0 ? 0 : 1)

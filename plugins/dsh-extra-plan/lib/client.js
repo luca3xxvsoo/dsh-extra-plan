@@ -36,7 +36,9 @@ window.__ModuleLoader__.load({
       qqbotUnavailable: "qqbot 环境未就绪，不展示配置项。",
       approvalEnabled: "越权申请开关",
       flashGuideEnabled: "启用 flash 引导",
-      configLoadFailed: "配置加载失败："
+      configLoadFailed: "配置加载失败：",
+      trueValue: "True",
+      falseValue: "False"
     };
 
     const en = {
@@ -63,7 +65,9 @@ window.__ModuleLoader__.load({
       qqbotUnavailable: "QQ Bot environment is not ready. No configuration items are displayed.",
       approvalEnabled: "Approval Required",
       flashGuideEnabled: "Enable Flash Guide",
-      configLoadFailed: "Config load failed: "
+      configLoadFailed: "Config load failed: ",
+      trueValue: "True",
+      falseValue: "False"
     };
 
     const css =
@@ -99,7 +103,9 @@ window.__ModuleLoader__.load({
       function ProConfigTab() {
         const [configStatus, setConfigStatus] = React.useState("loading");
         const [draft, setDraft] = React.useState(null);
+        const [fields, setFields] = React.useState([]);
         const [flashStatus, setFlashStatus] = React.useState("loading");
+        const [flashField, setFlashField] = React.useState(null);
         const [flashDisabled, setFlashDisabled] = React.useState(false);
         const [saving, setSaving] = React.useState(false);
         const [message, setMessage] = React.useState({ kind: "", text: "" });
@@ -115,15 +121,18 @@ window.__ModuleLoader__.load({
             })
             .then(function (data) {
               if (cancelled) return;
-              setDraft({
-                plannerModel: typeof data.plannerModel === "string" ? data.plannerModel : "",
-                plannerPromptSuffix: typeof data.plannerPromptSuffix === "string" ? data.plannerPromptSuffix : "",
-                exploreBudget: typeof data.exploreBudget === "number" ? data.exploreBudget : 18,
-                anchoredBootstrap: data.anchoredBootstrap === true,
-                runcodeCatchGate: data.runcodeCatchGate === true,
-                webFetch: data.webFetch === true,
-                toolPresentationMode: typeof data.toolPresentationMode === "string" && ["native", "ptc", "both"].includes(data.toolPresentationMode) ? data.toolPresentationMode : "native"
-              });
+              const fields = Array.isArray(data.fields) ? data.fields : [];
+              const values = data.values && typeof data.values === "object" ? data.values : {};
+              const nextDraft = {};
+              for (const field of fields) {
+                if (field && field.separate === undefined) {
+                  nextDraft[field.key] = Object.prototype.hasOwnProperty.call(values, field.key)
+                    ? values[field.key]
+                    : field.default;
+                }
+              }
+              setFields(fields);
+              setDraft(nextDraft);
               setConfigStatus("ready");
             })
             .catch(function (err) {
@@ -133,7 +142,7 @@ window.__ModuleLoader__.load({
           return function () { cancelled = true; };
         }, []);
 
-        // flash 引导开关：随 pro规划区一起加载（数据源独立：agent.cordis.yml extra-plan 插件 config 区 flashGuideEnabled 字段，见 settings.js flash-guide-config 端点）。
+        // flash 引导开关：随 pro规划区一起加载，数据源独立，见 flash-guide-config 端点。
         React.useEffect(function () {
           let cancelled = false;
           fetch(FLASHGUIDE_CONFIG_URL, { headers: { accept: "application/json" } })
@@ -146,6 +155,7 @@ window.__ModuleLoader__.load({
             .then(function (data) {
               if (cancelled) return;
               if (data.available !== true) { setFlashStatus("hidden"); return; }
+              setFlashField(data.field || null);
               setFlashDisabled(data.disabled === true);
               setFlashStatus("ready");
             })
@@ -165,15 +175,12 @@ window.__ModuleLoader__.load({
           if (configStatus !== "ready" || !draft || saving) return;
           setSaving(true);
           setMessage({ kind: "", text: "" });
-          const body = {
-            plannerModel: String(draft.plannerModel).trim(),
-            plannerPromptSuffix: String(draft.plannerPromptSuffix),
-            exploreBudget: Number(draft.exploreBudget),
-            anchoredBootstrap: draft.anchoredBootstrap === true,
-            runcodeCatchGate: draft.runcodeCatchGate === true,
-            webFetch: draft.webFetch === true,
-            toolPresentationMode: draft.toolPresentationMode || "native"
-          };
+          const body = {};
+          for (const field of fields) {
+            if (!field || field.separate !== undefined) continue;
+            const value = draft[field.key];
+            body[field.key] = field.type === "integer" ? Number(value) : value;
+          }
           try {
             const res = await fetch(PRO_CONFIG_URL, {
               method: "PUT",
@@ -218,92 +225,80 @@ window.__ModuleLoader__.load({
           );
         }
 
-        return el("div", { className: "esp-section" },
-          el("p", { className: "esp-sectionTitle" }, t("proSection")),
-          el("label", { className: "esp-field" },
-            el("span", { className: "esp-label" }, t("plannerModel")),
-            el("input", {
-              className: "esp-input",
-              type: "text",
-              value: draft.plannerModel,
-              onChange: function (e) { setField("plannerModel", e.target.value); }
-            })
-          ),
-          el("label", { className: "esp-field" },
-            el("span", { className: "esp-label" }, t("plannerPromptSuffix")),
-            el("textarea", {
+        function optionLabel(field, option) {
+          const localeKey = field.optionLocale && field.optionLocale[String(option)];
+          if (localeKey) return t(localeKey);
+          if (typeof option === "boolean") return option ? t("trueValue") : t("falseValue");
+          return String(option);
+        }
+
+        function optionValue(field, raw) {
+          if (!Array.isArray(field.options)) return raw;
+          for (const option of field.options) {
+            if (String(option) === raw) return option;
+          }
+          return raw;
+        }
+
+        function renderField(field) {
+          if (!field || field.separate !== undefined) return null;
+          const key = field.key;
+          const value = draft[key];
+          let control;
+          if (field.control === "textarea") {
+            control = el("textarea", {
               className: "esp-textarea",
-              value: draft.plannerPromptSuffix,
-              onChange: function (e) { setField("plannerPromptSuffix", e.target.value); }
-            })
-          ),
-          el("label", { className: "esp-field" },
-            el("span", { className: "esp-label" }, t("exploreBudget")),
-            el("input", {
+              value: value === undefined ? "" : value,
+              onChange: function (e) { setField(key, e.target.value); }
+            });
+          } else if (field.control === "number") {
+            control = el("input", {
               className: "esp-input",
               type: "number",
-              min: "1",
-              step: "1",
-              value: draft.exploreBudget,
-              onChange: function (e) { setField("exploreBudget", e.target.value); }
-            })
-          ),
-          el("label", { className: "esp-field" },
-            el("span", { className: "esp-label" }, t("anchoredBootstrap")),
+              min: field.min === undefined ? undefined : String(field.min),
+              step: field.step === undefined ? undefined : String(field.step),
+              value: value === undefined ? "" : value,
+              onChange: function (e) { setField(key, e.target.value); }
+            });
+          } else if (field.control === "select") {
+            const options = Array.isArray(field.options) ? field.options : [];
+            control = el("select", {
+              className: "esp-select",
+              value: value === undefined ? "" : String(value),
+              onChange: function (e) { setField(key, optionValue(field, e.target.value)); }
+            }, options.map(function (option) {
+              return el("option", { key: String(option), value: String(option) }, optionLabel(field, option));
+            }));
+          } else {
+            control = el("input", {
+              className: "esp-input",
+              type: "text",
+              value: value === undefined ? "" : value,
+              onChange: function (e) { setField(key, e.target.value); }
+            });
+          }
+          return el("label", { className: "esp-field", key: key },
+            el("span", { className: "esp-label" }, t(field.locale)),
+            control
+          );
+        }
+
+        const proFields = fields.filter(function (field) { return field && field.separate === undefined; });
+        const flashReady = flashStatus === "ready" && flashField !== null;
+        const flashOptions = flashField && Array.isArray(flashField.options) ? flashField.options : [];
+        return el("div", { className: "esp-section" },
+          el("p", { className: "esp-sectionTitle" }, t("proSection")),
+          proFields.map(renderField),
+          flashReady ? el("label", { className: "esp-field", key: "flash" },
+            el("span", { className: "esp-label" }, t(flashField.locale)),
             el("select", {
               className: "esp-select",
-              value: draft.anchoredBootstrap === true ? "true" : "false",
-              onChange: function (e) { setField("anchoredBootstrap", e.target.value === "true"); }
-            },
-              el("option", { value: "true" }, "True"),
-              el("option", { value: "false" }, "False")
-            )
-          ),
-          flashStatus === "ready" ? el("label", { className: "esp-field" },
-            el("span", { className: "esp-label" }, t("flashGuideEnabled")),
-            el("select", {
-              className: "esp-select",
-              value: flashDisabled ? "false" : "true",
-              onChange: function (e) { setFlashDisabled(e.target.value !== "true"); }
-            },
-              el("option", { value: "true" }, "True"),
-              el("option", { value: "false" }, "False")
-            )
+              value: flashDisabled ? String(false) : String(true),
+              onChange: function (e) { setFlashDisabled(optionValue(flashField, e.target.value) !== true); }
+            }, flashOptions.map(function (option) {
+              return el("option", { key: String(option), value: String(option) }, optionLabel(flashField, option));
+            }))
           ) : null,
-          el("label", { className: "esp-field" },
-            el("span", { className: "esp-label" }, t("webFetch")),
-            el("select", {
-              className: "esp-select",
-              value: draft.webFetch === true ? "true" : "false",
-              onChange: function (e) { setField("webFetch", e.target.value === "true"); }
-            },
-              el("option", { value: "true" }, "True"),
-              el("option", { value: "false" }, "False")
-            )
-          ),
-          el("label", { className: "esp-field" },
-            el("span", { className: "esp-label" }, t("toolPresentationMode")),
-            el("select", {
-              className: "esp-select",
-              value: draft.toolPresentationMode || "native",
-              onChange: function (e) { setField("toolPresentationMode", e.target.value); }
-            },
-              el("option", { value: "native" }, t("toolPresentationModeNative")),
-              el("option", { value: "both" }, t("toolPresentationModeBoth")),
-              el("option", { value: "ptc" }, t("toolPresentationModePtc"))
-            )
-          ),
-          el("label", { className: "esp-field" },
-            el("span", { className: "esp-label" }, t("runcodeCatchGate")),
-            el("select", {
-              className: "esp-select",
-              value: draft.runcodeCatchGate === true ? "true" : "false",
-              onChange: function (e) { setField("runcodeCatchGate", e.target.value === "true"); }
-            },
-              el("option", { value: "true" }, "True"),
-              el("option", { value: "false" }, "False")
-            )
-          ),
           message.text ? el("p", { className: message.kind === "ok" ? "esp-ok" : "esp-err" }, message.text) : null,
           el("div", { className: "esp-actions" },
             el("button", {

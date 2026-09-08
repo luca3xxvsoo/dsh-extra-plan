@@ -43,7 +43,7 @@ dsh 插件「按需规划模式」预设：AI 未经用户同意只能只读探�
 - 预设自愈：lib/preset-sync.js（版本 hash 比对；同版本手改不覆盖）
 
 ## 相关文档
-- 导航入口：READMEAI.md（先读它）
+- 导航入口：READAI.md（先读它）
 - 机制设计意图/教训：pe-test/docs/ai-机制设计.md
 - 维护纪律/自检/地图同步：pe-test/docs/ai-维护手册.md
 - 函数级索引：pe-test/docs/ai-代码地图.md
