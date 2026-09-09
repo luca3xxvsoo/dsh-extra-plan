@@ -6,7 +6,7 @@
 
 **按需规划模式（extra-plan）**：会话未经用户同意时，模型仅可调用只读工具探查。且可调用pro规划子代理，使用高质量模型生成规划验收方案。
 
-**兼容性**：DSH v0.1.2-rc.1(0.1.1不支持)、qqbot v0.1.0/v0.4.0 86804a8版（56db053版不支持）
+**兼容性**：DSH v0.1.2-rc.1(0.1.1不支持)、qqbot v0.1.0/v0.4.0
 
 ## 2. 核心优势
 
@@ -33,13 +33,13 @@ winget install --id Git.MinGit --exact --source winget
 ```
 1. 核心安装(必装)
 ```powershell 7+
-dsh plugin --profile web add 'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan' --allow-build='@local/dsh-extra-plan@git+https://github.com/luca3xxvsoo/dsh-extra-plan.git'
+dsh plugin --profile web add 'luca3xxvsoo/dsh-extra-plan#dsh-v0.1.2rc-qqbot-v0.1.0-only&path:/plugins/dsh-extra-plan' --allow-build='@local/dsh-extra-plan@git+https://github.com/luca3xxvsoo/dsh-extra-plan.git'
 ```
 2. qqbot兼容插件安装 (选装 remove命令报错可忽略)
 
 ```powershell 7+ 
 dsh plugin --profile qqbot remove @local/dsh-extra-plan
-dsh plugin --profile qqbot add 'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-qqbot-user-questions' --allow-build='@local/dsh-qqbot-user-questions@git+https://github.com/luca3xxvsoo/dsh-extra-plan.git'
+dsh plugin --profile qqbot add 'luca3xxvsoo/dsh-extra-plan#dsh-v0.1.2rc-qqbot-v0.1.0-only&path:/plugins/dsh-qqbot-user-questions' --allow-build='@local/dsh-qqbot-user-questions@git+https://github.com/luca3xxvsoo/dsh-extra-plan.git'
 ```
 3. **重启 DSH 进程**使插件生效
 4. 新建会话，在预设列表中选择「按需规划模式」即可使用
