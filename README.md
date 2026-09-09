@@ -11,6 +11,7 @@
 ## 1. 安装及卸载方式（面向 DSH 环境用户）
 
 > 前置条件：已安装 DeepSeek Harness（DSH）。默认 DSH_HOME = `~/.dsh`（可被环境变量 `DSH_HOME` 覆盖）。Win环境默认 DSH_HOME = `%USERPROFILE%\.dsh`
+> 兼容性：dsh v0.1.1-rc.2、qqbot v0.1.0/v0.4.0
 
 ### 安装步骤
 
@@ -20,14 +21,12 @@ winget install --id Git.MinGit --exact --source winget
 ```
 1. 核心安装(必装)
 ```powershell 7+
-dsh plugin --profile web add 'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan' --allow-build='@local/dsh-extra-plan@git+https://github.com/luca3xxvsoo/dsh-extra-plan.git'
+dsh plugin --profile web add 'luca3xxvsoo/dsh-extra-plan#dsh-v0.1.1rc-only&path:/plugins/dsh-extra-plan' --allow-build='@local/dsh-extra-plan@git+https://github.com/luca3xxvsoo/dsh-extra-plan.git'
 ```
 2. qqbot兼容插件安装 (选装)
 
-**装前注意**：支持v0.1.0，可能支持v0.4.0 86804a8版，不支持v0.4.0 56db053版及后续。v0.4.0 56db053版对ask_user_question、越权审批有原生支持，但是作者发现的时候npm只有86804a8版，所以暂不修改
-
 ```powershell 7+
-dsh plugin --profile qqbot add 'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan' 'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-qqbot-user-questions' --allow-build='@local/dsh-extra-plan@git+https://github.com/luca3xxvsoo/dsh-extra-plan.git' --allow-build='@local/dsh-qqbot-user-questions@git+https://github.com/luca3xxvsoo/dsh-extra-plan.git'
+dsh plugin --profile qqbot add 'luca3xxvsoo/dsh-extra-plan#dsh-v0.1.1rc-only&path:/plugins/dsh-extra-plan' 'luca3xxvsoo/dsh-extra-plan#dsh-v0.1.1rc-only&path:/plugins/dsh-qqbot-user-questions' --allow-build='@local/dsh-extra-plan@git+https://github.com/luca3xxvsoo/dsh-extra-plan.git' --allow-build='@local/dsh-qqbot-user-questions@git+https://github.com/luca3xxvsoo/dsh-extra-plan.git'
 ```
 3. **重启 DSH 进程**使插件生效
 4. 新建会话，在预设列表中选择「按需规划模式」即可使用
