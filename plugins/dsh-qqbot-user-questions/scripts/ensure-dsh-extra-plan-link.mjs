@@ -1,10 +1,10 @@
-import { existsSync, lstatSync, mkdirSync, rmSync, symlinkSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, realpathSync, symlinkSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 /**
  * 确保 qqbot profile 的 dsh-extra-plan 指向 web profile 的同名包。
- * web 缺失时跳过；已有链接保持不动；实体目录按既有规则替换。
+ * web 缺失时跳过；已有正确链接保持不动；实体目录或非目标链接保留并提示迁移。
  * 所有异常仅记录日志，不阻断安装或插件启动。
  */
 export function ensureDshExtraPlanLink() {
@@ -18,25 +18,24 @@ export function ensureDshExtraPlanLink() {
       return
     }
 
-    let hasQqPkg = false
     try {
       const stat = lstatSync(qqPkg)
-      hasQqPkg = true
-      if (stat.isSymbolicLink()) return
+      if (stat.isSymbolicLink()) {
+        try {
+          if (realpathSync(qqPkg) === realpathSync(webPkg)) return
+        } catch {}
+        console.warn('[dsh-qqbot-user-questions] qqbot 目标已存在非目标链接，保留原状；请通过 pnpm 完成迁移后重试')
+        return
+      }
+      console.warn('[dsh-qqbot-user-questions] qqbot 目标已存在实体对象，保留原状；请通过 pnpm 完成迁移后重试')
+      return
     } catch (err) {
       if (err && err.code !== 'ENOENT') throw err
     }
 
-    if (!hasQqPkg) {
-      mkdirSync(join(home, 'profiles', 'qqbot', 'node_modules', '@local'), { recursive: true })
-      symlinkSync(webPkg, qqPkg, process.platform === 'win32' ? 'junction' : 'dir')
-      console.log('[dsh-qqbot-user-questions] 已建立映射: qqbot → web')
-      return
-    }
-
-    rmSync(qqPkg, { recursive: true, force: true })
+    mkdirSync(join(home, 'profiles', 'qqbot', 'node_modules', '@local'), { recursive: true })
     symlinkSync(webPkg, qqPkg, process.platform === 'win32' ? 'junction' : 'dir')
-    console.log('[dsh-qqbot-user-questions] 旧版目录已替换为映射')
+    console.log('[dsh-qqbot-user-questions] 已建立映射: qqbot → web')
   } catch (err) {
     console.error('[dsh-qqbot-user-questions] 映射建立失败:', err.message)
   }

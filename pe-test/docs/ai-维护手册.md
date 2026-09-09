@@ -7,6 +7,25 @@
 - **验收与部署次序**：先仓库内验收 → 用户部署生产 → 生产测试。AI 在验收通过前不得执行生产环境同步/部署动作（dsh plugin 更新、distribute-preset.mjs、复制 DSH_HOME 安装目录、.agent-presets 下发等均属用户侧部署）
 - 复杂嵌套/拼接的修改遵循转义纪律：最终目标语言视角写出正确代码 → 逐层向外转义 → 解析回放验证（全局纪律）
 
+## Web 核心与 QQBot 分发所有权
+| profile | 唯一职责 | 迁移边界 |
+|:--|:--|:--|
+| web | 直接安装 `@local/dsh-extra-plan`；持有核心 bundle/依赖、allow-build、`distribute-preset` 与启动 `preset-sync` | 不从 web 删除核心包或预设 |
+| qqbot | 直接安装 `@local/dsh-qqbot-user-questions`；postinstall 先建立 `@local/dsh-extra-plan` → web 同名包的 Junction/目录链接，再做兼容补丁 | 不声明核心直接依赖，不分发预设，不执行 `preset-sync` |
+
+### 已有残留迁移（用户侧）
+- 前提：先由用户完成 web 核心安装和预设分发，再通过 profile 的 pnpm/DSH 包管理流程移除 qqbot/package.json 的直接 `@local/dsh-extra-plan`；由 pnpm 同步 lock、`.modules.yaml`、`virtualStoreDir`、`storeDir` 与 hoisted 解析状态，最后重新安装/刷新 QQBot 兼容包。
+- lock、`.modules.yaml`、`.pnpm`、store 等均由 pnpm 管理，禁止手工编辑或删除；Junction 只由 adapter postinstall 在 pnpm 元数据完成后创建。
+- helper 仅在目标缺失时建链；已有实体目录或非目标链接保留并提示用户走 pnpm 迁移。
+
+### 禁止递归删除
+| 对象 | 规则 |
+|:--|:--|
+| `qqbot/node_modules/@local/dsh-extra-plan`、`@local` 父目录 | helper 不递归删除、不替换既有实体或非目标链接；由用户通过 pnpm 迁移 |
+| `qqbot/node_modules`、`node_modules/.pnpm`、pnpm store | 禁止递归删除或手工清理 |
+| `profiles/web`、`profiles/qqbot`、`.agent-presets` | 禁止递归删除；生产状态由用户的 pnpm/DSH 流程维护 |
+- 仓库改动和回归通过后，生产 profile 迁移由用户执行；仓库验收不是生产部署许可，AI 不接触 `C:\Users\Administrator\.dsh\profiles`。
+
 ## 改完后
 1. 静态校验：node --check <改动的 js/mjs>
 2. 同步代码地图：node pe-test/tools/代码地图生成.mjs

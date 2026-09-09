@@ -13,14 +13,12 @@ import { rm } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { ensureDshExtraPlanLink } from './scripts/ensure-dsh-extra-plan-link.mjs'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
 export const name = 'dsh-qqbot-user-questions'
 export const inject = ['qqbot.bot', 'qqbot.sessionManager', 'userQuestions']
 
 export function apply(ctx, config) {
-  ensureDshExtraPlanLink()
   const bot = ctx['qqbot.bot']
   const manager = ctx['qqbot.sessionManager']
   const userQuestions = ctx.userQuestions

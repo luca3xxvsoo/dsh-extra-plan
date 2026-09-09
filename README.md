@@ -31,13 +31,14 @@
 ```powershell 7+
 winget install --id Git.MinGit --exact --source winget
 ```
-1. 核心安装(必装,仅保证支持dsh v0.1.2-rc.1)
+1. 核心安装(必装)
 ```powershell 7+
 dsh plugin --profile web add 'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan' --allow-build='@local/dsh-extra-plan@git+https://github.com/luca3xxvsoo/dsh-extra-plan.git'
 ```
-2. qqbot兼容插件安装 (选装)
+2. qqbot兼容插件安装 (选装 remove命令报错可忽略)
 
-```powershell 7+
+```powershell 7+ 
+dsh plugin --profile qqbot remove @local/dsh-extra-plan
 dsh plugin --profile qqbot add 'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-qqbot-user-questions' --allow-build='@local/dsh-qqbot-user-questions@git+https://github.com/luca3xxvsoo/dsh-extra-plan.git'
 ```
 3. **重启 DSH 进程**使插件生效
