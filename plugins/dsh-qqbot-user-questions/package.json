@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-qqbot-user-questions",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "main": "index.js",
@@ -12,11 +12,11 @@
   "files": [
     "index.js",
     "cordis.patch.yml",
-    "patches/",
+    "lib/",
     "scripts/"
   ],
   "scripts": {
-    "postinstall": "node scripts/apply-patch.mjs"
+    "postinstall": "node scripts/heal.mjs"
   },
   "dsh": {
     "bundle": {

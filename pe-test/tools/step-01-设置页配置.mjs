@@ -114,8 +114,6 @@ const previousDshHome = process.env.DSH_HOME
 const fixtureHome = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-settings-'))
 const presetDir = join(fixtureHome, '.agent-presets', 'extra-plan')
 const webPlugin = join(fixtureHome, 'profiles', 'web', 'node_modules', '@local', 'dsh-extra-plan')
-const qqbotDir = join(fixtureHome, 'profiles', 'qqbot')
-const qqbotQuestionsDir = join(qqbotDir, 'node_modules', '@local', 'dsh-qqbot-user-questions')
 let server = null
 let serverStarted = false
 
@@ -142,24 +140,8 @@ try {
   process.env.DSH_HOME = fixtureHome
   mkdirSync(presetDir, { recursive: true })
   mkdirSync(webPlugin, { recursive: true })
-  mkdirSync(qqbotQuestionsDir, { recursive: true })
   writeFileSync(join(presetDir, 'preset.yml'), TEMPLATE_PRESET, 'utf8')
   writeFileSync(join(presetDir, 'agent.cordis.yml'), patchAgent(oldValues), 'utf8')
-  writeFileSync(join(qqbotDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: ['@tencent-connect/dsh-qqbot'] } } }), 'utf8')
-  const patchFile = join(qqbotDir, 'cordis.patch.yml')
-  const topIdLine = '- id: qqbot-user-questions              # top-level config'
-  writeFileSync(patchFile, [
-    topIdLine,
-    '  config:',
-    '    approvalEnabled: true',
-    '- id: unrelated',
-    '  config:',
-    '    keep: unchanged',
-    '- insert:',
-    '  - id: qqbot-user-questions',
-    '    config:',
-    '      approvalEnabled: false',
-  ].join('\n') + '\n', 'utf8')
 
   const metadata = publicSettingMetadata(TEMPLATE_AGENT, patchAgent(oldValues))
   check('共享 metadata 恰有 7 项且默认来自新版模板', metadata.fields.length === 7 && metadata.fields.find((field) => field.key === 'exploreBudget').default === 18)
@@ -235,18 +217,6 @@ try {
     const result = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { ...newValues, ...invalid })
     check('pro 严格拒绝 ' + label, result.status === 400)
   }
-
-  const qqStatus = await requestJson(port, 'GET', '/api/dsh-extra-plan-settings/qqbot-status')
-  check('qqbot 独立回归 status 可用', qqStatus.status === 200 && qqStatus.body.available === true)
-  const qqBefore = await requestJson(port, 'GET', '/api/dsh-extra-plan-settings/qqbot-config')
-  check('qqbot approvalEnabled 仍只走独立 patch API', qqBefore.status === 200 && qqBefore.body.approvalEnabled === true)
-  const qqPut = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/qqbot-config', { approvalEnabled: false })
-  check('qqbot patch PUT 保留顶层 id 注释', qqPut.status === 200 && qqPut.body.approvalEnabled === false && readFileSync(patchFile, 'utf8').includes(topIdLine) && readFileSync(patchFile, 'utf8').includes('    approvalEnabled: false'))
-  writeFileSync(patchFile, '- insert:\n  - id: qqbot-user-questions\n    config:\n      approvalEnabled: true\n', 'utf8')
-  const qqInsert = await requestJson(port, 'GET', '/api/dsh-extra-plan-settings/qqbot-config')
-  check('qqbot 旧 insert 形状保持兼容', qqInsert.status === 200 && qqInsert.body.approvalEnabled === true)
-  writeFileSync(patchFile, '- id: unrelated\n  config:\n    keep: true\n', 'utf8')
-  check('qqbot 缺条目返回 404 且不影响迁移文件', (await requestJson(port, 'GET', '/api/dsh-extra-plan-settings/qqbot-config')).status === 404 && readFileSync(join(presetDir, 'agent.cordis.yml'), 'utf8').includes("plannerModel: 'api-new-model'"))
 
   const clientText = readFileSync(new URL('../../plugins/dsh-extra-plan/lib/client.js', import.meta.url), 'utf8')
   check('client 按 metadata 渲染控件且无硬编码模板路径/默认/枚举值', clientText.includes('setFields(fields)') && clientText.includes('field.options') && clientText.includes('field.min') && !clientText.includes('agent.cordis.yml') && !clientText.includes('value: "native"') && !clientText.includes('value: "ptc"') && !clientText.includes(': 18'))

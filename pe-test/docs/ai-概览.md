@@ -6,7 +6,7 @@
 ## 项目一句话
 dsh 插件「按需规划模式」预设：AI 未经用户同意只能只读探查，经路由/澄清/批准三级机械闸门后按规划执行。五角色分工保证「用户确认 → 规划 → 执行 → 验收」闭环。
 
-兼容：dsh v0.1.2-rc.1（0.1.1 不支持）；qqbot v0.1.0/v0.4.0 86804a8 版（56db053 版不支持）；Linux/macOS 逻辑层已验证（pe-test 写拦截 68 用例），运行时仅 Windows 实测。
+兼容：dsh v0.1.2-rc.1（0.1.1 不支持）；qqbot 0.5.0 版（自愈/建链由精简版 dsh-qqbot-user-questions 承担）；Linux/macOS 逻辑层已验证（pe-test 写拦截 68 用例），运行时仅 Windows 实测。
 
 ## 五角色
 1. 主会话：用户交互入口、需求接收、复杂度评估、路由确认、任务分派、计划展示、验收汇总
@@ -20,7 +20,7 @@ dsh 插件「按需规划模式」预设：AI 未经用户同意只能只读探�
 |:--|:--|:--|
 | 三级闸门状态机+主闸门 | plugins/dsh-extra-plan/index.js | 修改最频繁（route/clarified/approved/channelBroken） |
 | 探查预算 | index.js budget* 族（budgetNoticeText/budgetReminderText/budgetExhaustedReason 等） | 开局告知/剩3提醒/耗尽往返 |
-| save_probe/save_plan/show_file 工具 | index.js 落盘族（validateProbe/renderProbeMarkdown/atomicCommit/recoverJournals/defineSavePlan 等） | 双写+journal 自愈 |
+| save_probe/save_plan 工具 | index.js 落盘族（validateProbe/renderProbeMarkdown/atomicCommit/recoverJournals/defineSavePlan 等） | 双写+journal 自愈 |
 | run_code 静态拆解组判定 | index.js decomposeRunCode/runCodeGroupDenyReason | 防绕道闸门 |
 | run_code 容错检查 | index.js runCodeCatchGateReason/runCodeDispatchGateReason（开关 cfg.runcodeCatchGate 默认 false） | 多调用独立容错硬闸门（try/allSettled/.catch/safe 白名单；教学式拒绝）+ 单实例子调用上限=exploreBudget |
 | anchored 引导 | index.js system-prompt/assemble 钩子（约 L2580；isBootstrapPhase/keep 构造） | 首轮极简 persona/目录收窄；ptc 兼容（目录含 run_code 亦锚定；有 shell 时滤 run_code） |
@@ -30,7 +30,7 @@ dsh 插件「按需规划模式」预设：AI 未经用户同意只能只读探�
 | 预设自愈核对 | lib/preset-sync.js | 启动时 hash 比对下发 |
 | 执行者工具裁剪 | lib/executor-spawn.js | E8：覆盖 workflow/ralph worker |
 | 预设本体（persona/deny/descriptor） | assets/presets/extra-plan/agent.cordis.yml | 改预设=改这里（复制副本再改） |
-| qqbot 兼容 | plugins/dsh-qqbot-user-questions/（index.js + patches/* + scripts/apply-patch.mjs） | 文字问答/优先对话/审批流 + 安装时 postinstall Junction/目录链接映射（@local 指向 web）；不负责预设分发或 preset-sync |
+| qqbot 自愈 | plugins/dsh-qqbot-user-questions/（精简版：lib/heal.mjs + scripts/heal.mjs） | 启动/安装时补 code-runtime/agent-presets 行 + @local 建链；不含问答/审批 |
 | 代码地图 | pe-test/docs/ai-代码地图.md + pe-test/tools/代码地图生成.mjs | 函数级索引+增量同步 |
 
 ## 模块关系（数据流）
@@ -39,7 +39,7 @@ dsh 插件「按需规划模式」预设：AI 未经用户同意只能只读探�
 ## 运行时相关
 - web 直接核心包安装经 dsh plugin add + cordis.patch.yml（host 平面行：extra-plan-settings 设置页 API、extra-plan-preset-sync 预设自愈）
 - web 直接核心包唯一负责预设分发：scripts/distribute-preset.mjs（安装/更新写 DSH_HOME/.agent-presets/extra-plan/）
-- web 直接核心包唯一负责启动 preset-sync：lib/preset-sync.js（版本 hash 比对；同版本手改不覆盖）；QQBot 仅提供兼容补丁和安装时 Junction/目录链接映射
+- web 直接核心包唯一负责启动 preset-sync：lib/preset-sync.js（版本 hash 比对；同版本手改不覆盖）；QQBot 侧由精简版插件自愈，dsh-extra-plan 核心对 qqbot 零感知
 
 ## 相关文档
 - 导航入口：READAI.md（先读它）

@@ -1,8 +1,8 @@
 // Host half of dsh-extra-plan-settings.
-// Agent settings are described and patched by preset-settings.js. QQBot keeps
-// its independent compatibility API and is deliberately outside migration.
+// Agent settings are described and patched by preset-settings.js.
+// qqbot 自愈见独立插件 dsh-qqbot-user-questions（精简版），本设置页不涉及 qqbot。
 
-import { readFileSync, writeFileSync, mkdirSync, renameSync, existsSync, readdirSync, rmSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync, renameSync, rmSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import z from '@deepseek-ai/schemastery'
@@ -11,7 +11,6 @@ import {
   TOOL_PRESENTATION_MODES,
   getSettingDefinition,
   parsePresetYaml,
-  patchFirstYamlScalar,
   patchYamlScalar,
   publicSettingMetadata,
   validateSettingValue,
@@ -35,18 +34,6 @@ function dshHomeDir() {
 
 function agentCordisPath() {
   return join(dshHomeDir(), '.agent-presets', 'extra-plan', 'agent.cordis.yml')
-}
-
-function cordisPatchPath() {
-  return join(dshHomeDir(), 'profiles', 'qqbot', 'cordis.patch.yml')
-}
-
-function qqbotDir() {
-  return join(dshHomeDir(), 'profiles', 'qqbot')
-}
-
-function qqbotUserQuestionsDir() {
-  return join(qqbotDir(), 'node_modules', '@local', 'dsh-qqbot-user-questions')
 }
 
 function isLoopback(req) {
@@ -114,48 +101,6 @@ function patchManagedFile(file, entries) {
   writeTextAtomic(file, text)
 }
 
-function readQqbotConfig(file) {
-  const content = readFileSync(file, 'utf8')
-  const data = parsePresetYaml(content)
-  const patches = Array.isArray(data) ? data : []
-  for (const patch of patches) {
-    if (patch && patch.id === 'qqbot-user-questions') return { patches, patch, entry: patch }
-  }
-  for (const patch of patches) {
-    if (!patch || !Array.isArray(patch.insert)) continue
-    for (const entry of patch.insert) {
-      if (entry && entry.id === 'qqbot-user-questions') return { patches, patch, entry }
-    }
-  }
-  return { patches, patch: null, entry: null }
-}
-
-function checkQqbotStatus() {
-  if (!existsSync(qqbotDir())) return false
-  const packageFile = join(qqbotDir(), 'package.json')
-  try {
-    const pkg = JSON.parse(readFileSync(packageFile, 'utf8'))
-    const bundles = pkg && pkg.dsh && pkg.dsh.profile && Array.isArray(pkg.dsh.profile.bundles)
-      ? pkg.dsh.profile.bundles : []
-    if (!bundles.includes('@tencent-connect/dsh-qqbot')) return false
-  } catch {
-    return false
-  }
-  return existsSync(qqbotUserQuestionsDir())
-}
-
-function qqbotPatchManagedField(file, value) {
-  const text = readFileSync(file, 'utf8')
-  const patched = patchFirstYamlScalar(text, {
-    pluginId: 'qqbot-user-questions',
-    path: 'config.approvalEnabled',
-    scalarType: 'boolean',
-  }, value)
-  if (!patched.ok) return false
-  writeTextAtomic(file, patched.text)
-  return true
-}
-
 function createApiHandler() {
   return async (req, res) => {
     if (!isLoopback(req)) return json(res, 403, { error: 'forbidden: loopback only' })
@@ -196,41 +141,6 @@ function createApiHandler() {
           const message = String(error && error.message || error)
           const status = message.includes(' missing') || message.includes(' ambiguous') ? 404 : 500
           return json(res, status, { error: 'failed to write agent.cordis.yml: ' + message })
-        }
-      }
-
-      if (req.method === 'GET' && path === '/api/dsh-extra-plan-settings/qqbot-status') {
-        try { return json(res, 200, { available: checkQqbotStatus() }) }
-        catch (error) {
-          return json(res, 500, { error: 'failed to check qqbot status: ' + String(error && error.message || error) })
-        }
-      }
-
-      if (req.method === 'GET' && path === '/api/dsh-extra-plan-settings/qqbot-config') {
-        if (!checkQqbotStatus()) return json(res, 404, { error: 'qqbot profile not available' })
-        const file = cordisPatchPath()
-        try {
-          const { entry } = readQqbotConfig(file)
-          if (!entry || !entry.config) return json(res, 404, { error: 'qqbot-user-questions not found in cordis.patch.yml' })
-          return json(res, 200, { approvalEnabled: entry.config.approvalEnabled === true })
-        } catch (error) {
-          return json(res, 500, { error: 'failed to read cordis.patch.yml: ' + String(error && error.message || error) })
-        }
-      }
-
-      if (req.method === 'PUT' && path === '/api/dsh-extra-plan-settings/qqbot-config') {
-        if (!checkQqbotStatus()) return json(res, 404, { error: 'qqbot profile not available' })
-        const body = await readJsonBody(req)
-        if (body === null || typeof body.approvalEnabled !== 'boolean') {
-          return json(res, 400, { error: 'approvalEnabled must be a boolean' })
-        }
-        try {
-          if (!qqbotPatchManagedField(cordisPatchPath(), body.approvalEnabled)) {
-            return json(res, 404, { error: 'qqbot-user-questions not found in cordis.patch.yml' })
-          }
-          return json(res, 200, { approvalEnabled: body.approvalEnabled })
-        } catch (error) {
-          return json(res, 500, { error: 'failed to write cordis.patch.yml: ' + String(error && error.message || error) })
         }
       }
 

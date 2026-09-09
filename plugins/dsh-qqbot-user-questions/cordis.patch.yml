@@ -1,11 +1,5 @@
+# 精简版：仅自愈补行+mklink；问答/审批由 dsh-qqbot 0.5.0 原生承担。
 # 增加而不是覆盖
 - insert:
     - id: qqbot-user-questions
       name: '@local/dsh-qqbot-user-questions'
-      # 是否支持越权 true为支持
-      config:
-        approvalEnabled: false
-    - id: agent-presets
-      name: '@deepseek-ai/dsh-agent-presets'
-      config:
-        default: extra-plan

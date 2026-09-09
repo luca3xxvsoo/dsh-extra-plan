@@ -6,7 +6,7 @@
 
 **按需规划模式（extra-plan）**：会话未经用户同意时，模型仅可调用只读工具探查。且可调用pro规划子代理，使用高质量模型生成规划验收方案。
 
-**兼容性**：DSH v0.1.2-rc.1(0.1.1不支持)、qqbot v0.1.0/v0.4.0 86804a8版（56db053版不支持）
+**兼容性**：DSH v0.1.2-rc.1(0.1.1不支持)、qqbot 0.5.0 版
 
 ## 2. 核心优势
 
@@ -35,24 +35,15 @@ winget install --id Git.MinGit --exact --source winget
 ```powershell 7+
 dsh plugin --profile web add 'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan' --allow-build='@local/dsh-extra-plan@git+https://github.com/luca3xxvsoo/dsh-extra-plan.git'
 ```
-2. qqbot兼容插件安装 (选装 remove命令报错可忽略)
-
+2. qqbot兼容插件安装 (选装,remove命令报错可忽略)
 ```powershell 7+ 
 dsh plugin --profile qqbot remove @local/dsh-extra-plan
+dsh plugin --profile qqbot remove @local/dsh-qqbot-user-questions
 dsh plugin --profile qqbot add 'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-qqbot-user-questions' --allow-build='@local/dsh-qqbot-user-questions@git+https://github.com/luca3xxvsoo/dsh-extra-plan.git'
 ```
 3. **重启 DSH 进程**使插件生效
 4. 新建会话，在预设列表中选择「按需规划模式」即可使用
-
-### 可选模块：dsh-qqbot-user-questions
-
-**模块背景**：dsh-qqbot（腾讯官方 QQ Bot IM 插件）在默认配置下不挂任何 agent 预设；而 extra-plan 的核心交互（路由确认 / 澄清 / 批准三阶段问话）依赖 `ask_user_question` 的 UI 应答者，QQbot 无此 UI，直接挂载会导致问答无法完成。本可选插件为 qqbot 提供**文字列表**发到 QQ、等待用户回复，让 extra-plan 在 QQbot 上保持完整的三阶段问答与闸门语义。并且可以用命令 /优先对话 ，在AI连续调用工具的长任务的场景对指定对话进行边界插入
-
-**优先对话触发模式**：
-  - /优先对话：将队列中第一个对话进行边界插入
-  - /优先对话 对话内容：将对话内容进行边界插入
-
-**前提说明**：本模块涉及对 dsh-qqbot 源码的最小改动，需使用者自行评估
+5. qqbot下使用 /preset 切换预设
 
 ### 卸载步骤
 
@@ -65,12 +56,7 @@ dsh plugin --profile web remove @local/dsh-extra-plan
 ```powershell 7+
 dsh plugin --profile qqbot remove @local/dsh-qqbot-user-questions
 ```
-4. qqbot兼容插件替换文件还原 (如装)
-```
-DSH_HOME/profiles/qqbot/node_modules/@tencent-connect/dsh-qqbot/dist/gateway/bootstrap.js.orig -> bootstrap.js
-DSH_HOME/profiles/qqbot/node_modules/@tencent-connect/dsh-qqbot/dist/transport/outbound.js.orig -> outbound.js
-```
-5. **重启 DSH 进程**
+4. **重启 DSH 进程**
 
 ### 平台实测说明
 
@@ -88,8 +74,6 @@ DSH web界面 -> 设置 -> 插件 -> 插件配置 -> 按需规划模式配置
   - web_fetch开关：是否开启web_fetch。
   - 工具呈现模式：工具呈现方式切换（默认/混合/纯PTC模式）
   - run_code 容错检查：PTC模式下，增加每个工具调用需要try catch的闸门。通过限制+建议的模式保障仅单个调用报错
-
-**qqbot兼容插件**：越权申请开关。仅在qqbot进程运行时显示
 
 ## 5. 仓库结构
 
@@ -111,14 +95,10 @@ dsh-extra-plan/
 │   │   ├── cordis.patch.yml                                      
 │   │   ├── index.js                                    
 │   │   └── package.json
-│   └── dsh-qqbot-user-questions/                       # 可选模块：QQbot 上保留 extra-plan 完整问答
-│       ├── patches/@tencent-connect-dsh-qqbot/dist/    # 自动分发 qqbot插件修改 内容
-│       │   ├── gateway/bootstrap.js                    # 修改好的文件 最小必须注入：ctx.provide
-│       │   └── transport/outbound.js                   # 修改好的文件 放行新增的工具show_file：用该工具调用方案/验收.md节约token
-│       ├── scripts/                     
-│       │   ├── apply-patch.mjs                         # 自动分发 qqbot插件修改 脚本
-│       │   └── ensure-dsh-extra-plan-link.mjs          # 同步 web 目录下的 dsh-extra-plan
-│       ├── cordis.patch.yml                        
+│   └── dsh-qqbot-user-questions/                  
+│       ├── lib/heal.js                                 # 自愈函数
+│       ├── scripts/heal.mjs                            # 自愈分发                      
+│       ├── cordis.patch.yml                    
 │       ├── index.js                      
 │       └── package.json        
 ├── pe-test/                                            # 自检/取证工具
@@ -152,7 +132,7 @@ dsh-extra-plan/
 │       ├── step-99-用量统计.mjs
 │       ├── 代码地图生成.mjs                           
 │       └── readme.md
-├── README.md                                            # 本文档（模式介绍 + 安装方式）
+├── README.md                                            # 本文档
 ├── READAI.md                                            # AI 入口导航（分层）
 └── LICENSE                                              # MIT 许可
 ```

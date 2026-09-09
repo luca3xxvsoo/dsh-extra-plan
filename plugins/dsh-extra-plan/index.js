@@ -885,11 +885,6 @@ function renderSavePlan(value) {
   return [{ type: 'text', text: '方案已落盘（原子双写）：\n- ' + value.paths.join('\n- ') }]
 }
 
-// 展示指引（DISPLAY_GUIDE）：save_plan 生成文件开头注入的 blockquote，引导主会话
-// 用 show_file 工具展示完整内容，绕过 QQ 通道 tool-presenter 的 1500 字符截断
-// （RESULT_PREVIEW_LIMIT）。末尾保留一个空行作视觉分隔。仅内部使用，不导出。
-const DISPLAY_GUIDE = '> **展示指引**：向用户展示时，使用 show_file 工具，禁止使用 assistant 文本、read 工具直接输出。\n\n'
-
 // ── save_probe：探查线索落盘的机械上限（导出供测试，防复制漂移） ──
 // 条目数/单条长度/总量均为设计值；调整须同步 PROBE_LIMITS、测试、文档三处。
 export const PROBE_LIMITS = {
@@ -2210,7 +2205,6 @@ import { homedir } from 'node:os'
 
 export function apply(ctx, config) {
   const cfg = config !== null && typeof config === 'object' ? config : {}
-  const showFilePatterns = Array.isArray(cfg.showFilePatterns) && cfg.showFilePatterns.length > 0 ? cfg.showFilePatterns.map(String) : ['方案-*.md', '验收-*.md']
   const plannerModel = typeof cfg.plannerModel === 'string' ? cfg.plannerModel : 'deepseek-v4-pro'
   const planToolName = typeof cfg.planTool === 'string' ? cfg.planTool : 'subagent_plan'
   const exploreBudget = Number.isInteger(cfg.exploreBudget) && cfg.exploreBudget > 0 ? cfg.exploreBudget : 18
@@ -2590,8 +2584,8 @@ export function apply(ctx, config) {
         recoverJournals(dir)
         try {
           atomicCommit(dir, base, [
-            { name: `方案-${base}.md`, content: DISPLAY_GUIDE + args.plan },
-            { name: `验收-${base}.md`, content: DISPLAY_GUIDE + args.checklist },
+            { name: `方案-${base}.md`, content: args.plan },
+            { name: `验收-${base}.md`, content: args.checklist },
           ])
         } catch (error) {
           throw new Error(`save_plan: 落盘失败：${error instanceof Error ? error.message : String(error)}`)
@@ -2742,75 +2736,6 @@ export function apply(ctx, config) {
   const saveProbeRegistered = new WeakSet()
   function registerSaveProbe(agent) { registerTool(saveProbeRegistered, 'save_probe', defineSaveProbe, agent) }
 
-  // ── show_file：只注册于主会话层（session-start + pre-step 幂等兜底） ──
-  // 通配符匹配：* 匹配任意字符（含空），其余字符字面匹配。
-  function matchWildcard(name, pattern) {
-    const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')
-    return new RegExp('^' + escaped + '$').test(name)
-  }
-  function defineShowFile() {
-    return {
-      name: 'show_file',
-      description: '读取工作区文件并直接输出完整内容（不经过 LLM 生成，不截断）。默认仅支持方案-*.md 和验收-*.md（save_plan 生成的文件），可通过配置 showFilePatterns 扩展。接收 file_path 参数，返回文件完整内容',
-      parameters: {
-        type: 'object',
-        properties: {
-          file_path: { type: 'string', description: '文件路径（相对工作区或绝对路径）' },
-        },
-        required: ['file_path'],
-        additionalProperties: false,
-      },
-      presentResult(args, result) {
-        let output = ''
-        if (typeof result.content?.content === 'string') {
-          output = result.content.content
-        } else if (typeof result.content === 'string') {
-          output = result.content
-        } else if (Array.isArray(result.content)) {
-          output = result.content.map(b => (b?.type === 'text' ? b.text : '')).join('')
-        }
-        return { card: 'terminal', output }
-      },
-      output: {
-        schema: {
-          type: 'object',
-          properties: {
-            path: { type: 'string' },
-            content: { type: 'string' },
-          },
-          required: ['path', 'content'],
-          additionalProperties: false,
-        },
-        render(args, result) {
-          return [{ type: 'text', text: result.content }]
-        },
-      },
-      timeoutMs: 15000,
-      async execute(args, exec) {
-        const session = exec.agent?.session
-        const cwd = session?.header?.cwd
-        if (!cwd) throw new Error('show_file: 会话缺少工作区路径')
-        const filePath = args.file_path
-        if (typeof filePath !== 'string' || filePath.trim() === '') {
-          throw new Error('show_file: file_path 必须是非空字符串')
-        }
-        const resolved = resolve(isAbsolute(filePath) ? filePath : join(cwd, filePath))
-        if (!existsSync(resolved)) {
-          throw new Error(`show_file: 文件不存在：${resolved}`)
-        }
-        const basename = resolved.split(/[\\/]/).pop()
-        const allowed = showFilePatterns.some((p) => matchWildcard(basename, p))
-        if (!allowed) {
-          throw new Error(`show_file: 文件名「${basename}」不在允许的匹配模式中。当前允许的模式：${showFilePatterns.join(', ')}。可通过配置 showFilePatterns 扩展。`)
-        }
-        const content = readFileSync(resolved, 'utf8')
-        return { path: resolved, content }
-      },
-    }
-  }
-  const showFileRegistered = new WeakSet()
-  function registerShowFile(agent) { registerTool(showFileRegistered, 'show_file', defineShowFile, agent) }
-
   // 放行-认领关联：父会话放行 subagent_probe 后挂「待认领计数」（parentSessionId → 次数），
   // probe 子会话 session-start/pre-step 经 probeClaimFor 认领：消费计数、标记 probeClaimed、
   // 注册 save_probe。同父执行者（schemas 含 write/edit）不认领；reviewer 无待认领不认领；
@@ -2836,8 +2761,8 @@ export function apply(ctx, config) {
   let selfAgent = undefined
 
   // 1) 会话启动：子代理基线（账本 + 沙箱下限）；规划子代理注册 save_plan；
-  //    主会话与探查子代理注册 save_probe（scoped）；主会话注册 show_file
-  //    （recompose 不重发 session-start，pre-step 兜底）。
+  //    主会话与探查子代理注册 save_probe（scoped；recompose 不重发 session-start，
+  //    pre-step 兜底）。
   ctx.on('agent/session-start', (payload) => {
     const agent = payload.agent
     if (agent === undefined) return
@@ -2845,7 +2770,6 @@ export function apply(ctx, config) {
     childBaseline(agent)
     if (isPlannerChild(agent)) registerSavePlan(agent)
     if (!isSubagentChild(agent) || probeClaimFor(agent)) { registerSaveProbe(agent) }
-    if (!isSubagentChild(agent)) registerShowFile(agent)
   })
 
   // 2) pre-step：账本补记（会话最终消息的行延迟到此）；规划子代理初始任务与
@@ -2857,7 +2781,6 @@ export function apply(ctx, config) {
       selfAgent = payload.agent
       childBaseline(payload.agent)
       if (!isSubagentChild(payload.agent) || probeClaimFor(payload.agent)) { registerSaveProbe(payload.agent) }
-      if (!isSubagentChild(payload.agent)) registerShowFile(payload.agent)
     }
     const decision = await next()
     if (decision.kind !== 'enter') return decision
