@@ -31,7 +31,6 @@ const JsExpr = new yaml.Type('tag:yaml.org,2002:js', {
 })
 export const YAML_SCHEMA = yaml.JSON_SCHEMA.extend(JsExpr)
 
-const isNonEmptyString = (value) => typeof value === 'string' && value.trim() !== ''
 const isString = (value) => typeof value === 'string'
 const isPositiveInteger = (value) => typeof value === 'number' && Number.isInteger(value) && value > 0
 const isBoolean = (value) => typeof value === 'boolean'
@@ -58,7 +57,9 @@ const setting = (definition) => Object.freeze({
 export const SETTING_DEFINITIONS = Object.freeze([
   setting({
     key: 'plannerModel', pluginId: 'extra-plan', path: 'config.plannerModel', scalarType: 'string',
-    validator: isNonEmptyString, normalize: (value) => value.trim(),
+    // T4：允许空串（= 显式清空 = 继承主会话模型；解析侧只判 !==''，键缺失才用代码缺省值）。
+    // 空白串经 normalize trim 归一为 ''，与空串同义；非 string（如 YAML 数字）仍非法。
+    validator: isString, normalize: (value) => value.trim(),
     ui: { control: 'text', locale: 'plannerModel' }, locatorAliases: [],
   }),
   setting({

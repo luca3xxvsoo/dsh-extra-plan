@@ -12,7 +12,7 @@ const DSH_HOME = (process.env.DSH_HOME || homedir() + '/.dsh').replaceAll('\\', 
 const PLUGIN_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/index.js', import.meta.url))
 const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
 const decisions = plugin.decisions
-const { catalogHasWriteTools, isReadOnlyChildByCatalog, routeDenyReason, runCodeCatchGateReason, runCodeGroupDenyReason, probeDisposalWarning, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason } = decisions
+const { catalogHasWriteTools, isReadOnlyChildByCatalog, routeDenyReason, runCodeCatchGateReason, runCodeGroupDenyReason, askUserQuestionReturnGateReason, probeDisposalWarning, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason } = decisions
 
 let pass = 0
 let fail = 0
@@ -44,7 +44,9 @@ const require = createRequire(DSH_HOME + '/profiles/web/node_modules/package.jso
 const yaml = require('js-yaml')
 const JsExpr = new yaml.Type('tag:yaml.org,2002:js', { kind: 'scalar', resolve: () => true, construct: (data) => data })
 const schema = yaml.JSON_SCHEMA.extend(JsExpr)
-const presetFile = DSH_HOME + '/.agent-presets/extra-plan/agent.cordis.yml'
+// 2026-09-10 修订：预设静态断言改为读【工作区模板资产】，与 step-01-预设完整性 同源。
+// 原实现读现场 DSH_HOME 预设，会导致「工作区已改、断言要等用户部署后才可能通过」的悖论。
+const presetFile = fileURLToPath(new URL('../../plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml', import.meta.url))
 let rows
 try {
   rows = yaml.load(readFileSync(presetFile, 'utf8'), { schema })
@@ -85,7 +87,7 @@ function checkDeny(id, expectCount, mustContain, mustNotContain, label) {
 }
 checkDeny('tool-subagent-review', 14, ['write', 'edit', 'subagent_probe', 'cordis_run'], [], 'reviewer deny 恰 14 项且含 write/edit/subagent_probe/cordis_run')
 checkDeny('tool-subagent', 12, ['subagent_probe', 'cordis_run'], ['write', 'edit'], 'executor deny 恰 12 项、不含 write/edit、含 subagent_probe/cordis_run')
-checkDeny('tool-subagent-plan', null, ['write', 'edit', 'cordis_run'], ['subagent_probe'], 'planner deny 含 write/edit/cordis_run 且不含 subagent_probe')
+checkDeny('tool-subagent-plan', 13, ['write', 'edit', 'cordis_run', 'subagent_probe'], [], 'planner deny 恰 13 项且含 write/edit/cordis_run/subagent_probe')
 checkDeny('tool-subagent-probe', 14, ['write', 'edit', 'subagent_probe', 'cordis_run'], ['subagent_fork'], 'probe deny 恰 14 项且含 write/edit/subagent_probe/cordis_run、不含 subagent_fork')
 
 // ── ③ 真实监听器拦截行为（[任务5]，mock ctx 走插件 apply） ─────────────
@@ -426,7 +428,7 @@ const nestedPlanCode = { code: "await tools.subagent_plan({ task: '规划', run_
 const nestedProbeCode = { code: "await tools.subagent_probe({ run_in_background: true })", description: '嵌套探查委派' }
 
 r = preExecute(harness, noneMain, 'run_code', nestedAskCode)
-checkTrue('R42 主会话 none 态 run_code（code 含嵌套 ask_user_question）→ 放行（外壳不拦嵌套，嵌套 ask 由瀑布判定）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R42 主会话 none 态 run_code（code 含未返回的嵌套 ask_user_question）→ deny（返回值白名单）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('return await tools.ask_user_question(...)') && String(r.reason).includes('const q = await tools.ask_user_question(...); return JSON.stringify({ question: q })'))
 r = preExecute(harness, noneMain, 'run_code', nestedPlanCode)
 checkTrue('R43 主会话 none 态 run_code（code 含嵌套 subagent_plan）→ deny 且含「子代理未放行：subagent_plan」（v4：组判定按直呼同闸门预审）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('子代理未放行：subagent_plan'))
 r = preExecute(harness, noneMain, 'subagent_plan', { run_in_background: true })
@@ -537,6 +539,47 @@ checkTrue('R85 组内 job_output wait 成员 → deny 且含「job_output 禁止
 r = preExecute(harness, noneMain, 'run_code', revCode)
 checkTrue('R86 组内 subagent_review 成员无批准 → deny 且含「执行类委派未放行：subagent_review」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('执行类委派未放行：subagent_review'))
 
+// ── ⑭b T3：主会话 save_plan 路由矩阵（仅 direct 放行，其余路由态拒绝） ──────
+// 内容闸门与规划子代理共用同一 defineSavePlan 实现（强度一致），本节只锁路由闸门；
+// 若漏加显式分支，mainGateReason 兜底 return null 会让所有路由态放行 —— 逐态锁定。
+const planUnclarifiedMain = mainWithEvents([umE(), callE('ask_user_question', 'a1', routeArgsE), okE('a1', answerE(['进行pro规划']))])
+r = preExecute(harness, directMain, 'save_plan', { plan: 'p', checklist: 'c' })
+checkTrue('T3-1 主会话 direct 态 save_plan → allow', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, noneMain, 'save_plan', { plan: 'p', checklist: 'c' })
+checkTrue('T3-2 主会话 none 态 save_plan → deny 且含「save_plan 仅允许在直接执行」与「当前路由态：none」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('save_plan 仅允许在直接执行') && String(r.reason).includes('当前路由态：none'))
+r = preExecute(harness, planUnclarifiedMain, 'save_plan', { plan: 'p', checklist: 'c' })
+checkTrue('T3-3 主会话 plan 未澄清态 save_plan → deny 且含「当前路由态：plan」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('当前路由态：plan'))
+r = preExecute(harness, planMain, 'save_plan', { plan: 'p', checklist: 'c' })
+checkTrue('T3-4 主会话 plan+clarified 态 save_plan → deny（路由仍为 plan）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('当前路由态：plan'))
+r = preExecute(harness, approvedMain, 'save_plan', { plan: 'p', checklist: 'c' })
+// 注：approved 是独立标志，deriveFlowState 的 route 仍为 'plan'（拒绝文案报的就是 route 态）。
+checkTrue('T3-5 主会话 approved 态 save_plan → deny（文案含「save_plan 仅允许在直接执行」与「当前路由态：plan」）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('save_plan 仅允许在直接执行') && String(r.reason).includes('当前路由态：plan') && String(r.reason).includes('转交pro规划') === false)
+
+// ── ⑭c T5：planner 不得委派探查者（subagent_probe 仅主会话可用） ───────────
+// planner 身份由 events 含 subagent/descriptor(mode=continuable) 判定，路由态对其无意义；
+// 三态各锁一次，确保拒绝不依赖路由（闸门只看 isPlanner）。
+const plannerWithEvents = (events) => ({
+  session: { header: { id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => [DESC, ...events] },
+  options: { model: 'deepseek-v4-pro' },
+  ctx: undefined,
+})
+const plannerProbeStates = [
+  ['T5-1 planner none 态', plannerWithEvents([])],
+  ['T5-2 planner plan+clarified 态', plannerWithEvents([umE(), callE('ask_user_question', 'a1', routeArgsE), okE('a1', answerE(['进行pro规划'])), callE('ask_user_question', 'a2', clarifyArgsE), okE('a2', answerE(['方案A']))])],
+  ['T5-3 planner direct 态', plannerWithEvents([umE(), callE('ask_user_question', 'a1', routeArgsE), okE('a1', answerE(['直接执行']))])],
+]
+for (const [label, agent] of plannerProbeStates) {
+  r = preExecute(harness, agent, 'subagent_probe', { run_in_background: true })
+  checkTrue(label + ' 直呼 subagent_probe(run_in_background: true) → deny 且含「仅主会话可用」与「申请继续探查」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('仅主会话可用') && String(r.reason).includes('申请继续探查'))
+}
+r = preExecute(harness, plannerAgent, 'subagent_probe', {})
+checkTrue('T5-4 planner 缺 run_in_background → 角色拒绝分支先命中（含「规划子代理不得委派探查者」，非 run_in_background 文案）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划子代理不得委派探查者') && !String(r.reason).includes('探查者必须后台运行'))
+const nestedProbeGroupCode = { code: "await tools.subagent_probe({ run_in_background: true })", description: '嵌套探查委派' }
+r = preExecute(harness, plannerAgent, 'run_code', nestedProbeGroupCode)
+checkTrue('T5-5 planner 经 run_code 组内调用 subagent_probe 成员 → 聚合拒绝（含「仅主会话可用」与「申请继续探查」）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('run_code 拆解预审未通过') && String(r.reason).includes('仅主会话可用') && String(r.reason).includes('申请继续探查'))
+r = preExecute(harness, noneMain, 'run_code', nestedProbeGroupCode)
+checkTrue('T5-6 主会话 none 态 run_code 组内 subagent_probe → 仍放行（禁令只针对 planner）', r !== null && r !== undefined && r.kind === 'allow')
+
 // ── ⑨ ptc 锚定（anchored 引导放宽：无 shell 有 run_code 也锚定；P1-P11） ──
 // ptc 折叠目录 [run_code]（wireSchemas 塌缩）：修复前 shells 为空 → 跳过锚定；
 // 修复后 keep 在无 shell 分支加入 run_code → tools 收窄为 [run_code]、
@@ -569,6 +612,32 @@ checkTrue('R86 组内 subagent_review 成员无批准 → deny 且含「执行�
 }
 
 
+// ── ⑩b ASK 系列：主会话 ask 返回值白名单 + pre-execute 重入 ─────────────
+const askReturnRunCases = [
+  ['R-ASK1 裸 await ask → deny', 'await tools.ask_user_question({})', 'deny'],
+  ['R-ASK2 只赋值不返回 → deny', 'const q = await tools.ask_user_question({})', 'deny'],
+  ['R-ASK3 console.log 消费 → deny', 'console.log(await tools.ask_user_question({}))', 'deny'],
+  ['R-ASK4 .then 包装 → deny', 'return await tools.ask_user_question({}).then((x) => x)', 'deny'],
+  ['R-ASK5 工具别名 → deny', 'const ask = tools.ask_user_question; return await ask({})', 'deny'],
+  ['R-ASK6 动态工具访问 → deny', "const name = 'ask_user_question'; return await tools[name]({})", 'deny'],
+  ['R-ASK7 直接 return-await → allow', 'return await tools.ask_user_question({})', 'allow'],
+  ['R-ASK8 单变量 JSON.stringify → allow', 'const q = await tools.ask_user_question({}); return JSON.stringify({ question: q })', 'allow'],
+]
+for (const [label, code, expectedKind] of askReturnRunCases) {
+  r = preExecute(harness, noneMain, 'run_code', { code, description: label })
+  const hasExamples = expectedKind === 'allow' || (r !== null && r !== undefined && String(r.reason).includes('return await tools.ask_user_question(...)') && String(r.reason).includes('const q = await tools.ask_user_question(...); return JSON.stringify({ question: q })'))
+  checkTrue(label + '（默认 harness，闸门不依赖 runcodeCatchGate）', r !== null && r !== undefined && r.kind === expectedKind && hasExamples)
+}
+
+// 外层静态展开达到既有 depth 边界时先放行；实际内层带 parent 重新进入主会话 pre-execute，必须拒绝裸 await ask。
+const nestedAskInnerCode = 'await tools.ask_user_question({})'
+const nestedAskLevelOneCode = 'await tools.run_code({ "code": ' + JSON.stringify(nestedAskInnerCode) + ' })'
+const nestedAskOuterCode = 'await tools.run_code({ "code": ' + JSON.stringify(nestedAskLevelOneCode) + ' })'
+r = preExecute(harness, noneMain, 'run_code', { code: nestedAskOuterCode, description: '嵌套 ask 外层容器' })
+checkTrue('R-ASK9 外层嵌套容器沿用 depth 边界 → allow', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, noneMain, 'run_code', { code: nestedAskInnerCode, description: '嵌套 ask 实际内层' }, { rootCallId: 'nested-ask-root', parent: Symbol('nested-ask-parent') })
+checkTrue('R-ASK10 带 parent 的实际内层裸 await ask 重入 → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('return await tools.ask_user_question(...)') && String(r.reason).includes('const q = await tools.ask_user_question(...); return JSON.stringify({ question: q })'))
+
 // ── ⑪ UC 系列:runCodeCatchGateReason 纯函数（多调用容错硬闸门，任务1/3） ──
 checkTrue('UC1 ≥2 无保护→拒', (() => { const got = runCodeCatchGateReason("await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })"); return typeof got === 'string' && got.includes('run_code 内 2 个工具调用未全部独立容错') && got.includes('已保护 0 个') })())
 checkTrue('UC2 独立 try 全覆盖→null', runCodeCatchGateReason("try { await tools.read({ file_path: 'x' }) } catch (e) {}\ntry { await tools.read({ file_path: 'y' }) } catch (e) {}") === null)
@@ -584,7 +653,7 @@ checkTrue('UC11 嵌套展平无保护→触发', (() => { const got = runCodeCat
 checkTrue('UC12 嵌套各自 try→null', runCodeCatchGateReason("await tools.run_code({ \"code\": \"try { await tools.read({ file_path: 'x' }) } catch (e) {}\" })\ntry { await tools.read({ file_path: 'y' }) } catch (e) {}") === null)
 checkTrue('UC13 注释/字符串内 tools.x 不计数→null', runCodeCatchGateReason("const s = 'tools.read({ file_path: 1 })'\n// tools.write({})\nawait tools.glob({ pattern: '**/*.md' })") === null)
 checkTrue("UC14 tools['read'] 字面量方括号计数→触发", (() => { const got = runCodeCatchGateReason("await tools['read']({ file_path: 'x' })\nawait tools['read']({ file_path: 'y' })"); return typeof got === 'string' && got.includes('run_code 内 2 个') })())
-checkTrue('UC15 probeDisposalWarning(0)→null 且 (2)→含「2 个未认领探查者委派」', probeDisposalWarning(0) === null && (() => { const got = probeDisposalWarning(2); return typeof got === 'string' && got.includes('2 个未认领探查者委派') })())
+checkTrue('UC15 probeDisposalWarning(0)→null 且 (2)→含「2 个未认领探查者委派」与「委派方会话销毁时」（T5 文案中性化，不再硬编码「规划子代理会话销毁」）', probeDisposalWarning(0) === null && (() => { const got = probeDisposalWarning(2); return typeof got === 'string' && got.includes('2 个未认领探查者委派') && got.includes('委派方会话销毁时') && !got.includes('规划子代理会话销毁') })())
 checkTrue('UC16 runcodeCatchGate:false → null（开关关纯函数）', runCodeGroupDenyReason(undefined, { name: 'run_code', arguments: { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })" } }, { kind: 'main' }, { runcodeCatchGate: false }) === null)
 checkTrue('UC17 显式 runcodeCatchGate:true → 拒且含「未全部独立容错」', (() => { const got = runCodeGroupDenyReason(undefined, { name: 'run_code', arguments: { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })" } }, { kind: 'main' }, { runcodeCatchGate: true }); return typeof got === 'string' && got.includes('未全部独立容错') })())
 checkTrue('UC18 safe 白名单放行（形态匹配+实参恰 1 调用点）', runCodeCatchGateReason("const safe = (p) => p.catch((e) => ({ _error: String(e).slice(0, 200) }))\nawait safe(tools.read({ file_path: 'x' }))\ntry { await tools.read({ file_path: 'y' }) } catch (e) {}") === null)

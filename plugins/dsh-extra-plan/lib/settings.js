@@ -121,7 +121,7 @@ function createApiHandler() {
         const model = getSettingDefinition('plannerModel')
         const budget = getSettingDefinition('exploreBudget')
         if (!validateSettingValue(model, input.plannerModel)) {
-          return json(res, 400, { error: 'plannerModel must be a non-empty string' })
+          return json(res, 400, { error: 'plannerModel must be a string (empty string = inherit main-session model)' })
         }
         if (!validateSettingValue(budget, input.exploreBudget)) {
           return json(res, 400, { error: 'exploreBudget must be a positive integer' })

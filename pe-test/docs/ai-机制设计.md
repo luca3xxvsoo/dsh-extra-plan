@@ -12,13 +12,15 @@
 - 是什么：run_code 能一次做多件事，是绕开「单工具闸门」的后门。静态拆解 code 为工具成员组（decomposeRunCode：扫描 tools.xxx 调用 + 裸写扫描），逐成员走与直呼完全相同的判定，聚合拒绝。
 - 边界：动态访问（tools[var]）、参数不可解析、嵌套超深 → 不产生成员，运行时瀑布兜底（安全方向放行）。
 - 多调用容错硬闸门：code 内 tools.* 调用点（未去重，裸写不计）≥2 时，要求每个调用点独立容错（①独立 try/catch 组——try 块内恰 1 个调用点 ②allSettled([...]) 数组内 ③.catch 链）；不足→教学式聚合拒绝（「run_code 内 N 个工具调用未全部独立容错…已保护 M 个」）。单调用豁免；嵌套 run_code 展平纳入；静态识别失败保守按未保护拒绝。job_output 全角色禁 wait:true（等完成通知）；被 pre-execute 拒绝的调用不计探查预算（配对按 tool-result 块级 isError 排除）。
-- runcodeCatchGate 开关：cfg.runcodeCatchGate===true 默认 false（设置页开启，仿 anchoredBootstrap）；开启时 runCodeCatchGateReason 参与组判定（多调用无独立容错拒绝）；仅影响本检查。
+- runcodeCatchGate 开关：cfg.runcodeCatchGate===true 默认 false（设置页开启，仿 anchoredBootstrap；装载时快照，改后需重启 Harness）。开启时 runCodeCatchGateReason 参与组判定（多调用无独立容错拒绝）；**仅影响本检查**。作用面已全仓核实（2026-09-10）：全仓唯一判定读点是 L2312 的 if、唯一调用点 L2313、产物仅一个 kind:'catch' 拒绝成员；生效角色=主会话（L3453）/planner（L3400）/只读子代理（L3432），执行者豁免（L3448 直接 next()）。
+- ask 返回值白名单（恒开，与 runcodeCatchGate 解耦）：主会话 run_code 内出现 tools.ask_user_question 时，仅放行两种写法——return await tools.ask_user_question(...)；或 const q = await tools.ask_user_question(...); return JSON.stringify({ question: q })；其余形态（别名/动态访问/静态属性引用/.then 包装/只赋值不 return）→ 聚合拒绝（askUserQuestionReturnGateReason，L1768-1963）。接入点 L2269 位于 runcodeCatchGate 的 if 之外、仅按 roleKind==='main'，planner 与只读子代理不接；嵌套超展开深度由 pre-execute 重入兜底。
 - safe 白名单：const NAME=(P)=>P.catch(CB) 形态（任意命名；let/var/async/花括号 body/非 p.catch 形状不入；同名非匹配再定义剔除）；NAME(...) 实参区间恰 1 个 tools 调用点→保护、≥2→不保护（与 try 同口径）；拒绝文案含模板 const safe = (p) => p.catch((e) => ({ _error: String(e).slice(0, 200) }))。
 - 预算容器计费：planner 预算按容器计——run_code 本身计 1 次（tool/call+tool/result 配对），子调用（code-dispatch）不再计入；直呼 1 次 1 计不变；toolCallCount 已删嵌套分支。
 - 单实例子调用上限（planner）：单 run_code 实例子调用 ≤ exploreBudget；静态点计数>上限组判定快路径拒 + 运行时按 rootCallId（内存 Map）聚合超限拒；循环/动态放大同样受限。
 
 ## 三、探查预算（规划子代理）
 - 是什么：机械上限（默认 18 次工具调用）。开局告知 + 剩 3 次提醒 + 耗尽拒绝并注入数字指令；预算自最近一条主会话消息起计，每条转达消息 = 重置 = 授权继续。
+- planner 的探查只能自行 read/glob/grep（T5：不得委派探查者——探查者仅主会话可委派）；预算耗尽或确有缺口时走「申请继续探查」往返：主会话派探查者并转达线索文件路径，planner 读取后继续。
 - 为什么：规划子代理只读但可能无限探索（"越探越远/想太久"），机械预算强制收敛。
 
 ## 四、save_plan 双写 + journal 自愈
@@ -26,12 +28,12 @@
 - 为什么：方案/验收必须成对出现；崩溃不产生半成品。
 
 ## 五、子代理工具裁剪
-- 是什么：agent.cordis.yml 各 tool-subagent-* 行的 toolFilter.deny 清单 + lib/executor-spawn.js 薄代理（覆盖引擎内部调用的 workflow/ralph worker）。
-- 为什么：防委派递归（执行者不得再委派）、执行者/验收者只读；save_plan 只注册于规划子代理层（scoped），其余代理不可见、无需 deny。
+- 是什么：agent.cordis.yml 各 tool-subagent-* 行的 toolFilter.deny 清单 + lib/executor-spawn.js 薄代理（覆盖引擎内部调用的 workflow/ralph worker）。planner 行 deny 含 subagent_probe（探查者仅主会话可委派：目录层不可见 + 闸门拒绝，双层禁止）。
+- 为什么：防委派递归（执行者不得再委派）、执行者/验收者只读；save_plan 注册于规划子代理层与主会话层（T3：主会话侧仅 direct 路由放行、其余路由态拒绝，内容闸门同一实现），其余代理不可见、无需 deny。
 
 ## 六、模型/力度继承
-- 是什么：子代理模型/reasoningEffort 继承父会话；plannerModel（设置页显式配置）优先于父会话当前模型；resolvePlannerEntry 单点解析+缓存。
-- 为什么：规划用高质量模型可配置；后台规划时父会话空闲，解析不得依赖「父会话进行中请求头」或模型目录 advisory 命中（2026-09-03 修复）。
+- 是什么：子代理模型/reasoningEffort 继承父会话；plannerModel（设置页显式配置）优先于父会话当前模型；**置空 = 继承主会话模型**（T4）；resolvePlannerEntry 单点解析+缓存，并按 provider 目录做**静默降级**判定（T2：清单非空且未命中 → 继承主会话模型，落 type:'degrade' 诊断）。
+- 为什么：规划用高质量模型可配置；配置模型不被支持时静默降级（不报错、不中断、不打扰用户）；后台规划时父会话空闲，解析不得依赖「父会话进行中请求头」或模型目录 advisory 命中（2026-09-03 修复）。
 
 ## 七、anchored 引导（首轮极简，ptc 兼容）
 - 是什么：主会话与规划子代理在会话首个 tool/call 落盘前（isBootstrapPhase，index.js L236-243），system-prompt/assemble 钩子（约 L2580）装配级注入极简 persona（bootstrapPersona）、清空运行时上下文、目录收窄——有 shell（bash/pwsh，native/both）收窄为 shell + read（run_code 被滤掉）；仅 run_code（ptc 折叠目录）保留 run_code；无 shell 且无 run_code 跳过并每实例警告一次。首个工具调用后每步 assemble 重查事件流 → 恢复全量 persona 与完整目录。执行者/reviewer 子代理不引导。
@@ -45,16 +47,17 @@
 | R1 | 静态黑名单不覆盖动态 require/Function 构造/编码拼串（不产生成员→组判定放行→运行时瀑布兜底） | index.js decomposeRunCode 附近注释 |
 | E8 | workflow/ralph worker 由引擎内部调用不携带 toolFilter，预设 tool-subagent 行裁剪对其不生效；经 executor-spawn 薄代理注入 deny | lib/executor-spawn.js 文件头注释 |
 | v2→v4 | run_code 裸写扫描必须屏蔽已提取工具调用区间后再扫，防「工具参数字符串被误判为裸写」 | index.js decomposeRunCode 尾部注释 |
-| 模型目录 | plannerModel 解析不得依赖 llm 模型目录命中（目录是 advisory：未列出 id 仍原样传递）；旧逻辑父会话空闲时 provider 空导致 plannerModel 永不生效 | index.js resolvePlannerEntry 注释 |
+| 模型目录 | plannerModel 解析不依赖目录「命中」作生效前提；目录仅作降级判定启发式：清单非空且未命中→静默降级主会话模型；清单空/取不到目录→保守沿用并落诊断（目录是 advisory：未列出 id 仍原样传递；旧逻辑父会话空闲时 provider 空导致 plannerModel 永不生效） | index.js resolvePlannerEntry 注释 + decidePlannerModelUse |
 | 启动预锁 | 不引入启动预锁（启动即重活拖慢会话启动，快通道教训） | index.js 头部注释（约 L74） |
 | PTC×锚定 | ptc 模式 wireSchemas 塌缩为仅 [run_code]，锚定钩子凭 shell 判定 catalog 无 shell → 曾静默跳过（首轮全量 persona+SDK bindings 暴露引发模型误判直调 glob）；2026-09-06 修复：目录含 run_code 亦锚定（无 shell 分支 keep 并入 run_code；有 shell 时 run_code 仍滤除；无 shell 无 run_code 维持跳过+警告） | index.js 头注释（约 L62-64）+ 锚定钩子注释（L2575 附近） |
 | 多调用容错 | run_code ≥2 个 tools.* 调用点未独立容错 → 组判定整体拒绝；一个 try 块包 2 个调用不算各自独立保护 | index.js runCodeCatchGateReason 注释 |
 | 被拒不烧预算 | pre-execute deny 的 tool/result 无 data.error（仅 HarnessError 有 .info），成功配对须按块级 isError 排除，否则被拒调用计入探查预算 | index.js toolCallCount 注释 |
-| 探查者级联中止 | planner 轮次结束→activation dispose→jobs-local owner 级联取消 one-shot 探查者 job（owner disposed）；extra-plan 侧只能告警+文档说明，根治需官方包配合 | index.js probeDisposalWarning 注释 |
-| runcodeCatchGate 开关 | 教学文案螺旋时用户可关闸退避；开关仅影响多调用容错检查，不影响其它闸门 | index.js runCodeGroupDenyReason runcodeCatchGate 注释 |
+| 探查者级联中止 | planner 派探查者曾因引擎 owner 级联取消而全部丢失（planner 轮次结束→activation dispose→jobs-local 取消 one-shot 探查者 job，owner disposed）→ **已改为禁止 planner 委派探查者**（闸门 subagentProbeGateReason 拒绝 planner，文案指向「申请继续探查」），委派权收归主会话；历史备注：若将来放开并行派探查，候选 A（引擎侧 stateOf 计入 job）/候选 B（探查者 job 改挂主会话 owner）均需官方包配合 | index.js subagentProbeGateReason/probeDisposalWarning 注释 |
+| runcodeCatchGate 开关 | 教学文案螺旋时用户可关闸退避；开关仅影响多调用容错检查，不影响其它闸门（2026-09-10 全仓核实：唯一读点 L2312；ask 返回值白名单 L2269、单实例子调用上限 exploreBudget、预算耗尽白名单、job_output 禁 wait 均不受本开关控制；执行者 L3448 豁免） | index.js runCodeGroupDenyReason runcodeCatchGate 注释 + L2269/L2312/L3448 |
 | safe 白名单 | 形态匹配（任意命名）兼顾 AI 可写性与防绕性（参数/回调内新增调用点仍被独立计数）；逐字模板对 AI 实际写法过脆 | index.js runCodeCatchGateReason safe 注释 |
 | 容器计费 | run_code 子调用（code-dispatch）不再计入 planner 预算：toolCallCount 删除嵌套分支；预算检查用 isRunCodeSubCall（exec.parent!==undefined）跳过子调用 | index.js toolCallCount 注释 |
 | 实例上限 | 静态计数防不住循环放大（1 点=计 1）：运行时按 rootCallId 内存 Map 聚合，超 exploreBudget 拒 | index.js runCodeDispatchGateReason 注释 |
+| 代码地图维护 | 地图是 AI 的「第一眼落点」：**人工段管语义、机器段管行号**——头部「意图速查」写 意图词→函数名、**故意不写行号**（人工段行号必漂移），引用的函数名失效由脚本报 [导航失效]；覆盖口径用**形态规则**（任意缩进的 `function NAME` / `const NAME = (…) =>` / `= function`）取代「缩进代理」，并**不做例外清单**（接受清单/排除清单均已删）；文本推断的天花板（正则字面量里的引号毁掉遮罩、无花括号多行箭头区间越界、同名函数描述串位）由 `pe-test/_maptest` 三个夹具固化回归，运行时计数器只报实现层漏检；「改完忘同步」由 `--check`（一键体检内置，不写盘）判红 | pe-test/tools/代码地图生成.mjs 头注释 + pe-test/docs/ai-维护手册.md |
 
 ---
 

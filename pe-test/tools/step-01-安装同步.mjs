@@ -79,6 +79,15 @@ try {
   check('相同 hash 收敛 → idle', syncPreset(home) === 'idle')
   const afterIdle = [readFileSync(join(dist, 'preset.yml')), readFileSync(join(dist, 'agent.cordis.yml')), readFileSync(join(dist, 'dist-manifest.json'))]
   check('idle 三个核心字节完全不变且 readManifest 正确', beforeIdle.every((value, index) => value.equals(afterIdle[index])) && readManifest(dist) === currentHash)
+
+  // T4：旧值 plannerModel 为空串（显式清空）→ captured → restored，写回 '' 且不回填资产默认
+  writeFileSync(join(dist, 'agent.cordis.yml'), patchAgent({ plannerModel: '' }), 'utf8')
+  writeManifest(dist, 'OLD-EMPTY-PLANNER-MODEL')
+  check('旧值空串 → upgraded', syncPreset(home) === 'upgraded')
+  const emptyManifest = manifestAt(dist)
+  const emptyAgentText = readFileSync(join(dist, 'agent.cordis.yml'), 'utf8')
+  check('空串旧值 restored 且写回 plannerModel: \'\'（不删行、不回填 deepseek-v4-pro）', emptyManifest.settingsMigration.results.plannerModel === 'restored' && emptyAgentText.includes("plannerModel: ''") && !emptyAgentText.includes('plannerModel: deepseek-v4-pro'))
+  check('空串迁移后 manifest 仍为厂商 hash/format=2', emptyManifest.format === 2 && emptyManifest.distHash === currentHash && emptyManifest.settingsMigration.source === 'captured')
 } finally {
   rmSync(work, { recursive: true, force: true })
 }

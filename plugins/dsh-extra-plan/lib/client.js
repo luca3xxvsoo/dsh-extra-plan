@@ -14,6 +14,7 @@ window.__ModuleLoader__.load({
       cardDescription: "配置 pro 规划模块的参数。",
       proSection: "pro规划模块",
       plannerModel: "使用模型",
+      plannerModelHint: "留空 = 继承主会话模型",
       plannerPromptSuffix: "额外引导",
       exploreBudget: "探查额度",
       anchoredBootstrap: "anchored开关",
@@ -38,6 +39,7 @@ window.__ModuleLoader__.load({
       cardDescription: "Configure pro planner settings.",
       proSection: "Pro Planner",
       plannerModel: "Planner Model",
+      plannerModelHint: "Leave empty to inherit the main-session model",
       plannerPromptSuffix: "Extra Prompt Suffix",
       exploreBudget: "Explore Budget",
       anchoredBootstrap: "Anchored Bootstrap",
@@ -230,7 +232,10 @@ window.__ModuleLoader__.load({
           }
           return el("label", { className: "esp-field", key: key },
             el("span", { className: "esp-label" }, t(field.locale)),
-            control
+            control,
+            // T4：plannerModel 留空 = 显式清空 = 继承主会话模型（其余字段无此语义，只在
+            // 该字段下渲染提示；字段 key/locale 同名 plannerModel，见描述表）。
+            field.locale === "plannerModel" ? el("p", { className: "esp-hint" }, t("plannerModelHint")) : null
           );
         }
 

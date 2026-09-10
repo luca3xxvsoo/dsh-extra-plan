@@ -28,6 +28,8 @@ const AUTO = [
   ['step-01-qqbot-安装映射.mjs', true, ''],
   ['step-04-路由与写闸门.mjs', true, ''],
   ['step-06-线索落盘.mjs', true, ''],
+  // 代码地图一致性（--check：不写盘；地图过期/漏检/导航失效 → 退出码 1）
+  ['代码地图生成.mjs', true, '', ['--check']],
 ]
 
 // 人眼项: [文件, 参数说明] — 无断言，需人工判读输出
@@ -49,7 +51,7 @@ function parseResult(out) {
   return { pass: Number(m[1]), fail: Number(m[2]) }
 }
 
-function runOne(file) {
+function runOne(file, extraArgs) {
   // Windows 沙箱禁止子进程 stdout/stderr 管道；用系统临时文件保留原有取证语义。
   const captureDir = mkdtempSync(join(tmpdir(), 'dsh-pe-test-auto-'))
   const stdoutPath = join(captureDir, 'stdout.log')
@@ -58,7 +60,8 @@ function runOne(file) {
   const stderrFd = openSync(stderrPath, 'w')
   let r
   try {
-    r = spawnSync(process.execPath, [join(HERE, file)], {
+    const argv = [join(HERE, file)].concat(Array.isArray(extraArgs) ? extraArgs : [])
+    r = spawnSync(process.execPath, argv, {
       timeout: 120000,
       stdio: ['ignore', stdoutFd, stderrFd],
     })
@@ -69,7 +72,7 @@ function runOne(file) {
   const out = readFileSync(stdoutPath, 'utf8') + readFileSync(stderrPath, 'utf8')
   rmSync(captureDir, { recursive: true, force: true })
   const stats = parseResult(out)
-  const failLines = String(out).split('\n').filter((l) => l.includes('FAIL') || l.includes('Error:')).slice(0, 8)
+  const failLines = String(out).split('\n').filter((l) => l.includes('FAIL') || l.includes('Error:') || l.includes('地图与代码不一致') || l.includes('疑似漏检') || l.includes('导航失效')).slice(0, 8)
   return { status: r.status, stats, failLines, error: r.error }
 }
 
@@ -123,13 +126,13 @@ function main() {
   let autoFail = 0
   let skipRepo = 0
   lines.push('## 一、自动判定项')
-  for (const [file, needRepo, known] of AUTO) {
+  for (const [file, needRepo, known, extraArgs] of AUTO) {
     if (needRepo && !FULL_DIR) {
       skipRepo += 1
       lines.push(`| ${file} | 未执行 | 需完整目录 | ${known || '—'} |`)
       continue
     }
-    const r = runOne(file)
+    const r = runOne(file, extraArgs)
     if (r.error !== undefined) {
       skipRepo += 1
       lines.push(`| ${file} | 未执行 | 运行环境受限（spawn 失败: ${String(r.error.code || r.error.message).slice(0, 40)}） | ${known || '—'} |`)

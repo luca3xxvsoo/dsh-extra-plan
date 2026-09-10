@@ -205,8 +205,9 @@ try {
     return value.kind === 'ok' && value.value === (item.key === 'plannerModel' ? newValues.plannerModel : newValues[item.key])
   }))
 
+  // T4：plannerModel 空白/空串已合法（显式清空=继承主会话模型），移出非法值表；
+  // 其正例在同段末尾单独断言（PUT 200 + GET 回显空串 + 文件写回空串标量）。
   const invalidBodies = [
-    ['plannerModel 空白', { plannerModel: '   ' }],
     ['exploreBudget 0', { exploreBudget: 0 }],
     ['plannerPromptSuffix 非 string', { plannerPromptSuffix: 1 }],
     ['anchoredBootstrap string', { anchoredBootstrap: 'true' }],
@@ -218,8 +219,17 @@ try {
     check('pro 严格拒绝 ' + label, result.status === 400)
   }
 
+  // T4 正例：plannerModel 空串（显式清空 → 继承主会话模型）可保存且原样回显
+  const emptyPut = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { ...newValues, plannerModel: '' })
+  check('pro PUT plannerModel:"" → 200 且 values.plannerModel 为空串', emptyPut.status === 200 && valuesFrom(emptyPut.body).plannerModel === '')
+  const emptyGet = await requestJson(port, 'GET', '/api/dsh-extra-plan-settings/pro-config')
+  check('pro GET 回显 plannerModel 为空串（未被回填资产默认）', emptyGet.status === 200 && valuesFrom(emptyGet.body).plannerModel === '')
+  const emptyText = readFileSync(join(presetDir, 'agent.cordis.yml'), 'utf8')
+  check('空串写回 plannerModel: \'\' 标量行（键保留、不删行、不回填默认值）', emptyText.includes("plannerModel: ''") && !emptyText.includes('plannerModel: deepseek-v4-pro'))
+
   const clientText = readFileSync(new URL('../../plugins/dsh-extra-plan/lib/client.js', import.meta.url), 'utf8')
   check('client 按 metadata 渲染控件且无硬编码模板路径/默认/枚举值', clientText.includes('setFields(fields)') && clientText.includes('field.options') && clientText.includes('field.min') && !clientText.includes('agent.cordis.yml') && !clientText.includes('value: "native"') && !clientText.includes('value: "ptc"') && !clientText.includes(': 18'))
+  check('client plannerModel 字段带「留空 = 继承主会话模型」提示（T4）', clientText.includes('plannerModelHint') && clientText.includes('留空 = 继承主会话模型'))
 } catch (error) {
   fail += 1
   console.error('FAIL  设置页 HTTP 回归异常: ' + String(error && error.stack || error))

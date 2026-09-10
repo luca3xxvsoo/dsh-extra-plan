@@ -1,7 +1,7 @@
 # 按需规划模式 — 项目概览
 
 > AI 每次动手前速读：项目是什么、五角色、文件职责（改哪里）。函数级定位用 ai-代码地图.md。
-> **改完必做**：node pe-test/tools/代码地图生成.mjs（同步地图+补描述，流程见 ai-维护手册.md）。
+> **改完必做**：node pe-test/tools/代码地图生成.mjs（同步地图+补描述，流程见 ai-维护手册.md）。一键体检已内置 `--check` 一致性检查（不写盘）：地图过期/漏检/导航失效 → 该项判红。
 
 ## 项目一句话
 dsh 插件「按需规划模式」预设：AI 未经用户同意只能只读探查，经路由/澄清/批准三级机械闸门后按规划执行。五角色分工保证「用户确认 → 规划 → 执行 → 验收」闭环。
@@ -11,7 +11,7 @@ dsh 插件「按需规划模式」预设：AI 未经用户同意只能只读探�
 ## 五角色
 1. 主会话：用户交互入口、需求接收、复杂度评估、路由确认、任务分派、计划展示、验收汇总
 2. 探查者：后台批量只读探查、save_probe 落盘【含证据报告】、回主会话只给路径+2-3 行摘要
-3. 规划子代理：只读探查 + save_plan 落盘「方案+验收标准」双文件；探查预算硬上限；continuable 可续轮
+3. 规划子代理：只读探查（**不得委派探查者**，缺信息走「申请继续探查」交主会话）+ save_plan 落盘「方案+验收标准」双文件；探查预算硬上限；continuable 可续轮
 4. 执行者：按方案+验收文件机械执行、逐项自验证；one-shot 后台
 5. 验收者：只读验收文件逐条机械核对；one-shot 后台
 
@@ -20,21 +20,21 @@ dsh 插件「按需规划模式」预设：AI 未经用户同意只能只读探�
 |:--|:--|:--|
 | 三级闸门状态机+主闸门 | plugins/dsh-extra-plan/index.js | 修改最频繁（route/clarified/approved/channelBroken） |
 | 探查预算 | index.js budget* 族（budgetNoticeText/budgetReminderText/budgetExhaustedReason 等） | 开局告知/剩3提醒/耗尽往返 |
-| save_probe/save_plan 工具 | index.js 落盘族（validateProbe/renderProbeMarkdown/atomicCommit/recoverJournals/defineSavePlan 等） | 双写+journal 自愈 |
+| save_probe/save_plan 工具 | index.js 落盘族（validateProbe/renderProbeMarkdown/atomicCommit/recoverJournals/defineSavePlan 等） | 双写+journal 自愈；save_plan 注册于规划子代理层+主会话层（主会话仅 direct 路由放行，T3） |
 | run_code 静态拆解组判定 | index.js decomposeRunCode/runCodeGroupDenyReason | 防绕道闸门 |
 | run_code 容错检查 | index.js runCodeCatchGateReason/runCodeDispatchGateReason（开关 cfg.runcodeCatchGate 默认 false） | 多调用独立容错硬闸门（try/allSettled/.catch/safe 白名单；教学式拒绝）+ 单实例子调用上限=exploreBudget |
 | anchored 引导 | index.js system-prompt/assemble 钩子（约 L2580；isBootstrapPhase/keep 构造） | 首轮极简 persona/目录收窄；ptc 兼容（目录含 run_code 亦锚定；有 shell 时滤 run_code） |
 | 探查者模型注入 | index.js resolveProbeRequestInjection | 上溯父会话配置 |
 | 设置页后端 API | lib/settings.js（createApiHandler 等） | 仅本机环回 |
-| 设置页前端 UI | lib/client.js | 打包器（__ModuleLoader__）格式，无函数级索引 |
+| 设置页前端 UI | lib/client.js | 打包器（__ModuleLoader__）格式；**已按函数级索引**（apply/ProConfigTab/ExtraPlanCard 等，2026-09-10 起） |
 | 预设自愈核对 | lib/preset-sync.js | 启动时 hash 比对下发 |
 | 执行者工具裁剪 | lib/executor-spawn.js | E8：覆盖 workflow/ralph worker |
 | 预设本体（persona/deny/descriptor） | assets/presets/extra-plan/agent.cordis.yml | 改预设=改这里（复制副本再改） |
 | qqbot 自愈 | plugins/dsh-qqbot-user-questions/（精简版：lib/heal.mjs + scripts/heal.mjs） | 启动/安装时补 code-runtime/agent-presets 行 + @local 建链；不含问答/审批 |
-| 代码地图 | pe-test/docs/ai-代码地图.md + pe-test/tools/代码地图生成.mjs | 函数级索引+增量同步 |
+| 代码地图 | pe-test/docs/ai-代码地图.md + pe-test/tools/代码地图生成.mjs | 头部「意图速查」= 人工段（脚本原样保留、校验引用函数名）；函数索引 = 机器段（行号/增删）；`--check` 一致性门槛；覆盖口径 = 任意缩进的命名函数定义 |
 
 ## 模块关系（数据流）
-用户需求 → 主会话（只读探查理解）→ 判据（主会话直查 or 委派探查者 save_probe 线索）→ 路由确认 → pro 规划（澄清 → save_probe 线索 → 规划子代理 save_plan 双文件）→ 用户批准 → 执行者（按方案改）→ 验收者（逐条核对）→ 主会话汇总 → **用户部署生产环境 → 用户实测闭环**（部署动作由用户执行；AI 在验收通过前不得执行生产环境同步/部署动作）；「直接执行」路径跳过规划环节。
+用户需求 → 主会话（只读探查理解）→ 判据（主会话直查 or 委派探查者 save_probe 线索）→ 路由确认 → pro 规划（澄清 → save_probe 线索 → 规划子代理 save_plan 双文件；planner 申请继续探查 → 主会话再探查/委派探查者 → 转达线索路径 → 预算重置继续）→ 用户批准 → 执行者（按方案改）→ 验收者（逐条核对）→ 主会话汇总 → **用户部署生产环境 → 用户实测闭环**（部署动作由用户执行；AI 在验收通过前不得执行生产环境同步/部署动作）；「直接执行」路径跳过规划环节。
 
 ## 运行时相关
 - web 直接核心包安装经 dsh plugin add + cordis.patch.yml（host 平面行：extra-plan-settings 设置页 API、extra-plan-preset-sync 预设自愈）

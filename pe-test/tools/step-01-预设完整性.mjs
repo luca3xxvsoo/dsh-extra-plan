@@ -111,13 +111,16 @@ if (probeRow !== undefined && probeRow.config.backgroundMode === 'one-shot' && p
   console.log('FAIL  subagent_probe 行缺失或配置不完整')
 }
 const pluginRow = all.find((row) => row.name === '@local/dsh-extra-plan')
-const plannerModel = pluginRow !== undefined && pluginRow.config && typeof pluginRow.config.plannerModel === 'string' ? pluginRow.config.plannerModel : ''
-if (planRow !== undefined && plannerModel !== '') {
+// T4：plannerModel 允许置空（空串 = 继承主会话模型）；键存在且为 string 即合法，
+// 不再要求非空（禁止项：空串误报为配置缺失回填资产默认）。
+const plannerModelRaw = pluginRow !== undefined && pluginRow.config ? pluginRow.config.plannerModel : undefined
+const plannerModel = typeof plannerModelRaw === 'string' ? plannerModelRaw : ''
+if (planRow !== undefined && typeof plannerModelRaw === 'string') {
   pass += 1
-  console.log('PASS  subagent_plan 行存在、plannerModel 已配置（=' + plannerModel + '）')
+  console.log('PASS  subagent_plan 行存在、plannerModel 键为 string（=' + (plannerModel === '' ? '空串=继承主会话模型' : plannerModel) + '）')
 } else {
   fail += 1
-  console.log('FAIL  subagent_plan 行或 plannerModel 配置缺失')
+  console.log('FAIL  subagent_plan 行或 plannerModel 键缺失（须为 string，可为空串）')
 }
 if (pluginRow !== undefined && pluginRow.config && pluginRow.config.usageLedger && pluginRow.config.usageLedger.enabled === true && pluginRow.config.anchoredBootstrap === true && typeof pluginRow.config.plannerPromptSuffix === 'string') {
   pass += 1
@@ -125,6 +128,19 @@ if (pluginRow !== undefined && pluginRow.config && pluginRow.config.usageLedger 
 } else {
   fail += 1
   console.log('FAIL  extra-plan 插件行 config 缺失')
+}
+
+// T1 禁止项：本修复走宿主 patch（dsh-qqbot-user-questions/cordis.patch.yml 补
+// cordis-host-runner 行），资产预设的 tool-cordis 行必须逐字未变（仅 id + name 两行、无 config）。
+const toolCordisRow = all.find((row) => row.id === 'tool-cordis')
+const toolCordisTextRe = /- id: tool-cordis\n  name: '@deepseek-ai\/dsh-tool-cordis'(?:\n|$)/
+if (toolCordisRow !== undefined && toolCordisRow.name === '@deepseek-ai/dsh-tool-cordis' && toolCordisRow.config === undefined
+  && toolCordisTextRe.test(agentText)) {
+  pass += 1
+  console.log('PASS  T1 资产预设 tool-cordis 行逐字未变（仅 id+name 两行、无 config）')
+} else {
+  fail += 1
+  console.log('FAIL  T1 资产预设 tool-cordis 行被改动或形状不符')
 }
 
 console.log('\n通过 ' + pass + ', 失败 ' + fail)

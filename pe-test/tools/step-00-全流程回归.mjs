@@ -41,6 +41,7 @@ const {
   codeMutationHints,
   decomposeRunCode,
   runCodeGroupDenyReason,
+  askUserQuestionReturnGateReason,
   deriveFlowState,
   plannerChildIdsOf,
   toolCallCount,
@@ -66,6 +67,7 @@ const {
   renderProbeMarkdown,
   extractProbeEvidenceRefs,
   resolveProbeRequestInjection,
+  decidePlannerModelUse,
 } = plugin.decisions
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 
@@ -314,8 +316,11 @@ for (const [name, got, expected] of BN) {
 }
 check('BN9 双块第一块已含告知 → 不重复拼', JSON.stringify(withBudgetNotice({ source: { kind: 'user' }, content: [{ type: 'text', text: 'a\n\n' + NOTICE18 }, { type: 'text', text: 'b' }] }, NOTICE18)), JSON.stringify({ source: { kind: 'user' }, content: [{ type: 'text', text: 'a\n\n' + NOTICE18 }, { type: 'text', text: 'b' }] }))
 check('BN10 content 无 text 块 → 原样', JSON.stringify(withBudgetNotice({ source: { kind: 'user' }, content: [{ type: 'image' }] }, NOTICE18)), JSON.stringify({ source: { kind: 'user' }, content: [{ type: 'image' }] }))
-check('BN7 budgetNoticeText(18) 全文等值', NOTICE18, '本轮探查预算上限为 18 次工具调用。探查时 ≥ 2 个独立方向建议优先用 subagent_probe 并行多派探查者。预算耗尽时输出「申请继续探查：<待查项> — <原因>」，主会话将探查待查项并转达线索文件路径，你读取线索继续工作。探查完成后直接调用 save_plan 落盘（系统会自动检测未探查项）')
-check('BN8 budgetNoticeText(12) 全文等值', NOTICE12, '本轮探查预算上限为 12 次工具调用。探查时 ≥ 2 个独立方向建议优先用 subagent_probe 并行多派探查者。预算耗尽时输出「申请继续探查：<待查项> — <原因>」，主会话将探查待查项并转达线索文件路径，你读取线索继续工作。探查完成后直接调用 save_plan 落盘（系统会自动检测未探查项）')
+// T5：预算告知第 2 句由「优先用 subagent_probe 并行多派探查者」改为「自行 read/glob/grep
+// 分批核对 + 缺信息走申请继续探查」（planner 不得委派探查者），BN7/BN8 全文等值锁定新文案。
+check('BN7 budgetNoticeText(18) 全文等值', NOTICE18, '本轮探查预算上限为 18 次工具调用。探查时 ≥ 2 个独立方向自行 read/glob/grep 分批核对；缺信息时输出「申请继续探查：<待查项> — <原因>」交主会话委派探查者。预算耗尽时输出「申请继续探查：<待查项> — <原因>」，主会话将探查待查项并转达线索文件路径，你读取线索继续工作。探查完成后直接调用 save_plan 落盘（系统会自动检测未探查项）')
+check('BN8 budgetNoticeText(12) 全文等值', NOTICE12, '本轮探查预算上限为 12 次工具调用。探查时 ≥ 2 个独立方向自行 read/glob/grep 分批核对；缺信息时输出「申请继续探查：<待查项> — <原因>」交主会话委派探查者。预算耗尽时输出「申请继续探查：<待查项> — <原因>」，主会话将探查待查项并转达线索文件路径，你读取线索继续工作。探查完成后直接调用 save_plan 落盘（系统会自动检测未探查项）')
+check('BN7b 新文案含「自行 read/glob/grep 分批核对」，不再含「建议优先用 subagent_probe 并行多派探查者」', NOTICE18.includes('自行 read/glob/grep 分批核对') && !NOTICE18.includes('建议优先用 subagent_probe 并行多派探查者') && NOTICE18.includes('申请继续探查'), true)
 
 // ── BR 系列:budgetReminderText / budgetReminderMessage / budgetReminderSent ──
 const REMIND3 = budgetReminderText(3, 18, BUDGET_REMINDER_THRESHOLD)
@@ -551,6 +556,22 @@ const RP = [
 ]
 for (const [name, fn, expected] of RP) { check(name, await fn(), expected) }
 
+// ── PM 系列:decidePlannerModelUse（T2 静默降级判定纯函数） ─────────────────
+// provider 目录只作降级启发式：目录成功且清单非空且未命中 → 静默降级（继承主会话模型）；
+// 清单为空 / 查询抛错（NO_ADAPTER）/ 取不到 llm → 保守沿用（advisory 语义，防误杀
+// 未实现发现能力的适配器）；provider 无值与 plannerModel='' → 沿用/继承，均不落诊断。
+const CAT_OK = (ids) => ({ kind: 'ok', ids })
+const PM = [
+  ['PM1 命中（目录非空且含该模型）→ 用 plannerModel', decidePlannerModelUse('deepseek-v4-pro', 'deepseek-official', CAT_OK(['deepseek-flash', 'deepseek-v4-pro'])), { use: true, degraded: false, diag: null, reason: 'catalog-hit' }],
+  ['PM2 未命中+清单非空 → 不覆盖（静默降级 inherit-parent）', decidePlannerModelUse('gpt-5.6-terra', 'deepseek-official', CAT_OK(['deepseek-flash', 'deepseek-v4-pro'])), { use: false, degraded: true, diag: 'inherit-parent', reason: 'catalog-miss' }],
+  ['PM3 清单空 → 沿用（空清单≠不可用）', decidePlannerModelUse('gpt-5.6-terra', 'deepseek-official', { kind: 'empty' }), { use: true, degraded: false, diag: 'keep-planner-model', reason: 'catalog-empty' }],
+  ['PM4 目录查询抛错（NO_ADAPTER）→ 沿用', decidePlannerModelUse('gpt-5.6-terra', 'deepseek-official', { kind: 'error' }), { use: true, degraded: false, diag: 'keep-planner-model', reason: 'catalog-error' }],
+  ['PM4b 取不到 llm 服务 → 沿用', decidePlannerModelUse('gpt-5.6-terra', 'deepseek-official', { kind: 'no-llm' }), { use: true, degraded: false, diag: 'keep-planner-model', reason: 'catalog-unavailable' }],
+  ['PM5 provider 无值（父会话空闲）→ 沿用且不落诊断', decidePlannerModelUse('deepseek-v4-pro', undefined, { kind: 'no-llm' }), { use: true, degraded: false, diag: null, reason: 'no-provider' }],
+  ['PM6 plannerModel 空串（T4 置空=继承主会话）→ 不覆盖', decidePlannerModelUse('', 'deepseek-official', CAT_OK(['deepseek-v4-pro'])), { use: false, degraded: false, diag: null, reason: 'empty-config' }],
+]
+for (const [name, got, expected] of PM) check(name, got, expected)
+
 // ── AS 系列:pre-execute 整链（mock ctx 走插件 apply；harness 模式同 step-04 L92-106/L140-144） ──
 function makeAskHarness() {
   const listeners = {}
@@ -699,6 +720,30 @@ for (const [name, code, expected] of H) {
   check(name, codeMutationHints(code), expected)
 }
 
+// ── ASK 系列:ask_user_question 返回值白名单纯函数（任务1/2） ─────────────
+const ASK_RETURN = [
+  ['AR1 无 ask 源码 → null', 'const x = 1', null],
+  ['AR2 直接 return-await → null', 'return await tools.ask_user_question({})', null],
+  ['AR3 单变量 JSON.stringify 且按边界引用 → null', 'const q = await tools.ask_user_question({}); return JSON.stringify({ question: q })', null],
+  ['AR4 裸 await → 拒绝', 'await tools.ask_user_question({})', 'deny'],
+  ['AR5 只赋值不返回 → 拒绝', 'const q = await tools.ask_user_question({})', 'deny'],
+  ['AR6 return 未按边界引用 q → 拒绝', 'const q = await tools.ask_user_question({}); return JSON.stringify({ question: qq })', 'deny'],
+  ['AR7 console.log 消费 ask → 拒绝', 'console.log(await tools.ask_user_question({}))', 'deny'],
+  ['AR8 .then 包装 → 拒绝', 'return await tools.ask_user_question({}).then((x) => x)', 'deny'],
+  ['AR9 工具别名 → 拒绝', 'const ask = tools.ask_user_question; return await ask({})', 'deny'],
+  ['AR10 动态工具访问 → 拒绝', "const name = 'ask_user_question'; return await tools[name]({})", 'deny'],
+  ['AR11 动态复杂包装 → 拒绝', 'return await Promise.resolve(tools.ask_user_question({}))', 'deny'],
+  ['AR12 字符串/注释中的 ask 不触发', "const s = 'tools.ask_user_question({})'; // tools.ask_user_question({})", null],
+]
+for (const [name, code, expected] of ASK_RETURN) {
+  const got = askUserQuestionReturnGateReason(code)
+  const okResult = expected === null
+    ? got === null
+    : typeof got === 'string' && got.includes('return await tools.ask_user_question(...)') && got.includes('const q = await tools.ask_user_question(...); return JSON.stringify({ question: q })')
+  if (okResult) { pass += 1 } else { fail += 1 }
+  console.log((okResult ? 'PASS' : 'FAIL') + '  ' + name + '  (期望 ' + JSON.stringify(expected) + ', 实际 ' + JSON.stringify(got) + ')')
+}
+
 // ── I 系列:runCodeGroupDenyReason 主会话组判定（F7' v4:拆解 → 组判定 → 聚合） ──
 const readOnlyCodeFx = "await readFileSync('x', 'utf8')"
 const writeCodeFx = "await writeFileSync('x', '1')"
@@ -720,6 +765,23 @@ for (const [name, code, state, expected] of I) {
   const okResult = expected === null ? got === null : typeof got === 'string' && expected.every((s) => got.includes(s))
   if (okResult) { pass += 1 } else { fail += 1 }
   console.log(`${okResult ? 'PASS' : 'FAIL'}  ${name}  (期望 ${JSON.stringify(expected)}, 实际 ${JSON.stringify(got)})`)
+}
+
+// ── ASK-G 系列:主会话组判定硬闸门（与 runcodeCatchGate 解耦） ─────────────
+const ASK_GROUP = [
+  ['AG1 main+runcodeCatchGate:false 裸 await ask → 聚合拒绝', 'await tools.ask_user_question({})', { runcodeCatchGate: false }, 'deny'],
+  ['AG2 main+runcodeCatchGate 缺省裸 await ask → 聚合拒绝', 'await tools.ask_user_question({})', {}, 'deny'],
+  ['AG3 main 直接 return-await ask → 放行(null)', 'return await tools.ask_user_question({})', {}, null],
+  ['AG4 main 单变量 JSON.stringify ask → 放行(null)', 'const q = await tools.ask_user_question({}); return JSON.stringify({ question: q })', {}, null],
+  ['AG5 planner 不接入 ask 返回值门 → 放行(null)', 'await tools.ask_user_question({})', {}, null, { kind: 'planner' }],
+]
+for (const [name, code, gateCtx, expected, role] of ASK_GROUP) {
+  const got = runCodeGroupDenyReason(undefined, { arguments: { code } }, role !== undefined ? role : { kind: 'main' }, gateCtx)
+  const okResult = expected === null
+    ? got === null
+    : typeof got === 'string' && got.includes('return await tools.ask_user_question(...)') && got.includes('const q = await tools.ask_user_question(...); return JSON.stringify({ question: q })')
+  if (okResult) { pass += 1 } else { fail += 1 }
+  console.log((okResult ? 'PASS' : 'FAIL') + '  ' + name + '  (期望 ' + JSON.stringify(expected) + ', 实际 ' + JSON.stringify(got) + ')')
 }
 
 // ── J 系列:decomposeRunCode 拆解器（F7' v4 静态预审，返回 {members,dynamic} 全文） ──
@@ -765,5 +827,5 @@ for (const [name, role, code, expected, gateCtx] of K) {
   console.log(`${okResult ? 'PASS' : 'FAIL'}  ${name}  (期望 ${JSON.stringify(expected)}, 实际 ${JSON.stringify(got)})`)
 }
 
-console.log(`\n通过 ${pass}/${KA.length + M.length + F.length + GK.length + GM.length + F21.length + GL.length + SW.length + P.length + C.length + CU.length + AP.length + BN.length + 5 + BR.length + DR.length + BD.length + BE.length + S.length + 1 + PW.length + 2 + D.length + 3 + 3 + PR.length + 7 + 5 + E.length + RP.length + LQ.length + AS.length + FC.length + PC.length + CC.length + CUCODE.length + CLC.length + H.length + I.length + J.length + K.length + IS.length + SCD.length + DG.length}, 失败 ${fail}`)
+console.log(`\n通过 ${pass}/${KA.length + M.length + F.length + GK.length + GM.length + F21.length + GL.length + SW.length + P.length + C.length + CU.length + AP.length + BN.length + 5 + BR.length + DR.length + BD.length + BE.length + S.length + 1 + PW.length + 2 + D.length + 3 + 3 + PR.length + 7 + 5 + E.length + RP.length + LQ.length + AS.length + FC.length + PC.length + CC.length + CUCODE.length + CLC.length + H.length + ASK_RETURN.length + I.length + ASK_GROUP.length + J.length + K.length + IS.length + SCD.length + DG.length + PM.length + 1}, 失败 ${fail}`)
 process.exit(fail === 0 ? 0 : 1)

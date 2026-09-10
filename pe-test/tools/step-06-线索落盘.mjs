@@ -1,8 +1,9 @@
 // save_probe 注册层 + 硬闸门五态 + planner 预算回归（v1 口径）验证（v3）：
-// ①注册层断言（mock ctx 走插件 apply：主会话 save_probe 幂等 / planner 只 save_plan /
-//   executor 均不注册）
+// ①注册层断言（mock ctx 走插件 apply：主会话 save_probe 幂等 + save_plan（T3）/
+//   planner save_plan / executor 均不注册）
 // ②pre-execute save_probe 五态闸门（none→deny、plan 未澄清→deny、plan 已澄清→allow、
 //   direct→deny、channelBroken→allow；deny 文案含「探查线索未放行」）
+// ②b pre-execute save_plan 五态闸门（T3，主会话：direct→allow，其余四态→deny）
 // ③planner 预算回归（v1 口径）：18 次成功配对耗尽后 read（含线索文件路径）仍 deny
 //   （reason 含「探查预算已耗尽」）、save_plan 仍 allow——不引入任何预算豁免。
 // ④执行层冒烟（真实落盘）：save_plan 双写 / save_probe 单写 + journal 双形状自愈。
@@ -36,6 +37,7 @@ const ok = (cid, text) => ({ type: 'tool/result', data: { message: { content: [{
 const err = (cid, code) => ({ type: 'tool/result', data: { error: { name: 'Error', ...(code === undefined ? {} : { code }) }, message: { content: [{ type: 'tool-result', toolCallId: cid, content: [] }] } } })
 const routeArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }] })
 const clarifyArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '方案A' }, { label: '方案B' }] }] })
+const approvalArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }] })
 const answer = (labels) => JSON.stringify({ answers: labels.map((l) => ({ id: 'q1', selected: [l] })) })
 
 // ── mock ctx harness（ctx.get 按 name==='tools' 返回注册表） ─────────────
@@ -85,7 +87,7 @@ fireSessionStart(harness, mainAgent)
 await firePreStep(harness, mainAgent)
 await firePreStep(harness, mainAgent) // 幂等：重复触发不重复注册
 check('S1 主会话注册恰一条 save_probe（幂等）', registered.filter((t) => t.name === 'save_probe').length, 1)
-check('S2 主会话不注册 save_plan', registered.filter((t) => t.name === 'save_plan').length, 0)
+check('S2 主会话注册 save_plan（T3：与 save_probe 同构；放行由 mainGateReason 按路由判定）', registered.filter((t) => t.name === 'save_plan').length, 1)
 
 registered.length = 0
 fireSessionStart(harness, plannerAgent)
@@ -110,6 +112,26 @@ for (const [name, events, expected] of FIVE) {
   const r = preExecute(harness, agent, 'save_probe', {})
   if (expected === 'deny') {
     checkTrue(`${name}`, r !== null && r !== undefined && r.kind === 'deny')
+  } else {
+    checkTrue(`${name}`, r !== null && r !== undefined && r.kind === 'allow')
+  }
+}
+
+// ── ②b pre-execute save_plan 路由矩阵（T3，主会话：仅 direct 放行） ─────────
+// 与上表同五态：direct→allow；none / plan 未澄清 / plan 已澄清 / approved→deny
+// （拒绝文案含「save_plan 仅允许在直接执行」与当前路由态）。
+const SAVE_PLAN_STATES = [
+  ['S28 主会话 route=direct → save_plan allow', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['直接执行']))], 'allow'],
+  ['S29 主会话 route=none → save_plan deny', [um()], 'deny'],
+  ['S30 主会话 route=plan 未澄清 → save_plan deny', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划']))], 'deny'],
+  ['S31 主会话 route=plan 已澄清 → save_plan deny', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A']))], 'deny'],
+  ['S32 主会话 route=approved → save_plan deny', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A'])), call('ask_user_question', 'a3', approvalArgs), ok('a3', answer(['同意执行']))], 'deny'],
+]
+for (const [name, events, expected] of SAVE_PLAN_STATES) {
+  const agent = { session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => events }, options: {}, ctx: agentCtx }
+  const r = preExecute(harness, agent, 'save_plan', { plan: 'p', checklist: 'c' })
+  if (expected === 'deny') {
+    checkTrue(`${name}（文案含「save_plan 仅允许在直接执行」）`, r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('save_plan 仅允许在直接执行') && String(r.reason).includes('当前路由态：'))
   } else {
     checkTrue(`${name}`, r !== null && r !== undefined && r.kind === 'allow')
   }

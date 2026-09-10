@@ -98,7 +98,9 @@ function manifestAt(dist) {
 check('白名单恰有 7 个稳定键', keys.length === 7 && keys.join('|') === expectedKeys.join('|'))
 check('locator 恰为稳定插件 id + config 路径', SETTING_DEFINITIONS.every((item) => item.path === 'config.' + (item.key === 'webFetch' ? 'fetch' : item.key === 'toolPresentationMode' ? 'mode' : item.key)))
 check('禁止项不在白名单且描述不可变', !keys.some((key) => ['approvalEnabled', 'bootstrapPersona', 'bootstrapShellTools', 'bootstrapCommonTools', 'planTool', 'savePlanDir', 'usageLedger', 'searchTimeoutMs'].includes(key)) && Object.isFrozen(SETTING_DEFINITIONS) && SETTING_DEFINITIONS.every((item) => Object.isFrozen(item)))
-check('validator 类型严格且 mode 三项来自描述表', definition('plannerModel').validator('  x  ') && !definition('plannerModel').validator('') && definition('exploreBudget').validator(1) && !definition('exploreBudget').validator('1') && TOOL_PRESENTATION_MODES.join('/') === definition('toolPresentationMode').ui.options.join('/'))
+// T4：plannerModel 放开为空串（空串=显式清空=继承主会话模型），空白串 normalize 后归一为 ''；
+// 非 string（数字等）仍非法——validator 的类型严格性由 !validator(123) 锁定。
+check('validator 类型严格且 mode 三项来自描述表', definition('plannerModel').validator('  x  ') && definition('plannerModel').validator('') && definition('plannerModel').normalize('   ') === '' && !definition('plannerModel').validator(123) && definition('exploreBudget').validator(1) && !definition('exploreBudget').validator('1') && TOOL_PRESENTATION_MODES.join('/') === definition('toolPresentationMode').ui.options.join('/'))
 check('公开 metadata 含 7 项、额度 min=1、控件与 locale', (() => {
   const metadata = publicSettingMetadata(assetAgent, assetAgent)
   const budget = metadata.fields.find((field) => field.key === 'exploreBudget')
@@ -155,8 +157,17 @@ const duplicateState = captureSettings(duplicate)
 const duplicatePatch = patchYamlScalar(duplicate, definition('plannerModel'), 'never-guess')
 check('重复 locator 标记歧义且禁止替换', duplicateState.states.plannerModel === 'ambiguous' && duplicatePatch.ok === false && duplicatePatch.reason === 'ambiguous')
 
+// T4 正例：空串与空白串均为合法旧值（captured + normalize 为 ''），移出非法值表。
+check('plannerModel 空串旧值 → captured 且值为空串', (() => {
+  const state = captureSettings(minimalYaml({ plannerModel: "''" }))
+  return state.states.plannerModel === 'captured' && state.values.plannerModel === ''
+})())
+check('plannerModel 空白串旧值 → captured 且 normalize 为空串', (() => {
+  const state = captureSettings(minimalYaml({ plannerModel: '"   "' }))
+  return state.states.plannerModel === 'captured' && state.values.plannerModel === ''
+})())
+
 const invalidCases = [
-  ['plannerModel 空白', 'plannerModel', '"   "'],
   ['plannerModel number', 'plannerModel', '123'],
   ['plannerModel null', 'plannerModel', 'null'],
   ['plannerPromptSuffix number', 'plannerPromptSuffix', '123'],

@@ -1,5 +1,13 @@
-# 精简版：仅自愈补行+mklink；问答/审批由 dsh-qqbot 0.5.0 原生承担。
+# 精简版：静态 insert 注册依赖+mklink；旧版错误块由 heal 迁移；问答/审批由 dsh-qqbot 0.5.0 原生承担。
 # 增加而不是覆盖
 - insert:
     - id: qqbot-user-questions
       name: '@local/dsh-qqbot-user-questions'
+    - id: code-runtime
+      name: '@deepseek-ai/dsh-code-runtime-worker-thread'
+    - id: agent-presets
+      name: '@deepseek-ai/dsh-agent-presets'
+      config:
+        default: extra-plan
+    - id: cordis-host-runner
+      name: '@deepseek-ai/dsh-cordis-host-runner'

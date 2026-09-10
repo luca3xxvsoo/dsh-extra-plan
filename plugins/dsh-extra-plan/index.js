@@ -44,12 +44,18 @@
 //     - 计划已批准（approved）：放行执行类委派（subagent/subagent_fork/
 //       workflow/ralph/subagent_review）与写工具；
 //     - send_message：完全放行（目标合法性由宿主校验；续轮转达语义不变）；
+//     - save_plan：主会话同注册，仅直行态（route==='direct'）放行；其余路由态
+//       返回拒绝文案（T3；内容闸门与规划子代理共用同一实现，强度一致）；
+//     - subagent_probe：仅主会话可委派（任意路由状态放行 + 固定后台）；规划子代理
+//       被闸门拒绝（T5，改用「申请继续探查」升级通道）；
 //     - 空白回复（answers:[]）/取消/中断/验词失败一律视为未确认；仅提问
 //       通道级错误码白名单逃生放行（防死锁，v11 口径）。
 //  2) 规划子代理（subagent_plan 创建、model=pro 的子会话）：
-//     - save_plan 工具只在此子会话注册（session-start 时注册到子代理层）；
-//     - save_probe 工具只注册在主会话层（session-start + pre-step 幂等兜底），
-//       规划子代理/执行者/reviewer 不可见；
+//     - save_plan 工具注册在此子会话与主会话层（session-start 时按
+//       isPlannerChild / 非子代理判定；主会话侧仅 direct 路由放行，见 1)）；
+//     - save_probe 工具注册在主会话层与已认领的探查子会话层（session-start +
+//       pre-step 幂等兜底；probe 子代理经放行-认领关联认领），规划子代理/执行者/
+//       reviewer 不可见；
 //     - 探查硬上限：自最近一条主会话发往本子代理的消息（初始任务
 //       kind=user / send_message 续轮转达 kind=agent-message；用户不直接对话
 //       子代理）起的 tool/call（含 save_plan）≥ exploreBudget 后拒绝后续
@@ -799,7 +805,7 @@ const BUDGET_REMINDER_THRESHOLD = 3
 
 // 预算告知文本：本轮探查预算上限为 {budget} 次工具调用。
 function budgetNoticeText(budget) {
-  return `本轮探查预算上限为 ${budget} 次工具调用。探查时 ≥ 2 个独立方向建议优先用 subagent_probe 并行多派探查者。预算耗尽时输出「申请继续探查：<待查项> — <原因>」，主会话将探查待查项并转达线索文件路径，你读取线索继续工作。探查完成后直接调用 save_plan 落盘（系统会自动检测未探查项）`
+  return `本轮探查预算上限为 ${budget} 次工具调用。探查时 ≥ 2 个独立方向自行 read/glob/grep 分批核对；缺信息时输出「申请继续探查：<待查项> — <原因>」交主会话委派探查者。预算耗尽时输出「申请继续探查：<待查项> — <原因>」，主会话将探查待查项并转达线索文件路径，你读取线索继续工作。探查完成后直接调用 save_plan 落盘（系统会自动检测未探查项）`
 }
 
 // 预算告知拼接：结构同 withPlannerPromptSuffix（kind 限定 user/coordinator/agent-message、
@@ -874,6 +880,21 @@ function timestamp() {
   const d = new Date()
   const pad = (n) => String(n).padStart(2, '0')
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
+}
+
+// 会话标识段（T3）：session header id 去除分隔符后前 8 位字母数字。单段、无连字符，
+// 便于按「时间戳前一段」识别；取不到 id（测试夹具/异常会话）→ ''（相关隔离随之关闭）。
+function sessionTagOf(sessionId) {
+  return typeof sessionId === 'string' ? sessionId.replace(/[^A-Za-z0-9]/g, '').slice(0, 8) : ''
+}
+
+// save_plan 文件名 base（T3）：任务短名（可空）+ 调用方会话标识段 + 本地时间戳。
+// T3 后主会话与规划子代理可同秒各落一份 save_plan：base 内嵌会话标识使文件名与
+// journal 名天然互不相同（跨角色同秒撞名不再可能）；journal 内容另存该标识供
+// recoverJournals 精确过滤（见 atomicCommit/recoverJournals）。
+function savePlanBase(nameSeg, sessionId) {
+  const tag = sessionTagOf(sessionId)
+  return (nameSeg === '' ? '' : nameSeg + '-') + (tag === '' ? '' : tag + '-') + timestamp()
 }
 
 // save_plan 结果的模型可见内容（v0.1.3 修复）：output.render 契约必须返回
@@ -1744,6 +1765,203 @@ function collectRunCodeSites(txt, msk) {
   return sites
 }
 
+// ask_user_question 返回值白名单（第一版）：只在主会话 run_code 预执行前做保守静态证明。
+// 允许直接 return await，或单一标识符接收后紧随顶层 return 且按标识符边界实际引用；其余一律拒绝。
+function askUserQuestionReturnGateReason(code) {
+  const text = typeof code === 'string' ? code : ''
+  if (text === '') return null
+  const masked = maskCodeLiteralsAndComments(text)
+  const reason = 'run_code 内 ask_user_question 返回值未通过返回值白名单：仅允许以下两种写法：return await tools.ask_user_question(...)；或 const q = await tools.ask_user_question(...); return JSON.stringify({ question: q })'
+  const isIdChar = (ch) => ch !== undefined && /[A-Za-z0-9_$]/.test(ch)
+  const skipWs = (value, start) => {
+    let i = start
+    while (i < value.length && /\s/.test(value[i])) i += 1
+    return i
+  }
+  const sites = collectRunCodeSites(text, masked)
+  const askSites = sites.filter((site) => site.name === ASK_TOOL)
+  const askStarts = new Set(askSites.map((site) => site.start))
+  let invalidReference = sites.some((site) => site.name === undefined)
+
+  // 任何静态属性引用但非调用、字面量方括号访问、动态方括号访问都不能证明是白名单形态。
+  let scan = 0
+  while (scan < masked.length) {
+    const idx = masked.indexOf('tools', scan)
+    if (idx === -1) break
+    if ((idx === 0 || !isIdChar(masked[idx - 1]))) {
+      let k = skipWs(masked, idx + 5)
+      if (masked[k] === '.') {
+        k = skipWs(masked, k + 1)
+        const m = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(masked.slice(k))
+        if (m !== null && m[0] === ASK_TOOL && !isIdChar(masked[k + m[0].length])) {
+          if (!askStarts.has(idx)) invalidReference = true
+        }
+      } else if (masked[k] === '[') {
+        let q = skipWs(text, k + 1)
+        if (text[q] === "'" || text[q] === '"') {
+          const quote = text[q]
+          let end = q + 1
+          while (end < text.length) {
+            if (text[end] === '\\') { end += 2; continue }
+            if (text[end] === quote) break
+            end += 1
+          }
+          if (text.slice(q + 1, end) === ASK_TOOL) invalidReference = true
+        } else {
+          invalidReference = true
+        }
+      }
+    }
+    scan = idx + 5
+  }
+
+  // bare ask 或非 tools 对象的属性调用同样属于别名/未知访问，不能放行。
+  scan = 0
+  while (scan < masked.length) {
+    const idx = masked.indexOf(ASK_TOOL, scan)
+    if (idx === -1) break
+    if ((idx === 0 || !isIdChar(masked[idx - 1])) && !isIdChar(masked[idx + ASK_TOOL.length])) {
+      let p = idx - 1
+      while (p >= 0 && /\s/.test(masked[p])) p -= 1
+      let direct = false
+      if (masked[p] === '.') {
+        p -= 1
+        while (p >= 0 && /\s/.test(masked[p])) p -= 1
+        const end = p
+        while (p >= 0 && isIdChar(masked[p])) p -= 1
+        direct = masked.slice(p + 1, end + 1) === 'tools'
+      }
+      if (!direct) invalidReference = true
+    }
+    scan = idx + ASK_TOOL.length
+  }
+  if (invalidReference && askSites.length === 0) return reason
+  if (invalidReference) return reason
+  if (askSites.length === 0) return null
+
+  // 仅在三种括号深度都为 0 时才把调用视为顶层语句中的调用。
+  const braceDepth = new Array(text.length + 1)
+  const parenDepth = new Array(text.length + 1)
+  const bracketDepth = new Array(text.length + 1)
+  let brace = 0
+  let paren = 0
+  let bracket = 0
+  for (let i = 0; i < masked.length; i += 1) {
+    braceDepth[i] = brace
+    parenDepth[i] = paren
+    bracketDepth[i] = bracket
+    if (masked[i] === '{') brace += 1
+    else if (masked[i] === '}') brace -= 1
+    else if (masked[i] === '(') paren += 1
+    else if (masked[i] === ')') paren -= 1
+    else if (masked[i] === '[') bracket += 1
+    else if (masked[i] === ']') bracket -= 1
+  }
+  braceDepth[text.length] = brace
+  parenDepth[text.length] = paren
+  bracketDepth[text.length] = bracket
+  const isTopLevel = (pos) => braceDepth[pos] === 0 && parenDepth[pos] === 0 && bracketDepth[pos] === 0
+  const candidateStarts = (pos) => {
+    const starts = [0]
+    for (let i = 0; i < pos; i += 1) {
+      if (masked[i] === ';' && isTopLevel(i)) starts.push(i + 1)
+      else if (masked[i] === '}' && isTopLevel(i + 1)) starts.push(i + 1)
+    }
+    return starts
+  }
+  const tokenAt = (value, pos, token) => value.slice(pos, pos + token.length) === token &&
+    (pos === 0 || !isIdChar(value[pos - 1])) && !isIdChar(value[pos + token.length])
+  const expressionEnd = (start) => {
+    for (let i = start; i < masked.length; i += 1) {
+      if (masked[i] === ';' && isTopLevel(i)) return i
+      if (masked[i] === '\n' && isTopLevel(i)) {
+        let k = skipWs(masked, i + 1)
+        if (/^(?:const|let|var|return|console|await|if|for|while|try|throw)\b/.test(masked.slice(k))) return i
+      }
+    }
+    return masked.length
+  }
+  const references = (expression, name) => {
+    let i = 0
+    while (i < expression.length) {
+      const idx = expression.indexOf(name, i)
+      if (idx === -1) return false
+      if ((idx === 0 || !isIdChar(expression[idx - 1])) && !isIdChar(expression[idx + name.length])) {
+        let p = idx - 1
+        while (p >= 0 && /\s/.test(expression[p])) p -= 1
+        let n = idx + name.length
+        while (n < expression.length && /\s/.test(expression[n])) n += 1
+        if (expression[p] !== '.' && expression[n] !== ':') return true
+      }
+      i = idx + name.length
+    }
+    return false
+  }
+  const hasReassignment = (expression, name) => {
+    let i = 0
+    while (i < expression.length) {
+      const idx = expression.indexOf(name, i)
+      if (idx === -1) return false
+      if ((idx === 0 || !isIdChar(expression[idx - 1])) && !isIdChar(expression[idx + name.length])) {
+        let n = idx + name.length
+        while (n < expression.length && /\s/.test(expression[n])) n += 1
+        if (expression[n] === '=' && expression[n + 1] !== '=' && expression[n + 1] !== '>') return true
+        if ((expression[n] === '+' || expression[n] === '-') && expression[n + 1] === '+') return true
+        let p = idx - 1
+        while (p >= 0 && /\s/.test(expression[p])) p -= 1
+        if ((expression[p] === '+' || expression[p] === '-') && expression[p - 1] === expression[p]) return true
+      }
+      i = idx + name.length
+    }
+    return false
+  }
+  const afterCall = (site) => {
+    let k = site.end + 1
+    while (k < masked.length && /\s/.test(masked[k])) k += 1
+    let semicolon = false
+    if (masked[k] === ';') {
+      semicolon = true
+      k += 1
+      while (k < masked.length && /\s/.test(masked[k])) k += 1
+    }
+    return { pos: k, semicolon, gap: text.slice(site.end + 1, k) }
+  }
+
+  for (const site of askSites) {
+    const callHead = masked.slice(site.start, site.end + 1)
+    if (!isTopLevel(site.start) || !/^tools\s*\.\s*ask_user_question\s*\(/.test(callHead)) return reason
+    if (callHead.includes('=>') || /\bfunction\b/.test(callHead)) return reason
+    let accepted = false
+    for (const start of candidateStarts(site.start)) {
+      const prefix = masked.slice(start, site.start).trim()
+      const direct = /^return[ \t]+await$/.test(prefix)
+      const assigned = /^(?:(?:const|let|var)[ \t]+)?([A-Za-z_$][A-Za-z0-9_$]*)[ \t]*=[ \t]*await$/.exec(prefix)
+      if (!direct && assigned === null) continue
+      const tail = afterCall(site)
+      if (direct) {
+        const continuation = ['.', '(', '[', '+', '-', '*', '/', '%', '&', '|', '?', ':', ',', '`'].includes(masked[tail.pos])
+        if (tail.pos === masked.length || tail.semicolon || ((tail.gap.includes('\n') || tail.gap.includes('\r')) && !continuation)) accepted = true
+        continue
+      }
+      if (!tail.semicolon && !tail.gap.includes('\n') && !tail.gap.includes('\r')) continue
+      if (!isTopLevel(tail.pos) || !tokenAt(masked, tail.pos, 'return')) continue
+      let exprStart = tail.pos + 6
+      const returnGapStart = exprStart
+      exprStart = skipWs(masked, exprStart)
+      const returnGap = text.slice(returnGapStart, exprStart)
+      if (exprStart >= masked.length || returnGap === '' || /[\r\n]/.test(returnGap)) continue
+      const end = expressionEnd(exprStart)
+      const expression = masked.slice(exprStart, end).trim()
+      const name = assigned[1]
+      if (expression === '' || !references(expression, name) || hasReassignment(expression, name)) continue
+      if (/\bconsole\s*\./.test(expression) || /\.\s*then\b/.test(expression) || expression.includes('=>') || /\bfunction\b/.test(expression)) continue
+      accepted = true
+    }
+    if (!accepted) return reason
+  }
+  return null
+}
+
 // run_code code 静态调用点计数（单实例子调用上限快路径，planner 专属）：run_code 调用点本身不计、
 // 参数 JSON 可解析时递归展开 args.code（镜像 runCodeCatchGateReason 展平口径）；其余调用点各计 1。
 function runCodeSiteCount(code) {
@@ -1799,18 +2017,21 @@ function runCodeDispatchGateReason(events, exec, cap) {
   return null
 }
 
-// ① subagent_probe 分支（现 L2236-2248 纯部分）：run_in_background 检查 + planner 预算检查。
+// ① subagent_probe 分支（唯一功能点）：planner 角色拒绝 + run_in_background 检查。
+// T5：探查者仅主会话可委派——planner 派出的 one-shot 探查者 owner=委派者，planner 轮次
+// 结束即被宿主级联取消（owner disposed），故从源头禁止 planner 委派；拒绝分支置于函数
+// 顶部（run_in_background 检查之前、且不依赖 args 解析），两个调用点——组判定
+// （run_code 内成员）与直呼/listener——都经本函数，单点覆盖两条路径。
+// 文案必须指向「申请继续探查」（否则模型会反复重试烧预算）：planner 的探查只能自行
+// read/glob/grep，缺口走申请继续探查往返，由主会话派探查者并转达线索文件路径。
 // 参数不可解析（组判定 vExec 传字符串）时跳过 run_in_background 检查（运行时瀑布兜底）。
-function subagentProbeGateReason(exec, isPlanner, events, exploreBudget) {
+function subagentProbeGateReason(exec, isPlanner) {
+  if (isPlanner) {
+    return '规划子代理不得委派探查者：subagent_probe 仅主会话可用（探查者属主会话的探查能力）。请用 read/glob/grep 自行核对；确有缺口时输出「申请继续探查：<待查项> — <原因>」，由主会话派探查者并把线索文件路径转达给你（toolFilter 之外的第二道防线）'
+  }
   const args = exec !== undefined && exec !== null ? exec.arguments : undefined
   if (args !== undefined && args !== null && typeof args === 'object' && args.run_in_background !== true) {
     return '探查者必须后台运行：请显式传 run_in_background: true（one-shot 一次性会话，返回 jobId 后用 job_output 收集结果）'
-  }
-  if (isPlanner && !FREE_TOOLS.has(exec.name) && !isRunCodeSubCall(exec)) {
-    const used = toolCallsSinceUser(events !== undefined ? events : [], FREE_TOOLS)
-    if (budgetExceeded(used + 1, exploreBudget)) {
-      return budgetExhaustedReason(Math.min(used, exploreBudget), exploreBudget)
-    }
   }
   return null
 }
@@ -1878,18 +2099,21 @@ function jobOutputGateReason(exec, jobOutputCallCounters) {
   return null
 }
 
-// 探查者级联中止告警（任务C）：planner 轮次结束 → activation dispose → 宿主 jobs-local
-// owner 级联取消 one-shot 探查者 job（owner disposed）——agent/disposed 清理时若仍有
-// 未认领探查者委派计数即告警留痕。已知引擎限制：根治需官方包配合（dsh-jobs-local/
+// 探查者级联中止告警：委派方轮次结束 → activation dispose → 宿主 jobs-local owner
+// 级联取消 one-shot 探查者 job（owner disposed）——agent/disposed 清理时若仍有未认领
+// 探查者委派计数即告警留痕。T5 后 planner 不得委派探查者（闸门拒绝），委派方只剩主
+// 会话，故文案中性化为「委派方会话销毁时」（触发路径 = 主会话在探查者认领前被销毁；
+// 原硬编码「规划子代理」属错配）。已知引擎限制：根治需官方包配合（dsh-jobs-local/
 // dsh-tool-subagent/dsh-subagent），extra-plan 侧只能告警+文档说明（见教训索引）。
 function probeDisposalWarning(remaining) {
   if (!Number.isInteger(remaining) || remaining <= 0) return null
-  return '规划子代理会话销毁时仍有 ' + remaining + ' 个未认领探查者委派：其后台 job 可能已被宿主级联取消（owner disposed）。已知引擎限制：one-shot 探查者 owner=委派者，级联取消修复需官方包配合（dsh-jobs-local/dsh-tool-subagent/dsh-subagent）'
+  return '委派方会话销毁时仍有 ' + remaining + ' 个未认领探查者委派：其后台 job 可能已被宿主级联取消（owner disposed）。已知引擎限制：one-shot 探查者 owner=委派者，级联取消修复需官方包配合（dsh-jobs-local/dsh-tool-subagent/dsh-subagent）'
 }
 
 // ④ 主会话段（现 L2293-2430 纯部分，分支顺序逐字同序）：
 //    ask → write/edit → cordis 6 只读 → cordis_run → pwsh/bash → planToolName
-//    → save_probe → subagent 族 → run_code（调 runCodeGroupDenyReason，depth+1）
+//    → save_probe → save_plan（T3：仅 direct 放行）→ subagent 族
+//    → run_code（调 runCodeGroupDenyReason，depth+1）
 //    → job_output（wait 检查 + 计数器查重，只读不写入；set 由 listener 放行路径执行）→ null。
 //    gateCtx: { events, planToolName, jobOutputCallCounters, runCodeDepth }。
 function mainGateReason(state, exec, gateCtx) {
@@ -1985,6 +2209,16 @@ function mainGateReason(state, exec, gateCtx) {
     }
     return null
   }
+  // T3：save_plan 主会话侧——仅直接执行（direct）路由放行落盘；其余路由态拒绝。
+  // 必须显式分支：本函数兜底 return null 会让所有路由态被放行。内容闸门与规划
+  // 子代理完全一致（同一 defineSavePlan 工厂）；规划子代理侧走 plannerGateReason
+  // 兜底放行，不受本分支影响。
+  if (name === 'save_plan') {
+    if (!escape && state.route !== 'direct') {
+      return `save_plan 仅允许在直接执行路由下落盘方案与验收；当前路由态：${state.route}`
+    }
+    return null
+  }
   if (name === 'subagent' || name === 'subagent_fork' || name === 'workflow' || name === 'ralph' || name === 'subagent_review') {
     if (!escape && state.approved !== true) {
       return approvalDenyReason(name, state)
@@ -2031,7 +2265,14 @@ function runCodeGroupDenyReason(state, exec, role, gateCtx) {
   const members = []
   const denies = []
   const visit = (codeArg, depth) => {
+    // ask 返回值硬闸门只接入主会话；嵌套超出既有展开深度的部分仍由实际 pre-execute 重入兜底。
+    const askReason = roleKind === 'main' ? askUserQuestionReturnGateReason(codeArg) : null
     const decomposed = decomposeRunCode(codeArg)
+    if (askReason !== null) {
+      const askMember = { kind: 'tool', name: ASK_TOOL, argsParsed: true, args: {}, argsText: '' }
+      if (!decomposed.members.some((member) => member.kind === 'tool' && member.name === ASK_TOOL)) members.push(askMember)
+      denies.push({ member: askMember, reason: askReason })
+    }
     for (const member of decomposed.members) {
       // 嵌套 run_code 成员展平：depth>=1 或参数不可解析 → 跳过（运行时瀑布兜底）；
       // 否则递归拆解 member.args.code 并原位展平（子成员按 role 继续判定）。
@@ -2046,7 +2287,7 @@ function runCodeGroupDenyReason(state, exec, role, gateCtx) {
         : { name: member.name, arguments: member.argsParsed ? member.args : member.argsText, sub: true }
       let reason = null
       if (member.name === 'subagent_probe') {
-        reason = subagentProbeGateReason(vExec, roleKind === 'planner', ctx.events !== undefined ? ctx.events : [], ctx.exploreBudget)
+        reason = subagentProbeGateReason(vExec, roleKind === 'planner')
       } else if (member.kind === 'bare-write') {
         // 裸写成员按角色分流：只读角色保留 v2 共享文案（hits 拼写与现 L1221 逐字同构）；
         // 主会话走 write/edit 闸门（routeDenyReason 与 approved 文案）；
@@ -2107,6 +2348,41 @@ function aggregateRunCodeDenyReason(members, denies) {
     lines.push(`- ${label}: ${d.reason}`)
   }
   return lines.join('\n')
+}
+
+// ── T2：plannerModel 可用性判定（纯函数；resolvePlannerEntry 唯一调用点） ──
+// 输入：plannerModel（string，'' = 设置页显式清空 = 继承主会话模型）、provider（父会话
+// provider，可能 undefined）、catalog（模型目录查询结果描述）：
+//   { kind: 'ok', ids: [...] }  目录查询成功且清单非空
+// | { kind: 'empty' }           适配器未覆写发现能力（静默返回 []）
+// | { kind: 'error' }           查询抛错（如 provider 未注册 → NO_ADAPTER）
+// | { kind: 'no-llm' }          取不到 llm 服务 / 未发起查询
+// 输出：{ use, degraded, diag, reason }
+//   use      = 是否用 plannerModel 覆盖 model（false = planner 继承主会话模型）
+//   degraded = 是否发生「静默降级」（配置的模型未被采用，供口径/回溯）
+//   diag     = 需要落盘诊断时的 decision 值，否则 null
+//   reason   = 判定原因（诊断留痕用）
+// 规则（顺序即设计口径）：
+//   1. plannerModel === '' → 不覆盖（T4 置空语义），不落诊断；
+//   2. plannerModel 非空且 provider 有值：
+//      a. 目录成功、清单非空且未命中 → 不覆盖（静默降级，diag:'inherit-parent'）；
+//      b. 清单为空 / 抛错 / 取不到 llm → 保守沿用 plannerModel（目录 advisory：
+//         空清单≠不可用，防误杀未实现发现能力的适配器），diag:'keep-planner-model'；
+//      c. 命中 → 覆盖（现行为），不落诊断；
+//   3. plannerModel 非空且 provider 无值（父会话空闲等）→ 沿用 plannerModel，不落诊断。
+function decidePlannerModelUse(plannerModel, provider, catalog) {
+  const configured = typeof plannerModel === 'string' ? plannerModel : ''
+  if (configured === '') return { use: false, degraded: false, diag: null, reason: 'empty-config' }
+  if (typeof provider !== 'string' || provider === '') return { use: true, degraded: false, diag: null, reason: 'no-provider' }
+  const kind = catalog !== null && typeof catalog === 'object' && typeof catalog.kind === 'string' ? catalog.kind : 'no-llm'
+  if (kind === 'ok') {
+    const ids = Array.isArray(catalog.ids) ? catalog.ids : []
+    if (ids.includes(configured)) return { use: true, degraded: false, diag: null, reason: 'catalog-hit' }
+    return { use: false, degraded: true, diag: 'inherit-parent', reason: 'catalog-miss' }
+  }
+  if (kind === 'empty') return { use: true, degraded: false, diag: 'keep-planner-model', reason: 'catalog-empty' }
+  if (kind === 'error') return { use: true, degraded: false, diag: 'keep-planner-model', reason: 'catalog-error' }
+  return { use: true, degraded: false, diag: 'keep-planner-model', reason: 'catalog-unavailable' }
 }
 
 // 供场景测试直接复用（消除"复制品"漂移）。模块顶层无副作用，纯 Node 可 import。
@@ -2180,6 +2456,7 @@ export const decisions = {
   decomposeRunCode,
   runCodeCatchGateReason,
   collectRunCodeSites,
+  askUserQuestionReturnGateReason,
   runCodeSiteCount,
   isRunCodeSubCall,
   runCodeDispatchGateReason,
@@ -2193,6 +2470,7 @@ export const decisions = {
   jobOutputGateReason,
   probeDisposalWarning,
   resolveProbeRequestInjection,
+  decidePlannerModelUse,
 }
 
 export const name = 'extra-plan'
@@ -2371,10 +2649,14 @@ export function apply(ctx, config) {
   // 模型优先级：plannerModel（设置页显式配置，规划子代理专用）> 父会话当前
   // model；provider/maxTokens 取自父会话 requestHeader().config（父会话空闲时
   // 取不到 → undefined，注入时跳过、保留 spawn 描述符默认值）。
-  // 2026-09-03 修复：不再依赖 llm 模型目录命中（目录是 advisory：未列出 id 仍
-  // 原样传递，dsh-llm-deepseek 文档口径）与父会话进行中请求头——旧逻辑在父会话
-  // 空闲（后台规划时必然如此）时 provider 为空、查询被跳过，导致 plannerModel
+  // 2026-09-03 修复：不再依赖父会话进行中请求头与「目录命中」作生效前提——旧逻辑在
+  // 父会话空闲（后台规划时必然如此）时 provider 为空、查询被跳过，导致 plannerModel
   // 永不生效、回退主会话默认模型（flash）；现改为显式配置直接生效。
+  // T2 追加（与旧病划清边界）：目录只作【静默降级的启发式】，且经 ctx.llm.listModels
+  // (provider) 主动查询（不依赖父会话进行中请求头；父空闲时 provider 为空即按规则 3
+  // 沿用）；仅当目录成功返回非空清单且明确不含 plannerModel 时才降级为主会话模型，
+  // 清单为空/抛错/取不到 llm 服务一律保守沿用（advisory 语义：空清单≠不可用，
+  // 防误杀未实现发现能力的适配器）。
   // 解析整体 try/catch：异常时保持已取到的值，不抛；agent/request 钩子只调本函数。
   async function resolvePlannerEntry(agent) {
     const cached = plannerModelCache.get(agent)
@@ -2402,8 +2684,41 @@ export function apply(ctx, config) {
           }
         }
       }
-      // 规划子代理模型 = 设置页 plannerModel（显式配置优先，父空闲时也能生效）
-      if (plannerModel !== '') model = plannerModel
+      // 规划子代理模型 = 设置页 plannerModel（显式配置优先，父空闲时也能生效）；
+      // T2/T4：判定抽成纯函数（decidePlannerModelUse，见 decisions 导出表），
+      // 目录查询只在此处（解析点唯一 = 目录查询点唯一）。
+      if (plannerModel !== '') {
+        let catalog = { kind: 'no-llm' }
+        const llm = ctx.get('llm')
+        if (llm !== undefined && llm !== null && typeof llm.listModels === 'function') {
+          try {
+            const models = await llm.listModels(provider)
+            const ids = Array.isArray(models)
+              ? models.map((m) => m !== null && typeof m === 'object' && typeof m.id === 'string' ? m.id : '').filter((id) => id !== '')
+              : []
+            catalog = ids.length === 0 ? { kind: 'empty' } : { kind: 'ok', ids }
+          } catch (error) {
+            catalog = { kind: 'error' }
+          }
+        }
+        const decision = decidePlannerModelUse(plannerModel, provider, catalog)
+        if (decision.use) model = plannerModel
+        if (decision.diag !== null) {
+          // 降级/保守沿用诊断：与 agent/request-error 同一 jsonl 通道、独立 type 字段；
+          // 静默口径——不抛错、不向用户输出任何提示（只留痕供回溯）。
+          try {
+            appendFileSync(diagPath, JSON.stringify({
+              ts: new Date().toISOString(),
+              type: 'degrade',
+              sessionId: agent.session !== undefined && agent.session !== null && agent.session.header !== undefined ? agent.session.header.id : '',
+              provider: provider !== undefined ? provider : '',
+              plannerModel,
+              decision: decision.diag,
+              reason: decision.reason,
+            }) + '\n', 'utf8')
+          } catch (error) { /* 诊断落盘失败不影响解析 */ }
+        }
+      }
     } catch (error) {
       // 解析异常：保持已取到的值（provider/maxTokens 可能 undefined），不抛、不崩调用方。
     }
@@ -2479,21 +2794,25 @@ export function apply(ctx, config) {
     return child
   }
 
-  // ── save_plan：只注册于规划子代理层（session-start 时按 isPlannerChild 判定） ──
+  // ── save_plan：注册于规划子代理层与主会话层（session-start 按 isPlannerChild /
+  // 非子代理判定；主会话侧由 mainGateReason 限定仅 direct 路由放行，T3） ──
   // 程序定死双写：①两个 payload 必填（tools 注册表按 parameters.required 校验，
   // 缺一即拒绝调用）；②tmp 双写成功 → journal → 依次 rename → 清 journal；
   // 崩溃后下次 save_plan 按残留 journal 补完（fail-soft）。
   // 公共原子落盘（save_plan 双写 / save_probe 单写共用）：mkdir → 逐条写 tmp →
   // journal（新形状 {entries:[{tmp,file}]}）→ 逐条 rename → 清 journal；任一步
   // 失败先清 journal（尽力而为）再抛错。tmp 后缀沿用现有 .tmp-${process.pid}-${Date.now()}。
-  function atomicCommit(dir, base, files) {
+  // sessionTag（可选，T3）：写入方会话标识段（sessionTagOf），随 journal 落盘供
+  // recoverJournals 按会话过滤；'' / 缺省时不写该字段（save_probe 单写保持旧形状）。
+  function atomicCommit(dir, base, files, sessionTag) {
     mkdirSync(dir, { recursive: true })
     const suffix = `.tmp-${process.pid}-${Date.now()}`
     const journal = join(dir, `.journal-${base}.json`)
     const entries = files.map((f) => ({ tmp: join(dir, f.name + suffix), file: join(dir, f.name) }))
+    const record = { ...(typeof sessionTag === 'string' && sessionTag !== '' ? { session: sessionTag } : {}), entries }
     try {
       for (let i = 0; i < files.length; i += 1) writeFileSync(entries[i].tmp, files[i].content, 'utf8')
-      writeFileSync(journal, JSON.stringify({ entries }), 'utf8')
+      writeFileSync(journal, JSON.stringify(record), 'utf8')
       for (const e of entries) renameSync(e.tmp, e.file)
       unlinkSync(journal)
     } catch (error) {
@@ -2504,7 +2823,10 @@ export function apply(ctx, config) {
 
   // journal 崩溃自愈：新形状 entries 逐条补完 rename；旧形状（planTmp/checkTmp/
   // planFile/checkFile）保持原逻辑；恢复失败 console.warn 且继续。
-  function recoverJournals(dir) {
+  // sessionTag（可选，T3）：save_plan 传入自己的会话标识段，跳过「内嵌了其它会话标识」
+  // 的 journal 残留（同秒 base 撞名防护的另一半：不同调用方互不补完对方的半成品）；
+  // 无标识的历史残留（旧形状、手工夹具）与 save_probe 的单写保持原恢复语义。
+  function recoverJournals(dir, sessionTag) {
     let names = []
     try { names = readdirSync(dir) } catch (error) { return }
     if (!names.some((name) => name.startsWith('.journal-'))) return
@@ -2513,6 +2835,9 @@ export function apply(ctx, config) {
       const file = join(dir, entry)
       try {
         const record = JSON.parse(readFileSync(file, 'utf8'))
+        if (record !== null && typeof record === 'object'
+            && typeof sessionTag === 'string' && sessionTag !== ''
+            && typeof record.session === 'string' && record.session !== '' && record.session !== sessionTag) continue
         if (record !== null && typeof record === 'object') {
           if (Array.isArray(record.entries)) {
             for (const item of record.entries) {
@@ -2577,16 +2902,19 @@ export function apply(ctx, config) {
         }
         const dir = resolve(join(cwd, savePlanDir))
         const nameSeg = sanitizeTaskName(args.taskName)
-        const ts = timestamp()
-        const base = (nameSeg === '' ? '' : nameSeg + '-') + ts
+        // T3：base 内嵌调用方会话标识段（主会话与规划子代理同秒落盘不再撞名）；
+        // journal 恢复按同一标识过滤（跨角色互恢复防护）。
+        const sessionId = session.header !== undefined && session.header !== null ? session.header.id : undefined
+        const sessionTag = sessionTagOf(sessionId)
+        const base = savePlanBase(nameSeg, sessionId)
         const planFile = join(dir, `方案-${base}.md`)
         const checkFile = join(dir, `验收-${base}.md`)
-        recoverJournals(dir)
+        recoverJournals(dir, sessionTag)
         try {
           atomicCommit(dir, base, [
             { name: `方案-${base}.md`, content: args.plan },
             { name: `验收-${base}.md`, content: args.checklist },
-          ])
+          ], sessionTag)
         } catch (error) {
           throw new Error(`save_plan: 落盘失败：${error instanceof Error ? error.message : String(error)}`)
         }
@@ -2739,12 +3067,16 @@ export function apply(ctx, config) {
   // 放行-认领关联：父会话放行 subagent_probe 后挂「待认领计数」（parentSessionId → 次数），
   // probe 子会话 session-start/pre-step 经 probeClaimFor 认领：消费计数、标记 probeClaimed、
   // 注册 save_probe。同父执行者（schemas 含 write/edit）不认领；reviewer 无待认领不认领；
+  // 规划子代理不认领（T5：planner 已不得委派探查者，若放行其认领会抢走主会话派出的探查者
+  // 的待认领计数，害真探查者落不了证据报告）；
   // probeClaimed 幂等（session-start 与 pre-step 双入口不双消费）。
   const probeClaimed = new WeakSet()
   const pendingProbeClaims = new Map()
   function probeClaimFor(agent) {
     if (probeClaimed.has(agent)) return true
     if (!isSubagentChild(agent)) return false
+    // T5 守卫：规划子代理不得认领（见上方注释）。
+    if (isPlannerChild(agent)) return false
     const header = agent.session.header
     const parentSession = header !== undefined && header !== null ? header.parentSession : undefined
     if (typeof parentSession !== 'string') return false
@@ -2760,15 +3092,15 @@ export function apply(ctx, config) {
 
   let selfAgent = undefined
 
-  // 1) 会话启动：子代理基线（账本 + 沙箱下限）；规划子代理注册 save_plan；
-  //    主会话与探查子代理注册 save_probe（scoped；recompose 不重发 session-start，
-  //    pre-step 兜底）。
+  // 1) 会话启动：子代理基线（账本 + 沙箱下限）；规划子代理与主会话注册 save_plan
+  //    （T3：主会话仅 direct 路由放行，判定在 mainGateReason）；主会话与探查子代理
+  //    注册 save_probe（scoped；recompose 不重发 session-start，pre-step 兜底）。
   ctx.on('agent/session-start', (payload) => {
     const agent = payload.agent
     if (agent === undefined) return
     selfAgent = agent
     childBaseline(agent)
-    if (isPlannerChild(agent)) registerSavePlan(agent)
+    if (isPlannerChild(agent) || !isSubagentChild(agent)) registerSavePlan(agent)
     if (!isSubagentChild(agent) || probeClaimFor(agent)) { registerSaveProbe(agent) }
   })
 
@@ -2780,6 +3112,10 @@ export function apply(ctx, config) {
     if (payload.agent !== undefined) {
       selfAgent = payload.agent
       childBaseline(payload.agent)
+      // T3：save_plan 与 save_probe 同构——主会话侧同样在 pre-step 幂等兜底注册
+      // （web 会话先按默认预设发布、recompose 不重发 session-start，仅靠 session-start
+      // 会漏注册；registerTool 的 WeakSet 保证不重复注册）。
+      if (isPlannerChild(payload.agent) || !isSubagentChild(payload.agent)) registerSavePlan(payload.agent)
       if (!isSubagentChild(payload.agent) || probeClaimFor(payload.agent)) { registerSaveProbe(payload.agent) }
     }
     const decision = await next()
@@ -3034,12 +3370,13 @@ export function apply(ctx, config) {
     }
     const child = childBaseline(agent)
     const planner = isPlannerChild(agent)
-    // 探查者委派属只读探查能力（与 read/glob/grep 同级）：任意路由状态放行，
+    // 探查者委派属只读探查能力（与 read/glob/grep 同级）：主会话在任意路由状态放行，
     // 仅强制 one-shot 固定后台（与 subagent/subagent_review 同机械闸门口径）。
-    // 置于 planner/child 判定之前：planner 委派 subagent_probe 时同样挂待认领计数
-    // （供子会话 session-start 认领；否则 probe 子会话经 parentSession 无放行痕迹）。
+    // 置于 planner/child 判定之前，但闸门函数内首先按角色拒绝 planner（T5）：
+    // subagent_probe 仅主会话可委派；放行时挂「待认领计数」供 probe 子会话
+    // session-start 认领（否则 probe 子会话经 parentSession 无放行痕迹）。
     if (exec.name === 'subagent_probe') {
-      const reason = subagentProbeGateReason(exec, planner, sessionEvents(agent.session), exploreBudget)
+      const reason = subagentProbeGateReason(exec, planner)
       if (reason !== null) return { kind: 'deny', reason }
       if (planner && isRunCodeSubCall(exec)) {
         const rid = typeof exec.rootCallId === 'string' ? exec.rootCallId : ''
