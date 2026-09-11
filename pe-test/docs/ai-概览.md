@@ -47,6 +47,7 @@ dsh 插件「按需规划模式」预设：AI 未经用户同意只能只读探�
 - 维护纪律/自检/地图同步：pe-test/docs/ai-维护手册.md
 - 函数级索引：pe-test/docs/ai-代码地图.md
 - 流程备查：pe-test/docs/ai-流程备查.md
+- 宿主耦合台账（升级 DSH/qqbot 前必读）：pe-test/docs/ai-宿主耦合台账.md
 
 ---
 
