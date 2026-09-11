@@ -310,7 +310,7 @@
 1. **exec.sub 不是宿主字段**——本仓库 plugins/dsh-extra-plan/index.js L1991 判断 `exec.sub === true`，但本版宿主 dsh-tools 包内 lib/types/index.d.ts 的 ToolExecution 与 ToolExecutionInput 均无 sub 字段（宿主侧只有 exec.parent，见 L1992 的判断）。sub 是本插件在 L2286 与 L2287 给合成成员自打的标记，不是宿主契约；升级比对时不要在宿主类型里找 sub，只需核对 exec.parent 与 rootCallId。
 2. **sessionProjections 的 stateOf 本插件全文 0 次调用**——本插件没有任何一处直接调用 sessionProjections 的 stateOf(session, sandboxMode)；沙箱模式一律改走 sandboxPolicy 的 overrideOf（宿主 dsh-sandbox-policy 包内 lib/index.js 内部才调用 stateOf）。升级若移除或改名 overrideOf，本插件需改道直连投影服务，因此本项按「反向记录」保留在③-C 末行。
 3. **lib/executor-spawn.js L66 注释的宿主行号已过期并已修正**——该注释原文把 dsh-subagent 包内 resolveChildAgentOptions 的实现位置写成一段固定的宿主行号区间，本机 0.1.2-rc.1 实测该符号实际落在包内另一区间（本台账按硬约束不写宿主行号）。本期已把该注释改为按包名与符号名核对：注释内容改为「宿主 resolveChildAgentOptions（@deepseek-ai/dsh-subagent 包内，按符号名核对）用对象展开合并」；文件中该注释的相邻两行未动，文件仍为 89 行。
-- 升级影响报告（0.1.2-rc.1 → 0.1.5-rc.2 逐条核对结论与修复清单，与本台账双向互链）：pe-test/docs/ai-宿主升级影响-DSH-0.1.5-rc.2.md
+- 升级影响报告（0.1.2-rc.1 → 0.1.5-rc.2 逐条核对结论与修复清单，与本台账双向互链）：.extra-plan/ai-宿主升级影响-DSH-0.1.5-rc.2.md（已归档；原 pe-test/docs/ 路径已于 2026-09-11 撤出仓库）
 
 ## ⑦ 0.1.5-rc.2 起的新失败面（本台账原未覆盖）
 
@@ -318,3 +318,26 @@
 - dsh-tool-subagent：配了 toolFilter 却无 allow/deny 即抛错（"tool-subagent: `toolFilter` is configured but names neither `allow` nor `deny` — remove the key or fill the filter"；0.1.5-rc.2 内 lib/index.js L370）。
 - 本仓库预设四行均含 toolFilter.deny（agent.cordis.yml L182/L231/L256/L288；executor-spawn 行 L314 另注入 deny），按现文安全，无需改动 assets/presets/**。
 - 本台账互链的「DSH 升级影响报告」已归档至 .extra-plan/ai-宿主升级影响-DSH-0.1.5-rc.2.md（存档，不删）。
+
+## ⑧ 预设各行 config 属宿主契约（0.1.2-rc.1 ↔ 0.1.5-rc.2 双向对照）
+
+本节补记一处此前**未覆盖**的宿主契约面：③ 四层表记的是本仓库代码与宿主的挂钩点，而 `assets/presets/extra-plan/agent.cordis.yml` 里**每一行（row）的 config 键也是宿主契约**——由该行 `name` 所指宿主包的 Config schema 校验。2026-09-12 实测确认的动机：persona 行的键在 0.1.3-alpha.2 起由 `text` 改名为 `prefix`（且必填），旧键在 0.1.5-rc.2 启动时报 `$.prefix missing required value`，此前升级比对未预警。
+
+**对照方法与规模**：预设 31 行条目（17 个顶层条目 + 嵌套子行）× 22 个宿主包；新版侧读本机 0.1.5-rc.2 安装包，旧版侧取 unpkg 发布的 `@0.1.2-rc.1`（22/22 均取到发布物）；每行把**真实 config** 喂进对应包的 Config 实跑校验（schemastery）。
+
+**结论**：新版侧 21 行有 schema 的条目全部 PASS、0 FAIL；旧版侧 26 个宿主行 21 PASS、0 FAIL（5 行因旧包不导出 Config 无法校验）。**除 persona 外无第二个同类型断点**，本预设装回 0.1.2-rc.1 可用。
+
+**persona 行现状（双写）**：`prefix: &personaText`（新宿主必填键，0.1.3-alpha.2 起）+ `text: *personaText`（旧宿主必填键，锚点引用同一段文本，长度 1499 字符两边一致）。两代 schema 实跑校验均通过。删除条件：确定不再支持 0.1.2-rc.1 时删掉 `text` 别名行即可（`prefix` 不受影响）。
+
+**未知键为何安全（机制）**：schemastery 的 `~standard.validate` 以默认 `strict=false` 调用 `Schema.resolve`（发布物 `@deepseek-ai/schemastery@3.18.2` 的 object 处理器为 `if (!strict) merge(result, data)`）；且**即使 `strict=true`，未知键也只是被丢弃，不会抛 ValidationError**。两代 dsh 均依赖 `@deepseek-ai/schemastery: ^3.18.2`，而该包 latest 即 3.18.2，语义一致——所以双写产生的未知键在两代都不会报错。
+
+**反向风险清单（旧版必填、当前行内已显式给；将来若被当成冗余删掉，旧版即断）**：`persona.text`、`agent-instructions.maxBytes`、`tool-fs-search.sampleOverCapGlobResults`、`tool-subagent.provider`、`tool-todo.allowParallelInProgress`、`agent-tool-presentation.mode`。
+
+**本轮同时扫清的高危面**：`toolFilter.deny` 四张表共 14 个工具名在 0.1.5-rc.2 全部存在（且未列保留名 `run_code`、未列不可限制的 `save_plan`）；`isolate` 三个 realm 键均等于真实服务名；两处 `!!js` 求值链路完好；仓库解析器（`parsePresetYaml`）与宿主 `entryListSchema` 对 31 行的解析结果 0 差异。
+
+**对升级流程的建议**：升级 DSH 前，除 ⑤ 的比对清单外，应把「预设每行 config 键对两版 schema 实跑校验」一并执行——本次 persona 断点正是靠启动报错才发现的，属事后补救。
+
+**证据来源（探查者证据报告，均已落盘）**：
+- 新版侧：.extra-plan/线索-extra-plan-预设-0-1-5-rc-2-配置核查-20260912002315.md
+- 旧版侧（逐行结论表）：.extra-plan/线索-extra-plan预设旧版0-1-2-rc-1兼容核查-20260912002247.md
+- 旧版侧（22 包 schema 原文）：.extra-plan/线索-extra-plan旧版22包schema原文-20260912002318.md

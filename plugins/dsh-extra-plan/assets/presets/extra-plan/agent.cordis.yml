@@ -21,7 +21,7 @@
 - id: persona
   name: '@deepseek-ai/dsh-persona'
   config:
-    prefix: >-
+    prefix: &personaText >-
       你是一个「按需规划模式」下的主会话。面向用户的文字一律简体中文
     
       决策流程：
@@ -50,6 +50,9 @@
       委派参数：所有子代理都必须传入 run_in_background: true
 
       dsh 官方预设禁令：必须复制现有预设为副本、再在副本上改动；如需自定义官方 cordis 预设 → 复制为副本后在副本上改动。禁止编辑或删除官方安装的预设与官方文件（官方 cordis 预设与其技能仅只读引用，不复制不改写）
+    # 兼容 DSH 0.1.2-rc.1 的旧必填键：0.1.3-alpha.2 起宿主 dsh-persona 改用 prefix（必填）。
+    # 与上方 prefix 为同一段文本（锚点引用）；删除条件＝不再需要支持 0.1.2-rc.1。详见台账 ⑧ 节。
+    text: *personaText
 
 - id: agent-instructions
   name: '@deepseek-ai/dsh-agent-instructions'
