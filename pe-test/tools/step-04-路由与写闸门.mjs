@@ -702,6 +702,33 @@ checkTrue('R98 executor job_output wait → allow（执行者豁免保持）', r
 r = preExecute(harness, plannerAgent, 'run_code', joCode)
 checkTrue('R99 planner run_code 组内 job_output wait → deny 且含「job_output 禁止带 wait: true」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止带 wait: true'))
 
+// ── ⑭d 可变事件流 tool-jobs 完成通知解锁（任务4） ──────────────────────
+{
+  const sharedEvents = []
+  const mutableMain = {
+    session: { header: { id: 'mutable-main', cwd: 'C:/work' }, snapshotEvents: () => sharedEvents },
+    options: {},
+    ctx: undefined,
+  }
+  // 首次 job_output j1 → allow
+  r = preExecute(harness, mutableMain, 'job_output', { job_id: 'j1' })
+  checkTrue('TJ1 可变事件流 job_output j1 首次 → allow', r !== null && r !== undefined && r.kind === 'allow')
+  // 无通知时同 job 再调 → deny（回归）
+  r = preExecute(harness, mutableMain, 'job_output', { job_id: 'j1' })
+  checkTrue('TJ2 可变事件流 job_output j1 无通知再调 → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止对同一 job 重复调用'))
+  // 注入 tool-jobs 完成通知事件
+  sharedEvents.push({
+    type: 'user/message',
+    data: {
+      source: { kind: 'plugin', plugin: 'tool-jobs', form: 'notice' },
+      content: [{ type: 'text', text: 'background job j1 (subagent: test) finished [status: completed]. Read its output with job_output.' }],
+    },
+  })
+  // 通知注入后 job_output j1 → allow（修复生效）
+  r = preExecute(harness, mutableMain, 'job_output', { job_id: 'j1' })
+  checkTrue('TJ3 可变事件流 tool-jobs 通知后 job_output j1 → allow（修复生效）', r !== null && r !== undefined && r.kind === 'allow')
+}
+
 // ── ⑭ R100-R105：runcodeCatchGate 开关 + safe 白名单 + 容器计费 + 实例上限（2026-09-06） ──
 r = preExecute(harness, noneMain, 'run_code', { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })", description: 'UC1 同款' })
 checkTrue('R100 默认（runcodeCatchGate 缺省=关）多调用无容错 → allow（默认关放行）', r !== null && r !== undefined && r.kind === 'allow')

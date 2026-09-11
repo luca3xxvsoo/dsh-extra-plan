@@ -724,7 +724,7 @@ function toolCallsSinceUser(events, skipNames) {
     if (e === null || typeof e !== 'object' || e.type !== 'user/message') continue
     const d = e.data
     const kind = d !== null && typeof d === 'object' && d.source !== null && typeof d.source === 'object' ? d.source.kind : ''
-    if (kind === 'user' || kind === 'coordinator' || kind === 'agent-message') {
+    if (kind === 'user' || kind === 'agent-message') {
       anchor = i
       break
     }
@@ -745,7 +745,7 @@ function jobOutputCallsForJob(events, jobId) {
     if (e === null || typeof e !== 'object' || e.type !== 'user/message') continue
     const d = e.data
     const kind = d !== null && typeof d === 'object' && d.source !== null && typeof d.source === 'object' ? d.source.kind : ''
-    if (kind === 'user' || kind === 'coordinator' || kind === 'agent-message') {
+    if (kind === 'user' || kind === 'agent-message') {
       anchor = i
       break
     }
@@ -774,7 +774,7 @@ function appendSuffixBlock(message, text) {
   if (text === '') return message
   if (message === null || typeof message !== 'object') return message
   const src = message.source
-  if (src === null || typeof src !== 'object' || (src.kind !== 'user' && src.kind !== 'coordinator' && src.kind !== 'agent-message')) return message
+  if (src === null || typeof src !== 'object' || (src.kind !== 'user' && src.kind !== 'agent-message')) return message
   if (!Array.isArray(message.content)) return message
   let target = -1
   for (let i = 0; i < message.content.length; i += 1) {
@@ -808,7 +808,7 @@ function budgetNoticeText(budget) {
   return `本轮探查预算上限为 ${budget} 次工具调用。探查时 ≥ 2 个独立方向自行 read/glob/grep 分批核对；缺信息时输出「申请继续探查：<待查项> — <原因>」交主会话委派探查者。预算耗尽时输出「申请继续探查：<待查项> — <原因>」，主会话将探查待查项并转达线索文件路径，你读取线索继续工作。探查完成后直接调用 save_plan 落盘（系统会自动检测未探查项）`
 }
 
-// 预算告知拼接：结构同 withPlannerPromptSuffix（kind 限定 user/coordinator/agent-message、
+// 预算告知拼接：结构同 withPlannerPromptSuffix（kind 限定 user/agent-message、
 // 单文本块、已含则幂等、返回新对象不原地改）。
 function withBudgetNotice(message, notice) { return appendSuffixBlock(message, notice) }
 
@@ -819,12 +819,12 @@ function budgetReminderText(remaining, budget, threshold) {
   return `本轮探查预算还剩 ${remaining} 次`
 }
 
-// 阈值提示消息：kind 必须为 'plugin'（锚点规则只认 user/coordinator/agent-message，kind=user 会误重置预算）。
+// 阈值提示消息：kind 必须为 'plugin'（锚点规则只认 user/agent-message，kind=user 会误重置预算）。
 function budgetReminderMessage(reminder) {
   return { source: { kind: 'plugin', plugin: 'dsh-extra-plan' }, content: [{ type: 'text', text: reminder }] }
 }
 
-// 阈值提示幂等：自最近一条 user/coordinator/agent-message 锚点之后是否已注入过含 marker 的消息
+// 阈值提示幂等：自最近一条 user/agent-message 锚点之后是否已注入过含 marker 的消息
 // （无锚点全量扫描；元素缺 content 按无命中处理、不抛异常）。天然每轮重置。
 function budgetReminderSent(events, marker) {
   if (!Array.isArray(events)) return false
@@ -834,7 +834,7 @@ function budgetReminderSent(events, marker) {
     if (e === null || typeof e !== 'object' || e.type !== 'user/message') continue
     const d = e.data
     const kind = d !== null && typeof d === 'object' && d.source !== null && typeof d.source === 'object' ? d.source.kind : ''
-    if (kind === 'user' || kind === 'coordinator' || kind === 'agent-message') {
+    if (kind === 'user' || kind === 'agent-message') {
       anchor = i
       break
     }
@@ -2509,6 +2509,7 @@ export function apply(ctx, config) {
   const jobOutputCallCounters = new Map()
   const jobOutputLastAnchors = new Map() // sessionId → 上次锚点索引
   const subCallCounters = new Map() // rootCallId → 已放行子调用数（单实例上限，planner 专属）
+  const toolJobsNoticesConsumed = new Map() // sessionId → Set<jobId> 已处理过的 tool-jobs 完成通知的 jobId
   async function foldUsage(agent, role) {
     if (!ledgerOn || ledgerPath === '') return
     const session = agent.session
@@ -3356,7 +3357,7 @@ export function apply(ctx, config) {
         if (e === null || typeof e !== 'object' || e.type !== 'user/message') continue
         const d = e.data
         const kind = d !== null && typeof d === 'object' && d.source !== null && typeof d.source === 'object' ? d.source.kind : ''
-        if (kind === 'user' || kind === 'coordinator' || kind === 'agent-message') {
+        if (kind === 'user' || kind === 'agent-message') {
           currentAnchor = i
           break
         }
@@ -3364,8 +3365,42 @@ export function apply(ctx, config) {
       const lastAnchor = jobOutputLastAnchors.get(sessId)
       if (lastAnchor !== currentAnchor) {
         jobOutputCallCounters.delete(sessId)
+        toolJobsNoticesConsumed.delete(sessId)
         subCallCounters.clear()
         jobOutputLastAnchors.set(sessId, currentAnchor)
+      }
+    }
+    // tool-jobs 完成通知解锁扫描：匹配 source.kind==='plugin' && source.plugin==='tool-jobs' && source.form==='notice'
+    // 从正文用 /background job (\S+)/ 解析 jobId；若存在于本 session 的 jobOutputCallCounters 中则删除该
+    // jobId 计数（只清这一个，不清整表、不动 subCallCounters）；解析失败或未跟踪 → 无操作（保守不放行）。
+    {
+      const sessId = agent.session.header.id
+      const scanEvents = sessionEvents(agent.session)
+      const consumed = toolJobsNoticesConsumed.get(sessId)
+      for (const se of scanEvents) {
+        if (se === null || typeof se !== 'object' || se.type !== 'user/message') continue
+        const sd = se.data
+        if (sd === null || typeof sd !== 'object' || sd.source === null || typeof sd.source !== 'object') continue
+        const src = sd.source
+        if (src.kind !== 'plugin' || src.plugin !== 'tool-jobs' || src.form !== 'notice') continue
+        if (!Array.isArray(sd.content)) continue
+        let noticeText = ''
+        for (const block of sd.content) {
+          if (block !== null && typeof block === 'object' && block.type === 'text' && typeof block.text === 'string') {
+            noticeText = block.text
+            break
+          }
+        }
+        if (noticeText === '') continue
+        const m = noticeText.match(/background job (\S+)/)
+        if (m === null) continue
+        const jobId = m[1]
+        if (consumed !== undefined && consumed.has(jobId)) continue
+        const perSession = jobOutputCallCounters.get(sessId)
+        if (perSession === undefined || !perSession.has(jobId)) continue
+        perSession.delete(jobId)
+        if (consumed !== undefined) consumed.add(jobId)
+        else toolJobsNoticesConsumed.set(sessId, new Set([jobId]))
       }
     }
     const child = childBaseline(agent)

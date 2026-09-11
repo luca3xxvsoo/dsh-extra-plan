@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-09-10 21:14:01（脚本自动更新时间戳行）
+> 上次同步：2026-09-11 13:01:54（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -39,7 +39,7 @@
 
 | 文件 | 行数 | 说明 |
 |:--|--:|:--|
-| plugins/dsh-extra-plan/index.js | 3469 | 模式核心：三级闸门（路由/澄清/批准）+ 探查预算 + save_plan/save_probe 工具 + 锚点钩子（修改最频繁） |
+| plugins/dsh-extra-plan/index.js | 3504 | 模式核心：三级闸门（路由/澄清/批准）+ 探查预算 + save_plan/save_probe 工具 + 锚点钩子（修改最频繁） |
 | plugins/dsh-extra-plan/lib/client-bridge.js | 20 | 客户端桥接壳：仅承载 dsh.client 加载路径指向 lib/client.js（apply 空实现） |
 | plugins/dsh-extra-plan/lib/client.js | 317 | dsh web 设置界面 UI（__ModuleLoader__ 打包格式，React；中/英文案） |
 | plugins/dsh-extra-plan/lib/executor-spawn.js | 90 | 执行者子代理 provider：委托宿主 spawn，注入工具 deny（防委派递归/追问） |
@@ -89,7 +89,7 @@
 | plugins/dsh-extra-plan/index.js | deriveFlowState | L542-622 | 事件流推导 flow state（route/clarified/approved/channelBroken） |  |
 | plugins/dsh-extra-plan/index.js | plannerChildIdsOf | L627-677 | 事件流收集规划子代理会话 id |  |
 | plugins/dsh-extra-plan/index.js | toolCallCount | L685-712 | 统计成功工具调用次数（可跳过指定工具） |  |
-| plugins/dsh-extra-plan/index.js | toolCallsSinceUser | L719-734 | 最近一次用户/协调者消息之后的工具调用数 |  |
+| plugins/dsh-extra-plan/index.js | toolCallsSinceUser | L719-734 | 最近一次用户/agent-message 锚点之后的工具调用数 |  |
 | plugins/dsh-extra-plan/index.js | jobOutputCallsForJob | L739-766 | 锚点后对指定 job 的 job_output 调用计数 |  |
 | plugins/dsh-extra-plan/index.js | appendSuffixBlock | L773-790 | 给 user 消息追加文本块（拼入第一个 text 块尾部） |  |
 | plugins/dsh-extra-plan/index.js | withPlannerPromptSuffix | L791-800 | 拼接规划子代理附加引导 |  |
@@ -150,25 +150,25 @@
 | plugins/dsh-extra-plan/index.js | visit | L2267-2310 | 递归展平嵌套 run_code（runCodeGroupDenyReason 内闭包） |  |
 | plugins/dsh-extra-plan/index.js | aggregateRunCodeDenyReason | L2339-2351 | 聚合多成员拒绝消息 |  |
 | plugins/dsh-extra-plan/index.js | decidePlannerModelUse | L2373-2386 | T2 静默降级判定：目录命中→用 plannerModel；清单非空未命中→不覆盖（inherit-parent）；空/异常→沿用 |  |
-| plugins/dsh-extra-plan/index.js | apply | L2484-3468 | 插件主入口：配置解析/服务注册/工具注册/锚点钩子 |  |
-| plugins/dsh-extra-plan/index.js | foldUsage | L2512-2586 | usage 账本折叠写入（cursor 去重，按 sessionId+seq） |  |
-| plugins/dsh-extra-plan/index.js | isChild | L2591-2599 | 子代理判定（live 校验+误分类警示） |  |
-| plugins/dsh-extra-plan/index.js | isPlannerChild | L2603-2617 | 规划子代理判定（descriptor.mode=continuable） |  |
-| plugins/dsh-extra-plan/index.js | toolSchemasOf | L2622-2640 | 防御式获取 agent 工具 schemas |  |
-| plugins/dsh-extra-plan/index.js | resolvePlannerEntry | L2661-2728 | 规划子模型单点解析（plannerModel 优先 + 父会话配置 + 缓存）；经 listModels 目录做 T2 降级判定 |  |
-| plugins/dsh-extra-plan/index.js | parseSkillFrontmatter | L2772-2781 | SKILL.md frontmatter 的 name/description 解析 |  |
-| plugins/dsh-extra-plan/index.js | floorChildPolicy | L2783-2787 | 子代理沙箱策略抬升（workspace-write） |  |
-| plugins/dsh-extra-plan/index.js | childBaseline | L2789-2795 | 子代理基线（判定/usage/floor 汇总） |  |
-| plugins/dsh-extra-plan/index.js | atomicCommit | L2807-2822 | 原子落盘（tmp→journal→rename→清 journal；save_plan 双写/save_probe 单写共用）；可选 sessionTag 写入 journal 供按会话恢复（T3） |  |
-| plugins/dsh-extra-plan/index.js | recoverJournals | L2829-2856 | journal 崩溃自愈（新旧形状兼容）；可选 sessionTag 过滤：跳过内嵌其它会话标识的残留（T3 跨角色互恢复防护） |  |
-| plugins/dsh-extra-plan/index.js | defineSavePlan | L2858-2924 | save_plan 工具定义（双写必填/证据引用校验） |  |
-| plugins/dsh-extra-plan/index.js | registerTool | L2928-2941 | 工具注册分发 |  |
-| plugins/dsh-extra-plan/index.js | registerSavePlan | L2944 | save_plan 注册（规划子代理层 + 主会话层；主会话侧放行由 mainGateReason 限 direct，T3） |  |
-| plugins/dsh-extra-plan/index.js | defineSaveProbe | L2949-3062 | save_probe 工具定义 |  |
-| plugins/dsh-extra-plan/index.js | registerSaveProbe | L3065 | save_probe 注册（主会话层 + 已认领的探查子代理层；规划子代理/执行者/reviewer 不是持有者） |  |
-| plugins/dsh-extra-plan/index.js | probeClaimFor | L3075-3091 | 放行-认领关联查核（pendingProbeClaims）：非子代理/含写子代理/规划子代理（T5 守卫）不认领，命中则消费计数并登记 save_probe |  |
-| plugins/dsh-extra-plan/index.js | causeChainOf | L3142-3154 | 拒绝原因链解析（子代理继承根因） |  |
-| plugins/dsh-extra-plan/index.js | recordRequestError | L3155-3177 | 记录请求错误诊断到临时目录 |  |
+| plugins/dsh-extra-plan/index.js | apply | L2484-3503 | 插件主入口：配置解析/服务注册/工具注册/锚点钩子 |  |
+| plugins/dsh-extra-plan/index.js | foldUsage | L2513-2587 | usage 账本折叠写入（cursor 去重，按 sessionId+seq） |  |
+| plugins/dsh-extra-plan/index.js | isChild | L2592-2600 | 子代理判定（live 校验+误分类警示） |  |
+| plugins/dsh-extra-plan/index.js | isPlannerChild | L2604-2618 | 规划子代理判定（descriptor.mode=continuable） |  |
+| plugins/dsh-extra-plan/index.js | toolSchemasOf | L2623-2641 | 防御式获取 agent 工具 schemas |  |
+| plugins/dsh-extra-plan/index.js | resolvePlannerEntry | L2662-2729 | 规划子模型单点解析（plannerModel 优先 + 父会话配置 + 缓存）；经 listModels 目录做 T2 降级判定 |  |
+| plugins/dsh-extra-plan/index.js | parseSkillFrontmatter | L2773-2782 | SKILL.md frontmatter 的 name/description 解析 |  |
+| plugins/dsh-extra-plan/index.js | floorChildPolicy | L2784-2788 | 子代理沙箱策略抬升（workspace-write） |  |
+| plugins/dsh-extra-plan/index.js | childBaseline | L2790-2796 | 子代理基线（判定/usage/floor 汇总） |  |
+| plugins/dsh-extra-plan/index.js | atomicCommit | L2808-2823 | 原子落盘（tmp→journal→rename→清 journal；save_plan 双写/save_probe 单写共用）；可选 sessionTag 写入 journal 供按会话恢复（T3） |  |
+| plugins/dsh-extra-plan/index.js | recoverJournals | L2830-2857 | journal 崩溃自愈（新旧形状兼容）；可选 sessionTag 过滤：跳过内嵌其它会话标识的残留（T3 跨角色互恢复防护） |  |
+| plugins/dsh-extra-plan/index.js | defineSavePlan | L2859-2925 | save_plan 工具定义（双写必填/证据引用校验） |  |
+| plugins/dsh-extra-plan/index.js | registerTool | L2929-2942 | 工具注册分发 |  |
+| plugins/dsh-extra-plan/index.js | registerSavePlan | L2945 | save_plan 注册（规划子代理层 + 主会话层；主会话侧放行由 mainGateReason 限 direct，T3） |  |
+| plugins/dsh-extra-plan/index.js | defineSaveProbe | L2950-3063 | save_probe 工具定义 |  |
+| plugins/dsh-extra-plan/index.js | registerSaveProbe | L3066 | save_probe 注册（主会话层 + 已认领的探查子代理层；规划子代理/执行者/reviewer 不是持有者） |  |
+| plugins/dsh-extra-plan/index.js | probeClaimFor | L3076-3092 | 放行-认领关联查核（pendingProbeClaims）：非子代理/含写子代理/规划子代理（T5 守卫）不认领，命中则消费计数并登记 save_probe |  |
+| plugins/dsh-extra-plan/index.js | causeChainOf | L3143-3155 | 拒绝原因链解析（子代理继承根因） |  |
+| plugins/dsh-extra-plan/index.js | recordRequestError | L3156-3178 | 记录请求错误诊断到临时目录 |  |
 | plugins/dsh-extra-plan/lib/client-bridge.js | apply | L17-19 | 空实现（仅承载 dsh.client 加载路径指向 lib/client.js） |  |
 | plugins/dsh-extra-plan/lib/client.js | apply | L81-311 | 客户端插件入口：注入样式表与中英词条，定义设置页组件并注册到 settings.plugin.item 插槽（用 inject 等待插槽就绪，register 会被丢弃） |  |
 | plugins/dsh-extra-plan/lib/client.js | ProConfigTab | L92-255 | 设置页「pro规划模块」组件：GET /pro-config 载入 fields/values → 本地草稿 → save() PUT 回写；含 loading/error/ready 三态渲染 |  |
