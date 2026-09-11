@@ -5,7 +5,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { framesOf, decodeText } from '../_shared/zstd-frames.mjs'
-import { findSession } from '../_shared/session-finder.mjs'
+import { findSession, logPath } from '../_shared/session-finder.mjs'
 
 const found = findSession(process.argv[2])
 if (found.kind === 'notfound') { console.error('dir not found:', found.arg); process.exit(1) }
@@ -13,7 +13,8 @@ if (found.kind === 'none') { console.error('未发现使用过按需规划模式
 
 for (const dir of found.dirs) {
   console.log(`\n===== 会话 ${dir} =====`)
-  const buf = fs.readFileSync(path.join(found.base, dir, 'session.jsonl.zstd'))
+  const lp = logPath(path.join(found.base, dir)); if (!lp) { console.error('会话日志文件不存在（两代候选名均未命中）:', path.join(found.base, dir)); continue }
+  const buf = fs.readFileSync(lp)
   let lineNo = 0
   for (const f of framesOf(buf)) {
     const text = decodeText(buf, f)

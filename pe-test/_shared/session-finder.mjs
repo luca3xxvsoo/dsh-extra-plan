@@ -25,7 +25,7 @@ const MARKER = '按需规划模式'
 // 方法定义 L3327）；本工具自实现目录遍历、不调用宿主 listSessionDirs，不受该抛错影响——按候选名逐项探测，存在即用。
 const SESSION_LOG_NAMES = ['session.v3.jsonl.zstd', 'session.jsonl.zstd']
 
-function logPath(dir) {
+export function logPath(dir) {
   for (const name of SESSION_LOG_NAMES) {
     const p = path.join(dir, name)
     if (fs.existsSync(p)) return p
