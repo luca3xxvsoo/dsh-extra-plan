@@ -349,14 +349,18 @@ const sessionStart = (listeners, agent) => {
 }
 
 // ── ⑥ R-code 系列:F1 桥接（run_code 内嵌套 ask 驱动状态机） ──────────────
-// 嵌套事件 fixture（同 step-00 F-code 系形状）：code-dispatch-start 的 arguments 为对象形态，
-// code-dispatch 的 content 直接是 ContentBlock 数组（无 tool-result 外层）。
-const cdStartE = (name, sid, argsObj) => ({ type: 'tool/code-dispatch-start', data: { rootCallId: 'r1', parentCallId: 'pc1', subCallId: sid, name, arguments: argsObj } })
-const cdEndE = (sid, text, isError = false) => ({ type: 'tool/code-dispatch', data: { rootCallId: 'r1', parentCallId: 'pc1', subCallId: sid, name: 'ask_user_question', arguments: {}, isError, content: [{ type: 'text', text }] } })
+// 嵌套事件 fixture（同 step-00 F-code 系形状）：dispatch-start 的 arguments 为对象形态，
+// dispatch 的 content 直接是 ContentBlock 数组（无 tool-result 外层）。
+// 事件名双兼容两代：0.1.5-rc.2 新名 = tool/ptc-dispatch-start / tool/ptc-dispatch；
+// 0.1.2-rc.1 旧名 = tool/code-dispatch-start / tool/code-dispatch，均由 runDispatchSeriesE(ev) 注入。
 const nestedRouteE = { questions: [{ id: 'q1', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }] }
 const nestedClarifyE = { questions: [{ id: 'q1', options: [{ label: '方案A' }, { label: '方案B' }] }] }
 const nestedApprovalE = { questions: [{ id: 'q1', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }] }
 const nestedCustomE = '{"answers":[{"id":"q1","custom":"改成XX"}]}'
+
+function runDispatchSeriesE(ev) {
+  const cdStartE = (name, sid, argsObj) => ({ type: ev.start, data: { rootCallId: 'r1', parentCallId: 'pc1', subCallId: sid, name, arguments: argsObj } })
+  const cdEndE = (sid, text, isError = false) => ({ type: ev.end, data: { rootCallId: 'r1', parentCallId: 'pc1', subCallId: sid, name: 'ask_user_question', arguments: {}, isError, content: [{ type: 'text', text }] } })
 
 const nestedDirectMain = mainWithEvents([umE(), cdStartE('ask_user_question', 'n1', nestedRouteE), cdEndE('n1', answerE(['直接执行']))])
 const nestedPlanMain = mainWithEvents([umE(), cdStartE('ask_user_question', 'n1', nestedRouteE), cdEndE('n1', answerE(['进行pro规划'])), cdStartE('ask_user_question', 'n2', nestedClarifyE), cdEndE('n2', nestedCustomE)])
@@ -368,6 +372,11 @@ r = preExecute(harness, nestedPlanMain, 'subagent_plan', {})
 checkTrue('R23 嵌套路由 plan+嵌套澄清 → subagent_plan 放行（F1 桥接）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, nestedApproveMain, 'subagent', { run_in_background: true })
 checkTrue('R24 嵌套批准「同意执行」→ subagent 委派放行（F1 桥接）', r !== null && r !== undefined && r.kind === 'allow')
+
+checkTrue('UC27 runCodeDispatchGateReason：18×→null / 19×→拒含「超过上限」 / 无rootCallId→null', (() => { const evs18 = Array.from({ length: 18 }, (_, i) => cdStartE('read', 's' + i, {})); const evs19 = evs18.concat([cdStartE('read', 's19', {})]); return runCodeDispatchGateReason(evs18, { rootCallId: 'r1' }, 18) === null && (() => { const got = runCodeDispatchGateReason(evs19, { rootCallId: 'r1' }, 18); return typeof got === 'string' && got.includes('超过上限') })() && runCodeDispatchGateReason(evs18, {}, 18) === null })())
+}
+runDispatchSeriesE({ start: 'tool/ptc-dispatch-start', end: 'tool/ptc-dispatch' })
+if (process.env.EXTRA_PLAN_LEGACY_ROUND === '1') runDispatchSeriesE({ start: 'tool/code-dispatch-start', end: 'tool/code-dispatch' })
 
 // ── ⑦ R-code 系列:F4 桥接（ptc 折叠目录只读判定退化为角色信号） ──────────
 // ptc 折叠形态（wireSchemas 塌缩为仅 [run_code]）：修复前 executor 被误判只读恒拒 write；
@@ -665,7 +674,6 @@ checkTrue('UC23 嵌套 safe 单层放行', runCodeCatchGateReason("const safe = 
 checkTrue('UC24 教学文案含 safe 模板逐字', (() => { const got = runCodeCatchGateReason("await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })"); return typeof got === 'string' && got.includes('const safe = (p) => p.catch((e) => ({ _error: String(e).slice(0, 200) }))') })())
 checkTrue('UC25 runCodeSiteCount：2 调用→2 / 嵌套展平→3', runCodeSiteCount("await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })") === 2 && runCodeSiteCount(String.raw`await tools.run_code({ "code": "await tools.read({ file_path: 'a' })\nawait tools.read({ file_path: 'b' })" })\nawait tools.read({ file_path: 'c' })`) === 3)
 checkTrue('UC26 isRunCodeSubCall：parent→true / sub:true→true / 普通→false', isRunCodeSubCall({ parent: Symbol('p') }) === true && isRunCodeSubCall({ sub: true }) === true && isRunCodeSubCall({ name: 'read' }) === false)
-checkTrue('UC27 runCodeDispatchGateReason：18×→null / 19×→拒含「超过上限」 / 无rootCallId→null', (() => { const evs18 = Array.from({ length: 18 }, (_, i) => cdStartE('read', 's' + i, {})); const evs19 = evs18.concat([cdStartE('read', 's19', {})]); return runCodeDispatchGateReason(evs18, { rootCallId: 'r1' }, 18) === null && (() => { const got = runCodeDispatchGateReason(evs19, { rootCallId: 'r1' }, 18); return typeof got === 'string' && got.includes('超过上限') })() && runCodeDispatchGateReason(evs18, {}, 18) === null })())
 
 // ── ⑫ R87-R93：多调用容错硬闸门监听器级（任务3） ──
 r = preExecute(harnessCatchOn, noneMain, 'run_code', { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })", description: 'UC1 同款' })

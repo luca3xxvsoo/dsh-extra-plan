@@ -118,6 +118,19 @@ function approvalDenyReason(action, state) {
 
 const ASK_TOOL = 'ask_user_question'
 
+// ── 会话事件名双兼容层（DSH 0.1.2-rc.1 / 0.1.5-rc.2）────────────────────────
+// 为什么双兼容：生产仍是 0.1.2-rc.1 且需回放旧会话日志，同一份代码须两代都能工作。
+// 两代出处：tool/code-dispatch(-start)（子调用 id 前缀 :code:）属 0.1.2-rc.1；
+//   tool/ptc-dispatch(-start)（前缀 :ptc:）属 0.1.5-rc.2（dsh-session known-event-types：
+//   0.1.2-rc.1 L66-67 / 0.1.5-rc.2 L71-72；载荷字段两代未变）。
+// 删除条件：生产整体切到 0.1.5-rc.2 且不再回放旧日志（含 tool/code-dispatch(-start) 的旧会话）。
+// 删除动作：删两个 Set 里带 COMPAT 标记的那一项；判定点无需改动。
+// 删除判据：grep "COMPAT"（后跟左括号）应为 0 命中。
+const DISPATCH_START = new Set(['tool/ptc-dispatch-start', 'tool/code-dispatch-start']) // COMPAT(0.1.2-rc.1)
+const DISPATCH = new Set(['tool/ptc-dispatch', 'tool/code-dispatch']) // COMPAT(0.1.2-rc.1)
+const isDispatchStart = (t) => DISPATCH_START.has(t) // 含旧名 tool/code-dispatch-start（0.1.2-rc.1）
+const isDispatch = (t) => DISPATCH.has(t)
+
 // 注（v0.1.1 修复）：裸词 `md` 已从列表移除——`\bmd\b` 会命中 'README.md' 这类
 // 文件名里的 ".md"，导致只读探查命令被批量误拦（冒烟实测：规划子代理每条只读
 // pwsh 均被拒）。其余裸词（rd/del/copy/move/ren 等）误伤概率低，保留。
@@ -500,7 +513,7 @@ function parseAskResultData(data) {
   return { callId, kind: 'ok', answersLen, selected }
 }
 
-// 解析一次嵌套 ask 的结果（tool/code-dispatch 事件，run_code 程序内嵌套调用）。
+// 解析一次嵌套 ask 的结果（tool/ptc-dispatch / tool/code-dispatch 事件，run_code 程序内嵌套调用）。
 // data.content 直接是 ContentBlock 数组（无 tool/result 的 tool-result 外层）。
 // 返回（与 parseAskResultData 同构）：
 //   { callId, kind: 'ok', answersLen, selected } —— 正常答复（answersLen=0 为空白回复）
@@ -564,13 +577,13 @@ function deriveFlowState(events) {
       if (labels !== null) asks.set(e.data.callId, askKindOfRelaxed(labels))
       continue
     }
-    if (e.type === 'tool/code-dispatch-start' && e.data !== null && typeof e.data === 'object' &&
+    if (isDispatchStart(e.type) && e.data !== null && typeof e.data === 'object' &&
         e.data.name === ASK_TOOL && typeof e.data.subCallId === 'string') {
       const labels = labelsOfCallData(e.data)
       if (labels !== null) asks.set(e.data.subCallId, askKindOfRelaxed(labels))
       continue
     }
-    if (e.type === 'tool/code-dispatch' && e.data !== null && typeof e.data === 'object' &&
+    if (isDispatch(e.type) && e.data !== null && typeof e.data === 'object' &&
         typeof e.data.subCallId === 'string') {
       const result = parseDispatchAskResult(e.data)
       if (result.callId === undefined || !asks.has(result.callId)) continue
@@ -635,12 +648,12 @@ function plannerChildIdsOf(events) {
       calls.add(e.data.callId)
       continue
     }
-    if (e.type === 'tool/code-dispatch-start' && e.data !== null && typeof e.data === 'object' &&
+    if (isDispatchStart(e.type) && e.data !== null && typeof e.data === 'object' &&
         e.data.name === 'subagent_plan' && typeof e.data.subCallId === 'string') {
       calls.add(e.data.subCallId)
       continue
     }
-    if (e.type === 'tool/code-dispatch' && e.data !== null && typeof e.data === 'object' &&
+    if (isDispatch(e.type) && e.data !== null && typeof e.data === 'object' &&
         typeof e.data.subCallId === 'string' && calls.has(e.data.subCallId)) {
       let text = ''
       if (Array.isArray(e.data.content)) {
@@ -678,7 +691,7 @@ function plannerChildIdsOf(events) {
 
 // 会话内 tool/call 成功配对计数（排除 skipNames，如 save_plan/send_message）——探查硬上限判据。
 // 直呼 = tool/call + tool/result(ok) 配对计（data.error undefined/null + message.content 内
-// tool-result 的 toolCallId 命中 + 块级 isError!==true 排除）；code-dispatch（run_code 子调用）
+// tool-result 的 toolCallId 命中 + 块级 isError!==true 排除）；ptc/code-dispatch（run_code 子调用）
 // 不再计入——容器计费：run_code 本身计 1 次（tool/call+tool/result 配对），子调用由实例上限单独约束。
 // 修复B（被拒不烧预算）：pre-execute deny 的 tool/result 无 data.error（仅 HarnessError 有 .info），
 // 但 tool-result 块恒带块级 isError:true → 配对判定按块级 isError 排除，被拒调用才真实不计。
@@ -1998,7 +2011,7 @@ function runCodeDispatchCapText(rid, count, cap) {
   return `run_code 实例（rootCallId ${rid}）子调用数 ${count} 超过上限 ${cap}（exploreBudget）：请拆分 run_code 或提高 exploreBudget；循环/动态放大同样受限`
 }
 
-// 运行时单实例上限判定（planner 专属）：统计 events 中 type==='tool/code-dispatch-start' 且
+// 运行时单实例上限判定（planner 专属）：统计 events 中 type 命中 DISPATCH_START（新名 tool/ptc-dispatch-start / 旧名 tool/code-dispatch-start）且
 // data.rootCallId===rid 的条数 count；count>cap → 返回 T3 文案；否则 null。
 // exec.rootCallId 非 string / events 非数组 / cap 非正整数 → null。
 function runCodeDispatchGateReason(events, exec, cap) {
@@ -2008,7 +2021,7 @@ function runCodeDispatchGateReason(events, exec, cap) {
   let count = 0
   for (const e of events) {
     if (e === null || typeof e !== 'object') continue
-    if (e.type !== 'tool/code-dispatch-start') continue
+    if (!isDispatchStart(e.type)) continue
     const d = e.data
     if (d === null || typeof d !== 'object') continue
     if (d.rootCallId === rid) count += 1

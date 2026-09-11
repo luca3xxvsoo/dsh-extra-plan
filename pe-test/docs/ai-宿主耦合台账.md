@@ -165,12 +165,12 @@
 | 本仓库位置(文件+符号+行号) | 宿主符号(逐字) | 宿主包+包内相对路径 | 用途 | 升级敏感点 | 核实状态 |
 |:--|:--|:--|:--|:--|:--|
 | SD1 pe-test/_shared/session-finder.mjs L16-L49（SESSIONS 布局与首行 parentSession） | 会话存储布局 sessions 目录结构 + 首行 parentSession 字段 | dsh-session-persistence-jsonl 包内 lib/index.js；字段校验 dsh-session 包内 lib/types/types.d.ts | 取证工具按布局定位会话并读首行取父会话 | 布局或首行字段变化即取证工具全部失效 | 【已核实】 |
-| SD2 pe-test/_shared/zstd-frames.mjs L6（帧魔术数）与 L40-42 | 会话日志压缩后缀与 zstd 帧格式（compression 为 zstd 时后缀 .jsonl.zstd） | dsh-session-persistence-jsonl 包内 lib/index.js | 自实现 zstd 帧切分并用 node:zlib 解压读会话日志 | 宿主换压缩格式或文件名规则即解码失败 | 【已核实】 |
+| SD2 pe-test/_shared/zstd-frames.mjs L6（帧魔术数）与 L40-42 | 会话日志压缩后缀与 zstd 帧格式（compression 为 zstd 时后缀 .jsonl.zstd；文件名两代并列：0.1.2-rc.1=session.jsonl.zstd、0.1.5-rc.2 起=session.v3.jsonl.zstd） | dsh-session-persistence-jsonl 包内 lib/index.js | 自实现 zstd 帧切分并用 node:zlib 解压读会话日志 | 宿主换压缩格式或文件名规则即解码失败 | 【已核实】 |
 | SD3 plugins/dsh-extra-plan/index.js L537-L712 与 L548（会话事件流解析） | user/message 事件负载（data.source.kind 为 user） | dsh-session 包内 lib/types/types.d.ts | 扫描会话事件流判定用户轮起点（预算锚点） | 事件键或负载形状变化即锚点判定失效 | 【已核实】 |
 | SD4 plugins/dsh-extra-plan/index.js L561 与 L292-293（tool/call 解析） | tool/call 事件负载（turn 与 step 与 callId 与 name 与 arguments，arguments 是原始 JSON 字符串） | dsh-session 包内 lib/types/types.d.ts | 识别 ask_user_question 调用与澄清选项 | arguments 由字符串改对象即 JSON.parse 抛错 | 【已核实】 |
 | SD5 plugins/dsh-extra-plan/index.js L697 与 L693（tool/result 与错误块排除） | tool/result 事件负载（turn 与 step 与 message 与 error 与 meta）+ ToolResultBlock 的 isError | dsh-session 包内 lib/types/types.d.ts；dsh-llm 包内 lib/types/types.d.ts | 按结果与错误标记计预算（被拒调用不计） | 负载或错误标记口径变化即预算计数偏差 | 【已核实】 |
 | SD6 plugins/dsh-extra-plan/index.js L2544-L2557（assistant/message 用量记账） | assistant/message 事件负载（turn 与 step 与 message 与 usage 与 interrupted）+ TokenUsage + MessageSourceMap 的 model | dsh-session 包内 lib/types/types.d.ts；dsh-llm 包内 lib/types/types.d.ts 与 lib/types/message.d.ts | usage 账本累加输入与输出与缓存读 tokens 及来源模型 | 字段改名或来源映射变化即账本失真 | 【已核实】 |
-| SD7 plugins/dsh-extra-plan/index.js L568 与 L511-L518（tool/code-dispatch-start 解析） | tool/code-dispatch-start 与 tool/code-dispatch 负载（rootCallId 与 parentCallId 与 subCallId 与 name 与 arguments 与 isError 与 content） | dsh-tools 包内 lib/types/types.d.ts 与 lib/types/invariant.js | PTC 模式下统计 run_code 子调用与判定拆解组 | 字段或调用链不变量变化即统计与拦截失效 | 【已核实】 |
+| SD7 plugins/dsh-extra-plan/index.js L568 与 L511-L518（tool/code-dispatch-start 解析） | tool/code-dispatch-start 与 tool/code-dispatch（0.1.2-rc.1）/ tool/ptc-dispatch-start 与 tool/ptc-dispatch（0.1.5-rc.2）负载（rootCallId 与 parentCallId 与 subCallId 与 name 与 arguments 与 isError 与 content） | dsh-tools 包内 lib/types/types.d.ts 与 lib/types/invariant.js | PTC 模式下统计 run_code 子调用与判定拆解组 | 字段或调用链不变量变化即统计与拦截失效 | 【已核实】 |
 | SD8 plugins/dsh-extra-plan/index.js L2611-L2614（subagent/descriptor 判定 continuable） | subagent/descriptor 事件（mode 取值 one-shot 或 continuable） | dsh-subagent 包内 lib/types/descriptor.d.ts | 区分可续轮子代理（规划者）与 one-shot（执行者与验收者） | mode 值域或事件版本变化即角色判定漂移 | 【已核实】 |
 | SD9 plugins/dsh-extra-plan/index.js L777 与 L824（续轮转达判定） | MessageSourceMap（plugin 与 tool 与 model）与续轮 source 的 kind 为 agent-message（form 为 relay） | dsh-llm 包内 lib/types/message.d.ts；dsh-subagent 包内 lib/types/continuation.d.ts | 识别续轮转达消息，避免把转达当新用户轮 | source 的 kind 或 form 改名即判定失效、预算被重复锚定 | 【已核实】 |
 | SD10 plugins/dsh-extra-plan/index.js L173（session.snapshotEvents()） | Session.snapshotEvents(fromSeq, toSeqExclusive) | dsh-session 包内 lib/types/index.d.ts | 读取会话事件快照（已弃用 events getter） | 方法签名变化即读取失败 | 【已核实】 |
@@ -310,3 +310,11 @@
 1. **exec.sub 不是宿主字段**——本仓库 plugins/dsh-extra-plan/index.js L1991 判断 `exec.sub === true`，但本版宿主 dsh-tools 包内 lib/types/index.d.ts 的 ToolExecution 与 ToolExecutionInput 均无 sub 字段（宿主侧只有 exec.parent，见 L1992 的判断）。sub 是本插件在 L2286 与 L2287 给合成成员自打的标记，不是宿主契约；升级比对时不要在宿主类型里找 sub，只需核对 exec.parent 与 rootCallId。
 2. **sessionProjections 的 stateOf 本插件全文 0 次调用**——本插件没有任何一处直接调用 sessionProjections 的 stateOf(session, sandboxMode)；沙箱模式一律改走 sandboxPolicy 的 overrideOf（宿主 dsh-sandbox-policy 包内 lib/index.js 内部才调用 stateOf）。升级若移除或改名 overrideOf，本插件需改道直连投影服务，因此本项按「反向记录」保留在③-C 末行。
 3. **lib/executor-spawn.js L66 注释的宿主行号已过期并已修正**——该注释原文把 dsh-subagent 包内 resolveChildAgentOptions 的实现位置写成一段固定的宿主行号区间，本机 0.1.2-rc.1 实测该符号实际落在包内另一区间（本台账按硬约束不写宿主行号）。本期已把该注释改为按包名与符号名核对：注释内容改为「宿主 resolveChildAgentOptions（@deepseek-ai/dsh-subagent 包内，按符号名核对）用对象展开合并」；文件中该注释的相邻两行未动，文件仍为 89 行。
+- 升级影响报告（0.1.2-rc.1 → 0.1.5-rc.2 逐条核对结论与修复清单，与本台账双向互链）：pe-test/docs/ai-宿主升级影响-DSH-0.1.5-rc.2.md
+
+## ⑦ 0.1.5-rc.2 起的新失败面（本台账原未覆盖）
+
+- dsh-tools tools.restrict() 新增两处抛错守卫：无 scoped context（"tools.restrict() requires a scoped context (agent.ctx): ..."）与空过滤器 {}（"tools.restrict({}) is a no-op: ..."）；另有保留工具 run_code 命名守卫（0.1.5-rc.2 内 lib/index.js L2790-L2804）。
+- dsh-tool-subagent：配了 toolFilter 却无 allow/deny 即抛错（"tool-subagent: `toolFilter` is configured but names neither `allow` nor `deny` — remove the key or fill the filter"；0.1.5-rc.2 内 lib/index.js L370）。
+- 本仓库预设四行均含 toolFilter.deny（agent.cordis.yml L182/L231/L256/L288；executor-spawn 行 L314 另注入 deny），按现文安全，无需改动 assets/presets/**。
+- 本台账互链的「DSH 升级影响报告」已归档至 .extra-plan/ai-宿主升级影响-DSH-0.1.5-rc.2.md（存档，不删）。

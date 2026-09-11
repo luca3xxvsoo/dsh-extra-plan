@@ -85,11 +85,11 @@ const answer = (labels) => JSON.stringify({ answers: labels.map((l) => ({ id: 'q
 const customAnswer = '{"answers":[{"id":"q1","custom":"改成XX"}]}'
 const emptyAnswer = '{"answers":[]}'
 // 嵌套事件 fixture（run_code 程序内嵌套调用，混合模式桥接 F1-F4）：
-// code-dispatch-start 的 data={rootCallId,parentCallId,subCallId,name,arguments}（arguments 为对象形态，
-// 与直呼 call 的 arguments JSON 字符串形态区别）；code-dispatch 的 data 另含 isError+content
+// dispatch-start 的 data={rootCallId,parentCallId,subCallId,name,arguments}（arguments 为对象形态，
+// 与直呼 call 的 arguments JSON 字符串形态区别）；dispatch 的 data 另含 isError+content
 // （content 直接是 ContentBlock 数组，无 tool/result 的 tool-result 外层）。
-const cdStart = (name, sid, argsObj) => ({ type: 'tool/code-dispatch-start', data: { rootCallId: 'r1', parentCallId: 'pc1', subCallId: sid, name, arguments: argsObj } })
-const cdEnd = (sid, text, isError = false) => ({ type: 'tool/code-dispatch', data: { rootCallId: 'r1', parentCallId: 'pc1', subCallId: sid, name: 'ask_user_question', arguments: {}, isError, content: [{ type: 'text', text }] } })
+// 事件名双兼容两代：0.1.5-rc.2 新名 = tool/ptc-dispatch-start / tool/ptc-dispatch；
+// 0.1.2-rc.1 旧名 = tool/code-dispatch-start / tool/code-dispatch，均由 runDispatchSeries(ev) 注入。
 const nestedRouteArgs = { questions: [{ id: 'q1', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }] }
 const nestedApprovalArgs = { questions: [{ id: 'q1', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }] }
 const nestedClarifyArgs = { questions: [{ id: 'q1', options: [{ label: '方案A' }, { label: '方案B' }] }] }
@@ -610,6 +610,11 @@ const AS = [
 ]
 for (const [name, got, expected] of AS) check(name, got, expected)
 
+let dispatchSeriesChecks = 0
+function runDispatchSeries(ev) {
+  const cdStart = (name, sid, argsObj) => ({ type: ev.start, data: { rootCallId: 'r1', parentCallId: 'pc1', subCallId: sid, name, arguments: argsObj } })
+  const cdEnd = (sid, text, isError = false) => ({ type: ev.end, data: { rootCallId: 'r1', parentCallId: 'pc1', subCallId: sid, name: 'ask_user_question', arguments: {}, isError, content: [{ type: 'text', text }] } })
+
 // ── F-code 系列:deriveFlowState 识别 run_code 内嵌套 ask（F1 桥接） ─────────
 const FC = [
   ['FC1 嵌套路由答「直接执行」→ direct', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['直接执行']))], { route: 'direct', clarified: false, approved: false, channelBroken: false }],
@@ -629,7 +634,7 @@ for (const [name, events, expected] of FC) {
 const PC = [
   ['PC1 嵌套 plan 结果含 uuid → 提取', [um(), cdStart('subagent_plan', 'p1', {}), cdEnd('p1', 'started subagent 3a7c1e5b-9d2f-4e8a-b6c4-1f0e9d8c7b6a')], ['3a7c1e5b-9d2f-4e8a-b6c4-1f0e9d8c7b6a']],
   ['PC2 嵌套 plan 结果 isError → 空', [um(), cdStart('subagent_plan', 'p1', {}), cdEnd('p1', 'Error: gated', true)], []],
-  ['PC3 非 subagent_plan 的 code-dispatch 忽略', [um(), cdStart('write', 'w1', {}), cdEnd('w1', 'started subagent 3a7c1e5b-9d2f-4e8a-b6c4-1f0e9d8c7b6a')], []],
+  ['PC3 非 subagent_plan 的 dispatch 忽略', [um(), cdStart('write', 'w1', {}), cdEnd('w1', 'started subagent 3a7c1e5b-9d2f-4e8a-b6c4-1f0e9d8c7b6a')], []],
 ]
 for (const [name, events, expected] of PC) {
   check(name, plannerChildIdsOf(events), expected)
@@ -637,8 +642,8 @@ for (const [name, events, expected] of PC) {
 
 // ── C-code/CU-code 系列:toolCallCount / toolCallsSinceUser 计入嵌套调用（F2 桥接） ──
 const CC = [
-  ['CC1 单 cdStart（容器计费）→ 0', [cdStart('read', 'n1', {}), cdEnd('n1', 'ok')], new Set([]), 0],
-  ['CC2 直呼×2+cdStart×2 → 2（子调用不计）', [call('read', 'c1'), ok('c1', 'r'), call('glob', 'c2'), ok('c2', 'r'), cdStart('pwsh', 'n1', {}), cdEnd('n1', 'ok'), cdStart('read', 'n2', {}), cdEnd('n2', 'ok')], new Set([]), 2],
+  ['CC1 单 dispatch-start（容器计费）→ 0', [cdStart('read', 'n1', {}), cdEnd('n1', 'ok')], new Set([]), 0],
+  ['CC2 直呼×2+dispatch-start×2 → 2（子调用不计）', [call('read', 'c1'), ok('c1', 'r'), call('glob', 'c2'), ok('c2', 'r'), cdStart('pwsh', 'n1', {}), cdEnd('n1', 'ok'), cdStart('read', 'n2', {}), cdEnd('n2', 'ok')], new Set([]), 2],
   ['CC3 skipNames 含 save_plan → 嵌套 save_plan 不计（子调用全部不计）', [cdStart('save_plan', 'n1', {}), cdEnd('n1', 'ok'), cdStart('read', 'n2', {}), cdEnd('n2', 'ok')], new Set(['save_plan']), 0],
   ['CC4 嵌套 skipNames 白名单不含（glob/read）→ 子调用不计（现为 0）', [cdStart('send_message', 'n1', {}), cdEnd('n1', 'ok'), cdStart('glob', 'n2', {}), cdEnd('n2', 'ok'), cdStart('read', 'n3', {}), cdEnd('n3', 'ok')], new Set(['save_plan', 'send_message']), 0],
   ['CC5 dispatch isError 不计（子调用不计）', [cdStart('read', 'n1', {}), cdEnd('n1', 'x', true)], new Set([]), 0],
@@ -656,6 +661,24 @@ const CUCODE = [
 for (const [name, events, skip, expected] of CUCODE) {
   check(name, toolCallsSinceUser(events, skip), expected)
 }
+
+// ── DG 系列:runCodeDispatchGateReason 运行时实例上限判定 ─────────────────
+const dg18 = Array.from({ length: 18 }, (_, i) => cdStart('read', 'd' + i, {}))
+const dg19 = dg18.concat([cdStart('read', 'd19', {})])
+const DG = [
+  ['DG1 18×dispatch-start + cap18 → null', runCodeDispatchGateReason(dg18, { rootCallId: 'r1' }, 18), null],
+  ['DG2 19×dispatch-start → 非 null 且含「超过上限」', runCodeDispatchGateReason(dg19, { rootCallId: 'r1' }, 18) !== null && String(runCodeDispatchGateReason(dg19, { rootCallId: 'r1' }, 18)).includes('超过上限'), true],
+  ['DG3 exec 无 rootCallId → null', runCodeDispatchGateReason(dg18, {}, 18), null],
+  ['DG4 cap=0 → null', runCodeDispatchGateReason(dg18, { rootCallId: 'r1' }, 0), null],
+  ['DG5 events 非数组 → null', runCodeDispatchGateReason(null, { rootCallId: 'r1' }, 18), null],
+]
+for (const [name, got, expected] of DG) {
+  check(name, got, expected)
+}
+  dispatchSeriesChecks += FC.length + PC.length + CC.length + CUCODE.length + DG.length
+}
+runDispatchSeries({ start: 'tool/ptc-dispatch-start', end: 'tool/ptc-dispatch' }) // 默认轮：0.1.5-rc.2 新名
+if (process.env.EXTRA_PLAN_LEGACY_ROUND === '1') runDispatchSeries({ start: 'tool/code-dispatch-start', end: 'tool/code-dispatch' }) // 旧名轮：0.1.2-rc.1（可开关）
 
 // ── IS 系列:isRunCodeSubCall 子调用语义判定（容器计费 / 实例上限） ──────────
 const IS = [
@@ -676,20 +699,6 @@ const SCD = [
 ]
 for (const [name, code, expected] of SCD) {
   check(name, runCodeSiteCount(code), expected)
-}
-
-// ── DG 系列:runCodeDispatchGateReason 运行时实例上限判定 ─────────────────
-const dg18 = Array.from({ length: 18 }, (_, i) => cdStart('read', 'd' + i, {}))
-const dg19 = dg18.concat([cdStart('read', 'd19', {})])
-const DG = [
-  ['DG1 18×cdStart + cap18 → null', runCodeDispatchGateReason(dg18, { rootCallId: 'r1' }, 18), null],
-  ['DG2 19×cdStart → 非 null 且含「超过上限」', runCodeDispatchGateReason(dg19, { rootCallId: 'r1' }, 18) !== null && String(runCodeDispatchGateReason(dg19, { rootCallId: 'r1' }, 18)).includes('超过上限'), true],
-  ['DG3 exec 无 rootCallId → null', runCodeDispatchGateReason(dg18, {}, 18), null],
-  ['DG4 cap=0 → null', runCodeDispatchGateReason(dg18, { rootCallId: 'r1' }, 0), null],
-  ['DG5 events 非数组 → null', runCodeDispatchGateReason(null, { rootCallId: 'r1' }, 18), null],
-]
-for (const [name, got, expected] of DG) {
-  check(name, got, expected)
 }
 
 // ── CLC 系列:catalogIsCollapsed（ptc 折叠目录判定，F4 桥接） ───────────────
@@ -827,5 +836,5 @@ for (const [name, role, code, expected, gateCtx] of K) {
   console.log(`${okResult ? 'PASS' : 'FAIL'}  ${name}  (期望 ${JSON.stringify(expected)}, 实际 ${JSON.stringify(got)})`)
 }
 
-console.log(`\n通过 ${pass}/${KA.length + M.length + F.length + GK.length + GM.length + F21.length + GL.length + SW.length + P.length + C.length + CU.length + AP.length + BN.length + 5 + BR.length + DR.length + BD.length + BE.length + S.length + 1 + PW.length + 2 + D.length + 3 + 3 + PR.length + 7 + 5 + E.length + RP.length + LQ.length + AS.length + FC.length + PC.length + CC.length + CUCODE.length + CLC.length + H.length + ASK_RETURN.length + I.length + ASK_GROUP.length + J.length + K.length + IS.length + SCD.length + DG.length + PM.length + 1}, 失败 ${fail}`)
+console.log(`\n通过 ${pass}/${KA.length + M.length + F.length + GK.length + GM.length + F21.length + GL.length + SW.length + P.length + C.length + CU.length + AP.length + BN.length + 5 + BR.length + DR.length + BD.length + BE.length + S.length + 1 + PW.length + 2 + D.length + 3 + 3 + PR.length + 7 + 5 + E.length + RP.length + LQ.length + AS.length + dispatchSeriesChecks + CLC.length + H.length + ASK_RETURN.length + I.length + ASK_GROUP.length + J.length + K.length + IS.length + SCD.length + PM.length + 1}, 失败 ${fail}`)
 process.exit(fail === 0 ? 0 : 1)
