@@ -48,6 +48,7 @@
 | 跨平台写拦截 | step-00-跨平台写拦截.mjs |
 | 代码地图（口径/覆盖/导航） | 一键step测试.mjs 内置「代码地图生成.mjs --check」（不写盘，比对结构+漏检+导航失效）；同步仍用 node pe-test/tools/代码地图生成.mjs |
 | 会话解码/取证 | step-05-会话解码.mjs、step-06-真实会话查看.mjs、step-08-方案配对查看.mjs |
+| 机械闸门实机逐条实测（非 mock/静态自检，both 单形态 × catchGate 两轮） | pe-test/docs/ai-实机闸门测试流程.md（AI 给脚本、用户照做、当场取证判定） |
 
 ## 代码地图（函数级索引）维护规则
 - 定位功能：grep pe-test/docs/ai-代码地图.md 关键词（函数名/功能词）→ 得文件+行号 → read 区间；地图未覆盖再 glob/grep/read 探查
