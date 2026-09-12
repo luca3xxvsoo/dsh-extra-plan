@@ -863,8 +863,9 @@ function budgetReminderText(remaining, budget, threshold) {
 }
 
 // 阈值提示消息：kind 必须为 'plugin'（锚点规则只认 user/agent-message，kind=user 会误重置预算）。
+// 身份（id/role）必须由宿主构造器给出：手写对象缺 id/role 会被 dsh-session 判为损坏会话。
 function budgetReminderMessage(reminder) {
-  return { source: { kind: 'plugin', plugin: 'dsh-extra-plan' }, content: [{ type: 'text', text: reminder }] }
+  return createUserMessage({ source: { kind: 'plugin', plugin: 'dsh-extra-plan' }, content: [{ type: 'text', text: reminder }] })
 }
 
 // 阈值提示幂等：自最近一条 user/agent-message 锚点之后是否已注入过含 marker 的消息
@@ -2385,6 +2386,7 @@ import { mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, exists
 import { join, resolve, isAbsolute, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
 export function apply(ctx, config) {
   const cfg = config !== null && typeof config === 'object' ? config : {}
