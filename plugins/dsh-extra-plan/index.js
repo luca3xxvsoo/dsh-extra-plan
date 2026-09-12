@@ -131,17 +131,19 @@ const DISPATCH = new Set(['tool/ptc-dispatch', 'tool/code-dispatch']) // COMPAT(
 const isDispatchStart = (t) => DISPATCH_START.has(t) // 含旧名 tool/code-dispatch-start（0.1.2-rc.1）
 const isDispatch = (t) => DISPATCH.has(t)
 
-// 注（v0.1.1 修复）：裸词 `md` 已从列表移除——`\bmd\b` 会命中 'README.md' 这类
-// 文件名里的 ".md"，导致只读探查命令被批量误拦（冒烟实测：规划子代理每条只读
-// pwsh 均被拒）。其余裸词（rd/del/copy/move/ren 等）误伤概率低，保留。
-const PWSH_MUTATION = /\b(New-Item|Remove-Item|Rename-Item|Move-Item|Copy-Item|Set-Content|Add-Content|Clear-Content|Out-File|Set-Item|New-ItemProperty|Set-ItemProperty|Remove-ItemProperty|mkdir|rmdir|rd|del|erase|copy|move|ren|rename|xcopy|robocopy|git\s+(add|commit|checkout|switch|restore|clean|rm|mv|reset))\b|\b(Export-Csv|Export-Clixml|Tee-Object|Start-Transcript)\b|\[System\.IO\.File\]::(WriteAllText|WriteAllBytes|AppendAllText|Delete|Move|Copy|Replace|Encrypt|Decrypt)|\[IO\.File\]::(WriteAllText|WriteAllBytes|AppendAllText|Delete|Move|Copy|Replace|Encrypt|Decrypt)|\[System\.IO\.(FileStream|StreamWriter|BinaryWriter)\]::new|\[System\.IO\.Compression\.ZipFile\]::(CreateFromDirectory|ExtractToDirectory)|\[System\.IO\.Directory\]::(Delete|Move|CreateDirectory)|New-Object\s+-ComObject\s+Scripting\.FileSystemObject/i
+// PWSH 写动词判定（P2 位置判定）：语法级写形态全文本匹配（git 写子命令/.NET 静态/COM FSO/
+// Export-Csv/Export-Clixml/Tee-Object/Start-Transcript）；裸写动词按段首词判定（参数位置裸词不再拦）。
+const PWSH_MUTATION = /\bgit\s+(add|commit|checkout|switch|restore|clean|rm|mv|reset)\b|\b(Export-Csv|Export-Clixml|Tee-Object|Start-Transcript)\b|\[System\.IO\.File\]::(WriteAllText|WriteAllBytes|AppendAllText|Delete|Move|Copy|Replace|Encrypt|Decrypt)|\[IO\.File\]::(WriteAllText|WriteAllBytes|AppendAllText|Delete|Move|Copy|Replace|Encrypt|Decrypt)|\[System\.IO\.(FileStream|StreamWriter|BinaryWriter)\]::new|\[System\.IO\.Compression\.ZipFile\]::(CreateFromDirectory|ExtractToDirectory)|\[System\.IO\.Directory\]::(Delete|Move|CreateDirectory)|New-Object\s+-ComObject\s+Scripting\.FileSystemObject/i
+const PWSH_BARE_WORDS = /\b(New-Item|Remove-Item|Rename-Item|Move-Item|Copy-Item|Set-Content|Add-Content|Clear-Content|Out-File|Set-Item|New-ItemProperty|Set-ItemProperty|Remove-ItemProperty|mkdir|rmdir|rd|del|erase|copy|move|ren|rename|xcopy|robocopy)\b/i
 
-// bash 写命令（与 PWSH_MUTATION 严格对等，识别创建/修改/删除文件的操作）：
-//   - 裸命令词：rm/mv/cp/mkdir/rmdir/touch/tee/chmod/chown/ln（词后须跟空白/行尾/
-//     路径分隔符，避免命中文件名参数里的裸词——如 echo hello 不带重定向不拦截）
-//   - 已知边界（与 PWSH_MUTATION 对等）：参数位置的裸拦截词（如 grep -rn rm src/、
-//     PWSH 的 Select-String "Remove-Item" 同样误拦）不做排除——严格对等策略下
-//     不扩大正则复杂度，若上线后误拦再按方案风险 1 的缓解措施收紧。
+// bash 写命令（与 PWSH_MUTATION 严格对等，识别创建/修改/删除文件的操作；P2 起为位置判定）：
+//   - 裸命令词：rm/mv/cp/mkdir/rmdir/touch/tee/chmod/chown/ln/install/rsync/truncate/
+//     fallocate/shred/zip 按段首词判定——按 ; 换行 && || | & 切段后只判每段首个命令词，
+//     段首为 sudo/env/nohup/command 时取下一词；参数位置裸词不再拦（如 grep -rn rm src/、
+//     echo "del done" 放行）。
+//   - 已知边界（与 PWSH_MUTATION 对等）：语法级写形态出现在参数位置仍全文本命中；位置判定下
+//     包管理器命令首词非写动词不拦（此前 install 裸词全文本匹配曾使 npm install -g 误拦，
+//     本改动修复）；首词即 install/rsync/truncate/fallocate/shred/zip 仍拦。
 //   - git 写子命令：add/commit/checkout/switch/restore/clean/rm/mv/reset
 //   - sed 原地修改：sed -i / sed -i.bak / sed --in-place（sed\s+(?:--in-place\b|(?:-[A-Za-z]*\s+)*-i\b)：
 //     覆盖 -i 前带其他短选项（如 sed -n -i），且不误拦 sed 脚本内容里的 -i 字符串
@@ -149,14 +151,13 @@ const PWSH_MUTATION = /\b(New-Item|Remove-Item|Rename-Item|Move-Item|Copy-Item|S
 //     的复合写法会漏拦，PWSH 无对等物，按严格对等不扩大）
 //   - 重定向写：> >> 2> 2>> &> >&（fd→fd 重定向属只读管道不拦截：2>&1/1>&2 由
 //     [0-9]?>>? 后负向前瞻排除 &N；>&2 由 >& 后负向前瞻排除数字）
-// 已知边界（严格对等，PWSH_MUTATION 也未覆盖其对等物，不拦截）：
-//   scp/unzip/mount/umount/mkfs/包管理器(apt/yum/brew/npm install -g/pip install)/docker/kubectl。
 //   v0.1.7 起：PWSH_MUTATION 已覆盖 .NET 静态方法（System.IO.File/IO.File/FileStream/
 //   StreamWriter/BinaryWriter/ZipFile/Directory）、COM Scripting.FileSystemObject、
 //   Export-Csv/Export-Clixml/Tee-Object/Start-Transcript；BASH_MUTATION 已覆盖
 //   dd of=/install/rsync/truncate/fallocate/shred/wget -O/curl -o/vim/vi/nano/tar -c/zip
 //   （Linux 待真机验证）。
-const BASH_MUTATION = /\b(rm|mv|cp|mkdir|rmdir|touch|tee|chmod|chown|ln)\b(?=\s|$|\/)|git\s+(add|commit|checkout|switch|restore|clean|rm|mv|reset)\b|sed\s+(?:--in-place\b|(?:-[A-Za-z]*\s+)*-i\b)|(?:[0-9]?>>?(?!&\d)|&>|>&(?!\d))|\b(install|rsync|truncate|fallocate|shred)\b|\bdd\b[^|]*\sof=|wget\s+.*-O\b|curl\s+.*-o\b|\bvi(m)?\s+\S|\bnano\s+\S|tar\s+-[A-Za-z]*c|\bzip\b/i
+const BASH_MUTATION = /git\s+(add|commit|checkout|switch|restore|clean|rm|mv|reset)\b|sed\s+(?:--in-place\b|(?:-[A-Za-z]*\s+)*-i\b)|(?:[0-9]?>>?(?!&\d)|&>|>&(?!\d))|\bdd\b[^|]*\sof=|wget\s+.*-O\b|curl\s+.*-o\b|\bvi(m)?\s+\S|\bnano\s+\S|tar\s+-[A-Za-z]*c/i
+const BASH_BARE_WORDS = /\b(rm|mv|cp|mkdir|rmdir|touch|tee|chmod|chown|ln|install|rsync|truncate|fallocate|shred|zip)\b/i
 
 // run_code 静态写模式扫描黑名单（F7'，自写正则无依赖）：防偶然写；防刻意绕过有限
 // （动态 require/Function 构造/编码拼串不覆盖，见风险 R1）。白名单例外=不在黑名单：
@@ -272,12 +273,41 @@ function commandTextOf(exec) {
 }
 function pwshCommandOf(exec) { return commandTextOf(exec) }
 function bashCommandOf(exec) { return commandTextOf(exec) }
-function mutationMatches(commandOf, exec, regex) {
-  const cmd = commandOf(exec)
-  return cmd !== '' && regex.test(cmd)
+const SHELL_PREFIX_WORDS = new Set(['sudo', 'env', 'nohup', 'command'])
+const INNER_SHELL_WORDS = new Set(['pwsh', 'powershell', 'cmd', 'bash', 'sh'])
+function mutationTextMatches(text, syntaxRe, bareRe, depth) {
+  if (text === '' || depth >= 4) return false
+  if (syntaxRe.test(text)) return true
+  const segs = text.split(/[;\r\n]|\s*&&\s*|\s*\|\|\s*|\s*\|\s*|\s*&\s*/)
+  for (let s = 0; s < segs.length; s += 1) {
+    const seg = segs[s]
+    const first = /^\s*([A-Za-z0-9_.:\/-]+)/.exec(seg)
+    if (first === null) continue
+    let word = first[1]
+    if (SHELL_PREFIX_WORDS.has(word)) {
+      const second = /^\s*([A-Za-z0-9_.:\/-]+)/.exec(seg.slice(first[0].length))
+      if (second === null) continue
+      word = second[1]
+    }
+    if (INNER_SHELL_WORDS.has(word)) {
+      const arg = /-(?:Command|c)\s+(?:"([^"]*)"|'([^']*)')/i.exec(seg)
+      if (arg !== null) {
+        const inner = arg[1] !== undefined ? arg[1] : arg[2]
+        // 内层为另一平台 shell（pwsh 内嵌 bash 或反向）时两侧写形态并判（保守方向=拦）
+        if (mutationTextMatches(inner, syntaxRe, bareRe, depth + 1) || mutationTextMatches(inner, PWSH_MUTATION, PWSH_BARE_WORDS, depth + 1) || mutationTextMatches(inner, BASH_MUTATION, BASH_BARE_WORDS, depth + 1)) return true
+      }
+      continue
+    }
+    if (bareRe.test(word)) return true
+  }
+  return false
 }
-function pwshMutationMatches(exec) { return mutationMatches(pwshCommandOf, exec, PWSH_MUTATION) }
-function bashMutationMatches(exec) { return mutationMatches(bashCommandOf, exec, BASH_MUTATION) }
+function mutationMatches(commandOf, exec, syntaxRe, bareRe) {
+  const cmd = commandOf(exec)
+  return cmd !== '' && mutationTextMatches(cmd, syntaxRe, bareRe, 0)
+}
+function pwshMutationMatches(exec) { return mutationMatches(pwshCommandOf, exec, PWSH_MUTATION, PWSH_BARE_WORDS) }
+function bashMutationMatches(exec) { return mutationMatches(bashCommandOf, exec, BASH_MUTATION, BASH_BARE_WORDS) }
 
 // run_code 的 code 文本提取（exec.arguments.code 字符串；防御非字符串返回 ''）。
 function runCodeTextOf(exec) {
@@ -1471,8 +1501,8 @@ function decomposeRunCode(code) {
 }
 
 // run_code 多调用容错硬闸门（v0.1.10）：code 内 tools.* 调用点（未去重、含多行、含动态访问；
-// 裸写 hint 不计）≥2 时，要求每个调用点独立容错（①独立 try/catch 组——try 块内恰 1 个调用点
-// ②allSettled([...]) 数组内 ③调用闭括号后 .catch 链）；不足 → 教学式拒绝（组判定整体拒绝）。
+// 裸写 hint 不计）≥2 时，要求每个调用点独立容错——只认独立 try/catch 组：try 块内恰 1 个调用点、
+// 块后紧跟 catch；allSettled 数组 / .catch 链 / 包装函数一律不认；不足 → 教学式拒绝（组判定整体拒绝）。
 // 单调用豁免；嵌套 run_code 展平（depth 0 且参数可解析时递归扫 args.code，depth≥1 跳过）纳入；
 // 静态识别失败方向=保守（按未保护拒绝）。decomposeRunCode 契约与 native/both 直呼路径均不变。
 function runCodeCatchGateReason(code) {
@@ -1541,153 +1571,13 @@ function runCodeCatchGateReason(code) {
       }
       ti = tIdx + 3
     }
-    // ② allSettled 保护：allSettled（前后非 idChar，Promise.allSettled 的 '.' 前缀天然满足）
-    //    → 跳过 ws 须 '(' → 配平取实参区间 → 区间内首个 '[' 起配平取数组区间 → 区间内全部调用点保护。
-    let ai = 0
-    while (ai < tlen) {
-      const aIdx = msk.indexOf('allSettled', ai)
-      if (aIdx === -1) break
-      if (aIdx === 0 || (msk[aIdx - 1] === undefined || !/[A-Za-z0-9_$]/.test(msk[aIdx - 1]))) {
-        let k = aIdx + 10
-        while (k < tlen && /\s/.test(msk[k])) k += 1
-        if (msk[k] === '(') {
-          const bal = sliceBalancedArgs(msk, txt, k)
-          let br = k + 1
-          while (br < bal.closeIdx && /\s/.test(msk[br])) br += 1
-          if (msk[br] === '[') {
-            let depth = 1
-            let ri = br + 1
-            while (ri < bal.closeIdx && depth > 0) {
-              if (msk[ri] === '[') depth += 1
-              else if (msk[ri] === ']') depth -= 1
-              ri += 1
-            }
-            const arrClose = ri - 1
-            for (let s = 0; s < layerSites.length; s += 1) {
-              if (within(layerSites[s], br, arrClose)) protectedIdx.add(s)
-            }
-          }
-          ai = bal.closeIdx + 1
-          continue
-        }
-      }
-      ai = aIdx + 10
-    }
-    // ③ .catch 链保护：对每个调用点，自 closeIdx+1 在 masked 上跳过 ws 后须为 '.' + ws* + catch
-    //    （catch 后一字符非 idChar）→ 该点计入保护（含动态访问调用点）。
-    for (let s = 0; s < layerSites.length; s += 1) {
-      let k = layerSites[s].end + 1
-      while (k < tlen && /\s/.test(msk[k])) k += 1
-      if (msk[k] === '.') {
-        k += 1
-        while (k < tlen && /\s/.test(msk[k])) k += 1
-        if (msk.slice(k, k + 5) === 'catch' && (k + 5 >= tlen || (msk[k + 5] === undefined || !/[A-Za-z0-9_$]/.test(msk[k + 5])))) protectedIdx.add(s)
-      }
-    }
 
-    // ④ safe 白名单保护：匹配 const NAME=(P)=>P.catch(CB) 形态定义（NAME/P/CB 任意标识符、
-    //     body 须恰为 P.catch(...)；let/var/async/花括号 body/空转 body 不入白名单）；
-    //     同名非匹配再定义/赋值扫描剔除（保守：再定义即失效）；
-    //     NAME(...) 实参区间内恰 1 个 tools 调用点→保护该点、≥2 个→均不保护（与 try 块同口径）。
-    const safeWhitelist = new Set()
-    const safeDefPos = new Set()
-    let wi = 0
-    while (wi < tlen) {
-      const wIdx = msk.indexOf('const', wi)
-      if (wIdx === -1) break
-      if (!(wIdx === 0 || !/[A-Za-z0-9_$]/.test(msk[wIdx - 1])) || !(wIdx + 5 >= tlen || !/[A-Za-z0-9_$]/.test(msk[wIdx + 5]))) {
-        wi = wIdx + 5
-        continue
-      }
-      let wk = wIdx + 5
-      while (wk < tlen && /\s/.test(msk[wk])) wk += 1
-      const wa = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(msk.slice(wk))
-      if (wa === null) { wi = wIdx + 5; continue }
-      const wName = wa[0]
-      const wNamePos = wk
-      wk += wName.length
-      while (wk < tlen && /\s/.test(msk[wk])) wk += 1
-      if (msk[wk] !== '=') { wi = wIdx + 5; continue }
-      wk += 1
-      while (wk < tlen && /\s/.test(msk[wk])) wk += 1
-      if (msk[wk] !== '(') { wi = wIdx + 5; continue }
-      wk += 1
-      while (wk < tlen && /\s/.test(msk[wk])) wk += 1
-      const wp = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(msk.slice(wk))
-      if (wp === null) { wi = wIdx + 5; continue }
-      const wParam = wp[0]
-      wk += wParam.length
-      while (wk < tlen && /\s/.test(msk[wk])) wk += 1
-      if (msk[wk] !== ')') { wi = wIdx + 5; continue }
-      wk += 1
-      while (wk < tlen && /\s/.test(msk[wk])) wk += 1
-      if (msk[wk] !== '=' || msk[wk + 1] !== '>') { wi = wIdx + 5; continue }
-      wk += 2
-      while (wk < tlen && /\s/.test(msk[wk])) wk += 1
-      const catchParen = wk + wParam.length + 6
-      if (!(msk.slice(wk, wk + wParam.length) === wParam && msk.slice(wk + wParam.length, wk + wParam.length + 6) === '.catch' && msk[catchParen] === '(' && catchParen < tlen)) {
-        wi = wIdx + 5
-        continue
-      }
-      const wbal = sliceBalancedArgs(msk, txt, catchParen)
-      let wb = wbal.closeIdx + 1
-      while (wb < tlen && (msk[wb] === ' ' || msk[wb] === '\t')) wb += 1
-      const wnext = wb < tlen ? msk[wb] : ''
-      const bodyExtends = wnext !== '' && !(wnext === '\n' || wnext === '\r' || wnext === ';' || wnext === ',' || wnext === ')' || wnext === '}' || wnext === ']')
-      if (bodyExtends) { wi = wIdx + 5; continue }
-      safeWhitelist.add(wName)
-      safeDefPos.add(wNamePos)
-      wi = wbal.closeIdx + 1
-    }
-    // 剔除：whitelist 每名在 masked 上扫「非 idChar 前缀 NAME + ws* =」或「function NAME」出现点；
-    // 该出现点不是上述形状匹配定义 → 删除（同名再定义/赋值即失效，保守方向=拒绝）。
-    for (const wName of safeWhitelist) {
-      let di = 0
-      while (di < tlen) {
-        const dIdx = msk.indexOf(wName, di)
-        if (dIdx === -1) break
-        if (!(dIdx === 0 || !/[A-Za-z0-9_$]/.test(msk[dIdx - 1]))) { di = dIdx + 1; continue }
-        let dk = dIdx + wName.length
-        while (dk < tlen && /\s/.test(msk[dk])) dk += 1
-        let isDefPoint = msk[dk] === '='
-        if (!isDefPoint) {
-          let pb = dIdx - 1
-          while (pb >= 0 && /\s/.test(msk[pb])) pb -= 1
-          if (pb >= 7 && msk.slice(pb - 7, pb + 1) === 'function' && (pb - 8 < 0 || !/[A-Za-z0-9_$]/.test(msk[pb - 8]))) isDefPoint = true
-        }
-        if (isDefPoint && !safeDefPos.has(dIdx)) {
-          safeWhitelist.delete(wName)
-          break
-        }
-        di = dIdx + 1
-      }
-    }
-    // 调用保护：whitelist 每名扫「非 idChar 且非 '.' 前缀 NAME + ws* (」→ 配平取实参区间 →
-    // 区间内 tools 调用点恰 1 个 → 保护；≥2 个 → 均不保护。
-    for (const wName of safeWhitelist) {
-      let ci = 0
-      while (ci < tlen) {
-        const cIdx = msk.indexOf(wName, ci)
-        if (cIdx === -1) break
-        if (!(cIdx === 0 || (!/[A-Za-z0-9_$]/.test(msk[cIdx - 1]) && msk[cIdx - 1] !== '.'))) { ci = cIdx + 1; continue }
-        let ck = cIdx + wName.length
-        while (ck < tlen && /\s/.test(msk[ck])) ck += 1
-        if (msk[ck] !== '(') { ci = cIdx + 1; continue }
-        const cbal = sliceBalancedArgs(msk, txt, ck)
-        const whits = []
-        for (let wj = 0; wj < layerSites.length; wj += 1) {
-          if (layerSites[wj].start >= ck && layerSites[wj].end <= cbal.closeIdx) whits.push(wj)
-        }
-        if (whits.length === 1) protectedIdx.add(whits[0])
-        ci = cIdx + 1
-      }
-    }
     protectedCount += protectedIdx.size
   }
   scanLayer(text)
   if (total < 2) return null
   if (protectedCount === total) return null
-  return 'run_code 内 ' + total + ' 个工具调用未全部独立容错：每个工具调用须各自 try/catch 或 allSettled，保证只有报错的那个失败、其余照常。已保护 ' + protectedCount + ' 个。保护写法：①每个调用独立 try/catch；②放 Promise.allSettled([...]) 数组内；③调用后接 .catch；或定义白名单包装后逐个包裹：const safe = (p) => p.catch((e) => ({ _error: String(e).slice(0, 200) }))，再写 safe(tools.x(...))（safe 参数内恰 1 个调用点才受保护）'
+  return 'run_code 内 ' + total + ' 个工具调用未全部独立容错：请给每个调用点各写一个独立 try/catch——一次只包 1 个调用、块后紧跟 catch。已保护 ' + protectedCount + ' 个。写法示例：try { await tools.read({ file_path: "x" }) } catch (e) {}'
 }
 
 // run_code 调用点收集（镜像 decomposeRunCode 提取语义；不去重、只记 {start,end,innerText,name}）。
@@ -2044,7 +1934,7 @@ function subagentProbeGateReason(exec, isPlanner) {
   }
   const args = exec !== undefined && exec !== null ? exec.arguments : undefined
   if (args !== undefined && args !== null && typeof args === 'object' && args.run_in_background !== true) {
-    return '探查者必须后台运行：请显式传 run_in_background: true（one-shot 一次性会话，返回 jobId 后用 job_output 收集结果）'
+    return '探查者必须后台运行：请传 run_in_background: true'
   }
   return null
 }
@@ -2240,7 +2130,7 @@ function mainGateReason(state, exec, gateCtx) {
     if (name === 'subagent' || name === 'subagent_review') {
       const args = exec.arguments
       if (args !== undefined && args !== null && typeof args === 'object' && args.run_in_background !== true) {
-        return '执行者/reviewer 必须后台运行：请显式传 run_in_background: true（one-shot 一次性会话，返回 jobId 后用 job_output 收集结果）'
+        return '执行者/reviewer 必须后台运行：请传 run_in_background: true'
       }
     }
     return null
@@ -2403,6 +2293,8 @@ export const decisions = {
   CHANNEL_BROKEN_CODES,
   PWSH_MUTATION,
   BASH_MUTATION,
+  PWSH_BARE_WORDS,
+  BASH_BARE_WORDS,
   bashCommandOf,
   bashMutationMatches,
   ROUTE_WORD_DIRECT,
