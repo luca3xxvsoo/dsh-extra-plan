@@ -18,7 +18,11 @@
 | ask 必须 return／返回值白名单 | index.js | askUserQuestionReturnGateReason |
 | 单实例调用点上限／循环放大 | index.js | runCodeSiteCount、runCodeDispatchGateReason |
 | job_output 禁 wait:true／同 job 查重 | index.js | jobOutputGateReason |
+| 命令文本提取／写操作判定／runner 写暗示（write/拦截） | index.js | commandTextOf、pwshCommandOf、bashCommandOf、mutationTextMatches、pwshMutationMatches、bashMutationMatches、runCodeTextOf、codeMutationHints |
 | 锚定引导／首轮极简／bootstrap | index.js | isBootstrapPhase |
+| 方案/询问工具在未确认路由下的拒绝文案（plan route） | index.js | planDenyReason |
+| 批准前禁委派（approval deny） | index.js | approvalDenyReason |
+| 规划子代理分支闸门（planner 写禁+预算） | index.js | plannerGateReason |
 | 方案与验收落盘／save_plan 双写（plan/checklist） | index.js | defineSavePlan、registerSavePlan、savePlanBase |
 | 落盘原子提交／journal 崩溃自愈（atomic/commit） | index.js | atomicCommit、recoverJournals |
 | 线索落盘／save_probe／证据报告（probe/evidence） | index.js | validateProbe、renderProbeMarkdown、extractProbeEvidenceRefs |
@@ -47,8 +51,8 @@
 | plugins/dsh-extra-plan/lib/preset-sync.js | 290 | 预设资产自动下发同步（distHash 比对，幂等） |
 | plugins/dsh-extra-plan/lib/settings.js | 166 | 设置页后端 HTTP API（pro-config；qqbot 相关已随精简版插件移除） |
 | plugins/dsh-extra-plan/scripts/distribute-preset.mjs | 41 | 预设分发脚本（安装/更新时写 DSH_HOME/.agent-presets/extra-plan） |
-| plugins/dsh-qqbot-user-questions/index.js | 23 | qqbot 精简版自愈插件：apply 启动时自愈（补行+建链），不阻断启动 |
-| plugins/dsh-qqbot-user-questions/lib/heal.js | 370 | 自愈纯函数模块（定位 profile/幂等补行/建链；供 index.js/CLI/测试复用） |
+| plugins/dsh-qqbot-user-questions/index.js | 23 | qqbot 精简版自愈插件：apply 启动时调 healQqbotCompatibility（迁移旧错误块+建链），不阻断启动 |
+| plugins/dsh-qqbot-user-questions/lib/heal.js | 370 | 自愈纯函数模块（定位 profile/旧块迁移/建链；供 index.js/CLI/测试复用） |
 | plugins/dsh-qqbot-user-questions/scripts/heal.mjs | 27 | CLI 兜底入口（postinstall/手动触发；invokedAsMain 判定） |
 
 ## 函数索引
@@ -70,7 +74,7 @@
 | plugins/dsh-extra-plan/index.js | commandTextOf | L261-273 | 从 exec.arguments 提取 shell 命令原文（字符串/parsed 兼容） |  |
 | plugins/dsh-extra-plan/index.js | pwshCommandOf | L274 | 提取 pwsh 命令文本 |  |
 | plugins/dsh-extra-plan/index.js | bashCommandOf | L275 | 提取 bash 命令文本 |  |
-| plugins/dsh-extra-plan/index.js | mutationTextMatches | L278-304 | （待补充） |  |
+| plugins/dsh-extra-plan/index.js | mutationTextMatches | L278-304 | 写操作文本判定主体：先整套正则直命中，再把文本按 `;`/换行/`&&`/`\|\|`/`\|`/`&` 切段，逐段取首词与裸词表比对；对 `sudo`/`env`/`nohup`/`command` 前缀词向内再取一词，对 `pwsh`/`powershell`/`cmd`/`bash`/`sh` 的内嵌命令做 `-Command`/`-c` 引号内文本的**递归展开**（深度上限 4），达到写形态即拦 | 内嵌递归时三个平台形态并判、方向偏保守（宁拦不放过）；`mutationMatches`/`pwshMutationMatches`/`bashMutationMatches` 为其中间层 |
 | plugins/dsh-extra-plan/index.js | mutationMatches | L305-308 | 命令命中写操作拒绝正则判定 |  |
 | plugins/dsh-extra-plan/index.js | pwshMutationMatches | L309 | pwsh 写操作判定（调 mutationMatches） |  |
 | plugins/dsh-extra-plan/index.js | bashMutationMatches | L310 | bash 写操作判定（调 mutationMatches） |  |
@@ -254,7 +258,7 @@
 | plugins/dsh-extra-plan/scripts/distribute-preset.mjs | messageFor | L9-13 | 把 syncPreset 的三态结果（idle/upgraded/其他）翻译成带目标目录的中文控制台提示行，纯字符串拼接无副作用 |  |
 | plugins/dsh-extra-plan/scripts/distribute-preset.mjs | distribute | L16-21 | 预设分发（hash 比对→写 DSH_HOME/.agent-presets/extra-plan） |  |
 | plugins/dsh-extra-plan/scripts/distribute-preset.mjs | invokedAsMain | L23-28 | 主脚本判定（node 直跑时执行 distribute） |  |
-| plugins/dsh-qqbot-user-questions/index.js | apply | L13-22 | 插件入口：apply 启动时调 healQqbotCompatibility 自愈（补行+建链；try/catch 不阻断启动） |  |
+| plugins/dsh-qqbot-user-questions/index.js | apply | L13-22 | 插件入口：apply 启动时调 healQqbotCompatibility 自愈（迁移旧错误块+建链；try/catch 不阻断启动） |  |
 | plugins/dsh-qqbot-user-questions/lib/heal.js | loadYamlModule | L19-35 | js-yaml 双 fallback 加载（本地 createRequire 失败回退官方 APPDATA DSH 包）；惰性缓存，导入零副作用 |  |
 | plugins/dsh-qqbot-user-questions/lib/heal.js | timestamp | L37-41 | 时间戳 yyyyMMddHHmmssSSS（备份文件名唯一性，含毫秒） |  |
 | plugins/dsh-qqbot-user-questions/lib/heal.js | pad | L39 | 数字补零（timestamp 内部闭包） |  |
@@ -273,10 +277,10 @@
 | plugins/dsh-qqbot-user-questions/lib/heal.js | removeLegacyRootBlocks | L199-210 | 移除旧版根级块（移除后无实质内容时写顶层 []） |  |
 | plugins/dsh-qqbot-user-questions/lib/heal.js | verifyMigratedPatch | L212-237 | 迁移后校验：顶层为数组且无旧块残留（js-yaml 优先、行级兜底） |  |
 | plugins/dsh-qqbot-user-questions/lib/heal.js | emptyArrayLine | L225 | 顶层空数组行（[]）判定（行级兜底用） |  |
-| plugins/dsh-qqbot-user-questions/lib/heal.js | healPatchRows | L246-284 | 幂等补 cordis.patch.yml 两行（code-runtime/agent-presets）；写前 .bak-* 备份、写后校验失败恢复；文件不存在跳过 |  |
+| plugins/dsh-qqbot-user-questions/lib/heal.js | healPatchRows | L246-284 | 幂等**迁移**旧版根级 code-runtime/agent-presets 错误块（语义是移除旧块，两行补入由包内静态 cordis.patch.yml 的 insert 唯一提供）；写前 .bak-* 备份、写后校验失败恢复；文件不存在跳过 | 函数名带 Patch/补行语义易误读，实为「清旧块」；旧描述「补两行」已失效（2026-09-12 订正） |
 | plugins/dsh-qqbot-user-questions/lib/heal.js | findOwnQqbotProfiles | L292-312 | 扫描 $DSH_HOME/profiles/* 找出锚定本插件的 qqbot profile（bundles + node_modules 双条件） |  |
 | plugins/dsh-qqbot-user-questions/lib/heal.js | ensureDshExtraPlanLink | L320-350 | 建 @local/dsh-extra-plan → web 包链接：web 缺失跳过/已正确不动/实体或非目标链接提示 pnpm 迁移/仅 ENOENT 建 junction |  |
-| plugins/dsh-qqbot-user-questions/lib/heal.js | healQqbotCompatibility | L356-369 | 对每个自有 profile 先补行再建链；整体 try/catch 只记录日志不阻断 |  |
+| plugins/dsh-qqbot-user-questions/lib/heal.js | healQqbotCompatibility | L356-369 | 对每个自有 profile 依次执行 healPatchRows（清旧错误块）与 ensureDshExtraPlanLink（建链）；整体 try/catch 只记录日志不阻断 |  |
 | plugins/dsh-qqbot-user-questions/scripts/heal.mjs | invokedAsMain | L9-14 | 主脚本判定（node 直跑时执行自愈；镜像 distribute-preset.mjs L23-30） |  |
 
 ---

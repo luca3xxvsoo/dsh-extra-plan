@@ -6,7 +6,7 @@
 ## 项目一句话
 dsh 插件「按需规划模式」预设：AI 未经用户同意只能只读探查，经路由/澄清/批准三级机械闸门后按规划执行。五角色分工保证「用户确认 → 规划 → 执行 → 验收」闭环。
 
-兼容：dsh v0.1.2-rc.1（0.1.1 不支持）；qqbot 0.5.0 版（自愈/建链由精简版 dsh-qqbot-user-questions 承担）；Linux/macOS 逻辑层已验证（pe-test 写拦截 68 用例），运行时仅 Windows 实测。
+兼容：dsh >= v0.1.2-rc.1 & <= v0.1.5-rc.2（0.1.1 不支持；上界与 READAI.md/README.md 口径一致）；qqbot 0.5.0 版（自愈/建链由精简版 dsh-qqbot-user-questions 承担）；Linux/macOS 逻辑层已验证（pe-test 写拦截 68 用例），运行时仅 Windows 实测。
 
 ## 五角色
 1. 主会话：用户交互入口、需求接收、复杂度评估、路由确认、任务分派、计划展示、验收汇总
@@ -30,7 +30,7 @@ dsh 插件「按需规划模式」预设：AI 未经用户同意只能只读探�
 | 预设自愈核对 | lib/preset-sync.js | 启动时 hash 比对下发 |
 | 执行者工具裁剪 | lib/executor-spawn.js | E8：覆盖 workflow/ralph worker |
 | 预设本体（persona/deny/descriptor） | assets/presets/extra-plan/agent.cordis.yml | 改预设=改这里（复制副本再改） |
-| qqbot 自愈 | plugins/dsh-qqbot-user-questions/（精简版：lib/heal.mjs + scripts/heal.mjs） | 启动/安装时补 code-runtime/agent-presets 行 + @local 建链；不含问答/审批 |
+| qqbot 自愈 | plugins/dsh-qqbot-user-questions/lib/heal.js + scripts/heal.mjs（精简版插件根 index.js 调 heal.js） | 启动/安装时迁移旧版根级 code-runtime/agent-presets 错误块 + @local 建链（两行补入由包内静态 cordis.patch.yml 承担）；不含问答/审批 |
 | 代码地图 | pe-test/docs/ai-代码地图.md + pe-test/tools/代码地图生成.mjs | 头部「意图速查」= 人工段（脚本原样保留、校验引用函数名）；函数索引 = 机器段（行号/增删）；`--check` 一致性门槛；覆盖口径 = 任意缩进的命名函数定义 |
 
 ## 模块关系（数据流）

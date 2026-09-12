@@ -11,7 +11,7 @@
 | profile | 唯一职责 | 迁移边界 |
 |:--|:--|:--|
 | web | 直接安装 `@local/dsh-extra-plan`；持有核心 bundle/依赖、allow-build、`distribute-preset` 与启动 `preset-sync` | 不从 web 删除核心包或预设 |
-| qqbot | 直接安装 `@local/dsh-qqbot-user-questions`（精简版）；apply/postinstall 自愈：补 `cordis.patch.yml` 的 code-runtime/agent-presets 行 + 建 `@local/dsh-extra-plan` → web 同名包链接 | 不声明核心直接依赖，不分发预设，不执行 `preset-sync`；不含问答/审批/补丁分发 |
+| qqbot | 直接安装 `@local/dsh-qqbot-user-questions`（精简版）；两行补入由包内静态 `cordis.patch.yml` 的 insert 承担，apply/postinstall 自愈只做两件事：迁移旧版根级 code-runtime/agent-presets 错误块 + 建 `@local/dsh-extra-plan` → web 同名包链接 | 不声明核心直接依赖，不分发预设，不执行 `preset-sync`；不含问答/审批/补丁分发 |
 
 ### 已有残留迁移（用户侧）
 - 前提：先由用户完成 web 核心安装和预设分发，再通过 profile 的 pnpm/DSH 包管理流程移除 qqbot/package.json 的直接 `@local/dsh-extra-plan`；由 pnpm 同步 lock、`.modules.yaml`、`virtualStoreDir`、`storeDir` 与 hoisted 解析状态，最后重新安装/刷新 QQBot 兼容包。
@@ -39,11 +39,11 @@
 ## 自检工具速查（pe-test/tools/）
 | 改动域 | 自检 |
 |:--|:--|
-| 闸门/路由/写拦截 | step-04-路由与写闸门.mjs |
+| 闸门/路由/写拦截 | step-04-路由与写闸门.mjs（监听器级）+ step-00-跨平台写拦截.mjs（68 用例，写形态识别正则的纯函数级回归） |
 | planner 探查委派禁令（T5）+ save_plan 主会话路由（T3）+ plannerModel 降级判定（T2） | step-04-路由与写闸门.mjs（T3/T5 监听器级）、step-00-全流程回归.mjs（PM 系列纯函数直测）、step-06-线索落盘.mjs（save_plan 注册与路由矩阵） |
 | save_probe/save_plan 落盘 | step-06-线索落盘.mjs |
-| 预设安装/完整性/设置页 | step-01-预设完整性.mjs、step-01-安装分发.mjs、step-01-设置页配置.mjs |
-| 全量回归 | step-00-全流程回归.mjs（需真实 session_id；一键step测试.mjs 同） |
+| 预设安装/完整性/设置页 | step-01-预设完整性.mjs、step-01-安装分发.mjs、step-01-安装同步.mjs、step-01-设置迁移.mjs、step-01-设置页配置.mjs |
+| 全量回归 | step-00-全流程回归.mjs（需真实 session_id；一键step测试.mjs 同）。**一键体检的自动判定项共 11 项**（以 `一键step测试.mjs` 的 AUTO 数组为准）：step-00-全流程回归、step-00-跨平台写拦截、step-01-设置迁移、step-01-安装分发、step-01-安装同步、step-01-预设完整性、step-01-设置页配置、step-01-qqbot-安装映射、step-04-路由与写闸门、step-06-线索落盘、代码地图生成.mjs（--check） |
 | usage 账本 | step-99-用量统计.mjs |
 | 跨平台写拦截 | step-00-跨平台写拦截.mjs |
 | 代码地图（口径/覆盖/导航） | 一键step测试.mjs 内置「代码地图生成.mjs --check」（不写盘，比对结构+漏检+导航失效）；同步仍用 node pe-test/tools/代码地图生成.mjs |

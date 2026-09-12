@@ -10,6 +10,7 @@
 - 报告 A：.extra-plan/线索-宿主耦合台账-extra-plan-20260911195625.md（plugins/dsh-extra-plan/index.js 全部宿主接触面，80 条 evidence，未核实 0 条）
 - 报告 B：.extra-plan/线索-宿主耦合台账-除index-js外全部接触面-20260911195550.md（除 index.js 外全部接触面，79 条 evidence，含四层分类）
 - 报告 C：.extra-plan/线索-qqbot宿主耦合台账-20260911195447.md（qqbot 侧全部接触面，50 条 evidence）
+- 台账基线修订（2026-09-12）：① 基线块的「DSH 宿主版本 0.1.2-rc.1 → 0.1.5-rc.2」与「仓库文件基线 55 → 52」两处为本次复核订正；② 覆盖口径剔除 gitignored 的 `pe-test/reports/`（原 5 行报告行移出，结论原就为「无」），故②表行数由 55 降为 52。被移出的 5 行若日后重新生成同类报告，不需回填。
 
 口径校准：报告 C 的「五、证据」段实际为 50 条顶层条目（其中 2 条为 YAML 多行块、物理行更多），故本台账按 80 + 79 + 50 = 209 条逐条勾销，比规划方案预估的 208 条多 1 条（只多不少，不构成遗漏）。
 口径对齐说明（2026-09-11 验收勘误）：验收标准清单 [任务6] 写的「报告 C 49 条 / 合计 208 条」是规划阶段的预估口径；执行阶段实测报告 C 顶层证据为 50 条，故本台账以 80 + 79 + 50 = 209 条为准，并已在下文 ③-E 勾销表中逐段给出归属条目编号（无悬空引用）。
@@ -20,19 +21,20 @@
 
 | 项 | 值 | 来源 |
 |:--|:--|:--|
-| DSH 宿主版本 | 0.1.2-rc.1 | 宿主 dsh 包内 package.json 的 version 字段实测 |
+| DSH 宿主版本 | 0.1.5-rc.2 | 宿主 dsh 包内 package.json 的 version 字段实测（2026-09-12 复核订正；原记 0.1.2-rc.1 为台账首次成文时的基线） |
 | 宿主安装路径 | C:\Users\SheepToken\AppData\Roaming\npm\node_modules\@deepseek-ai\dsh | 本机实测；宿主依赖包位于其 node_modules\@deepseek-ai\ 下 |
 | QQBOT 目标版本 | 0.5.0 | README.md L9 口径；本机无该包，属【未核实】目标版本 |
 | 本插件版本 | 0.2.0（@local/dsh-extra-plan） | plugins/dsh-extra-plan/package.json 的 version 字段实测 |
 | qqbot 精简插件版本 | 2.0.0（@local/dsh-qqbot-user-questions） | plugins/dsh-qqbot-user-questions/package.json 的 version 字段实测 |
 | DSH_HOME | C:\Users\SheepToken\.dsh | 本机实测（profiles/web 存在，无 profiles/qqbot） |
 | 记录日期 | 2026-09-11 | 本次产出日期 |
-| 仓库文件基线 | 55 个（git ls-files 50 个 tracked + pe-test/reports 5 个 ignored 报告） | 本机实测 |
+| 仓库文件基线 | 52 个（git ls-files 全部 tracked 文件；2026-09-12 复核订正，原记 55 个 = 50 tracked + 5 个 pe-test/reports 报告文件，该目录已于 2026-09-11 清理、本次不再计入） | 本机实测 |
 
 **声明句：本台账不写宿主行号：宿主侧一律以 包名+包内相对路径+符号名 定位，升级时按符号名在升级后的宿主包内重新核对。**（本仓库自身的文件与行号可以写，用于定位改动点。）
-## ② 仓库文件覆盖总表（55 个文件，逐行结论）
+## ② 仓库文件覆盖总表（52 个文件，逐行结论）
 
-覆盖口径：本仓库当前磁盘文件全集（排除 .git、.extra-plan、node_modules）= git ls-files 的 50 个 tracked 文件 + pe-test/reports/ 下 5 个 ignored 报告文件 = 55 个。逐行给结论：有挂钩写条目编号（见③四层表与④QQBOT 专章），无挂钩写「无」。
+覆盖口径：本仓库 tracked 文件全集（`git ls-files` 全部命中，含 `pe-test/` 下各目录）= 52 个。逐行给结论：有挂钩写条目编号（见③四层表与④QQBOT 专章），无挂钩写「无」。
+**口径订正（2026-09-12）**：原口径为「git ls-files 的 50 个 tracked 文件 + `pe-test/reports/` 下 5 个 ignored 报告文件 = 55 个」。`pe-test/reports/` 系一键体检每次运行都会重写的 gitignored 产物目录（随跑随变），已从口径中剔除；顺带消掉原表内那 5 行的悬空引用（该目录已于 2026-09-11 清理，且那 5 行结论本就都是「无」）。目录本身仍会被 `一键step测试.mjs` 重建，但不再计入本台账基线。
 
 | 文件路径 | 结论（有挂钩→条目编号 / 无→「无」） | 备注 |
 |:--|:--|:--|
@@ -48,11 +50,6 @@
 | pe-test/docs/ai-流程备查.md | 无 | AI 文档，只读产物，不含挂钩代码 |
 | pe-test/docs/ai-维护手册.md | 无 | AI 文档；声明所有权边界与宿主目录禁改清单（profiles/web、profiles/qqbot、.agent-presets） |
 | pe-test/README.md | 无 | 测试目录说明文档，不含挂钩代码 |
-| pe-test/reports/测试报告-20260910211618.md | 无 | 测试报告产物（ignored 文件） |
-| pe-test/reports/测试报告-step-04-工具清单查看-20260910211618.md | 无 | 测试报告产物（ignored 文件） |
-| pe-test/reports/测试报告-step-05-会话解码-20260910211618.md | 无 | 测试报告产物（ignored 文件） |
-| pe-test/reports/测试报告-step-06-真实会话查看-20260910211618.md | 无 | 测试报告产物（ignored 文件） |
-| pe-test/reports/测试报告-step-08-方案配对查看-20260910211618.md | 无 | 测试报告产物（ignored 文件） |
 | pe-test/tools/代码地图生成.mjs | 无 | 工作区代码地图生成器（node:fs/path/url），无宿主接触 |
 | pe-test/tools/一键step测试.mjs | 宿主数据与布局形状层 SD1（传递） | 编排脚本：spawnSync 跑各 step；本身不 import 宿主包 |
 | pe-test/tools/readme.md | 无 | 工具目录说明文档，不含挂钩代码 |
@@ -287,6 +284,8 @@
 4. **旧版自带越权开关（已删除，当前版本无）**——旧版 cordis.patch.yml 给 qqbot-user-questions 行带 `approvalEnabled: false`（config.approvalEnabled）。当前该行已无 config 段。
 
 ### ④-C 待补核清单（恰 6 项，均【未核实】，须在装了 qqbot 的机器上执行）
+
+> **欠账状态（2026-09-12 复核）**：本清单 6 项 + ④-A 活跃挂钩表 3 条 + 基线块 qqbot 目标版本 1 项，共 10 条仍标【未核实】，**尚未销账**；本机无 `profiles/qqbot`、无 qqbot 0.5.0 包，本机无法补核（判据：台账①基线块「DSH_HOME」行的实测备注与 `plugins/dsh-qqbot-user-questions` 未装）。
 
 | 序号 | 待核实事项 | 补核动作（读哪个文件 / 跑哪条命令） | 核实状态 |
 |:--|:--|:--|:--|
