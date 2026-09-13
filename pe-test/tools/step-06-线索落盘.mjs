@@ -1,8 +1,8 @@
 // save_probe 注册层 + 硬闸门五态 + planner 预算回归（v1 口径）验证（v3）：
 // ①注册层断言（mock ctx 走插件 apply：主会话 save_probe 幂等 + save_plan（T3）/
 //   planner save_plan / executor 均不注册）
-// ②pre-execute save_probe 五态闸门（none→deny、plan 未澄清→deny、plan 已澄清→allow、
-//   direct→deny、channelBroken→allow；deny 文案含「探查线索未放行」）
+// ②pre-execute save_probe 五态闸门（none→deny、plan 未澄清→deny、plan 已澄清但目的未定→deny、
+//   plan 已澄清且目的已定→allow、direct→deny、channelBroken→allow；deny 文案含「探查线索未放行」）
 // ②b pre-execute save_plan 五态闸门（T3，主会话：direct→allow，其余四态→deny）
 // ③planner 预算回归（v1 口径）：18 次成功配对耗尽后 read（含线索文件路径）仍 deny
 //   （reason 含「探查预算已耗尽」）、save_plan 仍 allow——不引入任何预算豁免。
@@ -13,6 +13,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const PLUGIN_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/index.js', import.meta.url))
+import { registerHostDeps } from '../_shared/host-deps.mjs'
+await registerHostDeps()
 const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
 
 let pass = 0
@@ -37,6 +39,7 @@ const ok = (cid, text) => ({ type: 'tool/result', data: { message: { content: [{
 const err = (cid, code) => ({ type: 'tool/result', data: { error: { name: 'Error', ...(code === undefined ? {} : { code }) }, message: { content: [{ type: 'tool-result', toolCallId: cid, content: [] }] } } })
 const routeArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }] })
 const clarifyArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '方案A' }, { label: '方案B' }] }] })
+const purposeArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '完善方案' }, { label: '重新规划' }] }] })
 const approvalArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }] })
 const answer = (labels) => JSON.stringify({ answers: labels.map((l) => ({ id: 'q1', selected: [l] })) })
 
@@ -103,7 +106,8 @@ check('S5 executor 均不注册（空）', registered.length, 0)
 const FIVE = [
   ['S6 route=none → deny', [um()], 'deny'],
   ['S7 route=plan 未澄清 → deny', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划']))], 'deny'],
-  ['S8 route=plan 已澄清 → allow', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A']))], 'allow'],
+  ['S8 route=plan 已澄清但目的未定 → deny', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A']))], 'deny'],
+  ['S8b route=plan 已澄清且目的已定 → allow', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', purposeArgs), ok('a2', answer(['完善方案'])), call('ask_user_question', 'a3', clarifyArgs), ok('a3', answer(['方案A']))], 'allow'],
   ['S9 route=direct → deny', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['直接执行']))], 'deny'],
   ['S10 channelBroken → allow（逃生）', [um(), call('ask_user_question', 'a1', routeArgs), err('a1', 'NO_PROVIDER')], 'allow'],
 ]
@@ -116,6 +120,11 @@ for (const [name, events, expected] of FIVE) {
     checkTrue(`${name}`, r !== null && r !== undefined && r.kind === 'allow')
   }
 }
+
+// S8c：与 S8 同事件流的 save_probe 拒绝文案（第四锚点教学式文案，机械层放行前置）
+const s8Agent = { session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => FIVE[2][1] }, options: {}, ctx: agentCtx }
+const s8r = preExecute(harness, s8Agent, 'save_probe', {})
+checkTrue('S8c 目的未定 save_probe 拒绝文案含「规划目的尚未确认」与「须先 ask_user_question 询问用户本次 pro 规划的目的」', s8r !== null && s8r !== undefined && s8r.kind === 'deny' && String(s8r.reason).includes('规划目的尚未确认') && String(s8r.reason).includes('须先 ask_user_question 询问用户本次 pro 规划的目的'))
 
 // ── ②b pre-execute save_plan 路由矩阵（T3，主会话：仅 direct 放行） ─────────
 // 与上表同五态：direct→allow；none / plan 未澄清 / plan 已澄清 / approved→deny

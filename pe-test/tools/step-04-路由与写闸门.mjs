@@ -10,6 +10,8 @@ import { homedir } from 'node:os'
 
 const DSH_HOME = (process.env.DSH_HOME || homedir() + '/.dsh').replaceAll('\\', '/')
 const PLUGIN_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/index.js', import.meta.url))
+import { registerHostDeps } from '../_shared/host-deps.mjs'
+await registerHostDeps()
 const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
 const decisions = plugin.decisions
 const { catalogHasWriteTools, isReadOnlyChildByCatalog, routeDenyReason, runCodeCatchGateReason, runCodeGroupDenyReason, askUserQuestionReturnGateReason, probeDisposalWarning, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason } = decisions
@@ -199,6 +201,7 @@ const okE = (cid, text) => ({ type: 'tool/result', data: { message: { content: [
 const errE = (cid, code) => ({ type: 'tool/result', data: { error: { name: 'Error', code }, message: { content: [{ type: 'tool-result', toolCallId: cid, content: [] }] } } })
 const routeArgsE = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }] })
 const clarifyArgsE = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '方案A' }, { label: '方案B' }] }] })
+const purposeArgsE = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '完善方案' }, { label: '重新规划' }] }] })
 const approvalArgsE = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }] })
 const answerE = (labels) => JSON.stringify({ answers: labels.map((l) => ({ id: 'q1', selected: [l] })) })
 const mainWithEvents = (events) => ({ session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => events }, options: {}, ctx: undefined })
@@ -207,6 +210,8 @@ const mainWithEvents = (events) => ({ session: { header: { id: 'main-1', cwd: 'C
 const directMain = mainWithEvents([umE(), callE('ask_user_question', 'a1', routeArgsE), okE('a1', answerE(['直接执行']))])
 const noneMain = mainWithEvents([])
 const planMain = mainWithEvents([umE(), callE('ask_user_question', 'a1', routeArgsE), okE('a1', answerE(['进行pro规划'])), callE('ask_user_question', 'a2', clarifyArgsE), okE('a2', answerE(['方案A']))])
+// planPurposeMain：路由 + 目的确认（「完善方案」）+ 澄清 三锚点齐备（目的 ask 位于澄清之前，同 persona 新顺序）
+const planPurposeMain = mainWithEvents([umE(), callE('ask_user_question', 'a1', routeArgsE), okE('a1', answerE(['进行pro规划'])), callE('ask_user_question', 'a2', purposeArgsE), okE('a2', answerE(['完善方案'])), callE('ask_user_question', 'a3', clarifyArgsE), okE('a3', answerE(['方案A']))])
 
 // R18：direct 态派探查者（run_in_background: true）→ 放行（同时把 main-1 挂「待认领计数」，
 // 供 C1/C2/C2b 认领用例经 parentSession=main-1 消费验证；R15-R17 判读走真实工具集，不依赖认领）
@@ -355,6 +360,8 @@ const sessionStart = (listeners, agent) => {
 // 0.1.2-rc.1 旧名 = tool/code-dispatch-start / tool/code-dispatch，均由 runDispatchSeriesE(ev) 注入。
 const nestedRouteE = { questions: [{ id: 'q1', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }] }
 const nestedClarifyE = { questions: [{ id: 'q1', options: [{ label: '方案A' }, { label: '方案B' }] }] }
+// 目的确认嵌套 fixture（第四锚点：route=plan 后、澄清之前的二选一）
+const nestedPurposeE = { questions: [{ id: 'q1', options: [{ label: '完善方案' }, { label: '重新规划' }] }] }
 const nestedApprovalE = { questions: [{ id: 'q1', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }] }
 const nestedCustomE = '{"answers":[{"id":"q1","custom":"改成XX"}]}'
 
@@ -363,7 +370,7 @@ function runDispatchSeriesE(ev) {
   const cdEndE = (sid, text, isError = false) => ({ type: ev.end, data: { rootCallId: 'r1', parentCallId: 'pc1', subCallId: sid, name: 'ask_user_question', arguments: {}, isError, content: [{ type: 'text', text }] } })
 
 const nestedDirectMain = mainWithEvents([umE(), cdStartE('ask_user_question', 'n1', nestedRouteE), cdEndE('n1', answerE(['直接执行']))])
-const nestedPlanMain = mainWithEvents([umE(), cdStartE('ask_user_question', 'n1', nestedRouteE), cdEndE('n1', answerE(['进行pro规划'])), cdStartE('ask_user_question', 'n2', nestedClarifyE), cdEndE('n2', nestedCustomE)])
+const nestedPlanMain = mainWithEvents([umE(), cdStartE('ask_user_question', 'n1', nestedRouteE), cdEndE('n1', answerE(['进行pro规划'])), cdStartE('ask_user_question', 'n2', nestedPurposeE), cdEndE('n2', answerE(['完善方案'])), cdStartE('ask_user_question', 'n3', nestedClarifyE), cdEndE('n3', nestedCustomE)])
 const nestedApproveMain = mainWithEvents([umE(), cdStartE('ask_user_question', 'n1', nestedRouteE), cdEndE('n1', answerE(['进行pro规划'])), cdStartE('ask_user_question', 'n2', nestedClarifyE), cdEndE('n2', answerE(['方案A'])), cdStartE('ask_user_question', 'n3', nestedApprovalE), cdEndE('n3', answerE(['同意执行']))])
 
 r = preExecute(harness, nestedDirectMain, 'write', {})
@@ -509,7 +516,9 @@ checkTrue('R68 cordis_run 批准放行 → allow', r !== null && r !== undefined
 r = preExecute(harness, noneMain, 'save_probe', { fileMap: [], focusAreas: [], exclusions: [], background: [] })
 checkTrue('R69 save_probe 主会话 none 态 → deny 且含「子代理未放行：save_probe」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('子代理未放行：save_probe'))
 r = preExecute(harness, planMain, 'save_probe', { fileMap: [], focusAreas: [], exclusions: [], background: [] })
-checkTrue('R70 save_probe 主会话 plan 态 → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R70 save_probe 主会话 plan 态但目的未定 → deny 且含「规划目的尚未确认」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划目的尚未确认'))
+r = preExecute(harness, planPurposeMain, 'save_probe', { fileMap: [], focusAreas: [], exclusions: [], background: [] })
+checkTrue('R70b save_probe 主会话 plan 态（目的已定+已澄清）→ allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, budgetPlanner, 'read', {})
 checkTrue('R71 planner 预算耗尽 listener 层 → deny 且含「探查预算已耗尽（本轮已用 18/18）」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('探查预算已耗尽（本轮已用 18/18）'))
 r = preExecute(harness, budgetPlanner, 'run_code', freeCode)
@@ -536,7 +545,11 @@ checkTrue('R79 planner send_message → allow（FREE_TOOLS 豁免）', r !== nul
 r = preExecute(harness, probeAgent, 'send_message', { agent_id: 'parent', message: 'hi' })
 checkTrue('R80 probe send_message → allow（child 分支不拦）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, planMain, 'subagent_plan', { run_in_background: false })
-checkTrue('R81 subagent_plan 前台参数 → deny 且含「规划子代理不可前台等待」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划子代理不可前台等待'))
+checkTrue('R81 subagent_plan 目的未定+前台参数 → deny 且含「规划目的尚未确认」、不含「规划子代理不可前台等待」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划目的尚未确认') && !String(r.reason).includes('规划子代理不可前台等待'))
+r = preExecute(harness, planPurposeMain, 'subagent_plan', { run_in_background: false })
+checkTrue('R81b subagent_plan 目的已定+前台参数 → deny 且含「规划子代理不可前台等待」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划子代理不可前台等待'))
+r = preExecute(harness, planPurposeMain, 'subagent_plan', {})
+checkTrue('R81c subagent_plan 目的已定+不传参 → allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, noneMain, 'cordis_inspect_query', {})
 checkTrue('R82 cordis 只读族 → allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, noneMain, 'run_code', smCode)

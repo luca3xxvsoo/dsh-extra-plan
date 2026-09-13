@@ -2,6 +2,8 @@
 // 直接 import 插件导出的 decisions（与 index.js 同一份实现，无复制品）——
 // 插件模块顶层无副作用，可在纯 Node 环境加载。
 import { pathToFileURL, fileURLToPath } from 'node:url'
+import { registerHostDeps } from '../_shared/host-deps.mjs'
+await registerHostDeps()
 const PLUGIN_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/index.js', import.meta.url))
 const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
 const {
@@ -32,6 +34,7 @@ const {
   validateGateAskStructure,
   matchRouteLabel,
   matchApprovalLabel,
+  matchPurposeLabel,
   parseAskResultData,
   parseDispatchAskResult,
   catalogIsCollapsed,
@@ -81,6 +84,8 @@ const deny = (cid, reason) => ({ type: 'tool/result', data: { message: { content
 const routeArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }] })
 const approvalArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }] })
 const clarifyArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '方案A' }, { label: '方案B' }] }] })
+const purposeArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '完善方案' }, { label: '重新规划' }] }] })
+const wordPurposeArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '完善方案' }] }] })
 const answer = (labels) => JSON.stringify({ answers: labels.map((l) => ({ id: 'q1', selected: [l] })) })
 const customAnswer = '{"answers":[{"id":"q1","custom":"改成XX"}]}'
 const emptyAnswer = '{"answers":[]}'
@@ -93,6 +98,7 @@ const emptyAnswer = '{"answers":[]}'
 const nestedRouteArgs = { questions: [{ id: 'q1', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }] }
 const nestedApprovalArgs = { questions: [{ id: 'q1', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }] }
 const nestedClarifyArgs = { questions: [{ id: 'q1', options: [{ label: '方案A' }, { label: '方案B' }] }] }
+const nestedPurposeArgs = { questions: [{ id: 'q1', options: [{ label: '完善方案' }, { label: '重新规划' }] }] }
 
 let pass = 0
 let fail = 0
@@ -109,6 +115,7 @@ const KA = [
   ['K3 澄清 ask(自由选项) → clarify', { name: 'ask_user_question', callId: 'k3', arguments: clarifyArgs }, 'clarify'],
   ['K4 参数无法解析 → null(跳过)', { name: 'ask_user_question', callId: 'k4', arguments: 'not-json' }, null],
   ['K5 无 questions 字段 → null', { name: 'ask_user_question', callId: 'k5', arguments: '{}' }, null],
+  ['KA6 目的 ask(两个目的词) → purpose', { name: 'ask_user_question', callId: 'k6', arguments: purposeArgs }, 'purpose'],
 ]
 for (const [name, data, expected] of KA) {
   const labels = labelsOfCallData(data)
@@ -142,31 +149,40 @@ const M = [
   ['M7 批准词「转交pro规划」→ replan', matchApprovalLabel(['转交pro规划']), 'replan'],
   ['M8 批准词「不同意」→ disagree', matchApprovalLabel(['不同意']), 'disagree'],
   ['M9 批准词无匹配 → null', matchApprovalLabel(['别的词']), null],
+  ['M10 目的词「完善方案」→ refine', matchPurposeLabel(['完善方案']), 'refine'],
+  ['M11 目的词「重新规划」→ redo', matchPurposeLabel(['重新规划']), 'redo'],
+  ['M12 目的词无匹配 → null', matchPurposeLabel(['别的词']), null],
 ]
 for (const [name, got, expected] of M) check(name, got, expected)
 
 // ── F 系列:deriveFlowState(自最近人类消息起) ──────────────────────────
 const F = [
-  ['F1 无事件 → 全空', [], { route: 'none', clarified: false, approved: false, channelBroken: false }],
-  ['F2 路由答「直接执行」→ direct', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['直接执行']))], { route: 'direct', clarified: false, approved: false, channelBroken: false }],
-  ['F3 路由答规划 + 澄清自定义答复 → plan+clarified', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', customAnswer)], { route: 'plan', clarified: true, approved: false, channelBroken: false }],
-  ['F4 路由空白回复 → 保持 none', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', emptyAnswer)], { route: 'none', clarified: false, approved: false, channelBroken: false }],
-  ['F5 路由答「不同意」→ none', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['不同意']))], { route: 'none', clarified: false, approved: false, channelBroken: false }],
-  ['F6 全链路:规划+澄清+同意执行 → approved', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A'])), call('ask_user_question', 'a3', approvalArgs), ok('a3', answer(['同意执行']))], { route: 'plan', clarified: true, approved: true, channelBroken: false }],
-  ['F7 批准答「转交pro规划」→ approved=false', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A'])), call('ask_user_question', 'a3', approvalArgs), ok('a3', answer(['转交pro规划']))], { route: 'plan', clarified: true, approved: false, channelBroken: false }],
-  ['F8 批准答「不同意」→ approved=false', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A'])), call('ask_user_question', 'a3', approvalArgs), ok('a3', answer(['不同意']))], { route: 'plan', clarified: true, approved: false, channelBroken: false }],
-  ['F9 路由被用户取消(ASK_CANCELLED) → none', [um(), call('ask_user_question', 'a1', routeArgs), err('a1', 'ASK_CANCELLED')], { route: 'none', clarified: false, approved: false, channelBroken: false }],
-  ['F10 通道错误(NO_PROVIDER) → channelBroken', [um(), call('ask_user_question', 'a1', routeArgs), err('a1', 'NO_PROVIDER')], { route: 'none', clarified: false, approved: false, channelBroken: true }],
-  ['F11 新人类消息 → 重置', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['直接执行'])), um()], { route: 'none', clarified: false, approved: false, channelBroken: false }],
-  ['F12 澄清空白回复 → 未澄清', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', emptyAnswer)], { route: 'plan', clarified: false, approved: false, channelBroken: false }],
-  ['F13 两次路由答:先直行后规划 → 后答生效', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['直接执行'])), call('ask_user_question', 'a2', routeArgs), ok('a2', answer(['进行pro规划']))], { route: 'plan', clarified: false, approved: false, channelBroken: false }],
-  ['F14 澄清自定义答复(无 selected) → 已澄清', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', customAnswer)], { route: 'plan', clarified: true, approved: false, channelBroken: false }],
-  ['F15 无关工具结果不影响状态', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['直接执行'])), call('read', 'r1'), ok('r1', '这里写着 "answers" 字样')], { route: 'direct', clarified: false, approved: false, channelBroken: false }],
-  ['F16 路由先确认后空白回复 → 重置 none', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['直接执行'])), call('ask_user_question', 'a2', routeArgs), ok('a2', emptyAnswer)], { route: 'none', clarified: false, approved: false, channelBroken: false }],
-  ['F17 路由先确认后取消 → 重置 none', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['直接执行'])), call('ask_user_question', 'a2', routeArgs), err('a2', 'ASK_CANCELLED')], { route: 'none', clarified: false, approved: false, channelBroken: false }],
-  ['F18 批准先确认后空白回复 → 重置 false', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A'])), call('ask_user_question', 'a3', approvalArgs), ok('a3', answer(['同意执行'])), call('ask_user_question', 'a4', approvalArgs), ok('a4', emptyAnswer)], { route: 'plan', clarified: true, approved: false, channelBroken: false }],
-  ['F19 批准先确认后取消 → 重置 false', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A'])), call('ask_user_question', 'a3', approvalArgs), ok('a3', answer(['同意执行'])), call('ask_user_question', 'a4', approvalArgs), err('a4', 'ASK_CANCELLED')], { route: 'none', clarified: true, approved: false, channelBroken: false }],
-  ['F20 通道错误逃生回归：不重置已确认状态', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['直接执行'])), call('ask_user_question', 'a2', routeArgs), err('a2', 'NO_PROVIDER')], { route: 'direct', clarified: false, approved: false, channelBroken: true }],
+  ['F1 无事件 → 全空', [], { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
+  ['F2 路由答「直接执行」→ direct', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['直接执行']))], { route: 'direct', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
+  ['F3 路由答规划 + 澄清自定义答复 → plan+clarified', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', customAnswer)], { route: 'plan', clarified: true, approved: false, purpose: 'none', channelBroken: false }],
+  ['F4 路由空白回复 → 保持 none', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', emptyAnswer)], { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
+  ['F5 路由答「不同意」→ none', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['不同意']))], { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
+  ['F6 全链路:规划+澄清+同意执行 → approved', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A'])), call('ask_user_question', 'a3', approvalArgs), ok('a3', answer(['同意执行']))], { route: 'plan', clarified: true, approved: true, purpose: 'none', channelBroken: false }],
+  ['F7 批准答「转交pro规划」→ approved=false', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A'])), call('ask_user_question', 'a3', approvalArgs), ok('a3', answer(['转交pro规划']))], { route: 'plan', clarified: true, approved: false, purpose: 'none', channelBroken: false }],
+  ['F8 批准答「不同意」→ approved=false', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A'])), call('ask_user_question', 'a3', approvalArgs), ok('a3', answer(['不同意']))], { route: 'plan', clarified: true, approved: false, purpose: 'none', channelBroken: false }],
+  ['F9 路由被用户取消(ASK_CANCELLED) → none', [um(), call('ask_user_question', 'a1', routeArgs), err('a1', 'ASK_CANCELLED')], { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
+  ['F10 通道错误(NO_PROVIDER) → channelBroken', [um(), call('ask_user_question', 'a1', routeArgs), err('a1', 'NO_PROVIDER')], { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: true }],
+  ['F11 新人类消息 → 重置', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['直接执行'])), um()], { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
+  ['F12 澄清空白回复 → 未澄清', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', emptyAnswer)], { route: 'plan', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
+  ['F13 两次路由答:先直行后规划 → 后答生效', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['直接执行'])), call('ask_user_question', 'a2', routeArgs), ok('a2', answer(['进行pro规划']))], { route: 'plan', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
+  ['F14 澄清自定义答复(无 selected) → 已澄清', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', customAnswer)], { route: 'plan', clarified: true, approved: false, purpose: 'none', channelBroken: false }],
+  ['F15 无关工具结果不影响状态', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['直接执行'])), call('read', 'r1'), ok('r1', '这里写着 "answers" 字样')], { route: 'direct', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
+  ['F16 路由先确认后空白回复 → 重置 none', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['直接执行'])), call('ask_user_question', 'a2', routeArgs), ok('a2', emptyAnswer)], { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
+  ['F17 路由先确认后取消 → 重置 none', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['直接执行'])), call('ask_user_question', 'a2', routeArgs), err('a2', 'ASK_CANCELLED')], { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
+  ['F18 批准先确认后空白回复 → 重置 false', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A'])), call('ask_user_question', 'a3', approvalArgs), ok('a3', answer(['同意执行'])), call('ask_user_question', 'a4', approvalArgs), ok('a4', emptyAnswer)], { route: 'plan', clarified: true, approved: false, purpose: 'none', channelBroken: false }],
+  ['F19 批准先确认后取消 → 重置 false', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A'])), call('ask_user_question', 'a3', approvalArgs), ok('a3', answer(['同意执行'])), call('ask_user_question', 'a4', approvalArgs), err('a4', 'ASK_CANCELLED')], { route: 'none', clarified: true, approved: false, purpose: 'none', channelBroken: false }],
+  ['F20 通道错误逃生回归：不重置已确认状态', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['直接执行'])), call('ask_user_question', 'a2', routeArgs), err('a2', 'NO_PROVIDER')], { route: 'direct', clarified: false, approved: false, purpose: 'none', channelBroken: true }],
+  ['F23 目的答「完善方案」→ purpose=refine 且 clarified 不变', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', purposeArgs), ok('a2', answer(['完善方案']))], { route: 'plan', clarified: false, approved: false, purpose: 'refine', channelBroken: false }],
+  ['F24 目的答「重新规划」→ purpose=redo', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', purposeArgs), ok('a2', answer(['重新规划']))], { route: 'plan', clarified: false, approved: false, purpose: 'redo', channelBroken: false }],
+  ['F25 目的空白答复 → purpose 保持 none', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', purposeArgs), ok('a2', emptyAnswer)], { route: 'plan', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
+  ['F26 目的答复未命中两词 → purpose 保持 none', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', purposeArgs), ok('a2', answer(['别的词']))], { route: 'plan', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
+  ['F27 目的 ask 取消(ASK_CANCELLED) → route=none + purpose=none', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', purposeArgs), err('a2', 'ASK_CANCELLED')], { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
+  ['F28 目的答复后接澄清答复 → purpose 保留且 clarified=true（目的答复不置 clarified 守门）', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', purposeArgs), ok('a2', answer(['完善方案'])), call('ask_user_question', 'a3', clarifyArgs), ok('a3', answer(['方案A']))], { route: 'plan', clarified: true, approved: false, purpose: 'refine', channelBroken: false }],
 ]
 for (const [name, events, expected] of F) {
   check(name, deriveFlowState(events), expected)
@@ -188,6 +204,9 @@ const GK = [
   ['GK8b 无空格半角（推荐）后缀 → standard', categorizeGateAsk(['直接执行(推荐)', '进行pro规划(推荐)', '不同意(推荐)']), 'standard'],
   ['GK9 非白名单变体（! 等额外字符）→ malformed', categorizeGateAsk(['直接执行!', '进行pro规划', '不同意']), 'malformed'],
   ['GK10 方括号后缀 [推荐] → malformed', categorizeGateAsk(['直接执行 [推荐]', '进行pro规划 [推荐]', '不同意 [推荐]']), 'malformed'],
+  ['GK11 标准二词目的 ask → standard', categorizeGateAsk(['完善方案', '重新规划']), 'standard'],
+  ['GK12 单词目的 ask（只有「完善方案」）→ malformed', categorizeGateAsk(['完善方案']), 'malformed'],
+  ['GK13 带 (Recommended) 后缀的目的 ask → standard', categorizeGateAsk(['完善方案 (Recommended)', '重新规划 (Recommended)']), 'standard'],
 ]
 for (const [name, got, expected] of GK) check(name, got, expected)
 
@@ -196,13 +215,14 @@ const GM = [
   ['GM1 单词路由 deny 文案含标准模板', gateAskDenyReason(['直接执行']).includes('路由 ask 选项固定为') && gateAskDenyReason(['直接执行']).includes('批准 ask 选项固定为'), true],
   ['GM2 单词路由 deny 文案含具体缺项', gateAskDenyReason(['直接执行']).includes('进行pro规划') && gateAskDenyReason(['直接执行']).includes('不同意'), true],
   ['GM3 非白名单变体 deny 不含「缺少：」且含推荐标记范围提示', !gateAskDenyReason(['直接执行!', '进行pro规划', '不同意']).includes('缺少：') && gateAskDenyReason(['直接执行!', '进行pro规划', '不同意']).includes('推荐标记仅限'), true],
+  ['GM4 单词目的 deny 文案含目的模板与缺项', gateAskDenyReason(['完善方案']).includes('目的 ask 选项固定为') && gateAskDenyReason(['完善方案']).includes('当前目的 ask 缺少：重新规划'), true],
 ]
 for (const [name, got, expected] of GM) check(name, got, expected)
 
 // ── F 系列补充:单词副作用修复（deriveFlowState + askKindOfRelaxed） ──────
 const F21 = [
-  ['F21 单词路由 ask 答「直接执行」→ route=direct', [um(), call('ask_user_question', 'a1', wordRouteArgs), ok('a1', answer(['直接执行']))], { route: 'direct', clarified: false, approved: false, channelBroken: false }],
-  ['F22 单词批准 ask 答「同意执行」→ approved=true', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A'])), call('ask_user_question', 'a3', wordApproveArgs), ok('a3', answer(['同意执行']))], { route: 'plan', clarified: true, approved: true, channelBroken: false }],
+  ['F21 单词路由 ask 答「直接执行」→ route=direct', [um(), call('ask_user_question', 'a1', wordRouteArgs), ok('a1', answer(['直接执行']))], { route: 'direct', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
+  ['F22 单词批准 ask 答「同意执行」→ approved=true', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A'])), call('ask_user_question', 'a3', wordApproveArgs), ok('a3', answer(['同意执行']))], { route: 'plan', clarified: true, approved: true, purpose: 'none', channelBroken: false }],
 ]
 for (const [name, events, expected] of F21) {
   check(name, deriveFlowState(events), expected)
@@ -218,6 +238,8 @@ const GL = [
   ['GL5 批准第二问无 options 字段 → 通过', validateGateAskStructure('approve', [...glApproveQ1, { id: 'q2', question: '修改意见' }]), null],
   ['GL6 批准第三问带 options → 拒（第二问起全部校验）', (() => { const r = validateGateAskStructure('approve', [...glApproveQ1, { id: 'q2', question: '修改意见' }, { id: 'q3', question: '补充', options: [{ label: 'x' }] }]); return r !== null && r.includes('纯文本') })(), true],
   ['GL7 路由 2 问 → 仍拒含「须恰好 1 个问题」（route 分支零改动回归）', (() => { const r = validateGateAskStructure('route', [...glApproveQ1, { id: 'q2', question: '补充' }]); return r !== null && r.includes('须恰好 1 个问题') })(), true],
+  ['GL8 目的 ask 恰好 1 个问题 → 通过', validateGateAskStructure('purpose', [{ id: 'q1', question: '请选择', options: [{ label: '完善方案' }, { label: '重新规划' }] }]), null],
+  ['GL9 目的 ask 2 问 → 拒含「目的 ask 结构错误」与「须恰好 1 个问题」', (() => { const r = validateGateAskStructure('purpose', [{ id: 'q1', question: '请选择', options: [{ label: '完善方案' }, { label: '重新规划' }] }, { id: 'q2', question: '补充' }]); return r !== null && r.includes('目的 ask 结构错误') && r.includes('须恰好 1 个问题') })(), true],
 ]
 for (const [name, got, expected] of GL) check(name, got, expected)
 
@@ -333,7 +355,6 @@ const BR = [
   ['BR4 remaining=4 → 空串', budgetReminderText(4, 18, 3), ''],
   ['BR5 remaining=0 → 空串', budgetReminderText(0, 18, 3), ''],
   ['BR6 remaining=15 → 空串', budgetReminderText(15, 18, 3), ''],
-  ['BR7 budgetReminderMessage 形状', JSON.stringify(budgetReminderMessage(REMIND3)), JSON.stringify({ source: { kind: 'plugin', plugin: 'dsh-extra-plan' }, content: [{ type: 'text', text: REMIND3 }] })],
   ['BR8 无事件 → false', budgetReminderSent([], MARKER), false],
   ['BR9 锚点后含 marker → true', budgetReminderSent([umk('user'), remEvent('本轮探查预算还剩 3 次，请收紧探查、规划收尾，未查项记入待确认假设清单')], MARKER), true],
   ['BR10 marker 在锚点前 → false(新一轮重置)', budgetReminderSent([remEvent('本轮探查预算还剩 3 次，请收紧探查、规划收尾，未查项记入待确认假设清单'), umk('agent-message')], MARKER), false],
@@ -343,6 +364,14 @@ const BR = [
   ['BR14 budget=3 remaining=2 → 空串(全程不提示)', budgetReminderText(2, 3, 3), ''],
 ]
 for (const [name, got, expected] of BR) check(name, got, expected)
+
+// BR7（修正，不降级）：budgetReminderMessage 现经宿主 createUserMessage 构造，字段集 = {source, content, role:'user', id}。
+// 原条目只断言 {source, content}，在构造器注入 role/id 后必然失败；此处拆为 4 条断言，覆盖全部字段。
+const msg = budgetReminderMessage(REMIND3)
+check('BR7a budgetReminderMessage source/content 深等值', JSON.stringify({ source: msg.source, content: msg.content }), JSON.stringify({ source: { kind: 'plugin', plugin: 'dsh-extra-plan' }, content: [{ type: 'text', text: REMIND3 }] }))
+check('BR7b role 恒为 user', msg.role, 'user')
+check('BR7c id 为非空字符串', typeof msg.id === 'string' && msg.id.length > 0, true)
+check('BR7d 两次调用 id 唯一', budgetReminderMessage(REMIND3).id !== msg.id, true)
 
 // ── DR 系列:deny 提示模板与闸门词表同源（v0.1.9） ─────────────────────
 const DR = [
@@ -607,6 +636,9 @@ const AS = [
   ['AS6 cordis_run 路由未确认 → deny 含「路由未确认：cordis_run」与「须先 ask_user_question 路由确认」', (() => { const r = askPreExecute('cordis_run', {}); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认：cordis_run') && String(r.reason).includes('须先 ask_user_question 路由确认') })(), true],
   ['AS7 cordis_define 路由未确认 → allow', (() => { const r = askPreExecute('cordis_define', {}); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
   ['AS8 cordis_inspect_list 路由未确认 → allow', (() => { const r = askPreExecute('cordis_inspect_list', {}); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
+  ['AS9 目的标准二选一 1 问 ask → allow', (() => { const r = askPreExecute('ask_user_question', JSON.parse(purposeArgs)); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
+  ['AS10 目的缺一词 ask → deny 含「目的 ask 选项固定为」', (() => { const r = askPreExecute('ask_user_question', JSON.parse(wordPurposeArgs)); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('目的 ask 选项固定为') })(), true],
+  ['AS11 目的 2 问 ask → deny 含「目的 ask 结构错误」', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', options: [{ label: '完善方案' }, { label: '重新规划' }] }, { id: 'q2', question: '补充' }] }); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('目的 ask 结构错误') })(), true],
 ]
 for (const [name, got, expected] of AS) check(name, got, expected)
 
@@ -617,14 +649,15 @@ function runDispatchSeries(ev) {
 
 // ── F-code 系列:deriveFlowState 识别 run_code 内嵌套 ask（F1 桥接） ─────────
 const FC = [
-  ['FC1 嵌套路由答「直接执行」→ direct', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['直接执行']))], { route: 'direct', clarified: false, approved: false, channelBroken: false }],
-  ['FC2 嵌套路由答「进行pro规划」→ plan', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['进行pro规划']))], { route: 'plan', clarified: false, approved: false, channelBroken: false }],
-  ['FC3 嵌套路由答「不同意」→ none', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['不同意']))], { route: 'none', clarified: false, approved: false, channelBroken: false }],
-  ['FC4 嵌套澄清自定义答复 → clarified', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['进行pro规划'])), cdStart('ask_user_question', 'n2', nestedClarifyArgs), cdEnd('n2', customAnswer)], { route: 'plan', clarified: true, approved: false, channelBroken: false }],
-  ['FC5 嵌套批准「同意执行」→ approved', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['进行pro规划'])), cdStart('ask_user_question', 'n2', nestedClarifyArgs), cdEnd('n2', answer(['方案A'])), cdStart('ask_user_question', 'n3', nestedApprovalArgs), cdEnd('n3', answer(['同意执行']))], { route: 'plan', clarified: true, approved: true, channelBroken: false }],
-  ['FC6 嵌套空白 answers:[] → 全默认', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', emptyAnswer)], { route: 'none', clarified: false, approved: false, channelBroken: false }],
-  ['FC7 嵌套 isError:true → route=none+approved=false', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', 'Error: ask failed', true)], { route: 'none', clarified: false, approved: false, channelBroken: false }],
-  ['FC8 直呼+嵌套混排互不干扰（后答生效）', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['直接执行'])), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划']))], { route: 'plan', clarified: false, approved: false, channelBroken: false }],
+  ['FC1 嵌套路由答「直接执行」→ direct', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['直接执行']))], { route: 'direct', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
+  ['FC2 嵌套路由答「进行pro规划」→ plan', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['进行pro规划']))], { route: 'plan', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
+  ['FC3 嵌套路由答「不同意」→ none', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['不同意']))], { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
+  ['FC4 嵌套澄清自定义答复 → clarified', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['进行pro规划'])), cdStart('ask_user_question', 'n2', nestedClarifyArgs), cdEnd('n2', customAnswer)], { route: 'plan', clarified: true, approved: false, purpose: 'none', channelBroken: false }],
+  ['FC5 嵌套批准「同意执行」→ approved', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['进行pro规划'])), cdStart('ask_user_question', 'n2', nestedClarifyArgs), cdEnd('n2', answer(['方案A'])), cdStart('ask_user_question', 'n3', nestedApprovalArgs), cdEnd('n3', answer(['同意执行']))], { route: 'plan', clarified: true, approved: true, purpose: 'none', channelBroken: false }],
+  ['FC6 嵌套空白 answers:[] → 全默认', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', emptyAnswer)], { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
+  ['FC7 嵌套 isError:true → route=none+approved=false', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', 'Error: ask failed', true)], { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
+  ['FC8 直呼+嵌套混排互不干扰（后答生效）', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['直接执行'])), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划']))], { route: 'plan', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
+  ['FC9 嵌套目的 ask 答「完善方案」→ purpose=refine 且 clarified=false', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['进行pro规划'])), cdStart('ask_user_question', 'n2', nestedPurposeArgs), cdEnd('n2', answer(['完善方案']))], { route: 'plan', clarified: false, approved: false, purpose: 'refine', channelBroken: false }],
 ]
 for (const [name, events, expected] of FC) {
   check(name, deriveFlowState(events), expected)
@@ -756,9 +789,9 @@ for (const [name, code, expected] of ASK_RETURN) {
 // ── I 系列:runCodeGroupDenyReason 主会话组判定（F7' v4:拆解 → 组判定 → 聚合） ──
 const readOnlyCodeFx = "await readFileSync('x', 'utf8')"
 const writeCodeFx = "await writeFileSync('x', '1')"
-const noneStateFx = { route: 'none', clarified: false, approved: false, channelBroken: false }
-const planStateFx = { route: 'plan', clarified: true, approved: false, channelBroken: false }
-const approvedStateFx = { route: 'plan', clarified: true, approved: true, channelBroken: false }
+const noneStateFx = { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }
+const planStateFx = { route: 'plan', clarified: true, approved: false, purpose: 'refine', channelBroken: false }
+const approvedStateFx = { route: 'plan', clarified: true, approved: true, purpose: 'refine', channelBroken: false }
 const mainGroupReason = (state, code) => runCodeGroupDenyReason(state, { arguments: { code } }, { kind: 'main' }, {})
 const I = [
   ['I1 主会话 none+纯只读 → 放行(null)', readOnlyCodeFx, noneStateFx, null],

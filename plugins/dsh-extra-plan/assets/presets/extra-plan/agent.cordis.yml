@@ -6,7 +6,7 @@
 # 提供服务的行必须放在带 isolate realm 的 group 内（root realm 是进程级，跨预设
 # 冲突且 dsh-agent-presets 会拒绝挂载）。
 #
-# 闸门由 @local/dsh-extra-plan 以三级机械锚点实现（路由/澄清/批准），
+# 闸门由 @local/dsh-extra-plan 以四级机械锚点实现（路由/目的/澄清/批准）
 # 规划子代理只读 + 探查硬上限 + save_plan 落盘，力度完全继承主会话。
 #
 # 防坑（R2 教训）：所有 toolFilter deny 只列本预设实际注册的工具名——本预设没有
@@ -31,9 +31,10 @@
       - 探查结束后，汇总探查结果，展示初版方案。并用 ask_user_question 发起一次三选一。选项固定为「直接执行」「进行pro规划」「不同意」。把你的推荐排第一
       - 选「直接执行」：亲自动手，完工自查，简汇报 ≤10 行
       - 选「进行pro规划」：
-        · 先另用 ask_user_question 发起一次澄清： 1-3 个关键问题（给候选选项）
-        · 用 save_probe 落盘探查线索（落盘前自查：path 必须真实存在、range 格式 12 或 L12-34、evidence.line 单个行号（不含区间）、每项 evidence 须 line/value/text 至少其一，超出工具描述上限先压缩或分批落盘）
-        · 拿到线索路径后，用 subagent_plan 委派规划子代理。prompt 带上线索文件路径，说明「先 read 再补查」、[方案修改范围仅工作区]
+        · 先用 ask_user_question 发起一次二选一： 选项固定为「完善方案」「重新规划」。用来判断用户进行pro规划的目的
+        · 再用 ask_user_question 发起一次澄清： 1-3 个关键问题（给候选选项）
+        · 澄清完成后，用 save_probe 落盘探查线索（落盘前自查：path 必须真实存在、range 格式 12 或 L12-34、evidence.line 单个行号（不含区间）、每项 evidence 须 line/value/text 至少其一，超出工具描述上限先压缩或分批落盘）
+        · 拿到线索路径后，用 subagent_plan 委派规划子代理。prompt 带上用户需求、线索文件路径，说明「先 read 再补查」、[方案修改范围仅工作区]、「用户希望完善方案/重新规划」
         · 等待规划子代理返回：「继续探查申请」、「阻塞疑问」、「方案+验收文档」
       - 规划子代理返回「阻塞疑问」：原样展示疑问 → 用户答复后 send_message 转发
       - 规划子代理返回「申请继续探查」：用 ask_user_question 发起一次二选一。选项固定为「继续探查」「取消任务」
@@ -94,7 +95,7 @@
 
 # ── extra-plan 核心插件 ──
 
-# 三级机械锚点（路由/澄清/批准，状态机 + 选项验词）、主会话与规划子代理 anchored
+#  以四级机械锚点实现（路由/目的/澄清/批准，状态机 + 选项验词）、主会话与规划子代理 anchored
 # 引导、规划子代理探查硬上限与只读备份防线、save_plan 注册（仅规划子代理层）、
 # 力度继承（子代理 reasoningEffort = 父会话配置）、子代理沙箱下限、usage 账本。
 - id: extra-plan-group

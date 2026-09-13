@@ -80,13 +80,14 @@ DSH web界面 -> 设置 -> 插件 -> 插件配置 -> 按需规划模式配置
 ```
 dsh-extra-plan/
 ├── plugins/              
-│   ├── dsh-extra-plan/                                 # 模式核心插件（三级闸门/探查上限/save_plan 等）
+│   ├── dsh-extra-plan/                                 # 模式核心插件（四级闸门/探查上限/save_plan 等）
 │   │   ├── assets/presets/extra-plan/                  # 自动分发 .agent-presets 内容   
 │   │   │   ├── agent.cordis.yml                        # 预设主配置（persona/工具/插件行/delegation）
 │   │   │   ├── preset.yml                              # 预设元信息（GUI 显示名称与描述）
 │   │   │   └── dist-manifest.json                                
 │   │   ├── lib/                                        # 设置界面
 │   │   │   ├── client.js                               # dsh web界面配置插件
+│   │   │   ├── client-bridge.js                        # dsh web界面配置插件
 │   │   │   ├── settings.js                             # dsh web界面配置插件
 │   │   │   ├── preset-settings.js                      # 同步旧版本用户设置
 │   │   │   ├── preset-sync.js                          # 自愈插件
@@ -105,6 +106,7 @@ dsh-extra-plan/
 │   ├── README.md/                                      # 自检/取证工具介绍
 │   ├── _shared/                                        
 │   │   ├── zstd-frames.mjs  
+│   │   ├── host-deps.mjs  
 │   │   ├── session-finder.mjs  
 │   │   └── preset-hash.mjs      
 │   │── docs/                                           # AI文档
@@ -112,6 +114,8 @@ dsh-extra-plan/
 │   │   ├── ai-机制设计.md  
 │   │   ├── ai-流程备查.md  
 │   │   ├── ai-维护手册.md  
+│   │   ├── ai-实机闸门测试流程.md 
+│   │   ├── ai-宿主耦合台账.md 
 │   │   └── ai-代码地图.md         
 │   └── tools/                                          # 测试工具
 │       ├── 一键step测试.mjs                             # 可以通过输入真实session_id进行测试

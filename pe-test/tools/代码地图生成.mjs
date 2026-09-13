@@ -389,7 +389,9 @@ for (const [key, list] of old.byKey) {
 const fileRows = []
 for (const file of srcFiles) {
   const rel = relative(PROJECT_ROOT, file).split(BS).join('/')
-  const lines = readFileSync(file, 'utf8').split(NL).length
+  // 行数 = 真实行数：以换行结尾的文件 split(NL) 会多出一个空尾项，需去掉；不以换行结尾的按 split 计数即为真实行数。
+  const raw = readFileSync(file, 'utf8')
+  const lines = raw.endsWith(NL) ? raw.split(NL).length - 1 : raw.split(NL).length
   fileRows.push({ path: rel, lines, desc: old.fileDesc.get(rel) || '' })
 }
 funcs.sort((a, b) => a.path === b.path ? a.startLine - b.startLine : (a.path < b.path ? -1 : 1))

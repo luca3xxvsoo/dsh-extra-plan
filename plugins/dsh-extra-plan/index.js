@@ -1,6 +1,6 @@
 // @local/dsh-extra-plan (v0.1.9)
 // v2（2026-09-04）：agent/request planner 前置注入
-// 额外规划模式（extra-plan 预设专用）：按需规划 + 三级机械锚点（路由/澄清/批准）
+// 额外规划模式（extra-plan 预设专用）：按需规划 + 四级机械锚点（路由/目的/澄清/批准）
 // + 主会话与规划子代理 anchored 引导 + 规划子代理探查硬上限 + 力度继承 +
 // save_plan 方案落盘（原子双写）+ 子代理沙箱下限 + usage 账本。
 //
@@ -34,7 +34,7 @@
 //    不安装该监听器 → 插件注入在 next() 解析后执行并最终生效。
 //
 // 行为：
-//  1) 三级机械锚点（主会话，硬闸门，tools/pre-execute）：
+//  1) 四级机械锚点（主会话，硬闸门，tools/pre-execute）：
 //     - 路由未确认（state.route==='none' 且无通道逃生）：禁 write/edit 与
 //       pwsh 写命令、禁一切委派；「不同意」保持未确认；
 //     - 直行态（route==='direct'）：放行主会话写工具；委派恒拒（无计划批准
@@ -83,18 +83,22 @@
 
 const CHANNEL_BROKEN_CODES = new Set(['NO_PROVIDER', 'CALLER_NOT_LIVE', 'DELEGATED_CALLER'])
 
-// 路由 ask 与批准 ask 的固定枚举词（persona 约定；验词按包含匹配）。
+// 路由/目的/批准 ask 的固定枚举词（persona 约定；验词按包含匹配）。
 const ROUTE_WORD_DIRECT = '直接执行'
 const ROUTE_WORD_PLAN = '进行pro规划'
 const ROUTE_WORD_DISAGREE = '不同意'
 const APPROVAL_WORD_APPROVE = '同意执行'
 const APPROVAL_WORD_REPLAN = '转交pro规划'
+const PURPOSE_WORD_REFINE = '完善方案'
+const PURPOSE_WORD_REDO = '重新规划'
 
 // 选项集合文本（唯一真源，引用词表常量；各 deny 提示引用，不重复写词）
 const ROUTE_OPTIONS_TEXT = `「${ROUTE_WORD_DIRECT}」「${ROUTE_WORD_PLAN}」「${ROUTE_WORD_DISAGREE}」`
 const APPROVAL_OPTIONS_TEXT = `「${APPROVAL_WORD_APPROVE}」「${APPROVAL_WORD_REPLAN}」「${ROUTE_WORD_DISAGREE}」`
 const ROUTE_CONFIRM_TEXT = `须先 ask_user_question 路由确认（选项固定为${ROUTE_OPTIONS_TEXT}）`
 const APPROVAL_CONFIRM_TEXT = `须先 ask_user_question 让用户对方案点「${APPROVAL_WORD_APPROVE}」（批准选项固定为${APPROVAL_OPTIONS_TEXT}）`
+const PURPOSE_OPTIONS_TEXT = `「${PURPOSE_WORD_REFINE}」「${PURPOSE_WORD_REDO}」`
+const PURPOSE_CONFIRM_TEXT = `须先 ask_user_question 询问用户本次 pro 规划的目的（选项固定为${PURPOSE_OPTIONS_TEXT}）`
 
 // deny 提示模板（与闸门验词同源：引用词表常量，改词表则提示自动跟随）
 function routeDenyReason(toolLabel, state) {
@@ -106,6 +110,9 @@ function routeDenyReason(toolLabel, state) {
 function planDenyReason(action, state) {
   if (state && state.route === 'direct') {
     return `直行态下不可规划：${action}。「直接执行」已选，请直接使用 write/edit/pwsh/bash 等工具动手完成任务`
+  }
+  if (state && state.route === 'plan' && state.purpose !== 'refine' && state.purpose !== 'redo') {
+    return `规划目的尚未确认：${action}。${PURPOSE_CONFIRM_TEXT}，答复后再调用 ${action}`
   }
   if (state && state.route === 'plan' && state.clarified === false) {
     return `澄清问答尚未完成：${action}。请先独立发一次 ask_user_question 做澄清问答（1-3 个关键问题，给候选选项），完成后再调用 ${action}`
@@ -350,6 +357,7 @@ function labelsOfCallData(data) {
 // 路由 ask 与批准 ask 的标准词集合（用于三分法判定）。
 const ROUTE_GATE_SET = new Set([ROUTE_WORD_DIRECT, ROUTE_WORD_PLAN, ROUTE_WORD_DISAGREE])
 const APPROVAL_GATE_SET = new Set([APPROVAL_WORD_APPROVE, APPROVAL_WORD_REPLAN, ROUTE_WORD_DISAGREE])
+const PURPOSE_GATE_SET = new Set([PURPOSE_WORD_REFINE, PURPOSE_WORD_REDO])
 
 // 免计瀑布预算的工具白名单（planner 预算计数与 pre-execute 闸门豁免共用）。
 const FREE_TOOLS = new Set(['save_plan', 'send_message'])
@@ -384,8 +392,8 @@ function isPartialGateSet(labels, gateSet) {
 
 // 综合三分法判定：对 ask 的选项做「完全等于 / 部分相交 / 完全不相交」分类。
 function categorizeGateAsk(labels) {
-  if (isExactGateSet(labels, ROUTE_GATE_SET) || isExactGateSet(labels, APPROVAL_GATE_SET)) return 'standard'
-  if (isPartialGateSet(labels, ROUTE_GATE_SET) || isPartialGateSet(labels, APPROVAL_GATE_SET)) return 'malformed'
+  if (isExactGateSet(labels, ROUTE_GATE_SET) || isExactGateSet(labels, APPROVAL_GATE_SET) || isExactGateSet(labels, PURPOSE_GATE_SET)) return 'standard'
+  if (isPartialGateSet(labels, ROUTE_GATE_SET) || isPartialGateSet(labels, APPROVAL_GATE_SET) || isPartialGateSet(labels, PURPOSE_GATE_SET)) return 'malformed'
   return 'ordinary'
 }
 
@@ -407,13 +415,22 @@ function gateAskDenyReason(labels) {
     }
     if (!found) approvalMissing.push(word)
   }
-  let msg = `ask 选项不规范。路由 ask 选项固定为${ROUTE_OPTIONS_TEXT}；批准 ask 选项固定为${APPROVAL_OPTIONS_TEXT}。`
-  const pickRoute = routeMissing.length <= approvalMissing.length
-  const missing = pickRoute ? routeMissing : approvalMissing
+  const purposeMissing = []
+  for (const word of PURPOSE_GATE_SET) {
+    let found = false
+    for (const label of labels) {
+      if (label.indexOf(word) !== -1) { found = true; break }
+    }
+    if (!found) purposeMissing.push(word)
+  }
+  let msg = `ask 选项不规范。路由 ask 选项固定为${ROUTE_OPTIONS_TEXT}；批准 ask 选项固定为${APPROVAL_OPTIONS_TEXT}；目的 ask 选项固定为${PURPOSE_OPTIONS_TEXT}。`
+  const pickPurpose = purposeMissing.length < routeMissing.length && purposeMissing.length < approvalMissing.length
+  const pickRoute = !pickPurpose && routeMissing.length <= approvalMissing.length
+  const missing = pickPurpose ? purposeMissing : pickRoute ? routeMissing : approvalMissing
   if (missing.length === 0) {
     msg += ' 当前选项包含了标准三词但带有非标准修饰（如额外字符、非白名单后缀）。推荐标记仅限 (Recommended)/（Recommended）/(推荐)/（推荐）四种'
   } else {
-    msg += ` 当前${pickRoute ? '路由' : '批准'} ask 缺少：${missing.join('、')}。`
+    msg += ` 当前${pickPurpose ? '目的' : pickRoute ? '路由' : '批准'} ask 缺少：${missing.join('、')}。`
   }
   msg += ' 请按标准模板重提'
   return msg
@@ -427,6 +444,10 @@ function validateGateAskStructure(kind, questions) {
   if (!Array.isArray(questions)) return 'ask 结构错误：缺少 questions 数组'
   if (kind === 'route') {
     if (questions.length !== 1) return `路由 ask 结构错误：须恰好 1 个问题（路由确认 ask 只做一次三选一，后续澄清请另发一次 ask_user_question。选项固定为${ROUTE_OPTIONS_TEXT}），当前 ${questions.length} 个问题`
+    return null
+  }
+  if (kind === 'purpose') {
+    if (questions.length !== 1) return `目的 ask 结构错误：须恰好 1 个问题（规划目的确认 ask 只做一次二选一，后续澄清请另发一次 ask_user_question。选项固定为${PURPOSE_OPTIONS_TEXT}），当前 ${questions.length} 个问题`
     return null
   }
   if (kind === 'approve') {
@@ -451,13 +472,18 @@ function askKindOf(labels) {
   let hasDirect = false
   let hasPlan = false
   let hasApprove = false
+  let hasRefine = false
+  let hasRedo = false
   for (const label of labels) {
     if (label.indexOf(ROUTE_WORD_DIRECT) !== -1) hasDirect = true
     if (label.indexOf(ROUTE_WORD_PLAN) !== -1) hasPlan = true
     if (label.indexOf(APPROVAL_WORD_APPROVE) !== -1) hasApprove = true
+    if (label.indexOf(PURPOSE_WORD_REFINE) !== -1) hasRefine = true
+    if (label.indexOf(PURPOSE_WORD_REDO) !== -1) hasRedo = true
   }
   if (hasDirect && hasPlan) return 'route'
   if (hasApprove) return 'approve'
+  if (hasRefine && hasRedo) return 'purpose'
   return 'clarify'
 }
 
@@ -469,14 +495,17 @@ function askKindOfRelaxed(labels) {
   let hasRouteSpecific = false
   let hasApproveSpecific = false
   let hasDisagree = false
+  let hasPurposeSpecific = false
   for (const label of labels) {
     if (label.indexOf(ROUTE_WORD_DIRECT) !== -1 || label.indexOf(ROUTE_WORD_PLAN) !== -1) hasRouteSpecific = true
     if (label.indexOf(APPROVAL_WORD_APPROVE) !== -1 || label.indexOf(APPROVAL_WORD_REPLAN) !== -1) hasApproveSpecific = true
     if (label.indexOf(ROUTE_WORD_DISAGREE) !== -1) hasDisagree = true
+    if (label.indexOf(PURPOSE_WORD_REFINE) !== -1 || label.indexOf(PURPOSE_WORD_REDO) !== -1) hasPurposeSpecific = true
   }
   if (hasRouteSpecific) return 'route'
   if (hasApproveSpecific) return 'approve'
   if (hasDisagree) return 'route'
+  if (hasPurposeSpecific) return 'purpose'
   return 'clarify'
 }
 
@@ -498,6 +527,14 @@ function matchApprovalLabel(selected) {
   }
   for (const label of selected) {
     if (label.indexOf(ROUTE_WORD_DISAGREE) !== -1) return 'disagree'
+  }
+  return null
+}
+
+function matchPurposeLabel(selected) {
+  for (const label of selected) {
+    if (label.indexOf(PURPOSE_WORD_REFINE) !== -1) return 'refine'
+    if (label.indexOf(PURPOSE_WORD_REDO) !== -1) return 'redo'
   }
   return null
 }
@@ -577,13 +614,14 @@ function parseDispatchAskResult(data) {
   return { callId, kind: 'ok', answersLen, selected }
 }
 
-// 三级锚点状态机（纯函数，自最近一条人类消息起的事件推导）：
+// 四级锚点状态机（纯函数，自最近一条人类消息起的事件推导）：
 //   route: 'none' | 'direct' | 'plan'（「不同意」→ 回 'none'，保持未确认）
 //   clarified: 是否有完成的澄清问答（空白回复不算）
 //   approved: 是否已获「同意执行」（「转交pro规划」「不同意」→ 重置 false）
+//   purpose: 'none' | 'refine' | 'redo'（目的确认：「完善方案」→ refine / 「重新规划」→ redo）
 //   channelBroken: 提问通道级错误（逃生放行标记）
 function deriveFlowState(events) {
-  const state = { route: 'none', clarified: false, approved: false, channelBroken: false }
+  const state = { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }
   if (!Array.isArray(events)) return state
   let lastHuman = -1
   for (let i = events.length - 1; i >= 0; i -= 1) {
@@ -619,7 +657,7 @@ function deriveFlowState(events) {
       if (result.callId === undefined || !asks.has(result.callId)) continue
       if (result.kind === 'error') {
         if (CHANNEL_BROKEN_CODES.has(result.code)) state.channelBroken = true
-        else { state.route = 'none'; state.approved = false }
+        else { state.route = 'none'; state.approved = false; state.purpose = 'none' }
         continue
       }
       const kind = asks.get(result.callId)
@@ -628,6 +666,11 @@ function deriveFlowState(events) {
         if (matched === 'direct') state.route = 'direct'
         else if (matched === 'plan') state.route = 'plan'
         else state.route = 'none'
+      } else if (kind === 'purpose') {
+        if (result.answersLen > 0) {
+          const matched = matchPurposeLabel(result.selected)
+          if (matched !== null) state.purpose = matched
+        }
       } else if (kind === 'clarify') {
         if (result.answersLen > 0) state.clarified = true
       } else if (kind === 'approve') {
@@ -642,7 +685,7 @@ function deriveFlowState(events) {
     if (result.callId === undefined || !asks.has(result.callId)) continue
     if (result.kind === 'error') {
       if (CHANNEL_BROKEN_CODES.has(result.code)) state.channelBroken = true
-      else { state.route = 'none'; state.approved = false }
+      else { state.route = 'none'; state.approved = false; state.purpose = 'none' }
       continue
     }
     const kind = asks.get(result.callId)
@@ -652,6 +695,11 @@ function deriveFlowState(events) {
       else if (matched === 'plan') state.route = 'plan'
       else if (matched === 'disagree') state.route = 'none'
       else state.route = 'none'
+    } else if (kind === 'purpose') {
+      if (result.answersLen > 0) {
+        const matched = matchPurposeLabel(result.selected)
+        if (matched !== null) state.purpose = matched
+      }
     } else if (kind === 'clarify') {
       if (result.answersLen > 0) state.clarified = true
     } else if (kind === 'approve') {
@@ -2024,7 +2072,7 @@ function mainGateReason(state, exec, gateCtx) {
   const ctx = gateCtx !== undefined && gateCtx !== null ? gateCtx : {}
   const events = ctx.events !== undefined && ctx.events !== null ? ctx.events : []
   const planToolName = typeof ctx.planToolName === 'string' && ctx.planToolName !== '' ? ctx.planToolName : 'subagent_plan'
-  state = state !== undefined && state !== null ? state : { route: 'none', clarified: false, approved: false, channelBroken: false }
+  state = state !== undefined && state !== null ? state : { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }
   const escape = state.channelBroken === true
   const name = exec !== undefined && exec !== null && typeof exec.name === 'string' ? exec.name : ''
   if (name === ASK_TOOL) {
@@ -2034,7 +2082,7 @@ function mainGateReason(state, exec, gateCtx) {
       if (category === 'malformed') {
         const denyMsg = gateAskDenyReason(labels)
         // 同时检查结构错误，合并为一条报错，一次性告知模型两个问题
-        const kind = askKindOfRelaxed(labels) === 'approve' ? 'approve' : 'route'
+        const kind = askKindOfRelaxed(labels) === 'approve' ? 'approve' : askKindOfRelaxed(labels) === 'purpose' ? 'purpose' : 'route'
         // kind 按特异性判定（复用 askKindOfRelaxed 语义）：批准特异词→approve；路由特异词或仅共享「不同意」→route
         const args = exec.arguments
         const questions = args !== undefined && args !== null && typeof args === 'object' ? args.questions : undefined
@@ -2045,7 +2093,7 @@ function mainGateReason(state, exec, gateCtx) {
         return denyMsg
       }
       if (category === 'standard') {
-        const kind = isExactGateSet(labels, ROUTE_GATE_SET) ? 'route' : 'approve'
+        const kind = isExactGateSet(labels, ROUTE_GATE_SET) ? 'route' : isExactGateSet(labels, PURPOSE_GATE_SET) ? 'purpose' : 'approve'
         const args = exec.arguments
         const questions = args !== undefined && args !== null && typeof args === 'object' ? args.questions : undefined
         const structErr = validateGateAskStructure(kind, questions)
@@ -2097,7 +2145,7 @@ function mainGateReason(state, exec, gateCtx) {
     return null
   }
   if (name === planToolName) {
-    if (!escape && (state.route !== 'plan' || state.clarified !== true)) {
+    if (!escape && (state.route !== 'plan' || state.clarified !== true || (state.purpose !== 'refine' && state.purpose !== 'redo'))) {
       return planDenyReason('subagent_plan', state)
     }
     // 新增：continuable 默认后台，传 false 是试图前台等待绕开续轮
@@ -2108,7 +2156,7 @@ function mainGateReason(state, exec, gateCtx) {
     return null
   }
   if (name === 'save_probe') {
-    if (!escape && (state.route !== 'plan' || state.clarified !== true)) {
+    if (!escape && (state.route !== 'plan' || state.clarified !== true || (state.purpose !== 'refine' && state.purpose !== 'redo'))) {
       return planDenyReason('save_probe', state)
     }
     return null
@@ -2145,7 +2193,7 @@ function mainGateReason(state, exec, gateCtx) {
 
 // 组判定：run_code 拆解 → 逐成员走「与直呼完全相同的闸门」→ 聚合拒绝。
 // state：主会话 flow state（role.kind==='main' 时必传；其它角色忽略）；缺省归一化为
-// { route:'none', clarified:false, approved:false, channelBroken:false }。
+// { route:'none', clarified:false, approved:false, purpose:'none', channelBroken:false }。
 // role：{ kind:'main' } | { kind:'planner' } | { kind:'child', readOnly:boolean, probe:boolean }。
 // gateCtx 缺省：{ events:[], planToolName:'subagent_plan', jobOutputCallCounters:new Map(),
 // exploreBudget:18, runCodeDepth:0, runcodeCatchGate:false }。
@@ -2163,7 +2211,7 @@ function runCodeGroupDenyReason(state, exec, role, gateCtx) {
   }
   const st = state !== undefined && state !== null
     ? state
-    : { route: 'none', clarified: false, approved: false, channelBroken: false }
+    : { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }
   const r = role !== undefined && role !== null && typeof role === 'object' && typeof role.kind === 'string' ? role : { kind: 'main' }
   const roleKind = r.kind
   const members = []
@@ -2303,10 +2351,15 @@ export const decisions = {
   ROUTE_WORD_DISAGREE,
   APPROVAL_WORD_APPROVE,
   APPROVAL_WORD_REPLAN,
+  PURPOSE_WORD_REFINE,
+  PURPOSE_WORD_REDO,
   ROUTE_OPTIONS_TEXT,
   APPROVAL_OPTIONS_TEXT,
+  PURPOSE_OPTIONS_TEXT,
   ROUTE_CONFIRM_TEXT,
   APPROVAL_CONFIRM_TEXT,
+  PURPOSE_CONFIRM_TEXT,
+  PURPOSE_GATE_SET,
   isSubagentChild,
   isExplicitRoute,
   isExplicitEffort,
@@ -2330,6 +2383,7 @@ export const decisions = {
   validateGateAskStructure,
   matchRouteLabel,
   matchApprovalLabel,
+  matchPurposeLabel,
   parseAskResultData,
   parseDispatchAskResult,
   deriveFlowState,
@@ -3250,7 +3304,7 @@ export function apply(ctx, config) {
     return nextConfig
   })
 
-  // 5) 硬闸门（tools/pre-execute）：规划子代理只读 + 探查硬上限；主会话三级锚点。
+  // 5) 硬闸门（tools/pre-execute）：规划子代理只读 + 探查硬上限；主会话四级锚点。
   ctx.on('tools/pre-execute', (exec, next) => {
     if (exec.agent === undefined) return next()
     const agent = exec.agent

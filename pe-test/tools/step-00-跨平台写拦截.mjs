@@ -22,7 +22,11 @@
 // 说明：本脚本只依赖 Node 标准库与 decisions 导出，不做任何文件写操作。
 // ============================================================================
 
-import { decisions } from '../../plugins/dsh-extra-plan/index.js'
+import { registerHostDeps } from '../_shared/host-deps.mjs'
+await registerHostDeps()
+
+// 插件顶层静态 import '@deepseek-ai/dsh-llm' → 必须先注册宿主真包解析钩子，再动态加载插件模块。
+const { decisions } = await import('../../plugins/dsh-extra-plan/index.js')
 
 const {
   BASH_MUTATION,
