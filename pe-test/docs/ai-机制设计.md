@@ -10,7 +10,9 @@
 
 ## 二、run_code 组判定
 - 是什么：run_code 能一次做多件事，是绕开「单工具闸门」的后门。静态拆解 code 为工具成员组（decomposeRunCode：扫描 tools.xxx 调用 + 裸写扫描），逐成员走与直呼完全相同的判定，聚合拒绝。
-- 边界：动态访问（tools[var]）、参数不可解析、嵌套超深 → 不产生成员，运行时瀑布兜底（安全方向放行）。
+- 边界（**不产生成员** → 组判定放行 → 运行时瀑布兜底，安全方向）：动态访问（tools[var]）/运行时拼名、嵌套 run_code 深度超限、eval/Function 动态代码。
+- 边界（**成员保留、仅参数依赖检查跳过**）：参数不可解析（参数不是合法 JSON，例如 JS 对象字面量用了无引号键名）→ 成员照常产生（`argsParsed:false`，聚合标签为 `<工具名>（参数不可解析）`），**状态型闸门（route/clarified/approved/purpose）照常判定**，只跳过**参数依赖检查**（run_in_background / wait / sandbox_permissions / agent_id / command / questions），由运行时 `tools/pre-execute` 瀑布按直呼闸门拦截（文案同源）。
+- **组拒零副作用（兜底缺口）**：组内任一成员触发闸门 → 整条 `run_code` 不执行、成员全部不落地 → **此时运行时瀑布也不会跑**。故参数依赖型闸门（A10/A11/A16/A30 等）在组判定路径下存在「静态未评估、运行时也未兜底」的窗口：正确取法＝参数写成**严格 JSON**（使 `argsParsed=true`）＋锚点状态齐备＋组内不被其它成员先拒（若为安全而搭配必然拒绝成员，则接受该项在聚合里不可见）。
 - 多调用容错硬闸门：code 内 tools.* 调用点（未去重，裸写不计）≥2 时，要求每个调用点独立容错——只认独立 try/catch 组（try 块内恰 1 个调用点、块后紧跟 catch；allSettled 数组 / .catch 链 / 包装函数一律不认）；不足→教学式聚合拒绝（「run_code 内 N 个工具调用未全部独立容错…已保护 M 个」）。单调用豁免；嵌套 run_code 展平纳入；静态识别失败保守按未保护拒绝。job_output 全角色禁 wait:true（等完成通知）；被 pre-execute 拒绝的调用不计探查预算（配对按 tool-result 块级 isError 排除）。
 - runcodeCatchGate 开关：cfg.runcodeCatchGate===true 默认 false（设置页开启，仿 anchoredBootstrap；装载时快照，改后需重启 Harness）。开启时 runCodeCatchGateReason 参与组判定（多调用无独立容错拒绝）；**仅影响本检查**。作用面已全仓核实（2026-09-10）：全仓唯一判定读点与唯一调用点 = runCodeGroupDenyReason 内 runcodeCatchGate 判定分支（if (ctx.runcodeCatchGate === true) → runCodeCatchGateReason，产物仅一个 kind:'catch' 拒绝成员）；生效角色 = 主会话/planner/只读子代理（runCodeGroupDenyReason 内 roleKind 分流：main 走 mainGateReason、planner 走 plannerGateReason、child·readOnly 走 childReadonlyGateReason），执行者（child 非只读）豁免（reason 保持 null 直接放行）。
 - ask 返回值白名单（恒开，与 runcodeCatchGate 解耦）：主会话 run_code 内出现 tools.ask_user_question 时，仅放行两种写法——return await tools.ask_user_question(...)；或 const q = await tools.ask_user_question(...); return JSON.stringify({ question: q })；其余形态（别名/动态访问/静态属性引用/.then 包装/只赋值不 return）→ 聚合拒绝（askUserQuestionReturnGateReason，函数区间见代码地图函数索引）。接入点 = runCodeGroupDenyReason 内 visit 的 askReason 判定（roleKind==='main' 才调用，planner 与只读子代理不接）；嵌套超展开深度由 pre-execute 重入兜底。
