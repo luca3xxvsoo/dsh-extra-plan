@@ -55,7 +55,7 @@
 | A01 | 主会话 | route=plan | 调 write/edit（或 pwsh/bash 写命令） | `规划态下主会话不可写文件：${toolLabel}。探查请走 save_probe，写文件请等方案批准后走执行者委派` | 卡片 Error 文案 + step-05 解码 | 实机直测 |
 | A02 | 主会话 | route=none（未做路由 ask，或选「不同意」后回 none） | 首轮直接调 write/edit | `路由未确认：${toolLabel}。只读探查可随时进行。创建/修改/删除文件须先 ask_user_question 路由确认（选项固定为「直接执行」「进行pro规划」「不同意」），用户批准后才可动手` | 同上 | 实机直测 |
 | A03 | 主会话 | route=direct | 调 subagent_plan 或 save_probe | `直行态下不可规划：${action}。「直接执行」已选，请直接使用 write/edit/pwsh/bash 等工具动手完成任务` | 同上 | 实机直测 |
-| A04 | 主会话 | route=plan 且 clarified=false 且目的已定 | 调 subagent_plan | `澄清问答尚未完成：${action}。请先独立发一次 ask_user_question 做澄清问答（1-3 个关键问题，给候选选项），完成后再调用 ${action}` | 同上 | 实机直测 |
+| A04 | 主会话 | route=plan 且 clarified=false 且目的已定（＝U4→U5 窗口；收紧后该态为正常可达态） | 调 subagent_plan | `澄清问答尚未完成：${action}。请先独立发一次 ask_user_question 做澄清问答（1-3 个关键问题，给候选选项），完成后再调用 ${action}` | 同上 | 实机直测 |
 | A05 | 主会话 | route=none（含选「不同意」后） | 调 subagent_plan | `子代理未放行：${action}。须先 ask_user_question 路由确认（选项固定为「直接执行」「进行pro规划」「不同意」），意图澄清问答后再调用 ${action}` | 同上 | 实机直测 |
 | A06 | 主会话 | approved!==true | 调 subagent / subagent_fork / workflow / ralph / subagent_review | `执行类委派未放行：${action}。须先 ask_user_question 让用户对方案点「同意执行」（批准选项固定为「同意执行」「转交pro规划」「不同意」），用户批准后才可委派` | 同上 | 实机直测 |
 | A07 | 主会话 | approved=true 且 route!=='direct' | 主会话自己调 write/edit | `方案已批准，执行请走 subagent 委派 flash 执行者（读方案/验收文件执行）。主会话直做仅限越界操作（工作区外写入，走 shell（Windows 用 pwsh、Linux/macOS 用 bash）+ sandbox_permissions）` | 同上 | 实机直测 |
@@ -64,7 +64,7 @@
 | A10 | 主会话 | route=plan 且 clarified=true 且目的已定 | 调 subagent_plan 且显式传 run_in_background:false | `规划子代理不可前台等待：run_in_background 参数不得传 false（continuable 固定后台运行）。请移除 run_in_background: false 或省略该参数` | 同上 | 实机直测 |
 | A11 | 主会话 | approved=true | subagent / subagent_review 未传 run_in_background:true | `执行者/reviewer 必须后台运行：请传 run_in_background: true` | 同上 | 实机直测 |
 | A12 | 主会话 | route!=='direct' | 主会话调 save_plan | `save_plan 仅允许在直接执行路由下落盘方案与验收；当前路由态：${state.route}` | 同上 | 实机直测 |
-| A13 | 主会话 | route!=='plan' 或 clarified!==true | 主会话调 save_probe | 随前置态取 A02/A03/A04 同源文案：route=none →「子代理未放行：save_probe。…」；route=direct →「直行态下不可规划：save_probe。…」；plan 且目的未定 →「规划目的尚未确认：save_probe。…」；plan 未澄清（目的已定）→「澄清问答尚未完成：save_probe。…」 | 同上 | 实机直测 |
+| A13 | 主会话 | route!=='plan' 或 clarified!==true | 主会话调 save_probe | 随前置态取 A02/A03/A04 同源文案：route=none →「子代理未放行：save_probe。…」；route=direct →「直行态下不可规划：save_probe。…」；plan 且目的未定 →「规划目的尚未确认：save_probe。…」；plan 未澄清（目的已定）分支＝U4→U5 窗口直测 →「澄清问答尚未完成：save_probe。…」 | 同上 | 实机直测 |
 | A14 | 主会话 | —（任意路由） | 发部分相交/非标选项 ask（例：只含「直接执行」一项） | `ask 选项不规范。路由 ask 选项固定为「直接执行」「进行pro规划」「不同意」；批准 ask 选项固定为「同意执行」「转交pro规划」「不同意」；目的 ask 选项固定为「完善方案」「重新规划」。` + ` 当前路由 ask 缺少：…。` | 同上 | 实机直测 |
 | A15 | 主会话 | — | 发标准三词但结构错：路由 ask 非 1 问 / 批准 ask 少于 2 问 / 第 2 问带 options | `批准 ask 结构错误：须至少 2 个问题（第一个为批准选项固定为「同意执行」「转交pro规划」「不同意」，第二个为修改意见可空），当前 N 个问题`；或 `批准 ask 结构错误：第 N 个问题（修改意见）必须为纯文本输入，不得提供选项（预设选项不符合用户想法），当前带 M 个选项。请改为纯文本大文本框、去掉 options` | 同上 | 实机直测 |
 | A16 | 任意角色（主会话 / planner / 只读子代理） | — | 调 job_output 带 wait:true | `job_output 禁止带 wait: true 前台等待。请省略 wait 参数或设 wait: false，job 完成后会收到通知` | 同上 | 实机直测 |
@@ -172,7 +172,7 @@
 | `A16` | 组 成员 job_output（wait:true） | `job_output 禁止带 wait: true 前台等待。…` |
 
 #### 3.2.3b S2.5 route=plan·目的已定·未澄清（U4 目的答复后）
-状态：route=plan、purpose=refine|redo、clarified=false。
+状态：route=plan、purpose=refine|redo、clarified=false。（S2.5 为正常可达态：目的未定（或路由未确认）时普通 ask 的答复不置 clarified；U4 后 U5 前在此窗口直测 A04/A13）
 一次性连发清单：
 1. **组判定 run_code#4b**（2 成员，一次聚合）：subagent_plan / save_probe（目的已定、澄清未完成 → 两条各落澄清文案）
 
@@ -182,7 +182,7 @@
 | `A13` | 组 成员 save_probe | `澄清问答尚未完成：save_probe。…`（澄清文案分支） |
 
 #### 3.2.4 S3 route=plan·已澄清（U5 澄清答复后）
-状态：route=plan、clarified=true、purpose=refine|redo。
+状态：route=plan、clarified=true、purpose=refine|redo。（clarified=true 必须经目的已定后的澄清答复置位）
 一次性连发清单：
 1. **组判定 run_code#5**（4 成员）：subagent_plan（显式 run_in_background:false）/ subagent / save_plan / job_output（wait:true）
 2. 起一个后台 pwsh job（只读命令，如列目录）→ **同轮内** job_output 调两次（第一次放行、第二次拒 → A17）；both 下推荐写成**同一次 run_code 内两次同参 job_output**（组判定同参去重只留 1 成员，第二次为运行时嵌套 re-entry 被拒），直呼两次为对照写法
@@ -292,8 +292,8 @@ channelBroken 逃生（`CHANNEL_BROKEN_CODES` = NO_PROVIDER / CALLER_NOT_LIVE / 
 | U1 | 第一轮 | 空白回车（路由 ask） | S0（route=none 默认态） | A02,A05,A06,A08,A12,A13,A14,A15,A16,A22,A30,A39 | 12 | 空白放路由 ask 上，route=none 默认态零扰动（空白不置位任何状态位），未确认语义与 S0 全量一次操作双收；「取消」与空白同属未确认形态，标注择一必测、另一可选（差异见陷阱⑦） |
 | U2 | 第一轮 | 选「直接执行」 | S1（route=direct） | A03,A06,A16,A30 | 4（＋probe 委派，0 用户操作） | direct 态只有用户能进；A30 放行侧委派 probe 与其同批 |
 | U3 | 第一轮 | 选「进行pro规划」 | S2（route=plan·未澄清·目的未定） | A01,A06,A08,A12,A16,A41 | 7 | plan 态只有用户能进；S2 下 subagent_plan/save_probe 两条同落 A41（目的闸门先于澄清判定） |
-| U4 | 第一轮 | 目的答复（选「完善方案」或「重新规划」） | S2.5（route=plan·目的已定·未澄清） | A04,A13 | 2 | purpose 只有答复可置位；目的 ask 为选「进行pro规划」后第一个提问、仍为第 4 次用户操作 |
-| U5 | 第一轮 | 澄清答复（选探查方式） | S3（route=plan·已澄清） | A10,A06,A12,A16,A17 | 5（＋planner 委派，0 用户操作） | clarified 只有答复可置位；A17 需同轮内完成（计数锚点重置见陷阱③） |
+| U4 | 第一轮 | 目的答复（选「完善方案」或「重新规划」） | S2.5（route=plan·目的已定·未澄清） | A04,A13 | 2 | purpose 只有答复可置位；目的 ask 为选「进行pro规划」后第一个提问、仍为第 4 次用户操作；S2.5 是澄清文案（A04/A13）唯一实机取证窗口 |
+| U5 | 第一轮 | 澄清答复（选探查方式） | S3（route=plan·已澄清） | A10,A06,A12,A16,A17 | 5（＋planner 委派，0 用户操作） | clarified 仅当目的已定（purpose∈{完善方案,重新规划}）时由澄清答复置位；唯一重置＝新人类消息重开事件窗；A17 需同轮内完成（计数锚点重置见陷阱③） |
 | U6 | 第一轮 | 批准同意（点「同意执行」） | S4（route=plan·已批准） | A07,A09,A11,A08,A12 | 5（＋reviewer 委派，0 用户操作） | approved 只有「同意」可置位 |
 | U7 | 第一轮前置（**仅起步非 both 需要**，起步已 both 时省去） | 设置页 1 次保存：**把工具呈现模式（`toolPresentationMode`）切到 both ＋ 把 `runcodeCatchGate` 置 true**（**同一张卡片、同一次保存**，搭车不新增操作）＋ 重启 Harness（**不必新开会话**） | 前置（不推进 flow state） | —（0 条直接） | 0 | 两个 key 唯一入口都是设置页；装载期快照口径（见 1.5(b)）导致必须重新装载，与第一轮批次解耦 |
 | U8 | 轮间（第一轮与第二轮之间） | 设置页 1 次保存：**把 `runcodeCatchGate` 切为 false**（`toolPresentationMode` 不动；与工具呈现模式同一张卡片、同一次保存口径）＋ 重启 Harness（**不必新开会话**） | 前置（不推进 flow state；第二轮 route=none 即可） | —（0 条直接；第二轮两项见 3.4） | 0 | 开关装载期快照（见 1.5(b)）；轮间必须重新装载；重启后用户发一条消息即回 route=none（无需新会话）；**第二轮 0 次状态舞** |
@@ -336,7 +336,7 @@ channelBroken 逃生（`CHANNEL_BROKEN_CODES` = NO_PROVIDER / CALLER_NOT_LIVE / 
 ④ runcodeCatchGate 自我合规（第一轮 3.2.7 批）：开启后测试脚本自身发给 run_code 的代码也必须逐调用点独立 try/catch，否则脚本先被 A21 拒。
 ⑤ 会话定位禁 auto：一律显式传会话目录名 / SESSION_ID（auto 可能取到别的「按需规划模式」会话）。
 ⑥ 人眼项取证 EPERM：不跑一键step测试 的人眼项，取证命令由用户手动终端执行（见 C6）。
-⑦ 空白 vs 取消差异：空白 = answersLen:0，仅不置位对应状态位；取消/中断若宿主带 error 且非通道码 → route 回 none、approved 复位。→ U1 用**空白回车**、不用 Esc；若用户按 Esc 导致状态回退属预期、不影响 S0（none 本为默认）；Esc 行为列为**可选加测**。
+⑦ 空白 vs 取消差异：空白 = answersLen:0，仅不置位对应状态位；取消/中断若宿主带 error 且非通道码 → route 回 none、approved 复位。→ U1 用**空白回车**、不用 Esc；若用户按 Esc 导致状态回退属预期、不影响 S0（none 本为默认）；Esc 行为列为**可选加测**；clarified 不随取消归零（取消残留混合态＝已知接受项）。
 ⑧ 组拒零副作用：denies≥1 时 run_code 整体拒绝、成员不执行；放行侧成员只用只读工具（read/glob/grep/job_output/job_list/cordis_inspect_*），防止真写盘 / 真委派误伤。
 ⑨ 聚合多行串扰：预算耗尽后发起的 planner 组判定会同时出现 cap / 裸写 / 实例上限与 budget 白名单行（denies 非短路全量收集）—— 逐行对照 A 表，不视为串扰（见 3.2.6.1）。
 ⑩ A26 取证必须逐次调用：一次只发一个调用、一个 step 一个调用；禁止把多次调用挤进同一个 step。
@@ -350,7 +350,7 @@ channelBroken 逃生（`CHANNEL_BROKEN_CODES` = NO_PROVIDER / CALLER_NOT_LIVE / 
 
 | 域 | 范围 | A 编号 | 对应 U 序号 |
 |:--|:--|:--|:--|
-| D1 | 锚点（route/purpose/clarified/approved 与 ask 结构） | A01-A06、A14、A15、A41 | U1/U2/U3/U4 |
+| D1 | 锚点（route/purpose/clarified/approved 与 ask 结构） | A01-A06、A14、A15、A41 | U1/U2/U3/U4/U5 |
 | D2 | 写/cordis/shell/planTool/委派 ＋ save_plan·save_probe 主会话路由 | A07-A13 | U1/U2/U3/U4/U5/U6 |
 | D3 | job_output | A16、A17 | U1-U6（A17 仅 U5） |
 | D4 | run_code 组判定 | A18-A23 | U1（3.2.7 拦截面）/ U5（planner 序列）/ U8（第二轮放行面） |

@@ -209,7 +209,7 @@ const mainWithEvents = (events) => ({ session: { header: { id: 'main-1', cwd: 'C
 // direct 态：路由已确认「直接执行」；无确认态：无事件；plan+clarified 态：规划+澄清完成
 const directMain = mainWithEvents([umE(), callE('ask_user_question', 'a1', routeArgsE), okE('a1', answerE(['直接执行']))])
 const noneMain = mainWithEvents([])
-const planMain = mainWithEvents([umE(), callE('ask_user_question', 'a1', routeArgsE), okE('a1', answerE(['进行pro规划'])), callE('ask_user_question', 'a2', clarifyArgsE), okE('a2', answerE(['方案A']))])
+const planMain = mainWithEvents([umE(), callE('ask_user_question', 'a1', routeArgsE), okE('a1', answerE(['进行pro规划'])), callE('ask_user_question', 'a2', clarifyArgsE), okE('a2', answerE(['方案A']))]) // 目的未定前置态夹具（R70/R81/T3-4 依赖 purpose=none）
 // planPurposeMain：路由 + 目的确认（「完善方案」）+ 澄清 三锚点齐备（目的 ask 位于澄清之前，同 persona 新顺序）
 const planPurposeMain = mainWithEvents([umE(), callE('ask_user_question', 'a1', routeArgsE), okE('a1', answerE(['进行pro规划'])), callE('ask_user_question', 'a2', purposeArgsE), okE('a2', answerE(['完善方案'])), callE('ask_user_question', 'a3', clarifyArgsE), okE('a3', answerE(['方案A']))])
 
@@ -404,7 +404,7 @@ r = preExecute(harness, rwCatalogChild, 'write', {})
 checkTrue('R27 含 write 目录 write → 放行', r !== null && r !== undefined && r.kind === 'allow')
 
 // ── ⑧ R-code 系列:F7'（run_code 统一审查关口） ────────────────────────────
-const approvedMain = mainWithEvents([umE(), callE('ask_user_question', 'a1', routeArgsE), okE('a1', answerE(['进行pro规划'])), callE('ask_user_question', 'a2', clarifyArgsE), okE('a2', answerE(['方案A'])), callE('ask_user_question', 'a3', approvalArgsE), okE('a3', answerE(['同意执行']))])
+const approvedMain = mainWithEvents([umE(), callE('ask_user_question', 'a1', routeArgsE), okE('a1', answerE(['进行pro规划'])), callE('ask_user_question', 'a2', purposeArgsE), okE('a2', answerE(['完善方案'])), callE('ask_user_question', 'a3', clarifyArgsE), okE('a3', answerE(['方案A'])), callE('ask_user_question', 'a4', approvalArgsE), okE('a4', answerE(['同意执行']))])
 const escapeMain = mainWithEvents([umE(), callE('ask_user_question', 'a1', routeArgsE), errE('a1', 'NO_PROVIDER')])
 const writeCode = { code: "await writeFileSync('x', '1')", description: '写文件' }
 const readOnlyCode = { code: "await readFileSync('x', 'utf8')", description: '只读' }
@@ -572,7 +572,7 @@ checkTrue('T3-2 主会话 none 态 save_plan → deny 且含「save_plan 仅允�
 r = preExecute(harness, planUnclarifiedMain, 'save_plan', { plan: 'p', checklist: 'c' })
 checkTrue('T3-3 主会话 plan 未澄清态 save_plan → deny 且含「当前路由态：plan」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('当前路由态：plan'))
 r = preExecute(harness, planMain, 'save_plan', { plan: 'p', checklist: 'c' })
-checkTrue('T3-4 主会话 plan+clarified 态 save_plan → deny（路由仍为 plan）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('当前路由态：plan'))
+checkTrue('T3-4 主会话 plan 态(目的未定·未澄清) save_plan → deny（路由仍为 plan）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('当前路由态：plan'))
 r = preExecute(harness, approvedMain, 'save_plan', { plan: 'p', checklist: 'c' })
 // 注：approved 是独立标志，deriveFlowState 的 route 仍为 'plan'（拒绝文案报的就是 route 态）。
 checkTrue('T3-5 主会话 approved 态 save_plan → deny（文案含「save_plan 仅允许在直接执行」与「当前路由态：plan」）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('save_plan 仅允许在直接执行') && String(r.reason).includes('当前路由态：plan') && String(r.reason).includes('转交pro规划') === false)

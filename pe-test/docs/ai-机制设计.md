@@ -4,7 +4,7 @@
 > 教训索引：复踩坑前先看下表；细节读指向注释。
 
 ## 一、四级机械锚点（路由/目的/澄清/批准）
-- 是什么：不是「问四次」，而是「状态机 + 选项验词」——deriveFlowState 从事件流推导 { route, clarified, approved, purpose, channelBroken }，mainGateReason 按状态逐工具判定，非标选项被拒。目的闸门：选「进行pro规划」后必须先发一次目的二选一 ask（选项仅有「完善方案」/「重新规划」），purpose ∈ 'none' | 'refine' | 'redo'，未定则 save_probe 与 subagent_plan 一律教学式拒绝（只做放行前置，不拦澄清 ask）。
+- 是什么：不是「问四次」，而是「状态机 + 选项验词」——deriveFlowState 从事件流推导 { route, clarified, approved, purpose, channelBroken }，mainGateReason 按状态逐工具判定，非标选项被拒。目的闸门：选「进行pro规划」后必须先发一次目的二选一 ask（选项仅有「完善方案」/「重新规划」），purpose ∈ 'none' | 'refine' | 'redo'，未定则 save_probe 与 subagent_plan 一律教学式拒绝（只做放行前置，不拦澄清 ask）；clarified 置位前提＝route==='plan' 且 purpose∈{refine,redo}；目的未定前普通 ask 答复不置位、不拦截；唯一重置＝新人类消息重开事件窗；取消/中断不归零（混合态为已知接受残留）。
 - 为什么：用户要求「每一步动手前由用户确认」，机械强制不依赖 AI 自觉。
 - 动它：改状态机/判定/拒绝文案。
 
@@ -57,7 +57,8 @@
 | 实例上限 | 静态计数防不住循环放大（1 点=计 1）：运行时按 rootCallId 内存 Map 聚合，超 exploreBudget 拒 | index.js runCodeDispatchGateReason 注释 |
 | 代码地图维护 | 地图是 AI 的「第一眼落点」：**人工段管语义、机器段管行号**——头部「意图速查」写 意图词→函数名、**故意不写行号**（人工段行号必漂移），引用的函数名失效由脚本报 [导航失效]；覆盖口径用**形态规则**（任意缩进的 `function NAME` / `const NAME = (…) =>` / `= function`）取代「缩进代理」，并**不做例外清单**（接受清单/排除清单均已删）；文本推断的天花板（正则字面量里的引号毁掉遮罩、无花括号多行箭头区间越界、同名函数描述串位）由 `pe-test/_maptest` 三个夹具固化回归，运行时计数器只报实现层漏检；「改完忘同步」由 `--check`（一键体检内置，不写盘）判红 | pe-test/tools/代码地图生成.mjs 头注释 + pe-test/docs/ai-维护手册.md |
 | 会话消息身份 | 注入会话事件流的 user/message 必须经宿主构造器 createUserMessage 生成（自带 role:'user' 与 id；手拼 {source,content} 缺 id/role 会被会话判损坏） | index.js budgetReminderMessage（经 createUserMessage 构造）+ 台账 SD37 |
-| 目的 ask 白答坑 | 目的二词不含任何路由/批准词，askKindOfRelaxed 默认回落 clarify（L509），不加 purpose 分支则答复目的 ask 会顺带置 clarified=true | index.js askKindOfRelaxed/deriveFlowState |
+| 目的 ask 白答坑 | 目的二词不含任何路由/批准词，askKindOfRelaxed 默认回落 clarify（L509），不加 purpose 分支则答复目的 ask 会顺带置 clarified=true；上一轮已由分类侧修复（purpose 分支）；本轮在置位侧收紧（index.js deriveFlowState L675/L704 加 route+purpose 前置条件） | index.js askKindOfRelaxed/deriveFlowState |
+| clarified 越界置位 | clarified 越界置位坑：目的未定/路由未确认时普通 ask 答复曾无条件置 clarified=true，澄清锚点形同虚设；本轮以置位前置修复（index.js deriveFlowState L675/L704） | index.js deriveFlowState L675/L704 |
 | 澄清选项子串坑（B） | 澄清 ask 的选项不得包含「完善方案」「重新规划」的任何子串（isPartialGateSet 的 indexOf 包含匹配），否则整条 ask 被判 malformed 拒绝 | index.js categorizeGateAsk/isPartialGateSet |
 
 ---

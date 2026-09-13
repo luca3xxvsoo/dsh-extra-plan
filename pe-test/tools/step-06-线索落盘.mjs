@@ -1,7 +1,7 @@
 // save_probe 注册层 + 硬闸门五态 + planner 预算回归（v1 口径）验证（v3）：
 // ①注册层断言（mock ctx 走插件 apply：主会话 save_probe 幂等 + save_plan（T3）/
 //   planner save_plan / executor 均不注册）
-// ②pre-execute save_probe 五态闸门（none→deny、plan 未澄清→deny、plan 已澄清但目的未定→deny、
+// ②pre-execute save_probe 五态闸门（none→deny、plan 未澄清→deny、取消残留（route=none·已澄清·目的归零）→deny、
 //   plan 已澄清且目的已定→allow、direct→deny、channelBroken→allow；deny 文案含「探查线索未放行」）
 // ②b pre-execute save_plan 五态闸门（T3，主会话：direct→allow，其余四态→deny）
 // ③planner 预算回归（v1 口径）：18 次成功配对耗尽后 read（含线索文件路径）仍 deny
@@ -106,7 +106,7 @@ check('S5 executor 均不注册（空）', registered.length, 0)
 const FIVE = [
   ['S6 route=none → deny', [um()], 'deny'],
   ['S7 route=plan 未澄清 → deny', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划']))], 'deny'],
-  ['S8 route=plan 已澄清但目的未定 → deny', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A']))], 'deny'],
+  ['S8 取消残留:route=none·已澄清·目的归零 → deny', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', purposeArgs), ok('a2', answer(['完善方案'])), call('ask_user_question', 'a3', clarifyArgs), ok('a3', answer(['方案A'])), call('ask_user_question', 'a4', clarifyArgs), err('a4', 'ASK_CANCELLED')], 'deny'],
   ['S8b route=plan 已澄清且目的已定 → allow', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', purposeArgs), ok('a2', answer(['完善方案'])), call('ask_user_question', 'a3', clarifyArgs), ok('a3', answer(['方案A']))], 'allow'],
   ['S9 route=direct → deny', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['直接执行']))], 'deny'],
   ['S10 channelBroken → allow（逃生）', [um(), call('ask_user_question', 'a1', routeArgs), err('a1', 'NO_PROVIDER')], 'allow'],
@@ -121,19 +121,19 @@ for (const [name, events, expected] of FIVE) {
   }
 }
 
-// S8c：与 S8 同事件流的 save_probe 拒绝文案（第四锚点教学式文案，机械层放行前置）
-const s8Agent = { session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => FIVE[2][1] }, options: {}, ctx: agentCtx }
+// S8c：独立事件流（route→clarify、目的未定）的 save_probe 拒绝文案（第四锚点教学式文案，机械层放行前置）
+const s8Agent = { session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A']))] }, options: {}, ctx: agentCtx }
 const s8r = preExecute(harness, s8Agent, 'save_probe', {})
 checkTrue('S8c 目的未定 save_probe 拒绝文案含「规划目的尚未确认」与「须先 ask_user_question 询问用户本次 pro 规划的目的」', s8r !== null && s8r !== undefined && s8r.kind === 'deny' && String(s8r.reason).includes('规划目的尚未确认') && String(s8r.reason).includes('须先 ask_user_question 询问用户本次 pro 规划的目的'))
 
 // ── ②b pre-execute save_plan 路由矩阵（T3，主会话：仅 direct 放行） ─────────
-// 与上表同五态：direct→allow；none / plan 未澄清 / plan 已澄清 / approved→deny
+// 与上表同五态：direct→allow；none / plan 未澄清（目的未定）/ approved→deny；取消残留（route=none·已澄清·目的归零）→ deny（见上表 S8）
 // （拒绝文案含「save_plan 仅允许在直接执行」与当前路由态）。
 const SAVE_PLAN_STATES = [
   ['S28 主会话 route=direct → save_plan allow', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['直接执行']))], 'allow'],
   ['S29 主会话 route=none → save_plan deny', [um()], 'deny'],
   ['S30 主会话 route=plan 未澄清 → save_plan deny', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划']))], 'deny'],
-  ['S31 主会话 route=plan 已澄清 → save_plan deny', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A']))], 'deny'],
+  ['S31 主会话 route=plan 未澄清（目的未定）→ save_plan deny', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A']))], 'deny'],
   ['S32 主会话 route=approved → save_plan deny', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A'])), call('ask_user_question', 'a3', approvalArgs), ok('a3', answer(['同意执行']))], 'deny'],
 ]
 for (const [name, events, expected] of SAVE_PLAN_STATES) {

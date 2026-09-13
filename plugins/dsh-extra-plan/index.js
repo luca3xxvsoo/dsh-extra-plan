@@ -672,7 +672,7 @@ function deriveFlowState(events) {
           if (matched !== null) state.purpose = matched
         }
       } else if (kind === 'clarify') {
-        if (result.answersLen > 0) state.clarified = true
+        if (result.answersLen > 0 && state.route === 'plan' && (state.purpose === 'refine' || state.purpose === 'redo')) state.clarified = true
       } else if (kind === 'approve') {
         const matched = matchApprovalLabel(result.selected)
         if (matched === 'approve') state.approved = true
@@ -701,7 +701,7 @@ function deriveFlowState(events) {
         if (matched !== null) state.purpose = matched
       }
     } else if (kind === 'clarify') {
-      if (result.answersLen > 0) state.clarified = true
+      if (result.answersLen > 0 && state.route === 'plan' && (state.purpose === 'refine' || state.purpose === 'redo')) state.clarified = true
     } else if (kind === 'approve') {
       const matched = matchApprovalLabel(result.selected)
       if (matched === 'approve') state.approved = true
