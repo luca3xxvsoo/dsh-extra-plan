@@ -56,31 +56,12 @@ const setting = (definition) => Object.freeze({
 
 export const SETTING_DEFINITIONS = Object.freeze([
   setting({
-    key: 'plannerModel', pluginId: 'extra-plan', path: 'config.plannerModel', scalarType: 'string',
-    // T4：允许空串（= 显式清空 = 继承主会话模型；解析侧只判 !==''，键缺失才用代码缺省值）。
-    // 空白串经 normalize trim 归一为 ''，与空串同义；非 string（如 YAML 数字）仍非法。
-    validator: isString, normalize: (value) => value.trim(),
-    ui: { control: 'text', locale: 'plannerModel' }, locatorAliases: [],
-  }),
-  setting({
-    key: 'plannerPromptSuffix', pluginId: 'extra-plan', path: 'config.plannerPromptSuffix', scalarType: 'string',
-    validator: isString, ui: { control: 'textarea', locale: 'plannerPromptSuffix' }, locatorAliases: [],
-  }),
-  setting({
-    key: 'exploreBudget', pluginId: 'extra-plan', path: 'config.exploreBudget', scalarType: 'integer',
-    validator: isPositiveInteger, ui: { control: 'number', min: 1, step: 1, locale: 'exploreBudget' }, locatorAliases: [],
-  }),
-  setting({
     key: 'anchoredBootstrap', pluginId: 'extra-plan', path: 'config.anchoredBootstrap', scalarType: 'boolean',
-    validator: isBoolean, ui: { control: 'select', options: [true, false], locale: 'anchoredBootstrap' }, locatorAliases: [],
-  }),
-  setting({
-    key: 'runcodeCatchGate', pluginId: 'extra-plan', path: 'config.runcodeCatchGate', scalarType: 'boolean',
-    validator: isBoolean, ui: { control: 'select', options: [true, false], locale: 'runcodeCatchGate' }, locatorAliases: [],
+    validator: isBoolean, ui: { control: 'select', options: [true, false], locale: 'anchoredBootstrap', section: 'general' }, locatorAliases: [],
   }),
   setting({
     key: 'webFetch', pluginId: 'tool-web', path: 'config.fetch', scalarType: 'boolean',
-    validator: isBoolean, ui: { control: 'select', options: [true, false], locale: 'webFetch' }, locatorAliases: [],
+    validator: isBoolean, ui: { control: 'select', options: [true, false], locale: 'webFetch', section: 'general' }, locatorAliases: [],
   }),
   setting({
     key: 'toolPresentationMode', pluginId: 'tool-presentation', path: 'config.mode', scalarType: 'mode',
@@ -89,8 +70,32 @@ export const SETTING_DEFINITIONS = Object.freeze([
       control: 'select', options: modeOptions,
       optionLocale: { native: 'toolPresentationModeNative', ptc: 'toolPresentationModePtc', both: 'toolPresentationModeBoth' },
       locale: 'toolPresentationMode',
+      section: 'general',
     },
     locatorAliases: [],
+  }),
+  setting({
+    key: 'runcodeCatchGate', pluginId: 'extra-plan', path: 'config.runcodeCatchGate', scalarType: 'boolean',
+    validator: isBoolean, ui: { control: 'select', options: [true, false], locale: 'runcodeCatchGate', section: 'general' }, locatorAliases: [],
+  }),
+  setting({
+    key: 'crossProviderPlannerModel', pluginId: 'extra-plan', path: 'config.crossProviderPlannerModel', scalarType: 'boolean',
+    validator: isBoolean, ui: { control: 'select', options: [true, false], locale: 'crossProviderPlannerModel', section: 'pro' }, locatorAliases: [],
+  }),
+  setting({
+    key: 'plannerModel', pluginId: 'extra-plan', path: 'config.plannerModel', scalarType: 'string',
+    // T4：允许空串（= 显式清空 = 继承主会话模型；解析侧只判 !==''，键缺失才用代码缺省值）。
+    // 空白串经 normalize trim 归一为 ''，与空串同义；非 string（如 YAML 数字）仍非法。
+    validator: isString, normalize: (value) => value.trim(),
+    ui: { control: 'text', locale: 'plannerModel', section: 'pro' }, locatorAliases: [],
+  }),
+  setting({
+    key: 'plannerPromptSuffix', pluginId: 'extra-plan', path: 'config.plannerPromptSuffix', scalarType: 'string',
+    validator: isString, ui: { control: 'textarea', locale: 'plannerPromptSuffix', section: 'pro' }, locatorAliases: [],
+  }),
+  setting({
+    key: 'exploreBudget', pluginId: 'extra-plan', path: 'config.exploreBudget', scalarType: 'integer',
+    validator: isPositiveInteger, ui: { control: 'number', min: 1, step: 1, locale: 'exploreBudget', section: 'pro' }, locatorAliases: [],
   }),
 ])
 
@@ -404,6 +409,7 @@ export function publicSettingMetadata(defaultText, actualText = defaultText) {
       ...(ui.options === undefined ? {} : { options: [...ui.options] }),
       ...(ui.optionLocale === undefined ? {} : { optionLocale: { ...ui.optionLocale } }),
       ...(ui.separate === undefined ? {} : { separate: ui.separate }),
+      ...(ui.section === undefined ? {} : { section: ui.section }),
     }
     const field = {
       key: definition.key, pluginId: definition.pluginId, path: definition.path,

@@ -6,7 +6,7 @@
 
 **按需规划模式（extra-plan）**：会话未经用户同意时，模型仅可调用只读工具探查。且可调用pro规划子代理，使用高质量模型生成规划验收方案。
 
-**兼容性**：DSH >= v0.1.2-rc.1 & <= v0.1.5-rc.2、qqbot 0.5.0 版（暂未确认）
+**兼容性**：DSH >= v0.1.2-rc.1 & <= v0.1.5-rc.2、qqbot 0.5.0 版
 
 ## 2. 核心优势
 
@@ -23,9 +23,11 @@
 
 ## 3. 安装及卸载方式（面向 DSH 环境用户）
 
-> 前置条件：已安装 DeepSeek Harness（DSH）。默认 DSH_HOME = `~/.dsh`（可被环境变量 `DSH_HOME` 覆盖）。Win环境默认 DSH_HOME = `%USERPROFILE%\.dsh`
+> 前置条件：已安装 DeepSeek Harness（DSH）。默认 DSH_HOME = `~/.dsh`。Win环境默认 DSH_HOME = `%USERPROFILE%\.dsh`
 
 ### 安装步骤
+
+#### github安装
 
 0. 安装 git/minigit (已安装可忽略)
 ```powershell 7+
@@ -40,6 +42,23 @@ dsh plugin --profile web add 'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra
 dsh plugin --profile qqbot remove @local/dsh-extra-plan
 dsh plugin --profile qqbot remove @local/dsh-qqbot-user-questions
 dsh plugin --profile qqbot add 'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-qqbot-user-questions' --allow-build='@local/dsh-qqbot-user-questions@git+https://github.com/luca3xxvsoo/dsh-extra-plan.git'
+```
+3. **重启 DSH 进程**使插件生效
+4. 新建会话，在预设列表中选择「按需规划模式」即可使用
+5. qqbot下使用 /preset 切换预设
+
+#### 本地安装
+
+0. 下载源码并解压
+1. 核心安装(必装)
+```powershell 7+
+dsh plugin --profile web add "file:///[解压路径]/dsh-extra-plan-main/plugins/dsh-extra-plan" --allow-build="@local/dsh-extra-plan@file:[解压路径]/dsh-extra-plan-main/plugins/dsh-extra-plan"
+```
+2. qqbot兼容插件安装 (选装,remove命令报错可忽略)
+```powershell 7+ 
+dsh plugin --profile qqbot remove @local/dsh-extra-plan
+dsh plugin --profile qqbot remove @local/dsh-qqbot-user-questions
+dsh plugin --profile qqbot add 'file:///[解压路径]/dsh-extra-plan-main/plugins/dsh-qqbot-user-questions' --allow-build='@local/dsh-qqbot-user-questions@file:[解压路径]/dsh-extra-plan-main/plugins/dsh-qqbot-user-questions'
 ```
 3. **重启 DSH 进程**使插件生效
 4. 新建会话，在预设列表中选择「按需规划模式」即可使用
@@ -60,20 +79,23 @@ dsh plugin --profile qqbot remove @local/dsh-qqbot-user-questions
 
 ### 平台实测说明
 
-跨平台兼容改造的**逻辑层**已由 `pe-test/tools/step-00-跨平台写拦截.mjs` 验证（本仓库 Windows 环境实测 68 用例全过，脚本三平台通用）；但**完整运行时**（DSH 实际加载本预设 + 真实 bash/pwsh 行为）目前仅在 **Windows 环境实测正常**，**Linux/macOS 尚未在真实环境验证**。建议部署到 Linux/macOS 前用 GitHub Actions 三平台矩阵或 WSL2 补充实测
+跨平台兼容改造的**逻辑层**已由 `pe-test/tools/step-00-跨平台写拦截.mjs` 验证（本仓库 Windows 环境实测 68 用例全过，脚本三平台通用）；但仅在 **Windows 环境实测正常**，**Linux/macOS 尚未在真实环境验证**
 
 ## 4. 可配置项
 
 DSH web界面 -> 设置 -> 插件 -> 插件配置 -> 按需规划模式配置
 
-**pro规划**：
-  - 使用模型：pro规划默认使用模型。未匹配/置空时：使用主会话模型
-  - 额外引导：在主会话发送给pro规划的任务结尾，拼接上的内容。可能能增加pro规划的智商（未验证）。可置空
-  - 探查额度：允许pro规划调用工具的次数，避免后台无限制调用
+**通用设置**：
   - anchored开关：首轮极简工具 + 提示词
-  - web_fetch开关：是否开启web_fetch。
+  - web_fetch开关：是否开启web_fetch
   - 工具呈现模式：工具呈现方式切换（默认/混合/纯PTC模式）
   - run_code 容错检查：PTC模式下，增加每个工具调用需要try catch的闸门。通过限制+建议的模式保障仅单个调用报错
+
+**pro规划**：
+  - 跨提供商：允许跨提供商选择模型。开启时将以 其他提供商 - 主会话提供商 - deepseek官方 的顺序，获取可用模型。关闭时仅从主会话提供商获取。默认关闭
+  - 使用模型：pro规划默认使用模型。未匹配/置空时：使用主会话模型
+  - 额外引导：在主会话发送给pro规划的任务结尾，拼接上的内容。可能能增加pro规划的智商（未验证）。可置空
+  - 探查额度：允许pro规划调用工具的次数，避免后台无限制调用。同时限制一次runcode内可调用的工具上限数
 
 ## 5. 仓库结构
 

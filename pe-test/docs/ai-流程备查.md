@@ -12,7 +12,7 @@
 
 ③ 用户提出需求
 
-④ 只读探查理解任务：收到需求后先用只读探查（read/glob/grep/web_search、shell 只读命令（Windows 用 pwsh、Linux/macOS 用 bash））理解任务。只读工具不受路由限制可随时用；仅探查任务可直接探查展示。定位优先查 pe-test/docs/ai-代码地图.md（见 ai-维护手册.md）。
+④ 只读探查理解任务：收到需求后先用只读探查（read/glob/grep/web_search、shell 只读命令（Windows 用 pwsh、Linux/macOS 用 bash））理解任务。只读工具不受路由限制可随时用；路由前的 ordinary 探查/澄清 ask 也继续允许，不得误拦。仅探查任务可直接探查展示。定位优先查 pe-test/docs/ai-代码地图.md（见 ai-维护手册.md）。
 
 ⑤ 探查方式二选一（**必问 ask**，persona 口径）：复杂度评估完成后用 ask_user_question 弹一次二选一——选项固定为「主会话探查」「探查者探查」，把自己的推荐排第一，用户选谁就走谁。下列三条判据**只用于形成推荐**（不再用于自动决策；委派有一次往返与落盘成本）：
    - ① 并行收益：探查点可拆成 ≥2 个互不依赖的子任务
@@ -26,15 +26,15 @@
 
 ⑥ 预估任务复杂度 → 推荐路径：基于探查结果预估（涉及对象数/代码行数/信息完整度）：简单明确 → 推荐直接执行；复杂/多文件/需方案 → 推荐进行pro规划；需求不明确 → 先澄清
 
-⑦ 路由确认（每次动手前必问，硬闸门）：用 ask_user_question 弹一次三选一——选项固定为「直接执行」「进行pro规划」「不同意」（把自己的判断——含复杂度评估与是否已用探查者——排第一）。
+⑦ 路由确认（主会话流程首问、每次流程重开/动手前必问，硬闸门）：用 ask_user_question 弹一次三选一——选项固定为「直接执行」「进行pro规划」「不同意」（把自己的判断——含复杂度评估与是否已用探查者——排第一）。固定顺序为 route→purpose→普通澄清；任何 route 状态都可重新发起该三选一路由 ask。
    - **未确认语义**：空白答复（answers:[]）/取消/中断/验词失败一律视为未确认；仅通道级故障码（NO_PROVIDER/CALLER_NOT_LIVE/DELEGATED_CALLER）白名单逃生（防死锁）
    - 「直接执行」→ 直接执行路径：主会话亲自用全套工具动手，完工前对照需求逐项自查，简短汇报（≤10 行）；direct 态放行主会话写工具，**委派恒拒**（subagent/subagent_plan/subagent_review 等硬闸门拒绝），仅允许只读探查子代理（subagent_probe）；简单任务不要绕道规划，中等任务规划后执行
    - 「进行pro规划」→ 进入 ⑧-⑫
    - 「不同意」→ 不动作、对话询问
    - 其余委派仍需路由/批准锚点；send_message 完全放行（目标合法性由宿主校验，续轮转达语义不变）
 
-⑧-1 目的确认（第四锚点）：选「进行pro规划」后**第一个** ask 必须是目的 ask——**另发一次独立的 ask_user_question**，恰好 1 个问题、选项仅有「完善方案」「重新规划」（流程/persona 口径，persona 本体由用户修改；机械层只做放行前置：目的未定则 save_probe 与 subagent_plan 一律教学式拒绝，不拦澄清 ask；目的未定时澄清 ask 的答复只提供信息、不置 clarified）
-⑧-2 澄清意图：目的确认答复后，**再另发一次独立的 ask_user_question** 澄清最关键的 1~3 个问题（给候选选项）；与路由确认或目的确认合并进同一次提问将触发闸门（路由/目的 ask 须恰好 1 个问题）。**澄清选项不得包含「完善方案」「重新规划」的任何子串**——否则整条 ask 被判 purpose/malformed 拒绝；机械层既有三分法判定的自然后果，不新增规则。clarified 置位前提：route=plan 且 purpose∈{完善方案,重新规划}；唯一重置＝新人类消息重开事件窗（取消/中断与路由反复切换不归零 clarified，混合态为已知接受残留）
+⑧-1 目的确认（第四锚点）：选「进行pro规划」后**第一个** ask 必须是目的 ask——**另发一次独立的 ask_user_question**，恰好 1 个问题、选项仅有「完善方案」「重新规划」。机械层仅对首问选项精确等于该二选一的 purpose ask 做顺序闸门：route=none/direct 时拒绝，原因必须包含「须先 ask_user_question 路由确认（选项固定为「直接执行」「进行pro规划」「不同意」）」；route=plan 时放行；channelBroken=true 维持逃生放行。目的未定则 save_probe 与 subagent_plan 一律教学式拒绝，不拦 ordinary 澄清 ask；目的未定时澄清答复只提供信息、不置 clarified。
+⑧-2 澄清意图：目的确认答复后，**再另发一次独立的 ask_user_question** 澄清最关键的 1~3 个问题（给候选选项）；与路由确认或目的确认合并进同一次提问将触发闸门（路由/目的 ask 须恰好 1 个问题）。**澄清选项不得包含「完善方案」「重新规划」的任何子串**——否则整条 ask 被判 purpose/malformed 拒绝；机械层既有三分法判定的自然后果，不新增规则。clarified 置位前提：route=plan 且 purpose∈{完善方案,重新规划}；route 重选前清 purpose/clarified/approved；有效目的重选前清 clarified/approved；非通道取消/中断清 route/purpose/clarified/approved；CHANNEL_BROKEN_CODES 逃生只置 channelBroken 并保留旧阶段状态；最近一条 user/message 仍切断旧事件窗并回五字段默认态。
 
 ⑨ 探查线索落盘（save_probe）：主会话把本轮只读探查留下的「线索地图」经 save_probe 落盘为 `.extra-plan` 下**单个文件** `线索-<任务名>-<时间戳>.md`（按工具要求填四字段），拿到返回的线索文件路径。
    - 只含四类定位线索：文件地图（fileMap）/ 重点区域（focusAreas）/ 排除项（exclusions）/ 背景与意图（background），**不含证据**（行号/数值/文案摘录）
@@ -51,10 +51,9 @@
    - **预算耗尽 → 往返**：子代理输出「申请继续探查：<待查项> — <原因>」；主会话原样展示并弹 ask（选项「继续探查」「取消规划」）确认；用户确认继续后，主会话自己探查或委派探查者批量探查（**委派探查者只由主会话执行**）→ save_probe 落盘新线索 → send_message 把线索路径转达 → 预算重置继续；探查完成后子代理直接调用 save_plan 落盘
    - **产出格式**：规划方案（目标、步骤分解：每步做什么/涉及文件/关键命令、风险与回滚；已探查核实的步骤标【已探查核实】，步骤正文保留精确定位信息）；验收标准清单（每条带对应任务编号，形如「[任务N] 文件路径 + 期望值/行号/数值/文案 + 禁止项」，保持机械精确）——**路径/行号/数值/文案照实写，不得编造、不得概括**
    - **证据引用**：来自探查者【含证据报告】的可标【探查者已核实】并注明「证据来源：<文件路径>」（插件校验文件存在且为证据报告）
-   - **方案落盘（save_plan，注册于规划子代理层与主会话层；主会话侧仅「直接执行」路由放行，T3）**：全程只读 + 仅可落盘；写入 `.extra-plan`，**双文件**：`方案-<任务名>-<yyyyMMddHHmmss>.md` 与 `验收-<任务名>-<yyyyMMddHHmmss>.md`；程序定死双写（两个 payload 必填 + 原子写入、journal 崩溃自愈）；**存在未探查/待确认项时禁止调用**（【未探查·待确认】/待确认假设清单存在于方案时插件抛错）
-   - 落盘成功后输出两个文件路径，并用 send_message 向主会话 2-3 行回报（方案路径、验收路径、涉及文件数、步骤数）
-   - **疑问往返通道**：规划中遇到阻塞性关键疑问 → 子代理暂停当轮、把疑问作为当轮输出（不要猜测）；主会话原样向用户展示 → 用户答复 → 主会话原样 send_message 回同一子代理继续规划（可多轮）。主会话只转发、不代答、不改写
-   - 用户可随时中断：说「取消规划」或改选直行 → 主会话 interrupt_agent 停止子代理当前轮次（interrupt 仅停轮、不销毁会话，子代理仍存续、可随时唤醒），回到 ⑦ 重新路由确认后再动手
+   - 用户可随时中断：说「取消规划」或改选直行 → 主会话 interrupt_agent 停止子代理当前轮次（interrupt 仅停轮、不销毁会话，子代理仍存续、可随时唤醒）；非通道取消同时清 route/purpose/clarified/approved，回到 ⑦ 重新路由确认后再动手；通道级故障仍保留 channelBroken 逃生与旧状态。
+
+⑩-1 **planner 首请求时序屏障（crossProviderPlannerModel）**：continuable child/session 的创建、session-start、childId 与等待可以先发生，但都不算模型执行。True 路径中，agent/request listener 必须先 await 上游 next()，再等待全部匹配 provider 的真实 OK probe 完整结束并完成排序；若没有成功候选，再等待已验证的父 provider/model fallback；只有在这些步骤完成后才返回 final LlmCallConfig，随后 DSH 才允许 prepareCall，再进入 stream。任何候选与 fallback 都失败时 listener reject 固定错误 extra-plan: planner request blocked: no verified planner route，actual planner prepareCall/stream 均不得发生。False、缺失、非法值不走该屏障之外的跨 provider/fallback probe，保留旧流程。
 
 ⑪ 计划回传 → 主会话读取方案文件与验收文件（用 read 工具读取展示）、把内容**原样展示给用户（不要改写、不要润色）**，并 ask 确认下一步操作——第一问选项固定为「同意执行」「转交pro规划」「不同意」，同一次问话附第二个问题「修改意见」（可留空，批准 ask 须 ≥2 个问题）：
    - 「同意执行」→ 进入 ⑫
@@ -82,7 +81,7 @@
 
 ## 2. 子代理通用机制（贯穿 ⑩-⑬）
 
-- **模型/力度继承**：子代理模型与 reasoningEffort 完全继承父会话（agent/request 解析后注入）；规划子代理模型可被设置页 plannerModel 显式覆盖（优先于父会话当前模型，解析见 index.js resolvePlannerEntry）；plannerModel **置空 = 继承主会话模型**，非空但主会话 provider 目录明确不含该模型时**静默降级**为主会话模型（目录为空/取不到则保守沿用）
+- **模型/力度继承与跨 Provider 开关**：子代理 reasoningEffort/maxTokens 仍继承父会话，plannerModel 非空时由设置页选择；crossProviderPlannerModel 默认 false，且仅 cfg.crossProviderPlannerModel === true 才启用严格真实探针。设置保存后需重新装载 Harness，运行中的 Agent 不动态切换。False、缺失、非法值完整保留旧单 provider listModels advisory 语义（空 plannerModel 直接零 probe 继承）；True 的非空 plannerModel 枚举全 provider，所有精确命中 provider 串行完成 prepareCall({provider,model,maxTokens:1}) + 完整 prepared stream 的 plugin-source OK text probe 后再按普通 name/id、父 provider 倒数第二、deepseek-official 最后排序。所有候选失败时必须先验证父 provider/model fallback，同路由复用结果；无验证路由固定阻断，不能让 planner 进入真实请求。True 的空 plannerModel 只验证父 fallback。
 - **子代理沙箱下限**：read-only → 自动抬升为 workspace-write（childPolicyNeedsFloor），保证子代理能写工作区
 - **usage 账本**：每次调用（含子代理）按 role（main/planner/executor）折叠写入 usage-ledger JSONL（配置见 agent.cordis.yml extra-plan.usageLedger）
 

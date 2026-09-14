@@ -119,6 +119,7 @@ let serverStarted = false
 
 const oldValues = {
   plannerModel: 'api-old-model',
+  crossProviderPlannerModel: true,
   plannerPromptSuffix: 'api old suffix',
   exploreBudget: 12,
   anchoredBootstrap: false,
@@ -128,6 +129,7 @@ const oldValues = {
 }
 const newValues = {
   plannerModel: 'api-new-model',
+  crossProviderPlannerModel: false,
   plannerPromptSuffix: 'new: suffix',
   exploreBudget: 31,
   anchoredBootstrap: true,
@@ -144,7 +146,7 @@ try {
   writeFileSync(join(presetDir, 'agent.cordis.yml'), patchAgent(oldValues), 'utf8')
 
   const metadata = publicSettingMetadata(TEMPLATE_AGENT, patchAgent(oldValues))
-  check('共享 metadata 恰有 7 项且默认来自新版模板', metadata.fields.length === 7 && metadata.fields.find((field) => field.key === 'exploreBudget').default === 18)
+  check('共享 metadata 恰有 8 项且默认来自新版模板', metadata.fields.length === 8 && metadata.fields.find((field) => field.key === 'exploreBudget').default === 18 && metadata.fields.find((field) => field.key === 'crossProviderPlannerModel').default === false)
 
   const routeDefinitions = []
   const settingsRegistrations = []
@@ -187,27 +189,41 @@ try {
   serverStarted = true
 
   const proBefore = await requestJson(port, 'GET', '/api/dsh-extra-plan-settings/pro-config')
-  check('pro-config GET 返回 7 项 metadata 与旧值', proBefore.status === 200 && proBefore.body.fields.length === 7 && valuesFrom(proBefore.body).plannerModel === oldValues.plannerModel && valuesFrom(proBefore.body).toolPresentationMode === oldValues.toolPresentationMode)
+  check('pro-config GET 返回 8 项 metadata 与旧值', proBefore.status === 200 && proBefore.body.fields.length === 8 && valuesFrom(proBefore.body).plannerModel === oldValues.plannerModel && valuesFrom(proBefore.body).crossProviderPlannerModel === true && valuesFrom(proBefore.body).toolPresentationMode === oldValues.toolPresentationMode)
   const fieldMap = new Map(proBefore.body.fields.map((field) => [field.key, field]))
-  check('pro metadata 控件/min/mode 由描述表提供', fieldMap.get('exploreBudget').control === 'number' && fieldMap.get('exploreBudget').min === 1 && fieldMap.get('toolPresentationMode').options.join('/') === 'native/ptc/both')
+  const fieldKeys = proBefore.body.fields.map((field) => field.key)
+  check('pro metadata 控件/min/mode 由描述表提供', fieldMap.get('exploreBudget').control === 'number' && fieldMap.get('exploreBudget').min === 1 && fieldMap.get('toolPresentationMode').options.join('/') === 'native/ptc/both' && fieldMap.get('crossProviderPlannerModel').control === 'select' && fieldMap.get('crossProviderPlannerModel').options.join('/') === 'true/false')
+  const generalKeys = ['anchoredBootstrap', 'webFetch', 'toolPresentationMode', 'runcodeCatchGate']
+  const proKeys = ['crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget']
+  check('metadata 通用设置区块顺序与 section', generalKeys.every((key, index) => fieldKeys[index] === key && fieldMap.get(key).section === 'general'))
+  check('metadata pro 规划区块顺序与 section', proKeys.every((key, index) => fieldKeys[index + generalKeys.length] === key && fieldMap.get(key).section === 'pro') && proBefore.body.fields.every((field) => field.section !== undefined))
+  check('pro 区块内跨提供商紧跟使用模型', fieldKeys.indexOf('crossProviderPlannerModel') + 1 === fieldKeys.indexOf('plannerModel'))
 
   const beforePut = readFileSync(join(presetDir, 'agent.cordis.yml'), 'utf8')
   const putBody = { ...newValues }
   const proPut = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', putBody)
-  check('pro-config PUT 返回更新后的实际 values', proPut.status === 200 && valuesFrom(proPut.body).plannerModel === newValues.plannerModel && valuesFrom(proPut.body).exploreBudget === newValues.exploreBudget && valuesFrom(proPut.body).toolPresentationMode === newValues.toolPresentationMode)
+  check('pro-config PUT 返回更新后的实际 values', proPut.status === 200 && valuesFrom(proPut.body).plannerModel === newValues.plannerModel && valuesFrom(proPut.body).crossProviderPlannerModel === false && valuesFrom(proPut.body).exploreBudget === newValues.exploreBudget && valuesFrom(proPut.body).toolPresentationMode === newValues.toolPresentationMode)
   const afterPut = readFileSync(join(presetDir, 'agent.cordis.yml'), 'utf8')
   const changed = diffLines(beforePut, afterPut)
   const managedLeaves = managedDefinitions.map((item) => item.path.split('.').at(-1))
   check('pro PUT 只改描述表登记的标量行', changed.length === managedDefinitions.length && changed.every((item) => managedLeaves.some((leaf) => item.after.includes(leaf + ':'))))
   const parsedAfterPut = parsePresetYaml(afterPut)
-  check('pro PUT 目标文件 7 项由稳定 locator 读取', managedDefinitions.every((item) => {
+  check('pro PUT 目标文件 8 项由稳定 locator 读取', managedDefinitions.every((item) => {
     const value = resolveSetting(parsedAfterPut, item, { aliases: false })
     return value.kind === 'ok' && value.value === (item.key === 'plannerModel' ? newValues.plannerModel : newValues[item.key])
   }))
 
+  const truePut = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { ...newValues, crossProviderPlannerModel: true })
+  check('pro PUT crossProviderPlannerModel:true → 200 且写入 true', truePut.status === 200 && valuesFrom(truePut.body).crossProviderPlannerModel === true && readFileSync(join(presetDir, 'agent.cordis.yml'), 'utf8').includes('crossProviderPlannerModel: true'))
+  const falsePut = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { ...newValues, crossProviderPlannerModel: false })
+  check('pro PUT crossProviderPlannerModel:false → 200 且写入 false', falsePut.status === 200 && valuesFrom(falsePut.body).crossProviderPlannerModel === false && readFileSync(join(presetDir, 'agent.cordis.yml'), 'utf8').includes('crossProviderPlannerModel: false'))
+
   // T4：plannerModel 空白/空串已合法（显式清空=继承主会话模型），移出非法值表；
   // 其正例在同段末尾单独断言（PUT 200 + GET 回显空串 + 文件写回空串标量）。
   const invalidBodies = [
+    ['crossProviderPlannerModel 字符串', { crossProviderPlannerModel: 'true' }],
+    ['crossProviderPlannerModel 数字', { crossProviderPlannerModel: 1 }],
+    ['crossProviderPlannerModel null', { crossProviderPlannerModel: null }],
     ['exploreBudget 0', { exploreBudget: 0 }],
     ['plannerPromptSuffix 非 string', { plannerPromptSuffix: 1 }],
     ['anchoredBootstrap string', { anchoredBootstrap: 'true' }],
@@ -230,6 +246,7 @@ try {
   const clientText = readFileSync(new URL('../../plugins/dsh-extra-plan/lib/client.js', import.meta.url), 'utf8')
   check('client 按 metadata 渲染控件且无硬编码模板路径/默认/枚举值', clientText.includes('setFields(fields)') && clientText.includes('field.options') && clientText.includes('field.min') && !clientText.includes('agent.cordis.yml') && !clientText.includes('value: "native"') && !clientText.includes('value: "ptc"') && !clientText.includes(': 18'))
   check('client plannerModel 字段带「留空 = 继承主会话模型」提示（T4）', clientText.includes('plannerModelHint') && clientText.includes('留空 = 继承主会话模型'))
+  check('client 含跨提供商 locale 且复用 metadata select', clientText.includes('crossProviderPlannerModel') && clientText.includes('field.options') && clientText.includes('optionValue(field, e.target.value)'))
 } catch (error) {
   fail += 1
   console.error('FAIL  设置页 HTTP 回归异常: ' + String(error && error.stack || error))

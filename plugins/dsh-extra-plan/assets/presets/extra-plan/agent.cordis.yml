@@ -117,6 +117,8 @@
         # 静默降级为主会话模型（T2 判定：目录为空/取不到目录则保守沿用，目录是 advisory）；
         # provider/maxTokens 继承父会话。默认值仅在该键缺失时生效（键存在即为用户值）。
         plannerModel: deepseek-v4-pro
+        # False 保留旧单 provider 目录流程；True 才对全 provider 做串行真实 OK 探针并严格验证 fallback。
+        crossProviderPlannerModel: false
         planTool: subagent_plan
         exploreBudget: 18
         savePlanDir: '.extra-plan'

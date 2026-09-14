@@ -85,17 +85,25 @@ const locatorChecks = SETTING_DEFINITIONS.map((definition) => {
   const textMatches = findTextLocatorMatches(agentText, definition.locator)
   return { definition, parsed, textMatches }
 })
-if (locatorChecks.every((item) => item.parsed.kind === 'ok' && item.textMatches.length === 1)) {
+if (SETTING_DEFINITIONS.length === 8 && locatorChecks.every((item) => item.parsed.kind === 'ok' && item.textMatches.length === 1)) {
   pass += 1
-  console.log('PASS  设置白名单恰有 7 个唯一 locator（工作区模板）')
+  console.log('PASS  设置白名单恰有 8 个唯一 locator（工作区模板）')
 } else {
   fail += 1
   console.log('FAIL  设置白名单 locator 不完整或有歧义')
 }
 const defaults = Object.fromEntries(locatorChecks.map((item) => [item.definition.key, item.parsed.kind === 'ok' ? item.parsed.value : undefined]))
-if (defaults.plannerModel === 'deepseek-v4-pro' && defaults.exploreBudget === 18 && defaults.anchoredBootstrap === true && defaults.runcodeCatchGate === false && defaults.webFetch === false && defaults.toolPresentationMode === 'native' && typeof defaults.plannerPromptSuffix === 'string') {
+const crossDefinition = SETTING_DEFINITIONS.find((item) => item.key === 'crossProviderPlannerModel')
+if (crossDefinition !== undefined && crossDefinition.pluginId === 'extra-plan' && crossDefinition.path === 'config.crossProviderPlannerModel' && crossDefinition.scalarType === 'boolean' && crossDefinition.validator(true) && !crossDefinition.validator('true') && crossDefinition.ui.control === 'select' && crossDefinition.ui.options.join('/') === 'true/false' && crossDefinition.locatorAliases.length === 0) {
   pass += 1
-  console.log('PASS  新版模板 7 项默认值来自实际叶值')
+  console.log('PASS  crossProviderPlannerModel descriptor 严格为 boolean select 且无 alias')
+} else {
+  fail += 1
+  console.log('FAIL  crossProviderPlannerModel descriptor 不符合契约')
+}
+if (defaults.plannerModel === 'deepseek-v4-pro' && defaults.crossProviderPlannerModel === false && defaults.exploreBudget === 18 && defaults.anchoredBootstrap === true && defaults.runcodeCatchGate === false && defaults.webFetch === false && defaults.toolPresentationMode === 'native' && typeof defaults.plannerPromptSuffix === 'string') {
+  pass += 1
+  console.log('PASS  新版模板 8 项默认值来自实际叶值（跨提供商=false）')
 } else {
   fail += 1
   console.log('FAIL  新版模板默认值不符合验收锚点')
@@ -122,7 +130,7 @@ if (planRow !== undefined && typeof plannerModelRaw === 'string') {
   fail += 1
   console.log('FAIL  subagent_plan 行或 plannerModel 键缺失（须为 string，可为空串）')
 }
-if (pluginRow !== undefined && pluginRow.config && pluginRow.config.usageLedger && pluginRow.config.usageLedger.enabled === true && pluginRow.config.anchoredBootstrap === true && typeof pluginRow.config.plannerPromptSuffix === 'string') {
+if (pluginRow !== undefined && pluginRow.config && pluginRow.config.crossProviderPlannerModel === false && pluginRow.config.usageLedger && pluginRow.config.usageLedger.enabled === true && pluginRow.config.anchoredBootstrap === true && typeof pluginRow.config.plannerPromptSuffix === 'string') {
   pass += 1
   console.log('PASS  extra-plan 插件行 config 完整（anchoredBootstrap/usageLedger 开启、plannerPromptSuffix 存在）')
 } else {

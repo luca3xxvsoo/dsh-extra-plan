@@ -1,7 +1,7 @@
 // save_probe 注册层 + 硬闸门五态 + planner 预算回归（v1 口径）验证（v3）：
 // ①注册层断言（mock ctx 走插件 apply：主会话 save_probe 幂等 + save_plan（T3）/
 //   planner save_plan / executor 均不注册）
-// ②pre-execute save_probe 五态闸门（none→deny、plan 未澄清→deny、取消残留（route=none·已澄清·目的归零）→deny、
+// ②pre-execute save_probe 五态闸门（none→deny、plan 未澄清→deny、非通道取消后五字段清理→deny、
 //   plan 已澄清且目的已定→allow、direct→deny、channelBroken→allow；deny 文案含「探查线索未放行」）
 // ②b pre-execute save_plan 五态闸门（T3，主会话：direct→allow，其余四态→deny）
 // ③planner 预算回归（v1 口径）：18 次成功配对耗尽后 read（含线索文件路径）仍 deny
@@ -16,6 +16,7 @@ const PLUGIN_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/index.js
 import { registerHostDeps } from '../_shared/host-deps.mjs'
 await registerHostDeps()
 const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
+const { deriveFlowState } = plugin.decisions
 
 let pass = 0
 let fail = 0
@@ -106,7 +107,7 @@ check('S5 executor 均不注册（空）', registered.length, 0)
 const FIVE = [
   ['S6 route=none → deny', [um()], 'deny'],
   ['S7 route=plan 未澄清 → deny', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划']))], 'deny'],
-  ['S8 取消残留:route=none·已澄清·目的归零 → deny', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', purposeArgs), ok('a2', answer(['完善方案'])), call('ask_user_question', 'a3', clarifyArgs), ok('a3', answer(['方案A'])), call('ask_user_question', 'a4', clarifyArgs), err('a4', 'ASK_CANCELLED')], 'deny'],
+  ['S8 取消后五字段清理:route=none·目的归零·未澄清 → deny', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', purposeArgs), ok('a2', answer(['完善方案'])), call('ask_user_question', 'a3', clarifyArgs), ok('a3', answer(['方案A'])), call('ask_user_question', 'a4', clarifyArgs), err('a4', 'ASK_CANCELLED')], 'deny'],
   ['S8b route=plan 已澄清且目的已定 → allow', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', purposeArgs), ok('a2', answer(['完善方案'])), call('ask_user_question', 'a3', clarifyArgs), ok('a3', answer(['方案A']))], 'allow'],
   ['S9 route=direct → deny', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['直接执行']))], 'deny'],
   ['S10 channelBroken → allow（逃生）', [um(), call('ask_user_question', 'a1', routeArgs), err('a1', 'NO_PROVIDER')], 'allow'],
@@ -120,14 +121,32 @@ for (const [name, events, expected] of FIVE) {
     checkTrue(`${name}`, r !== null && r !== undefined && r.kind === 'allow')
   }
 }
+const cancelledState = deriveFlowState(FIVE[2][1])
+check('S8 ASK_CANCELLED 后状态五字段全清', cancelledState, { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false })
 
 // S8c：独立事件流（route→clarify、目的未定）的 save_probe 拒绝文案（第四锚点教学式文案，机械层放行前置）
 const s8Agent = { session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A']))] }, options: {}, ctx: agentCtx }
 const s8r = preExecute(harness, s8Agent, 'save_probe', {})
 checkTrue('S8c 目的未定 save_probe 拒绝文案含「规划目的尚未确认」与「须先 ask_user_question 询问用户本次 pro 规划的目的」', s8r !== null && s8r !== undefined && s8r.kind === 'deny' && String(s8r.reason).includes('规划目的尚未确认') && String(s8r.reason).includes('须先 ask_user_question 询问用户本次 pro 规划的目的'))
 
+let r
+// 完整阶段后重选 route=plan 必须清掉旧目的/澄清/批准；按 route→purpose→clarify 才恢复下游放行。
+const completePlanEvents = [um(), call('ask_user_question', 'r1', routeArgs), ok('r1', answer(['进行pro规划'])), call('ask_user_question', 'r2', purposeArgs), ok('r2', answer(['完善方案'])), call('ask_user_question', 'r3', clarifyArgs), ok('r3', answer(['方案A'])), call('ask_user_question', 'r4', approvalArgs), ok('r4', answer(['同意执行']))]
+const reselectPlanEvents = completePlanEvents.concat([call('ask_user_question', 'r5', routeArgs), ok('r5', answer(['进行pro规划']))])
+const reselectPlanAgent = { session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => reselectPlanEvents }, options: {}, ctx: agentCtx }
+r = preExecute(harness, reselectPlanAgent, 'save_probe', {})
+checkTrue('S8d 完整阶段后重选 plan 的 save_probe → deny 且含「规划目的尚未确认」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划目的尚未确认'))
+r = preExecute(harness, reselectPlanAgent, 'subagent_plan', {})
+checkTrue('S8e 完整阶段后重选 plan 的 subagent_plan → deny 且含「规划目的尚未确认」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划目的尚未确认'))
+const reselectPlanReadyEvents = reselectPlanEvents.concat([call('ask_user_question', 'r6', purposeArgs), ok('r6', answer(['重新规划'])), call('ask_user_question', 'r7', clarifyArgs), ok('r7', answer(['方案B']))])
+const reselectPlanReadyAgent = { session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => reselectPlanReadyEvents }, options: {}, ctx: agentCtx }
+r = preExecute(harness, reselectPlanReadyAgent, 'save_probe', {})
+checkTrue('S8f 重选 plan 后目的→澄清完成的 save_probe → allow', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, reselectPlanReadyAgent, 'subagent_plan', {})
+checkTrue('S8g 重选 plan 后目的→澄清完成的 subagent_plan → allow', r !== null && r !== undefined && r.kind === 'allow')
+
 // ── ②b pre-execute save_plan 路由矩阵（T3，主会话：仅 direct 放行） ─────────
-// 与上表同五态：direct→allow；none / plan 未澄清（目的未定）/ approved→deny；取消残留（route=none·已澄清·目的归零）→ deny（见上表 S8）
+// 与上表同五态：direct→allow；none / plan 未澄清（目的未定）/ approved→deny；非通道取消后五字段清理→deny（见上表 S8）
 // （拒绝文案含「save_plan 仅允许在直接执行」与当前路由态）。
 const SAVE_PLAN_STATES = [
   ['S28 主会话 route=direct → save_plan allow', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['直接执行']))], 'allow'],
@@ -153,7 +172,7 @@ for (let i = 0; i < 18; i += 1) {
   plannerEvents.push(ok(`r${i}`, 'ok'))
 }
 const exhaustedPlanner = { session: { header: { id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => plannerEvents }, options: { model: 'deepseek-v4-pro' }, ctx: agentCtx }
-let r = preExecute(harness, exhaustedPlanner, 'read', { file_path: 'C:/work/.extra-plan/线索-x-20260816090000.md' })
+r = preExecute(harness, exhaustedPlanner, 'read', { file_path: 'C:/work/.extra-plan/线索-x-20260816090000.md' })
 checkTrue('S11 预算耗尽后 read 线索文件 → deny（read 线索计入预算，v1 口径）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('探查预算已耗尽'))
 r = preExecute(harness, exhaustedPlanner, 'save_plan', { plan: 'p', checklist: 'c' })
 checkTrue('S12 预算耗尽后 save_plan → allow（跳过名单仍仅 save_plan）', r !== null && r !== undefined && r.kind === 'allow')

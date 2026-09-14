@@ -41,9 +41,9 @@
 | 改动域 | 自检 |
 |:--|:--|
 | 闸门/路由/写拦截 | step-04-路由与写闸门.mjs（监听器级）+ step-00-跨平台写拦截.mjs（68 用例，写形态识别正则的纯函数级回归） |
-| planner 探查委派禁令（T5）+ save_plan 主会话路由（T3）+ plannerModel 降级判定（T2） | step-04-路由与写闸门.mjs（T3/T5 监听器级）、step-00-全流程回归.mjs（PM 系列纯函数直测）、step-06-线索落盘.mjs（save_plan 注册与路由矩阵） |
+| planner 探查委派禁令（T5）+ save_plan 主会话路由（T3）+ plannerModel 降级/跨 Provider 时序（T2） | step-04-路由与写闸门.mjs（T3/T5 监听器级）、step-00-全流程回归.mjs（PM 纯函数 + fake LLM True/False 分流、真实 OK probe、排序、失败隔离、fallback、timeout、cache、agent/request 屏障）、step-06-线索落盘.mjs（save_plan 注册与路由矩阵） |
 | save_probe/save_plan 落盘 | step-06-线索落盘.mjs |
-| 预设安装/完整性/设置页 | step-01-预设完整性.mjs、step-01-安装分发.mjs、step-01-安装同步.mjs、step-01-设置迁移.mjs、step-01-设置页配置.mjs |
+| 预设安装/完整性/设置页/八项迁移 | step-01-预设完整性.mjs、step-01-安装分发.mjs、step-01-安装同步.mjs、step-01-设置迁移.mjs、step-01-设置页配置.mjs（descriptor/metadata/locator/manifest 从 7 到 8、default false、true/false PUT、非法值与 skipped-old-missing） |
 | 全量回归 | step-00-全流程回归.mjs（需真实 session_id；一键step测试.mjs 同）。**一键体检的自动判定项共 11 项**（以 `一键step测试.mjs` 的 AUTO 数组为准）：step-00-全流程回归、step-00-跨平台写拦截、step-01-设置迁移、step-01-安装分发、step-01-安装同步、step-01-预设完整性、step-01-设置页配置、step-01-qqbot-安装映射、step-04-路由与写闸门、step-06-线索落盘、代码地图生成.mjs（--check） |
 | usage 账本 | step-99-用量统计.mjs |
 | 跨平台写拦截 | step-00-跨平台写拦截.mjs |

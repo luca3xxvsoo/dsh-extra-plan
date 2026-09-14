@@ -14,7 +14,7 @@ import { registerHostDeps } from '../_shared/host-deps.mjs'
 await registerHostDeps()
 const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
 const decisions = plugin.decisions
-const { catalogHasWriteTools, isReadOnlyChildByCatalog, routeDenyReason, runCodeCatchGateReason, runCodeGroupDenyReason, askUserQuestionReturnGateReason, probeDisposalWarning, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason } = decisions
+const { catalogHasWriteTools, isReadOnlyChildByCatalog, routeDenyReason, ROUTE_CONFIRM_TEXT, runCodeCatchGateReason, runCodeGroupDenyReason, askUserQuestionReturnGateReason, probeDisposalWarning, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason } = decisions
 
 let pass = 0
 let fail = 0
@@ -212,6 +212,25 @@ const noneMain = mainWithEvents([])
 const planMain = mainWithEvents([umE(), callE('ask_user_question', 'a1', routeArgsE), okE('a1', answerE(['进行pro规划'])), callE('ask_user_question', 'a2', clarifyArgsE), okE('a2', answerE(['方案A']))]) // 目的未定前置态夹具（R70/R81/T3-4 依赖 purpose=none）
 // planPurposeMain：路由 + 目的确认（「完善方案」）+ 澄清 三锚点齐备（目的 ask 位于澄清之前，同 persona 新顺序）
 const planPurposeMain = mainWithEvents([umE(), callE('ask_user_question', 'a1', routeArgsE), okE('a1', answerE(['进行pro规划'])), callE('ask_user_question', 'a2', purposeArgsE), okE('a2', answerE(['完善方案'])), callE('ask_user_question', 'a3', clarifyArgsE), okE('a3', answerE(['方案A']))])
+const channelBrokenMain = mainWithEvents([umE(), callE('ask_user_question', 'a1', routeArgsE), errE('a1', 'NO_PROVIDER')])
+const ordinaryProbeArgsE = { questions: [{ id: 'q1', options: [{ label: '主会话探查' }, { label: '探查者探查' }] }] }
+const ordinaryClarifyArgsE = { questions: [{ id: 'q1', options: [{ label: '方案A' }, { label: '方案B' }] }] }
+
+// 精确目的 ask 只在 route=plan 放行；route=none/direct 拒绝且引用固定路由确认句，ordinary 与 channelBroken 保持放行。
+r = preExecute(harness, noneMain, 'ask_user_question', JSON.parse(purposeArgsE))
+checkTrue('R18a 主会话 none 态精确目的 ask → deny 且含固定路由确认句', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(ROUTE_CONFIRM_TEXT))
+r = preExecute(harness, directMain, 'ask_user_question', JSON.parse(purposeArgsE))
+checkTrue('R18b 主会话 direct 态精确目的 ask → deny 且含固定路由确认句', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(ROUTE_CONFIRM_TEXT))
+r = preExecute(harness, planMain, 'ask_user_question', JSON.parse(purposeArgsE))
+checkTrue('R18c 主会话 plan 态精确目的 ask → allow', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, channelBrokenMain, 'ask_user_question', JSON.parse(purposeArgsE))
+checkTrue('R18d 主会话 channelBroken 精确目的 ask → allow（逃生）', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, noneMain, 'ask_user_question', JSON.parse(routeArgsE))
+checkTrue('R18e 主会话 none 态精确三选一路由 ask → allow', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, noneMain, 'ask_user_question', ordinaryProbeArgsE)
+checkTrue('R18f 主会话 none 态 ordinary 探查 ask → allow', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, noneMain, 'ask_user_question', ordinaryClarifyArgsE)
+checkTrue('R18g 主会话 none 态 ordinary 澄清 ask → allow', r !== null && r !== undefined && r.kind === 'allow')
 
 // R18：direct 态派探查者（run_in_background: true）→ 放行（同时把 main-1 挂「待认领计数」，
 // 供 C1/C2/C2b 认领用例经 parentSession=main-1 消费验证；R15-R17 判读走真实工具集，不依赖认领）
@@ -372,6 +391,9 @@ function runDispatchSeriesE(ev) {
 const nestedDirectMain = mainWithEvents([umE(), cdStartE('ask_user_question', 'n1', nestedRouteE), cdEndE('n1', answerE(['直接执行']))])
 const nestedPlanMain = mainWithEvents([umE(), cdStartE('ask_user_question', 'n1', nestedRouteE), cdEndE('n1', answerE(['进行pro规划'])), cdStartE('ask_user_question', 'n2', nestedPurposeE), cdEndE('n2', answerE(['完善方案'])), cdStartE('ask_user_question', 'n3', nestedClarifyE), cdEndE('n3', nestedCustomE)])
 const nestedApproveMain = mainWithEvents([umE(), cdStartE('ask_user_question', 'n1', nestedRouteE), cdEndE('n1', answerE(['进行pro规划'])), cdStartE('ask_user_question', 'n2', nestedClarifyE), cdEndE('n2', answerE(['方案A'])), cdStartE('ask_user_question', 'n3', nestedApprovalE), cdEndE('n3', answerE(['同意执行']))])
+const nestedPurposeNoneMain = mainWithEvents([umE(), cdStartE('ask_user_question', 'n1', nestedRouteE), cdEndE('n1', answerE(['不同意']))])
+const nestedPurposeDirectMain = mainWithEvents([umE(), cdStartE('ask_user_question', 'n1', nestedRouteE), cdEndE('n1', answerE(['直接执行']))])
+const nestedPurposeEscapeMain = mainWithEvents([umE(), callE('ask_user_question', 'outer1', routeArgsE), errE('outer1', 'NO_PROVIDER')])
 
 r = preExecute(harness, nestedDirectMain, 'write', {})
 checkTrue('R22 嵌套路由答「直接执行」→ write 放行（F1 桥接）', r !== null && r !== undefined && r.kind === 'allow')
@@ -379,6 +401,14 @@ r = preExecute(harness, nestedPlanMain, 'subagent_plan', {})
 checkTrue('R23 嵌套路由 plan+嵌套澄清 → subagent_plan 放行（F1 桥接）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, nestedApproveMain, 'subagent', { run_in_background: true })
 checkTrue('R24 嵌套批准「同意执行」→ subagent 委派放行（F1 桥接）', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, nestedPurposeNoneMain, 'ask_user_question', nestedPurposeE)
+checkTrue('R24a 嵌套 none 态精确目的 ask → deny 且含固定路由确认句', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(ROUTE_CONFIRM_TEXT))
+r = preExecute(harness, nestedPurposeDirectMain, 'ask_user_question', nestedPurposeE)
+checkTrue('R24b 嵌套 direct 态精确目的 ask → deny 且含固定路由确认句', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(ROUTE_CONFIRM_TEXT))
+r = preExecute(harness, nestedPlanMain, 'ask_user_question', nestedPurposeE)
+checkTrue('R24c 嵌套 plan 态精确目的 ask → allow', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, nestedPurposeEscapeMain, 'ask_user_question', nestedPurposeE)
+checkTrue('R24d 嵌套 channelBroken 精确目的 ask → allow（逃生）', r !== null && r !== undefined && r.kind === 'allow')
 
 checkTrue('UC27 runCodeDispatchGateReason：18×→null / 19×→拒含「超过上限」 / 无rootCallId→null', (() => { const evs18 = Array.from({ length: 18 }, (_, i) => cdStartE('read', 's' + i, {})); const evs19 = evs18.concat([cdStartE('read', 's19', {})]); return runCodeDispatchGateReason(evs18, { rootCallId: 'r1' }, 18) === null && (() => { const got = runCodeDispatchGateReason(evs19, { rootCallId: 'r1' }, 18); return typeof got === 'string' && got.includes('超过上限') })() && runCodeDispatchGateReason(evs18, {}, 18) === null })())
 }
@@ -404,10 +434,31 @@ r = preExecute(harness, rwCatalogChild, 'write', {})
 checkTrue('R27 含 write 目录 write → 放行', r !== null && r !== undefined && r.kind === 'allow')
 
 // ── ⑧ R-code 系列:F7'（run_code 统一审查关口） ────────────────────────────
-const approvedMain = mainWithEvents([umE(), callE('ask_user_question', 'a1', routeArgsE), okE('a1', answerE(['进行pro规划'])), callE('ask_user_question', 'a2', purposeArgsE), okE('a2', answerE(['完善方案'])), callE('ask_user_question', 'a3', clarifyArgsE), okE('a3', answerE(['方案A'])), callE('ask_user_question', 'a4', approvalArgsE), okE('a4', answerE(['同意执行']))])
+const approvedBaseEvents = [umE(), callE('ask_user_question', 'a1', routeArgsE), okE('a1', answerE(['进行pro规划'])), callE('ask_user_question', 'a2', purposeArgsE), okE('a2', answerE(['完善方案'])), callE('ask_user_question', 'a3', clarifyArgsE), okE('a3', answerE(['方案A'])), callE('ask_user_question', 'a4', approvalArgsE), okE('a4', answerE(['同意执行']))]
+const approvedMain = mainWithEvents(approvedBaseEvents)
+const reselectDirectMain = mainWithEvents(approvedBaseEvents.concat([callE('ask_user_question', 'a5', routeArgsE), okE('a5', answerE(['直接执行']))]))
+const reselectDisagreeMain = mainWithEvents(approvedBaseEvents.concat([callE('ask_user_question', 'a5', routeArgsE), okE('a5', answerE(['不同意']))]))
+const reselectPlanMain = mainWithEvents(approvedBaseEvents.concat([callE('ask_user_question', 'a5', routeArgsE), okE('a5', answerE(['进行pro规划']))]))
+const reselectPlanReadyMain = mainWithEvents(approvedBaseEvents.concat([callE('ask_user_question', 'a5', routeArgsE), okE('a5', answerE(['进行pro规划'])), callE('ask_user_question', 'a6', purposeArgsE), okE('a6', answerE(['重新规划'])), callE('ask_user_question', 'a7', clarifyArgsE), okE('a7', answerE(['方案B']))]))
 const escapeMain = mainWithEvents([umE(), callE('ask_user_question', 'a1', routeArgsE), errE('a1', 'NO_PROVIDER')])
 const writeCode = { code: "await writeFileSync('x', '1')", description: '写文件' }
 const readOnlyCode = { code: "await readFileSync('x', 'utf8')", description: '只读' }
+
+// 完整批准后重选路由必须清掉 approved；重选 plan 后目的必须重新确认，按 route→purpose→clarify 才恢复放行。
+r = preExecute(harness, reselectDirectMain, 'subagent', { run_in_background: true })
+checkTrue('R27a 完整批准后重选 direct → 执行类委派仍 deny（approved 清理）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('执行类委派未放行：subagent'))
+r = preExecute(harness, reselectDisagreeMain, 'subagent', { run_in_background: true })
+checkTrue('R27b 完整批准后重选不同意 → 执行类委派仍 deny（approved 清理）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('执行类委派未放行：subagent'))
+r = preExecute(harness, reselectPlanMain, 'subagent', { run_in_background: true })
+checkTrue('R27c 完整批准后重选 plan → 执行类委派仍 deny（approved 清理）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('执行类委派未放行：subagent'))
+r = preExecute(harness, reselectPlanMain, 'save_probe', {})
+checkTrue('R27d 重选 plan 后 save_probe → deny 且含「规划目的尚未确认」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划目的尚未确认'))
+r = preExecute(harness, reselectPlanMain, 'subagent_plan', {})
+checkTrue('R27e 重选 plan 后 subagent_plan → deny 且含「规划目的尚未确认」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划目的尚未确认'))
+r = preExecute(harness, reselectPlanReadyMain, 'save_probe', {})
+checkTrue('R27f 重选 plan 后按目的→澄清顺序 save_probe → allow', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, reselectPlanReadyMain, 'subagent_plan', {})
+checkTrue('R27g 重选 plan 后按目的→澄清顺序 subagent_plan → allow', r !== null && r !== undefined && r.kind === 'allow')
 
 r = preExecute(harness, noneMain, 'run_code', readOnlyCode)
 checkTrue('R28 主会话 none 态 run_code（纯只读）→ 放行（终版：无写模式放行，ptc 死锁解除）', r !== null && r !== undefined && r.kind === 'allow')

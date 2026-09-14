@@ -16,7 +16,7 @@
 //    提问通道级错误码全集（v0.1.2-rc.1 实际）：ASK_ABORTED / EMPTY_QUESTIONS /
 //    CALLER_NOT_LIVE / DELEGATED_CALLER / BAD_INTENT / NO_PROVIDER；宿主无独立
 //    取消码（取消/中断统一以 ASK_ABORTED 上报）；BAD_INTENT 为新增码、非通道
-//    故障，落入 else 分支重置 route/approved（安全方向）；
+//    故障，落入 else 分支重置 route/purpose/clarified/approved（安全方向）；
 // 5. preStep 先装配后 pre-step——目录裁剪/引导一律走 system-prompt/assemble
 //    装配级过滤（await next() 后替换），与时序无关、每次请求（含首个）生效；
 // 6. web 会话先按默认预设发布、约 3 秒后 recompose 且不重发 agent/session-start
@@ -70,8 +70,10 @@
 //     native/both）→ shell + read（run_code 被滤掉）；仅 run_code（ptc 折叠目录）
 //     → run_code；无 shell 且无 run_code → 跳过并每实例警告一次；
 //     执行者/reviewer 子代理不引导。
-//  4) 力度继承：子代理 agent/request 解析后，把 reasoningEffort 改写为父会话
-//     request/header 的 config.reasoningEffort（完全继承、无下限）。
+//  4) planner 模型与首请求屏障：reasoningEffort/maxTokens 继承父会话；crossProviderPlannerModel
+//     仅严格等于 true 时，agent/request await 全部匹配 provider 的真实 OK probe、排序和必要
+//     fallback 验证后才返回最终 LlmCallConfig，随后宿主才可 prepareCall/stream。False、缺失、
+//     非法值保留旧单 provider listModels 流程；所有 True 路由失败时固定阻断，不交未验证配置。
 //  5) 子代理沙箱下限（复用 childPolicyNeedsFloor）：read-only → workspace-write。
 //  6) usage 账本（config.usageLedger.enabled）：折叠 assistant/message.usage
 //     逐行写 JSONL，行 = 一次调用；role：main（主会话）/ planner（规划子代理）/
@@ -99,6 +101,9 @@ const ROUTE_CONFIRM_TEXT = `须先 ask_user_question 路由确认（选项固定
 const APPROVAL_CONFIRM_TEXT = `须先 ask_user_question 让用户对方案点「${APPROVAL_WORD_APPROVE}」（批准选项固定为${APPROVAL_OPTIONS_TEXT}）`
 const PURPOSE_OPTIONS_TEXT = `「${PURPOSE_WORD_REFINE}」「${PURPOSE_WORD_REDO}」`
 const PURPOSE_CONFIRM_TEXT = `须先 ask_user_question 询问用户本次 pro 规划的目的（选项固定为${PURPOSE_OPTIONS_TEXT}）`
+function purposeRouteDenyReason() {
+  return `目的确认 ask 未按路由顺序：${ROUTE_CONFIRM_TEXT}，选择「${ROUTE_WORD_PLAN}」后再询问规划目的（目的选项固定为${PURPOSE_OPTIONS_TEXT}）`
+}
 
 // deny 提示模板（与闸门验词同源：引用词表常量，改词表则提示自动跟随）
 function routeDenyReason(toolLabel, state) {
@@ -622,6 +627,15 @@ function parseDispatchAskResult(data) {
 //   channelBroken: 提问通道级错误（逃生放行标记）
 function deriveFlowState(events) {
   const state = { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }
+  const resetStageState = () => {
+    state.purpose = 'none'
+    state.clarified = false
+    state.approved = false
+  }
+  const resetRouteState = () => {
+    state.route = 'none'
+    resetStageState()
+  }
   if (!Array.isArray(events)) return state
   let lastHuman = -1
   for (let i = events.length - 1; i >= 0; i -= 1) {
@@ -657,19 +671,23 @@ function deriveFlowState(events) {
       if (result.callId === undefined || !asks.has(result.callId)) continue
       if (result.kind === 'error') {
         if (CHANNEL_BROKEN_CODES.has(result.code)) state.channelBroken = true
-        else { state.route = 'none'; state.approved = false; state.purpose = 'none' }
+        else resetRouteState()
         continue
       }
       const kind = asks.get(result.callId)
       if (kind === 'route') {
+        resetStageState()
         const matched = matchRouteLabel(result.selected)
         if (matched === 'direct') state.route = 'direct'
         else if (matched === 'plan') state.route = 'plan'
         else state.route = 'none'
       } else if (kind === 'purpose') {
-        if (result.answersLen > 0) {
+        if (state.route === 'plan' && result.answersLen > 0) {
           const matched = matchPurposeLabel(result.selected)
-          if (matched !== null) state.purpose = matched
+          if (matched !== null) {
+            resetStageState()
+            state.purpose = matched
+          }
         }
       } else if (kind === 'clarify') {
         if (result.answersLen > 0 && state.route === 'plan' && (state.purpose === 'refine' || state.purpose === 'redo')) state.clarified = true
@@ -685,20 +703,24 @@ function deriveFlowState(events) {
     if (result.callId === undefined || !asks.has(result.callId)) continue
     if (result.kind === 'error') {
       if (CHANNEL_BROKEN_CODES.has(result.code)) state.channelBroken = true
-      else { state.route = 'none'; state.approved = false; state.purpose = 'none' }
+      else resetRouteState()
       continue
     }
     const kind = asks.get(result.callId)
     if (kind === 'route') {
+      resetStageState()
       const matched = matchRouteLabel(result.selected)
       if (matched === 'direct') state.route = 'direct'
       else if (matched === 'plan') state.route = 'plan'
       else if (matched === 'disagree') state.route = 'none'
       else state.route = 'none'
     } else if (kind === 'purpose') {
-      if (result.answersLen > 0) {
+      if (state.route === 'plan' && result.answersLen > 0) {
         const matched = matchPurposeLabel(result.selected)
-        if (matched !== null) state.purpose = matched
+        if (matched !== null) {
+          resetStageState()
+          state.purpose = matched
+        }
       }
     } else if (kind === 'clarify') {
       if (result.answersLen > 0 && state.route === 'plan' && (state.purpose === 'refine' || state.purpose === 'redo')) state.clarified = true
@@ -2097,7 +2119,11 @@ function mainGateReason(state, exec, gateCtx) {
         const args = exec.arguments
         const questions = args !== undefined && args !== null && typeof args === 'object' ? args.questions : undefined
         const structErr = validateGateAskStructure(kind, questions)
-        if (structErr !== null) return structErr
+        if (structErr !== null) {
+          if (kind === 'purpose' && !escape && state.route !== 'plan') return `${purposeRouteDenyReason()}同时，${structErr} 请一并修正后重提。`
+          return structErr
+        }
+        if (kind === 'purpose' && !escape && state.route !== 'plan') return purposeRouteDenyReason()
       }
       // 'ordinary' → 放行；'standard' 结构校验通过 → 放行
     }
@@ -2337,6 +2363,35 @@ function decidePlannerModelUse(plannerModel, provider, catalog) {
   return { use: true, degraded: false, diag: 'keep-planner-model', reason: 'catalog-unavailable' }
 }
 
+// True 路径的真实探针固定上限；False 路径不读取这些辅助逻辑。
+const PLANNER_PROBE_TIMEOUT_MS = 30000
+const PLANNER_BLOCKED_REASON = 'extra-plan: planner request blocked: no verified planner route'
+
+function comparePlannerText(a, b) {
+  const left = typeof a === 'string' ? a : ''
+  const right = typeof b === 'string' ? b : ''
+  return left < right ? -1 : left > right ? 1 : 0
+}
+
+function plannerProviderRank(providerId, parentProvider) {
+  if (providerId === 'deepseek-official') return 2
+  if (typeof parentProvider === 'string' && parentProvider !== '' && providerId === parentProvider) return 1
+  return 0
+}
+
+function sortPlannerCandidates(candidates, parentProvider) {
+  return [...candidates].sort((left, right) => {
+    const leftRank = plannerProviderRank(left.id, parentProvider)
+    const rightRank = plannerProviderRank(right.id, parentProvider)
+    if (leftRank !== rightRank) return leftRank - rightRank
+    if (leftRank === 0) {
+      const byName = comparePlannerText(left.name, right.name)
+      if (byName !== 0) return byName
+    }
+    return comparePlannerText(left.id, right.id)
+  })
+}
+
 // 供场景测试直接复用（消除"复制品"漂移）。模块顶层无副作用，纯 Node 可 import。
 export const decisions = {
   CHANNEL_BROKEN_CODES,
@@ -2431,6 +2486,9 @@ export const decisions = {
   probeDisposalWarning,
   resolveProbeRequestInjection,
   decidePlannerModelUse,
+  PLANNER_PROBE_TIMEOUT_MS,
+  PLANNER_BLOCKED_REASON,
+  sortPlannerCandidates,
 }
 
 export const name = 'extra-plan'
@@ -2451,6 +2509,7 @@ export function apply(ctx, config) {
   const plannerPromptSuffix = typeof cfg.plannerPromptSuffix === 'string' ? cfg.plannerPromptSuffix : ''
   const bootstrapOn = cfg.anchoredBootstrap !== false
   const runcodeCatchGateOn = cfg.runcodeCatchGate === true
+  const crossProviderPlannerModelOn = cfg.crossProviderPlannerModel === true
   const bootstrapPersona = typeof cfg.bootstrapPersona === 'string' ? cfg.bootstrapPersona : 'You are a helpful software engineer assistant.'
   const bootstrapShellTools = new Set(Array.isArray(cfg.bootstrapShellTools) ? cfg.bootstrapShellTools : ['bash', 'pwsh'])
   const bootstrapCommonTools = new Set(Array.isArray(cfg.bootstrapCommonTools) ? cfg.bootstrapCommonTools : ['read'])
@@ -2602,27 +2661,100 @@ export function apply(ctx, config) {
   }
 
   // ── planner 模型单点解析 ──
-  // plannerModelCache：planner 子代理有效模型条目缓存（key=agent）。上移自原
-  // agent/request 钩子：一个 planner 只解析一次、之后固定。模型目录查询调用
-  // 全文件只在此函数内（解析点唯一 = 函数唯一）。
+  // plannerModelCache：planner 子代理有效模型条目缓存（key=agent）。True 路径首次入口
+  // 立即缓存 in-flight promise；成功 entry 与严格 rejection 都固定到该 Agent 生命周期。
   const plannerModelCache = new WeakMap()
 
-  // 单点解析（唯一解析点）：查缓存有则直接返回；无则解析并写缓存。
-  // 模型优先级：plannerModel（设置页显式配置，规划子代理专用）> 父会话当前
-  // model；provider/maxTokens 取自父会话 requestHeader().config（父会话空闲时
-  // 取不到 → undefined，注入时跳过、保留 spawn 描述符默认值）。
-  // 2026-09-03 修复：不再依赖父会话进行中请求头与「目录命中」作生效前提——旧逻辑在
-  // 父会话空闲（后台规划时必然如此）时 provider 为空、查询被跳过，导致 plannerModel
-  // 永不生效、回退主会话默认模型（flash）；现改为显式配置直接生效。
-  // T2 追加（与旧病划清边界）：目录只作【静默降级的启发式】，且经 ctx.llm.listModels
-  // (provider) 主动查询（不依赖父会话进行中请求头；父空闲时 provider 为空即按规则 3
-  // 沿用）；仅当目录成功返回非空清单且明确不含 plannerModel 时才降级为主会话模型，
-  // 清单为空/抛错/取不到 llm 服务一律保守沿用（advisory 语义：空清单≠不可用，
-  // 防误杀未实现发现能力的适配器）。
-  // 解析整体 try/catch：异常时保持已取到的值，不抛；agent/request 钩子只调本函数。
-  async function resolvePlannerEntry(agent) {
-    const cached = plannerModelCache.get(agent)
-    if (cached !== undefined) return cached
+  function plannerAbortError(signal) {
+    const reason = signal !== undefined && signal !== null ? signal.reason : undefined
+    return reason instanceof Error ? reason : new Error('extra-plan: planner probe aborted')
+  }
+
+  // 用一个本地 AbortController 同时覆盖 listModels、prepareCall 和完整 stream；listModels
+  // 没有 signal 参数，Promise.race 只解除本解析等待，不能替第三方 adapter 撤销遗留 I/O。
+  async function withPlannerProbeDeadline(operation, parentSignal) {
+    if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
+    const controller = new AbortController()
+    let timedOut = false
+    let parentAbortListener = null
+    if (parentSignal !== undefined && parentSignal !== null && typeof parentSignal.addEventListener === 'function') {
+      parentAbortListener = () => controller.abort(plannerAbortError(parentSignal))
+      parentSignal.addEventListener('abort', parentAbortListener, { once: true })
+      if (parentSignal.aborted) parentAbortListener()
+    }
+    const timeout = setTimeout(() => {
+      timedOut = true
+      controller.abort(new Error('extra-plan: planner route probe timed out'))
+    }, PLANNER_PROBE_TIMEOUT_MS)
+    let abortListener = null
+    const aborted = new Promise((resolve, reject) => {
+      abortListener = () => reject(controller.signal.reason instanceof Error ? controller.signal.reason : new Error('extra-plan: planner probe aborted'))
+      if (controller.signal.aborted) abortListener()
+      else controller.signal.addEventListener('abort', abortListener, { once: true })
+    })
+    const pending = Promise.resolve().then(() => operation(controller.signal))
+    pending.catch(() => {})
+    try {
+      return await Promise.race([pending, aborted])
+    } catch (error) {
+      if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
+      if (timedOut) return { timeout: true }
+      throw error
+    } finally {
+      clearTimeout(timeout)
+      if (parentAbortListener !== null && parentSignal !== undefined && parentSignal !== null && typeof parentSignal.removeEventListener === 'function') parentSignal.removeEventListener('abort', parentAbortListener)
+      if (abortListener !== null) controller.signal.removeEventListener('abort', abortListener)
+    }
+  }
+
+  // 候选目录检查与真实探针共用一个 deadline。checkCatalog=false 仅用于父会话 fallback，
+  // 因而不把 advisory listModels 误当成 fallback 成功，也允许父模型未列在目录中时验证。
+  async function probePlannerRoute(llm, provider, model, parentSignal, checkCatalog) {
+    let matched = !checkCatalog
+    try {
+      const result = await withPlannerProbeDeadline(async (signal) => {
+        if (checkCatalog) {
+          if (typeof llm.listModels !== 'function') return { matched: false, ok: false }
+          const models = await llm.listModels(provider)
+          if (!Array.isArray(models) || !models.some((item) => item !== null && typeof item === 'object' && item.id === model)) return { matched: false, ok: false }
+          matched = true
+        }
+        if (typeof llm.prepareCall !== 'function') return { matched, ok: false }
+        const prepared = await llm.prepareCall({ provider, model, maxTokens: 1 }, signal)
+        if (prepared === null || typeof prepared !== 'object' || typeof prepared.stream !== 'function') return { matched, ok: false }
+        const preparedConfig = prepared.config
+        if (preparedConfig === null || typeof preparedConfig !== 'object' || preparedConfig.provider !== provider || preparedConfig.model !== model) return { matched, ok: false }
+        const request = {
+          provider: preparedConfig.provider,
+          model: preparedConfig.model,
+          ...(preparedConfig.reasoningEffort === undefined ? {} : { reasoningEffort: preparedConfig.reasoningEffort }),
+          ...(preparedConfig.temperature === undefined ? {} : { temperature: preparedConfig.temperature }),
+          ...(preparedConfig.maxTokens === undefined ? {} : { maxTokens: preparedConfig.maxTokens }),
+          ...(preparedConfig.stop === undefined ? {} : { stop: preparedConfig.stop }),
+          messages: [createUserMessage({ source: { kind: 'plugin', plugin: 'dsh-extra-plan' }, content: [{ type: 'text', text: 'OK' }] })],
+          signal,
+        }
+        let finishCount = 0
+        let finishKind = ''
+        for await (const chunk of prepared.stream(request)) {
+          if (chunk !== null && typeof chunk === 'object' && chunk.type === 'finish') {
+            finishCount += 1
+            finishKind = chunk.reason !== null && typeof chunk.reason === 'object' && typeof chunk.reason.kind === 'string' ? chunk.reason.kind : ''
+          }
+        }
+        return { matched, ok: finishCount === 1 && finishKind !== '' && finishKind !== 'error' && finishKind !== 'aborted' }
+      }, parentSignal)
+      if (result !== null && typeof result === 'object' && result.timeout === true) return { matched, ok: false, timeout: true }
+      return result !== null && typeof result === 'object' && typeof result.ok === 'boolean' ? result : { matched, ok: false }
+    } catch (error) {
+      if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
+      return { matched, ok: false }
+    }
+  }
+
+  // False/缺失/非法开关的旧单 provider 流程原样保留：只查父 provider 的 advisory 目录，
+  // 不枚举 provider，也不调用真实 prepareCall/stream 或严格 fallback probe。
+  async function resolvePlannerEntryLegacy(agent) {
     let provider
     let model
     let maxTokens
@@ -2646,9 +2778,6 @@ export function apply(ctx, config) {
           }
         }
       }
-      // 规划子代理模型 = 设置页 plannerModel（显式配置优先，父空闲时也能生效）；
-      // T2/T4：判定抽成纯函数（decidePlannerModelUse，见 decisions 导出表），
-      // 目录查询只在此处（解析点唯一 = 目录查询点唯一）。
       if (plannerModel !== '') {
         let catalog = { kind: 'no-llm' }
         const llm = ctx.get('llm')
@@ -2666,8 +2795,6 @@ export function apply(ctx, config) {
         const decision = decidePlannerModelUse(plannerModel, provider, catalog)
         if (decision.use) model = plannerModel
         if (decision.diag !== null) {
-          // 降级/保守沿用诊断：与 agent/request-error 同一 jsonl 通道、独立 type 字段；
-          // 静默口径——不抛错、不向用户输出任何提示（只留痕供回溯）。
           try {
             appendFileSync(diagPath, JSON.stringify({
               ts: new Date().toISOString(),
@@ -2682,11 +2809,93 @@ export function apply(ctx, config) {
         }
       }
     } catch (error) {
-      // 解析异常：保持已取到的值（provider/maxTokens 可能 undefined），不抛、不崩调用方。
+      // 旧兼容口径：解析异常保持已取到的值，不抛出。
     }
-    const entry = { provider, model, maxTokens }
-    plannerModelCache.set(agent, entry)
-    return entry
+    return { provider, model, maxTokens }
+  }
+
+  // True 严格路径：只把已完成真实 OK probe 的排序候选或已验证父 fallback 交给 planner。
+  async function resolvePlannerEntryStrict(agent, parentSignal) {
+    let provider
+    let model
+    let maxTokens
+    try {
+      const parentSession = agent.session.header.parentSession
+      if (typeof parentSession === 'string') {
+        const agents = ctx.get('agents')
+        let parent
+        try {
+          parent = agents !== undefined ? agents.get(parentSession) : undefined
+        } catch (error) {
+          parent = undefined
+        }
+        if (parent !== undefined && parent.session !== undefined && parent.session !== null) {
+          const header = typeof parent.session.requestHeader === 'function' ? parent.session.requestHeader() : undefined
+          const pcfg = header !== undefined && header.config !== undefined && header.config !== null ? header.config : null
+          if (pcfg !== null) {
+            provider = typeof pcfg.provider === 'string' && pcfg.provider !== '' ? pcfg.provider : undefined
+            model = typeof pcfg.model === 'string' && pcfg.model !== '' ? pcfg.model : undefined
+            maxTokens = typeof pcfg.maxTokens === 'number' && pcfg.maxTokens > 0 ? pcfg.maxTokens : undefined
+          }
+        }
+      }
+    } catch (error) {
+      // 缺失/损坏的父配置在候选全失败时由固定 strict block 统一处理。
+    }
+    let llm
+    try {
+      llm = ctx.get('llm')
+    } catch (error) {
+      llm = undefined
+    }
+    if (llm === undefined || llm === null || typeof llm !== 'object') throw new Error(PLANNER_BLOCKED_REASON)
+
+    const routeKey = (routeProvider, routeModel) => routeProvider + '\u0000' + routeModel
+    const probeOutcomes = new Map()
+    const successes = []
+    if (plannerModel !== '') {
+      let listedProviders = []
+      try {
+        if (typeof llm.listProviders === 'function') {
+          const listed = await withPlannerProbeDeadline(() => llm.listProviders(), parentSignal)
+          if (!(listed !== null && typeof listed === 'object' && listed.timeout === true) && Array.isArray(listed)) listedProviders = listed
+        }
+      } catch (error) {
+        if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
+      }
+      const seenProviderIds = new Set()
+      for (const listed of listedProviders) {
+        if (listed === null || typeof listed !== 'object' || typeof listed.id !== 'string' || listed.id === '' || seenProviderIds.has(listed.id)) continue
+        seenProviderIds.add(listed.id)
+        const providerName = typeof listed.name === 'string' ? listed.name : listed.id
+        const outcome = await probePlannerRoute(llm, listed.id, plannerModel, parentSignal, true)
+        if (outcome.matched) probeOutcomes.set(routeKey(listed.id, plannerModel), outcome)
+        if (outcome.ok) successes.push({ id: listed.id, name: providerName })
+      }
+      const sorted = sortPlannerCandidates(successes, provider)
+      if (sorted.length > 0) return { provider: sorted[0].id, model: plannerModel, maxTokens }
+    }
+
+    if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
+    if (typeof provider !== 'string' || provider === '' || typeof model !== 'string' || model === '') throw new Error(PLANNER_BLOCKED_REASON)
+    const fallbackKey = routeKey(provider, model)
+    const reused = probeOutcomes.get(fallbackKey)
+    const fallback = reused !== undefined ? reused : await probePlannerRoute(llm, provider, model, parentSignal, false)
+    if (fallback.ok) return { provider, model, maxTokens }
+    if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
+    throw new Error(PLANNER_BLOCKED_REASON)
+  }
+
+  // 单一入口的首个调用即保存 promise，避免同一 Agent 并发/续轮重复真实探针；rejection
+  // 也固定缓存，后续请求不会把未验证路由重新交给 DSH。
+  function resolvePlannerEntry(agent, parentSignal) {
+    const cached = plannerModelCache.get(agent)
+    if (cached !== undefined) return cached
+    const pending = crossProviderPlannerModelOn
+      ? resolvePlannerEntryStrict(agent, parentSignal)
+      : resolvePlannerEntryLegacy(agent)
+    plannerModelCache.set(agent, pending)
+    return pending
   }
 
   // ── cordis 官方技能引用（runtime-skill 注册，零副本） ──
@@ -3233,7 +3442,7 @@ export function apply(ctx, config) {
     // 设置页 plannerModel（resolvePlannerEntry 现场解析/缓存）；不再依赖父 header
     // 非空与 WeakMap 缓存命中（断点①pcfg-null 早退 ②缓存 miss 回退父值 均已消除）。
     if (isPlannerChild(payload.agent)) {
-      const entry = await resolvePlannerEntry(payload.agent)
+      const entry = await resolvePlannerEntry(payload.agent, payload.signal)
       const nextConfig = { ...resolved }
       if (entry.model !== undefined) nextConfig.model = entry.model
       if (entry.provider !== undefined) nextConfig.provider = entry.provider

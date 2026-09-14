@@ -13,8 +13,10 @@ window.__ModuleLoader__.load({
       cardTitle: "按需规划模式配置",
       cardDescription: "配置 pro 规划模块的参数。",
       proSection: "pro规划模块",
+      generalSection: "通用设置",
       plannerModel: "使用模型",
       plannerModelHint: "留空 = 继承主会话模型",
+      crossProviderPlannerModel: "跨提供商",
       plannerPromptSuffix: "额外引导",
       exploreBudget: "探查额度",
       anchoredBootstrap: "anchored开关",
@@ -38,8 +40,10 @@ window.__ModuleLoader__.load({
       cardTitle: "Extra Plan Configuration",
       cardDescription: "Configure pro planner settings.",
       proSection: "Pro Planner",
+      generalSection: "General Settings",
       plannerModel: "Planner Model",
       plannerModelHint: "Leave empty to inherit the main-session model",
+      crossProviderPlannerModel: "Cross-Provider Planner Model",
       plannerPromptSuffix: "Extra Prompt Suffix",
       exploreBudget: "Explore Budget",
       anchoredBootstrap: "Anchored Bootstrap",
@@ -239,10 +243,18 @@ window.__ModuleLoader__.load({
           );
         }
 
-        const proFields = fields.filter(function (field) { return field && field.separate === undefined; });
-        return el("div", { className: "esp-section" },
-          el("p", { className: "esp-sectionTitle" }, t("proSection")),
-          proFields.map(renderField),
+        const visibleFields = fields.filter(function (field) { return field && field.separate === undefined; });
+        const generalFields = visibleFields.filter(function (field) { return field.section === "general"; });
+        const proFields = visibleFields.filter(function (field) { return field.section === "pro" || field.section === undefined; });
+        return el(React.Fragment, null,
+          el("div", { className: "esp-section" },
+            el("p", { className: "esp-sectionTitle" }, t("generalSection")),
+            generalFields.map(renderField)
+          ),
+          el("div", { className: "esp-section" },
+            el("p", { className: "esp-sectionTitle" }, t("proSection")),
+            proFields.map(renderField)
+          ),
           message.text ? el("p", { className: message.kind === "ok" ? "esp-ok" : "esp-err" }, message.text) : null,
           el("div", { className: "esp-actions" },
             el("button", {

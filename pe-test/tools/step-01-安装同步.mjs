@@ -42,6 +42,7 @@ mkdirSync(home, { recursive: true })
 const currentHash = contentHash(ASSET_DIR)
 const oldValues = {
   plannerModel: 'old-sync-model',
+  crossProviderPlannerModel: true,
   plannerPromptSuffix: 'old: sync suffix',
   exploreBudget: 9,
   anchoredBootstrap: false,
@@ -53,7 +54,7 @@ const expectedOldAgent = patchAgent(oldValues)
 
 try {
   check('首次自愈 → written', syncPreset(home) === 'written')
-  check('首次 manifest format=2/7 项审计', (() => { const m = manifestAt(dist); return m.format === 2 && m.distHash === currentHash && Object.keys(m.settingsMigration.results).length === 7 })())
+  check('首次 manifest format=2/8 项审计', (() => { const m = manifestAt(dist); return m.format === 2 && m.distHash === currentHash && Object.keys(m.settingsMigration.results).length === 8 })())
   check('首次第二次 → idle', syncPreset(home) === 'idle')
 
   writeFileSync(join(dist, 'agent.cordis.yml'), expectedOldAgent, 'utf8')
@@ -79,6 +80,14 @@ try {
   check('相同 hash 收敛 → idle', syncPreset(home) === 'idle')
   const afterIdle = [readFileSync(join(dist, 'preset.yml')), readFileSync(join(dist, 'agent.cordis.yml')), readFileSync(join(dist, 'dist-manifest.json'))]
   check('idle 三个核心字节完全不变且 readManifest 正确', beforeIdle.every((value, index) => value.equals(afterIdle[index])) && readManifest(dist) === currentHash)
+
+  const oldMissingCross = expectedOldAgent.replace('        crossProviderPlannerModel: true\n', '')
+  writeFileSync(join(dist, 'agent.cordis.yml'), oldMissingCross, 'utf8')
+  writeManifest(dist, 'OLD-MISSING-CROSS')
+  check('旧值缺失 crossProviderPlannerModel → upgraded', syncPreset(home) === 'upgraded')
+  const missingCrossManifest = manifestAt(dist)
+  const missingCrossText = readFileSync(join(dist, 'agent.cordis.yml'), 'utf8')
+  check('缺失开关写回 false 且审计 skipped-old-missing', missingCrossText.includes('crossProviderPlannerModel: false') && missingCrossManifest.settingsMigration.results.crossProviderPlannerModel === 'skipped-old-missing')
 
   // T4：旧值 plannerModel 为空串（显式清空）→ captured → restored，写回 '' 且不回填资产默认
   writeFileSync(join(dist, 'agent.cordis.yml'), patchAgent({ plannerModel: '' }), 'utf8')

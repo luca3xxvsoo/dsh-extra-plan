@@ -14,6 +14,7 @@ const {
   APPROVAL_WORD_APPROVE,
   APPROVAL_WORD_REPLAN,
   ROUTE_OPTIONS_TEXT,
+  ROUTE_CONFIRM_TEXT,
   APPROVAL_OPTIONS_TEXT,
   routeDenyReason,
   planDenyReason,
@@ -71,6 +72,9 @@ const {
   extractProbeEvidenceRefs,
   resolveProbeRequestInjection,
   decidePlannerModelUse,
+  PLANNER_PROBE_TIMEOUT_MS,
+  PLANNER_BLOCKED_REASON,
+  sortPlannerCandidates,
 } = plugin.decisions
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 
@@ -156,6 +160,17 @@ const M = [
 for (const [name, got, expected] of M) check(name, got, expected)
 
 // ── F 系列:deriveFlowState(自最近人类消息起) ──────────────────────────
+const fullPlanApprovedEvents = [
+  um(),
+  call('ask_user_question', 'fa1', routeArgs),
+  ok('fa1', answer(['进行pro规划'])),
+  call('ask_user_question', 'fa2', purposeArgs),
+  ok('fa2', answer(['完善方案'])),
+  call('ask_user_question', 'fa3', clarifyArgs),
+  ok('fa3', answer(['方案A'])),
+  call('ask_user_question', 'fa4', approvalArgs),
+  ok('fa4', answer(['同意执行'])),
+]
 const F = [
   ['F1 无事件 → 全空', [], { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
   ['F2 路由答「直接执行」→ direct', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['直接执行']))], { route: 'direct', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
@@ -183,6 +198,13 @@ const F = [
   ['F26 目的答复未命中两词 → purpose 保持 none', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', purposeArgs), ok('a2', answer(['别的词']))], { route: 'plan', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
   ['F27 目的 ask 取消(ASK_CANCELLED) → route=none + purpose=none', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', purposeArgs), err('a2', 'ASK_CANCELLED')], { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
   ['F28 目的答复后接澄清答复 → purpose 保留且 clarified=true（目的答复不置 clarified 守门）', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', purposeArgs), ok('a2', answer(['完善方案'])), call('ask_user_question', 'a3', clarifyArgs), ok('a3', answer(['方案A']))], { route: 'plan', clarified: true, approved: false, purpose: 'refine', channelBroken: false }],
+  ['F29 完整阶段后重选「直接执行」→ 清理阶段状态', fullPlanApprovedEvents.concat([call('ask_user_question', 'fa5', routeArgs), ok('fa5', answer(['直接执行']))]), { route: 'direct', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
+  ['F30 完整阶段后重选「进行pro规划」→ 清理阶段状态', fullPlanApprovedEvents.concat([call('ask_user_question', 'fa5', routeArgs), ok('fa5', answer(['进行pro规划']))]), { route: 'plan', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
+  ['F31 完整阶段后重选「不同意」→ 清理阶段状态', fullPlanApprovedEvents.concat([call('ask_user_question', 'fa5', routeArgs), ok('fa5', answer(['不同意']))]), { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
+  ['F32 完整阶段后有效目的重选「重新规划」→ 清理 clarified/approved', fullPlanApprovedEvents.concat([call('ask_user_question', 'fa5', purposeArgs), ok('fa5', answer(['重新规划']))]), { route: 'plan', clarified: false, approved: false, purpose: 'redo', channelBroken: false }],
+  ['F33 完整阶段后 ASK_CANCELLED → 五字段清理', fullPlanApprovedEvents.concat([call('ask_user_question', 'fa5', routeArgs), err('fa5', 'ASK_CANCELLED')]), { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
+  ['F34 完整阶段后新用户消息 → 默认态', fullPlanApprovedEvents.concat([um()]), { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
+  ['F35 完整阶段后 NO_PROVIDER → 保留阶段状态并逃生', fullPlanApprovedEvents.concat([call('ask_user_question', 'fa5', routeArgs), err('fa5', 'NO_PROVIDER')]), { route: 'plan', clarified: true, approved: true, purpose: 'refine', channelBroken: true }],
 ]
 for (const [name, events, expected] of F) {
   check(name, deriveFlowState(events), expected)
@@ -601,6 +623,351 @@ const PM = [
 ]
 for (const [name, got, expected] of PM) check(name, got, expected)
 
+// ── PLANNER 系列：fake AgentLoop 边界 + True/False LLM 分流 ───────────────
+function deferredPlanner() {
+  let resolve
+  let reject
+  const promise = new Promise((ok, fail) => { resolve = ok; reject = fail })
+  return { promise, resolve, reject }
+}
+
+function plannerTick() {
+  return new Promise((resolve) => setTimeout(resolve, 0))
+}
+
+function plannerRequestShape(call) {
+  const request = call.request
+  const message = request !== null && typeof request === 'object' && Array.isArray(request.messages) ? request.messages[0] : undefined
+  const forbidden = ['system', 'tools', 'sessionId', 'purpose']
+  return request !== null && typeof request === 'object'
+    && request.provider === call.provider
+    && request.model === call.model
+    && request.maxTokens === 1
+    && forbidden.every((key) => !Object.prototype.hasOwnProperty.call(request, key))
+    && Array.isArray(request.messages) && request.messages.length === 1
+    && message !== undefined && message.role === 'user'
+    && message.source !== undefined && message.source.kind === 'plugin' && message.source.plugin === 'dsh-extra-plan'
+    && Array.isArray(message.content) && message.content.length === 1
+    && message.content[0].type === 'text' && message.content[0].text === 'OK'
+}
+
+function makePlannerFake(spec, timeline) {
+  const state = { listProviders: 0, listModels: [], prepareCalls: [], streamCalls: [] }
+  const providers = Array.isArray(spec.providers) ? spec.providers : []
+  const catalogs = spec.catalogs || {}
+  const behaviors = spec.behaviors || {}
+  const behaviorFor = (provider, model) => behaviors[provider + '/' + model] || behaviors[provider] || {}
+  const llm = {
+    listProviders() {
+      state.listProviders += 1
+      timeline.push('listProviders')
+      return Promise.resolve(providers)
+    },
+    listModels(provider) {
+      state.listModels.push(provider)
+      timeline.push('listModels:' + provider)
+      const catalog = catalogs[provider]
+      if (catalog === 'reject') return Promise.reject(new Error('synthetic listModels failure: ' + provider))
+      if (catalog === 'timeout') return new Promise(() => {})
+      return Promise.resolve(Array.isArray(catalog) ? catalog : [])
+    },
+    prepareCall(config, signal) {
+      const provider = config.provider
+      const model = config.model
+      const behavior = behaviorFor(provider, model)
+      state.prepareCalls.push({ provider, model, config, signal })
+      timeline.push('probe-prepare:' + provider + '/' + model)
+      if (behavior.prepare === 'reject') return Promise.reject(new Error('synthetic prepare failure: ' + provider + '/' + model))
+      const preparedConfig = { ...config, ...(behavior.preparedConfig || {}) }
+      return Promise.resolve({
+        config: preparedConfig,
+        stream(request) {
+          state.streamCalls.push({ provider, model, request, signal })
+          timeline.push('probe-stream:' + provider + '/' + model)
+          if (behavior.stream === 'throw') throw new Error('synthetic stream failure: ' + provider + '/' + model)
+          if (behavior.stream === 'timeout') return (async function* () { await new Promise(() => {}) })()
+          return (async function* () {
+            if (behavior.gate !== undefined) await behavior.gate.promise
+            if (behavior.finish === 'none') {
+              yield { type: 'text-delta', index: 0, text: 'OK' }
+              return
+            }
+            yield { type: 'block-start', index: 0, blockType: 'text' }
+            yield { type: 'text-delta', index: 0, text: 'OK' }
+            yield { type: 'block-end', index: 0, block: { type: 'text', text: 'OK' } }
+            timeline.push('probe-finish:' + provider + '/' + model)
+            const kind = behavior.finish || 'stop'
+            const reason = kind === 'error' || kind === 'aborted' ? { kind, failure: { message: 'synthetic ' + kind, code: 'SYNTHETIC' } } : { kind }
+            yield { type: 'finish', reason }
+          })()
+        },
+      })
+    },
+  }
+  return { llm, state }
+}
+
+function makePlannerHarness(options = {}) {
+  const timeline = options.timeline || []
+  const parentConfig = options.parentConfig === undefined
+    ? { provider: 'p-parent', model: 'parent-model', maxTokens: 512, reasoningEffort: 'low' }
+    : options.parentConfig
+  const parent = { session: { header: { id: 'parent-id' }, requestHeader: () => ({ config: parentConfig }) } }
+  const agent = {
+    session: {
+      header: { id: 'planner-id', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-id' },
+      snapshotEvents: () => [{ type: 'subagent/descriptor', data: { mode: 'continuable' } }],
+    },
+  }
+  const listeners = {}
+  const ctx = {
+    get(name) {
+      if (name === 'agents') return { get: (id) => id === 'parent-id' ? parent : undefined }
+      if (name === 'llm') return options.llm
+      return undefined
+    },
+    on(name, fn) {
+      if (listeners[name] === undefined) listeners[name] = []
+      listeners[name].push(fn)
+    },
+  }
+  const config = {
+    anchoredBootstrap: false,
+    plannerModel: options.plannerModel === undefined ? 'planner-model' : options.plannerModel,
+  }
+  if (Object.prototype.hasOwnProperty.call(options, 'crossProviderPlannerModel')) config.crossProviderPlannerModel = options.crossProviderPlannerModel
+  plugin.apply(ctx, config)
+  return { agent, parent, listeners, timeline }
+}
+
+async function invokePlanner(harness, signal) {
+  const listener = harness.listeners['agent/request']
+  if (!Array.isArray(listener) || listener.length === 0) throw new Error('agent/request 监听器未注册')
+  return listener[0]({ agent: harness.agent, turn: 1, step: 1, signal }, async () => {
+    harness.timeline.push('agent/request-next')
+    return { provider: 'upstream', model: 'upstream-model', maxTokens: 99 }
+  })
+}
+
+async function invokePlannerMarked(harness, signal) {
+  const result = await invokePlanner(harness, signal)
+  harness.timeline.push('selection-return')
+  return result
+}
+
+function markActualPlanner(harness) {
+  harness.timeline.push('actual-prepare')
+  harness.timeline.push('actual-stream')
+}
+
+async function withFastPlannerDeadline(task) {
+  const originalSetTimeout = globalThis.setTimeout
+  const originalClearTimeout = globalThis.clearTimeout
+  const active = new Set()
+  globalThis.setTimeout = (callback, delay, ...args) => {
+    let handle
+    const actualDelay = delay === PLANNER_PROBE_TIMEOUT_MS ? 1 : delay
+    handle = originalSetTimeout(() => { active.delete(handle); callback(...args) }, actualDelay)
+    active.add(handle)
+    return handle
+  }
+  globalThis.clearTimeout = (handle) => {
+    active.delete(handle)
+    return originalClearTimeout(handle)
+  }
+  try {
+    return await task(active)
+  } finally {
+    globalThis.setTimeout = originalSetTimeout
+    globalThis.clearTimeout = originalClearTimeout
+    for (const handle of active) originalClearTimeout(handle)
+    active.clear()
+  }
+}
+
+const plannerSignal = () => new AbortController().signal
+const plannerCandidate = (id, name) => ({ id, name })
+const plannerModelCatalog = [{ id: 'planner-model', name: 'Planner Model' }]
+const PLANNER = [
+  ['PL1 排序普通 name/id、主 provider 倒数第二、官方最后', () => {
+    const sorted = sortPlannerCandidates([
+      plannerCandidate('deepseek-official', 'DeepSeek Official'),
+      plannerCandidate('p-parent', 'Parent'),
+      plannerCandidate('p-z', 'Zeta'),
+      plannerCandidate('p-a', 'Alpha'),
+      plannerCandidate('p-a2', 'Alpha'),
+    ], 'p-parent')
+    return sorted.map((item) => item.id)
+  }, ['p-a', 'p-a2', 'p-z', 'p-parent', 'deepseek-official']],
+  ['PL2 child 可先创建/等待，全部 probe finish 后才 selection/actual 且选择非首个成功者', async () => {
+    const timeline = ['child-created', 'child-wait']
+    const gates = { 'p-z': deferredPlanner(), 'p-a': deferredPlanner(), 'p-parent': deferredPlanner(), 'deepseek-official': deferredPlanner() }
+    const behaviors = {}
+    for (const id of Object.keys(gates)) behaviors[id + '/planner-model'] = { gate: gates[id] }
+    const fake = makePlannerFake({
+      providers: [plannerCandidate('p-z', 'Zeta'), plannerCandidate('p-a', 'Alpha'), plannerCandidate('p-parent', 'Parent'), plannerCandidate('deepseek-official', 'DeepSeek Official')],
+      catalogs: { 'p-z': plannerModelCatalog, 'p-a': plannerModelCatalog, 'p-parent': plannerModelCatalog, 'deepseek-official': plannerModelCatalog },
+      behaviors,
+    }, timeline)
+    const harness = makePlannerHarness({ llm: fake.llm, timeline, crossProviderPlannerModel: true })
+    const pending = invokePlannerMarked(harness, plannerSignal())
+    await plannerTick()
+    const firstGateStarted = timeline.includes('probe-stream:p-z/planner-model')
+    const noEarlySelection = !timeline.includes('selection-return') && !timeline.includes('actual-prepare') && !timeline.includes('actual-stream')
+    for (const id of ['p-z', 'p-a', 'p-parent', 'deepseek-official']) {
+      gates[id].resolve()
+      await plannerTick()
+    }
+    const result = await pending
+    const selectionIndex = timeline.indexOf('selection-return')
+    const finishIndexes = timeline.filter((item) => item.startsWith('probe-finish:')).map((item) => timeline.indexOf(item))
+    const allFinishedBeforeSelection = finishIndexes.length === 4 && finishIndexes.every((index) => index < selectionIndex)
+    const serialModels = fake.state.listModels.join('|') === 'p-z|p-a|p-parent|deepseek-official'
+    const shapes = fake.state.streamCalls.length === 4 && fake.state.streamCalls.every(plannerRequestShape) && fake.state.prepareCalls.every((prepare) => Object.keys(prepare.config).join('|') === 'provider|model|maxTokens' && fake.state.streamCalls.some((stream) => stream.provider === prepare.provider && stream.model === prepare.model && stream.signal === prepare.signal))
+    markActualPlanner(harness)
+    return { result: { provider: result.provider, model: result.model }, firstGateStarted, noEarlySelection, allFinishedBeforeSelection, serialModels, shapes, actualAfterSelection: timeline.indexOf('actual-prepare') > selectionIndex && timeline.indexOf('actual-stream') > selectionIndex }
+  }, { result: { provider: 'p-a', model: 'planner-model' }, firstGateStarted: true, noEarlySelection: true, allFinishedBeforeSelection: true, serialModels: true, shapes: true, actualAfterSelection: true }],
+  ['PL3 list/prepare/stream/error/aborted/no-finish/timeout 单 provider 失败隔离后仍选成功者', async () => withFastPlannerDeadline(async (active) => {
+    const timeline = []
+    const providers = [
+      plannerCandidate('p-list-reject', 'List Reject'), plannerCandidate('p-list-timeout', 'List Timeout'), plannerCandidate('p-prepare', 'Prepare'), plannerCandidate('p-stream', 'Stream'), plannerCandidate('p-error', 'Error'), plannerCandidate('p-aborted', 'Aborted'), plannerCandidate('p-no-finish', 'No Finish'), plannerCandidate('p-timeout', 'Timeout'), plannerCandidate('p-good', 'Good'),
+    ]
+    const catalogs = {}
+    for (const item of providers) catalogs[item.id] = plannerModelCatalog
+    catalogs['p-list-reject'] = 'reject'
+    catalogs['p-list-timeout'] = 'timeout'
+    const fake = makePlannerFake({ providers, catalogs, behaviors: {
+      'p-prepare': { prepare: 'reject' },
+      'p-stream': { stream: 'throw' },
+      'p-error': { finish: 'error' },
+      'p-aborted': { finish: 'aborted' },
+      'p-no-finish': { finish: 'none' },
+      'p-timeout': { stream: 'timeout' },
+      'p-good': { finish: 'stop' },
+    } }, timeline)
+    const harness = makePlannerHarness({ llm: fake.llm, timeline, crossProviderPlannerModel: true })
+    const pending = invokePlannerMarked(harness, plannerSignal())
+    const result = await pending
+    const selectionIndex = timeline.indexOf('selection-return')
+    const actualBeforeSelection = timeline.some((item, index) => (item === 'actual-prepare' || item === 'actual-stream') && index < selectionIndex)
+    markActualPlanner(harness)
+    return { provider: result.provider, model: result.model, listProviders: fake.state.listProviders, listModels: fake.state.listModels.length, prepareCalls: fake.state.prepareCalls.length, actualBeforeSelection, timerClean: active.size === 0, timeoutWasAttempted: fake.state.listModels.includes('p-timeout') && fake.state.streamCalls.some((call) => call.provider === 'p-timeout') }
+  }), { provider: 'p-good', model: 'planner-model', listProviders: 1, listModels: 9, prepareCalls: 7, actualBeforeSelection: false, timerClean: true, timeoutWasAttempted: true }],
+  ['PL4 全候选失败后仅在 fallback 真实 probe 成功时继承父路由', async () => {
+    const timeline = []
+    const fake = makePlannerFake({
+      providers: [plannerCandidate('p-a', 'Alpha'), plannerCandidate('p-parent', 'Parent')],
+      catalogs: { 'p-a': plannerModelCatalog, 'p-parent': plannerModelCatalog },
+      behaviors: {
+        'p-a/planner-model': { finish: 'error' },
+        'p-parent/planner-model': { finish: 'aborted' },
+        'p-parent/parent-model': { finish: 'stop' },
+      },
+    }, timeline)
+    const harness = makePlannerHarness({ llm: fake.llm, timeline, crossProviderPlannerModel: true })
+    const result = await invokePlannerMarked(harness, plannerSignal())
+    const routes = fake.state.prepareCalls.map((call) => call.provider + '/' + call.model)
+    const selectionIndex = timeline.indexOf('selection-return')
+    markActualPlanner(harness)
+    return { result: { provider: result.provider, model: result.model, maxTokens: result.maxTokens }, routes, fallbackDirect: routes.includes('p-parent/parent-model'), allProbeFinishBeforeSelection: timeline.filter((item) => item.startsWith('probe-finish:')).every((item) => timeline.indexOf(item) < selectionIndex) }
+  }, { result: { provider: 'p-parent', model: 'parent-model', maxTokens: 512 }, routes: ['p-a/planner-model', 'p-parent/planner-model', 'p-parent/parent-model'], fallbackDirect: true, allProbeFinishBeforeSelection: true }],
+  ['PL5 fallback 与已探测同 route/model 复用失败 outcome，不二次计费', async () => {
+    const timeline = []
+    const fake = makePlannerFake({ providers: [plannerCandidate('p-same', 'Same')], catalogs: { 'p-same': plannerModelCatalog }, behaviors: { 'p-same/planner-model': { finish: 'error' } } }, timeline)
+    const harness = makePlannerHarness({ llm: fake.llm, timeline, crossProviderPlannerModel: true, parentConfig: { provider: 'p-same', model: 'planner-model', maxTokens: 512 } })
+    let message = ''
+    try { await invokePlanner(harness, plannerSignal()) } catch (error) { message = String(error && error.message || error) }
+    return { message, prepareCalls: fake.state.prepareCalls.length, streamCalls: fake.state.streamCalls.length }
+  }, { message: PLANNER_BLOCKED_REASON, prepareCalls: 1, streamCalls: 1 }],
+  ['PL6 无 llm/父路由缺失/fallback 失败均在 actual 前固定 reject', async () => {
+    const run = async (options) => {
+      const timeline = []
+      const fakeBundle = options.withoutLlm ? null : makePlannerFake(options.spec, timeline)
+      const fake = fakeBundle === null ? undefined : fakeBundle.llm
+      const state = fakeBundle === null ? null : fakeBundle.state
+      const harness = makePlannerHarness({ llm: fake, timeline, crossProviderPlannerModel: true, parentConfig: options.parentConfig })
+      let message = ''
+      try { await invokePlanner(harness, plannerSignal()); message = 'resolved' } catch (error) { message = String(error && error.message || error) }
+      return { message, actual: timeline.filter((item) => item === 'actual-prepare' || item === 'actual-stream').length, state }
+    }
+    const failedSpec = { providers: [plannerCandidate('p-a', 'Alpha')], catalogs: { 'p-a': plannerModelCatalog }, behaviors: { 'p-a/planner-model': { finish: 'error' }, 'p-parent/parent-model': { finish: 'error' } } }
+    const fallbackFail = await run({ spec: failedSpec, parentConfig: { provider: 'p-parent', model: 'parent-model', maxTokens: 512 } })
+    const noParent = await run({ spec: failedSpec, parentConfig: { provider: 'p-parent' } })
+    const noLlm = await run({ withoutLlm: true, parentConfig: { provider: 'p-parent', model: 'parent-model' } })
+    return { fallbackFail: { message: fallbackFail.message, actual: fallbackFail.actual }, noParent: { message: noParent.message, actual: noParent.actual }, noLlm: { message: noLlm.message, actual: noLlm.actual } }
+  }, { fallbackFail: { message: PLANNER_BLOCKED_REASON, actual: 0 }, noParent: { message: PLANNER_BLOCKED_REASON, actual: 0 }, noLlm: { message: PLANNER_BLOCKED_REASON, actual: 0 } }],
+  ['PL7 True 空 plannerModel 只 probe 父 fallback，成功继承且失败前置阻断', async () => {
+    const run = async (finish) => {
+      const timeline = []
+      const fake = makePlannerFake({ behaviors: { 'p-parent/parent-model': { finish } } }, timeline)
+      const harness = makePlannerHarness({ llm: fake.llm, timeline, plannerModel: '', crossProviderPlannerModel: true })
+      let result = null
+      let message = ''
+      try { result = await invokePlannerMarked(harness, plannerSignal()) } catch (error) { message = String(error && error.message || error) }
+      return { result: result === null ? null : { provider: result.provider, model: result.model }, message, listProviders: fake.state.listProviders, listModels: fake.state.listModels.length, prepareCalls: fake.state.prepareCalls.length, streamCalls: fake.state.streamCalls.length }
+    }
+    return { success: await run('stop'), failure: await run('error') }
+  }, { success: { result: { provider: 'p-parent', model: 'parent-model' }, message: '', listProviders: 0, listModels: 0, prepareCalls: 1, streamCalls: 1 }, failure: { result: null, message: PLANNER_BLOCKED_REASON, listProviders: 0, listModels: 0, prepareCalls: 1, streamCalls: 1 } }],
+  ['PL8 False/缺失/非法开关严格走旧单 provider 且空模型零 probe', async () => {
+    const modes = [
+      { label: 'missing', set: false },
+      { label: 'false', set: true, value: false },
+      { label: 'string', set: true, value: 'true' },
+      { label: 'number', set: true, value: 1 },
+      { label: 'null', set: true, value: null },
+    ]
+    const outputs = []
+    for (const mode of modes) {
+      const timeline = []
+      const fake = makePlannerFake({ providers: [plannerCandidate('p-other', 'Other')], catalogs: { 'p-parent': plannerModelCatalog } }, timeline)
+      const options = { llm: fake.llm, timeline }
+      if (mode.set) options.crossProviderPlannerModel = mode.value
+      const harness = makePlannerHarness(options)
+      let result = null
+      try { result = await invokePlanner(harness, plannerSignal()) } catch (error) { result = { error: String(error && error.message || error) } }
+      outputs.push({ label: mode.label, result: result === null ? null : { provider: result.provider, model: result.model, maxTokens: result.maxTokens }, listProviders: fake.state.listProviders, listModels: fake.state.listModels.join('|'), prepareCalls: fake.state.prepareCalls.length, streamCalls: fake.state.streamCalls.length })
+    }
+    const emptyTimeline = []
+    const emptyFake = makePlannerFake({ providers: [plannerCandidate('p-other', 'Other')], catalogs: {} }, emptyTimeline)
+    const emptyHarness = makePlannerHarness({ llm: emptyFake.llm, timeline: emptyTimeline, plannerModel: '', crossProviderPlannerModel: false })
+    const emptyResult = await invokePlanner(emptyHarness, plannerSignal())
+    return { outputs, empty: { result: { provider: emptyResult.provider, model: emptyResult.model }, listProviders: emptyFake.state.listProviders, listModels: emptyFake.state.listModels.length, prepareCalls: emptyFake.state.prepareCalls.length, streamCalls: emptyFake.state.streamCalls.length } }
+  }, { outputs: [
+    { label: 'missing', result: { provider: 'p-parent', model: 'planner-model', maxTokens: 512 }, listProviders: 0, listModels: 'p-parent', prepareCalls: 0, streamCalls: 0 },
+    { label: 'false', result: { provider: 'p-parent', model: 'planner-model', maxTokens: 512 }, listProviders: 0, listModels: 'p-parent', prepareCalls: 0, streamCalls: 0 },
+    { label: 'string', result: { provider: 'p-parent', model: 'planner-model', maxTokens: 512 }, listProviders: 0, listModels: 'p-parent', prepareCalls: 0, streamCalls: 0 },
+    { label: 'number', result: { provider: 'p-parent', model: 'planner-model', maxTokens: 512 }, listProviders: 0, listModels: 'p-parent', prepareCalls: 0, streamCalls: 0 },
+    { label: 'null', result: { provider: 'p-parent', model: 'planner-model', maxTokens: 512 }, listProviders: 0, listModels: 'p-parent', prepareCalls: 0, streamCalls: 0 },
+  ], empty: { result: { provider: 'p-parent', model: 'parent-model' }, listProviders: 0, listModels: 0, prepareCalls: 0, streamCalls: 0 } }],
+  ['PL9 同一 Agent 成功/严格 rejection 均缓存 in-flight promise，后续不重探', async () => {
+    const successTimeline = []
+    const successFake = makePlannerFake({ providers: [plannerCandidate('p-good', 'Good')], catalogs: { 'p-good': plannerModelCatalog }, behaviors: { 'p-good/planner-model': { finish: 'stop' } } }, successTimeline)
+    const successHarness = makePlannerHarness({ llm: successFake.llm, timeline: successTimeline, crossProviderPlannerModel: true })
+    const successPair = await Promise.all([invokePlanner(successHarness, plannerSignal()), invokePlanner(successHarness, plannerSignal())])
+    const successThird = await invokePlanner(successHarness, plannerSignal())
+    const failureTimeline = []
+    const failureFake = makePlannerFake({ providers: [plannerCandidate('p-bad', 'Bad')], catalogs: { 'p-bad': plannerModelCatalog }, behaviors: { 'p-bad/planner-model': { finish: 'error' }, 'p-parent/parent-model': { finish: 'error' } } }, failureTimeline)
+    const failureHarness = makePlannerHarness({ llm: failureFake.llm, timeline: failureTimeline, crossProviderPlannerModel: true })
+    const failureResults = await Promise.all([
+      invokePlanner(failureHarness, plannerSignal()).then(() => 'resolved', (error) => String(error && error.message || error)),
+      invokePlanner(failureHarness, plannerSignal()).then(() => 'resolved', (error) => String(error && error.message || error)),
+    ])
+    return { success: { providers: successFake.state.listProviders, models: successFake.state.listModels.length, prepares: successFake.state.prepareCalls.length, streams: successFake.state.streamCalls.length, routes: successPair.concat([successThird]).map((result) => result.provider + '/' + result.model) }, failure: { providers: failureFake.state.listProviders, prepares: failureFake.state.prepareCalls.length, results: failureResults } }
+  }, { success: { providers: 1, models: 1, prepares: 1, streams: 1, routes: ['p-good/planner-model', 'p-good/planner-model', 'p-good/planner-model'] }, failure: { providers: 1, prepares: 2, results: [PLANNER_BLOCKED_REASON, PLANNER_BLOCKED_REASON] } }],
+  ['PL10 外部 turn abort 原样传播，不改写成无有效路由', async () => {
+    const timeline = []
+    const fake = makePlannerFake({ providers: [plannerCandidate('p-a', 'Alpha')], catalogs: { 'p-a': plannerModelCatalog } }, timeline)
+    const harness = makePlannerHarness({ llm: fake.llm, timeline, crossProviderPlannerModel: true })
+    const controller = new AbortController()
+    const reason = new Error('caller-aborted')
+    controller.abort(reason)
+    let message = ''
+    try { await invokePlanner(harness, controller.signal) } catch (error) { message = String(error && error.message || error) }
+    return { message, listProviders: fake.state.listProviders, prepareCalls: fake.state.prepareCalls.length }
+  }, { message: 'caller-aborted', listProviders: 0, prepareCalls: 0 }],
+]
+for (const [name, fn, expected] of PLANNER) check(name, await fn(), expected)
+
 // ── AS 系列:pre-execute 整链（mock ctx 走插件 apply；harness 模式同 step-04 L92-106/L140-144） ──
 function makeAskHarness() {
   const listeners = {}
@@ -621,12 +988,19 @@ const askMainAgent = {
   options: {},
   ctx: undefined,
 }
-function askPreExecute(name, argumentsObj) {
+function askPreExecute(name, argumentsObj, events = []) {
   const entry = askHarness['tools/pre-execute']
   if (entry === undefined || entry.length === 0) throw new Error('pre-execute 监听器未注册')
-  return entry[0]({ agent: askMainAgent, name, arguments: argumentsObj }, () => ({ kind: 'allow' }))
+  const agent = { ...askMainAgent, session: { ...askMainAgent.session, snapshotEvents: () => events } }
+  return entry[0]({ agent, name, arguments: argumentsObj }, () => ({ kind: 'allow' }))
 }
 const askStandardQ1 = [{ id: 'q1', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }]
+const askDirectEvents = [um(), call('ask_user_question', 'aa1', routeArgs), ok('aa1', answer(['直接执行']))]
+const askPlanEvents = [um(), call('ask_user_question', 'aa1', routeArgs), ok('aa1', answer(['进行pro规划']))]
+const askChannelBrokenEvents = [um(), call('ask_user_question', 'aa1', routeArgs), err('aa1', 'NO_PROVIDER')]
+const ordinaryProbeArgs = { questions: [{ id: 'q1', options: [{ label: '主会话探查' }, { label: '探查者探查' }] }] }
+const ordinaryClarifyArgs = { questions: [{ id: 'q1', options: [{ label: '方案A' }, { label: '方案B' }] }] }
+const purposeRunCode = { code: 'return await tools.ask_user_question({"questions":[{"id":"q1","options":[{"label":"完善方案"},{"label":"重新规划"}]}]})', description: '嵌套目的确认' }
 const AS = [
   ['AS1 首问标准三词+第二问带选项 → deny 且含「纯文本」、不含「一并修正」（standard 单报路径）', (() => { const r = askPreExecute('ask_user_question', { questions: [...askStandardQ1, { id: 'q2', question: '修改意见', options: [{ label: '无' }, { label: '有意见（填写）' }] }] }); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('纯文本') && !String(r.reason).includes('一并修正') })(), true],
   ['AS2 首问标准三词+第二问无 options → allow', (() => { const r = askPreExecute('ask_user_question', { questions: [...askStandardQ1, { id: 'q2', question: '修改意见' }] }); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
@@ -636,9 +1010,17 @@ const AS = [
   ['AS6 cordis_run 路由未确认 → deny 含「路由未确认：cordis_run」与「须先 ask_user_question 路由确认」', (() => { const r = askPreExecute('cordis_run', {}); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认：cordis_run') && String(r.reason).includes('须先 ask_user_question 路由确认') })(), true],
   ['AS7 cordis_define 路由未确认 → allow', (() => { const r = askPreExecute('cordis_define', {}); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
   ['AS8 cordis_inspect_list 路由未确认 → allow', (() => { const r = askPreExecute('cordis_inspect_list', {}); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
-  ['AS9 目的标准二选一 1 问 ask → allow', (() => { const r = askPreExecute('ask_user_question', JSON.parse(purposeArgs)); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
+  ['AS9 目的标准二选一 route=none → deny 且含固定路由确认句', (() => { const r = askPreExecute('ask_user_question', JSON.parse(purposeArgs), []); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(ROUTE_CONFIRM_TEXT) })(), true],
+  ['AS9b 目的标准二选一 route=direct → deny 且含固定路由确认句', (() => { const r = askPreExecute('ask_user_question', JSON.parse(purposeArgs), askDirectEvents); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(ROUTE_CONFIRM_TEXT) })(), true],
+  ['AS9c 目的标准二选一 route=plan → allow', (() => { const r = askPreExecute('ask_user_question', JSON.parse(purposeArgs), askPlanEvents); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
+  ['AS9d 目的标准二选一 channelBroken → allow（逃生）', (() => { const r = askPreExecute('ask_user_question', JSON.parse(purposeArgs), askChannelBrokenEvents); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
+  ['AS9e 精确三选一路由 ask route=none → allow', (() => { const r = askPreExecute('ask_user_question', JSON.parse(routeArgs), []); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
+  ['AS9f ordinary 探查 ask route=none → allow', (() => { const r = askPreExecute('ask_user_question', ordinaryProbeArgs, []); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
+  ['AS9g ordinary 澄清 ask route=none → allow', (() => { const r = askPreExecute('ask_user_question', ordinaryClarifyArgs, []); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
   ['AS10 目的缺一词 ask → deny 含「目的 ask 选项固定为」', (() => { const r = askPreExecute('ask_user_question', JSON.parse(wordPurposeArgs)); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('目的 ask 选项固定为') })(), true],
-  ['AS11 目的 2 问 ask → deny 含「目的 ask 结构错误」', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', options: [{ label: '完善方案' }, { label: '重新规划' }] }, { id: 'q2', question: '补充' }] }); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('目的 ask 结构错误') })(), true],
+  ['AS11 非计划目的 2 问 ask → deny 且同时含固定路由确认句与「目的 ask 结构错误」', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', options: [{ label: '完善方案' }, { label: '重新规划' }] }, { id: 'q2', question: '补充' }] }); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(ROUTE_CONFIRM_TEXT) && String(r.reason).includes('目的 ask 结构错误') })(), true],
+  ['AS12 run_code 内 none 态目的 ask → deny 且聚合含固定路由确认句', (() => { const r = askPreExecute('run_code', purposeRunCode, []); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(ROUTE_CONFIRM_TEXT) })(), true],
+  ['AS12b run_code 内 direct 态目的 ask → deny 且聚合含固定路由确认句', (() => { const r = askPreExecute('run_code', purposeRunCode, askDirectEvents); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(ROUTE_CONFIRM_TEXT) })(), true],
 ]
 for (const [name, got, expected] of AS) check(name, got, expected)
 
@@ -648,6 +1030,17 @@ function runDispatchSeries(ev) {
   const cdEnd = (sid, text, isError = false) => ({ type: ev.end, data: { rootCallId: 'r1', parentCallId: 'pc1', subCallId: sid, name: 'ask_user_question', arguments: {}, isError, content: [{ type: 'text', text }] } })
 
 // ── F-code 系列:deriveFlowState 识别 run_code 内嵌套 ask（F1 桥接） ─────────
+const fullNestedPlanApprovedEvents = [
+  um(),
+  cdStart('ask_user_question', 'fn1', nestedRouteArgs),
+  cdEnd('fn1', answer(['进行pro规划'])),
+  cdStart('ask_user_question', 'fn2', nestedPurposeArgs),
+  cdEnd('fn2', answer(['完善方案'])),
+  cdStart('ask_user_question', 'fn3', nestedClarifyArgs),
+  cdEnd('fn3', answer(['方案A'])),
+  cdStart('ask_user_question', 'fn4', nestedApprovalArgs),
+  cdEnd('fn4', answer(['同意执行'])),
+]
 const FC = [
   ['FC1 嵌套路由答「直接执行」→ direct', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['直接执行']))], { route: 'direct', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
   ['FC2 嵌套路由答「进行pro规划」→ plan', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['进行pro规划']))], { route: 'plan', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
@@ -658,6 +1051,8 @@ const FC = [
   ['FC7 嵌套 isError:true → route=none+approved=false', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', 'Error: ask failed', true)], { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
   ['FC8 直呼+嵌套混排互不干扰（后答生效）', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['直接执行'])), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划']))], { route: 'plan', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
   ['FC9 嵌套目的 ask 答「完善方案」→ purpose=refine 且 clarified=false', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['进行pro规划'])), cdStart('ask_user_question', 'n2', nestedPurposeArgs), cdEnd('n2', answer(['完善方案']))], { route: 'plan', clarified: false, approved: false, purpose: 'refine', channelBroken: false }],
+  ['FC10 嵌套完整阶段后重选「直接执行」→ 清理阶段状态', fullNestedPlanApprovedEvents.concat([cdStart('ask_user_question', 'fn5', nestedRouteArgs), cdEnd('fn5', answer(['直接执行']))]), { route: 'direct', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
+  ['FC11 嵌套完整阶段后 ASK_CANCELLED → 五字段清理', fullNestedPlanApprovedEvents.concat([cdStart('ask_user_question', 'fn5', nestedRouteArgs), cdEnd('fn5', 'Error: ask cancelled', true)]), { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
 ]
 for (const [name, events, expected] of FC) {
   check(name, deriveFlowState(events), expected)
@@ -869,5 +1264,5 @@ for (const [name, role, code, expected, gateCtx] of K) {
   console.log(`${okResult ? 'PASS' : 'FAIL'}  ${name}  (期望 ${JSON.stringify(expected)}, 实际 ${JSON.stringify(got)})`)
 }
 
-console.log(`\n通过 ${pass}/${KA.length + M.length + F.length + GK.length + GM.length + F21.length + GL.length + SW.length + P.length + C.length + CU.length + AP.length + BN.length + 5 + BR.length + DR.length + BD.length + BE.length + S.length + 1 + PW.length + 2 + D.length + 3 + 3 + PR.length + 7 + 5 + E.length + RP.length + LQ.length + AS.length + dispatchSeriesChecks + CLC.length + H.length + ASK_RETURN.length + I.length + ASK_GROUP.length + J.length + K.length + IS.length + SCD.length + PM.length + 1}, 失败 ${fail}`)
+console.log(`\n通过 ${pass}, 失败 ${fail}`)
 process.exit(fail === 0 ? 0 : 1)
