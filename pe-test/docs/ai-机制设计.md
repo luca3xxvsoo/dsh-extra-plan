@@ -28,20 +28,31 @@
 - 是什么：方案+验收两文件程序定死双写（两个 payload 必填），原子提交（tmp→journal→rename→清 journal），崩溃后下次 save_plan 自愈补完（新旧 journal 形状兼容）。
 - 为什么：方案/验收必须成对出现；崩溃不产生半成品。
 
+## 四-1、save_probe 机械上限与证据边界
+- `PROBE_LIMITS` 是 save_probe 独立于 planner 预算的参数校验：当前 `maxEvidenceEntries=150`、`maxEvidenceTextLen=1000`，四类集合上限仍为 fileMap/focusAreas 50、exclusions/background 20，证据总量上限为 32000；超限拒绝且不静默截断。step-00 PR23=151 条拒绝，PR34/PR35=1000 通过、1001 拒绝，工具描述/schema 从同一常量动态生成。
+- `exploreBudget=18` 只约束 planner 工具调用与单个 run_code 子调用，不是 PROBE_LIMITS；宿主台账的历史「80 条」「80+79+50=209」是归档 evidence 统计，也不是当前上限。
+
 ## 五、子代理工具裁剪
 - 是什么：agent.cordis.yml 各 tool-subagent-* 行的 toolFilter.deny 清单 + lib/executor-spawn.js 薄代理（覆盖引擎内部调用的 workflow/ralph worker）。planner 行 deny 含 subagent_probe（探查者仅主会话可委派：目录层不可见 + 闸门拒绝，双层禁止）。
 - 为什么：防委派递归（执行者不得再委派）、执行者/验收者只读；save_plan 注册于规划子代理层与主会话层（T3：主会话侧仅 direct 路由放行、其余路由态拒绝，内容闸门同一实现），其余代理不可见、无需 deny。
 
-## 六、模型/力度继承与 planner 跨 Provider 真实探针
-- 是什么：子代理的 reasoningEffort 与 maxTokens 仍按父会话配置继承；plannerModel 仍由设置页显式指定，空串表示继承父会话路由。crossProviderPlannerModel 是装载期快照，只有 cfg.crossProviderPlannerModel === true 才进入严格跨 Provider 路径，默认值由预设资产 false 提供；设置保存后需重新装载 Harness 才生效，运行中的 Agent 不动态切换。
-- 不可绕过的首请求时序：planner child 可以先创建并显示为等待，这不等于模型已执行；真正首请求必须按 agent/request await → 全部匹配 provider 的真实 OK probe 完成 → 排序/必要 fallback probe → 返回 final LlmCallConfig → DSH prepareCall → DSH stream 顺序进行。agent/request 的异步 listener reject 会在 DSH prepareCall 前结束该 turn。
-- False、缺失或非法值：完整保留旧单 provider 流程，只对父 provider 调用 listModels 的 advisory 目录判定；命中采用 plannerModel，非空未命中静默继承父模型，空目录/异常/无 llm 保持旧保守语义；不调用 listProviders、真实 prepareCall/stream 或 fallback probe。
-- True 且 plannerModel 非空：枚举所有已注册 provider，逐一读取 listModels，只对精确命中的 provider 串行发起一次 prepareCall({ provider, model, maxTokens: 1 })，并完整消费同一 prepared stream。请求只有一条由 createUserMessage 构造的 plugin-source OK text 消息，不带 system、tools、sessionId、purpose；所有候选结束后再按普通 provider name/id 正序、父 provider 倒数第二、deepseek-official 最后排序，不能首个成功即提前选择。
-- True 的严格 fallback：全部候选失败后，父会话 provider/model 必须再完成同规格真实 OK probe；若它与已探测候选是同一路由则复用 outcome，不二次请求。无 llm、父路由缺失、fallback 失败、失败终止块、无终止块或超时都返回固定阻断错误 extra-plan: planner request blocked: no verified planner route，未验证路由不得进入实际 planner dispatch。
-- True 且 plannerModel 为空：跳过跨 Provider 枚举，只把父会话 provider/model 作为唯一 fallback 并先验证；False 的空模型仍保持零 probe 的原继承语义。
-- 探针边界与副作用：每个 provider 使用串行 AbortController/race 与 30000 ms deadline，prepareCall 和 prepared stream 共享同一 signal；真实探针只保证调用前时点，网络、认证、额度和模型状态随后仍可能变化。探针不创建 Agent 或 session event，但会经过全局 llm/stream middleware，并可能产生真实网络、用量与计费，不是免费或零副作用；不遵守 abort 的第三方 adapter 可能留下遗留 I/O。
-- 缓存：WeakMap 在首次入口立即保存同一 in-flight promise；成功 entry 与严格 rejection 都固定到同一 planner Agent，后续请求不重复探针。
-- 为什么：以一次可控且可审计的最小真实调用换取首个 planner 路由的时点验证，同时用 False 默认值保护旧部署的行为与成本边界。
+## 六、模型/力度继承与双路由真实探针
+- 是什么：子代理的 reasoningEffort 与 maxTokens 仍按既有父会话语义继承；planner 只读取 plannerModel，非 planner child（executor、reviewer、probe、workflow/ralph worker）只读取 otherAgentModel。两项均为设置页装载期快照，保存后需重新装载 Harness 生效，运行中的 Agent 不动态切换。
+- 不可绕过的首请求时序：planner 与非 planner child 都可以先创建并显示为等待，这不等于模型已执行；True 路径的真正首请求必须按 agent/request await → 全部候选真实 OK probe 完成 → 排序/必要 fallback probe → 返回 final LlmCallConfig → DSH prepareCall → DSH stream 顺序进行。agent/request 的异步 listener reject 会在 DSH prepareCall 前结束该 turn。
+- 非 planner 显式路由优先：相对直接父的 agentOptions.provider/model 已变化时视为显式，直接保留调用方 route，不读取 otherAgentModel、不列举 provider、不做 probe；未显式时 provider/model fallback 统一取顶层主会话，planner 父模型不会污染 probe 或 worker。
+- False、缺失或非法值：planner 保留旧单 provider advisory listModels 语义；非 planner 对非空 otherAgentModel 只查询顶层主会话 provider 的 listModels，精确命中才覆盖 model，空串、未命中、空目录、异常或无 llm 均回退主会话 route；非 planner 不调用 listProviders、真实 prepareCall/stream 或 strict fallback probe。
+- True 且非 planner otherAgentModel 非空：枚举所有已注册 provider，逐一读取 listModels，只对精确命中的 provider 串行发起一次 prepareCall({ provider, model, maxTokens: 1 })，并完整消费同一 prepared stream。请求只有一条由 createUserMessage 构造的 plugin-source OK text 消息；所有候选结束后再按既有 provider name/id、父 provider、deepseek-official 排序，不能首个成功即提前 dispatch。planner 仍只按 plannerModel 走其原 resolver/cache。
+- True 的严格 fallback：非 planner 候选为空、未匹配或全部 prepare/stream/finish/timeout 失败后，顶层主会话 provider/model 必须完成同规格真实 OK probe；若同一路由已在本次 Agent 解析中探测则复用 outcome，不二次请求。无 llm、主会话路由缺失或 fallback 失败时返回固定非 planner 阻断，未验证路由不得进入实际 child dispatch；planner 继续使用原 planner 阻断。
+- True 且非 planner otherAgentModel 为空：跳过跨 Provider 枚举，只验证顶层主会话 fallback；False 的空模型保持零 probe 的原继承语义。
+- 探针边界与副作用：planner/非 planner 每个候选使用串行 AbortController/race 与 30000 ms deadline，prepareCall 和 prepared stream 共享同一 signal；真实探针只保证调用前时点，网络、认证、额度和模型状态随后仍可能变化。探针不创建 Agent 或 session event，但会经过全局 llm/stream middleware，并可能产生真实网络、用量与计费，不是免费或零副作用；不遵守 abort 的第三方 adapter 可能留下遗留 I/O。
+- 缓存：plannerModelCache 与 otherAgentModelCache 完全分离，均在各自首次入口立即保存同一 in-flight promise；成功 entry 与 strict rejection 都固定到单个 Agent，不跨角色/Agent 共享成功或失败 outcome。
+- 为什么：以一次可控且可审计的最小真实调用换取 child route 的时点验证，同时保持 planner 与非 planner 配置边界，并以 False 默认值保护旧部署的行为与成本边界。
+
+## 六-1、step-07 实机证据分层（A42/A43、C11/C12，HUMAN）
+- `pe-test/tools/step-07-子代理模型与引导取证.mjs` 只接受显式 `SESSION_ID`（顶层主会话 ID）与显式 `PLANNER_PROMPT_SUFFIX`，复用 `_shared/session-finder.mjs` 和 `_shared/zstd-frames.mjs`，兼容 `session.v3.jsonl.zstd` 与 `session.jsonl.zstd`；缺失/定位失败不得无参 auto 或伪造通过。
+- 角色只分 pro规划/非pro规划：直接 child 的 `parentSession`、`origin=subagent`、`delegationDepth`、`subagent/descriptor.mode` 与父 `subagent_plan` call/result child ID 关联共同给出证据；不能依据 provider/model 猜角色，也不细分 executor/reviewer/probe。
+- request/header.config.provider/model、request/context.provider/model/contextWindow、model/selection 是 attempted route；`assistant/message.data.message.source.kind=model` 的 source.provider/model 才是 actual provenance。重复的 header/message 原样逐条保留；前栏有而后栏无标 `attempted-only`，两栏均无标 `no-log`。
+- 仅 pro规划 child 的初始首个 text block与父 `subagent_plan` 原始 prompt参与 suffix 判定；完整输出每个 text block，`budgetNotice`、宿主 `Your parent agent id is …` guidance、`header.system` 单列且不计 suffix。精确匹配并按 `verified-injection` / `content-only` / `attempted-only` / `absent` / `no-log` 记录，配置 snapshot 与实际 route 分列。
 
 ## 七、anchored 引导（首轮极简，ptc 兼容）
 | 多调用容错 | run_code ≥2 个 tools.* 调用点未独立容错 → 组判定整体拒绝；一个 try 块包 2 个调用不算各自独立保护 | index.js runCodeCatchGateReason 注释 |

@@ -45,6 +45,7 @@ const oldValues = {
   crossProviderPlannerModel: true,
   plannerPromptSuffix: 'old: suffix',
   exploreBudget: 7,
+  otherAgentModel: 'old-distribute-other-model',
   anchoredBootstrap: false,
   runcodeCatchGate: true,
   webFetch: true,
@@ -57,7 +58,7 @@ try {
   check('首次安装 → written', distribute(home) === 'written')
   const first = manifestAt(dist)
   check('首次 manifest format=2', first.format === 2)
-  check('首次审计 source=absent 且恰有 8 项', first.settingsMigration && first.settingsMigration.source === 'absent' && Object.keys(first.settingsMigration.results).length === 8)
+  check('首次审计 source=absent 且恰有 9 项', first.settingsMigration && first.settingsMigration.source === 'absent' && Object.keys(first.settingsMigration.results).length === 9)
   check('首次厂商 distHash 正确', first.distHash === currentHash && readManifest(dist) === currentHash)
   check('同版本重装 → idle', distribute(home) === 'idle')
 
@@ -69,15 +70,22 @@ try {
   writeManifest(dist, 'OLD-DISTRIBUTE-HASH')
   check('旧 format=1 记录 → upgraded', distribute(home) === 'upgraded')
   const upgraded = manifestAt(dist)
-  check('升级后 8 项有效旧值全部恢复', readFileSync(join(dist, 'agent.cordis.yml'), 'utf8') === expectedOldAgent)
+  check('升级后 9 项有效旧值全部恢复', readFileSync(join(dist, 'agent.cordis.yml'), 'utf8') === expectedOldAgent)
   check('升级后 manifest format=2/厂商 hash', upgraded.format === 2 && upgraded.distHash === currentHash)
-  check('升级后 audit captured/8 项且不含原始用户值', upgraded.settingsMigration.source === 'captured' && Object.keys(upgraded.settingsMigration.results).length === 8 && !JSON.stringify(upgraded).includes('old-distribute-model'))
+  check('升级后 audit captured/9 项且不含原始用户值', upgraded.settingsMigration.source === 'captured' && Object.keys(upgraded.settingsMigration.results).length === 9 && !JSON.stringify(upgraded).includes('old-distribute-model') && !JSON.stringify(upgraded).includes('old-distribute-other-model'))
 
   writeFileSync(join(dist, 'agent.cordis.yml'), patchAgent({ plannerModel: 'old-without-manifest' }), 'utf8')
   rmSync(join(dist, 'dist-manifest.json'))
   check('无 manifest 仍捕获并 upgraded', distribute(home) === 'upgraded')
   const noManifest = manifestAt(dist)
   check('无 manifest sourceDistHash=null 且恢复', noManifest.settingsMigration.sourceDistHash === null && readFileSync(join(dist, 'agent.cordis.yml'), 'utf8').includes("plannerModel: 'old-without-manifest'"))
+
+  const oldMissingOther = expectedOldAgent.replace("        otherAgentModel: 'old-distribute-other-model'\n", '')
+  writeFileSync(join(dist, 'agent.cordis.yml'), oldMissingOther, 'utf8')
+  writeManifest(dist, 'OLD-MISSING-OTHER-DISTRIBUTE')
+  check('旧值缺失 otherAgentModel → upgraded', distribute(home) === 'upgraded')
+  const missingOther = manifestAt(dist)
+  check('缺失 otherAgentModel 写回空串且审计 skipped-old-missing', readFileSync(join(dist, 'agent.cordis.yml'), 'utf8').includes("otherAgentModel: ''") && missingOther.settingsMigration.results.otherAgentModel === 'skipped-old-missing')
 
   const beforeIdle = [readFileSync(join(dist, 'preset.yml')), readFileSync(join(dist, 'agent.cordis.yml')), readFileSync(join(dist, 'dist-manifest.json'))]
   check('第二次相同发行 → idle', distribute(home) === 'idle')

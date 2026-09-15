@@ -11,21 +11,21 @@ window.__ModuleLoader__.load({
 
     const zh = {
       cardTitle: "按需规划模式配置",
-      cardDescription: "配置 pro 规划模块的参数。",
+      cardDescription: "配置按需规划模式的参数",
       proSection: "pro规划模块",
       generalSection: "通用设置",
-      plannerModel: "使用模型",
-      plannerModelHint: "留空 = 继承主会话模型",
-      crossProviderPlannerModel: "跨提供商",
-      plannerPromptSuffix: "额外引导",
-      exploreBudget: "探查额度",
+      plannerModel: "pro规划 | 使用模型",
+      crossProviderPlannerModel: "跨提供方",
+      plannerPromptSuffix: "pro规划 | 额外引导",
+      exploreBudget: "pro规划 | 探查额度",
+      otherAgentModel: "其他子代理 | 使用模型",
       anchoredBootstrap: "anchored开关",
       runcodeCatchGate: "run_code 容错检查",
       webFetch: "web_fetch开关",
       toolPresentationMode: "工具呈现模式",
       toolPresentationModeNative: "默认",
       toolPresentationModeBoth: "混合",
-      toolPresentationModePtc: "纯PTC模式",
+      toolPresentationModePtc: "PTC模式",
       save: "保存",
       saving: "保存中…",
       saved: "已保存，需重启 Harness 后生效",
@@ -41,11 +41,11 @@ window.__ModuleLoader__.load({
       cardDescription: "Configure pro planner settings.",
       proSection: "Pro Planner",
       generalSection: "General Settings",
-      plannerModel: "Planner Model",
-      plannerModelHint: "Leave empty to inherit the main-session model",
+      plannerModel: "Pro Planner | Model",
       crossProviderPlannerModel: "Cross-Provider Planner Model",
-      plannerPromptSuffix: "Extra Prompt Suffix",
-      exploreBudget: "Explore Budget",
+      plannerPromptSuffix: "Pro Planner | Extra Prompt Suffix",
+      exploreBudget: "Pro Planner | Explore Budget",
+      otherAgentModel: "Other Agents | Model",
       anchoredBootstrap: "Anchored Bootstrap",
       runcodeCatchGate: "RunCode Catch Guard",
       webFetch: "Web Fetch",
@@ -63,23 +63,48 @@ window.__ModuleLoader__.load({
       falseValue: "False"
     };
 
+    const FIELD_HINTS = Object.freeze({
+      anchoredBootstrap: "首轮极简工具 + 提示词",
+      webFetch: "是否开启web_fetch",
+      toolPresentationMode: "工具呈现方式切换（默认/混合/PTC模式）",
+      runcodeCatchGate: "PTC模式下，增加每个工具调用需要try catch的闸门。通过限制+建议的模式保障仅单个调用报错",
+      crossProviderPlannerModel: "允许跨提供方选择模型。开启时将以 其他提供方 - 主会话提供方 - deepseek官方 的顺序，获取可用模型。关闭时仅从主会话提供方获取。默认关闭",
+      plannerModel: "pro规划默认使用模型。未匹配/置空时：使用主会话模型",
+      plannerPromptSuffix: "在主会话发送给pro规划的任务结尾，拼接上的内容。可能能增加pro规划的智商（未验证）。可置空",
+      exploreBudget: "允许pro规划调用工具的次数，避免后台无限制调用。同时限制一次runcode内可调用的工具上限数",
+      otherAgentModel: "其他子代理默认使用模型。未匹配/置空时：使用主会话模型"
+    });
+
     const css =
       '.esp-wrap{display:flex;flex-direction:column;gap:20px;max-width:760px;color:var(--dsw-alias-label-primary)}' +
-      '.esp-section{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;gap:10px}' +
-      '.esp-sectionTitle{font-size:14px;font-weight:600;color:var(--dsw-alias-label-primary);margin:0}' +
-      '.esp-field{display:flex;flex-direction:column;gap:6px;padding:4px 0}' +
-      '.esp-label{font-size:12px;font-weight:500;color:var(--dsw-alias-label-secondary)}' +
-      '.esp-input,.esp-select{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);border-radius:8px;padding:8px 10px;font:inherit;font-size:13px;width:100%;box-sizing:border-box}' +
-      '.esp-input:focus,.esp-select:focus{border-color:var(--dsw-alias-brand-primary);outline:none}' +
-      '.esp-textarea{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);border-radius:8px;padding:8px 10px;font:inherit;font-size:13px;width:100%;box-sizing:border-box;resize:vertical;min-height:80px}' +
-      '.esp-textarea:focus{border-color:var(--dsw-alias-brand-primary);outline:none}' +
-      '.esp-actions{display:flex;justify-content:flex-end;gap:8px;padding-top:8px}' +
-      '.esp-btn{appearance:none;font:inherit;cursor:pointer;border:1px solid var(--dsw-alias-border-l2);background:none;color:var(--dsw-alias-label-secondary);border-radius:8px;padding:5px 12px;font-size:13px;white-space:nowrap}' +
+      '.esp-card{list-style:none;border:.5px solid var(--dsw-alias-border-l4);background:var(--dsw-alias-bg-layer-3);border-radius:16px;overflow:hidden}' +
+      '.esp-cardOpen .esp-cardHeader{background:var(--dsw-alias-bg-layer-3)}' +
+      '.esp-cardHeader{appearance:none;display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;border:0;background:transparent;color:var(--dsw-alias-label-primary);cursor:pointer;padding:14px 16px;text-align:left;font:inherit}' +
+      '.esp-cardHeader:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}' +
+      '.esp-cardHeaderText{display:flex;flex-direction:column;gap:2px;min-width:0}' +
+      '.esp-cardName{font-size:14px;font-weight:600;line-height:1.5}' +
+      '.esp-cardDescription{font-size:12px;color:var(--dsw-alias-label-secondary);line-height:1.5}' +
+      '.esp-cardChevron{color:var(--dsw-alias-label-secondary);flex:0 0 auto;transition:transform .15s ease}' +
+      '.esp-cardChevronOpen{transform:rotate(180deg)}' +
+      '.esp-cardBody{border-top:.5px solid var(--dsw-alias-border-l2);margin:0 16px;padding-bottom:8px}' +
+      '.esp-section{border:.5px solid var(--dsw-alias-border-l4);background:var(--dsw-alias-bg-layer-3);border-radius:16px;padding:14px 16px;display:flex;flex-direction:column;gap:0}' +
+      '.esp-section + .esp-section{margin-top:0}' +
+      '.esp-sectionTitle{font-size:14px;font-weight:600;color:var(--dsw-alias-label-primary);line-height:1.5;margin:0 0 2px}' +
+      '.esp-field{display:flex;flex-direction:column;gap:6px;padding:12px 0}' +
+      '.esp-fieldHead{display:block}' +
+      '.esp-label{font-size:13px;font-weight:500;line-height:1.5;color:var(--dsw-alias-label-primary)}' +
+      '.esp-field + .esp-field{border-top:.5px solid var(--dsw-alias-border-l2)}' +
+      '.esp-input,.esp-select{height:34px;border:.5px solid var(--dsw-alias-border-l4);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);border-radius:8px;padding:0 12px;font:inherit;font-size:13px;width:100%;box-sizing:border-box}' +
+      '.esp-textarea{border:.5px solid var(--dsw-alias-border-l4);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);border-radius:8px;padding:8px 12px;font:inherit;font-size:13px;width:100%;box-sizing:border-box;resize:vertical;min-height:80px}' +
+      '.esp-input:focus-visible,.esp-select:focus-visible,.esp-textarea:focus-visible{border-color:var(--dsw-alias-brand-primary);outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}' +
+      '.esp-cardFooter{border-top:.5px solid var(--dsw-alias-border-l2);padding:12px 0 4px;display:flex;align-items:center;gap:8px}' +
+      '.esp-actions{display:flex;justify-content:flex-end;gap:8px;margin-left:auto}' +
+      '.esp-btn{appearance:none;font:inherit;cursor:pointer;border:.5px solid var(--dsw-alias-border-l4);background:transparent;color:var(--dsw-alias-label-secondary);border-radius:8px;padding:5px 12px;font-size:13px;white-space:nowrap}' +
       '.esp-btnPrimary{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary)}' +
       '.esp-btn:disabled{opacity:.5;cursor:default}' +
       '.esp-ok{color:var(--dsw-alias-brand-primary);font-size:12px;margin:0}' +
       '.esp-err{color:var(--dsw-alias-label-error);font-size:12px;margin:0}' +
-      '.esp-hint{color:var(--dsw-alias-label-tertiary);font-size:12px;margin:0}' +
+      '.esp-hint{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:1.5;margin:0}' +
       '.esp-empty{color:var(--dsw-alias-label-tertiary);font-size:13px;margin:0}';
 
     function apply(ctx) {
@@ -235,11 +260,11 @@ window.__ModuleLoader__.load({
             });
           }
           return el("label", { className: "esp-field", key: key },
-            el("span", { className: "esp-label" }, t(field.locale)),
+            el("span", { className: "esp-fieldHead" },
+              el("span", { className: "esp-label" }, t(field.locale))
+            ),
             control,
-            // T4：plannerModel 留空 = 显式清空 = 继承主会话模型（其余字段无此语义，只在
-            // 该字段下渲染提示；字段 key/locale 同名 plannerModel，见描述表）。
-            field.locale === "plannerModel" ? el("p", { className: "esp-hint" }, t("plannerModelHint")) : null
+            el("p", { className: "esp-hint" }, FIELD_HINTS[key] || "")
           );
         }
 
@@ -255,13 +280,15 @@ window.__ModuleLoader__.load({
             el("p", { className: "esp-sectionTitle" }, t("proSection")),
             proFields.map(renderField)
           ),
-          message.text ? el("p", { className: message.kind === "ok" ? "esp-ok" : "esp-err" }, message.text) : null,
-          el("div", { className: "esp-actions" },
-            el("button", {
-              className: "esp-btn esp-btnPrimary",
-              disabled: saving,
-              onClick: save
-            }, saving ? t("saving") : t("save"))
+          el("div", { className: "esp-cardFooter" },
+            message.text ? el("p", { className: message.kind === "ok" ? "esp-ok" : "esp-err" }, message.text) : null,
+            el("div", { className: "esp-actions" },
+              el("button", {
+                className: "esp-btn esp-btnPrimary",
+                disabled: saving,
+                onClick: save
+              }, saving ? t("saving") : t("save"))
+            )
           )
         );
       }
@@ -270,20 +297,20 @@ window.__ModuleLoader__.load({
         const [open, setOpen] = React.useState(false);
 
         return el("li", {
-          className: "YyYd_a_card" + (open ? " YyYd_a_cardOpen" : "")
+          className: "esp-card" + (open ? " esp-cardOpen" : "")
         },
           el("button", {
             type: "button",
-            className: "YyYd_a_header",
+            className: "esp-cardHeader",
             "aria-expanded": open,
             onClick: function () { setOpen(!open); }
           },
-            el("span", { className: "YyYd_a_headText" },
-              el("span", { className: "YyYd_a_name" }, t("cardTitle")),
-              el("span", { className: "YyYd_a_description" }, t("cardDescription"))
+            el("span", { className: "esp-cardHeaderText" },
+              el("span", { className: "esp-cardName" }, t("cardTitle")),
+              el("span", { className: "esp-cardDescription" }, t("cardDescription"))
             ),
             el("span", {
-              className: "YyYd_a_chevron" + (open ? " YyYd_a_chevronOpen" : ""),
+              className: "esp-cardChevron" + (open ? " esp-cardChevronOpen" : ""),
               style: { display: "inline-flex", alignItems: "center", justifyContent: "center", width: "14px", height: "14px" }
             },
               el("svg", { width: "14", height: "14", viewBox: "0 0 14 14", fill: "none" },
@@ -291,7 +318,7 @@ window.__ModuleLoader__.load({
               )
             )
           ),
-          open ? el("div", { className: "YyYd_a_body" },
+          open ? el("div", { className: "esp-cardBody" },
             el(ExtraPlanSettingsTab)
           ) : null
         );

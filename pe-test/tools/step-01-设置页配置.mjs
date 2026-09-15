@@ -122,6 +122,7 @@ const oldValues = {
   crossProviderPlannerModel: true,
   plannerPromptSuffix: 'api old suffix',
   exploreBudget: 12,
+  otherAgentModel: 'api-old-other-model',
   anchoredBootstrap: false,
   runcodeCatchGate: true,
   webFetch: true,
@@ -132,6 +133,7 @@ const newValues = {
   crossProviderPlannerModel: false,
   plannerPromptSuffix: 'new: suffix',
   exploreBudget: 31,
+  otherAgentModel: 'api-new-other-model',
   anchoredBootstrap: true,
   runcodeCatchGate: false,
   webFetch: false,
@@ -146,7 +148,7 @@ try {
   writeFileSync(join(presetDir, 'agent.cordis.yml'), patchAgent(oldValues), 'utf8')
 
   const metadata = publicSettingMetadata(TEMPLATE_AGENT, patchAgent(oldValues))
-  check('共享 metadata 恰有 8 项且默认来自新版模板', metadata.fields.length === 8 && metadata.fields.find((field) => field.key === 'exploreBudget').default === 18 && metadata.fields.find((field) => field.key === 'crossProviderPlannerModel').default === false)
+  check('共享 metadata 恰有 9 项且默认来自新版模板', metadata.fields.length === 9 && metadata.fields.find((field) => field.key === 'exploreBudget').default === 18 && metadata.fields.find((field) => field.key === 'crossProviderPlannerModel').default === false && metadata.fields.find((field) => field.key === 'otherAgentModel').default === '')
 
   const routeDefinitions = []
   const settingsRegistrations = []
@@ -189,26 +191,26 @@ try {
   serverStarted = true
 
   const proBefore = await requestJson(port, 'GET', '/api/dsh-extra-plan-settings/pro-config')
-  check('pro-config GET 返回 8 项 metadata 与旧值', proBefore.status === 200 && proBefore.body.fields.length === 8 && valuesFrom(proBefore.body).plannerModel === oldValues.plannerModel && valuesFrom(proBefore.body).crossProviderPlannerModel === true && valuesFrom(proBefore.body).toolPresentationMode === oldValues.toolPresentationMode)
+  check('pro-config GET 返回 9 项 metadata 与旧值', proBefore.status === 200 && proBefore.body.fields.length === 9 && valuesFrom(proBefore.body).plannerModel === oldValues.plannerModel && valuesFrom(proBefore.body).crossProviderPlannerModel === true && valuesFrom(proBefore.body).otherAgentModel === oldValues.otherAgentModel && valuesFrom(proBefore.body).toolPresentationMode === oldValues.toolPresentationMode)
   const fieldMap = new Map(proBefore.body.fields.map((field) => [field.key, field]))
   const fieldKeys = proBefore.body.fields.map((field) => field.key)
-  check('pro metadata 控件/min/mode 由描述表提供', fieldMap.get('exploreBudget').control === 'number' && fieldMap.get('exploreBudget').min === 1 && fieldMap.get('toolPresentationMode').options.join('/') === 'native/ptc/both' && fieldMap.get('crossProviderPlannerModel').control === 'select' && fieldMap.get('crossProviderPlannerModel').options.join('/') === 'true/false')
+  check('pro metadata 控件/min/mode 由描述表提供', fieldMap.get('exploreBudget').control === 'number' && fieldMap.get('exploreBudget').min === 1 && fieldMap.get('toolPresentationMode').options.join('/') === 'native/ptc/both' && fieldMap.get('crossProviderPlannerModel').control === 'select' && fieldMap.get('crossProviderPlannerModel').options.join('/') === 'true/false' && fieldMap.get('otherAgentModel').control === 'text')
   const generalKeys = ['anchoredBootstrap', 'webFetch', 'toolPresentationMode', 'runcodeCatchGate']
-  const proKeys = ['crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget']
+  const proKeys = ['crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel']
   check('metadata 通用设置区块顺序与 section', generalKeys.every((key, index) => fieldKeys[index] === key && fieldMap.get(key).section === 'general'))
   check('metadata pro 规划区块顺序与 section', proKeys.every((key, index) => fieldKeys[index + generalKeys.length] === key && fieldMap.get(key).section === 'pro') && proBefore.body.fields.every((field) => field.section !== undefined))
-  check('pro 区块内跨提供商紧跟使用模型', fieldKeys.indexOf('crossProviderPlannerModel') + 1 === fieldKeys.indexOf('plannerModel'))
+  check('pro 区块内跨提供方紧跟使用模型', fieldKeys.indexOf('crossProviderPlannerModel') + 1 === fieldKeys.indexOf('plannerModel'))
 
   const beforePut = readFileSync(join(presetDir, 'agent.cordis.yml'), 'utf8')
   const putBody = { ...newValues }
   const proPut = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', putBody)
-  check('pro-config PUT 返回更新后的实际 values', proPut.status === 200 && valuesFrom(proPut.body).plannerModel === newValues.plannerModel && valuesFrom(proPut.body).crossProviderPlannerModel === false && valuesFrom(proPut.body).exploreBudget === newValues.exploreBudget && valuesFrom(proPut.body).toolPresentationMode === newValues.toolPresentationMode)
+  check('pro-config PUT 返回更新后的实际 values', proPut.status === 200 && valuesFrom(proPut.body).plannerModel === newValues.plannerModel && valuesFrom(proPut.body).crossProviderPlannerModel === false && valuesFrom(proPut.body).exploreBudget === newValues.exploreBudget && valuesFrom(proPut.body).otherAgentModel === newValues.otherAgentModel && valuesFrom(proPut.body).toolPresentationMode === newValues.toolPresentationMode)
   const afterPut = readFileSync(join(presetDir, 'agent.cordis.yml'), 'utf8')
   const changed = diffLines(beforePut, afterPut)
   const managedLeaves = managedDefinitions.map((item) => item.path.split('.').at(-1))
   check('pro PUT 只改描述表登记的标量行', changed.length === managedDefinitions.length && changed.every((item) => managedLeaves.some((leaf) => item.after.includes(leaf + ':'))))
   const parsedAfterPut = parsePresetYaml(afterPut)
-  check('pro PUT 目标文件 8 项由稳定 locator 读取', managedDefinitions.every((item) => {
+  check('pro PUT 目标文件 9 项由稳定 locator 读取', managedDefinitions.every((item) => {
     const value = resolveSetting(parsedAfterPut, item, { aliases: false })
     return value.kind === 'ok' && value.value === (item.key === 'plannerModel' ? newValues.plannerModel : newValues[item.key])
   }))
@@ -226,6 +228,8 @@ try {
     ['crossProviderPlannerModel null', { crossProviderPlannerModel: null }],
     ['exploreBudget 0', { exploreBudget: 0 }],
     ['plannerPromptSuffix 非 string', { plannerPromptSuffix: 1 }],
+    ['otherAgentModel 数字', { otherAgentModel: 1 }],
+    ['otherAgentModel null', { otherAgentModel: null }],
     ['anchoredBootstrap string', { anchoredBootstrap: 'true' }],
     ['webFetch number', { webFetch: 1 }],
     ['toolPresentationMode code', { toolPresentationMode: 'code' }],
@@ -243,10 +247,43 @@ try {
   const emptyText = readFileSync(join(presetDir, 'agent.cordis.yml'), 'utf8')
   check('空串写回 plannerModel: \'\' 标量行（键保留、不删行、不回填默认值）', emptyText.includes("plannerModel: ''") && !emptyText.includes('plannerModel: deepseek-v4-pro'))
 
+  const otherEmptyPut = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { ...newValues, plannerModel: '', otherAgentModel: '' })
+  check('pro PUT otherAgentModel:"" → 200 且 values.otherAgentModel 为空串', otherEmptyPut.status === 200 && valuesFrom(otherEmptyPut.body).otherAgentModel === '')
+  const otherEmptyGet = await requestJson(port, 'GET', '/api/dsh-extra-plan-settings/pro-config')
+  check('pro GET 回显 otherAgentModel 为空串（未被默认覆盖）', otherEmptyGet.status === 200 && valuesFrom(otherEmptyGet.body).otherAgentModel === '')
+  const otherEmptyText = readFileSync(join(presetDir, 'agent.cordis.yml'), 'utf8')
+  check("空串写回 otherAgentModel: '' 标量行", otherEmptyText.includes("otherAgentModel: ''"))
+
   const clientText = readFileSync(new URL('../../plugins/dsh-extra-plan/lib/client.js', import.meta.url), 'utf8')
-  check('client 按 metadata 渲染控件且无硬编码模板路径/默认/枚举值', clientText.includes('setFields(fields)') && clientText.includes('field.options') && clientText.includes('field.min') && !clientText.includes('agent.cordis.yml') && !clientText.includes('value: "native"') && !clientText.includes('value: "ptc"') && !clientText.includes(': 18'))
-  check('client plannerModel 字段带「留空 = 继承主会话模型」提示（T4）', clientText.includes('plannerModelHint') && clientText.includes('留空 = 继承主会话模型'))
-  check('client 含跨提供商 locale 且复用 metadata select', clientText.includes('crossProviderPlannerModel') && clientText.includes('field.options') && clientText.includes('optionValue(field, e.target.value)'))
+  const expectedHints = {
+    anchoredBootstrap: '首轮极简工具 + 提示词',
+    webFetch: '是否开启web_fetch',
+    toolPresentationMode: '工具呈现方式切换（默认/混合/PTC模式）',
+    runcodeCatchGate: 'PTC模式下，增加每个工具调用需要try catch的闸门。通过限制+建议的模式保障仅单个调用报错',
+    crossProviderPlannerModel: '允许跨提供方选择模型。开启时将以 其他提供方 - 主会话提供方 - deepseek官方 的顺序，获取可用模型。关闭时仅从主会话提供方获取。默认关闭',
+    plannerModel: 'pro规划默认使用模型。未匹配/置空时：使用主会话模型',
+    plannerPromptSuffix: '在主会话发送给pro规划的任务结尾，拼接上的内容。可能能增加pro规划的智商（未验证）。可置空',
+    exploreBudget: '允许pro规划调用工具的次数，避免后台无限制调用。同时限制一次runcode内可调用的工具上限数',
+    otherAgentModel: '其他子代理默认使用模型。未匹配/置空时：使用主会话模型。',
+  }
+  check('client 按 metadata 渲染控件且无硬编码模板路径/默认/枚举值', clientText.includes('setFields(fields)') && clientText.includes('field.options') && clientText.includes('field.min') && clientText.includes('field.step') && clientText.includes('field.type === "integer" ? Number(value)') && !clientText.includes('agent.cordis.yml') && !clientText.includes('value: "native"') && !clientText.includes('value: "ptc"') && !clientText.includes(': 18'))
+  check('client 标签与三项 zh 文案已对齐', clientText.includes('cardDescription: "配置按需规划模式的参数"') && clientText.includes('plannerModel: "pro规划 | 使用模型"') && clientText.includes('plannerPromptSuffix: "pro规划 | 额外引导"') && clientText.includes('exploreBudget: "pro规划 | 探查额度"') && clientText.includes('otherAgentModel: "其他子代理 | 使用模型"') && clientText.includes('crossProviderPlannerModel: "跨提供方"') && clientText.includes('toolPresentationModePtc: "PTC模式"') && !clientText.includes('plannerModel: "使用模型"') && !clientText.includes('plannerPromptSuffix: "额外引导"') && !clientText.includes('exploreBudget: "探查额度"'))
+  for (const [key, hint] of Object.entries(expectedHints)) {
+    check('client 静态 hint ' + key, clientText.includes(key + ': "' + hint + '"'))
+  }
+  const fieldRenderStart = clientText.indexOf('return el("label", { className: "esp-field"')
+  const fieldRenderText = fieldRenderStart < 0 ? '' : clientText.slice(fieldRenderStart, fieldRenderStart + 700)
+  check('client 9 个字段统一按 head→control→hint 渲染', Object.keys(expectedHints).every((key) => clientText.includes(key)) && clientText.includes('FIELD_HINTS[key]') && fieldRenderText.indexOf('className: "esp-fieldHead"') >= 0 && fieldRenderText.indexOf('control,') > fieldRenderText.indexOf('className: "esp-fieldHead"') && fieldRenderText.indexOf('className: "esp-hint"') > fieldRenderText.indexOf('control,'))
+  check('client 保留通用设置与 pro规划模块双区块', clientText.includes('t("generalSection")') && clientText.includes('t("proSection")') && clientText.includes('generalFields.map(renderField)') && clientText.includes('proFields.map(renderField)'))
+  check('client 使用本地稳定卡片/字段样式与相邻分隔线', clientText.includes('.esp-card{') && clientText.includes('.esp-cardOpen') && clientText.includes('.esp-cardHeader{') && clientText.includes('.esp-cardBody{') && clientText.includes('.esp-cardFooter{') && clientText.includes('.esp-field{display:flex;flex-direction:column;gap:6px;padding:12px 0}') && clientText.includes('.esp-field + .esp-field{border-top:.5px solid var(--dsw-alias-border-l2)}') && clientText.includes('border-radius:16px') && clientText.includes('padding:14px 16px') && clientText.includes('margin:0 16px;padding-bottom:8px') && clientText.includes('padding:12px 0 4px'))
+  const readyBlockStart = clientText.indexOf('return el(React.Fragment, null,')
+  const readyBlockText = readyBlockStart < 0 ? '' : clientText.slice(readyBlockStart, readyBlockStart + 1200)
+  const espCardFooterCount = (clientText.match(/className: "esp-cardFooter"/g) || []).length
+  check('client 双内嵌卡片官方稳定外观与共享保存区', clientText.includes('.esp-wrap{display:flex;flex-direction:column;gap:20px;') && clientText.includes('.esp-section{border:.5px solid var(--dsw-alias-border-l4);background:var(--dsw-alias-bg-layer-3);border-radius:16px;padding:14px 16px;display:flex;flex-direction:column;gap:0}') && clientText.includes('.esp-section + .esp-section{margin-top:0}') && !clientText.includes('.esp-section{display:flex;flex-direction:column;gap:0;padding:10px 0 0}') && !clientText.includes('.esp-section + .esp-section{margin-top:8px}') && readyBlockText.includes('t("generalSection")') && readyBlockText.includes('generalFields.map(renderField)') && readyBlockText.includes('t("proSection")') && readyBlockText.includes('proFields.map(renderField)') && clientText.includes('className: "esp-cardBody"') && readyBlockText.includes('className: "esp-cardFooter"') && espCardFooterCount === 1)
+  check('client 控件尺寸/焦点与 textarea 视觉契约', clientText.includes('font-size:13px;font-weight:500;line-height:1.5') && clientText.includes('height:34px') && clientText.includes('border-radius:8px;padding:0 12px') && clientText.includes(':focus-visible') && clientText.includes('resize:vertical;min-height:80px'))
+  check('client 无官方哈希类、未公开组件或 README 运行时依赖', !clientText.includes('YyYd_a_') && !clientText.includes('At1oFq_') && !clientText.includes('ValueField') && !clientText.includes('PluginCard') && !clientText.includes('CardForm') && !clientText.includes('README.md'))
+  check('hint/option 工具呈现模式统一为 PTC模式', clientText.includes('toolPresentationMode: "工具呈现模式"') && clientText.includes('toolPresentationModePtc: "PTC模式"') && clientText.includes('toolPresentationMode: "工具呈现方式切换（默认/混合/PTC模式）"'))
+  check('client 保留 GET/PUT、slot key 与 slots/locale 注入', clientText.includes('const PRO_CONFIG_URL = "/api/dsh-extra-plan-settings/pro-config"') && clientText.includes('method: "PUT"') && clientText.includes('key: "dsh-extra-plan"') && clientText.includes('exports.inject = ["slots", "locale"]') && clientText.includes('inject: () => ({})'))
 } catch (error) {
   fail += 1
   console.error('FAIL  设置页 HTTP 回归异常: ' + String(error && error.stack || error))

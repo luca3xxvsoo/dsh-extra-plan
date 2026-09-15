@@ -70,10 +70,12 @@
 //     native/both）→ shell + read（run_code 被滤掉）；仅 run_code（ptc 折叠目录）
 //     → run_code；无 shell 且无 run_code → 跳过并每实例警告一次；
 //     执行者/reviewer 子代理不引导。
-//  4) planner 模型与首请求屏障：reasoningEffort/maxTokens 继承父会话；crossProviderPlannerModel
-//     仅严格等于 true 时，agent/request await 全部匹配 provider 的真实 OK probe、排序和必要
-//     fallback 验证后才返回最终 LlmCallConfig，随后宿主才可 prepareCall/stream。False、缺失、
-//     非法值保留旧单 provider listModels 流程；所有 True 路由失败时固定阻断，不交未验证配置。
+//  4) planner 与非 planner child 模型及首请求屏障：planner 只用 plannerModel，executor/reviewer/probe
+//     与 workflow/ralph worker 只用 otherAgentModel；非 planner 显式 agentOptions/provider/model 优先，
+//     未显式时 fallback 固定取顶层主会话。crossProviderPlannerModel 仅严格等于 true 时，agent/request
+//     await 全部匹配 provider 的真实 OK probe、排序和必要 fallback 验证后才返回最终 LlmCallConfig，
+//     随后宿主才可 prepareCall/stream。False、缺失、非法值的非 planner 仅查主会话 provider advisory
+//     listModels；所有 True 路由失败时固定阻断，不交未验证配置。
 //  5) 子代理沙箱下限（复用 childPolicyNeedsFloor）：read-only → workspace-write。
 //  6) usage 账本（config.usageLedger.enabled）：折叠 assistant/message.usage
 //     逐行写 JSONL，行 = 一次调用；role：main（主会话）/ planner（规划子代理）/
@@ -1023,23 +1025,28 @@ function renderSavePlan(value) {
 // ── save_probe：探查线索落盘的机械上限（导出供测试，防复制漂移） ──
 // 条目数/单条长度/总量均为设计值；调整须同步 PROBE_LIMITS、测试、文档三处。
 export const PROBE_LIMITS = {
-  maxEntries: { fileMap: 50, focusAreas: 50, exclusions: 20, background: 20 },
-  maxPathLen: 1024,
-  maxRangeLen: 20,
-  maxRelationLen: 400,
-  maxNoteLen: 400,
-  maxTopicLen: 120,
-  maxDetailLen: 1000,
-  maxTotalChars: 20000,
-  rangePattern: '^L?\\d+(?:-\\d+)?$',
-  maxEvidenceEntries: 80,
-  maxEvidenceLineLen: 20,
-  maxEvidenceValueLen: 240,
-  maxEvidenceTextLen: 800,
-  maxEvidenceNoteLen: 400,
-  maxEvidenceTotalChars: 32000,
-  evidenceLinePattern: '^L?\\d+$',
-  maxTaskNameLen: 32,
+  maxEntries: { // 各类集合/数组的最大条目数配置
+    fileMap: 50, // 文件映射表，例如 路径 -> 文件信息
+    focusAreas: 50, // 重点关注区域/重点模块
+    exclusions: 20, // 排除项，例如排除文件、目录、规则
+    background: 20, // 背景信息/上下文条目
+  },
+  maxPathLen: 1024, // 文件路径或目录路径最大长度
+  maxRangeLen: 20, // 范围字符串最大长度，例如 "L10-L20"、"123-456"
+  maxRelationLen: 400, // 关系描述最大长度，例如依赖、调用、关联关系
+  maxNoteLen: 400, // 备注/注释最大长度
+  maxTopicLen: 120, // 主题/标题最大长度
+  maxDetailLen: 1000, // 详细说明最大长度
+  maxTotalChars: 20000, // 整个探测内容总字符数上限
+  rangePattern: '^L?\\d+(?:-\\d+)?$', // 范围格式正则：匹配 123、L123、123-456、L123-456；L 可能表示 Line
+  maxEvidenceEntries: 150, // 证据条目最大数量
+  maxEvidenceLineLen: 20, // 证据行号字符串最大长度，例如 "L123"
+  maxEvidenceValueLen: 240, // 证据 value 字段最大长度
+  maxEvidenceTextLen: 1000, // 证据正文/文本内容最大长度
+  maxEvidenceNoteLen: 400, // 证据备注最大长度
+  maxEvidenceTotalChars: 32000, // 所有证据内容总字符数上限
+  evidenceLinePattern: '^L?\\d+$', // 证据行号格式正则：匹配 123 或 L123，不支持范围
+  maxTaskNameLen: 32, // 任务名称最大长度
 }
 
 // line/range 格式提示统一文案（描述与报错共用；格式正则本体不变）。
@@ -1275,6 +1282,54 @@ function catalogIsCollapsed(tools) {
 // 基准为直接父（isExplicitRoute 复用）、maxTokens 无条件继承、effort 取直接父
 // reasoningEffort（顶层 effort 不渗入）。模块顶层纯函数：不引用 probeClaimFor/
 // pendingProbeClaims/plannerModelCache/plannerModel/ctx 闭包变量；经 decisions 导出供场景测试直接复用。
+function requestConfigSnapshot(agent) {
+  if (agent === undefined || agent === null || agent.session === undefined || agent.session === null) return null
+  if (typeof agent.session.requestHeader !== 'function') return null
+  let header
+  try { header = agent.session.requestHeader() } catch (error) { return null }
+  const config = header !== undefined && header !== null && header.config !== undefined && header.config !== null ? header.config : null
+  if (config === null || typeof config !== 'object') return null
+  return {
+    provider: typeof config.provider === 'string' && config.provider !== '' ? config.provider : undefined,
+    model: typeof config.model === 'string' && config.model !== '' ? config.model : undefined,
+    maxTokens: typeof config.maxTokens === 'number' && config.maxTokens > 0 ? config.maxTokens : undefined,
+    reasoningEffort: typeof config.reasoningEffort === 'string' ? config.reasoningEffort : '',
+  }
+}
+
+function agentFromRegistry(agents, id) {
+  if (agents === undefined || agents === null || typeof agents.get !== 'function') return undefined
+  try { return agents.get(id) } catch (error) { return undefined }
+}
+
+// 返回直接父与顶层主会话的 owned route snapshot；链断裂时不把中间 child 当主会话。
+function resolveAgentRouteSources(agent, agents) {
+  const header = agent !== undefined && agent !== null && agent.session !== undefined && agent.session !== null && agent.session.header !== undefined && agent.session.header !== null ? agent.session.header : null
+  const parentSession = header !== null ? header.parentSession : undefined
+  if (typeof parentSession !== 'string') return { available: false, complete: false, direct: null, source: null }
+  const parent = agentFromRegistry(agents, parentSession)
+  const direct = requestConfigSnapshot(parent)
+  if (direct === null) return { available: false, complete: false, direct: null, source: null }
+  let source = direct
+  let current = parent
+  let complete = true
+  let depth = 0
+  while (isSubagentChild(current)) {
+    const currentHeader = current !== undefined && current !== null && current.session !== undefined && current.session !== null && current.session.header !== undefined && current.session.header !== null ? current.session.header : null
+    const upId = currentHeader !== null ? currentHeader.parentSession : undefined
+    if (typeof upId !== 'string') { complete = false; break }
+    const up = agentFromRegistry(agents, upId)
+    if (up === undefined) { complete = false; break }
+    const upConfig = requestConfigSnapshot(up)
+    if (upConfig === null) { complete = false; break }
+    current = up
+    source = upConfig
+    depth += 1
+    if (depth >= 8) { complete = false; break }
+  }
+  return { available: true, complete, direct, source: complete ? source : null }
+}
+
 async function resolveProbeRequestInjection(agent, agents, resolved) {
   // 1) 直接父解析（防御 requestHeader 异常；重构前为内联逻辑，现抽为独立函数）
   if (agent === undefined || agent === null || agent.session === undefined || agent.session === null) return resolved
@@ -2366,6 +2421,7 @@ function decidePlannerModelUse(plannerModel, provider, catalog) {
 // True 路径的真实探针固定上限；False 路径不读取这些辅助逻辑。
 const PLANNER_PROBE_TIMEOUT_MS = 30000
 const PLANNER_BLOCKED_REASON = 'extra-plan: planner request blocked: no verified planner route'
+const NON_PLANNER_BLOCKED_REASON = 'extra-plan: non-planner request blocked: no verified non-planner route'
 
 function comparePlannerText(a, b) {
   const left = typeof a === 'string' ? a : ''
@@ -2485,9 +2541,11 @@ export const decisions = {
   jobOutputGateReason,
   probeDisposalWarning,
   resolveProbeRequestInjection,
+  resolveAgentRouteSources,
   decidePlannerModelUse,
   PLANNER_PROBE_TIMEOUT_MS,
   PLANNER_BLOCKED_REASON,
+  NON_PLANNER_BLOCKED_REASON,
   sortPlannerCandidates,
 }
 
@@ -2503,6 +2561,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 export function apply(ctx, config) {
   const cfg = config !== null && typeof config === 'object' ? config : {}
   const plannerModel = typeof cfg.plannerModel === 'string' ? cfg.plannerModel : 'deepseek-v4-pro'
+  const otherAgentModel = typeof cfg.otherAgentModel === 'string' ? cfg.otherAgentModel.trim() : ''
   const planToolName = typeof cfg.planTool === 'string' ? cfg.planTool : 'subagent_plan'
   const exploreBudget = Number.isInteger(cfg.exploreBudget) && cfg.exploreBudget > 0 ? cfg.exploreBudget : 18
   const savePlanDir = typeof cfg.savePlanDir === 'string' && cfg.savePlanDir !== '' ? cfg.savePlanDir : '.extra-plan'
@@ -2664,6 +2723,8 @@ export function apply(ctx, config) {
   // plannerModelCache：planner 子代理有效模型条目缓存（key=agent）。True 路径首次入口
   // 立即缓存 in-flight promise；成功 entry 与严格 rejection 都固定到该 Agent 生命周期。
   const plannerModelCache = new WeakMap()
+  // 非 planner 专用缓存：key=单个 child Agent；成功、in-flight 与 strict rejection 均固定隔离。
+  const otherAgentModelCache = new WeakMap()
 
   function plannerAbortError(signal) {
     const reason = signal !== undefined && signal !== null ? signal.reason : undefined
@@ -2895,6 +2956,101 @@ export function apply(ctx, config) {
       ? resolvePlannerEntryStrict(agent, parentSignal)
       : resolvePlannerEntryLegacy(agent)
     plannerModelCache.set(agent, pending)
+    return pending
+  }
+
+  // 非 planner 路由来源：普通 child 保留直接父 maxTokens，probe 保留顶层来源 maxTokens；
+  // provider/model 的 fallback 始终取完整链路解析出的顶层主会话，链断裂不冒充中间 child。
+  function nonPlannerRouteSources(agent) {
+    let agents
+    try { agents = ctx.get('agents') } catch (error) { agents = undefined }
+    return resolveAgentRouteSources(agent, agents)
+  }
+
+  function nonPlannerFallbackEntry(sources, probe) {
+    if (sources === null || sources === undefined || sources.available !== true || sources.source === null || sources.direct === null) return null
+    const tokenSource = probe ? sources.source : sources.direct
+    return {
+      provider: sources.source.provider,
+      model: sources.source.model,
+      maxTokens: tokenSource.maxTokens,
+    }
+  }
+
+  // cross=false/缺失/非法：只对顶层主会话 provider 做 advisory listModels；不做真实探针。
+  async function resolveOtherAgentEntryLegacy(agent, probe) {
+    const sources = nonPlannerRouteSources(agent)
+    const fallback = nonPlannerFallbackEntry(sources, probe)
+    if (fallback === null || otherAgentModel === '' || fallback.provider === undefined) return fallback || {}
+    let llm
+    try { llm = ctx.get('llm') } catch (error) { llm = undefined }
+    if (llm === undefined || llm === null || typeof llm.listModels !== 'function') return fallback
+    try {
+      const models = await llm.listModels(fallback.provider)
+      if (Array.isArray(models) && models.some((item) => item !== null && typeof item === 'object' && item.id === otherAgentModel)) {
+        return { ...fallback, model: otherAgentModel }
+      }
+    } catch (error) {
+      // advisory 目录异常按要求静默回退顶层主会话。
+    }
+    return fallback
+  }
+
+  // cross=true：所有匹配 provider 串行完整 OK probe，候选全部结束后按 planner 既有排序选择。
+  async function resolveOtherAgentEntryStrict(agent, parentSignal, probe) {
+    const sources = nonPlannerRouteSources(agent)
+    const fallback = nonPlannerFallbackEntry(sources, probe)
+    if (fallback === null) {
+      if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
+      throw new Error(NON_PLANNER_BLOCKED_REASON)
+    }
+    if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
+    let llm
+    try { llm = ctx.get('llm') } catch (error) { llm = undefined }
+    if (llm === undefined || llm === null || typeof llm !== 'object') {
+      throw new Error(NON_PLANNER_BLOCKED_REASON)
+    }
+    const routeKey = (routeProvider, routeModel) => routeProvider + '\u0000' + routeModel
+    const probeOutcomes = new Map()
+    const successes = []
+    if (otherAgentModel !== '' && typeof llm.listProviders === 'function') {
+      let listedProviders = []
+      try {
+        const listed = await withPlannerProbeDeadline(() => llm.listProviders(), parentSignal)
+        if (!(listed !== null && typeof listed === 'object' && listed.timeout === true) && Array.isArray(listed)) listedProviders = listed
+      } catch (error) {
+        if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
+      }
+      const seenProviderIds = new Set()
+      for (const listed of listedProviders) {
+        if (listed === null || typeof listed !== 'object' || typeof listed.id !== 'string' || listed.id === '' || seenProviderIds.has(listed.id)) continue
+        seenProviderIds.add(listed.id)
+        const providerName = typeof listed.name === 'string' ? listed.name : listed.id
+        const outcome = await probePlannerRoute(llm, listed.id, otherAgentModel, parentSignal, true)
+        if (outcome.matched) probeOutcomes.set(routeKey(listed.id, otherAgentModel), outcome)
+        if (outcome.ok) successes.push({ id: listed.id, name: providerName })
+      }
+      const sorted = sortPlannerCandidates(successes, fallback.provider)
+      if (sorted.length > 0) return { ...fallback, provider: sorted[0].id, model: otherAgentModel }
+    }
+    if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
+    if (fallback.provider === undefined || fallback.model === undefined) throw new Error(NON_PLANNER_BLOCKED_REASON)
+    const fallbackKey = routeKey(fallback.provider, fallback.model)
+    const reused = probeOutcomes.get(fallbackKey)
+    const fallbackOutcome = reused !== undefined ? reused : await probePlannerRoute(llm, fallback.provider, fallback.model, parentSignal, false)
+    if (fallbackOutcome.ok) return fallback
+    if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
+    throw new Error(NON_PLANNER_BLOCKED_REASON)
+  }
+
+  // 单一非 planner 入口：每个 child Agent 独立保存首个 in-flight promise、成功或 strict rejection。
+  function resolveOtherAgentEntry(agent, parentSignal, probe) {
+    const cached = otherAgentModelCache.get(agent)
+    if (cached !== undefined) return cached
+    const pending = crossProviderPlannerModelOn
+      ? resolveOtherAgentEntryStrict(agent, parentSignal, probe)
+      : resolveOtherAgentEntryLegacy(agent, probe)
+    otherAgentModelCache.set(agent, pending)
     return pending
   }
 
@@ -3468,46 +3624,33 @@ export function apply(ctx, config) {
       }
       return nextConfig
     }
-    const parentSession = payload.agent.session.header.parentSession
-    if (typeof parentSession !== 'string') return resolved
-    const agents = ctx.get('agents')
-    let parent
-    try {
-      parent = agents !== undefined ? agents.get(parentSession) : undefined
-    } catch (error) {
-      parent = undefined
-    }
-    if (parent === undefined) return resolved
-    const header = typeof parent.session.requestHeader === 'function' ? parent.session.requestHeader() : undefined
-    const pcfg = header !== undefined && header.config !== undefined && header.config !== null ? header.config : null
-    if (pcfg === null) return resolved
-    const parentProvider = typeof pcfg.provider === 'string' && pcfg.provider !== '' ? pcfg.provider : undefined
-    const parentModel = typeof pcfg.model === 'string' && pcfg.model !== '' ? pcfg.model : undefined
-    const parentMaxTokens = typeof pcfg.maxTokens === 'number' && pcfg.maxTokens > 0 ? pcfg.maxTokens : undefined
+    let agents
+    try { agents = ctx.get('agents') } catch (error) { agents = undefined }
+    const sources = resolveAgentRouteSources(payload.agent, agents)
+    if (sources.available !== true || sources.direct === null) return resolved
+    const parentConfig = sources.direct
+    const parentProvider = parentConfig.provider
+    const parentModel = parentConfig.model
     const resolvedProvider = typeof resolved.provider === 'string' ? resolved.provider : ''
     const resolvedModel = typeof resolved.model === 'string' ? resolved.model : ''
     const resolvedEffort = typeof resolved.reasoningEffort === 'string' ? resolved.reasoningEffort : ''
-    let provider = parentProvider
-    let model = parentModel
-    let maxTokens = parentMaxTokens
-    // probe（探查者）特判：模型跟随顶层主会话（resolveProbeRequestInjection 内沿
-    // parentSession 链上溯）；early return 不读 plannerModelCache，planner 分支不受影响。
-    // probe 判定=真实工具集含 save_probe（schemas 投影；save_probe 仅主会话与认领的
-    // probe 子代理注册，执行者/reviewer schemas 无 save_probe）。
-    if (schemasHasTool(toolSchemasOf(payload.agent), 'save_probe')) {
-      return await resolveProbeRequestInjection(payload.agent, agents, resolved)
-    }
-    const parentEffort = typeof pcfg.reasoningEffort === 'string' ? pcfg.reasoningEffort : ''
+    const parentEffort = parentConfig.reasoningEffort
     const routeExplicit = isExplicitRoute(resolvedProvider, resolvedModel, parentProvider, parentModel)
     const effortExplicit = isExplicitEffort(resolvedEffort, parentEffort)
+    const probe = schemasHasTool(toolSchemasOf(payload.agent), 'save_probe')
+    const tokenSource = probe && sources.source !== null ? sources.source : parentConfig
     const nextConfig = { ...resolved }
+    // 显式 agentOptions/provider/model 相对直接父路由优先：短路 resolver、目录与真实探针。
     if (!routeExplicit) {
-      // 未显式：现状注入（模型/提供商跟随父会话）
-      if (model !== undefined) nextConfig.model = model
-      if (provider !== undefined) nextConfig.provider = provider
+      // 非 planner resolver 内部把 provider/model fallback 固定取顶层主会话；probe 同样不绕过该入口。
+      const entry = await resolveOtherAgentEntry(payload.agent, payload.signal, probe)
+      if (entry !== null && entry.model !== undefined) nextConfig.model = entry.model
+      if (entry !== null && entry.provider !== undefined) nextConfig.provider = entry.provider
+      if (entry !== null && entry.maxTokens !== undefined) nextConfig.maxTokens = entry.maxTokens
+    } else if (tokenSource.maxTokens !== undefined) {
+      // 显式 route 仍保持原 maxTokens 继承语义；probe 沿用顶层来源。
+      nextConfig.maxTokens = tokenSource.maxTokens
     }
-    // maxTokens 保持现状无条件继承（官方显式接口无 maxTokens，不做判定）
-    if (maxTokens !== undefined) nextConfig.maxTokens = maxTokens
     const suppressEffort = effortExplicit || (routeExplicit && resolvedEffort === '')
     if (parentEffort !== '' && !suppressEffort) nextConfig.reasoningEffort = parentEffort
     return nextConfig

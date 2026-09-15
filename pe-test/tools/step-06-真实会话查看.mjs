@@ -42,6 +42,12 @@ for (const dir of found.dirs) {
         const err = data.error
         const reason = err ? trunc(String(err.reason || err.message || JSON.stringify(err)), 260) : ''
         if (reason !== '') console.log(`L${lineNo} TOOL-ERROR ${trunc(reason, 260)}`)
+        const blocks = data.message && Array.isArray(data.message.content) ? data.message.content : []
+        for (const block of blocks) {
+          if (block === null || typeof block !== 'object' || block.type !== 'tool-result' || block.isError !== true) continue
+          const content = Array.isArray(block.content) ? block.content.map((item) => item !== null && typeof item === 'object' && typeof item.text === 'string' ? item.text : '').join('') : String(block.content || '')
+          console.log(`L${lineNo} TOOL-ERROR ${trunc(content || 'tool-result isError=true', 260)}`)
+        }
       } else if (typeof t === 'string' && /retry|error|failed/i.test(t)) {
         console.log(`L${lineNo} EVENT[${t}] ${trunc(JSON.stringify(data), 300)}`)
       }

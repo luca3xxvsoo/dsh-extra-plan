@@ -21,10 +21,12 @@ dsh 插件「按需规划模式」预设：AI 未经用户同意只能只读探�
 | 四级闸门状态机+主闸门 | plugins/dsh-extra-plan/index.js | 修改最频繁（route/purpose/clarified/approved/channelBroken） |
 | 探查预算 | index.js budget* 族（budgetNoticeText/budgetReminderText/budgetExhaustedReason 等） | 开局告知/剩3提醒/耗尽往返 |
 | save_probe/save_plan 工具 | index.js 落盘族（validateProbe/renderProbeMarkdown/atomicCommit/recoverJournals/defineSavePlan 等） | 双写+journal 自愈；save_plan 注册于规划子代理层+主会话层（主会话仅 direct 路由放行，T3） |
+| save_probe PROBE_LIMITS | index.js validateProbe/defineSaveProbe；step-00 PR23=151、PR34/PR35 | evidence 最多 150 条、单条 evidence.text 最多 1000 字；1000 通过、1001 拒绝；描述/schema 动态读取常量 |
 | run_code 静态拆解组判定 | index.js decomposeRunCode/runCodeGroupDenyReason | 防绕道闸门 |
 | run_code 容错检查 | index.js runCodeCatchGateReason/runCodeDispatchGateReason（开关 cfg.runcodeCatchGate 默认 false） | 多调用独立容错硬闸门（只认逐点 try/catch；教学式拒绝）+ 单实例子调用上限=exploreBudget |
 | anchored 引导 | index.js system-prompt/assemble 钩子（isBootstrapPhase/keep 构造；行号见代码地图函数索引） | 首轮极简 persona/目录收窄；ptc 兼容（目录含 run_code 亦锚定；有 shell 时滤 run_code） |
 | 探查者模型注入 | index.js resolveProbeRequestInjection | 上溯父会话配置 |
+| 实机子代理模型/提供方与引导取证 | pe-test/tools/step-07-子代理模型与引导取证.mjs | HUMAN：显式 SESSION_ID + PLANNER_PROMPT_SUFFIX；两代日志、pro规划/非pro规划、attempted route 与 actual provenance、suffix 等级 |
 | 设置页后端 API | lib/settings.js（createApiHandler 等） | 仅本机环回 |
 | 设置页前端 UI | lib/client.js | 打包器（__ModuleLoader__）格式；**已按函数级索引**（apply/ProConfigTab/ExtraPlanCard 等，2026-09-10 起） |
 | 预设自愈核对 | lib/preset-sync.js | 启动时 hash 比对下发 |
@@ -36,6 +38,8 @@ dsh 插件「按需规划模式」预设：AI 未经用户同意只能只读探�
 ## 模块关系（数据流）
 用户需求 → 主会话（只读探查理解）→ 探查方式二选一 ask（主会话探查 / 探查者探查）→ 路由确认 → pro 规划（目的确认 → 澄清 → save_probe 线索 → 规划子代理 save_plan 双文件；planner 申请继续探查 → 主会话再探查/委派探查者 → 转达线索路径 → 预算重置继续）→ 用户批准 → 执行者（按方案改）→ 验收者（逐条核对）→ 主会话汇总 → **用户部署生产环境 → 用户实测闭环**（部署动作由用户执行；AI 在验收通过前不得执行生产环境同步/部署动作）；「直接执行」路径跳过规划环节。
 
+实机证据补充：A42/A43（C11/C12）由 step-07 HUMAN 独立取证，不能用 step-00 fake/mock、候选 probe 或工作区配置替代实际 provider/model 与 suffix 结论；request/header 是 attempted route，assistant/message source 是 actual provenance；exploreBudget=18 仍只代表 planner 工具预算。
+
 ## 运行时相关
 - web 直接核心包安装经 dsh plugin add + cordis.patch.yml（host 平面行：extra-plan-settings 设置页 API、extra-plan-preset-sync 预设自愈）
 - web 直接核心包唯一负责预设分发：scripts/distribute-preset.mjs（安装/更新写 DSH_HOME/.agent-presets/extra-plan/）
@@ -45,7 +49,7 @@ dsh 插件「按需规划模式」预设：AI 未经用户同意只能只读探�
 - 导航入口：READAI.md（先读它）
 - 机制设计意图/教训：pe-test/docs/ai-机制设计.md
 - 维护纪律/自检/地图同步：pe-test/docs/ai-维护手册.md
-- 函数级索引：pe-test/docs/ai-代码地图.md
+- 函数级索引：pe-test/docs/ai-代码地图.md（含 step-07 HUMAN 取证入口）
 - 流程备查：pe-test/docs/ai-流程备查.md
 - 宿主耦合台账（升级 DSH/qqbot 前必读）：pe-test/docs/ai-宿主耦合台账.md
 

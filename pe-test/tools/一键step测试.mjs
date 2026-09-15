@@ -37,6 +37,7 @@ const HUMAN = [
   ['step-04-工具清单查看.mjs', '参数可选: <会话目录名>；无参数自动查找最新按需规划模式主会话+其子会话，看每轮 AI 用了哪些工具（引导收窄/恢复）'],
   ['step-05-会话解码.mjs', '参数可选: <会话目录名>；无参数自动查找最新按需规划模式主会话+其子会话，看事件统计/plan模式（澄清问题问到没）'],
   ['step-06-真实会话查看.mjs', '参数可选: <sessions-dir>；无参数自动查找最新按需规划模式主会话+其子会话，看拒绝记录（TOOL-ERROR）'],
+  ['step-07-子代理模型与引导取证.mjs', '必须通过一键参数 --session <顶层主会话ID> 显式传入 SESSION_ID，并继承调用者显式提供的 PLANNER_PROMPT_SUFFIX；只读两代日志，查看 pro规划/非pro规划 child 的 route/provenance/suffix 分栏'],
   ['step-08-方案配对查看.mjs', '参数可选: <sessions-dir>/<会话目录名>；无参数自动查找最新按需规划模式主会话+其子会话，看 save_plan 调用/结果是否成对（方案+验收双写）'],
 ]
 
@@ -81,10 +82,24 @@ function runForensic(file, sessionArg) {
   const env = sessionArg !== undefined
     ? { ...process.env, SESSION_ID: String(sessionArg) }
     : process.env
-  const r = spawnSync(process.execPath, [join(HERE, file)], {
-    encoding: 'utf8', timeout: 120000, maxBuffer: 64 * 1024 * 1024, env,
-  })
-  const out = (r.stdout || '') + (r.stderr || '')   // 全量拼接，无任何截断/过滤/摘要
+  // 与自动项相同，使用文件描述符避免受限 Windows 环境下 stdout/stderr 管道 EPERM；
+  // 读取两个临时文件后再原样拼接，保留完整 stdout/stderr。
+  const captureDir = mkdtempSync(join(tmpdir(), 'dsh-pe-test-human-'))
+  const stdoutPath = join(captureDir, 'stdout.log')
+  const stderrPath = join(captureDir, 'stderr.log')
+  const stdoutFd = openSync(stdoutPath, 'w')
+  const stderrFd = openSync(stderrPath, 'w')
+  let r
+  try {
+    r = spawnSync(process.execPath, [join(HERE, file)], {
+      timeout: 120000, stdio: ['ignore', stdoutFd, stderrFd], env,
+    })
+  } finally {
+    closeSync(stdoutFd)
+    closeSync(stderrFd)
+  }
+  const out = readFileSync(stdoutPath, 'utf8') + readFileSync(stderrPath, 'utf8')
+  rmSync(captureDir, { recursive: true, force: true })
   return { status: r.status, out, error: r.error }
 }
 
@@ -149,7 +164,7 @@ function main() {
   lines.push('')
 
   lines.push('## 二、人眼项（无自动判定，请人工运行判读）')
-  lines.push('提示：以下取证工具无参运行时按「会话定位」区规则取会话；也可用 --session <会话ID> / SESSION_ID 指定会话后再运行')
+  lines.push('提示：step-07 必须用 --session <顶层主会话ID> 并显式提供 PLANNER_PROMPT_SUFFIX；其余取证工具无参运行时按「会话定位」区规则取会话，也可用 --session <会话ID> / SESSION_ID 指定')
   for (const [file, note] of HUMAN) {
     const tool = file.replace(/\.mjs$/, '')
     lines.push(`- ${file} — ${note}（详见 测试报告-${tool}-${stamp}.md）`)

@@ -52,6 +52,7 @@ dsh plugin --profile qqbot add 'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-qqb
 0. 下载源码并解压
 1. 核心安装(必装)
 ```powershell 7+
+dsh plugin --profile web remove @local/dsh-extra-plan
 dsh plugin --profile web add "file:///[解压路径]/dsh-extra-plan-main/plugins/dsh-extra-plan" --allow-build="@local/dsh-extra-plan@file:[解压路径]/dsh-extra-plan-main/plugins/dsh-extra-plan"
 ```
 2. qqbot兼容插件安装 (选装,remove命令报错可忽略)
@@ -88,14 +89,15 @@ DSH web界面 -> 设置 -> 插件 -> 插件配置 -> 按需规划模式配置
 **通用设置**：
   - anchored开关：首轮极简工具 + 提示词
   - web_fetch开关：是否开启web_fetch
-  - 工具呈现模式：工具呈现方式切换（默认/混合/纯PTC模式）
+  - 工具呈现模式：工具呈现方式切换（默认/混合/PTC模式）
   - run_code 容错检查：PTC模式下，增加每个工具调用需要try catch的闸门。通过限制+建议的模式保障仅单个调用报错
 
 **pro规划**：
-  - 跨提供商：允许跨提供商选择模型。开启时将以 其他提供商 - 主会话提供商 - deepseek官方 的顺序，获取可用模型。关闭时仅从主会话提供商获取。默认关闭
-  - 使用模型：pro规划默认使用模型。未匹配/置空时：使用主会话模型
-  - 额外引导：在主会话发送给pro规划的任务结尾，拼接上的内容。可能能增加pro规划的智商（未验证）。可置空
-  - 探查额度：允许pro规划调用工具的次数，避免后台无限制调用。同时限制一次runcode内可调用的工具上限数
+  - 跨提供方：允许跨提供方选择模型。开启时将以 其他提供方 - 主会话提供方 - deepseek官方 的顺序，获取可用模型。关闭时仅从主会话提供方获取。默认关闭
+  - pro规划 | 使用模型：pro规划默认使用模型。未匹配/置空时：使用主会话模型
+  - pro规划 | 额外引导：在主会话发送给pro规划的任务结尾，拼接上的内容。可能能增加pro规划的智商（未验证）。可置空
+  - pro规划 | 探查额度：允许pro规划调用工具的次数，避免后台无限制调用。同时限制一次runcode内可调用的工具上限数
+  - 其他子代理 | 使用模型：其他子代理默认使用模型。未匹配/置空时：使用主会话模型
 
 ## 5. 仓库结构
 
@@ -154,6 +156,7 @@ dsh-extra-plan/
 │       ├── step-05-会话解码.mjs
 │       ├── step-06-线索落盘.mjs
 │       ├── step-06-真实会话查看.mjs
+│       ├── step-07-子代理模型与引导取证.mjs
 │       ├── step-08-方案配对查看.mjs
 │       ├── step-99-用量统计.mjs
 │       ├── 代码地图生成.mjs                           

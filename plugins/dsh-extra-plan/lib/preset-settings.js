@@ -97,6 +97,11 @@ export const SETTING_DEFINITIONS = Object.freeze([
     key: 'exploreBudget', pluginId: 'extra-plan', path: 'config.exploreBudget', scalarType: 'integer',
     validator: isPositiveInteger, ui: { control: 'number', min: 1, step: 1, locale: 'exploreBudget', section: 'pro' }, locatorAliases: [],
   }),
+  setting({
+    key: 'otherAgentModel', pluginId: 'extra-plan', path: 'config.otherAgentModel', scalarType: 'string',
+    validator: isString, normalize: (value) => value.trim(),
+    ui: { control: 'text', locale: 'otherAgentModel', section: 'pro' }, locatorAliases: [],
+  }),
 ])
 
 export const PRESET_SETTINGS = SETTING_DEFINITIONS

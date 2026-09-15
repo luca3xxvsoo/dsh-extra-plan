@@ -5,6 +5,7 @@
 - 改预设（agent.cordis.yml）：复制现有预设为副本再改；官方安装的预设/技能只读引用（不复制不改写）
 - 先读：ai-概览.md（改哪里）、ai-机制设计.md（改核心前）、ai-代码地图.md（定位函数）
 - **验收与部署次序**：先仓库内验收 → 用户部署生产 → 生产测试。AI 在验收通过前不得执行生产环境同步/部署动作（dsh plugin 更新、distribute-preset.mjs、复制 DSH_HOME 安装目录、.agent-presets 下发等均属用户侧部署）
+- **本轮 README 边界**：根 `dsh-extra-plan/README.md` 不编辑、不备份；其中 otherAgentModel 文档缺口只记录在本维护范围，由用户自行同步。
 - 复杂嵌套/拼接的修改遵循转义纪律：最终目标语言视角写出正确代码 → 逐层向外转义 → 解析回放验证（全局纪律）
 
 ## Web 核心与 QQBot 分发所有权
@@ -34,22 +35,24 @@
    - 一键体检已内置一致性检查（`代码地图生成.mjs --check`，**不写盘**）：地图与代码不一致（[新增]/[行号]/[删除]）或存在漏检/导航失效 → 该项判**失败**，提示先跑同步
    - 地图头部「意图速查」整节由人工维护（脚本原样保留）；其引用的函数改名/删除后会报 [导航失效]
    - 提交前跑 node pe-test/tools/代码地图生成.mjs --check 须退出码 0
-3. 跑对应自检（见下表）
+3. 跑对应自检（见下表）。step-07 是实机 HUMAN 项：无可用 SESSION_ID 时不得伪造通过，改由用户在同一部署快照下实测。
 4. 交付汇报：改动点 / 校验结果 / 备份路径 / 风险点；用户实测确认后才算完成
 
 ## 自检工具速查（pe-test/tools/）
 | 改动域 | 自检 |
 |:--|:--|
 | 闸门/路由/写拦截 | step-04-路由与写闸门.mjs（监听器级）+ step-00-跨平台写拦截.mjs（68 用例，写形态识别正则的纯函数级回归） |
-| planner 探查委派禁令（T5）+ save_plan 主会话路由（T3）+ plannerModel 降级/跨 Provider 时序（T2） | step-04-路由与写闸门.mjs（T3/T5 监听器级）、step-00-全流程回归.mjs（PM 纯函数 + fake LLM True/False 分流、真实 OK probe、排序、失败隔离、fallback、timeout、cache、agent/request 屏障）、step-06-线索落盘.mjs（save_plan 注册与路由矩阵） |
+| planner 探查委派禁令（T5）+ save_plan 主会话路由（T3）+ plannerModel/otherAgentModel 降级与跨 Provider 时序（T2） | step-04-路由与写闸门.mjs（T3/T5 监听器级）、step-00-全流程回归.mjs（planner 与 executor/reviewer/probe/workflow/ralph worker 的 True/False 分流、真实 OK probe、排序、失败隔离、fallback、timeout、per-Agent cache、agent/request 屏障）、step-06-线索落盘.mjs（save_plan 注册与路由矩阵） |
+| save_probe 机械上限/动态描述 | step-00-全流程回归.mjs（PROBE_LIMITS：evidence 150、text 1000，PR23=151、PR34/PR35=1000/1001；实际 schema 动态断言） |
 | save_probe/save_plan 落盘 | step-06-线索落盘.mjs |
-| 预设安装/完整性/设置页/八项迁移 | step-01-预设完整性.mjs、step-01-安装分发.mjs、step-01-安装同步.mjs、step-01-设置迁移.mjs、step-01-设置页配置.mjs（descriptor/metadata/locator/manifest 从 7 到 8、default false、true/false PUT、非法值与 skipped-old-missing） |
-| 全量回归 | step-00-全流程回归.mjs（需真实 session_id；一键step测试.mjs 同）。**一键体检的自动判定项共 11 项**（以 `一键step测试.mjs` 的 AUTO 数组为准）：step-00-全流程回归、step-00-跨平台写拦截、step-01-设置迁移、step-01-安装分发、step-01-安装同步、step-01-预设完整性、step-01-设置页配置、step-01-qqbot-安装映射、step-04-路由与写闸门、step-06-线索落盘、代码地图生成.mjs（--check） |
+| 预设安装/完整性/设置页/九项迁移 | step-01-预设完整性.mjs、step-01-安装分发.mjs、step-01-安装同步.mjs、step-01-设置迁移.mjs、step-01-设置页配置.mjs（descriptor/metadata/locator/manifest 从 8 到 9、otherAgentModel 空串默认、true/false PUT、非法值与 skipped-old-missing） |
+| 全量回归 | step-00-全流程回归.mjs（本地 mock/in-process，不需真实 session_id；一键step测试.mjs 同）。**一键体检的自动判定项共 11 项**（以 `一键step测试.mjs` 的 AUTO 数组为准）：step-00-全流程回归、step-00-跨平台写拦截、step-01-设置迁移、step-01-安装分发、step-01-安装同步、step-01-预设完整性、step-01-设置页配置、step-01-qqbot-安装映射、step-04-路由与写闸门、step-06-线索落盘、代码地图生成.mjs（--check） |
 | usage 账本 | step-99-用量统计.mjs |
 | 跨平台写拦截 | step-00-跨平台写拦截.mjs |
 | 代码地图（口径/覆盖/导航） | 一键step测试.mjs 内置「代码地图生成.mjs --check」（不写盘，比对结构+漏检+导航失效）；同步仍用 node pe-test/tools/代码地图生成.mjs |
-| 会话解码/取证 | step-05-会话解码.mjs、step-06-真实会话查看.mjs、step-08-方案配对查看.mjs |
+| 会话解码/取证 | step-05-会话解码.mjs、step-06-真实会话查看.mjs、step-07-子代理模型与引导取证.mjs、step-08-方案配对查看.mjs |
 | 机械闸门实机逐条实测（非 mock/静态自检，both 单形态 × catchGate 两轮） | pe-test/docs/ai-实机闸门测试流程.md（AI 给脚本、用户照做、当场取证判定） |
+| 子代理模型/提供方与 suffix 实机取证（A42/A43、C11/C12） | step-07-子代理模型与引导取证.mjs（HUMAN；显式 SESSION_ID + PLANNER_PROMPT_SUFFIX；request/header attempted route 与 assistant/message actual provenance 分列，suffix 等级完整保留） |
 
 ## 代码地图（函数级索引）维护规则
 - 定位功能：grep pe-test/docs/ai-代码地图.md 关键词（函数名/功能词）→ 得文件+行号 → read 区间；地图未覆盖再 glob/grep/read 探查
@@ -61,3 +64,5 @@
 ---
 
 *本文件对应 READAI.md 导航层「维护纪律」一行的展开。*
+
+补充口径：`PROBE_LIMITS.maxEvidenceEntries=150`、`maxEvidenceTextLen=1000`；`exploreBudget=18` 仅是 planner 探查预算/单实例子调用上限，台账历史 80 条与 80+79+50=209 仍是归档统计。

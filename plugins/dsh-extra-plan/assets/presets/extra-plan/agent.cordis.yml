@@ -113,14 +113,16 @@
         bootstrapPersona: 'You are a helpful software engineer assistant.'
         bootstrapShellTools: [bash, pwsh]
         bootstrapCommonTools: [read]
-        # planner 模型名：置空=继承主会话模型；非空且主会话 provider 目录明确不含该模型时
+        # planner 模型名：仅 planner 使用；置空=继承主会话模型；非空且主会话 provider 目录明确不含该模型时
         # 静默降级为主会话模型（T2 判定：目录为空/取不到目录则保守沿用，目录是 advisory）；
         # provider/maxTokens 继承父会话。默认值仅在该键缺失时生效（键存在即为用户值）。
         plannerModel: deepseek-v4-pro
-        # False 保留旧单 provider 目录流程；True 才对全 provider 做串行真实 OK 探针并严格验证 fallback。
+        # False 保留旧单 provider 目录流程；True 才对 planner 与非 planner child 做串行真实 OK 探针并严格验证 fallback。
         crossProviderPlannerModel: false
         planTool: subagent_plan
         exploreBudget: 18
+        otherAgentModel: ''
+        # 非 planner child（executor/reviewer/probe/workflow/ralph worker）优先使用该模型；空/未匹配/真实探针失败回退主会话。
         savePlanDir: '.extra-plan'
         plannerPromptSuffix: '你的深度思考部分需要以"好了，现在我以全局视角来看待这个问题"开头'
         usageLedger:
@@ -173,7 +175,7 @@
     - id: tool-subagent-list-agents
       name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
 
-    # 执行者（模型跟随主会话）：批准后经 subagent 委派。deny 只列本预设实际存在的工具名
+    # 执行者（非 planner child）：优先使用 otherAgentModel，空/未匹配/真实探针失败回退主会话；批准后经 subagent 委派。deny 只列本预设实际存在的工具名
     # （R2 教训）；save_plan 仅在规划子代理层注册，执行者不可见、无需 deny。
     - id: tool-subagent
       name: '@deepseek-ai/dsh-tool-subagent'
@@ -278,8 +280,8 @@
             - subagent_plan
             - cordis_run
 
-    # 探查子代理（subagent_probe）：只读探查 + save_probe 落盘【含证据报告】
-    # one-shot（不可续轮）；模型跟随主会话（不配 agentOptions，显式指定优先）
+    # 探查子代理（非 planner child）：优先使用 otherAgentModel，空/未匹配/真实探针失败回退顶层主会话；只读探查 + save_probe 落盘【含证据报告】
+    # one-shot（不可续轮）；模型由非 planner resolver 处理（不配 agentOptions，显式指定优先）
     - id: tool-subagent-probe
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
@@ -311,10 +313,10 @@
             - cordis_run
 
     # executor-spawn 薄委托层：
-    # workflow/ralph worker 请求缺 toolFilter 时注入执行者 deny（12 项，含 cordis_run、含
+    # workflow/ralph worker 请求缺 toolFilter 时注入执行者 deny（12 项，含
     # subagent_plan 防 worker 再规划、含 subagent_probe 防 worker 委派探查者；
-    # save_plan 不可见无需列）；模型不注入，worker 由宿主继承父会话当前模型
-    # （请求显式指定 model 时优先）。
+    # save_plan 不可见无需列）；模型不在薄层注入，worker 由非 planner resolver 选择 otherAgentModel
+    # 或回退顶层主会话（请求显式指定 provider/model 时优先）。
     - id: executor-spawn
       name: '@local/dsh-extra-plan/executor-spawn'
       config:

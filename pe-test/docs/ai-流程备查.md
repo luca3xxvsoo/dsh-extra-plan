@@ -40,6 +40,8 @@
    - 只含四类定位线索：文件地图（fileMap）/ 重点区域（focusAreas）/ 排除项（exclusions）/ 背景与意图（background），**不含证据**（行号/数值/文案摘录）
    - plan 态下 save_probe 与 subagent_plan **同条件放行**（目的已定 + 澄清完成后；澄清完成＝目的已定后的澄清答复置位 clarified）
 
+⑨-1 **save_probe 限制口径**：当前 `PROBE_LIMITS.maxEvidenceEntries=150`、`maxEvidenceTextLen=1000`；step-00 PR23=151 条拒绝（用 `PROBE_LIMITS.maxEvidenceEntries + 1` 动态构造），PR34/PR35 用 `PROBE_LIMITS.maxEvidenceTextLen` 与加一覆盖 `evidence.text` 1000 通过、1001 拒绝；save_probe 描述/schema 随常量动态生成。`exploreBudget=18` 仍是 planner 探查预算/单实例子调用上限，不是 PROBE_LIMITS；台账历史 80 条、80+79+50=209 仍是归档统计。
+
 ⑩ 启用 pro 规划子代理（subagent_plan 工具，continuable 固定后台）：
    - 委派 prompt 自包含（目标、范围、相关文件、产出要求）并带上用户目的选择（完善方案/重新规划）与线索文件路径，说明「先 read 该线索文件、再按需补查」，避免重复探查
    - **探查硬上限**（默认 18 次，计数含 save_plan）：每轮开局告知预算；剩余 ≤3 次注入一次「还剩 N 次」提醒（预算值 ≤3 时不注入；每轮只注入一次）；预算耗尽 → 拒绝后续工具调用并注入带数字收敛指令。预算自最近一条主会话发往子代理的消息起计：初始任务/续轮转达（kind=user/agent-message）= 一次重置 = 授权继续；运行时快照（kind=plugin）不重置
@@ -53,7 +55,9 @@
    - **证据引用**：来自探查者【含证据报告】的可标【探查者已核实】并注明「证据来源：<文件路径>」（插件校验文件存在且为证据报告）
    - 用户可随时中断：说「取消规划」或改选直行 → 主会话 interrupt_agent 停止子代理当前轮次（interrupt 仅停轮、不销毁会话，子代理仍存续、可随时唤醒）；非通道取消同时清 route/purpose/clarified/approved，回到 ⑦ 重新路由确认后再动手；通道级故障仍保留 channelBroken 逃生与旧状态。
 
-⑩-1 **planner 首请求时序屏障（crossProviderPlannerModel）**：continuable child/session 的创建、session-start、childId 与等待可以先发生，但都不算模型执行。True 路径中，agent/request listener 必须先 await 上游 next()，再等待全部匹配 provider 的真实 OK probe 完整结束并完成排序；若没有成功候选，再等待已验证的父 provider/model fallback；只有在这些步骤完成后才返回 final LlmCallConfig，随后 DSH 才允许 prepareCall，再进入 stream。任何候选与 fallback 都失败时 listener reject 固定错误 extra-plan: planner request blocked: no verified planner route，actual planner prepareCall/stream 均不得发生。False、缺失、非法值不走该屏障之外的跨 provider/fallback probe，保留旧流程。
+⑩-1 **planner 与非 planner 首请求时序屏障（crossProviderPlannerModel）**：child/session 的创建、session-start、childId 与等待可以先发生，但都不算模型执行。planner 仍只解析 plannerModel；executor、reviewer、probe、workflow worker、ralph worker 等非 planner child 解析 otherAgentModel。非 planner 先按直接父比较显式 agentOptions.provider/model，显式 route 直接保留；未显式时 fallback 来源统一为顶层主会话，不被 planner 父模型污染。True 路径中 agent/request listener 必须先 await 上游 next()，再等待全部匹配 provider 的真实 OK probe 完整结束并完成排序；若没有成功候选，再等待已验证的顶层主会话 provider/model fallback；只有这些步骤完成后才返回 final LlmCallConfig，随后 DSH 才允许 prepareCall，再进入 stream。任何候选与 fallback 都失败时 listener 在实际 child prepareCall/stream 前 reject；planner 使用原固定错误，非 planner 使用固定非 planner 阻断。False、缺失、非法值的非 planner 只查主会话 provider 的 advisory listModels，不做真实 probe；planner 旧流程保持不变。
+
+⑩-2 **step-07 实机模型/引导取证（A42/A43、C11/C12，HUMAN）**：用户必须在同一部署配置快照下显式提供 `SESSION_ID`（顶层主会话 ID）与 `PLANNER_PROMPT_SUFFIX`（空串也必须显式存在），运行 `node pe-test/tools/step-07-子代理模型与引导取证.mjs`；脚本只读两代日志，按 parentSession/origin/delegationDepth/descriptor.mode 与父 `subagent_plan` call/result 关联 child，只区分 pro规划/非pro规划。request/header.config.provider/model、request/context、model/selection 只记 attempted route；assistant/message.source.provider/model 才记 actual provenance。仅 pro规划 child 的首个 text block参与 suffix 精确匹配，完整输出所有 text block，budgetNotice、宿主 `Your parent agent id is …` guidance、header.system 分列且不计 suffix；等级按 verified-injection/content-only/attempted-only/absent/no-log，不能用 mock、候选 probe 或模型猜角色代替实机结论。
 
 ⑪ 计划回传 → 主会话读取方案文件与验收文件（用 read 工具读取展示）、把内容**原样展示给用户（不要改写、不要润色）**，并 ask 确认下一步操作——第一问选项固定为「同意执行」「转交pro规划」「不同意」，同一次问话附第二个问题「修改意见」（可留空，批准 ask 须 ≥2 个问题）：
    - 「同意执行」→ 进入 ⑫
@@ -81,7 +85,7 @@
 
 ## 2. 子代理通用机制（贯穿 ⑩-⑬）
 
-- **模型/力度继承与跨 Provider 开关**：子代理 reasoningEffort/maxTokens 仍继承父会话，plannerModel 非空时由设置页选择；crossProviderPlannerModel 默认 false，且仅 cfg.crossProviderPlannerModel === true 才启用严格真实探针。设置保存后需重新装载 Harness，运行中的 Agent 不动态切换。False、缺失、非法值完整保留旧单 provider listModels advisory 语义（空 plannerModel 直接零 probe 继承）；True 的非空 plannerModel 枚举全 provider，所有精确命中 provider 串行完成 prepareCall({provider,model,maxTokens:1}) + 完整 prepared stream 的 plugin-source OK text probe 后再按普通 name/id、父 provider 倒数第二、deepseek-official 最后排序。所有候选失败时必须先验证父 provider/model fallback，同路由复用结果；无验证路由固定阻断，不能让 planner 进入真实请求。True 的空 plannerModel 只验证父 fallback。
+- **模型/力度继承与跨 Provider 开关**：子代理 reasoningEffort/maxTokens 仍按既有继承/显式抑制语义；plannerModel 仅供 planner，otherAgentModel 仅供非 planner child。crossProviderPlannerModel 默认 false，且仅 cfg.crossProviderPlannerModel === true 才启用严格真实探针。设置保存后需重新装载 Harness，运行中的 Agent 不动态切换。非 planner 在 False/缺失/非法时只对顶层主会话 provider 调用 listModels advisory，精确命中 otherAgentModel 才覆盖；空、未命中、空目录、异常或无 llm 回退主会话 route，不调用 listProviders、真实 prepareCall/stream 或 strict fallback probe。True 的非空 otherAgentModel 枚举全 provider，所有精确命中 provider 串行完成 prepareCall({provider,model,maxTokens:1}) + 完整 prepared stream 的 plugin-source OK probe 后再按既有排序，全部候选结束后才选择；候选失败/未命中/空配置时先验证顶层主会话 provider/model fallback，同路由复用结果；无验证路由在实际 child dispatch 前固定阻断。planner 的 True/False 与原 planner resolver/cache 独立，planner 仍只使用 plannerModel。
 - **子代理沙箱下限**：read-only → 自动抬升为 workspace-write（childPolicyNeedsFloor），保证子代理能写工作区
 - **usage 账本**：每次调用（含子代理）按 role（main/planner/executor）折叠写入 usage-ledger JSONL（配置见 agent.cordis.yml extra-plan.usageLedger）
 

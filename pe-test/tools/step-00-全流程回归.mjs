@@ -71,9 +71,11 @@ const {
   renderProbeMarkdown,
   extractProbeEvidenceRefs,
   resolveProbeRequestInjection,
+  resolveAgentRouteSources,
   decidePlannerModelUse,
   PLANNER_PROBE_TIMEOUT_MS,
   PLANNER_BLOCKED_REASON,
+  NON_PLANNER_BLOCKED_REASON,
   sortPlannerCandidates,
 } = plugin.decisions
 const HERE = fileURLToPath(new URL('.', import.meta.url))
@@ -529,7 +531,7 @@ const PR = [
   ['PR20 range L12-34 → 过', { ...validProbe(), focusAreas: [{ path: EXISTING, range: 'L12-34', note: 'n' }] }, 'pass'],
   ['PR21 exclusions scope 概念边界（不校验存在性）→ 过', { ...validProbe(), exclusions: [{ scope: '某概念边界', note: 'n' }] }, 'pass'],
   ['PR22 evidence 非数组 → 拒', { ...validProbe(), evidence: 'not-array' }, 'reject'],
-  ['PR23 evidence 81 条 → 拒', { ...validProbe(), evidence: Array.from({ length: PROBE_LIMITS.maxEvidenceEntries + 1 }, (_, i) => ({ path: EXISTING, value: `v${i}` })) }, 'reject'],
+  ['PR23 evidence 151 条 → 拒', { ...validProbe(), evidence: Array.from({ length: PROBE_LIMITS.maxEvidenceEntries + 1 }, (_, i) => ({ path: EXISTING, value: `v${i}` })) }, 'reject'],
   ['PR24 evidence[0] 缺 line/value/text → 拒', { ...validProbe(), evidence: [{ path: EXISTING }] }, 'reject'],
   ['PR25 evidence[0].line 非法（如 L12-x）→ 拒', { ...validProbe(), evidence: [{ path: EXISTING, line: 'L12-x', value: 'v' }] }, 'reject'],
   ['PR26 evidence[0].path 不存在 → 拒并指明', { ...validProbe(), evidence: [{ path: '不存在-证据-xyz.md', value: 'v' }] }, 'reject-with', '不存在'],
@@ -540,6 +542,8 @@ const PR = [
   ['PR31 多违规一次性全报（聚合）', { ...validProbe(), fileMap: [{ path: '不存在-聚合-xyz.md', relation: 'r' }], background: [{ topic: 't', detail: 'x'.repeat(PROBE_LIMITS.maxDetailLen + 1) }] }, 'reject-all', ['不存在', 'background[0].detail', '处违规']],
   ['PR32 evidence.line 区间报错含修正法', { ...validProbe(), evidence: [{ path: EXISTING, line: 'L158-162', value: 'v' }] }, 'reject-all', ['禁止区间', 'evidence.text', '单个行号']],
   ['PR33 focusAreas.range 非法报错含区间说明', { ...validProbe(), focusAreas: [{ path: EXISTING, range: 'L12-x', note: 'n' }] }, 'reject-all', ['range', '仅 focusAreas.range 允许区间']],
+  ['PR34 evidence[0].text 1000 字 → 过', { ...validProbe(), evidence: [{ path: EXISTING, text: 't'.repeat(PROBE_LIMITS.maxEvidenceTextLen) }] }, 'pass'],
+  ['PR35 evidence[0].text 1001 字 → 拒', { ...validProbe(), evidence: [{ path: EXISTING, text: 't'.repeat(PROBE_LIMITS.maxEvidenceTextLen + 1) }] }, 'reject'],
 ]
 for (const [name, args, mode, substr] of PR) {
   const got = validateProbe(args, HERE)
@@ -547,6 +551,28 @@ for (const [name, args, mode, substr] of PR) {
   if (okResult) { pass += 1 } else { fail += 1 }
   console.log(`${okResult ? 'PASS' : 'FAIL'}  ${name}  (实际 ${JSON.stringify(got)})`)
 }
+
+// ── SCHEMA 系列：save_probe 注册后核验实际动态描述（不复制限制常量） ────────
+const schemaRegistration = { listeners: {}, registered: [] }
+const schemaTools = { register: (definition) => schemaRegistration.registered.push(definition) }
+const schemaCtx = {
+  get: () => undefined,
+  on(name, fn) {
+    if (schemaRegistration.listeners[name] === undefined) schemaRegistration.listeners[name] = []
+    schemaRegistration.listeners[name].push(fn)
+  },
+}
+plugin.apply(schemaCtx, { anchoredBootstrap: false })
+const schemaAgent = {
+  session: { header: { id: 'schema-main' }, snapshotEvents: () => [] },
+  ctx: { get: (name) => name === 'tools' ? schemaTools : undefined },
+}
+schemaRegistration.listeners['agent/session-start'][0]({ agent: schemaAgent })
+const schemaSaveProbe = schemaRegistration.registered.find((definition) => definition.name === 'save_probe')
+const schemaDescription = schemaSaveProbe === undefined ? '' : String(schemaSaveProbe.description || '')
+const evidenceDescription = schemaSaveProbe === undefined || schemaSaveProbe.parameters === undefined || schemaSaveProbe.parameters.properties === undefined || schemaSaveProbe.parameters.properties.evidence === undefined ? '' : String(schemaSaveProbe.parameters.properties.evidence.description || '')
+check('SCHEMA1 实际 save_probe 顶层描述含动态 evidence 条数/正文上限', schemaDescription.includes(`evidence ≤${PROBE_LIMITS.maxEvidenceEntries} 条`) && schemaDescription.includes(`evidence JSON 总量 ≤${PROBE_LIMITS.maxEvidenceTotalChars}`), true)
+check('SCHEMA2 实际 save_probe evidence schema 含动态 text 长度上限', evidenceDescription.includes(`至多 ${PROBE_LIMITS.maxEvidenceEntries} 条`) && evidenceDescription.includes(`text ≤${PROBE_LIMITS.maxEvidenceTextLen} 字`), true)
 
 // ── RENDER4+ 系列:renderSaveProbe / renderProbeMarkdown 契约（v3） ────────
 const probeRendered = renderSaveProbe({ path: 'C:/w/.extra-plan/线索-x-20260816090000.md' })
@@ -734,6 +760,7 @@ function makePlannerHarness(options = {}) {
   const config = {
     anchoredBootstrap: false,
     plannerModel: options.plannerModel === undefined ? 'planner-model' : options.plannerModel,
+    otherAgentModel: options.otherAgentModel === undefined ? '' : options.otherAgentModel,
   }
   if (Object.prototype.hasOwnProperty.call(options, 'crossProviderPlannerModel')) config.crossProviderPlannerModel = options.crossProviderPlannerModel
   plugin.apply(ctx, config)
@@ -967,6 +994,300 @@ const PLANNER = [
   }, { message: 'caller-aborted', listProviders: 0, prepareCalls: 0 }],
 ]
 for (const [name, fn, expected] of PLANNER) check(name, await fn(), expected)
+
+// ── NP 系列：非 planner child 统一模型解析、真实探针、回退与 per-Agent cache ──
+const OTHER_MODEL = 'other-model'
+const nonPlannerRoles = ['executor', 'reviewer', 'probe', 'workflow-worker', 'ralph-worker']
+
+function makeNonPlannerHarness(options = {}) {
+  const timeline = options.timeline || []
+  const mainConfig = options.mainConfig === undefined
+    ? { provider: 'p-main', model: 'main-model', maxTokens: 512, reasoningEffort: 'low' }
+    : options.mainConfig
+  const plannerConfig = options.plannerConfig === undefined
+    ? { provider: 'p-planner', model: 'planner-model', maxTokens: 1024, reasoningEffort: 'medium' }
+    : options.plannerConfig
+  const main = {
+    session: {
+      header: { id: 'main-id', origin: 'main' },
+      snapshotEvents: () => [],
+      requestHeader: () => ({ config: mainConfig }),
+    },
+  }
+  const planner = {
+    session: {
+      header: { id: 'planner-id', origin: 'subagent', delegationDepth: 1, parentSession: 'main-id' },
+      snapshotEvents: () => [{ type: 'subagent/descriptor', data: { mode: 'continuable' } }],
+      requestHeader: () => ({ config: plannerConfig }),
+    },
+  }
+  const specs = Array.isArray(options.agentSpecs) && options.agentSpecs.length > 0
+    ? options.agentSpecs
+    : [{ id: options.agentId || 'child-id', role: options.role || 'executor', parentSession: options.parentSession || 'main-id' }]
+  const registry = new Map([['main-id', main], ['planner-id', planner]])
+  const agents = new Map()
+  for (const spec of specs) {
+    const role = spec.role || 'executor'
+    const schemas = spec.schemas !== undefined
+      ? spec.schemas
+      : role === 'probe' ? [{ name: 'save_probe' }] : role === 'reviewer' ? [{ name: 'read' }] : [{ name: 'write' }]
+    const agent = {
+      session: {
+        header: { id: spec.id, origin: 'subagent', delegationDepth: 2, parentSession: spec.parentSession || 'main-id' },
+        snapshotEvents: () => [],
+      },
+      ctx: {
+        get(name) {
+          if (name === 'tools') return { schemas: () => schemas }
+          return undefined
+        },
+      },
+    }
+    agents.set(spec.id, agent)
+    registry.set(spec.id, agent)
+  }
+  const listeners = {}
+  const ctx = {
+    get(name) {
+      if (name === 'agents') return { get: (id) => registry.get(id) }
+      if (name === 'llm') return options.llm
+      return undefined
+    },
+    on(name, fn) {
+      if (listeners[name] === undefined) listeners[name] = []
+      listeners[name].push(fn)
+    },
+  }
+  const config = {
+    anchoredBootstrap: false,
+    plannerModel: 'planner-model',
+    otherAgentModel: options.otherAgentModel === undefined ? OTHER_MODEL : options.otherAgentModel,
+  }
+  if (Object.prototype.hasOwnProperty.call(options, 'crossProviderPlannerModel')) config.crossProviderPlannerModel = options.crossProviderPlannerModel
+  plugin.apply(ctx, config)
+  return { main, planner, registry, agents, agent: agents.values().next().value, listeners, timeline }
+}
+
+function directRouteFor(harness, agent) {
+  const child = typeof agent === 'string' ? harness.agents.get(agent) : agent
+  const parent = harness.registry.get(child.session.header.parentSession)
+  const header = parent !== undefined && parent.session !== undefined && typeof parent.session.requestHeader === 'function'
+    ? parent.session.requestHeader() : undefined
+  const config = header !== undefined && header.config !== undefined && header.config !== null ? header.config : {}
+  return {
+    ...(typeof config.provider === 'string' ? { provider: config.provider } : {}),
+    ...(typeof config.model === 'string' ? { model: config.model } : {}),
+    ...(typeof config.maxTokens === 'number' ? { maxTokens: config.maxTokens } : {}),
+    ...(typeof config.reasoningEffort === 'string' ? { reasoningEffort: config.reasoningEffort } : {}),
+  }
+}
+
+async function invokeNonPlanner(harness, agentOrId, resolved, signal) {
+  const agent = typeof agentOrId === 'string' ? harness.agents.get(agentOrId) : (agentOrId || harness.agent)
+  const listener = harness.listeners['agent/request']
+  if (!Array.isArray(listener) || listener.length === 0) throw new Error('agent/request 非 planner listener 未注册')
+  const base = resolved === undefined ? directRouteFor(harness, agent) : resolved
+  const requestSignal = signal === undefined ? new AbortController().signal : signal
+  return listener[0]({ agent, turn: 1, step: 1, signal: requestSignal }, async () => {
+    harness.timeline.push('agent/request-next')
+    return base
+  })
+}
+
+function markActualNonPlanner(harness) {
+  harness.timeline.push('actual-prepare')
+  harness.timeline.push('actual-stream')
+}
+
+function routeView(result) {
+  if (result === null || result === undefined) return null
+  return {
+    provider: result.provider,
+    model: result.model,
+    maxTokens: result.maxTokens,
+    reasoningEffort: result.reasoningEffort,
+  }
+}
+
+const NON_PLANNER = [
+  ['NP1 executor/reviewer/probe/workflow/ralph 均走 otherAgentModel（cross=false）', async () => {
+    const outputs = []
+    for (const role of nonPlannerRoles) {
+      const timeline = []
+      const fake = makePlannerFake({ catalogs: { 'p-main': [{ id: OTHER_MODEL, name: 'Other Model' }] } }, timeline)
+      const harness = makeNonPlannerHarness({ role, llm: fake.llm, timeline, crossProviderPlannerModel: false })
+      const result = await invokeNonPlanner(harness)
+      markActualNonPlanner(harness)
+      const actualIndex = timeline.indexOf('actual-prepare')
+      outputs.push({ role, route: routeView(result), listProviders: fake.state.listProviders, listModels: fake.state.listModels.join('|'), prepareCalls: fake.state.prepareCalls.length, streamCalls: fake.state.streamCalls.length, resolverBeforeActual: timeline.indexOf('listModels:p-main') < actualIndex })
+    }
+    return outputs
+  }, nonPlannerRoles.map((role) => ({ role, route: { provider: 'p-main', model: OTHER_MODEL, maxTokens: 512, reasoningEffort: 'low' }, listProviders: 0, listModels: 'p-main', prepareCalls: 0, streamCalls: 0, resolverBeforeActual: true }))],
+  ['NP2 cross=false/缺失/非法、空/未命中/空目录/异常/无 llm 均回退主会话且不真实 probe', async () => {
+    const cases = [
+      { label: 'empty', otherAgentModel: '', catalog: [{ id: OTHER_MODEL }], crossProviderPlannerModel: false },
+      { label: 'whitespace', otherAgentModel: '   ', catalog: [{ id: OTHER_MODEL }], crossProviderPlannerModel: false },
+      { label: 'miss', catalog: [{ id: 'different-model' }], crossProviderPlannerModel: false },
+      { label: 'empty-catalog', catalog: [], crossProviderPlannerModel: false },
+      { label: 'catalog-error', catalog: 'reject', crossProviderPlannerModel: false },
+      { label: 'no-llm', noLlm: true, crossProviderPlannerModel: false },
+      { label: 'missing-switch', catalog: [{ id: OTHER_MODEL }] },
+      { label: 'string-switch', catalog: [{ id: OTHER_MODEL }], crossProviderPlannerModel: 'true' },
+      { label: 'number-switch', catalog: [{ id: OTHER_MODEL }], crossProviderPlannerModel: 1 },
+      { label: 'null-switch', catalog: [{ id: OTHER_MODEL }], crossProviderPlannerModel: null },
+    ]
+    const outputs = []
+    for (const item of cases) {
+      const timeline = []
+      const fakeBundle = item.noLlm ? null : makePlannerFake({ catalogs: { 'p-main': item.catalog } }, timeline)
+      const harness = makeNonPlannerHarness({ role: 'executor', llm: fakeBundle === null ? undefined : fakeBundle.llm, timeline, otherAgentModel: item.otherAgentModel === undefined ? OTHER_MODEL : item.otherAgentModel, ...(item.crossProviderPlannerModel === undefined ? {} : { crossProviderPlannerModel: item.crossProviderPlannerModel }) })
+      const result = await invokeNonPlanner(harness)
+      markActualNonPlanner(harness)
+      outputs.push({ label: item.label, route: routeView(result), listProviders: fakeBundle === null ? 0 : fakeBundle.state.listProviders, listModels: fakeBundle === null ? '' : fakeBundle.state.listModels.join('|'), prepareCalls: fakeBundle === null ? 0 : fakeBundle.state.prepareCalls.length, streamCalls: fakeBundle === null ? 0 : fakeBundle.state.streamCalls.length })
+    }
+    return outputs
+  }, [
+    { label: 'empty', route: { provider: 'p-main', model: 'main-model', maxTokens: 512, reasoningEffort: 'low' }, listProviders: 0, listModels: '', prepareCalls: 0, streamCalls: 0 },
+    { label: 'whitespace', route: { provider: 'p-main', model: 'main-model', maxTokens: 512, reasoningEffort: 'low' }, listProviders: 0, listModels: '', prepareCalls: 0, streamCalls: 0 },
+    { label: 'miss', route: { provider: 'p-main', model: 'main-model', maxTokens: 512, reasoningEffort: 'low' }, listProviders: 0, listModels: 'p-main', prepareCalls: 0, streamCalls: 0 },
+    { label: 'empty-catalog', route: { provider: 'p-main', model: 'main-model', maxTokens: 512, reasoningEffort: 'low' }, listProviders: 0, listModels: 'p-main', prepareCalls: 0, streamCalls: 0 },
+    { label: 'catalog-error', route: { provider: 'p-main', model: 'main-model', maxTokens: 512, reasoningEffort: 'low' }, listProviders: 0, listModels: 'p-main', prepareCalls: 0, streamCalls: 0 },
+    { label: 'no-llm', route: { provider: 'p-main', model: 'main-model', maxTokens: 512, reasoningEffort: 'low' }, listProviders: 0, listModels: '', prepareCalls: 0, streamCalls: 0 },
+    { label: 'missing-switch', route: { provider: 'p-main', model: OTHER_MODEL, maxTokens: 512, reasoningEffort: 'low' }, listProviders: 0, listModels: 'p-main', prepareCalls: 0, streamCalls: 0 },
+    { label: 'string-switch', route: { provider: 'p-main', model: OTHER_MODEL, maxTokens: 512, reasoningEffort: 'low' }, listProviders: 0, listModels: 'p-main', prepareCalls: 0, streamCalls: 0 },
+    { label: 'number-switch', route: { provider: 'p-main', model: OTHER_MODEL, maxTokens: 512, reasoningEffort: 'low' }, listProviders: 0, listModels: 'p-main', prepareCalls: 0, streamCalls: 0 },
+    { label: 'null-switch', route: { provider: 'p-main', model: OTHER_MODEL, maxTokens: 512, reasoningEffort: 'low' }, listProviders: 0, listModels: 'p-main', prepareCalls: 0, streamCalls: 0 },
+  ]],
+  ['NP3 显式 agentOptions provider/model 优先且完全跳过目录与真实探针', async () => {
+    const timeline = []
+    const fake = makePlannerFake({ providers: [{ id: 'p-a', name: 'A' }], catalogs: { 'p-a': [{ id: OTHER_MODEL }] } }, timeline)
+    const harness = makeNonPlannerHarness({ role: 'executor', llm: fake.llm, timeline, crossProviderPlannerModel: true })
+    const result = await invokeNonPlanner(harness, undefined, { provider: 'p-explicit', model: 'explicit-model', reasoningEffort: 'high' })
+    markActualNonPlanner(harness)
+    return { route: routeView(result), listProviders: fake.state.listProviders, listModels: fake.state.listModels, prepareCalls: fake.state.prepareCalls.length, streamCalls: fake.state.streamCalls.length, timeline }
+  }, { route: { provider: 'p-explicit', model: 'explicit-model', maxTokens: 512, reasoningEffort: 'high' }, listProviders: 0, listModels: [], prepareCalls: 0, streamCalls: 0, timeline: ['agent/request-next', 'actual-prepare', 'actual-stream'] }],
+  ['NP4 嵌套于 planner 的普通 child/probe 均以顶层主会话为 fallback，且 probe 不绕过 resolver', async () => {
+    const outputs = []
+    for (const role of ['executor', 'probe']) {
+      const timeline = []
+      const fake = makePlannerFake({ catalogs: { 'p-main': [{ id: OTHER_MODEL }] } }, timeline)
+      const harness = makeNonPlannerHarness({ role, parentSession: 'planner-id', llm: fake.llm, timeline, crossProviderPlannerModel: false, mainConfig: { provider: 'p-main', model: 'main-model', maxTokens: 4096, reasoningEffort: 'high' }, plannerConfig: { provider: 'p-planner', model: 'planner-model', maxTokens: 1024, reasoningEffort: 'low' } })
+      const result = await invokeNonPlanner(harness)
+      markActualNonPlanner(harness)
+      outputs.push({ role, route: routeView(result), listModels: fake.state.listModels.join('|'), prepareCalls: fake.state.prepareCalls.length, streamCalls: fake.state.streamCalls.length })
+    }
+    return outputs
+  }, [
+    { role: 'executor', route: { provider: 'p-main', model: OTHER_MODEL, maxTokens: 1024, reasoningEffort: 'low' }, listModels: 'p-main', prepareCalls: 0, streamCalls: 0 },
+    { role: 'probe', route: { provider: 'p-main', model: OTHER_MODEL, maxTokens: 4096, reasoningEffort: 'low' }, listModels: 'p-main', prepareCalls: 0, streamCalls: 0 },
+  ]],
+  ['NP5 cross=true 串行探针全部完成后按既有排序选择成功候选', async () => {
+    const timeline = []
+    const providers = [
+      { id: 'p-z', name: 'Zeta' }, { id: 'p-a', name: 'Alpha' }, { id: 'p-main', name: 'Main' }, { id: 'deepseek-official', name: 'DeepSeek Official' },
+    ]
+    const catalogs = {}
+    const behaviors = {}
+    for (const provider of providers) { catalogs[provider.id] = [{ id: OTHER_MODEL }]; behaviors[provider.id + '/' + OTHER_MODEL] = { finish: 'stop' } }
+    const fake = makePlannerFake({ providers, catalogs, behaviors }, timeline)
+    const harness = makeNonPlannerHarness({ role: 'workflow-worker', llm: fake.llm, timeline, crossProviderPlannerModel: true })
+    const result = await invokeNonPlanner(harness)
+    markActualNonPlanner(harness)
+    const actualIndex = timeline.indexOf('actual-prepare')
+    const probeIndexes = timeline.map((item, index) => item.startsWith('probe-') || item.startsWith('listProviders') || item.startsWith('listModels:') ? index : -1).filter((index) => index >= 0)
+    return { route: routeView(result), listProviders: fake.state.listProviders, listModels: fake.state.listModels.join('|'), prepareRoutes: fake.state.prepareCalls.map((call) => call.provider + '/' + call.model), streamCalls: fake.state.streamCalls.length, allProbeBeforeActual: probeIndexes.length > 0 && probeIndexes.every((index) => index < actualIndex) }
+  }, { route: { provider: 'p-a', model: OTHER_MODEL, maxTokens: 512, reasoningEffort: 'low' }, listProviders: 1, listModels: 'p-z|p-a|p-main|deepseek-official', prepareRoutes: ['p-z/other-model', 'p-a/other-model', 'p-main/other-model', 'deepseek-official/other-model'], streamCalls: 4, allProbeBeforeActual: true }],
+  ['NP6 cross=true 覆盖 list/prepare/stream/error/aborted/no-finish/timeout 与 fallback 成功/严格拒绝', async () => withFastPlannerDeadline(async (active) => {
+    const timeline = []
+    const providers = [
+      { id: 'p-list-reject', name: 'List Reject' }, { id: 'p-list-timeout', name: 'List Timeout' }, { id: 'p-prepare', name: 'Prepare' }, { id: 'p-stream', name: 'Stream' }, { id: 'p-error', name: 'Error' }, { id: 'p-aborted', name: 'Aborted' }, { id: 'p-none', name: 'No Finish' }, { id: 'p-timeout', name: 'Timeout' },
+    ]
+    const catalogs = {}
+    for (const provider of providers) catalogs[provider.id] = [{ id: OTHER_MODEL }]
+    catalogs['p-list-reject'] = 'reject'
+    catalogs['p-list-timeout'] = 'timeout'
+    const behaviors = {
+      'p-prepare/other-model': { prepare: 'reject' },
+      'p-stream/other-model': { stream: 'throw' },
+      'p-error/other-model': { finish: 'error' },
+      'p-aborted/other-model': { finish: 'aborted' },
+      'p-none/other-model': { finish: 'none' },
+      'p-timeout/other-model': { stream: 'timeout' },
+      'p-main/main-model': { finish: 'stop' },
+    }
+    const fake = makePlannerFake({ providers, catalogs, behaviors }, timeline)
+    const harness = makeNonPlannerHarness({ role: 'ralph-worker', llm: fake.llm, timeline, crossProviderPlannerModel: true })
+    const result = await invokeNonPlanner(harness)
+    markActualNonPlanner(harness)
+    const actualIndex = timeline.indexOf('actual-prepare')
+    const resolverIndexes = timeline.map((item, index) => item.startsWith('list') || item.startsWith('probe-') ? index : -1).filter((index) => index >= 0)
+
+    const failureTimeline = []
+    const failureFake = makePlannerFake({ providers: [], catalogs: { 'p-main': [{ id: 'unrelated' }] }, behaviors: { 'p-main/main-model': { finish: 'error' } } }, failureTimeline)
+    const failureHarness = makeNonPlannerHarness({ role: 'reviewer', llm: failureFake.llm, timeline: failureTimeline, crossProviderPlannerModel: true })
+    let failureMessage = ''
+    try { await invokeNonPlanner(failureHarness) } catch (error) { failureMessage = String(error && error.message || error) }
+
+    return {
+      fallbackSuccess: { route: routeView(result), listProviders: fake.state.listProviders, listModels: fake.state.listModels.join('|'), prepareRoutes: fake.state.prepareCalls.map((call) => call.provider + '/' + call.model), streamRoutes: fake.state.streamCalls.map((call) => call.provider + '/' + call.model), timeoutAttempted: fake.state.listModels.includes('p-list-timeout') && fake.state.streamCalls.some((call) => call.provider === 'p-timeout'), timerClean: active.size === 0, allProbeBeforeActual: resolverIndexes.every((index) => index < actualIndex) },
+      strictReject: { message: failureMessage, listProviders: failureFake.state.listProviders, listModels: failureFake.state.listModels.join('|'), prepareRoutes: failureFake.state.prepareCalls.map((call) => call.provider + '/' + call.model), actual: failureTimeline.filter((item) => item === 'actual-prepare' || item === 'actual-stream').length },
+    }
+  }), { fallbackSuccess: { route: { provider: 'p-main', model: 'main-model', maxTokens: 512, reasoningEffort: 'low' }, listProviders: 1, listModels: 'p-list-reject|p-list-timeout|p-prepare|p-stream|p-error|p-aborted|p-none|p-timeout', prepareRoutes: ['p-prepare/other-model', 'p-stream/other-model', 'p-error/other-model', 'p-aborted/other-model', 'p-none/other-model', 'p-timeout/other-model', 'p-main/main-model'], streamRoutes: ['p-stream/other-model', 'p-error/other-model', 'p-aborted/other-model', 'p-none/other-model', 'p-timeout/other-model', 'p-main/main-model'], timeoutAttempted: true, timerClean: true, allProbeBeforeActual: true }, strictReject: { message: NON_PLANNER_BLOCKED_REASON, listProviders: 1, listModels: '', prepareRoutes: ['p-main/main-model'], actual: 0 } }],
+  ['NP7 候选失败与 fallback 同 route/model 复用 outcome，不二次真实调用', async () => {
+    const timeline = []
+    const fake = makePlannerFake({ providers: [{ id: 'p-main', name: 'Main' }], catalogs: { 'p-main': [{ id: OTHER_MODEL }] }, behaviors: { ['p-main/' + OTHER_MODEL]: { finish: 'error' } } }, timeline)
+    const harness = makeNonPlannerHarness({ role: 'executor', llm: fake.llm, timeline, crossProviderPlannerModel: true, otherAgentModel: OTHER_MODEL, mainConfig: { provider: 'p-main', model: OTHER_MODEL, maxTokens: 512, reasoningEffort: 'low' } })
+    let message = ''
+    try { await invokeNonPlanner(harness) } catch (error) { message = String(error && error.message || error) }
+    return { message, listProviders: fake.state.listProviders, listModels: fake.state.listModels.join('|'), prepareCalls: fake.state.prepareCalls.length, streamCalls: fake.state.streamCalls.length }
+  }, { message: NON_PLANNER_BLOCKED_REASON, listProviders: 1, listModels: 'p-main', prepareCalls: 1, streamCalls: 1 }],
+  ['NP8 同一 non-planner Agent 并发/续请求复用成功 cache，planner 仍只用 plannerModel', async () => {
+    const timeline = []
+    const fake = makePlannerFake({ providers: [{ id: 'p-a', name: 'Alpha' }], catalogs: { 'p-a': [{ id: OTHER_MODEL }] }, behaviors: { ['p-a/' + OTHER_MODEL]: { finish: 'stop' } } }, timeline)
+    const harness = makeNonPlannerHarness({ role: 'executor', llm: fake.llm, timeline, crossProviderPlannerModel: true })
+    const pair = await Promise.all([invokeNonPlanner(harness), invokeNonPlanner(harness)])
+    const third = await invokeNonPlanner(harness)
+    const plannerTimeline = []
+    const plannerFake = makePlannerFake({ providers: [{ id: 'p-other', name: 'Other' }, { id: 'p-parent', name: 'Parent' }], catalogs: { 'p-other': [{ id: 'planner-model' }], 'p-parent': [{ id: 'planner-model' }] }, behaviors: { 'p-other/planner-model': { finish: 'stop' }, 'p-parent/planner-model': { finish: 'stop' } } }, plannerTimeline)
+    const plannerHarness = makePlannerHarness({ llm: plannerFake.llm, timeline: plannerTimeline, plannerModel: 'planner-model', otherAgentModel: OTHER_MODEL, crossProviderPlannerModel: true })
+    const plannerResult = await invokePlanner(plannerHarness, plannerSignal())
+    return { nonPlannerRoutes: pair.concat([third]).map(routeView), providers: fake.state.listProviders, listModels: fake.state.listModels.join('|'), prepareCalls: fake.state.prepareCalls.length, streams: fake.state.streamCalls.length, plannerRoute: routeView(plannerResult), plannerListProviders: plannerFake.state.listProviders, plannerModels: plannerFake.state.listModels.join('|') }
+  }, { nonPlannerRoutes: [{ provider: 'p-a', model: OTHER_MODEL, maxTokens: 512, reasoningEffort: 'low' }, { provider: 'p-a', model: OTHER_MODEL, maxTokens: 512, reasoningEffort: 'low' }, { provider: 'p-a', model: OTHER_MODEL, maxTokens: 512, reasoningEffort: 'low' }], providers: 1, listModels: 'p-a', prepareCalls: 1, streams: 1, plannerRoute: { provider: 'p-other', model: 'planner-model', maxTokens: 512, reasoningEffort: 'low' }, plannerListProviders: 1, plannerModels: 'p-other|p-parent' }],
+  ['NP9 不同 Agent 的成功/失败不共享 non-planner cache 或失败结果', async () => {
+    const successTimeline = []
+    const successFake = makePlannerFake({ providers: [{ id: 'p-a', name: 'Alpha' }], catalogs: { 'p-a': [{ id: OTHER_MODEL }] }, behaviors: { ['p-a/' + OTHER_MODEL]: { finish: 'stop' } } }, successTimeline)
+    const successHarness = makeNonPlannerHarness({ llm: successFake.llm, timeline: successTimeline, crossProviderPlannerModel: true, agentSpecs: [{ id: 'child-a', role: 'executor' }, { id: 'child-b', role: 'executor' }] })
+    const successPair = await Promise.all([invokeNonPlanner(successHarness, 'child-a'), invokeNonPlanner(successHarness, 'child-b')])
+    const failureTimeline = []
+    const failureFake = makePlannerFake({ providers: [{ id: 'p-a', name: 'Alpha' }], catalogs: { 'p-a': [{ id: OTHER_MODEL }] }, behaviors: { ['p-a/' + OTHER_MODEL]: { finish: 'error' }, 'p-main/main-model': { finish: 'error' } } }, failureTimeline)
+    const failureHarness = makeNonPlannerHarness({ llm: failureFake.llm, timeline: failureTimeline, crossProviderPlannerModel: true, agentSpecs: [{ id: 'fail-a', role: 'executor' }, { id: 'fail-b', role: 'executor' }] })
+    const failureResults = await Promise.all(['fail-a', 'fail-b'].map((id) => invokeNonPlanner(failureHarness, id).then(() => 'resolved', (error) => String(error && error.message || error))))
+    return { success: { routes: successPair.map(routeView), providers: successFake.state.listProviders, models: successFake.state.listModels.length, prepares: successFake.state.prepareCalls.length, streams: successFake.state.streamCalls.length }, failure: { results: failureResults, providers: failureFake.state.listProviders, models: failureFake.state.listModels.length, prepares: failureFake.state.prepareCalls.length, streams: failureFake.state.streamCalls.length } }
+  }, { success: { routes: [{ provider: 'p-a', model: OTHER_MODEL, maxTokens: 512, reasoningEffort: 'low' }, { provider: 'p-a', model: OTHER_MODEL, maxTokens: 512, reasoningEffort: 'low' }], providers: 2, models: 2, prepares: 2, streams: 2 }, failure: { results: [NON_PLANNER_BLOCKED_REASON, NON_PLANNER_BLOCKED_REASON], providers: 2, models: 2, prepares: 4, streams: 4 } }],
+  ['NP10 cross=true 空 otherAgentModel 仅验证主会话 fallback，成功/失败均不枚举 provider', async () => {
+    const run = async (finish) => {
+      const timeline = []
+      const fake = makePlannerFake({ providers: [{ id: 'p-a', name: 'A' }], catalogs: {}, behaviors: { 'p-main/main-model': { finish } } }, timeline)
+      const harness = makeNonPlannerHarness({ role: 'probe', llm: fake.llm, timeline, crossProviderPlannerModel: true, otherAgentModel: '' })
+      let result = null
+      let message = ''
+      try { result = await invokeNonPlanner(harness) } catch (error) { message = String(error && error.message || error) }
+      return { route: routeView(result), message, listProviders: fake.state.listProviders, listModels: fake.state.listModels.length, prepareCalls: fake.state.prepareCalls.length, streamCalls: fake.state.streamCalls.length }
+    }
+    return { success: await run('stop'), failure: await run('error') }
+  }, { success: { route: { provider: 'p-main', model: 'main-model', maxTokens: 512, reasoningEffort: 'low' }, message: '', listProviders: 0, listModels: 0, prepareCalls: 1, streamCalls: 1 }, failure: { route: null, message: NON_PLANNER_BLOCKED_REASON, listProviders: 0, listModels: 0, prepareCalls: 1, streamCalls: 1 } }],
+  ['NP11 非 planner 外部 turn abort 原样传播且不触发 provider/listModels', async () => {
+    const timeline = []
+    const fake = makePlannerFake({ providers: [{ id: 'p-a', name: 'A' }], catalogs: { 'p-a': [{ id: OTHER_MODEL }] } }, timeline)
+    const harness = makeNonPlannerHarness({ role: 'executor', llm: fake.llm, timeline, crossProviderPlannerModel: true })
+    const controller = new AbortController()
+    controller.abort(new Error('caller-aborted'))
+    let message = ''
+    try { await invokeNonPlanner(harness, undefined, undefined, controller.signal) } catch (error) { message = String(error && error.message || error) }
+    return { message, listProviders: fake.state.listProviders, listModels: fake.state.listModels.length, prepareCalls: fake.state.prepareCalls.length }
+  }, { message: 'caller-aborted', listProviders: 0, listModels: 0, prepareCalls: 0 }],
+]
+for (const [name, fn, expected] of NON_PLANNER) check(name, await fn(), expected)
 
 // ── AS 系列:pre-execute 整链（mock ctx 走插件 apply；harness 模式同 step-04 L92-106/L140-144） ──
 function makeAskHarness() {

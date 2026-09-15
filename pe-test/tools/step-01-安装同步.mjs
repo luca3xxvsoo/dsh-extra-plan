@@ -45,6 +45,7 @@ const oldValues = {
   crossProviderPlannerModel: true,
   plannerPromptSuffix: 'old: sync suffix',
   exploreBudget: 9,
+  otherAgentModel: 'old-sync-other-model',
   anchoredBootstrap: false,
   runcodeCatchGate: true,
   webFetch: true,
@@ -54,7 +55,7 @@ const expectedOldAgent = patchAgent(oldValues)
 
 try {
   check('首次自愈 → written', syncPreset(home) === 'written')
-  check('首次 manifest format=2/8 项审计', (() => { const m = manifestAt(dist); return m.format === 2 && m.distHash === currentHash && Object.keys(m.settingsMigration.results).length === 8 })())
+  check('首次 manifest format=2/9 项审计', (() => { const m = manifestAt(dist); return m.format === 2 && m.distHash === currentHash && Object.keys(m.settingsMigration.results).length === 9 })())
   check('首次第二次 → idle', syncPreset(home) === 'idle')
 
   writeFileSync(join(dist, 'agent.cordis.yml'), expectedOldAgent, 'utf8')
@@ -88,6 +89,14 @@ try {
   const missingCrossManifest = manifestAt(dist)
   const missingCrossText = readFileSync(join(dist, 'agent.cordis.yml'), 'utf8')
   check('缺失开关写回 false 且审计 skipped-old-missing', missingCrossText.includes('crossProviderPlannerModel: false') && missingCrossManifest.settingsMigration.results.crossProviderPlannerModel === 'skipped-old-missing')
+
+  const oldMissingOther = expectedOldAgent.replace("        otherAgentModel: 'old-sync-other-model'\n", '')
+  writeFileSync(join(dist, 'agent.cordis.yml'), oldMissingOther, 'utf8')
+  writeManifest(dist, 'OLD-MISSING-OTHER')
+  check('旧值缺失 otherAgentModel → upgraded', syncPreset(home) === 'upgraded')
+  const missingOtherManifest = manifestAt(dist)
+  const missingOtherText = readFileSync(join(dist, 'agent.cordis.yml'), 'utf8')
+  check('缺失 otherAgentModel 写回空串且审计 skipped-old-missing', missingOtherText.includes("otherAgentModel: ''") && missingOtherManifest.settingsMigration.results.otherAgentModel === 'skipped-old-missing')
 
   // T4：旧值 plannerModel 为空串（显式清空）→ captured → restored，写回 '' 且不回填资产默认
   writeFileSync(join(dist, 'agent.cordis.yml'), patchAgent({ plannerModel: '' }), 'utf8')

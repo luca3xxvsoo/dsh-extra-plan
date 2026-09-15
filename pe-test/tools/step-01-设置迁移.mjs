@@ -25,7 +25,7 @@ const assetAgent = readFileSync(join(ASSET_DIR, 'agent.cordis.yml'), 'utf8')
 const assetPreset = readFileSync(join(ASSET_DIR, 'preset.yml'), 'utf8')
 const definition = (key) => getSettingDefinition(key)
 const keys = SETTING_DEFINITIONS.map((item) => item.key)
-const expectedKeys = ['anchoredBootstrap', 'webFetch', 'toolPresentationMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget']
+const expectedKeys = ['anchoredBootstrap', 'webFetch', 'toolPresentationMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel']
 
 let pass = 0
 let fail = 0
@@ -52,6 +52,7 @@ function minimalYaml(overrides = {}, nested = false) {
     '            crossProviderPlannerModel: ' + value('crossProviderPlannerModel', 'false'),
     '            plannerPromptSuffix: ' + value('plannerPromptSuffix', 'old-suffix'),
     '            exploreBudget: ' + value('exploreBudget', '8'),
+    '            otherAgentModel: ' + value('otherAgentModel', "''"),
     '            anchoredBootstrap: ' + value('anchoredBootstrap', 'true'),
     '            runcodeCatchGate: ' + value('runcodeCatchGate', 'false'),
   ]
@@ -82,6 +83,7 @@ function minimalYaml(overrides = {}, nested = false) {
     '        crossProviderPlannerModel: ' + value('crossProviderPlannerModel', 'false'),
     '        plannerPromptSuffix: ' + value('plannerPromptSuffix', 'old-suffix'),
     '        exploreBudget: ' + value('exploreBudget', '8'),
+    '        otherAgentModel: ' + value('otherAgentModel', "''"),
     '        anchoredBootstrap: ' + value('anchoredBootstrap', 'true'),
     '        runcodeCatchGate: ' + value('runcodeCatchGate', 'false'),
     '- id: tool-web',
@@ -97,18 +99,19 @@ function manifestAt(dist) {
   return JSON.parse(readFileSync(join(dist, 'dist-manifest.json'), 'utf8'))
 }
 
-check('白名单恰有 8 个稳定键', keys.length === 8 && keys.join('|') === expectedKeys.join('|'))
+check('白名单恰有 9 个稳定键', keys.length === 9 && keys.join('|') === expectedKeys.join('|'))
 check('locator 恰为稳定插件 id + config 路径', SETTING_DEFINITIONS.every((item) => item.path === 'config.' + (item.key === 'webFetch' ? 'fetch' : item.key === 'toolPresentationMode' ? 'mode' : item.key)))
 check('禁止项不在白名单且描述不可变', !keys.some((key) => ['approvalEnabled', 'bootstrapPersona', 'bootstrapShellTools', 'bootstrapCommonTools', 'planTool', 'savePlanDir', 'usageLedger', 'searchTimeoutMs'].includes(key)) && Object.isFrozen(SETTING_DEFINITIONS) && SETTING_DEFINITIONS.every((item) => Object.isFrozen(item)))
 // T4：plannerModel 放开为空串（空串=显式清空=继承主会话模型），空白串 normalize 后归一为 ''；
 // 非 string（数字等）仍非法——validator 的类型严格性由 !validator(123) 锁定。
-check('validator 类型严格且新增开关仅接受 boolean', definition('plannerModel').validator('  x  ') && definition('plannerModel').validator('') && definition('plannerModel').normalize('   ') === '' && !definition('plannerModel').validator(123) && definition('crossProviderPlannerModel').validator(true) && definition('crossProviderPlannerModel').validator(false) && !definition('crossProviderPlannerModel').validator('true') && !definition('crossProviderPlannerModel').validator(1) && definition('exploreBudget').validator(1) && !definition('exploreBudget').validator('1') && TOOL_PRESENTATION_MODES.join('/') === definition('toolPresentationMode').ui.options.join('/'))
-check('公开 metadata 含 8 项、额度 min=1、控件与 locale', (() => {
+check('validator 类型严格且字符串设置支持空串归一', definition('plannerModel').validator('  x  ') && definition('plannerModel').validator('') && definition('plannerModel').normalize('   ') === '' && !definition('plannerModel').validator(123) && definition('otherAgentModel').validator('') && definition('otherAgentModel').normalize('   ') === '' && !definition('otherAgentModel').validator(123) && definition('crossProviderPlannerModel').validator(true) && definition('crossProviderPlannerModel').validator(false) && !definition('crossProviderPlannerModel').validator('true') && !definition('crossProviderPlannerModel').validator(1) && definition('exploreBudget').validator(1) && !definition('exploreBudget').validator('1') && TOOL_PRESENTATION_MODES.join('/') === definition('toolPresentationMode').ui.options.join('/'))
+check('公开 metadata 含 9 项、额度 min=1、控件与 locale', (() => {
   const metadata = publicSettingMetadata(assetAgent, assetAgent)
   const budget = metadata.fields.find((field) => field.key === 'exploreBudget')
   const mode = metadata.fields.find((field) => field.key === 'toolPresentationMode')
   const cross = metadata.fields.find((field) => field.key === 'crossProviderPlannerModel')
-  return metadata.fields.length === 8 && cross.control === 'select' && cross.options.join('/') === 'true/false' && cross.default === false && budget.min === 1 && budget.control === 'number' && mode.options.join('/') === 'native/ptc/both' && typeof mode.locale === 'string'
+  const other = metadata.fields.find((field) => field.key === 'otherAgentModel')
+  return metadata.fields.length === 9 && cross.control === 'select' && cross.options.join('/') === 'true/false' && cross.default === false && other.control === 'text' && other.default === '' && budget.min === 1 && budget.control === 'number' && mode.options.join('/') === 'native/ptc/both' && typeof mode.locale === 'string'
 })())
 
 const allOldValues = {
@@ -116,6 +119,7 @@ const allOldValues = {
   crossProviderPlannerModel: true,
   plannerPromptSuffix: 'legacy: suffix',
   exploreBudget: 23,
+  otherAgentModel: 'legacy-other-model',
   anchoredBootstrap: false,
   runcodeCatchGate: true,
   webFetch: true,
@@ -123,7 +127,7 @@ const allOldValues = {
 }
 const oldAll = patchAgent(allOldValues)
 const captured = captureSettings(oldAll)
-check('8 个有效旧值全部捕获', Object.keys(captured.values).length === 8 && Object.values(captured.states).every((state) => state === 'captured') && captured.values.crossProviderPlannerModel === true)
+check('9 个有效旧值全部捕获', Object.keys(captured.values).length === 9 && Object.values(captured.states).every((state) => state === 'captured') && captured.values.crossProviderPlannerModel === true && captured.values.otherAgentModel === 'legacy-other-model')
 
 const stringSafety = ['true', '123', 'line one\nline two']
 check('字符串 true/数字样字符串/换行保持 string 类型', stringSafety.every((value) => {
@@ -174,6 +178,8 @@ check('plannerModel 空白串旧值 → captured 且 normalize 为空串', (() =
 const invalidCases = [
   ['plannerModel number', 'plannerModel', '123'],
   ['plannerModel null', 'plannerModel', 'null'],
+  ['otherAgentModel number', 'otherAgentModel', '123'],
+  ['otherAgentModel null', 'otherAgentModel', 'null'],
   ['plannerPromptSuffix number', 'plannerPromptSuffix', '123'],
   ['plannerPromptSuffix null', 'plannerPromptSuffix', 'null'],
   ['exploreBudget quoted number', 'exploreBudget', '"18"'],
@@ -212,23 +218,23 @@ try {
   writeManifest(validDist, 'OLD-VALID-MATRIX')
   check('生产 syncPreset 有效旧值 → upgraded', syncPreset(validHome) === 'upgraded')
   const validManifest = manifestAt(validDist)
-  check('有效迁移 8 项 restored 且 distHash 为厂商 hash', validManifest.format === 2 && validManifest.distHash === contentHash(ASSET_DIR) && validManifest.settingsMigration.source === 'captured' && Object.keys(validManifest.settingsMigration.results).length === 8 && Object.values(validManifest.settingsMigration.results).every((result) => result === 'restored'))
+  check('有效迁移 9 项 restored 且 distHash 为厂商 hash', validManifest.format === 2 && validManifest.distHash === contentHash(ASSET_DIR) && validManifest.settingsMigration.source === 'captured' && Object.keys(validManifest.settingsMigration.results).length === 9 && Object.values(validManifest.settingsMigration.results).every((result) => result === 'restored'))
   check('有效迁移后的两份核心结构以新版为底、preset 完整', readFileSync(join(validDist, 'preset.yml'), 'utf8') === assetPreset && readFileSync(join(validDist, 'agent.cordis.yml'), 'utf8') === oldAll)
 
-  const oldMissingText = assetAgent.replace('        runcodeCatchGate: false\n', '').replace('        crossProviderPlannerModel: false\n', '') + '\n- id: old-custom\n  config:\n    persona: old-only\n'
+  const oldMissingText = assetAgent.replace('        runcodeCatchGate: false\n', '').replace('        crossProviderPlannerModel: false\n', '').replace("        otherAgentModel: ''\n", '') + '\n- id: old-custom\n  config:\n    persona: old-only\n'
   writeFileSync(join(missingDist, 'agent.cordis.yml'), oldMissingText, 'utf8')
   writeManifest(missingDist, 'OLD-MISSING-MATRIX')
   check('旧版缺字段 → upgraded 且新版默认保留', syncPreset(missingHome) === 'upgraded')
   const missingManifest = manifestAt(missingDist)
-  check('仅新版字段 runcodeCatchGate/crossProviderPlannerModel 保持 false 并审计 skipped-old-missing', readFileSync(join(missingDist, 'agent.cordis.yml'), 'utf8').includes('        runcodeCatchGate: false') && readFileSync(join(missingDist, 'agent.cordis.yml'), 'utf8').includes('        crossProviderPlannerModel: false') && missingManifest.settingsMigration.results.runcodeCatchGate === 'skipped-old-missing' && missingManifest.settingsMigration.results.crossProviderPlannerModel === 'skipped-old-missing')
+  check('仅新版字段 runcodeCatchGate/crossProviderPlannerModel/otherAgentModel 保持默认并审计 skipped-old-missing', readFileSync(join(missingDist, 'agent.cordis.yml'), 'utf8').includes('        runcodeCatchGate: false') && readFileSync(join(missingDist, 'agent.cordis.yml'), 'utf8').includes('        crossProviderPlannerModel: false') && readFileSync(join(missingDist, 'agent.cordis.yml'), 'utf8').includes("        otherAgentModel: ''") && missingManifest.settingsMigration.results.runcodeCatchGate === 'skipped-old-missing' && missingManifest.settingsMigration.results.crossProviderPlannerModel === 'skipped-old-missing' && missingManifest.settingsMigration.results.otherAgentModel === 'skipped-old-missing')
   check('旧版独有 row/group/persona 不残留', !readFileSync(join(missingDist, 'agent.cordis.yml'), 'utf8').includes('old-custom') && !readFileSync(join(missingDist, 'agent.cordis.yml'), 'utf8').includes('old-only'))
 
-  const invalidText = assetAgent.replace('        plannerModel: deepseek-v4-pro', '        plannerModel: 123').replace('        crossProviderPlannerModel: false', "        crossProviderPlannerModel: 'true'").replace('        exploreBudget: 18', '        exploreBudget: 0')
+  const invalidText = assetAgent.replace('        plannerModel: deepseek-v4-pro', '        plannerModel: 123').replace('        crossProviderPlannerModel: false', "        crossProviderPlannerModel: 'true'").replace('        exploreBudget: 18', '        exploreBudget: 0').replace("        otherAgentModel: ''", '        otherAgentModel: 123')
   writeFileSync(join(invalidDist, 'agent.cordis.yml'), invalidText, 'utf8')
   writeManifest(invalidDist, 'OLD-INVALID-MATRIX')
   check('非法旧值 → upgraded 不阻断', syncPreset(invalidHome) === 'upgraded')
   const invalidManifest = manifestAt(invalidDist)
-  check('非法旧值使用新版实际默认并写 skipped-invalid', readFileSync(join(invalidDist, 'agent.cordis.yml'), 'utf8').includes('        plannerModel: deepseek-v4-pro') && readFileSync(join(invalidDist, 'agent.cordis.yml'), 'utf8').includes('        crossProviderPlannerModel: false') && readFileSync(join(invalidDist, 'agent.cordis.yml'), 'utf8').includes('        exploreBudget: 18') && invalidManifest.settingsMigration.results.plannerModel === 'skipped-invalid' && invalidManifest.settingsMigration.results.crossProviderPlannerModel === 'skipped-invalid' && invalidManifest.settingsMigration.results.exploreBudget === 'skipped-invalid')
+  check('非法旧值使用新版实际默认并写 skipped-invalid', readFileSync(join(invalidDist, 'agent.cordis.yml'), 'utf8').includes('        plannerModel: deepseek-v4-pro') && readFileSync(join(invalidDist, 'agent.cordis.yml'), 'utf8').includes('        crossProviderPlannerModel: false') && readFileSync(join(invalidDist, 'agent.cordis.yml'), 'utf8').includes('        exploreBudget: 18') && readFileSync(join(invalidDist, 'agent.cordis.yml'), 'utf8').includes("        otherAgentModel: ''") && invalidManifest.settingsMigration.results.plannerModel === 'skipped-invalid' && invalidManifest.settingsMigration.results.crossProviderPlannerModel === 'skipped-invalid' && invalidManifest.settingsMigration.results.exploreBudget === 'skipped-invalid' && invalidManifest.settingsMigration.results.otherAgentModel === 'skipped-invalid')
 
   writeFileSync(join(unreadableDist, 'agent.cordis.yml'), '- id: [not valid\n', 'utf8')
   writeManifest(unreadableDist, 'OLD-UNREADABLE-MATRIX')

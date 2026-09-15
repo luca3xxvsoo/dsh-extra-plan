@@ -5,7 +5,7 @@
 
 ## 项目一句话
 dsh 插件「按需规划模式」预设：AI 未经用户同意只能只读探查，经路由/目的/澄清/批准四级机械闸门后按规划执行。
-五角色：主会话（入口协调）→ 探查者（只读批量+证据落盘，**仅主会话可委派**）→ 规划子代理（方案+验收双文件，不得委派探查者）→ 执行者（按方案改）→ 验收者（逐条核对）。
+五角色：主会话（入口协调）→ 探查者（只读批量+证据落盘，**仅主会话可委派**）→ 规划子代理（方案+验收双文件，不得委派探查者）→ 执行者（按方案改）→ 验收者（逐条核对）。save_probe 的 `PROBE_LIMITS` 当前为 evidence 150 条、单条 evidence.text 1000 字；step-00 PR23=151、PR34/PR35=1000/1001；exploreBudget=18 与台账历史 80/209 是不同口径。
 兼容：dsh >= v0.1.2-rc.1 & <= v0.1.5-rc.2；qqbot 0.5.0 版 + 精简版 dsh-qqbot-user-questions（仅自愈+mklink，选装）。anchored 引导（首轮极简）默认开且兼容 PTC：纯 PTC 模式首轮仅暴露 run_code 工具 + 极简引导词（详见 ai-流程备查.md / ai-机制设计.md）。
 
 ## 文档索引（想查什么 → 打开哪个）
@@ -18,9 +18,10 @@ dsh 插件「按需规划模式」预设：AI 未经用户同意只能只读探�
 | 完整流程（实际机制校订版） | pe-test/docs/ai-流程备查.md | 流程细节拿不准时 |
 | 宿主耦合点全表（DSH/qqbot 升级比对） | pe-test/docs/ai-宿主耦合台账.md | 升级 DSH/qqbot 前必读 |
 | 发版前/改闸门后实机逐条实测全部机械闸门（用户操作最少编排，both 单形态 × catchGate 两轮） | pe-test/docs/ai-实机闸门测试流程.md | 发版前跑全量；改闸门后按域增量 |
+| 子代理模型/提供方与 pro规划引导实机取证（A42/A43、C11/C12） | pe-test/tools/step-07-子代理模型与引导取证.mjs | HUMAN：显式 SESSION_ID + PLANNER_PROMPT_SUFFIX；request/header attempted route、assistant/message actual provenance、suffix 等级分栏 |
 
 ## 必守纪律（一句）
-改前备份到 .extra-plan/backup-*/；改预设=复制副本；改完跑 node pe-test/tools/代码地图生成.mjs + 对应自检 + node --check。**改完不同步地图 = 一键体检「代码地图一致性」判红**（体检内置 `代码地图生成.mjs --check`，不写盘）。提交前 node pe-test/tools/代码地图生成.mjs --check 退出码 0
+改前备份到 .extra-plan/backup-*/；改预设=复制副本；改完跑 node pe-test/tools/代码地图生成.mjs + 对应自检 + node --check。**改完不同步地图 = 一键体检「代码地图一致性」判红**（体检内置 `代码地图生成.mjs --check`，不写盘）。提交前 node pe-test/tools/代码地图生成.mjs --check 退出码 0。根 `dsh-extra-plan/README.md` 本轮不编辑/不备份，otherAgentModel 缺口由用户自行同步。
 
 ## 真相源
 - 角色 persona/deny 清单 → assets/presets/extra-plan/agent.cordis.yml

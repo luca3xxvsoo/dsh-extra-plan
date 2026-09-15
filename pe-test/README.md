@@ -9,7 +9,7 @@
 |---|---|---|
 | **逻辑检查**（step-00） | 插件「脑子里的规矩」对不对（写命令该拦的拦不拦、预算算得对不对） | 每次改完插件后 |
 | **安装检查**（step-01） | 装到你电脑上后：文件全不全、设置页能不能改 | 装完插件后第一次 |
-| **痕迹检查**（step-04/05/06/08/99） | 跑完一次真实流程后，看日志：AI 这轮干了什么、有没有违规 | 每次试完流程后 |
+| **痕迹检查**（step-04/05/06/07/08/99） | 跑完一次真实流程后，看日志：AI 这轮干了什么、有没有违规 | 每次试完流程后 |
 
 ## 怎么跑
 
@@ -19,7 +19,15 @@ node pe-test/tools/一键step测试.mjs
 ```
 → 自动跑全部「自动判定项」（11 个），结果保存到 `pe-test/reports/测试报告-<时间>.md`
 → 跑之前先确认：**在完整目录（pe-test 与 plugins 同级 = 仓库根）下运行**才有完整结果
-→ 报告末尾会列出「人眼项/需参数项」——那些需要你自己跑并人工判读，不是自动的
+→ 报告末尾会列出「人眼项/需参数项」——那些需要你自己跑并人工判读，不是自动的；HUMAN 独立报告保留 stdout/stderr 全量原文
+
+**step-07 实机子代理取证（HUMAN，不能无参运行）**：一键体检用 `--session <顶层主会话ID>` 显式传入 `SESSION_ID`；直接运行脚本时按下方命令显式设置环境变量，并在同一部署配置快照下提供 `PLANNER_PROMPT_SUFFIX`（空串也要显式设置）：
+```powershell
+$env:SESSION_ID='<顶层主会话ID>'
+$env:PLANNER_PROMPT_SUFFIX='<同一部署快照的精确 suffix>'
+node pe-test/tools/step-07-子代理模型与引导取证.mjs
+```
+脚本只读 `session.v3.jsonl.zstd` / `session.jsonl.zstd`，分开报告 request/header（attempted route，尝试路由）和 assistant/message.data.message.source（actual provenance，实际产出），只区分 pro规划/非pro规划；完整 planner 文本、budgetNotice、宿主 guidance、header.system 与 suffix 等级照实输出（对应 C11/C12）。
 
 也可以直接跑单个文件（`node pe-test/tools/step-01-预设完整性.mjs`），效果一样。
 
@@ -37,9 +45,12 @@ node pe-test/tools/一键step测试.mjs
 | 5 澄清意图 | 人眼看 step-05-会话解码 | 会话里确认问过澄清问题 |
 | 6 线索落盘 | step-06-线索落盘 (+ 真实会话查看) | save_probe 五态闸门、落盘无残留 |
 | 7 规划预算 | 人眼看 step-06-真实会话查看 | 预算耗尽时 AI 被拒绝（日志里有 TOOL-ERROR） |
+| 7A 子代理模型/引导取证 | step-07-子代理模型与引导取证（HUMAN） | A42/A43：实际 provider/model、route 与 provenance 分栏，suffix 精确等级 |
 | 8 方案配对 | 人眼看 step-08-方案配对查看 | 方案+验收两个文件成对出现、时间戳一致 |
 | 10 验收只读 | 覆盖在 step-04-路由与写闸门 | reviewer 只读、不碰写操作 |
 | 11 代码地图一致性 | 覆盖在一键体检（`代码地图生成.mjs --check`，不写盘） | 地图与代码同步、无漏检/导航失效；**改完代码没同步地图 → 这项红**，跑 `node pe-test/tools/代码地图生成.mjs` 即可修 |
+
+**限制口径**：save_probe 的 `PROBE_LIMITS` 当前为 evidence 最多 150 条、单条 `evidence.text` 最多 1000 字；step-00 的 PR23=151 条拒绝，PR34/PR35 覆盖 1000 通过、1001 拒绝。`exploreBudget=18` 是 planner 工具预算/单实例子调用上限，不能与上述限制或台账历史「80 条」「80+79+50=209」混用。根 `dsh-extra-plan/README.md` 不在本轮 AI 修改范围，otherAgentModel 缺口由用户自行同步。
 
 ## 两个注意事项
 
