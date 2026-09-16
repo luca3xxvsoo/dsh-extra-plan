@@ -4,6 +4,7 @@
 // ③真实监听器拦截行为（mock ctx 走插件 apply 注册的 assemble/pre-execute）
 // ④回归（主会话路由闸门、planner 拦截、anchored 引导收窄）
 import { pathToFileURL, fileURLToPath } from 'node:url'
+import { join } from 'node:path'
 import { createRequire } from 'node:module'
 import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -14,7 +15,7 @@ import { registerHostDeps } from '../_shared/host-deps.mjs'
 await registerHostDeps()
 const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
 const decisions = plugin.decisions
-const { catalogHasWriteTools, isReadOnlyChildByCatalog, routeDenyReason, ROUTE_CONFIRM_TEXT, runCodeCatchGateReason, runCodeGroupDenyReason, askUserQuestionReturnGateReason, probeDisposalWarning, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason } = decisions
+const { catalogHasWriteTools, isReadOnlyChildByCatalog, routeDenyReason, ROUTE_CONFIRM_TEXT, runCodeCatchGateReason, runCodeGroupDenyReason, askUserQuestionReturnGateReason, probeDisposalWarning, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilteredToolsSdk, readSchemasForRendering, renderMinimalReadText, toolPresentationModeOf, projectSkillCatalogDecision, isBootstrapPhase } = decisions
 
 let pass = 0
 let fail = 0
@@ -93,19 +94,44 @@ checkDeny('tool-subagent-plan', 13, ['write', 'edit', 'cordis_run', 'subagent_pr
 checkDeny('tool-subagent-probe', 14, ['write', 'edit', 'subagent_probe', 'cordis_run'], ['subagent_fork'], 'probe deny 恰 14 项且含 write/edit/subagent_probe/cordis_run、不含 subagent_fork')
 
 // ── ③ 真实监听器拦截行为（[任务5]，mock ctx 走插件 apply） ─────────────
-function makeHarness(config) {
-  const listeners = {}
-  const ctx = {
-    get: () => undefined,
-    on: (name, fn) => {
-      if (listeners[name] === undefined) listeners[name] = []
-      listeners[name].push(fn)
+const DSH_APPDATA = process.env.APPDATA || homedir() + '/AppData/Roaming'
+const CORDIS_PRESET_FILE = join(DSH_APPDATA, 'npm', 'node_modules', '@deepseek-ai', 'dsh', 'node_modules', '@deepseek-ai', 'dsh-agent-presets', 'presets', 'cordis', 'agent.cordis.yml')
+function resolvedValue(value) {
+  return {
+    then(onFulfilled) {
+      try {
+        const next = onFulfilled(value)
+        return { catch: () => next }
+      } catch (error) {
+        return { catch(onRejected) { return onRejected(error) } }
+      }
     },
+  }
+}
+function makeHarness(config = {}) {
+  const listeners = {}
+  const skillRegistrations = []
+  let presetResolveCount = 0
+  const ctx = {
+    get: (name) => {
+      if (name === 'agentPresets') return { resolve: () => { presetResolveCount += 1; return resolvedValue({ path: CORDIS_PRESET_FILE }) } }
+      if (name === 'skills') return { register: (definition) => { skillRegistrations.push(definition); return () => {} } }
+      if (name === 'codeRuntime') return { language: typeof config.language === 'string' ? config.language : 'typescript' }
+      return undefined
+    },
+    on: (name, fn, options) => {
+      if (listeners[name] === undefined) listeners[name] = []
+      if (options !== null && typeof options === 'object' && options.prepend === true) listeners[name].unshift(fn)
+      else listeners[name].push(fn)
+    },
+    effect: (effectFn) => effectFn(),
     // 修复（mock 契约补齐）：真实宿主 ctx 有 provide（插件 apply 顶层注册只读服务），
     // mock 缺此方法导致 apply 抛 TypeError；与 step-06 同款写法。
     provide: (name, value) => { ctx[name] = value },
   }
   plugin.apply(ctx, config)
+  listeners.skillRegistrations = skillRegistrations
+  listeners.presetResolveCount = () => presetResolveCount
   return listeners
 }
 const harness = makeHarness({ anchoredBootstrap: false })
@@ -137,10 +163,10 @@ const plannerAgent = {
   ctx: undefined,
 }
 
-async function assemble(listeners, agent, tools) {
+async function assemble(listeners, agent, tools, sections = []) {
   const entry = listeners['system-prompt/assemble']
   if (entry === undefined || entry.length === 0) throw new Error('assemble 监听器未注册')
-  return await entry[0](null, { agent }, async () => ({ tools, sections: [], contexts: [] }))
+  return await entry[0](null, { agent }, async () => ({ tools, sections, contexts: [] }))
 }
 function preExecute(listeners, agent, name, argumentsObj, execExtras) {
   const entry = listeners['tools/pre-execute']
@@ -653,22 +679,36 @@ checkTrue('T5-5 planner 经 run_code 组内调用 subagent_probe 成员 → 聚�
 r = preExecute(harness, noneMain, 'run_code', nestedProbeGroupCode)
 checkTrue('T5-6 主会话 none 态 run_code 组内 subagent_probe → 仍放行（禁令只针对 planner）', r !== null && r !== undefined && r.kind === 'allow')
 
-// ── ⑨ ptc 锚定（anchored 引导放宽：无 shell 有 run_code 也锚定；P1-P11） ──
-// ptc 折叠目录 [run_code]（wireSchemas 塌缩）：修复前 shells 为空 → 跳过锚定；
-// 修复后 keep 在无 shell 分支加入 run_code → tools 收窄为 [run_code]、
-// sections 替换为极简 persona、contexts 清空（SDK bindings 随之端出）。
-{
-  const ptcMain = await assemble(harnessBoot, mainAgent, [{ name: 'run_code' }])
-  check('P1 ptc 主会话首轮 tools 恰为 [run_code]（锚定启用不跳过）', Array.isArray(ptcMain.tools) ? ptcMain.tools.map((t) => t.name) : null, ['run_code'])
-  check('P2 ptc 主会话 sections 恰为极简 persona 单条', ptcMain.sections, [{ name: 'extra-plan-bootstrap', text: 'You are a helpful software engineer assistant.' }])
-  check('P3 ptc 主会话 contexts 清空', ptcMain.contexts, [])
+// ── ⑨ PTC/HN/HB 锚定基线（首轮按真实 phase、mode、role 分支） ─────────────
+const PTC_READ_SCHEMA = {
+  name: 'read',
+  description: 'Read a UTF-8 text file and return line-numbered content.',
+  parameters: { type: 'object', required: ['file_path'], properties: { file_path: { type: 'string', description: 'Path to read, resolved by the filesystem backend.' }, offset: { type: 'number', description: '1-based first line to return. Defaults to 1.' }, limit: { type: 'number', description: 'Maximum number of lines to return. Defaults to 2000.' } }, additionalProperties: false },
+  output: { type: 'object', additionalProperties: true },
 }
-{
-  const ptcPlanner = await assemble(harnessBoot, plannerAgent, [{ name: 'run_code' }])
-  check('P4 ptc planner 首轮 tools 恰为 [run_code]', Array.isArray(ptcPlanner.tools) ? ptcPlanner.tools.map((t) => t.name) : null, ['run_code'])
-  check('P5 ptc planner sections 恰为极简 persona 单条', ptcPlanner.sections, [{ name: 'extra-plan-bootstrap', text: 'You are a helpful software engineer assistant.' }])
-  check('P6 ptc planner contexts 清空', ptcPlanner.contexts, [])
+const PTC_BOOT_SCHEMAS = [PTC_READ_SCHEMA, { name: 'run_code', description: 'Run a program.', parameters: { type: 'object' }, output: { type: 'object', additionalProperties: true } }]
+const ptcBootAgent = {
+  session: { header: { id: 'ptc-boot-main', cwd: 'C:/work' }, snapshotEvents: () => [] },
+  options: {},
+  ctx: { get: (name) => name === 'tools' ? { schemas: () => PTC_BOOT_SCHEMAS, sdkSchemas: () => [PTC_READ_SCHEMA], modeFor: () => 'ptc' } : undefined },
 }
+const ptcBootSections = [
+  { name: 'tools:ptc-only', text: 'Only the run_code transport is directly callable.' },
+  { name: 'tool:read', text: 'Use the read tool — not shell commands like cat — to inspect text files. Results include line numbers. Use offset and limit to continue reading large files.' },
+  { name: 'tools:sdk', text: 'Original SDK declarations should be replaced in HP.' },
+  { name: 'matrix-user-section', text: 'ordinary section' },
+]
+const hpMain = await assemble(harnessBoot, ptcBootAgent, [{ name: 'run_code' }], ptcBootSections)
+const hpRead = Array.isArray(hpMain.sections) ? hpMain.sections.find((section) => section.name === 'tool:read') : undefined
+const hpReadText = hpRead !== undefined && typeof hpRead.text === 'string' ? hpRead.text : ''
+check('P1 HP0 主会话首轮 tools 恰为 [run_code]', hpMain.tools.map((tool) => tool.name), ['run_code'])
+check('P2 HP0 sections 恰为 persona/PTC/read 三项', hpMain.sections.map((section) => section.name), ['extra-plan-bootstrap', 'tools:ptc-only', 'tool:read'])
+checkTrue('P3 HP0 无顶层 read、无 SDK/Cordis，contexts 清空', !hpMain.tools.some((tool) => tool.name === 'read') && !hpMain.sections.some((section) => section.name === 'tools:sdk' || section.name === 'tool:cordis') && Array.isArray(hpMain.contexts) && hpMain.contexts.length === 0)
+checkTrue('P4 HP0 tool:read 同时含既有 guidance 与唯一 read 最小契约', hpReadText.includes('Use the read tool') && hpReadText.includes('read:') && hpReadText.includes('file_path') && hpReadText.includes('offset') && hpReadText.includes('limit') && !CORDIS_PRESENTATION_TOOLS.some((name) => hpReadText.includes(name)))
+const hpPlanner = { ...ptcBootAgent, session: { ...ptcBootAgent.session, header: { id: 'ptc-boot-planner', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => [DESC] } }
+const hpPlannerAssembly = await assemble(harnessBoot, hpPlanner, [{ name: 'run_code' }], ptcBootSections)
+check('P5 HP0 planner sections 恰为 persona/PTC/read 三项', hpPlannerAssembly.sections.map((section) => section.name), ['extra-plan-bootstrap', 'tools:ptc-only', 'tool:read'])
+checkTrue('P6 HP0 planner 仍只暴露 run_code', hpPlannerAssembly.tools.map((tool) => tool.name).join('|') === 'run_code')
 {
   const emptyBoot = await assemble(harnessBoot, mainAgent, [{ name: 'read' }, { name: 'glob' }])
   check('P7 无 shell 无 run_code → 跳过（tools 原样）', Array.isArray(emptyBoot.tools) ? emptyBoot.tools.map((t) => t.name).sort() : null, ['glob', 'read'])
@@ -681,7 +721,7 @@ checkTrue('T5-6 主会话 none 态 run_code 组内 subagent_probe → 仍放行�
 }
 {
   const ptcExecutor = await assemble(harnessBoot, executor, [{ name: 'run_code' }])
-  check('P11 ptc executor 不引导（tools 原样 [run_code]）', Array.isArray(ptcExecutor.tools) ? ptcExecutor.tools.map((t) => t.name) : null, ['run_code'])
+  check('P11 PTC executor 不引导（tools 原样 [run_code]）', Array.isArray(ptcExecutor.tools) ? ptcExecutor.tools.map((t) => t.name) : null, ['run_code'])
 }
 
 
@@ -829,5 +869,184 @@ checkTrue('R103 planner 子调用（语义）预算 → allow（容器计费）'
   checkTrue('R105 planner 静态调用点 19 处 → deny 且含「超过单实例子调用上限」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('超过单实例子调用上限'))
 }
 
-console.log(`\n通过 ${pass}, 失败 ${fail}`)
+
+// ── ⑮ 创造模式装配投影矩阵：4 × 3 × 2 × 5 = 120 ───────────────────────
+// 使用真实 registry schema 形状的 mock；只断言模型可见 assembly，不把隐藏误报为 runtime binding 安全隔离。
+const MATRIX_CORDIS_TOOLS = CORDIS_PRESENTATION_TOOLS
+const MATRIX_CREATIVE_SKILLS = ['cordis-plugin-development', 'editing-cordis-compositions']
+const MATRIX_SCHEMA = (name, description, parameters) => ({
+  name,
+  description,
+  parameters,
+  output: { type: 'object', additionalProperties: true },
+})
+const MATRIX_OBJECT = { type: 'object', additionalProperties: true }
+const MATRIX_READ_PARAMETERS = { type: 'object', required: ['file_path'], properties: { file_path: { type: 'string', description: 'Path to read, resolved by the filesystem backend.' }, offset: { type: 'number', description: '1-based first line to return. Defaults to 1.' }, limit: { type: 'number', description: 'Maximum number of lines to return. Defaults to 2000.' } }, additionalProperties: false }
+const MATRIX_TOOL_DEFINITIONS = [
+  MATRIX_SCHEMA('bash', 'Run a bash command.', MATRIX_OBJECT),
+  MATRIX_SCHEMA('pwsh', 'Run a PowerShell command.', MATRIX_OBJECT),
+  MATRIX_SCHEMA('edit', 'Edit a UTF-8 text file.', MATRIX_OBJECT),
+  MATRIX_SCHEMA('glob', 'Find files by glob.', MATRIX_OBJECT),
+  MATRIX_SCHEMA('grep', 'Search file contents.', MATRIX_OBJECT),
+  MATRIX_SCHEMA('read', 'Read a UTF-8 text file and return line-numbered content.', MATRIX_READ_PARAMETERS),
+  MATRIX_SCHEMA('save_probe', 'Save an evidence report.', MATRIX_OBJECT),
+  MATRIX_SCHEMA('skill', 'Load a named skill.', MATRIX_OBJECT),
+  MATRIX_SCHEMA('web_search', 'Search the web.', MATRIX_OBJECT),
+  MATRIX_SCHEMA('write', 'Write a UTF-8 text file.', MATRIX_OBJECT),
+  ...MATRIX_CORDIS_TOOLS.map((name) => MATRIX_SCHEMA(name, 'Cordis presentation schema for ' + name + '.', MATRIX_OBJECT)),
+  MATRIX_SCHEMA('run_code', 'Run a program.', { type: 'object', required: ['code', 'description'], properties: { code: { type: 'string' }, description: { type: 'string' } }, additionalProperties: false }),
+]
+const MATRIX_NO_WRITE = MATRIX_TOOL_DEFINITIONS.filter((schema) => schema.name !== 'write' && schema.name !== 'edit')
+function matrixSchemasFor(role) {
+  return role === 'main' || role === 'executor' ? MATRIX_TOOL_DEFINITIONS : MATRIX_NO_WRITE
+}
+function matrixDirectTools(schemas, mode) {
+  if (mode === 'ptc') return schemas.filter((schema) => schema.name === 'run_code')
+  if (mode === 'native') return schemas.filter((schema) => schema.name !== 'run_code')
+  return schemas
+}
+function matrixSections(mode) {
+  const sections = []
+  if (mode === 'ptc') sections.push({ name: 'tools:ptc-only', text: 'Only the run_code transport is directly callable.' })
+  sections.push({ name: 'tool:read', text: 'Use the read tool — not shell commands like cat — to inspect text files. Results include line numbers. Use offset and limit to continue reading large files.' })
+  sections.push({ name: 'tool:cordis', text: 'Cordis guidance: ' + MATRIX_CORDIS_TOOLS.join(', ') })
+  if (mode !== 'native') sections.push({ name: 'tools:sdk', text: 'Original SDK declarations: ' + MATRIX_CORDIS_TOOLS.join(', ') + ', read, skill, file_path, offset, limit.' })
+  sections.push({ name: 'matrix-user-section', text: 'ordinary user skill and prompt section' })
+  return sections
+}
+function matrixAgent(role, phase, serial, mode) {
+  const schemas = matrixSchemasFor(role)
+  const sdkSchemas = schemas.filter((schema) => schema.name !== 'run_code')
+  const events = phase === 'first' ? [] : [{ type: 'tool/call', data: {} }]
+  if (role === 'planner') events.unshift(DESC)
+  const header = role === 'main'
+    ? { id: 'matrix-main-' + serial, cwd: 'C:/work' }
+    : { id: 'matrix-' + role + '-' + serial, origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }
+  return {
+    session: { header, snapshotEvents: () => events },
+    options: {},
+    ctx: { get: (name) => name === 'tools' ? { schemas: () => schemas, sdkSchemas: () => sdkSchemas, modeFor: () => mode } : undefined },
+  }
+}
+function sectionNames(assembly) {
+  return Array.isArray(assembly.sections) ? assembly.sections.map((section) => section.name) : []
+}
+function sectionText(assembly, name) {
+  const section = Array.isArray(assembly.sections) ? assembly.sections.find((item) => item.name === name) : undefined
+  return section !== undefined && typeof section.text === 'string' ? section.text : ''
+}
+function declarationNames(text) {
+  const names = []
+  for (const match of text.matchAll(/^\s{2}([A-Za-z_$][A-Za-z0-9_$]*):\s/gm)) {
+    if (!names.includes(match[1])) names.push(match[1])
+  }
+  return names
+}
+function matrixCatalogDecision(creativeMode) {
+  const entries = [
+    { name: 'matrix-ordinary-skill', description: 'Ordinary skill kept in every catalog.' },
+    ...(creativeMode ? MATRIX_CREATIVE_SKILLS.map((name) => ({ name, description: 'Creative Cordis skill.' })) : []),
+  ]
+  return { kind: 'enter', messages: [{ source: { kind: 'skill-catalog', update: false, entries }, content: [{ type: 'text', text: 'matrix skill catalog' }] }] }
+}
+async function matrixCatalog(listeners, agent, creativeMode) {
+  const decision = matrixCatalogDecision(creativeMode)
+  const entry = listeners['agent/pre-step'] !== undefined ? listeners['agent/pre-step'][0] : undefined
+  return entry === undefined ? decision : await entry({ agent }, async () => decision)
+}
+const matrixModes = ['native', 'ptc', 'both']
+const matrixRoles = ['main', 'planner', 'executor', 'reviewer', 'probe']
+let matrixCases = 0
+let matrixSerial = 0
+for (const anchoredBootstrap of [false, true]) {
+  for (const creativeMode of [false, true]) {
+    for (const mode of matrixModes) {
+      for (const phase of ['first', 'later']) {
+        for (const role of matrixRoles) {
+          matrixSerial += 1
+          const harnessMatrix = makeHarness({ anchoredBootstrap, creativeMode })
+          const agent = matrixAgent(role, phase, matrixSerial, mode)
+          const schemas = matrixSchemasFor(role)
+          const rawTools = matrixDirectTools(schemas, mode)
+          const assembled = await assemble(harnessMatrix, agent, rawTools, matrixSections(mode))
+          const anchored = anchoredBootstrap && phase === 'first' && (role === 'main' || role === 'planner')
+          const anchoredPtc = anchored && mode === 'ptc'
+          const visibleRawTools = creativeMode ? rawTools : rawTools.filter((tool) => !MATRIX_CORDIS_TOOLS.includes(tool.name))
+          const expectedNames = anchoredPtc
+            ? ['run_code']
+            : anchored
+              ? visibleRawTools.filter((tool) => ['bash', 'pwsh', 'read'].includes(tool.name)).map((tool) => tool.name)
+              : visibleRawTools.map((tool) => tool.name)
+          const gotNames = Array.isArray(assembled.tools) ? assembled.tools.map((tool) => tool.name) : []
+          const expectedSectionNames = anchoredPtc
+            ? ['extra-plan-bootstrap', 'tools:ptc-only', 'tool:read']
+            : anchored
+              ? ['extra-plan-bootstrap']
+              : matrixSections(mode).filter((section) => creativeMode || section.name !== 'tool:cordis').map((section) => section.name)
+          const gotSectionNames = sectionNames(assembled)
+          const namesOk = gotNames.join('|') === expectedNames.join('|')
+          const sectionsOk = gotSectionNames.join('|') === expectedSectionNames.join('|')
+          const sdk = sectionText(assembled, 'tools:sdk')
+          const sdkCordisHits = MATRIX_CORDIS_TOOLS.filter((name) => sdk.includes(name))
+          const sdkPresent = !anchored && mode !== 'native'
+          const sdkOk = sdkPresent
+            ? creativeMode
+              ? sdkCordisHits.length === 7 && sdk.includes('read')
+              : sdkCordisHits.length === 0 && sdk.includes('read:') && sdk.includes('file_path') && sdk.includes('offset') && sdk.includes('limit')
+            : sdk === ''
+          const cordisSection = sectionText(assembled, 'tool:cordis')
+          const cordisSectionHits = MATRIX_CORDIS_TOOLS.filter((name) => cordisSection.includes(name))
+          const topCordisHits = gotNames.filter((name) => MATRIX_CORDIS_TOOLS.includes(name))
+          const c7Expected = creativeMode && !anchored ? 7 : 0
+          const cordisOk = c7Expected === 7
+            ? cordisSectionHits.length === 7 && (mode === 'ptc' ? topCordisHits.length === 0 : topCordisHits.length === 7)
+            : cordisSectionHits.length === 0 && topCordisHits.length === 0
+          const readText = sectionText(assembled, 'tool:read')
+          let readOk
+          if (anchoredPtc) {
+            const declarations = declarationNames(readText)
+            readOk = readText.includes('Use the read tool — not shell commands like cat')
+              && readText.includes('file_path') && readText.includes('offset') && readText.includes('limit')
+              && readText.includes('Defaults to 1.') && readText.includes('Defaults to 2000.')
+              && declarations.length === 1 && declarations[0] === 'read'
+              && MATRIX_CORDIS_TOOLS.every((name) => !readText.includes(name))
+          } else if (anchored) {
+            readOk = readText === '' && !gotSectionNames.includes('tool:read')
+          } else {
+            readOk = readText.includes('Use the read tool — not shell commands like cat')
+          }
+          const phaseOk = (isBootstrapPhase(agent) ? 'first' : 'later') === phase
+          const contextsOk = !anchored || (Array.isArray(assembled.contexts) && assembled.contexts.length === 0)
+          const catalog = await matrixCatalog(harnessMatrix, agent, creativeMode)
+          const catalogMessage = Array.isArray(catalog.messages) ? catalog.messages.find((message) => message !== null && typeof message === 'object' && message.source !== undefined) : undefined
+          const catalogEntries = catalogMessage !== undefined && catalogMessage.source !== null && typeof catalogMessage.source === 'object' && Array.isArray(catalogMessage.source.entries) ? catalogMessage.source.entries : []
+          const catalogCreative = catalogEntries.filter((entry) => entry !== null && typeof entry === 'object' && MATRIX_CREATIVE_SKILLS.includes(entry.name))
+          const catalogExpected = creativeMode && !anchoredPtc ? 2 : 0
+          const catalogOk = catalogCreative.length === catalogExpected && catalogEntries.some((entry) => entry !== null && typeof entry === 'object' && entry.name === 'matrix-ordinary-skill')
+          const ordinarySkillToolOk = anchoredPtc ? schemas.some((schema) => schema.name === 'skill') : mode === 'ptc' ? sdk.includes('skill') : visibleRawTools.some((tool) => tool.name === 'skill')
+          const ptcBoundaryOk = mode !== 'ptc' || (gotNames.length === 1 && gotNames[0] === 'run_code' && !gotNames.includes('read') && gotSectionNames.includes('tools:ptc-only') && gotSectionNames.includes('tool:read') && (anchoredPtc ? !gotSectionNames.includes('tools:sdk') : gotSectionNames.includes('tools:sdk')))
+          const hpOk = !anchoredPtc || (gotSectionNames.join('|') === 'extra-plan-bootstrap|tools:ptc-only|tool:read' && sdk === '' && cordisSection === '' && !gotSectionNames.includes('matrix-user-section'))
+          const hnHbOk = !(anchored && mode !== 'ptc') || (gotSectionNames.join('|') === 'extra-plan-bootstrap' && gotNames.includes('read') && !gotSectionNames.includes('tool:read') && !gotSectionNames.includes('tools:ptc-only') && !gotSectionNames.includes('tools:sdk') && !gotSectionNames.includes('tool:cordis'))
+          const label = 'M' + matrixSerial + ' A=' + (anchoredBootstrap ? '1' : '0') + ' C=' + (creativeMode ? '1' : '0') + ' M=' + mode + ' phase=' + phase + ' role=' + role + ' C7=' + c7Expected + ' catalog=' + catalogExpected
+          checkTrue(label + ' tools/sections/phase/presentation', namesOk && sectionsOk && phaseOk && sdkOk && cordisOk && readOk && contextsOk && catalogOk && ordinarySkillToolOk && ptcBoundaryOk && hpOk && hnHbOk)
+          matrixCases += 1
+        }
+      }
+    }
+  }
+}
+check('装配矩阵案例总数', matrixCases, 120)
+checkTrue('Cordis 固定集合恰有 7 项且名称唯一', MATRIX_CORDIS_TOOLS.length === 7 && new Set(MATRIX_CORDIS_TOOLS).size === 7)
+const projectionSource = { tools: [{ name: 'read' }, { name: 'cordis_run' }], sections: [{ name: 'tool:cordis', text: 'hidden' }, { name: 'tools:sdk', text: 'old' }] }
+const projectionCopy = projectAssemblyForPresentation(projectionSource, projectionSource.tools, { sdkText: 'read:' })
+checkTrue('projectAssemblyForPresentation 返回新 assembly 且不原地修改', projectionCopy !== projectionSource && projectionSource.tools.length === 2 && projectionSource.sections[0].name === 'tool:cordis' && projectionCopy.tools.length === 1 && projectionCopy.tools[0].name === 'read' && sectionText(projectionCopy, 'tool:cordis') === '' && sectionText(projectionCopy, 'tools:sdk') === 'read:')
+const skillHarnessOff = makeHarness({ anchoredBootstrap: false, creativeMode: false })
+const skillHarnessOn = makeHarness({ anchoredBootstrap: false, creativeMode: true })
+const expectedCreativeSkills = ['cordis-plugin-development', 'editing-cordis-compositions']
+checkTrue('creativeMode:false 不注册两个官方 skill 且不解析 cordis 预设', skillHarnessOff.skillRegistrations.length === 0 && skillHarnessOff.presetResolveCount() === 0)
+checkTrue('creativeMode:true 恢复恰 2 个官方 skill 注册', skillHarnessOn.skillRegistrations.length === 2 && skillHarnessOn.skillRegistrations.map((item) => item.name).sort().join('|') === expectedCreativeSkills.sort().join('|'))
+checkTrue('skill 工具仍属于普通模型可见工具', matrixDirectTools(MATRIX_TOOL_DEFINITIONS, 'native').some((tool) => tool.name === 'skill'))
+checkTrue('F/L 判定识别数组型 tool/call 事件', !isBootstrapPhase({ session: { snapshotEvents: () => [{ type: ['assistant', 'tool/call'] }] } }))
+
+console.log('\n通过 ' + pass + ', 失败 ' + fail)
 process.exit(fail === 0 ? 0 : 1)

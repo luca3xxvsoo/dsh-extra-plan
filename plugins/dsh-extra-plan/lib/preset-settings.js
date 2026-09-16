@@ -60,6 +60,10 @@ export const SETTING_DEFINITIONS = Object.freeze([
     validator: isBoolean, ui: { control: 'select', options: [true, false], locale: 'anchoredBootstrap', section: 'general' }, locatorAliases: [],
   }),
   setting({
+    key: 'creativeMode', pluginId: 'extra-plan', path: 'config.creativeMode', scalarType: 'boolean',
+    validator: isBoolean, ui: { control: 'select', options: [true, false], locale: 'creativeMode', section: 'general' }, locatorAliases: [],
+  }),
+  setting({
     key: 'webFetch', pluginId: 'tool-web', path: 'config.fetch', scalarType: 'boolean',
     validator: isBoolean, ui: { control: 'select', options: [true, false], locale: 'webFetch', section: 'general' }, locatorAliases: [],
   }),

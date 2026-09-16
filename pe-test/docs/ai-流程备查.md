@@ -8,7 +8,11 @@
 
 ① 用户以按需规划模式进入（会话预设「按需规划模式」）
 
-② anchored 引导（默认开，可配置）：主会话与规划子代理在首个 tool/call 落盘前——装配级注入极简 persona、清空运行时上下文、目录收窄（有 shell（bash/pwsh）时收窄为 shell + read【run_code 被滤掉】；仅 run_code 的 ptc 模式保留 run_code；无 shell 且无 run_code 跳过并警告一次）；模型完成首个工具调用后自动恢复全量 persona 与完整工具目录。执行者/验收者子代理不引导。
+② A/C/M 展示时序（默认 A=1、C=0；M=native|ptc|both）：F 精确表示 session 尚无任何 tool/call，首个 tool/call 落盘后为 L。A=1/F/main-planner 的 native/both 是 HN/HB：顶层保留 bootstrap shell(s)+read，sections 仅 extra-plan-bootstrap，不加 tool:read；PTC 是 HP：顶层精确为 [run_code]，sections 精确为 extra-plan-bootstrap、tools:ptc-only、tool:read，其中 tool:read 合并既有 guidance 与仅 tools.read 的最小契约，不含完整 tools:sdk/Cordis。A=1 的 L 和 A=0 从 N/P/B 基线开始，执行者/验收者/探查者不走 anchored 首轮。C=0 时所有角色、F/L 隐藏 7 个 Cordis 展示项及两个创造 skill catalog；C=1 恢复完整 SDK/Cordis/两个创造 skill，唯一 HP1（F/main-planner）暂隐 catalog。所有变化只改变模型可见面，不是 PTC runtime binding 安全隔离；既有 registry namespace、deny 与 pre-execute 仍按原逻辑执行。
+
+### 1.1 PTC 实机专项
+- C=0 与 C=1 各开一条干净的 A=1/M=ptc 顶层会话：任何 tool/call 前记录 F header；完成首个顶层 run_code 后在同一会话记录 L，再发第二调用确认仍为 L。
+- F 只由会话是否已有 tool/call 判定，旧会话不得冒充 F；native/both HN/HB 回归单独编排，旧会话仅可提供 L 证据。
 
 ③ 用户提出需求
 
@@ -68,7 +72,7 @@
    - 创建执行子代理（subagent，one-shot 后台，必须显式传 run_in_background: true）执行
    - 执行者 persona：先读「方案」+「验收」文件、以文件内容为准执行，**不要重新规划整体方案**；执行过程中持续对照验收文件自验证，发现问题立即修正
    - 执行者权限：审批策略在委派边界固定为 never——**写工作区以外的路径必然被拒绝**：不要逐条尝试、更不要设 sandbox_permissions（不会弹窗、只会失败）；任务要求写工作区外时，先完成工作区内能做的部分，把越界操作清单（命令、目标路径、用途、预期内容）写进汇报，由主会话统一越界执行（shell + sandbox_permissions）
-   - 执行者工具裁剪 deny（12 项）：subagent / subagent_review / subagent_probe / workflow / ralph / send_message / interrupt_agent / list_agents / ask_user_question / todo_write / subagent_plan / cordis_run（防委派递归；预设侧配置见 agent.cordis.yml tool-subagent 行）
+   - 执行者工具裁剪 deny（12 项）：subagent / subagent_review / subagent_probe / workflow / ralph / send_message / interrupt_agent / list_agents / ask_user_question / todo_write / subagent_plan / cordis_run（防委派递归；预设侧配置见 agent.cordis.yml tool-subagent 行）；creativeMode 的模型可见投影不新增、不改写该 deny，亦不改变执行者 run_code 内既有 binding。
    - 汇报格式（≤15 行，禁止粘贴大段文件内容）：①完成清单——逐项做了什么、关键结果值；②自验证结论——逐项通过/不通过，附一行证据；③越界需求（如有）
    - 主会话**不得自己动手改文件**（write/edit 与 shell 写命令被闸门机械拦截；批准态下主会话仅可执行越界 shell 写：带 sandbox_permissions + justification）
    - **修改范围 = 工作区仓库内**：执行者与主会话在验收通过前不得执行任何生产环境同步/部署动作（如 dsh plugin 更新、scripts/distribute-preset.mjs 分发、复制到 DSH_HOME 安装目录、.agent-presets 下发）——部署时机由用户掌控
@@ -80,7 +84,7 @@
    - 「通过」→ 主会话采纳并汇总；「不通过」→ 把问题清单修正进执行委派重派（最多 2 轮）；两轮仍不通过 → 收集两轮不通过原因、原样返回用户，由用户决策
 
 ⑭ 地图维护（所有改动完成后必做）：
-   - 主会话在交付前运行 node pe-test/tools/代码地图生成.mjs → 核对 stdout（[新增] 补描述 / [删除] 核对是否改名 / [行号] 无动作）→ 补写（待补充）描述
+   - 主会话在交付前先运行 node pe-test/tools/代码地图生成.mjs 更新机器段，再核对 stdout（[新增] 补描述 / [删除] 核对是否改名 / [行号] 无动作）→ 在人工意图速查区补写 projectAssemblyForPresentation/renderFilteredToolsSdk 的 A/C/M、HP 最小 read、HN/HB 基线与 binding 边界描述，最后运行 --check
    - 无论改动来自「直接执行」还是「执行者委派」路径，此步都由主会话执行；验收发现问题需修正重跑时，修正后再次执行本步
 
 ## 2. 子代理通用机制（贯穿 ⑩-⑬）

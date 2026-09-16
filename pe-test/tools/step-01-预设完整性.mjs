@@ -25,10 +25,14 @@ try {
 console.log('PASS  工作区 agent/preset YAML 解析成功（' + (Array.isArray(rows) ? rows.length : '非数组!') + ' 行）')
 if (!Array.isArray(preset)) console.log('PASS  preset.yml 为有效 YAML 文档')
 
+const cordisTools = [
+  'cordis_inspect_list', 'cordis_inspect_query', 'cordis_inspect_self',
+  'cordis_define', 'cordis_run', 'cordis_stop', 'cordis_undefine',
+]
 const registered = new Set([
   'subagent', 'subagent_review', 'subagent_probe', 'subagent_plan', 'workflow', 'ralph',
   'send_message', 'interrupt_agent', 'list_agents', 'ask_user_question',
-  'todo_write', 'write', 'edit', 'read', 'glob', 'grep', 'pwsh', 'web_search', 'cordis_run',
+  'todo_write', 'write', 'edit', 'read', 'glob', 'grep', 'pwsh', 'web_search', ...cordisTools,
 ])
 
 let pass = 0
@@ -85,9 +89,9 @@ const locatorChecks = SETTING_DEFINITIONS.map((definition) => {
   const textMatches = findTextLocatorMatches(agentText, definition.locator)
   return { definition, parsed, textMatches }
 })
-if (SETTING_DEFINITIONS.length === 9 && locatorChecks.every((item) => item.parsed.kind === 'ok' && item.textMatches.length === 1)) {
+if (SETTING_DEFINITIONS.length === 10 && locatorChecks.every((item) => item.parsed.kind === 'ok' && item.textMatches.length === 1)) {
   pass += 1
-  console.log('PASS  设置白名单恰有 9 个唯一 locator（工作区模板）')
+  console.log('PASS  设置白名单恰有 10 个唯一 locator（工作区模板）')
 } else {
   fail += 1
   console.log('FAIL  设置白名单 locator 不完整或有歧义')
@@ -101,6 +105,14 @@ if (crossDefinition !== undefined && crossDefinition.pluginId === 'extra-plan' &
   fail += 1
   console.log('FAIL  crossProviderPlannerModel descriptor 不符合契约')
 }
+const creativeDefinition = SETTING_DEFINITIONS.find((item) => item.key === 'creativeMode')
+if (creativeDefinition !== undefined && creativeDefinition.pluginId === 'extra-plan' && creativeDefinition.path === 'config.creativeMode' && creativeDefinition.scalarType === 'boolean' && creativeDefinition.validator(true) && !creativeDefinition.validator('true') && !creativeDefinition.validator(1) && creativeDefinition.validator(false) && creativeDefinition.ui.control === 'select' && creativeDefinition.ui.options.join('/') === 'true/false' && creativeDefinition.ui.locale === 'creativeMode' && creativeDefinition.ui.section === 'general' && creativeDefinition.locatorAliases.length === 0) {
+  pass += 1
+  console.log('PASS  creativeMode descriptor 严格为 boolean select 且无 alias')
+} else {
+  fail += 1
+  console.log('FAIL  creativeMode descriptor 不符合契约')
+}
 const otherDefinition = SETTING_DEFINITIONS.find((item) => item.key === 'otherAgentModel')
 if (otherDefinition !== undefined && otherDefinition.pluginId === 'extra-plan' && otherDefinition.path === 'config.otherAgentModel' && otherDefinition.scalarType === 'string' && otherDefinition.validator('') && otherDefinition.validator('  model  ') && !otherDefinition.validator(123) && otherDefinition.ui.control === 'text' && otherDefinition.ui.locale === 'otherAgentModel' && otherDefinition.ui.section === 'pro' && otherDefinition.locatorAliases.length === 0) {
   pass += 1
@@ -109,9 +121,9 @@ if (otherDefinition !== undefined && otherDefinition.pluginId === 'extra-plan' &
   fail += 1
   console.log('FAIL  otherAgentModel descriptor 不符合契约')
 }
-if (defaults.plannerModel === 'deepseek-v4-pro' && defaults.crossProviderPlannerModel === false && defaults.exploreBudget === 18 && defaults.otherAgentModel === '' && defaults.anchoredBootstrap === true && defaults.runcodeCatchGate === false && defaults.webFetch === false && defaults.toolPresentationMode === 'native' && typeof defaults.plannerPromptSuffix === 'string') {
+if (defaults.plannerModel === 'deepseek-v4-pro' && defaults.crossProviderPlannerModel === false && defaults.creativeMode === false && defaults.exploreBudget === 18 && defaults.otherAgentModel === '' && defaults.anchoredBootstrap === true && defaults.runcodeCatchGate === false && defaults.webFetch === false && defaults.toolPresentationMode === 'native' && typeof defaults.plannerPromptSuffix === 'string') {
   pass += 1
-  console.log('PASS  新版模板 9 项默认值来自实际叶值（跨提供商=false，otherAgentModel=空串）')
+  console.log('PASS  新版模板 10 项默认值来自实际叶值（creativeMode=false，跨提供商=false，otherAgentModel=空串）')
 } else {
   fail += 1
   console.log('FAIL  新版模板默认值不符合验收锚点')
@@ -138,9 +150,9 @@ if (planRow !== undefined && typeof plannerModelRaw === 'string') {
   fail += 1
   console.log('FAIL  subagent_plan 行或 plannerModel 键缺失（须为 string，可为空串）')
 }
-if (pluginRow !== undefined && pluginRow.config && pluginRow.config.crossProviderPlannerModel === false && pluginRow.config.otherAgentModel === '' && pluginRow.config.usageLedger && pluginRow.config.usageLedger.enabled === true && pluginRow.config.anchoredBootstrap === true && typeof pluginRow.config.plannerPromptSuffix === 'string') {
+if (pluginRow !== undefined && pluginRow.config && pluginRow.config.creativeMode === false && pluginRow.config.crossProviderPlannerModel === false && pluginRow.config.otherAgentModel === '' && pluginRow.config.usageLedger && pluginRow.config.usageLedger.enabled === true && pluginRow.config.anchoredBootstrap === true && typeof pluginRow.config.plannerPromptSuffix === 'string') {
   pass += 1
-  console.log('PASS  extra-plan 插件行 config 完整（anchoredBootstrap/usageLedger 开启、plannerPromptSuffix 存在）')
+  console.log('PASS  extra-plan 插件行 config 完整（anchoredBootstrap/creativeMode/usageLedger、plannerPromptSuffix 存在）')
 } else {
   fail += 1
   console.log('FAIL  extra-plan 插件行 config 缺失')
@@ -157,6 +169,13 @@ if (toolCordisRow !== undefined && toolCordisRow.name === '@deepseek-ai/dsh-tool
 } else {
   fail += 1
   console.log('FAIL  T1 资产预设 tool-cordis 行被改动或形状不符')
+}
+if (cordisTools.length === 7 && agentText.includes('# 7 工具') && toolCordisRow !== undefined) {
+  pass += 1
+  console.log('PASS  Cordis 静态集合恰有 7 项')
+} else {
+  fail += 1
+  console.log('FAIL  Cordis 静态集合不是 7 项')
 }
 
 console.log('\n通过 ' + pass + ', 失败 ' + fail)

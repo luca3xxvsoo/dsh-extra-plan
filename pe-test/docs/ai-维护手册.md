@@ -1,7 +1,7 @@
 # 维护手册（AI 动手纪律 + 自检 + 地图同步）
 
 ## 动手前
-- 备份：修改目标文件前复制到 .extra-plan/backup-<目标>-<yyyyMMdd>/（项目惯例）
+- 备份：修改前将本轮 10 个目标逐路径镜像到 `.extra-plan/backup-ptc-phase-resume-<timestamp>/`，不得覆盖旧备份
 - 改预设（agent.cordis.yml）：复制现有预设为副本再改；官方安装的预设/技能只读引用（不复制不改写）
 - 先读：ai-概览.md（改哪里）、ai-机制设计.md（改核心前）、ai-代码地图.md（定位函数）
 - **验收与部署次序**：先仓库内验收 → 用户部署生产 → 生产测试。AI 在验收通过前不得执行生产环境同步/部署动作（dsh plugin 更新、distribute-preset.mjs、复制 DSH_HOME 安装目录、.agent-presets 下发等均属用户侧部署）
@@ -28,35 +28,43 @@
 - 仓库改动和回归通过后，生产 profile 迁移由用户执行；仓库验收不是生产部署许可，AI 不接触 `C:\Users\Administrator\.dsh\profiles`。
 
 ## 改完后
-1. 静态校验：node --check <改动的 js/mjs>
-2. 同步代码地图：node pe-test/tools/代码地图生成.mjs
-   - 读 stdout：[新增] → 补写描述；[删除] → 核对是真删除还是改名（旧描述在报告里，沾回新行）；[行号] → 正常（无动作）
-   - 补写 pe-test/docs/ai-代码地图.md 中（待补充）描述；脚本只更新结构，不覆盖已有描述
-   - 一键体检已内置一致性检查（`代码地图生成.mjs --check`，**不写盘**）：地图与代码不一致（[新增]/[行号]/[删除]）或存在漏检/导航失效 → 该项判**失败**，提示先跑同步
-   - 地图头部「意图速查」整节由人工维护（脚本原样保留）；其引用的函数改名/删除后会报 [导航失效]
-   - 提交前跑 node pe-test/tools/代码地图生成.mjs --check 须退出码 0
-3. 跑对应自检（见下表）。step-07 是实机 HUMAN 项：无可用 SESSION_ID 时不得伪造通过，改由用户在同一部署快照下实测。
-4. 交付汇报：改动点 / 校验结果 / 备份路径 / 风险点；用户实测确认后才算完成
+1. 先同步本轮语义文档：`READAI.md` 与 `pe-test/docs` 下 6 份指定文档（共 7 个目标文档）；根 README、pe-test/README.md、ai-宿主耦合台账.md 不编辑。
+2. 本轮按固定顺序逐文件执行 3 个语法门（工作目录固定为 dsh-extra-plan）：
+   - node --check plugins/dsh-extra-plan/index.js
+
+
+
+
+
+
+
+   - node --check pe-test/tools/step-04-路由与写闸门.mjs
+   - node --check pe-test/tools/step-04-工具清单查看.mjs
+   每条退出码必须为 0，且无 SyntaxError 或其它解析错误。
+3. 运行 5 个 step-01 回归：设置页配置、设置迁移、预设完整性、安装同步、安装分发。
+4. 运行 step-04-路由与写闸门.mjs：实际执行 A/C/M/F-L × 五角色的 2×2×3×2×5=120 格，逐格核对 C7 0/7、catalog 0/2、普通 skill、HP 最小 read、HN/HB 无 tool:read 及既有 deny；再以显式会话目录运行 step-04-工具清单查看.mjs 取证。
+5. 先运行 `node pe-test/tools/代码地图生成.mjs` 更新机器段；再只补允许的人类意图速查/功能描述/备注，最后运行 `node pe-test/tools/代码地图生成.mjs --check`，退出码必须为 0。机器段文件/函数/行号/增删由脚本维护；模型可见面隐藏不是 PTC runtime binding 安全隔离。
+6. 交付汇报：改动点 / 每条校验结果 / 备份路径 / 风险点；用户实测确认后才算完成
 
 ## 自检工具速查（pe-test/tools/）
 | 改动域 | 自检 |
 |:--|:--|
-| 闸门/路由/写拦截 | step-04-路由与写闸门.mjs（监听器级）+ step-00-跨平台写拦截.mjs（68 用例，写形态识别正则的纯函数级回归） |
+| 闸门/路由/写拦截与A/C/M展示装配 | step-04-路由与写闸门.mjs（监听器级 + 120 格 A/C/M/F-L/五角色案例，含 C7/catalog/HP/HN/HB 断言）+ step-00-跨平台写拦截.mjs（68 用例） |
 | planner 探查委派禁令（T5）+ save_plan 主会话路由（T3）+ plannerModel/otherAgentModel 降级与跨 Provider 时序（T2） | step-04-路由与写闸门.mjs（T3/T5 监听器级）、step-00-全流程回归.mjs（planner 与 executor/reviewer/probe/workflow/ralph worker 的 True/False 分流、真实 OK probe、排序、失败隔离、fallback、timeout、per-Agent cache、agent/request 屏障）、step-06-线索落盘.mjs（save_plan 注册与路由矩阵） |
 | save_probe 机械上限/动态描述 | step-00-全流程回归.mjs（PROBE_LIMITS：evidence 150、text 1000，PR23=151、PR34/PR35=1000/1001；实际 schema 动态断言） |
 | save_probe/save_plan 落盘 | step-06-线索落盘.mjs |
-| 预设安装/完整性/设置页/九项迁移 | step-01-预设完整性.mjs、step-01-安装分发.mjs、step-01-安装同步.mjs、step-01-设置迁移.mjs、step-01-设置页配置.mjs（descriptor/metadata/locator/manifest 从 8 到 9、otherAgentModel 空串默认、true/false PUT、非法值与 skipped-old-missing） |
+| 预设安装/完整性/设置页/十项迁移 | step-01-预设完整性.mjs、step-01-安装分发.mjs、step-01-安装同步.mjs、step-01-设置迁移.mjs、step-01-设置页配置.mjs（descriptor/metadata/locator/manifest 从 9 到 10，creativeMode 默认 false、true/false PUT、非法值与 skipped-old-missing） |
 | 全量回归 | step-00-全流程回归.mjs（本地 mock/in-process，不需真实 session_id；一键step测试.mjs 同）。**一键体检的自动判定项共 11 项**（以 `一键step测试.mjs` 的 AUTO 数组为准）：step-00-全流程回归、step-00-跨平台写拦截、step-01-设置迁移、step-01-安装分发、step-01-安装同步、step-01-预设完整性、step-01-设置页配置、step-01-qqbot-安装映射、step-04-路由与写闸门、step-06-线索落盘、代码地图生成.mjs（--check） |
 | usage 账本 | step-99-用量统计.mjs |
 | 跨平台写拦截 | step-00-跨平台写拦截.mjs |
 | 代码地图（口径/覆盖/导航） | 一键step测试.mjs 内置「代码地图生成.mjs --check」（不写盘，比对结构+漏检+导航失效）；同步仍用 node pe-test/tools/代码地图生成.mjs |
 | 会话解码/取证 | step-05-会话解码.mjs、step-06-真实会话查看.mjs、step-07-子代理模型与引导取证.mjs、step-08-方案配对查看.mjs |
-| 机械闸门实机逐条实测（非 mock/静态自检，both 单形态 × catchGate 两轮） | pe-test/docs/ai-实机闸门测试流程.md（AI 给脚本、用户照做、当场取证判定） |
+| 机械闸门与PTC F/L实机取证（非 mock/静态自检） | pe-test/docs/ai-实机闸门测试流程.md（PTC C=0/C=1 干净会话 F→L；native/both HN/HB 独立回归；both 机械轮另行执行） |
 | 子代理模型/提供方与 suffix 实机取证（A42/A43、C11/C12） | step-07-子代理模型与引导取证.mjs（HUMAN；显式 SESSION_ID + PLANNER_PROMPT_SUFFIX；request/header attempted route 与 assistant/message actual provenance 分列，suffix 等级完整保留） |
 
 ## 代码地图（函数级索引）维护规则
 - 定位功能：grep pe-test/docs/ai-代码地图.md 关键词（函数名/功能词）→ 得文件+行号 → read 区间；地图未覆盖再 glob/grep/read 探查
-- 行号/增删行由脚本维护；功能描述与备注由 AI/人维护
+- 代码变更后先运行 node pe-test/tools/代码地图生成.mjs 更新机器行号/时间戳；行号/增删行由脚本维护，功能描述与备注由 AI/人维护，最后运行 --check
 - 函数改名 = 删旧增新，旧描述出现在脚本删除报告里（沾回新行即可）
 - 「意图速查」（文件头部）：意图词 → 文件 → 函数名，人工维护、脚本保留；行号一律到「函数索引」按函数名取（人工段不写行号，防漂移）
 - 覆盖口径 = 任意缩进的命名函数定义（`function NAME` / `const|let|var NAME = (…) =>` / `= function`）；反向计数器与抽取器同口径，只用于抓实现层漏检

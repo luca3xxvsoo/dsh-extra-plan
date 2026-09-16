@@ -47,6 +47,7 @@ const oldValues = {
   exploreBudget: 9,
   otherAgentModel: 'old-sync-other-model',
   anchoredBootstrap: false,
+  creativeMode: false,
   runcodeCatchGate: true,
   webFetch: true,
   toolPresentationMode: 'both',
@@ -55,7 +56,7 @@ const expectedOldAgent = patchAgent(oldValues)
 
 try {
   check('首次自愈 → written', syncPreset(home) === 'written')
-  check('首次 manifest format=2/9 项审计', (() => { const m = manifestAt(dist); return m.format === 2 && m.distHash === currentHash && Object.keys(m.settingsMigration.results).length === 9 })())
+  check('首次 manifest format=2/10 项审计', (() => { const m = manifestAt(dist); return m.format === 2 && m.distHash === currentHash && Object.keys(m.settingsMigration.results).length === 10 })())
   check('首次第二次 → idle', syncPreset(home) === 'idle')
 
   writeFileSync(join(dist, 'agent.cordis.yml'), expectedOldAgent, 'utf8')

@@ -47,6 +47,7 @@ const oldValues = {
   exploreBudget: 7,
   otherAgentModel: 'old-distribute-other-model',
   anchoredBootstrap: false,
+  creativeMode: false,
   runcodeCatchGate: true,
   webFetch: true,
   toolPresentationMode: 'ptc',
@@ -58,7 +59,7 @@ try {
   check('首次安装 → written', distribute(home) === 'written')
   const first = manifestAt(dist)
   check('首次 manifest format=2', first.format === 2)
-  check('首次审计 source=absent 且恰有 9 项', first.settingsMigration && first.settingsMigration.source === 'absent' && Object.keys(first.settingsMigration.results).length === 9)
+  check('首次审计 source=absent 且恰有 10 项', first.settingsMigration && first.settingsMigration.source === 'absent' && Object.keys(first.settingsMigration.results).length === 10)
   check('首次厂商 distHash 正确', first.distHash === currentHash && readManifest(dist) === currentHash)
   check('同版本重装 → idle', distribute(home) === 'idle')
 
@@ -70,9 +71,9 @@ try {
   writeManifest(dist, 'OLD-DISTRIBUTE-HASH')
   check('旧 format=1 记录 → upgraded', distribute(home) === 'upgraded')
   const upgraded = manifestAt(dist)
-  check('升级后 9 项有效旧值全部恢复', readFileSync(join(dist, 'agent.cordis.yml'), 'utf8') === expectedOldAgent)
+  check('升级后 10 项有效旧值全部恢复', readFileSync(join(dist, 'agent.cordis.yml'), 'utf8') === expectedOldAgent)
   check('升级后 manifest format=2/厂商 hash', upgraded.format === 2 && upgraded.distHash === currentHash)
-  check('升级后 audit captured/9 项且不含原始用户值', upgraded.settingsMigration.source === 'captured' && Object.keys(upgraded.settingsMigration.results).length === 9 && !JSON.stringify(upgraded).includes('old-distribute-model') && !JSON.stringify(upgraded).includes('old-distribute-other-model'))
+  check('升级后 audit captured/10 项且不含原始用户值', upgraded.settingsMigration.source === 'captured' && Object.keys(upgraded.settingsMigration.results).length === 10 && !JSON.stringify(upgraded).includes('old-distribute-model') && !JSON.stringify(upgraded).includes('old-distribute-other-model'))
 
   writeFileSync(join(dist, 'agent.cordis.yml'), patchAgent({ plannerModel: 'old-without-manifest' }), 'utf8')
   rmSync(join(dist, 'dist-manifest.json'))

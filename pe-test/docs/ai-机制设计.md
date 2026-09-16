@@ -54,7 +54,24 @@
 - request/header.config.provider/model、request/context.provider/model/contextWindow、model/selection 是 attempted route；`assistant/message.data.message.source.kind=model` 的 source.provider/model 才是 actual provenance。重复的 header/message 原样逐条保留；前栏有而后栏无标 `attempted-only`，两栏均无标 `no-log`。
 - 仅 pro规划 child 的初始首个 text block与父 `subagent_plan` 原始 prompt参与 suffix 判定；完整输出每个 text block，`budgetNotice`、宿主 `Your parent agent id is …` guidance、`header.system` 单列且不计 suffix。精确匹配并按 `verified-injection` / `content-only` / `attempted-only` / `absent` / `no-log` 记录，配置 snapshot 与实际 route 分列。
 
-## 七、anchored 引导（首轮极简，ptc 兼容）
+## 七、anchored 引导与创造模式装配（A/C/M/F-L 三维时序）
+- `anchoredBootstrap`（A）与 `creativeMode`（C）是两个独立布尔开关；`toolPresentationMode`（M）取 `native|ptc|both`。F 精确表示 session 尚无任何 `tool/call`，首个 `tool/call` 落盘后为 L；不增加轮次设置或持久化状态。
+- C=0 时五角色、F/L 均只投影隐藏 7 个 Cordis 展示工具/`tool:cordis`/SDK 对应 schema 与说明，两个官方创造 skill 不进入 catalog；C=1 时恢复完整 SDK/Cordis/两个创造 skill，普通 skill 与 `skill` 工具始终保留。仅 HP1（A=1、C=1、M=ptc、F、main/planner）在 agent/pre-step 消息副本中暂隐两个创造 skill，L 恢复。
+- Pure PTC 顶层始终只保留 `run_code`。A=1/F/main-planner/M=ptc 的 HP0/HP1 sections 精确为 `extra-plan-bootstrap`、`tools:ptc-only`、`tool:read`；`tool:read` 合并既有 guidance 与只含 `tools.read` 的最小契约（`file_path` required string、`offset` number/default 1、`limit` number/current cap），不生成完整 `tools:sdk`。
+- A=1/F/main-planner/M=native 的 HN0/HN1 与 M=both 的 HB0/HB1 顶层仍为 bootstrap shell(s)+`read`，sections **仅** `extra-plan-bootstrap`，没有 `tool:read`；L 及 A=0 均回到 N/P/B 基线。其它角色不走 anchored 首轮。
+
+| 状态 | 顶层 / sections / SDK 与 catalog |
+|:--|:--|
+| N0/N1 | native：C=0/1；F/L 顶层按 `V_r-C7`/`V_r`，`tool:read` guidance；C7=0/7，catalog=0/2。 |
+| P0/P1 | ptc：顶层精确 `[run_code]`；`tools:ptc-only`、`tool:read`、完整 `tools:sdk`；C7=0/7，catalog=0/2。 |
+| B0/B1 | both：顶层含 `run_code` 的 `V_r-C7`/`V_r`；`tool:read`，并按 C 过滤/保留完整 `tools:sdk`；C7=0/7，catalog=0/2。 |
+| HN/HB | A=1/F/main-planner/native/both：sections 仅 persona；HN/HB 不含 `tool:read`，无 PTC/SDK；C=0/1 分别 catalog=0/2。 |
+| HP0/HP1 | A=1/F/main-planner/ptc：顶层 `[run_code]`，sections 精确三项；最小 read 契约、无完整 SDK/Cordis/C7；HP1 的 catalog=0，L 回 P1=2。 |
+
+- `step-04-路由与写闸门.mjs` 实际执行 `2×2×3×2×5=120` 格，逐格断言 phase、C7 0/7、catalog 0/2、普通 skill、HP 最小 read 与 HN/HB 无 `tool:read`。
+- 三面过滤通过 `projectAssemblyForPresentation` 与 `renderFilteredToolsSdk` 创建新 assembly/schema 投影；`tools:sdk` 只从明确 schema 数组整体调用官方 renderer，禁止从原始 SDK 文本用正则/字符串删块。两个官方 skill 在 `agentPresets.resolve('cordis')` 注册源按 C=0/1 分别为 0/2；skill catalog 是独立 agent/pre-step 消息副本。
+- 这是模型可见面隐藏，不是 PTC runtime binding 安全隔离：`registry.schemas(exec.agent)` 建成的 run_code 内 `tools.*` namespace、既有 `toolFilter.deny`、`tools.restrict`、`tools/pre-execute` 与各角色 `cordis_run` deny 均保持原行为。
+
 | 多调用容错 | run_code ≥2 个 tools.* 调用点未独立容错 → 组判定整体拒绝；一个 try 块包 2 个调用不算各自独立保护 | index.js runCodeCatchGateReason 注释 |
 | 被拒不烧预算 | pre-execute deny 的 tool/result 无 data.error（仅 HarnessError 有 .info），成功配对须按块级 isError 排除，否则被拒调用计入探查预算 | index.js toolCallCount 注释 |
 | 探查者级联中止 | planner 派探查者曾因引擎 owner 级联取消而全部丢失（planner 轮次结束→activation dispose→jobs-local 取消 one-shot 探查者 job，owner disposed）→ **已改为禁止 planner 委派探查者**（闸门 subagentProbeGateReason 拒绝 planner，文案指向「申请继续探查」），委派权收归主会话；历史备注：若将来放开并行派探查，候选 A（引擎侧 stateOf 计入 job）/候选 B（探查者 job 改挂主会话 owner）均需官方包配合 | index.js subagentProbeGateReason/probeDisposalWarning 注释 |

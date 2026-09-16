@@ -4,9 +4,10 @@
 > 运行时行为以 persona（agent.cordis.yml 注入内容）与机械闸门为准。
 
 ## 项目一句话
-dsh 插件「按需规划模式」预设：AI 未经用户同意只能只读探查，经路由/目的/澄清/批准四级机械闸门后按规划执行。
+dsh 插件「按需规划模式」预设：AI 未经用户同意只能只读探查，经路由/目的/澄清/批准四级机械闸门后按规划执行；Pure PTC 顶层始终只保留 run_code。
 五角色：主会话（入口协调）→ 探查者（只读批量+证据落盘，**仅主会话可委派**）→ 规划子代理（方案+验收双文件，不得委派探查者）→ 执行者（按方案改）→ 验收者（逐条核对）。save_probe 的 `PROBE_LIMITS` 当前为 evidence 150 条、单条 evidence.text 1000 字；step-00 PR23=151、PR34/PR35=1000/1001；exploreBudget=18 与台账历史 80/209 是不同口径。
-兼容：dsh >= v0.1.2-rc.1 & <= v0.1.5-rc.2；qqbot 0.5.0 版 + 精简版 dsh-qqbot-user-questions（仅自愈+mklink，选装）。anchored 引导（首轮极简）默认开且兼容 PTC：纯 PTC 模式首轮仅暴露 run_code 工具 + 极简引导词（详见 ai-流程备查.md / ai-机制设计.md）。
+兼容：dsh >= v0.1.2-rc.1 & <= v0.1.5-rc.2；qqbot 0.5.0 版 + 精简版 dsh-qqbot-user-questions（仅自愈+mklink，选装）。A=anchoredBootstrap、C=creativeMode、M=toolPresentationMode（native/ptc/both），F=尚无 tool/call、L=首个 tool/call 后。
+A=1/F/main-planner：M=native/both 为 HN/HB（bootstrap shell(s)+read，sections 仅 extra-plan-bootstrap，无 tool:read）；M=ptc 为 HP（顶层仅 run_code，sections 精确为 extra-plan-bootstrap、tools:ptc-only、tool:read，其中 read 是 guidance+最小契约，不含完整 tools:sdk/Cordis）。A=1 的 L 与 A=0 从 N/P/B 基线开始；C=0 全角色隐藏 7 个 Cordis 展示项且两个创造 skill 不出现在 catalog，C=1 非 HP1 保留完整 SDK/Cordis/两个创造 skill，HP1 仅 F/main-planner 暂隐 catalog。以上是模型可见投影，不是 runtime binding 安全隔离（详见 ai-流程备查.md / ai-机制设计.md）。
 
 ## 文档索引（想查什么 → 打开哪个）
 | 想查什么 | 打开 | 建议时机 |
@@ -17,11 +18,11 @@ dsh 插件「按需规划模式」预设：AI 未经用户同意只能只读探�
 | 函数在几行/干什么 | pe-test/docs/ai-代码地图.md | 定位功能时：**先看文件头部「意图速查」**（意图词 → 函数名），再按函数名到索引区取行号区间 |
 | 完整流程（实际机制校订版） | pe-test/docs/ai-流程备查.md | 流程细节拿不准时 |
 | 宿主耦合点全表（DSH/qqbot 升级比对） | pe-test/docs/ai-宿主耦合台账.md | 升级 DSH/qqbot 前必读 |
-| 发版前/改闸门后实机逐条实测全部机械闸门（用户操作最少编排，both 单形态 × catchGate 两轮） | pe-test/docs/ai-实机闸门测试流程.md | 发版前跑全量；改闸门后按域增量 |
+| PTC 首轮 F→L 与 native/both HN/HB 回归实机取证 | pe-test/docs/ai-实机闸门测试流程.md | PTC 的 C=0/C=1 各用干净新顶层会话；both 回归独立 |
 | 子代理模型/提供方与 pro规划引导实机取证（A42/A43、C11/C12） | pe-test/tools/step-07-子代理模型与引导取证.mjs | HUMAN：显式 SESSION_ID + PLANNER_PROMPT_SUFFIX；request/header attempted route、assistant/message actual provenance、suffix 等级分栏 |
 
 ## 必守纪律（一句）
-改前备份到 .extra-plan/backup-*/；改预设=复制副本；改完跑 node pe-test/tools/代码地图生成.mjs + 对应自检 + node --check。**改完不同步地图 = 一键体检「代码地图一致性」判红**（体检内置 `代码地图生成.mjs --check`，不写盘）。提交前 node pe-test/tools/代码地图生成.mjs --check 退出码 0。根 `dsh-extra-plan/README.md` 本轮不编辑/不备份，otherAgentModel 缺口由用户自行同步。
+改前逐文件备份到 `.extra-plan/backup-ptc-phase-resume-<timestamp>/`；改完按固定顺序执行 `node --check plugins/dsh-extra-plan/index.js`、两个 step-04 脚本的 `node --check`，再运行 `node pe-test/tools/step-04-路由与写闸门.mjs`、`node pe-test/tools/代码地图生成.mjs`，维护人类段后执行 `node pe-test/tools/代码地图生成.mjs --check`。**改完不同步地图 = 一键体检「代码地图一致性」判红**。根 `dsh-extra-plan/README.md`、pe-test README、宿主耦合台账及官方文件本轮不编辑。
 
 ## 真相源
 - 角色 persona/deny 清单 → assets/presets/extra-plan/agent.cordis.yml

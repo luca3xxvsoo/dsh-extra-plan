@@ -20,6 +20,7 @@ window.__ModuleLoader__.load({
       exploreBudget: "pro规划 | 探查额度",
       otherAgentModel: "其他子代理 | 使用模型",
       anchoredBootstrap: "anchored开关",
+      creativeMode: "创造模式开关",
       runcodeCatchGate: "run_code 容错检查",
       webFetch: "web_fetch开关",
       toolPresentationMode: "工具呈现模式",
@@ -47,6 +48,7 @@ window.__ModuleLoader__.load({
       exploreBudget: "Pro Planner | Explore Budget",
       otherAgentModel: "Other Agents | Model",
       anchoredBootstrap: "Anchored Bootstrap",
+      creativeMode: "Creative Mode",
       runcodeCatchGate: "RunCode Catch Guard",
       webFetch: "Web Fetch",
       toolPresentationMode: "Tool Presentation Mode",
@@ -65,6 +67,7 @@ window.__ModuleLoader__.load({
 
     const FIELD_HINTS = Object.freeze({
       anchoredBootstrap: "首轮极简工具 + 提示词",
+      creativeMode: "是否开启dsh官方创造模式",
       webFetch: "是否开启web_fetch",
       toolPresentationMode: "工具呈现方式切换（默认/混合/PTC模式）",
       runcodeCatchGate: "PTC模式下，增加每个工具调用需要try catch的闸门。通过限制+建议的模式保障仅单个调用报错",

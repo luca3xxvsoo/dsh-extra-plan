@@ -66,10 +66,10 @@
 //       （kind=agent-message）末尾机械拼接「\n\n + 配置文本」（任务要求 + 回车换行
 //       + 文本）；运行时快照（kind=plugin）不追加。
 //  3) anchored 引导（默认开）：主会话与规划子代理在首个 tool/call 落盘前，
-//     装配级注入极简 persona、清空运行时上下文、目录收窄——有 shell（bash/pwsh，
-//     native/both）→ shell + read（run_code 被滤掉）；仅 run_code（ptc 折叠目录）
-//     → run_code；无 shell 且无 run_code → 跳过并每实例警告一次；
-//     执行者/reviewer 子代理不引导。
+//     装配级注入极简 persona、清空运行时上下文、目录收窄——native/both 保持
+//     bootstrap shell(s)+read，sections 仅 persona；Pure PTC 只保留 run_code，
+//     sections 为 persona + tools:ptc-only + tool:read（read 是官方最小契约）；
+//     无 shell 且无 run_code → 跳过并每实例警告一次；执行者/reviewer 子代理不引导。
 //  4) planner 与非 planner child 模型及首请求屏障：planner 只用 plannerModel，executor/reviewer/probe
 //     与 workflow/ralph worker 只用 otherAgentModel；非 planner 显式 agentOptions/provider/model 优先，
 //     未显式时 fallback 固定取顶层主会话。crossProviderPlannerModel 仅严格等于 true 时，agent/request
@@ -131,6 +131,125 @@ function approvalDenyReason(action, state) {
 }
 
 const ASK_TOOL = 'ask_user_question'
+
+// creativeMode=false 只改变模型可见的装配投影；registry binding 与运行时执行边界保持不变。
+const CORDIS_PRESENTATION_TOOLS = Object.freeze([
+  'cordis_inspect_list',
+  'cordis_inspect_query',
+  'cordis_inspect_self',
+  'cordis_define',
+  'cordis_run',
+  'cordis_stop',
+  'cordis_undefine',
+])
+const CORDIS_PRESENTATION_TOOL_SET = new Set(CORDIS_PRESENTATION_TOOLS)
+const CORDIS_SECTION_NAME = 'tool:cordis'
+const PTC_SECTION_NAME = 'tools:ptc-only'
+const SDK_SECTION_NAME = 'tools:sdk'
+const READ_SECTION_NAME = 'tool:read'
+const READ_GUIDANCE_FALLBACK = 'Use the read tool — not shell commands like cat — to inspect text files. Results include line numbers. Use offset and limit to continue reading large files.'
+const CREATIVE_SKILL_NAMES = new Set(['cordis-plugin-development', 'editing-cordis-compositions'])
+
+function sectionOf(sections, name) {
+  if (!Array.isArray(sections)) return undefined
+  return sections.find((section) => section !== null && typeof section === 'object' && section.name === name)
+}
+
+function sectionTextOf(sections, name) {
+  const section = sectionOf(sections, name)
+  return section !== undefined && typeof section.text === 'string' ? section.text : ''
+}
+
+function readSchemasForRendering(schemas) {
+  if (!Array.isArray(schemas)) return []
+  return schemas.filter((schema) => schema !== null && typeof schema === 'object' && schema.name === 'read')
+}
+
+async function renderMinimalReadText(sections, schemas, language) {
+  const guidance = sectionTextOf(sections, READ_SECTION_NAME) || READ_GUIDANCE_FALLBACK
+  const readSchemas = readSchemasForRendering(schemas)
+  if (readSchemas.length === 0) return guidance
+  try {
+    const rendered = await renderFilteredToolsSdk(readSchemas, language)
+    return [guidance, rendered].filter((text) => typeof text === 'string' && text !== '').join('\n\n')
+  } catch (error) {
+    console.warn('extra-plan: minimal tool:read render failed (' + (error instanceof Error ? error.message : String(error)) + ')')
+    return guidance
+  }
+}
+
+function toolPresentationModeOf(agent) {
+  const tools = toolRegistryOf(agent)
+  if (tools === undefined || typeof tools.modeFor !== 'function') return undefined
+  try {
+    const mode = tools.modeFor(agent)
+    return typeof mode === 'string' ? mode : undefined
+  } catch (error) {
+    return undefined
+  }
+}
+
+function skillCatalogEntriesOf(source) {
+  if (source === null || typeof source !== 'object' || !Array.isArray(source.entries)) return undefined
+  const entries = []
+  for (const entry of source.entries) {
+    if (entry === null || typeof entry !== 'object' || typeof entry.name !== 'string' || typeof entry.description !== 'string') return undefined
+    entries.push({ name: entry.name, description: entry.description })
+  }
+  return entries
+}
+
+function renderSkillCatalogText(source, entries) {
+  const lines = ['<system-reminder>']
+  if (source.update === true) {
+    lines.push('The available skill catalog changed. This complete catalog replaces every earlier available-skills list in this session:', '', '<available_skills>')
+    for (const entry of entries) lines.push('- \`' + entry.name + '\`: ' + entry.description)
+    lines.push('</available_skills>', '')
+    if (entries.length === 0) {
+      lines.push('No skills are currently available through the \`skill\` tool. Do not use names from earlier skill catalogs.')
+      lines.push('A user may still invoke a skill directly; its <skill_content> block then appears in this conversation. Follow it, and do not call the \`skill\` tool for it.')
+    } else {
+      lines.push('Use only names in this replacement catalog. If the user names a listed skill, or the task clearly matches its description, call the \`skill\` tool with the exact name before acting.')
+      lines.push('A user may also invoke a skill directly; its <skill_content> block then appears in this conversation. Follow it, and do not call the \`skill\` tool again for that skill.')
+    }
+  } else {
+    lines.push('A skill is a reusable set of task-specific instructions. The following skills are available in this session:', '', '<available_skills>')
+    for (const entry of entries) lines.push('- \`' + entry.name + '\`: ' + entry.description)
+    lines.push('</available_skills>', '')
+    lines.push('If the user names a skill, or the task clearly matches its description, call the \`skill\` tool with the exact skill name before taking task actions. This catalog contains summaries only; do not infer or follow the skill instructions until it has been loaded.')
+    lines.push('A user may also invoke a skill directly; its <skill_content> block then appears in this conversation. Follow it, and do not call the \`skill\` tool again for that skill.')
+  }
+  lines.push('</system-reminder>')
+  return lines.join('\n')
+}
+
+function projectSkillCatalogDecision(decision) {
+  if (decision === null || typeof decision !== 'object' || decision.kind === 'reject' || !Array.isArray(decision.messages)) return decision
+  let changed = false
+  const messages = decision.messages.map((message) => {
+    if (message === null || typeof message !== 'object') return message
+    const entries = skillCatalogEntriesOf(message.source)
+    if (entries === undefined) return message
+    const visible = entries.filter((entry) => !CREATIVE_SKILL_NAMES.has(entry.name))
+    if (visible.length === entries.length) return message
+    changed = true
+    const source = { ...message.source, entries: visible }
+    const text = renderSkillCatalogText(source, visible)
+    let replaced = false
+    const content = Array.isArray(message.content)
+      ? message.content.map((part) => {
+        if (!replaced && part !== null && typeof part === 'object' && part.type === 'text') {
+          replaced = true
+          return { ...part, text }
+        }
+        return part
+      })
+      : []
+    if (!replaced) content.push({ type: 'text', text })
+    return { ...message, source, content }
+  })
+  return changed ? { ...decision, messages } : decision
+}
 
 // ── 会话事件名双兼容层（DSH 0.1.2-rc.1 / 0.1.5-rc.2）────────────────────────
 // 为什么双兼容：生产仍是 0.1.2-rc.1 且需回放旧会话日志，同一份代码须两代都能工作。
@@ -266,7 +385,10 @@ function isBootstrapPhase(agent) {
   if (session === undefined || session === null) return false
   const events = sessionEvents(session)
   if (!Array.isArray(events)) return false
-  return !events.some((event) => event !== null && typeof event === 'object' && event.type === 'tool/call')
+  return !events.some((event) => {
+    if (event === null || typeof event !== 'object') return false
+    return event.type === 'tool/call' || (Array.isArray(event.type) && event.type.includes('tool/call'))
+  })
 }
 
 // pwsh/bash 命令文本（对象/字符串双形状，v11 修复）。已探查核实：bash 与 pwsh 的
@@ -2448,6 +2570,130 @@ function sortPlannerCandidates(candidates, parentProvider) {
   })
 }
 
+function isCordisPresentationTool(name) {
+  return typeof name === 'string' && CORDIS_PRESENTATION_TOOL_SET.has(name)
+}
+
+function filteredCordisSchemas(schemas) {
+  if (!Array.isArray(schemas)) return []
+  return schemas.filter((schema) => schema !== null && typeof schema === 'object' && !isCordisPresentationTool(schema.name))
+}
+
+function hasSection(sections, name) {
+  return Array.isArray(sections) && sections.some((section) => section !== null && typeof section === 'object' && section.name === name)
+}
+
+function hasNonEmptySection(sections, name) {
+  return Array.isArray(sections) && sections.some((section) => section !== null && typeof section === 'object' && section.name === name && typeof section.text === 'string' && section.text !== '')
+}
+
+// 只投影 PromptAssembly 的模型可见副本；不修改 registry、result 或其 schema。
+function projectAssemblyForPresentation(assembly, schemas, options = {}) {
+  if (assembly === null || typeof assembly !== 'object') return assembly
+  const hideCordis = options.hideCordis !== false
+  const ptcOnly = options.ptcOnly === true
+  const keepToolNames = options.keepToolNames instanceof Set ? options.keepToolNames : null
+  const keepSectionNames = options.keepSectionNames instanceof Set ? options.keepSectionNames : null
+  const schemaNames = Array.isArray(schemas)
+    ? new Set(schemas.filter((schema) => schema !== null && typeof schema === 'object' && typeof schema.name === 'string').map((schema) => schema.name))
+    : null
+  const tools = Array.isArray(assembly.tools)
+    ? assembly.tools.filter((tool) => {
+      if (tool === null || typeof tool !== 'object' || typeof tool.name !== 'string') return false
+      if (hideCordis && isCordisPresentationTool(tool.name)) return false
+      if (ptcOnly && tool.name !== 'run_code') return false
+      if (keepToolNames !== null && !keepToolNames.has(tool.name)) return false
+      return schemaNames === null || schemaNames.size === 0 || schemaNames.has(tool.name)
+    })
+    : assembly.tools
+  const sections = Array.isArray(assembly.sections)
+    ? assembly.sections
+      .filter((section) => section !== null && typeof section === 'object' && (!hideCordis || section.name !== CORDIS_SECTION_NAME) && (keepSectionNames === null || keepSectionNames.has(section.name)))
+      .map((section) => section.name === SDK_SECTION_NAME && typeof options.sdkText === 'string'
+        ? { ...section, text: options.sdkText }
+        : section)
+    : assembly.sections
+  return { ...assembly, sections, tools }
+}
+
+function toolRegistryOf(agent) {
+  if (agent === undefined || agent === null || agent.ctx === undefined || agent.ctx === null || typeof agent.ctx.get !== 'function') return undefined
+  try {
+    const tools = agent.ctx.get('tools')
+    return tools !== null && typeof tools === 'object' ? tools : undefined
+  } catch (error) {
+    return undefined
+  }
+}
+
+function toolSdkSchemasOf(agent) {
+  const tools = toolRegistryOf(agent)
+  if (tools === undefined) return undefined
+  try {
+    if (typeof tools.sdkSchemas === 'function') {
+      const schemas = tools.sdkSchemas(agent)
+      if (Array.isArray(schemas)) return schemas
+    }
+    if (typeof tools.schemas !== 'function') return undefined
+    const schemas = tools.schemas(agent)
+    if (!Array.isArray(schemas)) return undefined
+    return schemas.filter((schema) => schema !== null && typeof schema === 'object' && schema.name !== 'run_code').map((schema) => ({
+      ...schema,
+      output: schema.output !== undefined ? schema.output : { type: 'object', additionalProperties: true },
+    }))
+  } catch (error) {
+    return undefined
+  }
+}
+
+function sdkSchemasForRendering(schemas) {
+  return filteredCordisSchemas(schemas)
+    .filter((schema) => schema.name !== 'run_code')
+    .map((schema) => ({
+      ...schema,
+      output: schema.output !== undefined ? schema.output : { type: 'object', additionalProperties: true },
+    }))
+}
+
+function dshToolsEntryCandidates() {
+  const dshHome = process.env.DSH_HOME || join(homedir(), '.dsh')
+  const candidates = [
+    join(dshHome, 'profiles', 'web', 'node_modules', '@deepseek-ai', 'dsh-tools', 'lib', 'index.js'),
+  ]
+  if (process.platform === 'win32') {
+    const appData = process.env.APPDATA || join(homedir(), 'AppData', 'Roaming')
+    candidates.push(join(appData, 'npm', 'node_modules', '@deepseek-ai', 'dsh', 'node_modules', '@deepseek-ai', 'dsh-tools', 'lib', 'index.js'))
+  } else {
+    candidates.push(
+      join('/usr', 'local', 'lib', 'node_modules', '@deepseek-ai', 'dsh', 'node_modules', '@deepseek-ai', 'dsh-tools', 'lib', 'index.js'),
+      join(homedir(), '.npm-global', 'lib', 'node_modules', '@deepseek-ai', 'dsh', 'node_modules', '@deepseek-ai', 'dsh-tools', 'lib', 'index.js'),
+      join(homedir(), 'node_modules', '@deepseek-ai', 'dsh', 'node_modules', '@deepseek-ai', 'dsh-tools', 'lib', 'index.js'),
+    )
+  }
+  return [...new Set(candidates)]
+}
+
+let sdkRendererModulePromise
+function loadSdkRendererModule() {
+  if (sdkRendererModulePromise === undefined) {
+    sdkRendererModulePromise = (async () => {
+      for (const entry of dshToolsEntryCandidates()) {
+        if (existsSync(entry)) return import(pathToFileURL(entry).href)
+      }
+      throw new Error('extra-plan: dsh-tools SDK renderer is unavailable')
+    })()
+  }
+  return sdkRendererModulePromise
+}
+
+// 只接收已过滤 schema，整体调用官方 renderer 重建 tools:sdk，不从原始文本删块。
+async function renderFilteredToolsSdk(schemas, language = 'typescript') {
+  const rendererModule = await loadSdkRendererModule()
+  const render = language === 'python' ? rendererModule.renderToolsSdkPy : rendererModule.renderToolsSdk
+  if (typeof render !== 'function') throw new Error(`extra-plan: unsupported SDK renderer language ${language}`)
+  return render(sdkSchemasForRendering(schemas))
+}
+
 // 供场景测试直接复用（消除"复制品"漂移）。模块顶层无副作用，纯 Node 可 import。
 export const decisions = {
   CHANNEL_BROKEN_CODES,
@@ -2547,6 +2793,13 @@ export const decisions = {
   PLANNER_BLOCKED_REASON,
   NON_PLANNER_BLOCKED_REASON,
   sortPlannerCandidates,
+  CORDIS_PRESENTATION_TOOLS,
+  projectAssemblyForPresentation,
+  renderFilteredToolsSdk,
+  readSchemasForRendering,
+  renderMinimalReadText,
+  toolPresentationModeOf,
+  projectSkillCatalogDecision,
 }
 
 export const name = 'extra-plan'
@@ -2554,7 +2807,7 @@ export const inject = []
 
 import { mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, existsSync, unlinkSync, appendFileSync } from 'node:fs'
 import { join, resolve, isAbsolute, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { homedir } from 'node:os'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
@@ -2567,6 +2820,7 @@ export function apply(ctx, config) {
   const savePlanDir = typeof cfg.savePlanDir === 'string' && cfg.savePlanDir !== '' ? cfg.savePlanDir : '.extra-plan'
   const plannerPromptSuffix = typeof cfg.plannerPromptSuffix === 'string' ? cfg.plannerPromptSuffix : ''
   const bootstrapOn = cfg.anchoredBootstrap !== false
+  const creativeModeOn = cfg.creativeMode === true
   const runcodeCatchGateOn = cfg.runcodeCatchGate === true
   const crossProviderPlannerModelOn = cfg.crossProviderPlannerModel === true
   const bootstrapPersona = typeof cfg.bootstrapPersona === 'string' ? cfg.bootstrapPersona : 'You are a helpful software engineer assistant.'
@@ -3063,7 +3317,8 @@ export function apply(ctx, config) {
   // 失败降级：任一环节异常仅 console.warn，不影响闸门与其余功能。
   const agentPresets = ctx.get('agentPresets')
   const skills = ctx.get('skills')
-  if (agentPresets !== undefined && skills !== undefined) {
+  // creativeMode=false 不注册两个官方创造模式 skill；skill 工具及其它用户 skill 不受影响。
+  if (creativeModeOn && agentPresets !== undefined && skills !== undefined) {
     ctx.effect(() => {
       let dead = false
       const disposers = []
@@ -3435,6 +3690,22 @@ export function apply(ctx, config) {
   // 续轮转达机械拼接 plannerPromptSuffix（「任务要求 + 空行 + 配置文本」——宿主
   // exec.arguments 与消息对象均 deepFreeze，拼接走 pre-step 消息替换通道，
   // 与 agent-instructions 基线注入同通道）。
+  function shouldHideCreativeCatalog(agent) {
+    if (!creativeModeOn || !bootstrapOn || !isBootstrapPhase(agent)) return false
+    const planner = isPlannerChild(agent)
+    const child = isChild(agent)
+    if (!planner && child) return false
+    return toolPresentationModeOf(agent) === 'ptc'
+  }
+
+  // skill catalog 属于 agent/pre-step 消息通道；只改当前请求副本，不注销 skill binding。
+  // 仅 HP1（C=1、A=1、F、main/planner、M=ptc）暂隐两个创造 skill；L 与其它组合
+  // 保持完整 catalog。prepend 让本投影在 tool-skill 的 catalog 生成之后收到最终 decision。
+  ctx.on('agent/pre-step', async (payload, next) => {
+    const decision = await next()
+    return shouldHideCreativeCatalog(payload.agent) ? projectSkillCatalogDecision(decision) : decision
+  }, { prepend: true })
+
   ctx.on('agent/pre-step', async (payload, next) => {
     if (payload.agent !== undefined) {
       selfAgent = payload.agent
@@ -3524,24 +3795,21 @@ export function apply(ctx, config) {
   })
 
   // 3) anchored 引导（默认开）：主会话与规划子代理首轮极简；执行者/reviewer 不引导。
-  //    ptc 兼容（2026-09-06）：catalog 无 shell 但有 run_code（ptc 折叠目录）同样锚定——
-  //    keep 无 shell 分支并入 run_code（目录收窄为 [run_code]）；有 shell 时 run_code 仍
-  //    被滤掉（keep=shells+read，both/native 现状不变）；无 shell 无 run_code 跳过+警告一次。
-  //    钩子常驻（bootstrapOn=false 时也注册）：另负责按装配目录机械识别只读
-  //    子代理（reviewer）写入 per-agent 缓存，供 pre-execute 拦截复用；
-  //    bootstrapOn=false 时仅记录目录、不改装配产物。
+  //    native/both 首轮保留 bootstrap shell(s)+read，sections 仅 persona；Pure PTC
+  //    首轮保留唯一 run_code、persona、tools:ptc-only 与 tool:read 最小契约，不生成完整 SDK。
+  //    无 shell 无 run_code 跳过+警告一次。钩子常驻（bootstrapOn=false 时也注册）：
+  //    另负责按装配目录机械识别只读子代理（reviewer）写入 per-agent 缓存，供
+  //    pre-execute 拦截复用；bootstrapOn=false 时仅记录目录、不改装配产物。
   const readOnlyChildren = new WeakSet()
   ctx.on('system-prompt/assemble', async (assembly, context, next) => {
     const result = await next()
     const agent = context.agent
     if (agent === undefined) return result
     const planner = isPlannerChild(agent)
-    if (isChild(agent) && !planner) {
-      // 只读分类：优先真实工具集（tools.schemas，restrict 后非折叠）——含 write/edit=可写
-      // （executor，折叠态下同样正确）→ 放行；无 write/edit=只读（probe/reviewer）→ 拦截。
-      // schemas 不可得（防御回落，行为与改造前非折叠态逐项等价）：折叠目录保守放行（目录层
-      // deny 兜底）；非折叠按目录判定（isReadOnlyChildByCatalog）；否则放行。
-      const schemas = toolSchemasOf(agent)
+    const child = isChild(agent)
+    const schemas = toolSchemasOf(agent)
+    if (child && !planner) {
+      // 只读分类使用 registry.schemas，而不是装配返回数组；模型可见隐藏不改变执行分类。
       if (schemas !== undefined) {
         if (schemasHasWriteTools(schemas)) readOnlyChildren.delete(agent)
         else readOnlyChildren.add(agent)
@@ -3553,26 +3821,85 @@ export function apply(ctx, config) {
         readOnlyChildren.delete(agent)
       }
     }
-    if (!bootstrapOn) return result
-    if (isChild(agent) && !planner) return result
-    if (!isBootstrapPhase(agent)) return result
-    if (!Array.isArray(result.tools) || result.tools.length === 0) return result
-    const shells = result.tools.filter((tool) => tool !== null && typeof tool === 'object' && bootstrapShellTools.has(tool.name))
-    const runCodes = result.tools.filter((tool) => tool !== null && typeof tool === 'object' && tool.name === 'run_code')
+
+    // 展示决策按 phase → creative → mode 分层；所有分支只返回模型可见副本。
+    const phase = isBootstrapPhase(agent) ? 'first' : 'later'
+    const role = planner ? 'planner' : child ? 'executor' : 'main'
+    const mode = hasNonEmptySection(result.sections, PTC_SECTION_NAME)
+      ? 'ptc'
+      : hasNonEmptySection(result.sections, SDK_SECTION_NAME) ? 'both' : 'native'
+    const anchoredFirst = bootstrapOn && phase === 'first' && (role === 'main' || role === 'planner')
+    const anchoredPtc = anchoredFirst && mode === 'ptc'
+    let presented = result
+    if (anchoredPtc) {
+      // HP0/HP1：PTC 首轮只保留传输、persona 与 read 最小契约；不先生成完整 SDK。
+      presented = projectAssemblyForPresentation(result, schemas, {
+        hideCordis: !creativeModeOn,
+        ptcOnly: true,
+        keepSectionNames: new Set([PTC_SECTION_NAME, READ_SECTION_NAME]),
+      })
+    } else if (!creativeModeOn) {
+      let sdkText
+      if (hasSection(result.sections, SDK_SECTION_NAME)) {
+        let language = 'typescript'
+        try {
+          const runtime = typeof ctx.get === 'function' ? ctx.get('codeRuntime') : undefined
+          if (runtime !== undefined && runtime !== null && typeof runtime.language === 'string') language = runtime.language
+        } catch (error) { /* 缺少 codeRuntime 时按测试/兼容默认使用 TypeScript renderer */ }
+        try {
+          const sdkSchemas = toolSdkSchemasOf(agent)
+          sdkText = await renderFilteredToolsSdk(sdkSchemas === undefined ? schemas : sdkSchemas, language)
+        } catch (error) {
+          console.warn('extra-plan: filtered tools:sdk render failed (' + (error instanceof Error ? error.message : String(error)) + ')')
+          sdkText = ''
+        }
+      }
+      presented = projectAssemblyForPresentation(result, schemas, { sdkText, ptcOnly: mode === 'ptc' })
+    } else if (mode === 'ptc') {
+      // Pure PTC 的保留传输始终是唯一顶层工具；其余 binding 只在嵌套 SDK 中出现。
+      presented = projectAssemblyForPresentation(result, schemas, { hideCordis: false, ptcOnly: true })
+    }
+
+    if (!anchoredFirst) return presented
+    if (!Array.isArray(presented.tools) || presented.tools.length === 0) return presented
+    const shells = presented.tools.filter((tool) => tool !== null && typeof tool === 'object' && bootstrapShellTools.has(tool.name))
+    const runCodes = presented.tools.filter((tool) => tool !== null && typeof tool === 'object' && tool.name === 'run_code')
     if (shells.length === 0 && runCodes.length === 0) {
       if (!bootstrapShellMissingWarned) {
         bootstrapShellMissingWarned = true
         console.warn('extra-plan: anchoredBootstrap enabled but neither a bootstrap shell nor run_code is present in the catalog — bootstrap skipped for this assembly')
       }
-      return result
+      return presented
     }
     const keep = new Set([...shells.map((tool) => tool.name), ...(shells.length === 0 ? runCodes.map((tool) => tool.name) : []), ...bootstrapCommonTools])
-    const tools = result.tools.filter((tool) => tool !== null && typeof tool === 'object' && keep.has(tool.name))
+    const bootstrapped = presented.tools.filter((tool) => tool !== null && typeof tool === 'object' && keep.has(tool.name))
+    if (anchoredPtc) {
+      let language = 'typescript'
+      try {
+        const runtime = typeof ctx.get === 'function' ? ctx.get('codeRuntime') : undefined
+        if (runtime !== undefined && runtime !== null && typeof runtime.language === 'string') language = runtime.language
+      } catch (error) { /* 缺少 codeRuntime 时按测试/兼容默认使用 TypeScript renderer */ }
+      const sdkSchemas = toolSdkSchemasOf(agent)
+      const readText = await renderMinimalReadText(result.sections, sdkSchemas === undefined ? schemas : sdkSchemas, language)
+      const ptcSection = sectionOf(presented.sections, PTC_SECTION_NAME)
+      const readSection = sectionOf(presented.sections, READ_SECTION_NAME)
+      const sections = [
+        { name: 'extra-plan-bootstrap', text: bootstrapPersona },
+        ...(ptcSection === undefined ? [{ name: PTC_SECTION_NAME, text: '' }] : [{ ...ptcSection }]),
+        ...(readSection === undefined ? [{ name: READ_SECTION_NAME, text: readText }] : [{ ...readSection, text: readText }]),
+      ]
+      return {
+        ...presented,
+        sections,
+        contexts: [],
+        tools: bootstrapped,
+      }
+    }
     return {
-      ...result,
+      ...presented,
       sections: [{ name: 'extra-plan-bootstrap', text: bootstrapPersona }],
       contexts: [],
-      tools,
+      tools: bootstrapped,
     }
   })
 
