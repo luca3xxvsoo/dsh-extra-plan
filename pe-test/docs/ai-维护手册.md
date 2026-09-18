@@ -1,12 +1,14 @@
 # 维护手册（AI 动手纪律 + 自检 + 地图同步）
 
 ## 动手前
-- 备份：修改前将本轮 10 个目标逐路径镜像到 `.extra-plan/backup-ptc-phase-resume-<timestamp>/`，不得覆盖旧备份
+- 备份：修改前把本轮实际改动的每个文件按原目录结构逐路径镜像到 `.extra-plan/backup-<本轮任务名>-<timestamp>/`；不得覆盖旧备份目录；根 README 禁改、不备份。
 - 改预设（agent.cordis.yml）：复制现有预设为副本再改；官方安装的预设/技能只读引用（不复制不改写）
 - 先读：ai-概览.md（改哪里）、ai-机制设计.md（改核心前）、ai-代码地图.md（定位函数）
 - **验收与部署次序**：先仓库内验收 → 用户部署生产 → 生产测试。AI 在验收通过前不得执行生产环境同步/部署动作（dsh plugin 更新、distribute-preset.mjs、复制 DSH_HOME 安装目录、.agent-presets 下发等均属用户侧部署）
-- **本轮 README 边界**：根 `dsh-extra-plan/README.md` 不编辑、不备份；其中 otherAgentModel 文档缺口只记录在本维护范围，由用户自行同步。
+- **README 边界**：根 `dsh-extra-plan/README.md` 不编辑、不备份；pe-test/README.md 等其它层级 README 可改；其中 otherAgentModel 文档缺口只记录在本维护范围，由用户自行同步。
 - 复杂嵌套/拼接的修改遵循转义纪律：最终目标语言视角写出正确代码 → 逐层向外转义 → 解析回放验证（全局纪律）
+- 工作区外写入（如 ~/.dsh/memory/ 记忆库）：沙箱拒绝时唯一放行通道 = shell 命令 + sandbox_permissions 提权（一次性重试，需用户批准；AGENTS.md 协议已有规定，本项目遵守）。严禁通过改用工具名称绕过沙箱限制。
+- 闸门拒绝消息已含修复指令（如「已保护 M 个」「参数不可解析」「须先 ask_user_question 路由确认」「选项固定为…」）——照改写法即可通过，严禁换工具/改调用方式绕过；绕过尝试会被后续闸门拦截。
 
 ## Web 核心与 QQBot 分发所有权
 | profile | 唯一职责 | 迁移边界 |
@@ -28,32 +30,29 @@
 - 仓库改动和回归通过后，生产 profile 迁移由用户执行；仓库验收不是生产部署许可，AI 不接触 `C:\Users\Administrator\.dsh\profiles`。
 
 ## 改完后
-1. 先同步本轮语义文档：`READAI.md` 与 `pe-test/docs` 下 6 份指定文档（共 7 个目标文档）；根 README、pe-test/README.md、ai-宿主耦合台账.md 不编辑。
-2. 本轮按固定顺序逐文件执行 3 个语法门（工作目录固定为 dsh-extra-plan）：
+1. 先同步本轮语义文档：`READAI.md` 与 `pe-test/docs` 下 6 份指定文档（共 7 个目标文档）。唯一禁改文档：根 `dsh-extra-plan/README.md`（与 READAI.md 同层级）；其余文档（含各级 README.md、pe-test/docs/ai-宿主耦合台账.md）均可改；官方安装的预设与技能只读引用、不复制不改写。
+2. 本轮按固定顺序逐文件执行 9 个语法门（本轮实际改动过的每个 .js / .mjs 都要逐一 node --check，不只限下列 9 个；下列 9 个为当前基线清单；工作目录固定为 dsh-extra-plan）：
    - node --check plugins/dsh-extra-plan/index.js
-
-
-
-
-
-
-
-   - node --check pe-test/tools/step-04-路由与写闸门.mjs
-   - node --check pe-test/tools/step-04-工具清单查看.mjs
-   每条退出码必须为 0，且无 SyntaxError 或其它解析错误。
-3. 运行 5 个 step-01 回归：设置页配置、设置迁移、预设完整性、安装同步、安装分发。
-4. 运行 step-04-路由与写闸门.mjs：实际执行 A/C/M/F-L × 五角色的 2×2×3×2×5=120 格，逐格核对 C7 0/7、catalog 0/2、普通 skill、HP 最小 read、HN/HB 无 tool:read 及既有 deny；再以显式会话目录运行 step-04-工具清单查看.mjs 取证。
-5. 先运行 `node pe-test/tools/代码地图生成.mjs` 更新机器段；再只补允许的人类意图速查/功能描述/备注，最后运行 `node pe-test/tools/代码地图生成.mjs --check`，退出码必须为 0。机器段文件/函数/行号/增删由脚本维护；模型可见面隐藏不是 PTC runtime binding 安全隔离。
-6. 交付汇报：改动点 / 每条校验结果 / 备份路径 / 风险点；用户实测确认后才算完成
+   - node --check plugins/dsh-extra-plan/lib/run-code-static.js
+   - node --check plugins/dsh-extra-plan/lib/save-contract.js
+   - node --check plugins/dsh-extra-plan/lib/save-probe-validation.js
+   - node --check plugins/dsh-extra-plan/lib/save-persistence.js
+   - node --check plugins/dsh-extra-plan/lib/save-tool-factories.js
+   - node --check plugins/dsh-extra-plan/lib/agent-session.js
+   - node --check plugins/dsh-extra-plan/lib/model-routing.js
+   - node --check plugins/dsh-extra-plan/lib/assembly-presentation.js
+3. 语法门全部退出码为 0 后，按本轮固定顺序运行：`node pe-test/tools/step-00-全流程回归.mjs` → `node pe-test/tools/step-04-路由与写闸门.mjs` → `node pe-test/tools/step-06-线索落盘.mjs` → `node pe-test/tools/代码地图生成.mjs`；人工段维护后运行 `node pe-test/tools/代码地图生成.mjs --check`，最后运行 `node pe-test/tools/一键step测试.mjs`。每条退出码必须为 0，且无 SyntaxError 或其它解析错误。
+4. 全量维护时仍可运行 6 个 step-01 回归（设置页配置、设置迁移、预设完整性、安装同步、安装分发、qqbot 安装映射）；step-04 工具清单可另以显式会话目录取证。模型可见面隐藏不是 PTC runtime binding 安全隔离。
+5. 交付汇报：改动点 / 每条校验结果 / 备份路径 / 风险点；用户实测确认后才算完成
 
 ## 自检工具速查（pe-test/tools/）
 | 改动域 | 自检 |
 |:--|:--|
 | 闸门/路由/写拦截与A/C/M展示装配 | step-04-路由与写闸门.mjs（监听器级 + 120 格 A/C/M/F-L/五角色案例，含 C7/catalog/HP/HN/HB 断言）+ step-00-跨平台写拦截.mjs（68 用例） |
 | planner 探查委派禁令（T5）+ save_plan 主会话路由（T3）+ plannerModel/otherAgentModel 降级与跨 Provider 时序（T2） | step-04-路由与写闸门.mjs（T3/T5 监听器级）、step-00-全流程回归.mjs（planner 与 executor/reviewer/probe/workflow/ralph worker 的 True/False 分流、真实 OK probe、排序、失败隔离、fallback、timeout、per-Agent cache、agent/request 屏障）、step-06-线索落盘.mjs（save_plan 注册与路由矩阵） |
-| save_probe 机械上限/动态描述 | step-00-全流程回归.mjs（PROBE_LIMITS：evidence 150、text 1000，PR23=151、PR34/PR35=1000/1001；实际 schema 动态断言） |
-| save_probe/save_plan 落盘 | step-06-线索落盘.mjs |
-| 预设安装/完整性/设置页/十项迁移 | step-01-预设完整性.mjs、step-01-安装分发.mjs、step-01-安装同步.mjs、step-01-设置迁移.mjs、step-01-设置页配置.mjs（descriptor/metadata/locator/manifest 从 9 到 10，creativeMode 默认 false、true/false PUT、非法值与 skipped-old-missing） |
+| save_probe 机械上限/动态描述 | lib/save-contract.js（PROBE_LIMITS/渲染合同）+ lib/save-probe-validation.js（validateProbe）+ lib/save-tool-factories.js（动态 schema/execute）；step-00-全流程回归.mjs（evidence 150、text 1000，PR23=151、PR34/PR35=1000/1001；实际 schema 动态断言） |
+| save_probe/save_plan 落盘 | lib/save-persistence.js（atomicCommit/recoverJournals）+ lib/save-tool-factories.js（工具定义）+ index.js（apply 注册/闸门接线）；step-06-线索落盘.mjs |
+| 预设安装/完整性/设置页/十项迁移 | step-01-预设完整性.mjs、step-01-安装分发.mjs、step-01-安装同步.mjs、step-01-设置迁移.mjs、step-01-设置页配置.mjs（descriptor/metadata/locator/manifest 从 9 到 10，creativeMode 默认 false、true/false PUT、非法值与 skipped-old-missing；归属：descriptor（预设完整性）/ metadata 10 项（设置页配置）/ locator（设置页配置）/ manifest（设置迁移）/ creativeMode PUT（设置页配置）/ skipped-old-missing（安装同步）） |
 | 全量回归 | step-00-全流程回归.mjs（本地 mock/in-process，不需真实 session_id；一键step测试.mjs 同）。**一键体检的自动判定项共 11 项**（以 `一键step测试.mjs` 的 AUTO 数组为准）：step-00-全流程回归、step-00-跨平台写拦截、step-01-设置迁移、step-01-安装分发、step-01-安装同步、step-01-预设完整性、step-01-设置页配置、step-01-qqbot-安装映射、step-04-路由与写闸门、step-06-线索落盘、代码地图生成.mjs（--check） |
 | usage 账本 | step-99-用量统计.mjs |
 | 跨平台写拦截 | step-00-跨平台写拦截.mjs |
@@ -71,6 +70,10 @@
 
 ---
 
-*本文件对应 READAI.md 导航层「维护纪律」一行的展开。*
+*本文件对应 READAI.md 文档索引表「维护纪律+自检+地图同步」一行与「必守纪律（一句）」的展开。*
 
 补充口径：`PROBE_LIMITS.maxEvidenceEntries=150`、`maxEvidenceTextLen=1000`；`exploreBudget=18` 仅是 planner 探查预算/单实例子调用上限，台账历史 80 条与 80+79+50=209 仍是归档统计。
+
+- PROBE_LIMITS 的字段名与上限以 `lib/save-contract.js` L47-70 为唯一口径（共 20 个字段：四类条目数 50/50/20/20、maxPathLen 1024、maxRangeLen 20、maxRelationLen 400、maxNoteLen 400、maxTopicLen 120、maxDetailLen 1000、maxTotalChars 20000、rangePattern、maxEvidenceEntries 150、maxEvidenceLineLen 20、maxEvidenceValueLen 240、maxEvidenceTextLen 1000、maxEvidenceNoteLen 400、maxEvidenceTotalChars 32000、evidenceLinePattern、maxTaskNameLen 32），本文不复制数值以免漂移。LINE_FORMAT_HINT（L73）与 RANGE_FORMAT_HINT（L74）为格式提示常量，同样以源码为口径。
+- save_probe 单写路径同样调用 recoverJournals 且不带 sessionTag（save-tool-factories L177；旧 L3632 同）。此前文档只写『下次 save_plan 自愈补完』——这是拆分前既有缺口，本次记录不修代码。
+- 本机 Windows 沙箱下 netstat / Get-NetTCPConnection / Get-WmiObject Win32_Process 等查询可能被拒（Program failed to run: 拒绝访问）；排查运行时改用等价间接证据（进程启动时点、会话内闸门生效日志、step-04/06 等取证脚本输出）。

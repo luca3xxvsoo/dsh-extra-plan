@@ -8,6 +8,8 @@ import {
   resolveSetting,
   findTextLocatorMatches,
 } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
+// S1：DEFAULT_DENY 收敛断言（执行者 deny 清单必须与预设 config.deny 逐字一致）。
+import { DEFAULT_DENY, resolveDeny } from '../../plugins/dsh-extra-plan/lib/executor-spawn.js'
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url))
 const PRESET_DIR = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'assets', 'presets', 'extra-plan')
@@ -69,6 +71,58 @@ for (const inner of all) {
     const deny = inner.config && Array.isArray(inner.config.deny) ? inner.config.deny : []
     checkDeny('executor-spawn deny', deny)
   }
+}
+
+// S1-07 ~ S1-11：DEFAULT_DENY 已收敛为预设 config.deny 同集（12 项），resolveDeny 为纯函数回退。
+const executorRow = all.find((row) => row.name === '@local/dsh-extra-plan/executor-spawn')
+const ymlDeny = executorRow !== undefined && executorRow.config && Array.isArray(executorRow.config.deny)
+  ? executorRow.config.deny : []
+if (DEFAULT_DENY.length === 12) {
+  pass += 1
+  console.log('PASS  S1 DEFAULT_DENY 恰有 12 项')
+} else {
+  fail += 1
+  console.log('FAIL  S1 DEFAULT_DENY 项数不是 12：' + DEFAULT_DENY.length)
+}
+const defaultDenySet = new Set(DEFAULT_DENY)
+const ymlDenySet = new Set(ymlDeny)
+if (defaultDenySet.size === DEFAULT_DENY.length && defaultDenySet.size === ymlDenySet.size
+  && [...defaultDenySet].every((name) => ymlDenySet.has(name))) {
+  pass += 1
+  console.log('PASS  S1 DEFAULT_DENY 与 agent.cordis.yml config.deny 集合逐字一致（12 项）')
+} else {
+  fail += 1
+  console.log('FAIL  S1 DEFAULT_DENY 与 agent.cordis.yml config.deny 集合不一致')
+}
+const removedDenyNames = ['subagent_fork', 'create_goal', 'update_goal', 'get_goal', 'exit_plan_mode']
+const stillPresent = removedDenyNames.filter((name) => DEFAULT_DENY.includes(name))
+if (stillPresent.length === 0) {
+  pass += 1
+  console.log('PASS  S1 DEFAULT_DENY 不含已移除 5 名（subagent_fork/create_goal/update_goal/get_goal/exit_plan_mode）')
+} else {
+  fail += 1
+  console.log('FAIL  S1 DEFAULT_DENY 仍含：' + stillPresent.join(', '))
+}
+if (DEFAULT_DENY.includes('subagent_plan') === true && DEFAULT_DENY.includes('cordis_run') === true) {
+  pass += 1
+  console.log('PASS  S1 DEFAULT_DENY 含新增 2 名（subagent_plan、cordis_run）')
+} else {
+  fail += 1
+  console.log('FAIL  S1 DEFAULT_DENY 缺少 subagent_plan 或 cordis_run')
+}
+const denyFallbackCases = [
+  resolveDeny(undefined) === DEFAULT_DENY,
+  resolveDeny({}) === DEFAULT_DENY,
+  Array.isArray(resolveDeny({ deny: ['x', 'y'] }))
+    && resolveDeny({ deny: ['x', 'y'] })[0] === 'x' && resolveDeny({ deny: ['x', 'y'] })[1] === 'y'
+    && resolveDeny({ deny: ['x', 'y'] }).length === 2,
+]
+if (denyFallbackCases.every((ok) => ok)) {
+  pass += 1
+  console.log('PASS  S1 resolveDeny(undefined/{}) 回退 DEFAULT_DENY，resolveDeny({deny:["x","y"]}) 原样返回')
+} else {
+  fail += 1
+  console.log('FAIL  S1 resolveDeny 回退或原样返回行为不符')
 }
 
 const names = all.map((row) => typeof row.name === 'string' ? row.name : '')

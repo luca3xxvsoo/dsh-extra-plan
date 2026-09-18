@@ -870,6 +870,13 @@ checkTrue('R103 planner 子调用（语义）预算 → allow（容器计费）'
 }
 
 
+const rcBridgePlannerCode = 'await tools.write({})\nawait tools.subagent_probe({})'
+r = preExecute(harness, plannerAgent, 'run_code', { code: rcBridgePlannerCode, description: 'R106 planner 组判定桥接' })
+const rcBridgeReason = r !== null && r !== undefined && r.kind === 'deny' ? String(r.reason) : ''
+checkTrue('R106 planner run_code write+subagent_probe → 聚合两项拒绝且成员顺序 write→subagent_probe', r !== null && r !== undefined && r.kind === 'deny' && rcBridgeReason.includes('工具组共 2 项（去重后），2 项触发闸门') && rcBridgeReason.includes('规划子代理只读') && rcBridgeReason.includes('仅主会话可用') && rcBridgeReason.indexOf('- write:') < rcBridgeReason.indexOf('- subagent_probe:'))
+r = preExecute(harness, noneMain, 'run_code', { code: 'await tools.save_plan({})', description: 'R107 noneMain mainGateReason 桥接' })
+checkTrue('R107 noneMain run_code save_plan → 回到 mainGateReason 的 T3 拒绝文案', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('save_plan 仅允许在直接执行路由下落盘方案与验收'))
+
 // ── ⑮ 创造模式装配投影矩阵：4 × 3 × 2 × 5 = 120 ───────────────────────
 // 使用真实 registry schema 形状的 mock；只断言模型可见 assembly，不把隐藏误报为 runtime binding 安全隔离。
 const MATRIX_CORDIS_TOOLS = CORDIS_PRESENTATION_TOOLS

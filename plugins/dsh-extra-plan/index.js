@@ -1,4 +1,4 @@
-// @local/dsh-extra-plan (v0.1.9)
+// @local/dsh-extra-plan (v0.2.1)
 // v2（2026-09-04）：agent/request planner 前置注入
 // 额外规划模式（extra-plan 预设专用）：按需规划 + 四级机械锚点（路由/目的/澄清/批准）
 // + 主会话与规划子代理 anchored 引导 + 规划子代理探查硬上限 + 力度继承 +
@@ -132,124 +132,8 @@ function approvalDenyReason(action, state) {
 
 const ASK_TOOL = 'ask_user_question'
 
-// creativeMode=false 只改变模型可见的装配投影；registry binding 与运行时执行边界保持不变。
-const CORDIS_PRESENTATION_TOOLS = Object.freeze([
-  'cordis_inspect_list',
-  'cordis_inspect_query',
-  'cordis_inspect_self',
-  'cordis_define',
-  'cordis_run',
-  'cordis_stop',
-  'cordis_undefine',
-])
-const CORDIS_PRESENTATION_TOOL_SET = new Set(CORDIS_PRESENTATION_TOOLS)
-const CORDIS_SECTION_NAME = 'tool:cordis'
-const PTC_SECTION_NAME = 'tools:ptc-only'
-const SDK_SECTION_NAME = 'tools:sdk'
-const READ_SECTION_NAME = 'tool:read'
-const READ_GUIDANCE_FALLBACK = 'Use the read tool — not shell commands like cat — to inspect text files. Results include line numbers. Use offset and limit to continue reading large files.'
-const CREATIVE_SKILL_NAMES = new Set(['cordis-plugin-development', 'editing-cordis-compositions'])
 
-function sectionOf(sections, name) {
-  if (!Array.isArray(sections)) return undefined
-  return sections.find((section) => section !== null && typeof section === 'object' && section.name === name)
-}
 
-function sectionTextOf(sections, name) {
-  const section = sectionOf(sections, name)
-  return section !== undefined && typeof section.text === 'string' ? section.text : ''
-}
-
-function readSchemasForRendering(schemas) {
-  if (!Array.isArray(schemas)) return []
-  return schemas.filter((schema) => schema !== null && typeof schema === 'object' && schema.name === 'read')
-}
-
-async function renderMinimalReadText(sections, schemas, language) {
-  const guidance = sectionTextOf(sections, READ_SECTION_NAME) || READ_GUIDANCE_FALLBACK
-  const readSchemas = readSchemasForRendering(schemas)
-  if (readSchemas.length === 0) return guidance
-  try {
-    const rendered = await renderFilteredToolsSdk(readSchemas, language)
-    return [guidance, rendered].filter((text) => typeof text === 'string' && text !== '').join('\n\n')
-  } catch (error) {
-    console.warn('extra-plan: minimal tool:read render failed (' + (error instanceof Error ? error.message : String(error)) + ')')
-    return guidance
-  }
-}
-
-function toolPresentationModeOf(agent) {
-  const tools = toolRegistryOf(agent)
-  if (tools === undefined || typeof tools.modeFor !== 'function') return undefined
-  try {
-    const mode = tools.modeFor(agent)
-    return typeof mode === 'string' ? mode : undefined
-  } catch (error) {
-    return undefined
-  }
-}
-
-function skillCatalogEntriesOf(source) {
-  if (source === null || typeof source !== 'object' || !Array.isArray(source.entries)) return undefined
-  const entries = []
-  for (const entry of source.entries) {
-    if (entry === null || typeof entry !== 'object' || typeof entry.name !== 'string' || typeof entry.description !== 'string') return undefined
-    entries.push({ name: entry.name, description: entry.description })
-  }
-  return entries
-}
-
-function renderSkillCatalogText(source, entries) {
-  const lines = ['<system-reminder>']
-  if (source.update === true) {
-    lines.push('The available skill catalog changed. This complete catalog replaces every earlier available-skills list in this session:', '', '<available_skills>')
-    for (const entry of entries) lines.push('- \`' + entry.name + '\`: ' + entry.description)
-    lines.push('</available_skills>', '')
-    if (entries.length === 0) {
-      lines.push('No skills are currently available through the \`skill\` tool. Do not use names from earlier skill catalogs.')
-      lines.push('A user may still invoke a skill directly; its <skill_content> block then appears in this conversation. Follow it, and do not call the \`skill\` tool for it.')
-    } else {
-      lines.push('Use only names in this replacement catalog. If the user names a listed skill, or the task clearly matches its description, call the \`skill\` tool with the exact name before acting.')
-      lines.push('A user may also invoke a skill directly; its <skill_content> block then appears in this conversation. Follow it, and do not call the \`skill\` tool again for that skill.')
-    }
-  } else {
-    lines.push('A skill is a reusable set of task-specific instructions. The following skills are available in this session:', '', '<available_skills>')
-    for (const entry of entries) lines.push('- \`' + entry.name + '\`: ' + entry.description)
-    lines.push('</available_skills>', '')
-    lines.push('If the user names a skill, or the task clearly matches its description, call the \`skill\` tool with the exact skill name before taking task actions. This catalog contains summaries only; do not infer or follow the skill instructions until it has been loaded.')
-    lines.push('A user may also invoke a skill directly; its <skill_content> block then appears in this conversation. Follow it, and do not call the \`skill\` tool again for that skill.')
-  }
-  lines.push('</system-reminder>')
-  return lines.join('\n')
-}
-
-function projectSkillCatalogDecision(decision) {
-  if (decision === null || typeof decision !== 'object' || decision.kind === 'reject' || !Array.isArray(decision.messages)) return decision
-  let changed = false
-  const messages = decision.messages.map((message) => {
-    if (message === null || typeof message !== 'object') return message
-    const entries = skillCatalogEntriesOf(message.source)
-    if (entries === undefined) return message
-    const visible = entries.filter((entry) => !CREATIVE_SKILL_NAMES.has(entry.name))
-    if (visible.length === entries.length) return message
-    changed = true
-    const source = { ...message.source, entries: visible }
-    const text = renderSkillCatalogText(source, visible)
-    let replaced = false
-    const content = Array.isArray(message.content)
-      ? message.content.map((part) => {
-        if (!replaced && part !== null && typeof part === 'object' && part.type === 'text') {
-          replaced = true
-          return { ...part, text }
-        }
-        return part
-      })
-      : []
-    if (!replaced) content.push({ type: 'text', text })
-    return { ...message, source, content }
-  })
-  return changed ? { ...decision, messages } : decision
-}
 
 // ── 会话事件名双兼容层（DSH 0.1.2-rc.1 / 0.1.5-rc.2）────────────────────────
 // 为什么双兼容：生产仍是 0.1.2-rc.1 且需回放旧会话日志，同一份代码须两代都能工作。
@@ -292,68 +176,13 @@ const PWSH_BARE_WORDS = /\b(New-Item|Remove-Item|Rename-Item|Move-Item|Copy-Item
 const BASH_MUTATION = /git\s+(add|commit|checkout|switch|restore|clean|rm|mv|reset)\b|sed\s+(?:--in-place\b|(?:-[A-Za-z]*\s+)*-i\b)|(?:[0-9]?>>?(?!&\d)|&>|>&(?!\d))|\bdd\b[^|]*\sof=|wget\s+.*-O\b|curl\s+.*-o\b|\bvi(m)?\s+\S|\bnano\s+\S|tar\s+-[A-Za-z]*c/i
 const BASH_BARE_WORDS = /\b(rm|mv|cp|mkdir|rmdir|touch|tee|chmod|chown|ln|install|rsync|truncate|fallocate|shred|zip)\b/i
 
-// run_code 静态写模式扫描黑名单（F7'，自写正则无依赖）：防偶然写；防刻意绕过有限
-// （动态 require/Function 构造/编码拼串不覆盖，见风险 R1）。白名单例外=不在黑名单：
-// node:fs 只读方法族（readFileSync/readdirSync/statSync/existsSync/accessSync/readFile/
-// readdir/stat/access/realpath/lstat 等）天然不命中。
-const RUNCODE_MUTATION_HINTS = [
-  { id: 'fs-write', re: /\b(?:writeFileSync|appendFileSync|unlinkSync|rmSync|rmdirSync|mkdirSync|renameSync|copyFileSync|truncateSync|chmodSync|chownSync|symlinkSync|linkSync|mkdtempSync|createWriteStream|watch)\s*\(/ },
-  { id: 'fs-promise-write', re: /\b(?:writeFile|appendFile|unlink|rm|rmdir|mkdir|rename|copyFile|truncate|chmod|chown|symlink|link|mkdtemp)\s*\(/ },
-  { id: 'child-process-import', re: /(?:require\s*\(\s*['"](?:child_process|node:child_process)['"]\s*\))|(?:from\s+['"](?:child_process|node:child_process)['"])/ },
-  { id: 'child-process-call', re: /\b(?:execSync|execFileSync|spawnSync|spawn|execFile|fork)\s*\(/ },
-  { id: 'net-http-server', re: /(?:require\s*\(\s*['"](?:net|node:net|http|node:http)['"]\s*\))|(?:from\s+['"](?:net|node:net|http|node:http)['"])|\b(?:createServer|listen)\s*\(/ },
-  { id: 'eval-function', re: /\b(?:eval|Function)\s*\(/ },
-  { id: 'process-binding', re: /\bprocess\s*\.\s*binding\s*\(/ },
-  { id: 'dlopen', re: /\bprocess\s*\.\s*dlopen\s*\(/ },
-  { id: 'node-vm', re: /(?:require\s*\(\s*['"]node:vm['"]\s*\))|(?:from\s+['"]node:vm['"])|\b(?:runInThisContext|runInNewContext|runInContext|compileFunction)\s*\(/ },
-]
+
 
 // ── 纯判定函数（模块顶层；经 decisions 导出供场景测试直接复用，防复制漂移） ──
 
-// 会话事件快照统一读取（v0.1.2-rc.1 单版本口径）：
-// `events` 已移除，替代 API 为 `snapshotEvents()`（无参=全量冻结数组，
-// 有快照缓存，语义与旧 events getter 等价；另有 eventAt(seq) 供单点读取）；
-// 均无返回 []（各调用点已有 Array.isArray/长度防御，空数组语义安全；
-// 时序上不抛错、不崩网关）。
-function sessionEvents(session) {
-  if (session === undefined || session === null) return []
-  if (typeof session.snapshotEvents === 'function') return session.snapshotEvents()
-  return []
-}
-
-// 显式路由判定（对齐官方 model-selection.ts L118-119 routeChanged 口径：
-// provider 或 model 任一与父值不同即视为显式）。空串/undefined 视为「无选择」。
-function isExplicitRoute(rProvider, rModel, pProvider, pModel) {
-  const rp = typeof rProvider === 'string' && rProvider !== '' ? rProvider : undefined
-  const rm = typeof rModel === 'string' && rModel !== '' ? rModel : undefined
-  if (rp !== undefined && (rp !== pProvider || rm !== pModel)) return true
-  if (rm !== undefined && rm !== pModel) return true
-  return false
-}
-
-// 显式 effort 判定（对齐官方 L189-190）：只有 resolved 存在且 ≠ 父值才算显式；
-// undefined/空串（adapter 默认被 requestProposal 剥除后）不算显式。
-function isExplicitEffort(rEffort, pEffort) {
-  return typeof rEffort === 'string' && rEffort !== '' && rEffort !== pEffort
-}
-
-// 可靠子代理识别（持久标记）：优先 session.header，日志 descriptor 扫描兜底。
-function isSubagentChild(agent) {
-  if (agent === undefined || agent === null) return false
-  const session = agent.session
-  if (session === undefined || session === null) return false
-  const header = session.header
-  if (header !== undefined && header !== null) {
-    if (header.origin === 'subagent') return true
-    if (typeof header.delegationDepth === 'number' && header.delegationDepth > 0) return true
-  }
-  const events = sessionEvents(session)
-  if (!Array.isArray(events)) return false
-  for (const event of events) {
-    if (event !== null && typeof event === 'object' && event.type === 'subagent/descriptor') return true
-  }
-  return false
-}
+// 会话事件快照（sessionEvents）与子代理识别（isSubagentChild）的唯一来源 = lib/agent-session.js
+// （index.js 与 lib/model-routing.js 共用，模块内不再保留镜像副本）；见下方 import 行，
+// decisions 继续 re-export isSubagentChild（名字数不变）。
 
 // 此刻是否受委派（父会话 agent 存活）；调用方已确认 isSubagentChild。
 // 缺 parentSession / agents 缺席 / 读取失败一律偏安全豁免（v11 口径）。
@@ -445,23 +274,7 @@ function mutationMatches(commandOf, exec, syntaxRe, bareRe) {
 function pwshMutationMatches(exec) { return mutationMatches(pwshCommandOf, exec, PWSH_MUTATION, PWSH_BARE_WORDS) }
 function bashMutationMatches(exec) { return mutationMatches(bashCommandOf, exec, BASH_MUTATION, BASH_BARE_WORDS) }
 
-// run_code 的 code 文本提取（exec.arguments.code 字符串；防御非字符串返回 ''）。
-function runCodeTextOf(exec) {
-  const args = exec !== null && exec !== undefined ? exec.arguments : undefined
-  const code = args !== null && typeof args === 'object' ? args.code : undefined
-  return typeof code === 'string' ? code : ''
-}
 
-// 静态扫描 code 返回命中的 hint id 列表（去重、按 RUNCODE_MUTATION_HINTS 顺序）。
-function codeMutationHints(code) {
-  const text = typeof code === 'string' ? code : ''
-  if (text === '') return []
-  const hits = []
-  for (const hint of RUNCODE_MUTATION_HINTS) {
-    if (hint.re.test(text)) hits.push(hint.id)
-  }
-  return hits
-}
 
 // 从 ask_user_question 的 tool/call 事件解析选项标签集——只收首问 questions[0] 的选项标签（第二问「修改意见」为纯文本输入，其选项不进入验词集合）。
 // 事件里 arguments 是 JSON 字符串；解析失败返回 null（跳过该调用的分类）。
@@ -592,8 +405,8 @@ function validateGateAskStructure(kind, questions) {
   return `ask 结构错误：未知的 ask 类型 "${kind}"。`
 }
 
-// 测试契约 API（非死代码）：运行时状态机只用 askKindOfRelaxed（见 L487），本严格版
-// 仅经 decisions 导出（L1052）供 pe-test step-00-全流程回归.mjs L91 调用（K1-K5）。
+// 测试契约 API（非死代码）：运行时状态机只用 askKindOfRelaxed（见 L436），本严格版
+// 仅经 decisions 导出（L1232）供 pe-test step-00-全流程回归.mjs L149 调用（K1-K5）。
 // 删除定义会使 decisions 顶层求值 ReferenceError（index.js 模块加载即崩）——保留。
 // ask 分类：路由 ask（同时含「直接执行」「进行pro规划」）、批准 ask（含
 // 「同意执行」）、其余视为澄清 ask。persona 约定选项措辞固定。
@@ -617,7 +430,7 @@ function askKindOf(labels) {
 }
 
 // 宽松版 ask 分类：专给状态机用，只要 ask 选项里出现任一路由词/批准词就归类，
-// 不要求同时包含两个词（修复单词 ask 副作用——答了「直接执行」但状态机当 clarify 白答）。
+// 不要求同时包含两个词（run_code 子调用路径不做选项集校验，宽松分类器避免状态机误判）。
 // 「不同意」是路由组与批准组的共享词，按特异性优先：路由特有词（直接执行/进行pro规划）
 // → route；批准特有词（同意执行/转交pro规划）→ approve；仅有「不同意」→ route。
 function askKindOfRelaxed(labels) {
@@ -836,7 +649,7 @@ function deriveFlowState(events) {
       const matched = matchRouteLabel(result.selected)
       if (matched === 'direct') state.route = 'direct'
       else if (matched === 'plan') state.route = 'plan'
-      else if (matched === 'disagree') state.route = 'none'
+      // disagree 与其它未识别标签同义：路由不成立（原 else if (disagree) 与本分支同值，合并）。
       else state.route = 'none'
     } else if (kind === 'purpose') {
       if (state.route === 'plan' && result.answersLen > 0) {
@@ -851,67 +664,13 @@ function deriveFlowState(events) {
     } else if (kind === 'approve') {
       const matched = matchApprovalLabel(result.selected)
       if (matched === 'approve') state.approved = true
-      else if (matched === 'replan' || matched === 'disagree') state.approved = false
+      // replan/disagree 与其它未识别标签同义：未获批准（原 else if (replan|disagree) 与本分支同值，合并）。
       else state.approved = false
     }
   }
   return state
 }
 
-// 白名单检查已删除（send_message 完全放行）；本函数保留供 step-00 P/PC 系列测试引用。
-// 从事件里提取存续的规划子代理 id（subagent_plan 的 call/result 精确配对，
-// 从结果文本提取会话 id：仅 uuid 形态（宿主 subagent_plan 结果文本 'started subagent <uuid>'）。纯事件推导，重启不丢。
-function plannerChildIdsOf(events) {
-  const ids = []
-  if (!Array.isArray(events)) return ids
-  const calls = new Set()
-  for (const e of events) {
-    if (e === null || typeof e !== 'object') continue
-    if (e.type === 'tool/call' && e.data !== null && typeof e.data === 'object' &&
-        e.data.name === 'subagent_plan' && typeof e.data.callId === 'string') {
-      calls.add(e.data.callId)
-      continue
-    }
-    if (isDispatchStart(e.type) && e.data !== null && typeof e.data === 'object' &&
-        e.data.name === 'subagent_plan' && typeof e.data.subCallId === 'string') {
-      calls.add(e.data.subCallId)
-      continue
-    }
-    if (isDispatch(e.type) && e.data !== null && typeof e.data === 'object' &&
-        typeof e.data.subCallId === 'string' && calls.has(e.data.subCallId)) {
-      let text = ''
-      if (Array.isArray(e.data.content)) {
-        for (const block of e.data.content) {
-          if (block !== null && typeof block === 'object' && block.type === 'text' && typeof block.text === 'string') text += block.text
-        }
-      }
-      if (text !== '') {
-        const matched = text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)
-        if (matched !== null && !ids.includes(matched[0])) ids.push(matched[0])
-      }
-      continue
-    }
-    if (e.type !== 'tool/result') continue
-    const result = parseAskResultData(e.data)
-    if (result.callId === undefined || !calls.has(result.callId)) continue
-    if (result.kind !== 'ok') continue
-    let text = ''
-    const message = e.data.message
-    if (message !== null && typeof message === 'object' && Array.isArray(message.content)) {
-      for (const outer of message.content) {
-        if (outer !== null && typeof outer === 'object' && outer.type === 'tool-result' && Array.isArray(outer.content)) {
-          for (const block of outer.content) {
-            if (block !== null && typeof block === 'object' && block.type === 'text' && typeof block.text === 'string') text += block.text
-          }
-        }
-      }
-    }
-    if (text === '') continue
-    const matched = text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)
-    if (matched !== null && !ids.includes(matched[0])) ids.push(matched[0])
-  }
-  return ids
-}
 
 // 会话内 tool/call 成功配对计数（排除 skipNames，如 save_plan/send_message）——探查硬上限判据。
 // 直呼 = tool/call + tool/result(ok) 配对计（data.error undefined/null + message.content 内
@@ -970,37 +729,6 @@ function toolCallsSinceUser(events, skipNames) {
   return toolCallCount(events.slice(anchor + 1), skipNames)
 }
 
-// job_output 连续调用计数：自最近锚点之后，同一 job_id 的 job_output 调用次数。
-// 用于防止模型轮询同一 job。返回 0 表示首次调用，>0 表示已调用过。
-// 重置时机与探查预算相同：新用户消息或 send_message 续轮转达。
-function jobOutputCallsForJob(events, jobId) {
-  if (!Array.isArray(events) || typeof jobId !== 'string') return 0
-  // 找锚点（与 toolCallsSinceUser 相同逻辑）
-  let anchor = -1
-  for (let i = events.length - 1; i >= 0; i -= 1) {
-    const e = events[i]
-    if (e === null || typeof e !== 'object' || e.type !== 'user/message') continue
-    const d = e.data
-    const kind = d !== null && typeof d === 'object' && d.source !== null && typeof d.source === 'object' ? d.source.kind : ''
-    if (kind === 'user' || kind === 'agent-message') {
-      anchor = i
-      break
-    }
-  }
-  // 统计锚点后该 jobId 的 job_output 调用次数
-  let count = 0
-  for (let i = anchor + 1; i < events.length; i += 1) {
-    const e = events[i]
-    if (e === null || typeof e !== 'object' || e.type !== 'tool/call') continue
-    const d = e.data
-    if (d === null || typeof d !== 'object' || d.name !== 'job_output') continue
-    const args = d.arguments
-    if (args !== null && typeof args === 'object' && args.job_id === jobId) {
-      count += 1
-    }
-  }
-  return count
-}
 
 // 规划任务附加指令拼接（v0.1.5）：主会话委派 subagent_plan 的初始任务消息
 // （source.kind=user）与 send_message 续轮转达（source.kind=agent-message）末尾
@@ -1089,7 +817,7 @@ function budgetReminderSent(events, marker) {
   return false
 }
 
-// deny 文案：used 语义 = 已成功次数（不含本次被拒调用）；仅把基线 L1120 开头
+// deny 文案：used 语义 = 已成功次数（不含本次被拒调用）；仅把基线文案开头
 // 「探查预算已耗尽：」改为「探查预算已耗尽（本轮已用 {used}/{budget}）：」。
 function budgetExhaustedReason(used, budget) {
   return `探查预算已耗尽（本轮已用 ${used}/${budget}）：输出「申请继续探查：<待查项> — <原因>」。主会话将探查待查项并转达线索文件路径，你读取线索继续工作。探查完成则直接调用 save_plan 落盘。`
@@ -1100,256 +828,7 @@ function budgetExceeded(used, budget) {
   return used > budget
 }
 
-// 任务短名净化：仅保留安全字符（字母/数字/下划线/连字符/中日韩文字），
-// 其余字符折为连字符；≤PROBE_LIMITS.maxTaskNameLen 字；去首尾连字符。
-// 净化失败或空串返回 ''（只用时间戳）。
-function sanitizeTaskName(name) {
-  if (typeof name !== 'string') return ''
-  let out = ''
-  for (const ch of name) {
-    if (out.length >= PROBE_LIMITS.maxTaskNameLen) break
-    out += /[A-Za-z0-9_\-\u4e00-\u9fff]/.test(ch) ? ch : '-'
-  }
-  return out.replace(/^-+|-+$/g, '').slice(0, PROBE_LIMITS.maxTaskNameLen)
-}
-
-// 本地时间戳 yyyyMMddHHmmss（文件名唯一性 + 可读性）。
-function timestamp() {
-  const d = new Date()
-  const pad = (n) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
-}
-
-// 会话标识段（T3）：session header id 去除分隔符后前 8 位字母数字。单段、无连字符，
-// 便于按「时间戳前一段」识别；取不到 id（测试夹具/异常会话）→ ''（相关隔离随之关闭）。
-function sessionTagOf(sessionId) {
-  return typeof sessionId === 'string' ? sessionId.replace(/[^A-Za-z0-9]/g, '').slice(0, 8) : ''
-}
-
-// save_plan 文件名 base（T3）：任务短名（可空）+ 调用方会话标识段 + 本地时间戳。
-// T3 后主会话与规划子代理可同秒各落一份 save_plan：base 内嵌会话标识使文件名与
-// journal 名天然互不相同（跨角色同秒撞名不再可能）；journal 内容另存该标识供
-// recoverJournals 精确过滤（见 atomicCommit/recoverJournals）。
-function savePlanBase(nameSeg, sessionId) {
-  const tag = sessionTagOf(sessionId)
-  return (nameSeg === '' ? '' : nameSeg + '-') + (tag === '' ? '' : tag + '-') + timestamp()
-}
-
-// save_plan 结果的模型可见内容（v0.1.3 修复）：output.render 契约必须返回
-// ContentBlock[]（宿主第一方工具均如此，见 dsh-tool-pwsh L355），不能返回裸
-// 字符串——否则 DeepSeek 适配器 serializeMessages 的 flattenText 会对字符串调
-// .filter 抛 TypeError，被外层包装成 TRANSPORT、重试 3 连败（毫秒级），表现为
-// "save_plan 后子代理必死"。此函数导出供场景测试锁死契约。
-function renderSavePlan(value) {
-  return [{ type: 'text', text: '方案已落盘（原子双写）：\n- ' + value.paths.join('\n- ') }]
-}
-
-// ── save_probe：探查线索落盘的机械上限（导出供测试，防复制漂移） ──
-// 条目数/单条长度/总量均为设计值；调整须同步 PROBE_LIMITS、测试、文档三处。
-export const PROBE_LIMITS = {
-  maxEntries: { // 各类集合/数组的最大条目数配置
-    fileMap: 50, // 文件映射表，例如 路径 -> 文件信息
-    focusAreas: 50, // 重点关注区域/重点模块
-    exclusions: 20, // 排除项，例如排除文件、目录、规则
-    background: 20, // 背景信息/上下文条目
-  },
-  maxPathLen: 1024, // 文件路径或目录路径最大长度
-  maxRangeLen: 20, // 范围字符串最大长度，例如 "L10-L20"、"123-456"
-  maxRelationLen: 400, // 关系描述最大长度，例如依赖、调用、关联关系
-  maxNoteLen: 400, // 备注/注释最大长度
-  maxTopicLen: 120, // 主题/标题最大长度
-  maxDetailLen: 1000, // 详细说明最大长度
-  maxTotalChars: 20000, // 整个探测内容总字符数上限
-  rangePattern: '^L?\\d+(?:-\\d+)?$', // 范围格式正则：匹配 123、L123、123-456、L123-456；L 可能表示 Line
-  maxEvidenceEntries: 150, // 证据条目最大数量
-  maxEvidenceLineLen: 20, // 证据行号字符串最大长度，例如 "L123"
-  maxEvidenceValueLen: 240, // 证据 value 字段最大长度
-  maxEvidenceTextLen: 1000, // 证据正文/文本内容最大长度
-  maxEvidenceNoteLen: 400, // 证据备注最大长度
-  maxEvidenceTotalChars: 32000, // 所有证据内容总字符数上限
-  evidenceLinePattern: '^L?\\d+$', // 证据行号格式正则：匹配 123 或 L123，不支持范围
-  maxTaskNameLen: 32, // 任务名称最大长度
-}
-
-// line/range 格式提示统一文案（描述与报错共用；格式正则本体不变）。
-const LINE_FORMAT_HINT = '仅接受单个行号（12 或 L12），禁止区间（如 L158-162），区间信息请写入 evidence.text 并取代表性行号'
-const RANGE_FORMAT_HINT = '仅 focusAreas.range 允许区间（12 或 L12-34）'
-
-// save_probe 机械校验（纯函数，导出供测试）：四字段必为数组；条目数/单条长度/
-// 总量 ≤ 上限；fileMap/focusAreas 的 path 必须真实存在（相对按 cwd 解析、绝对
-// 原样，不要求在工作区内）；focusAreas 的 range 若提供（非空）须匹配 rangePattern。
-// 超限一律「拒绝 + 报错」不静默截断。违规不提前返回：一次性收集全部违规并返回
-// 聚合信息（每条注明字段/下标/当前值/上限），全部满足返回 null。
-function validateProbe(args, cwd) {
-  if (args === null || typeof args !== 'object') return 'save_probe: 参数必须是对象（四字段 fileMap/focusAreas/exclusions/background 均为数组）'
-  const violations = []
-  const fields = ['fileMap', 'focusAreas', 'exclusions', 'background']
-  for (const field of fields) {
-    if (!Array.isArray(args[field])) { violations.push(`save_probe: ${field} 必须是数组`); continue }
-    const limit = PROBE_LIMITS.maxEntries[field]
-    if (args[field].length > limit) violations.push(`save_probe: ${field} 条目数 ${args[field].length} 超过上限 ${limit}`)
-  }
-  if (Array.isArray(args.fileMap)) {
-    for (let i = 0; i < args.fileMap.length; i += 1) {
-      const item = args.fileMap[i]
-      if (item === null || typeof item !== 'object') { violations.push(`save_probe: fileMap[${i}] 必须是对象`); continue }
-      if (typeof item.path !== 'string') violations.push(`save_probe: fileMap[${i}].path 必须是字符串`)
-      else if (item.path.length > PROBE_LIMITS.maxPathLen) violations.push(`save_probe: fileMap[${i}].path 长度 ${item.path.length} 超过上限 ${PROBE_LIMITS.maxPathLen}`)
-      if (typeof item.relation !== 'string') violations.push(`save_probe: fileMap[${i}].relation 必须是字符串`)
-      else if (item.relation.length > PROBE_LIMITS.maxRelationLen) violations.push(`save_probe: fileMap[${i}].relation 长度 ${item.relation.length} 超过上限 ${PROBE_LIMITS.maxRelationLen}`)
-      if (typeof item.path === 'string' && !existsSync(probePathOf(cwd, item.path))) violations.push(`save_probe: fileMap[${i}].path 不存在：${item.path}`)
-    }
-  }
-  if (Array.isArray(args.focusAreas)) {
-    for (let i = 0; i < args.focusAreas.length; i += 1) {
-      const item = args.focusAreas[i]
-      if (item === null || typeof item !== 'object') { violations.push(`save_probe: focusAreas[${i}] 必须是对象`); continue }
-      if (typeof item.path !== 'string') violations.push(`save_probe: focusAreas[${i}].path 必须是字符串`)
-      else if (item.path.length > PROBE_LIMITS.maxPathLen) violations.push(`save_probe: focusAreas[${i}].path 长度 ${item.path.length} 超过上限 ${PROBE_LIMITS.maxPathLen}`)
-      if (typeof item.note !== 'string') violations.push(`save_probe: focusAreas[${i}].note 必须是字符串`)
-      else if (item.note.length > PROBE_LIMITS.maxNoteLen) violations.push(`save_probe: focusAreas[${i}].note 长度 ${item.note.length} 超过上限 ${PROBE_LIMITS.maxNoteLen}`)
-      if (item.range !== undefined && item.range !== null && item.range !== '') {
-        if (typeof item.range !== 'string') violations.push(`save_probe: focusAreas[${i}].range 必须是字符串`)
-        else if (item.range.length > PROBE_LIMITS.maxRangeLen) violations.push(`save_probe: focusAreas[${i}].range 长度 ${item.range.length} 超过上限 ${PROBE_LIMITS.maxRangeLen}`)
-        else if (!new RegExp(PROBE_LIMITS.rangePattern, 'i').test(item.range)) violations.push(`save_probe: focusAreas[${i}].range 非法：${item.range}（${RANGE_FORMAT_HINT}；正确格式如 12 或 L12-34）`)
-      }
-      if (typeof item.path === 'string' && !existsSync(probePathOf(cwd, item.path))) violations.push(`save_probe: focusAreas[${i}].path 不存在：${item.path}`)
-    }
-  }
-  if (Array.isArray(args.exclusions)) {
-    for (let i = 0; i < args.exclusions.length; i += 1) {
-      const item = args.exclusions[i]
-      if (item === null || typeof item !== 'object') { violations.push(`save_probe: exclusions[${i}] 必须是对象`); continue }
-      if (typeof item.note !== 'string') violations.push(`save_probe: exclusions[${i}].note 必须是字符串`)
-      else if (item.note.length > PROBE_LIMITS.maxNoteLen) violations.push(`save_probe: exclusions[${i}].note 长度 ${item.note.length} 超过上限 ${PROBE_LIMITS.maxNoteLen}`)
-    }
-  }
-  if (Array.isArray(args.background)) {
-    for (let i = 0; i < args.background.length; i += 1) {
-      const item = args.background[i]
-      if (item === null || typeof item !== 'object') { violations.push(`save_probe: background[${i}] 必须是对象`); continue }
-      if (typeof item.topic !== 'string') violations.push(`save_probe: background[${i}].topic 必须是字符串`)
-      else if (item.topic.length > PROBE_LIMITS.maxTopicLen) violations.push(`save_probe: background[${i}].topic 长度 ${item.topic.length} 超过上限 ${PROBE_LIMITS.maxTopicLen}`)
-      if (typeof item.detail !== 'string') violations.push(`save_probe: background[${i}].detail 必须是字符串`)
-      else if (item.detail.length > PROBE_LIMITS.maxDetailLen) violations.push(`save_probe: background[${i}].detail 长度 ${item.detail.length} 超过上限 ${PROBE_LIMITS.maxDetailLen}`)
-    }
-  }
-  if (args.evidence !== undefined && args.evidence !== null) {
-    if (!Array.isArray(args.evidence)) {
-      violations.push('save_probe: evidence 必须是数组')
-    } else {
-      if (args.evidence.length > PROBE_LIMITS.maxEvidenceEntries) violations.push(`save_probe: evidence 条目数 ${args.evidence.length} 超过上限 ${PROBE_LIMITS.maxEvidenceEntries}`)
-      for (let i = 0; i < args.evidence.length; i += 1) {
-        const item = args.evidence[i]
-        if (item === null || typeof item !== 'object') { violations.push(`save_probe: evidence[${i}] 必须是对象`); continue }
-        if (typeof item.path !== 'string') violations.push(`save_probe: evidence[${i}].path 类型错误（应为字符串）`)
-        else if (item.path.length > PROBE_LIMITS.maxPathLen) violations.push(`save_probe: evidence[${i}].path 长度 ${item.path.length} 超过上限 ${PROBE_LIMITS.maxPathLen}`)
-        if (typeof item.path === 'string' && !existsSync(probePathOf(cwd, item.path))) violations.push(`save_probe: evidence[${i}].path 不存在：${item.path}`)
-        if (item.line !== undefined && item.line !== null && item.line !== '') {
-          if (typeof item.line !== 'string') violations.push(`save_probe: evidence[${i}].line 类型错误（应为字符串）`)
-          else if (item.line.length > PROBE_LIMITS.maxEvidenceLineLen) violations.push(`save_probe: evidence[${i}].line 长度 ${item.line.length} 超过上限 ${PROBE_LIMITS.maxEvidenceLineLen}（${LINE_FORMAT_HINT}）`)
-          else if (!new RegExp(PROBE_LIMITS.evidenceLinePattern, 'i').test(item.line)) violations.push(`save_probe: evidence[${i}].line 非法：${item.line}（${LINE_FORMAT_HINT}）`)
-        }
-        if (item.value !== undefined && item.value !== null && item.value !== '') {
-          if (typeof item.value !== 'string') violations.push(`save_probe: evidence[${i}].value 类型错误（应为字符串）`)
-          else if (item.value.length > PROBE_LIMITS.maxEvidenceValueLen) violations.push(`save_probe: evidence[${i}].value 长度 ${item.value.length} 超过上限 ${PROBE_LIMITS.maxEvidenceValueLen}`)
-        }
-        if (item.text !== undefined && item.text !== null && item.text !== '') {
-          if (typeof item.text !== 'string') violations.push(`save_probe: evidence[${i}].text 类型错误（应为字符串）`)
-          else if (item.text.length > PROBE_LIMITS.maxEvidenceTextLen) violations.push(`save_probe: evidence[${i}].text 长度 ${item.text.length} 超过上限 ${PROBE_LIMITS.maxEvidenceTextLen}`)
-        }
-        if (item.note !== undefined && item.note !== null && item.note !== '') {
-          if (typeof item.note !== 'string') violations.push(`save_probe: evidence[${i}].note 类型错误（应为字符串）`)
-          else if (item.note.length > PROBE_LIMITS.maxEvidenceNoteLen) violations.push(`save_probe: evidence[${i}].note 长度 ${item.note.length} 超过上限 ${PROBE_LIMITS.maxEvidenceNoteLen}`)
-        }
-        if ((item.line === undefined || item.line === null || item.line === '') &&
-            (item.value === undefined || item.value === null || item.value === '') &&
-            (item.text === undefined || item.text === null || item.text === '')) {
-          violations.push(`save_probe: evidence[${i}] 须至少提供 line/value/text 之一`)
-        }
-      }
-      const evTotal = JSON.stringify(args.evidence).length
-      if (evTotal > PROBE_LIMITS.maxEvidenceTotalChars) violations.push(`save_probe: evidence 总量 ${evTotal} 字符超过上限 ${PROBE_LIMITS.maxEvidenceTotalChars}`)
-    }
-  }
-  const allFieldsArrays = fields.every((field) => Array.isArray(args[field]))
-  if (allFieldsArrays) {
-    const total = JSON.stringify({ fileMap: args.fileMap, focusAreas: args.focusAreas, exclusions: args.exclusions, background: args.background }).length
-    if (total > PROBE_LIMITS.maxTotalChars) violations.push(`save_probe: 四字段总量 ${total} 字符超过上限 ${PROBE_LIMITS.maxTotalChars}`)
-  }
-  if (violations.length === 0) return null
-  return `save_probe: 校验不通过，共发现 ${violations.length} 处违规（超限一律拒绝、不静默截断，请逐条修正后重试）：\n- ${violations.join('\n- ')}`
-}
-
-// 探查路径解析：绝对路径原样、相对路径按 cwd 解析（供 validateProbe 存在性校验）。
-function probePathOf(cwd, p) {
-  if (isAbsolute(p)) return p
-  return resolve(join(cwd, p))
-}
-
-// 线索/证据报告 Markdown 渲染（模板固定）：标题 + 卷首声明 + 四节；evidence 非空时
-// 标题/卷首切换为证据报告语义并追加「## 五、证据」节。导出供测试核对内容契约。
-function renderProbeMarkdown(args) {
-  const hasEvidence = Array.isArray(args.evidence) && args.evidence.length > 0
-  const lines = []
-  lines.push(hasEvidence ? '# 探查证据报告（探查者 save_probe 落盘）' : '# 探查线索（save_probe 落盘，非结论）')
-  lines.push('')
-  if (hasEvidence) {
-    lines.push('> 本文件为探查者已核实的证据报告：行号/数值/文案照实记录，可被规划子代理作为【探查者已核实】证据引用（引用时在方案中注明「证据来源：本文件路径」）')
-  } else {
-    lines.push('> 本文件只有定位线索、没有证据；不得引用本文件的行号/数值/文案作为【已探查核实】证据——证据须由 pro 规划子代理自行 read/glob/grep 核实')
-  }
-  lines.push('')
-  lines.push('## 一、文件地图')
-  for (const item of args.fileMap) lines.push(`- ${item.path}：${item.relation}`)
-  lines.push('')
-  lines.push('## 二、重点区域')
-  for (const item of args.focusAreas) {
-    lines.push(item.range !== undefined && item.range !== null && item.range !== '' ? `- ${item.path}（${item.range}）：${item.note}` : `- ${item.path}：${item.note}`)
-  }
-  lines.push('')
-  lines.push('## 三、排除项')
-  for (const item of args.exclusions) {
-    lines.push(item.scope !== undefined && item.scope !== null && item.scope !== '' ? `- ${item.scope}：${item.note}` : `- （未指明范围）：${item.note}`)
-  }
-  lines.push('')
-  lines.push('## 四、背景与意图')
-  for (const item of args.background) lines.push(`- ${item.topic}：${item.detail}`)
-  lines.push('')
-  if (hasEvidence) {
-    lines.push('## 五、证据')
-    for (const item of args.evidence) {
-      let line = `- ${item.path}`
-      if (item.line !== undefined && item.line !== null && item.line !== '') line += `（${item.line}）`
-      line += '：'
-      if (item.value !== undefined && item.value !== null && item.value !== '') line += item.value
-      if (item.text !== undefined && item.text !== null && item.text !== '') line += `｜${item.text}`
-      if (item.note !== undefined && item.note !== null && item.note !== '') line += `｜${item.note}`
-      lines.push(line)
-    }
-    lines.push('')
-  }
-  return lines.join('\n')
-}
-
-// 提取方案中【探查者已核实】标注引用的证据文件路径（纯函数，导出供测试）。
-// 契约：标注行须含「证据：<路径>」（如：【探查者已核实】·证据：.extra-plan/证据-xxx.md）。
-const PROBE_EVIDENCE_RE = /【探查者已核实】[^\n]*?证据[：:]\s*([^\s，。；）】\n]+)/g
-export function extractProbeEvidenceRefs(plan) {
-  if (typeof plan !== 'string' || plan === '') return []
-  const refs = []
-  for (const m of plan.matchAll(PROBE_EVIDENCE_RE)) {
-    const p = m[1].trim()
-    if (p !== '' && !refs.includes(p)) refs.push(p)
-  }
-  return refs
-}
-
-// save_probe 结果的模型可见内容（与 renderSavePlan 同契约：ContentBlock[]）。
-// hasEvidence 二参由 output.render 传入（args.evidence 非空）；缺省走线索文案。
-function renderSaveProbe(value, hasEvidence) {
-  return [{ type: 'text', text: (hasEvidence === true ? '探查证据报告已落盘：\n- ' : '探查线索已落盘：\n- ') + value.path }]
-}
+// save_plan/save_probe 合同、校验与渲染已拆至 plugins/dsh-extra-plan/lib。
 
 // 工具集判定（真实工具集 tools.schemas，restrict 后非折叠；目录判定保留为 schemas 不可得时的回落）。
 // 元素支持两种形状：字符串工具名、{ name } 对象（装配目录/工具集均为对象形状）。
@@ -1396,778 +875,6 @@ function catalogIsCollapsed(tools) {
     (only !== null && typeof only === 'object' && only.name === 'run_code')
 }
 
-// probe（探查者）子代理模型跟随顶层主会话：沿 parentSession 链上溯（probe→planner→
-// 主会话，多级委派亦逐层追溯），取顶层主会话 requestHeader().config 作为
-// provider/model/maxTokens 注入源（不再取直接父/委派方值）。链任一层断裂（get 失败/
-// requestHeader 非函数或抛异常/config 为 null/depth 达 8 上限）→ 整体回退直接父会话
-// config（与钩子改动前行为逐字节等价），整段不抛错。注入判定沿现状口径：routeExplicit
-// 基准为直接父（isExplicitRoute 复用）、maxTokens 无条件继承、effort 取直接父
-// reasoningEffort（顶层 effort 不渗入）。模块顶层纯函数：不引用 probeClaimFor/
-// pendingProbeClaims/plannerModelCache/plannerModel/ctx 闭包变量；经 decisions 导出供场景测试直接复用。
-function requestConfigSnapshot(agent) {
-  if (agent === undefined || agent === null || agent.session === undefined || agent.session === null) return null
-  if (typeof agent.session.requestHeader !== 'function') return null
-  let header
-  try { header = agent.session.requestHeader() } catch (error) { return null }
-  const config = header !== undefined && header !== null && header.config !== undefined && header.config !== null ? header.config : null
-  if (config === null || typeof config !== 'object') return null
-  return {
-    provider: typeof config.provider === 'string' && config.provider !== '' ? config.provider : undefined,
-    model: typeof config.model === 'string' && config.model !== '' ? config.model : undefined,
-    maxTokens: typeof config.maxTokens === 'number' && config.maxTokens > 0 ? config.maxTokens : undefined,
-    reasoningEffort: typeof config.reasoningEffort === 'string' ? config.reasoningEffort : '',
-  }
-}
-
-function agentFromRegistry(agents, id) {
-  if (agents === undefined || agents === null || typeof agents.get !== 'function') return undefined
-  try { return agents.get(id) } catch (error) { return undefined }
-}
-
-// 返回直接父与顶层主会话的 owned route snapshot；链断裂时不把中间 child 当主会话。
-function resolveAgentRouteSources(agent, agents) {
-  const header = agent !== undefined && agent !== null && agent.session !== undefined && agent.session !== null && agent.session.header !== undefined && agent.session.header !== null ? agent.session.header : null
-  const parentSession = header !== null ? header.parentSession : undefined
-  if (typeof parentSession !== 'string') return { available: false, complete: false, direct: null, source: null }
-  const parent = agentFromRegistry(agents, parentSession)
-  const direct = requestConfigSnapshot(parent)
-  if (direct === null) return { available: false, complete: false, direct: null, source: null }
-  let source = direct
-  let current = parent
-  let complete = true
-  let depth = 0
-  while (isSubagentChild(current)) {
-    const currentHeader = current !== undefined && current !== null && current.session !== undefined && current.session !== null && current.session.header !== undefined && current.session.header !== null ? current.session.header : null
-    const upId = currentHeader !== null ? currentHeader.parentSession : undefined
-    if (typeof upId !== 'string') { complete = false; break }
-    const up = agentFromRegistry(agents, upId)
-    if (up === undefined) { complete = false; break }
-    const upConfig = requestConfigSnapshot(up)
-    if (upConfig === null) { complete = false; break }
-    current = up
-    source = upConfig
-    depth += 1
-    if (depth >= 8) { complete = false; break }
-  }
-  return { available: true, complete, direct, source: complete ? source : null }
-}
-
-async function resolveProbeRequestInjection(agent, agents, resolved) {
-  // 1) 直接父解析（防御 requestHeader 异常；重构前为内联逻辑，现抽为独立函数）
-  if (agent === undefined || agent === null || agent.session === undefined || agent.session === null) return resolved
-  const agentHeader = agent.session.header !== undefined && agent.session.header !== null ? agent.session.header : null
-  const parentSession = agentHeader !== null ? agentHeader.parentSession : undefined
-  if (typeof parentSession !== 'string') return resolved
-  if (agents === undefined) return resolved
-  let parent
-  try {
-    parent = agents.get(parentSession)
-  } catch (error) {
-    parent = undefined
-  }
-  if (parent === undefined) return resolved
-  let parentHeader
-  if (parent.session !== undefined && parent.session !== null && typeof parent.session.requestHeader === 'function') {
-    try {
-      parentHeader = parent.session.requestHeader()
-    } catch (error) {
-      parentHeader = undefined
-    }
-  }
-  const parentConfig = parentHeader !== undefined && parentHeader.config !== undefined && parentHeader.config !== null ? parentHeader.config : null
-  if (parentConfig === null) return resolved
-  const parentProvider = typeof parentConfig.provider === 'string' && parentConfig.provider !== '' ? parentConfig.provider : undefined
-  const parentModel = typeof parentConfig.model === 'string' && parentConfig.model !== '' ? parentConfig.model : undefined
-  const parentMaxTokens = typeof parentConfig.maxTokens === 'number' && parentConfig.maxTokens > 0 ? parentConfig.maxTokens : undefined
-
-  // 2) 链上溯取顶层主会话 config：isSubagentChild(cur)===false 即正常终止（停在 cur）；
-  //    读 cur 的 parentSession 非 string → 终止；get 失败/requestHeader 非函数或抛异常/
-  //    config 为 null/depth 达 8 上限 → broken 回退（sourceConfig 保持直接父 config）。
-  let sourceConfig = parentConfig
-  let cur = parent
-  let broken = false
-  let depth = 0
-  while (!broken) {
-    if (!isSubagentChild(cur)) break
-    const curHeader = cur.session !== undefined && cur.session !== null && cur.session.header !== undefined && cur.session.header !== null ? cur.session.header : null
-    const pid = curHeader !== null ? curHeader.parentSession : undefined
-    if (typeof pid !== 'string') break
-    let up
-    try {
-      up = agents.get(pid)
-    } catch (error) {
-      up = undefined
-    }
-    if (up === undefined) { broken = true; break }
-    let upHeader
-    if (up.session !== undefined && up.session !== null && typeof up.session.requestHeader === 'function') {
-      try {
-        upHeader = up.session.requestHeader()
-      } catch (error) {
-        upHeader = undefined
-      }
-    }
-    const upConfig = upHeader !== undefined && upHeader.config !== undefined && upHeader.config !== null ? upHeader.config : null
-    if (upConfig === null) { broken = true; break }
-    cur = up
-    sourceConfig = upConfig
-    depth += 1
-    if (depth >= 8) { broken = true; break }
-  }
-  if (broken) sourceConfig = parentConfig
-  const sourceProvider = typeof sourceConfig.provider === 'string' && sourceConfig.provider !== '' ? sourceConfig.provider : undefined
-  const sourceModel = typeof sourceConfig.model === 'string' && sourceConfig.model !== '' ? sourceConfig.model : undefined
-  const sourceMaxTokens = typeof sourceConfig.maxTokens === 'number' && sourceConfig.maxTokens > 0 ? sourceConfig.maxTokens : undefined
-
-  // 3) 注入应用（唯一差异：来源为 sourceConfig）
-  const resolvedProvider = typeof resolved.provider === 'string' ? resolved.provider : ''
-  const resolvedModel = typeof resolved.model === 'string' ? resolved.model : ''
-  const resolvedEffort = typeof resolved.reasoningEffort === 'string' ? resolved.reasoningEffort : ''
-  const routeExplicit = isExplicitRoute(resolvedProvider, resolvedModel, parentProvider, parentModel)
-  const parentEffort = typeof parentConfig.reasoningEffort === 'string' ? parentConfig.reasoningEffort : ''
-  const effortExplicit = isExplicitEffort(resolvedEffort, parentEffort)
-  const nextConfig = { ...resolved }
-  if (!routeExplicit) {
-    if (sourceModel !== undefined) nextConfig.model = sourceModel
-    if (sourceProvider !== undefined) nextConfig.provider = sourceProvider
-  }
-  // maxTokens 保持现状无条件继承（官方显式接口无 maxTokens，不做判定）
-  if (sourceMaxTokens !== undefined) nextConfig.maxTokens = sourceMaxTokens
-  const suppressEffort = effortExplicit || (routeExplicit && resolvedEffort === '')
-  if (parentEffort !== '' && !suppressEffort) nextConfig.reasoningEffort = parentEffort
-  return nextConfig
-}
-
-// ── F7' v4：run_code 拆解器 + 闸门纯函数抽取 + 组判定/聚合（单一真源） ──
-// 说明（重构原则）：listener 各分段的纯粹判定部分抽取为模块顶层纯函数；普通工具
-// 路径（native/both 直呼）与组判定成员路径调用「同一函数」，文案字面量唯一出处，
-// 杜绝复制漂移。所有闭包依赖（exploreBudget、planToolName、jobOutputCallCounters、
-// probe）改为参数/ctx 传入。抽函数内分支顺序与改前 listener 逐字同序。
-
-// 遮蔽代码中的字符串字面量（'...'/"..."/`...`）与注释（//、/* */）为等长空格
-// （保留换行/回车），消除字符串/注释内 tools.xxx 或裸写词的误提取；遮蔽后无引号，
-// 后续括号配平不受字符串内括号干扰（未闭合字符串/注释保守遮蔽至末尾）。
-function maskCodeLiteralsAndComments(code) {
-  const text = typeof code === 'string' ? code : ''
-  const chars = text.split('')
-  const n = chars.length
-  let i = 0
-  while (i < n) {
-    const ch = chars[i]
-    if (ch === "'" || ch === '"' || ch === '`') {
-      const quote = ch
-      let j = i + 1
-      while (j < n) {
-        if (chars[j] === '\\') { j += 2; continue }
-        if (chars[j] === quote) break
-        j += 1
-      }
-      const end = j < n ? j : n - 1
-      for (let k = i; k <= end; k += 1) { if (chars[k] !== '\n' && chars[k] !== '\r') chars[k] = ' ' }
-      i = j < n ? j + 1 : n
-      continue
-    }
-    if (ch === '/' && i + 1 < n && chars[i + 1] === '/') {
-      let j = i
-      while (j < n && chars[j] !== '\n') j += 1
-      for (let k = i; k < j; k += 1) { if (chars[k] !== '\n' && chars[k] !== '\r') chars[k] = ' ' }
-      i = j
-      continue
-    }
-    if (ch === '/' && i + 1 < n && chars[i + 1] === '*') {
-      let j = i + 2
-      while (j + 1 < n && !(chars[j] === '*' && chars[j + 1] === '/')) j += 1
-      const end = j + 1 < n ? j + 1 : n - 1
-      for (let k = i; k <= end; k += 1) { if (chars[k] !== '\n' && chars[k] !== '\r') chars[k] = ' ' }
-      i = j + 2
-      continue
-    }
-    i += 1
-  }
-  return chars.join('')
-}
-
-// 从 '（' 起括号配平（计数 ( ) [ ] { }，遮蔽后无字符串干扰）取参数切片：
-// 在遮蔽文本上配平，innerText 取原文本（JSON.parse 需要原始字面量）。
-// 返回 { closeIdx（配平闭括号索引，未闭合取文本末尾）, innerText }。
-function sliceBalancedArgs(maskedText, text, parenIdx) {
-  let depth = 0
-  let i = parenIdx
-  while (i < maskedText.length) {
-    const ch = maskedText[i]
-    if (ch === '(') depth += 1
-    else if (ch === ')') { depth -= 1; if (depth === 0) break }
-    else if (ch === '[') depth += 1
-    else if (ch === ']') depth -= 1
-    else if (ch === '{') depth += 1
-    else if (ch === '}') depth -= 1
-    i += 1
-  }
-  const closeIdx = i < maskedText.length ? i : text.length - 1
-  const innerText = text.slice(parenIdx + 1, i < maskedText.length ? i : text.length)
-  return { closeIdx, innerText }
-}
-
-// 拆解 run_code 的 code 文本为工具组（静态预审用）。返回 { members, dynamic }：
-// members = 去重后的组员数组（按出现顺序；裸写伪成员固定排末尾）；
-// dynamic = 是否出现静态不可解析的动态工具访问（tools[var] 等）——不计入组，运行时瀑布兜底。
-// 组员形状：
-//   { kind:'tool', name, argsParsed:boolean, args:object|null, argsText:string }（参数不可解析时 argsParsed:false）
-//   { kind:'bare-write', name:'write', hints:string[] }（裸写伪工具）
-// 边界与兜底（写入注释，运行时瀑布兜底）：动态访问 tools[var]/运行时拼名、参数不可解析、
-// 嵌套 run_code 深度超限、eval/Function 动态代码——静态不可解析时不产生成员 → 组判定放行
-// → 运行时嵌套调用自身进入 tools/pre-execute 瀑布按直呼闸门拦截（文案同源），安全方向。
-function decomposeRunCode(code) {
-  const text = typeof code === 'string' ? code : ''
-  const members = []
-  let dynamic = false
-  if (text === '') return { members, dynamic }
-  const masked = maskCodeLiteralsAndComments(text)
-  const n = text.length
-  const occupied = new Array(n).fill(false)
-  const seen = new Set()
-  const addMember = (member) => {
-    // 去重键 = name + '\u0001' + (argsParsed ? JSON.stringify(args) : '#raw:' + argsText)。
-    // 设计理由：闸门判定结果完全由 name+arguments 决定（参数依赖检查：run_in_background/
-    // wait/sandbox_permissions/agent_id/command/questions）；同名同参重复调用判定恒同 →
-    // 合并去重，避免重复报错行；同名不同参必须各自判定（如 subagent_probe 带/不带
-    // run_in_background）；不可解析参数同名合并（参数依赖检查被跳过，判定结果与具体
-    // 参数无关）。已注明边界：JSON.stringify 依赖键序，键序不同但语义相同的字面量
-    // 视为不同成员（各自判定，安全方向）。
-    const key = member.kind === 'bare-write'
-      ? 'bare-write\u0001' + member.hints.join('\u0001')
-      : member.name + '\u0001' + (member.argsParsed ? JSON.stringify(member.args) : '#raw:' + member.argsText)
-    if (seen.has(key)) return
-    seen.add(key)
-    members.push(member)
-  }
-  const markRange = (start, end) => {
-    for (let k = start; k <= end && k < occupied.length; k += 1) occupied[k] = true
-  }
-  const isIdChar = (ch) => ch !== undefined && /[A-Za-z0-9_$]/.test(ch)
-  let i = 0
-  while (i < n) {
-    const ch = text[i]
-    // ① 跳过字符串字面量与注释（遮蔽版 masked 已把对应位置留空格；扫描须在原序列
-    //    上跳过起始符，避免把字符串/注释内的 tools.xxx 当调用提取）
-    if (ch === "'" || ch === '"' || ch === '`') {
-      const quote = ch
-      let j = i + 1
-      while (j < n) {
-        if (text[j] === '\\') { j += 2; continue }
-        if (text[j] === quote) break
-        j += 1
-      }
-      i = j < n ? j + 1 : n
-      continue
-    }
-    if (ch === '/' && i + 1 < n && text[i + 1] === '/') {
-      while (i < n && text[i] !== '\n') i += 1
-      continue
-    }
-    if (ch === '/' && i + 1 < n && text[i + 1] === '*') {
-      const end = text.indexOf('*/', i + 2)
-      i = end === -1 ? n : end + 2
-      continue
-    }
-    // ② 提取工具调用（含 await 前缀无关；支持 tools.xxx(...) 与 tools['xxx'](...)/
-    //    tools["xxx"](...) 字面量方括号）；③ tools[ 的非字面量方括号访问
-    //    （如 tools[var]、tools[`x`]）→ dynamic = true，不产生成员。
-    if (text.startsWith('tools', i) && !(i > 0 && isIdChar(text[i - 1]))) {
-      let j = i + 5
-      while (j < n && /\s/.test(text[j])) j += 1
-      let name
-      let parenIdx = -1
-      if (text[j] === '.') {
-        j += 1
-        while (j < n && /\s/.test(text[j])) j += 1
-        const m = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(text.slice(j))
-        if (m !== null) {
-          name = m[0]
-          let k = j + name.length
-          while (k < n && /\s/.test(text[k])) k += 1
-          if (text[k] === '(') parenIdx = k
-        }
-      } else if (text[j] === '[') {
-        j += 1
-        while (j < n && /\s/.test(text[j])) j += 1
-        const q = text[j]
-        if (q === "'" || q === '"') {
-          let k = j + 1
-          while (k < n && text[k] !== q) { if (text[k] === '\\') k += 1; k += 1 }
-          const lit = text.slice(j + 1, k)
-          if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(lit) && k < n) {
-            k += 1
-            while (k < n && /\s/.test(text[k])) k += 1
-            if (text[k] === ']') {
-              k += 1
-              while (k < n && /\s/.test(text[k])) k += 1
-              if (text[k] === '(') { name = lit; parenIdx = k }
-            }
-          }
-          // 字面量名非法或形态不符 → 静态不可解析
-          if (name === undefined) dynamic = true
-        } else {
-          // tools[var] / tools[`x`] / tools[expr] → 动态访问
-          dynamic = true
-        }
-      }
-      if (name !== undefined && parenIdx !== -1) {
-        // 自 '(' 起括号配平（遮蔽后无字符串干扰），取参数原文 innerText
-        const bal = sliceBalancedArgs(masked, text, parenIdx)
-        const innerText = bal.innerText.trim()
-        // ④ 参数解析：JSON.parse(innerText) 成功且为对象 → argsParsed=true；
-        //    否则 argsParsed=false、argsText=innerText（标记「参数不可解析」）。
-        let argsParsed = false
-        let args = null
-        if (innerText !== '') {
-          try {
-            const parsed = JSON.parse(innerText)
-            if (parsed !== null && typeof parsed === 'object') { args = parsed; argsParsed = true }
-          } catch (error) { /* 非 JSON：参数不可解析 */ }
-        }
-        addMember({ kind: 'tool', name, argsParsed, args: argsParsed ? args : null, argsText: innerText })
-        markRange(i, bal.closeIdx)
-        i = bal.closeIdx + 1
-        continue
-      }
-    }
-    i += 1
-  }
-  // ⑥ 裸写扫描：对遮蔽后文本中已提取工具调用区间之外的剩余片段跑 codeMutationHints
-  //    （复用 RUNCODE_MUTATION_HINTS）→ hits 非空 → 追加一个 { kind:'bare-write',
-  //    name:'write', hints:hits } 成员（排末尾；多个裸写命中合并为一个）。
-  //    与 v2 差异说明：v2 对全文本扫描（含嵌套工具调用参数字符串内的裸写词）；v4 屏蔽
-  //    工具调用区间后再扫，杜绝「tools.write({ content: "writeFileSync(...)" }) 的参
-  //    数字符串被误判为裸写」，属精确化改进；不影响 R35/R36/R40（它们用裸 writeFileSync
-  //    直写，仍命中）。
-  const restChars = masked.split('')
-  for (let k = 0; k < occupied.length; k += 1) { if (occupied[k]) restChars[k] = ' ' }
-  const hints = codeMutationHints(restChars.join(''))
-  if (hints.length > 0) addMember({ kind: 'bare-write', name: 'write', hints })
-  return { members, dynamic }
-}
-
-// run_code 多调用容错硬闸门（v0.1.10）：code 内 tools.* 调用点（未去重、含多行、含动态访问；
-// 裸写 hint 不计）≥2 时，要求每个调用点独立容错——只认独立 try/catch 组：try 块内恰 1 个调用点、
-// 块后紧跟 catch；allSettled 数组 / .catch 链 / 包装函数一律不认；不足 → 教学式拒绝（组判定整体拒绝）。
-// 单调用豁免；嵌套 run_code 展平（depth 0 且参数可解析时递归扫 args.code，depth≥1 跳过）纳入；
-// 静态识别失败方向=保守（按未保护拒绝）。decomposeRunCode 契约与 native/both 直呼路径均不变。
-function runCodeCatchGateReason(code) {
-  const text = typeof code === 'string' ? code : ''
-  if (text === '') return null
-  const n = text.length
-  // 调用点收集：模块顶层 collectRunCodeSites（逻辑自本函数局部 collectSites 逐字提升，见函数定义处）。
-  let total = 0
-  let protectedCount = 0
-  // 单层扫描（嵌套层递归；protection 按层内区间判定，跨层不继承）
-  const scanLayer =
-    (txt) => {
-    const msk = maskCodeLiteralsAndComments(txt)
-    const sites = collectRunCodeSites(txt, msk)
-    const tlen = txt.length
-    // 嵌套展平：depth 0 的 tools.run_code 且参数 JSON.parse 可解析 → 递归扫 args.code、
-    // 该调用点不计入本层；参数不可解析的 run_code 调用点按普通调用点计数。
-    const layerSites = []
-    for (const site of sites) {
-      if (site.name === 'run_code' && site.innerText !== '') {
-        let parsed = null
-        try { parsed = JSON.parse(site.innerText) } catch (error) { /* 参数不可解析 */ }
-        if (parsed !== null && typeof parsed === 'object' && typeof parsed.code === 'string') {
-          scanLayer(parsed.code)
-          continue
-        }
-      }
-      layerSites.push(site)
-    }
-    total += layerSites.length
-    const protectedIdx = new Set()
-    const within = (site, a, b) => site.start >= a && site.start <= b
-    // ① try/catch 保护：masked 上扫 try（前后非 idChar）→ 跳过 ws 须 '{' → 配平取块区间；
-    //    块后跳过 ws 须 catch（catch 后一字符非 idChar，兼容 catch(e)/catch{}）；
-    //    该 try 块内恰 1 个调用点 → 该点计入保护；≥2 个 → 均不保护。
-    let ti = 0
-    while (ti < tlen) {
-      const tIdx = msk.indexOf('try', ti)
-      if (tIdx === -1) break
-      if ((tIdx === 0 || (msk[tIdx - 1] === undefined || !/[A-Za-z0-9_$]/.test(msk[tIdx - 1]))) && (tIdx + 3 >= tlen || (msk[tIdx + 3] === undefined || !/[A-Za-z0-9_$]/.test(msk[tIdx + 3])))) {
-        let k = tIdx + 3
-        while (k < tlen && /\s/.test(msk[k])) k += 1
-        if (msk[k] === '{') {
-          // 花括号专用配平（'{' 开头、'}' 归零即断；不用 sliceBalancedArgs——它在 ')' 归零才断，
-          // 会把 try 块区间错误延伸到 catch 的 '(e)'）
-          let depthB = 0
-          let braceClose = -1
-          for (let x = k; x < tlen; x += 1) {
-            if (msk[x] === '{') depthB += 1
-            else if (msk[x] === '}') { depthB -= 1; if (depthB === 0) { braceClose = x; break } }
-          }
-          if (braceClose !== -1) {
-            let c = braceClose + 1
-            while (c < tlen && /\s/.test(msk[c])) c += 1
-            if (msk.slice(c, c + 5) === 'catch' && (c + 5 >= tlen || (msk[c + 5] === undefined || !/[A-Za-z0-9_$]/.test(msk[c + 5])))) {
-              const hits = []
-              for (let s = 0; s < layerSites.length; s += 1) {
-                if (within(layerSites[s], k, braceClose)) hits.push(s)
-              }
-              if (hits.length === 1) protectedIdx.add(hits[0])
-            }
-            ti = braceClose + 1
-            continue
-          }
-        }
-      }
-      ti = tIdx + 3
-    }
-
-    protectedCount += protectedIdx.size
-  }
-  scanLayer(text)
-  if (total < 2) return null
-  if (protectedCount === total) return null
-  return 'run_code 内 ' + total + ' 个工具调用未全部独立容错：请给每个调用点各写一个独立 try/catch——一次只包 1 个调用、块后紧跟 catch。已保护 ' + protectedCount + ' 个。写法示例：try { await tools.read({ file_path: "x" }) } catch (e) {}'
-}
-
-// run_code 调用点收集（镜像 decomposeRunCode 提取语义；不去重、只记 {start,end,innerText,name}）。
-// 自 runCodeCatchGateReason 局部 collectSites 提升为模块顶层（任务1）：字符串/注释跳过、
-// tools./tools['lit']/tools[var] 三类调用点、sliceBalancedArgs 配平；逻辑逐字未动。
-function collectRunCodeSites(txt, msk) {
-    const sites = []
-    const tlen = txt.length
-    let i = 0
-    while (i < tlen) {
-      const ch = txt[i]
-      // 跳过字符串字面量与注释（原序列上跳过起始符，避免字符串/注释内 tools.x 当调用提取）
-      if (ch === "'" || ch === '"' || ch === '`') {
-        const quote = ch
-        let j = i + 1
-        while (j < tlen) {
-          if (txt[j] === '\\') { j += 2; continue }
-          if (txt[j] === quote) break
-          j += 1
-        }
-        i = j < tlen ? j + 1 : tlen
-        continue
-      }
-      if (ch === '/' && i + 1 < tlen && txt[i + 1] === '/') {
-        while (i < tlen && txt[i] !== '\n') i += 1
-        continue
-      }
-      if (ch === '/' && i + 1 < tlen && txt[i + 1] === '*') {
-        const end = txt.indexOf('*/', i + 2)
-        i = end === -1 ? tlen : end + 2
-        continue
-      }
-      if (txt.startsWith('tools', i) && !(i > 0 && txt[i - 1] !== undefined && /[A-Za-z0-9_$]/.test(txt[i - 1]))) {
-        let j = i + 5
-        while (j < tlen && /\s/.test(txt[j])) j += 1
-        let name = undefined
-        let parenIdx = -1
-        if (txt[j] === '.') {
-          j += 1
-          while (j < tlen && /\s/.test(txt[j])) j += 1
-          const m = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(txt.slice(j))
-          if (m !== null) {
-            const mName = m[0]
-            let k = j + mName.length
-            while (k < tlen && /\s/.test(txt[k])) k += 1
-            if (txt[k] === '(') { name = mName; parenIdx = k }
-          }
-        } else if (txt[j] === '[') {
-          j += 1
-          while (j < tlen && /\s/.test(txt[j])) j += 1
-          const q = txt[j]
-          if (q === "'" || q === '"') {
-            let k = j + 1
-            while (k < tlen && txt[k] !== q) { if (txt[k] === '\\') k += 1; k += 1 }
-            const lit = txt.slice(j + 1, k)
-            if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(lit) && k < tlen) {
-              k += 1
-              while (k < tlen && /\s/.test(txt[k])) k += 1
-              if (txt[k] === ']') {
-                k += 1
-                while (k < tlen && /\s/.test(txt[k])) k += 1
-                if (txt[k] === '(') { name = lit; parenIdx = k }
-              }
-            }
-          } else {
-            // tools[var]/tools[expr] 动态访问：跳到 ']' 后 ws 再找 '('（找不到 '(' 不计，
-            // 如 const t = tools[fn] 非调用）
-            let k = j
-            let depth = 1
-            while (k < tlen && depth > 0) {
-              if (txt[k] === '[') depth += 1
-              else if (txt[k] === ']') depth -= 1
-              k += 1
-            }
-            while (k < tlen && /\s/.test(txt[k])) k += 1
-            if (txt[k] === '(') parenIdx = k
-          }
-        }
-        if (parenIdx !== -1) {
-          const bal = sliceBalancedArgs(msk, txt, parenIdx)
-          sites.push({ start: i, end: bal.closeIdx, innerText: bal.innerText.trim(), name })
-          i = bal.closeIdx + 1
-          continue
-        }
-      }
-      i += 1
-    }
-  return sites
-}
-
-// ask_user_question 返回值白名单（第一版）：只在主会话 run_code 预执行前做保守静态证明。
-// 允许直接 return await，或单一标识符接收后紧随顶层 return 且按标识符边界实际引用；其余一律拒绝。
-function askUserQuestionReturnGateReason(code) {
-  const text = typeof code === 'string' ? code : ''
-  if (text === '') return null
-  const masked = maskCodeLiteralsAndComments(text)
-  const reason = 'run_code 内 ask_user_question 返回值未通过返回值白名单：仅允许以下两种写法：return await tools.ask_user_question(...)；或 const q = await tools.ask_user_question(...); return JSON.stringify({ question: q })'
-  const isIdChar = (ch) => ch !== undefined && /[A-Za-z0-9_$]/.test(ch)
-  const skipWs = (value, start) => {
-    let i = start
-    while (i < value.length && /\s/.test(value[i])) i += 1
-    return i
-  }
-  const sites = collectRunCodeSites(text, masked)
-  const askSites = sites.filter((site) => site.name === ASK_TOOL)
-  const askStarts = new Set(askSites.map((site) => site.start))
-  let invalidReference = sites.some((site) => site.name === undefined)
-
-  // 任何静态属性引用但非调用、字面量方括号访问、动态方括号访问都不能证明是白名单形态。
-  let scan = 0
-  while (scan < masked.length) {
-    const idx = masked.indexOf('tools', scan)
-    if (idx === -1) break
-    if ((idx === 0 || !isIdChar(masked[idx - 1]))) {
-      let k = skipWs(masked, idx + 5)
-      if (masked[k] === '.') {
-        k = skipWs(masked, k + 1)
-        const m = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(masked.slice(k))
-        if (m !== null && m[0] === ASK_TOOL && !isIdChar(masked[k + m[0].length])) {
-          if (!askStarts.has(idx)) invalidReference = true
-        }
-      } else if (masked[k] === '[') {
-        let q = skipWs(text, k + 1)
-        if (text[q] === "'" || text[q] === '"') {
-          const quote = text[q]
-          let end = q + 1
-          while (end < text.length) {
-            if (text[end] === '\\') { end += 2; continue }
-            if (text[end] === quote) break
-            end += 1
-          }
-          if (text.slice(q + 1, end) === ASK_TOOL) invalidReference = true
-        } else {
-          invalidReference = true
-        }
-      }
-    }
-    scan = idx + 5
-  }
-
-  // bare ask 或非 tools 对象的属性调用同样属于别名/未知访问，不能放行。
-  scan = 0
-  while (scan < masked.length) {
-    const idx = masked.indexOf(ASK_TOOL, scan)
-    if (idx === -1) break
-    if ((idx === 0 || !isIdChar(masked[idx - 1])) && !isIdChar(masked[idx + ASK_TOOL.length])) {
-      let p = idx - 1
-      while (p >= 0 && /\s/.test(masked[p])) p -= 1
-      let direct = false
-      if (masked[p] === '.') {
-        p -= 1
-        while (p >= 0 && /\s/.test(masked[p])) p -= 1
-        const end = p
-        while (p >= 0 && isIdChar(masked[p])) p -= 1
-        direct = masked.slice(p + 1, end + 1) === 'tools'
-      }
-      if (!direct) invalidReference = true
-    }
-    scan = idx + ASK_TOOL.length
-  }
-  if (invalidReference && askSites.length === 0) return reason
-  if (invalidReference) return reason
-  if (askSites.length === 0) return null
-
-  // 仅在三种括号深度都为 0 时才把调用视为顶层语句中的调用。
-  const braceDepth = new Array(text.length + 1)
-  const parenDepth = new Array(text.length + 1)
-  const bracketDepth = new Array(text.length + 1)
-  let brace = 0
-  let paren = 0
-  let bracket = 0
-  for (let i = 0; i < masked.length; i += 1) {
-    braceDepth[i] = brace
-    parenDepth[i] = paren
-    bracketDepth[i] = bracket
-    if (masked[i] === '{') brace += 1
-    else if (masked[i] === '}') brace -= 1
-    else if (masked[i] === '(') paren += 1
-    else if (masked[i] === ')') paren -= 1
-    else if (masked[i] === '[') bracket += 1
-    else if (masked[i] === ']') bracket -= 1
-  }
-  braceDepth[text.length] = brace
-  parenDepth[text.length] = paren
-  bracketDepth[text.length] = bracket
-  const isTopLevel = (pos) => braceDepth[pos] === 0 && parenDepth[pos] === 0 && bracketDepth[pos] === 0
-  const candidateStarts = (pos) => {
-    const starts = [0]
-    for (let i = 0; i < pos; i += 1) {
-      if (masked[i] === ';' && isTopLevel(i)) starts.push(i + 1)
-      else if (masked[i] === '}' && isTopLevel(i + 1)) starts.push(i + 1)
-    }
-    return starts
-  }
-  const tokenAt = (value, pos, token) => value.slice(pos, pos + token.length) === token &&
-    (pos === 0 || !isIdChar(value[pos - 1])) && !isIdChar(value[pos + token.length])
-  const expressionEnd = (start) => {
-    for (let i = start; i < masked.length; i += 1) {
-      if (masked[i] === ';' && isTopLevel(i)) return i
-      if (masked[i] === '\n' && isTopLevel(i)) {
-        let k = skipWs(masked, i + 1)
-        if (/^(?:const|let|var|return|console|await|if|for|while|try|throw)\b/.test(masked.slice(k))) return i
-      }
-    }
-    return masked.length
-  }
-  const references = (expression, name) => {
-    let i = 0
-    while (i < expression.length) {
-      const idx = expression.indexOf(name, i)
-      if (idx === -1) return false
-      if ((idx === 0 || !isIdChar(expression[idx - 1])) && !isIdChar(expression[idx + name.length])) {
-        let p = idx - 1
-        while (p >= 0 && /\s/.test(expression[p])) p -= 1
-        let n = idx + name.length
-        while (n < expression.length && /\s/.test(expression[n])) n += 1
-        if (expression[p] !== '.' && expression[n] !== ':') return true
-      }
-      i = idx + name.length
-    }
-    return false
-  }
-  const hasReassignment = (expression, name) => {
-    let i = 0
-    while (i < expression.length) {
-      const idx = expression.indexOf(name, i)
-      if (idx === -1) return false
-      if ((idx === 0 || !isIdChar(expression[idx - 1])) && !isIdChar(expression[idx + name.length])) {
-        let n = idx + name.length
-        while (n < expression.length && /\s/.test(expression[n])) n += 1
-        if (expression[n] === '=' && expression[n + 1] !== '=' && expression[n + 1] !== '>') return true
-        if ((expression[n] === '+' || expression[n] === '-') && expression[n + 1] === '+') return true
-        let p = idx - 1
-        while (p >= 0 && /\s/.test(expression[p])) p -= 1
-        if ((expression[p] === '+' || expression[p] === '-') && expression[p - 1] === expression[p]) return true
-      }
-      i = idx + name.length
-    }
-    return false
-  }
-  const afterCall = (site) => {
-    let k = site.end + 1
-    while (k < masked.length && /\s/.test(masked[k])) k += 1
-    let semicolon = false
-    if (masked[k] === ';') {
-      semicolon = true
-      k += 1
-      while (k < masked.length && /\s/.test(masked[k])) k += 1
-    }
-    return { pos: k, semicolon, gap: text.slice(site.end + 1, k) }
-  }
-
-  for (const site of askSites) {
-    const callHead = masked.slice(site.start, site.end + 1)
-    if (!isTopLevel(site.start) || !/^tools\s*\.\s*ask_user_question\s*\(/.test(callHead)) return reason
-    if (callHead.includes('=>') || /\bfunction\b/.test(callHead)) return reason
-    let accepted = false
-    for (const start of candidateStarts(site.start)) {
-      const prefix = masked.slice(start, site.start).trim()
-      const direct = /^return[ \t]+await$/.test(prefix)
-      const assigned = /^(?:(?:const|let|var)[ \t]+)?([A-Za-z_$][A-Za-z0-9_$]*)[ \t]*=[ \t]*await$/.exec(prefix)
-      if (!direct && assigned === null) continue
-      const tail = afterCall(site)
-      if (direct) {
-        const continuation = ['.', '(', '[', '+', '-', '*', '/', '%', '&', '|', '?', ':', ',', '`'].includes(masked[tail.pos])
-        if (tail.pos === masked.length || tail.semicolon || ((tail.gap.includes('\n') || tail.gap.includes('\r')) && !continuation)) accepted = true
-        continue
-      }
-      if (!tail.semicolon && !tail.gap.includes('\n') && !tail.gap.includes('\r')) continue
-      if (!isTopLevel(tail.pos) || !tokenAt(masked, tail.pos, 'return')) continue
-      let exprStart = tail.pos + 6
-      const returnGapStart = exprStart
-      exprStart = skipWs(masked, exprStart)
-      const returnGap = text.slice(returnGapStart, exprStart)
-      if (exprStart >= masked.length || returnGap === '' || /[\r\n]/.test(returnGap)) continue
-      const end = expressionEnd(exprStart)
-      const expression = masked.slice(exprStart, end).trim()
-      const name = assigned[1]
-      if (expression === '' || !references(expression, name) || hasReassignment(expression, name)) continue
-      if (/\bconsole\s*\./.test(expression) || /\.\s*then\b/.test(expression) || expression.includes('=>') || /\bfunction\b/.test(expression)) continue
-      accepted = true
-    }
-    if (!accepted) return reason
-  }
-  return null
-}
-
-// run_code code 静态调用点计数（单实例子调用上限快路径，planner 专属）：run_code 调用点本身不计、
-// 参数 JSON 可解析时递归展开 args.code（镜像 runCodeCatchGateReason 展平口径）；其余调用点各计 1。
-function runCodeSiteCount(code) {
-  const text = typeof code === 'string' ? code : ''
-  if (text === '') return 0
-  const masked = maskCodeLiteralsAndComments(text)
-  const sites = collectRunCodeSites(text, masked)
-  let total = 0
-  for (const site of sites) {
-    if (site.name === 'run_code' && site.innerText !== '') {
-      let parsed = null
-      try { parsed = JSON.parse(site.innerText) } catch (error) { /* 参数不可解析 */ }
-      if (parsed !== null && typeof parsed === 'object' && typeof parsed.code === 'string') {
-        total += runCodeSiteCount(parsed.code)
-        continue
-      }
-    }
-    total += 1
-  }
-  return total
-}
-
-// 子调用语义判定：exec.sub===true（组判定合成成员）或 exec.parent!==undefined（运行时嵌套判定，
-// 与官方 dsh-tools nested 判定同口径）→ true；其余 false（直呼/根 run_code 不算子调用）。
-function isRunCodeSubCall(exec) {
-  if (exec === null || typeof exec !== 'object') return false
-  if (exec.sub === true) return true
-  if (exec.parent !== undefined) return true
-  return false
-}
-
-// 单实例子调用超限文案（T3 逐字；listener 运行时检查与纯函数共用）。
-function runCodeDispatchCapText(rid, count, cap) {
-  return `run_code 实例（rootCallId ${rid}）子调用数 ${count} 超过上限 ${cap}（exploreBudget）：请拆分 run_code 或提高 exploreBudget；循环/动态放大同样受限`
-}
-
-// 运行时单实例上限判定（planner 专属）：统计 events 中 type 命中 DISPATCH_START（新名 tool/ptc-dispatch-start / 旧名 tool/code-dispatch-start）且
-// data.rootCallId===rid 的条数 count；count>cap → 返回 T3 文案；否则 null。
-// exec.rootCallId 非 string / events 非数组 / cap 非正整数 → null。
-function runCodeDispatchGateReason(events, exec, cap) {
-  const rid = exec !== null && exec !== undefined ? exec.rootCallId : undefined
-  if (typeof rid !== 'string' || !Array.isArray(events)) return null
-  if (!Number.isInteger(cap) || cap <= 0) return null
-  let count = 0
-  for (const e of events) {
-    if (e === null || typeof e !== 'object') continue
-    if (!isDispatchStart(e.type)) continue
-    const d = e.data
-    if (d === null || typeof d !== 'object') continue
-    if (d.rootCallId === rid) count += 1
-  }
-  if (count > cap) return runCodeDispatchCapText(rid, count, cap)
-  return null
-}
-
 // ① subagent_probe 分支（唯一功能点）：planner 角色拒绝 + run_in_background 检查。
 // T5：探查者仅主会话可委派——planner 派出的 one-shot 探查者 owner=委派者，planner 轮次
 // 结束即被宿主级联取消（owner disposed），故从源头禁止 planner 委派；拒绝分支置于函数
@@ -2187,7 +894,7 @@ function subagentProbeGateReason(exec, isPlanner) {
   return null
 }
 
-// ② planner 分支（现 L2249-2264 纯部分）：write/edit → pwsh → bash → 预算；不含 run_code（由调用方处理）。
+// ② planner 分支（plannerGateReason；自 apply 内提取的纯部分）：write/edit → pwsh → bash → 预算；不含 run_code（由调用方处理）。
 function plannerGateReason(exec, events, exploreBudget, jobOutputCallCounters) {
   if (exec.name === 'write' || exec.name === 'edit') {
     return '规划子代理只读：方案经 save_plan 落盘，其余写入一律禁止（toolFilter 之外的第二道防线）'
@@ -2208,7 +915,7 @@ function plannerGateReason(exec, events, exploreBudget, jobOutputCallCounters) {
   return null
 }
 
-// ③ child 只读块（现 L2274-2289 纯部分）：write/edit → pwsh → bash；probe 布尔选文案；不含 run_code。
+// ③ child 只读块（childReadonlyGateReason；自 apply 内提取的纯部分）：write/edit → pwsh → bash；probe 布尔选文案；不含 run_code。
 function childReadonlyGateReason(exec, probe, jobOutputCallCounters) {
   if (exec.name === 'write' || exec.name === 'edit') {
     return probe ? '探查者只读：探查不修改任何文件，write/edit 一律禁止（工具目录判定）' : '验收复核者只读：验收复核不修改任何文件，write/edit 一律禁止（工具目录判定）'
@@ -2261,7 +968,7 @@ function probeDisposalWarning(remaining) {
   return '委派方会话销毁时仍有 ' + remaining + ' 个未认领探查者委派：其后台 job 可能已被宿主级联取消（owner disposed）。已知引擎限制：one-shot 探查者 owner=委派者，级联取消修复需官方包配合（dsh-jobs-local/dsh-tool-subagent/dsh-subagent）'
 }
 
-// ④ 主会话段（现 L2293-2430 纯部分，分支顺序逐字同序）：
+// ④ 主会话段（mainGateReason；自 apply 内提取的纯部分，分支顺序逐字同序）：
 //    ask → write/edit → cordis 6 只读 → cordis_run → pwsh/bash → planToolName
 //    → save_probe → save_plan（T3：仅 direct 放行）→ subagent 族
 //    → run_code（调 runCodeGroupDenyReason，depth+1）
@@ -2444,7 +1151,7 @@ function runCodeGroupDenyReason(state, exec, role, gateCtx) {
       if (member.name === 'subagent_probe') {
         reason = subagentProbeGateReason(vExec, roleKind === 'planner')
       } else if (member.kind === 'bare-write') {
-        // 裸写成员按角色分流：只读角色保留 v2 共享文案（hits 拼写与现 L1221 逐字同构）；
+        // 裸写成员按角色分流：只读角色保留 v2 共享文案（hits 拼写与既有共享文案逐字同构）；
         // 主会话走 write/edit 闸门（routeDenyReason 与 approved 文案）；
         // 执行者（child 非只读）豁免。
         if (roleKind === 'planner' || (roleKind === 'child' && r.readOnly === true)) {
@@ -2505,194 +1212,21 @@ function aggregateRunCodeDenyReason(members, denies) {
   return lines.join('\n')
 }
 
-// ── T2：plannerModel 可用性判定（纯函数；resolvePlannerEntry 唯一调用点） ──
-// 输入：plannerModel（string，'' = 设置页显式清空 = 继承主会话模型）、provider（父会话
-// provider，可能 undefined）、catalog（模型目录查询结果描述）：
-//   { kind: 'ok', ids: [...] }  目录查询成功且清单非空
-// | { kind: 'empty' }           适配器未覆写发现能力（静默返回 []）
-// | { kind: 'error' }           查询抛错（如 provider 未注册 → NO_ADAPTER）
-// | { kind: 'no-llm' }          取不到 llm 服务 / 未发起查询
-// 输出：{ use, degraded, diag, reason }
-//   use      = 是否用 plannerModel 覆盖 model（false = planner 继承主会话模型）
-//   degraded = 是否发生「静默降级」（配置的模型未被采用，供口径/回溯）
-//   diag     = 需要落盘诊断时的 decision 值，否则 null
-//   reason   = 判定原因（诊断留痕用）
-// 规则（顺序即设计口径）：
-//   1. plannerModel === '' → 不覆盖（T4 置空语义），不落诊断；
-//   2. plannerModel 非空且 provider 有值：
-//      a. 目录成功、清单非空且未命中 → 不覆盖（静默降级，diag:'inherit-parent'）；
-//      b. 清单为空 / 抛错 / 取不到 llm → 保守沿用 plannerModel（目录 advisory：
-//         空清单≠不可用，防误杀未实现发现能力的适配器），diag:'keep-planner-model'；
-//      c. 命中 → 覆盖（现行为），不落诊断；
-//   3. plannerModel 非空且 provider 无值（父会话空闲等）→ 沿用 plannerModel，不落诊断。
-function decidePlannerModelUse(plannerModel, provider, catalog) {
-  const configured = typeof plannerModel === 'string' ? plannerModel : ''
-  if (configured === '') return { use: false, degraded: false, diag: null, reason: 'empty-config' }
-  if (typeof provider !== 'string' || provider === '') return { use: true, degraded: false, diag: null, reason: 'no-provider' }
-  const kind = catalog !== null && typeof catalog === 'object' && typeof catalog.kind === 'string' ? catalog.kind : 'no-llm'
-  if (kind === 'ok') {
-    const ids = Array.isArray(catalog.ids) ? catalog.ids : []
-    if (ids.includes(configured)) return { use: true, degraded: false, diag: null, reason: 'catalog-hit' }
-    return { use: false, degraded: true, diag: 'inherit-parent', reason: 'catalog-miss' }
-  }
-  if (kind === 'empty') return { use: true, degraded: false, diag: 'keep-planner-model', reason: 'catalog-empty' }
-  if (kind === 'error') return { use: true, degraded: false, diag: 'keep-planner-model', reason: 'catalog-error' }
-  return { use: true, degraded: false, diag: 'keep-planner-model', reason: 'catalog-unavailable' }
-}
 
-// True 路径的真实探针固定上限；False 路径不读取这些辅助逻辑。
-const PLANNER_PROBE_TIMEOUT_MS = 30000
-const PLANNER_BLOCKED_REASON = 'extra-plan: planner request blocked: no verified planner route'
-const NON_PLANNER_BLOCKED_REASON = 'extra-plan: non-planner request blocked: no verified non-planner route'
 
-function comparePlannerText(a, b) {
-  const left = typeof a === 'string' ? a : ''
-  const right = typeof b === 'string' ? b : ''
-  return left < right ? -1 : left > right ? 1 : 0
-}
 
-function plannerProviderRank(providerId, parentProvider) {
-  if (providerId === 'deepseek-official') return 2
-  if (typeof parentProvider === 'string' && parentProvider !== '' && providerId === parentProvider) return 1
-  return 0
-}
 
-function sortPlannerCandidates(candidates, parentProvider) {
-  return [...candidates].sort((left, right) => {
-    const leftRank = plannerProviderRank(left.id, parentProvider)
-    const rightRank = plannerProviderRank(right.id, parentProvider)
-    if (leftRank !== rightRank) return leftRank - rightRank
-    if (leftRank === 0) {
-      const byName = comparePlannerText(left.name, right.name)
-      if (byName !== 0) return byName
-    }
-    return comparePlannerText(left.id, right.id)
-  })
-}
-
-function isCordisPresentationTool(name) {
-  return typeof name === 'string' && CORDIS_PRESENTATION_TOOL_SET.has(name)
-}
-
-function filteredCordisSchemas(schemas) {
-  if (!Array.isArray(schemas)) return []
-  return schemas.filter((schema) => schema !== null && typeof schema === 'object' && !isCordisPresentationTool(schema.name))
-}
-
-function hasSection(sections, name) {
-  return Array.isArray(sections) && sections.some((section) => section !== null && typeof section === 'object' && section.name === name)
-}
-
-function hasNonEmptySection(sections, name) {
-  return Array.isArray(sections) && sections.some((section) => section !== null && typeof section === 'object' && section.name === name && typeof section.text === 'string' && section.text !== '')
-}
-
-// 只投影 PromptAssembly 的模型可见副本；不修改 registry、result 或其 schema。
-function projectAssemblyForPresentation(assembly, schemas, options = {}) {
-  if (assembly === null || typeof assembly !== 'object') return assembly
-  const hideCordis = options.hideCordis !== false
-  const ptcOnly = options.ptcOnly === true
-  const keepToolNames = options.keepToolNames instanceof Set ? options.keepToolNames : null
-  const keepSectionNames = options.keepSectionNames instanceof Set ? options.keepSectionNames : null
-  const schemaNames = Array.isArray(schemas)
-    ? new Set(schemas.filter((schema) => schema !== null && typeof schema === 'object' && typeof schema.name === 'string').map((schema) => schema.name))
-    : null
-  const tools = Array.isArray(assembly.tools)
-    ? assembly.tools.filter((tool) => {
-      if (tool === null || typeof tool !== 'object' || typeof tool.name !== 'string') return false
-      if (hideCordis && isCordisPresentationTool(tool.name)) return false
-      if (ptcOnly && tool.name !== 'run_code') return false
-      if (keepToolNames !== null && !keepToolNames.has(tool.name)) return false
-      return schemaNames === null || schemaNames.size === 0 || schemaNames.has(tool.name)
-    })
-    : assembly.tools
-  const sections = Array.isArray(assembly.sections)
-    ? assembly.sections
-      .filter((section) => section !== null && typeof section === 'object' && (!hideCordis || section.name !== CORDIS_SECTION_NAME) && (keepSectionNames === null || keepSectionNames.has(section.name)))
-      .map((section) => section.name === SDK_SECTION_NAME && typeof options.sdkText === 'string'
-        ? { ...section, text: options.sdkText }
-        : section)
-    : assembly.sections
-  return { ...assembly, sections, tools }
-}
-
-function toolRegistryOf(agent) {
-  if (agent === undefined || agent === null || agent.ctx === undefined || agent.ctx === null || typeof agent.ctx.get !== 'function') return undefined
-  try {
-    const tools = agent.ctx.get('tools')
-    return tools !== null && typeof tools === 'object' ? tools : undefined
-  } catch (error) {
-    return undefined
-  }
-}
-
-function toolSdkSchemasOf(agent) {
-  const tools = toolRegistryOf(agent)
-  if (tools === undefined) return undefined
-  try {
-    if (typeof tools.sdkSchemas === 'function') {
-      const schemas = tools.sdkSchemas(agent)
-      if (Array.isArray(schemas)) return schemas
-    }
-    if (typeof tools.schemas !== 'function') return undefined
-    const schemas = tools.schemas(agent)
-    if (!Array.isArray(schemas)) return undefined
-    return schemas.filter((schema) => schema !== null && typeof schema === 'object' && schema.name !== 'run_code').map((schema) => ({
-      ...schema,
-      output: schema.output !== undefined ? schema.output : { type: 'object', additionalProperties: true },
-    }))
-  } catch (error) {
-    return undefined
-  }
-}
-
-function sdkSchemasForRendering(schemas) {
-  return filteredCordisSchemas(schemas)
-    .filter((schema) => schema.name !== 'run_code')
-    .map((schema) => ({
-      ...schema,
-      output: schema.output !== undefined ? schema.output : { type: 'object', additionalProperties: true },
-    }))
-}
-
-function dshToolsEntryCandidates() {
-  const dshHome = process.env.DSH_HOME || join(homedir(), '.dsh')
-  const candidates = [
-    join(dshHome, 'profiles', 'web', 'node_modules', '@deepseek-ai', 'dsh-tools', 'lib', 'index.js'),
-  ]
-  if (process.platform === 'win32') {
-    const appData = process.env.APPDATA || join(homedir(), 'AppData', 'Roaming')
-    candidates.push(join(appData, 'npm', 'node_modules', '@deepseek-ai', 'dsh', 'node_modules', '@deepseek-ai', 'dsh-tools', 'lib', 'index.js'))
-  } else {
-    candidates.push(
-      join('/usr', 'local', 'lib', 'node_modules', '@deepseek-ai', 'dsh', 'node_modules', '@deepseek-ai', 'dsh-tools', 'lib', 'index.js'),
-      join(homedir(), '.npm-global', 'lib', 'node_modules', '@deepseek-ai', 'dsh', 'node_modules', '@deepseek-ai', 'dsh-tools', 'lib', 'index.js'),
-      join(homedir(), 'node_modules', '@deepseek-ai', 'dsh', 'node_modules', '@deepseek-ai', 'dsh-tools', 'lib', 'index.js'),
-    )
-  }
-  return [...new Set(candidates)]
-}
-
-let sdkRendererModulePromise
-function loadSdkRendererModule() {
-  if (sdkRendererModulePromise === undefined) {
-    sdkRendererModulePromise = (async () => {
-      for (const entry of dshToolsEntryCandidates()) {
-        if (existsSync(entry)) return import(pathToFileURL(entry).href)
-      }
-      throw new Error('extra-plan: dsh-tools SDK renderer is unavailable')
-    })()
-  }
-  return sdkRendererModulePromise
-}
-
-// 只接收已过滤 schema，整体调用官方 renderer 重建 tools:sdk，不从原始文本删块。
-async function renderFilteredToolsSdk(schemas, language = 'typescript') {
-  const rendererModule = await loadSdkRendererModule()
-  const render = language === 'python' ? rendererModule.renderToolsSdkPy : rendererModule.renderToolsSdk
-  if (typeof render !== 'function') throw new Error(`extra-plan: unsupported SDK renderer language ${language}`)
-  return render(sdkSchemasForRendering(schemas))
-}
+// run_code 静态 helper 单向接线：依赖只由根的 ASK_TOOL 与双兼容 dispatch 判定显式注入。
+const {
+  decomposeRunCode,
+  runCodeCatchGateReason,
+  collectRunCodeSites,
+  askUserQuestionReturnGateReason,
+  runCodeSiteCount,
+  isRunCodeSubCall,
+  runCodeDispatchGateReason,
+  runCodeDispatchCapText,
+} = createRunCodeStatic({ askTool: ASK_TOOL, isDispatchStart })
 
 // 供场景测试直接复用（消除"复制品"漂移）。模块顶层无副作用，纯 Node 可 import。
 export const decisions = {
@@ -2744,10 +1278,8 @@ export const decisions = {
   parseAskResultData,
   parseDispatchAskResult,
   deriveFlowState,
-  plannerChildIdsOf,
   toolCallCount,
   toolCallsSinceUser,
-  jobOutputCallsForJob,
   withPlannerPromptSuffix,
   BUDGET_REMINDER_THRESHOLD,
   budgetNoticeText,
@@ -2786,7 +1318,6 @@ export const decisions = {
   aggregateRunCodeDenyReason,
   jobOutputGateReason,
   probeDisposalWarning,
-  resolveProbeRequestInjection,
   resolveAgentRouteSources,
   decidePlannerModelUse,
   PLANNER_PROBE_TIMEOUT_MS,
@@ -2805,11 +1336,20 @@ export const decisions = {
 export const name = 'extra-plan'
 export const inject = []
 
-import { mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, existsSync, unlinkSync, appendFileSync } from 'node:fs'
-import { join, resolve, isAbsolute, dirname } from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
-import { homedir } from 'node:os'
+import { mkdirSync, readFileSync, writeFileSync, existsSync, appendFileSync } from 'node:fs'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { PROBE_LIMITS, sanitizeTaskName, timestamp, renderSavePlan, renderSaveProbe, renderProbeMarkdown, extractProbeEvidenceRefs } from './lib/save-contract.js'
+import { validateProbe } from './lib/save-probe-validation.js'
+import { atomicCommit, recoverJournals } from './lib/save-persistence.js'
+import { createSaveToolFactories } from './lib/save-tool-factories.js'
+import { RUNCODE_MUTATION_HINTS, runCodeTextOf, codeMutationHints, createRunCodeStatic } from './lib/run-code-static.js'
+import { sessionEvents, isSubagentChild } from './lib/agent-session.js'
+import { createModelRouting, isExplicitRoute, isExplicitEffort, resolveAgentRouteSources, decidePlannerModelUse, PLANNER_PROBE_TIMEOUT_MS, PLANNER_BLOCKED_REASON, NON_PLANNER_BLOCKED_REASON, sortPlannerCandidates } from './lib/model-routing.js'
+import { CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilteredToolsSdk, readSchemasForRendering, renderMinimalReadText, toolPresentationModeOf, toolRegistryOf, toolSdkSchemasOf, projectSkillCatalogDecision, PTC_SECTION_NAME, READ_SECTION_NAME, SDK_SECTION_NAME, sectionOf, hasSection, hasNonEmptySection } from './lib/assembly-presentation.js'
+
+export { PROBE_LIMITS, extractProbeEvidenceRefs }
 
 export function apply(ctx, config) {
   const cfg = config !== null && typeof config === 'object' ? config : {}
@@ -2818,6 +1358,11 @@ export function apply(ctx, config) {
   const planToolName = typeof cfg.planTool === 'string' ? cfg.planTool : 'subagent_plan'
   const exploreBudget = Number.isInteger(cfg.exploreBudget) && cfg.exploreBudget > 0 ? cfg.exploreBudget : 18
   const savePlanDir = typeof cfg.savePlanDir === 'string' && cfg.savePlanDir !== '' ? cfg.savePlanDir : '.extra-plan'
+  const { defineSavePlan, defineSaveProbe } = createSaveToolFactories({
+    savePlanDir,
+    atomicCommit,
+    recoverJournals,
+  })
   const plannerPromptSuffix = typeof cfg.plannerPromptSuffix === 'string' ? cfg.plannerPromptSuffix : ''
   const bootstrapOn = cfg.anchoredBootstrap !== false
   const creativeModeOn = cfg.creativeMode === true
@@ -2973,340 +1518,17 @@ export function apply(ctx, config) {
     }
   }
 
-  // ── planner 模型单点解析 ──
-  // plannerModelCache：planner 子代理有效模型条目缓存（key=agent）。True 路径首次入口
-  // 立即缓存 in-flight promise；成功 entry 与严格 rejection 都固定到该 Agent 生命周期。
-  const plannerModelCache = new WeakMap()
-  // 非 planner 专用缓存：key=单个 child Agent；成功、in-flight 与 strict rejection 均固定隔离。
-  const otherAgentModelCache = new WeakMap()
-
-  function plannerAbortError(signal) {
-    const reason = signal !== undefined && signal !== null ? signal.reason : undefined
-    return reason instanceof Error ? reason : new Error('extra-plan: planner probe aborted')
-  }
-
-  // 用一个本地 AbortController 同时覆盖 listModels、prepareCall 和完整 stream；listModels
-  // 没有 signal 参数，Promise.race 只解除本解析等待，不能替第三方 adapter 撤销遗留 I/O。
-  async function withPlannerProbeDeadline(operation, parentSignal) {
-    if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
-    const controller = new AbortController()
-    let timedOut = false
-    let parentAbortListener = null
-    if (parentSignal !== undefined && parentSignal !== null && typeof parentSignal.addEventListener === 'function') {
-      parentAbortListener = () => controller.abort(plannerAbortError(parentSignal))
-      parentSignal.addEventListener('abort', parentAbortListener, { once: true })
-      if (parentSignal.aborted) parentAbortListener()
-    }
-    const timeout = setTimeout(() => {
-      timedOut = true
-      controller.abort(new Error('extra-plan: planner route probe timed out'))
-    }, PLANNER_PROBE_TIMEOUT_MS)
-    let abortListener = null
-    const aborted = new Promise((resolve, reject) => {
-      abortListener = () => reject(controller.signal.reason instanceof Error ? controller.signal.reason : new Error('extra-plan: planner probe aborted'))
-      if (controller.signal.aborted) abortListener()
-      else controller.signal.addEventListener('abort', abortListener, { once: true })
-    })
-    const pending = Promise.resolve().then(() => operation(controller.signal))
-    pending.catch(() => {})
-    try {
-      return await Promise.race([pending, aborted])
-    } catch (error) {
-      if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
-      if (timedOut) return { timeout: true }
-      throw error
-    } finally {
-      clearTimeout(timeout)
-      if (parentAbortListener !== null && parentSignal !== undefined && parentSignal !== null && typeof parentSignal.removeEventListener === 'function') parentSignal.removeEventListener('abort', parentAbortListener)
-      if (abortListener !== null) controller.signal.removeEventListener('abort', abortListener)
-    }
-  }
-
-  // 候选目录检查与真实探针共用一个 deadline。checkCatalog=false 仅用于父会话 fallback，
-  // 因而不把 advisory listModels 误当成 fallback 成功，也允许父模型未列在目录中时验证。
-  async function probePlannerRoute(llm, provider, model, parentSignal, checkCatalog) {
-    let matched = !checkCatalog
-    try {
-      const result = await withPlannerProbeDeadline(async (signal) => {
-        if (checkCatalog) {
-          if (typeof llm.listModels !== 'function') return { matched: false, ok: false }
-          const models = await llm.listModels(provider)
-          if (!Array.isArray(models) || !models.some((item) => item !== null && typeof item === 'object' && item.id === model)) return { matched: false, ok: false }
-          matched = true
-        }
-        if (typeof llm.prepareCall !== 'function') return { matched, ok: false }
-        const prepared = await llm.prepareCall({ provider, model, maxTokens: 1 }, signal)
-        if (prepared === null || typeof prepared !== 'object' || typeof prepared.stream !== 'function') return { matched, ok: false }
-        const preparedConfig = prepared.config
-        if (preparedConfig === null || typeof preparedConfig !== 'object' || preparedConfig.provider !== provider || preparedConfig.model !== model) return { matched, ok: false }
-        const request = {
-          provider: preparedConfig.provider,
-          model: preparedConfig.model,
-          ...(preparedConfig.reasoningEffort === undefined ? {} : { reasoningEffort: preparedConfig.reasoningEffort }),
-          ...(preparedConfig.temperature === undefined ? {} : { temperature: preparedConfig.temperature }),
-          ...(preparedConfig.maxTokens === undefined ? {} : { maxTokens: preparedConfig.maxTokens }),
-          ...(preparedConfig.stop === undefined ? {} : { stop: preparedConfig.stop }),
-          messages: [createUserMessage({ source: { kind: 'plugin', plugin: 'dsh-extra-plan' }, content: [{ type: 'text', text: 'OK' }] })],
-          signal,
-        }
-        let finishCount = 0
-        let finishKind = ''
-        for await (const chunk of prepared.stream(request)) {
-          if (chunk !== null && typeof chunk === 'object' && chunk.type === 'finish') {
-            finishCount += 1
-            finishKind = chunk.reason !== null && typeof chunk.reason === 'object' && typeof chunk.reason.kind === 'string' ? chunk.reason.kind : ''
-          }
-        }
-        return { matched, ok: finishCount === 1 && finishKind !== '' && finishKind !== 'error' && finishKind !== 'aborted' }
-      }, parentSignal)
-      if (result !== null && typeof result === 'object' && result.timeout === true) return { matched, ok: false, timeout: true }
-      return result !== null && typeof result === 'object' && typeof result.ok === 'boolean' ? result : { matched, ok: false }
-    } catch (error) {
-      if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
-      return { matched, ok: false }
-    }
-  }
-
-  // False/缺失/非法开关的旧单 provider 流程原样保留：只查父 provider 的 advisory 目录，
-  // 不枚举 provider，也不调用真实 prepareCall/stream 或严格 fallback probe。
-  async function resolvePlannerEntryLegacy(agent) {
-    let provider
-    let model
-    let maxTokens
-    try {
-      const parentSession = agent.session.header.parentSession
-      if (typeof parentSession === 'string') {
-        const agents = ctx.get('agents')
-        let parent
-        try {
-          parent = agents !== undefined ? agents.get(parentSession) : undefined
-        } catch (error) {
-          parent = undefined
-        }
-        if (parent !== undefined) {
-          const header = typeof parent.session.requestHeader === 'function' ? parent.session.requestHeader() : undefined
-          const pcfg = header !== undefined && header.config !== undefined && header.config !== null ? header.config : null
-          if (pcfg !== null) {
-            provider = typeof pcfg.provider === 'string' && pcfg.provider !== '' ? pcfg.provider : undefined
-            model = typeof pcfg.model === 'string' && pcfg.model !== '' ? pcfg.model : undefined
-            maxTokens = typeof pcfg.maxTokens === 'number' && pcfg.maxTokens > 0 ? pcfg.maxTokens : undefined
-          }
-        }
-      }
-      if (plannerModel !== '') {
-        let catalog = { kind: 'no-llm' }
-        const llm = ctx.get('llm')
-        if (llm !== undefined && llm !== null && typeof llm.listModels === 'function') {
-          try {
-            const models = await llm.listModels(provider)
-            const ids = Array.isArray(models)
-              ? models.map((m) => m !== null && typeof m === 'object' && typeof m.id === 'string' ? m.id : '').filter((id) => id !== '')
-              : []
-            catalog = ids.length === 0 ? { kind: 'empty' } : { kind: 'ok', ids }
-          } catch (error) {
-            catalog = { kind: 'error' }
-          }
-        }
-        const decision = decidePlannerModelUse(plannerModel, provider, catalog)
-        if (decision.use) model = plannerModel
-        if (decision.diag !== null) {
-          try {
-            appendFileSync(diagPath, JSON.stringify({
-              ts: new Date().toISOString(),
-              type: 'degrade',
-              sessionId: agent.session !== undefined && agent.session !== null && agent.session.header !== undefined ? agent.session.header.id : '',
-              provider: provider !== undefined ? provider : '',
-              plannerModel,
-              decision: decision.diag,
-              reason: decision.reason,
-            }) + '\n', 'utf8')
-          } catch (error) { /* 诊断落盘失败不影响解析 */ }
-        }
-      }
-    } catch (error) {
-      // 旧兼容口径：解析异常保持已取到的值，不抛出。
-    }
-    return { provider, model, maxTokens }
-  }
-
-  // True 严格路径：只把已完成真实 OK probe 的排序候选或已验证父 fallback 交给 planner。
-  async function resolvePlannerEntryStrict(agent, parentSignal) {
-    let provider
-    let model
-    let maxTokens
-    try {
-      const parentSession = agent.session.header.parentSession
-      if (typeof parentSession === 'string') {
-        const agents = ctx.get('agents')
-        let parent
-        try {
-          parent = agents !== undefined ? agents.get(parentSession) : undefined
-        } catch (error) {
-          parent = undefined
-        }
-        if (parent !== undefined && parent.session !== undefined && parent.session !== null) {
-          const header = typeof parent.session.requestHeader === 'function' ? parent.session.requestHeader() : undefined
-          const pcfg = header !== undefined && header.config !== undefined && header.config !== null ? header.config : null
-          if (pcfg !== null) {
-            provider = typeof pcfg.provider === 'string' && pcfg.provider !== '' ? pcfg.provider : undefined
-            model = typeof pcfg.model === 'string' && pcfg.model !== '' ? pcfg.model : undefined
-            maxTokens = typeof pcfg.maxTokens === 'number' && pcfg.maxTokens > 0 ? pcfg.maxTokens : undefined
-          }
-        }
-      }
-    } catch (error) {
-      // 缺失/损坏的父配置在候选全失败时由固定 strict block 统一处理。
-    }
-    let llm
-    try {
-      llm = ctx.get('llm')
-    } catch (error) {
-      llm = undefined
-    }
-    if (llm === undefined || llm === null || typeof llm !== 'object') throw new Error(PLANNER_BLOCKED_REASON)
-
-    const routeKey = (routeProvider, routeModel) => routeProvider + '\u0000' + routeModel
-    const probeOutcomes = new Map()
-    const successes = []
-    if (plannerModel !== '') {
-      let listedProviders = []
-      try {
-        if (typeof llm.listProviders === 'function') {
-          const listed = await withPlannerProbeDeadline(() => llm.listProviders(), parentSignal)
-          if (!(listed !== null && typeof listed === 'object' && listed.timeout === true) && Array.isArray(listed)) listedProviders = listed
-        }
-      } catch (error) {
-        if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
-      }
-      const seenProviderIds = new Set()
-      for (const listed of listedProviders) {
-        if (listed === null || typeof listed !== 'object' || typeof listed.id !== 'string' || listed.id === '' || seenProviderIds.has(listed.id)) continue
-        seenProviderIds.add(listed.id)
-        const providerName = typeof listed.name === 'string' ? listed.name : listed.id
-        const outcome = await probePlannerRoute(llm, listed.id, plannerModel, parentSignal, true)
-        if (outcome.matched) probeOutcomes.set(routeKey(listed.id, plannerModel), outcome)
-        if (outcome.ok) successes.push({ id: listed.id, name: providerName })
-      }
-      const sorted = sortPlannerCandidates(successes, provider)
-      if (sorted.length > 0) return { provider: sorted[0].id, model: plannerModel, maxTokens }
-    }
-
-    if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
-    if (typeof provider !== 'string' || provider === '' || typeof model !== 'string' || model === '') throw new Error(PLANNER_BLOCKED_REASON)
-    const fallbackKey = routeKey(provider, model)
-    const reused = probeOutcomes.get(fallbackKey)
-    const fallback = reused !== undefined ? reused : await probePlannerRoute(llm, provider, model, parentSignal, false)
-    if (fallback.ok) return { provider, model, maxTokens }
-    if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
-    throw new Error(PLANNER_BLOCKED_REASON)
-  }
-
-  // 单一入口的首个调用即保存 promise，避免同一 Agent 并发/续轮重复真实探针；rejection
-  // 也固定缓存，后续请求不会把未验证路由重新交给 DSH。
-  function resolvePlannerEntry(agent, parentSignal) {
-    const cached = plannerModelCache.get(agent)
-    if (cached !== undefined) return cached
-    const pending = crossProviderPlannerModelOn
-      ? resolvePlannerEntryStrict(agent, parentSignal)
-      : resolvePlannerEntryLegacy(agent)
-    plannerModelCache.set(agent, pending)
-    return pending
-  }
-
-  // 非 planner 路由来源：普通 child 保留直接父 maxTokens，probe 保留顶层来源 maxTokens；
-  // provider/model 的 fallback 始终取完整链路解析出的顶层主会话，链断裂不冒充中间 child。
-  function nonPlannerRouteSources(agent) {
-    let agents
-    try { agents = ctx.get('agents') } catch (error) { agents = undefined }
-    return resolveAgentRouteSources(agent, agents)
-  }
-
-  function nonPlannerFallbackEntry(sources, probe) {
-    if (sources === null || sources === undefined || sources.available !== true || sources.source === null || sources.direct === null) return null
-    const tokenSource = probe ? sources.source : sources.direct
-    return {
-      provider: sources.source.provider,
-      model: sources.source.model,
-      maxTokens: tokenSource.maxTokens,
-    }
-  }
-
-  // cross=false/缺失/非法：只对顶层主会话 provider 做 advisory listModels；不做真实探针。
-  async function resolveOtherAgentEntryLegacy(agent, probe) {
-    const sources = nonPlannerRouteSources(agent)
-    const fallback = nonPlannerFallbackEntry(sources, probe)
-    if (fallback === null || otherAgentModel === '' || fallback.provider === undefined) return fallback || {}
-    let llm
-    try { llm = ctx.get('llm') } catch (error) { llm = undefined }
-    if (llm === undefined || llm === null || typeof llm.listModels !== 'function') return fallback
-    try {
-      const models = await llm.listModels(fallback.provider)
-      if (Array.isArray(models) && models.some((item) => item !== null && typeof item === 'object' && item.id === otherAgentModel)) {
-        return { ...fallback, model: otherAgentModel }
-      }
-    } catch (error) {
-      // advisory 目录异常按要求静默回退顶层主会话。
-    }
-    return fallback
-  }
-
-  // cross=true：所有匹配 provider 串行完整 OK probe，候选全部结束后按 planner 既有排序选择。
-  async function resolveOtherAgentEntryStrict(agent, parentSignal, probe) {
-    const sources = nonPlannerRouteSources(agent)
-    const fallback = nonPlannerFallbackEntry(sources, probe)
-    if (fallback === null) {
-      if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
-      throw new Error(NON_PLANNER_BLOCKED_REASON)
-    }
-    if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
-    let llm
-    try { llm = ctx.get('llm') } catch (error) { llm = undefined }
-    if (llm === undefined || llm === null || typeof llm !== 'object') {
-      throw new Error(NON_PLANNER_BLOCKED_REASON)
-    }
-    const routeKey = (routeProvider, routeModel) => routeProvider + '\u0000' + routeModel
-    const probeOutcomes = new Map()
-    const successes = []
-    if (otherAgentModel !== '' && typeof llm.listProviders === 'function') {
-      let listedProviders = []
-      try {
-        const listed = await withPlannerProbeDeadline(() => llm.listProviders(), parentSignal)
-        if (!(listed !== null && typeof listed === 'object' && listed.timeout === true) && Array.isArray(listed)) listedProviders = listed
-      } catch (error) {
-        if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
-      }
-      const seenProviderIds = new Set()
-      for (const listed of listedProviders) {
-        if (listed === null || typeof listed !== 'object' || typeof listed.id !== 'string' || listed.id === '' || seenProviderIds.has(listed.id)) continue
-        seenProviderIds.add(listed.id)
-        const providerName = typeof listed.name === 'string' ? listed.name : listed.id
-        const outcome = await probePlannerRoute(llm, listed.id, otherAgentModel, parentSignal, true)
-        if (outcome.matched) probeOutcomes.set(routeKey(listed.id, otherAgentModel), outcome)
-        if (outcome.ok) successes.push({ id: listed.id, name: providerName })
-      }
-      const sorted = sortPlannerCandidates(successes, fallback.provider)
-      if (sorted.length > 0) return { ...fallback, provider: sorted[0].id, model: otherAgentModel }
-    }
-    if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
-    if (fallback.provider === undefined || fallback.model === undefined) throw new Error(NON_PLANNER_BLOCKED_REASON)
-    const fallbackKey = routeKey(fallback.provider, fallback.model)
-    const reused = probeOutcomes.get(fallbackKey)
-    const fallbackOutcome = reused !== undefined ? reused : await probePlannerRoute(llm, fallback.provider, fallback.model, parentSignal, false)
-    if (fallbackOutcome.ok) return fallback
-    if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
-    throw new Error(NON_PLANNER_BLOCKED_REASON)
-  }
-
-  // 单一非 planner 入口：每个 child Agent 独立保存首个 in-flight promise、成功或 strict rejection。
-  function resolveOtherAgentEntry(agent, parentSignal, probe) {
-    const cached = otherAgentModelCache.get(agent)
-    if (cached !== undefined) return cached
-    const pending = crossProviderPlannerModelOn
-      ? resolveOtherAgentEntryStrict(agent, parentSignal, probe)
-      : resolveOtherAgentEntryLegacy(agent, probe)
-    otherAgentModelCache.set(agent, pending)
-    return pending
-  }
+  // ── planner / 非 planner 模型单点解析（工厂实例；缓存 per-apply） ──
+  // 见 lib/model-routing.js：plannerModelCache / otherAgentModelCache 每次 apply 各新建一份
+  // WeakMap（绝不提升为模块全局）；llm/agents/诊断路径按惰性 getter 取用。
+  const { resolvePlannerEntry, resolveOtherAgentEntry } = createModelRouting({
+    plannerModel,
+    otherAgentModel,
+    crossProviderPlannerModelOn,
+    getLlm: () => ctx.get('llm'),
+    getAgents: () => ctx.get('agents'),
+    getDiagPath: () => diagPath,
+  })
 
   // ── cordis 官方技能引用（runtime-skill 注册，零副本） ──
   // 从官方 agentPresets 服务 resolve('cordis') 拿 shipped 预设真实路径
@@ -3376,135 +1598,7 @@ export function apply(ctx, config) {
     return child
   }
 
-  // ── save_plan：注册于规划子代理层与主会话层（session-start 按 isPlannerChild /
-  // 非子代理判定；主会话侧由 mainGateReason 限定仅 direct 路由放行，T3） ──
-  // 程序定死双写：①两个 payload 必填（tools 注册表按 parameters.required 校验，
-  // 缺一即拒绝调用）；②tmp 双写成功 → journal → 依次 rename → 清 journal；
-  // 崩溃后下次 save_plan 按残留 journal 补完（fail-soft）。
-  // 公共原子落盘（save_plan 双写 / save_probe 单写共用）：mkdir → 逐条写 tmp →
-  // journal（新形状 {entries:[{tmp,file}]}）→ 逐条 rename → 清 journal；任一步
-  // 失败先清 journal（尽力而为）再抛错。tmp 后缀沿用现有 .tmp-${process.pid}-${Date.now()}。
-  // sessionTag（可选，T3）：写入方会话标识段（sessionTagOf），随 journal 落盘供
-  // recoverJournals 按会话过滤；'' / 缺省时不写该字段（save_probe 单写保持旧形状）。
-  function atomicCommit(dir, base, files, sessionTag) {
-    mkdirSync(dir, { recursive: true })
-    const suffix = `.tmp-${process.pid}-${Date.now()}`
-    const journal = join(dir, `.journal-${base}.json`)
-    const entries = files.map((f) => ({ tmp: join(dir, f.name + suffix), file: join(dir, f.name) }))
-    const record = { ...(typeof sessionTag === 'string' && sessionTag !== '' ? { session: sessionTag } : {}), entries }
-    try {
-      for (let i = 0; i < files.length; i += 1) writeFileSync(entries[i].tmp, files[i].content, 'utf8')
-      writeFileSync(journal, JSON.stringify(record), 'utf8')
-      for (const e of entries) renameSync(e.tmp, e.file)
-      unlinkSync(journal)
-    } catch (error) {
-      try { unlinkSync(journal) } catch (error2) { /* 清理尽力而为 */ }
-      throw error
-    }
-  }
-
-  // journal 崩溃自愈：新形状 entries 逐条补完 rename；旧形状（planTmp/checkTmp/
-  // planFile/checkFile）保持原逻辑；恢复失败 console.warn 且继续。
-  // sessionTag（可选，T3）：save_plan 传入自己的会话标识段，跳过「内嵌了其它会话标识」
-  // 的 journal 残留（同秒 base 撞名防护的另一半：不同调用方互不补完对方的半成品）；
-  // 无标识的历史残留（旧形状、手工夹具）与 save_probe 的单写保持原恢复语义。
-  function recoverJournals(dir, sessionTag) {
-    let names = []
-    try { names = readdirSync(dir) } catch (error) { return }
-    if (!names.some((name) => name.startsWith('.journal-'))) return
-    for (const entry of names) {
-      if (!entry.startsWith('.journal-') || !entry.endsWith('.json')) continue
-      const file = join(dir, entry)
-      try {
-        const record = JSON.parse(readFileSync(file, 'utf8'))
-        if (record !== null && typeof record === 'object'
-            && typeof sessionTag === 'string' && sessionTag !== ''
-            && typeof record.session === 'string' && record.session !== '' && record.session !== sessionTag) continue
-        if (record !== null && typeof record === 'object') {
-          if (Array.isArray(record.entries)) {
-            for (const item of record.entries) {
-              if (item !== null && typeof item === 'object' && typeof item.tmp === 'string' && typeof item.file === 'string' && existsSync(item.tmp)) renameSync(item.tmp, item.file)
-            }
-          } else {
-            if (typeof record.planTmp === 'string' && typeof record.planFile === 'string' && existsSync(record.planTmp)) renameSync(record.planTmp, record.planFile)
-            if (typeof record.checkTmp === 'string' && typeof record.checkFile === 'string' && existsSync(record.checkTmp)) renameSync(record.checkTmp, record.checkFile)
-          }
-        }
-        unlinkSync(file)
-      } catch (error) {
-        console.warn(`extra-plan: save_plan journal recovery failed for ${file}: ${error instanceof Error ? error.message : String(error)}`)
-      }
-    }
-  }
-
-  function defineSavePlan() {
-    return {
-      name: 'save_plan',
-      description: '落盘规划方案与验收标准清单（原子双写，两个文件必填）。存在未探查项时禁止调用。不得编造内容、数值或行号。【探查者已核实】步骤须注明证据来源文件路径（探查者 save_probe 落盘的证据报告），插件将校验文件存在且为证据报告。返回文件路径',
-      parameters: {
-        type: 'object',
-        properties: {
-          plan: { type: 'string', description: '规划方案全文（含假设时须全部已确认，Markdown）' },
-          checklist: { type: 'string', description: '验收标准清单全文（逐条机械可核对、每条带对应任务编号，Markdown）' },
-          taskName: { type: 'string', description: `可选任务短名（≤${PROBE_LIMITS.maxTaskNameLen} 字；插件会净化，勿传路径）` },
-        },
-        required: ['plan', 'checklist'],
-        additionalProperties: false,
-      },
-      output: {
-        schema: {
-          type: 'object',
-          properties: { paths: { type: 'array', items: { type: 'string' } } },
-          required: ['paths'],
-          additionalProperties: false,
-        },
-        render(args, value) {
-          return renderSavePlan(value)
-        },
-      },
-      timeoutMs: 30000,
-      async execute(args, exec) {
-        if (args === null || typeof args !== 'object' || typeof args.plan !== 'string' || args.plan.length < 200 || typeof args.checklist !== 'string' || args.checklist.length < 200) {
-          throw new Error('save_plan: plan/checklist 参数缺失或内容过短（未收到合法参数；调用参数须为合法 JSON，请检查后重试）')
-        }
-        const plan = args.plan || ''
-        if (/【未探查·待确认】/.test(plan) || /待确认假设清单/.test(plan)) {
-          throw new Error('save_plan: 方案中包含【未探查·待确认】步骤或「待确认假设清单」。请先申请追加预算继续探查，确认所有项均已探查核实后再调用 save_plan')
-        }
-        const session = exec.agent !== undefined && exec.agent !== null ? exec.agent.session : undefined
-        const cwd = session !== undefined && session !== null && session.header !== undefined && typeof session.header.cwd === 'string' ? session.header.cwd : ''
-        if (cwd === '') throw new Error('save_plan: 会话缺少工作区路径，无法落盘')
-        // 【探查者已核实】证据校验：方案中标注引用的证据文件必须真实存在、且为探查者
-        // save_probe 落盘的证据报告（标题含「探查证据报告」），杜绝编造证据引用。
-        for (const ref of extractProbeEvidenceRefs(plan)) {
-          const resolved = probePathOf(cwd, ref)
-          if (!existsSync(resolved)) throw new Error(`save_plan: 【探查者已核实】证据文件不存在：${ref}`)
-          const head = readFileSync(resolved, 'utf8').slice(0, 200)
-          if (!head.includes('探查证据报告')) throw new Error(`save_plan: 【探查者已核实】证据文件非探查者落盘（缺「探查证据报告」标题）：${ref}`)
-        }
-        const dir = resolve(join(cwd, savePlanDir))
-        const nameSeg = sanitizeTaskName(args.taskName)
-        // T3：base 内嵌调用方会话标识段（主会话与规划子代理同秒落盘不再撞名）；
-        // journal 恢复按同一标识过滤（跨角色互恢复防护）。
-        const sessionId = session.header !== undefined && session.header !== null ? session.header.id : undefined
-        const sessionTag = sessionTagOf(sessionId)
-        const base = savePlanBase(nameSeg, sessionId)
-        const planFile = join(dir, `方案-${base}.md`)
-        const checkFile = join(dir, `验收-${base}.md`)
-        recoverJournals(dir, sessionTag)
-        try {
-          atomicCommit(dir, base, [
-            { name: `方案-${base}.md`, content: args.plan },
-            { name: `验收-${base}.md`, content: args.checklist },
-          ], sessionTag)
-        } catch (error) {
-          throw new Error(`save_plan: 落盘失败：${error instanceof Error ? error.message : String(error)}`)
-        }
-        return { paths: [planFile, checkFile] }
-      },
-    }
-  }
-
+  // save_plan/save_probe 的合同、校验、渲染与公共原子落盘由 lib 工厂提供；此处仅保留注册与生命周期接线。
   // 工具注册公共实现：WeakSet 去重 + tools 服务取用 + warn/error 文案模板 + try/catch。
   // 三个注册函数各自闭包持有各自 WeakSet 与工具名，跨工具幂等互不共享。
   function registerTool(registered, toolName, defineFn, agent) {
@@ -3525,124 +1619,7 @@ export function apply(ctx, config) {
   const savePlanRegistered = new WeakSet()
   function registerSavePlan(agent) { registerTool(savePlanRegistered, 'save_plan', defineSavePlan, agent) }
 
-  // ── save_probe：注册于主会话层 + 探查子代理层（scoped；session-start + pre-step 幂等兜底） ──
-  // 主会话/探查子代理只读探查后经 save_probe 把「线索地图（可含证据报告）」落盘为
-  // .extra-plan 下单个 Markdown 文件（四类定位线索，可选五、证据）；执行者/验收者不可见。
-  function defineSaveProbe() {
-    return {
-      name: 'save_probe',
-      description: `把只读探查结果经 save_probe 落盘为工作区 .extra-plan 目录下的单个 Markdown 文件：四类定位线索——文件地图（fileMap）/ 重点区域（focusAreas）/ 排除项（exclusions）/ 背景与意图（background），可选证据数组（evidence：探查者把核实过的行号/数值/文案照实写入；主会话线索模式可不传）。主会话线索模式只写定位线索（路径/范围/关系/备注），不含证据（行号/数值/文案摘录）——pro 规划子代理（subagent_plan）不得把线索文件内容当作【已探查核实】证据；探查子代理传 evidence 时落盘为证据报告（行号/数值/文案照实记录，可被规划子代理作为【探查者已核实】证据引用）。落盘成功后返回文件路径；委派 subagent_plan 时请在 prompt 中带上该路径，说明先 read 文件再按需补查。落盘规则：fileMap/focusAreas 各 ≤${PROBE_LIMITS.maxEntries.fileMap} 条、exclusions/background 各 ≤${PROBE_LIMITS.maxEntries.exclusions} 条、evidence ≤${PROBE_LIMITS.maxEvidenceEntries} 条；四字段 JSON 总量 ≤${PROBE_LIMITS.maxTotalChars}、evidence JSON 总量 ≤${PROBE_LIMITS.maxEvidenceTotalChars}（按 JSON 序列化长度计，键名/引号/逗号均计入）；fileMap/focusAreas/evidence 的 path 必须真实存在（相对按工作区解析）；range 提示：${RANGE_FORMAT_HINT}；evidence.line ${LINE_FORMAT_HINT}；evidence 每项 line/value/text 至少其一；超限会拒绝（不静默截断），先压缩概括或分多次落盘。`,
-      parameters: {
-        type: 'object',
-        properties: {
-          fileMap: {
-            type: 'array',
-            description: '文件地图：探查中定位到的相关文件（每项 {path, relation}；path 必须真实存在，相对按工作区解析）',
-            items: {
-              type: 'object',
-              properties: {
-                path: { type: 'string', description: '文件路径（相对工作区或绝对路径，必须真实存在）' },
-                relation: { type: 'string', description: `该文件与任务的关系（≤${PROBE_LIMITS.maxRelationLen} 字）` },
-              },
-              required: ['path', 'relation'],
-              additionalProperties: false,
-            },
-          },
-          focusAreas: {
-            type: 'array',
-            description: '重点区域：需要 pro 子代理优先补查的文件与行号范围（每项 {path, range?, note}；path 必须真实存在）',
-            items: {
-              type: 'object',
-              properties: {
-                path: { type: 'string', description: '文件路径（必须真实存在）' },
-                range: { type: 'string', description: `可选行号范围；${RANGE_FORMAT_HINT}` },
-                note: { type: 'string', description: `该区域的重点与补查方向（≤${PROBE_LIMITS.maxNoteLen} 字）` },
-              },
-              required: ['path', 'note'],
-              additionalProperties: false,
-            },
-          },
-          exclusions: {
-            type: 'array',
-            description: '排除项：探查中判定与任务无关的范围/文件（每项 {scope?, note}；允许概念边界，不校验存在性）',
-            items: {
-              type: 'object',
-              properties: {
-                scope: { type: 'string', description: '可选排除范围描述' },
-                note: { type: 'string', description: `排除原因（≤${PROBE_LIMITS.maxNoteLen} 字）` },
-              },
-              required: ['note'],
-              additionalProperties: false,
-            },
-          },
-          background: {
-            type: 'array',
-            description: '背景与意图：任务的背景、目标与用户意图（每项 {topic, detail}）',
-            items: {
-              type: 'object',
-              properties: {
-                topic: { type: 'string', description: `背景主题（≤${PROBE_LIMITS.maxTopicLen} 字）` },
-                detail: { type: 'string', description: `背景/意图细节（≤${PROBE_LIMITS.maxDetailLen} 字）` },
-              },
-              required: ['topic', 'detail'],
-              additionalProperties: false,
-            },
-          },
-          evidence: {
-            type: 'array',
-            description: `可选证据数组（探查子代理 save_probe 落盘证据报告用；主会话线索模式可不传）：探查者把核实过的行号/数值/文案照实写入——每项 {path 必填, line?, value?, text?, note?}，path 必须真实存在，line/value/text 至少一个（line ≤${PROBE_LIMITS.maxEvidenceLineLen} 字；${LINE_FORMAT_HINT}，value ≤${PROBE_LIMITS.maxEvidenceValueLen} 字，text ≤${PROBE_LIMITS.maxEvidenceTextLen} 字，note ≤${PROBE_LIMITS.maxEvidenceNoteLen} 字，至多 ${PROBE_LIMITS.maxEvidenceEntries} 条）`,
-            items: {
-              type: 'object',
-              properties: {
-                path: { type: 'string', description: '被核实文件路径（相对工作区或绝对路径，必须真实存在）' },
-                line: { type: 'string', description: `可选行号；${LINE_FORMAT_HINT}` },
-                value: { type: 'string', description: `可选核实值（≤${PROBE_LIMITS.maxEvidenceValueLen} 字）` },
-                text: { type: 'string', description: `可选原文摘录（≤${PROBE_LIMITS.maxEvidenceTextLen} 字）` },
-                note: { type: 'string', description: `可选备注（≤${PROBE_LIMITS.maxEvidenceNoteLen} 字）` },
-              },
-              required: ['path'],
-              additionalProperties: false,
-            },
-          },
-          taskName: { type: 'string', description: `可选任务短名（≤${PROBE_LIMITS.maxTaskNameLen} 字；插件会净化，勿传路径）` },
-        },
-        required: ['fileMap', 'focusAreas', 'exclusions', 'background'],
-        additionalProperties: false,
-      },
-      output: {
-        schema: {
-          type: 'object',
-          properties: { path: { type: 'string' } },
-          required: ['path'],
-          additionalProperties: false,
-        },
-        render(args, value) {
-          return renderSaveProbe(value, Array.isArray(args.evidence) && args.evidence.length > 0)
-        },
-      },
-      timeoutMs: 30000,
-      async execute(args, exec) {
-        const session = exec.agent !== undefined && exec.agent !== null ? exec.agent.session : undefined
-        const cwd = session !== undefined && session !== null && session.header !== undefined && typeof session.header.cwd === 'string' ? session.header.cwd : ''
-        if (cwd === '') throw new Error('save_probe: 会话缺少工作区路径，无法落盘')
-        const dir = resolve(join(cwd, savePlanDir))
-        const nameSeg = sanitizeTaskName(args.taskName)
-        const ts = timestamp()
-        const base = (nameSeg === '' ? '' : nameSeg + '-') + ts
-        recoverJournals(dir)
-        const invalid = validateProbe(args, cwd)
-        if (invalid !== null) throw new Error(invalid)
-        const fileName = `线索-${base}.md`
-        try {
-          atomicCommit(dir, base, [{ name: fileName, content: renderProbeMarkdown(args) }])
-        } catch (error) {
-          throw new Error(`save_probe: 落盘失败：${error instanceof Error ? error.message : String(error)}`)
-        }
-        return { path: join(dir, fileName) }
-      },
-    }
-  }
-
+  // save_probe 定义由显式依赖工厂提供；注册状态仍由 apply 实例独立持有。
   const saveProbeRegistered = new WeakSet()
   function registerSaveProbe(agent) { registerTool(saveProbeRegistered, 'save_probe', defineSaveProbe, agent) }
 
@@ -4127,7 +2104,7 @@ export function apply(ctx, config) {
     const state = deriveFlowState(events)
     const reason = mainGateReason(state, exec, { events, planToolName, jobOutputCallCounters, runcodeCatchGate: runcodeCatchGateOn, runCodeDepth: 0 })
     if (reason !== null) return { kind: 'deny', reason }
-    // 放行副作用：job_output 计数器记录（原 L2414-2427 的 set 部分，仅在放行时执行，时序等价）
+    // 放行副作用：job_output 计数器记录（自 apply 内提取的 set 部分，仅在放行时执行，时序等价）
     if (exec.name === 'job_output') {
       const args = exec.arguments
       const jobId = args !== undefined && args !== null && typeof args === 'object' ? args.job_id : undefined

@@ -130,7 +130,7 @@ function stagePreset(targetDir, distHash, previous) {
     for (const definition of SETTING_DEFINITIONS) {
       const oldState = previous.states[definition.key]
       if (previous.audit.source !== 'captured') {
-        results[definition.key] = previous.audit.results[definition.key]
+        // results 与 previous.audit.results 同引用，原自赋值 results[k] = results[k] 无副作用。
         continue
       }
       if (oldState !== 'captured') {
@@ -234,17 +234,6 @@ function cleanupLegacyFlashGuidePatches(dshHome) {
 
 function noSourcePrevious() {
   return { audit: emptyMigration('absent', null), values: {}, states: {} }
-}
-
-/** 原子地发布一份完整新版预设；生产调用统一走 syncPreset。 */
-export function writeFull(targetDir, distHash) {
-  const staged = stagePreset(targetDir, distHash, noSourcePrevious())
-  try {
-    publishStage(targetDir, staged.tmp)
-  } catch (error) {
-    if (existsSync(staged.tmp)) cleanupPath(staged.tmp)
-    throw error
-  }
 }
 
 /**

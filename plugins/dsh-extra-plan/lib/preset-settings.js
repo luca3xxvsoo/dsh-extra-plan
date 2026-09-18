@@ -108,8 +108,6 @@ export const SETTING_DEFINITIONS = Object.freeze([
   }),
 ])
 
-export const PRESET_SETTINGS = SETTING_DEFINITIONS
-export const SETTINGS_DESCRIPTORS = SETTING_DEFINITIONS
 export const TOOL_PRESENTATION_MODES = Object.freeze([
   ...SETTING_DEFINITIONS.find((item) => item.key === 'toolPresentationMode').ui.options,
 ])
@@ -206,7 +204,6 @@ export function captureSettings(text) {
   return { document, values, states }
 }
 
-export const readManagedSettings = captureSettings
 
 function inlineCommentIndex(value) {
   let quote = null
@@ -394,7 +391,6 @@ export function patchYamlScalar(text, definitionOrLocator, value, options = {}) 
   return { ok: true, text: lines.join('\n'), line: selected.line }
 }
 
-export const patchFirstYamlScalar = (text, definitionOrLocator, value) => patchYamlScalar(text, definitionOrLocator, value, { first: true })
 
 export function publicSettingMetadata(defaultText, actualText = defaultText) {
   const defaultDocument = parsePresetYaml(defaultText)
@@ -431,24 +427,4 @@ export function publicSettingMetadata(defaultText, actualText = defaultText) {
     if (defaultValue !== undefined) defaults[definition.key] = defaultValue
   }
   return { fields, values, defaults }
-}
-
-export function settingsFileValues(text) {
-  const document = parsePresetYaml(text)
-  const values = {}
-  for (const definition of SETTING_DEFINITIONS) {
-    const result = resolveSetting(document, definition, { aliases: false })
-    if (result.kind === 'ok' && validateSettingValue(definition, result.value)) {
-      values[definition.key] = normalizeSettingValue(definition, result.value)
-    }
-  }
-  return values
-}
-
-export function yamlFileExists(file) {
-  return existsSync(file)
-}
-
-export function readYamlFile(file) {
-  return readFileSync(file, 'utf8')
 }

@@ -106,20 +106,28 @@ DSH web界面 -> 设置 -> 插件 -> 插件配置 -> 按需规划模式配置
 dsh-extra-plan/
 ├── plugins/              
 │   ├── dsh-extra-plan/                                 # 模式核心插件（四级闸门/探查上限/save_plan 等）
-│   │   ├── assets/presets/extra-plan/                  # 自动分发 .agent-presets 内容   
+│   │   ├── assets/presets/extra-plan/                   
 │   │   │   ├── agent.cordis.yml                        # 预设主配置（persona/工具/插件行/delegation）
 │   │   │   ├── preset.yml                              # 预设元信息（GUI 显示名称与描述）
-│   │   │   └── dist-manifest.json                                
-│   │   ├── lib/                                        # 设置界面
-│   │   │   ├── client.js                               # dsh web界面配置插件
-│   │   │   ├── client-bridge.js                        # dsh web界面配置插件
-│   │   │   ├── settings.js                             # dsh web界面配置插件
+│   │   │   └── dist-manifest.json                      # 预设分发：核心文件哈希清单  
+│   │   ├── lib/                                        # 模块目录
+│   │   │   ├── client.js                               # 设置页前端 UI
+│   │   │   ├── client-bridge.js                        # 客户端桥接行
+│   │   │   ├── settings.js                             # 设置页宿主端
 │   │   │   ├── preset-settings.js                      # 同步旧版本用户设置
-│   │   │   ├── preset-sync.js                          # 自愈插件
+│   │   │   ├── preset-sync.js                          # 预设分发与启动自愈
+│   │   │   ├── save-contract.js                        # save_plan/save_probe：合同常量与 Markdown 渲染
+│   │   │   ├── save-probe-validation.js                # save_probe：参数与路径/range/evidence 校验
+│   │   │   ├── save-persistence.js                     # save_plan/save_probe：原子落盘内核与 journal 自愈
+│   │   │   ├── save-tool-factories.js                  # save_plan/save_probe：工具定义
+│   │   │   ├── run-code-static.js                      # run_code：静态解析与理由函数
+│   │   │   ├── model-routing.js                        # 子代理模型选择：planner/非 planner 路由解析
+│   │   │   ├── assembly-presentation.js                # 展示投影：A/C/M 投影与 skill catalog
+│   │   │   ├── agent-session.js                        # 角色判定：sessionEvents/isSubagentChild 唯一来源
 │   │   │   └── executor-spawn.js                       # 执行者委托层（workflow/ralph worker 注入）
-│   │   ├── scripts/distribute-preset.mjs               # 自动分发 .agent-presets 脚本
+│   │   ├── scripts/distribute-preset.mjs               # postinstall 预设分发入口
 │   │   ├── cordis.patch.yml                                      
-│   │   ├── index.js                                    
+│   │   ├── index.js                                    # 四级闸门：路由/目的/澄清/批准 + apply 接线
 │   │   └── package.json
 │   └── dsh-qqbot-user-questions/                  
 │       ├── lib/heal.js                                 # 自愈函数
@@ -128,13 +136,13 @@ dsh-extra-plan/
 │       ├── index.js                      
 │       └── package.json        
 ├── pe-test/                                            # 自检/取证工具
-│   ├── README.md/                                      # 自检/取证工具介绍
+│   ├── README.md                                       # 自检/取证工具介绍
 │   ├── _shared/                                        
 │   │   ├── zstd-frames.mjs  
 │   │   ├── host-deps.mjs  
 │   │   ├── session-finder.mjs  
 │   │   └── preset-hash.mjs      
-│   │── docs/                                           # AI文档
+│   ├── docs/                                           # AI文档
 │   │   ├── ai-概览.md  
 │   │   ├── ai-机制设计.md  
 │   │   ├── ai-流程备查.md  
@@ -156,6 +164,7 @@ dsh-extra-plan/
 │       ├── step-04-路由与写闸门.mjs
 │       ├── step-05-会话解码.mjs
 │       ├── step-06-线索落盘.mjs
+│       ├── step-07-子代理模型与引导取证.mjs
 │       ├── step-06-真实会话查看.mjs
 │       ├── step-08-方案配对查看.mjs
 │       ├── step-99-用量统计.mjs

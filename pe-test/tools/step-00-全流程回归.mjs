@@ -6,6 +6,7 @@ import { registerHostDeps } from '../_shared/host-deps.mjs'
 await registerHostDeps()
 const PLUGIN_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/index.js', import.meta.url))
 const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
+import { createRunCodeStatic } from '../../plugins/dsh-extra-plan/lib/run-code-static.js'
 const {
   CHANNEL_BROKEN_CODES,
   ROUTE_WORD_DIRECT,
@@ -47,7 +48,6 @@ const {
   runCodeGroupDenyReason,
   askUserQuestionReturnGateReason,
   deriveFlowState,
-  plannerChildIdsOf,
   toolCallCount,
   toolCallsSinceUser,
   isRunCodeSubCall,
@@ -70,7 +70,6 @@ const {
   renderSaveProbe,
   renderProbeMarkdown,
   extractProbeEvidenceRefs,
-  resolveProbeRequestInjection,
   resolveAgentRouteSources,
   decidePlannerModelUse,
   PLANNER_PROBE_TIMEOUT_MS,
@@ -79,6 +78,11 @@ const {
   sortPlannerCandidates,
 } = plugin.decisions
 const HERE = fileURLToPath(new URL('.', import.meta.url))
+const staticRunCode = createRunCodeStatic({
+  askTool: 'ask_user_question',
+  isDispatchStart: (type) => type === 'tool/ptc-dispatch-start' || type === 'tool/code-dispatch-start',
+})
+const { maskCodeLiteralsAndComments, sliceBalancedArgs } = staticRunCode
 
 // ── 事件构造（真实形状，同 step-06-线索落盘.mjs / step-04-路由与写闸门.mjs 的事件构造函数，三处同构见 R6） ───
 const um = () => ({ type: 'user/message', data: { source: { kind: 'user' } } })
@@ -113,6 +117,23 @@ function check(name, got, expected) {
   if (okResult) { pass += 1 } else { fail += 1 }
   console.log(`${okResult ? 'PASS' : 'FAIL'}  ${name}  (期望 ${JSON.stringify(expected)}, 实际 ${JSON.stringify(got)})`)
 }
+function checkTrue(name, got) {
+  check(name, got, true)
+}
+
+// ── 根入口公开 named export 兼容断言：与 decisions 保持同一绑定/行为 ──
+check('公开导出 PROBE_LIMITS 与 decisions 同一绑定', plugin.PROBE_LIMITS === plugin.decisions.PROBE_LIMITS, true)
+check('公开导出 extractProbeEvidenceRefs 与 decisions 同一绑定', plugin.extractProbeEvidenceRefs === plugin.decisions.extractProbeEvidenceRefs, true)
+const PUBLIC_E1_E5_INPUTS = [
+  '',
+  '普通方案文本，无证据标记',
+  '步骤1：【探查者已核实】·证据：.extra-plan/证据-a.md',
+  '【探查者已核实】·证据：证据-a.md 与【探查者已核实】·证据：证据-a.md',
+  '【探查者已核实】步骤已完成',
+]
+check('公开导出 extractProbeEvidenceRefs 对 E1-E5 输入给出相同结果',
+  PUBLIC_E1_E5_INPUTS.map((input) => plugin.extractProbeEvidenceRefs(input)),
+  PUBLIC_E1_E5_INPUTS.map((input) => plugin.decisions.extractProbeEvidenceRefs(input)))
 
 // ── KA 系列:ask 分类与参数解析（v4 更名：原 K 系列让位于子代理角色组判定 K 系列；断言内容逐字不变） ──
 const KA = [
@@ -267,18 +288,6 @@ const GL = [
 ]
 for (const [name, got, expected] of GL) check(name, got, expected)
 
-// ── P 系列:plannerChildIdsOf ───────────────────────────────────────────
-const planCall = (cid) => call('subagent_plan', cid)
-const P = [
-  ['P1 plan 结果含 uuid 形态 id → 提取', [um(), planCall('p1'), ok('p1', '已启动规划子代理 3a7c1e5b-9d2f-4e8a-b6c4-1f0e9d8c7b6a，可 send_message 继续')], ['3a7c1e5b-9d2f-4e8a-b6c4-1f0e9d8c7b6a']],
-  ['P2 plan 结果无 id → 空', [um(), planCall('p1'), ok('p1', '规划子代理已启动')], []],
-  ['P3 plan 结果错误 → 空', [um(), planCall('p1'), err('p1', 'GATED')], []],
-  ['P4 uuid 形态 → 提取', [um(), planCall('p1'), ok('p1', 'child 6b9d2f8a-1c3e-4f5a-9b7d-0e2c8a4f6d10 已启动')], ['6b9d2f8a-1c3e-4f5a-9b7d-0e2c8a4f6d10']],
-  ['P5 非 plan 调用的结果忽略', [um(), call('subagent', 'x1'), ok('x1', 'session-ffffffff')], []],
-]
-for (const [name, events, expected] of P) {
-  check(name, plannerChildIdsOf(events), expected)
-}
 
 // ── SW 系列:真实工具集判定纯函数（schemasHasWriteTools / schemasHasTool，方案B） ──
 const SW = [
@@ -604,34 +613,6 @@ const E = [
   ['E5 无「证据：」前缀的标注 → 不提取', extractProbeEvidenceRefs('【探查者已核实】步骤已完成'), []],
 ]
 for (const [name, got, expected] of E) check(name, got, expected)
-
-// ── RP 系列:resolveProbeRequestInjection（探查者模型跟随顶层主会话） ──
-const mainCfg = { provider: 'p-main', model: 'model-main', maxTokens: 8192, reasoningEffort: 'high' }
-const plannerCfg = { provider: 'p-pro', model: 'deepseek-v4-pro', maxTokens: 16384 }
-const topMain = () => ({ session: { header: { origin: 'main' }, requestHeader: () => ({ config: mainCfg }) } })
-const midPlanner = () => ({ session: { header: { origin: 'subagent', delegationDepth: 1, parentSession: 'main-id' }, requestHeader: () => ({ config: plannerCfg }) } })
-const probeAgent = (parentSession) => ({ session: { header: { origin: 'subagent', delegationDepth: 2, parentSession }, requestHeader: () => ({ config: plannerCfg }) } })
-const registryOf = (map) => ({ get: (id) => map.get(id) })
-const RP_FULL_REG = registryOf(new Map([['main-id', topMain()], ['planner-id', midPlanner()]]))
-const RP = [
-  ['RP1 planner 委派 probe → 注入顶层主会话 provider/model/maxTokens', async () => {
-    const out = await resolveProbeRequestInjection(probeAgent('planner-id'), RP_FULL_REG, { provider: 'p-pro', model: 'deepseek-v4-pro', maxTokens: 16384 })
-    return { provider: out.provider, model: out.model, maxTokens: out.maxTokens }
-  }, { provider: 'p-main', model: 'model-main', maxTokens: 8192 }],
-  ['RP2 probe resolved 显式 provider/model → 不被覆盖（maxTokens 仍无条件继承顶层）', async () => {
-    const out = await resolveProbeRequestInjection(probeAgent('planner-id'), RP_FULL_REG, { provider: 'p-custom', model: 'model-custom' })
-    return { provider: out.provider, model: out.model, maxTokens: out.maxTokens }
-  }, { provider: 'p-custom', model: 'model-custom', maxTokens: 8192 }],
-  ['RP3 上溯链断裂（main-id 不存在）→ 回退直接父会话值', async () => {
-    const out = await resolveProbeRequestInjection(probeAgent('planner-id'), registryOf(new Map([['planner-id', midPlanner()]])), { provider: 'p-pro', model: 'deepseek-v4-pro', maxTokens: 16384 })
-    return { provider: out.provider, model: out.model, maxTokens: out.maxTokens }
-  }, { provider: 'p-pro', model: 'deepseek-v4-pro', maxTokens: 16384 }],
-  ['RP4 effort 仍以直接父为准（顶层 high 不渗入）→ 不注入 effort', async () => {
-    const out = await resolveProbeRequestInjection(probeAgent('planner-id'), RP_FULL_REG, { provider: 'p-pro', model: 'deepseek-v4-pro' })
-    return typeof out.reasoningEffort === 'string' ? out.reasoningEffort : ''
-  }, ''],
-]
-for (const [name, fn, expected] of RP) { check(name, await fn(), expected) }
 
 // ── PM 系列:decidePlannerModelUse（T2 静默降级判定纯函数） ─────────────────
 // provider 目录只作降级启发式：目录成功且清单非空且未命中 → 静默降级（继承主会话模型）；
@@ -1286,6 +1267,27 @@ const NON_PLANNER = [
     try { await invokeNonPlanner(harness, undefined, undefined, controller.signal) } catch (error) { message = String(error && error.message || error) }
     return { message, listProviders: fake.state.listProviders, listModels: fake.state.listModels.length, prepareCalls: fake.state.prepareCalls.length }
   }, { message: 'caller-aborted', listProviders: 0, listModels: 0, prepareCalls: 0 }],
+  ['NP12 上溯链断裂（顶层 main-id 不存在）→ 回退直接父 planner 会话配置', async () => {
+    const harness = makeNonPlannerHarness({
+      role: 'probe',
+      parentSession: 'planner-id',
+      plannerConfig: { provider: 'p-pro', model: 'deepseek-v4-pro', maxTokens: 16384 },
+      mainConfig: { provider: 'p-main', model: 'main-model', maxTokens: 8192, reasoningEffort: 'high' },
+    })
+    harness.registry.delete('main-id')
+    const out = await invokeNonPlanner(harness)
+    return { provider: out.provider, model: out.model, maxTokens: out.maxTokens }
+  }, { provider: 'p-pro', model: 'deepseek-v4-pro', maxTokens: 16384 }],
+  ['NP13 effort 以直接父为准、顶层 high 不渗入（完整链）', async () => {
+    const harness = makeNonPlannerHarness({
+      role: 'probe',
+      parentSession: 'planner-id',
+      plannerConfig: { provider: 'p-pro', model: 'deepseek-v4-pro', maxTokens: 16384 },
+      mainConfig: { provider: 'p-main', model: 'main-model', maxTokens: 8192, reasoningEffort: 'high' },
+    })
+    const out = await invokeNonPlanner(harness)
+    return typeof out.reasoningEffort === 'string' ? out.reasoningEffort : ''
+  }, ''],
 ]
 for (const [name, fn, expected] of NON_PLANNER) check(name, await fn(), expected)
 
@@ -1379,15 +1381,6 @@ for (const [name, events, expected] of FC) {
   check(name, deriveFlowState(events), expected)
 }
 
-// ── P-code 系列:plannerChildIdsOf 识别嵌套 subagent_plan（F3 桥接） ─────────
-const PC = [
-  ['PC1 嵌套 plan 结果含 uuid → 提取', [um(), cdStart('subagent_plan', 'p1', {}), cdEnd('p1', 'started subagent 3a7c1e5b-9d2f-4e8a-b6c4-1f0e9d8c7b6a')], ['3a7c1e5b-9d2f-4e8a-b6c4-1f0e9d8c7b6a']],
-  ['PC2 嵌套 plan 结果 isError → 空', [um(), cdStart('subagent_plan', 'p1', {}), cdEnd('p1', 'Error: gated', true)], []],
-  ['PC3 非 subagent_plan 的 dispatch 忽略', [um(), cdStart('write', 'w1', {}), cdEnd('w1', 'started subagent 3a7c1e5b-9d2f-4e8a-b6c4-1f0e9d8c7b6a')], []],
-]
-for (const [name, events, expected] of PC) {
-  check(name, plannerChildIdsOf(events), expected)
-}
 
 // ── C-code/CU-code 系列:toolCallCount / toolCallsSinceUser 计入嵌套调用（F2 桥接） ──
 const CC = [
@@ -1424,7 +1417,7 @@ const DG = [
 for (const [name, got, expected] of DG) {
   check(name, got, expected)
 }
-  dispatchSeriesChecks += FC.length + PC.length + CC.length + CUCODE.length + DG.length
+  dispatchSeriesChecks += FC.length + CC.length + CUCODE.length + DG.length
 }
 runDispatchSeries({ start: 'tool/ptc-dispatch-start', end: 'tool/ptc-dispatch' }) // 默认轮：0.1.5-rc.2 新名
 if (process.env.EXTRA_PLAN_LEGACY_ROUND === '1') runDispatchSeries({ start: 'tool/code-dispatch-start', end: 'tool/code-dispatch' }) // 旧名轮：0.1.2-rc.1（可开关）
@@ -1562,6 +1555,64 @@ const J = [
 for (const [name, code, expected] of J) {
   check(name, decomposeRunCode(code), expected)
 }
+
+// ── RC 系列:拆分后静态模块边界与静态 helper 直接回归 ─────────────────
+const rcL1Code = [
+  "const one = 'tools.write({ path: " + String.fromCharCode(92) + "'x" + String.fromCharCode(92) + "' })';",
+  "const two = " + JSON.stringify('tools.edit({ file_path: "x" })') + ";",
+  "const tpl = " + String.fromCharCode(96) + "tools.write({}) " + String.fromCharCode(36) + "{tools.edit({})}" + String.fromCharCode(96) + ";",
+  'tools.read({ "file_path": "ok" })',
+].join('\n')
+const rcL1Masked = maskCodeLiteralsAndComments(rcL1Code)
+const rcL1Result = decomposeRunCode(rcL1Code)
+checkTrue('RC-L1 转义单/双引号、反引号与模板插值不产生成员', rcL1Masked.length === rcL1Code.length && rcL1Result.dynamic === false && rcL1Result.members.length === 1 && rcL1Result.members[0].name === 'read')
+
+const rcL2Code = "// tools.write({})\r\n/* tools.edit({}) */\r\ntools.read({})"
+const rcL2Masked = maskCodeLiteralsAndComments(rcL2Code)
+const rcL2Result = decomposeRunCode(rcL2Code)
+const rcL2UnclosedString = "const s = 'tools.write({})\r\ntools.read({})"
+const rcL2UnclosedBlock = "/* tools.edit({})\r\ntools.read({})"
+checkTrue('RC-L2 行/块注释与 CRLF 保留且遮蔽区不产生成员', rcL2Masked.length === rcL2Code.length && rcL2Masked.includes('\r\n') && rcL2Result.members.length === 1 && rcL2Result.members[0].name === 'read')
+checkTrue('RC-L2 未闭合字符串/块注释等长遮蔽并保留换行', maskCodeLiteralsAndComments(rcL2UnclosedString).length === rcL2UnclosedString.length && maskCodeLiteralsAndComments(rcL2UnclosedString).includes('\r\n') && decomposeRunCode(rcL2UnclosedString).members.length === 0 && maskCodeLiteralsAndComments(rcL2UnclosedBlock).length === rcL2UnclosedBlock.length && maskCodeLiteralsAndComments(rcL2UnclosedBlock).includes('\r\n') && decomposeRunCode(rcL2UnclosedBlock).members.length === 0)
+
+const rcL3Text = "tools.read({ nested: [1, { ok: (true) }] }) tail"
+const rcL3Paren = rcL3Text.indexOf('(')
+const rcL3Slice = sliceBalancedArgs(maskCodeLiteralsAndComments(rcL3Text), rcL3Text, rcL3Paren)
+check('RC-L3 嵌套括号配平返回原始 innerText', rcL3Slice, { closeIdx: rcL3Text.lastIndexOf(')'), innerText: '{ nested: [1, { ok: (true) }] }' })
+const rcL4Text = "tools.read({ nested: [1, { ok: true }]"
+const rcL4Paren = rcL4Text.indexOf('(')
+const rcL4Slice = sliceBalancedArgs(maskCodeLiteralsAndComments(rcL4Text), rcL4Text, rcL4Paren)
+check('RC-L4 未配平 closeIdx=末尾且保留尾部 innerText', rcL4Slice, { closeIdx: rcL4Text.length - 1, innerText: rcL4Text.slice(rcL4Paren + 1) })
+
+const rcD1Code = "const name = 'read'; tools[name]({ file_path: 'x' })"
+const rcD1Result = decomposeRunCode(rcD1Code)
+const rcD1Sites = plugin.decisions.collectRunCodeSites(rcD1Code, maskCodeLiteralsAndComments(rcD1Code))
+const rcD1NonCallCode = 'const name = tools[name]'
+const rcD1NonCallSites = plugin.decisions.collectRunCodeSites(rcD1NonCallCode, maskCodeLiteralsAndComments(rcD1NonCallCode))
+checkTrue('RC-D1 tools[name](...) dynamic=true、site.name=undefined，非调用不计 site', rcD1Result.dynamic === true && rcD1Result.members.length === 0 && rcD1Sites.length === 1 && rcD1Sites[0].name === undefined && rcD1NonCallSites.length === 0)
+
+const rcN1Inner = 'await tools.write({})'
+const rcN1Code = 'await tools.run_code({ "code": ' + JSON.stringify(rcN1Inner) + ' })'
+const rcN1Result = decomposeRunCode(rcN1Code)
+const rcN1FlattenReason = runCodeGroupDenyReason(noneStateFx, { name: 'run_code', arguments: { code: rcN1Code } }, { kind: 'main' }, {})
+const rcN1UnparsedCode = 'await tools.run_code({ code: nested })'
+const rcN1UnparsedResult = decomposeRunCode(rcN1UnparsedCode)
+const rcN1UnparsedReason = runCodeGroupDenyReason(noneStateFx, { name: 'run_code', arguments: { code: rcN1UnparsedCode } }, { kind: 'main' }, {})
+checkTrue('RC-N1 可解析嵌套 run_code 一层展平、不可解析参数保留运行时', rcN1Result.dynamic === false && rcN1Result.members.length === 1 && rcN1Result.members[0].name === 'run_code' && rcN1Result.members[0].argsParsed === true && typeof rcN1FlattenReason === 'string' && rcN1FlattenReason.includes('- write:') && rcN1UnparsedResult.members.length === 1 && rcN1UnparsedResult.members[0].name === 'run_code' && rcN1UnparsedResult.members[0].argsParsed === false && rcN1UnparsedReason === null)
+
+const rcP1Result = decomposeRunCode('tools.read({ "file_path": "x" }); tools.read({ "file_path": "y" })')
+checkTrue('RC-P1 同名不同 JSON 参数保留两个成员', rcP1Result.members.length === 2 && rcP1Result.members[0].name === 'read' && rcP1Result.members[1].name === 'read' && rcP1Result.members[0].args.file_path === 'x' && rcP1Result.members[1].args.file_path === 'y')
+
+const rcDgEvents = [
+  { type: 'tool/ptc-dispatch-start', data: { rootCallId: 'rc-same' } },
+  { type: 'tool/code-dispatch-start', data: { rootCallId: 'rc-same' } },
+  { type: 'tool/code-dispatch-start', data: { rootCallId: 'rc-other' } },
+]
+const rcDgExceeded = runCodeDispatchGateReason(rcDgEvents, { rootCallId: 'rc-same' }, 1)
+checkTrue('RC-DG1 新旧 dispatch-start 同 root 计数、异 root 不计，非法 cap/root 返回 null', typeof rcDgExceeded === 'string' && rcDgExceeded.includes('子调用数 2') && runCodeDispatchGateReason(rcDgEvents, { rootCallId: 'rc-same' }, 2) === null && runCodeDispatchGateReason(rcDgEvents, { rootCallId: 'rc-same' }, 0) === null && runCodeDispatchGateReason(rcDgEvents, { rootCallId: 'rc-same' }, -1) === null && runCodeDispatchGateReason(rcDgEvents, { rootCallId: 'rc-same' }, 1.5) === null && runCodeDispatchGateReason(rcDgEvents, { rootCallId: 7 }, 1) === null)
+
+const rcAgReason = runCodeGroupDenyReason(undefined, { name: 'run_code', arguments: { code: 'await tools.write({})\nawait tools.subagent_probe({})' } }, { kind: 'planner' }, {})
+checkTrue('RC-AG1 planner write+subagent_probe 聚合 2 项且保持成员顺序', typeof rcAgReason === 'string' && rcAgReason.includes('工具组共 2 项（去重后），2 项触发闸门') && rcAgReason.includes('规划子代理只读') && rcAgReason.includes('仅主会话可用') && rcAgReason.indexOf('- write:') < rcAgReason.indexOf('- subagent_probe:'))
 
 // ── K 系列:子代理角色组判定（F7' v4;role = {kind:'planner'}/{kind:'child',readOnly,probe}） ──
 // 预算耗尽白名单 fixture（T2 修复）：18 组成功配对 = 已用 18/18（与 step-04 budgetEvents 同口径）。

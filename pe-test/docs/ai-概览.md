@@ -1,7 +1,7 @@
 # 按需规划模式 — 项目概览
 
 > AI 每次动手前速读：项目是什么、五角色、文件职责（改哪里）。函数级定位用 ai-代码地图.md。
-> **改完必做**：node pe-test/tools/代码地图生成.mjs（同步地图+补描述，流程见 ai-维护手册.md）。一键体检已内置 `--check` 一致性检查（不写盘）：地图过期/漏检/导航失效 → 该项判红。
+> **改完必做**：node pe-test/tools/代码地图生成.mjs（同步地图+人工补描述（脚本只同步结构，绝不覆盖已有描述），流程见 ai-维护手册.md）。一键体检已内置 `--check` 一致性检查（不写盘）：地图过期/漏检/导航失效 → 该项判红。
 
 ## 项目一句话
 dsh 插件「按需规划模式」预设：AI 未经用户同意只能只读探查，经路由/目的/澄清/批准四级机械闸门后按规划执行。五角色分工保证「用户确认 → 规划 → 执行 → 验收」闭环。工具呈现按 A=anchoredBootstrap、C=creativeMode、M=native/ptc/both 三个独立维度，F=无 tool/call、L=首个 tool/call 后判定。
@@ -20,13 +20,13 @@ dsh 插件「按需规划模式」预设：AI 未经用户同意只能只读探�
 |:--|:--|:--|
 | 四级闸门状态机+主闸门 | plugins/dsh-extra-plan/index.js | 修改最频繁（route/purpose/clarified/approved/channelBroken） |
 | 探查预算 | index.js budget* 族（budgetNoticeText/budgetReminderText/budgetExhaustedReason 等） | 开局告知/剩3提醒/耗尽往返 |
-| save_probe/save_plan 工具 | index.js 落盘族（validateProbe/renderProbeMarkdown/atomicCommit/recoverJournals/defineSavePlan 等） | 双写+journal 自愈；save_plan 注册于规划子代理层+主会话层（主会话仅 direct 路由放行，T3） |
-| save_probe PROBE_LIMITS | index.js validateProbe/defineSaveProbe；step-00 PR23=151、PR34/PR35 | evidence 最多 150 条、单条 evidence.text 最多 1000 字；1000 通过、1001 拒绝；描述/schema 动态读取常量 |
-| run_code 静态拆解组判定 | index.js decomposeRunCode/runCodeGroupDenyReason | 防绕道闸门 |
-| run_code 容错检查 | index.js runCodeCatchGateReason/runCodeDispatchGateReason（开关 cfg.runcodeCatchGate 默认 false） | 多调用独立容错硬闸门（只认逐点 try/catch；教学式拒绝）+ 单实例子调用上限=exploreBudget |
-| anchored 首轮引导 | index.js system-prompt/assemble 钩子（isBootstrapPhase/keep 构造；行号见代码地图函数索引） | A=1/F/main-planner：native/both 为 HN/HB（bootstrap shell(s)+read，sections 仅 extra-plan-bootstrap）；PTC 为 HP（顶层仅 run_code，sections 精确为 extra-plan-bootstrap、tools:ptc-only、tool:read，read 为 guidance+最小契约）；L 恢复 N/P/B |
-| creativeMode 持续装配投影 | index.js projectAssemblyForPresentation/renderFilteredToolsSdk 与 skill 注册源 | C=0 覆盖五角色每轮模型可见面：隐藏 7 个 Cordis 工具、tool:cordis、SDK 中对应 schema/说明，两个创造 skill 不进入 catalog；C=1 保留完整 SDK/Cordis/两个创造 skill，但 HP1 的 F/main-planner 仅暂隐 catalog；普通 skill/skill 工具保留。官方 renderer 从明确 schema 整体重建；不改变 registry binding，非运行时安全隔离 |
-| 探查者模型注入 | index.js resolveProbeRequestInjection | 上溯父会话配置 |
+| save_probe/save_plan 工具 | lib/save-contract.js（合同/渲染）、lib/save-probe-validation.js（校验）、lib/save-persistence.js（原子落盘+journal）、lib/save-tool-factories.js（工具定义工厂）；index.js（apply 注册/闸门接线） | 双写+journal 自愈；save_plan 注册于规划子代理层+主会话层（主会话仅 direct 路由放行，T3） |
+| save_probe PROBE_LIMITS | lib/save-contract.js PROBE_LIMITS；lib/save-probe-validation.js validateProbe；lib/save-tool-factories.js 动态 schema；step-00 PR23=151、PR34/PR35 | evidence 最多 150 条、单条 evidence.text 最多 1000 字；1000 通过、1001 拒绝；描述/schema 动态读取同一合同常量 |
+| run_code 静态拆解组判定 | index.js runCodeGroupDenyReason（组聚合/判定）；lib/run-code-static.js decomposeRunCode（静态拆解，index.js 解构调用后 re-export） | 防绕道闸门 |
+| run_code 容错检查 | lib/run-code-static.js runCodeCatchGateReason/runCodeDispatchGateReason（index.js 解构调用与 re-export；开关 cfg.runcodeCatchGate 默认 false） | 多调用独立容错硬闸门（只认逐点 try/catch；教学式拒绝）+ 单实例子调用上限=exploreBudget |
+| anchored 首轮引导 | lib/assembly-presentation.js projectAssemblyForPresentation/renderFilteredToolsSdk（HP 的 tool:read 由其生成）；index.js system-prompt/assemble 钩子（isBootstrapPhase/keep 构造；行号见代码地图函数索引） | A=1/F/main-planner：native/both 为 HN/HB（bootstrap shell(s)+read，sections 仅 extra-plan-bootstrap）；PTC 为 HP（顶层仅 run_code，sections 精确为 extra-plan-bootstrap、tools:ptc-only、tool:read，read 为 guidance+最小契约）；L 恢复 N/P/B |
+| creativeMode 持续装配投影 | lib/assembly-presentation.js projectAssemblyForPresentation/renderFilteredToolsSdk；index.js skill 注册源 | C=0 覆盖五角色每轮模型可见面：隐藏 7 个 Cordis 工具、tool:cordis、SDK 中对应 schema/说明，两个创造 skill 不进入 catalog；C=1 不因 C 隐藏——非 HP1 且非 anchored 时保留完整 SDK/Cordis/两个创造 skill，但 HP1 的 F/main-planner 仅暂隐 catalog；普通 skill/skill 工具保留。官方 renderer 从明确 schema 整体重建；不改变 registry binding，非运行时安全隔离 |
+| 探查者／非 planner 模型注入 | lib/model-routing.js resolveOtherAgentEntry（createModelRouting 工厂返回，apply 内解构） | 上溯顶层主会话 fallback；resolver 层链断裂（source=null）返回 {}、不注入直接父；「链断裂回退直接父」仅对钩子层 maxTokens 继承成立 |
 | 实机子代理模型/提供方与引导取证 | pe-test/tools/step-07-子代理模型与引导取证.mjs | HUMAN：显式 SESSION_ID + PLANNER_PROMPT_SUFFIX；两代日志、pro规划/非pro规划、attempted route 与 actual provenance、suffix 等级 |
 | 设置页后端 API | lib/settings.js（createApiHandler 等） | 仅本机环回 |
 | 设置页前端 UI | lib/client.js | 打包器（__ModuleLoader__）格式；**已按函数级索引**（apply/ProConfigTab/ExtraPlanCard 等，2026-09-10 起） |
@@ -37,6 +37,10 @@ dsh 插件「按需规划模式」预设：AI 未经用户同意只能只读探�
 | PTC三维装配矩阵 | pe-test/tools/step-04-路由与写闸门.mjs | 实际执行 2×2×3×2×5=120 格，逐格断言 A/C/M/F-L/五角色、C7 0/7、catalog 0/2、普通 skill、HP 与 HN/HB 基线 |
 | 工具清单/时序取证 | pe-test/tools/step-04-工具清单查看.mjs | 显式会话、逻辑 JSONL 行号、前置 tool/call 数、first/later、精确 header.tools、header.system 文本命中、skill-catalog；文本命中不冒充 section 名 |
 | 代码地图 | pe-test/docs/ai-代码地图.md + pe-test/tools/代码地图生成.mjs | 头部「意图速查」= 人工段（脚本原样保留、校验引用函数名）；函数索引 = 机器段（行号/增删）；`--check` 一致性门槛；覆盖口径 = 任意缩进的命名函数定义 |
+| run_code 静态解析/理由函数 | lib/run-code-static.js（createRunCodeStatic 工厂：decomposeRunCode/runCodeCatchGateReason/runCodeDispatchGateReason/runCodeSiteCount/isRunCodeSubCall/askUserQuestionReturnGateReason/runCodeDispatchCapText） | 仅接收显式 { askTool, isDispatchStart } 普通依赖，不持有 ctx/状态；9 条禁用 API 正则与拒绝文案逐字保留自拆分前 |
+| 会话事件快照/子代理判定 | lib/agent-session.js（sessionEvents/isSubagentChild） | index.js 经 import 使用并经 decisions re-export；台账 SD10/HK20 宿主接触面现居此文件 |
+| 预设设置解析与保格式改写 | lib/preset-settings.js（loadYaml/captureSettings/patchYamlScalar 等） | 十项设置 descriptor（SETTING_DEFINITIONS L57-109，含 otherAgentModel）；js-yaml 双路回退 |
+| 客户端桥接 | lib/client-bridge.js（name='dsh-extra-plan-client-bridge'，空 apply L17-19） | 仅承载 dsh.client 加载路径指向 lib/client.js |
 
 ## 模块关系（数据流）
 用户需求 → 主会话（只读探查理解）→ 探查方式二选一 ask（主会话探查 / 探查者探查）→ 路由确认 → pro 规划（目的确认 → 澄清 → save_probe 线索 → 规划子代理 save_plan 双文件；planner 申请继续探查 → 主会话再探查/委派探查者 → 转达线索路径 → 预算重置继续）→ 用户批准 → 执行者（按方案改）→ 验收者（逐条核对）→ 主会话汇总 → **用户部署生产环境 → 用户实测闭环**（部署动作由用户执行；AI 在验收通过前不得执行生产环境同步/部署动作）；「直接执行」路径跳过规划环节。
@@ -44,7 +48,7 @@ dsh 插件「按需规划模式」预设：AI 未经用户同意只能只读探�
 实机证据补充：A42/A43（C11/C12）由 step-07 HUMAN 独立取证，不能用 step-00 fake/mock、候选 probe 或工作区配置替代实际 provider/model 与 suffix 结论；request/header 是 attempted route，assistant/message source 是 actual provenance；exploreBudget=18 仍只代表 planner 工具预算。
 
 ## 运行时相关
-- web 直接核心包安装经 dsh plugin add + cordis.patch.yml（host 平面行：extra-plan-settings 设置页 API、extra-plan-preset-sync 预设自愈）
+- web 直接核心包安装经 dsh plugin add + cordis.patch.yml（host 平面行：dsh-extra-plan-settings 设置页 API、extra-plan-preset-sync 预设自愈）
 - web 直接核心包唯一负责预设分发：scripts/distribute-preset.mjs（安装/更新写 DSH_HOME/.agent-presets/extra-plan/）
 - web 直接核心包唯一负责启动 preset-sync：lib/preset-sync.js（版本 hash 比对；同版本手改不覆盖）；QQBot 侧由精简版插件自愈，dsh-extra-plan 核心对 qqbot 零感知
 
@@ -55,6 +59,7 @@ dsh 插件「按需规划模式」预设：AI 未经用户同意只能只读探�
 - 函数级索引：pe-test/docs/ai-代码地图.md（含 step-07 HUMAN 取证入口）
 - 流程备查：pe-test/docs/ai-流程备查.md
 - 宿主耦合台账（升级 DSH/qqbot 前必读）：pe-test/docs/ai-宿主耦合台账.md
+- 实机闸门测试流程：pe-test/docs/ai-实机闸门测试流程.md
 
 ---
 

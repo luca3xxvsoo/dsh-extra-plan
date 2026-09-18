@@ -8,9 +8,7 @@ import { dirname, join } from 'node:path'
 import z from '@deepseek-ai/schemastery'
 import {
   SETTING_DEFINITIONS,
-  TOOL_PRESENTATION_MODES,
   getSettingDefinition,
-  parsePresetYaml,
   patchYamlScalar,
   publicSettingMetadata,
   validateSettingValue,
@@ -19,7 +17,6 @@ import {
 
 export const name = 'dsh-extra-plan-settings'
 export const inject = []
-export { TOOL_PRESENTATION_MODES }
 
 const EXTRA_PLAN_NS = 'dsh-extra-plan'
 const ExtraPlanSettingsSchema = z.object({})

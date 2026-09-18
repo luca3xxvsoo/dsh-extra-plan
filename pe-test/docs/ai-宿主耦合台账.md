@@ -5,14 +5,11 @@
 
 ## 数据源
 
-本台账条目全部来自三份探查者证据报告（行号、数值、文案照实引用），共 209 条 evidence，逐条勾销、无遗漏：
+本台账条目来自历史探查者证据报告（三份报告已归档、不再逐文件引用；行号、数值、文案引用历史核对结论）。
 
-- 报告 A：.extra-plan/线索-宿主耦合台账-extra-plan-20260911195625.md（plugins/dsh-extra-plan/index.js 全部宿主接触面，80 条 evidence，未核实 0 条）
-- 报告 B：.extra-plan/线索-宿主耦合台账-除index-js外全部接触面-20260911195550.md（除 index.js 外全部接触面，79 条 evidence，含四层分类）
-- 报告 C：.extra-plan/线索-qqbot宿主耦合台账-20260911195447.md（qqbot 侧全部接触面，50 条 evidence）
 - 台账基线修订（2026-09-12）：① 基线块的「DSH 宿主版本 0.1.2-rc.1 → 0.1.5-rc.2」与「仓库文件基线 55 → 52」两处为本次复核订正；② 覆盖口径剔除 gitignored 的 `pe-test/reports/`（原 5 行报告行移出，结论原就为「无」），故②表行数由 55 降为 52。被移出的 5 行若日后重新生成同类报告，不需回填。
 
-口径校准：报告 C 的「五、证据」段实际为 50 条顶层条目（其中 2 条为 YAML 多行块、物理行更多），故本台账按 80 + 79 + 50 = 209 条逐条勾销，比规划方案预估的 208 条多 1 条（只多不少，不构成遗漏）。
+口径校准：台帐条目按 80 + 79 + 50 = 209 条 evidence 原始统计逐条勾销，比规划方案预估的 208 条多 1 条（只多不少，不构成遗漏）。
 口径对齐说明（2026-09-11 验收勘误）：验收标准清单 [任务6] 写的「报告 C 49 条 / 合计 208 条」是规划阶段的预估口径；执行阶段实测报告 C 顶层证据为 50 条，故本台账以 80 + 79 + 50 = 209 条为准，并已在下文 ③-E 勾销表中逐段给出归属条目编号（无悬空引用）。
 
 证据去向：③四层表的每一条都在「本仓库位置」列给出条目编号（宿主服务层 HS1-HS25、宿主组合与文件契约层 HK1-HK24（含 HK6a/HK6b）、宿主数据与布局形状层 SD1-SD38、安装配置面 CF1-CF12），②覆盖总表的每一行给出该文件命中的条目编号或「无」。
@@ -28,13 +25,13 @@
 | qqbot 精简插件版本 | 2.0.0（@local/dsh-qqbot-user-questions） | plugins/dsh-qqbot-user-questions/package.json 的 version 字段实测 |
 | DSH_HOME | C:\Users\SheepToken\.dsh | 本机实测（profiles/web 存在，无 profiles/qqbot） |
 | 记录日期 | 2026-09-11 | 本次产出日期 |
-| 仓库文件基线 | 53 个（git ls-files 全部 tracked 文件；2026-09-13 复核订正：52 → 53 = 新增 pe-test/_shared/host-deps.mjs；原记 55 个 = 50 tracked + 5 个 pe-test/reports 报告文件，该目录已于 2026-09-11 清理、本次不再计入） | 本机实测 |
+| 仓库文件基线 | 62 个（覆盖口径：排除 .extra-plan 与 gitignored 产物目录 pe-test/reports 后的实测文件数；该产物目录由一键体检每次运行重写、随跑随变，不参与口径；2026-09-18 复核） | 本机实测 |
 
 **声明句：本台账不写宿主行号：宿主侧一律以 包名+包内相对路径+符号名 定位，升级时按符号名在升级后的宿主包内重新核对。**（本仓库自身的文件与行号可以写，用于定位改动点。）
-## ② 仓库文件覆盖总表（53 个文件，逐行结论）
+## ② 仓库文件覆盖总表（62 个文件，逐行结论）
 
-覆盖口径：本仓库 tracked 文件全集（`git ls-files` 全部命中，含 `pe-test/` 下各目录）= 53 个。逐行给结论：有挂钩写条目编号（见③四层表与④QQBOT 专章），无挂钩写「无」。
-**口径订正（2026-09-12）**：原口径为「git ls-files 的 50 个 tracked 文件 + `pe-test/reports/` 下 5 个 ignored 报告文件 = 55 个」。`pe-test/reports/` 系一键体检每次运行都会重写的 gitignored 产物目录（随跑随变），已从口径中剔除；顺带消掉原表内那 5 行的悬空引用（该目录已于 2026-09-11 清理，且那 5 行结论本就都是「无」）。目录本身仍会被 `一键step测试.mjs` 重建，但不再计入本台账基线。
+覆盖口径：本仓库文件全集 = 工作区内全部文件（不含 .extra-plan）减去 gitignored 产物目录 pe-test/reports（由一键体检每次运行重写、随跑随变，不参与口径）；2026-09-18 复核实测 62 个，含 pe-test/ 下各目录。复现：pwsh 统计 dsh-extra-plan 下排除 .extra-plan 与 pe-test/reports 后的文件数。逐行给结论：有挂钩写条目编号（见③四层表与④QQBOT 专章），无挂钩写「无」。
+**口径订正（2026-09-12）**：原口径为「git ls-files 的 50 个 tracked 文件 + `pe-test/reports/` 下 5 个 ignored 报告文件 = 55 个」。`pe-test/reports/` 系一键体检每次运行都会重写的 gitignored 产物目录（随跑随变），已从口径中剔除；顺带消掉原表内那 5 行的悬空引用（该目录为 gitignored 产物目录（一键体检每次运行都会重建），当前含 84 个历史报告文件，不属仓库正式文件，且那 5 行结论本就都是「无」）。目录本身仍会被 `一键step测试.mjs` 重建，但不再计入本台账基线。
 
 | 文件路径 | 结论（有挂钩→条目编号 / 无→「无」） | 备注 |
 |:--|:--|:--|
@@ -50,10 +47,12 @@
 | pe-test/docs/ai-机制设计.md | 无 | AI 文档，只读产物，不含挂钩代码 |
 | pe-test/docs/ai-流程备查.md | 无 | AI 文档，只读产物，不含挂钩代码 |
 | pe-test/docs/ai-维护手册.md | 无 | AI 文档；声明所有权边界与宿主目录禁改清单（profiles/web、profiles/qqbot、.agent-presets） |
+| pe-test/docs/ai-实机闸门测试流程.md | 无 | 实机闸门与 HUMAN 取证流程文档；本文不写行号，只引用宿主包名与符号名，无代码级挂钩 |
+| pe-test/docs/ai-宿主耦合台账.md | 无 | 本台账自身；宿主侧一律以「包名+包内相对路径+符号名」定位，不写宿主行号 |
 | pe-test/README.md | 无 | 测试目录说明文档，不含挂钩代码 |
 | pe-test/tools/代码地图生成.mjs | 无 | 工作区代码地图生成器（node:fs/path/url），无宿主接触 |
 | pe-test/tools/一键step测试.mjs | 宿主数据与布局形状层 SD1（传递） | 编排脚本：spawnSync 跑各 step；本身不 import 宿主包 |
-| pe-test/tools/readme.md | 无 | 工具目录说明文档，不含挂钩代码 |
+| pe-test/tools/readme.md | 无 | save_probe 路径存在性校验所需的 fixture 文件（3 行自述为非文档；不删不改名） |
 | pe-test/tools/step-00-跨平台写拦截.mjs | 无 | 本仓写拦截自检，不接触宿主包 |
 | pe-test/tools/step-00-全流程回归.mjs | 无 | import 仅 node:url，其余为代码串断言，无宿主包接触 |
 | pe-test/tools/step-01-安装分发.mjs | 安装配置面 CF9（夹具） | 临时 DSH_HOME 夹具回归 distribute()，import 本仓脚本与 preset-settings |
@@ -74,12 +73,20 @@
 | plugins/dsh-extra-plan/assets/presets/extra-plan/dist-manifest.json | 无 | 仓库内分发清单模板（format 1、distHash null）；本项目自造格式，非宿主契约 |
 | plugins/dsh-extra-plan/assets/presets/extra-plan/preset.yml | 安装配置面 CF10 | 预设显示元数据（name/description），对应宿主 METADATA_FILE 契约 |
 | plugins/dsh-extra-plan/cordis.patch.yml | 宿主组合与文件契约层 HK11 | bundle patch 宿主平面行：insert 三条（client-bridge 相对路径行 + settings/preset-sync 子路径行） |
-| plugins/dsh-extra-plan/index.js | 宿主服务层 HS1、HS2、HS3、HS4、HS5、HS6、HS7、HS8、HS9、HS10、HS11、HS12、HS13、HS14、HS15、HS16、HS17、HS18、HS19、HS20、HS21、HS22、HS23、HS24、HS25，宿主组合与文件契约层 HK1、HK2、HK3、HK4、HK5、HK6、HK6a、HK6b、HK7、HK8、HK9、HK11、HK12、HK20、HK21、HK22、HK23，宿主数据与布局形状层 SD4、SD5、SD6、SD7、SD8、SD9、SD10、SD11、SD12、SD13、SD14、SD15、SD16、SD17、SD18、SD19、SD20、SD21、SD22、SD23、SD24、SD25、SD26、SD27、SD28、SD29、SD30、SD31、SD32、SD35、SD36、SD37、SD38（共 73 处，逐处见③四层表） | 会话平面主体插件（3816 行）：7 钩子、5 服务、会话事件解析与数据形状消费、工具注册面、planner 与非 planner child 双 resolver、True 真实 probe/strict fallback |
+| plugins/dsh-extra-plan/index.js | 宿主服务层 HS1、HS2、HS3、HS4、HS5、HS6、HS7、HS8、HS9、HS10、HS11、HS12、HS13、HS14、HS15、HS16、HS17、HS18、HS19、HS20、HS21、HS22、HS23、HS24、HS25，宿主组合与文件契约层 HK1、HK2、HK3、HK4、HK5、HK6、HK6a、HK6b、HK7、HK8、HK9、HK11、HK12、HK20、HK21、HK22、HK23，宿主数据与布局形状层 SD4、SD5、SD6、SD7、SD8、SD9、SD10、SD11、SD12、SD13、SD14、SD15、SD16、SD17、SD18、SD19、SD20、SD21、SD22、SD23、SD24、SD25、SD26、SD27、SD28、SD29、SD30、SD31、SD32、SD35、SD36、SD37、SD38（共 73 处，逐处见③四层表） | 会话平面主体插件（2120 行）：7 钩子、5 服务、会话事件解析与数据形状消费、工具注册面、planner 与非 planner child 双 resolver、True 真实 probe/strict fallback |
+| plugins/dsh-extra-plan/lib/agent-session.js | 宿主数据与布局形状层 SD10 + 宿主组合与文件契约层 HK20 | 会话事件快照（sessionEvents）与子代理识别（isSubagentChild）的唯一来源；index.js 经 import 使用并经 decisions re-export；零依赖纯函数 |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | 宿主数据与布局形状层 SD18 | A/C/M 模型可见投影与 tools:sdk 整体重建；从 scoped tools 服务读 schemas/sdkSchemas/模式，官方 dsh-tools SDK renderer 按 DSH_HOME/profile 与宿主安装目录只读加载（同 SD33 布局口径） |
 | plugins/dsh-extra-plan/lib/client-bridge.js | 宿主服务层 HS22、HS23 + 宿主组合与文件契约层 HK24 | pathLike 空壳插件行：仅让 clientModules 扫到本包 dsh.client 声明 |
-| plugins/dsh-extra-plan/lib/client.js | 宿主服务层 HS17、HS18、HS19、HS20、HS21、HS22 + 宿主组合与文件契约层 HK10、HK14 | 浏览器半：宿主打包格式、locale 注册、settings.plugin.item 卡片；metadata fields 由 descriptor 顺序驱动并按 section 分两组（general/pro），九项字段含 otherAgentModel，通用 True/False select 与宿主哈希类名/主题 token |
+| plugins/dsh-extra-plan/lib/client.js | 宿主服务层 HS17、HS18、HS19、HS20、HS21、HS22 + 宿主组合与文件契约层 HK10、HK14 | 浏览器半：宿主打包格式、locale 注册、settings.plugin.item 卡片；metadata fields 由 descriptor 顺序驱动并按 section 分两组（general/pro），十项字段含 otherAgentModel，通用 True/False select 与宿主哈希类名/主题 token |
 | plugins/dsh-extra-plan/lib/executor-spawn.js | 宿主服务层 HS8、HS9、HS10、HS11、HS12 | subagents provider 薄委托层：包装宿主 spawn provider 并注入 toolFilter.deny |
-| plugins/dsh-extra-plan/lib/preset-settings.js | 宿主服务层 HS13、HS14、HS15、HS16 | 九项设置 descriptor 表（含 config.crossProviderPlannerModel:boolean 与 config.otherAgentModel:string）+ !!js 保真 YAML 解析 + 逐行标量改写；js-yaml 本地与宿主安装目录双路回退 |
+| plugins/dsh-extra-plan/lib/model-routing.js | 宿主组合与文件契约层 HK6a、HK6b + 宿主数据与布局形状层 SD11、SD14、SD15 | planner/非 planner 双 resolver：listProviders/listModels、真实 prepareCall + 完整 prepared stream 探针、agents.get 上溯顶层主会话 route、requestHeader owned 路由快照；createModelRouting per-apply 工厂，不 import index.js |
+| plugins/dsh-extra-plan/lib/preset-settings.js | 宿主服务层 HS13、HS14、HS15、HS16 | 十项设置 descriptor 表（含 config.crossProviderPlannerModel:boolean 与 config.otherAgentModel:string）+ !!js 保真 YAML 解析 + 逐行标量改写；js-yaml 本地与宿主安装目录双路回退 |
 | plugins/dsh-extra-plan/lib/preset-sync.js | 宿主服务层 HS5、HS6、HS7 + 宿主组合与文件契约层 HK16 | 启动自愈与 postinstall 共用状态机：写 DSH_HOME/.agent-presets/extra-plan，清理 profiles 下 cordis.patch.yml 遗留行，原子发布 |
+| plugins/dsh-extra-plan/lib/run-code-static.js | 宿主组合与文件契约层 HK21 | run_code 纯静态解析/理由模块（写模式 hint、工具组拆解、ask 返回值白名单、调用点计数与双兼容 dispatch cap）；仅显式注入普通依赖，不持有宿主状态 |
+| plugins/dsh-extra-plan/lib/save-contract.js | 无 | save 合同唯一真源：任务名/时间戳/sessionTag/base、PROBE_LIMITS 与 save_plan/save_probe 渲染；无宿主接触 |
+| plugins/dsh-extra-plan/lib/save-persistence.js | 无 | 公共原子落盘（tmp→journal→rename→清 journal）与新旧 journal 自愈；仅 node:fs/path |
+| plugins/dsh-extra-plan/lib/save-probe-validation.js | 无 | save_probe 参数校验（数组/条目/长度/总量/path 存在性/range/evidence 聚合拒绝）；无宿主接触 |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | 宿主数据与布局形状层 SD19、SD20、SD21 | save_plan/save_probe 的工具定义面（parameters/output.schema/render/execute）；execute 取 exec.agent.session.header.cwd 作落盘基准 |
 | plugins/dsh-extra-plan/lib/settings.js | 宿主服务层 HS1、HS2、HS3、HS4 | 宿主平面设置插件：settings 命名空间注册 + webServer 前缀路由 + DSH_HOME 与 .agent-presets 解析与受管文件改写 |
 | plugins/dsh-extra-plan/package.json | 宿主组合与文件契约层 HK12、HK13、HK14 + 安装配置面 CF1、CF4、CF5、CF6、CF8、CF12 | 安装配置面：dsh.bundle.patch、dsh.client（platform 与 inject）、exports 子路径、postinstall、js-yaml 依赖 |
 | plugins/dsh-extra-plan/scripts/distribute-preset.mjs | 安装配置面 CF1、CF2、CF3 | postinstall 入口：解析 DSH_HOME 后委派 syncPreset 分发预设 |
@@ -102,10 +109,10 @@
 
 | 本仓库位置(文件+符号+行号) | 宿主符号(逐字) | 宿主包+包内相对路径 | 用途 | 升级敏感点 | 核实状态 |
 |:--|:--|:--|:--|:--|:--|
-| HS1 plugins/dsh-extra-plan/lib/settings.js apply 与 ctx.inject(['settings'])（L154-157）+ L156 sctx.settings.register | settings（服务名）+ register(ns, schema, options) | dsh-settings 包内 lib/index.js | 注册设置命名空间 dsh-extra-plan，供设置页与本插件 config 读写 | 服务名、方法签名或 options.base 语义变化即注册失败 | 【已核实】 |
-| HS2 plugins/dsh-extra-plan/lib/settings.js L24 EXTRA_PLAN_NS | NAMESPACE_PATTERN（命名空间命名约束） | dsh-settings 包内 lib/index.js | 命名空间字面量 dsh-extra-plan 必须同时命中宿主命名规则与前端卡片 key | 正则放宽或收紧、校验点迁移即注册被拒 | 【已核实】 |
-| HS3 plugins/dsh-extra-plan/lib/settings.js ctx.inject(['webServer'])（L158-163）+ L160-161 webServer.register({kind:'prefix'}) | webServer（服务名）+ register(route) + route.kind 值域 exact 与 prefix | dsh-host-webserver 包内 lib/index.js | 注册设置页后端路由前缀 /api/dsh-extra-plan-settings 并随 effect 注销 | kind 改 exact 则 /pro-config 子路径不匹配；前缀最长匹配规则变化即路由错位 | 【已核实】 |
-| HS4 plugins/dsh-extra-plan/lib/settings.js L36 与 L30-33（拼 .agent-presets/extra-plan/agent.cordis.yml） | USER_PRESET_DIR + COMPOSITION_FILE + DSH_HOME_ENV + DSH_HOME_DIR_NAME | dsh-agent-presets 包内 lib/index.js；dsh-home-paths 包内 lib/index.js | 定位用户预设目录与组合文件名（读写受管 config 文件） | 目录名、文件名或 DSH_HOME 解析规则变化即读写目标错位 | 【已核实】 |
+| HS1 plugins/dsh-extra-plan/lib/settings.js apply 与 ctx.inject(['settings'])（L151-154）+ L153 sctx.settings.register | settings（服务名）+ register(ns, schema, options) | dsh-settings 包内 lib/index.js | 注册设置命名空间 dsh-extra-plan，供设置页与本插件 config 读写 | 服务名、方法签名或 options.base 语义变化即注册失败 | 【已核实】 |
+| HS2 plugins/dsh-extra-plan/lib/settings.js L21 EXTRA_PLAN_NS | NAMESPACE_PATTERN（命名空间命名约束） | dsh-settings 包内 lib/index.js | 命名空间字面量 dsh-extra-plan 必须同时命中宿主命名规则与前端卡片 key | 正则放宽或收紧、校验点迁移即注册被拒 | 【已核实】 |
+| HS3 plugins/dsh-extra-plan/lib/settings.js ctx.inject(['webServer'])（L155-160）+ L157-158 webServer.register({kind:'prefix'}) | webServer（服务名）+ register(route) + route.kind 值域 exact 与 prefix | dsh-host-webserver 包内 lib/index.js | 注册设置页后端路由前缀 /api/dsh-extra-plan-settings 并随 effect 注销 | kind 改 exact 则 /pro-config 子路径不匹配；前缀最长匹配规则变化即路由错位 | 【已核实】 |
+| HS4 plugins/dsh-extra-plan/lib/settings.js L33 与 L26-30（拼 .agent-presets/extra-plan/agent.cordis.yml） | USER_PRESET_DIR + COMPOSITION_FILE + DSH_HOME_ENV + DSH_HOME_DIR_NAME | dsh-agent-presets 包内 lib/index.js；dsh-home-paths 包内 lib/index.js | 定位用户预设目录与组合文件名（读写受管 config 文件） | 目录名、文件名或 DSH_HOME 解析规则变化即读写目标错位 | 【已核实】 |
 | HS5 plugins/dsh-extra-plan/lib/preset-sync.js L278-L289（inject 为空的宿主平面自愈插件） | cordis 插件契约 name 与 inject 与 apply | cordis 包内 lib/index.js（宿主依赖 @deepseek-ai/cordis ^4.0.2） | 作为 bundle patch 行加载，DSH 启动即自愈（幂等、异常被吞） | cordis 改插件契约或 patch 行注入方式变化即 apply 不被调用 | 【已核实】 |
 | HS6 plugins/dsh-extra-plan/lib/preset-sync.js L29 CORE_FILES 与 L115-201 原子发布 | METADATA_FILE + COMPOSITION_FILE + 用户预设目录 .agent-presets | dsh-agent-presets 包内 lib/index.js | 发布用户预设：两文件名与宿主约定完全绑定，目录缺任一即被判 broken | 宿主改名任一常量或改 broken 判定即发布与发现同时失效 | 【已核实】 |
 | HS7 plugins/dsh-extra-plan/lib/preset-sync.js L207-233 cleanupLegacyFlashGuidePatches（含 L219 遗留行正则） | PROFILE_PATCH_FILENAME（profile 用户层 patch 文件名） | dsh-app-boot 包内 lib/index.js | 删宿主 profile 层 profiles 目录下 cordis.patch.yml 里的 flash-guide 遗留行块 | 文件名或 patch 行 YAML 结构变化即正则失效、遗留行残留 | 【已核实】 |
@@ -116,7 +123,7 @@
 | HS12 plugins/dsh-extra-plan/lib/executor-spawn.js L64-68 注释（resolveChildAgentOptions 语义） | resolveChildAgentOptions（对象展开合并 requested） | dsh-subagent 包内 lib/index.js | 说明 agentOptions 空对象与 undefined 等价、父会话 provider/model/maxTokens 全继承 | 合并语义改为显式键判定即空对象可能屏蔽父值（本期注释已同步口径） | 【已核实】 |
 | HS13 plugins/dsh-extra-plan/lib/preset-settings.js L9-22 loadYaml 回退（createRequire 锚定宿主安装包） | 宿主安装包路径 @deepseek-ai/dsh 的 package.json 与其依赖 js-yaml | dsh 包内 package.json 与包内 node_modules/js-yaml | 本地 require js-yaml 失败时借宿主安装目录解析 YAML | 宿主移除 js-yaml 依赖或改 npm 全局前缀即回退断裂 | 【已核实】 |
 | HS14 plugins/dsh-extra-plan/lib/preset-settings.js L25-32 JsExpr 标签 | !!js 标签 schema（yaml.JSON_SCHEMA.extend） | cordis-plugin-include 包内 lib/index.js；dsh-app-boot 包内 lib/index.js | 以保真方式解析预设里的 !!js dshHomePath 表达式 | 宿主换 YAML 库或改标签实现即解析失败 | 【已核实】 |
-| HS15 plugins/dsh-extra-plan/lib/preset-settings.js L59-L102 descriptor 表（pluginId 与 path） | 组合行 id + 行内路径（config 下键路径）定位契约 | dsh-agent-presets 包内 lib/index.js（行结构见本仓 agent.cordis.yml） | 把九项设置写回预设组合行的 config 键（plannerModel、otherAgentModel、crossProviderPlannerModel、toolPresentationMode 等） | 宿主行结构或 config 路径语义变化即改写落点错误 | 【已核实】 |
+| HS15 plugins/dsh-extra-plan/lib/preset-settings.js L59-L102 descriptor 表（pluginId 与 path） | 组合行 id + 行内路径（config 下键路径）定位契约 | dsh-agent-presets 包内 lib/index.js（行结构见本仓 agent.cordis.yml） | 把十项设置写回预设组合行的 config 键（plannerModel、otherAgentModel、crossProviderPlannerModel、toolPresentationMode 等） | 宿主行结构或 config 路径语义变化即改写落点错误 | 【已核实】 |
 | HS16 plugins/dsh-extra-plan/lib/preset-settings.js L37 modeOptions 与 L86 | config.mode 枚举（native / ptc / both） | dsh-agent-tool-presentation 包内 lib/index.js | 设置页 mode 取值必须与宿主该插件的 config.mode 枚举一致 | 宿主枚举增删项即设置页写入非法值 | 【已核实】 |
 | HS17 plugins/dsh-extra-plan/lib/client.js L1-2（__ModuleLoader__.load 自注册，id 为 @local/dsh-extra-plan） | __ModuleLoader__ 打包契约 + loader 注册（重名抛错、未注册即报错） | dsh-client-modules 包内 lib/index.js | 浏览器半 bundle 自注册，id 必须等于包名与组合图行 id | 打包格式或注册契约变化即前端插件不加载 | 【已核实】 |
 | HS18 plugins/dsh-extra-plan/lib/client.js L7 require('react') | 共享模块系统提供的 react | dsh-client-modules 包内 lib/client.js | 客户端 bundle 通过共享 require 取 React（宿主 68 个内置 bundle 同款） | 宿主改共享依赖暴露方式即 require 失败 | 【已核实】 |
@@ -126,24 +133,24 @@
 | HS22 plugins/dsh-extra-plan/lib/client.js L63-79 主题变量引用 | 主题 token --dsw-alias-label-primary 与 border-l2 与 bg-layer-3 与 brand-primary 与 label-secondary 与 label-error 与 label-tertiary | dsh-client-ui-theme 包内 lib/client.js | 卡片配色随宿主主题 token | token 改名或删除即样式与可读性受损 | 【已核实】 |
 | HS23 plugins/dsh-extra-plan/lib/client-bridge.js L15-19（name 与 inject 为空与空 apply） | pathLike 行锚定（点开头或 file: 或绝对路径）+ nearestPackage 向上找 package.json + exports 里的 ./client | dsh-client-modules 包内 lib/index.js | 空壳宿主平面行，唯一作用是让 clientModules 扫到本包 package.json 的 dsh.client 声明 | pathLike 判定、nearestPackage 或 exports 解析变化即前端 bundle 不被发现 | 【已核实】 |
 | HS24 plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml L105-L130（config 含 crossProviderPlannerModel:boolean 与 otherAgentModel:string） | 预设行 config 经宿主 schema 校验后 1:1 传入 apply(ctx, config) | dsh-agent-presets 包内 lib/index.js | 把预设行 config 交给插件（crossProviderPlannerModel 只在 cfg===true 时打开严格路径，otherAgentModel 为空串表示回退主会话） | 宿主改变行 config 传递方式或校验即插件配置读不到 | 【已核实】 |
-| HS25 plugins/dsh-extra-plan/index.js L2556-L3816（name 为 extra-plan、inject 为空、apply(ctx, config)） | cordis 插件契约 name 与 inject 与 apply | cordis 包内 lib/index.js；行注入方 dsh-agent-presets 包内 lib/index.js | 作为 agent 平面预设组合行加载（每会话一份实例），配置快照含 plannerModel/otherAgentModel/crossProviderPlannerModel | 契约或 config 注入方式变化即 apply 不被调用或配置读不到 | 【已核实】 |
+| HS25 plugins/dsh-extra-plan/index.js L1336-L2120（name 为 extra-plan、inject 为空、apply(ctx, config)；name 与 inject 在 L1336-L1337、apply 函数体 L1354-L2120） | cordis 插件契约 name 与 inject 与 apply | cordis 包内 lib/index.js；行注入方 dsh-agent-presets 包内 lib/index.js | 作为 agent 平面预设组合行加载（每会话一份实例），配置快照含 plannerModel/otherAgentModel/crossProviderPlannerModel | 契约或 config 注入方式变化即 apply 不被调用或配置读不到 | 【已核实】 |
 ### ③-B 宿主组合与文件契约层（钩子注册与组合文件契约，共 26 条）
 
 归层原则：ctx.on 钩子注册（emit 与 waterfall 契约）、cordis.patch.yml 的 insert 语义、dsh.bundle.patch 与 exports 解析、.agent-presets 目录与 CORE 文件名契约、!!js dshHomePath、isolate realm、__ModuleLoader__ 打包契约、inject 为空的插件契约。
 
 | 本仓库位置(文件+符号+行号) | 宿主符号(逐字) | 宿主包+包内相对路径 | 用途 | 升级敏感点 | 核实状态 |
 |:--|:--|:--|:--|:--|:--|
-| HK1 plugins/dsh-extra-plan/index.js L3006（注册 agent/session-start） | agent/session-start（mode 为 emit；payload 含 agent 与 source） | dsh-tool-cordis 包内 lib/index.js（钩子签名目录）；派发点 dsh-agent-loop 包内 lib/index.js | 会话启动时初始化本会话账本与状态 | 钩子名、payload 字段或派发时机变化即初始化失效 | 【已核实】 |
-| HK2 plugins/dsh-extra-plan/index.js L3019-L3030（agent/pre-step，判定 decision.kind 不为 enter 直接返回） | agent/pre-step（mode 为 waterfall；next() 返回 PreStepDecision） | dsh-tool-cordis 包内 lib/index.js；派发点 dsh-agent-loop 包内 lib/index.js；类型 dsh-agent 包内 lib/types/runtime-types.d.ts | 锚定引导轮次判定与消息收窄（取 next() 返回值后决定是否直接返回） | 决策 kind 取值或瀑布 next 语义变化即引导逻辑失真 | 【已核实】 |
-| HK3 plugins/dsh-extra-plan/index.js L3087（agent/request-error，try 与 finally 包 next()） | agent/request-error（mode 为 waterfall；payload 含 turn、step、provider、failure、retryPolicy、signal） | dsh-tool-cordis 包内 lib/index.js；派发点 dsh-agent-loop 包内 lib/index.js | 请求失败时记录错误（finally 记账，不影响重试决策） | payload 字段或 next 调用语义变化即记账丢失或重复 | 【已核实】 |
-| HK4 plugins/dsh-extra-plan/index.js L3095（agent/disposed） | agent/disposed（mode 为 emit；读 payload.agent 的 session.header.id） | dsh-tool-cordis 包内 lib/index.js；payload.agent 融合 dsh-agent 包内 lib/index.js | 会话销毁时结算该会话账本 | 钩子或 payload 形状变化即账本不结算 | 【已核实】 |
-| HK5 plugins/dsh-extra-plan/index.js L3115-L3117（system-prompt/assemble，三参 assembly 与 context 与 next） | system-prompt/assemble（mode 为 waterfall；三参形式） | dsh-tool-cordis 包内 lib/index.js；派发点 dsh-system-prompt 包内 lib/index.js；类型 dsh-system-prompt 包内 lib/types/index.d.ts | 注入 anchored 引导段（段名 extra-plan-bootstrap），收窄首轮目录 | 参数元数、瀑布语义或 PromptAssembly 形状变化即引导段丢失 | 【已核实】 |
+| HK1 plugins/dsh-extra-plan/index.js L1657（注册 agent/session-start） | agent/session-start（mode 为 emit；payload 含 agent 与 source） | dsh-tool-cordis 包内 lib/index.js（钩子签名目录）；派发点 dsh-agent-loop 包内 lib/index.js | 会话启动时初始化本会话账本与状态 | 钩子名、payload 字段或派发时机变化即初始化失效 | 【已核实】 |
+| HK2 plugins/dsh-extra-plan/index.js L1686-L1709（agent/pre-step，判定 decision.kind 不为 enter 直接返回在 L1697）；catalog 投影注册点 L1681-L1684 | agent/pre-step（mode 为 waterfall；next() 返回 PreStepDecision） | dsh-tool-cordis 包内 lib/index.js；派发点 dsh-agent-loop 包内 lib/index.js；类型 dsh-agent 包内 lib/types/runtime-types.d.ts | 锚定引导轮次判定与消息收窄（取 next() 返回值后决定是否直接返回） | 决策 kind 取值或瀑布 next 语义变化即引导逻辑失真 | 【已核实】 |
+| HK3 plugins/dsh-extra-plan/index.js L1754（agent/request-error，try 与 finally 包 next()） | agent/request-error（mode 为 waterfall；payload 含 turn、step、provider、failure、retryPolicy、signal） | dsh-tool-cordis 包内 lib/index.js；派发点 dsh-agent-loop 包内 lib/index.js | 请求失败时记录错误（finally 记账，不影响重试决策） | payload 字段或 next 调用语义变化即记账丢失或重复 | 【已核实】 |
+| HK4 plugins/dsh-extra-plan/index.js L1762（agent/disposed） | agent/disposed（mode 为 emit；读 payload.agent 的 session.header.id） | dsh-tool-cordis 包内 lib/index.js；payload.agent 融合 dsh-agent 包内 lib/index.js | 会话销毁时结算该会话账本 | 钩子或 payload 形状变化即账本不结算 | 【已核实】 |
+| HK5 plugins/dsh-extra-plan/index.js L1781-L1881（system-prompt/assemble，三参 assembly 与 context 与 next） | system-prompt/assemble（mode 为 waterfall；三参形式） | dsh-tool-cordis 包内 lib/index.js；派发点 dsh-system-prompt 包内 lib/index.js；类型 dsh-system-prompt 包内 lib/types/index.d.ts | 注入 anchored 引导段（段名 extra-plan-bootstrap），收窄首轮目录 | 参数元数、瀑布语义或 PromptAssembly 形状变化即引导段丢失 | 【已核实】 |
 | HK6 plugins/dsh-extra-plan/index.js（agent/request） | agent/request（mode 为 waterfall；next() 返回 LlmCallConfig） | dsh-tool-cordis 包内 lib/index.js；派发点 dsh-agent-loop 包内 lib/index.js；类型 dsh-agent/lib/types/runtime-types.d.ts | planner 与非 planner child 先 await next；非 planner 显式 route 优先，未显式时 otherAgentModel 的 True 路径完成全部真实 probe/排序或已验证顶层主会话 fallback，最后返回 final LlmCallConfig；随后宿主才 prepareCall/stream | 返回值形状、payload.signal 或 waterfall 等待语义变化会让未验证路由越过屏障 | 【已核实】 |
-| HK6a plugins/dsh-extra-plan/index.js（probePlannerRoute + planner/非 planner strict resolver） | llm.listModels(provider) + llm.listProviders() | dsh-llm 包内 lib/index.js；类型 dsh-llm/lib/types/index.d.ts | True 路径按角色枚举 provider，并仅对 listModels 精确命中的 plannerModel 或 otherAgentModel route 进入真实探针；False 的非 planner 只查询顶层主会话 provider advisory 目录，不触碰 listProviders/真实 probe | listProviders/listModels 返回形状、advisory 语义或注册顺序变化即候选集合与排序输入变化 | 【已核实】 |
-| HK6b plugins/dsh-extra-plan/index.js（probePlannerRoute） | llm.prepareCall(config, signal) + PreparedLlmCall.stream(options) | dsh-llm 包内 lib/index.js；类型 dsh-llm/lib/types/index.d.ts L369-L390、types.d.ts L379-L416 | planner/非 planner True 均以 maxTokens:1、plugin-source OK text、无 system/tools/sessionId/purpose 的同 signal prepared stream 完整消费，finish error/aborted/缺失/超时均失败 | prepare/stream 绑定 registration、call-config 或 StreamChunk 形状变化即探针失真；该契约仅 True 使用 | 【已核实】 |
-| HK7 plugins/dsh-extra-plan/index.js L3308-L3255（tools/pre-execute 硬闸门） | tools/pre-execute（mode 为 waterfall；exec 为 ToolExecution，next() 默认 allow） | dsh-tool-cordis 包内 lib/index.js；派发点 dsh-tools 包内 lib/index.js；类型 dsh-tools 包内 lib/types/index.d.ts | 四级机械闸门（route 与 purpose 与 clarified 与 approved）与多调用拆解拦截 | exec 契约或决策类型变化即闸门失效或误拦 | 【已核实】 |
+| HK6a plugins/dsh-extra-plan/lib/model-routing.js（probePlannerRoute L206-247 + planner/非 planner strict resolver L312-381、L433-477）；钩子侧 index.js L1898-L1960 | llm.listModels(provider) + llm.listProviders() | dsh-llm 包内 lib/index.js；类型 dsh-llm/lib/types/index.d.ts | True 路径按角色枚举 provider，并仅对 listModels 精确命中的 plannerModel 或 otherAgentModel route 进入真实探针；False 的非 planner 只查询顶层主会话 provider advisory 目录，不触碰 listProviders/真实 probe | listProviders/listModels 返回形状、advisory 语义或注册顺序变化即候选集合与排序输入变化 | 【已核实】 |
+| HK6b plugins/dsh-extra-plan/lib/model-routing.js probePlannerRoute L206-247（prepareCall + 完整 prepared stream） | llm.prepareCall(config, signal) + PreparedLlmCall.stream(options) | dsh-llm 包内 lib/index.js；类型 dsh-llm/lib/types/index.d.ts L369-L390、types.d.ts L379-L416 | planner/非 planner True 均以 maxTokens:1、plugin-source OK text、无 system/tools/sessionId/purpose 的同 signal prepared stream 完整消费，finish error/aborted/缺失/超时均失败 | prepare/stream 绑定 registration、call-config 或 StreamChunk 形状变化即探针失真；该契约仅 True 使用 | 【已核实】 |
+| HK7 plugins/dsh-extra-plan/index.js L1964-L2119（tools/pre-execute 硬闸门） | tools/pre-execute（mode 为 waterfall；exec 为 ToolExecution，next() 默认 allow） | dsh-tool-cordis 包内 lib/index.js；派发点 dsh-tools 包内 lib/index.js；类型 dsh-tools 包内 lib/types/index.d.ts | 四级机械闸门（route 与 purpose 与 clarified 与 approved）与多调用拆解拦截 | exec 契约或决策类型变化即闸门失效或误拦 | 【已核实】 |
 | HK8 plugins/dsh-extra-plan/index.js 七个钩子回调内统一读取 payload.agent | agentEvents fused()：把 agent 融进 payload | dsh-agent 包内 lib/index.js | 所有钩子以 payload.agent 取当前 agent 与 session 上下文 | 融合机制或 payload 形状变化即取不到 agent | 【已核实】 |
-| HK9 plugins/dsh-extra-plan/index.js L3292-L3302（按 source 三元组识别通知并按正文正则解析 jobId） | background job 通知的 source 三元组（kind 为 plugin、plugin 为 tool-jobs、form 为 notice）与正文前缀 background job 加 id | dsh-tool-jobs 包内 lib/index.js | 识别 tool-jobs 完成通知并解析 jobId（解析失败保守不放行） | source 三元组或正文格式变化即解析失败、通知渠道降级 | 【已核实】 |
+| HK9 plugins/dsh-extra-plan/index.js L1990-L2022（按 source 三元组识别通知并按正文正则解析 jobId，match 在 L2012） | background job 通知的 source 三元组（kind 为 plugin、plugin 为 tool-jobs、form 为 notice）与正文前缀 background job 加 id | dsh-tool-jobs 包内 lib/index.js | 识别 tool-jobs 完成通知并解析 jobId（解析失败保守不放行） | source 三元组或正文格式变化即解析失败、通知渠道降级 | 【已核实】 |
 | HK11 plugins/dsh-extra-plan/cordis.patch.yml 三条 insert 行（一条相对路径行与两条 branded 子路径行） | patch 顶层数组语法 insert（无 id 的 insert 追加到根列表）+ anchorInsertedPluginNames 相对路径绝对化 | dsh-app-boot 包内 lib/index.js | 把 client-bridge 与 settings 与 preset-sync 三行注入 profile 组合树 | patch 语义或相对路径基准变化即行不注入或被 warn 跳过 | 【已核实】 |
 | HK12 plugins/dsh-extra-plan/package.json dsh.bundle.patch 指向 ./cordis.patch.yml | dsh.bundle.patch（loadProfile 读取点；缺失抛 declares no dsh.bundle） | dsh-app-boot 包内 lib/index.js；profile 侧 profiles/web/package.json | 声明本包为 profile bundle 并给出 patch 入口 | 字段名或基准目录变化即 patch 不加载、启动报错 | 【已核实】 |
 | HK13 plugins/dsh-extra-plan/package.json L7-16 exports 子路径（与 cordis.patch.yml 两条 branded 行对应） | exports 解析（resolve 子路径；解析失败有专门报错口径） | dsh-app-boot 包内 lib/index.js | 以 @local/dsh-extra-plan/settings 与 /preset-sync 载入宿主平面行 | exports 解析规则或报错口径变化即行解析失败 | 【已核实】 |
@@ -153,9 +160,9 @@
 | HK17 plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml 四行 tool-subagent（provider 与 toolName 与 backgroundMode 与 persona 与 toolFilter.deny 与 maxDepth） | 行配置 schema（provider 必填、toolName 默认 subagent、backgroundMode 值域、toolFilter 的 allow 与 deny、maxDepth 默认 3） | dsh-tool-subagent 包内 lib/index.js | 定义执行者与规划者与 workflow 与 ralph 四类子代理行与 deny 清单 | schema 增删键或值域变化即预设加载报错或裁剪失效 | 【已核实】 |
 | HK18 plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml L312-316 executor-spawn 行（providerName 与 delegate） | 子代理行 config 经 schema 校验后交给本仓 provider 实现 | dsh-tool-subagent 包内 lib/index.js | 把 workflow 与 ralph 两行的 provider 指向本仓 executor-spawn | config 键名或传递方式变化即委托链断裂 | 【已核实】 |
 | HK19 plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml L163 与 L168 宿主包子路径行 | 宿主包行名解析（exports 子路径，如 tool-subagent-control 下的 list-agents） | dsh-app-boot 包内 lib/index.js；对应包 dsh-tool-subagent-control 包内 lib/index.js | 在预设组合中直接挂宿主包的行 | 宿主包改名或移除子路径导出即预设加载失败 | 【已核实】 |
-| HK20 plugins/dsh-extra-plan/index.js L214-L215 与 L230（子代理识别与沙箱下限判定） | SessionHeader 的 origin 为 subagent 与 delegationDepth 与 parentSession | dsh-session 包内 lib/types/types.d.ts | 识别子代理会话，决定是否施加工作区写沙箱下限 | 字段改名或缺失即把子代理当主会话处理（沙箱下限失效） | 【已核实】 |
-| HK21 plugins/dsh-extra-plan/index.js L1895-L1896（exec.sub 与 exec.parent 判定） | ToolExecution.parent（宿主侧字段；另有 rootCallId 与 arguments 与 agent） | dsh-tools 包内 lib/types/index.d.ts | 判断该调用是否为委派子会话调用（闸门对象判定） | parent 语义变化即判定漂移（注意 sub 非宿主字段，见⑥） | 【已核实】 |
-| HK22 plugins/dsh-extra-plan/index.js L314 与 L262 与 L271（exec.arguments 为已解析对象并取 command 键） | ToolExecution.arguments（宿主已解析对象，非 JSON 字符串） | dsh-tools 包内 lib/types/index.d.ts | 闸门按已解析参数判定命令类调用（pwsh 与 bash 同形） | 参数解析时机或形状变化即判定失效 | 【已核实】 |
+| HK20 plugins/dsh-extra-plan/lib/agent-session.js L21-36（isSubagentChild 子代理识别：header.origin/delegationDepth/descriptor 三路探测）+ index.js L203-L208 与 L1587-L1591（childPolicyNeedsFloor/floorChildPolicy 沙箱下限判定） | SessionHeader 的 origin 为 subagent 与 delegationDepth 与 parentSession | dsh-session 包内 lib/types/types.d.ts | 识别子代理会话，决定是否施加工作区写沙箱下限 | 字段改名或缺失即把子代理当主会话处理（沙箱下限失效） | 【已核实】 |
+| HK21 plugins/dsh-extra-plan/lib/run-code-static.js isRunCodeSubCall L637-L641（exec.sub 与 exec.parent 判定） | ToolExecution.parent（宿主侧字段；另有 rootCallId 与 arguments 与 agent） | dsh-tools 包内 lib/types/index.d.ts | 判断该调用是否为委派子会话调用（闸门对象判定） | parent 语义变化即判定漂移（注意 sub 非宿主字段，见⑥） | 【已核实】 |
+| HK22 plugins/dsh-extra-plan/index.js L226-L238（commandTextOf 取 exec.arguments 的 command 键）与 L274-L275（pwsh/bash 写判定调用点） | ToolExecution.arguments（宿主已解析对象，非 JSON 字符串） | dsh-tools 包内 lib/types/index.d.ts | 闸门按已解析参数判定命令类调用（pwsh 与 bash 同形） | 参数解析时机或形状变化即判定失效 | 【已核实】 |
 | HK24 plugins/dsh-extra-plan/lib/client-bridge.js 空壳行与 package.json dsh.client | pathLike 行须写点开头的相对路径（否则按精确包名解析、行被跳过） | dsh-app-boot 包内 lib/index.js（anchorInsertedPluginNames）；dsh-client-modules 包内 lib/index.js | 让宿主扫到本包客户端声明 | pathLike 判定或精确包名解析规则变化即行被跳过 | 【已核实】 |
 | HK10 pe-test/tools/step-06-线索落盘.mjs（构造宿主事件形状走 apply 的注册层与闸门回归） | subagent/descriptor 与 user/message 与 tool/call 与 tool/result 事件负载形状 | dsh-session 包内 lib/types/types.d.ts；dsh-subagent 包内 lib/types/descriptor.d.ts | mock ctx 回归插件注册层与闸门（夹具必须与真实负载同形） | 事件形状变化即夹具脱离真实负载、回归假绿 | 【已核实】 |
 | HK23 pe-test/tools/step-01-预设完整性.mjs（宿主包名清单与行结构静态断言） | 宿主包名与组合行结构（静态字面量，不代表宿主运行时契约） | dsh-agent-presets 包内 lib/index.js；dsh-tool-subagent 包内 lib/index.js | 纯工作区模板校验（不访问生产 DSH_HOME） | 宿主包改名后该断言同时失效，不会先于预设发现漂移 | 【已核实】 |
@@ -167,40 +174,40 @@
 |:--|:--|:--|:--|:--|:--|
 | SD1 pe-test/_shared/session-finder.mjs L16-L65（SESSIONS 布局与首行 parentSession；step-07 复用） | 会话存储布局 sessions 目录结构 + 首行 parentSession 字段 | dsh-session-persistence-jsonl 包内 lib/index.js；字段校验 dsh-session 包内 lib/types/types.d.ts | 取证工具按布局定位会话并读首行取父会话 | 布局或首行字段变化即取证工具全部失效 | 【已核实】 |
 | SD2 pe-test/_shared/zstd-frames.mjs L6（帧魔术数）与 L40-42（step-07 复用） | 会话日志压缩后缀与 zstd 帧格式（compression 为 zstd 时后缀 .jsonl.zstd；文件名两代并列：0.1.2-rc.1=session.jsonl.zstd、0.1.5-rc.2 起=session.v3.jsonl.zstd） | dsh-session-persistence-jsonl 包内 lib/index.js | 自实现 zstd 帧切分并用 node:zlib 解压读会话日志 | 宿主换压缩格式或文件名规则即解码失败 | 【已核实】 |
-| SD3 plugins/dsh-extra-plan/index.js L580-L755 与 L591（会话事件流解析） | user/message 事件负载（data.source.kind 为 user） | dsh-session 包内 lib/types/types.d.ts | 扫描会话事件流判定用户轮起点（预算锚点） | 事件键或负载形状变化即锚点判定失效 | 【已核实】 |
-| SD4 plugins/dsh-extra-plan/index.js L604 与 L335-336（tool/call 解析） | tool/call 事件负载（turn 与 step 与 callId 与 name 与 arguments，arguments 是原始 JSON 字符串） | dsh-session 包内 lib/types/types.d.ts | 识别 ask_user_question 调用与澄清选项（含第四锚点目的 ask：仍属 tool/call + options 解析，无实质变更） | arguments 由字符串改对象即 JSON.parse 抛错 | 【已核实】 |
-| SD5 plugins/dsh-extra-plan/index.js L740 与 L736（tool/result 与错误块排除） | tool/result 事件负载（turn 与 step 与 message 与 error 与 meta）+ ToolResultBlock 的 isError | dsh-session 包内 lib/types/types.d.ts；dsh-llm 包内 lib/types/types.d.ts | 按结果与错误标记计预算（被拒调用不计） | 负载或错误标记口径变化即预算计数偏差 | 【已核实】 |
-| SD6 plugins/dsh-extra-plan/index.js L2451-L2464（assistant/message 用量记账） | assistant/message 事件负载（turn 与 step 与 message 与 usage 与 interrupted）+ TokenUsage + MessageSourceMap 的 model | dsh-session 包内 lib/types/types.d.ts；dsh-llm 包内 lib/types/types.d.ts 与 lib/types/message.d.ts | usage 账本累加输入与输出与缓存读 tokens 及来源模型 | 字段改名或来源映射变化即账本失真 | 【已核实】 |
-| SD7 plugins/dsh-extra-plan/index.js L611 与 L554-L561（tool/code-dispatch-start 解析） | tool/code-dispatch-start 与 tool/code-dispatch（0.1.2-rc.1）/ tool/ptc-dispatch-start 与 tool/ptc-dispatch（0.1.5-rc.2）负载（rootCallId 与 parentCallId 与 subCallId 与 name 与 arguments 与 isError 与 content） | dsh-tools 包内 lib/types/types.d.ts 与 lib/types/invariant.js | PTC 模式下统计 run_code 子调用与判定拆解组 | 字段或调用链不变量变化即统计与拦截失效 | 【已核实】 |
-| SD8 plugins/dsh-extra-plan/index.js L2600-L2614（subagent/descriptor 判定 continuable） | subagent/descriptor 事件（mode 取值 one-shot 或 continuable） | dsh-subagent 包内 lib/types/descriptor.d.ts | 区分可续轮子代理（规划者）与 one-shot（执行者与验收者） | mode 值域或事件版本变化即角色判定漂移 | 【已核实】 |
-| SD11 plugins/dsh-extra-plan/index.js requestConfigSnapshot/resolveAgentRouteSources（requestHeader 与 header.config） | Session.requestHeader() 返回 EpochHeader（内含 config 为 LlmCallConfig） | dsh-session 包内 lib/types/index.d.ts；dsh-llm 包内 lib/types/call-config.d.ts | 沿 parentSession 上溯顶层主会话 provider/model；planner 与非 planner True fallback 必须验证该 route，非 planner False 只对该 provider 做 advisory listModels | 返回值形状或 config 位置变化即继承/严格 fallback 取不到值 | 【已核实】 |
-| SD10 plugins/dsh-extra-plan/index.js L194-L198（session.snapshotEvents()） | Session.snapshotEvents(fromSeq, toSeqExclusive) | dsh-session 包内 lib/types/index.d.ts | 读取会话事件快照（已弃用 events getter） | 方法签名变化即读取失败 | 【已核实】 |
+| SD3 plugins/dsh-extra-plan/index.js L565-L672（deriveFlowState 事件流回放）与 L715-L730（toolCallsSinceUser 预算锚点） | user/message 事件负载（data.source.kind 为 user） | dsh-session 包内 lib/types/types.d.ts | 扫描会话事件流判定用户轮起点（预算锚点） | 事件键或负载形状变化即锚点判定失效 | 【已核实】 |
+| SD4 plugins/dsh-extra-plan/index.js L488-L523（parseAskResultData 解析 answers）与 L565-L672（deriveFlowState 内 tool/call 解析） | tool/call 事件负载（turn 与 step 与 callId 与 name 与 arguments，arguments 是原始 JSON 字符串） | dsh-session 包内 lib/types/types.d.ts | 识别 ask_user_question 调用与澄清选项（含第四锚点目的 ask：仍属 tool/call + options 解析，无实质变更） | arguments 由字符串改对象即 JSON.parse 抛错 | 【已核实】 |
+| SD5 plugins/dsh-extra-plan/index.js L681-L708（toolCallCount 按块级 isError 排除被拒调用） | tool/result 事件负载（turn 与 step 与 message 与 error 与 meta）+ ToolResultBlock 的 isError | dsh-session 包内 lib/types/types.d.ts；dsh-llm 包内 lib/types/types.d.ts | 按结果与错误标记计预算（被拒调用不计） | 负载或错误标记口径变化即预算计数偏差 | 【已核实】 |
+| SD6 plugins/dsh-extra-plan/index.js L1391-L1465（foldUsage 的 assistant/message 分支，判定在 L1422；累加字段在 L1430） | assistant/message 事件负载（turn 与 step 与 message 与 usage 与 interrupted）+ TokenUsage + MessageSourceMap 的 model | dsh-session 包内 lib/types/types.d.ts；dsh-llm 包内 lib/types/types.d.ts 与 lib/types/message.d.ts | usage 账本累加输入与输出与缓存读 tokens 及来源模型 | 字段改名或来源映射变化即账本失真 | 【已核实】 |
+| SD7 plugins/dsh-extra-plan/index.js L531-L557（parseDispatchAskResult）与 L565-L672（deriveFlowState 双兼容事件名解析） | tool/code-dispatch-start 与 tool/code-dispatch（0.1.2-rc.1）/ tool/ptc-dispatch-start 与 tool/ptc-dispatch（0.1.5-rc.2）负载（rootCallId 与 parentCallId 与 subCallId 与 name 与 arguments 与 isError 与 content） | dsh-tools 包内 lib/types/types.d.ts 与 lib/types/invariant.js | PTC 模式下统计 run_code 子调用与判定拆解组 | 字段或调用链不变量变化即统计与拦截失效 | 【已核实】 |
+| SD8 plugins/dsh-extra-plan/index.js L1482-L1496（isPlannerChild 按 subagent/descriptor.mode=continuable 判定） | subagent/descriptor 事件（mode 取值 one-shot 或 continuable） | dsh-subagent 包内 lib/types/descriptor.d.ts | 区分可续轮子代理（规划者）与 one-shot（执行者与验收者） | mode 值域或事件版本变化即角色判定漂移 | 【已核实】 |
+| SD11 plugins/dsh-extra-plan/lib/model-routing.js requestConfigSnapshot L39-52 与 resolveAgentRouteSources L60-85（requestHeader 与 header.config） | Session.requestHeader() 返回 EpochHeader（内含 config 为 LlmCallConfig） | dsh-session 包内 lib/types/index.d.ts；dsh-llm 包内 lib/types/call-config.d.ts | 沿 parentSession 上溯顶层主会话 provider/model；planner 与非 planner True fallback 必须验证该 route，非 planner False 只对该 provider 做 advisory listModels | 返回值形状或 config 位置变化即继承/严格 fallback 取不到值 | 【已核实】 |
+| SD10 plugins/dsh-extra-plan/lib/agent-session.js L14-18（sessionEvents → session.snapshotEvents(fromSeq, toSeqExclusive)） | Session.snapshotEvents(fromSeq, toSeqExclusive) | dsh-session 包内 lib/types/index.d.ts | 读取会话事件快照（已弃用 events getter） | 方法签名变化即读取失败 | 【已核实】 |
 
-| SD12 plugins/dsh-extra-plan/index.js L2927（agent.session.append 写 sandbox/mode） | Session.append(type, data) 与 sandbox/mode 事件负载（mode 与 source） | dsh-session 包内 lib/types/index.d.ts；dsh-sandbox-policy 包内 lib/types/session-mode.d.ts | 为委派子会话写沙箱下限（本插件唯一一次会话事件写入） | append 签名或事件键与负载变化即写入失败或被忽略 | 【已核实】 |
-| SD15 plugins/dsh-extra-plan/index.js probePlannerRoute 与 planner/非 planner resolver（llm.listModels(provider)） | llm（服务名）+ listModels(provider) 返回 LlmModelInfo 数组 | dsh-llm 包内 lib/index.js（签名目录 dsh-tool-cordis 包内 lib/index.js） | planner False 保留父 provider advisory；非 planner False 只查顶层主会话 provider；True 按角色逐 provider 精确匹配后进入真实 probe | 服务名或返回项形状变化即列表为空/候选集合变化 | 【已核实】 |
-| SD14 plugins/dsh-extra-plan/index.js agentFromRegistry/resolveAgentRouteSources（agents.get(parentSession)） | agents（服务名）+ get(id 为 SessionId) | dsh-agent 包内 lib/index.js | 判断父会话是否仍存活并上溯顶层主会话 route | 服务名或 get 语义变化即存活判定失效或 fallback 取错 | 【已核实】 |
+| SD12 plugins/dsh-extra-plan/index.js L1589（agent.session.append 写 sandbox/mode） | Session.append(type, data) 与 sandbox/mode 事件负载（mode 与 source） | dsh-session 包内 lib/types/index.d.ts；dsh-sandbox-policy 包内 lib/types/session-mode.d.ts | 为委派子会话写沙箱下限（本插件唯一一次会话事件写入） | append 签名或事件键与负载变化即写入失败或被忽略 | 【已核实】 |
+| SD15 plugins/dsh-extra-plan/lib/model-routing.js probePlannerRoute L206-247 与 planner/非 planner resolver（llm.listModels(provider)） | llm（服务名）+ listModels(provider) 返回 LlmModelInfo 数组 | dsh-llm 包内 lib/index.js（签名目录 dsh-tool-cordis 包内 lib/index.js） | planner False 保留父 provider advisory；非 planner False 只查顶层主会话 provider；True 按角色逐 provider 精确匹配后进入真实 probe | 服务名或返回项形状变化即列表为空/候选集合变化 | 【已核实】 |
+| SD14 plugins/dsh-extra-plan/lib/model-routing.js agentFromRegistry L54-57 与 resolveAgentRouteSources L60-85（agents.get(parentSession)） | agents（服务名）+ get(id 为 SessionId) | dsh-agent 包内 lib/index.js | 判断父会话是否仍存活并上溯顶层主会话 route | 服务名或 get 语义变化即存活判定失效或 fallback 取错 | 【已核实】 |
 
-| SD16 plugins/dsh-extra-plan/index.js L2645-L2661（agentPresets.resolve 与 skills.register） | agentPresets（服务名）+ resolve(id) 返回 AgentPreset；skills（服务名）+ register(definition) | dsh-agent-presets 包内 lib/index.js 与 lib/types/preset.d.ts；dsh-skill 包内 lib/index.js 与 lib/types/index.d.ts | 据 AgentPreset.path 的目录名注册官方 skills | 服务名、注册形状或 SkillRegistration 字段变化即 skills 注册失败 | 【已核实】 |
-| SD17 plugins/dsh-extra-plan/index.js L2648-L2672（ctx.effect 生命周期） | ctx.effect(callback)（cordis 插件生命周期 API） | cordis 包内 lib/index.js | 把 skills 注册等副作用绑定到当前 fiber，随插件销毁回收 | effect 语义变化即副作用泄漏或提前回收 | 【已核实】 |
-| SD18 plugins/dsh-extra-plan/index.js L2543-L2544（tools.schemas(agent)） | tools（服务名，经 agent.ctx.get 取）+ schemas(scope) 返回 ToolSchema 数组 | dsh-tools 包内 lib/index.js（签名目录 dsh-tool-cordis 包内 lib/index.js） | 取当前作用域可见工具清单用于引导收窄 | 返回形状或作用域解析变化即收窄失效 | 【已核实】 |
-| SD19 plugins/dsh-extra-plan/index.js L2766-L2845 工具注册面（parameters 与 output.schema 与 render 与 execute） | ToolRuntime.register(definition) 返回 disposer；restrict(filter)；ToolDefinition 与 ToolOutputDefinition 形状 | dsh-tools 包内 lib/index.js 与 lib/types/index.d.ts | 注册 save_probe 与 save_plan 与 show_file 等工具（未用 restrict、未接 disposer） | 定义形状（render 与 execute 签名）变化即工具不可用 | 【已核实】 |
-| SD20 plugins/dsh-extra-plan/index.js L2792-L2802（execute(args, exec) 取 exec.agent.session 与 session.header.cwd） | ToolRunContext 与 SessionHeader.cwd | dsh-tools 包内 lib/types/index.d.ts；dsh-session 包内 lib/types/types.d.ts | 工具执行期取会话工作区路径与 agent 上下文 | cwd 字段改名或缺失即工具拒绝执行 | 【已核实】 |
-| SD21 plugins/dsh-extra-plan/index.js L2801-L2802 与 L2952（save_probe 同形取 cwd） | SessionHeader.cwd（会话工作区路径） | dsh-session 包内 lib/types/types.d.ts | 落盘路径基准（线索与方案文件所在工作区） | 字段缺失即落盘不可用 | 【已核实】 |
-| SD22 plugins/dsh-extra-plan/index.js L3154-L3156（返回 sections 与 contexts 与 tools） | PromptAssembly（sections 与 contexts 与 tools 与 variables）+ AssembledSection（name 与 text） | dsh-system-prompt 包内 lib/types/index.d.ts | 以 extra-plan-bootstrap 段注入引导内容 | 结构变化即引导段被丢弃或渲染异常 | 【已核实】 |
-| SD23 plugins/dsh-extra-plan/index.js L3029-L3030（PreStepDecision） | PreStepDecision（kind 为 reject 或 enter，enter 带 messages 与 startsRequestSeries） | dsh-agent 包内 lib/types/runtime-types.d.ts | 决定本轮是否进入请求序列并收窄 messages | 取值域变化即引导逻辑失效 | 【已核实】 |
-| SD24 plugins/dsh-extra-plan/index.js L3254-L3302（PreToolDecision 与拒绝文案） | PreToolDecision（kind 为 allow 或 deny 或 ask） | dsh-tools 包内 lib/types/index.d.ts | 闸门放行与拒绝与追问三态输出 | 取值域变化即闸门行为异常 | 【已核实】 |
-| SD25 plugins/dsh-extra-plan/index.js L3178-L3201（exec 字段使用与瀑布链 next） | tools/pre-execute 的 exec 契约（callId 与 rootCallId 与 name 与 arguments 与 agent 与 parent 与 signal 与 token）与瀑布链 next() | dsh-tool-cordis 包内 lib/index.js（钩子签名目录）；dsh-tools 包内 lib/types/index.d.ts | 闸门读取调用上下文并串联其他插件的 pre-execute 钩子 | 字段增删或 next 语义变化即闸门误判 | 【已核实】 |
+| SD16 plugins/dsh-extra-plan/index.js L1544-L1575（ctx.effect 内 agentPresets.resolve（L1547）与 skills.register（L1557）） | agentPresets（服务名）+ resolve(id) 返回 AgentPreset；skills（服务名）+ register(definition) | dsh-agent-presets 包内 lib/index.js 与 lib/types/preset.d.ts；dsh-skill 包内 lib/index.js 与 lib/types/index.d.ts | 据 AgentPreset.path 的目录名注册官方 skills | 服务名、注册形状或 SkillRegistration 字段变化即 skills 注册失败 | 【已核实】 |
+| SD17 plugins/dsh-extra-plan/index.js L1544（ctx.effect 生命周期绑定） | ctx.effect(callback)（cordis 插件生命周期 API） | cordis 包内 lib/index.js | 把 skills 注册等副作用绑定到当前 fiber，随插件销毁回收 | effect 语义变化即副作用泄漏或提前回收 | 【已核实】 |
+| SD18 plugins/dsh-extra-plan/index.js L1501-L1519（toolSchemasOf 取 tools.schemas(agent)，调用在 L1514） | tools（服务名，经 agent.ctx.get 取）+ schemas(scope) 返回 ToolSchema 数组 | dsh-tools 包内 lib/index.js（签名目录 dsh-tool-cordis 包内 lib/index.js） | 取当前作用域可见工具清单用于引导收窄 | 返回形状或作用域解析变化即收窄失效 | 【已核实】 |
+| SD19 plugins/dsh-extra-plan/lib/save-tool-factories.js L7-192 工具定义面（parameters 与 output.schema 与 render 与 execute）；注册点 index.js L1608-L1613(registerTool)/L1620(registerSavePlan)/L1624(registerSaveProbe) | ToolRuntime.register(definition) 返回 disposer；restrict(filter)；ToolDefinition 与 ToolOutputDefinition 形状 | dsh-tools 包内 lib/index.js 与 lib/types/index.d.ts | 注册 save_probe 与 save_plan 与 show_file 等工具（未用 restrict、未接 disposer） | 定义形状（render 与 execute 签名）变化即工具不可用 | 【已核实】 |
+| SD20 plugins/dsh-extra-plan/lib/save-tool-factories.js L42-43（execute(args, exec) 取 exec.agent.session 与 session.header.cwd） | ToolRunContext 与 SessionHeader.cwd | dsh-tools 包内 lib/types/index.d.ts；dsh-session 包内 lib/types/types.d.ts | 工具执行期取会话工作区路径与 agent 上下文 | cwd 字段改名或缺失即工具拒绝执行 | 【已核实】 |
+| SD21 plugins/dsh-extra-plan/lib/save-tool-factories.js L170-L171（save_probe 同形取 cwd） | SessionHeader.cwd（会话工作区路径） | dsh-session 包内 lib/types/types.d.ts | 落盘路径基准（线索与方案文件所在工作区） | 字段缺失即落盘不可用 | 【已核实】 |
+| SD22 plugins/dsh-extra-plan/index.js L1781-L1881（assemble 钩子；返回 sections/contexts/tools 在 L1875-L1880） | PromptAssembly（sections 与 contexts 与 tools 与 variables）+ AssembledSection（name 与 text） | dsh-system-prompt 包内 lib/types/index.d.ts | 以 extra-plan-bootstrap 段注入引导内容 | 结构变化即引导段被丢弃或渲染异常 | 【已核实】 |
+| SD23 plugins/dsh-extra-plan/index.js L1686-L1709（PreStepDecision；kind !== 'enter' 直接返回在 L1697） | PreStepDecision（kind 为 reject 或 enter，enter 带 messages 与 startsRequestSeries） | dsh-agent 包内 lib/types/runtime-types.d.ts | 决定本轮是否进入请求序列并收窄 messages | 取值域变化即引导逻辑失效 | 【已核实】 |
+| SD24 plugins/dsh-extra-plan/index.js L1964-L2119（PreToolDecision 与拒绝文案；deny 在 L2106、放行在 L2118） | PreToolDecision（kind 为 allow 或 deny 或 ask） | dsh-tools 包内 lib/types/index.d.ts | 闸门放行与拒绝与追问三态输出 | 取值域变化即闸门行为异常 | 【已核实】 |
+| SD25 plugins/dsh-extra-plan/index.js L1964-L2119（exec 字段使用与瀑布链 next） | tools/pre-execute 的 exec 契约（callId 与 rootCallId 与 name 与 arguments 与 agent 与 parent 与 signal 与 token）与瀑布链 next() | dsh-tool-cordis 包内 lib/index.js（钩子签名目录）；dsh-tools 包内 lib/types/index.d.ts | 闸门读取调用上下文并串联其他插件的 pre-execute 钩子 | 字段增删或 next 语义变化即闸门误判 | 【已核实】 |
 | SD26 plugins/dsh-extra-plan/index.js 七个钩子的事件主体解析依赖 | scoped 事件到路由 subject 的解析表（tools/pre-execute 取第一个参数的 agent；system-prompt/assemble 取第二个参数的 scope） | dsh-scope 包内 lib/invariant.js | 决定 payload.agent 与 context.scope 是否注入到本插件的钩子回调 | 映射表变化即 payload.agent 或 scope 变为 undefined | 【已核实】 |
 | SD27 plugins/dsh-extra-plan/index.js agent/request listener（返回值改写与力度抑制） | LlmCallConfig（provider 与 model 与 reasoningEffort 与 temperature 与 maxTokens 与 stop） | dsh-llm 包内 lib/types/call-config.d.ts | planner 只注入 plannerModel；非 planner 显式 route 优先，未显式时注入 otherAgentModel 或顶层主会话 fallback，并保留 maxTokens/reasoningEffort 继承 | 字段改名或校验收紧即请求构造失败 | 【已核实】 |
-| SD28 plugins/dsh-extra-plan/index.js L2459-L2461（usage 字段累加） | TokenUsage（inputTokens 与 outputTokens 与 totalTokens 与 cacheReadTokens 与 cacheWriteTokens 与 reasoningTokens） | dsh-llm 包内 lib/types/types.d.ts | usage 账本按类型累加（缺失键按 0 计） | 字段改名即账本数值归零 | 【已核实】 |
-| SD29 plugins/dsh-extra-plan/index.js L736-L740（内容块判定） | ToolResultBlock（type 为 tool-result 与 toolCallId 与 content 与 isError） | dsh-llm 包内 lib/types/types.d.ts | 解析工具结果内容块（排除被拒调用） | 内容块形状变化即解析失败 | 【已核实】 |
+| SD28 plugins/dsh-extra-plan/index.js L1391-L1465（foldUsage 内 usage 字段累加，类型字段读取在 L1430） | TokenUsage（inputTokens 与 outputTokens 与 totalTokens 与 cacheReadTokens 与 cacheWriteTokens 与 reasoningTokens） | dsh-llm 包内 lib/types/types.d.ts | usage 账本按类型累加（缺失键按 0 计） | 字段改名即账本数值归零 | 【已核实】 |
+| SD29 plugins/dsh-extra-plan/index.js L681-L708（toolCallCount）与 L693（tool-result 块判定） | ToolResultBlock（type 为 tool-result 与 toolCallId 与 content 与 isError） | dsh-llm 包内 lib/types/types.d.ts | 解析工具结果内容块（排除被拒调用） | 内容块形状变化即解析失败 | 【已核实】 |
 | SD30 plugins/dsh-extra-plan/index.js 工具注册与 schemas 消费（ToolSchema） | ToolSchema（name 与 description 与 parameters） | dsh-llm 包内 lib/types/types.d.ts | 工具入参与出参 schema 声明 | 形状变化即 schema 校验失败 | 【已核实】 |
-| SD31 plugins/dsh-extra-plan/index.js L3154-L3156 上下文消费（AssembleContext） | AssembleContext（scope 与 signal）+ dsh-agent 对它的 agent 模块增强 | dsh-system-prompt 包内 lib/types/index.d.ts；dsh-agent 包内 lib/types/runtime-types.d.ts | 从 assemble 上下文取 agent 判定会话角色 | 增强字段被移除即 context.agent 为 undefined | 【已核实】 |
-| SD32 plugins/dsh-extra-plan/index.js L335-336（ask_user_question 错误码依赖） | ask_user_question 错误码全集（CALLER_NOT_LIVE 与 DELEGATED_CALLER 与 BAD_INTENT 与 NO_PROVIDER 与 ASK_ABORTED 与 EMPTY_QUESTIONS） | dsh-user-questions 包内 lib/types/index.js | 通道逃生白名单依据（据错误码判定是否放行替代通道） | 错误码增删改名即逃生判定漂移 | 【已核实】 |
-| SD36 plugins/dsh-extra-plan/index.js L3292 与 L3302（子代理结果文本识别） | subagent 结果文本前缀 started subagent 加 id，与 backgroundMode 到 descriptor.mode 的映射 | dsh-tool-subagent 包内 lib/index.js | 从工具结果文本识别子代理启动与后台模式 | 文本格式或映射变化即识别失败 | 【已核实】 |
-| SD37 plugins/dsh-extra-plan/index.js budgetReminderMessage（createUserMessage 构造，L867-L869）+ L3039 使用点 | createUserMessage（dsh-llm 导出：返回 {source,content,role:'user',id}，id=brandString(randomUUID())） | dsh-llm 包内 lib/types/message.js（经 lib/index.js 导出） | 会话内注入的 user/message 身份字段（id/role）必须由宿主构造器给出，手拼消息缺 id/role 会被会话判损坏，预算提醒经此构造 | createUserMessage 签名/字段变化或 user/message 身份校验收紧即注入失效 | 【已核实】 |
+| SD31 plugins/dsh-extra-plan/index.js L1781-L1783 上下文消费（AssembleContext：context.agent 判定会话角色） | AssembleContext（scope 与 signal）+ dsh-agent 对它的 agent 模块增强 | dsh-system-prompt 包内 lib/types/index.d.ts；dsh-agent 包内 lib/types/runtime-types.d.ts | 从 assemble 上下文取 agent 判定会话角色 | 增强字段被移除即 context.agent 为 undefined | 【已核实】 |
+| SD32 plugins/dsh-extra-plan/index.js L88（CHANNEL_BROKEN_CODES 白名单）与 L565-L672（deriveFlowState 错误码分支） | ask_user_question 错误码全集（CALLER_NOT_LIVE 与 DELEGATED_CALLER 与 BAD_INTENT 与 NO_PROVIDER 与 ASK_ABORTED 与 EMPTY_QUESTIONS） | dsh-user-questions 包内 lib/types/index.js | 通道逃生白名单依据（据错误码判定是否放行替代通道） | 错误码增删改名即逃生判定漂移 | 【已核实】 |
+| SD36 plugins/dsh-extra-plan/index.js L1482-L1496（isPlannerChild 按 subagent/descriptor.mode 判定）与 L1634-L1650（probeClaimFor 认领判定） | backgroundMode 到 descriptor.mode 的映射（continuable/one-shot） | dsh-tool-subagent 包内 lib/index.js | 按 subagent/descriptor.mode 区分可续轮规划者与 one-shot；当前版本不再依赖「started subagent <id>」结果文本（全仓 0 命中） | 文本格式或映射变化即识别失败 | 【已核实】 |
+| SD37 plugins/dsh-extra-plan/index.js budgetReminderMessage（createUserMessage 构造，L789-L790）+ L1706 使用点 | createUserMessage（dsh-llm 导出：返回 {source,content,role:'user',id}，id=brandString(randomUUID())） | dsh-llm 包内 lib/types/message.js（经 lib/index.js 导出） | 会话内注入的 user/message 身份字段（id/role）必须由宿主构造器给出，手拼消息缺 id/role 会被会话判损坏，预算提醒经此构造 | createUserMessage 签名/字段变化或 user/message 身份校验收紧即注入失效 | 【已核实】 |
 | SD38 pe-test/tools/step-07-子代理模型与引导取证.mjs（显式 SESSION_ID，只读） | SessionHeader.parentSession/origin/delegationDepth；subagent/descriptor.mode；request/header、request/context、model/selection、assistant/message.source | dsh-session-persistence-jsonl、dsh-session、dsh-subagent、dsh-agent-loop、dsh-llm 包内对应类型/事件 | A42/A43 取证：直接 child 谱系只分 pro规划/非pro规划；request/header/config 与 request/context 是 attempted route，assistant/message source.kind=model 是 actual provenance；planner 首个 user/agent-message text 与父 subagent_plan prompt 用于 suffix 等级 | 事件名、字段路径、两代日志文件名或消息 source 形状变化即 step-07 取证失真；不能以配置候选、header.system、候选 probe 或 provider/model 猜角色 | 【已核实】 |
-| SD35 plugins/dsh-extra-plan/index.js L271 与工具注册面（deny 名单对齐） | 宿主内置工具名清单（deny 名单取值来源） | dsh-tools 包内 lib/index.js；dsh-tool-subagent 包内 lib/index.js | 预设 toolFilter.deny 必须与宿主实际注册工具名一致 | 宿主工具改名即 restrict 抛错或裁剪失效 | 【已核实】 |
+| SD35 plugins/dsh-extra-plan/index.js L1604-L1617（工具注册面）与 assets/presets/extra-plan/agent.cordis.yml 四行 toolFilter.deny（deny 名单对齐） | 宿主内置工具名清单（deny 名单取值来源） | dsh-tools 包内 lib/index.js；dsh-tool-subagent 包内 lib/index.js | 预设 toolFilter.deny 必须与宿主实际注册工具名一致 | 宿主工具改名即 restrict 抛错或裁剪失效 | 【已核实】 |
 | SD33 pe-test/tools/step-04-路由与写闸门.mjs L44-L54（按 profile node_modules 锚点取 js-yaml）；pe-test/_shared/host-deps.mjs（解析钩子，同锚点取 @deepseek-ai/dsh-llm） | profile 依赖布局 profiles/web/node_modules + 宿主包名 @deepseek-ai/dsh | dsh-app-boot 包内 lib/index.js；dsh-home-paths 包内 lib/index.js | 按 profile 解析目录锚点解析 YAML 库 | profile 布局改名或安装路径变化即解析失败 | 【已核实】 |
 | SD34 plugins/dsh-extra-plan/index.js 全文 0 处调用（反向记录：未使用的宿主面） | sessionProjections 的 stateOf(session, sandboxMode)（宿主内部实现，本插件不直接调用） | dsh-sandbox-policy 包内 lib/index.js | 记录：沙箱模式一律走 sandboxPolicy.overrideOf，不直连投影服务 | 若宿主移除 overrideOf 而只留 stateOf，插件需改道（见⑥） | 【已核实】 |
 > 本轮新增取证域：A42/A43、C11/C12 由 `pe-test/tools/step-07-子代理模型与引导取证.mjs` 承担，命令必须显式 `SESSION_ID` + `PLANNER_PROMPT_SUFFIX`，不自动猜会话、不发 Provider 请求；模型配置 snapshot 与实际 route/provenance 分栏，完整文本不截断。
@@ -220,10 +227,10 @@
 | CF8 plugins/dsh-extra-plan/package.json L43-46 js-yaml 依赖 | js-yaml 依赖（宿主 dsh 包 dependencies 同款 ^4.2.0） | dsh 包内 package.json 与包内 node_modules/js-yaml | 本地解析 YAML，失败时回退宿主安装目录同名依赖 | 宿主移除该依赖或换 YAML 库即回退断裂 | 【已核实】 |
 | CF7 pe-test/tools/step-01-设置页配置.mjs L11-28 与 L29-39 | 宿主安装目录解析（AppData 下 npm 全局 node_modules 的 @deepseek-ai/dsh）+ 依赖 @deepseek-ai/schemastery | dsh 包内 package.json；包内 node_modules/@deepseek-ai/schemastery | 回归脚本从宿主安装包解析 js-yaml 与 schemastery 后跑真实 apply 与 loopback HTTP | 安装前缀或宿主依赖清单变化即脚本不可用 | 【已核实】 |
 | CF11 pe-test/tools/step-01-qqbot-安装映射.mjs L104 与 L41-53 与 L75 | 宿主安装目录解析取 js-yaml + DSH_HOME 注入 + profiles 下 node_modules/@local 夹具 | dsh 包内 package.json；dsh-home-paths 包内 lib/index.js | qqbot 侧回归的解析与夹具基础 | 安装前缀或 profile 布局变化即夹具失真 | 【已核实】 |
-| CF12 plugins/dsh-extra-plan/package.json L44（dependencies @deepseek-ai/dsh-llm ^0.1.5-rc.2） | 宿主同名依赖解析（与 CF8 的 js-yaml 同款口径） | dsh 包内 node_modules/@deepseek-ai/dsh-llm（本机实测存在，version 0.1.5-rc.2） | index.js L2389 顶层静态 import createUserMessage | 宿主移除/改名该依赖或 exports 变化即解析失败、自检报错 | 【已核实】 |
+| CF12 plugins/dsh-extra-plan/package.json L44（dependencies @deepseek-ai/dsh-llm ^0.1.5-rc.2） | 宿主同名依赖解析（与 CF8 的 js-yaml 同款口径） | dsh 包内 node_modules/@deepseek-ai/dsh-llm（本机实测存在，version 0.1.5-rc.2） | index.js L1342 顶层静态 import createUserMessage | 宿主移除/改名该依赖或 exports 变化即解析失败、自检报错 | 【已核实】 |
 | CF9 pe-test/tools/step-01-安装分发.mjs 与 step-01-安装同步.mjs 与 step-01-设置迁移.mjs | DSH_HOME 布局与 profiles 下 profile 目录形状（临时夹具） | dsh-home-paths 包内 lib/index.js；dsh-app-boot 包内 lib/index.js | 临时 DSH_HOME 下回归分发与自愈与迁移状态机 | profile 布局变化即夹具与真实形状脱节 | 【已核实】 |
 | CF10 plugins/dsh-extra-plan/assets/presets/extra-plan/preset.yml L1-L2（name 与 description） | METADATA_FILE 契约（支持 name 与 description 与 order） | dsh-agent-presets 包内 lib/index.js | 预设显示元数据（预设列表展示名与描述） | 元数据契约变化即预设列表缺名或排序异常 | 【已核实】 |
-| CF3 plugins/dsh-extra-plan/lib/settings.js L29-33 与 preset-sync.js L282-285 与 distribute-preset.mjs L31-33（三处自实现 DSH_HOME 解析） | DSH_HOME_ENV 与 DSH_HOME_DIR_NAME（.dsh）与 resolveDshHome | dsh-home-paths 包内 lib/index.js | 三处按同口径自实现解析 DSH_HOME（非 API 调用，属约定耦合） | 宿主改环境变量名或默认目录即三处同时错位 | 【已核实】 |
+| CF3 plugins/dsh-extra-plan/lib/settings.js L26-30 与 preset-sync.js L282-285 与 distribute-preset.mjs L31-33（三处自实现 DSH_HOME 解析） | DSH_HOME_ENV 与 DSH_HOME_DIR_NAME（.dsh）与 resolveDshHome | dsh-home-paths 包内 lib/index.js | 三处按同口径自实现解析 DSH_HOME（非 API 调用，属约定耦合） | 宿主改环境变量名或默认目录即三处同时错位 | 【已核实】 |
 
 ### ③-E 证据勾销表（209 条 evidence 逐条去向）
 
@@ -251,7 +258,6 @@
 说明：本仓 assets/presets/extra-plan/dist-manifest.json 的 format 与 distHash 字段为【本项目自造格式，非宿主契约】（format 1 与 2 均由本仓库定义），宿主升级不比对该文件，故不入四层表。
 ## ④ QQBOT 专章（qqbot 兼容插件与 qqbot 宿主耦合）
 
-范围：本仓库 QQBOT 侧全部挂钩。证据来源：.extra-plan/线索-qqbot宿主耦合台账-20260911195447.md（50 条 evidence）。本机无 profiles/qqbot、无 @tencent-connect/dsh-qqbot 包，因此凡依赖 qqbot 真实环境的条目一律标【未核实】（QQBOT 活跃挂钩表内共 3 条）。
 
 ### ④-A 活跃挂钩表（qqbot 简化插件对 DSH 宿主与 qqbot 宿主的现行耦合，共 27 条）
 
@@ -286,7 +292,6 @@
 | pe-test/tools/一键step测试.mjs（已把 qqbot 用例纳入一键体检、required 为 true） | 无宿主符号（本仓库编排契约） | 无（不指向宿主包） | 升级后跑一键体检即可暴露 patch 行与建链漂移 | 与宿主无关，仅作为升级比对入口 | 【已核实】 |
 ### ④-B 已删除的历史耦合（4 处，当前版本均无）
 
-以下均逐字引自备份 .extra-plan/backup-qqbot兼容v2-20260909/plugins/dsh-qqbot-user-questions/（旧版 v1.0.0），并已确认当前版本中不存在。列此节的用途：升级比对时先确认新版不再依赖这些内部实现，避免误以为仍要维护。
 
 1. **旧版服务名依赖（已删除，当前版本无）**——旧版 plugins/dsh-qqbot-user-questions/index.js 第 19 行为 `export const inject = ['qqbot.bot', 'qqbot.sessionManager', 'userQuestions']`，直接依赖 qqbot 包内部服务名与宿主 @deepseek-ai/dsh-user-questions。旧版还对 manager.remove 做 monkey-patch 并删除会话目录。当前 index.js 为 inject 为空数组，只做幂等自愈；对应 qqbot 包内服务名一旦随版本变化即断，正是被裁剪的原因。
 2. **旧版覆盖 qqbot 包 dist 文件（已删除，当前版本无）**——旧版 postinstall 入口 scripts/apply-patch.mjs 以 `const DIST_TARGET = join(PACKAGE_ROOT, '..', '..', '@tencent-connect', 'dsh-qqbot', 'dist')` 为根，直接覆盖 qqbot 包内 gateway/bootstrap.js 与 transport/outbound.js 两个文件。当前版本已无 patches 目录与 apply-patch.mjs，改为 profile 层 patch 行与自愈。
@@ -316,17 +321,15 @@
 
 ## ⑥ 已知漂移与口径纠正（3 处）
 
-1. **exec.sub 不是宿主字段**——本仓库 plugins/dsh-extra-plan/index.js L1895 判断 `exec.sub === true`，但本版宿主 dsh-tools 包内 lib/types/index.d.ts 的 ToolExecution 与 ToolExecutionInput 均无 sub 字段（宿主侧只有 exec.parent，见 L1896 的判断）。sub 是本插件在 L2190 与 L2191 给合成成员自打的标记，不是宿主契约；升级比对时不要在宿主类型里找 sub，只需核对 exec.parent 与 rootCallId。
+1. **exec.sub 不是宿主字段**——本仓库 plugins/dsh-extra-plan/lib/run-code-static.js L637-L641（isRunCodeSubCall）判断 `exec.sub === true`，但本版宿主 dsh-tools 包内 lib/types/index.d.ts 的 ToolExecution 与 ToolExecutionInput 均无 sub 字段（宿主侧只有 exec.parent，同段 L640 的判断）。sub 是本插件在 index.js L1148 与 L1149 给合成成员自打的标记，不是宿主契约；升级比对时不要在宿主类型里找 sub，只需核对 exec.parent 与 rootCallId。
 2. **sessionProjections 的 stateOf 本插件全文 0 次调用**——本插件没有任何一处直接调用 sessionProjections 的 stateOf(session, sandboxMode)；沙箱模式一律改走 sandboxPolicy 的 overrideOf（宿主 dsh-sandbox-policy 包内 lib/index.js 内部才调用 stateOf）。升级若移除或改名 overrideOf，本插件需改道直连投影服务，因此本项按「反向记录」保留在③-C 末行。
 3. **lib/executor-spawn.js L66 注释（HEAD 复核：注释仍在 L66）的宿主行号已过期并已修正**——该注释原文把 dsh-subagent 包内 resolveChildAgentOptions 的实现位置写成一段固定的宿主行号区间，本机 0.1.2-rc.1 实测该符号实际落在包内另一区间（本台账按硬约束不写宿主行号）。本期已把该注释改为按包名与符号名核对：注释内容改为「宿主 resolveChildAgentOptions（@deepseek-ai/dsh-subagent 包内，按符号名核对）用对象展开合并」；文件中该注释的相邻两行未动，文件仍为 89 行。
-- 升级影响报告（0.1.2-rc.1 → 0.1.5-rc.2 逐条核对结论与修复清单，与本台账双向互链）：.extra-plan/ai-宿主升级影响-DSH-0.1.5-rc.2.md（已归档；原 pe-test/docs/ 路径已于 2026-09-11 撤出仓库）
 
 ## ⑦ 0.1.5-rc.2 起的新失败面（本台账原未覆盖）
 
-- dsh-tools tools.restrict() 新增两处抛错守卫：无 scoped context（"tools.restrict() requires a scoped context (agent.ctx): ..."）与空过滤器 {}（"tools.restrict({}) is a no-op: ..."）；另有保留工具 run_code 命名守卫（0.1.5-rc.2 内 lib/index.js L2790-L2804）。
-- dsh-tool-subagent：配了 toolFilter 却无 allow/deny 即抛错（"tool-subagent: `toolFilter` is configured but names neither `allow` nor `deny` — remove the key or fill the filter"；0.1.5-rc.2 内 lib/index.js L370）。
-- 本仓库预设四行均含 toolFilter.deny（agent.cordis.yml L185/L234/L259/L291；executor-spawn 行 L317 另注入 deny），按现文安全，无需改动 assets/presets/**。
-- 本台账互链的「DSH 升级影响报告」已归档至 .extra-plan/ai-宿主升级影响-DSH-0.1.5-rc.2.md（存档，不删）。
+- dsh-tools tools.restrict() 新增两处抛错守卫：无 scoped context（"tools.restrict() requires a scoped context (agent.ctx): ..."）与空过滤器 {}（"tools.restrict({}) is a no-op: ..."）；另有保留工具 run_code 命名守卫（0.1.5-rc.2 内 dsh-tools 包 lib/index.js，按符号名核对）。
+- dsh-tool-subagent：配了 toolFilter 却无 allow/deny 即抛错（"tool-subagent: `toolFilter` is configured but names neither `allow` nor `deny` — remove the key or fill the filter"；0.1.5-rc.2 内 dsh-tool-subagent 包 lib/index.js，按符号名核对）。
+- 本仓库预设四行均含 toolFilter.deny（agent.cordis.yml L193-194/L242-243/L267-268/L299-300；executor-spawn 行 L326 另注入 deny），按现文安全，无需改动 assets/presets/**。
 
 ## ⑧ 预设各行 config 属宿主契约（0.1.2-rc.1 ↔ 0.1.5-rc.2 双向对照）
 
@@ -346,7 +349,3 @@
 
 **对升级流程的建议**：升级 DSH 前，除 ⑤ 的比对清单外，应把「预设每行 config 键对两版 schema 实跑校验」一并执行——本次 persona 断点正是靠启动报错才发现的，属事后补救。
 
-**证据来源（探查者证据报告，均已落盘）**：
-- 新版侧：.extra-plan/线索-extra-plan-预设-0-1-5-rc-2-配置核查-20260912002315.md
-- 旧版侧（逐行结论表）：.extra-plan/线索-extra-plan预设旧版0-1-2-rc-1兼容核查-20260912002247.md
-- 旧版侧（22 包 schema 原文）：.extra-plan/线索-extra-plan旧版22包schema原文-20260912002318.md

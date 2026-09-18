@@ -110,12 +110,16 @@ function maskCode(text) {
   }
   return chars.join('')
 }
-function braceEndLine(lines, masked, braceStart) {
+// startCol：定义行内「函数体起花括号」的列偏移（findEndLine 传 braceCol）。
+// 缺省从第 0 列起扫会把默认参数 options = {} 或解构参数 { askTool } 的第一个花括号
+// 误判为函数体起括号 → endLine 塌回起始行（如 createRunCodeStatic 仅记 L37）。
+function braceEndLine(lines, masked, braceStart, startCol) {
   const n = lines.length
+  const first = typeof startCol === 'number' && startCol >= 0 ? startCol : 0
   let depth = 0
   for (let li = braceStart; li < n; li += 1) {
     const line = masked[li]
-    for (let ci = 0; ci < line.length; ci += 1) {
+    for (let ci = li === braceStart ? first : 0; ci < line.length; ci += 1) {
       const ch = line[ci]
       if (ch === '{') depth += 1
       else if (ch === '}') { depth -= 1; if (depth === 0) return li + 1 }
@@ -138,6 +142,7 @@ function findEndLine(lines, masked, startIdx, limitIdx) {
   const rawLimit = typeof limitIdx === 'number' ? limitIdx : n
   const limit = Math.max(startIdx + 1, Math.min(rawLimit, n))
   let braceStart = -1
+  let braceCol = -1
   let semiLine = -1
   let lastOpen = -1 // 最后一个「属于本表达式」的行：无花括号表达式的收尾依据
   let paren = 0
@@ -149,7 +154,7 @@ function findEndLine(lines, masked, startIdx, limitIdx) {
     let touched = false
     for (let ci = 0; ci < line.length; ci += 1) {
       const ch = line[ci]
-      if (paren === 0 && bracket === 0 && ch === '{') { braceStart = li; break }
+      if (paren === 0 && bracket === 0 && ch === '{') { braceStart = li; braceCol = ci; break }
       if (paren === 0 && bracket === 0 && ch === ';') { semiLine = li; break }
       if (ch === '(') { paren += 1; touched = true }
       else if (ch === ')') { paren -= 1; touched = true }
@@ -162,7 +167,7 @@ function findEndLine(lines, masked, startIdx, limitIdx) {
     prevCont = orig !== '' && CONTINUATION_CHARS.indexOf(orig[orig.length - 1]) !== -1
     if (braceStart !== -1 || semiLine !== -1) break
   }
-  if (braceStart !== -1 && (semiLine === -1 || braceStart < semiLine)) return braceEndLine(lines, masked, braceStart)
+  if (braceStart !== -1 && (semiLine === -1 || braceStart < semiLine)) return braceEndLine(lines, masked, braceStart, braceCol)
   if (semiLine !== -1) return semiLine + 1
   if (lastOpen !== -1) return lastOpen + 1
   return startIdx + 1
