@@ -1,8 +1,9 @@
 // step-99-用量统计.mjs（原 ledger-summary.mjs）— usage 账本聚合工具（P3 A/B 读数）。
 // 用法：node step-99-用量统计.mjs <ledger.jsonl>
-// 输出：按 sessionId/role/model 分组统计 行数(调用次数)/hit(输入命中)/miss(输入未命中)/
-//       out(输出) 合计，并按单价估算花费（pro 输入3/输出6，flash 输入1/输出2，
-//       命中 0.025/0.02，¥/1M——与 Reasonix 本机价格表一致），最后给出 pro:flash 花费比。
+// 口径：纯 token 统计 —— 按 sessionId | role | model 分组，统计 行数(调用次数)/hit(输入命中)/miss(输入未命中)/
+//       out(输出)/cw(缓存写入 cacheWriteTokens)/rs(推理 reasoningTokens) 合计，并展示该组 provider
+//       （同组取首个非空值，空显示 -）；旧行缺 provider/cw/rs 时按 空串/0/0 处理。
+//       只累计 token 字段，不做任何折算，也不做任何按 provider 或按 model 的汇总。
 // v11.8.1：按 (sessionId, seq) 去重（崩溃窗口可能产生的重复行；无 seq 的旧行不去重）。
 import { readFileSync } from 'node:fs'
 
@@ -30,37 +31,20 @@ for (const line of lines) {
 const groups = new Map()
 for (const r of rows) {
   const key = `${r.sessionId}|${r.role}|${r.model}`
-  const g = groups.get(key) ?? { sessionId: r.sessionId, role: r.role, model: r.model, calls: 0, hit: 0, miss: 0, out: 0, cost: 0 }
+  const g = groups.get(key) ?? { sessionId: r.sessionId, role: r.role, model: r.model, provider: '', calls: 0, hit: 0, miss: 0, out: 0, cw: 0, rs: 0 }
+  if (g.provider === '' && typeof r.provider === 'string' && r.provider !== '') g.provider = r.provider
   g.calls += 1
   g.hit += Number(r.hit) || 0
   g.miss += Number(r.miss) || 0
   g.out += Number(r.out) || 0
+  g.cw += Number(r.cacheWriteTokens) || 0
+  g.rs += Number(r.reasoningTokens) || 0
   groups.set(key, g)
 }
 const list = [...groups.values()].sort((a, b) => a.sessionId.localeCompare(b.sessionId) || a.role.localeCompare(b.role) || a.model.localeCompare(b.model))
-const byModel = { pro: { calls: 0, hit: 0, miss: 0, out: 0, cost: 0 }, flash: { calls: 0, hit: 0, miss: 0, out: 0, cost: 0 } }
+console.log('=== 分组明细（sessionId | role | model | provider | calls | hit | miss | out | cw | rs） ===')
 for (const g of list) {
-  const isPro = String(g.model).includes('pro')
-  const bucket = byModel[isPro ? 'pro' : 'flash']
-  bucket.calls += g.calls
-  bucket.hit += g.hit
-  bucket.miss += g.miss
-  bucket.out += g.out
-  const priceIn = isPro ? 3 : 1
-  const priceOut = isPro ? 6 : 2
-  g.cost = (g.hit * (isPro ? 0.025 : 0.02) + g.miss * priceIn + g.out * priceOut) / 1e6
-  bucket.cost += g.cost
-}
-console.log('=== 分组明细（sessionId | role | model | calls | hit | miss | out | estCost¥） ===')
-for (const g of list) {
-  console.log(`${g.sessionId} | ${g.role} | ${g.model} | ${g.calls} | ${g.hit} | ${g.miss} | ${g.out} | ${g.cost.toFixed(4)}`)
-}
-console.log('=== 按模型汇总 ===')
-for (const [name, b] of Object.entries(byModel)) {
-  console.log(`${name}: calls=${b.calls} hit=${b.hit} miss=${b.miss} out=${b.out} estCost=¥${b.cost.toFixed(4)}`)
-}
-const totalCost = byModel.pro.cost + byModel.flash.cost
-if (totalCost > 0) {
-  console.log(`pro:flash 花费比 = ${(byModel.pro.cost / totalCost * 100).toFixed(1)} : ${(byModel.flash.cost / totalCost * 100).toFixed(1)}`)
+  const provider = g.provider === '' ? '-' : g.provider
+  console.log(`${g.sessionId} | ${g.role} | ${g.model} | ${provider} | ${g.calls} | ${g.hit} | ${g.miss} | ${g.out} | ${g.cw} | ${g.rs}`)
 }
 console.log(`总行数（去重后调用次数合计）: ${rows.length}`)

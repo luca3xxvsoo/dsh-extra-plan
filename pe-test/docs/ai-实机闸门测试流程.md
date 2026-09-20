@@ -68,10 +68,10 @@
 | A09 | 主会话 | approved=true 且 route!=='direct' 且 `args.sandbox_permissions` 非字符串 | pwsh/bash 写命令**不带** sandbox_permissions | `方案已批准，工作区内写入请走 subagent 委派执行者。越界操作（工作区外写入）请带 sandbox_permissions 参数（如 sandbox_permissions: "workspace-write"）与 justification 重试` | 同上 | 实机直测 |
 | A10 | 主会话 | route=plan 且 clarified=true 且目的已定 | 调 subagent_plan 且显式传 run_in_background:false | `规划子代理不可前台等待：run_in_background 参数不得传 false（continuable 固定后台运行）。请移除 run_in_background: false 或省略该参数` | 同上 | 实机直测 |
 | A11 | 主会话 | approved=true | subagent / subagent_review 未传 run_in_background:true | `执行者/reviewer 必须后台运行：请传 run_in_background: true` | 同上 | 实机直测 |
-| A12 | 主会话 | route!=='direct' | 主会话调 save_plan | `save_plan 仅允许在直接执行路由下落盘方案与验收；当前路由态：${state.route}` | 同上 | 实机直测 |
+| A12 | 主会话 | 任意路由态（route=none/direct/plan，含 approved） | 直呼 save_plan（plan/checklist 各 ≥200 字、无未探查标记、无证据引用） | 无拒绝文案：返回 paths 数组含两个 .md 文件路径（方案-{base}.md、验收-{base}.md）。save_plan 为受限规划工件，路由态不再是放行条件（目录固定 cwd/.extra-plan、文件名固定形态、内容闸门与规划子代理同一实现仍生效） | 直呼放行侧 + read 验证 + step-06 路由矩阵（S1 的 A46 即同一直呼放行面） | 实机直测 |
 | A13 | 主会话 | route!=='plan' 或 clarified!==true | 主会话调 save_probe | 随前置态取 A02/A03/A04 同源文案：route=none →「子代理未放行：save_probe。…」；route=direct →「直行态下不可规划：save_probe。…」；plan 且目的未定 →「规划目的尚未确认：save_probe。…」；plan 未澄清（目的已定）分支＝U4→U5 窗口直测 →「澄清问答尚未完成：save_probe。…」 | 同上 | 实机直测 |
 | A14 | 主会话 | —（任意路由） | 发部分相交/非标选项 ask（例：只含「直接执行」一项） | `ask 选项不规范。路由 ask 选项固定为「直接执行」「进行pro规划」「不同意」；批准 ask 选项固定为「同意执行」「转交pro规划」「不同意」；目的 ask 选项固定为「完善方案」「重新规划」。` + ` 当前路由 ask 缺少：…。` | 同上 | 实机直测 |
-| A15 | 主会话 | — | 发标准三词但结构错：路由 ask 非 1 问 / 批准 ask 少于 2 问 / 第 2 问带 options | `批准 ask 结构错误：须至少 2 个问题（第一个为批准选项固定为「同意执行」「转交pro规划」「不同意」，第二个为修改意见可空），当前 N 个问题`；或 `批准 ask 结构错误：第 N 个问题（修改意见）必须为纯文本输入，不得提供选项（预设选项不符合用户想法），当前带 M 个选项。请改为纯文本大文本框、去掉 options` | 同上 | 实机直测 |
+| A15 | 主会话 | — | 发标准三词但结构错：路由 ask 少于 2 问（缺第二问）/ 路由第 2 问带 options / 批准 ask 少于 2 问 / 批准第 2 问带 options | 路由侧：`路由 ask 结构错误：须至少 2 个问题（第一个为路由选项固定为「直接执行」「进行pro规划」「不同意」，第二个为补充要求可空），当前 N 个问题`；或 `路由 ask 结构错误：第 N 个问题（补充要求）必须为纯文本输入，不得提供选项（预设选项不符合用户想法），当前带 M 个选项。请改为纯文本大文本框、去掉 options`。批准侧：`批准 ask 结构错误：须至少 2 个问题（第一个为批准选项固定为「同意执行」「转交pro规划」「不同意」，第二个为修改意见可空），当前 N 个问题`；或 `批准 ask 结构错误：第 N 个问题（修改意见）必须为纯文本输入，不得提供选项（预设选项不符合用户想法），当前带 M 个选项。请改为纯文本大文本框、去掉 options` | 同上 | 实机直测 |
 | A16 | 任意角色（主会话 / planner / 只读子代理） | — | 调 job_output 带 wait:true | `job_output 禁止带 wait: true 前台等待。请省略 wait 参数或设 wait: false，job 完成后会收到通知` | 同上 | 实机直测 |
 | A17 | 任意角色 | 同一轮内已成功调用过同一 job_id | 同轮内第二次调 job_output（同一 job） | `job_output 禁止对同一 job 重复调用。job "<job_id>" 在本轮已调用过，请等待通知或使用 job_list 查看状态` | 同上 | 实机直测（须同轮内，见陷阱③） |
 | A18 | planner | — | planner 的 run_code 写 19 个 tools.* 调用点 | `run_code 静态调用点 19 处超过单实例子调用上限 18（exploreBudget）：请拆分多个 run_code 或减少单次调用点` | 同上（聚合行「- run_code: …」） | 实机直测（planner 序列） |
@@ -128,9 +128,9 @@
 #### 3.2.1 S0 route=none（U1 空白回车后）
 状态：route=none、clarified=false、approved=false（deriveFlowState 默认态）。
 一次性连发清单（AI 一轮内全部发出，用户 0 操作；both 下直呼面与 run_code 面同轮并用）：
-1. **组判定 run_code#1**（8 成员，一次聚合取证 8 条）：write / subagent_plan / cordis_run / save_plan / save_probe / subagent / subagent_probe（不带 run_in_background）/ job_output（wait:true）
+1. **组判定 run_code#1**（7 成员，一次聚合取证 7 条）：write / subagent_plan / cordis_run / save_probe / subagent / subagent_probe（不带 run_in_background）/ job_output（wait:true）——save_plan 已改为任意路由态放行的受限规划工件，不再是组拒成员（放行侧见 A12 直呼 + S1 的 A46）
 2. 直呼 ask#1：非标选项 ask（只含「直接执行」）→ A14
-3. 直呼 ask#2：标准三词但结构错（批准 ask 只有 1 问或第 2 问带 options）→ A15
+3. 直呼 ask#2：标准三词但结构错（路由 ask 少于 2 问（缺第二问）/ 路由第 2 问带 options / 批准 ask 只有 1 问或第 2 问带 options）→ A15
 4. **组判定 run_code#2**：ask 返回值非白名单形态 → A22
 5. 直呼只读对照：read / glob / grep（放行、无文案）
 6. **直呼单条对照（直呼面）**：直呼 write → 单条 `Error:` 卡片（A02）；其子文案必须与第 1 步聚合行 `- write: …` 逐字一致（C9 硬判据②）
@@ -142,18 +142,17 @@
 | `A02` | 组1 成员 write | `路由未确认：write/edit。只读探查可随时进行。…` |
 | `A05` | 组1 成员 subagent_plan | `子代理未放行：subagent_plan。须先 ask_user_question 路由确认…，意图澄清问答后再调用 subagent_plan` |
 | `A08` | 组1 成员 cordis_run | `路由未确认：cordis_run。cordis 只读/暂存工具（cordis_inspect_*、cordis_define、cordis_stop、cordis_undefine）可随时使用…` |
-| `A12` | 组1 成员 save_plan | `save_plan 仅允许在直接执行路由下落盘方案与验收；当前路由态：none` |
 | `A13` | 组1 成员 save_probe | `子代理未放行：save_probe。须先 ask_user_question 路由确认…`（route=none 分支） |
 | `A06` | 组1 成员 subagent | `执行类委派未放行：subagent。须先 ask_user_question 让用户对方案点「同意执行」…` |
 | `A30` | 组1 成员 subagent_probe（不带 run_in_background） | `探查者必须后台运行：请传 run_in_background: true` |
 | `A16` | 组1 成员 job_output（wait:true） | `job_output 禁止带 wait: true 前台等待。请省略 wait 参数或设 wait: false，job 完成后会收到通知` |
 | `A02` | 直呼 write（直呼面单条） | 单条 `Error:` 卡片；子文案与组1 的 `- write: …` 行**逐字一致**（C9） |
 | `A14` | 直呼 ask#1 | `ask 选项不规范。路由 ask 选项固定为「直接执行」「进行pro规划」「不同意」；批准 ask 选项固定为「同意执行」「转交pro规划」「不同意」。` |
-| `A15` | 直呼 ask#2 | `批准 ask 结构错误：须至少 2 个问题（…），当前 N 个问题` |
+| `A15` | 直呼 ask#2 | 路由侧 `路由 ask 结构错误：须至少 2 个问题（…），当前 N 个问题`（少于 2 问）；第 2 问带 options 时为 `路由 ask 结构错误：第 N 个问题（补充要求）必须为纯文本输入…`；批准侧 `批准 ask 结构错误：须至少 2 个问题（…），当前 N 个问题` 同族文案 |
 | `A22` | 组2 run_code | `run_code 内 ask_user_question 返回值未通过返回值白名单：仅允许以下两种写法…` |
 | `A39` | 目录观察 | 无拒绝文案；both 开态 tools 清单 = 全部工具 ＋ run_code（不塌缩）；anchored 收窄后 keep={bash,pwsh,read}=3 项 |
 
-组1 预期聚合 header：`工具组共 8 项（去重后），8 项触发闸门，任一触发即整体拒绝：` + 8 行「- <标签>: <子文案>」；缺任一行即判该条不通过（成员参数不可解析等情形按 3.1 标签规则核对）。
+组1 预期聚合 header：`工具组共 7 项（去重后），7 项触发闸门，任一触发即整体拒绝：` + 7 行「- <标签>: <子文案>」；缺任一行即判该条不通过（成员参数不可解析等情形按 3.1 标签规则核对）。
 
 > ⚠️ **静态分析盲区：subagent_probe 和 job_output 成员若参数非全 JSON 字面量（如 job_id 用变量取自上一步返回值），decomposeRunCode 将参数标记为不可解析 → 闸门跳过判定 → 聚合行不出现 A30/A16 行。此时须直呼补测这两条（直呼 subagent_probe 不带 run_in_background → A30；直呼 job_output 带 wait:true → A16），确保不遗漏。**
 
@@ -181,14 +180,13 @@
 #### 3.2.3 S2 route=plan·未澄清（U3 选「进行pro规划」后）
 状态：route=plan、clarified=false、purpose=none。选「进行pro规划」后**第一个提问一定是目的 ask**（单问、选项仅有「完善方案」「重新规划」）——未答复前 save_probe 与 subagent_plan 一律被目的闸门教学式拒绝（A41）。
 一次性连发清单：
-1. **组判定 run_code#4**（7 成员，一次聚合）：write / subagent_plan / save_probe / save_plan / cordis_run / subagent / job_output（wait:true）
+1. **组判定 run_code#4**（6 成员，一次聚合）：write / subagent_plan / save_probe / cordis_run / subagent / job_output（wait:true）——save_plan 已不在组拒清单内（任意路由态放行）
 
 | 命中 A | 成员/路径 | 期望文案关键句 |
 |:--|:--|:--|
 | `A01` | 组 成员 write | `规划态下主会话不可写文件：write/edit。探查请走 save_probe，写文件请等方案批准后走执行者委派` |
 | `A41` | 组 成员 subagent_plan | `规划目的尚未确认：subagent_plan。须先 ask_user_question 询问用户本次 pro 规划的目的（选项固定为「完善方案」「重新规划」），答复后再调用 subagent_plan` |
 | `A41` | 组 成员 save_probe | `规划目的尚未确认：save_probe。须先 ask_user_question 询问用户本次 pro 规划的目的（选项固定为「完善方案」「重新规划」），答复后再调用 save_probe` |
-| `A12` | 组 成员 save_plan | `save_plan 仅允许在直接执行路由下落盘方案与验收；当前路由态：plan` |
 | `A08` | 组 成员 cordis_run | `路由未确认：cordis_run。…` |
 | `A06` | 组 成员 subagent | `执行类委派未放行：subagent。…` |
 | `A16` | 组 成员 job_output（wait:true） | `job_output 禁止带 wait: true 前台等待。…` |
@@ -206,7 +204,7 @@
 #### 3.2.4 S3 route=plan·已澄清（U5 澄清答复后）
 状态：route=plan、clarified=true、purpose=refine|redo。（clarified=true 必须经目的已定后的澄清答复置位）
 一次性连发清单：
-1. **组判定 run_code#5**（4 成员）：subagent_plan（显式 run_in_background:false）/ subagent / save_plan / job_output（wait:true）
+1. **组判定 run_code#5**（3 成员）：subagent_plan（显式 run_in_background:false）/ subagent / job_output（wait:true）——save_plan 已不在组拒清单内
 2. 起一个后台 pwsh job（只读命令，如列目录）→ **同轮内** job_output 调两次（第一次放行、第二次拒 → A17）；both 下推荐写成**同一次 run_code 内两次同参 job_output**（组判定同参去重只留 1 成员，第二次为运行时嵌套 re-entry 被拒），直呼两次为对照写法
 3. 直呼放行侧：委派 **planner 会话**（subagent_plan，不带 run_in_background；参数跳过检查=放行）执行 3.2.6.1 序列（0 用户操作）
 
@@ -214,7 +212,6 @@
 |:--|:--|:--|
 | `A10` | 组 成员 subagent_plan + run_in_background:false | `规划子代理不可前台等待：run_in_background 参数不得传 false（continuable 固定后台运行）。请移除 run_in_background: false 或省略该参数` |
 | `A06` | 组 成员 subagent | `执行类委派未放行：subagent。…` |
-| `A12` | 组 成员 save_plan | `save_plan 仅允许在直接执行路由下落盘方案与验收；当前路由态：plan` |
 | `A16` | 组 成员 job_output（wait:true） | `job_output 禁止带 wait: true 前台等待。…` |
 | `A17` | 同一次 run_code 内第二次同参 job_output（或同轮直呼第二次） | `job_output 禁止对同一 job 重复调用。job "<job_id>" 在本轮已调用过，请等待通知或使用 job_list 查看状态` |
 
@@ -223,7 +220,7 @@
 #### 3.2.5 S4 route=plan·已批准（U6 批准「同意执行」后）
 状态：route=plan、approved=true、purpose 已定（refine|redo）。
 一次性连发清单：
-1. **组判定 run_code#6**（5 成员）：write / pwsh 写命令（不带 sandbox_permissions）/ subagent（不带 run_in_background:true）/ save_plan / cordis_run（A08 对照面：批准态本应放行，此处仅作组员随全拒批一并被拦，不单独产生文案）
+1. **组判定 run_code#6**（4 成员）：write / pwsh 写命令（不带 sandbox_permissions）/ subagent（不带 run_in_background:true）/ cordis_run（A08 对照面：批准态本应放行，此处仅作组员随全拒批一并被拦，不单独产生文案）——save_plan 已不在组拒清单内
 2. 直呼放行侧：subagent_review 带 run_in_background:true → 放行（A11 放行侧），随即委派 **reviewer 会话**执行 3.2.6.3 序列（0 用户操作）
 3. **A48 执行者委派**：直呼 subagent 带 run_in_background:true 委派 flash 执行者 → 执行者子会话内先发 read 进 L 态 → 观察工具清单（A38：deny 名单内工具不可见）→ 验证能读方案/验收文件干活（0 用户操作）
 
@@ -232,7 +229,6 @@
 | `A07` | 组 成员 write | `方案已批准，执行请走 subagent 委派 flash 执行者（读方案/验收文件执行）。主会话直做仅限越界操作（工作区外写入，走 shell…+ sandbox_permissions）` |
 | `A09` | 组 成员 pwsh 写命令（无 sandbox_permissions） | `方案已批准，工作区内写入请走 subagent 委派执行者。越界操作（工作区外写入）请带 sandbox_permissions 参数…与 justification 重试` |
 | `A11` | 组 成员 subagent（无 run_in_background:true） | `执行者/reviewer 必须后台运行：请传 run_in_background: true` |
-| `A12` | 组 成员 save_plan | `save_plan 仅允许在直接执行路由下落盘方案与验收；当前路由态：plan` |
 | A11 放行侧 | 直呼 subagent_review + run_in_background:true | 无拒绝文案；reviewer 子会话开始（one-shot 后台） |
 | `A48` | 直呼 subagent + run_in_background:true 委派 flash 执行者 | 执行者工具清单 deny 名单内工具不可见（A38），且能读方案/验收文件执行 |
 
@@ -326,16 +322,16 @@ channelBroken 逃生（`CHANNEL_BROKEN_CODES` = NO_PROVIDER / CALLER_NOT_LIVE / 
 
 | 序号 | 轮次 | 用户动作 | 推进到状态 | 覆盖 A 编号集合 | 覆盖条数 | 合并理由 |
 |:--|:--|:--|:--|:--|:--|:--|
-| U1 | 第一轮 | 空白回车（路由 ask） | S0（route=none 默认态） | A02,A05,A06,A08,A12,A13,A14,A15,A16,A22,A30,A39 | 12 | 空白放路由 ask 上，route=none 默认态零扰动（空白不置位任何状态位），未确认语义与 S0 全量一次操作双收；「取消」与空白同属未确认形态，标注择一必测、另一可选（差异见陷阱⑦） |
+| U1 | 第一轮 | 空白回车（路由 ask） | S0（route=none 默认态） | A02,A05,A06,A08,A13,A14,A15,A16,A22,A30,A39 | 11 | 空白放路由 ask 上，route=none 默认态零扰动（空白不置位任何状态位），未确认语义与 S0 全量一次操作双收；「取消」与空白同属未确认形态，标注择一必测、另一可选（差异见陷阱⑦） |
 | U2 | 第一轮 | 选「直接执行」 | S1（route=direct） | A03,A06,A16,A30 | 4（＋probe 委派，0 用户操作） | direct 态只有用户能进；A30 放行侧委派 probe 与其同批 |
-| U3 | 第一轮 | 选「进行pro规划」 | S2（route=plan·未澄清·目的未定） | A01,A06,A08,A12,A16,A41,A41-3 | 7 | plan 态只有用户能进；S2 下 subagent_plan/save_probe 两条同落 A41（目的闸门先于澄清判定），精确目的 ask 只能在 route=plan 发起 |
+| U3 | 第一轮 | 选「进行pro规划」 | S2（route=plan·未澄清·目的未定） | A01,A06,A08,A16,A41,A41-3 | 6 | plan 态只有用户能进；S2 下 subagent_plan/save_probe 两条同落 A41（目的闸门先于澄清判定），精确目的 ask 只能在 route=plan 发起 |
 | U4 | 第一轮 | 目的答复（选「完善方案」或「重新规划」） | S2.5（route=plan·目的已定·未澄清） | A04,A13,A41-1,A41-2,A41-4,A41-5 | 2（＋A41 补充取证 4 项） | purpose 只有答复可置位；目的 ask 为「进行pro规划」后第一个提问；route=none/direct 的精确目的 ask 拒绝句必须含固定路由确认句，plan 放行、ordinary 不误拦、channelBroken 逃生与重选/取消清理在此窗口取证 |
-| U5 | 第一轮 | 澄清答复（选探查方式） | S3（route=plan·已澄清） | A10,A06,A12,A16,A17 | 5（＋planner 委派，0 用户操作） | clarified 仅当目的已定（purpose∈{完善方案,重新规划}）时由澄清答复置位；route/目的重选与非通道取消按阶段清理，channelBroken 保留旧状态，新 user/message 重开事件窗回默认态；A17 需同轮内完成（计数锚点重置见陷阱③） |
-| U6 | 第一轮 | 批准同意（点「同意执行」） | S4（route=plan·已批准） | A07,A09,A11,A08,A12 | 5（＋reviewer 委派，0 用户操作） | approved 只有「同意」可置位 |
+| U5 | 第一轮 | 澄清答复（选探查方式） | S3（route=plan·已澄清） | A10,A06,A16,A17 | 4（＋planner 委派，0 用户操作） | clarified 仅当目的已定（purpose∈{完善方案,重新规划}）时由澄清答复置位；route/目的重选与非通道取消按阶段清理，channelBroken 保留旧状态，新 user/message 重开事件窗回默认态；A17 需同轮内完成（计数锚点重置见陷阱③） |
+| U6 | 第一轮 | 批准同意（点「同意执行」） | S4（route=plan·已批准） | A07,A09,A11,A08 | 4（＋reviewer 委派，0 用户操作） | approved 只有「同意」可置位 |
 | U7 | 第一轮前置（**仅起步非 both 需要**，起步已 both 时省去） | 设置页 1 次保存：**把工具呈现模式（`toolPresentationMode`）切到 both ＋ 把 `runcodeCatchGate` 置 true**（**同一张卡片、同一次保存**，搭车不新增操作）＋ 重启 Harness（**不必新开会话**） | 前置（不推进 flow state） | —（0 条直接） | 0 | 两个 key 唯一入口都是设置页；装载期快照口径（见 1.5(b)）导致必须重新装载，与第一轮批次解耦 |
 | U8 | 轮间（第一轮与第二轮之间） | 设置页 1 次保存：**把 `runcodeCatchGate` 切为 false**（`toolPresentationMode` 不动；与工具呈现模式同一张卡片、同一次保存口径）＋ 重启 Harness（**不必新开会话**） | 前置（不推进 flow state；第二轮 route=none 即可） | —（0 条直接；第二轮三项见 3.4） | 0 | 开关装载期快照（见 1.5(b)）；轮间必须重新装载；重启后用户发一条消息即回 route=none（无需新会话）；**第二轮 0 次状态舞** |
 
-> 表注一：「覆盖条数」列 = 该行直接连发清单命中的 A 编号条数（合计 35 条次，含跨行重复）；由该行批次委派的子代理序列所覆盖的编号按委派批次归属同一 U 序号（planner→U5、probe→U2、reviewer→U6），合计覆盖 44 条实机可测项。
+> 表注一：「覆盖条数」列 = 该行直接连发清单命中的 A 编号条数（合计 31 条次，含跨行重复）；由该行批次委派的子代理序列所覆盖的编号按委派批次归属同一 U 序号（planner→U5、probe→U2、reviewer→U6），合计覆盖 44 条实机可测项。
 > 表注二：清单行数 = 第一轮 U1-U6 共 6 行 ＋ 第二轮 0 行 ＋ 设置页 1-2 行（U7 仅起步非 both 需要；U8 恒定）。合计：起步非 both 8 次 = U1-U6（6 次状态推进）＋ U7（1 次保存）＋ U8（1 次保存）；起步已 both 7 次 = U1-U6（6 次）＋ U8（1 次）。第二轮 0 行 = 第二轮 0 次状态操作（理由见 3.4）。
 > 表注三：设置页行动作均含「切到 both／切 catchGate」与 `runcodeCatchGate`、同卡片/同一次保存措辞；**第二轮不新增任何用户操作行**。
 
@@ -397,7 +393,7 @@ channelBroken 逃生（`CHANNEL_BROKEN_CODES` = NO_PROVIDER / CALLER_NOT_LIVE / 
 | 域 | 范围 | A 编号 | 对应 U 序号 |
 |:--|:--|:--|:--|
 | D1 | 锚点（route/purpose/clarified/approved 与 ask 结构） | A01-A06、A14、A15、A41、A41-1～A41-5、A47、A45 | U1/U2/U3/U4/U5 |
-| D2 | 写/cordis/shell/planTool/委派 ＋ save_plan·save_probe 主会话路由 | A07-A13 | U1/U2/U3/U4/U5/U6 |
+| D2 | 写/cordis/shell/planTool/委派 ＋ save_plan 受限工件放行（任意路由态）· save_probe 主会话路由（条件不变） | A07-A11、A13 | U1/U2/U3/U4/U5/U6 |
 | D3 | job_output | A16、A17 | U1-U6（A17 仅 U5） |
 | D4 | run_code 组判定 | A18-A23 | U1（3.2.7 拦截面）/ U5（planner 序列）/ U8（第二轮放行面） |
 | D5 | planner 预算 | A24-A28（A29 实机，仅 ptc） | U5（planner 序列） |

@@ -43,7 +43,7 @@ const HUMAN = [
 
 // 需参数项
 const NEED_ARG = [
-  ['step-99-用量统计.mjs', '参数: <ledger.jsonl>，统计用量/花费'],
+  ['step-99-用量统计.mjs', '参数: <ledger.jsonl>，统计 token 用量'],
 ]
 
 function parseResult(out) {

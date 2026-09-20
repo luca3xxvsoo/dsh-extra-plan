@@ -4,7 +4,7 @@
 > 运行时行为以 persona（agent.cordis.yml 注入内容）与机械闸门为准。
 
 ## 项目一句话
-dsh 插件「按需规划模式」预设：AI 未经用户同意只能只读探查，经路由/目的/澄清/批准四级机械闸门后按规划执行；Pure PTC 顶层始终只保留 run_code。
+dsh 插件「按需规划模式」预设：AI 未经用户同意不得修改源码/配置/执行态，经路由/目的/澄清/批准四级机械闸门后按规划执行；路由确认前唯一写例外 = 受限规划工件 save_plan（任意路由态可落盘 cwd/.extra-plan 的固定形状方案/验收双文件，内容闸门与目录/文件名形态不变），save_probe 仍限 pro 规划窗口（route=plan + 目的已定 + 澄清完成）；Pure PTC 顶层始终只保留 run_code。
 五角色：主会话（入口协调）→ 探查者（只读批量+证据落盘，**仅主会话可委派**）→ 规划子代理（方案+验收双文件，不得委派探查者）→ 执行者（按方案改）→ 验收者（逐条核对）。save_probe 的 `PROBE_LIMITS` 当前为 evidence 150 条、单条 evidence.text 1000 字；step-00 PR23=151、PR34/PR35=1000/1001；exploreBudget=18 与台账历史 80/209 是不同口径。
 兼容：dsh >= v0.1.2-rc.1 & <= v0.1.5-rc.2；qqbot 0.5.0 版 + 精简版 dsh-qqbot-user-questions（仅自愈+mklink，选装）。A=anchoredBootstrap、C=creativeMode、M=toolPresentationMode（native/ptc/both），F=尚无 tool/call、L=首个 tool/call 后。
 A=1/F/main-planner：M=native/both 为 HN/HB（bootstrap shell(s)+read，sections 仅 extra-plan-bootstrap，无 tool:read）；M=ptc 为 HP（顶层仅 run_code，sections 精确为 extra-plan-bootstrap、tools:ptc-only、tool:read，其中 read 是 guidance+最小契约，不含完整 tools:sdk/Cordis）。A=1 的 L 与 A=0 从 N/P/B 基线（N=native/P=ptc/B=both）开始；C=0 全角色隐藏 7 个 Cordis 展示项且两个创造 skill 不出现在 catalog，C=1 不因 C 隐藏——非 HP1 且非 anchored 时保留完整 SDK/Cordis/两个创造 skill，HP1 仅 F/main-planner 暂隐 catalog。以上是模型可见投影，不是 runtime binding 安全隔离（详见 ai-流程备查.md / ai-机制设计.md）。

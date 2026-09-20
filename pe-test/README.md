@@ -58,4 +58,6 @@ node pe-test/tools/step-07-子代理模型与引导取证.mjs
 
 1. **`tools/readme.md` 是测试数据（不是文档）**：`step-00-全流程回归` 的检查项依赖它存在，**别删、别改名**。
 2. **运行前提**：部分文件要 `import 仓库里的插件代码`（相对路径 `../../plugins/...`）——如果运行时报「找不到模块」，说明当前目录不是完整目录；把 pe-test 挪回仓库根（或你准备挪回工作区时带齐 plugins）再跑。
-3. `step-99-用量统计.mjs` 需要参数：`node step-99-用量统计.mjs <账本文件路径>`。
+3. `step-99-用量统计.mjs` 需要参数：`node step-99-用量统计.mjs <账本文件路径>`。口径＝**纯 token 统计**：输出一张按 `sessionId | role | model` 分组的明细表，列为
+   `sessionId | role | model | provider | calls | hit | miss | out | cw | rs`（calls=调用次数、hit=输入命中、miss=输入未命中、out=输出、cw=缓存写入 cacheWriteTokens、rs=推理 reasoningTokens），
+   provider 取该组首个非空值、空值显示 `-`；不做任何按 provider 或按 model 的汇总，也不输出任何折算后的数字。旧账本行（缺 provider/cw/rs）按 空串/0/0 统计，不会报错也不会被跳过。

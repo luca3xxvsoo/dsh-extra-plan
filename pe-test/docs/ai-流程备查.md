@@ -3,7 +3,8 @@
 > 本节按 index.js 头部版本行 (v0.2.1) 及其「宿主事实依赖清单 / 行为：」注释块与 agent.cordis.yml 校订（首次校订 2026-09-05，最近同步 2026-09-18），为运行时真实流程。
 > **以 persona 为准**（用户 2026-09-12 确认）：persona 中「主会话探查/探查者探查二选一」是**现行口径**——复杂度评估完成后必弹该 ask，选项固定、推荐排第一；第 ⑤ 节的三条判据只用于**决定推荐哪一项**，不用于自动决策（本节已按此对齐）。
 > 机制细节权威来源：index.js 头部行为注释 + agent.cordis.yml 各 tool-subagent 行；函数定位用 ai-代码地图.md。
-> save 工具拆分边界：`plugins/dsh-extra-plan/lib/save-contract.js` 维护命名、限制与 ContentBlock 渲染合同，`lib/save-probe-validation.js` 负责校验，`lib/save-persistence.js` 负责原子落盘与 journal 自愈，`lib/save-tool-factories.js` 负责 save_plan/save_probe 定义；根 `plugins/dsh-extra-plan/index.js` 仅创建工厂、注册工具并接入生命周期/闸门。
+> save 工具拆分边界：`plugins/dsh-extra-plan/lib/save-contract.js` 维护命名、限制与 ContentBlock 渲染合同，`lib/save-probe-validation.js` 负责校验，`lib/save-persistence.js` 负责阶段感知原子落盘与 journal 自愈（pre-journal 条件清理：先删 journal 并确认不存在才清 tmp；post-journal 保留 journal 与现场；全部目标确认就位后才删 journal；恢复逐项确认目标存在、全项就位才清 journal），`lib/save-tool-factories.js` 负责 save_plan/save_probe 定义；根 `plugins/dsh-extra-plan/index.js` 仅创建工厂、注册工具并接入生命周期/闸门。
+> 注册与兜底口径：注册成功后才写「已注册」标记（WeakSet 按 agent 自去重），失败一律不写标记；session-start 每会话只发一次且 recompose 不重发，故 pre-step 每步的幂等兜底是唯一重试通道（注册发生在 `await next()` 之前，与 decision.kind 无关）；重名与永久性定义期错误记终态不再重试，其余错误下一步重试。pre-step 中注册的工具只进下一步 assembly（宿主先 assemble 快照、后派发 pre-step）。
 
 ## 1. 完整流程
 
@@ -31,7 +32,7 @@
 
 ⑥ 预估任务复杂度 → 推荐路径：基于探查结果预估（涉及对象数/代码行数/信息完整度）：简单明确 → 推荐直接执行；复杂/多文件/需方案 → 推荐进行pro规划；需求不明确 → 先澄清
 
-⑦ 路由确认（主会话流程首问、每次流程重开/动手前必问，硬闸门）：用 ask_user_question 弹一次三选一——选项固定为「直接执行」「进行pro规划」「不同意」（把自己的判断——含复杂度评估与是否已用探查者——排第一）。固定顺序为 route→purpose→普通澄清；任何 route 状态都可重新发起该三选一路由 ask。
+⑦ 路由确认（主会话流程首问、每次流程重开/动手前必问，硬闸门）：用 ask_user_question 弹**一次两问**——第一问三选一，选项固定为「直接执行」「进行pro规划」「不同意」（把自己的判断——含复杂度评估与是否已用探查者——排第一）；第二问为纯文本「补充要求」（id=supplement，可留空、不得提供 options）。固定顺序为 route→purpose→普通澄清；任何 route 状态都可重新发起该路由 ask（重发同样须为两问同形）。
    - **未确认语义**：空白答复（answers:[]）/取消/中断/验词失败一律视为未确认；仅通道级故障码（NO_PROVIDER/CALLER_NOT_LIVE/DELEGATED_CALLER）白名单逃生（防死锁）
    - 「直接执行」→ 直接执行路径：主会话亲自用全套工具动手，完工前对照需求逐项自查，简短汇报（≤10 行）；direct 态放行主会话写工具，**委派恒拒**（subagent/subagent_plan/subagent_review 等硬闸门拒绝），仅允许只读探查子代理（subagent_probe）；简单任务不要绕道规划，中等任务规划后执行
    - 「进行pro规划」→ 进入 ⑧-⑫
@@ -39,7 +40,7 @@
    - 其余委派仍需路由/批准锚点；send_message 完全放行（目标合法性由宿主校验，续轮转达语义不变）
 
 ⑧-1 目的确认（第四锚点）：选「进行pro规划」后**第一个** ask 必须是目的 ask——**另发一次独立的 ask_user_question**，恰好 1 个问题、选项仅有「完善方案」「重新规划」。机械层仅对首问选项精确等于该二选一的 purpose ask 做顺序闸门：route=none/direct 时拒绝，原因必须包含「须先 ask_user_question 路由确认（选项固定为「直接执行」「进行pro规划」「不同意」）」；route=plan 时放行；channelBroken=true 维持逃生放行。目的未定则 save_probe 与 subagent_plan 一律教学式拒绝，不拦 ordinary 澄清 ask；目的未定时澄清答复只提供信息、不置 clarified。
-⑧-2 澄清意图：目的确认答复后，**再另发一次独立的 ask_user_question** 澄清最关键的 1~3 个问题（给候选选项）；与路由确认或目的确认合并进同一次提问将触发闸门（路由/目的 ask 须恰好 1 个问题）。**澄清选项不得包含「完善方案」「重新规划」的任何子串**——否则整条 ask 被判 purpose/malformed 拒绝；机械层既有三分法判定的自然后果，不新增规则。clarified 置位前提：route=plan 且 purpose∈{完善方案,重新规划}；route 重选前清 purpose/clarified/approved；有效目的重选前清 clarified/approved；非通道取消/中断清 route/purpose/clarified/approved；CHANNEL_BROKEN_CODES 逃生只置 channelBroken 并保留旧阶段状态；最近一条 user/message 仍切断旧事件窗并回五字段默认态。
+⑧-2 澄清意图：目的确认答复后，**再另发一次独立的 ask_user_question** 澄清最关键的 1~3 个问题（给候选选项）；与路由确认或目的确认合并进同一次提问将触发闸门（路由 ask 须**恰好 2 个问题**——第一问固定三选一、第二问纯文本「补充要求」不得带 options；目的 ask 须**恰好 1 个问题**）。**澄清选项不得包含「完善方案」「重新规划」的任何子串**——否则整条 ask 被判 purpose/malformed 拒绝；机械层既有三分法判定的自然后果，不新增规则。clarified 置位前提：route=plan 且 purpose∈{完善方案,重新规划}；route 重选前清 purpose/clarified/approved；有效目的重选前清 clarified/approved；非通道取消/中断清 route/purpose/clarified/approved；CHANNEL_BROKEN_CODES 逃生只置 channelBroken 并保留旧阶段状态；最近一条 user/message 仍切断旧事件窗并回五字段默认态。
 
 ⑨ 探查线索落盘（save_probe）：主会话把本轮只读探查留下的「线索地图」经 save_probe 落盘为 `.extra-plan` 下**单个文件** `线索-<任务名>-<时间戳>.md`（按工具要求填四字段），拿到返回的线索文件路径。任务名为空或非 string 时 sanitizeTaskName（save-contract.js L4-11）返回空串 → save_probe 自建 base（save-tool-factories.js L174-176：`const nameSeg = sanitizeTaskName(args.taskName); const ts = timestamp(); const base = (nameSeg === '' ? '' : nameSeg + '-') + ts`，不含 sessionTag）→ 文件名退化为 `线索-<时间戳>.md`（无占位字样）；save-contract.js L31-34 的 savePlanBase（含 sessionTag）只用于 save_plan 双文件。
    - 只含四类定位线索：文件地图（fileMap）/ 重点区域（focusAreas）/ 排除项（exclusions）/ 背景与意图（background），**不含证据**（行号/数值/文案摘录）
@@ -64,7 +65,7 @@
 
 ⑩-2 **step-07 实机模型/引导取证（A42/A43、C11/C12，HUMAN）**：用户必须在同一部署配置快照下显式提供 `SESSION_ID`（顶层主会话 ID）与 `PLANNER_PROMPT_SUFFIX`（空串也必须显式存在），运行 `node pe-test/tools/step-07-子代理模型与引导取证.mjs`；脚本只读两代日志，按 parentSession/origin/delegationDepth/descriptor.mode 与父 `subagent_plan` call/result 关联 child，只区分 pro规划/非pro规划。request/header.config.provider/model、request/context、model/selection 只记 attempted route；assistant/message.source.provider/model 才记 actual provenance。仅 pro规划 child 的首个 text block参与 suffix 精确匹配，完整输出所有 text block，budgetNotice、宿主 `Your parent agent id is …` guidance、header.system 分列且不计 suffix；等级按 verified-injection/content-only/attempted-only/absent/no-log，不能用 mock、候选 probe 或模型猜角色代替实机结论。
 
-⑪ 计划回传 → 主会话读取方案文件与验收文件（用 read 工具读取展示）、把内容**原样展示给用户（不要改写、不要润色）**，并 ask 确认下一步操作。路由确认 ask 恰好 1 个问题（三选一「直接执行」「进行pro规划」「不同意」）；批准 ask 恰好 2 个问题——第一问选项固定为「同意执行」「转交pro规划」「不同意」，第二个问题为纯文本「修改意见」（可留空），不得提供 options（index.js L400 机械层会拒绝：「批准 ask 结构错误：第 N 个问题（修改意见）必须为纯文本输入，不得提供选项（预设选项不符合用户想法），当前带 M 个选项。请改为纯文本大文本框、去掉 options」）：
+⑪ 计划回传 → 主会话读取方案文件与验收文件（用 read 工具读取展示）、把内容**原样展示给用户（不要改写、不要润色）**，并 ask 确认下一步操作。路由确认 ask 恰好 2 个问题——第一问为三选一「直接执行」「进行pro规划」「不同意」，第二个问题为纯文本「补充要求」（可留空），不得提供 options（index.js L388/L392 机械层会拒绝：「路由 ask 结构错误：须至少 2 个问题（第一个为路由选项固定为「直接执行」「进行pro规划」「不同意」，第二个为补充要求可空），当前 N 个问题」；或「路由 ask 结构错误：第 N 个问题（补充要求）必须为纯文本输入，不得提供选项（预设选项不符合用户想法），当前带 M 个选项。请改为纯文本大文本框、去掉 options」）；批准 ask 恰好 2 个问题——第一问选项固定为「同意执行」「转交pro规划」「不同意」，第二个问题为纯文本「修改意见」（可留空），不得提供 options（index.js L402/L406 机械层会拒绝：「批准 ask 结构错误：第 N 个问题（修改意见）必须为纯文本输入，不得提供选项（预设选项不符合用户想法），当前带 M 个选项。请改为纯文本大文本框、去掉 options」）：
    - 「同意执行」→ 进入 ⑫
    - 「转交pro规划」→ 重新规划（批准后回炉，区别于目的闸门二选一中的「重新规划」）
    - 「不同意」→ 回到 ⑦
@@ -92,7 +93,7 @@
 
 - **模型/力度继承与跨 Provider 开关**：子代理 reasoningEffort/maxTokens 仍按既有继承/显式抑制语义；plannerModel 仅供 planner，otherAgentModel 仅供非 planner child。crossProviderPlannerModel 默认 false，且仅 cfg.crossProviderPlannerModel === true 才启用严格真实探针。设置保存后需重新装载 Harness，运行中的 Agent 不动态切换。非 planner 在 False/缺失/非法时只对顶层主会话 provider 调用 listModels advisory，精确命中 otherAgentModel 才覆盖；空、未命中、空目录、异常或无 llm 回退主会话 route，不调用 listProviders、真实 prepareCall/stream 或 strict fallback probe。True 的非空 otherAgentModel 枚举全 provider，所有精确命中 provider 串行完成 prepareCall({provider,model,maxTokens:1}) + 完整 prepared stream 的 plugin-source OK probe 后再按既有排序，全部候选结束后才选择；候选失败/未命中/空配置时先验证顶层主会话 provider/model fallback，同路由复用结果；无验证路由在实际 child dispatch 前固定阻断。planner 的 True/False 与原 planner resolver/cache 独立，planner 仍只使用 plannerModel。
 - **子代理沙箱下限**：read-only → 自动抬升为 workspace-write（childPolicyNeedsFloor），保证子代理能写工作区
-- **usage 账本**：每次调用（含子代理）按 role（main/planner/executor）折叠写入 usage-ledger JSONL（配置见 agent.cordis.yml extra-plan.usageLedger）
+- **usage 账本**：每次调用（含子代理）按 role（main/planner/executor）折叠写入 usage-ledger JSONL（配置见 agent.cordis.yml extra-plan.usageLedger）。折叠入口 foldUsage 是同步函数：session-start/pre-step/pre-execute 触发补记，agent/disposed 在宿主 driver 静止、session 解绑前同步结算末轮（宿主 emit/void 不等待监听器 Promise，禁止改异步）；每行字段 = ts/sessionId/role/model/provider/hit/miss/out/cacheWriteTokens/reasoningTokens/seq（provider 取自 msg.source.provider、缺省空串；cacheWriteTokens/reasoningTokens 缺省 0；hit/miss/out/cw/rs 五字段全零的事件不写行），读侧 step-99 为纯 token 统计（明细列 sessionId|role|model|provider|calls|hit|miss|out|cw|rs，不做任何按 provider 或按 model 的汇总）。写入带 (sessionId,seq) 去重，cursor JSON 只在有新增行时整文件写回。同 session 续载（disposed 回收内存项后）按 sessionId 从 cursor JSON 单项恢复 seq/index 去重，不重写旧行；cursor 文件不存在静默按空表，读取错误/JSON 损坏/根值非对象则每实例首次告警一次并降级为空表覆盖写（其它 session 去重基准会丢失）。运行时计数（rootCall 子调用、job_output 查重、tool-jobs 消费集）按 sessionId 分桶，跨会话互不清理。回归入口：step-04 ⑭e 段（P4-1~P4-24）。
 
 ---
 

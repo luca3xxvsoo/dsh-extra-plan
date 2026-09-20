@@ -44,15 +44,15 @@
 //     - 计划已批准（approved）：放行执行类委派（subagent/subagent_fork/
 //       workflow/ralph/subagent_review）与写工具；
 //     - send_message：完全放行（目标合法性由宿主校验；续轮转达语义不变）；
-//     - save_plan：主会话同注册，仅直行态（route==='direct'）放行；其余路由态
-//       返回拒绝文案（T3；内容闸门与规划子代理共用同一实现，强度一致）；
+//     - save_plan：主会话同注册，任意路由态放行（受限规划工件：仅写 cwd/.extra-plan
+//       固定形状 Markdown；内容闸门与规划子代理共用同一实现，强度一致）；
 //     - subagent_probe：仅主会话可委派（任意路由状态放行 + 固定后台）；规划子代理
 //       被闸门拒绝（T5，改用「申请继续探查」升级通道）；
 //     - 空白回复（answers:[]）/取消/中断/验词失败一律视为未确认；仅提问
 //       通道级错误码白名单逃生放行（防死锁，v11 口径）。
 //  2) 规划子代理（subagent_plan 创建、model=pro 的子会话）：
 //     - save_plan 工具注册在此子会话与主会话层（session-start 时按
-//       isPlannerChild / 非子代理判定；主会话侧仅 direct 路由放行，见 1)）；
+//       isPlannerChild / 非子代理判定；主会话侧任意路由态放行（受限规划工件），见 1)）；
 //     - save_probe 工具注册在主会话层与已认领的探查子会话层（session-start +
 //       pre-step 幂等兜底；probe 子代理经放行-认领关联认领），规划子代理/执行者/
 //       reviewer 不可见；
@@ -80,7 +80,21 @@
 //  6) usage 账本（config.usageLedger.enabled）：折叠 assistant/message.usage
 //     逐行写 JSONL，行 = 一次调用；role：main（主会话）/ planner（规划子代理）/
 //     executor（执行者/reviewer 子代理）；写入带 (sessionId,seq) 去重，
-//     保证跨插件实例安全。
+//     保证跨插件实例安全。foldUsage 为同步函数（禁止改成异步）：agent/disposed 是
+//     emit/void，宿主只为监听器返回的 Promise 挂 catch、不等待完成，末轮 final flush
+//     必须在监听器同步路径内完成（此时 driver 已静止、session 尚未解绑）。
+//  7) 会话状态生命周期（P0-4）：运行时状态一律按 sessionId 分桶——subCallCounters 为
+//     sessionId→rootCallId→已放行子调用数，锚点变化只删当前 session 桶（已移除全局
+//     clear()）；agent/disposed 先同步 final fold（role 取 childBaseline 缓存的 WeakMap
+//     角色），再按 sessionId 回收 jobOutputCallCounters、jobOutputLastAnchors、
+//     toolJobsNoticesConsumed、subCallCounters 与 usageCursors（重复 disposed 幂等，
+//     其它 session 状态不受影响）。usageCursors 内存 Map 只保存活跃 session：同 session
+//     再次激活且内存无项时按 sessionId 从 cursor JSON 单项续载 seq/index（内存 ref 固定
+//     从 null 开始 → 从索引 0 扫描并靠 seq 跳过旧消息）。cursor JSON 不存在（ENOENT）
+//     静默按空表；其它读取错误、JSON 解析失败或根值非对象（含数组）→ 每插件实例首次
+//     降级告警一次并进入空表降级，此后写回以「空表 + 当前 session」覆盖写（其它 session
+//     的去重基准会丢失、其后续恢复可能重复追加 ledger 行）；正常可解析时写前重读、读改写
+//     保留其它合法 session 条目。snapshot 增量扫描与 cursor 批量/延迟持久化留后续批次。
 //
 // 不挂 force-plan、不挂 plan mode、无 exit_plan_mode——本模式没有计划模式预锁
 // （快通道教训：不引入启动预锁）。
@@ -276,7 +290,7 @@ function bashMutationMatches(exec) { return mutationMatches(bashCommandOf, exec,
 
 
 
-// 从 ask_user_question 的 tool/call 事件解析选项标签集——只收首问 questions[0] 的选项标签（第二问「修改意见」为纯文本输入，其选项不进入验词集合）。
+// 从 ask_user_question 的 tool/call 事件解析选项标签集——只收首问 questions[0] 的选项标签（第二问「补充要求／修改意见」为纯文本输入，其选项不进入验词集合）。
 // 事件里 arguments 是 JSON 字符串；解析失败返回 null（跳过该调用的分类）。
 function labelsOfCallData(data) {
   if (data === null || typeof data !== 'object') return null
@@ -379,13 +393,19 @@ function gateAskDenyReason(labels) {
 }
 
 // 结构校验纯函数：校验标准 ask 的 questions 结构是否符合规范。
-// kind='route'：须恰好 1 个问题；kind='approve'：须至少 2 个问题（第二个为修改意见可空）。
-// kind='approve' 追加：第二问（questions[1]）起不得带非空 options（修改意见必须纯文本输入）。
-// 通过返回 null，不通过返回 deny reason 字符串（含"修改意见"提示）。
+// kind='route'：须至少 2 个问题（第二个为补充要求可空）；kind='approve'：须至少 2 个问题（第二个为修改意见可空）。
+// kind='route'/'approve' 追加：第二问（questions[1]）起不得带非空 options（补充要求/修改意见必须纯文本输入）。
+// 通过返回 null，不通过返回 deny reason 字符串（路由文案含"补充要求"、批准文案含"修改意见"提示）。
 function validateGateAskStructure(kind, questions) {
   if (!Array.isArray(questions)) return 'ask 结构错误：缺少 questions 数组'
   if (kind === 'route') {
-    if (questions.length !== 1) return `路由 ask 结构错误：须恰好 1 个问题（路由确认 ask 只做一次三选一，后续澄清请另发一次 ask_user_question。选项固定为${ROUTE_OPTIONS_TEXT}），当前 ${questions.length} 个问题`
+    if (questions.length < 2) return `路由 ask 结构错误：须至少 2 个问题（第一个为路由选项固定为${ROUTE_OPTIONS_TEXT}，第二个为补充要求可空），当前 ${questions.length} 个问题`
+    for (let i = 1; i < questions.length; i += 1) {
+      const q = questions[i]
+      if (q !== null && typeof q === 'object' && Array.isArray(q.options) && q.options.length > 0) {
+        return `路由 ask 结构错误：第 ${i + 1} 个问题（补充要求）必须为纯文本输入，不得提供选项（预设选项不符合用户想法），当前带 ${q.options.length} 个选项。请改为纯文本大文本框、去掉 options`
+      }
+    }
     return null
   }
   if (kind === 'purpose') {
@@ -970,9 +990,11 @@ function probeDisposalWarning(remaining) {
 
 // ④ 主会话段（mainGateReason；自 apply 内提取的纯部分，分支顺序逐字同序）：
 //    ask → write/edit → cordis 6 只读 → cordis_run → pwsh/bash → planToolName
-//    → save_probe → save_plan（T3：仅 direct 放行）→ subagent 族
-//    → run_code（调 runCodeGroupDenyReason，depth+1）
+//    → save_probe 分支保持不变（route=plan + purpose∈{refine,redo} + clarified）
+//    → subagent 族 → run_code（调 runCodeGroupDenyReason，depth+1）
 //    → job_output（wait 检查 + 计数器查重，只读不写入；set 由 listener 放行路径执行）→ null。
+//    save_plan 已移除路由态限制：无显式分支，由本函数兜底 return null 任意路由态放行
+//    （受限规划工件：仅写 cwd/.extra-plan 固定形状 Markdown，内容闸门与规划子代理同一实现）。
 //    gateCtx: { events, planToolName, jobOutputCallCounters, runCodeDepth }。
 function mainGateReason(state, exec, gateCtx) {
   const ctx = gateCtx !== undefined && gateCtx !== null ? gateCtx : {}
@@ -1068,16 +1090,6 @@ function mainGateReason(state, exec, gateCtx) {
   if (name === 'save_probe') {
     if (!escape && (state.route !== 'plan' || state.clarified !== true || (state.purpose !== 'refine' && state.purpose !== 'redo'))) {
       return planDenyReason('save_probe', state)
-    }
-    return null
-  }
-  // T3：save_plan 主会话侧——仅直接执行（direct）路由放行落盘；其余路由态拒绝。
-  // 必须显式分支：本函数兜底 return null 会让所有路由态被放行。内容闸门与规划
-  // 子代理完全一致（同一 defineSavePlan 工厂）；规划子代理侧走 plannerGateReason
-  // 兜底放行，不受本分支影响。
-  if (name === 'save_plan') {
-    if (!escape && state.route !== 'direct') {
-      return `save_plan 仅允许在直接执行路由下落盘方案与验收；当前路由态：${state.route}`
     }
     return null
   }
@@ -1379,37 +1391,84 @@ export function apply(ctx, config) {
   const ledgerPath = ledgerCfg !== null && typeof ledgerCfg.path === 'string' ? ledgerCfg.path : ''
   const ledgerCursorPath = ledgerPath === '' ? '' : ledgerPath + '.cursor.json'
   let ledgerWarned = false
+  // cursor 降级告警口径：每插件实例（= 每个会话各一份）首次进入空表降级时告警一次
+  // （与 ledgerWarned 同一次式风格）；同一实例内多次降级读不重复告警。
+  let cursorDegradedWarned = false
+  // usageCursors 只保存活跃 session：sessionId → { seq, index, ref }（ref 为上次折叠时的
+  // 事件数组引用，仅内存有效）。disposed final fold 后删除本 session 项；同 session 再次
+  // 激活且内存无项时按 sessionId 从 cursor JSON 单项续载（ref 从 null 开始 → 从索引 0
+  // 全量扫描、靠 seq 跳过旧消息；该增量扫描性能问题留后续批次）。
   const usageCursors = new Map()
-  let usageCursorsLoaded = false
   // job_output 同轮防重复：内存计数器（Map<sessionId, Map<jobId, 1>>）
   // 替代 session.events 推导——tool/call 先落盘、后 pre-execute（宿主 agent-loop 先
   // appendToolCall 后 scheduler.prepare）；jobOutputCallCounters 内存计数器不依赖该时序。
   const jobOutputCallCounters = new Map()
   const jobOutputLastAnchors = new Map() // sessionId → 上次锚点索引
-  const subCallCounters = new Map() // rootCallId → 已放行子调用数（单实例上限，planner 专属）
+  // sessionId → Map<rootCallId, 已放行子调用数>（单实例上限，planner 专属）。
+  // 按 session 分桶：锚点变化 / disposed 只删当前 session 桶，不再全局 clear()——
+  // 全局清空会连带清掉其它 session 正在执行的 run_code 子调用计数。
+  const subCallCounters = new Map()
   const toolJobsNoticesConsumed = new Map() // sessionId → Set<jobId> 已处理过的 tool-jobs 完成通知的 jobId
-  async function foldUsage(agent, role) {
+  // cursor JSON 读取（续载与写回前的现状盘点共用）：返回 { ok, table }。
+  // - ENOENT（首次运行尚无 cursor 文件）→ ok:true + 空表，静默不告警（本就没有可保留内容）；
+  // - 其它读取错误 / JSON 解析失败 / 根值非对象（null、数组、标量）→ 本实例首次降级告警一次，
+  //   ok:false + 空表降级：写回只能覆盖写「空表 + 当前 session」，其它 session 的去重基准会
+  //   丢失、其后续恢复可能重复追加 ledger 行（机制说明与风险已写入 ai-机制设计.md）。
+  function readUsageCursorTable() {
+    let raw
+    try {
+      raw = readFileSync(ledgerCursorPath, 'utf8')
+    } catch (error) {
+      if (error !== null && typeof error === 'object' && error.code === 'ENOENT') return { ok: true, table: {} }
+      warnUsageCursorDegraded(error)
+      return { ok: false, table: {} }
+    }
+    let saved
+    try {
+      saved = JSON.parse(raw)
+    } catch (error) {
+      warnUsageCursorDegraded(error)
+      return { ok: false, table: {} }
+    }
+    if (saved === null || typeof saved !== 'object' || Array.isArray(saved)) {
+      warnUsageCursorDegraded(new Error('cursor root is not a plain object: ' + (Array.isArray(saved) ? 'array' : typeof saved)))
+      return { ok: false, table: {} }
+    }
+    return { ok: true, table: saved }
+  }
+
+  // 降级告警：每插件实例首次降级时一次（同 ledgerWarned 口径），避免多次降级读重复刷屏。
+  function warnUsageCursorDegraded(error) {
+    if (cursorDegradedWarned) return
+    cursorDegradedWarned = true
+    console.warn('extra-plan: usage cursor JSON unreadable or corrupt — falling back to an empty cursor table; other sessions dedupe baselines may be lost on the next write: ' + (error instanceof Error ? error.message : String(error)))
+  }
+
+  // cursor 单项归一：兼容旧数字形状（sessionId: seq）与现有 { seq, index } 形状；内存 ref 固定从 null 开始。
+  function usageCursorEntryOf(table, sessionId) {
+    const value = table[sessionId]
+    if (typeof value === 'number') return { seq: value, index: 0, ref: null }
+    if (value !== null && typeof value === 'object' && typeof value.seq === 'number') {
+      return { seq: value.seq, index: typeof value.index === 'number' ? value.index : 0, ref: null }
+    }
+    return undefined
+  }
+
+  // usage 折叠：同步函数（禁止改成 async——agent/disposed 是 emit/void，宿主不等待 Promise，
+  // 异步文件 I/O 会重新打开末轮漏记窗口）。既有语义保持：事件扫描、token/model/role 与 JSONL
+  // 字段、只有新增行才追加并持久化 cursor、cursor JSON 整文件改写。
+  function foldUsage(agent, role) {
     if (!ledgerOn || ledgerPath === '') return
     const session = agent.session
     if (session === undefined || session === null) return
     const events = sessionEvents(session)
     if (!Array.isArray(events)) return
     try {
-      if (!usageCursorsLoaded) {
-        usageCursorsLoaded = true
-        try {
-          const saved = JSON.parse(readFileSync(ledgerCursorPath, 'utf8'))
-          if (saved !== null && typeof saved === 'object') {
-            for (const key of Object.keys(saved)) {
-              const v = saved[key]
-              if (typeof v === 'number') usageCursors.set(key, { seq: v, index: 0, ref: null })
-              else if (v !== null && typeof v === 'object' && typeof v.seq === 'number') usageCursors.set(key, { seq: v.seq, index: typeof v.index === 'number' ? v.index : 0, ref: null })
-            }
-          }
-        } catch (error) { /* 首次运行无 cursor 文件 */ }
-      }
       const sid = session.header.id
-      const prev = usageCursors.get(sid)
+      // 内存无项（首次 fold / disposed 回收后同 session 再次激活）→ 只按 sessionId 从 cursor JSON
+      // 续载本项；不再把 JSON 里其它历史 session 一次性灌进内存 Map。
+      let prev = usageCursors.get(sid)
+      if (prev === undefined) prev = usageCursorEntryOf(readUsageCursorTable().table, sid)
       let cursor = 0
       let start = 0
       if (prev !== undefined) {
@@ -1430,17 +1489,23 @@ export function apply(ctx, config) {
         const hit = typeof usage.cacheReadTokens === 'number' ? usage.cacheReadTokens : 0
         const miss = typeof usage.inputTokens === 'number' ? usage.inputTokens : 0
         const out = typeof usage.outputTokens === 'number' ? usage.outputTokens : 0
-        if (hit === 0 && miss === 0 && out === 0) continue
+        const cacheWriteTokens = typeof usage.cacheWriteTokens === 'number' ? usage.cacheWriteTokens : 0
+        const reasoningTokens = typeof usage.reasoningTokens === 'number' ? usage.reasoningTokens : 0
+        if (hit === 0 && miss === 0 && out === 0 && cacheWriteTokens === 0 && reasoningTokens === 0) continue
         const msg = data.message
         const model = msg !== null && typeof msg === 'object' && msg.source !== null && typeof msg.source === 'object' && typeof msg.source.model === 'string' ? msg.source.model : ''
+        const provider = msg !== null && typeof msg === 'object' && msg.source !== null && typeof msg.source === 'object' && typeof msg.source.provider === 'string' ? msg.source.provider : ''
         rows.push(JSON.stringify({
           ts: new Date().toISOString(),
           sessionId: sid,
           role,
           model,
+          provider,
           hit,
           miss,
           out,
+          cacheWriteTokens,
+          reasoningTokens,
           seq,
         }))
       }
@@ -1451,10 +1516,21 @@ export function apply(ctx, config) {
       const dir = ledgerPath.slice(0, Math.max(sepA, sepB))
       if (dir !== '') mkdirSync(dir, { recursive: true })
       appendFileSync(ledgerPath, rows.join('\n') + '\n', 'utf8')
+      // cursor 持久化：写前重读现状——可解析时更新本 session 项并逐项保留其它合法 session
+      // （归一为 { seq, index }）；降级态（读不到/解析失败/根值非对象）以空表 + 当前 session
+      // 覆盖写，其它 session 去重基准丢失的风险见 readUsageCursorTable 注释。仍是「有新增行才
+      // 整文件改写」，本批不引入批量/延迟持久化。
       const persisted = {}
-      for (const [k, v] of usageCursors) {
-        persisted[k] = v !== null && typeof v === 'object' ? { seq: v.seq, index: v.index } : v
+      const current = readUsageCursorTable()
+      if (current.ok) {
+        for (const key of Object.keys(current.table)) {
+          if (key === sid) continue
+          const entry = usageCursorEntryOf(current.table, key)
+          if (entry === undefined) continue
+          persisted[key] = { seq: entry.seq, index: entry.index }
+        }
       }
+      persisted[sid] = { seq: cursor, index: events.length }
       try { writeFileSync(ledgerCursorPath, JSON.stringify(persisted), 'utf8') } catch (error) { /* cursor 持久化尽力而为 */ }
     } catch (error) {
       if (!ledgerWarned) {
@@ -1590,29 +1666,64 @@ export function apply(ctx, config) {
     }
   }
 
+  // childBaseline 最近一次确定的 usage role（WeakMap：随 agent 回收，不需要显式回收表）。
+  // agent/disposed 的 final fold 优先复用该缓存——agent 已离开 registry 后重新分类可能让
+  // main/planner/executor 漂移，缓存保证同一 agent 的角色一致。
+  const usageRoles = new WeakMap()
+
+  function usageRoleOf(agent) {
+    const cached = usageRoles.get(agent)
+    if (cached !== undefined) return cached
+    // 无缓存（该 agent 从未经过 childBaseline）→ 走同一稳定判定兜底，不写缓存。
+    return isPlannerChild(agent) ? 'planner' : isChild(agent) ? 'executor' : 'main'
+  }
+
   function childBaseline(agent) {
     const child = isChild(agent)
     const planner = isPlannerChild(agent)
-    void foldUsage(agent, planner ? 'planner' : child ? 'executor' : 'main')
+    const role = planner ? 'planner' : child ? 'executor' : 'main'
+    usageRoles.set(agent, role)
+    foldUsage(agent, role)
     if (child) floorChildPolicy(agent)
     return child
   }
 
   // save_plan/save_probe 的合同、校验、渲染与公共原子落盘由 lib 工厂提供；此处仅保留注册与生命周期接线。
   // 工具注册公共实现：WeakSet 去重 + tools 服务取用 + warn/error 文案模板 + try/catch。
-  // 三个注册函数各自闭包持有各自 WeakSet 与工具名，跨工具幂等互不共享。
+  // 两个注册函数各自闭包持有各自 WeakSet 与工具名，跨工具幂等互不共享。
   function registerTool(registered, toolName, defineFn, agent) {
+    // 幂等短路：仅在注册成功后写入标记（失败一律不写，留给下一次 session-start/pre-step 重试）。
     if (registered.has(agent)) return
-    registered.add(agent)
-    const tools = agent.ctx !== undefined && agent.ctx !== null ? agent.ctx.get('tools') : undefined
-    if (tools === undefined || typeof tools.register !== 'function') {
+    let tools
+    try {
+      tools = agent.ctx !== undefined && agent.ctx !== null && typeof agent.ctx.get === 'function' ? agent.ctx.get('tools') : undefined
+    } catch (error) {
+      tools = undefined
+    }
+    // 分类 C（服务未就绪）：时序可自愈 → 不写标记，下一步重试。
+    if (tools === undefined || tools === null || typeof tools.register !== 'function') {
       console.warn('extra-plan: tools service unavailable — ' + toolName + ' not registered')
       return
     }
     try {
       tools.register(defineFn())
+      registered.add(agent)
     } catch (error) {
-      console.error('extra-plan: ' + toolName + ' registration failed: ' + (error instanceof Error ? error.message : String(error)))
+      const message = error instanceof Error ? error.message : String(error)
+      // 分类 A（重名：同名工具已存在，不构成缺失）→ 记终态，不重试。
+      if (error instanceof Error && message.includes('already registered')) {
+        registered.add(agent)
+        console.warn('extra-plan: ' + toolName + ' already registered in this scope — keeping the existing tool, no retry')
+        return
+      }
+      // 分类 B（永久性定义期错误：JsonSchemaError / TypeError / 保留名）→ 记终态，不重试。
+      if (error instanceof Error && (error.name === 'JsonSchemaError' || error.name === 'TypeError' || message.includes('is reserved'))) {
+        registered.add(agent)
+        console.error('extra-plan: ' + toolName + ' registration failed permanently: ' + message)
+        return
+      }
+      // 分类 C（其它非预期错误：可能瞬态）→ 不写标记、不 return，下一步重试。
+      console.error('extra-plan: ' + toolName + ' registration failed: ' + message)
     }
   }
 
@@ -1652,7 +1763,7 @@ export function apply(ctx, config) {
   let selfAgent = undefined
 
   // 1) 会话启动：子代理基线（账本 + 沙箱下限）；规划子代理与主会话注册 save_plan
-  //    （T3：主会话仅 direct 路由放行，判定在 mainGateReason）；主会话与探查子代理
+  //    （主会话侧任意路由态放行：受限规划工件，判定在 mainGateReason 兜底）；主会话与探查子代理
   //    注册 save_probe（scoped；recompose 不重发 session-start，pre-step 兜底）。
   ctx.on('agent/session-start', (payload) => {
     const agent = payload.agent
@@ -1759,16 +1870,31 @@ export function apply(ctx, config) {
     }
   })
 
+  // 4) 会话销毁：同步 final flush + 单会话状态回收。必须保持同步回调——agent/disposed 是
+  //    emit/void，宿主调用监听器后只对返回的 Promise 挂 catch、不等待完成；此处 driver 已静止、
+  //    session 尚未解绑，同步路径内才能读到最终 snapshot 并结算末轮 usage。
+  //    顺序不可换：① 先按缓存 role 同步 foldUsage（在任何 Map 删除之前）；② 保留
+  //    pendingProbeClaims 的剩余数量告警语义，再删除该 session 的待认领计数；③ 最后按
+  //    sessionId 依次回收 jobOutputCallCounters、jobOutputLastAnchors、toolJobsNoticesConsumed、
+  //    subCallCounters 与 usageCursors。重复 disposed 幂等；其它 session 的同名 rootCallId、
+  //    计数与 cursor 均不受影响（本 session 的去重基准留在 cursor JSON，靠单项续载恢复）。
+  //    final fold 写入失败仍走既有单次 ledger warning 且不抛出，不阻断后续清理。
   ctx.on('agent/disposed', (payload) => {
-    const sessionId = payload.agent?.session?.header?.id
-    if (typeof sessionId === 'string') {
-      const pending = pendingProbeClaims.get(sessionId)
-      if (Number.isInteger(pending) && pending > 0) {
-        const warning = probeDisposalWarning(pending)
-        if (warning !== null) console.warn(warning)
-      }
-      pendingProbeClaims.delete(sessionId)
+    const agent = payload.agent
+    const sessionId = agent?.session?.header?.id
+    if (typeof sessionId !== 'string') return
+    foldUsage(agent, usageRoleOf(agent))
+    const pending = pendingProbeClaims.get(sessionId)
+    if (Number.isInteger(pending) && pending > 0) {
+      const warning = probeDisposalWarning(pending)
+      if (warning !== null) console.warn(warning)
     }
+    pendingProbeClaims.delete(sessionId)
+    jobOutputCallCounters.delete(sessionId)
+    jobOutputLastAnchors.delete(sessionId)
+    toolJobsNoticesConsumed.delete(sessionId)
+    subCallCounters.delete(sessionId)
+    usageCursors.delete(sessionId)
   })
 
   // 3) anchored 引导（默认开）：主会话与规划子代理首轮极简；执行者/reviewer 不引导。
@@ -1960,6 +2086,18 @@ export function apply(ctx, config) {
     return nextConfig
   })
 
+  // 单实例子调用上限（planner）：按当前 session 的 rootCallId 桶读取计数，未超限则计数 +1。
+  // 返回拒绝文案或 null（放行）；空 rootCallId 与 exploreBudget 上限的既有拒绝文案、
+  // 计数时机（先判上限、再写入）逐字保持不变。
+  function noteRunCodeSubCall(sessionId, rid) {
+    const bucket = subCallCounters.get(sessionId)
+    const passed = rid === '' || bucket === undefined ? 0 : (bucket.get(rid) || 0)
+    if (rid === '' || passed >= exploreBudget) return runCodeDispatchCapText(rid === '' ? '?' : rid, passed + 1, exploreBudget)
+    if (bucket === undefined) subCallCounters.set(sessionId, new Map([[rid, passed + 1]]))
+    else bucket.set(rid, passed + 1)
+    return null
+  }
+
   // 5) 硬闸门（tools/pre-execute）：规划子代理只读 + 探查硬上限；主会话四级锚点。
   ctx.on('tools/pre-execute', (exec, next) => {
     if (exec.agent === undefined) return next()
@@ -1981,9 +2119,12 @@ export function apply(ctx, config) {
       }
       const lastAnchor = jobOutputLastAnchors.get(sessId)
       if (lastAnchor !== currentAnchor) {
+        // 只清当前 session：job_output 查重、tool-jobs 消费集与本 session 的 rootCall 桶。
+        // subCallCounters 已按 sessionId 分桶，故删除全局 clear()——它会把其它 session
+        // 正在执行的 run_code 子调用计数一并清掉（跨会话锚点互不干扰）。
         jobOutputCallCounters.delete(sessId)
         toolJobsNoticesConsumed.delete(sessId)
-        subCallCounters.clear()
+        subCallCounters.delete(sessId)
         jobOutputLastAnchors.set(sessId, currentAnchor)
       }
     }
@@ -2032,9 +2173,8 @@ export function apply(ctx, config) {
       if (reason !== null) return { kind: 'deny', reason }
       if (planner && isRunCodeSubCall(exec)) {
         const rid = typeof exec.rootCallId === 'string' ? exec.rootCallId : ''
-        const passed = rid === '' ? 0 : (subCallCounters.get(rid) || 0)
-        if (rid === '' || passed >= exploreBudget) return { kind: 'deny', reason: runCodeDispatchCapText(rid === '' ? '?' : rid, passed + 1, exploreBudget) }
-        subCallCounters.set(rid, passed + 1)
+        const capReason = noteRunCodeSubCall(agent.session.header.id, rid)
+        if (capReason !== null) return { kind: 'deny', reason: capReason }
       }
       const parentId = agent.session.header.id
       pendingProbeClaims.set(parentId, (pendingProbeClaims.get(parentId) || 0) + 1)
@@ -2066,9 +2206,8 @@ export function apply(ctx, config) {
       }
       if (planner && isRunCodeSubCall(exec)) {
         const rid = typeof exec.rootCallId === 'string' ? exec.rootCallId : ''
-        const passed = rid === '' ? 0 : (subCallCounters.get(rid) || 0)
-        if (rid === '' || passed >= exploreBudget) return { kind: 'deny', reason: runCodeDispatchCapText(rid === '' ? '?' : rid, passed + 1, exploreBudget) }
-        subCallCounters.set(rid, passed + 1)
+        const capReason = noteRunCodeSubCall(agent.session.header.id, rid)
+        if (capReason !== null) return { kind: 'deny', reason: capReason }
       }
       return next()
     }

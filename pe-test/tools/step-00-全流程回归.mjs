@@ -93,6 +93,9 @@ const err = (cid, code) => ({ type: 'tool/result', data: { error: { name: 'Error
 const deny = (cid, reason) => ({ type: 'tool/result', data: { message: { content: [{ type: 'tool-result', toolCallId: cid, content: [{ type: 'text', text: 'Error: ' + reason }], isError: true }] } } })
 const routeArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }] })
 const approvalArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }] })
+// D7：路由 ask 双问夹具——第二问为纯文本「补充要求」（可留空、不得带 options）
+const route2qArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }, { id: 'supplement', question: '补充要求' }] })
+const route2qArgsWithOpts = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }, { id: 'supplement', question: '补充要求', options: [{ label: '选项A' }] }] })
 const clarifyArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '方案A' }, { label: '方案B' }] }] })
 const purposeArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '完善方案' }, { label: '重新规划' }] }] })
 const wordPurposeArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '完善方案' }] }] })
@@ -276,13 +279,14 @@ for (const [name, events, expected] of F21) {
 // ── GL 系列:结构校验纯函数（validateGateAskStructure） ────────────────────
 const glApproveQ1 = [{ id: 'q1', question: '请选择', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }]
 const GL = [
-  ['GL1 路由 ask 恰好 1 个问题 → 通过', validateGateAskStructure('route', [{ id: 'q1', question: '请选择', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }]), null],
+  ['GL1 路由 ask 恰好 1 个问题（缺第二问）→ 不通过，含「须至少 2 个问题」', (() => { const r = validateGateAskStructure('route', [{ id: 'q1', question: '请选择', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }]); return r !== null && r.includes('须至少 2 个问题') })(), true],
   ['GL2 批准 ask 仅 1 个问题缺修改意见 → 不通过，含"修改意见"', validateGateAskStructure('approve', [{ id: 'q1', question: '请选择', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }]) !== null && validateGateAskStructure('approve', [{ id: 'q1', question: '请选择', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }]).includes('修改意见'), true],
   ['GL3 批准第二问带非空 options → 拒（含修改意见/纯文本/不得提供选项）', (() => { const r = validateGateAskStructure('approve', [...glApproveQ1, { id: 'q2', question: '修改意见', options: [{ label: '无' }] }]); return r !== null && r.includes('修改意见') && r.includes('纯文本') && r.includes('不得提供选项') })(), true],
   ['GL4 批准第二问 options:[] → 通过（空数组=纯文本框）', validateGateAskStructure('approve', [...glApproveQ1, { id: 'q2', question: '修改意见', options: [] }]), null],
   ['GL5 批准第二问无 options 字段 → 通过', validateGateAskStructure('approve', [...glApproveQ1, { id: 'q2', question: '修改意见' }]), null],
   ['GL6 批准第三问带 options → 拒（第二问起全部校验）', (() => { const r = validateGateAskStructure('approve', [...glApproveQ1, { id: 'q2', question: '修改意见' }, { id: 'q3', question: '补充', options: [{ label: 'x' }] }]); return r !== null && r.includes('纯文本') })(), true],
-  ['GL7 路由 2 问 → 仍拒含「须恰好 1 个问题」（route 分支零改动回归）', (() => { const r = validateGateAskStructure('route', [...glApproveQ1, { id: 'q2', question: '补充' }]); return r !== null && r.includes('须恰好 1 个问题') })(), true],
+  ['GL7 路由 2 问（第二问纯文本补充要求）→ 通过', validateGateAskStructure('route', [{ id: 'q1', question: '请选择', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }, { id: 'q2', question: '补充要求' }]), null],
+  ['GL7b 路由 2 问第二问带非空 options → 拒（含「补充要求」「纯文本」）', (() => { const r = validateGateAskStructure('route', [{ id: 'q1', question: '请选择', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }, { id: 'q2', question: '补充要求', options: [{ label: '选项A' }] }]); return r !== null && r.includes('补充要求') && r.includes('纯文本') })(), true],
   ['GL8 目的 ask 恰好 1 个问题 → 通过', validateGateAskStructure('purpose', [{ id: 'q1', question: '请选择', options: [{ label: '完善方案' }, { label: '重新规划' }] }]), null],
   ['GL9 目的 ask 2 问 → 拒含「目的 ask 结构错误」与「须恰好 1 个问题」', (() => { const r = validateGateAskStructure('purpose', [{ id: 'q1', question: '请选择', options: [{ label: '完善方案' }, { label: '重新规划' }] }, { id: 'q2', question: '补充' }]); return r !== null && r.includes('目的 ask 结构错误') && r.includes('须恰好 1 个问题') })(), true],
 ]
@@ -1329,7 +1333,7 @@ const AS = [
   ['AS2 首问标准三词+第二问无 options → allow', (() => { const r = askPreExecute('ask_user_question', { questions: [...askStandardQ1, { id: 'q2', question: '修改意见' }] }); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
   ['AS3 首问非白名单变体+第二问无 options → deny 含「推荐标记仅限」、不含「路由 ask 结构错误」（kind 特异性回归）', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', options: [{ label: '同意执行!' }, { label: '转交pro规划' }, { label: '不同意' }] }, { id: 'q2', question: '修改意见' }] }); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('推荐标记仅限') && !String(r.reason).includes('路由 ask 结构错误') })(), true],
   ['AS4 单问「同意执行!」变体 → deny 含「批准 ask 结构错误」与「修改意见」（approve 模板正向）', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', options: [{ label: '同意执行!' }] }] }); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('批准 ask 结构错误') && String(r.reason).includes('修改意见') })(), true],
-  ['AS5 单问路由变体（直接执行!）→ deny 且不含「结构错误」（route 特异不回归）', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', options: [{ label: '直接执行!' }, { label: '进行pro规划' }, { label: '不同意' }] }] }); return r !== null && r !== undefined && r.kind === 'deny' && !String(r.reason).includes('结构错误') })(), true],
+  ['AS5 路由变体（直接执行!）+第二问纯文本 → deny 且不含「结构错误」（route 特异不回归）', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', options: [{ label: '直接执行!' }, { label: '进行pro规划' }, { label: '不同意' }] }, { id: 'q2', question: '补充要求' }] }); return r !== null && r !== undefined && r.kind === 'deny' && !String(r.reason).includes('结构错误') })(), true],
   ['AS6 cordis_run 路由未确认 → deny 含「路由未确认：cordis_run」与「须先 ask_user_question 路由确认」', (() => { const r = askPreExecute('cordis_run', {}); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认：cordis_run') && String(r.reason).includes('须先 ask_user_question 路由确认') })(), true],
   ['AS7 cordis_define 路由未确认 → allow', (() => { const r = askPreExecute('cordis_define', {}); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
   ['AS8 cordis_inspect_list 路由未确认 → allow', (() => { const r = askPreExecute('cordis_inspect_list', {}); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
@@ -1337,7 +1341,9 @@ const AS = [
   ['AS9b 目的标准二选一 route=direct → deny 且含固定路由确认句', (() => { const r = askPreExecute('ask_user_question', JSON.parse(purposeArgs), askDirectEvents); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(ROUTE_CONFIRM_TEXT) })(), true],
   ['AS9c 目的标准二选一 route=plan → allow', (() => { const r = askPreExecute('ask_user_question', JSON.parse(purposeArgs), askPlanEvents); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
   ['AS9d 目的标准二选一 channelBroken → allow（逃生）', (() => { const r = askPreExecute('ask_user_question', JSON.parse(purposeArgs), askChannelBrokenEvents); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
-  ['AS9e 精确三选一路由 ask route=none → allow', (() => { const r = askPreExecute('ask_user_question', JSON.parse(routeArgs), []); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
+  ['AS9e 单问路由 ask（缺第二问）route=none → deny 且含「须至少 2 个问题」', (() => { const r = askPreExecute('ask_user_question', JSON.parse(routeArgs), []); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('须至少 2 个问题') })(), true],
+  ['AS9h 路由双问（第二问纯文本）route=none → allow', (() => { const r = askPreExecute('ask_user_question', JSON.parse(route2qArgs), []); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
+  ['AS9i 路由双问第二问带 options route=none → deny 且含「纯文本」「补充要求」', (() => { const r = askPreExecute('ask_user_question', JSON.parse(route2qArgsWithOpts), []); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('纯文本') && String(r.reason).includes('补充要求') })(), true],
   ['AS9f ordinary 探查 ask route=none → allow', (() => { const r = askPreExecute('ask_user_question', ordinaryProbeArgs, []); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
   ['AS9g ordinary 澄清 ask route=none → allow', (() => { const r = askPreExecute('ask_user_question', ordinaryClarifyArgs, []); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
   ['AS10 目的缺一词 ask → deny 含「目的 ask 选项固定为」', (() => { const r = askPreExecute('ask_user_question', JSON.parse(wordPurposeArgs)); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('目的 ask 选项固定为') })(), true],

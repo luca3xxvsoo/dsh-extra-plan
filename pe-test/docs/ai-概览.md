@@ -4,7 +4,7 @@
 > **改完必做**：node pe-test/tools/代码地图生成.mjs（同步地图+人工补描述（脚本只同步结构，绝不覆盖已有描述），流程见 ai-维护手册.md）。一键体检已内置 `--check` 一致性检查（不写盘）：地图过期/漏检/导航失效 → 该项判红。
 
 ## 项目一句话
-dsh 插件「按需规划模式」预设：AI 未经用户同意只能只读探查，经路由/目的/澄清/批准四级机械闸门后按规划执行。五角色分工保证「用户确认 → 规划 → 执行 → 验收」闭环。工具呈现按 A=anchoredBootstrap、C=creativeMode、M=native/ptc/both 三个独立维度，F=无 tool/call、L=首个 tool/call 后判定。
+dsh 插件「按需规划模式」预设：AI 未经用户同意不得修改源码/配置/执行态（只读探查为主），经路由/目的/澄清/批准四级机械闸门后按规划执行；唯一写例外是受限规划工件 save_plan——任意路由态可落盘 cwd/.extra-plan 的固定形状方案/验收双文件（内容闸门、目录与文件名形态不变），save_probe 放行条件保持现状（route=plan + 目的已定 + 澄清完成）。五角色分工保证「用户确认 → 规划 → 执行 → 验收」闭环。工具呈现按 A=anchoredBootstrap、C=creativeMode、M=native/ptc/both 三个独立维度，F=无 tool/call、L=首个 tool/call 后判定。
 
 兼容：dsh >= v0.1.2-rc.1 & <= v0.1.5-rc.2（0.1.1 不支持；上界与 READAI.md/README.md 口径一致）；qqbot 0.5.0 版（自愈/建链由精简版 dsh-qqbot-user-questions 承担）；Linux/macOS 逻辑层已验证（pe-test 写拦截 68 用例），运行时仅 Windows 实测。
 
@@ -20,7 +20,7 @@ dsh 插件「按需规划模式」预设：AI 未经用户同意只能只读探�
 |:--|:--|:--|
 | 四级闸门状态机+主闸门 | plugins/dsh-extra-plan/index.js | 修改最频繁（route/purpose/clarified/approved/channelBroken） |
 | 探查预算 | index.js budget* 族（budgetNoticeText/budgetReminderText/budgetExhaustedReason 等） | 开局告知/剩3提醒/耗尽往返 |
-| save_probe/save_plan 工具 | lib/save-contract.js（合同/渲染）、lib/save-probe-validation.js（校验）、lib/save-persistence.js（原子落盘+journal）、lib/save-tool-factories.js（工具定义工厂）；index.js（apply 注册/闸门接线） | 双写+journal 自愈；save_plan 注册于规划子代理层+主会话层（主会话仅 direct 路由放行，T3） |
+| save_probe/save_plan 工具 | lib/save-contract.js（合同/渲染）、lib/save-probe-validation.js（校验）、lib/save-persistence.js（原子落盘+阶段感知 journal）、lib/save-tool-factories.js（工具定义工厂）；index.js（apply 注册/闸门接线） | 双写+journal 自愈（阶段感知：pre-journal 失败先删 journal 并以 existsSync 确认不存在才清 tmp，post-journal 任何失败保留 journal 与现场，全部目标确认就位后才删 journal；恢复逐项确认目标存在、全项就位才清 journal，目标缺失或形状非法保留 journal 并告警；无 fsync/跨进程强持久化承诺）；save_plan 注册于规划子代理层+主会话层（主会话侧任意路由态放行——受限规划工件，仅写 cwd/.extra-plan 固定形状 Markdown）；save_probe 放行条件保持现状（route=plan + 目的已定 + 澄清完成）；注册幂等由「成功后才写 WeakSet 标记」保证，失败不写标记并由 pre-step 每步兜底重试（session-start 每会话仅一次、recompose 不重发，故只剩 pre-step 一条恢复通道）；注册失败按重名/永久性（记终态）与可重试（下一步重试）三分类处置 |
 | save_probe PROBE_LIMITS | lib/save-contract.js PROBE_LIMITS；lib/save-probe-validation.js validateProbe；lib/save-tool-factories.js 动态 schema；step-00 PR23=151、PR34/PR35 | evidence 最多 150 条、单条 evidence.text 最多 1000 字；1000 通过、1001 拒绝；描述/schema 动态读取同一合同常量 |
 | run_code 静态拆解组判定 | index.js runCodeGroupDenyReason（组聚合/判定）；lib/run-code-static.js decomposeRunCode（静态拆解，index.js 解构调用后 re-export） | 防绕道闸门 |
 | run_code 容错检查 | lib/run-code-static.js runCodeCatchGateReason/runCodeDispatchGateReason（index.js 解构调用与 re-export；开关 cfg.runcodeCatchGate 默认 false） | 多调用独立容错硬闸门（只认逐点 try/catch；教学式拒绝）+ 单实例子调用上限=exploreBudget |
@@ -34,16 +34,17 @@ dsh 插件「按需规划模式」预设：AI 未经用户同意只能只读探�
 | 执行者工具裁剪 | lib/executor-spawn.js | E8：覆盖 workflow/ralph worker |
 | 预设本体（persona/deny/descriptor/设置默认） | assets/presets/extra-plan/agent.cordis.yml | 改预设=改这里（复制副本再改）；anchoredBootstrap 与 creativeMode 两个开关独立，creativeMode 默认 false |
 | qqbot 自愈 | plugins/dsh-qqbot-user-questions/lib/heal.js + scripts/heal.mjs（精简版插件根 index.js 调 heal.js） | 启动/安装时迁移旧版根级 code-runtime/agent-presets 错误块 + @local 建链（两行补入由包内静态 cordis.patch.yml 承担）；不含问答/审批 |
-| PTC三维装配矩阵 | pe-test/tools/step-04-路由与写闸门.mjs | 实际执行 2×2×3×2×5=120 格，逐格断言 A/C/M/F-L/五角色、C7 0/7、catalog 0/2、普通 skill、HP 与 HN/HB 基线 |
+| PTC三维装配矩阵 | pe-test/tools/step-04-路由与写闸门.mjs | 实际执行 2×2×3×2×5=120 格，逐格断言 A/C/M/F-L/五角色、C7 0/7、catalog 0/2、普通 skill、HP 与 HN/HB 基线；同文件另含 P0-4 会话状态生命周期与末轮 usage 监听器级用例（e 段 P4-1~P4-24：双 session 同 root 隔离、跨 session 锚点、disposed 清理、临时账本的 final flush/幂等/续载去重/cursor 降级、P4-24 provider/cw/rs 新字段落盘与五字段零行跳过） |
 | 工具清单/时序取证 | pe-test/tools/step-04-工具清单查看.mjs | 显式会话、逻辑 JSONL 行号、前置 tool/call 数、first/later、精确 header.tools、header.system 文本命中、skill-catalog；文本命中不冒充 section 名 |
 | 代码地图 | pe-test/docs/ai-代码地图.md + pe-test/tools/代码地图生成.mjs | 头部「意图速查」= 人工段（脚本原样保留、校验引用函数名）；函数索引 = 机器段（行号/增删）；`--check` 一致性门槛；覆盖口径 = 任意缩进的命名函数定义 |
 | run_code 静态解析/理由函数 | lib/run-code-static.js（createRunCodeStatic 工厂：decomposeRunCode/runCodeCatchGateReason/runCodeDispatchGateReason/runCodeSiteCount/isRunCodeSubCall/askUserQuestionReturnGateReason/runCodeDispatchCapText） | 仅接收显式 { askTool, isDispatchStart } 普通依赖，不持有 ctx/状态；9 条禁用 API 正则与拒绝文案逐字保留自拆分前 |
 | 会话事件快照/子代理判定 | lib/agent-session.js（sessionEvents/isSubagentChild） | index.js 经 import 使用并经 decisions re-export；台账 SD10/HK20 宿主接触面现居此文件 |
+| 会话状态生命周期 + usage 账本（P0-4） | index.js apply 内（foldUsage/readUsageCursorTable/warnUsageCursorDegraded/usageCursorEntryOf/usageRoleOf/noteRunCodeSubCall/childBaseline + agent/disposed 监听器） | 运行时状态按 sessionId 分桶：subCallCounters = sessionId→rootCallId→已放行次数，锚点变化只删当前 session 桶（不再全局 clear）；agent/disposed 是 emit/void、宿主只挂 catch 不等待 → 先同步 final fold（role 取 childBaseline 的 usageRoles WeakMap 缓存）再按 sessionId 回收 jobOutput/锚点/notice/rootCall/usage 内存态（重复 disposed 幂等）；usageCursors 只存活跃 session：同 session 续载按 sessionId 从 cursor JSON 单项恢复 seq/index（内存 ref 从 null → 索引 0 扫描、seq 跳过旧消息）；ENOENT 静默按空表，其它读取错误/JSON 解析失败/根值非对象 → 每插件实例首次降级告警一次并进入空表降级（写回覆盖为仅当前 session，其它 session 去重基准丢失，性能优化留后续 D3）；账本行字段 = ts/sessionId/role/model/provider/hit/miss/out/cacheWriteTokens/reasoningTokens/seq（provider 缺省空串、cacheWriteTokens/reasoningTokens 缺省 0；hit/miss/out/cw/rs 五字段全零不写行），读侧 step-99 为纯 token 统计（明细含 provider/cw/rs，无任何汇总）；回归入口 = step-04 ⑭e 段（P4-1~P4-24） |
 | 预设设置解析与保格式改写 | lib/preset-settings.js（loadYaml/captureSettings/patchYamlScalar 等） | 十项设置 descriptor（SETTING_DEFINITIONS L57-109，含 otherAgentModel）；js-yaml 双路回退 |
 | 客户端桥接 | lib/client-bridge.js（name='dsh-extra-plan-client-bridge'，空 apply L17-19） | 仅承载 dsh.client 加载路径指向 lib/client.js |
 
 ## 模块关系（数据流）
-用户需求 → 主会话（只读探查理解）→ 探查方式二选一 ask（主会话探查 / 探查者探查）→ 路由确认 → pro 规划（目的确认 → 澄清 → save_probe 线索 → 规划子代理 save_plan 双文件；planner 申请继续探查 → 主会话再探查/委派探查者 → 转达线索路径 → 预算重置继续）→ 用户批准 → 执行者（按方案改）→ 验收者（逐条核对）→ 主会话汇总 → **用户部署生产环境 → 用户实测闭环**（部署动作由用户执行；AI 在验收通过前不得执行生产环境同步/部署动作）；「直接执行」路径跳过规划环节。
+用户需求 → 主会话（只读探查理解）→ 探查方式二选一 ask（主会话探查 / 探查者探查）→ 路由确认（两问：第一问三选一「直接执行」「进行pro规划」「不同意」，第二问纯文本「补充要求」）→ pro 规划（目的确认 → 澄清 → save_probe 线索 → 规划子代理 save_plan 双文件；planner 申请继续探查 → 主会话再探查/委派探查者 → 转达线索路径 → 预算重置继续）→ 用户批准 → 执行者（按方案改）→ 验收者（逐条核对）→ 主会话汇总 → **用户部署生产环境 → 用户实测闭环**（部署动作由用户执行；AI 在验收通过前不得执行生产环境同步/部署动作）；「直接执行」路径跳过规划环节。主会话侧仅受限规划工件 save_plan 可在任意路由态落盘（cwd/.extra-plan 固定形状 Markdown），其余写入仍须路由/批准锚点。
 
 实机证据补充：A42/A43（C11/C12）由 step-07 HUMAN 独立取证，不能用 step-00 fake/mock、候选 probe 或工作区配置替代实际 provider/model 与 suffix 结论；request/header 是 attempted route，assistant/message source 是 actual provenance；exploreBudget=18 仍只代表 planner 工具预算。
 

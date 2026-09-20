@@ -18,7 +18,7 @@
 - runcodeCatchGate 开关：cfg.runcodeCatchGate===true 默认 false（设置页开启，仿 anchoredBootstrap；装载时快照，改后需重启 Harness）。开启时 runCodeCatchGateReason 参与组判定（多调用无独立容错拒绝）；**仅影响本检查**。作用面已全仓核实（2026-09-10）：全仓唯一判定读点与唯一调用点 = runCodeGroupDenyReason 内 runcodeCatchGate 判定分支（if (ctx.runcodeCatchGate === true) → runCodeCatchGateReason，产物仅一个 kind:'catch' 拒绝成员）；生效角色 = 主会话/planner/只读子代理（runCodeGroupDenyReason 内 roleKind 分流：main 走 mainGateReason、planner 走 plannerGateReason、child·readOnly 走 childReadonlyGateReason），执行者（child 非只读）豁免（reason 保持 null 直接放行）。
 - ask 返回值白名单（恒开，与 runcodeCatchGate 解耦）：主会话 run_code 内出现 tools.ask_user_question 时，仅放行两种写法——return await tools.ask_user_question(...)；或 const q = await tools.ask_user_question(...); return JSON.stringify({ question: q })；其余形态（别名/动态访问/静态属性引用/.then 包装/只赋值不 return）→ 聚合拒绝（askUserQuestionReturnGateReason，函数区间见代码地图函数索引）。接入点 = runCodeGroupDenyReason 内 visit 的 askReason 判定（roleKind==='main' 才调用，planner 与只读子代理不接）；嵌套超展开深度由 pre-execute 重入兜底。
 - 预算容器计费：planner 预算按容器计——run_code 本身计 1 次（tool/call+tool/result 配对），子调用（code-dispatch）不再计入；直呼 1 次 1 计不变；toolCallCount 已删嵌套分支。
-- 单实例子调用上限（planner）：单 run_code 实例子调用 ≤ exploreBudget；静态点计数>上限组判定快路径拒 + 运行时按 rootCallId（内存 Map）聚合超限拒；循环/动态放大同样受限。
+- 单实例子调用上限（planner）：单 run_code 实例子调用 ≤ exploreBudget；静态点计数>上限组判定快路径拒 + 运行时按 rootCallId 聚合超限拒（P0-4 起该内存 Map 为 sessionId→rootCallId→次数，锚点变化与 disposed 只删当前 session 桶，不再全局 clear，跨会话计数互不干扰）；循环/动态放大同样受限。
 
 ## 三、探查预算（规划子代理）
 - 是什么：机械上限（默认 18 次工具调用）。开局告知 + 剩 3 次提醒 + 耗尽拒绝并注入数字指令；预算自最近一条主会话消息起计，每条转达消息 = 重置 = 授权继续。
@@ -28,6 +28,7 @@
 ## 四、save_plan 双写 + journal 自愈
 - 是什么：方案+验收两文件程序定死双写（两个 payload 必填），原子提交（tmp→journal→rename→清 journal），崩溃后下次 save_plan 自愈补完（新旧 journal 形状兼容）。职责拆分为：`plugins/dsh-extra-plan/lib/save-contract.js` 维护命名、限制与 ContentBlock 渲染合同，`lib/save-probe-validation.js` 负责校验与证据引用路径查证，`lib/save-persistence.js` 负责原子提交与 journal 自愈，`lib/save-tool-factories.js` 负责 save_plan/save_probe 的 schema、output、render、execute，根 `plugins/dsh-extra-plan/index.js` 的 apply 只创建工厂并负责注册、生命周期与闸门接线。
 - 为什么：方案/验收必须成对出现；崩溃不产生半成品。
+- 阶段感知不变量（P0-3）：① journal 成功写入前（pre-journal）失败才做条件清理——先删本次可能已部分落盘的 journal 并用 existsSync 确认其不存在，确认后才清 tmp；journal 删不掉或删后仍存在则保留全部 tmp（不制造「journal 存在而 tmp/目标均缺失」的不可续做现场），对外始终抛原始错误、清理错误不覆盖。② journal 成功写入后（post-journal）任一次 rename、目标确认或 journal 删除失败，一律保留 journal 与现有现场，不在 catch 里删恢复入口（已完成的 rename 不可可靠逆转）。③ atomicCommit 只有在全部目标 existsSync 确认就位后才删除 journal；recoverJournals 逐项「tmp 存在则 rename，随后确认目标文件存在」，已完成项凭目标存在幂等续做，任一项未完成或确认失败即保留 journal，只有全部项就位才删；新形状 entries 与旧形状四字段归一为非空目标列表，形状非法/字段缺失走既有告警并保留 journal。两函数各自在末位提供可选文件系统操作依赖（默认同义映射同步 node:fs、冻结只读，未提供的操作项回退默认实现），仅供 step-06 局部故障注入，不改生产调用形状；本批不承诺 fsync 或跨进程强持久化，也不扩展并发同名等议题。
 
 ## 四-1、save_probe 机械上限与证据边界
 - `PROBE_LIMITS` 是 save_probe 独立于 planner 预算的参数校验，唯一真源在 `plugins/dsh-extra-plan/lib/save-contract.js`；`validateProbe` 位于 `lib/save-probe-validation.js`，工具动态描述/schema 与执行仍由 `lib/save-tool-factories.js` 读取同一绑定：当前 `maxEvidenceEntries=150`、`maxEvidenceTextLen=1000`，四类集合上限仍为 fileMap/focusAreas 50、exclusions/background 20，证据总量上限为 32000；超限拒绝且不静默截断。step-00 PR23=151 条拒绝，PR34/PR35=1000 通过、1001 拒绝。
@@ -35,7 +36,7 @@
 
 ## 五、子代理工具裁剪
 - 是什么：agent.cordis.yml 各 tool-subagent-* 行的 toolFilter.deny 清单 + lib/executor-spawn.js 薄代理（覆盖引擎内部调用的 workflow/ralph worker）。planner 行 deny 含 subagent_probe（探查者仅主会话可委派：目录层不可见 + 闸门拒绝，双层禁止）。
-- 为什么：防委派递归（执行者不得再委派）、执行者/验收者只读；save_plan 注册于规划子代理层与主会话层（T3：主会话侧仅 direct 路由放行、其余路由态拒绝，内容闸门同一实现），其余代理不可见、无需 deny。
+- 为什么：防委派递归（执行者不得再委派）、执行者/验收者只读；save_plan 注册于规划子代理层与主会话层（主会话侧任意路由态放行——受限规划工件：仅写 cwd/.extra-plan 固定形状 Markdown、内容闸门同一实现；save_probe 放行条件保持现状：route=plan + 目的已定 + 澄清完成），其余代理不可见、无需 deny。
 
 ## 六、模型/力度继承与双路由真实探针
 - 是什么：子代理的 reasoningEffort 与 maxTokens 仍按既有父会话语义继承；planner 只读取 plannerModel，非 planner child（executor、reviewer、probe、workflow/ralph worker）只读取 otherAgentModel。两项均为设置页装载期快照，保存后需重新装载 Harness 生效，运行中的 Agent 不动态切换。
@@ -74,6 +75,14 @@ planner resolver 分 legacy/strict 两路（False/缺失/非法走旧 advisory�
 - 三面过滤通过 `projectAssemblyForPresentation` 与 `renderFilteredToolsSdk` 创建新 assembly/schema 投影；`tools:sdk` 只从明确 schema 数组整体调用官方 renderer，禁止从原始 SDK 文本用正则/字符串删块。两个官方 skill 在 `agentPresets.resolve('cordis')` 注册源按 C=0/1 分别为 0/2；skill catalog 是独立 agent/pre-step 消息副本。
 - 这是模型可见面隐藏，不是 PTC runtime binding 安全隔离：`registry.schemas(exec.agent)` 建成的 run_code 内 `tools.*` namespace、既有 `toolFilter.deny`、`tools.restrict`、`tools/pre-execute` 与各角色 `cordis_run` deny 均保持原行为。
 
+## 八、会话状态生命周期与 usage 末轮结算（P0-4）
+- 是什么：运行时聚合状态一律按 sessionId 分桶——subCallCounters 为 sessionId→rootCallId→已放行子调用数（noteRunCodeSubCall），jobOutputCallCounters/jobOutputLastAnchors/toolJobsNoticesConsumed/usageCursors 本就按 sessionId；锚点变化（新用户消息或 send_message 续轮转达）只删当前 session 的 job/notice/rootCall 桶，绝不全局 clear。
+- agent/disposed 是 **emit/void**：宿主在 driver quiescence 之后、session detachment 之前同步调用监听器，且只对监听器返回的 Promise 挂 catch、**不等待完成**。因此末轮 usage 的 final fold 必须在监听器同步路径内完成（foldUsage 是同步函数，禁止改成 async 或延迟 I/O，否则末轮漏记窗口重开）；顺序固定为「先同步 final fold（role 取 childBaseline 缓存的 usageRoles WeakMap，避免 agent 离开 registry 后 main/planner/executor 漂移；无缓存才走稳定兜底）→ 保留 pendingProbeClaims 剩余数量告警并删除该 session 待认领计数 → 按 sessionId 删除两张 job 表、notice 集、rootCall 桶与 usage cursor」，重复 disposed 幂等，其它 session 状态不受影响。
+- usage cursor 内存态与持久续载态分离：usageCursors 只保存活跃 session（内存 ref 只在同一次折叠的事件数组上有效）；同 session 再次激活而内存无项时，按 sessionId 从 cursor JSON 单项续载 seq/index（ref 从 null 开始 → 从索引 0 全量扫描、靠 seq 跳过旧消息）。这正是「Map 回收 + 去重基准保留」两件事必须同时落地」的原因：只删 Map 会让同 session 恢复后重复追加 ledger 行。
+- cursor 读取降级是差异化的：文件不存在（ENOENT）静默按空表；其它读取错误、JSON 解析失败或根值非对象（含数组）→ 每插件实例首次降级告警一次（同 ledgerWarned 口径）并进入空表降级，此后写回以「空表 + 当前 session」覆盖写——**明确接受其它 session 去重基准丢失、其后续恢复可能重复追加 ledger 行的降级风险**；文件可解析时则在写前重读、读改写只更新当前 session 并保留其它合法 session 条目。
+- 仍属后续批次（本批不做）：snapshot 增量扫描、cursor 批量/延迟持久化、持久 cursor 文件历史 session 清理、按 provider 分组的用量汇总；「有新增 ledger 行才整文件写回 cursor」的既有语义不变。
+- ledger 行字段与 provider 归属（P1-2）：每行 = ts/sessionId/role/model/provider/hit/miss/out/cacheWriteTokens/reasoningTokens/seq；provider 取自 msg.source.provider（缺省空串），cacheWriteTokens/reasoningTokens 缺省 0，hit/miss/out/cw/rs 五字段全零的事件不写行；旧行缺这些字段时按 空串/0/0 读取，读侧 step-99 为纯 token 统计，不做任何按 provider 或按 model 的汇总。
+
 | 教训 | 结论 | 源位置 |
 |:--|:--|:--|
 | 多调用容错 | run_code ≥2 个 tools.* 调用点未独立容错 → 组判定整体拒绝；一个 try 块包 2 个调用不算各自独立保护 | lib/run-code-static.js runCodeCatchGateReason（L253 起；多调用硬闸门注释 L248-252） |
@@ -81,14 +90,17 @@ planner resolver 分 legacy/strict 两路（False/缺失/非法走旧 advisory�
 | 探查者级联中止 | planner 派探查者曾因引擎 owner 级联取消而全部丢失（planner 轮次结束→activation dispose→jobs-local 取消 one-shot 探查者 job，owner disposed）→ **已改为禁止 planner 委派探查者**（闸门 subagentProbeGateReason 拒绝 planner，文案指向「申请继续探查」），委派权收归主会话；历史备注：若将来放开并行派探查，候选 A（引擎侧 stateOf 计入 job）/候选 B（探查者 job 改挂主会话 owner）均需官方包配合 | index.js subagentProbeGateReason/probeDisposalWarning 注释 |
 | runcodeCatchGate 开关 | 教学文案螺旋时用户可关闸退避；开关仅影响多调用容错检查，不影响其它闸门（2026-09-10 全仓核实：唯一读点 = runCodeGroupDenyReason 的 runcodeCatchGate 判定分支；ask 返回值白名单、单实例子调用上限 exploreBudget、预算耗尽白名单、job_output 禁 wait 均不受本开关控制；执行者豁免） | index.js runCodeGroupDenyReason runcodeCatchGate 注释 |
 | 模型目录与真实探针 | plannerModel 不能以目录命中或 resolveCallConfig/resolveModelInfo 代替真实可用性；False/缺失/非法开关保留旧单 provider advisory 流程，True 才枚举全 provider，对精确命中者串行 prepareCall + 完整 prepared stream 探针，全部完成后排序；全失败必须验证父 provider/model fallback，否则固定阻断 planner 请求 | lib/model-routing.js resolvePlannerEntry（L385-393）、probePlannerRoute（L206-247）、sortPlannerCandidates（L139-150） |
-| 实例上限 | 静态计数防不住循环放大（1 点=计 1）：运行时按 rootCallId 内存 Map 聚合，超 exploreBudget 拒 | lib/run-code-static.js runCodeDispatchGateReason（L652-666，注释同区）；运行时按 rootCallId 聚合的 Map 仍在 index.js apply 内 |
+| 实例上限 | 静态计数防不住循环放大（1 点=计 1）：运行时按 rootCallId 聚合，超 exploreBudget 拒；P0-4 起该 Map 为 sessionId→rootCallId→次数（锚点变化/disposed 只删当前 session 桶，禁止全局 clear） | lib/run-code-static.js runCodeDispatchGateReason（L652-666，注释同区）；运行时 Map 与 noteRunCodeSubCall 在 index.js apply 内 |
+| disposed 不等待 Promise | agent/disposed 是 emit/void：宿主同步调用监听器后只对返回的 Promise 挂 catch，不等待完成 → 末轮 usage final fold 必须同步完成（foldUsage 非 async），且必须在任何 Map 删除之前；role 用 childBaseline 的 WeakMap 缓存 | index.js agent/disposed 监听器注释 + foldUsage/usageRoleOf |
+| cursor 降级覆盖写 | ENOENT 静默按空表；损坏/不可解析/根值非对象 → 每实例首次告警一次并降级为空表，写回只保留当前 session（其它 session 去重基准丢失、可能重复记账）；可解析时写前重读、读改写保留其它合法 session | index.js readUsageCursorTable/warnUsageCursorDegraded/usageCursorEntryOf |
 | 代码地图维护 | 地图是 AI 的「第一眼落点」：**人工段管语义、机器段管行号**——头部「意图速查」写 意图词→函数名、**故意不写行号**（人工段行号必漂移），引用的函数名失效由脚本报 [导航失效]；覆盖口径用**形态规则**（任意缩进的 `function NAME` / `const NAME = (…) =>` / `= function`）取代「缩进代理」，并**不做例外清单**（接受清单/排除清单均已删）；文本推断的天花板（正则字面量里的引号毁掉遮罩、无花括号多行箭头区间越界、同名函数描述串位）运行时计数器只报实现层漏检；「改完忘同步」由 `--check`（一键体检内置，不写盘）判红 | pe-test/tools/代码地图生成.mjs 头注释 + pe-test/docs/ai-维护手册.md |
 | 会话消息身份 | 注入会话事件流的 user/message 必须经宿主构造器 createUserMessage 生成（自带 role:'user' 与 id；手拼 {source,content} 缺 id/role 会被会话判损坏） | index.js budgetReminderMessage（经 createUserMessage 构造）+ 台账 SD37 |
-| 目的 ask 路由前置 | 只有首问选项与 PURPOSE_GATE_SET 精确相等的目的 ask 才检查顺序；route=none/direct 拒绝并直接引用固定文案「须先 ask_user_question 路由确认（选项固定为「直接执行」「进行pro规划」「不同意」）」；route=plan 且恰好 1 问放行；ordinary 探查/澄清与 malformed 仍走原分类路径 | index.js purposeRouteDenyReason/mainGateReason/categorizeGateAsk |
+| 目的 ask 路由前置 | 只有首问选项与 PURPOSE_GATE_SET 精确相等的目的 ask 才检查顺序；route=none/direct 拒绝并直接引用固定文案「须先 ask_user_question 路由确认（选项固定为「直接执行」「进行pro规划」「不同意」）」；route=plan 且目的 ask 恰好 1 问放行；**路由 ask 须恰好 2 问**（第一问固定三选一、第二问纯文本「补充要求」不得带 options），第二问不进验词集合、不影响目的 ask 顺序闸门；ordinary 探查/澄清与 malformed 仍走原分类路径 | index.js purposeRouteDenyReason/mainGateReason/categorizeGateAsk/validateGateAskStructure |
 | 阶段状态残留 | route 正常重选前清 purpose/clarified/approved；有效目的重选前清 clarified/approved；非 CHANNEL_BROKEN_CODES 的 ask error（含 ASK_CANCELLED）清 route/purpose/clarified/approved；NO_PROVIDER/CALLER_NOT_LIVE/DELEGATED_CALLER 只置 channelBroken 并保留旧状态；最近一条 user/message 仍切换到五字段默认态 | index.js deriveFlowState |
 | 澄清选项子串坑（B） | 澄清 ask 的选项不得包含「完善方案」「重新规划」的任何子串（isPartialGateSet 的 indexOf 包含匹配），否则整条 ask 被判 malformed 拒绝 | index.js categorizeGateAsk/isPartialGateSet |
 | save_probe 格式差异 | 聚焦区 focusAreas.range 允许区间（如 L10-20），但证据行号 evidence.line 只接受单行号——传区间被 validateProbe 拒绝。所有上限以 lib/save-contract.js PROBE_LIMITS 为唯一口径、文档不复制数值。 | lib/save-contract.js L61（rangePattern）与 L68（evidenceLinePattern） |
 | run_code 模板截断 | run_code 的 code 参数是 TypeScript 源码（type-stripped）：正文中出现反引号或 ${ 会截断模板字符串/被当插值求值，报 Expected a semicolon；同类：PowerShell 嵌套引号未闭合报 ParserError。这类报错只指向解析崩点、不给根因。对策：① 首选改写表述——正文用「」引用或改用单引号拼接，从源头避免反引号与 ${；② 必须书写反引号字面量时用 String.fromCharCode(96) 生成（96 = 反引号码点）。 | 本会话实战（run_code 预审闸门记录） |
+| 注册标记顺序 | save_plan/save_probe 注册的「已注册」标记必须在 tools.register(defineFn()) 成功之后才写入，绝不可在取 tools 服务之前写（原缺陷：标记早于 register 调用 → 首次服务未就绪或首次抛错后，session-start/pre-step 两条入口都被 WeakSet 短路，会话整个生命周期静默缺工具）。失败按三分类处置：A 重名（message 含 already registered：工具已存在）与 B 永久性（error.name 为 JsonSchemaError/TypeError 或 message 含 is reserved：定义期 bug）记终态、不重试；C 可重试（tools 服务未就绪、工厂 defineFn 抛错、其他非预期错误）不写标记、下一步重试（pre-step 每步都会重试）。判定以 error.name 优先、instanceof Error 为前置；桩必须抛真实 Error 实例，用普通对象冒充 Error 会落到分类 C。 | index.js registerTool（catch 的 A/B/C 分类与 registered.add 位置） |
 
 ---
 
