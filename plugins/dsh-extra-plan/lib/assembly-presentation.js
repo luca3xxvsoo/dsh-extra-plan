@@ -24,7 +24,6 @@ export const CORDIS_SECTION_NAME = 'tool:cordis'
 export const PTC_SECTION_NAME = 'tools:ptc-only'
 export const SDK_SECTION_NAME = 'tools:sdk'
 export const READ_SECTION_NAME = 'tool:read'
-export const READ_GUIDANCE_FALLBACK = 'Use the read tool — not shell commands like cat — to inspect text files. Results include line numbers. Use offset and limit to continue reading large files.'
 export const CREATIVE_SKILL_NAMES = new Set(['cordis-plugin-development', 'editing-cordis-compositions'])
 
 export function sectionOf(sections, name) {
@@ -32,28 +31,9 @@ export function sectionOf(sections, name) {
   return sections.find((section) => section !== null && typeof section === 'object' && section.name === name)
 }
 
-export function sectionTextOf(sections, name) {
-  const section = sectionOf(sections, name)
-  return section !== undefined && typeof section.text === 'string' ? section.text : ''
-}
-
-export function readSchemasForRendering(schemas) {
-  if (!Array.isArray(schemas)) return []
-  return schemas.filter((schema) => schema !== null && typeof schema === 'object' && schema.name === 'read')
-}
-
-export async function renderMinimalReadText(sections, schemas, language) {
-  const guidance = sectionTextOf(sections, READ_SECTION_NAME) || READ_GUIDANCE_FALLBACK
-  const readSchemas = readSchemasForRendering(schemas)
-  if (readSchemas.length === 0) return guidance
-  try {
-    const rendered = await renderFilteredToolsSdk(readSchemas, language)
-    return [guidance, rendered].filter((text) => typeof text === 'string' && text !== '').join('\n\n')
-  } catch (error) {
-    console.warn('extra-plan: minimal tool:read render failed (' + (error instanceof Error ? error.message : String(error)) + ')')
-    return guidance
-  }
-}
+// HP 首轮的 tool:read 文本改由 index.js 手写（cfg.bootstrapReadHint），本模块不再渲染最小 read，
+// 三个只服务该旧渲染路径的辅助（取 section 文本 / 只选 read schema / 拼接最小 read 文本）已整组删除；
+// 删除时全仓 grep 确认其中「取 section 文本」无调用点，随组一并删除。
 
 export function skillCatalogEntriesOf(source) {
   if (source === null || typeof source !== 'object' || !Array.isArray(source.entries)) return undefined
@@ -201,11 +181,17 @@ export function loadSdkRendererModule() {
   return sdkRendererModulePromise
 }
 
-// 只接收已过滤 schema，整体调用官方 renderer 重建 tools:sdk，不从原始文本删块。
-export async function renderFilteredToolsSdk(schemas, language = 'typescript') {
+// 返回当前语言对应的官方 renderer 函数引用；模块 promise 仍保持模块级动态 import 缓存。
+export async function resolveToolsSdkRenderer(language = 'typescript') {
   const rendererModule = await loadSdkRendererModule()
   const render = language === 'python' ? rendererModule.renderToolsSdkPy : rendererModule.renderToolsSdk
   if (typeof render !== 'function') throw new Error(`extra-plan: unsupported SDK renderer language ${language}`)
+  return render
+}
+
+// 只接收已过滤 schema，整体调用官方 renderer 重建 tools:sdk，不从原始文本删块。
+export async function renderFilteredToolsSdk(schemas, language = 'typescript') {
+  const render = await resolveToolsSdkRenderer(language)
   return render(sdkSchemasForRendering(schemas))
 }
 

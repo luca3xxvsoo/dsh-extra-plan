@@ -14,8 +14,29 @@ const PLUGIN_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/index.js
 import { registerHostDeps } from '../_shared/host-deps.mjs'
 await registerHostDeps()
 const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
+import { createSdkTextCache, sdkSchemasFingerprint, sdkTextCacheEntryMatches } from '../../plugins/dsh-extra-plan/lib/sdk-text-cache.js'
 const decisions = plugin.decisions
-const { catalogHasWriteTools, isReadOnlyChildByCatalog, routeDenyReason, ROUTE_CONFIRM_TEXT, runCodeCatchGateReason, runCodeGroupDenyReason, askUserQuestionReturnGateReason, probeDisposalWarning, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilteredToolsSdk, readSchemasForRendering, renderMinimalReadText, toolPresentationModeOf, projectSkillCatalogDecision, isBootstrapPhase } = decisions
+const { catalogHasWriteTools, isReadOnlyChildByCatalog, routeDenyReason, ROUTE_CONFIRM_TEXT, runCodeCatchGateReason, runCodeGroupDenyReason, askUserQuestionReturnGateReason, probeDisposalWarning, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilteredToolsSdk, toolPresentationModeOf, projectSkillCatalogDecision, isBootstrapPhase, shellMutationReason, recordJobOutputCall } = decisions
+
+// ── F 段（HP 首轮）tool:read 手写文案（变量②）的两个基准字符串 ──────────────
+// HINT_READ_DEFAULT：内置兜底文案的逐字副本，同时是预设 bootstrapReadHint 的示例值
+//   （下方「预设静态断言」会核对两者逐字一致，防止测试副本与预设/内置漂移）。
+// HOST_READ_TEXT：宿主 tool:read 原文（宿主 section 文本），即 N/P/B 与 L 段的直通夹具值——F/PTC 由插件
+//   借槽覆盖为手写文案，故两者必须可区分（断言要求 F 段逐字等于前者、且不等于后者）。
+const HINT_READ_DEFAULT = [
+  '在 run_code 程序里读文件：调用 tools.read({ file_path })，file_path 必填；可选 offset（默认 1）与 limit（默认 2000）。返回含 path、offset、totalLines 与带行号的 lines（每项为 { number, text }）。示例：',
+  "const r = await tools.read({ file_path: 'README.md' })",
+  'return r',
+].join('\n')
+const HOST_READ_TEXT = 'Use the read tool — not shell commands like cat — to inspect text files. Results include line numbers. Use offset and limit to continue reading large files.'
+// 变量②文案的四要素判据：工具名、调用形态、参数与默认值、返回形状；且不得含官方 SDK 骨架。
+function hintReadOk(text) {
+  return typeof text === 'string'
+    && text.includes('tools.read') && text.includes('file_path')
+    && text.includes('offset') && text.includes('limit')
+    && text.includes('run_code') && text.includes('totalLines') && text.includes('lines')
+    && !text.includes('interface ToolArgsMap') && !text.includes('declare const tools') && !text.includes('Use the read tool')
+}
 
 let pass = 0
 let fail = 0
@@ -92,6 +113,12 @@ checkDeny('tool-subagent-review', 14, ['write', 'edit', 'subagent_probe', 'cordi
 checkDeny('tool-subagent', 12, ['subagent_probe', 'cordis_run'], ['write', 'edit'], 'executor deny 恰 12 项、不含 write/edit、含 subagent_probe/cordis_run')
 checkDeny('tool-subagent-plan', 13, ['write', 'edit', 'cordis_run', 'subagent_probe'], [], 'planner deny 恰 13 项且含 write/edit/cordis_run/subagent_probe')
 checkDeny('tool-subagent-probe', 14, ['write', 'edit', 'subagent_probe', 'cordis_run'], ['subagent_fork'], 'probe deny 恰 14 项且含 write/edit/subagent_probe/cordis_run、不含 subagent_fork')
+{
+  const extraPlanRow = all.find((r) => r.id === 'extra-plan')
+  const presetHint = extraPlanRow !== undefined && extraPlanRow.config !== undefined ? extraPlanRow.config.bootstrapReadHint : undefined
+  check('P0-0 预设 bootstrapReadHint 与内置兜底/测试副本逐字一致', presetHint, HINT_READ_DEFAULT)
+  check('P0-1 预设 bootstrapPersona 未被回退（中文现值逐字保留）', extraPlanRow !== undefined && extraPlanRow.config !== undefined ? extraPlanRow.config.bootstrapPersona : undefined, '你是一位乐于助人的软件工程师助手，使用简体中文思考和回复。')
+}
 
 // ── ③ 真实监听器拦截行为（[任务5]，mock ctx 走插件 apply） ─────────────
 const DSH_APPDATA = process.env.APPDATA || homedir() + '/AppData/Roaming'
@@ -779,6 +806,7 @@ r = preExecute(harness, noneMain, 'run_code', nestedProbeGroupCode)
 checkTrue('T5-6 主会话 none 态 run_code 组内 subagent_probe → 仍放行（禁令只针对 planner）', r !== null && r !== undefined && r.kind === 'allow')
 
 // ── ⑨ PTC/HN/HB 锚定基线（首轮按真实 phase、mode、role 分支） ─────────────
+// 宿主 read tool 的注册 schema 复刻（registry mock）：F/PTC 不再渲染它，仅供工具过滤/mode 判定。
 const PTC_READ_SCHEMA = {
   name: 'read',
   description: 'Read a UTF-8 text file and return line-numbered content.',
@@ -793,7 +821,9 @@ const ptcBootAgent = {
 }
 const ptcBootSections = [
   { name: 'tools:ptc-only', text: 'Only the run_code transport is directly callable.' },
-  { name: 'tool:read', text: 'Use the read tool — not shell commands like cat — to inspect text files. Results include line numbers. Use offset and limit to continue reading large files.' },
+  // 宿主 tool:read 原文（N/P/B 与 L 直通值）。F/PTC 由插件借槽覆盖为变量②手写文案，
+  // 故此处刻意保持宿主原文：断言要求 F 段逐字等于 HINT_READ_DEFAULT 且不等于本夹具文本。
+  { name: 'tool:read', text: HOST_READ_TEXT },
   { name: 'tools:sdk', text: 'Original SDK declarations should be replaced in HP.' },
   { name: 'matrix-user-section', text: 'ordinary section' },
 ]
@@ -803,11 +833,36 @@ const hpReadText = hpRead !== undefined && typeof hpRead.text === 'string' ? hpR
 check('P1 HP0 主会话首轮 tools 恰为 [run_code]', hpMain.tools.map((tool) => tool.name), ['run_code'])
 check('P2 HP0 sections 恰为 persona/PTC/read 三项', hpMain.sections.map((section) => section.name), ['extra-plan-bootstrap', 'tools:ptc-only', 'tool:read'])
 checkTrue('P3 HP0 无顶层 read、无 SDK/Cordis，contexts 清空', !hpMain.tools.some((tool) => tool.name === 'read') && !hpMain.sections.some((section) => section.name === 'tools:sdk' || section.name === 'tool:cordis') && Array.isArray(hpMain.contexts) && hpMain.contexts.length === 0)
-checkTrue('P4 HP0 tool:read 同时含既有 guidance 与唯一 read 最小契约', hpReadText.includes('Use the read tool') && hpReadText.includes('read:') && hpReadText.includes('file_path') && hpReadText.includes('offset') && hpReadText.includes('limit') && !CORDIS_PRESENTATION_TOOLS.some((name) => hpReadText.includes(name)))
+check('P4 HP0 tool:read 逐字等于变量②手写文案（默认值）', hpReadText, HINT_READ_DEFAULT)
+checkTrue('P4a HP0 tool:read 含四要素（tools.read/file_path/offset/limit/totalLines）且不含官方骨架与宿主原文',
+  hintReadOk(hpReadText) && !hpReadText.includes('Use the read tool') && !CORDIS_PRESENTATION_TOOLS.some((name) => hpReadText.includes(name)))
+checkTrue('P4b HP0 tool:read 不再由宿主原文/官方 renderer 生成（与直通夹具文本可区分）', hpReadText !== HOST_READ_TEXT && !hpReadText.includes('Use the read tool'))
 const hpPlanner = { ...ptcBootAgent, session: { ...ptcBootAgent.session, header: { id: 'ptc-boot-planner', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => [DESC] } }
 const hpPlannerAssembly = await assemble(harnessBoot, hpPlanner, [{ name: 'run_code' }], ptcBootSections)
 check('P5 HP0 planner sections 恰为 persona/PTC/read 三项', hpPlannerAssembly.sections.map((section) => section.name), ['extra-plan-bootstrap', 'tools:ptc-only', 'tool:read'])
 checkTrue('P6 HP0 planner 仍只暴露 run_code', hpPlannerAssembly.tools.map((tool) => tool.name).join('|') === 'run_code')
+
+// ── ⑨b 变量② bootstrapReadHint：显式覆盖生效 / 空串与非字符串回退内置默认 ──
+// 覆盖语义 = 只改模型可见副本的 tool:read text，宿主注册表与段名/透传均不动。
+{
+  const HINT_READ_EXPLICIT = '显式覆盖：在 run_code 程序里调用 tools.read({ file_path })；file_path 必填，offset 默认 1，limit 默认 2000，返回带行号的 lines。'
+  const explicitHarness = makeHarness({ anchoredBootstrap: true, bootstrapReadHint: HINT_READ_EXPLICIT })
+  const explicitAssembly = await assemble(explicitHarness, ptcBootAgent, [{ name: 'run_code' }], ptcBootSections)
+  const explicitText = sectionText(explicitAssembly, 'tool:read')
+  check('V2-1 显式 cfg.bootstrapReadHint 覆盖生效（HP tool:read 逐字等于该值）', explicitText, HINT_READ_EXPLICIT)
+  checkTrue('V2-2 显式覆盖时段名与透传不变：sections 恰 persona/PTC/read、tools 仍 [run_code]、tools:ptc-only 原样',
+    sectionNames(explicitAssembly).join('|') === 'extra-plan-bootstrap|tools:ptc-only|tool:read'
+    && explicitAssembly.tools.map((tool) => tool.name).join('|') === 'run_code'
+    && sectionText(explicitAssembly, 'tools:ptc-only') === 'Only the run_code transport is directly callable.'
+    && sectionText(explicitAssembly, 'extra-plan-bootstrap') === 'You are a helpful software engineer assistant.')
+  const emptyHarness = makeHarness({ anchoredBootstrap: true, bootstrapReadHint: '' })
+  const emptyText = sectionText(await assemble(emptyHarness, ptcBootAgent, [{ name: 'run_code' }], ptcBootSections), 'tool:read')
+  const nonStringHarness = makeHarness({ anchoredBootstrap: true, bootstrapReadHint: 42 })
+  const nonStringText = sectionText(await assemble(nonStringHarness, ptcBootAgent, [{ name: 'run_code' }], ptcBootSections), 'tool:read')
+  check('V2-3 空串 bootstrapReadHint → 回退内置默认文案', emptyText, HINT_READ_DEFAULT)
+  check('V2-4 非字符串 bootstrapReadHint → 回退内置默认文案', nonStringText, HINT_READ_DEFAULT)
+  checkTrue('V2-5 四个实例互不影响（默认/显式/空串/非字符串各自独立）', hpReadText === HINT_READ_DEFAULT && explicitText === HINT_READ_EXPLICIT && emptyText !== HINT_READ_EXPLICIT && nonStringText !== HINT_READ_EXPLICIT)
+}
 {
   const emptyBoot = await assemble(harnessBoot, mainAgent, [{ name: 'read' }, { name: 'glob' }])
   check('P7 无 shell 无 run_code → 跳过（tools 原样）', Array.isArray(emptyBoot.tools) ? emptyBoot.tools.map((t) => t.name).sort() : null, ['glob', 'read'])
@@ -1019,6 +1074,21 @@ const captureWarnings = (fn) => {
   const messages = []
   console.warn = (message) => { messages.push(String(message)) }
   try { fn() } finally { console.warn = original }
+  return messages
+}
+const captureFilteredSdkWarnings = async (fn) => {
+  const original = console.warn
+  const messages = []
+  console.warn = (...args) => {
+    const message = args.map((arg) => String(arg)).join(' ')
+    if (message.includes('extra-plan: filtered tools:sdk render failed')) messages.push(message)
+    else original(...args)
+  }
+  try {
+    await fn()
+  } finally {
+    console.warn = original
+  }
   return messages
 }
 const cursorWarnings = (messages) => messages.filter((message) => message.includes('usage cursor JSON'))
@@ -1279,6 +1349,119 @@ checkTrue('P4-2 源码：disposed 先同步 fold 再按 sessionId 删除、role 
   } finally { rmSync(dir, { recursive: true, force: true }) }
 }
 
+// ── P4-25~P4-27（P1-4-4 对拍）：per-session 游标增量（session.seq 水位 + snapshotEvents(from,to)）──
+// 口径：mock session 严格实现宿主契约「seq === log 索引、append-only 日志」；foldUsage 保持同步函数。
+// 全量对拍只在验收期跑这一处（生产热路径只跑增量，不存在同一趟双跑）：全量参考 = 同一 sessionId、
+// 但游标为空的独立实例首次折叠（prev 缺失 → 必走无参全量分支），故两路结果可逐行（除 ts）比较。
+const watermarkSession = (id, log) => {
+  const calls = []
+  const session = {
+    header: { id, origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' },
+    log,
+    calls,
+    append: () => {},
+    eventAt: (seq) => log[seq],
+    get seq() { return log.length },
+    snapshotEvents: (from, to) => {
+      calls.push([from, to])
+      if (typeof from === 'number' && typeof to === 'number') return Object.freeze(log.slice(from, to))
+      return Object.freeze(log.slice())
+    },
+  }
+  return { session, calls, agent: { session, options: {}, ctx: undefined } }
+}
+const stripTs = (rows) => rows.map(({ ts, ...rest }) => rest)
+const rangeCalls = (calls) => calls.filter((pair) => typeof pair[0] === 'number' && typeof pair[1] === 'number')
+const fullCalls = (calls) => calls.filter((pair) => pair[0] === undefined)
+
+// P4-25：水位未变 → 直接返回（不物化数组、不写文件）。用 planner 子代理（日志含 descriptor）
+// 使 isPlannerChild 在第一趟后命中 descriptor 缓存，第二趟除 foldUsage 外无其它快照消费者，
+// 因此「第二趟零次 snapshotEvents 调用」可同时证明早返回未物化任何数组。
+{
+  const dir = makeTmpDir()
+  try {
+    const ledger = join(dir, 'usage-ledger.jsonl')
+    const h = makeHarness({ anchoredBootstrap: false, usageLedger: { enabled: true, path: ledger } })
+    const log = [DESC, usageRowE(1, 1, 2, 3, 'deepseek-v4-pro', {}), usageRowE(2, 4, 5, 6, 'deepseek-v4-pro', {})]
+    const w = watermarkSession('p4-cursor-nochange', log)
+    sessionStartListener(h, w.agent)
+    const ledgerA = existsSync(ledger) ? readFileSync(ledger, 'utf8') : ''
+    const cursorA = existsSync(ledger + '.cursor.json') ? readFileSync(ledger + '.cursor.json', 'utf8') : ''
+    w.calls.length = 0
+    sessionStartListener(h, w.agent)
+    const ledgerB = existsSync(ledger) ? readFileSync(ledger, 'utf8') : ''
+    const cursorB = existsSync(ledger + '.cursor.json') ? readFileSync(ledger + '.cursor.json', 'utf8') : ''
+    checkTrue('P4-25 水位未变（prevIndex === session.seq === 3）→ 直接返回：ledger 与 cursor 字节不变、行数不变，且本次零次 snapshotEvents 调用（不物化数组、不写文件）',
+      ledgerA !== '' && cursorA !== '' && readLedgerRows(ledger).length === 2
+      && ledgerA === ledgerB && cursorA === cursorB && w.calls.length === 0)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+}
+// P4-26：增量续扫等价——追加事件后只物化 [prevIndex, logLen) 区间，仅新事件被折叠；
+// 全量参考（同 sessionId、游标为空的独立实例首折走无参全量）逐行（除 ts）一致。
+{
+  const dirA = makeTmpDir()
+  const dirB = makeTmpDir()
+  try {
+    const sid = 'p4-cursor-incr'
+    const ledgerA = join(dirA, 'usage-ledger.jsonl')
+    const ledgerB = join(dirB, 'usage-ledger.jsonl')
+    const hA = makeHarness({ anchoredBootstrap: false, usageLedger: { enabled: true, path: ledgerA } })
+    const hB = makeHarness({ anchoredBootstrap: false, usageLedger: { enabled: true, path: ledgerB } })
+    // seq 从 1 起（seq 0 落在「seq <= cursor」的初始去重窗口内，与 P4-8~P4-13 既有口径一致）。
+    const log = [usageRowE(1, 1, 1, 1, 'deepseek-v4-pro', {}), usageRowE(2, 2, 2, 2, 'deepseek-v4-pro', {})]
+    const wInc = watermarkSession(sid, log)
+    sessionStartListener(hA, wInc.agent)
+    const first = readLedgerRows(ledgerA)
+    wInc.calls.length = 0
+    log.push(usageRowE(3, 3, 3, 3, 'deepseek-v4-reasoner', {}), usageRowE(4, 4, 4, 4, 'deepseek-v4-reasoner', {}))
+    sessionStartListener(hA, wInc.agent)
+    const incr = readLedgerRows(ledgerA)
+    const wFull = watermarkSession(sid, log.slice())
+    sessionStartListener(hB, wFull.agent)
+    const full = readLedgerRows(ledgerB)
+    const rc = rangeCalls(wInc.calls)
+    checkTrue('P4-26 增量续扫等价：区间读恰为 (2,4) 一次（只物化新增区间）、恰追加 2 行、seq 序列 1..4 无重复；与同 sessionId 的全量参考逐行（除 ts）一致',
+      first.length === 2 && incr.length === 4 && incr.map((row) => row.seq).join(',') === '1,2,3,4'
+      && rc.length === 1 && rc[0][0] === 2 && rc[0][1] === 4
+      && full.length === 4 && JSON.stringify(stripTs(incr)) === JSON.stringify(stripTs(full)))
+  } finally { rmSync(dirA, { recursive: true, force: true }); rmSync(dirB, { recursive: true, force: true }) }
+}
+// P4-27：水位前提不成立（cursor.index > session.seq，日志截断）→ 回退无参全量快照；
+// seq 去重（seq <= cursor.seq → skip）保证不重写已折叠行；结果与增量路径对同一输入一致。
+{
+  const dirA = makeTmpDir()
+  const dirB = makeTmpDir()
+  try {
+    const sid = 'p4-cursor-trunc'
+    const ledgerA = join(dirA, 'usage-ledger.jsonl')
+    const ledgerB = join(dirB, 'usage-ledger.jsonl')
+    // 预置游标：index=99 远超水位 4（截断模拟）；另含旧数字形状的其它 session 项（读改写须保留）。
+    writeFileSync(ledgerA + '.cursor.json', JSON.stringify({ [sid]: { seq: 2, index: 99 }, 'other-session': 7 }), 'utf8')
+    const hA = makeHarness({ anchoredBootstrap: false, usageLedger: { enabled: true, path: ledgerA } })
+    const hB = makeHarness({ anchoredBootstrap: false, usageLedger: { enabled: true, path: ledgerB } })
+    // seq 1..4（同 P4-26：seq 0 落在初始去重窗口内）；预置游标 seq=2 表示「前两行已折叠」。
+    const log = [usageRowE(1, 1, 1, 1, 'deepseek-v4-pro', {}), usageRowE(2, 2, 2, 2, 'deepseek-v4-pro', {}), usageRowE(3, 3, 3, 3, 'deepseek-v4-reasoner', {}), usageRowE(4, 4, 4, 4, 'deepseek-v4-reasoner', {})]
+    const wTrunc = watermarkSession(sid, log)
+    sessionStartListener(hA, wTrunc.agent)
+    const truncated = readLedgerRows(ledgerA)
+    const tableA = JSON.parse(readFileSync(ledgerA + '.cursor.json', 'utf8'))
+    // 增量参考：同 sid 分两步折叠（首折全量 + 追加后区间）→ 其增量段即回退路径应当得到的行。
+    const logB = log.slice(0, 2)
+    const wRef = watermarkSession(sid, logB)
+    sessionStartListener(hB, wRef.agent)
+    logB.push(log[2], log[3])
+    sessionStartListener(hB, wRef.agent)
+    const refRows = readLedgerRows(ledgerB)
+    const rc = rangeCalls(wTrunc.calls)
+    checkTrue('P4-27 回退全量：index(99) > session.seq(4) → 走无参全量快照（零次区间读）、seq 去重不产生重复行（仅 seq 3/4 两行），结果与增量路径对同一输入逐行（除 ts）一致；游标写回 index=4 且保留其它 session（旧数字形状归一）',
+      truncated.length === 2 && truncated.map((row) => row.seq).join(',') === '3,4'
+      && rc.length === 0 && fullCalls(wTrunc.calls).length >= 1
+      && refRows.length === 4 && JSON.stringify(stripTs(truncated)) === JSON.stringify(stripTs(refRows.slice(2)))
+      && tableA[sid] !== undefined && tableA[sid].seq === 4 && tableA[sid].index === 4
+      && tableA['other-session'] !== undefined && tableA['other-session'].seq === 7 && tableA['other-session'].index === 0)
+  } finally { rmSync(dirA, { recursive: true, force: true }); rmSync(dirB, { recursive: true, force: true }) }
+}
+
 // ── ⑮ 创造模式装配投影矩阵：4 × 3 × 2 × 5 = 120 ───────────────────────
 // 使用真实 registry schema 形状的 mock；只断言模型可见 assembly，不把隐藏误报为 runtime binding 安全隔离。
 const MATRIX_CORDIS_TOOLS = CORDIS_PRESENTATION_TOOLS
@@ -1290,6 +1473,8 @@ const MATRIX_SCHEMA = (name, description, parameters) => ({
   output: { type: 'object', additionalProperties: true },
 })
 const MATRIX_OBJECT = { type: 'object', additionalProperties: true }
+// 宿主 read tool 的注册 schema 复刻（registry mock）：F/PTC 段不再渲染它，仅用于工具过滤/mode 判定；
+// 段文本断言见下方 readOk（F 段逐字等于 HINT_READ_DEFAULT）。
 const MATRIX_READ_PARAMETERS = { type: 'object', required: ['file_path'], properties: { file_path: { type: 'string', description: 'Path to read, resolved by the filesystem backend.' }, offset: { type: 'number', description: '1-based first line to return. Defaults to 1.' }, limit: { type: 'number', description: 'Maximum number of lines to return. Defaults to 2000.' } }, additionalProperties: false }
 const MATRIX_TOOL_DEFINITIONS = [
   MATRIX_SCHEMA('bash', 'Run a bash command.', MATRIX_OBJECT),
@@ -1317,15 +1502,17 @@ function matrixDirectTools(schemas, mode) {
 function matrixSections(mode) {
   const sections = []
   if (mode === 'ptc') sections.push({ name: 'tools:ptc-only', text: 'Only the run_code transport is directly callable.' })
-  sections.push({ name: 'tool:read', text: 'Use the read tool — not shell commands like cat — to inspect text files. Results include line numbers. Use offset and limit to continue reading large files.' })
+  // 宿主 tool:read 原文（非 anchored 的直通夹具值）：anchored PTC 行由插件借槽覆盖为
+  // 变量②手写文案，断言据此要求「逐字等于 HINT_READ_DEFAULT 且不等于本夹具文本」。
+  sections.push({ name: 'tool:read', text: HOST_READ_TEXT })
   sections.push({ name: 'tool:cordis', text: 'Cordis guidance: ' + MATRIX_CORDIS_TOOLS.join(', ') })
   if (mode !== 'native') sections.push({ name: 'tools:sdk', text: 'Original SDK declarations: ' + MATRIX_CORDIS_TOOLS.join(', ') + ', read, skill, file_path, offset, limit.' })
   sections.push({ name: 'matrix-user-section', text: 'ordinary user skill and prompt section' })
   return sections
 }
-function matrixAgent(role, phase, serial, mode) {
+function matrixAgent(role, phase, serial, mode, sdkSchemasOverride) {
   const schemas = matrixSchemasFor(role)
-  const sdkSchemas = schemas.filter((schema) => schema.name !== 'run_code')
+  const sdkSchemas = sdkSchemasOverride === undefined ? schemas.filter((schema) => schema.name !== 'run_code') : sdkSchemasOverride
   const events = phase === 'first' ? [] : [{ type: 'tool/call', data: {} }]
   if (role === 'planner') events.unshift(DESC)
   const header = role === 'main'
@@ -1344,13 +1531,7 @@ function sectionText(assembly, name) {
   const section = Array.isArray(assembly.sections) ? assembly.sections.find((item) => item.name === name) : undefined
   return section !== undefined && typeof section.text === 'string' ? section.text : ''
 }
-function declarationNames(text) {
-  const names = []
-  for (const match of text.matchAll(/^\s{2}([A-Za-z_$][A-Za-z0-9_$]*):\s/gm)) {
-    if (!names.includes(match[1])) names.push(match[1])
-  }
-  return names
-}
+// 旧 declarationNames（从官方单-read SDK 骨架里抽声明名）随 F 段改为手写文案而失去调用点，已删除。
 function matrixCatalogDecision(creativeMode) {
   const entries = [
     { name: 'matrix-ordinary-skill', description: 'Ordinary skill kept in every catalog.' },
@@ -1413,16 +1594,17 @@ for (const anchoredBootstrap of [false, true]) {
           const readText = sectionText(assembled, 'tool:read')
           let readOk
           if (anchoredPtc) {
-            const declarations = declarationNames(readText)
-            readOk = readText.includes('Use the read tool — not shell commands like cat')
-              && readText.includes('file_path') && readText.includes('offset') && readText.includes('limit')
-              && readText.includes('Defaults to 1.') && readText.includes('Defaults to 2000.')
-              && declarations.length === 1 && declarations[0] === 'read'
+            // F/PTC 的 tool:read 逐字等于变量②手写文案（此处实例未配置 → 内置默认），
+            // 且不再含宿主原文、不再含官方单-read SDK 骨架与 Cordis 名称。
+            readOk = readText === HINT_READ_DEFAULT && hintReadOk(readText)
+              && readText !== HOST_READ_TEXT
+              && readText !== '' && gotSectionNames.includes('tool:read')
               && MATRIX_CORDIS_TOOLS.every((name) => !readText.includes(name))
           } else if (anchored) {
             readOk = readText === '' && !gotSectionNames.includes('tool:read')
           } else {
-            readOk = readText.includes('Use the read tool — not shell commands like cat')
+            // 非 anchored（N/P/B 与全部 L）：tool:read 保持宿主原文直通，插件不碰。
+            readOk = readText === HOST_READ_TEXT
           }
           const phaseOk = (isBootstrapPhase(agent) ? 'first' : 'later') === phase
           const contextsOk = !anchored || (Array.isArray(assembled.contexts) && assembled.contexts.length === 0)
@@ -1456,6 +1638,263 @@ checkTrue('creativeMode:false 不注册两个官方 skill 且不解析 cordis �
 checkTrue('creativeMode:true 恢复恰 2 个官方 skill 注册', skillHarnessOn.skillRegistrations.length === 2 && skillHarnessOn.skillRegistrations.map((item) => item.name).sort().join('|') === expectedCreativeSkills.sort().join('|'))
 checkTrue('skill 工具仍属于普通模型可见工具', matrixDirectTools(MATRIX_TOOL_DEFINITIONS, 'native').some((tool) => tool.name === 'skill'))
 checkTrue('F/L 判定识别数组型 tool/call 事件', !isBootstrapPhase({ session: { snapshotEvents: () => [{ type: ['assistant', 'tool/call'] }] } }))
+
+// ── ⑮b P2-2：agent 级 SDK 文本复用（受控 renderer，计数是硬门槛） ────────
+// 受控 renderer 只接收已完成 sdkSchemasForRendering 形状，故可逐字对拍输入与输出；
+// F 只走 read 输入，完整 L 才交给 cache。耗时不参与通过/失败判定。
+const p2ReadInput = [{ name: 'read', parameters: { type: 'object', required: ['file_path'] }, output: { type: 'object' } }]
+const p2FullInput = [
+  ...p2ReadInput,
+  { name: 'alpha', parameters: { type: 'object', properties: { nested: { type: 'string' } } }, output: { type: 'array', items: { type: 'string' } } },
+]
+const p2AgentA = { session: { header: { id: 'p2-same-session' } } }
+const p2AgentB = { session: { header: { id: 'p2-same-session' } } }
+const p2Cache = createSdkTextCache()
+const p2Calls = []
+const p2Renderer = async (input) => {
+  p2Calls.push(JSON.parse(JSON.stringify(input)))
+  return 'SDK<' + JSON.stringify(input) + '>'
+}
+let baselineCount = 0
+const baselineRenderer = (input) => { baselineCount += 1; return 'SDK<' + JSON.stringify(input) + '>' }
+await baselineRenderer(p2FullInput)
+await baselineRenderer(p2FullInput)
+const fTextP2 = await p2Renderer(p2ReadInput)
+const lTextP2a = await p2Cache.getOrCreate(p2AgentA, p2FullInput, 'typescript', p2Renderer)
+const lTextP2b = await p2Cache.getOrCreate(p2AgentA, p2FullInput, 'typescript', p2Renderer)
+const p2FullCalls = p2Calls.filter((input) => input.length === p2FullInput.length)
+check('P2-1 基线两次完整 L renderer 计数', baselineCount, 2)
+checkTrue('P2-2 受控 PTC F→L→L：F 输入只含 read、完整 L 调用精确 1 次',
+  p2Calls.length === 2 && p2Calls[0].length === 1 && p2Calls[0][0].name === 'read' && p2FullCalls.length === 1)
+checkTrue('P2-3 同 agent 同 key 命中且两次 L 文本逐字相等', lTextP2a === lTextP2b && p2FullCalls.length === 1 && fTextP2 !== lTextP2a)
+const p2DifferentAgentBefore = p2Calls.length
+await p2Cache.getOrCreate(p2AgentB, p2FullInput, 'typescript', p2Renderer)
+checkTrue('P2-4 不同 agent（同 sessionId）不共享', p2Calls.length === p2DifferentAgentBefore + 1)
+const p2NestedChanged = [{ ...p2FullInput[0] }, { ...p2FullInput[1], parameters: { type: 'object', properties: { nested: { type: 'number' } } } }]
+const p2NestedBefore = p2Calls.length
+await p2Cache.getOrCreate(p2AgentA, p2NestedChanged, 'typescript', p2Renderer)
+checkTrue('P2-5 同名工具嵌套 parameters/output 改变重渲染', p2Calls.length === p2NestedBefore + 1)
+const p2OutputChanged = [{ ...p2FullInput[0] }, { ...p2FullInput[1], output: { type: 'object', properties: { changed: { type: 'boolean' } } } }]
+const p2OutputBefore = p2Calls.length
+await p2Cache.getOrCreate(p2AgentA, p2OutputChanged, 'typescript', p2Renderer)
+checkTrue('P2-6 同名工具 output schema 改变重渲染', p2Calls.length === p2OutputBefore + 1)
+const p2LanguageBefore = p2Calls.length
+await p2Cache.getOrCreate(p2AgentA, p2FullInput, 'python', p2Renderer)
+checkTrue('P2-7 language 原值改变重渲染', p2Calls.length === p2LanguageBefore + 1)
+let alternateRendererCalls = 0
+const alternateRenderer = (input) => { alternateRendererCalls += 1; return 'ALT<' + JSON.stringify(input) + '>' }
+const alternateText = await p2Cache.getOrCreate(p2AgentA, p2FullInput, 'python', alternateRenderer)
+checkTrue('P2-8 renderer 函数引用改变重渲染', alternateRendererCalls === 1 && alternateText.startsWith('ALT<'))
+const p2NewApplyCache = createSdkTextCache()
+const newApplyBefore = p2Calls.length
+await p2NewApplyCache.getOrCreate(p2AgentA, p2FullInput, 'typescript', p2Renderer)
+checkTrue('P2-9 新 plugin apply/cache factory 无旧 entry', p2Calls.length === newApplyBefore + 1)
+const fingerprintNestedA = sdkSchemasFingerprint([{ name: 'same', parameters: { alpha: 1, beta: { nested: true } }, output: { type: 'object' } }])
+const fingerprintNestedB = sdkSchemasFingerprint([{ name: 'same', parameters: { alpha: 1, beta: { nested: false } }, output: { type: 'object' } }])
+const fingerprintOutputB = sdkSchemasFingerprint([{ name: 'same', parameters: { alpha: 1, beta: { nested: true } }, output: { type: 'array' } }])
+const fingerprintOrderA = sdkSchemasFingerprint([{ name: 'same', parameters: { alpha: 1, beta: 2 } }])
+const fingerprintOrderB = sdkSchemasFingerprint([{ name: 'same', parameters: { beta: 2, alpha: 1 } }])
+const fingerprintAbsent = sdkSchemasFingerprint([{ name: 'same' }])
+const fingerprintUndefined = sdkSchemasFingerprint([{ name: 'same', output: undefined }])
+const cyclicSchema = { name: 'cycle' }
+cyclicSchema.parameters = cyclicSchema
+const getterSchema = {}
+Object.defineProperty(getterSchema, 'name', { enumerable: true, get: () => 'getter' })
+checkTrue('P2-10 指纹覆盖嵌套 parameters/output、数组与对象键顺序及字段存在性',
+  fingerprintNestedA !== fingerprintNestedB && fingerprintNestedA !== fingerprintOutputB && fingerprintOrderA !== fingerprintOrderB && fingerprintAbsent !== fingerprintUndefined)
+checkTrue('P2-11 无法无损签名时 cache miss（循环引用/getter 不写入 entry）', sdkSchemasFingerprint([cyclicSchema]) === undefined && sdkSchemasFingerprint([getterSchema]) === undefined)
+const p2ConcurrentAgent = { session: { header: { id: 'p2-concurrent' } } }
+let concurrentResolve
+let concurrentCalls = 0
+const concurrentRenderer = () => {
+  concurrentCalls += 1
+  return new Promise((resolve) => { concurrentResolve = resolve })
+}
+const concurrentA = p2Cache.getOrCreate(p2ConcurrentAgent, p2FullInput, 'typescript', concurrentRenderer)
+const concurrentB = p2Cache.getOrCreate(p2ConcurrentAgent, p2FullInput, 'typescript', concurrentRenderer)
+checkTrue('P2-12 同 key 并发请求共享同一个 in-flight Promise', concurrentA === concurrentB)
+await Promise.resolve()
+concurrentResolve('concurrent-text')
+await Promise.all([concurrentA, concurrentB])
+checkTrue('P2-13 同 key 并发只启动一次 renderer', concurrentCalls === 1)
+const p2RejectAgent = { session: { header: { id: 'p2-reject' } } }
+let rejectNext = true
+let rejectCalls = 0
+const rejectThenRetryRenderer = () => {
+  rejectCalls += 1
+  if (rejectNext) { rejectNext = false; return Promise.reject(new Error('controlled reject')) }
+  return 'retry-text'
+}
+let rejected = false
+try { await p2Cache.getOrCreate(p2RejectAgent, p2FullInput, 'typescript', rejectThenRetryRenderer) } catch (error) { rejected = true }
+const retryText = await p2Cache.getOrCreate(p2RejectAgent, p2FullInput, 'typescript', rejectThenRetryRenderer)
+checkTrue('P2-14 renderer reject 不缓存，下一次相同 L 重试', rejected && rejectCalls === 2 && retryText === 'retry-text')
+const p2DisposeAgent = { session: { header: { id: 'p2-dispose' } } }
+let disposeCalls = 0
+const disposeRenderer = (input) => { disposeCalls += 1; return 'dispose-text' }
+await p2Cache.getOrCreate(p2DisposeAgent, p2FullInput, 'typescript', disposeRenderer)
+p2Cache.dispose(p2DisposeAgent)
+await p2Cache.getOrCreate(p2DisposeAgent, p2FullInput, 'typescript', disposeRenderer)
+checkTrue('P2-15 dispose 后同 agent 再请求重渲染', disposeCalls === 2)
+const p2StaleAgent = { session: { header: { id: 'p2-stale' } } }
+let resolveOld
+const oldPromise = p2Cache.getOrCreate(p2StaleAgent, p2FullInput, 'typescript', () => new Promise((resolve) => { resolveOld = resolve }))
+await Promise.resolve()
+const freshInput = [{ ...p2FullInput[0] }, { ...p2FullInput[1], parameters: { type: 'object', properties: { fresh: { type: 'string' } } } }]
+const freshRenderer = () => 'fresh-text'
+const freshPromise = p2Cache.getOrCreate(p2StaleAgent, freshInput, 'typescript', freshRenderer)
+const freshText = await freshPromise
+resolveOld('old-text')
+await oldPromise
+let staleConfirmCalls = 0
+const staleConfirm = await p2Cache.getOrCreate(p2StaleAgent, freshInput, 'typescript', freshRenderer)
+checkTrue('P2-16 旧 key 迟到 resolve 不覆盖新 entry', freshText === 'fresh-text' && staleConfirm === 'fresh-text' && staleConfirmCalls === 0)
+checkTrue('P2-17 entry 三元组按 renderer 身份比较且 dispose 可回收',
+  sdkTextCacheEntryMatches({ fingerprint: 'f', language: 'typescript', renderer: p2Renderer }, 'f', 'typescript', p2Renderer)
+  && !sdkTextCacheEntryMatches({ fingerprint: 'f', language: 'typescript', renderer: p2Renderer }, 'f', 'python', p2Renderer)
+  && !sdkTextCacheEntryMatches({ fingerprint: 'f', language: 'typescript', renderer: p2Renderer }, 'f', 'typescript', alternateRenderer))
+const p2Source = pluginSource
+checkTrue('P2-18 F/native 与 F/both 不渲染完整 SDK，L 才按完整 renderer 输入接 cache',
+  p2Source.includes('if (!anchoredFirst && hasSection(result.sections, SDK_SECTION_NAME))')
+  && p2Source.includes('const effectiveSchemas = toolSdkSchemasOf(agent) ?? schemas')
+  && p2Source.includes('const rendererInput = sdkSchemasForRendering(effectiveSchemas)')
+  && p2Source.includes('sdkTextCache.dispose(agent)'))
+const p2PresentationHarness = makeHarness({ anchoredBootstrap: true, creativeMode: false })
+const p2FTrapHarness = makeHarness({ anchoredBootstrap: true, creativeMode: false, language: '__p2-unsupported-renderer-sentinel__' })
+let p2FullSdkRendererPathAttempts = 0
+const p2RendererTrapSchema = {}
+Object.defineProperty(p2RendererTrapSchema, 'name', {
+  enumerable: true,
+  get() {
+    p2FullSdkRendererPathAttempts += 1
+    throw new Error('p2 full SDK renderer trap')
+  },
+})
+const p2OriginalWarn = console.warn
+let p2FNative
+let p2FBoth
+const p2RendererWarnings = await captureFilteredSdkWarnings(async () => {
+  const p2FNativeAgent = matrixAgent('main', 'first', 1001, 'native', [p2RendererTrapSchema])
+  const p2FBothAgent = matrixAgent('main', 'first', 1002, 'both', [p2RendererTrapSchema])
+  p2FNative = await assemble(p2FTrapHarness, p2FNativeAgent, matrixDirectTools(matrixSchemasFor('main'), 'native'), matrixSections('native'))
+  p2FBoth = await assemble(p2FTrapHarness, p2FBothAgent, matrixDirectTools(matrixSchemasFor('main'), 'both'), matrixSections('both'))
+})
+checkTrue('P2-19 F/native 与 F/both 模型可见面不含完整 tools:sdk',
+  !sectionNames(p2FNative).includes('tools:sdk') && !sectionNames(p2FBoth).includes('tools:sdk')
+  && sectionNames(p2FNative).join('|') === 'extra-plan-bootstrap'
+  && sectionNames(p2FBoth).join('|') === 'extra-plan-bootstrap')
+checkTrue('P2-19 F/native 与 F/both 不进入完整 SDK renderer（sentinel trap 无 warning/入径，console.warn 已恢复）',
+  p2RendererWarnings.length === 0 && p2FullSdkRendererPathAttempts === 0 && console.warn === p2OriginalWarn)
+const p2LLaterAgent = matrixAgent('main', 'later', 1003, 'both')
+const p2LLater = await assemble(p2PresentationHarness, p2LLaterAgent, matrixDirectTools(matrixSchemasFor('main'), 'both'), matrixSections('both'))
+checkTrue('P2-20 C=0 L 对拍 tools/sections：Cordis 隐藏、SDK 保留 read 且不缓存 assembly',
+  !p2LLater.tools.some((tool) => MATRIX_CORDIS_TOOLS.includes(tool.name))
+  && !sectionNames(p2LLater).includes('tool:cordis')
+  && sectionText(p2LLater, 'tools:sdk').includes('read')
+  && sectionText(p2LLater, 'tools:sdk').includes('file_path'))
+const p2RuntimeDeny = preExecute(harness, mainAgent, 'write', {})
+checkTrue('P2-21 C=0 runtime deny/权限行为保持：主会话未确认 write 仍 deny', p2RuntimeDeny !== null && p2RuntimeDeny.kind === 'deny' && String(p2RuntimeDeny.reason).includes('路由未确认'))
+
+// ── ⑯ B3 收敛：shell 只读文案单源 + job_output 记录单源（T2/T3） ─────────────
+// ① 六格逐字矩阵：完整字符串等值比较（不用 includes），负例锁 null 边界。
+const SHELL_MATRIX = [
+  ['planner', 'pwsh', { command: 'New-Item x.txt' }, '规划子代理只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件'],
+  ['planner', 'bash', { command: 'rm -rf x' }, '规划子代理只读：bash 仅限只读探查命令，禁止创建/修改/删除文件'],
+  ['probe', 'pwsh', { command: 'Set-Content a.txt x' }, '探查者只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件'],
+  ['probe', 'bash', { command: 'mkdir d' }, '探查者只读：bash 仅限只读探查命令，禁止创建/修改/删除文件'],
+  ['reviewer', 'pwsh', { command: 'Remove-Item x' }, '验收复核者只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件'],
+  ['reviewer', 'bash', { command: 'echo hi > f.txt' }, '验收复核者只读：bash 仅限只读探查命令，禁止创建/修改/删除文件'],
+]
+for (const [role, toolName, args, expected] of SHELL_MATRIX) {
+  check('B3-1 ' + role + '×' + toolName + ' shellMutationReason 逐字等值', shellMutationReason(role, { name: toolName, arguments: args }), expected)
+}
+check('B3-2 planner pwsh 只读命令（Get-ChildItem）→ null', shellMutationReason('planner', { name: 'pwsh', arguments: { command: 'Get-ChildItem' } }), null)
+check('B3-3 probe bash 参数位裸词（grep -rn rm src/）→ null', shellMutationReason('probe', { name: 'bash', arguments: { command: 'grep -rn rm src/' } }), null)
+check('B3-4 planner write（非 shell）→ null', shellMutationReason('planner', { name: 'write', arguments: {} }), null)
+check('B3-5 reviewer edit（非 shell）→ null', shellMutationReason('reviewer', { name: 'edit', arguments: {} }), null)
+checkTrue('B3-6 未知角色与缺失入参 → null（无异常）',
+  shellMutationReason('executor', { name: 'pwsh', arguments: { command: 'New-Item x' } }) === null
+  && shellMutationReason(undefined, { name: 'pwsh', arguments: { command: 'New-Item x' } }) === null
+  && shellMutationReason('planner', undefined) === null
+  && shellMutationReason('planner', { name: 'pwsh' }) === null)
+
+// ② 记录函数状态迁移：惰性建表 / 同 session 多 job / 跨 session 隔离 / 同 job 幂等覆盖 / 非法输入零副作用。
+{
+  const counters = new Map()
+  const snap = (m) => JSON.stringify([...m.entries()].map(([k, v]) => [k, [...v.entries()]]).sort())
+  const agentA = { session: { header: { id: 'b3-sess-A' }, snapshotEvents: () => [] }, options: {}, ctx: undefined }
+  const agentB = { session: { header: { id: 'b3-sess-B' }, snapshotEvents: () => [] }, options: {}, ctx: undefined }
+  const joExec = (jobId) => ({ name: 'job_output', arguments: { job_id: jobId } })
+  const emptyBefore = snap(counters)
+  checkTrue('B3-7 首次调用惰性建表（返回 true，表恰为 b3-sess-A → j1→1）',
+    recordJobOutputCall(agentA, joExec('j1'), counters) === true && counters.size === 1 && snap(counters) === '[["b3-sess-A",[["j1",1]]]]')
+  checkTrue('B3-8 同 session 多 job 累积（j1/j2 并存，值均为 1）',
+    recordJobOutputCall(agentA, joExec('j2'), counters) === true && counters.size === 1 && counters.get('b3-sess-A').size === 2 && counters.get('b3-sess-A').get('j1') === 1 && counters.get('b3-sess-A').get('j2') === 1)
+  checkTrue('B3-9 跨 session 隔离（B 建表不影响 A 的表项）',
+    recordJobOutputCall(agentB, joExec('j1'), counters) === true && counters.size === 2 && counters.get('b3-sess-B').size === 1 && counters.get('b3-sess-A').size === 2 && !counters.get('b3-sess-B').has('j2'))
+  checkTrue('B3-10 同 job 幂等覆盖（表项数与值不变）',
+    recordJobOutputCall(agentA, joExec('j1'), counters) === true && counters.get('b3-sess-A').size === 2 && counters.get('b3-sess-A').get('j1') === 1)
+  const before = snap(counters)
+  const noHeader = { session: { snapshotEvents: () => [] }, options: {}, ctx: undefined }
+  const badAgent = { session: { header: { id: 7 }, snapshotEvents: () => [] }, options: {}, ctx: undefined }
+  const badCalls = [
+    recordJobOutputCall(agentA, { name: 'job_output', arguments: {} }, counters),
+    recordJobOutputCall(agentA, { name: 'job_output', arguments: { job_id: 42 } }, counters),
+    recordJobOutputCall(agentA, { name: 'job_output', arguments: { job_id: null } }, counters),
+    recordJobOutputCall(agentA, { name: 'job_output', arguments: '{ bad json' }, counters),
+    recordJobOutputCall(agentA, { name: 'read', arguments: { job_id: 'j9' } }, counters),
+    recordJobOutputCall(agentA, undefined, counters),
+    recordJobOutputCall(undefined, joExec('j9'), counters),
+    recordJobOutputCall(noHeader, joExec('j9'), counters),
+    recordJobOutputCall(badAgent, joExec('j9'), counters),
+    recordJobOutputCall(agentA, joExec('j9'), undefined),
+    recordJobOutputCall(agentA, joExec('j9'), null),
+  ]
+  checkTrue('B3-11 非法输入（缺/非字符串 job_id、非 job_output、agent/sessionId/counters 缺失）→ 全部 false、Map 零副作用',
+    badCalls.every((v) => v === false) && snap(counters) === before && before !== emptyBefore)
+  checkTrue('B3-12 counters 缺失不建表（两 session 表项数与值保持）',
+    counters.size === 2 && counters.get('b3-sess-A').size === 2 && counters.get('b3-sess-B').size === 1 && !counters.has('undefined'))
+}
+
+// ③ 源码单点结构断言：唯一写入点、三处内联实现已删、监听器无二次判定、三类角色统一调用。
+{
+  const recordStart = pluginSource.indexOf('function recordJobOutputCall(')
+  const recordBody = recordStart === -1 ? '' : pluginSource.slice(recordStart, pluginSource.indexOf('\n}\n', recordStart))
+  checkTrue('B3-13 jobId→1 写入全文件唯一（perSession.set( 恰 1 处）且只位于 recordJobOutputCall',
+    pluginSource.split('perSession.set(').length - 1 === 1 && recordBody.includes('perSession.set(args.job_id, 1)') && recordBody.includes('counters.set(sessId, perSession)'))
+  checkTrue('B3-14 三处内联实现已删（无 let perSession = jobOutputCallCounters.get(sessId)）',
+    pluginSource.split('let perSession = jobOutputCallCounters.get(sessId)').length - 1 === 0)
+  checkTrue('B3-15 监听器无局部 jobReason 二次判定（jobReason 0 命中）',
+    pluginSource.split('jobReason').length - 1 === 0)
+  checkTrue('B3-16 三类受保护角色均调用统一记录函数：调用点恰 3 处（加定义共 4 处），执行者分支无第 4 处调用',
+    pluginSource.split('recordJobOutputCall(agent, exec, jobOutputCallCounters)').length - 1 === 3 && pluginSource.split('recordJobOutputCall(').length - 1 === 4)
+  checkTrue('B3-17 首次判定已带 counters：planner 与只读 child 监听器调用点均传 jobOutputCallCounters',
+    pluginSource.includes('plannerGateReason(exec, execEvents, exploreBudget, jobOutputCallCounters)') && pluginSource.includes('childReadonlyGateReason(exec, probe, jobOutputCallCounters)'))
+  // pwsh/bashMutationMatches(exec) 各 3 处 = 定义 + shellMutationReason 单点 + mainGateReason 主会话分支
+  // （主会话走 routeDenyReason，不属 B3 只读角色文案范围）；只读角色侧不再各自出现。
+  checkTrue('B3-18 shellMutationReason 唯一实现；六格文案只剩两条模板（不再各自拼接）；pwsh/bash mutation 判定各 3 处（定义+只读单点+主会话分支）',
+    pluginSource.split('function shellMutationReason(').length - 1 === 1
+    && pluginSource.split('仅限只读探查命令').length - 1 === 2
+    && pluginSource.split('pwshMutationMatches(exec)').length - 1 === 3
+    && pluginSource.split('bashMutationMatches(exec)').length - 1 === 3)
+  checkTrue('B3-19 decisions 导出两个新函数（测试直接复用生产实现，无镜像副本）',
+    typeof decisions.shellMutationReason === 'function' && typeof decisions.recordJobOutputCall === 'function')
+}
+
+// ④ 监听器级：job_output 子调用真实 re-entry（首次放行后记录、同 job 第二次拒绝）与组拒零副作用。
+{
+  const reEntryPlanner = plannerWithId('b3-reentry-planner', [DESC])
+  const subExec = { rootCallId: 'b3-re-entry', parent: Symbol('b3-re-entry') }
+  r = preExecute(harness, reEntryPlanner, 'job_output', { job_id: 'jr1' }, subExec)
+  checkTrue('B3-20 planner run_code 内 job_output 子调用首次 re-entry → allow（容器计费口径不变）', r !== null && r !== undefined && r.kind === 'allow')
+  r = preExecute(harness, reEntryPlanner, 'job_output', { job_id: 'jr1' }, subExec)
+  checkTrue('B3-21 同 job 第二次 re-entry → deny 且含「job_output 禁止对同一 job 重复调用」（首次放行已记录）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止对同一 job 重复调用'))
+  const sideFxPlanner = plannerWithId('b3-group-deny-planner', [DESC])
+  r = preExecute(harness, sideFxPlanner, 'run_code', { code: "await tools.job_output({ job_id: 'jg3' })\nawait tools.write({})", description: 'B3 组拒（write 成员）含 job_output 成员' })
+  checkTrue('B3-22 组内含 job_output 成员的组拒 → deny（write 成员触发，文案不变）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('run_code 拆解预审未通过') && String(r.reason).includes('- write:'))
+  r = preExecute(harness, sideFxPlanner, 'job_output', { job_id: 'jg3' })
+  checkTrue('B3-23 组拒零副作用：该 job 直呼仍首次放行（组判定未写入计数器）', r !== null && r !== undefined && r.kind === 'allow')
+}
 
 console.log('\n通过 ' + pass + ', 失败 ' + fail)
 process.exit(fail === 0 ? 0 : 1)

@@ -7,7 +7,14 @@
 dsh 插件「按需规划模式」预设：AI 未经用户同意不得修改源码/配置/执行态，经路由/目的/澄清/批准四级机械闸门后按规划执行；路由确认前唯一写例外 = 受限规划工件 save_plan（任意路由态可落盘 cwd/.extra-plan 的固定形状方案/验收双文件，内容闸门与目录/文件名形态不变），save_probe 仍限 pro 规划窗口（route=plan + 目的已定 + 澄清完成）；Pure PTC 顶层始终只保留 run_code。
 五角色：主会话（入口协调）→ 探查者（只读批量+证据落盘，**仅主会话可委派**）→ 规划子代理（方案+验收双文件，不得委派探查者）→ 执行者（按方案改）→ 验收者（逐条核对）。save_probe 的 `PROBE_LIMITS` 当前为 evidence 150 条、单条 evidence.text 1000 字；step-00 PR23=151、PR34/PR35=1000/1001；exploreBudget=18 与台账历史 80/209 是不同口径。
 兼容：dsh >= v0.1.2-rc.1 & <= v0.1.5-rc.2；qqbot 0.5.0 版 + 精简版 dsh-qqbot-user-questions（仅自愈+mklink，选装）。A=anchoredBootstrap、C=creativeMode、M=toolPresentationMode（native/ptc/both），F=尚无 tool/call、L=首个 tool/call 后。
-A=1/F/main-planner：M=native/both 为 HN/HB（bootstrap shell(s)+read，sections 仅 extra-plan-bootstrap，无 tool:read）；M=ptc 为 HP（顶层仅 run_code，sections 精确为 extra-plan-bootstrap、tools:ptc-only、tool:read，其中 read 是 guidance+最小契约，不含完整 tools:sdk/Cordis）。A=1 的 L 与 A=0 从 N/P/B 基线（N=native/P=ptc/B=both）开始；C=0 全角色隐藏 7 个 Cordis 展示项且两个创造 skill 不出现在 catalog，C=1 不因 C 隐藏——非 HP1 且非 anchored 时保留完整 SDK/Cordis/两个创造 skill，HP1 仅 F/main-planner 暂隐 catalog。以上是模型可见投影，不是 runtime binding 安全隔离（详见 ai-流程备查.md / ai-机制设计.md）。
+A=1/F/main-planner：M=native/both 为 HN/HB（bootstrap shell(s)+read，sections 仅 extra-plan-bootstrap，无 tool:read）；M=ptc 为 HP（顶层仅 run_code，sections 精确为 extra-plan-bootstrap、tools:ptc-only、tool:read，其中 read 文本由插件手写 cfg.bootstrapReadHint（空串/非字符串回退内置中文兜底），不含完整 tools:sdk/Cordis）。A=1 的 L 与 A=0 从 N/P/B 基线（N=native/P=ptc/B=both）开始；C=0 全角色隐藏 7 个 Cordis 展示项且两个创造 skill 不出现在 catalog，C=1 不因 C 隐藏——非 HP1 且非 anchored 时保留完整 SDK/Cordis/两个创造 skill，HP1 仅 F/main-planner 暂隐 catalog。以上是模型可见投影，不是 runtime binding 安全隔离（详见 ai-流程备查.md / ai-机制设计.md）。
+
+## P2-2 SDK 文本复用边界（终版）
+- 缓存只存在每个 plugin `apply` 闭包内的 agent-keyed WeakMap：同一 agent 对象同一 session 的 L 首次生成、后续相同有效输入复用；不按 sessionId 跨 agent 共享，不缓存 PromptAssembly/sections/tools/contexts/persona，不落盘。
+- F/L 严格分离：F/PTC 不再生成任何 SDK 文本（`tool:read` 段由预设键 `bootstrapReadHint` 手写），因此不读写完整缓存；F/native 与 F/both 不渲染随后会被剥离的完整 SDK；L 且 C=0、存在 `tools:sdk` 才取得 live effective schemas，整体重建并查询缓存。
+- 命中三元组 = `sdkSchemasForRendering` 后完整嵌套输入的保守结构指纹（保留数组/对象键顺序与字段存在性）+ 原始 language 字符串 + active renderer 函数引用；schema、language、renderer 任一变化即失效，无法无损指纹则 miss 且不写入。
+- 同 key 并发共享 in-flight Promise；renderer reject、调用方 catch 的空文本降级、过期 Promise 均不缓存/不回写；agent/disposed 先 dispose（即使缺 sessionId），新 agent、new apply、部署或重启从空缓存开始。
+- step-04 的 renderer 调用计数是硬门槛：PTC F→L→L 两次相同完整 L 必须精确调用 1 次且文本逐字相等；耗时只报告、不设毫秒阈值。P2-3 不在本批；根 `README.md`、ai-宿主耦合台账与官方安装目录不改。
 
 ## 文档索引（想查什么 → 打开哪个）
 | 想查什么 | 打开 | 建议时机 |
@@ -20,12 +27,12 @@ A=1/F/main-planner：M=native/both 为 HN/HB（bootstrap shell(s)+read，section
 | 完整流程（实际机制校订版） | pe-test/docs/ai-流程备查.md | 流程细节拿不准时 |
 | 宿主耦合点全表（DSH/qqbot 升级比对） | pe-test/docs/ai-宿主耦合台账.md | 升级 DSH/qqbot 前必读 |
 | PTC 首轮 F→L 与 native/both HN/HB 回归实机取证 | pe-test/docs/ai-实机闸门测试流程.md | PTC 的 C=0/C=1 各用干净新顶层会话；both 回归独立 |
-| 子代理模型/提供方与 pro规划引导实机取证（A42/A43、C11/C12） | pe-test/tools/step-07-子代理模型与引导取证.mjs | 首次实机取证前 |
+| 子代理模型/提供方与 pro规划引导实机取证（A42/A43、C11/C12） | pe-test/tools/step-07-子代理模型与引导取证.mjs | 首次实机取证前；已优化为两阶段流式头扫描（只解析命中子会话），不加堆参数默认堆可跑通 |
 
-> 脚注（step-07 行用法）：HUMAN：显式 SESSION_ID + PLANNER_PROMPT_SUFFIX；request/header attempted route、assistant/message actual provenance、suffix 等级分栏。
+> 脚注（step-07 行用法）：HUMAN：显式 SESSION_ID + PLANNER_PROMPT_SUFFIX；request/header attempted route、assistant/message actual provenance、suffix 等级分栏。内存口径：先只读头信息筛出直接 child、再只解析命中目录（事件不再保留 raw 行），配合 `_shared/session-finder.mjs` 首行读分块渐读，277 份会话工作区下默认堆可跑通。
 
 ## 必守纪律（一句）
-改前逐文件备份到 `.extra-plan/backup-<任务名>-<timestamp>/`（与维护手册备份条款口径一致）；工作目录固定为 dsh-extra-plan（仓库根）；改完按固定顺序执行根入口与 8 个新增 lib 的 `node --check`（`plugins/dsh-extra-plan/index.js`、`lib/run-code-static.js`、`lib/save-contract.js`、`lib/save-probe-validation.js`、`lib/save-persistence.js`、`lib/save-tool-factories.js`、`lib/agent-session.js`、`lib/model-routing.js`、`lib/assembly-presentation.js`），再运行 `node pe-test/tools/step-00-全流程回归.mjs`、`node pe-test/tools/step-04-路由与写闸门.mjs`、`node pe-test/tools/step-06-线索落盘.mjs`、`node pe-test/tools/代码地图生成.mjs`，人工段维护后执行 `node pe-test/tools/代码地图生成.mjs --check`，最后执行 `node pe-test/tools/一键step测试.mjs`。**改完不同步地图 = 一键体检「代码地图一致性」判红**。**唯一禁改文档：根 `dsh-extra-plan/README.md`（与 READAI.md 同层级）；其余文档（含各级 README.md、pe-test/docs/ai-宿主耦合台账.md）均可改；官方安装的预设与技能只读引用、不复制不改写。**
+改前逐文件备份到 `.extra-plan/backup-<任务名>-<timestamp>/`（与维护手册备份条款口径一致）；工作目录固定为 dsh-extra-plan（仓库根）；改完按固定顺序执行根入口与 9 个新增 lib 的 `node --check`（`plugins/dsh-extra-plan/index.js`、`lib/run-code-static.js`、`lib/save-contract.js`、`lib/save-probe-validation.js`、`lib/save-persistence.js`、`lib/save-tool-factories.js`、`lib/agent-session.js`、`lib/model-routing.js`、`lib/assembly-presentation.js`、`lib/sdk-text-cache.js`），再运行 `node pe-test/tools/step-00-全流程回归.mjs`、`node pe-test/tools/step-04-路由与写闸门.mjs`、`node pe-test/tools/step-06-线索落盘.mjs`、`node pe-test/tools/代码地图生成.mjs`，人工段维护后执行 `node pe-test/tools/代码地图生成.mjs --check`，最后执行 `node pe-test/tools/一键step测试.mjs`。**改完不同步地图 = 一键体检「代码地图一致性」判红**。**唯一禁改文档：根 `dsh-extra-plan/README.md`（与 READAI.md 同层级）；其余文档（含各级 README.md、pe-test/docs/ai-宿主耦合台账.md）均可改；官方安装的预设与技能只读引用、不复制不改写。**
 
 ## 真相源
 （以下路径相对 plugins/dsh-extra-plan/）

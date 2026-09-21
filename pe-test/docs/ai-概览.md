@@ -20,33 +20,39 @@ dsh 插件「按需规划模式」预设：AI 未经用户同意不得修改源�
 |:--|:--|:--|
 | 四级闸门状态机+主闸门 | plugins/dsh-extra-plan/index.js | 修改最频繁（route/purpose/clarified/approved/channelBroken） |
 | 探查预算 | index.js budget* 族（budgetNoticeText/budgetReminderText/budgetExhaustedReason 等） | 开局告知/剩3提醒/耗尽往返 |
-| save_probe/save_plan 工具 | lib/save-contract.js（合同/渲染）、lib/save-probe-validation.js（校验）、lib/save-persistence.js（原子落盘+阶段感知 journal）、lib/save-tool-factories.js（工具定义工厂）；index.js（apply 注册/闸门接线） | 双写+journal 自愈（阶段感知：pre-journal 失败先删 journal 并以 existsSync 确认不存在才清 tmp，post-journal 任何失败保留 journal 与现场，全部目标确认就位后才删 journal；恢复逐项确认目标存在、全项就位才清 journal，目标缺失或形状非法保留 journal 并告警；无 fsync/跨进程强持久化承诺）；save_plan 注册于规划子代理层+主会话层（主会话侧任意路由态放行——受限规划工件，仅写 cwd/.extra-plan 固定形状 Markdown）；save_probe 放行条件保持现状（route=plan + 目的已定 + 澄清完成）；注册幂等由「成功后才写 WeakSet 标记」保证，失败不写标记并由 pre-step 每步兜底重试（session-start 每会话仅一次、recompose 不重发，故只剩 pre-step 一条恢复通道）；注册失败按重名/永久性（记终态）与可重试（下一步重试）三分类处置 |
+| save_probe/save_plan 工具 | lib/save-contract.js（合同/渲染）、lib/save-probe-validation.js（校验）、lib/save-persistence.js（原子落盘+阶段感知 journal）、lib/save-tool-factories.js（工具定义工厂）；index.js（apply 注册/闸门接线） | 双写+journal 自愈（阶段感知：pre-journal 失败先删 journal 并以 existsSync 确认不存在才清 tmp，post-journal 任何失败保留 journal 与现场，全部目标确认就位后才删 journal；恢复逐项确认目标存在、全项就位才清 journal，目标缺失或形状非法保留 journal 并告警；无 fsync/跨进程强持久化承诺）；save_plan 注册于规划子代理层+主会话层（主会话侧任意路由态放行——受限规划工件，仅写 cwd/.extra-plan 固定形状 Markdown）；save_probe 放行条件保持现状（route=plan + 目的已定 + 澄清完成）；注册幂等由「成功后才写 WeakSet 标记」保证；A 类重名与 B 类永久性定义错误也写标记记终态、不再重试，仅 tools 服务未就绪与 C 类可重试错误不写标记、由 pre-step 每步兜底重试（session-start 每会话仅一次、recompose 不重发，故只剩 pre-step 一条恢复通道） |
 | save_probe PROBE_LIMITS | lib/save-contract.js PROBE_LIMITS；lib/save-probe-validation.js validateProbe；lib/save-tool-factories.js 动态 schema；step-00 PR23=151、PR34/PR35 | evidence 最多 150 条、单条 evidence.text 最多 1000 字；1000 通过、1001 拒绝；描述/schema 动态读取同一合同常量 |
 | run_code 静态拆解组判定 | index.js runCodeGroupDenyReason（组聚合/判定）；lib/run-code-static.js decomposeRunCode（静态拆解，index.js 解构调用后 re-export） | 防绕道闸门 |
 | run_code 容错检查 | lib/run-code-static.js runCodeCatchGateReason/runCodeDispatchGateReason（index.js 解构调用与 re-export；开关 cfg.runcodeCatchGate 默认 false） | 多调用独立容错硬闸门（只认逐点 try/catch；教学式拒绝）+ 单实例子调用上限=exploreBudget |
-| anchored 首轮引导 | lib/assembly-presentation.js projectAssemblyForPresentation/renderFilteredToolsSdk（HP 的 tool:read 由其生成）；index.js system-prompt/assemble 钩子（isBootstrapPhase/keep 构造；行号见代码地图函数索引） | A=1/F/main-planner：native/both 为 HN/HB（bootstrap shell(s)+read，sections 仅 extra-plan-bootstrap）；PTC 为 HP（顶层仅 run_code，sections 精确为 extra-plan-bootstrap、tools:ptc-only、tool:read，read 为 guidance+最小契约）；L 恢复 N/P/B |
+| anchored 首轮引导 | lib/assembly-presentation.js projectAssemblyForPresentation/renderFilteredToolsSdk（L 段 tools:sdk 重建）；index.js system-prompt/assemble 钩子（isBootstrapPhase/keep 构造 + HP 的 tool:read 文本覆盖；行号见代码地图函数索引） | A=1/F/main-planner：native/both 为 HN/HB（bootstrap shell(s)+read，sections 仅 extra-plan-bootstrap）；PTC 为 HP（顶层仅 run_code，sections 精确为 extra-plan-bootstrap、tools:ptc-only、tool:read，read 文本由插件手写 cfg.bootstrapReadHint、空串/非字符串回退内置中文兜底）；L 恢复 N/P/B（tool:read 回宿主原文） |
 | creativeMode 持续装配投影 | lib/assembly-presentation.js projectAssemblyForPresentation/renderFilteredToolsSdk；index.js skill 注册源 | C=0 覆盖五角色每轮模型可见面：隐藏 7 个 Cordis 工具、tool:cordis、SDK 中对应 schema/说明，两个创造 skill 不进入 catalog；C=1 不因 C 隐藏——非 HP1 且非 anchored 时保留完整 SDK/Cordis/两个创造 skill，但 HP1 的 F/main-planner 仅暂隐 catalog；普通 skill/skill 工具保留。官方 renderer 从明确 schema 整体重建；不改变 registry binding，非运行时安全隔离 |
-| 探查者／非 planner 模型注入 | lib/model-routing.js resolveOtherAgentEntry（createModelRouting 工厂返回，apply 内解构） | 上溯顶层主会话 fallback；resolver 层链断裂（source=null）返回 {}、不注入直接父；「链断裂回退直接父」仅对钩子层 maxTokens 继承成立 |
-| 实机子代理模型/提供方与引导取证 | pe-test/tools/step-07-子代理模型与引导取证.mjs | HUMAN：显式 SESSION_ID + PLANNER_PROMPT_SUFFIX；两代日志、pro规划/非pro规划、attempted route 与 actual provenance、suffix 等级 |
+| 探查者／非 planner 模型注入 | lib/model-routing.js resolveOtherAgentEntry（createModelRouting 工厂返回，apply 内解构） | 上溯顶层主会话 fallback；resolver 层链断裂（source=null）返回 {}、不注入直接父；「链断裂回退直接父」仅对钩子层 maxTokens 继承成立；跨 provider 严格探针为有界并发池（写死常量 PLANNER_PROBE_CONCURRENCY=5，planner 与非 planner 同形：去重 → 并发池 → 按发起顺序收集 → 全部结束后排序），非配置项 |
+| 实机子代理模型/提供方与引导取证 | pe-test/tools/step-07-子代理模型与引导取证.mjs | HUMAN：显式 SESSION_ID + PLANNER_PROMPT_SUFFIX；两代日志、pro规划/非pro规划、attempted route 与 actual provenance、suffix 等级；两阶段头扫描只解析命中 child，默认堆可跑通 |
 | 设置页后端 API | lib/settings.js（createApiHandler 等） | 仅本机环回 |
 | 设置页前端 UI | lib/client.js | 打包器（__ModuleLoader__）格式；**已按函数级索引**（apply/ProConfigTab/ExtraPlanCard 等，2026-09-10 起） |
 | 预设自愈核对 | lib/preset-sync.js | 启动时 hash 比对下发 |
 | 执行者工具裁剪 | lib/executor-spawn.js | E8：覆盖 workflow/ralph worker |
 | 预设本体（persona/deny/descriptor/设置默认） | assets/presets/extra-plan/agent.cordis.yml | 改预设=改这里（复制副本再改）；anchoredBootstrap 与 creativeMode 两个开关独立，creativeMode 默认 false |
 | qqbot 自愈 | plugins/dsh-qqbot-user-questions/lib/heal.js + scripts/heal.mjs（精简版插件根 index.js 调 heal.js） | 启动/安装时迁移旧版根级 code-runtime/agent-presets 错误块 + @local 建链（两行补入由包内静态 cordis.patch.yml 承担）；不含问答/审批 |
-| PTC三维装配矩阵 | pe-test/tools/step-04-路由与写闸门.mjs | 实际执行 2×2×3×2×5=120 格，逐格断言 A/C/M/F-L/五角色、C7 0/7、catalog 0/2、普通 skill、HP 与 HN/HB 基线；同文件另含 P0-4 会话状态生命周期与末轮 usage 监听器级用例（e 段 P4-1~P4-24：双 session 同 root 隔离、跨 session 锚点、disposed 清理、临时账本的 final flush/幂等/续载去重/cursor 降级、P4-24 provider/cw/rs 新字段落盘与五字段零行跳过） |
+| PTC三维装配矩阵 | pe-test/tools/step-04-路由与写闸门.mjs | 实际执行 2×2×3×2×5=120 格，逐格断言 A/C/M/F-L/五角色、C7 0/7、catalog 0/2、普通 skill、HP 与 HN/HB 基线；同文件另含 P0-4 会话状态生命周期与末轮 usage 监听器级用例（e 段 P4-1~P4-24 期望不变 + 新增 P4-25+ 增量对拍：双 session 同 root 隔离、跨 session 锚点、disposed 清理、临时账本的 final flush/幂等/续载去重/cursor 降级、P4-24 provider/cw/rs 新字段落盘与五字段零行跳过） |
 | 工具清单/时序取证 | pe-test/tools/step-04-工具清单查看.mjs | 显式会话、逻辑 JSONL 行号、前置 tool/call 数、first/later、精确 header.tools、header.system 文本命中、skill-catalog；文本命中不冒充 section 名 |
 | 代码地图 | pe-test/docs/ai-代码地图.md + pe-test/tools/代码地图生成.mjs | 头部「意图速查」= 人工段（脚本原样保留、校验引用函数名）；函数索引 = 机器段（行号/增删）；`--check` 一致性门槛；覆盖口径 = 任意缩进的命名函数定义 |
 | run_code 静态解析/理由函数 | lib/run-code-static.js（createRunCodeStatic 工厂：decomposeRunCode/runCodeCatchGateReason/runCodeDispatchGateReason/runCodeSiteCount/isRunCodeSubCall/askUserQuestionReturnGateReason/runCodeDispatchCapText） | 仅接收显式 { askTool, isDispatchStart } 普通依赖，不持有 ctx/状态；9 条禁用 API 正则与拒绝文案逐字保留自拆分前 |
 | 会话事件快照/子代理判定 | lib/agent-session.js（sessionEvents/isSubagentChild） | index.js 经 import 使用并经 decisions re-export；台账 SD10/HK20 宿主接触面现居此文件 |
-| 会话状态生命周期 + usage 账本（P0-4） | index.js apply 内（foldUsage/readUsageCursorTable/warnUsageCursorDegraded/usageCursorEntryOf/usageRoleOf/noteRunCodeSubCall/childBaseline + agent/disposed 监听器） | 运行时状态按 sessionId 分桶：subCallCounters = sessionId→rootCallId→已放行次数，锚点变化只删当前 session 桶（不再全局 clear）；agent/disposed 是 emit/void、宿主只挂 catch 不等待 → 先同步 final fold（role 取 childBaseline 的 usageRoles WeakMap 缓存）再按 sessionId 回收 jobOutput/锚点/notice/rootCall/usage 内存态（重复 disposed 幂等）；usageCursors 只存活跃 session：同 session 续载按 sessionId 从 cursor JSON 单项恢复 seq/index（内存 ref 从 null → 索引 0 扫描、seq 跳过旧消息）；ENOENT 静默按空表，其它读取错误/JSON 解析失败/根值非对象 → 每插件实例首次降级告警一次并进入空表降级（写回覆盖为仅当前 session，其它 session 去重基准丢失，性能优化留后续 D3）；账本行字段 = ts/sessionId/role/model/provider/hit/miss/out/cacheWriteTokens/reasoningTokens/seq（provider 缺省空串、cacheWriteTokens/reasoningTokens 缺省 0；hit/miss/out/cw/rs 五字段全零不写行），读侧 step-99 为纯 token 统计（明细含 provider/cw/rs，无任何汇总）；回归入口 = step-04 ⑭e 段（P4-1~P4-24） |
+| 会话状态生命周期 + usage 账本（P0-4） | index.js apply 内（foldUsage/readUsageCursorTable/warnUsageCursorDegraded/usageCursorEntryOf/usageRoleOf/noteRunCodeSubCall/childBaseline + agent/disposed 监听器） | 运行时状态按 sessionId 分桶：subCallCounters = sessionId→rootCallId→已放行次数，锚点变化只删当前 session 桶（不再全局 clear）；agent/disposed 是 emit/void、宿主只挂 catch 不等待 → 先同步 final fold（role 取 childBaseline 的 usageRoles WeakMap 缓存）再按 sessionId 回收 jobOutput/锚点/notice/rootCall/usage 内存态（重复 disposed 幂等）；usageCursors 只存活跃 session：同 session 续载按 sessionId 从 cursor JSON 单项恢复 seq/index（增量口径 = 宿主 session.seq 水位 + snapshotEvents(from,to) 区间读取：水位未变直接返回、不物化数组；prevIndex > 水位（日志截断）或首次折叠回退全量；seq <= cursor 跳过已落盘行）；ENOENT 静默按空表，其它读取错误/JSON 解析失败/根值非对象 → 每插件实例首次降级告警一次并进入空表降级（写回覆盖为仅当前 session，其它 session 去重基准丢失，性能优化留后续 D3）；账本行字段 = ts/sessionId/role/model/provider/hit/miss/out/cacheWriteTokens/reasoningTokens/seq（provider 缺省空串、cacheWriteTokens/reasoningTokens 缺省 0；hit/miss/out/cw/rs 五字段全零不写行），读侧 step-99 为纯 token 统计（明细含 provider/cw/rs，无任何汇总）；回归入口 = step-04 ⑭e 段（P4-1~P4-24 + 新增 P4-25+ 增量对拍） |
 | 预设设置解析与保格式改写 | lib/preset-settings.js（loadYaml/captureSettings/patchYamlScalar 等） | 十项设置 descriptor（SETTING_DEFINITIONS L57-109，含 otherAgentModel）；js-yaml 双路回退 |
 | 客户端桥接 | lib/client-bridge.js（name='dsh-extra-plan-client-bridge'，空 apply L17-19） | 仅承载 dsh.client 加载路径指向 lib/client.js |
+
+## P2-2 SDK 文本复用验证口径
+- `plugins/dsh-extra-plan/lib/sdk-text-cache.js` 提供 apply 级 agent-keyed WeakMap；只在同一 agent 对象同一 session 的完整 L 复用 SDK 文本，不以 sessionId 跨 agent 共享，也不缓存 PromptAssembly、sections、tools、contexts 或 persona。
+- F/PTC 只走 `read` 最小 renderer 输入且不触碰完整 cache；F/native、F/both 不为最终会剥离的完整 SDK 渲染；L/C=0/有 `tools:sdk` 才用完整 effective schemas。
+- key 为完整 `sdkSchemasForRendering` 输入保序保字段的保守指纹、原始 language、active renderer 引用；三者任一变化失效，无法无损签名不写 entry。reject/降级空文本不缓存，同 key 并发合并 Promise；dispose、new agent、new apply、部署/重启均清空边界。
+- 受控基准以调用计数 1 和 L 文本逐字对拍为阻断门槛，耗时仅报告；step-04 同时对拍 C=0 模型可见目录与既有 runtime deny，P2-3、生产部署和 DSH_HOME 同步不在本批。
 
 ## 模块关系（数据流）
 用户需求 → 主会话（只读探查理解）→ 探查方式二选一 ask（主会话探查 / 探查者探查）→ 路由确认（两问：第一问三选一「直接执行」「进行pro规划」「不同意」，第二问纯文本「补充要求」）→ pro 规划（目的确认 → 澄清 → save_probe 线索 → 规划子代理 save_plan 双文件；planner 申请继续探查 → 主会话再探查/委派探查者 → 转达线索路径 → 预算重置继续）→ 用户批准 → 执行者（按方案改）→ 验收者（逐条核对）→ 主会话汇总 → **用户部署生产环境 → 用户实测闭环**（部署动作由用户执行；AI 在验收通过前不得执行生产环境同步/部署动作）；「直接执行」路径跳过规划环节。主会话侧仅受限规划工件 save_plan 可在任意路由态落盘（cwd/.extra-plan 固定形状 Markdown），其余写入仍须路由/批准锚点。
 
-实机证据补充：A42/A43（C11/C12）由 step-07 HUMAN 独立取证，不能用 step-00 fake/mock、候选 probe 或工作区配置替代实际 provider/model 与 suffix 结论；request/header 是 attempted route，assistant/message source 是 actual provenance；exploreBudget=18 仍只代表 planner 工具预算。
+实机证据补充：A42/A43（C11/C12）由 step-07 HUMAN 独立取证，不能用 step-00 fake/mock、候选 probe 或工作区配置替代实际 provider/model 与 suffix 结论；request/header 是 attempted route，assistant/message source 是 actual provenance；exploreBudget=18 仍只代表 planner 工具预算。step-07 取证内存口径：先 `headerOfDir` 只读头信息筛出直接 child、再对命中目录 `parseSession`（事件不再保留 raw 行），`_shared/session-finder.mjs` 首行读改 64 KB 起步分块渐读，277 份会话工作区下默认堆可跑通。
 
 ## 运行时相关
 - web 直接核心包安装经 dsh plugin add + cordis.patch.yml（host 平面行：dsh-extra-plan-settings 设置页 API、extra-plan-preset-sync 预设自愈）
@@ -57,7 +63,7 @@ dsh 插件「按需规划模式」预设：AI 未经用户同意不得修改源�
 - 导航入口：READAI.md（先读它）
 - 机制设计意图/教训：pe-test/docs/ai-机制设计.md
 - 维护纪律/自检/地图同步：pe-test/docs/ai-维护手册.md
-- 函数级索引：pe-test/docs/ai-代码地图.md（含 step-07 HUMAN 取证入口）
+- 函数级索引：pe-test/docs/ai-代码地图.md（含 step-07 HUMAN 取证入口；该入口已按两阶段头扫描+按需解析优化内存）
 - 流程备查：pe-test/docs/ai-流程备查.md
 - 宿主耦合台账（升级 DSH/qqbot 前必读）：pe-test/docs/ai-宿主耦合台账.md
 - 实机闸门测试流程：pe-test/docs/ai-实机闸门测试流程.md

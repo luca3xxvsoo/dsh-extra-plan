@@ -1,7 +1,7 @@
 # 维护手册（AI 动手纪律 + 自检 + 地图同步）
 
 ## 动手前
-- 备份：修改前把本轮实际改动的每个文件按原目录结构逐路径镜像到 `.extra-plan/backup-<本轮任务名>-<timestamp>/`；不得覆盖旧备份目录；根 README 禁改、不备份。
+- 备份：修改前把本轮实际改动的每个文件按原目录结构逐路径镜像到 `.extra-plan/backup-<本轮任务名>-<timestamp>/`；不得覆盖旧备份目录；根 README 禁改、不备份。**文件镜像 + 按子块独立回退**：备份按文件镜像（而非整目录快照），同一批次内的每个子块（如 P1-3 / P1-4）必须能**单独回退**——恢复该子块涉及的备份文件即可，不牵连其它子块；同一次任务续跑沿用已建备份目录，禁止另建第二个或把改后版本覆盖回备份。
 - 改预设（agent.cordis.yml）：复制现有预设为副本再改；官方安装的预设/技能只读引用（不复制不改写）
 - 先读：ai-概览.md（改哪里）、ai-机制设计.md（改核心前）、ai-代码地图.md（定位函数）
 - **验收与部署次序**：先仓库内验收 → 用户部署生产 → 生产测试。AI 在验收通过前不得执行生产环境同步/部署动作（dsh plugin 更新、distribute-preset.mjs、复制 DSH_HOME 安装目录、.agent-presets 下发等均属用户侧部署）
@@ -50,7 +50,7 @@
 |:--|:--|
 | 闸门/路由/写拦截与A/C/M展示装配 | step-04-路由与写闸门.mjs（监听器级 + 120 格 A/C/M/F-L/五角色案例，含 C7/catalog/HP/HN/HB 断言）+ step-00-跨平台写拦截.mjs（68 用例） |
 | planner 探查委派禁令（T5）+ save_plan 主会话侧受限规划工件（任意路由态放行，save_probe 放行条件保持现状）+ plannerModel/otherAgentModel 降级与跨 Provider 时序（T2） | step-04-路由与写闸门.mjs（save_plan 五态全 allow 与 R107 组判定、T5 监听器级）、step-00-全流程回归.mjs（planner 与 executor/reviewer/probe/workflow/ralph worker 的 True/False 分流、真实 OK probe、排序、失败隔离、fallback、timeout、per-Agent cache、agent/request 屏障）、step-06-线索落盘.mjs（save_plan 注册与路由矩阵：任意路由态 allow） |
-| 注册失败路径与重试（P0-2/D1：失败不写标记、下一步重试；重名与永久性错误记终态不重试） | step-06-线索落盘.mjs（S6 服务不可用→次轮成功、S7 可重试错→次轮成功、S8 重名不重试、S9 永久性不重试、S10 pre-step 注册只影响下一步）、step-04-路由与写闸门.mjs（C4 认领时服务不可用→次轮成功、C5 可重试错粘性不重复消费、C6 重名不重试、C7 永久性不重试） |
+| 注册失败路径与重试（P0-2/D1：服务未就绪与 C 类可重试错误不写标记、下一步重试；A 类重名与 B 类永久性错误写标记记终态不重试） | step-06-线索落盘.mjs（S6 服务不可用→次轮成功、S7 可重试错→次轮成功、S8 重名不重试、S9 永久性不重试、S10 pre-step 注册只影响下一步）、step-04-路由与写闸门.mjs（C4 认领时服务不可用→次轮成功、C5 可重试错粘性不重复消费、C6 重名不重试、C7 永久性不重试） |
 | save_probe 机械上限/动态描述 | lib/save-contract.js（PROBE_LIMITS/渲染合同）+ lib/save-probe-validation.js（validateProbe）+ lib/save-tool-factories.js（动态 schema/execute）；step-00-全流程回归.mjs（evidence 150、text 1000，PR23=151、PR34/PR35=1000/1001；实际 schema 动态断言） |
 | save_probe/save_plan 落盘（含事务阶段语义） | lib/save-persistence.js（atomicCommit 阶段感知提交/recoverJournals 完成判定；两函数末位各带可选 fs 依赖，默认冻结只读、未提供项回退默认实现）+ lib/save-tool-factories.js（工具定义）+ index.js（apply 注册/闸门接线）；step-06-线索落盘.mjs ⑤ 段逐阶段故障注入覆盖：正常双写、tmp 写失败、journal 已落盘后写桩抛错（pre-journal 条件清理成功／journal 删不掉则 journal+全部 tmp 保留且抛原始错误）、第一次与第二次 rename 失败、最终删 journal 失败、全目标确认前不删 journal、恢复 rename 失败可续做、已完成项幂等续做、tmp 与目标均缺失保留 journal 并告警、旧形状双端恢复、形状非法保留、sessionTag 跳过与失败隔离 |
 | 预设安装/完整性/设置页/十项迁移 | step-01-预设完整性.mjs、step-01-安装分发.mjs、step-01-安装同步.mjs、step-01-设置迁移.mjs、step-01-设置页配置.mjs（descriptor/metadata/locator/manifest 从 9 到 10，creativeMode 默认 false、true/false PUT、非法值与 skipped-old-missing；归属：descriptor（预设完整性）/ metadata 10 项（设置页配置）/ locator（设置页配置）/ manifest（设置迁移）/ creativeMode PUT（设置页配置）/ skipped-old-missing（安装同步）） |
@@ -58,9 +58,9 @@
 | usage 账本（含会话状态生命周期） | step-99-用量统计.mjs（真实 ledger 读侧 token 用量统计：明细列 sessionId|role|model|provider|calls|hit|miss|out|cw|rs，纯 token 口径、无任何汇总）+ step-04-路由与写闸门.mjs ⑭e 段（P4-1~P4-24 监听器级：双 session 同 rootCallId 各 1~18 allow/19 deny、session B 锚点变化不清 A 的计数、disposed A 后同 sessionId 从空开始且 B 保持、临时账本的 one-shot 末轮 flush（role=executor、seq/token/model 正确）、重复 disposed 幂等、同 session 续载只写新 seq、可解析 cursor 保留其它 session、ENOENT 静默、损坏/非对象 cursor 告警一次并覆盖写、final fold 写入失败的既有单次 warning 且不阻断清理、P4-24 新字段落盘（provider/cacheWriteTokens/reasoningTokens 取值正确，hit/miss/out 全零而 cw 非零的行不被跳过，旧形状行按 空串/0/0 落盘）） |
 | 跨平台写拦截 | step-00-跨平台写拦截.mjs |
 | 代码地图（口径/覆盖/导航） | 一键step测试.mjs 内置「代码地图生成.mjs --check」（不写盘，比对结构+漏检+导航失效）；同步仍用 node pe-test/tools/代码地图生成.mjs |
-| 会话解码/取证 | step-05-会话解码.mjs、step-06-真实会话查看.mjs、step-07-子代理模型与引导取证.mjs、step-08-方案配对查看.mjs |
+| 会话解码/取证 | step-05-会话解码.mjs、step-06-真实会话查看.mjs、step-07-子代理模型与引导取证.mjs、step-08-方案配对查看.mjs（共用 `_shared/session-finder.mjs`：readMeta 为首行分块渐读，不再全文件 `readFileSync`） |
 | 机械闸门与PTC F/L实机取证（非 mock/静态自检） | pe-test/docs/ai-实机闸门测试流程.md（PTC C=0/C=1 干净会话 F→L；native/both HN/HB 独立回归；both 机械轮另行执行） |
-| 子代理模型/提供方与 suffix 实机取证（A42/A43、C11/C12） | step-07-子代理模型与引导取证.mjs（HUMAN；显式 SESSION_ID + PLANNER_PROMPT_SUFFIX；request/header attempted route 与 assistant/message actual provenance 分列，suffix 等级完整保留） |
+| 子代理模型/提供方与 suffix 实机取证（A42/A43、C11/C12） | step-07-子代理模型与引导取证.mjs（HUMAN；显式 SESSION_ID + PLANNER_PROMPT_SUFFIX；request/header attempted route 与 assistant/message actual provenance 分列，suffix 等级完整保留）。内存备注：两阶段头扫描（`headerOfDir` 有界分块读）只对命中直接 child 做 `parseSession`、事件不保留 raw，默认堆可跑通；stdout 逐字节与优化前一致，HUMAN 项仍按原文全量输出、不加过滤开关 |
 
 ## 代码地图（函数级索引）维护规则
 - 定位功能：grep pe-test/docs/ai-代码地图.md 关键词（函数名/功能词）→ 得文件+行号 → read 区间；地图未覆盖再 glob/grep/read 探查
@@ -68,6 +68,8 @@
 - 函数改名 = 删旧增新，旧描述出现在脚本删除报告里（沾回新行即可）
 - 「意图速查」（文件头部）：意图词 → 文件 → 函数名，人工维护、脚本保留；行号一律到「函数索引」按函数名取（人工段不写行号，防漂移）
 - 覆盖口径 = 任意缩进的命名函数定义（`function NAME` / `const|let|var NAME = (…) =>` / `= function`）；反向计数器与抽取器同口径，只用于抓实现层漏检
+- P2-2 语法门必须额外检查 `node --check plugins/dsh-extra-plan/lib/sdk-text-cache.js`；缓存语义验收跑 `node pe-test/tools/step-04-路由与写闸门.mjs`，调用计数精确 1 是硬门槛，耗时仅报告。
+- P2-2 维护边界：agent-only WeakMap、F/L 分离、完整 schema/language/renderer 三元组失效、并发 Promise 合并、reject/降级失败不缓存、dispose/restart/new apply 清空；调用计数 1 是硬门槛、耗时仅报告；不得改根 `README.md`、ai-宿主耦合台账或官方安装目录。
 
 ---
 

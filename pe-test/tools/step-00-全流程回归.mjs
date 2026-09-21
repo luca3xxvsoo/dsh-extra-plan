@@ -811,7 +811,7 @@ const PLANNER = [
     ], 'p-parent')
     return sorted.map((item) => item.id)
   }, ['p-a', 'p-a2', 'p-z', 'p-parent', 'deepseek-official']],
-  ['PL2 child 可先创建/等待，全部 probe finish 后才 selection/actual 且选择非首个成功者', async () => {
+  ['PL2 child 可先创建/等待，全部 probe finish 后才 selection/actual 且选择非首个成功者（探针并发上限 5）', async () => {
     const timeline = ['child-created', 'child-wait']
     const gates = { 'p-z': deferredPlanner(), 'p-a': deferredPlanner(), 'p-parent': deferredPlanner(), 'deepseek-official': deferredPlanner() }
     const behaviors = {}
@@ -977,6 +977,57 @@ const PLANNER = [
     try { await invokePlanner(harness, controller.signal) } catch (error) { message = String(error && error.message || error) }
     return { message, listProviders: fake.state.listProviders, prepareCalls: fake.state.prepareCalls.length }
   }, { message: 'caller-aborted', listProviders: 0, prepareCalls: 0 }],
+  // PL11（P1-3-4-5）：8 个候选（> 上限 5）全部挂在 gate 上，逐 tick 采样 in-flight；
+  // in-flight = 已发起 listModels 且尚未 probe-finish 的候选数（本用例所有候选都会走到 finish）。
+  // 断言：任意时刻 ≤ 5（且确实并行到 5，证明不是退化成串行）；发起顺序 = listedProviders 顺序；
+  // 选择结果与串行参考（全部候选成功 + 同一排序函数）完全一致。
+  ['PL11 候选数 >5 时并发池上限 5：任意时刻 in-flight ≤ 5 且选择结果与串行参考一致', async () => {
+    const timeline = []
+    const ids = ['p-01', 'p-02', 'p-03', 'p-04', 'p-05', 'p-06', 'p-07', 'p-08']
+    const gates = {}
+    const behaviors = {}
+    const catalogs = {}
+    const providers = []
+    for (const id of ids) {
+      gates[id] = deferredPlanner()
+      behaviors[id + '/planner-model'] = { gate: gates[id] }
+      catalogs[id] = plannerModelCatalog
+      providers.push(plannerCandidate(id, id.toUpperCase()))
+    }
+    const fake = makePlannerFake({ providers, catalogs, behaviors }, timeline)
+    const harness = makePlannerHarness({ llm: fake.llm, timeline, crossProviderPlannerModel: true })
+    const pending = invokePlannerMarked(harness, plannerSignal())
+    const samples = []
+    const sample = () => {
+      const started = fake.state.listModels.length
+      const finished = timeline.filter((item) => item.startsWith('probe-finish:')).length
+      samples.push(started - finished)
+    }
+    for (let i = 0; i < 6; i += 1) { await plannerTick(); sample() }
+    const heldAtCap = samples[samples.length - 1]
+    for (const id of ids) { gates[id].resolve(); await plannerTick(); sample() }
+    const result = await pending
+    const serialReference = sortPlannerCandidates(ids.map((id) => plannerCandidate(id, id.toUpperCase())), 'p-parent')[0].id
+    return {
+      maxInFlight: Math.max(...samples),
+      overCap: samples.filter((value) => value > 5).length,
+      heldAtCap,
+      listedOrder: fake.state.listModels.join('|'),
+      prepareRoutes: fake.state.prepareCalls.map((call) => call.provider + '/' + call.model).join('|'),
+      streamCalls: fake.state.streamCalls.length,
+      result: { provider: result.provider, model: result.model },
+      serialReference,
+    }
+  }, {
+    maxInFlight: 5,
+    overCap: 0,
+    heldAtCap: 5,
+    listedOrder: 'p-01|p-02|p-03|p-04|p-05|p-06|p-07|p-08',
+    prepareRoutes: 'p-01/planner-model|p-02/planner-model|p-03/planner-model|p-04/planner-model|p-05/planner-model|p-06/planner-model|p-07/planner-model|p-08/planner-model',
+    streamCalls: 8,
+    result: { provider: 'p-01', model: 'planner-model' },
+    serialReference: 'p-01',
+  }],
 ]
 for (const [name, fn, expected] of PLANNER) check(name, await fn(), expected)
 
@@ -1166,7 +1217,7 @@ const NON_PLANNER = [
     { role: 'executor', route: { provider: 'p-main', model: OTHER_MODEL, maxTokens: 1024, reasoningEffort: 'low' }, listModels: 'p-main', prepareCalls: 0, streamCalls: 0 },
     { role: 'probe', route: { provider: 'p-main', model: OTHER_MODEL, maxTokens: 4096, reasoningEffort: 'low' }, listModels: 'p-main', prepareCalls: 0, streamCalls: 0 },
   ]],
-  ['NP5 cross=true 串行探针全部完成后按既有排序选择成功候选', async () => {
+  ['NP5 cross=true 并发探针（上限 5）全部完成后按既有排序选择成功候选', async () => {
     const timeline = []
     const providers = [
       { id: 'p-z', name: 'Zeta' }, { id: 'p-a', name: 'Alpha' }, { id: 'p-main', name: 'Main' }, { id: 'deepseek-official', name: 'DeepSeek Official' },

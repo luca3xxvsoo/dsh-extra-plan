@@ -124,6 +124,7 @@ dsh-extra-plan/
 │   │   │   ├── model-routing.js                        # 子代理模型选择：planner/非 planner 路由解析
 │   │   │   ├── assembly-presentation.js                # 展示投影：A/C/M 投影与 skill catalog
 │   │   │   ├── agent-session.js                        # 角色判定：sessionEvents/isSubagentChild 唯一来源
+│   │   │   ├── sdk-text-cache.js                       # tools:sdk缓存复用
 │   │   │   └── executor-spawn.js                       # 执行者委托层（workflow/ralph worker 注入）
 │   │   ├── scripts/distribute-preset.mjs               # postinstall 预设分发入口
 │   │   ├── cordis.patch.yml                                      

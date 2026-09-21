@@ -35,12 +35,27 @@ export function logPath(dir) {
 
 function readMeta(dir) {
   // 解码第一帧读首行 JSON（首行必然在第一个 zstd 帧内），取 parentSession。
-  const p = logPath(dir); if (!p) return {}; const buf = fs.readFileSync(p)
-  const frames = framesOf(buf)
-  const text = frames.length > 0 ? decodeText(buf, frames[0]) : ''
-  const first = text.split('\n').map((l) => l.trim()).find((l) => l !== '')
-  if (!first) return {}
-  try { return JSON.parse(first) } catch { return {} }
+  // 有界分块读：从 64 KB 起步按 ×4 渐进放大，读到含完整帧 0 的最小范围为止；
+  // 渐块读到头仍无完整帧时回退全文件读取——与旧全文件语义等价（framesOf 只返回完整帧）。
+  const p = logPath(dir); if (!p) return {}
+  const fd = fs.openSync(p, 'r')
+  try {
+    const total = fs.fstatSync(fd).size
+    let size = 65536
+    while (true) {
+      const buf = Buffer.alloc(Math.min(size, total))
+      const n = fs.readSync(fd, buf, 0, buf.length, 0)
+      const frames = framesOf(buf.subarray(0, n))
+      if (frames.length > 0) {
+        const text = decodeText(buf, frames[0])
+        const first = text.split('\n').map((l) => l.trim()).find((l) => l !== '')
+        if (!first) return {}
+        try { return JSON.parse(first) } catch { return {} }
+      }
+      if (n >= total) return {}
+      size = Math.min(size * 4, total)
+    }
+  } finally { fs.closeSync(fd) }
 }
 
 function scanAll() {

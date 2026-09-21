@@ -97,7 +97,7 @@
 | A37 | 主会话 / 已认领探查子代理 | — | save_probe 四字段非数组 / 条目超上限（fileMap、focusAreas 50；exclusions、background 20；evidence 150；单条 evidence.text ≤1000 字（1000 通过、1001 拒绝）；自动对照 step-00 PR23=151 条拒绝/ path 不存在 / range 格式错（`^L?\d+(?:-\d+)?$`）/ evidence.line 带区间 | throw `save_probe: 校验不通过，共发现 N 处违规（超限一律拒绝、不静默截断，请逐条修正后重试）：` + 逐条 `- …` | 同上 | 实机直测（probe 序列） |
 | A38 | 执行者 / planner / reviewer / probe | — | 观察对应子会话工具清单 | 不产生拒绝文案；判据 = 该子会话 request/header 的 tools 清单中 deny 名单内工具**不可见**（四行共同禁 cordis_run） | step-04-工具清单查看 | 目录观察 |
 | A48 | 主会话 → 执行者子会话 | route=plan 且 approved=true | 直呼 subagent 带 run_in_background:true 委派 flash 执行者 | 执行者工具清单 deny 名单内工具不可见（A38），且能读方案/验收文件执行 | 工具清单观察 + 执行结果 | 实机直测（本次会话未实测，待执行） |
-| A39 | 主会话 / planner | A=1 且 F | 按 M 观察 HN/HB/HP 首轮目录：native/both=bootstrap shell(s)+read、sections 仅 extra-plan-bootstrap；PTC=顶层仅 run_code、sections 精确三项 | 不产生拒绝文案；判据 = 逐轮 request/header 的 tools 清单；HP 的 tool:read 同时确认 guidance+最小 read 契约，HN/HB 明确无 tool:read；L 回 N/P/B | step-04-工具清单查看 + 120 案例 mock | 目录观察（显式 F/L） |
+| A39 | 主会话 / planner | A=1 且 F | 按 M 观察 HN/HB/HP 首轮目录：native/both=bootstrap shell(s)+read、sections 仅 extra-plan-bootstrap；PTC=顶层仅 run_code、sections 精确三项 | 不产生拒绝文案；判据 = 逐轮 request/header 的 tools 清单；HP 的 tool:read 逐字等于手写文案（变量② cfg.bootstrapReadHint；含 tools.read/file_path/offset/limit 且不含官方骨架），HN/HB 明确无 tool:read；L 回 N/P/B | step-04-工具清单查看 + 120 案例 mock | 目录观察（显式 F/L） |
 | A44 | 主会话 / planner / executor / reviewer / probe | C=0/1；每轮 | 对照 7 个 Cordis 工具、tool:cordis、tools:sdk schema 与两个官方 skill catalog | C=0：展示 C7/catalog=0；C=1：非 HP1 展示 C7/catalog=7/2，HP1 的 F/main-planner 为 C7/catalog=0、L=7/2；普通 skill/skill 工具保留。两种均不改变 registry binding、toolFilter.deny、tools.restrict、tools/pre-execute 与既有 cordis_run deny | step-04 120 案例 mock；实机观察 request/header、header.system 文本命中与 catalog | 模型可见投影观察：仅模型可见面，非运行时安全隔离 |
 | A40 | workflow / ralph worker | — | worker 请求缺 toolFilter 时注入执行者 deny（防递归委派） | 不产生拒绝文案（工具不可见）；fallback 变体由静态断言覆盖 | 静态断言 +（可选）工具清单观察 | **静态断言替代** |
 | A41 | 主会话 | route=plan 且 purpose=none | 调 subagent_plan 或 save_probe | `规划目的尚未确认：${action}。须先 ask_user_question 询问用户本次 pro 规划的目的（选项固定为「完善方案」「重新规划」），答复后再调用 ${action}` | 卡片 Error + step-05 | 实机直测 |
@@ -401,6 +401,12 @@ channelBroken 逃生（`CHANNEL_BROKEN_CODES` = NO_PROVIDER / CALLER_NOT_LIVE / 
 | D7 | 落盘 | A34-A37、A46 | U5（planner 序列）/ U2（probe 序列） |
 | D8 | 静态目录 | A38-A40、A44（A40 静态断言替代；A44 模型可见投影观察） | U2/U5/U6（工具清单观察） |
 | D9 | 子代理模型/提供方与 pro规划引导取证 | A42-A43 | AI 自动（pwsh step-07，显式 SESSION_ID + PLANNER_PROMPT_SUFFIX） |
+
+## 7.5 P2-2 SDK 文本复用取证（新增）
+- **F→L→L**：另开干净 PTC、C=0 顶层会话；首轮 F 只核对 `tool:read` 的手写文案（变量② `cfg.bootstrapReadHint`；含 tools.read/file_path/offset/limit，且不含官方骨架），不把完整 `tools:sdk` 文本当作 F 证据。进入 L 后连续两次保持有效输入不变，记录 `tools:sdk` 全文并逐字对拍。
+- **硬判据**：受控 renderer 计数为「完整 L 首次 1、第二次仍 1」（未修复基线 2），文本逐字相等；调用计数是通过/失败门槛，耗时只报告、不得设置毫秒阈值。step-04 同时机械覆盖不同 agent、嵌套 parameters/output、language、renderer 引用、并发、reject 重试、dispose、迟到 Promise、F/native/both 不完整渲染及 C=0 runtime deny 对拍。
+- **边界记录**：这是 agent-only 缓存，只在同一 plugin apply 的同一 agent 对象内命中，不按 sessionId 跨 agent 共享；完整 key 为保序保字段的 renderer 输入指纹+原始 language+active renderer 身份。schema/language/renderer 变化失效；无法无损指纹、失败降级空文本、过期 Promise 均不缓存。agent/disposed、new agent、new apply、部署/重启后必须重新生成。
+- **取证命令**：工作区内执行 `node pe-test/tools/step-04-路由与写闸门.mjs`、`node pe-test/tools/step-04-工具清单查看.mjs <新建实机会话目录名>`；后者只接受新会话目录，报告逐字文本/精确目录/计数，不用历史 `textLength`、`textHits` 证明命中。生产部署、DSH_HOME/.agent-presets 同步和 P2-3 均不在本批。
 
 ## 八、收尾
 - 全量（或增量域）跑完后执行：`node pe-test/tools/代码地图生成.mjs --check`（**不写盘**；一致性 / 漏检 / 导航失效判非 0 退出）。

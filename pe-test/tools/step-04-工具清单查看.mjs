@@ -50,7 +50,12 @@ function systemTextHits(systemText) {
   const c7 = CORDIS_PRESENTATION_TOOLS.filter((name) => systemText.includes(name))
   return {
     ptcInstruction: systemText.includes('Writing code for run_code') || systemText.includes('Only the run_code transport is directly callable') || systemText.includes('tools:ptc-only') || systemText.includes('PTC'),
-    readGuidance: systemText.includes('Use the read tool') && systemText.includes('not shell commands like cat'),
+    // 宿主 tool:read 原文（L 段与 N/P/B 直通形态）
+    readHostText: systemText.includes('Use the read tool') && systemText.includes('not shell commands like cat'),
+    // 新形态：F 段（HP 首轮）tool:read 手写文案（变量②）——中文引导句 + 四要素
+    // （tools.read 调用形态 / file_path / offset / limit）；旧形态的官方骨架命中不计入本项。
+    readHint: systemText.includes('在 run_code 程序里读文件') && systemText.includes('tools.read') && systemText.includes('file_path') && systemText.includes('offset') && systemText.includes('limit'),
+    // 旧形态（历史会话留痕）：官方单-read SDK 骨架（'read:' 声明）或同款参数名
     minimalRead: (systemText.includes('read:') || systemText.includes('tools.read')) && systemText.includes('file_path') && systemText.includes('offset') && systemText.includes('limit'),
     sdkRenderer: systemText.includes('interface ToolArgsMap') && systemText.includes('declare const tools'),
     c7,

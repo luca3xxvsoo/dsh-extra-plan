@@ -1,7 +1,7 @@
 // @local/dsh-extra-plan lib/model-routing.js (v0.2.1)
 // planner / 非 planner 子代理模型路由解析（自 index.js 拆分，逐字保留原实现）。
 //   顶层纯函数：isExplicitRoute / isExplicitEffort / resolveAgentRouteSources /
-//   decidePlannerModelUse / sortPlannerCandidates + 三个阻断文案与探针超时常量，
+//   decidePlannerModelUse / sortPlannerCandidates + 两个阻断文案与探针超时/并发常量，
 //   经 index.js 的 decisions re-export 供场景测试直接复用（防复制漂移）。
 //   createModelRouting：per-apply 工厂。plannerModelCache / otherAgentModelCache 在工厂内
 //   新建（每次 apply 各一份 WeakMap），绝不提升为模块全局——否则跨插件实例串 Agent 缓存。
@@ -121,6 +121,10 @@ export function decidePlannerModelUse(plannerModel, provider, catalog) {
 
 // True 路径的真实探针固定上限；False 路径不读取这些辅助逻辑。
 export const PLANNER_PROBE_TIMEOUT_MS = 30000
+// 跨 Provider 严格候选探针的并发上限（硬编码常量，不新增任何配置项、不经 cfg.* 读取）：
+// planner 与非 planner 候选循环共用同一个有界并发池，超出上限的候选排队等待，
+// 全部候选结束后才按发起顺序收集结果并排序选择（选择结果与串行实现逐项一致）。
+export const PLANNER_PROBE_CONCURRENCY = 5
 export const PLANNER_BLOCKED_REASON = 'extra-plan: planner request blocked: no verified planner route'
 export const NON_PLANNER_BLOCKED_REASON = 'extra-plan: non-planner request blocked: no verified non-planner route'
 
@@ -246,6 +250,29 @@ async function probePlannerRoute(llm, provider, model, parentSignal, checkCatalo
   }
 }
 
+// 有界并发探针池（上限 PLANNER_PROBE_CONCURRENCY）：候选按入参顺序启动，超出上限的排队；
+// 每个候选各自走 probePlannerRoute（各自独立 AbortController + 30s deadline，互不共享），
+// 返回值与入参一一对应且按发起顺序排列（完成顺序不影响结果）——调用方因此可在全部候选结束后
+// 按发起顺序写 probeOutcomes/successes 再排序，与串行实现的选择结果完全一致。
+// 任一候选抛出（父 turn abort 原样传播）→ 整体 reject；其余候选的 rejection 由 Promise.all 一并接住。
+async function probePlannerCandidates(llm, providerIds, model, parentSignal) {
+  const outcomes = new Array(providerIds.length)
+  let next = 0
+  const worker = async () => {
+    for (;;) {
+      const index = next
+      next += 1
+      if (index >= providerIds.length) return
+      outcomes[index] = await probePlannerRoute(llm, providerIds[index], model, parentSignal, true)
+    }
+  }
+  const width = Math.min(PLANNER_PROBE_CONCURRENCY, providerIds.length)
+  const workers = []
+  for (let i = 0; i < width; i += 1) workers.push(worker())
+  await Promise.all(workers)
+  return outcomes
+}
+
 // 从父会话 requestHeader 提取 provider/model/maxTokens（严格路径与旧流程共用的同一逻辑）。
 // 非法/缺失一律取 undefined；parent 为 undefined/null 时整体返回 null（不触碰 parent.session）。
 function extractParentEntry(parent) {
@@ -365,14 +392,22 @@ async function resolvePlannerEntryStrict(agent, parentSignal) {
     } catch (error) {
       if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
     }
+    // 去重在前、并发在后：先按 listedProviders 顺序构建去重候选列表，再交给并发池（上限
+    // PLANNER_PROBE_CONCURRENCY=5），超出部分排队；结果按发起顺序回填，与串行实现逐项一致。
     const seenProviderIds = new Set()
+    const candidates = []
     for (const listed of listedProviders) {
       if (listed === null || typeof listed !== 'object' || typeof listed.id !== 'string' || listed.id === '' || seenProviderIds.has(listed.id)) continue
       seenProviderIds.add(listed.id)
-      const providerName = typeof listed.name === 'string' ? listed.name : listed.id
-      const outcome = await probePlannerRoute(llm, listed.id, plannerModel, parentSignal, true)
-      if (outcome.matched) probeOutcomes.set(routeKey(listed.id, plannerModel), outcome)
-      if (outcome.ok) successes.push({ id: listed.id, name: providerName })
+      candidates.push({ id: listed.id, name: typeof listed.name === 'string' ? listed.name : listed.id })
+    }
+    const outcomes = await probePlannerCandidates(llm, candidates.map((candidate) => candidate.id), plannerModel, parentSignal)
+    // 全部候选结束后才写入（发起顺序，非完成顺序）：同 route/model 在 fallback 复用同一 outcome。
+    for (let index = 0; index < candidates.length; index += 1) {
+      const outcome = outcomes[index]
+      if (outcome === undefined) continue
+      if (outcome.matched) probeOutcomes.set(routeKey(candidates[index].id, plannerModel), outcome)
+      if (outcome.ok) successes.push({ id: candidates[index].id, name: candidates[index].name })
     }
     const sorted = sortPlannerCandidates(successes, provider)
     if (sorted.length > 0) return { provider: sorted[0].id, model: plannerModel, maxTokens }
@@ -437,7 +472,8 @@ async function resolveOtherAgentEntryLegacy(agent, probe) {
   return fallback
 }
 
-// cross=true：所有匹配 provider 串行完整 OK probe，候选全部结束后按 planner 既有排序选择。
+// cross=true：所有匹配 provider 并发（上限 PLANNER_PROBE_CONCURRENCY）完整 OK probe，
+// 候选全部结束后按 planner 既有排序选择。
 async function resolveOtherAgentEntryStrict(agent, parentSignal, probe) {
   const sources = nonPlannerRouteSources(agent)
   const fallback = nonPlannerFallbackEntry(sources, probe)
@@ -462,14 +498,20 @@ async function resolveOtherAgentEntryStrict(agent, parentSignal, probe) {
     } catch (error) {
       if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
     }
+    // 与 planner 同形：去重 → 并发池（上限 PLANNER_PROBE_CONCURRENCY=5，超出排队）→ 按发起顺序收集。
     const seenProviderIds = new Set()
+    const candidates = []
     for (const listed of listedProviders) {
       if (listed === null || typeof listed !== 'object' || typeof listed.id !== 'string' || listed.id === '' || seenProviderIds.has(listed.id)) continue
       seenProviderIds.add(listed.id)
-      const providerName = typeof listed.name === 'string' ? listed.name : listed.id
-      const outcome = await probePlannerRoute(llm, listed.id, otherAgentModel, parentSignal, true)
-      if (outcome.matched) probeOutcomes.set(routeKey(listed.id, otherAgentModel), outcome)
-      if (outcome.ok) successes.push({ id: listed.id, name: providerName })
+      candidates.push({ id: listed.id, name: typeof listed.name === 'string' ? listed.name : listed.id })
+    }
+    const outcomes = await probePlannerCandidates(llm, candidates.map((candidate) => candidate.id), otherAgentModel, parentSignal)
+    for (let index = 0; index < candidates.length; index += 1) {
+      const outcome = outcomes[index]
+      if (outcome === undefined) continue
+      if (outcome.matched) probeOutcomes.set(routeKey(candidates[index].id, otherAgentModel), outcome)
+      if (outcome.ok) successes.push({ id: candidates[index].id, name: candidates[index].name })
     }
     const sorted = sortPlannerCandidates(successes, fallback.provider)
     if (sorted.length > 0) return { ...fallback, provider: sorted[0].id, model: otherAgentModel }

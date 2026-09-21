@@ -89,7 +89,7 @@ function parseSession(dir) {
     const line = raw.trim()
     if (line === '') return
     try {
-      events.push({ line: lineCount, raw: line, event: JSON.parse(line) })
+      events.push({ line: lineCount, event: JSON.parse(line) })
     } catch {
       parseFailures += 1
     }
@@ -120,6 +120,57 @@ function parseSession(dir) {
     decodeFailures,
     lineCount,
     header: first === undefined ? {} : sessionHeaderOf(first.event),
+  }
+}
+
+// 两阶段扫描第一段：只读头信息——有界分块读取，定位首个 session 事件的头字段即返回，
+// 不构建 events 数组、不保留 raw 行；无 session 事件的目录返回空 header（与 parseSession 首个 session 事件语义一致）。
+function headerOfDir(dir) {
+  const directory = path.join(found.base, dir)
+  const file = logPath(directory)
+  if (file === null) return null
+  const headerOfText = (text) => {
+    for (const raw of text.split(/\r?\n/)) {
+      const line = raw.trim()
+      if (line === '') continue
+      let event
+      try { event = JSON.parse(line) } catch { continue }
+      if (hasType(event, 'session')) return sessionHeaderOf(event)
+    }
+    return null
+  }
+  let reportedFrames = 0
+  const decodeChunk = (chunk) => {
+    const frames = framesOf(chunk)
+    let text = ''
+    for (let index = 0; index < frames.length; index += 1) {
+      try {
+        text += decodeText(chunk, frames[index])
+      } catch (error) {
+        if (index >= reportedFrames) console.error('L? 解码失败（' + dir + '）：' + (error instanceof Error ? error.message : String(error)))
+      }
+    }
+    reportedFrames = Math.max(reportedFrames, frames.length)
+    return text
+  }
+  const fd = fs.openSync(file, 'r')
+  try {
+    const total = fs.fstatSync(fd).size
+    let size = 65536
+    while (true) {
+      const buf = Buffer.alloc(Math.min(size, total))
+      const n = fs.readSync(fd, buf, 0, buf.length, 0)
+      const header = headerOfText(decodeChunk(buf.subarray(0, n)))
+      if (header !== null) return { dir, header }
+      if (n >= total) {
+        // 渐块读到头仍未见 session 事件：回退全文件（与旧 parseSession 相同的兜底语义）
+        const whole = headerOfText(decodeChunk(fs.readFileSync(file)))
+        return { dir, header: whole === null ? {} : whole }
+      }
+      size = Math.min(size * 2, total)
+    }
+  } finally {
+    fs.closeSync(fd)
   }
 }
 
@@ -446,14 +497,21 @@ function printPlannerMessages(messages) {
 }
 
 const mainDir = found.dirs[0]
-const siblingDirs = fs.readdirSync(found.base)
-  .filter((dir) => dir !== mainDir && logPath(path.join(found.base, dir)) !== null)
-const candidateSessions = [mainDir, ...siblingDirs].map(parseSession)
-const parent = candidateSessions[0]
+const parent = parseSession(mainDir)
 if (Object.prototype.hasOwnProperty.call(parent.header, 'parentSession') && parent.header.parentSession !== undefined && parent.header.parentSession !== null && parent.header.parentSession !== '') {
   failInput('SESSION_ID 不是顶层主会话（parentSession=' + parent.header.parentSession + '）')
 }
-const children = candidateSessions.filter((child) => child !== parent && directChildOf(parent, child))
+const siblingDirs = fs.readdirSync(found.base)
+  .filter((dir) => dir !== mainDir && logPath(path.join(found.base, dir)) !== null)
+// 两阶段扫描第二段：先只用 headerOfDir 读头信息筛出直接子会话（保持 readdirSync 顺序），
+// 再只对命中目录做 parseSession——未命中目录不再常驻 events。
+const childEntries = []
+for (const dir of siblingDirs) {
+  const h = headerOfDir(dir)
+  if (!h || !h.header) continue
+  if (directChildOf(parent, h)) childEntries.push(dir)
+}
+const children = childEntries.map(parseSession)
 const sessions = [parent, ...children]
 const parentBundle = buildParentLinks(parent, children)
 const linksByDir = new Map(children.map((child) => [child.dir, parentBundle.links.filter((link) => link.dir === child.dir)]))

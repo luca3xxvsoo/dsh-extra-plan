@@ -68,7 +68,8 @@
 //  3) anchored 引导（默认开）：主会话与规划子代理在首个 tool/call 落盘前，
 //     装配级注入极简 persona、清空运行时上下文、目录收窄——native/both 保持
 //     bootstrap shell(s)+read，sections 仅 persona；Pure PTC 只保留 run_code，
-//     sections 为 persona + tools:ptc-only + tool:read（read 是官方最小契约）；
+//     sections 为 persona + tools:ptc-only + tool:read（tool:read 文本由 cfg.bootstrapReadHint
+//     手写、内置中文兜底，不再调官方 renderer；L 段自动回到宿主原文）；
 //     无 shell 且无 run_code → 跳过并每实例警告一次；执行者/reviewer 子代理不引导。
 //  4) planner 与非 planner child 模型及首请求屏障：planner 只用 plannerModel，executor/reviewer/probe
 //     与 workflow/ralph worker 只用 otherAgentModel；非 planner 显式 agentOptions/provider/model 优先，
@@ -89,8 +90,8 @@
 //     角色），再按 sessionId 回收 jobOutputCallCounters、jobOutputLastAnchors、
 //     toolJobsNoticesConsumed、subCallCounters 与 usageCursors（重复 disposed 幂等，
 //     其它 session 状态不受影响）。usageCursors 内存 Map 只保存活跃 session：同 session
-//     再次激活且内存无项时按 sessionId 从 cursor JSON 单项续载 seq/index（内存 ref 固定
-//     从 null 开始 → 从索引 0 扫描并靠 seq 跳过旧消息）。cursor JSON 不存在（ENOENT）
+//     再次激活且内存无项时按 sessionId 从 cursor JSON 单项续载 { seq, index }（不再保留内存
+//     态 ref 字段；增量改由 session.seq 水位 + snapshotEvents(from,to) 区间读取实现）。cursor JSON 不存在（ENOENT）
 //     静默按空表；其它读取错误、JSON 解析失败或根值非对象（含数组）→ 每插件实例首次
 //     降级告警一次并进入空表降级，此后写回以「空表 + 当前 session」覆盖写（其它 session
 //     的去重基准会丢失、其后续恢复可能重复追加 ledger 行）；正常可解析时写前重读、读改写
@@ -100,6 +101,16 @@
 // （快通道教训：不引入启动预锁）。
 
 const CHANNEL_BROKEN_CODES = new Set(['NO_PROVIDER', 'CALLER_NOT_LIVE', 'DELEGATED_CALLER'])
+
+// F 段（HP 首轮）tool:read 的内置兜底文案（= 预设 agent.cordis.yml 的 bootstrapReadHint 示例，逐字一致）。
+// 除代码外用中文；四要素必须保留：工具名 read、程序内 tools.read(...) 调用形态、file_path 必填与
+// offset/limit 默认值、返回形状（path/offset/totalLines/lines 带行号）。文案不再由官方 renderer 生成，
+// 与宿主 read 契约（dsh-tool-fs）的人工核对见台账 HS26。
+const BOOTSTRAP_READ_HINT_FALLBACK = [
+  '在 run_code 程序里读文件：调用 tools.read({ file_path })，file_path 必填；可选 offset（默认 1）与 limit（默认 2000）。返回含 path、offset、totalLines 与带行号的 lines（每项为 { number, text }）。示例：',
+  "const r = await tools.read({ file_path: 'README.md' })",
+  'return r',
+].join('\n')
 
 // 路由/目的/批准 ask 的固定枚举词（persona 约定；验词按包含匹配）。
 const ROUTE_WORD_DIRECT = '直接执行'
@@ -426,7 +437,7 @@ function validateGateAskStructure(kind, questions) {
 }
 
 // 测试契约 API（非死代码）：运行时状态机只用 askKindOfRelaxed（见 L436），本严格版
-// 仅经 decisions 导出（L1232）供 pe-test step-00-全流程回归.mjs L149 调用（K1-K5）。
+// 仅经 decisions 导出（L1244）供 pe-test step-00-全流程回归.mjs L149 调用（K1-K5）。
 // 删除定义会使 decisions 顶层求值 ReferenceError（index.js 模块加载即崩）——保留。
 // ask 分类：路由 ask（同时含「直接执行」「进行pro规划」）、批准 ask（含
 // 「同意执行」）、其余视为澄清 ask。persona 约定选项措辞固定。
@@ -914,17 +925,34 @@ function subagentProbeGateReason(exec, isPlanner) {
   return null
 }
 
-// ② planner 分支（plannerGateReason；自 apply 内提取的纯部分）：write/edit → pwsh → bash → 预算；不含 run_code（由调用方处理）。
+// shell 写命令的只读角色拒绝文案（B3 收敛：唯一实现，planner/探查者/验收复核者 × pwsh/bash 共六格；
+// 六格文案与重构前逐字一致）。只处理 pwsh/bash 且确实命中既有 mutation 判定的调用；role 只接受
+// planner/probe/reviewer，其余（含未知角色、非 shell 工具、只读命令）一律返回 null。
+// write/edit 分支与本函数无关，各自 GateReason 内逐字保留。
+function shellMutationReason(role, exec) {
+  let label = null
+  if (role === 'planner') label = '规划子代理'
+  else if (role === 'probe') label = '探查者'
+  else if (role === 'reviewer') label = '验收复核者'
+  if (label === null) return null
+  if (exec === undefined || exec === null) return null
+  if (exec.name === 'pwsh') {
+    return pwshMutationMatches(exec) ? `${label}只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件` : null
+  }
+  if (exec.name === 'bash') {
+    return bashMutationMatches(exec) ? `${label}只读：bash 仅限只读探查命令，禁止创建/修改/删除文件` : null
+  }
+  return null
+}
+
+// ② planner 分支（plannerGateReason；自 apply 内提取的纯部分）：write/edit → shell 写命令
+// （shellMutationReason）→ job_output → 预算；不含 run_code（由调用方处理）。
 function plannerGateReason(exec, events, exploreBudget, jobOutputCallCounters) {
   if (exec.name === 'write' || exec.name === 'edit') {
     return '规划子代理只读：方案经 save_plan 落盘，其余写入一律禁止（toolFilter 之外的第二道防线）'
   }
-  if (exec.name === 'pwsh' && pwshMutationMatches(exec)) {
-    return '规划子代理只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件'
-  }
-  if (exec.name === 'bash' && bashMutationMatches(exec)) {
-    return '规划子代理只读：bash 仅限只读探查命令，禁止创建/修改/删除文件'
-  }
+  const shellReason = shellMutationReason('planner', exec)
+  if (shellReason !== null) return shellReason
   if (exec.name === 'job_output') return jobOutputGateReason(exec, jobOutputCallCounters)
   if (!FREE_TOOLS.has(exec.name) && !isRunCodeSubCall(exec)) {
     const used = toolCallsSinceUser(events !== undefined ? events : [], FREE_TOOLS)
@@ -935,24 +963,21 @@ function plannerGateReason(exec, events, exploreBudget, jobOutputCallCounters) {
   return null
 }
 
-// ③ child 只读块（childReadonlyGateReason；自 apply 内提取的纯部分）：write/edit → pwsh → bash；probe 布尔选文案；不含 run_code。
+// ③ child 只读块（childReadonlyGateReason；自 apply 内提取的纯部分）：write/edit → shell 写命令
+// （shellMutationReason，probe 布尔选角色）→ job_output；不含 run_code。
 function childReadonlyGateReason(exec, probe, jobOutputCallCounters) {
   if (exec.name === 'write' || exec.name === 'edit') {
     return probe ? '探查者只读：探查不修改任何文件，write/edit 一律禁止（工具目录判定）' : '验收复核者只读：验收复核不修改任何文件，write/edit 一律禁止（工具目录判定）'
   }
-  if (exec.name === 'pwsh' && pwshMutationMatches(exec)) {
-    return probe ? '探查者只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件' : '验收复核者只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件'
-  }
-  if (exec.name === 'bash' && bashMutationMatches(exec)) {
-    return probe ? '探查者只读：bash 仅限只读探查命令，禁止创建/修改/删除文件' : '验收复核者只读：bash 仅限只读探查命令，禁止创建/修改/删除文件'
-  }
+  const shellReason = shellMutationReason(probe ? 'probe' : 'reviewer', exec)
+  if (shellReason !== null) return shellReason
   if (exec.name === 'job_output') return jobOutputGateReason(exec, jobOutputCallCounters)
   return null
 }
 
 // job_output 全角色闸门（v0.1.10）：wait:true 禁令 + 同 job 查重（自原 mainGateReason 分支逐字搬移，
 // 闸门 1/2 文案逐字不变）；counters undefined/null 或 vExec 无 agent（组判定成员）时
-// 跳过查重、wait 检查照常。
+// 跳过查重、wait 检查照常。本函数只读查重，写入侧唯一位点是 recordJobOutputCall（B3 收敛）。
 function jobOutputGateReason(exec, jobOutputCallCounters) {
   const args = exec !== undefined && exec !== null ? exec.arguments : undefined
   // 闸门 1：禁止 wait: true 前台等待（参数不可解析时跳过，运行时瀑布兜底）
@@ -960,7 +985,7 @@ function jobOutputGateReason(exec, jobOutputCallCounters) {
     return 'job_output 禁止带 wait: true 前台等待。请省略 wait 参数或设 wait: false，job 完成后会收到通知'
   }
   // 闸门 2：禁止同一 jobId 连续调用（防轮询）——内存计数器替代 events 推导。
-  // 只读查重（写入由 listener 放行路径执行，时序等价）；组判定成员无会话上下文时
+  // 只读查重（写入由 recordJobOutputCall 在放行路径执行，时序等价）；组判定成员无会话上下文时
   // 跳过（运行时瀑布兜底）。
   if (args !== undefined && args !== null && typeof args === 'object' && typeof args.job_id === 'string') {
     const execAgent = exec !== undefined && exec !== null ? exec.agent : undefined
@@ -975,6 +1000,24 @@ function jobOutputGateReason(exec, jobOutputCallCounters) {
     }
   }
   return null
+}
+
+// job_output 放行后的计数器记录（B3 收敛：唯一实现；planner、只读 child、主会话三处共用，
+// 执行者仍完全豁免）。仅当工具名恰为 job_output、job_id 为字符串、sessionId 为字符串且
+// counters 可用时惰性建 session Map 并写 jobId→1；任一条件不满足即返回 false 且零副作用。
+// 返回值仅供场景测试断言状态迁移，运行时调用方忽略。
+function recordJobOutputCall(agent, exec, counters) {
+  if (exec === undefined || exec === null || exec.name !== 'job_output') return false
+  const args = exec.arguments
+  if (args === undefined || args === null || typeof args !== 'object' || typeof args.job_id !== 'string') return false
+  const header = agent !== undefined && agent !== null && agent.session !== undefined && agent.session !== null ? agent.session.header : undefined
+  const sessId = header !== undefined && header !== null ? header.id : undefined
+  if (typeof sessId !== 'string') return false
+  if (counters === undefined || counters === null) return false
+  let perSession = counters.get(sessId)
+  if (perSession === undefined) { perSession = new Map(); counters.set(sessId, perSession) }
+  perSession.set(args.job_id, 1)
+  return true
 }
 
 // 探查者级联中止告警：委派方轮次结束 → activation dispose → 宿主 jobs-local owner
@@ -992,7 +1035,7 @@ function probeDisposalWarning(remaining) {
 //    ask → write/edit → cordis 6 只读 → cordis_run → pwsh/bash → planToolName
 //    → save_probe 分支保持不变（route=plan + purpose∈{refine,redo} + clarified）
 //    → subagent 族 → run_code（调 runCodeGroupDenyReason，depth+1）
-//    → job_output（wait 检查 + 计数器查重，只读不写入；set 由 listener 放行路径执行）→ null。
+//    → job_output（wait 检查 + 计数器查重，只读不写入；set 由 recordJobOutputCall 在放行路径执行）→ null。
 //    save_plan 已移除路由态限制：无显式分支，由本函数兜底 return null 任意路由态放行
 //    （受限规划工件：仅写 cwd/.extra-plan 固定形状 Markdown，内容闸门与规划子代理同一实现）。
 //    gateCtx: { events, planToolName, jobOutputCallCounters, runCodeDepth }。
@@ -1324,11 +1367,13 @@ export const decisions = {
   runCodeDispatchCapText,
   runCodeGroupDenyReason,
   subagentProbeGateReason,
+  shellMutationReason,
   plannerGateReason,
   childReadonlyGateReason,
   mainGateReason,
   aggregateRunCodeDenyReason,
   jobOutputGateReason,
+  recordJobOutputCall,
   probeDisposalWarning,
   resolveAgentRouteSources,
   decidePlannerModelUse,
@@ -1339,8 +1384,8 @@ export const decisions = {
   CORDIS_PRESENTATION_TOOLS,
   projectAssemblyForPresentation,
   renderFilteredToolsSdk,
-  readSchemasForRendering,
-  renderMinimalReadText,
+  resolveToolsSdkRenderer,
+  sdkSchemasForRendering,
   toolPresentationModeOf,
   projectSkillCatalogDecision,
 }
@@ -1359,7 +1404,8 @@ import { createSaveToolFactories } from './lib/save-tool-factories.js'
 import { RUNCODE_MUTATION_HINTS, runCodeTextOf, codeMutationHints, createRunCodeStatic } from './lib/run-code-static.js'
 import { sessionEvents, isSubagentChild } from './lib/agent-session.js'
 import { createModelRouting, isExplicitRoute, isExplicitEffort, resolveAgentRouteSources, decidePlannerModelUse, PLANNER_PROBE_TIMEOUT_MS, PLANNER_BLOCKED_REASON, NON_PLANNER_BLOCKED_REASON, sortPlannerCandidates } from './lib/model-routing.js'
-import { CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilteredToolsSdk, readSchemasForRendering, renderMinimalReadText, toolPresentationModeOf, toolRegistryOf, toolSdkSchemasOf, projectSkillCatalogDecision, PTC_SECTION_NAME, READ_SECTION_NAME, SDK_SECTION_NAME, sectionOf, hasSection, hasNonEmptySection } from './lib/assembly-presentation.js'
+import { CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilteredToolsSdk, resolveToolsSdkRenderer, sdkSchemasForRendering, toolPresentationModeOf, toolRegistryOf, toolSdkSchemasOf, projectSkillCatalogDecision, PTC_SECTION_NAME, READ_SECTION_NAME, SDK_SECTION_NAME, sectionOf, hasSection, hasNonEmptySection } from './lib/assembly-presentation.js'
+import { createSdkTextCache } from './lib/sdk-text-cache.js'
 
 export { PROBE_LIMITS, extractProbeEvidenceRefs }
 
@@ -1381,9 +1427,14 @@ export function apply(ctx, config) {
   const runcodeCatchGateOn = cfg.runcodeCatchGate === true
   const crossProviderPlannerModelOn = cfg.crossProviderPlannerModel === true
   const bootstrapPersona = typeof cfg.bootstrapPersona === 'string' ? cfg.bootstrapPersona : 'You are a helpful software engineer assistant.'
+  // 变量②：F 段（HP 首轮）tool:read 的手写文案；空串/非字符串一律回退内置同文案兜底。
+  const bootstrapReadHint = typeof cfg.bootstrapReadHint === 'string' && cfg.bootstrapReadHint !== ''
+    ? cfg.bootstrapReadHint
+    : BOOTSTRAP_READ_HINT_FALLBACK
   const bootstrapShellTools = new Set(Array.isArray(cfg.bootstrapShellTools) ? cfg.bootstrapShellTools : ['bash', 'pwsh'])
   const bootstrapCommonTools = new Set(Array.isArray(cfg.bootstrapCommonTools) ? cfg.bootstrapCommonTools : ['read'])
   let bootstrapShellMissingWarned = false
+  const sdkTextCache = createSdkTextCache()
 
   // usage 账本（写入带 (sessionId,seq) 去重，跨插件实例安全）
   const ledgerCfg = cfg.usageLedger !== null && typeof cfg.usageLedger === 'object' ? cfg.usageLedger : null
@@ -1394,10 +1445,10 @@ export function apply(ctx, config) {
   // cursor 降级告警口径：每插件实例（= 每个会话各一份）首次进入空表降级时告警一次
   // （与 ledgerWarned 同一次式风格）；同一实例内多次降级读不重复告警。
   let cursorDegradedWarned = false
-  // usageCursors 只保存活跃 session：sessionId → { seq, index, ref }（ref 为上次折叠时的
-  // 事件数组引用，仅内存有效）。disposed final fold 后删除本 session 项；同 session 再次
-  // 激活且内存无项时按 sessionId 从 cursor JSON 单项续载（ref 从 null 开始 → 从索引 0
-  // 全量扫描、靠 seq 跳过旧消息；该增量扫描性能问题留后续批次）。
+  // usageCursors 只保存活跃 session：sessionId → { seq, index }（index = 上次折叠时读到的
+  // session.seq 水位＝会话日志长度）。disposed final fold 后删除本 session 项；同 session 再次
+  // 激活且内存无项时按 sessionId 从 cursor JSON 单项续载（水位可续做增量：只读 [index, seq)
+  // 区间；水位不可读/日志截断/首次折叠才回退全量扫描，靠 seq 跳过旧消息）。
   const usageCursors = new Map()
   // job_output 同轮防重复：内存计数器（Map<sessionId, Map<jobId, 1>>）
   // 替代 session.events 推导——tool/call 先落盘、后 pre-execute（宿主 agent-loop 先
@@ -1444,12 +1495,13 @@ export function apply(ctx, config) {
     console.warn('extra-plan: usage cursor JSON unreadable or corrupt — falling back to an empty cursor table; other sessions dedupe baselines may be lost on the next write: ' + (error instanceof Error ? error.message : String(error)))
   }
 
-  // cursor 单项归一：兼容旧数字形状（sessionId: seq）与现有 { seq, index } 形状；内存 ref 固定从 null 开始。
+  // cursor 单项归一：兼容旧数字形状（sessionId: seq，按水位 0 处理）与现有 { seq, index } 形状。
+  // 不再保留内存 ref 字段——增量改由 session.seq 水位 + snapshotEvents(from, to) 区间读取实现。
   function usageCursorEntryOf(table, sessionId) {
     const value = table[sessionId]
-    if (typeof value === 'number') return { seq: value, index: 0, ref: null }
+    if (typeof value === 'number') return { seq: value, index: 0 }
     if (value !== null && typeof value === 'object' && typeof value.seq === 'number') {
-      return { seq: value.seq, index: typeof value.index === 'number' ? value.index : 0, ref: null }
+      return { seq: value.seq, index: typeof value.index === 'number' ? value.index : 0 }
     }
     return undefined
   }
@@ -1457,29 +1509,46 @@ export function apply(ctx, config) {
   // usage 折叠：同步函数（禁止改成 async——agent/disposed 是 emit/void，宿主不等待 Promise，
   // 异步文件 I/O 会重新打开末轮漏记窗口）。既有语义保持：事件扫描、token/model/role 与 JSONL
   // 字段、只有新增行才追加并持久化 cursor、cursor JSON 整文件改写。
+  // 增量口径（P1-4）：以宿主 session.seq（＝会话日志长度，O(1)、不物化数组）为水位，配合
+  // session.snapshotEvents(from, to) 区间读取只物化新增区间；水位不可读 / prevIndex > 水位
+  // （日志截断）/ 首次折叠（无 prev）才回退全量快照。绝不在同一趟里同时跑全量与增量再对拍。
   function foldUsage(agent, role) {
     if (!ledgerOn || ledgerPath === '') return
     const session = agent.session
     if (session === undefined || session === null) return
-    const events = sessionEvents(session)
-    if (!Array.isArray(events)) return
+    if (typeof session.snapshotEvents !== 'function') return
     try {
       const sid = session.header.id
+      // ① 水位读取（O(1)，不物化数组）：宿主 session.seq ≡ 日志长度（seq === 索引的宿主契约）。
+      const logLen = session.seq
+      const hasWatermark = typeof logLen === 'number' && Number.isFinite(logLen) && logLen >= 0
       // 内存无项（首次 fold / disposed 回收后同 session 再次激活）→ 只按 sessionId 从 cursor JSON
       // 续载本项；不再把 JSON 里其它历史 session 一次性灌进内存 Map。
       let prev = usageCursors.get(sid)
       if (prev === undefined) prev = usageCursorEntryOf(readUsageCursorTable().table, sid)
       let cursor = 0
-      let start = 0
-      if (prev !== undefined) {
+      let prevIndex = -1
+      if (prev !== undefined && prev !== null) {
         cursor = typeof prev === 'number' ? prev : (typeof prev.seq === 'number' ? prev.seq : 0)
-        if (typeof prev === 'object' && prev.ref === events && typeof prev.index === 'number' && prev.index >= 0 && prev.index <= events.length) start = prev.index
+        if (typeof prev.index === 'number' && Number.isFinite(prev.index) && prev.index >= 0) prevIndex = prev.index
       }
+      let start = 0
+      let events
+      if (hasWatermark && prevIndex === logLen) return // ② 无新增 → 直接返回（不物化数组、不写文件）
+      if (hasWatermark && prevIndex >= 0 && prevIndex <= logLen) {
+        // ③ 增量路径：只物化 [prevIndex, logLen) 区间
+        start = prevIndex
+        events = session.snapshotEvents(prevIndex, logLen)
+      } else {
+        // ④ 回退全量：首次折叠（无 prev）/ 会话无水位（非宿主会话对象）/ prevIndex > logLen（日志截断）
+        events = session.snapshotEvents()
+      }
+      if (!Array.isArray(events)) return
       const rows = []
-      for (let idx = start; idx < events.length; idx += 1) {
+      for (let idx = 0; idx < events.length; idx += 1) {
         const event = events[idx]
         if (event === null || typeof event !== 'object' || event.type !== 'assistant/message') continue
-        const seq = typeof event.seq === 'number' ? event.seq : idx
+        const seq = typeof event.seq === 'number' ? event.seq : start + idx
         if (seq <= cursor) continue
         cursor = seq
         const data = event.data
@@ -1509,7 +1578,9 @@ export function apply(ctx, config) {
           seq,
         }))
       }
-      usageCursors.set(sid, { seq: cursor, index: events.length, ref: events })
+      // 游标写回：index 为本次读到的水位（增量下一次从该水位续做）；无水位会话退化为本次快照长度。
+      const nextIndex = hasWatermark ? logLen : events.length
+      usageCursors.set(sid, { seq: cursor, index: nextIndex })
       if (rows.length === 0) return
       const sepA = ledgerPath.lastIndexOf('\\')
       const sepB = ledgerPath.lastIndexOf('/')
@@ -1530,7 +1601,7 @@ export function apply(ctx, config) {
           persisted[key] = { seq: entry.seq, index: entry.index }
         }
       }
-      persisted[sid] = { seq: cursor, index: events.length }
+      persisted[sid] = { seq: cursor, index: nextIndex }
       try { writeFileSync(ledgerCursorPath, JSON.stringify(persisted), 'utf8') } catch (error) { /* cursor 持久化尽力而为 */ }
     } catch (error) {
       if (!ledgerWarned) {
@@ -1543,8 +1614,9 @@ export function apply(ctx, config) {
   const sandboxPolicy = ctx.get('sandboxPolicy')
   const subagentAsPlannerWarned = new WeakSet()
 
-  function isChild(agent) {
-    if (!isSubagentChild(agent)) return false
+  // events（可选入参，P1-4）：调用方已持有快照时传入复用；不传时由 isSubagentChild 内部自取。
+  function isChild(agent, events) {
+    if (!isSubagentChild(agent, events)) return false
     const child = isLiveDelegation(agent, ctx.get('agents'))
     if (!child && !subagentAsPlannerWarned.has(agent)) {
       subagentAsPlannerWarned.add(agent)
@@ -1553,19 +1625,33 @@ export function apply(ctx, config) {
     return child
   }
 
+  // planner descriptor 判定缓存（per-apply WeakMap，key = agent，随 agent GC 回收）：
+  // ① 命中直接返回缓存 boolean，不再扫描事件流；
+  // ② 只在事件流中真实扫到 subagent/descriptor 时写入（mode === 'continuable' → true，其它 mode → false）；
+  // ③ 未扫到 descriptor（含主会话、以及 descriptor 尚未落盘的子会话）一律**不写缓存**——
+  //    这是防「planner 永久误判」的边界：会话恢复/fork/外部写入时 header 可能无子代理标记、
+  //    事件流后补 descriptor，缓存 false 就再也纠正不回来（该路径即失效回退：下次照旧全量扫描）。
+  // 覆盖面：仅子代理受益（主会话在 isSubagentChild 的最早分支即返回 false，不走本缓存，也不受益）。
+  const plannerDescriptorCache = new WeakMap()
+
   // 规划子代理：子会话且 descriptor.mode === 'continuable'（tool-subagent-plan 行
   // backgroundMode: continuable 生成；'one-shot' = 执行者/验收复核者）。
-  function isPlannerChild(agent) {
-    if (!isSubagentChild(agent)) return false
+  // events（可选入参，P1-4）：调用方已持有快照时传入复用（传入时同样遵守「无 descriptor 不写缓存」）。
+  function isPlannerChild(agent, events) {
+    const cached = plannerDescriptorCache.get(agent)
+    if (cached !== undefined) return cached
+    if (!isSubagentChild(agent, events)) return false
     const session = agent.session
     if (session === undefined || session === null) return false
-    const events = sessionEvents(session)
-    if (!Array.isArray(events)) return false
-    for (const event of events) {
+    const scanEvents = events === undefined ? sessionEvents(session) : events
+    if (!Array.isArray(scanEvents)) return false
+    for (const event of scanEvents) {
       if (event !== null && typeof event === 'object' && event.type === 'subagent/descriptor'
           && event.data !== undefined && event.data !== null
           && typeof event.data.mode === 'string') {
-        return event.data.mode === 'continuable'
+        const planner = event.data.mode === 'continuable'
+        plannerDescriptorCache.set(agent, planner)
+        return planner
       }
     }
     return false
@@ -1678,9 +1764,10 @@ export function apply(ctx, config) {
     return isPlannerChild(agent) ? 'planner' : isChild(agent) ? 'executor' : 'main'
   }
 
-  function childBaseline(agent) {
-    const child = isChild(agent)
-    const planner = isPlannerChild(agent)
+  // events（可选入参，P1-4）：同一次 pre-execute 内复用同一份快照；不传时两个判定各自自取。
+  function childBaseline(agent, events) {
+    const child = isChild(agent, events)
+    const planner = isPlannerChild(agent, events)
     const role = planner ? 'planner' : child ? 'executor' : 'main'
     usageRoles.set(agent, role)
     foldUsage(agent, role)
@@ -1692,7 +1779,7 @@ export function apply(ctx, config) {
   // 工具注册公共实现：WeakSet 去重 + tools 服务取用 + warn/error 文案模板 + try/catch。
   // 两个注册函数各自闭包持有各自 WeakSet 与工具名，跨工具幂等互不共享。
   function registerTool(registered, toolName, defineFn, agent) {
-    // 幂等短路：仅在注册成功后写入标记（失败一律不写，留给下一次 session-start/pre-step 重试）。
+    // 幂等短路：注册成功、分类 A（重名）与分类 B（永久性定义期错误）都写标记（A/B 记终态不再重试）；仅 tools 服务未就绪与分类 C（可重试）不写标记、留给后续 pre-step 重试。
     if (registered.has(agent)) return
     let tools
     try {
@@ -1881,6 +1968,7 @@ export function apply(ctx, config) {
   //    final fold 写入失败仍走既有单次 ledger warning 且不抛出，不阻断后续清理。
   ctx.on('agent/disposed', (payload) => {
     const agent = payload.agent
+    sdkTextCache.dispose(agent)
     const sessionId = agent?.session?.header?.id
     if (typeof sessionId !== 'string') return
     foldUsage(agent, usageRoleOf(agent))
@@ -1899,7 +1987,8 @@ export function apply(ctx, config) {
 
   // 3) anchored 引导（默认开）：主会话与规划子代理首轮极简；执行者/reviewer 不引导。
   //    native/both 首轮保留 bootstrap shell(s)+read，sections 仅 persona；Pure PTC
-  //    首轮保留唯一 run_code、persona、tools:ptc-only 与 tool:read 最小契约，不生成完整 SDK。
+  //    首轮保留唯一 run_code、persona、tools:ptc-only 与 tool:read 手写文案
+  //    （借宿主段名覆盖 text，取值 cfg.bootstrapReadHint），不生成完整 SDK。
   //    无 shell 无 run_code 跳过+警告一次。钩子常驻（bootstrapOn=false 时也注册）：
   //    另负责按装配目录机械识别只读子代理（reviewer）写入 per-agent 缓存，供
   //    pre-execute 拦截复用；bootstrapOn=false 时仅记录目录、不改装配产物。
@@ -1935,7 +2024,7 @@ export function apply(ctx, config) {
     const anchoredPtc = anchoredFirst && mode === 'ptc'
     let presented = result
     if (anchoredPtc) {
-      // HP0/HP1：PTC 首轮只保留传输、persona 与 read 最小契约；不先生成完整 SDK。
+      // HP0/HP1：PTC 首轮只保留传输、persona 与手写 read 文案（覆盖 tool:read 的 text）；不先生成完整 SDK。
       presented = projectAssemblyForPresentation(result, schemas, {
         hideCordis: !creativeModeOn,
         ptcOnly: true,
@@ -1943,15 +2032,18 @@ export function apply(ctx, config) {
       })
     } else if (!creativeModeOn) {
       let sdkText
-      if (hasSection(result.sections, SDK_SECTION_NAME)) {
+      // F/native 与 F/both 随后只返回 bootstrap shell(s)+read，不能为被剥离的完整 SDK 预热。
+      if (!anchoredFirst && hasSection(result.sections, SDK_SECTION_NAME)) {
         let language = 'typescript'
         try {
           const runtime = typeof ctx.get === 'function' ? ctx.get('codeRuntime') : undefined
           if (runtime !== undefined && runtime !== null && typeof runtime.language === 'string') language = runtime.language
         } catch (error) { /* 缺少 codeRuntime 时按测试/兼容默认使用 TypeScript renderer */ }
         try {
-          const sdkSchemas = toolSdkSchemasOf(agent)
-          sdkText = await renderFilteredToolsSdk(sdkSchemas === undefined ? schemas : sdkSchemas, language)
+          const effectiveSchemas = toolSdkSchemasOf(agent) ?? schemas
+          const rendererInput = sdkSchemasForRendering(effectiveSchemas)
+          const renderer = await resolveToolsSdkRenderer(language)
+          sdkText = await sdkTextCache.getOrCreate(agent, rendererInput, language, renderer)
         } catch (error) {
           console.warn('extra-plan: filtered tools:sdk render failed (' + (error instanceof Error ? error.message : String(error)) + ')')
           sdkText = ''
@@ -1977,19 +2069,14 @@ export function apply(ctx, config) {
     const keep = new Set([...shells.map((tool) => tool.name), ...(shells.length === 0 ? runCodes.map((tool) => tool.name) : []), ...bootstrapCommonTools])
     const bootstrapped = presented.tools.filter((tool) => tool !== null && typeof tool === 'object' && keep.has(tool.name))
     if (anchoredPtc) {
-      let language = 'typescript'
-      try {
-        const runtime = typeof ctx.get === 'function' ? ctx.get('codeRuntime') : undefined
-        if (runtime !== undefined && runtime !== null && typeof runtime.language === 'string') language = runtime.language
-      } catch (error) { /* 缺少 codeRuntime 时按测试/兼容默认使用 TypeScript renderer */ }
-      const sdkSchemas = toolSdkSchemasOf(agent)
-      const readText = await renderMinimalReadText(result.sections, sdkSchemas === undefined ? schemas : sdkSchemas, language)
+      // 借宿主段名覆盖文本：只改「模型可见副本」的 tool:read text（= 变量②手写文案），
+      // 不动宿主注册表；L 段（首个 tool/call 之后）不再进入本分支，自动回到宿主原文。
       const ptcSection = sectionOf(presented.sections, PTC_SECTION_NAME)
       const readSection = sectionOf(presented.sections, READ_SECTION_NAME)
       const sections = [
         { name: 'extra-plan-bootstrap', text: bootstrapPersona },
         ...(ptcSection === undefined ? [{ name: PTC_SECTION_NAME, text: '' }] : [{ ...ptcSection }]),
-        ...(readSection === undefined ? [{ name: READ_SECTION_NAME, text: readText }] : [{ ...readSection, text: readText }]),
+        ...(readSection === undefined ? [{ name: READ_SECTION_NAME, text: bootstrapReadHint }] : [{ ...readSection, text: bootstrapReadHint }]),
       ]
       return {
         ...presented,
@@ -2102,13 +2189,17 @@ export function apply(ctx, config) {
   ctx.on('tools/pre-execute', (exec, next) => {
     if (exec.agent === undefined) return next()
     const agent = exec.agent
+    // 单次会话事件快照（P1-4）：本钩子内全部消费点（锚点扫描、tool-jobs 通知扫描、角色判定、
+    // planner 闸门、main 闸门与状态推导）复用同一份快照引用，只取一次。宿主 snapshotEvents()
+    // 无参时返回缓存全量快照（无新事件即同一引用），故此处只做快照来源收敛与可读性整理——
+    // 本批**不减少**各消费点各自的 O(n) 扫描次数（6 个独立循环各自保持 O(n)）。
+    const execEvents = sessionEvents(agent.session)
     // job_output 计数器锚点重置：新用户消息或 send_message 续轮转达时清空该 session 的计数器
     {
       const sessId = agent.session.header.id
-      const events = sessionEvents(agent.session)
       let currentAnchor = -1
-      for (let i = events.length - 1; i >= 0; i -= 1) {
-        const e = events[i]
+      for (let i = execEvents.length - 1; i >= 0; i -= 1) {
+        const e = execEvents[i]
         if (e === null || typeof e !== 'object' || e.type !== 'user/message') continue
         const d = e.data
         const kind = d !== null && typeof d === 'object' && d.source !== null && typeof d.source === 'object' ? d.source.kind : ''
@@ -2133,9 +2224,8 @@ export function apply(ctx, config) {
     // jobId 计数（只清这一个，不清整表、不动 subCallCounters）；解析失败或未跟踪 → 无操作（保守不放行）。
     {
       const sessId = agent.session.header.id
-      const scanEvents = sessionEvents(agent.session)
       const consumed = toolJobsNoticesConsumed.get(sessId)
-      for (const se of scanEvents) {
+      for (const se of execEvents) {
         if (se === null || typeof se !== 'object' || se.type !== 'user/message') continue
         const sd = se.data
         if (sd === null || typeof sd !== 'object' || sd.source === null || typeof sd.source !== 'object') continue
@@ -2161,8 +2251,8 @@ export function apply(ctx, config) {
         else toolJobsNoticesConsumed.set(sessId, new Set([jobId]))
       }
     }
-    const child = childBaseline(agent)
-    const planner = isPlannerChild(agent)
+    const child = childBaseline(agent, execEvents)
+    const planner = isPlannerChild(agent, execEvents)
     // 探查者委派属只读探查能力（与 read/glob/grep 同级）：主会话在任意路由状态放行，
     // 仅强制 one-shot 固定后台（与 subagent/subagent_review 同机械闸门口径）。
     // 置于 planner/child 判定之前，但闸门函数内首先按角色拒绝 planner（T5）：
@@ -2181,28 +2271,20 @@ export function apply(ctx, config) {
       return next()
     }
     if (planner) {
-      const plannerEvents = sessionEvents(agent.session)
-      let reason = plannerGateReason(exec, plannerEvents, exploreBudget)
+      let reason = plannerGateReason(exec, execEvents, exploreBudget, jobOutputCallCounters)
       // 预算耗尽时 run_code 不在此直拒：plannerGateReason 对 run_code 仅可能因预算耗尽返回非 null
       // （run_code 非 write/edit/pwsh/bash/job_output），置 null 让预算判定进入组判定——组判定内按白名单把关：
       // 成员组非空且全部 ∈ FREE_TOOLS 才放行；含非白名单成员或空组/动态访问 → 拒绝（动态拼接文案）。
       if (exec.name === 'run_code' && reason !== null) reason = null
       if (reason !== null) return { kind: 'deny', reason }
       if (exec.name === 'run_code') {
-        const runReason = runCodeGroupDenyReason(undefined, exec, { kind: 'planner' }, { events: plannerEvents, exploreBudget, jobOutputCallCounters, runcodeCatchGate: runcodeCatchGateOn })
+        const runReason = runCodeGroupDenyReason(undefined, exec, { kind: 'planner' }, { events: execEvents, exploreBudget, jobOutputCallCounters, runcodeCatchGate: runcodeCatchGateOn })
         if (runReason !== null) return { kind: 'deny', reason: runReason }
       }
+      // job_output 的 wait 禁令与同 job 查重已由上方 plannerGateReason 首次判定完成
+      // （B3 收敛：不再二次调用 jobOutputGateReason）；此处只在全部闸门放行后记录计数器。
       if (exec.name === 'job_output') {
-        const jobReason = jobOutputGateReason(exec, jobOutputCallCounters)
-        if (jobReason !== null) return { kind: 'deny', reason: jobReason }
-        const args = exec.arguments
-        const jobId = args !== undefined && args !== null && typeof args === 'object' ? args.job_id : undefined
-        if (typeof jobId === 'string') {
-          const sessId = agent.session.header.id
-          let perSession = jobOutputCallCounters.get(sessId)
-          if (perSession === undefined) { perSession = new Map(); jobOutputCallCounters.set(sessId, perSession) }
-          perSession.set(jobId, 1)
-        }
+        recordJobOutputCall(agent, exec, jobOutputCallCounters)
       }
       if (planner && isRunCodeSubCall(exec)) {
         const rid = typeof exec.rootCallId === 'string' ? exec.rootCallId : ''
@@ -2217,43 +2299,27 @@ export function apply(ctx, config) {
       // 注：此段到达时 planner 必已 return（planner 段在前），`!planner` 条件可省略（保留原状）。
       if (!planner && readOnlyChildren.has(agent)) {
         const probe = schemasHasTool(toolSchemasOf(agent), 'save_probe')
-        const reason = childReadonlyGateReason(exec, probe)
+        const reason = childReadonlyGateReason(exec, probe, jobOutputCallCounters)
         if (reason !== null) return { kind: 'deny', reason }
         if (exec.name === 'run_code') {
           const runReason = runCodeGroupDenyReason(undefined, exec, { kind: 'child', readOnly: true, probe }, { jobOutputCallCounters, runcodeCatchGate: runcodeCatchGateOn })
           if (runReason !== null) return { kind: 'deny', reason: runReason }
         }
+        // job_output 的 wait 禁令与同 job 查重已由上方 childReadonlyGateReason 首次判定完成
+        // （B3 收敛：不再二次调用 jobOutputGateReason）；此处只在全部闸门放行后记录计数器。
         if (exec.name === 'job_output') {
-          const jobReason = jobOutputGateReason(exec, jobOutputCallCounters)
-          if (jobReason !== null) return { kind: 'deny', reason: jobReason }
-          const args = exec.arguments
-          const jobId = args !== undefined && args !== null && typeof args === 'object' ? args.job_id : undefined
-          if (typeof jobId === 'string') {
-            const sessId = agent.session.header.id
-            let perSession = jobOutputCallCounters.get(sessId)
-            if (perSession === undefined) { perSession = new Map(); jobOutputCallCounters.set(sessId, perSession) }
-            perSession.set(jobId, 1)
-          }
+          recordJobOutputCall(agent, exec, jobOutputCallCounters)
         }
       }
       return next() // 执行者子代理豁免（目录含 write/edit，缓存未命中）
     }
 
-    const events = sessionEvents(agent.session)
-    const state = deriveFlowState(events)
-    const reason = mainGateReason(state, exec, { events, planToolName, jobOutputCallCounters, runcodeCatchGate: runcodeCatchGateOn, runCodeDepth: 0 })
+    const state = deriveFlowState(execEvents)
+    const reason = mainGateReason(state, exec, { events: execEvents, planToolName, jobOutputCallCounters, runcodeCatchGate: runcodeCatchGateOn, runCodeDepth: 0 })
     if (reason !== null) return { kind: 'deny', reason }
-    // 放行副作用：job_output 计数器记录（自 apply 内提取的 set 部分，仅在放行时执行，时序等价）
-    if (exec.name === 'job_output') {
-      const args = exec.arguments
-      const jobId = args !== undefined && args !== null && typeof args === 'object' ? args.job_id : undefined
-      if (typeof jobId === 'string') {
-        const sessId = agent.session.header.id
-        let perSession = jobOutputCallCounters.get(sessId)
-        if (perSession === undefined) { perSession = new Map(); jobOutputCallCounters.set(sessId, perSession) }
-        perSession.set(jobId, 1)
-      }
-    }
+    // 放行副作用：job_output 计数器记录（B3 收敛：与 planner/只读 child 共用 recordJobOutputCall；
+    // 仅在全部闸门放行后执行，时序等价）
+    recordJobOutputCall(agent, exec, jobOutputCallCounters)
     return next()
   })
 }

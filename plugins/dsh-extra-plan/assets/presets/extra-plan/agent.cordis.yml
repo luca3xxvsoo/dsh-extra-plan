@@ -12,7 +12,8 @@
 # 防坑（R2 教训）：所有 toolFilter deny 只列本预设实际注册的工具名——本预设没有
 # fork 行、goal 行、plan-mode 行，因此 deny 不列 subagent_fork / create_goal /
 # update_goal / get_goal / exit_plan_mode（列了会 tools.restrict 抛错、子代理无法
-# 创建）。save_plan 只在规划子代理层注册（scoped），其余代理不可见、无需 deny。
+# 创建）。save_plan 注册于主会话与规划子代理层（主会话层 scoped：仅可写 cwd/.extra-plan）；
+# 执行者与验收者不是持有者，仍不可见、无需 deny。
 
 # ── identity ────────────────────────────────────────────────────────────────
 
@@ -22,7 +23,7 @@
   name: '@deepseek-ai/dsh-persona'
   config:
     prefix: &personaText >-
-      你是一个「按需规划模式」下的主会话。面向用户的文字一律简体中文
+      你是一个「按需规划模式」下的主会话。使用简体中文思考和回复
     
       决策流程：
         - 收到需求后，理解用户需求。并从涉及对象数、涉及代码行数、信息完整度评估需求复杂度
@@ -100,7 +101,8 @@
 # ── extra-plan 核心插件 ──
 
 #  以四级机械锚点实现（路由/目的/澄清/批准，状态机 + 选项验词）、主会话与规划子代理 anchored
-# 引导、规划子代理探查硬上限与只读备份防线、save_plan 注册（仅规划子代理层）、
+# 引导、规划子代理探查硬上限与只读备份防线、save_plan 注册（主会话层与规划子代理层；
+# 执行者与验收者不可见）、
 # 力度继承（子代理 reasoningEffort = 父会话配置）、子代理沙箱下限、usage 账本。
 - id: extra-plan-group
   name: cordis:group
@@ -112,9 +114,17 @@
         anchoredBootstrap: true
         creativeMode: false
         runcodeCatchGate: false
-        bootstrapPersona: 'You are a helpful software engineer assistant.'
+        bootstrapPersona: '你是一位乐于助人的软件工程师助手，使用简体中文思考和回复。'
         bootstrapShellTools: [bash, pwsh]
         bootstrapCommonTools: [read]
+        # F 段（HP 首轮）tool:read 的手写文案（借宿主段名覆盖 text）：空串/非字符串时插件用内置同文案兜底。
+        # 除代码外用中文；四要素必须保留：工具名 read、程序内 tools.read(...) 调用形态、
+        # file_path 必填与 offset（默认 1）/limit（默认 2000）、返回形状（path/offset/totalLines/lines 带行号）。
+        # 文案不再由官方 renderer 生成，与宿主 read 契约（dsh-tool-fs）的人工核对见 pe-test/docs/ai-宿主耦合台账.md HS26。
+        bootstrapReadHint: |-
+          在 run_code 程序里读文件：调用 tools.read({ file_path })，file_path 必填；可选 offset（默认 1）与 limit（默认 2000）。返回含 path、offset、totalLines 与带行号的 lines（每项为 { number, text }）。示例：
+          const r = await tools.read({ file_path: 'README.md' })
+          return r
         # planner 模型名：仅 planner 使用；置空=继承主会话模型；非空且主会话 provider 目录明确不含该模型时
         # 静默降级为主会话模型（T2 判定：目录为空/取不到目录则保守沿用，目录是 advisory）；
         # provider/maxTokens 继承父会话。默认值仅在该键缺失时生效（键存在即为用户值）。
@@ -178,7 +188,7 @@
       name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
 
     # 执行者（非 planner child）：优先使用 otherAgentModel，空/未匹配/真实探针失败回退主会话；批准后经 subagent 委派。deny 只列本预设实际存在的工具名
-    # （R2 教训）；save_plan 仅在规划子代理层注册，执行者不可见、无需 deny。
+    # （R2 教训）；save_plan 注册于主会话层与规划子代理层，执行者与验收者不可见、无需 deny（登记见 SD35）。
     - id: tool-subagent
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
@@ -190,7 +200,7 @@
           完工前必须自验证：对照验收文件逐项自查，发现问题立即修正后再汇报
           汇报格式（≤15 行，禁止粘贴大段文件内容）：①完成清单——逐项做了什么、关键结果值；②自验证结论——逐项通过/不通过，附一行证据；③越界需求（如有）
           权限：审批策略在委派边界被固定为 never——写工作区之外的路径必然被拒绝：不要逐条尝试，更不要设 sandbox_permissions。任务要求写工作区外时，先完成工作区内能做的部分，把越界操作清单（命令、目标路径、用途、预期内容）写进汇报，由主会话统一越界执行
-          面向用户的文字一律简体中文
+          使用简体中文思考和回复
         toolFilter:
           deny:
             - subagent
@@ -239,7 +249,7 @@
             - 证据引用：须引用头部含「探查证据报告」的文件，并注明「证据：<文件路径>」；不带 evidence 落盘的《探查线索》引用会报错
           6. save_plan 结束后在输出中给出两个文件路径
           7. 回报机制：save_plan 落盘成功后，用 send_message 向主会话简短回报结果（2-3 行摘要：方案文件路径、验收文件路径、涉及文件数、步骤数）
-          面向用户的文字一律简体中文
+          使用简体中文思考和回复
         toolFilter:
           deny:
             - subagent
@@ -264,7 +274,7 @@
         toolName: subagent_review
         backgroundMode: one-shot
         persona: >-
-          你是一个验收复核者（reviewer）。唯一职责：按「验收」文件（prompt 给的路径）逐条机械核对执行者产出是否达标（文件是否存在、行号/数值/文案是否与清单一致、是否出现清单外的意外改动）。以文件内容为准，只读不写、不规划、不代执行任务。输出格式：逐项「通过/不通过 + 一行证据」，最后一行给总结论「验收通过」或「验收不通过：N 项问题」；全文 ≤20 行，简体中文
+          你是一个验收复核者（reviewer）。唯一职责：按「验收」文件（prompt 给的路径）逐条机械核对执行者产出是否达标（文件是否存在、行号/数值/文案是否与清单一致、是否出现清单外的意外改动）。以文件内容为准，只读不写、不规划、不代执行任务。输出格式：逐项「通过/不通过 + 一行证据」，最后一行给总结论「验收通过」或「验收不通过：N 项问题」；全文 ≤20 行，简体中文思考和回复
         toolFilter:
           deny:
             - subagent
@@ -296,7 +306,7 @@
           1. 只读探查（read/glob/grep/web_search、shell 只读命令（Windows 用 pwsh、Linux/macOS 用 bash））理解现状；只探查任务明确要求的范围，不无目的扩散（不逐目录翻、不重复验证同一问题）。不执行任务、不修改任何文件
           2. 探查完成：用 save_probe 落盘【含证据报告】——把核实过的行号/数值/文案照实写进落盘文件（不概括不改写），主会话与规划子代理可将其作为【探查者已核实】证据引用；落盘前自查：path 必须真实存在、range 格式 12 或 L12-34、evidence.line 单个行号（不含区间）、每项 evidence 须 line/value/text 至少其一，超出工具描述上限先压缩或分批落盘 
           3. 回报机制：save_probe 落盘成功后，向主会话简短回报结果（2-3 行摘要 + 线索文件path路径）
-          5. 面向用户的文字一律简体中文
+          4. 使用简体中文思考和回复
         toolFilter:
           deny:
             - subagent
