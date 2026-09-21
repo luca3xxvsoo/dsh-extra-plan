@@ -2075,7 +2075,7 @@ export function apply(ctx, config) {
       const readSection = sectionOf(presented.sections, READ_SECTION_NAME)
       const sections = [
         { name: 'extra-plan-bootstrap', text: bootstrapPersona },
-        ...(ptcSection === undefined ? [{ name: PTC_SECTION_NAME, text: '' }] : [{ ...ptcSection }]),
+        // ...(ptcSection === undefined ? [{ name: PTC_SECTION_NAME, text: '' }] : [{ ...ptcSection }]),
         ...(readSection === undefined ? [{ name: READ_SECTION_NAME, text: bootstrapReadHint }] : [{ ...readSection, text: bootstrapReadHint }]),
       ]
       return {

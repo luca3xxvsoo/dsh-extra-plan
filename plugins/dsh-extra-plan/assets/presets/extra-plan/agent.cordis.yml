@@ -122,7 +122,7 @@
         # file_path 必填与 offset（默认 1）/limit（默认 2000）、返回形状（path/offset/totalLines/lines 带行号）。
         # 文案不再由官方 renderer 生成，与宿主 read 契约（dsh-tool-fs）的人工核对见 pe-test/docs/ai-宿主耦合台账.md HS26。
         bootstrapReadHint: |-
-          在 run_code 程序里读文件：调用 tools.read({ file_path })，file_path 必填；可选 offset（默认 1）与 limit（默认 2000）。返回含 path、offset、totalLines 与带行号的 lines（每项为 { number, text }）。示例：
+          run_code 调用 read 示例：
           const r = await tools.read({ file_path: 'README.md' })
           return r
         # planner 模型名：仅 planner 使用；置空=继承主会话模型；非空且主会话 provider 目录明确不含该模型时
