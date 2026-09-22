@@ -41,6 +41,7 @@
    - node --check plugins/dsh-extra-plan/lib/agent-session.js
    - node --check plugins/dsh-extra-plan/lib/model-routing.js
    - node --check plugins/dsh-extra-plan/lib/assembly-presentation.js
+   - node --check plugins/dsh-extra-plan/lib/gate-words.js（v0.3.0 起：闸门词共享契约，本轮新增基线门）
 3. 语法门全部退出码为 0 后，按本轮固定顺序运行：`node pe-test/tools/step-00-全流程回归.mjs` → `node pe-test/tools/step-04-路由与写闸门.mjs` → `node pe-test/tools/step-06-线索落盘.mjs` → `node pe-test/tools/代码地图生成.mjs`；人工段维护后运行 `node pe-test/tools/代码地图生成.mjs --check`，最后运行 `node pe-test/tools/一键step测试.mjs`。每条退出码必须为 0，且无 SyntaxError 或其它解析错误。
 4. 全量维护时仍可运行 6 个 step-01 回归（设置页配置、设置迁移、预设完整性、安装同步、安装分发、qqbot 安装映射）；step-04 工具清单可另以显式会话目录取证。模型可见面隐藏不是 PTC runtime binding 安全隔离。
 5. 交付汇报：改动点 / 每条校验结果 / 备份路径 / 风险点；用户实测确认后才算完成
@@ -53,6 +54,7 @@
 | 注册失败路径与重试（P0-2/D1：服务未就绪与 C 类可重试错误不写标记、下一步重试；A 类重名与 B 类永久性错误写标记记终态不重试） | step-06-线索落盘.mjs（S6 服务不可用→次轮成功、S7 可重试错→次轮成功、S8 重名不重试、S9 永久性不重试、S10 pre-step 注册只影响下一步）、step-04-路由与写闸门.mjs（C4 认领时服务不可用→次轮成功、C5 可重试错粘性不重复消费、C6 重名不重试、C7 永久性不重试） |
 | save_probe 机械上限/动态描述 | lib/save-contract.js（PROBE_LIMITS/渲染合同）+ lib/save-probe-validation.js（validateProbe）+ lib/save-tool-factories.js（动态 schema/execute）；step-00-全流程回归.mjs（evidence 150、text 1000，PR23=151、PR34/PR35=1000/1001；实际 schema 动态断言） |
 | save_probe/save_plan 落盘（含事务阶段语义） | lib/save-persistence.js（atomicCommit 阶段感知提交/recoverJournals 完成判定；两函数末位各带可选 fs 依赖，默认冻结只读、未提供项回退默认实现）+ lib/save-tool-factories.js（工具定义）+ index.js（apply 注册/闸门接线）；step-06-线索落盘.mjs ⑤ 段逐阶段故障注入覆盖：正常双写、tmp 写失败、journal 已落盘后写桩抛错（pre-journal 条件清理成功／journal 删不掉则 journal+全部 tmp 保留且抛原始错误）、第一次与第二次 rename 失败、最终删 journal 失败、全目标确认前不删 journal、恢复 rename 失败可续做、已完成项幂等续做、tmp 与目标均缺失保留 journal 并告警、旧形状双端恢复、形状非法保留、sessionTag 跳过与失败隔离 |
+| 闸门关键词单一来源（config.gateWords 7 项）／prompt variable 注册／旧词拒绝／同 hash idle／hash 变化整组迁移 | step-00-全流程回归.mjs（GWY/GWV/GWC 段：YAML 七键与 persona 双键、宿主 renderPrompt 两键替换、15 例非法矩阵错误前缀、定制七词正例与旧词负例）、step-04-路由与写闸门.mjs（GW 段：apply 恰注册 7 个 provider、坏配置零副作用、三类 dispatch 定制词全链、旧词不推进、fresh apply、variables 哨兵投影）、step-01-安装同步.mjs（同 hash 定制词 idle + 旧 hash 升级整组 restored）、step-01-设置迁移.mjs（九类矩阵含 bad-new-template 抛错不切换目标）、step-01-安装分发.mjs（distribute 包装层同款断言） |
 | 预设安装/完整性/设置页/十项迁移 | step-01-预设完整性.mjs、step-01-安装分发.mjs、step-01-安装同步.mjs、step-01-设置迁移.mjs、step-01-设置页配置.mjs（descriptor/metadata/locator/manifest 从 9 到 10，creativeMode 默认 false、true/false PUT、非法值与 skipped-old-missing；归属：descriptor（预设完整性）/ metadata 10 项（设置页配置）/ locator（设置页配置）/ manifest（设置迁移）/ creativeMode PUT（设置页配置）/ skipped-old-missing（安装同步）） |
 | 全量回归 | step-00-全流程回归.mjs（本地 mock/in-process，不需真实 session_id；一键step测试.mjs 同）。**一键体检的自动判定项共 11 项**（以 `一键step测试.mjs` 的 AUTO 数组为准）：step-00-全流程回归、step-00-跨平台写拦截、step-01-设置迁移、step-01-安装分发、step-01-安装同步、step-01-预设完整性、step-01-设置页配置、step-01-qqbot-安装映射、step-04-路由与写闸门、step-06-线索落盘、代码地图生成.mjs（--check） |
 | usage 账本（含会话状态生命周期） | step-99-用量统计.mjs（真实 ledger 读侧 token 用量统计：明细列 sessionId|role|model|provider|calls|hit|miss|out|cw|rs，纯 token 口径、无任何汇总）+ step-04-路由与写闸门.mjs ⑭e 段（P4-1~P4-24 监听器级：双 session 同 rootCallId 各 1~18 allow/19 deny、session B 锚点变化不清 A 的计数、disposed A 后同 sessionId 从空开始且 B 保持、临时账本的 one-shot 末轮 flush（role=executor、seq/token/model 正确）、重复 disposed 幂等、同 session 续载只写新 seq、可解析 cursor 保留其它 session、ENOENT 静默、损坏/非对象 cursor 告警一次并覆盖写、final fold 写入失败的既有单次 warning 且不阻断清理、P4-24 新字段落盘（provider/cacheWriteTokens/reasoningTokens 取值正确，hit/miss/out 全零而 cw 非零的行不被跳过，旧形状行按 空串/0/0 落盘）） |
@@ -74,6 +76,20 @@
 ---
 
 *本文件对应 READAI.md 文档索引表「维护纪律+自检+地图同步」一行与「必守纪律（一句）」的展开。*
+
+## 闸门关键词单源维护（v0.3.0）
+- **唯一人工编辑位置**：`DSH_HOME/.agent-presets/extra-plan/agent.cordis.yml`（仓库模板 `plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml`）的 `config.gateWords` 7 个字段；禁止在 JS 里改词值（`lib/gate-words.js` 无词值、无默认词表、不读文件/环境变量）。改词后普通重启即生效；旧词不再推进状态机（历史事件安全）。
+- **合法性**：非数组对象、键集合恰为 7 键、每值为非空字符串、首尾无空白、无 CR/LF、7 值两两不同、不以 (Recommended)/（Recommended）/(推荐)/（推荐）结尾；失败信息以 `extra-plan: config.gateWords` 开头，运行时同步抛错（阻止预设被使用，不回退旧词）。
+- **设置页分工**：10 项 UI settings 不动；gateWords 是 **7 项 migration-only 字段**——不进 `SETTING_DEFINITIONS`、不进设置页 metadata、不进 `preset-defaults.generated.js`、不新增构建/生成步骤；`generate-runtime-defaults.mjs --check` 必须保持 0 且生成物无 diff。
+- **两条保留链**（同步自愈/安装分发同一状态机）：同 hash → `idle`（不读改写现场正文，用户改词逐字保留；现场被改成缺词/非法也不自愈，随后 runtime 抛错）；hash 变化 → 先复制新厂商模板 → 恢复 10 项设置 → 整组合法旧词 7 叶定点写回 → 共享 validator 复验后才发布；缺失/非法/歧义整组采用新模板值（禁止部分迁移），新模板 locator 缺失/歧义、patch 失败或复验失败一律抛错并保留旧目标。
+- **审计**：manifest `format: 2`；`settingsMigration` 仍 10 项；并列字段 `gateWordsMigration.results` 恰 7 项状态字符串（skipped-source-absent / skipped-old-missing / skipped-invalid / skipped-old-ambiguous / skipped-source-unreadable / restored），**不得写入用户实际词值**。
+- **本批语法门**：本轮实际改动的 3 个 .js（`index.js`、`lib/gate-words.js`、`lib/preset-sync.js`）与 6 个 .mjs（step-00/04/06 + 三个 step-01）逐文件 `node --check`；`lib/gate-words.js` 应加入后续基线语法门清单。
+
+## P2-4 生成链与拆分自检
+- 先运行 `node plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs` 与 `--check`；生成模块是派生产物，禁止手改。模板坏时不得清空或覆盖 last-known-good。
+- B1 模块化只收无宿主状态 helper 与 per-apply agent runtime factory；usage ledger、工具注册/claim、disposed 同步 final fold、ctx.on 顺序、tools/pre-execute 与 FREE_TOOLS 仍检查根入口。
+- 本轮新增语法门覆盖 `lib/preset-defaults.generated.js`、`lib/shell-mutation.js`、`lib/planner-budget.js`、`lib/runtime-static.js`、`lib/agent-runtime.js` 与生成器；再按固定顺序跑 B2 step-01、step-00/跨平台、step-04、step-06、代码地图及一键 step。
+
 
 补充口径：`PROBE_LIMITS.maxEvidenceEntries=150`、`maxEvidenceTextLen=1000`；`exploreBudget=18` 仅是 planner 探查预算/单实例子调用上限，台账历史 80 条与 80+79+50=209 仍是归档统计。
 

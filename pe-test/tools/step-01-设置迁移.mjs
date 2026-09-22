@@ -1,10 +1,10 @@
 // 设置选择性迁移共享层与生产状态机回归矩阵。
 // 所有 DSH_HOME、旧版 YAML 与发布目录都在系统临时目录。
 
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, renameSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, renameSync, cpSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { syncPreset, contentHash, publishStage } from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
 import { contentHash as sharedHash, readManifest, writeManifest } from '../_shared/preset-hash.mjs'
 import {
@@ -18,6 +18,8 @@ import {
   resolveSetting,
   serializeScalar,
 } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
+import { DEFAULT_EXPLORE_BUDGET } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
+import { GATE_WORD_MIGRATION_DEFINITIONS, GATE_WORDS_GROUP_DEFINITION, createGateRuntime } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 const ASSET_DIR = join(HERE, '..', '..', 'plugins', 'dsh-extra-plan', 'assets', 'presets', 'extra-plan')
@@ -33,6 +35,7 @@ function check(label, condition) {
   if (condition) { pass += 1; console.log('PASS  ' + label) }
   else { fail += 1; console.log('FAIL  ' + label) }
 }
+check('exploreBudget 默认来自生成模块且为 YAML 叶值', DEFAULT_EXPLORE_BUDGET === resolveSetting(parsePresetYaml(assetAgent), definition('exploreBudget'), { aliases: false }).value && DEFAULT_EXPLORE_BUDGET === 18)
 
 function patchAgent(values) {
   let text = assetAgent
@@ -235,12 +238,12 @@ try {
   check('仅新版字段 creativeMode/runcodeCatchGate/crossProviderPlannerModel/otherAgentModel 保持默认并审计 skipped-old-missing', readFileSync(join(missingDist, 'agent.cordis.yml'), 'utf8').includes('        creativeMode: false') && readFileSync(join(missingDist, 'agent.cordis.yml'), 'utf8').includes('        runcodeCatchGate: false') && readFileSync(join(missingDist, 'agent.cordis.yml'), 'utf8').includes('        crossProviderPlannerModel: false') && readFileSync(join(missingDist, 'agent.cordis.yml'), 'utf8').includes("        otherAgentModel: ''") && missingManifest.settingsMigration.results.creativeMode === 'skipped-old-missing' && missingManifest.settingsMigration.results.runcodeCatchGate === 'skipped-old-missing' && missingManifest.settingsMigration.results.crossProviderPlannerModel === 'skipped-old-missing' && missingManifest.settingsMigration.results.otherAgentModel === 'skipped-old-missing')
   check('旧版独有 row/group/persona 不残留', !readFileSync(join(missingDist, 'agent.cordis.yml'), 'utf8').includes('old-custom') && !readFileSync(join(missingDist, 'agent.cordis.yml'), 'utf8').includes('old-only'))
 
-  const invalidText = assetAgent.replace('        plannerModel: deepseek-v4-pro', '        plannerModel: 123').replace('        creativeMode: false', "        creativeMode: 'true'").replace('        crossProviderPlannerModel: false', "        crossProviderPlannerModel: 'true'").replace('        exploreBudget: 18', '        exploreBudget: 0').replace("        otherAgentModel: ''", '        otherAgentModel: 123')
+  const invalidText = assetAgent.replace('        plannerModel: deepseek-v4-pro', '        plannerModel: 123').replace('        creativeMode: false', "        creativeMode: 'true'").replace('        crossProviderPlannerModel: false', "        crossProviderPlannerModel: 'true'").replace('        exploreBudget: ' + DEFAULT_EXPLORE_BUDGET, '        exploreBudget: 0').replace("        otherAgentModel: ''", '        otherAgentModel: 123')
   writeFileSync(join(invalidDist, 'agent.cordis.yml'), invalidText, 'utf8')
   writeManifest(invalidDist, 'OLD-INVALID-MATRIX')
   check('非法旧值 → upgraded 不阻断', syncPreset(invalidHome) === 'upgraded')
   const invalidManifest = manifestAt(invalidDist)
-  check('非法旧值使用新版实际默认并写 skipped-invalid', readFileSync(join(invalidDist, 'agent.cordis.yml'), 'utf8').includes('        plannerModel: deepseek-v4-pro') && readFileSync(join(invalidDist, 'agent.cordis.yml'), 'utf8').includes('        creativeMode: false') && readFileSync(join(invalidDist, 'agent.cordis.yml'), 'utf8').includes('        crossProviderPlannerModel: false') && readFileSync(join(invalidDist, 'agent.cordis.yml'), 'utf8').includes('        exploreBudget: 18') && readFileSync(join(invalidDist, 'agent.cordis.yml'), 'utf8').includes("        otherAgentModel: ''") && invalidManifest.settingsMigration.results.plannerModel === 'skipped-invalid' && invalidManifest.settingsMigration.results.creativeMode === 'skipped-invalid' && invalidManifest.settingsMigration.results.crossProviderPlannerModel === 'skipped-invalid' && invalidManifest.settingsMigration.results.exploreBudget === 'skipped-invalid' && invalidManifest.settingsMigration.results.otherAgentModel === 'skipped-invalid')
+  check('非法旧值使用新版实际默认并写 skipped-invalid', readFileSync(join(invalidDist, 'agent.cordis.yml'), 'utf8').includes('        plannerModel: deepseek-v4-pro') && readFileSync(join(invalidDist, 'agent.cordis.yml'), 'utf8').includes('        creativeMode: false') && readFileSync(join(invalidDist, 'agent.cordis.yml'), 'utf8').includes('        crossProviderPlannerModel: false') && readFileSync(join(invalidDist, 'agent.cordis.yml'), 'utf8').includes('        exploreBudget: ' + DEFAULT_EXPLORE_BUDGET) && readFileSync(join(invalidDist, 'agent.cordis.yml'), 'utf8').includes("        otherAgentModel: ''") && invalidManifest.settingsMigration.results.plannerModel === 'skipped-invalid' && invalidManifest.settingsMigration.results.creativeMode === 'skipped-invalid' && invalidManifest.settingsMigration.results.crossProviderPlannerModel === 'skipped-invalid' && invalidManifest.settingsMigration.results.exploreBudget === 'skipped-invalid' && invalidManifest.settingsMigration.results.otherAgentModel === 'skipped-invalid')
 
   for (const [label, scalar] of [['number', '1'], ['null', 'null']]) {
     const variantHome = join(work, 'invalid-creative-' + label + '-home')
@@ -264,6 +267,112 @@ try {
   check('同版本第二次 → idle', syncPreset(validHome) === 'idle')
   const afterIdle = [readFileSync(join(validDist, 'preset.yml')), readFileSync(join(validDist, 'agent.cordis.yml')), readFileSync(join(validDist, 'dist-manifest.json'))]
   check('idle 字节完全不变且共享 hash/readManifest 复用生产', beforeIdle.every((value, index) => value.equals(afterIdle[index])) && sharedHash(ASSET_DIR) === contentHash(ASSET_DIR) && readManifest(validDist) === contentHash(ASSET_DIR))
+
+  // ── gateWords 升级迁移矩阵（[任务5] 九类：valid/missing/partial-missing/extra-key/
+  //    non-string/duplicate/ambiguous/unreadable/bad-new-template） ──────────────
+  const GATE_CUSTOM = { routeDirect: '甲直行', routePlan: '乙规划', routeDisagree: '丙否决', approvalApprove: '丁批准', approvalReplan: '戊转规划', purposeRefine: '己完整', purposeRedo: '庚重做' }
+  const gateFieldNames = GATE_WORD_MIGRATION_DEFINITIONS.map((item) => item.key)
+  const gateBlockRange = (text) => {
+    const rows = text.split('\n')
+    const start = rows.findIndex((line) => line.trim() === 'gateWords:')
+    if (start < 0) return null
+    let end = start
+    while (end + 1 < rows.length && rows[end + 1].startsWith('          ')) end += 1
+    return { rows, start, end }
+  }
+  const mutateGateBlock = (text, mutate) => {
+    const range = gateBlockRange(text)
+    if (range === null) throw new Error('fixture: gateWords block missing')
+    const block = range.rows.slice(range.start + 1, range.end + 1)
+    range.rows.splice(range.start + 1, range.end - range.start, ...mutate(block))
+    return range.rows.join('\n')
+  }
+  const stripGateGroup = (text) => {
+    const range = gateBlockRange(text)
+    if (range === null) throw new Error('fixture: gateWords block missing')
+    range.rows.splice(range.start, range.end - range.start + 1)
+    return range.rows.join('\n')
+  }
+  const dropGateLeaf = (text, field) => mutateGateBlock(text, (block) => block.filter((line) => !line.startsWith('          ' + field + ':')))
+  const setGateLeaf = (text, field, raw) => mutateGateBlock(text, (block) => block.map((line) => line.startsWith('          ' + field + ':') ? '          ' + field + ': ' + raw : line))
+  const copyGateLeaf = (text, target, source) => mutateGateBlock(text, (block) => {
+    const sourceLine = block.find((line) => line.startsWith('          ' + source + ':'))
+    const raw = sourceLine.slice(('          ' + source + ':').length).trim()
+    return block.map((line) => line.startsWith('          ' + target + ':') ? '          ' + target + ': ' + raw : line)
+  })
+  const customGateAgent = (text) => {
+    let out = text
+    for (const item of GATE_WORD_MIGRATION_DEFINITIONS) {
+      const patched = patchYamlScalar(out, item, GATE_CUSTOM[item.key])
+      if (!patched.ok) throw new Error('fixture: gate patch failed ' + item.key)
+      out = patched.text
+    }
+    return out
+  }
+  const gateMatrix = [
+    ['valid', customGateAgent(assetAgent), 'restored'],
+    ['missing', stripGateGroup(assetAgent), 'skipped-old-missing'],
+    ['partial-missing', dropGateLeaf(assetAgent, 'routePlan'), 'skipped-invalid'],
+    ['extra-key', mutateGateBlock(assetAgent, (block) => block.concat(["          extraKey: 'x'"])), 'skipped-invalid'],
+    ['non-string', setGateLeaf(assetAgent, 'routeDirect', '42'), 'skipped-invalid'],
+    ['duplicate', copyGateLeaf(assetAgent, 'approvalApprove', 'routeDirect'), 'skipped-invalid'],
+    ['ambiguous', assetAgent + '\n- id: extra-plan\n  config:\n    gateWords:\n      routeDirect: dup-row\n', 'skipped-old-ambiguous'],
+    ['unreadable', '- id: [not valid\n', 'skipped-source-unreadable'],
+  ]
+  for (const [label, variant, expectedStatus] of gateMatrix) {
+    const home = join(work, 'gate-' + label + '-home')
+    const dist = join(home, '.agent-presets', 'extra-plan')
+    mkdirSync(dist, { recursive: true })
+    writeFileSync(join(dist, 'preset.yml'), assetPreset, 'utf8')
+    writeFileSync(join(dist, 'agent.cordis.yml'), variant, 'utf8')
+    writeManifest(dist, 'OLD-GATE-' + label.toUpperCase())
+    check('gateWords ' + label + ' → upgraded', syncPreset(home) === 'upgraded')
+    const migratedManifest = manifestAt(dist)
+    const gateResults = migratedManifest.gateWordsMigration === undefined ? {} : migratedManifest.gateWordsMigration.results
+    check('gateWords ' + label + ' 审计恰 7 项且全为 ' + expectedStatus, Object.keys(gateResults).length === 7 && Object.values(gateResults).every((result) => result === expectedStatus))
+    check('gateWords ' + label + ' manifest 仍 format=2/厂商 hash/settingsMigration 10 项', migratedManifest.format === 2 && migratedManifest.distHash === contentHash(ASSET_DIR) && Object.keys(migratedManifest.settingsMigration.results).length === 10)
+    check('gateWords ' + label + ' manifest 不泄漏用户词值', !JSON.stringify(migratedManifest).includes(GATE_CUSTOM.routeDirect) && !JSON.stringify(migratedManifest).includes(GATE_CUSTOM.purposeRedo))
+    const migratedText = readFileSync(join(dist, 'agent.cordis.yml'), 'utf8')
+    const migratedGroup = resolveSetting(parsePresetYaml(migratedText), GATE_WORDS_GROUP_DEFINITION, { aliases: false })
+    const migratedRuntime = createGateRuntime(migratedGroup.value)
+    if (label === 'valid') {
+      check('gateWords valid 迁移后逐项等于用户定制值', gateFieldNames.every((field) => migratedRuntime.words[field] === GATE_CUSTOM[field]))
+    } else {
+      const assetWords = resolveSetting(parsePresetYaml(assetAgent), GATE_WORDS_GROUP_DEFINITION, { aliases: false }).value
+      check('gateWords ' + label + ' 整组采用新模板出厂值（禁止部分迁移）', gateFieldNames.every((field) => migratedRuntime.words[field] === assetWords[field]) && migratedRuntime.words.routePlan !== GATE_CUSTOM.routePlan)
+    }
+  }
+
+  // bad-new-template：把插件包整份复制到临时目录，只改【副本】的资产 gateWords，再从副本
+  // import 生产 syncPreset（签名不变、无 test-only 参数）：坏模板必须抛错且目标目录三核心
+  // 文件逐字节不变、不留 .tmp 残骸。仓库内资产不被触碰。
+  {
+    const pluginSource = join(HERE, '..', '..', 'plugins', 'dsh-extra-plan')
+    const badVariants = [
+      ['整组缺失', (text) => stripGateGroup(text)],
+      ['单叶缺失', (text) => dropGateLeaf(text, 'purposeRedo')],
+      ['值重复', (text) => copyGateLeaf(text, 'approvalReplan', 'routeDirect')],
+    ]
+    for (const [label, mutate] of badVariants) {
+      const copyRoot = join(work, 'bad-template-' + label)
+      cpSync(pluginSource, join(copyRoot, 'dsh-extra-plan'), { recursive: true })
+      const copyAsset = join(copyRoot, 'dsh-extra-plan', 'assets', 'presets', 'extra-plan', 'agent.cordis.yml')
+      writeFileSync(copyAsset, mutate(readFileSync(copyAsset, 'utf8')), 'utf8')
+      const copySync = await import(pathToFileURL(join(copyRoot, 'dsh-extra-plan', 'lib', 'preset-sync.js')).href)
+      const home = join(work, 'bad-template-' + label + '-home')
+      const dist = join(home, '.agent-presets', 'extra-plan')
+      mkdirSync(dist, { recursive: true })
+      writeFileSync(join(dist, 'preset.yml'), assetPreset, 'utf8')
+      writeFileSync(join(dist, 'agent.cordis.yml'), customGateAgent(assetAgent), 'utf8')
+      writeManifest(dist, 'OLD-BAD-TEMPLATE-' + label)
+      const before = [readFileSync(join(dist, 'preset.yml')), readFileSync(join(dist, 'agent.cordis.yml')), readFileSync(join(dist, 'dist-manifest.json'))]
+      let thrown = null
+      try { copySync.syncPreset(home) } catch (error) { thrown = error instanceof Error ? error.message : String(error) }
+      const after = [readFileSync(join(dist, 'preset.yml')), readFileSync(join(dist, 'agent.cordis.yml')), readFileSync(join(dist, 'dist-manifest.json'))]
+      const leftovers = readdirSync(join(home, '.agent-presets')).filter((name) => name.startsWith('.tmp-'))
+      check('bad-new-template ' + label + ' → 抛错且目标三核心文件逐字节不变、无 .tmp 残骸', thrown !== null && before.every((value, index) => value.equals(after[index])) && leftovers.length === 0)
+    }
+  }
 
   const rollbackTarget = join(work, 'rollback', 'target')
   const rollbackTmp = join(work, 'rollback', 'tmp')

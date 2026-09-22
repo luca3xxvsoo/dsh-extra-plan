@@ -7,7 +7,8 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { distribute } from '../../plugins/dsh-extra-plan/scripts/distribute-preset.mjs'
 import { contentHash, readManifest, writeManifest } from '../_shared/preset-hash.mjs'
-import { SETTING_DEFINITIONS, patchYamlScalar } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
+import { SETTING_DEFINITIONS, parsePresetYaml, patchYamlScalar, resolveSetting } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
+import { GATE_WORD_FIELDS, GATE_WORD_MIGRATION_DEFINITIONS, GATE_WORDS_GROUP_DEFINITION, createGateRuntime } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 const ASSET_DIR = join(HERE, '..', '..', 'plugins', 'dsh-extra-plan', 'assets', 'presets', 'extra-plan')
@@ -60,6 +61,7 @@ try {
   const first = manifestAt(dist)
   check('首次 manifest format=2', first.format === 2)
   check('首次审计 source=absent 且恰有 10 项', first.settingsMigration && first.settingsMigration.source === 'absent' && Object.keys(first.settingsMigration.results).length === 10)
+  check('首次 gateWordsMigration 恰 7 项 skipped-source-absent', first.gateWordsMigration !== undefined && first.gateWordsMigration.source === 'absent' && Object.keys(first.gateWordsMigration.results).length === 7 && Object.values(first.gateWordsMigration.results).every((result) => result === 'skipped-source-absent'))
   check('首次厂商 distHash 正确', first.distHash === currentHash && readManifest(dist) === currentHash)
   check('同版本重装 → idle', distribute(home) === 'idle')
 
@@ -87,6 +89,35 @@ try {
   check('旧值缺失 otherAgentModel → upgraded', distribute(home) === 'upgraded')
   const missingOther = manifestAt(dist)
   check('缺失 otherAgentModel 写回空串且审计 skipped-old-missing', readFileSync(join(dist, 'agent.cordis.yml'), 'utf8').includes("otherAgentModel: ''") && missingOther.settingsMigration.results.otherAgentModel === 'skipped-old-missing')
+
+
+  // ── gateWords（distribute 包装层）：同版本改词 idle 保留 + 旧 hash 升级 restored ──
+  const GATE_CUSTOM = { routeDirect: '甲直行', routePlan: '乙规划', routeDisagree: '丙否决', approvalApprove: '丁批准', approvalReplan: '戊转规划', purposeRefine: '己完整', purposeRedo: '庚重做' }
+  const customGateAgent = (() => {
+    let out = assetAgent
+    for (const item of GATE_WORD_MIGRATION_DEFINITIONS) {
+      const patched = patchYamlScalar(out, item, GATE_CUSTOM[item.key])
+      if (!patched.ok) throw new Error('fixture patch failed: ' + item.key)
+      out = patched.text
+    }
+    return out
+  })()
+  writeFileSync(join(dist, 'agent.cordis.yml'), customGateAgent, 'utf8')
+  const beforeGateIdle = [readFileSync(join(dist, 'preset.yml')), readFileSync(join(dist, 'agent.cordis.yml')), readFileSync(join(dist, 'dist-manifest.json'))]
+  check('同版本现场改 7 词 → idle', distribute(home) === 'idle')
+  const afterGateIdle = [readFileSync(join(dist, 'preset.yml')), readFileSync(join(dist, 'agent.cordis.yml')), readFileSync(join(dist, 'dist-manifest.json'))]
+  check('idle 保留现场 7 词且三核心字节逐字不变', afterGateIdle[1].equals(beforeGateIdle[1]) && beforeGateIdle.every((value, index) => value.equals(afterGateIdle[index])))
+
+  writeFileSync(join(dist, 'agent.cordis.yml'), customGateAgent.replace('        anchoredBootstrap: false', '        anchoredBootstrap: true'), 'utf8')
+  writeManifest(dist, 'OLD-DISTRIBUTE-GATE-HASH')
+  check('旧 hash 升级 → upgraded', distribute(home) === 'upgraded')
+  const gateManifest = manifestAt(dist)
+  const gateText = readFileSync(join(dist, 'agent.cordis.yml'), 'utf8')
+  const gateRuntime = createGateRuntime(resolveSetting(parsePresetYaml(gateText), GATE_WORDS_GROUP_DEFINITION, { aliases: false }).value)
+  check('升级后 gateWordsMigration 恰 7 项全 restored 且 distHash 为厂商 hash', gateManifest.gateWordsMigration !== undefined && Object.keys(gateManifest.gateWordsMigration.results).length === 7 && Object.values(gateManifest.gateWordsMigration.results).every((result) => result === 'restored') && gateManifest.distHash === currentHash)
+  check('升级后 7 词逐项等于用户定制值（含变量映射）', GATE_WORD_FIELDS.every((item) => gateRuntime.words[item.field] === GATE_CUSTOM[item.field] && gateRuntime.variables[item.variable] === GATE_CUSTOM[item.field]))
+  check('升级后 manifest 不泄漏用户词值', !JSON.stringify(gateManifest).includes(GATE_CUSTOM.routeDirect) && !JSON.stringify(gateManifest).includes(GATE_CUSTOM.purposeRefine))
+  check('升级后 settingsMigration 仍 10 项且 format=2', gateManifest.format === 2 && Object.keys(gateManifest.settingsMigration.results).length === 10)
 
   const beforeIdle = [readFileSync(join(dist, 'preset.yml')), readFileSync(join(dist, 'agent.cordis.yml')), readFileSync(join(dist, 'dist-manifest.json'))]
   check('第二次相同发行 → idle', distribute(home) === 'idle')

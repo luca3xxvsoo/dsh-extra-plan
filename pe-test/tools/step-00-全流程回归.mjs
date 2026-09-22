@@ -4,19 +4,19 @@
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { registerHostDeps } from '../_shared/host-deps.mjs'
 await registerHostDeps()
+const plannerBudget = await import('../../plugins/dsh-extra-plan/lib/planner-budget.js')
 const PLUGIN_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/index.js', import.meta.url))
 const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
 import { createRunCodeStatic } from '../../plugins/dsh-extra-plan/lib/run-code-static.js'
+import * as shellMutation from '../../plugins/dsh-extra-plan/lib/shell-mutation.js'
+import * as runtimeStatic from '../../plugins/dsh-extra-plan/lib/runtime-static.js'
+import * as agentRuntime from '../../plugins/dsh-extra-plan/lib/agent-runtime.js'
+import { DEFAULT_EXPLORE_BUDGET as GENERATED_DEFAULT_EXPLORE_BUDGET } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
+import { existsSync, readFileSync } from 'node:fs'
+import { parsePresetYaml } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
+import { GATE_WORD_FIELDS, GATE_WORD_MIGRATION_DEFINITIONS, createGateRuntime, validateGateWords } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
 const {
   CHANNEL_BROKEN_CODES,
-  ROUTE_WORD_DIRECT,
-  ROUTE_WORD_PLAN,
-  ROUTE_WORD_DISAGREE,
-  APPROVAL_WORD_APPROVE,
-  APPROVAL_WORD_REPLAN,
-  ROUTE_OPTIONS_TEXT,
-  ROUTE_CONFIRM_TEXT,
-  APPROVAL_OPTIONS_TEXT,
   routeDenyReason,
   planDenyReason,
   approvalDenyReason,
@@ -78,6 +78,49 @@ const {
   sortPlannerCandidates,
 } = plugin.decisions
 const HERE = fileURLToPath(new URL('.', import.meta.url))
+
+// ── 闸门词唯一真源 = 资产 YAML（config.gateWords） ───────────────────────────
+// 默认正例与期望文案一律由 parsePresetYaml 取到的配置经 createGateRuntime 派生；
+// decisions 不再导出任何词值常量，测试也不手写第二份词值。
+const ASSET_AGENT_FILE = fileURLToPath(new URL('../../plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml', import.meta.url))
+const GATE_WORDS_LIB_FILE = fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/gate-words.js', import.meta.url))
+const assetDocument = parsePresetYaml(readFileSync(ASSET_AGENT_FILE, 'utf8'))
+function flattenAssetRows(list) {
+  const out = []
+  for (const row of list) {
+    if (row === null || typeof row !== "object") continue
+    out.push(row)
+    if (row.group === true && Array.isArray(row.config)) out.push(...flattenAssetRows(row.config))
+  }
+  return out
+}
+const assetRowsAll = flattenAssetRows(assetDocument)
+const assetExtraPlanConfig = assetRowsAll.find((row) => row.id === 'extra-plan').config
+const assetGateWords = assetExtraPlanConfig.gateWords
+const gateRuntime = createGateRuntime(assetGateWords)
+const ROUTE_WORD_DIRECT = gateRuntime.words.routeDirect
+const ROUTE_WORD_PLAN = gateRuntime.words.routePlan
+const ROUTE_WORD_DISAGREE = gateRuntime.words.routeDisagree
+const APPROVAL_WORD_APPROVE = gateRuntime.words.approvalApprove
+const APPROVAL_WORD_REPLAN = gateRuntime.words.approvalReplan
+const ROUTE_OPTIONS_TEXT = gateRuntime.options.route
+const APPROVAL_OPTIONS_TEXT = gateRuntime.options.approval
+const ROUTE_CONFIRM_TEXT = gateRuntime.confirm.route
+
+// ── apply 统一入口（4 处 plugin.apply 站点同源） ────────────────────────────
+// 合并资产 YAML 的 gateWords（调用方显式传 gateWords 时以调用方为准），并补齐
+// systemPrompt/effect mock；坏配置入口不经本 helper（直接调 plugin.apply）。
+function applyPlugin(ctx, config, registry) {
+  const variables = registry !== undefined ? registry : []
+  ctx.systemPrompt = { variable: (name, provider) => { variables.push({ name, provider }); return () => {} } }
+  if (typeof ctx.effect !== "function") ctx.effect = (fn) => fn()
+  if (typeof ctx.get === "function") {
+    const inner = ctx.get
+    ctx.get = (name) => (name === "systemPrompt" ? ctx.systemPrompt : inner(name))
+  }
+  plugin.apply(ctx, Object.assign({ gateWords: assetGateWords }, config))
+  return variables
+}
 const staticRunCode = createRunCodeStatic({
   askTool: 'ask_user_question',
   isDispatchStart: (type) => type === 'tool/ptc-dispatch-start' || type === 'tool/code-dispatch-start',
@@ -137,6 +180,18 @@ const PUBLIC_E1_E5_INPUTS = [
 check('公开导出 extractProbeEvidenceRefs 对 E1-E5 输入给出相同结果',
   PUBLIC_E1_E5_INPUTS.map((input) => plugin.extractProbeEvidenceRefs(input)),
   PUBLIC_E1_E5_INPUTS.map((input) => plugin.decisions.extractProbeEvidenceRefs(input)))
+check('shell PWSH_MUTATION 与 decisions 严格同一绑定', plugin.decisions.PWSH_MUTATION === shellMutation.PWSH_MUTATION, true)
+check('shell BASH_MUTATION 与 decisions 严格同一绑定', plugin.decisions.BASH_MUTATION === shellMutation.BASH_MUTATION, true)
+check('shell pwshMutationMatches 与 decisions 严格同一绑定', plugin.decisions.pwshMutationMatches === shellMutation.pwshMutationMatches, true)
+check('shell bashMutationMatches 与 decisions 严格同一绑定', plugin.decisions.bashMutationMatches === shellMutation.bashMutationMatches, true)
+check('planner toolCallCount 与 decisions 严格同一绑定', plugin.decisions.toolCallCount === plannerBudget.toolCallCount, true)
+check('planner budgetNoticeText 与 decisions 严格同一绑定', plugin.decisions.budgetNoticeText === plannerBudget.budgetNoticeText, true)
+check('planner DEFAULT_EXPLORE_BUDGET 来自生成模块且为 18', plannerBudget.DEFAULT_EXPLORE_BUDGET === GENERATED_DEFAULT_EXPLORE_BUDGET, true)
+check('生成默认值当前为 18', GENERATED_DEFAULT_EXPLORE_BUDGET, 18)
+check('agent runtime isLiveDelegation 与 decisions 严格同一绑定', plugin.decisions.isLiveDelegation === agentRuntime.isLiveDelegation, true)
+check('agent runtime childPolicyNeedsFloor 与 decisions 严格同一绑定', plugin.decisions.childPolicyNeedsFloor === agentRuntime.childPolicyNeedsFloor, true)
+check('runtime-static parseSkillFrontmatter 只收显式头字段', JSON.stringify(runtimeStatic.parseSkillFrontmatter('name: demo\ndescription: desc\nbody')), JSON.stringify({ name: 'demo', description: 'desc' }))
+check('runtime-static causeChainOf 按显式 depth 截断', runtimeStatic.causeChainOf({ name: 'A', message: 'a', cause: { name: 'B', message: 'b' } }, 1).length, 1)
 
 // ── KA 系列:ask 分类与参数解析（v4 更名：原 K 系列让位于子代理角色组判定 K 系列；断言内容逐字不变） ──
 const KA = [
@@ -149,7 +204,7 @@ const KA = [
 ]
 for (const [name, data, expected] of KA) {
   const labels = labelsOfCallData(data)
-  check(name, labels === null ? null : askKindOf(labels), expected)
+  check(name, labels === null ? null : askKindOf(labels, gateRuntime), expected)
 }
 
 // ── LQ 系列:labelsOfCallData 只收首问（第二问选项不进入验词集合） ─────────
@@ -170,18 +225,18 @@ for (const [name, data, expected] of LQ) {
 
 // ── M 系列:验词映射 ────────────────────────────────────────────────────
 const M = [
-  ['M1 路由词「直接执行」→ direct', matchRouteLabel(['直接执行']), 'direct'],
-  ['M2 路由词「进行pro规划」→ plan', matchRouteLabel(['进行pro规划']), 'plan'],
-  ['M3 路由词「不同意」→ disagree', matchRouteLabel(['不同意']), 'disagree'],
-  ['M4 路由词无匹配 → null', matchRouteLabel([]), null],
-  ['M5 路由词带后缀「直接执行（推荐）」→ direct', matchRouteLabel(['直接执行（推荐）']), 'direct'],
-  ['M6 批准词「同意执行」→ approve', matchApprovalLabel(['同意执行']), 'approve'],
-  ['M7 批准词「转交pro规划」→ replan', matchApprovalLabel(['转交pro规划']), 'replan'],
-  ['M8 批准词「不同意」→ disagree', matchApprovalLabel(['不同意']), 'disagree'],
-  ['M9 批准词无匹配 → null', matchApprovalLabel(['别的词']), null],
-  ['M10 目的词「完善方案」→ refine', matchPurposeLabel(['完善方案']), 'refine'],
-  ['M11 目的词「重新规划」→ redo', matchPurposeLabel(['重新规划']), 'redo'],
-  ['M12 目的词无匹配 → null', matchPurposeLabel(['别的词']), null],
+  ['M1 路由词「直接执行」→ direct', matchRouteLabel(['直接执行'], gateRuntime), 'direct'],
+  ['M2 路由词「进行pro规划」→ plan', matchRouteLabel(['进行pro规划'], gateRuntime), 'plan'],
+  ['M3 路由词「不同意」→ disagree', matchRouteLabel(['不同意'], gateRuntime), 'disagree'],
+  ['M4 路由词无匹配 → null', matchRouteLabel([], gateRuntime), null],
+  ['M5 路由词带后缀「直接执行（推荐）」→ direct', matchRouteLabel(['直接执行（推荐）'], gateRuntime), 'direct'],
+  ['M6 批准词「同意执行」→ approve', matchApprovalLabel(['同意执行'], gateRuntime), 'approve'],
+  ['M7 批准词「转交pro规划」→ replan', matchApprovalLabel(['转交pro规划'], gateRuntime), 'replan'],
+  ['M8 批准词「不同意」→ disagree', matchApprovalLabel(['不同意'], gateRuntime), 'disagree'],
+  ['M9 批准词无匹配 → null', matchApprovalLabel(['别的词'], gateRuntime), null],
+  ['M10 目的词「完善方案」→ refine', matchPurposeLabel(['完善方案'], gateRuntime), 'refine'],
+  ['M11 目的词「重新规划」→ redo', matchPurposeLabel(['重新规划'], gateRuntime), 'redo'],
+  ['M12 目的词无匹配 → null', matchPurposeLabel(['别的词'], gateRuntime), null],
 ]
 for (const [name, got, expected] of M) check(name, got, expected)
 
@@ -233,7 +288,7 @@ const F = [
   ['F35 完整阶段后 NO_PROVIDER → 保留阶段状态并逃生', fullPlanApprovedEvents.concat([call('ask_user_question', 'fa5', routeArgs), err('fa5', 'NO_PROVIDER')]), { route: 'plan', clarified: true, approved: true, purpose: 'refine', channelBroken: true }],
 ]
 for (const [name, events, expected] of F) {
-  check(name, deriveFlowState(events), expected)
+  check(name, deriveFlowState(events, gateRuntime), expected)
 }
 
 // ── GK 系列:三分法 gate ask 分类（categorizeGateAsk） ────────────────────
@@ -241,29 +296,29 @@ const wordRouteArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label
 const wordApproveArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '同意执行' }] }] })
 const twoWordRouteArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '直接执行' }, { label: '进行pro规划' }] }] })
 const GK = [
-  ['GK1 标准三词路由 ask → standard', categorizeGateAsk(['直接执行', '进行pro规划', '不同意']), 'standard'],
-  ['GK2 标准三词批准 ask → standard', categorizeGateAsk(['同意执行', '转交pro规划', '不同意']), 'standard'],
-  ['GK3 单词路由 ask（只有「直接执行」）→ malformed', categorizeGateAsk(['直接执行']), 'malformed'],
-  ['GK4 两词路由 ask（缺「不同意」）→ malformed', categorizeGateAsk(['直接执行', '进行pro规划']), 'malformed'],
-  ['GK5 纯澄清 ask → ordinary', categorizeGateAsk(['方案A', '方案B']), 'ordinary'],
-  ['GK6 带 (Recommended) 后缀的路由 ask → standard', categorizeGateAsk(['直接执行 (Recommended)', '进行pro规划 (Recommended)', '不同意 (Recommended)']), 'standard'],
-  ['GK7 带（推荐）后缀的批准 ask → standard', categorizeGateAsk(['同意执行（推荐）', '转交pro规划（推荐）', '不同意（推荐）']), 'standard'],
-  ['GK8 带 (recommended) 小写后缀 → standard', categorizeGateAsk(['直接执行 (recommended)', '进行pro规划 (recommended)', '不同意 (recommended)']), 'standard'],
-  ['GK8b 无空格半角（推荐）后缀 → standard', categorizeGateAsk(['直接执行(推荐)', '进行pro规划(推荐)', '不同意(推荐)']), 'standard'],
-  ['GK9 非白名单变体（! 等额外字符）→ malformed', categorizeGateAsk(['直接执行!', '进行pro规划', '不同意']), 'malformed'],
-  ['GK10 方括号后缀 [推荐] → malformed', categorizeGateAsk(['直接执行 [推荐]', '进行pro规划 [推荐]', '不同意 [推荐]']), 'malformed'],
-  ['GK11 标准二词目的 ask → standard', categorizeGateAsk(['完善方案', '重新规划']), 'standard'],
-  ['GK12 单词目的 ask（只有「完善方案」）→ malformed', categorizeGateAsk(['完善方案']), 'malformed'],
-  ['GK13 带 (Recommended) 后缀的目的 ask → standard', categorizeGateAsk(['完善方案 (Recommended)', '重新规划 (Recommended)']), 'standard'],
+  ['GK1 标准三词路由 ask → standard', categorizeGateAsk(['直接执行', '进行pro规划', '不同意'], gateRuntime), 'standard'],
+  ['GK2 标准三词批准 ask → standard', categorizeGateAsk(['同意执行', '转交pro规划', '不同意'], gateRuntime), 'standard'],
+  ['GK3 单词路由 ask（只有「直接执行」）→ malformed', categorizeGateAsk(['直接执行'], gateRuntime), 'malformed'],
+  ['GK4 两词路由 ask（缺「不同意」）→ malformed', categorizeGateAsk(['直接执行', '进行pro规划'], gateRuntime), 'malformed'],
+  ['GK5 纯澄清 ask → ordinary', categorizeGateAsk(['方案A', '方案B'], gateRuntime), 'ordinary'],
+  ['GK6 带 (Recommended) 后缀的路由 ask → standard', categorizeGateAsk(['直接执行 (Recommended)', '进行pro规划 (Recommended)', '不同意 (Recommended)'], gateRuntime), 'standard'],
+  ['GK7 带（推荐）后缀的批准 ask → standard', categorizeGateAsk(['同意执行（推荐）', '转交pro规划（推荐）', '不同意（推荐）'], gateRuntime), 'standard'],
+  ['GK8 带 (recommended) 小写后缀 → standard', categorizeGateAsk(['直接执行 (recommended)', '进行pro规划 (recommended)', '不同意 (recommended)'], gateRuntime), 'standard'],
+  ['GK8b 无空格半角（推荐）后缀 → standard', categorizeGateAsk(['直接执行(推荐)', '进行pro规划(推荐)', '不同意(推荐)'], gateRuntime), 'standard'],
+  ['GK9 非白名单变体（! 等额外字符）→ malformed', categorizeGateAsk(['直接执行!', '进行pro规划', '不同意'], gateRuntime), 'malformed'],
+  ['GK10 方括号后缀 [推荐] → malformed', categorizeGateAsk(['直接执行 [推荐]', '进行pro规划 [推荐]', '不同意 [推荐]'], gateRuntime), 'malformed'],
+  ['GK11 标准二词目的 ask → standard', categorizeGateAsk(['完善方案', '重新规划'], gateRuntime), 'standard'],
+  ['GK12 单词目的 ask（只有「完善方案」）→ malformed', categorizeGateAsk(['完善方案'], gateRuntime), 'malformed'],
+  ['GK13 带 (Recommended) 后缀的目的 ask → standard', categorizeGateAsk(['完善方案 (Recommended)', '重新规划 (Recommended)'], gateRuntime), 'standard'],
 ]
 for (const [name, got, expected] of GK) check(name, got, expected)
 
 // ── GM 系列:gate ask deny 文案（gateAskDenyReason） ──────────────────────
 const GM = [
-  ['GM1 单词路由 deny 文案含标准模板', gateAskDenyReason(['直接执行']).includes('路由 ask 选项固定为') && gateAskDenyReason(['直接执行']).includes('批准 ask 选项固定为'), true],
-  ['GM2 单词路由 deny 文案含具体缺项', gateAskDenyReason(['直接执行']).includes('进行pro规划') && gateAskDenyReason(['直接执行']).includes('不同意'), true],
-  ['GM3 非白名单变体 deny 不含「缺少：」且含推荐标记范围提示', !gateAskDenyReason(['直接执行!', '进行pro规划', '不同意']).includes('缺少：') && gateAskDenyReason(['直接执行!', '进行pro规划', '不同意']).includes('推荐标记仅限'), true],
-  ['GM4 单词目的 deny 文案含目的模板与缺项', gateAskDenyReason(['完善方案']).includes('目的 ask 选项固定为') && gateAskDenyReason(['完善方案']).includes('当前目的 ask 缺少：重新规划'), true],
+  ['GM1 单词路由 deny 文案含标准模板', gateAskDenyReason(['直接执行'], gateRuntime).includes('路由 ask 选项固定为') && gateAskDenyReason(['直接执行'], gateRuntime).includes('批准 ask 选项固定为'), true],
+  ['GM2 单词路由 deny 文案含具体缺项', gateAskDenyReason(['直接执行'], gateRuntime).includes('进行pro规划') && gateAskDenyReason(['直接执行'], gateRuntime).includes('不同意'), true],
+  ['GM3 非白名单变体 deny 不含「缺少：」且含推荐标记范围提示', !gateAskDenyReason(['直接执行!', '进行pro规划', '不同意'], gateRuntime).includes('缺少：') && gateAskDenyReason(['直接执行!', '进行pro规划', '不同意'], gateRuntime).includes('推荐标记仅限'), true],
+  ['GM4 单词目的 deny 文案含目的模板与缺项', gateAskDenyReason(['完善方案'], gateRuntime).includes('目的 ask 选项固定为') && gateAskDenyReason(['完善方案'], gateRuntime).includes('当前目的 ask 缺少：重新规划'), true],
 ]
 for (const [name, got, expected] of GM) check(name, got, expected)
 
@@ -273,22 +328,22 @@ const F21 = [
   ['F22 单词批准 ask 答「同意执行」→ approved=true', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A'])), call('ask_user_question', 'a3', wordApproveArgs), ok('a3', answer(['同意执行']))], { route: 'plan', clarified: false, approved: true, purpose: 'none', channelBroken: false }],
 ]
 for (const [name, events, expected] of F21) {
-  check(name, deriveFlowState(events), expected)
+  check(name, deriveFlowState(events, gateRuntime), expected)
 }
 
 // ── GL 系列:结构校验纯函数（validateGateAskStructure） ────────────────────
 const glApproveQ1 = [{ id: 'q1', question: '请选择', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }]
 const GL = [
-  ['GL1 路由 ask 恰好 1 个问题（缺第二问）→ 不通过，含「须至少 2 个问题」', (() => { const r = validateGateAskStructure('route', [{ id: 'q1', question: '请选择', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }]); return r !== null && r.includes('须至少 2 个问题') })(), true],
-  ['GL2 批准 ask 仅 1 个问题缺修改意见 → 不通过，含"修改意见"', validateGateAskStructure('approve', [{ id: 'q1', question: '请选择', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }]) !== null && validateGateAskStructure('approve', [{ id: 'q1', question: '请选择', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }]).includes('修改意见'), true],
-  ['GL3 批准第二问带非空 options → 拒（含修改意见/纯文本/不得提供选项）', (() => { const r = validateGateAskStructure('approve', [...glApproveQ1, { id: 'q2', question: '修改意见', options: [{ label: '无' }] }]); return r !== null && r.includes('修改意见') && r.includes('纯文本') && r.includes('不得提供选项') })(), true],
-  ['GL4 批准第二问 options:[] → 通过（空数组=纯文本框）', validateGateAskStructure('approve', [...glApproveQ1, { id: 'q2', question: '修改意见', options: [] }]), null],
-  ['GL5 批准第二问无 options 字段 → 通过', validateGateAskStructure('approve', [...glApproveQ1, { id: 'q2', question: '修改意见' }]), null],
-  ['GL6 批准第三问带 options → 拒（第二问起全部校验）', (() => { const r = validateGateAskStructure('approve', [...glApproveQ1, { id: 'q2', question: '修改意见' }, { id: 'q3', question: '补充', options: [{ label: 'x' }] }]); return r !== null && r.includes('纯文本') })(), true],
-  ['GL7 路由 2 问（第二问纯文本补充要求）→ 通过', validateGateAskStructure('route', [{ id: 'q1', question: '请选择', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }, { id: 'q2', question: '补充要求' }]), null],
-  ['GL7b 路由 2 问第二问带非空 options → 拒（含「补充要求」「纯文本」）', (() => { const r = validateGateAskStructure('route', [{ id: 'q1', question: '请选择', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }, { id: 'q2', question: '补充要求', options: [{ label: '选项A' }] }]); return r !== null && r.includes('补充要求') && r.includes('纯文本') })(), true],
-  ['GL8 目的 ask 恰好 1 个问题 → 通过', validateGateAskStructure('purpose', [{ id: 'q1', question: '请选择', options: [{ label: '完善方案' }, { label: '重新规划' }] }]), null],
-  ['GL9 目的 ask 2 问 → 拒含「目的 ask 结构错误」与「须恰好 1 个问题」', (() => { const r = validateGateAskStructure('purpose', [{ id: 'q1', question: '请选择', options: [{ label: '完善方案' }, { label: '重新规划' }] }, { id: 'q2', question: '补充' }]); return r !== null && r.includes('目的 ask 结构错误') && r.includes('须恰好 1 个问题') })(), true],
+  ['GL1 路由 ask 恰好 1 个问题（缺第二问）→ 不通过，含「须至少 2 个问题」', (() => { const r = validateGateAskStructure('route', [{ id: 'q1', question: '请选择', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }], gateRuntime); return r !== null && r.includes('须至少 2 个问题') })(), true],
+  ['GL2 批准 ask 仅 1 个问题缺修改意见 → 不通过，含"修改意见"', validateGateAskStructure('approve', [{ id: 'q1', question: '请选择', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }], gateRuntime) !== null && validateGateAskStructure('approve', [{ id: 'q1', question: '请选择', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }], gateRuntime).includes('修改意见'), true],
+  ['GL3 批准第二问带非空 options → 拒（含修改意见/纯文本/不得提供选项）', (() => { const r = validateGateAskStructure('approve', [...glApproveQ1, { id: 'q2', question: '修改意见', options: [{ label: '无' }] }], gateRuntime); return r !== null && r.includes('修改意见') && r.includes('纯文本') && r.includes('不得提供选项') })(), true],
+  ['GL4 批准第二问 options:[] → 通过（空数组=纯文本框）', validateGateAskStructure('approve', [...glApproveQ1, { id: 'q2', question: '修改意见', options: [] }], gateRuntime), null],
+  ['GL5 批准第二问无 options 字段 → 通过', validateGateAskStructure('approve', [...glApproveQ1, { id: 'q2', question: '修改意见' }], gateRuntime), null],
+  ['GL6 批准第三问带 options → 拒（第二问起全部校验）', (() => { const r = validateGateAskStructure('approve', [...glApproveQ1, { id: 'q2', question: '修改意见' }, { id: 'q3', question: '补充', options: [{ label: 'x' }] }], gateRuntime); return r !== null && r.includes('纯文本') })(), true],
+  ['GL7 路由 2 问（第二问纯文本补充要求）→ 通过', validateGateAskStructure('route', [{ id: 'q1', question: '请选择', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }, { id: 'q2', question: '补充要求' }], gateRuntime), null],
+  ['GL7b 路由 2 问第二问带非空 options → 拒（含「补充要求」「纯文本」）', (() => { const r = validateGateAskStructure('route', [{ id: 'q1', question: '请选择', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }, { id: 'q2', question: '补充要求', options: [{ label: '选项A' }] }], gateRuntime); return r !== null && r.includes('补充要求') && r.includes('纯文本') })(), true],
+  ['GL8 目的 ask 恰好 1 个问题 → 通过', validateGateAskStructure('purpose', [{ id: 'q1', question: '请选择', options: [{ label: '完善方案' }, { label: '重新规划' }] }], gateRuntime), null],
+  ['GL9 目的 ask 2 问 → 拒含「目的 ask 结构错误」与「须恰好 1 个问题」', (() => { const r = validateGateAskStructure('purpose', [{ id: 'q1', question: '请选择', options: [{ label: '完善方案' }, { label: '重新规划' }] }, { id: 'q2', question: '补充' }], gateRuntime); return r !== null && r.includes('目的 ask 结构错误') && r.includes('须恰好 1 个问题') })(), true],
 ]
 for (const [name, got, expected] of GL) check(name, got, expected)
 
@@ -412,10 +467,10 @@ check('BR7d 两次调用 id 唯一', budgetReminderMessage(REMIND3).id !== msg.i
 
 // ── DR 系列:deny 提示模板与闸门词表同源（v0.1.9） ─────────────────────
 const DR = [
-  ['DR1 routeDenyReason 含三个路由词', routeDenyReason('write/edit').includes(ROUTE_WORD_DIRECT) && routeDenyReason('write/edit').includes(ROUTE_WORD_PLAN) && routeDenyReason('write/edit').includes(ROUTE_WORD_DISAGREE), true],
-  ['DR2 planDenyReason 含三个路由词', planDenyReason('subagent_plan').includes(ROUTE_WORD_DIRECT) && planDenyReason('subagent_plan').includes(ROUTE_WORD_PLAN) && planDenyReason('subagent_plan').includes(ROUTE_WORD_DISAGREE), true],
-  ['DR3 approvalDenyReason 含三个批准词', approvalDenyReason('subagent').includes(APPROVAL_WORD_APPROVE) && approvalDenyReason('subagent').includes(APPROVAL_WORD_REPLAN) && approvalDenyReason('subagent').includes(ROUTE_WORD_DISAGREE), true],
-  ['DR4 approvalDenyReason 不误用路由词集合', !approvalDenyReason('subagent').includes(ROUTE_WORD_DIRECT), true],
+  ['DR1 routeDenyReason 含三个路由词', routeDenyReason('write/edit', undefined, gateRuntime).includes(ROUTE_WORD_DIRECT) && routeDenyReason('write/edit', undefined, gateRuntime).includes(ROUTE_WORD_PLAN) && routeDenyReason('write/edit', undefined, gateRuntime).includes(ROUTE_WORD_DISAGREE), true],
+  ['DR2 planDenyReason 含三个路由词', planDenyReason('subagent_plan', undefined, gateRuntime).includes(ROUTE_WORD_DIRECT) && planDenyReason('subagent_plan', undefined, gateRuntime).includes(ROUTE_WORD_PLAN) && planDenyReason('subagent_plan', undefined, gateRuntime).includes(ROUTE_WORD_DISAGREE), true],
+  ['DR3 approvalDenyReason 含三个批准词', approvalDenyReason('subagent', undefined, gateRuntime).includes(APPROVAL_WORD_APPROVE) && approvalDenyReason('subagent', undefined, gateRuntime).includes(APPROVAL_WORD_REPLAN) && approvalDenyReason('subagent', undefined, gateRuntime).includes(ROUTE_WORD_DISAGREE), true],
+  ['DR4 approvalDenyReason 不误用路由词集合', !approvalDenyReason('subagent', undefined, gateRuntime).includes(ROUTE_WORD_DIRECT), true],
 ]
 for (const [name, got, expected] of DR) check(name, got, expected)
 
@@ -487,6 +542,48 @@ const sp = (override, defaultMode) => ({ overrideOf: () => override, defaultMode
 check('FLOOR1 会话级 read-only → 抬升', childPolicyNeedsFloor({}, sp('read-only', 'workspace-write')), true)
 check('FLOOR2 部署默认 read-only → 抬升', childPolicyNeedsFloor({}, sp(undefined, 'read-only')), true)
 check('FLOOR3 workspace-write → 不动', childPolicyNeedsFloor({}, sp(undefined, 'workspace-write')), false)
+
+// ── AR 系列:createAgentRuntime per-apply 状态、快照与同步 fold ─────────────
+const runtimeDescriptor = { type: 'subagent/descriptor', data: { mode: 'continuable' } }
+const runtimeEvents = []
+const runtimeParentIds = new Set(['runtime-parent'])
+const runtimeFoldRoles = []
+const runtimeFloorWrites = []
+const runtimeWarnings = []
+const runtimeChild = {
+  session: { header: { id: 'runtime-child', origin: 'subagent', delegationDepth: 1, parentSession: 'runtime-parent' }, snapshotEvents: () => runtimeEvents, append: (...args) => runtimeFloorWrites.push(args) },
+  ctx: undefined,
+}
+const runtime = agentRuntime.createAgentRuntime({
+  getAgents: () => ({ get: (id) => runtimeParentIds.has(id) ? {} : undefined }),
+  sandboxPolicy: { overrideOf: () => 'read-only', defaultMode: 'workspace-write' },
+  foldUsage: (_agent, role) => runtimeFoldRoles.push(role),
+  warn: (message) => runtimeWarnings.push(message),
+})
+check('AR1 无 descriptor 不缓存 false', runtime.isPlannerChild(runtimeChild, []), false)
+runtimeEvents.push(runtimeDescriptor)
+check('AR2 后补 descriptor 可纠正为 planner=true', runtime.isPlannerChild(runtimeChild, runtimeEvents), true)
+let explicitSnapshotCalls = 0
+const explicitSnapshotAgent = {
+  session: { header: { id: 'runtime-explicit', origin: 'subagent', delegationDepth: 1, parentSession: 'runtime-parent' }, snapshotEvents: () => { explicitSnapshotCalls += 1; return [runtimeDescriptor] } },
+  ctx: undefined,
+}
+const explicitEvents = [runtimeDescriptor]
+runtime.isPlannerChild(explicitSnapshotAgent, explicitEvents)
+runtime.isChild(explicitSnapshotAgent, explicitEvents)
+check('AR3 显式 events 快照复用且不读取 session.snapshotEvents', explicitSnapshotCalls, 0)
+check('AR4 缺失 agent/ctx/tools/schema 降级为 undefined', runtime.toolSchemasOf(undefined) === undefined && runtime.toolSchemasOf({}) === undefined && runtime.toolSchemasOf({ ctx: { get: () => ({}) } }) === undefined, true)
+let schemaCalls = 0
+const runtimeSchemaAgent = { ctx: { get: (name) => name === 'tools' ? { schemas: () => { schemaCalls += 1; return [{ name: 'read' }] } } : undefined } }
+check('AR5 toolSchemasOf 成功返回数组且不缓存', JSON.stringify(runtime.toolSchemasOf(runtimeSchemaAgent)), JSON.stringify([{ name: 'read' }]))
+runtime.toolSchemasOf(runtimeSchemaAgent)
+check('AR5b toolSchemasOf 每次重新读取 schemas', schemaCalls, 2)
+check('AR6 childBaseline 同步 fold 后追加 workspace-write floor', runtime.childBaseline(runtimeChild, runtimeEvents) === true && runtimeFoldRoles.at(-1) === 'planner' && runtimeFloorWrites.length === 1, true)
+runtimeParentIds.clear()
+check('AR7 usageRoleOf 优先缓存，registry 脱离后仍为 planner', runtime.usageRoleOf(runtimeChild), 'planner')
+const runtimeMain = { session: { header: { id: 'runtime-main' }, snapshotEvents: () => [] }, ctx: undefined }
+runtime.childBaseline(runtimeMain, [])
+check('AR8 main baseline 同步 fold 且不追加 floor', runtimeFoldRoles.at(-1) === 'main' && runtimeFloorWrites.length === 1 && runtimeWarnings.length === 0, true)
 
 // ── RENDER 系列:save_plan 渲染契约（v0.1.3 回归：必须返回 ContentBlock[]）──
 const rendered = renderSavePlan({ paths: ['a.md', 'b.md'] })
@@ -575,7 +672,7 @@ const schemaCtx = {
     schemaRegistration.listeners[name].push(fn)
   },
 }
-plugin.apply(schemaCtx, { anchoredBootstrap: false })
+applyPlugin(schemaCtx, { anchoredBootstrap: false })
 const schemaAgent = {
   session: { header: { id: 'schema-main' }, snapshotEvents: () => [] },
   ctx: { get: (name) => name === 'tools' ? schemaTools : undefined },
@@ -748,7 +845,7 @@ function makePlannerHarness(options = {}) {
     otherAgentModel: options.otherAgentModel === undefined ? '' : options.otherAgentModel,
   }
   if (Object.prototype.hasOwnProperty.call(options, 'crossProviderPlannerModel')) config.crossProviderPlannerModel = options.crossProviderPlannerModel
-  plugin.apply(ctx, config)
+  applyPlugin(ctx, config)
   return { agent, parent, listeners, timeline }
 }
 
@@ -1100,7 +1197,7 @@ function makeNonPlannerHarness(options = {}) {
     otherAgentModel: options.otherAgentModel === undefined ? OTHER_MODEL : options.otherAgentModel,
   }
   if (Object.prototype.hasOwnProperty.call(options, 'crossProviderPlannerModel')) config.crossProviderPlannerModel = options.crossProviderPlannerModel
-  plugin.apply(ctx, config)
+  applyPlugin(ctx, config)
   return { main, planner, registry, agents, agent: agents.values().next().value, listeners, timeline }
 }
 
@@ -1357,7 +1454,7 @@ function makeAskHarness() {
     },
     provide: (name, value) => { ctx[name] = value },
   }
-  plugin.apply(ctx, { anchoredBootstrap: false })
+  applyPlugin(ctx, { anchoredBootstrap: false })
   return listeners
 }
 const askHarness = makeAskHarness()
@@ -1435,7 +1532,7 @@ const FC = [
   ['FC11 嵌套完整阶段后 ASK_CANCELLED → 五字段清理', fullNestedPlanApprovedEvents.concat([cdStart('ask_user_question', 'fn5', nestedRouteArgs), cdEnd('fn5', 'Error: ask cancelled', true)]), { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
 ]
 for (const [name, events, expected] of FC) {
-  check(name, deriveFlowState(events), expected)
+  check(name, deriveFlowState(events, gateRuntime), expected)
 }
 
 
@@ -1528,11 +1625,12 @@ for (const [name, code, expected] of H) {
   check(name, codeMutationHints(code), expected)
 }
 
-// ── ASK 系列:ask_user_question 返回值白名单纯函数（任务1/2） ─────────────
+// ── ASK 系列:ask_user_question 返回链闸门纯函数（任务1/2） ─────────────
 const ASK_RETURN = [
   ['AR1 无 ask 源码 → null', 'const x = 1', null],
   ['AR2 直接 return-await → null', 'return await tools.ask_user_question({})', null],
-  ['AR3 单变量 JSON.stringify 且按边界引用 → null', 'const q = await tools.ask_user_question({}); return JSON.stringify({ question: q })', null],
+  ['AR3 单变量 JSON.stringify 返回 → null', 'const q = await tools.ask_user_question({}); return JSON.stringify({ question: q })', null],
+  ['AR3b 单变量直接 return → null', 'const q = await tools.ask_user_question({}); return q', null],
   ['AR4 裸 await → 拒绝', 'await tools.ask_user_question({})', 'deny'],
   ['AR5 只赋值不返回 → 拒绝', 'const q = await tools.ask_user_question({})', 'deny'],
   ['AR6 return 未按边界引用 q → 拒绝', 'const q = await tools.ask_user_question({}); return JSON.stringify({ question: qq })', 'deny'],
@@ -1547,7 +1645,7 @@ for (const [name, code, expected] of ASK_RETURN) {
   const got = askUserQuestionReturnGateReason(code)
   const okResult = expected === null
     ? got === null
-    : typeof got === 'string' && got.includes('return await tools.ask_user_question(...)') && got.includes('const q = await tools.ask_user_question(...); return JSON.stringify({ question: q })')
+    : typeof got === 'string' && got.includes('结果未正确返回用户层')
   if (okResult) { pass += 1 } else { fail += 1 }
   console.log((okResult ? 'PASS' : 'FAIL') + '  ' + name + '  (期望 ' + JSON.stringify(expected) + ', 实际 ' + JSON.stringify(got) + ')')
 }
@@ -1558,15 +1656,15 @@ const writeCodeFx = "await writeFileSync('x', '1')"
 const noneStateFx = { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }
 const planStateFx = { route: 'plan', clarified: true, approved: false, purpose: 'refine', channelBroken: false }
 const approvedStateFx = { route: 'plan', clarified: true, approved: true, purpose: 'refine', channelBroken: false }
-const mainGroupReason = (state, code) => runCodeGroupDenyReason(state, { arguments: { code } }, { kind: 'main' }, {})
+  const mainGroupReason = (state, code) => runCodeGroupDenyReason(state, { arguments: { code } }, { kind: 'main' }, { gateRuntime })
 const I = [
   ['I1 主会话 none+纯只读 → 放行(null)', readOnlyCodeFx, noneStateFx, null],
-  ['I2 主会话 none+裸写 → 聚合含 routeDenyReason(write/edit,{route:none}) 全文', writeCodeFx, noneStateFx, [routeDenyReason('write/edit', { route: 'none' })]],
-  ['I3 主会话 plan+裸写 → 聚合含 routeDenyReason(write/edit,{route:plan}) 全文（含「规划态下主会话不可写文件」）', writeCodeFx, planStateFx, [routeDenyReason('write/edit', { route: 'plan' })]],
+  ['I2 主会话 none+裸写 → 聚合含 routeDenyReason(write/edit,{route:none}) 全文', writeCodeFx, noneStateFx, [routeDenyReason('write/edit', { route: 'none' }, gateRuntime)]],
+  ['I3 主会话 plan+裸写 → 聚合含 routeDenyReason(write/edit,{route:plan}) 全文（含「规划态下主会话不可写文件」）', writeCodeFx, planStateFx, [routeDenyReason('write/edit', { route: 'plan' }, gateRuntime)]],
   ['I4 主会话 approved+纯只读 → 放行(null)（v4:组空全过，ptc 死锁解除）', readOnlyCodeFx, approvedStateFx, null],
   ['I5 主会话 approved+裸写 → 聚合含「方案已批准，执行请走 subagent 委派」', writeCodeFx, approvedStateFx, ['方案已批准，执行请走 subagent 委派']],
   ['I6 主会话 approved+tools.subagent(run_in_background:true) → 放行(null)', "await tools.subagent({ task: 'x', run_in_background: true })", approvedStateFx, null],
-  ['I7 主会话 none+裸写+subagent_plan → 聚合同时含两条子文案', "await writeFileSync('x', '1'); await tools.subagent_plan({ task: '规划', run_in_background: true })", noneStateFx, [routeDenyReason('write/edit', { route: 'none' }), planDenyReason('subagent_plan', { route: 'none' })]],
+  ['I7 主会话 none+裸写+subagent_plan → 聚合同时含两条子文案', "await writeFileSync('x', '1'); await tools.subagent_plan({ task: '规划', run_in_background: true })", noneStateFx, [routeDenyReason('write/edit', { route: 'none' }, gateRuntime), planDenyReason('subagent_plan', { route: 'none' }, gateRuntime)]],
 ]
 for (const [name, code, state, expected] of I) {
   const got = mainGroupReason(state, code)
@@ -1581,13 +1679,14 @@ const ASK_GROUP = [
   ['AG2 main+runcodeCatchGate 缺省裸 await ask → 聚合拒绝', 'await tools.ask_user_question({})', {}, 'deny'],
   ['AG3 main 直接 return-await ask → 放行(null)', 'return await tools.ask_user_question({})', {}, null],
   ['AG4 main 单变量 JSON.stringify ask → 放行(null)', 'const q = await tools.ask_user_question({}); return JSON.stringify({ question: q })', {}, null],
+  ['AG4b main 单变量直接 return ask → 放行(null)', 'const q = await tools.ask_user_question({}); return q', {}, null],
   ['AG5 planner 不接入 ask 返回值门 → 放行(null)', 'await tools.ask_user_question({})', {}, null, { kind: 'planner' }],
 ]
 for (const [name, code, gateCtx, expected, role] of ASK_GROUP) {
-  const got = runCodeGroupDenyReason(undefined, { arguments: { code } }, role !== undefined ? role : { kind: 'main' }, gateCtx)
+  const got = runCodeGroupDenyReason(undefined, { arguments: { code } }, role !== undefined ? role : { kind: 'main' }, Object.assign({}, gateCtx, { gateRuntime }))
   const okResult = expected === null
     ? got === null
-    : typeof got === 'string' && got.includes('return await tools.ask_user_question(...)') && got.includes('const q = await tools.ask_user_question(...); return JSON.stringify({ question: q })')
+    : typeof got === 'string' && got.includes('结果未正确返回用户层')
   if (okResult) { pass += 1 } else { fail += 1 }
   console.log((okResult ? 'PASS' : 'FAIL') + '  ' + name + '  (期望 ' + JSON.stringify(expected) + ', 实际 ' + JSON.stringify(got) + ')')
 }
@@ -1651,10 +1750,10 @@ checkTrue('RC-D1 tools[name](...) dynamic=true、site.name=undefined，非调用
 const rcN1Inner = 'await tools.write({})'
 const rcN1Code = 'await tools.run_code({ "code": ' + JSON.stringify(rcN1Inner) + ' })'
 const rcN1Result = decomposeRunCode(rcN1Code)
-const rcN1FlattenReason = runCodeGroupDenyReason(noneStateFx, { name: 'run_code', arguments: { code: rcN1Code } }, { kind: 'main' }, {})
+const rcN1FlattenReason = runCodeGroupDenyReason(noneStateFx, { name: 'run_code', arguments: { code: rcN1Code } }, { kind: 'main' }, { gateRuntime })
 const rcN1UnparsedCode = 'await tools.run_code({ code: nested })'
 const rcN1UnparsedResult = decomposeRunCode(rcN1UnparsedCode)
-const rcN1UnparsedReason = runCodeGroupDenyReason(noneStateFx, { name: 'run_code', arguments: { code: rcN1UnparsedCode } }, { kind: 'main' }, {})
+const rcN1UnparsedReason = runCodeGroupDenyReason(noneStateFx, { name: 'run_code', arguments: { code: rcN1UnparsedCode } }, { kind: 'main' }, { gateRuntime })
 checkTrue('RC-N1 可解析嵌套 run_code 一层展平、不可解析参数保留运行时', rcN1Result.dynamic === false && rcN1Result.members.length === 1 && rcN1Result.members[0].name === 'run_code' && rcN1Result.members[0].argsParsed === true && typeof rcN1FlattenReason === 'string' && rcN1FlattenReason.includes('- write:') && rcN1UnparsedResult.members.length === 1 && rcN1UnparsedResult.members[0].name === 'run_code' && rcN1UnparsedResult.members[0].argsParsed === false && rcN1UnparsedReason === null)
 
 const rcP1Result = decomposeRunCode('tools.read({ "file_path": "x" }); tools.read({ "file_path": "y" })')
@@ -1687,11 +1786,106 @@ const K = [
   ['K10 planner+预算耗尽+read 成员 → 聚合含「探查预算已耗尽（本轮已用 18/18）」与「仅可调用 save_plan/send_message」', { kind: 'planner' }, "await tools.read({ file_path: 'x' })", ['探查预算已耗尽（本轮已用 18/18）', '仅可调用 save_plan/send_message'], { events: budgetEventsFx, exploreBudget: 18 }],
 ]
 for (const [name, role, code, expected, gateCtx] of K) {
-  const got = runCodeGroupDenyReason(undefined, { arguments: { code } }, role, gateCtx !== undefined ? gateCtx : {})
+  const got = runCodeGroupDenyReason(undefined, { arguments: { code } }, role, Object.assign({}, gateCtx !== undefined ? gateCtx : {}, { gateRuntime }))
   const okResult = expected === null ? got === null : typeof got === 'string' && expected.every((s) => got.includes(s))
   if (okResult) { pass += 1 } else { fail += 1 }
   console.log(`${okResult ? 'PASS' : 'FAIL'}  ${name}  (期望 ${JSON.stringify(expected)}, 实际 ${JSON.stringify(got)})`)
 }
+
+// ── GW 系列：YAML 单一来源、prompt variable 契约、严格校验与动态词表 ────────
+const GATE_FIELD_NAMES = ['routeDirect', 'routePlan', 'routeDisagree', 'approvalApprove', 'approvalReplan', 'purposeRefine', 'purposeRedo']
+const GATE_VARIABLE_NAMES = ['extra_plan_route_direct', 'extra_plan_route_plan', 'extra_plan_route_disagree', 'extra_plan_approval_approve', 'extra_plan_approval_replan', 'extra_plan_purpose_refine', 'extra_plan_purpose_redo']
+const factoryValuesPattern = new RegExp(GATE_FIELD_NAMES.map((field) => assetGateWords[field]).join('|'))
+
+// GWY1-GWY4：YAML 七键布局 / 字段元数据 / 迁移 locator 契约
+check('GWY1 资产 YAML config.gateWords 直属键恰为 7 个闸门字段', Object.keys(assetGateWords), GATE_FIELD_NAMES)
+check('GWY2 GATE_WORD_FIELDS 恰 7 项且每项只含 field/variable 元数据', GATE_WORD_FIELDS.map((item) => Object.keys(item).sort().join('+')), GATE_FIELD_NAMES.map(() => 'field+variable'))
+check('GWY3 GATE_WORD_FIELDS 的 field/variable 与 YAML 键一一对应', GATE_WORD_FIELDS.map((item) => [item.field, item.variable]), GATE_FIELD_NAMES.map((field, index) => [field, GATE_VARIABLE_NAMES[index]]))
+check('GWY4 GATE_WORD_MIGRATION_DEFINITIONS 7 项：id=extra-plan + config.gateWords.<field> + string + 无 alias/UI', GATE_WORD_MIGRATION_DEFINITIONS.map((item) => [item.key, item.locator.pluginId, item.locator.path, item.scalarType, item.locatorAliases === undefined, item.ui === undefined]), GATE_FIELD_NAMES.map((field) => [field, 'extra-plan', 'config.gateWords.' + field, 'string', true, true]))
+
+// GWY5-GWY7：persona 锚点双键同源、7 个变量引用、无值字面量
+const personaRow = assetRowsAll.find((row) => row.id === 'persona')
+const personaText = personaRow.config.prefix
+check('GWY5 persona prefix === text（两代键逐字同源）', personaRow.config.text === personaText, true)
+check('GWY6 persona 正文引用的变量集合恰为 7 个', Array.from(new Set(personaText.match(/\{\{extra_plan_[a-z_]+\}\}/g) || [])).sort(), GATE_VARIABLE_NAMES.map((name) => '{{' + name + '}}').sort())
+check('GWY7 persona 正文不含任何闸门值字面量', factoryValuesPattern.test(personaText), false)
+check('GWY7b lib/gate-words.js 对 7 个出厂词 0 命中（JS 侧无第二份真源）', factoryValuesPattern.test(readFileSync(GATE_WORDS_LIB_FILE, 'utf8')), false)
+
+// GWY8-GWY9：宿主严格 renderPrompt 对 prefix/text 都完成替换
+const hostSystemPromptEntry = (() => {
+  const candidates = []
+  if (process.platform === 'win32') {
+    const appData = typeof process.env.APPDATA === 'string' && process.env.APPDATA !== '' ? process.env.APPDATA.replaceAll(String.fromCharCode(92), '/') : String(process.env.USERPROFILE || '') + '/AppData/Roaming'
+    candidates.push(appData + '/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-system-prompt/lib/index.js')
+  } else {
+    candidates.push('/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-system-prompt/lib/index.js')
+  }
+  for (const candidate of candidates) if (existsSync(candidate)) return candidate
+  return null
+})()
+const hostRenderPrompt = hostSystemPromptEntry === null ? null : (await import(pathToFileURL(hostSystemPromptEntry).href)).renderPrompt
+const renderedPrefix = typeof hostRenderPrompt === 'function' ? hostRenderPrompt({ sections: [{ name: 'deployment:persona', text: personaText }], contexts: [], variables: gateRuntime.variables }) : ''
+const renderedText = typeof hostRenderPrompt === 'function' ? hostRenderPrompt({ sections: [{ name: 'deployment:persona', text: personaRow.config.text }], contexts: [], variables: gateRuntime.variables }) : null
+checkTrue('GWY8 宿主严格 renderPrompt 对 prefix 完成全部变量替换且含 7 个当前值', typeof hostRenderPrompt === 'function' && !renderedPrefix.includes('{{') && GATE_FIELD_NAMES.every((field) => renderedPrefix.includes(assetGateWords[field])))
+checkTrue('GWY9 宿主严格 renderPrompt 对 text 键（0.1.2-rc.1 旧键）结果与 prefix 逐字相等', typeof hostRenderPrompt === 'function' && renderedText === renderedPrefix && !renderedText.includes('{{'))
+
+// GWV 系列：validator 非法矩阵（表驱动，全部必须抛同一前缀）
+const cloneWords = (patch) => Object.assign({}, gateRuntime.words, patch)
+const dropField = (field) => { const out = Object.assign({}, gateRuntime.words); delete out[field]; return out }
+const GWV = [
+  ['非对象 undefined', undefined],
+  ['null', null],
+  ['数组', [gateRuntime.words.routeDirect]],
+  ['整组缺失（空对象）', {}],
+  ['单键缺失 routePlan', dropField('routePlan')],
+  ['额外键', cloneWords({ extraKey: 'x' })],
+  ['非字符串（数字）', cloneWords({ routeDirect: 42 })],
+  ['空串', cloneWords({ routeDirect: '' })],
+  ['首尾空白', cloneWords({ routeDirect: ' ' + gateRuntime.words.routeDirect })],
+  ['CR/LF', cloneWords({ routeDirect: gateRuntime.words.routeDirect + String.fromCharCode(10) })],
+  ['重复值', cloneWords({ approvalApprove: gateRuntime.words.routeDirect })],
+  ['保留后缀 (Recommended)', cloneWords({ routeDirect: gateRuntime.words.routeDirect + ' (Recommended)' })],
+  ['保留后缀 （Recommended）', cloneWords({ routeDirect: gateRuntime.words.routeDirect + '（Recommended）' })],
+  ['保留后缀 (推荐)', cloneWords({ routeDirect: gateRuntime.words.routeDirect + '(推荐)' })],
+  ['保留后缀 （推荐）', cloneWords({ routeDirect: gateRuntime.words.routeDirect + '（推荐）' })],
+]
+let validatorMatrixOk = true
+for (const [label, raw] of GWV) {
+  let message = null
+  try { validateGateWords(raw) } catch (error) { message = error instanceof Error ? error.message : String(error) }
+  if (message === null || !message.startsWith('extra-plan: config.gateWords')) {
+    validatorMatrixOk = false
+    console.log('     validator 矩阵未按前缀抛错: ' + label + ' -> ' + String(message))
+  }
+}
+checkTrue('GWV1 非法配置矩阵（15 例）全部抛出以 extra-plan: config.gateWords 开头的错误', validatorMatrixOk)
+const frozenWords = validateGateWords(Object.assign({}, gateRuntime.words))
+checkTrue('GWV2 合法七词返回冻结副本（非同一引用）', Object.isFrozen(frozenWords) && frozenWords !== gateRuntime.words && frozenWords.routeDirect === gateRuntime.words.routeDirect)
+let noArgMessage = null
+try { createGateRuntime(undefined) } catch (error) { noArgMessage = error instanceof Error ? error.message : String(error) }
+checkTrue('GWV3 createGateRuntime 无参不存在默认词表（抛错）', noArgMessage !== null && noArgMessage.startsWith('extra-plan: config.gateWords'))
+
+// GWC 系列：定制七词正例（与出厂词无子串重叠）+ 旧词负例
+const CUSTOM_WORDS = { routeDirect: '甲直行', routePlan: '乙规划', routeDisagree: '丙否决', approvalApprove: '丁批准', approvalReplan: '戊转规划', purposeRefine: '己完整', purposeRedo: '庚重做' }
+const customRuntime = createGateRuntime(CUSTOM_WORDS)
+const customValues = GATE_FIELD_NAMES.map((field) => CUSTOM_WORDS[field])
+const customRouteArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: CUSTOM_WORDS.routeDirect }, { label: CUSTOM_WORDS.routePlan }, { label: CUSTOM_WORDS.routeDisagree }] }] })
+const customPurposeArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: CUSTOM_WORDS.purposeRefine }, { label: CUSTOM_WORDS.purposeRedo }] }] })
+const customApprovalArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: CUSTOM_WORDS.approvalApprove }, { label: CUSTOM_WORDS.approvalReplan }, { label: CUSTOM_WORDS.routeDisagree }] }] })
+checkTrue('GWC0 定制七词与出厂七词无子串重叠且不含出厂词（静默失效检测前置）', !factoryValuesPattern.test(customValues.join('|')) && customValues.every((value) => !GATE_FIELD_NAMES.some((field) => value.includes(assetGateWords[field]) || assetGateWords[field].includes(value))))
+check('GWC1 定制词标准三词 → categorizeGateAsk standard', categorizeGateAsk([CUSTOM_WORDS.routeDirect, CUSTOM_WORDS.routePlan, CUSTOM_WORDS.routeDisagree], customRuntime), 'standard')
+check('GWC2 定制词缺一词 → malformed（partial 子串教学路径）', categorizeGateAsk([CUSTOM_WORDS.routeDirect, CUSTOM_WORDS.routePlan], customRuntime), 'malformed')
+check('GWC3 与定制词完全不相交 → ordinary', categorizeGateAsk(['方案A', '方案B'], customRuntime), 'ordinary')
+check('GWC4 三类 match 精确匹配定制词（route/approval/purpose 共 8 项）', [matchRouteLabel([CUSTOM_WORDS.routeDirect], customRuntime), matchRouteLabel([CUSTOM_WORDS.routePlan], customRuntime), matchRouteLabel([CUSTOM_WORDS.routeDisagree], customRuntime), matchApprovalLabel([CUSTOM_WORDS.approvalApprove], customRuntime), matchApprovalLabel([CUSTOM_WORDS.approvalReplan], customRuntime), matchApprovalLabel([CUSTOM_WORDS.routeDisagree], customRuntime), matchPurposeLabel([CUSTOM_WORDS.purposeRefine], customRuntime), matchPurposeLabel([CUSTOM_WORDS.purposeRedo], customRuntime)], ['direct', 'plan', 'disagree', 'approve', 'replan', 'disagree', 'refine', 'redo'])
+check('GWC5 定制词带白名单推荐后缀 → 归一后仍精确匹配', matchRouteLabel([CUSTOM_WORDS.routeDirect + '（推荐）'], customRuntime), 'direct')
+check('GWC6 定制词的非白名单变体不匹配（禁止 indexOf 子串）', [matchRouteLabel([CUSTOM_WORDS.routeDirect + '!'], customRuntime), matchApprovalLabel(['前缀' + CUSTOM_WORDS.approvalApprove], customRuntime)], [null, null])
+check('GWC7 旧出厂词在定制 runtime 下三类 match 全部不匹配', [matchRouteLabel([assetGateWords.routeDirect], customRuntime), matchApprovalLabel([assetGateWords.approvalApprove], customRuntime), matchPurposeLabel([assetGateWords.purposeRefine], customRuntime)], [null, null, null])
+checkTrue('GWC8 定制词 deny 文案由当前词表插值（路由确认句含定制三词）', routeDenyReason('write/edit', { route: 'none' }, customRuntime).includes('「' + CUSTOM_WORDS.routeDirect + '」「' + CUSTOM_WORDS.routePlan + '」「' + CUSTOM_WORDS.routeDisagree + '」'))
+checkTrue('GWC9 定制词 deny 文案（路由/规划/批准三类）不含任何出厂词', !factoryValuesPattern.test(routeDenyReason('write/edit', { route: 'none' }, customRuntime) + planDenyReason('subagent_plan', { route: 'none' }, customRuntime) + approvalDenyReason('subagent', { route: 'none' }, customRuntime)))
+check('GWC10 定制词 deriveFlowState 全链 → plan/redo/clarified/approved', deriveFlowState([um(), call('ask_user_question', 'gw1', customRouteArgs), ok('gw1', answer([CUSTOM_WORDS.routePlan])), call('ask_user_question', 'gw2', customPurposeArgs), ok('gw2', answer([CUSTOM_WORDS.purposeRedo])), call('ask_user_question', 'gw3', clarifyArgs), ok('gw3', answer(['方案A'])), call('ask_user_question', 'gw4', customApprovalArgs), ok('gw4', answer([CUSTOM_WORDS.approvalApprove]))], customRuntime), { route: 'plan', clarified: true, approved: true, purpose: 'redo', channelBroken: false })
+check('GWC11 定制 runtime 下提交旧出厂词 → 全部未确认', deriveFlowState([um(), call('ask_user_question', 'go1', routeArgs), ok('go1', answer([assetGateWords.routeDirect])), call('ask_user_question', 'go2', purposeArgs), ok('go2', answer([assetGateWords.purposeRefine])), call('ask_user_question', 'go3', approvalArgs), ok('go3', answer([assetGateWords.approvalApprove]))], customRuntime), { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false })
+check('GWC12 定制 runtime 下旧词 + 推荐后缀仍不推进', deriveFlowState([um(), call('ask_user_question', 'go4', routeArgs), ok('go4', answer([assetGateWords.routeDirect + '（推荐）']))], customRuntime).route, 'none')
+check('GWC13 默认 runtime 下定制词不误推进（双向隔离）', deriveFlowState([um(), call('ask_user_question', 'gm1', customRouteArgs), ok('gm1', answer([CUSTOM_WORDS.routeDirect]))], gateRuntime).route, 'none')
 
 console.log(`\n通过 ${pass}, 失败 ${fail}`)
 process.exit(fail === 0 ? 0 : 1)

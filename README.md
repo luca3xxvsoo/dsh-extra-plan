@@ -108,25 +108,33 @@ dsh-extra-plan/
 │   ├── dsh-extra-plan/                                 # 模式核心插件（四级闸门/探查上限/save_plan 等）
 │   │   ├── assets/presets/extra-plan/                   
 │   │   │   ├── agent.cordis.yml                        # 预设主配置（persona/工具/插件行/delegation）
-│   │   │   ├── preset.yml                              # 预设元信息（GUI 显示名称与描述）
-│   │   │   └── dist-manifest.json                      # 预设分发：核心文件哈希清单  
+│   │   │   ├── dist-manifest.json                      # 预设分发：分发清单模板（distHash 比对 + 迁移状态；部署时由 preset-sync 写入） 
+│   │   │   └── preset.yml                              # 预设元信息（GUI 显示名称与描述）
 │   │   ├── lib/                                        # 模块目录
+│   │   │   ├── agent-runtime.js                        # 角色运行态：createAgentRuntime 的 per-apply 判定与缓存
+│   │   │   ├── agent-session.js                        # 角色判定：sessionEvents/isSubagentChild 唯一来源
+│   │   │   ├── assembly-presentation.js                # 展示投影：A/C/M 投影与 skill catalog
 │   │   │   ├── client.js                               # 设置页前端 UI
 │   │   │   ├── client-bridge.js                        # 客户端桥接行
-│   │   │   ├── settings.js                             # 设置页宿主端
-│   │   │   ├── preset-settings.js                      # 同步旧版本用户设置
+│   │   │   ├── executor-spawn.js                       # 执行者委托层（workflow/ralph worker 注入）
+│   │   │   ├── gate-words.js                           # 闸门词契约：字段规格/整组校验/运行时派生
+│   │   │   ├── model-routing.js                        # 子代理模型选择：planner/非 planner 路由解析
+│   │   │   ├── preset-settings.js                      # 设置项 descriptor 与 YAML 保格式改写（供迁移复用）
 │   │   │   ├── preset-sync.js                          # 预设分发与启动自愈
+│   │   │   ├── planner-budget.js                       # 探查预算：用量计数与提醒/耗尽文案
+│   │   │   ├── preset-defaults.generated.js            # 构建期生成：exploreBudget 默认值
+│   │   │   ├── runtime-static.js                       # 静态纯函数：显式参数 helper
+│   │   │   ├── run-code-static.js                      # run_code：静态解析与理由函数
 │   │   │   ├── save-contract.js                        # save_plan/save_probe：合同常量与 Markdown 渲染
 │   │   │   ├── save-probe-validation.js                # save_probe：参数与路径/range/evidence 校验
 │   │   │   ├── save-persistence.js                     # save_plan/save_probe：原子落盘内核与 journal 自愈
 │   │   │   ├── save-tool-factories.js                  # save_plan/save_probe：工具定义
-│   │   │   ├── run-code-static.js                      # run_code：静态解析与理由函数
-│   │   │   ├── model-routing.js                        # 子代理模型选择：planner/非 planner 路由解析
-│   │   │   ├── assembly-presentation.js                # 展示投影：A/C/M 投影与 skill catalog
-│   │   │   ├── agent-session.js                        # 角色判定：sessionEvents/isSubagentChild 唯一来源
 │   │   │   ├── sdk-text-cache.js                       # tools:sdk缓存复用
-│   │   │   └── executor-spawn.js                       # 执行者委托层（workflow/ralph worker 注入）
-│   │   ├── scripts/distribute-preset.mjs               # postinstall 预设分发入口
+│   │   │   ├── settings.js                             # 设置页宿主端
+│   │   │   └── shell-mutation.js                       # 写操作判定：跨平台命令解码与写形态
+│   │   ├── scripts/                                    
+│   │   │   ├── distribute-preset.mjs                   # postinstall 预设分发入口
+│   │   │   └── generate-runtime-defaults.mjs           # 构建期生成器：exploreBudget 叶值 → preset-defaults.generated.js
 │   │   ├── cordis.patch.yml                                      
 │   │   ├── index.js                                    # 四级闸门：路由/目的/澄清/批准 + apply 接线
 │   │   └── package.json
@@ -139,10 +147,10 @@ dsh-extra-plan/
 ├── pe-test/                                            # 自检/取证工具
 │   ├── README.md                                       # 自检/取证工具介绍
 │   ├── _shared/                                        
-│   │   ├── zstd-frames.mjs  
 │   │   ├── host-deps.mjs  
+│   │   ├── preset-hash.mjs      
 │   │   ├── session-finder.mjs  
-│   │   └── preset-hash.mjs      
+│   │   └── zstd-frames.mjs  
 │   ├── docs/                                           # AI文档
 │   │   ├── ai-概览.md  
 │   │   ├── ai-机制设计.md  
@@ -165,8 +173,8 @@ dsh-extra-plan/
 │       ├── step-04-路由与写闸门.mjs
 │       ├── step-05-会话解码.mjs
 │       ├── step-06-线索落盘.mjs
-│       ├── step-07-子代理模型与引导取证.mjs
 │       ├── step-06-真实会话查看.mjs
+│       ├── step-07-子代理模型与引导取证.mjs
 │       ├── step-08-方案配对查看.mjs
 │       ├── step-99-用量统计.mjs
 │       ├── 代码地图生成.mjs                           

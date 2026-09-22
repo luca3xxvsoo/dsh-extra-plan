@@ -11,12 +11,15 @@ import { homedir, tmpdir } from 'node:os'
 
 const DSH_HOME = (process.env.DSH_HOME || homedir() + '/.dsh').replaceAll('\\', '/')
 const PLUGIN_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/index.js', import.meta.url))
+const AGENT_RUNTIME_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/agent-runtime.js', import.meta.url))
+const SHELL_MUTATION_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/shell-mutation.js', import.meta.url))
 import { registerHostDeps } from '../_shared/host-deps.mjs'
 await registerHostDeps()
 const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
 import { createSdkTextCache, sdkSchemasFingerprint, sdkTextCacheEntryMatches } from '../../plugins/dsh-extra-plan/lib/sdk-text-cache.js'
+import { createGateRuntime } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
 const decisions = plugin.decisions
-const { catalogHasWriteTools, isReadOnlyChildByCatalog, routeDenyReason, ROUTE_CONFIRM_TEXT, runCodeCatchGateReason, runCodeGroupDenyReason, askUserQuestionReturnGateReason, probeDisposalWarning, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilteredToolsSdk, toolPresentationModeOf, projectSkillCatalogDecision, isBootstrapPhase, shellMutationReason, recordJobOutputCall } = decisions
+const { catalogHasWriteTools, isReadOnlyChildByCatalog, routeDenyReason, runCodeCatchGateReason, runCodeGroupDenyReason, askUserQuestionReturnGateReason, probeDisposalWarning, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilteredToolsSdk, toolPresentationModeOf, projectSkillCatalogDecision, isBootstrapPhase, shellMutationReason, recordJobOutputCall } = decisions
 
 // ── F 段（HP 首轮）tool:read 手写文案（变量②）的两个基准字符串 ──────────────
 // HINT_READ_DEFAULT：内置兜底文案的逐字副本，同时是预设 bootstrapReadHint 的示例值
@@ -29,6 +32,7 @@ const HINT_READ_DEFAULT = [
   'return r',
 ].join('\n')
 const HOST_READ_TEXT = 'Use the read tool — not shell commands like cat — to inspect text files. Results include line numbers. Use offset and limit to continue reading large files.'
+const PRESET_READ_HINT = ['run_code 调用 read 示例：', "const r = await tools.read({ file_path: 'README.md' })", 'return r'].join('\n')
 // 变量②文案的四要素判据：工具名、调用形态、参数与默认值、返回形状；且不得含官方 SDK 骨架。
 function hintReadOk(text) {
   return typeof text === 'string'
@@ -90,6 +94,16 @@ function flatten(list) {
   return out
 }
 const all = flatten(rows)
+
+// ── 闸门词唯一真源 = 资产 YAML 的 config.gateWords ─────────────────────────
+// 插件 apply 对 gateWords 做整组严格校验：缺失/非法同步抛错。故 harness 默认经
+// withGateWords 合并 YAML 词表（调用方显式传 gateWords 时以调用方为准，供坏配置用例）；
+// 期望文案（路由确认句等）同样由当前词表派生，测试不手写第二份词值。
+const assetExtraPlanConfig = all.find((row) => row.id === 'extra-plan').config
+const assetGateWords = assetExtraPlanConfig.gateWords
+const gateRuntime = createGateRuntime(assetGateWords)
+const ROUTE_CONFIRM_TEXT = gateRuntime.confirm.route
+function withGateWords(config) { return { gateWords: assetGateWords, ...config } }
 function checkDeny(id, expectCount, mustContain, mustNotContain, label) {
   const row = all.find((r) => r.id === id)
   const deny = row !== undefined && row.config !== undefined && Array.isArray(row.config.toolFilter.deny) ? row.config.toolFilter.deny : null
@@ -116,7 +130,7 @@ checkDeny('tool-subagent-probe', 14, ['write', 'edit', 'subagent_probe', 'cordis
 {
   const extraPlanRow = all.find((r) => r.id === 'extra-plan')
   const presetHint = extraPlanRow !== undefined && extraPlanRow.config !== undefined ? extraPlanRow.config.bootstrapReadHint : undefined
-  check('P0-0 预设 bootstrapReadHint 与内置兜底/测试副本逐字一致', presetHint, HINT_READ_DEFAULT)
+  check('P0-0 预设 bootstrapReadHint 保持工作区模板现值', presetHint, PRESET_READ_HINT)
   check('P0-1 预设 bootstrapPersona 未被回退（中文现值逐字保留）', extraPlanRow !== undefined && extraPlanRow.config !== undefined ? extraPlanRow.config.bootstrapPersona : undefined, '你是一位乐于助人的软件工程师助手，使用简体中文思考和回复。')
 }
 
@@ -138,9 +152,13 @@ function resolvedValue(value) {
 function makeHarness(config = {}) {
   const listeners = {}
   const skillRegistrations = []
+  const variables = []
+  const systemPrompt = { variable: (name, provider) => { variables.push({ name, provider }); return () => {} } }
   let presetResolveCount = 0
   const ctx = {
+    systemPrompt,
     get: (name) => {
+      if (name === 'systemPrompt') return systemPrompt
       if (name === 'agentPresets') return { resolve: () => { presetResolveCount += 1; return resolvedValue({ path: CORDIS_PRESET_FILE }) } }
       if (name === 'skills') return { register: (definition) => { skillRegistrations.push(definition); return () => {} } }
       if (name === 'codeRuntime') return { language: typeof config.language === 'string' ? config.language : 'typescript' }
@@ -156,9 +174,10 @@ function makeHarness(config = {}) {
     // mock 缺此方法导致 apply 抛 TypeError；与 step-06 同款写法。
     provide: (name, value) => { ctx[name] = value },
   }
-  plugin.apply(ctx, config)
+  plugin.apply(ctx, withGateWords(config))
   listeners.skillRegistrations = skillRegistrations
   listeners.presetResolveCount = () => presetResolveCount
+  listeners.variables = variables
   return listeners
 }
 const harness = makeHarness({ anchoredBootstrap: false })
@@ -614,7 +633,7 @@ checkTrue('R27g 重选 plan 后按目的→澄清顺序 subagent_plan → allow'
 r = preExecute(harness, noneMain, 'run_code', readOnlyCode)
 checkTrue('R28 主会话 none 态 run_code（纯只读）→ 放行（终版：无写模式放行，ptc 死锁解除）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, noneMain, 'run_code', writeCode)
-checkTrue('R29 主会话 none 态 run_code（含写）→ deny 且聚合含 routeDenyReason(\'write/edit\', { route: \'none\' }) 全文（组判定聚合报错）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(routeDenyReason('write/edit', { route: 'none' })))
+checkTrue('R29 主会话 none 态 run_code（含写）→ deny 且聚合含 routeDenyReason(\'write/edit\', { route: \'none\' }) 全文（组判定聚合报错）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(routeDenyReason('write/edit', { route: 'none' }, gateRuntime)))
 r = preExecute(harness, directMain, 'run_code', writeCode)
 checkTrue('R30 主会话 direct 态 run_code（含写）→ 放行', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, planMain, 'run_code', readOnlyCode)
@@ -646,7 +665,7 @@ const nestedPlanCode = { code: "await tools.subagent_plan({ task: '规划', run_
 const nestedProbeCode = { code: "await tools.subagent_probe({ run_in_background: true })", description: '嵌套探查委派' }
 
 r = preExecute(harness, noneMain, 'run_code', nestedAskCode)
-checkTrue('R42 主会话 none 态 run_code（code 含未返回的嵌套 ask_user_question）→ deny（返回值白名单）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('return await tools.ask_user_question(...)') && String(r.reason).includes('const q = await tools.ask_user_question(...); return JSON.stringify({ question: q })'))
+checkTrue('R42 主会话 none 态 run_code（code 含未返回的嵌套 ask_user_question）→ deny（返回链闸门）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('结果未正确返回用户层'))
 r = preExecute(harness, noneMain, 'run_code', nestedPlanCode)
 checkTrue('R43 主会话 none 态 run_code（code 含嵌套 subagent_plan）→ deny 且含「子代理未放行：subagent_plan」（v4：组判定按直呼同闸门预审）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('子代理未放行：subagent_plan'))
 r = preExecute(harness, noneMain, 'subagent_plan', { run_in_background: true })
@@ -654,7 +673,7 @@ checkTrue('R44 主会话 none 态直呼 subagent_plan（嵌套瀑布等价）→
 r = preExecute(harness, noneMain, 'run_code', nestedProbeCode)
 checkTrue('R45 主会话 none 态 run_code（code 含嵌套 subagent_probe）→ 放行（外壳不拦嵌套探查委派）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, planMain, 'run_code', writeCode)
-checkTrue('R46 主会话 plan+clarified 态 run_code（含写）→ deny 且聚合含 routeDenyReason(\'write/edit\', { route: \'plan\' }) 全文（含「规划态下主会话不可写文件」）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(routeDenyReason('write/edit', { route: 'plan' })))
+checkTrue('R46 主会话 plan+clarified 态 run_code（含写）→ deny 且聚合含 routeDenyReason(\'write/edit\', { route: \'plan\' }) 全文（含「规划态下主会话不可写文件」）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(routeDenyReason('write/edit', { route: 'plan' }, gateRuntime)))
 r = preExecute(harness, approvedMain, 'run_code', writeCode)
 checkTrue('R47 主会话 approved 态 run_code（含写）→ deny 且聚合含「方案已批准，执行请走 subagent 委派」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('方案已批准，执行请走 subagent 委派'))
 r = preExecute(harness, approvedMain, 'run_code', { code: "await tools.subagent({ task: '执行', run_in_background: true })", description: '嵌套委派' })
@@ -820,6 +839,7 @@ const ptcBootAgent = {
   ctx: { get: (name) => name === 'tools' ? { schemas: () => PTC_BOOT_SCHEMAS, sdkSchemas: () => [PTC_READ_SCHEMA], modeFor: () => 'ptc' } : undefined },
 }
 const ptcBootSections = [
+  // 宿主仍会下发 tools:ptc-only；插件 HP 分支已按用户要求停用该段透传（下方断言其不出现在产物中）。
   { name: 'tools:ptc-only', text: 'Only the run_code transport is directly callable.' },
   // 宿主 tool:read 原文（N/P/B 与 L 直通值）。F/PTC 由插件借槽覆盖为变量②手写文案，
   // 故此处刻意保持宿主原文：断言要求 F 段逐字等于 HINT_READ_DEFAULT 且不等于本夹具文本。
@@ -831,7 +851,7 @@ const hpMain = await assemble(harnessBoot, ptcBootAgent, [{ name: 'run_code' }],
 const hpRead = Array.isArray(hpMain.sections) ? hpMain.sections.find((section) => section.name === 'tool:read') : undefined
 const hpReadText = hpRead !== undefined && typeof hpRead.text === 'string' ? hpRead.text : ''
 check('P1 HP0 主会话首轮 tools 恰为 [run_code]', hpMain.tools.map((tool) => tool.name), ['run_code'])
-check('P2 HP0 sections 恰为 persona/PTC/read 三项', hpMain.sections.map((section) => section.name), ['extra-plan-bootstrap', 'tools:ptc-only', 'tool:read'])
+check('P2 HP0 sections 恰为 persona/read 两项（宿主 tools:ptc-only 段已停用）', hpMain.sections.map((section) => section.name), ['extra-plan-bootstrap', 'tool:read'])
 checkTrue('P3 HP0 无顶层 read、无 SDK/Cordis，contexts 清空', !hpMain.tools.some((tool) => tool.name === 'read') && !hpMain.sections.some((section) => section.name === 'tools:sdk' || section.name === 'tool:cordis') && Array.isArray(hpMain.contexts) && hpMain.contexts.length === 0)
 check('P4 HP0 tool:read 逐字等于变量②手写文案（默认值）', hpReadText, HINT_READ_DEFAULT)
 checkTrue('P4a HP0 tool:read 含四要素（tools.read/file_path/offset/limit/totalLines）且不含官方骨架与宿主原文',
@@ -839,7 +859,7 @@ checkTrue('P4a HP0 tool:read 含四要素（tools.read/file_path/offset/limit/to
 checkTrue('P4b HP0 tool:read 不再由宿主原文/官方 renderer 生成（与直通夹具文本可区分）', hpReadText !== HOST_READ_TEXT && !hpReadText.includes('Use the read tool'))
 const hpPlanner = { ...ptcBootAgent, session: { ...ptcBootAgent.session, header: { id: 'ptc-boot-planner', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => [DESC] } }
 const hpPlannerAssembly = await assemble(harnessBoot, hpPlanner, [{ name: 'run_code' }], ptcBootSections)
-check('P5 HP0 planner sections 恰为 persona/PTC/read 三项', hpPlannerAssembly.sections.map((section) => section.name), ['extra-plan-bootstrap', 'tools:ptc-only', 'tool:read'])
+check('P5 HP0 planner sections 恰为 persona/read 两项（宿主 tools:ptc-only 段已停用）', hpPlannerAssembly.sections.map((section) => section.name), ['extra-plan-bootstrap', 'tool:read'])
 checkTrue('P6 HP0 planner 仍只暴露 run_code', hpPlannerAssembly.tools.map((tool) => tool.name).join('|') === 'run_code')
 
 // ── ⑨b 变量② bootstrapReadHint：显式覆盖生效 / 空串与非字符串回退内置默认 ──
@@ -850,10 +870,10 @@ checkTrue('P6 HP0 planner 仍只暴露 run_code', hpPlannerAssembly.tools.map((t
   const explicitAssembly = await assemble(explicitHarness, ptcBootAgent, [{ name: 'run_code' }], ptcBootSections)
   const explicitText = sectionText(explicitAssembly, 'tool:read')
   check('V2-1 显式 cfg.bootstrapReadHint 覆盖生效（HP tool:read 逐字等于该值）', explicitText, HINT_READ_EXPLICIT)
-  checkTrue('V2-2 显式覆盖时段名与透传不变：sections 恰 persona/PTC/read、tools 仍 [run_code]、tools:ptc-only 原样',
-    sectionNames(explicitAssembly).join('|') === 'extra-plan-bootstrap|tools:ptc-only|tool:read'
+  checkTrue('V2-2 显式覆盖时段名与透传不变：sections 恰 persona/read、tools 仍 [run_code]、宿主 tools:ptc-only 不再下发',
+    sectionNames(explicitAssembly).join('|') === 'extra-plan-bootstrap|tool:read'
     && explicitAssembly.tools.map((tool) => tool.name).join('|') === 'run_code'
-    && sectionText(explicitAssembly, 'tools:ptc-only') === 'Only the run_code transport is directly callable.'
+    && !sectionNames(explicitAssembly).includes('tools:ptc-only')
     && sectionText(explicitAssembly, 'extra-plan-bootstrap') === 'You are a helpful software engineer assistant.')
   const emptyHarness = makeHarness({ anchoredBootstrap: true, bootstrapReadHint: '' })
   const emptyText = sectionText(await assemble(emptyHarness, ptcBootAgent, [{ name: 'run_code' }], ptcBootSections), 'tool:read')
@@ -879,7 +899,7 @@ checkTrue('P6 HP0 planner 仍只暴露 run_code', hpPlannerAssembly.tools.map((t
 }
 
 
-// ── ⑩b ASK 系列：主会话 ask 返回值白名单 + pre-execute 重入 ─────────────
+// ── ⑩b ASK 系列：主会话 ask 返回链闸门 + pre-execute 重入 ─────────────
 const askReturnRunCases = [
   ['R-ASK1 裸 await ask → deny', 'await tools.ask_user_question({})', 'deny'],
   ['R-ASK2 只赋值不返回 → deny', 'const q = await tools.ask_user_question({})', 'deny'],
@@ -889,10 +909,11 @@ const askReturnRunCases = [
   ['R-ASK6 动态工具访问 → deny', "const name = 'ask_user_question'; return await tools[name]({})", 'deny'],
   ['R-ASK7 直接 return-await → allow', 'return await tools.ask_user_question({})', 'allow'],
   ['R-ASK8 单变量 JSON.stringify → allow', 'const q = await tools.ask_user_question({}); return JSON.stringify({ question: q })', 'allow'],
+  ['R-ASK8b 单变量直接 return → allow', 'const q = await tools.ask_user_question({}); return q', 'allow'],
 ]
 for (const [label, code, expectedKind] of askReturnRunCases) {
   r = preExecute(harness, noneMain, 'run_code', { code, description: label })
-  const hasExamples = expectedKind === 'allow' || (r !== null && r !== undefined && String(r.reason).includes('return await tools.ask_user_question(...)') && String(r.reason).includes('const q = await tools.ask_user_question(...); return JSON.stringify({ question: q })'))
+  const hasExamples = expectedKind === 'allow' || (r !== null && r !== undefined && String(r.reason).includes('结果未正确返回用户层'))
   checkTrue(label + '（默认 harness，闸门不依赖 runcodeCatchGate）', r !== null && r !== undefined && r.kind === expectedKind && hasExamples)
 }
 
@@ -903,7 +924,7 @@ const nestedAskOuterCode = 'await tools.run_code({ "code": ' + JSON.stringify(ne
 r = preExecute(harness, noneMain, 'run_code', { code: nestedAskOuterCode, description: '嵌套 ask 外层容器' })
 checkTrue('R-ASK9 外层嵌套容器沿用 depth 边界 → allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, noneMain, 'run_code', { code: nestedAskInnerCode, description: '嵌套 ask 实际内层' }, { rootCallId: 'nested-ask-root', parent: Symbol('nested-ask-parent') })
-checkTrue('R-ASK10 带 parent 的实际内层裸 await ask 重入 → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('return await tools.ask_user_question(...)') && String(r.reason).includes('const q = await tools.ask_user_question(...); return JSON.stringify({ question: q })'))
+checkTrue('R-ASK10 带 parent 的实际内层裸 await ask 重入 → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('结果未正确返回用户层'))
 
 // ── ⑪ UC 系列:runCodeCatchGateReason 纯函数（多调用容错硬闸门，任务1/3） ──
 checkTrue('UC1 ≥2 无保护→拒', (() => { const got = runCodeCatchGateReason("await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })"); return typeof got === 'string' && got.includes('run_code 内 2 个工具调用未全部独立容错') && got.includes('已保护 0 个') })())
@@ -921,8 +942,8 @@ checkTrue('UC12 嵌套各自 try→null', runCodeCatchGateReason("await tools.ru
 checkTrue('UC13 注释/字符串内 tools.x 不计数→null', runCodeCatchGateReason("const s = 'tools.read({ file_path: 1 })'\n// tools.write({})\nawait tools.glob({ pattern: '**/*.md' })") === null)
 checkTrue("UC14 tools['read'] 字面量方括号计数→触发", (() => { const got = runCodeCatchGateReason("await tools['read']({ file_path: 'x' })\nawait tools['read']({ file_path: 'y' })"); return typeof got === 'string' && got.includes('run_code 内 2 个') })())
 checkTrue('UC15 probeDisposalWarning(0)→null 且 (2)→含「2 个未认领探查者委派」与「委派方会话销毁时」（T5 文案中性化，不再硬编码「规划子代理会话销毁」）', probeDisposalWarning(0) === null && (() => { const got = probeDisposalWarning(2); return typeof got === 'string' && got.includes('2 个未认领探查者委派') && got.includes('委派方会话销毁时') && !got.includes('规划子代理会话销毁') })())
-checkTrue('UC16 runcodeCatchGate:false → null（开关关纯函数）', runCodeGroupDenyReason(undefined, { name: 'run_code', arguments: { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })" } }, { kind: 'main' }, { runcodeCatchGate: false }) === null)
-checkTrue('UC17 显式 runcodeCatchGate:true → 拒且含「未全部独立容错」', (() => { const got = runCodeGroupDenyReason(undefined, { name: 'run_code', arguments: { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })" } }, { kind: 'main' }, { runcodeCatchGate: true }); return typeof got === 'string' && got.includes('未全部独立容错') })())
+checkTrue('UC16 runcodeCatchGate:false → null（开关关纯函数）', runCodeGroupDenyReason(undefined, { name: 'run_code', arguments: { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })" } }, { kind: 'main' }, { runcodeCatchGate: false, gateRuntime }) === null)
+checkTrue('UC17 显式 runcodeCatchGate:true → 拒且含「未全部独立容错」', (() => { const got = runCodeGroupDenyReason(undefined, { name: 'run_code', arguments: { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })" } }, { kind: 'main' }, { runcodeCatchGate: true, gateRuntime }); return typeof got === 'string' && got.includes('未全部独立容错') })())
 checkTrue('UC18 safe 包装→拒（只认逐点 try/catch）', (() => { const got = runCodeCatchGateReason("const safe = (p) => p.catch((e) => ({ _error: String(e).slice(0, 200) }))\nawait safe(tools.read({ file_path: 'x' }))\ntry { await tools.read({ file_path: 'y' }) } catch (e) {}"); return typeof got === 'string' && got.includes('已保护 1 个') })())
 checkTrue('UC19 safe 实参含 2 调用点 → 拒且含「已保护 0 个」', (() => { const got = runCodeCatchGateReason("const safe = (p) => p.catch((e) => ({ _error: String(e).slice(0, 200) }))\nawait safe(tools.read({ file_path: 'x' }).then(() => tools.read({ file_path: 'y' })))"); return typeof got === 'string' && got.includes('已保护 0 个') })())
 checkTrue('UC20 空转 safe (p=>p) → 拒且含「已保护 0 个」', (() => { const got = runCodeCatchGateReason("const safe = (p) => p\nawait safe(tools.read({ file_path: 'x' }))\nawait tools.read({ file_path: 'y' })"); return typeof got === 'string' && got.includes('已保护 0 个') })())
@@ -1030,7 +1051,7 @@ const rcBridgeReason = r !== null && r !== undefined && r.kind === 'deny' ? Stri
 checkTrue('R106 planner run_code write+subagent_probe → 聚合两项拒绝且成员顺序 write→subagent_probe', r !== null && r !== undefined && r.kind === 'deny' && rcBridgeReason.includes('工具组共 2 项（去重后），2 项触发闸门') && rcBridgeReason.includes('规划子代理只读') && rcBridgeReason.includes('仅主会话可用') && rcBridgeReason.indexOf('- write:') < rcBridgeReason.indexOf('- subagent_probe:'))
 r = preExecute(harness, noneMain, 'run_code', { code: 'await tools.save_plan({})\nawait tools.write({})', description: 'R107 noneMain 组判定：save_plan 放行 + write 仍拒' })
 const rc107Reason = r !== null && r !== undefined && r.kind === 'deny' ? String(r.reason) : ''
-checkTrue('R107 noneMain run_code save_plan+write → 组内 save_plan 放行、write 仍拒 → 聚合 deny（2 项 1 项触发，不含 save_plan 行）', r !== null && r !== undefined && r.kind === 'deny' && rc107Reason.includes('工具组共 2 项（去重后），1 项触发闸门') && rc107Reason.includes(routeDenyReason('write/edit', { route: 'none' })) && rc107Reason.includes('- write:') && rc107Reason.includes('save_plan') === false)
+checkTrue('R107 noneMain run_code save_plan+write → 组内 save_plan 放行、write 仍拒 → 聚合 deny（2 项 1 项触发，不含 save_plan 行）', r !== null && r !== undefined && r.kind === 'deny' && rc107Reason.includes('工具组共 2 项（去重后），1 项触发闸门') && rc107Reason.includes(routeDenyReason('write/edit', { route: 'none' }, gateRuntime)) && rc107Reason.includes('- write:') && rc107Reason.includes('save_plan') === false)
 
 // ── ⑭e P0-4：会话状态生命周期 + 末轮 usage final flush（T2/T3/T4 监听器级） ──
 // 口径：账本用例显式传 config.usageLedger.enabled=true + 临时 config.usageLedger.path；
@@ -1096,13 +1117,17 @@ const makeTmpDir = () => mkdtempSync(join(tmpdir(), 'extra-plan-p4-'))
 
 // P4-1/P4-2：源码级不变量（T2.2/T3.1/T3.5/T4.1/T4.7）
 const pluginSource = readFileSync(PLUGIN_PATH, 'utf8')
+const agentRuntimeSource = readFileSync(AGENT_RUNTIME_PATH, 'utf8')
+const shellMutationSource = readFileSync(SHELL_MUTATION_PATH, 'utf8')
 checkTrue('P4-1 源码：无 usageCursorsLoaded 灌表路径、无 subCallCounters.clear()、foldUsage 非 async、计数走 noteRunCodeSubCall',
   !pluginSource.includes('usageCursorsLoaded') && !pluginSource.includes('subCallCounters.clear()') && !pluginSource.includes('async function foldUsage') && pluginSource.includes('function noteRunCodeSubCall(sessionId, rid)'))
-checkTrue('P4-2 源码：disposed 先同步 fold 再按 sessionId 删除、role 走 WeakMap 缓存、ENOENT 静默分支存在',
+checkTrue('P4-2 源码：disposed 先同步 fold，再按 sessionId 删除；agent runtime 独立持有角色 WeakMap 与同步 floor',
   pluginSource.includes('foldUsage(agent, usageRoleOf(agent))')
   && pluginSource.indexOf('foldUsage(agent, usageRoleOf(agent))') < pluginSource.indexOf('jobOutputCallCounters.delete(sessionId)')
-  && pluginSource.includes('const usageRoles = new WeakMap()')
-  && pluginSource.includes("error.code === 'ENOENT'"))
+  && !pluginSource.includes('const usageRoles = new WeakMap()')
+  && agentRuntimeSource.includes('const usageRoles = new WeakMap()')
+  && agentRuntimeSource.includes('foldUsage(agent, role)')
+  && agentRuntimeSource.includes("error.code === 'ENOENT'") || pluginSource.includes("error.code === 'ENOENT'"))
 
 // P4-3：两个 session 同 rootCallId 各自 1~18 allow、19 deny（计数按 session 隔离）
 {
@@ -1569,7 +1594,7 @@ for (const anchoredBootstrap of [false, true]) {
               : visibleRawTools.map((tool) => tool.name)
           const gotNames = Array.isArray(assembled.tools) ? assembled.tools.map((tool) => tool.name) : []
           const expectedSectionNames = anchoredPtc
-            ? ['extra-plan-bootstrap', 'tools:ptc-only', 'tool:read']
+            ? ['extra-plan-bootstrap', 'tool:read']
             : anchored
               ? ['extra-plan-bootstrap']
               : matrixSections(mode).filter((section) => creativeMode || section.name !== 'tool:cordis').map((section) => section.name)
@@ -1615,8 +1640,8 @@ for (const anchoredBootstrap of [false, true]) {
           const catalogExpected = creativeMode && !anchoredPtc ? 2 : 0
           const catalogOk = catalogCreative.length === catalogExpected && catalogEntries.some((entry) => entry !== null && typeof entry === 'object' && entry.name === 'matrix-ordinary-skill')
           const ordinarySkillToolOk = anchoredPtc ? schemas.some((schema) => schema.name === 'skill') : mode === 'ptc' ? sdk.includes('skill') : visibleRawTools.some((tool) => tool.name === 'skill')
-          const ptcBoundaryOk = mode !== 'ptc' || (gotNames.length === 1 && gotNames[0] === 'run_code' && !gotNames.includes('read') && gotSectionNames.includes('tools:ptc-only') && gotSectionNames.includes('tool:read') && (anchoredPtc ? !gotSectionNames.includes('tools:sdk') : gotSectionNames.includes('tools:sdk')))
-          const hpOk = !anchoredPtc || (gotSectionNames.join('|') === 'extra-plan-bootstrap|tools:ptc-only|tool:read' && sdk === '' && cordisSection === '' && !gotSectionNames.includes('matrix-user-section'))
+          const ptcBoundaryOk = mode !== 'ptc' || (gotNames.length === 1 && gotNames[0] === 'run_code' && !gotNames.includes('read') && (anchoredPtc ? !gotSectionNames.includes('tools:ptc-only') : gotSectionNames.includes('tools:ptc-only')) && gotSectionNames.includes('tool:read') && (anchoredPtc ? !gotSectionNames.includes('tools:sdk') : gotSectionNames.includes('tools:sdk')))
+          const hpOk = !anchoredPtc || (gotSectionNames.join('|') === 'extra-plan-bootstrap|tool:read' && sdk === '' && cordisSection === '' && !gotSectionNames.includes('matrix-user-section'))
           const hnHbOk = !(anchored && mode !== 'ptc') || (gotSectionNames.join('|') === 'extra-plan-bootstrap' && gotNames.includes('read') && !gotSectionNames.includes('tool:read') && !gotSectionNames.includes('tools:ptc-only') && !gotSectionNames.includes('tools:sdk') && !gotSectionNames.includes('tool:cordis'))
           const label = 'M' + matrixSerial + ' A=' + (anchoredBootstrap ? '1' : '0') + ' C=' + (creativeMode ? '1' : '0') + ' M=' + mode + ' phase=' + phase + ' role=' + role + ' C7=' + c7Expected + ' catalog=' + catalogExpected
           checkTrue(label + ' tools/sections/phase/presentation', namesOk && sectionsOk && phaseOk && sdkOk && cordisOk && readOk && contextsOk && catalogOk && ordinarySkillToolOk && ptcBoundaryOk && hpOk && hnHbOk)
@@ -1870,13 +1895,15 @@ checkTrue('B3-6 未知角色与缺失入参 → null（无异常）',
     pluginSource.split('recordJobOutputCall(agent, exec, jobOutputCallCounters)').length - 1 === 3 && pluginSource.split('recordJobOutputCall(').length - 1 === 4)
   checkTrue('B3-17 首次判定已带 counters：planner 与只读 child 监听器调用点均传 jobOutputCallCounters',
     pluginSource.includes('plannerGateReason(exec, execEvents, exploreBudget, jobOutputCallCounters)') && pluginSource.includes('childReadonlyGateReason(exec, probe, jobOutputCallCounters)'))
-  // pwsh/bashMutationMatches(exec) 各 3 处 = 定义 + shellMutationReason 单点 + mainGateReason 主会话分支
-  // （主会话走 routeDenyReason，不属 B3 只读角色文案范围）；只读角色侧不再各自出现。
-  checkTrue('B3-18 shellMutationReason 唯一实现；六格文案只剩两条模板（不再各自拼接）；pwsh/bash mutation 判定各 3 处（定义+只读单点+主会话分支）',
+  // mutation 实现已下沉到 shell-mutation.js；根仅保留只读单点与主会话分支调用。
+  checkTrue('B3-18 shellMutationReason 唯一实现；六格文案只剩两条模板；mutation 实现位于新模块且根只保留两处调用',
     pluginSource.split('function shellMutationReason(').length - 1 === 1
     && pluginSource.split('仅限只读探查命令').length - 1 === 2
-    && pluginSource.split('pwshMutationMatches(exec)').length - 1 === 3
-    && pluginSource.split('bashMutationMatches(exec)').length - 1 === 3)
+    && pluginSource.split('pwshMutationMatches(exec)').length - 1 === 2
+    && pluginSource.split('bashMutationMatches(exec)').length - 1 === 2
+    && shellMutationSource.split('function mutationMatches(').length - 1 === 1
+    && shellMutationSource.split('export function pwshMutationMatches(exec)').length - 1 === 1
+    && shellMutationSource.split('export function bashMutationMatches(exec)').length - 1 === 1)
   checkTrue('B3-19 decisions 导出两个新函数（测试直接复用生产实现，无镜像副本）',
     typeof decisions.shellMutationReason === 'function' && typeof decisions.recordJobOutputCall === 'function')
 }
@@ -1894,6 +1921,150 @@ checkTrue('B3-6 未知角色与缺失入参 → null（无异常）',
   checkTrue('B3-22 组内含 job_output 成员的组拒 → deny（write 成员触发，文案不变）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('run_code 拆解预审未通过') && String(r.reason).includes('- write:'))
   r = preExecute(harness, sideFxPlanner, 'job_output', { job_id: 'jg3' })
   checkTrue('B3-23 组拒零副作用：该 job 直呼仍首次放行（组判定未写入计数器）', r !== null && r !== undefined && r.kind === 'allow')
+}
+
+// ── ⑯ GW 系列：闸门词单源（资产 YAML config.gateWords）运行时贯通 ──────────
+// 口径：apply 从本次 config.gateWords 建运行时词表（缺失/非法同步抛错、零副作用）；
+// 注册恰好 7 个 prompt variable；helper/状态机/闸门共用同一实例；旧词不得推进状态。
+const GATE_VARIABLE_ORDER = ['extra_plan_route_direct', 'extra_plan_route_plan', 'extra_plan_route_disagree', 'extra_plan_approval_approve', 'extra_plan_approval_replan', 'extra_plan_purpose_refine', 'extra_plan_purpose_redo']
+const GATE_FIELD_ORDER = ['routeDirect', 'routePlan', 'routeDisagree', 'approvalApprove', 'approvalReplan', 'purposeRefine', 'purposeRedo']
+// 裸 harness（不合并 YAML 词表）：坏配置入口与独立实例用。
+function rawHarness(config, listeners, variables) {
+  const systemPrompt = { variable: (name, provider) => { variables.push({ name, provider }); return () => {} } }
+  const ctx = {
+    systemPrompt,
+    get: (name) => (name === 'systemPrompt' ? systemPrompt : name === 'codeRuntime' ? { language: 'typescript' } : undefined),
+    on: (name, fn) => {
+      if (listeners[name] === undefined) listeners[name] = []
+      listeners[name].push(fn)
+    },
+    effect: (effectFn) => effectFn(),
+    provide: (name, value) => { ctx[name] = value },
+  }
+  plugin.apply(ctx, config)
+  return listeners
+}
+async function assembleWithVariables(listeners, agent, tools, sections, variables) {
+  const entry = listeners['system-prompt/assemble']
+  if (entry === undefined || entry.length === 0) throw new Error('assemble 监听器未注册')
+  return await entry[0](null, { agent }, async () => ({ tools, sections, contexts: [], variables }))
+}
+
+check('GW1 合法配置 apply 恰好注册 7 个 prompt variable（名称与顺序）', harness.variables.map((item) => item.name), GATE_VARIABLE_ORDER)
+check('GW2 provider 逐项返回当前 apply 的 config.gateWords 值', harness.variables.map((item) => item.provider({})), GATE_FIELD_ORDER.map((field) => assetGateWords[field]))
+{
+  // 坏配置：rawHarness 不合并默认词表 → 整组校验在 apply 内同步抛错，且此前零监听器/零变量副作用。
+  const badListeners = {}
+  const badVariables = []
+  const badCases = [
+    ['整组缺失', { anchoredBootstrap: false }],
+    ['单键缺失', { anchoredBootstrap: false, gateWords: Object.assign({}, assetGateWords, { routePlan: undefined }) }],
+    ['数组', { anchoredBootstrap: false, gateWords: [] }],
+    ['重复值', { anchoredBootstrap: false, gateWords: Object.assign({}, assetGateWords, { approvalApprove: assetGateWords.routeDirect }) }],
+  ]
+  let allThrowWithPrefix = true
+  for (const [label, config] of badCases) {
+    let message = null
+    try { rawHarness(config, badListeners, badVariables) } catch (error) { message = error instanceof Error ? error.message : String(error) }
+    if (message === null || !message.startsWith('extra-plan: config.gateWords')) {
+      allThrowWithPrefix = false
+      console.log('     坏配置用例未按前缀抛错: ' + label + ' -> ' + String(message))
+    }
+  }
+  checkTrue('GW3 坏配置（缺组/缺键/数组/重复值）apply 同步抛错且错误前缀为 extra-plan: config.gateWords', allThrowWithPrefix)
+  check('GW4 坏配置抛错前零监听器/零变量副作用', [Object.keys(badListeners).length, badVariables.length], [0, 0])
+}
+
+// 定制七词：与出厂词无子串重叠（每词互不为子串，也不含出厂词片段）。
+const CUSTOM_WORDS = { routeDirect: '甲直行', routePlan: '乙规划', routeDisagree: '丙否决', approvalApprove: '丁批准', approvalReplan: '戊转规划', purposeRefine: '己完整', purposeRedo: '庚重做' }
+const customHarness = makeHarness({ anchoredBootstrap: false, gateWords: CUSTOM_WORDS })
+const customRuntime = createGateRuntime(CUSTOM_WORDS)
+const cRouteArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '甲直行' }, { label: '乙规划' }, { label: '丙否决' }] }] })
+const cPurposeArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '己完整' }, { label: '庚重做' }] }] })
+const cApprovalArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '丁批准' }, { label: '戊转规划' }, { label: '丙否决' }] }] })
+const cClarifyArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '方案A' }, { label: '方案B' }] }] })
+const FACTORY_WORDS_PATTERN = /直接执行|进行pro规划|不同意|同意执行|转交pro规划|完善方案|重新规划/
+
+check('GW5 fresh apply：第二实例 variables 只含第二份 config 的词值', customHarness.variables.map((item) => item.provider({})), GATE_FIELD_ORDER.map((field) => CUSTOM_WORDS[field]))
+check('GW6 第一实例 provider 不受第二实例影响（无跨 apply 缓存）', harness.variables.map((item) => item.provider({})).join('|'), GATE_FIELD_ORDER.map((field) => assetGateWords[field]).join('|'))
+
+// 直呼路径（tool/call + tool/result）：定制词全链 direct / plan+refine / plan+redo / approve。
+const cDirect = mainWithEvents([umE(), callE('ask_user_question', 'c1', cRouteArgs), okE('c1', answerE(['甲直行']))])
+r = preExecute(customHarness, cDirect, 'write', {})
+checkTrue('GW7 定制词「甲直行」直呼路由 → write 放行', r !== null && r !== undefined && r.kind === 'allow')
+const cPlanRefine = mainWithEvents([umE(), callE('ask_user_question', 'c1', cRouteArgs), okE('c1', answerE(['乙规划'])), callE('ask_user_question', 'c2', cPurposeArgs), okE('c2', answerE(['己完整'])), callE('ask_user_question', 'c3', cClarifyArgs), okE('c3', answerE(['方案A']))])
+check('GW8 定制词三锚点 → deriveFlowState plan/refine/clarified', decisions.deriveFlowState(cPlanRefine.session.snapshotEvents(), customRuntime), { route: 'plan', clarified: true, approved: false, purpose: 'refine', channelBroken: false })
+r = preExecute(customHarness, cPlanRefine, 'subagent_plan', { run_in_background: true })
+checkTrue('GW9 定制词 plan 态 → subagent_plan 放行', r !== null && r !== undefined && r.kind === 'allow')
+const cApprove = mainWithEvents([umE(), callE('ask_user_question', 'c1', cRouteArgs), okE('c1', answerE(['乙规划'])), callE('ask_user_question', 'c2', cPurposeArgs), okE('c2', answerE(['庚重做'])), callE('ask_user_question', 'c3', cClarifyArgs), okE('c3', answerE(['方案A'])), callE('ask_user_question', 'c4', cApprovalArgs), okE('c4', answerE(['丁批准']))])
+check('GW10 定制词「丁批准」→ approved + purpose=redo', decisions.deriveFlowState(cApprove.session.snapshotEvents(), customRuntime), { route: 'plan', clarified: true, approved: true, purpose: 'redo', channelBroken: false })
+r = preExecute(customHarness, cApprove, 'subagent', { run_in_background: true })
+checkTrue('GW11 定制词批准态 → subagent 委派放行', r !== null && r !== undefined && r.kind === 'allow')
+const cReplan = mainWithEvents([umE(), callE('ask_user_question', 'c1', cRouteArgs), okE('c1', answerE(['乙规划'])), callE('ask_user_question', 'c2', cApprovalArgs), okE('c2', answerE(['戊转规划']))])
+check('GW12 定制词「戊转规划」→ 未获批准', decisions.deriveFlowState(cReplan.session.snapshotEvents(), customRuntime).approved, false)
+const cDisagree = mainWithEvents([umE(), callE('ask_user_question', 'c1', cRouteArgs), okE('c1', answerE(['丙否决']))])
+check('GW13 定制词「丙否决」→ route 回 none', decisions.deriveFlowState(cDisagree.session.snapshotEvents(), customRuntime).route, 'none')
+
+// 两代嵌套 dispatch（tool/ptc-dispatch(-start) 与 tool/code-dispatch(-start)）同链。
+for (const generation of [['ptc', 'tool/ptc-dispatch-start', 'tool/ptc-dispatch'], ['code', 'tool/code-dispatch-start', 'tool/code-dispatch']]) {
+  const label = generation[0]
+  const startE = (sid, argsObj) => ({ type: generation[1], data: { rootCallId: 'r1', parentCallId: 'pc1', subCallId: sid, name: 'ask_user_question', arguments: argsObj } })
+  const endE = (sid, text) => ({ type: generation[2], data: { rootCallId: 'r1', parentCallId: 'pc1', subCallId: sid, name: 'ask_user_question', arguments: {}, isError: false, content: [{ type: 'text', text }] } })
+  const fullEvents = [
+    umE(),
+    startE('n1', JSON.parse(cRouteArgs)), endE('n1', answerE(['乙规划'])),
+    startE('n2', JSON.parse(cPurposeArgs)), endE('n2', answerE(['庚重做'])),
+    startE('n3', JSON.parse(cClarifyArgs)), endE('n3', answerE(['方案A'])),
+    startE('n4', JSON.parse(cApprovalArgs)), endE('n4', answerE(['戊转规划'])),
+  ]
+  const state = decisions.deriveFlowState(fullEvents, customRuntime)
+  checkTrue('GW14 ' + label + ' dispatch 定制词全链 → plan/redo/clarified/未批准', state.route === 'plan' && state.purpose === 'redo' && state.clarified === true && state.approved === false)
+  r = preExecute(customHarness, mainWithEvents(fullEvents), 'subagent', { run_in_background: true })
+  checkTrue('GW15 ' + label + ' dispatch「戊转规划」→ subagent deny 且文案只含当前定制批准词', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('戊转规划') && !FACTORY_WORDS_PATTERN.test(String(r.reason)))
+  const approveEvents = [
+    umE(),
+    startE('n1', JSON.parse(cRouteArgs)), endE('n1', answerE(['乙规划'])),
+    startE('n2', JSON.parse(cPurposeArgs)), endE('n2', answerE(['己完整'])),
+    startE('n3', JSON.parse(cClarifyArgs)), endE('n3', answerE(['方案A'])),
+    startE('n4', JSON.parse(cApprovalArgs)), endE('n4', answerE(['丁批准'])),
+  ]
+  r = preExecute(customHarness, mainWithEvents(approveEvents), 'subagent', { run_in_background: true })
+  checkTrue('GW16 ' + label + ' dispatch「丁批准」→ subagent 委派放行', r !== null && r !== undefined && r.kind === 'allow')
+}
+
+// 旧出厂词负例：定制 runtime 下旧词不得推进任何状态，deny 文案只含当前定制词。
+const oldWordEvents = [umE(), callE('ask_user_question', 'o1', routeArgsE), okE('o1', answerE(['直接执行'])), callE('ask_user_question', 'o2', purposeArgsE), okE('o2', answerE(['完善方案'])), callE('ask_user_question', 'o3', approvalArgsE), okE('o3', answerE(['同意执行']))]
+check('GW17 定制 runtime 下提交旧出厂词 → route/purpose/approved 全部未确认', decisions.deriveFlowState(oldWordEvents, customRuntime), { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false })
+const oldWordMain = mainWithEvents(oldWordEvents)
+r = preExecute(customHarness, oldWordMain, 'write', {})
+checkTrue('GW18 旧词不得推进 → write deny 且文案含当前定制三词、不含任何出厂词', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('「甲直行」「乙规划」「丙否决」') && !FACTORY_WORDS_PATTERN.test(String(r.reason)))
+r = preExecute(customHarness, oldWordMain, 'subagent', { run_in_background: true })
+checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制批准词', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('丁批准') && !FACTORY_WORDS_PATTERN.test(String(r.reason)))
+{
+  const suffixState = decisions.deriveFlowState([umE(), callE('ask_user_question', 's1', cRouteArgs), okE('s1', answerE(['甲直行（推荐）']))], customRuntime)
+  check('GW20 当前词带白名单推荐后缀 → 归一后精确匹配（direct）', suffixState.route, 'direct')
+  const variantState = decisions.deriveFlowState([umE(), callE('ask_user_question', 'v1', cRouteArgs), okE('v1', answerE(['甲直行!']))], customRuntime)
+  check('GW21 当前词的非白名单变体（! 等额外字符）→ 不推进（禁止 indexOf 子串）', variantState.route, 'none')
+  const oldWordSuffixState = decisions.deriveFlowState([umE(), callE('ask_user_question', 'v2', cRouteArgs), okE('v2', answerE(['直接执行（推荐）']))], customRuntime)
+  check('GW22 旧词带推荐后缀 → 仍不推进', oldWordSuffixState.route, 'none')
+}
+
+// A/C/M/F-L 装配投影：variables 哨兵必须在普通/过滤/anchored native-both/PTC/later 全部保留。
+{
+  const sentinel = { extra_plan_route_direct: 'SENTINEL-DIRECT', extra_plan_route_plan: 'SENTINEL-PLAN' }
+  const sentinelTools = [{ name: 'read' }, { name: 'pwsh' }, { name: 'run_code' }]
+  const ptcSections = [{ name: 'tools:ptc-only', text: 'Only the run_code transport is directly callable.' }, { name: 'tools:sdk', text: 'SDK-OLD' }]
+  const plain = await assembleWithVariables(harness, mainAgent, sentinelTools, [{ name: 'tools:sdk', text: 'SDK-OLD' }], sentinel)
+  check('GW23 非 anchored 过滤投影保留 variables', plain.variables, sentinel)
+  const anchoredPtc = await assembleWithVariables(harnessBoot, mainAgent, sentinelTools, ptcSections, sentinel)
+  check('GW24 anchored 首轮 PTC 投影保留 variables', anchoredPtc.variables, sentinel)
+  const anchoredNative = await assembleWithVariables(harnessBoot, mainAgent, sentinelTools, [{ name: 'matrix-user-section', text: 'x' }], sentinel)
+  check('GW25 anchored 首轮 native/both 投影保留 variables', anchoredNative.variables, sentinel)
+  const laterAgent = mainWithEvents([callE('read', 'later-1')])
+  const laterAssembly = await assembleWithVariables(harnessBoot, laterAgent, sentinelTools, ptcSections, sentinel)
+  check('GW26 anchored later 恢复原 persona 变量引用且保留 variables', laterAssembly.variables, sentinel)
+  const plannerAssembly = await assembleWithVariables(harnessBoot, plannerAgent, sentinelTools, ptcSections, sentinel)
+  check('GW27 anchored 首轮 planner PTC 投影保留 variables', plannerAssembly.variables, sentinel)
 }
 
 console.log('\n通过 ' + pass + ', 失败 ' + fail)

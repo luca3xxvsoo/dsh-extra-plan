@@ -18,11 +18,14 @@
     "index.js",
     "lib/",
     "scripts/distribute-preset.mjs",
+    "scripts/generate-runtime-defaults.mjs",
     "cordis.patch.yml",
     "assets/presets/extra-plan/"
   ],
   "scripts": {
-    "postinstall": "node scripts/distribute-preset.mjs"
+    "postinstall": "node scripts/distribute-preset.mjs",
+    "generate:runtime-defaults": "node scripts/generate-runtime-defaults.mjs",
+    "prepack": "node scripts/generate-runtime-defaults.mjs"
   },
   "license": "MIT",
   "repository": "git+https://github.com/luca3xxvsoo/dsh-extra-plan.git",

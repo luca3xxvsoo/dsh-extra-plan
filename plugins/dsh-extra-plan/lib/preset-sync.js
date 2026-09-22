@@ -22,7 +22,14 @@ import {
   parsePresetYaml,
   patchYamlScalar,
   resolveSetting,
+  resolveTemplateSettingDefault,
 } from './preset-settings.js'
+import {
+  GATE_WORD_FIELD_NAMES,
+  GATE_WORD_MIGRATION_DEFINITIONS,
+  GATE_WORDS_GROUP_DEFINITION,
+  validateGateWords,
+} from './gate-words.js'
 
 const PRESET_ID = 'extra-plan'
 const MANIFEST_NAME = 'dist-manifest.json'
@@ -73,31 +80,107 @@ function emptyMigration(source, sourceDistHash) {
   }
 }
 
+/** gateWords 专用空审计：只记状态，不记用户词值。 */
+function emptyGateWordsMigration(source, sourceDistHash) {
+  const results = {}
+  const status = source === 'absent' ? 'skipped-source-absent' : 'skipped-source-unreadable'
+  for (const field of GATE_WORD_FIELD_NAMES) results[field] = status
+  return {
+    format: 1,
+    sourceDistHash: sourceDistHash === undefined ? null : sourceDistHash,
+    source,
+    results,
+  }
+}
+
+/** 旧组状态 → 审计状态字符串（整组同一状态，禁止部分迁移）。 */
+function gateReasonForState(state) {
+  if (state === 'missing') return 'skipped-old-missing'
+  if (state === 'ambiguous') return 'skipped-old-ambiguous'
+  return 'skipped-invalid'
+}
+
+/**
+ * 整组判定：稳定 locator（id=extra-plan + config.gateWords）定位 + 共享 validator 全组校验。
+ * 返回 { state: 'captured'|'missing'|'ambiguous'|'invalid', values? }；不做部分接受。
+ */
+function captureGateWords(document) {
+  const result = resolveSetting(document, GATE_WORDS_GROUP_DEFINITION, { aliases: false })
+  if (result.kind === 'missing') return { state: 'missing' }
+  if (result.kind === 'ambiguous') return { state: 'ambiguous' }
+  try {
+    return { state: 'captured', values: validateGateWords(result.value) }
+  } catch {
+    return { state: 'invalid' }
+  }
+}
+
+/** 厂商模板整组校验：缺失/非法一律抛错（坏模板不得进入 hash/idle 或发布流程）。 */
+function assertTemplateGateWords(text) {
+  const captured = captureGateWords(parsePresetYaml(text))
+  if (captured.state !== 'captured') {
+    throw new Error('extra-plan: 厂商模板 gateWords ' + captured.state + '（config.gateWords 必须整组合法）')
+  }
+  return captured.values
+}
+
 function capturePrevious(targetDir, sourceDistHash) {
   const sourceFile = join(targetDir, 'agent.cordis.yml')
   if (!existsSync(sourceFile)) {
-    return { audit: emptyMigration('absent', sourceDistHash), values: {}, states: {} }
+    return {
+      audit: emptyMigration('absent', sourceDistHash),
+      values: {},
+      states: {},
+      gateAudit: emptyGateWordsMigration('absent', sourceDistHash),
+      gateValues: null,
+      gateState: 'missing',
+    }
   }
   let text
   try {
     text = readFileSync(sourceFile, 'utf8')
   } catch {
-    return { audit: emptyMigration('unreadable', sourceDistHash), values: {}, states: {} }
+    return {
+      audit: emptyMigration('unreadable', sourceDistHash),
+      values: {},
+      states: {},
+      gateAudit: emptyGateWordsMigration('unreadable', sourceDistHash),
+      gateValues: null,
+      gateState: 'unreadable',
+    }
   }
   try {
     const captured = captureSettings(text)
+    // 复用同一份解析文档：settings 与 gateWords 各自独立判定，互不影响。
+    const gate = captureGateWords(captured.document)
+    const source = {
+      format: 1,
+      sourceDistHash: sourceDistHash === undefined ? null : sourceDistHash,
+      source: 'captured',
+      results: {},
+    }
     return {
-      audit: {
+      audit: source,
+      values: captured.values,
+      states: captured.states,
+      gateAudit: {
         format: 1,
         sourceDistHash: sourceDistHash === undefined ? null : sourceDistHash,
         source: 'captured',
         results: {},
       },
-      values: captured.values,
-      states: captured.states,
+      gateValues: gate.state === 'captured' ? gate.values : null,
+      gateState: gate.state,
     }
   } catch {
-    return { audit: emptyMigration('unreadable', sourceDistHash), values: {}, states: {} }
+    return {
+      audit: emptyMigration('unreadable', sourceDistHash),
+      values: {},
+      states: {},
+      gateAudit: emptyGateWordsMigration('unreadable', sourceDistHash),
+      gateValues: null,
+      gateState: 'unreadable',
+    }
   }
 }
 
@@ -152,6 +235,45 @@ function stagePreset(targetDir, distHash, previous) {
       results[definition.key] = 'restored'
     }
 
+    // gateWords 整组迁移（先复制新版模板 → 再整组写回旧值）：只有旧组整体合法才逐叶
+    // 定点写回；缺失/非法/定位歧义一律整组采用新模板出厂值（禁止部分迁移）；新模板
+    // locator 缺失/歧义、patch 失败或迁移后整组校验失败一律抛错（沿 catch 清理 temp、
+    // 保留旧 target，不发布半成品）。
+    const gateAudit = previous.gateAudit
+    const gateResults = gateAudit.results
+    if (gateAudit.source === 'captured') {
+      if (previous.gateState !== 'captured') {
+        for (const definition of GATE_WORD_MIGRATION_DEFINITIONS) {
+          gateResults[definition.key] = gateReasonForState(previous.gateState)
+        }
+      } else {
+        for (const definition of GATE_WORD_MIGRATION_DEFINITIONS) {
+          const stagedGate = resolveSetting(agentDocument, definition, { aliases: false })
+          if (stagedGate.kind !== 'ok') {
+            throw new Error('extra-plan: 新模板 gateWords 定位 ' + stagedGate.kind + '（' + definition.locator.path + '）')
+          }
+          const patchedGate = patchYamlScalar(agentText, definition, previous.gateValues[definition.key])
+          if (!patchedGate.ok) {
+            throw new Error('extra-plan: 新模板 gateWords 写回失败（' + definition.locator.path + '：' + patchedGate.reason + '）')
+          }
+          agentText = patchedGate.text
+          agentDocument = parsePresetYaml(agentText)
+        }
+        const verified = captureGateWords(agentDocument)
+        if (verified.state !== 'captured') {
+          throw new Error('extra-plan: gateWords 迁移后整组校验失败（' + verified.state + '）')
+        }
+        for (const field of GATE_WORD_FIELD_NAMES) {
+          if (verified.values[field] !== previous.gateValues[field]) {
+            throw new Error('extra-plan: gateWords 迁移后取值与用户值不一致（' + field + '）')
+          }
+        }
+        for (const definition of GATE_WORD_MIGRATION_DEFINITIONS) {
+          gateResults[definition.key] = 'restored'
+        }
+      }
+    }
+
     // Reparse after all scalar patches, then write the audit-only manifest.
     parsePresetYaml(agentText)
     writeFileSync(join(tmp, 'agent.cordis.yml'), agentText, 'utf8')
@@ -159,8 +281,9 @@ function stagePreset(targetDir, distHash, previous) {
       format: 2,
       distHash,
       settingsMigration: previous.audit,
+      gateWordsMigration: gateAudit,
     }, null, 2) + '\n', 'utf8')
-    return { tmp, migration: previous.audit }
+    return { tmp, migration: previous.audit, gateMigration: gateAudit }
   } catch (error) {
     rmSync(tmp, { recursive: true, force: true })
     throw error
@@ -233,7 +356,14 @@ function cleanupLegacyFlashGuidePatches(dshHome) {
 }
 
 function noSourcePrevious() {
-  return { audit: emptyMigration('absent', null), values: {}, states: {} }
+  return {
+    audit: emptyMigration('absent', null),
+    values: {},
+    states: {},
+    gateAudit: emptyGateWordsMigration('absent', null),
+    gateValues: null,
+    gateState: 'missing',
+  }
 }
 
 /**
@@ -242,6 +372,12 @@ function noSourcePrevious() {
  */
 export function syncPreset(dshHome) {
   const targetDir = join(dshHome, '.agent-presets', PRESET_ID)
+  const templateFile = join(ASSET_DIR, 'agent.cordis.yml')
+  if (!existsSync(templateFile)) throw new Error('预设模板缺失：' + templateFile)
+  const templateText = readFileSync(templateFile, 'utf8')
+  resolveTemplateSettingDefault(templateText, 'exploreBudget')
+  // 厂商模板 gateWords 必须在 hash/idle 判定之前整组严格校验：坏模板立即抛错且不触碰目标目录。
+  assertTemplateGateWords(templateText)
   const currentHash = contentHash(ASSET_DIR)
   if (currentHash === null) throw new Error('预设资产缺失：' + ASSET_DIR)
 

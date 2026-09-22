@@ -10,7 +10,7 @@
 
 ① 用户以按需规划模式进入（会话预设「按需规划模式」）
 
-② A/C/M 展示时序（默认 A=1、C=0；M=native|ptc|both）：F 精确表示 session 尚无任何 tool/call，首个 tool/call 落盘后为 L。A=1/F/main-planner 的 native/both 是 HN/HB：顶层保留 bootstrap shell(s)+read，sections 仅 extra-plan-bootstrap，不加 tool:read；PTC 是 HP：顶层精确为 [run_code]，sections 精确为 extra-plan-bootstrap、tools:ptc-only、tool:read，其中 tool:read 的文本由插件手写（cfg.bootstrapReadHint，空串/非字符串回退内置中文兜底；借宿主段名只改模型可见副本），不含完整 tools:sdk/Cordis，也不再调用官方 renderer。A=1 的 L 和 A=0 从 N/P/B 基线开始，执行者/验收者/探查者不走 anchored 首轮。C=0 时所有角色、F/L 隐藏 7 个 Cordis 展示项及两个创造 skill catalog；C=1 恢复完整 SDK/Cordis/两个创造 skill，唯一 HP1（F/main-planner）暂隐 catalog。所有变化只改变模型可见面，不是 PTC runtime binding 安全隔离；既有 registry namespace、deny 与 pre-execute 仍按原逻辑执行。
+② A/C/M 展示时序（默认 A=1、C=0；M=native|ptc|both）：F 精确表示 session 尚无任何 tool/call，首个 tool/call 落盘后为 L。A=1/F/main-planner 的 native/both 是 HN/HB：顶层保留 bootstrap shell(s)+read，sections 仅 extra-plan-bootstrap，不加 tool:read；PTC 是 HP：顶层精确为 [run_code]，sections 精确为 extra-plan-bootstrap、tool:read 两项（宿主 tools:ptc-only 段已按用户要求停用、不再透传），其中 tool:read 的文本由插件手写（cfg.bootstrapReadHint，空串/非字符串回退内置中文兜底；借宿主段名只改模型可见副本），不含完整 tools:sdk/Cordis，也不再调用官方 renderer。A=1 的 L 和 A=0 从 N/P/B 基线开始，执行者/验收者/探查者不走 anchored 首轮。C=0 时所有角色、F/L 隐藏 7 个 Cordis 展示项及两个创造 skill catalog；C=1 恢复完整 SDK/Cordis/两个创造 skill，唯一 HP1（F/main-planner）暂隐 catalog。所有变化只改变模型可见面，不是 PTC runtime binding 安全隔离；既有 registry namespace、deny 与 pre-execute 仍按原逻辑执行。
 
 ### 1.1 PTC 实机专项
 - C=0 与 C=1 各开一条干净的 A=1/M=ptc 顶层会话：任何 tool/call 前记录 F header；完成首个顶层 run_code 后在同一会话记录 L，再发第二调用确认仍为 L。
@@ -32,15 +32,15 @@
 
 ⑥ 预估任务复杂度 → 推荐路径：基于探查结果预估（涉及对象数/代码行数/信息完整度）：简单明确 → 推荐直接执行；复杂/多文件/需方案 → 推荐进行pro规划；需求不明确 → 先澄清
 
-⑦ 路由确认（主会话流程首问、每次流程重开/动手前必问，硬闸门）：用 ask_user_question 弹**一次两问**——第一问三选一，选项固定为「直接执行」「进行pro规划」「不同意」（把自己的判断——含复杂度评估与是否已用探查者——排第一）；第二问为纯文本「补充要求」（id=supplement，可留空、不得提供 options）——标准 persona 流程固定发这两问，机械层为「至少两问」（第 2 问起全部须为纯文本且不得带非空 options）。固定顺序为 route→purpose→普通澄清；任何 route 状态都可重新发起该路由 ask（重发同样须为两问同形）。
+⑦ 路由确认（主会话流程首问、每次流程重开/动手前必问，硬闸门）：用 ask_user_question 弹**一次两问**——第一问三选一，**选项取现场 `agent.cordis.yml` 的 `config.gateWords`**（routeDirect/routePlan/routeDisagree；括号内为出厂示例：「直接执行」「进行pro规划」「不同意」——文档里的词值一律只是出厂示例，不是运行时第二真源）（把自己的判断——含复杂度评估与是否已用探查者——排第一）；第二问为纯文本「补充要求」（id=supplement，可留空、不得提供 options）——标准 persona 流程固定发这两问，机械层为「至少两问」（第 2 问起全部须为纯文本且不得带非空 options）。固定顺序为 route→purpose→普通澄清；任何 route 状态都可重新发起该路由 ask（重发同样须为两问同形）。
    - **未确认语义**：空白答复（answers:[]）/取消/中断/验词失败一律视为未确认；仅通道级故障码（NO_PROVIDER/CALLER_NOT_LIVE/DELEGATED_CALLER）白名单逃生（防死锁）
-   - 「直接执行」→ 直接执行路径：主会话亲自用全套工具动手，完工前对照需求逐项自查，简短汇报（≤10 行）；direct 态放行主会话写工具，**委派恒拒**（subagent/subagent_plan/subagent_review 等硬闸门拒绝），仅允许只读探查子代理（subagent_probe）；简单任务不要绕道规划，中等任务规划后执行
-   - 「进行pro规划」→ 进入 ⑧-⑫
-   - 「不同意」→ 不动作、对话询问
+   - route 的直行词（出厂示例「直接执行」）→ 直接执行路径：主会话亲自用全套工具动手，完工前对照需求逐项自查，简短汇报（≤10 行）；direct 态放行主会话写工具，**委派恒拒**（subagent/subagent_plan/subagent_review 等硬闸门拒绝），仅允许只读探查子代理（subagent_probe）；简单任务不要绕道规划，中等任务规划后执行
+   - route 的规划词（出厂示例「进行pro规划」）→ 进入 ⑧-⑫
+   - route 的否决词（出厂示例「不同意」）→ 不动作、对话询问
    - 其余委派仍需路由/批准锚点；send_message 完全放行（目标合法性由宿主校验，续轮转达语义不变）
 
-⑧-1 目的确认（第四锚点）：选「进行pro规划」后**第一个** ask 必须是目的 ask——**另发一次独立的 ask_user_question**，恰好 1 个问题、选项仅有「完善方案」「重新规划」。机械层仅对首问选项精确等于该二选一的 purpose ask 做顺序闸门：route=none/direct 时拒绝，原因必须包含「须先 ask_user_question 路由确认（选项固定为「直接执行」「进行pro规划」「不同意」）」；route=plan 时放行；channelBroken=true 维持逃生放行。目的未定则 save_probe 与 subagent_plan 一律教学式拒绝，不拦 ordinary 澄清 ask；目的未定时澄清答复只提供信息、不置 clarified。
-⑧-2 澄清意图：目的确认答复后，**再另发一次独立的 ask_user_question** 澄清最关键的 1~3 个问题（给候选选项）；与路由确认或目的确认合并进同一次提问将触发闸门（路由 ask 机械层须**至少 2 个问题**——第一问固定三选一、第 2 问起全部为纯文本且不得带非空 options（标准流程即「补充要求」这一问）；目的 ask 须**恰好 1 个问题**）。**澄清选项不得包含「完善方案」「重新规划」的任何子串**——否则整条 ask 被判 purpose/malformed 拒绝；机械层既有三分法判定的自然后果，不新增规则。clarified 置位前提：route=plan 且 purpose∈{完善方案,重新规划}；route 重选前清 purpose/clarified/approved；有效目的重选前清 clarified/approved；非通道取消/中断清 route/purpose/clarified/approved；CHANNEL_BROKEN_CODES 逃生只置 channelBroken 并保留旧阶段状态；最近一条 user/message 仍切断旧事件窗并回五字段默认态。
+⑧-1 目的确认（第四锚点）：选 route 的规划词（出厂示例「进行pro规划」）后**第一个** ask 必须是目的 ask——**另发一次独立的 ask_user_question**，恰好 1 个问题、选项仅有当前 `config.gateWords` 的 purposeRefine/purposeRedo（出厂示例「完善方案」「重新规划」）。机械层仅对首问选项精确等于该二选一的 purpose ask 做顺序闸门：route=none/direct 时拒绝，原因必须包含**由当前 `config.gateWords` 拼出的路由确认句**（恒为「须先 ask_user_question 路由确认（选项固定为<当前三词>）」，出厂值下逐字为「须先 ask_user_question 路由确认（选项固定为「直接执行」「进行pro规划」「不同意」）」）；route=plan 时放行；channelBroken=true 维持逃生放行。目的未定则 save_probe 与 subagent_plan 一律教学式拒绝，不拦 ordinary 澄清 ask；目的未定时澄清答复只提供信息、不置 clarified。
+⑧-2 澄清意图：目的确认答复后，**再另发一次独立的 ask_user_question** 澄清最关键的 1~3 个问题（给候选选项）；与路由确认或目的确认合并进同一次提问将触发闸门（路由 ask 机械层须**至少 2 个问题**——第一问固定三选一、第 2 问起全部为纯文本且不得带非空 options（标准流程即「补充要求」这一问）；目的 ask 须**恰好 1 个问题**）。**澄清选项不得包含当前 `config.gateWords` 目的词（出厂示例「完善方案」「重新规划」）的任何子串**——否则整条 ask 被判 purpose/malformed 拒绝；机械层既有三分法判定的自然后果，不新增规则。clarified 置位前提：route=plan 且 purpose∈{当前 purposeRefine, 当前 purposeRedo}；route 重选前清 purpose/clarified/approved；有效目的重选前清 clarified/approved；非通道取消/中断清 route/purpose/clarified/approved；CHANNEL_BROKEN_CODES 逃生只置 channelBroken 并保留旧阶段状态；最近一条 user/message 仍切断旧事件窗并回五字段默认态。
 
 ⑨ 探查线索落盘（save_probe）：主会话把本轮只读探查留下的「线索地图」经 save_probe 落盘为 `.extra-plan` 下**单个文件** `线索-<任务名>-<时间戳>.md`（按工具要求填四字段），拿到返回的线索文件路径。任务名为空或非 string 时 sanitizeTaskName（save-contract.js L4-11）返回空串 → save_probe 自建 base（save-tool-factories.js L174-176：`const nameSeg = sanitizeTaskName(args.taskName); const ts = timestamp(); const base = (nameSeg === '' ? '' : nameSeg + '-') + ts`，不含 sessionTag）→ 文件名退化为 `线索-<时间戳>.md`（无占位字样）；save-contract.js L31-34 的 savePlanBase（含 sessionTag）只用于 save_plan 双文件。
    - 只含四类定位线索：文件地图（fileMap）/ 重点区域（focusAreas）/ 排除项（exclusions）/ 背景与意图（background），**不含证据**（行号/数值/文案摘录）
@@ -49,7 +49,7 @@
 ⑨-1 **save_probe 限制口径**：当前 `PROBE_LIMITS.maxEvidenceEntries=150`、`maxEvidenceTextLen=1000`；step-00 PR23=151 条拒绝（用 `PROBE_LIMITS.maxEvidenceEntries + 1` 动态构造），PR34/PR35 用 `PROBE_LIMITS.maxEvidenceTextLen` 与加一覆盖 `evidence.text` 1000 通过、1001 拒绝；save_probe 描述/schema 随常量动态生成。`exploreBudget=18` 仍是 planner 探查预算/单实例子调用上限，不是 PROBE_LIMITS；台账历史 80 条、80+79+50=209 仍是归档统计。
 
 ⑩ 启用 pro 规划子代理（subagent_plan 工具，continuable 固定后台）：
-   - 委派 prompt 自包含（目标、范围、相关文件、产出要求）并带上用户目的选择（完善方案/重新规划）与线索文件路径，说明「先 read 该线索文件、再按需补查」，避免重复探查
+   - 委派 prompt 自包含（目标、范围、相关文件、产出要求）并带上用户目的选择（当前 purposeRefine/purposeRedo，出厂示例「完善方案/重新规划」）与线索文件路径，说明「先 read 该线索文件、再按需补查」，避免重复探查
    - **探查硬上限**（默认 18 次，计数含 save_plan）：每轮开局告知预算；剩余 ≤3 次注入一次「还剩 N 次」提醒（预算值 ≤3 时不注入；每轮只注入一次）；预算耗尽 → 拒绝后续工具调用并注入带数字收敛指令。预算自最近一条主会话发往子代理的消息起计：初始任务/续轮转达（kind=user/agent-message）= 一次重置 = 授权继续；运行时快照（kind=plugin）不重置
    - 预算紧张（剩 ≤3）时优先申请继续探查，由主会话委派探查者一次性换取信息
    - **run_code 多调用容错硬闸门**：主会话/planner/只读子代理（probe/reviewer）用 run_code 批量调用时，≥2 个 tools.* 调用必须给每个调用点各写一个独立 try/catch——一次只包 1 个调用、块后紧跟 catch（否则组判定拒绝，教学式文案含「已保护 M 个」；执行者子代理豁免=既有架构）；job_output 全角色禁 wait:true——等完成通知唤醒续轮，勿前台等待
@@ -65,10 +65,10 @@
 
 ⑩-2 **step-07 实机模型/引导取证（A42/A43、C11/C12，HUMAN）**：用户必须在同一部署配置快照下显式提供 `SESSION_ID`（顶层主会话 ID）与 `PLANNER_PROMPT_SUFFIX`（空串也必须显式存在），运行 `node pe-test/tools/step-07-子代理模型与引导取证.mjs`；脚本只读两代日志，按 parentSession/origin/delegationDepth/descriptor.mode 与父 `subagent_plan` call/result 关联 child，只区分 pro规划/非pro规划。request/header.config.provider/model、request/context、model/selection 只记 attempted route；assistant/message.source.provider/model 才记 actual provenance。仅 pro规划 child 的首个 text block参与 suffix 精确匹配，完整输出所有 text block，budgetNotice、宿主 `Your parent agent id is …` guidance、header.system 分列且不计 suffix；等级按 verified-injection/content-only/attempted-only/absent/no-log，不能用 mock、候选 probe 或模型猜角色代替实机结论。内存与扫描面：脚本先只用 `headerOfDir` 有界分块读头信息筛出直接 child，再只对命中目录解析事件（不再保留 raw 行），共用 `session-finder.mjs` 首行读改分块渐读——输出逐字节与优化前一致，但不加堆参数默认堆即可跑通。
 
-⑪ 计划回传 → 主会话读取方案文件与验收文件（用 read 工具读取展示）、把内容**原样展示给用户（不要改写、不要润色）**，并 ask 确认下一步操作。路由确认 ask 标准流程固定发 2 个问题（机械层接受至少 2 个）——第一问为三选一「直接执行」「进行pro规划」「不同意」，第二个问题为纯文本「补充要求」（可留空），不得提供 options（index.js L402/L406 机械层会拒绝：「路由 ask 结构错误：须至少 2 个问题（第一个为路由选项固定为「直接执行」「进行pro规划」「不同意」，第二个为补充要求可空），当前 N 个问题」；或「路由 ask 结构错误：第 N 个问题（补充要求）必须为纯文本输入，不得提供选项（预设选项不符合用户想法），当前带 M 个选项。请改为纯文本大文本框、去掉 options」）；批准 ask 标准流程固定发 2 个问题（机械层同样接受至少 2 个）——第一问选项固定为「同意执行」「转交pro规划」「不同意」，第二个问题为纯文本「修改意见」（可留空），不得提供 options（index.js L416/L420 机械层会拒绝：「批准 ask 结构错误：第 N 个问题（修改意见）必须为纯文本输入，不得提供选项（预设选项不符合用户想法），当前带 M 个选项。请改为纯文本大文本框、去掉 options」）：
-   - 「同意执行」→ 进入 ⑫
-   - 「转交pro规划」→ 重新规划（批准后回炉，区别于目的闸门二选一中的「重新规划」）
-   - 「不同意」→ 回到 ⑦
+⑪ 计划回传 → 主会话读取方案文件与验收文件（用 read 工具读取展示）、把内容**原样展示给用户（不要改写、不要润色）**，并 ask 确认下一步操作。路由确认 ask 标准流程固定发 2 个问题（机械层接受至少 2 个）——第一问为三选一（**取当前 `config.gateWords` 三词**；出厂示例「直接执行」「进行pro规划」「不同意」），第二个问题为纯文本「补充要求」（可留空），不得提供 options（机械层会拒绝：「路由 ask 结构错误：须至少 2 个问题（第一个为路由选项固定为<当前三词>，第二个为补充要求可空），当前 N 个问题」；或「路由 ask 结构错误：第 N 个问题（补充要求）必须为纯文本输入，不得提供选项（预设选项不符合用户想法），当前带 M 个选项。请改为纯文本大文本框、去掉 options」）；批准 ask 标准流程固定发 2 个问题（机械层同样接受至少 2 个）——第一问选项取当前 `config.gateWords` 的 approvalApprove/approvalReplan/routeDisagree（出厂示例「同意执行」「转交pro规划」「不同意」），第二个问题为纯文本「修改意见」（可留空），不得提供 options（机械层会拒绝：「批准 ask 结构错误：第 N 个问题（修改意见）必须为纯文本输入，不得提供选项（预设选项不符合用户想法），当前带 M 个选项。请改为纯文本大文本框、去掉 options」）：
+   - 批准词（出厂示例「同意执行」）→ 进入 ⑫
+   - 转规划词（出厂示例「转交pro规划」）→ 重新规划（批准后回炉，区别于目的闸门二选一中的目的词）
+   - 否决词（出厂示例「不同意」）→ 回到 ⑦
 
 ⑫ 执行（方案批准后）：
    - 创建执行子代理（subagent，one-shot 后台，必须显式传 run_in_background: true）执行
@@ -106,3 +106,8 @@
 ---
 
 *本节于 2026-09-05 按实际机制校订；原 13 步版本已被替换。机制变化时优先更新 index.js 头注释，再同步本节。*
+
+## P2-4 运行时默认与模块边界补记
+- exploreBudget 的默认读取顺序是工作区 `agent.cordis.yml` 叶值 → 构建期生成 `preset-defaults.generated.js` → 运行时 fallback；运行时不读 YAML，合法 cfg 值仍优先。
+- 生成/--check/prepack 完整校验失败即非 0 且保留 last-known-good；preset-sync 在任何用户预设目标写入前失败，既有 postinstall/startup 外壳不阻断。
+- shell mutation、planner budget、frontmatter/cause-chain 与 per-apply role/cache 工厂位于 lib；usage/注册/claim、disposed 同步 final fold、监听器顺序和 pre-execute 接线仍在根入口。

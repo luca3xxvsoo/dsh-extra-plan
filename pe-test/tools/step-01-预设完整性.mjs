@@ -1,13 +1,17 @@
 // extra-plan 预设静态校验：只读工作区模板，不访问生产 DSH_HOME。
-import { readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import {
   SETTING_DEFINITIONS,
   parsePresetYaml,
   resolveSetting,
   findTextLocatorMatches,
+  resolveTemplateSettingDefault,
 } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
+import { DEFAULT_EXPLORE_BUDGET } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
+import { generateRuntimeDefaults, renderRuntimeDefaults } from '../../plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs'
 // S1：DEFAULT_DENY 收敛断言（执行者 deny 清单必须与预设 config.deny 逐字一致）。
 import { DEFAULT_DENY, resolveDeny } from '../../plugins/dsh-extra-plan/lib/executor-spawn.js'
 
@@ -15,6 +19,8 @@ const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url))
 const PRESET_DIR = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'assets', 'presets', 'extra-plan')
 const file = join(PRESET_DIR, 'agent.cordis.yml')
 const presetFile = join(PRESET_DIR, 'preset.yml')
+const generatedFile = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'preset-defaults.generated.js')
+const generatorFile = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'scripts', 'generate-runtime-defaults.mjs')
 let rows
 let preset
 try {
@@ -39,6 +45,10 @@ const registered = new Set([
 
 let pass = 0
 let fail = 0
+function check(label, condition) {
+  if (condition) { pass += 1; console.log('PASS  ' + label) }
+  else { fail += 1; console.log('FAIL  ' + label) }
+}
 function checkDeny(label, denyList) {
   const unknown = denyList.filter((name) => !registered.has(name))
   if (unknown.length > 0) {
@@ -181,6 +191,59 @@ if (defaults.plannerModel === 'deepseek-v4-pro' && defaults.crossProviderPlanner
 } else {
   fail += 1
   console.log('FAIL  新版模板默认值不符合验收锚点')
+}
+
+// B2：YAML exploreBudget 是作者真源，生成模块只保存派生 fallback；非法 source 不覆盖 sentinel。
+const packageJson = JSON.parse(readFileSync(join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'package.json'), 'utf8'))
+const generatedText = readFileSync(generatedFile, 'utf8')
+check('B2 YAML 叶值、生成 export 与 resolver 同为 18', resolveTemplateSettingDefault(agentText, 'exploreBudget') === 18 && DEFAULT_EXPLORE_BUDGET === 18 && generatedText.includes('export const DEFAULT_EXPLORE_BUDGET = 18'), true)
+check('B2 render 文本与已提交生成模块逐字一致', renderRuntimeDefaults(agentText) === generatedText, true)
+const packageFiles = Array.isArray(packageJson.files) ? packageJson.files : []
+check('B2 package files/scripts 含生成器、generate 与 prepack', packageFiles.includes('scripts/generate-runtime-defaults.mjs') && packageJson.scripts['generate:runtime-defaults'] === 'node scripts/generate-runtime-defaults.mjs' && packageJson.scripts.prepack === 'node scripts/generate-runtime-defaults.mjs', true)
+const generatedBeforeCheck = readFileSync(generatedFile)
+let checkPassed = false
+try { generateRuntimeDefaults({ sourcePath: file, outputPath: generatedFile, check: true }); checkPassed = true } catch { checkPassed = false }
+check('B2 --check 通过且不写生成物', checkPassed && readFileSync(generatedFile).equals(generatedBeforeCheck), true)
+
+const generatorFixture = mkdtempSync(join(tmpdir(), 'dsh-runtime-defaults-'))
+try {
+  const validMini = '- id: extra-plan\n  config:\n    exploreBudget: 18\n'
+  const validSource = join(generatorFixture, 'valid.yml')
+  const validOutput = join(generatorFixture, 'valid.generated.js')
+  writeFileSync(validSource, validMini, 'utf8')
+  const validRendered = renderRuntimeDefaults(validMini)
+  generateRuntimeDefaults({ sourcePath: validSource, outputPath: validOutput })
+  check('B2 临时 source/output 可生成并逐字等于 render', readFileSync(validOutput, 'utf8') === validRendered, true)
+  const mismatchOutput = join(generatorFixture, 'mismatch.generated.js')
+  writeFileSync(mismatchOutput, 'SENTINEL-CHECK', 'utf8')
+  let mismatchFailed = false
+  try { generateRuntimeDefaults({ sourcePath: validSource, outputPath: mismatchOutput, check: true }) } catch { mismatchFailed = true }
+  check('B2 --check 不一致时非 0 且不改 sentinel', mismatchFailed && readFileSync(mismatchOutput, 'utf8') === 'SENTINEL-CHECK', true)
+  let missingFailed = false
+  try { generateRuntimeDefaults({ sourcePath: validSource, outputPath: join(generatorFixture, 'missing.generated.js'), check: true }) } catch { missingFailed = true }
+  check('B2 --check 缺失生成物时非 0', missingFailed, true)
+  const invalidTemplates = [
+    ['missing', '- id: extra-plan\n  config:\n    plannerModel: x\n'],
+    ['ambiguous', validMini + validMini],
+    ['zero', '- id: extra-plan\n  config:\n    exploreBudget: 0\n'],
+    ['negative', '- id: extra-plan\n  config:\n    exploreBudget: -1\n'],
+    ['decimal', '- id: extra-plan\n  config:\n    exploreBudget: 1.5\n'],
+    ['string', "- id: extra-plan\n  config:\n    exploreBudget: '18'\n"],
+    ['null', '- id: extra-plan\n  config:\n    exploreBudget: null\n'],
+    ['syntax', '- id: [broken\n'],
+  ]
+  for (const [label, sourceText] of invalidTemplates) {
+    const sourcePath = join(generatorFixture, label + '.yml')
+    const outputPath = join(generatorFixture, label + '.generated.js')
+    const sentinel = 'SENTINEL-' + label
+    writeFileSync(sourcePath, sourceText, 'utf8')
+    writeFileSync(outputPath, sentinel, 'utf8')
+    let failed = false
+    try { generateRuntimeDefaults({ sourcePath, outputPath }) } catch { failed = true }
+    check('B2 非法模板 ' + label + ' 失败且不覆盖 sentinel', failed && readFileSync(outputPath, 'utf8') === sentinel, true)
+  }
+} finally {
+  rmSync(generatorFixture, { recursive: true, force: true })
 }
 
 const planRow = subagentRows.find((row) => row.config && row.config.toolName === 'subagent_plan')

@@ -7,7 +7,8 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { syncPreset } from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
 import { contentHash, readManifest, writeManifest } from '../_shared/preset-hash.mjs'
-import { SETTING_DEFINITIONS, patchYamlScalar } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
+import { SETTING_DEFINITIONS, parsePresetYaml, patchYamlScalar, resolveSetting } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
+import { GATE_WORD_FIELDS, GATE_WORD_MIGRATION_DEFINITIONS, GATE_WORDS_GROUP_DEFINITION, createGateRuntime } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 const ASSET_DIR = join(HERE, '..', '..', 'plugins', 'dsh-extra-plan', 'assets', 'presets', 'extra-plan')
@@ -57,6 +58,7 @@ const expectedOldAgent = patchAgent(oldValues)
 try {
   check('首次自愈 → written', syncPreset(home) === 'written')
   check('首次 manifest format=2/10 项审计', (() => { const m = manifestAt(dist); return m.format === 2 && m.distHash === currentHash && Object.keys(m.settingsMigration.results).length === 10 })())
+  check('首次安装 gateWordsMigration 恰 7 项且全为 skipped-source-absent（format=1）', (() => { const m = manifestAt(dist); return m.gateWordsMigration !== undefined && m.gateWordsMigration.format === 1 && m.gateWordsMigration.source === 'absent' && Object.keys(m.gateWordsMigration.results).length === 7 && Object.values(m.gateWordsMigration.results).every((result) => result === 'skipped-source-absent') })())
   check('首次第二次 → idle', syncPreset(home) === 'idle')
 
   writeFileSync(join(dist, 'agent.cordis.yml'), expectedOldAgent, 'utf8')
@@ -82,6 +84,52 @@ try {
   check('相同 hash 收敛 → idle', syncPreset(home) === 'idle')
   const afterIdle = [readFileSync(join(dist, 'preset.yml')), readFileSync(join(dist, 'agent.cordis.yml')), readFileSync(join(dist, 'dist-manifest.json'))]
   check('idle 三个核心字节完全不变且 readManifest 正确', beforeIdle.every((value, index) => value.equals(afterIdle[index])) && readManifest(dist) === currentHash)
+
+  // ── gateWords：同 hash 普通重启保留 + hash 变化版本升级整组迁移（[任务5]） ──
+  const GATE_CUSTOM = { routeDirect: '甲直行', routePlan: '乙规划', routeDisagree: '丙否决', approvalApprove: '丁批准', approvalReplan: '戊转规划', purposeRefine: '己完整', purposeRedo: '庚重做' }
+  function customGateAgent(text) {
+    let out = text
+    for (const item of GATE_WORD_MIGRATION_DEFINITIONS) {
+      const patched = patchYamlScalar(out, item, GATE_CUSTOM[item.key])
+      if (!patched.ok) throw new Error('fixture patch failed: ' + item.key)
+      out = patched.text
+    }
+    return out
+  }
+  function flattenRows(list) {
+    const out = []
+    for (const row of list) {
+      if (row === null || typeof row !== 'object') continue
+      out.push(row)
+      if (row.group === true && Array.isArray(row.config)) out.push(...flattenRows(row.config))
+    }
+    return out
+  }
+  const assetBootstrapPersona = flattenRows(parsePresetYaml(assetAgent)).find((row) => row.id === 'extra-plan').config.bootstrapPersona
+  function bootstrapPersonaLine(value) { return "        bootstrapPersona: '" + value + "'" }
+
+  // ① 同 hash 普通重启：现场 7 词改成定制值、manifest 保持 currentHash → idle 且字节逐字保留
+  writeFileSync(join(dist, 'agent.cordis.yml'), customGateAgent(assetAgent), 'utf8')
+  const beforeCustomIdle = [readFileSync(join(dist, 'preset.yml')), readFileSync(join(dist, 'agent.cordis.yml')), readFileSync(join(dist, 'dist-manifest.json'))]
+  check('同 hash 现场定制 7 词 → idle（不读取/不改写现场正文）', syncPreset(home) === 'idle')
+  const afterCustomIdle = [readFileSync(join(dist, 'preset.yml')), readFileSync(join(dist, 'agent.cordis.yml')), readFileSync(join(dist, 'dist-manifest.json'))]
+  check('idle 三个核心文件 Buffer 完全相等（用户定制词逐字保留）', beforeCustomIdle.every((value, index) => value.equals(afterCustomIdle[index])))
+
+  // ② hash 变化版本升级：非迁移厂商字段改 OLD 标记 + manifest 改旧 hash
+  const oldMarkerAgent = readFileSync(join(dist, 'agent.cordis.yml'), 'utf8').replace(bootstrapPersonaLine(assetBootstrapPersona), "        bootstrapPersona: 'OLD-SYNC-MARKER'")
+  writeFileSync(join(dist, 'agent.cordis.yml'), oldMarkerAgent, 'utf8')
+  writeManifest(dist, 'OLD-SYNC-GATE-HASH')
+  check('旧 hash + 非迁移字段 OLD 标记 → upgraded', syncPreset(home) === 'upgraded')
+  const upgradedGateManifest = manifestAt(dist)
+  const upgradedGateText = readFileSync(join(dist, 'agent.cordis.yml'), 'utf8')
+  const upgradedGateGroup = resolveSetting(parsePresetYaml(upgradedGateText), GATE_WORDS_GROUP_DEFINITION, { aliases: false })
+  const upgradedGateRuntime = createGateRuntime(upgradedGateGroup.value)
+  check('升级后 7 个定制词逐项保留（createGateRuntime.variables 等于用户值）', GATE_WORD_FIELDS.every((item) => upgradedGateRuntime.variables[item.variable] === GATE_CUSTOM[item.field]) && GATE_WORD_MIGRATION_DEFINITIONS.every((item) => upgradedGateRuntime.words[item.key] === GATE_CUSTOM[item.key]))
+  check('升级后非迁移厂商字段恢复为当前资产值（新模板其它内容同步）', upgradedGateText.includes('bootstrapPersona: ' + JSON.stringify(assetBootstrapPersona).replace(/^"|"$/g, "'")) && !upgradedGateText.includes('OLD-SYNC-MARKER'))
+  check('升级产物 persona prefix === text 且含 7 个变量引用', (() => { const persona = flattenRows(parsePresetYaml(upgradedGateText)).find((row) => row.id === 'persona'); const refs = Array.from(new Set(persona.config.prefix.match(/\{\{extra_plan_[a-z_]+\}\}/g) || [])); return persona.config.prefix === persona.config.text && refs.length === 7 })())
+  check('升级后 manifest distHash=currentHash / settingsMigration 10 项 / gateWordsMigration 7 项全 restored', upgradedGateManifest.format === 2 && upgradedGateManifest.distHash === currentHash && Object.keys(upgradedGateManifest.settingsMigration.results).length === 10 && Object.keys(upgradedGateManifest.gateWordsMigration.results).length === 7 && Object.values(upgradedGateManifest.gateWordsMigration.results).every((result) => result === 'restored'))
+  check('升级后 manifest 不泄漏用户词值', !JSON.stringify(upgradedGateManifest).includes(GATE_CUSTOM.routeDirect) && !JSON.stringify(upgradedGateManifest).includes(GATE_CUSTOM.approvalReplan))
+  check('升级后再次同步 → idle（收敛）', syncPreset(home) === 'idle')
 
   const oldMissingCross = expectedOldAgent.replace('        crossProviderPlannerModel: true\n', '')
   writeFileSync(join(dist, 'agent.cordis.yml'), oldMissingCross, 'utf8')

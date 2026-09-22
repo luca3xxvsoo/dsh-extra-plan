@@ -46,6 +46,7 @@ const {
   publicSettingMetadata,
   resolveSetting,
 } = presetSettings
+const { DEFAULT_EXPLORE_BUDGET } = await import(new URL('../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js', import.meta.url).href)
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 const ASSET_DIR = join(HERE, '..', '..', 'plugins', 'dsh-extra-plan', 'assets', 'presets', 'extra-plan')
@@ -150,7 +151,7 @@ try {
   writeFileSync(join(presetDir, 'agent.cordis.yml'), patchAgent(oldValues), 'utf8')
 
   const metadata = publicSettingMetadata(TEMPLATE_AGENT, patchAgent(oldValues))
-  check('共享 metadata 恰有 10 项且默认来自新版模板', metadata.fields.length === 10 && metadata.fields.find((field) => field.key === 'exploreBudget').default === 18 && metadata.fields.find((field) => field.key === 'crossProviderPlannerModel').default === false && metadata.fields.find((field) => field.key === 'otherAgentModel').default === '')
+  check('共享 metadata 恰有 10 项且默认来自新版模板', metadata.fields.length === 10 && metadata.fields.find((field) => field.key === 'exploreBudget').default === DEFAULT_EXPLORE_BUDGET && metadata.fields.find((field) => field.key === 'crossProviderPlannerModel').default === false && metadata.fields.find((field) => field.key === 'otherAgentModel').default === '')
 
   const routeDefinitions = []
   const settingsRegistrations = []

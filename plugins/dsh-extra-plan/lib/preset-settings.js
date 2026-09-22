@@ -187,6 +187,23 @@ export function normalizeSettingValue(definition, value) {
   return typeof definition.normalize === 'function' ? definition.normalize(value) : value
 }
 
+export function resolveTemplateSettingDefault(defaultText, key) {
+  const definition = getSettingDefinition(key)
+  if (definition === undefined) throw new Error('template default ' + String(key) + ': descriptor missing')
+  let document
+  try {
+    document = parsePresetYaml(defaultText)
+  } catch (error) {
+    throw new Error('template default ' + key + ': YAML parse failed: ' + (error instanceof Error ? error.message : String(error)))
+  }
+  const result = resolveSetting(document, definition, { aliases: false })
+  if (result.kind !== 'ok') throw new Error('template default ' + key + ': locator ' + result.kind)
+  if (!validateSettingValue(definition, result.value)) {
+    throw new Error('template default ' + key + ': value invalid (expected ' + definition.scalarType + ' positive integer)')
+  }
+  return normalizeSettingValue(definition, result.value)
+}
+
 export function captureSettings(text) {
   const document = parsePresetYaml(text)
   const values = {}

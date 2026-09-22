@@ -19,7 +19,33 @@ const PLUGIN_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/index.js
 import { registerHostDeps } from '../_shared/host-deps.mjs'
 await registerHostDeps()
 const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
+import { DEFAULT_EXPLORE_BUDGET } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
+import { parsePresetYaml } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
+import { createGateRuntime } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
 const { deriveFlowState } = plugin.decisions
+
+// ── 闸门词注入（与 step-04 同口径） ──────────────────────────────────────
+// 插件在 apply 里对 config.gateWords 做整组严格校验：缺失/非法同步抛错。故所有 harness
+// 必须先从【资产 YAML】解析 extra-plan config，再合并 gateWords 后 apply——测试不手写词值。
+const ASSET_AGENT_FILE = fileURLToPath(new URL('../../plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml', import.meta.url))
+function flattenRows(list) {
+  const out = []
+  for (const row of list) {
+    if (row === null || typeof row !== 'object') continue
+    out.push(row)
+    if (row.group === true && Array.isArray(row.config)) out.push(...flattenRows(row.config))
+  }
+  return out
+}
+const assetExtraPlanConfig = flattenRows(parsePresetYaml(readFileSync(ASSET_AGENT_FILE, 'utf8'))).find((row) => row.id === 'extra-plan').config
+const assetGateWords = assetExtraPlanConfig.gateWords
+const gateRuntime = createGateRuntime(assetGateWords)
+/** 合并资产 YAML 的 gateWords（调用方显式值优先，便于坏配置用例覆盖）。 */
+function withGateWords(config) { return { gateWords: assetGateWords, ...config } }
+/** ctx.systemPrompt mock：记录 variable 注册（当前 agent scope，恰 7 个）。 */
+function systemPromptMock(registry) {
+  return { variable: (name, provider) => { registry.push({ name, provider }); return () => {} } }
+}
 
 // P0-3：持久化函数直连导入（故障注入用；与 index.js 注入给 save 工具工厂的是同一模块实例）
 const PERSISTENCE_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/save-persistence.js', import.meta.url))
@@ -54,17 +80,21 @@ const answer = (labels) => JSON.stringify({ answers: labels.map((l) => ({ id: 'q
 // ── mock ctx harness（ctx.get 按 name==='tools' 返回注册表） ─────────────
 function makeHarness(config, toolsMock) {
   const listeners = {}
+  const variables = []
   const ctx = {
+    systemPrompt: systemPromptMock(variables),
     get: (name) => (name === 'tools' ? toolsMock : undefined),
     on: (name, fn) => {
       if (listeners[name] === undefined) listeners[name] = []
       listeners[name].push(fn)
     },
+    effect: (fn) => fn(),
     provide: (name, value) => {
       ctx[name] = value
     },
   }
-  plugin.apply(ctx, config)
+  plugin.apply(ctx, withGateWords(config))
+  listeners.variables = variables
   return listeners
 }
 const registered = []
@@ -158,14 +188,16 @@ function registrationAgent(id, toolsRef) {
 // 独立 harness：插件 ctx 与 agent ctx 同源（都把 tools 指向 ref.current，null 表示服务不可用）。
 function refHarness(toolsRef) {
   const ctx = {
+    systemPrompt: systemPromptMock([]),
     get: (name) => (name === 'tools' ? toolsRef.current : undefined),
     on: (name, fn) => {
       if (toolsRef.listeners[name] === undefined) toolsRef.listeners[name] = []
       toolsRef.listeners[name].push(fn)
     },
+    effect: (fn) => fn(),
     provide: () => {},
   }
-  plugin.apply(ctx, { anchoredBootstrap: false })
+  plugin.apply(ctx, withGateWords({ anchoredBootstrap: false }))
   return toolsRef.listeners
 }
 // 宿主口径：assemble 先于本步 pre-step 派发（快照即本步工具目录），pre-step 中注册只进下一步 assembly。
@@ -325,7 +357,7 @@ for (const [name, events, expected] of FIVE) {
     checkTrue(`${name}`, r !== null && r !== undefined && r.kind === 'allow')
   }
 }
-const cancelledState = deriveFlowState(FIVE[2][1])
+const cancelledState = deriveFlowState(FIVE[2][1], gateRuntime)
 check('S8g ASK_CANCELLED 后状态五字段全清', cancelledState, { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false })
 
 // S8cg：独立事件流（route→clarify、目的未定）的 save_probe 拒绝文案（第四锚点教学式文案，机械层放行前置）
@@ -371,7 +403,8 @@ for (const [name, events, expected] of SAVE_PLAN_STATES) {
 
 // ── ③ planner 预算回归（v1 口径，[任务4.3]/[任务7.4]） ───────────────────
 const plannerEvents = [DESC, umk('user')]
-for (let i = 0; i < 18; i += 1) {
+check('S10b 生成默认预算仍为 18', DEFAULT_EXPLORE_BUDGET, 18)
+for (let i = 0; i < DEFAULT_EXPLORE_BUDGET; i += 1) {
   plannerEvents.push(call('read', `r${i}`))
   plannerEvents.push(ok(`r${i}`, 'ok'))
 }
@@ -380,7 +413,7 @@ r = preExecute(harness, exhaustedPlanner, 'read', { file_path: 'C:/work/.extra-p
 checkTrue('S11 预算耗尽后 read 线索文件 → deny（read 线索计入预算，v1 口径）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('探查预算已耗尽'))
 r = preExecute(harness, exhaustedPlanner, 'save_plan', { plan: 'p', checklist: 'c' })
 checkTrue('S12 预算耗尽后 save_plan → allow（跳过名单仍仅 save_plan）', r !== null && r !== undefined && r.kind === 'allow')
-// 11 次成功配对后第 12 次 read（线索文件）不拒绝——12 ≤ 18（exploreBudget 默认）未超预算
+// 11 次成功配对后第 12 次 read（线索文件）不拒绝——12 ≤ DEFAULT_EXPLORE_BUDGET（默认）未超预算
 const plannerEvents11 = [DESC, umk('user')]
 for (let i = 0; i < 11; i += 1) {
   plannerEvents11.push(call('read', `q${i}`))

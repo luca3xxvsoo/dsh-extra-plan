@@ -413,13 +413,13 @@ export function createRunCodeStatic({ askTool, isDispatchStart }) {
     return sites
   }
   
-  // ask_user_question 返回值白名单（第一版）：只在主会话 run_code 预执行前做保守静态证明。
-  // 允许直接 return await，或单一标识符接收后紧随顶层 return 且按标识符边界实际引用；其余一律拒绝。
+  // ask_user_question 返回链闸门（第一版）：只在主会话 run_code 预执行前做保守静态证明。
+  // 允许直接 return await，或单一标识符接收后紧随顶层 return 且按标识符边界实际引用；其余无法证明结果返回用户层的形态拒绝。
   function askUserQuestionReturnGateReason(code) {
     const text = typeof code === 'string' ? code : ''
     if (text === '') return null
     const masked = maskCodeLiteralsAndComments(text)
-    const reason = 'run_code 内 ask_user_question 返回值未通过返回值白名单：仅允许以下两种写法：return await tools.ask_user_question(...)；或 const q = await tools.ask_user_question(...); return JSON.stringify({ question: q })'
+    const reason = 'run_code 内 ask_user_question 结果未正确返回用户层：请直接 return await tools.ask_user_question(...)，或先用变量接收后在紧随的顶层 return 中返回该结果；不得只调用、只赋值、通过别名/动态访问，或用 .then/函数包装结果'
     const isIdChar = (ch) => ch !== undefined && /[A-Za-z0-9_$]/.test(ch)
     const skipWs = (value, start) => {
       let i = start

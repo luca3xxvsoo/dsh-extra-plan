@@ -7,7 +7,7 @@
 dsh 插件「按需规划模式」预设：AI 未经用户同意不得修改源码/配置/执行态，经路由/目的/澄清/批准四级机械闸门后按规划执行；路由确认前唯一写例外 = 受限规划工件 save_plan（任意路由态可落盘 cwd/.extra-plan 的固定形状方案/验收双文件，内容闸门与目录/文件名形态不变），save_probe 仍限 pro 规划窗口（route=plan + 目的已定 + 澄清完成）；Pure PTC 顶层始终只保留 run_code。
 五角色：主会话（入口协调）→ 探查者（只读批量+证据落盘，**仅主会话可委派**）→ 规划子代理（方案+验收双文件，不得委派探查者）→ 执行者（按方案改）→ 验收者（逐条核对）。save_probe 的 `PROBE_LIMITS` 当前为 evidence 150 条、单条 evidence.text 1000 字；step-00 PR23=151、PR34/PR35=1000/1001；exploreBudget=18 与台账历史 80/209 是不同口径。
 兼容：dsh >= v0.1.2-rc.1 & <= v0.1.5-rc.2；qqbot 0.5.0 版 + 精简版 dsh-qqbot-user-questions（仅自愈+mklink，选装）。A=anchoredBootstrap、C=creativeMode、M=toolPresentationMode（native/ptc/both），F=尚无 tool/call、L=首个 tool/call 后。
-A=1/F/main-planner：M=native/both 为 HN/HB（bootstrap shell(s)+read，sections 仅 extra-plan-bootstrap，无 tool:read）；M=ptc 为 HP（顶层仅 run_code，sections 精确为 extra-plan-bootstrap、tools:ptc-only、tool:read，其中 read 文本由插件手写 cfg.bootstrapReadHint（空串/非字符串回退内置中文兜底），不含完整 tools:sdk/Cordis）。A=1 的 L 与 A=0 从 N/P/B 基线（N=native/P=ptc/B=both）开始；C=0 全角色隐藏 7 个 Cordis 展示项且两个创造 skill 不出现在 catalog，C=1 不因 C 隐藏——非 HP1 且非 anchored 时保留完整 SDK/Cordis/两个创造 skill，HP1 仅 F/main-planner 暂隐 catalog。以上是模型可见投影，不是 runtime binding 安全隔离（详见 ai-流程备查.md / ai-机制设计.md）。
+A=1/F/main-planner：M=native/both 为 HN/HB（bootstrap shell(s)+read，sections 仅 extra-plan-bootstrap，无 tool:read）；M=ptc 为 HP（顶层仅 run_code，sections 精确为 extra-plan-bootstrap、tool:read 两项；宿主 tools:ptc-only 段已停用、不再下发，其中 read 文本由插件手写 cfg.bootstrapReadHint（空串/非字符串回退内置中文兜底），不含完整 tools:sdk/Cordis）。A=1 的 L 与 A=0 从 N/P/B 基线（N=native/P=ptc/B=both）开始；C=0 全角色隐藏 7 个 Cordis 展示项且两个创造 skill 不出现在 catalog，C=1 不因 C 隐藏——非 HP1 且非 anchored 时保留完整 SDK/Cordis/两个创造 skill，HP1 仅 F/main-planner 暂隐 catalog。以上是模型可见投影，不是 runtime binding 安全隔离（详见 ai-流程备查.md / ai-机制设计.md）。
 
 ## P2-2 SDK 文本复用边界（终版）
 - 缓存只存在每个 plugin `apply` 闭包内的 agent-keyed WeakMap：同一 agent 对象同一 session 的 L 首次生成、后续相同有效输入复用；不按 sessionId 跨 agent 共享，不缓存 PromptAssembly/sections/tools/contexts/persona，不落盘。
@@ -37,9 +37,21 @@ A=1/F/main-planner：M=native/both 为 HN/HB（bootstrap shell(s)+read，section
 ## 真相源
 （以下路径相对 plugins/dsh-extra-plan/）
 - 角色 persona/deny 清单 → assets/presets/extra-plan/agent.cordis.yml
+- 闸门关键词值（唯一真源） → assets/presets/extra-plan/agent.cordis.yml 的 config.gateWords（7 字段；JS 侧 schema/校验/派生见 lib/gate-words.js，无词值）
 - 函数行号/描述 → pe-test/docs/ai-代码地图.md（唯一来源模块登记：lib/agent-session.js 会话快照/子代理识别）
 - 机制「为什么」详版注释 → 各源码文件注释（指向见 ai-机制设计.md 教训索引表）
 
 ---
 
 **AI 禁改文档仅一处：根 `dsh-extra-plan/README.md`（与本文同层级）；其余文档（含各级 README.md、台账）均可改。**
+## 闸门关键词单一来源（v0.3.0）
+- 7 个闸门关键词（routeDirect/routePlan/routeDisagree/approvalApprove/approvalReplan/purposeRefine/purposeRedo）的**唯一人工编辑位置**是 `assets/presets/extra-plan/agent.cordis.yml` 的 `config.gateWords`（部署现场为 `DSH_HOME/.agent-presets/extra-plan/agent.cordis.yml`）；出厂示例值为「直接执行｜进行pro规划｜不同意｜同意执行｜转交pro规划｜完善方案｜重新规划」，**只是示例，不是运行时第二真源**。
+- `lib/gate-words.js` 只保存字段名/prompt variable 名/校验规则/迁移 locator 与运行时派生（`createGateRuntime`），**不含任何出厂词值、不读文件/环境变量、没有无参默认词表**；`index.js` 每次 apply 第一步 `createGateRuntime(cfg.gateWords)`，缺失/非法同步抛错（阻止该预设被使用，不回退旧词），并在当前 agent scope 经 `ctx.effect(() => ctx.systemPrompt.variable(...))` 注册恰好 7 个 `extra_plan_*` 变量；persona 的 `prefix`/`text` 双键只引用这 7 个变量。
+- deny 教学文案（路由确认句、批准选项句、目的选项句、三类 ask 模板）现由**当前** `config.gateWords` 插值拼出；出厂值下与历史静态文案逐字相同。三类 match 只认「推荐后缀归一后精确等于当前词值」，旧词与任意变体都不能推进 route/purpose/approved。
+- 两条保留链：**同 hash 普通重启** → `idle`，现场 YAML 三个核心文件逐字节不变（现场被改成缺失/非法也不自愈、随后 runtime 严格抛错）；**hash 变化版本升级** → 先复制新厂商模板，再恢复 10 项 UI 设置，最后把整组合法的 7 个旧词定点迁回（缺失/非法/歧义整组采用新模板值，禁止部分迁移）。
+- 设置页仍是 **10 项 UI settings**；gateWords 是**迁移专用字段（7 项）**，不进设置页 metadata、不进 `preset-defaults.generated.js`、不新增构建步骤。manifest 仍是 `format: 2`：`settingsMigration` 10 项 + 并列加法字段 `gateWordsMigration`（7 项状态，只记状态不记用户词值）。
+
+## P2-4 默认值与拆分边界
+- `assets/presets/extra-plan/agent.cordis.yml` 的 `config.exploreBudget` 是唯一默认作者真源；构建期 `scripts/generate-runtime-defaults.mjs` 生成 `lib/preset-defaults.generated.js`，运行时只 import 该常量，不解析 YAML，descriptor 仅负责定位、校验与 UI metadata。
+- 生成器先完整解析/校验再替换；缺失或非法模板时生成、`--check`、prepack 非 0，保留 last-known-good；preset-sync 在任何 DSH_HOME 目标写入前失败，postinstall/startup 外壳仍非阻断。
+- P2-4 B1 将无宿主状态的 shell mutation、planner budget、runtime-static 与 per-apply agent runtime factory 下沉；usage、工具注册/claim、disposed 同步 final fold、监听器顺序和 tools/pre-execute 仍留在 `index.js`。
