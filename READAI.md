@@ -34,6 +34,11 @@ A=1/F/main-planner：M=native/both 为 HN/HB（bootstrap shell(s)+read，section
 ## 必守纪律（一句）
 改前逐文件备份到 `.extra-plan/backup-<任务名>-<timestamp>/`（与维护手册备份条款口径一致）；工作目录固定为 dsh-extra-plan（仓库根）；改完按固定顺序执行根入口与 9 个新增 lib 的 `node --check`（`plugins/dsh-extra-plan/index.js`、`lib/run-code-static.js`、`lib/save-contract.js`、`lib/save-probe-validation.js`、`lib/save-persistence.js`、`lib/save-tool-factories.js`、`lib/agent-session.js`、`lib/model-routing.js`、`lib/assembly-presentation.js`、`lib/sdk-text-cache.js`），再运行 `node pe-test/tools/step-00-全流程回归.mjs`、`node pe-test/tools/step-04-路由与写闸门.mjs`、`node pe-test/tools/step-06-线索落盘.mjs`、`node pe-test/tools/代码地图生成.mjs`，人工段维护后执行 `node pe-test/tools/代码地图生成.mjs --check`，最后执行 `node pe-test/tools/一键step测试.mjs`。**改完不同步地图 = 一键体检「代码地图一致性」判红**。**唯一禁改文档：根 `dsh-extra-plan/README.md`（与 READAI.md 同层级）；其余文档（含各级 README.md、pe-test/docs/ai-宿主耦合台账.md）均可改；官方安装的预设与技能只读引用、不复制不改写。**
 
+## PTC 拒绝中文呈现兜底与状态机口径（2026-09-23）
+- **PTC 子调用被闸门拒绝 → tools/post-execute 把失败结果 content 改写为 `Error: <中文 reason>`**：pre-execute deny 时按 sessionId→rootCallId 记录本次 reason，post-execute 在 run_code 失败结果的 `error.message` 含精确子串 `ToolCallError: <reason>` 时只替换 `content`（PostToolDecision 禁止对失败结果替换 value），模型不再看到 `code run failed (exception)` 与 worker.cjs 堆栈；未命中/非 run_code/非失败一律 `next()` 透传（不吞错），记录消费即清、agent/disposed 按 session 清桶。
+- **状态机对闸门拒绝不重置路由、用户取消仍清四字段**：`kind:'denied'`（插件中文拒绝文案）不改任何状态字段；用户取消/中断（native 直呼码 ASK_CANCELLED、嵌套为宿主取消句 HOST_ASK_CANCEL_TEXTS）仍走 resetRouteState 清 route/purpose/clarified/approved；CHANNEL_BROKEN_CODES 只置 channelBroken。
+- 宿主接触面登记见 pe-test/docs/ai-宿主耦合台账.md HK25（0.1.2-rc.1 实测；0.1.5-rc.2 已于本机静态契约复核通过——钩子签名、waterfall 语义、PostToolDecision 形状、content 替换允许性及该版新增两条守卫均不触发；实机行为面待部署后实测）；用例见 step-04 ⑮ DZ1-DZ12。
+
 ## 真相源
 （以下路径相对 plugins/dsh-extra-plan/）
 - 角色 persona/deny 清单 → assets/presets/extra-plan/agent.cordis.yml

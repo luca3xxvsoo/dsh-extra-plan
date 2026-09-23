@@ -9,17 +9,44 @@ import { createRequire } from 'node:module'
 import { readFileSync, writeFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 
+// 隔离前的原始 DSH_HOME：仅供下方 createRequire 锚定宿主 profile 的 js-yaml；
+// 插件运行时的 DSH_HOME 见紧随 registerHostDeps 之后的隔离块。
 const DSH_HOME = (process.env.DSH_HOME || homedir() + '/.dsh').replaceAll('\\', '/')
 const PLUGIN_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/index.js', import.meta.url))
 const AGENT_RUNTIME_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/agent-runtime.js', import.meta.url))
 const SHELL_MUTATION_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/shell-mutation.js', import.meta.url))
 import { registerHostDeps } from '../_shared/host-deps.mjs'
+// host-deps 必须在隔离前完成解析：它按候选① DSH_HOME/profiles/web 锚定宿主真包，
+// 隔离后该锚点不存在（会退到 npm 全局候选，非确定）。
 await registerHostDeps()
+
+// ── 测试隔离（方案 A 构造期读盘） ──────────────────────────────────────────
+// live-config 构造期无条件读盘一次（DSH_HOME/.agent-presets/extra-plan/agent.cordis.yml，或
+// 优先级更高的 DSH_EXTRA_PLAN_CONFIG_PATH）。若命中现场真值，本脚本各 harness 传入的 config
+// 快照（期望值全部按入参硬编码）会被现场配置污染。故在【插件 import 之前】把 DSH_HOME 指向
+// 一个空的临时目录、并清空 DSH_EXTRA_PLAN_CONFIG_PATH，使构造期读盘必然失败 → 各实例回退到
+// 自己的 fallbackDefaults（= 该 harness 的入参）。测试结束（含 process.exit 与异常退出路径）
+// 由 process.on('exit') 恢复原值并删除临时目录。
+const previousDshHome = process.env.DSH_HOME
+const previousConfigPath = process.env.DSH_EXTRA_PLAN_CONFIG_PATH
+const isolatedDshHome = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-step04-home-'))
+process.env.DSH_HOME = isolatedDshHome
+delete process.env.DSH_EXTRA_PLAN_CONFIG_PATH
+function restoreIsolatedEnv() {
+  if (previousDshHome === undefined) delete process.env.DSH_HOME
+  else process.env.DSH_HOME = previousDshHome
+  if (previousConfigPath === undefined) delete process.env.DSH_EXTRA_PLAN_CONFIG_PATH
+  else process.env.DSH_EXTRA_PLAN_CONFIG_PATH = previousConfigPath
+  rmSync(isolatedDshHome, { recursive: true, force: true })
+}
+process.on('exit', restoreIsolatedEnv)
+
 const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
 import { createSdkTextCache, sdkSchemasFingerprint, sdkTextCacheEntryMatches } from '../../plugins/dsh-extra-plan/lib/sdk-text-cache.js'
 import { createGateRuntime } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
+import { createLiveConfig } from '../../plugins/dsh-extra-plan/lib/live-config.js'
 const decisions = plugin.decisions
-const { catalogHasWriteTools, isReadOnlyChildByCatalog, routeDenyReason, runCodeCatchGateReason, runCodeGroupDenyReason, askUserQuestionReturnGateReason, probeDisposalWarning, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilteredToolsSdk, toolPresentationModeOf, projectSkillCatalogDecision, isBootstrapPhase, shellMutationReason, recordJobOutputCall } = decisions
+const { catalogHasWriteTools, isReadOnlyChildByCatalog, routeDenyReason, runCodeCatchGateReason, runCodeGroupDenyReason, askUserQuestionReturnGateReason, probeDisposalWarning, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilteredToolsSdk, toolPresentationModeOf, projectSkillCatalogDecision, isBootstrapPhase, shellMutationReason, recordJobOutputCall, parseAskResultData, parseDispatchAskResult, deriveFlowState } = decisions
 
 // ── F 段（HP 首轮）tool:read 手写文案（变量②）的两个基准字符串 ──────────────
 // HINT_READ_DEFAULT：内置兜底文案的逐字副本，同时是预设 bootstrapReadHint 的示例值
@@ -1894,7 +1921,7 @@ checkTrue('B3-6 未知角色与缺失入参 → null（无异常）',
   checkTrue('B3-16 三类受保护角色均调用统一记录函数：调用点恰 3 处（加定义共 4 处），执行者分支无第 4 处调用',
     pluginSource.split('recordJobOutputCall(agent, exec, jobOutputCallCounters)').length - 1 === 3 && pluginSource.split('recordJobOutputCall(').length - 1 === 4)
   checkTrue('B3-17 首次判定已带 counters：planner 与只读 child 监听器调用点均传 jobOutputCallCounters',
-    pluginSource.includes('plannerGateReason(exec, execEvents, exploreBudget, jobOutputCallCounters)') && pluginSource.includes('childReadonlyGateReason(exec, probe, jobOutputCallCounters)'))
+    pluginSource.includes('plannerGateReason(exec, execEvents, exploreBudget(), jobOutputCallCounters)') && pluginSource.includes('childReadonlyGateReason(exec, probe, jobOutputCallCounters)'))
   // mutation 实现已下沉到 shell-mutation.js；根仅保留只读单点与主会话分支调用。
   checkTrue('B3-18 shellMutationReason 唯一实现；六格文案只剩两条模板；mutation 实现位于新模块且根只保留两处调用',
     pluginSource.split('function shellMutationReason(').length - 1 === 1
@@ -2065,6 +2092,120 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
   check('GW26 anchored later 恢复原 persona 变量引用且保留 variables', laterAssembly.variables, sentinel)
   const plannerAssembly = await assembleWithVariables(harnessBoot, plannerAgent, sentinelTools, ptcSections, sentinel)
   check('GW27 anchored 首轮 planner PTC 投影保留 variables', plannerAssembly.variables, sentinel)
+}
+
+// ── ⑬ live-config 构造期读盘（方案 A 新增回归） ─────────────────────────
+// 方案 A 缺口的真实形状：宿主在「新会话 apply」时传入的 cfg 可能是改文件**之前**的快照；
+// 若基线只取该快照、且文件 mtimeMs+size 恰好未变，实例第一拍就会拿到旧值。以下 5 条覆盖：
+// ①显式 configPath ②env 路径（DSH_EXTRA_PLAN_CONFIG_PATH）③apply 集成双向对照（旧快照 vs 文件
+// 真值）④文件改写后 stamp 变化仍跟进 ⑤读盘失败（文件不存在）构造期回退 fallback。
+{
+  const lcDir = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-live-config-'))
+  // 夹具只含 extra-plan 行（captureSettings 按 id='extra-plan' + config.<key> 定位），exploreBudget
+  // 取与内置默认 18 不同的值，确保「读到文件」与「回退 fallback」可区分。
+  const lcFixture = (anchored, budget) => '- id: extra-plan\n  config:\n    anchoredBootstrap: ' + anchored + '\n    runcodeCatchGate: true\n    exploreBudget: ' + budget + '\n'
+  const lcOffFile = join(lcDir, 'agent-off.cordis.yml')
+  const lcOnFile = join(lcDir, 'agent-on.cordis.yml')
+  writeFileSync(lcOffFile, lcFixture(false, 7), 'utf8')
+  writeFileSync(lcOnFile, lcFixture(true, 7), 'utf8')
+
+  // ① 显式 configPath：构造完成即可取到文件真值，不需要任何 stamp 变化
+  const lcExplicit = createLiveConfig({ configPath: lcOffFile, fallbackDefaults: { exploreBudget: 18, runcodeCatchGate: false, anchoredBootstrap: true } })
+  check('LC1 构造期读盘（显式 configPath）：首次取值即文件值 exploreBudget=7（fallback 18 未生效）', lcExplicit.exploreBudget, 7)
+  check('LC1b 构造期读盘：布尔键同样首拍取文件真值（runcodeCatchGate=true 覆盖 fallback false）', lcExplicit.runcodeCatchGate, true)
+
+  const lcSavedConfigPath = process.env.DSH_EXTRA_PLAN_CONFIG_PATH
+  try {
+    // ② 路径决议 env 分支（测试隔离已清空该变量，此处临时指向夹具文件）
+    process.env.DSH_EXTRA_PLAN_CONFIG_PATH = lcOffFile
+    const lcByEnv = createLiveConfig({ fallbackDefaults: { exploreBudget: 18 } })
+    check('LC2 构造期读盘（DSH_EXTRA_PLAN_CONFIG_PATH）：首次取值即文件值 exploreBudget=7', lcByEnv.exploreBudget, 7)
+
+    // ③ apply 集成双向对照：传入 cfg 快照与文件真值相反时，首拍装配必须听文件（判据 = 是否注入
+    //    extra-plan-bootstrap 段；anchoredBootstrap 的唯一装配读点在本插件 pre-step 装配路径）。
+    const lcTools = [{ name: 'read' }, { name: 'pwsh' }, { name: 'run_code' }]
+    const lcSections = [{ name: 'tools:ptc-only', text: 'Only the run_code transport is directly callable.' }]
+    const lcOldTrueHarness = makeHarness({ anchoredBootstrap: true })
+    const lcOldTrueAssembly = await assemble(lcOldTrueHarness, mainAgent, lcTools, lcSections)
+    checkTrue('LC3 旧快照(true) vs 文件真值(false)：首拍装配不注入 extra-plan-bootstrap（文件真值胜出）', !lcOldTrueAssembly.sections.some((section) => section.name === 'extra-plan-bootstrap'))
+    process.env.DSH_EXTRA_PLAN_CONFIG_PATH = lcOnFile
+    const lcOldFalseHarness = makeHarness({ anchoredBootstrap: false })
+    const lcOldFalseAssembly = await assemble(lcOldFalseHarness, mainAgent, lcTools, lcSections)
+    checkTrue('LC3b 反向对照：旧快照(false) vs 文件真值(true) → 首拍装配注入 extra-plan-bootstrap（判据敏感）', lcOldFalseAssembly.sections.some((section) => section.name === 'extra-plan-bootstrap'))
+  } finally {
+    if (lcSavedConfigPath === undefined) delete process.env.DSH_EXTRA_PLAN_CONFIG_PATH
+    else process.env.DSH_EXTRA_PLAN_CONFIG_PATH = lcSavedConfigPath
+  }
+
+  // ④ 后续取值仍走 mtimeMs+size 变更检测：文件改写（size 同步变化）→ 取值跟进
+  writeFileSync(lcOffFile, lcFixture(false, 421), 'utf8')
+  check('LC4 文件改写后 stamp 变化 → 取值跟进 exploreBudget=421', lcExplicit.exploreBudget, 421)
+
+  // ⑤ 读盘失败（文件不存在）→ 构造期回退 fallbackDefaults 且不抛（自带一次 console.warn 防抖）
+  const lcMissing = createLiveConfig({ configPath: join(lcDir, 'missing.cordis.yml'), fallbackDefaults: { exploreBudget: 18 } })
+  check('LC5 文件不存在 → 构造期回退 fallback exploreBudget=18（不抛）', lcMissing.exploreBudget, 18)
+
+  rmSync(lcDir, { recursive: true, force: true })
+}
+
+// ── ⑮（DZ 段）PTC 闸门拒绝中文呈现与状态机连带修复（2026-09-23 新增） ────────
+// 编号沿用方案步骤 7 的「⑮ 段」口径（脚本内既有 ⑮ 为创造模式装配投影矩阵段，两段各归各的）。
+// 覆盖：parse 函数 denied 判别（DZ1-DZ3 嵌套 / DZ4-DZ6 native 直呼与通道码）、状态机
+// 「闸门拒绝不重置、取消仍清四字段」对照（DZ7/DZ8）、tools/post-execute 呈现改写（DZ9-DZ12）。
+// 全部经 makeHarness 注册的真实监听器与真实 gateRuntime 词表；拒绝文案取闸门产物，不自造第二份。
+{
+  // 真实拒绝产物（purposeRouteDenyReason 经 mainGateReason 返回；direct 态精确目的 ask 必拒）
+  const dzDeny = preExecute(harness, directMain, 'ask_user_question', JSON.parse(purposeArgsE), { sub: true, rootCallId: 'rc-1', parent: 'rc-1' })
+  const dzDenyOk = dzDeny !== null && dzDeny !== undefined && dzDeny.kind === 'deny'
+  const dzReason = dzDenyOk ? String(dzDeny.reason) : ''
+  const dzText = 'Error: ' + dzReason
+  // post-execute 宿主失败结果形状（逐字同宿主证据链：error.message 带英文包装与 worker.cjs 堆栈）
+  const dzFailOf = (reason) => ({
+    isError: true,
+    error: { message: 'Error: code run failed (exception): ToolCallError: ' + reason + '\n    at bindingFailure (file:///D:/app/node_modules/@deepseek-ai/dsh-code-runtime/lib/worker.cjs:759:22)' },
+    content: [{ type: 'text', text: 'Error: code run failed (exception): ToolCallError: ' + reason }],
+  })
+  const dzEntry = harness['tools/post-execute']
+  const dzHook = dzEntry !== undefined && Array.isArray(dzEntry) && dzEntry.length > 0 ? dzEntry[0] : null
+  const dzPass = { kind: 'accept', marker: 'passthrough' }
+  const dzNext = () => dzPass
+
+  // DZ1：嵌套（PTC）闸门拒绝文案（isError:true、无错误码）→ denied（不重置的判别入口）
+  check('DZ1 parseDispatchAskResult 嵌套闸门拒绝中文文案 → denied', parseDispatchAskResult({ subCallId: 'x', isError: true, content: [{ type: 'text', text: 'Error: 目的确认 ask 未按路由顺序：须先 ask_user_question 路由确认（选项固定为「直接执行」「进行pro规划」「不同意」），选择「进行pro规划」后再询问规划目的（目的选项固定为「完善方案」「重新规划」）' }] }), { callId: 'x', kind: 'denied', code: '' })
+  // DZ2：嵌套宿主取消句（HOST_ASK_CANCEL_TEXTS 逐字常量）→ error（取消清四字段语义保留）
+  check('DZ2 parseDispatchAskResult 宿主取消句 → error（不误判为拒绝）', parseDispatchAskResult({ subCallId: 'x', isError: true, content: [{ type: 'text', text: 'Error: ask_user_question was aborted before the user answered' }] }), { callId: 'x', kind: 'error', code: '' })
+  // DZ3：正常答复路径行为与改动前逐字一致
+  check('DZ3 parseDispatchAskResult 正常答复 → ok/answersLen/selected 逐字不变', parseDispatchAskResult({ subCallId: 'x', content: [{ type: 'text', text: answerE(['完善方案 (Recommended)']) }] }), { callId: 'x', kind: 'ok', answersLen: 1, selected: ['完善方案 (Recommended)'] })
+  // DZ4：native 直呼闸门拒绝（信封 isError:true、无 data.error）→ denied（修正原 kind:'ok' 误判）
+  check('DZ4 parseAskResultData 信封 isError:true 中文文案 → denied', parseAskResultData({ message: { content: [{ type: 'tool-result', toolCallId: 'call_x', isError: true, content: [{ type: 'text', text: 'Error: 路由 ask 结构错误：请按标准模板重提' }] }] } }), { callId: 'call_x', kind: 'denied', code: '' })
+  // DZ5/DZ6：data.error 路径（native 取消码 / 通道码）逐字不变
+  check('DZ5 parseAskResultData data.error=ASK_CANCELLED → error（native 取消路径不变）', parseAskResultData(errE('call_c', 'ASK_CANCELLED').data), { callId: 'call_c', kind: 'error', code: 'ASK_CANCELLED' })
+  check('DZ6 parseAskResultData data.error=NO_PROVIDER → error（通道码路径不变）', parseAskResultData(errE('call_p', 'NO_PROVIDER').data), { callId: 'call_p', kind: 'error', code: 'NO_PROVIDER' })
+
+  // DZ7/DZ8：状态机双对照（同一事件序，仅结果文案不同）
+  const dzStart = (sid, argsObj) => ({ type: 'tool/ptc-dispatch-start', data: { rootCallId: 'rc-1', parentCallId: 'pc-1', subCallId: sid, name: 'ask_user_question', arguments: argsObj } })
+  const dzEnd = (sid, text) => ({ type: 'tool/ptc-dispatch', data: { rootCallId: 'rc-1', parentCallId: 'pc-1', subCallId: sid, name: 'ask_user_question', arguments: {}, isError: true, content: [{ type: 'text', text }] } })
+  const dzRouteOk = [umE(), callE('ask_user_question', 'a1', routeArgsE), okE('a1', answerE(['进行pro规划']))]
+  const dzDeniedEvents = dzRouteOk.concat([dzStart('n2', JSON.parse(purposeArgsE)), dzEnd('n2', dzText)])
+  check('DZ7 闸门拒绝不重置：route ask ok（plan）→ purpose 被拒 → route 仍 plan、阶段状态不动', deriveFlowState(dzDeniedEvents, gateRuntime), { route: 'plan', clarified: false, approved: false, purpose: 'none', channelBroken: false })
+  const dzCancelEvents = dzRouteOk.concat([dzStart('n2', JSON.parse(purposeArgsE)), dzEnd('n2', 'Error: ask_user_question was aborted before the user answered')])
+  check('DZ8 取消仍清四字段：route ask ok（plan）→ purpose 取消（宿主取消句）→ route 回 none', deriveFlowState(dzCancelEvents, gateRuntime), { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false })
+
+  // DZ9：钩子命中（记录来自上面真实 deny；rootCallId rc-1）
+  const dzOut9 = dzHook === null ? null : dzHook({ agent: mainAgent, name: 'run_code', callId: 'rc-1', rootCallId: 'rc-1' }, dzFailOf(dzReason), dzNext)
+  checkTrue('DZ9 post-execute 命中：content 改写为「Error: <真实 deny reason>」且无英文包装/堆栈', dzDenyOk && dzHook !== null && dzOut9 !== null && JSON.stringify(dzOut9) === JSON.stringify({ kind: 'accept', content: [{ type: 'text', text: dzText }] }) && !String(dzOut9.content[0].text).includes('code run failed') && !String(dzOut9.content[0].text).includes('bindingFailure') && !String(dzOut9.content[0].text).includes('worker.cjs'))
+  // DZ10：无记录 → next() 透传（原样返回 next 结果，不改写）
+  const dzOut10 = dzHook === null ? null : dzHook({ agent: mainAgent, name: 'run_code', callId: 'rc-none', rootCallId: 'rc-none' }, dzFailOf('未记录的其它失败原因'), dzNext)
+  checkTrue('DZ10 无记录 → next() 透传（result 不被改写）', dzOut10 === dzPass)
+  // DZ11：exec.name!=='run_code' → 透传；且记录不被消费（随后同名 rootCallId 的 run_code 仍命中）
+  const dz11Pre = preExecute(harness, directMain, 'ask_user_question', JSON.parse(purposeArgsE), { sub: true, rootCallId: 'rc-11', parent: 'rc-11' })
+  const dz11Reason = dz11Pre !== null && dz11Pre !== undefined && dz11Pre.kind === 'deny' ? String(dz11Pre.reason) : ''
+  const dzOut11 = dzHook === null ? null : dzHook({ agent: mainAgent, name: 'write', callId: 'rc-11', rootCallId: 'rc-11' }, dzFailOf(dz11Reason), dzNext)
+  const dzHit11 = dzHook === null ? null : dzHook({ agent: mainAgent, name: 'run_code', callId: 'rc-11', rootCallId: 'rc-11' }, dzFailOf(dz11Reason), dzNext)
+  checkTrue('DZ11 exec.name!==run_code → 透传（且记录未消费：同名 run_code 随后仍命中）', dzOut11 === dzPass && dzHit11 !== null && dzHit11 !== dzPass && String(dzHit11.content[0].text) === 'Error: ' + dz11Reason)
+  // DZ12：消费即清——rc-1 记录已在 DZ9 被消费，第二次调用（同一 rootId）透传
+  const dzOut12 = dzHook === null ? null : dzHook({ agent: mainAgent, name: 'run_code', callId: 'rc-1', rootCallId: 'rc-1' }, dzFailOf(dzReason), dzNext)
+  checkTrue('DZ12 消费即清：同一 rootId 第二次调用 → 透传', dzOut12 === dzPass)
 }
 
 console.log('\n通过 ' + pass + ', 失败 ' + fail)

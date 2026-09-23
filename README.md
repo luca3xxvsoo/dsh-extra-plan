@@ -118,6 +118,7 @@ dsh-extra-plan/
 │   │   │   ├── client-bridge.js                        # 客户端桥接行
 │   │   │   ├── executor-spawn.js                       # 执行者委托层（workflow/ralph worker 注入）
 │   │   │   ├── gate-words.js                           # 闸门词契约：字段规格/整组校验/运行时派生
+│   │   │   ├── live-config.js                          # 热修改支持模块
 │   │   │   ├── model-routing.js                        # 子代理模型选择：planner/非 planner 路由解析
 │   │   │   ├── preset-settings.js                      # 设置项 descriptor 与 YAML 保格式改写（供迁移复用）
 │   │   │   ├── preset-sync.js                          # 预设分发与启动自愈

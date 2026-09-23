@@ -262,16 +262,16 @@ try {
 
   const clientText = readFileSync(new URL('../../plugins/dsh-extra-plan/lib/client.js', import.meta.url), 'utf8')
   const expectedHints = {
-    anchoredBootstrap: '首轮极简工具 + 提示词',
-    creativeMode: '是否开启dsh官方创造模式',
-    webFetch: '是否开启web_fetch',
-    toolPresentationMode: '工具呈现方式切换（默认/混合/PTC模式）',
-    runcodeCatchGate: 'PTC模式下，增加每个工具调用需要try catch的闸门。通过限制+建议的模式保障仅单个调用报错',
-    crossProviderPlannerModel: '允许跨提供方选择模型。开启时将以 其他提供方 - 主会话提供方 - deepseek官方 的顺序，获取可用模型。关闭时仅从主会话提供方获取。默认关闭',
-    plannerModel: 'pro规划默认使用模型。未匹配/置空时：使用主会话模型',
-    plannerPromptSuffix: '在主会话发送给pro规划的任务结尾，拼接上的内容。可能能增加pro规划的智商（未验证）。可置空',
-    exploreBudget: '允许pro规划调用工具的次数，避免后台无限制调用。同时限制一次runcode内可调用的工具上限数',
-    otherAgentModel: '其他子代理默认使用模型。未匹配/置空时：使用主会话模型',
+    anchoredBootstrap: '首轮极简工具 + 提示词 ｜ 新会话/新子代理生效',
+    creativeMode: '是否开启dsh官方创造模式 ｜ 重启生效',
+    webFetch: '是否开启web_fetch ｜ 重启生效',
+    toolPresentationMode: '工具呈现方式切换（默认/混合/PTC模式） ｜ 重启生效',
+    runcodeCatchGate: 'PTC模式下，增加每个工具调用需要try catch的闸门。通过限制+建议的模式保障仅单个调用报错 ｜ 立即生效',
+    crossProviderPlannerModel: '允许跨提供方选择模型。开启时将以 其他提供方 - 主会话提供方 - deepseek官方 的顺序，获取可用模型。关闭时仅从主会话提供方获取。默认关闭 ｜ 新会话/新子代理生效',
+    plannerModel: 'pro规划默认使用模型。未匹配/置空时：使用主会话模型 ｜ 新会话/新子代理生效',
+    plannerPromptSuffix: '在主会话发送给pro规划的任务结尾，拼接上的内容。可能能增加pro规划的智商（未验证）。可置空 ｜ 立即生效',
+    exploreBudget: '允许pro规划调用工具的次数，避免后台无限制调用。同时限制一次runcode内可调用的工具上限数 ｜ 立即生效',
+    otherAgentModel: '其他子代理默认使用模型。未匹配/置空时：使用主会话模型 ｜ 新会话/新子代理生效',
   }
   check('client 按 metadata 渲染控件且无硬编码模板路径/默认/枚举值', clientText.includes('setFields(fields)') && clientText.includes('field.options') && clientText.includes('field.min') && clientText.includes('field.step') && clientText.includes('field.type === "integer" ? Number(value)') && !clientText.includes('agent.cordis.yml') && !clientText.includes('value: "native"') && !clientText.includes('value: "ptc"') && !clientText.includes(': 18'))
   check('client 标签与三项 zh 文案已对齐', clientText.includes('cardDescription: "配置按需规划模式的参数"') && clientText.includes('plannerModel: "pro规划 | 使用模型"') && clientText.includes('creativeMode: "创造模式开关"') && clientText.includes('plannerPromptSuffix: "pro规划 | 额外引导"') && clientText.includes('exploreBudget: "pro规划 | 探查额度"') && clientText.includes('otherAgentModel: "其他子代理 | 使用模型"') && clientText.includes('crossProviderPlannerModel: "跨提供方"') && clientText.includes('toolPresentationModePtc: "PTC模式"') && !clientText.includes('plannerModel: "使用模型"') && !clientText.includes('plannerPromptSuffix: "额外引导"') && !clientText.includes('exploreBudget: "探查额度"'))
@@ -289,7 +289,7 @@ try {
   check('client 双内嵌卡片官方稳定外观与共享保存区', clientText.includes('.esp-wrap{display:flex;flex-direction:column;gap:20px;') && clientText.includes('.esp-section{border:.5px solid var(--dsw-alias-border-l4);background:var(--dsw-alias-bg-layer-3);border-radius:16px;padding:14px 16px;display:flex;flex-direction:column;gap:0}') && clientText.includes('.esp-section + .esp-section{margin-top:0}') && !clientText.includes('.esp-section{display:flex;flex-direction:column;gap:0;padding:10px 0 0}') && !clientText.includes('.esp-section + .esp-section{margin-top:8px}') && readyBlockText.includes('t("generalSection")') && readyBlockText.includes('generalFields.map(renderField)') && readyBlockText.includes('t("proSection")') && readyBlockText.includes('proFields.map(renderField)') && clientText.includes('className: "esp-cardBody"') && readyBlockText.includes('className: "esp-cardFooter"') && espCardFooterCount === 1)
   check('client 控件尺寸/焦点与 textarea 视觉契约', clientText.includes('font-size:13px;font-weight:500;line-height:1.5') && clientText.includes('height:34px') && clientText.includes('border-radius:8px;padding:0 12px') && clientText.includes(':focus-visible') && clientText.includes('resize:vertical;min-height:80px'))
   check('client 无官方哈希类、未公开组件或 README 运行时依赖', !clientText.includes('YyYd_a_') && !clientText.includes('At1oFq_') && !clientText.includes('ValueField') && !clientText.includes('PluginCard') && !clientText.includes('CardForm') && !clientText.includes('README.md'))
-  check('hint/option 工具呈现模式统一为 PTC模式', clientText.includes('toolPresentationMode: "工具呈现模式"') && clientText.includes('toolPresentationModePtc: "PTC模式"') && clientText.includes('toolPresentationMode: "工具呈现方式切换（默认/混合/PTC模式）"'))
+  check('hint/option 工具呈现模式统一为 PTC模式', clientText.includes('toolPresentationMode: "工具呈现模式"') && clientText.includes('toolPresentationModePtc: "PTC模式"') && clientText.includes('toolPresentationMode: "工具呈现方式切换（默认/混合/PTC模式） ｜ 重启生效"'))
   check('client 保留 GET/PUT、slot key 与 slots/locale 注入', clientText.includes('const PRO_CONFIG_URL = "/api/dsh-extra-plan-settings/pro-config"') && clientText.includes('method: "PUT"') && clientText.includes('key: "dsh-extra-plan"') && clientText.includes('exports.inject = ["slots", "locale"]') && clientText.includes('inject: () => ({})'))
 } catch (error) {
   fail += 1

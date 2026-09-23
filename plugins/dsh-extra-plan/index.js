@@ -13,10 +13,13 @@
 //    把子代理当根）——一律用「子代理标记 + 父会话存活」公式；
 // 4. ask_user_question 答案以 tool/result 回流（tool-result 信封的 toolCallId
 //    与 tool/call 的 callId 精确配对），渲染文本为 {"answers":[...]} JSON；
-//    提问通道级错误码全集（v0.1.2-rc.1 实际）：ASK_ABORTED / EMPTY_QUESTIONS /
-//    CALLER_NOT_LIVE / DELEGATED_CALLER / BAD_INTENT / NO_PROVIDER；宿主无独立
-//    取消码（取消/中断统一以 ASK_ABORTED 上报）；BAD_INTENT 为新增码、非通道
-//    故障，落入 else 分支重置 route/purpose/clarified/approved（安全方向）；
+//    提问通道级错误码全集（v0.1.2-rc.1 声明）：ASK_ABORTED / EMPTY_QUESTIONS /
+//    CALLER_NOT_LIVE / DELEGATED_CALLER / BAD_INTENT / NO_PROVIDER；取消码实测口径
+//    （2026-09-23 复核）：native 直呼取消上报 ASK_CANCELLED（全库唯一实证
+//    session-368b8b1f L3140），嵌套（PTC）取消无码、只有宿主文案句（见
+//    HOST_ASK_CANCEL_TEXTS）；ASK_ABORTED 全库 423 会话 0 命中；BAD_INTENT 为新增码、
+//    非通道故障，落入 else 分支重置 route/purpose/clarified/approved（安全方向）；
+//    闸门拒绝（插件中文文案）另判为 kind:'denied'，不重置路由与阶段状态（见 deriveFlowState）；
 // 5. preStep 先装配后 pre-step——目录裁剪/引导一律走 system-prompt/assemble
 //    装配级过滤（await next() 后替换），与时序无关、每次请求（含首个）生效；
 // 6. web 会话先按默认预设发布、约 3 秒后 recompose 且不重发 agent/session-start
@@ -166,6 +169,12 @@ const isDispatch = (t) => DISPATCH.has(t)
 
 
 // ── 纯判定函数（模块顶层；经 decisions 导出供场景测试直接复用，防复制漂移） ──
+
+// 宿主在「用户取消/中断 ask」时回流的文案句（逐字常量，2026-09-23 实测：嵌套 PTC 路径
+// 与 native 路径同句）。嵌套路径无错误码，故只按文案判别取消；以 'Error: ' 开头且不等于
+// 本表任一条 → 判为闸门拒绝（parseAskResultData/parseDispatchAskResult 返回 kind:'denied'），
+// 不触发 resetRouteState（状态机连带修复）。
+const HOST_ASK_CANCEL_TEXTS = ['Error: ask_user_question was aborted before the user answered', 'Error: the user cancelled ask_user_question']
 
 // 会话事件快照（sessionEvents）与子代理识别（isSubagentChild）的唯一来源 = lib/agent-session.js
 // （index.js 与 lib/model-routing.js 共用，模块内不再保留镜像副本）；见下方 import 行，
@@ -406,8 +415,25 @@ function matchPurposeLabel(selected, gateRuntime) {
   ])
 }
 
+// ContentBlock 数组首条 text 块的文本（无 text 块 → ''）
+function firstTextOfBlocks(blocks) {
+  if (!Array.isArray(blocks)) return ''
+  for (const block of blocks) {
+    if (block !== null && typeof block === 'object' && block.type === 'text' && typeof block.text === 'string') return block.text
+  }
+  return ''
+}
+
+// 闸门拒绝判别：以 'Error: ' 开头且不等于宿主取消句（HOST_ASK_CANCEL_TEXTS）→ true。
+// 依据（2026-09-23 实测）：嵌套拒绝=插件中文文案（本插件 deny reason），嵌套取消=宿主英文句，
+// 两者其它字段同构（同键集、同 isError:true、同无 error/code），只能按文案判别。
+function askResultTextIsDenied(text) {
+  return typeof text === 'string' && text.startsWith('Error: ') && !HOST_ASK_CANCEL_TEXTS.includes(text)
+}
+
 // 解析一次 ask 的结果（tool/result 事件）。返回：
 //   { callId, kind: 'ok', answersLen, selected } —— 正常答复（answersLen=0 为空白回复）
+//   { callId, kind: 'denied', code: '' } —— 闸门拒绝（插件中文文案，isError:true、无 data.error）
 //   { callId, kind: 'error', code } —— 错误结果（取消/中断/通道错误/参数错误）
 //   { callId: undefined } —— 与该次 ask 无关的结果
 function parseAskResultData(data) {
@@ -416,15 +442,28 @@ function parseAskResultData(data) {
   if (message === null || typeof message !== 'object' || !Array.isArray(message.content)) return { callId: undefined }
   let callId
   let inner
+  let outerIsError = false
+  let outerText = ''
   for (const outer of message.content) {
     if (outer !== null && typeof outer === 'object' && outer.type === 'tool-result') {
       if (typeof outer.toolCallId === 'string') callId = outer.toolCallId
-      if (inner === undefined && Array.isArray(outer.content)) inner = outer.content
+      if (inner === undefined && Array.isArray(outer.content)) {
+        inner = outer.content
+        // isError 在 tool-result 信封（message.content[0]）上，不在 data 上（native 闸门拒绝实证）。
+        outerIsError = outer.isError === true
+        outerText = firstTextOfBlocks(outer.content)
+      }
     }
   }
   if (typeof callId !== 'string') return { callId: undefined }
   if (data.error !== undefined && data.error !== null) {
     return { callId, kind: 'error', code: typeof data.error.code === 'string' ? data.error.code : '' }
+  }
+  // 无 data.error 但信封 isError:true：闸门拒绝（中文文案）→ denied；其余（含宿主取消句）→ error。
+  // 空 code 走既有 else 分支（取消清四字段/denied 不重置由 deriveFlowState 区分）。
+  if (outerIsError) {
+    if (askResultTextIsDenied(outerText)) return { callId, kind: 'denied', code: '' }
+    return { callId, kind: 'error', code: '' }
   }
   let answersLen = 0
   const selected = []
@@ -451,13 +490,16 @@ function parseAskResultData(data) {
 // data.content 直接是 ContentBlock 数组（无 tool/result 的 tool-result 外层）。
 // 返回（与 parseAskResultData 同构）：
 //   { callId, kind: 'ok', answersLen, selected } —— 正常答复（answersLen=0 为空白回复）
-//   { callId, kind: 'error', code } —— isError===true（嵌套层无错误码 → code=''）
+//   { callId, kind: 'denied', code: '' } —— 闸门拒绝（isError===true + 插件中文文案，非宿主取消句）
+//   { callId, kind: 'error', code } —— isError===true 的其它情形（嵌套层无错误码 → code=''）
 //   { callId: undefined } —— 防御（subCallId 非 string）
 function parseDispatchAskResult(data) {
   if (data === null || typeof data !== 'object') return { callId: undefined }
   const callId = data.subCallId
   if (typeof callId !== 'string') return { callId: undefined }
   if (data.isError === true) {
+    // 嵌套层无错误码：闸门拒绝=插件中文文案 → denied；宿主取消句等其它 → error（清四字段语义保留）。
+    if (askResultTextIsDenied(firstTextOfBlocks(data.content))) return { callId, kind: 'denied', code: '' }
     return { callId, kind: 'error', code: '' }
   }
   let answersLen = 0
@@ -487,6 +529,8 @@ function parseDispatchAskResult(data) {
 //   approved: 是否已获 approvalApprove（approvalReplan / routeDisagree → 重置 false）
 //   purpose: 'none' | 'refine' | 'redo'（purposeRefine → refine / purposeRedo → redo）
 //   channelBroken: 提问通道级错误（逃生放行标记）
+// 失败分支判别：kind==='denied'（插件闸门拒绝）→ 不改任何字段；kind==='error' →
+// 通道码置 channelBroken，其余（含宿主取消句 / ASK_CANCELLED）resetRouteState 清四字段。
 function deriveFlowState(events, gateRuntime) {
   const state = { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }
   const resetStageState = () => {
@@ -531,6 +575,9 @@ function deriveFlowState(events, gateRuntime) {
         typeof e.data.subCallId === 'string') {
       const result = parseDispatchAskResult(e.data)
       if (result.callId === undefined || !asks.has(result.callId)) continue
+      // 闸门拒绝不重置：route/purpose/clarified/approved 原样保留（合规重提即可放行）；
+      // 取消/中断/通道错误仍走下方 error 分支（清四字段语义不变）。
+      if (result.kind === 'denied') continue
       if (result.kind === 'error') {
         if (CHANNEL_BROKEN_CODES.has(result.code)) state.channelBroken = true
         else resetRouteState()
@@ -563,6 +610,8 @@ function deriveFlowState(events, gateRuntime) {
     if (e.type !== 'tool/result') continue
     const result = parseAskResultData(e.data)
     if (result.callId === undefined || !asks.has(result.callId)) continue
+    // 同 dispatch 分支：闸门拒绝（denied）不重置任何状态字段。
+    if (result.kind === 'denied') continue
     if (result.kind === 'error') {
       if (CHANNEL_BROKEN_CODES.has(result.code)) state.channelBroken = true
       else resetRouteState()
@@ -1143,6 +1192,7 @@ import { createModelRouting, isExplicitRoute, isExplicitEffort, resolveAgentRout
 import { CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilteredToolsSdk, resolveToolsSdkRenderer, sdkSchemasForRendering, toolPresentationModeOf, toolRegistryOf, toolSdkSchemasOf, projectSkillCatalogDecision, PTC_SECTION_NAME, READ_SECTION_NAME, SDK_SECTION_NAME, sectionOf, hasSection, hasNonEmptySection } from './lib/assembly-presentation.js'
 import { createSdkTextCache } from './lib/sdk-text-cache.js'
 import { GATE_WORD_FIELDS, createGateRuntime } from './lib/gate-words.js'
+import { createLiveConfig } from './lib/live-config.js'
 
 export { PROBE_LIMITS, extractProbeEvidenceRefs }
 
@@ -1164,21 +1214,40 @@ export function apply(ctx, config) {
       for (const dispose of disposers) dispose()
     }
   })
-  const plannerModel = typeof cfg.plannerModel === 'string' ? cfg.plannerModel : 'deepseek-v4-pro'
-  const otherAgentModel = typeof cfg.otherAgentModel === 'string' ? cfg.otherAgentModel.trim() : ''
   const planToolName = typeof cfg.planTool === 'string' ? cfg.planTool : 'subagent_plan'
-  const exploreBudget = Number.isInteger(cfg.exploreBudget) && cfg.exploreBudget > 0 ? cfg.exploreBudget : DEFAULT_EXPLORE_BUDGET
   const savePlanDir = typeof cfg.savePlanDir === 'string' && cfg.savePlanDir !== '' ? cfg.savePlanDir : '.extra-plan'
   const { defineSavePlan, defineSaveProbe } = createSaveToolFactories({
     savePlanDir,
     atomicCommit,
     recoverJournals,
   })
-  const plannerPromptSuffix = typeof cfg.plannerPromptSuffix === 'string' ? cfg.plannerPromptSuffix : ''
-  const bootstrapOn = cfg.anchoredBootstrap !== false
+  // ── 配置热读：7 项设置从「apply 期一次性常量」改为「消费点现场取值」 ──────
+  // 设置页改 YAML 后同会话即时生效（无需重启）；取值经 mtime+size 变更检测缓存，
+  // 文件未变时零读盘零解析，详见 lib/live-config.js。fallbackDefaults = apply 期
+  // cfg 快照：既是磁盘不可用/解析失败时的兜底，也是本实例初始值（生产上与该
+  // YAML 同源——cfg 就是该文件当时的解析结果）。
+  const liveConfig = createLiveConfig({
+    fallbackDefaults: {
+      plannerModel: typeof cfg.plannerModel === 'string' ? cfg.plannerModel : 'deepseek-v4-pro',
+      otherAgentModel: typeof cfg.otherAgentModel === 'string' ? cfg.otherAgentModel.trim() : '',
+      exploreBudget: Number.isInteger(cfg.exploreBudget) && cfg.exploreBudget > 0 ? cfg.exploreBudget : DEFAULT_EXPLORE_BUDGET,
+      plannerPromptSuffix: typeof cfg.plannerPromptSuffix === 'string' ? cfg.plannerPromptSuffix : '',
+      anchoredBootstrap: cfg.anchoredBootstrap !== false,
+      creativeMode: cfg.creativeMode === true,
+      runcodeCatchGate: cfg.runcodeCatchGate === true,
+      crossProviderPlannerModel: cfg.crossProviderPlannerModel === true,
+    },
+  })
+  // ── 7 项热读：消费点现场取值（全部加括号调用） ──
+  const plannerModel = () => liveConfig.plannerModel
+  const otherAgentModel = () => liveConfig.otherAgentModel
+  const exploreBudget = () => liveConfig.exploreBudget
+  const plannerPromptSuffix = () => liveConfig.plannerPromptSuffix
+  const bootstrapOn = () => liveConfig.anchoredBootstrap
+  const runcodeCatchGateOn = () => liveConfig.runcodeCatchGate
+  const crossProviderPlannerModelOn = () => liveConfig.crossProviderPlannerModel
+  // creativeModeOn 保持 apply 期快照（生效标志=重启生效；注册侧与投影侧均不热读）。
   const creativeModeOn = cfg.creativeMode === true
-  const runcodeCatchGateOn = cfg.runcodeCatchGate === true
-  const crossProviderPlannerModelOn = cfg.crossProviderPlannerModel === true
   const bootstrapPersona = typeof cfg.bootstrapPersona === 'string' ? cfg.bootstrapPersona : 'You are a helpful software engineer assistant.'
   // 变量②：F 段（HP 首轮）tool:read 的手写文案；空串/非字符串一律回退内置同文案兜底。
   const bootstrapReadHint = typeof cfg.bootstrapReadHint === 'string' && cfg.bootstrapReadHint !== ''
@@ -1377,9 +1446,9 @@ export function apply(ctx, config) {
   // 见 lib/model-routing.js：plannerModelCache / otherAgentModelCache 每次 apply 各新建一份
   // WeakMap（绝不提升为模块全局）；llm/agents/诊断路径按惰性 getter 取用。
   const { resolvePlannerEntry, resolveOtherAgentEntry } = createModelRouting({
-    plannerModel,
-    otherAgentModel,
-    crossProviderPlannerModelOn,
+    getPlannerModel: () => liveConfig.plannerModel,
+    getOtherAgentModel: () => liveConfig.otherAgentModel,
+    getCrossProviderPlannerModel: () => liveConfig.crossProviderPlannerModel,
     getLlm: () => ctx.get('llm'),
     getAgents: () => ctx.get('agents'),
     getDiagPath: () => diagPath,
@@ -1522,7 +1591,7 @@ export function apply(ctx, config) {
   // exec.arguments 与消息对象均 deepFreeze，拼接走 pre-step 消息替换通道，
   // 与 agent-instructions 基线注入同通道）。
   function shouldHideCreativeCatalog(agent) {
-    if (!creativeModeOn || !bootstrapOn || !isBootstrapPhase(agent)) return false
+    if (!creativeModeOn || !bootstrapOn() || !isBootstrapPhase(agent)) return false
     const planner = isPlannerChild(agent)
     const child = isChild(agent)
     if (!planner && child) return false
@@ -1552,10 +1621,10 @@ export function apply(ctx, config) {
     if (selfAgent === undefined || !isPlannerChild(selfAgent)) return decision
     if (!Array.isArray(decision.messages)) return decision
     // 预算告知（先于 suffix 拼接，suffix 为空也生效）+ 阈值提示（剩余 ≤3 且未注入过时追加一条）。
-    const budgetNotice = budgetNoticeText(exploreBudget)
+    const budgetNotice = budgetNoticeText(exploreBudget())
     const used = toolCallsSinceUser(sessionEvents(selfAgent.session), FREE_TOOLS)
-    const reminder = budgetReminderText(exploreBudget - used, exploreBudget, BUDGET_REMINDER_THRESHOLD)
-    let messages = decision.messages.map((message) => withPlannerPromptSuffix(withBudgetNotice(message, budgetNotice), plannerPromptSuffix))
+    const reminder = budgetReminderText(exploreBudget() - used, exploreBudget(), BUDGET_REMINDER_THRESHOLD)
+    let messages = decision.messages.map((message) => withPlannerPromptSuffix(withBudgetNotice(message, budgetNotice), plannerPromptSuffix()))
     if (reminder !== '' && !budgetReminderSent(sessionEvents(selfAgent.session), '本轮探查预算还剩 ')) {
       messages = [...messages, budgetReminderMessage(reminder)]
     }
@@ -1606,7 +1675,8 @@ export function apply(ctx, config) {
   //    emit/void，宿主调用监听器后只对返回的 Promise 挂 catch、不等待完成；此处 driver 已静止、
   //    session 尚未解绑，同步路径内才能读到最终 snapshot 并结算末轮 usage。
   //    顺序不可换：① 先按缓存 role 同步 foldUsage（在任何 Map 删除之前）；② 保留
-  //    pendingProbeClaims 的剩余数量告警语义，再删除该 session 的待认领计数；③ 最后按
+  //    pendingProbeClaims 的剩余数量告警语义，再删除该 session 的待认领计数（含
+  //    runCodeDenyRecords 的 PTC 拒绝记录桶）；③ 最后按
   //    sessionId 依次回收 jobOutputCallCounters、jobOutputLastAnchors、toolJobsNoticesConsumed、
   //    subCallCounters 与 usageCursors。重复 disposed 幂等；其它 session 的同名 rootCallId、
   //    计数与 cursor 均不受影响（本 session 的去重基准留在 cursor JSON，靠单项续载恢复）。
@@ -1623,6 +1693,7 @@ export function apply(ctx, config) {
       if (warning !== null) console.warn(warning)
     }
     pendingProbeClaims.delete(sessionId)
+    runCodeDenyRecords.delete(sessionId)
     jobOutputCallCounters.delete(sessionId)
     jobOutputLastAnchors.delete(sessionId)
     toolJobsNoticesConsumed.delete(sessionId)
@@ -1665,7 +1736,7 @@ export function apply(ctx, config) {
     const mode = hasNonEmptySection(result.sections, PTC_SECTION_NAME)
       ? 'ptc'
       : hasNonEmptySection(result.sections, SDK_SECTION_NAME) ? 'both' : 'native'
-    const anchoredFirst = bootstrapOn && phase === 'first' && (role === 'main' || role === 'planner')
+    const anchoredFirst = bootstrapOn() && phase === 'first' && (role === 'main' || role === 'planner')
     const anchoredPtc = anchoredFirst && mode === 'ptc'
     let presented = result
     if (anchoredPtc) {
@@ -1826,10 +1897,30 @@ export function apply(ctx, config) {
   function noteRunCodeSubCall(sessionId, rid) {
     const bucket = subCallCounters.get(sessionId)
     const passed = rid === '' || bucket === undefined ? 0 : (bucket.get(rid) || 0)
-    if (rid === '' || passed >= exploreBudget) return runCodeDispatchCapText(rid === '' ? '?' : rid, passed + 1, exploreBudget)
+    if (rid === '' || passed >= exploreBudget()) return runCodeDispatchCapText(rid === '' ? '?' : rid, passed + 1, exploreBudget())
     if (bucket === undefined) subCallCounters.set(sessionId, new Map([[rid, passed + 1]]))
     else bucket.set(rid, passed + 1)
     return null
+  }
+
+  // 4b) PTC 闸门拒绝记录（呈现层兜底用）：pre-execute 拒绝 run_code 子调用时，把本次中文
+  //     reason 记入 sessionId → rootCallId → Set<reason>；tools/post-execute 在 run_code 失败
+  //     结果里按精确子串 'ToolCallError: <reason>' 命中后，把宿主英文包装（worker.cjs 堆栈）
+  //     换成「Error: <reason>」。只记子调用（isRunCodeSubCall：exec.sub===true 或
+  //     exec.parent!==undefined）——native 直呼被拒时外层结果本就是拒绝文案，无需改写。
+  //     记录在 post-execute 消费即清（成败都清），agent/disposed 按 session 清整桶（双保险）。
+  const runCodeDenyRecords = new Map()
+  function recordRunCodeDeny(agent, exec, reason) {
+    if (!isRunCodeSubCall(exec)) return
+    if (typeof reason !== 'string' || reason === '') return
+    const sessionId = agent !== undefined && agent !== null && agent.session !== undefined && agent.session !== null && agent.session.header !== undefined && agent.session.header !== null ? agent.session.header.id : undefined
+    if (typeof sessionId !== 'string' || sessionId === '') return
+    const rid = typeof exec.rootCallId === 'string' && exec.rootCallId !== '' ? exec.rootCallId : (typeof exec.callId === 'string' ? exec.callId : '')
+    let byRoot = runCodeDenyRecords.get(sessionId)
+    if (byRoot === undefined) { byRoot = new Map(); runCodeDenyRecords.set(sessionId, byRoot) }
+    let reasons = byRoot.get(rid)
+    if (reasons === undefined) { reasons = new Set(); byRoot.set(rid, reasons) }
+    reasons.add(reason)
   }
 
   // 5) 硬闸门（tools/pre-execute）：规划子代理只读 + 探查硬上限；主会话四级锚点。
@@ -1907,26 +1998,38 @@ export function apply(ctx, config) {
     // session-start 认领（否则 probe 子会话经 parentSession 无放行痕迹）。
     if (exec.name === 'subagent_probe') {
       const reason = subagentProbeGateReason(exec, planner)
-      if (reason !== null) return { kind: 'deny', reason }
+      if (reason !== null) {
+        recordRunCodeDeny(agent, exec, reason)
+        return { kind: 'deny', reason }
+      }
       if (planner && isRunCodeSubCall(exec)) {
         const rid = typeof exec.rootCallId === 'string' ? exec.rootCallId : ''
         const capReason = noteRunCodeSubCall(agent.session.header.id, rid)
-        if (capReason !== null) return { kind: 'deny', reason: capReason }
+        if (capReason !== null) {
+          recordRunCodeDeny(agent, exec, capReason)
+          return { kind: 'deny', reason: capReason }
+        }
       }
       const parentId = agent.session.header.id
       pendingProbeClaims.set(parentId, (pendingProbeClaims.get(parentId) || 0) + 1)
       return next()
     }
     if (planner) {
-      let reason = plannerGateReason(exec, execEvents, exploreBudget, jobOutputCallCounters)
+      let reason = plannerGateReason(exec, execEvents, exploreBudget(), jobOutputCallCounters)
       // 预算耗尽时 run_code 不在此直拒：plannerGateReason 对 run_code 仅可能因预算耗尽返回非 null
       // （run_code 非 write/edit/pwsh/bash/job_output），置 null 让预算判定进入组判定——组判定内按白名单把关：
       // 成员组非空且全部 ∈ FREE_TOOLS 才放行；含非白名单成员或空组/动态访问 → 拒绝（动态拼接文案）。
       if (exec.name === 'run_code' && reason !== null) reason = null
-      if (reason !== null) return { kind: 'deny', reason }
+      if (reason !== null) {
+        recordRunCodeDeny(agent, exec, reason)
+        return { kind: 'deny', reason }
+      }
       if (exec.name === 'run_code') {
-        const runReason = runCodeGroupDenyReason(undefined, exec, { kind: 'planner' }, { events: execEvents, exploreBudget, jobOutputCallCounters, runcodeCatchGate: runcodeCatchGateOn, gateRuntime })
-        if (runReason !== null) return { kind: 'deny', reason: runReason }
+        const runReason = runCodeGroupDenyReason(undefined, exec, { kind: 'planner' }, { events: execEvents, exploreBudget: exploreBudget(), jobOutputCallCounters, runcodeCatchGate: runcodeCatchGateOn(), gateRuntime })
+        if (runReason !== null) {
+          recordRunCodeDeny(agent, exec, runReason)
+          return { kind: 'deny', reason: runReason }
+        }
       }
       // job_output 的 wait 禁令与同 job 查重已由上方 plannerGateReason 首次判定完成
       // （B3 收敛：不再二次调用 jobOutputGateReason）；此处只在全部闸门放行后记录计数器。
@@ -1936,7 +2039,10 @@ export function apply(ctx, config) {
       if (planner && isRunCodeSubCall(exec)) {
         const rid = typeof exec.rootCallId === 'string' ? exec.rootCallId : ''
         const capReason = noteRunCodeSubCall(agent.session.header.id, rid)
-        if (capReason !== null) return { kind: 'deny', reason: capReason }
+        if (capReason !== null) {
+          recordRunCodeDeny(agent, exec, capReason)
+          return { kind: 'deny', reason: capReason }
+        }
       }
       return next()
     }
@@ -1947,10 +2053,16 @@ export function apply(ctx, config) {
       if (!planner && readOnlyChildren.has(agent)) {
         const probe = schemasHasTool(toolSchemasOf(agent), 'save_probe')
         const reason = childReadonlyGateReason(exec, probe, jobOutputCallCounters)
-        if (reason !== null) return { kind: 'deny', reason }
+        if (reason !== null) {
+          recordRunCodeDeny(agent, exec, reason)
+          return { kind: 'deny', reason }
+        }
         if (exec.name === 'run_code') {
-          const runReason = runCodeGroupDenyReason(undefined, exec, { kind: 'child', readOnly: true, probe }, { jobOutputCallCounters, runcodeCatchGate: runcodeCatchGateOn, gateRuntime })
-          if (runReason !== null) return { kind: 'deny', reason: runReason }
+          const runReason = runCodeGroupDenyReason(undefined, exec, { kind: 'child', readOnly: true, probe }, { jobOutputCallCounters, runcodeCatchGate: runcodeCatchGateOn(), gateRuntime })
+          if (runReason !== null) {
+            recordRunCodeDeny(agent, exec, runReason)
+            return { kind: 'deny', reason: runReason }
+          }
         }
         // job_output 的 wait 禁令与同 job 查重已由上方 childReadonlyGateReason 首次判定完成
         // （B3 收敛：不再二次调用 jobOutputGateReason）；此处只在全部闸门放行后记录计数器。
@@ -1962,11 +2074,42 @@ export function apply(ctx, config) {
     }
 
     const state = deriveFlowState(execEvents, gateRuntime)
-    const reason = mainGateReason(state, exec, { events: execEvents, planToolName, jobOutputCallCounters, runcodeCatchGate: runcodeCatchGateOn, runCodeDepth: 0, gateRuntime })
-    if (reason !== null) return { kind: 'deny', reason }
+    const reason = mainGateReason(state, exec, { events: execEvents, planToolName, jobOutputCallCounters, runcodeCatchGate: runcodeCatchGateOn(), runCodeDepth: 0, gateRuntime })
+    if (reason !== null) {
+      recordRunCodeDeny(agent, exec, reason)
+      return { kind: 'deny', reason }
+    }
     // 放行副作用：job_output 计数器记录（B3 收敛：与 planner/只读 child 共用 recordJobOutputCall；
     // 仅在全部闸门放行后执行，时序等价）
     recordJobOutputCall(agent, exec, jobOutputCallCounters)
     return next()
+  })
+
+  // 6) 呈现兜底（tools/post-execute）：run_code 失败结果的 error.message 含本插件刚记下的
+  //    闸门拒绝 reason（精确子串 'ToolCallError: <reason>'）时，把失败结果 content 改写为
+  //    「Error: <reason>」——宿主英文包装（'code run failed (exception)' + worker.cjs 堆栈）
+  //    不再进入模型上下文。只改 content（PostToolDecision 禁止对失败结果替换 value）。
+  //    fail-open：无记录/未命中/非 run_code/非失败一律 next() 透传（不吞错）；命中与未命中
+  //    都在读取后清掉本 root 记录（消费即清）；钩子内异常由宿主 catch 后按 toolErrorResult 兜底。
+  ctx.on('tools/post-execute', (exec, result, next) => {
+    if (exec === null || typeof exec !== 'object') return next()
+    if (exec.agent === undefined || exec.name !== 'run_code') return next()
+    if (result === null || typeof result !== 'object' || result.isError !== true) return next()
+    const sessionId = exec.agent.session !== undefined && exec.agent.session !== null && exec.agent.session.header !== undefined && exec.agent.session.header !== null ? exec.agent.session.header.id : ''
+    const rootId = typeof exec.rootCallId === 'string' && exec.rootCallId !== '' ? exec.rootCallId : (typeof exec.callId === 'string' ? exec.callId : '')
+    const reasons = typeof sessionId === 'string' && sessionId !== '' ? (runCodeDenyRecords.get(sessionId) || new Map()).get(rootId) : undefined
+    if (reasons === undefined || reasons.size === 0) return next()
+    if (typeof sessionId === 'string' && sessionId !== '') {
+      const byRoot = runCodeDenyRecords.get(sessionId)
+      if (byRoot !== undefined) byRoot.delete(rootId)
+    }
+    const error = result.error
+    const message = error !== null && error !== undefined && typeof error === 'object' && typeof error.message === 'string' ? error.message : ''
+    let matched = null
+    for (const reason of reasons) {
+      if (reason !== '' && message.includes('ToolCallError: ' + reason)) { matched = reason; break }
+    }
+    if (matched === null) return next()
+    return { kind: 'accept', content: [{ type: 'text', text: 'Error: ' + matched }] }
   })
 }

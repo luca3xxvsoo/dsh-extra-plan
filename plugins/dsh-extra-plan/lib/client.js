@@ -29,7 +29,7 @@ window.__ModuleLoader__.load({
       toolPresentationModePtc: "PTC模式",
       save: "保存",
       saving: "保存中…",
-      saved: "已保存，需重启 Harness 后生效",
+      saved: "已保存",
       saveFailed: "保存失败：",
       loading: "加载中…",
       loadFailed: "加载失败",
@@ -57,7 +57,7 @@ window.__ModuleLoader__.load({
       toolPresentationModePtc: "Pure PTC",
       save: "Save",
       saving: "Saving…",
-      saved: "Saved. Restart Harness to take effect.",
+      saved: "Saved.",
       saveFailed: "Save failed: ",
       loading: "Loading…",
       loadFailed: "Load failed",
@@ -66,16 +66,16 @@ window.__ModuleLoader__.load({
     };
 
     const FIELD_HINTS = Object.freeze({
-      anchoredBootstrap: "首轮极简工具 + 提示词",
-      creativeMode: "是否开启dsh官方创造模式",
-      webFetch: "是否开启web_fetch",
-      toolPresentationMode: "工具呈现方式切换（默认/混合/PTC模式）",
-      runcodeCatchGate: "PTC模式下，增加每个工具调用需要try catch的闸门。通过限制+建议的模式保障仅单个调用报错",
-      crossProviderPlannerModel: "允许跨提供方选择模型。开启时将以 其他提供方 - 主会话提供方 - deepseek官方 的顺序，获取可用模型。关闭时仅从主会话提供方获取。默认关闭",
-      plannerModel: "pro规划默认使用模型。未匹配/置空时：使用主会话模型",
-      plannerPromptSuffix: "在主会话发送给pro规划的任务结尾，拼接上的内容。可能能增加pro规划的智商（未验证）。可置空",
-      exploreBudget: "允许pro规划调用工具的次数，避免后台无限制调用。同时限制一次runcode内可调用的工具上限数",
-      otherAgentModel: "其他子代理默认使用模型。未匹配/置空时：使用主会话模型"
+      anchoredBootstrap: "首轮极简工具 + 提示词 ｜ 新会话/新子代理生效",
+      creativeMode: "是否开启dsh官方创造模式 ｜ 重启生效",
+      webFetch: "是否开启web_fetch ｜ 重启生效",
+      toolPresentationMode: "工具呈现方式切换（默认/混合/PTC模式） ｜ 重启生效",
+      runcodeCatchGate: "PTC模式下，增加每个工具调用需要try catch的闸门。通过限制+建议的模式保障仅单个调用报错 ｜ 立即生效",
+      crossProviderPlannerModel: "允许跨提供方选择模型。开启时将以 其他提供方 - 主会话提供方 - deepseek官方 的顺序，获取可用模型。关闭时仅从主会话提供方获取。默认关闭 ｜ 新会话/新子代理生效",
+      plannerModel: "pro规划默认使用模型。未匹配/置空时：使用主会话模型 ｜ 新会话/新子代理生效",
+      plannerPromptSuffix: "在主会话发送给pro规划的任务结尾，拼接上的内容。可能能增加pro规划的智商（未验证）。可置空 ｜ 立即生效",
+      exploreBudget: "允许pro规划调用工具的次数，避免后台无限制调用。同时限制一次runcode内可调用的工具上限数 ｜ 立即生效",
+      otherAgentModel: "其他子代理默认使用模型。未匹配/置空时：使用主会话模型 ｜ 新会话/新子代理生效"
     });
 
     const css =

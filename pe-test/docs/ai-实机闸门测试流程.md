@@ -35,7 +35,7 @@
 - **用户操作定义**：用户必须亲手、AI 不可代做的动作，仅四类 —— ①选选项（点选 ask 弹窗中的某一项）；②空白答复或取消（空白回车 / Esc 取消）；③点设置页开关/保存；④必要时重启进程（重启 Harness）。
 - **AI 的一切工具调用不计入**：含委派子代理、子代理会话内连调、一次 run_code 的组判定与聚合取证。
 - **常数项 U0**：一次重启（装载期快照生效）＋ 一条新的用户消息（使 route 锚点前移、回到 `route=none` 默认态）。普通闸门两轮可用既有会话（含重启后恢复的同一会话）；PTC 专项的 F 证据必须每个 C 值各用干净 A=1 顶层会话，已有会话只能作 L 证据。不计入变量操作、不单独占用户操作清单行。
-- **设置页保存与随后的重启/新开会话合并计 1 次用户操作**（同属「设置页前置档」：`toolPresentationMode` 与 `runcodeCatchGate` 都是装载期快照，改值必须重新装载才生效（重启 Harness 即可，新开会话亦可），见 1.5(b) 与 7.1）。
+- **设置页保存与随后的重启/新开会话合并计 1 次用户操作**（同属「设置页前置档」：`toolPresentationMode` 仍是装载期快照、改值必须重新装载才生效（重启 Harness 即可，新开会话亦可）；`runcodeCatchGate`（2026-09-23 修订）已改为插件侧配置热读，设置页保存后**立即生效**、无需重启进程或新开会话，不触发「必须重启」的记账，见 1.5(b) 与 7.1）。
 - **空白与取消**：视为两种不同响应形态。「必测」取**空白回车**（U1）；「取消」列为可选加测（差异见 7.2 陷阱⑦）。
 
 ### 1.4 （本节空缺，编号占位）
@@ -43,7 +43,7 @@
 ### 1.5 模式口径（工具呈现模式 toolPresentationMode）
 
 - **(a) 预设级、全角色同形**：设置页 key = `toolPresentationMode` → `tool-presentation` 的 `config.mode`；宿主 `presentAs` 声明落在预设的 **standing mount scope** 上，**影响该预设下全部 agent**（主会话与 planner/probe/reviewer 子代理同形 —— 子代理绑定父的同一 standing 组合）。
-- **(b) 装载期快照**：mode 在装载期定格；宿主按指纹（mtimeMs + size）变化触发世代重建 → **切换只需重新装载：重启进程 或 新开会话，二者任一即可**（设置页「需重启」文案为保守口径）。**2026-09-12 实测：重启后同一既有会话（ID 未变）即生效**。同一机制的 `runcodeCatchGateOn`（apply 装载期一次性快照 `cfg.runcodeCatchGate === true`）同为装载期快照：设置页改值后必须重新装载才生效——重启 Harness 即够、新开会话亦可，二者不必同时做（2026-09-12 实测）。
+- **(b) 装载期快照**：mode 在装载期定格；宿主按指纹（mtimeMs + size）变化触发世代重建 → **切换只需重新装载：重启进程 或 新开会话，二者任一即可**（设置页「需重启」文案为保守口径）。**2026-09-12 实测：重启后同一既有会话（ID 未变）即生效**。同一机制的 `runcodeCatchGateOn`（2026-09-23 修订）**不再是装载期快照**：插件侧已改为配置热读（构造期读盘取文件真值、后续按 mtimeMs + size 变更跟进）→ 设置页保存后**立即生效**，无需重启进程或新开会话（重启/新开会话仍可用，只是不再必要）；本段的装载期快照口径仅适用于上面的 `toolPresentationMode`。
 - **(c) 已开会话锁死**：**进程内**已开会话不能原地切换模式 —— swap 抛 `agent-preset/locked`。但**重启进程后原会话会按新配置重新装载**（2026-09-12 实测：重启后同一既有会话直呼面可用、装载期开关已生效）→ 故本条**不构成「必须新开会话」的理由**，只说明「不能在一个正在运行的进程里原地切换」。
 - **(d) 取值与两栏现状**：取值域 native／ptc／both；**仓库默认** = agent.cordis.yml `mode: native`、`runcodeCatchGate: false`；**部署实况** = 以第 0 节自查为准（2026-09-12 实测起点：`mode='ptc'`、`runcodeCatchGate=true`；此后值可能已变化，不得写死）。
 - **(e) F 判据需要干净会话**（2026-09-12 新增）：`isBootstrapPhase` 只看「首个 `tool/call` 落盘前」，既有会话早已越过该相位、永远不会再进引导态。PTC 专项必须为 C=0、C=1 各开一条干净 A=1/M=ptc 顶层会话观察 HP0/HP1 的 F；完成首个顶层 `run_code` 后在同一条会话观察 L 与第二调用。HN/HB native/both 回归也独立记录；普通第二轮可继续复用既有会话。
@@ -124,7 +124,7 @@
 - 各节「期望文案」列只给**关键句**，逐字模板以 A 表为准（两处一致）。
 
 ### 3.2 第一轮：both ＋ catchGate=true（拦截面轮）
-配置 = **both ＋ catchGate=true**（`runcodeCatchGateOn` 装载期快照，见 1.5(b)，已生效）；U1-U6 六批按 **A01-A48 编号集合**执行（AI 连发、用户 0 额外工具操作），A42/A43 由 AI 在全部子代理完成后用 pwsh 自动运行 step-07 取证（集成到自动化批次）；A21 的拦截面一并覆盖。
+配置 = **both ＋ catchGate=true**（`runcodeCatchGateOn` 配置热读、保存即生效，见 1.5(b)）；U1-U6 六批按 **A01-A48 编号集合**执行（AI 连发、用户 0 额外工具操作），A42/A43 由 AI 在全部子代理完成后用 pwsh 自动运行 step-07 取证（集成到自动化批次）；A21 的拦截面一并覆盖。
 
 #### 3.2.1 S0 route=none（U1 空白回车后）
 状态：route=none、clarified=false、approved=false（deriveFlowState 默认态）。
@@ -277,7 +277,7 @@
 5. 工具清单观察 → A38（**both 下有效**：reviewer 目录不塌缩、无 write/edit）。
 
 #### 3.2.7 S6 第一轮·A21 拦截面批次（catchGate=true；0 用户操作）
-配置：both ＋ catchGate=true（装载期快照，见 1.5(b)，已在第一轮生效）；**固定 S0 同轮发起（route=none 默认态）**，可在 S0 同轮发起；批次内包含路由相关成员（write→A02 仅 route=none 时成立），不可在 S1-S4 状态下执行。
+配置：both ＋ catchGate=true（配置热读、保存即生效，见 1.5(b)，已在第一轮生效）；**固定 S0 同轮发起（route=none 默认态）**，可在 S0 同轮发起；批次内包含路由相关成员（write→A02 仅 route=none 时成立），不可在 S1-S4 状态下执行。
 一次性连发清单：
 1. **组判定 run_code#7**（2 成员）：一个含 ≥2 个调用点、未逐点独立 try/catch 的代码块（→ A21）+ write 成员（→ A02 复验）（A02 仅在 route=none 下成立；固定 S0 执行确保期望吻合）→ 验证**同批双闸门聚合**（header + A21 行 + A02 行）
 2. **组判定 run_code#8**：裸 `await tools.ask_user_question(...)`（不 return，→ A22 复验）
@@ -289,13 +289,13 @@ A21 的 **planner 侧**另由 mock 兜底（不另开 planner 会话）：`step-
 #### 3.2.8 通道故障特例（不占编排批次）
 channelBroken 逃生（`CHANNEL_BROKEN_CODES` = NO_PROVIDER / CALLER_NOT_LIVE / DELEGATED_CALLER，另有总开关）会让主会话锚点闸门**整体放行**；本地实机制造通道级故障码不可控 → 由 mock 事件流断言（step-04 已有）替代 ＋ 陷阱①，**不占任何编排批次**。
 
-### 3.3 轮间：1 次设置页保存（把 catchGate 切为 false）＋ 重启（无需新会话）
+### 3.3 轮间：1 次设置页保存（把 catchGate 切为 false；保存即生效、无需重启）
 
 第一轮跑完后，AI 用下面这段**转告语**（原文入档，照读）请用户做轮间切换；**轮间不重走任何批次**：
 
-> 本轮（both ＋ catchGate=true）已覆盖 44 条实机项中的 43 条与 A21 的拦截面。剩余内容需在 catchGate=false 下验：A21 的放行面 ＋ 开关局部性佐证（第二轮 0 次状态操作）。请你在设置页把 runcodeCatchGate 改为 false（与工具呈现模式同一张卡片）并重启 Harness（**不必新开会话**），完成后**在本会话**告诉我，我立即补测并把两轮结果合并成报告。
+> 本轮（both ＋ catchGate=true）已覆盖 44 条实机项中的 43 条与 A21 的拦截面。剩余内容需在 catchGate=false 下验：A21 的放行面 ＋ 开关局部性佐证（第二轮 0 次状态操作）。请你只在设置页把 runcodeCatchGate 改为 false（与工具呈现模式同一张卡片）——该开关为配置热读、**保存后立即生效，无需重启 Harness、也不必新开会话**——完成后**在本会话**告诉我，我立即补测并把两轮结果合并成报告。
 
-轮间成本 = **1 次设置页保存**（`runcodeCatchGate` true→false，`toolPresentationMode` 不动）**＋ 重启 Harness**（装载期快照决定必须重新装载才生效；重启即够，无需新开会话）。
+轮间成本 = **1 次设置页保存**（`runcodeCatchGate` true→false，`toolPresentationMode` 不动）——该开关（2026-09-23 修订）为插件侧配置热读、**保存即生效，轮间无需重启 Harness、也不必新开会话**。
 
 ### 3.4 第二轮：both ＋ catchGate=false（放行面轮）
 
@@ -314,7 +314,7 @@ channelBroken 逃生（`CHANNEL_BROKEN_CODES` = NO_PROVIDER / CALLER_NOT_LIVE / 
 | 轮次 | 配置组合 | 你的操作 | 覆盖内容 |
 |:--|:--|:--|:--|
 | 第一轮（拦截面轮） | both ＋ catchGate=true（起步非 true 时在切 both 的**同一张卡片、同一次保存**中搭车设为 true） | 6 次状态推进（U1-U6，见第四部分）＋ 设置页前置档 1 次保存（仅起步非 both 需要） | 44 条实机项中的 **43 条** ＋ **A21 的拦截面**（＝ 44 条实机项全覆盖） |
-| 轮间 | 设置页 1 次保存把 runcodeCatchGate 切为 false（与工具呈现模式同一张卡片）＋ 重启 Harness | 1 次设置页保存 ＋ 重启（**不必新开会话**） | —（不产出判定） |
+| 轮间 | 设置页 1 次保存把 runcodeCatchGate 切为 false（与工具呈现模式同一张卡片；配置热读、保存即生效） | 1 次设置页保存（**无需重启、不必新开会话**） | —（不产出判定） |
 | 第二轮（放行面轮） | both ＋ catchGate=false | **0 次状态操作**（不推进任何路由状态，无需复走 U1-U6） | A21 的放行面（1 条）＋ 开关局部性佐证 |
 
 ## 四、用户操作清单
@@ -329,8 +329,8 @@ channelBroken 逃生（`CHANNEL_BROKEN_CODES` = NO_PROVIDER / CALLER_NOT_LIVE / 
 | U4 | 第一轮 | 目的答复（选「完善方案」或「重新规划」） | S2.5（route=plan·目的已定·未澄清） | A04,A13,A41-1,A41-2,A41-4,A41-5 | 2（＋A41 补充取证 4 项） | purpose 只有答复可置位；目的 ask 为「进行pro规划」后第一个提问；route=none/direct 的精确目的 ask 拒绝句必须含固定路由确认句，plan 放行、ordinary 不误拦、channelBroken 逃生与重选/取消清理在此窗口取证 |
 | U5 | 第一轮 | 澄清答复（选探查方式） | S3（route=plan·已澄清） | A10,A06,A16,A17 | 4（＋planner 委派，0 用户操作） | clarified 仅当目的已定（purpose∈{完善方案,重新规划}）时由澄清答复置位；route/目的重选与非通道取消按阶段清理，channelBroken 保留旧状态，新 user/message 重开事件窗回默认态；A17 需同轮内完成（计数锚点重置见陷阱③） |
 | U6 | 第一轮 | 批准同意（点「同意执行」） | S4（route=plan·已批准） | A07,A09,A11,A08 | 4（＋reviewer 委派，0 用户操作） | approved 只有「同意」可置位 |
-| U7 | 第一轮前置（**仅起步非 both 需要**，起步已 both 时省去） | 设置页 1 次保存：**把工具呈现模式（`toolPresentationMode`）切到 both ＋ 把 `runcodeCatchGate` 置 true**（**同一张卡片、同一次保存**，搭车不新增操作）＋ 重启 Harness（**不必新开会话**） | 前置（不推进 flow state） | —（0 条直接） | 0 | 两个 key 唯一入口都是设置页；装载期快照口径（见 1.5(b)）导致必须重新装载，与第一轮批次解耦 |
-| U8 | 轮间（第一轮与第二轮之间） | 设置页 1 次保存：**把 `runcodeCatchGate` 切为 false**（`toolPresentationMode` 不动；与工具呈现模式同一张卡片、同一次保存口径）＋ 重启 Harness（**不必新开会话**） | 前置（不推进 flow state；第二轮 route=none 即可） | —（0 条直接；第二轮三项见 3.4） | 0 | 开关装载期快照（见 1.5(b)）；轮间必须重新装载；重启后用户发一条消息即回 route=none（无需新会话）；**第二轮 0 次状态舞** |
+| U7 | 第一轮前置（**仅起步非 both 需要**，起步已 both 时省去） | 设置页 1 次保存：**把工具呈现模式（`toolPresentationMode`）切到 both ＋ 把 `runcodeCatchGate` 置 true**（**同一张卡片、同一次保存**，搭车不新增操作）＋ 重启 Harness（**不必新开会话**） | 前置（不推进 flow state） | —（0 条直接） | 0 | 两个 key 唯一入口都是设置页；本次重启由工具呈现模式的装载期快照口径（见 1.5(b)）决定（`runcodeCatchGate` 已热读、同次保存即生效），与第一轮批次解耦 |
+| U8 | 轮间（第一轮与第二轮之间） | 设置页 1 次保存：**把 `runcodeCatchGate` 切为 false**（`toolPresentationMode` 不动；与工具呈现模式同一张卡片、同一次保存口径）——配置热读、**保存即生效，无需重启 Harness、不必新开会话** | 前置（不推进 flow state；第二轮 route=none 即可） | —（0 条直接；第二轮三项见 3.4） | 0 | 开关为插件侧配置热读（2026-09-23 修订，见 1.5(b)）；轮间无需重新装载/重启，用户发一条消息即回 route=none（无需新会话）；**第二轮 0 次状态舞** |
 
 > 表注一：「覆盖条数」列 = 该行直接连发清单命中的 A 编号条数（合计 31 条次，含跨行重复）；由该行批次委派的子代理序列所覆盖的编号按委派批次归属同一 U 序号（planner→U5、probe→U2、reviewer→U6），合计覆盖 44 条实机可测项。
 > 表注二：清单行数 = 第一轮 U1-U6 共 6 行 ＋ 第二轮 0 行 ＋ 设置页 1-2 行（U7 仅起步非 both 需要；U8 恒定）。合计：起步非 both 8 次 = U1-U6（6 次状态推进）＋ U7（1 次保存）＋ U8（1 次保存）；起步已 both 7 次 = U1-U6（6 次）＋ U8（1 次）。第二轮 0 行 = 第二轮 0 次状态操作（理由见 3.4）。
@@ -387,7 +387,7 @@ channelBroken 逃生（`CHANNEL_BROKEN_CODES` = NO_PROVIDER / CALLER_NOT_LIVE / 
 ### 7.3 用户配合协议
 - AI 逐条给出精确操作脚本（点哪个选项、空白回车、连续调某个工具 N 次、带哪个参数）；用户照做；AI **当场**照录工具卡片文案并判定「通过（文案与期望关键句一致）/ 不通过（给出实际文案）」。
 - 每完成一域由用户在清单勾选；支持「发版前跑全量、改闸门后按域增量」。
-- 两轮之间 AI 只发 3.3 的**转告语**，等用户完成设置页切换并重启后再继续第二轮（**无需新会话**）。
+- 两轮之间 AI 只发 3.3 的**转告语**，等用户完成设置页切换（`runcodeCatchGate` 配置热读、保存即生效，轮间**无需重启**）后再继续第二轮（**无需新会话**）。
 
 ### 7.4 域分组（D1-D9，可勾选；增量跑按域映射到 U 序号）
 

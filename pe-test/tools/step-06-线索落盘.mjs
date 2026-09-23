@@ -17,7 +17,30 @@ import { join } from 'node:path'
 
 const PLUGIN_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/index.js', import.meta.url))
 import { registerHostDeps } from '../_shared/host-deps.mjs'
+// host-deps 先于隔离完成解析（它按候选① DSH_HOME/profiles/web 锚定宿主真包）。
 await registerHostDeps()
+
+// ── 测试隔离（方案 A 构造期读盘） ──────────────────────────────────────────
+// live-config 构造期无条件读盘一次（DSH_HOME/.agent-presets/extra-plan/agent.cordis.yml，或
+// 优先级更高的 DSH_EXTRA_PLAN_CONFIG_PATH）。本脚本的 plugin.apply 均传入 config 快照（如
+// anchoredBootstrap: false），若命中现场真值，这些按入参硬编码的期望会被现场配置污染。故在
+// 【插件 import 之前】把 DSH_HOME 指向空的临时目录、并清空 DSH_EXTRA_PLAN_CONFIG_PATH：
+// 构造期读盘必然失败 → 各实例回退到自己的 fallbackDefaults（= apply 入参）。
+// 测试结束（含 process.exit 与异常退出路径）由 process.on('exit') 恢复原值并删临时目录。
+const previousDshHome = process.env.DSH_HOME
+const previousConfigPath = process.env.DSH_EXTRA_PLAN_CONFIG_PATH
+const isolatedDshHome = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-step06-home-'))
+process.env.DSH_HOME = isolatedDshHome
+delete process.env.DSH_EXTRA_PLAN_CONFIG_PATH
+function restoreIsolatedEnv() {
+  if (previousDshHome === undefined) delete process.env.DSH_HOME
+  else process.env.DSH_HOME = previousDshHome
+  if (previousConfigPath === undefined) delete process.env.DSH_EXTRA_PLAN_CONFIG_PATH
+  else process.env.DSH_EXTRA_PLAN_CONFIG_PATH = previousConfigPath
+  rmSync(isolatedDshHome, { recursive: true, force: true })
+}
+process.on('exit', restoreIsolatedEnv)
+
 const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
 import { DEFAULT_EXPLORE_BUDGET } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
 import { parsePresetYaml } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'

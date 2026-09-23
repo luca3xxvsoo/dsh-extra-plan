@@ -29,7 +29,7 @@ function dshHomeDir() {
   return join(process.env.USERPROFILE || process.env.HOME || '', '.dsh')
 }
 
-function agentCordisPath() {
+export function agentCordisPath() {
   return join(dshHomeDir(), '.agent-presets', 'extra-plan', 'agent.cordis.yml')
 }
 
@@ -63,7 +63,7 @@ function readJsonBody(req) {
   })
 }
 
-function readAgentMetadata(file) {
+export function readAgentMetadata(file) {
   const actualText = readFileSync(file, 'utf8')
   let defaultText = actualText
   try { defaultText = readFileSync(TEMPLATE_AGENT_FILE, 'utf8') } catch { /* installed package may be incomplete */ }

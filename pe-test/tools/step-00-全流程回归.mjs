@@ -3,7 +3,30 @@
 // 插件模块顶层无副作用，可在纯 Node 环境加载。
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { registerHostDeps } from '../_shared/host-deps.mjs'
+// host-deps 先于隔离完成解析（它按候选① DSH_HOME/profiles/web 锚定宿主真包）。
 await registerHostDeps()
+
+// ── 测试隔离（方案 A 构造期读盘） ──────────────────────────────────────────
+// live-config 构造期无条件读盘一次（DSH_HOME/.agent-presets/extra-plan/agent.cordis.yml，或
+// 优先级更高的 DSH_EXTRA_PLAN_CONFIG_PATH）。本脚本的 plugin.apply 均传入 config 快照（如
+// anchoredBootstrap: false），若命中现场真值，这些按入参硬编码的期望会被现场配置污染。故在
+// 【插件 import 之前】把 DSH_HOME 指向空的临时目录、并清空 DSH_EXTRA_PLAN_CONFIG_PATH：
+// 构造期读盘必然失败 → 各实例回退到自己的 fallbackDefaults（= apply 入参）。
+// 测试结束（含 process.exit 与异常退出路径）由 process.on('exit') 恢复原值并删临时目录。
+const previousDshHome = process.env.DSH_HOME
+const previousConfigPath = process.env.DSH_EXTRA_PLAN_CONFIG_PATH
+const isolatedDshHome = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-step00-home-'))
+process.env.DSH_HOME = isolatedDshHome
+delete process.env.DSH_EXTRA_PLAN_CONFIG_PATH
+function restoreIsolatedEnv() {
+  if (previousDshHome === undefined) delete process.env.DSH_HOME
+  else process.env.DSH_HOME = previousDshHome
+  if (previousConfigPath === undefined) delete process.env.DSH_EXTRA_PLAN_CONFIG_PATH
+  else process.env.DSH_EXTRA_PLAN_CONFIG_PATH = previousConfigPath
+  rmSync(isolatedDshHome, { recursive: true, force: true })
+}
+process.on('exit', restoreIsolatedEnv)
+
 const plannerBudget = await import('../../plugins/dsh-extra-plan/lib/planner-budget.js')
 const PLUGIN_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/index.js', import.meta.url))
 const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
@@ -12,7 +35,9 @@ import * as shellMutation from '../../plugins/dsh-extra-plan/lib/shell-mutation.
 import * as runtimeStatic from '../../plugins/dsh-extra-plan/lib/runtime-static.js'
 import * as agentRuntime from '../../plugins/dsh-extra-plan/lib/agent-runtime.js'
 import { DEFAULT_EXPLORE_BUDGET as GENERATED_DEFAULT_EXPLORE_BUDGET } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { parsePresetYaml } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
 import { GATE_WORD_FIELDS, GATE_WORD_MIGRATION_DEFINITIONS, createGateRuntime, validateGateWords } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
 const {
@@ -1518,6 +1543,12 @@ const fullNestedPlanApprovedEvents = [
   cdStart('ask_user_question', 'fn4', nestedApprovalArgs),
   cdEnd('fn4', answer(['同意执行'])),
 ]
+// 2026-09-23 同步（步骤 2/3 的 denied 语义）：嵌套失败结果按文案二分——
+// ① 插件闸门拒绝 = 'Error: ' + 中文 reason（实测形状，本常量即 purposeRouteDenyReason 产物形状）→ kind:'denied'，状态不重置；
+// ② 宿主取消句 = HOST_ASK_CANCEL_TEXTS 逐字成员 → kind:'error', code:''，resetRouteState 清四字段。
+// 原 FC7/FC11 的自造文案（'Error: ask failed' / 'Error: ask cancelled'）不在两类中，已按实测口径同步。
+const FC_DENY_TEXT = 'Error: 目的确认 ask 未按路由顺序：须先 ask_user_question 路由确认（选项固定为「直接执行」「进行pro规划」「不同意」），选择「进行pro规划」后再询问规划目的（目的选项固定为「完善方案」「重新规划」）'
+const FC_CANCEL_TEXT = 'Error: ask_user_question was aborted before the user answered'
 const FC = [
   ['FC1 嵌套路由答「直接执行」→ direct', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['直接执行']))], { route: 'direct', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
   ['FC2 嵌套路由答「进行pro规划」→ plan', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['进行pro规划']))], { route: 'plan', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
@@ -1525,11 +1556,12 @@ const FC = [
   ['FC4 嵌套澄清自定义答复（目的未定）→ 未澄清', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['进行pro规划'])), cdStart('ask_user_question', 'n2', nestedClarifyArgs), cdEnd('n2', customAnswer)], { route: 'plan', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
   ['FC5 嵌套批准「同意执行」（目的未定·未澄清）→ approved', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['进行pro规划'])), cdStart('ask_user_question', 'n2', nestedClarifyArgs), cdEnd('n2', answer(['方案A'])), cdStart('ask_user_question', 'n3', nestedApprovalArgs), cdEnd('n3', answer(['同意执行']))], { route: 'plan', clarified: false, approved: true, purpose: 'none', channelBroken: false }],
   ['FC6 嵌套空白 answers:[] → 全默认', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', emptyAnswer)], { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['FC7 嵌套 isError:true → route=none+approved=false', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', 'Error: ask failed', true)], { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
+  ['FC7 嵌套闸门拒绝（denied：真实中文文案）→ 五字段保持默认（拒绝不重置）', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', FC_DENY_TEXT, true)], { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
   ['FC8 直呼+嵌套混排互不干扰（后答生效）', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['直接执行'])), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划']))], { route: 'plan', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
   ['FC9 嵌套目的 ask 答「完善方案」→ purpose=refine 且 clarified=false', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['进行pro规划'])), cdStart('ask_user_question', 'n2', nestedPurposeArgs), cdEnd('n2', answer(['完善方案']))], { route: 'plan', clarified: false, approved: false, purpose: 'refine', channelBroken: false }],
   ['FC10 嵌套完整阶段后重选「直接执行」→ 清理阶段状态', fullNestedPlanApprovedEvents.concat([cdStart('ask_user_question', 'fn5', nestedRouteArgs), cdEnd('fn5', answer(['直接执行']))]), { route: 'direct', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['FC11 嵌套完整阶段后 ASK_CANCELLED → 五字段清理', fullNestedPlanApprovedEvents.concat([cdStart('ask_user_question', 'fn5', nestedRouteArgs), cdEnd('fn5', 'Error: ask cancelled', true)]), { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
+  ['FC11 嵌套完整阶段后宿主取消句（取消仍清四字段）→ 五字段清理', fullNestedPlanApprovedEvents.concat([cdStart('ask_user_question', 'fn5', nestedRouteArgs), cdEnd('fn5', FC_CANCEL_TEXT, true)]), { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
+  ['FC12 嵌套完整阶段后闸门拒绝（denied）→ 五字段全保留（route=plan、目的/澄清/批准不动）', fullNestedPlanApprovedEvents.concat([cdStart('ask_user_question', 'fn5', nestedRouteArgs), cdEnd('fn5', FC_DENY_TEXT, true)]), { route: 'plan', clarified: true, approved: true, purpose: 'refine', channelBroken: false }],
 ]
 for (const [name, events, expected] of FC) {
   check(name, deriveFlowState(events, gateRuntime), expected)

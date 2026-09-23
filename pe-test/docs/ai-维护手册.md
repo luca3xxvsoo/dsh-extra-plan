@@ -49,7 +49,7 @@
 ## 自检工具速查（pe-test/tools/）
 | 改动域 | 自检 |
 |:--|:--|
-| 闸门/路由/写拦截与A/C/M展示装配 | step-04-路由与写闸门.mjs（监听器级 + 120 格 A/C/M/F-L/五角色案例，含 C7/catalog/HP/HN/HB 断言）+ step-00-跨平台写拦截.mjs（68 用例） |
+| 闸门/路由/写拦截与A/C/M展示装配 | step-04-路由与写闸门.mjs（监听器级 + 120 格 A/C/M/F-L/五角色案例，含 C7/catalog/HP/HN/HB 断言；⑮ DZ1-DZ12：parse denied 判别、拒绝不重置/取消清四字段双对照、tools/post-execute 呈现改写命中-透传-非 run_code-消费即清）+ step-00-跨平台写拦截.mjs（68 用例） |
 | planner 探查委派禁令（T5）+ save_plan 主会话侧受限规划工件（任意路由态放行，save_probe 放行条件保持现状）+ plannerModel/otherAgentModel 降级与跨 Provider 时序（T2） | step-04-路由与写闸门.mjs（save_plan 五态全 allow 与 R107 组判定、T5 监听器级）、step-00-全流程回归.mjs（planner 与 executor/reviewer/probe/workflow/ralph worker 的 True/False 分流、真实 OK probe、排序、失败隔离、fallback、timeout、per-Agent cache、agent/request 屏障）、step-06-线索落盘.mjs（save_plan 注册与路由矩阵：任意路由态 allow） |
 | 注册失败路径与重试（P0-2/D1：服务未就绪与 C 类可重试错误不写标记、下一步重试；A 类重名与 B 类永久性错误写标记记终态不重试） | step-06-线索落盘.mjs（S6 服务不可用→次轮成功、S7 可重试错→次轮成功、S8 重名不重试、S9 永久性不重试、S10 pre-step 注册只影响下一步）、step-04-路由与写闸门.mjs（C4 认领时服务不可用→次轮成功、C5 可重试错粘性不重复消费、C6 重名不重试、C7 永久性不重试） |
 | save_probe 机械上限/动态描述 | lib/save-contract.js（PROBE_LIMITS/渲染合同）+ lib/save-probe-validation.js（validateProbe）+ lib/save-tool-factories.js（动态 schema/execute）；step-00-全流程回归.mjs（evidence 150、text 1000，PR23=151、PR34/PR35=1000/1001；实际 schema 动态断言） |
