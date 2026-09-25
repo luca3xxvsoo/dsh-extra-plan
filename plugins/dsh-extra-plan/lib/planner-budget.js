@@ -97,8 +97,13 @@ export function budgetReminderText(remaining, budget, threshold) {
   return `本轮探查预算还剩 ${remaining} 次`
 }
 
+// source 形状（v4 生产者自有 kind 要求）：宿主行准入（dsh-session-format-v3-to-v4 包内
+// lib/index.js 的 source 校验）要求 source 为非空字符串 kind，并明确排除旧兜底值 plugin ——
+// 旧包裹形状（kind 取旧兜底值 plugin + plugin 包名字段）必被拒收（SessionFormatError: format v4
+// message requires a producer-owned source kind）并使会话当场终止；本插件按 V3 迁移惯例
+// 自造 kind `plugin:<包名>`，无需任何 producer 注册（官方 dsh-tool-jobs 同法自造 tool-jobs）。
 export function budgetReminderMessage(reminder) {
-  return createUserMessage({ source: { kind: 'plugin', plugin: 'dsh-extra-plan' }, content: [{ type: 'text', text: reminder }] })
+  return createUserMessage({ source: { kind: 'plugin:@local/dsh-extra-plan' }, content: [{ type: 'text', text: reminder }] })
 }
 
 export function budgetReminderSent(events, marker) {

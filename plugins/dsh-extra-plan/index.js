@@ -1225,11 +1225,15 @@ import { createDeveloperMessage } from '@deepseek-ai/dsh-llm'
 // per-session 重试账本 malformedRetried 按 sessionId 分桶（本插件每个会话各持一份 apply
 // 实例，模块级 Map + sessionId 键在「模块共享/每会话独立」两种装载模型下语义一致），
 // disposed 时按 sessionId 回收（见 agent/disposed 监听器）。
-// 注入形状（已按宿主 0.1.7-rc.2 源码核实）：developer/message 在已知事件白名单
+// 注入形状（已按宿主 0.1.7-rc.2 源码核实；2026-09-25 订正）：developer/message 在已知事件白名单
 // （dsh-session lib/types/known-event-types.js L36）；append 必须带 surfaceOp:'append'
 // （dsh-session lib/index.js L294-308）；message 需非空 id、role='developer'、source.kind
-// 非空字符串、content 数组（同文件 L1151-1176）；纯文本 content 不得带 headerSeq
-// （L246-256）；无 turn/step 约束（invariant.js 无该分支）。
+// 非空字符串、content 数组（同文件 L1151-1176）；纯文本 content 不得带 headerSeq（L246-256）。
+// **原记「invariant.js 无该分支（故无需坐标）」已被宿主源码证伪**：v4 行准入要求
+// developer/message 自带 turn/step 且均为 ≥1 的整数，宿主 append 只补 seq/time、绝不补坐标，
+// 坐标必须由调用方给出（实机报错为 SessionFormatError: developer/message turn must be a
+// non-negative safe integer）；关系校验 companion 未挂载于活动 profile，故只需满足行准入。
+// source 同须用生产者自有 kind，v4 禁止旧包裹形状（kind 取旧兜底值 plugin + plugin 包名字段）；本插件统一 plugin:@local/dsh-extra-plan。
 const MALFORMED_RETRY_HINT = '你上一次的某个工具调用参数在传输中被截断，宿主侧无法把参数解析成合法 JSON，本次请求以 MALFORMED_RESPONSE 失败，该工具未执行、没有产生任何副作用。请在重试时压缩并重写该工具调用的参数：缩短长文本与证据列表、只保留核实结论必需的行号/数值/文案，确保参数是完整合法的 JSON，再原样重发同一调用。'
 
 // sessionId → Set('turn:step')：同一回合同一步只兜底 1 次（防重试死循环）。
@@ -1259,11 +1263,16 @@ function malformedRecovery(payload) {
       malformedRetried.set(sessionId, set)
     }
     set.add(key)
-    try {
-      const message = createDeveloperMessage({ content: [{ type: 'text', text: MALFORMED_RETRY_HINT }], source: { kind: 'plugin' } })
-      agent.session.append('developer/message', { message }, { surfaceOp: 'append' })
-    } catch (error) {
-      console.warn(`extra-plan: malformed retry hint append failed: ${error instanceof Error ? error.message : String(error)}`)
+    // 坐标防御：v4 行准入要求 developer/message 自带 ≥1 的 turn/step 且宿主 append 不补坐标，
+    // 而 request-error 的 payload 在个别场景可能缺坐标或非正整数——此时跳过注入，但仍返回
+    // { kind: 'retry' }，使自愈主路径不因注入条件不满足而失效。
+    if (Number.isInteger(payload.turn) && payload.turn >= 1 && Number.isInteger(payload.step) && payload.step >= 1) {
+      try {
+        const message = createDeveloperMessage({ content: [{ type: 'text', text: MALFORMED_RETRY_HINT }], source: { kind: 'plugin:@local/dsh-extra-plan' } })
+        agent.session.append('developer/message', { turn: payload.turn, step: payload.step, message }, { surfaceOp: 'append' })
+      } catch (error) {
+        console.warn(`extra-plan: malformed retry hint append failed: ${error instanceof Error ? error.message : String(error)}`)
+      }
     }
     return { kind: 'retry' }
   } catch (error) {
@@ -2068,7 +2077,8 @@ export function apply(ctx, config) {
         jobOutputLastAnchors.set(sessId, currentAnchor)
       }
     }
-    // tool-jobs 完成通知解锁扫描：匹配 source.kind==='plugin' && source.plugin==='tool-jobs' && source.form==='notice'
+    // tool-jobs 完成通知解锁扫描：匹配 source.kind==='tool-jobs' && source.form==='notice'
+    // （v4 形状；旧三元组表述（kind 取旧兜底值 plugin + plugin 包名字段）已废，见下方 HK9 注）
     // 从正文用 /background job (\S+)/ 解析 jobId；若存在于本 session 的 jobOutputCallCounters 中则删除该
     // jobId 计数（只清这一个，不清整表、不动 subCallCounters）；解析失败或未跟踪 → 无操作（保守不放行）。
     {

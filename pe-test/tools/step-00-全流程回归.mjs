@@ -483,11 +483,72 @@ for (const [name, got, expected] of BR) check(name, got, expected)
 
 // BR7（修正，不降级）：budgetReminderMessage 现经宿主 createUserMessage 构造，字段集 = {source, content, role:'user', id}。
 // 原条目只断言 {source, content}，在构造器注入 role/id 后必然失败；此处拆为 4 条断言，覆盖全部字段。
+// 2026-09-25 订正期望 source 形状（v4 口径）：宿主行准入（dsh-session-format-v3-to-v4）要求 source.kind 为
+// 生产者自有非空字符串，旧包裹形状（kind 取旧兜底值 'plugin' + plugin 包名字段）会被拒收并终止会话；
+// 本插件统一自造 plugin:@local/dsh-extra-plan。
 const msg = budgetReminderMessage(REMIND3)
-check('BR7a budgetReminderMessage source/content 深等值', JSON.stringify({ source: msg.source, content: msg.content }), JSON.stringify({ source: { kind: 'plugin', plugin: 'dsh-extra-plan' }, content: [{ type: 'text', text: REMIND3 }] }))
+check('BR7a budgetReminderMessage source/content 深等值', JSON.stringify({ source: msg.source, content: msg.content }), JSON.stringify({ source: { kind: 'plugin:@local/dsh-extra-plan' }, content: [{ type: 'text', text: REMIND3 }] }))
 check('BR7b role 恒为 user', msg.role, 'user')
 check('BR7c id 为非空字符串', typeof msg.id === 'string' && msg.id.length > 0, true)
 check('BR7d 两次调用 id 唯一', budgetReminderMessage(REMIND3).id !== msg.id, true)
+
+// ── MR 系列:malformedRecovery 直呼用例（2026-09-25 新增；该命名导出此前全仓零调用） ──
+// 全组用桩对象：桩 session.append 只记账、桩 agent.session.header.id 固定为 stub- 前缀且各例互不相同，
+// 既不写入任何真实会话，也不与共享重试账本（malformedRetried，按 sessionId 分桶）互相串味。
+const MR_SOURCE = 'plugin:@local/dsh-extra-plan'
+function mrStub(tag, patch) {
+  const appends = []
+  const session = {
+    header: { id: 'stub-malformed-' + tag },
+    append(type, payload, options) { appends.push({ type, payload, options }) },
+  }
+  return { appends, payload: Object.assign({ agent: { session }, failure: { code: 'MALFORMED_RESPONSE' } }, patch) }
+}
+// MR1：合法坐标 → 注入一次且携带 ≥1 的 turn/step、source 为生产者自有 kind
+const mrLegal = mrStub('legal', { turn: 3, step: 2 })
+const mrLegalResult = plugin.malformedRecovery(mrLegal.payload)
+const mrLegalCall = mrLegal.appends[0]
+check('MR1a 合法坐标 → 仍返回 retry', mrLegalResult, { kind: 'retry' })
+check('MR1b 注入恰一次 developer/message', Array.isArray(mrLegal.appends) && mrLegal.appends.length === 1 && mrLegalCall.type === 'developer/message', true)
+check('MR1c payload 坐标源自 payload.turn/step', mrLegalCall.payload.turn === 3 && mrLegalCall.payload.step === 2, true)
+check('MR1d 注入 message.source 为 plugin:@local/dsh-extra-plan', JSON.stringify(mrLegalCall.payload.message.source), JSON.stringify({ kind: MR_SOURCE }))
+check('MR1e 注入 message 为 developer 且 id 非空', mrLegalCall.payload.message.role === 'developer' && typeof mrLegalCall.payload.message.id === 'string' && mrLegalCall.payload.message.id.length > 0, true)
+check('MR1f 注入带 surfaceOp:append', mrLegalCall.options.surfaceOp, 'append')
+// MR2：坐标缺失 → 不注入，但自愈主路径仍返回 retry
+const mrNoCoord = mrStub('no-coord', {})
+check('MR2a 无 turn/step → 不注入', mrNoCoord.appends.length, 0)
+check('MR2b 无 turn/step → 仍返回 retry', plugin.malformedRecovery(mrNoCoord.payload), { kind: 'retry' })
+// MR3：坐标非法矩阵（0/负/非整数/非数字类型/仅一侧缺失）→ 逐例不注入且仍返回 retry
+const MR_BAD_COORDS = [
+  ['turn=0', { turn: 0, step: 1 }],
+  ['turn=-1', { turn: -1, step: 1 }],
+  ['turn=1.5', { turn: 1.5, step: 1 }],
+  ['turn 非数字', { turn: '3', step: 1 }],
+  ['step=0', { turn: 2, step: 0 }],
+  ['step=-2', { turn: 2, step: -2 }],
+  ['step 缺失', { turn: 2 }],
+  ['turn 为 null', { turn: null, step: 1 }],
+]
+const mrBadResults = []
+for (let i = 0; i < MR_BAD_COORDS.length; i += 1) {
+  const [label, coords] = MR_BAD_COORDS[i]
+  const stub = mrStub('bad-' + i, coords)
+  const result = plugin.malformedRecovery(stub.payload)
+  mrBadResults.push(label + ':' + (stub.appends.length === 0 ? 'no-append' : 'APPENDED') + '/' + JSON.stringify(result))
+}
+check('MR3 非法坐标 8 例全部不注入且仍返回 retry', mrBadResults, MR_BAD_COORDS.map(([label]) => label + ':no-append/{"kind":"retry"}'))
+// MR4：同一 (turn:step) 二次调用 → null（同回合只兜底 1 次，防重试死循环）
+const mrRepeat = mrStub('repeat', { turn: 5, step: 4 })
+const mrRepeatFirst = plugin.malformedRecovery(mrRepeat.payload)
+const mrRepeatSecond = plugin.malformedRecovery(mrRepeat.payload)
+check('MR4a 首次返回 retry', mrRepeatFirst, { kind: 'retry' })
+check('MR4b 同 (turn:step) 二次调用返回 null', mrRepeatSecond, null)
+check('MR4c 二次调用不再注入', mrRepeat.appends.length, 1)
+// MR5/MR6：非目标失败码与用户取消一律不干预（透传 null、不注入）
+const mrOtherCode = mrStub('other-code', { turn: 1, step: 1, failure: { code: 'CHANNEL_BROKEN' } })
+check('MR5 非 MALFORMED_RESPONSE → null 不干预', plugin.malformedRecovery(mrOtherCode.payload), null)
+const mrAborted = mrStub('aborted', { turn: 1, step: 1, signal: { aborted: true } })
+check('MR6 signal.aborted → null 不干预', plugin.malformedRecovery(mrAborted.payload), null)
 
 // ── DR 系列:deny 提示模板与闸门词表同源（v0.1.9） ─────────────────────
 const DR = [
@@ -779,7 +840,7 @@ function plannerRequestShape(call) {
     && forbidden.every((key) => !Object.prototype.hasOwnProperty.call(request, key))
     && Array.isArray(request.messages) && request.messages.length === 1
     && message !== undefined && message.role === 'user'
-    && message.source !== undefined && message.source.kind === 'plugin' && message.source.plugin === 'dsh-extra-plan'
+    && message.source !== undefined && message.source.kind === 'plugin:@local/dsh-extra-plan'
     && Array.isArray(message.content) && message.content.length === 1
     && message.content[0].type === 'text' && message.content[0].text === 'OK'
 }
