@@ -1,10 +1,14 @@
 // syncPreset 启动自愈回归（dsh 0.1.7-rc.1 新载体）。
 // 夹具（全部位于系统临时 DSH_HOME，绝不使用真实生产目录）：
 //   状态目录 $DSH_HOME/.agent-presets/extra-plan/（dist-manifest.json 台账 + 旧分发副本 agent.cordis.yml）
-//   目标物 $DSH_HOME/profiles/web/cordis.patch.yml（声明行 preset-extra-plan 的 config.plugins）
+//   目标物 $DSH_HOME/profiles/web/cordis.patch.yml（声明行 preset-extra-plan 的 config.plugins
+//   + settings 行 dsh-extra-plan-settings 的 config = 10 项权威值落点）
 // 断言语义保留（原「首次/升级/幂等 + settings captured/10 项 + gateWordsMigration 7 项」）：
-//   首次 → written（源缺席）；有旧副本 → upgraded（8 项落 settings 行、2 项落声明行子行、7 词整组迁移）；
+//   首次 → written（源缺席）；有旧副本 → upgraded（**10 项一律落 settings 行**、7 词整组迁移）；
 //   收敛 → idle。写盘经注入的 apply 回调（宿主侧即 configEditor.edit）。
+// 本轮新增 ⑥-6：2 项宿主行设置的「权威值（settings 行）→ 投影（声明行 plugins 子行）」链：
+//   T-1 投影被删 + 权威非出厂值 → 按权威值重建；T-2 权威改值 → 投影跟进；T-3 权威==出厂 + 投影缺失 → idle；
+//   T-4 settings 行缺项 + 声明行非出厂值 → 一次性回填（M-1/M-2）。
 
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -22,6 +26,7 @@ import {
   DECLARATION_ROW_IDS,
   declarationCoversAsset,
   declarationBodyMatchesAsset,
+  effectiveRowConfig,
   restatePresetPlugins,
   carryUserWritable,
   assetPlugins,
@@ -126,13 +131,14 @@ try {
   check('旧 format=1 台账 + 旧副本 → upgraded', upgraded.action === 'upgraded')
   const planSettings = upgraded.plan.settings
   const planPreset = upgraded.plan.preset
-  check('升级后 8 项 UI 设置值取自旧副本（settings 行落点）', planSettings !== null &&
+  check('升级后 10 项设置值取自旧副本（8 项 UI + 2 项宿主行统一落 settings 行）', planSettings !== null &&
     planSettings.values.plannerModel === 'old-sync-model' && planSettings.values.crossProviderPlannerModel === true &&
     planSettings.values.plannerPromptSuffix === 'old: sync suffix' && planSettings.values.exploreBudget === 9 &&
     planSettings.values.otherAgentModel === 'old-sync-other-model' && planSettings.values.anchoredBootstrap === false &&
     planSettings.values.creativeMode === false && planSettings.values.runcodeCatchGate === true &&
-    Object.keys(planSettings.values).length === 8)
-  check('升级后 2 项宿主行落声明行 plugins 子行（tool-web.fetch / tool-presentation.mode）', planPreset !== null &&
+    planSettings.values.webFetch === true && planSettings.values.toolPresentationMode === 'both' &&
+    Object.keys(planSettings.values).length === 10)
+  check('升级后 2 项宿主行按权威值投影声明行 plugins 子行（tool-web.fetch / tool-presentation.mode）', planPreset !== null &&
     planPreset.hostRowConfig['tool-web'].fetch === true && planPreset.hostRowConfig['tool-presentation'].mode === 'both')
   check('升级后 7 词整组迁移（gateWords 全部为旧值）', planPreset.gateWords !== null && GATE_WORD_FIELDS.every((item) => planPreset.gateWords[item.field] === GATE_CUSTOM[item.field]))
   check('升级后 settingsMigration source=captured 且 10 项全 restored', upgraded.plan.audit.source === 'captured' && Object.keys(upgraded.plan.audit.results).length === 10 && Object.values(upgraded.plan.audit.results).every((r) => r === 'restored'))
@@ -149,7 +155,7 @@ try {
   writeFileSync(join(stateDir, 'dist-manifest.json'), JSON.stringify({ format: 1, distHash: 'OLD-MISSING-OTHER' }, null, 2) + '\n', 'utf8')
   const missingRun = await syncPreset({ dshHome: home, readPatch })
   check('旧副本缺 otherAgentModel → upgraded 且审计 skipped-old-missing', missingRun.action === 'upgraded' && missingRun.plan.audit.results.otherAgentModel === 'skipped-old-missing')
-  check('缺失键不进入落地值（settings 行只写有值的 7 项）', missingRun.plan.settings !== null && !Object.prototype.hasOwnProperty.call(missingRun.plan.settings.values, 'otherAgentModel') && Object.keys(missingRun.plan.settings.values).length === 7)
+  check('缺失键不进入落地值（settings 行只写有值的 9 项：7 项 UI + 2 项宿主行）', missingRun.plan.settings !== null && !Object.prototype.hasOwnProperty.call(missingRun.plan.settings.values, 'otherAgentModel') && Object.keys(missingRun.plan.settings.values).length === 9)
 
   // ⑤ 旧副本 7 词非法（重复值）→ 整组 skipped-invalid，不写回；宿主行仍迁移（不抛）
   const dupGateText = patchAgent(CUSTOM).replace('        routePlan: \'进行pro规划\'', '        routePlan: \'直接执行\'')
@@ -288,6 +294,114 @@ try {
     findRow(userRows, 'extra-plan').config.gateWords = GATE_CUSTOM
     const carried = carryUserWritable(userRows)
     check('carry：用户改动被抽出（含穿透 group 的 gateWords）', carried.hostRowConfig['tool-presentation'].mode === 'ptc' && carried.gateWords.routeDirect === GATE_CUSTOM.routeDirect)
+  }
+
+  // ⑥-6 权威值（settings 行）↔ 投影（声明行 plugins 子行）链：投影被删/权威改值/稳态/一次性回填。
+  // 夹具 = patchFile 直接含 settings 行（+ 可选声明行），旧副本临时移走以隔离迁移来源。
+  {
+    const findRow = (rows, id) => {
+      for (const row of rows) {
+        if (row === null || typeof row !== 'object') continue
+        if (row.id === id) return row
+        if (Array.isArray(row.config)) {
+          const hit = findRow(row.config, id)
+          if (hit !== undefined) return hit
+        }
+      }
+      return undefined
+    }
+    // settings 行夹具（权威值落点）：行 id + config 叶值。
+    const settingsRow = (lines) => '- id: dsh-extra-plan-settings\n  config:\n' + lines.map((line) => '    ' + line + '\n').join('')
+    // 台账夹具：distHash 对齐厂商资产 → 唯一的非 idle 触发源只能是「投影/回填」维度。
+    const writeManifestWith = (hash) => writeFileSync(join(stateDir, 'dist-manifest.json'), JSON.stringify({
+      format: 2,
+      distHash: hash,
+      settingsMigration: { format: 1, sourceDistHash: null, source: 'absent', results: {} },
+      gateWordsMigration: { format: 1, sourceDistHash: null, source: 'absent', results: {} },
+    }, null, 2) + '\n', 'utf8')
+    let legacyBackup = null
+    try { legacyBackup = readFileSync(join(stateDir, 'agent.cordis.yml'), 'utf8') } catch { legacyBackup = null }
+    rmSync(join(stateDir, 'agent.cordis.yml'), { force: true })
+
+    // T-1 投影被宿主删除（patchFile 无声明行）+ settings 行含非出厂值 → 非 idle → 重建投影 = 权威值
+    writeFileSync(patchFile, settingsRow(["toolPresentationMode: 'ptc'"]), 'utf8')
+    writeManifestWith(currentHash)
+    const t1 = await syncPreset({ dshHome: home, readPatch })
+    check('T-1a 投影被删（无声明行）+ settings 行非出厂值 → 非 idle', t1.action !== 'idle')
+    check('T-1b 非 idle 仅由投影维度触发（本体未过期、无迁移源）', t1.plan.bodyStale === false && t1.plan.settings === null &&
+      t1.plan.preset !== null && t1.plan.preset.hostRowConfig['tool-presentation'].mode === 'ptc' && Object.keys(t1.plan.preset.hostRowConfig).length === 1)
+    const t1rebuilt = restatePresetPlugins({ plugins: undefined }, null, t1.plan.preset, assetPlugins())
+    check('T-1c 按 plan 重建声明行后子行值 = settings 行权威值（mode=ptc / fetch 保持出厂 false）',
+      findRow(t1rebuilt.plugins, 'tool-presentation').config.mode === 'ptc' && findRow(t1rebuilt.plugins, 'tool-web').config.fetch === false)
+
+    // T-2 settings 行权威值改写 → 下一次 syncPreset 判非 idle 并投影新值；投影跟上后收敛 idle
+    writeFileSync(patchFile, settingsRow(["toolPresentationMode: 'both'"]) + declarationPatchText().replace('mode: native', 'mode: ptc'), 'utf8')
+    writeManifestWith(currentHash)
+    const t2 = await syncPreset({ dshHome: home, readPatch })
+    check('T-2a 权威值（both）≠ 当前投影（ptc）→ 非 idle', t2.action !== 'idle')
+    check('T-2b 投影 plan 写入权威新值（both），未改动的 webFetch 不写冗余覆盖',
+      t2.plan.preset !== null && t2.plan.preset.hostRowConfig['tool-presentation'].mode === 'both' && Object.keys(t2.plan.preset.hostRowConfig).length === 1)
+    writeFileSync(patchFile, settingsRow(["toolPresentationMode: 'both'"]) + declarationPatchText().replace('mode: native', 'mode: both'), 'utf8')
+    check('T-2c 投影已跟随权威值 → idle（收敛，不反复重写）', (await syncPreset({ dshHome: home, readPatch })).action === 'idle')
+
+    // T-3 权威值 == 出厂值 + 声明行缺失 → idle（稳态，不反复重建、不空转写盘）
+    writeFileSync(patchFile, settingsRow(['webFetch: false', "toolPresentationMode: 'native'"]), 'utf8')
+    writeManifestWith(currentHash)
+    check('T-3 投影值 == 出厂值 且 声明行缺失 → idle（不空转）', (await syncPreset({ dshHome: home, readPatch })).action === 'idle')
+
+    // T-4 一次性回填（M-1/M-2）：settings 行缺这 2 项 + 声明行子行有非出厂值 → 回填 settings 行 = 声明行旧值
+    writeFileSync(patchFile, settingsRow(['creativeMode: true']) + declarationPatchText().replace('mode: native', 'mode: ptc'), 'utf8')
+    writeManifestWith(currentHash)
+    const t4 = await syncPreset({ dshHome: home, readPatch })
+    check('T-4a settings 行缺项 + 声明行非出厂值 → 非 idle 且回填值 = 声明行旧值（ptc）',
+      t4.action !== 'idle' && t4.plan.settings !== null && t4.plan.settings.values.toolPresentationMode === 'ptc')
+    check('T-4b 回填不制造空 override（webFetch 为出厂值 → 不写该键；回填只含 1 键）',
+      !Object.prototype.hasOwnProperty.call(t4.plan.settings.values, 'webFetch') && Object.keys(t4.plan.settings.values).length === 1)
+    check('T-4c 回填不重写投影（投影已等于权威值 → plan.preset 为空）', t4.plan.preset === null)
+    check('T-4d 回填经台账留痕（审计状态 = restored-from-declaration-row，且不记用户值）',
+      readManifestRecordOf(stateDir).settingsMigration.results.toolPresentationMode === 'restored-from-declaration-row' &&
+      !JSON.stringify(readManifestRecordOf(stateDir)).includes('ptc'))
+    writeFileSync(patchFile, settingsRow(['creativeMode: true', "toolPresentationMode: 'ptc'"]) + declarationPatchText().replace('mode: native', 'mode: ptc'), 'utf8')
+    check('T-4e 回填完成后（settings 行已有该值）→ idle（一次性，不反复回填）', (await syncPreset({ dshHome: home, readPatch })).action === 'idle')
+
+    // ⑥-6f 宿主入口形状：settingsValues（settings 行生效 config）+ declaredPlugins（声明行生效 plugins）
+    check('effectiveRowConfig：profile override（行 config 本身）优先，其余层补齐；兼容 override.config 行节点形状；无层 → null（不可判定）', (() => {
+      const merged = effectiveRowConfig({ entry: { options: { config: { creativeMode: false } } }, inherited: { creativeMode: true, exploreBudget: 5 }, override: { creativeMode: true } })
+      const scoped = effectiveRowConfig({ entry: { options: { config: {} } }, inherited: {}, override: { config: { webFetch: true } } })
+      return merged.creativeMode === true && merged.exploreBudget === 5 && scoped.webFetch === true && effectiveRowConfig({ entry: { options: {} } }) === null
+    })())
+    const hostDeclared = (() => {
+      const clone = structuredClone(assetPlugins())
+      findRow(clone, 'tool-presentation').config.mode = 'ptc'
+      return clone
+    })()
+    writeFileSync(patchFile, declarationPatchText().replace('mode: native', 'mode: ptc'), 'utf8')
+    writeManifestWith(currentHash)
+    const hostShape = await syncPreset({ dshHome: home, declaredPlugins: hostDeclared, settingsValues: { toolPresentationMode: 'both' } })
+    check('宿主形状：settingsValues 权威值（both）≠ 投影（ptc）→ 非 idle 且投影 plan 写 both',
+      hostShape.action !== 'idle' && hostShape.plan.preset !== null && hostShape.plan.preset.hostRowConfig['tool-presentation'].mode === 'both')
+    check('宿主形状：settings 行已有该键 → 不回填（settings.values 不含该键）',
+      hostShape.plan.settings === null || !Object.prototype.hasOwnProperty.call(hostShape.plan.settings.values, 'toolPresentationMode'))
+    writeManifestWith(currentHash)
+    const hostBackfill = await syncPreset({ dshHome: home, declaredPlugins: hostDeclared, settingsValues: {} })
+    check('宿主形状：settings 行在但缺项 + 声明行非出厂值 → 一次性回填（present=true 才触发，行缺席不触发）',
+      hostBackfill.action !== 'idle' && hostBackfill.plan.settings !== null && hostBackfill.plan.settings.values.toolPresentationMode === 'ptc')
+
+    // 键在但值非法（手改 YAML）不算「缺失」：按权威值/出厂值修复，不留在稳态
+    const illegalDeclared = (() => {
+      const clone = structuredClone(assetPlugins())
+      findRow(clone, 'tool-presentation').config.mode = 'code'
+      return clone
+    })()
+    writeManifestWith(currentHash)
+    const illegalRun = await syncPreset({ dshHome: home, declaredPlugins: illegalDeclared, settingsValues: { toolPresentationMode: 'native' } })
+    check('投影值非法（mode=code）→ 非 idle 且按权威值修复为 native（键在≠缺失，不留在稳态）',
+      illegalRun.action !== 'idle' && illegalRun.plan.preset !== null && illegalRun.plan.preset.hostRowConfig['tool-presentation'].mode === 'native')
+    const illegalRebuilt = restatePresetPlugins({ plugins: illegalDeclared }, null, illegalRun.plan.preset, assetPlugins())
+    check('投影值非法修复后子行值合法（避免 carry 把非法值写回）', findRow(illegalRebuilt.plugins, 'tool-presentation').config.mode === 'native')
+
+    writeFileSync(patchFile, declarationPatchText(), 'utf8')
+    if (legacyBackup !== null) writeFileSync(join(stateDir, 'agent.cordis.yml'), legacyBackup, 'utf8')
   }
 
   // ⑦ 旧 flash-guide 根级块清理：profiles/*/cordis.patch.yml 契约保持

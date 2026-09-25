@@ -10,8 +10,10 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   EXTRA_PLAN_SETTING_DEFINITIONS,
+  HOST_ROW_LEAF_KEYS,
   HOST_ROW_SETTING_DEFINITIONS,
   PRESET_ROW_ID,
+  PROJECTION_SETTING_DEFINITIONS,
   SETTING_DEFINITIONS,
   SETTING_GROUPS,
   SETTINGS_ROW_ID,
@@ -22,6 +24,7 @@ import {
   getSettingDefinition,
   parsePresetYaml,
   patchYamlScalar,
+  readProjectedValue,
   resolveSetting,
   restatePluginsRow,
   serializeScalar,
@@ -109,7 +112,7 @@ function minimalYaml(overrides = {}, nested = false) {
   ].join('\n') + '\n'
 }
 
-// 新载体 settings 行夹具（profile patch 真值形状）：8 项 UI 设置。
+// 新载体 settings 行夹具（profile patch 真值形状）：10 项（8 项 UI + 2 项宿主行设置）。
 function settingsRowYaml(values = {}) {
   const pick = (key, fallback) => Object.prototype.hasOwnProperty.call(values, key) ? values[key] : fallback
   return [
@@ -123,6 +126,8 @@ function settingsRowYaml(values = {}) {
     "    plannerPromptSuffix: '" + pick('plannerPromptSuffix', '') + "'",
     '    exploreBudget: ' + pick('exploreBudget', '18'),
     "    otherAgentModel: '" + pick('otherAgentModel', '') + "'",
+    '    webFetch: ' + pick('webFetch', 'false'),
+    "    toolPresentationMode: '" + pick('toolPresentationMode', 'native') + "'",
     '- id: other-row',
     '  config:',
     '    keep: true',
@@ -130,7 +135,7 @@ function settingsRowYaml(values = {}) {
 }
 
 check('白名单恰有 10 个稳定键且顺序不变', keys.length === 10 && keys.join('|') === expectedKeys.join('|'))
-check('descriptor 分组：extra-plan 8 项（settings 行）+ host-rows 2 项（声明行 plugins 子行）',
+check('descriptor 分组：extra-plan 8 项（本插件热读）+ host-rows 2 项（另投影到声明行 plugins 子行）',
   EXTRA_PLAN_SETTING_DEFINITIONS.length === 8 && HOST_ROW_SETTING_DEFINITIONS.length === 2 &&
   EXTRA_PLAN_SETTING_DEFINITIONS.every((item) => item.group === SETTING_GROUPS.EXTRA_PLAN) &&
   HOST_ROW_SETTING_DEFINITIONS.every((item) => item.group === SETTING_GROUPS.HOST_ROWS))
@@ -139,10 +144,18 @@ check('descriptor 已无 pluginId/path 顶层字段（改 rowLocator/sourceLocat
 check('sourceLocator 仍为源模板行 id + config 路径（资产/旧分发副本同形）',
   SETTING_DEFINITIONS.every((item) => item.sourceLocator.path === 'config.' + (item.key === 'webFetch' ? 'fetch' : item.key === 'toolPresentationMode' ? 'mode' : item.key)) &&
   definition('plannerModel').sourceLocator.rowId === 'extra-plan' && definition('webFetch').sourceLocator.rowId === 'tool-web')
-check('rowLocator 指向新载体：8 项 settings 行、2 项声明行 plugins 子行',
-  EXTRA_PLAN_SETTING_DEFINITIONS.every((item) => item.rowLocator.rowId === SETTINGS_ROW_ID && item.rowLocator.path === 'config.' + item.key) &&
-  definition('webFetch').rowLocator.rowId === PRESET_ROW_ID && definition('webFetch').rowLocator.pluginsRowId === 'tool-web' && definition('webFetch').rowLocator.path === 'config.fetch' &&
-  definition('toolPresentationMode').rowLocator.pluginsRowId === 'tool-presentation' && definition('toolPresentationMode').rowLocator.path === 'config.mode')
+check('rowLocator 指向权威值落点：10 项一律 settings 行（含原声明行子行的 2 项宿主行设置）',
+  SETTING_DEFINITIONS.every((item) => item.rowLocator.rowId === SETTINGS_ROW_ID && item.rowLocator.path === 'config.' + item.key &&
+    item.rowLocator.pluginsRowId === undefined) &&
+  definition('webFetch').rowLocator.path === 'config.webFetch' && definition('toolPresentationMode').rowLocator.path === 'config.toolPresentationMode')
+check('projectionLocator 只给 2 项宿主行设置：声明行 plugins 内 tool-web.fetch / tool-presentation.mode（8 项 UI 设置无投影面）',
+  PROJECTION_SETTING_DEFINITIONS.length === 2 && PROJECTION_SETTING_DEFINITIONS.every((item) => item.group === SETTING_GROUPS.HOST_ROWS) &&
+  EXTRA_PLAN_SETTING_DEFINITIONS.every((item) => item.projectionLocator === undefined) &&
+  definition('webFetch').projectionLocator.rowId === PRESET_ROW_ID && definition('webFetch').projectionLocator.pluginsRowId === 'tool-web' && definition('webFetch').projectionLocator.path === 'config.fetch' &&
+  definition('toolPresentationMode').projectionLocator.pluginsRowId === 'tool-presentation' && definition('toolPresentationMode').projectionLocator.path === 'config.mode')
+check('HOST_ROW_LEAF_KEYS 与投影 locator 叶键同源（未新增第二份键名清单）',
+  HOST_ROW_LEAF_KEYS.webFetch === 'fetch' && HOST_ROW_LEAF_KEYS.toolPresentationMode === 'mode' &&
+  HOST_ROW_SETTING_DEFINITIONS.every((item) => item.projectionLocator.path === 'config.' + HOST_ROW_LEAF_KEYS[item.key]))
 check('禁止项不在白名单且描述不可变', !keys.some((key) => ['approvalEnabled', 'bootstrapPersona', 'bootstrapShellTools', 'bootstrapCommonTools', 'bootstrapReadHint', 'planTool', 'savePlanDir', 'usageLedger', 'searchTimeoutMs'].includes(key)) && Object.isFrozen(SETTING_DEFINITIONS) && SETTING_DEFINITIONS.every((item) => Object.isFrozen(item)))
 // T4：plannerModel 放开为空串（空串=显式清空=继承主会话模型），空白串 normalize 后归一为 ''；
 // 非 string（数字等）仍非法——validator 的类型严格性由 !validator(123) 锁定。
@@ -200,13 +213,33 @@ const GATE_CUSTOM = { routeDirect: '甲直行', routePlan: '乙规划', routeDis
 const customGateText = (() => { let out = assetAgent; for (const item of GATE_WORD_MIGRATION_DEFINITIONS) { const patched = patchYamlScalar(out, item, GATE_CUSTOM[item.key]); if (!patched.ok) throw new Error('fixture patch failed: ' + item.key); out = patched.text } return out })()
 check('7 词逐叶定点改写后整组等于定制值', (() => { const runtime = createGateRuntime(resolveSetting(parsePresetYaml(customGateText), GATE_WORDS_GROUP_DEFINITION, { aliases: false }).value); return GATE_WORD_MIGRATION_DEFINITIONS.every((item) => runtime.words[item.key] === GATE_CUSTOM[item.key]) })())
 
-// ── 新载体 settings 行捕获（captureRowSettings） ──────────────────────────
+// ── 新载体 settings 行捕获（captureRowSettings：8 项 UI 热读键 + 10 项权威值） ────
 const rowText = settingsRowYaml({ anchoredBootstrap: 'false', exploreBudget: '7', plannerModel: 'row-model' })
 const rowCapture = captureRowSettings(rowText)
 check('captureRowSettings 按 settings 行 id 捕获 8 项', Object.keys(rowCapture.values).length === 8 && rowCapture.values.exploreBudget === 7 && rowCapture.values.anchoredBootstrap === false && rowCapture.values.plannerModel === 'row-model')
 check('settings 行缺席 → 8 项全 missing（消费端回退 cfg 快照）', (() => { const none = captureRowSettings('- id: other-row\n  config:\n    keep: true\n'); return Object.keys(none.states).length === 8 && Object.values(none.states).every((state) => state === 'missing') })())
 check('settings 行同名重复 → ambiguous（不猜值）', (() => { const dup = settingsRowYaml() + settingsRowYaml(); return captureRowSettings(dup).states.exploreBudget === 'ambiguous' })())
 check('settings 行非法叶值 → invalid（不进 values）', (() => { const bad = settingsRowYaml().replace('    exploreBudget: 18', '    exploreBudget: 0'); const capturedBad = captureRowSettings(bad); return capturedBad.states.exploreBudget === 'invalid' && !Object.prototype.hasOwnProperty.call(capturedBad.values, 'exploreBudget') })())
+
+// ── 权威值（settings 行 10 项）+ 投影读取（rowPresent / readProjectedValue） ──────
+const authorityText = settingsRowYaml({ webFetch: 'true', toolPresentationMode: 'ptc' })
+const authority = captureRowSettings(authorityText, SETTING_DEFINITIONS)
+check('权威值捕获：10 项（含 webFetch / toolPresentationMode）全 captured 且 rowPresent=true',
+  Object.keys(authority.states).length === 10 && Object.values(authority.states).every((state) => state === 'captured') &&
+  authority.values.webFetch === true && authority.values.toolPresentationMode === 'ptc' && authority.rowPresent === true)
+check('rowPresent 区分「settings 行缺席（不可判定）」与「行在但缺项（可回填）」',
+  captureRowSettings('- id: other-row\n  config:\n    keep: true\n', SETTING_DEFINITIONS).rowPresent === false &&
+  captureRowSettings('- id: dsh-extra-plan-settings\n  config:\n    creativeMode: true\n', SETTING_DEFINITIONS).rowPresent === true)
+check('readProjectedValue：按 projectionLocator 读声明行子行现值（缺失/非法 → undefined，判定侧按出厂值参与比较）', (() => {
+  const plugins = [{ id: 'tool-web', config: { fetch: false, searchTimeoutMs: 60000 } }, { id: 'tool-presentation', config: { mode: 'native' } }]
+  const before = readProjectedValue(plugins, definition('toolPresentationMode'))
+  findPluginsRow(plugins, 'tool-presentation').config.mode = 'ptc'
+  const after = readProjectedValue(plugins, definition('toolPresentationMode'))
+  findPluginsRow(plugins, 'tool-presentation').config.mode = 'code'
+  const illegal = readProjectedValue(plugins, definition('toolPresentationMode'))
+  const missing = readProjectedValue(undefined, definition('webFetch'))
+  return before === 'native' && after === 'ptc' && illegal === undefined && missing === undefined
+})())
 
 // ── live-config 构造期读盘（新载体：路径来自 resolveDocumentPath） ─────────
 {
@@ -225,6 +258,17 @@ check('settings 行非法叶值 → invalid（不进 values）', (() => { const 
     check('LC-D 路径不可得（configEditor 未就绪）→ 回退 fallbackDefaults（不读旧预设目录）', noPath.exploreBudget === 18)
     writeFileSync(offFile, settingsRowYaml({ anchoredBootstrap: 'false', exploreBudget: '421' }), 'utf8')
     check('LC-E 文件改写后 stamp 变化 → 取值跟进', lc.exploreBudget === 421)
+    // U-1：2 项宿主行设置的读取路径 = settings 行（与 8 项同一 rowLocator），
+    // 权威值非出厂值时按权威值返回；settings 行缺项时回退 fallback/内置默认。
+    writeFileSync(offFile, settingsRowYaml({ webFetch: 'true', toolPresentationMode: 'ptc' }), 'utf8')
+    const lcHostRows = createLiveConfig({ resolveDocumentPath: () => offFile, fallbackDefaults: { webFetch: false, toolPresentationMode: 'native' } })
+    check('LC-F 2 项宿主行设置读取路径 = settings 行（webFetch=true / toolPresentationMode=ptc）', lcHostRows.webFetch === true && lcHostRows.toolPresentationMode === 'ptc')
+    check('LC-F2 settings 行缺这 2 项 → 回退 fallbackDefaults（不读声明行、不读旧预设目录）', (() => {
+      writeFileSync(offFile, settingsRowYaml({ exploreBudget: '18' }).replace('    webFetch: false\n', '').replace("    toolPresentationMode: 'native'\n", ''), 'utf8')
+      const lcFallback = createLiveConfig({ resolveDocumentPath: () => offFile, fallbackDefaults: { webFetch: false, toolPresentationMode: 'native' } })
+      const lcBuiltin = createLiveConfig({ resolveDocumentPath: () => offFile })
+      return lcFallback.webFetch === false && lcFallback.toolPresentationMode === 'native' && lcBuiltin.webFetch === false && lcBuiltin.toolPresentationMode === 'native'
+    })())
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

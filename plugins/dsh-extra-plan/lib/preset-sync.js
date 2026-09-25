@@ -13,9 +13,14 @@
 //    已按用户值改写——逐字 hash 永不相等会退化成「每次启动都重跑迁移」。故按行 id 集合判定。
 //  - 写盘只经 configEditor.edit（事务 + reconcile + 回滚），本模块绝不直写 cordis.patch.yml。
 //  - 旧值来源 = 旧分发副本 $DSH_HOME/.agent-presets/extra-plan/agent.cordis.yml（若在）：
-//    8 项 → settings 行 config；2 项宿主行 → 声明行 config.plugins 内 tool-web/tool-presentation
-//    子行；7 项 gateWords → 声明行 config.plugins 内 extra-plan 行 config.gateWords（整体重述后
+//    10 项 → settings 行 config（8 项 UI + 2 项宿主行设置，权威值统一落点）；
+//    7 项 gateWords → 声明行 config.plugins 内 extra-plan 行 config.gateWords（整体重述后
 //    整组校验，失败即抛不落盘）。
+//  - **权威值 vs 投影（2026-09-25 二轮）**：2 项宿主行设置（webFetch / toolPresentationMode）
+//    的权威值在 settings 行；声明行 plugins 内 tool-web / tool-presentation 子行只是**投影**
+//    （消费方是宿主行装载期快照，只有声明行子行能被宿主读到）。
+//    投影被宿主删除 = 无害状态：投影值 == 出厂值时判稳态 idle（不反复重建），
+//    权威值非出厂值则重建投影；settings 行缺项而声明行有非出厂值 → 一次性回填 settings 行。
 //
 // 本模块同时导出纯计算（planPresetSync / capturePrevious / 审计构造）与宿主入口（apply），
 // 使 postinstall、启动自愈与回归夹具共用同一份状态机。
@@ -27,14 +32,20 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   HOST_ROW_IDS,
+  HOST_ROW_LEAF_KEYS,
   HOST_ROW_SETTING_DEFINITIONS,
   PRESET_ROW_ID,
+  PROJECTION_SETTING_DEFINITIONS,
   SETTINGS_ROW_ID,
   SETTING_DEFINITIONS,
-  SETTING_GROUPS,
+  captureRowSettings,
   captureSettings,
   findPluginsRow,
+  normalizeSettingValue,
+  readPath,
+  readProjectedValue,
   restatePluginsRow,
+  validateSettingValue,
 } from './preset-settings.js'
 import {
   GATE_WORD_FIELD_NAMES,
@@ -103,10 +114,12 @@ export function declarationCoversAsset(plugins) {
 
 /**
  * 用户可写位置表：行 id → 该行内「用户可改」的 config 键集合。
- * **与写回清单严格同源** —— 唯一来源是 HOST_ROW_SETTING_DEFINITIONS.rowLocator
- * （2 项宿主行：tool-web.fetch / tool-presentation.mode）与 GATE_WORDS_GROUP_DEFINITION
+ * **与写回清单严格同源** —— 唯一来源是 HOST_ROW_SETTING_DEFINITIONS.projectionLocator
+ * （2 项宿主行投影落点：tool-web.fetch / tool-presentation.mode）与 GATE_WORDS_GROUP_DEFINITION
  * （extra-plan.gateWords 整组）。任何未列于此的位置都属「资产本体」，必须随资产变化刷新。
  * 比对剥离表与搬运写回清单必须恒等，否则会出现「比对了却没写回 → 用户值被新模板吃掉」。
+ * 注意这里用 projectionLocator（声明行 plugins 子行）而非 rowLocator（settings 行权威落点）：
+ * settings 行不在声明行 plugins 里，与「本体剥离/比对」无关。
  */
 function userWritableByRow() {
   const table = new Map()
@@ -120,7 +133,7 @@ function userWritableByRow() {
     else set.add(key)
   }
   for (const definition of HOST_ROW_SETTING_DEFINITIONS) {
-    const locator = definition.rowLocator
+    const locator = definition.projectionLocator
     if (locator !== null && typeof locator === 'object') push(locator.pluginsRowId, locator.path)
   }
   push(GATE_WORDS_GROUP_DEFINITION.rowId, GATE_WORDS_GROUP_DEFINITION.path)
@@ -199,6 +212,139 @@ export function carryUserWritable(plugins) {
   }
   visit(plugins)
   return { hostRowConfig, gateWords }
+}
+
+/**
+ * 生效行 config（宿主 configuration() 行 → config 对象）：
+ * inherited 层 → Loader 行 declared config → profile override，逐层浅合并、高优先层胜。
+ * 宿主 configuration() 的 override 就是该行的 config 对象本身
+ * （dsh-config-editor configuration()：patches.findLast(row => row.id === id && row.config !== undefined)?.config ?? {}），
+ * 另兼容 override.config 的行节点形状以防宿主换代。无任何层 → null（不可判定）。
+ */
+export function effectiveRowConfig(row) {
+  if (row === null || typeof row !== 'object') return null
+  const isPlain = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
+  const layers = []
+  if (isPlain(row.inherited)) layers.push(row.inherited)
+  const own = row.entry !== undefined && row.entry.options !== undefined ? row.entry.options.config : undefined
+  if (isPlain(own)) layers.push(own)
+  const override = row.override
+  if (isPlain(override)) {
+    if (isPlain(override.config)) layers.push(override.config)
+    else layers.push(override)
+  }
+  return layers.length === 0 ? null : Object.assign({}, ...layers)
+}
+
+/**
+ * 权威值读取（settings 行 = 10 项设置的唯一权威落点）：
+ *  - 宿主侧：options.settingsValues（configuration() 内 SETTINGS_ROW_ID 行的生效 config）
+ *    → present=true（行在，缺键即「缺项」→ 可一次性回填）。
+ *  - 夹具/旁路侧：options.readPatch() 文本经 captureRowSettings（同一 rowLocator）捕获，
+ *    rowPresent 区分「行缺席（不可判定）」与「行在但缺项（可回填）」。
+ * 两者皆无 → { present:false, values:{} }：信息不全时不改写现场（与 declarationBodyMatchesAsset 同口径）。
+ */
+export function readAuthoritySettings(options) {
+  const input = options !== null && typeof options === 'object' ? options : {}
+  const provided = input.settingsValues
+  if (provided !== undefined && provided !== null && typeof provided === 'object' && !Array.isArray(provided)) {
+    const values = {}
+    for (const definition of SETTING_DEFINITIONS) {
+      const raw = provided[definition.key]
+      if (validateSettingValue(definition, raw)) values[definition.key] = normalizeSettingValue(definition, raw)
+    }
+    return { present: true, values }
+  }
+  if (typeof input.readPatch === 'function') {
+    let text = ''
+    try { text = input.readPatch() } catch { return { present: false, values: {} } }
+    if (typeof text === 'string' && text.trim() !== '') {
+      try {
+        const captured = captureRowSettings(text, SETTING_DEFINITIONS)
+        return { present: captured.rowPresent === true, values: captured.values }
+      } catch { /* YAML 非法 → 不可判定，保守不改写现场 */ }
+    }
+  }
+  return { present: false, values: {} }
+}
+
+/** 出厂默认（2 项宿主行设置）：读厂商模板叶值（sourceLocator），缺项/解析失败回落内置兜底。 */
+export function hostRowDefaultsOf(templateText) {
+  const fallback = { webFetch: false, toolPresentationMode: 'native' }
+  try {
+    const captured = captureSettings(templateText)
+    const out = {}
+    for (const definition of PROJECTION_SETTING_DEFINITIONS) {
+      const key = definition.key
+      const hit = captured.states[key] === 'captured' && Object.prototype.hasOwnProperty.call(captured.values, key)
+      out[key] = hit ? captured.values[key] : fallback[key]
+    }
+    return out
+  } catch {
+    return fallback
+  }
+}
+
+/**
+ * 投影叶是否存在（键在不在；值是否合法另判）——把「键缺失」与「键在但值非法」区分开：
+ * 前者是无害删除（按出厂值参与比较，可稳态 idle），后者必须按权威值/出厂值修复。
+ */
+function projectionLeafExists(plugins, definition) {
+  const locator = definition.projectionLocator
+  const row = findPluginsRow(plugins, locator.pluginsRowId)
+  if (row === null) return false
+  return readPath(row, locator.path).exists
+}
+
+/**
+ * 投影一致性判定 + 投影 plan（2 项宿主行设置）。纯计算，不写盘。
+ * 期望投影值 T：① 权威值（settings 行现值 ∪ 本次迁移值）有该键 → T = 权威值；
+ *              ② 权威缺项而声明行有非出厂值 → T = 声明行现值，并记入 backfill（一次性回填 settings 行）；
+ *              ③ 其余 → T = 出厂默认。
+ * 当前投影值 C = 声明行子行现值；投影缺失（宿主删行/删键）按出厂默认参与比较 ——
+ * 于是「权威 == 出厂 且 投影缺失」判一致 → 稳态 idle（不反复重建、不空转写盘）；
+ * 键在但值非法（手改 YAML 等）不算「缺失」，一律按 T 修复。
+ * @returns { needed, backfill, targets, hostRowConfig }：
+ *   needed = 需要写盘（投影不一致/非法 或 需回填 settings 行）；hostRowConfig = 只含需改写的投影键。
+ */
+export function planHostRowProjection(authority, declaredPlugins, defaults, extraAuthority) {
+  const authorityValues = {
+    ...(authority !== null && typeof authority === 'object' && authority.values !== undefined ? authority.values : {}),
+    ...(extraAuthority !== null && typeof extraAuthority === 'object' && !Array.isArray(extraAuthority) ? extraAuthority : {}),
+  }
+  const settingsRowHas = authority !== null && typeof authority === 'object' && authority.present === true
+  const factory = defaults !== null && typeof defaults === 'object' ? defaults : {}
+  const backfill = {}
+  const targets = {}
+  const hostRowConfig = {}
+  let needed = false
+  for (const definition of PROJECTION_SETTING_DEFINITIONS) {
+    const key = definition.key
+    const defaultValue = factory[key]
+    const current = readProjectedValue(declaredPlugins, definition)
+    const captured = Object.prototype.hasOwnProperty.call(authorityValues, key)
+    let target
+    if (captured) {
+      target = authorityValues[key]
+    } else if (current !== undefined && current !== defaultValue) {
+      // 权威值缺项而现场（声明行投影）有非出厂值：升级前的旧落点 → 一次性回填 settings 行。
+      target = current
+      if (settingsRowHas) backfill[key] = current
+    } else {
+      target = defaultValue
+    }
+    targets[key] = target
+    const projected = current === undefined ? defaultValue : current
+    const invalidLeaf = current === undefined && projectionLeafExists(declaredPlugins, definition)
+    if (projected !== target || invalidLeaf) {
+      needed = true
+      const locator = definition.projectionLocator
+      const merged = hostRowConfig[locator.pluginsRowId] === undefined ? {} : hostRowConfig[locator.pluginsRowId]
+      hostRowConfig[locator.pluginsRowId] = { ...merged, [HOST_ROW_LEAF_KEYS[key]]: target }
+    }
+  }
+  if (Object.keys(backfill).length > 0) needed = true
+  return { needed, backfill, targets, hostRowConfig }
 }
 
 function readManifestRecord(stateDir) {
@@ -363,8 +509,9 @@ export function capturePrevious(stateDir, sourceDistHash) {
  * 纯计算：把旧值副本的捕获结果翻译成「本次要落地的内容 + 审计」。
  * @param previous capturePrevious 的返回值
  * @returns { settings, preset, audit, gateAudit }
- *   settings.values = 8 项 settings 行新值（无 captured 项则 null）
- *   preset.hostRowConfig = 声明行 plugins 子行要改的 config（无 captured 项则为 {}）
+ *   settings.values = 10 项 settings 行新值（无 captured 项则 null）—— 权威值统一落点，
+ *     含 2 项宿主行设置（其声明行子行为投影，由 planHostRowProjection 按权威值合成）；
+ *   preset.hostRowConfig = 声明行 plugins 子行投影改写（本函数留空，由 syncPreset 按权威值填）
  *   preset.gateWords = 7 词组（无 captured 组则 null）
  */
 export function buildMigrationPlan(previous) {
@@ -381,18 +528,11 @@ export function buildMigrationPlan(previous) {
       results[definition.key] = reasonForOldState(oldState)
       continue
     }
-    // 8 项 UI 设置落 settings 行 config；2 项宿主行落声明行 plugins 子行（见下方 hostRowConfig）。
-    if (definition.group === SETTING_GROUPS.EXTRA_PLAN) {
-      settingsValues[definition.key] = previous.values[definition.key]
-      settingsCount += 1
-    }
+    // 10 项（8 项 UI + 2 项宿主行）权威值一律落 settings 行 config；
+    // 2 项宿主行的声明行子行由投影链按权威值写入（不再把用户值写在声明行）。
+    settingsValues[definition.key] = previous.values[definition.key]
+    settingsCount += 1
     results[definition.key] = 'restored'
-  }
-
-  const hostRowConfig = {}
-  for (const definition of HOST_ROW_SETTING_DEFINITIONS) {
-    if (results[definition.key] !== 'restored') continue
-    hostRowConfig[HOST_ROW_IDS[definition.key]] = { [definition.key === 'webFetch' ? 'fetch' : 'mode']: previous.values[definition.key] }
   }
 
   const gateAudit = previous.gateAudit
@@ -408,9 +548,7 @@ export function buildMigrationPlan(previous) {
   }
 
   const settings = settingsCount === 0 ? null : { values: settingsValues, audit }
-  const preset = gateWords !== null || Object.keys(hostRowConfig).length > 0
-    ? { hostRowConfig, gateWords }
-    : null
+  const preset = gateWords !== null ? { hostRowConfig: {}, gateWords } : null
   return { settings, preset, audit, gateAudit }
 }
 
@@ -506,11 +644,13 @@ export function initStateDir(dshHome) {
 }
 
 /**
- * 启动自愈主体：资产 hash + 声明行覆盖度判定 → 旧值迁移 → 审计落 manifest。
+ * 启动自愈主体：资产 hash + 声明行覆盖度 + 本体内容 + 投影一致性 → 旧值迁移/投影 → 审计落 manifest。
  * @param options.dshHome DSH_HOME（状态目录与旧值来源根）
  * @param options.declaredPlugins 声明行当前生效的 plugins（宿主侧由 configEditor 提供；
  *   非宿主路径传 undefined = 该维度不参与判定）
- * @param options.readPatch plugins 载体不可得时的旁证读取（可选，测试夹具用）
+ * @param options.settingsValues settings 行（权威值载体）的生效 config（宿主侧由
+ *   configuration() 内 SETTINGS_ROW_ID 行给出；给了即视为「行存在」）
+ * @param options.readPatch plugins 载体不可得时的旁证读取（可选，测试夹具用；权威值也从同一文本捕获）
  * @param options.apply async (plan, context) => void 落地回调（宿主侧 = configEditor.edit；
  *   缺省 = 只算不落，postinstall/夹具路径）
  * @returns { action: 'written'|'upgraded'|'idle', plan? }
@@ -537,10 +677,41 @@ export async function syncPreset(options = {}) {
   // 会被判为 idle 而永不更新（本次 0.1.7-rc.2 故障根因）。此处剥离用户可写键后比对本体。
   const assetBody = options.assetPlugins === undefined ? assetPlugins() : options.assetPlugins
   const bodyOk = declarationBodyMatchesAsset(declaredPlugins, assetBody)
-  if (manifest !== null && manifest.distHash === currentHash && declarationOk && bodyOk) return { action: 'idle' }
+  // 第四个维度：投影一致性。2 项宿主行设置的权威值在 settings 行，声明行子行只是投影；
+  // 「投影值 == 出厂值且声明行缺失」在此判为一致（稳态 idle，不反复重建、不空转写盘）。
+  const hostRowDefaults = hostRowDefaultsOf(templateText)
+  const authority = readAuthoritySettings(options)
+  const projectionCheck = planHostRowProjection(authority, declaredPlugins, hostRowDefaults)
+  if (manifest !== null && manifest.distHash === currentHash && declarationOk && bodyOk && !projectionCheck.needed) return { action: 'idle' }
 
   const previous = capturePrevious(stateDir, manifest === null ? null : manifest.distHash)
   const planned = buildMigrationPlan(previous)
+  // 迁移值（旧副本 = 显式用户值来源）优先于声明行 carry：2 项宿主行的权威值随之上移 settings 行，
+  // 再按权威值合成声明行投影 plan。
+  const migratedAuthority = {}
+  if (planned.settings !== null) {
+    for (const definition of PROJECTION_SETTING_DEFINITIONS) {
+      if (Object.prototype.hasOwnProperty.call(planned.settings.values, definition.key)) migratedAuthority[definition.key] = planned.settings.values[definition.key]
+    }
+  }
+  const projection = Object.keys(migratedAuthority).length === 0
+    ? projectionCheck
+    : planHostRowProjection(authority, declaredPlugins, hostRowDefaults, migratedAuthority)
+  // 一次性回填：settings 行缺项 且 声明行子行有非出厂值 → 把旧落点的值补进 settings 行（权威值上移）。
+  const backfillKeys = Object.keys(projection.backfill)
+  if (backfillKeys.length > 0) {
+    const values = planned.settings === null ? {} : { ...planned.settings.values }
+    for (const key of backfillKeys) {
+      values[key] = projection.backfill[key]
+      if (Object.prototype.hasOwnProperty.call(planned.audit.results, key)) planned.audit.results[key] = 'restored-from-declaration-row'
+    }
+    planned.settings = { values, audit: planned.audit }
+  }
+  // 投影 plan：只含需改写的投影键；gateWords 沿用迁移结论（carry 由 restatePresetPlugins 兜底）。
+  const gateWords = planned.preset === null ? null : planned.preset.gateWords
+  planned.preset = Object.keys(projection.hostRowConfig).length > 0 || gateWords !== null
+    ? { hostRowConfig: projection.hostRowConfig, gateWords }
+    : null
   // 本体过期标记：旧副本缺失时 planned.preset 恒为 null，若无此标记则「本体刷新」会被
   // applyPlan 的 preset 条件一并跳过（2026-09-25 现场实测：判非 idle 却什么都不写）。
   planned.bodyStale = !bodyOk
@@ -613,9 +784,15 @@ export function apply(ctx) {
           const rows = typeof editor.configuration === 'function' ? editor.configuration() : []
           const presetEntry = rows.find((row) => row !== null && typeof row === 'object' && row.entry !== undefined && row.entry.options !== undefined && row.entry.options.id === PRESET_ROW_ID)
           const declaredPlugins = presetEntry === undefined ? undefined : effectivePlugins(presetEntry)
+          // 权威值载体 = settings 行（本插件自有行，宿主不清理）：投影一致性判定与 2 项宿主行的
+          // 一次性回填都按它读；行缺席（宿主未装载 settings 组件）→ settingsValues 为 undefined
+          // → 该维度不参与判定（保守，不改写现场）。
+          const settingsEntry = rows.find((row) => row !== null && typeof row === 'object' && row.entry !== undefined && row.entry.options !== undefined && row.entry.options.id === SETTINGS_ROW_ID)
+          const settingsValues = settingsEntry === undefined ? undefined : effectiveRowConfig(settingsEntry)
           await syncPreset({
             dshHome: defaultDshHome(),
             declaredPlugins,
+            settingsValues,
             apply: async (planned) => {
               await applyPlan(editor, rows, planned)
             },

@@ -9,7 +9,10 @@ window.__ModuleLoader__.load({
     // settings 命名空间 = profile 行 id（dsh-extra-plan-settings）；同时用作 configForms 键、
     // plugins.item 卡片的 slot id 与 locale 命名空间。
     const NS = "dsh-extra-plan-settings";
-    // 2 项宿主行设置（webFetch / toolPresentationMode）的唯一写口：声明行 plugins 重述接口。
+    // 2 项宿主行设置（webFetch / toolPresentationMode）：**权威值落 settings 行**
+    // （dsh-extra-plan-settings 行 config，与上面 8 项同源，跨升级/重装不丢）；
+    // 声明行 plugins 内 tool-web / tool-presentation 子行只是投影（消费方是宿主行装载期快照）。
+    // 提交仍走本插件的 PUT（接口内部：先写 settings 行 → 再投影声明行子行）。
     const PRO_CONFIG_URL = "/api/dsh-extra-plan-settings/pro-config";
 
     const zh = {
@@ -34,6 +37,7 @@ window.__ModuleLoader__.load({
       save: "保存",
       saving: "保存中…",
       saved: "已保存",
+      savedRestart: "已保存（这 2 项需重启 DSH 后生效）",
       saveFailed: "保存失败：",
       loading: "加载中…",
       loadFailed: "加载失败",
@@ -67,6 +71,7 @@ window.__ModuleLoader__.load({
       save: "Save",
       saving: "Saving…",
       saved: "Saved.",
+      savedRestart: "Saved. Restart DSH for these two settings to take effect.",
       saveFailed: "Save failed: ",
       loading: "Loading…",
       loadFailed: "Load failed",
@@ -92,10 +97,11 @@ window.__ModuleLoader__.load({
       { key: "otherAgentModel", control: "text", locale: "otherAgentModel", section: "pro", hint: "其他子代理默认使用模型。未匹配/置空时：使用主会话模型 ｜ 新会话/新子代理生效" }
     ]);
 
-    // 2 项宿主行设置（声明行 plugins 内 tool-web / tool-presentation 子行 config）。
+    // 2 项宿主行设置（权威值在 settings 行 dsh-extra-plan-settings config；
+    // 声明行 plugins 内 tool-web / tool-presentation 子行为投影，消费方是宿主行装载期快照）。
     const HOST_ROW_FIELDS = Object.freeze([
-      { key: "webFetch", control: "select", options: [true, false], locale: "webFetch", hint: "是否开启web_fetch（声明行 tool-web 行 config.fetch）｜ 重启生效" },
-      { key: "toolPresentationMode", control: "select", options: ["native", "ptc", "both"], optionLocale: { native: "toolPresentationModeNative", ptc: "toolPresentationModePtc", both: "toolPresentationModeBoth" }, locale: "toolPresentationMode", hint: "工具呈现方式切换（默认/混合/PTC模式）（声明行 tool-presentation 行 config.mode）｜ 重启生效" }
+      { key: "webFetch", control: "select", options: [true, false], locale: "webFetch", hint: "是否开启web_fetch（权威值存 settings 行，投影到声明行 tool-web 行 config.fetch）｜ 需重启生效" },
+      { key: "toolPresentationMode", control: "select", options: ["native", "ptc", "both"], optionLocale: { native: "toolPresentationModeNative", ptc: "toolPresentationModePtc", both: "toolPresentationModeBoth" }, locale: "toolPresentationMode", hint: "工具呈现方式切换（默认/混合/PTC模式）（权威值存 settings 行，投影到声明行 tool-presentation 行 config.mode）｜ 需重启生效" }
     ]);
 
     const css =
@@ -288,8 +294,8 @@ window.__ModuleLoader__.load({
       }
 
       // 2 项宿主行设置：自绘控件 + 专用 PUT（body 仅 {webFetch, toolPresentationMode}）。
-      // 消费方是声明行 plugins 内其它行的 config，不在 settings 命名空间里，故走宿主
-      // configEditor.edit 的专用路由。
+      // 接口内部走新链：先写 settings 行（权威值，跨升级不丢）→ 再投影声明行 plugins 子行；
+      // 消费方是宿主行装载期快照，故保存提示明示「需重启生效」。
       function HostRowsPanel() {
         const [status, setStatus] = React.useState("loading");
         const [draft, setDraft] = React.useState(null);
@@ -337,7 +343,7 @@ window.__ModuleLoader__.load({
             if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
             const values = data.values && typeof data.values === "object" ? data.values : {};
             setDraft({ webFetch: values.webFetch, toolPresentationMode: values.toolPresentationMode });
-            setMessage({ kind: "ok", text: t("saved") });
+            setMessage({ kind: "ok", text: t("savedRestart") });
           } catch (e) {
             setMessage({ kind: "error", text: t("saveFailed") + " " + String((e && e.message) || e) });
           } finally {

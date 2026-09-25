@@ -120,10 +120,39 @@ check('依赖锚点 ① profiles/<name>/node_modules ② 0.1.7 宿主现场 node
 check('settings.js：settings 命名空间策略走 settings.configure({ auto: false }, ctx.fiber)（无 settings.register）', settingsText.includes('child.settings.configure({ auto: false }, ctx.fiber)') && !settingsText.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n').includes('settings.register'))
 check('settings.js：无 ExtraPlanSettingsSchema、无 .agent-presets 写预设文件、无自建原子写', !settingsText.includes('ExtraPlanSettingsSchema') && !settingsText.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n').includes('.agent-presets'))
 check('settings.js：PUT 仅收 webFetch/toolPresentationMode 且写链经 editor.edit + 整体重述 plugins', settingsText.includes('HOST_ROW_KEYS') && settingsText.includes('unsupported field(s)') && settingsText.includes('restatePresetPlugins') && settingsText.includes('await editor.edit(') && settingsText.includes("isLocateError(error) ? 404 : 500"))
+check('C-3 写链顺序：先写 settings 行（权威值）→ 再投影声明行 plugins 子行', (() => {
+  const authorityIdx = settingsText.indexOf('await editor.edit(settingsRow.entry')
+  const projectionIdx = settingsText.indexOf('await editor.edit(presetRow.entry')
+  return authorityIdx > 0 && projectionIdx > authorityIdx && settingsText.includes('failed to write settings row')
+})())
+check('C-3b 投影失败不回滚权威值（200 + projection.applied=false，无 500 回退）', settingsText.includes('projection: { applied: true }') && settingsText.includes('projection: { applied: false') && settingsText.includes("declaration row not found: ' + PRESET_ROW_ID"))
+check('C-2 settings 命名空间仍为行 id dsh-extra-plan-settings（未改名；客户端 NS 与 settings 行 id 同字面量）',
+  settingsText.includes('export { SETTINGS_ROW_ID, PRESET_ROW_ID }') && clientText.includes('const NS = "dsh-extra-plan-settings"') &&
+  clientText.includes('ctx.configForms.whileServed([NS]'))
+check('C-1 settings.js 的 Config 源码文本：恰 10 处字段链 volatile（8 项 UI 直接声明 + 2 项宿主行字段表）', (() => {
+  const codeOnly = settingsText.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n')
+  const body = codeOnly.slice(codeOnly.indexOf('export const Config = z.object({'), codeOnly.indexOf('})', codeOnly.indexOf('export const Config = z.object({')))
+  const chained = [...body.matchAll(/[A-Za-z][A-Za-z0-9]*:\s*z\.[^\n]*?\.volatile\(\)/g)].map((match) => match[1])
+  const hostRowFields = settingsText.slice(settingsText.indexOf('export const HOST_ROW_AUTHORITY_FIELDS'), settingsText.indexOf('export const Config'))
+  return chained.length === 8 && (settingsText.match(/\.volatile\(\)/g) || []).length === 10 &&
+    hostRowFields.includes('webFetch: z.boolean().default(false).volatile()') &&
+    hostRowFields.includes("toolPresentationMode: z.string().default('native').volatile()") &&
+    body.includes('...HOST_ROW_AUTHORITY_FIELDS')
+})())
 const clientCode = clientText.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n')
 check('client.js：configForms.whileServed + plugins.item，无 settings.plugin.item / 无旧 key 卡片注册', clientCode.includes('ctx.configForms.whileServed([NS]') && clientCode.includes('ctx.slots.inject("plugins.item"') && clientCode.includes('name: "plugins.item"') && clientCode.includes('id: NS') && !clientCode.includes('settings.plugin.item') && !clientCode.includes('key: "dsh-extra-plan"'))
 check('client.js：外壳与注入面（__ModuleLoader__ + require(react) + slots/locale/configForms）', clientText.includes('window.__ModuleLoader__.load({') && clientText.includes('id: "@local/dsh-extra-plan"') && clientText.includes('require("react")') && clientText.includes('exports.inject = ["slots", "locale", "configForms"]'))
 check('client.js：2 项宿主行提交体仅 {webFetch, toolPresentationMode} 且 esp-* 样式保留', clientText.includes('const body = { webFetch: draft.webFetch, toolPresentationMode: draft.toolPresentationMode }') && clientText.includes('.esp-wrap{') && clientText.includes('.esp-section{') && clientText.includes('.esp-btn'))
+check('U-2 client.js：2 项宿主行 UI 明示「需重启生效」（提示语 + 保存回执），与 8 项「立即生效」区分', (() => {
+  const hostRowFields = clientText.slice(clientText.indexOf('const HOST_ROW_FIELDS'), clientText.indexOf('const css ='))
+  return hostRowFields.includes('需重启生效') && hostRowFields.split('需重启生效').length === 3 &&
+    clientText.includes('savedRestart: "已保存（这 2 项需重启 DSH 后生效）"') &&
+    clientText.includes('text: t("savedRestart")') && clientText.includes('hostRowSection: "宿主行设置（重启生效）"')
+})())
+check('U-2b client.js：2 项提示语指向权威值落点（settings 行）+ 投影落点（声明行子行）', (() => {
+  const hostRowFields = clientText.slice(clientText.indexOf('const HOST_ROW_FIELDS'), clientText.indexOf('const css ='))
+  return hostRowFields.includes('权威值存 settings 行') && hostRowFields.includes('投影到声明行')
+})())
 check('client.js：8 项走 ownerProps.form（state/mutate），无十项整批 save()', clientText.includes('form.mutate(ops, revision)') && clientText.includes('props.form') && !clientText.includes('for (const field of fields)'))
 
 if (!volatileCapable) {
@@ -141,6 +170,24 @@ const presetSettings = await import(new URL('../../plugins/dsh-extra-plan/lib/pr
 const { PRESET_ROW_ID, SETTINGS_ROW_ID, parsePresetYaml, restatePluginsRow } = presetSettings
 const { restatePresetPlugins } = await import(new URL('../../plugins/dsh-extra-plan/lib/preset-sync.js', import.meta.url).href)
 
+// ── C-1/C-2（运行时，真 schemastery）：Config 字典 10 字段全 volatile + 默认值与资产/descriptor 一致 ──
+{
+  const configSchema = settingsModule.Config
+  const configDict = configSchema !== undefined && configSchema.dict !== undefined && configSchema.dict !== null ? configSchema.dict : {}
+  const configKeys = Object.keys(configDict)
+  check('C-1 运行时：settings 行 Config 字典恰 10 个字段（8 项 UI + webFetch/toolPresentationMode）',
+    configKeys.length === 10 && configKeys.join('|') === 'anchoredBootstrap|creativeMode|runcodeCatchGate|crossProviderPlannerModel|plannerModel|plannerPromptSuffix|exploreBudget|otherAgentModel|webFetch|toolPresentationMode')
+  check('C-1b 运行时：10 个字段逐一带 volatile 标记（meta.volatile===true → SettingsForms 才会投影）',
+    Object.values(configDict).every((schema) => schema !== null && schema !== undefined && schema.meta !== undefined && schema.meta.volatile === true))
+  check('C-2b 运行时：SETTINGS_ROW_ID 常量 = 行 id dsh-extra-plan-settings（ns 未改名）', SETTINGS_ROW_ID === 'dsh-extra-plan-settings')
+  // volatile 字段的解析产物是 Volatile 引用（读值经 .get()）——正是宿主 SettingsForms 的投影口径。
+  const parsedDefault = configSchema({})
+  check('C-1c 运行时：Config 默认值 = 资产模板叶值/descriptor 默认（webFetch=false、toolPresentationMode=native、exploreBudget=18）',
+    parsedDefault.webFetch.get() === false && parsedDefault.toolPresentationMode.get() === 'native' && parsedDefault.exploreBudget.get() === 18 && parsedDefault.anchoredBootstrap.get() === true)
+  const parsedSet = configSchema({ webFetch: true, toolPresentationMode: 'ptc' })
+  check('C-1d 运行时：宿主 schema 认这 2 个键（写入 settings 行后不会被 schema 丢弃）', parsedSet.webFetch.get() === true && parsedSet.toolPresentationMode.get() === 'ptc')
+}
+
 const ASSET_PATCH = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'assets', 'presets', 'extra-plan', 'preset-patch.generated.yml')
 const generatedPatchText = readFileSync(ASSET_PATCH, 'utf8')
 // 声明行夹具：生成产物去缩进 4 列 → profile patch 的根级声明行。
@@ -149,14 +196,16 @@ function declaredPlugins() {
   return structuredClone(doc[0].insert[0].config.plugins)
 }
 
-function makeConfigEditor({ present = true } = {}) {
+function makeConfigEditor({ present = true, presetPresent = present, settingsPresent = present } = {}) {
   const state = { rows: [], edits: [], plugins: declaredPlugins() }
-  if (present) {
+  if (presetPresent) {
     state.rows.push({
       entry: { options: { id: PRESET_ROW_ID, name: '@deepseek-ai/dsh-agent-preset', config: { id: 'extra-plan', plugins: state.plugins } }, fiber: {} },
       inherited: {},
       override: {},
     })
+  }
+  if (settingsPresent) {
     state.rows.push({
       entry: { options: { id: SETTINGS_ROW_ID, name: '@local/dsh-extra-plan/settings', config: {} }, fiber: {} },
       inherited: {},
@@ -172,6 +221,7 @@ function makeConfigEditor({ present = true } = {}) {
       const next = change(structuredClone(row.entry.options.config), row.inherited)
       row.entry.options.config = next
       if (entry.options.id === PRESET_ROW_ID) state.plugins = next.plugins
+      if (entry.options.id === SETTINGS_ROW_ID) state.settingsConfig = next
       state.edits.push({ id: entry.options.id, next })
     },
   }
@@ -249,7 +299,9 @@ try {
     const pluginsBefore = structuredClone(editor.state.plugins)
     const put = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true, toolPresentationMode: 'ptc' })
     check('PUT 2 项 → 200 且回读为写入值', put.status === 200 && put.body.values.webFetch === true && put.body.values.toolPresentationMode === 'ptc')
-    check('PUT 经 configEditor.edit 整体重述声明行 plugins（恰 1 次 edit，目标行 = 声明行）', editor.state.edits.length === 1 && editor.state.edits[0].id === PRESET_ROW_ID)
+    check('C-3 PUT 写链落盘顺序：① settings 行（权威值）→ ② 声明行 plugins（投影）', editor.state.edits.length === 2 && editor.state.edits[0].id === SETTINGS_ROW_ID && editor.state.edits[1].id === PRESET_ROW_ID)
+    check('C-3b 权威值落 settings 行 config（与 8 项同源落点）', editor.state.settingsConfig.webFetch === true && editor.state.settingsConfig.toolPresentationMode === 'ptc' && Object.keys(editor.state.edits[0].next).length === 2)
+    check('C-3c 投影回执：projection.applied=true（声明行子行已同步）', put.body.projection !== undefined && put.body.projection.applied === true)
     const afterPlugins = editor.state.plugins
     const webAfter = afterPlugins.find((row) => row.id === 'tool-web')
     const presentAfter = afterPlugins.find((row) => row.id === 'tool-presentation')
@@ -259,6 +311,7 @@ try {
     const before2 = readFileSync(ASSET_PATCH, 'utf8')
     const partial = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: false })
     check('PUT 单键 → 200 且另一键保持现值', partial.status === 200 && partial.body.values.webFetch === false && partial.body.values.toolPresentationMode === 'ptc')
+    check('PUT 单键也只写权威值键（settings 行 config 不含未提交键）', editor.state.settingsConfig.webFetch === false && editor.state.settingsConfig.toolPresentationMode === 'ptc' && Object.keys(editor.state.settingsConfig).length === 2)
     check('PUT 不触碰资产文件（写链只在宿主 editor）', readFileSync(ASSET_PATCH, 'utf8') === before2)
 
     const unknown = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { plannerModel: 'x' })
@@ -273,16 +326,31 @@ try {
     await new Promise((resolve) => server.close(() => resolve()))
   }
 
-  // 行定位失败口径
+  // 行定位失败口径：settings 行（权威值落点）缺席 → 404；仅声明行缺席 → 权威值照落、投影缺席
   const missingEditor = makeConfigEditor({ present: false })
   const missingRun = await startServer(missingEditor)
   try {
     const get = await requestJson(missingRun.port, 'GET', '/api/dsh-extra-plan-settings/pro-config')
-    check('声明行缺失：GET 回落到出厂默认（200，不抛）', get.status === 200 && get.body.values.webFetch === false && get.body.values.toolPresentationMode === 'native')
+    check('settings 行与声明行皆缺失：GET 回落到出厂默认（200，不抛）', get.status === 200 && get.body.values.webFetch === false && get.body.values.toolPresentationMode === 'native' && get.body.fields.every((field) => field.source === 'default'))
     const put = await requestJson(missingRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
-    check('声明行缺失：PUT → 404（行定位口径）', put.status === 404 && String(put.body.error).includes('declaration row not found'))
+    check('settings 行缺失：PUT → 404（权威值无处落地；不静默写别处）', put.status === 404 && String(put.body.error).includes('settings row not found') && missingEditor.state.edits.length === 0)
   } finally {
     await new Promise((resolve) => missingRun.server.close(() => resolve()))
+  }
+
+  // 仅声明行缺失（宿主清理投影行）：权威值必须照落 settings 行 → 200 + projection.applied=false
+  const noDeclarationEditor = makeConfigEditor({ presetPresent: false })
+  const noDeclarationRun = await startServer(noDeclarationEditor)
+  try {
+    const put = await requestJson(noDeclarationRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true, toolPresentationMode: 'ptc' })
+    check('声明行（投影）缺失：PUT 仍 200 且权威值落 settings 行（投影被删无害）',
+      put.status === 200 && noDeclarationEditor.state.settingsConfig.webFetch === true && noDeclarationEditor.state.settingsConfig.toolPresentationMode === 'ptc')
+    check('声明行缺失：回执 projection.applied=false 且带原因（下次启动自愈按权威值重建投影）',
+      put.body.projection !== undefined && put.body.projection.applied === false && String(put.body.projection.error).includes('declaration row not found'))
+    check('声明行缺失：GET 回读权威值（settings 行）而非出厂默认', put.body.values.webFetch === true && put.body.values.toolPresentationMode === 'ptc')
+    check('声明行缺失：无任何声明行写入尝试（edits 恰 1 次 = settings 行）', noDeclarationEditor.state.edits.length === 1 && noDeclarationEditor.state.edits[0].id === SETTINGS_ROW_ID)
+  } finally {
+    await new Promise((resolve) => noDeclarationRun.server.close(() => resolve()))
   }
 
   // edit/reconcile 失败口径

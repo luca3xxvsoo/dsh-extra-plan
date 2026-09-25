@@ -1,15 +1,21 @@
 // Shared settings descriptors, YAML parsing, and format-preserving scalar patches.
 // The descriptor list is the only source of truth for settings-page fields.
 //
-// dsh 0.1.7-rc.1 载体订正：设置值有两个落点，descriptor 用两套行定位元数据表达——
+// dsh 0.1.7-rc.1 载体订正（2026-09-25 二轮：权威值上移 settings 行 + 声明行投影）：
+// 设置值有三个落点，descriptor 用三套行定位元数据表达——
+//  - rowLocator：**权威值落点** = settings 行 dsh-extra-plan-settings 的 config.<key>。
+//    10 项设置（8 项 UI + 2 项宿主行）的权威值全部在此行：宿主不清理、安装/重装流程不动它
+//    （configEditor.edit 对该行的继承层是空对象，永不判「值==继承层」而删行）。
+//    captureRowSettings / live-config 的读路径都走它。
+//  - projectionLocator：**投影落点** = 声明行 preset-extra-plan 的 config.plugins 内
+//    tool-web / tool-presentation 子行（仅 2 项宿主行设置）。消费方是宿主行装载期快照，
+//    故必须投影到声明行；**投影被宿主删除是无害状态**（权威值在 settings 行，按权威值重建）。
 //  - sourceLocator：源模板 / 旧分发副本（DSH_HOME/.agent-presets/extra-plan/agent.cordis.yml）
 //    的行定位。资产 assets/presets/extra-plan/agent.cordis.yml 与旧副本同形（顶层
 //    id=extra-plan / tool-web / tool-presentation 行），captureSettings、
 //    resolveTemplateSettingDefault、patchYamlScalar 与 gate-words 的迁移 locator 都走它。
-//  - rowLocator：新载体 profile patch 行定位（8 项 UI 设置 = settings 行
-//    dsh-extra-plan-settings 的 config.<key>；2 项宿主行设置 = 声明行 preset-extra-plan
-//    的 config.plugins 内 tool-web / tool-presentation 子行）。
-// group 标记哪个落点：8 项 extra-plan（settings 行） / 2 项 host-rows（声明行 plugins）。
+// group 标记「消费方分组」（不表示权威值落点）：8 项 extra-plan（本插件自己热读）
+//   / 2 项 host-rows（投影给宿主行 tool-web / tool-presentation）。
 
 import { createRequire } from 'node:module'
 import { existsSync, readFileSync } from 'node:fs'
@@ -52,9 +58,11 @@ export const SETTINGS_ROW_ID = 'dsh-extra-plan-settings'
 /** 预设声明行 id 与模块名（config.plugins = agent.cordis.yml 顶层条目）。 */
 export const PRESET_ROW_ID = 'preset-extra-plan'
 export const PRESET_PLUGIN_NAME = '@deepseek-ai/dsh-agent-preset'
-/** 声明行 plugins 内承载 2 项宿主行设置的子行 id。 */
+/** 声明行 plugins 内承载 2 项宿主行设置的子行 id（投影落点的行 id）。 */
 export const HOST_ROW_IDS = Object.freeze({ webFetch: 'tool-web', toolPresentationMode: 'tool-presentation' })
-/** descriptor 分组：8 项落 settings 行 / 2 项落声明行 plugins 子行。 */
+/** 投影落点的叶键（宿主行 config 内键名）：源模板与投影共用同一份 leaf 名，不新增第二份键名清单。 */
+export const HOST_ROW_LEAF_KEYS = Object.freeze({ webFetch: 'fetch', toolPresentationMode: 'mode' })
+/** descriptor 分组（消费方）：8 项落 settings 行 / 2 项另投影到声明行 plugins 子行。 */
 export const SETTING_GROUPS = Object.freeze({ EXTRA_PLAN: 'extra-plan', HOST_ROWS: 'host-rows' })
 
 const setting = (definition) => Object.freeze({
@@ -62,6 +70,9 @@ const setting = (definition) => Object.freeze({
   type: definition.scalarType,
   sourceLocator: Object.freeze({ ...definition.sourceLocator }),
   rowLocator: Object.freeze({ ...definition.rowLocator }),
+  ...(definition.projectionLocator === undefined
+    ? {}
+    : { projectionLocator: Object.freeze({ ...definition.projectionLocator }) }),
   locatorAliases: Object.freeze((definition.locatorAliases || []).map((alias) => Object.freeze({
     rowId: alias.rowId,
     path: alias.path,
@@ -75,30 +86,41 @@ const setting = (definition) => Object.freeze({
   }),
 })
 
-const extraPlanLocator = (key, path) => ({ rowId: SETTINGS_ROW_ID, path: path === undefined ? 'config.' + key : path })
+/** 权威值落点：settings 行（10 项统一）config.<key>。 */
+const settingsRowLocator = (key, path) => ({ rowId: SETTINGS_ROW_ID, path: path === undefined ? 'config.' + key : path })
 const sourceLocator = (key, path) => ({ rowId: 'extra-plan', path: path === undefined ? 'config.' + key : path })
+/** 投影落点：声明行 plugins 内 host-rows 子行 config.<leaf>（leaf 名与源模板同名）。 */
+const hostRowProjectionLocator = (key) => ({
+  rowId: PRESET_ROW_ID,
+  pluginsRowId: HOST_ROW_IDS[key],
+  path: 'config.' + HOST_ROW_LEAF_KEYS[key],
+})
 
 export const SETTING_DEFINITIONS = Object.freeze([
   setting({
     key: 'anchoredBootstrap', group: SETTING_GROUPS.EXTRA_PLAN, scalarType: 'boolean',
-    sourceLocator: sourceLocator('anchoredBootstrap'), rowLocator: extraPlanLocator('anchoredBootstrap'),
+    sourceLocator: sourceLocator('anchoredBootstrap'), rowLocator: settingsRowLocator('anchoredBootstrap'),
     validator: isBoolean, ui: { control: 'select', options: [true, false], locale: 'anchoredBootstrap', section: 'general' }, locatorAliases: [],
   }),
   setting({
     key: 'creativeMode', group: SETTING_GROUPS.EXTRA_PLAN, scalarType: 'boolean',
-    sourceLocator: sourceLocator('creativeMode'), rowLocator: extraPlanLocator('creativeMode'),
+    sourceLocator: sourceLocator('creativeMode'), rowLocator: settingsRowLocator('creativeMode'),
     validator: isBoolean, ui: { control: 'select', options: [true, false], locale: 'creativeMode', section: 'general' }, locatorAliases: [],
   }),
   setting({
     key: 'webFetch', group: SETTING_GROUPS.HOST_ROWS, scalarType: 'boolean',
-    sourceLocator: { rowId: 'tool-web', path: 'config.fetch' },
-    rowLocator: { rowId: PRESET_ROW_ID, pluginsRowId: HOST_ROW_IDS.webFetch, path: 'config.fetch' },
+    // 源模板行 = 投影落点同行同叶（tool-web.config.fetch）；
+    // 权威值落点 = settings 行 config.webFetch；投影落点 = 声明行 tool-web 子行（须与源同形）。
+    sourceLocator: { rowId: HOST_ROW_IDS.webFetch, path: 'config.' + HOST_ROW_LEAF_KEYS.webFetch },
+    rowLocator: settingsRowLocator('webFetch'),
+    projectionLocator: hostRowProjectionLocator('webFetch'),
     validator: isBoolean, ui: { control: 'select', options: [true, false], locale: 'webFetch', section: 'general' }, locatorAliases: [],
   }),
   setting({
     key: 'toolPresentationMode', group: SETTING_GROUPS.HOST_ROWS, scalarType: 'mode',
-    sourceLocator: { rowId: 'tool-presentation', path: 'config.mode' },
-    rowLocator: { rowId: PRESET_ROW_ID, pluginsRowId: HOST_ROW_IDS.toolPresentationMode, path: 'config.mode' },
+    sourceLocator: { rowId: HOST_ROW_IDS.toolPresentationMode, path: 'config.' + HOST_ROW_LEAF_KEYS.toolPresentationMode },
+    rowLocator: settingsRowLocator('toolPresentationMode'),
+    projectionLocator: hostRowProjectionLocator('toolPresentationMode'),
     validator: isMode,
     ui: {
       control: 'select', options: modeOptions,
@@ -110,17 +132,17 @@ export const SETTING_DEFINITIONS = Object.freeze([
   }),
   setting({
     key: 'runcodeCatchGate', group: SETTING_GROUPS.EXTRA_PLAN, scalarType: 'boolean',
-    sourceLocator: sourceLocator('runcodeCatchGate'), rowLocator: extraPlanLocator('runcodeCatchGate'),
+    sourceLocator: sourceLocator('runcodeCatchGate'), rowLocator: settingsRowLocator('runcodeCatchGate'),
     validator: isBoolean, ui: { control: 'select', options: [true, false], locale: 'runcodeCatchGate', section: 'general' }, locatorAliases: [],
   }),
   setting({
     key: 'crossProviderPlannerModel', group: SETTING_GROUPS.EXTRA_PLAN, scalarType: 'boolean',
-    sourceLocator: sourceLocator('crossProviderPlannerModel'), rowLocator: extraPlanLocator('crossProviderPlannerModel'),
+    sourceLocator: sourceLocator('crossProviderPlannerModel'), rowLocator: settingsRowLocator('crossProviderPlannerModel'),
     validator: isBoolean, ui: { control: 'select', options: [true, false], locale: 'crossProviderPlannerModel', section: 'pro' }, locatorAliases: [],
   }),
   setting({
     key: 'plannerModel', group: SETTING_GROUPS.EXTRA_PLAN, scalarType: 'string',
-    sourceLocator: sourceLocator('plannerModel'), rowLocator: extraPlanLocator('plannerModel'),
+    sourceLocator: sourceLocator('plannerModel'), rowLocator: settingsRowLocator('plannerModel'),
     // T4：允许空串（= 显式清空 = 继承主会话模型；解析侧只判 !==''，键缺失才用代码缺省值）。
     // 空白串经 normalize trim 归一为 ''，与空串同义；非 string（如 YAML 数字）仍非法。
     validator: isString, normalize: (value) => value.trim(),
@@ -128,29 +150,33 @@ export const SETTING_DEFINITIONS = Object.freeze([
   }),
   setting({
     key: 'plannerPromptSuffix', group: SETTING_GROUPS.EXTRA_PLAN, scalarType: 'string',
-    sourceLocator: sourceLocator('plannerPromptSuffix'), rowLocator: extraPlanLocator('plannerPromptSuffix'),
+    sourceLocator: sourceLocator('plannerPromptSuffix'), rowLocator: settingsRowLocator('plannerPromptSuffix'),
     validator: isString, ui: { control: 'textarea', locale: 'plannerPromptSuffix', section: 'pro' }, locatorAliases: [],
   }),
   setting({
     key: 'exploreBudget', group: SETTING_GROUPS.EXTRA_PLAN, scalarType: 'integer',
-    sourceLocator: sourceLocator('exploreBudget'), rowLocator: extraPlanLocator('exploreBudget'),
+    sourceLocator: sourceLocator('exploreBudget'), rowLocator: settingsRowLocator('exploreBudget'),
     validator: isPositiveInteger, ui: { control: 'number', min: 1, step: 1, locale: 'exploreBudget', section: 'pro' }, locatorAliases: [],
   }),
   setting({
     key: 'otherAgentModel', group: SETTING_GROUPS.EXTRA_PLAN, scalarType: 'string',
-    sourceLocator: sourceLocator('otherAgentModel'), rowLocator: extraPlanLocator('otherAgentModel'),
+    sourceLocator: sourceLocator('otherAgentModel'), rowLocator: settingsRowLocator('otherAgentModel'),
     validator: isString, normalize: (value) => value.trim(),
     ui: { control: 'text', locale: 'otherAgentModel', section: 'pro' }, locatorAliases: [],
   }),
 ])
 
-/** 8 项落 settings 行的 UI 设置（= live-config 热读键集合）。 */
+/** 8 项 UI 设置（权威值落 settings 行；= live-config 热读键集合）。 */
 export const EXTRA_PLAN_SETTING_DEFINITIONS = Object.freeze(
   SETTING_DEFINITIONS.filter((item) => item.group === SETTING_GROUPS.EXTRA_PLAN),
 )
-/** 2 项落声明行 config.plugins 子行的宿主行设置。 */
+/** 2 项宿主行设置（权威值同样落 settings 行；另经 projectionLocator 投影到声明行 plugins 子行）。 */
 export const HOST_ROW_SETTING_DEFINITIONS = Object.freeze(
   SETTING_DEFINITIONS.filter((item) => item.group === SETTING_GROUPS.HOST_ROWS),
+)
+/** 带投影面的设置（= 2 项宿主行设置）——投影一致性与投影 plan 的唯一遍历源。 */
+export const PROJECTION_SETTING_DEFINITIONS = Object.freeze(
+  SETTING_DEFINITIONS.filter((item) => item.projectionLocator !== undefined),
 )
 
 export const TOOL_PRESENTATION_MODES = Object.freeze([
@@ -290,9 +316,9 @@ export function captureSettings(text, definitions) {
 }
 
 /**
- * 新载体 profile patch 捕获（8 项 settings 行）：逐项按 rowLocator（行 id
- * SETTINGS_ROW_ID + config.<key>）解析，形状与 captureSettings 同构。
- * 行缺失/多命中/叶缺失一律 missing/ambiguous → 消费端回退 apply 期 cfg 快照。
+ * 权威值捕获（settings 行）：逐项按 rowLocator（行 id SETTINGS_ROW_ID + config.<key>）解析，
+ * 形状与 captureSettings 同构。行缺失/多命中/叶缺失一律 missing/ambiguous → 消费端回退。
+ * rowPresent 区分「settings 行缺席（不可判定，保守不改写现场）」与「行在但缺该项（可一次性回填）」。
  */
 export function captureRowSettings(text, definitions) {
   const document = parsePresetYaml(text)
@@ -309,7 +335,7 @@ export function captureRowSettings(text, definitions) {
       states[definition.key] = 'captured'
     }
   }
-  return { document, values, states }
+  return { document, values, states, rowPresent: rowsById(document, SETTINGS_ROW_ID).length > 0 }
 }
 
 /** 声明行 config.plugins 内按 id 定位子行（含 group 行的 config 子行数组，深度优先；找不到返回 null）。 */
@@ -324,6 +350,21 @@ export function findPluginsRow(plugins, rowId) {
     }
   }
   return null
+}
+
+/**
+ * 读声明行 plugins 内某项设置的**当前投影值**（按 projectionLocator 定位子行 + 叶键）。
+ * 返回 undefined = 该投影缺失（子行缺失 / 叶缺失 / 值非法）——判定侧一律按出厂默认参与比较。
+ * 只服务 2 项宿主行设置；权威值不走这里（见 captureRowSettings）。
+ */
+export function readProjectedValue(plugins, definition) {
+  const locator = definition === null || definition === undefined ? undefined : definition.projectionLocator
+  if (locator === undefined || locator === null) return undefined
+  const row = findPluginsRow(plugins, locator.pluginsRowId)
+  if (row === null) return undefined
+  const read = readPath(row, locator.path)
+  if (!read.exists || !validateSettingValue(definition, read.value)) return undefined
+  return normalizeSettingValue(definition, read.value)
 }
 
 /** 声明行 config.plugins 深拷贝后整体重述：只改目标子行的指定 config 键（config 不深合并语义）。 */

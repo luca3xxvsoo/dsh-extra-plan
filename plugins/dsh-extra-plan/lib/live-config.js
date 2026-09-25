@@ -19,9 +19,18 @@
 //    missing/ambiguous/invalid 只回退该键。
 // 5) fallback 链：settings 行 override（profile patch 真值）→ cfg（apply 期快照）
 //    → BUILTIN_DEFAULTS。不设计 per-Agent 缓存失效策略：新 agent = 新 WeakMap 键。
+// 6) 10 项同源读取：8 项 UI 设置 + 2 项宿主行设置（webFetch / toolPresentationMode）的
+//    权威值都落在 settings 行 config（dsh-extra-plan-settings 行），本实例按同一 rowLocator 读。
+//    差别只在消费方：8 项由本插件热读（改后立即生效）；2 项由宿主行装载期快照消费，
+//    本插件只提供权威值读口，**改后需重启宿主才生效**。
 
 import { statSync, readFileSync } from 'node:fs'
-import { captureRowSettings } from './preset-settings.js'
+import {
+  HOST_ROW_SETTING_DEFINITIONS,
+  SETTING_DEFINITIONS,
+  TOOL_PRESENTATION_MODES,
+  captureRowSettings,
+} from './preset-settings.js'
 
 // 8 个热读键（与 SETTING_DEFINITIONS 中 extra-plan 组一致）。
 const LIVE_KEYS = Object.freeze([
@@ -35,7 +44,13 @@ const LIVE_KEYS = Object.freeze([
   'otherAgentModel',
 ])
 
-// 调用方未提供 fallbackDefaults 时的内置兜底（与 index.js apply 期 cfg 快照同口径）。
+// 2 项宿主行设置键（权威值同在 settings 行；消费方是宿主行装载期快照 → 改后需重启）。
+const HOST_ROW_KEYS = Object.freeze(HOST_ROW_SETTING_DEFINITIONS.map((item) => item.key))
+// 本实例一次读盘覆盖的全部键（10 项）。
+const READ_KEYS = Object.freeze([...LIVE_KEYS, ...HOST_ROW_KEYS])
+
+// 调用方未提供 fallbackDefaults 时的内置兜底（与 index.js apply 期 cfg 快照同口径；
+// 2 项宿主行的兜底与资产模板叶值 / settings.js Config 默认值逐字一致）。
 const BUILTIN_DEFAULTS = Object.freeze({
   anchoredBootstrap: true,
   creativeMode: false,
@@ -45,6 +60,8 @@ const BUILTIN_DEFAULTS = Object.freeze({
   plannerPromptSuffix: '',
   exploreBudget: 18,
   otherAgentModel: '',
+  webFetch: false,
+  toolPresentationMode: 'native',
 })
 
 function textOf(value) {
@@ -78,21 +95,26 @@ function positiveIntegerOr(raw, fallbackValue) {
   return typeof raw === 'number' && Number.isInteger(raw) && raw > 0 ? raw : fallbackValue
 }
 
+function modeOr(raw, fallbackValue) {
+  return typeof raw === 'string' && TOOL_PRESENTATION_MODES.includes(raw) ? raw : fallbackValue
+}
+
 function pick(key, raw, fallbackValue) {
-  if (key === 'anchoredBootstrap' || key === 'creativeMode' || key === 'runcodeCatchGate' || key === 'crossProviderPlannerModel') {
+  if (key === 'anchoredBootstrap' || key === 'creativeMode' || key === 'runcodeCatchGate' || key === 'crossProviderPlannerModel' || key === 'webFetch') {
     return booleanOr(raw, fallbackValue)
   }
   if (key === 'plannerModel' || key === 'otherAgentModel') {
     return typeof raw === 'string' ? raw.trim() : fallbackValue
   }
   if (key === 'exploreBudget') return positiveIntegerOr(raw, fallbackValue)
+  if (key === 'toolPresentationMode') return modeOr(raw, fallbackValue)
   return stringOr(raw, fallbackValue)
 }
 
 function normalizedFallback(fallbackDefaults) {
   const source = fallbackDefaults !== null && typeof fallbackDefaults === 'object' ? fallbackDefaults : {}
   const out = {}
-  for (const key of LIVE_KEYS) {
+  for (const key of READ_KEYS) {
     out[key] = key in source ? pick(key, source[key], BUILTIN_DEFAULTS[key]) : BUILTIN_DEFAULTS[key]
   }
   return out
@@ -138,7 +160,8 @@ export function createLiveConfig(options) {
   function readDiskValues() {
     let captured = null
     try {
-      captured = captureRowSettings(readFileSync(path, 'utf8'))
+      // 10 项同源：全部按 rowLocator（settings 行 id + config.<key>）定位。
+      captured = captureRowSettings(readFileSync(path, 'utf8'), SETTING_DEFINITIONS)
     } catch (error) {
       return { ok: false, reason: '解析失败 ' + String(error !== null && typeof error === 'object' ? error.message : error) }
     }
@@ -146,7 +169,7 @@ export function createLiveConfig(options) {
     const states = captured !== null && captured.states !== null && typeof captured.states === 'object' ? captured.states : {}
     const next = {}
     let capturedCount = 0
-    for (const key of LIVE_KEYS) {
+    for (const key of READ_KEYS) {
       // 只有 capturedRowSettings 判定 captured 的键才覆盖；missing/ambiguous/invalid 一律回退 cfg 快照。
       const hit = states[key] === 'captured' && Object.prototype.hasOwnProperty.call(rawValues, key)
       if (hit) capturedCount += 1
@@ -229,6 +252,10 @@ export function createLiveConfig(options) {
     get exploreBudget() { return read('exploreBudget') },
     // 其他子代理默认模型（消费点：lib/model-routing.js 非 planner 解析）
     get otherAgentModel() { return read('otherAgentModel') },
+    // 2 项宿主行设置的权威值读口（落点 = settings 行 config；消费方是宿主行装载期快照，
+    // 本插件不消费它们——改后需重启宿主才生效，与上面 8 项的「立即生效」不同）
+    get webFetch() { return read('webFetch') },
+    get toolPresentationMode() { return read('toolPresentationMode') },
   }
   return Object.freeze(live)
 }
