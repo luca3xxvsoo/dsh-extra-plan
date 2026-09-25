@@ -1212,8 +1212,98 @@ import { CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilter
 import { createSdkTextCache } from './lib/sdk-text-cache.js'
 import { GATE_WORD_FIELDS, createGateRuntime } from './lib/gate-words.js'
 import { createLiveConfig } from './lib/live-config.js'
+import { createDeveloperMessage } from '@deepseek-ai/dsh-llm'
 
-export { PROBE_LIMITS, extractProbeEvidenceRefs }
+// ── save_probe/任意工具参数截断 → MALFORMED_RESPONSE 整轮致命的限次自愈（v0.3.1） ──────
+// 机制：宿主 dsh-llm-deepseek 在消息流结束处对每个 tool-call 参数严格 JSON.parse，失败抛
+// LlmError('... tool input is invalid JSON', 'MALFORMED_RESPONSE')；该码不在宿主默认重试码集
+// （DEFAULT_RETRYABLE_CODES），llm-retry 直接放行 → agent/request-error waterfall 若无人返回
+// {kind:'retry'}，本轮整体终止。参数非法时工具 execute 根本不会被调用（解析发生在宿主流层），
+// 修复只能落在 request-error 兜底、不能落在 save_probe 工具内；失败回合工具未执行、无副作用，
+// 重试一次是安全的。
+// malformedRecovery 为模块级函数（须被导出供回归冒烟直呼，apply 闭包函数无法导出）；
+// per-session 重试账本 malformedRetried 按 sessionId 分桶（本插件每个会话各持一份 apply
+// 实例，模块级 Map + sessionId 键在「模块共享/每会话独立」两种装载模型下语义一致），
+// disposed 时按 sessionId 回收（见 agent/disposed 监听器）。
+// 注入形状（已按宿主 0.1.7-rc.2 源码核实）：developer/message 在已知事件白名单
+// （dsh-session lib/types/known-event-types.js L36）；append 必须带 surfaceOp:'append'
+// （dsh-session lib/index.js L294-308）；message 需非空 id、role='developer'、source.kind
+// 非空字符串、content 数组（同文件 L1151-1176）；纯文本 content 不得带 headerSeq
+// （L246-256）；无 turn/step 约束（invariant.js 无该分支）。
+const MALFORMED_RETRY_HINT = '你上一次的某个工具调用参数在传输中被截断，宿主侧无法把参数解析成合法 JSON，本次请求以 MALFORMED_RESPONSE 失败，该工具未执行、没有产生任何副作用。请在重试时压缩并重写该工具调用的参数：缩短长文本与证据列表、只保留核实结论必需的行号/数值/文案，确保参数是完整合法的 JSON，再原样重发同一调用。'
+
+// sessionId → Set('turn:step')：同一回合同一步只兜底 1 次（防重试死循环）。
+const malformedRetried = new Map()
+
+// 判定链：① 非 MALFORMED_RESPONSE 不干预；② signal.aborted 绝不干扰用户取消；
+// ③ agent.session.header.id 非字符串不干预；④ 同 (turn:step) 已兜底过则不重复；
+// ⑤ 首次命中：记账 + 注入中文 developer 提示（模型在重试请求中可见），注入失败只吞掉、
+// 不阻断自愈；⑥ 返回 { kind: 'retry' } → dsh-agent-loop 重试该步。任何意外异常一律
+// 返回 null 透传（自愈兜底绝不放大故障）。
+function malformedRecovery(payload) {
+  try {
+    if (payload === undefined || payload === null || typeof payload !== 'object') return null
+    const failure = payload.failure
+    if (failure === undefined || failure === null || failure.code !== 'MALFORMED_RESPONSE') return null
+    if (payload.signal !== undefined && payload.signal !== null && payload.signal.aborted) return null
+    const agent = payload.agent
+    const sessionId = agent !== undefined && agent !== null && agent.session !== undefined && agent.session !== null && agent.session.header !== undefined && agent.session.header !== null
+      ? agent.session.header.id
+      : ''
+    if (typeof sessionId !== 'string' || sessionId === '') return null
+    const key = `${payload.turn}:${payload.step}`
+    let set = malformedRetried.get(sessionId)
+    if (set !== undefined && set.has(key)) return null
+    if (set === undefined) {
+      set = new Set()
+      malformedRetried.set(sessionId, set)
+    }
+    set.add(key)
+    try {
+      const message = createDeveloperMessage({ content: [{ type: 'text', text: MALFORMED_RETRY_HINT }], source: { kind: 'plugin' } })
+      agent.session.append('developer/message', { message }, { surfaceOp: 'append' })
+    } catch (error) {
+      console.warn(`extra-plan: malformed retry hint append failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    return { kind: 'retry' }
+  } catch (error) {
+    return null
+  }
+}
+
+// ── agent/error 回合错误取证落盘（与 recordRequestError 同诊断模式） ──────
+// 宿主在回合/步骤级错误时 emit 'agent/error'（payload = { agent, turn, step, error }，
+// error 为逐字原始错误；派发点 dsh-agent-loop throwError、签名 dsh-tool-cordis
+// api-catalog），宿主不把该错误写 console → 由监听器逐字落盘留证。本插件每个会话
+// 各持一份实例，主会话与全部子代理的任何 runTurn 级错误（含子代理"腰斩"的流建立
+// 失败）都会留痕。
+// recordAgentError 为模块级函数（须被导出供回归冒烟直呼）：与 recordRequestError
+// 同模式——整体 try/catch 吞错、写失败一次性 console.warn 防刷屏；落盘文件与
+// diagPath 同目录（diagPath 默认 = 本插件目录，此处同由本模块文件位置派生）。
+const agentErrorDiagPath = join(dirname(fileURLToPath(import.meta.url)), 'extra-plan-agent-errors.jsonl')
+let agentErrorDiagWarned = false
+
+function recordAgentError(payload) {
+  try {
+    const sessionId = payload?.agent?.session?.header?.id
+    const row = {
+      ts: new Date().toISOString(),
+      sessionId: typeof sessionId === 'string' ? sessionId : '',
+      turn: payload.turn,
+      step: payload.step,
+      chain: causeChainOf(payload.error, 8),
+    }
+    mkdirSync(dirname(agentErrorDiagPath), { recursive: true })
+    appendFileSync(agentErrorDiagPath, JSON.stringify(row) + '\n', { encoding: 'utf8' })
+  } catch (error) {
+    if (!agentErrorDiagWarned) {
+      agentErrorDiagWarned = true
+      console.warn(`extra-plan: agent-error diagnostics write failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+}
+
+export { PROBE_LIMITS, extractProbeEvidenceRefs, malformedRecovery, recordAgentError }
 
 export function apply(ctx, config) {
   const cfg = config !== null && typeof config === 'object' ? config : {}
@@ -1637,9 +1727,12 @@ export function apply(ctx, config) {
     return { ...decision, messages }
   })
 
-  // 2.5) 模型请求失败诊断（v0.1.2）：把 failure 的完整 cause 链逐行写进诊断文件，
-  // 用于定位"save_plan 后请求流中断"的真实底层错误（TRANSPORT 只是包装码）。
-  // 只记录、不干预：waterfall 返回值原样透传（llm-retry 的 {kind:'retry'} 不受影响）。
+  // 2.5) 模型请求失败诊断 + MALFORMED_RESPONSE 限次自愈（v0.3.1）：把 failure 的完整
+  // cause 链逐行写进诊断文件，用于定位"save_plan 后请求流中断"的真实底层错误（TRANSPORT
+  // 只是包装码）；记账之外，对 MALFORMED_RESPONSE 做一次兜底自愈（malformedRecovery，
+  // 见模块级注释）：llm-retry 已返回 {kind:'retry'} 时原样透传（不与宿主重试叠加、不
+  // 重复重试），否则交 malformedRecovery 判定——命中返回 retry 让 dsh-agent-loop 重试该
+  // 步，未命中回退原 action 透传（其余失败码行为不变）。
   const __dirname = dirname(fileURLToPath(import.meta.url))
   const diagPath = typeof cfg.diagFile === 'string' && cfg.diagFile !== '' ? cfg.diagFile : join(__dirname, 'extra-plan-request-errors.jsonl')
   let diagWarned = false
@@ -1668,14 +1761,23 @@ export function apply(ctx, config) {
       }
     }
   }
-  
+
   ctx.on('agent/request-error', async (payload, next) => {
+    let action
     try {
-      return await next()
+      action = await next()
     } finally {
       recordRequestError(payload)
     }
+    if (action !== undefined && action !== null && action.kind === 'retry') return action
+    return malformedRecovery(payload) ?? action
   })
+
+  // 2.6) 回合错误取证（agent/error 为 emit、同步回调）：宿主不把回合级错误写
+  // console，由 recordAgentError 逐字落盘诊断文件供根因定位
+  // （含子代理"腰斩"的流建立失败等 runTurn 级错误）；recordAgentError 内部全吞错、
+  // 写失败仅一次性告警，监听器绝不放大故障。
+  ctx.on('agent/error', recordAgentError)
 
   // 4) 会话销毁：同步 final flush + 单会话状态回收。必须保持同步回调——agent/disposed 是
   //    emit/void，宿主调用监听器后只对返回的 Promise 挂 catch、不等待完成；此处 driver 已静止、
@@ -1684,7 +1786,8 @@ export function apply(ctx, config) {
   //    pendingProbeClaims 的剩余数量告警语义，再删除该 session 的待认领计数（含
   //    runCodeDenyRecords 的 PTC 拒绝记录桶）；③ 最后按
   //    sessionId 依次回收 jobOutputCallCounters、jobOutputLastAnchors、toolJobsNoticesConsumed、
-  //    subCallCounters 与 usageCursors。重复 disposed 幂等；其它 session 的同名 rootCallId、
+  //    subCallCounters、usageCursors 与 malformedRetried（MALFORMED 自愈限次账本）。
+  //    重复 disposed 幂等；其它 session 的同名 rootCallId、
   //    计数与 cursor 均不受影响（本 session 的去重基准留在 cursor JSON，靠单项续载恢复）。
   //    final fold 写入失败仍走既有单次 ledger warning 且不抛出，不阻断后续清理。
   ctx.on('agent/disposed', (payload) => {
@@ -1700,6 +1803,7 @@ export function apply(ctx, config) {
     }
     pendingProbeClaims.delete(sessionId)
     runCodeDenyRecords.delete(sessionId)
+    malformedRetried.delete(sessionId)
     jobOutputCallCounters.delete(sessionId)
     jobOutputLastAnchors.delete(sessionId)
     toolJobsNoticesConsumed.delete(sessionId)

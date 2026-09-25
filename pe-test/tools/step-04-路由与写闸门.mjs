@@ -160,8 +160,8 @@ function checkDeny(id, expectCount, mustContain, mustNotContain, label) {
 }
 checkDeny('tool-subagent-review', 13, ['write', 'edit', 'subagent_probe'], [], 'reviewer deny 恰 13 项且含 write/edit/subagent_probe')
 checkDeny('tool-subagent', 11, ['subagent_probe'], ['write', 'edit'], 'executor deny 恰 11 项、不含 write/edit、含 subagent_probe')
-checkDeny('tool-subagent-plan', 12, ['write', 'edit', 'subagent_probe'], [], 'planner deny 恰 12 项且含 write/edit/subagent_probe')
-checkDeny('tool-subagent-probe', 13, ['write', 'edit', 'subagent_probe'], ['subagent_fork'], 'probe deny 恰 13 项且含 write/edit/subagent_probe、不含 subagent_fork')
+checkDeny('tool-subagent-plan', 13, ['write', 'edit', 'subagent_probe'], [], 'planner deny 恰 13 项且含 write/edit/subagent_probe')
+checkDeny('tool-subagent-probe', 14, ['write', 'edit', 'subagent_probe'], ['subagent_fork'], 'probe deny 恰 14 项且含 write/edit/subagent_probe、不含 subagent_fork')
 {
   const extraPlanRow = all.find((r) => r.id === 'extra-plan')
   const presetHint = extraPlanRow !== undefined && extraPlanRow.config !== undefined ? extraPlanRow.config.bootstrapReadHint : undefined

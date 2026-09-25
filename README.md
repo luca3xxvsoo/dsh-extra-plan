@@ -80,6 +80,16 @@ dsh plugin --profile qqbot remove @local/dsh-qqbot-user-questions
 
 跨平台兼容改造的**逻辑层**已由 `pe-test/tools/step-00-跨平台写拦截.mjs` 验证（本仓库 Windows 环境实测 68 用例全过，脚本三平台通用）；但仅在 **Windows 环境实测正常**，**Linux/macOS 尚未在真实环境验证**
 
+### dsh 0.1.7 rc2已知问题
+
+#### cordis_inspect_query 无超时导致探查者、执行者、验收者调用直接卡死
+
+避免方案：创造模式开关设置为关
+
+#### 子代理未知原因请求失败无法恢复
+
+疑似为dsh-llm-deepseek-api-key的问题，暂无彻底解决方案
+
 ## 4. 可配置项
 
 DSH web界面 -> 插件 -> @local/dsh-extra-plan -> 按需规划模式配置

@@ -46,6 +46,7 @@ A=1/F/main-planner：M=native/both 为 HN/HB（bootstrap shell(s)+read，section
 - 闸门关键词值（唯一真源） → assets/presets/extra-plan/agent.cordis.yml 的 config.gateWords（7 字段；JS 侧 schema/校验/派生见 lib/gate-words.js，无词值）
 - 函数行号/描述 → pe-test/docs/ai-代码地图.md（唯一来源模块登记：lib/agent-session.js 会话快照/子代理识别）
 - 机制「为什么」详版注释 → 各源码文件注释（指向见 ai-机制设计.md 教训索引表）
+- 回合/请求错误诊断文件 → plugins/dsh-extra-plan/extra-plan-agent-errors.jsonl（宿主 agent/error 逐字 errorChain 落盘；子代理「腰斩」/回合失败复现后**先读此文件**定位根因）与 extra-plan-request-errors.jsonl（agent/request-error 失败记录）
 
 ## 新载体与 isolate 名单（0.1.7，rc.1 起 / rc.2 沿用；v0.3.0）
 - **预设载体换代**：预设不再是「分发到 `$DSH_HOME/.agent-presets/extra-plan` 的目录」（0.1.7 无任何读取方），而是 profile patch 根级 insert 一行声明行 `preset-extra-plan`（`name: '@deepseek-ai/dsh-agent-preset'`，`config{id,name,description,order,plugins}`），其中 `config.plugins` = `agent.cordis.yml` **顶层 17 条目**（group 3：extra-plan-group/compaction/delegation + 普通行 14；组内子行 14，总 31）逐字平移。产物由 `scripts/generate-runtime-defaults.mjs` 生成到 `assets/presets/extra-plan/preset-patch.generated.yml`，随 `package.json` 的 `dsh.bundle.patch` 数组 `['./cordis.patch.yml','./assets/presets/extra-plan/preset-patch.generated.yml']` 装载；**该文件是生成物，禁手改**（改预设只改 `agent.cordis.yml`，再跑生成器）。

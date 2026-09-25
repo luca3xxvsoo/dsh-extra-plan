@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-09-25 14:53:01（脚本自动更新时间戳行）
+> 上次同步：2026-09-25 22:12:58（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -66,7 +66,7 @@
 
 | 文件 | 行数 | 说明 |
 |:--|--:|:--|
-| plugins/dsh-extra-plan/index.js | 2124 | 模式核心：四级闸门（路由/目的/澄清/批准，7 个闸门关键词的唯一值源是 YAML 的 config.gateWords——apply 第一步 createGateRuntime 严格校验并在当前 agent scope 注册 7 个 extra_plan_* 变量，词表作为显式参数贯穿全部 helper/状态机/闸门，JS 侧无内置词值）+ 探查预算 + apply 创建/注册 save 工具工厂并接生命周期/闸门 + planner/非 planner child 双 resolver 与跨 Provider 真实 probe/严格 fallback + A/C/M 展示投影、HP 手写 read 文案（变量② cfg.bootstrapReadHint + 内置兜底，L 段回宿主原文）、HP0/HP1 首轮投影与 HN/HB 基线与 catalog 时序 + L/C=0 SDK 文本 agent-keyed WeakMap 缓存（创建于 apply、agent/disposed 回收）+ 会话状态生命周期（按 sessionId 分桶、agent/disposed 同步 final flush 与单会话回收、usage cursor 单项续载、ledger 行含可信用量字段 provider/cacheWriteTokens/reasoningTokens 且五字段全零不写行）（修改最频繁） |
+| plugins/dsh-extra-plan/index.js | 2228 | 模式核心：四级闸门（路由/目的/澄清/批准，7 个闸门关键词的唯一值源是 YAML 的 config.gateWords——apply 第一步 createGateRuntime 严格校验并在当前 agent scope 注册 7 个 extra_plan_* 变量，词表作为显式参数贯穿全部 helper/状态机/闸门，JS 侧无内置词值）+ 探查预算 + apply 创建/注册 save 工具工厂并接生命周期/闸门 + planner/非 planner child 双 resolver 与跨 Provider 真实 probe/严格 fallback + A/C/M 展示投影、HP 手写 read 文案（变量② cfg.bootstrapReadHint + 内置兜底，L 段回宿主原文）、HP0/HP1 首轮投影与 HN/HB 基线与 catalog 时序 + L/C=0 SDK 文本 agent-keyed WeakMap 缓存（创建于 apply、agent/disposed 回收）+ 会话状态生命周期（按 sessionId 分桶、agent/disposed 同步 final flush 与单会话回收、usage cursor 单项续载、ledger 行含可信用量字段 provider/cacheWriteTokens/reasoningTokens 且五字段全零不写行）（修改最频繁） |
 | plugins/dsh-extra-plan/lib/agent-runtime.js | 111 | 每次 apply 的角色识别、descriptor/工具 schema 缓存、usage role baseline 与 sandbox floor 工厂；不 import index.js |
 | plugins/dsh-extra-plan/lib/agent-session.js | 41 | 会话事件与子代理识别的唯一来源：sessionEvents/isSubagentChild 零依赖纯函数，被 index.js 与 lib/model-routing.js 共用（无镜像副本；不 import index.js） |
 | plugins/dsh-extra-plan/lib/assembly-presentation.js | 246 | A/C/M 展示投影与 skill catalog 投影：读取 live tools registry（toolRegistryOf/toolSdkSchemasOf/toolPresentationModeOf 读 scoped tools 服务）；SDK renderer 惰性加载缓存（sdkRendererModulePromise）与 active renderer resolver；模块头自述 live 取数已迁入；不再渲染最小 read（三个只服务该旧路径的辅助已整组删除——F 段 tool:read 文本改由 index.js 手写 cfg.bootstrapReadHint） |
@@ -141,27 +141,29 @@
 | plugins/dsh-extra-plan/index.js | runCodeGroupDenyReason | L982-1065 | run_code 组判定：拆解→成员逐判定→聚合拒绝；成员判定复用主会话闸门时经 gateCtx.gateRuntime 传同一词表实例；预算耗尽白名单把关 |  |
 | plugins/dsh-extra-plan/index.js | visit | L999-1042 | 递归展平嵌套 run_code（runCodeGroupDenyReason 内闭包） |  |
 | plugins/dsh-extra-plan/index.js | aggregateRunCodeDenyReason | L1071-1083 | 聚合多成员拒绝消息 |  |
-| plugins/dsh-extra-plan/index.js | apply | L1218-2124 | 插件主入口：第一步 createGateRuntime(cfg.gateWords)（缺失/非法同步抛错，早于任何工具/监听器/服务副作用）→ ctx.effect 在当前 agent scope 注册恰好 7 个 extra_plan_* prompt variable（provider 返回本次 apply 捕获值）→ 配置解析（含变量② bootstrapReadHint）/服务注册/工具注册/creativeMode 模型可见投影/锚点钩子（HP 首轮 tool:read text 用变量②覆盖）；planner 与非 planner child 双模型路由；会话状态按 sessionId 分桶与 agent/disposed 同步 final flush + 单会话回收 |  |
-| plugins/dsh-extra-plan/index.js | plannerModel | L1271 | 热读箭头 getter：pro 规划默认模型（liveConfig.plannerModel；消费点=model-routing 的 getPlannerModel） |  |
-| plugins/dsh-extra-plan/index.js | otherAgentModel | L1272 | 热读箭头 getter：其他子代理默认模型（消费点=model-routing 的 getOtherAgentModel） |  |
-| plugins/dsh-extra-plan/index.js | exploreBudget | L1273 | 热读箭头 getter：pro 规划探查额度/单实例子调用上限（消费点=预算文案、noteRunCodeSubCall、plannerGateReason 与组判定） |  |
-| plugins/dsh-extra-plan/index.js | plannerPromptSuffix | L1274 | 热读箭头 getter：pre-step 拼接的额外引导后缀 |  |
-| plugins/dsh-extra-plan/index.js | bootstrapOn | L1275 | 热读箭头 getter：anchored 首轮引导开关（消费点=shouldHideCreativeCatalog 与 anchoredFirst 装配；creativeModeOn 仍为快照） |  |
-| plugins/dsh-extra-plan/index.js | runcodeCatchGateOn | L1276 | 热读箭头 getter：PTC try/catch 闸门开关（消费点=planner/只读 child/主会话三处组判定传参） |  |
-| plugins/dsh-extra-plan/index.js | crossProviderPlannerModelOn | L1277 | 热读箭头 getter：跨提供方模型选择开关（消费点=model-routing 双 resolver 入口，新 agent 重决议） |  |
-| plugins/dsh-extra-plan/index.js | creativeModeOn | L1280 | 热读箭头 getter：创造模式开关（liveConfig.creativeMode；消费点=shouldHideCreativeCatalog 与装配投影 hideCordis） |  |
-| plugins/dsh-extra-plan/index.js | readUsageCursorTable | L1320-1341 | usage cursor JSON 读取（续载/写回前盘点共用）：返回 { ok, table }；ENOENT 静默按空表，其它读取错误、JSON 解析失败、根值非对象（含数组）→ 降级空表并告警 |  |
-| plugins/dsh-extra-plan/index.js | warnUsageCursorDegraded | L1344-1348 | cursor 降级告警：每插件实例首次降级时一次（同 ledgerWarned 口径），声明其它 session 去重基准可能丢失 |  |
-| plugins/dsh-extra-plan/index.js | usageCursorEntryOf | L1352-1359 | cursor 单项归一：兼容旧数字形状（按水位 0 处理）与 { seq, index }；不再保留内存态 ref 字段——增量由 session.seq 水位 + snapshotEvents(from,to) 区间读取实现，水位未变直接返回、截断回退全量 |  |
-| plugins/dsh-extra-plan/index.js | foldUsage | L1367-1464 | usage 账本折叠写入（同步函数，禁止改 async；cursor 去重按 sessionId+seq）：写出行 = ts/sessionId/role/model/provider/hit/miss/out/cacheWriteTokens/reasoningTokens/seq（provider 取自 msg.source.provider 缺省空串；cw/rs 缺省 0；hit/miss/out/cw/rs 五字段全零不写行）；内存无本 session 项时按 sessionId 从 cursor JSON 单项续载；写前重读、读改写保留其它合法 session，降级态以空表+当前 session 覆盖写；有新增行才整文件写回 |  |
-| plugins/dsh-extra-plan/index.js | registerTool | L1501-1535 | 工具注册分发：注册成功、A 重名、B 永久性三类都写「已注册」标记（A/B 记终态不重试）；仅 tools 服务未就绪与 C 类可重试不写标记，留给下一次入口重试 |  |
-| plugins/dsh-extra-plan/index.js | registerSavePlan | L1538 | save_plan 注册（规划子代理层 + 主会话层；主会话侧任意路由态放行——受限规划工件，mainGateReason 兜底放行）；注册失败按 A/B/C 三分类：A/B 写标记记终态不重试，服务未就绪与 C 类不写标记、由 pre-step 每步兜底重试 |  |
-| plugins/dsh-extra-plan/index.js | registerSaveProbe | L1542 | save_probe 注册（主会话层 + 已认领的探查子代理层；规划子代理/执行者/reviewer 不是持有者）；已认领者靠 probeClaimed 粘性在下一步重试注册、不重复消费待认领计数 |  |
-| plugins/dsh-extra-plan/index.js | probeClaimFor | L1552-1568 | 放行-认领关联查核（pendingProbeClaims）：非子代理/含写子代理/规划子代理（T5 守卫）不认领，命中则消费计数并登记 save_probe |  |
-| plugins/dsh-extra-plan/index.js | shouldHideCreativeCatalog | L1598-1605 | HP1 判定：C=1、A=1、F、main/planner、M=ptc 时暂隐两个创造 skill |  |
-| plugins/dsh-extra-plan/index.js | recordRequestError | L1648-1670 | 记录请求错误诊断到插件目录（diagPath 为 apply 内定义的诊断目录路径） |  |
-| plugins/dsh-extra-plan/index.js | noteRunCodeSubCall | L1904-1911 | 单实例子调用上限（planner）：按 sessionId→rootCallId 桶读计数、未超限则 +1；返回拒绝文案或 null；空 rootCallId 与 exploreBudget 文案保持 |  |
-| plugins/dsh-extra-plan/index.js | recordRunCodeDeny | L1920-1931 | pre-execute 八处 deny 出口在 return 前记录本次中文 reason（sessionId→rootCallId→Set）；仅 isRunCodeSubCall（exec.sub 或 exec.parent）且 reason 为非空字符串时写入 | 记录由 tools/post-execute 按精确子串消费（消费即清），agent/disposed 按 session 清桶；不做跨 session 共享 |
+| plugins/dsh-extra-plan/index.js | malformedRecovery | L1243-1272 | MALFORMED_RESPONSE 限次自愈：llm-retry 已给 {kind:'retry'} 原样透传（不叠加）；否则按 sessionId→Set('turn:step') 同回合只兜底 1 次（防死循环），注入 developer/message 中文提示（append 带 surfaceOp:'append'、纯文本禁带 headerSeq）并返回 {kind:'retry'}；aborted/无 agent/超次 → null 回退原 action 透传 |  |
+| plugins/dsh-extra-plan/index.js | recordAgentError | L1286-1304 | agent/error 回合错误取证：把宿主回合/步骤级错误（payload {agent,turn,step,error}）逐字落盘到插件目录 extra-plan-agent-errors.jsonl，行 = {ts, sessionId, turn, step, chain}；整体吞错 + 一次性 warn 防刷屏；模块级函数经命名导出供回归冒烟直呼 | 与 recordRequestError 同诊断模式 |
+| plugins/dsh-extra-plan/index.js | apply | L1308-2228 | 插件主入口：第一步 createGateRuntime(cfg.gateWords)（缺失/非法同步抛错，早于任何工具/监听器/服务副作用）→ ctx.effect 在当前 agent scope 注册恰好 7 个 extra_plan_* prompt variable（provider 返回本次 apply 捕获值）→ 配置解析（含变量② bootstrapReadHint）/服务注册/工具注册/creativeMode 模型可见投影/锚点钩子（HP 首轮 tool:read text 用变量②覆盖）；planner 与非 planner child 双模型路由；会话状态按 sessionId 分桶与 agent/disposed 同步 final flush + 单会话回收 |  |
+| plugins/dsh-extra-plan/index.js | plannerModel | L1361 | 热读箭头 getter：pro 规划默认模型（liveConfig.plannerModel；消费点=model-routing 的 getPlannerModel） |  |
+| plugins/dsh-extra-plan/index.js | otherAgentModel | L1362 | 热读箭头 getter：其他子代理默认模型（消费点=model-routing 的 getOtherAgentModel） |  |
+| plugins/dsh-extra-plan/index.js | exploreBudget | L1363 | 热读箭头 getter：pro 规划探查额度/单实例子调用上限（消费点=预算文案、noteRunCodeSubCall、plannerGateReason 与组判定） |  |
+| plugins/dsh-extra-plan/index.js | plannerPromptSuffix | L1364 | 热读箭头 getter：pre-step 拼接的额外引导后缀 |  |
+| plugins/dsh-extra-plan/index.js | bootstrapOn | L1365 | 热读箭头 getter：anchored 首轮引导开关（消费点=shouldHideCreativeCatalog 与 anchoredFirst 装配；creativeModeOn 仍为快照） |  |
+| plugins/dsh-extra-plan/index.js | runcodeCatchGateOn | L1366 | 热读箭头 getter：PTC try/catch 闸门开关（消费点=planner/只读 child/主会话三处组判定传参） |  |
+| plugins/dsh-extra-plan/index.js | crossProviderPlannerModelOn | L1367 | 热读箭头 getter：跨提供方模型选择开关（消费点=model-routing 双 resolver 入口，新 agent 重决议） |  |
+| plugins/dsh-extra-plan/index.js | creativeModeOn | L1370 | 热读箭头 getter：创造模式开关（liveConfig.creativeMode；消费点=shouldHideCreativeCatalog 与装配投影 hideCordis） |  |
+| plugins/dsh-extra-plan/index.js | readUsageCursorTable | L1410-1431 | usage cursor JSON 读取（续载/写回前盘点共用）：返回 { ok, table }；ENOENT 静默按空表，其它读取错误、JSON 解析失败、根值非对象（含数组）→ 降级空表并告警 |  |
+| plugins/dsh-extra-plan/index.js | warnUsageCursorDegraded | L1434-1438 | cursor 降级告警：每插件实例首次降级时一次（同 ledgerWarned 口径），声明其它 session 去重基准可能丢失 |  |
+| plugins/dsh-extra-plan/index.js | usageCursorEntryOf | L1442-1449 | cursor 单项归一：兼容旧数字形状（按水位 0 处理）与 { seq, index }；不再保留内存态 ref 字段——增量由 session.seq 水位 + snapshotEvents(from,to) 区间读取实现，水位未变直接返回、截断回退全量 |  |
+| plugins/dsh-extra-plan/index.js | foldUsage | L1457-1554 | usage 账本折叠写入（同步函数，禁止改 async；cursor 去重按 sessionId+seq）：写出行 = ts/sessionId/role/model/provider/hit/miss/out/cacheWriteTokens/reasoningTokens/seq（provider 取自 msg.source.provider 缺省空串；cw/rs 缺省 0；hit/miss/out/cw/rs 五字段全零不写行）；内存无本 session 项时按 sessionId 从 cursor JSON 单项续载；写前重读、读改写保留其它合法 session，降级态以空表+当前 session 覆盖写；有新增行才整文件写回 |  |
+| plugins/dsh-extra-plan/index.js | registerTool | L1591-1625 | 工具注册分发：注册成功、A 重名、B 永久性三类都写「已注册」标记（A/B 记终态不重试）；仅 tools 服务未就绪与 C 类可重试不写标记，留给下一次入口重试 |  |
+| plugins/dsh-extra-plan/index.js | registerSavePlan | L1628 | save_plan 注册（规划子代理层 + 主会话层；主会话侧任意路由态放行——受限规划工件，mainGateReason 兜底放行）；注册失败按 A/B/C 三分类：A/B 写标记记终态不重试，服务未就绪与 C 类不写标记、由 pre-step 每步兜底重试 |  |
+| plugins/dsh-extra-plan/index.js | registerSaveProbe | L1632 | save_probe 注册（主会话层 + 已认领的探查子代理层；规划子代理/执行者/reviewer 不是持有者）；已认领者靠 probeClaimed 粘性在下一步重试注册、不重复消费待认领计数 |  |
+| plugins/dsh-extra-plan/index.js | probeClaimFor | L1642-1658 | 放行-认领关联查核（pendingProbeClaims）：非子代理/含写子代理/规划子代理（T5 守卫）不认领，命中则消费计数并登记 save_probe |  |
+| plugins/dsh-extra-plan/index.js | shouldHideCreativeCatalog | L1688-1695 | HP1 判定：C=1、A=1、F、main/planner、M=ptc 时暂隐两个创造 skill |  |
+| plugins/dsh-extra-plan/index.js | recordRequestError | L1741-1763 | 记录 agent/request-error 失败诊断到插件目录 extra-plan-request-errors.jsonl（diagPath 可经 cfg.diagFile 覆盖；行含 turn/step/provider/message/code/causeChain） |  |
+| plugins/dsh-extra-plan/index.js | noteRunCodeSubCall | L2008-2015 | 单实例子调用上限（planner）：按 sessionId→rootCallId 桶读计数、未超限则 +1；返回拒绝文案或 null；空 rootCallId 与 exploreBudget 文案保持 |  |
+| plugins/dsh-extra-plan/index.js | recordRunCodeDeny | L2024-2035 | pre-execute 八处 deny 出口在 return 前记录本次中文 reason（sessionId→rootCallId→Set）；仅 isRunCodeSubCall（exec.sub 或 exec.parent）且 reason 为非空字符串时写入 | 记录由 tools/post-execute 按精确子串消费（消费即清），agent/disposed 按 session 清桶；不做跨 session 共享 |
 | plugins/dsh-extra-plan/lib/agent-runtime.js | isLiveDelegation | L8-19 | 按父会话 registry 存活状态判定委托是否仍有效 |  |
 | plugins/dsh-extra-plan/lib/agent-runtime.js | childPolicyNeedsFloor | L22-27 | 判定 read-only 子代理是否需要 workspace-write floor |  |
 | plugins/dsh-extra-plan/lib/agent-runtime.js | createAgentRuntime | L29-111 | 创建 per-apply 角色/缓存/usage baseline 工厂 |  |
