@@ -143,15 +143,12 @@ const clientCode = clientText.split('\n').filter((line) => !line.trim().startsWi
 check('client.js：configForms.whileServed + plugins.row.config（key = @local/dsh-extra-plan#dsh-extra-plan-settings；无 order / 无 plugins.item 卡片注册 / 无 settings.plugin.item）', clientCode.includes('ctx.configForms.whileServed([NS]') && clientCode.includes('ctx.slots.inject("plugins.row.config"') && clientCode.includes('name: "plugins.row.config"') && clientCode.includes('"@local/dsh-extra-plan#dsh-extra-plan-settings"') && !clientCode.includes('"plugins.item"') && !clientCode.includes('order: 90') && !clientCode.includes('settings.plugin.item') && !clientCode.includes('key: "dsh-extra-plan"'))
 check('client.js：外壳与注入面（__ModuleLoader__ + require(react) + slots/locale/configForms）', clientText.includes('window.__ModuleLoader__.load({') && clientText.includes('id: "@local/dsh-extra-plan"') && clientText.includes('require("react")') && clientText.includes('exports.inject = ["slots", "locale", "configForms"]'))
 check('client.js：2 项宿主行提交体仅 {webFetch, toolPresentationMode} 且 esp-* 样式保留', clientText.includes('JSON.stringify({ webFetch: hostDraft.webFetch, toolPresentationMode: hostDraft.toolPresentationMode })') && clientText.includes('.esp-wrap{') && clientText.includes('.esp-section{') && clientText.includes('.esp-btn'))
-check('U-2 client.js：2 项宿主行 UI 明示「需重启生效」（提示语 + 保存回执），与 8 项「立即生效」区分', (() => {
+check('U-2 client.js：2 项宿主行提示仍标明重启生效（重置后文案）+ 保存回执 savedRestart', (() => {
   const hostRowFields = clientText.slice(clientText.indexOf('const HOST_ROW_FIELDS'), clientText.indexOf('const css ='))
-  return hostRowFields.includes('需重启生效') && hostRowFields.split('需重启生效').length === 3 &&
+  return hostRowFields.includes('是否开启web_fetch ｜ 重启生效') &&
+    hostRowFields.includes('工具呈现方式切换（默认/混合/PTC模式） ｜ 重启生效') &&
     clientText.includes('savedRestart: "已保存（这 2 项需重启 DSH 后生效）"') &&
     clientText.includes('text: t("savedRestart")')
-})())
-check('U-2b client.js：2 项提示语指向权威值落点（settings 行）+ 投影落点（声明行子行）', (() => {
-  const hostRowFields = clientText.slice(clientText.indexOf('const HOST_ROW_FIELDS'), clientText.indexOf('const css ='))
-  return hostRowFields.includes('权威值存 settings 行') && hostRowFields.includes('投影到声明行')
 })())
 check('client.js：8 项走 ownerProps.form（state/mutate），无十项整批 save()', clientText.includes('form.mutate(ops, revision)') && clientText.includes('props.form') && !clientText.includes('for (const field of fields)'))
 

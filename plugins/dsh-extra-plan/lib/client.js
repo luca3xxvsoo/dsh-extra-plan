@@ -97,7 +97,7 @@ window.__ModuleLoader__.load({
     // 写入一律交回宿主表单（ownerProps.form.mutate），不由本插件直接落盘。
     const EXTRA_FIELDS = Object.freeze([
       { key: "anchoredBootstrap", control: "select", options: [true, false], locale: "anchoredBootstrap", section: "general", hint: "首轮极简工具 + 提示词 ｜ 新会话/新子代理生效" },
-      { key: "creativeMode", control: "select", options: [true, false], locale: "creativeMode", section: "general", hint: "是否开启dsh官方创造模式 ｜ 立即生效（重启后新会话同样生效）" },
+      { key: "creativeMode", control: "select", options: [true, false], locale: "creativeMode", section: "general", hint: "是否开启dsh官方创造模式 ｜ 重启生效" },
       { key: "runcodeCatchGate", control: "select", options: [true, false], locale: "runcodeCatchGate", section: "general", hint: "PTC模式下，增加每个工具调用需要try catch的闸门。通过限制+建议的模式保障仅单个调用报错 ｜ 立即生效" },
       { key: "crossProviderPlannerModel", control: "select", options: [true, false], locale: "crossProviderPlannerModel", section: "pro", hint: "允许跨提供方选择模型。开启时将以 其他提供方 - 主会话提供方 - deepseek官方 的顺序，获取可用模型。关闭时仅从主会话提供方获取。默认关闭 ｜ 新会话/新子代理生效" },
       { key: "plannerModel", control: "text", locale: "plannerModel", section: "pro", hint: "pro规划默认使用模型。未匹配/置空时：使用主会话模型 ｜ 新会话/新子代理生效" },
@@ -109,8 +109,8 @@ window.__ModuleLoader__.load({
     // 2 项宿主行设置（权威值在 settings 行 dsh-extra-plan-settings config；
     // 声明行 plugins 内 tool-web / tool-presentation 子行为投影，消费方是宿主行装载期快照）。
     const HOST_ROW_FIELDS = Object.freeze([
-      { key: "webFetch", control: "select", options: [true, false], locale: "webFetch", hint: "是否开启web_fetch（权威值存 settings 行，投影到声明行 tool-web 行 config.fetch）｜ 需重启生效" },
-      { key: "toolPresentationMode", control: "select", options: ["native", "ptc", "both"], optionLocale: { native: "toolPresentationModeNative", ptc: "toolPresentationModePtc", both: "toolPresentationModeBoth" }, locale: "toolPresentationMode", hint: "工具呈现方式切换（默认/混合/PTC模式）（权威值存 settings 行，投影到声明行 tool-presentation 行 config.mode）｜ 需重启生效" }
+      { key: "webFetch", control: "select", options: [true, false], locale: "webFetch", hint: "是否开启web_fetch ｜ 重启生效" },
+      { key: "toolPresentationMode", control: "select", options: ["native", "ptc", "both"], optionLocale: { native: "toolPresentationModeNative", ptc: "toolPresentationModePtc", both: "toolPresentationModeBoth" }, locale: "toolPresentationMode", hint: "工具呈现方式切换（默认/混合/PTC模式） ｜ 重启生效" }
     ]);
 
     const css =

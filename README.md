@@ -82,7 +82,7 @@ dsh plugin --profile qqbot remove @local/dsh-qqbot-user-questions
 
 ## 4. 可配置项
 
-DSH web界面 -> 插件 -> 按需规划模式配置
+DSH web界面 -> 插件 -> @local/dsh-extra-plan -> 按需规划模式配置
 
 **通用设置**：
   - anchored开关：首轮极简工具 + 提示词
