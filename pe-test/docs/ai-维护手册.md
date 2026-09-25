@@ -13,8 +13,8 @@
 ## Web 核心与 QQBot 分发所有权
 | profile | 唯一职责 | 迁移边界 |
 |:--|:--|:--|
-| web | 直接安装 `@local/dsh-extra-plan`；持有核心 bundle/依赖、allow-build、`distribute-preset` 与启动 `preset-sync` | 不从 web 删除核心包或预设 |
-| qqbot | 直接安装 `@local/dsh-qqbot-user-questions`（精简版）；两行补入由包内静态 `cordis.patch.yml` 的 insert 承担，apply/postinstall 自愈只做两件事：迁移旧版根级 code-runtime/agent-presets 错误块 + 建 `@local/dsh-extra-plan` → web 同名包链接 | 不声明核心直接依赖，不分发预设，不执行 `preset-sync`；不含问答/审批/补丁分发 |
+| web | 直接安装 `@local/dsh-extra-plan`；持有核心 bundle/依赖、allow-build、postinstall（状态目录初始化）与启动 `preset-sync` | 不从 web 删除核心包或预设；预设本体由 profile patch 声明行承载（0.1.7 起 `.agent-presets/extra-plan` 只剩状态目录） |
+| qqbot | 直接安装 `@local/dsh-qqbot-user-questions`（精简版）；两行补入由包内静态 `cordis.patch.yml` 的 insert 承担（0.1.7 新包族：`ptc-runtime` = `@deepseek-ai/dsh-ptc-runtime-node`、`agent-preset-registry` = `@deepseek-ai/dsh-agent-preset-registry`（config.default: extra-plan）；**待有 QQBOT 环境再测试**），apply/postinstall 自愈只做两件事：迁移旧版根级错误块（0.1.5 族 code-runtime/agent-presets + 0.1.7 族 ptc-runtime/agent-preset-registry）+ 建 `@local/dsh-extra-plan` → web 同名包链接 | 不声明核心直接依赖，不分发预设本体（预设随 bundle patch 声明行装载），不执行 `preset-sync`；不含问答/审批/补丁分发 |
 
 ### 已有残留迁移（用户侧）
 - 前提：先由用户完成 web 核心安装和预设分发，再通过 profile 的 pnpm/DSH 包管理流程移除 qqbot/package.json 的直接 `@local/dsh-extra-plan`；由 pnpm 同步 lock、`.modules.yaml`、`virtualStoreDir`、`storeDir` 与 hoisted 解析状态，最后重新安装/刷新 QQBot 兼容包。
@@ -30,7 +30,7 @@
 - 仓库改动和回归通过后，生产 profile 迁移由用户执行；仓库验收不是生产部署许可，AI 不接触 `C:\Users\Administrator\.dsh\profiles`。
 
 ## 改完后
-1. 先同步本轮语义文档：`READAI.md` 与 `pe-test/docs` 下 6 份指定文档（共 7 个目标文档）。唯一禁改文档：根 `dsh-extra-plan/README.md`（与 READAI.md 同层级）；其余文档（含各级 README.md、pe-test/docs/ai-宿主耦合台账.md）均可改；官方安装的预设与技能只读引用、不复制不改写。
+1. 先同步本轮语义文档：`READAI.md` 与 `pe-test/docs` 下 **7 份** .md（ai-概览 / ai-维护手册 / ai-机制设计 / ai-宿主耦合台账 / ai-实机闸门测试流程 / ai-流程备查 / ai-代码地图 中除 ai-概览 外的实际改动面——用户口径「6 份」与实有 7 份不符，本版按实有 7 份全部覆盖）。唯一禁改文档：根 `dsh-extra-plan/README.md`（与 READAI.md 同层级）；其余文档（含各级 README.md、pe-test/docs/ai-宿主耦合台账.md）均可改；官方安装的预设与技能只读引用、不复制不改写。
 2. 本轮按固定顺序逐文件执行 9 个语法门（本轮实际改动过的每个 .js / .mjs 都要逐一 node --check，不只限下列 9 个；下列 9 个为当前基线清单；工作目录固定为 dsh-extra-plan）：
    - node --check plugins/dsh-extra-plan/index.js
    - node --check plugins/dsh-extra-plan/lib/run-code-static.js
@@ -78,10 +78,10 @@
 *本文件对应 READAI.md 文档索引表「维护纪律+自检+地图同步」一行与「必守纪律（一句）」的展开。*
 
 ## 闸门关键词单源维护（v0.3.0）
-- **唯一人工编辑位置**：`DSH_HOME/.agent-presets/extra-plan/agent.cordis.yml`（仓库模板 `plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml`）的 `config.gateWords` 7 个字段；禁止在 JS 里改词值（`lib/gate-words.js` 无词值、无默认词表、不读文件/环境变量）。改词后普通重启即生效；旧词不再推进状态机（历史事件安全）。
+- **唯一人工编辑位置**：仓库模板 `plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml`（部署现场 = profile patch 声明行 `preset-extra-plan` 的 `config.plugins` 内 `extra-plan` 行 `config.gateWords`，即 `configEditor.documentPath`；旧 `DSH_HOME/.agent-presets/extra-plan/agent.cordis.yml` 仅作迁移期旧值副本）的 `config.gateWords` 7 个字段；禁止在 JS 里改词值（`lib/gate-words.js` 无词值、无默认词表、不读文件/环境变量）。改词后普通重启即生效；旧词不再推进状态机（历史事件安全）。
 - **合法性**：非数组对象、键集合恰为 7 键、每值为非空字符串、首尾无空白、无 CR/LF、7 值两两不同、不以 (Recommended)/（Recommended）/(推荐)/（推荐）结尾；失败信息以 `extra-plan: config.gateWords` 开头，运行时同步抛错（阻止预设被使用，不回退旧词）。
-- **设置页分工**：10 项 UI settings 不动；gateWords 是 **7 项 migration-only 字段**——不进 `SETTING_DEFINITIONS`、不进设置页 metadata、不进 `preset-defaults.generated.js`、不新增构建/生成步骤；`generate-runtime-defaults.mjs --check` 必须保持 0 且生成物无 diff。
-- **两条保留链**（同步自愈/安装分发同一状态机）：同 hash → `idle`（不读改写现场正文，用户改词逐字保留；现场被改成缺词/非法也不自愈，随后 runtime 抛错）；hash 变化 → 先复制新厂商模板 → 恢复 10 项设置 → 整组合法旧词 7 叶定点写回 → 共享 validator 复验后才发布；缺失/非法/歧义整组采用新模板值（禁止部分迁移），新模板 locator 缺失/歧义、patch 失败或复验失败一律抛错并保留旧目标。
+- **设置页分工**：**8 项 UI 设置**（settings 行 `dsh-extra-plan-settings` 的 `Config`，8 字段全 `.volatile()`）+ **2 项宿主行设置**（webFetch/toolPresentationMode，落声明行 `config.plugins` 内 `tool-web`/`tool-presentation` 子行，经专用 PUT → `configEditor.edit`）；gateWords 是 **7 项 migration-only 字段**——不进 `SETTING_DEFINITIONS`、不进设置页表单、不进 `preset-defaults.generated.js`、不新增构建/生成步骤；`generate-runtime-defaults.mjs --check` 必须保持 0 且**两份产物**（`lib/preset-defaults.generated.js` 与 `assets/presets/extra-plan/preset-patch.generated.yml`）无 diff。
+- **两条保留链**（启动自愈；postinstall 只初始化状态目录）：资产 hash 一致**且**声明行 plugins 覆盖资产行 id 集合 → `idle`（不写盘，台账字节不变）；否则迁移一次 → 8 项设置写 settings 行、2 项宿主行写声明行 plugins 子行、整组合法旧词写回 `extra-plan` 行；缺失/非法/歧义整组缺席（禁止部分迁移）；写盘只经 `configEditor.edit`（事务 + reconcile + 回滚），**本插件绝不直写任何 `cordis.patch.yml`**。
 - **审计**：manifest `format: 2`；`settingsMigration` 仍 10 项；并列字段 `gateWordsMigration.results` 恰 7 项状态字符串（skipped-source-absent / skipped-old-missing / skipped-invalid / skipped-old-ambiguous / skipped-source-unreadable / restored），**不得写入用户实际词值**。
 - **本批语法门**：本轮实际改动的 3 个 .js（`index.js`、`lib/gate-words.js`、`lib/preset-sync.js`）与 6 个 .mjs（step-00/04/06 + 三个 step-01）逐文件 `node --check`；`lib/gate-words.js` 应加入后续基线语法门清单。
 

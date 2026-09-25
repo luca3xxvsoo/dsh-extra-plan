@@ -20,11 +20,21 @@ export const CORDIS_PRESENTATION_TOOLS = Object.freeze([
   'cordis_undefine',
 ])
 export const CORDIS_PRESENTATION_TOOL_SET = new Set(CORDIS_PRESENTATION_TOOLS)
+// 【已废弃·0.1.7 宿主】'tool:cordis' 段在 dsh-tool-cordis 侧已删除（官方 README），
+// 全库不再产出该段名；常量与 hideCordis 过滤逻辑保留无害（匹配不到即空转），
+// 7 个 cordis 工具名的呈现侧隐藏仍生效（CORDIS_PRESENTATION_TOOLS）。
 export const CORDIS_SECTION_NAME = 'tool:cordis'
 export const PTC_SECTION_NAME = 'tools:ptc-only'
 export const SDK_SECTION_NAME = 'tools:sdk'
 export const READ_SECTION_NAME = 'tool:read'
-export const CREATIVE_SKILL_NAMES = new Set(['cordis-plugin-development', 'editing-cordis-compositions'])
+// C=1 创造模式官方 skill 面（skill-filesystem 行 customSkillDirs 静态注册）：
+// 三个包内 SKILL.md 名。C=0 时由 projectSkillCatalogDecision 从模型可见 catalog 隐藏
+// （旧实现是「不在插件里注册」；静态注册后改为投影隐藏，语义等价）。
+export const CREATIVE_SKILL_NAMES = new Set([
+  'cordis-plugin-development',
+  'editing-cordis-compositions',
+  'cordis-composition-reference',
+])
 
 export function sectionOf(sections, name) {
   if (!Array.isArray(sections)) return undefined

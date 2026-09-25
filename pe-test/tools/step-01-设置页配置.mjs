@@ -1,65 +1,180 @@
-// 设置页 Host API 集成回归：真实 apply + loopback HTTP。
-// agent/preset、profile 与所有写入均来自工作区模板或系统临时 DSH_HOME。
+// 设置页 Host API 集成回归（dsh 0.1.7-rc.1 双通道写链）。
+// 依赖锚点（T9-5）：① DSH_HOME/profiles/<name>/node_modules ② 0.1.7 宿主现场 node_modules
+//   （同级 dsh-v0.1.7* 检出，或 npm 全局 dsh 包自带的 node_modules）；两锚点均缺失即 throw。
+// 运行时夹具：mock ctx（settings.configure + webServer）+ mock configEditor（configuration/edit），
+//   profile patch 内容由 edit 回填写入内存行集合，GET 再经 configuration() 读回——同一代码路径往返。
+// 不写任何生产目录；HTTP 服务器只绑定 127.0.0.1。
 
 import { createServer, request as httpRequest } from 'node:http'
 import { createRequire, registerHooks } from 'node:module'
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { readdirSync, readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-const dependencyBases = [
-  import.meta.url,
-  join(process.env.APPDATA || join(homedir(), 'AppData', 'Roaming'), 'npm', 'node_modules', '@deepseek-ai', 'dsh', 'package.json'),
-]
-let dependencyRequire = null
-for (const base of dependencyBases) {
+const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url))
+const DSH_HOME = (process.env.DSH_HOME || join(homedir(), '.dsh')).replaceAll('\\', '/')
+
+function profileNodeModulesRoots() {
+  const roots = []
+  const profilesDir = join(DSH_HOME, 'profiles')
+  let names = []
+  try { names = readdirSync(profilesDir) } catch { names = [] }
+  const ordered = ['web'].concat(names.filter((name) => name !== 'web'))
+  for (const name of ordered) roots.push(join(profilesDir, name, 'node_modules'))
+  return roots
+}
+
+function hostSiteNodeModulesRoots() {
+  const roots = []
+  // 同级 0.1.7 宿主现场检出（dsh-v0.1.7*）
+  try {
+    const parent = dirname(REPO_ROOT.replace(/[\\/]$/, ''))
+    // 同代多检出（如 dsh-v0.1.7-rc 与 dsh-v0.1.7-rc2）按 rc 号降序：dependencyBases 首项 = 最新 rc 现场，
+    // 不随目录枚举顺序漂移；找不到任何 0.1.7 现场时该 base 列表为空，运行时断言自动降级为静态契约核对。
+    const rcOrder = (name) => {
+      const matched = /rc\.?(\d+)/i.exec(name)
+      return matched === null ? 0 : Number(matched[1])
+    }
+    const hostNames = readdirSync(parent).filter((name) => /^dsh-v?0\.1\.7/.test(name))
+    hostNames.sort((a, b) => rcOrder(b) - rcOrder(a))
+    for (const name of hostNames) {
+      roots.push(join(parent, name, 'node_modules'))
+    }
+  } catch { /* 同级目录不可枚举时忽略 */ }
+  const prefixes = []
+  if (process.platform === 'win32') {
+    if (process.env.APPDATA) prefixes.push(join(process.env.APPDATA, 'npm', 'node_modules'))
+    prefixes.push(join(homedir(), 'AppData', 'Roaming', 'npm', 'node_modules'))
+  } else {
+    prefixes.push(join('/usr', 'local', 'lib', 'node_modules'))
+    prefixes.push(join(homedir(), '.npm-global', 'lib', 'node_modules'))
+    prefixes.push(join(homedir(), 'node_modules'))
+  }
+  for (const prefix of prefixes) {
+    roots.push(join(prefix, '@deepseek-ai', 'dsh', 'node_modules'))
+    roots.push(prefix)
+  }
+  return roots
+}
+
+const dependencyBases = profileNodeModulesRoots()
+  .map((root) => join(root, 'package.json'))
+  .concat(hostSiteNodeModulesRoots().map((root) => join(root, 'package.json')))
+if (dependencyBases.length === 0) throw new Error('未找到 settings.js 回归所需的依赖锚点（① profiles/<name>/node_modules ② 0.1.7 宿主现场 node_modules）')
+
+function tryRequire(base) {
   try {
     const candidate = createRequire(base)
-    candidate.resolve('js-yaml')
-    candidate.resolve('@deepseek-ai/schemastery')
-    dependencyRequire = candidate
-    break
-  } catch { /* try the next read-only dependency location */ }
+    const yamlPath = candidate.resolve('js-yaml')
+    const schemaPath = candidate.resolve('@deepseek-ai/schemastery')
+    const schemaModule = candidate('@deepseek-ai/schemastery')
+    const volatileCapable = typeof schemaModule.boolean === 'function' && typeof schemaModule.boolean().volatile === 'function'
+    return { candidate, yamlPath, schemaPath, volatileCapable }
+  } catch {
+    return null
+  }
 }
-if (dependencyRequire === null) throw new Error('未找到 settings.js 回归所需依赖')
-const packageModuleUrls = new Map([
-  ['@deepseek-ai/schemastery', pathToFileURL(dependencyRequire.resolve('@deepseek-ai/schemastery')).href],
-])
+
+let dependencyRequire = null
+let schemasteryUrl = null
+let volatileCapable = false
+for (const base of dependencyBases) {
+  const found = tryRequire(base)
+  if (found === null) continue
+  if (dependencyRequire === null) {
+    dependencyRequire = found.candidate
+    schemasteryUrl = pathToFileURL(found.schemaPath).href
+  }
+  if (found.volatileCapable) {
+    dependencyRequire = found.candidate
+    schemasteryUrl = pathToFileURL(found.schemaPath).href
+    volatileCapable = true
+    break
+  }
+}
+if (dependencyRequire === null) {
+  throw new Error('未找到 settings.js 回归所需依赖（js-yaml / @deepseek-ai/schemastery）；已探测锚点：\n  - ' + dependencyBases.join('\n  - '))
+}
 if (typeof registerHooks === 'function') {
   registerHooks({
     resolve(specifier, context, next) {
-      const mapped = packageModuleUrls.get(specifier)
-      if (mapped !== undefined) return { url: mapped, shortCircuit: true }
+      if (specifier === '@deepseek-ai/schemastery') return { url: schemasteryUrl, shortCircuit: true }
       return next(specifier, context)
     },
   })
 }
 
-const settingsModule = await import(new URL('../../plugins/dsh-extra-plan/lib/settings.js', import.meta.url).href)
-const presetSettings = await import(new URL('../../plugins/dsh-extra-plan/lib/preset-settings.js', import.meta.url).href)
-const {
-  SETTING_DEFINITIONS,
-  getSettingDefinition,
-  parsePresetYaml,
-  patchYamlScalar,
-  publicSettingMetadata,
-  resolveSetting,
-} = presetSettings
-const { DEFAULT_EXPLORE_BUDGET } = await import(new URL('../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js', import.meta.url).href)
-
-const HERE = fileURLToPath(new URL('.', import.meta.url))
-const ASSET_DIR = join(HERE, '..', '..', 'plugins', 'dsh-extra-plan', 'assets', 'presets', 'extra-plan')
-const TEMPLATE_AGENT = readFileSync(join(ASSET_DIR, 'agent.cordis.yml'), 'utf8')
-const TEMPLATE_PRESET = readFileSync(join(ASSET_DIR, 'preset.yml'), 'utf8')
-const definition = (key) => getSettingDefinition(key)
-const managedDefinitions = SETTING_DEFINITIONS.filter((item) => item.ui.separate === undefined)
+const settingsText = readFileSync(join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'settings.js'), 'utf8')
+const clientText = readFileSync(join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'client.js'), 'utf8')
 
 let pass = 0
 let fail = 0
 function check(label, condition) {
   if (condition) { pass += 1; console.log('PASS  ' + label) }
   else { fail += 1; console.log('FAIL  ' + label) }
+}
+
+// ── 静态契约（与 schemastery 版本无关，恒执行） ──────────────────────────
+check('依赖锚点 ① profiles/<name>/node_modules ② 0.1.7 宿主现场 node_modules 均可解析 js-yaml', dependencyBases.length >= 2 && dependencyRequire !== null)
+check('settings.js：settings 命名空间策略走 settings.configure({ auto: false }, ctx.fiber)（无 settings.register）', settingsText.includes('child.settings.configure({ auto: false }, ctx.fiber)') && !settingsText.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n').includes('settings.register'))
+check('settings.js：无 ExtraPlanSettingsSchema、无 .agent-presets 写预设文件、无自建原子写', !settingsText.includes('ExtraPlanSettingsSchema') && !settingsText.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n').includes('.agent-presets'))
+check('settings.js：PUT 仅收 webFetch/toolPresentationMode 且写链经 editor.edit + 整体重述 plugins', settingsText.includes('HOST_ROW_KEYS') && settingsText.includes('unsupported field(s)') && settingsText.includes('restatePresetPlugins') && settingsText.includes('await editor.edit(') && settingsText.includes("isLocateError(error) ? 404 : 500"))
+const clientCode = clientText.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n')
+check('client.js：configForms.whileServed + plugins.item，无 settings.plugin.item / 无旧 key 卡片注册', clientCode.includes('ctx.configForms.whileServed([NS]') && clientCode.includes('ctx.slots.inject("plugins.item"') && clientCode.includes('name: "plugins.item"') && clientCode.includes('id: NS') && !clientCode.includes('settings.plugin.item') && !clientCode.includes('key: "dsh-extra-plan"'))
+check('client.js：外壳与注入面（__ModuleLoader__ + require(react) + slots/locale/configForms）', clientText.includes('window.__ModuleLoader__.load({') && clientText.includes('id: "@local/dsh-extra-plan"') && clientText.includes('require("react")') && clientText.includes('exports.inject = ["slots", "locale", "configForms"]'))
+check('client.js：2 项宿主行提交体仅 {webFetch, toolPresentationMode} 且 esp-* 样式保留', clientText.includes('const body = { webFetch: draft.webFetch, toolPresentationMode: draft.toolPresentationMode }') && clientText.includes('.esp-wrap{') && clientText.includes('.esp-section{') && clientText.includes('.esp-btn'))
+check('client.js：8 项走 ownerProps.form（state/mutate），无十项整批 save()', clientText.includes('form.mutate(ops, revision)') && clientText.includes('props.form') && !clientText.includes('for (const field of fields)'))
+
+if (!volatileCapable) {
+  console.log('SKIP  本机可解析到的 @deepseek-ai/schemastery 无 Schema.volatile()（0.1.5 世代的 3.18.2）；')
+  console.log('      运行时 HTTP 回归需要 0.1.7 宿主（rc.1 / rc.2）自带的 3.18.4。已探测锚点：')
+  for (const base of dependencyBases) console.log('        - ' + base)
+  console.log('      静态契约断言全部照常执行；运行时部分在 0.1.7 宿主现场存在时自动启用。')
+  console.log('\n通过 ' + pass + ', 失败 ' + fail)
+  process.exit(fail === 0 ? 0 : 1)
+}
+
+// ── 运行时：真实 apply + loopback HTTP + mock configEditor ────────────────
+const settingsModule = await import(new URL('../../plugins/dsh-extra-plan/lib/settings.js', import.meta.url).href)
+const presetSettings = await import(new URL('../../plugins/dsh-extra-plan/lib/preset-settings.js', import.meta.url).href)
+const { PRESET_ROW_ID, SETTINGS_ROW_ID, parsePresetYaml, restatePluginsRow } = presetSettings
+const { restatePresetPlugins } = await import(new URL('../../plugins/dsh-extra-plan/lib/preset-sync.js', import.meta.url).href)
+
+const ASSET_PATCH = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'assets', 'presets', 'extra-plan', 'preset-patch.generated.yml')
+const generatedPatchText = readFileSync(ASSET_PATCH, 'utf8')
+// 声明行夹具：生成产物去缩进 4 列 → profile patch 的根级声明行。
+function declaredPlugins() {
+  const doc = parsePresetYaml(generatedPatchText)
+  return structuredClone(doc[0].insert[0].config.plugins)
+}
+
+function makeConfigEditor({ present = true } = {}) {
+  const state = { rows: [], edits: [], plugins: declaredPlugins() }
+  if (present) {
+    state.rows.push({
+      entry: { options: { id: PRESET_ROW_ID, name: '@deepseek-ai/dsh-agent-preset', config: { id: 'extra-plan', plugins: state.plugins } }, fiber: {} },
+      inherited: {},
+      override: {},
+    })
+    state.rows.push({
+      entry: { options: { id: SETTINGS_ROW_ID, name: '@local/dsh-extra-plan/settings', config: {} }, fiber: {} },
+      inherited: {},
+      override: {},
+    })
+  }
+  return {
+    state,
+    configuration: () => state.rows,
+    edit: async (entry, change) => {
+      const row = state.rows.find((item) => item.entry === entry)
+      if (row === undefined) throw new Error('Configuration entry is no longer available')
+      const next = change(structuredClone(row.entry.options.config), row.inherited)
+      row.entry.options.config = next
+      if (entry.options.id === PRESET_ROW_ID) state.plugins = next.plugins
+      state.edits.push({ id: entry.options.id, next })
+    },
+  }
 }
 
 function requestJson(port, method, route, value) {
@@ -77,7 +192,7 @@ function requestJson(port, method, route, value) {
       res.on('end', () => {
         const raw = chunks.join('')
         let body = null
-        try { body = JSON.parse(raw) } catch { /* keep null for assertions */ }
+        try { body = JSON.parse(raw) } catch { /* keep null */ }
         resolve({ status: res.statusCode, body, raw })
       })
     })
@@ -87,87 +202,19 @@ function requestJson(port, method, route, value) {
   })
 }
 
-function diffLines(before, after) {
-  const a = before.split('\n')
-  const b = after.split('\n')
-  const out = []
-  for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
-    if (a[i] !== b[i]) out.push({ line: i + 1, before: a[i], after: b[i] })
-  }
-  return out
-}
-
-function patchAgent(values) {
-  let text = TEMPLATE_AGENT
-  for (const [key, value] of Object.entries(values)) {
-    const patched = patchYamlScalar(text, definition(key), value)
-    if (!patched.ok) throw new Error('fixture patch failed: ' + key)
-    text = patched.text
-  }
-  return text
-}
-
-function valuesFrom(payload) {
-  return payload && payload.values && typeof payload.values === 'object' ? payload.values : {}
-}
-
-const previousDshHome = process.env.DSH_HOME
-const fixtureHome = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-settings-'))
-const presetDir = join(fixtureHome, '.agent-presets', 'extra-plan')
-const webPlugin = join(fixtureHome, 'profiles', 'web', 'node_modules', '@local', 'dsh-extra-plan')
-let server = null
-let serverStarted = false
-
-const oldValues = {
-  plannerModel: 'api-old-model',
-  crossProviderPlannerModel: true,
-  plannerPromptSuffix: 'api old suffix',
-  exploreBudget: 12,
-  otherAgentModel: 'api-old-other-model',
-  anchoredBootstrap: false,
-  creativeMode: false,
-  runcodeCatchGate: true,
-  webFetch: true,
-  toolPresentationMode: 'ptc',
-}
-const newValues = {
-  plannerModel: 'api-new-model',
-  crossProviderPlannerModel: false,
-  plannerPromptSuffix: 'new: suffix',
-  exploreBudget: 31,
-  otherAgentModel: 'api-new-other-model',
-  anchoredBootstrap: true,
-  creativeMode: true,
-  runcodeCatchGate: false,
-  webFetch: false,
-  toolPresentationMode: 'both',
-}
-
-try {
-  process.env.DSH_HOME = fixtureHome
-  mkdirSync(presetDir, { recursive: true })
-  mkdirSync(webPlugin, { recursive: true })
-  writeFileSync(join(presetDir, 'preset.yml'), TEMPLATE_PRESET, 'utf8')
-  writeFileSync(join(presetDir, 'agent.cordis.yml'), patchAgent(oldValues), 'utf8')
-
-  const metadata = publicSettingMetadata(TEMPLATE_AGENT, patchAgent(oldValues))
-  check('共享 metadata 恰有 10 项且默认来自新版模板', metadata.fields.length === 10 && metadata.fields.find((field) => field.key === 'exploreBudget').default === DEFAULT_EXPLORE_BUDGET && metadata.fields.find((field) => field.key === 'crossProviderPlannerModel').default === false && metadata.fields.find((field) => field.key === 'otherAgentModel').default === '')
-
+async function startServer(editor) {
   const routeDefinitions = []
-  const settingsRegistrations = []
+  const settingsPolicies = []
   const mockContext = {
+    fiber: { uid: 'test-fiber' },
+    get: (name) => (name === 'configEditor' ? editor : undefined),
     inject(deps, callback) {
       if (deps[0] === 'settings') {
-        callback({ settings: { register: (name) => settingsRegistrations.push(name) } })
+        callback({ effect: (fn) => fn(), settings: { configure: (policy, owner) => { settingsPolicies.push({ policy, owner }); return () => {} } } })
         return
       }
       if (deps[0] === 'webServer') {
-        callback({
-          effect: (effectFn) => effectFn(),
-          webServer: {
-            register: (definition) => { routeDefinitions.push(definition); return () => {} },
-          },
-        })
+        callback({ effect: (fn) => fn(), webServer: { register: (definition) => { routeDefinitions.push(definition); return () => {} } } })
         return
       }
       throw new Error('unexpected dependency: ' + deps.join(','))
@@ -175,12 +222,9 @@ try {
   }
   settingsModule.apply(mockContext)
   const route = routeDefinitions.find((item) => item.path === '/api/dsh-extra-plan-settings')
-  check('真实 apply 注册设置路由与命名空间', route !== undefined && typeof route.handler === 'function' && settingsRegistrations.includes('dsh-extra-plan'))
-  if (route === undefined || typeof route.handler !== 'function') throw new Error('真实设置 handler 未注册')
-
-  const handler = route.handler
-  server = createServer((req, res) => {
-    Promise.resolve(handler(req, res)).catch((error) => {
+  check('真实 apply 注册 prefix 路由且登记 auto:false 页面策略（owner = ctx.fiber）', route !== undefined && typeof route.handler === 'function' && settingsPolicies.length === 1 && settingsPolicies[0].policy.auto === false && settingsPolicies[0].owner === mockContext.fiber)
+  const server = createServer((req, res) => {
+    Promise.resolve(route.handler(req, res)).catch((error) => {
       if (!res.headersSent) {
         res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify({ error: String(error && error.message || error) }))
@@ -191,114 +235,73 @@ try {
     server.once('error', reject)
     server.listen(0, '127.0.0.1', () => resolve(server.address().port))
   })
-  serverStarted = true
+  return { server, port }
+}
 
-  const proBefore = await requestJson(port, 'GET', '/api/dsh-extra-plan-settings/pro-config')
-  check('pro-config GET 返回 10 项 metadata 与旧值', proBefore.status === 200 && proBefore.body.fields.length === 10 && valuesFrom(proBefore.body).plannerModel === oldValues.plannerModel && valuesFrom(proBefore.body).creativeMode === oldValues.creativeMode && valuesFrom(proBefore.body).crossProviderPlannerModel === true && valuesFrom(proBefore.body).otherAgentModel === oldValues.otherAgentModel && valuesFrom(proBefore.body).toolPresentationMode === oldValues.toolPresentationMode)
-  const fieldMap = new Map(proBefore.body.fields.map((field) => [field.key, field]))
-  const fieldKeys = proBefore.body.fields.map((field) => field.key)
-  check('pro metadata 控件/min/mode 由描述表提供', fieldMap.get('exploreBudget').control === 'number' && fieldMap.get('exploreBudget').min === 1 && fieldMap.get('toolPresentationMode').options.join('/') === 'native/ptc/both' && fieldMap.get('crossProviderPlannerModel').control === 'select' && fieldMap.get('crossProviderPlannerModel').options.join('/') === 'true/false' && fieldMap.get('otherAgentModel').control === 'text')
-  const generalKeys = ['anchoredBootstrap', 'creativeMode', 'webFetch', 'toolPresentationMode', 'runcodeCatchGate']
-  const proKeys = ['crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel']
-  check('metadata 通用设置区块顺序与 section', generalKeys.every((key, index) => fieldKeys[index] === key && fieldMap.get(key).section === 'general'))
-  check('metadata pro 规划区块顺序与 section', proKeys.every((key, index) => fieldKeys[index + generalKeys.length] === key && fieldMap.get(key).section === 'pro') && proBefore.body.fields.every((field) => field.section !== undefined))
-  check('pro 区块内跨提供方紧跟使用模型', fieldKeys.indexOf('crossProviderPlannerModel') + 1 === fieldKeys.indexOf('plannerModel'))
+try {
+  const editor = makeConfigEditor()
+  const { server, port } = await startServer(editor)
+  try {
+    const before = await requestJson(port, 'GET', '/api/dsh-extra-plan-settings/pro-config')
+    check('GET 只读现值：2 项 metadata + 声明行子行当前值（fetch=false / mode=native）', before.status === 200 && before.body.fields.length === 2 && before.body.values.webFetch === false && before.body.values.toolPresentationMode === 'native')
+    check('GET fields 由描述表提供控件/选项（select + native/ptc/both）', before.body.fields.find((field) => field.key === 'toolPresentationMode').options.join('/') === 'native/ptc/both' && before.body.fields.find((field) => field.key === 'webFetch').control === 'select')
 
-  const beforePut = readFileSync(join(presetDir, 'agent.cordis.yml'), 'utf8')
-  const putBody = { ...newValues }
-  const proPut = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', putBody)
-  check('pro-config PUT 返回更新后的实际 values', proPut.status === 200 && valuesFrom(proPut.body).plannerModel === newValues.plannerModel && valuesFrom(proPut.body).creativeMode === newValues.creativeMode && valuesFrom(proPut.body).crossProviderPlannerModel === false && valuesFrom(proPut.body).exploreBudget === newValues.exploreBudget && valuesFrom(proPut.body).otherAgentModel === newValues.otherAgentModel && valuesFrom(proPut.body).toolPresentationMode === newValues.toolPresentationMode)
-  const afterPut = readFileSync(join(presetDir, 'agent.cordis.yml'), 'utf8')
-  const changed = diffLines(beforePut, afterPut)
-  const managedLeaves = managedDefinitions.map((item) => item.path.split('.').at(-1))
-  check('pro PUT 只改描述表登记的标量行', changed.length === managedDefinitions.length && changed.every((item) => managedLeaves.some((leaf) => item.after.includes(leaf + ':'))))
-  const parsedAfterPut = parsePresetYaml(afterPut)
-  check('pro PUT 目标文件 10 项由稳定 locator 读取', managedDefinitions.every((item) => {
-    const value = resolveSetting(parsedAfterPut, item, { aliases: false })
-    return value.kind === 'ok' && value.value === (item.key === 'plannerModel' ? newValues.plannerModel : newValues[item.key])
-  }))
+    const pluginsBefore = structuredClone(editor.state.plugins)
+    const put = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true, toolPresentationMode: 'ptc' })
+    check('PUT 2 项 → 200 且回读为写入值', put.status === 200 && put.body.values.webFetch === true && put.body.values.toolPresentationMode === 'ptc')
+    check('PUT 经 configEditor.edit 整体重述声明行 plugins（恰 1 次 edit，目标行 = 声明行）', editor.state.edits.length === 1 && editor.state.edits[0].id === PRESET_ROW_ID)
+    const afterPlugins = editor.state.plugins
+    const webAfter = afterPlugins.find((row) => row.id === 'tool-web')
+    const presentAfter = afterPlugins.find((row) => row.id === 'tool-presentation')
+    check('PUT 只改目标子行目标键：tool-web.config.fetch=true、tool-presentation.config.mode=ptc，其余键与行集合原样', webAfter.config.fetch === true && webAfter.config.searchTimeoutMs === 60000 && presentAfter.config.mode === 'ptc' && afterPlugins.length === pluginsBefore.length)
+    check('PUT 不改动原 plugins 对象（深拷贝整体重述，纯函数语义）', pluginsBefore.find((row) => row.id === 'tool-web').config.fetch === false)
 
-  const truePut = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { ...newValues, crossProviderPlannerModel: true })
-  check('pro PUT crossProviderPlannerModel:true → 200 且写入 true', truePut.status === 200 && valuesFrom(truePut.body).crossProviderPlannerModel === true && readFileSync(join(presetDir, 'agent.cordis.yml'), 'utf8').includes('crossProviderPlannerModel: true'))
-  const falsePut = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { ...newValues, crossProviderPlannerModel: false })
-  check('pro PUT crossProviderPlannerModel:false → 200 且写入 false', falsePut.status === 200 && valuesFrom(falsePut.body).crossProviderPlannerModel === false && readFileSync(join(presetDir, 'agent.cordis.yml'), 'utf8').includes('crossProviderPlannerModel: false'))
+    const before2 = readFileSync(ASSET_PATCH, 'utf8')
+    const partial = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: false })
+    check('PUT 单键 → 200 且另一键保持现值', partial.status === 200 && partial.body.values.webFetch === false && partial.body.values.toolPresentationMode === 'ptc')
+    check('PUT 不触碰资产文件（写链只在宿主 editor）', readFileSync(ASSET_PATCH, 'utf8') === before2)
 
-  // T4：plannerModel 空白/空串已合法（显式清空=继承主会话模型），移出非法值表；
-  // 其正例在同段末尾单独断言（PUT 200 + GET 回显空串 + 文件写回空串标量）。
-  const invalidBodies = [
-    ['crossProviderPlannerModel 字符串', { crossProviderPlannerModel: 'true' }],
-    ['crossProviderPlannerModel 数字', { crossProviderPlannerModel: 1 }],
-    ['crossProviderPlannerModel null', { crossProviderPlannerModel: null }],
-    ['exploreBudget 0', { exploreBudget: 0 }],
-    ['plannerPromptSuffix 非 string', { plannerPromptSuffix: 1 }],
-    ['otherAgentModel 数字', { otherAgentModel: 1 }],
-    ['otherAgentModel null', { otherAgentModel: null }],
-    ['creativeMode 字符串', { creativeMode: 'true' }],
-    ['creativeMode 数字', { creativeMode: 1 }],
-    ['creativeMode null', { creativeMode: null }],
-    ['anchoredBootstrap string', { anchoredBootstrap: 'true' }],
-    ['webFetch number', { webFetch: 1 }],
-    ['toolPresentationMode code', { toolPresentationMode: 'code' }],
-  ]
-  for (const [label, invalid] of invalidBodies) {
-    const result = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { ...newValues, ...invalid })
-    check('pro 严格拒绝 ' + label, result.status === 400)
+    const unknown = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { plannerModel: 'x' })
+    check('PUT 未支持字段 → 400（本接口仅收 2 项）', unknown.status === 400 && String(unknown.body.error).includes('unsupported field'))
+    const badMode = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { toolPresentationMode: 'code' })
+    check('PUT 非法枚举值 → 400', badMode.status === 400)
+    const badBool = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: 1 })
+    check('PUT 非法布尔值 → 400', badBool.status === 400)
+    const empty = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', {})
+    check('PUT 空体 → 400（至少一项）', empty.status === 400)
+  } finally {
+    await new Promise((resolve) => server.close(() => resolve()))
   }
 
-  // T4 正例：plannerModel 空串（显式清空 → 继承主会话模型）可保存且原样回显
-  const emptyPut = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { ...newValues, plannerModel: '' })
-  check('pro PUT plannerModel:"" → 200 且 values.plannerModel 为空串', emptyPut.status === 200 && valuesFrom(emptyPut.body).plannerModel === '')
-  const emptyGet = await requestJson(port, 'GET', '/api/dsh-extra-plan-settings/pro-config')
-  check('pro GET 回显 plannerModel 为空串（未被回填资产默认）', emptyGet.status === 200 && valuesFrom(emptyGet.body).plannerModel === '')
-  const emptyText = readFileSync(join(presetDir, 'agent.cordis.yml'), 'utf8')
-  check('空串写回 plannerModel: \'\' 标量行（键保留、不删行、不回填默认值）', emptyText.includes("plannerModel: ''") && !emptyText.includes('plannerModel: deepseek-v4-pro'))
-
-  const otherEmptyPut = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { ...newValues, plannerModel: '', otherAgentModel: '' })
-  check('pro PUT otherAgentModel:"" → 200 且 values.otherAgentModel 为空串', otherEmptyPut.status === 200 && valuesFrom(otherEmptyPut.body).otherAgentModel === '')
-  const otherEmptyGet = await requestJson(port, 'GET', '/api/dsh-extra-plan-settings/pro-config')
-  check('pro GET 回显 otherAgentModel 为空串（未被默认覆盖）', otherEmptyGet.status === 200 && valuesFrom(otherEmptyGet.body).otherAgentModel === '')
-  const otherEmptyText = readFileSync(join(presetDir, 'agent.cordis.yml'), 'utf8')
-  check("空串写回 otherAgentModel: '' 标量行", otherEmptyText.includes("otherAgentModel: ''"))
-
-  const clientText = readFileSync(new URL('../../plugins/dsh-extra-plan/lib/client.js', import.meta.url), 'utf8')
-  const expectedHints = {
-    anchoredBootstrap: '首轮极简工具 + 提示词 ｜ 新会话/新子代理生效',
-    creativeMode: '是否开启dsh官方创造模式 ｜ 重启生效',
-    webFetch: '是否开启web_fetch ｜ 重启生效',
-    toolPresentationMode: '工具呈现方式切换（默认/混合/PTC模式） ｜ 重启生效',
-    runcodeCatchGate: 'PTC模式下，增加每个工具调用需要try catch的闸门。通过限制+建议的模式保障仅单个调用报错 ｜ 立即生效',
-    crossProviderPlannerModel: '允许跨提供方选择模型。开启时将以 其他提供方 - 主会话提供方 - deepseek官方 的顺序，获取可用模型。关闭时仅从主会话提供方获取。默认关闭 ｜ 新会话/新子代理生效',
-    plannerModel: 'pro规划默认使用模型。未匹配/置空时：使用主会话模型 ｜ 新会话/新子代理生效',
-    plannerPromptSuffix: '在主会话发送给pro规划的任务结尾，拼接上的内容。可能能增加pro规划的智商（未验证）。可置空 ｜ 立即生效',
-    exploreBudget: '允许pro规划调用工具的次数，避免后台无限制调用。同时限制一次runcode内可调用的工具上限数 ｜ 立即生效',
-    otherAgentModel: '其他子代理默认使用模型。未匹配/置空时：使用主会话模型 ｜ 新会话/新子代理生效',
+  // 行定位失败口径
+  const missingEditor = makeConfigEditor({ present: false })
+  const missingRun = await startServer(missingEditor)
+  try {
+    const get = await requestJson(missingRun.port, 'GET', '/api/dsh-extra-plan-settings/pro-config')
+    check('声明行缺失：GET 回落到出厂默认（200，不抛）', get.status === 200 && get.body.values.webFetch === false && get.body.values.toolPresentationMode === 'native')
+    const put = await requestJson(missingRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
+    check('声明行缺失：PUT → 404（行定位口径）', put.status === 404 && String(put.body.error).includes('declaration row not found'))
+  } finally {
+    await new Promise((resolve) => missingRun.server.close(() => resolve()))
   }
-  check('client 按 metadata 渲染控件且无硬编码模板路径/默认/枚举值', clientText.includes('setFields(fields)') && clientText.includes('field.options') && clientText.includes('field.min') && clientText.includes('field.step') && clientText.includes('field.type === "integer" ? Number(value)') && !clientText.includes('agent.cordis.yml') && !clientText.includes('value: "native"') && !clientText.includes('value: "ptc"') && !clientText.includes(': 18'))
-  check('client 标签与三项 zh 文案已对齐', clientText.includes('cardDescription: "配置按需规划模式的参数"') && clientText.includes('plannerModel: "pro规划 | 使用模型"') && clientText.includes('creativeMode: "创造模式开关"') && clientText.includes('plannerPromptSuffix: "pro规划 | 额外引导"') && clientText.includes('exploreBudget: "pro规划 | 探查额度"') && clientText.includes('otherAgentModel: "其他子代理 | 使用模型"') && clientText.includes('crossProviderPlannerModel: "跨提供方"') && clientText.includes('toolPresentationModePtc: "PTC模式"') && !clientText.includes('plannerModel: "使用模型"') && !clientText.includes('plannerPromptSuffix: "额外引导"') && !clientText.includes('exploreBudget: "探查额度"'))
-  for (const [key, hint] of Object.entries(expectedHints)) {
-    check('client 静态 hint ' + key, clientText.includes(key + ': "' + hint + '"'))
+
+  // edit/reconcile 失败口径
+  const failingEditor = makeConfigEditor()
+  failingEditor.edit = async () => { throw new Error('reconcile failed: new row did not load') }
+  const failingRun = await startServer(failingEditor)
+  try {
+    const put = await requestJson(failingRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
+    check('edit/reconcile 失败 → 500（非行定位错误）', put.status === 500 && String(put.body.error).includes('reconcile failed'))
+  } finally {
+    await new Promise((resolve) => failingRun.server.close(() => resolve()))
   }
-  const fieldRenderStart = clientText.indexOf('return el("label", { className: "esp-field"')
-  const fieldRenderText = fieldRenderStart < 0 ? '' : clientText.slice(fieldRenderStart, fieldRenderStart + 700)
-  check('client 10 个字段统一按 head→control→hint 渲染', Object.keys(expectedHints).every((key) => clientText.includes(key)) && clientText.includes('FIELD_HINTS[key]') && fieldRenderText.indexOf('className: "esp-fieldHead"') >= 0 && fieldRenderText.indexOf('control,') > fieldRenderText.indexOf('className: "esp-fieldHead"') && fieldRenderText.indexOf('className: "esp-hint"') > fieldRenderText.indexOf('control,'))
-  check('client 保留通用设置与 pro规划模块双区块', clientText.includes('t("generalSection")') && clientText.includes('t("proSection")') && clientText.includes('generalFields.map(renderField)') && clientText.includes('proFields.map(renderField)'))
-  check('client 使用本地稳定卡片/字段样式与相邻分隔线', clientText.includes('.esp-card{') && clientText.includes('.esp-cardOpen') && clientText.includes('.esp-cardHeader{') && clientText.includes('.esp-cardBody{') && clientText.includes('.esp-cardFooter{') && clientText.includes('.esp-field{display:flex;flex-direction:column;gap:6px;padding:12px 0}') && clientText.includes('.esp-field + .esp-field{border-top:.5px solid var(--dsw-alias-border-l2)}') && clientText.includes('border-radius:16px') && clientText.includes('padding:14px 16px') && clientText.includes('margin:0 16px;padding-bottom:8px') && clientText.includes('padding:12px 0 4px'))
-  const readyBlockStart = clientText.indexOf('return el(React.Fragment, null,')
-  const readyBlockText = readyBlockStart < 0 ? '' : clientText.slice(readyBlockStart, readyBlockStart + 1200)
-  const espCardFooterCount = (clientText.match(/className: "esp-cardFooter"/g) || []).length
-  check('client 双内嵌卡片官方稳定外观与共享保存区', clientText.includes('.esp-wrap{display:flex;flex-direction:column;gap:20px;') && clientText.includes('.esp-section{border:.5px solid var(--dsw-alias-border-l4);background:var(--dsw-alias-bg-layer-3);border-radius:16px;padding:14px 16px;display:flex;flex-direction:column;gap:0}') && clientText.includes('.esp-section + .esp-section{margin-top:0}') && !clientText.includes('.esp-section{display:flex;flex-direction:column;gap:0;padding:10px 0 0}') && !clientText.includes('.esp-section + .esp-section{margin-top:8px}') && readyBlockText.includes('t("generalSection")') && readyBlockText.includes('generalFields.map(renderField)') && readyBlockText.includes('t("proSection")') && readyBlockText.includes('proFields.map(renderField)') && clientText.includes('className: "esp-cardBody"') && readyBlockText.includes('className: "esp-cardFooter"') && espCardFooterCount === 1)
-  check('client 控件尺寸/焦点与 textarea 视觉契约', clientText.includes('font-size:13px;font-weight:500;line-height:1.5') && clientText.includes('height:34px') && clientText.includes('border-radius:8px;padding:0 12px') && clientText.includes(':focus-visible') && clientText.includes('resize:vertical;min-height:80px'))
-  check('client 无官方哈希类、未公开组件或 README 运行时依赖', !clientText.includes('YyYd_a_') && !clientText.includes('At1oFq_') && !clientText.includes('ValueField') && !clientText.includes('PluginCard') && !clientText.includes('CardForm') && !clientText.includes('README.md'))
-  check('hint/option 工具呈现模式统一为 PTC模式', clientText.includes('toolPresentationMode: "工具呈现模式"') && clientText.includes('toolPresentationModePtc: "PTC模式"') && clientText.includes('toolPresentationMode: "工具呈现方式切换（默认/混合/PTC模式） ｜ 重启生效"'))
-  check('client 保留 GET/PUT、slot key 与 slots/locale 注入', clientText.includes('const PRO_CONFIG_URL = "/api/dsh-extra-plan-settings/pro-config"') && clientText.includes('method: "PUT"') && clientText.includes('key: "dsh-extra-plan"') && clientText.includes('exports.inject = ["slots", "locale"]') && clientText.includes('inject: () => ({})'))
+
+  // restatePresetPlugins 与 settings.js 走同一实现（写链单一来源）
+  const shared = restatePresetPlugins({ plugins: declaredPlugins() }, {}, { hostRowConfig: { 'tool-web': { fetch: true } }, gateWords: null })
+  check('settings.js 与 preset-sync.js 共用 restatePresetPlugins（单点写链，返回 {...current, plugins}）', shared.plugins.find((row) => row.id === 'tool-web').config.fetch === true && restatePluginsRow(declaredPlugins(), 'tool-web', { fetch: true }) !== null)
 } catch (error) {
   fail += 1
   console.error('FAIL  设置页 HTTP 回归异常: ' + String(error && error.stack || error))
-} finally {
-  if (server !== null && serverStarted) await new Promise((resolve) => server.close(() => resolve()))
-  if (previousDshHome === undefined) delete process.env.DSH_HOME
-  else process.env.DSH_HOME = previousDshHome
-  rmSync(fixtureHome, { recursive: true, force: true })
 }
 
 console.log('\n通过 ' + pass + ', 失败 ' + fail)

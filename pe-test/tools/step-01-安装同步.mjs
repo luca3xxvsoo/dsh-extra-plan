@@ -1,19 +1,47 @@
-// syncPreset 启动自愈入口的选择性迁移回归。
-// 全部写入均在系统临时 DSH_HOME，绝不使用真实生产目录。
+// syncPreset 启动自愈回归（dsh 0.1.7-rc.1 新载体）。
+// 夹具（全部位于系统临时 DSH_HOME，绝不使用真实生产目录）：
+//   状态目录 $DSH_HOME/.agent-presets/extra-plan/（dist-manifest.json 台账 + 旧分发副本 agent.cordis.yml）
+//   目标物 $DSH_HOME/profiles/web/cordis.patch.yml（声明行 preset-extra-plan 的 config.plugins）
+// 断言语义保留（原「首次/升级/幂等 + settings captured/10 项 + gateWordsMigration 7 项」）：
+//   首次 → written（源缺席）；有旧副本 → upgraded（8 项落 settings 行、2 项落声明行子行、7 词整组迁移）；
+//   收敛 → idle。写盘经注入的 apply 回调（宿主侧即 configEditor.edit）。
 
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, appendFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { syncPreset } from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
-import { contentHash, readManifest, writeManifest } from '../_shared/preset-hash.mjs'
-import { SETTING_DEFINITIONS, parsePresetYaml, patchYamlScalar, resolveSetting } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
-import { GATE_WORD_FIELDS, GATE_WORD_MIGRATION_DEFINITIONS, GATE_WORDS_GROUP_DEFINITION, createGateRuntime } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
+import {
+  ASSET_DIR,
+  ASSET_PATCH_FILE,
+  contentHash,
+  initStateDir,
+  readManifest,
+  readManifestRecordOf,
+  syncPreset,
+  stateDirOf,
+  DECLARATION_ROW_IDS,
+  declarationCoversAsset,
+} from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
+import { SETTING_DEFINITIONS, patchYamlScalar } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
+import { GATE_WORD_FIELDS, GATE_WORD_MIGRATION_DEFINITIONS } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
-const ASSET_DIR = join(HERE, '..', '..', 'plugins', 'dsh-extra-plan', 'assets', 'presets', 'extra-plan')
 const assetAgent = readFileSync(join(ASSET_DIR, 'agent.cordis.yml'), 'utf8')
+const generatedPatchText = readFileSync(ASSET_PATCH_FILE, 'utf8')
 const definition = (key) => SETTING_DEFINITIONS.find((item) => item.key === key)
+
+// 声明行夹具：把生成产物的 insert 行去缩进 4 列 → 直接作为 profile patch 的根级声明行。
+function declarationPatchText() {
+  const lines = generatedPatchText.split('\n').slice(4)
+  const out = []
+  for (const line of lines) {
+    if (line === '') { out.push(''); continue }
+    if (!line.startsWith('    ')) throw new Error('生成产物缩进异常：' + JSON.stringify(line))
+    out.push(line.slice(4))
+  }
+  while (out.length > 0 && out[out.length - 1].trim() === '') out.pop()
+  return out.join('\n') + '\n'
+}
 
 let pass = 0
 let fail = 0
@@ -31,17 +59,31 @@ function patchAgent(values) {
   }
   return text
 }
-
-function manifestAt(dist) {
-  return JSON.parse(readFileSync(join(dist, 'dist-manifest.json'), 'utf8'))
+function customGateAgent(text, custom) {
+  let out = text
+  for (const item of GATE_WORD_MIGRATION_DEFINITIONS) {
+    const patched = patchYamlScalar(out, item, custom[item.key])
+    if (!patched.ok) throw new Error('fixture patch failed: ' + item.key)
+    out = patched.text
+  }
+  return out
 }
 
-const work = mkdtempSync(join(tmpdir(), 'dsh-sync-migration-'))
+const work = mkdtempSync(join(tmpdir(), 'dsh-sync-carrier-'))
 const home = join(work, 'home')
-const dist = join(home, '.agent-presets', 'extra-plan')
-mkdirSync(home, { recursive: true })
+const stateDir = stateDirOf(home)
+const profileDir = join(home, 'profiles', 'web')
+const patchFile = join(profileDir, 'cordis.patch.yml')
+mkdirSync(stateDir, { recursive: true })
+mkdirSync(profileDir, { recursive: true })
+writeFileSync(patchFile, declarationPatchText(), 'utf8')
 const currentHash = contentHash(ASSET_DIR)
-const oldValues = {
+const readPatch = () => readFileSync(patchFile, 'utf8')
+const declaredFromPatch = () => {
+  const parsed = readPatch()
+  return parsed
+}
+const CUSTOM = {
   plannerModel: 'old-sync-model',
   crossProviderPlannerModel: true,
   plannerPromptSuffix: 'old: sync suffix',
@@ -53,108 +95,96 @@ const oldValues = {
   webFetch: true,
   toolPresentationMode: 'both',
 }
-const expectedOldAgent = patchAgent(oldValues)
+const GATE_CUSTOM = { routeDirect: '甲直行', routePlan: '乙规划', routeDisagree: '丙否决', approvalApprove: '丁批准', approvalReplan: '戊转规划', purposeRefine: '己完整', purposeRedo: '庚重做' }
 
 try {
-  check('首次自愈 → written', syncPreset(home) === 'written')
-  check('首次 manifest format=2/10 项审计', (() => { const m = manifestAt(dist); return m.format === 2 && m.distHash === currentHash && Object.keys(m.settingsMigration.results).length === 10 })())
-  check('首次安装 gateWordsMigration 恰 7 项且全为 skipped-source-absent（format=1）', (() => { const m = manifestAt(dist); return m.gateWordsMigration !== undefined && m.gateWordsMigration.format === 1 && m.gateWordsMigration.source === 'absent' && Object.keys(m.gateWordsMigration.results).length === 7 && Object.values(m.gateWordsMigration.results).every((result) => result === 'skipped-source-absent') })())
-  check('首次第二次 → idle', syncPreset(home) === 'idle')
+  // ① 首次自愈（无旧副本）：写入资产 hash + 缺席审计；无内容落地（apply 不被调用）
+  check('首次 initStateDir → written', initStateDir(home).action === 'written')
+  const applied = []
+  const first = await syncPreset({ dshHome: home, readPatch, apply: async (plan, ctx) => { applied.push({ plan, ctx }) } })
+  check('首次自愈 → written', first.action === 'written')
+  check('首次 manifest format=2 / distHash=厂商 hash / readManifest 一致', first.plan !== undefined && readManifestRecordOf(stateDir).format === 2 && readManifest(stateDir) === currentHash)
+  check('首次 settingsMigration source=absent 且 10 项全 skipped-source-absent', (() => { const m = readManifestRecordOf(stateDir); return m.settingsMigration.source === 'absent' && Object.keys(m.settingsMigration.results).length === 10 && Object.values(m.settingsMigration.results).every((r) => r === 'skipped-source-absent') })())
+  check('首次 gateWordsMigration 7 项全 skipped-source-absent', (() => { const m = readManifestRecordOf(stateDir); return m.gateWordsMigration.format === 1 && m.gateWordsMigration.source === 'absent' && Object.keys(m.gateWordsMigration.results).length === 7 && Object.values(m.gateWordsMigration.results).every((r) => r === 'skipped-source-absent') })())
+  check('首次无旧值 → settings/preset 均无落地内容（apply 不写入）', first.plan.settings === null && first.plan.preset === null)
 
-  writeFileSync(join(dist, 'agent.cordis.yml'), expectedOldAgent, 'utf8')
-  writeManifest(dist, 'OLD-SYNC-HASH')
-  const profile = join(home, 'profiles', 'sample')
-  mkdirSync(profile, { recursive: true })
-  const patchFile = join(profile, 'cordis.patch.yml')
+  // ② 收敛：第二次 → idle，manifest 字节不变
+  const beforeIdle = readFileSync(join(stateDir, 'dist-manifest.json'))
+  check('第二次 → idle', (await syncPreset({ dshHome: home, readPatch })).action === 'idle')
+  check('idle manifest 字节完全不变', readFileSync(join(stateDir, 'dist-manifest.json')).equals(beforeIdle))
+
+  // ③ 有旧分发副本（10 项定制 + 7 词定制）→ upgraded：内容映射到新载体
+  writeFileSync(join(stateDir, 'agent.cordis.yml'), customGateAgent(patchAgent(CUSTOM), GATE_CUSTOM), 'utf8')
+  writeFileSync(join(stateDir, 'dist-manifest.json'), JSON.stringify({ format: 1, distHash: 'OLD-SYNC-HASH' }, null, 2) + '\n', 'utf8')
+  applied.length = 0
+  const upgraded = await syncPreset({ dshHome: home, readPatch, apply: async (plan, ctx) => { applied.push({ plan, ctx }) } })
+  check('旧 format=1 台账 + 旧副本 → upgraded', upgraded.action === 'upgraded')
+  const planSettings = upgraded.plan.settings
+  const planPreset = upgraded.plan.preset
+  check('升级后 8 项 UI 设置值取自旧副本（settings 行落点）', planSettings !== null &&
+    planSettings.values.plannerModel === 'old-sync-model' && planSettings.values.crossProviderPlannerModel === true &&
+    planSettings.values.plannerPromptSuffix === 'old: sync suffix' && planSettings.values.exploreBudget === 9 &&
+    planSettings.values.otherAgentModel === 'old-sync-other-model' && planSettings.values.anchoredBootstrap === false &&
+    planSettings.values.creativeMode === false && planSettings.values.runcodeCatchGate === true &&
+    Object.keys(planSettings.values).length === 8)
+  check('升级后 2 项宿主行落声明行 plugins 子行（tool-web.fetch / tool-presentation.mode）', planPreset !== null &&
+    planPreset.hostRowConfig['tool-web'].fetch === true && planPreset.hostRowConfig['tool-presentation'].mode === 'both')
+  check('升级后 7 词整组迁移（gateWords 全部为旧值）', planPreset.gateWords !== null && GATE_WORD_FIELDS.every((item) => planPreset.gateWords[item.field] === GATE_CUSTOM[item.field]))
+  check('升级后 settingsMigration source=captured 且 10 项全 restored', upgraded.plan.audit.source === 'captured' && Object.keys(upgraded.plan.audit.results).length === 10 && Object.values(upgraded.plan.audit.results).every((r) => r === 'restored'))
+  check('升级后 gateWordsMigration 7 项全 restored', Object.keys(upgraded.plan.gateAudit.results).length === 7 && Object.values(upgraded.plan.gateAudit.results).every((r) => r === 'restored'))
+  check('apply 回调收到本次 plan 与上下文（宿主侧即 configEditor.edit 的落地面）', applied.length === 1 && applied[0].plan === upgraded.plan && applied[0].ctx.stateDir === stateDir && applied[0].ctx.distHash === currentHash && applied[0].ctx.action === 'upgraded')
+  const upgradedManifest = readManifestRecordOf(stateDir)
+  check('升级后 manifest format=2 / 厂商 hash / captured', upgradedManifest.format === 2 && upgradedManifest.distHash === currentHash && upgradedManifest.settingsMigration.source === 'captured')
+  check('升级后 manifest 不泄漏用户值', !JSON.stringify(upgradedManifest).includes('old-sync-model') && !JSON.stringify(upgradedManifest).includes(GATE_CUSTOM.routeDirect))
+  check('升级后再次同步 → idle（收敛）', (await syncPreset({ dshHome: home, readPatch })).action === 'idle')
+
+  // ④ 旧副本缺字段 → skipped-old-missing，且不写该键（无值不写回）
+  const missingOther = patchAgent(CUSTOM).replace("        otherAgentModel: 'old-sync-other-model'\n", '')
+  writeFileSync(join(stateDir, 'agent.cordis.yml'), missingOther, 'utf8')
+  writeFileSync(join(stateDir, 'dist-manifest.json'), JSON.stringify({ format: 1, distHash: 'OLD-MISSING-OTHER' }, null, 2) + '\n', 'utf8')
+  const missingRun = await syncPreset({ dshHome: home, readPatch })
+  check('旧副本缺 otherAgentModel → upgraded 且审计 skipped-old-missing', missingRun.action === 'upgraded' && missingRun.plan.audit.results.otherAgentModel === 'skipped-old-missing')
+  check('缺失键不进入落地值（settings 行只写有值的 7 项）', missingRun.plan.settings !== null && !Object.prototype.hasOwnProperty.call(missingRun.plan.settings.values, 'otherAgentModel') && Object.keys(missingRun.plan.settings.values).length === 7)
+
+  // ⑤ 旧副本 7 词非法（重复值）→ 整组 skipped-invalid，不写回；宿主行仍迁移（不抛）
+  const dupGateText = patchAgent(CUSTOM).replace('        routePlan: \'进行pro规划\'', '        routePlan: \'直接执行\'')
+  writeFileSync(join(stateDir, 'agent.cordis.yml'), dupGateText, 'utf8')
+  writeFileSync(join(stateDir, 'dist-manifest.json'), JSON.stringify({ format: 1, distHash: 'OLD-BAD-GATE' }, null, 2) + '\n', 'utf8')
+  const badGate = await syncPreset({ dshHome: home, readPatch })
+  check('旧 7 词非法 → gateWordsMigration 7 项全 skipped-invalid 且不写回（preset.gateWords=null）', badGate.action === 'upgraded' && Object.keys(badGate.plan.gateAudit.results).length === 7 && Object.values(badGate.plan.gateAudit.results).every((r) => r === 'skipped-invalid') && badGate.plan.preset !== null && badGate.plan.preset.gateWords === null)
+  check('7 词非法不阻断宿主行迁移（tool-web/tool-presentation 仍落位）', Object.keys(badGate.plan.preset.hostRowConfig).length === 2)
+
+  // ⑥ 目标物判定：声明行 plugins 缺 extra-plan 行 → 非 idle（即便台账 hash 相同）
+  const manifestNow = readManifestRecordOf(stateDir)
+  const brokenPatch = declarationPatchText().replace('          - id: extra-plan\n', '          - id: extra-plan-renamed\n')
+  writeFileSync(patchFile, brokenPatch, 'utf8')
+  const notCovered = await syncPreset({ dshHome: home, readPatch })
+  check('声明行 plugins 不覆盖资产行 id 集合 → 非 idle', notCovered.action !== 'idle' && manifestNow.distHash === currentHash)
+  check('declarationCoversAsset 双态判定敏感', declarationCoversAsset([{ id: 'extra-plan' }, { id: 'tool-web' }, { id: 'tool-presentation' }]) === true && declarationCoversAsset([{ id: 'extra-plan-renamed' }]) === false)
+  check('DECLARATION_ROW_IDS 覆盖 extra-plan / tool-web / tool-presentation', DECLARATION_ROW_IDS.join('|') === 'extra-plan|tool-web|tool-presentation')
+  writeFileSync(patchFile, declarationPatchText(), 'utf8')
+
+  // ⑦ 旧 flash-guide 根级块清理：profiles/*/cordis.patch.yml 契约保持
+  const sampleDir = join(home, 'profiles', 'sample')
+  mkdirSync(sampleDir, { recursive: true })
+  const samplePatch = join(sampleDir, 'cordis.patch.yml')
   const approval = '    approvalEnabled: true'
-  writeFileSync(patchFile, '- id: flash-guide\n  disabled: true\n- id: keep\n  config:\n' + approval + '\n', 'utf8')
-  check('旧 format=1 记录 → upgraded', syncPreset(home) === 'upgraded')
-  const upgraded = manifestAt(dist)
-  check('升级后全部有效旧值恢复', readFileSync(join(dist, 'agent.cordis.yml'), 'utf8') === expectedOldAgent)
-  check('升级后 format=2/厂商 hash/audit captured', upgraded.format === 2 && upgraded.distHash === currentHash && upgraded.settingsMigration.source === 'captured')
-  check('升级后清理旧 flash 且不碰其他 patch 字段', !readFileSync(patchFile, 'utf8').includes('flash-guide') && readFileSync(patchFile, 'utf8').includes(approval))
+  writeFileSync(samplePatch, '- id: flash-guide\n  disabled: true\n- id: keep\n  config:\n' + approval + '\n', 'utf8')
+  writeFileSync(join(stateDir, 'dist-manifest.json'), JSON.stringify({ format: 1, distHash: 'OLD-FLASH' }, null, 2) + '\n', 'utf8')
+  const flashRun = await syncPreset({ dshHome: home, readPatch })
+  check('非 idle 运行清理旧 flash-guide 块且不碰其它行', flashRun.action === 'upgraded' && !readFileSync(samplePatch, 'utf8').includes('flash-guide') && readFileSync(samplePatch, 'utf8').includes(approval))
 
-  writeFileSync(join(dist, 'agent.cordis.yml'), patchAgent({ plannerModel: 'old-sync-no-manifest' }), 'utf8')
-  rmSync(join(dist, 'dist-manifest.json'))
-  check('无 manifest 仍 upgraded', syncPreset(home) === 'upgraded')
-  const noManifest = manifestAt(dist)
-  check('无 manifest sourceDistHash=null/旧值恢复', noManifest.settingsMigration.sourceDistHash === null && readFileSync(join(dist, 'agent.cordis.yml'), 'utf8').includes("plannerModel: 'old-sync-no-manifest'"))
+  // ⑧ 空 plannerModel（显式清空）→ captured/restored，写回 '' 而非回填资产默认
+  writeFileSync(join(stateDir, 'agent.cordis.yml'), patchAgent({ plannerModel: '' }), 'utf8')
+  writeFileSync(join(stateDir, 'dist-manifest.json'), JSON.stringify({ format: 1, distHash: 'OLD-EMPTY-PLANNER' }, null, 2) + '\n', 'utf8')
+  const emptyRun = await syncPreset({ dshHome: home, readPatch })
+  check('旧值空串 plannerModel → restored 且落地值为 ``（不回填 deepseek-v4-pro）', emptyRun.action === 'upgraded' && emptyRun.plan.audit.results.plannerModel === 'restored' && emptyRun.plan.settings.values.plannerModel === '')
 
-  const beforeIdle = [readFileSync(join(dist, 'preset.yml')), readFileSync(join(dist, 'agent.cordis.yml')), readFileSync(join(dist, 'dist-manifest.json'))]
-  check('相同 hash 收敛 → idle', syncPreset(home) === 'idle')
-  const afterIdle = [readFileSync(join(dist, 'preset.yml')), readFileSync(join(dist, 'agent.cordis.yml')), readFileSync(join(dist, 'dist-manifest.json'))]
-  check('idle 三个核心字节完全不变且 readManifest 正确', beforeIdle.every((value, index) => value.equals(afterIdle[index])) && readManifest(dist) === currentHash)
-
-  // ── gateWords：同 hash 普通重启保留 + hash 变化版本升级整组迁移（[任务5]） ──
-  const GATE_CUSTOM = { routeDirect: '甲直行', routePlan: '乙规划', routeDisagree: '丙否决', approvalApprove: '丁批准', approvalReplan: '戊转规划', purposeRefine: '己完整', purposeRedo: '庚重做' }
-  function customGateAgent(text) {
-    let out = text
-    for (const item of GATE_WORD_MIGRATION_DEFINITIONS) {
-      const patched = patchYamlScalar(out, item, GATE_CUSTOM[item.key])
-      if (!patched.ok) throw new Error('fixture patch failed: ' + item.key)
-      out = patched.text
-    }
-    return out
-  }
-  function flattenRows(list) {
-    const out = []
-    for (const row of list) {
-      if (row === null || typeof row !== 'object') continue
-      out.push(row)
-      if (row.group === true && Array.isArray(row.config)) out.push(...flattenRows(row.config))
-    }
-    return out
-  }
-  const assetBootstrapPersona = flattenRows(parsePresetYaml(assetAgent)).find((row) => row.id === 'extra-plan').config.bootstrapPersona
-  function bootstrapPersonaLine(value) { return "        bootstrapPersona: '" + value + "'" }
-
-  // ① 同 hash 普通重启：现场 7 词改成定制值、manifest 保持 currentHash → idle 且字节逐字保留
-  writeFileSync(join(dist, 'agent.cordis.yml'), customGateAgent(assetAgent), 'utf8')
-  const beforeCustomIdle = [readFileSync(join(dist, 'preset.yml')), readFileSync(join(dist, 'agent.cordis.yml')), readFileSync(join(dist, 'dist-manifest.json'))]
-  check('同 hash 现场定制 7 词 → idle（不读取/不改写现场正文）', syncPreset(home) === 'idle')
-  const afterCustomIdle = [readFileSync(join(dist, 'preset.yml')), readFileSync(join(dist, 'agent.cordis.yml')), readFileSync(join(dist, 'dist-manifest.json'))]
-  check('idle 三个核心文件 Buffer 完全相等（用户定制词逐字保留）', beforeCustomIdle.every((value, index) => value.equals(afterCustomIdle[index])))
-
-  // ② hash 变化版本升级：非迁移厂商字段改 OLD 标记 + manifest 改旧 hash
-  const oldMarkerAgent = readFileSync(join(dist, 'agent.cordis.yml'), 'utf8').replace(bootstrapPersonaLine(assetBootstrapPersona), "        bootstrapPersona: 'OLD-SYNC-MARKER'")
-  writeFileSync(join(dist, 'agent.cordis.yml'), oldMarkerAgent, 'utf8')
-  writeManifest(dist, 'OLD-SYNC-GATE-HASH')
-  check('旧 hash + 非迁移字段 OLD 标记 → upgraded', syncPreset(home) === 'upgraded')
-  const upgradedGateManifest = manifestAt(dist)
-  const upgradedGateText = readFileSync(join(dist, 'agent.cordis.yml'), 'utf8')
-  const upgradedGateGroup = resolveSetting(parsePresetYaml(upgradedGateText), GATE_WORDS_GROUP_DEFINITION, { aliases: false })
-  const upgradedGateRuntime = createGateRuntime(upgradedGateGroup.value)
-  check('升级后 7 个定制词逐项保留（createGateRuntime.variables 等于用户值）', GATE_WORD_FIELDS.every((item) => upgradedGateRuntime.variables[item.variable] === GATE_CUSTOM[item.field]) && GATE_WORD_MIGRATION_DEFINITIONS.every((item) => upgradedGateRuntime.words[item.key] === GATE_CUSTOM[item.key]))
-  check('升级后非迁移厂商字段恢复为当前资产值（新模板其它内容同步）', upgradedGateText.includes('bootstrapPersona: ' + JSON.stringify(assetBootstrapPersona).replace(/^"|"$/g, "'")) && !upgradedGateText.includes('OLD-SYNC-MARKER'))
-  check('升级产物 persona prefix === text 且含 7 个变量引用', (() => { const persona = flattenRows(parsePresetYaml(upgradedGateText)).find((row) => row.id === 'persona'); const refs = Array.from(new Set(persona.config.prefix.match(/\{\{extra_plan_[a-z_]+\}\}/g) || [])); return persona.config.prefix === persona.config.text && refs.length === 7 })())
-  check('升级后 manifest distHash=currentHash / settingsMigration 10 项 / gateWordsMigration 7 项全 restored', upgradedGateManifest.format === 2 && upgradedGateManifest.distHash === currentHash && Object.keys(upgradedGateManifest.settingsMigration.results).length === 10 && Object.keys(upgradedGateManifest.gateWordsMigration.results).length === 7 && Object.values(upgradedGateManifest.gateWordsMigration.results).every((result) => result === 'restored'))
-  check('升级后 manifest 不泄漏用户词值', !JSON.stringify(upgradedGateManifest).includes(GATE_CUSTOM.routeDirect) && !JSON.stringify(upgradedGateManifest).includes(GATE_CUSTOM.approvalReplan))
-  check('升级后再次同步 → idle（收敛）', syncPreset(home) === 'idle')
-
-  const oldMissingCross = expectedOldAgent.replace('        crossProviderPlannerModel: true\n', '')
-  writeFileSync(join(dist, 'agent.cordis.yml'), oldMissingCross, 'utf8')
-  writeManifest(dist, 'OLD-MISSING-CROSS')
-  check('旧值缺失 crossProviderPlannerModel → upgraded', syncPreset(home) === 'upgraded')
-  const missingCrossManifest = manifestAt(dist)
-  const missingCrossText = readFileSync(join(dist, 'agent.cordis.yml'), 'utf8')
-  check('缺失开关写回 false 且审计 skipped-old-missing', missingCrossText.includes('crossProviderPlannerModel: false') && missingCrossManifest.settingsMigration.results.crossProviderPlannerModel === 'skipped-old-missing')
-
-  const oldMissingOther = expectedOldAgent.replace("        otherAgentModel: 'old-sync-other-model'\n", '')
-  writeFileSync(join(dist, 'agent.cordis.yml'), oldMissingOther, 'utf8')
-  writeManifest(dist, 'OLD-MISSING-OTHER')
-  check('旧值缺失 otherAgentModel → upgraded', syncPreset(home) === 'upgraded')
-  const missingOtherManifest = manifestAt(dist)
-  const missingOtherText = readFileSync(join(dist, 'agent.cordis.yml'), 'utf8')
-  check('缺失 otherAgentModel 写回空串且审计 skipped-old-missing', missingOtherText.includes("otherAgentModel: ''") && missingOtherManifest.settingsMigration.results.otherAgentModel === 'skipped-old-missing')
-
-  // T4：旧值 plannerModel 为空串（显式清空）→ captured → restored，写回 '' 且不回填资产默认
-  writeFileSync(join(dist, 'agent.cordis.yml'), patchAgent({ plannerModel: '' }), 'utf8')
-  writeManifest(dist, 'OLD-EMPTY-PLANNER-MODEL')
-  check('旧值空串 → upgraded', syncPreset(home) === 'upgraded')
-  const emptyManifest = manifestAt(dist)
-  const emptyAgentText = readFileSync(join(dist, 'agent.cordis.yml'), 'utf8')
-  check('空串旧值 restored 且写回 plannerModel: \'\'（不删行、不回填 deepseek-v4-pro）', emptyManifest.settingsMigration.results.plannerModel === 'restored' && emptyAgentText.includes("plannerModel: ''") && !emptyAgentText.includes('plannerModel: deepseek-v4-pro'))
-  check('空串迁移后 manifest 仍为厂商 hash/format=2', emptyManifest.format === 2 && emptyManifest.distHash === currentHash && emptyManifest.settingsMigration.source === 'captured')
+  // ⑨ 无台账但状态目录有旧副本（跨版本残留）→ 按首次 written 处理并迁移
+  rmSync(join(stateDir, 'dist-manifest.json'))
+  writeFileSync(join(stateDir, 'agent.cordis.yml'), patchAgent({ exploreBudget: 42 }), 'utf8')
+  const noManifest = await syncPreset({ dshHome: home, readPatch })
+  check('无台账 + 旧副本 → written 且 sourceDistHash=null、exploreBudget=42 恢复', noManifest.action === 'written' && noManifest.plan.audit.sourceDistHash === null && noManifest.plan.settings.values.exploreBudget === 42)
 } finally {
   rmSync(work, { recursive: true, force: true })
 }

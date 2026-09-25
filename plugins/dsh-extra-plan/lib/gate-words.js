@@ -27,20 +27,20 @@ export const GATE_WORD_FIELDS = Object.freeze([
 /** 7 个字段名（顺序即 YAML 中的集中排列顺序）。 */
 export const GATE_WORD_FIELD_NAMES = Object.freeze(GATE_WORD_FIELDS.map((item) => item.field))
 
-/** 整组 locator：id=extra-plan 行的 config.gateWords（供 resolveSetting 直接使用）。 */
+/** 整组 locator：源模板/旧分发副本内 id=extra-plan 行的 config.gateWords（供 resolveSetting 直接使用）。 */
 export const GATE_WORDS_GROUP_DEFINITION = Object.freeze({
   id: 'extra-plan',
-  pluginId: 'extra-plan',
+  rowId: 'extra-plan',
   path: 'config.gateWords',
   keys: GATE_WORD_FIELD_NAMES,
-  locator: Object.freeze({ pluginId: 'extra-plan', path: 'config.gateWords' }),
+  sourceLocator: Object.freeze({ rowId: 'extra-plan', path: 'config.gateWords' }),
 })
 
-/** 7 个迁移叶 locator：id=extra-plan + config.gateWords.<field>，标量类型 string，无 alias、无 UI 属性。 */
+/** 7 个迁移叶 locator：源模板内 id=extra-plan + config.gateWords.<field>，标量类型 string，无 alias、无 UI 属性。 */
 export const GATE_WORD_MIGRATION_DEFINITIONS = Object.freeze(GATE_WORD_FIELDS.map((item) => Object.freeze({
   key: item.field,
-  pluginId: 'extra-plan',
-  locator: Object.freeze({ pluginId: 'extra-plan', path: 'config.gateWords.' + item.field }),
+  rowId: 'extra-plan',
+  sourceLocator: Object.freeze({ rowId: 'extra-plan', path: 'config.gateWords.' + item.field }),
   scalarType: 'string',
 })))
 

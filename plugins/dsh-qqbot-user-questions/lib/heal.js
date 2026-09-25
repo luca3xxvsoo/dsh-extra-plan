@@ -1,7 +1,8 @@
 // @local/dsh-qqbot-user-questions 精简版自愈模块（纯函数，无副作用导入）
 // 供 index.js（DSH 启动 apply）、scripts/heal.mjs（CLI 兜底）、pe-test 复用：
 //   1. findOwnQqbotProfiles(dshHome) 扫描 profiles/* 锚定「装了本插件的 qqbot profile」
-//   2. healPatchRows(profileDir)      迁移旧版 cordis.patch.yml 根级 code-runtime/agent-presets 错误块
+//   2. healPatchRows(profileDir)      迁移旧版 cordis.patch.yml 根级 code-runtime/agent-presets
+//      （0.1.5-rc.2 族）与 ptc-runtime/agent-preset-registry（0.1.7-rc.1 族）错误块
 //   3. ensureDshExtraPlanLink(dshHome, profileName) 建 web → profile 的 @local/dsh-extra-plan 链接
 //   4. healQqbotCompatibility(dshHome) 对每个自有 profile 依次先迁移再建链（整体不阻断）
 // 旧能力（问答/审批/官方包补丁/会话目录删除等 monkey-patch）已删，
@@ -41,7 +42,18 @@ function timestamp() {
 }
 
 // ── 旧版错误块：只迁移根级完整生成条目，静态 insert 由 cordis.patch.yml 唯一提供 ──
+// 【待有 QQBOT 环境再测试，本机不做验证】两行新包族按 dsh 0.1.7-rc.1 同步（方案 U3/U4
+// 未核实项）；0.1.5-rc.2 及更早包族的同形残留保留清理能力，避免旧 profile 升级后残留重复行。
 const LEGACY_ROOT_ENTRIES = [
+  {
+    id: 'ptc-runtime',
+    name: '@deepseek-ai/dsh-ptc-runtime-node',
+  },
+  {
+    id: 'agent-preset-registry',
+    name: '@deepseek-ai/dsh-agent-preset-registry',
+    default: 'extra-plan',
+  },
   {
     id: 'code-runtime',
     name: '@deepseek-ai/dsh-code-runtime-worker-thread',
@@ -238,8 +250,10 @@ function verifyMigratedPatch(content) {
 
 /**
  * 只迁移旧版自愈生成的根级完整块：
- * - code-runtime 的 name 必须是 worker-thread 目标包名；
- * - agent-presets 的 name 必须匹配且 config.default 必须为 standard；
+ * - ptc-runtime 的 name 必须是 dsh-ptc-runtime-node（0.1.7 等价行）；
+ * - agent-preset-registry 的 name 必须匹配且 config.default 必须为 extra-plan；
+ * - code-runtime / agent-presets 为 0.1.5-rc.2 及更早包族的同形残留（config.default
+ *   分别为未声明与 standard）；
  * - 嵌套 insert、im-qqbot 及其他用户条目原样保留。
  * 实际迁移前备份，写后验证顶层 YAML 数组和旧块消失，失败恢复原文；无旧块零写入零备份。
  */

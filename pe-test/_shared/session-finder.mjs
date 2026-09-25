@@ -1,10 +1,10 @@
 // _shared/session-finder.mjs — 取证工具会话定位（step-04/05/06/08 共用）
 // 无参（auto）：全量扫描 DSH_HOME/sessions 下所有工作区会话目录（目录名 <uuid> 或 session-<uuid> 均按目录名处理），
-//   顶层候选 = 首行 session 事件无 parentSession 字段的会话，按会话日志文件（SESSION_LOG_NAMES 两代候选：session.v3.jsonl.zstd / session.jsonl.zstd）mtime 倒序（mtime 相同时按目录名升序稳定化），
+//   顶层候选 = 首行 session 事件无 parentSession 字段的会话，按会话日志文件（SESSION_LOG_NAMES 三代候选：session.v4.jsonl.zstd / session.v3.jsonl.zstd / session.jsonl.zstd）mtime 倒序（mtime 相同时按目录名升序稳定化），
 //   对候选依次全文解码做 includes(MARKER)，首个命中即主会话（免全库全文解码）；
 //   子会话 = 全部会话中首行 parentSession 精确等于主会话目录名的目录，按 zstd mtime 升序。
 // 显式传参（explicit）：会话目录名全库精确匹配（实测目录名全库唯一）；
-//   含分隔符路径校验该目录下会话日志文件（SESSION_LOG_NAMES 两代候选）存在；
+//   含分隔符路径校验该目录下会话日志文件（SESSION_LOG_NAMES 三代候选）存在；
 //   工作区目录（自身无 zstd、但子目录含 zstd）返回该工作区全部会话目录；
 //   均不匹配返回 kind:'notfound'。
 // 说明：首行解析失败的会话按「无 parentSession」处理（兜底）；不使用 agentPreset 字段预筛（实测全库同名无法区分模式）。
@@ -17,13 +17,14 @@ const DSH_HOME = (process.env.DSH_HOME || homedir() + '/.dsh').replaceAll('\\', 
 const SESSIONS = DSH_HOME + '/sessions'
 const MARKER = '按需规划模式'
 
-// 会话日志文件名两代并存（显式候选数组、不用代际正则——避免静默吞掉未来代际编号）：
-//   'session.v3.jsonl.zstd' = DSH 0.1.5-rc.2（SESSION_FORMAT_VERSION 3；sessionFormatLogFilename(3)+compressionSuffix(zstd)）
-//   'session.jsonl.zstd'   = DSH 0.1.2-rc.1 及更早（旧命名，COMPAT 保留）
-// 删除条件：生产整体切到 0.1.5-rc.2 且不再回放旧日志；删除动作：删数组第二项；删除判据：旧名不再被引用。
+// 会话日志文件名三代并存（显式候选数组、不用代际正则——避免静默吞掉未来代际编号）：
+//   'session.v4.jsonl.zstd' = DSH 0.1.7-rc.1（SESSION_FORMAT_VERSION 4；sessionFormatLogFilename(4)+compressionSuffix(zstd)）
+//   'session.v3.jsonl.zstd' = DSH 0.1.5-rc.2（SESSION_FORMAT_VERSION 3）
+//   'session.jsonl.zstd'    = DSH 0.1.2-rc.1 及更早（旧命名，COMPAT 保留）
+// 删除条件：生产整体切到 0.1.7-rc.1 且不再回放旧日志；删除动作：删数组后两项；删除判据：旧名不再被引用。
 // 新版宿主 dsh-session-persistence-jsonl 的 listSessionDirs() 对旧平铺布局抛 legacyLayout（0.1.5-rc.2 内 L3273/L3294，
 // 方法定义 L3327）；本工具自实现目录遍历、不调用宿主 listSessionDirs，不受该抛错影响——按候选名逐项探测，存在即用。
-const SESSION_LOG_NAMES = ['session.v3.jsonl.zstd', 'session.jsonl.zstd']
+const SESSION_LOG_NAMES = ['session.v4.jsonl.zstd', 'session.v3.jsonl.zstd', 'session.jsonl.zstd']
 
 export function logPath(dir) {
   for (const name of SESSION_LOG_NAMES) {
@@ -59,7 +60,7 @@ function readMeta(dir) {
 }
 
 function scanAll() {
-  // 遍历 SESSIONS 下所有工作区目录，收集所有含会话日志文件（SESSION_LOG_NAMES 两代候选）的会话目录。
+  // 遍历 SESSIONS 下所有工作区目录，收集所有含会话日志文件（SESSION_LOG_NAMES 三代候选）的会话目录。
   const out = []
   if (!fs.existsSync(SESSIONS)) return out
   for (const ws of fs.readdirSync(SESSIONS)) {

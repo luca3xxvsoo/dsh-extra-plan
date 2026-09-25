@@ -702,7 +702,8 @@ const schemaAgent = {
   session: { header: { id: 'schema-main' }, snapshotEvents: () => [] },
   ctx: { get: (name) => name === 'tools' ? schemaTools : undefined },
 }
-schemaRegistration.listeners['agent/session-start'][0]({ agent: schemaAgent })
+// 0.1.7 换代：agent/session-start 已删除，启动注册改由 agent/created（serial）承担。
+schemaRegistration.listeners['agent/created'][0]({ agent: schemaAgent, source: 'startup' })
 const schemaSaveProbe = schemaRegistration.registered.find((definition) => definition.name === 'save_probe')
 const schemaDescription = schemaSaveProbe === undefined ? '' : String(schemaSaveProbe.description || '')
 const evidenceDescription = schemaSaveProbe === undefined || schemaSaveProbe.parameters === undefined || schemaSaveProbe.parameters.properties === undefined || schemaSaveProbe.parameters.properties.evidence === undefined ? '' : String(schemaSaveProbe.parameters.properties.evidence.description || '')
@@ -1833,7 +1834,8 @@ const factoryValuesPattern = new RegExp(GATE_FIELD_NAMES.map((field) => assetGat
 check('GWY1 资产 YAML config.gateWords 直属键恰为 7 个闸门字段', Object.keys(assetGateWords), GATE_FIELD_NAMES)
 check('GWY2 GATE_WORD_FIELDS 恰 7 项且每项只含 field/variable 元数据', GATE_WORD_FIELDS.map((item) => Object.keys(item).sort().join('+')), GATE_FIELD_NAMES.map(() => 'field+variable'))
 check('GWY3 GATE_WORD_FIELDS 的 field/variable 与 YAML 键一一对应', GATE_WORD_FIELDS.map((item) => [item.field, item.variable]), GATE_FIELD_NAMES.map((field, index) => [field, GATE_VARIABLE_NAMES[index]]))
-check('GWY4 GATE_WORD_MIGRATION_DEFINITIONS 7 项：id=extra-plan + config.gateWords.<field> + string + 无 alias/UI', GATE_WORD_MIGRATION_DEFINITIONS.map((item) => [item.key, item.locator.pluginId, item.locator.path, item.scalarType, item.locatorAliases === undefined, item.ui === undefined]), GATE_FIELD_NAMES.map((field) => [field, 'extra-plan', 'config.gateWords.' + field, 'string', true, true]))
+// T6 订正：locator 字段名 pluginId → rowId、locator → sourceLocator（旧分发副本/资产模板同形）。
+check('GWY4 GATE_WORD_MIGRATION_DEFINITIONS 7 项：rowId=extra-plan + config.gateWords.<field> + string + 无 alias/UI', GATE_WORD_MIGRATION_DEFINITIONS.map((item) => [item.key, item.sourceLocator.rowId, item.sourceLocator.path, item.scalarType, item.locatorAliases === undefined, item.ui === undefined]), GATE_FIELD_NAMES.map((field) => [field, 'extra-plan', 'config.gateWords.' + field, 'string', true, true]))
 
 // GWY5-GWY7：persona 锚点双键同源、7 个变量引用、无值字面量
 const personaRow = assetRowsAll.find((row) => row.id === 'persona')

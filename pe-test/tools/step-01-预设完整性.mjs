@@ -140,7 +140,7 @@ const required = [
   '@deepseek-ai/dsh-persona', '@local/dsh-extra-plan', '@deepseek-ai/dsh-tool-ask-user',
   '@deepseek-ai/dsh-tool-subagent', '@deepseek-ai/dsh-tool-subagent-control',
   '@deepseek-ai/dsh-tool-subagent-control/list-agents', '@local/dsh-extra-plan/executor-spawn',
-  '@deepseek-ai/dsh-workflow-worker-thread', '@deepseek-ai/dsh-tool-workflow',
+  '@deepseek-ai/dsh-workflow-ptc', '@deepseek-ai/dsh-tool-workflow',
   '@deepseek-ai/dsh-tool-ralph', '@deepseek-ai/dsh-compaction-basic', '@deepseek-ai/dsh-tool-cordis',
 ]
 for (const req of required) {
@@ -150,19 +150,19 @@ for (const req of required) {
 const agentText = readFileSync(file, 'utf8')
 const locatorChecks = SETTING_DEFINITIONS.map((definition) => {
   const parsed = resolveSetting(rows, definition, { aliases: false })
-  const textMatches = findTextLocatorMatches(agentText, definition.locator)
+  const textMatches = findTextLocatorMatches(agentText, definition.sourceLocator)
   return { definition, parsed, textMatches }
 })
 if (SETTING_DEFINITIONS.length === 10 && locatorChecks.every((item) => item.parsed.kind === 'ok' && item.textMatches.length === 1)) {
   pass += 1
-  console.log('PASS  设置白名单恰有 10 个唯一 locator（工作区模板）')
+  console.log('PASS  设置白名单恰有 10 个唯一 sourceLocator（源模板/旧分发副本同形）')
 } else {
   fail += 1
   console.log('FAIL  设置白名单 locator 不完整或有歧义')
 }
 const defaults = Object.fromEntries(locatorChecks.map((item) => [item.definition.key, item.parsed.kind === 'ok' ? item.parsed.value : undefined]))
 const crossDefinition = SETTING_DEFINITIONS.find((item) => item.key === 'crossProviderPlannerModel')
-if (crossDefinition !== undefined && crossDefinition.pluginId === 'extra-plan' && crossDefinition.path === 'config.crossProviderPlannerModel' && crossDefinition.scalarType === 'boolean' && crossDefinition.validator(true) && !crossDefinition.validator('true') && crossDefinition.ui.control === 'select' && crossDefinition.ui.options.join('/') === 'true/false' && crossDefinition.locatorAliases.length === 0) {
+if (crossDefinition !== undefined && crossDefinition.sourceLocator.rowId === 'extra-plan' && crossDefinition.sourceLocator.path === 'config.crossProviderPlannerModel' && crossDefinition.scalarType === 'boolean' && crossDefinition.validator(true) && !crossDefinition.validator('true') && crossDefinition.ui.control === 'select' && crossDefinition.ui.options.join('/') === 'true/false' && crossDefinition.locatorAliases.length === 0) {
   pass += 1
   console.log('PASS  crossProviderPlannerModel descriptor 严格为 boolean select 且无 alias')
 } else {
@@ -170,7 +170,7 @@ if (crossDefinition !== undefined && crossDefinition.pluginId === 'extra-plan' &
   console.log('FAIL  crossProviderPlannerModel descriptor 不符合契约')
 }
 const creativeDefinition = SETTING_DEFINITIONS.find((item) => item.key === 'creativeMode')
-if (creativeDefinition !== undefined && creativeDefinition.pluginId === 'extra-plan' && creativeDefinition.path === 'config.creativeMode' && creativeDefinition.scalarType === 'boolean' && creativeDefinition.validator(true) && !creativeDefinition.validator('true') && !creativeDefinition.validator(1) && creativeDefinition.validator(false) && creativeDefinition.ui.control === 'select' && creativeDefinition.ui.options.join('/') === 'true/false' && creativeDefinition.ui.locale === 'creativeMode' && creativeDefinition.ui.section === 'general' && creativeDefinition.locatorAliases.length === 0) {
+if (creativeDefinition !== undefined && creativeDefinition.sourceLocator.rowId === 'extra-plan' && creativeDefinition.sourceLocator.path === 'config.creativeMode' && creativeDefinition.scalarType === 'boolean' && creativeDefinition.validator(true) && !creativeDefinition.validator('true') && !creativeDefinition.validator(1) && creativeDefinition.validator(false) && creativeDefinition.ui.control === 'select' && creativeDefinition.ui.options.join('/') === 'true/false' && creativeDefinition.ui.locale === 'creativeMode' && creativeDefinition.ui.section === 'general' && creativeDefinition.locatorAliases.length === 0) {
   pass += 1
   console.log('PASS  creativeMode descriptor 严格为 boolean select 且无 alias')
 } else {
@@ -178,7 +178,7 @@ if (creativeDefinition !== undefined && creativeDefinition.pluginId === 'extra-p
   console.log('FAIL  creativeMode descriptor 不符合契约')
 }
 const otherDefinition = SETTING_DEFINITIONS.find((item) => item.key === 'otherAgentModel')
-if (otherDefinition !== undefined && otherDefinition.pluginId === 'extra-plan' && otherDefinition.path === 'config.otherAgentModel' && otherDefinition.scalarType === 'string' && otherDefinition.validator('') && otherDefinition.validator('  model  ') && !otherDefinition.validator(123) && otherDefinition.ui.control === 'text' && otherDefinition.ui.locale === 'otherAgentModel' && otherDefinition.ui.section === 'pro' && otherDefinition.locatorAliases.length === 0) {
+if (otherDefinition !== undefined && otherDefinition.sourceLocator.rowId === 'extra-plan' && otherDefinition.sourceLocator.path === 'config.otherAgentModel' && otherDefinition.scalarType === 'string' && otherDefinition.validator('') && otherDefinition.validator('  model  ') && !otherDefinition.validator(123) && otherDefinition.ui.control === 'text' && otherDefinition.ui.locale === 'otherAgentModel' && otherDefinition.ui.section === 'pro' && otherDefinition.locatorAliases.length === 0) {
   pass += 1
   console.log('PASS  otherAgentModel descriptor 严格为 string text 且无 alias')
 } else {
@@ -192,6 +192,46 @@ if (defaults.plannerModel === 'deepseek-v4-pro' && defaults.crossProviderPlanner
   fail += 1
   console.log('FAIL  新版模板默认值不符合验收锚点')
 }
+
+// ── T1 声明行新载体（dsh 0.1.7-rc.1）──────────────────────────────────────
+// 预设本体 = 生成产物 assets/presets/extra-plan/preset-patch.generated.yml 的根级 insert 声明行
+// （name '@deepseek-ai/dsh-agent-preset'），config.plugins 与资产 agent.cordis.yml 顶层条目逐行逐字一致。
+const patchFile = join(PRESET_DIR, 'preset-patch.generated.yml')
+const patchText = readFileSync(patchFile, 'utf8')
+check('T1 声明行存在（- id: preset-extra-plan 且下一行 name 逐字为 @deepseek-ai/dsh-agent-preset）',
+  patchText.includes("    - id: preset-extra-plan\n      name: '@deepseek-ai/dsh-agent-preset'\n"))
+check('T1 声明行 config 含 id: extra-plan 与逐字 description（取自 preset.yml）',
+  patchText.includes('        id: extra-plan\n') && patchText.includes("        description: '" + preset.description + "'\n") && preset.description === '可交互式进入pro模型规划，适合交互式vibe coding，不适合wish coding。')
+const patchDoc = parsePresetYaml(patchText)
+const patchDeclaration = patchDoc[0].insert[0]
+check('T1 声明行 config 顶层条目数 = 17（group 3 + 普通 14），且与资产顶层条目逐字一致',
+  patchDeclaration.config.plugins.length === 17 && (Array.isArray(rows) ? rows.length : -1) === 17 &&
+  JSON.stringify(patchDeclaration.config.plugins) === JSON.stringify(rows))
+const assetTopText = agentText.slice(agentText.indexOf('- id: persona')).replace(/\n+$/, '')
+const generatedPluginsBlock = patchText.slice(patchText.indexOf('        plugins:\n') + 17).replace(/\n+$/, '')
+const deIndented = generatedPluginsBlock.split('\n').map((line) => (line.startsWith('          ') ? line.slice(10) : line)).join('\n')
+check('T1 生成产物 plugins 与资产顶层条目逐行逐字一致（仅整段平移 10 列缩进）', deIndented === assetTopText)
+const groupIds = patchDeclaration.config.plugins.filter((row) => row.group === true).map((row) => row.id)
+const delegationGroup = patchDeclaration.config.plugins.find((row) => row.id === 'delegation')
+const compactionGroup = patchDeclaration.config.plugins.find((row) => row.id === 'compaction')
+const extraPlanGroup = patchDeclaration.config.plugins.find((row) => row.id === 'extra-plan-group')
+check('T1 三组随组搬迁：group 行 3（extra-plan-group/compaction/delegation）且子行数 1/3/10',
+  groupIds.join('|') === 'extra-plan-group|compaction|delegation' &&
+  extraPlanGroup.config.length === 1 && compactionGroup.config.length === 3 && delegationGroup.config.length === 10)
+check('T1 isolate 名单随组搬迁且值全为布尔 true（含 subagentModelSelection / toolResultPruner / workflowEngine）',
+  delegationGroup.isolate.subagentModelSelection === true && delegationGroup.isolate.workflowEngine === true &&
+  compactionGroup.isolate.toolResultPruner === true && extraPlanGroup.isolate !== undefined &&
+  Object.values(delegationGroup.isolate).concat(Object.values(compactionGroup.isolate), Object.values(extraPlanGroup.isolate)).every((value) => value === true))
+check('T1 声明行 plugins 内不存在 @deepseek-ai/dsh-workflow-worker-thread / @deepseek-ai/dsh-agent-presets（复数包名）',
+  !patchText.includes('@deepseek-ai/dsh-workflow-worker-thread') && !patchText.includes('@deepseek-ai/dsh-agent-presets'))
+check('T1 skill-filesystem 行 config.customSkillDirs 表达式逐字含 createRequire(baseUrl) 与 skills',
+  agentText.includes("customSkillDirs:") && agentText.includes("createRequire(baseUrl).resolve('@deepseek-ai/dsh-agent-preset/package.json')") && agentText.includes("'skills')"))
+check('T1 头注释已改 dsh-agent-preset-registry（不再写 dsh-agent-presets 会拒绝挂载）',
+  !agentText.includes('dsh-agent-presets 会拒绝挂载') && agentText.includes('dsh-agent-preset-registry 会拒绝挂载'))
+check('T1 workflow-ptc 行 config.provider 保留 extra-executor-spawn',
+  agentText.includes("- id: workflow-ptc\n      name: '@deepseek-ai/dsh-workflow-ptc'\n      config:\n        provider: extra-executor-spawn\n"))
+check('T1 官方预设/技能文件未复制进本仓（assets 目录无 skills/ 与 cordis 预设拷贝）',
+  !existsSync(join(PRESET_DIR, 'skills')) && !existsSync(join(PRESET_DIR, 'agent.cordis.official.yml')))
 
 // B2：YAML exploreBudget 是作者真源，生成模块只保存派生 fallback；非法 source 不覆盖 sentinel。
 const packageJson = JSON.parse(readFileSync(join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'package.json'), 'utf8'))

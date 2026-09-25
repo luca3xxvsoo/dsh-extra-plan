@@ -6,7 +6,10 @@ window.__ModuleLoader__.load({
     Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
     const React = require("react");
 
+    // settings 命名空间 = profile 行 id（dsh-extra-plan-settings）；同时用作 configForms 键、
+    // plugins.item 卡片的 slot id 与 locale 命名空间。
     const NS = "dsh-extra-plan-settings";
+    // 2 项宿主行设置（webFetch / toolPresentationMode）的唯一写口：声明行 plugins 重述接口。
     const PRO_CONFIG_URL = "/api/dsh-extra-plan-settings/pro-config";
 
     const zh = {
@@ -14,6 +17,7 @@ window.__ModuleLoader__.load({
       cardDescription: "配置按需规划模式的参数",
       proSection: "pro规划模块",
       generalSection: "通用设置",
+      hostRowSection: "宿主行设置（重启生效）",
       plannerModel: "pro规划 | 使用模型",
       crossProviderPlannerModel: "跨提供方",
       plannerPromptSuffix: "pro规划 | 额外引导",
@@ -33,6 +37,10 @@ window.__ModuleLoader__.load({
       saveFailed: "保存失败：",
       loading: "加载中…",
       loadFailed: "加载失败",
+      unavailable: "该配置命名空间当前未由宿主提供，暂时无法编辑。",
+      readOnly: "本部署的设置为只读。",
+      overridden: "已覆盖",
+      reset: "恢复默认",
       trueValue: "True",
       falseValue: "False"
     };
@@ -42,6 +50,7 @@ window.__ModuleLoader__.load({
       cardDescription: "Configure pro planner settings.",
       proSection: "Pro Planner",
       generalSection: "General Settings",
+      hostRowSection: "Host row settings (restart to take effect)",
       plannerModel: "Pro Planner | Model",
       crossProviderPlannerModel: "Cross-Provider Planner Model",
       plannerPromptSuffix: "Pro Planner | Extra Prompt Suffix",
@@ -61,41 +70,42 @@ window.__ModuleLoader__.load({
       saveFailed: "Save failed: ",
       loading: "Loading…",
       loadFailed: "Load failed",
+      unavailable: "The Host does not serve this settings namespace right now.",
+      readOnly: "This deployment stores settings read-only.",
+      overridden: "Overridden",
+      reset: "Reset to default",
       trueValue: "True",
       falseValue: "False"
     };
 
-    const FIELD_HINTS = Object.freeze({
-      anchoredBootstrap: "首轮极简工具 + 提示词 ｜ 新会话/新子代理生效",
-      creativeMode: "是否开启dsh官方创造模式 ｜ 重启生效",
-      webFetch: "是否开启web_fetch ｜ 重启生效",
-      toolPresentationMode: "工具呈现方式切换（默认/混合/PTC模式） ｜ 重启生效",
-      runcodeCatchGate: "PTC模式下，增加每个工具调用需要try catch的闸门。通过限制+建议的模式保障仅单个调用报错 ｜ 立即生效",
-      crossProviderPlannerModel: "允许跨提供方选择模型。开启时将以 其他提供方 - 主会话提供方 - deepseek官方 的顺序，获取可用模型。关闭时仅从主会话提供方获取。默认关闭 ｜ 新会话/新子代理生效",
-      plannerModel: "pro规划默认使用模型。未匹配/置空时：使用主会话模型 ｜ 新会话/新子代理生效",
-      plannerPromptSuffix: "在主会话发送给pro规划的任务结尾，拼接上的内容。可能能增加pro规划的智商（未验证）。可置空 ｜ 立即生效",
-      exploreBudget: "允许pro规划调用工具的次数，避免后台无限制调用。同时限制一次runcode内可调用的工具上限数 ｜ 立即生效",
-      otherAgentModel: "其他子代理默认使用模型。未匹配/置空时：使用主会话模型 ｜ 新会话/新子代理生效"
-    });
+    // 8 项 UI 设置（settings 行 dsh-extra-plan-settings 的 volatile 字段）：客户端自带的
+    // 呈现元数据（控件/选项/locale/提示）。写入一律交回宿主表单（ownerProps.form.mutate），
+    // 不由本插件直接落盘。
+    const EXTRA_FIELDS = Object.freeze([
+      { key: "anchoredBootstrap", control: "select", options: [true, false], locale: "anchoredBootstrap", section: "general", hint: "首轮极简工具 + 提示词 ｜ 新会话/新子代理生效" },
+      { key: "creativeMode", control: "select", options: [true, false], locale: "creativeMode", section: "general", hint: "是否开启dsh官方创造模式 ｜ 立即生效（重启后新会话同样生效）" },
+      { key: "runcodeCatchGate", control: "select", options: [true, false], locale: "runcodeCatchGate", section: "general", hint: "PTC模式下，增加每个工具调用需要try catch的闸门。通过限制+建议的模式保障仅单个调用报错 ｜ 立即生效" },
+      { key: "crossProviderPlannerModel", control: "select", options: [true, false], locale: "crossProviderPlannerModel", section: "pro", hint: "允许跨提供方选择模型。开启时将以 其他提供方 - 主会话提供方 - deepseek官方 的顺序，获取可用模型。关闭时仅从主会话提供方获取。默认关闭 ｜ 新会话/新子代理生效" },
+      { key: "plannerModel", control: "text", locale: "plannerModel", section: "pro", hint: "pro规划默认使用模型。未匹配/置空时：使用主会话模型 ｜ 新会话/新子代理生效" },
+      { key: "plannerPromptSuffix", control: "textarea", locale: "plannerPromptSuffix", section: "pro", hint: "在主会话发送给pro规划的任务结尾，拼接上的内容。可能能增加pro规划的智商（未验证）。可置空 ｜ 立即生效" },
+      { key: "exploreBudget", control: "number", min: 1, step: 1, locale: "exploreBudget", section: "pro", hint: "允许pro规划调用工具的次数，避免后台无限制调用。同时限制一次runcode内可调用的工具上限数 ｜ 立即生效" },
+      { key: "otherAgentModel", control: "text", locale: "otherAgentModel", section: "pro", hint: "其他子代理默认使用模型。未匹配/置空时：使用主会话模型 ｜ 新会话/新子代理生效" }
+    ]);
+
+    // 2 项宿主行设置（声明行 plugins 内 tool-web / tool-presentation 子行 config）。
+    const HOST_ROW_FIELDS = Object.freeze([
+      { key: "webFetch", control: "select", options: [true, false], locale: "webFetch", hint: "是否开启web_fetch（声明行 tool-web 行 config.fetch）｜ 重启生效" },
+      { key: "toolPresentationMode", control: "select", options: ["native", "ptc", "both"], optionLocale: { native: "toolPresentationModeNative", ptc: "toolPresentationModePtc", both: "toolPresentationModeBoth" }, locale: "toolPresentationMode", hint: "工具呈现方式切换（默认/混合/PTC模式）（声明行 tool-presentation 行 config.mode）｜ 重启生效" }
+    ]);
 
     const css =
       '.esp-wrap{display:flex;flex-direction:column;gap:20px;max-width:760px;color:var(--dsw-alias-label-primary)}' +
-      '.esp-card{list-style:none;border:.5px solid var(--dsw-alias-border-l4);background:var(--dsw-alias-bg-layer-3);border-radius:16px;overflow:hidden}' +
-      '.esp-cardOpen .esp-cardHeader{background:var(--dsw-alias-bg-layer-3)}' +
-      '.esp-cardHeader{appearance:none;display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;border:0;background:transparent;color:var(--dsw-alias-label-primary);cursor:pointer;padding:14px 16px;text-align:left;font:inherit}' +
-      '.esp-cardHeader:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}' +
-      '.esp-cardHeaderText{display:flex;flex-direction:column;gap:2px;min-width:0}' +
-      '.esp-cardName{font-size:14px;font-weight:600;line-height:1.5}' +
-      '.esp-cardDescription{font-size:12px;color:var(--dsw-alias-label-secondary);line-height:1.5}' +
-      '.esp-cardChevron{color:var(--dsw-alias-label-secondary);flex:0 0 auto;transition:transform .15s ease}' +
-      '.esp-cardChevronOpen{transform:rotate(180deg)}' +
-      '.esp-cardBody{border-top:.5px solid var(--dsw-alias-border-l2);margin:0 16px;padding-bottom:8px}' +
       '.esp-section{border:.5px solid var(--dsw-alias-border-l4);background:var(--dsw-alias-bg-layer-3);border-radius:16px;padding:14px 16px;display:flex;flex-direction:column;gap:0}' +
-      '.esp-section + .esp-section{margin-top:0}' +
       '.esp-sectionTitle{font-size:14px;font-weight:600;color:var(--dsw-alias-label-primary);line-height:1.5;margin:0 0 2px}' +
       '.esp-field{display:flex;flex-direction:column;gap:6px;padding:12px 0}' +
-      '.esp-fieldHead{display:block}' +
+      '.esp-fieldHead{display:flex;align-items:center;gap:8px}' +
       '.esp-label{font-size:13px;font-weight:500;line-height:1.5;color:var(--dsw-alias-label-primary)}' +
+      '.esp-badge{font-size:11px;line-height:1.4;color:var(--dsw-alias-label-tertiary);border:.5px solid var(--dsw-alias-border-l3);border-radius:6px;padding:0 6px}' +
       '.esp-field + .esp-field{border-top:.5px solid var(--dsw-alias-border-l2)}' +
       '.esp-input,.esp-select{height:34px;border:.5px solid var(--dsw-alias-border-l4);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);border-radius:8px;padding:0 12px;font:inherit;font-size:13px;width:100%;box-sizing:border-box}' +
       '.esp-textarea{border:.5px solid var(--dsw-alias-border-l4);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);border-radius:8px;padding:8px 12px;font:inherit;font-size:13px;width:100%;box-sizing:border-box;resize:vertical;min-height:80px}' +
@@ -121,10 +131,168 @@ window.__ModuleLoader__.load({
 
       ctx.effect(() => ctx.locale.register(NS, { zh, en }), "dsh-extra-plan-settings: dictionaries");
 
-      function ProConfigTab() {
-        const [configStatus, setConfigStatus] = React.useState("loading");
+      function optionLabel(field, option) {
+        const localeKey = field.optionLocale && field.optionLocale[String(option)];
+        if (localeKey) return t(localeKey);
+        if (typeof option === "boolean") return option ? t("trueValue") : t("falseValue");
+        return String(option);
+      }
+
+      function optionValue(field, raw) {
+        if (!Array.isArray(field.options)) return raw;
+        for (const option of field.options) {
+          if (String(option) === raw) return option;
+        }
+        return raw;
+      }
+
+      function renderControl(field, value, disabled, onChange) {
+        if (field.control === "textarea") {
+          return el("textarea", {
+            className: "esp-textarea",
+            disabled: disabled,
+            value: value === undefined || value === null ? "" : String(value),
+            onChange: function (e) { onChange(e.target.value); }
+          });
+        }
+        if (field.control === "number") {
+          return el("input", {
+            className: "esp-input",
+            type: "number",
+            disabled: disabled,
+            min: field.min === undefined ? undefined : String(field.min),
+            step: field.step === undefined ? undefined : String(field.step),
+            value: value === undefined || value === null ? "" : String(value),
+            onChange: function (e) { onChange(e.target.value); }
+          });
+        }
+        if (field.control === "select") {
+          const options = Array.isArray(field.options) ? field.options : [];
+          return el("select", {
+            className: "esp-select",
+            disabled: disabled,
+            value: value === undefined || value === null ? "" : String(value),
+            onChange: function (e) { onChange(optionValue(field, e.target.value)); }
+          }, options.map(function (option) {
+            return el("option", { key: String(option), value: String(option) }, optionLabel(field, option));
+          }));
+        }
+        return el("input", {
+          className: "esp-input",
+          type: "text",
+          disabled: disabled,
+          value: value === undefined || value === null ? "" : String(value),
+          onChange: function (e) { onChange(e.target.value); }
+        });
+      }
+
+      // 8 项 UI 设置：直接消费宿主提供的表单（ownerProps.form = ConfigPageForm{state, mutate}）。
+      // 保存 = 一次性提交全部字段编辑（set op，带读到的 revision 作为 fence）。
+      function ExtraPlanForm(props) {
+        const form = props.form;
+        const snapshot = form !== undefined && form !== null ? form.state : undefined;
+        const value = snapshot !== undefined && snapshot !== null ? snapshot.value : undefined;
+        const writable = snapshot !== undefined && snapshot !== null ? snapshot.writable === true : false;
+        const revision = snapshot !== undefined && snapshot !== null ? snapshot.revision : undefined;
+        const status = snapshot !== undefined && snapshot !== null ? snapshot.status : "unavailable";
         const [draft, setDraft] = React.useState(null);
-        const [fields, setFields] = React.useState([]);
+        const [saving, setSaving] = React.useState(false);
+        const [message, setMessage] = React.useState({ kind: "", text: "" });
+
+        React.useEffect(function () {
+          const next = {};
+          for (const field of EXTRA_FIELDS) {
+            const raw = value !== undefined && value !== null ? value[field.key] : undefined;
+            next[field.key] = raw === undefined ? "" : raw;
+          }
+          setDraft(next);
+          setMessage({ kind: "", text: "" });
+        }, [value]);
+
+        if (status === "loading" || draft === null) {
+          return el("div", { className: "esp-section" },
+            el("p", { className: "esp-sectionTitle" }, t("generalSection")),
+            el("p", { className: "esp-empty" }, t("loading"))
+          );
+        }
+        if (status === "unavailable") {
+          return el("div", { className: "esp-section" },
+            el("p", { className: "esp-sectionTitle" }, t("generalSection")),
+            el("p", { className: "esp-empty" }, t("unavailable"))
+          );
+        }
+
+        function fieldValue(field) {
+          const raw = draft[field.key];
+          if (field.control === "number") {
+            const n = Number(raw);
+            return Number.isFinite(n) ? n : raw;
+          }
+          return raw;
+        }
+
+        async function save() {
+          if (form === undefined || form === null || typeof form.mutate !== "function" || saving) return;
+          setSaving(true);
+          setMessage({ kind: "", text: "" });
+          const ops = EXTRA_FIELDS.map(function (field) {
+            return { op: "set", path: [field.key], value: fieldValue(field) };
+          });
+          try {
+            const accepted = await form.mutate(ops, revision);
+            if (accepted === false) setMessage({ kind: "error", text: t("saveFailed") });
+            else setMessage({ kind: "ok", text: t("saved") });
+          } catch (e) {
+            setMessage({ kind: "error", text: t("saveFailed") + " " + String((e && e.message) || e) });
+          } finally {
+            setSaving(false);
+          }
+        }
+
+        const generalFields = EXTRA_FIELDS.filter(function (field) { return field.section === "general"; });
+        const proFields = EXTRA_FIELDS.filter(function (field) { return field.section === "pro"; });
+        function renderField(field) {
+          return el("label", { className: "esp-field", key: field.key },
+            el("span", { className: "esp-fieldHead" },
+              el("span", { className: "esp-label" }, t(field.locale))
+            ),
+            renderControl(field, draft[field.key], !writable, function (next) {
+              setDraft(function (prev) { return Object.assign({}, prev, { [field.key]: next }); });
+              setMessage({ kind: "", text: "" });
+            }),
+            el("p", { className: "esp-hint" }, field.hint)
+          );
+        }
+
+        return el(React.Fragment, null,
+          el("div", { className: "esp-section" },
+            el("p", { className: "esp-sectionTitle" }, t("generalSection")),
+            generalFields.map(renderField)
+          ),
+          el("div", { className: "esp-section" },
+            el("p", { className: "esp-sectionTitle" }, t("proSection")),
+            proFields.map(renderField)
+          ),
+          el("div", { className: "esp-cardFooter" },
+            writable ? null : el("p", { className: "esp-hint" }, t("readOnly")),
+            message.text ? el("p", { className: message.kind === "ok" ? "esp-ok" : "esp-err" }, message.text) : null,
+            el("div", { className: "esp-actions" },
+              el("button", {
+                className: "esp-btn esp-btnPrimary",
+                disabled: saving || !writable,
+                onClick: save
+              }, saving ? t("saving") : t("save"))
+            )
+          )
+        );
+      }
+
+      // 2 项宿主行设置：自绘控件 + 专用 PUT（body 仅 {webFetch, toolPresentationMode}）。
+      // 消费方是声明行 plugins 内其它行的 config，不在 settings 命名空间里，故走宿主
+      // configEditor.edit 的专用路由。
+      function HostRowsPanel() {
+        const [status, setStatus] = React.useState("loading");
+        const [draft, setDraft] = React.useState(null);
         const [saving, setSaving] = React.useState(false);
         const [message, setMessage] = React.useState({ kind: "", text: "" });
 
@@ -139,42 +307,26 @@ window.__ModuleLoader__.load({
             })
             .then(function (data) {
               if (cancelled) return;
-              const fields = Array.isArray(data.fields) ? data.fields : [];
               const values = data.values && typeof data.values === "object" ? data.values : {};
-              const nextDraft = {};
-              for (const field of fields) {
-                if (field && field.separate === undefined) {
-                  nextDraft[field.key] = Object.prototype.hasOwnProperty.call(values, field.key)
-                    ? values[field.key]
-                    : field.default;
-                }
+              const next = {};
+              for (const field of HOST_ROW_FIELDS) {
+                next[field.key] = Object.prototype.hasOwnProperty.call(values, field.key) ? values[field.key] : undefined;
               }
-              setFields(fields);
-              setDraft(nextDraft);
-              setConfigStatus("ready");
+              setDraft(next);
+              setStatus("ready");
             })
-            .catch(function (err) {
+            .catch(function () {
               if (cancelled) return;
-              setConfigStatus("error");
+              setStatus("error");
             });
           return function () { cancelled = true; };
         }, []);
 
-        function setField(key, value) {
-          setDraft(function (prev) { return Object.assign({}, prev, { [key]: value }); });
-          setMessage({ kind: "", text: "" });
-        }
-
         async function save() {
-          if (configStatus !== "ready" || !draft || saving) return;
+          if (draft === null || saving) return;
           setSaving(true);
           setMessage({ kind: "", text: "" });
-          const body = {};
-          for (const field of fields) {
-            if (!field || field.separate !== undefined) continue;
-            const value = draft[field.key];
-            body[field.key] = field.type === "integer" ? Number(value) : value;
-          }
+          const body = { webFetch: draft.webFetch, toolPresentationMode: draft.toolPresentationMode };
           try {
             const res = await fetch(PRO_CONFIG_URL, {
               method: "PUT",
@@ -183,6 +335,8 @@ window.__ModuleLoader__.load({
             });
             const data = await res.json().catch(function () { return {}; });
             if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+            const values = data.values && typeof data.values === "object" ? data.values : {};
+            setDraft({ webFetch: values.webFetch, toolPresentationMode: values.toolPresentationMode });
             setMessage({ kind: "ok", text: t("saved") });
           } catch (e) {
             setMessage({ kind: "error", text: t("saveFailed") + " " + String((e && e.message) || e) });
@@ -191,104 +345,30 @@ window.__ModuleLoader__.load({
           }
         }
 
-        if (configStatus === "loading") {
-          return el("div", { className: "esp-section" },
-            el("p", { className: "esp-sectionTitle" }, t("proSection")),
-            el("p", { className: "esp-empty" }, t("loading"))
-          );
-        }
-        if (configStatus === "error") {
-          return el("div", { className: "esp-section" },
-            el("p", { className: "esp-sectionTitle" }, t("proSection")),
-            el("p", { className: "esp-err" }, t("loadFailed"))
-          );
-        }
-        if (!draft) {
-          return el("div", { className: "esp-section" },
-            el("p", { className: "esp-sectionTitle" }, t("proSection")),
-            el("p", { className: "esp-empty" }, t("loading"))
-          );
-        }
-
-        function optionLabel(field, option) {
-          const localeKey = field.optionLocale && field.optionLocale[String(option)];
-          if (localeKey) return t(localeKey);
-          if (typeof option === "boolean") return option ? t("trueValue") : t("falseValue");
-          return String(option);
-        }
-
-        function optionValue(field, raw) {
-          if (!Array.isArray(field.options)) return raw;
-          for (const option of field.options) {
-            if (String(option) === raw) return option;
-          }
-          return raw;
-        }
-
         function renderField(field) {
-          if (!field || field.separate !== undefined) return null;
-          const key = field.key;
-          const value = draft[key];
-          let control;
-          if (field.control === "textarea") {
-            control = el("textarea", {
-              className: "esp-textarea",
-              value: value === undefined ? "" : value,
-              onChange: function (e) { setField(key, e.target.value); }
-            });
-          } else if (field.control === "number") {
-            control = el("input", {
-              className: "esp-input",
-              type: "number",
-              min: field.min === undefined ? undefined : String(field.min),
-              step: field.step === undefined ? undefined : String(field.step),
-              value: value === undefined ? "" : value,
-              onChange: function (e) { setField(key, e.target.value); }
-            });
-          } else if (field.control === "select") {
-            const options = Array.isArray(field.options) ? field.options : [];
-            control = el("select", {
-              className: "esp-select",
-              value: value === undefined ? "" : String(value),
-              onChange: function (e) { setField(key, optionValue(field, e.target.value)); }
-            }, options.map(function (option) {
-              return el("option", { key: String(option), value: String(option) }, optionLabel(field, option));
-            }));
-          } else {
-            control = el("input", {
-              className: "esp-input",
-              type: "text",
-              value: value === undefined ? "" : value,
-              onChange: function (e) { setField(key, e.target.value); }
-            });
-          }
-          return el("label", { className: "esp-field", key: key },
+          return el("label", { className: "esp-field", key: field.key },
             el("span", { className: "esp-fieldHead" },
               el("span", { className: "esp-label" }, t(field.locale))
             ),
-            control,
-            el("p", { className: "esp-hint" }, FIELD_HINTS[key] || "")
+            renderControl(field, draft === null ? undefined : draft[field.key], draft === null, function (next) {
+              setDraft(function (prev) { return Object.assign({}, prev, { [field.key]: next }); });
+              setMessage({ kind: "", text: "" });
+            }),
+            el("p", { className: "esp-hint" }, field.hint)
           );
         }
 
-        const visibleFields = fields.filter(function (field) { return field && field.separate === undefined; });
-        const generalFields = visibleFields.filter(function (field) { return field.section === "general"; });
-        const proFields = visibleFields.filter(function (field) { return field.section === "pro" || field.section === undefined; });
-        return el(React.Fragment, null,
-          el("div", { className: "esp-section" },
-            el("p", { className: "esp-sectionTitle" }, t("generalSection")),
-            generalFields.map(renderField)
-          ),
-          el("div", { className: "esp-section" },
-            el("p", { className: "esp-sectionTitle" }, t("proSection")),
-            proFields.map(renderField)
-          ),
+        return el("div", { className: "esp-section" },
+          el("p", { className: "esp-sectionTitle" }, t("hostRowSection")),
+          status === "loading" ? el("p", { className: "esp-empty" }, t("loading")) : null,
+          status === "error" ? el("p", { className: "esp-err" }, t("loadFailed")) : null,
+          draft === null ? null : HOST_ROW_FIELDS.map(renderField),
           el("div", { className: "esp-cardFooter" },
             message.text ? el("p", { className: message.kind === "ok" ? "esp-ok" : "esp-err" }, message.text) : null,
             el("div", { className: "esp-actions" },
               el("button", {
                 className: "esp-btn esp-btnPrimary",
-                disabled: saving,
+                disabled: saving || draft === null,
                 onClick: save
               }, saving ? t("saving") : t("save"))
             )
@@ -296,64 +376,31 @@ window.__ModuleLoader__.load({
         );
       }
 
-      function ExtraPlanCard() {
-        const [open, setOpen] = React.useState(false);
-
-        return el("li", {
-          className: "esp-card" + (open ? " esp-cardOpen" : "")
-        },
-          el("button", {
-            type: "button",
-            className: "esp-cardHeader",
-            "aria-expanded": open,
-            onClick: function () { setOpen(!open); }
-          },
-            el("span", { className: "esp-cardHeaderText" },
-              el("span", { className: "esp-cardName" }, t("cardTitle")),
-              el("span", { className: "esp-cardDescription" }, t("cardDescription"))
-            ),
-            el("span", {
-              className: "esp-cardChevron" + (open ? " esp-cardChevronOpen" : ""),
-              style: { display: "inline-flex", alignItems: "center", justifyContent: "center", width: "14px", height: "14px" }
-            },
-              el("svg", { width: "14", height: "14", viewBox: "0 0 14 14", fill: "none" },
-                el("path", { d: "M4 6l3 3 3-3", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round", strokeLinejoin: "round" })
-              )
-            )
-          ),
-          open ? el("div", { className: "esp-cardBody" },
-            el(ExtraPlanSettingsTab)
-          ) : null
-        );
-      }
-
-      function ExtraPlanSettingsTab() {
+      function SettingsCard(props) {
+        const t = props.t !== undefined && props.t !== null ? props.t : (key) => key;
+        if (props.view === "summary") return t("cardDescription");
         return el("div", { className: "esp-wrap" },
-          el(ProConfigTab)
+          el(ExtraPlanForm, { form: props.form }),
+          el(HostRowsPanel)
         );
       }
 
-      // 注册在 settings.plugin.item 插槽（「插件配置」tab 的卡片插槽），
-      // key 与 settings 命名空间名一致。此插槽与 DSH 内置 BashCard 等同一插槽。
-      // ConfigurablePluginsTab 取 settings 命名空间列表与已注册 card key 的交集
-      // 来决定渲染哪些卡片。
-      //
-      // 使用 ctx.slots.inject 而非 ctx.slots.register：inject 等待插槽被声明
-      // 后再注册（DSH 内置卡片、dsh-web-search-netflying 等均用此模式）。
-      // register 是立即注册，在 v0.1.2-rc1 中 settings.plugin.item 插槽声明
-      // 晚于本 client.js 加载，立即注册被丢弃。
-      ctx.slots.inject("settings.plugin.item", function* () {
-        yield ctx.slots.register({
-          name: "settings.plugin.item",
-          key: "dsh-extra-plan",
-          locale: NS,
-          inject: () => ({})
-        }, ExtraPlanCard);
-      });
+      // 注册面（dsh 0.1.7-rc.1）：Plugins 页的 plugins.item 官方插件卡片列表。
+      // 旧版 settings.plugin.item 插槽在 0.1.7 全库 0 命中（已废）。
+      // whileServed：只有宿主确实提供该 settings 命名空间时才注册卡片，
+      // 没有该命名空间的部署不显示任何痕迹。
+      ctx.effect(() => ctx.configForms.whileServed([NS], () => ctx.slots.inject("plugins.item", () => ctx.slots.register({
+        name: "plugins.item",
+        id: NS,
+        order: 90,
+        label: () => t("cardTitle"),
+        locale: NS,
+        inject: () => ({})
+      }, SettingsCard))), "dsh-extra-plan-settings: plugins item page");
     }
 
     exports.apply = apply;
-    exports.inject = ["slots", "locale"];
+    exports.inject = ["slots", "locale", "configForms"];
     return module.exports;
   }
 });

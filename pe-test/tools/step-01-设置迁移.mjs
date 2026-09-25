@@ -1,30 +1,38 @@
-// 设置选择性迁移共享层与生产状态机回归矩阵。
-// 所有 DSH_HOME、旧版 YAML 与发布目录都在系统临时目录。
+// 设置描述表（descriptor）/ 行定位 / 保格式改写的共享层回归。
+// dsh 0.1.7-rc.1 载体订正后：本文件只覆盖「描述表契约 + 源模板（资产/旧分发副本同形）解析与
+// 定点改写 + 新载体 settings 行捕获」，不再覆盖旧分发目录的状态机迁移矩阵
+// （那部分由 step-01-安装同步.mjs 用新载体夹具覆盖）。
+// 所有夹具都在内存或系统临时目录，不触碰生产 DSH_HOME。
 
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, renameSync, cpSync, readdirSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
-import { syncPreset, contentHash, publishStage } from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
-import { contentHash as sharedHash, readManifest, writeManifest } from '../_shared/preset-hash.mjs'
+import { fileURLToPath } from 'node:url'
 import {
+  EXTRA_PLAN_SETTING_DEFINITIONS,
+  HOST_ROW_SETTING_DEFINITIONS,
+  PRESET_ROW_ID,
   SETTING_DEFINITIONS,
+  SETTING_GROUPS,
+  SETTINGS_ROW_ID,
   TOOL_PRESENTATION_MODES,
+  captureRowSettings,
   captureSettings,
+  findPluginsRow,
   getSettingDefinition,
   parsePresetYaml,
   patchYamlScalar,
-  publicSettingMetadata,
   resolveSetting,
+  restatePluginsRow,
   serializeScalar,
 } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
 import { DEFAULT_EXPLORE_BUDGET } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
 import { GATE_WORD_MIGRATION_DEFINITIONS, GATE_WORDS_GROUP_DEFINITION, createGateRuntime } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
+import { createLiveConfig } from '../../plugins/dsh-extra-plan/lib/live-config.js'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 const ASSET_DIR = join(HERE, '..', '..', 'plugins', 'dsh-extra-plan', 'assets', 'presets', 'extra-plan')
 const assetAgent = readFileSync(join(ASSET_DIR, 'agent.cordis.yml'), 'utf8')
-const assetPreset = readFileSync(join(ASSET_DIR, 'preset.yml'), 'utf8')
 const definition = (key) => getSettingDefinition(key)
 const keys = SETTING_DEFINITIONS.map((item) => item.key)
 const expectedKeys = ['anchoredBootstrap', 'creativeMode', 'webFetch', 'toolPresentationMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel']
@@ -35,7 +43,8 @@ function check(label, condition) {
   if (condition) { pass += 1; console.log('PASS  ' + label) }
   else { fail += 1; console.log('FAIL  ' + label) }
 }
-check('exploreBudget 默认来自生成模块且为 YAML 叶值', DEFAULT_EXPLORE_BUDGET === resolveSetting(parsePresetYaml(assetAgent), definition('exploreBudget'), { aliases: false }).value && DEFAULT_EXPLORE_BUDGET === 18)
+
+check('exploreBudget 默认来自生成模块且为资产 YAML 叶值', DEFAULT_EXPLORE_BUDGET === resolveSetting(parsePresetYaml(assetAgent), definition('exploreBudget'), { aliases: false }).value && DEFAULT_EXPLORE_BUDGET === 18)
 
 function patchAgent(values) {
   let text = assetAgent
@@ -100,25 +109,47 @@ function minimalYaml(overrides = {}, nested = false) {
   ].join('\n') + '\n'
 }
 
-function manifestAt(dist) {
-  return JSON.parse(readFileSync(join(dist, 'dist-manifest.json'), 'utf8'))
+// 新载体 settings 行夹具（profile patch 真值形状）：8 项 UI 设置。
+function settingsRowYaml(values = {}) {
+  const pick = (key, fallback) => Object.prototype.hasOwnProperty.call(values, key) ? values[key] : fallback
+  return [
+    '- id: dsh-extra-plan-settings',
+    '  config:',
+    '    anchoredBootstrap: ' + pick('anchoredBootstrap', 'true'),
+    '    creativeMode: ' + pick('creativeMode', 'false'),
+    '    runcodeCatchGate: ' + pick('runcodeCatchGate', 'false'),
+    '    crossProviderPlannerModel: ' + pick('crossProviderPlannerModel', 'false'),
+    "    plannerModel: '" + pick('plannerModel', 'deepseek-v4-pro') + "'",
+    "    plannerPromptSuffix: '" + pick('plannerPromptSuffix', '') + "'",
+    '    exploreBudget: ' + pick('exploreBudget', '18'),
+    "    otherAgentModel: '" + pick('otherAgentModel', '') + "'",
+    '- id: other-row',
+    '  config:',
+    '    keep: true',
+  ].join('\n') + '\n'
 }
 
-check('白名单恰有 10 个稳定键', keys.length === 10 && keys.join('|') === expectedKeys.join('|'))
-check('locator 恰为稳定插件 id + config 路径', SETTING_DEFINITIONS.every((item) => item.path === 'config.' + (item.key === 'webFetch' ? 'fetch' : item.key === 'toolPresentationMode' ? 'mode' : item.key)))
+check('白名单恰有 10 个稳定键且顺序不变', keys.length === 10 && keys.join('|') === expectedKeys.join('|'))
+check('descriptor 分组：extra-plan 8 项（settings 行）+ host-rows 2 项（声明行 plugins 子行）',
+  EXTRA_PLAN_SETTING_DEFINITIONS.length === 8 && HOST_ROW_SETTING_DEFINITIONS.length === 2 &&
+  EXTRA_PLAN_SETTING_DEFINITIONS.every((item) => item.group === SETTING_GROUPS.EXTRA_PLAN) &&
+  HOST_ROW_SETTING_DEFINITIONS.every((item) => item.group === SETTING_GROUPS.HOST_ROWS))
+check('descriptor 已无 pluginId/path 顶层字段（改 rowLocator/sourceLocator 双定位元数据）',
+  SETTING_DEFINITIONS.every((item) => !Object.prototype.hasOwnProperty.call(item, 'pluginId') && !Object.prototype.hasOwnProperty.call(item, 'path') && !Object.prototype.hasOwnProperty.call(item, 'locator')))
+check('sourceLocator 仍为源模板行 id + config 路径（资产/旧分发副本同形）',
+  SETTING_DEFINITIONS.every((item) => item.sourceLocator.path === 'config.' + (item.key === 'webFetch' ? 'fetch' : item.key === 'toolPresentationMode' ? 'mode' : item.key)) &&
+  definition('plannerModel').sourceLocator.rowId === 'extra-plan' && definition('webFetch').sourceLocator.rowId === 'tool-web')
+check('rowLocator 指向新载体：8 项 settings 行、2 项声明行 plugins 子行',
+  EXTRA_PLAN_SETTING_DEFINITIONS.every((item) => item.rowLocator.rowId === SETTINGS_ROW_ID && item.rowLocator.path === 'config.' + item.key) &&
+  definition('webFetch').rowLocator.rowId === PRESET_ROW_ID && definition('webFetch').rowLocator.pluginsRowId === 'tool-web' && definition('webFetch').rowLocator.path === 'config.fetch' &&
+  definition('toolPresentationMode').rowLocator.pluginsRowId === 'tool-presentation' && definition('toolPresentationMode').rowLocator.path === 'config.mode')
 check('禁止项不在白名单且描述不可变', !keys.some((key) => ['approvalEnabled', 'bootstrapPersona', 'bootstrapShellTools', 'bootstrapCommonTools', 'bootstrapReadHint', 'planTool', 'savePlanDir', 'usageLedger', 'searchTimeoutMs'].includes(key)) && Object.isFrozen(SETTING_DEFINITIONS) && SETTING_DEFINITIONS.every((item) => Object.isFrozen(item)))
 // T4：plannerModel 放开为空串（空串=显式清空=继承主会话模型），空白串 normalize 后归一为 ''；
 // 非 string（数字等）仍非法——validator 的类型严格性由 !validator(123) 锁定。
 check('validator 类型严格且字符串设置支持空串归一', definition('plannerModel').validator('  x  ') && definition('plannerModel').validator('') && definition('plannerModel').normalize('   ') === '' && !definition('plannerModel').validator(123) && definition('otherAgentModel').validator('') && definition('otherAgentModel').normalize('   ') === '' && !definition('otherAgentModel').validator(123) && definition('crossProviderPlannerModel').validator(true) && definition('crossProviderPlannerModel').validator(false) && !definition('crossProviderPlannerModel').validator('true') && !definition('crossProviderPlannerModel').validator(1) && definition('exploreBudget').validator(1) && !definition('exploreBudget').validator('1') && TOOL_PRESENTATION_MODES.join('/') === definition('toolPresentationMode').ui.options.join('/'))
-check('公开 metadata 含 10 项、额度 min=1、控件与 locale', (() => {
-  const metadata = publicSettingMetadata(assetAgent, assetAgent)
-  const budget = metadata.fields.find((field) => field.key === 'exploreBudget')
-  const mode = metadata.fields.find((field) => field.key === 'toolPresentationMode')
-  const cross = metadata.fields.find((field) => field.key === 'crossProviderPlannerModel')
-  const other = metadata.fields.find((field) => field.key === 'otherAgentModel')
-  return metadata.fields.length === 10 && cross.control === 'select' && cross.options.join('/') === 'true/false' && cross.default === false && other.control === 'text' && other.default === '' && budget.min === 1 && budget.control === 'number' && mode.options.join('/') === 'native/ptc/both' && typeof mode.locale === 'string'
-})())
+check('serializeScalar 三态：boolean/integer/字符串单引号', serializeScalar(true, 'boolean') === 'true' && serializeScalar(false, 'boolean') === 'false' && serializeScalar(18, 'integer') === '18' && serializeScalar("a'b", 'string') === "'a''b'" && serializeScalar('a\nb', 'string') === JSON.stringify('a\nb'))
 
+// ── 源模板（旧分发副本同形）定位与保格式改写 ──────────────────────────────
 const allOldValues = {
   plannerModel: 'legacy-model',
   crossProviderPlannerModel: true,
@@ -131,272 +162,81 @@ const allOldValues = {
   webFetch: true,
   toolPresentationMode: 'ptc',
 }
-const oldAll = patchAgent(allOldValues)
-const captured = captureSettings(oldAll)
-check('10 个有效旧值全部捕获', Object.keys(captured.values).length === 10 && Object.values(captured.states).every((state) => state === 'captured') && captured.values.crossProviderPlannerModel === true && captured.values.otherAgentModel === 'legacy-other-model')
+const oldText = patchAgent(allOldValues)
+const captured = captureSettings(oldText)
+check('captureSettings 10 项全 captured 且值等于旧值', Object.values(captured.states).every((state) => state === 'captured') && keys.every((key) => captured.values[key] === allOldValues[key]))
 
-const stringSafety = ['true', '123', 'line one\nline two']
-check('字符串 true/数字样字符串/换行保持 string 类型', stringSafety.every((value) => {
-  const patched = patchYamlScalar(assetAgent, definition('plannerModel'), value)
-  if (!patched.ok) return false
-  const result = resolveSetting(parsePresetYaml(patched.text), definition('plannerModel'), { aliases: false })
-  return result.kind === 'ok' && result.value === value
-}))
-check('!!js 两行原文与无关字节保持', (() => {
-  const patched = patchYamlScalar(assetAgent, definition('plannerModel'), 'format-safe')
-  return patched.ok && patched.text.includes("disabled: !!js process.platform === 'win32'") && patched.text.includes("path: !!js dshHomePath('usage-ledger', 'ledger.jsonl')")
-})())
-check('目标行尾注释保留且未知字段不越 sibling', (() => {
-  const source = '- id: tool-web # row comment\n  config:\n    fetch: false # keep comment\n    keep: unchanged\n- id: other\n  config:\n    fetch: true\n'
-  const patched = patchYamlScalar(source, definition('webFetch'), true)
-  return patched.ok && patched.text.includes('- id: tool-web # row comment') && patched.text.includes('fetch: true # keep comment') && patched.text.includes('keep: unchanged') && patched.text.includes('fetch: true\n')
-})())
+const flatDoc = parsePresetYaml(minimalYaml())
+check('扁平 group 内 extra-plan 行 10 项可解析', SETTING_DEFINITIONS.every((item) => resolveSetting(flatDoc, item, { aliases: false }).kind === 'ok'))
+const nestedDoc = parsePresetYaml(minimalYaml({}, true))
+check('重排/更深嵌套 row 可递归定位', SETTING_DEFINITIONS.every((item) => resolveSetting(nestedDoc, item, { aliases: false }).kind === 'ok'))
 
-const nested = minimalYaml({}, true)
-const nestedParsed = parsePresetYaml(nested)
-check('重排/更深嵌套 row 可递归定位', SETTING_DEFINITIONS.every((item) => resolveSetting(nestedParsed, item, { aliases: false }).kind === 'ok'))
-const nestedMode = patchYamlScalar(nested, definition('toolPresentationMode'), 'both')
-check('更深嵌套 scalar 定点替换', nestedMode.ok && resolveSetting(parsePresetYaml(nestedMode.text), definition('toolPresentationMode'), { aliases: false }).value === 'both')
+const nestedText = minimalYaml({}, true)
+const nestedMode = patchYamlScalar(nestedText, definition('toolPresentationMode'), 'both')
+check('更深嵌套 scalar 定点替换（toolPresentationMode → both）', nestedMode.ok && resolveSetting(parsePresetYaml(nestedMode.text), definition('toolPresentationMode'), { aliases: false }).value === 'both')
+const patchedPlanner = patchYamlScalar(assetAgent, definition('plannerModel'), 'format-safe')
+check('保格式改写：仅目标叶行变化', patchedPlanner.ok && patchedPlanner.text.split('\n').filter((line, index) => line !== assetAgent.split('\n')[index]).length === 1)
 
-const aliasBase = definition('plannerModel')
-const aliasDefinition = {
-  ...aliasBase,
-  locator: { pluginId: 'renamed-extra', path: 'config.plannerModel' },
-  locatorAliases: [{ pluginId: 'legacy-extra', path: 'settings.model' }],
-}
-const aliasDoc = parsePresetYaml('- id: legacy-extra\n  settings:\n    model: legacy-alias\n')
-check('显式 locator alias 才能恢复移动字段', resolveSetting(aliasDoc, aliasDefinition).kind === 'ok' && resolveSetting(aliasDoc, aliasDefinition).value === 'legacy-alias')
-const duplicate = minimalYaml({ plannerModel: 'one' }) + minimalYaml({ plannerModel: 'two' })
-const duplicateState = captureSettings(duplicate)
-const duplicatePatch = patchYamlScalar(duplicate, definition('plannerModel'), 'never-guess')
-check('重复 locator 标记歧义且禁止替换', duplicateState.states.plannerModel === 'ambiguous' && duplicatePatch.ok === false && duplicatePatch.reason === 'ambiguous')
+const dupText = '- id: extra-plan\n  config:\n    plannerModel: a\n- id: extra-plan\n  config:\n    plannerModel: b\n'
+check('同名行重复 → ambiguous（不定点猜改）', captureSettings(dupText).states.plannerModel === 'ambiguous' && patchYamlScalar(dupText, definition('plannerModel'), 'never-guess').reason === 'ambiguous')
 
-// T4 正例：空串与空白串均为合法旧值（captured + normalize 为 ''），移出非法值表。
-check('plannerModel 空串旧值 → captured 且值为空串', (() => {
-  const state = captureSettings(minimalYaml({ plannerModel: "''" }))
-  return state.states.plannerModel === 'captured' && state.values.plannerModel === ''
-})())
-check('plannerModel 空白串旧值 → captured 且 normalize 为空串', (() => {
-  const state = captureSettings(minimalYaml({ plannerModel: '"   "' }))
-  return state.states.plannerModel === 'captured' && state.values.plannerModel === ''
-})())
+const aliasDefinition = { ...definition('plannerModel'), locatorAliases: [{ rowId: 'legacy-planner', path: 'config.plannerModel' }] }
+const aliasDoc = parsePresetYaml('- id: legacy-planner\n  config:\n    plannerModel: legacy-alias\n')
+check('显式 locator alias 才能恢复移动字段', resolveSetting(aliasDoc, aliasDefinition).kind === 'ok' && resolveSetting(aliasDoc, aliasDefinition).value === 'legacy-alias' && resolveSetting(aliasDoc, definition('plannerModel')).kind === 'missing')
 
-const invalidCases = [
-  ['plannerModel number', 'plannerModel', '123'],
-  ['plannerModel null', 'plannerModel', 'null'],
-  ['otherAgentModel number', 'otherAgentModel', '123'],
-  ['otherAgentModel null', 'otherAgentModel', 'null'],
-  ['plannerPromptSuffix number', 'plannerPromptSuffix', '123'],
-  ['plannerPromptSuffix null', 'plannerPromptSuffix', 'null'],
-  ['exploreBudget quoted number', 'exploreBudget', '"18"'],
-  ['exploreBudget zero', 'exploreBudget', '0'],
-  ['exploreBudget negative', 'exploreBudget', '-1'],
-  ['exploreBudget decimal', 'exploreBudget', '1.5'],
-  ['exploreBudget null', 'exploreBudget', 'null'],
-  ['anchoredBootstrap string', 'anchoredBootstrap', "'true'"],
-  ['anchoredBootstrap number', 'anchoredBootstrap', '1'],
-  ['anchoredBootstrap null', 'anchoredBootstrap', 'null'],
-  ['creativeMode string', 'creativeMode', "'true'"],
-  ['creativeMode number', 'creativeMode', '1'],
-  ['creativeMode null', 'creativeMode', 'null'],
-  ['runcodeCatchGate string', 'runcodeCatchGate', "'false'"],
-  ['webFetch string', 'webFetch', "'true'"],
-  ['toolPresentationMode code', 'toolPresentationMode', 'code'],
-  ['toolPresentationMode bogus', 'toolPresentationMode', 'bogus'],
-  ['toolPresentationMode boolean', 'toolPresentationMode', 'true'],
-]
-for (const [label, key, raw] of invalidCases) {
-  const state = captureSettings(minimalYaml({ [key]: raw })).states[key]
-  check('非法值 ' + label + ' → invalid', state === 'invalid')
+const emptyState = captureSettings(minimalYaml({ plannerModel: "''" }))
+check("空串标量 captured（不被判 invalid）", emptyState.states.plannerModel === 'captured' && emptyState.values.plannerModel === '')
+const blankState = captureSettings(minimalYaml({ plannerModel: '"   "' }))
+check('空白串 captured 且 normalize 归一并留待消费端 trim', blankState.states.plannerModel === 'captured' && blankState.values.plannerModel === '')
+const invalidState = captureSettings(minimalYaml({ exploreBudget: '0' }))
+check('非法值 → invalid（不进 values）', invalidState.states.exploreBudget === 'invalid' && !Object.prototype.hasOwnProperty.call(invalidState.values, 'exploreBudget'))
+
+// ── gateWords：源模板整组定位 + 迁移叶 locator ────────────────────────────
+check('gateWords 组定义与新命名 locator（rowId + sourceLocator）', GATE_WORDS_GROUP_DEFINITION.sourceLocator.rowId === 'extra-plan' && GATE_WORDS_GROUP_DEFINITION.sourceLocator.path === 'config.gateWords')
+check('7 个迁移叶 locator：rowId=extra-plan + config.gateWords.<field> + string', GATE_WORD_MIGRATION_DEFINITIONS.length === 7 && GATE_WORD_MIGRATION_DEFINITIONS.every((item) => item.sourceLocator.rowId === 'extra-plan' && item.sourceLocator.path === 'config.gateWords.' + item.key && item.scalarType === 'string'))
+const assetWords = resolveSetting(parsePresetYaml(assetAgent), GATE_WORDS_GROUP_DEFINITION, { aliases: false }).value
+check('资产模板 7 词整组合法且 createGateRuntime 可派生', (() => { try { return Object.keys(createGateRuntime(assetWords).words).length === 7 } catch { return false } })())
+const GATE_CUSTOM = { routeDirect: '甲直行', routePlan: '乙规划', routeDisagree: '丙否决', approvalApprove: '丁批准', approvalReplan: '戊转规划', purposeRefine: '己完整', purposeRedo: '庚重做' }
+const customGateText = (() => { let out = assetAgent; for (const item of GATE_WORD_MIGRATION_DEFINITIONS) { const patched = patchYamlScalar(out, item, GATE_CUSTOM[item.key]); if (!patched.ok) throw new Error('fixture patch failed: ' + item.key); out = patched.text } return out })()
+check('7 词逐叶定点改写后整组等于定制值', (() => { const runtime = createGateRuntime(resolveSetting(parsePresetYaml(customGateText), GATE_WORDS_GROUP_DEFINITION, { aliases: false }).value); return GATE_WORD_MIGRATION_DEFINITIONS.every((item) => runtime.words[item.key] === GATE_CUSTOM[item.key]) })())
+
+// ── 新载体 settings 行捕获（captureRowSettings） ──────────────────────────
+const rowText = settingsRowYaml({ anchoredBootstrap: 'false', exploreBudget: '7', plannerModel: 'row-model' })
+const rowCapture = captureRowSettings(rowText)
+check('captureRowSettings 按 settings 行 id 捕获 8 项', Object.keys(rowCapture.values).length === 8 && rowCapture.values.exploreBudget === 7 && rowCapture.values.anchoredBootstrap === false && rowCapture.values.plannerModel === 'row-model')
+check('settings 行缺席 → 8 项全 missing（消费端回退 cfg 快照）', (() => { const none = captureRowSettings('- id: other-row\n  config:\n    keep: true\n'); return Object.keys(none.states).length === 8 && Object.values(none.states).every((state) => state === 'missing') })())
+check('settings 行同名重复 → ambiguous（不猜值）', (() => { const dup = settingsRowYaml() + settingsRowYaml(); return captureRowSettings(dup).states.exploreBudget === 'ambiguous' })())
+check('settings 行非法叶值 → invalid（不进 values）', (() => { const bad = settingsRowYaml().replace('    exploreBudget: 18', '    exploreBudget: 0'); const capturedBad = captureRowSettings(bad); return capturedBad.states.exploreBudget === 'invalid' && !Object.prototype.hasOwnProperty.call(capturedBad.values, 'exploreBudget') })())
+
+// ── live-config 构造期读盘（新载体：路径来自 resolveDocumentPath） ─────────
+{
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-rowconfig-'))
+  try {
+    const offFile = join(dir, 'cordis-off.patch.yml')
+    const onFile = join(dir, 'cordis-on.patch.yml')
+    writeFileSync(offFile, settingsRowYaml({ anchoredBootstrap: 'false', runcodeCatchGate: 'true', exploreBudget: '7' }), 'utf8')
+    writeFileSync(onFile, settingsRowYaml({ anchoredBootstrap: 'true', exploreBudget: '9' }), 'utf8')
+    const lc = createLiveConfig({ resolveDocumentPath: () => offFile, fallbackDefaults: { exploreBudget: 18, runcodeCatchGate: false, anchoredBootstrap: true } })
+    check('LC-A 构造期读盘：首次取值即 settings 行真值', lc.exploreBudget === 7 && lc.runcodeCatchGate === true && lc.anchoredBootstrap === false)
+    check('LC-B resolveDocumentPath 变化 → 取值跟进（路径参与 stamp 判定）', (() => { let current = offFile; const lc2 = createLiveConfig({ resolveDocumentPath: () => current, fallbackDefaults: { exploreBudget: 18 } }); const first = lc2.exploreBudget; current = onFile; return first === 7 && lc2.exploreBudget === 9 })())
+    const missing = createLiveConfig({ resolveDocumentPath: () => join(dir, 'nope.yml'), fallbackDefaults: { exploreBudget: 18 } })
+    check('LC-C resolveDocumentPath 指向不存在文件 → 回退 fallbackDefaults（不抛）', missing.exploreBudget === 18)
+    const noPath = createLiveConfig({ resolveDocumentPath: () => '', fallbackDefaults: { exploreBudget: 18 } })
+    check('LC-D 路径不可得（configEditor 未就绪）→ 回退 fallbackDefaults（不读旧预设目录）', noPath.exploreBudget === 18)
+    writeFileSync(offFile, settingsRowYaml({ anchoredBootstrap: 'false', exploreBudget: '421' }), 'utf8')
+    check('LC-E 文件改写后 stamp 变化 → 取值跟进', lc.exploreBudget === 421)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 }
 
-const work = mkdtempSync(join(tmpdir(), 'dsh-settings-migration-matrix-'))
-const validHome = join(work, 'valid-home')
-const validDist = join(validHome, '.agent-presets', 'extra-plan')
-const missingHome = join(work, 'missing-home')
-const missingDist = join(missingHome, '.agent-presets', 'extra-plan')
-const invalidHome = join(work, 'invalid-home')
-const invalidDist = join(invalidHome, '.agent-presets', 'extra-plan')
-const unreadableHome = join(work, 'unreadable-home')
-const unreadableDist = join(unreadableHome, '.agent-presets', 'extra-plan')
-try {
-  for (const dir of [validDist, missingDist, invalidDist, unreadableDist]) mkdirSync(dir, { recursive: true })
-  for (const dir of [validDist, missingDist, invalidDist, unreadableDist]) writeFileSync(join(dir, 'preset.yml'), assetPreset, 'utf8')
-
-  writeFileSync(join(validDist, 'agent.cordis.yml'), oldAll, 'utf8')
-  writeManifest(validDist, 'OLD-VALID-MATRIX')
-  check('生产 syncPreset 有效旧值 → upgraded', syncPreset(validHome) === 'upgraded')
-  const validManifest = manifestAt(validDist)
-  check('有效迁移 10 项 restored 且 distHash 为厂商 hash', validManifest.format === 2 && validManifest.distHash === contentHash(ASSET_DIR) && validManifest.settingsMigration.source === 'captured' && Object.keys(validManifest.settingsMigration.results).length === 10 && Object.values(validManifest.settingsMigration.results).every((result) => result === 'restored'))
-  check('有效迁移后的两份核心结构以新版为底、preset 完整', readFileSync(join(validDist, 'preset.yml'), 'utf8') === assetPreset && readFileSync(join(validDist, 'agent.cordis.yml'), 'utf8') === oldAll)
-
-  const oldMissingText = assetAgent.replace('        creativeMode: false\n', '').replace('        runcodeCatchGate: false\n', '').replace('        crossProviderPlannerModel: false\n', '').replace("        otherAgentModel: ''\n", '') + '\n- id: old-custom\n  config:\n    persona: old-only\n'
-  writeFileSync(join(missingDist, 'agent.cordis.yml'), oldMissingText, 'utf8')
-  writeManifest(missingDist, 'OLD-MISSING-MATRIX')
-  check('旧版缺字段 → upgraded 且新版默认保留', syncPreset(missingHome) === 'upgraded')
-  const missingManifest = manifestAt(missingDist)
-  check('仅新版字段 creativeMode/runcodeCatchGate/crossProviderPlannerModel/otherAgentModel 保持默认并审计 skipped-old-missing', readFileSync(join(missingDist, 'agent.cordis.yml'), 'utf8').includes('        creativeMode: false') && readFileSync(join(missingDist, 'agent.cordis.yml'), 'utf8').includes('        runcodeCatchGate: false') && readFileSync(join(missingDist, 'agent.cordis.yml'), 'utf8').includes('        crossProviderPlannerModel: false') && readFileSync(join(missingDist, 'agent.cordis.yml'), 'utf8').includes("        otherAgentModel: ''") && missingManifest.settingsMigration.results.creativeMode === 'skipped-old-missing' && missingManifest.settingsMigration.results.runcodeCatchGate === 'skipped-old-missing' && missingManifest.settingsMigration.results.crossProviderPlannerModel === 'skipped-old-missing' && missingManifest.settingsMigration.results.otherAgentModel === 'skipped-old-missing')
-  check('旧版独有 row/group/persona 不残留', !readFileSync(join(missingDist, 'agent.cordis.yml'), 'utf8').includes('old-custom') && !readFileSync(join(missingDist, 'agent.cordis.yml'), 'utf8').includes('old-only'))
-
-  const invalidText = assetAgent.replace('        plannerModel: deepseek-v4-pro', '        plannerModel: 123').replace('        creativeMode: false', "        creativeMode: 'true'").replace('        crossProviderPlannerModel: false', "        crossProviderPlannerModel: 'true'").replace('        exploreBudget: ' + DEFAULT_EXPLORE_BUDGET, '        exploreBudget: 0').replace("        otherAgentModel: ''", '        otherAgentModel: 123')
-  writeFileSync(join(invalidDist, 'agent.cordis.yml'), invalidText, 'utf8')
-  writeManifest(invalidDist, 'OLD-INVALID-MATRIX')
-  check('非法旧值 → upgraded 不阻断', syncPreset(invalidHome) === 'upgraded')
-  const invalidManifest = manifestAt(invalidDist)
-  check('非法旧值使用新版实际默认并写 skipped-invalid', readFileSync(join(invalidDist, 'agent.cordis.yml'), 'utf8').includes('        plannerModel: deepseek-v4-pro') && readFileSync(join(invalidDist, 'agent.cordis.yml'), 'utf8').includes('        creativeMode: false') && readFileSync(join(invalidDist, 'agent.cordis.yml'), 'utf8').includes('        crossProviderPlannerModel: false') && readFileSync(join(invalidDist, 'agent.cordis.yml'), 'utf8').includes('        exploreBudget: ' + DEFAULT_EXPLORE_BUDGET) && readFileSync(join(invalidDist, 'agent.cordis.yml'), 'utf8').includes("        otherAgentModel: ''") && invalidManifest.settingsMigration.results.plannerModel === 'skipped-invalid' && invalidManifest.settingsMigration.results.creativeMode === 'skipped-invalid' && invalidManifest.settingsMigration.results.crossProviderPlannerModel === 'skipped-invalid' && invalidManifest.settingsMigration.results.exploreBudget === 'skipped-invalid' && invalidManifest.settingsMigration.results.otherAgentModel === 'skipped-invalid')
-
-  for (const [label, scalar] of [['number', '1'], ['null', 'null']]) {
-    const variantHome = join(work, 'invalid-creative-' + label + '-home')
-    const variantDist = join(variantHome, '.agent-presets', 'extra-plan')
-    mkdirSync(variantDist, { recursive: true })
-    writeFileSync(join(variantDist, 'preset.yml'), assetPreset, 'utf8')
-    writeFileSync(join(variantDist, 'agent.cordis.yml'), assetAgent.replace('        creativeMode: false', '        creativeMode: ' + scalar), 'utf8')
-    writeManifest(variantDist, 'OLD-INVALID-CREATIVE-' + label.toUpperCase())
-    check('creativeMode ' + label + ' 旧值 → upgraded 不阻断', syncPreset(variantHome) === 'upgraded')
-    const variantManifest = manifestAt(variantDist)
-    check('creativeMode ' + label + ' 迁移落 false/skipped-invalid', readFileSync(join(variantDist, 'agent.cordis.yml'), 'utf8').includes('        creativeMode: false') && variantManifest.settingsMigration.results.creativeMode === 'skipped-invalid')
-  }
-
-  writeFileSync(join(unreadableDist, 'agent.cordis.yml'), '- id: [not valid\n', 'utf8')
-  writeManifest(unreadableDist, 'OLD-UNREADABLE-MATRIX')
-  check('旧 YAML 不可读 → upgraded 默认发布', syncPreset(unreadableHome) === 'upgraded')
-  const unreadableManifest = manifestAt(unreadableDist)
-  check('不可读 source=unreadable 且不伪称 restored/不泄露旧值', unreadableManifest.settingsMigration.source === 'unreadable' && Object.values(unreadableManifest.settingsMigration.results).every((result) => result === 'skipped-source-unreadable') && !JSON.stringify(unreadableManifest).includes('not valid'))
-
-  const beforeIdle = [readFileSync(join(validDist, 'preset.yml')), readFileSync(join(validDist, 'agent.cordis.yml')), readFileSync(join(validDist, 'dist-manifest.json'))]
-  check('同版本第二次 → idle', syncPreset(validHome) === 'idle')
-  const afterIdle = [readFileSync(join(validDist, 'preset.yml')), readFileSync(join(validDist, 'agent.cordis.yml')), readFileSync(join(validDist, 'dist-manifest.json'))]
-  check('idle 字节完全不变且共享 hash/readManifest 复用生产', beforeIdle.every((value, index) => value.equals(afterIdle[index])) && sharedHash(ASSET_DIR) === contentHash(ASSET_DIR) && readManifest(validDist) === contentHash(ASSET_DIR))
-
-  // ── gateWords 升级迁移矩阵（[任务5] 九类：valid/missing/partial-missing/extra-key/
-  //    non-string/duplicate/ambiguous/unreadable/bad-new-template） ──────────────
-  const GATE_CUSTOM = { routeDirect: '甲直行', routePlan: '乙规划', routeDisagree: '丙否决', approvalApprove: '丁批准', approvalReplan: '戊转规划', purposeRefine: '己完整', purposeRedo: '庚重做' }
-  const gateFieldNames = GATE_WORD_MIGRATION_DEFINITIONS.map((item) => item.key)
-  const gateBlockRange = (text) => {
-    const rows = text.split('\n')
-    const start = rows.findIndex((line) => line.trim() === 'gateWords:')
-    if (start < 0) return null
-    let end = start
-    while (end + 1 < rows.length && rows[end + 1].startsWith('          ')) end += 1
-    return { rows, start, end }
-  }
-  const mutateGateBlock = (text, mutate) => {
-    const range = gateBlockRange(text)
-    if (range === null) throw new Error('fixture: gateWords block missing')
-    const block = range.rows.slice(range.start + 1, range.end + 1)
-    range.rows.splice(range.start + 1, range.end - range.start, ...mutate(block))
-    return range.rows.join('\n')
-  }
-  const stripGateGroup = (text) => {
-    const range = gateBlockRange(text)
-    if (range === null) throw new Error('fixture: gateWords block missing')
-    range.rows.splice(range.start, range.end - range.start + 1)
-    return range.rows.join('\n')
-  }
-  const dropGateLeaf = (text, field) => mutateGateBlock(text, (block) => block.filter((line) => !line.startsWith('          ' + field + ':')))
-  const setGateLeaf = (text, field, raw) => mutateGateBlock(text, (block) => block.map((line) => line.startsWith('          ' + field + ':') ? '          ' + field + ': ' + raw : line))
-  const copyGateLeaf = (text, target, source) => mutateGateBlock(text, (block) => {
-    const sourceLine = block.find((line) => line.startsWith('          ' + source + ':'))
-    const raw = sourceLine.slice(('          ' + source + ':').length).trim()
-    return block.map((line) => line.startsWith('          ' + target + ':') ? '          ' + target + ': ' + raw : line)
-  })
-  const customGateAgent = (text) => {
-    let out = text
-    for (const item of GATE_WORD_MIGRATION_DEFINITIONS) {
-      const patched = patchYamlScalar(out, item, GATE_CUSTOM[item.key])
-      if (!patched.ok) throw new Error('fixture: gate patch failed ' + item.key)
-      out = patched.text
-    }
-    return out
-  }
-  const gateMatrix = [
-    ['valid', customGateAgent(assetAgent), 'restored'],
-    ['missing', stripGateGroup(assetAgent), 'skipped-old-missing'],
-    ['partial-missing', dropGateLeaf(assetAgent, 'routePlan'), 'skipped-invalid'],
-    ['extra-key', mutateGateBlock(assetAgent, (block) => block.concat(["          extraKey: 'x'"])), 'skipped-invalid'],
-    ['non-string', setGateLeaf(assetAgent, 'routeDirect', '42'), 'skipped-invalid'],
-    ['duplicate', copyGateLeaf(assetAgent, 'approvalApprove', 'routeDirect'), 'skipped-invalid'],
-    ['ambiguous', assetAgent + '\n- id: extra-plan\n  config:\n    gateWords:\n      routeDirect: dup-row\n', 'skipped-old-ambiguous'],
-    ['unreadable', '- id: [not valid\n', 'skipped-source-unreadable'],
-  ]
-  for (const [label, variant, expectedStatus] of gateMatrix) {
-    const home = join(work, 'gate-' + label + '-home')
-    const dist = join(home, '.agent-presets', 'extra-plan')
-    mkdirSync(dist, { recursive: true })
-    writeFileSync(join(dist, 'preset.yml'), assetPreset, 'utf8')
-    writeFileSync(join(dist, 'agent.cordis.yml'), variant, 'utf8')
-    writeManifest(dist, 'OLD-GATE-' + label.toUpperCase())
-    check('gateWords ' + label + ' → upgraded', syncPreset(home) === 'upgraded')
-    const migratedManifest = manifestAt(dist)
-    const gateResults = migratedManifest.gateWordsMigration === undefined ? {} : migratedManifest.gateWordsMigration.results
-    check('gateWords ' + label + ' 审计恰 7 项且全为 ' + expectedStatus, Object.keys(gateResults).length === 7 && Object.values(gateResults).every((result) => result === expectedStatus))
-    check('gateWords ' + label + ' manifest 仍 format=2/厂商 hash/settingsMigration 10 项', migratedManifest.format === 2 && migratedManifest.distHash === contentHash(ASSET_DIR) && Object.keys(migratedManifest.settingsMigration.results).length === 10)
-    check('gateWords ' + label + ' manifest 不泄漏用户词值', !JSON.stringify(migratedManifest).includes(GATE_CUSTOM.routeDirect) && !JSON.stringify(migratedManifest).includes(GATE_CUSTOM.purposeRedo))
-    const migratedText = readFileSync(join(dist, 'agent.cordis.yml'), 'utf8')
-    const migratedGroup = resolveSetting(parsePresetYaml(migratedText), GATE_WORDS_GROUP_DEFINITION, { aliases: false })
-    const migratedRuntime = createGateRuntime(migratedGroup.value)
-    if (label === 'valid') {
-      check('gateWords valid 迁移后逐项等于用户定制值', gateFieldNames.every((field) => migratedRuntime.words[field] === GATE_CUSTOM[field]))
-    } else {
-      const assetWords = resolveSetting(parsePresetYaml(assetAgent), GATE_WORDS_GROUP_DEFINITION, { aliases: false }).value
-      check('gateWords ' + label + ' 整组采用新模板出厂值（禁止部分迁移）', gateFieldNames.every((field) => migratedRuntime.words[field] === assetWords[field]) && migratedRuntime.words.routePlan !== GATE_CUSTOM.routePlan)
-    }
-  }
-
-  // bad-new-template：把插件包整份复制到临时目录，只改【副本】的资产 gateWords，再从副本
-  // import 生产 syncPreset（签名不变、无 test-only 参数）：坏模板必须抛错且目标目录三核心
-  // 文件逐字节不变、不留 .tmp 残骸。仓库内资产不被触碰。
-  {
-    const pluginSource = join(HERE, '..', '..', 'plugins', 'dsh-extra-plan')
-    const badVariants = [
-      ['整组缺失', (text) => stripGateGroup(text)],
-      ['单叶缺失', (text) => dropGateLeaf(text, 'purposeRedo')],
-      ['值重复', (text) => copyGateLeaf(text, 'approvalReplan', 'routeDirect')],
-    ]
-    for (const [label, mutate] of badVariants) {
-      const copyRoot = join(work, 'bad-template-' + label)
-      cpSync(pluginSource, join(copyRoot, 'dsh-extra-plan'), { recursive: true })
-      const copyAsset = join(copyRoot, 'dsh-extra-plan', 'assets', 'presets', 'extra-plan', 'agent.cordis.yml')
-      writeFileSync(copyAsset, mutate(readFileSync(copyAsset, 'utf8')), 'utf8')
-      const copySync = await import(pathToFileURL(join(copyRoot, 'dsh-extra-plan', 'lib', 'preset-sync.js')).href)
-      const home = join(work, 'bad-template-' + label + '-home')
-      const dist = join(home, '.agent-presets', 'extra-plan')
-      mkdirSync(dist, { recursive: true })
-      writeFileSync(join(dist, 'preset.yml'), assetPreset, 'utf8')
-      writeFileSync(join(dist, 'agent.cordis.yml'), customGateAgent(assetAgent), 'utf8')
-      writeManifest(dist, 'OLD-BAD-TEMPLATE-' + label)
-      const before = [readFileSync(join(dist, 'preset.yml')), readFileSync(join(dist, 'agent.cordis.yml')), readFileSync(join(dist, 'dist-manifest.json'))]
-      let thrown = null
-      try { copySync.syncPreset(home) } catch (error) { thrown = error instanceof Error ? error.message : String(error) }
-      const after = [readFileSync(join(dist, 'preset.yml')), readFileSync(join(dist, 'agent.cordis.yml')), readFileSync(join(dist, 'dist-manifest.json'))]
-      const leftovers = readdirSync(join(home, '.agent-presets')).filter((name) => name.startsWith('.tmp-'))
-      check('bad-new-template ' + label + ' → 抛错且目标三核心文件逐字节不变、无 .tmp 残骸', thrown !== null && before.every((value, index) => value.equals(after[index])) && leftovers.length === 0)
-    }
-  }
-
-  const rollbackTarget = join(work, 'rollback', 'target')
-  const rollbackTmp = join(work, 'rollback', 'tmp')
-  mkdirSync(rollbackTarget, { recursive: true })
-  mkdirSync(rollbackTmp, { recursive: true })
-  const oldManifest = '{"format":2,"distHash":"OLD-ROLLBACK"}\n'
-  writeFileSync(join(rollbackTarget, 'dist-manifest.json'), oldManifest, 'utf8')
-  writeFileSync(join(rollbackTarget, 'agent.cordis.yml'), 'old-agent', 'utf8')
-  writeFileSync(join(rollbackTmp, 'agent.cordis.yml'), 'new-agent', 'utf8')
-  let renameCalls = 0
-  const failingOps = {
-    exists: existsSync,
-    remove: rmSync,
-    rename(source, target) {
-      renameCalls += 1
-      if (renameCalls === 2) throw new Error('synthetic switch failure')
-      return renameSync(source, target)
-    },
-  }
-  let rollbackFailed = false
-  try { publishStage(rollbackTarget, rollbackTmp, failingOps) } catch { rollbackFailed = true }
-  check('切换失败抛错并保留旧目录/旧 manifest', rollbackFailed && readFileSync(join(rollbackTarget, 'agent.cordis.yml'), 'utf8') === 'old-agent' && readFileSync(join(rollbackTarget, 'dist-manifest.json'), 'utf8') === oldManifest && !existsSync(rollbackTmp))
-} finally {
-  rmSync(work, { recursive: true, force: true })
+// ── 声明行 plugins 行内定位/重述原语（供 T2/T3 写链复用） ────────────────
+{
+  const plugins = [{ id: 'tool-web', name: 'x', config: { fetch: false, searchTimeoutMs: 60000 } }, { id: 'grp', name: 'cordis:group', group: true, config: [{ id: 'extra-plan', config: { creativeMode: false } }] }]
+  check('findPluginsRow 递归覆盖 group 子行；缺失返回 null', findPluginsRow(plugins, 'extra-plan') !== null && findPluginsRow(plugins, 'no-such-row') === null)
+  const restated = restatePluginsRow(plugins, 'tool-web', { fetch: true })
+  check('restatePluginsRow 深拷贝整体重述：目标键改、其余键与原对象不变', restated[0].config.fetch === true && restated[0].config.searchTimeoutMs === 60000 && plugins[0].config.fetch === false)
+  check('restatePluginsRow 目标行缺失 → null（调用方据此判定 404）', restatePluginsRow(plugins, 'no-such-row', { x: 1 }) === null)
 }
 
 console.log('\n通过 ' + pass + ', 失败 ' + fail)

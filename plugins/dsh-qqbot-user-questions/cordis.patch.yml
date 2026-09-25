@@ -1,12 +1,21 @@
 # 精简版：静态 insert 注册依赖+mklink；旧版错误块由 heal 迁移；问答/审批由 dsh-qqbot 0.5.0 原生承担。
+# 【待有 QQBOT 环境再测试，本机不做验证】本文件两行按 dsh 0.1.7-rc.1 新包族静态重写，
+# 无 qqbot 0.5.0 包可实测（方案 U3/U4 未核实项）。
 # 增加而不是覆盖
 - insert:
     - id: qqbot-user-questions
       name: '@local/dsh-qqbot-user-questions'
-    - id: code-runtime
-      name: '@deepseek-ai/dsh-code-runtime-worker-thread'
-    - id: agent-presets
-      name: '@deepseek-ai/dsh-agent-presets'
+    # 0.1.7-rc.1：旧 code-runtime 行（worker-thread 族的 code-runtime 包）整包消失，
+    # 等价行 = ptc-runtime（dsh-base 同形行：id: ptc-runtime / name:
+    # '@deepseek-ai/dsh-ptc-runtime-node'，提供 ctx.ptcRuntime）。
+    # 若目标 qqbot 宿主的基础组合已带该行，本行须删除以免重复注册。
+    - id: ptc-runtime
+      name: '@deepseek-ai/dsh-ptc-runtime-node'
+    # 0.1.7-rc.1：旧 agent-presets 行（复数包）整包消失，替身 = dsh-agent-preset-registry
+    # （Config{default, selectedDefault}；modeSelectionEnabled 已在 dsh 0.1.7-rc.2 删除，勿再写；
+    # 预设声明行由各 bundle patch 提供）。
+    - id: agent-preset-registry
+      name: '@deepseek-ai/dsh-agent-preset-registry'
       config:
         default: extra-plan
     - id: cordis-host-runner

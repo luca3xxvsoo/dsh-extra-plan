@@ -1175,7 +1175,7 @@ export const decisions = {
 export const name = 'extra-plan'
 export const inject = ['systemPrompt']
 
-import { mkdirSync, readFileSync, writeFileSync, existsSync, appendFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PROBE_LIMITS, sanitizeTaskName, timestamp, renderSavePlan, renderSaveProbe, renderProbeMarkdown, extractProbeEvidenceRefs } from './lib/save-contract.js'
@@ -1185,7 +1185,7 @@ import { createSaveToolFactories } from './lib/save-tool-factories.js'
 import { RUNCODE_MUTATION_HINTS, runCodeTextOf, codeMutationHints, createRunCodeStatic } from './lib/run-code-static.js'
 import { PWSH_MUTATION, BASH_MUTATION, PWSH_BARE_WORDS, BASH_BARE_WORDS, pwshCommandOf, bashCommandOf, pwshMutationMatches, bashMutationMatches } from './lib/shell-mutation.js'
 import { DEFAULT_EXPLORE_BUDGET, toolCallCount, toolCallsSinceUser, withPlannerPromptSuffix, BUDGET_REMINDER_THRESHOLD, budgetNoticeText, withBudgetNotice, budgetReminderText, budgetReminderMessage, budgetReminderSent, budgetExhaustedReason, budgetExceeded } from './lib/planner-budget.js'
-import { parseSkillFrontmatter, causeChainOf } from './lib/runtime-static.js'
+import { causeChainOf } from './lib/runtime-static.js'
 import { createAgentRuntime, isLiveDelegation, childPolicyNeedsFloor } from './lib/agent-runtime.js'
 import { sessionEvents, isSubagentChild } from './lib/agent-session.js'
 import { createModelRouting, isExplicitRoute, isExplicitEffort, resolveAgentRouteSources, decidePlannerModelUse, PLANNER_PROBE_TIMEOUT_MS, PLANNER_BLOCKED_REASON, NON_PLANNER_BLOCKED_REASON, sortPlannerCandidates } from './lib/model-routing.js'
@@ -1227,6 +1227,16 @@ export function apply(ctx, config) {
   // cfg 快照：既是磁盘不可用/解析失败时的兜底，也是本实例初始值（生产上与该
   // YAML 同源——cfg 就是该文件当时的解析结果）。
   const liveConfig = createLiveConfig({
+    // 路径决议（T6）：profile cordis.patch.yml（configEditor.documentPath）——设置值的新落点
+    // （settings 行 config）；旧 .agent-presets/extra-plan/agent.cordis.yml 已无读取方。
+    resolveDocumentPath: () => {
+      try {
+        const editor = ctx.get('configEditor')
+        return editor !== undefined && editor !== null && typeof editor.documentPath === 'string' ? editor.documentPath : ''
+      } catch (error) {
+        return ''
+      }
+    },
     fallbackDefaults: {
       plannerModel: typeof cfg.plannerModel === 'string' ? cfg.plannerModel : 'deepseek-v4-pro',
       otherAgentModel: typeof cfg.otherAgentModel === 'string' ? cfg.otherAgentModel.trim() : '',
@@ -1246,8 +1256,9 @@ export function apply(ctx, config) {
   const bootstrapOn = () => liveConfig.anchoredBootstrap
   const runcodeCatchGateOn = () => liveConfig.runcodeCatchGate
   const crossProviderPlannerModelOn = () => liveConfig.crossProviderPlannerModel
-  // creativeModeOn 保持 apply 期快照（生效标志=重启生效；注册侧与投影侧均不热读）。
-  const creativeModeOn = cfg.creativeMode === true
+  // creativeMode 三消费点全部改走 live-config getter（T5-5）：C 隐藏集合（shouldHideCreativeCatalog）
+  // 与装配投影 hideCordis 两处现场取值，链 = settings 行 override → cfg 快照 → BUILTIN_DEFAULTS。
+  const creativeModeOn = () => liveConfig.creativeMode
   const bootstrapPersona = typeof cfg.bootstrapPersona === 'string' ? cfg.bootstrapPersona : 'You are a helpful software engineer assistant.'
   // 变量②：F 段（HP 首轮）tool:read 的手写文案；空串/非字符串一律回退内置同文案兜底。
   const bootstrapReadHint = typeof cfg.bootstrapReadHint === 'string' && cfg.bootstrapReadHint !== ''
@@ -1454,49 +1465,14 @@ export function apply(ctx, config) {
     getDiagPath: () => diagPath,
   })
 
-  // ── cordis 官方技能引用（runtime-skill 注册，零副本） ──
-  // 从官方 agentPresets 服务 resolve('cordis') 拿 shipped 预设真实路径
-  // （path=.../presets/cordis/agent.cordis.yml，目录=dirname(path)），读取官方
-  // skills/ 下两个 SKILL.md 原文，把 name/description/content 注册为 runtime
-  // skill 进本插件所在 standing 层（scopeOf(调用者 ctx)）——extra-plan 主会话
-  // 经 tool-skill 的 list/get（scope=agent，链上合并 standing 层）可见、可 load。
-  // 失败降级：任一环节异常仅 console.warn，不影响闸门与其余功能。
-  const agentPresets = ctx.get('agentPresets')
-  const skills = ctx.get('skills')
-  // creativeMode=false 不注册两个官方创造模式 skill；skill 工具及其它用户 skill 不受影响。
-  if (creativeModeOn && agentPresets !== undefined && skills !== undefined) {
-    ctx.effect(() => {
-      let dead = false
-      const disposers = []
-      agentPresets.resolve('cordis').then((preset) => {
-        if (dead || preset === undefined || preset === null) return
-        if (typeof preset.path !== 'string' || preset.path === '') return
-        const skillsDir = join(dirname(preset.path), 'skills')
-        for (const id of ['editing-cordis-compositions', 'cordis-plugin-development']) {
-          const file = join(skillsDir, id, 'SKILL.md')
-          if (!existsSync(file)) continue
-          const text = readFileSync(file, 'utf8')
-          const meta = parseSkillFrontmatter(text)
-          if (meta.name === '' || meta.description === '') continue
-          disposers.push(skills.register({
-            name: meta.name,
-            description: meta.description,
-            source: file,
-            path: file,
-            content: text,
-          }))
-        }
-      }).catch((error) => {
-        console.warn(`extra-plan: 官方 cordis 技能引用失败（${error instanceof Error ? error.message : String(error)}）`)
-      })
-      return () => {
-        dead = true
-        for (const dispose of disposers) dispose()
-      }
-    })
-  }
-
-  // parseSkillFrontmatter is imported from lib/runtime-static.js.
+  // ── C=1 创造模式的官方 skill 面（T5-3 取径订正）────────────────────────────
+  // 旧实现（0.1.2-rc.1~0.1.5-rc.2）在 apply 期经 agentPresets.resolve('cordis') 取 shipped
+  // 预设目录后 skills.register 两个 SKILL.md。dsh 0.1.7-rc.1 的 resolve() 只返回 {id[,broken]}，
+  // 恒无 path → 整块静默失效（预设挂载成功但 skill 永远不注册）。
+  // 现取径 = 静态注册：预设 skill-filesystem 行的 config.customSkillDirs 指向
+  // @deepseek-ai/dsh-agent-preset 包内 skills/（见 agent.cordis.yml），三个 SKILL.md 随
+  // skill-filesystem 行进入本预设组合；creativeMode=false 不再靠「不注册」，而由
+  // assembly-presentation 的 CREATIVE_SKILL_NAMES 在 catalog 投影里隐藏（语义等价）。
 
   // childBaseline/usageRoleOf and sandbox floor live in the per-apply agent runtime factory.
 
@@ -1577,21 +1553,32 @@ export function apply(ctx, config) {
   // 1) 会话启动：子代理基线（账本 + 沙箱下限）；规划子代理与主会话注册 save_plan
   //    （主会话侧任意路由态放行：受限规划工件，判定在 mainGateReason 兜底）；主会话与探查子代理
   //    注册 save_probe（scoped；recompose 不重发 session-start，pre-step 兜底）。
-  ctx.on('agent/session-start', (payload) => {
-    const agent = payload.agent
-    if (agent === undefined) return
-    selfAgent = agent
-    childBaseline(agent)
-    if (isPlannerChild(agent) || !isSubagentChild(agent)) registerSavePlan(agent)
-    if (!isSubagentChild(agent) || probeClaimFor(agent)) { registerSaveProbe(agent) }
+  // HK1（0.1.7 换代）：agent/session-start 已删除；agent/created 升为 serial——
+  // 监听器被宿主 await，任何抛出都会让会话创建失败。故整块必须吞错：内部异常只
+  // console.warn 留痕，绝不放任传播（gateRuntime 已在 apply 期求值，此处不再抛）。
+  ctx.on('agent/created', (payload) => {
+    try {
+      const agent = payload.agent
+      if (agent === undefined) return
+      selfAgent = agent
+      childBaseline(agent)
+      if (isPlannerChild(agent) || !isSubagentChild(agent)) registerSavePlan(agent)
+      if (!isSubagentChild(agent) || probeClaimFor(agent)) { registerSaveProbe(agent) }
+    } catch (error) {
+      console.warn('extra-plan: agent/created 初始化失败（不阻断会话创建）：' + (error instanceof Error ? error.message : String(error)))
+    }
   })
 
   // 2) pre-step：账本补记（会话最终消息的行延迟到此）；规划子代理初始任务与
   // 续轮转达机械拼接 plannerPromptSuffix（「任务要求 + 空行 + 配置文本」——宿主
   // exec.arguments 与消息对象均 deepFreeze，拼接走 pre-step 消息替换通道，
   // 与 agent-instructions 基线注入同通道）。
+  // C=0：三个官方 cordis skill 由 skill-filesystem 的 customSkillDirs 静态注册进本预设组合
+  // （不再靠「不注册」），一律从模型可见 catalog 隐藏——与旧「不注册」语义等价。
+  // C=1：保留原 HP1 首轮暂隐逻辑（仅 A=1、F、main/planner、M=ptc 的极简首轮）。
   function shouldHideCreativeCatalog(agent) {
-    if (!creativeModeOn || !bootstrapOn() || !isBootstrapPhase(agent)) return false
+    if (!creativeModeOn()) return true
+    if (!bootstrapOn() || !isBootstrapPhase(agent)) return false
     const planner = isPlannerChild(agent)
     const child = isChild(agent)
     if (!planner && child) return false
@@ -1742,19 +1729,20 @@ export function apply(ctx, config) {
     if (anchoredPtc) {
       // HP0/HP1：PTC 首轮只保留传输、persona 与手写 read 文案（覆盖 tool:read 的 text）；不先生成完整 SDK。
       presented = projectAssemblyForPresentation(result, schemas, {
-        hideCordis: !creativeModeOn,
+        hideCordis: !creativeModeOn(),
         ptcOnly: true,
         keepSectionNames: new Set([PTC_SECTION_NAME, READ_SECTION_NAME]),
       })
-    } else if (!creativeModeOn) {
+    } else if (!creativeModeOn()) {
       let sdkText
       // F/native 与 F/both 随后只返回 bootstrap shell(s)+read，不能为被剥离的完整 SDK 预热。
       if (!anchoredFirst && hasSection(result.sections, SDK_SECTION_NAME)) {
         let language = 'typescript'
         try {
-          const runtime = typeof ctx.get === 'function' ? ctx.get('codeRuntime') : undefined
+          // 0.1.7 服务名换代：codeRuntime → ptcRuntime（dsh-tools 的 PTC 运行服务）。
+          const runtime = typeof ctx.get === 'function' ? ctx.get('ptcRuntime') : undefined
           if (runtime !== undefined && runtime !== null && typeof runtime.language === 'string') language = runtime.language
-        } catch (error) { /* 缺少 codeRuntime 时按测试/兼容默认使用 TypeScript renderer */ }
+        } catch (error) { /* 缺少 ptcRuntime 时按测试/兼容默认使用 TypeScript renderer */ }
         try {
           const effectiveSchemas = toolSdkSchemasOf(agent) ?? schemas
           const rendererInput = sdkSchemasForRendering(effectiveSchemas)
@@ -1968,7 +1956,9 @@ export function apply(ctx, config) {
         const sd = se.data
         if (sd === null || typeof sd !== 'object' || sd.source === null || typeof sd.source !== 'object') continue
         const src = sd.source
-        if (src.kind !== 'plugin' || src.plugin !== 'tool-jobs' || src.form !== 'notice') continue
+        // HK9（0.1.7 换代）：dsh-tool-jobs 的完成通知源已改为
+        // { kind: 'tool-jobs', form: 'notice', summary }（旧 'plugin' 兜底 kind 已废）。
+        if (src.kind !== 'tool-jobs' || src.form !== 'notice') continue
         if (!Array.isArray(sd.content)) continue
         let noticeText = ''
         for (const block of sd.content) {

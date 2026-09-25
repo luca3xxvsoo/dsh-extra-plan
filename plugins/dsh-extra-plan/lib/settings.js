@@ -1,37 +1,60 @@
-// Host half of dsh-extra-plan-settings.
-// Agent settings are described and patched by preset-settings.js.
-// qqbot 自愈见独立插件 dsh-qqbot-user-questions（精简版），本设置页不涉及 qqbot。
+// Host half of dsh-extra-plan-settings（dsh 0.1.7-rc.1 设置链）。
+//
+// 双通道写链（方案 T3）：
+//  - 8 项 UI 设置（anchoredBootstrap/creativeMode/runcodeCatchGate/
+//    crossProviderPlannerModel/plannerModel/plannerPromptSuffix/exploreBudget/
+//    otherAgentModel）：本行 Config 的 8 个 .volatile() 字段，走宿主 SettingsForms
+//    （settings.configure 只登记页面策略；读写统一走官方 configForms/remote.settings，
+//    事务 + revision fencing + 回滚）。旧的 settings.register(ns, schema) 在 0.1.7 不存在。
+//  - 2 项宿主行设置（webFetch、toolPresentationMode）：消费方是声明行 plugins 内的
+//    tool-web / tool-presentation 子行 config（非 volatile，不在本行 Config 内），
+//    唯一官方写口 = configEditor.edit（整体重述 plugins，config 不深合并）。
+//    PUT /api/dsh-extra-plan-settings/pro-config 仅收这 2 项；GET 只读 configuration() 现值。
+//
+// 本模块不涉及 qqbot（见独立插件 dsh-qqbot-user-questions）。
+// 写盘一律经宿主 editor：本模块不直写任何 cordis.patch.yml、不写旧预设目录。
 
-import { readFileSync, writeFileSync, mkdirSync, renameSync, rmSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import z from '@deepseek-ai/schemastery'
 import {
-  SETTING_DEFINITIONS,
-  getSettingDefinition,
-  patchYamlScalar,
-  publicSettingMetadata,
+  HOST_ROW_SETTING_DEFINITIONS,
+  PRESET_ROW_ID,
+  SETTINGS_ROW_ID,
+  captureSettings,
+  findPluginsRow,
+  readPath,
   validateSettingValue,
-  normalizeSettingValue,
 } from './preset-settings.js'
+import { restatePresetPlugins } from './preset-sync.js'
 
 export const name = 'dsh-extra-plan-settings'
 export const inject = []
 
-const EXTRA_PLAN_NS = 'dsh-extra-plan'
-const ExtraPlanSettingsSchema = z.object({})
 const HERE = dirname(fileURLToPath(import.meta.url))
 const TEMPLATE_AGENT_FILE = join(HERE, '..', 'assets', 'presets', 'extra-plan', 'agent.cordis.yml')
 
-function dshHomeDir() {
-  const fromEnv = process.env.DSH_HOME
-  if (typeof fromEnv === 'string' && fromEnv.trim() !== '') return fromEnv.trim()
-  return join(process.env.USERPROFILE || process.env.HOME || '', '.dsh')
-}
+/**
+ * 8 项 UI 设置的宿主表单 schema：每字段链 .volatile()（SettingsForms 只投影 volatile 字段），
+ * 默认值与 lib/live-config.js BUILTIN_DEFAULTS 逐字一致。
+ * ns = 本行 id（profile patch 根级 insert 行，id 唯一 → configEditor 可寻址）。
+ */
+export const Config = z.object({
+  anchoredBootstrap: z.boolean().default(true).volatile(),
+  creativeMode: z.boolean().default(false).volatile(),
+  runcodeCatchGate: z.boolean().default(false).volatile(),
+  crossProviderPlannerModel: z.boolean().default(false).volatile(),
+  plannerModel: z.string().default('deepseek-v4-pro').volatile(),
+  plannerPromptSuffix: z.string().default('').volatile(),
+  // 整数语义按宿主既有习语表达（schemastery 无 .int()；官方 volatile 整数字段同形，
+  // 见 dsh-agent-loop 的 maxParallelToolCalls: z.number().step(1).min(1).default(10).volatile()）。
+  exploreBudget: z.number().step(1).min(1).default(18).volatile(),
+  otherAgentModel: z.string().default('').volatile(),
+})
 
-export function agentCordisPath() {
-  return join(dshHomeDir(), '.agent-presets', 'extra-plan', 'agent.cordis.yml')
-}
+const HOST_ROW_KEYS = Object.freeze(HOST_ROW_SETTING_DEFINITIONS.map((item) => item.key))
+const PATH_WITHIN_ROW = Object.freeze({ webFetch: 'config.fetch', toolPresentationMode: 'config.mode' })
 
 function isLoopback(req) {
   const addr = req.socket && req.socket.remoteAddress
@@ -63,82 +86,141 @@ function readJsonBody(req) {
   })
 }
 
-export function readAgentMetadata(file) {
-  const actualText = readFileSync(file, 'utf8')
-  let defaultText = actualText
-  try { defaultText = readFileSync(TEMPLATE_AGENT_FILE, 'utf8') } catch { /* installed package may be incomplete */ }
-  return publicSettingMetadata(defaultText, actualText)
-}
-
-function proPayload(file) {
-  const metadata = readAgentMetadata(file)
-  return { ...metadata, ...metadata.values }
-}
-
-function writeTextAtomic(file, text) {
-  const dir = dirname(file)
-  mkdirSync(dir, { recursive: true })
-  const tmp = file + '.tmp-' + process.pid
+/** 出厂默认（2 项宿主行）：读仓库模板 agent.cordis.yml 的同名叶值，缺则内置兜底。 */
+function assetHostRowDefaults() {
+  const fallback = { webFetch: false, toolPresentationMode: 'native' }
   try {
-    writeFileSync(tmp, text, 'utf8')
-    renameSync(tmp, file)
-  } catch (error) {
-    try { rmSync(tmp, { force: true }) } catch { /* preserve original error */ }
-    throw error
+    const captured = captureSettings(readFileSync(TEMPLATE_AGENT_FILE, 'utf8'))
+    const values = captured !== null && captured.values !== null && typeof captured.values === 'object' ? captured.values : {}
+    const states = captured !== null && captured.states !== null && typeof captured.states === 'object' ? captured.states : {}
+    const out = {}
+    for (const key of HOST_ROW_KEYS) {
+      out[key] = states[key] === 'captured' && Object.prototype.hasOwnProperty.call(values, key) ? values[key] : fallback[key]
+    }
+    return out
+  } catch {
+    return fallback
   }
 }
 
-function patchManagedFile(file, entries) {
-  let text = readFileSync(file, 'utf8')
-  for (const entry of entries) {
-    const patched = patchYamlScalar(text, entry.definition, entry.value)
-    if (!patched.ok) throw new Error(entry.definition.key + ' ' + patched.reason)
-    text = patched.text
-  }
-  writeTextAtomic(file, text)
+/** 生效 plugins：profile override → Loader 行 config → 继承层。 */
+function effectivePlugins(row) {
+  const override = row.override
+  if (override !== null && typeof override === 'object' && Array.isArray(override.plugins)) return override.plugins
+  const own = row.entry !== undefined && row.entry.options !== undefined ? row.entry.options.config : undefined
+  if (own !== null && typeof own === 'object' && Array.isArray(own.plugins)) return own.plugins
+  const inherited = row.inherited
+  if (inherited !== null && typeof inherited === 'object' && Array.isArray(inherited.plugins)) return inherited.plugins
+  return undefined
 }
 
-function createApiHandler() {
+function findPresetRow(editor) {
+  const rows = typeof editor.configuration === 'function' ? editor.configuration() : []
+  return rows.find((row) => row !== null && typeof row === 'object' && row.entry !== undefined && row.entry.options !== undefined && row.entry.options.id === PRESET_ROW_ID)
+}
+
+/** GET 只读语义：读 configuration() 现值（声明行 plugins 内 2 项子行 config）。 */
+function readHostRowState(editor) {
+  const defaults = assetHostRowDefaults()
+  const presetRow = findPresetRow(editor)
+  if (presetRow === undefined) return { located: false, values: { ...defaults }, defaults }
+  const plugins = effectivePlugins(presetRow)
+  const values = { ...defaults }
+  const overridden = {}
+  for (const definition of HOST_ROW_SETTING_DEFINITIONS) {
+    const row = findPluginsRow(plugins, definition.rowLocator.pluginsRowId)
+    if (row === null) { overridden[definition.key] = false; continue }
+    const read = readPath(row, PATH_WITHIN_ROW[definition.key])
+    if (!read.exists || !validateSettingValue(definition, read.value)) { overridden[definition.key] = false; continue }
+    values[definition.key] = read.value
+    overridden[definition.key] = true
+  }
+  return { located: true, values, defaults, overridden }
+}
+
+function publicField(definition, value, defaultValue, overridden) {
+  const ui = definition.ui
+  return {
+    key: definition.key,
+    type: definition.scalarType,
+    control: ui.control,
+    locale: ui.locale,
+    ...(ui.options === undefined ? {} : { options: [...ui.options] }),
+    ...(ui.optionLocale === undefined ? {} : { optionLocale: { ...ui.optionLocale } }),
+    value,
+    default: defaultValue,
+    overridden: overridden === true,
+  }
+}
+
+function proPayload(editor) {
+  const defaults = assetHostRowDefaults()
+  const state = { located: false, values: { ...defaults }, defaults, overridden: {} }
+  let current = state
+  try { current = readHostRowState(editor) } catch { current = state }
+  const fields = HOST_ROW_SETTING_DEFINITIONS.map((definition) => publicField(
+    definition,
+    current.values[definition.key],
+    current.defaults[definition.key],
+    current.overridden === undefined ? false : current.overridden[definition.key],
+  ))
+  return { fields, values: { ...current.values }, defaults: { ...current.defaults } }
+}
+
+/** 行定位失败（声明行/子行缺失）→ 404；edit/reconcile 失败 → 500。 */
+function isLocateError(error) {
+  const message = String(error !== null && typeof error === 'object' && error.message !== undefined ? error.message : error)
+  return message.includes('不可定位') || message.includes('缺少') || message.includes('缺失') || message === 'not found'
+}
+
+function createApiHandler(ctx) {
   return async (req, res) => {
     if (!isLoopback(req)) return json(res, 403, { error: 'forbidden: loopback only' })
     const url = new URL(req.url, 'http://localhost')
     const path = url.pathname
     try {
+      const editor = typeof ctx.get === 'function' ? ctx.get('configEditor') : undefined
+      if (editor === undefined || editor === null || typeof editor.edit !== 'function') {
+        return json(res, 500, { error: 'configEditor service is unavailable' })
+      }
+
       if (req.method === 'GET' && path === '/api/dsh-extra-plan-settings/pro-config') {
-        const file = agentCordisPath()
-        try { return json(res, 200, proPayload(file)) }
+        try { return json(res, 200, proPayload(editor)) }
         catch (error) {
-          return json(res, 500, { error: 'failed to read agent.cordis.yml: ' + String(error && error.message || error) })
+          return json(res, 500, { error: 'failed to read declaration row plugins: ' + String(error && error.message || error) })
         }
       }
 
       if (req.method === 'PUT' && path === '/api/dsh-extra-plan-settings/pro-config') {
         const body = await readJsonBody(req)
         const input = body !== null && typeof body === 'object' ? body : {}
-        const model = getSettingDefinition('plannerModel')
-        const budget = getSettingDefinition('exploreBudget')
-        if (!validateSettingValue(model, input.plannerModel)) {
-          return json(res, 400, { error: 'plannerModel must be a string (empty string = inherit main-session model)' })
+        const keys = Object.keys(input)
+        const unknown = keys.filter((key) => !HOST_ROW_KEYS.includes(key))
+        if (unknown.length > 0) {
+          return json(res, 400, { error: 'unsupported field(s): ' + unknown.join(', ') + '（本接口仅收 ' + HOST_ROW_KEYS.join('/') + '）' })
         }
-        if (!validateSettingValue(budget, input.exploreBudget)) {
-          return json(res, 400, { error: 'exploreBudget must be a positive integer' })
-        }
-        const entries = []
-        for (const definition of SETTING_DEFINITIONS) {
-          if (definition.ui.separate !== undefined || !Object.prototype.hasOwnProperty.call(input, definition.key)) continue
+        const hostRowConfig = {}
+        for (const definition of HOST_ROW_SETTING_DEFINITIONS) {
+          if (!Object.prototype.hasOwnProperty.call(input, definition.key)) continue
           if (!validateSettingValue(definition, input[definition.key])) {
             return json(res, 400, { error: definition.key + ' has an invalid value' })
           }
-          entries.push({ definition, value: normalizeSettingValue(definition, input[definition.key]) })
+          hostRowConfig[definition.rowLocator.pluginsRowId] = { [definition.key === 'webFetch' ? 'fetch' : 'mode']: input[definition.key] }
+        }
+        if (Object.keys(hostRowConfig).length === 0) {
+          return json(res, 400, { error: 'at least one of ' + HOST_ROW_KEYS.join('/') + ' is required' })
+        }
+        const presetRow = findPresetRow(editor)
+        if (presetRow === undefined) {
+          return json(res, 404, { error: 'declaration row not found: ' + PRESET_ROW_ID })
         }
         try {
-          patchManagedFile(agentCordisPath(), entries)
-          return json(res, 200, proPayload(agentCordisPath()))
+          await editor.edit(presetRow.entry, (current, inherited) => restatePresetPlugins(current, inherited, { hostRowConfig, gateWords: null }))
         } catch (error) {
           const message = String(error && error.message || error)
-          const status = message.includes(' missing') || message.includes(' ambiguous') ? 404 : 500
-          return json(res, status, { error: 'failed to write agent.cordis.yml: ' + message })
+          return json(res, isLocateError(error) ? 404 : 500, { error: 'failed to write declaration row plugins: ' + message })
         }
+        return json(res, 200, proPayload(editor))
       }
 
       return json(res, 404, { error: 'not found' })
@@ -149,14 +231,19 @@ function createApiHandler() {
 }
 
 export function apply(ctx) {
-  ctx.inject(['settings'], (sctx) => {
-    sctx.settings.register(EXTRA_PLAN_NS, ExtraPlanSettingsSchema)
+  // 8 项 UI 设置：只登记本实例的页面策略（auto:false = 只走 Plugins 页自定义卡片，
+  // 不生成自动页）；Config 的 volatile 字段由 SettingsForms 投影成表单，
+  // 读写一律走官方 configForms（remote.settings）——本行无自建写链。
+  ctx.inject(['settings'], (child) => {
+    child.effect(() => child.settings.configure({ auto: false }, ctx.fiber))
   })
   ctx.inject(['webServer'], (webCtx) => {
     webCtx.effect(() => webCtx.webServer.register({
       kind: 'prefix',
       path: '/api/dsh-extra-plan-settings',
-      handler: createApiHandler(),
+      handler: createApiHandler(ctx),
     }), 'dsh-extra-plan-settings: api route')
   })
 }
+
+export { SETTINGS_ROW_ID, PRESET_ROW_ID }

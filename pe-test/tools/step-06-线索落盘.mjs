@@ -129,10 +129,12 @@ const mainAgent = { session: { header: { id: 'main-1', cwd: 'C:/work' }, snapsho
 const plannerAgent = { session: { header: { id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => [DESC] }, options: { model: 'deepseek-v4-pro' }, ctx: agentCtx }
 const executorAgent = { session: { header: { id: 'exec-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => [] }, options: {}, ctx: agentCtx }
 
-function fireSessionStart(listeners, agent) {
-  const entry = listeners['agent/session-start']
-  if (entry === undefined || entry.length === 0) throw new Error('session-start 监听器未注册')
-  for (const fn of entry) fn({ agent })
+// 0.1.7 换代：agent/session-start 已删除，改由 agent/created（serial，payload
+// { agent, source }) 承担 save_plan/save_probe 的会话启动注册。
+function fireAgentCreated(listeners, agent) {
+  const entry = listeners['agent/created']
+  if (entry === undefined || entry.length === 0) throw new Error('agent/created 监听器未注册')
+  for (const fn of entry) fn({ agent, source: 'startup' })
 }
 // T3 前置修复：pre-step 是宿主 waterfall——必须逐个 await 全部监听器，
 // 否则只取 [0] 只命中创造目录投影处理器，注册处理器（排在其后）永不执行。
@@ -154,19 +156,19 @@ function preExecute(listeners, agent, name, argumentsObj) {
 
 // ── ① 注册层断言（[任务3]） ─────────────────────────────────────────────
 registered.length = 0
-fireSessionStart(harness, mainAgent)
+fireAgentCreated(harness, mainAgent)
 await firePreStep(harness, mainAgent)
 await firePreStep(harness, mainAgent) // 幂等：重复触发不重复注册
 check('S1 主会话注册恰一条 save_probe（幂等）', registered.filter((t) => t.name === 'save_probe').length, 1)
 check('S2 主会话注册 save_plan（受限规划工件：与 save_probe 同构的工厂；放行不再按路由判定）', registered.filter((t) => t.name === 'save_plan').length, 1)
 
 registered.length = 0
-fireSessionStart(harness, plannerAgent)
+fireAgentCreated(harness, plannerAgent)
 check('S3 planner 注册恰一条 save_plan', registered.filter((t) => t.name === 'save_plan').length, 1)
 check('S4 planner 不注册 save_probe', registered.filter((t) => t.name === 'save_probe').length, 0)
 
 registered.length = 0
-fireSessionStart(harness, executorAgent)
+fireAgentCreated(harness, executorAgent)
 await firePreStep(harness, executorAgent)
 check('S5 executor 均不注册（空）', registered.length, 0)
 
@@ -240,7 +242,7 @@ function visibleNames(assembly) {
   const harness6 = refHarness(ref)
   const registered6 = []
   const agent6 = registrationAgent('retry-main-1', ref)
-  fireSessionStart(harness6, agent6)
+  fireAgentCreated(harness6, agent6)
   check('S6 save_plan 服务不可用首轮未注册', registered6.length, 0)
   ref.current = stubToolsOf(registered6, { mode: 'ok' })
   await firePreStep(harness6, agent6)
@@ -271,7 +273,7 @@ function visibleNames(assembly) {
       if (attempts7 === 1) throw new Error('transient tools layer failure')
     } })
     ref.current = tools7
-    fireSessionStart(harness7, agent7)
+    fireAgentCreated(harness7, agent7)
     check('S7 可重试错首轮：save_probe 尝试 1 次（分类 C 不写标记）、save_plan 尝试 1 次', [attempts7, planAttempts7], [1, 1])
     checkTrue('S7 可重试错走分类 C 文案（无永久化后缀）', logs7.some(([lvl, text]) => lvl === 'error' && text.includes('save_probe registration failed: transient tools layer failure')))
     await firePreStep(harness7, agent7)
@@ -332,7 +334,7 @@ function visibleNames(assembly) {
     const agent9b = registrationAgent('permanent-main-1', ref9b)
     let attempts9b = 0
     ref9b.current = stubToolsOf(registered9b, { mode: 'permanent', fail: (name) => { if (name !== 'save_plan') return; attempts9b += 1; throw jsonSchemaStub() } })
-    fireSessionStart(harness9b, agent9b)
+    fireAgentCreated(harness9b, agent9b)
     await firePreStep(harness9b, agent9b)
     await firePreStep(harness9b, agent9b)
     check('S9 JsonSchemaError 桩（name 为真实 JsonSchemaError、save_plan 路径）只尝试 1 次', attempts9b, 1)
@@ -454,10 +456,10 @@ checkTrue('S14 预算耗尽后收到 agent-message 转达 → 预算重置 read 
 const smokeMain = { session: { header: { id: 'smoke-main', cwd: 'C:/work' }, snapshotEvents: () => [] }, options: {}, ctx: agentCtx }
 const smokePlanner = { session: { header: { id: 'smoke-planner', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => [DESC] }, options: { model: 'deepseek-v4-pro' }, ctx: agentCtx }
 registered.length = 0
-fireSessionStart(harness, smokeMain)
+fireAgentCreated(harness, smokeMain)
 const saveProbeDef = registered.find((t) => t.name === 'save_probe')
 registered.length = 0
-fireSessionStart(harness, smokePlanner)
+fireAgentCreated(harness, smokePlanner)
 const savePlanDef = registered.find((t) => t.name === 'save_plan')
 check('S14 冒烟捕获 save_probe 工具定义', saveProbeDef !== undefined && typeof saveProbeDef.execute === 'function', true)
 check('S15 冒烟捕获 save_plan 工具定义', savePlanDef !== undefined && typeof savePlanDef.execute === 'function', true)

@@ -146,18 +146,22 @@ try {
   const staticPatch = parseYaml(staticPatchText)
   const staticInserts = rootInsertNodes(staticPatch)
   const staticRows = staticInserts.length === 1 && Array.isArray(staticInserts[0].insert) ? staticInserts[0].insert : []
-  const staticCode = staticRows.find((row) => isMap(row) && row.id === 'code-runtime')
-  const staticAgent = staticRows.find((row) => isMap(row) && row.id === 'agent-presets')
+  const staticCode = staticRows.find((row) => isMap(row) && row.id === 'ptc-runtime')
+  const staticAgent = staticRows.find((row) => isMap(row) && row.id === 'agent-preset-registry')
   const staticQqbot = staticRows.find((row) => isMap(row) && row.id === 'qqbot-user-questions')
   const staticRunner = staticRows.find((row) => isMap(row) && row.id === 'cordis-host-runner')
   check('兼容 patch 是顶层数组且仅有一个根级 insert', Array.isArray(staticPatch) && staticPatch.length === 1 && staticInserts.length === 1)
-  check('静态 insert 恰四行且 qqbot-user-questions/code-runtime/agent-presets 包名准确', staticRows.length === 4 &&
-    isMap(staticCode) && staticCode.name === '@deepseek-ai/dsh-code-runtime-worker-thread' &&
-    isMap(staticAgent) && staticAgent.name === '@deepseek-ai/dsh-agent-presets' &&
+  check('静态 insert 第 4 行 cordis-host-runner 包名准确且无 config', isMap(staticRows.find((row) => isMap(row) && row.id === 'cordis-host-runner')) && staticRows.find((row) => isMap(row) && row.id === 'cordis-host-runner').name === '@deepseek-ai/dsh-cordis-host-runner')
+  // 【待有 QQBOT 环境再测试，本机不做验证】两行按 dsh 0.1.7-rc.1 新包族静态重写（原
+  // code-runtime/agent-presets 两包在 0.1.7 整包消失；方案 U3/U4 未核实项）。
+  check('静态 insert 恰四行且 qqbot-user-questions/ptc-runtime/agent-preset-registry 包名准确', staticRows.length === 4 &&
+    isMap(staticCode) && staticCode.name === '@deepseek-ai/dsh-ptc-runtime-node' &&
+    isMap(staticAgent) && staticAgent.name === '@deepseek-ai/dsh-agent-preset-registry' &&
     isMap(staticQqbot) && staticQqbot.name === '@local/dsh-qqbot-user-questions')
-  check('静态 insert 第 4 行 cordis-host-runner 包名准确且无 config', isMap(staticRunner) && staticRunner.name === '@deepseek-ai/dsh-cordis-host-runner' && staticRunner.config === undefined)
-  check('静态 agent-presets 默认严格为 extra-plan', isMap(staticAgent) && isMap(staticAgent.config) && staticAgent.config.default === 'extra-plan')
-  check('code-runtime/agent-presets 不在根级非-insert patch', Array.isArray(staticPatch) && !staticPatch.some((row) => isMap(row) && (row.id === 'code-runtime' || row.id === 'agent-presets')))
+  check('cordis-host-runner 行无 config（保持原语义）', isMap(staticRunner) && staticRunner.name === '@deepseek-ai/dsh-cordis-host-runner' && staticRunner.config === undefined)
+  check('静态 agent-preset-registry 默认严格为 extra-plan', isMap(staticAgent) && isMap(staticAgent.config) && staticAgent.config.default === 'extra-plan')
+  check('ptc-runtime/agent-preset-registry 不在根级非-insert patch', Array.isArray(staticPatch) && !staticPatch.some((row) => isMap(row) && (row.id === 'ptc-runtime' || row.id === 'agent-preset-registry')))
+  check('静态 patch 不再出现 0.1.5 世代两包名', !staticPatchText.includes('@deepseek-ai/dsh-code-runtime-worker-thread') && !staticPatchText.includes('@deepseek-ai/dsh-agent-presets') && staticPatchText.includes('本机不做验证'))
   check('cordis-host-runner 不在根级非-insert patch（无第二处 cordis 行）', Array.isArray(staticPatch) && !staticPatch.some((row) => isMap(row) && (row.id === 'cordis-host-runner' || row.name === '@deepseek-ai/dsh-cordis-host-runner')))
 
   // ② 生产同形 fixture：只迁移两个旧根级块，保留 im-qqbot 与备份原文

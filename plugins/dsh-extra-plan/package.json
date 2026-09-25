@@ -1,7 +1,7 @@
 {
   "name": "@local/dsh-extra-plan",
-  "version": "0.2.1",
-  "description": "额外规划模式（extra-plan 预设专用）：按需规划 + 四级机械锚点（路由/目的/澄清/批准）+ anchored 引导（主会话与规划子代理）+ 规划子代理探查硬上限 + 力度继承 + save_plan 方案落盘（原子双写）+ 子代理沙箱下限 + usage 账本。Mounted by the extra-plan preset; 预设资产经 postinstall 在安装时一次性分发到 DSH_HOME/.agent-presets/extra-plan/（发完即退役，永不覆盖本机改动）。",
+  "version": "0.3.0",
+  "description": "额外规划模式（extra-plan 预设专用）：按需规划 + 四级机械锚点（路由/目的/澄清/批准）+ anchored 引导（主会话与规划子代理）+ 规划子代理探查硬上限 + 力度继承 + save_plan 方案落盘（原子双写）+ 子代理沙箱下限 + usage 账本。Mounted by the extra-plan preset; 预设新载体（dsh 0.1.7-rc.1 / 0.1.7-rc.2）= profile patch 根级 insert 一行 preset-extra-plan 声明行（@deepseek-ai/dsh-agent-preset，config.plugins = agent.cordis.yml 顶层条目逐字），由 assets/presets/extra-plan/preset-patch.generated.yml 随 dsh.bundle.patch 数组装载。",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -12,6 +12,7 @@
     "./client": "./lib/client.js",
     "./client-bridge": "./lib/client-bridge.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
+    "./assets/presets/extra-plan/preset-patch.generated.yml": "./assets/presets/extra-plan/preset-patch.generated.yml",
     "./package.json": "./package.json"
   },
   "files": [
@@ -20,7 +21,8 @@
     "scripts/distribute-preset.mjs",
     "scripts/generate-runtime-defaults.mjs",
     "cordis.patch.yml",
-    "assets/presets/extra-plan/"
+    "assets/presets/extra-plan/",
+    "assets/presets/extra-plan/preset-patch.generated.yml"
   ],
   "scripts": {
     "postinstall": "node scripts/distribute-preset.mjs",
@@ -31,7 +33,10 @@
   "repository": "git+https://github.com/luca3xxvsoo/dsh-extra-plan.git",
   "dsh": {
     "bundle": {
-      "patch": "./cordis.patch.yml"
+      "patch": [
+        "./cordis.patch.yml",
+        "./assets/presets/extra-plan/preset-patch.generated.yml"
+      ]
     },
     "client": {
       "platform": "web",
@@ -44,7 +49,10 @@
     }
   },
   "dependencies": {
-    "@deepseek-ai/dsh-llm": "^0.1.5-rc.2",
+    "@deepseek-ai/dsh-llm": "0.1.7-rc.1 || 0.1.7-rc.2",
     "js-yaml": "^4.2.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh": "0.1.7-rc.1 || 0.1.7-rc.2"
   }
 }

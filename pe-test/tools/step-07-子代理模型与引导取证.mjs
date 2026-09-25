@@ -114,7 +114,8 @@ function parseSession(dir) {
     directory,
     file,
     fileName: path.basename(file),
-    generation: path.basename(file) === 'session.v3.jsonl.zstd' ? 'v3' : 'v0',
+    // 代际三值判定（v4/v3/v0）：按文件名精确比对，未知形状归 'v0'（旧平铺命名）。
+    generation: path.basename(file) === 'session.v4.jsonl.zstd' ? 'v4' : path.basename(file) === 'session.v3.jsonl.zstd' ? 'v3' : 'v0',
     events,
     parseFailures,
     decodeFailures,
@@ -525,7 +526,7 @@ printParentEvidence(parentBundle, parent)
 for (const session of sessions) {
   console.log('\n===== 会话 ' + session.dir + ' =====')
   if (session.file === null) {
-    console.error('会话日志文件不存在（两代候选名均未命中）：' + session.directory)
+    console.error('会话日志文件不存在（三代候选名均未命中）：' + session.directory)
     continue
   }
   console.log('日志文件名=' + session.fileName)

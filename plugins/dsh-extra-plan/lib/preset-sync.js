@@ -1,42 +1,72 @@
-// Host-side preset distribution and startup self-healing.
-// Both postinstall and the startup hook call syncPreset; only the two vendor
-// core files are staged, with the registered settings intersection restored.
+// Host-side preset state: asset hash chain, migration audit ledger, and startup self-healing
+// over the dsh 0.1.7-rc.1 preset carrier.
+//
+// 载体订正（方案 T2）：预设不再是「分发到 $DSH_HOME/.agent-presets/extra-plan 的目录」，
+// 而是 profile patch 根级 insert 一行 preset-extra-plan 声明行
+// （name '@deepseek-ai/dsh-agent-preset'，config.plugins = agent.cordis.yml 顶层条目逐字）。
+// 于是：
+//  - 分发目标退役；postinstall（scripts/distribute-preset.mjs）只初始化插件自有状态目录
+//    $DSH_HOME/.agent-presets/extra-plan/（dist-manifest.json 审计台账）。
+//  - 目标物判定 = 资产 hash（contentHash(ASSET_DIR)） + 声明行 plugins 仍覆盖资产行 id 集合。
+//    为什么不是「declaredPlugins 与资产逐字 hash 相等」：设置页写值会把整段 plugins
+//    重述进 profile patch（configEditor.edit，config 不深合并），行集合不变而部分行 config
+//    已按用户值改写——逐字 hash 永不相等会退化成「每次启动都重跑迁移」。故按行 id 集合判定。
+//  - 写盘只经 configEditor.edit（事务 + reconcile + 回滚），本模块绝不直写 cordis.patch.yml。
+//  - 旧值来源 = 旧分发副本 $DSH_HOME/.agent-presets/extra-plan/agent.cordis.yml（若在）：
+//    8 项 → settings 行 config；2 项宿主行 → 声明行 config.plugins 内 tool-web/tool-presentation
+//    子行；7 项 gateWords → 声明行 config.plugins 内 extra-plan 行 config.gateWords（整体重述后
+//    整组校验，失败即抛不落盘）。
+//
+// 本模块同时导出纯计算（planPresetSync / capturePrevious / 审计构造）与宿主入口（apply），
+// 使 postinstall、启动自愈与回归夹具共用同一份状态机。
 
 import { createHash } from 'node:crypto'
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
+  HOST_ROW_IDS,
+  HOST_ROW_SETTING_DEFINITIONS,
+  PRESET_ROW_ID,
+  SETTINGS_ROW_ID,
   SETTING_DEFINITIONS,
+  SETTING_GROUPS,
   captureSettings,
-  parsePresetYaml,
-  patchYamlScalar,
-  resolveSetting,
-  resolveTemplateSettingDefault,
+  findPluginsRow,
+  restatePluginsRow,
 } from './preset-settings.js'
 import {
   GATE_WORD_FIELD_NAMES,
-  GATE_WORD_MIGRATION_DEFINITIONS,
   GATE_WORDS_GROUP_DEFINITION,
   validateGateWords,
 } from './gate-words.js'
+import { parsePresetYaml, resolveSetting, resolveTemplateSettingDefault } from './preset-settings.js'
 
 const PRESET_ID = 'extra-plan'
 const MANIFEST_NAME = 'dist-manifest.json'
 export const CORE_FILES = ['preset.yml', 'agent.cordis.yml']
+export const STATE_DIR_NAME = '.agent-presets'
+/** 声明行 plugins 必须承载的行 id（缺任一 → 声明行不再覆盖本预设组合）。 */
+export const DECLARATION_ROW_IDS = Object.freeze([
+  'extra-plan',
+  HOST_ROW_IDS.webFetch,
+  HOST_ROW_IDS.toolPresentationMode,
+])
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 export const ASSET_DIR = join(HERE, '..', 'assets', 'presets', PRESET_ID)
+export const ASSET_PATCH_FILE = join(ASSET_DIR, 'preset-patch.generated.yml')
+
+export function stateDirOf(dshHome) {
+  return join(dshHome, STATE_DIR_NAME, PRESET_ID)
+}
+
+export function defaultDshHome() {
+  return process.env.DSH_HOME === undefined || process.env.DSH_HOME === ''
+    ? join(homedir(), '.dsh')
+    : process.env.DSH_HOME
+}
 
 /** sha256(preset.yml || agent.cordis.yml)，固定顺序；任一缺失返回 null。 */
 export function contentHash(dir) {
@@ -49,23 +79,55 @@ export function contentHash(dir) {
   return h.digest('hex')
 }
 
-function readManifestRecord(targetDir) {
-  const file = join(targetDir, MANIFEST_NAME)
+/** 声明行 plugins 的行 id 集合（含 group 子行，扁平化）。 */
+export function pluginRowIds(plugins) {
+  const ids = []
+  const visit = (rows) => {
+    if (!Array.isArray(rows)) return
+    for (const row of rows) {
+      if (row === null || typeof row !== 'object') continue
+      if (typeof row.id === 'string' && row.id !== '') ids.push(row.id)
+      if (Array.isArray(row.config)) visit(row.config)
+    }
+  }
+  visit(plugins)
+  return ids
+}
+
+/** 声明行是否仍在承载本预设组合：行 id 集合覆盖 DECLARATION_ROW_IDS。 */
+export function declarationCoversAsset(plugins) {
+  if (!Array.isArray(plugins)) return false
+  const ids = new Set(pluginRowIds(plugins))
+  return DECLARATION_ROW_IDS.every((id) => ids.has(id))
+}
+
+function readManifestRecord(stateDir) {
+  const file = join(stateDir, MANIFEST_NAME)
   if (!existsSync(file)) return null
   try {
     const manifest = JSON.parse(readFileSync(file, 'utf8'))
     if (manifest === null || typeof manifest !== 'object') return null
     if (manifest.format !== 1 && manifest.format !== 2) return null
-    return typeof manifest.distHash === 'string' ? manifest : null
+    return typeof manifest.distHash === 'string' ? manifest : { ...manifest, distHash: null }
   } catch {
     return null
   }
 }
 
-/** 读目标目录 manifest 的 distHash；兼容 format 1/2，缺失/损坏返回 null。 */
-export function readManifest(targetDir) {
-  const manifest = readManifestRecord(targetDir)
+/** 读状态目录 manifest 记录（format 1/2 兼容）；缺失/损坏返回 null。 */
+export function readManifestRecordOf(stateDir) {
+  return readManifestRecord(stateDir)
+}
+
+/** 读状态目录 manifest 的 distHash；兼容 format 1/2，缺失/损坏返回 null。 */
+export function readManifest(stateDir) {
+  const manifest = readManifestRecord(stateDir)
   return manifest === null ? null : manifest.distHash
+}
+
+export function writeManifest(stateDir, record) {
+  mkdirSync(stateDir, { recursive: true })
+  writeFileSync(join(stateDir, MANIFEST_NAME), JSON.stringify(record, null, 2) + '\n', 'utf8')
 }
 
 function emptyMigration(source, sourceDistHash) {
@@ -100,8 +162,15 @@ function gateReasonForState(state) {
   return 'skipped-invalid'
 }
 
+function reasonForOldState(state) {
+  if (state === 'missing') return 'skipped-old-missing'
+  if (state === 'ambiguous') return 'skipped-old-ambiguous'
+  if (state === 'invalid') return 'skipped-invalid'
+  return 'skipped-old-missing'
+}
+
 /**
- * 整组判定：稳定 locator（id=extra-plan + config.gateWords）定位 + 共享 validator 全组校验。
+ * 整组判定：稳定 locator（源行 id=extra-plan + config.gateWords）+ 共享 validator 全组校验。
  * 返回 { state: 'captured'|'missing'|'ambiguous'|'invalid', values? }；不做部分接受。
  */
 function captureGateWords(document) {
@@ -124,18 +193,25 @@ function assertTemplateGateWords(text) {
   return captured.values
 }
 
-function capturePrevious(targetDir, sourceDistHash) {
-  const sourceFile = join(targetDir, 'agent.cordis.yml')
-  if (!existsSync(sourceFile)) {
-    return {
-      audit: emptyMigration('absent', sourceDistHash),
-      values: {},
-      states: {},
-      gateAudit: emptyGateWordsMigration('absent', sourceDistHash),
-      gateValues: null,
-      gateState: 'missing',
-    }
+/** 无旧值副本时的捕获结果（源缺席）。 */
+export function noSourcePrevious(sourceDistHash = null) {
+  return {
+    audit: emptyMigration('absent', sourceDistHash),
+    values: {},
+    states: {},
+    gateAudit: emptyGateWordsMigration('absent', sourceDistHash),
+    gateValues: null,
+    gateState: 'missing',
   }
+}
+
+/**
+ * 读旧分发副本（$DSH_HOME/.agent-presets/extra-plan/agent.cordis.yml）并捕获 10 项 + 7 词。
+ * 副本不存在 → 源缺席；读取失败 → 源不可读；解析失败 → 源不可读（不阻断启动）。
+ */
+export function capturePrevious(stateDir, sourceDistHash) {
+  const sourceFile = join(stateDir, 'agent.cordis.yml')
+  if (!existsSync(sourceFile)) return noSourcePrevious(sourceDistHash === undefined ? null : sourceDistHash)
   let text
   try {
     text = readFileSync(sourceFile, 'utf8')
@@ -153,14 +229,13 @@ function capturePrevious(targetDir, sourceDistHash) {
     const captured = captureSettings(text)
     // 复用同一份解析文档：settings 与 gateWords 各自独立判定，互不影响。
     const gate = captureGateWords(captured.document)
-    const source = {
-      format: 1,
-      sourceDistHash: sourceDistHash === undefined ? null : sourceDistHash,
-      source: 'captured',
-      results: {},
-    }
     return {
-      audit: source,
+      audit: {
+        format: 1,
+        sourceDistHash: sourceDistHash === undefined ? null : sourceDistHash,
+        source: 'captured',
+        results: {},
+      },
       values: captured.values,
       states: captured.states,
       gateAudit: {
@@ -184,150 +259,85 @@ function capturePrevious(targetDir, sourceDistHash) {
   }
 }
 
-function reasonForOldState(state) {
-  if (state === 'missing') return 'skipped-old-missing'
-  if (state === 'ambiguous') return 'skipped-old-ambiguous'
-  if (state === 'invalid') return 'skipped-invalid'
-  return 'skipped-old-missing'
-}
-
-function reasonForNewState(kind) {
-  return kind === 'ambiguous' ? 'skipped-new-ambiguous' : 'skipped-new-missing'
-}
-
-function stagePreset(targetDir, distHash, previous) {
-  const parent = dirname(targetDir)
-  mkdirSync(parent, { recursive: true })
-  const tmp = join(parent, '.tmp-' + PRESET_ID + '-' + process.pid + '-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8))
-  mkdirSync(tmp, { recursive: true })
-  try {
-    for (const file of CORE_FILES) copyFileSync(join(ASSET_DIR, file), join(tmp, file))
-
-    // Parse both staged vendor files before any target switch. YAML is parsed
-    // with the same !!js-preserving schema used by settings and migration.
-    parsePresetYaml(readFileSync(join(tmp, 'preset.yml'), 'utf8'))
-    let agentText = readFileSync(join(tmp, 'agent.cordis.yml'), 'utf8')
-    let agentDocument = parsePresetYaml(agentText)
-    const results = previous.audit.results
-
-    for (const definition of SETTING_DEFINITIONS) {
-      const oldState = previous.states[definition.key]
-      if (previous.audit.source !== 'captured') {
-        // results 与 previous.audit.results 同引用，原自赋值 results[k] = results[k] 无副作用。
-        continue
-      }
-      if (oldState !== 'captured') {
-        results[definition.key] = reasonForOldState(oldState)
-        continue
-      }
-      const staged = resolveSetting(agentDocument, definition, { aliases: false })
-      if (staged.kind !== 'ok') {
-        results[definition.key] = reasonForNewState(staged.kind)
-        continue
-      }
-      const patched = patchYamlScalar(agentText, definition, previous.values[definition.key])
-      if (!patched.ok) {
-        results[definition.key] = reasonForNewState(patched.reason)
-        continue
-      }
-      agentText = patched.text
-      agentDocument = parsePresetYaml(agentText)
-      results[definition.key] = 'restored'
-    }
-
-    // gateWords 整组迁移（先复制新版模板 → 再整组写回旧值）：只有旧组整体合法才逐叶
-    // 定点写回；缺失/非法/定位歧义一律整组采用新模板出厂值（禁止部分迁移）；新模板
-    // locator 缺失/歧义、patch 失败或迁移后整组校验失败一律抛错（沿 catch 清理 temp、
-    // 保留旧 target，不发布半成品）。
-    const gateAudit = previous.gateAudit
-    const gateResults = gateAudit.results
-    if (gateAudit.source === 'captured') {
-      if (previous.gateState !== 'captured') {
-        for (const definition of GATE_WORD_MIGRATION_DEFINITIONS) {
-          gateResults[definition.key] = gateReasonForState(previous.gateState)
-        }
-      } else {
-        for (const definition of GATE_WORD_MIGRATION_DEFINITIONS) {
-          const stagedGate = resolveSetting(agentDocument, definition, { aliases: false })
-          if (stagedGate.kind !== 'ok') {
-            throw new Error('extra-plan: 新模板 gateWords 定位 ' + stagedGate.kind + '（' + definition.locator.path + '）')
-          }
-          const patchedGate = patchYamlScalar(agentText, definition, previous.gateValues[definition.key])
-          if (!patchedGate.ok) {
-            throw new Error('extra-plan: 新模板 gateWords 写回失败（' + definition.locator.path + '：' + patchedGate.reason + '）')
-          }
-          agentText = patchedGate.text
-          agentDocument = parsePresetYaml(agentText)
-        }
-        const verified = captureGateWords(agentDocument)
-        if (verified.state !== 'captured') {
-          throw new Error('extra-plan: gateWords 迁移后整组校验失败（' + verified.state + '）')
-        }
-        for (const field of GATE_WORD_FIELD_NAMES) {
-          if (verified.values[field] !== previous.gateValues[field]) {
-            throw new Error('extra-plan: gateWords 迁移后取值与用户值不一致（' + field + '）')
-          }
-        }
-        for (const definition of GATE_WORD_MIGRATION_DEFINITIONS) {
-          gateResults[definition.key] = 'restored'
-        }
-      }
-    }
-
-    // Reparse after all scalar patches, then write the audit-only manifest.
-    parsePresetYaml(agentText)
-    writeFileSync(join(tmp, 'agent.cordis.yml'), agentText, 'utf8')
-    writeFileSync(join(tmp, MANIFEST_NAME), JSON.stringify({
-      format: 2,
-      distHash,
-      settingsMigration: previous.audit,
-      gateWordsMigration: gateAudit,
-    }, null, 2) + '\n', 'utf8')
-    return { tmp, migration: previous.audit, gateMigration: gateAudit }
-  } catch (error) {
-    rmSync(tmp, { recursive: true, force: true })
-    throw error
-  }
-}
-
-function cleanupPath(path) {
-  try { rmSync(path, { recursive: true, force: true }) } catch { /* best effort during rollback */ }
-}
-
-const FILE_OPS = Object.freeze({ exists: existsSync, rename: renameSync, remove: rmSync })
-
-function switchStage(targetDir, tmp, ops = FILE_OPS) {
-  const backup = targetDir + '.backup-' + process.pid + '-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)
-  let oldMoved = false
-  let newMoved = false
-  try {
-    if (ops.exists(targetDir)) {
-      ops.rename(targetDir, backup)
-      oldMoved = true
-    }
-    ops.rename(tmp, targetDir)
-    newMoved = true
-    if (oldMoved) ops.remove(backup, { recursive: true, force: true })
-  } catch (error) {
-    if (newMoved && ops.exists(targetDir)) cleanupPath(targetDir)
-    if (oldMoved && ops.exists(backup) && !ops.exists(targetDir)) {
-      try { ops.rename(backup, targetDir) } catch { /* preserve the original error */ }
-    }
-    if (ops.exists(tmp)) cleanupPath(tmp)
-    if (ops.exists(backup) && ops.exists(targetDir)) cleanupPath(backup)
-    throw error
-  }
-}
-
-export function publishStage(targetDir, tmp, ops = FILE_OPS) {
-  switchStage(targetDir, tmp, ops)
-}
-
 /**
- * Legacy cleanup remains part of the successful upgrade state machine only.
- * It never participates in settings capture and never reads profile patch settings.
+ * 纯计算：把旧值副本的捕获结果翻译成「本次要落地的内容 + 审计」。
+ * @param previous capturePrevious 的返回值
+ * @returns { settings, preset, audit, gateAudit }
+ *   settings.values = 8 项 settings 行新值（无 captured 项则 null）
+ *   preset.hostRowConfig = 声明行 plugins 子行要改的 config（无 captured 项则为 {}）
+ *   preset.gateWords = 7 词组（无 captured 组则 null）
  */
-function cleanupLegacyFlashGuidePatches(dshHome) {
+export function buildMigrationPlan(previous) {
+  const audit = previous.audit
+  const results = audit.results
+  const settingsValues = {}
+  let settingsCount = 0
+  for (const definition of SETTING_DEFINITIONS) {
+    // 源缺席/不可读：results 保持 emptyMigration 预填的状态字符串（缺席≠旧值缺失），
+    // 不按 previous.states 覆写——否则会把 skipped-source-absent 误写成 skipped-old-missing。
+    if (audit.source !== 'captured') continue
+    const oldState = previous.states[definition.key]
+    if (oldState !== 'captured') {
+      results[definition.key] = reasonForOldState(oldState)
+      continue
+    }
+    // 8 项 UI 设置落 settings 行 config；2 项宿主行落声明行 plugins 子行（见下方 hostRowConfig）。
+    if (definition.group === SETTING_GROUPS.EXTRA_PLAN) {
+      settingsValues[definition.key] = previous.values[definition.key]
+      settingsCount += 1
+    }
+    results[definition.key] = 'restored'
+  }
+
+  const hostRowConfig = {}
+  for (const definition of HOST_ROW_SETTING_DEFINITIONS) {
+    if (results[definition.key] !== 'restored') continue
+    hostRowConfig[HOST_ROW_IDS[definition.key]] = { [definition.key === 'webFetch' ? 'fetch' : 'mode']: previous.values[definition.key] }
+  }
+
+  const gateAudit = previous.gateAudit
+  const gateResults = gateAudit.results
+  let gateWords = null
+  if (gateAudit.source === 'captured') {
+    if (previous.gateState !== 'captured') {
+      for (const field of GATE_WORD_FIELD_NAMES) gateResults[field] = gateReasonForState(previous.gateState)
+    } else {
+      for (const field of GATE_WORD_FIELD_NAMES) gateResults[field] = 'restored'
+      gateWords = { ...previous.gateValues }
+    }
+  }
+
+  const settings = settingsCount === 0 ? null : { values: settingsValues, audit }
+  const preset = gateWords !== null || Object.keys(hostRowConfig).length > 0
+    ? { hostRowConfig, gateWords }
+    : null
+  return { settings, preset, audit, gateAudit }
+}
+
+/** 声明行 plugins 整体重述：只改目标子行的指定 config 键（含 gateWords 整组校验，失败即抛）。 */
+export function restatePresetPlugins(current, inherited, preset) {
+  const fromCurrent = current !== null && typeof current === 'object' && Array.isArray(current.plugins) ? current.plugins : null
+  const fromInherited = inherited !== null && typeof inherited === 'object' && Array.isArray(inherited.plugins) ? inherited.plugins : null
+  const base = fromCurrent !== null ? fromCurrent : fromInherited
+  if (base === null) throw new Error('声明行 ' + PRESET_ROW_ID + ' 的 config.plugins 不可定位')
+  let plugins = structuredClone(base)
+  for (const [rowId, config] of Object.entries(preset.hostRowConfig === undefined ? {} : preset.hostRowConfig)) {
+    const next = restatePluginsRow(plugins, rowId, config)
+    if (next === null) throw new Error('声明行 plugins 内缺少宿主行 ' + rowId)
+    plugins = next
+  }
+  if (preset.gateWords !== null && preset.gateWords !== undefined) {
+    const next = restatePluginsRow(plugins, 'extra-plan', { gateWords: preset.gateWords })
+    if (next === null) throw new Error('声明行 plugins 内缺少 extra-plan 行（gateWords 无处落地）')
+    const row = findPluginsRow(next, 'extra-plan')
+    validateGateWords(row.config.gateWords)
+    plugins = next
+  }
+  return { ...current, plugins }
+}
+
+/** 旧 flash-guide patch 清理（profiles 下各 cordis.patch.yml 契约保持，app-boot 兼容期行为）。 */
+export function cleanupLegacyFlashGuidePatches(dshHome) {
   try {
     const root = join(dshHome, 'profiles')
     if (!existsSync(root)) return
@@ -355,60 +365,154 @@ function cleanupLegacyFlashGuidePatches(dshHome) {
   } catch { /* cleanup must not block startup */ }
 }
 
-function noSourcePrevious() {
-  return {
-    audit: emptyMigration('absent', null),
-    values: {},
-    states: {},
-    gateAudit: emptyGateWordsMigration('absent', null),
-    gateValues: null,
-    gateState: 'missing',
+/**
+ * postinstall：只初始化插件自有状态目录 + 空 manifest（distHash=null + 双缺席审计）。
+ * 台账已存在（含空台账本身）时一律 idle——postinstall 不参与迁移，绝不覆盖既有审计。
+ */
+export function initStateDir(dshHome) {
+  const stateDir = stateDirOf(dshHome)
+  mkdirSync(stateDir, { recursive: true })
+  const existing = readManifestRecord(stateDir)
+  if (existing !== null) return { action: 'idle', stateDir, manifest: existing }
+  const manifest = {
+    format: 2,
+    distHash: null,
+    settingsMigration: emptyMigration('absent', null),
+    gateWordsMigration: emptyGateWordsMigration('absent', null),
   }
+  writeManifest(stateDir, manifest)
+  return { action: 'written', stateDir, manifest }
 }
 
 /**
- * 运行一次捕获 → stage → 校验 → 可回滚切换自愈。
- * @returns 'written' | 'upgraded' | 'idle'
+ * 启动自愈主体：资产 hash + 声明行覆盖度判定 → 旧值迁移 → 审计落 manifest。
+ * @param options.dshHome DSH_HOME（状态目录与旧值来源根）
+ * @param options.declaredPlugins 声明行当前生效的 plugins（宿主侧由 configEditor 提供；
+ *   非宿主路径传 undefined = 该维度不参与判定）
+ * @param options.readPatch plugins 载体不可得时的旁证读取（可选，测试夹具用）
+ * @param options.apply async (plan, context) => void 落地回调（宿主侧 = configEditor.edit；
+ *   缺省 = 只算不落，postinstall/夹具路径）
+ * @returns { action: 'written'|'upgraded'|'idle', plan? }
  */
-export function syncPreset(dshHome) {
-  const targetDir = join(dshHome, '.agent-presets', PRESET_ID)
+export async function syncPreset(options = {}) {
+  const dshHome = typeof options.dshHome === 'string' && options.dshHome !== '' ? options.dshHome : defaultDshHome()
+  const stateDir = stateDirOf(dshHome)
   const templateFile = join(ASSET_DIR, 'agent.cordis.yml')
   if (!existsSync(templateFile)) throw new Error('预设模板缺失：' + templateFile)
   const templateText = readFileSync(templateFile, 'utf8')
   resolveTemplateSettingDefault(templateText, 'exploreBudget')
-  // 厂商模板 gateWords 必须在 hash/idle 判定之前整组严格校验：坏模板立即抛错且不触碰目标目录。
+  // 厂商模板 gateWords 必须在 hash/idle 判定之前整组严格校验：坏模板立即抛错且不触碰目标物。
   assertTemplateGateWords(templateText)
   const currentHash = contentHash(ASSET_DIR)
   if (currentHash === null) throw new Error('预设资产缺失：' + ASSET_DIR)
 
-  const targetExists = existsSync(targetDir)
-  const previousManifest = targetExists ? readManifestRecord(targetDir) : null
-  if (targetExists && previousManifest !== null && previousManifest.distHash === currentHash) return 'idle'
-
-  const previous = targetExists
-    ? capturePrevious(targetDir, previousManifest === null ? null : previousManifest.distHash)
-    : noSourcePrevious()
-  const staged = stagePreset(targetDir, currentHash, previous)
-  try {
-    publishStage(targetDir, staged.tmp)
-  } catch (error) {
-    if (existsSync(staged.tmp)) cleanupPath(staged.tmp)
-    throw error
+  const manifest = readManifestRecord(stateDir)
+  let declaredPlugins = options.declaredPlugins
+  if (declaredPlugins === undefined && typeof options.readPatch === 'function') {
+    declaredPlugins = readDeclaredPluginsFromPatch(options.readPatch())
   }
-  if (targetExists) cleanupLegacyFlashGuidePatches(dshHome)
-  return targetExists ? 'upgraded' : 'written'
+  const declarationOk = declaredPlugins === undefined ? true : declarationCoversAsset(declaredPlugins)
+  if (manifest !== null && manifest.distHash === currentHash && declarationOk) return { action: 'idle' }
+
+  const previous = capturePrevious(stateDir, manifest === null ? null : manifest.distHash)
+  const planned = buildMigrationPlan(previous)
+  const firstRun = manifest === null || manifest.distHash === null
+  const action = firstRun ? 'written' : 'upgraded'
+  if (typeof options.apply === 'function') {
+    await options.apply(planned, { stateDir, distHash: currentHash, action })
+  }
+  cleanupLegacyFlashGuidePatches(dshHome)
+  writeManifest(stateDir, {
+    format: 2,
+    distHash: currentHash,
+    settingsMigration: planned.audit,
+    gateWordsMigration: planned.gateAudit,
+  })
+  return { action, plan: planned, stateDir, distHash: currentHash }
+}
+
+/** 从 profile patch 文本里读声明行 config.plugins（旁证；宿主侧以 configEditor 为准）。 */
+export function readDeclaredPluginsFromPatch(text) {
+  if (typeof text !== 'string' || text.trim() === '') return undefined
+  let document
+  try {
+    document = parsePresetYaml(text)
+  } catch {
+    return undefined
+  }
+  const found = []
+  const visit = (value) => {
+    if (value === null || typeof value !== 'object') return
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item)
+      return
+    }
+    if (value.id === PRESET_ROW_ID && value.config !== null && typeof value.config === 'object' && Array.isArray(value.config.plugins)) {
+      found.push(value.config.plugins)
+    }
+    for (const child of Object.values(value)) visit(child)
+  }
+  visit(document)
+  return found.length === 0 ? undefined : found[0]
 }
 
 export const name = 'extra-plan-preset-sync'
 export const inject = []
 
-export function apply() {
-  try {
-    const home = process.env.DSH_HOME === undefined || process.env.DSH_HOME === ''
-      ? join(homedir(), '.dsh')
-      : process.env.DSH_HOME
-    syncPreset(home)
-  } catch {
-    // Startup self-healing is deliberately non-blocking.
+/**
+ * 宿主入口：启动自愈。写盘只经 configEditor.edit（本模块不直写 cordis.patch.yml）。
+ * 失败一律不阻断启动。
+ */
+export function apply(ctx) {
+  ctx.inject(['configEditor'], (child) => {
+    child.effect(() => {
+      void (async () => {
+        try {
+          const editor = child.configEditor
+          const rows = typeof editor.configuration === 'function' ? editor.configuration() : []
+          const presetEntry = rows.find((row) => row !== null && typeof row === 'object' && row.entry !== undefined && row.entry.options !== undefined && row.entry.options.id === PRESET_ROW_ID)
+          const declaredPlugins = presetEntry === undefined ? undefined : effectivePlugins(presetEntry)
+          await syncPreset({
+            dshHome: defaultDshHome(),
+            declaredPlugins,
+            apply: async (planned) => {
+              await applyPlan(editor, rows, planned)
+            },
+          })
+        } catch (error) {
+          console.warn('[dsh-extra-plan] 预设启动自愈失败（不阻断启动）：' + (error instanceof Error ? error.message : String(error)))
+        }
+      })()
+      return () => {}
+    }, 'extra-plan-preset-sync: startup self-healing')
+  })
+}
+
+/** 生效 plugins：profile override → Loader 行 config → 继承层。 */
+function effectivePlugins(row) {
+  const overridePlugins = row.override !== null && typeof row.override === 'object' && Array.isArray(row.override.plugins) ? row.override.plugins : null
+  if (overridePlugins !== null) return overridePlugins
+  const own = row.entry.options.config
+  if (own !== null && typeof own === 'object' && Array.isArray(own.plugins)) return own.plugins
+  const inherited = row.inherited
+  if (inherited !== null && typeof inherited === 'object' && Array.isArray(inherited.plugins)) return inherited.plugins
+  return undefined
+}
+
+async function applyPlan(editor, rows, planned) {
+  const findEntry = (id) => {
+    const row = rows.find((item) => item !== null && typeof item === 'object' && item.entry !== undefined && item.entry.options !== undefined && item.entry.options.id === id)
+    return row === undefined ? undefined : row.entry
+  }
+  if (planned.settings !== null) {
+    const entry = findEntry(SETTINGS_ROW_ID)
+    if (entry === undefined) throw new Error('settings 行缺失：' + SETTINGS_ROW_ID)
+    const values = planned.settings.values
+    await editor.edit(entry, (current) => ({ ...current, ...values }))
+  }
+  if (planned.preset !== null) {
+    const entry = findEntry(PRESET_ROW_ID)
+    if (entry === undefined) throw new Error('声明行缺失：' + PRESET_ROW_ID)
+    await editor.edit(entry, (current, inherited) => restatePresetPlugins(current, inherited, planned.preset))
   }
 }

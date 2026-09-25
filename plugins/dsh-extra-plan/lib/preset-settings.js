@@ -1,5 +1,15 @@
 // Shared settings descriptors, YAML parsing, and format-preserving scalar patches.
 // The descriptor list is the only source of truth for settings-page fields.
+//
+// dsh 0.1.7-rc.1 载体订正：设置值有两个落点，descriptor 用两套行定位元数据表达——
+//  - sourceLocator：源模板 / 旧分发副本（DSH_HOME/.agent-presets/extra-plan/agent.cordis.yml）
+//    的行定位。资产 assets/presets/extra-plan/agent.cordis.yml 与旧副本同形（顶层
+//    id=extra-plan / tool-web / tool-presentation 行），captureSettings、
+//    resolveTemplateSettingDefault、patchYamlScalar 与 gate-words 的迁移 locator 都走它。
+//  - rowLocator：新载体 profile patch 行定位（8 项 UI 设置 = settings 行
+//    dsh-extra-plan-settings 的 config.<key>；2 项宿主行设置 = 声明行 preset-extra-plan
+//    的 config.plugins 内 tool-web / tool-presentation 子行）。
+// group 标记哪个落点：8 项 extra-plan（settings 行） / 2 项 host-rows（声明行 plugins）。
 
 import { createRequire } from 'node:module'
 import { existsSync, readFileSync } from 'node:fs'
@@ -37,12 +47,23 @@ const isBoolean = (value) => typeof value === 'boolean'
 const modeOptions = Object.freeze(['native', 'ptc', 'both'])
 const isMode = (value) => typeof value === 'string' && modeOptions.includes(value)
 
+/** 新载体行 id（settings 命名空间 = profile 行 id）。 */
+export const SETTINGS_ROW_ID = 'dsh-extra-plan-settings'
+/** 预设声明行 id 与模块名（config.plugins = agent.cordis.yml 顶层条目）。 */
+export const PRESET_ROW_ID = 'preset-extra-plan'
+export const PRESET_PLUGIN_NAME = '@deepseek-ai/dsh-agent-preset'
+/** 声明行 plugins 内承载 2 项宿主行设置的子行 id。 */
+export const HOST_ROW_IDS = Object.freeze({ webFetch: 'tool-web', toolPresentationMode: 'tool-presentation' })
+/** descriptor 分组：8 项落 settings 行 / 2 项落声明行 plugins 子行。 */
+export const SETTING_GROUPS = Object.freeze({ EXTRA_PLAN: 'extra-plan', HOST_ROWS: 'host-rows' })
+
 const setting = (definition) => Object.freeze({
   ...definition,
   type: definition.scalarType,
-  locator: Object.freeze({ pluginId: definition.pluginId, path: definition.path }),
+  sourceLocator: Object.freeze({ ...definition.sourceLocator }),
+  rowLocator: Object.freeze({ ...definition.rowLocator }),
   locatorAliases: Object.freeze((definition.locatorAliases || []).map((alias) => Object.freeze({
-    pluginId: alias.pluginId,
+    rowId: alias.rowId,
     path: alias.path,
   }))),
   ui: Object.freeze({
@@ -54,21 +75,30 @@ const setting = (definition) => Object.freeze({
   }),
 })
 
+const extraPlanLocator = (key, path) => ({ rowId: SETTINGS_ROW_ID, path: path === undefined ? 'config.' + key : path })
+const sourceLocator = (key, path) => ({ rowId: 'extra-plan', path: path === undefined ? 'config.' + key : path })
+
 export const SETTING_DEFINITIONS = Object.freeze([
   setting({
-    key: 'anchoredBootstrap', pluginId: 'extra-plan', path: 'config.anchoredBootstrap', scalarType: 'boolean',
+    key: 'anchoredBootstrap', group: SETTING_GROUPS.EXTRA_PLAN, scalarType: 'boolean',
+    sourceLocator: sourceLocator('anchoredBootstrap'), rowLocator: extraPlanLocator('anchoredBootstrap'),
     validator: isBoolean, ui: { control: 'select', options: [true, false], locale: 'anchoredBootstrap', section: 'general' }, locatorAliases: [],
   }),
   setting({
-    key: 'creativeMode', pluginId: 'extra-plan', path: 'config.creativeMode', scalarType: 'boolean',
+    key: 'creativeMode', group: SETTING_GROUPS.EXTRA_PLAN, scalarType: 'boolean',
+    sourceLocator: sourceLocator('creativeMode'), rowLocator: extraPlanLocator('creativeMode'),
     validator: isBoolean, ui: { control: 'select', options: [true, false], locale: 'creativeMode', section: 'general' }, locatorAliases: [],
   }),
   setting({
-    key: 'webFetch', pluginId: 'tool-web', path: 'config.fetch', scalarType: 'boolean',
+    key: 'webFetch', group: SETTING_GROUPS.HOST_ROWS, scalarType: 'boolean',
+    sourceLocator: { rowId: 'tool-web', path: 'config.fetch' },
+    rowLocator: { rowId: PRESET_ROW_ID, pluginsRowId: HOST_ROW_IDS.webFetch, path: 'config.fetch' },
     validator: isBoolean, ui: { control: 'select', options: [true, false], locale: 'webFetch', section: 'general' }, locatorAliases: [],
   }),
   setting({
-    key: 'toolPresentationMode', pluginId: 'tool-presentation', path: 'config.mode', scalarType: 'mode',
+    key: 'toolPresentationMode', group: SETTING_GROUPS.HOST_ROWS, scalarType: 'mode',
+    sourceLocator: { rowId: 'tool-presentation', path: 'config.mode' },
+    rowLocator: { rowId: PRESET_ROW_ID, pluginsRowId: HOST_ROW_IDS.toolPresentationMode, path: 'config.mode' },
     validator: isMode,
     ui: {
       control: 'select', options: modeOptions,
@@ -79,34 +109,49 @@ export const SETTING_DEFINITIONS = Object.freeze([
     locatorAliases: [],
   }),
   setting({
-    key: 'runcodeCatchGate', pluginId: 'extra-plan', path: 'config.runcodeCatchGate', scalarType: 'boolean',
+    key: 'runcodeCatchGate', group: SETTING_GROUPS.EXTRA_PLAN, scalarType: 'boolean',
+    sourceLocator: sourceLocator('runcodeCatchGate'), rowLocator: extraPlanLocator('runcodeCatchGate'),
     validator: isBoolean, ui: { control: 'select', options: [true, false], locale: 'runcodeCatchGate', section: 'general' }, locatorAliases: [],
   }),
   setting({
-    key: 'crossProviderPlannerModel', pluginId: 'extra-plan', path: 'config.crossProviderPlannerModel', scalarType: 'boolean',
+    key: 'crossProviderPlannerModel', group: SETTING_GROUPS.EXTRA_PLAN, scalarType: 'boolean',
+    sourceLocator: sourceLocator('crossProviderPlannerModel'), rowLocator: extraPlanLocator('crossProviderPlannerModel'),
     validator: isBoolean, ui: { control: 'select', options: [true, false], locale: 'crossProviderPlannerModel', section: 'pro' }, locatorAliases: [],
   }),
   setting({
-    key: 'plannerModel', pluginId: 'extra-plan', path: 'config.plannerModel', scalarType: 'string',
+    key: 'plannerModel', group: SETTING_GROUPS.EXTRA_PLAN, scalarType: 'string',
+    sourceLocator: sourceLocator('plannerModel'), rowLocator: extraPlanLocator('plannerModel'),
     // T4：允许空串（= 显式清空 = 继承主会话模型；解析侧只判 !==''，键缺失才用代码缺省值）。
     // 空白串经 normalize trim 归一为 ''，与空串同义；非 string（如 YAML 数字）仍非法。
     validator: isString, normalize: (value) => value.trim(),
     ui: { control: 'text', locale: 'plannerModel', section: 'pro' }, locatorAliases: [],
   }),
   setting({
-    key: 'plannerPromptSuffix', pluginId: 'extra-plan', path: 'config.plannerPromptSuffix', scalarType: 'string',
+    key: 'plannerPromptSuffix', group: SETTING_GROUPS.EXTRA_PLAN, scalarType: 'string',
+    sourceLocator: sourceLocator('plannerPromptSuffix'), rowLocator: extraPlanLocator('plannerPromptSuffix'),
     validator: isString, ui: { control: 'textarea', locale: 'plannerPromptSuffix', section: 'pro' }, locatorAliases: [],
   }),
   setting({
-    key: 'exploreBudget', pluginId: 'extra-plan', path: 'config.exploreBudget', scalarType: 'integer',
+    key: 'exploreBudget', group: SETTING_GROUPS.EXTRA_PLAN, scalarType: 'integer',
+    sourceLocator: sourceLocator('exploreBudget'), rowLocator: extraPlanLocator('exploreBudget'),
     validator: isPositiveInteger, ui: { control: 'number', min: 1, step: 1, locale: 'exploreBudget', section: 'pro' }, locatorAliases: [],
   }),
   setting({
-    key: 'otherAgentModel', pluginId: 'extra-plan', path: 'config.otherAgentModel', scalarType: 'string',
+    key: 'otherAgentModel', group: SETTING_GROUPS.EXTRA_PLAN, scalarType: 'string',
+    sourceLocator: sourceLocator('otherAgentModel'), rowLocator: extraPlanLocator('otherAgentModel'),
     validator: isString, normalize: (value) => value.trim(),
     ui: { control: 'text', locale: 'otherAgentModel', section: 'pro' }, locatorAliases: [],
   }),
 ])
+
+/** 8 项落 settings 行的 UI 设置（= live-config 热读键集合）。 */
+export const EXTRA_PLAN_SETTING_DEFINITIONS = Object.freeze(
+  SETTING_DEFINITIONS.filter((item) => item.group === SETTING_GROUPS.EXTRA_PLAN),
+)
+/** 2 项落声明行 config.plugins 子行的宿主行设置。 */
+export const HOST_ROW_SETTING_DEFINITIONS = Object.freeze(
+  SETTING_DEFINITIONS.filter((item) => item.group === SETTING_GROUPS.HOST_ROWS),
+)
 
 export const TOOL_PRESENTATION_MODES = Object.freeze([
   ...SETTING_DEFINITIONS.find((item) => item.key === 'toolPresentationMode').ui.options,
@@ -138,13 +183,13 @@ export function readPath(object, path) {
   return { exists: true, value }
 }
 
-function rowsById(document, pluginId) {
+function rowsById(document, rowId) {
   const rows = []
   const seen = new Set()
   const visit = (value) => {
     if (value === null || typeof value !== 'object' || seen.has(value)) return
     seen.add(value)
-    if (hasOwn(value, 'id') && value.id === pluginId) rows.push(value)
+    if (hasOwn(value, 'id') && value.id === rowId) rows.push(value)
     if (Array.isArray(value)) {
       for (const item of value) visit(item)
     } else {
@@ -156,7 +201,7 @@ function rowsById(document, pluginId) {
 }
 
 function resolveLocator(document, locator) {
-  const rows = rowsById(document, locator.pluginId)
+  const rows = rowsById(document, locator.rowId)
   if (rows.length === 0) return { kind: 'missing', locator }
   if (rows.length > 1) return { kind: 'ambiguous', locator, matches: rows.length }
   const value = readPath(rows[0], locator.path)
@@ -164,9 +209,27 @@ function resolveLocator(document, locator) {
   return { kind: 'ok', locator, row: rows[0], value: value.value }
 }
 
-export function resolveSetting(document, definition, options = {}) {
-  const locators = [definition.locator]
-  if (options.aliases !== false) locators.push(...definition.locatorAliases)
+function locatorFor(definitionOrLocator) {
+  if (definitionOrLocator !== null && definitionOrLocator !== undefined && definitionOrLocator.sourceLocator !== undefined) {
+    return definitionOrLocator.sourceLocator
+  }
+  return definitionOrLocator
+}
+
+function aliasesFor(definitionOrLocator) {
+  if (definitionOrLocator !== null && definitionOrLocator !== undefined && Array.isArray(definitionOrLocator.locatorAliases)) {
+    return definitionOrLocator.locatorAliases
+  }
+  return []
+}
+
+/**
+ * 行定位解析：接受 descriptor（用其 sourceLocator）或裸 locator { rowId, path }。
+ * 多命中/别名歧义 → ambiguous；缺行或缺叶 → missing；否则 ok。
+ */
+export function resolveSetting(document, definitionOrLocator, options = {}) {
+  const locators = [locatorFor(definitionOrLocator)]
+  if (options.aliases !== false) locators.push(...aliasesFor(definitionOrLocator))
   const candidates = []
   let sawAmbiguous = false
   for (const locator of locators) {
@@ -204,11 +267,16 @@ export function resolveTemplateSettingDefault(defaultText, key) {
   return normalizeSettingValue(definition, result.value)
 }
 
-export function captureSettings(text) {
+/**
+ * 源模板/旧分发副本捕获（10 项）：逐项按 sourceLocator 解析 → {document, values, states}。
+ * states 四态（captured/missing/ambiguous/invalid），仅 captured 进 values。
+ */
+export function captureSettings(text, definitions) {
   const document = parsePresetYaml(text)
+  const list = definitions === undefined ? SETTING_DEFINITIONS : definitions
   const values = {}
   const states = {}
-  for (const definition of SETTING_DEFINITIONS) {
+  for (const definition of list) {
     const result = resolveSetting(document, definition)
     if (result.kind === 'missing') states[definition.key] = 'missing'
     else if (result.kind === 'ambiguous') states[definition.key] = 'ambiguous'
@@ -221,6 +289,52 @@ export function captureSettings(text) {
   return { document, values, states }
 }
 
+/**
+ * 新载体 profile patch 捕获（8 项 settings 行）：逐项按 rowLocator（行 id
+ * SETTINGS_ROW_ID + config.<key>）解析，形状与 captureSettings 同构。
+ * 行缺失/多命中/叶缺失一律 missing/ambiguous → 消费端回退 apply 期 cfg 快照。
+ */
+export function captureRowSettings(text, definitions) {
+  const document = parsePresetYaml(text)
+  const list = definitions === undefined ? EXTRA_PLAN_SETTING_DEFINITIONS : definitions
+  const values = {}
+  const states = {}
+  for (const definition of list) {
+    const result = resolveSetting(document, definition.rowLocator, { aliases: false })
+    if (result.kind === 'missing') states[definition.key] = 'missing'
+    else if (result.kind === 'ambiguous') states[definition.key] = 'ambiguous'
+    else if (!validateSettingValue(definition, result.value)) states[definition.key] = 'invalid'
+    else {
+      values[definition.key] = normalizeSettingValue(definition, result.value)
+      states[definition.key] = 'captured'
+    }
+  }
+  return { document, values, states }
+}
+
+/** 声明行 config.plugins 内按 id 定位子行（含 group 行的 config 子行数组，深度优先；找不到返回 null）。 */
+export function findPluginsRow(plugins, rowId) {
+  if (!Array.isArray(plugins)) return null
+  for (const row of plugins) {
+    if (row === null || typeof row !== 'object') continue
+    if (row.id === rowId) return row
+    if (Array.isArray(row.config)) {
+      const nested = findPluginsRow(row.config, rowId)
+      if (nested !== null) return nested
+    }
+  }
+  return null
+}
+
+/** 声明行 config.plugins 深拷贝后整体重述：只改目标子行的指定 config 键（config 不深合并语义）。 */
+export function restatePluginsRow(plugins, rowId, patch) {
+  const next = structuredClone(plugins)
+  const row = findPluginsRow(next, rowId)
+  if (row === null) return null
+  const base = row.config !== null && typeof row.config === 'object' && !Array.isArray(row.config) ? row.config : {}
+  row.config = { ...base, ...structuredClone(patch) }
+  return next
+}
 
 function inlineCommentIndex(value) {
   let quote = null
@@ -315,11 +429,12 @@ function textPathLine(lines, rowStart, rowEndIndex, rowIndent, path) {
   return null
 }
 
-export function findTextLocatorMatches(text, locator) {
+export function findTextLocatorMatches(text, definitionOrLocator) {
+  const locator = locatorFor(definitionOrLocator)
   const lines = String(text).split('\n')
   const matches = []
   for (let i = 0; i < lines.length; i += 1) {
-    if (parseRowId(lines[i]) !== locator.pluginId) continue
+    if (parseRowId(lines[i]) !== locator.rowId) continue
     const indent = lineIndent(withoutCr(lines[i]))
     const end = rowEnd(lines, i, indent)
     const line = textPathLine(lines, i, end, indent, locator.path)
@@ -370,16 +485,17 @@ function isBlockScalarLine(line, key) {
   return /^[|>]/.test(token)
 }
 
-function locatorFor(definitionOrLocator) {
-  if (definitionOrLocator !== null && definitionOrLocator.locator !== undefined) return definitionOrLocator.locator
-  return definitionOrLocator
-}
-
 function scalarTypeFor(definitionOrLocator) {
-  if (definitionOrLocator !== null && definitionOrLocator.scalarType !== undefined) return definitionOrLocator.scalarType
+  if (definitionOrLocator !== null && definitionOrLocator !== undefined && definitionOrLocator.scalarType !== undefined) {
+    return definitionOrLocator.scalarType
+  }
   return 'string'
 }
 
+/**
+ * 保格式定点改写 YAML 标量（按 sourceLocator 定位）。仅用于迁移期文本改写，
+ * 纯字符串处理、不写文件；dsh 0.1.7-rc.1 的宿主写链一律走 configEditor.edit。
+ */
 export function patchYamlScalar(text, definitionOrLocator, value, options = {}) {
   const locator = locatorFor(definitionOrLocator)
   const scalarType = scalarTypeFor(definitionOrLocator)
@@ -406,42 +522,4 @@ export function patchYamlScalar(text, definitionOrLocator, value, options = {}) 
     lines.splice(selected.line + 1, end - selected.line - 1)
   }
   return { ok: true, text: lines.join('\n'), line: selected.line }
-}
-
-
-export function publicSettingMetadata(defaultText, actualText = defaultText) {
-  const defaultDocument = parsePresetYaml(defaultText)
-  const actualDocument = parsePresetYaml(actualText)
-  const fields = []
-  const values = {}
-  const defaults = {}
-  for (const definition of SETTING_DEFINITIONS) {
-    const defaultResult = resolveSetting(defaultDocument, definition, { aliases: false })
-    const actualResult = resolveSetting(actualDocument, definition, { aliases: false })
-    const defaultValue = defaultResult.kind === 'ok' && validateSettingValue(definition, defaultResult.value)
-      ? normalizeSettingValue(definition, defaultResult.value) : undefined
-    const actualValue = actualResult.kind === 'ok' && validateSettingValue(definition, actualResult.value)
-      ? normalizeSettingValue(definition, actualResult.value) : defaultValue
-    const ui = definition.ui
-    const publicUi = {
-      control: ui.control,
-      locale: ui.locale,
-      ...(ui.min === undefined ? {} : { min: ui.min }),
-      ...(ui.step === undefined ? {} : { step: ui.step }),
-      ...(ui.options === undefined ? {} : { options: [...ui.options] }),
-      ...(ui.optionLocale === undefined ? {} : { optionLocale: { ...ui.optionLocale } }),
-      ...(ui.separate === undefined ? {} : { separate: ui.separate }),
-      ...(ui.section === undefined ? {} : { section: ui.section }),
-    }
-    const field = {
-      key: definition.key, pluginId: definition.pluginId, path: definition.path,
-      type: definition.scalarType, ui: publicUi, ...publicUi,
-      ...(defaultValue === undefined ? {} : { default: defaultValue }),
-      ...(actualValue === undefined ? {} : { value: actualValue }),
-    }
-    fields.push(field)
-    if (actualValue !== undefined) values[definition.key] = actualValue
-    if (defaultValue !== undefined) defaults[definition.key] = defaultValue
-  }
-  return { fields, values, defaults }
 }

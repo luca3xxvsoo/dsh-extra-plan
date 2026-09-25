@@ -45,6 +45,13 @@ const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
 import { createSdkTextCache, sdkSchemasFingerprint, sdkTextCacheEntryMatches } from '../../plugins/dsh-extra-plan/lib/sdk-text-cache.js'
 import { createGateRuntime } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
 import { createLiveConfig } from '../../plugins/dsh-extra-plan/lib/live-config.js'
+import { CREATIVE_SKILL_NAMES as CREATIVE_SKILL_NAMES_FOR_TEST } from '../../plugins/dsh-extra-plan/lib/assembly-presentation.js'
+import { SETTING_DEFINITIONS as SETTING_DEFINITIONS_E, SETTING_GROUPS as SETTING_GROUPS_E, PRESET_ROW_ID as PRESET_ROW_ID_E, SETTINGS_ROW_ID as SETTINGS_ROW_ID_E, EXTRA_PLAN_SETTING_DEFINITIONS as EXTRA_PLAN_SETTING_DEFINITIONS_E, findPluginsRow as findPluginsRowE } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
+import { restatePresetPlugins as restatePresetPluginsE, declarationCoversAsset as declarationCoversAssetE, ASSET_PATCH_FILE as ASSET_PATCH_FILE_E, pluginRowIds as pluginRowIdsE } from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
+// 说明：不 import lib/settings.js——它顶层 import '@deepseek-ai/schemastery'，而本机可解析到的
+// 宿主副本（profiles/web 与 npm 全局 dsh 0.1.5-rc.2 自带的 3.18.2）无 Schema.volatile()；
+// 0.1.7-rc.1 宿主自带 3.18.4 才有。故 Config 的 volatile/默认值契约改用源码文本静态核对（机械可核对）。
+import { readFileSync as readFileSyncE } from 'node:fs'
 const decisions = plugin.decisions
 const { catalogHasWriteTools, isReadOnlyChildByCatalog, routeDenyReason, runCodeCatchGateReason, runCodeGroupDenyReason, askUserQuestionReturnGateReason, probeDisposalWarning, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilteredToolsSdk, toolPresentationModeOf, projectSkillCatalogDecision, isBootstrapPhase, shellMutationReason, recordJobOutputCall, parseAskResultData, parseDispatchAskResult, deriveFlowState } = decisions
 
@@ -102,9 +109,10 @@ const schema = yaml.JSON_SCHEMA.extend(JsExpr)
 // 2026-09-10 修订：预设静态断言改为读【工作区模板资产】，与 step-01-预设完整性 同源。
 // 原实现读现场 DSH_HOME 预设，会导致「工作区已改、断言要等用户部署后才可能通过」的悖论。
 const presetFile = fileURLToPath(new URL('../../plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml', import.meta.url))
+const presetText = readFileSync(presetFile, 'utf8')
 let rows
 try {
-  rows = yaml.load(readFileSync(presetFile, 'utf8'), { schema })
+  rows = yaml.load(presetText, { schema })
 } catch (error) {
   console.error(`FAIL  YAML 解析失败: ${error.message}`)
   process.exit(1)
@@ -162,33 +170,19 @@ checkDeny('tool-subagent-probe', 14, ['write', 'edit', 'subagent_probe', 'cordis
 }
 
 // ── ③ 真实监听器拦截行为（[任务5]，mock ctx 走插件 apply） ─────────────
-const DSH_APPDATA = process.env.APPDATA || homedir() + '/AppData/Roaming'
-const CORDIS_PRESET_FILE = join(DSH_APPDATA, 'npm', 'node_modules', '@deepseek-ai', 'dsh', 'node_modules', '@deepseek-ai', 'dsh-agent-presets', 'presets', 'cordis', 'agent.cordis.yml')
-function resolvedValue(value) {
-  return {
-    then(onFulfilled) {
-      try {
-        const next = onFulfilled(value)
-        return { catch: () => next }
-      } catch (error) {
-        return { catch(onRejected) { return onRejected(error) } }
-      }
-    },
-  }
-}
+// 0.1.7 取径订正：C=1 创造 skill 面不再经 agentPresets.resolve('cordis') 运行期注册
+// （该 resolve 在 0.1.7 只返回 {id[,broken]}，path 恒 undefined），改为预设 skill-filesystem
+// 行 config.customSkillDirs 静态注册——故 agentPresets/skills mock 与其断言整体退役。
 function makeHarness(config = {}) {
   const listeners = {}
-  const skillRegistrations = []
   const variables = []
   const systemPrompt = { variable: (name, provider) => { variables.push({ name, provider }); return () => {} } }
-  let presetResolveCount = 0
   const ctx = {
     systemPrompt,
     get: (name) => {
       if (name === 'systemPrompt') return systemPrompt
-      if (name === 'agentPresets') return { resolve: () => { presetResolveCount += 1; return resolvedValue({ path: CORDIS_PRESET_FILE }) } }
-      if (name === 'skills') return { register: (definition) => { skillRegistrations.push(definition); return () => {} } }
-      if (name === 'codeRuntime') return { language: typeof config.language === 'string' ? config.language : 'typescript' }
+      // 0.1.7 服务名换代：codeRuntime → ptcRuntime（SDK renderer 语言来源）。
+      if (name === 'ptcRuntime') return { language: typeof config.language === 'string' ? config.language : 'typescript' }
       return undefined
     },
     on: (name, fn, options) => {
@@ -202,8 +196,6 @@ function makeHarness(config = {}) {
     provide: (name, value) => { ctx[name] = value },
   }
   plugin.apply(ctx, withGateWords(config))
-  listeners.skillRegistrations = skillRegistrations
-  listeners.presetResolveCount = () => presetResolveCount
   listeners.variables = variables
   return listeners
 }
@@ -441,35 +433,37 @@ const claimChild = (id, parentSession, tools) => ({
   options: {},
   ctx: { get: (n) => (n === 'tools' ? tools : undefined) },
 })
-const sessionStart = (listeners, agent) => {
-  const entry = listeners['agent/session-start']
-  if (entry === undefined || entry.length === 0) throw new Error('session-start 监听器未注册')
-  for (const fn of entry) fn({ agent })
+// 0.1.7 换代：agent/session-start 已删除，会话启动注册改由 agent/created（serial，payload
+// { agent, source }) 承担——监听器被宿主 await，抛错即会话创建失败。
+const agentCreated = (listeners, agent) => {
+  const entry = listeners['agent/created']
+  if (entry === undefined || entry.length === 0) throw new Error('agent/created 监听器未注册')
+  for (const fn of entry) fn({ agent, source: 'startup' })
 }
 // C1 probe 子会话（parent=main-1 已有 R18/R20/R21 放行累计的待认领计数、schemas 无写）→ 注册 save_probe
 {
   const c1Registered = []
   const c1Probe = claimChild('probe-c1', 'main-1', claimTools(c1Registered, [{ name: 'read' }, { name: 'save_probe' }]))
-  sessionStart(harness, c1Probe)
+  agentCreated(harness, c1Probe)
   checkTrue('C1 probe 子会话（parent=main-1 有待认领计数）session-start → save_probe 已注册', c1Registered.includes('save_probe'))
 }
 // C2 executor 子会话（schemas 含写、同父 main-1）→ 不注册且不消费
 {
   const c2Registered = []
   const c2Exec = claimChild('exec-c2', 'main-1', claimTools(c2Registered, [{ name: 'read' }, { name: 'write' }]))
-  sessionStart(harness, c2Exec)
+  agentCreated(harness, c2Exec)
   checkTrue('C2 executor 子会话（schemas 含写）session-start → 不注册', !c2Registered.includes('save_probe'))
   // 不消费验证：同父再触发 probe 子会话仍可认领（计数未被 C2 消耗）
   const c2bRegistered = []
   const c2bProbe = claimChild('probe-c2b', 'main-1', claimTools(c2bRegistered, [{ name: 'read' }, { name: 'save_probe' }]))
-  sessionStart(harness, c2bProbe)
+  agentCreated(harness, c2bProbe)
   checkTrue('C2b 同父再触发 probe 子会话 → 仍可认领（C2 未消费计数）', c2bRegistered.includes('save_probe'))
 }
 // C3 reviewer 子会话（schemas 无写、parent=parent-1 无 pending）→ 不注册
 {
   const c3Registered = []
   const c3Rev = claimChild('review-c3', 'parent-1', claimTools(c3Registered, [{ name: 'read' }, { name: 'glob' }]))
-  sessionStart(harness, c3Rev)
+  agentCreated(harness, c3Rev)
   checkTrue('C3 reviewer 子会话（无 pending）session-start → 不注册', !c3Registered.includes('save_probe'))
 }
 
@@ -502,7 +496,7 @@ const grantClaim = () => {
   const record4 = []
   const probe4 = claimChild('probe-c4', 'main-1', undefined)
   grantClaim()
-  sessionStart(harness, probe4)
+  agentCreated(harness, probe4)
   checkTrue('C4 认领时 tools 不可用 → 本轮不注册', !record4.includes('save_probe'))
   probe4.ctx = { get: (n) => (n === 'tools' ? failTools(record4, probeSchemas) : undefined) }
   await stepProbe(harness, probe4)
@@ -511,7 +505,7 @@ const grantClaim = () => {
   const record4b = []
   const probe4b = claimChild('probe-c4b', 'main-1', failTools(record4b, probeSchemas))
   grantClaim()
-  sessionStart(harness, probe4b)
+  agentCreated(harness, probe4b)
   checkTrue('C4 重试不额外消费计数：同父新 probe 仍可认领并注册', record4b.includes('save_probe'))
 }
 // C5 可重试错（无 name 的普通 Error → 分类 C）：粘性 probeClaimed 使重试不再消费计数
@@ -520,7 +514,7 @@ const grantClaim = () => {
   let attempts5 = 0
   const probe5 = claimChild('probe-c5', 'main-1', undefined)
   grantClaim()
-  sessionStart(harness, probe5)
+  agentCreated(harness, probe5)
   probe5.ctx = { get: (n) => (n === 'tools' ? failTools(record5, probeSchemas, () => { attempts5 += 1; if (attempts5 === 1) throw new Error('transient claim register failure') }) : undefined) }
   await stepProbe(harness, probe5)
   check('C5 可重试错首次尝试 1 次', attempts5, 1)
@@ -530,7 +524,7 @@ const grantClaim = () => {
   const record5b = []
   const probe5b = claimChild('probe-c5b', 'main-1', failTools(record5b, probeSchemas))
   grantClaim()
-  sessionStart(harness, probe5b)
+  agentCreated(harness, probe5b)
   checkTrue('C5 重试未额外消费计数：同父新 probe 仍可认领并注册', record5b.includes('save_probe'))
 }
 // C6 重名（分类 A：message 含 already registered）→ 记终态不重试
@@ -540,7 +534,7 @@ const grantClaim = () => {
   const dup6 = new Error('tool "save_probe" is already registered in this scope')
   const probe6 = claimChild('probe-c6', 'main-1', undefined)
   grantClaim()
-  sessionStart(harness, probe6)
+  agentCreated(harness, probe6)
   probe6.ctx = { get: (n) => (n === 'tools' ? failTools(record6, probeSchemas, () => { attempts6 += 1; if (attempts6 === 1) throw dup6 }) : undefined) }
   await stepProbe(harness, probe6)
   await stepProbe(harness, probe6)
@@ -552,7 +546,7 @@ const grantClaim = () => {
   let attempts7 = 0
   const probe7 = claimChild('probe-c7', 'main-1', undefined)
   grantClaim()
-  sessionStart(harness, probe7)
+  agentCreated(harness, probe7)
   probe7.ctx = { get: (n) => (n === 'tools' ? failTools(record7, probeSchemas, () => { attempts7 += 1; throw new TypeError('tool "save_probe" must declare output { schema, render, presentationMeta? }') }) : undefined) }
   await stepProbe(harness, probe7)
   await stepProbe(harness, probe7)
@@ -563,7 +557,7 @@ const grantClaim = () => {
   schemaError7.name = 'JsonSchemaError'
   const probe7b = claimChild('probe-c7b', 'main-1', undefined)
   grantClaim()
-  sessionStart(harness, probe7b)
+  agentCreated(harness, probe7b)
   probe7b.ctx = { get: (n) => (n === 'tools' ? failTools(record7b, probeSchemas, () => { attempts7b += 1; throw schemaError7 }) : undefined) }
   await stepProbe(harness, probe7b)
   await stepProbe(harness, probe7b)
@@ -1034,7 +1028,8 @@ checkTrue('R99 planner run_code 组内 job_output wait → deny 且含「job_out
   sharedEvents.push({
     type: 'user/message',
     data: {
-      source: { kind: 'plugin', plugin: 'tool-jobs', form: 'notice' },
+      // 0.1.7 换代：dsh-tool-jobs 的完成通知源为 { kind:'tool-jobs', form:'notice' }（旧 plugin 兜底 kind 已废）。
+      source: { kind: 'tool-jobs', form: 'notice' },
       content: [{ type: 'text', text: 'background job j1 (subagent: test) finished [status: completed]. Read its output with job_output.' }],
     },
   })
@@ -1094,10 +1089,10 @@ const childWithId = (id, events) => ({
   options: {},
   ctx: undefined,
 })
-const sessionStartListener = (listeners, agent) => {
-  const entry = listeners['agent/session-start']
-  if (entry === undefined || entry.length === 0) throw new Error('agent/session-start 监听器未注册')
-  return entry[0]({ agent, source: 'test' })
+const agentCreatedListener = (listeners, agent) => {
+  const entry = listeners['agent/created']
+  if (entry === undefined || entry.length === 0) throw new Error('agent/created 监听器未注册')
+  return entry[0]({ agent, source: 'startup' })
 }
 const disposedListener = (listeners, agent) => {
   const entry = listeners['agent/disposed']
@@ -1226,7 +1221,7 @@ checkTrue('P4-2 源码：disposed 先同步 fold，再按 sessionId 删除；age
     const h = makeHarness({ anchoredBootstrap: false, usageLedger: { enabled: true, path: ledger } })
     const events = []
     const child = childWithId('p4-oneshot', events)
-    sessionStartListener(h, child)
+    agentCreatedListener(h, child)
     checkTrue('P4-8 session-start 无 usage → 不写 ledger 行（cursor 亦不落盘）', !existsSync(ledger) && !existsSync(ledger + '.cursor.json'))
     events.push(usageRowE(42, 10, 20, 30, 'deepseek-v4-pro', {}))
     const listenerReturn = disposedListener(h, child)
@@ -1237,7 +1232,7 @@ checkTrue('P4-2 源码：disposed 先同步 fold，再按 sessionId 删除；age
     checkTrue('P4-10 重复 disposed 不重复追加 final usage（仍 1 行，靠持久 cursor 去重）', readLedgerRows(ledger).length === 1)
     events.push(usageRowE(50, 1, 2, 3, 'deepseek-v4-reasoner', {}))
     const revived = childWithId('p4-oneshot', events)
-    sessionStartListener(h, revived)
+    agentCreatedListener(h, revived)
     const rows2 = readLedgerRows(ledger)
     checkTrue('P4-11 同 sessionId 续载（disposed 后内存项已删）：旧 seq 42 不重写、新 seq 50 恰写一次，且新行 provider 空串/cacheWriteTokens=0/reasoningTokens=0',
       rows2.length === 2 && rows2[0].seq === 42 && rows2[1].seq === 50 && rows2[1].model === 'deepseek-v4-reasoner' && rows2[1].role === 'executor' && rows2[1].provider === '' && rows2[1].cacheWriteTokens === 0 && rows2[1].reasoningTokens === 0)
@@ -1256,7 +1251,7 @@ checkTrue('P4-2 源码：disposed 先同步 fold，再按 sessionId 删除；age
     const h = makeHarness({ anchoredBootstrap: false, usageLedger: { enabled: true, path: ledger } })
     const plannerEvents = [DESC]
     const planner = plannerWithId('p4-planner-role', plannerEvents)
-    sessionStartListener(h, planner)
+    agentCreatedListener(h, planner)
     plannerEvents.push(usageRowE(8, 1, 1, 1, 'deepseek-v4-pro', {}))
     disposedListener(h, planner)
     const rows = readLedgerRows(ledger)
@@ -1277,7 +1272,7 @@ checkTrue('P4-2 源码：disposed 先同步 fold，再按 sessionId 删除；age
     const cursorPath = ledger + '.cursor.json'
     writeFileSync(cursorPath, JSON.stringify({ 'other-session': { seq: 7, index: 3 }, 'legacy-session': 5 }), 'utf8')
     const h = makeHarness({ anchoredBootstrap: false, usageLedger: { enabled: true, path: ledger } })
-    const warnings = captureWarnings(() => { sessionStartListener(h, childWithId('p4-keep', [usageRowE(11, 1, 1, 1, 'm', {})])) })
+    const warnings = captureWarnings(() => { agentCreatedListener(h, childWithId('p4-keep', [usageRowE(11, 1, 1, 1, 'm', {})])) })
     const table = JSON.parse(readFileSync(cursorPath, 'utf8'))
     checkTrue('P4-16 可解析 cursor 读改写：0 warning、更新本 session 且保留其它 session（含旧数字形状归一为 {seq,index}）',
       cursorWarnings(warnings).length === 0 && table['other-session'] !== undefined && table['other-session'].seq === 7 && table['other-session'].index === 3 && table['legacy-session'] !== undefined && table['legacy-session'].seq === 5 && table['p4-keep'] !== undefined && table['p4-keep'].seq === 11 && readLedgerRows(ledger).length === 1)
@@ -1291,7 +1286,7 @@ checkTrue('P4-2 源码：disposed 先同步 fold，再按 sessionId 删除；age
     const ledger = join(dir, 'usage-ledger.jsonl')
     const h = makeHarness({ anchoredBootstrap: false, usageLedger: { enabled: true, path: ledger } })
     const enoentAgent = childWithId('p4-enoent', [usageRowE(1, 1, 1, 1, 'm', {})])
-    const warnings = captureWarnings(() => { sessionStartListener(h, enoentAgent); disposedListener(h, enoentAgent) })
+    const warnings = captureWarnings(() => { agentCreatedListener(h, enoentAgent); disposedListener(h, enoentAgent) })
     checkTrue('P4-17 ENOENT（首次运行无 cursor 文件）静默按空表：0 条降级 warning，ledger 与 cursor 正常落盘',
       cursorWarnings(warnings).length === 0 && readLedgerRows(ledger).length === 1 && JSON.parse(readFileSync(ledger + '.cursor.json', 'utf8'))['p4-enoent'].seq === 1)
   } finally { rmSync(dir, { recursive: true, force: true }) }
@@ -1307,7 +1302,7 @@ checkTrue('P4-2 源码：disposed 先同步 fold，再按 sessionId 删除；age
     const h = makeHarness({ anchoredBootstrap: false, usageLedger: { enabled: true, path: ledger } })
     const events = [usageRowE(5, 2, 3, 4, 'm', {})]
     const agent = childWithId('p4-corrupt', events)
-    const warnings = captureWarnings(() => { sessionStartListener(h, agent) })
+    const warnings = captureWarnings(() => { agentCreatedListener(h, agent) })
     const table = JSON.parse(readFileSync(cursorPath, 'utf8'))
     checkTrue('P4-18 损坏 cursor JSON：已捕获到恰 1 条降级 warning + 写成功后覆盖为仅当前 session（预置的 other-session 条目不再保留）',
       cursorWarnings(warnings).length === 1 && table['p4-corrupt'] !== undefined && table['p4-corrupt'].seq === 5 && table['other-session'] === undefined && readLedgerRows(ledger).length === 1)
@@ -1328,7 +1323,7 @@ checkTrue('P4-2 源码：disposed 先同步 fold，再按 sessionId 删除；age
     const cursorPath = ledger + '.cursor.json'
     writeFileSync(cursorPath, '[1,2,3]', 'utf8')
     const h = makeHarness({ anchoredBootstrap: false, usageLedger: { enabled: true, path: ledger } })
-    const warnings = captureWarnings(() => { sessionStartListener(h, childWithId('p4-nonobj', [usageRowE(2, 1, 1, 1, 'm', {})])) })
+    const warnings = captureWarnings(() => { agentCreatedListener(h, childWithId('p4-nonobj', [usageRowE(2, 1, 1, 1, 'm', {})])) })
     const table = JSON.parse(readFileSync(cursorPath, 'utf8'))
     checkTrue('P4-20 cursor 根值为非对象（数组）：1 条降级 warning + 覆盖写为普通对象且仅当前 session',
       cursorWarnings(warnings).length === 1 && !Array.isArray(table) && table['p4-nonobj'] !== undefined && table['p4-nonobj'].seq === 2)
@@ -1388,7 +1383,7 @@ checkTrue('P4-2 源码：disposed 先同步 fold，再按 sessionId 删除；age
     // 次行：旧形状（opts={} → 不写 provider/cacheWriteTokens/reasoningTokens 键）→ 按 空串/0/0 落盘。
     const events = [usageRowE(61, 0, 0, 0, 'deepseek-v4-pro', { provider: 'deepseek', cacheWriteTokens: 7, reasoningTokens: 9 })]
     const child = childWithId('p4-usage-fields', events)
-    sessionStartListener(h, child)
+    agentCreatedListener(h, child)
     events.push(usageRowE(62, 1, 2, 3, 'deepseek-v4-pro', {}))
     disposedListener(h, child)
     const rows = readLedgerRows(ledger)
@@ -1436,11 +1431,11 @@ const fullCalls = (calls) => calls.filter((pair) => pair[0] === undefined)
     const h = makeHarness({ anchoredBootstrap: false, usageLedger: { enabled: true, path: ledger } })
     const log = [DESC, usageRowE(1, 1, 2, 3, 'deepseek-v4-pro', {}), usageRowE(2, 4, 5, 6, 'deepseek-v4-pro', {})]
     const w = watermarkSession('p4-cursor-nochange', log)
-    sessionStartListener(h, w.agent)
+    agentCreatedListener(h, w.agent)
     const ledgerA = existsSync(ledger) ? readFileSync(ledger, 'utf8') : ''
     const cursorA = existsSync(ledger + '.cursor.json') ? readFileSync(ledger + '.cursor.json', 'utf8') : ''
     w.calls.length = 0
-    sessionStartListener(h, w.agent)
+    agentCreatedListener(h, w.agent)
     const ledgerB = existsSync(ledger) ? readFileSync(ledger, 'utf8') : ''
     const cursorB = existsSync(ledger + '.cursor.json') ? readFileSync(ledger + '.cursor.json', 'utf8') : ''
     checkTrue('P4-25 水位未变（prevIndex === session.seq === 3）→ 直接返回：ledger 与 cursor 字节不变、行数不变，且本次零次 snapshotEvents 调用（不物化数组、不写文件）',
@@ -1462,14 +1457,14 @@ const fullCalls = (calls) => calls.filter((pair) => pair[0] === undefined)
     // seq 从 1 起（seq 0 落在「seq <= cursor」的初始去重窗口内，与 P4-8~P4-13 既有口径一致）。
     const log = [usageRowE(1, 1, 1, 1, 'deepseek-v4-pro', {}), usageRowE(2, 2, 2, 2, 'deepseek-v4-pro', {})]
     const wInc = watermarkSession(sid, log)
-    sessionStartListener(hA, wInc.agent)
+    agentCreatedListener(hA, wInc.agent)
     const first = readLedgerRows(ledgerA)
     wInc.calls.length = 0
     log.push(usageRowE(3, 3, 3, 3, 'deepseek-v4-reasoner', {}), usageRowE(4, 4, 4, 4, 'deepseek-v4-reasoner', {}))
-    sessionStartListener(hA, wInc.agent)
+    agentCreatedListener(hA, wInc.agent)
     const incr = readLedgerRows(ledgerA)
     const wFull = watermarkSession(sid, log.slice())
-    sessionStartListener(hB, wFull.agent)
+    agentCreatedListener(hB, wFull.agent)
     const full = readLedgerRows(ledgerB)
     const rc = rangeCalls(wInc.calls)
     checkTrue('P4-26 增量续扫等价：区间读恰为 (2,4) 一次（只物化新增区间）、恰追加 2 行、seq 序列 1..4 无重复；与同 sessionId 的全量参考逐行（除 ts）一致',
@@ -1494,15 +1489,15 @@ const fullCalls = (calls) => calls.filter((pair) => pair[0] === undefined)
     // seq 1..4（同 P4-26：seq 0 落在初始去重窗口内）；预置游标 seq=2 表示「前两行已折叠」。
     const log = [usageRowE(1, 1, 1, 1, 'deepseek-v4-pro', {}), usageRowE(2, 2, 2, 2, 'deepseek-v4-pro', {}), usageRowE(3, 3, 3, 3, 'deepseek-v4-reasoner', {}), usageRowE(4, 4, 4, 4, 'deepseek-v4-reasoner', {})]
     const wTrunc = watermarkSession(sid, log)
-    sessionStartListener(hA, wTrunc.agent)
+    agentCreatedListener(hA, wTrunc.agent)
     const truncated = readLedgerRows(ledgerA)
     const tableA = JSON.parse(readFileSync(ledgerA + '.cursor.json', 'utf8'))
     // 增量参考：同 sid 分两步折叠（首折全量 + 追加后区间）→ 其增量段即回退路径应当得到的行。
     const logB = log.slice(0, 2)
     const wRef = watermarkSession(sid, logB)
-    sessionStartListener(hB, wRef.agent)
+    agentCreatedListener(hB, wRef.agent)
     logB.push(log[2], log[3])
-    sessionStartListener(hB, wRef.agent)
+    agentCreatedListener(hB, wRef.agent)
     const refRows = readLedgerRows(ledgerB)
     const rc = rangeCalls(wTrunc.calls)
     checkTrue('P4-27 回退全量：index(99) > session.seq(4) → 走无参全量快照（零次区间读）、seq 去重不产生重复行（仅 seq 3/4 两行），结果与增量路径对同一输入逐行（除 ts）一致；游标写回 index=4 且保留其它 session（旧数字形状归一）',
@@ -1683,11 +1678,39 @@ checkTrue('Cordis 固定集合恰有 7 项且名称唯一', MATRIX_CORDIS_TOOLS.
 const projectionSource = { tools: [{ name: 'read' }, { name: 'cordis_run' }], sections: [{ name: 'tool:cordis', text: 'hidden' }, { name: 'tools:sdk', text: 'old' }] }
 const projectionCopy = projectAssemblyForPresentation(projectionSource, projectionSource.tools, { sdkText: 'read:' })
 checkTrue('projectAssemblyForPresentation 返回新 assembly 且不原地修改', projectionCopy !== projectionSource && projectionSource.tools.length === 2 && projectionSource.sections[0].name === 'tool:cordis' && projectionCopy.tools.length === 1 && projectionCopy.tools[0].name === 'read' && sectionText(projectionCopy, 'tool:cordis') === '' && sectionText(projectionCopy, 'tools:sdk') === 'read:')
-const skillHarnessOff = makeHarness({ anchoredBootstrap: false, creativeMode: false })
-const skillHarnessOn = makeHarness({ anchoredBootstrap: false, creativeMode: true })
-const expectedCreativeSkills = ['cordis-plugin-development', 'editing-cordis-compositions']
-checkTrue('creativeMode:false 不注册两个官方 skill 且不解析 cordis 预设', skillHarnessOff.skillRegistrations.length === 0 && skillHarnessOff.presetResolveCount() === 0)
-checkTrue('creativeMode:true 恢复恰 2 个官方 skill 注册', skillHarnessOn.skillRegistrations.length === 2 && skillHarnessOn.skillRegistrations.map((item) => item.name).sort().join('|') === expectedCreativeSkills.sort().join('|'))
+// C=1 创造 skill 面（0.1.7 静态注册）：预设 skill-filesystem 行的 config.customSkillDirs
+// 指向官方包内 skills/（含 3 个 SKILL.md 目录）；表达式逐字含 createRequire(baseUrl) 与 'skills'。
+const expectedCreativeSkills = ['cordis-plugin-development', 'editing-cordis-compositions', 'cordis-composition-reference']
+{
+  const skillFsRow = all.find((row) => row.id === 'skill-filesystem')
+  const dirs = skillFsRow !== undefined && skillFsRow.config !== undefined && Array.isArray(skillFsRow.config.customSkillDirs) ? skillFsRow.config.customSkillDirs : []
+  checkTrue('T9-3a 预设 skill-filesystem 行 config.customSkillDirs 存在（恰 1 项）', skillFsRow !== undefined && dirs.length === 1)
+  checkTrue("T9-3b customSkillDirs 表达式逐字含 createRequire(baseUrl).resolve('@deepseek-ai/dsh-agent-preset/package.json') 与 'skills'",
+    presetText.includes("createRequire(baseUrl).resolve('@deepseek-ai/dsh-agent-preset/package.json')") && presetText.includes("'skills'"))
+}
+// 隐藏集合（C=0 语义等价旧「不注册」）：三 id 全在 CREATIVE_SKILL_NAMES，且 C=0 时从 catalog 隐藏。
+const skillCatalogFixture = (names) => ({
+  kind: 'enter',
+  messages: [{
+    source: { kind: 'skill-catalog', update: false, entries: [{ name: 'matrix-ordinary-skill', description: 'ordinary' }].concat(names.map((name) => ({ name, description: 'creative' }))) },
+    content: [{ type: 'text', text: 'matrix skill catalog' }],
+  }],
+})
+const catalogNamesOf = (decision) => {
+  const message = Array.isArray(decision.messages) ? decision.messages.find((item) => item !== null && typeof item === 'object' && item.source !== undefined && Array.isArray(item.source.entries)) : undefined
+  return message === undefined ? [] : message.source.entries.map((entry) => entry.name)
+}
+{
+  checkTrue('T9-3c 隐藏集合恰含 3 个 cordis skill 且全部为 true 名单', expectedCreativeSkills.every((name) => CREATIVE_SKILL_NAMES_FOR_TEST.has(name)) && CREATIVE_SKILL_NAMES_FOR_TEST.size === 3)
+  const offHarness = makeHarness({ anchoredBootstrap: false, creativeMode: false })
+  const hiddenOff = await offHarness['agent/pre-step'][0]({ agent: mainAgent }, async () => skillCatalogFixture(expectedCreativeSkills))
+  const namesOff = catalogNamesOf(hiddenOff)
+  checkTrue('T9-3d C=0 全 phase 隐藏 3 个 cordis skill 且保留普通 skill', expectedCreativeSkills.every((name) => !namesOff.includes(name)) && namesOff.includes('matrix-ordinary-skill'))
+  const onHarness = makeHarness({ anchoredBootstrap: false, creativeMode: true })
+  const keptOn = await onHarness['agent/pre-step'][0]({ agent: mainAgent }, async () => skillCatalogFixture(expectedCreativeSkills))
+  const namesOn = catalogNamesOf(keptOn)
+  checkTrue('T9-3e C=1 非 HP1 窗口保留 3 个创造 skill（投影不隐藏）', expectedCreativeSkills.every((name) => namesOn.includes(name)))
+}
 checkTrue('skill 工具仍属于普通模型可见工具', matrixDirectTools(MATRIX_TOOL_DEFINITIONS, 'native').some((tool) => tool.name === 'skill'))
 checkTrue('F/L 判定识别数组型 tool/call 事件', !isBootstrapPhase({ session: { snapshotEvents: () => [{ type: ['assistant', 'tool/call'] }] } }))
 
@@ -1960,7 +1983,7 @@ function rawHarness(config, listeners, variables) {
   const systemPrompt = { variable: (name, provider) => { variables.push({ name, provider }); return () => {} } }
   const ctx = {
     systemPrompt,
-    get: (name) => (name === 'systemPrompt' ? systemPrompt : name === 'codeRuntime' ? { language: 'typescript' } : undefined),
+    get: (name) => (name === 'systemPrompt' ? systemPrompt : name === 'ptcRuntime' ? { language: 'typescript' } : undefined),
     on: (name, fn) => {
       if (listeners[name] === undefined) listeners[name] = []
       listeners[name].push(fn)
@@ -2101,9 +2124,10 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
 // 真值）④文件改写后 stamp 变化仍跟进 ⑤读盘失败（文件不存在）构造期回退 fallback。
 {
   const lcDir = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-live-config-'))
-  // 夹具只含 extra-plan 行（captureSettings 按 id='extra-plan' + config.<key> 定位），exploreBudget
-  // 取与内置默认 18 不同的值，确保「读到文件」与「回退 fallback」可区分。
-  const lcFixture = (anchored, budget) => '- id: extra-plan\n  config:\n    anchoredBootstrap: ' + anchored + '\n    runcodeCatchGate: true\n    exploreBudget: ' + budget + '\n'
+  // 夹具 = profile patch 内的 settings 行（0.1.7 新载体：captureRowSettings 按
+  // id='dsh-extra-plan-settings' + config.<key> 定位），exploreBudget 取与内置默认 18
+  // 不同的值，确保「读到文件」与「回退 fallback」可区分。
+  const lcFixture = (anchored, budget) => '- id: dsh-extra-plan-settings\n  config:\n    anchoredBootstrap: ' + anchored + '\n    runcodeCatchGate: true\n    exploreBudget: ' + budget + '\n'
   const lcOffFile = join(lcDir, 'agent-off.cordis.yml')
   const lcOnFile = join(lcDir, 'agent-on.cordis.yml')
   writeFileSync(lcOffFile, lcFixture(false, 7), 'utf8')
@@ -2206,6 +2230,76 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
   // DZ12：消费即清——rc-1 记录已在 DZ9 被消费，第二次调用（同一 rootId）透传
   const dzOut12 = dzHook === null ? null : dzHook({ agent: mainAgent, name: 'run_code', callId: 'rc-1', rootCallId: 'rc-1' }, dzFailOf(dzReason), dzNext)
   checkTrue('DZ12 消费即清：同一 rootId 第二次调用 → 透传', dzOut12 === dzPass)
+}
+
+// ── ⑰ T9-3 新契约硬门槛：isolate / volatile / 写链 / 声明行覆盖（2026-09-24） ────────
+// 四组断言全部机械可核对：isolate 名单（预设挂载必过审计）、settings 行 Config 8 字段
+// 全 volatile、2 项宿主行写链（声明行 plugins 整体重述）、声明行与生成产物一致性。
+{
+  // ① isolate：三组名单 ⊇ {subagentModelSelection, toolResultPruner, workflowEngine} 且值全 true。
+  const requiredIsolate = ['subagentModelSelection', 'toolResultPruner', 'workflowEngine']
+  const isolateGroups = all.filter((row) => row.group === true)
+  const isolateMap = {}
+  for (const group of isolateGroups) {
+    if (group.isolate === undefined || group.isolate === null) continue
+    for (const [name, value] of Object.entries(group.isolate)) {
+      isolateMap[name] = isolateMap[name] === undefined ? [group.id, value] : [isolateMap[name][0] + ',' + group.id, isolateMap[name][1] && value]
+      if (isolateMap[name][1] !== true) isolateMap[name][1] = value
+    }
+  }
+  checkTrue('T9-3f 预设三组 isolate 名单 ⊇ {subagentModelSelection, toolResultPruner, workflowEngine}', requiredIsolate.every((name) => Object.prototype.hasOwnProperty.call(isolateMap, name)))
+  checkTrue('T9-3g 三组 isolate 值全部 === true（禁止具名字符串 label）', Object.values(isolateMap).every((entry) => entry[1] === true) && requiredIsolate.every((name) => isolateMap[name][1] === true))
+  const delegationRow = all.find((row) => row.id === 'delegation')
+  const compactionRow = all.find((row) => row.id === 'compaction')
+  const extraPlanGroupRow = all.find((row) => row.id === 'extra-plan-group')
+  checkTrue('T9-3h delegation/compaction/extra-plan-group 各自带 isolate 键且覆盖必要项',
+    delegationRow.isolate.subagentModelSelection === true && delegationRow.isolate.workflowEngine === true &&
+    compactionRow.isolate.toolResultPruner === true &&
+    extraPlanGroupRow.isolate !== undefined && Object.keys(extraPlanGroupRow.isolate).length > 0)
+
+  // ② 生成产物：声明行存在 + plugins 行 id 集合覆盖资产 + 生成物与资产顶层条目逐行一致
+  const generatedPatchText = readFileSyncE(ASSET_PATCH_FILE_E, 'utf8')
+  checkTrue('T9-3i 生成产物含声明行 "- id: preset-extra-plan" 且下一行 name 为 @deepseek-ai/dsh-agent-preset',
+    generatedPatchText.includes('    - id: preset-extra-plan\n      name: \'@deepseek-ai/dsh-agent-preset\'\n'))
+  const generatedDoc = yaml.load(generatedPatchText, { schema })
+  const generatedPlugins = generatedDoc[0].insert[0].config.plugins
+  checkTrue('T9-3j 生成产物 plugins 行 id 集合覆盖资产顶层条目（declarationCoversAsset）且行数一致', declarationCoversAssetE(generatedPlugins) && pluginRowIdsE(generatedPlugins).length === pluginRowIdsE(rows).length)
+  const assetTop = presetText.slice(presetText.indexOf('- id: persona')).replace(/\n+$/, '')
+  const genPluginsText = generatedPatchText.slice(generatedPatchText.indexOf('        plugins:\n') + 17).replace(/\n+$/, '')
+  const stripped = genPluginsText.split('\n').map((line) => (line.startsWith('          ') ? line.slice(10) : line)).join('\n')
+  checkTrue('T9-3k 生成产物 plugins 与资产顶层条目逐行逐字一致（仅平移 10 列缩进）', stripped === assetTop)
+
+  // ③ settings 行 Config：8 字段全 volatile（源码文本静态核对）+ 2 项宿主行 descriptor 分组
+  const settingsText = readFileSyncE(fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/settings.js', import.meta.url)), 'utf8')
+  // 只取代码行（剥注释），避免注释里的示例（如官方 maxParallelToolCalls 习语）混进字段集合。
+  const settingsCodeOnly = settingsText.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n')
+  const configBody = settingsCodeOnly.slice(settingsCodeOnly.indexOf('export const Config = z.object({'), settingsCodeOnly.indexOf('})', settingsCodeOnly.indexOf('export const Config = z.object({')))
+  const volatileKeys = [...configBody.matchAll(/([A-Za-z][A-Za-z0-9]*):\s*z\.[^\n]*?\.volatile\(\)/g)].map((match) => match[1])
+  check('T9-3l settings 行 Config 恰 8 字段且每字段链 .volatile()', volatileKeys.slice().sort().join('|'), ['anchoredBootstrap', 'creativeMode', 'crossProviderPlannerModel', 'exploreBudget', 'otherAgentModel', 'plannerModel', 'plannerPromptSuffix', 'runcodeCatchGate'].sort().join('|'))
+  checkTrue('T9-3m exploreBudget 为整数字段（z.number().step(1).min(1)）且默认 18、链 .volatile()', configBody.includes('exploreBudget: z.number().step(1).min(1).default(18).volatile()'))
+  const settingsCode = settingsCodeOnly
+  checkTrue('T9-3n settings.js 代码段无 settings.register / ExtraPlanSettingsSchema / 旧预设目录写入',
+    !settingsCode.includes('settings.register') && !settingsCode.includes('ExtraPlanSettingsSchema') &&
+    !settingsCode.includes('.agent-presets') && settingsCode.includes("child.settings.configure({ auto: false }, ctx.fiber)"))
+  check('T9-3o descriptor 分组：extra-plan 恰 8 项、host-rows 恰 2 项', EXTRA_PLAN_SETTING_DEFINITIONS_E.length + '|' + SETTING_DEFINITIONS_E.filter((item) => item.group === SETTING_GROUPS_E.HOST_ROWS).length, '8|2')
+  checkTrue('T9-3p 新载体行 id 常量与声明行一致', SETTINGS_ROW_ID_E === 'dsh-extra-plan-settings' && PRESET_ROW_ID_E === 'preset-extra-plan')
+
+  // ④ 写链：2 项宿主行经 configEditor.edit 整体重述声明行 plugins（restatePresetPlugins 纯函数行为）
+  const declared = generatedPlugins
+  const restated = restatePresetPluginsE({ plugins: declared }, {}, { hostRowConfig: { 'tool-web': { fetch: true }, 'tool-presentation': { mode: 'ptc' } }, gateWords: null })
+  const webRow = restated.plugins.find((row) => row.id === 'tool-web')
+  const presentRow = restated.plugins.find((row) => row.id === 'tool-presentation')
+  checkTrue('T9-3q restatePresetPlugins 整体重述 plugins：tool-web.fetch/tool-presentation.mode 落位且其余行原样',
+    webRow.config.fetch === true && presentRow.config.mode === 'ptc' && webRow.config.searchTimeoutMs === 60000 &&
+    pluginRowIdsE(restated.plugins).length === pluginRowIdsE(declared).length && declared.find((row) => row.id === 'tool-web').config.fetch === false)
+  let gateThrew = false
+  try { restatePresetPluginsE({ plugins: declared }, {}, { hostRowConfig: {}, gateWords: { routeDirect: '只有一个词' } }) } catch { gateThrew = true }
+  checkTrue('T9-3r gateWords 整组校验失败即抛（不落盘语义）', gateThrew)
+  const gateOk = restatePresetPluginsE({ plugins: declared }, {}, { hostRowConfig: {}, gateWords: assetGateWords })
+  const gateRow = findPluginsRowE(gateOk.plugins, 'extra-plan')
+  checkTrue('T9-3s gateWords 合法整组写回 extra-plan 行 config.gateWords', gateRow !== null && JSON.stringify(gateRow.config.gateWords) === JSON.stringify(assetGateWords))
+  checkTrue('T9-3t settings.js 写链文本只经 configEditor.edit（无直写 cordis.patch.yml）',
+    settingsText.includes('editor.edit(') && settingsText.includes('restatePresetPlugins') && !settingsText.includes('writeFileSync'))
 }
 
 console.log('\n通过 ' + pass + ', 失败 ' + fail)

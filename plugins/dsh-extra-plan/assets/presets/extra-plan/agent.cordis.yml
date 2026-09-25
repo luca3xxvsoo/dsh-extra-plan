@@ -4,7 +4,7 @@
 # 会话经 scope parentage 加入；会话自身状态仍按 Session/Agent 键控在插件内部。
 # 宿主组合保留预设不得拥有的东西：注册表本身、沙箱与审批栈、持久化、模型路由。
 # 提供服务的行必须放在带 isolate realm 的 group 内（root realm 是进程级，跨预设
-# 冲突且 dsh-agent-presets 会拒绝挂载）。
+# 冲突且 dsh-agent-preset-registry 会拒绝挂载（'Preset services require isolate realms: ...'））。
 #
 # 闸门由 @local/dsh-extra-plan 以四级机械锚点实现（路由/目的/澄清/批准）
 # 规划子代理只读 + 探查硬上限 + save_plan 落盘，力度完全继承主会话。
@@ -30,7 +30,7 @@
         - 需求复杂度评估完成后，用 ask_user_question 发起一次二选一。选项固定为「主会话探查」「探查者探查」。把你的推荐排第一
         - 探查派发：确认探查地形，评估哪些方向互不依赖；≥ 2 个独立方向优先用 subagent_probe 并行多派探查者。prompt 说明「只读探查、save_probe 落盘证据报告、回主会话只给路径 + 2-3 行摘要」
         - 探查结束后，汇总探查结果，展示初版方案。并用 ask_user_question 发起一次三选一。选项固定为「{{extra_plan_route_direct}}」「{{extra_plan_route_plan}}」「{{extra_plan_route_disagree}}」，附第二个问题「补充要求」可留空。把你的推荐排第一
-        - 选「{{extra_plan_route_direct}}」：亲自动手，完工自查，简汇报 ≤10 行
+        - 选「{{extra_plan_route_direct}}」：用 save_plan 落盘操作方案。落盘完成后根据方案执行 + 完工验收自查
         - 选「{{extra_plan_route_disagree}}」：说明用户对任务方向有一定调整。与用户探讨后再决定后续步骤
         - 选「{{extra_plan_route_plan}}」：
           · 先用 ask_user_question 发起一次二选一： 选项固定为「{{extra_plan_purpose_refine}}」「{{extra_plan_purpose_redo}}」。用来判断用户{{extra_plan_route_plan}}的目的
@@ -94,6 +94,14 @@
 
 - id: skill-filesystem
   name: '@deepseek-ai/dsh-skill-filesystem'
+  # C=1 创造模式的官方 skill 面（dsh 0.1.7-rc.1）：不再由插件运行期 agentPresets.resolve('cordis')
+  # 取 path 后 skills.register（0.1.7 该 resolve 只返回 {id[,broken]}，path 恒 undefined），改为官方替身
+  # 的静态根：@deepseek-ai/dsh-agent-preset 包内 skills/（含 editing-cordis-compositions、
+  # cordis-plugin-development、cordis-composition-reference 三个 SKILL.md）。baseUrl = 本预设声明行所在
+  # Loader 上下文（cordis-plugin-loader 的 !!js 求值域），表达式逐字取自官方 cordis.patch.yml。
+  config:
+    customSkillDirs:
+      - !!js process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('@deepseek-ai/dsh-agent-preset/package.json')), 'skills')
 
 - id: tool-skill
   name: '@deepseek-ai/dsh-tool-skill'
@@ -107,6 +115,10 @@
 - id: extra-plan-group
   name: cordis:group
   group: true
+  # 保险项（本仓全 .js/.mjs 零 cordis 服务注册：extends Service / super(ctx, / provide 均 0 命中）：
+  # 注册集合为 ∅，任意名满足审计的 ⊇∅；值一律 true（每条目各自 LocalRealm），禁止具名字符串 label。
+  isolate:
+    extraPlan: true
   config:
     - id: extra-plan
       name: '@local/dsh-extra-plan'
@@ -196,8 +208,15 @@
 - id: delegation
   name: cordis:group
   group: true
+  # subagentModelSelection【必要】：本组四行 dsh-tool-subagent 的插件类即 SubagentModelSelectionConfig
+  # extends Service，super(ctx,'subagentModelSelection')——每个实例行各注册一次，未隔离即泄漏到 root realm，
+  # 预设挂载抛 'Preset services require isolate realms: subagentModelSelection'。
+  # workflowEngine【必要】：组内 workflow-ptc 行实例 PtcWorkflowEngine extends WorkflowEngine，
+  # 父类 super(ctx,'workflowEngine')。两键值一律 true（各自 LocalRealm）——四实例同名服务共用具名
+  # GlobalRealm 会互相覆盖、破坏各自 config 语义。
   isolate:
     workflowEngine: true
+    subagentModelSelection: true
   config:
     - id: tool-subagent-control
       name: '@deepseek-ai/dsh-tool-subagent-control'
@@ -366,8 +385,11 @@
           - subagent_plan
           - cordis_run
 
-    - id: workflow-worker-thread
-      name: '@deepseek-ai/dsh-workflow-worker-thread'
+    # 0.1.7：旧的 worker-thread 工作流行（worker-thread 替身包）整包消失，替身为 dsh-workflow-ptc
+    # （其行实例 PtcWorkflowEngine 继承 dsh-workflow 的 WorkflowEngine，仍注册 workflowEngine，
+    # 由本组 isolate.workflowEngine 覆盖）；provider 保留本仓自定义薄委托层名。
+    - id: workflow-ptc
+      name: '@deepseek-ai/dsh-workflow-ptc'
       config:
         provider: extra-executor-spawn
 
