@@ -101,6 +101,65 @@ export function declarationCoversAsset(plugins) {
   return DECLARATION_ROW_IDS.every((id) => ids.has(id))
 }
 
+/**
+ * 用户可写位置表：行 id → 该行内「用户可改」的 config 键集合。
+ * **与写回清单严格同源** —— 唯一来源是 HOST_ROW_SETTING_DEFINITIONS.rowLocator
+ * （2 项宿主行：tool-web.fetch / tool-presentation.mode）与 GATE_WORDS_GROUP_DEFINITION
+ * （extra-plan.gateWords 整组）。任何未列于此的位置都属「资产本体」，必须随资产变化刷新。
+ * 比对剥离表与搬运写回清单必须恒等，否则会出现「比对了却没写回 → 用户值被新模板吃掉」。
+ */
+function userWritableByRow() {
+  const table = new Map()
+  const push = (rowId, path) => {
+    if (typeof rowId !== 'string' || rowId === '' || typeof path !== 'string') return
+    const prefix = 'config.'
+    const key = path.startsWith(prefix) ? path.slice(prefix.length) : path
+    if (key === '' || key.includes('.')) return
+    const set = table.get(rowId)
+    if (set === undefined) table.set(rowId, new Set([key]))
+    else set.add(key)
+  }
+  for (const definition of HOST_ROW_SETTING_DEFINITIONS) {
+    const locator = definition.rowLocator
+    if (locator !== null && typeof locator === 'object') push(locator.pluginsRowId, locator.path)
+  }
+  push(GATE_WORDS_GROUP_DEFINITION.rowId, GATE_WORDS_GROUP_DEFINITION.path)
+  return table
+}
+
+/** 剥离用户可写键（置为固定占位，保持键序与结构不变），得到「本体」视图。 */
+export function stripUserWritable(plugins) {
+  if (!Array.isArray(plugins)) return plugins
+  const table = userWritableByRow()
+  const stripRow = (row) => {
+    if (row === null || typeof row !== 'object' || Array.isArray(row)) return row
+    const next = { ...row }
+    if (Array.isArray(next.config)) {
+      next.config = next.config.map(stripRow)
+      return next
+    }
+    const writable = typeof next.id === 'string' ? table.get(next.id) : undefined
+    if (writable !== undefined && next.config !== null && typeof next.config === 'object') {
+      const config = { ...next.config }
+      for (const key of writable) {
+        if (Object.prototype.hasOwnProperty.call(config, key)) config[key] = '__user__'
+      }
+      next.config = config
+    }
+    return next
+  }
+  return plugins.map(stripRow)
+}
+
+/**
+ * 声明行「本体」是否与资产一致（剥离用户可写键后逐字比较）。
+ * 任一输入不可用（undefined / 非数组）→ 保守返回 true（不触发重建，绝不在信息不全时改写现场）。
+ */
+export function declarationBodyMatchesAsset(declaredPlugins, assetBody) {
+  if (!Array.isArray(declaredPlugins) || !Array.isArray(assetBody)) return true
+  return JSON.stringify(stripUserWritable(declaredPlugins)) === JSON.stringify(stripUserWritable(assetBody))
+}
+
 function readManifestRecord(stateDir) {
   const file = join(stateDir, MANIFEST_NAME)
   if (!existsSync(file)) return null
@@ -315,10 +374,13 @@ export function buildMigrationPlan(previous) {
 }
 
 /** 声明行 plugins 整体重述：只改目标子行的指定 config 键（含 gateWords 整组校验，失败即抛）。 */
-export function restatePresetPlugins(current, inherited, preset) {
+export function restatePresetPlugins(current, inherited, preset, basePlugins) {
   const fromCurrent = current !== null && typeof current === 'object' && Array.isArray(current.plugins) ? current.plugins : null
   const fromInherited = inherited !== null && typeof inherited === 'object' && Array.isArray(inherited.plugins) ? inherited.plugins : null
-  const base = fromCurrent !== null ? fromCurrent : fromInherited
+  // 本体基底 = 厂商模板（资产声明行）优先：保证 persona / deny / 注释等「本体」随资产刷新，
+  // 再在下方把用户可写项（2 项宿主行 + gateWords）写回。未提供新模板时才回落既有顺序
+  // （profile 现值 → 继承层），行为与修复前逐字一致。
+  const base = Array.isArray(basePlugins) ? basePlugins : fromCurrent !== null ? fromCurrent : fromInherited
   if (base === null) throw new Error('声明行 ' + PRESET_ROW_ID + ' 的 config.plugins 不可定位')
   let plugins = structuredClone(base)
   for (const [rowId, config] of Object.entries(preset.hostRowConfig === undefined ? {} : preset.hostRowConfig)) {
@@ -412,7 +474,11 @@ export async function syncPreset(options = {}) {
     declaredPlugins = readDeclaredPluginsFromPatch(options.readPatch())
   }
   const declarationOk = declaredPlugins === undefined ? true : declarationCoversAsset(declaredPlugins)
-  if (manifest !== null && manifest.distHash === currentHash && declarationOk) return { action: 'idle' }
+  // 第三个维度：本体内容。修复前只看「行 id 在不在」，于是「资产只有 config 值变化（如 deny 删项）」
+  // 会被判为 idle 而永不更新（本次 0.1.7-rc.2 故障根因）。此处剥离用户可写键后比对本体。
+  const assetBody = options.assetPlugins === undefined ? assetPlugins() : options.assetPlugins
+  const bodyOk = declarationBodyMatchesAsset(declaredPlugins, assetBody)
+  if (manifest !== null && manifest.distHash === currentHash && declarationOk && bodyOk) return { action: 'idle' }
 
   const previous = capturePrevious(stateDir, manifest === null ? null : manifest.distHash)
   const planned = buildMigrationPlan(previous)
@@ -454,6 +520,19 @@ export function readDeclaredPluginsFromPatch(text) {
   }
   visit(document)
   return found.length === 0 ? undefined : found[0]
+}
+
+/**
+ * 厂商模板（资产 patch）里的声明行 plugins —— 本体同步的基底来源。
+ * 资产缺失 / 解析失败一律返回 undefined（调用方回落既有行为，绝不破坏现场）。
+ */
+export function assetPlugins() {
+  try {
+    if (!existsSync(ASSET_PATCH_FILE)) return undefined
+    return readDeclaredPluginsFromPatch(readFileSync(ASSET_PATCH_FILE, 'utf8'))
+  } catch {
+    return undefined
+  }
 }
 
 export const name = 'extra-plan-preset-sync'
@@ -513,6 +592,8 @@ async function applyPlan(editor, rows, planned) {
   if (planned.preset !== null) {
     const entry = findEntry(PRESET_ROW_ID)
     if (entry === undefined) throw new Error('声明行缺失：' + PRESET_ROW_ID)
-    await editor.edit(entry, (current, inherited) => restatePresetPlugins(current, inherited, planned.preset))
+    // 以厂商模板为基底重建本体，再把用户可写项（2 项宿主行 + gateWords）写回；
+    // 修复前此处以 profile 现值为基底，导致本体（persona/deny/注释）永不跟随资产。
+    await editor.edit(entry, (current, inherited) => restatePresetPlugins(current, inherited, planned.preset, assetPlugins()))
   }
 }

@@ -21,6 +21,10 @@ import {
   stateDirOf,
   DECLARATION_ROW_IDS,
   declarationCoversAsset,
+  declarationBodyMatchesAsset,
+  restatePresetPlugins,
+  assetPlugins,
+  readDeclaredPluginsFromPatch,
 } from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
 import { SETTING_DEFINITIONS, patchYamlScalar } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
 import { GATE_WORD_FIELDS, GATE_WORD_MIGRATION_DEFINITIONS } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
@@ -163,6 +167,60 @@ try {
   check('declarationCoversAsset 双态判定敏感', declarationCoversAsset([{ id: 'extra-plan' }, { id: 'tool-web' }, { id: 'tool-presentation' }]) === true && declarationCoversAsset([{ id: 'extra-plan-renamed' }]) === false)
   check('DECLARATION_ROW_IDS 覆盖 extra-plan / tool-web / tool-presentation', DECLARATION_ROW_IDS.join('|') === 'extra-plan|tool-web|tool-presentation')
   writeFileSync(patchFile, declarationPatchText(), 'utf8')
+
+  // ⑥-2 本体内容维度（本次 0.1.7-rc.2 故障根因回归）：3 个行 id 全在、但本体与资产不一致 → 必须非 idle。
+  // 修复前 declarationCoversAsset 只查「行 id 在不在」，此类「资产只有 config 值变化」的升级会被判 idle 而永不生效。
+  const stalePatch = declarationPatchText().replace('maxBytes: 65536', 'maxBytes: 32768')
+  check('夹具：本体过期 patch 与资产本体确实不同', stalePatch !== declarationPatchText())
+  writeFileSync(patchFile, stalePatch, 'utf8')
+  const staleRun = await syncPreset({ dshHome: home, readPatch })
+  check('本体过期（3 个行 id 全在）→ 非 idle', staleRun.action !== 'idle')
+  check('本体过期判定不依赖 hash 变化（distHash 仍为厂商值）', readManifestRecordOf(stateDir).distHash === currentHash)
+  writeFileSync(patchFile, declarationPatchText(), 'utf8')
+  check('本体恢复为资产 → idle（收敛，不反复重搬）', (await syncPreset({ dshHome: home, readPatch })).action === 'idle')
+
+  // ⑥-3 本体比对与重建（纯函数级）：用户可写项剥离恒等 + 本体取资产值 + 用户值写回。
+  {
+    const findRow = (rows, id) => {
+      for (const row of rows) {
+        if (row === null || typeof row !== 'object') continue
+        if (row.id === id) return row
+        if (Array.isArray(row.config)) {
+          const hit = findRow(row.config, id)
+          if (hit !== undefined) return hit
+        }
+      }
+      return undefined
+    }
+    const stalePlugins = readDeclaredPluginsFromPatch(stalePatch)
+    const freshPlugins = assetPlugins()
+    check('assetPlugins() 可解析资产声明行 plugins（顶层 17 行）', Array.isArray(freshPlugins) && freshPlugins.length === 17)
+    check('本体比对：过期本体 → false', declarationBodyMatchesAsset(stalePlugins, freshPlugins) === false)
+    check('本体比对：仅用户可写项（2 宿主行 + 7 词）不同 → true', (() => {
+      const userChanged = JSON.parse(JSON.stringify(freshPlugins))
+      findRow(userChanged, 'tool-web').config.fetch = true
+      findRow(userChanged, 'tool-presentation').config.mode = 'both'
+      findRow(userChanged, 'extra-plan').config.gateWords = GATE_CUSTOM
+      return declarationBodyMatchesAsset(userChanged, freshPlugins) === true
+    })())
+    check('本体比对：嵌套行非用户项（extra-plan.exploreBudget）变化 → false', (() => {
+      const nested = JSON.parse(JSON.stringify(freshPlugins))
+      findRow(nested, 'extra-plan').config.exploreBudget = 99
+      return declarationBodyMatchesAsset(nested, freshPlugins) === false
+    })())
+    const rebuilt = restatePresetPlugins(
+      { plugins: stalePlugins },
+      null,
+      { hostRowConfig: { 'tool-web': { fetch: true }, 'tool-presentation': { mode: 'both' } }, gateWords: GATE_CUSTOM },
+      freshPlugins,
+    )
+    const rebuiltRows = rebuilt.plugins
+    const aiRow = rebuiltRows.find((row) => row.id === 'agent-instructions')
+    check('重建后本体取资产值（maxBytes 由过期的 32768 回到 65536）', aiRow !== undefined && aiRow.config.maxBytes === 65536)
+    check('重建后用户 2 项宿主行值仍在（fetch=true / mode=both）', findRow(rebuiltRows, 'tool-web').config.fetch === true && findRow(rebuiltRows, 'tool-presentation').config.mode === 'both')
+    check('重建后 7 个闸门词整组为用户值', GATE_WORD_FIELDS.every((item) => findRow(rebuiltRows, 'extra-plan').config.gateWords[item.field] === GATE_CUSTOM[item.field]))
+    check('重建不污染资产视图（assetPlugins 仍为资产原值）', findRow(assetPlugins(), 'agent-instructions').config.maxBytes === 65536)
+  }
 
   // ⑦ 旧 flash-guide 根级块清理：profiles/*/cordis.patch.yml 契约保持
   const sampleDir = join(home, 'profiles', 'sample')

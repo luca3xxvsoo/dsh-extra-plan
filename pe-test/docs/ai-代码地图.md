@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-09-25 11:27:37（脚本自动更新时间戳行）
+> 上次同步：2026-09-25 11:50:00（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -45,7 +45,7 @@
 | 设置页宿主半段／双通道写链／configEditor.edit 写链（settings 行 8 项 volatile Config · 2 项宿主行 PUT · 落盘一律经 configEditor.edit 整体重述，本插件不直写 cordis.patch.yml） | lib/settings.js、lib/preset-settings.js、lib/preset-sync.js | apply、createApiHandler、proPayload、readHostRowState、effectivePlugins、findPresetRow、restatePresetPlugins、restatePluginsRow、findPluginsRow、applyPlan |
 | 设置值行定位与捕获（sourceLocator 源模板/旧副本 · rowLocator 新载体 settings 行/声明行 plugins 子行 · group 分组 · host-rows 2 项 webFetch/toolPresentationMode · 行定位失败 404 与 500 分流） | lib/preset-settings.js、lib/settings.js | captureSettings、captureRowSettings、resolveSetting、findTextLocatorMatches、patchYamlScalar、serializeScalar、assetHostRowDefaults、publicField、isLocateError |
 | 配置热读／生效标志／改设置页不重启（live-config/hot-read/DSH_EXTRA_PLAN_CONFIG_PATH/configEditor.documentPath/mtime+size） | plugins/dsh-extra-plan/lib/live-config.js、plugins/dsh-extra-plan/index.js | createLiveConfig、refresh、read、currentPath、readDiskValues、statStamp |
-| 预设声明行载体／启动自愈／资产 hash＋声明行覆盖判定（preset-sync 新机制：buildMigrationPlan 计划 · applyPlan 落地 · effectivePlugins 取生效 plugins · readDeclaredPluginsFromPatch 旁路读声明行；覆盖判定按行 id 集合而非逐字 hash · preset-patch.generated.yml · 写盘只经 configEditor.edit） | lib/preset-sync.js | syncPreset、initStateDir、buildMigrationPlan、capturePrevious、restatePresetPlugins、declarationCoversAsset、pluginRowIds、readDeclaredPluginsFromPatch、stateDirOf、defaultDshHome、applyPlan、effectivePlugins、readManifestRecordOf、writeManifest、findEntry |
+| 预设声明行载体／启动自愈／资产 hash＋声明行覆盖＋**本体内容**三维判定（preset-sync：buildMigrationPlan 计划 · applyPlan 落地 · effectivePlugins 取生效 plugins · readDeclaredPluginsFromPatch 旁路读声明行；**idle 三条件 = 资产 hash 一致 + 行 id 覆盖 + 本体内容一致**；**本体比对 = 剥离用户可写键（2 项宿主行 config + 7 个闸门词）后逐字比；搬运基底取厂商模板 assetPlugins，使 persona/deny/注释随资产刷新而用户值不丢** · preset-patch.generated.yml · 写盘只经 configEditor.edit） | lib/preset-sync.js | syncPreset、initStateDir、buildMigrationPlan、capturePrevious、restatePresetPlugins、declarationCoversAsset、declarationBodyMatchesAsset、stripUserWritable、assetPlugins、pluginRowIds、readDeclaredPluginsFromPatch、stateDirOf、defaultDshHome、applyPlan、effectivePlugins、readManifestRecordOf、writeManifest、findEntry |
 | postinstall 状态目录初始化（不再分发内容） | scripts/distribute-preset.mjs | distribute、messageFor |
 | 设置页前端 UI／Plugins 页卡片（React/plugins.item/configForms.whileServed） | lib/client.js | apply、SettingsCard、ExtraPlanForm、HostRowsPanel、renderControl |
 | 执行者工具裁剪／deny（executor-spawn） | lib/executor-spawn.js | apply |
@@ -80,7 +80,7 @@
 | plugins/dsh-extra-plan/lib/planner-budget.js | 132 | planner 工具计数、消息后缀/预算提示/耗尽文案；默认预算由生成模块提供，FREE_TOOLS 仍在根入口 |
 | plugins/dsh-extra-plan/lib/preset-defaults.generated.js | 3 | 由 YAML 模板生成的 runtime fallback 常量；generated/do not edit |
 | plugins/dsh-extra-plan/lib/preset-settings.js | 525 | 十项设置描述表（唯一真源，含 creativeMode 默认 false）+ 预设 YAML 解析 + 双定位元数据（sourceLocator 源模板/旧分发副本 · rowLocator 新载体 settings 行/声明行 plugins 子行 · group 8+2 分组）+ 声明行 plugins 行内定位与整体重述原语（findPluginsRow/restatePluginsRow）+ 保格式定点标量改写；plannerModel/otherAgentModel validator 放开空串并 trim；已无 pluginId/path 顶层字段、publicSettingMetadata 已退役 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | 518 | 预设新载体的状态与启动自愈（dsh 0.1.7，rc.1 起）：资产 hash（contentHash 仍 sha256(preset.yml‖agent.cordis.yml)）+ 声明行 plugins 覆盖资产行 id 集合 → idle；否则一次迁移：8 项写 settings 行 config、2 项写声明行 plugins 子行、7 词整组写回 extra-plan 行（落盘前 validateGateWords）；写盘只经 `apply` 注入的 `configEditor.edit`（宿主 apply 经 ctx.inject(['configEditor'])），**本模块绝不直写 cordis.patch.yml**；postinstall 只走 initStateDir（状态目录 + 空 manifest）；manifest format=2 + settingsMigration 10 项 + gateWordsMigration 7 项（只记状态不记词值）；cleanupLegacyFlashGuidePatches 保留 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | 599 | 预设新载体的状态与启动自愈（dsh 0.1.7，rc.1 起）：资产 hash（contentHash 仍 sha256(preset.yml‖agent.cordis.yml)）+ 声明行 plugins 覆盖资产行 id 集合 → idle；否则一次迁移：8 项写 settings 行 config、2 项写声明行 plugins 子行、7 词整组写回 extra-plan 行（落盘前 validateGateWords）；写盘只经 `apply` 注入的 `configEditor.edit`（宿主 apply 经 ctx.inject(['configEditor'])），**本模块绝不直写 cordis.patch.yml**；postinstall 只走 initStateDir（状态目录 + 空 manifest）；manifest format=2 + settingsMigration 10 项 + gateWordsMigration 7 项（只记状态不记词值）；cleanupLegacyFlashGuidePatches 保留 |
 | plugins/dsh-extra-plan/lib/run-code-static.js | 678 | run_code 纯静态解析/理由模块：写模式 hint、工具组拆解、ask 返回值白名单、调用点计数与双兼容 dispatch cap；仅显式注入普通依赖，不持有宿主状态；导出常量 RUNCODE_MUTATION_HINTS（9 条禁用 API 黑名单）与 runCodeCatchGateReason 内部闭包 scanLayer（单层 try/catch 保护扫描）属常量与跨行 const 箭头，生成器不入函数索引，故仅在此登记 |
 | plugins/dsh-extra-plan/lib/runtime-static.js | 27 | 显式参数纯 helper：SKILL frontmatter 与 cause 链解析；不持有宿主状态 |
 | plugins/dsh-extra-plan/lib/save-contract.js | 138 | 合同唯一真源：任务名/时间戳/sessionTag/base、PROBE_LIMITS 与 save_plan/save_probe ContentBlock/Markdown 渲染；无宿主状态；PROBE_LIMITS 共 20 个字段（含四类条目数/路径长度/各维度上限/正则/证据维度上限/任务名长度；字段名与上限以本文件 PROBE_LIMITS 为唯一口径）；LINE_FORMAT_HINT / RANGE_FORMAT_HINT 为格式提示常量 |
@@ -312,29 +312,35 @@
 | plugins/dsh-extra-plan/lib/preset-sync.js | pluginRowIds | L83-95 | 声明行 plugins 的行 id 集合（含 group 行 config 子行数组，扁平化；空串与非对象行跳过） |  |
 | plugins/dsh-extra-plan/lib/preset-sync.js | visit | L85-92 | 递归遍历 plugins 行数组：字符串 id 推入 ids，遇 config 数组继续下钻（非数组直接返回） | pluginRowIds 内部闭包 |
 | plugins/dsh-extra-plan/lib/preset-sync.js | declarationCoversAsset | L98-102 | 声明行是否仍承载本预设组合：行 id 集合覆盖 DECLARATION_ROW_IDS（extra-plan + 2 项宿主行 id），非数组一律 false |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | readManifestRecord | L104-115 | 读目标目录 dist-manifest.json：校验 format∈{1,2} 且 distHash 为字符串；文件缺失/JSON 损坏/结构不符一律返回 null |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | readManifestRecordOf | L118-120 | 读状态目录 manifest 记录的对外导出（format 1/2 兼容）：文件缺失、JSON 损坏、结构不符一律 null |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | readManifest | L123-126 | 读 dist-manifest.json |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | writeManifest | L128-131 | 写状态目录 manifest：mkdir -p 后按 2 空格缩进 JSON + 尾换行落盘 dist-manifest.json |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | emptyMigration | L133-143 | 构造「未捕获到旧设置」的空迁移审计：format=1 + sourceDistHash + source，并把各设置项状态填为 skipped-source-absent/unreadable |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | emptyGateWordsMigration | L146-156 | gateWords 专用空审计（format 1 + source + 7 项状态，无旧目标=skipped-source-absent / 不可读=skipped-source-unreadable）；只记状态不记用户词值 |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | gateReasonForState | L159-163 | 旧组状态 → 审计字符串（missing→skipped-old-missing / ambiguous→skipped-old-ambiguous / 其余→skipped-invalid）：整组同一状态，禁止部分迁移 |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | reasonForOldState | L165-170 | 旧设置捕获状态 → 审计原因码：missing→skipped-old-missing、ambiguous→skipped-old-ambiguous、invalid→skipped-invalid |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | captureGateWords | L176-185 | 旧组整组判定：稳定 locator（id=extra-plan + config.gateWords）定位 + 共享 validator 全组校验，返回 captured/missing/ambiguous/invalid 与冻结词值 |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | assertTemplateGateWords | L188-194 | 厂商模板整组前置校验：缺失/非法一律抛错（在 hash/idle 判定与任何目标目录动作之前，坏模板不得进入发布流程） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | noSourcePrevious | L197-206 | 目标目录不存在时构造「无来源」previous：audit=emptyMigration('absent',null)，values/states 均为空对象 |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | capturePrevious | L212-260 | 捕获旧 agent.cordis.yml 设置 → {audit(captured),values,states}；失败给 absent/unreadable 空审计 |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | buildMigrationPlan | L270-315 | 纯计算：把 previous 捕获结果翻译成本次要落地内容与审计——8 项进 settings 行 values（无 captured 项则 settings=null）、2 项宿主行进 hostRowConfig（fetch/mode）、7 词 gateWords 整组；源缺席时保留预填审计状态不覆写 |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | restatePresetPlugins | L318-337 | 声明行 plugins 整体重述：base 取 current.plugins（缺则 inherited.plugins），先改宿主行 config（缺行即抛）再改 extra-plan 行 gateWords（整组 validateGateWords） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | cleanupLegacyFlashGuidePatches | L340-366 | 清理旧 flash-guide 补丁条目 |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | initStateDir | L372-385 | postinstall 状态目录初始化：建目录后读台账，已存在（含空台账）→ idle 不覆盖；不存在 → 写 format=2 + distHash=null + 双缺席审计并返回 written |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | syncPreset | L397-432 | 同步判定与落地：资产 hash + 声明行 plugins 覆盖资产行 id 集合一致 → idle（不写盘）；否则经 configEditor.edit 写 settings 行 8 项 / 声明行 plugins 2 项 + gateWords 整组 |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | readDeclaredPluginsFromPatch | L435-457 | 从 profile patch 文本旁路读声明行 config.plugins（DFS 找 id=PRESET_ROW_ID 的行）；空文本、YAML 非法或未命中返回 undefined |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | visit | L444-454 | 递归遍历解析结果（数组逐项、对象逐值），把 id=PRESET_ROW_ID 且 config.plugins 为数组的行 plugins 推入 found | readDeclaredPluginsFromPatch 内部闭包 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | apply | L466-489 | 插件入口：ctx.inject([configEditor]) 取编辑器后调 syncPreset，写盘只经 configEditor.edit |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | effectivePlugins | L492-500 | 取生效 plugins：profile override → Loader 行 entry.options.config → inherited 层，均无数组返回 undefined |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | applyPlan | L502-518 | 落地回调：按 plan 用 configEditor.edit 改 settings 行（浅合并 values）与声明行（restatePresetPlugins 重述）；目标行缺失即抛 |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | findEntry | L503-506 | 按 id 在 configuration() 行里找 entry（entry.options.id 命中），未命中返回 undefined | applyPlan 内部闭包 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | userWritableByRow | L111-128 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | push | L113-121 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | stripUserWritable | L131-152 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | stripRow | L134-150 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | declarationBodyMatchesAsset | L158-161 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readManifestRecord | L163-174 | 读目标目录 dist-manifest.json：校验 format∈{1,2} 且 distHash 为字符串；文件缺失/JSON 损坏/结构不符一律返回 null |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readManifestRecordOf | L177-179 | 读状态目录 manifest 记录的对外导出（format 1/2 兼容）：文件缺失、JSON 损坏、结构不符一律 null |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readManifest | L182-185 | 读 dist-manifest.json |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | writeManifest | L187-190 | 写状态目录 manifest：mkdir -p 后按 2 空格缩进 JSON + 尾换行落盘 dist-manifest.json |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | emptyMigration | L192-202 | 构造「未捕获到旧设置」的空迁移审计：format=1 + sourceDistHash + source，并把各设置项状态填为 skipped-source-absent/unreadable |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | emptyGateWordsMigration | L205-215 | gateWords 专用空审计（format 1 + source + 7 项状态，无旧目标=skipped-source-absent / 不可读=skipped-source-unreadable）；只记状态不记用户词值 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | gateReasonForState | L218-222 | 旧组状态 → 审计字符串（missing→skipped-old-missing / ambiguous→skipped-old-ambiguous / 其余→skipped-invalid）：整组同一状态，禁止部分迁移 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | reasonForOldState | L224-229 | 旧设置捕获状态 → 审计原因码：missing→skipped-old-missing、ambiguous→skipped-old-ambiguous、invalid→skipped-invalid |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | captureGateWords | L235-244 | 旧组整组判定：稳定 locator（id=extra-plan + config.gateWords）定位 + 共享 validator 全组校验，返回 captured/missing/ambiguous/invalid 与冻结词值 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | assertTemplateGateWords | L247-253 | 厂商模板整组前置校验：缺失/非法一律抛错（在 hash/idle 判定与任何目标目录动作之前，坏模板不得进入发布流程） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | noSourcePrevious | L256-265 | 目标目录不存在时构造「无来源」previous：audit=emptyMigration('absent',null)，values/states 均为空对象 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | capturePrevious | L271-319 | 捕获旧 agent.cordis.yml 设置 → {audit(captured),values,states}；失败给 absent/unreadable 空审计 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | buildMigrationPlan | L329-374 | 纯计算：把 previous 捕获结果翻译成本次要落地内容与审计——8 项进 settings 行 values（无 captured 项则 settings=null）、2 项宿主行进 hostRowConfig（fetch/mode）、7 词 gateWords 整组；源缺席时保留预填审计状态不覆写 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | restatePresetPlugins | L377-399 | 声明行 plugins 整体重述：base 取 current.plugins（缺则 inherited.plugins），先改宿主行 config（缺行即抛）再改 extra-plan 行 gateWords（整组 validateGateWords） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | cleanupLegacyFlashGuidePatches | L402-428 | 清理旧 flash-guide 补丁条目 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | initStateDir | L434-447 | postinstall 状态目录初始化：建目录后读台账，已存在（含空台账）→ idle 不覆盖；不存在 → 写 format=2 + distHash=null + 双缺席审计并返回 written |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | syncPreset | L459-498 | 同步判定与落地：资产 hash + 声明行 plugins 覆盖资产行 id 集合一致 → idle（不写盘）；否则经 configEditor.edit 写 settings 行 8 项 / 声明行 plugins 2 项 + gateWords 整组 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readDeclaredPluginsFromPatch | L501-523 | 从 profile patch 文本旁路读声明行 config.plugins（DFS 找 id=PRESET_ROW_ID 的行）；空文本、YAML 非法或未命中返回 undefined |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | visit | L510-520 | 递归遍历解析结果（数组逐项、对象逐值），把 id=PRESET_ROW_ID 且 config.plugins 为数组的行 plugins 推入 found | readDeclaredPluginsFromPatch 内部闭包 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | assetPlugins | L529-536 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | apply | L545-568 | 插件入口：ctx.inject([configEditor]) 取编辑器后调 syncPreset，写盘只经 configEditor.edit |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | effectivePlugins | L571-579 | 取生效 plugins：profile override → Loader 行 entry.options.config → inherited 层，均无数组返回 undefined |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | applyPlan | L581-599 | 落地回调：按 plan 用 configEditor.edit 改 settings 行（浅合并 values）与声明行（restatePresetPlugins 重述）；目标行缺失即抛 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | findEntry | L582-585 | 按 id 在 configuration() 行里找 entry（entry.options.id 命中），未命中返回 undefined | applyPlan 内部闭包 |
 | plugins/dsh-extra-plan/lib/run-code-static.js | runCodeTextOf | L20-24 | 提取 run_code 的 code 参数文本 |  |
 | plugins/dsh-extra-plan/lib/run-code-static.js | codeMutationHints | L27-35 | 对文本扫描 RUNCODE_MUTATION_HINTS 返回命中写暗示 id 列表 |  |
 | plugins/dsh-extra-plan/lib/run-code-static.js | createRunCodeStatic | L37-678 | 创建 run_code 静态 helper 闭包，仅注入 askTool 与双兼容 isDispatchStart |  |
