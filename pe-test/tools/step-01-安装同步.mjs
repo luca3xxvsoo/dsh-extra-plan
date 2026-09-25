@@ -23,6 +23,7 @@ import {
   declarationCoversAsset,
   declarationBodyMatchesAsset,
   restatePresetPlugins,
+  carryUserWritable,
   assetPlugins,
   readDeclaredPluginsFromPatch,
 } from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
@@ -220,6 +221,73 @@ try {
     check('重建后用户 2 项宿主行值仍在（fetch=true / mode=both）', findRow(rebuiltRows, 'tool-web').config.fetch === true && findRow(rebuiltRows, 'tool-presentation').config.mode === 'both')
     check('重建后 7 个闸门词整组为用户值', GATE_WORD_FIELDS.every((item) => findRow(rebuiltRows, 'extra-plan').config.gateWords[item.field] === GATE_CUSTOM[item.field]))
     check('重建不污染资产视图（assetPlugins 仍为资产原值）', findRow(assetPlugins(), 'agent-instructions').config.maxBytes === 65536)
+  }
+
+  // ⑥-4 自愈闭环（本轮关键钉死项）：旧副本缺席 + 本体过期 + 用户定制并存 →
+  //   必须判非 idle 且携带 bodyStale（applyPlan 据此重建）；重建语义 = 资产基底 + carry 保住用户值；重建后收敛 idle。
+  {
+    const findRow = (rows, id) => {
+      for (const row of rows) {
+        if (row === null || typeof row !== 'object') continue
+        if (row.id === id) return row
+        if (Array.isArray(row.config)) {
+          const hit = findRow(row.config, id)
+          if (hit !== undefined) return hit
+        }
+      }
+      return undefined
+    }
+    // 关键前提：临时移走旧分发副本，构造 source: absent 场景（本机现场即此态）。
+    // 若旧副本存在，显式迁移值会按设计优先于 carry，就测不到「无旧副本时靠 carry 保住用户值」这条链。
+    // 先备份、用例末尾原样写回，避免影响后续段落。
+    let legacyBackup = null
+    try { legacyBackup = readFileSync(join(stateDir, 'agent.cordis.yml'), 'utf8') } catch { legacyBackup = null }
+    rmSync(join(stateDir, 'agent.cordis.yml'), { force: true })
+    const staleUserPatch = declarationPatchText().replace('maxBytes: 65536', 'maxBytes: 32768').replace('mode: native', 'mode: ptc')
+    check('闭环夹具：本体陈旧且保留用户值（mode: ptc）', staleUserPatch !== declarationPatchText() && staleUserPatch.indexOf('mode: ptc') !== -1)
+    writeFileSync(patchFile, staleUserPatch, 'utf8')
+    const applied = []
+    const staleRun = await syncPreset({ dshHome: home, readPatch, apply: async (plan) => { applied.push(plan) } })
+    check('闭环①：旧副本缺席 + 本体过期 → 非 idle', staleRun.action !== 'idle')
+    check('闭环②：plan 携带 bodyStale（applyPlan 据此重建声明行）', applied.length === 1 && applied[0].bodyStale === true)
+    const appliedPlan = applied[0]
+    const rebuilt = restatePresetPlugins(
+      { plugins: readDeclaredPluginsFromPatch(staleUserPatch) },
+      null,
+      appliedPlan.preset !== null ? appliedPlan.preset : { hostRowConfig: {}, gateWords: null },
+      assetPlugins(),
+    )
+    const rebuiltFind = (id) => findRow(rebuilt.plugins, id)
+    check('闭环③：重建后本体取资产值（maxBytes 由 32768 回到 65536）', rebuiltFind('agent-instructions').config.maxBytes === 65536)
+    check('闭环④：重建后用户定制被 carry 保住（mode 仍为 ptc）', rebuiltFind('tool-presentation').config.mode === 'ptc')
+    check('闭环⑤：重建后本体比对为 true（剥离用户项后与资产一致）', declarationBodyMatchesAsset(rebuilt.plugins, assetPlugins()) === true)
+    writeFileSync(patchFile, declarationPatchText().replace('mode: native', 'mode: ptc'), 'utf8')
+    check('闭环⑥：现场恢复为「资产本体 + 用户值」→ idle（收敛）', (await syncPreset({ dshHome: home, readPatch })).action === 'idle')
+    writeFileSync(patchFile, declarationPatchText(), 'utf8')
+    if (legacyBackup !== null) writeFileSync(join(stateDir, 'agent.cordis.yml'), legacyBackup, 'utf8')
+  }
+
+  // ⑥-5 carryUserWritable 三态（与剥离表同源；旧副本缺席时保住现场用户值的唯一来源）
+  {
+    const findRow = (rows, id) => {
+      for (const row of rows) {
+        if (row === null || typeof row !== 'object') continue
+        if (row.id === id) return row
+        if (Array.isArray(row.config)) {
+          const hit = findRow(row.config, id)
+          if (hit !== undefined) return hit
+        }
+      }
+      return undefined
+    }
+    check('carry：非数组输入 → 空且不抛错', (() => { const c = carryUserWritable(undefined); return Object.keys(c.hostRowConfig).length === 0 && c.gateWords === null })())
+    const fromAsset = carryUserWritable(assetPlugins())
+    check('carry：资产本体 → 抽出 2 项宿主行与 7 个闸门词', Object.keys(fromAsset.hostRowConfig).length === 2 && fromAsset.gateWords !== null && Object.keys(fromAsset.gateWords).length === 7)
+    const userRows = JSON.parse(JSON.stringify(assetPlugins()))
+    findRow(userRows, 'tool-presentation').config.mode = 'ptc'
+    findRow(userRows, 'extra-plan').config.gateWords = GATE_CUSTOM
+    const carried = carryUserWritable(userRows)
+    check('carry：用户改动被抽出（含穿透 group 的 gateWords）', carried.hostRowConfig['tool-presentation'].mode === 'ptc' && carried.gateWords.routeDirect === GATE_CUSTOM.routeDirect)
   }
 
   // ⑦ 旧 flash-guide 根级块清理：profiles/*/cordis.patch.yml 契约保持

@@ -160,6 +160,47 @@ export function declarationBodyMatchesAsset(declaredPlugins, assetBody) {
   return JSON.stringify(stripUserWritable(declaredPlugins)) === JSON.stringify(stripUserWritable(assetBody))
 }
 
+/**
+ * 从现有声明行抽出用户可写项（与剥离表 userWritableByRow 同源）——本体重建时的「保留」来源。
+ * 迁移场景（有旧副本）由 preset 的显式值优先；**旧副本缺失（source: absent）时靠这里保住现场用户定制**，
+ * 否则以资产为基底重建会把用户的 2 项宿主行设置与 7 个闸门词一并覆盖掉。
+ */
+export function carryUserWritable(plugins) {
+  const hostRowConfig = {}
+  let gateWords = null
+  if (!Array.isArray(plugins)) return { hostRowConfig, gateWords }
+  const table = userWritableByRow()
+  const gateRowId = GATE_WORDS_GROUP_DEFINITION.rowId
+  const prefix = 'config.'
+  const gatePath = GATE_WORDS_GROUP_DEFINITION.path
+  const gateKey = gatePath.startsWith(prefix) ? gatePath.slice(prefix.length) : gatePath
+  const visit = (rows) => {
+    for (const row of rows) {
+      if (row === null || typeof row !== 'object') continue
+      if (Array.isArray(row.config)) {
+        visit(row.config)
+        continue
+      }
+      if (typeof row.id !== 'string' || row.config === null || typeof row.config !== 'object') continue
+      const writable = table.get(row.id)
+      if (writable === undefined) continue
+      const pick = {}
+      for (const key of writable) {
+        if (Object.prototype.hasOwnProperty.call(row.config, key)) pick[key] = row.config[key]
+      }
+      if (Object.keys(pick).length === 0) continue
+      if (row.id === gateRowId) {
+        if (Object.prototype.hasOwnProperty.call(pick, gateKey)) gateWords = pick[gateKey]
+        continue
+      }
+      const merged = hostRowConfig[row.id] === undefined ? {} : hostRowConfig[row.id]
+      hostRowConfig[row.id] = { ...merged, ...pick }
+    }
+  }
+  visit(plugins)
+  return { hostRowConfig, gateWords }
+}
+
 function readManifestRecord(stateDir) {
   const file = join(stateDir, MANIFEST_NAME)
   if (!existsSync(file)) return null
@@ -382,18 +423,36 @@ export function restatePresetPlugins(current, inherited, preset, basePlugins) {
   // （profile 现值 → 继承层），行为与修复前逐字一致。
   const base = Array.isArray(basePlugins) ? basePlugins : fromCurrent !== null ? fromCurrent : fromInherited
   if (base === null) throw new Error('声明行 ' + PRESET_ROW_ID + ' 的 config.plugins 不可定位')
+  const presetPlan = preset !== null && typeof preset === 'object' ? preset : {}
   let plugins = structuredClone(base)
-  for (const [rowId, config] of Object.entries(preset.hostRowConfig === undefined ? {} : preset.hostRowConfig)) {
+  // 用户可写项取值：显式迁移值优先；缺省时从当前声明行保留（无旧副本场景下这是唯一的用户值来源）。
+  const carry = carryUserWritable(fromCurrent)
+  const explicitHostRows = presetPlan.hostRowConfig !== null && typeof presetPlan.hostRowConfig === 'object' ? presetPlan.hostRowConfig : {}
+  const hostRowConfig = { ...carry.hostRowConfig, ...explicitHostRows }
+  for (const [rowId, config] of Object.entries(hostRowConfig)) {
     const next = restatePluginsRow(plugins, rowId, config)
     if (next === null) throw new Error('声明行 plugins 内缺少宿主行 ' + rowId)
     plugins = next
   }
-  if (preset.gateWords !== null && preset.gateWords !== undefined) {
-    const next = restatePluginsRow(plugins, 'extra-plan', { gateWords: preset.gateWords })
+  const explicitGateWords = presetPlan.gateWords !== null && presetPlan.gateWords !== undefined ? presetPlan.gateWords : null
+  if (explicitGateWords !== null) {
+    const next = restatePluginsRow(plugins, 'extra-plan', { gateWords: explicitGateWords })
     if (next === null) throw new Error('声明行 plugins 内缺少 extra-plan 行（gateWords 无处落地）')
     const row = findPluginsRow(next, 'extra-plan')
     validateGateWords(row.config.gateWords)
     plugins = next
+  } else if (carry.gateWords !== null && carry.gateWords !== undefined) {
+    // 现场词表来自声明行现值：非法时跳过词表写回（保留基底值），不阻断本体刷新。
+    try {
+      const next = restatePluginsRow(plugins, 'extra-plan', { gateWords: carry.gateWords })
+      if (next !== null) {
+        const row = findPluginsRow(next, 'extra-plan')
+        validateGateWords(row.config.gateWords)
+        plugins = next
+      }
+    } catch {
+      // 保留基底词表。
+    }
   }
   return { ...current, plugins }
 }
@@ -482,6 +541,9 @@ export async function syncPreset(options = {}) {
 
   const previous = capturePrevious(stateDir, manifest === null ? null : manifest.distHash)
   const planned = buildMigrationPlan(previous)
+  // 本体过期标记：旧副本缺失时 planned.preset 恒为 null，若无此标记则「本体刷新」会被
+  // applyPlan 的 preset 条件一并跳过（2026-09-25 现场实测：判非 idle 却什么都不写）。
+  planned.bodyStale = !bodyOk
   const firstRun = manifest === null || manifest.distHash === null
   const action = firstRun ? 'written' : 'upgraded'
   if (typeof options.apply === 'function') {
@@ -589,11 +651,15 @@ async function applyPlan(editor, rows, planned) {
     const values = planned.settings.values
     await editor.edit(entry, (current) => ({ ...current, ...values }))
   }
-  if (planned.preset !== null) {
+  // 条件从「有旧副本可迁移」扩展为「有旧副本可迁移 或 声明行本体已过期」：
+  // 旧副本缺失（source: absent）时 planned.preset 恒为 null，修复前会连本体刷新一起跳过，
+  // 形成「每次启动判非 idle 却什么都不写」的永不自愈循环。
+  if (planned.preset !== null || planned.bodyStale === true) {
     const entry = findEntry(PRESET_ROW_ID)
     if (entry === undefined) throw new Error('声明行缺失：' + PRESET_ROW_ID)
+    const presetPlan = planned.preset !== null ? planned.preset : { hostRowConfig: {}, gateWords: null }
     // 以厂商模板为基底重建本体，再把用户可写项（2 项宿主行 + gateWords）写回；
     // 修复前此处以 profile 现值为基底，导致本体（persona/deny/注释）永不跟随资产。
-    await editor.edit(entry, (current, inherited) => restatePresetPlugins(current, inherited, planned.preset, assetPlugins()))
+    await editor.edit(entry, (current, inherited) => restatePresetPlugins(current, inherited, presetPlan, assetPlugins()))
   }
 }
