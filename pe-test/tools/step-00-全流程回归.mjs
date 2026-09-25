@@ -40,6 +40,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parsePresetYaml } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
 import { GATE_WORD_FIELDS, createGateRuntime, validateGateWords } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
+import { probePathOf } from '../../plugins/dsh-extra-plan/lib/save-probe-validation.js'
 const {
   CHANNEL_BROKEN_CODES,
   routeDenyReason,
@@ -804,6 +805,33 @@ const E = [
   ['E5 无「证据：」前缀的标注 → 不提取', extractProbeEvidenceRefs('【探查者已核实】步骤已完成'), []],
 ]
 for (const [name, got, expected] of E) check(name, got, expected)
+
+// ── E6-E9:证据引用装饰剥除（反引号包裹 / 顿号连列 / 绝对路径；拆分+清洗语义） ──────
+// 用例引用的证据文件在 .extra-plan 下真实存在；E9 对提取结果逐个做存在性断言
+// （probePathOf 解析 + existsSync），故「剥装饰后得到的即真实路径」是实测判据。
+const EVIDENCE_REL_A = '.extra-plan/线索-20260926003349.md'
+const EVIDENCE_REL_B = '.extra-plan/线索-20260926003943.md'
+const WORKSPACE_ROOT = fileURLToPath(new URL('../../', import.meta.url))
+const EVIDENCE_ABS_A = join(WORKSPACE_ROOT, EVIDENCE_REL_A)
+const E6_E8 = [
+  ['E6 反引号包裹 → 剥装饰后提取裸路径', extractProbeEvidenceRefs(`【探查者已核实】·证据：\`${EVIDENCE_REL_A}\``), [EVIDENCE_REL_A]],
+  ['E7 顿号连列（各带反引号）→ 拆分为两条', extractProbeEvidenceRefs(`【探查者已核实】·证据：\`${EVIDENCE_REL_A}\`、\`${EVIDENCE_REL_B}\``), [EVIDENCE_REL_A, EVIDENCE_REL_B]],
+  ['E8 绝对路径带反引号 → 剥装饰后原样提取', extractProbeEvidenceRefs(`【探查者已核实】·证据：\`${EVIDENCE_ABS_A}\``), [EVIDENCE_ABS_A]],
+]
+for (const [name, got, expected] of E6_E8) check(name, got, expected)
+const E6_E8_REFS = E6_E8.flatMap(([, got]) => got)
+check('E9 E6-E8 提取结果逐一 probePathOf(工作区根, ref) + existsSync 为真', E6_E8_REFS.length === 4 && E6_E8_REFS.every((ref) => existsSync(probePathOf(WORKSPACE_ROOT, ref))), true)
+
+// ── E10-E12:清洗误伤修正（成对剥除；单侧装饰不剥） ──────────────────────────
+// 上一轮曾用「单侧循环剥除」，把合法文件名自身的首字符也剥掉（`_private.md` → `private.md`、
+// `(abc).md` → `abc).md`），表现为「文件存在却判不存在」。E10/E11 钉住「单侧不剥」，
+// E12 钉住「成对剥除生效后不继续误剥内部字符」。
+const E10_E12 = [
+  ['E10 单侧下划线开头 → 不剥，原样保留', extractProbeEvidenceRefs('【探查者已核实】·证据：_private.md'), ['_private.md']],
+  ['E11 单侧首括号 → 不剥，原样保留', extractProbeEvidenceRefs('【探查者已核实】·证据：(abc).md'), ['(abc).md']],
+  ['E12 反引号成对包裹下划线文件名 → 剥成裸路径', extractProbeEvidenceRefs('【探查者已核实】·证据：`_private.md`'), ['_private.md']],
+]
+for (const [name, got, expected] of E10_E12) check(name, got, expected)
 
 // ── PM 系列:decidePlannerModelUse（T2 静默降级判定纯函数） ─────────────────
 // provider 目录只作降级启发式：目录成功且清单非空且未命中 → 静默降级（继承主会话模型）；

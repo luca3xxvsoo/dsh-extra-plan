@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-09-26 00:17:14（脚本自动更新时间戳行）
+> 上次同步：2026-09-26 02:03:18（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -30,8 +30,8 @@
 | 会话状态生命周期／disposed 收尾／末轮 usage 结算／usage 账本续载／可信用量字段（provider/cw/rs）（session 分桶、final flush、cursor 降级、session.seq 水位 + snapshotEvents(from,to) 区间增量、水位未变直接返回、截断回退全量） | index.js、lib/agent-runtime.js | foldUsage、readUsageCursorTable、warnUsageCursorDegraded、usageCursorEntryOf、usageRoleOf、noteRunCodeSubCall、childBaseline |
 | 方案与验收落盘／save_plan 双写（plan/checklist；主会话侧任意路由态放行的受限规划工件，仅写 cwd/.extra-plan） | lib/save-tool-factories.js、lib/save-contract.js、index.js | defineSavePlan、registerSavePlan、savePlanBase |
 | 落盘原子提交／journal 崩溃自愈（atomic/commit） | lib/save-persistence.js、index.js | atomicCommit、recoverJournals |
-| 线索落盘／save_probe／证据报告（probe/evidence；PROBE_LIMITS evidence=150/text=1000；step-00 PR23=151、PR34/PR35；主会话侧放行条件保持现状——route=plan + 目的已定 + 澄清完成） | lib/save-contract.js、lib/save-probe-validation.js、lib/save-tool-factories.js、index.js | validateProbe、renderProbeMarkdown、extractProbeEvidenceRefs |
-| save 合同／限制值／ContentBlock 渲染（11 个导出 = 8 个函数 + 3 个常量 PROBE_LIMITS、LINE_FORMAT_HINT、RANGE_FORMAT_HINT） | lib/save-contract.js | sanitizeTaskName、timestamp、sessionTagOf、savePlanBase、renderSavePlan、renderProbeMarkdown、renderSaveProbe、extractProbeEvidenceRefs |
+| 线索落盘／save_probe／证据报告（probe/evidence；PROBE_LIMITS evidence=150/text=1000；step-00 PR23=151、PR34/PR35；主会话侧放行条件保持现状——route=plan + 目的已定 + 澄清完成；extractProbeEvidenceRefs 顺序固定：整体成对剥除（循环）→ 按顿号/分号/竖线拆分 → 逐段成对剥除 + trim → 过滤空串 → 去重（拆分符**不含空格与半角逗号**：空格项冗余——捕获正则已排除空白，含空格路径在捕获阶段即截断；半角逗号能通过捕获，列入会把 `report,1.md` 劈成两段；剥除**单侧一律不剥**；剥除集与拆分符均不含 `.` 与 `/`；反引号包裹的 `a.md、b.md` 先整体剥壳再拆分得两条），step-00 E6-E12 覆盖） | lib/save-contract.js、lib/save-probe-validation.js、lib/save-tool-factories.js、index.js | validateProbe、renderProbeMarkdown、extractProbeEvidenceRefs |
+| save 合同／限制值／ContentBlock 渲染（11 个导出 = 8 个函数 + 3 个常量 PROBE_LIMITS、LINE_FORMAT_HINT、RANGE_FORMAT_HINT；证据引用提取含「拆分 + 装饰剥除」两段，装饰剥离集不含 `.` 与 `/`） | lib/save-contract.js | sanitizeTaskName、timestamp、sessionTagOf、savePlanBase、renderSavePlan、renderProbeMarkdown、renderSaveProbe、extractProbeEvidenceRefs |
 | save_probe 校验／路径存在性与聚合拒绝 | lib/save-probe-validation.js | validateProbe、probePathOf |
 | save 工具显式依赖工厂 | lib/save-tool-factories.js | createSaveToolFactories、defineSavePlan、defineSaveProbe |
 | PTC F→L／native-both HN-HB 实机取证 | pe-test/docs/ai-实机闸门测试流程.md |  |
@@ -47,7 +47,7 @@
 | 配置热读／生效标志／改设置页不重启（live-config/hot-read/DSH_EXTRA_PLAN_CONFIG_PATH/configEditor.documentPath/mtime+size；2 项宿主行设置为权威值读口，改后仍需重启） | plugins/dsh-extra-plan/lib/live-config.js、plugins/dsh-extra-plan/index.js | createLiveConfig、refresh、read、currentPath、readDiskValues、statStamp、pick、modeOr |
 | 预设声明行载体／启动自愈／**三维判定**（声明行覆盖资产行 id 集合 ＋ **本体内容**剥离比对 ＋ **投影一致性**）（preset-sync：syncPreset 判三维 · readAuthoritySettings 读权威值 · planHostRowProjection 判投影/回填（projectionLeafExists 区分键缺失与键在但值非法，非法值按权威值修复） · applyPlan 落地 · effectivePlugins 取生效 plugins · readDeclaredPluginsFromPatch 旁路读声明行；**idle 三条件 = 行 id 覆盖 + 本体内容一致 + 权威值与当前投影一致（投影值==出厂值且声明行缺失 → 稳态 idle 不空转）；无 manifest 台账、无跨版本迁移**；**本体比对 = 剥离用户可写键（声明行 2 项宿主行投影 config + 7 个闸门词）后逐字比；重建基底取厂商模板 assetPlugins，使 persona/deny/注释随资产刷新而用户值不丢** · 一次性回填 settings 行 · preset-patch.generated.yml · 写盘只经 configEditor.edit） | lib/preset-sync.js | syncPreset、readAuthoritySettings、hostRowDefaultsOf、planHostRowProjection、projectionLeafExists、effectiveRowConfig、restatePresetPlugins、declarationCoversAsset、declarationBodyMatchesAsset、stripUserWritable、carryUserWritable、assetPlugins、pluginRowIds、readDeclaredPluginsFromPatch、defaultDshHome、applyPlan、effectivePlugins、findEntry |
 | 设置页前端 UI／已安装包行详情配置区（React/plugins.row.config/configForms.whileServed；key = `@local/dsh-extra-plan#dsh-extra-plan-settings`） | lib/client.js | apply、SettingsCard、ExtraPlanForm、renderControl |
-| 执行者工具裁剪／deny（executor-spawn） | lib/executor-spawn.js | apply |
+| 执行者工具裁剪／deny（executor-spawn；注册引用计数幂等——跨预设世代/行重建共享同一注册与 disposer） | lib/executor-spawn.js | apply |
 | qqbot 兼容自愈／建链 | dsh-qqbot-user-questions/lib/heal.js（选装包，本机未安装） | healQqbotCompatibility、ensureDshExtraPlanLink |
 | YAML 默认值真源／生成／last-known-good（exploreBudget）＋预设声明行产物生成（preset-patch.generated.yml 的 insert 行 · 顶层条目按 PLUGINS_INDENT 平移 · --check 比对） | lib/preset-settings.js、scripts/generate-runtime-defaults.mjs、lib/preset-defaults.generated.js | resolveTemplateSettingDefault、renderRuntimeDefaults、renderPresetPatch、topLevelRowsOf、generateRuntimeDefaults、indentBlock、quoteYamlSingle、assertParses、writeOrCheck |
 | 闸门关键词单一来源／7 词唯一手工编辑位／prompt variable 注册／旧词拒绝／严格校验（gateWords/extra_plan_*） | plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml、plugins/dsh-extra-plan/lib/gate-words.js、index.js | validateGateWords、createGateRuntime、normalizeGateLabel、matchExactKind、deriveFlowState、mainGateReason |
@@ -72,8 +72,8 @@
 | plugins/dsh-extra-plan/lib/agent-session.js | 41 | 会话事件与子代理识别的唯一来源：sessionEvents/isSubagentChild 零依赖纯函数，被 index.js 与 lib/model-routing.js 共用（无镜像副本；不 import index.js） |
 | plugins/dsh-extra-plan/lib/assembly-presentation.js | 246 | A/C/M 展示投影与 skill catalog 投影：读取 live tools registry（toolRegistryOf/toolSdkSchemasOf/toolPresentationModeOf 读 scoped tools 服务）；SDK renderer 惰性加载缓存（sdkRendererModulePromise）与 active renderer resolver；模块头自述 live 取数已迁入；不再渲染最小 read（三个只服务该旧路径的辅助已整组删除——F 段 tool:read 文本改由 index.js 手写 cfg.bootstrapReadHint） |
 | plugins/dsh-extra-plan/lib/client-bridge.js | 19 | 客户端桥接壳：仅承载 dsh.client 加载路径指向 lib/client.js（apply 空实现） |
-| plugins/dsh-extra-plan/lib/client.js | 433 | dsh web 已安装包行详情页配置区 UI（React；注册面 = keyed 插槽 plugins.row.config，key = `@local/dsh-extra-plan#dsh-extra-plan-settings`，configForms.whileServed 包裹，inject ['slots','locale','configForms']）；8 项 UI 设置消费 ownerProps.form（state 播种 / mutate 提交），2 项宿主行自绘控件值并入官方 10 op mutate（**PUT 仅投影声明行子行；保存回执极简（已保存/保存失败），重启生效仅见于字段 hint**）；字段顺序与显示名/hint 逐字对齐根 README「4. 可配置项」（通用区 = anchoredBootstrap/creativeMode/webFetch/toolPresentationMode/runcodeCatchGate；pro 区 = crossProviderPlannerModel/plannerModel/plannerPromptSuffix/exploreBudget/otherAgentModel）；esp-* 样式族保留 |
-| plugins/dsh-extra-plan/lib/executor-spawn.js | 90 | 执行者子代理 provider：委托宿主 spawn，注入工具 deny（防委派递归/追问） |
+| plugins/dsh-extra-plan/lib/client.js | 432 | dsh web 已安装包行详情页配置区 UI（React；注册面 = keyed 插槽 plugins.row.config，key = `@local/dsh-extra-plan#dsh-extra-plan-settings`，configForms.whileServed 包裹，inject ['slots','locale','configForms']）；8 项 UI 设置消费 ownerProps.form（state 播种 / mutate 提交），2 项宿主行自绘控件值并入官方 10 op mutate（**PUT 仅投影声明行子行；保存回执极简（已保存/保存失败），重启生效仅见于字段 hint**）；字段顺序与显示名/hint 逐字对齐根 README「4. 可配置项」（通用区 = anchoredBootstrap/creativeMode/webFetch/toolPresentationMode/runcodeCatchGate；pro 区 = crossProviderPlannerModel/plannerModel/plannerPromptSuffix/exploreBudget/otherAgentModel）；esp-* 样式族保留 |
+| plugins/dsh-extra-plan/lib/executor-spawn.js | 135 | 执行者子代理 provider：委托宿主 spawn，注入工具 deny（防委派递归/追问）；registerProvider 走引用计数幂等（WeakMap 槽，跨预设世代/行重建复用同一注册，归零才反注册） |
 | plugins/dsh-extra-plan/lib/gate-words.js | 122 | 闸门关键词共享契约（唯一值源是 YAML 的 config.gateWords）：字段规格 GATE_WORD_FIELDS/GATE_WORDS_GROUP_DEFINITION + 整组严格校验 validateGateWords（错误一律以 extra-plan: config.gateWords 开头）+ 运行时词表 createGateRuntime（无参默认值）；纯模块：不含任何出厂词值、不读文件与环境变量，被 index.js（运行时）与 lib/preset-sync.js（启动自愈）共享（迁移叶 locator 已随跨版本搬迁链删除） |
 | plugins/dsh-extra-plan/lib/live-config.js | 261 | 配置热读（dsh 0.1.7 载体，rc.1 起；rc.2 契约复核一致）：**10 项同源读取 = 8 项热读（含 creativeMode，全部热读）+ 2 项宿主行设置权威值读口（webFetch/toolPresentationMode 仍重启生效）**。路径决议 configPath → DSH_EXTRA_PLAN_CONFIG_PATH → **configEditor.documentPath（profile cordis.patch.yml）**；解析目标 = settings 行 id `dsh-extra-plan-settings` 的 config（captureRowSettings + SETTING_DEFINITIONS = 10 项权威值同源落点）；fallback 链 = settings 行 override → cfg 快照 → BUILTIN_DEFAULTS。构造期**无条件读盘一次**并以文件真值作首拍基准；此后路径或 mtimeMs+size 变化才重读（零 IO 零解析为常态）；无路径/读盘/解析失败即整组回退并 console.warn 一次；不读旧 `.agent-presets` 目录、不监听不轮询、无 per-Agent 失效策略 |
 | plugins/dsh-extra-plan/lib/model-routing.js | 544 | planner/非 planner 子代理模型路由：顶层纯判定函数 + createModelRouting per-apply 工厂（per-instance WeakMap、惰性 llm/agents getter；不 import index.js） |
@@ -83,10 +83,10 @@
 | plugins/dsh-extra-plan/lib/preset-sync.js | 581 | 预设新载体的状态与启动自愈（dsh 0.1.7，rc.1 起）：**三维判定 = 声明行 plugins 覆盖资产行 id 集合 + 本体内容剥离比对 + 投影一致性（readAuthoritySettings/planHostRowProjection）** → idle；否则一次落地（action 恒 written）：**回填 settings 行（settings 行缺项而声明行有非出厂值）**、2 项宿主行**按权威值投影**到声明行 plugins 子行、本体以厂商模板重建（bodyStale）并把 7 词由 carry 从声明行现值兜底写回 extra-plan 行（落盘前 validateGateWords）；**投影值 == 出厂值且声明行缺失 = 稳态 idle（不反复重建）**；写盘只经 `apply` 注入的 `configEditor.edit`（宿主 apply 经 ctx.inject(['configEditor']) 并传 settings 行生效 config），**本模块绝不直写 cordis.patch.yml**；**无运行期台账（状态目录/manifest/postinstall 脚本/postinstall 清理链已于 2026-09-25 整链删除）、无跨版本迁移** |
 | plugins/dsh-extra-plan/lib/run-code-static.js | 678 | run_code 纯静态解析/理由模块：写模式 hint、工具组拆解、ask 返回值白名单、调用点计数与双兼容 dispatch cap；仅显式注入普通依赖，不持有宿主状态；导出常量 RUNCODE_MUTATION_HINTS（9 条禁用 API 黑名单）与 runCodeCatchGateReason 内部闭包 scanLayer（单层 try/catch 保护扫描）属常量与跨行 const 箭头，生成器不入函数索引，故仅在此登记 |
 | plugins/dsh-extra-plan/lib/runtime-static.js | 16 | 显式参数纯 helper：SKILL frontmatter 与 cause 链解析；不持有宿主状态 |
-| plugins/dsh-extra-plan/lib/save-contract.js | 138 | 合同唯一真源：任务名/时间戳/sessionTag/base、PROBE_LIMITS 与 save_plan/save_probe ContentBlock/Markdown 渲染；无宿主状态；PROBE_LIMITS 共 20 个字段（含四类条目数/路径长度/各维度上限/正则/证据维度上限/任务名长度；字段名与上限以本文件 PROBE_LIMITS 为唯一口径）；LINE_FORMAT_HINT / RANGE_FORMAT_HINT 为格式提示常量 |
+| plugins/dsh-extra-plan/lib/save-contract.js | 192 | 合同唯一真源：任务名/时间戳/sessionTag/base、PROBE_LIMITS 与 save_plan/save_probe ContentBlock/Markdown 渲染；证据引用提取含「拆分 + 装饰剥除」（不含 `.` 与 `/`）；无宿主状态；PROBE_LIMITS 共 20 个字段（含四类条目数/路径长度/各维度上限/正则/证据维度上限/任务名长度；字段名与上限以本文件 PROBE_LIMITS 为唯一口径）；LINE_FORMAT_HINT / RANGE_FORMAT_HINT 为格式提示常量 |
 | plugins/dsh-extra-plan/lib/save-persistence.js | 124 | 阶段感知公共原子落盘与 journal 自愈：tmp→journal→rename→逐项确认目标就位→清 journal；pre-journal 条件清理（先删 journal 并确认不存在才清 tmp）、post-journal 一律保留 journal 与现场、全目标确认后才删 journal；恢复逐项确认目标存在、全项就位才清 journal，形状非法/目标缺失保留 journal 并告警；按 sessionTag 过滤；末位可选 fs 依赖默认同义映射 node:fs（冻结只读、未提供项回退默认） |
 | plugins/dsh-extra-plan/lib/save-probe-validation.js | 115 | save_probe 参数校验：数组/条目/长度/总量/path 存在性/range/evidence 聚合拒绝 |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | 192 | 显式依赖工厂：定义 save_plan/save_probe schema/output/render/execute；不缓存 ctx/agent/会话状态 |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | 206 | 显式依赖工厂：定义 save_plan/save_probe schema/output/render/execute；证据引用报错以 JSON.stringify(ref) 呈现（首字符属装饰集时附「疑似含 Markdown 装饰」提示）；不缓存 ctx/agent/会话状态 |
 | plugins/dsh-extra-plan/lib/sdk-text-cache.js | 161 | apply 级 agent-keyed WeakMap SDK 文本缓存：完整 renderer 输入保守指纹、language/renderer 身份比较、并发 Promise 合并、reject/过期 Promise 不回写、dispose 回收；不持有 sessionId 或 PromptAssembly |
 | plugins/dsh-extra-plan/lib/settings.js | 299 | 设置页宿主半段（dsh 0.1.7，rc.1 起；2026-09-26 = 权威值统一由客户端一次 mutate 写入 + PUT 仅投影）：`Config` **10 字段全链 `.volatile()`**（8 项 UI 直接声明 + 2 项宿主行字段表 HOST_ROW_AUTHORITY_FIELDS 展开，ns = 行 id dsh-extra-plan-settings）+ `settings.configure({auto:false}, ctx.fiber)` 页面策略 + prefix 路由 `PUT/GET /api/dsh-extra-plan-settings/pro-config`（**PUT 仅投影声明行 plugins 子行（settings 行零写入；成功 200 + projection.applied=true，声明行缺失/投影 edit 失败 200 + applied=false 且不回滚权威值；校验失败 400）**；GET 三层回退只读 = settings 行权威值 → 声明行投影现值 → 出厂默认；403 非环回）；qqbot 相关已随精简版插件移除 |
 | plugins/dsh-extra-plan/lib/shell-mutation.js | 86 | 跨平台命令文本解码与 pwsh/bash 写形态判定；纯函数、不持有 apply 状态 |
@@ -194,19 +194,20 @@
 | plugins/dsh-extra-plan/lib/assembly-presentation.js | toolSdkSchemasOf | L217-235 | 优先读取 tools.sdkSchemas；兼容旧服务时从 schemas 补 owned output schema，供 SDK renderer 使用 |  |
 | plugins/dsh-extra-plan/lib/assembly-presentation.js | toolPresentationModeOf | L237-246 | 从 scoped tools registry 读取 native/ptc/both 模式 |  |
 | plugins/dsh-extra-plan/lib/client-bridge.js | apply | L17-19 | 空实现（仅承载 dsh.client 加载路径指向 lib/client.js） |  |
-| plugins/dsh-extra-plan/lib/client.js | apply | L135-427 | 客户端插件入口：注入 esp-* 样式表并注册中英词条；经 configForms.whileServed 包裹后把 SettingsCard 注册到 Plugins 页行详情 keyed 插槽 plugins.row.config（key = `@local/dsh-extra-plan#dsh-extra-plan-settings`；宿主 plugins.item 是官方设置页专用列表、旧 settings.plugin.item 在 0.1.7 已废；无该 settings 命名空间则不注册；卡片 = 通用设置区（anchoredBootstrap/creativeMode/webFetch/toolPresentationMode/runcodeCatchGate）+ pro规划区（5 项）双区块 + 全卡唯一保存按钮） |  |
+| plugins/dsh-extra-plan/lib/client.js | apply | L135-426 | 客户端插件入口：注入 esp-* 样式表并注册中英词条；经 configForms.whileServed 包裹后把 SettingsCard 注册到 Plugins 页行详情 keyed 插槽 plugins.row.config（key = `@local/dsh-extra-plan#dsh-extra-plan-settings`；宿主 plugins.item 是官方设置页专用列表、旧 settings.plugin.item 在 0.1.7 已废；无该 settings 命名空间则不注册；卡片 = 通用设置区（anchoredBootstrap/creativeMode/webFetch/toolPresentationMode/runcodeCatchGate）+ pro规划区（5 项）双区块 + 全卡唯一保存按钮） |  |
 | plugins/dsh-extra-plan/lib/client.js | optionLabel | L146-151 | 选项显示名：优先 optionLocale 词条，其次布尔 trueValue/falseValue，最后原值字符串 | apply 内部闭包（设置页控件共用） |
 | plugins/dsh-extra-plan/lib/client.js | optionValue | L153-159 | 把后端返回的字符串值映射回 field.options 里的原始类型（不在选项中则原样返回） | apply 内部闭包（设置页控件共用） |
 | plugins/dsh-extra-plan/lib/client.js | renderControl | L161-199 | 按 field.control 渲染受控控件：textarea／number（透传 min、step）／select（选项文案走 optionLabel、回值走 optionValue）／其余回落 text input；统一 disabled 与 onChange 回传 |  |
-| plugins/dsh-extra-plan/lib/client.js | ExtraPlanForm | L206-405 | 8 项 UI 设置表单：从宿主 ownerProps.form.state 播种 draft（value/writable/revision/status），按 general/pro 两组 esp-section 渲染字段，footer 一次性提交 mutate(set ops + revision fence) 后提示已保存/保存失败；loading/unavailable 走占位 |  |
-| plugins/dsh-extra-plan/lib/client.js | fieldValue | L269-276 | 取字段草稿值：number 控件把草稿转 Number（非有限数值原样返回），其余控件原样返回 | ExtraPlanForm 内部闭包 |
-| plugins/dsh-extra-plan/lib/client.js | rollbackHostRows | L279-296 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/client.js | saveAll | L298-341 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/client.js | renderField | L351-362 | 按 field 渲染 8 项 UI 设置中的一个字段：esp-field 内「locale 名称→renderControl（随 snapshot.writable 禁用）→静态 hint」，编辑写回 draft 并清提示 | ExtraPlanForm 内部闭包；本地稳定字段样式 |
-| plugins/dsh-extra-plan/lib/client.js | SettingsCard | L407-413 | 卡片根组件：view=summary 时返回一行卡片描述，其余渲染 esp-wrap（8 项 ExtraPlanForm + 2 项 HostRowsPanel 两段）并对 props.t 缺失做兜底 |  |
-| plugins/dsh-extra-plan/lib/executor-spawn.js | resolveDeny | L47-49 | deny 解析纯函数：config.deny 合法（非 null 对象且为数组）时原样返回，否则回退 DEFAULT_DENY | 由 apply 调用；DEFAULT_DENY 已与预设 config.deny 收敛为同集 12 项 |
-| plugins/dsh-extra-plan/lib/executor-spawn.js | apply | L51-90 | 插件入口：注册执行者 provider（委托宿主 spawn，注入 deny 工具裁剪） |  |
-| plugins/dsh-extra-plan/lib/executor-spawn.js | defaultedAgentOptions | L70-74 | 执行者 agentOptions 透传（请求自带优先，否则空对象继承父会话） |  |
+| plugins/dsh-extra-plan/lib/client.js | ExtraPlanForm | L206-404 | 8 项 UI 设置表单：从宿主 ownerProps.form.state 播种 draft（value/writable/revision/status），按 general/pro 两组 esp-section 渲染字段，footer 一次性提交 mutate(set ops + revision fence) 后提示已保存/保存失败；loading/unavailable 走占位 |  |
+| plugins/dsh-extra-plan/lib/client.js | fieldValue | L268-275 | 取字段草稿值：number 控件把草稿转 Number（非有限数值原样返回），其余控件原样返回 | ExtraPlanForm 内部闭包 |
+| plugins/dsh-extra-plan/lib/client.js | rollbackHostRows | L278-295 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/client.js | saveAll | L297-340 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/client.js | renderField | L350-361 | 按 field 渲染 8 项 UI 设置中的一个字段：esp-field 内「locale 名称→renderControl（随 snapshot.writable 禁用）→静态 hint」，编辑写回 draft 并清提示 | ExtraPlanForm 内部闭包；本地稳定字段样式 |
+| plugins/dsh-extra-plan/lib/client.js | SettingsCard | L406-412 | 卡片根组件：view=summary 时返回一行卡片描述，其余渲染 esp-wrap（8 项 ExtraPlanForm + 2 项 HostRowsPanel 两段）并对 props.t 缺失做兜底 |  |
+| plugins/dsh-extra-plan/lib/executor-spawn.js | resolveDeny | L49-51 | deny 解析纯函数：config.deny 合法（非 null 对象且为数组）时原样返回，否则回退 DEFAULT_DENY | 由 apply 调用；DEFAULT_DENY 已与预设 config.deny 收敛为同集 12 项 |
+| plugins/dsh-extra-plan/lib/executor-spawn.js | apply | L62-135 | 插件入口：注册执行者 provider（委托宿主 spawn，注入 deny 工具裁剪）；注册走引用计数幂等——槽 count>0 时只加持有并 console.warn 后返回，count==0 且已存在同名 provider 时抛真实冲突错，全新注册时保存 host disposer（含 delegator 校验与 defaultedAgentOptions） |  |
+| plugins/dsh-extra-plan/lib/executor-spawn.js | releaseSlot | L87-93 | 释放一份注册持有：count 递减，归零且已有宿主 disposer 时调用它反注册并置空（以 ctx.effect 清理回调形式挂载，标签 'executor-spawn: shared provider slot'） |  |
+| plugins/dsh-extra-plan/lib/executor-spawn.js | defaultedAgentOptions | L113-117 | 执行者 agentOptions 透传（请求自带优先，否则空对象继承父会话） |  |
 | plugins/dsh-extra-plan/lib/gate-words.js | fail | L39-41 | 统一抛出 'extra-plan: config.gateWords ' 前缀的校验错误（错误前缀的唯一出口） |  |
 | plugins/dsh-extra-plan/lib/gate-words.js | normalizeGateLabel | L44-46 | 推荐后缀归一（(Recommended)/（Recommended）/(推荐)/（推荐），四级后缀、英文大小写不敏感、前后空白），与 index.js normalizeLabel 同规则；仅供校验保留后缀用 |  |
 | plugins/dsh-extra-plan/lib/gate-words.js | validateGateWords | L52-79 | 整组严格校验：非数组对象、键集合恰为 7 键、每值为非空字符串、首尾无空白、无 CR/LF、7 值两两不同、不以保留推荐后缀结尾；合法返回冻结副本，任何一条不合法即抛错（禁止部分接受） |  |
@@ -371,17 +372,19 @@
 | plugins/dsh-extra-plan/lib/save-contract.js | savePlanBase | L31-34 | save_plan 文件名 base（任务短名 + 会话标识段 + 时间戳） |  |
 | plugins/dsh-extra-plan/lib/save-contract.js | renderSavePlan | L41-43 | save_plan 结果渲染为单元素 ContentBlock[] |  |
 | plugins/dsh-extra-plan/lib/save-contract.js | renderProbeMarkdown | L78-119 | save_probe 线索/证据报告 Markdown 渲染（固定标题与五节模板） |  |
-| plugins/dsh-extra-plan/lib/save-contract.js | extractProbeEvidenceRefs | L124-132 | 提取方案中【探查者已核实】标注的证据文件路径并去重 |  |
-| plugins/dsh-extra-plan/lib/save-contract.js | renderSaveProbe | L136-138 | save_probe 结果渲染为单元素 ContentBlock[] |  |
+| plugins/dsh-extra-plan/lib/save-contract.js | trimProbeEvidenceDecor | L161-172 | **成对**剥除证据引用段的首尾装饰（成对集合：反引号/`*`/`_`/引号/半全角括号/中文书名号等——仅当首字符是开装饰、末字符是其配对闭装饰、且中间不再出现该闭装饰时才剥，可循环处理多层包裹）；**单侧出现一律不剥**（`_private.md`／`(abc).md` 原样保留，只 trim 首尾空白）；剥除集**不含 `.` 与 `/`**（相对路径与扩展名必须保留） | 由 extractProbeEvidenceRefs 整体与逐段调用；坑与修法见 ai-机制设计.md 教训索引「证据引用清洗误伤（单侧剥除）」 |
+| plugins/dsh-extra-plan/lib/save-contract.js | extractProbeEvidenceRefs | L173-186 | 提取方案中【探查者已核实】标注的证据文件路径，顺序固定为：整体成对剥除（循环）→ 按顿号/分号/竖线拆分为多段（**拆分符不含空格与半角逗号**）→ 逐段成对剥除 + trim → 过滤空串 → 按出现顺序去重 | step-00 E1-E12（E6-E9 覆盖反引号/顿号连列/绝对路径与存在性；E10-E12 覆盖单侧不剥与成对剥后不误剥） |
+| plugins/dsh-extra-plan/lib/save-contract.js | renderSaveProbe | L190-192 | save_probe 结果渲染为单元素 ContentBlock[] |  |
 | plugins/dsh-extra-plan/lib/save-persistence.js | fsOpsOf | L10-13 | 合并末位可选文件系统操作依赖：未提供的操作项回退冻结只读的默认 node:fs 同义实现（另建新对象，不就地改写共享默认集） |  |
 | plugins/dsh-extra-plan/lib/save-persistence.js | atomicCommit | L30-60 | 阶段感知原子提交：mkdir→写 tmp→写 journal→逐条 rename→逐项确认目标就位→清 journal；pre-journal 失败先删 journal 并用 existsSync 确认不存在才清 tmp（journal 删不掉则保留全部 tmp），post-journal 任何失败（rename/目标确认/journal 删除）保留 journal 与现场，始终抛原始错误、清理错误不覆盖；末位可选 fs 依赖注入 |  |
 | plugins/dsh-extra-plan/lib/save-persistence.js | recoveryTargetsOf | L67-90 | journal 记录归一为非空恢复目标列表（新形状 entries ／ 旧形状 planTmp·checkTmp·planFile·checkFile）；形状非法、字段缺半对或无目标即抛错，走既有告警路径并保留 journal |  |
 | plugins/dsh-extra-plan/lib/save-persistence.js | recoverJournals | L102-124 | journal 崩溃自愈：逐项「tmp 存在则 rename、随后确认目标存在」，已完成项凭目标存在幂等续做，任一项失败保留 journal，全项就位才删；形状非法/目标缺失告警后保留并继续扫其它 journal；兼容新旧形状并按 sessionTag 过滤；末位可选 fs 依赖注入 |  |
 | plugins/dsh-extra-plan/lib/save-probe-validation.js | validateProbe | L10-109 | save_probe 参数校验：上限、路径存在性、range/evidence 规则与聚合拒绝 |  |
 | plugins/dsh-extra-plan/lib/save-probe-validation.js | probePathOf | L112-115 | 相对路径按 cwd 解析、绝对路径原样返回 |  |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | createSaveToolFactories | L7-192 | 创建只捕获目录与原子持久化依赖的 save 工具定义工厂；注入依赖：savePlanDir、atomicCommit、recoverJournals |  |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | defineSavePlan | L8-74 | save_plan schema/output/render/execute（双写与证据引用校验） |  |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | defineSaveProbe | L76-189 | save_probe schema/output/render/execute（限制校验与线索/证据落盘） |  |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | probeRefDecorationHint | L16-18 | ref 首字符属装饰集（反引号/引号/半全角括号/中文标点等）时返回「疑似含 Markdown 装饰；引用证据请使用裸路径，每条单独一行」提示，否则返回空串 | 工具侧诊断文本（非界面文案）；报错中 ref 一律 JSON.stringify 呈现 |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | createSaveToolFactories | L21-206 | 创建只捕获目录与原子持久化依赖的 save 工具定义工厂；注入依赖：savePlanDir、atomicCommit、recoverJournals |  |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | defineSavePlan | L22-88 | save_plan schema/output/render/execute（双写与证据引用校验） |  |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | defineSaveProbe | L90-203 | save_probe schema/output/render/execute（限制校验与线索/证据落盘） |  |
 | plugins/dsh-extra-plan/lib/sdk-text-cache.js | isWeakKey | L7-9 | 判断值是否可作为 WeakMap key |  |
 | plugins/dsh-extra-plan/lib/sdk-text-cache.js | numberTag | L11-17 | 为 NaN/Infinity/-0 等数字生成无歧义指纹标签 |  |
 | plugins/dsh-extra-plan/lib/sdk-text-cache.js | isArrayIndexKey | L19-23 | 识别数组数字索引，保留额外自有字段顺序 |  |

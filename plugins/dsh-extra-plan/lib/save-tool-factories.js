@@ -3,6 +3,20 @@ import { join, resolve } from 'node:path'
 import { PROBE_LIMITS, RANGE_FORMAT_HINT, LINE_FORMAT_HINT, sanitizeTaskName, timestamp, sessionTagOf, savePlanBase, renderSavePlan, renderProbeMarkdown, renderSaveProbe, extractProbeEvidenceRefs } from './save-contract.js'
 import { validateProbe, probePathOf } from './save-probe-validation.js'
 
+// 证据引用报错呈现：装饰字符（反引号/引号/括号/中文标点）在裸插值下不可见，故 ref
+// 一律以 JSON.stringify 呈现；首字符属装饰集时再追加提示（工具侧诊断文本，非界面文案）。
+// 该提示**可达**、会真实触发：在「证据文件不存在」报错路径上，抛出前调用
+// probeRefDecorationHint（本文件唯一的调用点；「非探查者落盘」路径不拼接该提示，与实机
+// 判据 A36 的「第一条追加」口径一致）。判定条件 = ref 首字符落在下方 PROBE_REF_DECOR_RE
+// 的装饰集内——该集合**含 `_` 与半/全角括号**。剥除实现只对**成对包裹**生效、单侧一律
+// 不剥，故 `_private.md`、`(abc).md` 这类**合法文件名**会被原样保留，其首字符仍落在
+// 集合内：这类名字在文件不存在时会收到提示，属**可接受的轻微误报**（提示仅为诊断文本、
+// 不影响判定；A36 亦以「首字符属装饰集」为期望口径）。
+const PROBE_REF_DECOR_RE = /^[`*_"'<>[\]()（）「」【】『』，。；：！？、|]/
+function probeRefDecorationHint(ref) {
+  return PROBE_REF_DECOR_RE.test(ref) ? '（疑似含 Markdown 装饰；引用证据请使用裸路径，每条单独一行）' : ''
+}
+
 // save_plan/save_probe 工具定义只捕获显式目录与持久化依赖，不持有宿主会话状态。
 export function createSaveToolFactories({ savePlanDir, atomicCommit, recoverJournals }) {
   function defineSavePlan() {
@@ -46,9 +60,9 @@ export function createSaveToolFactories({ savePlanDir, atomicCommit, recoverJour
         // save_probe 落盘的证据报告（标题含「探查证据报告」），杜绝编造证据引用。
         for (const ref of extractProbeEvidenceRefs(plan)) {
           const resolved = probePathOf(cwd, ref)
-          if (!existsSync(resolved)) throw new Error(`save_plan: 【探查者已核实】证据文件不存在：${ref}`)
+          if (!existsSync(resolved)) throw new Error(`save_plan: 【探查者已核实】证据文件不存在：${JSON.stringify(ref)}${probeRefDecorationHint(ref)}`)
           const head = readFileSync(resolved, 'utf8').slice(0, 200)
-          if (!head.includes('探查证据报告')) throw new Error(`save_plan: 【探查者已核实】证据文件非探查者落盘（缺「探查证据报告」标题）：${ref}`)
+          if (!head.includes('探查证据报告')) throw new Error(`save_plan: 【探查者已核实】证据文件非探查者落盘（缺「探查证据报告」标题）：${JSON.stringify(ref)}`)
         }
         const dir = resolve(join(cwd, savePlanDir))
         const nameSeg = sanitizeTaskName(args.taskName)

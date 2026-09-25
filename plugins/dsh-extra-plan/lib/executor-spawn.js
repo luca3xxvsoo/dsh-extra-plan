@@ -19,8 +19,10 @@
 // fork 由预设 tool-subagent-fork 行自带的 toolFilter 覆盖（宿主 fork
 // provider 已支持 toolFilter，对话继承不受 deny 影响）。
 //
-// 生命周期：与宿主 provider 一致，registerProvider 随进程存活；只有
-// planner-executor 预设引用 'executor-spawn'，其他预设不受影响。
+// 生命周期：registerProvider 随进程存活；providerName 来自 config——默认 'executor-spawn'，
+// planner-executor 预设传 'extra-executor-spawn'。注册采用**引用计数幂等**：预设组合变更 →
+// 根 Include reload → 本行新 fiber 再次 apply 时，与仍存活的旧世代共享同一注册与 disposer
+// （同名重复注册会撞宿主 dsh-subagent 的无覆盖分支），仅最后一个持有者释放时才反注册。
 
 export const name = 'executor-spawn'
 export const inject = ['subagents']
@@ -48,6 +50,15 @@ export function resolveDeny(config) {
   return config !== null && typeof config === 'object' && Array.isArray(config.deny) ? config.deny : DEFAULT_DENY
 }
 
+// 注册槽表（模块级，随进程存活）：键 = ctx.subagents 服务实例（同一 Service 的 traceable
+// 代理为构造期单例，跨 ctx/跨预设世代访问稳定），值 = Map<providerName, { count, dispose }>。
+// 用途：预设组合变更 → 根 Include reload → 本行新 fiber 再次 apply；旧世代 provider 因
+// users>0 不被 collect → 宿主进程级 providers 表同名 → dsh-subagent 重名注册无覆盖分支即
+// 抛 DUPLICATE_PROVIDER（现场表现为预设「加载失败」）。引用计数让新旧世代共享同一注册：
+// 仅在最后一个持有者释放时才调用宿主 disposer 反注册（若改为探测跳过，则旧世代被 collect
+// 后零持有 → workflow-ptc/tool-ralph 派发 NO_PROVIDER）。
+const registrationSlots = new WeakMap()
+
 export function apply(ctx, config) {
   const providerName = config !== null && typeof config === 'object' && typeof config.providerName === 'string'
     ? config.providerName : 'executor-spawn'
@@ -58,6 +69,38 @@ export function apply(ctx, config) {
   const real = ctx.subagents.getProvider(delegate)
   if (real === undefined) {
     throw new Error(`executor-spawn: 委托的 provider "${delegate}" 未注册（宿主 subagent-spawn-in-process 应已挂载）`)
+  }
+
+  // ── 注册幂等（引用计数） ───────────────────────────────────────────────────
+  // 槽：本插件族在同一 ctx.subagents 上对同一 providerName 的唯一注册记录。
+  let slots = registrationSlots.get(ctx.subagents)
+  if (slots === undefined) {
+    slots = new Map()
+    registrationSlots.set(ctx.subagents, slots)
+  }
+  let slot = slots.get(providerName)
+  if (slot === undefined) {
+    slot = { count: 0, dispose: null }
+    slots.set(providerName, slot)
+  }
+  // 释放一份持有：归零且已有宿主 disposer 时反注册并置空（供下一次全新注册）。
+  const releaseSlot = () => {
+    slot.count -= 1
+    if (slot.count === 0 && slot.dispose !== null) {
+      slot.dispose()
+      slot.dispose = null
+    }
+  }
+  if (slot.count > 0) {
+    // 本插件族已注册（旧世代存活，或本行 fiber 重建）：只加持有，不再注册。
+    slot.count += 1
+    ctx.effect(() => releaseSlot, 'executor-spawn: shared provider slot')
+    console.warn(`executor-spawn: provider "${providerName}" 已由本插件注册，跳过重复注册（预设组合变更/行重建共享同一注册；deny/delegate 变更需重启 DSH 生效）`)
+    return
+  }
+  if (ctx.subagents.getProvider(providerName) !== undefined) {
+    // 零持有却已有同名 provider：真实重名冲突（非本插件注册方），保留宿主重名报错语义。
+    throw new Error(`executor-spawn: provider "${providerName}" 已被其他注册方占用（重名冲突，本插件不覆盖）`)
   }
 
   // 默认过滤器：请求自带 toolFilter 时尊重调用方；否则注入执行者 deny。
@@ -72,7 +115,7 @@ export function apply(ctx, config) {
       ? { ...request.agentOptions } : {}
     return base
   }
-  ctx.subagents.registerProvider({
+  slot.dispose = ctx.subagents.registerProvider({
     name: providerName,
     capabilities: real.capabilities,
     inheritsParentContext: real.inheritsParentContext,
@@ -87,4 +130,6 @@ export function apply(ctx, config) {
       ? { prepareContinuable: (request) => real.prepareContinuable(request) }
       : {}),
   })
+  slot.count = 1
+  ctx.effect(() => releaseSlot, 'executor-spawn: shared provider slot')
 }

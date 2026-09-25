@@ -225,7 +225,6 @@ window.__ModuleLoader__.load({
             next[field.key] = raw === undefined ? "" : raw;
           }
           setDraft(next);
-          setMessage({ kind: "", text: "" });
         }, [value]);
 
         React.useEffect(function () {
