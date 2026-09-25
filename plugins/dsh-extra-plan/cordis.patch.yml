@@ -18,7 +18,7 @@
 #    作用是让 clientModules 扫描到本包 package.json 的 dsh.client 声明并加载
 #    lib/client.js（设置页卡片 UI）。
 #  - dsh-extra-plan-settings：设置页 API + settings 命名空间（服务级单例，须宿主平面）。
-#    该行 id 就是 settings 命名空间名（SettingsForms 的 ns，也是客户端卡片的 configForms 键），
+#    该行 id 就是 settings 命名空间名（SettingsForms 的 ns，也是 plugins.row.config 键的 rowId 段 = 客户端卡片注册键 `@local/dsh-extra-plan#<rowId>`），
 #    也是 live-config 定位的配置文件行 id。
 #  - extra-plan-preset-sync：启动时按三维判定核对 preset-extra-plan 声明行
 #    （声明行覆盖 / 本体剥离比对 / 投影一致性；预设缺失 / 声明行被清 / 本体过期时的兜底）。

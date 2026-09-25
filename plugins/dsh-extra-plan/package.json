@@ -1,7 +1,7 @@
 {
   "name": "@local/dsh-extra-plan",
   "version": "0.3.0",
-  "description": "实现权限控制+子代理角色分配",
+  "description": "额外规划模式（extra-plan 预设专用）：按需规划 + 四级机械锚点（路由/目的/澄清/批准）+ anchored 引导（主会话与规划子代理）+ 规划子代理探查硬上限 + 力度继承 + save_plan 方案落盘（原子双写）+ 子代理沙箱下限 + usage 账本。Mounted by the extra-plan preset; 预设新载体（dsh 0.1.7-rc.1 / 0.1.7-rc.2）= profile patch 根级 insert 一行 preset-extra-plan 声明行（@deepseek-ai/dsh-agent-preset，config.plugins = agent.cordis.yml 顶层条目逐字），由 assets/presets/extra-plan/preset-patch.generated.yml 随 dsh.bundle.patch 数组装载。依赖口径（2026-09-25 起）：dependencies 不含任何 @deepseek-ai/* 宿主包，@deepseek-ai/dsh-llm 与 @deepseek-ai/schemastery 只作 peerDependencies 声明（profile 侧 autoInstallPeers=false 不安装），运行时由 0.1.7 运行时解析表回落到宿主自带副本——profile 内一旦出现第二份同名宿主包会被优先解析、顶替宿主 llm 运行时（旧依赖曾把缺 tool-update 投影的 0.1.7-rc.1 dsh-llm 装进 profile，导致会话内工具变更产生的 tool_removal 被 API 422 拒绝、整会话报废）。",
   "type": "module",
   "main": "index.js",
   "exports": {
