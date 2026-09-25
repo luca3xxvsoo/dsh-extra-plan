@@ -10,10 +10,10 @@
 //  - projectionLocator：**投影落点** = 声明行 preset-extra-plan 的 config.plugins 内
 //    tool-web / tool-presentation 子行（仅 2 项宿主行设置）。消费方是宿主行装载期快照，
 //    故必须投影到声明行；**投影被宿主删除是无害状态**（权威值在 settings 行，按权威值重建）。
-//  - sourceLocator：源模板 / 旧分发副本（DSH_HOME/.agent-presets/extra-plan/agent.cordis.yml）
-//    的行定位。资产 assets/presets/extra-plan/agent.cordis.yml 与旧副本同形（顶层
-//    id=extra-plan / tool-web / tool-presentation 行），captureSettings、
-//    resolveTemplateSettingDefault、patchYamlScalar 与 gate-words 的迁移 locator 都走它。
+//  - sourceLocator：源模板（资产）的行定位 =
+//    assets/presets/extra-plan/agent.cordis.yml（顶层 id=extra-plan / tool-web /
+//    tool-presentation 行），captureSettings、resolveTemplateSettingDefault 与
+//    patchYamlScalar 都走它（跨版本搬迁链已于 2026-09-25 死代码清理删除）。
 // group 标记「消费方分组」（不表示权威值落点）：8 项 extra-plan（本插件自己热读）
 //   / 2 项 host-rows（投影给宿主行 tool-web / tool-presentation）。
 
@@ -294,7 +294,7 @@ export function resolveTemplateSettingDefault(defaultText, key) {
 }
 
 /**
- * 源模板/旧分发副本捕获（10 项）：逐项按 sourceLocator 解析 → {document, values, states}。
+ * 源模板（资产）捕获（10 项）：逐项按 sourceLocator 解析 → {document, values, states}。
  * states 四态（captured/missing/ambiguous/invalid），仅 captured 进 values。
  */
 export function captureSettings(text, definitions) {

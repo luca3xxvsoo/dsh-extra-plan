@@ -39,7 +39,7 @@ import { existsSync, readFileSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parsePresetYaml } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
-import { GATE_WORD_FIELDS, GATE_WORD_MIGRATION_DEFINITIONS, createGateRuntime, validateGateWords } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
+import { GATE_WORD_FIELDS, createGateRuntime, validateGateWords } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
 const {
   CHANNEL_BROKEN_CODES,
   routeDenyReason,
@@ -215,7 +215,6 @@ check('planner DEFAULT_EXPLORE_BUDGET 来自生成模块且为 18', plannerBudge
 check('生成默认值当前为 18', GENERATED_DEFAULT_EXPLORE_BUDGET, 18)
 check('agent runtime isLiveDelegation 与 decisions 严格同一绑定', plugin.decisions.isLiveDelegation === agentRuntime.isLiveDelegation, true)
 check('agent runtime childPolicyNeedsFloor 与 decisions 严格同一绑定', plugin.decisions.childPolicyNeedsFloor === agentRuntime.childPolicyNeedsFloor, true)
-check('runtime-static parseSkillFrontmatter 只收显式头字段', JSON.stringify(runtimeStatic.parseSkillFrontmatter('name: demo\ndescription: desc\nbody')), JSON.stringify({ name: 'demo', description: 'desc' }))
 check('runtime-static causeChainOf 按显式 depth 截断', runtimeStatic.causeChainOf({ name: 'A', message: 'a', cause: { name: 'B', message: 'b' } }, 1).length, 1)
 
 // ── KA 系列:ask 分类与参数解析（v4 更名：原 K 系列让位于子代理角色组判定 K 系列；断言内容逐字不变） ──
@@ -1830,12 +1829,10 @@ const GATE_FIELD_NAMES = ['routeDirect', 'routePlan', 'routeDisagree', 'approval
 const GATE_VARIABLE_NAMES = ['extra_plan_route_direct', 'extra_plan_route_plan', 'extra_plan_route_disagree', 'extra_plan_approval_approve', 'extra_plan_approval_replan', 'extra_plan_purpose_refine', 'extra_plan_purpose_redo']
 const factoryValuesPattern = new RegExp(GATE_FIELD_NAMES.map((field) => assetGateWords[field]).join('|'))
 
-// GWY1-GWY4：YAML 七键布局 / 字段元数据 / 迁移 locator 契约
+// GWY1-GWY3：YAML 七键布局 / 字段元数据契约（迁移叶 locator 已随搬迁链删除，不再断言）
 check('GWY1 资产 YAML config.gateWords 直属键恰为 7 个闸门字段', Object.keys(assetGateWords), GATE_FIELD_NAMES)
 check('GWY2 GATE_WORD_FIELDS 恰 7 项且每项只含 field/variable 元数据', GATE_WORD_FIELDS.map((item) => Object.keys(item).sort().join('+')), GATE_FIELD_NAMES.map(() => 'field+variable'))
 check('GWY3 GATE_WORD_FIELDS 的 field/variable 与 YAML 键一一对应', GATE_WORD_FIELDS.map((item) => [item.field, item.variable]), GATE_FIELD_NAMES.map((field, index) => [field, GATE_VARIABLE_NAMES[index]]))
-// T6 订正：locator 字段名 pluginId → rowId、locator → sourceLocator（旧分发副本/资产模板同形）。
-check('GWY4 GATE_WORD_MIGRATION_DEFINITIONS 7 项：rowId=extra-plan + config.gateWords.<field> + string + 无 alias/UI', GATE_WORD_MIGRATION_DEFINITIONS.map((item) => [item.key, item.sourceLocator.rowId, item.sourceLocator.path, item.scalarType, item.locatorAliases === undefined, item.ui === undefined]), GATE_FIELD_NAMES.map((field) => [field, 'extra-plan', 'config.gateWords.' + field, 'string', true, true]))
 
 // GWY5-GWY7：persona 锚点双键同源、7 个变量引用、无值字面量
 const personaRow = assetRowsAll.find((row) => row.id === 'persona')

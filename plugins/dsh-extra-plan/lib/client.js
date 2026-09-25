@@ -18,9 +18,8 @@ window.__ModuleLoader__.load({
     const zh = {
       cardTitle: "按需规划模式配置",
       cardDescription: "配置按需规划模式的参数",
-      proSection: "pro规划模块",
+      proSection: "pro规划",
       generalSection: "通用设置",
-      hostRowSection: "宿主行设置（重启生效）",
       plannerModel: "pro规划 | 使用模型",
       crossProviderPlannerModel: "跨提供方",
       plannerPromptSuffix: "pro规划 | 额外引导",
@@ -38,6 +37,9 @@ window.__ModuleLoader__.load({
       saving: "保存中…",
       saved: "已保存",
       savedRestart: "已保存（这 2 项需重启 DSH 后生效）",
+      savedPartial: "保存部分失败：宿主行设置已写入，pro规划/通用设置未写入（已自动回滚宿主行设置）",
+      hostRowsFailed: "宿主行设置保存失败，其余设置未写入",
+      rollbackFailed: "宿主行设置已写入且回滚失败",
       saveFailed: "保存失败：",
       loading: "加载中…",
       loadFailed: "加载失败",
@@ -54,7 +56,6 @@ window.__ModuleLoader__.load({
       cardDescription: "Configure pro planner settings.",
       proSection: "Pro Planner",
       generalSection: "General Settings",
-      hostRowSection: "Host row settings (restart to take effect)",
       plannerModel: "Pro Planner | Model",
       crossProviderPlannerModel: "Cross-Provider Planner Model",
       plannerPromptSuffix: "Pro Planner | Extra Prompt Suffix",
@@ -72,6 +73,9 @@ window.__ModuleLoader__.load({
       saving: "Saving…",
       saved: "Saved.",
       savedRestart: "Saved. Restart DSH for these two settings to take effect.",
+      savedPartial: "Partial save: host-row settings were written; pro planner/general settings failed (host-row settings rolled back).",
+      hostRowsFailed: "Host-row settings failed to save; other settings were not written.",
+      rollbackFailed: "Host-row settings were written and rollback failed.",
       saveFailed: "Save failed: ",
       loading: "Loading…",
       loadFailed: "Load failed",
@@ -192,8 +196,10 @@ window.__ModuleLoader__.load({
         });
       }
 
-      // 8 项 UI 设置：直接消费宿主提供的表单（ownerProps.form = ConfigPageForm{state, mutate}）。
-      // 保存 = 一次性提交全部字段编辑（set op，带读到的 revision 作为 fence）。
+      // 单卡双区块：8 项 UI 设置直接消费宿主提供的表单
+      // （ownerProps.form = ConfigPageForm{state, mutate}）；2 项宿主行设置自绘控件 + 专用 PUT。
+      // 全卡唯一保存按钮 → saveAll：先 PUT 2 项宿主行（无 revision fencing，失败即中止、8 项零写入），
+      // 再走官方 configForms mutate 8 项（自带 revision fencing + 事务回滚）；mutate 失败自动回滚 2 项。
       function ExtraPlanForm(props) {
         const form = props.form;
         const snapshot = form !== undefined && form !== null ? form.state : undefined;
@@ -202,8 +208,12 @@ window.__ModuleLoader__.load({
         const revision = snapshot !== undefined && snapshot !== null ? snapshot.revision : undefined;
         const status = snapshot !== undefined && snapshot !== null ? snapshot.status : "unavailable";
         const [draft, setDraft] = React.useState(null);
+        const [hostDraft, setHostDraft] = React.useState(null);
+        const [hostStatus, setHostStatus] = React.useState("loading");
         const [saving, setSaving] = React.useState(false);
         const [message, setMessage] = React.useState({ kind: "", text: "" });
+        // PUT 前快照（加载时 values 的 webFetch/toolPresentationMode）：mutate 失败时用它再 PUT 一次原值。
+        const hostSnapshot = React.useRef(null);
 
         React.useEffect(function () {
           const next = {};
@@ -214,93 +224,6 @@ window.__ModuleLoader__.load({
           setDraft(next);
           setMessage({ kind: "", text: "" });
         }, [value]);
-
-        if (status === "loading" || draft === null) {
-          return el("div", { className: "esp-section" },
-            el("p", { className: "esp-sectionTitle" }, t("generalSection")),
-            el("p", { className: "esp-empty" }, t("loading"))
-          );
-        }
-        if (status === "unavailable") {
-          return el("div", { className: "esp-section" },
-            el("p", { className: "esp-sectionTitle" }, t("generalSection")),
-            el("p", { className: "esp-empty" }, t("unavailable"))
-          );
-        }
-
-        function fieldValue(field) {
-          const raw = draft[field.key];
-          if (field.control === "number") {
-            const n = Number(raw);
-            return Number.isFinite(n) ? n : raw;
-          }
-          return raw;
-        }
-
-        async function save() {
-          if (form === undefined || form === null || typeof form.mutate !== "function" || saving) return;
-          setSaving(true);
-          setMessage({ kind: "", text: "" });
-          const ops = EXTRA_FIELDS.map(function (field) {
-            return { op: "set", path: [field.key], value: fieldValue(field) };
-          });
-          try {
-            const accepted = await form.mutate(ops, revision);
-            if (accepted === false) setMessage({ kind: "error", text: t("saveFailed") });
-            else setMessage({ kind: "ok", text: t("saved") });
-          } catch (e) {
-            setMessage({ kind: "error", text: t("saveFailed") + " " + String((e && e.message) || e) });
-          } finally {
-            setSaving(false);
-          }
-        }
-
-        const generalFields = EXTRA_FIELDS.filter(function (field) { return field.section === "general"; });
-        const proFields = EXTRA_FIELDS.filter(function (field) { return field.section === "pro"; });
-        function renderField(field) {
-          return el("label", { className: "esp-field", key: field.key },
-            el("span", { className: "esp-fieldHead" },
-              el("span", { className: "esp-label" }, t(field.locale))
-            ),
-            renderControl(field, draft[field.key], !writable, function (next) {
-              setDraft(function (prev) { return Object.assign({}, prev, { [field.key]: next }); });
-              setMessage({ kind: "", text: "" });
-            }),
-            el("p", { className: "esp-hint" }, field.hint)
-          );
-        }
-
-        return el(React.Fragment, null,
-          el("div", { className: "esp-section" },
-            el("p", { className: "esp-sectionTitle" }, t("generalSection")),
-            generalFields.map(renderField)
-          ),
-          el("div", { className: "esp-section" },
-            el("p", { className: "esp-sectionTitle" }, t("proSection")),
-            proFields.map(renderField)
-          ),
-          el("div", { className: "esp-cardFooter" },
-            writable ? null : el("p", { className: "esp-hint" }, t("readOnly")),
-            message.text ? el("p", { className: message.kind === "ok" ? "esp-ok" : "esp-err" }, message.text) : null,
-            el("div", { className: "esp-actions" },
-              el("button", {
-                className: "esp-btn esp-btnPrimary",
-                disabled: saving || !writable,
-                onClick: save
-              }, saving ? t("saving") : t("save"))
-            )
-          )
-        );
-      }
-
-      // 2 项宿主行设置：自绘控件 + 专用 PUT（body 仅 {webFetch, toolPresentationMode}）。
-      // 接口内部走新链：先写 settings 行（权威值，跨升级不丢）→ 再投影声明行 plugins 子行；
-      // 消费方是宿主行装载期快照，故保存提示明示「需重启生效」。
-      function HostRowsPanel() {
-        const [status, setStatus] = React.useState("loading");
-        const [draft, setDraft] = React.useState(null);
-        const [saving, setSaving] = React.useState(false);
-        const [message, setMessage] = React.useState({ kind: "", text: "" });
 
         React.useEffect(function () {
           let cancelled = false;
@@ -318,64 +241,147 @@ window.__ModuleLoader__.load({
               for (const field of HOST_ROW_FIELDS) {
                 next[field.key] = Object.prototype.hasOwnProperty.call(values, field.key) ? values[field.key] : undefined;
               }
-              setDraft(next);
-              setStatus("ready");
+              hostSnapshot.current = { webFetch: next.webFetch, toolPresentationMode: next.toolPresentationMode };
+              setHostDraft(next);
+              setHostStatus("ready");
             })
             .catch(function () {
               if (cancelled) return;
-              setStatus("error");
+              setHostStatus("error");
             });
           return function () { cancelled = true; };
         }, []);
 
-        async function save() {
-          if (draft === null || saving) return;
-          setSaving(true);
-          setMessage({ kind: "", text: "" });
-          const body = { webFetch: draft.webFetch, toolPresentationMode: draft.toolPresentationMode };
+        if (status === "loading" || draft === null) {
+          return el("div", { className: "esp-section" },
+            el("p", { className: "esp-empty" }, t("loading"))
+          );
+        }
+        if (status === "unavailable") {
+          return el("div", { className: "esp-section" },
+            el("p", { className: "esp-empty" }, t("unavailable"))
+          );
+        }
+
+        function fieldValue(field) {
+          const raw = draft[field.key];
+          if (field.control === "number") {
+            const n = Number(raw);
+            return Number.isFinite(n) ? n : raw;
+          }
+          return raw;
+        }
+
+        // 部分失败：用 PUT 前快照再发一次 PUT 原值（best-effort，不再抛错）。
+        async function rollbackHostRows() {
+          const base = hostSnapshot.current;
+          if (base === null || base === undefined) {
+            setMessage({ kind: "error", text: t("rollbackFailed") });
+            return;
+          }
           try {
             const res = await fetch(PRO_CONFIG_URL, {
               method: "PUT",
               headers: { "content-type": "application/json", "accept": "application/json" },
-              body: JSON.stringify(body)
+              body: JSON.stringify({ webFetch: base.webFetch, toolPresentationMode: base.toolPresentationMode })
+            });
+            if (!res.ok) throw new Error("HTTP " + res.status);
+            setMessage({ kind: "error", text: t("savedPartial") });
+          } catch {
+            setMessage({ kind: "error", text: t("rollbackFailed") });
+          }
+        }
+
+        async function saveAll() {
+          if (form === undefined || form === null || typeof form.mutate !== "function" || saving) return;
+          if (hostDraft === null) return;
+          setSaving(true);
+          setMessage({ kind: "", text: "" });
+          // 第一步：PUT 2 项宿主行（请求体形状照搬原独立面板）。PUT 无 revision fencing/回滚，
+          // 失败即中止、8 项零写入，无半写风险。
+          let values
+          try {
+            const res = await fetch(PRO_CONFIG_URL, {
+              method: "PUT",
+              headers: { "content-type": "application/json", "accept": "application/json" },
+              body: JSON.stringify({ webFetch: hostDraft.webFetch, toolPresentationMode: hostDraft.toolPresentationMode })
             });
             const data = await res.json().catch(function () { return {}; });
             if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
-            const values = data.values && typeof data.values === "object" ? data.values : {};
-            setDraft({ webFetch: values.webFetch, toolPresentationMode: values.toolPresentationMode });
-            setMessage({ kind: "ok", text: t("savedRestart") });
+            values = data.values && typeof data.values === "object" ? data.values : {};
           } catch (e) {
-            setMessage({ kind: "error", text: t("saveFailed") + " " + String((e && e.message) || e) });
+            setMessage({ kind: "error", text: t("hostRowsFailed") + " " + String((e && e.message) || e) });
+            setSaving(false);
+            return;
+          }
+          // 第二步：官方 configForms mutate 8 项（8 项 set op，带读到的 revision 作为 fence）。
+          const ops = EXTRA_FIELDS.map(function (field) {
+            return { op: "set", path: [field.key], value: fieldValue(field) };
+          });
+          try {
+            const accepted = await form.mutate(ops, revision);
+            if (accepted === false) {
+              await rollbackHostRows();
+              return;
+            }
+            // 保存后状态刷新：2 项用 PUT 返回值刷新；8 项由 form.state.value 变化触发既有 [value] effect。
+            hostSnapshot.current = { webFetch: values.webFetch, toolPresentationMode: values.toolPresentationMode };
+            setHostDraft({ webFetch: values.webFetch, toolPresentationMode: values.toolPresentationMode });
+            setMessage({ kind: "ok", text: t("savedRestart") });
+          } catch {
+            await rollbackHostRows();
           } finally {
             setSaving(false);
           }
         }
 
-        function renderField(field) {
+        const generalFields = EXTRA_FIELDS.filter(function (field) { return field.section === "general"; });
+        const proFields = EXTRA_FIELDS.filter(function (field) { return field.section === "pro"; });
+        function renderField(field, current, disabled, onChange) {
           return el("label", { className: "esp-field", key: field.key },
             el("span", { className: "esp-fieldHead" },
               el("span", { className: "esp-label" }, t(field.locale))
             ),
-            renderControl(field, draft === null ? undefined : draft[field.key], draft === null, function (next) {
-              setDraft(function (prev) { return Object.assign({}, prev, { [field.key]: next }); });
+            renderControl(field, current, disabled, function (next) {
+              onChange(next);
               setMessage({ kind: "", text: "" });
             }),
             el("p", { className: "esp-hint" }, field.hint)
           );
         }
 
-        return el("div", { className: "esp-section" },
-          el("p", { className: "esp-sectionTitle" }, t("hostRowSection")),
-          status === "loading" ? el("p", { className: "esp-empty" }, t("loading")) : null,
-          status === "error" ? el("p", { className: "esp-err" }, t("loadFailed")) : null,
-          draft === null ? null : HOST_ROW_FIELDS.map(renderField),
+        return el(React.Fragment, null,
+          el("div", { className: "esp-section" },
+            el("p", { className: "esp-sectionTitle" }, t("generalSection")),
+            generalFields.map(function (field) {
+              return renderField(field, draft[field.key], saving || !writable, function (next) {
+                setDraft(function (prev) { return Object.assign({}, prev, { [field.key]: next }); });
+              });
+            }),
+            hostStatus === "loading" ? el("p", { className: "esp-empty" }, t("loading")) : null,
+            hostStatus === "error" ? el("p", { className: "esp-err" }, t("loadFailed")) : null,
+            hostDraft === null ? null : HOST_ROW_FIELDS.map(function (field) {
+              return renderField(field, hostDraft[field.key], saving || !writable || hostDraft === null, function (next) {
+                setHostDraft(function (prev) { return Object.assign({}, prev, { [field.key]: next }); });
+              });
+            })
+          ),
+          el("div", { className: "esp-section" },
+            el("p", { className: "esp-sectionTitle" }, t("proSection")),
+            proFields.map(function (field) {
+              return renderField(field, draft[field.key], saving || !writable, function (next) {
+                setDraft(function (prev) { return Object.assign({}, prev, { [field.key]: next }); });
+              });
+            })
+          ),
           el("div", { className: "esp-cardFooter" },
+            writable ? null : el("p", { className: "esp-hint" }, t("readOnly")),
             message.text ? el("p", { className: message.kind === "ok" ? "esp-ok" : "esp-err" }, message.text) : null,
             el("div", { className: "esp-actions" },
               el("button", {
                 className: "esp-btn esp-btnPrimary",
-                disabled: saving || draft === null,
-                onClick: save
+                disabled: saving || !writable || hostDraft === null,
+                onClick: saveAll
               }, saving ? t("saving") : t("save"))
             )
           )
@@ -386,8 +392,7 @@ window.__ModuleLoader__.load({
         const t = props.t !== undefined && props.t !== null ? props.t : (key) => key;
         if (props.view === "summary") return t("cardDescription");
         return el("div", { className: "esp-wrap" },
-          el(ExtraPlanForm, { form: props.form }),
-          el(HostRowsPanel)
+          el(ExtraPlanForm, { form: props.form })
         );
       }
 

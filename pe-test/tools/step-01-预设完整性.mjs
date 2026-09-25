@@ -14,6 +14,7 @@ import { DEFAULT_EXPLORE_BUDGET } from '../../plugins/dsh-extra-plan/lib/preset-
 import { generateRuntimeDefaults, renderRuntimeDefaults } from '../../plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs'
 // S1：DEFAULT_DENY 收敛断言（执行者 deny 清单必须与预设 config.deny 逐字一致）。
 import { DEFAULT_DENY, resolveDeny } from '../../plugins/dsh-extra-plan/lib/executor-spawn.js'
+import { HOST_CORDIS_TOOLS } from '../../plugins/dsh-extra-plan/lib/assembly-presentation.js'
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url))
 const PRESET_DIR = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'assets', 'presets', 'extra-plan')
@@ -33,12 +34,11 @@ try {
 console.log('PASS  工作区 agent/preset YAML 解析成功（' + (Array.isArray(rows) ? rows.length : '非数组!') + ' 行）')
 if (!Array.isArray(preset)) console.log('PASS  preset.yml 为有效 YAML 文档')
 
-// 0.1.7-rc.2 宿主事实：dsh-tool-cordis 只注册 cordis_inspect_list（lib/index.js L40）、
-// cordis_inspect_query（lib/index.js L56）；cordis_run/cordis_define/cordis_stop/
-// cordis_undefine/cordis_inspect_self 已不存在（deny 列出未知名会使 tools.restrict() 抛错）。
-const cordisTools = [
-  'cordis_inspect_list', 'cordis_inspect_query',
-]
+// 0.1.7-rc.2 宿主事实（与 lib/assembly-presentation.js HOST_CORDIS_TOOLS 同源）：
+// dsh-tool-cordis 只注册 cordis_inspect_list（lib/index.js L40）、cordis_inspect_query（lib/index.js L56）；
+// cordis_run/cordis_define/cordis_stop/cordis_undefine/cordis_inspect_self 已不存在
+// （deny 列出未知名会使 tools.restrict() 抛错）。真值对拍见下方 S-宿主真值。
+const cordisTools = HOST_CORDIS_TOOLS
 const registered = new Set([
   'subagent', 'subagent_review', 'subagent_probe', 'subagent_plan', 'workflow', 'ralph',
   'send_message', 'interrupt_agent', 'list_agents', 'ask_user_question',
@@ -60,6 +60,20 @@ function checkDeny(label, denyList) {
     pass += 1
     console.log('PASS  ' + label + '（' + denyList.length + ' 项，全部存在）')
   }
+}
+
+// S-宿主真值：读本机 npm 全局宿主 dsh-tool-cordis 的 lib/index.js，提取 name 注册集，
+// 与 HOST_CORDIS_TOOLS 比对——宿主删/增 cordis 工具时此处判红（A1 类缺陷的机械拦截）。
+const hostCordisEntry = process.env.APPDATA
+  ? join(process.env.APPDATA, 'npm', 'node_modules', '@deepseek-ai', 'dsh', 'node_modules', '@deepseek-ai', 'dsh-tool-cordis', 'lib', 'index.js')
+  : null
+if (hostCordisEntry !== null && existsSync(hostCordisEntry)) {
+  const registeredCordis = [...readFileSync(hostCordisEntry, 'utf8').matchAll(/name:\s*["'](cordis_[a-z_]+)["']/g)].map((m) => m[1])
+  const truth = [...HOST_CORDIS_TOOLS].sort().join(',')
+  const actual = [...new Set(registeredCordis)].sort().join(',')
+  check('S-宿主真值：dsh-tool-cordis 注册集 = HOST_CORDIS_TOOLS（' + actual + '）', actual === truth)
+} else {
+  console.log('PASS  S-宿主真值：本机未安装宿主 dsh-tool-cordis，跳过对拍')
 }
 
 function flatten(list) {

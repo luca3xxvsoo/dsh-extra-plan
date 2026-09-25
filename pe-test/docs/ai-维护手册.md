@@ -4,7 +4,7 @@
 - 备份：修改前把本轮实际改动的每个文件按原目录结构逐路径镜像到 `.extra-plan/backup-<本轮任务名>-<timestamp>/`；不得覆盖旧备份目录；根 README 禁改、不备份。**文件镜像 + 按子块独立回退**：备份按文件镜像（而非整目录快照），同一批次内的每个子块（如 P1-3 / P1-4）必须能**单独回退**——恢复该子块涉及的备份文件即可，不牵连其它子块；同一次任务续跑沿用已建备份目录，禁止另建第二个或把改后版本覆盖回备份。
 - 改预设（agent.cordis.yml）：复制现有预设为副本再改；官方安装的预设/技能只读引用（不复制不改写）
 - 先读：ai-概览.md（改哪里）、ai-机制设计.md（改核心前）、ai-代码地图.md（定位函数）
-- **验收与部署次序**：先仓库内验收 → 用户部署生产 → 生产测试。AI 在验收通过前不得执行生产环境同步/部署动作（dsh plugin 更新、distribute-preset.mjs、复制 DSH_HOME 安装目录、.agent-presets 下发等均属用户侧部署）
+- **验收与部署次序**：先仓库内验收 → 用户部署生产 → 生产测试。AI 在验收通过前不得执行生产环境同步/部署动作（dsh plugin 更新、复制 DSH_HOME 安装目录、.agent-presets 下发等均属用户侧部署）
 - **README 边界**：根 `dsh-extra-plan/README.md` 不编辑、不备份；pe-test/README.md 等其它层级 README 可改；其中 otherAgentModel 文档缺口只记录在本维护范围，由用户自行同步。
 - 复杂嵌套/拼接的修改遵循转义纪律：最终目标语言视角写出正确代码 → 逐层向外转义 → 解析回放验证（全局纪律）
 - 工作区外写入（如 ~/.dsh/memory/ 记忆库）：沙箱拒绝时唯一放行通道 = shell 命令 + sandbox_permissions 提权（一次性重试，需用户批准；AGENTS.md 协议已有规定，本项目遵守）。严禁通过改用工具名称绕过沙箱限制。
@@ -42,8 +42,9 @@
    - node --check plugins/dsh-extra-plan/lib/model-routing.js
    - node --check plugins/dsh-extra-plan/lib/assembly-presentation.js
    - node --check plugins/dsh-extra-plan/lib/gate-words.js（v0.3.0 起：闸门词共享契约，本轮新增基线门）
+   - node --check plugins/dsh-extra-plan/lib/client.js（浏览器半打包格式：A7 单卡双区块改造后纳入基线语法门）
 3. 语法门全部退出码为 0 后，按本轮固定顺序运行：`node pe-test/tools/step-00-全流程回归.mjs` → `node pe-test/tools/step-04-路由与写闸门.mjs` → `node pe-test/tools/step-06-线索落盘.mjs` → `node pe-test/tools/代码地图生成.mjs`；人工段维护后运行 `node pe-test/tools/代码地图生成.mjs --check`，最后运行 `node pe-test/tools/一键step测试.mjs`。每条退出码必须为 0，且无 SyntaxError 或其它解析错误。
-4. 全量维护时仍可运行 6 个 step-01 回归（设置页配置、设置迁移、预设完整性、安装同步、安装分发、qqbot 安装映射）；step-04 工具清单可另以显式会话目录取证。模型可见面隐藏不是 PTC runtime binding 安全隔离。
+4. 全量维护时仍可运行 5 个 step-01 回归（设置页配置、设置迁移、预设完整性、安装同步、qqbot 安装映射；`step-01-安装分发.mjs` 已随 2026-09-25 死代码清理删除）；step-04 工具清单可另以显式会话目录取证。模型可见面隐藏不是 PTC runtime binding 安全隔离。
 5. 交付汇报：改动点 / 每条校验结果 / 备份路径 / 风险点；用户实测确认后才算完成
 
 ## 自检工具速查（pe-test/tools/）
@@ -54,9 +55,9 @@
 | 注册失败路径与重试（P0-2/D1：服务未就绪与 C 类可重试错误不写标记、下一步重试；A 类重名与 B 类永久性错误写标记记终态不重试） | step-06-线索落盘.mjs（S6 服务不可用→次轮成功、S7 可重试错→次轮成功、S8 重名不重试、S9 永久性不重试、S10 pre-step 注册只影响下一步）、step-04-路由与写闸门.mjs（C4 认领时服务不可用→次轮成功、C5 可重试错粘性不重复消费、C6 重名不重试、C7 永久性不重试） |
 | save_probe 机械上限/动态描述 | lib/save-contract.js（PROBE_LIMITS/渲染合同）+ lib/save-probe-validation.js（validateProbe）+ lib/save-tool-factories.js（动态 schema/execute）；step-00-全流程回归.mjs（evidence 150、text 1000，PR23=151、PR34/PR35=1000/1001；实际 schema 动态断言） |
 | save_probe/save_plan 落盘（含事务阶段语义） | lib/save-persistence.js（atomicCommit 阶段感知提交/recoverJournals 完成判定；两函数末位各带可选 fs 依赖，默认冻结只读、未提供项回退默认实现）+ lib/save-tool-factories.js（工具定义）+ index.js（apply 注册/闸门接线）；step-06-线索落盘.mjs ⑤ 段逐阶段故障注入覆盖：正常双写、tmp 写失败、journal 已落盘后写桩抛错（pre-journal 条件清理成功／journal 删不掉则 journal+全部 tmp 保留且抛原始错误）、第一次与第二次 rename 失败、最终删 journal 失败、全目标确认前不删 journal、恢复 rename 失败可续做、已完成项幂等续做、tmp 与目标均缺失保留 journal 并告警、旧形状双端恢复、形状非法保留、sessionTag 跳过与失败隔离 |
-| 闸门关键词单一来源（config.gateWords 7 项）／prompt variable 注册／旧词拒绝／同 hash idle／hash 变化整组迁移 | step-00-全流程回归.mjs（GWY/GWV/GWC 段：YAML 七键与 persona 双键、宿主 renderPrompt 两键替换、15 例非法矩阵错误前缀、定制七词正例与旧词负例）、step-04-路由与写闸门.mjs（GW 段：apply 恰注册 7 个 provider、坏配置零副作用、三类 dispatch 定制词全链、旧词不推进、fresh apply、variables 哨兵投影）、step-01-安装同步.mjs（同 hash 定制词 idle + 旧 hash 升级整组 restored）、step-01-设置迁移.mjs（九类矩阵含 bad-new-template 抛错不切换目标）、step-01-安装分发.mjs（distribute 包装层同款断言） |
-| 预设安装/完整性/设置页/十项迁移 | step-01-预设完整性.mjs、step-01-安装分发.mjs、step-01-安装同步.mjs、step-01-设置迁移.mjs、step-01-设置页配置.mjs（descriptor/metadata/locator/manifest 从 9 到 10，creativeMode 默认 false、true/false PUT、非法值与 skipped-old-missing；归属：descriptor（预设完整性）/ metadata 10 项（设置页配置）/ locator（设置页配置）/ manifest（设置迁移）/ creativeMode PUT（设置页配置）/ skipped-old-missing（安装同步）） |
-| 全量回归 | step-00-全流程回归.mjs（本地 mock/in-process，不需真实 session_id；一键step测试.mjs 同）。**一键体检的自动判定项共 11 项**（以 `一键step测试.mjs` 的 AUTO 数组为准）：step-00-全流程回归、step-00-跨平台写拦截、step-01-设置迁移、step-01-安装分发、step-01-安装同步、step-01-预设完整性、step-01-设置页配置、step-01-qqbot-安装映射、step-04-路由与写闸门、step-06-线索落盘、代码地图生成.mjs（--check） |
+| 闸门关键词单一来源（config.gateWords 7 项）／prompt variable 注册／旧词拒绝／三维判定 idle | step-00-全流程回归.mjs（GWY/GWV/GWC 段：YAML 七键与 persona 双键、宿主 renderPrompt 两键替换、15 例非法矩阵错误前缀、定制七词正例与旧词负例）、step-04-路由与写闸门.mjs（GW 段：apply 恰注册 7 个 provider、坏配置零副作用、三类 dispatch 定制词全链、旧词不推进、fresh apply、variables 哨兵投影）、step-01-安装同步.mjs（三维判定 idle + 投影/回填链 + 闭环/本体/carry）、step-01-设置迁移.mjs（描述表与源模板定位矩阵含 bad-new-template 抛错不切换目标） |
+| 预设安装/完整性/设置页/十项权威值落点 | step-01-预设完整性.mjs、step-01-安装同步.mjs、step-01-设置迁移.mjs、step-01-设置页配置.mjs（descriptor/metadata/locator 从 9 到 10，creativeMode 默认 false、true/false PUT、非法值；归属：descriptor（预设完整性）/ metadata 10 项（设置页配置）/ locator（设置页配置）/ creativeMode PUT（设置页配置）/ 投影与回填（安装同步）） |
+| 全量回归 | step-00-全流程回归.mjs（本地 mock/in-process，不需真实 session_id；一键step测试.mjs 同）。**一键体检的自动判定项共 10 项**（以 `一键step测试.mjs` 的 AUTO 数组为准）：step-00-全流程回归、step-00-跨平台写拦截、step-01-设置迁移、step-01-安装同步、step-01-预设完整性、step-01-设置页配置、step-01-qqbot-安装映射、step-04-路由与写闸门、step-06-线索落盘、代码地图生成.mjs（--check） |
 | usage 账本（含会话状态生命周期） | step-99-用量统计.mjs（真实 ledger 读侧 token 用量统计：明细列 sessionId|role|model|provider|calls|hit|miss|out|cw|rs，纯 token 口径、无任何汇总）+ step-04-路由与写闸门.mjs ⑭e 段（P4-1~P4-24 监听器级：双 session 同 rootCallId 各 1~18 allow/19 deny、session B 锚点变化不清 A 的计数、disposed A 后同 sessionId 从空开始且 B 保持、临时账本的 one-shot 末轮 flush（role=executor、seq/token/model 正确）、重复 disposed 幂等、同 session 续载只写新 seq、可解析 cursor 保留其它 session、ENOENT 静默、损坏/非对象 cursor 告警一次并覆盖写、final fold 写入失败的既有单次 warning 且不阻断清理、P4-24 新字段落盘（provider/cacheWriteTokens/reasoningTokens 取值正确，hit/miss/out 全零而 cw 非零的行不被跳过，旧形状行按 空串/0/0 落盘）） |
 | 跨平台写拦截 | step-00-跨平台写拦截.mjs |
 | 代码地图（口径/覆盖/导航） | 一键step测试.mjs 内置「代码地图生成.mjs --check」（不写盘，比对结构+漏检+导航失效）；同步仍用 node pe-test/tools/代码地图生成.mjs |
@@ -80,9 +81,9 @@
 ## 闸门关键词单源维护（v0.3.0）
 - **唯一人工编辑位置**：仓库模板 `plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml`（部署现场 = profile patch 声明行 `preset-extra-plan` 的 `config.plugins` 内 `extra-plan` 行 `config.gateWords`，即 `configEditor.documentPath`；旧 `DSH_HOME/.agent-presets/extra-plan/agent.cordis.yml` 仅作迁移期旧值副本）的 `config.gateWords` 7 个字段；禁止在 JS 里改词值（`lib/gate-words.js` 无词值、无默认词表、不读文件/环境变量）。改词后普通重启即生效；旧词不再推进状态机（历史事件安全）。
 - **合法性**：非数组对象、键集合恰为 7 键、每值为非空字符串、首尾无空白、无 CR/LF、7 值两两不同、不以 (Recommended)/（Recommended）/(推荐)/（推荐）结尾；失败信息以 `extra-plan: config.gateWords` 开头，运行时同步抛错（阻止预设被使用，不回退旧词）。
-- **设置页分工**：**8 项 UI 设置**（settings 行 `dsh-extra-plan-settings` 的 `Config`，8 字段全 `.volatile()`）+ **2 项宿主行设置**（webFetch/toolPresentationMode，落声明行 `config.plugins` 内 `tool-web`/`tool-presentation` 子行，经专用 PUT → `configEditor.edit`）；gateWords 是 **7 项 migration-only 字段**——不进 `SETTING_DEFINITIONS`、不进设置页表单、不进 `preset-defaults.generated.js`、不新增构建/生成步骤；`generate-runtime-defaults.mjs --check` 必须保持 0 且**两份产物**（`lib/preset-defaults.generated.js` 与 `assets/presets/extra-plan/preset-patch.generated.yml`）无 diff。
-- **两条保留链**（启动自愈；postinstall 只初始化状态目录）：资产 hash 一致**且**声明行 plugins 覆盖资产行 id 集合 → `idle`（不写盘，台账字节不变）；否则迁移一次 → 8 项设置写 settings 行、2 项宿主行写声明行 plugins 子行、整组合法旧词写回 `extra-plan` 行；缺失/非法/歧义整组缺席（禁止部分迁移）；写盘只经 `configEditor.edit`（事务 + reconcile + 回滚），**本插件绝不直写任何 `cordis.patch.yml`**。
-- **审计**：manifest `format: 2`；`settingsMigration` 仍 10 项；并列字段 `gateWordsMigration.results` 恰 7 项状态字符串（skipped-source-absent / skipped-old-missing / skipped-invalid / skipped-old-ambiguous / skipped-source-unreadable / restored），**不得写入用户实际词值**。
+- **设置页分工**：**8 项 UI 设置**（settings 行 `dsh-extra-plan-settings` 的 `Config`，8 字段全 `.volatile()`）+ **2 项宿主行设置**（webFetch/toolPresentationMode，权威值同样落 settings 行，另投影到声明行 `config.plugins` 内 `tool-web`/`tool-presentation` 子行，经专用 PUT → `configEditor.edit`）；gateWords 是 **7 项 YAML-only 闸门词字段**——不进 `SETTING_DEFINITIONS`、不进设置页表单、不进 `preset-defaults.generated.js`、不新增构建/生成步骤；`generate-runtime-defaults.mjs --check` 必须保持 0 且**两份产物**（`lib/preset-defaults.generated.js` 与 `assets/presets/extra-plan/preset-patch.generated.yml`）无 diff。
+- **启动自愈三维判定**（preset-sync；**无 manifest 台账、无跨版本迁移**）：声明行 plugins 覆盖资产行 id 集合 **且** 本体剥离用户可写键后与资产一致 **且** 2 项宿主行投影与权威值一致 → `idle`（不写盘）；任一不成立 → 以资产为基底重建声明行、一次性回填 settings 行缺项、按权威值投影 2 项宿主行、gateWords 由 carry 从声明行现值兜底并整组复验（非法则保留基底词表）；写盘只经 `configEditor.edit`（事务 + reconcile + 回滚），**本插件绝不直写任何 `cordis.patch.yml`**。
+- **无运行期状态目录**：插件不落任何自有台账（旧状态目录初始化 / manifest 读写 / postinstall 脚本与 flash 清理链已于 2026-09-25 整链删除）；启动自愈是唯一落地点，失败由外壳吞错不阻断启动。
 - **本批语法门**：本轮实际改动的 3 个 .js（`index.js`、`lib/gate-words.js`、`lib/preset-sync.js`）与 6 个 .mjs（step-00/04/06 + 三个 step-01）逐文件 `node --check`；`lib/gate-words.js` 应加入后续基线语法门清单。
 
 ## P2-4 生成链与拆分自检

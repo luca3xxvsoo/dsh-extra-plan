@@ -1,17 +1,6 @@
 // @local/dsh-extra-plan runtime-static helpers.
 // Explicit-argument pure helpers only; no ctx or per-apply state.
 
-export function parseSkillFrontmatter(text) {
-  let name = ''
-  let description = ''
-  for (const line of text.split(/\r?\n/)) {
-    if (name === '' && line.startsWith('name:')) name = line.slice('name:'.length).trim()
-    else if (description === '' && line.startsWith('description:')) description = line.slice('description:'.length).trim()
-    else if (name !== '' && description !== '') break
-  }
-  return { name, description }
-}
-
 export function causeChainOf(error, depth) {
   const chain = []
   let current = error

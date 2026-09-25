@@ -1,32 +1,33 @@
-// Host-side preset state: asset hash chain, migration audit ledger, and startup self-healing
-// over the dsh 0.1.7-rc.1 preset carrier.
+// Host-side preset self-healing over the dsh 0.1.7 preset carrier.
 //
 // 载体订正（方案 T2）：预设不再是「分发到 $DSH_HOME/.agent-presets/extra-plan 的目录」，
 // 而是 profile patch 根级 insert 一行 preset-extra-plan 声明行
 // （name '@deepseek-ai/dsh-agent-preset'，config.plugins = agent.cordis.yml 顶层条目逐字）。
 // 于是：
-//  - 分发目标退役；postinstall（scripts/distribute-preset.mjs）只初始化插件自有状态目录
-//    $DSH_HOME/.agent-presets/extra-plan/（dist-manifest.json 审计台账）。
-//  - 目标物判定 = 资产 hash（contentHash(ASSET_DIR)） + 声明行 plugins 仍覆盖资产行 id 集合。
+//  - 分发目标退役；**本插件无项目自有状态目录**——运行期状态目录与台账链
+//    （状态目录初始化 / 台账 manifest 读写 / postinstall 脚本）已于 2026-09-25 死代码清理整链删除。
+//  - 启动自愈判定 = 三维：① 声明行 plugins 覆盖资产行 id 集合；② 本体剥离用户可写键后与资产
+//    逐字一致；③ 2 项宿主行投影与权威值一致。
 //    为什么不是「declaredPlugins 与资产逐字 hash 相等」：设置页写值会把整段 plugins
 //    重述进 profile patch（configEditor.edit，config 不深合并），行集合不变而部分行 config
 //    已按用户值改写——逐字 hash 永不相等会退化成「每次启动都重跑迁移」。故按行 id 集合判定。
+//    资产本体变化由维度②的剥离比对覆盖，故运行期台账不是 idle 判据的必要条件。
 //  - 写盘只经 configEditor.edit（事务 + reconcile + 回滚），本模块绝不直写 cordis.patch.yml。
-//  - 旧值来源 = 旧分发副本 $DSH_HOME/.agent-presets/extra-plan/agent.cordis.yml（若在）：
-//    10 项 → settings 行 config（8 项 UI + 2 项宿主行设置，权威值统一落点）；
-//    7 项 gateWords → 声明行 config.plugins 内 extra-plan 行 config.gateWords（整体重述后
-//    整组校验，失败即抛不落盘）。
 //  - **权威值 vs 投影（2026-09-25 二轮）**：2 项宿主行设置（webFetch / toolPresentationMode）
 //    的权威值在 settings 行；声明行 plugins 内 tool-web / tool-presentation 子行只是**投影**
 //    （消费方是宿主行装载期快照，只有声明行子行能被宿主读到）。
 //    投影被宿主删除 = 无害状态：投影值 == 出厂值时判稳态 idle（不反复重建），
 //    权威值非出厂值则重建投影；settings 行缺项而声明行有非出厂值 → 一次性回填 settings 行。
+//  - 0.1.6 及更早的搬迁链（旧分发副本捕获 / 迁移计划 / 审计状态机）已于 2026-09-25 整链删除
+//    （用户 2026-09-25 拍板放弃）；现场 gateWords 由
+//    restatePresetPlugins 的 carry 分支从声明行现值兜底。
 //
-// 本模块同时导出纯计算（planPresetSync / capturePrevious / 审计构造）与宿主入口（apply），
-// 使 postinstall、启动自愈与回归夹具共用同一份状态机。
+// 本模块同时导出纯计算（declarationCoversAsset / declarationBodyMatchesAsset /
+// planHostRowProjection / restatePresetPlugins 等）与宿主入口（apply），使启动自愈与回归夹具
+// 共用同一份状态机。
 
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -48,16 +49,13 @@ import {
   validateSettingValue,
 } from './preset-settings.js'
 import {
-  GATE_WORD_FIELD_NAMES,
   GATE_WORDS_GROUP_DEFINITION,
   validateGateWords,
 } from './gate-words.js'
 import { parsePresetYaml, resolveSetting, resolveTemplateSettingDefault } from './preset-settings.js'
 
 const PRESET_ID = 'extra-plan'
-const MANIFEST_NAME = 'dist-manifest.json'
 export const CORE_FILES = ['preset.yml', 'agent.cordis.yml']
-export const STATE_DIR_NAME = '.agent-presets'
 /** 声明行 plugins 必须承载的行 id（缺任一 → 声明行不再覆盖本预设组合）。 */
 export const DECLARATION_ROW_IDS = Object.freeze([
   'extra-plan',
@@ -69,10 +67,10 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 export const ASSET_DIR = join(HERE, '..', 'assets', 'presets', PRESET_ID)
 export const ASSET_PATCH_FILE = join(ASSET_DIR, 'preset-patch.generated.yml')
 
-export function stateDirOf(dshHome) {
-  return join(dshHome, STATE_DIR_NAME, PRESET_ID)
-}
-
+/**
+ * DSH_HOME 解析（env 优先、默认 ~/.dsh）。
+ * 保留导出：状态目录链删除后本模块已无内部调用方，仅为公共 API 与回归夹具保留。
+ */
 export function defaultDshHome() {
   return process.env.DSH_HOME === undefined || process.env.DSH_HOME === ''
     ? join(homedir(), '.dsh')
@@ -175,8 +173,8 @@ export function declarationBodyMatchesAsset(declaredPlugins, assetBody) {
 
 /**
  * 从现有声明行抽出用户可写项（与剥离表 userWritableByRow 同源）——本体重建时的「保留」来源。
- * 迁移场景（有旧副本）由 preset 的显式值优先；**旧副本缺失（source: absent）时靠这里保住现场用户定制**，
- * 否则以资产为基底重建会把用户的 2 项宿主行设置与 7 个闸门词一并覆盖掉。
+ * 以资产为基底重建本体时必须靠这里保住现场用户定制，
+ * 否则会把用户的 2 项宿主行设置与 7 个闸门词一并覆盖掉。
  */
 export function carryUserWritable(plugins) {
   const hostRowConfig = {}
@@ -298,7 +296,7 @@ function projectionLeafExists(plugins, definition) {
 
 /**
  * 投影一致性判定 + 投影 plan（2 项宿主行设置）。纯计算，不写盘。
- * 期望投影值 T：① 权威值（settings 行现值 ∪ 本次迁移值）有该键 → T = 权威值；
+ * 期望投影值 T：① 权威值（settings 行现值）有该键 → T = 权威值；
  *              ② 权威缺项而声明行有非出厂值 → T = 声明行现值，并记入 backfill（一次性回填 settings 行）；
  *              ③ 其余 → T = 出厂默认。
  * 当前投影值 C = 声明行子行现值；投影缺失（宿主删行/删键）按出厂默认参与比较 ——
@@ -347,74 +345,6 @@ export function planHostRowProjection(authority, declaredPlugins, defaults, extr
   return { needed, backfill, targets, hostRowConfig }
 }
 
-function readManifestRecord(stateDir) {
-  const file = join(stateDir, MANIFEST_NAME)
-  if (!existsSync(file)) return null
-  try {
-    const manifest = JSON.parse(readFileSync(file, 'utf8'))
-    if (manifest === null || typeof manifest !== 'object') return null
-    if (manifest.format !== 1 && manifest.format !== 2) return null
-    return typeof manifest.distHash === 'string' ? manifest : { ...manifest, distHash: null }
-  } catch {
-    return null
-  }
-}
-
-/** 读状态目录 manifest 记录（format 1/2 兼容）；缺失/损坏返回 null。 */
-export function readManifestRecordOf(stateDir) {
-  return readManifestRecord(stateDir)
-}
-
-/** 读状态目录 manifest 的 distHash；兼容 format 1/2，缺失/损坏返回 null。 */
-export function readManifest(stateDir) {
-  const manifest = readManifestRecord(stateDir)
-  return manifest === null ? null : manifest.distHash
-}
-
-export function writeManifest(stateDir, record) {
-  mkdirSync(stateDir, { recursive: true })
-  writeFileSync(join(stateDir, MANIFEST_NAME), JSON.stringify(record, null, 2) + '\n', 'utf8')
-}
-
-function emptyMigration(source, sourceDistHash) {
-  const results = {}
-  const status = source === 'absent' ? 'skipped-source-absent' : 'skipped-source-unreadable'
-  for (const definition of SETTING_DEFINITIONS) results[definition.key] = status
-  return {
-    format: 1,
-    sourceDistHash: sourceDistHash === undefined ? null : sourceDistHash,
-    source,
-    results,
-  }
-}
-
-/** gateWords 专用空审计：只记状态，不记用户词值。 */
-function emptyGateWordsMigration(source, sourceDistHash) {
-  const results = {}
-  const status = source === 'absent' ? 'skipped-source-absent' : 'skipped-source-unreadable'
-  for (const field of GATE_WORD_FIELD_NAMES) results[field] = status
-  return {
-    format: 1,
-    sourceDistHash: sourceDistHash === undefined ? null : sourceDistHash,
-    source,
-    results,
-  }
-}
-
-/** 旧组状态 → 审计状态字符串（整组同一状态，禁止部分迁移）。 */
-function gateReasonForState(state) {
-  if (state === 'missing') return 'skipped-old-missing'
-  if (state === 'ambiguous') return 'skipped-old-ambiguous'
-  return 'skipped-invalid'
-}
-
-function reasonForOldState(state) {
-  if (state === 'missing') return 'skipped-old-missing'
-  if (state === 'ambiguous') return 'skipped-old-ambiguous'
-  if (state === 'invalid') return 'skipped-invalid'
-  return 'skipped-old-missing'
-}
-
 /**
  * 整组判定：稳定 locator（源行 id=extra-plan + config.gateWords）+ 共享 validator 全组校验。
  * 返回 { state: 'captured'|'missing'|'ambiguous'|'invalid', values? }；不做部分接受。
@@ -437,119 +367,6 @@ function assertTemplateGateWords(text) {
     throw new Error('extra-plan: 厂商模板 gateWords ' + captured.state + '（config.gateWords 必须整组合法）')
   }
   return captured.values
-}
-
-/** 无旧值副本时的捕获结果（源缺席）。 */
-export function noSourcePrevious(sourceDistHash = null) {
-  return {
-    audit: emptyMigration('absent', sourceDistHash),
-    values: {},
-    states: {},
-    gateAudit: emptyGateWordsMigration('absent', sourceDistHash),
-    gateValues: null,
-    gateState: 'missing',
-  }
-}
-
-/**
- * 读旧分发副本（$DSH_HOME/.agent-presets/extra-plan/agent.cordis.yml）并捕获 10 项 + 7 词。
- * 副本不存在 → 源缺席；读取失败 → 源不可读；解析失败 → 源不可读（不阻断启动）。
- */
-export function capturePrevious(stateDir, sourceDistHash) {
-  const sourceFile = join(stateDir, 'agent.cordis.yml')
-  if (!existsSync(sourceFile)) return noSourcePrevious(sourceDistHash === undefined ? null : sourceDistHash)
-  let text
-  try {
-    text = readFileSync(sourceFile, 'utf8')
-  } catch {
-    return {
-      audit: emptyMigration('unreadable', sourceDistHash),
-      values: {},
-      states: {},
-      gateAudit: emptyGateWordsMigration('unreadable', sourceDistHash),
-      gateValues: null,
-      gateState: 'unreadable',
-    }
-  }
-  try {
-    const captured = captureSettings(text)
-    // 复用同一份解析文档：settings 与 gateWords 各自独立判定，互不影响。
-    const gate = captureGateWords(captured.document)
-    return {
-      audit: {
-        format: 1,
-        sourceDistHash: sourceDistHash === undefined ? null : sourceDistHash,
-        source: 'captured',
-        results: {},
-      },
-      values: captured.values,
-      states: captured.states,
-      gateAudit: {
-        format: 1,
-        sourceDistHash: sourceDistHash === undefined ? null : sourceDistHash,
-        source: 'captured',
-        results: {},
-      },
-      gateValues: gate.state === 'captured' ? gate.values : null,
-      gateState: gate.state,
-    }
-  } catch {
-    return {
-      audit: emptyMigration('unreadable', sourceDistHash),
-      values: {},
-      states: {},
-      gateAudit: emptyGateWordsMigration('unreadable', sourceDistHash),
-      gateValues: null,
-      gateState: 'unreadable',
-    }
-  }
-}
-
-/**
- * 纯计算：把旧值副本的捕获结果翻译成「本次要落地的内容 + 审计」。
- * @param previous capturePrevious 的返回值
- * @returns { settings, preset, audit, gateAudit }
- *   settings.values = 10 项 settings 行新值（无 captured 项则 null）—— 权威值统一落点，
- *     含 2 项宿主行设置（其声明行子行为投影，由 planHostRowProjection 按权威值合成）；
- *   preset.hostRowConfig = 声明行 plugins 子行投影改写（本函数留空，由 syncPreset 按权威值填）
- *   preset.gateWords = 7 词组（无 captured 组则 null）
- */
-export function buildMigrationPlan(previous) {
-  const audit = previous.audit
-  const results = audit.results
-  const settingsValues = {}
-  let settingsCount = 0
-  for (const definition of SETTING_DEFINITIONS) {
-    // 源缺席/不可读：results 保持 emptyMigration 预填的状态字符串（缺席≠旧值缺失），
-    // 不按 previous.states 覆写——否则会把 skipped-source-absent 误写成 skipped-old-missing。
-    if (audit.source !== 'captured') continue
-    const oldState = previous.states[definition.key]
-    if (oldState !== 'captured') {
-      results[definition.key] = reasonForOldState(oldState)
-      continue
-    }
-    // 10 项（8 项 UI + 2 项宿主行）权威值一律落 settings 行 config；
-    // 2 项宿主行的声明行子行由投影链按权威值写入（不再把用户值写在声明行）。
-    settingsValues[definition.key] = previous.values[definition.key]
-    settingsCount += 1
-    results[definition.key] = 'restored'
-  }
-
-  const gateAudit = previous.gateAudit
-  const gateResults = gateAudit.results
-  let gateWords = null
-  if (gateAudit.source === 'captured') {
-    if (previous.gateState !== 'captured') {
-      for (const field of GATE_WORD_FIELD_NAMES) gateResults[field] = gateReasonForState(previous.gateState)
-    } else {
-      for (const field of GATE_WORD_FIELD_NAMES) gateResults[field] = 'restored'
-      gateWords = { ...previous.gateValues }
-    }
-  }
-
-  const settings = settingsCount === 0 ? null : { values: settingsValues, audit }
-  const preset = gateWords !== null ? { hostRowConfig: {}, gateWords } : null
-  return { settings, preset, audit, gateAudit }
 }
 
 /** 声明行 plugins 整体重述：只改目标子行的指定 config 键（含 gateWords 整组校验，失败即抛）。 */
@@ -595,69 +412,18 @@ export function restatePresetPlugins(current, inherited, preset, basePlugins) {
   return { ...current, plugins }
 }
 
-/** 旧 flash-guide patch 清理（profiles 下各 cordis.patch.yml 契约保持，app-boot 兼容期行为）。 */
-export function cleanupLegacyFlashGuidePatches(dshHome) {
-  try {
-    const root = join(dshHome, 'profiles')
-    if (!existsSync(root)) return
-    for (const name of readdirSync(root)) {
-      const file = join(root, name, 'cordis.patch.yml')
-      if (!existsSync(file)) continue
-      const text = readFileSync(file, 'utf8')
-      const lines = text.split('\n')
-      const out = []
-      let skipping = false
-      for (const line of lines) {
-        if (!skipping && /^-\s*id:\s*flash-guide\s*$/.test(line)) {
-          skipping = true
-          continue
-        }
-        if (skipping) {
-          if (/^\S/.test(line)) skipping = false
-          else continue
-        }
-        out.push(line)
-      }
-      const next = out.join('\n')
-      if (next !== text) writeFileSync(file, next, 'utf8')
-    }
-  } catch { /* cleanup must not block startup */ }
-}
-
 /**
- * postinstall：只初始化插件自有状态目录 + 空 manifest（distHash=null + 双缺席审计）。
- * 台账已存在（含空台账本身）时一律 idle——postinstall 不参与迁移，绝不覆盖既有审计。
- */
-export function initStateDir(dshHome) {
-  const stateDir = stateDirOf(dshHome)
-  mkdirSync(stateDir, { recursive: true })
-  const existing = readManifestRecord(stateDir)
-  if (existing !== null) return { action: 'idle', stateDir, manifest: existing }
-  const manifest = {
-    format: 2,
-    distHash: null,
-    settingsMigration: emptyMigration('absent', null),
-    gateWordsMigration: emptyGateWordsMigration('absent', null),
-  }
-  writeManifest(stateDir, manifest)
-  return { action: 'written', stateDir, manifest }
-}
-
-/**
- * 启动自愈主体：资产 hash + 声明行覆盖度 + 本体内容 + 投影一致性 → 旧值迁移/投影 → 审计落 manifest。
- * @param options.dshHome DSH_HOME（状态目录与旧值来源根）
+ * 启动自愈主体：声明行覆盖度 + 本体内容 + 投影一致性（三维）→ 投影/回填 → 经注入的 apply 落地。
  * @param options.declaredPlugins 声明行当前生效的 plugins（宿主侧由 configEditor 提供；
  *   非宿主路径传 undefined = 该维度不参与判定）
  * @param options.settingsValues settings 行（权威值载体）的生效 config（宿主侧由
  *   configuration() 内 SETTINGS_ROW_ID 行给出；给了即视为「行存在」）
  * @param options.readPatch plugins 载体不可得时的旁证读取（可选，测试夹具用；权威值也从同一文本捕获）
  * @param options.apply async (plan, context) => void 落地回调（宿主侧 = configEditor.edit；
- *   缺省 = 只算不落，postinstall/夹具路径）
- * @returns { action: 'written'|'upgraded'|'idle', plan? }
+ *   缺省 = 只算不落，夹具路径）
+ * @returns { action: 'written'|'idle', plan? }
  */
 export async function syncPreset(options = {}) {
-  const dshHome = typeof options.dshHome === 'string' && options.dshHome !== '' ? options.dshHome : defaultDshHome()
-  const stateDir = stateDirOf(dshHome)
   const templateFile = join(ASSET_DIR, 'agent.cordis.yml')
   if (!existsSync(templateFile)) throw new Error('预设模板缺失：' + templateFile)
   const templateText = readFileSync(templateFile, 'utf8')
@@ -667,67 +433,42 @@ export async function syncPreset(options = {}) {
   const currentHash = contentHash(ASSET_DIR)
   if (currentHash === null) throw new Error('预设资产缺失：' + ASSET_DIR)
 
-  const manifest = readManifestRecord(stateDir)
   let declaredPlugins = options.declaredPlugins
   if (declaredPlugins === undefined && typeof options.readPatch === 'function') {
     declaredPlugins = readDeclaredPluginsFromPatch(options.readPatch())
   }
   const declarationOk = declaredPlugins === undefined ? true : declarationCoversAsset(declaredPlugins)
-  // 第三个维度：本体内容。修复前只看「行 id 在不在」，于是「资产只有 config 值变化（如 deny 删项）」
+  // 第二个维度：本体内容。修复前只看「行 id 在不在」，于是「资产只有 config 值变化（如 deny 删项）」
   // 会被判为 idle 而永不更新（本次 0.1.7-rc.2 故障根因）。此处剥离用户可写键后比对本体。
   const assetBody = options.assetPlugins === undefined ? assetPlugins() : options.assetPlugins
   const bodyOk = declarationBodyMatchesAsset(declaredPlugins, assetBody)
-  // 第四个维度：投影一致性。2 项宿主行设置的权威值在 settings 行，声明行子行只是投影；
+  // 第三个维度：投影一致性。2 项宿主行设置的权威值在 settings 行，声明行子行只是投影；
   // 「投影值 == 出厂值且声明行缺失」在此判为一致（稳态 idle，不反复重建、不空转写盘）。
+  // 三维全成立即 idle：不读也不写任何运行期台账（台账链已整链删除）。
   const hostRowDefaults = hostRowDefaultsOf(templateText)
   const authority = readAuthoritySettings(options)
   const projectionCheck = planHostRowProjection(authority, declaredPlugins, hostRowDefaults)
-  if (manifest !== null && manifest.distHash === currentHash && declarationOk && bodyOk && !projectionCheck.needed) return { action: 'idle' }
+  if (declarationOk && bodyOk && !projectionCheck.needed) return { action: 'idle' }
 
-  const previous = capturePrevious(stateDir, manifest === null ? null : manifest.distHash)
-  const planned = buildMigrationPlan(previous)
-  // 迁移值（旧副本 = 显式用户值来源）优先于声明行 carry：2 项宿主行的权威值随之上移 settings 行，
-  // 再按权威值合成声明行投影 plan。
-  const migratedAuthority = {}
-  if (planned.settings !== null) {
-    for (const definition of PROJECTION_SETTING_DEFINITIONS) {
-      if (Object.prototype.hasOwnProperty.call(planned.settings.values, definition.key)) migratedAuthority[definition.key] = planned.settings.values[definition.key]
-    }
-  }
-  const projection = Object.keys(migratedAuthority).length === 0
-    ? projectionCheck
-    : planHostRowProjection(authority, declaredPlugins, hostRowDefaults, migratedAuthority)
+  const projection = projectionCheck
+  const planned = {}
   // 一次性回填：settings 行缺项 且 声明行子行有非出厂值 → 把旧落点的值补进 settings 行（权威值上移）。
   const backfillKeys = Object.keys(projection.backfill)
-  if (backfillKeys.length > 0) {
-    const values = planned.settings === null ? {} : { ...planned.settings.values }
-    for (const key of backfillKeys) {
-      values[key] = projection.backfill[key]
-      if (Object.prototype.hasOwnProperty.call(planned.audit.results, key)) planned.audit.results[key] = 'restored-from-declaration-row'
-    }
-    planned.settings = { values, audit: planned.audit }
-  }
-  // 投影 plan：只含需改写的投影键；gateWords 沿用迁移结论（carry 由 restatePresetPlugins 兜底）。
-  const gateWords = planned.preset === null ? null : planned.preset.gateWords
-  planned.preset = Object.keys(projection.hostRowConfig).length > 0 || gateWords !== null
-    ? { hostRowConfig: projection.hostRowConfig, gateWords }
+  planned.settings = backfillKeys.length > 0
+    ? { values: Object.fromEntries(backfillKeys.map((key) => [key, projection.backfill[key]])) }
     : null
-  // 本体过期标记：旧副本缺失时 planned.preset 恒为 null，若无此标记则「本体刷新」会被
+  // 投影 plan：只含需改写的投影键；gateWords 由 restatePresetPlugins 的 carry 分支
+  // 从声明行现值兜底，故此处恒为 null。
+  planned.preset = Object.keys(projection.hostRowConfig).length > 0
+    ? { hostRowConfig: projection.hostRowConfig, gateWords: null }
+    : null
+  // 本体过期标记：本体比对不通过时 planned.preset 可能为 null，若无此标记则「本体刷新」会被
   // applyPlan 的 preset 条件一并跳过（2026-09-25 现场实测：判非 idle 却什么都不写）。
   planned.bodyStale = !bodyOk
-  const firstRun = manifest === null || manifest.distHash === null
-  const action = firstRun ? 'written' : 'upgraded'
   if (typeof options.apply === 'function') {
-    await options.apply(planned, { stateDir, distHash: currentHash, action })
+    await options.apply(planned, { action: 'written' })
   }
-  cleanupLegacyFlashGuidePatches(dshHome)
-  writeManifest(stateDir, {
-    format: 2,
-    distHash: currentHash,
-    settingsMigration: planned.audit,
-    gateWordsMigration: planned.gateAudit,
-  })
-  return { action, plan: planned, stateDir, distHash: currentHash }
+  return { action: 'written', plan: planned }
 }
 
 /** 从 profile patch 文本里读声明行 config.plugins（旁证；宿主侧以 configEditor 为准）。 */
@@ -790,7 +531,6 @@ export function apply(ctx) {
           const settingsEntry = rows.find((row) => row !== null && typeof row === 'object' && row.entry !== undefined && row.entry.options !== undefined && row.entry.options.id === SETTINGS_ROW_ID)
           const settingsValues = settingsEntry === undefined ? undefined : effectiveRowConfig(settingsEntry)
           await syncPreset({
-            dshHome: defaultDshHome(),
             declaredPlugins,
             settingsValues,
             apply: async (planned) => {
@@ -828,9 +568,8 @@ async function applyPlan(editor, rows, planned) {
     const values = planned.settings.values
     await editor.edit(entry, (current) => ({ ...current, ...values }))
   }
-  // 条件从「有旧副本可迁移」扩展为「有旧副本可迁移 或 声明行本体已过期」：
-  // 旧副本缺失（source: absent）时 planned.preset 恒为 null，修复前会连本体刷新一起跳过，
-  // 形成「每次启动判非 idle 却什么都不写」的永不自愈循环。
+  // 本体过期的非 idle 运行 planned.preset 可能为 null（只有本体需刷新），若无 bodyStale 标记
+  // 会连本体刷新一起跳过，形成「每次启动判非 idle 却什么都不写」的永不自愈循环。
   if (planned.preset !== null || planned.bodyStale === true) {
     const entry = findEntry(PRESET_ROW_ID)
     if (entry === undefined) throw new Error('声明行缺失：' + PRESET_ROW_ID)

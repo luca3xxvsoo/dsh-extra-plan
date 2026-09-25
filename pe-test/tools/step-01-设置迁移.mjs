@@ -1,5 +1,5 @@
 // 设置描述表（descriptor）/ 行定位 / 保格式改写的共享层回归。
-// dsh 0.1.7-rc.1 载体订正后：本文件只覆盖「描述表契约 + 源模板（资产/旧分发副本同形）解析与
+// dsh 0.1.7-rc.1 载体订正后：本文件只覆盖「描述表契约 + 源模板（资产）解析与
 // 定点改写 + 新载体 settings 行捕获」，不再覆盖旧分发目录的状态机迁移矩阵
 // （那部分由 step-01-安装同步.mjs 用新载体夹具覆盖）。
 // 所有夹具都在内存或系统临时目录，不触碰生产 DSH_HOME。
@@ -30,7 +30,7 @@ import {
   serializeScalar,
 } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
 import { DEFAULT_EXPLORE_BUDGET } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
-import { GATE_WORD_MIGRATION_DEFINITIONS, GATE_WORDS_GROUP_DEFINITION, createGateRuntime } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
+import { GATE_WORDS_GROUP_DEFINITION, createGateRuntime } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
 import { createLiveConfig } from '../../plugins/dsh-extra-plan/lib/live-config.js'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
@@ -141,7 +141,7 @@ check('descriptor 分组：extra-plan 8 项（本插件热读）+ host-rows 2 �
   HOST_ROW_SETTING_DEFINITIONS.every((item) => item.group === SETTING_GROUPS.HOST_ROWS))
 check('descriptor 已无 pluginId/path 顶层字段（改 rowLocator/sourceLocator 双定位元数据）',
   SETTING_DEFINITIONS.every((item) => !Object.prototype.hasOwnProperty.call(item, 'pluginId') && !Object.prototype.hasOwnProperty.call(item, 'path') && !Object.prototype.hasOwnProperty.call(item, 'locator')))
-check('sourceLocator 仍为源模板行 id + config 路径（资产/旧分发副本同形）',
+check('sourceLocator 仍为源模板行 id + config 路径（资产）同形',
   SETTING_DEFINITIONS.every((item) => item.sourceLocator.path === 'config.' + (item.key === 'webFetch' ? 'fetch' : item.key === 'toolPresentationMode' ? 'mode' : item.key)) &&
   definition('plannerModel').sourceLocator.rowId === 'extra-plan' && definition('webFetch').sourceLocator.rowId === 'tool-web')
 check('rowLocator 指向权威值落点：10 项一律 settings 行（含原声明行子行的 2 项宿主行设置）',
@@ -162,7 +162,7 @@ check('禁止项不在白名单且描述不可变', !keys.some((key) => ['approv
 check('validator 类型严格且字符串设置支持空串归一', definition('plannerModel').validator('  x  ') && definition('plannerModel').validator('') && definition('plannerModel').normalize('   ') === '' && !definition('plannerModel').validator(123) && definition('otherAgentModel').validator('') && definition('otherAgentModel').normalize('   ') === '' && !definition('otherAgentModel').validator(123) && definition('crossProviderPlannerModel').validator(true) && definition('crossProviderPlannerModel').validator(false) && !definition('crossProviderPlannerModel').validator('true') && !definition('crossProviderPlannerModel').validator(1) && definition('exploreBudget').validator(1) && !definition('exploreBudget').validator('1') && TOOL_PRESENTATION_MODES.join('/') === definition('toolPresentationMode').ui.options.join('/'))
 check('serializeScalar 三态：boolean/integer/字符串单引号', serializeScalar(true, 'boolean') === 'true' && serializeScalar(false, 'boolean') === 'false' && serializeScalar(18, 'integer') === '18' && serializeScalar("a'b", 'string') === "'a''b'" && serializeScalar('a\nb', 'string') === JSON.stringify('a\nb'))
 
-// ── 源模板（旧分发副本同形）定位与保格式改写 ──────────────────────────────
+// ── 源模板（资产）定位与保格式改写 ──────────────────────────────
 const allOldValues = {
   plannerModel: 'legacy-model',
   crossProviderPlannerModel: true,
@@ -204,14 +204,10 @@ check('空白串 captured 且 normalize 归一并留待消费端 trim', blankSta
 const invalidState = captureSettings(minimalYaml({ exploreBudget: '0' }))
 check('非法值 → invalid（不进 values）', invalidState.states.exploreBudget === 'invalid' && !Object.prototype.hasOwnProperty.call(invalidState.values, 'exploreBudget'))
 
-// ── gateWords：源模板整组定位 + 迁移叶 locator ────────────────────────────
+// ── gateWords：源模板整组定位 ────────────────────────────
 check('gateWords 组定义与新命名 locator（rowId + sourceLocator）', GATE_WORDS_GROUP_DEFINITION.sourceLocator.rowId === 'extra-plan' && GATE_WORDS_GROUP_DEFINITION.sourceLocator.path === 'config.gateWords')
-check('7 个迁移叶 locator：rowId=extra-plan + config.gateWords.<field> + string', GATE_WORD_MIGRATION_DEFINITIONS.length === 7 && GATE_WORD_MIGRATION_DEFINITIONS.every((item) => item.sourceLocator.rowId === 'extra-plan' && item.sourceLocator.path === 'config.gateWords.' + item.key && item.scalarType === 'string'))
 const assetWords = resolveSetting(parsePresetYaml(assetAgent), GATE_WORDS_GROUP_DEFINITION, { aliases: false }).value
 check('资产模板 7 词整组合法且 createGateRuntime 可派生', (() => { try { return Object.keys(createGateRuntime(assetWords).words).length === 7 } catch { return false } })())
-const GATE_CUSTOM = { routeDirect: '甲直行', routePlan: '乙规划', routeDisagree: '丙否决', approvalApprove: '丁批准', approvalReplan: '戊转规划', purposeRefine: '己完整', purposeRedo: '庚重做' }
-const customGateText = (() => { let out = assetAgent; for (const item of GATE_WORD_MIGRATION_DEFINITIONS) { const patched = patchYamlScalar(out, item, GATE_CUSTOM[item.key]); if (!patched.ok) throw new Error('fixture patch failed: ' + item.key); out = patched.text } return out })()
-check('7 词逐叶定点改写后整组等于定制值', (() => { const runtime = createGateRuntime(resolveSetting(parsePresetYaml(customGateText), GATE_WORDS_GROUP_DEFINITION, { aliases: false }).value); return GATE_WORD_MIGRATION_DEFINITIONS.every((item) => runtime.words[item.key] === GATE_CUSTOM[item.key]) })())
 
 // ── 新载体 settings 行捕获（captureRowSettings：8 项 UI 热读键 + 10 项权威值） ────
 const rowText = settingsRowYaml({ anchoredBootstrap: 'false', exploreBudget: '7', plannerModel: 'row-model' })

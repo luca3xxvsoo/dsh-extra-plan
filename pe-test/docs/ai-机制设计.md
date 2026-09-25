@@ -11,12 +11,11 @@
 - **设计事实：批准锚点独立**（2026-09-23 用户确认落档）：**机制事实**——① 执行类委派（subagent / subagent_fork / workflow / ralph / subagent_review）只认批准锚点（即只认 approved）：index.js:935-947 仅判 state.approved !== true，通过后只校验 run_in_background，route 完全不参与判定；② 批准 ask 无 route 前置：index.js:320-328 只要求「至少 2 问、第 2 问起纯文本且不得带非空 options」，对比 purpose 类在 index.js:868/871 才加 route==='plan' 前置；③ 批准答复无条件置位：index.js:603-605（dispatch 路径）与 index.js:638-640（tool/result 路径）只要 kind='approve' 且 matchApprovalLabel(selected, gateRuntime)==='approve' 即置 approved=true，不校验 route/purpose/clarified。**设计意图**：批准锚点独立支撑这条快捷路径——用户自备方案 → 主会话确认（点批准词，出厂示例「同意执行」）→ 派执行者；route 只选路线，委派授权只看 approved。**反例（禁止）**：给批准 ask 加 route 前置会堵死该合法场景；直行态委派被拒只是 approved 未置位的自然结果（index.js:918-920 的 route 前置只属于 subagent_plan / save_probe），不是 direct 态的机械禁令。注：index.js:43-44 头注释仍写旧句式「直行态…委派恒拒（无计划批准锚点）」，纯注释同步未纳入本轮。
 
 ## 一-1、闸门关键词单一来源与运行时词表（v0.3.0）
-- **唯一真源**：`config.gateWords`（agent.cordis.yml，7 字段集中排列）。JS 侧 `lib/gate-words.js` 只有 `GATE_WORD_FIELDS`（field/variable 元数据）、`GATE_WORDS_GROUP_DEFINITION`、7 个 `GATE_WORD_MIGRATION_DEFINITIONS`（id=extra-plan + config.gateWords.&lt;field&gt;，string，无 alias/UI）、`validateGateWords` 与 `createGateRuntime`——**不含出厂词值、不读文件/环境变量、无无参默认词表**。
+- **唯一真源**：`config.gateWords`（agent.cordis.yml，7 字段集中排列）。JS 侧 `lib/gate-words.js` 只有 `GATE_WORD_FIELDS`（field/variable 元数据）、`GATE_WORDS_GROUP_DEFINITION`、`validateGateWords` 与 `createGateRuntime`——**不含出厂词值、不读文件/环境变量、无无参默认词表**。
 - **运行时**：每次 apply 第一步 `createGateRuntime(cfg.gateWords)`，缺失/非法同步抛错（阻止该预设被使用，不回退旧词），且必须先于任何工具/监听器/服务副作用；`inject = ['systemPrompt']`，经 `ctx.effect(() => ctx.systemPrompt.variable(name, provider))` 在当前 agent scope 注册恰好 7 个 `extra_plan_*`（provider 返回本次 apply 捕获值、随 scope 释放、不注册全局变量、不跨 apply 缓存）。persona 的 `prefix: &personaText` 与 `text: *personaText` 共用同一段文本，正文只引用这 7 个变量（两代 persona 键逐字同源）。
 - **词表贯穿**：`categorizeGateAsk`/`gateAskDenyReason`/`askKindOf`/`askKindOfRelaxed`/`validateGateAskStructure`/三类 `match*`/`deriveFlowState`/`mainGateReason`/`runCodeGroupDenyReason` 全部显式接收同一 gateRuntime（mainGateReason 缺失即抛错，禁止 helper 自建默认词表）。
 - **严格匹配**：三类 match 走 `matchExactKind`——标签先按白名单推荐后缀归一（`(Recommended)`/`（Recommended）`/`(推荐)`/`（推荐）`，大小写不敏感），再与当前词值**精确相等**才返回内部枚举；`indexOf` 子串只保留给 malformed ask 的教学文案，绝不用于推进 route/purpose/approved。
-- **升级迁移状态机**（preset-sync）：同 hash → `idle`（不读改写现场正文；现场被改成缺失/非法也不自愈，随后 runtime 抛错）；hash 变化 → 复制新厂商模板 → 恢复 10 项 UI 设置 → 整组合法旧词 7 叶定点写回 → 共享 validator 复验后才提交；整组非法/缺失/歧义整组用新模板值；新模板坏、leaf locator 缺失/歧义、patch 失败或复验失败一律抛错并清理 temp、保留旧 target。
-- **审计**：manifest 仍 `format: 2`；`settingsMigration` 10 项不变；并列加法字段 `gateWordsMigration: { format: 1, sourceDistHash, source, results }`，results 恰 7 项状态字符串，**不记录用户词值**（manifest 不得泄漏现场词）；`gateWordsMigration` 是项目自有字段，不是宿主合同。
+- **启动自愈（preset-sync，三维判定）**：声明行覆盖 + 本体剥离比对 + 投影一致性全部成立 → `idle`（不写盘）；任一不成立 → 以资产为基底重建声明行、回填/投影 2 项宿主行、gateWords 由 carry 从声明行现值兜底并整组复验；**无 manifest 台账、无跨版本迁移（用户已确认放弃 0.1.6 及更早搬迁）**；新模板坏一律抛错不触碰目标物。
 
 ## 二、run_code 组判定
 - 是什么：run_code 能一次做多件事，是绕开「单工具闸门」的后门。静态拆解 code 为工具成员组（decomposeRunCode：扫描 tools.xxx 调用 + 裸写扫描），逐成员走与直呼完全相同的判定，聚合拒绝；静态解析/理由函数物理实现位于 `plugins/dsh-extra-plan/lib/run-code-static.js`。
@@ -70,19 +69,19 @@ planner resolver 分 legacy/strict 两路（False/缺失/非法走旧 advisory�
 
 ## 七、anchored 引导与创造模式装配（A/C/M/F-L 三维时序）
 - `anchoredBootstrap`（A）与 `creativeMode`（C）是两个独立布尔开关；`toolPresentationMode`（M）取 `native|ptc|both`。F 精确表示 session 尚无任何 `tool/call`，首个 `tool/call` 落盘后为 L；不增加轮次设置或持久化状态。
-- C=0 时五角色、F/L 均只投影隐藏 7 个 Cordis 展示工具/SDK 对应 schema 与说明（`tool:cordis` 段在 dsh 0.1.7-rc.1 宿主侧已删，`CORDIS_SECTION_NAME` 保留但标废弃、过滤恒空转无害），**三个官方创造 skill**（cordis-plugin-development / editing-cordis-compositions / cordis-composition-reference）不进入 catalog；C=1 时恢复完整 SDK/Cordis/三个创造 skill，普通 skill 与 `skill` 工具始终保留。仅 HP1（A=1、C=1、M=ptc、F、main/planner）在 agent/pre-step 消息副本中暂隐三个创造 skill，L 恢复。**取径订正（0.1.7）**：三个 skill 由预设 `skill-filesystem` 行的 `config.customSkillDirs` 静态注册（指向 `@deepseek-ai/dsh-agent-preset` 包内 `skills/`），不再由插件运行期 `agentPresets.resolve('cordis')` 注册（该 resolve 在 0.1.7 只返回 `{id[,broken]}`，`path` 恒 undefined → 旧实现静默失效）；C=0 的「不注册」语义由 catalog 投影隐藏等价实现（全 phase、全角色）。
+- C=0 时五角色、F/L 均只投影隐藏 2 个 Cordis 展示工具/SDK 对应 schema 与说明（`tool:cordis` 段在 dsh 0.1.7-rc.1 宿主侧已删，`CORDIS_SECTION_NAME` 保留但标废弃、过滤恒空转无害），**三个官方创造 skill**（cordis-plugin-development / editing-cordis-compositions / cordis-composition-reference）不进入 catalog；C=1 时恢复完整 SDK/Cordis/三个创造 skill，普通 skill 与 `skill` 工具始终保留。仅 HP1（A=1、C=1、M=ptc、F、main/planner）在 agent/pre-step 消息副本中暂隐三个创造 skill，L 恢复。**取径订正（0.1.7）**：三个 skill 由预设 `skill-filesystem` 行的 `config.customSkillDirs` 静态注册（指向 `@deepseek-ai/dsh-agent-preset` 包内 `skills/`），不再由插件运行期 `agentPresets.resolve('cordis')` 注册（该 resolve 在 0.1.7 只返回 `{id[,broken]}`，`path` 恒 undefined → 旧实现静默失效）；C=0 的「不注册」语义由 catalog 投影隐藏等价实现（全 phase、全角色）。
 - Pure PTC 顶层始终只保留 `run_code`。A=1/F/main-planner/M=ptc 的 HP0/HP1 sections 精确为 `extra-plan-bootstrap`、`tool:read` 两项（宿主 `tools:ptc-only` 段自 2026-09-22 起按用户要求停用、不透传；中间投影 keepSectionNames 仍保留它用于 mode 判定）；`tool:read` 的文本由插件手写（变量② `cfg.bootstrapReadHint`，空串/非字符串回退内置同文案），借宿主段名只改模型可见副本、不动宿主注册表；文案保留四要素——工具名 read、程序内 `tools.read(...)` 调用形态、`file_path` 必填与 `offset`（默认 1）/`limit`（默认 2000）、返回形状（`path`/`offset`/`totalLines`/`lines` 带行号），不生成完整 `tools:sdk`、也不再调用官方 renderer；L 段（首个 tool/call 后）自动回到宿主原文。
 - A=1/F/main-planner/M=native 的 HN0/HN1 与 M=both 的 HB0/HB1 顶层仍为 bootstrap shell(s)+`read`，sections **仅** `extra-plan-bootstrap`，没有 `tool:read`；L 及 A=0 均回到 N/P/B 基线。其它角色不走 anchored 首轮。
 
 | 状态 | 顶层 / sections / SDK 与 catalog |
 |:--|:--|
-| N0/N1 | native：C=0/1；F/L 顶层按 `V_r-C7`/`V_r`，`tool:read` 为宿主原文；C7=0/7，catalog=0/3。 |
-| P0/P1 | ptc：顶层精确 `[run_code]`；`tools:ptc-only`、`tool:read`、完整 `tools:sdk`；C7=0/7，catalog=0/3。 |
-| B0/B1 | both：顶层含 `run_code` 的 `V_r-C7`/`V_r`；`tool:read`，并按 C 过滤/保留完整 `tools:sdk`；C7=0/7，catalog=0/3。 |
+| N0/N1 | native：C=0/1；F/L 顶层按 `V_r-C7`/`V_r`，`tool:read` 为宿主原文；C7=0/2，catalog=0/3。 |
+| P0/P1 | ptc：顶层精确 `[run_code]`；`tools:ptc-only`、`tool:read`、完整 `tools:sdk`；C7=0/2，catalog=0/3。 |
+| B0/B1 | both：顶层含 `run_code` 的 `V_r-C7`/`V_r`；`tool:read`，并按 C 过滤/保留完整 `tools:sdk`；C7=0/2，catalog=0/3。 |
 | HN/HB | A=1/F/main-planner/native/both：sections 仅 extra-plan-bootstrap；HN/HB 不含 `tool:read`，无 PTC/SDK；C=0/1 分别 catalog=0/3。 |
 | HP0/HP1 | A=1/F/main-planner/ptc：顶层 `[run_code]`，sections 精确两项（persona + 手写 `tool:read`）；`tool:read` 为手写文案（`cfg.bootstrapReadHint`，默认内置中文）、无完整 SDK/Cordis/C7；HP1 的 catalog=0，L 回 P1=3。 |
 
-- `step-04-路由与写闸门.mjs` 实际执行 `2×2×3×2×5=120` 格，逐格断言 phase、C7 0/7、catalog 0/3、普通 skill、HP 手写 read 文案（逐字等于 `cfg.bootstrapReadHint` 生效值）与 HN/HB 无 `tool:read`；另含显式覆盖与空串/非字符串回退两组变量②用例。
+- `step-04-路由与写闸门.mjs` 实际执行 `2×2×3×2×5=120` 格，逐格断言 phase、C7 0/2、catalog 0/3、普通 skill、HP 手写 read 文案（逐字等于 `cfg.bootstrapReadHint` 生效值）与 HN/HB 无 `tool:read`；另含显式覆盖与空串/非字符串回退两组变量②用例。
 - 三面过滤通过 `projectAssemblyForPresentation` 与 `renderFilteredToolsSdk` 创建新 assembly/schema 投影；`tools:sdk` 只从明确 schema 数组整体调用官方 renderer，禁止从原始 SDK 文本用正则/字符串删块。**F 段（HP 首轮）是唯一例外：`tool:read` 的文本由插件手写（`cfg.bootstrapReadHint` + 内置兜底），不经官方 renderer、也不读宿主 section 原文**。三个官方 skill 由预设 `skill-filesystem` 行 `config.customSkillDirs` 静态注册（不再是运行期注册源），C=0/1 在 catalog 投影中分别为 0/3（C=0 全 phase 隐藏；C=1 仅 HP1 暂隐）；skill catalog 是独立 agent/pre-step 消息副本。`CREATIVE_SKILL_NAMES`（lib/assembly-presentation.js）是唯一隐藏名单。
 - 这是模型可见面隐藏，不是 PTC runtime binding 安全隔离：`registry.schemas(exec.agent)` 建成的 run_code 内 `tools.*` namespace、既有 `toolFilter.deny`、`tools.restrict`、`tools/pre-execute` 与各角色 `cordis_run` deny 均保持原行为。
 
@@ -117,7 +116,6 @@ planner resolver 分 legacy/strict 两路（False/缺失/非法走旧 advisory�
 | 阶段状态残留 | route 正常重选前清 purpose/clarified/approved；有效目的重选前清 clarified/approved；非 CHANNEL_BROKEN_CODES 的 ask error（含 ASK_CANCELLED）清 route/purpose/clarified/approved；NO_PROVIDER/CALLER_NOT_LIVE/DELEGATED_CALLER 只置 channelBroken 并保留旧状态；最近一条 user/message 仍切换到五字段默认态 | index.js deriveFlowState |
 | 澄清选项子串坑（B） | 澄清 ask 的选项不得包含当前 config.gateWords 目的词（出厂示例「完善方案」「重新规划」）的任何子串（isPartialGateSet 的 indexOf 包含匹配），否则整条 ask 被判 malformed 拒绝 | index.js categorizeGateAsk/isPartialGateSet |
 | 闸门词唯一来源／改名后旧词失效 | 7 个闸门关键词的唯一人工编辑位置是 YAML 的 config.gateWords；JS 侧只有 schema/校验/派生（lib/gate-words.js，无词值、无默认词表）。apply 第一步 createGateRuntime(cfg.gateWords) 严格校验（失败前缀 'extra-plan: config.gateWords'）并在当前 agent scope 注册 7 个 extra_plan_* 变量；deny 文案按当前词插值、三类 match 只认「推荐后缀归一后精确相等」——改词后旧 label 精确匹配失败，状态保持未确认（历史事件安全），旧词也不得靠子串或推荐后缀复活 | index.js apply/mainGateReason/matchExactKind、lib/gate-words.js |
-| gateWords 升级迁移整组原子 | 旧组合法才整组迁回（写回声明行 `extra-plan` 行 `config.gateWords`，落盘前 `validateGateWords` 复验）；缺键/多键/非字符串/空串/首尾空白/CR-LF/重复值/保留后缀一律整组判非法（skipped-invalid）不写回；定位歧义 skipped-old-ambiguous、旧副本不可读 skipped-source-unreadable、无旧副本 skipped-source-absent；同 hash 且声明行覆盖 **不自愈**，现场非法由 runtime 抛错阻止使用 | lib/preset-sync.js captureGateWords/assertTemplateGateWords/buildMigrationPlan/restatePresetPlugins |
 | 拒绝原因必须包含当前词文案 | 拒绝原因里的「选项固定为…」必须由当前 config.gateWords 拼出（出厂值下与历史静态文案逐字相同）：改词后 deny 文案自动跟随，测试以当前词表派生期望值，禁止在 JS 里写死第二份词值 | index.js routeDenyReason/planDenyReason/approvalDenyReason/gateAskDenyReason/purposeRouteDenyReason |
 | save_probe 格式差异 | 聚焦区 focusAreas.range 允许区间（如 L10-20），但证据行号 evidence.line 只接受单行号——传区间被 validateProbe 拒绝。所有上限以 lib/save-contract.js PROBE_LIMITS 为唯一口径、文档不复制数值。 | lib/save-contract.js L61（rangePattern）与 L68（evidenceLinePattern） |
 | run_code 模板截断 | run_code 的 code 参数是 TypeScript 源码（type-stripped）：正文中出现反引号或 ${ 会截断模板字符串/被当插值求值，报 Expected a semicolon；同类：PowerShell 嵌套引号未闭合报 ParserError。这类报错只指向解析崩点、不给根因。对策：① 首选改写表述——正文用「」引用或改用单引号拼接，从源头避免反引号与 ${；② 必须书写反引号字面量时用 String.fromCharCode(96) 生成（96 = 反引号码点）。 | 本会话实战（run_code 预审闸门记录） |

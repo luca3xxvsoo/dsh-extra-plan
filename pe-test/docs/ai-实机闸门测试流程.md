@@ -99,7 +99,7 @@
 | A38 | 执行者 / planner / reviewer / probe | — | 观察对应子会话工具清单 | 不产生拒绝文案；判据 = 该子会话 request/header 的 tools 清单中 deny 名单内工具**不可见**（四行共同禁 cordis_run） | step-04-工具清单查看 | 目录观察 |
 | A48 | 主会话 → 执行者子会话 | route=plan 且 approved=true | 直呼 subagent 带 run_in_background:true 委派 flash 执行者 | 执行者工具清单 deny 名单内工具不可见（A38），且能读方案/验收文件执行 | 工具清单观察 + 执行结果 | 实机直测（本次会话未实测，待执行） |
 | A39 | 主会话 / planner | A=1 且 F | 按 M 观察 HN/HB/HP 首轮目录：native/both=bootstrap shell(s)+read、sections 仅 extra-plan-bootstrap；PTC=顶层仅 run_code、sections 精确两项（persona + 手写 tool:read，不含宿主 tools:ptc-only） | 不产生拒绝文案；判据 = 逐轮 request/header 的 tools 清单；HP 的 tool:read 逐字等于手写文案（变量② cfg.bootstrapReadHint；含 tools.read/file_path/offset/limit 且不含官方骨架），HN/HB 明确无 tool:read；HP 不含宿主 tools:ptc-only 段；L 回 N/P/B | step-04-工具清单查看 + 120 案例 mock | 目录观察（显式 F/L） |
-| A44 | 主会话 / planner / executor / reviewer / probe | C=0/1；每轮 | 对照 7 个 Cordis 工具、tools:sdk schema 与**三个**官方 skill catalog（`tool:cordis` 段在 0.1.7 宿主侧已删，不再期望该段） | C=0：展示 C7/catalog=0；C=1：非 HP1 展示 C7/catalog=7/3，HP1 的 F/main-planner 为 C7/catalog=0、L=7/3；普通 skill/skill 工具保留。两种均不改变 registry binding、toolFilter.deny、tools.restrict、tools/pre-execute 与既有 cordis_run deny | step-04 120 案例 mock；实机观察 request/header、header.system 文本命中与 catalog | 模型可见投影观察：仅模型可见面，非运行时安全隔离 |
+| A44 | 主会话 / planner / executor / reviewer / probe | C=0/1；每轮 | 对照 2 个 Cordis 工具、tools:sdk schema 与**三个**官方 skill catalog（`tool:cordis` 段在 0.1.7 宿主侧已删，不再期望该段） | C=0：展示 C7/catalog=0；C=1：非 HP1 展示 C7/catalog=2/3，HP1 的 F/main-planner 为 C7/catalog=0、L=2/3；普通 skill/skill 工具保留。两种均不改变 registry binding、toolFilter.deny、tools.restrict、tools/pre-execute 与既有 cordis_run deny | step-04 120 案例 mock；实机观察 request/header、header.system 文本命中与 catalog | 模型可见投影观察：仅模型可见面，非运行时安全隔离 |
 | A40 | workflow / ralph worker | — | worker 请求缺 toolFilter 时注入执行者 deny（防递归委派） | 不产生拒绝文案（工具不可见）；fallback 变体由静态断言覆盖 | 静态断言 +（可选）工具清单观察 | **静态断言替代** |
 | A41 | 主会话 | route=plan 且 purpose=none | 调 subagent_plan 或 save_probe | `规划目的尚未确认：${action}。须先 ask_user_question 询问用户本次 pro 规划的目的（选项固定为「完善方案」「重新规划」），答复后再调用 ${action}` | 卡片 Error + step-05 | 实机直测 |
 | A41-1 | 主会话 | route=none | 直接发精确目的二选一 ask | deny；原因必须逐字包含 `须先 ask_user_question 路由确认（选项固定为「直接执行」「进行pro规划」「不同意」）` | step-00/step-04 监听器聚合与直呼 | 静态/实机直测替代 |
@@ -421,12 +421,12 @@ channelBroken 逃生（`CHANNEL_BROKEN_CODES` = NO_PROVIDER / CALLER_NOT_LIVE / 
 - **C 同 hash 普通重启（现场声明行/settings 行逐字保留）**：在**未升级版本**的前提下修改现场 `config.gateWords`（声明行 plugins 内 `extra-plan` 行）或其它设置，重启 Harness：
   - 判据：同 hash 判定为 idle → **声明行 plugins 与 settings 行不被改写**（preset-sync 不写盘）、`dist-manifest.json` 状态字段保持 `format: 2`、改动生效；把现场 `extra-plan` 行的 `config.gateWords` 改成缺键/非法组后重启，同样**不被自愈**，且该预设挂载时同步抛错（`extra-plan: config.gateWords …`）——即「普通重启保留用户配置」与「非法配置阻止使用」同时成立。（旧载体口径「预设目录三个核心文件逐字节不变」已不适用：`.agent-presets/extra-plan/` 现只剩审计台账。）
 - **D hash 变化版本升级（整组迁移）**：安装/更新到新的发行版本（manifest `distHash` 变化）后重启：
-  - 判据①：现场 7 词仍为**用户定制值**（`gateWordsMigration.results` 7 项全 `restored`），非迁移厂商字段（如 `bootstrapPersona`）恢复为新版资产值，persona 的 `prefix === text` 且含 7 个 `{{extra_plan_*}}` 变量引用。
-  - 判据②：旧组缺失/非法时 7 项为 `skipped-old-missing`/`skipped-invalid` 并整组采用新版出厂值（**不得出现部分 restored 与部分默认混用**）；旧 YAML 不可读为 `skipped-source-unreadable`；`id: extra-plan` 定位歧义为 `skipped-old-ambiguous`。
-  - 判据③：`dist-manifest.json` 保持 `format: 2`、`settingsMigration` 仍 10 项，且**不出现任何用户词值**。
-  - 判据④：新版本模板本身坏（缺键/重复/保留后缀）时同步**抛错且目标物不被替换**（声明行 plugins 与 settings 行的旧值原样保留、旧 manifest 保留）。
-- 取证命令（仓库侧，mock 层证据，不替代实机）：`node pe-test/tools/step-01-安装同步.mjs`（同 hash idle + 升级迁移）、`node pe-test/tools/step-01-设置迁移.mjs`（九类矩阵）、`node pe-test/tools/step-01-安装分发.mjs`（distribute 包装层）、`node pe-test/tools/step-04-路由与写闸门.mjs`（GW 段：定制词三路 dispatch 与旧词拒绝）、`node pe-test/tools/step-00-全流程回归.mjs`（GWY/GWV/GWC 段）。
-- 边界：本节只读/改 profile patch 的声明行与 settings 行（`DSH_HOME/profiles/<profile>/cordis.patch.yml`）属**用户侧部署动作**；AI 不代做生产部署，只出判据与取证脚本。`.agent-presets/extra-plan/` 只剩 `dist-manifest.json` 审计台账。
+  - 判据①：现场 7 词为**现场词值**（声明行 `extra-plan` 行 `config.gateWords`），非资产字段（如 `bootstrapPersona`）恢复为新版资产值，persona 的 `prefix === text` 且含 7 个 `{{extra_plan_*}}` 变量引用。
+  - 判据②：三维判定（声明行覆盖 + 本体剥离比对 + 投影一致性）全部成立即 `idle`（不写盘）；任一不成立即按资产本体重建声明行、回填/投影 2 项宿主行；gateWords 由 carry 从声明行现值兜底（非法则保留基底词表）；**无 manifest 台账、无跨版本迁移**。
+  - 判据③：**插件不落任何自有台账**（运行期状态目录与 manifest 链已于 2026-09-25 整链删除），现场与落盘内容**不出现任何额外审计文件**。
+  - 判据④：新版本模板本身坏（缺键/重复/保留后缀）时同步**抛错且目标物不被替换**（声明行 plugins 与 settings 行的旧值原样保留）。
+- 取证命令（仓库侧，mock 层证据，不替代实机）：`node pe-test/tools/step-01-安装同步.mjs`（三维判定 idle + 投影/回填 + 闭环/本体/carry）、`node pe-test/tools/step-01-设置迁移.mjs`（描述表与源模板定位矩阵）、`node pe-test/tools/step-04-路由与写闸门.mjs`（GW 段：定制词三路 dispatch 与旧词拒绝）、`node pe-test/tools/step-00-全流程回归.mjs`（GWY/GWV/GWC 段）。
+- 边界：本节只读/改 profile patch 的声明行与 settings 行（`DSH_HOME/profiles/<profile>/cordis.patch.yml`）属**用户侧部署动作**；AI 不代做生产部署，只出判据与取证脚本。`.agent-presets/extra-plan/` 已随死代码清理删除，本插件不再使用任何自有状态目录。
 
 ## 八、收尾
 - 全量（或增量域）跑完后执行：`node pe-test/tools/代码地图生成.mjs --check`（**不写盘**；一致性 / 漏检 / 导航失效判非 0 退出）。

@@ -1,13 +1,13 @@
 // @local/dsh-extra-plan lib/gate-words.js (v0.3.0)
-// 闸门关键词共享契约：字段规格、整组严格校验、运行时词表派生与迁移 locator。
+// 闸门关键词共享契约：字段规格、整组严格校验与运行时词表派生。
 //
 // 设计边界（见 pe-test/docs/ai-机制设计.md）：
-//  - 唯一人工编辑位置是 YAML（DSH_HOME/.agent-presets/extra-plan/agent.cordis.yml 的
+//  - 唯一人工编辑位置是 YAML（声明行 config.plugins 内 extra-plan 行的
 //    config.gateWords，仓库模板 assets/presets/extra-plan/agent.cordis.yml）；
-//  - 本模块只保存字段名、prompt variable 名、校验规则与迁移 locator，不保存任何出厂词值，
+//  - 本模块只保存字段名、prompt variable 名与校验规则，不保存任何出厂词值，
 //    不读文件、不读环境变量、不提供无参默认值——JS 侧不存在第二份真源；
 //  - 校验失败一律以 'extra-plan: config.gateWords' 开头（同步抛出，阻止预设被使用）；
-//  - 本模块是纯模块：可被 index.js（运行时）与 preset-sync.js（迁移）共享。
+//  - 本模块是纯模块：可被 index.js（运行时）与 preset-sync.js（启动自愈）共享。
 
 // 推荐后缀白名单（与前端 parseRecommendedLabel / index.js normalizeLabel 同一口径）：
 // 四种后缀 (Recommended)/（Recommended）/(推荐)/（推荐），英文不区分大小写，前后允许空白。
@@ -27,7 +27,7 @@ export const GATE_WORD_FIELDS = Object.freeze([
 /** 7 个字段名（顺序即 YAML 中的集中排列顺序）。 */
 export const GATE_WORD_FIELD_NAMES = Object.freeze(GATE_WORD_FIELDS.map((item) => item.field))
 
-/** 整组 locator：源模板/旧分发副本内 id=extra-plan 行的 config.gateWords（供 resolveSetting 直接使用）。 */
+/** 整组 locator：源模板（资产）内 id=extra-plan 行的 config.gateWords（供 resolveSetting 直接使用）。 */
 export const GATE_WORDS_GROUP_DEFINITION = Object.freeze({
   id: 'extra-plan',
   rowId: 'extra-plan',
@@ -35,14 +35,6 @@ export const GATE_WORDS_GROUP_DEFINITION = Object.freeze({
   keys: GATE_WORD_FIELD_NAMES,
   sourceLocator: Object.freeze({ rowId: 'extra-plan', path: 'config.gateWords' }),
 })
-
-/** 7 个迁移叶 locator：源模板内 id=extra-plan + config.gateWords.<field>，标量类型 string，无 alias、无 UI 属性。 */
-export const GATE_WORD_MIGRATION_DEFINITIONS = Object.freeze(GATE_WORD_FIELDS.map((item) => Object.freeze({
-  key: item.field,
-  rowId: 'extra-plan',
-  sourceLocator: Object.freeze({ rowId: 'extra-plan', path: 'config.gateWords.' + item.field }),
-  scalarType: 'string',
-})))
 
 function fail(detail) {
   throw new Error('extra-plan: config.gateWords ' + detail)

@@ -1,4 +1,4 @@
-// @local/dsh-extra-plan lib/assembly-presentation.js (v0.2.1)
+// @local/dsh-extra-plan lib/assembly-presentation.js (v0.3.0)
 // A/C/M 展示投影与 skill catalog 投影（自 index.js 拆分，逐字保留原实现）。
 //   纯静态导出：只读入参、不改 live registry/result，不持有 per-apply 状态。
 //   唯一模块级可变状态 = sdkRendererModulePromise（SDK renderer 动态 import 缓存 promise，
@@ -10,19 +10,18 @@ import { homedir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 
 // creativeMode=false 只改变模型可见的装配投影；registry binding 与运行时执行边界保持不变。
-export const CORDIS_PRESENTATION_TOOLS = Object.freeze([
+// 宿主真值（0.1.7-rc.2 实测：@deepseek-ai/dsh-tool-cordis lib/index.js 仅注册这 2 个只读工具；
+// 定位 = L40 cordis_inspect_list、L56 cordis_inspect_query；其余 5 名全包 0 命中）。
+// 呈现侧隐藏名单与宿主真值同源：宿主若增删 cordis 工具，step-01 宿主真值对拍即判红。
+export const HOST_CORDIS_TOOLS = Object.freeze([
   'cordis_inspect_list',
   'cordis_inspect_query',
-  'cordis_inspect_self',
-  'cordis_define',
-  'cordis_run',
-  'cordis_stop',
-  'cordis_undefine',
 ])
+export const CORDIS_PRESENTATION_TOOLS = HOST_CORDIS_TOOLS
 export const CORDIS_PRESENTATION_TOOL_SET = new Set(CORDIS_PRESENTATION_TOOLS)
 // 【已废弃·0.1.7 宿主】'tool:cordis' 段在 dsh-tool-cordis 侧已删除（官方 README），
 // 全库不再产出该段名；常量与 hideCordis 过滤逻辑保留无害（匹配不到即空转），
-// 7 个 cordis 工具名的呈现侧隐藏仍生效（CORDIS_PRESENTATION_TOOLS）。
+// 2 个 cordis 只读工具名的呈现侧隐藏仍生效（CORDIS_PRESENTATION_TOOLS = 宿主真值 HOST_CORDIS_TOOLS）。
 export const CORDIS_SECTION_NAME = 'tool:cordis'
 export const PTC_SECTION_NAME = 'tools:ptc-only'
 export const SDK_SECTION_NAME = 'tools:sdk'

@@ -6,18 +6,10 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { framesOf, decodeText } from '../_shared/zstd-frames.mjs'
 import { findSession, logPath } from '../_shared/session-finder.mjs'
+import { CORDIS_PRESENTATION_TOOLS } from '../../plugins/dsh-extra-plan/lib/assembly-presentation.js'
 
 const NL = String.fromCharCode(10)
 const CREATIVE_SKILLS = new Set(['cordis-plugin-development', 'editing-cordis-compositions'])
-const CORDIS_PRESENTATION_TOOLS = [
-  'cordis_inspect_list',
-  'cordis_inspect_query',
-  'cordis_inspect_self',
-  'cordis_define',
-  'cordis_run',
-  'cordis_stop',
-  'cordis_undefine',
-]
 function jsonText(value) {
   try { return JSON.stringify(value) } catch { return 'null' }
 }

@@ -142,12 +142,12 @@ check('C-1 settings.js 的 Config 源码文本：恰 10 处字段链 volatile（
 const clientCode = clientText.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n')
 check('client.js：configForms.whileServed + plugins.item，无 settings.plugin.item / 无旧 key 卡片注册', clientCode.includes('ctx.configForms.whileServed([NS]') && clientCode.includes('ctx.slots.inject("plugins.item"') && clientCode.includes('name: "plugins.item"') && clientCode.includes('id: NS') && !clientCode.includes('settings.plugin.item') && !clientCode.includes('key: "dsh-extra-plan"'))
 check('client.js：外壳与注入面（__ModuleLoader__ + require(react) + slots/locale/configForms）', clientText.includes('window.__ModuleLoader__.load({') && clientText.includes('id: "@local/dsh-extra-plan"') && clientText.includes('require("react")') && clientText.includes('exports.inject = ["slots", "locale", "configForms"]'))
-check('client.js：2 项宿主行提交体仅 {webFetch, toolPresentationMode} 且 esp-* 样式保留', clientText.includes('const body = { webFetch: draft.webFetch, toolPresentationMode: draft.toolPresentationMode }') && clientText.includes('.esp-wrap{') && clientText.includes('.esp-section{') && clientText.includes('.esp-btn'))
+check('client.js：2 项宿主行提交体仅 {webFetch, toolPresentationMode} 且 esp-* 样式保留', clientText.includes('JSON.stringify({ webFetch: hostDraft.webFetch, toolPresentationMode: hostDraft.toolPresentationMode })') && clientText.includes('.esp-wrap{') && clientText.includes('.esp-section{') && clientText.includes('.esp-btn'))
 check('U-2 client.js：2 项宿主行 UI 明示「需重启生效」（提示语 + 保存回执），与 8 项「立即生效」区分', (() => {
   const hostRowFields = clientText.slice(clientText.indexOf('const HOST_ROW_FIELDS'), clientText.indexOf('const css ='))
   return hostRowFields.includes('需重启生效') && hostRowFields.split('需重启生效').length === 3 &&
     clientText.includes('savedRestart: "已保存（这 2 项需重启 DSH 后生效）"') &&
-    clientText.includes('text: t("savedRestart")') && clientText.includes('hostRowSection: "宿主行设置（重启生效）"')
+    clientText.includes('text: t("savedRestart")')
 })())
 check('U-2b client.js：2 项提示语指向权威值落点（settings 行）+ 投影落点（声明行子行）', (() => {
   const hostRowFields = clientText.slice(clientText.indexOf('const HOST_ROW_FIELDS'), clientText.indexOf('const css ='))

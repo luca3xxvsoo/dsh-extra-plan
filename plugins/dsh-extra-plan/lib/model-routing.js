@@ -1,4 +1,4 @@
-// @local/dsh-extra-plan lib/model-routing.js (v0.2.1)
+// @local/dsh-extra-plan lib/model-routing.js (v0.3.0)
 // planner / 非 planner 子代理模型路由解析（自 index.js 拆分，逐字保留原实现）。
 //   顶层纯函数：isExplicitRoute / isExplicitEffort / resolveAgentRouteSources /
 //   decidePlannerModelUse / sortPlannerCandidates + 两个阻断文案与探针超时/并发常量，

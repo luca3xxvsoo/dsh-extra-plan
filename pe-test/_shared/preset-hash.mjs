@@ -1,12 +1,5 @@
-// _shared/preset-hash.mjs — only fixture manifest writing remains here.
-// Hashing and manifest reading are re-exported from the production state machine.
+// _shared/preset-hash.mjs — 只保留资产完整性 hash 的 re-export。
+// 运行期台账链（manifest 读写夹具）已于 2026-09-25 死代码清理删除，
+// 本文件不再提供任何台账夹具（隐藏/合成记录 hash 的用例一并退役）。
 
-import { writeFileSync } from 'node:fs'
-import { contentHash, readManifest } from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
-
-export { contentHash, readManifest }
-
-// Fixture-only helper: create an old format-1 or synthetic recorded hash.
-export function writeManifest(dir, hash) {
-  writeFileSync(dir + '/dist-manifest.json', JSON.stringify({ format: 1, distHash: hash }, null, 2) + '\n')
-}
+export { contentHash } from '../../plugins/dsh-extra-plan/lib/preset-sync.js'

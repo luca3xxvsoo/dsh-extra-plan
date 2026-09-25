@@ -10,7 +10,7 @@
 
 ① 用户以按需规划模式进入（会话预设「按需规划模式」）
 
-② A/C/M 展示时序（默认 A=1、C=0；M=native|ptc|both）：F 精确表示 session 尚无任何 tool/call，首个 tool/call 落盘后为 L。A=1/F/main-planner 的 native/both 是 HN/HB：顶层保留 bootstrap shell(s)+read，sections 仅 extra-plan-bootstrap，不加 tool:read；PTC 是 HP：顶层精确为 [run_code]，sections 精确为 extra-plan-bootstrap、tool:read 两项（宿主 tools:ptc-only 段已按用户要求停用、不再透传），其中 tool:read 的文本由插件手写（cfg.bootstrapReadHint，空串/非字符串回退内置中文兜底；借宿主段名只改模型可见副本），不含完整 tools:sdk/Cordis，也不再调用官方 renderer。A=1 的 L 和 A=0 从 N/P/B 基线开始，执行者/验收者/探查者不走 anchored 首轮。C=0 时所有角色、F/L 隐藏 7 个 Cordis 展示项及**三个**创造 skill（cordis-plugin-development / editing-cordis-compositions / cordis-composition-reference，由预设 `skill-filesystem` 行 `config.customSkillDirs` 静态注册）catalog；C=1 恢复完整 SDK/Cordis/三个创造 skill，唯一 HP1（F/main-planner）暂隐 catalog。`tool:cordis` 段在 0.1.7 宿主侧已删（常数保留、恒空转）。所有变化只改变模型可见面，不是 PTC runtime binding 安全隔离；既有 registry namespace、deny 与 pre-execute 仍按原逻辑执行。
+② A/C/M 展示时序（默认 A=1、C=0；M=native|ptc|both）：F 精确表示 session 尚无任何 tool/call，首个 tool/call 落盘后为 L。A=1/F/main-planner 的 native/both 是 HN/HB：顶层保留 bootstrap shell(s)+read，sections 仅 extra-plan-bootstrap，不加 tool:read；PTC 是 HP：顶层精确为 [run_code]，sections 精确为 extra-plan-bootstrap、tool:read 两项（宿主 tools:ptc-only 段已按用户要求停用、不再透传），其中 tool:read 的文本由插件手写（cfg.bootstrapReadHint，空串/非字符串回退内置中文兜底；借宿主段名只改模型可见副本），不含完整 tools:sdk/Cordis，也不再调用官方 renderer。A=1 的 L 和 A=0 从 N/P/B 基线开始，执行者/验收者/探查者不走 anchored 首轮。C=0 时所有角色、F/L 隐藏 2 个 Cordis 展示项及**三个**创造 skill（cordis-plugin-development / editing-cordis-compositions / cordis-composition-reference，由预设 `skill-filesystem` 行 `config.customSkillDirs` 静态注册）catalog；C=1 恢复完整 SDK/Cordis/三个创造 skill，唯一 HP1（F/main-planner）暂隐 catalog。`tool:cordis` 段在 0.1.7 宿主侧已删（常数保留、恒空转）。所有变化只改变模型可见面，不是 PTC runtime binding 安全隔离；既有 registry namespace、deny 与 pre-execute 仍按原逻辑执行。
 
 ### 1.1 PTC 实机专项
 - C=0 与 C=1 各开一条干净的 A=1/M=ptc 顶层会话：任何 tool/call 前记录 F header；完成首个顶层 run_code 后在同一会话记录 L，再发第二调用确认仍为 L。
@@ -79,7 +79,7 @@
    - 执行者工具裁剪 deny（12 项）：subagent / subagent_review / subagent_probe / workflow / ralph / send_message / interrupt_agent / list_agents / ask_user_question / todo_write / subagent_plan / cordis_run（防委派递归；预设侧配置见 agent.cordis.yml tool-subagent 行）；creativeMode 的模型可见投影不新增、不改写该 deny，亦不改变执行者 run_code 内既有 binding。
    - 汇报格式（≤15 行，禁止粘贴大段文件内容）：①完成清单——逐项做了什么、关键结果值；②自验证结论——逐项通过/不通过，附一行证据；③越界需求（如有）
    - 主会话**不得自己动手改文件**（write/edit 与 shell 写命令被闸门机械拦截；批准态下主会话仅可执行越界 shell 写：带 sandbox_permissions + justification）
-   - **修改范围 = 工作区仓库内**：执行者与主会话在验收通过前不得执行任何生产环境同步/部署动作（如 dsh plugin 更新、scripts/distribute-preset.mjs 分发、复制到 DSH_HOME 安装目录、.agent-presets 下发）——部署时机由用户掌控
+   - **修改范围 = 工作区仓库内**：执行者与主会话在验收通过前不得执行任何生产环境同步/部署动作（如 dsh plugin 更新、复制到 DSH_HOME 安装目录、.agent-presets 下发）——部署时机由用户掌控
 
 ⑬ 验收：
    - **增量对拍只在验收期跑一次**：游标增量（session.seq 水位 + snapshotEvents(from,to) 区间读取）与全量的等价性由 step-04 P4-25~P4-27 在验收/回归期证明；生产热路径只跑增量 + 廉价水位前提检查，严禁每趟全量+增量双跑

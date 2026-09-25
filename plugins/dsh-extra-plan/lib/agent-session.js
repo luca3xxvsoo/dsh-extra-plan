@@ -1,4 +1,4 @@
-// @local/dsh-extra-plan lib/agent-session.js (v0.2.1)
+// @local/dsh-extra-plan lib/agent-session.js (v0.3.0)
 // sessionEvents / isSubagentChild 的唯一来源（自 index.js 拆出，函数体逐字保留原实现）。
 //   零依赖纯函数模块：只读入参、不持有任何状态，不 import index.js（避免循环依赖）。
 //   使用方：index.js（import 后供留存区各调用点使用，并继续经 decisions re-export

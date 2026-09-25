@@ -300,9 +300,7 @@ try {
 
   // ⑪ 负例B：dsh-extra-plan 核心零感知（静态断言）
   const presetSync = readFileSync(join(SOURCE_ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'preset-sync.js'), 'utf8')
-  const distribute = readFileSync(join(SOURCE_ROOT, 'plugins', 'dsh-extra-plan', 'scripts', 'distribute-preset.mjs'), 'utf8')
   check('preset-sync.js 不含 qqbot/code-runtime/qqbot 自愈标识符（核心零感知）', !/qqbot|code-runtime|healQqbotCompatibility|healPatchRows/i.test(presetSync))
-  check('distribute-preset.mjs 不含 qqbot/code-runtime/qqbot 自愈标识符（核心零感知）', !/qqbot|code-runtime|healQqbotCompatibility|healPatchRows/i.test(distribute))
 
   // ⑫ DSH_HOME env 优先于 ~/.dsh（index.js apply 实测）
   const h12 = join(tempRoot, 's12-env')

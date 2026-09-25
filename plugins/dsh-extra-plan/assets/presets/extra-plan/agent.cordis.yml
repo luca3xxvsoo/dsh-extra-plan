@@ -424,8 +424,7 @@
 
 # 0.1.7-rc.2 起 dsh-tool-cordis 只注册 cordis_inspect_list/cordis_inspect_query
 # 两个只读工具；cordis_run 等 5 名已不存在，故不在任何 deny 清单中列出（deny 未知名
-# 会使宿主 tools.restrict() 抛错、子代理创建失败）。cordis_run 是唯一的执行口形态
-# （模型 JS 求值+挂载临时插件，纯内存、会话级、重启即失）——若某受支持版本仍注册该
+# 会使宿主 tools.restrict() 抛错、子代理创建失败）。若某受支持版本仍注册该
 # 工具：主会话由插件硬闸门按 write/edit 同规则管控（路由未确认拒绝、批准/直行放行）；
 # 执行者/规划/验收/探查四子代理改由运行时闸门（plannerGateReason /
 # childReadonlyGateReason）兜住，其余 cordis 工具放行。

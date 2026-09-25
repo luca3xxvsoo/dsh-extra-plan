@@ -18,14 +18,12 @@
   "files": [
     "index.js",
     "lib/",
-    "scripts/distribute-preset.mjs",
     "scripts/generate-runtime-defaults.mjs",
     "cordis.patch.yml",
     "assets/presets/extra-plan/",
     "assets/presets/extra-plan/preset-patch.generated.yml"
   ],
   "scripts": {
-    "postinstall": "node scripts/distribute-preset.mjs",
     "generate:runtime-defaults": "node scripts/generate-runtime-defaults.mjs",
     "prepack": "node scripts/generate-runtime-defaults.mjs"
   },

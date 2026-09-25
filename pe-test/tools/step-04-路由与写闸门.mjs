@@ -48,9 +48,9 @@ import { createLiveConfig } from '../../plugins/dsh-extra-plan/lib/live-config.j
 import { CREATIVE_SKILL_NAMES as CREATIVE_SKILL_NAMES_FOR_TEST } from '../../plugins/dsh-extra-plan/lib/assembly-presentation.js'
 import { SETTING_DEFINITIONS as SETTING_DEFINITIONS_E, SETTING_GROUPS as SETTING_GROUPS_E, PRESET_ROW_ID as PRESET_ROW_ID_E, SETTINGS_ROW_ID as SETTINGS_ROW_ID_E, EXTRA_PLAN_SETTING_DEFINITIONS as EXTRA_PLAN_SETTING_DEFINITIONS_E, findPluginsRow as findPluginsRowE } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
 import { restatePresetPlugins as restatePresetPluginsE, declarationCoversAsset as declarationCoversAssetE, ASSET_PATCH_FILE as ASSET_PATCH_FILE_E, pluginRowIds as pluginRowIdsE } from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
-// 说明：不 import lib/settings.js——它顶层 import '@deepseek-ai/schemastery'，而本机可解析到的
-// 宿主副本（profiles/web 与 npm 全局 dsh 0.1.5-rc.2 自带的 3.18.2）无 Schema.volatile()；
-// 0.1.7-rc.1 宿主自带 3.18.4 才有。故 Config 的 volatile/默认值契约改用源码文本静态核对（机械可核对）。
+// 说明：不 import lib/settings.js——它顶层 import '@deepseek-ai/schemastery'，解析环境依赖宿主副本
+// （本机 npm 全局 dsh 实测 0.1.7-rc.2，profiles/web 另有 profile 内副本）；
+// 故 Config 的 volatile/默认值契约改用源码文本静态核对（机械可核对），不依赖本机 schemastery 版本。
 import { readFileSync as readFileSyncE } from 'node:fs'
 const decisions = plugin.decisions
 const { catalogHasWriteTools, isReadOnlyChildByCatalog, routeDenyReason, runCodeCatchGateReason, runCodeGroupDenyReason, askUserQuestionReturnGateReason, probeDisposalWarning, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilteredToolsSdk, toolPresentationModeOf, projectSkillCatalogDecision, isBootstrapPhase, shellMutationReason, recordJobOutputCall, parseAskResultData, parseDispatchAskResult, deriveFlowState } = decisions
@@ -1628,15 +1628,15 @@ for (const anchoredBootstrap of [false, true]) {
           const sdkPresent = !anchored && mode !== 'native'
           const sdkOk = sdkPresent
             ? creativeMode
-              ? sdkCordisHits.length === 7 && sdk.includes('read')
+              ? sdkCordisHits.length === MATRIX_CORDIS_TOOLS.length && sdk.includes('read')
               : sdkCordisHits.length === 0 && sdk.includes('read:') && sdk.includes('file_path') && sdk.includes('offset') && sdk.includes('limit')
             : sdk === ''
           const cordisSection = sectionText(assembled, 'tool:cordis')
           const cordisSectionHits = MATRIX_CORDIS_TOOLS.filter((name) => cordisSection.includes(name))
           const topCordisHits = gotNames.filter((name) => MATRIX_CORDIS_TOOLS.includes(name))
-          const c7Expected = creativeMode && !anchored ? 7 : 0
-          const cordisOk = c7Expected === 7
-            ? cordisSectionHits.length === 7 && (mode === 'ptc' ? topCordisHits.length === 0 : topCordisHits.length === 7)
+          const c7Expected = creativeMode && !anchored ? MATRIX_CORDIS_TOOLS.length : 0
+          const cordisOk = c7Expected === MATRIX_CORDIS_TOOLS.length
+            ? cordisSectionHits.length === MATRIX_CORDIS_TOOLS.length && (mode === 'ptc' ? topCordisHits.length === 0 : topCordisHits.length === MATRIX_CORDIS_TOOLS.length)
             : cordisSectionHits.length === 0 && topCordisHits.length === 0
           const readText = sectionText(assembled, 'tool:read')
           let readOk
@@ -1674,8 +1674,8 @@ for (const anchoredBootstrap of [false, true]) {
   }
 }
 check('装配矩阵案例总数', matrixCases, 120)
-checkTrue('Cordis 固定集合恰有 7 项且名称唯一', MATRIX_CORDIS_TOOLS.length === 7 && new Set(MATRIX_CORDIS_TOOLS).size === 7)
-const projectionSource = { tools: [{ name: 'read' }, { name: 'cordis_run' }], sections: [{ name: 'tool:cordis', text: 'hidden' }, { name: 'tools:sdk', text: 'old' }] }
+checkTrue('Cordis 固定集合恰有 2 项且名称唯一', MATRIX_CORDIS_TOOLS.length === 2 && new Set(MATRIX_CORDIS_TOOLS).size === 2)
+const projectionSource = { tools: [{ name: 'read' }, { name: MATRIX_CORDIS_TOOLS[0] }], sections: [{ name: 'tool:cordis', text: 'hidden' }, { name: 'tools:sdk', text: 'old' }] }
 const projectionCopy = projectAssemblyForPresentation(projectionSource, projectionSource.tools, { sdkText: 'read:' })
 checkTrue('projectAssemblyForPresentation 返回新 assembly 且不原地修改', projectionCopy !== projectionSource && projectionSource.tools.length === 2 && projectionSource.sections[0].name === 'tool:cordis' && projectionCopy.tools.length === 1 && projectionCopy.tools[0].name === 'read' && sectionText(projectionCopy, 'tool:cordis') === '' && sectionText(projectionCopy, 'tools:sdk') === 'read:')
 // C=1 创造 skill 面（0.1.7 静态注册）：预设 skill-filesystem 行的 config.customSkillDirs

@@ -21,7 +21,6 @@ const AUTO = [
   ['step-00-全流程回归.mjs', true, ''],
   ['step-00-跨平台写拦截.mjs', true, ''],
   ['step-01-设置迁移.mjs', true, ''],
-  ['step-01-安装分发.mjs', true, ''],
   ['step-01-安装同步.mjs', true, ''],
   ['step-01-预设完整性.mjs', false, ''],
   ['step-01-设置页配置.mjs', false, ''],

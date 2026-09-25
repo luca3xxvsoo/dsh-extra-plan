@@ -4,7 +4,7 @@
 
 **作者从reasonix得到的灵感，实现权限控制+子代理角色分配的agent模板**
 
-**兼容性**：DSH = v0.1.7-rc.1/2 (测试中)、qqbot 未测试。旧版本兼容详见Releases
+**兼容性**：DSH = v0.1.7-rc.2、qqbot 未测试。旧版本兼容详见Releases
 
 ## 2. 核心优势
 
@@ -82,7 +82,7 @@ dsh plugin --profile qqbot remove @local/dsh-qqbot-user-questions
 
 ## 4. 可配置项
 
-DSH web界面 -> 设置 -> 插件 -> 插件配置 -> 按需规划模式配置
+DSH web界面 -> 插件 -> 按需规划模式配置
 
 **通用设置**：
   - anchored开关：首轮极简工具 + 提示词
@@ -106,7 +106,6 @@ dsh-extra-plan/
 │   ├── dsh-extra-plan/                                 # 模式核心插件（四级闸门/探查上限/save_plan 等）
 │   │   ├── assets/presets/extra-plan/                   
 │   │   │   ├── agent.cordis.yml                        # 预设主配置（persona/工具/插件行/delegation）
-│   │   │   ├── dist-manifest.json                      # 预设分发：分发清单模板（distHash 比对 + 迁移状态；部署时由 preset-sync 写入） 
 │   │   │   ├── preset-patch.generated.yml              # 预设投递载体文件
 │   │   │   └── preset.yml                              # 预设元信息（GUI 显示名称与描述）
 │   │   ├── lib/                                        # 模块目录
@@ -133,7 +132,6 @@ dsh-extra-plan/
 │   │   │   ├── settings.js                             # 设置页宿主端
 │   │   │   └── shell-mutation.js                       # 写操作判定：跨平台命令解码与写形态
 │   │   ├── scripts/                                    
-│   │   │   ├── distribute-preset.mjs                   # postinstall 预设分发入口
 │   │   │   └── generate-runtime-defaults.mjs           # 构建期生成器：exploreBudget 叶值 → preset-defaults.generated.js
 │   │   ├── cordis.patch.yml                                      
 │   │   ├── index.js                                    # 四级闸门：路由/目的/澄清/批准 + apply 接线
