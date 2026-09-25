@@ -337,5 +337,29 @@ if (cordisTools.length === 2 && agentText.includes('# 0.1.7-rc.2 起 dsh-tool-co
   console.log('FAIL  Cordis 静态集合不是 2 项')
 }
 
+// S2（2026-09-25）：宿主运行时包依赖政策——`dependencies` 不得含任何 `@deepseek-ai/*`。
+// 背景：0.1.7 运行时解析表里「profile node_modules 内的本地候选优先」（dsh-app-boot routeScoped），
+//   所以装进 profile 的宿主同名包会顶替宿主的 llm 运行时行；0.1.7-rc.1 副本没有
+//   projectToolUpdates/toolUpdate/toolHistory，会话内工具集变化产生的 developer tool-removal
+//   会被原样序列化成线上 tool_removal，而 DeepSeek Messages API 只接受 tool_addition → 422，
+//   且该 developer 消息落盘后整会话每轮必失败（现场取证见 ai-宿主耦合台账.md CF12 与 ⑦-2）。
+// 口径：dsh-llm / schemastery 只作 peerDependencies 声明（profile autoInstallPeers=false 不安装），
+//   运行时由宿主安装域供给 → 自动跟随宿主版本，不需要插件自己钉一套。
+const pluginPkgFile = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'package.json')
+let pluginPkg
+try { pluginPkg = JSON.parse(readFileSync(pluginPkgFile, 'utf8')) } catch { pluginPkg = undefined }
+const asRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {}
+const pluginDeps = pluginPkg !== undefined ? asRecord(pluginPkg.dependencies) : {}
+const pluginPeers = pluginPkg !== undefined ? asRecord(pluginPkg.peerDependencies) : {}
+const hostLeaks = Object.keys(pluginDeps).filter((name) => name.startsWith('@deepseek-ai/'))
+check('S2 dependencies 不含 @deepseek-ai/* 宿主包（profile 不得出现第二份宿主副本）'
+  + (hostLeaks.length > 0 ? '，实际: ' + hostLeaks.join(', ') : ''),
+  pluginPkg !== undefined && hostLeaks.length === 0)
+check('S2 peerDependencies 的 @deepseek-ai/dsh-llm 与 @deepseek-ai/dsh 同范围（当前 '
+  + String(pluginPeers['@deepseek-ai/dsh']) + '）',
+  typeof pluginPeers['@deepseek-ai/dsh-llm'] === 'string' && pluginPeers['@deepseek-ai/dsh-llm'] === pluginPeers['@deepseek-ai/dsh'])
+check('S2 peerDependencies 已声明 @deepseek-ai/schemastery（由宿主安装域供给）',
+  typeof pluginPeers['@deepseek-ai/schemastery'] === 'string' && pluginPeers['@deepseek-ai/schemastery'] !== '')
+
 console.log('\n通过 ' + pass + ', 失败 ' + fail)
 process.exit(fail === 0 ? 0 : 1)

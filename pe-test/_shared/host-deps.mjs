@@ -10,6 +10,9 @@
 //   ① DSH_HOME（默认 ~/.dsh）下 profiles/<name>/node_modules/@deepseek-ai/dsh-llm/package.json
 //   ② 宿主现场 node_modules（npm 全局前缀下 @deepseek-ai/dsh-llm，或 dsh 包自带的
 //      node_modules/@deepseek-ai/dsh-llm）
+// 现场告警：profile 与安装域同时存在 @deepseek-ai/dsh-llm 时打印一行「注意」（只告警、不改解析语义、
+//   不写盘）——profile 副本会被 DSH 优先解析并顶替宿主同名运行时行（0.1.7-rc.1 副本缺 tool-update 投影 →
+//   会话内工具集变化产生的线上 tool_removal 被 API 422 拒绝、整会话报废；详见 ai-宿主耦合台账.md CF12）。
 // 纪律（反作弊）：锚点全缺失即 throw（文案含候选路径清单）——绝不返回伪造模块，
 //   否则自检会「假绿」。同作用域其它包也只在同一 node_modules 根内解析，缺失即抛。
 // 本文件只在测试侧解析路径，不写盘、不改宿主。
@@ -42,11 +45,13 @@ function readFileSync0(dir) {
 }
 
 // 锚点候选（按序探测）：返回宿主 node_modules 根 + dsh-llm 包目录的候选组合
+// scope 仅用于「profile 内出现宿主同名副本」告警分组，不参与解析语义。
 function anchorCandidates() {
   const list = []
   const { home, names } = profileNames()
   for (const name of names) {
     list.push({
+      scope: 'profile',
       nodeModules: join(home, 'profiles', name, 'node_modules'),
       pkg: join(home, 'profiles', name, 'node_modules', SCOPE, PKG_NAME, 'package.json'),
     })
@@ -62,10 +67,12 @@ function anchorCandidates() {
   }
   for (const prefix of prefixes) {
     list.push({
+      scope: 'installation',
       nodeModules: prefix,
       pkg: join(prefix, SCOPE, PKG_NAME, 'package.json'),
     })
     list.push({
+      scope: 'installation',
       nodeModules: join(prefix, SCOPE, DSH_PKG_NAME, 'node_modules'),
       pkg: join(prefix, SCOPE, DSH_PKG_NAME, 'node_modules', SCOPE, PKG_NAME, 'package.json'),
     })
@@ -111,11 +118,46 @@ function scopedEntryOf(nodeModules, specifier) {
   return entryOf(join(nodeModules, SCOPE, parts[0], 'package.json'))
 }
 
+// 现场告警（只告警，不改解析语义、不写盘）：profile 内若存在宿主同名包副本，DSH 的运行时解析
+// 会让「profile node_modules 内的本地候选」优先（dsh-app-boot routeScoped），于是这份副本会顶替
+// 宿主的同名运行时行。实测教训（2026-09-25 本机 0.1.7-rc.2 现场）：profile 里一份 0.1.7-rc.1 的
+// @deepseek-ai/dsh-llm 缺 tool-update 投影（toolUpdate/toolHistory/projectToolUpdates 全 0 命中），
+// 会话内工具集变化产生的 developer tool-removal 被原样序列化成线上 tool_removal，而 DeepSeek
+// Messages API 只接受 tool_addition → 422，且该 developer 消息落盘后整会话每轮必失败。
+// 修复：清 profile 的 node_modules + pnpm-lock.yaml 后重装插件（插件 dependencies 不得含 @deepseek-ai/*）。
+function warnShadowedHostCopies() {
+  const found = new Map()
+  const seenPaths = new Set()
+  for (const candidate of anchorCandidates()) {
+    if (!existsSync(candidate.pkg)) continue
+    if (seenPaths.has(candidate.pkg)) continue // 多前缀候选可能指向同一份包（如 APPDATA 与 homedir 两种写法）
+    seenPaths.add(candidate.pkg)
+    let version = '未知'
+    try {
+      const manifest = JSON.parse(readFileSync(candidate.pkg, 'utf8'))
+      if (manifest !== null && typeof manifest === 'object' && typeof manifest.version === 'string') version = manifest.version
+    } catch { /* 清单不可读：按未知版本记录，不影响告警判定 */ }
+    if (!found.has(candidate.scope)) found.set(candidate.scope, [])
+    found.get(candidate.scope).push(version + ' @ ' + candidate.pkg)
+  }
+  const profileCopies = found.get('profile')
+  const installCopies = found.get('installation')
+  if (profileCopies === undefined || installCopies === undefined) return
+  console.warn(
+    '[host-deps] 注意: profile 内存在宿主同名包副本（' + TARGET + '），DSH 解析本地候选优先 → 会顶替宿主的同名运行时行。'
+    + '\n  profile 副本: ' + profileCopies.join(' | ')
+    + '\n  安装域副本: ' + installCopies.join(' | ')
+    + '\n  若两者版本不同，宿主运行时行为由 profile 那份决定（症状示例：会话内工具集变化 → 线上 tool_removal → API 422，整会话报废）。'
+    + '\n  修复: 删除 profile 的 node_modules 与 pnpm-lock.yaml 后重装插件，再重启 dsh。',
+  )
+}
+
 let registered = false
 
 export async function registerHostDeps() {
   if (registered) return
   registered = true
+  warnShadowedHostCopies()
   const anchor = findHostAnchor()
   const scopedNodeModules = []
   // 先试锚点自身的 node_modules 根；再退到各级上溯（profiles/web/node_modules → profiles/web → …）
