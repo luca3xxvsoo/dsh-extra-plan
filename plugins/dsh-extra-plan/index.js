@@ -11,8 +11,9 @@
 // 3. 子代理判定已弃用 agents.roots()（v0.1.2-rc.1 真实机制：子代理 runtime
 //    owner=父，agent-loop enter(agent, ownerCtx.agent)——按 owner 的根判定不会
 //    把子代理当根）——一律用「子代理标记 + 父会话存活」公式；
-// 4. ask_user_question 答案以 tool/result 回流（tool-result 信封的 toolCallId
-//    与 tool/call 的 callId 精确配对），渲染文本为 {"answers":[...]} JSON；
+// 4. ask_user_question 答案以 tool/result 回流（0.1.7 起 callId/isError 在 message 顶层、
+//    content 直接是内容块；0.1.2-rc.1 旧形状的 tool-result 信封仍兼容），
+//    与 tool/call 的 callId 精确配对，渲染文本为 {"answers":[...]} JSON；
 //    提问通道级错误码全集（v0.1.2-rc.1 声明）：ASK_ABORTED / EMPTY_QUESTIONS /
 //    CALLER_NOT_LIVE / DELEGATED_CALLER / BAD_INTENT / NO_PROVIDER；取消码实测口径
 //    （2026-09-23 复核）：native 直呼取消上报 ASK_CANCELLED（全库唯一实证
@@ -444,14 +445,23 @@ function parseAskResultData(data) {
   let inner
   let outerIsError = false
   let outerText = ''
-  for (const outer of message.content) {
-    if (outer !== null && typeof outer === 'object' && outer.type === 'tool-result') {
-      if (typeof outer.toolCallId === 'string') callId = outer.toolCallId
-      if (inner === undefined && Array.isArray(outer.content)) {
-        inner = outer.content
-        // isError 在 tool-result 信封（message.content[0]）上，不在 data 上（native 闸门拒绝实证）。
-        outerIsError = outer.isError === true
-        outerText = firstTextOfBlocks(outer.content)
+  // 0.1.7-rc.2 起：tool-result 信封拍平到 message 顶层（toolCallId / isError 在 message 上，
+  // content 直接是内容块）。旧形状（0.1.2-rc.1 / 0.1.5-rc.2）保留兼容。
+  if (typeof message.toolCallId === 'string') {
+    callId = message.toolCallId
+    inner = message.content
+    outerIsError = message.isError === true
+    outerText = firstTextOfBlocks(message.content)
+  } else {
+    for (const outer of message.content) {
+      if (outer !== null && typeof outer === 'object' && outer.type === 'tool-result') {
+        if (typeof outer.toolCallId === 'string') callId = outer.toolCallId
+        if (inner === undefined && Array.isArray(outer.content)) {
+          inner = outer.content
+          // isError 在 tool-result 信封（message.content[0]）上，不在 data 上（native 闸门拒绝实证）。
+          outerIsError = outer.isError === true
+          outerText = firstTextOfBlocks(outer.content)
+        }
       }
     }
   }
@@ -743,6 +753,9 @@ function plannerGateReason(exec, events, exploreBudget, jobOutputCallCounters) {
   if (exec.name === 'write' || exec.name === 'edit') {
     return '规划子代理只读：方案经 save_plan 落盘，其余写入一律禁止（toolFilter 之外的第二道防线）'
   }
+  if (exec.name === 'cordis_run') {
+    return '规划子代理只读：cordis_run 会在会话内执行模型 JS 并挂载临时插件，规划期一律禁止（宿主版本仍注册该工具时生效）'
+  }
   const shellReason = shellMutationReason('planner', exec)
   if (shellReason !== null) return shellReason
   if (exec.name === 'job_output') return jobOutputGateReason(exec, jobOutputCallCounters)
@@ -760,6 +773,11 @@ function plannerGateReason(exec, events, exploreBudget, jobOutputCallCounters) {
 function childReadonlyGateReason(exec, probe, jobOutputCallCounters) {
   if (exec.name === 'write' || exec.name === 'edit') {
     return probe ? '探查者只读：探查不修改任何文件，write/edit 一律禁止（工具目录判定）' : '验收复核者只读：验收复核不修改任何文件，write/edit 一律禁止（工具目录判定）'
+  }
+  if (exec.name === 'cordis_run') {
+    return probe
+      ? '探查者只读：cordis_run 会在会话内执行模型 JS 并挂载临时插件，一律禁止（宿主版本仍注册该工具时生效）'
+      : '验收复核者只读：cordis_run 会在会话内执行模型 JS 并挂载临时插件，一律禁止（宿主版本仍注册该工具时生效）'
   }
   const shellReason = shellMutationReason(probe ? 'probe' : 'reviewer', exec)
   if (shellReason !== null) return shellReason
@@ -824,7 +842,7 @@ function probeDisposalWarning(remaining) {
 }
 
 // ④ 主会话段（mainGateReason；自 apply 内提取的纯部分，分支顺序逐字同序）：
-//    ask → write/edit → cordis 6 只读 → cordis_run → pwsh/bash → planToolName
+//    ask → write/edit → cordis 2 只读 → cordis_run → pwsh/bash → planToolName
 //    → save_probe 分支保持不变（route=plan + purpose∈{refine,redo} + clarified）
 //    → subagent 族 → run_code（调 runCodeGroupDenyReason，depth+1）
 //    → job_output（wait 检查 + 计数器查重，只读不写入；set 由 recordJobOutputCall 在放行路径执行）→ null。
@@ -884,11 +902,12 @@ function mainGateReason(state, exec, gateCtx) {
     }
     return null
   }
-  // cordis（官方创造模式工具集，只读引用）：6 个只读/暂存工具任意路由状态放行
-  // （inspect_* 只读；define 只存源码+语法校验不执行；stop/undefine 无对象可操作）；
-  // cordis_run 是唯一执行口（模型 JS 求值+挂载临时插件，纯内存、会话级、重启即失）
-  // ——与 write/edit 同规则：路由未确认拒绝，批准/直行放行。执行者/规划/验收/探查
-  // 子代理侧由 agent.cordis.yml 的 toolFilter.deny 禁 cordis_run（其余 cordis 放行）。
+  // cordis（官方工具集，只读引用）：0.1.7-rc.2 宿主 dsh-tool-cordis 只注册
+  // cordis_inspect_list / cordis_inspect_query 两个只读工具；cordis_run 等 5 名已不存在。
+  // 下方判定为防御性保留（若某受支持版本仍注册该工具时生效）：cordis_run 是唯一执行口
+  // （模型 JS 求值+挂载临时插件，纯内存、会话级、重启即失）——与 write/edit 同规则：
+  // 路由未确认拒绝，批准/直行放行。子代理侧静态 deny 已移除（deny 未知名会使
+  // tools.restrict() 抛错、子代理创建失败），改由 planner/只读子代理的运行时闸门兜住。
   if (name === 'cordis_inspect_list' || name === 'cordis_inspect_query' || name === 'cordis_inspect_self' || name === 'cordis_define' || name === 'cordis_stop' || name === 'cordis_undefine') {
     return null
   }

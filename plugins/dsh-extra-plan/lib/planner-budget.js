@@ -19,6 +19,11 @@ export function toolCallCount(events, skipNames) {
     if (d.error !== undefined && d.error !== null) continue
     const message = d.message
     if (message === null || typeof message !== 'object' || !Array.isArray(message.content)) continue
+    // 0.1.7-rc.2 起：信封拍平到 message 顶层；旧形状保留兼容。
+    if (typeof message.toolCallId === 'string') {
+      if (message.isError !== true) okCalls.add(message.toolCallId)
+      continue
+    }
     for (const outer of message.content) {
       if (outer !== null && typeof outer === 'object' && outer.type === 'tool-result' && typeof outer.toolCallId === 'string' && outer.isError !== true) okCalls.add(outer.toolCallId)
     }

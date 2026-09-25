@@ -33,9 +33,11 @@ try {
 console.log('PASS  工作区 agent/preset YAML 解析成功（' + (Array.isArray(rows) ? rows.length : '非数组!') + ' 行）')
 if (!Array.isArray(preset)) console.log('PASS  preset.yml 为有效 YAML 文档')
 
+// 0.1.7-rc.2 宿主事实：dsh-tool-cordis 只注册 cordis_inspect_list（lib/index.js L40）、
+// cordis_inspect_query（lib/index.js L56）；cordis_run/cordis_define/cordis_stop/
+// cordis_undefine/cordis_inspect_self 已不存在（deny 列出未知名会使 tools.restrict() 抛错）。
 const cordisTools = [
-  'cordis_inspect_list', 'cordis_inspect_query', 'cordis_inspect_self',
-  'cordis_define', 'cordis_run', 'cordis_stop', 'cordis_undefine',
+  'cordis_inspect_list', 'cordis_inspect_query',
 ]
 const registered = new Set([
   'subagent', 'subagent_review', 'subagent_probe', 'subagent_plan', 'workflow', 'ralph',
@@ -83,23 +85,23 @@ for (const inner of all) {
   }
 }
 
-// S1-07 ~ S1-11：DEFAULT_DENY 已收敛为预设 config.deny 同集（12 项），resolveDeny 为纯函数回退。
+// S1-07 ~ S1-11：DEFAULT_DENY 已收敛为预设 config.deny 同集（11 项），resolveDeny 为纯函数回退。
 const executorRow = all.find((row) => row.name === '@local/dsh-extra-plan/executor-spawn')
 const ymlDeny = executorRow !== undefined && executorRow.config && Array.isArray(executorRow.config.deny)
   ? executorRow.config.deny : []
-if (DEFAULT_DENY.length === 12) {
+if (DEFAULT_DENY.length === 11) {
   pass += 1
-  console.log('PASS  S1 DEFAULT_DENY 恰有 12 项')
+  console.log('PASS  S1 DEFAULT_DENY 恰有 11 项')
 } else {
   fail += 1
-  console.log('FAIL  S1 DEFAULT_DENY 项数不是 12：' + DEFAULT_DENY.length)
+  console.log('FAIL  S1 DEFAULT_DENY 项数不是 11：' + DEFAULT_DENY.length)
 }
 const defaultDenySet = new Set(DEFAULT_DENY)
 const ymlDenySet = new Set(ymlDeny)
 if (defaultDenySet.size === DEFAULT_DENY.length && defaultDenySet.size === ymlDenySet.size
   && [...defaultDenySet].every((name) => ymlDenySet.has(name))) {
   pass += 1
-  console.log('PASS  S1 DEFAULT_DENY 与 agent.cordis.yml config.deny 集合逐字一致（12 项）')
+  console.log('PASS  S1 DEFAULT_DENY 与 agent.cordis.yml config.deny 集合逐字一致（11 项）')
 } else {
   fail += 1
   console.log('FAIL  S1 DEFAULT_DENY 与 agent.cordis.yml config.deny 集合不一致')
@@ -113,12 +115,12 @@ if (stillPresent.length === 0) {
   fail += 1
   console.log('FAIL  S1 DEFAULT_DENY 仍含：' + stillPresent.join(', '))
 }
-if (DEFAULT_DENY.includes('subagent_plan') === true && DEFAULT_DENY.includes('cordis_run') === true) {
+if (DEFAULT_DENY.includes('subagent_plan') === true && DEFAULT_DENY.includes('cordis_run') === false) {
   pass += 1
-  console.log('PASS  S1 DEFAULT_DENY 含新增 2 名（subagent_plan、cordis_run）')
+  console.log('PASS  S1 DEFAULT_DENY 含 subagent_plan 且不含 cordis_run（0.1.7 宿主无此工具）')
 } else {
   fail += 1
-  console.log('FAIL  S1 DEFAULT_DENY 缺少 subagent_plan 或 cordis_run')
+  console.log('FAIL  S1 DEFAULT_DENY 缺少 subagent_plan 或仍含 cordis_run')
 }
 const denyFallbackCases = [
   resolveDeny(undefined) === DEFAULT_DENY,
@@ -327,12 +329,12 @@ if (toolCordisRow !== undefined && toolCordisRow.name === '@deepseek-ai/dsh-tool
   fail += 1
   console.log('FAIL  T1 资产预设 tool-cordis 行被改动或形状不符')
 }
-if (cordisTools.length === 7 && agentText.includes('# 7 工具') && toolCordisRow !== undefined) {
+if (cordisTools.length === 2 && agentText.includes('# 0.1.7-rc.2 起 dsh-tool-cordis 只注册') && toolCordisRow !== undefined) {
   pass += 1
-  console.log('PASS  Cordis 静态集合恰有 7 项')
+  console.log('PASS  Cordis 静态集合恰有 2 项（rc.2 宿主实际注册集）')
 } else {
   fail += 1
-  console.log('FAIL  Cordis 静态集合不是 7 项')
+  console.log('FAIL  Cordis 静态集合不是 2 项')
 }
 
 console.log('\n通过 ' + pass + ', 失败 ' + fail)

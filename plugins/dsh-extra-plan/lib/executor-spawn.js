@@ -26,8 +26,9 @@ export const name = 'executor-spawn'
 export const inject = ['subagents']
 
 // DEFAULT_DENY 仅作 fallback：预设 agent.cordis.yml 的 executor-spawn 行恒提供
-// config.deny（12 项，含 cordis_run、subagent_plan），预设加载路径下本清单不可达；不一致以
-// config.deny 为准。本常量已与预设 config.deny 收敛一致（12 项）。
+// config.deny（11 项，含 subagent_plan；0.1.7 起宿主已无 cordis 执行口工具 cordis_run，
+// 故不列出——deny 未知名会使宿主 tools.restrict() 抛错），预设加载路径下本清单不可达；
+// 不一致以 config.deny 为准。本常量已与预设 config.deny 收敛一致（11 项）。
 export const DEFAULT_DENY = [
   'subagent',
   'subagent_review',
@@ -40,7 +41,6 @@ export const DEFAULT_DENY = [
   'ask_user_question',
   'todo_write',
   'subagent_plan',
-  'cordis_run',
 ]
 
 // deny 解析：config.deny 合法时以其为准，否则回退 DEFAULT_DENY（纯函数，供测试断言）。

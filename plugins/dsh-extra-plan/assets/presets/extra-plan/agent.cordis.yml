@@ -225,7 +225,8 @@
       name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
 
     # 执行者（非 planner child）：优先使用 otherAgentModel，空/未匹配/真实探针失败回退主会话；批准后经 subagent 委派。deny 只列本预设实际存在的工具名
-    # （R2 教训）；save_plan 注册于主会话层与规划子代理层，执行者与验收者不可见、无需 deny（登记见 SD35）。
+    # （R2 教训；0.1.7 起宿主已无 cordis 执行口工具 cordis_run，故不在任何 deny 清单中列出）；
+    # save_plan 注册于主会话层与规划子代理层，执行者与验收者不可见、无需 deny（登记见 SD35）。
     - id: tool-subagent
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
@@ -251,7 +252,6 @@
             - ask_user_question
             - todo_write
             - subagent_plan
-            - cordis_run
 
     # 规划子代理（subagent_plan）：只读 + 探查硬上限 + anchored 引导 + save_plan
     # 落盘（save_plan 由 extra-plan 插件在此子会话层注册）。continuable：迭代经
@@ -301,7 +301,6 @@
             - write
             - edit
             - subagent_plan
-            - cordis_run
 
     # 验收复核者（subagent_review）：只读验收文件逐条核对，≤20 行结论。
     - id: tool-subagent-review
@@ -327,7 +326,6 @@
             - write
             - edit
             - subagent_plan
-            - cordis_run
 
     # 探查子代理（非 planner child）：优先使用 otherAgentModel，空/未匹配/真实探针失败回退顶层主会话；只读探查 + save_probe 落盘【含证据报告】
     # one-shot（不可续轮）；模型由非 planner resolver 处理（不配 agentOptions，显式指定优先）
@@ -359,10 +357,9 @@
             - subagent_plan
             - write
             - edit
-            - cordis_run
 
     # executor-spawn 薄委托层：
-    # workflow/ralph worker 请求缺 toolFilter 时注入执行者 deny（12 项，含
+    # workflow/ralph worker 请求缺 toolFilter 时注入执行者 deny（11 项，含
     # subagent_plan 防 worker 再规划、含 subagent_probe 防 worker 委派探查者；
     # save_plan 不可见无需列）；模型不在薄层注入，worker 由非 planner resolver 选择 otherAgentModel
     # 或回退顶层主会话（请求显式指定 provider/model 时优先）。
@@ -383,7 +380,6 @@
           - ask_user_question
           - todo_write
           - subagent_plan
-          - cordis_run
 
     # 0.1.7：旧的 worker-thread 工作流行（worker-thread 替身包）整包消失，替身为 dsh-workflow-ptc
     # （其行实例 PtcWorkflowEngine 继承 dsh-workflow 的 WorkflowEngine，仍注册 workflowEngine，
@@ -426,10 +422,12 @@
 
 # ── cordis（官方创造模式工具集，只读引用官方包） ──────────────────────────
 
-# 7 工具：cordis_inspect_list/query/self 只读；cordis_define 只存源码+语法校验、
-# 不执行；cordis_stop/cordis_undefine 无对象可操作。cordis_run 是唯一执行口
-# （模型 JS 求值+挂载临时插件，纯内存、会话级、重启即失）——主会话由插件硬闸门
-# 按 write/edit 同规则管控（路由未确认拒绝、批准/直行放行）；执行者/规划/验收/
-# 探查四子代理由 toolFilter.deny 禁 cordis_run，其余 cordis 工具放行。
+# 0.1.7-rc.2 起 dsh-tool-cordis 只注册 cordis_inspect_list/cordis_inspect_query
+# 两个只读工具；cordis_run 等 5 名已不存在，故不在任何 deny 清单中列出（deny 未知名
+# 会使宿主 tools.restrict() 抛错、子代理创建失败）。cordis_run 是唯一的执行口形态
+# （模型 JS 求值+挂载临时插件，纯内存、会话级、重启即失）——若某受支持版本仍注册该
+# 工具：主会话由插件硬闸门按 write/edit 同规则管控（路由未确认拒绝、批准/直行放行）；
+# 执行者/规划/验收/探查四子代理改由运行时闸门（plannerGateReason /
+# childReadonlyGateReason）兜住，其余 cordis 工具放行。
 - id: tool-cordis
   name: '@deepseek-ai/dsh-tool-cordis'
