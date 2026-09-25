@@ -7,6 +7,7 @@
   "exports": {
     ".": "./index.js",
     "./settings": "./lib/settings.js",
+    "./settings/locale/*": "./locale/*",
     "./executor-spawn": "./lib/executor-spawn.js",
     "./preset-sync": "./lib/preset-sync.js",
     "./client": "./lib/client.js",
@@ -18,6 +19,7 @@
   "files": [
     "index.js",
     "lib/",
+    "locale/",
     "scripts/generate-runtime-defaults.mjs",
     "cordis.patch.yml",
     "assets/presets/extra-plan/",

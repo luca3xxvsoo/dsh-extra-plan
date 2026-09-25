@@ -7,8 +7,11 @@ window.__ModuleLoader__.load({
     const React = require("react");
 
     // settings 命名空间 = profile 行 id（dsh-extra-plan-settings）；同时用作 configForms 键、
-    // plugins.item 卡片的 slot id 与 locale 命名空间。
+    // plugins.row.config 键的 rowId 段与 locale 命名空间。
     const NS = "dsh-extra-plan-settings";
+    // 设置行的 plugins.row.config 注册键：宿主 rowConfigKey(bundle, rowId) = `${bundle}#${rowId}`。
+    // bundle 段 = profile 内包名（@local/dsh-extra-plan），rowId 段 = 设置行 id（= NS）。
+    const ROW_CONFIG_KEY = "@local/dsh-extra-plan#dsh-extra-plan-settings";
     // 2 项宿主行设置（webFetch / toolPresentationMode）：**权威值落 settings 行**
     // （dsh-extra-plan-settings 行 config，与上面 8 项同源，跨升级/重装不丢）；
     // 声明行 plugins 内 tool-web / tool-presentation 子行只是投影（消费方是宿主行装载期快照）。
@@ -88,8 +91,10 @@ window.__ModuleLoader__.load({
     };
 
     // 8 项 UI 设置（settings 行 dsh-extra-plan-settings 的 volatile 字段）：客户端自带的
-    // 呈现元数据（控件/选项/locale/提示）。写入一律交回宿主表单（ownerProps.form.mutate），
-    // 不由本插件直接落盘。
+    // 呈现元数据（控件/选项/locale/提示）。数组内 general 组在前、pro 组在后：
+    // pro 组首项 = crossProviderPlannerModel（README「pro规划」口径 L94-99）；
+    // general 组的 runcodeCatchGate 留在组末（其渲染位置由 render 段派生，见下）。
+    // 写入一律交回宿主表单（ownerProps.form.mutate），不由本插件直接落盘。
     const EXTRA_FIELDS = Object.freeze([
       { key: "anchoredBootstrap", control: "select", options: [true, false], locale: "anchoredBootstrap", section: "general", hint: "首轮极简工具 + 提示词 ｜ 新会话/新子代理生效" },
       { key: "creativeMode", control: "select", options: [true, false], locale: "creativeMode", section: "general", hint: "是否开启dsh官方创造模式 ｜ 立即生效（重启后新会话同样生效）" },
@@ -335,7 +340,13 @@ window.__ModuleLoader__.load({
           }
         }
 
-        const generalFields = EXTRA_FIELDS.filter(function (field) { return field.section === "general"; });
+        // 区块渲染顺序 = README「可配置项」口径（L87-99）：
+        // 通用区 = anchoredBootstrap → creativeMode → webFetch → toolPresentationMode → runcodeCatchGate；
+        // pro 区 = crossProviderPlannerModel → plannerModel → plannerPromptSuffix → exploreBudget → otherAgentModel。
+        // 实现：general 组里除 runcodeCatchGate 外的 2 项在前、2 项宿主行（HOST_ROW_FIELDS）居中、
+        // runcodeCatchGate 收尾；字段总数仍 10（8 项 UI + 2 项宿主行），区块仍 2 个。
+        const generalHeadFields = EXTRA_FIELDS.filter(function (field) { return field.section === "general" && field.key !== "runcodeCatchGate"; });
+        const generalTailFields = EXTRA_FIELDS.filter(function (field) { return field.section === "general" && field.key === "runcodeCatchGate"; });
         const proFields = EXTRA_FIELDS.filter(function (field) { return field.section === "pro"; });
         function renderField(field, current, disabled, onChange) {
           return el("label", { className: "esp-field", key: field.key },
@@ -353,7 +364,7 @@ window.__ModuleLoader__.load({
         return el(React.Fragment, null,
           el("div", { className: "esp-section" },
             el("p", { className: "esp-sectionTitle" }, t("generalSection")),
-            generalFields.map(function (field) {
+            generalHeadFields.map(function (field) {
               return renderField(field, draft[field.key], saving || !writable, function (next) {
                 setDraft(function (prev) { return Object.assign({}, prev, { [field.key]: next }); });
               });
@@ -363,6 +374,11 @@ window.__ModuleLoader__.load({
             hostDraft === null ? null : HOST_ROW_FIELDS.map(function (field) {
               return renderField(field, hostDraft[field.key], saving || !writable || hostDraft === null, function (next) {
                 setHostDraft(function (prev) { return Object.assign({}, prev, { [field.key]: next }); });
+              });
+            }),
+            generalTailFields.map(function (field) {
+              return renderField(field, draft[field.key], saving || !writable, function (next) {
+                setDraft(function (prev) { return Object.assign({}, prev, { [field.key]: next }); });
               });
             })
           ),
@@ -396,18 +412,18 @@ window.__ModuleLoader__.load({
         );
       }
 
-      // 注册面（dsh 0.1.7-rc.1）：Plugins 页的 plugins.item 官方插件卡片列表。
-      // 旧版 settings.plugin.item 插槽在 0.1.7 全库 0 命中（已废）。
+      // 注册面（dsh 0.1.7-rc.1 / 0.1.7-rc.2）：Plugins 页「已安装包 → 行详情页」的 keyed 插槽 plugins.row.config。
+      // 宿主 plugins.item 是官方设置页专用列表（挂那里会落进「官方」分组）；旧版 settings.plugin.item 插槽在 0.1.7 已废。
+      // key = ROW_CONFIG_KEY（宿主 rowConfigKey(bundle,rowId) 形态）；keyed 插槽按 key 定位、不认 order/label。
       // whileServed：只有宿主确实提供该 settings 命名空间时才注册卡片，
       // 没有该命名空间的部署不显示任何痕迹。
-      ctx.effect(() => ctx.configForms.whileServed([NS], () => ctx.slots.inject("plugins.item", () => ctx.slots.register({
-        name: "plugins.item",
-        id: NS,
-        order: 90,
+      ctx.effect(() => ctx.configForms.whileServed([NS], () => ctx.slots.inject("plugins.row.config", () => ctx.slots.register({
+        name: "plugins.row.config",
+        key: ROW_CONFIG_KEY,
         label: () => t("cardTitle"),
         locale: NS,
         inject: () => ({})
-      }, SettingsCard))), "dsh-extra-plan-settings: plugins item page");
+      }, SettingsCard))), "dsh-extra-plan-settings: plugins row config");
     }
 
     exports.apply = apply;

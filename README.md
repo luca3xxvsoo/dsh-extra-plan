@@ -131,6 +131,9 @@ dsh-extra-plan/
 │   │   │   ├── sdk-text-cache.js                       # tools:sdk缓存复用
 │   │   │   ├── settings.js                             # 设置页宿主端
 │   │   │   └── shell-mutation.js                       # 写操作判定：跨平台命令解码与写形态
+│   │   ├── locale/                                      
+│   │   │   ├── en.json                      
+│   │   │   └── zh.json                        
 │   │   ├── scripts/                                    
 │   │   │   └── generate-runtime-defaults.mjs           # 构建期生成器：exploreBudget 叶值 → preset-defaults.generated.js
 │   │   ├── cordis.patch.yml                                      
