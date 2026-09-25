@@ -217,7 +217,7 @@ const patchText = readFileSync(patchFile, 'utf8')
 check('T1 声明行存在（- id: preset-extra-plan 且下一行 name 逐字为 @deepseek-ai/dsh-agent-preset）',
   patchText.includes("    - id: preset-extra-plan\n      name: '@deepseek-ai/dsh-agent-preset'\n"))
 check('T1 声明行 config 含 id: extra-plan 与逐字 description（取自 preset.yml）',
-  patchText.includes('        id: extra-plan\n') && patchText.includes("        description: '" + preset.description + "'\n") && preset.description === '可交互式进入pro模型规划，适合交互式vibe coding，不适合wish coding。')
+  patchText.includes('        id: extra-plan\n') && patchText.includes("        description: '" + preset.description + "'\n") && preset.description === '实现权限控制+子代理角色分配')
 const patchDoc = parsePresetYaml(patchText)
 const patchDeclaration = patchDoc[0].insert[0]
 check('T1 声明行 config 顶层条目数 = 17（group 3 + 普通 14），且与资产顶层条目逐字一致',

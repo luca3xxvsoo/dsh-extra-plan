@@ -6,12 +6,11 @@ window.__ModuleLoader__.load({
     Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
     const React = require("react");
 
-    // settings 命名空间 = profile 行 id（dsh-extra-plan-settings）；同时用作 configForms 键、
-    // plugins.row.config 键的 rowId 段与 locale 命名空间。
+    // settings 命名空间 = profile 行 id（dsh-extra-plan-settings）；同时用作 configForms 键与 locale 命名空间。
     const NS = "dsh-extra-plan-settings";
-    // 设置行的 plugins.row.config 注册键：宿主 rowConfigKey(bundle, rowId) = `${bundle}#${rowId}`。
-    // bundle 段 = profile 内包名（@local/dsh-extra-plan），rowId 段 = 设置行 id（= NS）。
-    const ROW_CONFIG_KEY = "@local/dsh-extra-plan#dsh-extra-plan-settings";
+    // 包详情页内联配置卡的 plugins.bundle.config 注册键：keyed 插槽按 key 定位，
+    // key = bundle 包名（宿主 PackageDetail 用 entryKey: pkg.name 渲染该插槽）。
+    const BUNDLE_CONFIG_KEY = "@local/dsh-extra-plan";
     // 2 项宿主行设置（webFetch / toolPresentationMode）：**权威值落 settings 行**
     // （dsh-extra-plan-settings 行 config，与上面 8 项同源，跨升级/重装不丢）；
     // 声明行 plugins 内 tool-web / tool-presentation 子行只是投影（消费方是宿主行装载期快照）。
@@ -412,18 +411,18 @@ window.__ModuleLoader__.load({
         );
       }
 
-      // 注册面（dsh 0.1.7-rc.1 / 0.1.7-rc.2）：Plugins 页「已安装包 → 行详情页」的 keyed 插槽 plugins.row.config。
-      // 宿主 plugins.item 是官方设置页专用列表（挂那里会落进「官方」分组）；旧版 settings.plugin.item 插槽在 0.1.7 已废。
-      // key = ROW_CONFIG_KEY（宿主 rowConfigKey(bundle,rowId) 形态）；keyed 插槽按 key 定位、不认 order/label。
-      // whileServed：只有宿主确实提供该 settings 命名空间时才注册卡片，
-      // 没有该命名空间的部署不显示任何痕迹。
-      ctx.effect(() => ctx.configForms.whileServed([NS], () => ctx.slots.inject("plugins.row.config", () => ctx.slots.register({
-        name: "plugins.row.config",
-        key: ROW_CONFIG_KEY,
+      // 注册面（dsh 0.1.7-rc.1 / 0.1.7-rc.2）：Plugins 页「包详情页」内联配置区的 keyed 插槽 plugins.bundle.config。
+      // 宿主 plugins.item 是官方设置页专用列表（挂那里会落进「官方」分组）；settings.plugin.item 在 0.1.7 已废；
+      // 插件此前落在行详情页的 row.config 插槽，现按宿主官方用法内联到包详情页（位置在「包含的组件」上方）。
+      // key = BUNDLE_CONFIG_KEY = 包名；keyed 插槽按 key 定位、不认 order/label。
+      // whileServed：只有宿主确实提供该 settings 命名空间时才注册卡片，没有该命名空间的部署不显示任何痕迹。
+      ctx.effect(() => ctx.configForms.whileServed([NS], () => ctx.slots.inject("plugins.bundle.config", () => ctx.slots.register({
+        name: "plugins.bundle.config",
+        key: BUNDLE_CONFIG_KEY,
         label: () => t("cardTitle"),
         locale: NS,
         inject: () => ({})
-      }, SettingsCard))), "dsh-extra-plan-settings: plugins row config");
+      }, SettingsCard))), "dsh-extra-plan-settings: plugins bundle config");
     }
 
     exports.apply = apply;
