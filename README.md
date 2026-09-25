@@ -107,6 +107,7 @@ dsh-extra-plan/
 │   │   ├── assets/presets/extra-plan/                   
 │   │   │   ├── agent.cordis.yml                        # 预设主配置（persona/工具/插件行/delegation）
 │   │   │   ├── dist-manifest.json                      # 预设分发：分发清单模板（distHash 比对 + 迁移状态；部署时由 preset-sync 写入） 
+│   │   │   ├── preset-patch.generated.yml              # 预设投递载体文件
 │   │   │   └── preset.yml                              # 预设元信息（GUI 显示名称与描述）
 │   │   ├── lib/                                        # 模块目录
 │   │   │   ├── agent-runtime.js                        # 角色运行态：createAgentRuntime 的 per-apply 判定与缓存
