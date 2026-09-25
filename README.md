@@ -86,10 +86,6 @@ dsh plugin --profile qqbot remove @local/dsh-qqbot-user-questions
 
 避免方案：创造模式开关设置为关
 
-#### 子代理未知原因请求失败无法恢复
-
-疑似为dsh-llm-deepseek-api-key的问题，暂无彻底解决方案
-
 ## 4. 可配置项
 
 DSH web界面 -> 插件 -> @local/dsh-extra-plan -> 按需规划模式配置
