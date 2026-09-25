@@ -64,11 +64,12 @@
 //       kind=user / send_message 续轮转达 kind=agent-message；用户不直接对话
 //       子代理）起的 tool/call（含 save_plan）≥ exploreBudget 后拒绝后续
 //       工具调用并注入收敛指令；每条主会话转达消息重置预算（=用户授权继续
-//       探查）；save_plan 与运行时上下文快照（kind=plugin）不重置；
+//       探查）；save_plan 与宿主运行时快照（宿主自有 kind，如 runtime-context，
+//       非 user/agent-message）不重置；
 //     - write/edit 与 pwsh 写命令拒绝（toolFilter 之外的备份防线）。
 //     - plannerPromptSuffix 配置：委派的初始任务消息（kind=user）与续轮转达
 //       （kind=agent-message）末尾机械拼接「\n\n + 配置文本」（任务要求 + 回车换行
-//       + 文本）；运行时快照（kind=plugin）不追加。
+//       + 文本）；宿主运行时快照（自有 kind，非 user/agent-message）不追加。
 //  3) anchored 引导（默认开）：主会话与规划子代理在首个 tool/call 落盘前，
 //     装配级注入极简 persona、清空运行时上下文、目录收窄——native/both 保持
 //     bootstrap shell(s)+read，sections 仅 persona；Pure PTC 只保留 run_code，

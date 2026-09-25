@@ -1,6 +1,6 @@
 // Host half of dsh-extra-plan-settings（dsh 0.1.7-rc.1 设置链）。
 //
-// 写链（2026-09-25 二轮：权威值上移 settings 行 + 声明行投影）：
+// 写链（2026-09-26：权威值统一由客户端一次 mutate 写入 + PUT 仅投影）：
 //  - 权威值唯一落点 = 本行（settings 行 dsh-extra-plan-settings）的 config，共 10 项：
 //      · 8 项 UI 设置（anchoredBootstrap/creativeMode/runcodeCatchGate/
 //        crossProviderPlannerModel/plannerModel/plannerPromptSuffix/exploreBudget/
@@ -8,11 +8,13 @@
 //        读写统一走官方 configForms/remote.settings，事务 + revision fencing + 回滚）。
 //      · 2 项宿主行设置（webFetch、toolPresentationMode）：同样落在本行 config（本行即
 //        Config 的 10 个 volatile 字段），故与 8 项一样跨升级/重装不丢。
+//    10 项的写法 = 客户端官方 configForms 一次 mutate（10 个 set op，同一事务 + 同一
+//    revision fence）：先 PUT 后 mutate 会在本命名空间内自撞 fence，故 PUT 不再写本行。
 //  - 投影落点 = 声明行 preset-extra-plan 的 plugins 内 tool-web / tool-presentation 子行
 //    （消费方是宿主行装载期快照，只有声明行子行能被宿主读到，故必须投影）。
-//    PUT /api/dsh-extra-plan-settings/pro-config 的写链顺序：
-//      ① 先写 settings 行（权威值，宿主永不清理本行）→ ② 再投影声明行子行。
-//    投影失败不回滚权威值（投影被宿主删除是无害状态：下次启动自愈按权威值重建）。
+//    PUT /api/dsh-extra-plan-settings/pro-config 仅做投影（幂等；body 仅这 2 项，含其它键 400）：
+//      校验 → 投影声明行子行。权威值已由客户端 mutate 事务写入，故投影失败不回滚权威值
+//      （投影被宿主删除是无害状态：下次启动自愈按权威值重建）。
 //  - GET 只读：权威值（本行 config.<key>）→ 声明行投影现值 → 出厂默认，逐项回退。
 //
 // 本模块不涉及 qqbot（见独立插件 dsh-qqbot-user-questions）。
@@ -210,12 +212,6 @@ function proPayload(editor) {
   return { fields, values: { ...current.values }, defaults: { ...current.defaults } }
 }
 
-/** 行定位失败（声明行/子行缺失）→ 404；edit/reconcile 失败 → 500。 */
-function isLocateError(error) {
-  const message = String(error !== null && typeof error === 'object' && error.message !== undefined ? error.message : error)
-  return message.includes('不可定位') || message.includes('缺少') || message.includes('缺失') || message === 'not found'
-}
-
 function createApiHandler(ctx) {
   return async (req, res) => {
     if (!isLoopback(req)) return json(res, 403, { error: 'forbidden: loopback only' })
@@ -259,19 +255,7 @@ function createApiHandler(ctx) {
         if (Object.keys(authorityValues).length === 0) {
           return json(res, 400, { error: 'at least one of ' + HOST_ROW_KEYS.join('/') + ' is required' })
         }
-        // ① 权威值先落 settings 行（与 8 项 UI 设置同源落点）：宿主不清理本行 →
-        //    跨升级/重装/宿主删投影都不丢。行定位失败才是真正的 404（权威值无处落地）。
-        const settingsRow = findSettingsRow(editor)
-        if (settingsRow === undefined) {
-          return json(res, 404, { error: 'settings row not found: ' + SETTINGS_ROW_ID })
-        }
-        try {
-          await editor.edit(settingsRow.entry, (current) => ({ ...current, ...authorityValues }))
-        } catch (error) {
-          const message = String(error && error.message || error)
-          return json(res, isLocateError(error) ? 404 : 500, { error: 'failed to write settings row: ' + message })
-        }
-        // ② 再投影声明行 plugins 子行（消费方是宿主行装载期快照）。
+        // 投影声明行 plugins 子行（消费方是宿主行装载期快照）。
         //    投影失败不回滚权威值：投影被宿主删除是无害状态，下次启动自愈会按权威值重建。
         const presetRow = findPresetRow(editor)
         if (presetRow === undefined) {

@@ -9,6 +9,7 @@
 - 复杂嵌套/拼接的修改遵循转义纪律：最终目标语言视角写出正确代码 → 逐层向外转义 → 解析回放验证（全局纪律）
 - 工作区外写入（如 ~/.dsh/memory/ 记忆库）：沙箱拒绝时唯一放行通道 = shell 命令 + sandbox_permissions 提权（一次性重试，需用户批准；AGENTS.md 协议已有规定，本项目遵守）。严禁通过改用工具名称绕过沙箱限制。
 - 闸门拒绝消息已含修复指令（如「已保护 M 个」「参数不可解析」「须先 ask_user_question 路由确认」「选项固定为…」）——照改写法即可通过，严禁换工具/改调用方式绕过；绕过尝试会被后续闸门拦截。
+- **界面文案口径（用户确认，2026-09-25）**：界面文案只保留结论级信息（成功/失败/需做什么操作），不写技术描述；技术细节的合法去处 = 硬闸门给 AI 的文案（唯一例外）、诊断文件/日志/浏览器控制台、AI 维护文档。改 UI 文案时先对照本条。
 
 ## Web 核心与 QQBot 分发所有权
 | profile | 唯一职责 | 迁移边界 |
@@ -76,12 +77,12 @@
 
 ---
 
-*本文件对应 READAI.md 文档索引表「维护纪律+自检+地图同步」一行与「必守纪律（一句）」的展开。*
+*本文件对应 READAI.md 文档索引表「维护纪律+自检+地图同步」一行与「必守纪律」的展开。*
 
 ## 闸门关键词单源维护（v0.3.0）
 - **唯一人工编辑位置**：仓库模板 `plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml`（部署现场 = profile patch 声明行 `preset-extra-plan` 的 `config.plugins` 内 `extra-plan` 行 `config.gateWords`，即 `configEditor.documentPath`；旧 `DSH_HOME/.agent-presets/extra-plan/agent.cordis.yml` 仅作迁移期旧值副本）的 `config.gateWords` 7 个字段；禁止在 JS 里改词值（`lib/gate-words.js` 无词值、无默认词表、不读文件/环境变量）。改词后普通重启即生效；旧词不再推进状态机（历史事件安全）。
 - **合法性**：非数组对象、键集合恰为 7 键、每值为非空字符串、首尾无空白、无 CR/LF、7 值两两不同、不以 (Recommended)/（Recommended）/(推荐)/（推荐）结尾；失败信息以 `extra-plan: config.gateWords` 开头，运行时同步抛错（阻止预设被使用，不回退旧词）。
-- **设置页分工**：**8 项 UI 设置**（settings 行 `dsh-extra-plan-settings` 的 `Config`，8 字段全 `.volatile()`）+ **2 项宿主行设置**（webFetch/toolPresentationMode，权威值同样落 settings 行，另投影到声明行 `config.plugins` 内 `tool-web`/`tool-presentation` 子行，经专用 PUT → `configEditor.edit`）；gateWords 是 **7 项 YAML-only 闸门词字段**——不进 `SETTING_DEFINITIONS`、不进设置页表单、不进 `preset-defaults.generated.js`、不新增构建/生成步骤；`generate-runtime-defaults.mjs --check` 必须保持 0 且**两份产物**（`lib/preset-defaults.generated.js` 与 `assets/presets/extra-plan/preset-patch.generated.yml`）无 diff。
+- **设置页分工**：**8 项 UI 设置**（settings 行 `dsh-extra-plan-settings` 的 `Config`，8 字段全 `.volatile()`）+ **2 项宿主行设置**（webFetch/toolPresentationMode，权威值同样落 settings 行，与 8 项并入官方 configForms mutate（10 op）一次提交；另投影到声明行 `config.plugins` 内 `tool-web`/`tool-presentation` 子行，PUT 仅保留投影 → `configEditor.edit`）；gateWords 是 **7 项 YAML-only 闸门词字段**——不进 `SETTING_DEFINITIONS`、不进设置页表单、不进 `preset-defaults.generated.js`、不新增构建/生成步骤；`generate-runtime-defaults.mjs --check` 必须保持 0 且**两份产物**（`lib/preset-defaults.generated.js` 与 `assets/presets/extra-plan/preset-patch.generated.yml`）无 diff。
 - **启动自愈三维判定**（preset-sync；**无 manifest 台账、无跨版本迁移**）：声明行 plugins 覆盖资产行 id 集合 **且** 本体剥离用户可写键后与资产一致 **且** 2 项宿主行投影与权威值一致 → `idle`（不写盘）；任一不成立 → 以资产为基底重建声明行、一次性回填 settings 行缺项、按权威值投影 2 项宿主行、gateWords 由 carry 从声明行现值兜底并整组复验（非法则保留基底词表）；写盘只经 `configEditor.edit`（事务 + reconcile + 回滚），**本插件绝不直写任何 `cordis.patch.yml`**。
 - **无运行期状态目录**：插件不落任何自有台账（旧状态目录初始化 / manifest 读写 / postinstall 脚本与 flash 清理链已于 2026-09-25 整链删除）；启动自愈是唯一落地点，失败由外壳吞错不阻断启动。
 - **本批语法门**：本轮实际改动的 3 个 .js（`index.js`、`lib/gate-words.js`、`lib/preset-sync.js`）与 6 个 .mjs（step-00/04/06 + 三个 step-01）逐文件 `node --check`；`lib/gate-words.js` 应加入后续基线语法门清单。

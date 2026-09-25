@@ -500,7 +500,10 @@ function mrStub(tag, patch) {
   const appends = []
   const session = {
     header: { id: 'stub-malformed-' + tag },
-    append(type, payload, options) { appends.push({ type, payload, options }) },
+    append(type, payload, options) {
+      appends.push({ type, payload, options })
+      console.log('[MR-stub:' + tag + '] append ' + type + ' turn=' + payload.turn + ' step=' + payload.step)
+    },
   }
   return { appends, payload: Object.assign({ agent: { session }, failure: { code: 'MALFORMED_RESPONSE' } }, patch) }
 }
@@ -534,6 +537,7 @@ for (let i = 0; i < MR_BAD_COORDS.length; i += 1) {
   const [label, coords] = MR_BAD_COORDS[i]
   const stub = mrStub('bad-' + i, coords)
   const result = plugin.malformedRecovery(stub.payload)
+  console.log('[MR3] ' + label + ' → ' + (stub.appends.length === 0 ? 'no-append' : 'APPENDED'))
   mrBadResults.push(label + ':' + (stub.appends.length === 0 ? 'no-append' : 'APPENDED') + '/' + JSON.stringify(result))
 }
 check('MR3 非法坐标 8 例全部不注入且仍返回 retry', mrBadResults, MR_BAD_COORDS.map(([label]) => label + ':no-append/{"kind":"retry"}'))

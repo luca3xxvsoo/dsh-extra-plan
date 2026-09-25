@@ -15,7 +15,8 @@ window.__ModuleLoader__.load({
     // 2 项宿主行设置（webFetch / toolPresentationMode）：**权威值落 settings 行**
     // （dsh-extra-plan-settings 行 config，与上面 8 项同源，跨升级/重装不丢）；
     // 声明行 plugins 内 tool-web / tool-presentation 子行只是投影（消费方是宿主行装载期快照）。
-    // 提交仍走本插件的 PUT（接口内部：先写 settings 行 → 再投影声明行子行）。
+    // 提交：2 项并入官方 configForms 一次 mutate（与 8 项同一事务 + revision fencing）；
+    // 本插件的 PUT 仅把新值投影到声明行子行（幂等）。
     const PRO_CONFIG_URL = "/api/dsh-extra-plan-settings/pro-config";
 
     const zh = {
@@ -39,11 +40,9 @@ window.__ModuleLoader__.load({
       save: "保存",
       saving: "保存中…",
       saved: "已保存",
-      savedRestart: "已保存（这 2 项需重启 DSH 后生效）",
-      savedPartial: "保存部分失败：宿主行设置已写入，pro规划/通用设置未写入（已自动回滚宿主行设置）",
-      hostRowsFailed: "宿主行设置保存失败，其余设置未写入",
-      rollbackFailed: "宿主行设置已写入且回滚失败",
-      saveFailed: "保存失败：",
+      savedPartial: "保存失败",
+      hostRowsFailed: "保存失败",
+      rollbackFailed: "保存失败",
       loading: "加载中…",
       loadFailed: "加载失败",
       unavailable: "该配置命名空间当前未由宿主提供，暂时无法编辑。",
@@ -75,11 +74,9 @@ window.__ModuleLoader__.load({
       save: "Save",
       saving: "Saving…",
       saved: "Saved.",
-      savedRestart: "Saved. Restart DSH for these two settings to take effect.",
-      savedPartial: "Partial save: host-row settings were written; pro planner/general settings failed (host-row settings rolled back).",
-      hostRowsFailed: "Host-row settings failed to save; other settings were not written.",
-      rollbackFailed: "Host-row settings were written and rollback failed.",
-      saveFailed: "Save failed: ",
+      savedPartial: "Save failed.",
+      hostRowsFailed: "Save failed.",
+      rollbackFailed: "Save failed.",
       loading: "Loading…",
       loadFailed: "Load failed",
       unavailable: "The Host does not serve this settings namespace right now.",
@@ -202,9 +199,10 @@ window.__ModuleLoader__.load({
       }
 
       // 单卡双区块：8 项 UI 设置直接消费宿主提供的表单
-      // （ownerProps.form = ConfigPageForm{state, mutate}）；2 项宿主行设置自绘控件 + 专用 PUT。
-      // 全卡唯一保存按钮 → saveAll：先 PUT 2 项宿主行（无 revision fencing，失败即中止、8 项零写入），
-      // 再走官方 configForms mutate 8 项（自带 revision fencing + 事务回滚）；mutate 失败自动回滚 2 项。
+      // （ownerProps.form = ConfigPageForm{state, mutate}）；2 项宿主行设置自绘控件 + 专用 PUT（仅投影）。
+      // 全卡唯一保存按钮 → saveAll：先 PUT 纯投影 2 项宿主行（幂等，失败即中止、10 项零写入），
+      // 再走官方 configForms 一次 mutate 10 项（8 项 UI + 2 项宿主行，事务 + revision fencing）；
+      // mutate 失败回滚投影。
       function ExtraPlanForm(props) {
         const form = props.form;
         const snapshot = form !== undefined && form !== null ? form.state : undefined;
@@ -217,7 +215,7 @@ window.__ModuleLoader__.load({
         const [hostStatus, setHostStatus] = React.useState("loading");
         const [saving, setSaving] = React.useState(false);
         const [message, setMessage] = React.useState({ kind: "", text: "" });
-        // PUT 前快照（加载时 values 的 webFetch/toolPresentationMode）：mutate 失败时用它再 PUT 一次原值。
+        // 投影回滚基准（加载时 values 的 webFetch/toolPresentationMode）：mutate 失败时用它再 PUT 一次原值。
         const hostSnapshot = React.useRef(null);
 
         React.useEffect(function () {
@@ -277,7 +275,7 @@ window.__ModuleLoader__.load({
           return raw;
         }
 
-        // 部分失败：用 PUT 前快照再发一次 PUT 原值（best-effort，不再抛错）。
+        // 部分失败：用投影回滚基准再发一次 PUT 原值（best-effort，不再抛错）。
         async function rollbackHostRows() {
           const base = hostSnapshot.current;
           if (base === null || base === undefined) {
@@ -302,37 +300,39 @@ window.__ModuleLoader__.load({
           if (hostDraft === null) return;
           setSaving(true);
           setMessage({ kind: "", text: "" });
-          // 第一步：PUT 2 项宿主行（请求体形状照搬原独立面板）。PUT 无 revision fencing/回滚，
-          // 失败即中止、8 项零写入，无半写风险。
-          let values
+          // 第一步：PUT 仅投影 2 项宿主行到声明行子行（幂等）。投影无 revision fencing/回滚，
+          // 失败即中止、10 项零写入，无半写风险。
           try {
             const res = await fetch(PRO_CONFIG_URL, {
               method: "PUT",
               headers: { "content-type": "application/json", "accept": "application/json" },
-              body: JSON.stringify({ webFetch: hostDraft.webFetch, toolPresentationMode: hostDraft.toolPresentationMode })
+              // 投影体 = 本次保存的 2 项宿主行值（hostDraft 恒只含 HOST_ROW_FIELDS 两键；含其它键即 400）。
+              body: JSON.stringify({ ...hostDraft })
             });
             const data = await res.json().catch(function () { return {}; });
             if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
-            values = data.values && typeof data.values === "object" ? data.values : {};
           } catch (e) {
-            setMessage({ kind: "error", text: t("hostRowsFailed") + " " + String((e && e.message) || e) });
+            console.error("dsh-extra-plan-settings save failed:", e);
+            setMessage({ kind: "error", text: t("hostRowsFailed") });
             setSaving(false);
             return;
           }
-          // 第二步：官方 configForms mutate 8 项（8 项 set op，带读到的 revision 作为 fence）。
+          // 第二步：官方 configForms 一次 mutate 10 项（8 项 UI + 2 项宿主行 set op，带读到的 revision 作为 fence）。
           const ops = EXTRA_FIELDS.map(function (field) {
             return { op: "set", path: [field.key], value: fieldValue(field) };
-          });
+          }).concat(HOST_ROW_FIELDS.map(function (field) {
+            return { op: "set", path: [field.key], value: hostDraft[field.key] };
+          }));
           try {
             const accepted = await form.mutate(ops, revision);
             if (accepted === false) {
               await rollbackHostRows();
               return;
             }
-            // 保存后状态刷新：2 项用 PUT 返回值刷新；8 项由 form.state.value 变化触发既有 [value] effect。
-            hostSnapshot.current = { webFetch: values.webFetch, toolPresentationMode: values.toolPresentationMode };
-            setHostDraft({ webFetch: values.webFetch, toolPresentationMode: values.toolPresentationMode });
-            setMessage({ kind: "ok", text: t("savedRestart") });
+            // 保存后状态刷新：2 项用本次保存值刷新；8 项由 form.state.value 变化触发既有 [value] effect。
+            hostSnapshot.current = { webFetch: hostDraft.webFetch, toolPresentationMode: hostDraft.toolPresentationMode };
+            setHostDraft({ webFetch: hostDraft.webFetch, toolPresentationMode: hostDraft.toolPresentationMode });
+            setMessage({ kind: "ok", text: t("saved") });
           } catch {
             await rollbackHostRows();
           } finally {

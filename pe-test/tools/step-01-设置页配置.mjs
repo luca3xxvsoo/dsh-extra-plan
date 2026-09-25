@@ -119,12 +119,8 @@ function check(label, condition) {
 check('依赖锚点 ① profiles/<name>/node_modules ② 0.1.7 宿主现场 node_modules 均可解析 js-yaml', dependencyBases.length >= 2 && dependencyRequire !== null)
 check('settings.js：settings 命名空间策略走 settings.configure({ auto: false }, ctx.fiber)（无 settings.register）', settingsText.includes('child.settings.configure({ auto: false }, ctx.fiber)') && !settingsText.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n').includes('settings.register'))
 check('settings.js：无 ExtraPlanSettingsSchema、无 .agent-presets 写预设文件、无自建原子写', !settingsText.includes('ExtraPlanSettingsSchema') && !settingsText.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n').includes('.agent-presets'))
-check('settings.js：PUT 仅收 webFetch/toolPresentationMode 且写链经 editor.edit + 整体重述 plugins', settingsText.includes('HOST_ROW_KEYS') && settingsText.includes('unsupported field(s)') && settingsText.includes('restatePresetPlugins') && settingsText.includes('await editor.edit(') && settingsText.includes("isLocateError(error) ? 404 : 500"))
-check('C-3 写链顺序：先写 settings 行（权威值）→ 再投影声明行 plugins 子行', (() => {
-  const authorityIdx = settingsText.indexOf('await editor.edit(settingsRow.entry')
-  const projectionIdx = settingsText.indexOf('await editor.edit(presetRow.entry')
-  return authorityIdx > 0 && projectionIdx > authorityIdx && settingsText.includes('failed to write settings row')
-})())
+check('settings.js：PUT 仅收 webFetch/toolPresentationMode 且写链=投影 edit + 整体重述 plugins（settings 行零写入）', settingsText.includes('HOST_ROW_KEYS') && settingsText.includes('unsupported field(s)') && settingsText.includes('restatePresetPlugins') && settingsText.includes('await editor.edit(presetRow.entry') && !settingsText.includes('editor.edit(settingsRow.entry') && !settingsText.includes('isLocateError'))
+check('C-3 写链：PUT 纯投影（无 settings 行写）；10 项权威值由客户端一次 mutate 提交', !settingsText.includes('editor.edit(settingsRow.entry') && !settingsText.includes('failed to write settings row') && settingsText.indexOf('await editor.edit(presetRow.entry') > 0 && settingsText.includes('projection: { applied: true }'))
 check('C-3b 投影失败不回滚权威值（200 + projection.applied=false，无 500 回退）', settingsText.includes('projection: { applied: true }') && settingsText.includes('projection: { applied: false') && settingsText.includes("declaration row not found: ' + PRESET_ROW_ID"))
 check('C-2 settings 命名空间仍为行 id dsh-extra-plan-settings（未改名；客户端 NS 与 settings 行 id 同字面量）',
   settingsText.includes('export { SETTINGS_ROW_ID, PRESET_ROW_ID }') && clientText.includes('const NS = "dsh-extra-plan-settings"') &&
@@ -142,13 +138,13 @@ check('C-1 settings.js 的 Config 源码文本：恰 10 处字段链 volatile（
 const clientCode = clientText.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n')
 check('client.js：configForms.whileServed + plugins.row.config（key = @local/dsh-extra-plan#dsh-extra-plan-settings；无 order / 无 plugins.item 卡片注册 / 无 settings.plugin.item）', clientCode.includes('ctx.configForms.whileServed([NS]') && clientCode.includes('ctx.slots.inject("plugins.row.config"') && clientCode.includes('name: "plugins.row.config"') && clientCode.includes('"@local/dsh-extra-plan#dsh-extra-plan-settings"') && !clientCode.includes('"plugins.item"') && !clientCode.includes('order: 90') && !clientCode.includes('settings.plugin.item') && !clientCode.includes('key: "dsh-extra-plan"'))
 check('client.js：外壳与注入面（__ModuleLoader__ + require(react) + slots/locale/configForms）', clientText.includes('window.__ModuleLoader__.load({') && clientText.includes('id: "@local/dsh-extra-plan"') && clientText.includes('require("react")') && clientText.includes('exports.inject = ["slots", "locale", "configForms"]'))
-check('client.js：2 项宿主行提交体仅 {webFetch, toolPresentationMode} 且 esp-* 样式保留', clientText.includes('JSON.stringify({ webFetch: hostDraft.webFetch, toolPresentationMode: hostDraft.toolPresentationMode })') && clientText.includes('.esp-wrap{') && clientText.includes('.esp-section{') && clientText.includes('.esp-btn'))
-check('U-2 client.js：2 项宿主行提示仍标明重启生效（重置后文案）+ 保存回执 savedRestart', (() => {
+check('client.js：2 项宿主行并入官方 mutate（10 op）+ esp-* 样式保留', clientText.includes('.esp-wrap{') && clientText.includes('.esp-section{') && clientText.includes('.esp-btn') && clientText.includes('HOST_ROW_FIELDS.map') && clientText.includes('hostDraft[field.key]'))
+check('U-2 client.js：2 项宿主行提示仍标明重启生效 + 保存回执极简（saved，无 savedRestart）', (() => {
   const hostRowFields = clientText.slice(clientText.indexOf('const HOST_ROW_FIELDS'), clientText.indexOf('const css ='))
   return hostRowFields.includes('是否开启web_fetch ｜ 重启生效') &&
     hostRowFields.includes('工具呈现方式切换（默认/混合/PTC模式） ｜ 重启生效') &&
-    clientText.includes('savedRestart: "已保存（这 2 项需重启 DSH 后生效）"') &&
-    clientText.includes('text: t("savedRestart")')
+    clientText.includes('text: t("saved")') &&
+    !clientText.includes('savedRestart')
 })())
 check('client.js：8 项走 ownerProps.form（state/mutate），无十项整批 save()', clientText.includes('form.mutate(ops, revision)') && clientText.includes('props.form') && !clientText.includes('for (const field of fields)'))
 
@@ -296,8 +292,12 @@ try {
     const pluginsBefore = structuredClone(editor.state.plugins)
     const put = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true, toolPresentationMode: 'ptc' })
     check('PUT 2 项 → 200 且回读为写入值', put.status === 200 && put.body.values.webFetch === true && put.body.values.toolPresentationMode === 'ptc')
-    check('C-3 PUT 写链落盘顺序：① settings 行（权威值）→ ② 声明行 plugins（投影）', editor.state.edits.length === 2 && editor.state.edits[0].id === SETTINGS_ROW_ID && editor.state.edits[1].id === PRESET_ROW_ID)
-    check('C-3b 权威值落 settings 行 config（与 8 项同源落点）', editor.state.settingsConfig.webFetch === true && editor.state.settingsConfig.toolPresentationMode === 'ptc' && Object.keys(editor.state.edits[0].next).length === 2)
+    check('PUT 主场景追加：webFetch 取值层 source=projection（settings 行无写入，投影即取值层）', put.body.fields.find((field) => field.key === 'webFetch').source === 'projection')
+    check('PUT 只写声明行投影（settings 行零写入）', editor.state.edits.length === 1 && editor.state.edits[0].id === PRESET_ROW_ID)
+    check('settings 行 config 未被 PUT 触碰（仍 {}，权威值由官方 mutate 写入）', (() => {
+      const settingsRow = editor.state.rows.find((row) => row.entry.options.id === SETTINGS_ROW_ID)
+      return JSON.stringify(settingsRow.entry.options.config) === '{}' && put.body.fields.find((field) => field.key === 'toolPresentationMode').source === 'projection'
+    })())
     check('C-3c 投影回执：projection.applied=true（声明行子行已同步）', put.body.projection !== undefined && put.body.projection.applied === true)
     const afterPlugins = editor.state.plugins
     const webAfter = afterPlugins.find((row) => row.id === 'tool-web')
@@ -308,7 +308,11 @@ try {
     const before2 = readFileSync(ASSET_PATCH, 'utf8')
     const partial = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: false })
     check('PUT 单键 → 200 且另一键保持现值', partial.status === 200 && partial.body.values.webFetch === false && partial.body.values.toolPresentationMode === 'ptc')
-    check('PUT 单键也只写权威值键（settings 行 config 不含未提交键）', editor.state.settingsConfig.webFetch === false && editor.state.settingsConfig.toolPresentationMode === 'ptc' && Object.keys(editor.state.settingsConfig).length === 2)
+    check('PUT 单键追加：toolPresentationMode（未提交键）取值层仍为 source=projection', partial.body.fields.find((field) => field.key === 'toolPresentationMode').source === 'projection')
+    check('PUT 单键只投影该键子行（settings 行 config 仍未被触碰）', (() => {
+      const settingsRow = editor.state.rows.find((row) => row.entry.options.id === SETTINGS_ROW_ID)
+      return editor.state.plugins.find((row) => row.id === 'tool-web').config.fetch === false && JSON.stringify(settingsRow.entry.options.config) === '{}'
+    })())
     check('PUT 不触碰资产文件（写链只在宿主 editor）', readFileSync(ASSET_PATCH, 'utf8') === before2)
 
     const unknown = await requestJson(port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { plannerModel: 'x' })
@@ -323,29 +327,34 @@ try {
     await new Promise((resolve) => server.close(() => resolve()))
   }
 
-  // 行定位失败口径：settings 行（权威值落点）缺席 → 404；仅声明行缺席 → 权威值照落、投影缺席
-  const missingEditor = makeConfigEditor({ present: false })
+  // 行定位口径：settings 行（权威值载体）缺席不再阻断 PUT——投影不依赖该行；仅声明行缺席 → 投影缺席
+  const missingEditor = makeConfigEditor({ settingsPresent: false })
   const missingRun = await startServer(missingEditor)
   try {
+    const put = await requestJson(missingRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
+    check('settings 行缺失：PUT 仍 200 且照常投影（投影不依赖 settings 行）', put.status === 200 && put.body.projection.applied === true && missingEditor.state.edits.length === 1 && missingEditor.state.edits[0].id === PRESET_ROW_ID)
+    // 声明行也撤掉（宿主清理投影行）→ 两行皆缺：GET 回落到出厂默认
+    missingEditor.state.rows.length = 0
     const get = await requestJson(missingRun.port, 'GET', '/api/dsh-extra-plan-settings/pro-config')
     check('settings 行与声明行皆缺失：GET 回落到出厂默认（200，不抛）', get.status === 200 && get.body.values.webFetch === false && get.body.values.toolPresentationMode === 'native' && get.body.fields.every((field) => field.source === 'default'))
-    const put = await requestJson(missingRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
-    check('settings 行缺失：PUT → 404（权威值无处落地；不静默写别处）', put.status === 404 && String(put.body.error).includes('settings row not found') && missingEditor.state.edits.length === 0)
   } finally {
     await new Promise((resolve) => missingRun.server.close(() => resolve()))
   }
 
-  // 仅声明行缺失（宿主清理投影行）：权威值必须照落 settings 行 → 200 + projection.applied=false
+  // 仅声明行缺失（宿主清理投影行）：settings 行零写入 → 200 + projection.applied=false，回执回落出厂默认
   const noDeclarationEditor = makeConfigEditor({ presetPresent: false })
   const noDeclarationRun = await startServer(noDeclarationEditor)
   try {
     const put = await requestJson(noDeclarationRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true, toolPresentationMode: 'ptc' })
-    check('声明行（投影）缺失：PUT 仍 200 且权威值落 settings 行（投影被删无害）',
-      put.status === 200 && noDeclarationEditor.state.settingsConfig.webFetch === true && noDeclarationEditor.state.settingsConfig.toolPresentationMode === 'ptc')
+    check('声明行缺失：PUT 仍 200 + projection.applied=false（settings 行零写入）',
+      put.status === 200 && put.body.projection.applied === false && String(put.body.projection.error).includes('declaration row not found') && noDeclarationEditor.state.edits.length === 0 && (() => {
+        const settingsRow = noDeclarationEditor.state.rows.find((row) => row.entry.options.id === SETTINGS_ROW_ID)
+        return JSON.stringify(settingsRow.entry.options.config) === '{}'
+      })())
     check('声明行缺失：回执 projection.applied=false 且带原因（下次启动自愈按权威值重建投影）',
       put.body.projection !== undefined && put.body.projection.applied === false && String(put.body.projection.error).includes('declaration row not found'))
-    check('声明行缺失：GET 回读权威值（settings 行）而非出厂默认', put.body.values.webFetch === true && put.body.values.toolPresentationMode === 'ptc')
-    check('声明行缺失：无任何声明行写入尝试（edits 恰 1 次 = settings 行）', noDeclarationEditor.state.edits.length === 1 && noDeclarationEditor.state.edits[0].id === SETTINGS_ROW_ID)
+    check('声明行缺失且无权威落点：回执 values 回落出厂默认（webFetch=false、toolPresentationMode=native）', put.body.values.webFetch === false && put.body.values.toolPresentationMode === 'native' && put.body.fields.every((field) => field.source === 'default'))
+    check('声明行缺失：无任何声明行写入尝试（settings 行零写入、投影缺席 → edits 恰 0 次）', noDeclarationEditor.state.edits.length === 0)
   } finally {
     await new Promise((resolve) => noDeclarationRun.server.close(() => resolve()))
   }
@@ -356,7 +365,7 @@ try {
   const failingRun = await startServer(failingEditor)
   try {
     const put = await requestJson(failingRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
-    check('edit/reconcile 失败 → 500（非行定位错误）', put.status === 500 && String(put.body.error).includes('reconcile failed'))
+    check('投影 edit/reconcile 失败 → 200 + projection.applied=false（无 500 分流）', put.status === 200 && put.body.projection.applied === false && String(put.body.projection.error).includes('reconcile failed'))
   } finally {
     await new Promise((resolve) => failingRun.server.close(() => resolve()))
   }
