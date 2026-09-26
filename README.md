@@ -175,7 +175,6 @@ dsh-extra-plan/
 │       ├── step-00-跨平台写拦截.mjs
 │       ├── step-00-全流程回归.mjs
 │       ├── step-01-executor-spawn注册幂等.mjs
-│       ├── step-01-安装分发.mjs
 │       ├── step-01-安装同步.mjs
 │       ├── step-01-设置迁移.mjs
 │       ├── step-01-设置页配置.mjs
