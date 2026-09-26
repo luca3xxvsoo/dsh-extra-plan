@@ -27,14 +27,8 @@
 
 #### github安装
 
-0. 安装 git/minigit (已安装可忽略)
-```powershell 7+
-winget install --id Git.MinGit --exact --source winget
-```
 1. 核心安装(必装)
-```powershell 7+
-dsh plugin --profile web add 'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan' --allow-build='@local/dsh-extra-plan@git+https://github.com/luca3xxvsoo/dsh-extra-plan.git'
-```
+  - dsh web - 插件 - 添加插件 - 输入：https://github.com/luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan - 立即启用
 2. qqbot兼容插件安装 (选装,remove命令报错可忽略)
 ```powershell 7+ 
 dsh plugin --profile qqbot remove @local/dsh-extra-plan
@@ -49,10 +43,7 @@ dsh plugin --profile qqbot add 'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-qqb
 
 0. 下载源码并解压
 1. 核心安装(必装)
-```powershell 7+
-dsh plugin --profile web remove @local/dsh-extra-plan
-dsh plugin --profile web add "file:///[解压路径]/dsh-extra-plan-main/plugins/dsh-extra-plan" --allow-build="@local/dsh-extra-plan@file:[解压路径]/dsh-extra-plan-main/plugins/dsh-extra-plan"
-```
+  - dsh web - 插件 - 添加插件 - 输入：[解压路径]/dsh-extra-plan-main/plugins/dsh-extra-plan
 2. qqbot兼容插件安装 (选装,remove命令报错可忽略)
 ```powershell 7+ 
 dsh plugin --profile qqbot remove @local/dsh-extra-plan
@@ -69,12 +60,12 @@ dsh plugin --profile qqbot add 'file:///[解压路径]/dsh-extra-plan-main/plugi
 ```powershell 7+
 dsh plugin --profile web remove @local/dsh-extra-plan
 ```
-2. 手动删除DSH_HOME/.agent-presets/extra-plan/
-3. qqbot兼容插件卸载 (如装)
+2. qqbot兼容插件卸载 (如装)
 ```powershell 7+
+dsh plugin --profile qqbot remove @local/dsh-extra-plan
 dsh plugin --profile qqbot remove @local/dsh-qqbot-user-questions
 ```
-4. **重启 DSH 进程**
+3. **重启 DSH 进程**
 
 ### 平台实测说明
 
