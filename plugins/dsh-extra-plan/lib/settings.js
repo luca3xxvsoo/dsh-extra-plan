@@ -21,6 +21,7 @@
 // 写盘一律经宿主 editor：本模块不直写任何 cordis.patch.yml、不写旧预设目录。
 
 import { readFileSync } from 'node:fs'
+import { isDeepStrictEqual } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import z from '@deepseek-ai/schemastery'
@@ -265,6 +266,16 @@ function createApiHandler(ctx) {
           })
         }
         try {
+          // no-op 不写盘（口径与 preset-sync 三维 idle 一致）：以资产为基底、写回本次投影值与
+          // carry 词表后若与当前生效 plugins 深等 → 投影已达成，跳过 editor.edit —— 避免宿主
+          // edit 在 profile patch 无声明行时 append 冻结副本与无谓 reload（reload 失败还会走
+          // 宿主回滚）。深等不成立（或生效 plugins 不可读）时照常走 editor.edit（旧行为）。
+          const base = assetPlugins()
+          const currentPlugins = effectivePlugins(presetRow)
+          const next = restatePresetPlugins(currentPlugins === undefined ? {} : { plugins: currentPlugins }, {}, { hostRowConfig, gateWords: null }, base)
+          if (currentPlugins !== undefined && isDeepStrictEqual(next.plugins, currentPlugins)) {
+            return json(res, 200, { ...proPayload(editor), projection: { applied: true } })
+          }
           await editor.edit(presetRow.entry, (current, inherited) => restatePresetPlugins(current, inherited, { hostRowConfig, gateWords: null }, assetPlugins()))
           return json(res, 200, { ...proPayload(editor), projection: { applied: true } })
         } catch (error) {

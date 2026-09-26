@@ -15,7 +15,7 @@
 口径校准：台帐条目按 80 + 79 + 50 = 209 条 evidence 原始统计逐条勾销，比规划方案预估的 208 条多 1 条（只多不少，不构成遗漏）。
 口径对齐说明（2026-09-11 验收勘误）：验收标准清单 [任务6] 写的「报告 C 49 条 / 合计 208 条」是规划阶段的预估口径；执行阶段实测报告 C 顶层证据为 50 条，故本台账以 80 + 79 + 50 = 209 条为准，并已在下文 ③-E 勾销表中逐段给出归属条目编号（无悬空引用）。
 
-证据去向：③四层表的每一条都在「本仓库位置」列给出条目编号（宿主服务层 HS1-HS26、宿主组合与文件契约层 HK1-HK27（含 HK6a/HK6b）、宿主数据与布局形状层 SD1-SD38（含 SD19b）、安装配置面 CF1-CF12），②覆盖总表的每一行给出该文件命中的条目编号或「无」。
+证据去向：③四层表的每一条都在「本仓库位置」列给出条目编号（宿主服务层 HS1-HS27、宿主组合与文件契约层 HK1-HK27（含 HK6a/HK6b）、宿主数据与布局形状层 SD1-SD38（含 SD19b）、安装配置面 CF1-CF12），②覆盖总表的每一行给出该文件命中的条目编号或「无」。
 
 ## ① 基线块
 
@@ -79,7 +79,7 @@
 | plugins/dsh-extra-plan/lib/assembly-presentation.js | 宿主数据与布局形状层 SD18 | A/C/M 模型可见投影与 tools:sdk 整体重建；从 scoped tools 服务读 schemas/sdkSchemas/模式，官方 dsh-tools SDK renderer 按 DSH_HOME/profile 与宿主安装目录只读加载（同 SD33 布局口径） |
 | plugins/dsh-extra-plan/lib/client-bridge.js | 宿主服务层 HS22、HS23 + 宿主组合与文件契约层 HK24 | pathLike 空壳插件行：仅让 clientModules 扫到本包 dsh.client 声明 |
 | plugins/dsh-extra-plan/lib/client.js | 宿主服务层 HS17、HS18、HS19、HS20、HS21、HS22 + 宿主组合与文件契约层 HK10、HK14 | 浏览器半：宿主打包格式、locale 注册、`plugins.row.config` 行内配置卡片（key = `@local/dsh-extra-plan#dsh-extra-plan-settings`；旧 settings.plugin.item 已废）；metadata fields 由 descriptor 顺序驱动并按 section 分两组（general/pro，通用区渲染顺序含 2 项宿主行、顺序以根 README 为准），十项字段含 otherAgentModel，通用 True/False select 与宿主哈希类名/主题 token |
-| plugins/dsh-extra-plan/lib/executor-spawn.js | 宿主服务层 HS8、HS9、HS10、HS11、HS12 | subagents provider 薄委托层：包装宿主 spawn provider 并注入 toolFilter.deny |
+| plugins/dsh-extra-plan/lib/executor-spawn.js | 宿主服务层 HS8、HS9、HS10、HS11、HS12、HS27 | subagents provider 薄委托层：包装宿主 spawn provider 并注入 toolFilter.deny |
 | plugins/dsh-extra-plan/lib/live-config.js | 无（间接：与 HS4 同公式的 DSH_HOME 与 .agent-presets 路径决议副本，2026-09-23 登记） | 配置热读：8 热读键的现场取值层，只 import node:fs/os/path 与本包 preset-settings.js，不接触宿主包与服务；读取对象是设置页保存的 agent.cordis.yml 副本，故插件 DSH 版本兼容性为 0 风险；升级宿主时若 DSH_HOME 解析或 .agent-presets 布局变化，本文件与 settings.js（HS4）须同步核对 |
 | plugins/dsh-extra-plan/lib/model-routing.js | 宿主组合与文件契约层 HK6a、HK6b + 宿主数据与布局形状层 SD11、SD14、SD15 | planner/非 planner 双 resolver：listProviders/listModels、真实 prepareCall + 完整 prepared stream 探针、agents.get 上溯顶层主会话 route、requestHeader owned 路由快照；createModelRouting per-apply 工厂，不 import index.js |
 | plugins/dsh-extra-plan/lib/preset-settings.js | 宿主服务层 HS13、HS14、HS15、HS16 | 十项设置 descriptor 表（含 config.crossProviderPlannerModel:boolean 与 config.otherAgentModel:string）+ !!js 保真 YAML 解析 + 逐行标量改写；js-yaml 本地与宿主安装目录双路回退 |
@@ -105,7 +105,7 @@
 
 四层分组与归层原则：**③-A 宿主服务层**（ctx.get 与 ctx.inject 取用的宿主服务、服务方法签名、本插件向宿主注册的服务面与浏览器平面服务）；**③-B 宿主组合与文件契约层**（ctx.on 钩子注册的 emit 与 waterfall 契约、cordis.patch.yml 的 insert 语义、dsh.bundle.patch 与 exports 解析、.agent-presets 目录与 CORE 文件名契约、!!js dshHomePath、isolate realm、__ModuleLoader__ 打包契约、inject 为空的插件契约）；**③-C 宿主数据与布局形状层**（会话事件负载字段、Session 方法形状、SessionHeader 字段、profile 层 patch 文件、会话日志存储布局与压缩格式、客户端 CSS 哈希类名与主题 token）；**③-D 安装配置面**（package.json 的 dsh.bundle 与 dsh.client 与 exports 与 postinstall 与依赖声明、DSH_HOME 解析、宿主安装路径回退、预设元数据）。
 
-### ③-A 宿主服务层（服务读取与注册面，共 26 条）
+### ③-A 宿主服务层（服务读取与注册面，共 27 条）
 
 归层原则：通过 ctx.get / ctx.inject 取用的宿主服务、服务上的方法签名，以及本插件向宿主注册的服务面与浏览器平面服务。
 
@@ -118,7 +118,7 @@
 | HS5 **（0.1.7 重写）** plugins/dsh-extra-plan/lib/preset-sync.js `apply(ctx)` → `ctx.inject(['configEditor'], (child) => child.effect(...))`，写盘只经 `editor.edit(entry, change)` | configEditor（服务名）+ edit(entry, change) 的事务/reconcile/回滚语义 + configuration() 返回 `[{entry, inherited, override}]` | dsh-config-editor 包内 lib/index.js；dsh-app-boot 包内 reconcileProfilePatches | 启动自愈：三维判定（声明行覆盖度 + 本体剥离比对 + 投影一致性）→ 按需重建声明行/回填 settings 行 | 服务名/edit 签名/回滚语义变化即自愈失败（外层吞错不阻断启动）；**本插件绝不直写 cordis.patch.yml**（写坏防护全交宿主） | 【已核实】0.1.7 现场静态核对 |
 | HS6 **（0.1.7 重写）** `assets/presets/extra-plan/preset-patch.generated.yml` 声明行 | 预设载体 = 声明行 `- id: preset-<id>` / `name: '@deepseek-ai/dsh-agent-preset'` / `config{id,name,description,order,plugins}`；`PresetTree` + `mountPreset` 审计 | dsh-agent-preset 包内 lib/index.js（Config）；dsh-agent-preset-registry 包内 lib/index.js（mountPreset/auditRows/leakedServices）| 预设本体随 `dsh.bundle.patch` 数组装载；postinstall 已删除 | 声明行结构、Config 键或审计口径变化即预设挂载失败；`plugins` 必须是完整条目列表（group 行保留 `group: true` + `config` 子行数组）| 【已核实】0.1.7 现场静态核对 |
 | HS7 **（已删除·2026-09-25 死代码清理）** （原 cleanupLegacyFlashGuidePatches）| — | — | flash-guide 时代遗留清理已删除：恒空转 + 直写 patch 违反「写盘只经 configEditor.edit」纪律 | — | 【已删除】 |
-| HS8 plugins/dsh-extra-plan/lib/executor-spawn.js export const inject = ['subagents'] 与 apply(ctx, config) 与 registerProvider 注册段 | subagents（服务名）+ getProvider(name) + registerProvider(provider) | dsh-subagent 包内 lib/index.js | 包装并委托宿主 spawn provider，注册 extra-executor-spawn 提供者 | 服务名、方法签名、provider 接口五字段或重名校验变化即注册失败 | 【已核实】；2026-09-26 P2：registerProvider 段新增引用计数幂等防护（模块级 WeakMap 槽 count/宿主 disposer，跨预设世代与行重建共享同一注册、归零才反注册） |
+| HS8 plugins/dsh-extra-plan/lib/executor-spawn.js export const inject = ['subagents'] 与 apply(ctx, config) 与 registerProvider 注册段 | subagents（服务名）+ getProvider(name) + registerProvider(provider) | dsh-subagent 包内 lib/index.js | 包装并委托宿主 spawn provider，注册 extra-executor-spawn 提供者 | 服务名、方法签名、provider 接口五字段或重名校验变化即注册失败 | 【已核实】；2026-09-26 P2：registerProvider 段新增引用计数幂等防护（模块级 WeakMap 槽 count/宿主 disposer，跨预设世代与行重建共享同一注册、归零才反注册）；2026-09-26 P2 修订：槽表键由 ctx.subagents（traceable 代理每次属性读取新建、身份不稳定）改为服务实现本体（读取 Symbol.for("cordis.original")，代理 get 拦截器返回 target；subagents 为 root 单例跨世代稳定）；取不到符号值时降级回代理本身。 |
 | HS9 plugins/dsh-extra-plan/lib/executor-spawn.js providerName 与 getProvider（被委托的宿主 spawn provider 取值） | providerName 默认值 spawn（Config.providerName） | dsh-subagent-spawn-in-process 包内 lib/index.js | 取被委托的宿主 spawn provider 实体 | 宿主默认 provider 名变化即 getProvider 取不到、插件抛错 | 【已核实】 |
 | HS10 plugins/dsh-extra-plan/lib/executor-spawn.js toolFilter 注入与 resolveDeny（deny 对象） | SubagentProvider 能力校验 toolFilter + childCtx.tools.restrict(composition.toolFilter) | dsh-subagent 包内 lib/index.js | 给经本 provider 派出的子代理注入执行者工具 deny 清单 | deny 名单必须都是本预设实际注册的工具名，否则 restrict 抛错；能力校验口径变化即行为漂移 | 【已核实】 |
 | HS11 plugins/dsh-extra-plan/lib/executor-spawn.js prepareContinuable 条件透传 | UNSUPPORTED_CAPABILITY（provider 无 prepareContinuable 时抛错） | dsh-subagent 包内 lib/index.js | 仅当被委托 provider 支持时透传 continuable 能力 | 能力探测方式或错误口径变化即透传条件失真 | 【已核实】 |
@@ -137,6 +137,7 @@
 | HS24 plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml crossProviderPlannerModel 与 otherAgentModel 键（id 为 extra-plan 的行 config 段） | 预设行 config 经宿主 schema 校验后 1:1 传入 apply(ctx, config) | dsh-agent-presets 包内 lib/index.js | 把预设行 config 交给插件（crossProviderPlannerModel 只在 cfg===true 时打开严格路径，otherAgentModel 为空串表示回退主会话） | 宿主改变行 config 传递方式或校验即插件配置读不到 | 【已核实】 |
 | HS25 plugins/dsh-extra-plan/index.js export const name = 'extra-plan' 与 export const inject 与 export function apply(ctx, config)（插件契约声明与 apply 函数体） | cordis 插件契约 name 与 inject 与 apply | cordis 包内 lib/index.js；行注入方 dsh-agent-presets 包内 lib/index.js | 作为 agent 平面预设组合行加载（每会话一份实例），配置快照含 plannerModel/otherAgentModel/crossProviderPlannerModel | 契约或 config 注入方式变化即 apply 不被调用或配置读不到 | 【已核实】 |
 | HS26 plugins/dsh-extra-plan/index.js BOOTSTRAP_READ_HINT_FALLBACK 与 cfg.bootstrapReadHint 读取与 HP 分支借槽覆盖 tool:read 的 text | 宿主 read tool 的注册面：系统提示 section 名 tool:read、参数 file_path/offset/limit 与其默认值、输出 schema path/offset/lines/totalLines | dsh-tool-fs 包内 lib/index.js（rc1 section L320-324、defineTool read L325-409；rc2 section L257〔块 L256-260〕、参数 L241·L272、输出 schema L279-315；rc1→rc2 该段文本唯一差异＝删去「Results include line numbers.」）。语法高亮语言表已外移：rc1 内联 LANG_BY_EXTENSION（L118-176）→ rc2 新包 @deepseek-ai/dsh-util-code-language，仅由宿主 presentationMeta 的 lang 元数据与客户端代码面消费，模型提示面不可见 | F 段（HP 首轮）的 tool:read 文本改由插件手写维护（变量② cfg.bootstrapReadHint + 内置兜底），不再由官方 renderer 从宿主 schema 生成 | 宿主改 section 名、参数名/默认值或输出字段即手写文案失真——DSH 升级后需人工逐条核对本文案与预设 bootstrapReadHint（不自动跟随） | 【已核实】 |
+| HS27 plugins/dsh-extra-plan/lib/executor-spawn.js 符号锚点 slotKey（稳定槽键）与 registrationSlots（模块级 WeakMap 槽表） | `symbols.original`（= Symbol.for("cordis.original")）、`getTraceable`、`createTraceable`（每次属性读取新建 Proxy、无缓存）；`registerProvider`（重名抛 DUPLICATE_PROVIDER、返回 effect 化 disposer）、`getProvider`（纯查询） | cordis 包内 lib/index.js；dsh-subagent 包内 lib/index.js | 槽表键取「服务实现本体」（读全局注册符号，代理 get 拦截器返回 target）：subagents 为 root 单例，跨 ctx/跨预设世代命中同一槽，引用计数幂等才成立；宿主 registerProvider 无覆盖分支、重名必抛，故本插件幂等层是唯一绕开手段 | 该符号或 get 拦截语义变化 → 槽键取不到本体（降级回代理本身）→ 幂等失效、重现「provider 已被其他注册方占用」与预设「加载失败」；registerProvider 重名校验或 disposer 语义变化即注册/释放链断裂 | 【已核实】0.1.7-rc.2 现场静态核对（按包名 + 符号名） |
 ### ③-B 宿主组合与文件契约层（钩子注册与组合文件契约，共 29 条）
 
 归层原则：ctx.on 钩子注册（emit 与 waterfall 契约）、cordis.patch.yml 的 insert 语义、dsh.bundle.patch 与 exports 解析、.agent-presets 目录与 CORE 文件名契约、!!js dshHomePath、isolate realm、__ModuleLoader__ 打包契约、inject 为空的插件契约。

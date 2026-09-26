@@ -174,6 +174,7 @@ dsh-extra-plan/
 │       ├── 一键step测试.mjs                             # 可以通过输入真实session_id进行测试
 │       ├── step-00-跨平台写拦截.mjs
 │       ├── step-00-全流程回归.mjs
+│       ├── step-01-executor-spawn注册幂等.mjs
 │       ├── step-01-安装分发.mjs
 │       ├── step-01-安装同步.mjs
 │       ├── step-01-设置迁移.mjs

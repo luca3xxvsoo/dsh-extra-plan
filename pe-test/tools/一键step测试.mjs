@@ -23,6 +23,7 @@ const AUTO = [
   ['step-01-设置迁移.mjs', true, ''],
   ['step-01-安装同步.mjs', true, ''],
   ['step-01-预设完整性.mjs', false, ''],
+  ['step-01-executor-spawn注册幂等.mjs', false, ''],
   ['step-01-设置页配置.mjs', false, ''],
   ['step-01-qqbot-安装映射.mjs', true, ''],
   ['step-04-路由与写闸门.mjs', true, ''],

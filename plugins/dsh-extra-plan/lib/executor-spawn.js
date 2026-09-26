@@ -23,6 +23,7 @@
 // planner-executor 预设传 'extra-executor-spawn'。注册采用**引用计数幂等**：预设组合变更 →
 // 根 Include reload → 本行新 fiber 再次 apply 时，与仍存活的旧世代共享同一注册与 disposer
 // （同名重复注册会撞宿主 dsh-subagent 的无覆盖分支），仅最后一个持有者释放时才反注册。
+// 槽表键 = subagents 服务实现本体（root 单例；读取全局注册符号 cordis.original，取不到符号值时降级回代理本身）。
 
 export const name = 'executor-spawn'
 export const inject = ['subagents']
@@ -50,14 +51,30 @@ export function resolveDeny(config) {
   return config !== null && typeof config === 'object' && Array.isArray(config.deny) ? config.deny : DEFAULT_DENY
 }
 
-// 注册槽表（模块级，随进程存活）：键 = ctx.subagents 服务实例（同一 Service 的 traceable
-// 代理为构造期单例，跨 ctx/跨预设世代访问稳定），值 = Map<providerName, { count, dispose }>。
+// 注册槽表（模块级，随进程存活）：键 = subagents 服务实现本体（root 单例），值 =
+// Map<providerName, { count, dispose }>。键不取 ctx.subagents 代理本身——cordis 的 traceable
+// 代理每次属性读取都新建（createTraceable 无缓存），旧「代理身份稳定、可作槽键」的假设已被
+// 实测证伪：键永不命中 → 共享分支失效 → 新世代零持有却命中旧注册 → 误抛重名冲突。
+// 稳定键取法：读取全局注册符号 cordis.original，由 traceable 代理的 get
+// 拦截器返回 target（= 服务实现本体；subagents 为 root 单例，跨预设世代恒同一对象）；
+// 取不到符号值时降级回代理本身（保持旧行为，不劣化）。
 // 用途：预设组合变更 → 根 Include reload → 本行新 fiber 再次 apply；旧世代 provider 因
 // users>0 不被 collect → 宿主进程级 providers 表同名 → dsh-subagent 重名注册无覆盖分支即
 // 抛 DUPLICATE_PROVIDER（现场表现为预设「加载失败」）。引用计数让新旧世代共享同一注册：
 // 仅在最后一个持有者释放时才调用宿主 disposer 反注册（若改为探测跳过，则旧世代被 collect
 // 后零持有 → workflow-ptc/tool-ralph 派发 NO_PROVIDER）。
 const registrationSlots = new WeakMap()
+
+const SERVICE_ORIGINAL = Symbol.for('cordis.original')
+// 稳定槽键：读取全局注册符号 cordis.original 由 traceable 代理 get 拦截器返回 target
+// （服务实现本体，root 单例，跨 ctx/跨预设世代稳定）；非 traceable/取不到时降级回代理本身。
+function slotKey(subagents) {
+  if (subagents !== null && typeof subagents === 'object') {
+    const original = subagents[SERVICE_ORIGINAL]
+    if (original !== undefined) return original
+  }
+  return subagents
+}
 
 export function apply(ctx, config) {
   const providerName = config !== null && typeof config === 'object' && typeof config.providerName === 'string'
@@ -72,11 +89,12 @@ export function apply(ctx, config) {
   }
 
   // ── 注册幂等（引用计数） ───────────────────────────────────────────────────
-  // 槽：本插件族在同一 ctx.subagents 上对同一 providerName 的唯一注册记录。
-  let slots = registrationSlots.get(ctx.subagents)
+  // 槽：本插件族对同一 subagents 服务实现（root 单例）上同一 providerName 的唯一注册记录。
+  const key = slotKey(ctx.subagents)
+  let slots = registrationSlots.get(key)
   if (slots === undefined) {
     slots = new Map()
-    registrationSlots.set(ctx.subagents, slots)
+    registrationSlots.set(key, slots)
   }
   let slot = slots.get(providerName)
   if (slot === undefined) {
