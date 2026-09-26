@@ -1,8 +1,6 @@
 {
-  "title": "Extra Plan Configuration",
-  "description": "Configure the Extra Plan mode",
   "meta": {
-    "title": "Extra Plan Configuration",
-    "description": "Configure the Extra Plan mode"
+    "title": "Extra Plan",
+    "description": "Preset, settings, and startup check"
   }
 }

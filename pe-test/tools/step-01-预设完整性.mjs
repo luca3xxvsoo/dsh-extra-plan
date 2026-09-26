@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
+import { createRequire } from 'node:module'
 import {
   SETTING_DEFINITIONS,
   parsePresetYaml,
@@ -374,6 +375,80 @@ check('S2 peerDependencies 的 @deepseek-ai/dsh-llm 与 @deepseek-ai/dsh 同范�
   typeof pluginPeers['@deepseek-ai/dsh-llm'] === 'string' && pluginPeers['@deepseek-ai/dsh-llm'] === pluginPeers['@deepseek-ai/dsh'])
 check('S2 peerDependencies 已声明 @deepseek-ai/schemastery（由宿主安装域供给）',
   typeof pluginPeers['@deepseek-ai/schemastery'] === 'string' && pluginPeers['@deepseek-ai/schemastery'] !== '')
+
+// S3（2026-09-26）：显示元信息本地化通道——Plugins 页包卡片标题/描述与各「行」标题/描述的唯一来源。
+//   宿主 dsh-app-boot readPluginMeta：以 `<specifier>/locale/en.json` 为锚，读同目录 `<lang>.json` 的
+//   meta.title / meta.description（顶层 title/description 不生效，故字典只有 meta 键）。
+//   行的 specifier = 行的 name（@local/dsh-extra-plan/settings | @local/dsh-extra-plan/preset-sync），
+//   所以两条行级 exports 通道必须各自指到行级目录；若共用同一份字典，包卡片与两行会显示同一段文案
+//   （本次改动前的现象：三处都显示「按需规划模式配置」）。
+const LOCALE_CHANNELS = [
+  {
+    label: '包卡片',
+    specifier: '@local/dsh-extra-plan',
+    dir: 'locale',
+    zh: { title: '按需规划模式', description: '按需规划模式的预设、设置与启动核对' },
+    en: { title: 'Extra Plan', description: 'Preset, settings, and startup check' },
+  },
+  {
+    label: '设置行',
+    specifier: '@local/dsh-extra-plan/settings',
+    dir: join('locale', 'settings'),
+    zh: { title: '按需规划模式配置', description: '配置按需规划模式的参数' },
+    en: { title: 'Extra Plan Configuration', description: 'Configure the Extra Plan mode' },
+  },
+  {
+    label: '自愈行',
+    specifier: '@local/dsh-extra-plan/preset-sync',
+    dir: join('locale', 'preset-sync'),
+    zh: { title: '预设核对', description: '启动时核对预设，不一致时自动修复' },
+    en: { title: 'Preset Check', description: 'Verifies the preset at startup' },
+  },
+]
+const pluginDir = join(REPO_ROOT, 'plugins', 'dsh-extra-plan')
+const exportsMap = pluginPkg !== undefined ? asRecord(pluginPkg.exports) : {}
+check('S3 exports：设置行/自愈行两条 locale 通道各指行级目录，包级 ./locale/*.json 保留',
+  exportsMap['./settings/locale/*'] === './locale/settings/*'
+  && exportsMap['./preset-sync/locale/*'] === './locale/preset-sync/*'
+  && exportsMap['./locale/*.json'] === './locale/*.json')
+
+const localeProblems = []
+for (const channel of LOCALE_CHANNELS) {
+  for (const lang of ['zh', 'en']) {
+    const expected = channel[lang]
+    let parsed
+    try {
+      parsed = JSON.parse(readFileSync(join(pluginDir, channel.dir, lang + '.json'), 'utf8'))
+    } catch {
+      localeProblems.push(channel.label + '/' + lang + ' 读取或解析失败')
+      continue
+    }
+    const keys = parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? Object.keys(parsed) : []
+    const meta = asRecord(parsed.meta)
+    if (keys.length !== 1 || keys[0] !== 'meta') localeProblems.push(channel.label + '/' + lang + ' 顶层键应只有 meta')
+    if (meta.title !== expected.title) localeProblems.push(channel.label + '/' + lang + ' title 不符')
+    if (meta.description !== expected.description) localeProblems.push(channel.label + '/' + lang + ' description 不符')
+  }
+}
+check('S3 三组字典（包卡片/设置行/自愈行 × zh,en）只有 meta 键且文案精确匹配'
+  + (localeProblems.length > 0 ? '，异常: ' + localeProblems.join('; ') : ''), localeProblems.length === 0)
+
+const resolveProblems = []
+for (const channel of LOCALE_CHANNELS) {
+  for (const lang of ['zh', 'en']) {
+    const target = join(pluginDir, channel.dir, lang + '.json')
+    let resolved
+    try {
+      resolved = createRequire(join(pluginDir, 'package.json')).resolve(channel.specifier + '/locale/' + lang + '.json')
+    } catch {
+      resolveProblems.push(channel.label + '/' + lang + ' 不可解析')
+      continue
+    }
+    if (resolved !== target) resolveProblems.push(channel.label + '/' + lang + ' 解析到 ' + resolved)
+  }
+}
+check('S3 六个 specifier 经包自引用 + exports 真实解析命中各自文件（等价宿主 readPluginMeta 取文路径）'
+  + (resolveProblems.length > 0 ? '，异常: ' + resolveProblems.join('; ') : ''), resolveProblems.length === 0)
 
 console.log('\n通过 ' + pass + ', 失败 ' + fail)
 process.exit(fail === 0 ? 0 : 1)

@@ -7,11 +7,11 @@
   "exports": {
     ".": "./index.js",
     "./settings": "./lib/settings.js",
-    "./settings/locale/*": "./locale/*",
+    "./settings/locale/*": "./locale/settings/*",
     "./locale/*.json": "./locale/*.json",
     "./executor-spawn": "./lib/executor-spawn.js",
     "./preset-sync": "./lib/preset-sync.js",
-    "./preset-sync/locale/*": "./locale/*",
+    "./preset-sync/locale/*": "./locale/preset-sync/*",
     "./client": "./lib/client.js",
     "./client-bridge": "./lib/client-bridge.js",
     "./cordis.patch.yml": "./cordis.patch.yml",

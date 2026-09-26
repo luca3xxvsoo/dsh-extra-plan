@@ -80,11 +80,9 @@ dsh plugin --profile qqbot remove @local/dsh-qqbot-user-questions
 
 跨平台兼容改造的**逻辑层**已由 `pe-test/tools/step-00-跨平台写拦截.mjs` 验证（本仓库 Windows 环境实测 68 用例全过，脚本三平台通用）；但仅在 **Windows 环境实测正常**，**Linux/macOS 尚未在真实环境验证**
 
-### dsh 0.1.7 rc2已知问题
+### dsh-v0.1.7-rc2 已知问题
 
-#### cordis_inspect_query 无超时导致探查者、执行者、验收者调用直接卡死
-
-避免方案：创造模式开关设置为关
+cordis_inspect_query 无超时导致探查者、执行者、验收者调用直接卡死。避免方案：创造模式开关设置为关
 
 ## 4. 可配置项
 
@@ -137,7 +135,13 @@ dsh-extra-plan/
 │   │   │   ├── sdk-text-cache.js                       # tools:sdk缓存复用
 │   │   │   ├── settings.js                             # 设置页宿主端
 │   │   │   └── shell-mutation.js                       # 写操作判定：跨平台命令解码与写形态
-│   │   ├── locale/                                      
+│   │   ├── locale/                                     
+│   │   │   ├── preset-sync/
+│   │   │   │   ├── en.json                     
+│   │   │   │   └── zh.json   
+│   │   │   ├── settings/  
+│   │   │   │   ├── en.json                     
+│   │   │   │   └── zh.json                                  
 │   │   │   ├── en.json                      
 │   │   │   └── zh.json                        
 │   │   ├── scripts/                                    
