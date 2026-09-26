@@ -28,7 +28,7 @@
 #### github安装
 
 1. 核心安装(必装)
-  - dsh web - 插件 - 添加插件 - 输入：https://github.com/luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan - 立即启用
+  - dsh web - 插件 - 添加插件 - 输入：https://github.com/luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan - 允许脚本并重试 - 立即启用
 2. qqbot兼容插件安装 (选装,remove命令报错可忽略)
 ```powershell 7+ 
 dsh plugin --profile qqbot remove @local/dsh-extra-plan

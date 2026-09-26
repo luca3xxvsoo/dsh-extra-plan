@@ -1204,6 +1204,7 @@ import { atomicCommit, recoverJournals } from './lib/save-persistence.js'
 import { createSaveToolFactories } from './lib/save-tool-factories.js'
 import { RUNCODE_MUTATION_HINTS, runCodeTextOf, codeMutationHints, createRunCodeStatic } from './lib/run-code-static.js'
 import { PWSH_MUTATION, BASH_MUTATION, PWSH_BARE_WORDS, BASH_BARE_WORDS, pwshCommandOf, bashCommandOf, pwshMutationMatches, bashMutationMatches } from './lib/shell-mutation.js'
+import { DEFAULT_PLANNER_PROMPT_SUFFIX } from './lib/preset-defaults.generated.js'
 import { DEFAULT_EXPLORE_BUDGET, toolCallCount, toolCallsSinceUser, withPlannerPromptSuffix, BUDGET_REMINDER_THRESHOLD, budgetNoticeText, withBudgetNotice, budgetReminderText, budgetReminderMessage, budgetReminderSent, budgetExhaustedReason, budgetExceeded } from './lib/planner-budget.js'
 import { causeChainOf } from './lib/runtime-static.js'
 import { createAgentRuntime, isLiveDelegation, childPolicyNeedsFloor } from './lib/agent-runtime.js'
@@ -1360,7 +1361,7 @@ export function apply(ctx, config) {
       plannerModel: typeof cfg.plannerModel === 'string' ? cfg.plannerModel : 'deepseek-v4-pro',
       otherAgentModel: typeof cfg.otherAgentModel === 'string' ? cfg.otherAgentModel.trim() : '',
       exploreBudget: Number.isInteger(cfg.exploreBudget) && cfg.exploreBudget > 0 ? cfg.exploreBudget : DEFAULT_EXPLORE_BUDGET,
-      plannerPromptSuffix: typeof cfg.plannerPromptSuffix === 'string' ? cfg.plannerPromptSuffix : '',
+      plannerPromptSuffix: typeof cfg.plannerPromptSuffix === 'string' ? cfg.plannerPromptSuffix : DEFAULT_PLANNER_PROMPT_SUFFIX,
       anchoredBootstrap: cfg.anchoredBootstrap !== false,
       creativeMode: cfg.creativeMode === true,
       runcodeCatchGate: cfg.runcodeCatchGate === true,

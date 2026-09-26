@@ -11,7 +11,7 @@ import {
   findTextLocatorMatches,
   resolveTemplateSettingDefault,
 } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
-import { DEFAULT_EXPLORE_BUDGET } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
+import { DEFAULT_EXPLORE_BUDGET, DEFAULT_PLANNER_PROMPT_SUFFIX } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
 import { generateRuntimeDefaults, renderRuntimeDefaults } from '../../plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs'
 // S1：DEFAULT_DENY 收敛断言（执行者 deny 清单必须与预设 config.deny 逐字一致）。
 import { DEFAULT_DENY, resolveDeny } from '../../plugins/dsh-extra-plan/lib/executor-spawn.js'
@@ -202,7 +202,7 @@ if (otherDefinition !== undefined && otherDefinition.sourceLocator.rowId === 'ex
   fail += 1
   console.log('FAIL  otherAgentModel descriptor 不符合契约')
 }
-if (defaults.plannerModel === 'deepseek-v4-pro' && defaults.crossProviderPlannerModel === false && defaults.creativeMode === false && defaults.exploreBudget === 18 && defaults.otherAgentModel === '' && defaults.anchoredBootstrap === true && defaults.runcodeCatchGate === false && defaults.webFetch === false && defaults.toolPresentationMode === 'native' && typeof defaults.plannerPromptSuffix === 'string') {
+if (defaults.plannerModel === 'deepseek-v4-pro' && defaults.crossProviderPlannerModel === false && defaults.creativeMode === false && defaults.exploreBudget === 18 && defaults.otherAgentModel === '' && defaults.anchoredBootstrap === true && defaults.runcodeCatchGate === false && defaults.webFetch === false && defaults.toolPresentationMode === 'native' && defaults.plannerPromptSuffix === '你的深度思考部分需要以"好了，现在我以全局视角来看待这个问题"开头') {
   pass += 1
   console.log('PASS  新版模板 10 项默认值来自实际叶值（creativeMode=false，跨提供商=false，otherAgentModel=空串）')
 } else {
@@ -254,6 +254,7 @@ check('T1 官方预设/技能文件未复制进本仓（assets 目录无 skills/
 const packageJson = JSON.parse(readFileSync(join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'package.json'), 'utf8'))
 const generatedText = readFileSync(generatedFile, 'utf8')
 check('B2 YAML 叶值、生成 export 与 resolver 同为 18', resolveTemplateSettingDefault(agentText, 'exploreBudget') === 18 && DEFAULT_EXPLORE_BUDGET === 18 && generatedText.includes('export const DEFAULT_EXPLORE_BUDGET = 18'), true)
+check('B2 YAML plannerPromptSuffix 叶值、生成 export 与 resolver 三向一致', resolveTemplateSettingDefault(agentText, 'plannerPromptSuffix') === DEFAULT_PLANNER_PROMPT_SUFFIX && DEFAULT_PLANNER_PROMPT_SUFFIX === '你的深度思考部分需要以"好了，现在我以全局视角来看待这个问题"开头' && generatedText.includes('export const DEFAULT_PLANNER_PROMPT_SUFFIX = "你的深度思考部分需要以\\"好了，现在我以全局视角来看待这个问题\\"开头"'), true)
 check('B2 render 文本与已提交生成模块逐字一致', renderRuntimeDefaults(agentText) === generatedText, true)
 const packageFiles = Array.isArray(packageJson.files) ? packageJson.files : []
 check('B2 package files/scripts 含生成器、generate 与 prepack', packageFiles.includes('scripts/generate-runtime-defaults.mjs') && packageJson.scripts['generate:runtime-defaults'] === 'node scripts/generate-runtime-defaults.mjs' && packageJson.scripts.prepack === 'node scripts/generate-runtime-defaults.mjs', true)
@@ -264,7 +265,7 @@ check('B2 --check 通过且不写生成物', checkPassed && readFileSync(generat
 
 const generatorFixture = mkdtempSync(join(tmpdir(), 'dsh-runtime-defaults-'))
 try {
-  const validMini = '- id: extra-plan\n  config:\n    exploreBudget: 18\n'
+  const validMini = '- id: extra-plan\n  config:\n    exploreBudget: 18\n    plannerPromptSuffix: x\n'
   const validSource = join(generatorFixture, 'valid.yml')
   const validOutput = join(generatorFixture, 'valid.generated.js')
   writeFileSync(validSource, validMini, 'utf8')
@@ -288,6 +289,7 @@ try {
     ['string', "- id: extra-plan\n  config:\n    exploreBudget: '18'\n"],
     ['null', '- id: extra-plan\n  config:\n    exploreBudget: null\n'],
     ['syntax', '- id: [broken\n'],
+    ['suffix-numeric', '- id: extra-plan\n  config:\n    exploreBudget: 18\n    plannerPromptSuffix: 123\n'],
   ]
   for (const [label, sourceText] of invalidTemplates) {
     const sourcePath = join(generatorFixture, label + '.yml')

@@ -87,7 +87,7 @@
 | plugins/dsh-extra-plan/lib/live-config.js | 无（间接：HS4 同口径的 configPath → DSH_EXTRA_PLAN_CONFIG_PATH → configEditor.documentPath 决议，2026-09-23 登记） | 配置热读：8 热读键的现场取值层，只 import node:fs/os/path 与本包 preset-settings.js，不接触宿主包与服务；读取对象是设置页保存的 agent.cordis.yml 副本，故插件 DSH 版本兼容性为 0 风险；升级宿主时若 documentPath 语义或 profile patch 路径规则变化，本文件与 settings.js（HS4）须同步核对 |
 | plugins/dsh-extra-plan/lib/model-routing.js | 宿主组合与文件契约层 HK6a、HK6b + 宿主数据与布局形状层 SD11、SD14、SD15 | planner/非 planner 双 resolver：listProviders/listModels、真实 prepareCall + 完整 prepared stream 探针、agents.get 上溯顶层主会话 route、requestHeader owned 路由快照；createModelRouting per-apply 工厂，不 import index.js |
 | plugins/dsh-extra-plan/lib/planner-budget.js | 宿主数据与布局形状层 SD3、SD5、SD29、SD37 | 预算锚点与预算提醒构造（137 行，2026-09-26 复核） |
-| plugins/dsh-extra-plan/lib/preset-defaults.generated.js | 无 | GENERATED FILE（generate-runtime-defaults.mjs 产出，禁手改）；DEFAULT_EXPLORE_BUDGET = 18（3 行，2026-09-26 复核） |
+| plugins/dsh-extra-plan/lib/preset-defaults.generated.js | 无 | GENERATED FILE（generate-runtime-defaults.mjs 产出，禁手改）；DEFAULT_EXPLORE_BUDGET = 18 与 DEFAULT_PLANNER_PROMPT_SUFFIX（= 资产 plannerPromptSuffix 叶值）（4 行，2026-09-26 复核） |
 | plugins/dsh-extra-plan/lib/preset-settings.js | 宿主服务层 HS13、HS14、HS15、HS16 | 十项设置 descriptor 表（含 config.crossProviderPlannerModel:boolean 与 config.otherAgentModel:string）+ !!js 保真 YAML 解析 + 逐行标量改写；js-yaml 本地与宿主安装目录双路回退 |
 | plugins/dsh-extra-plan/lib/preset-sync.js | 宿主服务层 HS5、HS6 + 宿主组合与文件契约层 HK16 | 启动自愈状态机：三维判定 + 写盘只经 configEditor.edit |
 | plugins/dsh-extra-plan/lib/run-code-static.js | 宿主组合与文件契约层 HK21 | run_code 纯静态解析/理由模块（写模式 hint、工具组拆解、ask 返回值白名单、调用点计数与双兼容 dispatch cap）；仅显式注入普通依赖，不持有宿主状态 |
@@ -106,7 +106,7 @@
 | plugins/dsh-extra-plan/locale/preset-sync/en.json | 无（间接：CF6 本地化通道） | preset-sync 行级英文文案（2026-09-26 列表页文案重定位） |
 | plugins/dsh-extra-plan/locale/preset-sync/zh.json | 无（间接：CF6 本地化通道） | preset-sync 行级中文文案（2026-09-26 列表页文案重定位） |
 | plugins/dsh-extra-plan/package.json | 宿主组合与文件契约层 HK12、HK13、HK14 + 安装配置面 CF1、CF4、CF5、CF6、CF8、CF12 | 安装配置面：dsh.bundle.patch、dsh.client（platform 与 inject）、exports 子路径（含 ./locale/* 本地化通道）、js-yaml 依赖（本包无 postinstall，见 CF1） |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | 无（间接：HS6 声明行与 preset-defaults.generated.js 的生成器） | package.json scripts generate:runtime-defaults / prepack 入口；两产物仅在校验通过后替换（156 行，2026-09-26 复核） |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | 无（间接：HS6 声明行与 preset-defaults.generated.js 的生成器） | package.json scripts generate:runtime-defaults / prepack 入口；两产物仅在校验通过后替换（158 行，2026-09-26 复核） |
 | plugins/dsh-extra-plan/scripts/distribute-preset.mjs（已删除·2026-09-25 死代码清理） | 安装配置面 CF1、CF2、CF3（历史） | postinstall 入口：解析 DSH_HOME 后委派 syncPreset 分发预设——随台账链整链删除 |
 | plugins/dsh-qqbot-user-questions/cordis.patch.yml | QQBOT 专章 QB14-QB18 | 静态 patch：单一根级 insert 注入 4 行（qqbot-user-questions、ptc-runtime、agent-preset-registry 默认 extra-plan、cordis-host-runner） |
 | plugins/dsh-qqbot-user-questions/index.js | QQBOT 专章 QB1-QB4（QB4 为【未核实】） | 本仓库 qqbot 侧唯一插件入口（24 行）：apply() 启动时调 healQqbotCompatibility(home)；inject 为空 |
@@ -408,7 +408,7 @@
 后续若补齐 SD9/SD13 定义行：请同步修正②覆盖总表的「共 N 处」计数，并复核③-E 四处引用。
 
 ## ⑨ P2-4 默认生成链与模块边界
-- `preset-settings.js::resolveTemplateSettingDefault` 复用本仓 YAML_SCHEMA、locator、validator；`agent.cordis.yml` 的 exploreBudget 叶值是作者真源，生成模块是派生产物，运行时不解析 YAML。
+- `preset-settings.js::resolveTemplateSettingDefault` 复用本仓 YAML_SCHEMA、locator、validator；`agent.cordis.yml` 的 exploreBudget 与 plannerPromptSuffix 两个叶值是作者真源，生成模块是派生产物，运行时不解析 YAML。
 - `preset-sync.js::syncPreset` 在 contentHash/stage/publish 前校验模板；坏模板不触碰 DSH_HOME 目标，startup 既有非阻断外壳保持（本包已无 postinstall，见 CF1）。生成/--check/prepack 失败保留 last-known-good。
 - B1 新 lib 只承接无宿主状态 helper 与 per-apply role/cache factory；usage ledger、注册/claim、disposed 同步 final fold、ctx.on 顺序与 tools/pre-execute 继续由根入口持有。升级宿主时仍按原 HS/HK/SD 条目核对这些根接触面。
 

@@ -25,6 +25,7 @@
 //    本插件只提供权威值读口，**改后需重启宿主才生效**。
 
 import { statSync, readFileSync } from 'node:fs'
+import { DEFAULT_PLANNER_PROMPT_SUFFIX } from './preset-defaults.generated.js'
 import {
   HOST_ROW_SETTING_DEFINITIONS,
   SETTING_DEFINITIONS,
@@ -50,14 +51,14 @@ const HOST_ROW_KEYS = Object.freeze(HOST_ROW_SETTING_DEFINITIONS.map((item) => i
 const READ_KEYS = Object.freeze([...LIVE_KEYS, ...HOST_ROW_KEYS])
 
 // 调用方未提供 fallbackDefaults 时的内置兜底（与 index.js apply 期 cfg 快照同口径；
-// 2 项宿主行的兜底与资产模板叶值 / settings.js Config 默认值逐字一致）。
+// 各键兜底与资产模板叶值 / settings.js Config 默认值同源（同一生成常量）逐字一致）。
 const BUILTIN_DEFAULTS = Object.freeze({
   anchoredBootstrap: true,
   creativeMode: false,
   runcodeCatchGate: false,
   crossProviderPlannerModel: false,
   plannerModel: 'deepseek-v4-pro',
-  plannerPromptSuffix: '',
+  plannerPromptSuffix: DEFAULT_PLANNER_PROMPT_SUFFIX,
   exploreBudget: 18,
   otherAgentModel: '',
   webFetch: false,

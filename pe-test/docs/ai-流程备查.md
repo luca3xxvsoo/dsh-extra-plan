@@ -114,6 +114,6 @@
 - **前端**：`lib/client.js` 注册到 Plugins 页已安装包行详情的 keyed 插槽 `plugins.row.config`（key = `@local/dsh-extra-plan#dsh-extra-plan-settings`；`ctx.configForms.whileServed([NS], ...)` 包裹，`inject = ['slots','locale','configForms']`）；组件收 `{view, t, form}`——`form` 由宿主 `formFor(rowId)` 按同一 settings 命名空间注入（形状 `{state, mutate}` 不变），8 项用 `form.state` 播种、保存时 `form.mutate(ops, revision)`；2 项自绘控件值并入同一 mutate（10 op）+ PUT 纯投影。
 
 ## P2-4 运行时默认与模块边界补记
-- exploreBudget 的默认读取顺序是工作区 `agent.cordis.yml` 叶值 → 构建期生成 `preset-defaults.generated.js` → 运行时 fallback；运行时不读 YAML，合法 cfg 值仍优先。
+- exploreBudget 与 plannerPromptSuffix 的默认读取顺序是工作区 `agent.cordis.yml` 叶值 → 构建期生成 `preset-defaults.generated.js`（DEFAULT_EXPLORE_BUDGET / DEFAULT_PLANNER_PROMPT_SUFFIX 两常量）→ 运行时 fallback（settings.js Config 默认 / live-config BUILTIN_DEFAULTS / index.js apply 兜底）；运行时不读 YAML，合法 cfg 值仍优先（显式空串仍是合法用户值，不覆盖不迁移）。
 - 生成/--check/prepack 完整校验失败即非 0 且保留 last-known-good；preset-sync 在任何用户预设目标写入前失败，既有 postinstall/startup 外壳不阻断。
 - shell mutation、planner budget、frontmatter/cause-chain 与 per-apply role/cache 工厂位于 lib；usage/注册/claim、disposed 同步 final fold、监听器顺序和 pre-execute 接线仍在根入口。

@@ -175,8 +175,8 @@ const { restatePresetPlugins } = await import(new URL('../../plugins/dsh-extra-p
   check('C-2b 运行时：SETTINGS_ROW_ID 常量 = 行 id dsh-extra-plan-settings（ns 未改名）', SETTINGS_ROW_ID === 'dsh-extra-plan-settings')
   // volatile 字段的解析产物是 Volatile 引用（读值经 .get()）——正是宿主 SettingsForms 的投影口径。
   const parsedDefault = configSchema({})
-  check('C-1c 运行时：Config 默认值 = 资产模板叶值/descriptor 默认（webFetch=false、toolPresentationMode=native、exploreBudget=18）',
-    parsedDefault.webFetch.get() === false && parsedDefault.toolPresentationMode.get() === 'native' && parsedDefault.exploreBudget.get() === 18 && parsedDefault.anchoredBootstrap.get() === true)
+  check('C-1c 运行时：Config 默认值 = 资产模板叶值/descriptor 默认（webFetch=false、toolPresentationMode=native、exploreBudget=18、plannerPromptSuffix=资产句）',
+    parsedDefault.webFetch.get() === false && parsedDefault.toolPresentationMode.get() === 'native' && parsedDefault.exploreBudget.get() === 18 && parsedDefault.anchoredBootstrap.get() === true && parsedDefault.plannerPromptSuffix.get() === '你的深度思考部分需要以"好了，现在我以全局视角来看待这个问题"开头')
   const parsedSet = configSchema({ webFetch: true, toolPresentationMode: 'ptc' })
   check('C-1d 运行时：宿主 schema 认这 2 个键（写入 settings 行后不会被 schema 丢弃）', parsedSet.webFetch.get() === true && parsedSet.toolPresentationMode.get() === 'ptc')
 }

@@ -88,6 +88,6 @@ dsh 插件「按需规划模式」预设：AI 未经用户同意不得修改源�
 - **启动自愈三维判定**：声明行覆盖 + 本体剥离比对 + 投影一致性 → 一致则 `idle`（不写盘）；**无 manifest 台账、无跨版本迁移**（0.1.6 及更早搬迁已放弃）。
 
 ## P2-4 B1/B2 边界补充
-- exploreBudget 默认链固定为 YAML 模板叶值 → 构建期生成模块 → runtime fallback；`preset-defaults.generated.js` 带 generated/do not edit 头，descriptor 不拥有默认值，`index.js` 不在运行时解析 YAML（2026-09-23 起的例外：`lib/live-config.js` 构造期无条件解析一次、此后仅 YAML 的 mtimeMs+size 变化时再解析，用于 7 项设置热读；apply 期 cfg 快照仅作读盘失败时的兜底）。
+- exploreBudget 与 plannerPromptSuffix 的默认链固定为 YAML 模板叶值 → 构建期生成模块（DEFAULT_EXPLORE_BUDGET / DEFAULT_PLANNER_PROMPT_SUFFIX 两个常量；运行时 settings.js Config 默认、live-config BUILTIN_DEFAULTS、index.js apply 兜底三处只 import 常量、不硬编码同值字符串）→ runtime fallback；`preset-defaults.generated.js` 带 generated/do not edit 头，descriptor 不拥有默认值，`index.js` 不在运行时解析 YAML（2026-09-23 起的例外：`lib/live-config.js` 构造期无条件解析一次、此后仅 YAML 的 mtimeMs+size 变化时再解析，用于 7 项设置热读；apply 期 cfg 快照仅作读盘失败时的兜底）。
 - 生成器与 prepack 先校验后替换；坏模板保持 last-known-good，preset-sync 在目标目录写入前失败，startup 仍由既有外壳吞错不阻断。
 - 新职责：`lib/shell-mutation.js` 负责跨平台命令判定，`lib/planner-budget.js` 负责预算计数/文案，`lib/runtime-static.js` 负责显式参数纯 helper，`lib/agent-runtime.js` 每次 apply 创建角色/缓存/usage baseline 状态；usage、注册/claim、disposed 同步 final fold、listener 与 pre-execute 仍归根入口。

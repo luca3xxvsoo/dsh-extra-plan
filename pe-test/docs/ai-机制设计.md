@@ -138,6 +138,6 @@ planner resolver 分 legacy/strict 两路（False/缺失/非法走旧 advisory�
 *机制「为什么」的详版以此表指向的源码注释为准；本文件仅索引层。*
 
 ## P2-4 默认值真源与中度拆分
-- `agent.cordis.yml` 的 exploreBudget 叶值是唯一作者真源；`resolveTemplateSettingDefault` 复用既有 YAML/locator/validator 链，生成器完整校验后写 `preset-defaults.generated.js`。运行时只 import 生成常量，合法 cfg 正整数优先，缺失/非法才回退生成值。
+- `agent.cordis.yml` 的 exploreBudget 与 plannerPromptSuffix 两个叶值是作者真源；`resolveTemplateSettingDefault` 复用既有 YAML/locator/validator 链（两键同一解析链），生成器完整校验后写 `preset-defaults.generated.js`（`DEFAULT_EXPLORE_BUDGET` / `DEFAULT_PLANNER_PROMPT_SUFFIX`）。运行时只 import 生成常量，合法 cfg 值优先（exploreBudget 正整数 / plannerPromptSuffix 任意字符串，显式空串合法），缺失/非法才回退生成值。
 - 缺失/非法模板的生成、--check、prepack 必须阻断且保留 last-known-good；preset-sync 在 target 写入前失败，postinstall/startup 继续非阻断。descriptor 只做定位、校验、UI metadata，不增加 default/defaultValue。
 - B1 的 `shell-mutation.js`、`planner-budget.js`、`runtime-static.js` 均为显式参数/纯 helper；`createAgentRuntime` 每次 apply 新建 WeakSet/WeakMap 与 role baseline。根入口继续持有 usage、注册/claim、全部 ctx.on、disposed 同步 final fold、tools/pre-execute 和角色闸门。

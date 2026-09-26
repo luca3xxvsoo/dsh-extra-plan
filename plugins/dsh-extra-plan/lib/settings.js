@@ -25,6 +25,7 @@ import { isDeepStrictEqual } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import z from '@deepseek-ai/schemastery'
+import { DEFAULT_PLANNER_PROMPT_SUFFIX } from './preset-defaults.generated.js'
 import {
   HOST_ROW_LEAF_KEYS,
   HOST_ROW_SETTING_DEFINITIONS,
@@ -60,6 +61,7 @@ export const HOST_ROW_AUTHORITY_FIELDS = Object.freeze({
  * 直接声明，2 项宿主行设置来自 HOST_ROW_AUTHORITY_FIELDS —— 10 项的权威值全部落在本行。
  * ns = 本行 id（profile patch 根级 insert 行，id 唯一 → configEditor 可寻址；
  * 该 insert 不带 config → 继承层恒为 {} → 宿主 edit 永不判「值==继承层」而删行）。
+ * 8 项默认值与 BUILTIN_DEFAULTS 同源（同一生成常量）、与资产叶值逐字一致。
  */
 export const Config = z.object({
   anchoredBootstrap: z.boolean().default(true).volatile(),
@@ -67,7 +69,7 @@ export const Config = z.object({
   runcodeCatchGate: z.boolean().default(false).volatile(),
   crossProviderPlannerModel: z.boolean().default(false).volatile(),
   plannerModel: z.string().default('deepseek-v4-pro').volatile(),
-  plannerPromptSuffix: z.string().default('').volatile(),
+  plannerPromptSuffix: z.string().default(DEFAULT_PLANNER_PROMPT_SUFFIX).volatile(),
   // 整数语义按宿主既有习语表达（schemastery 无 .int()；官方 volatile 整数字段同形，
   // 见 dsh-agent-loop 的 maxParallelToolCalls: z.number().step(1).min(1).default(10) 尾链 volatile）。
   exploreBudget: z.number().step(1).min(1).default(18).volatile(),

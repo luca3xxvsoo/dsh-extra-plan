@@ -29,7 +29,7 @@ import {
   restatePluginsRow,
   serializeScalar,
 } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
-import { DEFAULT_EXPLORE_BUDGET } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
+import { DEFAULT_EXPLORE_BUDGET, DEFAULT_PLANNER_PROMPT_SUFFIX } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
 import { GATE_WORDS_GROUP_DEFINITION, createGateRuntime } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
 import { createLiveConfig } from '../../plugins/dsh-extra-plan/lib/live-config.js'
 
@@ -48,6 +48,7 @@ function check(label, condition) {
 }
 
 check('exploreBudget 默认来自生成模块且为资产 YAML 叶值', DEFAULT_EXPLORE_BUDGET === resolveSetting(parsePresetYaml(assetAgent), definition('exploreBudget'), { aliases: false }).value && DEFAULT_EXPLORE_BUDGET === 18)
+check('plannerPromptSuffix 默认来自生成模块且为资产 YAML 叶值', DEFAULT_PLANNER_PROMPT_SUFFIX === resolveSetting(parsePresetYaml(assetAgent), definition('plannerPromptSuffix'), { aliases: false }).value && DEFAULT_PLANNER_PROMPT_SUFFIX === '你的深度思考部分需要以"好了，现在我以全局视角来看待这个问题"开头')
 
 function patchAgent(values) {
   let text = assetAgent
@@ -265,6 +266,9 @@ check('readProjectedValue：按 projectionLocator 读声明行子行现值（缺
       const lcBuiltin = createLiveConfig({ resolveDocumentPath: () => offFile })
       return lcFallback.webFetch === false && lcFallback.toolPresentationMode === 'native' && lcBuiltin.webFetch === false && lcBuiltin.toolPresentationMode === 'native'
     })())
+    // LC-G：无 fallbackDefaults（configEditor 未就绪）→ BUILTIN_DEFAULTS 兜底 = 生成常量（= 资产叶值）。
+    const lcSuffixDefault = createLiveConfig({ resolveDocumentPath: () => '' })
+    check('LC-G 路径不可得且无 fallback → plannerPromptSuffix 兜底 = 生成常量（资产叶值）', lcSuffixDefault.plannerPromptSuffix === '你的深度思考部分需要以"好了，现在我以全局视角来看待这个问题"开头')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
