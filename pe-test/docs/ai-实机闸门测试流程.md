@@ -77,7 +77,7 @@
 | A14 | 主会话 | —（任意路由） | 发部分相交/非标选项 ask（例：只含「直接执行」一项） | `ask 选项不规范。路由 ask 选项固定为「直接执行」「进行pro规划」「不同意」；批准 ask 选项固定为「同意执行」「转交pro规划」「不同意」；目的 ask 选项固定为「完善方案」「重新规划」。` + ` 当前路由 ask 缺少：…。` ＋ 若同时存在结构错误，尾句为 `同时，路由 ask 结构错误：… 请一并修正后重提。`（与 A15 结构文案同源合并） | 同上 | 实机直测 |
 | A15 | 主会话 | — | 发标准三词但结构错：路由 ask 少于 2 问（缺第二问）/ 路由第 2 问带 options / 批准 ask 少于 2 问 / 批准第 2 问带 options | 路由侧：`路由 ask 结构错误：须至少 2 个问题（第一个为路由选项固定为「直接执行」「进行pro规划」「不同意」，第二个为补充要求可空），当前 N 个问题`；或 `路由 ask 结构错误：第 N 个问题（补充要求）必须为纯文本输入，不得提供选项（预设选项不符合用户想法），当前带 M 个选项。请改为纯文本大文本框、去掉 options`。批准侧：`批准 ask 结构错误：须至少 2 个问题（第一个为批准选项固定为「同意执行」「转交pro规划」「不同意」，第二个为修改意见可空），当前 N 个问题`；或 `批准 ask 结构错误：第 N 个问题（修改意见）必须为纯文本输入，不得提供选项（预设选项不符合用户想法），当前带 M 个选项。请改为纯文本大文本框、去掉 options` | 同上 | 实机直测 |
 | A16 | 任意角色（主会话 / planner / 只读子代理） | — | 调 job_output 带 wait:true | `job_output 禁止带 wait: true 前台等待。请省略 wait 参数或设 wait: false，job 完成后会收到通知` | 同上 | 实机直测 |
-| A17 | 任意角色 | 同一轮内已成功调用过同一 job_id | 同轮内第二次调 job_output（同一 job） | `job_output 禁止对同一 job 重复调用。job "<job_id>" 在本轮已调用过，请等待通知或使用 job_list 查看状态` | 同上 | 实机直测（须同轮内，见陷阱③） |
+| A17 | 任意角色 | 同一轮内已成功调用过同一 job_id | 同轮内第二次调 job_output（同一 job） | `job_output 禁止对同一 job 重复调用。job "<job_id>" 在本轮已调用过，请等待子代理返回结果，禁止提前收尾、结束` | 同上 | 实机直测（须同轮内，见陷阱③） |
 | A18 | planner | — | planner 的 run_code 写 19 个 tools.* 调用点 | `run_code 静态调用点 19 处超过单实例子调用上限 18（exploreBudget）：请拆分多个 run_code 或减少单次调用点` | 同上（聚合行「- run_code: …」） | 实机直测（planner 序列） |
 | A19 | planner / 只读 child | — | run_code 内裸写 writeFileSync 等写特征 | `只读角色仅允许只读探查：run_code 代码命中写模式特征 N 处（…）。请改用 read/glob/grep 或 shell 只读命令` | 同上（聚合标签形如 `write（裸写特征：…）`） | 实机直测（planner/probe 序列） |
 | A20 | planner | — | 单次 run_code 循环 25 次子调用（**全 FREE_TOOLS 成员**，如 save_plan 每次传过短参数 → 执行期 throw A34、零落盘；循环 read 等非 FREE_TOOLS 形态会先被 budget 白名单整体拒，取不到分档） | 25 次尝试中 18 次放行、7 次因单实例子调用上限拒绝；拒绝文案含「超过上限」与「exploreBudget」（`子调用数`具体数字仅照录，不作通过条件） | 同上（planner 序列，预算耗尽后发起） | 实机直测（planner 序列） |
@@ -231,7 +231,7 @@
 | `A10` | 组 成员 subagent_plan + run_in_background:false | `规划子代理不可前台等待：run_in_background 参数不得传 false（continuable 固定后台运行）。请移除 run_in_background: false 或省略该参数` |
 | `A06` | 组 成员 subagent | `执行类委派未放行：subagent。…` |
 | `A16` | 组 成员 job_output（wait:true） | `job_output 禁止带 wait: true 前台等待。…` |
-| `A17` | 同一次 run_code 内第二次同参 job_output（或同轮直呼第二次） | `job_output 禁止对同一 job 重复调用。job "<job_id>" 在本轮已调用过，请等待通知或使用 job_list 查看状态` |
+| `A17` | 同一次 run_code 内第二次同参 job_output（或同轮直呼第二次） | `job_output 禁止对同一 job 重复调用。job "<job_id>" 在本轮已调用过，请等待子代理返回结果，禁止提前收尾、结束` |
 | `A12` | 直呼 save_plan（合法参数，route=plan） | 无拒绝文案；paths 数组含两个 .md；read 验证两文件存在且可读 |
 | `A49` | 直呼 save_probe（四字段合法、单条 text ≤1000 字） | 无拒绝文案；`.extra-plan/` 新增「线索-」前缀文件；read 验证存在且可读 |
 

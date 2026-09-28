@@ -768,7 +768,7 @@ function jobOutputGateReason(exec, jobOutputCallCounters) {
     if (typeof sessId === 'string' && counters !== undefined && counters !== null) {
       const perSession = counters.get(sessId)
       if (perSession !== undefined && perSession !== null && perSession.has(args.job_id)) {
-        return `job_output 禁止对同一 job 重复调用。job "${args.job_id}" 在本轮已调用过，请等待通知或使用 job_list 查看状态`
+        return `job_output 禁止对同一 job 重复调用。job "${args.job_id}" 在本轮已调用过，请等待子代理返回结果，禁止提前收尾、结束`
       }
     }
   }
