@@ -23,8 +23,8 @@ function fsOpsOf(overrides) {
 // ③ 只有全部目标 existsSync 确认就位后才尝试删除 journal。
 // ④ 任何清理错误都不得覆盖原始错误：对外始终抛原始错误。
 // tmp 后缀沿用现有 .tmp-${process.pid}-${Date.now()}。
-// sessionTag（可选，T3）：写入方会话标识段（sessionTagOf），随 journal 落盘供
-// recoverJournals 按会话过滤；'' / 缺省时不写该字段（save_probe 单写保持旧形状）。
+// sessionTag（T3）：写入方会话标识段（sessionTagOf），随 journal 落盘供
+// recoverJournals 按会话过滤；所有生产 atomicCommit journal 均带非空 session。
 // fsOps（可选，末位）：局部文件系统操作依赖（默认 DEFAULT_FS_OPS），仅供测试注入故障；
 // 生产调用（index.js → save-tool-factories.js）不传，语义与拆分前完全一致。
 export function atomicCommit(dir, base, files, sessionTag, fsOps) {
@@ -33,7 +33,7 @@ export function atomicCommit(dir, base, files, sessionTag, fsOps) {
   const suffix = `.tmp-${process.pid}-${Date.now()}`
   const journal = join(dir, `.journal-${base}.json`)
   const entries = files.map((f) => ({ tmp: join(dir, f.name + suffix), file: join(dir, f.name) }))
-  const record = { ...(typeof sessionTag === 'string' && sessionTag !== '' ? { session: sessionTag } : {}), entries }
+  const record = { session: typeof sessionTag === 'string' && sessionTag !== '' ? sessionTag : 'unknown', entries }
   let journalWritten = false
   try {
     for (let i = 0; i < files.length; i += 1) ops.writeFileSync(entries[i].tmp, files[i].content, 'utf8')
@@ -59,37 +59,20 @@ export function atomicCommit(dir, base, files, sessionTag, fsOps) {
   }
 }
 
-// journal 记录归一为非空恢复目标列表：新形状 entries 与旧形状
-// planTmp/checkTmp/planFile/checkFile 两种形状统一成 [{tmp,file}]。
-// 字段缺失或形状非法（entries 为空/条目非 {tmp,file} 非空字符串、旧形状字段缺半对、既无
-// entries 也无任何旧形状目标）一律抛错，由调用方走既有告警路径并保留 journal——不可解析
-// 的记录绝不能被当成「已恢复完成」而删掉恢复入口。
+// journal 只接受当前形状：非空 entries 列表，每项为 {tmp,file}。
+// 旧形状或任何非法记录均告警并原样保留，不再提供历史恢复分支。
 function recoveryTargetsOf(record) {
   if (record === null || typeof record !== 'object') throw new Error('journal 记录不是对象')
-  if (Array.isArray(record.entries)) {
-    if (record.entries.length === 0) throw new Error('journal entries 为空，无恢复目标')
-    return record.entries.map((item) => {
-      if (item === null || typeof item !== 'object' || typeof item.tmp !== 'string' || item.tmp === '' || typeof item.file !== 'string' || item.file === '') {
-        throw new Error('journal entries 条目形状非法（每项须为 {tmp,file} 非空字符串）')
-      }
-      return { tmp: item.tmp, file: item.file }
-    })
-  }
-  const targets = []
-  for (const [tmpKey, fileKey] of [['planTmp', 'planFile'], ['checkTmp', 'checkFile']]) {
-    const tmp = record[tmpKey]
-    const target = record[fileKey]
-    if (tmp === undefined && target === undefined) continue
-    if (typeof tmp !== 'string' || tmp === '' || typeof target !== 'string' || target === '') {
-      throw new Error(`journal 旧形状字段不完整（${tmpKey}/${fileKey} 须成对非空字符串）`)
+  if (!Array.isArray(record.entries) || record.entries.length === 0) throw new Error('journal 不是当前 entries 形状，保留现场')
+  return record.entries.map((item) => {
+    if (item === null || typeof item !== 'object' || typeof item.tmp !== 'string' || item.tmp === '' || typeof item.file !== 'string' || item.file === '') {
+      throw new Error('journal entries 条目形状非法（每项须为 {tmp,file} 非空字符串）')
     }
-    targets.push({ tmp, file: target })
-  }
-  if (targets.length === 0) throw new Error('journal 记录无可恢复目标（既无 entries 也无旧形状四字段）')
-  return targets
+    return { tmp: item.tmp, file: item.file }
+  })
 }
 
-// journal 崩溃自愈：新形状 entries 与旧形状（planTmp/checkTmp/planFile/checkFile）逐项恢复。
+// journal 崩溃自愈：当前 entries 形状逐项恢复；旧形状只告警并保留。
 // 完成判定：每一项「tmp 存在则 rename，随后确认目标文件存在」——已在前一次尝试中完成 rename
 // 的项凭目标存在继续（幂等续做），tmp 与目标同时缺失的项视为恢复失败；任一项恢复或确认失败
 // 即保留 journal，只有全部项都确认就位才删除该 journal。恢复失败 console.warn 且继续扫描
@@ -109,9 +92,8 @@ export function recoverJournals(dir, sessionTag, fsOps) {
     const file = join(dir, entry)
     try {
       const record = JSON.parse(ops.readFileSync(file, 'utf8'))
-      if (record !== null && typeof record === 'object'
-          && typeof sessionTag === 'string' && sessionTag !== ''
-          && typeof record.session === 'string' && record.session !== '' && record.session !== sessionTag) continue
+      if (typeof sessionTag === 'string' && sessionTag !== ''
+          && (record === null || typeof record !== 'object' || record.session !== sessionTag)) continue
       for (const item of recoveryTargetsOf(record)) {
         if (ops.existsSync(item.tmp)) ops.renameSync(item.tmp, item.file)
         if (!ops.existsSync(item.file)) throw new Error(`目标文件未就位（保留 journal 待后续恢复）：${item.file}`)

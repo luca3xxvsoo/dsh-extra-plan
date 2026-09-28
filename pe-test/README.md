@@ -8,7 +8,8 @@
 | 分类 | 检查什么 | 什么时候用 |
 |---|---|---|
 | **逻辑检查**（step-00） | 插件「脑子里的规矩」对不对（写命令该拦的拦不拦、预算算得对不对） | 每次改完插件后 |
-| **安装检查**（step-01，含 step-01-qqbot-安装映射；step-01-安装分发已删除） | 装到你电脑上后：文件全不全、设置页能不能改 | 装完插件后第一次 |
+| **安装检查**（step-01，含 QQBot 静态安装映射；step-01-安装分发已删除） | 装到你电脑上后：文件全不全、设置页能不能改；QQBot 静态 patch/迁移逻辑 | 装完插件后第一次 |
+| **QQBot 环境检查**（step-01-qqbot-环境验证） | 严格环境预检、junction 能力与真实 profile 只读映射核验 | 有对应环境时自动运行；环境不足则 SKIP |
 | **痕迹检查**（step-04/05/06/07/08/99） | 跑完一次真实流程后，看日志：AI 这轮干了什么、有没有违规 | 每次试完流程后 |
 
 ## 设置页入口（dsh 0.1.7）
@@ -22,9 +23,9 @@
 ```
 node pe-test/tools/一键step测试.mjs
 ```
-→ 自动跑全部「自动判定项」（10 个），结果保存到 `pe-test/reports/测试报告-<时间>.md`
+→ 自动跑全部「自动判定项」（12 个），结果保存到 `pe-test/reports/测试报告-<时间>.md`
 → 跑之前先确认：**在完整目录（pe-test 与 plugins 同级 = 仓库根）下运行**才有完整结果
-→ 报告末尾会列出「人眼项/需参数项」——那些需要你自己跑并人工判读，不是自动的；HUMAN 独立报告保留 stdout/stderr 全量原文
+→ QQBot 环境项默认只读真实 profile；缺环境或 junction 能力不足显示结构化 SKIP，不计失败，不会自动 heal/建链；报告末尾会列出「人眼项/需参数项」——那些需要你自己跑并人工判读，不是自动的；HUMAN 独立报告保留 stdout/stderr 全量原文
 
 **step-07 实机子代理取证（HUMAN，不能无参运行）**：一键体检用 `--session <顶层主会话ID>` 显式传入 `SESSION_ID`；直接运行脚本时按下方命令显式设置环境变量，并在同一部署配置快照下提供 `PLANNER_PROMPT_SUFFIX`（空串也要显式设置）：
 ```powershell
@@ -32,19 +33,20 @@ $env:SESSION_ID='<顶层主会话ID>'
 $env:PLANNER_PROMPT_SUFFIX='<同一部署快照的精确 suffix>'
 node pe-test/tools/step-07-子代理模型与引导取证.mjs
 ```
-脚本只读 `session.v3.jsonl.zstd` / `session.jsonl.zstd`，分开报告 request/header（attempted route，尝试路由）和 assistant/message.data.message.source（actual provenance，实际产出），只区分 pro规划/非pro规划；完整 planner 文本、budgetNotice、宿主 guidance、header.system 与 suffix 等级照实输出（对应 C11/C12）。
+脚本按顺序探测三种候选日志：`session.v4.jsonl.zstd` / `session.v3.jsonl.zstd` / `session.jsonl.zstd`，分开报告 request/header（attempted route，尝试路由）和 assistant/message.data.message.source（actual provenance，实际产出），只区分 pro规划/非pro规划；完整 planner 文本、budgetNotice、宿主 guidance、header.system 与 suffix 等级照实输出（对应 C11/C12）。
 
 也可以直接跑单个文件（`node pe-test/tools/step-01-预设完整性.mjs`），效果一样。
 
 
-**看结果的通用规则**：step-00 类回归脚本看退出码（exit=0 且末行含「通过」= 全过），出现 FAIL 或退出码≠0 = 有问题，记下 FAIL 行的内容；代码地图 --check 看退出码（exit=0 且含「地图与代码一致」= 全过，其他输出=有问题）。
+**看结果的通用规则**：step-00 类回归脚本看退出码（exit=0 且末行含「通过」= 全过），出现 FAIL 或退出码≠0 = 有问题，记下 FAIL 行的内容；QQBot 环境脚本允许 PASS/SKIP 混合，只有 FAIL 或退出码≠0 才是问题；代码地图 --check 看退出码（exit=0 且含「地图与代码一致」= 全过，其他输出=有问题）。
 
 ## 每步看什么（快速索引）
 
 | 步骤 | 跑什么 | 全过 = 说明 |
 |---|---|---|
 | 0 全局逻辑回归 | step-00-全流程回归 / step-00-跨平台写拦截 | 插件核心逻辑没被改坏 |
-| 1 安装与配置 | step-01-设置迁移 / 安装同步 / 预设完整性 / 设置页配置 / step-01-qqbot-安装映射 | 选择性恢复、格式安全、双入口同步、设置项可改 |
+| 1 安装与配置 | step-01-设置迁移 / 安装同步 / 预设完整性 / 设置页配置 / step-01-qqbot-安装映射（静态） | 选择性恢复、格式安全、双入口同步、设置项可改、QQBot 静态 patch/迁移逻辑通过 |
+| 1A QQBot 环境 | step-01-qqbot-环境验证（条件只读） | 五条件命中时只读核验 profile；环境/能力不足为 SKIP，不计失败 |
 | 2 anchored 引导开关 | 人工对比（无自动工具） | 开=AI 先看再答；关=直接开干；两遍有区别=开关生效 |
 | 4 路由确认与写闸门 | step-04-路由与写闸门 (+ 工具清单查看) | 路由没确认时 AI 不能改文件；reviewer 不能写 |
 | 5 澄清意图 | 人眼看 step-05-会话解码 | 会话里确认问过澄清问题 |

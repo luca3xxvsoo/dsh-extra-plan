@@ -42,8 +42,8 @@ function timestamp() {
 }
 
 // ── 旧版错误块：只迁移根级完整生成条目，静态 insert 由 cordis.patch.yml 唯一提供 ──
-// 【待有 QQBOT 环境再测试，本机不做验证】两行新包族按 dsh 0.1.7-rc.1 同步（方案 U3/U4
-// 未核实项）；0.1.5-rc.2 及更早包族的同形残留保留清理能力，避免旧 profile 升级后残留重复行。
+// 静态包族由静态回归覆盖；严格环境命中时由环境脚本执行只读核验；
+// QQBot 消息、/preset、question/approval 与 postinstall 仍属部署后 HUMAN。
 const LEGACY_ROOT_ENTRIES = [
   {
     id: 'ptc-runtime',

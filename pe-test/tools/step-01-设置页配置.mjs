@@ -373,6 +373,7 @@ try {
   // restatePresetPlugins 与 settings.js 走同一实现（写链单一来源）
   const shared = restatePresetPlugins({ plugins: declaredPlugins() }, {}, { hostRowConfig: { 'tool-web': { fetch: true } }, gateWords: null })
   check('settings.js 与 preset-sync.js 共用 restatePresetPlugins（单点写链，返回 {...current, plugins}）', shared.plugins.find((row) => row.id === 'tool-web').config.fetch === true && restatePluginsRow(declaredPlugins(), 'tool-web', { fetch: true }) !== null)
+  check('U-3 客户端严格验证 projection.applied 且不使用 hostSnapshot 覆盖并发 authority', clientText.includes('data.projection.applied !== true') && clientText.includes('latestRes') && clientText.includes('latestData.values') && !clientText.includes('hostSnapshot'))
 } catch (error) {
   fail += 1
   console.error('FAIL  设置页 HTTP 回归异常: ' + String(error && error.stack || error))

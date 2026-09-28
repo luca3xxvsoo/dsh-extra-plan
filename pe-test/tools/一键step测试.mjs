@@ -1,6 +1,6 @@
 // 一键step测试.mjs — pe-test 一键体检
 // 用法: node 一键step测试.mjs
-// 说明: 自动运行全部「自动判定项」，把结果（通过/失败/已知预存问题/人眼项）写入
+// 说明: 自动运行全部「自动判定项」，把结果（通过/部分执行/未执行/失败/人眼项）写入
 //       pe-test/reports/测试报告-<时间戳>.md 并在控制台输出摘要。
 // 前置: 本工具设计为在完整目录（pe-test 与 plugins/ 同级，即 dsh-extra-plan 仓库根）运行；
 //       若检测到缺少 plugins，仓库依赖项将标注「需完整目录」而不执行。
@@ -26,6 +26,7 @@ const AUTO = [
   ['step-01-executor-spawn注册幂等.mjs', false, ''],
   ['step-01-设置页配置.mjs', false, ''],
   ['step-01-qqbot-安装映射.mjs', true, ''],
+  ['step-01-qqbot-环境验证.mjs', true, ''],
   ['step-04-路由与写闸门.mjs', true, ''],
   ['step-06-线索落盘.mjs', true, ''],
   // 代码地图一致性（--check：不写盘；地图过期/漏检/导航失效 → 退出码 1）
@@ -47,9 +48,10 @@ const NEED_ARG = [
 ]
 
 function parseResult(out) {
-  const m = String(out).match(/通过\s*(\d+)(?:\/\d+)?\s*,\s*失败\s*(\d+)/) || String(out).match(/结果：\s*(\d+) 通过，(\d+) 失败/)
+  const text = String(out)
+  const m = text.match(/通过\s*(\d+)(?:\/\d+)?\s*[,，]\s*失败\s*(\d+)(?:\s*[,，]\s*(?:跳过\s*(\d+)|(\d+)\s*跳过))?/) || text.match(/结果：\s*(\d+) 通过，(\d+) 失败/)
   if (m === null) return null
-  return { pass: Number(m[1]), fail: Number(m[2]) }
+  return { pass: Number(m[1]), fail: Number(m[2]), skip: Number(m[3] === undefined ? (m[4] === undefined ? 0 : m[4]) : m[3]) }
 }
 
 function runOne(file, extraArgs) {
@@ -74,7 +76,35 @@ function runOne(file, extraArgs) {
   rmSync(captureDir, { recursive: true, force: true })
   const stats = parseResult(out)
   const failLines = String(out).split('\n').filter((l) => l.includes('FAIL') || l.includes('Error:') || l.includes('地图与代码不一致') || l.includes('疑似漏检') || l.includes('导航失效')).slice(0, 8)
-  return { status: r.status, stats, failLines, error: r.error }
+  const skipLines = []
+  for (const line of String(out).split(/\r?\n/)) {
+    if (!line.startsWith('SKIP  ')) continue
+    try { skipLines.push(JSON.parse(line.slice('SKIP  '.length))) } catch { /* 非结构化 SKIP 不计入统计 */ }
+  }
+  return { status: r.status, stats, failLines, skipLines, error: r.error, out }
+}
+function escapeCell(value) {
+  return String(value === undefined || value === null ? '' : value).replace(/\r?\n/g, '<br>').replace(/\|/g, '\\|')
+}
+
+function classifyAuto(result) {
+  if (result.error !== undefined) return '未执行'
+  if (result.status !== 0 || (result.stats !== null && result.stats.fail > 0)) return '失败'
+  if (result.stats !== null && result.stats.skip > 0 && result.stats.pass === 0) return '未执行'
+  if (result.stats !== null && result.stats.skip > 0 && result.stats.pass > 0) return '部分执行'
+  return '通过'
+}
+
+function statsSummary(result) {
+  if (result.stats !== null) {
+    return '通过 ' + result.stats.pass + ', 失败 ' + result.stats.fail + (result.stats.skip > 0 ? ', 跳过 ' + result.stats.skip : '')
+  }
+  return result.status === 0 ? '通过（无统计行）' : '失败'
+}
+
+function structuredSkipSummary(result) {
+  if (result.skipLines.length > 0) return result.skipLines.map((value) => JSON.stringify(value)).join('；')
+  return ''
 }
 
 // 人眼项取证: 运行取证工具，stdout+stderr 全量拼接（无任何截断/过滤/摘要）
@@ -138,31 +168,40 @@ function main() {
   lines.push('')
 
   let autoPass = 0
+  let autoPartial = 0
+  let autoSkip = 0
   let autoFail = 0
-  let skipRepo = 0
   lines.push('## 一、自动判定项')
+  lines.push('| 自动项 | 状态 | 退出码 | 统计 | 诊断/备注 |')
+  lines.push('|:--|:--|--:|:--|:--|')
   for (const [file, needRepo, known, extraArgs] of AUTO) {
     if (needRepo && !FULL_DIR) {
-      skipRepo += 1
-      lines.push(`| ${file} | 未执行 | 需完整目录 | ${known || '—'} |`)
+      autoSkip += 1
+      lines.push('| ' + escapeCell(file) + ' | 未执行 | — | — | 需完整目录' + (known ? '；' + escapeCell(known) : '') + ' |')
       continue
     }
     const r = runOne(file, extraArgs)
+    let state
+    let diagnostic = structuredSkipSummary(r)
     if (r.error !== undefined) {
-      skipRepo += 1
-      lines.push(`| ${file} | 未执行 | 运行环境受限（spawn 失败: ${String(r.error.code || r.error.message).slice(0, 40)}） | ${known || '—'} |`)
-      continue
+      state = '未执行'
+      autoSkip += 1
+      diagnostic = '运行环境受限（spawn 失败: ' + String(r.error.code || r.error.message).slice(0, 80) + ')' + (known ? '；' + known : '')
+    } else {
+      state = classifyAuto(r)
+      if (state === '通过') autoPass += 1
+      else if (state === '部分执行') autoPartial += 1
+      else if (state === '未执行') autoSkip += 1
+      else autoFail += 1
+      if (diagnostic === '' && known) diagnostic = known
+      if (diagnostic === '' && state === '失败' && r.failLines.length > 0) diagnostic = r.failLines[0].trim()
     }
-    const ok = r.status === 0
-    if (ok) autoPass += 1; else autoFail += 1
-    const summary = r.stats !== null ? `通过 ${r.stats.pass}, 失败 ${r.stats.fail}` : (r.status === 0 ? '通过（无统计行）' : '失败')
-    lines.push(`| ${file} | ${ok ? '通过' : '失败'} | 退出码 ${r.status} | ${summary} | ${known || '—'} |`)
-    if (!ok && r.failLines.length > 0) {
-      for (const l of r.failLines) lines.push(`  - ${file}: ${l.trim().slice(0, 160)}`)
+    lines.push('| ' + escapeCell(file) + ' | ' + state + ' | ' + (r.status === null ? 'null' : String(r.status)) + ' | ' + escapeCell(statsSummary(r)) + ' | ' + escapeCell(diagnostic || '—') + ' |')
+    if (state === '失败' && r.failLines.length > 0) {
+      for (const l of r.failLines) lines.push('  - ' + escapeCell(file) + ': ' + escapeCell(l.trim().slice(0, 160)))
     }
   }
   lines.push('')
-
   lines.push('## 二、人眼项（无自动判定，请人工运行判读）')
   lines.push('提示：step-07 必须用 --session <顶层主会话ID> 并显式提供 PLANNER_PROMPT_SUFFIX；其余取证工具无参运行时按「会话定位」区规则取会话，也可用 --session <会话ID> / SESSION_ID 指定')
   for (const [file, note] of HUMAN) {
@@ -174,8 +213,9 @@ function main() {
   for (const [file, note] of NEED_ARG) lines.push(`- ${file} — ${note}`)
   lines.push('')
   lines.push('## 四、结论')
-  lines.push(`- 自动判定项: 通过 ${autoPass} / 失败 ${autoFail} / 未执行(需完整目录) ${skipRepo}，共 ${AUTO.length} 项`)
-  if (autoFail > 0) lines.push('- 说明: 失败项含「已知预存问题」（见自动判定项表格备注列），其余失败需排查')
+  lines.push('- 自动判定项结论：通过 ' + autoPass + ' / 部分执行 ' + autoPartial + ' / 未执行 ' + autoSkip + ' / 失败 ' + autoFail + '，共 ' + AUTO.length + ' 项')
+  lines.push('- 说明：部分执行/未执行不计失败；环境项的 SKIP 会保留结构化 reason/details，真实 QQBot 消息与交互仍属 HUMAN')
+  if (autoFail > 0) lines.push('- 说明：失败项含「已知预存问题」（见自动判定项表格备注列），其余失败需排查')
 
   mkdirSync(REPORTS_DIR, { recursive: true })
   const reportFile = join(REPORTS_DIR, `测试报告-${stamp}.md`)

@@ -23,6 +23,7 @@ const file = join(PRESET_DIR, 'agent.cordis.yml')
 const presetFile = join(PRESET_DIR, 'preset.yml')
 const generatedFile = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'preset-defaults.generated.js')
 const generatorFile = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'scripts', 'generate-runtime-defaults.mjs')
+const assemblySource = readFileSync(join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'assembly-presentation.js'), 'utf8')
 let rows
 let preset
 try {
@@ -452,5 +453,6 @@ for (const channel of LOCALE_CHANNELS) {
 check('S3 六个 specifier 经包自引用 + exports 真实解析命中各自文件（等价宿主 readPluginMeta 取文路径）'
   + (resolveProblems.length > 0 ? '，异常: ' + resolveProblems.join('; ') : ''), resolveProblems.length === 0)
 
+check('S4 空 schema 为权威空集合且退役 tool:cordis section 不产出', assemblySource.includes('schemaNames === null || schemaNames.has(tool.name)') && !assemblySource.includes('CORDIS_SECTION_NAME') && assemblySource.includes("section.name !== 'tool:cordis'"))
 console.log('\n通过 ' + pass + ', 失败 ' + fail)
 process.exit(fail === 0 ? 0 : 1)

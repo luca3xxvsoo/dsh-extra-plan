@@ -31,6 +31,7 @@ import { GATE_WORD_FIELDS } from '../../plugins/dsh-extra-plan/lib/gate-words.js
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 const assetAgent = readFileSync(join(ASSET_DIR, 'agent.cordis.yml'), 'utf8')
+const presetSyncSource = readFileSync(join(HERE, '..', '..', 'plugins', 'dsh-extra-plan', 'lib', 'preset-sync.js'), 'utf8')
 const generatedPatchText = readFileSync(ASSET_PATCH_FILE, 'utf8')
 
 // 声明行夹具：把生成产物的 insert 行去缩进 4 列 → 直接作为 profile patch 的根级声明行。
@@ -284,6 +285,7 @@ try {
 
     writeFileSync(patchFile, declarationPatchText(), 'utf8')
   }
+  check('T-5 自愈写序与 dispose active：PRESET 在 SETTINGS 前，edit 前后检查 active', presetSyncSource.indexOf('planned.preset !== null') < presetSyncSource.indexOf('planned.settings !== null') && presetSyncSource.includes('if (!isActive()) return') && presetSyncSource.includes('return () => { active = false }'))
 } finally {
   rmSync(work, { recursive: true, force: true })
 }

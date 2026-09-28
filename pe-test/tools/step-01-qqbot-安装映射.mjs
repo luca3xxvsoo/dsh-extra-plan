@@ -1,16 +1,15 @@
-// 精简版自愈回归：直接 import ../../plugins/dsh-qqbot-user-questions/lib/heal.js 纯函数直测
+// 精简版 QQBot 静态/迁移回归：直接 import heal.js 纯函数与临时 DSH_HOME 夹具
 // + scripts/heal.mjs CLI 子进程冒烟（DSH_HOME env 注入）。全部场景 mkdtemp 临时目录，
-// 不触碰工作区或生产 profile；验证静态 insert/旧根级块迁移/幂等/恢复/建链/职责边界。
+// 不触碰工作区或生产 profile；环境相关 junction 能力与真实 profile 只读核验见独立脚本。
 import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { closeSync, existsSync, lstatSync, mkdtempSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { closeSync, existsSync, lstatSync, mkdtempSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   findOwnQqbotProfiles,
   healPatchRows,
-  ensureDshExtraPlanLink,
   healQqbotCompatibility,
 } from '../../plugins/dsh-qqbot-user-questions/lib/heal.js'
 import { apply as applyLitePlugin } from '../../plugins/dsh-qqbot-user-questions/index.js'
@@ -34,9 +33,6 @@ function check(label, condition) {
 
 function isLink(path) {
   try { return lstatSync(path).isSymbolicLink() } catch { return false }
-}
-function sameTarget(path, expected) {
-  try { return realpathSync(path) === realpathSync(expected) } catch { return false }
 }
 function qqProfileDir(home) { return join(home, 'profiles', 'qqbot') }
 function qqPatch(home) { return join(home, 'profiles', 'qqbot', 'cordis.patch.yml') }
@@ -152,8 +148,7 @@ try {
   const staticRunner = staticRows.find((row) => isMap(row) && row.id === 'cordis-host-runner')
   check('兼容 patch 是顶层数组且仅有一个根级 insert', Array.isArray(staticPatch) && staticPatch.length === 1 && staticInserts.length === 1)
   check('静态 insert 第 4 行 cordis-host-runner 包名准确且无 config', isMap(staticRows.find((row) => isMap(row) && row.id === 'cordis-host-runner')) && staticRows.find((row) => isMap(row) && row.id === 'cordis-host-runner').name === '@deepseek-ai/dsh-cordis-host-runner')
-  // 【待有 QQBOT 环境再测试，本机不做验证】两行按 dsh 0.1.7-rc.1 新包族静态重写（原
-  // code-runtime/agent-presets 两包在 0.1.7 整包消失；方案 U3/U4 未核实项）。
+  // 静态包族由本段固定合同覆盖；严格环境命中后的真实 profile 只读核验由独立环境脚本负责。
   check('静态 insert 恰四行且 qqbot-user-questions/ptc-runtime/agent-preset-registry 包名准确', staticRows.length === 4 &&
     isMap(staticCode) && staticCode.name === '@deepseek-ai/dsh-ptc-runtime-node' &&
     isMap(staticAgent) && staticAgent.name === '@deepseek-ai/dsh-agent-preset-registry' &&
@@ -252,21 +247,7 @@ try {
   check('web 包缺失时 heal 不抛异常且输出跳过警告', w4.messages.some((m) => m.includes('未找到 web 的 dsh-extra-plan，跳过映射')))
   check('web 包缺失时不创建 qqbot 目标链接', !existsSync(qqExtraPlanDir(h4)))
 
-  // ⑦ qqbot 目标缺失 → 建 junction 且 realpath 指向 web 包
-  const h5 = join(tempRoot, 's7-link-create')
-  makeProfile(h5, 'qqbot')
-  installOwnPlugin(h5, 'qqbot')
-  const web5 = createWebPackage(h5)
-  healQqbotCompatibility(h5)
-  check('目标缺失时创建 symbolic link（Windows junction）', isLink(qqExtraPlanDir(h5)))
-  check('链接 realpath 指向 web 包', sameTarget(qqExtraPlanDir(h5), web5))
-
-  // ⑧ 已正确链接 → 不动
-  const before8 = realpathSync(qqExtraPlanDir(h5))
-  healQqbotCompatibility(h5)
-  check('已正确链接重复运行保持指向 web 且无异常', isLink(qqExtraPlanDir(h5)) && sameTarget(qqExtraPlanDir(h5), web5) && realpathSync(qqExtraPlanDir(h5)) === before8)
-
-  // ⑨ 实体目录 → 保留并提示 pnpm 迁移
+  // ⑦ 实体目录 → 保留并提示 pnpm 迁移
   const h9a = join(tempRoot, 's9a-entity')
   makeProfile(h9a, 'qqbot')
   installOwnPlugin(h9a, 'qqbot')
@@ -277,18 +258,7 @@ try {
   const w9a = captureWarn(() => healQqbotCompatibility(h9a))
   check('实体目录保留且提示 pnpm 迁移', existsSync(join(entityTarget, 'marker.txt')) && !isLink(entityTarget) && w9a.messages.some((m) => m.includes('请通过 pnpm 完成迁移')))
 
-  // ⑨b 非目标链接 → 保留并提示 pnpm 迁移
-  const h9b = join(tempRoot, 's9b-otherlink')
-  makeProfile(h9b, 'qqbot')
-  installOwnPlugin(h9b, 'qqbot')
-  createWebPackage(h9b)
-  const other = join(h9b, 'other-target')
-  mkdirSync(other, { recursive: true })
-  symlinkSync(other, qqExtraPlanDir(h9b), process.platform === 'win32' ? 'junction' : 'dir')
-  const w9b = captureWarn(() => healQqbotCompatibility(h9b))
-  check('非目标链接原样保留并提示 pnpm 迁移', isLink(qqExtraPlanDir(h9b)) && realpathSync(qqExtraPlanDir(h9b)) === realpathSync(other) && w9b.messages.some((m) => m.includes('请通过 pnpm 完成迁移')))
-
-  // ⑩ 负例A：bundles 锚定但未装本插件 → 零改动
+  // ⑧ 负例A：bundles 锚定但未装本插件 → 零改动
   const h10 = join(tempRoot, 's10-negative-a')
   const p10 = makeProfile(h10, 'qqbot')
   writeFileSync(qqPatch(h10), '# 注释\n[]\n', 'utf8')
@@ -298,11 +268,11 @@ try {
   check('未安装本插件的 profile cordis.patch.yml 零改动', readFileSync(qqPatch(h10), 'utf8') === before10)
   check('未安装本插件的 profile @local 目录零创建', !existsSync(join(p10, 'node_modules', '@local')))
 
-  // ⑪ 负例B：dsh-extra-plan 核心零感知（静态断言）
+  // ⑨ 负例B：dsh-extra-plan 核心零感知（静态断言）
   const presetSync = readFileSync(join(SOURCE_ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'preset-sync.js'), 'utf8')
   check('preset-sync.js 不含 qqbot/code-runtime/qqbot 自愈标识符（核心零感知）', !/qqbot|code-runtime|healQqbotCompatibility|healPatchRows/i.test(presetSync))
 
-  // ⑫ DSH_HOME env 优先于 ~/.dsh（index.js apply 实测）
+  // ⑩ DSH_HOME env 优先于 ~/.dsh（index.js apply 实测）
   const h12 = join(tempRoot, 's12-env')
   makeProfile(h12, 'qqbot')
   installOwnPlugin(h12, 'qqbot')

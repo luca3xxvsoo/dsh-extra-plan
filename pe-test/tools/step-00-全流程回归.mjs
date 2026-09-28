@@ -5,6 +5,7 @@ import { pathToFileURL, fileURLToPath } from 'node:url'
 import { registerHostDeps } from '../_shared/host-deps.mjs'
 // host-deps 先于隔离完成解析（它按候选① DSH_HOME/profiles/web 锚定宿主真包）。
 await registerHostDeps()
+const { interpolate } = await import('@deepseek-ai/cordis-plugin-loader')
 
 // ── 测试隔离（方案 A 构造期读盘） ──────────────────────────────────────────
 // live-config 构造期无条件读盘一次（DSH_HOME/.agent-presets/extra-plan/agent.cordis.yml，或
@@ -34,10 +35,10 @@ import { createRunCodeStatic } from '../../plugins/dsh-extra-plan/lib/run-code-s
 import * as shellMutation from '../../plugins/dsh-extra-plan/lib/shell-mutation.js'
 import * as runtimeStatic from '../../plugins/dsh-extra-plan/lib/runtime-static.js'
 import * as agentRuntime from '../../plugins/dsh-extra-plan/lib/agent-runtime.js'
-import { DEFAULT_EXPLORE_BUDGET as GENERATED_DEFAULT_EXPLORE_BUDGET } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
+import { DEFAULT_EXPLORE_BUDGET as GENERATED_DEFAULT_EXPLORE_BUDGET, DEFAULT_PLANNER_PROMPT_SUFFIX as GENERATED_DEFAULT_PLANNER_PROMPT_SUFFIX } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
 import { existsSync, readFileSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { parsePresetYaml } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
 import { GATE_WORD_FIELDS, createGateRuntime, validateGateWords } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
 import { probePathOf } from '../../plugins/dsh-extra-plan/lib/save-probe-validation.js'
@@ -149,17 +150,17 @@ function applyPlugin(ctx, config, registry) {
 }
 const staticRunCode = createRunCodeStatic({
   askTool: 'ask_user_question',
-  isDispatchStart: (type) => type === 'tool/ptc-dispatch-start' || type === 'tool/code-dispatch-start',
+  isDispatchStart: (type) => type === 'tool/ptc-dispatch-start',
 })
 const { maskCodeLiteralsAndComments, sliceBalancedArgs } = staticRunCode
 
 // ── 事件构造（真实形状，同 step-06-线索落盘.mjs / step-04-路由与写闸门.mjs 的事件构造函数，三处同构见 R6） ───
 const um = () => ({ type: 'user/message', data: { source: { kind: 'user' } } })
 const call = (name, cid, argumentsStr = '{}') => ({ type: 'tool/call', data: { name, callId: cid, arguments: argumentsStr } })
-const ok = (cid, text) => ({ type: 'tool/result', data: { message: { content: [{ type: 'tool-result', toolCallId: cid, content: [{ type: 'text', text }] }] } } })
-const err = (cid, code) => ({ type: 'tool/result', data: { error: { name: 'Error', ...(code === undefined ? {} : { code }) }, message: { content: [{ type: 'tool-result', toolCallId: cid, content: [] }] } } })
-// 真实 deny 形状（pre-execute 拒绝结果：块级 isError:true、无 data.error——仅 HarnessError 有 .info）
-const deny = (cid, reason) => ({ type: 'tool/result', data: { message: { content: [{ type: 'tool-result', toolCallId: cid, content: [{ type: 'text', text: 'Error: ' + reason }], isError: true }] } } })
+const ok = (cid, text) => ({ type: 'tool/result', data: { message: { toolCallId: cid, isError: false, content: [{ type: 'text', text }] } } })
+const err = (cid, code) => ({ type: 'tool/result', data: { error: { name: 'Error', ...(code === undefined ? {} : { code }) }, message: { toolCallId: cid, isError: true, content: [] } } })
+// 真实 deny 形状（pre-execute 拒绝结果：message 顶层 isError:true、无 data.error）
+const deny = (cid, reason) => ({ type: 'tool/result', data: { message: { toolCallId: cid, isError: true, content: [{ type: 'text', text: 'Error: ' + reason }] } } })
 const routeArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }] })
 const approvalArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }] })
 // D7：路由 ask 双问夹具——第二问为纯文本「补充要求」（可留空、不得带 options）
@@ -174,9 +175,7 @@ const emptyAnswer = '{"answers":[]}'
 // 嵌套事件 fixture（run_code 程序内嵌套调用，混合模式桥接 F1-F4）：
 // dispatch-start 的 data={rootCallId,parentCallId,subCallId,name,arguments}（arguments 为对象形态，
 // 与直呼 call 的 arguments JSON 字符串形态区别）；dispatch 的 data 另含 isError+content
-// （content 直接是 ContentBlock 数组，无 tool/result 的 tool-result 外层）。
-// 事件名双兼容两代：0.1.5-rc.2 新名 = tool/ptc-dispatch-start / tool/ptc-dispatch；
-// 0.1.2-rc.1 旧名 = tool/code-dispatch-start / tool/code-dispatch，均由 runDispatchSeries(ev) 注入。
+// content 直接是 ContentBlock 数组；当前只保留 tool/ptc-dispatch-start / tool/ptc-dispatch。
 const nestedRouteArgs = { questions: [{ id: 'q1', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }] }
 const nestedApprovalArgs = { questions: [{ id: 'q1', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }] }
 const nestedClarifyArgs = { questions: [{ id: 'q1', options: [{ label: '方案A' }, { label: '方案B' }] }] }
@@ -217,6 +216,94 @@ check('生成默认值当前为 18', GENERATED_DEFAULT_EXPLORE_BUDGET, 18)
 check('agent runtime isLiveDelegation 与 decisions 严格同一绑定', plugin.decisions.isLiveDelegation === agentRuntime.isLiveDelegation, true)
 check('agent runtime childPolicyNeedsFloor 与 decisions 严格同一绑定', plugin.decisions.childPolicyNeedsFloor === agentRuntime.childPolicyNeedsFloor, true)
 check('runtime-static causeChainOf 按显式 depth 截断', runtimeStatic.causeChainOf({ name: 'A', message: 'a', cause: { name: 'B', message: 'b' } }, 1).length, 1)
+
+// ── CFG 系列：主插件 loader Config 真实导入、默认值与边界 ────────────────
+const CONFIG_KEYS = [
+  'gateWords', 'planTool', 'savePlanDir', 'plannerModel', 'otherAgentModel', 'exploreBudget',
+  'plannerPromptSuffix', 'anchoredBootstrap', 'creativeMode', 'runcodeCatchGate',
+  'crossProviderPlannerModel', 'bootstrapPersona', 'bootstrapReadHint', 'bootstrapShellTools',
+  'bootstrapCommonTools', 'usageLedger', 'diagFile',
+]
+const configWithAssetGateWords = plugin.Config({ gateWords: assetGateWords })
+check('CFG1 主插件 name 保持 extra-plan', plugin.name, 'extra-plan')
+check('CFG2 主插件 inject 恰为 systemPrompt', plugin.inject, ['systemPrompt'])
+checkTrue('CFG3 主插件 apply 与 Config 均为函数', typeof plugin.apply === 'function' && typeof plugin.Config === 'function')
+check('CFG4 Config 顶层键恰为 17 个', Object.keys(configWithAssetGateWords).sort(), CONFIG_KEYS.slice().sort())
+check('CFG5 资产 gateWords 经 Config 保持原值', configWithAssetGateWords.gateWords, assetGateWords)
+check('CFG6 Config 标量默认值与 apply fallback 相同', [
+  configWithAssetGateWords.planTool,
+  configWithAssetGateWords.savePlanDir,
+  configWithAssetGateWords.plannerModel,
+  configWithAssetGateWords.otherAgentModel,
+  configWithAssetGateWords.exploreBudget,
+  configWithAssetGateWords.anchoredBootstrap,
+  configWithAssetGateWords.creativeMode,
+  configWithAssetGateWords.runcodeCatchGate,
+  configWithAssetGateWords.crossProviderPlannerModel,
+  configWithAssetGateWords.bootstrapPersona,
+], [
+  'subagent_plan', '.extra-plan', 'deepseek-v4-pro', '', 18,
+  true, false, false, false, 'You are a helpful software engineer assistant.',
+])
+check('CFG7 plannerPromptSuffix 使用生成默认值', configWithAssetGateWords.plannerPromptSuffix, GENERATED_DEFAULT_PLANNER_PROMPT_SUFFIX)
+checkTrue('CFG8 bootstrapReadHint 使用内置 fallback 形状', typeof configWithAssetGateWords.bootstrapReadHint === 'string' && configWithAssetGateWords.bootstrapReadHint.includes('tools.read') && configWithAssetGateWords.bootstrapReadHint.includes('file_path') && configWithAssetGateWords.bootstrapReadHint.includes('offset') && configWithAssetGateWords.bootstrapReadHint.includes('limit'))
+check('CFG9 工具数组默认值', [configWithAssetGateWords.bootstrapShellTools, configWithAssetGateWords.bootstrapCommonTools], [['bash', 'pwsh'], ['read']])
+check('CFG10 usageLedger 默认值', configWithAssetGateWords.usageLedger, { enabled: false, path: '' })
+check('CFG11 diagFile 默认落点', configWithAssetGateWords.diagFile, join(dirname(PLUGIN_PATH), 'extra-plan-request-errors.jsonl'))
+const assetLoaderContext = { dshHomePath: (...segments) => join(isolatedDshHome, ...segments) }
+const assetExtraPlanLoaderConfig = interpolate(assetLoaderContext, assetExtraPlanConfig)
+let assetConfigResolved = null
+let assetConfigFailure = null
+try {
+  assetConfigResolved = plugin.Config(assetExtraPlanLoaderConfig)
+} catch (error) {
+  assetConfigFailure = error instanceof Error ? error.message : String(error)
+}
+checkTrue('CFG12 完整资产 extra-plan config 通过 schema', assetConfigFailure === null && assetConfigResolved !== null)
+const customConfigGateWords = Object.fromEntries(Object.keys(assetGateWords).map((field, index) => [field, 'CFG自定义词' + String(index + 1)]))
+let customConfigResolved = null
+let customConfigFailure = null
+try {
+  customConfigResolved = plugin.Config({ ...assetExtraPlanLoaderConfig, gateWords: customConfigGateWords })
+} catch (error) {
+  customConfigFailure = error instanceof Error ? error.message : String(error)
+}
+checkTrue('CFG13 合法自定义 gateWords 不被 schema 替换', customConfigFailure === null && customConfigResolved !== null && JSON.stringify(customConfigResolved.gateWords) === JSON.stringify(customConfigGateWords))
+function expectConfigFailure(label, input) {
+  let message = null
+  try {
+    plugin.Config(input)
+  } catch (error) {
+    message = error instanceof Error ? error.message : String(error)
+  }
+  checkTrue(label, message !== null)
+}
+expectConfigFailure('CFG14 缺失 gateWords 在 schema 边界失败', {})
+expectConfigFailure('CFG15 exploreBudget=0 失败', { gateWords: assetGateWords, exploreBudget: 0 })
+expectConfigFailure('CFG16 exploreBudget 负数失败', { gateWords: assetGateWords, exploreBudget: -1 })
+expectConfigFailure('CFG17 exploreBudget 非整数失败', { gateWords: assetGateWords, exploreBudget: 1.5 })
+expectConfigFailure('CFG18 exploreBudget 字符串失败', { gateWords: assetGateWords, exploreBudget: '18' })
+for (const field of ['anchoredBootstrap', 'creativeMode', 'runcodeCatchGate', 'crossProviderPlannerModel']) {
+  expectConfigFailure('CFG19 ' + field + ' 字符串失败', { gateWords: assetGateWords, [field]: 'false' })
+}
+expectConfigFailure('CFG20 bootstrapShellTools 含非字符串失败', { gateWords: assetGateWords, bootstrapShellTools: ['bash', 7] })
+expectConfigFailure('CFG21 bootstrapCommonTools 含非字符串失败', { gateWords: assetGateWords, bootstrapCommonTools: ['read', 7] })
+expectConfigFailure('CFG22 usageLedger 字段类型错误失败', { gateWords: assetGateWords, usageLedger: { enabled: 'false', path: '' } })
+expectConfigFailure('CFG23 gateWords 值类型错误失败', { gateWords: Object.assign({}, assetGateWords, { routeDirect: 42 }) })
+function expectGateRuntimeFailure(label, raw) {
+  let message = null
+  try {
+    createGateRuntime(plugin.Config({ gateWords: raw }).gateWords)
+  } catch (error) {
+    message = error instanceof Error ? error.message : String(error)
+  }
+  checkTrue(label, message !== null && message.startsWith('extra-plan: config.gateWords'))
+}
+const missingRuntimeGateWords = Object.assign({}, assetGateWords)
+delete missingRuntimeGateWords.routePlan
+const extraRuntimeGateWords = Object.assign({}, assetGateWords, { extraKey: 'x' })
+expectGateRuntimeFailure('CFG24 gateWords 缺键不被部分接受', missingRuntimeGateWords)
+expectGateRuntimeFailure('CFG25 gateWords 多键不被裁剪放行', extraRuntimeGateWords)
 
 // ── KA 系列:ask 分类与参数解析（v4 更名：原 K 系列让位于子代理角色组判定 K 系列；断言内容逐字不变） ──
 const KA = [
@@ -770,10 +857,10 @@ const schemaAgent = {
 // 0.1.7 换代：agent/session-start 已删除，启动注册改由 agent/created（serial）承担。
 schemaRegistration.listeners['agent/created'][0]({ agent: schemaAgent, source: 'startup' })
 const schemaSaveProbe = schemaRegistration.registered.find((definition) => definition.name === 'save_probe')
-const schemaDescription = schemaSaveProbe === undefined ? '' : String(schemaSaveProbe.description || '')
-const evidenceDescription = schemaSaveProbe === undefined || schemaSaveProbe.parameters === undefined || schemaSaveProbe.parameters.properties === undefined || schemaSaveProbe.parameters.properties.evidence === undefined ? '' : String(schemaSaveProbe.parameters.properties.evidence.description || '')
-check('SCHEMA1 实际 save_probe 顶层描述含动态 evidence 条数/正文上限', schemaDescription.includes(`evidence ≤${PROBE_LIMITS.maxEvidenceEntries} 条`) && schemaDescription.includes(`evidence JSON 总量 ≤${PROBE_LIMITS.maxEvidenceTotalChars}`), true)
-check('SCHEMA2 实际 save_probe evidence schema 含动态 text 长度上限', evidenceDescription.includes(`至多 ${PROBE_LIMITS.maxEvidenceEntries} 条`) && evidenceDescription.includes(`text ≤${PROBE_LIMITS.maxEvidenceTextLen} 字`), true)
+const schemaSavePlan = schemaRegistration.registered.find((definition) => definition.name === 'save_plan')
+const schemaPlanDescription = schemaSavePlan === undefined ? '' : String(schemaSavePlan.description || ''); const schemaPlanParameters = schemaSavePlan === undefined || schemaSavePlan.parameters === undefined ? {} : schemaSavePlan.parameters; const schemaDescription = schemaSaveProbe === undefined ? '' : String(schemaSaveProbe.description || ''); const evidenceDescription = schemaSaveProbe === undefined || schemaSaveProbe.parameters === undefined || schemaSaveProbe.parameters.properties === undefined || schemaSaveProbe.parameters.properties.evidence === undefined ? '' : String(schemaSaveProbe.parameters.properties.evidence.description || ''); const planProperties = schemaPlanParameters.properties || {}; const probeParameters = schemaSaveProbe === undefined || schemaSaveProbe.parameters === undefined ? {} : schemaSaveProbe.parameters; const probeProperties = probeParameters.properties || {}; const planText = JSON.stringify(schemaPlanParameters); const probeText = JSON.stringify(probeParameters); const forbiddenPlan = ['原子双写', '插件将校验', '插件会净化', '不得编造内容、数值或行号']; const forbiddenProbe = ['pro 规划子代理', 'subagent_plan', '委派', '主会话线索模式', '超限会拒绝', '不静默截断', '插件会净化']
+check('SCHEMA1 save_plan 描述/schema 精确契约', schemaPlanDescription === '写入规划方案和验收清单（plan、checklist 必填）。plan 不得含「【未探查·待确认】」或「待确认假设清单」；【探查者已核实】步骤须写「证据：<路径>」，该路径必须指向标题含「探查证据报告」的现有文件。返回两个文件路径。' && schemaPlanDescription.length === 116 && JSON.stringify(schemaPlanParameters).length === 324 && Object.keys(planProperties).length === 3 && JSON.stringify(schemaPlanParameters.required) === JSON.stringify(['plan', 'checklist']) && schemaPlanParameters.additionalProperties === false && planProperties.plan.description === '规划方案全文（Markdown，至少 200 字；所有假设必须已确认）' && planProperties.checklist.description === '验收清单全文（Markdown，至少 200 字；每条须有任务编号并可机械核对）' && planProperties.taskName.description === '可选任务短名（最多 32 字；不要传路径）' && schemaPlanDescription.includes('证据：<路径>') && schemaPlanDescription.includes('探查证据报告') && forbiddenPlan.every((word) => !planText.includes(word)), true)
+check('SCHEMA2 save_probe 描述/schema 精确契约', schemaDescription === '写入只读探查结果。fileMap、focusAreas、exclusions、background 四个数组必填，按 JSON 序列化计总量最多 20000 字；evidence 可选，非空时生成证据报告，否则生成线索文件。字段格式和单项上限见参数说明；返回文件路径。' && schemaDescription.length === 134 && JSON.stringify(probeParameters).length === 2016 && Object.keys(probeProperties).length === 6 && JSON.stringify(probeParameters.required) === JSON.stringify(['fileMap', 'focusAreas', 'exclusions', 'background']) && probeParameters.additionalProperties === false && probeProperties.fileMap.description === '相关文件列表（最多 50 项）' && probeProperties.focusAreas.description === '重点区域列表（最多 50 项）' && probeProperties.exclusions.description === '排除项列表（最多 20 项；scope 可为概念边界，无须对应现有路径）' && probeProperties.background.description === '背景与意图列表（最多 20 项）' && probeProperties.fileMap.items.properties.path.description === '现有文件路径（相对路径按工作区解析，最多 1024 字）' && probeProperties.fileMap.items.properties.relation.description === '文件与任务的关系（最多 400 字）' && probeProperties.focusAreas.items.properties.path.description === '现有文件路径（相对路径按工作区解析，最多 1024 字）' && probeProperties.focusAreas.items.properties.range.description.includes('最多 20 字') && probeProperties.focusAreas.items.properties.range.description.includes('仅 focusAreas.range 允许区间（12 或 L12-34）') && probeProperties.focusAreas.items.properties.note.description === '重点和补查方向（最多 400 字）' && probeProperties.exclusions.items.properties.scope.description === '可选排除范围' && probeProperties.exclusions.items.properties.note.description === '排除原因（最多 400 字）' && probeProperties.background.items.properties.topic.description === '背景主题（最多 120 字）' && probeProperties.background.items.properties.detail.description === '背景或用户意图（最多 1000 字）' && probeProperties.evidence.description === '可选证据列表（最多 150 项，按 JSON 序列化计总量最多 32000 字）；非空时生成证据报告。每项 path 必须存在，并至少填写 line、value、text 之一。' && probeProperties.evidence.items.properties.path.description === '现有被核实文件路径（相对路径按工作区解析，最多 1024 字）' && probeProperties.evidence.items.properties.line.description.includes('最多 20 字') && probeProperties.evidence.items.properties.line.description.includes('仅接受单个行号（12 或 L12），禁止区间（如 L158-162），区间信息请写入 evidence.text 并取代表性行号') && probeProperties.evidence.items.properties.value.description === '可选核实值（最多 240 字）' && probeProperties.evidence.items.properties.text.description === '可选原文摘录（最多 1000 字）' && probeProperties.evidence.items.properties.note.description === '可选备注（最多 400 字）' && probeProperties.evidence.items.properties.line !== undefined && probeProperties.evidence.items.properties.value !== undefined && probeProperties.evidence.items.properties.text !== undefined && probeProperties.taskName.description === '可选任务短名（最多 32 字；不要传路径）' && ['20000', '32000', '50', '20', '150', '1024', '400', '120', '1000', '240', '32'].every((value) => (schemaDescription + probeText).includes(value)) && forbiddenProbe.every((word) => !probeText.includes(word)), true)
 
 // ── RENDER4+ 系列:renderSaveProbe / renderProbeMarkdown 契约（v3） ────────
 const probeRendered = renderSaveProbe({ path: 'C:/w/.extra-plan/线索-x-20260816090000.md' })
@@ -809,8 +896,8 @@ for (const [name, got, expected] of E) check(name, got, expected)
 // ── E6-E9:证据引用装饰剥除（反引号包裹 / 顿号连列 / 绝对路径；拆分+清洗语义） ──────
 // 用例引用的证据文件在 .extra-plan 下真实存在；E9 对提取结果逐个做存在性断言
 // （probePathOf 解析 + existsSync），故「剥装饰后得到的即真实路径」是实测判据。
-const EVIDENCE_REL_A = '.extra-plan/线索-20260926003349.md'
-const EVIDENCE_REL_B = '.extra-plan/线索-20260926003943.md'
+const EVIDENCE_REL_A = 'READAI.md'
+const EVIDENCE_REL_B = 'pe-test/docs/ai-概览.md'
 const WORKSPACE_ROOT = fileURLToPath(new URL('../../', import.meta.url))
 const EVIDENCE_ABS_A = join(WORKSPACE_ROOT, EVIDENCE_REL_A)
 const E6_E8 = [
@@ -1600,8 +1687,6 @@ const AS = [
   ['AS3 首问非白名单变体+第二问无 options → deny 含「推荐标记仅限」、不含「路由 ask 结构错误」（kind 特异性回归）', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', options: [{ label: '同意执行!' }, { label: '转交pro规划' }, { label: '不同意' }] }, { id: 'q2', question: '修改意见' }] }); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('推荐标记仅限') && !String(r.reason).includes('路由 ask 结构错误') })(), true],
   ['AS4 单问「同意执行!」变体 → deny 含「批准 ask 结构错误」与「修改意见」（approve 模板正向）', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', options: [{ label: '同意执行!' }] }] }); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('批准 ask 结构错误') && String(r.reason).includes('修改意见') })(), true],
   ['AS5 路由变体（直接执行!）+第二问纯文本 → deny 且不含「结构错误」（route 特异不回归）', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', options: [{ label: '直接执行!' }, { label: '进行pro规划' }, { label: '不同意' }] }, { id: 'q2', question: '补充要求' }] }); return r !== null && r !== undefined && r.kind === 'deny' && !String(r.reason).includes('结构错误') })(), true],
-  ['AS6 cordis_run 路由未确认 → deny 含「路由未确认：cordis_run」与「须先 ask_user_question 路由确认」', (() => { const r = askPreExecute('cordis_run', {}); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认：cordis_run') && String(r.reason).includes('须先 ask_user_question 路由确认') })(), true],
-  ['AS7 cordis_define 路由未确认 → allow', (() => { const r = askPreExecute('cordis_define', {}); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
   ['AS8 cordis_inspect_list 路由未确认 → allow', (() => { const r = askPreExecute('cordis_inspect_list', {}); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
   ['AS9 目的标准二选一 route=none → deny 且含固定路由确认句', (() => { const r = askPreExecute('ask_user_question', JSON.parse(purposeArgs), []); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(ROUTE_CONFIRM_TEXT) })(), true],
   ['AS9b 目的标准二选一 route=direct → deny 且含固定路由确认句', (() => { const r = askPreExecute('ask_user_question', JSON.parse(purposeArgs), askDirectEvents); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(ROUTE_CONFIRM_TEXT) })(), true],
@@ -1698,8 +1783,7 @@ for (const [name, got, expected] of DG) {
 }
   dispatchSeriesChecks += FC.length + CC.length + CUCODE.length + DG.length
 }
-runDispatchSeries({ start: 'tool/ptc-dispatch-start', end: 'tool/ptc-dispatch' }) // 默认轮：0.1.5-rc.2 新名
-if (process.env.EXTRA_PLAN_LEGACY_ROUND === '1') runDispatchSeries({ start: 'tool/code-dispatch-start', end: 'tool/code-dispatch' }) // 旧名轮：0.1.2-rc.1（可开关）
+runDispatchSeries({ start: 'tool/ptc-dispatch-start', end: 'tool/ptc-dispatch' })
 
 // ── IS 系列:isRunCodeSubCall 子调用语义判定（容器计费 / 实例上限） ──────────
 const IS = [
@@ -1886,8 +1970,8 @@ checkTrue('RC-P1 同名不同 JSON 参数保留两个成员', rcP1Result.members
 
 const rcDgEvents = [
   { type: 'tool/ptc-dispatch-start', data: { rootCallId: 'rc-same' } },
-  { type: 'tool/code-dispatch-start', data: { rootCallId: 'rc-same' } },
-  { type: 'tool/code-dispatch-start', data: { rootCallId: 'rc-other' } },
+  { type: 'tool/ptc-dispatch-start', data: { rootCallId: 'rc-same' } },
+  { type: 'tool/ptc-dispatch-start', data: { rootCallId: 'rc-other' } },
 ]
 const rcDgExceeded = runCodeDispatchGateReason(rcDgEvents, { rootCallId: 'rc-same' }, 1)
 checkTrue('RC-DG1 新旧 dispatch-start 同 root 计数、异 root 不计，非法 cap/root 返回 null', typeof rcDgExceeded === 'string' && rcDgExceeded.includes('子调用数 2') && runCodeDispatchGateReason(rcDgEvents, { rootCallId: 'rc-same' }, 2) === null && runCodeDispatchGateReason(rcDgEvents, { rootCallId: 'rc-same' }, 0) === null && runCodeDispatchGateReason(rcDgEvents, { rootCallId: 'rc-same' }, -1) === null && runCodeDispatchGateReason(rcDgEvents, { rootCallId: 'rc-same' }, 1.5) === null && runCodeDispatchGateReason(rcDgEvents, { rootCallId: 7 }, 1) === null)

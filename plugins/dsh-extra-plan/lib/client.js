@@ -215,8 +215,6 @@ window.__ModuleLoader__.load({
         const [hostStatus, setHostStatus] = React.useState("loading");
         const [saving, setSaving] = React.useState(false);
         const [message, setMessage] = React.useState({ kind: "", text: "" });
-        // 投影回滚基准（加载时 values 的 webFetch/toolPresentationMode）：mutate 失败时用它再 PUT 一次原值。
-        const hostSnapshot = React.useRef(null);
 
         React.useEffect(function () {
           const next = {};
@@ -243,7 +241,6 @@ window.__ModuleLoader__.load({
               for (const field of HOST_ROW_FIELDS) {
                 next[field.key] = Object.prototype.hasOwnProperty.call(values, field.key) ? values[field.key] : undefined;
               }
-              hostSnapshot.current = { webFetch: next.webFetch, toolPresentationMode: next.toolPresentationMode };
               setHostDraft(next);
               setHostStatus("ready");
             })
@@ -274,20 +271,21 @@ window.__ModuleLoader__.load({
           return raw;
         }
 
-        // 部分失败：用投影回滚基准再发一次 PUT 原值（best-effort，不再抛错）。
-        async function rollbackHostRows() {
-          const base = hostSnapshot.current;
-          if (base === null || base === undefined) {
-            setMessage({ kind: "error", text: t("rollbackFailed") });
-            return;
-          }
+        // mutate 结果不确定/失败时，重新读取最新权威值再投影，禁止使用加载期快照覆盖并发修改。
+        async function reconcileHostRows() {
           try {
+            const latestRes = await fetch(PRO_CONFIG_URL, { headers: { accept: "application/json" } });
+            const latestData = await latestRes.json().catch(function () { return {}; });
+            if (!latestRes.ok || latestData.values === null || typeof latestData.values !== "object") throw new Error("latest authority unavailable");
+            const latest = {};
+            for (const field of HOST_ROW_FIELDS) latest[field.key] = latestData.values[field.key];
             const res = await fetch(PRO_CONFIG_URL, {
               method: "PUT",
               headers: { "content-type": "application/json", "accept": "application/json" },
-              body: JSON.stringify({ webFetch: base.webFetch, toolPresentationMode: base.toolPresentationMode })
+              body: JSON.stringify(latest)
             });
-            if (!res.ok) throw new Error("HTTP " + res.status);
+            const data = await res.json().catch(function () { return {}; });
+            if (!res.ok || data.projection === null || typeof data.projection !== "object" || data.projection.applied !== true) throw new Error("projection reconcile failed");
             setMessage({ kind: "error", text: t("savedPartial") });
           } catch {
             setMessage({ kind: "error", text: t("rollbackFailed") });
@@ -310,6 +308,7 @@ window.__ModuleLoader__.load({
             });
             const data = await res.json().catch(function () { return {}; });
             if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+            if (data.projection === null || typeof data.projection !== "object" || data.projection.applied !== true) throw new Error(data.projection && data.projection.error ? data.projection.error : "projection not applied");
           } catch (e) {
             console.error("dsh-extra-plan-settings save failed:", e);
             setMessage({ kind: "error", text: t("hostRowsFailed") });
@@ -324,16 +323,15 @@ window.__ModuleLoader__.load({
           }));
           try {
             const accepted = await form.mutate(ops, revision);
-            if (accepted === false) {
-              await rollbackHostRows();
+            if (accepted !== true) {
+              await reconcileHostRows();
               return;
             }
             // 保存后状态刷新：2 项用本次保存值刷新；8 项由 form.state.value 变化触发既有 [value] effect。
-            hostSnapshot.current = { webFetch: hostDraft.webFetch, toolPresentationMode: hostDraft.toolPresentationMode };
             setHostDraft({ webFetch: hostDraft.webFetch, toolPresentationMode: hostDraft.toolPresentationMode });
             setMessage({ kind: "ok", text: t("saved") });
           } catch {
-            await rollbackHostRows();
+            await reconcileHostRows();
           } finally {
             setSaving(false);
           }

@@ -103,11 +103,13 @@ export function apply(ctx, config) {
   }
   // 释放一份持有：归零且已有宿主 disposer 时反注册并置空（供下一次全新注册）。
   const releaseSlot = () => {
+    if (slot.count <= 0) return
     slot.count -= 1
-    if (slot.count === 0 && slot.dispose !== null) {
-      slot.dispose()
-      slot.dispose = null
-    }
+    if (slot.count !== 0) return
+    const dispose = slot.dispose
+    slot.dispose = null
+    slots.delete(providerName)
+    if (dispose !== null) dispose()
   }
   if (slot.count > 0) {
     // 本插件族已注册（旧世代存活，或本行 fiber 重建）：只加持有，不再注册。

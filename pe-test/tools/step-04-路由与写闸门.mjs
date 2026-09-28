@@ -288,8 +288,8 @@ check('R14 bootstrapOn=true executor 不引导（目录原样）', Array.isArray
 // 事件构造辅助（同 step-00 F 系列形状：user/message + ask_user_question call/result）
 const umE = () => ({ type: 'user/message', data: { source: { kind: 'user' } } })
 const callE = (name, cid, argumentsStr = '{}') => ({ type: 'tool/call', data: { name, callId: cid, arguments: argumentsStr } })
-const okE = (cid, text) => ({ type: 'tool/result', data: { message: { content: [{ type: 'tool-result', toolCallId: cid, content: [{ type: 'text', text }] }] } } })
-const errE = (cid, code) => ({ type: 'tool/result', data: { error: { name: 'Error', code }, message: { content: [{ type: 'tool-result', toolCallId: cid, content: [] }] } } })
+const okE = (cid, text) => ({ type: 'tool/result', data: { message: { toolCallId: cid, isError: false, content: [{ type: 'text', text }] } } })
+const errE = (cid, code) => ({ type: 'tool/result', data: { error: { name: 'Error', code }, message: { toolCallId: cid, isError: true, content: [] } } })
 const routeArgsE = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }] })
 // D7：路由 ask 双问夹具（第二问纯文本「补充要求」）——D7 后单问夹具会被结构校验拒绝
 const route2qArgsE = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }, { id: 'supplement', question: '补充要求' }] })
@@ -565,9 +565,7 @@ const grantClaim = () => {
 }
 // ── ⑥ R-code 系列:F1 桥接（run_code 内嵌套 ask 驱动状态机） ──────────────
 // 嵌套事件 fixture（同 step-00 F-code 系形状）：dispatch-start 的 arguments 为对象形态，
-// dispatch 的 content 直接是 ContentBlock 数组（无 tool-result 外层）。
-// 事件名双兼容两代：0.1.5-rc.2 新名 = tool/ptc-dispatch-start / tool/ptc-dispatch；
-// 0.1.2-rc.1 旧名 = tool/code-dispatch-start / tool/code-dispatch，均由 runDispatchSeriesE(ev) 注入。
+// dispatch 的 content 直接是 ContentBlock 数组；当前只保留 tool/ptc-dispatch-start / tool/ptc-dispatch。
 const nestedRouteE = { questions: [{ id: 'q1', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }] }
 const nestedClarifyE = { questions: [{ id: 'q1', options: [{ label: '方案A' }, { label: '方案B' }] }] }
 // 目的确认嵌套 fixture（第四锚点：route=plan 后、澄清之前的二选一）
@@ -604,7 +602,6 @@ checkTrue('R24d 嵌套 channelBroken 精确目的 ask → allow（逃生）', r 
 checkTrue('UC27 runCodeDispatchGateReason：18×→null / 19×→拒含「超过上限」 / 无rootCallId→null', (() => { const evs18 = Array.from({ length: 18 }, (_, i) => cdStartE('read', 's' + i, {})); const evs19 = evs18.concat([cdStartE('read', 's19', {})]); return runCodeDispatchGateReason(evs18, { rootCallId: 'r1' }, 18) === null && (() => { const got = runCodeDispatchGateReason(evs19, { rootCallId: 'r1' }, 18); return typeof got === 'string' && got.includes('超过上限') })() && runCodeDispatchGateReason(evs18, {}, 18) === null })())
 }
 runDispatchSeriesE({ start: 'tool/ptc-dispatch-start', end: 'tool/ptc-dispatch' })
-if (process.env.EXTRA_PLAN_LEGACY_ROUND === '1') runDispatchSeriesE({ start: 'tool/code-dispatch-start', end: 'tool/code-dispatch' })
 
 // ── ⑦ R-code 系列:F4 桥接（ptc 折叠目录只读判定退化为角色信号） ──────────
 // ptc 折叠形态（wireSchemas 塌缩为仅 [run_code]）：修复前 executor 被误判只读恒拒 write；
@@ -751,10 +748,6 @@ r = preExecute(harness, mainAgent, 'job_output', { job_id: 'j1' })
 checkTrue('R65 job_output 同 job 重复 → deny 且含「job_output 禁止对同一 job 重复调用」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止对同一 job 重复调用'))
 r = preExecute(harness, mainAgent, 'job_output', { job_id: 'j2' })
 checkTrue('R66 job_output 不同 job → allow', r !== null && r !== undefined && r.kind === 'allow')
-r = preExecute(harness, noneMain, 'cordis_run', {})
-checkTrue('R67 cordis_run 未确认 → deny 且含「路由未确认：cordis_run」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认：cordis_run'))
-r = preExecute(harness, approvedMain, 'cordis_run', {})
-checkTrue('R68 cordis_run 批准放行 → allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, noneMain, 'save_probe', { fileMap: [], focusAreas: [], exclusions: [], background: [] })
 checkTrue('R69 save_probe 主会话 none 态 → deny 且含「子代理未放行：save_probe」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('子代理未放行：save_probe'))
 r = preExecute(harness, planMain, 'save_probe', { fileMap: [], focusAreas: [], exclusions: [], background: [] })
@@ -806,7 +799,7 @@ checkTrue('R86 组内 subagent_review 成员无批准 → deny 且含「执行�
 // ── ⑭b T3：主会话 save_plan 受限规划工件（任意路由态放行，D8-B 口径） ──────
 // 内容闸门与规划子代理共用同一 defineSavePlan 实现（强度一致），本节只锁路由闸门；
 // save_plan 已移除路由态限制：mainGateReason 无显式分支，由兜底 return null 放行 —— 逐态锁定。
-// 反面证据（不随本批放开）：write/edit → R29、cordis_run → R67、写 shell/subagent_plan/执行委派各节照旧。
+// 反面证据（不随本批放开）：write/edit → R29、写 shell/subagent_plan/执行委派各节照旧。
 const planUnclarifiedMain = mainWithEvents([umE(), callE('ask_user_question', 'a1', routeArgsE), okE('a1', answerE(['进行pro规划']))])
 r = preExecute(harness, directMain, 'save_plan', { plan: 'p', checklist: 'c' })
 checkTrue('T3-1 主会话 direct 态 save_plan → allow（受限工件）', r !== null && r !== undefined && r.kind === 'allow')
@@ -1292,41 +1285,41 @@ checkTrue('P4-2 源码：disposed 先同步 fold，再按 sessionId 删除；age
   } finally { rmSync(dir, { recursive: true, force: true }) }
 }
 
-// P4-18/P4-19：损坏 cursor → 1 条 warning + 覆盖写仅当前 session；同实例再次降级不重复告警
+// P4-18/P4-19：损坏 cursor → 1 条 warning + 原始字节保留；同实例再次降级不重复告警
 {
   const dir = makeTmpDir()
   try {
     const ledger = join(dir, 'usage-ledger.jsonl')
     const cursorPath = ledger + '.cursor.json'
-    writeFileSync(cursorPath, '{"other-session": {', 'utf8')
+    const corruptBytes = '{"other-session": {'
+    writeFileSync(cursorPath, corruptBytes, 'utf8')
     const h = makeHarness({ anchoredBootstrap: false, usageLedger: { enabled: true, path: ledger } })
     const events = [usageRowE(5, 2, 3, 4, 'm', {})]
     const agent = childWithId('p4-corrupt', events)
     const warnings = captureWarnings(() => { agentCreatedListener(h, agent) })
-    const table = JSON.parse(readFileSync(cursorPath, 'utf8'))
-    checkTrue('P4-18 损坏 cursor JSON：已捕获到恰 1 条降级 warning + 写成功后覆盖为仅当前 session（预置的 other-session 条目不再保留）',
-      cursorWarnings(warnings).length === 1 && table['p4-corrupt'] !== undefined && table['p4-corrupt'].seq === 5 && table['other-session'] === undefined && readLedgerRows(ledger).length === 1)
-    writeFileSync(cursorPath, 'not-json-at-all', 'utf8')
+    checkTrue('P4-18 损坏 cursor JSON：恰 1 条降级 warning + 原始字节保留（不覆盖 other-session 现场）',
+      cursorWarnings(warnings).length === 1 && readFileSync(cursorPath, 'utf8') === corruptBytes && readLedgerRows(ledger).length === 1)
+    const invalidBytes = 'not-json-at-all'
+    writeFileSync(cursorPath, invalidBytes, 'utf8')
     events.push(usageRowE(9, 1, 1, 1, 'm', {}))
     const warnings2 = captureWarnings(() => { disposedListener(h, agent) })
-    const table2 = JSON.parse(readFileSync(cursorPath, 'utf8'))
-    checkTrue('P4-19 同一实例再次降级读不重复告警（「每实例首次降级时一次」口径）：0 条新 warning，且降级态覆盖写仍含本 session',
-      cursorWarnings(warnings2).length === 0 && readLedgerRows(ledger).length === 2 && table2['p4-corrupt'] !== undefined && table2['p4-corrupt'].seq === 9)
+    checkTrue('P4-19 同一实例再次降级读不重复告警且仍保留原始字节',
+      cursorWarnings(warnings2).length === 0 && readLedgerRows(ledger).length === 2 && readFileSync(cursorPath, 'utf8') === invalidBytes)
   } finally { rmSync(dir, { recursive: true, force: true }) }
 }
 
-// P4-20：cursor 根值为非对象（数组）
+// P4-20：cursor 根值为非对象（数组）→ warning + 原始字节保留
 {
   const dir = makeTmpDir()
   try {
     const ledger = join(dir, 'usage-ledger.jsonl')
     const cursorPath = ledger + '.cursor.json'
-    writeFileSync(cursorPath, '[1,2,3]', 'utf8')
+    const arrayBytes = '[1,2,3]'
+    writeFileSync(cursorPath, arrayBytes, 'utf8')
     const h = makeHarness({ anchoredBootstrap: false, usageLedger: { enabled: true, path: ledger } })
     const warnings = captureWarnings(() => { agentCreatedListener(h, childWithId('p4-nonobj', [usageRowE(2, 1, 1, 1, 'm', {})])) })
-    const table = JSON.parse(readFileSync(cursorPath, 'utf8'))
-    checkTrue('P4-20 cursor 根值为非对象（数组）：1 条降级 warning + 覆盖写为普通对象且仅当前 session',
-      cursorWarnings(warnings).length === 1 && !Array.isArray(table) && table['p4-nonobj'] !== undefined && table['p4-nonobj'].seq === 2)
+    checkTrue('P4-20 cursor 根值为非对象（数组）：1 条降级 warning 且原始字节保留',
+      cursorWarnings(warnings).length === 1 && readFileSync(cursorPath, 'utf8') === arrayBytes && readLedgerRows(ledger).length === 1)
   } finally { rmSync(dir, { recursive: true, force: true }) }
 }
 
@@ -1619,7 +1612,7 @@ for (const anchoredBootstrap of [false, true]) {
             ? ['extra-plan-bootstrap', 'tool:read']
             : anchored
               ? ['extra-plan-bootstrap']
-              : matrixSections(mode).filter((section) => creativeMode || section.name !== 'tool:cordis').map((section) => section.name)
+              : matrixSections(mode).filter((section) => section.name !== 'tool:cordis').map((section) => section.name)
           const gotSectionNames = sectionNames(assembled)
           const namesOk = gotNames.join('|') === expectedNames.join('|')
           const sectionsOk = gotSectionNames.join('|') === expectedSectionNames.join('|')
@@ -1636,7 +1629,7 @@ for (const anchoredBootstrap of [false, true]) {
           const topCordisHits = gotNames.filter((name) => MATRIX_CORDIS_TOOLS.includes(name))
           const c7Expected = creativeMode && !anchored ? MATRIX_CORDIS_TOOLS.length : 0
           const cordisOk = c7Expected === MATRIX_CORDIS_TOOLS.length
-            ? cordisSectionHits.length === MATRIX_CORDIS_TOOLS.length && (mode === 'ptc' ? topCordisHits.length === 0 : topCordisHits.length === MATRIX_CORDIS_TOOLS.length)
+            ? cordisSectionHits.length === 0 && (mode === 'ptc' ? topCordisHits.length === 0 : topCordisHits.length === MATRIX_CORDIS_TOOLS.length)
             : cordisSectionHits.length === 0 && topCordisHits.length === 0
           const readText = sectionText(assembled, 'tool:read')
           let readOk
@@ -2055,8 +2048,8 @@ check('GW12 定制词「戊转规划」→ 未获批准', decisions.deriveFlowSt
 const cDisagree = mainWithEvents([umE(), callE('ask_user_question', 'c1', cRouteArgs), okE('c1', answerE(['丙否决']))])
 check('GW13 定制词「丙否决」→ route 回 none', decisions.deriveFlowState(cDisagree.session.snapshotEvents(), customRuntime).route, 'none')
 
-// 两代嵌套 dispatch（tool/ptc-dispatch(-start) 与 tool/code-dispatch(-start)）同链。
-for (const generation of [['ptc', 'tool/ptc-dispatch-start', 'tool/ptc-dispatch'], ['code', 'tool/code-dispatch-start', 'tool/code-dispatch']]) {
+// 当前嵌套 dispatch 只保留 PTC 事件链。
+for (const generation of [['ptc', 'tool/ptc-dispatch-start', 'tool/ptc-dispatch']]) {
   const label = generation[0]
   const startE = (sid, argsObj) => ({ type: generation[1], data: { rootCallId: 'r1', parentCallId: 'pc1', subCallId: sid, name: 'ask_user_question', arguments: argsObj } })
   const endE = (sid, text) => ({ type: generation[2], data: { rootCallId: 'r1', parentCallId: 'pc1', subCallId: sid, name: 'ask_user_question', arguments: {}, isError: false, content: [{ type: 'text', text }] } })
@@ -2201,7 +2194,7 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
   // DZ3：正常答复路径行为与改动前逐字一致
   check('DZ3 parseDispatchAskResult 正常答复 → ok/answersLen/selected 逐字不变', parseDispatchAskResult({ subCallId: 'x', content: [{ type: 'text', text: answerE(['完善方案 (Recommended)']) }] }), { callId: 'x', kind: 'ok', answersLen: 1, selected: ['完善方案 (Recommended)'] })
   // DZ4：native 直呼闸门拒绝（信封 isError:true、无 data.error）→ denied（修正原 kind:'ok' 误判）
-  check('DZ4 parseAskResultData 信封 isError:true 中文文案 → denied', parseAskResultData({ message: { content: [{ type: 'tool-result', toolCallId: 'call_x', isError: true, content: [{ type: 'text', text: 'Error: 路由 ask 结构错误：请按标准模板重提' }] }] } }), { callId: 'call_x', kind: 'denied', code: '' })
+  check('DZ4 parseAskResultData 信封 isError:true 中文文案 → denied', parseAskResultData({ message: { toolCallId: 'call_x', isError: true, content: [{ type: 'text', text: 'Error: 路由 ask 结构错误：请按标准模板重提' }] } }), { callId: 'call_x', kind: 'denied', code: '' })
   // DZ5/DZ6：data.error 路径（native 取消码 / 通道码）逐字不变
   check('DZ5 parseAskResultData data.error=ASK_CANCELLED → error（native 取消路径不变）', parseAskResultData(errE('call_c', 'ASK_CANCELLED').data), { callId: 'call_c', kind: 'error', code: 'ASK_CANCELLED' })
   check('DZ6 parseAskResultData data.error=NO_PROVIDER → error（通道码路径不变）', parseAskResultData(errE('call_p', 'NO_PROVIDER').data), { callId: 'call_p', kind: 'error', code: 'NO_PROVIDER' })

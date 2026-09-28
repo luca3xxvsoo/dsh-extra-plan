@@ -21,8 +21,9 @@ function check(label, condition) {
 }
 
 // 宿主 subagents 服务本体 mock（providers 为 Map，重名抛英文文案，返回 effect 化 disposer）。
-function makeService() {
+function makeService(throwOnDispose = false) {
   const providers = new Map()
+  let throwRemaining = throwOnDispose
   providers.set('spawn', { name: 'spawn', capabilities: ['start'], inheritsParentContext: true, start() {} })
   const service = {
     providers,
@@ -38,6 +39,7 @@ function makeService() {
         if (disposed) return
         disposed = true
         providers.delete(provider.name)
+        if (throwRemaining) { throwRemaining = false; throw new Error('mock disposer failure') }
       }
     },
     getProvider(name) {
@@ -136,6 +138,17 @@ check('⑥ 同 ctx 连续两次 apply 均不抛错' + (err6a || err6b ? '：' + 
 check('⑥ 连续两次 apply 后 registerCount === 1', serviceB.registerCount === 1)
 c6.dispose()
 check('⑥ 该 ctx dispose 后 provider 移除（两次持有全部释放）', serviceB.getProvider(PROVIDER_NAME) === undefined)
+
+// ⑦ 最后 release 的 disposer 抛错：slot 归零并可被下一代重新注册。
+const throwingService = makeService(true)
+const throwingCtx = makeCtx(throwingService)
+check('⑦ disposer 抛错前 apply 成功', applySafely(throwingCtx) === null)
+let disposeThrew = false
+try { throwingCtx.dispose() } catch (error) { disposeThrew = error.message === 'mock disposer failure' }
+check('⑦ disposer 抛错后 slot 清零/槽删除（provider 已移除）', disposeThrew && throwingService.getProvider(PROVIDER_NAME) === undefined)
+const retryCtx = makeCtx(throwingService)
+check('⑦ disposer 抛错后下一代可重新注册', applySafely(retryCtx) === null && throwingService.registerCount === 2)
+retryCtx.dispose()
 
 console.log('\n通过 ' + pass + ', 失败 ' + fail)
 process.exit(fail === 0 ? 0 : 1)

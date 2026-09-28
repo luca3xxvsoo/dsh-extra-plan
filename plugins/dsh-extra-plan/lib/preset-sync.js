@@ -40,7 +40,8 @@ import {
   SETTINGS_ROW_ID,
   SETTING_DEFINITIONS,
   captureRowSettings,
-  captureSettings,
+  effectivePluginsOf,
+  hostRowDefaultsFromTemplate,
   findPluginsRow,
   normalizeSettingValue,
   readPath,
@@ -266,22 +267,8 @@ export function readAuthoritySettings(options) {
   return { present: false, values: {} }
 }
 
-/** 出厂默认（2 项宿主行设置）：读厂商模板叶值（sourceLocator），缺项/解析失败回落内置兜底。 */
-export function hostRowDefaultsOf(templateText) {
-  const fallback = { webFetch: false, toolPresentationMode: 'native' }
-  try {
-    const captured = captureSettings(templateText)
-    const out = {}
-    for (const definition of PROJECTION_SETTING_DEFINITIONS) {
-      const key = definition.key
-      const hit = captured.states[key] === 'captured' && Object.prototype.hasOwnProperty.call(captured.values, key)
-      out[key] = hit ? captured.values[key] : fallback[key]
-    }
-    return out
-  } catch {
-    return fallback
-  }
-}
+/** 兼容旧导出名；实现由 preset-settings 提供并与 settings.js 共用。 */
+export const hostRowDefaultsOf = hostRowDefaultsFromTemplate
 
 /**
  * 投影叶是否存在（键在不在；值是否合法另判）——把「键缺失」与「键在但值非法」区分开：
@@ -445,7 +432,7 @@ export async function syncPreset(options = {}) {
   // 第三个维度：投影一致性。2 项宿主行设置的权威值在 settings 行，声明行子行只是投影；
   // 「投影值 == 出厂值且声明行缺失」在此判为一致（稳态 idle，不反复重建、不空转写盘）。
   // 三维全成立即 idle：不读也不写任何运行期台账（台账链已整链删除）。
-  const hostRowDefaults = hostRowDefaultsOf(templateText)
+  const hostRowDefaults = hostRowDefaultsFromTemplate(templateText)
   const authority = readAuthoritySettings(options)
   const projectionCheck = planHostRowProjection(authority, declaredPlugins, hostRowDefaults)
   if (declarationOk && bodyOk && !projectionCheck.needed) return { action: 'idle' }
@@ -519,12 +506,13 @@ export const inject = []
 export function apply(ctx) {
   ctx.inject(['configEditor'], (child) => {
     child.effect(() => {
+      let active = true
       void (async () => {
         try {
           const editor = child.configEditor
           const rows = typeof editor.configuration === 'function' ? editor.configuration() : []
           const presetEntry = rows.find((row) => row !== null && typeof row === 'object' && row.entry !== undefined && row.entry.options !== undefined && row.entry.options.id === PRESET_ROW_ID)
-          const declaredPlugins = presetEntry === undefined ? undefined : effectivePlugins(presetEntry)
+          const declaredPlugins = presetEntry === undefined ? undefined : effectivePluginsOf(presetEntry)
           // 权威值载体 = settings 行（本插件自有行，宿主不清理）：投影一致性判定与 2 项宿主行的
           // 一次性回填都按它读；行缺席（宿主未装载 settings 组件）→ settingsValues 为 undefined
           // → 该维度不参与判定（保守，不改写现场）。
@@ -534,48 +522,38 @@ export function apply(ctx) {
             declaredPlugins,
             settingsValues,
             apply: async (planned) => {
-              await applyPlan(editor, rows, planned)
+              await applyPlan(editor, rows, planned, () => active)
             },
           })
         } catch (error) {
           console.warn('[dsh-extra-plan] 预设启动自愈失败（不阻断启动）：' + (error instanceof Error ? error.message : String(error)))
         }
       })()
-      return () => {}
+      return () => { active = false }
     }, 'extra-plan-preset-sync: startup self-healing')
   })
 }
 
-/** 生效 plugins：profile override → Loader 行 config → 继承层。 */
-function effectivePlugins(row) {
-  const overridePlugins = row.override !== null && typeof row.override === 'object' && Array.isArray(row.override.plugins) ? row.override.plugins : null
-  if (overridePlugins !== null) return overridePlugins
-  const own = row.entry.options.config
-  if (own !== null && typeof own === 'object' && Array.isArray(own.plugins)) return own.plugins
-  const inherited = row.inherited
-  if (inherited !== null && typeof inherited === 'object' && Array.isArray(inherited.plugins)) return inherited.plugins
-  return undefined
-}
-
-async function applyPlan(editor, rows, planned) {
+async function applyPlan(editor, rows, planned, isActive = () => true) {
   const findEntry = (id) => {
     const row = rows.find((item) => item !== null && typeof item === 'object' && item.entry !== undefined && item.entry.options !== undefined && item.entry.options.id === id)
     return row === undefined ? undefined : row.entry
+  }
+  // 先写 PRESET_ROW_ID，再写 SETTINGS_ROW_ID；任一笔失败都让下一次启动继续收敛。
+  if (planned.preset !== null || planned.bodyStale === true) {
+    const entry = findEntry(PRESET_ROW_ID)
+    if (entry === undefined) throw new Error('声明行缺失：' + PRESET_ROW_ID)
+    const presetPlan = planned.preset !== null ? planned.preset : { hostRowConfig: {}, gateWords: null }
+    if (!isActive()) return
+    await editor.edit(entry, (current, inherited) => restatePresetPlugins(current, inherited, presetPlan, assetPlugins()))
+    if (!isActive()) return
   }
   if (planned.settings !== null) {
     const entry = findEntry(SETTINGS_ROW_ID)
     if (entry === undefined) throw new Error('settings 行缺失：' + SETTINGS_ROW_ID)
     const values = planned.settings.values
+    if (!isActive()) return
     await editor.edit(entry, (current) => ({ ...current, ...values }))
-  }
-  // 本体过期的非 idle 运行 planned.preset 可能为 null（只有本体需刷新），若无 bodyStale 标记
-  // 会连本体刷新一起跳过，形成「每次启动判非 idle 却什么都不写」的永不自愈循环。
-  if (planned.preset !== null || planned.bodyStale === true) {
-    const entry = findEntry(PRESET_ROW_ID)
-    if (entry === undefined) throw new Error('声明行缺失：' + PRESET_ROW_ID)
-    const presetPlan = planned.preset !== null ? planned.preset : { hostRowConfig: {}, gateWords: null }
-    // 以厂商模板为基底重建本体，再把用户可写项（2 项宿主行 + gateWords）写回；
-    // 修复前此处以 profile 现值为基底，导致本体（persona/deny/注释）永不跟随资产。
-    await editor.edit(entry, (current, inherited) => restatePresetPlugins(current, inherited, presetPlan, assetPlugins()))
+    if (!isActive()) return
   }
 }

@@ -10,7 +10,7 @@
 
 每个读取本文档的 AI **动手前必须先做本节四步检查**；不满足就先请用户改设置，**不得跳过**。
 
-1. **只读部署侧两个值**：read `DSH_HOME/profiles/<profile>/cordis.patch.yml`（设置页的正常写入路径 = configEditor.documentPath），取两处：`mode` = 声明行 `preset-extra-plan` 的 `config.plugins` 内 **`tool-presentation` 行 `config.mode`**；`runcodeCatchGate` = **settings 行 `dsh-extra-plan-settings` 的 `config.runcodeCatchGate`**（8 项 UI 设置都在这行）。AI **只读**、不写（见 7.1）。`.agent-presets/extra-plan/` 已降级为插件自有状态目录（只剩 `dist-manifest.json` 审计台账，宿主无任何读取方）。
+1. **只读部署侧两个值**：read `DSH_HOME/profiles/<profile>/cordis.patch.yml`（设置页的正常写入路径 = configEditor.documentPath），取两处：`mode` = 声明行 `preset-extra-plan` 的 `config.plugins` 内 **`tool-presentation` 行 `config.mode`**；`runcodeCatchGate` = **settings 行 `dsh-extra-plan-settings` 的 `config.runcodeCatchGate`**（8 项 UI 设置都在这行）。AI **只读**、不写（见 7.1）。`.agent-presets/extra-plan/` 已退役，当前不部署、不同步 DSH_HOME，宿主无任何读取方。
 2. **mode 必须是 both**：若 `mode` 不是 `both`，先明确提示用户切换、**等用户确认后再开始**；提示语模板（照读）：
    > 当前模式为 <值>，本流程需在 both（混合）模式执行：请在设置页把「工具呈现模式」改为「混合」并保存，然后重启 Harness（**不必新开会话**），完成后告诉我
    用户侧成本 = 1 次设置页保存 ＋ 重启 Harness（见 1.5、7.1）。
@@ -28,8 +28,9 @@
 - 全部运行期闸门只挂在 `ctx.on('tools/pre-execute')` 一处，统一 `return { kind: 'deny', reason }`；另有 3 类非 pre-execute 拒绝：save_plan/save_probe 工具由 `lib/save-tool-factories.js` 定义并在 `execute` 内 throw、静态层 `toolFilter.deny`（yml 四行 + executor-spawn 注入）、assemble 目录裁剪（只影响可见性、不产生文案）。根入口仅负责工厂创建、工具注册与闸门接线。
 
 ### 1.2 与 mock/静态自检的分工边界
-- 自动层（发版前工程门槛，本流程不替代）：`step-00-全流程回归` / `step-04-路由与写闸门` / `step-06-线索落盘` = mock ctx 走插件 apply 的 in-process 回归（0.1.7 起 step-04 另含 isolate/volatile/写链/声明行覆盖四组硬门槛，见其 ⑰ 段）；`step-04-路由与写闸门` 实际覆盖 A/C/M/F-L × 五角色的 2×2×3×2×5=120 格，并逐格断言 C7、catalog、HP 与 HN/HB；`step-00-跨平台写拦截` = 纯函数；`step-01-*` 与 `代码地图生成.mjs --check` = 静态；`一键step测试.mjs` 10 个自动判定项。
-- 本流程 = **实机验收层**：只做「真实会话里制造边界操作 → 对照期望文案 → 当场取证判定通过/不通过」，不重复自动层已覆盖的断言。
+- 自动层（发版前工程门槛，本流程不替代）：`step-00-全流程回归` / `step-04-路由与写闸门` / `step-06-线索落盘` = mock ctx 走插件 apply 的 in-process 回归（0.1.7 起 step-04 另含 isolate/volatile/写链/声明行覆盖四组硬门槛，见其 ⑰ 段）；`step-04-路由与写闸门` 实际覆盖 A/C/M/F-L × 五角色的 2×2×3×2×5=120 格，并逐格断言 C7、catalog、HP 与 HN/HB；`step-00-跨平台写拦截` = 纯函数；`step-01-*` 与 `代码地图生成.mjs --check` = 静态；`step-01-qqbot-环境验证.mjs` = 条件只读环境项；`一键step测试.mjs` 当前 AUTO 数组共 12 个自动判定项，环境项的部分执行/未执行不计失败。
+- QQBot 自动边界：环境脚本只在严格五条件命中时读取真实 profile 的 manifest、patch 与映射；junction 只在临时 fixture 探测/回归，真实 profile 分支禁止 heal/CLI/写操作。
+- 本流程 = **实机验收层**：只做「真实会话里制造边界操作 → 对照期望文案 → 当场取证判定通过/不通过」，不重复自动层已覆盖的断言；QQBot 启动、`/preset`、question-channel、approval-channel、postinstall 日志与真实消息收发始终单列 HUMAN。
 
 ### 1.3 用户操作计数规则
 - **用户操作定义**：用户必须亲手、AI 不可代做的动作，仅四类 —— ①选选项（点选 ask 弹窗中的某一项）；②空白答复或取消（空白回车 / Esc 取消）；③点设置页开关/保存；④必要时重启进程（重启 Harness）。
@@ -43,7 +44,7 @@
 ### 1.5 模式口径（工具呈现模式 toolPresentationMode）
 
 - **(a) 预设级、全角色同形**：设置页 key = `toolPresentationMode` → `tool-presentation` 的 `config.mode`；宿主 `presentAs` 声明落在预设的 **standing mount scope** 上，**影响该预设下全部 agent**（主会话与 planner/probe/reviewer 子代理同形 —— 子代理绑定父的同一 standing 组合）。
-- **(b) 装载期快照**：mode 在装载期定格；宿主按指纹（mtimeMs + size）变化触发世代重建 → **切换只需重新装载：重启进程 或 新开会话，二者任一即可**（设置页「需重启」文案为保守口径）。**2026-09-12 实测：重启后同一既有会话（ID 未变）即生效**。同一机制的 `runcodeCatchGateOn`（2026-09-23 修订）**不再是装载期快照**：插件侧已改为配置热读（构造期读盘取文件真值、后续按 mtimeMs + size 变更跟进）→ 设置页保存后**立即生效**，无需重启进程或新开会话（重启/新开会话仍可用，只是不再必要）；本段的装载期快照口径仅适用于上面的 `toolPresentationMode`。
+- **(b) 装载期快照**：mode 在装载期定格；文件 stamp 优先使用 dev/ino/size/mtimeNs/ctimeNs，兼容回退 ino/size/mtimeMs/ctimeMs。runcodeCatchGateOn 走配置热读，保存后立即生效；toolPresentationMode 仍按宿主装载期规则生效。
 - **(c) 已开会话锁死**：**进程内**已开会话不能原地切换模式 —— swap 抛 `agent-preset/locked`。但**重启进程后原会话会按新配置重新装载**（2026-09-12 实测：重启后同一既有会话直呼面可用、装载期开关已生效）→ 故本条**不构成「必须新开会话」的理由**，只说明「不能在一个正在运行的进程里原地切换」。
 - **(d) 取值与两栏现状**：取值域 native／ptc／both；**仓库默认** = agent.cordis.yml `mode: native`、`runcodeCatchGate: false`；**部署实况** = 以第 0 节自查为准（2026-09-12 实测起点：`mode='ptc'`、`runcodeCatchGate=true`；此后值可能已变化，不得写死）。
 - **(e) F 判据需要干净会话**（2026-09-12 新增）：`isBootstrapPhase` 只看「首个 `tool/call` 落盘前」，既有会话早已越过该相位、永远不会再进引导态。PTC 专项必须为 C=0、C=1 各开一条干净 A=1/M=ptc 顶层会话观察 HP0/HP1 的 F；完成首个顶层 `run_code` 后在同一条会话观察 L 与第二调用。HN/HB native/both 回归也独立记录；普通第二轮可继续复用既有会话。
@@ -67,7 +68,7 @@
 | A05 | 主会话 | route=none（含选「不同意」后） | 调 subagent_plan | `子代理未放行：${action}。须先 ask_user_question 路由确认（选项固定为「直接执行」「进行pro规划」「不同意」），意图澄清问答后再调用 ${action}` | 同上 | 实机直测 |
 | A06 | 主会话 | approved!==true | 调 subagent / subagent_fork / workflow / ralph / subagent_review | `执行类委派未放行：${action}。须先 ask_user_question 让用户对方案点「同意执行」（批准选项固定为「同意执行」「转交pro规划」「不同意」），用户批准后才可委派` | 同上 | 实机直测 |
 | A07 | 主会话 | approved=true 且 route!=='direct' | 主会话自己调 write/edit | `方案已批准，执行请走 subagent 委派 flash 执行者（读方案/验收文件执行）。主会话直做仅限越界操作（工作区外写入，走 shell（Windows 用 pwsh、Linux/macOS 用 bash）+ sandbox_permissions）` | 同上 | 实机直测 |
-| A08 | 主会话 | route!=='direct' 且 approved!==true | 调 cordis_run；对照面 cordis_inspect_* 放行 | `路由未确认：cordis_run。cordis 只读/暂存工具（cordis_inspect_*、cordis_define、cordis_stop、cordis_undefine）可随时使用；cordis_run 会在会话内执行模型 JS 并挂载临时插件，须先 ask_user_question 路由确认（选项固定为「直接执行」「进行pro规划」「不同意」），用户批准后才可动手` | 同上；对照面 cordis_inspect_query 因 0.1.7-rc.2 无超时（根 README 已知问题）部分豁免：系统终端执行或标注部分豁免 | 实机直测 |
+
 | A09 | 主会话 | approved=true 且 route!=='direct' 且 `args.sandbox_permissions` 非字符串 | pwsh/bash 写命令**不带** sandbox_permissions | `方案已批准，工作区内写入请走 subagent 委派执行者。越界操作（工作区外写入）请带 sandbox_permissions 参数（如 sandbox_permissions: "workspace-write"）与 justification 重试` | 同上 | 实机直测 |
 | A10 | 主会话 | route=plan 且 clarified=true 且目的已定 | 调 subagent_plan 且显式传 run_in_background:false | `规划子代理不可前台等待：run_in_background 参数不得传 false（continuable 固定后台运行）。请移除 run_in_background: false 或省略该参数` | 同上 | 实机直测 |
 | A11 | 主会话 | approved=true | subagent / subagent_review 未传 run_in_background:true | `执行者/reviewer 必须后台运行：请传 run_in_background: true` | 同上 | 实机直测 |
@@ -103,7 +104,7 @@
 | A49 | 主会话 | route=plan 且 clarified=true 且 purpose∈{完善方案,重新规划}（U5 后 S3 态；与 A13 的「plan 未澄清」拒绝分支互补） | 直呼 save_probe（fileMap/focusAreas 数组且各 ≤50 条、exclusions/background 各 ≤20 条、evidence ≤150 条且单条 evidence.text ≤1000 字） | 无拒绝文案：`.extra-plan/` 下新增「线索-」前缀 Markdown 落盘（与仓库既有 save_probe 落盘样例同形态），read 验证文件存在且可读 | 卡片照录（无 Error）+ read 验证（AI 完成，用户只看结论） | 实机直测（S3 批次搭车，0 用户操作） |
 | A50 | 执行者 | 执行者子会话已进 L 态（S4 批次 A48 委派的 flash 执行者） | A48 委派话术中携带 write 任务指令（在工作区 `pe-test/reports/` 下写一个临时文件、随后删除），执行者子会话据此直呼 write/edit 执行 | 无拒绝文案：write/edit 放行、临时文件创建成功（主会话 read 验证存在）且被删除清理；对照面 = executor deny 清单不含 write/edit，planner/reviewer/probe 三行则含（见 A38） | 卡片照录（无 Error）+ 主会话 read 验证 + 删除结果核实 | 实机直测（S4 批次搭车，0 用户操作） |
 | A39 | 主会话 / planner | A=1 且 F | 按 M 观察 HN/HB/HP 首轮目录：native/both=bootstrap shell(s)+read、sections 仅 extra-plan-bootstrap；PTC=顶层仅 run_code、sections 精确两项（persona + 手写 tool:read，不含宿主 tools:ptc-only） | 不产生拒绝文案；判据 = 逐轮 request/header 的 tools 清单；HP 的 tool:read 逐字等于手写文案（变量② cfg.bootstrapReadHint；含 tools.read/file_path/offset/limit 且不含官方骨架），HN/HB 明确无 tool:read；HP 不含宿主 tools:ptc-only 段；L 回 N/P/B | step-04-工具清单查看 + 120 案例 mock | 目录观察（显式 F/L） |
-| A44 | 主会话 / planner / executor / reviewer / probe | C=0/1；每轮 | 对照 2 个 Cordis 工具、tools:sdk schema 与**三个**官方 skill catalog（`tool:cordis` 段在 0.1.7 宿主侧已删，不再期望该段） | C=0：展示 C7/catalog=0；C=1：非 HP1 展示 C7/catalog=2/3，HP1 的 F/main-planner 为 C7/catalog=0、L=2/3；普通 skill/skill 工具保留。两种均不改变 registry binding、toolFilter.deny、tools.restrict、tools/pre-execute（0.1.7 宿主已无 cordis_run 工具，deny 判据一律以 agent.cordis.yml 实际清单为准，见 A38） | step-04 120 案例 mock；实机观察 request/header、header.system 文本命中与 catalog | 模型可见投影观察：仅模型可见面，非运行时安全隔离 |
+| A44 | 主会话 / planner / executor / reviewer / probe | C=0/1；每轮 | 对照 2 个 Cordis 工具、tools:sdk schema 与三个创造 skill catalog | C=0：展示 C7/catalog=0；C=1：非 HP1 展示 C7/catalog=2/3，HP1 的 F/main-planner 为 C7/catalog=0、L=2/3；普通 skill/skill 工具保留，不改变 registry binding、toolFilter.deny、tools.restrict、tools/pre-execute | step-04 120 案例 mock；实机观察 request/header、header.system 文本命中与 catalog | 模型可见投影观察：仅模型可见面，非运行时安全隔离 |
 | A40 | workflow / ralph worker | approved=true（S4 批次） | worker 请求缺 toolFilter 时注入执行者 deny（防递归委派） | 不产生拒绝文案（工具不可见）；判据 = worker 子会话 header.tools 中 executor-spawn 行 config.deny（`agent.cordis.yml` 的 extra-executor-spawn 行，11 项）不可见（header.tools 全名清单口径 = 强证据；tools:sdk 文本命中仅辅助，同 A38 分级）；取不到 worker 会话日志时以静态断言替代并记录原因 | 静态断言 + 实机工具清单观察（S4 批次搭车：step-04-工具清单查看 → AI 逐字比对 → 一行结论） | **静态断言替代**（＋实机观察搭车） |
 | A41 | 主会话 | route=plan 且 purpose=none | 调 subagent_plan 或 save_probe | `规划目的尚未确认：${action}。须先 ask_user_question 询问用户本次 pro 规划的目的（选项固定为「完善方案」「重新规划」），答复后再调用 ${action}` | 卡片 Error + step-05 | 实机直测 |
 | A41-1 | 主会话 | route=none | 直接发精确目的二选一 ask | deny；原因必须逐字包含 `须先 ask_user_question 路由确认（选项固定为「直接执行」「进行pro规划」「不同意」）` | step-00/step-04 监听器聚合与直呼 | 静态/实机直测替代 |
@@ -136,7 +137,7 @@
 > **取证前置（成员参数必须是严格 JSON 字面量）**：组判定 run_code 成员的参数必须是**严格 JSON 字面量（双引号）**。`await tools.subagent_probe({ "run_in_background": false })` 可被静态拆解解析；写成 JS 单引号对象 `await tools.subagent_probe({ run_in_background: false })` 或 `job_id` 用变量引用时，成员被标记「参数不可解析」、参数相关闸门（A30/A16）被静默跳过 → 聚合行缺失（本轮实测 7 成员只出 5 行，改双引号后 7/7 行齐全）。已核实：plugins/dsh-extra-plan/lib/run-code-static.js 的 decomposeRunCode 对成员参数做 JSON.parse（解析失败即 argsParsed=false）；index.js 聚合标签规则对参数不可解析成员标 `<工具名>（参数不可解析）`；实测现象见主会话报告 pe-test/reports/实机闸门测试报告-20260926122049.md §4 发现 1。
 
 一次性连发清单（AI 一轮内全部发出，用户 0 操作；both 下直呼面与 run_code 面同轮并用）：
-1. **组判定 run_code#1**（7 成员，一次聚合取证 7 条）：write / subagent_plan / cordis_run / save_probe / subagent / subagent_probe（不带 run_in_background）/ job_output（wait:true）——save_plan 已改为任意路由态放行的受限规划工件，不再是组拒成员（放行侧见 A12 直呼 + S1 的 A46）
+1. **组判定 run_code#1**（6 成员，一次聚合取证 6 条）：write / subagent_plan / save_probe / subagent / subagent_probe（不带 run_in_background）/ job_output（wait:true）——save_plan 是任意路由态放行的受限规划工件，不是组拒成员。
 2. 直呼 ask#1：非标选项 ask（只含「直接执行」）→ A14
 3. 直呼 ask#3：精确目的二选一 ask（选项恰为「完善方案」「重新规划」两项、结构 1 问）→ A41-1（route=none 拒绝，原因逐字含固定路由确认句）
 4. 直呼 ask#2：标准三词但结构错（路由 ask 少于 2 问（缺第二问）/ 路由第 2 问带 options / 批准 ask 只有 1 问或第 2 问带 options）→ A15
@@ -151,7 +152,7 @@
 |:--|:--|:--|
 | `A02` | 组1 成员 write | `路由未确认：write/edit。只读探查可随时进行。…` |
 | `A05` | 组1 成员 subagent_plan | `子代理未放行：subagent_plan。须先 ask_user_question 路由确认…，意图澄清问答后再调用 subagent_plan` |
-| `A08` | 组1 成员 cordis_run | `路由未确认：cordis_run。cordis 只读/暂存工具（cordis_inspect_*、cordis_define、cordis_stop、cordis_undefine）可随时使用…` |
+
 | `A13` | 组1 成员 save_probe | `子代理未放行：save_probe。须先 ask_user_question 路由确认…`（route=none 分支） |
 | `A06` | 组1 成员 subagent | `执行类委派未放行：subagent。须先 ask_user_question 让用户对方案点「同意执行」…` |
 | `A30` | 组1 成员 subagent_probe（不带 run_in_background） | `探查者必须后台运行：请传 run_in_background: true` |
@@ -177,7 +178,7 @@
 1. **组判定 run_code#3**（5 成员）：subagent_plan / save_probe / subagent / subagent_probe（不带 run_in_background）/ job_output（wait:true）
 2. 直呼放行侧：subagent_probe 带 run_in_background:true → 放行（A30 放行侧），随即委派 **probe 会话**执行 3.2.6.2 序列（0 用户操作）
 3. 直呼 ask#4：精确目的二选一 ask（形态同 S0 的 ask#3）→ A41-2（route=direct 拒绝，原因逐字含固定路由确认句）
-4. 直呼对照：cordis_inspect_list（任意路由放行、无文案）→ A08 对照面。**cordis_inspect_query 豁免**：宿主 0.1.7-rc.2 该工具无超时会卡死会话（根 README 已知问题），AI 会话内不得直呼——由用户在系统终端执行，或标注「对照面部分豁免」（本轮实测口径）
+4. 直呼对照：cordis_inspect_list（任意路由放行、无文案）；cordis_inspect_query 因宿主无超时风险不在 AI 会话内直呼，标注「对照面部分豁免」即可。
 5. **A46 放行侧**：直呼 save_plan（plan/checklist 各 ≥200 字、无未探查标记、无证据引用）→ 返回 paths 数组含两个 .md 文件路径 → read 验证两文件存在且可读（0 用户操作）
 
 | 命中 A | 成员/路径 | 期望文案关键句 |
@@ -189,20 +190,20 @@
 | `A16` | 组 成员 job_output（wait:true） | `job_output 禁止带 wait: true 前台等待。…` |
 | `A41-2` | 直呼 ask#4（精确目的二选一，route=direct） | deny 原因逐字包含 `须先 ask_user_question 路由确认（选项固定为「直接执行」「进行pro规划」「不同意」）` |
 | A30 放行侧 | 直呼 subagent_probe + run_in_background:true | 无拒绝文案；返回后台会话信息，probe 子会话开始（挂待认领计数） |
-| A08 对照 | 直呼 cordis_inspect_list | 无拒绝文案（任意路由放行）；cordis_inspect_query 豁免（系统终端执行或标注部分豁免） |
+| Cordis 对照 | 直呼 cordis_inspect_list | 无拒绝文案（任意路由放行）；cordis_inspect_query 部分豁免 |
 | `A46` | 直呼 save_plan（合法参数） | 返回 paths 数组含两个 .md 文件路径（方案-{base}.md、验收-{base}.md）；read 验证两文件存在且可读 |
 
 #### 3.2.3 S2 route=plan·未澄清（U3 选「进行pro规划」后）
 状态：route=plan、clarified=false、purpose=none。选「进行pro规划」后**第一个提问一定是目的 ask**（单问、选项仅有「完善方案」「重新规划」）——未答复前 save_probe 与 subagent_plan 一律被目的闸门教学式拒绝（A41）。
 一次性连发清单：
-1. **组判定 run_code#4**（6 成员，一次聚合）：write / subagent_plan / save_probe / cordis_run / subagent / job_output（wait:true）——save_plan 已不在组拒清单内（任意路由态放行）
+1. **组判定 run_code#4**（5 成员，一次聚合）：write / subagent_plan / save_probe / subagent / job_output（wait:true）——save_plan 已不在组拒清单内。
 
 | 命中 A | 成员/路径 | 期望文案关键句 |
 |:--|:--|:--|
 | `A01` | 组 成员 write | `规划态下主会话不可写文件：write/edit。探查请走 save_probe，写文件请等方案批准后走执行者委派` |
 | `A41` | 组 成员 subagent_plan | `规划目的尚未确认：subagent_plan。须先 ask_user_question 询问用户本次 pro 规划的目的（选项固定为「完善方案」「重新规划」），答复后再调用 subagent_plan` |
 | `A41` | 组 成员 save_probe | `规划目的尚未确认：save_probe。须先 ask_user_question 询问用户本次 pro 规划的目的（选项固定为「完善方案」「重新规划」），答复后再调用 save_probe` |
-| `A08` | 组 成员 cordis_run | `路由未确认：cordis_run。…` |
+
 | `A06` | 组 成员 subagent | `执行类委派未放行：subagent。…` |
 | `A16` | 组 成员 job_output（wait:true） | `job_output 禁止带 wait: true 前台等待。…` |
 
@@ -239,7 +240,7 @@
 #### 3.2.5 S4 route=plan·已批准（U6 批准「同意执行」后）
 状态：route=plan、approved=true、purpose 已定（refine|redo）。
 一次性连发清单：
-1. **组判定 run_code#6**（4 成员）：write / pwsh 写命令（不带 sandbox_permissions）/ subagent（不带 run_in_background:true）/ cordis_run（A08 对照面：批准态本应放行，此处仅作组员随全拒批一并被拦，不单独产生文案）——save_plan 已不在组拒清单内
+1. **组判定 run_code#6**（3 成员）：write / pwsh 写命令（不带 sandbox_permissions）/ subagent（不带 run_in_background:true）——save_plan 已不在组拒清单内。
 2. 直呼放行侧：subagent_review 带 run_in_background:true → 放行（A11 放行侧），随即委派 **reviewer 会话**执行 3.2.6.3 序列（0 用户操作）
 3. **A48 执行者委派**：直呼 subagent 带 run_in_background:true 委派 flash 执行者 → 执行者子会话内先发 read 进 L 态 → 观察工具清单（A38：deny 名单内工具不可见）→ 验证能读方案/验收文件干活（0 用户操作）
 4. **A50 执行者写放行对照**：在第 3 步的 A48 委派话术（flash 执行者）中追加任务指令「写一个临时文件到工作区 `pe-test/reports/`（用 write/edit），随后删除该文件」→ 执行者子会话据此直呼 write/edit 执行 → 无拒绝文案、文件创建成功（主会话 read 验证存在）→ 执行者删除清理（0 用户操作）
@@ -364,12 +365,12 @@ channelBroken 逃生（`CHANNEL_BROKEN_CODES` = NO_PROVIDER / CALLER_NOT_LIVE / 
 
 | 序号 | 轮次 | 用户动作 | 推进到状态 | 覆盖 A 编号集合 | 覆盖条数 | 合并理由 |
 |:--|:--|:--|:--|:--|:--|:--|
-| U1 | 第一轮 | 空白回车（路由 ask） | S0（route=none 默认态） | A02,A05,A06,A08,A13,A14,A15,A16,A22,A30,A39,A12 | 12 | 空白放路由 ask 上，route=none 默认态零扰动（空白不置位任何状态位），未确认语义与 S0 全量一次操作双收；「取消」与空白同属未确认形态，标注择一必测、另一可选（差异见陷阱⑦） |
+| U1 | 第一轮 | 空白回车（路由 ask） | S0（route=none 默认态） | A02,A05,A06,A13,A14,A15,A16,A22,A30,A39,A12 | 12 | 空白放路由 ask 上，route=none 默认态零扰动（空白不置位任何状态位），未确认语义与 S0 全量一次操作双收；「取消」与空白同属未确认形态，标注择一必测、另一可选（差异见陷阱⑦） |
 | U2 | 第一轮 | 选「直接执行」 | S1（route=direct） | A03,A06,A16,A30 | 4（＋probe 委派，0 用户操作） | direct 态只有用户能进；A30 放行侧委派 probe 与其同批 |
-| U3 | 第一轮 | 选「进行pro规划」 | S2（route=plan·未澄清·目的未定） | A01,A06,A08,A16,A41,A41-3 | 6 | plan 态只有用户能进；S2 下 subagent_plan/save_probe 两条同落 A41（目的闸门先于澄清判定），精确目的 ask 只能在 route=plan 发起 |
+| U3 | 第一轮 | 选「进行pro规划」 | S2（route=plan·未澄清·目的未定） | A01,A06,A16,A41,A41-3 | 6 | plan 态只有用户能进；S2 下 subagent_plan/save_probe 两条同落 A41（目的闸门先于澄清判定），精确目的 ask 只能在 route=plan 发起 |
 | U4 | 第一轮 | 目的答复（选「完善方案」或「重新规划」） | S2.5（route=plan·目的已定·未澄清） | A04,A13,A41-1,A41-2,A41-4,A41-5 | 2（＋A41 补充取证 4 项） | purpose 只有答复可置位；目的 ask 为「进行pro规划」后第一个提问；A41-1/A41-2（route=none/direct 精确目的 ask 拒绝句须含固定路由确认句）取证窗口前移至 U1/U2 顺带，plan 放行（A41-3）、ordinary 不误拦、channelBroken 逃生与重选/取消清理（A41-4/A41-5）在本窗口取证 |
 | U5 | 第一轮 | 澄清答复（选探查方式） | S3（route=plan·已澄清） | A10,A06,A16,A17,A12,A49 | 6（＋planner 委派，0 用户操作） | clarified 仅当目的已定（purpose∈{完善方案,重新规划}）时由澄清答复置位；route/目的重选与非通道取消按阶段清理，channelBroken 保留旧状态，新 user/message 重开事件窗回默认态；A17 需同轮内完成（计数锚点重置见陷阱③） |
-| U6 | 第一轮 | 批准同意（点「同意执行」） | S4（route=plan·已批准） | A07,A09,A11,A08,A50,A40 | 6（＋reviewer 委派，0 用户操作） | approved 只有「同意」可置位 |
+| U6 | 第一轮 | 批准同意（点「同意执行」） | S4（route=plan·已批准） | A07,A09,A11,A50,A40 | 6（＋reviewer 委派，0 用户操作） | approved 只有「同意」可置位 |
 | U7 | 第一轮前置（**仅起步非 both 需要**，起步已 both 时省去） | 设置页 1 次保存：**把工具呈现模式（`toolPresentationMode`）切到 both ＋ 把 `runcodeCatchGate` 置 true**（**同一张卡片、同一次保存**，搭车不新增操作）＋ 重启 Harness（**不必新开会话**） | 前置（不推进 flow state） | —（0 条直接） | 0 | 两个 key 唯一入口都是设置页；本次重启由工具呈现模式的装载期快照口径（见 1.5(b)）决定（`runcodeCatchGate` 已热读、同次保存即生效），与第一轮批次解耦 |
 | U8 | 轮间（第一轮与第二轮之间） | 设置页 1 次保存：**把 `runcodeCatchGate` 切为 false**（`toolPresentationMode` 不动；与工具呈现模式同一张卡片、同一次保存口径）——配置热读、**保存即生效，无需重启 Harness、不必新开会话** | 前置（不推进 flow state；第二轮 route=none 即可） | —（0 条直接；第二轮三项见 3.4） | 0 | 开关为插件侧配置热读（2026-09-23 修订，见 1.5(b)）；轮间无需重新装载/重启，用户发一条消息即回 route=none（无需新会话）；**第二轮 0 次状态舞** |
 

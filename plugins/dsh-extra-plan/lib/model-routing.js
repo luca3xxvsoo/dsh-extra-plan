@@ -298,6 +298,7 @@ async function resolvePlannerEntryLegacy(agent) {
   let model
   let maxTokens
   try {
+    const targetModel = getPlannerModel()
     const parentSession = agent.session.header.parentSession
     if (typeof parentSession === 'string') {
       const agents = getAgents()
@@ -314,7 +315,7 @@ async function resolvePlannerEntryLegacy(agent) {
         maxTokens = pcfg.maxTokens
       }
     }
-    if (getPlannerModel() !== '') {
+    if (targetModel !== '') {
       let catalog = { kind: 'no-llm' }
       const llm = getLlm()
       if (llm !== undefined && llm !== null && typeof llm.listModels === 'function') {
@@ -328,8 +329,8 @@ async function resolvePlannerEntryLegacy(agent) {
           catalog = { kind: 'error' }
         }
       }
-      const decision = decidePlannerModelUse(getPlannerModel(), provider, catalog)
-      if (decision.use) model = getPlannerModel()
+      const decision = decidePlannerModelUse(targetModel, provider, catalog)
+      if (decision.use) model = targetModel
       if (decision.diag !== null) {
         try {
           appendFileSync(getDiagPath(), JSON.stringify({
@@ -337,7 +338,7 @@ async function resolvePlannerEntryLegacy(agent) {
             type: 'degrade',
             sessionId: agent.session !== undefined && agent.session !== null && agent.session.header !== undefined ? agent.session.header.id : '',
             provider: provider !== undefined ? provider : '',
-            plannerModel: getPlannerModel(),
+            plannerModel: targetModel,
             decision: decision.diag,
             reason: decision.reason,
           }) + '\n', 'utf8')
@@ -355,6 +356,7 @@ async function resolvePlannerEntryStrict(agent, parentSignal) {
   let provider
   let model
   let maxTokens
+  const targetModel = getPlannerModel()
   try {
     const parentSession = agent.session.header.parentSession
     if (typeof parentSession === 'string') {
@@ -386,7 +388,7 @@ async function resolvePlannerEntryStrict(agent, parentSignal) {
   const routeKey = (routeProvider, routeModel) => routeProvider + '\u0000' + routeModel
   const probeOutcomes = new Map()
   const successes = []
-  if (getPlannerModel() !== '') {
+  if (targetModel !== '') {
     let listedProviders = []
     try {
       if (typeof llm.listProviders === 'function') {
@@ -405,16 +407,16 @@ async function resolvePlannerEntryStrict(agent, parentSignal) {
       seenProviderIds.add(listed.id)
       candidates.push({ id: listed.id, name: typeof listed.name === 'string' ? listed.name : listed.id })
     }
-    const outcomes = await probePlannerCandidates(llm, candidates.map((candidate) => candidate.id), getPlannerModel(), parentSignal)
+    const outcomes = await probePlannerCandidates(llm, candidates.map((candidate) => candidate.id), targetModel, parentSignal)
     // 全部候选结束后才写入（发起顺序，非完成顺序）：同 route/model 在 fallback 复用同一 outcome。
     for (let index = 0; index < candidates.length; index += 1) {
       const outcome = outcomes[index]
       if (outcome === undefined) continue
-      if (outcome.matched) probeOutcomes.set(routeKey(candidates[index].id, getPlannerModel()), outcome)
+      if (outcome.matched) probeOutcomes.set(routeKey(candidates[index].id, targetModel), outcome)
       if (outcome.ok) successes.push({ id: candidates[index].id, name: candidates[index].name })
     }
     const sorted = sortPlannerCandidates(successes, provider)
-    if (sorted.length > 0) return { provider: sorted[0].id, model: getPlannerModel(), maxTokens }
+    if (sorted.length > 0) return { provider: sorted[0].id, model: targetModel, maxTokens }
   }
 
   if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
@@ -432,7 +434,8 @@ async function resolvePlannerEntryStrict(agent, parentSignal) {
 function resolvePlannerEntry(agent, parentSignal) {
   const cached = plannerModelCache.get(agent)
   if (cached !== undefined) return cached
-  const pending = getCrossProviderPlannerModel()
+  const crossProvider = getCrossProviderPlannerModel()
+  const pending = crossProvider
     ? resolvePlannerEntryStrict(agent, parentSignal)
     : resolvePlannerEntryLegacy(agent)
   plannerModelCache.set(agent, pending)
@@ -461,14 +464,15 @@ function nonPlannerFallbackEntry(sources, probe) {
 async function resolveOtherAgentEntryLegacy(agent, probe) {
   const sources = nonPlannerRouteSources(agent)
   const fallback = nonPlannerFallbackEntry(sources, probe)
-  if (fallback === null || getOtherAgentModel() === '' || fallback.provider === undefined) return fallback || {}
+  const targetModel = getOtherAgentModel()
+  if (fallback === null || targetModel === '' || fallback.provider === undefined) return fallback || {}
   let llm
   try { llm = getLlm() } catch (error) { llm = undefined }
   if (llm === undefined || llm === null || typeof llm.listModels !== 'function') return fallback
   try {
     const models = await llm.listModels(fallback.provider)
-    if (Array.isArray(models) && models.some((item) => item !== null && typeof item === 'object' && item.id === getOtherAgentModel())) {
-      return { ...fallback, model: getOtherAgentModel() }
+    if (Array.isArray(models) && models.some((item) => item !== null && typeof item === 'object' && item.id === targetModel)) {
+      return { ...fallback, model: targetModel }
     }
   } catch (error) {
     // advisory 目录异常按要求静默回退顶层主会话。
@@ -481,6 +485,7 @@ async function resolveOtherAgentEntryLegacy(agent, probe) {
 async function resolveOtherAgentEntryStrict(agent, parentSignal, probe) {
   const sources = nonPlannerRouteSources(agent)
   const fallback = nonPlannerFallbackEntry(sources, probe)
+  const targetModel = getOtherAgentModel()
   if (fallback === null) {
     if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
     throw new Error(NON_PLANNER_BLOCKED_REASON)
@@ -494,7 +499,7 @@ async function resolveOtherAgentEntryStrict(agent, parentSignal, probe) {
   const routeKey = (routeProvider, routeModel) => routeProvider + '\u0000' + routeModel
   const probeOutcomes = new Map()
   const successes = []
-  if (getOtherAgentModel() !== '' && typeof llm.listProviders === 'function') {
+  if (targetModel !== '' && typeof llm.listProviders === 'function') {
     let listedProviders = []
     try {
       const listed = await withPlannerProbeDeadline(() => llm.listProviders(), parentSignal)
@@ -510,15 +515,15 @@ async function resolveOtherAgentEntryStrict(agent, parentSignal, probe) {
       seenProviderIds.add(listed.id)
       candidates.push({ id: listed.id, name: typeof listed.name === 'string' ? listed.name : listed.id })
     }
-    const outcomes = await probePlannerCandidates(llm, candidates.map((candidate) => candidate.id), getOtherAgentModel(), parentSignal)
+    const outcomes = await probePlannerCandidates(llm, candidates.map((candidate) => candidate.id), targetModel, parentSignal)
     for (let index = 0; index < candidates.length; index += 1) {
       const outcome = outcomes[index]
       if (outcome === undefined) continue
-      if (outcome.matched) probeOutcomes.set(routeKey(candidates[index].id, getOtherAgentModel()), outcome)
+      if (outcome.matched) probeOutcomes.set(routeKey(candidates[index].id, targetModel), outcome)
       if (outcome.ok) successes.push({ id: candidates[index].id, name: candidates[index].name })
     }
     const sorted = sortPlannerCandidates(successes, fallback.provider)
-    if (sorted.length > 0) return { ...fallback, provider: sorted[0].id, model: getOtherAgentModel() }
+    if (sorted.length > 0) return { ...fallback, provider: sorted[0].id, model: targetModel }
   }
   if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
   if (fallback.provider === undefined || fallback.model === undefined) throw new Error(NON_PLANNER_BLOCKED_REASON)
@@ -534,7 +539,8 @@ async function resolveOtherAgentEntryStrict(agent, parentSignal, probe) {
 function resolveOtherAgentEntry(agent, parentSignal, probe) {
   const cached = otherAgentModelCache.get(agent)
   if (cached !== undefined) return cached
-  const pending = getCrossProviderPlannerModel()
+  const crossProvider = getCrossProviderPlannerModel()
+  const pending = crossProvider
     ? resolveOtherAgentEntryStrict(agent, parentSignal, probe)
     : resolveOtherAgentEntryLegacy(agent, probe)
   otherAgentModelCache.set(agent, pending)

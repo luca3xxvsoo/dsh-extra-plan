@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { PROBE_LIMITS, RANGE_FORMAT_HINT, LINE_FORMAT_HINT, sanitizeTaskName, timestamp, sessionTagOf, savePlanBase, renderSavePlan, renderProbeMarkdown, renderSaveProbe, extractProbeEvidenceRefs } from './save-contract.js'
+import { PROBE_LIMITS, RANGE_FORMAT_HINT, LINE_FORMAT_HINT, sanitizeTaskName, sessionTagOf, saveArtifactBase, renderSavePlan, renderProbeMarkdown, renderSaveProbe, extractProbeEvidenceRefs } from './save-contract.js'
 import { validateProbe, probePathOf } from './save-probe-validation.js'
 
 // 证据引用报错呈现：装饰字符（反引号/引号/括号/中文标点）在裸插值下不可见，故 ref
@@ -22,13 +22,13 @@ export function createSaveToolFactories({ savePlanDir, atomicCommit, recoverJour
   function defineSavePlan() {
     return {
       name: 'save_plan',
-      description: '落盘规划方案与验收标准清单（原子双写，两个文件必填）。存在未探查项时禁止调用。不得编造内容、数值或行号。【探查者已核实】步骤须注明证据来源文件路径（探查者 save_probe 落盘的证据报告），插件将校验文件存在且为证据报告。返回文件路径',
+      description: '写入规划方案和验收清单（plan、checklist 必填）。plan 不得含「【未探查·待确认】」或「待确认假设清单」；【探查者已核实】步骤须写「证据：<路径>」，该路径必须指向标题含「探查证据报告」的现有文件。返回两个文件路径。',
       parameters: {
         type: 'object',
         properties: {
-          plan: { type: 'string', description: '规划方案全文（含假设时须全部已确认，Markdown）' },
-          checklist: { type: 'string', description: '验收标准清单全文（逐条机械可核对、每条带对应任务编号，Markdown）' },
-          taskName: { type: 'string', description: `可选任务短名（≤${PROBE_LIMITS.maxTaskNameLen} 字；插件会净化，勿传路径）` },
+          plan: { type: 'string', description: '规划方案全文（Markdown，至少 200 字；所有假设必须已确认）' },
+          checklist: { type: 'string', description: '验收清单全文（Markdown，至少 200 字；每条须有任务编号并可机械核对）' },
+          taskName: { type: 'string', description: `可选任务短名（最多 ${PROBE_LIMITS.maxTaskNameLen} 字；不要传路径）` },
         },
         required: ['plan', 'checklist'],
         additionalProperties: false,
@@ -70,7 +70,8 @@ export function createSaveToolFactories({ savePlanDir, atomicCommit, recoverJour
         // journal 恢复按同一标识过滤（跨角色互恢复防护）。
         const sessionId = session.header.id
         const sessionTag = sessionTagOf(sessionId)
-        const base = savePlanBase(nameSeg, sessionId)
+        if (sessionTag === '') throw new Error('save_plan: 会话缺少有效标识，无法隔离落盘事务')
+        const base = saveArtifactBase(nameSeg, sessionId)
         const planFile = join(dir, `方案-${base}.md`)
         const checkFile = join(dir, `验收-${base}.md`)
         recoverJournals(dir, sessionTag)
@@ -90,18 +91,18 @@ export function createSaveToolFactories({ savePlanDir, atomicCommit, recoverJour
   function defineSaveProbe() {
     return {
       name: 'save_probe',
-      description: `把只读探查结果经 save_probe 落盘为工作区 .extra-plan 目录下的单个 Markdown 文件：四类定位线索——文件地图（fileMap）/ 重点区域（focusAreas）/ 排除项（exclusions）/ 背景与意图（background），可选证据数组（evidence：探查者把核实过的行号/数值/文案照实写入；主会话线索模式可不传）。主会话线索模式只写定位线索（路径/范围/关系/备注），不含证据（行号/数值/文案摘录）——pro 规划子代理（subagent_plan）不得把线索文件内容当作【已探查核实】证据；探查子代理传 evidence 时落盘为证据报告（行号/数值/文案照实记录，可被规划子代理作为【探查者已核实】证据引用）。落盘成功后返回文件路径；委派 subagent_plan 时请在 prompt 中带上该路径，说明先 read 文件再按需补查。落盘规则：fileMap/focusAreas 各 ≤${PROBE_LIMITS.maxEntries.fileMap} 条、exclusions/background 各 ≤${PROBE_LIMITS.maxEntries.exclusions} 条、evidence ≤${PROBE_LIMITS.maxEvidenceEntries} 条；四字段 JSON 总量 ≤${PROBE_LIMITS.maxTotalChars}、evidence JSON 总量 ≤${PROBE_LIMITS.maxEvidenceTotalChars}（按 JSON 序列化长度计，键名/引号/逗号均计入）；fileMap/focusAreas/evidence 的 path 必须真实存在（相对按工作区解析）；range 提示：${RANGE_FORMAT_HINT}；evidence.line ${LINE_FORMAT_HINT}；evidence 每项 line/value/text 至少其一；超限会拒绝（不静默截断），先压缩概括或分多次落盘。`,
+       description: '写入只读探查结果。fileMap、focusAreas、exclusions、background 四个数组必填，按 JSON 序列化计总量最多 20000 字；evidence 可选，非空时生成证据报告，否则生成线索文件。字段格式和单项上限见参数说明；返回文件路径。',
       parameters: {
         type: 'object',
         properties: {
           fileMap: {
             type: 'array',
-            description: '文件地图：探查中定位到的相关文件（每项 {path, relation}；path 必须真实存在，相对按工作区解析）',
+             description: `相关文件列表（最多 ${PROBE_LIMITS.maxEntries.fileMap} 项）`,
             items: {
               type: 'object',
               properties: {
-                path: { type: 'string', description: '文件路径（相对工作区或绝对路径，必须真实存在）' },
-                relation: { type: 'string', description: `该文件与任务的关系（≤${PROBE_LIMITS.maxRelationLen} 字）` },
+                 path: { type: 'string', description: `现有文件路径（相对路径按工作区解析，最多 ${PROBE_LIMITS.maxPathLen} 字）` },
+                 relation: { type: 'string', description: `文件与任务的关系（最多 ${PROBE_LIMITS.maxRelationLen} 字）` },
               },
               required: ['path', 'relation'],
               additionalProperties: false,
@@ -109,13 +110,13 @@ export function createSaveToolFactories({ savePlanDir, atomicCommit, recoverJour
           },
           focusAreas: {
             type: 'array',
-            description: '重点区域：需要 pro 子代理优先补查的文件与行号范围（每项 {path, range?, note}；path 必须真实存在）',
+             description: `重点区域列表（最多 ${PROBE_LIMITS.maxEntries.focusAreas} 项）`,
             items: {
               type: 'object',
               properties: {
-                path: { type: 'string', description: '文件路径（必须真实存在）' },
-                range: { type: 'string', description: `可选行号范围；${RANGE_FORMAT_HINT}` },
-                note: { type: 'string', description: `该区域的重点与补查方向（≤${PROBE_LIMITS.maxNoteLen} 字）` },
+                 path: { type: 'string', description: `现有文件路径（相对路径按工作区解析，最多 ${PROBE_LIMITS.maxPathLen} 字）` },
+                 range: { type: 'string', description: `可选行号范围（最多 ${PROBE_LIMITS.maxRangeLen} 字）${RANGE_FORMAT_HINT}` },
+                 note: { type: 'string', description: `重点和补查方向（最多 ${PROBE_LIMITS.maxNoteLen} 字）` },
               },
               required: ['path', 'note'],
               additionalProperties: false,
@@ -123,12 +124,12 @@ export function createSaveToolFactories({ savePlanDir, atomicCommit, recoverJour
           },
           exclusions: {
             type: 'array',
-            description: '排除项：探查中判定与任务无关的范围/文件（每项 {scope?, note}；允许概念边界，不校验存在性）',
+             description: `排除项列表（最多 ${PROBE_LIMITS.maxEntries.exclusions} 项；scope 可为概念边界，无须对应现有路径）`,
             items: {
               type: 'object',
               properties: {
-                scope: { type: 'string', description: '可选排除范围描述' },
-                note: { type: 'string', description: `排除原因（≤${PROBE_LIMITS.maxNoteLen} 字）` },
+                 scope: { type: 'string', description: '可选排除范围' },
+                 note: { type: 'string', description: `排除原因（最多 ${PROBE_LIMITS.maxNoteLen} 字）` },
               },
               required: ['note'],
               additionalProperties: false,
@@ -136,12 +137,12 @@ export function createSaveToolFactories({ savePlanDir, atomicCommit, recoverJour
           },
           background: {
             type: 'array',
-            description: '背景与意图：任务的背景、目标与用户意图（每项 {topic, detail}）',
+             description: `背景与意图列表（最多 ${PROBE_LIMITS.maxEntries.background} 项）`,
             items: {
               type: 'object',
               properties: {
-                topic: { type: 'string', description: `背景主题（≤${PROBE_LIMITS.maxTopicLen} 字）` },
-                detail: { type: 'string', description: `背景/意图细节（≤${PROBE_LIMITS.maxDetailLen} 字）` },
+                 topic: { type: 'string', description: `背景主题（最多 ${PROBE_LIMITS.maxTopicLen} 字）` },
+                 detail: { type: 'string', description: `背景或用户意图（最多 ${PROBE_LIMITS.maxDetailLen} 字）` },
               },
               required: ['topic', 'detail'],
               additionalProperties: false,
@@ -149,21 +150,21 @@ export function createSaveToolFactories({ savePlanDir, atomicCommit, recoverJour
           },
           evidence: {
             type: 'array',
-            description: `可选证据数组（探查子代理 save_probe 落盘证据报告用；主会话线索模式可不传）：探查者把核实过的行号/数值/文案照实写入——每项 {path 必填, line?, value?, text?, note?}，path 必须真实存在，line/value/text 至少一个（line ≤${PROBE_LIMITS.maxEvidenceLineLen} 字；${LINE_FORMAT_HINT}，value ≤${PROBE_LIMITS.maxEvidenceValueLen} 字，text ≤${PROBE_LIMITS.maxEvidenceTextLen} 字，note ≤${PROBE_LIMITS.maxEvidenceNoteLen} 字，至多 ${PROBE_LIMITS.maxEvidenceEntries} 条）`,
+             description: `可选证据列表（最多 ${PROBE_LIMITS.maxEvidenceEntries} 项，按 JSON 序列化计总量最多 ${PROBE_LIMITS.maxEvidenceTotalChars} 字）；非空时生成证据报告。每项 path 必须存在，并至少填写 line、value、text 之一。`,
             items: {
               type: 'object',
               properties: {
-                path: { type: 'string', description: '被核实文件路径（相对工作区或绝对路径，必须真实存在）' },
-                line: { type: 'string', description: `可选行号；${LINE_FORMAT_HINT}` },
-                value: { type: 'string', description: `可选核实值（≤${PROBE_LIMITS.maxEvidenceValueLen} 字）` },
-                text: { type: 'string', description: `可选原文摘录（≤${PROBE_LIMITS.maxEvidenceTextLen} 字）` },
-                note: { type: 'string', description: `可选备注（≤${PROBE_LIMITS.maxEvidenceNoteLen} 字）` },
+                 path: { type: 'string', description: `现有被核实文件路径（相对路径按工作区解析，最多 ${PROBE_LIMITS.maxPathLen} 字）` },
+                 line: { type: 'string', description: `可选行号（最多 ${PROBE_LIMITS.maxEvidenceLineLen} 字）；${LINE_FORMAT_HINT}` },
+                 value: { type: 'string', description: `可选核实值（最多 ${PROBE_LIMITS.maxEvidenceValueLen} 字）` },
+                 text: { type: 'string', description: `可选原文摘录（最多 ${PROBE_LIMITS.maxEvidenceTextLen} 字）` },
+                 note: { type: 'string', description: `可选备注（最多 ${PROBE_LIMITS.maxEvidenceNoteLen} 字）` },
               },
               required: ['path'],
               additionalProperties: false,
             },
           },
-          taskName: { type: 'string', description: `可选任务短名（≤${PROBE_LIMITS.maxTaskNameLen} 字；插件会净化，勿传路径）` },
+           taskName: { type: 'string', description: `可选任务短名（最多 ${PROBE_LIMITS.maxTaskNameLen} 字；不要传路径）` },
         },
         required: ['fileMap', 'focusAreas', 'exclusions', 'background'],
         additionalProperties: false,
@@ -183,17 +184,19 @@ export function createSaveToolFactories({ savePlanDir, atomicCommit, recoverJour
       async execute(args, exec) {
         const session = exec.agent !== undefined && exec.agent !== null ? exec.agent.session : undefined
         const cwd = session !== undefined && session !== null && session.header !== undefined && typeof session.header.cwd === 'string' ? session.header.cwd : ''
-        if (cwd === '') throw new Error('save_probe: 会话缺少工作区路径，无法落盘')
-        const dir = resolve(join(cwd, savePlanDir))
-        const nameSeg = sanitizeTaskName(args.taskName)
-        const ts = timestamp()
-        const base = (nameSeg === '' ? '' : nameSeg + '-') + ts
-        recoverJournals(dir)
         const invalid = validateProbe(args, cwd)
         if (invalid !== null) throw new Error(invalid)
+        if (cwd === '') throw new Error('save_probe: 会话缺少工作区路径，无法落盘')
+        const sessionId = session !== undefined && session.header !== undefined ? session.header.id : undefined
+        const sessionTag = sessionTagOf(sessionId)
+        if (sessionTag === '') throw new Error('save_probe: 会话缺少有效标识，无法隔离落盘事务')
+        const dir = resolve(join(cwd, savePlanDir))
+        const nameSeg = sanitizeTaskName(args.taskName)
+        const base = saveArtifactBase(nameSeg, sessionId)
+        recoverJournals(dir, sessionTag)
         const fileName = `线索-${base}.md`
         try {
-          atomicCommit(dir, base, [{ name: fileName, content: renderProbeMarkdown(args) }])
+          atomicCommit(dir, base, [{ name: fileName, content: renderProbeMarkdown(args) }], sessionTag)
         } catch (error) {
           throw new Error(`save_probe: 落盘失败：${error instanceof Error ? error.message : String(error)}`)
         }

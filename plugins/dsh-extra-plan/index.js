@@ -11,9 +11,8 @@
 // 3. 子代理判定已弃用 agents.roots()（v0.1.2-rc.1 真实机制：子代理 runtime
 //    owner=父，agent-loop enter(agent, ownerCtx.agent)——按 owner 的根判定不会
 //    把子代理当根）——一律用「子代理标记 + 父会话存活」公式；
-// 4. ask_user_question 答案以 tool/result 回流（0.1.7 起 callId/isError 在 message 顶层、
-//    content 直接是内容块；0.1.2-rc.1 旧形状的 tool-result 信封仍兼容），
-//    与 tool/call 的 callId 精确配对，渲染文本为 {"answers":[...]} JSON；
+// 4. ask_user_question 答案以 tool/result 回流（callId/isError 在 message 顶层、
+//    content 直接是内容块），与 tool/call 的 callId 精确配对，渲染文本为 {"answers":[...]} JSON；
 //    提问通道级错误码全集（v0.1.2-rc.1 声明）：ASK_ABORTED / EMPTY_QUESTIONS /
 //    CALLER_NOT_LIVE / DELEGATED_CALLER / BAD_INTENT / NO_PROVIDER；取消码实测口径
 //    （2026-09-23 复核）：native 直呼取消上报 ASK_CANCELLED（全库唯一实证
@@ -153,18 +152,9 @@ const ASK_TOOL = 'ask_user_question'
 
 
 
-// ── 会话事件名双兼容层（DSH 0.1.2-rc.1 / 0.1.5-rc.2）────────────────────────
-// 为什么双兼容：生产仍是 0.1.2-rc.1 且需回放旧会话日志，同一份代码须两代都能工作。
-// 两代出处：tool/code-dispatch(-start)（子调用 id 前缀 :code:）属 0.1.2-rc.1；
-//   tool/ptc-dispatch(-start)（前缀 :ptc:）属 0.1.5-rc.2（dsh-session known-event-types：
-//   0.1.2-rc.1 L66-67 / 0.1.5-rc.2 L71-72；载荷字段两代未变）。
-// 删除条件：生产整体切到 0.1.5-rc.2 且不再回放旧日志（含 tool/code-dispatch(-start) 的旧会话）。
-// 删除动作：删两个 Set 里带 COMPAT 标记的那一项；判定点无需改动。
-// 删除判据：grep "COMPAT"（后跟左括号）应为 0 命中。
-const DISPATCH_START = new Set(['tool/ptc-dispatch-start', 'tool/code-dispatch-start']) // COMPAT(0.1.2-rc.1)
-const DISPATCH = new Set(['tool/ptc-dispatch', 'tool/code-dispatch']) // COMPAT(0.1.2-rc.1)
-const isDispatchStart = (t) => DISPATCH_START.has(t) // 含旧名 tool/code-dispatch-start（0.1.2-rc.1）
-const isDispatch = (t) => DISPATCH.has(t)
+// 当前宿主事件只保留 PTC dispatch 形状；旧 code-dispatch 运行分支已删除。
+const isDispatchStart = (t) => t === 'tool/ptc-dispatch-start'
+const isDispatch = (t) => t === 'tool/ptc-dispatch'
 
 // Shell mutation helpers live in lib/shell-mutation.js; imports below preserve the public decisions bindings.
 
@@ -442,30 +432,10 @@ function parseAskResultData(data) {
   if (data === null || typeof data !== 'object') return { callId: undefined }
   const message = data.message
   if (message === null || typeof message !== 'object' || !Array.isArray(message.content)) return { callId: undefined }
-  let callId
-  let inner
-  let outerIsError = false
-  let outerText = ''
-  // 0.1.7-rc.2 起：tool-result 信封拍平到 message 顶层（toolCallId / isError 在 message 上，
-  // content 直接是内容块）。旧形状（0.1.2-rc.1 / 0.1.5-rc.2）保留兼容。
-  if (typeof message.toolCallId === 'string') {
-    callId = message.toolCallId
-    inner = message.content
-    outerIsError = message.isError === true
-    outerText = firstTextOfBlocks(message.content)
-  } else {
-    for (const outer of message.content) {
-      if (outer !== null && typeof outer === 'object' && outer.type === 'tool-result') {
-        if (typeof outer.toolCallId === 'string') callId = outer.toolCallId
-        if (inner === undefined && Array.isArray(outer.content)) {
-          inner = outer.content
-          // isError 在 tool-result 信封（message.content[0]）上，不在 data 上（native 闸门拒绝实证）。
-          outerIsError = outer.isError === true
-          outerText = firstTextOfBlocks(outer.content)
-        }
-      }
-    }
-  }
+  const callId = message.toolCallId
+  const inner = message.content
+  const outerIsError = message.isError === true
+  const outerText = firstTextOfBlocks(message.content)
   if (typeof callId !== 'string') return { callId: undefined }
   if (data.error !== undefined && data.error !== null) {
     return { callId, kind: 'error', code: typeof data.error.code === 'string' ? data.error.code : '' }
@@ -497,8 +467,8 @@ function parseAskResultData(data) {
   return { callId, kind: 'ok', answersLen, selected }
 }
 
-// 解析一次嵌套 ask 的结果（tool/ptc-dispatch / tool/code-dispatch 事件，run_code 程序内嵌套调用）。
-// data.content 直接是 ContentBlock 数组（无 tool/result 的 tool-result 外层）。
+// 解析一次嵌套 ask 的结果（tool/ptc-dispatch 事件，run_code 程序内嵌套调用）。
+// data.content 直接是 ContentBlock 数组。
 // 返回（与 parseAskResultData 同构）：
 //   { callId, kind: 'ok', answersLen, selected } —— 正常答复（answersLen=0 为空白回复）
 //   { callId, kind: 'denied', code: '' } —— 闸门拒绝（isError===true + 插件中文文案，非宿主取消句）
@@ -754,9 +724,6 @@ function plannerGateReason(exec, events, exploreBudget, jobOutputCallCounters) {
   if (exec.name === 'write' || exec.name === 'edit') {
     return '规划子代理只读：方案经 save_plan 落盘，其余写入一律禁止（toolFilter 之外的第二道防线）'
   }
-  if (exec.name === 'cordis_run') {
-    return '规划子代理只读：cordis_run 会在会话内执行模型 JS 并挂载临时插件，规划期一律禁止（宿主版本仍注册该工具时生效）'
-  }
   const shellReason = shellMutationReason('planner', exec)
   if (shellReason !== null) return shellReason
   if (exec.name === 'job_output') return jobOutputGateReason(exec, jobOutputCallCounters)
@@ -774,11 +741,6 @@ function plannerGateReason(exec, events, exploreBudget, jobOutputCallCounters) {
 function childReadonlyGateReason(exec, probe, jobOutputCallCounters) {
   if (exec.name === 'write' || exec.name === 'edit') {
     return probe ? '探查者只读：探查不修改任何文件，write/edit 一律禁止（工具目录判定）' : '验收复核者只读：验收复核不修改任何文件，write/edit 一律禁止（工具目录判定）'
-  }
-  if (exec.name === 'cordis_run') {
-    return probe
-      ? '探查者只读：cordis_run 会在会话内执行模型 JS 并挂载临时插件，一律禁止（宿主版本仍注册该工具时生效）'
-      : '验收复核者只读：cordis_run 会在会话内执行模型 JS 并挂载临时插件，一律禁止（宿主版本仍注册该工具时生效）'
   }
   const shellReason = shellMutationReason(probe ? 'probe' : 'reviewer', exec)
   if (shellReason !== null) return shellReason
@@ -843,7 +805,7 @@ function probeDisposalWarning(remaining) {
 }
 
 // ④ 主会话段（mainGateReason；自 apply 内提取的纯部分，分支顺序逐字同序）：
-//    ask → write/edit → cordis 2 只读 → cordis_run → pwsh/bash → planToolName
+//    ask → write/edit → cordis 2 只读 → pwsh/bash → planToolName
 //    → save_probe 分支保持不变（route=plan + purpose∈{refine,redo} + clarified）
 //    → subagent 族 → run_code（调 runCodeGroupDenyReason，depth+1）
 //    → job_output（wait 检查 + 计数器查重，只读不写入；set 由 recordJobOutputCall 在放行路径执行）→ null。
@@ -903,19 +865,8 @@ function mainGateReason(state, exec, gateCtx) {
     }
     return null
   }
-  // cordis（官方工具集，只读引用）：0.1.7-rc.2 宿主 dsh-tool-cordis 只注册
-  // cordis_inspect_list / cordis_inspect_query 两个只读工具；cordis_run 等 5 名已不存在。
-  // 下方判定为防御性保留（若某受支持版本仍注册该工具时生效）：cordis_run 是唯一执行口
-  // （模型 JS 求值+挂载临时插件，纯内存、会话级、重启即失）——与 write/edit 同规则：
-  // 路由未确认拒绝，批准/直行放行。子代理侧静态 deny 已移除（deny 未知名会使
-  // tools.restrict() 抛错、子代理创建失败），改由 planner/只读子代理的运行时闸门兜住。
-  if (name === 'cordis_inspect_list' || name === 'cordis_inspect_query' || name === 'cordis_inspect_self' || name === 'cordis_define' || name === 'cordis_stop' || name === 'cordis_undefine') {
-    return null
-  }
-  if (name === 'cordis_run') {
-    if (!escape && state.route !== 'direct' && state.approved !== true) {
-      return `路由未确认：cordis_run。cordis 只读/暂存工具（cordis_inspect_*、cordis_define、cordis_stop、cordis_undefine）可随时使用；cordis_run 会在会话内执行模型 JS 并挂载临时插件，${gateRuntime.confirm.route}，用户批准后才可动手`
-    }
+  // cordis（官方工具集，只读引用）：当前支持两个只读工具。
+  if (name === 'cordis_inspect_list' || name === 'cordis_inspect_query') {
     return null
   }
   const isPwshMutation = name === 'pwsh' && pwshMutationMatches(exec)
@@ -1210,11 +1161,39 @@ import { causeChainOf } from './lib/runtime-static.js'
 import { createAgentRuntime, isLiveDelegation, childPolicyNeedsFloor } from './lib/agent-runtime.js'
 import { sessionEvents, isSubagentChild } from './lib/agent-session.js'
 import { createModelRouting, isExplicitRoute, isExplicitEffort, resolveAgentRouteSources, decidePlannerModelUse, PLANNER_PROBE_TIMEOUT_MS, PLANNER_BLOCKED_REASON, NON_PLANNER_BLOCKED_REASON, sortPlannerCandidates } from './lib/model-routing.js'
-import { CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilteredToolsSdk, resolveToolsSdkRenderer, sdkSchemasForRendering, toolPresentationModeOf, toolRegistryOf, toolSdkSchemasOf, projectSkillCatalogDecision, PTC_SECTION_NAME, READ_SECTION_NAME, SDK_SECTION_NAME, sectionOf, hasSection, hasNonEmptySection } from './lib/assembly-presentation.js'
+import { CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilteredToolsSdk, resolveToolsSdkRenderer, sdkSchemasForRendering, toolPresentationModeOf, toolSdkSchemasOf, projectSkillCatalogDecision, PTC_SECTION_NAME, READ_SECTION_NAME, SDK_SECTION_NAME, sectionOf, hasSection, hasNonEmptySection } from './lib/assembly-presentation.js'
 import { createSdkTextCache } from './lib/sdk-text-cache.js'
 import { GATE_WORD_FIELDS, createGateRuntime } from './lib/gate-words.js'
 import { createLiveConfig } from './lib/live-config.js'
 import { createDeveloperMessage } from '@deepseek-ai/dsh-llm'
+import z from '@deepseek-ai/schemastery'
+
+const DEFAULT_DIAG_FILE = join(dirname(fileURLToPath(import.meta.url)), 'extra-plan-request-errors.jsonl')
+
+// 主插件 Config 对应 id=extra-plan；lib/settings.js 的 Config 对应 id=dsh-extra-plan-settings。
+// 二者不复用、不互相导入；settings Config 仍独立维护 10 个 volatile 字段。
+export const Config = z.object({
+  gateWords: z.dict(z.string()).required(),
+  planTool: z.string().default('subagent_plan'),
+  savePlanDir: z.string().default('.extra-plan'),
+  plannerModel: z.string().default('deepseek-v4-pro'),
+  otherAgentModel: z.string().default(''),
+  exploreBudget: z.number().step(1).min(1).default(DEFAULT_EXPLORE_BUDGET),
+  plannerPromptSuffix: z.string().default(DEFAULT_PLANNER_PROMPT_SUFFIX),
+  anchoredBootstrap: z.boolean().default(true),
+  creativeMode: z.boolean().default(false),
+  runcodeCatchGate: z.boolean().default(false),
+  crossProviderPlannerModel: z.boolean().default(false),
+  bootstrapPersona: z.string().default('You are a helpful software engineer assistant.'),
+  bootstrapReadHint: z.string().default(BOOTSTRAP_READ_HINT_FALLBACK),
+  bootstrapShellTools: z.array(z.string()).default(['bash', 'pwsh']),
+  bootstrapCommonTools: z.array(z.string()).default(['read']),
+  usageLedger: z.object({
+    enabled: z.boolean().default(false),
+    path: z.string().default(''),
+  }).default({ enabled: false, path: '' }),
+  diagFile: z.string().default(DEFAULT_DIAG_FILE),
+})
 
 // ── save_probe/任意工具参数截断 → MALFORMED_RESPONSE 整轮致命的限次自愈（v0.3.1） ──────
 // 机制：宿主 dsh-llm-deepseek 在消息流结束处对每个 tool-call 参数严格 JSON.parse，失败抛
@@ -1533,28 +1512,31 @@ export function apply(ctx, config) {
       }
       // 游标写回：index 为本次读到的水位（增量下一次从该水位续做）；无水位会话退化为本次快照长度。
       const nextIndex = hasWatermark ? logLen : events.length
-      usageCursors.set(sid, { seq: cursor, index: nextIndex })
-      if (rows.length === 0) return
+      const nextCursor = { seq: cursor, index: nextIndex }
+      // 无 usage 行时只推进当前进程内存水位，避免重复扫描；不触碰账本或 cursor 文件。
+      if (rows.length === 0) {
+        usageCursors.set(sid, nextCursor)
+        return
+      }
       const sepA = ledgerPath.lastIndexOf('\\')
       const sepB = ledgerPath.lastIndexOf('/')
       const dir = ledgerPath.slice(0, Math.max(sepA, sepB))
       if (dir !== '') mkdirSync(dir, { recursive: true })
       appendFileSync(ledgerPath, rows.join('\n') + '\n', 'utf8')
-      // cursor 持久化：写前重读现状——可解析时更新本 session 项并逐项保留其它合法 session
-      // （归一为 { seq, index }）；降级态（读不到/解析失败/根值非对象）以空表 + 当前 session
-      // 覆盖写，其它 session 去重基准丢失的风险见 readUsageCursorTable 注释。仍是「有新增行才
-      // 整文件改写」，本批不引入批量/延迟持久化。
-      const persisted = {}
+      // append 成功后才推进内存游标；append 失败时下一次 fold 必须再次输出同一批 seq。
+      usageCursors.set(sid, nextCursor)
+      // cursor 持久化：写前重读现状——可解析时更新本 session 项并逐项保留其它合法 session。
+      // 重读降级（读不到/解析失败/根值非对象）时原样保留 cursor 文件，不覆盖其它 session 基准。
       const current = readUsageCursorTable()
-      if (current.ok) {
-        for (const key of Object.keys(current.table)) {
-          if (key === sid) continue
-          const entry = usageCursorEntryOf(current.table, key)
-          if (entry === undefined) continue
-          persisted[key] = { seq: entry.seq, index: entry.index }
-        }
+      if (!current.ok) return
+      const persisted = {}
+      for (const key of Object.keys(current.table)) {
+        if (key === sid) continue
+        const entry = usageCursorEntryOf(current.table, key)
+        if (entry === undefined) continue
+        persisted[key] = { seq: entry.seq, index: entry.index }
       }
-      persisted[sid] = { seq: cursor, index: nextIndex }
+      persisted[sid] = nextCursor
       try { writeFileSync(ledgerCursorPath, JSON.stringify(persisted), 'utf8') } catch (error) { /* cursor 持久化尽力而为 */ }
     } catch (error) {
       if (!ledgerWarned) {
@@ -1708,22 +1690,41 @@ export function apply(ctx, config) {
   // skill catalog 属于 agent/pre-step 消息通道；只改当前请求副本，不注销 skill binding。
   // 仅 HP1（C=1、A=1、F、main/planner、M=ptc）暂隐两个创造 skill；L 与其它组合
   // 保持完整 catalog。prepend 让本投影在 tool-skill 的 catalog 生成之后收到最终 decision。
+  let preStepWarned = false
+  function warnPreStepFailure(error) {
+    if (preStepWarned) return
+    preStepWarned = true
+    console.warn('extra-plan: agent/pre-step 初始化失败（保留原 decision）：' + (error instanceof Error ? error.message : String(error)))
+  }
   ctx.on('agent/pre-step', async (payload, next) => {
     const decision = await next()
-    return shouldHideCreativeCatalog(payload.agent) ? projectSkillCatalogDecision(decision) : decision
+    try {
+      return shouldHideCreativeCatalog(payload.agent) ? projectSkillCatalogDecision(decision) : decision
+    } catch (error) {
+      warnPreStepFailure(error)
+      return decision
+    }
   }, { prepend: true })
 
   ctx.on('agent/pre-step', async (payload, next) => {
+    let initializationFailed = false
     if (payload.agent !== undefined) {
-      selfAgent = payload.agent
-      childBaseline(payload.agent)
-      // T3：save_plan 与 save_probe 同构——主会话侧同样在 pre-step 幂等兜底注册
-      // （web 会话先按默认预设发布、recompose 不重发 session-start，仅靠 session-start
-      // 会漏注册；registerTool 的 WeakSet 保证不重复注册）。
-      if (isPlannerChild(payload.agent) || !isSubagentChild(payload.agent)) registerSavePlan(payload.agent)
-      if (!isSubagentChild(payload.agent) || probeClaimFor(payload.agent)) { registerSaveProbe(payload.agent) }
+      try {
+        selfAgent = payload.agent
+        childBaseline(payload.agent)
+        // T3：save_plan 与 save_probe 同构——主会话侧同样在 pre-step 幂等兜底注册
+        // （web 会话先按默认预设发布、recompose 不重发 session-start，仅靠 session-start
+        // 会漏注册；registerTool 的 WeakSet 保证不重复注册）。
+        if (isPlannerChild(payload.agent) || !isSubagentChild(payload.agent)) registerSavePlan(payload.agent)
+        if (!isSubagentChild(payload.agent) || probeClaimFor(payload.agent)) { registerSaveProbe(payload.agent) }
+      } catch (error) {
+        initializationFailed = true
+        warnPreStepFailure(error)
+      }
     }
     const decision = await next()
+    if (initializationFailed) return decision
+    try {
     if (decision.kind !== 'enter') return decision
     if (selfAgent === undefined || !isPlannerChild(selfAgent)) return decision
     if (!Array.isArray(decision.messages)) return decision
@@ -1735,7 +1736,11 @@ export function apply(ctx, config) {
     if (reminder !== '' && !budgetReminderSent(sessionEvents(selfAgent.session), '本轮探查预算还剩 ')) {
       messages = [...messages, budgetReminderMessage(reminder)]
     }
-    return { ...decision, messages }
+      return { ...decision, messages }
+    } catch (error) {
+      warnPreStepFailure(error)
+      return decision
+    }
   })
 
   // 2.5) 模型请求失败诊断 + MALFORMED_RESPONSE 限次自愈（v0.3.1）：把 failure 的完整
@@ -1744,8 +1749,7 @@ export function apply(ctx, config) {
   // 见模块级注释）：llm-retry 已返回 {kind:'retry'} 时原样透传（不与宿主重试叠加、不
   // 重复重试），否则交 malformedRecovery 判定——命中返回 retry 让 dsh-agent-loop 重试该
   // 步，未命中回退原 action 透传（其余失败码行为不变）。
-  const __dirname = dirname(fileURLToPath(import.meta.url))
-  const diagPath = typeof cfg.diagFile === 'string' && cfg.diagFile !== '' ? cfg.diagFile : join(__dirname, 'extra-plan-request-errors.jsonl')
+  const diagPath = typeof cfg.diagFile === 'string' && cfg.diagFile !== '' ? cfg.diagFile : DEFAULT_DIAG_FILE
   let diagWarned = false
   // causeChainOf is imported from lib/runtime-static.js.
 
@@ -1803,23 +1807,32 @@ export function apply(ctx, config) {
   //    final fold 写入失败仍走既有单次 ledger warning 且不抛出，不阻断后续清理。
   ctx.on('agent/disposed', (payload) => {
     const agent = payload.agent
-    sdkTextCache.dispose(agent)
     const sessionId = agent?.session?.header?.id
     if (typeof sessionId !== 'string') return
-    foldUsage(agent, usageRoleOf(agent))
-    const pending = pendingProbeClaims.get(sessionId)
-    if (Number.isInteger(pending) && pending > 0) {
-      const warning = probeDisposalWarning(pending)
-      if (warning !== null) console.warn(warning)
+    try {
+      sdkTextCache.dispose(agent)
+    } catch (error) {
+      console.warn('extra-plan: agent/disposed text cache cleanup failed: ' + (error instanceof Error ? error.message : String(error)))
     }
-    pendingProbeClaims.delete(sessionId)
-    runCodeDenyRecords.delete(sessionId)
-    malformedRetried.delete(sessionId)
-    jobOutputCallCounters.delete(sessionId)
-    jobOutputLastAnchors.delete(sessionId)
-    toolJobsNoticesConsumed.delete(sessionId)
-    subCallCounters.delete(sessionId)
-    usageCursors.delete(sessionId)
+    try {
+      foldUsage(agent, usageRoleOf(agent))
+    } catch (error) {
+      console.warn('extra-plan: agent/disposed final usage fold failed: ' + (error instanceof Error ? error.message : String(error)))
+    } finally {
+      const pending = pendingProbeClaims.get(sessionId)
+      if (Number.isInteger(pending) && pending > 0) {
+        const warning = probeDisposalWarning(pending)
+        if (warning !== null) console.warn(warning)
+      }
+      pendingProbeClaims.delete(sessionId)
+      runCodeDenyRecords.delete(sessionId)
+      malformedRetried.delete(sessionId)
+      jobOutputCallCounters.delete(sessionId)
+      jobOutputLastAnchors.delete(sessionId)
+      toolJobsNoticesConsumed.delete(sessionId)
+      subCallCounters.delete(sessionId)
+      usageCursors.delete(sessionId)
+    }
   })
 
   // 3) anchored 引导（默认开）：主会话与规划子代理首轮极简；执行者/reviewer 不引导。
@@ -1887,10 +1900,13 @@ export function apply(ctx, config) {
           sdkText = ''
         }
       }
-      presented = projectAssemblyForPresentation(result, schemas, { sdkText, ptcOnly: mode === 'ptc' })
+      presented = projectAssemblyForPresentation(result, schemas, { sdkText, hideCordis: !creativeModeOn(), ptcOnly: mode === 'ptc' })
     } else if (mode === 'ptc') {
       // Pure PTC 的保留传输始终是唯一顶层工具；其余 binding 只在嵌套 SDK 中出现。
       presented = projectAssemblyForPresentation(result, schemas, { hideCordis: false, ptcOnly: true })
+    } else {
+      // creativeMode 仍需复制投影以剥离已退役 tool:cordis 段，但保留两个展示工具与 SDK 原文。
+      presented = projectAssemblyForPresentation(result, schemas, { hideCordis: false })
     }
 
     if (!anchoredFirst) return presented
@@ -1909,13 +1925,9 @@ export function apply(ctx, config) {
     if (anchoredPtc) {
       // 借宿主段名覆盖文本：只改「模型可见副本」的 tool:read text（= 变量②手写文案），
       // 不动宿主注册表；L 段（首个 tool/call 之后）不再进入本分支，自动回到宿主原文。
-      const ptcSection = sectionOf(presented.sections, PTC_SECTION_NAME)
       const readSection = sectionOf(presented.sections, READ_SECTION_NAME)
       const sections = [
         { name: 'extra-plan-bootstrap', text: bootstrapPersona },
-        // 2026-09-22 按用户要求停用宿主 tools:ptc-only 段的透传：HP 段集固定为 persona + 手写
-        // tool:read；原行保留在下以备回滚（ptcSection 取值仅为回滚保留，当前不再使用）。
-        // ...(ptcSection === undefined ? [{ name: PTC_SECTION_NAME, text: '' }] : [{ ...ptcSection }]),
         ...(readSection === undefined ? [{ name: READ_SECTION_NAME, text: bootstrapReadHint }] : [{ ...readSection, text: bootstrapReadHint }]),
       ]
       return {
@@ -2174,8 +2186,7 @@ export function apply(ctx, config) {
     if (child) {
       // 只读子代理（reviewer/probe，真实工具集判定命中缓存）：write/edit 与 pwsh/bash 写命令
       // 一律拒绝；文案按 save_probe 信号区分（probe 走「探查者只读」，reviewer 文案逐字保持）。
-      // 注：此段到达时 planner 必已 return（planner 段在前），`!planner` 条件可省略（保留原状）。
-      if (!planner && readOnlyChildren.has(agent)) {
+      if (readOnlyChildren.has(agent)) {
         const probe = schemasHasTool(toolSchemasOf(agent), 'save_probe')
         const reason = childReadonlyGateReason(exec, probe, jobOutputCallCounters)
         if (reason !== null) {

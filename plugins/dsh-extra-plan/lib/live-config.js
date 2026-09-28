@@ -73,14 +73,24 @@ function envConfigPath() {
   return textOf(process.env.DSH_EXTRA_PLAN_CONFIG_PATH)
 }
 
-// stamp = mtimeMs + size；失败返回 { ok:false, reason }，调用方据此回退且不抛出。
+// stamp 优先使用 dev/ino/size/mtimeNs/ctimeNs；失败返回 { ok:false, reason }，调用方据此回退且不抛出。
 function statStamp(path) {
   try {
-    const info = statSync(path)
-    return { ok: true, stamp: String(info.mtimeMs) + ':' + String(info.size) }
+    const info = statSync(path, { bigint: true })
+    const fields = ['dev', 'ino', 'size', 'mtimeNs', 'ctimeNs']
+    if (fields.every((key) => typeof info[key] === 'bigint')) {
+      return { ok: true, stamp: fields.map((key) => String(info[key])).join(':') }
+    }
+    const fallback = statSync(path)
+    return { ok: true, stamp: [fallback.ino, fallback.size, fallback.mtimeMs, fallback.ctimeMs].map((value) => String(value)).join(':') }
   } catch (error) {
-    const code = error !== null && typeof error === 'object' && typeof error.code === 'string' ? error.code : ''
-    return { ok: false, reason: code !== '' ? code : String(error !== null && typeof error === 'object' ? error.message : error) }
+    try {
+      const fallback = statSync(path)
+      return { ok: true, stamp: [fallback.ino, fallback.size, fallback.mtimeMs, fallback.ctimeMs].map((value) => String(value)).join(':') }
+    } catch (fallbackError) {
+      const code = fallbackError !== null && typeof fallbackError === 'object' && typeof fallbackError.code === 'string' ? fallbackError.code : ''
+      return { ok: false, reason: code !== '' ? code : String(fallbackError !== null && typeof fallbackError === 'object' ? fallbackError.message : fallbackError) }
+    }
   }
 }
 

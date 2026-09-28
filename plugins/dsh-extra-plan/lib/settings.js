@@ -31,7 +31,8 @@ import {
   HOST_ROW_SETTING_DEFINITIONS,
   PRESET_ROW_ID,
   SETTINGS_ROW_ID,
-  captureSettings,
+  effectivePluginsOf,
+  hostRowDefaultsFromTemplate,
   normalizeSettingValue,
   readPath,
   readProjectedValue,
@@ -109,34 +110,6 @@ function readJsonBody(req) {
   })
 }
 
-/** 出厂默认（2 项宿主行）：读仓库模板 agent.cordis.yml 的同名叶值，缺则内置兜底。 */
-function assetHostRowDefaults() {
-  const fallback = { webFetch: false, toolPresentationMode: 'native' }
-  try {
-    const captured = captureSettings(readFileSync(TEMPLATE_AGENT_FILE, 'utf8'))
-    const values = captured !== null && captured.values !== null && typeof captured.values === 'object' ? captured.values : {}
-    const states = captured !== null && captured.states !== null && typeof captured.states === 'object' ? captured.states : {}
-    const out = {}
-    for (const key of HOST_ROW_KEYS) {
-      out[key] = states[key] === 'captured' && Object.prototype.hasOwnProperty.call(values, key) ? values[key] : fallback[key]
-    }
-    return out
-  } catch {
-    return fallback
-  }
-}
-
-/** 生效 plugins：profile override → Loader 行 config → 继承层。 */
-function effectivePlugins(row) {
-  const override = row.override
-  if (override !== null && typeof override === 'object' && Array.isArray(override.plugins)) return override.plugins
-  const own = row.entry !== undefined && row.entry.options !== undefined ? row.entry.options.config : undefined
-  if (own !== null && typeof own === 'object' && Array.isArray(own.plugins)) return own.plugins
-  const inherited = row.inherited
-  if (inherited !== null && typeof inherited === 'object' && Array.isArray(inherited.plugins)) return inherited.plugins
-  return undefined
-}
-
 function findPresetRow(editor) {
   const rows = typeof editor.configuration === 'function' ? editor.configuration() : []
   return rows.find((row) => row !== null && typeof row === 'object' && row.entry !== undefined && row.entry.options !== undefined && row.entry.options.id === PRESET_ROW_ID)
@@ -154,14 +127,14 @@ function findSettingsRow(editor) {
  * sources 逐项记录取值层（settings-row/projection/default），供 UI 与回归取证。
  */
 function readHostRowState(editor) {
-  const defaults = assetHostRowDefaults()
+  const defaults = hostRowDefaultsFromTemplate(readFileSync(TEMPLATE_AGENT_FILE, 'utf8'))
   const values = { ...defaults }
   const overridden = {}
   const sources = {}
   const settingsRow = findSettingsRow(editor)
   const authority = settingsRow === undefined ? null : effectiveRowConfig(settingsRow)
   const presetRow = findPresetRow(editor)
-  const plugins = presetRow === undefined ? undefined : effectivePlugins(presetRow)
+  const plugins = presetRow === undefined ? undefined : effectivePluginsOf(presetRow)
   for (const definition of HOST_ROW_SETTING_DEFINITIONS) {
     const key = definition.key
     overridden[key] = false
@@ -201,7 +174,7 @@ function publicField(definition, value, defaultValue, overridden, source) {
 }
 
 function proPayload(editor) {
-  const defaults = assetHostRowDefaults()
+  const defaults = hostRowDefaultsFromTemplate(readFileSync(TEMPLATE_AGENT_FILE, 'utf8'))
   const state = { located: false, values: { ...defaults }, defaults, overridden: {}, sources: {} }
   let current = state
   try { current = readHostRowState(editor) } catch { current = state }
@@ -273,7 +246,7 @@ function createApiHandler(ctx) {
           // edit 在 profile patch 无声明行时 append 冻结副本与无谓 reload（reload 失败还会走
           // 宿主回滚）。深等不成立（或生效 plugins 不可读）时照常走 editor.edit（旧行为）。
           const base = assetPlugins()
-          const currentPlugins = effectivePlugins(presetRow)
+          const currentPlugins = effectivePluginsOf(presetRow)
           const next = restatePresetPlugins(currentPlugins === undefined ? {} : { plugins: currentPlugins }, {}, { hostRowConfig, gateWords: null }, base)
           if (currentPlugins !== undefined && isDeepStrictEqual(next.plugins, currentPlugins)) {
             return json(res, 200, { ...proPayload(editor), projection: { applied: true } })

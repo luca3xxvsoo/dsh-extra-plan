@@ -19,10 +19,7 @@ export const HOST_CORDIS_TOOLS = Object.freeze([
 ])
 export const CORDIS_PRESENTATION_TOOLS = HOST_CORDIS_TOOLS
 export const CORDIS_PRESENTATION_TOOL_SET = new Set(CORDIS_PRESENTATION_TOOLS)
-// 【已废弃·0.1.7 宿主】'tool:cordis' 段在 dsh-tool-cordis 侧已删除（官方 README），
-// 全库不再产出该段名；常量与 hideCordis 过滤逻辑保留无害（匹配不到即空转），
-// 2 个 cordis 只读工具名的呈现侧隐藏仍生效（CORDIS_PRESENTATION_TOOLS = 宿主真值 HOST_CORDIS_TOOLS）。
-export const CORDIS_SECTION_NAME = 'tool:cordis'
+// 2 个 Cordis 只读工具名的呈现侧隐藏仍生效；宿主已删除 tool:cordis 段。
 export const PTC_SECTION_NAME = 'tools:ptc-only'
 export const SDK_SECTION_NAME = 'tools:sdk'
 export const READ_SECTION_NAME = 'tool:read'
@@ -137,12 +134,12 @@ export function projectAssemblyForPresentation(assembly, schemas, options = {}) 
       if (tool === null || typeof tool !== 'object' || typeof tool.name !== 'string') return false
       if (hideCordis && isCordisPresentationTool(tool.name)) return false
       if (ptcOnly && tool.name !== 'run_code') return false
-      return schemaNames === null || schemaNames.size === 0 || schemaNames.has(tool.name)
+      return schemaNames === null || schemaNames.has(tool.name)
     })
     : assembly.tools
   const sections = Array.isArray(assembly.sections)
     ? assembly.sections
-      .filter((section) => section !== null && typeof section === 'object' && (!hideCordis || section.name !== CORDIS_SECTION_NAME) && (keepSectionNames === null || keepSectionNames.has(section.name)))
+      .filter((section) => section !== null && typeof section === 'object' && section.name !== 'tool:cordis' && (keepSectionNames === null || keepSectionNames.has(section.name)))
       .map((section) => section.name === SDK_SECTION_NAME && typeof options.sdkText === 'string'
         ? { ...section, text: options.sdkText }
         : section)
@@ -180,12 +177,16 @@ export function dshToolsEntryCandidates() {
 let sdkRendererModulePromise
 export function loadSdkRendererModule() {
   if (sdkRendererModulePromise === undefined) {
-    sdkRendererModulePromise = (async () => {
+    const pending = (async () => {
       for (const entry of dshToolsEntryCandidates()) {
         if (existsSync(entry)) return import(pathToFileURL(entry).href)
       }
       throw new Error('extra-plan: dsh-tools SDK renderer is unavailable')
     })()
+    sdkRendererModulePromise = pending
+    pending.catch(() => {
+      if (sdkRendererModulePromise === pending) sdkRendererModulePromise = undefined
+    })
   }
   return sdkRendererModulePromise
 }

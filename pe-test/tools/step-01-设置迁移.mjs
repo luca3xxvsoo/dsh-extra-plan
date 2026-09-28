@@ -20,6 +20,8 @@ import {
   TOOL_PRESENTATION_MODES,
   captureRowSettings,
   captureSettings,
+  effectivePluginsOf,
+  hostRowDefaultsFromTemplate,
   findPluginsRow,
   getSettingDefinition,
   parsePresetYaml,
@@ -227,6 +229,12 @@ check('权威值捕获：10 项（含 webFetch / toolPresentationMode）全 capt
 check('rowPresent 区分「settings 行缺席（不可判定）」与「行在但缺项（可回填）」',
   captureRowSettings('- id: other-row\n  config:\n    keep: true\n', SETTING_DEFINITIONS).rowPresent === false &&
   captureRowSettings('- id: dsh-extra-plan-settings\n  config:\n    creativeMode: true\n', SETTING_DEFINITIONS).rowPresent === true)
+check('settings/preset-sync 共用 helper：effectivePluginsOf 与 hostRowDefaultsFromTemplate', (() => {
+  const plugins = [{ id: 'tool-web' }, { id: 'tool-presentation' }]
+  const row = { override: { plugins }, entry: { options: { config: { plugins: [{ id: 'own' }] } } }, inherited: { plugins: [{ id: 'inherited' }] } }
+  const defaults = hostRowDefaultsFromTemplate(assetAgent)
+  return effectivePluginsOf(row) === plugins && defaults.webFetch === false && defaults.toolPresentationMode === 'native'
+})())
 check('readProjectedValue：按 projectionLocator 读声明行子行现值（缺失/非法 → undefined，判定侧按出厂值参与比较）', (() => {
   const plugins = [{ id: 'tool-web', config: { fetch: false, searchTimeoutMs: 60000 } }, { id: 'tool-presentation', config: { mode: 'native' } }]
   const before = readProjectedValue(plugins, definition('toolPresentationMode'))

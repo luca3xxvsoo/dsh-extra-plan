@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-09-26 19:55:36（脚本自动更新时间戳行）
+> 上次同步：2026-09-27 19:53:56（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -28,10 +28,10 @@
 | 规划子代理分支闸门（planner 写禁+预算） | index.js | plannerGateReason、shellMutationReason |
 | 会话事件快照/子代理角色识别／单次快照复用（execEvents）／planner descriptor 缓存／events 可选入参 | lib/agent-session.js、lib/agent-runtime.js、index.js | sessionEvents、isSubagentChild、isLiveDelegation、childPolicyNeedsFloor、createAgentRuntime、isChild、isPlannerChild、toolSchemasOf、usageRoleOf、childBaseline |
 | 会话状态生命周期／disposed 收尾／末轮 usage 结算／usage 账本续载／可信用量字段（provider/cw/rs）（session 分桶、final flush、cursor 降级、session.seq 水位 + snapshotEvents(from,to) 区间增量、水位未变直接返回、截断回退全量） | index.js、lib/agent-runtime.js | foldUsage、readUsageCursorTable、warnUsageCursorDegraded、usageCursorEntryOf、usageRoleOf、noteRunCodeSubCall、childBaseline |
-| 方案与验收落盘／save_plan 双写（plan/checklist；主会话侧任意路由态放行的受限规划工件，仅写 cwd/.extra-plan） | lib/save-tool-factories.js、lib/save-contract.js、index.js | defineSavePlan、registerSavePlan、savePlanBase |
+| 方案与验收落盘／save_plan 双写（plan/checklist；主会话侧任意路由态放行的受限规划工件，仅写 cwd/.extra-plan） | lib/save-tool-factories.js、lib/save-contract.js、index.js | defineSavePlan、registerSavePlan、saveArtifactBase、savePlanBase |
 | 落盘原子提交／journal 崩溃自愈（atomic/commit） | lib/save-persistence.js、index.js | atomicCommit、recoverJournals |
 | 线索落盘／save_probe／证据报告（probe/evidence；PROBE_LIMITS evidence=150/text=1000；step-00 PR23=151、PR34/PR35；主会话侧放行条件保持现状——route=plan + 目的已定 + 澄清完成；extractProbeEvidenceRefs 顺序固定：整体成对剥除（循环）→ 按顿号/分号/竖线拆分 → 逐段成对剥除 + trim → 过滤空串 → 去重（拆分符**不含空格与半角逗号**：空格项冗余——捕获正则已排除空白，含空格路径在捕获阶段即截断；半角逗号能通过捕获，列入会把 `report,1.md` 劈成两段；剥除**单侧一律不剥**；剥除集与拆分符均不含 `.` 与 `/`；反引号包裹的 `a.md、b.md` 先整体剥壳再拆分得两条），step-00 E6-E12 覆盖） | lib/save-contract.js、lib/save-probe-validation.js、lib/save-tool-factories.js、index.js | validateProbe、renderProbeMarkdown、extractProbeEvidenceRefs |
-| save 合同／限制值／ContentBlock 渲染（11 个导出 = 8 个函数 + 3 个常量 PROBE_LIMITS、LINE_FORMAT_HINT、RANGE_FORMAT_HINT；证据引用提取含「拆分 + 装饰剥除」两段，装饰剥离集不含 `.` 与 `/`） | lib/save-contract.js | sanitizeTaskName、timestamp、sessionTagOf、savePlanBase、renderSavePlan、renderProbeMarkdown、renderSaveProbe、extractProbeEvidenceRefs |
+| save 合同／限制值／ContentBlock 渲染（统一 artifact base：sessionTag/毫秒/pid/序号；PROBE_LIMITS、LINE_FORMAT_HINT、RANGE_FORMAT_HINT 与渲染合同） | lib/save-contract.js | sanitizeTaskName、timestamp、sessionTagOf、saveArtifactBase、savePlanBase、renderSavePlan、renderProbeMarkdown、renderSaveProbe、extractProbeEvidenceRefs |
 | save_probe 校验／路径存在性与聚合拒绝 | lib/save-probe-validation.js | validateProbe、probePathOf |
 | save 工具显式依赖工厂 | lib/save-tool-factories.js | createSaveToolFactories、defineSavePlan、defineSaveProbe |
 | PTC F→L／native-both HN-HB 实机取证 | pe-test/docs/ai-实机闸门测试流程.md |  |
@@ -42,10 +42,10 @@
 | 子代理沙箱下限／权限抬升（floor/sandbox） | lib/agent-runtime.js、index.js | childPolicyNeedsFloor、createAgentRuntime |
 | 工具目录折叠／PTC 单入口（catalog/ptc） | index.js | catalogIsCollapsed |
 | planner/其他子代理模型与跨 Provider 真实探针／plannerModel/otherAgentModel（T2/T4；候选探针有界并发池 PLANNER_PROBE_CONCURRENCY=5，按发起顺序收集后排序） | plugins/dsh-extra-plan/lib/model-routing.js | probePlannerCandidates、resolvePlannerEntry、resolvePlannerEntryLegacy、resolvePlannerEntryStrict、resolveOtherAgentEntry、resolveOtherAgentEntryLegacy、resolveOtherAgentEntryStrict、resolveAgentRouteSources、probePlannerRoute、withPlannerProbeDeadline、sortPlannerCandidates、decidePlannerModelUse |
-| 设置页宿主半段／权威值上移 settings 行 + 声明行投影／configEditor.edit 写链（settings 行 10 项 volatile Config = 权威值唯一落点 · 2 项宿主行并入客户端一次 10 op mutate · PUT 仅投影声明行子行（投影 no-op 不写盘：深等即跳过 editor.edit） · 投影被宿主删除无害 · 落盘一律经 configEditor.edit 整体重述，本插件不直写 cordis.patch.yml） | lib/settings.js、lib/preset-settings.js、lib/preset-sync.js | apply、createApiHandler、proPayload、readHostRowState、findSettingsRow、findPresetRow、effectivePlugins、effectiveRowConfig、restatePresetPlugins、restatePluginsRow、findPluginsRow、applyPlan |
-| 设置值行定位与捕获（sourceLocator 源模板/旧副本 · rowLocator 权威值落点 settings 行 · projectionLocator 声明行 plugins 子行投影 · group 8+2 消费方分组 · host-rows 2 项 webFetch/toolPresentationMode · PUT 仅投影：失败口径 400 校验 / 200+applied=false） | lib/preset-settings.js、lib/settings.js | captureSettings、captureRowSettings、readProjectedValue、settingsRowLocator、hostRowProjectionLocator、resolveSetting、findTextLocatorMatches、patchYamlScalar、serializeScalar、assetHostRowDefaults、publicField |
-| 配置热读／生效标志／改设置页不重启（live-config/hot-read/DSH_EXTRA_PLAN_CONFIG_PATH/configEditor.documentPath/mtime+size；2 项宿主行设置为权威值读口，改后仍需重启） | plugins/dsh-extra-plan/lib/live-config.js、plugins/dsh-extra-plan/index.js | createLiveConfig、refresh、read、currentPath、readDiskValues、statStamp、pick、modeOr |
-| 预设声明行载体／启动自愈／**三维判定**（声明行覆盖资产行 id 集合 ＋ **本体内容**剥离比对 ＋ **投影一致性**）（preset-sync：syncPreset 判三维 · readAuthoritySettings 读权威值 · planHostRowProjection 判投影/回填（projectionLeafExists 区分键缺失与键在但值非法，非法值按权威值修复） · applyPlan 落地 · effectivePlugins 取生效 plugins · readDeclaredPluginsFromPatch 旁路读声明行；**idle 三条件 = 行 id 覆盖 + 本体内容一致 + 权威值与当前投影一致（投影值==出厂值且声明行缺失 → 稳态 idle 不空转）；无 manifest 台账、无跨版本迁移**；**本体比对 = 剥离用户可写键（声明行 2 项宿主行投影 config + 7 个闸门词）后逐字比；重建基底取厂商模板 assetPlugins，使 persona/deny/注释随资产刷新而用户值不丢** · 一次性回填 settings 行 · preset-patch.generated.yml · 写盘只经 configEditor.edit） | lib/preset-sync.js | syncPreset、readAuthoritySettings、hostRowDefaultsOf、planHostRowProjection、projectionLeafExists、effectiveRowConfig、restatePresetPlugins、declarationCoversAsset、declarationBodyMatchesAsset、stripUserWritable、carryUserWritable、assetPlugins、pluginRowIds、readDeclaredPluginsFromPatch、defaultDshHome、applyPlan、effectivePlugins、findEntry |
+| 设置页宿主半段／权威值上移 settings 行 + 声明行投影／configEditor.edit 写链（settings 行 10 项 volatile Config = 权威值唯一落点 · 2 项宿主行并入客户端一次 10 op mutate · PUT 仅投影声明行子行） | lib/settings.js、lib/preset-settings.js、lib/preset-sync.js | apply、createApiHandler、proPayload、readHostRowState、findSettingsRow、effectivePluginsOf、effectiveRowConfig、restatePresetPlugins、restatePluginsRow、findPluginsRow、applyPlan |
+| 设置值行定位与捕获（sourceLocator/rowLocator/projectionLocator；group 8+2；PUT 仅投影，HTTP 200 + applied 领域回执） | lib/preset-settings.js、lib/settings.js | captureSettings、captureRowSettings、effectivePluginsOf、hostRowDefaultsFromTemplate、readProjectedValue、resolveSetting、findTextLocatorMatches、patchYamlScalar、serializeScalar、publicField |
+| 配置热读／生效标志／改设置页不重启（live-config/hot-read；增强 stamp dev/ino/size/mtimeNs/ctimeNs，兼容回退 ino/size/mtimeMs/ctimeMs） | plugins/dsh-extra-plan/lib/live-config.js、plugins/dsh-extra-plan/index.js | createLiveConfig、refresh、read、currentPath、readDiskValues、statStamp、pick、modeOr |
+| 预设声明行载体／启动自愈／三维判定（声明行覆盖 + 本体剥离比对 + 投影一致性；无 manifest/旧迁移链） | lib/preset-sync.js、lib/preset-settings.js | syncPreset、readAuthoritySettings、hostRowDefaultsFromTemplate、planHostRowProjection、effectivePluginsOf、effectiveRowConfig、restatePresetPlugins、declarationCoversAsset、declarationBodyMatchesAsset、stripUserWritable、carryUserWritable、assetPlugins、pluginRowIds、readDeclaredPluginsFromPatch、defaultDshHome、applyPlan |
 | 设置页前端 UI／已安装包行详情配置区（React/plugins.row.config/configForms.whileServed；key = `@local/dsh-extra-plan#dsh-extra-plan-settings`） | lib/client.js | apply、SettingsCard、ExtraPlanForm、renderControl |
 | 执行者工具裁剪／deny（executor-spawn；注册引用计数幂等 = 稳定键幂等——槽键 = 服务实现本体（读全局注册符号 Symbol.for('cordis.original')，取不到时降级回代理本身），跨预设世代/行重建共享同一注册与 disposer） | lib/executor-spawn.js | apply、slotKey |
 | qqbot 兼容自愈／建链 | dsh-qqbot-user-questions/lib/heal.js（选装包，本机未安装） | healQqbotCompatibility、ensureDshExtraPlanLink |
@@ -57,38 +57,40 @@
 | 代码地图自身维护／口径／严格模式 | pe-test/tools/代码地图生成.mjs（不在索引范围，读文件头注释） |  |
 | 新载体选型与 isolate 审计（预设声明行／必要+保险隔离名单／LocalRealm vs GlobalRealm／三组 isolate 名单：extra-plan-group.extraPlan · compaction.compaction+toolResultPruner · delegation.workflowEngine+subagentModelSelection） | plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml、plugins/dsh-extra-plan/assets/presets/extra-plan/preset-patch.generated.yml、README.md（READAI.md「新载体」节） |  |
 | 创造 skill 静态注册／customSkillDirs／C=0 与 C=1 的 catalog 语义（skill-filesystem 行的 config.customSkillDirs 指向 agent-preset 包内 skills/；「不注册」已改为 catalog 隐藏） | plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml、plugins/dsh-extra-plan/lib/assembly-presentation.js、plugins/dsh-extra-plan/index.js | shouldHideCreativeCatalog、projectSkillCatalogDecision、skillCatalogEntriesOf、renderSkillCatalogText |
-| 0.1.7 服务名换代／ptcRuntime（旧 codeRuntime）／SDK renderer 语言取值 | plugins/dsh-extra-plan/index.js、plugins/dsh-extra-plan/lib/assembly-presentation.js | apply、resolveToolsSdkRenderer、renderFilteredToolsSdk、sdkSchemasForRendering |
+| 0.1.7 服务名换代／ptcRuntime／SDK renderer 语言取值 | plugins/dsh-extra-plan/index.js、plugins/dsh-extra-plan/lib/assembly-presentation.js | apply、resolveToolsSdkRenderer、renderFilteredToolsSdk、sdkSchemasForRendering |
 | tool-jobs 完成通知解锁（source.kind=tool-jobs 且 form=notice → 正文 /background job (\S+)/ 解析 jobId → 只清该 jobId 的 job_output 计数；HK9：旧 plugin kind 已废） | plugins/dsh-extra-plan/index.js | apply、recordJobOutputCall、jobOutputGateReason |
-| agent/created 钩子（serial；agent/session-start 已删除）／会话启动基线＋save_plan/save_probe 注册，整块吞错不阻断会话创建 | plugins/dsh-extra-plan/index.js | apply、childBaseline、isPlannerChild、isSubagentChild、registerSavePlan、registerSaveProbe、probeClaimFor |
+| agent/created 钩子（serial；agent/session-start 已删除）／会话启动基线＋save_plan/save_probe 注册，整块吞错不阻断会话创建 | plugins/dsh-extra-plan/index.js（agent/created 调用点）、plugins/dsh-extra-plan/lib/agent-runtime.js（childBaseline/isPlannerChild 定义）、plugins/dsh-extra-plan/lib/agent-session.js（isSubagentChild 定义） | apply、childBaseline、isPlannerChild、isSubagentChild、registerSavePlan、registerSaveProbe、probeClaimFor |
 | MALFORMED_RESPONSE 限次自愈／请求失败兜底 retry／注入模型可读提示（source.kind 用生产者自有 `plugin:@local/dsh-extra-plan`；developer/message 须自带 ≥1 的 turn/step，宿主 append 不补坐标；坐标缺失/非正整数 → 不注入但仍返回 retry） | index.js | malformedRecovery、recordRequestError |
 | 会话日志格式 v4 代际／session.v4.jsonl.zstd／三代候选名并存（v4/v3/旧名，未知形状归 v0） | pe-test/_shared/session-finder.mjs、pe-test/tools/step-07-子代理模型与引导取证.mjs |  |
+
+> QQBot 环境验证：`pe-test/tools/step-01-qqbot-环境验证.mjs` 的 `buildPreflight`（五条件/缺失码）、`probeJunctionCapability` 与 `runJunctionFixture`（能力探针/临时 fixture）、`runLiveReadonly` 与 `inspectMapping`（真实 profile patch/映射只读对拍）；该测试工具不在插件源码生成根，函数行号不手填。
 
 ## 文件总览
 
 | 文件 | 行数 | 说明 |
 |:--|--:|:--|
-| plugins/dsh-extra-plan/index.js | 2240 | 模式核心：四级闸门（路由/目的/澄清/批准，7 个闸门关键词的唯一值源是 YAML 的 config.gateWords——apply 第一步 createGateRuntime 严格校验并在当前 agent scope 注册 7 个 extra_plan_* 变量，词表作为显式参数贯穿全部 helper/状态机/闸门，JS 侧无内置词值）+ 探查预算 + apply 创建/注册 save 工具工厂并接生命周期/闸门 + planner/非 planner child 双 resolver 与跨 Provider 真实 probe/严格 fallback + A/C/M 展示投影、HP 手写 read 文案（变量② cfg.bootstrapReadHint + 内置兜底，L 段回宿主原文）、HP0/HP1 首轮投影与 HN/HB 基线与 catalog 时序 + L/C=0 SDK 文本 agent-keyed WeakMap 缓存（创建于 apply、agent/disposed 回收）+ 会话状态生命周期（按 sessionId 分桶、agent/disposed 同步 final flush 与单会话回收、usage cursor 单项续载、ledger 行含可信用量字段 provider/cacheWriteTokens/reasoningTokens 且五字段全零不写行）+ MALFORMED_RESPONSE 限次自愈（developer/message 注入须自带 ≥1 的 turn/step 且 source.kind 用生产者自有值，v4 行准入校验）（修改最频繁） |
+| plugins/dsh-extra-plan/index.js | 2224 | 模式核心：四级闸门（路由/目的/澄清/批准，7 个闸门关键词的唯一值源是 YAML 的 config.gateWords——apply 第一步 createGateRuntime 严格校验并在当前 agent scope 注册 7 个 extra_plan_* 变量，词表作为显式参数贯穿全部 helper/状态机/闸门，JS 侧无内置词值）+ 探查预算 + apply 创建/注册 save 工具工厂并接生命周期/闸门 + planner/非 planner child 双 resolver 与跨 Provider 真实 probe/严格 fallback + A/C/M 展示投影、HP 手写 read 文案（变量② cfg.bootstrapReadHint + 内置兜底，L 段回宿主原文）、HP0/HP1 首轮投影与 HN/HB 基线与 catalog 时序 + L/C=0 SDK 文本 agent-keyed WeakMap 缓存（创建于 apply、agent/disposed 回收）+ 会话状态生命周期（按 sessionId 分桶、agent/disposed 同步 final flush 与单会话回收、usage cursor 单项续载、ledger 行含可信用量字段 provider/cacheWriteTokens/reasoningTokens 且五字段全零不写行）+ MALFORMED_RESPONSE 限次自愈（developer/message 注入须自带 ≥1 的 turn/step 且 source.kind 用生产者自有值，v4 行准入校验）（修改最频繁） |
 | plugins/dsh-extra-plan/lib/agent-runtime.js | 111 | 每次 apply 的角色识别、descriptor/工具 schema 缓存、usage role baseline 与 sandbox floor 工厂；不 import index.js |
 | plugins/dsh-extra-plan/lib/agent-session.js | 41 | 会话事件与子代理识别的唯一来源：sessionEvents/isSubagentChild 零依赖纯函数，被 index.js 与 lib/model-routing.js 共用（无镜像副本；不 import index.js） |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | 246 | A/C/M 展示投影与 skill catalog 投影：读取 live tools registry（toolRegistryOf/toolSdkSchemasOf/toolPresentationModeOf 读 scoped tools 服务）；SDK renderer 惰性加载缓存（sdkRendererModulePromise）与 active renderer resolver；模块头自述 live 取数已迁入；不再渲染最小 read（三个只服务该旧路径的辅助已整组删除——F 段 tool:read 文本改由 index.js 手写 cfg.bootstrapReadHint） |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | 247 | A/C/M 展示投影与 skill catalog 投影：读取 live tools registry（toolRegistryOf/toolSdkSchemasOf/toolPresentationModeOf 读 scoped tools 服务）；SDK renderer 惰性加载缓存（sdkRendererModulePromise）与 active renderer resolver；模块头自述 live 取数已迁入；不再渲染最小 read（三个只服务该旧路径的辅助已整组删除——F 段 tool:read 文本改由 index.js 手写 cfg.bootstrapReadHint） |
 | plugins/dsh-extra-plan/lib/client-bridge.js | 19 | 客户端桥接壳：仅承载 dsh.client 加载路径指向 lib/client.js（apply 空实现） |
-| plugins/dsh-extra-plan/lib/client.js | 432 | dsh web 已安装包行详情页配置区 UI（React；注册面 = keyed 插槽 plugins.row.config，key = `@local/dsh-extra-plan#dsh-extra-plan-settings`，configForms.whileServed 包裹，inject ['slots','locale','configForms']）；8 项 UI 设置消费 ownerProps.form（state 播种 / mutate 提交），2 项宿主行自绘控件值并入官方 10 op mutate（**PUT 仅投影声明行子行；保存回执极简（已保存/保存失败），重启生效仅见于字段 hint**）；字段顺序与显示名/hint 逐字对齐根 README「4. 可配置项」（通用区 = anchoredBootstrap/creativeMode/webFetch/toolPresentationMode/runcodeCatchGate；pro 区 = crossProviderPlannerModel/plannerModel/plannerPromptSuffix/exploreBudget/otherAgentModel）；esp-* 样式族保留 |
-| plugins/dsh-extra-plan/lib/executor-spawn.js | 153 | 执行者子代理 provider：委托宿主 spawn，注入工具 deny（防委派递归/追问）；registerProvider 走引用计数幂等（**稳定键幂等**：模块级 WeakMap 槽表的槽键 = subagents 服务实现本体——读全局注册符号 Symbol.for('cordis.original')，由 traceable 代理 get 拦截器返回 target，root 单例跨预设世代恒同一对象；取不到符号值时降级回代理本身；跨预设世代/行重建复用同一注册，归零才反注册） |
+| plugins/dsh-extra-plan/lib/client.js | 430 | dsh web 已安装包行详情页配置区 UI（React；注册面 = keyed 插槽 plugins.row.config，key = `@local/dsh-extra-plan#dsh-extra-plan-settings`，configForms.whileServed 包裹，inject ['slots','locale','configForms']）；8 项 UI 设置消费 ownerProps.form（state 播种 / mutate 提交），2 项宿主行自绘控件值并入官方 10 op mutate（**PUT 仅投影声明行子行；保存回执极简（已保存/保存失败），重启生效仅见于字段 hint**）；字段顺序与显示名/hint 逐字对齐根 README「4. 可配置项」（通用区 = anchoredBootstrap/creativeMode/webFetch/toolPresentationMode/runcodeCatchGate；pro 区 = crossProviderPlannerModel/plannerModel/plannerPromptSuffix/exploreBudget/otherAgentModel）；esp-* 样式族保留 |
+| plugins/dsh-extra-plan/lib/executor-spawn.js | 155 | 执行者子代理 provider：委托宿主 spawn，注入工具 deny（防委派递归/追问）；registerProvider 走引用计数幂等（**稳定键幂等**：模块级 WeakMap 槽表的槽键 = subagents 服务实现本体——读全局注册符号 Symbol.for('cordis.original')，由 traceable 代理 get 拦截器返回 target，root 单例跨预设世代恒同一对象；取不到符号值时降级回代理本身；跨预设世代/行重建复用同一注册，归零才反注册） |
 | plugins/dsh-extra-plan/lib/gate-words.js | 122 | 闸门关键词共享契约（唯一值源是 YAML 的 config.gateWords）：字段规格 GATE_WORD_FIELDS/GATE_WORDS_GROUP_DEFINITION + 整组严格校验 validateGateWords（错误一律以 extra-plan: config.gateWords 开头）+ 运行时词表 createGateRuntime（无参默认值）；纯模块：不含任何出厂词值、不读文件与环境变量，被 index.js（运行时）与 lib/preset-sync.js（启动自愈）共享（迁移叶 locator 已随跨版本搬迁链删除） |
-| plugins/dsh-extra-plan/lib/live-config.js | 262 | 配置热读（dsh 0.1.7 载体，rc.1 起；rc.2 契约复核一致）：**10 项同源读取 = 8 项热读（含 creativeMode，全部热读）+ 2 项宿主行设置权威值读口（webFetch/toolPresentationMode 仍重启生效）**。路径决议 configPath → DSH_EXTRA_PLAN_CONFIG_PATH → **configEditor.documentPath（profile cordis.patch.yml）**；解析目标 = settings 行 id `dsh-extra-plan-settings` 的 config（captureRowSettings + SETTING_DEFINITIONS = 10 项权威值同源落点）；fallback 链 = settings 行 override → cfg 快照 → BUILTIN_DEFAULTS。构造期**无条件读盘一次**并以文件真值作首拍基准；此后路径或 mtimeMs+size 变化才重读（零 IO 零解析为常态）；无路径/读盘/解析失败即整组回退并 console.warn 一次；不读旧 `.agent-presets` 目录、不监听不轮询、无 per-Agent 失效策略 |
-| plugins/dsh-extra-plan/lib/model-routing.js | 544 | planner/非 planner 子代理模型路由：顶层纯判定函数 + createModelRouting per-apply 工厂（per-instance WeakMap、惰性 llm/agents getter；不 import index.js） |
+| plugins/dsh-extra-plan/lib/live-config.js | 272 | 配置热读：8 项热读 + 2 项宿主行权威读口；构造期读盘一次，后续按增强 stamp（dev/ino/size/mtimeNs/ctimeNs，兼容 ino/size/mtimeMs/ctimeMs）重读；失败整组回退并告警，不读 DSH_HOME 旧目录 |
+| plugins/dsh-extra-plan/lib/model-routing.js | 550 | planner/非 planner 子代理模型路由：顶层纯判定函数 + createModelRouting per-apply 工厂（per-instance WeakMap、惰性 llm/agents getter；不 import index.js） |
 | plugins/dsh-extra-plan/lib/planner-budget.js | 137 | planner 工具计数、消息后缀/预算提示/耗尽文案；**预算提醒消息经宿主 createUserMessage 构造，source 用生产者自有 kind `plugin:@local/dsh-extra-plan`（v4 行准入禁旧包裹 `plugin`，违者会话当场终止）**；默认预算由生成模块提供，FREE_TOOLS 仍在根入口 |
 | plugins/dsh-extra-plan/lib/preset-defaults.generated.js | 4 | 由 YAML 模板生成的 runtime fallback 常量；generated/do not edit |
-| plugins/dsh-extra-plan/lib/preset-settings.js | 566 | 十项设置描述表（唯一真源，含 creativeMode 默认 false）+ 预设 YAML 解析 + **三定位元数据**（sourceLocator 源模板/旧分发副本 · rowLocator **权威值落点 = settings 行**（10 项统一） · projectionLocator **投影落点 = 声明行 plugins 内 tool-web/tool-presentation 子行**（仅 2 项宿主行设置） · group 8+2 = 消费方分组）+ 权威值捕获 captureRowSettings（含 rowPresent：行缺席 vs 行在缺项）+ 投影现值读取 readProjectedValue + 声明行 plugins 行内定位与整体重述原语（findPluginsRow/restatePluginsRow）+ 保格式定点标量改写；plannerModel/otherAgentModel validator 放开空串并 trim；已无 pluginId/path 顶层字段、publicSettingMetadata 已退役 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | 581 | 预设新载体的状态与启动自愈（dsh 0.1.7，rc.1 起）：**三维判定 = 声明行 plugins 覆盖资产行 id 集合 + 本体内容剥离比对 + 投影一致性（readAuthoritySettings/planHostRowProjection）** → idle；否则一次落地（action 恒 written）：**回填 settings 行（settings 行缺项而声明行有非出厂值）**、2 项宿主行**按权威值投影**到声明行 plugins 子行、本体以厂商模板重建（bodyStale）并把 7 词由 carry 从声明行现值兜底写回 extra-plan 行（落盘前 validateGateWords）；**投影值 == 出厂值且声明行缺失 = 稳态 idle（不反复重建）**；写盘只经 `apply` 注入的 `configEditor.edit`（宿主 apply 经 ctx.inject(['configEditor']) 并传 settings 行生效 config），**本模块绝不直写 cordis.patch.yml**；**无运行期台账（状态目录/manifest/postinstall 脚本/postinstall 清理链已于 2026-09-25 整链删除）、无跨版本迁移** |
+| plugins/dsh-extra-plan/lib/preset-settings.js | 595 | 十项设置描述表（唯一真源，含 creativeMode 默认 false）+ 预设 YAML 解析 + **三定位元数据**（sourceLocator 源模板/旧分发副本 · rowLocator **权威值落点 = settings 行**（10 项统一） · projectionLocator **投影落点 = 声明行 plugins 内 tool-web/tool-presentation 子行**（仅 2 项宿主行设置） · group 8+2 = 消费方分组）+ 权威值捕获 captureRowSettings（含 rowPresent：行缺席 vs 行在缺项）+ 投影现值读取 readProjectedValue + 声明行 plugins 行内定位与整体重述原语（findPluginsRow/restatePluginsRow）+ 保格式定点标量改写；plannerModel/otherAgentModel validator 放开空串并 trim；已无 pluginId/path 顶层字段、publicSettingMetadata 已退役 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | 559 | 预设新载体的状态与启动自愈（dsh 0.1.7，rc.1 起）：**三维判定 = 声明行 plugins 覆盖资产行 id 集合 + 本体内容剥离比对 + 投影一致性（readAuthoritySettings/planHostRowProjection）** → idle；否则一次落地（action 恒 written）：**回填 settings 行（settings 行缺项而声明行有非出厂值）**、2 项宿主行**按权威值投影**到声明行 plugins 子行、本体以厂商模板重建（bodyStale）并把 7 词由 carry 从声明行现值兜底写回 extra-plan 行（落盘前 validateGateWords）；**投影值 == 出厂值且声明行缺失 = 稳态 idle（不反复重建）**；写盘只经 `apply` 注入的 `configEditor.edit`（宿主 apply 经 ctx.inject(['configEditor']) 并传 settings 行生效 config），**本模块绝不直写 cordis.patch.yml**；**无运行期台账（状态目录/manifest/postinstall 脚本/postinstall 清理链已于 2026-09-25 整链删除）、无跨版本迁移** |
 | plugins/dsh-extra-plan/lib/run-code-static.js | 678 | run_code 纯静态解析/理由模块：写模式 hint、工具组拆解、ask 返回值白名单、调用点计数与双兼容 dispatch cap；仅显式注入普通依赖，不持有宿主状态；导出常量 RUNCODE_MUTATION_HINTS（9 条禁用 API 黑名单）与 runCodeCatchGateReason 内部闭包 scanLayer（单层 try/catch 保护扫描）属常量与跨行 const 箭头，生成器不入函数索引，故仅在此登记 |
 | plugins/dsh-extra-plan/lib/runtime-static.js | 16 | 显式参数纯 helper：SKILL frontmatter 与 cause 链解析；不持有宿主状态 |
-| plugins/dsh-extra-plan/lib/save-contract.js | 192 | 合同唯一真源：任务名/时间戳/sessionTag/base、PROBE_LIMITS 与 save_plan/save_probe ContentBlock/Markdown 渲染；证据引用提取含「拆分 + 装饰剥除」（不含 `.` 与 `/`）；无宿主状态；PROBE_LIMITS 共 20 个字段（含四类条目数/路径长度/各维度上限/正则/证据维度上限/任务名长度；字段名与上限以本文件 PROBE_LIMITS 为唯一口径）；LINE_FORMAT_HINT / RANGE_FORMAT_HINT 为格式提示常量 |
-| plugins/dsh-extra-plan/lib/save-persistence.js | 124 | 阶段感知公共原子落盘与 journal 自愈：tmp→journal→rename→逐项确认目标就位→清 journal；pre-journal 条件清理（先删 journal 并确认不存在才清 tmp）、post-journal 一律保留 journal 与现场、全目标确认后才删 journal；恢复逐项确认目标存在、全项就位才清 journal，形状非法/目标缺失保留 journal 并告警；按 sessionTag 过滤；末位可选 fs 依赖默认同义映射 node:fs（冻结只读、未提供项回退默认） |
+| plugins/dsh-extra-plan/lib/save-contract.js | 212 | 合同唯一真源：任务名/时间戳/sessionTag/base、PROBE_LIMITS 与 save_plan/save_probe ContentBlock/Markdown 渲染；证据引用提取含「拆分 + 装饰剥除」（不含 `.` 与 `/`）；无宿主状态；PROBE_LIMITS 共 20 个字段（含四类条目数/路径长度/各维度上限/正则/证据维度上限/任务名长度；字段名与上限以本文件 PROBE_LIMITS 为唯一口径）；LINE_FORMAT_HINT / RANGE_FORMAT_HINT 为格式提示常量 |
+| plugins/dsh-extra-plan/lib/save-persistence.js | 106 | 阶段感知公共原子落盘与 journal 自愈：tmp→journal→rename→逐项确认目标就位→清 journal；pre-journal 条件清理（先删 journal 并确认不存在才清 tmp）、post-journal 一律保留 journal 与现场、全目标确认后才删 journal；恢复逐项确认目标存在、全项就位才清 journal，形状非法/目标缺失保留 journal 并告警；按 sessionTag 过滤；末位可选 fs 依赖默认同义映射 node:fs（冻结只读、未提供项回退默认） |
 | plugins/dsh-extra-plan/lib/save-probe-validation.js | 115 | save_probe 参数校验：数组/条目/长度/总量/path 存在性/range/evidence 聚合拒绝 |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | 206 | 显式依赖工厂：定义 save_plan/save_probe schema/output/render/execute；证据引用报错以 JSON.stringify(ref) 呈现（首字符属装饰集时附「疑似含 Markdown 装饰」提示）；不缓存 ctx/agent/会话状态 |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | 209 | 显式依赖工厂：定义 save_plan/save_probe schema/output/render/execute；证据引用报错以 JSON.stringify(ref) 呈现（首字符属装饰集时附「疑似含 Markdown 装饰」提示）；不缓存 ctx/agent/会话状态 |
 | plugins/dsh-extra-plan/lib/sdk-text-cache.js | 161 | apply 级 agent-keyed WeakMap SDK 文本缓存：完整 renderer 输入保守指纹、language/renderer 身份比较、并发 Promise 合并、reject/过期 Promise 不回写、dispose 回收；不持有 sessionId 或 PromptAssembly |
-| plugins/dsh-extra-plan/lib/settings.js | 312 | 设置页宿主半段（dsh 0.1.7，rc.1 起；2026-09-26 = 权威值统一由客户端一次 mutate 写入 + PUT 仅投影）：`Config` **10 字段全链 `.volatile()`**（8 项 UI 直接声明 + 2 项宿主行字段表 HOST_ROW_AUTHORITY_FIELDS 展开，ns = 行 id dsh-extra-plan-settings）+ `settings.configure({auto:false}, ctx.fiber)` 页面策略 + prefix 路由 `PUT/GET /api/dsh-extra-plan-settings/pro-config`（**PUT 仅投影声明行 plugins 子行（settings 行零写入；成功 200 + projection.applied=true，声明行缺失/投影 edit 失败 200 + applied=false 且不回滚权威值；校验失败 400）；**PUT 投影 no-op 不写盘**：以资产为基底 + 本次投影值与 carry 词表重述后若与当前生效 plugins 深等即跳过 editor.edit，返回与写盘成功路径逐字一致的响应）**；GET 三层回退只读 = settings 行权威值 → 声明行投影现值 → 出厂默认；403 非环回）；qqbot 相关已随精简版插件移除 |
+| plugins/dsh-extra-plan/lib/settings.js | 285 | 设置页宿主半段（dsh 0.1.7，rc.1 起；2026-09-26 = 权威值统一由客户端一次 mutate 写入 + PUT 仅投影）：`Config` **10 字段全链 `.volatile()`**（8 项 UI 直接声明 + 2 项宿主行字段表 HOST_ROW_AUTHORITY_FIELDS 展开，ns = 行 id dsh-extra-plan-settings）+ `settings.configure({auto:false}, ctx.fiber)` 页面策略 + prefix 路由 `PUT/GET /api/dsh-extra-plan-settings/pro-config`（**PUT 仅投影声明行 plugins 子行（settings 行零写入；成功 200 + projection.applied=true，声明行缺失/投影 edit 失败 200 + applied=false 且不回滚权威值；校验失败 400）；**PUT 投影 no-op 不写盘**：以资产为基底 + 本次投影值与 carry 词表重述后若与当前生效 plugins 深等即跳过 editor.edit，返回与写盘成功路径逐字一致的响应）**；GET 三层回退只读 = settings 行权威值 → 声明行投影现值 → 出厂默认；403 非环回）；qqbot 相关已随精简版插件移除 |
 | plugins/dsh-extra-plan/lib/shell-mutation.js | 86 | 跨平台命令文本解码与 pwsh/bash 写形态判定；纯函数、不持有 apply 状态 |
 | plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | 158 | 从 agent.cordis.yml 校验并生成 runtime 默认常量 + preset-patch.generated.yml 预设声明行（顶层条目逐字平移）；支持 --check 且坏源不覆盖 last-known-good |
 | plugins/dsh-qqbot-user-questions/index.js | 24 | qqbot 精简版自愈插件：apply 启动时调 healQqbotCompatibility（迁移旧错误块+建链），不阻断启动 |
@@ -99,72 +101,73 @@
 
 | 文件 | 函数 | 行号 | 功能描述 | 备注 |
 |:--|:--|:--|:--|:--|
-| plugins/dsh-extra-plan/index.js | purposeRouteDenyReason | L124-126 | 精确目的 ask 在非 plan 路由下的固定路由确认拒绝文案（文案由本次 apply 的 gateRuntime.confirm.route / options.purpose 插值） |  |
-| plugins/dsh-extra-plan/index.js | routeDenyReason | L129-134 | 路由未确认时 write/edit/写shell 的拒绝文案（提示先做路由确认）；文案由本次 apply 的 gateRuntime.confirm.route 插值（helper 显式收 gateRuntime，无默认词表） |  |
-| plugins/dsh-extra-plan/index.js | planDenyReason | L135-146 | plan 路由下 save_probe/subagent_plan 前置条件未满足的拒绝文案（直行态提示与确认句均由 gateRuntime 词值/文案插值） |  |
-| plugins/dsh-extra-plan/index.js | approvalDenyReason | L147-149 | 批准前禁止执行委派类工具（subagent/workflow/ralph）拒绝文案 |  |
-| plugins/dsh-extra-plan/index.js | isDispatchStart | L166 | 双兼容事件名判定：命中 DISPATCH_START 集合（新名 tool/ptc-dispatch-start = 0.1.5-rc.2 / 旧名 tool/code-dispatch-start = 0.1.2-rc.1） |  |
-| plugins/dsh-extra-plan/index.js | isDispatch | L167-170 | 双兼容事件名判定：命中 DISPATCH 集合（新名 tool/ptc-dispatch = 0.1.5-rc.2 / 旧名 tool/code-dispatch = 0.1.2-rc.1） |  |
-| plugins/dsh-extra-plan/index.js | isBootstrapPhase | L187-197 | anchored 引导阶段判定（首个工具调用前） |  |
-| plugins/dsh-extra-plan/index.js | labelsOfCallData | L204-220 | 从 ask 调用数据提取选项 label 集合 |  |
-| plugins/dsh-extra-plan/index.js | normalizeLabel | L231-233 | label 规范化（空白清理） |  |
-| plugins/dsh-extra-plan/index.js | isExactGateSet | L236-243 | label 集合与本次 gateRuntime 的 route/approval/purpose 集合完全一致判定（归一后精确比较，集合为运行时词表） |  |
-| plugins/dsh-extra-plan/index.js | isPartialGateSet | L246-254 | label 与闸门词部分包含判定（indexOf 子串）：只用于 malformed ask 教学文案，绝不用于推进 route/purpose/approved |  |
-| plugins/dsh-extra-plan/index.js | categorizeGateAsk | L257-261 | ask 分类（standard/malformed/ordinary）；三套词集来自入参 gateRuntime；partial 子串判断只服务当前词的 malformed 教学拒绝，不推进状态 |  |
-| plugins/dsh-extra-plan/index.js | gateAskDenyReason | L264-300 | 生成标准闸门 ask 选项/结构错误的拒绝理由；模板与缺项均按当前 gateRuntime 词值插值（出厂值下与历史逐字相同） |  |
-| plugins/dsh-extra-plan/index.js | validateGateAskStructure | L306-333 | 校验路由/目的/批准 ask 结构（选项文案由入参 gateRuntime 插值）（问题数、固定选项）：路由与批准均须 ≥2 问、第 2 问起不得带非空 options（路由第二问「补充要求」、批准第二问「修改意见」，均须纯文本）；目的 ask 仍须恰好 1 问 |  |
-| plugins/dsh-extra-plan/index.js | askKindOf | L340-357 | 从 label 判定 ask 类型（route/approve/purpose）；词值来自入参 gateRuntime（测试契约 API，仅经 decisions 导出） |  |
-| plugins/dsh-extra-plan/index.js | askKindOfRelaxed | L364-380 | 宽松判定 ask 类型（特异性词优先：路由→批准→仅共享否决词→目的→澄清）；词值来自入参 gateRuntime（本函数只做分类，不推进状态） |  |
-| plugins/dsh-extra-plan/index.js | matchExactKind | L385-393 | 三类 match 的唯一判定内核：标签先按白名单推荐后缀归一（normalizeLabel）再与当前 gateRuntime 词值精确相等才返回内部枚举；禁止 indexOf 子串推进 route/purpose/approved |  |
-| plugins/dsh-extra-plan/index.js | matchRouteLabel | L395-402 | 用户选择标签→direct/plan/disagree；仅「推荐后缀归一后精确等于当前 gateRuntime 词值」才返回枚举（matchExactKind 内核，禁止 indexOf） |  |
-| plugins/dsh-extra-plan/index.js | matchApprovalLabel | L404-411 | 用户选择标签→approve/replan/disagree；同 matchRouteLabel 的精确匹配口径（归一后等于当前词值才返回枚举） |  |
-| plugins/dsh-extra-plan/index.js | matchPurposeLabel | L413-418 | 用户选择标签→refine/redo（第四锚点目的二选一；括号内为出厂示例，实际取值来自当前 config.gateWords） |  |
-| plugins/dsh-extra-plan/index.js | firstTextOfBlocks | L421-427 | 取 ContentBlock 数组首条 text 块的文本（无 text 块返回空串）；供 parseAskResultData/parseDispatchAskResult 的拒绝-取消判别读取信封文案 | 纯 helper，无副作用 |
-| plugins/dsh-extra-plan/index.js | askResultTextIsDenied | L432-434 | 闸门拒绝判别：以 'Error: ' 开头且不等于 HOST_ASK_CANCEL_TEXTS 任一条 → true（插件中文拒绝文案）；宿主取消句与其它失败 → false | 判别只按文案：嵌套（PTC）路径拒绝与取消同构，唯一差异是文案；常量与注释见 index.js 同区 |
-| plugins/dsh-extra-plan/index.js | parseAskResultData | L441-498 | tool/result 解析用户选择（answers.selected）；信封 isError:true 且无 data.error 时按文案二分：中文拒绝文案 → kind:'denied'，取消句/其它 → kind:'error'（code 空）；data.error.code 路径与正常 answers 解析逐字不变 | denied 由 deriveFlowState 判为「不重置」；native 取消码 ASK_CANCELLED 与通道码仍走 error 分支 |
-| plugins/dsh-extra-plan/index.js | parseDispatchAskResult | L507-535 | ptc/code-dispatch 的 ask 结果解析（双兼容）；isError:true 时按文案二分：中文拒绝文案 → kind:'denied'，宿主取消句/其它 → kind:'error'（嵌套层无错误码，code 空）；正常答复路径不变 | 取消句逐字常量 HOST_ASK_CANCEL_TEXTS 与判别函数 askResultTextIsDenied（index.js 同区） |
-| plugins/dsh-extra-plan/index.js | deriveFlowState | L545-657 | 事件流推导 flow state（route/clarified/approved/purpose/channelBroken）；词表由入参 gateRuntime 提供——改词后旧 label 精确匹配失败，状态保持未确认（历史事件安全）。失败分支（2026-09-23）：kind:'denied'（闸门拒绝）continue 不改任何字段；kind:'error' 里通道码置 channelBroken、其余 resetRouteState 清四字段 | dispatch 与 tool/result 两个分支各有一处 denied 短路，顺序在 error 判定之前；台账 HK25 记录配套的呈现层兜底 |
-| plugins/dsh-extra-plan/index.js | resetStageState | L547-551 | 回放正常路由/有效目的前重置 purpose、clarified、approved | deriveFlowState 内部辅助 |
-| plugins/dsh-extra-plan/index.js | resetRouteState | L552-555 | 回放非通道 ask 错误时设置 route=none 并清理阶段状态 | deriveFlowState 内部辅助 |
-| plugins/dsh-extra-plan/index.js | catalogHasWriteTools | L669-674 | 工具目录是否含写工具判定 |  |
-| plugins/dsh-extra-plan/index.js | isReadOnlyChildByCatalog | L677-679 | 按工具目录判定只读子代理 |  |
-| plugins/dsh-extra-plan/index.js | schemasHasWriteTools | L684-689 | schemas 数组是否含写工具 |  |
-| plugins/dsh-extra-plan/index.js | schemasHasTool | L693-698 | schemas 是否含指定工具 |  |
-| plugins/dsh-extra-plan/index.js | catalogIsCollapsed | L705-710 | 工具目录折叠为单工具判定（run_code/仅shell） |  |
-| plugins/dsh-extra-plan/index.js | subagentProbeGateReason | L720-729 | 探查者分支闸门（T5 唯一功能点）：planner 禁止委派（文案指向「申请继续探查」）+ 主会话 run_in_background 必 true；两调用点（组判定/直呼）共用 |  |
-| plugins/dsh-extra-plan/index.js | shellMutationReason | L735-749 | 只读角色 shell 写命令拒绝文案的唯一实现：planner/探查者/验收复核者 × pwsh/bash 六格逐字（role 仅 planner/probe/reviewer；未命中 mutation、非 shell、未知角色一律 null） | B3 收敛：plannerGateReason 与 childReadonlyGateReason 共用，不再各自拼接文案 |
-| plugins/dsh-extra-plan/index.js | plannerGateReason | L753-770 | 规划子代理分支闸门（write/edit + shell 写命令 + job_output 首判 + 预算；不含 run_code） | shell 文案取自 shellMutationReason（B3 单源） |
-| plugins/dsh-extra-plan/index.js | childReadonlyGateReason | L774-787 | 子代理只读分支闸门（write/edit + shell 写命令 + job_output 首判；不含 run_code） | shell 文案取自 shellMutationReason（probe 布尔选角色） |
-| plugins/dsh-extra-plan/index.js | jobOutputGateReason | L792-814 | job_output 闸门：禁 wait:true + 同 job 重复调用查重（内存计数器；只读查重不写入） | 写入侧唯一位点是 recordJobOutputCall（B3 单源） |
-| plugins/dsh-extra-plan/index.js | recordJobOutputCall | L820-832 | job_output 放行后的计数器记录唯一实现：job_output + 字符串 job_id + 有效 sessionId + counters 可用时惰性建 session Map 并写 jobId→1，非法输入返回 false 且零副作用 | B3 收敛：planner/只读 child/主会话三处共用；执行者仍完全豁免 |
-| plugins/dsh-extra-plan/index.js | probeDisposalWarning | L840-843 | 探查者级联中止告警纯函数：剩余未认领探查者委派数为正整数时返回告警文案（T5 文案中性化「委派方会话销毁时」+ owner disposed + 引擎限制指向官方包）；非正整数返回 null |  |
-| plugins/dsh-extra-plan/index.js | mainGateReason | L853-973 | 主会话闸门主分支（ask/write/edit/plan/save_probe/subagent/run_code/job_output…）；gateCtx.gateRuntime 必填（缺失即抛错，helper 不得自建默认词表）；save_plan 任意路由态放行（受限规划工件：仅写 cwd/.extra-plan 固定形状 Markdown，无显式分支、走兜底 return null）；save_probe/subagent_plan 还需目的已定（purpose∈refine/redo，第四锚点）+ 澄清完成 |  |
-| plugins/dsh-extra-plan/index.js | runCodeGroupDenyReason | L983-1066 | run_code 组判定：拆解→成员逐判定→聚合拒绝；成员判定复用主会话闸门时经 gateCtx.gateRuntime 传同一词表实例；预算耗尽白名单把关 |  |
-| plugins/dsh-extra-plan/index.js | visit | L1000-1043 | 递归展平嵌套 run_code（runCodeGroupDenyReason 内闭包） |  |
-| plugins/dsh-extra-plan/index.js | aggregateRunCodeDenyReason | L1072-1084 | 聚合多成员拒绝消息 |  |
-| plugins/dsh-extra-plan/index.js | malformedRecovery | L1249-1283 | MALFORMED_RESPONSE 限次自愈：llm-retry 已给 {kind:'retry'} 原样透传（不叠加）；否则按 sessionId→Set('turn:step') 同回合只兜底 1 次（防死循环），注入 developer/message 中文提示（append 带 surfaceOp:'append'、纯文本禁带 headerSeq、source.kind 用生产者自有 plugin:@local/dsh-extra-plan）并返回 {kind:'retry'}；**payload 须自带 ≥1 的 turn/step（宿主 append 不补坐标），坐标缺失/非正整数 → 跳过注入但仍返回 {kind:'retry'}**；aborted/无 agent/超次 → null 回退原 action 透传 |  |
-| plugins/dsh-extra-plan/index.js | recordAgentError | L1297-1315 | agent/error 回合错误取证：把宿主回合/步骤级错误（payload {agent,turn,step,error}）逐字落盘到插件目录 extra-plan-agent-errors.jsonl，行 = {ts, sessionId, turn, step, chain}；整体吞错 + 一次性 warn 防刷屏；模块级函数经命名导出供回归冒烟直呼 | 与 recordRequestError 同诊断模式 |
-| plugins/dsh-extra-plan/index.js | apply | L1319-2240 | 插件主入口：第一步 createGateRuntime(cfg.gateWords)（缺失/非法同步抛错，早于任何工具/监听器/服务副作用）→ ctx.effect 在当前 agent scope 注册恰好 7 个 extra_plan_* prompt variable（provider 返回本次 apply 捕获值）→ 配置解析（含变量② bootstrapReadHint）/服务注册/工具注册/creativeMode 模型可见投影/锚点钩子（HP 首轮 tool:read text 用变量②覆盖）；planner 与非 planner child 双模型路由；会话状态按 sessionId 分桶与 agent/disposed 同步 final flush + 单会话回收 |  |
-| plugins/dsh-extra-plan/index.js | plannerModel | L1372 | 热读箭头 getter：pro 规划默认模型（liveConfig.plannerModel；消费点=model-routing 的 getPlannerModel） |  |
-| plugins/dsh-extra-plan/index.js | otherAgentModel | L1373 | 热读箭头 getter：其他子代理默认模型（消费点=model-routing 的 getOtherAgentModel） |  |
-| plugins/dsh-extra-plan/index.js | exploreBudget | L1374 | 热读箭头 getter：pro 规划探查额度/单实例子调用上限（消费点=预算文案、noteRunCodeSubCall、plannerGateReason 与组判定） |  |
-| plugins/dsh-extra-plan/index.js | plannerPromptSuffix | L1375 | 热读箭头 getter：pre-step 拼接的额外引导后缀 |  |
-| plugins/dsh-extra-plan/index.js | bootstrapOn | L1376 | 热读箭头 getter：anchored 首轮引导开关（消费点=shouldHideCreativeCatalog 与 anchoredFirst 装配；creativeModeOn 仍为快照） |  |
-| plugins/dsh-extra-plan/index.js | runcodeCatchGateOn | L1377 | 热读箭头 getter：PTC try/catch 闸门开关（消费点=planner/只读 child/主会话三处组判定传参） |  |
-| plugins/dsh-extra-plan/index.js | crossProviderPlannerModelOn | L1378 | 热读箭头 getter：跨提供方模型选择开关（消费点=model-routing 双 resolver 入口，新 agent 重决议） |  |
-| plugins/dsh-extra-plan/index.js | creativeModeOn | L1381 | 热读箭头 getter：创造模式开关（liveConfig.creativeMode；消费点=shouldHideCreativeCatalog 与装配投影 hideCordis） |  |
-| plugins/dsh-extra-plan/index.js | readUsageCursorTable | L1421-1442 | usage cursor JSON 读取（续载/写回前盘点共用）：返回 { ok, table }；ENOENT 静默按空表，其它读取错误、JSON 解析失败、根值非对象（含数组）→ 降级空表并告警 |  |
-| plugins/dsh-extra-plan/index.js | warnUsageCursorDegraded | L1445-1449 | cursor 降级告警：每插件实例首次降级时一次（同 ledgerWarned 口径），声明其它 session 去重基准可能丢失 |  |
-| plugins/dsh-extra-plan/index.js | usageCursorEntryOf | L1453-1460 | cursor 单项归一：兼容旧数字形状（按水位 0 处理）与 { seq, index }；不再保留内存态 ref 字段——增量由 session.seq 水位 + snapshotEvents(from,to) 区间读取实现，水位未变直接返回、截断回退全量 |  |
-| plugins/dsh-extra-plan/index.js | foldUsage | L1468-1565 | usage 账本折叠写入（同步函数，禁止改 async；cursor 去重按 sessionId+seq）：写出行 = ts/sessionId/role/model/provider/hit/miss/out/cacheWriteTokens/reasoningTokens/seq（provider 取自 msg.source.provider 缺省空串；cw/rs 缺省 0；hit/miss/out/cw/rs 五字段全零不写行）；内存无本 session 项时按 sessionId 从 cursor JSON 单项续载；写前重读、读改写保留其它合法 session，降级态以空表+当前 session 覆盖写；有新增行才整文件写回 |  |
-| plugins/dsh-extra-plan/index.js | registerTool | L1602-1636 | 工具注册分发：注册成功、A 重名、B 永久性三类都写「已注册」标记（A/B 记终态不重试）；仅 tools 服务未就绪与 C 类可重试不写标记，留给下一次入口重试 |  |
-| plugins/dsh-extra-plan/index.js | registerSavePlan | L1639 | save_plan 注册（规划子代理层 + 主会话层；主会话侧任意路由态放行——受限规划工件，mainGateReason 兜底放行）；注册失败按 A/B/C 三分类：A/B 写标记记终态不重试，服务未就绪与 C 类不写标记、由 pre-step 每步兜底重试 |  |
-| plugins/dsh-extra-plan/index.js | registerSaveProbe | L1643 | save_probe 注册（主会话层 + 已认领的探查子代理层；规划子代理/执行者/reviewer 不是持有者）；已认领者靠 probeClaimed 粘性在下一步重试注册、不重复消费待认领计数 |  |
-| plugins/dsh-extra-plan/index.js | probeClaimFor | L1653-1669 | 放行-认领关联查核（pendingProbeClaims）：非子代理/含写子代理/规划子代理（T5 守卫）不认领，命中则消费计数并登记 save_probe |  |
-| plugins/dsh-extra-plan/index.js | shouldHideCreativeCatalog | L1699-1706 | HP1 判定：C=1、A=1、F、main/planner、M=ptc 时暂隐两个创造 skill |  |
-| plugins/dsh-extra-plan/index.js | recordRequestError | L1752-1774 | 记录 agent/request-error 失败诊断到插件目录 extra-plan-request-errors.jsonl（diagPath 可经 cfg.diagFile 覆盖；行含 turn/step/provider/message/code/causeChain） |  |
-| plugins/dsh-extra-plan/index.js | noteRunCodeSubCall | L2019-2026 | 单实例子调用上限（planner）：按 sessionId→rootCallId 桶读计数、未超限则 +1；返回拒绝文案或 null；空 rootCallId 与 exploreBudget 文案保持 |  |
-| plugins/dsh-extra-plan/index.js | recordRunCodeDeny | L2035-2046 | pre-execute 八处 deny 出口在 return 前记录本次中文 reason（sessionId→rootCallId→Set）；仅 isRunCodeSubCall（exec.sub 或 exec.parent）且 reason 为非空字符串时写入 | 记录由 tools/post-execute 按精确子串消费（消费即清），agent/disposed 按 session 清桶；不做跨 session 共享 |
+| plugins/dsh-extra-plan/index.js | purposeRouteDenyReason | L123-125 | 精确目的 ask 在非 plan 路由下的固定路由确认拒绝文案（文案由本次 apply 的 gateRuntime.confirm.route / options.purpose 插值） |  |
+| plugins/dsh-extra-plan/index.js | routeDenyReason | L128-133 | 路由未确认时 write/edit/写shell 的拒绝文案（提示先做路由确认）；文案由本次 apply 的 gateRuntime.confirm.route 插值（helper 显式收 gateRuntime，无默认词表） |  |
+| plugins/dsh-extra-plan/index.js | planDenyReason | L134-145 | plan 路由下 save_probe/subagent_plan 前置条件未满足的拒绝文案（直行态提示与确认句均由 gateRuntime 词值/文案插值） |  |
+| plugins/dsh-extra-plan/index.js | approvalDenyReason | L146-148 | 批准前禁止执行委派类工具（subagent/workflow/ralph）拒绝文案 |  |
+| plugins/dsh-extra-plan/index.js | isDispatchStart | L156 | 当前 PTC dispatch-start 事件判定 |  |
+| plugins/dsh-extra-plan/index.js | isDispatch | L157-160 | 当前 PTC dispatch 事件判定 |  |
+| plugins/dsh-extra-plan/index.js | isBootstrapPhase | L177-187 | anchored 引导阶段判定（首个工具调用前） |  |
+| plugins/dsh-extra-plan/index.js | labelsOfCallData | L194-210 | 从 ask 调用数据提取选项 label 集合 |  |
+| plugins/dsh-extra-plan/index.js | normalizeLabel | L221-223 | label 规范化（空白清理） |  |
+| plugins/dsh-extra-plan/index.js | isExactGateSet | L226-233 | label 集合与本次 gateRuntime 的 route/approval/purpose 集合完全一致判定（归一后精确比较，集合为运行时词表） |  |
+| plugins/dsh-extra-plan/index.js | isPartialGateSet | L236-244 | label 与闸门词部分包含判定（indexOf 子串）：只用于 malformed ask 教学文案，绝不用于推进 route/purpose/approved |  |
+| plugins/dsh-extra-plan/index.js | categorizeGateAsk | L247-251 | ask 分类（standard/malformed/ordinary）；三套词集来自入参 gateRuntime；partial 子串判断只服务当前词的 malformed 教学拒绝，不推进状态 |  |
+| plugins/dsh-extra-plan/index.js | gateAskDenyReason | L254-290 | 生成标准闸门 ask 选项/结构错误的拒绝理由；模板与缺项均按当前 gateRuntime 词值插值（出厂值下与历史逐字相同） |  |
+| plugins/dsh-extra-plan/index.js | validateGateAskStructure | L296-323 | 校验路由/目的/批准 ask 结构（选项文案由入参 gateRuntime 插值）（问题数、固定选项）：路由与批准均须 ≥2 问、第 2 问起不得带非空 options（路由第二问「补充要求」、批准第二问「修改意见」，均须纯文本）；目的 ask 仍须恰好 1 问 |  |
+| plugins/dsh-extra-plan/index.js | askKindOf | L330-347 | 从 label 判定 ask 类型（route/approve/purpose）；词值来自入参 gateRuntime（测试契约 API，仅经 decisions 导出） |  |
+| plugins/dsh-extra-plan/index.js | askKindOfRelaxed | L354-370 | 宽松判定 ask 类型（特异性词优先：路由→批准→仅共享否决词→目的→澄清）；词值来自入参 gateRuntime（本函数只做分类，不推进状态） |  |
+| plugins/dsh-extra-plan/index.js | matchExactKind | L375-383 | 三类 match 的唯一判定内核：标签先按白名单推荐后缀归一（normalizeLabel）再与当前 gateRuntime 词值精确相等才返回内部枚举；禁止 indexOf 子串推进 route/purpose/approved |  |
+| plugins/dsh-extra-plan/index.js | matchRouteLabel | L385-392 | 用户选择标签→direct/plan/disagree；仅「推荐后缀归一后精确等于当前 gateRuntime 词值」才返回枚举（matchExactKind 内核，禁止 indexOf） |  |
+| plugins/dsh-extra-plan/index.js | matchApprovalLabel | L394-401 | 用户选择标签→approve/replan/disagree；同 matchRouteLabel 的精确匹配口径（归一后等于当前词值才返回枚举） |  |
+| plugins/dsh-extra-plan/index.js | matchPurposeLabel | L403-408 | 用户选择标签→refine/redo（第四锚点目的二选一；括号内为出厂示例，实际取值来自当前 config.gateWords） |  |
+| plugins/dsh-extra-plan/index.js | firstTextOfBlocks | L411-417 | 取 ContentBlock 数组首条 text 块的文本（无 text 块返回空串）；供 parseAskResultData/parseDispatchAskResult 的拒绝-取消判别读取信封文案 | 纯 helper，无副作用 |
+| plugins/dsh-extra-plan/index.js | askResultTextIsDenied | L422-424 | 闸门拒绝判别：以 'Error: ' 开头且不等于 HOST_ASK_CANCEL_TEXTS 任一条 → true（插件中文拒绝文案）；宿主取消句与其它失败 → false | 判别只按文案：嵌套（PTC）路径拒绝与取消同构，唯一差异是文案；常量与注释见 index.js 同区 |
+| plugins/dsh-extra-plan/index.js | parseAskResultData | L431-468 | tool/result 解析用户选择（answers.selected）；信封 isError:true 且无 data.error 时按文案二分：中文拒绝文案 → kind:'denied'，取消句/其它 → kind:'error'（code 空）；data.error.code 路径与正常 answers 解析逐字不变 | denied 由 deriveFlowState 判为「不重置」；native 取消码 ASK_CANCELLED 与通道码仍走 error 分支 |
+| plugins/dsh-extra-plan/index.js | parseDispatchAskResult | L477-505 | PTC dispatch ask 结果解析；isError:true 时按文案二分：中文拒绝文案 → kind:'denied'，宿主取消句/其它 → kind:'error' | 取消句逐字常量 HOST_ASK_CANCEL_TEXTS 与判别函数 askResultTextIsDenied |
+| plugins/dsh-extra-plan/index.js | deriveFlowState | L515-627 | 事件流推导 flow state（route/clarified/approved/purpose/channelBroken）；词表由入参 gateRuntime 提供——改词后旧 label 精确匹配失败，状态保持未确认（历史事件安全）。失败分支（2026-09-23）：kind:'denied'（闸门拒绝）continue 不改任何字段；kind:'error' 里通道码置 channelBroken、其余 resetRouteState 清四字段 | dispatch 与 tool/result 两个分支各有一处 denied 短路，顺序在 error 判定之前；台账 HK25 记录配套的呈现层兜底 |
+| plugins/dsh-extra-plan/index.js | resetStageState | L517-521 | 回放正常路由/有效目的前重置 purpose、clarified、approved | deriveFlowState 内部辅助 |
+| plugins/dsh-extra-plan/index.js | resetRouteState | L522-525 | 回放非通道 ask 错误时设置 route=none 并清理阶段状态 | deriveFlowState 内部辅助 |
+| plugins/dsh-extra-plan/index.js | catalogHasWriteTools | L639-644 | 工具目录是否含写工具判定 |  |
+| plugins/dsh-extra-plan/index.js | isReadOnlyChildByCatalog | L647-649 | 按工具目录判定只读子代理 |  |
+| plugins/dsh-extra-plan/index.js | schemasHasWriteTools | L654-659 | schemas 数组是否含写工具 |  |
+| plugins/dsh-extra-plan/index.js | schemasHasTool | L663-668 | schemas 是否含指定工具 |  |
+| plugins/dsh-extra-plan/index.js | catalogIsCollapsed | L675-680 | 工具目录折叠为单工具判定（run_code/仅shell） |  |
+| plugins/dsh-extra-plan/index.js | subagentProbeGateReason | L690-699 | 探查者分支闸门（T5 唯一功能点）：planner 禁止委派（文案指向「申请继续探查」）+ 主会话 run_in_background 必 true；两调用点（组判定/直呼）共用 |  |
+| plugins/dsh-extra-plan/index.js | shellMutationReason | L705-719 | 只读角色 shell 写命令拒绝文案的唯一实现：planner/探查者/验收复核者 × pwsh/bash 六格逐字（role 仅 planner/probe/reviewer；未命中 mutation、非 shell、未知角色一律 null） | B3 收敛：plannerGateReason 与 childReadonlyGateReason 共用，不再各自拼接文案 |
+| plugins/dsh-extra-plan/index.js | plannerGateReason | L723-737 | 规划子代理分支闸门（write/edit + shell 写命令 + job_output 首判 + 预算；不含 run_code） | shell 文案取自 shellMutationReason（B3 单源） |
+| plugins/dsh-extra-plan/index.js | childReadonlyGateReason | L741-749 | 子代理只读分支闸门（write/edit + shell 写命令 + job_output 首判；不含 run_code） | shell 文案取自 shellMutationReason（probe 布尔选角色） |
+| plugins/dsh-extra-plan/index.js | jobOutputGateReason | L754-776 | job_output 闸门：禁 wait:true + 同 job 重复调用查重（内存计数器；只读查重不写入） | 写入侧唯一位点是 recordJobOutputCall（B3 单源） |
+| plugins/dsh-extra-plan/index.js | recordJobOutputCall | L782-794 | job_output 放行后的计数器记录唯一实现：job_output + 字符串 job_id + 有效 sessionId + counters 可用时惰性建 session Map 并写 jobId→1，非法输入返回 false 且零副作用 | B3 收敛：planner/只读 child/主会话三处共用；执行者仍完全豁免 |
+| plugins/dsh-extra-plan/index.js | probeDisposalWarning | L802-805 | 探查者级联中止告警纯函数：剩余未认领探查者委派数为正整数时返回告警文案（T5 文案中性化「委派方会话销毁时」+ owner disposed + 引擎限制指向官方包）；非正整数返回 null |  |
+| plugins/dsh-extra-plan/index.js | mainGateReason | L815-924 | 主会话闸门主分支（ask/write/edit/plan/save_probe/subagent/run_code/job_output…）；gateCtx.gateRuntime 必填（缺失即抛错，helper 不得自建默认词表）；save_plan 任意路由态放行（受限规划工件：仅写 cwd/.extra-plan 固定形状 Markdown，无显式分支、走兜底 return null）；save_probe/subagent_plan 还需目的已定（purpose∈refine/redo，第四锚点）+ 澄清完成 |  |
+| plugins/dsh-extra-plan/index.js | runCodeGroupDenyReason | L934-1017 | run_code 组判定：拆解→成员逐判定→聚合拒绝；成员判定复用主会话闸门时经 gateCtx.gateRuntime 传同一词表实例；预算耗尽白名单把关 |  |
+| plugins/dsh-extra-plan/index.js | visit | L951-994 | 递归展平嵌套 run_code（runCodeGroupDenyReason 内闭包） |  |
+| plugins/dsh-extra-plan/index.js | aggregateRunCodeDenyReason | L1023-1035 | 聚合多成员拒绝消息 |  |
+| plugins/dsh-extra-plan/index.js | malformedRecovery | L1200-1234 | MALFORMED_RESPONSE 限次自愈：llm-retry 已给 {kind:'retry'} 原样透传（不叠加）；否则按 sessionId→Set('turn:step') 同回合只兜底 1 次（防死循环），注入 developer/message 中文提示（append 带 surfaceOp:'append'、纯文本禁带 headerSeq、source.kind 用生产者自有 plugin:@local/dsh-extra-plan）并返回 {kind:'retry'}；**payload 须自带 ≥1 的 turn/step（宿主 append 不补坐标），坐标缺失/非正整数 → 跳过注入但仍返回 {kind:'retry'}**；aborted/无 agent/超次 → null 回退原 action 透传 |  |
+| plugins/dsh-extra-plan/index.js | recordAgentError | L1248-1266 | agent/error 回合错误取证：把宿主回合/步骤级错误（payload {agent,turn,step,error}）逐字落盘到插件目录 extra-plan-agent-errors.jsonl，行 = {ts, sessionId, turn, step, chain}；整体吞错 + 一次性 warn 防刷屏；模块级函数经命名导出供回归冒烟直呼 | 与 recordRequestError 同诊断模式 |
+| plugins/dsh-extra-plan/index.js | apply | L1270-2224 | 插件主入口：第一步 createGateRuntime(cfg.gateWords)（缺失/非法同步抛错，早于任何工具/监听器/服务副作用）→ ctx.effect 在当前 agent scope 注册恰好 7 个 extra_plan_* prompt variable（provider 返回本次 apply 捕获值）→ 配置解析（含变量② bootstrapReadHint）/服务注册/工具注册/creativeMode 模型可见投影/锚点钩子（HP 首轮 tool:read text 用变量②覆盖）；planner 与非 planner child 双模型路由；会话状态按 sessionId 分桶与 agent/disposed 同步 final flush + 单会话回收 |  |
+| plugins/dsh-extra-plan/index.js | plannerModel | L1323 | 热读箭头 getter：pro 规划默认模型（liveConfig.plannerModel；消费点=model-routing 的 getPlannerModel） |  |
+| plugins/dsh-extra-plan/index.js | otherAgentModel | L1324 | 热读箭头 getter：其他子代理默认模型（消费点=model-routing 的 getOtherAgentModel） |  |
+| plugins/dsh-extra-plan/index.js | exploreBudget | L1325 | 热读箭头 getter：pro 规划探查额度/单实例子调用上限（消费点=预算文案、noteRunCodeSubCall、plannerGateReason 与组判定） |  |
+| plugins/dsh-extra-plan/index.js | plannerPromptSuffix | L1326 | 热读箭头 getter：pre-step 拼接的额外引导后缀 |  |
+| plugins/dsh-extra-plan/index.js | bootstrapOn | L1327 | 热读箭头 getter：anchored 首轮引导开关（消费点=shouldHideCreativeCatalog 与 anchoredFirst 装配；creativeModeOn 仍为快照） |  |
+| plugins/dsh-extra-plan/index.js | runcodeCatchGateOn | L1328 | 热读箭头 getter：PTC try/catch 闸门开关（消费点=planner/只读 child/主会话三处组判定传参） |  |
+| plugins/dsh-extra-plan/index.js | crossProviderPlannerModelOn | L1329 | 热读箭头 getter：跨提供方模型选择开关（消费点=model-routing 双 resolver 入口，新 agent 重决议） |  |
+| plugins/dsh-extra-plan/index.js | creativeModeOn | L1332 | 热读箭头 getter：创造模式开关（liveConfig.creativeMode；消费点=shouldHideCreativeCatalog 与装配投影 hideCordis） |  |
+| plugins/dsh-extra-plan/index.js | readUsageCursorTable | L1372-1393 | usage cursor JSON 读取（续载/写回前盘点共用）：返回 { ok, table }；ENOENT 静默按空表，其它读取错误、JSON 解析失败、根值非对象（含数组）→ 降级空表并告警 |  |
+| plugins/dsh-extra-plan/index.js | warnUsageCursorDegraded | L1396-1400 | cursor 降级告警：每插件实例首次降级时一次（同 ledgerWarned 口径），声明其它 session 去重基准可能丢失 |  |
+| plugins/dsh-extra-plan/index.js | usageCursorEntryOf | L1404-1411 | cursor 单项归一：兼容旧数字形状（按水位 0 处理）与 { seq, index }；不再保留内存态 ref 字段——增量由 session.seq 水位 + snapshotEvents(from,to) 区间读取实现，水位未变直接返回、截断回退全量 |  |
+| plugins/dsh-extra-plan/index.js | foldUsage | L1419-1519 | 同步 usage 折叠；append 成功后才推进内存 cursor；可解析 cursor 读改写保留其它 session，损坏/非对象只降级内存态并保留原始字节；session.seq + snapshotEvents(from,to) 增量水位语义 |  |
+| plugins/dsh-extra-plan/index.js | registerTool | L1556-1590 | 工具注册分发：注册成功、A 重名、B 永久性三类都写「已注册」标记（A/B 记终态不重试）；仅 tools 服务未就绪与 C 类可重试不写标记，留给下一次入口重试 |  |
+| plugins/dsh-extra-plan/index.js | registerSavePlan | L1593 | save_plan 注册（规划子代理层 + 主会话层；主会话侧任意路由态放行——受限规划工件，mainGateReason 兜底放行）；注册失败按 A/B/C 三分类：A/B 写标记记终态不重试，服务未就绪与 C 类不写标记、由 pre-step 每步兜底重试 |  |
+| plugins/dsh-extra-plan/index.js | registerSaveProbe | L1597 | save_probe 注册（主会话层 + 已认领的探查子代理层；规划子代理/执行者/reviewer 不是持有者）；已认领者靠 probeClaimed 粘性在下一步重试注册、不重复消费待认领计数 |  |
+| plugins/dsh-extra-plan/index.js | probeClaimFor | L1607-1623 | 放行-认领关联查核（pendingProbeClaims）：非子代理/含写子代理/规划子代理（T5 守卫）不认领，命中则消费计数并登记 save_probe |  |
+| plugins/dsh-extra-plan/index.js | shouldHideCreativeCatalog | L1653-1660 | HP1 判定：C=1、A=1、F、main/planner、M=ptc 时暂隐两个创造 skill |  |
+| plugins/dsh-extra-plan/index.js | warnPreStepFailure | L1666-1670 | pre-step 初始化/后处理异常的一次性告警 helper，保留原 decision 且保证 next 只调用一次 |  |
+| plugins/dsh-extra-plan/index.js | recordRequestError | L1729-1751 | 记录 agent/request-error 失败诊断到插件目录 extra-plan-request-errors.jsonl（diagPath 可经 cfg.diagFile 覆盖；行含 turn/step/provider/message/code/causeChain） |  |
+| plugins/dsh-extra-plan/index.js | noteRunCodeSubCall | L2004-2011 | 单实例子调用上限（planner）：按 sessionId→rootCallId 桶读计数、未超限则 +1；返回拒绝文案或 null；空 rootCallId 与 exploreBudget 文案保持 |  |
+| plugins/dsh-extra-plan/index.js | recordRunCodeDeny | L2020-2031 | pre-execute 八处 deny 出口在 return 前记录本次中文 reason（sessionId→rootCallId→Set）；仅 isRunCodeSubCall（exec.sub 或 exec.parent）且 reason 为非空字符串时写入 | 记录由 tools/post-execute 按精确子串消费（消费即清），agent/disposed 按 session 清桶；不做跨 session 共享 |
 | plugins/dsh-extra-plan/lib/agent-runtime.js | isLiveDelegation | L8-19 | 按父会话 registry 存活状态判定委托是否仍有效 |  |
 | plugins/dsh-extra-plan/lib/agent-runtime.js | childPolicyNeedsFloor | L22-27 | 判定 read-only 子代理是否需要 workspace-write floor |  |
 | plugins/dsh-extra-plan/lib/agent-runtime.js | createAgentRuntime | L29-111 | 创建 per-apply 角色/缓存/usage baseline 工厂 |  |
@@ -176,39 +179,40 @@
 | plugins/dsh-extra-plan/lib/agent-runtime.js | childBaseline | L100-108 | 同步确定 main/planner/executor role、fold usage 并应用 child floor |  |
 | plugins/dsh-extra-plan/lib/agent-session.js | sessionEvents | L15-19 | 取 agent.session 事件快照（缺失兜底空数组）；唯一来源 |  |
 | plugins/dsh-extra-plan/lib/agent-session.js | isSubagentChild | L26-41 | 判定会话属于子代理（header.origin/delegationDepth/descriptor 三路探测）；唯一来源，index.js 经 decisions re-export |  |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | sectionOf | L38-41 | 按名称取 PromptAssembly section |  |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | skillCatalogEntriesOf | L47-55 | 校验并提取 skill catalog 的最小 name/description 条目 |  |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | renderSkillCatalogText | L57-79 | 按条目重建系统 skill catalog 文本 |  |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | projectSkillCatalogDecision | L81-107 | 在当前消息副本中暂隐创造 skill，不注销 binding |  |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | isCordisPresentationTool | L109-111 | 判断名称是否属于固定 2 项 Cordis 模型可见工具集合 | 模型可见投影；不改变 registry binding |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | filteredCordisSchemas | L113-116 | 从 schema 数组排除固定 2 项 Cordis 工具，供 SDK 整体重建 |  |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | hasSection | L118-120 | 判断 PromptAssembly 是否含指定命名 section |  |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | hasNonEmptySection | L122-124 | 判断 tools:ptc-only 是否为有效非空 section，识别 Pure PTC |  |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | projectAssemblyForPresentation | L127-151 | 创建不原地修改的模型可见 assembly：按当前 schema 交集过滤工具，替换 SDK 文本并隐藏 tool:cordis，另支持 Pure PTC 顶层单入口 | 不改变 registry/restrict/pre-execute |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | sdkSchemasForRendering | L153-160 | 从 schema 输入排除 run_code 与 Cordis，并确保 renderer 获得输出 schema | 不读取原始 tools:sdk 文本 |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | dshToolsEntryCandidates | L162-178 | 生成 DSH_HOME/profile 与平台官方 dsh-tools SDK renderer 候选路径 | 只读加载官方包，不修改安装目录 |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | loadSdkRendererModule | L181-191 | 惰性加载并缓存官方 TypeScript/Python SDK renderer 模块 |  |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | resolveToolsSdkRenderer | L194-199 | 按 language 选择当前官方 TypeScript/Python SDK renderer，返回函数身份供 cache key 使用；复用模块级动态 import promise |  |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | renderFilteredToolsSdk | L202-205 | 仅以过滤后的 schema 整体调用官方 renderer 生成 tools:sdk，按 codeRuntime language 选择 TS/Python | 不做原始文本正则删块 |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | toolRegistryOf | L207-215 | 防御式读取 agent scoped tools service，服务缺失或异常返回 undefined |  |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | toolSdkSchemasOf | L217-235 | 优先读取 tools.sdkSchemas；兼容旧服务时从 schemas 补 owned output schema，供 SDK renderer 使用 |  |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | toolPresentationModeOf | L237-246 | 从 scoped tools registry 读取 native/ptc/both 模式 |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | sectionOf | L35-38 | 按名称取 PromptAssembly section |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | skillCatalogEntriesOf | L44-52 | 校验并提取 skill catalog 的最小 name/description 条目 |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | renderSkillCatalogText | L54-76 | 按条目重建系统 skill catalog 文本 |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | projectSkillCatalogDecision | L78-104 | 在当前消息副本中暂隐创造 skill，不注销 binding |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | isCordisPresentationTool | L106-108 | 判断名称是否属于固定 2 项 Cordis 模型可见工具集合 | 模型可见投影；不改变 registry binding |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | filteredCordisSchemas | L110-113 | 从 schema 数组排除固定 2 项 Cordis 工具，供 SDK 整体重建 |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | hasSection | L115-117 | 判断 PromptAssembly 是否含指定命名 section |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | hasNonEmptySection | L119-121 | 判断 tools:ptc-only 是否为有效非空 section，识别 Pure PTC |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | projectAssemblyForPresentation | L124-148 | 创建不原地修改的模型可见 assembly：按当前 schema 交集过滤工具，替换 SDK 文本并隐藏 tool:cordis，另支持 Pure PTC 顶层单入口 | 不改变 registry/restrict/pre-execute |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | sdkSchemasForRendering | L150-157 | 从 schema 输入排除 run_code 与 Cordis，并确保 renderer 获得输出 schema | 不读取原始 tools:sdk 文本 |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | dshToolsEntryCandidates | L159-175 | 生成 DSH_HOME/profile 与平台官方 dsh-tools SDK renderer 候选路径 | 只读加载官方包，不修改安装目录 |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | loadSdkRendererModule | L178-192 | 惰性加载官方 SDK renderer 模块；失败 promise 清空，候选补齐后可重试 |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | pending | L180-189 | loadSdkRendererModule 的 in-flight module promise；reject 后 identity-check 清空供下次重试 |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | resolveToolsSdkRenderer | L195-200 | 按 language 选择当前官方 TypeScript/Python SDK renderer，返回函数身份供 cache key 使用；复用模块级动态 import promise |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | renderFilteredToolsSdk | L203-206 | 仅以过滤后的 schema 整体调用官方 renderer 生成 tools:sdk，按 ptcRuntime language 选择 TS/Python | 不做原始文本正则删块 |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | toolRegistryOf | L208-216 | 防御式读取 agent scoped tools service，服务缺失或异常返回 undefined |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | toolSdkSchemasOf | L218-236 | 优先读取 tools.sdkSchemas；兼容旧服务时从 schemas 补 owned output schema，供 SDK renderer 使用 |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | toolPresentationModeOf | L238-247 | 从 scoped tools registry 读取 native/ptc/both 模式 |  |
 | plugins/dsh-extra-plan/lib/client-bridge.js | apply | L17-19 | 空实现（仅承载 dsh.client 加载路径指向 lib/client.js） |  |
-| plugins/dsh-extra-plan/lib/client.js | apply | L135-426 | 客户端插件入口：注入 esp-* 样式表并注册中英词条；经 configForms.whileServed 包裹后把 SettingsCard 注册到 Plugins 页行详情 keyed 插槽 plugins.row.config（key = `@local/dsh-extra-plan#dsh-extra-plan-settings`；宿主 plugins.item 是官方设置页专用列表、旧 settings.plugin.item 在 0.1.7 已废；无该 settings 命名空间则不注册；卡片 = 通用设置区（anchoredBootstrap/creativeMode/webFetch/toolPresentationMode/runcodeCatchGate）+ pro规划区（5 项）双区块 + 全卡唯一保存按钮） |  |
+| plugins/dsh-extra-plan/lib/client.js | apply | L135-424 | 客户端插件入口：注入 esp-* 样式表并注册中英词条；经 configForms.whileServed 包裹后把 SettingsCard 注册到 Plugins 页行详情 keyed 插槽 plugins.row.config（key = `@local/dsh-extra-plan#dsh-extra-plan-settings`；宿主 plugins.item 是官方设置页专用列表、旧 settings.plugin.item 在 0.1.7 已废；无该 settings 命名空间则不注册；卡片 = 通用设置区（anchoredBootstrap/creativeMode/webFetch/toolPresentationMode/runcodeCatchGate）+ pro规划区（5 项）双区块 + 全卡唯一保存按钮） |  |
 | plugins/dsh-extra-plan/lib/client.js | optionLabel | L146-151 | 选项显示名：优先 optionLocale 词条，其次布尔 trueValue/falseValue，最后原值字符串 | apply 内部闭包（设置页控件共用） |
 | plugins/dsh-extra-plan/lib/client.js | optionValue | L153-159 | 把后端返回的字符串值映射回 field.options 里的原始类型（不在选项中则原样返回） | apply 内部闭包（设置页控件共用） |
 | plugins/dsh-extra-plan/lib/client.js | renderControl | L161-199 | 按 field.control 渲染受控控件：textarea／number（透传 min、step）／select（选项文案走 optionLabel、回值走 optionValue）／其余回落 text input；统一 disabled 与 onChange 回传 |  |
-| plugins/dsh-extra-plan/lib/client.js | ExtraPlanForm | L206-404 | 8 项 UI 设置表单：从宿主 ownerProps.form.state 播种 draft（value/writable/revision/status），按 general/pro 两组 esp-section 渲染字段，footer 一次性提交 mutate(set ops + revision fence) 后提示已保存/保存失败；loading/unavailable 走占位 |  |
-| plugins/dsh-extra-plan/lib/client.js | fieldValue | L268-275 | 取字段草稿值：number 控件把草稿转 Number（非有限数值原样返回），其余控件原样返回 | ExtraPlanForm 内部闭包 |
-| plugins/dsh-extra-plan/lib/client.js | rollbackHostRows | L278-295 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/client.js | saveAll | L297-340 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/client.js | renderField | L350-361 | 按 field 渲染 8 项 UI 设置中的一个字段：esp-field 内「locale 名称→renderControl（随 snapshot.writable 禁用）→静态 hint」，编辑写回 draft 并清提示 | ExtraPlanForm 内部闭包；本地稳定字段样式 |
-| plugins/dsh-extra-plan/lib/client.js | SettingsCard | L406-412 | 卡片根组件：view=summary 时返回一行卡片描述，其余渲染 esp-wrap（8 项 ExtraPlanForm + 2 项 HostRowsPanel 两段）并对 props.t 缺失做兜底 |  |
+| plugins/dsh-extra-plan/lib/client.js | ExtraPlanForm | L206-402 | 8 项 UI 设置表单：从宿主 ownerProps.form.state 播种 draft（value/writable/revision/status），按 general/pro 两组 esp-section 渲染字段，footer 一次性提交 mutate(set ops + revision fence) 后提示已保存/保存失败；loading/unavailable 走占位 |  |
+| plugins/dsh-extra-plan/lib/client.js | fieldValue | L265-272 | 取字段草稿值：number 控件把草稿转 Number（非有限数值原样返回），其余控件原样返回 | ExtraPlanForm 内部闭包 |
+| plugins/dsh-extra-plan/lib/client.js | reconcileHostRows | L275-293 | mutate 失败/不确定时 GET 最新 authority，再 PUT 投影并验证 projection.applied=true；失败显示结论级错误 |  |
+| plugins/dsh-extra-plan/lib/client.js | saveAll | L295-338 | 初次 PUT 严格验证 projection.applied=true；成功后一次 mutate 10 op，不确定结果收敛到最新 authority |  |
+| plugins/dsh-extra-plan/lib/client.js | renderField | L348-359 | 按 field 渲染 8 项 UI 设置中的一个字段：esp-field 内「locale 名称→renderControl（随 snapshot.writable 禁用）→静态 hint」，编辑写回 draft 并清提示 | ExtraPlanForm 内部闭包；本地稳定字段样式 |
+| plugins/dsh-extra-plan/lib/client.js | SettingsCard | L404-410 | 卡片根组件：view=summary 时返回一行卡片描述，其余渲染 esp-wrap（8 项 ExtraPlanForm + 2 项 HostRowsPanel 两段）并对 props.t 缺失做兜底 |  |
 | plugins/dsh-extra-plan/lib/executor-spawn.js | resolveDeny | L50-52 | deny 解析纯函数：config.deny 合法（非 null 对象且为数组）时原样返回，否则回退 DEFAULT_DENY | 由 apply 调用；DEFAULT_DENY 已与预设 config.deny 收敛为同集 12 项 |
 | plugins/dsh-extra-plan/lib/executor-spawn.js | slotKey | L71-77 | 稳定槽键纯函数：读全局注册符号 Symbol.for('cordis.original') 取 subagents 服务实现本体（traceable 代理 get 拦截器返回 target；root 单例跨 ctx/跨预设世代恒同一对象），非 traceable/取不到符号值时降级回代理本身 | registrationSlots 查表的键来源，槽键语义 = 幂等跨世代命中的前提 |
-| plugins/dsh-extra-plan/lib/executor-spawn.js | apply | L79-153 | 插件入口：注册执行者 provider（委托宿主 spawn，注入 deny 工具裁剪）；注册走引用计数幂等——槽键取 slotKey(ctx.subagents)（服务实现本体，不再以 ctx.subagents 代理为键），槽 count>0 时只加持有并 console.warn 后返回，count==0 且已存在同名 provider 时抛真实冲突错，全新注册时保存 host disposer（含 delegator 校验与 defaultedAgentOptions） |  |
-| plugins/dsh-extra-plan/lib/executor-spawn.js | releaseSlot | L105-111 | 释放一份注册持有：count 递减，归零且已有宿主 disposer 时调用它反注册并置空（以 ctx.effect 清理回调形式挂载，标签 'executor-spawn: shared provider slot'） |  |
-| plugins/dsh-extra-plan/lib/executor-spawn.js | defaultedAgentOptions | L131-135 | 执行者 agentOptions 透传（请求自带优先，否则空对象继承父会话） |  |
+| plugins/dsh-extra-plan/lib/executor-spawn.js | apply | L79-155 | 插件入口：注册执行者 provider（委托宿主 spawn，注入 deny 工具裁剪）；注册走引用计数幂等——槽键取 slotKey(ctx.subagents)（服务实现本体，不再以 ctx.subagents 代理为键），槽 count>0 时只加持有并 console.warn 后返回，count==0 且已存在同名 provider 时抛真实冲突错，全新注册时保存 host disposer（含 delegator 校验与 defaultedAgentOptions） |  |
+| plugins/dsh-extra-plan/lib/executor-spawn.js | releaseSlot | L105-113 | 释放一份注册持有：count 递减，归零且已有宿主 disposer 时调用它反注册并置空（以 ctx.effect 清理回调形式挂载，标签 'executor-spawn: shared provider slot'） |  |
+| plugins/dsh-extra-plan/lib/executor-spawn.js | defaultedAgentOptions | L133-137 | 执行者 agentOptions 透传（请求自带优先，否则空对象继承父会话） |  |
 | plugins/dsh-extra-plan/lib/gate-words.js | fail | L39-41 | 统一抛出 'extra-plan: config.gateWords ' 前缀的校验错误（错误前缀的唯一出口） |  |
 | plugins/dsh-extra-plan/lib/gate-words.js | normalizeGateLabel | L44-46 | 推荐后缀归一（(Recommended)/（Recommended）/(推荐)/（推荐），四级后缀、英文大小写不敏感、前后空白），与 index.js normalizeLabel 同规则；仅供校验保留后缀用 |  |
 | plugins/dsh-extra-plan/lib/gate-words.js | validateGateWords | L52-79 | 整组严格校验：非数组对象、键集合恰为 7 键、每值为非空字符串、首尾无空白、无 CR/LF、7 值两两不同、不以保留推荐后缀结尾；合法返回冻结副本，任何一条不合法即抛错（禁止部分接受） |  |
@@ -216,19 +220,19 @@
 | plugins/dsh-extra-plan/lib/gate-words.js | createGateRuntime | L93-122 | 运行时词表工厂：仅从入参派生 words/route/approval/purpose 冻结数组 + 三套 Set + options/confirm 插值片段 + variables（变量名→本次 apply 值）；无默认词表，缺失/非法即抛错 |  |
 | plugins/dsh-extra-plan/lib/live-config.js | textOf | L68-70 | 非空字符串 trim 取值（空串/非串 → ''），用于路径与环境变量决议 |  |
 | plugins/dsh-extra-plan/lib/live-config.js | envConfigPath | L72-74 | 环境变量 DSH_EXTRA_PLAN_CONFIG_PATH 取值（空/缺省 → ''，体检用它隔离生产现场配置） |  |
-| plugins/dsh-extra-plan/lib/live-config.js | statStamp | L77-85 | fs.statSync 取 { mtimeMs, size } 拼变更 stamp；失败返回 { ok:false, reason } 不抛出（缺失/权限问题一律降级为回退，不中断插件） |  |
-| plugins/dsh-extra-plan/lib/live-config.js | booleanOr | L87-89 | 布尔取值：仅 true/false 采信，其他一律回落 fallback |  |
-| plugins/dsh-extra-plan/lib/live-config.js | stringOr | L91-93 | 字符串取值：非 string 回落 fallback（plannerPromptSuffix） |  |
-| plugins/dsh-extra-plan/lib/live-config.js | positiveIntegerOr | L95-97 | 正整数取值：非 >0 整数回落 fallback（exploreBudget） |  |
-| plugins/dsh-extra-plan/lib/live-config.js | modeOr | L99-101 | 工具呈现模式取值：仅接受 TOOL_PRESENTATION_MODES（native/ptc/both），其他回落 fallback（toolPresentationMode） |  |
-| plugins/dsh-extra-plan/lib/live-config.js | pick | L103-113 | 按 key 的标量类型收口（布尔含 webFetch／trim 字符串／正整数／工具呈现模式枚举），非法值一律回落 fallback |  |
-| plugins/dsh-extra-plan/lib/live-config.js | normalizedFallback | L115-122 | 归一 fallbackDefaults：取 10 个读取键（8 项 UI + 2 项宿主行设置），缺失键用内置兜底（与 index.js apply 期 cfg 快照同口径） |  |
-| plugins/dsh-extra-plan/lib/live-config.js | createLiveConfig | L130-262 | 热读工厂：决议路径 + 构造期**无条件读盘一次**（文件真值作首拍基准，成功即记 stamp；失败回退 fallbackDefaults + warnOnce）；返回 10 个 getter（8 项热读 + 2 项宿主行设置权威值读口；取值先 refresh 再做 stamp 比对）；creativeMode getter 保留但当前无热读消费点（该项为 apply 快照）；不做监听/轮询/订阅 |  |
-| plugins/dsh-extra-plan/lib/live-config.js | warnOnce | L141-145 | 同实例只告警一次（防抖）：不可用原因 + 生效路径 + 「回退到 apply 期快照兜底」 |  |
-| plugins/dsh-extra-plan/lib/live-config.js | currentPath | L148-158 | 路径决议（构造期与每次取值现场调用）：显式 configPath → 环境变量 DSH_EXTRA_PLAN_CONFIG_PATH → resolver()（宿主 configEditor.documentPath）；resolver 缺失或抛出返回空串 |  |
-| plugins/dsh-extra-plan/lib/live-config.js | readDiskValues | L161-183 | 读盘→解析→取值单一实现（构造期与 stamp 变化后的刷新共用）：readFileSync + **captureRowSettings(SETTING_DEFINITIONS)（settings 行 = 10 项权威值同源落点）**，按 states[key]==='captured' 覆盖、其余键回落 fallback；未捕获到任何键视为取值失败；失败返回 { ok:false, reason } 不抛出 |  |
-| plugins/dsh-extra-plan/lib/live-config.js | refresh | L203-232 | 变更检测主体：stamp 未变直接返回（零 IO 零解析）；变了才 readFileSync + captureRowSettings 全量解析，按 states[key]==='captured' 覆盖 fallback；stat/解析失败回落 fallback 并 warnOnce |  |
-| plugins/dsh-extra-plan/lib/live-config.js | read | L234-237 | getter 取值通道：refresh() 后读当前 values[key] |  |
+| plugins/dsh-extra-plan/lib/live-config.js | statStamp | L77-95 | fs.statSync 优先取 dev/ino/size/mtimeNs/ctimeNs，兼容回退 ino/size/mtimeMs/ctimeMs 拼变更 stamp；失败返回 { ok:false, reason } 不抛出 |  |
+| plugins/dsh-extra-plan/lib/live-config.js | booleanOr | L97-99 | 布尔取值：仅 true/false 采信，其他一律回落 fallback |  |
+| plugins/dsh-extra-plan/lib/live-config.js | stringOr | L101-103 | 字符串取值：非 string 回落 fallback（plannerPromptSuffix） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | positiveIntegerOr | L105-107 | 正整数取值：非 >0 整数回落 fallback（exploreBudget） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | modeOr | L109-111 | 工具呈现模式取值：仅接受 TOOL_PRESENTATION_MODES（native/ptc/both），其他回落 fallback（toolPresentationMode） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | pick | L113-123 | 按 key 的标量类型收口（布尔含 webFetch／trim 字符串／正整数／工具呈现模式枚举），非法值一律回落 fallback |  |
+| plugins/dsh-extra-plan/lib/live-config.js | normalizedFallback | L125-132 | 归一 fallbackDefaults：取 10 个读取键（8 项 UI + 2 项宿主行设置），缺失键用内置兜底（与 index.js apply 期 cfg 快照同口径） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | createLiveConfig | L140-272 | 热读工厂：决议路径 + 构造期**无条件读盘一次**（文件真值作首拍基准，成功即记 stamp；失败回退 fallbackDefaults + warnOnce）；返回 10 个 getter（8 项热读 + 2 项宿主行设置权威值读口；取值先 refresh 再做 stamp 比对）；creativeMode getter 保留但当前无热读消费点（该项为 apply 快照）；不做监听/轮询/订阅 |  |
+| plugins/dsh-extra-plan/lib/live-config.js | warnOnce | L151-155 | 同实例只告警一次（防抖）：不可用原因 + 生效路径 + 「回退到 apply 期快照兜底」 |  |
+| plugins/dsh-extra-plan/lib/live-config.js | currentPath | L158-168 | 路径决议（构造期与每次取值现场调用）：显式 configPath → 环境变量 DSH_EXTRA_PLAN_CONFIG_PATH → resolver()（宿主 configEditor.documentPath）；resolver 缺失或抛出返回空串 |  |
+| plugins/dsh-extra-plan/lib/live-config.js | readDiskValues | L171-193 | 读盘→解析→取值单一实现（构造期与 stamp 变化后的刷新共用）：readFileSync + **captureRowSettings(SETTING_DEFINITIONS)（settings 行 = 10 项权威值同源落点）**，按 states[key]==='captured' 覆盖、其余键回落 fallback；未捕获到任何键视为取值失败；失败返回 { ok:false, reason } 不抛出 |  |
+| plugins/dsh-extra-plan/lib/live-config.js | refresh | L213-242 | 变更检测主体：stamp 未变直接返回（零 IO 零解析）；变了才 readFileSync + captureRowSettings 全量解析，按 states[key]==='captured' 覆盖 fallback；stat/解析失败回落 fallback 并 warnOnce |  |
+| plugins/dsh-extra-plan/lib/live-config.js | read | L244-247 | getter 取值通道：refresh() 后读当前 values[key] |  |
 | plugins/dsh-extra-plan/lib/model-routing.js | isExplicitRoute | L19-25 | 按直接父 provider/model 比较 child resolved route，判断 agentOptions 显式路由并短路模型解析 |  |
 | plugins/dsh-extra-plan/lib/model-routing.js | isExplicitEffort | L29-31 | 显式指定 reasoningEffort 判断 |  |
 | plugins/dsh-extra-plan/lib/model-routing.js | requestConfigSnapshot | L41-54 | 从 Agent 的 requestHeader 只提取 provider/model/maxTokens/reasoningEffort owned 路由快照，异常或缺 config 返回 null | 不序列化/持有 Cordis 对象 |
@@ -238,23 +242,23 @@
 | plugins/dsh-extra-plan/lib/model-routing.js | comparePlannerText | L133-137 | 规划 provider name/id 的确定性字典序比较 |  |
 | plugins/dsh-extra-plan/lib/model-routing.js | plannerProviderRank | L139-143 | 候选排序层级：普通 provider、父会话 provider、deepseek-official |  |
 | plugins/dsh-extra-plan/lib/model-routing.js | sortPlannerCandidates | L145-156 | 真实探针成功候选排序：普通 name/id 正序，父 provider 倒数第二，官方最后 |  |
-| plugins/dsh-extra-plan/lib/model-routing.js | createModelRouting | L161-544 | 创建 per-apply 模型路由工厂：内部新建 plannerModelCache/otherAgentModelCache WeakMap，承载 planner 与非 planner 的 legacy/strict 双路径解析，返回 { resolvePlannerEntry, resolveOtherAgentEntry } | 每次 apply 各一份（绝不提升为模块全局）；llm/agents/诊断路径走惰性 getter |
+| plugins/dsh-extra-plan/lib/model-routing.js | createModelRouting | L161-550 | 创建 per-apply 模型路由工厂：内部新建 plannerModelCache/otherAgentModelCache WeakMap，承载 planner 与非 planner 的 legacy/strict 双路径解析，返回 { resolvePlannerEntry, resolveOtherAgentEntry } | 每次 apply 各一份（绝不提升为模块全局）；llm/agents/诊断路径走惰性 getter |
 | plugins/dsh-extra-plan/lib/model-routing.js | plannerAbortError | L169-172 | 保留外部 turn abort 原因，避免改写为严格路由阻断 |  |
 | plugins/dsh-extra-plan/lib/model-routing.js | withPlannerProbeDeadline | L176-209 | planner 与非 planner route 共用本地 30000ms AbortController/race 覆盖目录、准备与流消费并清理计时器 | 不遵守 signal 的第三方 adapter 可能遗留 I/O |
 | plugins/dsh-extra-plan/lib/model-routing.js | probePlannerRoute | L213-255 | planner 与非 planner 候选或顶层 fallback 共用 prepareCall + 完整 prepared stream 的 OK probe，隔离失败终止块/无终止块/超时 | 仅 True 路径调用，不把目录或 resolveCallConfig 当成功 |
 | plugins/dsh-extra-plan/lib/model-routing.js | probePlannerCandidates | L262-278 | 有界并发探针池（上限 PLANNER_PROBE_CONCURRENCY=5）：候选按入参顺序启动、超出排队；返回值与入参一一对应且按发起顺序排列（完成顺序不影响结果），调用方在全部结束后回填 probeOutcomes/successes 再排序 |  |
 | plugins/dsh-extra-plan/lib/model-routing.js | worker | L265-272 | probePlannerCandidates 的并发池内层 worker：用共享游标 next 领取下一个候选索引直到取尽；每个候选各自走 probePlannerRoute（独立 AbortController + 30s deadline，不共享） |  |
 | plugins/dsh-extra-plan/lib/model-routing.js | extractParentEntry | L282-292 | 从父会话 requestHeader().config 提取 provider/model/maxTokens（非法或缺失取 undefined），parent 为 null/undefined 时返回 null | 旧流程与严格路径共用；不读取 agent.session 字段 |
-| plugins/dsh-extra-plan/lib/model-routing.js | resolvePlannerEntryLegacy | L296-351 | False/缺失/非法开关的旧单 provider listModels advisory 解析与原降级诊断 | 不枚举 provider、不做真实 probe |
-| plugins/dsh-extra-plan/lib/model-routing.js | resolvePlannerEntryStrict | L354-428 | True 路径枚举全 provider、等待全部匹配候选排序，并验证父 provider/model fallback；无验证路由固定 reject | plannerModel 为空仅验证父 fallback |
-| plugins/dsh-extra-plan/lib/model-routing.js | routeKey | L386 | 以 provider 与 model 组成 probe outcome 复用键，避免 fallback 同路由二次请求 | 仅 resolver 内部使用 |
-| plugins/dsh-extra-plan/lib/model-routing.js | resolvePlannerEntry | L432-440 | 单点分流并立即缓存 in-flight promise：False 走旧 advisory，True 走全 provider 真实 probe 与严格 fallback | 成功 entry 与 rejection 均固定到 Agent |
-| plugins/dsh-extra-plan/lib/model-routing.js | nonPlannerRouteSources | L444-448 | 读取非 planner resolver 所需的 agents registry，并把服务异常转换为不可用来源 |  |
-| plugins/dsh-extra-plan/lib/model-routing.js | nonPlannerFallbackEntry | L450-458 | 组装顶层主会话 provider/model fallback；普通 child 继承直接父 maxTokens，probe 保留顶层 maxTokens |  |
-| plugins/dsh-extra-plan/lib/model-routing.js | resolveOtherAgentEntryLegacy | L461-477 | cross=false/缺失/非法时只查顶层主会话 provider 的 advisory listModels，命中 otherAgentModel 才覆盖，否则回退 | 不枚举 provider、不做真实 probe |
-| plugins/dsh-extra-plan/lib/model-routing.js | resolveOtherAgentEntryStrict | L481-531 | cross=true 时枚举全 provider，串行 probe otherAgentModel，候选全失败后验证主会话 fallback，失败固定阻断 | 复用 probePlannerRoute/withPlannerProbeDeadline |
-| plugins/dsh-extra-plan/lib/model-routing.js | routeKey | L494 | 非 planner strict resolver 内以 provider/model 组成本次 Agent 的 probe outcome 复用键 | 仅 resolver 内部使用；与 planner routeKey 同名但 cache 隔离 |
-| plugins/dsh-extra-plan/lib/model-routing.js | resolveOtherAgentEntry | L534-542 | 非 planner 单一入口，按 cross 开关选择 legacy/strict，并立即缓存单 Agent 的 in-flight/成功/rejection promise | 不读写 plannerModelCache |
+| plugins/dsh-extra-plan/lib/model-routing.js | resolvePlannerEntryLegacy | L296-352 | False/缺失/非法开关的旧单 provider listModels advisory 解析与原降级诊断 | 不枚举 provider、不做真实 probe |
+| plugins/dsh-extra-plan/lib/model-routing.js | resolvePlannerEntryStrict | L355-430 | True 路径枚举全 provider、等待全部匹配候选排序，并验证父 provider/model fallback；无验证路由固定 reject | plannerModel 为空仅验证父 fallback |
+| plugins/dsh-extra-plan/lib/model-routing.js | routeKey | L388 | 以 provider 与 model 组成 probe outcome 复用键，避免 fallback 同路由二次请求 | 仅 resolver 内部使用 |
+| plugins/dsh-extra-plan/lib/model-routing.js | resolvePlannerEntry | L434-443 | 单点分流并立即缓存 in-flight promise：False 走旧 advisory，True 走全 provider 真实 probe 与严格 fallback | 成功 entry 与 rejection 均固定到 Agent |
+| plugins/dsh-extra-plan/lib/model-routing.js | nonPlannerRouteSources | L447-451 | 读取非 planner resolver 所需的 agents registry，并把服务异常转换为不可用来源 |  |
+| plugins/dsh-extra-plan/lib/model-routing.js | nonPlannerFallbackEntry | L453-461 | 组装顶层主会话 provider/model fallback；普通 child 继承直接父 maxTokens，probe 保留顶层 maxTokens |  |
+| plugins/dsh-extra-plan/lib/model-routing.js | resolveOtherAgentEntryLegacy | L464-481 | cross=false/缺失/非法时只查顶层主会话 provider 的 advisory listModels，命中 otherAgentModel 才覆盖，否则回退 | 不枚举 provider、不做真实 probe |
+| plugins/dsh-extra-plan/lib/model-routing.js | resolveOtherAgentEntryStrict | L485-536 | cross=true 时枚举全 provider，串行 probe otherAgentModel，候选全失败后验证主会话 fallback，失败固定阻断 | 复用 probePlannerRoute/withPlannerProbeDeadline |
+| plugins/dsh-extra-plan/lib/model-routing.js | routeKey | L499 | 非 planner strict resolver 内以 provider/model 组成本次 Agent 的 probe outcome 复用键 | 仅 resolver 内部使用；与 planner routeKey 同名但 cache 隔离 |
+| plugins/dsh-extra-plan/lib/model-routing.js | resolveOtherAgentEntry | L539-548 | 非 planner 单一入口，按 cross 开关选择 legacy/strict，并立即缓存单 Agent 的 in-flight/成功/rejection promise | 不读写 plannerModelCache |
 | plugins/dsh-extra-plan/lib/planner-budget.js | toolCallCount | L11-40 | 按成功 tool/result 配对统计工具调用并跳过白名单工具 |  |
 | plugins/dsh-extra-plan/lib/planner-budget.js | toolCallsSinceUser | L43-55 | 统计最近 user/agent-message 锚点后的预算调用数 |  |
 | plugins/dsh-extra-plan/lib/planner-budget.js | appendSuffixBlock | L57-74 | 给 user/agent-message 的首个文本块幂等追加后缀 |  |
@@ -290,55 +294,55 @@
 | plugins/dsh-extra-plan/lib/preset-settings.js | normalizeSettingValue | L275-277 | 有 normalize 时按其归一化（如 plannerModel 的 trim），否则原值返回 |  |
 | plugins/dsh-extra-plan/lib/preset-settings.js | resolveTemplateSettingDefault | L279-294 | 按唯一 locator 解析并严格校验模板叶值 |  |
 | plugins/dsh-extra-plan/lib/preset-settings.js | captureSettings | L300-316 | 解析预设并逐项解析 → {document,values,states}；states 四态，仅 captured 进 values |  |
-| plugins/dsh-extra-plan/lib/preset-settings.js | captureRowSettings | L323-339 | **权威值捕获（settings 行，10 项）**：逐项按 rowLocator 解析且不并别名，states 四态（missing/ambiguous/invalid/captured），仅 captured 归一后进 values；额外返回 rowPresent（行在不在）以区分「不可判定」与「行在但缺项（可一次性回填）」 |  |
-| plugins/dsh-extra-plan/lib/preset-settings.js | findPluginsRow | L342-353 | 声明行 config.plugins 内按 id 深度优先定位子行（含 group 行的 config 子行数组），未命中返回 null |  |
-| plugins/dsh-extra-plan/lib/preset-settings.js | readProjectedValue | L360-368 | **投影现值读取**：按 descriptor.projectionLocator 定位声明行子行 + 叶键，值经 validator 校验后归一返回；子行缺失/叶缺失/非法一律 undefined（判定侧按出厂默认参与比较 → 投影被删是无害状态） | 只服务 2 项宿主行设置；权威值不走这里 |
-| plugins/dsh-extra-plan/lib/preset-settings.js | restatePluginsRow | L371-378 | 声明行 plugins 深拷贝后整体重述：只把目标子行的 config 键浅合并（config 不深合并语义），子行缺失返回 null |  |
-| plugins/dsh-extra-plan/lib/preset-settings.js | inlineCommentIndex | L380-398 | 找行内注释起始下标（跟踪单/双引号与 '' 转义，仅 # 前有空白或行首才算），无则 -1 |  |
-| plugins/dsh-extra-plan/lib/preset-settings.js | lineIndent | L400-403 | 行首空格数（缩进量）；与 qqbot heal.js 同名函数无关 |  |
-| plugins/dsh-extra-plan/lib/preset-settings.js | withoutCr | L405-407 | 去掉行尾 CR，兼容 CRLF 文本 |  |
-| plugins/dsh-extra-plan/lib/preset-settings.js | parseRowId | L409-421 | 解析 '- id: xxx' 行的 id（先去行内注释、再解单/双引号写法），非 id 行返回 null |  |
-| plugins/dsh-extra-plan/lib/preset-settings.js | parseMapKey | L423-427 | 映射行 → {key,indent}（'-' 开头的数组项返回 null） |  |
-| plugins/dsh-extra-plan/lib/preset-settings.js | rowEnd | L429-437 | 求所在块结束行：跳过空行/注释，遇缩进 ≤ 本行缩进即返回其行号，否则返回总行数 |  |
-| plugins/dsh-extra-plan/lib/preset-settings.js | findDirectKey | L439-457 | 在 [start,end) 内按首个子键缩进寻找父块直属子键 key 的行号；找不到返回 null |  |
-| plugins/dsh-extra-plan/lib/preset-settings.js | textPathLine | L459-471 | 沿点分 path 逐层下钻定位，返回路径末段所在行号；任一段缺失返回 null |  |
-| plugins/dsh-extra-plan/lib/preset-settings.js | findTextLocatorMatches | L473-485 | 在 YAML 原文中定位 pluginId 行并下钻路径 → [{rowStart,rowEnd,line}] |  |
-| plugins/dsh-extra-plan/lib/preset-settings.js | yamlString | L487-491 | 字符串 → YAML 标量：含换行用 JSON 双引号形式，否则单引号包裹并把 ' 转成 '' |  |
-| plugins/dsh-extra-plan/lib/preset-settings.js | serializeScalar | L493-497 | 按 scalarType 把值序列化成 YAML 标量文本（boolean/integer/其余走 yamlString） |  |
-| plugins/dsh-extra-plan/lib/preset-settings.js | escapeRegex | L499-501 | 逐字符转义正则元字符，把键名安全拼进正则 |  |
-| plugins/dsh-extra-plan/lib/preset-settings.js | replaceLineScalar | L503-515 | 保格式替换某键的标量值（保留缩进、值前后空白、行内注释与 CR）；键行不匹配返回 null |  |
-| plugins/dsh-extra-plan/lib/preset-settings.js | isBlockScalarLine | L517-527 | 判断该键的值是否块标量（以竖线或 > 开头，忽略行内注释） |  |
-| plugins/dsh-extra-plan/lib/preset-settings.js | scalarTypeFor | L529-534 | 参数归一化：传 descriptor 取 .scalarType，否则缺省 'string' |  |
-| plugins/dsh-extra-plan/lib/preset-settings.js | patchYamlScalar | L540-566 | 保格式定点改写 YAML 标量 → {ok,text,line}，或 {ok:false,reason:'missing'／'ambiguous'}；纯字符串处理不写文件 |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | defaultDshHome | L74-78 | DSH_HOME 决议：环境变量非空取环境变量，缺失/空串回退 ~/.dsh |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | contentHash | L81-89 | 预设资产内容哈希 |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | pluginRowIds | L92-104 | 声明行 plugins 的行 id 集合（含 group 行 config 子行数组，扁平化；空串与非对象行跳过） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | visit | L94-101 | 递归遍历 plugins 行数组：字符串 id 推入 ids，遇 config 数组继续下钻（非数组直接返回） | pluginRowIds 内部闭包 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | declarationCoversAsset | L107-111 | 声明行是否仍承载本预设组合：行 id 集合覆盖 DECLARATION_ROW_IDS（extra-plan + 2 项宿主行 id），非数组一律 false |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | userWritableByRow | L122-139 | 用户可写位置表（行 id → 该行「用户可改」的 config 键集合）：唯一来源 = HOST_ROW_SETTING_DEFINITIONS.**projectionLocator**（声明行子行 tool-web.fetch / tool-presentation.mode —— 权威值已上移 settings 行，本体剥离只看声明行）与 GATE_WORDS_GROUP_DEFINITION（extra-plan.gateWords）；**与搬运写回清单严格同源，剥离表与写回清单必须恒等** |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | push | L124-132 | 归一化 `config.` 前缀后的单键写入表（含点号的多级路径与空键一律忽略） | userWritableByRow 内部闭包 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | stripUserWritable | L142-163 | 剥离用户可写键（置 `__user__` 占位、保持键序与结构）得到「本体」视图；递归处理 group 行的 config 数组 |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | stripRow | L145-161 | 单行剥离：group 行递归下钻、命中行按可写键集合置占位（仅替换已存在的键） | stripUserWritable 内部闭包 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | declarationBodyMatchesAsset | L169-172 | 声明行「本体」是否与资产一致（剥离用户可写键后逐字比 JSON）；任一输入非数组 → 保守 true（不触发重建，信息不全时绝不改写现场） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | carryUserWritable | L179-213 | 从现有声明行抽出用户可写项（与剥离表同源）：显式迁移值缺省时的用户值来源；**旧副本缺席（source: absent）时靠它保住现场定制**（2 项宿主行 + 7 词） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | visit | L188-210 | 递归遍历 plugins（含 group 子行），按剥离表抽出用户可写键值 → hostRowConfig / gateWords | carryUserWritable 内部闭包 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | effectiveRowConfig | L222-235 | **权威值读取原语**：宿主 configuration() 行 → 生效 config（inherited 层 → Loader 行 declared config → profile override 浅合并，高优先层胜）；宿主 override 就是该行 config 本身，另兼容 override.config 行节点形状；无层 → null（不可判定） | settings.js 与 preset-sync.js 共用（同一实现，单点） |
-| plugins/dsh-extra-plan/lib/preset-sync.js | isPlain | L224 | 纯对象判定（非 null、非数组）——层合并前的过滤条件 | effectiveRowConfig 内部闭包 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | readAuthoritySettings | L245-267 | **权威值上移读取**：settings 行 = 10 项设置的唯一权威落点 —— 宿主侧取 options.settingsValues（present=true），夹具侧由 options.readPatch() 文本经 captureRowSettings 捕获（rowPresent 区分「行缺席」与「行在但缺项」）；两者皆无 → { present:false, values:{} }，信息不全时不改写现场 |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | hostRowDefaultsOf | L270-284 | 2 项宿主行设置的出厂默认：读厂商模板叶值（sourceLocator），缺项/解析失败回落内置 { webFetch:false, toolPresentationMode:'native' } | 投影一致性判定的兜底基准 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | projectionLeafExists | L290-295 | 投影叶「键在不在」判定（值是否合法另判）：把「键缺失」（无害删除，可稳态 idle）与「键在但值非法」（手改 YAML 等，必须按权威值/出厂值修复）区分开 | planHostRowProjection 内部前置 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | planHostRowProjection | L308-346 | **投影一致性判定 + 投影 plan**（纯计算）：期望投影值 = 权威值（settings 行现值 ∪ 迁移值）→ 缺项时取声明行非出厂现值并记 backfill（一次性回填）→ 否则出厂默认；**投影缺失按出厂默认参与比较，故「权威==出厂 且 投影缺失」判一致 = 稳态 idle（不反复重建/不空转写盘）**；键在但值非法一律按期望值修复；hostRowConfig 只含需改写的投影键 |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | captureGateWords | L352-361 | 旧组整组判定：稳定 locator（id=extra-plan + config.gateWords）定位 + 共享 validator 全组校验，返回 captured/missing/ambiguous/invalid 与冻结词值 |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | assertTemplateGateWords | L364-370 | 厂商模板整组前置校验：缺失/非法一律抛错（在 hash/idle 判定与任何目标目录动作之前，坏模板不得进入发布流程） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | restatePresetPlugins | L373-413 | 声明行 plugins 整体重述：**base 优先取 basePlugins（厂商模板）**，缺省才回落 current.plugins → inherited.plugins；再写回用户可写项 —— 宿主行 config 取「显式迁移值优先、carry（当前声明行）兜底」，gateWords 显式路径整组 validateGateWords（失败即抛）、carry 路径容错（非法则保留基底词表，不阻断本体刷新） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | syncPreset | L426-472 | 同步判定与落地：**idle 三条件 = 声明行 plugins 覆盖资产行 id 集合 + 本体内容一致（declarationBodyMatchesAsset）+ 投影一致（权威值==当前投影；投影缺失按出厂值比较 → 稳态 idle）；不读也不写任何运行期台账**；否则构造 plan 并经注入的 apply 落地：settings 行只写一次性回填值、声明行 plugins 按权威值投影 2 项宿主行（gateWords 由 restatePresetPlugins 的 carry 分支兜底），plan 上带 bodyStale 供 applyPlan 判断是否重建；action 恒 'written'（无 firstRun/upgraded 之分，ctx 只带 action） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | readDeclaredPluginsFromPatch | L475-497 | 从 profile patch 文本旁路读声明行 config.plugins（DFS 找 id=PRESET_ROW_ID 的行）；空文本、YAML 非法或未命中返回 undefined |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | visit | L484-494 | 递归遍历解析结果（数组逐项、对象逐值），把 id=PRESET_ROW_ID 且 config.plugins 为数组的行 plugins 推入 found | readDeclaredPluginsFromPatch 内部闭包 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | assetPlugins | L503-510 | 厂商模板（资产 patch）里的声明行 plugins —— 本体同步的基底来源；资产缺失或解析失败一律 undefined（调用方回落既有行为，绝不破坏现场） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | apply | L519-547 | 插件入口：ctx.inject([configEditor]) 取编辑器后调 syncPreset（**同时取 settings 行生效 config 作权威值 settingsValues**，写盘只经 configEditor.edit） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | effectivePlugins | L550-558 | 取生效 plugins：profile override → Loader 行 entry.options.config → inherited 层，均无数组返回 undefined |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | applyPlan | L560-581 | 落地回调：按 plan 用 configEditor.edit 改 settings 行（浅合并 values —— 迁移值 + 一次性回填值，**权威值落点**）；**声明行写入条件 = 有旧副本可迁移（plan.preset≠null）或 本体过期（plan.bodyStale===true）**，经 restatePresetPlugins(current, inherited, presetPlan, assetPlugins()) 以厂商模板为基底重建 + 按权威值投影宿主行 + 写回用户值；目标行缺失即抛 |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | findEntry | L561-564 | 按 id 在 configuration() 行里找 entry（entry.options.id 命中），未命中返回 undefined | applyPlan 内部闭包 |
+| plugins/dsh-extra-plan/lib/preset-settings.js | effectivePluginsOf | L319-328 | 统一解析 profile override → Loader config → inherited 的生效 plugins |  |
+| plugins/dsh-extra-plan/lib/preset-settings.js | hostRowDefaultsFromTemplate | L331-345 | 统一从模板 sourceLocator 捕获 webFetch/toolPresentationMode 默认，失败回退内置值 |  |
+| plugins/dsh-extra-plan/lib/preset-settings.js | captureRowSettings | L352-368 | **权威值捕获（settings 行，10 项）**：逐项按 rowLocator 解析且不并别名，states 四态（missing/ambiguous/invalid/captured），仅 captured 归一后进 values；额外返回 rowPresent（行在不在）以区分「不可判定」与「行在但缺项（可一次性回填）」 |  |
+| plugins/dsh-extra-plan/lib/preset-settings.js | findPluginsRow | L371-382 | 声明行 config.plugins 内按 id 深度优先定位子行（含 group 行的 config 子行数组），未命中返回 null |  |
+| plugins/dsh-extra-plan/lib/preset-settings.js | readProjectedValue | L389-397 | **投影现值读取**：按 descriptor.projectionLocator 定位声明行子行 + 叶键，值经 validator 校验后归一返回；子行缺失/叶缺失/非法一律 undefined（判定侧按出厂默认参与比较 → 投影被删是无害状态） | 只服务 2 项宿主行设置；权威值不走这里 |
+| plugins/dsh-extra-plan/lib/preset-settings.js | restatePluginsRow | L400-407 | 声明行 plugins 深拷贝后整体重述：只把目标子行的 config 键浅合并（config 不深合并语义），子行缺失返回 null |  |
+| plugins/dsh-extra-plan/lib/preset-settings.js | inlineCommentIndex | L409-427 | 找行内注释起始下标（跟踪单/双引号与 '' 转义，仅 # 前有空白或行首才算），无则 -1 |  |
+| plugins/dsh-extra-plan/lib/preset-settings.js | lineIndent | L429-432 | 行首空格数（缩进量）；与 qqbot heal.js 同名函数无关 |  |
+| plugins/dsh-extra-plan/lib/preset-settings.js | withoutCr | L434-436 | 去掉行尾 CR，兼容 CRLF 文本 |  |
+| plugins/dsh-extra-plan/lib/preset-settings.js | parseRowId | L438-450 | 解析 '- id: xxx' 行的 id（先去行内注释、再解单/双引号写法），非 id 行返回 null |  |
+| plugins/dsh-extra-plan/lib/preset-settings.js | parseMapKey | L452-456 | 映射行 → {key,indent}（'-' 开头的数组项返回 null） |  |
+| plugins/dsh-extra-plan/lib/preset-settings.js | rowEnd | L458-466 | 求所在块结束行：跳过空行/注释，遇缩进 ≤ 本行缩进即返回其行号，否则返回总行数 |  |
+| plugins/dsh-extra-plan/lib/preset-settings.js | findDirectKey | L468-486 | 在 [start,end) 内按首个子键缩进寻找父块直属子键 key 的行号；找不到返回 null |  |
+| plugins/dsh-extra-plan/lib/preset-settings.js | textPathLine | L488-500 | 沿点分 path 逐层下钻定位，返回路径末段所在行号；任一段缺失返回 null |  |
+| plugins/dsh-extra-plan/lib/preset-settings.js | findTextLocatorMatches | L502-514 | 在 YAML 原文中定位 pluginId 行并下钻路径 → [{rowStart,rowEnd,line}] |  |
+| plugins/dsh-extra-plan/lib/preset-settings.js | yamlString | L516-520 | 字符串 → YAML 标量：含换行用 JSON 双引号形式，否则单引号包裹并把 ' 转成 '' |  |
+| plugins/dsh-extra-plan/lib/preset-settings.js | serializeScalar | L522-526 | 按 scalarType 把值序列化成 YAML 标量文本（boolean/integer/其余走 yamlString） |  |
+| plugins/dsh-extra-plan/lib/preset-settings.js | escapeRegex | L528-530 | 逐字符转义正则元字符，把键名安全拼进正则 |  |
+| plugins/dsh-extra-plan/lib/preset-settings.js | replaceLineScalar | L532-544 | 保格式替换某键的标量值（保留缩进、值前后空白、行内注释与 CR）；键行不匹配返回 null |  |
+| plugins/dsh-extra-plan/lib/preset-settings.js | isBlockScalarLine | L546-556 | 判断该键的值是否块标量（以竖线或 > 开头，忽略行内注释） |  |
+| plugins/dsh-extra-plan/lib/preset-settings.js | scalarTypeFor | L558-563 | 参数归一化：传 descriptor 取 .scalarType，否则缺省 'string' |  |
+| plugins/dsh-extra-plan/lib/preset-settings.js | patchYamlScalar | L569-595 | 保格式定点改写 YAML 标量 → {ok,text,line}，或 {ok:false,reason:'missing'／'ambiguous'}；纯字符串处理不写文件 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | defaultDshHome | L75-79 | DSH_HOME 决议：环境变量非空取环境变量，缺失/空串回退 ~/.dsh |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | contentHash | L82-90 | 预设资产内容哈希 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | pluginRowIds | L93-105 | 声明行 plugins 的行 id 集合（含 group 行 config 子行数组，扁平化；空串与非对象行跳过） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | visit | L95-102 | 递归遍历 plugins 行数组：字符串 id 推入 ids，遇 config 数组继续下钻（非数组直接返回） | pluginRowIds 内部闭包 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | declarationCoversAsset | L108-112 | 声明行是否仍承载本预设组合：行 id 集合覆盖 DECLARATION_ROW_IDS（extra-plan + 2 项宿主行 id），非数组一律 false |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | userWritableByRow | L123-140 | 用户可写位置表（行 id → 该行「用户可改」的 config 键集合）：唯一来源 = HOST_ROW_SETTING_DEFINITIONS.**projectionLocator**（声明行子行 tool-web.fetch / tool-presentation.mode —— 权威值已上移 settings 行，本体剥离只看声明行）与 GATE_WORDS_GROUP_DEFINITION（extra-plan.gateWords）；**与搬运写回清单严格同源，剥离表与写回清单必须恒等** |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | push | L125-133 | 归一化 `config.` 前缀后的单键写入表（含点号的多级路径与空键一律忽略） | userWritableByRow 内部闭包 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | stripUserWritable | L143-164 | 剥离用户可写键（置 `__user__` 占位、保持键序与结构）得到「本体」视图；递归处理 group 行的 config 数组 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | stripRow | L146-162 | 单行剥离：group 行递归下钻、命中行按可写键集合置占位（仅替换已存在的键） | stripUserWritable 内部闭包 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | declarationBodyMatchesAsset | L170-173 | 声明行「本体」是否与资产一致（剥离用户可写键后逐字比 JSON）；任一输入非数组 → 保守 true（不触发重建，信息不全时绝不改写现场） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | carryUserWritable | L180-214 | 从现有声明行抽出用户可写项（与剥离表同源）：显式迁移值缺省时的用户值来源；**旧副本缺席（source: absent）时靠它保住现场定制**（2 项宿主行 + 7 词） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | visit | L189-211 | 递归遍历 plugins（含 group 子行），按剥离表抽出用户可写键值 → hostRowConfig / gateWords | carryUserWritable 内部闭包 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | effectiveRowConfig | L223-236 | **权威值读取原语**：宿主 configuration() 行 → 生效 config（inherited 层 → Loader 行 declared config → profile override 浅合并，高优先层胜）；宿主 override 就是该行 config 本身，另兼容 override.config 行节点形状；无层 → null（不可判定） | settings.js 与 preset-sync.js 共用（同一实现，单点） |
+| plugins/dsh-extra-plan/lib/preset-sync.js | isPlain | L225 | 纯对象判定（非 null、非数组）——层合并前的过滤条件 | effectiveRowConfig 内部闭包 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readAuthoritySettings | L246-268 | **权威值上移读取**：settings 行 = 10 项设置的唯一权威落点 —— 宿主侧取 options.settingsValues（present=true），夹具侧由 options.readPatch() 文本经 captureRowSettings 捕获（rowPresent 区分「行缺席」与「行在但缺项」）；两者皆无 → { present:false, values:{} }，信息不全时不改写现场 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | projectionLeafExists | L277-282 | 投影叶「键在不在」判定（值是否合法另判）：把「键缺失」（无害删除，可稳态 idle）与「键在但值非法」（手改 YAML 等，必须按权威值/出厂值修复）区分开 | planHostRowProjection 内部前置 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | planHostRowProjection | L295-333 | **投影一致性判定 + 投影 plan**（纯计算）：期望投影值 = 权威值（settings 行现值 ∪ 迁移值）→ 缺项时取声明行非出厂现值并记 backfill（一次性回填）→ 否则出厂默认；**投影缺失按出厂默认参与比较，故「权威==出厂 且 投影缺失」判一致 = 稳态 idle（不反复重建/不空转写盘）**；键在但值非法一律按期望值修复；hostRowConfig 只含需改写的投影键 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | captureGateWords | L339-348 | 旧组整组判定：稳定 locator（id=extra-plan + config.gateWords）定位 + 共享 validator 全组校验，返回 captured/missing/ambiguous/invalid 与冻结词值 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | assertTemplateGateWords | L351-357 | 厂商模板整组前置校验：缺失/非法一律抛错（在 hash/idle 判定与任何目标目录动作之前，坏模板不得进入发布流程） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | restatePresetPlugins | L360-400 | 声明行 plugins 整体重述：**base 优先取 basePlugins（厂商模板）**，缺省才回落 current.plugins → inherited.plugins；再写回用户可写项 —— 宿主行 config 取「显式迁移值优先、carry（当前声明行）兜底」，gateWords 显式路径整组 validateGateWords（失败即抛）、carry 路径容错（非法则保留基底词表，不阻断本体刷新） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | syncPreset | L413-459 | 同步判定与落地：**idle 三条件 = 声明行 plugins 覆盖资产行 id 集合 + 本体内容一致（declarationBodyMatchesAsset）+ 投影一致（权威值==当前投影；投影缺失按出厂值比较 → 稳态 idle）；不读也不写任何运行期台账**；否则构造 plan 并经注入的 apply 落地：settings 行只写一次性回填值、声明行 plugins 按权威值投影 2 项宿主行（gateWords 由 restatePresetPlugins 的 carry 分支兜底），plan 上带 bodyStale 供 applyPlan 判断是否重建；action 恒 'written'（无 firstRun/upgraded 之分，ctx 只带 action） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readDeclaredPluginsFromPatch | L462-484 | 从 profile patch 文本旁路读声明行 config.plugins（DFS 找 id=PRESET_ROW_ID 的行）；空文本、YAML 非法或未命中返回 undefined |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | visit | L471-481 | 递归遍历解析结果（数组逐项、对象逐值），把 id=PRESET_ROW_ID 且 config.plugins 为数组的行 plugins 推入 found | readDeclaredPluginsFromPatch 内部闭包 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | assetPlugins | L490-497 | 厂商模板（资产 patch）里的声明行 plugins —— 本体同步的基底来源；资产缺失或解析失败一律 undefined（调用方回落既有行为，绝不破坏现场） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | apply | L506-535 | 插件入口：ctx.inject([configEditor]) 取编辑器后调 syncPreset（**同时取 settings 行生效 config 作权威值 settingsValues**，写盘只经 configEditor.edit） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | applyPlan | L537-559 | 落地回调：按 plan 用 configEditor.edit 改 settings 行（浅合并 values —— 迁移值 + 一次性回填值，**权威值落点**）；**声明行写入条件 = 有旧副本可迁移（plan.preset≠null）或 本体过期（plan.bodyStale===true）**，经 restatePresetPlugins(current, inherited, presetPlan, assetPlugins()) 以厂商模板为基底重建 + 按权威值投影宿主行 + 写回用户值；目标行缺失即抛 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | findEntry | L538-541 | 按 id 在 configuration() 行里找 entry（entry.options.id 命中），未命中返回 undefined | applyPlan 内部闭包 |
 | plugins/dsh-extra-plan/lib/run-code-static.js | runCodeTextOf | L20-24 | 提取 run_code 的 code 参数文本 |  |
 | plugins/dsh-extra-plan/lib/run-code-static.js | codeMutationHints | L27-35 | 对文本扫描 RUNCODE_MUTATION_HINTS 返回命中写暗示 id 列表 |  |
 | plugins/dsh-extra-plan/lib/run-code-static.js | createRunCodeStatic | L37-678 | 创建 run_code 静态 helper 闭包，仅注入 askTool 与双兼容 isDispatchStart |  |
@@ -367,25 +371,27 @@
 | plugins/dsh-extra-plan/lib/run-code-static.js | runCodeDispatchGateReason | L651-665 | 运行时单实例上限（planner）：按 rootCallId 计数，超 cap 返回 T3 文案 |  |
 | plugins/dsh-extra-plan/lib/runtime-static.js | causeChainOf | L4-16 | 按显式 depth 提取错误 cause 链 |  |
 | plugins/dsh-extra-plan/lib/save-contract.js | sanitizeTaskName | L4-12 | 任务名净化（截断/去非法字符） |  |
-| plugins/dsh-extra-plan/lib/save-contract.js | timestamp | L15-19 | 本地时间戳 yyyyMMddHHmmss（文件名可读且具唯一性） |  |
-| plugins/dsh-extra-plan/lib/save-contract.js | pad | L17 | timestamp 内部数字补零 |  |
-| plugins/dsh-extra-plan/lib/save-contract.js | sessionTagOf | L23-25 | 会话标识段（去分隔符后取前 8 位字母数字） |  |
-| plugins/dsh-extra-plan/lib/save-contract.js | savePlanBase | L31-34 | save_plan 文件名 base（任务短名 + 会话标识段 + 时间戳） |  |
-| plugins/dsh-extra-plan/lib/save-contract.js | renderSavePlan | L41-43 | save_plan 结果渲染为单元素 ContentBlock[] |  |
-| plugins/dsh-extra-plan/lib/save-contract.js | renderProbeMarkdown | L78-119 | save_probe 线索/证据报告 Markdown 渲染（固定标题与五节模板） |  |
-| plugins/dsh-extra-plan/lib/save-contract.js | trimProbeEvidenceDecor | L161-172 | **成对**剥除证据引用段的首尾装饰（成对集合：反引号/`*`/`_`/引号/半全角括号/中文书名号等——仅当首字符是开装饰、末字符是其配对闭装饰、且中间不再出现该闭装饰时才剥，可循环处理多层包裹）；**单侧出现一律不剥**（`_private.md`／`(abc).md` 原样保留，只 trim 首尾空白）；剥除集**不含 `.` 与 `/`**（相对路径与扩展名必须保留） | 由 extractProbeEvidenceRefs 整体与逐段调用；坑与修法见 ai-机制设计.md 教训索引「证据引用清洗误伤（单侧剥除）」 |
-| plugins/dsh-extra-plan/lib/save-contract.js | extractProbeEvidenceRefs | L173-186 | 提取方案中【探查者已核实】标注的证据文件路径，顺序固定为：整体成对剥除（循环）→ 按顿号/分号/竖线拆分为多段（**拆分符不含空格与半角逗号**）→ 逐段成对剥除 + trim → 过滤空串 → 按出现顺序去重 | step-00 E1-E12（E6-E9 覆盖反引号/顿号连列/绝对路径与存在性；E10-E12 覆盖单侧不剥与成对剥后不误剥） |
-| plugins/dsh-extra-plan/lib/save-contract.js | renderSaveProbe | L190-192 | save_probe 结果渲染为单元素 ContentBlock[] |  |
+| plugins/dsh-extra-plan/lib/save-contract.js | timestampOf | L15-18 | 生成本地 yyyyMMddHHmmss 部分，供公共 timestamp 与 artifact base 使用 |  |
+| plugins/dsh-extra-plan/lib/save-contract.js | pad | L16 | timestamp 内部数字补零 |  |
+| plugins/dsh-extra-plan/lib/save-contract.js | timestamp | L20-22 | 本地时间戳 yyyyMMddHHmmss（文件名可读且具唯一性） |  |
+| plugins/dsh-extra-plan/lib/save-contract.js | sessionTagOf | L26-28 | 会话标识段（去分隔符后取前 8 位字母数字） |  |
+| plugins/dsh-extra-plan/lib/save-contract.js | saveArtifactBase | L34-49 | 统一生成任务名+sessionTag+毫秒+process.pid+进程序号的碰撞安全 base |  |
+| plugins/dsh-extra-plan/lib/save-contract.js | savePlanBase | L52-54 | save_plan 文件名 base（任务短名 + 会话标识段 + 时间戳） |  |
+| plugins/dsh-extra-plan/lib/save-contract.js | renderSavePlan | L61-63 | save_plan 结果渲染为单元素 ContentBlock[] |  |
+| plugins/dsh-extra-plan/lib/save-contract.js | renderProbeMarkdown | L98-139 | save_probe 线索/证据报告 Markdown 渲染（固定标题与五节模板） |  |
+| plugins/dsh-extra-plan/lib/save-contract.js | trimProbeEvidenceDecor | L181-192 | **成对**剥除证据引用段的首尾装饰（成对集合：反引号/`*`/`_`/引号/半全角括号/中文书名号等——仅当首字符是开装饰、末字符是其配对闭装饰、且中间不再出现该闭装饰时才剥，可循环处理多层包裹）；**单侧出现一律不剥**（`_private.md`／`(abc).md` 原样保留，只 trim 首尾空白）；剥除集**不含 `.` 与 `/`**（相对路径与扩展名必须保留） | 由 extractProbeEvidenceRefs 整体与逐段调用；坑与修法见 ai-机制设计.md 教训索引「证据引用清洗误伤（单侧剥除）」 |
+| plugins/dsh-extra-plan/lib/save-contract.js | extractProbeEvidenceRefs | L193-206 | 提取方案中【探查者已核实】标注的证据文件路径，顺序固定为：整体成对剥除（循环）→ 按顿号/分号/竖线拆分为多段（**拆分符不含空格与半角逗号**）→ 逐段成对剥除 + trim → 过滤空串 → 按出现顺序去重 | step-00 E1-E12（E6-E9 覆盖反引号/顿号连列/绝对路径与存在性；E10-E12 覆盖单侧不剥与成对剥后不误剥） |
+| plugins/dsh-extra-plan/lib/save-contract.js | renderSaveProbe | L210-212 | save_probe 结果渲染为单元素 ContentBlock[] |  |
 | plugins/dsh-extra-plan/lib/save-persistence.js | fsOpsOf | L10-13 | 合并末位可选文件系统操作依赖：未提供的操作项回退冻结只读的默认 node:fs 同义实现（另建新对象，不就地改写共享默认集） |  |
 | plugins/dsh-extra-plan/lib/save-persistence.js | atomicCommit | L30-60 | 阶段感知原子提交：mkdir→写 tmp→写 journal→逐条 rename→逐项确认目标就位→清 journal；pre-journal 失败先删 journal 并用 existsSync 确认不存在才清 tmp（journal 删不掉则保留全部 tmp），post-journal 任何失败（rename/目标确认/journal 删除）保留 journal 与现场，始终抛原始错误、清理错误不覆盖；末位可选 fs 依赖注入 |  |
-| plugins/dsh-extra-plan/lib/save-persistence.js | recoveryTargetsOf | L67-90 | journal 记录归一为非空恢复目标列表（新形状 entries ／ 旧形状 planTmp·checkTmp·planFile·checkFile）；形状非法、字段缺半对或无目标即抛错，走既有告警路径并保留 journal |  |
-| plugins/dsh-extra-plan/lib/save-persistence.js | recoverJournals | L102-124 | journal 崩溃自愈：逐项「tmp 存在则 rename、随后确认目标存在」，已完成项凭目标存在幂等续做，任一项失败保留 journal，全项就位才删；形状非法/目标缺失告警后保留并继续扫其它 journal；兼容新旧形状并按 sessionTag 过滤；末位可选 fs 依赖注入 |  |
+| plugins/dsh-extra-plan/lib/save-persistence.js | recoveryTargetsOf | L64-73 | journal 只接受非空当前 entries 列表；旧形状/非法形状只告警并保留 journal 与 tmp |  |
+| plugins/dsh-extra-plan/lib/save-persistence.js | recoverJournals | L85-106 | journal 崩溃自愈：逐项「tmp 存在则 rename、随后确认目标存在」，已完成项凭目标存在幂等续做，任一项失败保留 journal，全项就位才删；形状非法/目标缺失告警后保留并继续扫其它 journal；兼容新旧形状并按 sessionTag 过滤；末位可选 fs 依赖注入 |  |
 | plugins/dsh-extra-plan/lib/save-probe-validation.js | validateProbe | L10-109 | save_probe 参数校验：上限、路径存在性、range/evidence 规则与聚合拒绝 |  |
 | plugins/dsh-extra-plan/lib/save-probe-validation.js | probePathOf | L112-115 | 相对路径按 cwd 解析、绝对路径原样返回 |  |
 | plugins/dsh-extra-plan/lib/save-tool-factories.js | probeRefDecorationHint | L16-18 | ref 首字符属装饰集（反引号/引号/半全角括号/中文标点等）时返回「疑似含 Markdown 装饰；引用证据请使用裸路径，每条单独一行」提示，否则返回空串 | 工具侧诊断文本（非界面文案）；报错中 ref 一律 JSON.stringify 呈现 |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | createSaveToolFactories | L21-206 | 创建只捕获目录与原子持久化依赖的 save 工具定义工厂；注入依赖：savePlanDir、atomicCommit、recoverJournals |  |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | defineSavePlan | L22-88 | save_plan schema/output/render/execute（双写与证据引用校验） |  |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | defineSaveProbe | L90-203 | save_probe schema/output/render/execute（限制校验与线索/证据落盘） |  |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | createSaveToolFactories | L21-209 | 创建只捕获目录与原子持久化依赖的 save 工具定义工厂；注入依赖：savePlanDir、atomicCommit、recoverJournals |  |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | defineSavePlan | L22-89 | save_plan schema/output/render/execute（双写与证据引用校验） |  |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | defineSaveProbe | L91-206 | save_probe schema/output/render/execute（限制校验与线索/证据落盘） |  |
 | plugins/dsh-extra-plan/lib/sdk-text-cache.js | isWeakKey | L7-9 | 判断值是否可作为 WeakMap key |  |
 | plugins/dsh-extra-plan/lib/sdk-text-cache.js | numberTag | L11-17 | 为 NaN/Infinity/-0 等数字生成无歧义指纹标签 |  |
 | plugins/dsh-extra-plan/lib/sdk-text-cache.js | isArrayIndexKey | L19-23 | 识别数组数字索引，保留额外自有字段顺序 |  |
@@ -396,18 +402,16 @@
 | plugins/dsh-extra-plan/lib/sdk-text-cache.js | createSdkTextCache | L121-161 | 创建无模块级结果 Map 的 agent-keyed WeakMap 缓存工厂，提供 getOrCreate/dispose |  |
 | plugins/dsh-extra-plan/lib/sdk-text-cache.js | dispose | L124-126 | 删除 agent entry，阻止 disposed 后迟到 Promise 回写 |  |
 | plugins/dsh-extra-plan/lib/sdk-text-cache.js | getOrCreate | L128-158 | 按完整 schema 指纹+language+renderer 命中/替换 entry；同 key 合并 Promise，成功文本缓存，reject/过期结果删除或不回写 |  |
-| plugins/dsh-extra-plan/lib/settings.js | isLoopback | L82-85 | 环回地址判定（API 仅本机） |  |
-| plugins/dsh-extra-plan/lib/settings.js | json | L87-90 | HTTP JSON 响应 |  |
-| plugins/dsh-extra-plan/lib/settings.js | readJsonBody | L92-110 | 读取请求体（限 1MB） |  |
-| plugins/dsh-extra-plan/lib/settings.js | assetHostRowDefaults | L113-127 | 2 项宿主行出厂默认：读仓库模板 agent.cordis.yml 的 captured 叶值，缺失/读盘失败回落内置 { webFetch:false, toolPresentationMode:'native' } |  |
-| plugins/dsh-extra-plan/lib/settings.js | effectivePlugins | L130-138 | 取生效 plugins：profile override → row.entry.options.config → inherited 层，均无数组返回 undefined（GET 与 PUT 共用） |  |
-| plugins/dsh-extra-plan/lib/settings.js | findPresetRow | L140-143 | 从 configEditor.configuration() 中按 entry.options.id=PRESET_ROW_ID 找声明行，未命中返回 undefined |  |
-| plugins/dsh-extra-plan/lib/settings.js | findSettingsRow | L146-149 | 从 configEditor.configuration() 中按 entry.options.id=SETTINGS_ROW_ID 找 settings 行（**权威值载体**，GET 三层回退的首选读取层），未命中返回 undefined |  |
-| plugins/dsh-extra-plan/lib/settings.js | readHostRowState | L156-185 | GET 只读语义（三层回退）：**权威值 = settings 行 config.<key>** → 权威缺失/非法时回落「声明行投影现值」→ 再缺失取出厂默认；返回 { located, values, defaults, overridden, sources }（sources 记 settings-row/projection/default 供取证） |  |
-| plugins/dsh-extra-plan/lib/settings.js | publicField | L187-201 | 把 descriptor 构造成设置页字段描述：key/type/control/locale + 可选 options、optionLocale + value/default/overridden + source（取值层来源） |  |
-| plugins/dsh-extra-plan/lib/settings.js | proPayload | L203-216 | 设置页 API 响应体：fields（2 项宿主行的控件元数据 + 当期值/默认/覆盖标记/来源层）+ values + defaults；读取失败一律回落出厂默认（不抛） |  |
-| plugins/dsh-extra-plan/lib/settings.js | createApiHandler | L218-294 | 设置页 HTTP API（GET/PUT pro-config）：**PUT 纯投影 = 校验 → 投影 no-op 判定（以资产为基底 + 本次投影值与 carry 词表重述后与当前生效 plugins 深等 → 不写盘、直接 200 + applied=true）→ 投影声明行 plugins 子行（settings 行零写入；成功 200 + projection.applied=true，声明行缺失/投影 edit 失败 200 + applied=false）**；GET 三层回退只读 = settings 行权威值 → 声明行投影现值 → 出厂默认；不含 qqbot——见独立插件 dsh-qqbot-user-questions |  |
-| plugins/dsh-extra-plan/lib/settings.js | apply | L296-310 | 插件入口（HTTP 服务注册） |  |
+| plugins/dsh-extra-plan/lib/settings.js | isLoopback | L83-86 | 环回地址判定（API 仅本机） |  |
+| plugins/dsh-extra-plan/lib/settings.js | json | L88-91 | HTTP JSON 响应 |  |
+| plugins/dsh-extra-plan/lib/settings.js | readJsonBody | L93-111 | 读取请求体（限 1MB） |  |
+| plugins/dsh-extra-plan/lib/settings.js | findPresetRow | L113-116 | 从 configEditor.configuration() 中按 entry.options.id=PRESET_ROW_ID 找声明行，未命中返回 undefined |  |
+| plugins/dsh-extra-plan/lib/settings.js | findSettingsRow | L119-122 | 从 configEditor.configuration() 中按 entry.options.id=SETTINGS_ROW_ID 找 settings 行（**权威值载体**，GET 三层回退的首选读取层），未命中返回 undefined |  |
+| plugins/dsh-extra-plan/lib/settings.js | readHostRowState | L129-158 | GET 只读语义（三层回退）：**权威值 = settings 行 config.<key>** → 权威缺失/非法时回落「声明行投影现值」→ 再缺失取出厂默认；返回 { located, values, defaults, overridden, sources }（sources 记 settings-row/projection/default 供取证） |  |
+| plugins/dsh-extra-plan/lib/settings.js | publicField | L160-174 | 把 descriptor 构造成设置页字段描述：key/type/control/locale + 可选 options、optionLocale + value/default/overridden + source（取值层来源） |  |
+| plugins/dsh-extra-plan/lib/settings.js | proPayload | L176-189 | 设置页 API 响应体：fields（2 项宿主行的控件元数据 + 当期值/默认/覆盖标记/来源层）+ values + defaults；读取失败一律回落出厂默认（不抛） |  |
+| plugins/dsh-extra-plan/lib/settings.js | createApiHandler | L191-267 | 设置页 HTTP API（GET/PUT pro-config）：**PUT 纯投影 = 校验 → 投影 no-op 判定（以资产为基底 + 本次投影值与 carry 词表重述后与当前生效 plugins 深等 → 不写盘、直接 200 + applied=true）→ 投影声明行 plugins 子行（settings 行零写入；成功 200 + projection.applied=true，声明行缺失/投影 edit 失败 200 + applied=false）**；GET 三层回退只读 = settings 行权威值 → 声明行投影现值 → 出厂默认；不含 qqbot——见独立插件 dsh-qqbot-user-questions |  |
+| plugins/dsh-extra-plan/lib/settings.js | apply | L269-283 | 插件入口（HTTP 服务注册） |  |
 | plugins/dsh-extra-plan/lib/shell-mutation.js | commandTextOf | L32-44 | 解码对象/JSON 字符串两形状的 command 参数 |  |
 | plugins/dsh-extra-plan/lib/shell-mutation.js | pwshCommandOf | L46 | 提取 pwsh command 文本 |  |
 | plugins/dsh-extra-plan/lib/shell-mutation.js | bashCommandOf | L47 | 提取 bash command 文本 |  |

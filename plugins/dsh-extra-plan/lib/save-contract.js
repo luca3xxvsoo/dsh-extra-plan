@@ -11,26 +11,46 @@ export function sanitizeTaskName(name) {
   return out.replace(/^-+|-+$/g, '')
 }
 
-// 本地时间戳 yyyyMMddHHmmss（文件名唯一性 + 可读性）。
-export function timestamp() {
-  const d = new Date()
+// 本地时间戳 yyyyMMddHHmmss（保留既有公共格式合同）。
+function timestampOf(date) {
   const pad = (n) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
+}
+
+export function timestamp() {
+  return timestampOf(new Date())
 }
 
 // 会话标识段（T3）：session header id 去除分隔符后前 8 位字母数字。单段、无连字符，
-// 便于按「时间戳前一段」识别；取不到 id（测试夹具/异常会话）→ ''（相关隔离随之关闭）。
+// 便于按「时间戳前一段」识别；取不到 id（测试夹具/异常会话）→ ''。
 export function sessionTagOf(sessionId) {
   return typeof sessionId === 'string' ? sessionId.replace(/[^A-Za-z0-9]/g, '').slice(0, 8) : ''
 }
 
-// save_plan 文件名 base（T3）：任务短名（可空）+ 调用方会话标识段 + 本地时间戳。
-// T3 后主会话与规划子代理可同秒各落一份 save_plan：base 内嵌会话标识使文件名与
-// journal 名天然互不相同（跨角色同秒撞名不再可能）；journal 内容另存该标识供
-// recoverJournals 精确过滤（见 atomicCommit/recoverJournals）。
-export function savePlanBase(nameSeg, sessionId) {
+// 工件 base 唯一真源：任务短名 + sessionTag + 本地毫秒时间 + process.pid + 进程内递增序号。
+// 同一 task/session 在同一毫秒内连续调用也不会碰撞；save_plan/save_probe 共用此合同。
+let artifactLastMillis = -1
+let artifactSequence = 0
+export function saveArtifactBase(nameSeg, sessionId) {
+  const now = new Date()
+  const millis = now.getTime()
+  if (millis === artifactLastMillis) artifactSequence += 1
+  else {
+    artifactLastMillis = millis
+    artifactSequence = 0
+  }
   const tag = sessionTagOf(sessionId)
-  return (nameSeg === '' ? '' : nameSeg + '-') + (tag === '' ? '' : tag + '-') + timestamp()
+  const stamp = timestampOf(now) + String(now.getMilliseconds()).padStart(3, '0')
+  const parts = []
+  if (nameSeg !== '') parts.push(nameSeg)
+  if (tag !== '') parts.push(tag)
+  parts.push(stamp, String(process.pid), String(artifactSequence))
+  return parts.join('-')
+}
+
+// 兼容既有公共导出名；实现与 save_probe 共用唯一 base。
+export function savePlanBase(nameSeg, sessionId) {
+  return saveArtifactBase(nameSeg, sessionId)
 }
 
 // save_plan 结果的模型可见内容（v0.1.3 修复）：output.render 契约必须返回

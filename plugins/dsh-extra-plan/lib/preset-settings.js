@@ -315,6 +315,35 @@ export function captureSettings(text, definitions) {
   return { document, values, states }
 }
 
+/** 生效 plugins：profile override → Loader 行 config → 继承层。 */
+export function effectivePluginsOf(row) {
+  if (row === null || typeof row !== 'object') return undefined
+  const override = row.override
+  if (override !== null && typeof override === 'object' && Array.isArray(override.plugins)) return override.plugins
+  const own = row.entry !== undefined && row.entry.options !== undefined ? row.entry.options.config : undefined
+  if (own !== null && typeof own === 'object' && Array.isArray(own.plugins)) return own.plugins
+  const inherited = row.inherited
+  if (inherited !== null && typeof inherited === 'object' && Array.isArray(inherited.plugins)) return inherited.plugins
+  return undefined
+}
+
+/** 出厂默认（2 项宿主行）：读模板 sourceLocator，缺项/解析失败回落内置。 */
+export function hostRowDefaultsFromTemplate(templateText) {
+  const fallback = { webFetch: false, toolPresentationMode: 'native' }
+  try {
+    const captured = captureSettings(templateText)
+    const out = {}
+    for (const definition of PROJECTION_SETTING_DEFINITIONS) {
+      const key = definition.key
+      const hit = captured.states[key] === 'captured' && Object.prototype.hasOwnProperty.call(captured.values, key)
+      out[key] = hit ? captured.values[key] : fallback[key]
+    }
+    return out
+  } catch {
+    return fallback
+  }
+}
+
 /**
  * 权威值捕获（settings 行）：逐项按 rowLocator（行 id SETTINGS_ROW_ID + config.<key>）解析，
  * 形状与 captureSettings 同构。行缺失/多命中/叶缺失一律 missing/ambiguous → 消费端回退。

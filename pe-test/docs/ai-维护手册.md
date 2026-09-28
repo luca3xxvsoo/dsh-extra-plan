@@ -1,7 +1,7 @@
 # 维护手册（AI 动手纪律 + 自检 + 地图同步）
 
 ## 动手前
-- 备份：修改前把本轮实际改动的每个文件按原目录结构逐路径镜像到 `.extra-plan/backup-<本轮任务名>-<timestamp>/`；不得覆盖旧备份目录；根 README 禁改、不备份。**文件镜像 + 按子块独立回退**：备份按文件镜像（而非整目录快照），同一批次内的每个子块（如 P1-3 / P1-4）必须能**单独回退**——恢复该子块涉及的备份文件即可，不牵连其它子块；同一次任务续跑沿用已建备份目录，禁止另建第二个或把改后版本覆盖回备份。
+- 备份：修改前把本轮实际改动的每个文件按原目录结构逐路径镜像到唯一 `.extra-plan/backup-dsh-extra-plan-JS审查修复-<YYYYMMDDHHMMSS>/`；不得覆盖旧备份目录；根 README 禁改、不备份。**文件镜像 + 按子块独立回退**：备份按文件镜像（而非整目录快照），同一批次内的每个子块（如 P1-3 / P1-4）必须能**单独回退**——恢复该子块涉及的备份文件即可，不牵连其它子块；同一次任务续跑沿用已建备份目录，禁止另建第二个或把改后版本覆盖回备份。
 - 改预设（agent.cordis.yml）：复制现有预设为副本再改；官方安装的预设/技能只读引用（不复制不改写）
 - 先读：ai-概览.md（改哪里）、ai-机制设计.md（改核心前）、ai-代码地图.md（定位函数）
 - **验收与部署次序**：先仓库内验收 → 用户部署生产 → 生产测试。AI 在验收通过前不得执行生产环境同步/部署动作（dsh plugin 更新、复制 DSH_HOME 安装目录、.agent-presets 下发等均属用户侧部署）
@@ -14,13 +14,13 @@
 ## Web 核心与 QQBot 分发所有权
 | profile | 唯一职责 | 迁移边界 |
 |:--|:--|:--|
-| web | 直接安装 `@local/dsh-extra-plan`；持有核心 bundle/依赖、allow-build、postinstall（状态目录初始化）与启动 `preset-sync` | 不从 web 删除核心包或预设；预设本体由 profile patch 声明行承载（0.1.7 起 `.agent-presets/extra-plan` 只剩状态目录） |
-| qqbot | 直接安装 `@local/dsh-qqbot-user-questions`（精简版）；两行补入由包内静态 `cordis.patch.yml` 的 insert 承担（0.1.7 新包族：`ptc-runtime` = `@deepseek-ai/dsh-ptc-runtime-node`、`agent-preset-registry` = `@deepseek-ai/dsh-agent-preset-registry`（config.default: extra-plan）；**待有 QQBOT 环境再测试**），apply/postinstall 自愈只做两件事：迁移旧版根级错误块（0.1.5 族 code-runtime/agent-presets + 0.1.7 族 ptc-runtime/agent-preset-registry）+ 建 `@local/dsh-extra-plan` → web 同名包链接 | 不声明核心直接依赖，不分发预设本体（预设随 bundle patch 声明行装载），不执行 `preset-sync`；不含问答/审批/补丁分发 |
+| web | 直接安装 `@local/dsh-extra-plan`；持有核心 bundle/依赖与 allow-build；核心包无 postinstall、无项目自有运行期状态目录或 manifest；启动时运行 `preset-sync` | 不从 web 删除核心包或预设；预设本体由 profile patch 声明行承载，旧 `.agent-presets/extra-plan` 分发链已退役 |
+| qqbot | 直接安装 `@local/dsh-qqbot-user-questions`（精简版）；两行补入由包内静态 `cordis.patch.yml` 的 insert 承担（0.1.7 新包族：`ptc-runtime` = `@deepseek-ai/dsh-ptc-runtime-node`、`agent-preset-registry` = `@deepseek-ai/dsh-agent-preset-registry`（config.default: extra-plan））；静态回归始终执行，严格环境命中时由环境脚本对真实 profile 做只读核验，环境/能力不足结构化 SKIP；apply/postinstall 自愈仍只做迁移旧版根级错误块与建 `@local/dsh-extra-plan` → web 同名包链接 | 不声明核心直接依赖，不分发预设本体（预设随 bundle patch 声明行装载），不执行 `preset-sync`；不含问答/审批/补丁分发，真实消息/交互仍属部署后 HUMAN |
 
 ### 已有残留迁移（用户侧）
 - 前提：先由用户完成 web 核心安装和预设分发，再通过 profile 的 pnpm/DSH 包管理流程移除 qqbot/package.json 的直接 `@local/dsh-extra-plan`；由 pnpm 同步 lock、`.modules.yaml`、`virtualStoreDir`、`storeDir` 与 hoisted 解析状态，最后重新安装/刷新 QQBot 兼容包。
 - lock、`.modules.yaml`、`.pnpm`、store 等均由 pnpm 管理，禁止手工编辑或删除；Junction 由精简版插件自愈（apply/postinstall）在目标缺失时创建。
-- helper 仅在目标缺失时建链；已有实体目录或非目标链接保留并提示用户走 pnpm 迁移。
+- helper 仅在目标缺失时建链；已有实体目录或非目标链接保留并提示用户走 pnpm 迁移。仓库环境脚本只对 mkdtemp 临时 fixture 调用 helper；真实 DSH_HOME 分支只读，缺严格五条件或 junction 能力时为 SKIP。
 
 ### 禁止递归删除
 | 对象 | 规则 |
@@ -28,11 +28,11 @@
 | `qqbot/node_modules/@local/dsh-extra-plan`、`@local` 父目录 | helper 不递归删除、不替换既有实体或非目标链接；由用户通过 pnpm 迁移 |
 | `qqbot/node_modules`、`node_modules/.pnpm`、pnpm store | 禁止递归删除或手工清理 |
 | `profiles/web`、`profiles/qqbot`、`.agent-presets` | 禁止递归删除；生产状态由用户的 pnpm/DSH 流程维护 |
-- 仓库改动和回归通过后，生产 profile 迁移由用户执行；仓库验收不是生产部署许可，AI 不接触 `C:\Users\Administrator\.dsh\profiles`。
+- 仓库改动和回归通过后，生产 profile 迁移由用户执行；仓库验收不是生产部署许可，AI 不接触 `$DSH_HOME/profiles`。
 
 ## 改完后
-1. 先同步本轮语义文档：`READAI.md` 与 `pe-test/docs` 下 **7 份** .md（ai-概览 / ai-维护手册 / ai-机制设计 / ai-宿主耦合台账 / ai-实机闸门测试流程 / ai-流程备查 / ai-代码地图 中除 ai-概览 外的实际改动面——用户口径「6 份」与实有 7 份不符，本版按实有 7 份全部覆盖）。唯一禁改文档：根 `dsh-extra-plan/README.md`（与 READAI.md 同层级）；其余文档（含各级 README.md、pe-test/docs/ai-宿主耦合台账.md）均可改；官方安装的预设与技能只读引用、不复制不改写。
-2. 本轮按固定顺序逐文件执行 9 个语法门（本轮实际改动过的每个 .js / .mjs 都要逐一 node --check，不只限下列 9 个；下列 9 个为当前基线清单；工作目录固定为 dsh-extra-plan）：
+1. 先同步本轮语义文档：`READAI.md` 与 `pe-test/docs` 下 7 份语义文档 + `ai-代码地图.md`，合计任务5八份文件，全部覆盖本轮改动面。唯一禁改文档：根 `dsh-extra-plan/README.md`（与 READAI.md 同层级）；其余文档（含各级 README.md、pe-test/docs/ai-宿主耦合台账.md）均可改；官方安装的预设与技能只读引用、不复制不改写。
+2. 本轮按固定顺序逐文件执行语法门（本轮 12 个修改 JS + 8 个修改 MJS 均逐一 node --check；工作目录固定为 dsh-extra-plan）：
    - node --check plugins/dsh-extra-plan/index.js
    - node --check plugins/dsh-extra-plan/lib/run-code-static.js
    - node --check plugins/dsh-extra-plan/lib/save-contract.js
@@ -44,8 +44,8 @@
    - node --check plugins/dsh-extra-plan/lib/assembly-presentation.js
    - node --check plugins/dsh-extra-plan/lib/gate-words.js（v0.3.0 起：闸门词共享契约，本轮新增基线门）
    - node --check plugins/dsh-extra-plan/lib/client.js（浏览器半打包格式：A7 单卡双区块改造后纳入基线语法门）
-3. 语法门全部退出码为 0 后，按本轮固定顺序运行：`node pe-test/tools/step-00-全流程回归.mjs` → `node pe-test/tools/step-04-路由与写闸门.mjs` → `node pe-test/tools/step-06-线索落盘.mjs` → `node pe-test/tools/代码地图生成.mjs`；人工段维护后运行 `node pe-test/tools/代码地图生成.mjs --check`，最后运行 `node pe-test/tools/一键step测试.mjs`。每条退出码必须为 0，且无 SyntaxError 或其它解析错误。
-4. 全量维护时仍可运行 5 个 step-01 回归（设置页配置、设置迁移、预设完整性、安装同步、qqbot 安装映射；`step-01-安装分发.mjs` 已随 2026-09-25 死代码清理删除）；step-04 工具清单可另以显式会话目录取证。模型可见面隐藏不是 PTC runtime binding 安全隔离。
+3. 语法门全部退出码为 0 后，固定运行：step-00-全流程回归 → step-04-路由与写闸门 → step-06-线索落盘 → 代码地图生成 → 人工文档同步 → 代码地图 --check → 一键step测试。每条退出码必须为 0，且无 FAIL、SyntaxError、UnhandledPromiseRejection。
+4. 全量维护时仍可运行 7 个 step-01 回归（设置页配置、设置迁移、预设完整性、安装同步、qqbot 静态安装映射、qqbot 环境验证、step-01-executor-spawn注册幂等；`step-01-安装分发.mjs` 已随 2026-09-25 死代码清理删除）；环境验证命中真实 profile 时只读，环境不足为 SKIP；step-04 工具清单可另以显式会话目录取证。模型可见面隐藏不是 PTC runtime binding 安全隔离。
 5. 交付汇报：改动点 / 每条校验结果 / 备份路径 / 风险点；用户实测确认后才算完成
 
 ## 自检工具速查（pe-test/tools/）
@@ -55,11 +55,11 @@
 | planner 探查委派禁令（T5）+ save_plan 主会话侧受限规划工件（任意路由态放行，save_probe 放行条件保持现状）+ plannerModel/otherAgentModel 降级与跨 Provider 时序（T2） | step-04-路由与写闸门.mjs（save_plan 五态全 allow 与 R107 组判定、T5 监听器级）、step-00-全流程回归.mjs（planner 与 executor/reviewer/probe/workflow/ralph worker 的 True/False 分流、真实 OK probe、排序、失败隔离、fallback、timeout、per-Agent cache、agent/request 屏障）、step-06-线索落盘.mjs（save_plan 注册与路由矩阵：任意路由态 allow） |
 | 注册失败路径与重试（P0-2/D1：服务未就绪与 C 类可重试错误不写标记、下一步重试；A 类重名与 B 类永久性错误写标记记终态不重试） | step-06-线索落盘.mjs（S6 服务不可用→次轮成功、S7 可重试错→次轮成功、S8 重名不重试、S9 永久性不重试、S10 pre-step 注册只影响下一步）、step-04-路由与写闸门.mjs（C4 认领时服务不可用→次轮成功、C5 可重试错粘性不重复消费、C6 重名不重试、C7 永久性不重试） |
 | save_probe 机械上限/动态描述 | lib/save-contract.js（PROBE_LIMITS/渲染合同）+ lib/save-probe-validation.js（validateProbe）+ lib/save-tool-factories.js（动态 schema/execute）；step-00-全流程回归.mjs（evidence 150、text 1000，PR23=151、PR34/PR35=1000/1001；实际 schema 动态断言） |
-| save_probe/save_plan 落盘（含事务阶段语义） | lib/save-persistence.js（atomicCommit 阶段感知提交/recoverJournals 完成判定；两函数末位各带可选 fs 依赖，默认冻结只读、未提供项回退默认实现）+ lib/save-tool-factories.js（工具定义）+ index.js（apply 注册/闸门接线）；step-06-线索落盘.mjs ⑤ 段逐阶段故障注入覆盖：正常双写、tmp 写失败、journal 已落盘后写桩抛错（pre-journal 条件清理成功／journal 删不掉则 journal+全部 tmp 保留且抛原始错误）、第一次与第二次 rename 失败、最终删 journal 失败、全目标确认前不删 journal、恢复 rename 失败可续做、已完成项幂等续做、tmp 与目标均缺失保留 journal 并告警、旧形状双端恢复、形状非法保留、sessionTag 跳过与失败隔离 |
+| save_probe/save_plan 落盘（含事务阶段语义） | lib/save-persistence.js（atomicCommit 阶段感知提交/recoverJournals 完成判定；当前 entries 形状；旧形状/非法 journal 只告警并保留）+ lib/save-tool-factories.js（sessionTag、统一 artifact base、非法 args 先校验）+ index.js（apply 注册/闸门接线）；step-06-线索落盘.mjs 覆盖正常双写、同毫秒不碰撞、跨 session/无 tag 不恢复、当前 entries 恢复、旧形状留存、各阶段故障与恢复 |
 | 闸门关键词单一来源（config.gateWords 7 项）／prompt variable 注册／旧词拒绝／三维判定 idle | step-00-全流程回归.mjs（GWY/GWV/GWC 段：YAML 七键与 persona 双键、宿主 renderPrompt 两键替换、15 例非法矩阵错误前缀、定制七词正例与旧词负例）、step-04-路由与写闸门.mjs（GW 段：apply 恰注册 7 个 provider、坏配置零副作用、三类 dispatch 定制词全链、旧词不推进、fresh apply、variables 哨兵投影）、step-01-安装同步.mjs（三维判定 idle + 投影/回填链 + 闭环/本体/carry）、step-01-设置迁移.mjs（描述表与源模板定位矩阵含 bad-new-template 抛错不切换目标） |
 | 预设安装/完整性/设置页/十项权威值落点 | step-01-预设完整性.mjs、step-01-安装同步.mjs、step-01-设置迁移.mjs、step-01-设置页配置.mjs（descriptor/metadata/locator 从 9 到 10，creativeMode 默认 false、true/false PUT、非法值；归属：descriptor（预设完整性）/ metadata 10 项（设置页配置）/ locator（设置页配置）/ creativeMode PUT（设置页配置）/ 投影与回填（安装同步）） |
-| 全量回归 | step-00-全流程回归.mjs（本地 mock/in-process，不需真实 session_id；一键step测试.mjs 同）。**一键体检的自动判定项共 10 项**（以 `一键step测试.mjs` 的 AUTO 数组为准）：step-00-全流程回归、step-00-跨平台写拦截、step-01-设置迁移、step-01-安装同步、step-01-预设完整性、step-01-设置页配置、step-01-qqbot-安装映射、step-04-路由与写闸门、step-06-线索落盘、代码地图生成.mjs（--check） |
-| usage 账本（含会话状态生命周期） | step-99-用量统计.mjs（真实 ledger 读侧 token 用量统计：明细列 sessionId|role|model|provider|calls|hit|miss|out|cw|rs，纯 token 口径、无任何汇总）+ step-04-路由与写闸门.mjs ⑭e 段（P4-1~P4-24 监听器级：双 session 同 rootCallId 各 1~18 allow/19 deny、session B 锚点变化不清 A 的计数、disposed A 后同 sessionId 从空开始且 B 保持、临时账本的 one-shot 末轮 flush（role=executor、seq/token/model 正确）、重复 disposed 幂等、同 session 续载只写新 seq、可解析 cursor 保留其它 session、ENOENT 静默、损坏/非对象 cursor 告警一次并覆盖写、final fold 写入失败的既有单次 warning 且不阻断清理、P4-24 新字段落盘（provider/cacheWriteTokens/reasoningTokens 取值正确，hit/miss/out 全零而 cw 非零的行不被跳过，旧形状行按 空串/0/0 落盘）） |
+| 全量回归 | step-00-全流程回归.mjs（本地 mock/in-process，不需真实 session_id；一键step测试.mjs 同）。**一键体检的自动判定项共 12 项**（以 `一键step测试.mjs` 的 AUTO 数组为准）：step-00-全流程回归、step-00-跨平台写拦截、step-01-设置迁移、step-01-安装同步、step-01-预设完整性、step-01-executor-spawn注册幂等、step-01-设置页配置、step-01-qqbot-安装映射（静态）、step-01-qqbot-环境验证（条件只读）、step-04-路由与写闸门、step-06-线索落盘、代码地图生成.mjs（--check）；环境项的部分执行/未执行不计失败，真实 QQBot 消息、/preset、question/approval 与 postinstall 仍为 HUMAN |
+| usage 账本（含会话状态生命周期） | step-99-用量统计.mjs + step-04-路由与写闸门.mjs P4 段（session 分桶、disposed 同步 final fold、增量水位、可解析 cursor 保留其它 session、ENOENT 静默；损坏/非对象 cursor 首次告警但原始字节不覆盖；新字段与全零过滤） |
 | 跨平台写拦截 | step-00-跨平台写拦截.mjs |
 | 代码地图（口径/覆盖/导航） | 一键step测试.mjs 内置「代码地图生成.mjs --check」（不写盘，比对结构+漏检+导航失效）；同步仍用 node pe-test/tools/代码地图生成.mjs |
 | 会话解码/取证 | step-05-会话解码.mjs、step-06-真实会话查看.mjs、step-07-子代理模型与引导取证.mjs、step-08-方案配对查看.mjs（共用 `_shared/session-finder.mjs`：readMeta 为首行分块渐读，不再全文件 `readFileSync`） |
@@ -96,5 +96,5 @@
 补充口径：`PROBE_LIMITS.maxEvidenceEntries=150`、`maxEvidenceTextLen=1000`；`exploreBudget=18` 仅是 planner 探查预算/单实例子调用上限，台账历史 80 条与 80+79+50=209 仍是归档统计。
 
 - PROBE_LIMITS 的字段名与上限以 `lib/save-contract.js` L47-70 为唯一口径（共 20 个字段：四类条目数 50/50/20/20、maxPathLen 1024、maxRangeLen 20、maxRelationLen 400、maxNoteLen 400、maxTopicLen 120、maxDetailLen 1000、maxTotalChars 20000、rangePattern、maxEvidenceEntries 150、maxEvidenceLineLen 20、maxEvidenceValueLen 240、maxEvidenceTextLen 1000、maxEvidenceNoteLen 400、maxEvidenceTotalChars 32000、evidenceLinePattern、maxTaskNameLen 32），本文不复制数值以免漂移。LINE_FORMAT_HINT（L73）与 RANGE_FORMAT_HINT（L74）为格式提示常量，同样以源码为口径。
-- save_probe 单写路径同样调用 recoverJournals 且不带 sessionTag（save-tool-factories L177；旧 L3632 同）。此前文档只写『下次 save_plan 自愈补完』——这是拆分前既有缺口，本次记录不修代码。
+- save_probe 单写与 save_plan 均从 `exec.agent.session.header.id` 生成非空 sessionTag，使用统一 artifact base；recoverJournals 带 tag 时不同 tag 与无 tag journal 均跳过。旧形状 journal 只告警并原样保留。
 - 本机 Windows 沙箱下 netstat / Get-NetTCPConnection / Get-WmiObject Win32_Process 等查询可能被拒（Program failed to run: 拒绝访问）；排查运行时改用等价间接证据（进程启动时点、会话内闸门生效日志、step-04/06 等取证脚本输出）。

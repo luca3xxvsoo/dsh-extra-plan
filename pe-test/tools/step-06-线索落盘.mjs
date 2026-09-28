@@ -42,6 +42,8 @@ function restoreIsolatedEnv() {
 process.on('exit', restoreIsolatedEnv)
 
 const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
+const { saveArtifactBase } = await import(pathToFileURL(fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/save-contract.js', import.meta.url))).href)
+const { createSaveToolFactories } = await import(pathToFileURL(fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/save-tool-factories.js', import.meta.url))).href)
 import { DEFAULT_EXPLORE_BUDGET } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
 import { parsePresetYaml } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
 import { createGateRuntime } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
@@ -92,8 +94,8 @@ const DESC = { type: 'subagent/descriptor', data: { mode: 'continuable' } }
 const um = () => ({ type: 'user/message', data: { source: { kind: 'user' } } })
 const umk = (kind) => ({ type: 'user/message', data: { source: { kind } } })
 const call = (name, cid, argumentsStr = '{}') => ({ type: 'tool/call', data: { name, callId: cid, arguments: argumentsStr } })
-const ok = (cid, text) => ({ type: 'tool/result', data: { message: { content: [{ type: 'tool-result', toolCallId: cid, content: [{ type: 'text', text }] }] } } })
-const err = (cid, code) => ({ type: 'tool/result', data: { error: { name: 'Error', ...(code === undefined ? {} : { code }) }, message: { content: [{ type: 'tool-result', toolCallId: cid, content: [] }] } } })
+const ok = (cid, text) => ({ type: 'tool/result', data: { message: { toolCallId: cid, isError: false, content: [{ type: 'text', text }] } } })
+const err = (cid, code) => ({ type: 'tool/result', data: { error: { name: 'Error', ...(code === undefined ? {} : { code }) }, message: { toolCallId: cid, isError: true, content: [] } } })
 const routeArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }] })
 const clarifyArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '方案A' }, { label: '方案B' }] }] })
 const purposeArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '完善方案' }, { label: '重新规划' }] }] })
@@ -469,7 +471,7 @@ try {
   const work = join(tmpRoot, 'work')
   mkdirSync(work)
   writeFileSync(join(work, 'a.txt'), 'hello')
-  const execFake = (cwd) => ({ agent: { session: { header: { cwd } } } })
+  const execFake = (cwd) => ({ agent: { session: { header: { cwd, id: 'smoke-exec-1' } } } })
   const probeResult = await saveProbeDef.execute({
     taskName: 'smoke',
     fileMap: [{ path: 'a.txt', relation: '相关文件' }],
@@ -479,7 +481,7 @@ try {
   }, execFake(work))
   checkTrue('S16 save_probe 返回 {path}', probeResult !== null && typeof probeResult === 'object' && typeof probeResult.path === 'string')
   const probeFile = probeResult.path
-  checkTrue('S17 线索文件位于 .extra-plan 且命名 线索-smoke-<14位时间戳>.md', typeof probeFile === 'string' && probeFile.includes(join(work, '.extra-plan')) && /线索-smoke-\d{14}\.md$/.test(probeFile))
+  checkTrue('S17 线索文件位于 .extra-plan 且命名含 sessionTag/毫秒/pid/序号', typeof probeFile === 'string' && probeFile.includes(join(work, '.extra-plan')) && /线索-smoke-[A-Za-z0-9]+-\d{17}-\d+-\d+\.md$/.test(probeFile))
   checkTrue('S18 线索文件存在且含标题/卷首声明/四节', existsSync(probeFile) && (() => {
     const c = readFileSync(probeFile, 'utf8')
     return c.includes('# 探查线索（save_probe 落盘，非结论）') && c.includes('只有定位线索、没有证据') && ['## 一、文件地图', '## 二、重点区域', '## 三、排除项', '## 四、背景与意图'].every((s) => c.includes(s))
@@ -495,29 +497,48 @@ try {
   })()
   checkTrue('S20 校验拒绝面：不存在路径 → execute 抛错并指明', rejectResult)
 
-  // 旧形状 journal 自愈：plan/check 两个 tmp 都残留 → 触发 save_plan 补完两端
-  // （T3.3 起「tmp 与目标同时缺失」的项会保留 journal，夹具必须补齐两个 tmp，否则 S23 判红）
+  const invalidEffects = { recover: 0, atomic: 0 }
+  const invalidProbe = createSaveToolFactories({
+    savePlanDir: '.extra-plan',
+    recoverJournals: () => { invalidEffects.recover += 1 },
+    atomicCommit: () => { invalidEffects.atomic += 1 },
+  }).defineSaveProbe()
+  for (const badArgs of [null, undefined, {}]) {
+    try { await invalidProbe.execute(badArgs, execFake(work)) } catch {}
+  }
+  checkTrue('S20a 非法 args 先校验且零副作用（recover/atomic/rename/unlink 均为 0）', invalidEffects.recover === 0 && invalidEffects.atomic === 0)
+  const baseA = saveArtifactBase('collision', 'session-123456')
+  const baseB = saveArtifactBase('collision', 'session-123456')
+  checkTrue('S20b 同 task/session 同毫秒连续 base 不碰撞且含毫秒/pid/序号', baseA !== baseB && /collision-session1-\d{17}-\d+-\d+/.test(baseA) && /collision-session1-\d{17}-\d+-\d+/.test(baseB))
+
+  // 旧形状 journal 只告警并原样保留：不再提供历史恢复分支。
   const ep = join(work, '.extra-plan')
   const stalePlan = join(ep, '方案-stale.md')
   const staleCheck = join(ep, '验收-stale.md')
-  writeFileSync(join(ep, '.journal-stale.json'), JSON.stringify({ planTmp: join(ep, '方案-stale.md.tmp-x'), checkTmp: join(ep, '验收-stale.md.tmp-x'), planFile: stalePlan, checkFile: staleCheck }))
-  writeFileSync(join(ep, '方案-stale.md.tmp-x'), '旧残留-方案')
-  writeFileSync(join(ep, '验收-stale.md.tmp-x'), '旧残留-验收')
+  const staleJournal = join(ep, '.journal-stale.json')
+  const stalePlanTmp = join(ep, '方案-stale.md.tmp-x')
+  const staleCheckTmp = join(ep, '验收-stale.md.tmp-x')
+  const staleRecord = JSON.stringify({ planTmp: stalePlanTmp, checkTmp: staleCheckTmp, planFile: stalePlan, checkFile: staleCheck })
+  writeFileSync(staleJournal, staleRecord)
+  writeFileSync(stalePlanTmp, '旧残留-方案')
+  writeFileSync(staleCheckTmp, '旧残留-验收')
+  const staleWarnings = captureWarn(() => recoverJournals(ep))
+  checkTrue('S20b 旧形状 journal：告警且 journal/tmp 字节原样保留', staleWarnings.some((t) => t.includes('journal recovery failed')) && readFileSync(staleJournal, 'utf8') === staleRecord && readFileSync(stalePlanTmp, 'utf8') === '旧残留-方案' && readFileSync(staleCheckTmp, 'utf8') === '旧残留-验收')
   const planResult = await savePlanDef.execute({ plan: 'p'.repeat(300), checklist: 'c'.repeat(300), taskName: 'smoke2' }, execFake(work))
-  const tsMatch = (p) => (String(p).match(/(\d{14})\.md$/) || [])[1]
-  checkTrue('S21 save_plan 双文件落盘成功（同 timestamp）', Array.isArray(planResult.paths) && planResult.paths.length === 2 && existsSync(planResult.paths[0]) && existsSync(planResult.paths[1]) && tsMatch(planResult.paths[0]) === tsMatch(planResult.paths[1]))
-  checkTrue('S22 旧形状 journal 残留被补完（方案-stale.md 存在且内容为旧残留-方案）', existsSync(stalePlan) && readFileSync(stalePlan, 'utf8') === '旧残留-方案')
-  checkTrue('S22b 旧形状 journal 另一端同步机械核对（验收-stale.md 存在且内容为旧残留-验收）', existsSync(staleCheck) && readFileSync(staleCheck, 'utf8') === '旧残留-验收')
-  checkTrue('S23 补完后无残留 .tmp/.journal', readdirSync(ep).every((n) => !n.startsWith('.tmp-') && !n.startsWith('.journal-')))
+  const tsMatch = (p) => (String(p).match(/-[A-Za-z0-9]+-(\d{17})-\d+-\d+\.md$/) || [])[1]
+  checkTrue('S21 save_plan 双文件落盘成功（同毫秒 artifact base）', Array.isArray(planResult.paths) && planResult.paths.length === 2 && existsSync(planResult.paths[0]) && existsSync(planResult.paths[1]) && tsMatch(planResult.paths[0]) === tsMatch(planResult.paths[1]))
+  checkTrue('S22 旧形状 journal 保留（方案-stale.md 不被自愈）', !existsSync(stalePlan) && existsSync(stalePlanTmp))
+  checkTrue('S22b 旧形状 journal 另一端原样保留（验收-stale.md 不被自愈）', !existsSync(staleCheck) && existsSync(staleCheckTmp))
+  checkTrue('S23 当前 save_plan 完成但旧 journal/tmp 现场保留', existsSync(staleJournal) && existsSync(stalePlanTmp) && existsSync(staleCheckTmp))
 
   // 新形状 journal 自愈：entries 残留 → 触发 save_probe 补完
   const staleTmp = join(ep, '线索-stale.md.tmp-y')
   const staleFile = join(ep, '线索-stale.md')
   writeFileSync(staleTmp, 'stale')
-  writeFileSync(join(ep, '.journal-stale2.json'), JSON.stringify({ entries: [{ tmp: staleTmp, file: staleFile }] }))
+  writeFileSync(join(ep, '.journal-stale2.json'), JSON.stringify({ session: 'smokeexe', entries: [{ tmp: staleTmp, file: staleFile }] }))
   await saveProbeDef.execute({ taskName: 'stale', fileMap: [{ path: 'a.txt', relation: 'r' }], focusAreas: [], exclusions: [], background: [] }, execFake(work))
   checkTrue('S24 新形状 journal 残留被补完（线索-stale.md 存在）', existsSync(staleFile))
-  checkTrue('S25 补完后无残留 .tmp/.journal', readdirSync(ep).every((n) => !n.startsWith('.tmp-') && !n.startsWith('.journal-')))
+  checkTrue('S25 当前 entries 补完后无自身 .tmp/.journal（旧形状现场仍保留）', !existsSync(staleTmp) && !existsSync(join(ep, '.journal-stale2.json')) && existsSync(staleJournal))
   const emptyArgsReject = await (async () => {
     try {
       await savePlanDef.execute({}, execFake(work))
@@ -724,16 +745,17 @@ inScenario('r3-missing-both', (dir) => {
   checkTrue('R3 输出既有恢复失败告警', logs.some((t) => t.indexOf('journal recovery failed') >= 0))
 })
 
-// R4 旧形状 journal（plan/check 两端）机械核对（T3.1）
+// R4 旧形状 journal：只告警并保留 journal/tmp，当前版不再恢复四字段。
 inScenario('r4-legacy-shape', (dir) => {
   const journal = journalOf(dir, 'r4')
   const planTmp = join(dir, '方案-r4.md.tmp-z')
   const checkTmp = join(dir, '验收-r4.md.tmp-z')
   writeFileSync(planTmp, 'PLAN-r4')
   writeFileSync(checkTmp, 'CHECK-r4')
-  writeFileSync(journal, JSON.stringify({ planTmp, checkTmp, planFile: join(dir, '方案-r4.md'), checkFile: join(dir, '验收-r4.md') }))
-  recoverJournals(dir)
-  check('R4 旧形状 journal：plan/check 两端同时恢复后清 journal', [contentsOf(dir, ['方案-r4.md', '验收-r4.md']), leftovers(dir)], [['PLAN-r4', 'CHECK-r4'], []])
+  const record = JSON.stringify({ planTmp, checkTmp, planFile: join(dir, '方案-r4.md'), checkFile: join(dir, '验收-r4.md') })
+  writeFileSync(journal, record)
+  const logs = captureWarn(() => recoverJournals(dir))
+  check('R4 旧形状 journal：告警、字节与 tmp 原样保留', [existsSync(journal), readFileSync(journal, 'utf8') === record, existsSync(planTmp), existsSync(checkTmp), logs.some((t) => t.includes('journal recovery failed'))], [true, true, true, true, true])
 })
 
 // R5 形状非法/字段缺失的 journal（T3.1）：走既有告警路径并保留 journal
