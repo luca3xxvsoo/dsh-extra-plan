@@ -3,14 +3,17 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { framesOf, decodeText } from '../_shared/zstd-frames.mjs'
-import { findSession, logPath } from '../_shared/session-finder.mjs'
+import { findSession } from '../_shared/session-finder.mjs'
+import { toolResultOf, v4LogPath } from '../_shared/v4-tool-result.mjs'
 
 const found = findSession(process.argv[2])
 if (found.kind === 'notfound') { console.error('dir not found:', found.arg); process.exit(1) }
 if (found.kind === 'none') { console.error('未发现使用过按需规划模式的会话'); process.exit(1) }
+let invalidLog = false
+let unmatchedCount = 0
 for (const dir of found.dirs) {
   console.log(`===== ${dir} =====`)
-  const lp = logPath(path.join(found.base, dir)); if (!lp) { console.error('会话日志文件不存在（两代候选名均未命中）:', path.join(found.base, dir)); continue }
+  const lp = v4LogPath(path.join(found.base, dir)); if (!lp) { invalidLog = true; console.error('仅支持 dsh 0.1.7 v4：目标日志必须是 session.v4.jsonl.zstd：', path.join(found.base, dir)); continue }
   const buf = fs.readFileSync(lp)
   const lines = []
   for (const f of framesOf(buf)) lines.push(...decodeText(buf, f).split('\n'))
@@ -25,19 +28,17 @@ for (const dir of found.dirs) {
       console.log(`L${i + 1} save_plan CALL id=${callId} 参数键=[${keys.join(',')}]`)
       calls.set(callId, i + 1)
     } else if (ev.type === 'tool/result') {
-      const envelope = ev.data?.message?.content?.[0]
-      const callId = envelope?.toolCallId
-      if (callId && calls.has(callId)) {
-        calls.delete(callId)
-        if (ev.data.error) {
-          console.log(`  → L${i + 1} 结果 ERROR: ${JSON.stringify(ev.data.error).slice(0, 400)}`)
-        } else {
-          const inner = envelope.content
-          const txt = Array.isArray(inner) ? inner.map((b) => (typeof b === 'object' && b !== null && typeof b.text === 'string' ? b.text : '')).join('') : JSON.stringify(inner).slice(0, 160)
-          console.log(`  → L${i + 1} 结果 OK: ${txt.slice(0, 160)}`)
-        }
+      const result = toolResultOf(ev)
+      if (result !== null && calls.has(result.callId)) {
+        calls.delete(result.callId)
+        const txt = (result.text || '<无 text block>').slice(0, 160)
+        console.log(`  → L${i + 1} 结果 ${result.isError ? 'ERROR' : 'OK'}: ${txt}`)
       }
     }
   }
-  for (const [callId, at] of calls) console.log(`  → 调用 L${at}（id=${callId}）未找到配对结果（可能仍挂起/被中断）`)
+  for (const [callId, at] of calls) {
+    unmatchedCount += 1
+    console.log(`\u001b[31m🔴 未配对 调用 L${at}（id=${callId}）\u001b[0m`)
+  }
 }
+process.exitCode = invalidLog || unmatchedCount > 0 ? 1 : 0

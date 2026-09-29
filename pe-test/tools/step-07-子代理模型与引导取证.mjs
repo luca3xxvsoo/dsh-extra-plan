@@ -4,7 +4,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { framesOf, decodeText } from '../_shared/zstd-frames.mjs'
-import { findSession, logPath } from '../_shared/session-finder.mjs'
+import { findSession } from '../_shared/session-finder.mjs'
+import { toolResultOf, v4LogPath } from '../_shared/v4-tool-result.mjs'
 
 const hasOwn = (name) => Object.prototype.hasOwnProperty.call(process.env, name)
 const failInput = (message) => {
@@ -76,7 +77,7 @@ function sessionHeaderOf(event) {
 
 function parseSession(dir) {
   const directory = path.join(found.base, dir)
-  const file = logPath(directory)
+  const file = v4LogPath(directory)
   if (file === null) return { dir, directory, file: null, events: [], parseFailures: 0, decodeFailures: 0, lineCount: 0, header: {} }
   const buf = fs.readFileSync(file)
   const events = []
@@ -114,8 +115,7 @@ function parseSession(dir) {
     directory,
     file,
     fileName: path.basename(file),
-    // 代际三值判定（v4/v3/v0）：按文件名精确比对，未知形状归 'v0'（旧平铺命名）。
-    generation: path.basename(file) === 'session.v4.jsonl.zstd' ? 'v4' : path.basename(file) === 'session.v3.jsonl.zstd' ? 'v3' : 'v0',
+    generation: 'v4',
     events,
     parseFailures,
     decodeFailures,
@@ -128,7 +128,7 @@ function parseSession(dir) {
 // 不构建 events 数组、不保留 raw 行；无 session 事件的目录返回空 header（与 parseSession 首个 session 事件语义一致）。
 function headerOfDir(dir) {
   const directory = path.join(found.base, dir)
-  const file = logPath(directory)
+  const file = v4LogPath(directory)
   if (file === null) return null
   const headerOfText = (text) => {
     for (const raw of text.split(/\r?\n/)) {
@@ -183,24 +183,6 @@ function textBlocksOf(data) {
   })).filter((block) => block.type === 'text' && typeof block.text === 'string')
 }
 
-function toolResultBlocksOf(data) {
-  return contentOf(data).filter((block) => isObject(block) && block.type === 'tool-result')
-}
-function toolResultCallIdOf(data) {
-  const block = toolResultBlocksOf(data).find((item) => typeof item.toolCallId === 'string')
-  return block === undefined ? firstDefined(data.toolCallId, data.callId) : block.toolCallId
-}
-function toolResultIsError(data) {
-  return data.error !== undefined || toolResultBlocksOf(data).some((block) => block.isError === true)
-}
-function textFromValue(value) {
-  if (typeof value === 'string') return value
-  if (!Array.isArray(value)) return ''
-  return value.map((item) => isObject(item) && typeof item.text === 'string' ? item.text : '').join('')
-}
-function toolResultTextOf(data) {
-  return toolResultBlocksOf(data).map((block) => textFromValue(block.content)).filter((text) => text !== '').join('\n')
-}
 function parseCallArguments(raw) {
   if (isObject(raw)) return raw
   if (typeof raw !== 'string') return null
@@ -232,16 +214,11 @@ function toolCallOf(item) {
 }
 
 function resultRecordsOf(session) {
-  return session.events.filter((item) => hasType(item.event, 'tool/result')).map((item) => {
-    const data = dataOf(item.event)
-    return {
-      line: item.line,
-      callId: toolResultCallIdOf(data),
-      isError: toolResultIsError(data),
-      text: toolResultTextOf(data),
-      event: item.event,
-    }
-  })
+  return session.events.map((item) => {
+    const result = toolResultOf(item.event)
+    if (result === null) return null
+    return { line: item.line, callId: result.callId, isError: result.isError, text: result.text, event: item.event }
+  }).filter((record) => record !== null)
 }
 
 function aliasMapOf(children) {
@@ -498,12 +475,13 @@ function printPlannerMessages(messages) {
 }
 
 const mainDir = found.dirs[0]
+if (v4LogPath(path.join(found.base, mainDir)) === null) failInput('仅支持 dsh 0.1.7 v4：目标日志必须是 session.v4.jsonl.zstd')
 const parent = parseSession(mainDir)
 if (Object.prototype.hasOwnProperty.call(parent.header, 'parentSession') && parent.header.parentSession !== undefined && parent.header.parentSession !== null && parent.header.parentSession !== '') {
   failInput('SESSION_ID 不是顶层主会话（parentSession=' + parent.header.parentSession + '）')
 }
 const siblingDirs = fs.readdirSync(found.base)
-  .filter((dir) => dir !== mainDir && logPath(path.join(found.base, dir)) !== null)
+  .filter((dir) => dir !== mainDir && v4LogPath(path.join(found.base, dir)) !== null)
 // 两阶段扫描第二段：先只用 headerOfDir 读头信息筛出直接子会话（保持 readdirSync 顺序），
 // 再只对命中目录做 parseSession——未命中目录不再常驻 events。
 const childEntries = []
@@ -526,7 +504,7 @@ printParentEvidence(parentBundle, parent)
 for (const session of sessions) {
   console.log('\n===== 会话 ' + session.dir + ' =====')
   if (session.file === null) {
-    console.error('会话日志文件不存在（三代候选名均未命中）：' + session.directory)
+    console.error('仅支持 dsh 0.1.7 v4：目标日志必须是 session.v4.jsonl.zstd：' + session.directory)
     continue
   }
   console.log('日志文件名=' + session.fileName)

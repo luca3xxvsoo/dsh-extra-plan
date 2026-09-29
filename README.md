@@ -21,38 +21,24 @@
 
 ## 3. 安装及卸载方式（面向 DSH 环境用户）
 
-> 前置条件：已安装 DeepSeek Harness（DSH）。默认 DSH_HOME = `~/.dsh`。Win环境默认 DSH_HOME = `%USERPROFILE%\.dsh`
+### 核心安装
 
-### 安装步骤
+1. dsh web - 插件 - 添加插件 - https://github.com/luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan 或 [解压路径]/dsh-extra-plan-main/plugins/dsh-extra-plan - 允许脚本并重试 - 立即启用
+2. **重启 DSH 进程**使插件生效
+3. 新建会话，在预设列表中选择「按需规划模式」
 
-#### github安装
+### qqbot兼容插件安装
 
-1. 核心安装(必装)
-  - dsh web - 插件 - 添加插件 - 输入：https://github.com/luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan - 允许脚本并重试 - 立即启用
-2. qqbot兼容插件安装 (选装,remove命令报错可忽略)
-```powershell 7+ 
-dsh plugin --profile qqbot remove @local/dsh-extra-plan
-dsh plugin --profile qqbot remove @local/dsh-qqbot-user-questions
+1. 安装
+```powershell 7+ 在线
 $repo='luca3xxvsoo/dsh-extra-plan'; $q="$repo#path:/plugins/dsh-qqbot-user-questions"; $allow='@local/dsh-qqbot-user-questions@git+https://github.com/luca3xxvsoo/dsh-extra-plan.git'; dsh plugin --profile qqbot add $q --allow-build="$allow"; $exitCode=$LASTEXITCODE; if($exitCode -ne 0){dsh plugin --profile qqbot approve-builds --all; dsh plugin --profile qqbot add $q --allow-build="$allow"; $exitCode=$LASTEXITCODE}; if($exitCode -eq 0){dsh plugin --profile qqbot approve-builds --all; if($LASTEXITCODE -eq 0){$profileDir=Join-Path $env:USERPROFILE '.dsh\profiles\qqbot'; Push-Location $profileDir; try { node -e "const fs=require('node:fs'),p='package.json';if(!fs.existsSync('node_modules/@local/dsh-extra-plan'))throw new Error('缺少 qqbot 到 web 的 dsh-extra-plan 链接');const j=JSON.parse(fs.readFileSync(p,'utf8'));j.dsh=j.dsh||{};j.dsh.profile=j.dsh.profile||{};const b=j.dsh.profile.bundles=Array.isArray(j.dsh.profile.bundles)?j.dsh.profile.bundles:[];let changed=false;for(const n of ['@local/dsh-qqbot-user-questions','@local/dsh-extra-plan'])if(!b.includes(n)){b.push(n);changed=true};if(changed){fs.copyFileSync(p,p+'.bak');fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n')}" ; $nodeExit=$LASTEXITCODE } finally { Pop-Location }; if($nodeExit -eq 0){Write-Host '完整安装并激活成功，请重启 QQBot'}else{Write-Error 'bundle 激活失败'}}}else{Write-Error '插件安装失败'}
 ```
-3. **重启 DSH 进程**使插件生效
-4. 新建会话，在预设列表中选择「按需规划模式」即可使用
-5. qqbot下使用 /preset 切换预设
-
-#### 本地安装
-
-0. 下载源码并解压
-1. 核心安装(必装)
-  - dsh web - 插件 - 添加插件 - 输入：[解压路径]/dsh-extra-plan-main/plugins/dsh-extra-plan
-2. qqbot兼容插件安装 (选装,remove命令报错可忽略)
-```powershell 7+ 
-dsh plugin --profile qqbot remove @local/dsh-extra-plan
-dsh plugin --profile qqbot remove @local/dsh-qqbot-user-questions
+或
+```powershell 7+ 离线
 $src='[解压路径]\dsh-extra-plan-main'; $pkg=(Resolve-Path (Join-Path $src 'plugins\dsh-qqbot-user-questions')).Path -replace '\\','/'; $spec="file:///$pkg"; $allow="@local/dsh-qqbot-user-questions@file:$pkg"; dsh plugin --profile qqbot add $spec --allow-build="$allow"; $exitCode=$LASTEXITCODE; if($exitCode -ne 0){dsh plugin --profile qqbot approve-builds --all; dsh plugin --profile qqbot add $spec --allow-build="$allow"; $exitCode=$LASTEXITCODE}; if($exitCode -eq 0){dsh plugin --profile qqbot approve-builds --all; if($LASTEXITCODE -eq 0){$profileDir=Join-Path $env:USERPROFILE '.dsh\profiles\qqbot'; Push-Location $profileDir; try { node -e "const fs=require('node:fs'),p='package.json';if(!fs.existsSync('node_modules/@local/dsh-extra-plan'))throw new Error('缺少 qqbot 到 web 的 dsh-extra-plan 链接');const j=JSON.parse(fs.readFileSync(p,'utf8'));j.dsh=j.dsh||{};j.dsh.profile=j.dsh.profile||{};const b=j.dsh.profile.bundles=Array.isArray(j.dsh.profile.bundles)?j.dsh.profile.bundles:[];let c=false;for(const n of ['@local/dsh-qqbot-user-questions','@local/dsh-extra-plan'])if(!b.includes(n)){b.push(n);c=true};if(c){fs.copyFileSync(p,p+'.bak');fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n')}" ; $nodeExit=$LASTEXITCODE } finally { Pop-Location }; if($nodeExit -eq 0){Write-Host '本地插件安装并激活完成，请重启 QQBot'}}}
 ```
-3. **重启 DSH 进程**使插件生效
-4. 新建会话，在预设列表中选择「按需规划模式」即可使用
-5. qqbot下使用 /preset 切换预设
+2. **重启 DSH 进程**使插件生效
+3. qqbot下使用 /preset 切换预设
 
 ### 卸载步骤
 
@@ -151,7 +137,8 @@ dsh-extra-plan/
 │   ├── _shared/                                        
 │   │   ├── host-deps.mjs  
 │   │   ├── preset-hash.mjs      
-│   │   ├── session-finder.mjs  
+│   │   ├── session-finder.mjs    
+│   │   ├── v4-tool-result.mjs
 │   │   └── zstd-frames.mjs  
 │   ├── docs/                                           # AI文档
 │   │   ├── ai-概览.md  
@@ -174,6 +161,7 @@ dsh-extra-plan/
 │       ├── step-04-工具清单查看.mjs
 │       ├── step-04-路由与写闸门.mjs
 │       ├── step-05-会话解码.mjs
+│       ├── step-06-08-v4取证回归.mjs
 │       ├── step-06-线索落盘.mjs
 │       ├── step-06-真实会话查看.mjs
 │       ├── step-07-子代理模型与引导取证.mjs

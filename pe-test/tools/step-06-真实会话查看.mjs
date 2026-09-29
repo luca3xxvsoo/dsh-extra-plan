@@ -5,15 +5,17 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { framesOf, decodeText } from '../_shared/zstd-frames.mjs'
-import { findSession, logPath } from '../_shared/session-finder.mjs'
+import { findSession } from '../_shared/session-finder.mjs'
+import { toolResultOf, v4LogPath } from '../_shared/v4-tool-result.mjs'
 
 const found = findSession(process.argv[2])
 if (found.kind === 'notfound') { console.error('dir not found:', found.arg); process.exit(1) }
 if (found.kind === 'none') { console.error('未发现使用过按需规划模式的会话'); process.exit(1) }
 
+let invalidLog = false
 for (const dir of found.dirs) {
   console.log(`\n===== 会话 ${dir} =====`)
-  const lp = logPath(path.join(found.base, dir)); if (!lp) { console.error('会话日志文件不存在（两代候选名均未命中）:', path.join(found.base, dir)); continue }
+  const lp = v4LogPath(path.join(found.base, dir)); if (!lp) { invalidLog = true; console.error('仅支持 dsh 0.1.7 v4：目标日志必须是 session.v4.jsonl.zstd：', path.join(found.base, dir)); continue }
   const buf = fs.readFileSync(lp)
   let lineNo = 0
   for (const f of framesOf(buf)) {
@@ -39,18 +41,12 @@ for (const dir of found.dirs) {
           console.log(`L${lineNo} CALL ${data.name} ${trunc(data.arguments, 220)}`)
         }
       } else if (t === 'tool/result') {
-        const err = data.error
-        const reason = err ? trunc(String(err.reason || err.message || JSON.stringify(err)), 260) : ''
-        if (reason !== '') console.log(`L${lineNo} TOOL-ERROR ${trunc(reason, 260)}`)
-        const blocks = data.message && Array.isArray(data.message.content) ? data.message.content : []
-        for (const block of blocks) {
-          if (block === null || typeof block !== 'object' || block.type !== 'tool-result' || block.isError !== true) continue
-          const content = Array.isArray(block.content) ? block.content.map((item) => item !== null && typeof item === 'object' && typeof item.text === 'string' ? item.text : '').join('') : String(block.content || '')
-          console.log(`L${lineNo} TOOL-ERROR ${trunc(content || 'tool-result isError=true', 260)}`)
-        }
+        const result = toolResultOf(ev)
+        if (result !== null && result.isError === true) console.log(`L${lineNo} TOOL-ERROR ${trunc(result.text || 'tool result isError=true', 260)}`)
       } else if (typeof t === 'string' && /retry|error|failed/i.test(t)) {
         console.log(`L${lineNo} EVENT[${t}] ${trunc(JSON.stringify(data), 300)}`)
       }
     }
   }
 }
+process.exitCode = invalidLog ? 1 : 0
