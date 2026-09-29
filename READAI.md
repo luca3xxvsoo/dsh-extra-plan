@@ -1,75 +1,45 @@
 # 按需规划模式（AI 入口导航）
 
-> 本文件是导航层：先读这里，按「想查什么」打开二级文档；本文档不存机制细节，只保留导航与易漂移的数值/投影口径锚点（防漂移与信息过载）。
-> 运行时行为以 persona（agent.cordis.yml 注入内容）与机械闸门为准。
+> 先读本文件，再按场景打开一个入口；普通任务不默认加载历史归档。本文只放导航、当前兼容、安全边界和真相源，不复制机制长文。
 
-## 项目一句话
-dsh 插件「按需规划模式」预设：AI 未经用户同意不得修改源码/配置/执行态，经路由/目的/澄清/批准四级机械闸门后按规划执行；路由确认前唯一写例外 = 受限规划工件 save_plan（任意路由态可落盘 cwd/.extra-plan 的固定形状方案/验收双文件，内容闸门与目录/文件名形态不变），save_probe 仍限 pro 规划窗口（route=plan + 目的已定 + 澄清完成）；Pure PTC 顶层始终只保留 run_code。
-五角色：主会话（入口协调）→ 探查者（只读批量+证据落盘，**仅主会话可委派**）→ 规划子代理（方案+验收双文件，不得委派探查者）→ 执行者（按方案改）→ 验收者（逐条核对）。save_probe 的 `PROBE_LIMITS` 当前为 evidence 150 条、单条 evidence.text 1000 字；step-00 PR23=151、PR34/PR35=1000/1001；exploreBudget=18 与台账历史 80/209 是不同口径。
-兼容：当前只支持 dsh 0.1.7-rc.1 / 0.1.7-rc.2；本轮运行合同为 current-only，不保留旧运行分支。qqbot 侧为选装：静态安装映射回归始终执行，严格环境命中时由环境脚本只读核验，环境/能力不足结构化 SKIP；真实消息、/preset、question/approval 与 postinstall 仍属部署后 HUMAN，不把自动绿灯写成 QQBot 集成已通过。A=anchoredBootstrap、C=creativeMode、M=toolPresentationMode（native/ptc/both），F=尚无 tool/call、L=首个 tool/call 后。
-A=1/F/main-planner：M=native/both 为 HN/HB（bootstrap shell(s)+read，sections 仅 extra-plan-bootstrap）；M=ptc 为 HP（顶层仅 run_code，sections 精确为 extra-plan-bootstrap、tool:read 两项；宿主 tools:ptc-only 段停用，read 文本由插件手写 cfg.bootstrapReadHint）。A=1 的 L 与 A=0 从 N/P/B 基线开始；C=0 全角色隐藏 2 个 Cordis 展示工具、对应 SDK schema/说明和三个创造 skill，C=1 按当前目录保留。以上是模型可见投影，不是 runtime binding 安全隔离。
+## 按场景加载
 
-## P2-2 SDK 文本复用边界（终版）
-- 缓存只存在每个 plugin `apply` 闭包内的 agent-keyed WeakMap：同一 agent 对象同一 session 的 L 首次生成、后续相同有效输入复用；不按 sessionId 跨 agent 共享，不缓存 PromptAssembly/sections/tools/contexts/persona，不落盘。
-- F/L 严格分离：F/PTC 不再生成任何 SDK 文本（`tool:read` 段由预设键 `bootstrapReadHint` 手写），因此不读写完整缓存；F/native 与 F/both 不渲染随后会被剥离的完整 SDK；L 且 C=0、存在 `tools:sdk` 才取得 live effective schemas，整体重建并查询缓存。
-- 命中三元组 = `sdkSchemasForRendering` 后完整嵌套输入的保守结构指纹（保留数组/对象键顺序与字段存在性）+ 原始 language 字符串 + active renderer 函数引用；schema、language、renderer 任一变化即失效，无法无损指纹则 miss 且不写入。
-- 同 key 并发共享 in-flight Promise；renderer reject、调用方 catch 的空文本降级、过期 Promise 均不缓存/不回写；agent/disposed 先 dispose（即使缺 sessionId），新 agent、new apply、部署或重启从空缓存开始。
-- step-04 的 renderer 调用计数是硬门槛：PTC F→L→L 两次相同完整 L 必须精确调用 1 次且文本逐字相等；耗时只报告、不设毫秒阈值。P2-3 不在本批；根 `README.md`、ai-宿主耦合台账与官方安装目录不改。
-
-## 文档索引（想查什么 → 打开哪个）
-| 想查什么 | 打开 | 建议时机 |
+| 场景 | 入口 | 时机 |
 |:--|:--|:--|
-| 项目全貌/文件职责（改哪里） | pe-test/docs/ai-概览.md | 每次动手前 |
-| 体检工具包怎么跑（普通用户版） | pe-test/README.md | 装完插件第一次体检时 |
-| 核心机制为什么这么设计、历史教训 | pe-test/docs/ai-机制设计.md | 改闸门/预算/落盘/裁剪等核心前 |
-| 维护纪律+自检+地图同步 | pe-test/docs/ai-维护手册.md | 动手前、改完后 |
-| 函数在几行/干什么 | pe-test/docs/ai-代码地图.md | 定位功能时：**先看文件头部「意图速查」**（意图词 → 函数名），再按函数名到索引区取行号区间 |
-| 完整流程（实际机制校订版） | pe-test/docs/ai-流程备查.md | 流程细节拿不准时 |
-| 宿主耦合点全表（DSH/qqbot 升级比对） | pe-test/docs/ai-宿主耦合台账.md | 升级 DSH/qqbot 前必读 |
-| 预设新载体与 isolate 名单（0.1.7-rc.1） | 本文下方「新载体」节 + pe-test/docs/ai-机制设计.md | 改预设行/加服务行前必读 |
-| PTC 首轮 F→L 与 native/both HN/HB 回归实机取证 | pe-test/docs/ai-实机闸门测试流程.md | PTC 的 C=0/C=1 各用干净新顶层会话；both 回归独立 |
-| 子代理模型/提供方与 pro规划引导实机取证（A42/A43、C11/C12） | pe-test/tools/step-07-子代理模型与引导取证.mjs | 首次实机取证前；已优化为两阶段流式头扫描（只解析命中子会话），不加堆参数默认堆可跑通 |
+| 项目全貌、五角色、模块 owner | [ai-概览](pe-test/docs/ai-概览.md) | 普通改动前 |
+| 机制不变量与设计理由 | [ai-机制设计](pe-test/docs/ai-机制设计.md) | 改闸门、预算、落盘、裁剪前 |
+| 备份、禁改、回归、交付 | [ai-维护手册](pe-test/docs/ai-维护手册.md) | 修改前后 |
+| 主会话到验收的交接顺序 | [ai-流程备查](pe-test/docs/ai-流程备查.md) | 流程拿不准时 |
+| 函数定位、行号与机器索引 | [ai-代码地图](pe-test/docs/ai-代码地图.md) | grep 后局部 read |
+| DSH/QQBot 当前宿主契约 | [ai-宿主耦合台账](pe-test/docs/ai-宿主耦合台账.md) | 升级或宿主异常时 |
+| 唯一实机顺序 runbook | [ai-实机闸门测试流程](pe-test/docs/ai-实机闸门测试流程.md) | 部署后由用户验收 |
+| 旧机制、故障与批次追溯（非默认） | [ai-历史故障与机制归档](pe-test/docs/ai-历史故障与机制归档.md) | 需要历史根因时 |
+| 旧宿主耦合、历史快照与证据勾销（非默认） | [ai-宿主耦合历史归档](pe-test/docs/ai-宿主耦合历史归档.md) | 需要升级历史时 |
 
-> 脚注（step-07 行用法）：HUMAN：显式 SESSION_ID + PLANNER_PROMPT_SUFFIX；request/header attempted route、assistant/message actual provenance、suffix 等级分栏。内存口径：先只读头信息筛出直接 child、再只解析命中目录（事件不再保留 raw 行），配合 `_shared/session-finder.mjs` 首行读分块渐读，277 份会话工作区下默认堆可跑通。
+上述 8 个既有入口路径继续保留；两个归档直接位于 `pe-test/docs/`，不创建归档子目录或其它项目文档。
 
-## 必守纪律
-改前逐文件备份到唯一 `.extra-plan/backup-dsh-extra-plan-JS审查修复-<YYYYMMDDHHMMSS>/`，同任务续跑沿用且不覆盖原始镜像；工作目录固定为 dsh-extra-plan（仓库根）。改完对本轮 12 个 JS 与 8 个 MJS 逐文件 `node --check`，再按固定顺序执行 step-00 → step-04 → step-06 → 代码地图生成 → 人工文档同步 → 代码地图 --check → 一键step测试。**根 `dsh-extra-plan/README.md`、官方文件/预设/源码、生成文件与 DSH_HOME 均禁改；不得执行 git reset/checkout/clean。**
+## 当前兼容与安全边界
 
-**界面文案口径（用户确认）**：界面上展示给使用者的文案一律不写详细技术描述，只保留结论级信息（成功/失败/需要做什么操作）；技术细节只允许出现在 ① 硬闸门给 AI 的拒绝/教学文案（唯一例外）② 诊断文件与日志（`extra-plan-*-errors.jsonl` 等）与浏览器控制台 ③ AI 维护文档（`pe-test/docs/ai-*.md`、`READAI.md`）。实现词（投影/宿主行/已回滚/revision 等）不得写进界面文案。
+- 当前支持范围仅为 dsh `0.1.7-rc.1 || 0.1.7-rc.2`；插件 peerDependencies 是版本真源。QQBot 是选装面：静态映射回归可执行，真实消息、`/preset`、question/approval、postinstall 与生产运行仍是用户部署后的 HUMAN，不把静态绿灯写成集成通过。
+- 五角色顺序：主会话 → 探查者 → 规划子代理 → 执行者 → 验收者。路由/目的/澄清/批准是机械锚点；唯一受限写例外是 `save_plan` 双文件工件，其余工作区写入按批准后的执行者流程进行。
+- A/C/M 是模型可见投影维度：A=anchoredBootstrap，C=creativeMode，M=`native|ptc|both`；F/L 以首个 `tool/call` 为界。展示隐藏不等于运行时 binding 安全隔离，真实取证见实机流程。
+- AI 不执行生产部署；仓库验收通过后由用户操作部署与实测。工作区外写入被委派边界拒绝时，不逐条尝试，不设置 `sandbox_permissions`，只在汇报中列越界清单。
 
-## PTC 拒绝中文呈现兜底与状态机口径（2026-09-23）
-- **PTC 子调用被闸门拒绝 → tools/post-execute 把失败结果 content 改写为 `Error: <中文 reason>`**：pre-execute deny 时按 sessionId→rootCallId 记录本次 reason，post-execute 在 run_code 失败结果的 `error.message` 含精确子串 `ToolCallError: <reason>` 时只替换 `content`（PostToolDecision 禁止对失败结果替换 value），模型不再看到 `code run failed (exception)` 与 worker.cjs 堆栈；未命中/非 run_code/非失败一律 `next()` 透传（不吞错），记录消费即清、agent/disposed 按 session 清桶。
-- **状态机对闸门拒绝不重置路由、用户取消仍清四字段**：`kind:'denied'`（插件中文拒绝文案）不改任何状态字段；用户取消/中断（native 直呼码 ASK_CANCELLED、嵌套为宿主取消句 HOST_ASK_CANCEL_TEXTS）仍走 resetRouteState 清 route/purpose/clarified/approved；CHANNEL_BROKEN_CODES 只置 channelBroken。
-- 宿主接触面登记见 pe-test/docs/ai-宿主耦合台账.md HK25（当前 0.1.7 契约静态复核，实机行为面待部署后实测）；用例见 step-04 DZ1-DZ12。
+## 真相源短表
 
-## 真相源
-（以下路径相对 plugins/dsh-extra-plan/）
-- 角色 persona/deny 清单 → assets/presets/extra-plan/agent.cordis.yml（预设本体 = 生成产物 `assets/presets/extra-plan/preset-patch.generated.yml` 的声明行 `config.plugins`，与 agent.cordis.yml 顶层条目逐字一致）
-- 闸门关键词值（唯一真源） → assets/presets/extra-plan/agent.cordis.yml 的 config.gateWords（7 字段；JS 侧 schema/校验/派生见 lib/gate-words.js，无词值）
-- 函数行号/描述 → pe-test/docs/ai-代码地图.md（唯一来源模块登记：lib/agent-session.js 会话快照/子代理识别）
-- 机制「为什么」详版注释 → 各源码文件注释（指向见 ai-机制设计.md 教训索引表）
-- 回合/请求错误诊断文件 → plugins/dsh-extra-plan/extra-plan-agent-errors.jsonl（宿主 agent/error 逐字 errorChain 落盘；子代理「腰斩」/回合失败复现后**先读此文件**定位根因）与 extra-plan-request-errors.jsonl（agent/request-error 失败记录）
+- gateWords 唯一人工值源：[agent.cordis.yml](plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml) 的 `config.gateWords`；`lib/gate-words.js` 只负责字段、校验和运行时派生。
+- save_probe 限制与渲染合同：[save-contract.js](plugins/dsh-extra-plan/lib/save-contract.js)；验证：[save-probe-validation.js](plugins/dsh-extra-plan/lib/save-probe-validation.js)。文档不维护第二份限制值表。
+- 默认值与预设声明产物：[generate-runtime-defaults.mjs](plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs)；生成物只读、不得手改。
+- 函数路径/行号/结构：[代码地图生成.mjs](pe-test/tools/代码地图生成.mjs) 与 [ai-代码地图](pe-test/docs/ai-代码地图.md)；人工描述与机器索引分工不同。
+- 当前宿主状态：[ai-宿主耦合台账](pe-test/docs/ai-宿主耦合台账.md)；历史数字与已删除耦合只在[历史归档](pe-test/docs/ai-宿主耦合历史归档.md)中追溯。
 
-## 新载体与 isolate 名单（0.1.7，rc.1 起 / rc.2 沿用；v0.3.0）
-- **预设载体换代**：预设不再是「分发到 `$DSH_HOME/.agent-presets/extra-plan` 的目录」（0.1.7 无任何读取方），而是 profile patch 根级 insert 一行声明行 `preset-extra-plan`（`name: '@deepseek-ai/dsh-agent-preset'`，`config{id,name,description,order,plugins}`），其中 `config.plugins` = `agent.cordis.yml` **顶层 17 条目**（group 3：extra-plan-group/compaction/delegation + 普通行 14；组内子行 14，总 31）逐字平移。产物由 `scripts/generate-runtime-defaults.mjs` 生成到 `assets/presets/extra-plan/preset-patch.generated.yml`，随 `package.json` 的 `dsh.bundle.patch` 数组 `['./cordis.patch.yml','./assets/presets/extra-plan/preset-patch.generated.yml']` 装载；**该文件是生成物，禁手改**（改预设只改 `agent.cordis.yml`，再跑生成器）。
-- **postinstall 已删除（2026-09-25 死代码清理）**：不再初始化任何状态目录（0.1.7 无读取方）；启动自愈（lib/preset-sync.js apply）是唯一落地点，失败不阻断启动。
-- **isolate 名单（审计硬门槛）**：预设三组都带 `isolate` 键且值**一律 `true`**（每条目各自 LocalRealm；具名字符串 label 会让四个同名服务实例共享 GlobalRealm 互相覆盖，**禁止**）——delegation `{workflowEngine: true, subagentModelSelection: true}`（`dsh-workflow-ptc` 的行实例仍注册 workflowEngine；四行 `dsh-tool-subagent` 的插件类即 `SubagentModelSelectionConfig extends Service`，未隔离即抛 `Preset services require isolate realms: subagentModelSelection`）、compaction `{compaction: true, toolResultPruner: true}`、extra-plan-group `{extraPlan: true}`（本仓零服务注册，属保险项）。审计只认「少写必炸、多写未注册名不触发」，故**宁多勿少**；**删任何一项前先逐包 grep `extends Service|super(ctx,`**。
-- **创造模式 skill 面**：C=1 的官方 skill 不再由插件运行期 `agentPresets.resolve('cordis')` 注册（0.1.7 该 resolve 只返回 `{id[,broken]}`，`path` 恒 undefined → 旧实现静默失效），改为预设 `skill-filesystem` 行 `config.customSkillDirs` 指向 `@deepseek-ai/dsh-agent-preset` 包内 `skills/`（三个 SKILL.md 目录：cordis-plugin-development / editing-cordis-compositions / cordis-composition-reference）；C=0 由 `assembly-presentation` 的 `CREATIVE_SKILL_NAMES`（3 项）在 catalog 投影里隐藏。
-- **设置页双通道**：见上方「闸门关键词单一来源」节末条——8 项走 settings 行 `Config`（全 `.volatile()`，官方 configForms，ns = 行 id `dsh-extra-plan-settings`），2 项与 8 项同一 mutate（10 op）写 settings 行、声明行 plugins 子行仅由本插件 PUT 投影（`configEditor.edit`）。客户端卡片的插槽是 Plugins 页**已安装包行详情**的 `plugins.row.config`（key = `@local/dsh-extra-plan#dsh-extra-plan-settings`；`configForms.whileServed` 包裹；宿主 `plugins.item` 专供官方设置页、旧 `settings.plugin.item` 在 0.1.7 无活动注册（全库仅 1 处注释引用））。**0.1.7 设置入口（C1 订正·注册面再订正）**：DSH web 界面 → 左侧边栏「插件」页 → 已安装分组 → `@local/dsh-extra-plan` 包 → 行 `dsh-extra-plan-settings` 的配置区（旧「官方分组下的独立卡片」形态已随注册面迁移取消；旧「设置 → 插件 → 插件配置」路径在 0.1.7 已不存在）。
-- **钩子/契约换代（index.js）**：`agent/created` 为 serial 且整块吞错，pre-step 继续兜底；tool-jobs 完成通知源为 `{kind:'tool-jobs', form:'notice'}`；creativeMode 与其它 8 项插件设置走 live-config；宿主已不再产出 `tool:cordis` 段，当前只保留 2 个 Cordis 展示工具的过滤；旧 dispatch 事件、旧 tool-result 信封与旧 journal 恢复分支不再属于当前支持面。
-- **安装口径**：`dsh plugin` 装载不再有任何安装期脚本动作（`postinstall` 已于 2026-09-25 死代码清理删除，启动自愈兜底；旧「跳过构建仅少一次状态目录初始化」口径随之作废）；兼容门控 = `evaluatePluginCompatibility` 只查 peerDependencies 中 `@deepseek-ai/dsh` / `@deepseek-ai/dsh-` 前缀键，不满足时 **bundle 整层被跳过**（0.1.7-rc.2 起结构化为 skippedBundles + reportSkippedBundles，启动时统一打印 stderr）、loader 行被 preflight 置 disabled（与台账 CF12 口径一致）。**部署由用户执行（AI 不执行部署）**。
+## 文档修改边界
 
----
+- 本轮唯一不编辑的是仓库根 `README.md`；官方文件/预设、生成物、插件源码、测试脚本、生产环境和 `$DSH_HOME` 也不改。
+- 工作区内 AI 维护文档（含台账）可按批准方案修改；修改前按维护手册创建唯一 `.extra-plan/backup-dsh-extra-plan-JS审查修复-<YYYYMMDDHHMMSS>/`，同一任务续跑沿用，不覆盖镜像。
+- `pe-test/reports/` 只接收临时测试产物，不纳入源改动；不调用 `git reset`、`git checkout`、`git clean`。
+- 界面文案只给结论级信息；技术细节仅放硬闸门给 AI 的文案、诊断/日志和本组 AI 文档。
 
-**AI 禁改文档仅一处：根 `dsh-extra-plan/README.md`（与本文同层级）；其余文档（含各级 README.md、台账）均可改。**
-## 闸门关键词单一来源（v0.3.0）
-- 7 个闸门关键词（routeDirect/routePlan/routeDisagree/approvalApprove/approvalReplan/purposeRefine/purposeRedo）的**唯一人工编辑位置**是 `assets/presets/extra-plan/agent.cordis.yml` 的 `config.gateWords`（部署现场为 profile patch 声明行 `preset-extra-plan` 的 `config.plugins` 内 `extra-plan` 行 `config.gateWords`，即 `profileContext.patchPath`；旧 `DSH_HOME/.agent-presets/extra-plan/agent.cordis.yml` 已无读取方）；出厂示例值为「直接执行｜进行pro规划｜不同意｜同意执行｜转交pro规划｜完善方案｜重新规划」，**只是示例，不是运行时第二真源**。
-- `lib/gate-words.js` 只保存字段名/prompt variable 名/校验规则/迁移 locator 与运行时派生（`createGateRuntime`），**不含任何出厂词值、不读文件/环境变量、没有无参默认词表**；`index.js` 每次 apply 第一步 `createGateRuntime(cfg.gateWords)`，缺失/非法同步抛错（阻止该预设被使用，不回退旧词），并在当前 agent scope 经 `ctx.effect(() => ctx.systemPrompt.variable(...))` 注册恰好 7 个 `extra_plan_*` 变量；persona 的 `prefix`/`text` 双键只引用这 7 个变量。
-- deny 教学文案（路由确认句、批准选项句、目的选项句、三类 ask 模板）现由**当前** `config.gateWords` 插值拼出；出厂值下与历史静态文案逐字相同。三类 match 只认「推荐后缀归一后精确等于当前词值」，旧词与任意变体都不能推进 route/purpose/approved。
-- 两条保留链：**台账 hash 与资产一致且声明行覆盖资产行 id 集合** → `idle`（不写盘、台账字节不变）；**hash 变化/声明行失覆盖** → 迁移一次：8 项 UI 设置写 settings 行、2 项宿主行写声明行 `config.plugins` 子行、整组合法的 7 个旧词写回 `extra-plan` 行 `config.gateWords`（缺失/非法/歧义整组缺席，禁止部分迁移）。写盘只经 `configEditor.edit`（事务 + reconcile + 回滚），本插件不直写任何 `cordis.patch.yml`。
-- 设置页拆成**双通道**：**8 项 UI 设置**（anchoredBootstrap/creativeMode/runcodeCatchGate/crossProviderPlannerModel/plannerModel/plannerPromptSuffix/exploreBudget/otherAgentModel）落 settings 行 `dsh-extra-plan-settings` 的 `Config`（10 字段全链 `.volatile()`：8 项 UI 设置 + webFetch/toolPresentationMode 2 项宿主行设置，读写走官方 SettingsForms）；**2 项宿主行设置**（webFetch→`tool-web` 行 `config.fetch`、toolPresentationMode→`tool-presentation` 行 `config.mode`）与 8 项同一 mutate（10 op）写 settings 行，声明行 `config.plugins` 子行只是投影（`PUT /api/dsh-extra-plan-settings/pro-config`，body 仅这 2 项 → `configEditor.edit` 整体重述 plugins）。gateWords 不进设置页 metadata、不进 `preset-defaults.generated.js`；当前不依赖 manifest 或 `$DSH_HOME` 状态目录迁移链。
+## 验收顺序
 
-## P2-4 默认值与拆分边界
-- `assets/presets/extra-plan/agent.cordis.yml` 的 `config.exploreBudget` 与 `config.plannerPromptSuffix` 是默认作者真源；构建期 `scripts/generate-runtime-defaults.mjs` 生成 `lib/preset-defaults.generated.js` 的 `DEFAULT_EXPLORE_BUDGET` 与 `DEFAULT_PLANNER_PROMPT_SUFFIX` 两个常量，运行时（settings.js Config 默认、live-config BUILTIN_DEFAULTS、index.js apply 兜底）只 import 常量，不解析 YAML，descriptor 仅负责定位、校验与 UI metadata。
-- 生成器先完整解析/校验再替换；缺失或非法模板时生成、`--check`、prepack 非 0，保留 last-known-good；preset-sync 在任何 DSH_HOME 目标写入前失败，startup 外壳仍非阻断（本包已无 postinstall，见台账 CF1）。
-- P2-4 B1 将无宿主状态的 shell mutation、planner budget、runtime-static 与 per-apply agent runtime factory 下沉；usage、工具注册/claim、disposed 同步 final fold、监听器顺序和 tools/pre-execute 仍留在 `index.js`。
+按[维护手册](pe-test/docs/ai-维护手册.md)执行固定顺序：实际修改的 JS/MJS 才逐文件 `node --check`（本轮预期为零），然后 step-00 → step-04 → step-06 → 代码地图生成 → 人工地图复核 → 代码地图 `--check` → 一键 step 测试。Markdown 不伪造语法门结果；环境项的 SKIP/HUMAN 不计作通过。

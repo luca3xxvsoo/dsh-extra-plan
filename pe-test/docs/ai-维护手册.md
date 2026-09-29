@@ -1,100 +1,72 @@
-# 维护手册（AI 动手纪律 + 自检 + 地图同步）
+# 维护手册（备份、修改、回归与交付）
+
+> 本文回答“怎么安全改、改完跑什么”。机制理由读 [ai-机制设计](ai-机制设计.md)，流程交接读 [ai-流程备查](ai-流程备查.md)。
 
 ## 动手前
-- 备份：修改前把本轮实际改动的每个文件按原目录结构逐路径镜像到唯一 `.extra-plan/backup-dsh-extra-plan-JS审查修复-<YYYYMMDDHHMMSS>/`；不得覆盖旧备份目录；根 README 禁改、不备份。**文件镜像 + 按子块独立回退**：备份按文件镜像（而非整目录快照），同一批次内的每个子块（如 P1-3 / P1-4）必须能**单独回退**——恢复该子块涉及的备份文件即可，不牵连其它子块；同一次任务续跑沿用已建备份目录，禁止另建第二个或把改后版本覆盖回备份。
-- 改预设（agent.cordis.yml）：复制现有预设为副本再改；官方安装的预设/技能只读引用（不复制不改写）
-- 先读：ai-概览.md（改哪里）、ai-机制设计.md（改核心前）、ai-代码地图.md（定位函数）
-- **验收与部署次序**：先仓库内验收 → 用户部署生产 → 生产测试。AI 在验收通过前不得执行生产环境同步/部署动作（dsh plugin 更新、复制 DSH_HOME 安装目录、.agent-presets 下发等均属用户侧部署）
-- **README 边界**：根 `dsh-extra-plan/README.md` 不编辑、不备份；pe-test/README.md 等其它层级 README 可改；其中 otherAgentModel 文档缺口只记录在本维护范围，由用户自行同步。
-- 复杂嵌套/拼接的修改遵循转义纪律：最终目标语言视角写出正确代码 → 逐层向外转义 → 解析回放验证（全局纪律）
-- 工作区外写入（如 ~/.dsh/memory/ 记忆库）：沙箱拒绝时唯一放行通道 = shell 命令 + sandbox_permissions 提权（一次性重试，需用户批准；AGENTS.md 协议已有规定，本项目遵守）。严禁通过改用工具名称绕过沙箱限制。
-- 闸门拒绝消息已含修复指令（如「已保护 M 个」「参数不可解析」「须先 ask_user_question 路由确认」「选项固定为…」）——照改写法即可通过，严禁换工具/改调用方式绕过；绕过尝试会被后续闸门拦截。
-- **界面文案口径（用户确认，2026-09-25）**：界面文案只保留结论级信息（成功/失败/需做什么操作），不写技术描述；技术细节的合法去处 = 硬闸门给 AI 的文案（唯一例外）、诊断文件/日志/浏览器控制台、AI 维护文档。改 UI 文案时先对照本条。
 
-## Web 核心与 QQBot 分发所有权
-| profile | 唯一职责 | 迁移边界 |
+1. **先读与登记**：先读方案和验收文件，再读所有目标文件；按原章节建立迁移矩阵。没有矩阵证据的段落默认保留。
+2. **唯一备份**：修改前把本轮实际改动文件按原目录镜像到唯一 `.extra-plan/backup-dsh-extra-plan-JS审查修复-<YYYYMMDDHHMMSS>/`；同任务续跑沿用原目录，不覆盖原始镜像。文件镜像和子块独立回退是人工纪律，不声称已有自动闸门。
+3. **范围**：本项目 AI 文档可按批准方案修改，含宿主台账；仓库根 `README.md`、插件源码、测试脚本、官方文件/预设、生成物、生产环境和 `$DSH_HOME` 禁止修改。不得执行 `git reset`、`git checkout`、`git clean`。
+4. **备份后再改**：改预设时只改作者源并由生成器重建；本轮文档精简不改预设。生产部署由用户执行，仓库验收不是部署许可。
+5. **嵌套命令纪律**：涉及 `run_code`/PowerShell/字符串拼接时，先按最终语言写正确文本，再逐层转义，写后解析回放；Markdown 不伪造代码语法结果。
+
+## Web/QQBot 所有权与部署边界
+
+| profile | 当前职责 | 本仓库 AI 边界 |
 |:--|:--|:--|
-| web | 直接安装 `@local/dsh-extra-plan`；持有核心 bundle/依赖与 allow-build；核心包无 postinstall、无项目自有运行期状态目录或 manifest；启动时运行 `preset-sync` | 不从 web 删除核心包或预设；预设本体由 profile patch 声明行承载，旧 `.agent-presets/extra-plan` 分发链已退役 |
-| qqbot | 直接安装 `@local/dsh-qqbot-user-questions`（精简版）；两行补入由包内静态 `cordis.patch.yml` 的 insert 承担（0.1.7 新包族：`ptc-runtime` = `@deepseek-ai/dsh-ptc-runtime-node`、`agent-preset-registry` = `@deepseek-ai/dsh-agent-preset-registry`（config.default: extra-plan））；静态回归始终执行，严格环境命中时由环境脚本对真实 profile 做只读核验，环境/能力不足结构化 SKIP；apply/postinstall 自愈仍只做迁移旧版根级错误块与建 `@local/dsh-extra-plan` → web 同名包链接 | 不声明核心直接依赖，不分发预设本体（预设随 bundle patch 声明行装载），不执行 `preset-sync`；不含问答/审批/补丁分发，真实消息/交互仍属部署后 HUMAN |
+| web | 直接安装核心包；启动 `preset-sync`；承载 profile patch 预设声明行 | 不删除核心包/预设，不写生产 profile |
+| qqbot | 安装精简兼容包；静态 patch、旧块迁移与 web 包建链 | 不分发核心预设；真实消息、`/preset`、question/approval、allow-build/postinstall 为用户部署后 HUMAN |
 
-### 已有残留迁移（用户侧）
-- 前提：先由用户完成 web 核心安装和预设分发，再通过 profile 的 pnpm/DSH 包管理流程移除 qqbot/package.json 的直接 `@local/dsh-extra-plan`；由 pnpm 同步 lock、`.modules.yaml`、`virtualStoreDir`、`storeDir` 与 hoisted 解析状态，最后重新安装/刷新 QQBot 兼容包。
-- lock、`.modules.yaml`、`.pnpm`、store 等均由 pnpm 管理，禁止手工编辑或删除；Junction 由精简版插件自愈（apply/postinstall）在目标缺失时创建。
-- helper 仅在目标缺失时建链；已有实体目录或非目标链接保留并提示用户走 pnpm 迁移。仓库环境脚本只对 mkdtemp 临时 fixture 调用 helper；真实 DSH_HOME 分支只读，缺严格五条件或 junction 能力时为 SKIP。
+`$DSH_HOME/profiles`、`.agent-presets` 和其它生产目录只允许用户侧部署流程触碰；本轮不做同步、清锁、重启或现场修复。
 
-### 禁止递归删除
-| 对象 | 规则 |
+## 修改后固定顺序
+
+1. 对**本轮实际修改的 JS/MJS**逐文件执行 `node --check`；本轮预期实际修改 JS/MJS 为零，因此不为 Markdown 伪造语法门。
+2. 在仓库根依次运行：
+   - `node pe-test/tools/step-00-全流程回归.mjs`
+   - `node pe-test/tools/step-04-路由与写闸门.mjs`
+   - `node pe-test/tools/step-06-线索落盘.mjs`
+   - `node pe-test/tools/代码地图生成.mjs`
+   - 人工复核地图描述、结构键、同名顺序
+   - `node pe-test/tools/代码地图生成.mjs --check`
+   - `node pe-test/tools/一键step测试.mjs`
+3. 每条命令退出码必须为 0；输出不得有 `FAIL`、`SyntaxError`、`UnhandledPromiseRejection`、漏检或导航失效。AUTO 项数量只认 [一键step测试.mjs](../tools/一键step测试.mjs) 的 `AUTO` 数组；SKIP/HUMAN 不计作通过。
+4. 生产部署与实机测试由用户另行执行；实机流程中现场 mode、A/C、gateWords、SESSION_ID、模型、suffix 和残留数量必须现场读取。
+
+## 改动域 → 唯一检查入口
+
+| 改动域 | 主要检查 |
 |:--|:--|
-| `qqbot/node_modules/@local/dsh-extra-plan`、`@local` 父目录 | helper 不递归删除、不替换既有实体或非目标链接；由用户通过 pnpm 迁移 |
-| `qqbot/node_modules`、`node_modules/.pnpm`、pnpm store | 禁止递归删除或手工清理 |
-| `profiles/web`、`profiles/qqbot`、`.agent-presets` | 禁止递归删除；生产状态由用户的 pnpm/DSH 流程维护 |
-- 仓库改动和回归通过后，生产 profile 迁移由用户执行；仓库验收不是生产部署许可，AI 不接触 `$DSH_HOME/profiles`。
+| 闸门、route/purpose、A/C/M、PTC 呈现 | `step-00-全流程回归.mjs`、`step-04-路由与写闸门.mjs` |
+| save_plan/save_probe、journal、证据合同 | `step-00-全流程回归.mjs`、`step-06-线索落盘.mjs`；限制以 `lib/save-contract.js` 为准 |
+| 预设默认、settings、profile patch 自愈 | 对应 step-01 脚本；生成器与产物 `--check` 只读验证 |
+| 模型路由、usage、会话形状 | step-00、step-04 P4、step-07 HUMAN 取证；静态结果不替代实机 |
+| 代码地图 | `node pe-test/tools/代码地图生成.mjs` → 人工描述复核 → `--check`；一键测试也内置 `--check` |
+| 宿主升级/QQBot | [ai-宿主耦合台账](ai-宿主耦合台账.md) 的当前 checklist；SKIP 不销账，HUMAN 不伪造通过 |
+| 实机闸门 | [ai-实机闸门测试流程](ai-实机闸门测试流程.md)；保持单文件顺序，不拆表/改编号 |
 
-## 改完后
-1. 先同步本轮语义文档：`READAI.md` 与 `pe-test/docs` 下 7 份语义文档 + `ai-代码地图.md`，合计任务5八份文件，全部覆盖本轮改动面。唯一禁改文档：根 `dsh-extra-plan/README.md`（与 READAI.md 同层级）；其余文档（含各级 README.md、pe-test/docs/ai-宿主耦合台账.md）均可改；官方安装的预设与技能只读引用、不复制不改写。
-2. 本轮按固定顺序逐文件执行语法门（本轮 12 个修改 JS + 8 个修改 MJS 均逐一 node --check；工作目录固定为 dsh-extra-plan）：
-   - node --check plugins/dsh-extra-plan/index.js
-   - node --check plugins/dsh-extra-plan/lib/run-code-static.js
-   - node --check plugins/dsh-extra-plan/lib/save-contract.js
-   - node --check plugins/dsh-extra-plan/lib/save-probe-validation.js
-   - node --check plugins/dsh-extra-plan/lib/save-persistence.js
-   - node --check plugins/dsh-extra-plan/lib/save-tool-factories.js
-   - node --check plugins/dsh-extra-plan/lib/agent-session.js
-   - node --check plugins/dsh-extra-plan/lib/model-routing.js
-   - node --check plugins/dsh-extra-plan/lib/assembly-presentation.js
-   - node --check plugins/dsh-extra-plan/lib/gate-words.js（v0.3.0 起：闸门词共享契约，本轮新增基线门）
-   - node --check plugins/dsh-extra-plan/lib/client.js（浏览器半打包格式：A7 单卡双区块改造后纳入基线语法门）
-3. 语法门全部退出码为 0 后，固定运行：step-00-全流程回归 → step-04-路由与写闸门 → step-06-线索落盘 → 代码地图生成 → 人工文档同步 → 代码地图 --check → 一键step测试。每条退出码必须为 0，且无 FAIL、SyntaxError、UnhandledPromiseRejection。
-4. 全量维护时仍可运行 7 个 step-01 回归（设置页配置、设置迁移、预设完整性、安装同步、qqbot 静态安装映射、qqbot 环境验证、step-01-executor-spawn注册幂等；`step-01-安装分发.mjs` 已随 2026-09-25 死代码清理删除）；环境验证命中真实 profile 时只读，环境不足为 SKIP；step-04 工具清单可另以显式会话目录取证。模型可见面隐藏不是 PTC runtime binding 安全隔离。
-5. 交付汇报：改动点 / 每条校验结果 / 备份路径 / 风险点；用户实测确认后才算完成
+## 代码地图维护规则
 
-## 自检工具速查（pe-test/tools/）
-| 改动域 | 自检 |
-|:--|:--|
-| 闸门/路由/写拦截与A/C/M展示装配 | step-04-路由与写闸门.mjs（监听器级 + 120 格 A/C/M/F-L/五角色案例，含 C7/catalog/HP/HN/HB 断言；⑮ DZ1-DZ12：parse denied 判别、拒绝不重置/取消清四字段双对照、tools/post-execute 呈现改写命中-透传-非 run_code-消费即清）+ step-00-跨平台写拦截.mjs（68 用例） |
-| planner 探查委派禁令（T5）+ save_plan 主会话侧受限规划工件（任意路由态放行，save_probe 放行条件保持现状）+ plannerModel/otherAgentModel 降级与跨 Provider 时序（T2） | step-04-路由与写闸门.mjs（save_plan 五态全 allow 与 R107 组判定、T5 监听器级）、step-00-全流程回归.mjs（planner 与 executor/reviewer/probe/workflow/ralph worker 的 True/False 分流、真实 OK probe、排序、失败隔离、fallback、timeout、per-Agent cache、agent/request 屏障）、step-06-线索落盘.mjs（save_plan 注册与路由矩阵：任意路由态 allow） |
-| 注册失败路径与重试（P0-2/D1：服务未就绪与 C 类可重试错误不写标记、下一步重试；A 类重名与 B 类永久性错误写标记记终态不重试） | step-06-线索落盘.mjs（S6 服务不可用→次轮成功、S7 可重试错→次轮成功、S8 重名不重试、S9 永久性不重试、S10 pre-step 注册只影响下一步）、step-04-路由与写闸门.mjs（C4 认领时服务不可用→次轮成功、C5 可重试错粘性不重复消费、C6 重名不重试、C7 永久性不重试） |
-| save_probe 机械上限/动态描述 | lib/save-contract.js（PROBE_LIMITS/渲染合同）+ lib/save-probe-validation.js（validateProbe）+ lib/save-tool-factories.js（动态 schema/execute）；step-00-全流程回归.mjs（evidence 150、text 1000，PR23=151、PR34/PR35=1000/1001；实际 schema 动态断言） |
-| save_probe/save_plan 落盘（含事务阶段语义） | lib/save-persistence.js（atomicCommit 阶段感知提交/recoverJournals 完成判定；当前 entries 形状；旧形状/非法 journal 只告警并保留）+ lib/save-tool-factories.js（sessionTag、统一 artifact base、非法 args 先校验）+ index.js（apply 注册/闸门接线）；step-06-线索落盘.mjs 覆盖正常双写、同毫秒不碰撞、跨 session/无 tag 不恢复、当前 entries 恢复、旧形状留存、各阶段故障与恢复 |
-| 闸门关键词单一来源（config.gateWords 7 项）／prompt variable 注册／旧词拒绝／三维判定 idle | step-00-全流程回归.mjs（GWY/GWV/GWC 段：YAML 七键与 persona 双键、宿主 renderPrompt 两键替换、15 例非法矩阵错误前缀、定制七词正例与旧词负例）、step-04-路由与写闸门.mjs（GW 段：apply 恰注册 7 个 provider、坏配置零副作用、三类 dispatch 定制词全链、旧词不推进、fresh apply、variables 哨兵投影）、step-01-安装同步.mjs（三维判定 idle + 投影/回填链 + 闭环/本体/carry）、step-01-设置迁移.mjs（描述表与源模板定位矩阵含 bad-new-template 抛错不切换目标） |
-| 预设安装/完整性/设置页/十项权威值落点 | step-01-预设完整性.mjs、step-01-安装同步.mjs、step-01-设置迁移.mjs、step-01-设置页配置.mjs（descriptor/metadata/locator 从 9 到 10，creativeMode 默认 false、true/false PUT、非法值；归属：descriptor（预设完整性）/ metadata 10 项（设置页配置）/ locator（设置页配置）/ creativeMode PUT（设置页配置）/ 投影与回填（安装同步）） |
-| 全量回归 | step-00-全流程回归.mjs（本地 mock/in-process，不需真实 session_id；一键step测试.mjs 同）。**一键体检的自动判定项共 12 项**（以 `一键step测试.mjs` 的 AUTO 数组为准）：step-00-全流程回归、step-00-跨平台写拦截、step-01-设置迁移、step-01-安装同步、step-01-预设完整性、step-01-executor-spawn注册幂等、step-01-设置页配置、step-01-qqbot-安装映射（静态）、step-01-qqbot-环境验证（条件只读）、step-04-路由与写闸门、step-06-线索落盘、代码地图生成.mjs（--check）；环境项的部分执行/未执行不计失败，真实 QQBot 消息、/preset、question/approval 与 postinstall 仍为 HUMAN |
-| usage 账本（含会话状态生命周期） | step-99-用量统计.mjs + step-04-路由与写闸门.mjs P4 段（session 分桶、disposed 同步 final fold、增量水位、可解析 cursor 保留其它 session、ENOENT 静默；损坏/非对象 cursor 首次告警但原始字节不覆盖；新字段与全零过滤） |
-| 跨平台写拦截 | step-00-跨平台写拦截.mjs |
-| 代码地图（口径/覆盖/导航） | 一键step测试.mjs 内置「代码地图生成.mjs --check」（不写盘，比对结构+漏检+导航失效）；同步仍用 node pe-test/tools/代码地图生成.mjs |
-| 会话解码/取证 | step-05-会话解码.mjs、step-06-真实会话查看.mjs、step-07-子代理模型与引导取证.mjs、step-08-方案配对查看.mjs（共用 `_shared/session-finder.mjs`：readMeta 为首行分块渐读，不再全文件 `readFileSync`） |
-| 机械闸门与PTC F/L实机取证（非 mock/静态自检） | pe-test/docs/ai-实机闸门测试流程.md（PTC C=0/C=1 干净会话 F→L；native/both HN/HB 独立回归；both 机械轮另行执行） |
-| 子代理模型/提供方与 suffix 实机取证（A42/A43、C11/C12） | step-07-子代理模型与引导取证.mjs（HUMAN；显式 SESSION_ID + PLANNER_PROMPT_SUFFIX；request/header attempted route 与 assistant/message actual provenance 分列，suffix 等级完整保留）。内存备注：两阶段头扫描（`headerOfDir` 有界分块读）只对命中直接 child 做 `parseSession`、事件不保留 raw，默认堆可跑通；stdout 逐字节与优化前一致，HUMAN 项仍按原文全量输出、不加过滤开关 |
+- `## 意图速查`、`## 文件总览`、`## 函数索引` 和原表头必须保留。先 grep 意图词得到函数名，再按函数名读机器行号。
+- 运行地图生成器负责路径、函数名、行号区间、增删和漏检；人工只改意图、文件说明、功能描述与备注。机器生成的行数/行号不能手填冻结。
+- 稳定匹配键是“相对路径 + 函数名 + 同名出现顺序”。本轮重点保护 `routeKey` 两条、`visit` 三条、`isIdChar` 两条顺序；`--check` 不覆盖人工描述/固定尾部的全文比较，所以需另做结构键对拍。
+- 描述必须保留当前行为关键词：证据引用成对剥除与单侧不剥、`atomicCommit` 阶段语义、`syncPreset` 三条件 idle、`createApiHandler` PUT 仅投影、P2-2 agent-only cache、usage 同步 final fold 等。
+- 地图生成器是源码/测试索引，不是历史归档；无函数文件或纯描述变化不能只靠 `--check` 判定。
 
-## 代码地图（函数级索引）维护规则
-- 定位功能：grep pe-test/docs/ai-代码地图.md 关键词（函数名/功能词）→ 得文件+行号 → read 区间；地图未覆盖再 glob/grep/read 探查
-- 代码变更后先运行 node pe-test/tools/代码地图生成.mjs 更新机器行号/时间戳；行号/增删行由脚本维护，功能描述与备注由 AI/人维护，最后运行 --check
-- 函数改名 = 删旧增新，旧描述出现在脚本删除报告里（沾回新行即可）
-- 「意图速查」（文件头部）：意图词 → 文件 → 函数名，人工维护、脚本保留；行号一律到「函数索引」按函数名取（人工段不写行号，防漂移）
-- 覆盖口径 = 任意缩进的命名函数定义（`function NAME` / `const|let|var NAME = (…) =>` / `= function`）；反向计数器与抽取器同口径，只用于抓实现层漏检
-- P2-2 语法门必须额外检查 `node --check plugins/dsh-extra-plan/lib/sdk-text-cache.js`；缓存语义验收跑 `node pe-test/tools/step-04-路由与写闸门.mjs`，调用计数精确 1 是硬门槛，耗时仅报告。
-- P2-2 维护边界：agent-only WeakMap、F/L 分离、完整 schema/language/renderer 三元组失效、并发 Promise 合并、reject/降级失败不缓存、dispose/restart/new apply 清空；调用计数 1 是硬门槛、耗时仅报告；不得改根 `README.md`、ai-宿主耦合台账或官方安装目录。
+## 交付格式与回滚
 
----
+交付汇报不超过 15 行：
 
-*本文件对应 READAI.md 文档索引表「维护纪律+自检+地图同步」一行与「必守纪律」的展开。*
+1. **完成清单**：逐项写文件/动作与关键结果值；
+2. **自验证结论**：逐项写通过/不通过，并给一行证据；
+3. **越界需求**：列出命令、目标路径、用途、预期内容；没有则写“无”。
 
-## 闸门关键词单源维护（v0.3.0）
-- **唯一人工编辑位置**：仓库模板 `plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml`（部署现场 = profile patch 声明行 `preset-extra-plan` 的 `config.plugins` 内 `extra-plan` 行 `config.gateWords`，即 `configEditor.documentPath`；旧 `DSH_HOME/.agent-presets/extra-plan/agent.cordis.yml` 仅作迁移期旧值副本）的 `config.gateWords` 7 个字段；禁止在 JS 里改词值（`lib/gate-words.js` 无词值、无默认词表、不读文件/环境变量）。改词后普通重启即生效；旧词不再推进状态机（历史事件安全）。
-- **合法性**：非数组对象、键集合恰为 7 键、每值为非空字符串、首尾无空白、无 CR/LF、7 值两两不同、不以 (Recommended)/（Recommended）/(推荐)/（推荐）结尾；失败信息以 `extra-plan: config.gateWords` 开头，运行时同步抛错（阻止预设被使用，不回退旧词）。
-- **设置页分工**：**8 项 UI 设置**（settings 行 `dsh-extra-plan-settings` 的 `Config`，8 字段全 `.volatile()`）+ **2 项宿主行设置**（webFetch/toolPresentationMode，权威值同样落 settings 行，与 8 项并入官方 configForms mutate（10 op）一次提交；另投影到声明行 `config.plugins` 内 `tool-web`/`tool-presentation` 子行，PUT 仅保留投影 → `configEditor.edit`）；gateWords 是 **7 项 YAML-only 闸门词字段**——不进 `SETTING_DEFINITIONS`、不进设置页表单、不进 `preset-defaults.generated.js`、不新增构建/生成步骤；`generate-runtime-defaults.mjs --check` 必须保持 0 且**两份产物**（`lib/preset-defaults.generated.js` 与 `assets/presets/extra-plan/preset-patch.generated.yml`）无 diff。
-- **启动自愈三维判定**（preset-sync；**无 manifest 台账、无跨版本迁移**）：声明行 plugins 覆盖资产行 id 集合 **且** 本体剥离用户可写键后与资产一致 **且** 2 项宿主行投影与权威值一致 → `idle`（不写盘）；任一不成立 → 以资产为基底重建声明行、一次性回填 settings 行缺项、按权威值投影 2 项宿主行、gateWords 由 carry 从声明行现值兜底并整组复验（非法则保留基底词表）；写盘只经 `configEditor.edit`（事务 + reconcile + 回滚），**本插件绝不直写任何 `cordis.patch.yml`**。
-- **无运行期状态目录**：插件不落任何自有台账（旧状态目录初始化 / manifest 读写 / postinstall 脚本与 flash 清理链已于 2026-09-25 整链删除）；启动自愈是唯一落地点，失败由外壳吞错不阻断启动。
-- **本批语法门**：本轮实际改动的 3 个 .js（`index.js`、`lib/gate-words.js`、`lib/preset-sync.js`）与 6 个 .mjs（step-00/04/06 + 三个 step-01）逐文件 `node --check`；`lib/gate-words.js` 应加入后续基线语法门清单。
+回滚只能从唯一备份按文件/子块恢复，删除本轮新增归档，再运行地图 `--check`、step-00、step-04、step-06；不使用 Git 破坏性命令。`pe-test/reports/` 是临时产物，不纳入源改动。
 
-## P2-4 生成链与拆分自检
-- 先运行 `node plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs` 与 `--check`；生成模块是派生产物，禁止手改。模板坏时不得清空或覆盖 last-known-good。
-- B1 模块化只收无宿主状态 helper 与 per-apply agent runtime factory；usage ledger、工具注册/claim、disposed 同步 final fold、ctx.on 顺序、tools/pre-execute 与 FREE_TOOLS 仍检查根入口。
-- 本轮新增语法门覆盖 `lib/preset-defaults.generated.js`、`lib/shell-mutation.js`、`lib/planner-budget.js`、`lib/runtime-static.js`、`lib/agent-runtime.js` 与生成器；再按固定顺序跑 B2 step-01、step-00/跨平台、step-04、step-06、代码地图及一键 step。
+## P2-4 生成链
 
+作者值在 `plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml`；运行 `node plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs` 生成派生模块/声明行，`--check` 只读比较。坏模板、生成失败或 prepack 失败必须保留 last-known-good；生成物不得手改。
 
-补充口径：`PROBE_LIMITS.maxEvidenceEntries=150`、`maxEvidenceTextLen=1000`；`exploreBudget=18` 仅是 planner 探查预算/单实例子调用上限，台账历史 80 条与 80+79+50=209 仍是归档统计。
+## 单一来源提醒
 
-- PROBE_LIMITS 的字段名与上限以 `lib/save-contract.js` L47-70 为唯一口径（共 20 个字段：四类条目数 50/50/20/20、maxPathLen 1024、maxRangeLen 20、maxRelationLen 400、maxNoteLen 400、maxTopicLen 120、maxDetailLen 1000、maxTotalChars 20000、rangePattern、maxEvidenceEntries 150、maxEvidenceLineLen 20、maxEvidenceValueLen 240、maxEvidenceTextLen 1000、maxEvidenceNoteLen 400、maxEvidenceTotalChars 32000、evidenceLinePattern、maxTaskNameLen 32），本文不复制数值以免漂移。LINE_FORMAT_HINT（L73）与 RANGE_FORMAT_HINT（L74）为格式提示常量，同样以源码为口径。
-- save_probe 单写与 save_plan 均从 `exec.agent.session.header.id` 生成非空 sessionTag，使用统一 artifact base；recoverJournals 带 tag 时不同 tag 与无 tag journal 均跳过。旧形状 journal 只告警并原样保留。
-- 本机 Windows 沙箱下 netstat / Get-NetTCPConnection / Get-WmiObject Win32_Process 等查询可能被拒（Program failed to run: 拒绝访问）；排查运行时改用等价间接证据（进程启动时点、会话内闸门生效日志、step-04/06 等取证脚本输出）。
+`gateWords` 只改 YAML；`PROBE_LIMITS` 只读 `lib/save-contract.js`；模型/usage/投影细节分别以对应 lib 与 step 脚本为准；历史故障、旧宿主面、77/217/209 等历史统计读[归档](ai-宿主耦合历史归档.md)，不作为当前值。

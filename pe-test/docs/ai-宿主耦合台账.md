@@ -1,430 +1,207 @@
-# 宿主耦合台账（DSH 与 QQBOT 升级比对用）
+# 宿主耦合台账（当前 DSH/QQBot 升级核对）
 
-> 本台账回答一个问题：**升级 DSH 或 qqbot 后，本仓库哪些地方需要重新核对，按什么符号核对。**
-> 维护方式：宿主侧一律以「宿主包名 + 包内相对路径 + 符号名」定位；本仓库侧给出文件与符号/事件锚点，不写行号（需要行号时见 `pe-test/docs/ai-代码地图.md`，仅具名函数适用）。
+> 本台账只保留当前活动契约、风险、未核实项和升级 checklist。宿主侧按“包名 + 包内相对路径 + 符号名”定位，不写宿主固定行号；本仓库函数行号见 [ai-代码地图](ai-代码地图.md)。旧版本、已删除耦合、77/217/209 等历史快照与 evidence 勾销见[宿主耦合历史归档](ai-宿主耦合历史归档.md)，不作当前统计。
 
-## 数据源
+## ① 当前基线与判读规则
 
-本台账条目来自历史探查者证据报告（三份报告已归档、不再逐文件引用；行号、数值、文案引用历史核对结论）。
-
-- 行号复核（2026-09-21，B3 收敛轮）：index.js 抽取 shellMutationReason／recordJobOutputCall，并删除 planner 与只读 child 监听器的二次 jobOutputGateReason 判定与三处内联计数器写入；下文全部 index.js 行号锚点已按最终源码逐项重定位（按符号与内容复核，未用固定行数差批量平移），宿主契约、核验状态与风险结论均不变。
-- 台账基线修订（2026-09-12）：① 基线块的「DSH 宿主版本 0.1.2-rc.1 → 0.1.5-rc.2」与「仓库文件基线 55 → 52」两处为本次复核订正；② 覆盖口径剔除 gitignored 的 `pe-test/reports/`（原 5 行报告行移出，结论原就为「无」），故②表行数由 55 降为 52。被移出的 5 行若日后重新生成同类报告，不需回填。
-- 锚点口径改造（2026-09-22）：全表「本仓库位置」列由固定行号改为可 grep 的符号/事件锚点。原因：行号随 lib/ 拆分与日常源码增删持续漂移，一次重构即全表失准。方式：按「文件路径 + 事件字面量/具名函数/配置键/YAML 段键」定位，同一字面量多处出现时追加内容区分词（如 agent/pre-step 两处注册）；需要行号时统一见 `pe-test/docs/ai-代码地图.md`（仅具名函数适用）。宿主侧行号清零轮（2026-09-26）：按上文声明句清理③表内 7 处（HS26/HK6b/HK26/HK27/SD19b/SD37/CF12）与表外 10 行（⑥-1、⑦ 3 行、⑦-2 5 行、⑩ 1 行）的宿主行号；此后宿主侧一律只写包名+包内相对路径+符号名。列名同步：本仓库位置列由「文件+符号+行号」改为「文件+符号锚点」（列名声明 1 处 + 表头 5 处，列数与行数不变）。
-
-条目新增与复核口径（2026-09-24）：HS1/HS2/HS4/HS5/HS6/HS15/HS20/HK1/HK9/CF12 按 dsh 0.1.7-rc.1 结论重写，新增 §⑦「0.1.7-rc.1 起的新失败面」（isolate 审计与必要+保险名单、settings API 换代、settings.plugin.item 消失、用户预设目录读取方移除、compatibility.json/allowBuilds 门控、workflow-ptc 换包、codeRuntime→ptcRuntime、tool:cordis 段删除、会话格式 v4）；原 0.1.5-rc.2 面降级为 §⑦-1 保留备查。历史口径（2026-09-23）：新增 HK25（`tools/post-execute` 呈现改写面，0.1.2-rc.1 实测契约，配套状态机 kind:'denied' 不重置）；SD24 补记同钩子的 post 侧（PostToolDecision）已被本插件使用。**0.1.5-rc.2 侧复核（2026-09-23 补记）**：已在 0.1.5-rc.2 现场按本条目核验点逐项复核——钩子签名、waterfall 三参、next() 默认 accept、PostToolDecision 形状（accept 的 content 支）、accept.content 替换失败结果 content 的允许性全部保持；该版新增两条守卫（value 与 content 互斥、失败结果禁替换 value）本插件均不触发（listener 入口先 result.isError 短路、命中只返回 content），静态契约面复核通过（本机动态回归见 step-04 ⑮ DZ1-DZ12，492 项通过 0 失败）。**实机行为面（真实 PTC 拒绝端到端改写）仍待部署后实测**，不得按「实机已验证」引用。**2026-09-25（save_probe 自愈批）**：HK3 语义更新（request-error 由「只记账」变为「记账 + MALFORMED_RESPONSE 限次兜底 + 模型可读提示注入」）；新增 HK26（developer/message 会话事件注入接触面：append 形状、surfaceOp 必带、纯文本禁带 headerSeq、source.kind 要求）；工具面：规划/探查两子代理 toolFilter.deny 新增 cordis_inspect_query（防无超时 client 查询卡死一次性探查者）。
-口径校准：台帐条目按 80 + 79 + 50 = 209 条 evidence 原始统计逐条勾销，比规划方案预估的 208 条多 1 条（只多不少，不构成遗漏）。
-口径对齐说明（2026-09-11 验收勘误）：验收标准清单 [任务6] 写的「报告 C 49 条 / 合计 208 条」是规划阶段的预估口径；执行阶段实测报告 C 顶层证据为 50 条，故本台账以 80 + 79 + 50 = 209 条为准，并已在下文 ③-E 勾销表中逐段给出归属条目编号（无悬空引用）。
-
-证据去向：③四层表的每一条都在「本仓库位置」列给出条目编号（宿主服务层 HS1-HS27、宿主组合与文件契约层 HK1-HK27（含 HK6a/HK6b）、宿主数据与布局形状层 SD1-SD38（含 SD19b；SD9、SD13 为历史编号、无定义行，登记见编号说明）、安装配置面 CF1-CF12），②覆盖总表的每一行给出该文件命中的条目编号或「无」。
-
-## ① 基线块
-
-| 项 | 值 | 来源 |
+| 项 | 当前值/口径 | 状态 |
 |:--|:--|:--|
-| DSH 宿主版本 | **0.1.7-rc.1 / 0.1.7-rc.2（唯一支持版本，两版逐字列举）** | peerDependencies 精确钉 `'0.1.7-rc.1 || 0.1.7-rc.2'`；当前可读宿主位置为 `<DSH安装根>/package.json`（版本 0.1.7-rc.2）；原 rc.1 只读现场已不存在，rc.1 侧保留 §⑦-2 历史复核记录（契约面逐条一致；行为面工具集 7→2 见 §⑦） |
-| 宿主安装路径 | <DSH安装根> | 宿主依赖包位于 <DSH安装根>/node_modules/@deepseek-ai/ |
-| QQBOT 目标版本 | 0.5.0 | 当前可读 `$DSH_HOME/profiles/qqbot` 下静态包版本为 0.5.0；静态包版本可核不等于 QQBot 集成通过，真实流程仍为【未核实】 |
-| 本插件版本 | **0.3.0**（@local/dsh-extra-plan） | plugins/dsh-extra-plan/package.json 的 version 字段实测（0.1.7-rc.1 / rc.2 适配版） |
-| qqbot 精简插件版本 | 2.0.0（@local/dsh-qqbot-user-questions） | plugins/dsh-qqbot-user-questions/package.json 的 version 字段实测 |
-| DSH_HOME | $DSH_HOME | profiles/web、profiles/qqbot 当前均静态可见；不得据此判定集成通过 |
-| 记录日期 | 2026-09-11 | 本次产出日期 |
-| 仓库文件基线 | 77 个（覆盖口径：排除 .extra-plan 与 gitignored 产物目录 pe-test/reports 后的实测文件数 = git ls-files tracked 数 = 77，两组读数一致；该产物目录由一键体检每次运行重写、随跑随变，不参与口径；本轮新增环境验证脚本后复核） | 本机实测 |
+| DSH | `0.1.7-rc.1 || 0.1.7-rc.2` | 当前唯一支持范围；peerDependencies 为真源 |
+| QQBot 目标 | `0.5.0` | 静态目标，不等于集成通过 |
+| 核心插件 | `@local/dsh-extra-plan` `0.3.0` | 当前包契约 |
+| QQBot 精简插件 | `@local/dsh-qqbot-user-questions` `2.0.0` | 仍有 postinstall；allow-build 是否放行待 HUMAN |
+| 预设载体 | profile patch 根级 `preset-extra-plan` 声明行 | `dsh.bundle.patch` 第二项为生成产物；旧 `.agent-presets` 不作读取方 |
+| 状态判读 | `【已核实】` 表示台账静态/源码核对；`【未核实】`、`HUMAN`、`SKIP` 不得改为通过 | 当前台账纪律 |
 
-**声明句：本台账不写宿主行号：宿主侧一律以 包名+包内相对路径+符号名 定位，升级时按符号名在升级后的宿主包内重新核对。**（本仓库侧同样只写文件+符号/事件锚点，不写行号；需要行号时统一见 pe-test/docs/ai-代码地图.md。）
-## ② 仓库文件覆盖总表（77 个文件，逐行结论）
+### 当前宿主接触面总表
 
-覆盖口径：本仓库文件全集 = 工作区内全部文件（不含 .extra-plan）减去 gitignored 产物目录 pe-test/reports（由一键体检每次运行重写、随跑随变，不参与口径）；本轮复核实测 77 个（工作区口径 = git ls-files tracked 口径 = 77，两组读数一致；历史 62/63/70/71 数字仅作历史快照，不回改），含 pe-test/ 下各目录。复现：pwsh 统计 dsh-extra-plan 下排除 .extra-plan 与 pe-test/reports 后的文件数。逐行给结论：有挂钩写条目编号（见③四层表与④QQBOT 专章），无挂钩写「无」。表体含 1 行已删除历史登记（distribute-preset.mjs），现存 77 行全部为实存文件。
-**口径订正（2026-09-12）**：原口径为「git ls-files 的 50 个 tracked 文件 + `pe-test/reports/` 下 5 个 ignored 报告文件 = 55 个」。`pe-test/reports/` 系一键体检每次运行都会重写的 gitignored 产物目录（随跑随变），已从口径中剔除；顺带消掉原表内那 5 行的悬空引用（该目录为 gitignored 产物目录（一键体检每次运行都会重建），当前含 217 个历史报告文件，不属仓库正式文件，且那 5 行结论本就都是「无」）。目录本身仍会被 `一键step测试.mjs` 重建，但不再计入本台账基线。
-
-| 文件路径 | 结论（有挂钩→条目编号 / 无→「无」） | 备注 |
+| 层 | 当前活动范围 | 复核入口 |
 |:--|:--|:--|
-| .gitattributes | 无 | 纯属性文件，与宿主无交互 |
-| .gitignore | 无 | 忽略规则（含 .extra-plan/ 行），与宿主无交互 |
-| LICENSE | 无 | 许可证文本，与宿主无交互 |
-| pe-test/_shared/host-deps.mjs | 宿主数据与布局形状层 SD33（同形延展：按 DSH_HOME profile node_modules 与 npm 全局宿主安装目录锚点解析 @deepseek-ai/dsh-llm 真包入口） | 仅 pe-test 自检侧解析钩子；宿主包缺失即真抛错（不伪造模块） |
-| pe-test/_shared/preset-hash.mjs | 无 | 只 import 本仓 lib/preset-sync.js，无 @deepseek-ai/* 依赖 |
-| pe-test/_shared/session-finder.mjs | 宿主数据与布局形状层 SD1 | 取证工具共用的宿主会话存储布局依赖（sessions 目录布局 + 首行 parentSession） |
-| pe-test/_shared/zstd-frames.mjs | 宿主数据与布局形状层 SD2 | zstd 帧格式自实现切分，依赖宿主会话日志压缩格式 |
-| pe-test/docs/ai-代码地图.md | 无 | 工作区代码地图文档；本身不引用宿主符号，仅据本仓库文件生成 |
-| pe-test/docs/ai-概览.md | 无 | AI 文档；仅声明 qqbot 兼容与所有权边界（本期加一行台账入口），无代码级挂钩 |
-| pe-test/docs/ai-机制设计.md | 无 | AI 文档，只读产物，不含挂钩代码 |
-| pe-test/docs/ai-流程备查.md | 无 | AI 文档，只读产物，不含挂钩代码 |
-| pe-test/docs/ai-维护手册.md | 无 | AI 文档；声明所有权边界与宿主目录禁改清单（profiles/web、profiles/qqbot、.agent-presets） |
-| pe-test/docs/ai-实机闸门测试流程.md | 无 | 实机闸门与 HUMAN 取证流程文档；本文不写行号，只引用宿主包名与符号名，无代码级挂钩 |
-| pe-test/docs/ai-宿主耦合台账.md | 无 | 本台账自身；宿主侧一律以「包名+包内相对路径+符号名」定位，不写宿主行号 |
-| pe-test/README.md | 无 | 测试目录说明文档，不含挂钩代码 |
-| pe-test/tools/代码地图生成.mjs | 无 | 工作区代码地图生成器（node:fs/path/url），无宿主接触 |
-| pe-test/tools/一键step测试.mjs | 宿主数据与布局形状层 SD1（传递）+ QQBOT 专章 QB27、QB31 | 编排脚本：spawnSync 跑各 step；AUTO 12 项，环境项按通过/部分执行/未执行/失败四态汇总；本身不 import 宿主包 |
-| pe-test/tools/readme.md | 无 | save_probe 路径存在性校验所需的 fixture 文件（3 行自述为非文档；不删不改名） |
-| pe-test/tools/step-00-跨平台写拦截.mjs | 无 | 本仓写拦截自检，不接触宿主包 |
-| pe-test/tools/step-00-全流程回归.mjs | 无 | import 仅 node:url，其余为代码串断言，无宿主包接触 |
-| pe-test/tools/step-01-安装同步.mjs | 安装配置面 CF9（夹具） | 临时 DSH_HOME 夹具回归 syncPreset()，含 profiles/sample 目录构造 |
-| pe-test/tools/step-01-设置迁移.mjs | 安装配置面 CF9（夹具） | 临时目录回归设置迁移与发布状态机，import preset-sync + preset-settings |
-| pe-test/tools/step-01-设置页配置.mjs | 安装配置面 CF7 | 真实 apply + loopback HTTP 回归 lib/settings.js；从宿主安装目录解析 schemastery/js-yaml |
-| pe-test/tools/step-01-executor-spawn注册幂等.mjs | 宿主服务层 HS8、HS27（注册幂等回归） | 全进程内 mock（dsh-subagent registerProvider 重名语义 + cordis traceable 槽键），不访问 DSH_HOME / profile / 宿主安装目录（141 行，2026-09-26 复核） |
-| pe-test/tools/step-01-预设完整性.mjs | 宿主组合与文件契约层 HK23 | 纯工作区模板静态校验（自述不访问生产 DSH_HOME），断言宿主包名清单与行结构 |
-| pe-test/tools/step-01-qqbot-安装映射.mjs | QQBOT 专章 QB24（【未核实】）、QB25（【已核实】） | qqbot 侧静态/迁移回归：patch 四行、旧块迁移/备份/幂等/恢复、实体目录与负例、临时 DSH_HOME/apply/CLI；junction 创建与非目标链接已移至环境脚本；不读取真实 profile |
-| pe-test/tools/step-01-qqbot-环境验证.mjs | QQBOT 专章 QB28-QB30（条件只读） | DSH_HOME 严格五条件预检；mkdtemp junction capability 与 fixture；真实 profile 的 patch 顶层数组、映射分类/realpath 前后只读对拍；im-qqbot 宿主 schema 属 HUMAN/未核实，name 缺失不作为插件安装失败；SKIP 不销账、不自动 heal |
-| pe-test/tools/step-04-工具清单查看.mjs | 宿主数据与布局形状层 SD1（传递） | 取证工具：解析会话 zstd 日志查看工具清单，经 _shared 依赖宿主会话存储形状 |
-| pe-test/tools/step-04-路由与写闸门.mjs | 宿主数据与布局形状层 SD33、安装配置面 CF11 | 按 profile node_modules 锚点取 js-yaml，静态断言本仓 agent.cordis.yml |
-| pe-test/tools/step-05-会话解码.mjs | 宿主数据与布局形状层 SD1（传递） | 取证工具：会话日志解码，经 _shared 依赖宿主会话存储形状 |
-| pe-test/tools/step-06-线索落盘.mjs | 宿主数据与布局形状层 SD34 | mock ctx 走插件 apply 的注册层与闸门回归，构造宿主事件形状（subagent/descriptor、user/message、tool/call、tool/result） |
-| pe-test/tools/step-06-真实会话查看.mjs | 宿主数据与布局形状层 SD1（传递） | 取证工具：真实会话查看，经 _shared 依赖宿主会话存储形状；现同时输出 data.error 与 tool-result.isError 的 TOOL-ERROR |
-| pe-test/tools/step-07-子代理模型与引导取证.mjs | 宿主数据与布局形状层 SD1、SD2、SD8、SD11（传递） | HUMAN 取证工具：显式 SESSION_ID 定位直接 child，复用 v4/v3/旧名三种候选日志解码，分列 attempted route 与 actual provenance，并按 C11/C12 输出 suffix 证据；两阶段头扫描只解析命中 child（内存有界，默认堆可跑通） |
-| pe-test/tools/step-08-方案配对查看.mjs | 宿主数据与布局形状层 SD1（传递） | 取证工具：方案与验收文档配对查看，经 _shared 依赖宿主会话存储形状 |
-| pe-test/tools/step-99-用量统计.mjs | 无 | 用量统计读 jsonl（纯 token 统计，明细含 provider/cw/rs，无任何汇总；import 仅 node:fs），指向 usageLedger 输出，无宿主包接触 |
-| plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml | 宿主组合与文件契约层 HK15、HK16、HK17、HK18、HK19 + 安装配置面 CF10 + QQBOT 专章 QB26 | AGENT-PLANE 预设组合模板：宿主包行、cordis:group 与 isolate、四行 tool-subagent + toolFilter.deny、executor-spawn 行、!!js dshHomePath；extra-plan config 含默认 false 的 crossProviderPlannerModel 与空串 otherAgentModel，角色注释覆盖 planner/非 planner child |
-| plugins/dsh-extra-plan/assets/presets/extra-plan/preset-patch.generated.yml | 宿主服务层 HS6（声明行现场） | 生成物禁手改；dsh.bundle.patch 数组第二项（HK12/CF4） |
-| plugins/dsh-extra-plan/assets/presets/extra-plan/preset.yml | 安装配置面 CF10 | 预设显示元数据（name/description），对应宿主 METADATA_FILE 契约 |
-| plugins/dsh-extra-plan/cordis.patch.yml | 宿主组合与文件契约层 HK11 | bundle patch 宿主平面行：insert 三条（client-bridge 相对路径行 + settings/preset-sync 子路径行） |
-| plugins/dsh-extra-plan/index.js | 宿主服务层 HS1、HS2、HS3、HS4、HS5、HS6、HS8、HS9、HS10、HS11、HS12、HS13、HS14、HS15、HS16、HS17、HS18、HS19、HS20、HS21、HS22、HS23、HS24、HS25、HS26，宿主组合与文件契约层 HK1、HK2、HK3、HK4、HK5、HK6、HK6a、HK6b、HK7、HK8、HK9、HK11、HK12、HK20、HK21、HK22、HK23、HK25、HK26、HK27，宿主数据与布局形状层 SD3、SD4、SD5、SD6、SD7、SD8、SD9、SD10、SD11、SD12、SD13、SD14、SD15、SD16、SD17、SD18、SD19、SD19b、SD20、SD21、SD22、SD23、SD24、SD25、SD26、SD27、SD28、SD29、SD30、SD31、SD32、SD34、SD35、SD36、SD37、SD38（共 79 处，逐处见③四层表；SD9、SD13 为历史编号，见编号说明） | 会话平面主体插件（2239 行，2026-09-26 复核）：9 钩子、5 服务、会话事件解析与数据形状消费、8 项设置热读接线（createLiveConfig 调用 + 8 个箭头 getter，按符号名核对）、工具注册面、planner 与非 planner child 双 resolver、True 真实 probe/strict fallback |
-| plugins/dsh-extra-plan/lib/agent-runtime.js | 宿主组合与文件契约层 HK20 + 宿主数据与布局形状层 SD8、SD12、SD18、SD36 | 子代理识别（isPlannerChild）、沙箱下限（childPolicyNeedsFloor）、toolSchemasOf、sandbox/mode 写入（111 行，2026-09-26 复核） |
-| plugins/dsh-extra-plan/lib/agent-session.js | 宿主数据与布局形状层 SD10 + 宿主组合与文件契约层 HK20 | 会话事件快照（sessionEvents）与子代理识别（isSubagentChild）的唯一来源；index.js 经 import 使用并经 decisions re-export；零依赖纯函数 |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | 宿主数据与布局形状层 SD18 | A/C/M 模型可见投影与 tools:sdk 整体重建；从 scoped tools 服务读 schemas/sdkSchemas/模式，官方 dsh-tools SDK renderer 按 DSH_HOME/profile 与宿主安装目录只读加载（同 SD33 布局口径） |
-| plugins/dsh-extra-plan/lib/client-bridge.js | 宿主服务层 HS22、HS23 + 宿主组合与文件契约层 HK24 | pathLike 空壳插件行：仅让 clientModules 扫到本包 dsh.client 声明 |
-| plugins/dsh-extra-plan/lib/client.js | 宿主服务层 HS17、HS18、HS19、HS20、HS21、HS22 + 宿主组合与文件契约层 HK10、HK14 | 浏览器半：宿主打包格式、locale 注册、`plugins.row.config` 行内配置卡片（key = `@local/dsh-extra-plan#dsh-extra-plan-settings`；旧 settings.plugin.item 已废）；metadata fields 由 descriptor 顺序驱动并按 section 分两组（general/pro，通用区渲染顺序含 2 项宿主行、顺序以根 README 为准），十项字段含 otherAgentModel，通用 True/False select 与宿主哈希类名/主题 token |
-| plugins/dsh-extra-plan/lib/executor-spawn.js | 宿主服务层 HS8、HS9、HS10、HS11、HS12、HS27 | subagents provider 薄委托层：包装宿主 spawn provider 并注入 toolFilter.deny |
-| plugins/dsh-extra-plan/lib/gate-words.js | 无（间接：⑩ 7 个 prompt variable 名字与 gateWords 校验规则单源） | index.js 按其循环注册 ctx.systemPrompt.variable；不保存词值、无第二份真源（122 行，2026-09-26 复核） |
-| plugins/dsh-extra-plan/lib/live-config.js | 无（间接：HS4 同口径的 configPath → DSH_EXTRA_PLAN_CONFIG_PATH → configEditor.documentPath 决议，2026-09-23 登记） | 配置热读：8 热读键的现场取值层，只 import node:fs/os/path 与本包 preset-settings.js，不接触宿主包与服务；读取对象是设置页保存的 agent.cordis.yml 副本，故插件 DSH 版本兼容性为 0 风险；升级宿主时若 documentPath 语义或 profile patch 路径规则变化，本文件与 settings.js（HS4）须同步核对 |
-| plugins/dsh-extra-plan/lib/model-routing.js | 宿主组合与文件契约层 HK6a、HK6b + 宿主数据与布局形状层 SD11、SD14、SD15 | planner/非 planner 双 resolver：listProviders/listModels、真实 prepareCall + 完整 prepared stream 探针、agents.get 上溯顶层主会话 route、requestHeader owned 路由快照；createModelRouting per-apply 工厂，不 import index.js |
-| plugins/dsh-extra-plan/lib/planner-budget.js | 宿主数据与布局形状层 SD3、SD5、SD29、SD37 | 预算锚点与预算提醒构造（137 行，2026-09-26 复核） |
-| plugins/dsh-extra-plan/lib/preset-defaults.generated.js | 无 | GENERATED FILE（generate-runtime-defaults.mjs 产出，禁手改）；DEFAULT_EXPLORE_BUDGET = 18 与 DEFAULT_PLANNER_PROMPT_SUFFIX（= 资产 plannerPromptSuffix 叶值）（4 行，2026-09-26 复核） |
-| plugins/dsh-extra-plan/lib/preset-settings.js | 宿主服务层 HS13、HS14、HS15、HS16 | 十项设置 descriptor 表（含 config.crossProviderPlannerModel:boolean 与 config.otherAgentModel:string）+ !!js 保真 YAML 解析 + 逐行标量改写；js-yaml 本地与宿主安装目录双路回退 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | 宿主服务层 HS5、HS6 + 宿主组合与文件契约层 HK16 | 启动自愈状态机：三维判定 + 写盘只经 configEditor.edit |
-| plugins/dsh-extra-plan/lib/run-code-static.js | 宿主组合与文件契约层 HK21 | run_code 纯静态解析/理由模块（写模式 hint、工具组拆解、ask 返回值白名单、调用点计数与双兼容 dispatch cap）；仅显式注入普通依赖，不持有宿主状态 |
-| plugins/dsh-extra-plan/lib/runtime-static.js | 无（间接：HK27 的 causeChainOf 纯辅助） | 显式参数纯函数，无 ctx、无 per-apply 状态（16 行，2026-09-26 复核） |
-| plugins/dsh-extra-plan/lib/save-contract.js | 无 | save 合同唯一真源：任务名/时间戳/sessionTag/base、PROBE_LIMITS 与 save_plan/save_probe 渲染；无宿主接触 |
-| plugins/dsh-extra-plan/lib/save-persistence.js | 无 | 公共原子落盘（tmp→journal→rename→逐项确认目标就位→清 journal）与新旧 journal 自愈；阶段感知提交（pre-journal 条件清理／post-journal 保留 journal 与现场）与恢复完成判定（逐项确认目标存在，全项就位才删 journal）；仍无宿主依赖，仅 node:fs/path（末位可选 fs 依赖默认同义映射同步 node:fs，仅测试注入用） |
-| plugins/dsh-extra-plan/lib/save-probe-validation.js | 无 | save_probe 参数校验（数组/条目/长度/总量/path 存在性/range/evidence 聚合拒绝）；无宿主接触 |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | 宿主数据与布局形状层 SD19、SD20、SD21 | save_plan/save_probe 的工具定义面（parameters/output.schema/render/execute）；execute 取 exec.agent.session.header.cwd 作落盘基准 |
-| plugins/dsh-extra-plan/lib/sdk-text-cache.js | 无 | agent-keyed 内存 SDK 文本缓存，不持有 sessionId、不缓存 PromptAssembly（161 行，2026-09-26 复核） |
-| plugins/dsh-extra-plan/lib/settings.js | 宿主服务层 HS1、HS2、HS3、HS4 | 宿主平面设置插件：settings 命名空间注册 + webServer 前缀路由 + 受管文件改写（DSH_HOME 解析已迁出，见 CF3/HS4） |
-| plugins/dsh-extra-plan/lib/shell-mutation.js | 宿主组合与文件契约层 HK22 | 命令类调用判定（commandTextOf/pwshCommandOf/bashCommandOf）（86 行，2026-09-26 复核） |
-| plugins/dsh-extra-plan/locale/en.json | 无（间接：CF6 本地化通道） | 包级英文文案；宿主 readPluginMeta 解析 <specifier>/locale/en.json |
-| plugins/dsh-extra-plan/locale/zh.json | 无（间接：CF6 本地化通道） | 包级中文文案；宿主 readPluginMeta 解析 <specifier>/locale/zh.json |
-| plugins/dsh-extra-plan/locale/settings/en.json | 无（间接：CF6 本地化通道） | settings 行级英文文案（2026-09-26 列表页文案重定位） |
-| plugins/dsh-extra-plan/locale/settings/zh.json | 无（间接：CF6 本地化通道） | settings 行级中文文案（2026-09-26 列表页文案重定位） |
-| plugins/dsh-extra-plan/locale/preset-sync/en.json | 无（间接：CF6 本地化通道） | preset-sync 行级英文文案（2026-09-26 列表页文案重定位） |
-| plugins/dsh-extra-plan/locale/preset-sync/zh.json | 无（间接：CF6 本地化通道） | preset-sync 行级中文文案（2026-09-26 列表页文案重定位） |
-| plugins/dsh-extra-plan/package.json | 宿主组合与文件契约层 HK12、HK13、HK14 + 安装配置面 CF1、CF4、CF5、CF6、CF8、CF12 | 安装配置面：dsh.bundle.patch、dsh.client（platform 与 inject）、exports 子路径（含 ./locale/* 本地化通道）、js-yaml 依赖（本包无 postinstall，见 CF1） |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | 无（间接：HS6 声明行与 preset-defaults.generated.js 的生成器） | package.json scripts generate:runtime-defaults / prepack 入口；两产物仅在校验通过后替换（158 行，2026-09-26 复核） |
-| plugins/dsh-extra-plan/scripts/distribute-preset.mjs（已删除·2026-09-25 死代码清理） | 安装配置面 CF1、CF2、CF3（历史） | postinstall 入口：解析 DSH_HOME 后委派 syncPreset 分发预设——随台账链整链删除 |
-| plugins/dsh-qqbot-user-questions/cordis.patch.yml | QQBOT 专章 QB14-QB18 | 静态 patch：单一根级 insert 注入 4 行（qqbot-user-questions、ptc-runtime、agent-preset-registry 默认 extra-plan、cordis-host-runner） |
-| plugins/dsh-qqbot-user-questions/index.js | QQBOT 专章 QB1-QB4（QB4 为【未核实】） | 本仓库 qqbot 侧唯一插件入口（24 行）：apply() 启动时调 healQqbotCompatibility(home)；inject 为空 |
-| plugins/dsh-qqbot-user-questions/lib/heal.js | QQBOT 专章 QB5-QB13 | qqbot 自愈纯函数模块（383 行）：findOwnQqbotProfiles、healPatchRows、ensureDshExtraPlanLink；含 js-yaml 双 fallback、旧版根级块迁移、junction 建链 |
-| plugins/dsh-qqbot-user-questions/package.json | QQBOT 专章 QB19、QB20 | 包契约：name 为 @local/dsh-qqbot-user-questions v2.0.0；dsh.bundle.patch 指向 cordis.patch.yml；postinstall 跑 scripts/heal.mjs |
-| plugins/dsh-qqbot-user-questions/scripts/heal.mjs | QQBOT 专章 QB2、QB21 | CLI 兜底入口（26 行）：postinstall 与手动触发共用；invokedAsMain 判定；异常也以退出码 0 结束、不阻断 |
-| READAI.md | 无 | 导航层文档；声明 qqbot 兼容与版本区间，本期新增台账入口一行；无代码级挂钩；① 基线块 qqbot 0.5.0 目标版本的真实来源（兼容性行） |
-| README.md | QQBOT 专章 QB22、QB23（dsh plugin 命令段与 /preset 说明段） | 项目说明文档；本期禁止修改 |
-## ③ 四层条目表（固定 6 列；每条 6 列全非空，纯 Markdown 管道表、无合并单元格）
+| HS 服务/注册 | HS1-HS6、HS8-HS27（HS7 已删除历史） | 下面“当前 HS” |
+| HK 钩子/组合 | HK1-HK10、HK11-HK22、HK24-HK27；HK23 无定义不补造 | 下面“当前 HK” |
+| SD 数据/布局 | SD1-SD8、SD10-SD12、SD14-SD15、SD16-SD32、SD33、SD35-SD38；SD9/SD13 保留缺号说明 | 下面“当前 SD” |
+| CF 安装配置 | CF3-CF12；CF1/CF2 已删除历史 | 下面“当前 CF” |
+| QB 兼容包 | QB1-QB3、QB5-QB21、QB25-QB26；QB27-QB31 为测试/条件环境面 | 下面“当前 QB” |
 
-列名（逐字固定）：| 本仓库位置(文件+符号锚点) | 宿主符号(逐字) | 宿主包+包内相对路径 | 用途 | 升级敏感点 | 核实状态 |
+## ② 当前 HS：宿主服务与注册面
 
-四层分组与归层原则：**③-A 宿主服务层**（ctx.get 与 ctx.inject 取用的宿主服务、服务方法签名、本插件向宿主注册的服务面与浏览器平面服务）；**③-B 宿主组合与文件契约层**（ctx.on 钩子注册的 emit 与 waterfall 契约、cordis.patch.yml 的 insert 语义、dsh.bundle.patch 与 exports 解析、预设声明行与 profile patch 文件契约、!!js dshHomePath、isolate realm、__ModuleLoader__ 打包契约、inject 为空的插件契约）；**③-C 宿主数据与布局形状层**（会话事件负载字段、Session 方法形状、SessionHeader 字段、profile 层 patch 文件、会话日志存储布局与压缩格式、客户端 CSS 哈希类名与主题 token）；**③-D 安装配置面**（package.json 的 dsh.bundle 与 dsh.client 与 exports 与 postinstall 与依赖声明、DSH_HOME 解析、宿主安装路径回退、预设元数据）。
-
-### ③-A 宿主服务层（服务读取与注册面，共 27 条）
-
-归层原则：通过 ctx.get / ctx.inject 取用的宿主服务、服务上的方法签名，以及本插件向宿主注册的服务面与浏览器平面服务。
-
-| 本仓库位置(文件+符号锚点) | 宿主符号(逐字) | 宿主包+包内相对路径 | 用途 | 升级敏感点 | 核实状态 |
-|:--|:--|:--|:--|:--|:--|
-| HS1 **（0.1.7 重写）** plugins/dsh-extra-plan/lib/settings.js apply 与 ctx.inject(['settings']) 与 `child.effect(() => child.settings.configure({ auto: false }, ctx.fiber))` + `export const Config = z.object({10 字段全 .volatile()})` | SettingsForms.configure(presentation, owner) + describe()/update()/replace()/mutate()（ns = profile 行 id）| dsh-settings 包内 lib/index.js（describe 只投影 volatileForm 字段，ns = `entry.options.id`）| 10 项 UI 设置的表单与写入（8 项落 settings 行、2 项落声明行 plugins 子行，见 HS15）（走官方 configForms/remote.settings，事务 + revision fencing）| `settings.register` 在 0.1.7 **不存在**（旧写法抛 TypeError）；`configure` 的 owner fiber 决定 ns；缺 `.volatile()` 的字段不进表单；`volatileForm` 口径变化即表单消失 | 【已核实】0.1.7 现场静态核对 |
-| HS2 **（0.1.7 重写）** plugins/dsh-extra-plan/lib/settings.js 行 id `dsh-extra-plan-settings`（= settings 命名空间 = configForms 键 = `plugins.row.config` 键的 rowId 段 = locale ns） | SettingsNamespace = profile 行 id（`entry.options.id`）；`configEditor.entries()` 只收 `parent.tree.ctx.fiber.entry?.id === 'include'` 且 id 唯一的根级行 | dsh-settings 包内 lib/index.js；dsh-config-editor 包内 lib/index.js | 命名空间/卡片/configForms 三处键必须逐字一致（旧字面量 `dsh-extra-plan` 已退役）| 行 id 改名、行不再唯一（同 id 两行）或行不挂在 include 树下 → 命名空间不可寻址、卡片不渲染、`configEditor.edit` 抛「entry no longer available」 | 【已核实】0.1.7 现场静态核对 |
-| HS3 plugins/dsh-extra-plan/lib/settings.js ctx.inject(['webServer']) + createApiHandler 内 webServer.register({kind:'prefix'}) | webServer（服务名）+ register(route) + route.kind 值域 exact 与 prefix | dsh-host-webserver 包内 lib/index.js | 注册设置页后端路由前缀 /api/dsh-extra-plan-settings 并随 effect 注销 | kind 改 exact 则 /pro-config 子路径不匹配；前缀最长匹配规则变化即路由错位 | 【已核实】 |
-| HS4 **（0.1.7 重写·用户预设目录读取方已移除）** plugins/dsh-extra-plan/lib/live-config.js 路径决议 `configPath → DSH_EXTRA_PLAN_CONFIG_PATH → configEditor.documentPath`；lib/preset-sync.js **无项目自有状态目录**（旧 `$DSH_HOME/.agent-presets/extra-plan/` 已随死代码清理删除）| `configEditor.documentPath`（= `profileContext.patchPath`）+ `settings.documentPath` | dsh-config-editor 包内 lib/index.js；dsh-settings 包内 lib/index.js；dsh-home-paths 包内 lib/index.js | 热读 profile patch 内 settings 行 config；旧 `.agent-presets/extra-plan/agent.cordis.yml` **不再是任何读取方的真源**（0.1.7 无读取方）| `documentPath` 语义或 profile patch 路径规则变化即热读错位；`agentCordisPath` 已从 settings.js 删除 | 【已核实】0.1.7 现场静态核对 |
-| HS5 **（0.1.7 重写）** plugins/dsh-extra-plan/lib/preset-sync.js `apply(ctx)` → `ctx.inject(['configEditor'], (child) => child.effect(...))`，写盘只经 `editor.edit(entry, change)` | configEditor（服务名）+ edit(entry, change) 的事务/reconcile/回滚语义 + configuration() 返回 `[{entry, inherited, override}]` | dsh-config-editor 包内 lib/index.js；dsh-app-boot 包内 reconcileProfilePatches | 启动自愈：三维判定（声明行覆盖度 + 本体剥离比对 + 投影一致性）→ 按需重建声明行/回填 settings 行 | 服务名/edit 签名/回滚语义变化即自愈失败（外层吞错不阻断启动）；**本插件绝不直写 cordis.patch.yml**（写坏防护全交宿主） | 【已核实】0.1.7 现场静态核对 |
-| HS6 **（0.1.7 重写）** `assets/presets/extra-plan/preset-patch.generated.yml` 声明行 | 预设载体 = 声明行 `- id: preset-<id>` / `name: '@deepseek-ai/dsh-agent-preset'` / `config{id,name,description,order,plugins}`；`PresetTree` + `mountPreset` 审计 | dsh-agent-preset 包内 lib/index.js（Config）；dsh-agent-preset-registry 包内 lib/index.js（mountPreset/auditRows/leakedServices）| 预设本体随 `dsh.bundle.patch` 数组装载；postinstall 已删除 | 声明行结构、Config 键或审计口径变化即预设挂载失败；`plugins` 必须是完整条目列表（group 行保留 `group: true` + `config` 子行数组）| 【已核实】0.1.7 现场静态核对 |
-| HS7 **（已删除·2026-09-25 死代码清理）** （原 cleanupLegacyFlashGuidePatches）| — | — | flash-guide 时代遗留清理已删除：恒空转 + 直写 patch 违反「写盘只经 configEditor.edit」纪律 | — | 【已删除】 |
-| HS8 plugins/dsh-extra-plan/lib/executor-spawn.js export const inject = ['subagents'] 与 apply(ctx, config) 与 registerProvider 注册段 | subagents（服务名）+ getProvider(name) + registerProvider(provider) | dsh-subagent 包内 lib/index.js | 包装并委托宿主 spawn provider，注册 extra-executor-spawn 提供者 | 服务名、方法签名、provider 接口五字段或重名校验变化即注册失败 | 【已核实】；2026-09-26 P2：registerProvider 段新增引用计数幂等防护（模块级 WeakMap 槽 count/宿主 disposer，跨预设世代与行重建共享同一注册、归零才反注册）；2026-09-26 P2 修订：槽表键由 ctx.subagents（traceable 代理每次属性读取新建、身份不稳定）改为服务实现本体（读取 Symbol.for("cordis.original")，代理 get 拦截器返回 target；subagents 为 root 单例跨世代稳定）；取不到符号值时降级回代理本身。 |
-| HS9 plugins/dsh-extra-plan/lib/executor-spawn.js delegate 与 getProvider（被委托的宿主 spawn provider 取值） | delegate 默认值 'spawn'（apply 内 config.delegate 取值，非 Config schema）；本插件注册名 providerName 默认 'executor-spawn' | dsh-subagent-spawn-in-process 包内 lib/index.js | 取被委托的宿主 spawn provider 实体 | 宿主默认 provider 名变化即 getProvider 取不到、插件抛错 | 【已核实】 |
-| HS10 plugins/dsh-extra-plan/lib/executor-spawn.js toolFilter 注入与 resolveDeny（deny 对象） | SubagentProvider 能力校验 toolFilter + childCtx.tools.restrict(composition.toolFilter) | dsh-subagent 包内 lib/index.js | 给经本 provider 派出的子代理注入执行者工具 deny 清单 | deny 名单必须都是本预设实际注册的工具名，否则 restrict 抛错；能力校验口径变化即行为漂移 | 【已核实】 |
-| HS11 plugins/dsh-extra-plan/lib/executor-spawn.js prepareContinuable 条件透传 | UNSUPPORTED_CAPABILITY（provider 无 prepareContinuable 时抛错） | dsh-subagent 包内 lib/index.js | 仅当被委托 provider 支持时透传 continuable 能力 | 能力探测方式或错误口径变化即透传条件失真 | 【已核实】 |
-| HS12 plugins/dsh-extra-plan/lib/executor-spawn.js resolveChildAgentOptions 注释段（对象展开合并语义） | resolveChildAgentOptions（对象展开合并 requested） | dsh-subagent 包内 lib/index.js | 说明 agentOptions 空对象与 undefined 等价、父会话 provider/model/maxTokens 全继承 | 合并语义改为显式键判定即空对象可能屏蔽父值（本期注释已同步口径） | 【已核实】 |
-| HS13 plugins/dsh-extra-plan/lib/preset-settings.js loadYaml 回退（createRequire 锚定宿主安装包） | 宿主安装包路径 @deepseek-ai/dsh 的 package.json 与其依赖 js-yaml | dsh 包内 package.json 与包内 node_modules/js-yaml | 本地 require js-yaml 失败时借宿主安装目录解析 YAML | 宿主移除 js-yaml 依赖或改 npm 全局前缀即回退断裂 | 【已核实】 |
-| HS14 plugins/dsh-extra-plan/lib/preset-settings.js JsExpr 标签 | !!js 标签 schema（yaml.JSON_SCHEMA.extend） | cordis-plugin-include 包内 lib/index.js；dsh-app-boot 包内 lib/index.js | 以保真方式解析预设里的 !!js dshHomePath 表达式 | 宿主换 YAML 库或改标签实现即解析失败 | 【已核实】 |
-| HS15 **（0.1.7 重写）** plugins/dsh-extra-plan/lib/preset-settings.js SETTING_DEFINITIONS descriptor 表（`sourceLocator` / `rowLocator` 双定位 + `group` 分组；**已无 pluginId/path 顶层字段**）| 源模板（资产/旧分发副本）行定位 + 新载体行定位（settings 行 `config.<key>` / 声明行 `config.plugins` 子行）| dsh-agent-preset 包内 lib/index.js；dsh-config-editor 包内 lib/index.js | 十项设置的双落点解析与（迁移期）保格式定点改写：8 项落 settings 行、2 项落声明行 plugins 子行 | 行结构、子行 id（tool-web/tool-presentation）或 config 键变化即定位失败 | 【已核实】0.1.7 现场静态核对 |
-| HS16 plugins/dsh-extra-plan/lib/preset-settings.js modeOptions 与 SETTING_DEFINITIONS 内 config.mode 项 | config.mode 枚举（native / ptc / both） | dsh-agent-tool-presentation 包内 lib/index.js | 设置页 mode 取值必须与宿主该插件的 config.mode 枚举一致 | 宿主枚举增删项即设置页写入非法值 | 【已核实】 |
-| HS17 plugins/dsh-extra-plan/lib/client.js window.__ModuleLoader__.load 自注册（id 为 @local/dsh-extra-plan） | __ModuleLoader__ 打包契约 + loader 注册（重名抛错、未注册即报错） | dsh-client-modules 包内 lib/index.js | 浏览器半 bundle 自注册，id 必须等于包名与组合图行 id | 打包格式或注册契约变化即前端插件不加载 | 【已核实】 |
-| HS18 plugins/dsh-extra-plan/lib/client.js require("react") | 共享模块系统提供的 react | dsh-client-modules 包内 lib/client.js | 客户端 bundle 通过共享 require 取 React（宿主 68 个内置 bundle 同款） | 宿主改共享依赖暴露方式即 require 失败 | 【已核实】 |
-| HS19 plugins/dsh-extra-plan/lib/client.js ctx.locale.bind(NS) 与 register（命名空间 dsh-extra-plan-settings） | locale 服务 bind(ns) + register(ns, localeOrDicts, dict) | dsh-client-locale 包内 lib/client.js | 注册并绑定设置页卡片的中英文案 | 签名或字典形状变化即文案缺失 | 【已核实】 |
-| HS20 **（0.1.7 重写）** plugins/dsh-extra-plan/lib/client.js `ctx.effect(() => ctx.configForms.whileServed([NS], () => ctx.slots.inject('plugins.row.config', () => ctx.slots.register({ name:'plugins.row.config', key:'@local/dsh-extra-plan#dsh-extra-plan-settings', label, locale, inject }, SettingsCard))))`，`inject = ['slots','locale','configForms']` | slots 服务 inject(key, cb) + register(options, Component)；`plugins.row.config` 声明 `kind:'keyed', scope:'root'`（仅认 `key`，每键唯一；`label`/`order` 不投影），owner props = `PluginConfigViewProps{view, form?}`；`ConfigForms.whileServed(namespaces, register)` + 宿主 `formFor(rowId)` 注入 `form` | dsh-client-ui-renderer 包内 lib/client.js（slots 服务真身：super(ctx,"slots") 与 inject(key, callback)）；dsh-client-ui-plugin-manager 包内 lib/client.js（plugins.row.config 声明 kind:'keyed', scope:'root' 与 formFor(id) 注入 form）；dsh-client-ui-slots 包无 client bundle、不提供 slots 服务 | 已安装包行详情的配置区 + 表单（8 项消费 ownerProps.form，2 项自绘走专用 PUT）| **旧的 `settings.plugin.item` 插槽在 0.1.7 全库 0 命中（已废）**；插槽名/owner props/form 形状变化即卡片不渲染或表单空白（`form` 为 undefined 时只显示 unavailable）| 【已核实】0.1.7 现场静态核对 |
-| HS21 plugins/dsh-extra-plan/lib/client.js 卡片类名与行内样式段（本地 esp-* 内联样式族（现存类名：esp-cardFooter、esp-wrap、esp-section、esp-sectionTitle、esp-field、esp-fieldHead、esp-label、esp-badge、esp-input、esp-select、esp-textarea、esp-actions、esp-btn、esp-btnPrimary、esp-ok、esp-err；旧记 card/cardOpen/cardHeader/cardBody/cardChevron 五个名在本文件 0 命中）） | CSS Module 哈希类名族（**0.1.7-rc.2 订正：实际前缀 `pbvGtq_`**；台账旧记 `YyYd_a_*` 在 rc.1/rc.2 两棵树全库 0 命中） | dsh-client-ui-settings-plugins 包内 lib/client.js | **本插件已不依赖该哈希族**：`client.js` 自持 `esp-*` 内联样式随本包导出（宿主类名仅作参考） | 宿主重建后哈希前缀变化不再影响卡片样式（0.3.0 起已解耦） | 【已核实】修订于 0.1.7-rc.2 复核 |
-| HS22 plugins/dsh-extra-plan/lib/client.js 主题变量引用（--dsw-alias-label-primary 等 token） | 主题 token --dsw-alias-label-primary 与 border-l2 与 bg-layer-3 与 brand-primary 与 label-secondary 与 label-error 与 label-tertiary | dsh-client-ui-theme 包内 lib/client.js | 卡片配色随宿主主题 token | token 改名或删除即样式与可读性受损 | 【已核实】 |
-| HS23 plugins/dsh-extra-plan/lib/client-bridge.js export const name = 'dsh-extra-plan-client-bridge'（inject 为空与空 apply） | pathLike 行锚定（点开头或 file: 或绝对路径）+ nearestPackage 向上找 package.json + exports 里的 ./client | dsh-client-modules 包内 lib/index.js | 空壳宿主平面行，唯一作用是让 clientModules 扫到本包 package.json 的 dsh.client 声明 | pathLike 判定、nearestPackage 或 exports 解析变化即前端 bundle 不被发现 | 【已核实】 |
-| HS24 plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml crossProviderPlannerModel 与 otherAgentModel 键（id 为 extra-plan 的行 config 段） | 预设行 config 经宿主 schema 校验后 1:1 传入 apply(ctx, config) | dsh-agent-preset-registry 包内 lib/index.js（mountPreset/auditRows/leakedServices）；dsh-agent-preset 包内 lib/index.js（Config） | 把预设行 config 交给插件（crossProviderPlannerModel 只在 cfg===true 时打开严格路径，otherAgentModel 为空串表示回退主会话） | 宿主改变行 config 传递方式或校验即插件配置读不到 | 【已核实】 |
-| HS25 plugins/dsh-extra-plan/index.js export const name = 'extra-plan' 与 export const inject 与 export function apply(ctx, config)（插件契约声明与 apply 函数体） | cordis 插件契约 name 与 inject 与 apply | cordis 包内 lib/index.js；行注入方 dsh-agent-preset-registry 包内 lib/index.js | 作为 agent 平面预设组合行加载（每会话一份实例），配置快照含 plannerModel/otherAgentModel/crossProviderPlannerModel | 契约或 config 注入方式变化即 apply 不被调用或配置读不到 | 【已核实】 |
-| HS26 plugins/dsh-extra-plan/index.js BOOTSTRAP_READ_HINT_FALLBACK 与 cfg.bootstrapReadHint 读取与 HP 分支借槽覆盖 tool:read 的 text | 宿主 read tool 的注册面：系统提示 section 名 tool:read、参数 file_path/offset/limit 与其默认值、输出 schema path/offset/lines/totalLines | dsh-tool-fs 包内 lib/index.js（tool:read 注册段：section 名 tool:read、参数 file_path/offset/limit 与默认值、输出 schema path/offset/lines/totalLines；rc1→rc2 该段文本唯一差异＝删去「Results include line numbers.」）。语法高亮语言表已外移：rc1 内联 LANG_BY_EXTENSION → rc2 新包 @deepseek-ai/dsh-util-code-language，仅由宿主 presentationMeta 的 lang 元数据与客户端代码面消费，模型提示面不可见 | F 段（HP 首轮）的 tool:read 文本改由插件手写维护（变量② cfg.bootstrapReadHint + 内置兜底），不再由官方 renderer 从宿主 schema 生成 | 宿主改 section 名、参数名/默认值或输出字段即手写文案失真——DSH 升级后需人工逐条核对本文案与预设 bootstrapReadHint（不自动跟随） | 【已核实】 |
-| HS27 plugins/dsh-extra-plan/lib/executor-spawn.js 符号锚点 slotKey（稳定槽键）与 registrationSlots（模块级 WeakMap 槽表） | `symbols.original`（= Symbol.for("cordis.original")）、`getTraceable`、`createTraceable`（每次属性读取新建 Proxy、无缓存）；`registerProvider`（重名抛 DUPLICATE_PROVIDER、返回 effect 化 disposer）、`getProvider`（纯查询） | cordis 包内 lib/index.js；dsh-subagent 包内 lib/index.js | 槽表键取「服务实现本体」（读全局注册符号，代理 get 拦截器返回 target）：subagents 为 root 单例，跨 ctx/跨预设世代命中同一槽，引用计数幂等才成立；宿主 registerProvider 无覆盖分支、重名必抛，故本插件幂等层是唯一绕开手段 | 该符号或 get 拦截语义变化 → 槽键取不到本体（降级回代理本身）→ 幂等失效、重现「provider 已被其他注册方占用」与预设「加载失败」；registerProvider 重名校验或 disposer 语义变化即注册/释放链断裂 | 【已核实】0.1.7-rc.2 现场静态核对（按包名 + 符号名） |
-### ③-B 宿主组合与文件契约层（钩子注册与组合文件契约，共 29 条）
-
-归层原则：ctx.on 钩子注册（emit 与 waterfall 契约）、cordis.patch.yml 的 insert 语义、dsh.bundle.patch 与 exports 解析、预设声明行与 profile patch 文件契约、!!js dshHomePath、isolate realm、__ModuleLoader__ 打包契约、inject 为空的插件契约。
-
-| 本仓库位置(文件+符号锚点) | 宿主符号(逐字) | 宿主包+包内相对路径 | 用途 | 升级敏感点 | 核实状态 |
-|:--|:--|:--|:--|:--|:--|
-| HK1 **（0.1.7 重写）** plugins/dsh-extra-plan/index.js `ctx.on('agent/created', (payload) => { try { ...childBaseline/registerSavePlan/registerSaveProbe... } catch (e) { console.warn(...) } })` | **agent/created（mode 为 serial：监听器被宿主 await，任何抛出即会话创建失败）**；payload = `{agent, source: 'startup'|'resume'|'clear'|'compact', signal?}` | dsh-tool-cordis 包内 lib/types/api-catalog.js；派发点 dsh-agent-loop 包内 lib/index.js | 会话创建时初始化本会话账本与状态（save_plan/save_probe 注册） | **`agent/session-start` 在 0.1.7 已删除**（旧监听器永不触发）；serial 语义要求整块吞错——未包 try/catch 会让会话创建直接失败；pre-step 幂等兜底保留为第二通道 | 【已核实】0.1.7 现场静态核对 |
-| HK2 plugins/dsh-extra-plan/index.js ctx.on('agent/pre-step') 两处注册：判定 decision.kind 不为 enter 直接返回的那处 / catalog 投影那处（带 prepend: true） | agent/pre-step（mode 为 waterfall；next() 返回 PreStepDecision） | dsh-tool-cordis 包内 lib/types/api-catalog.js；派发点 dsh-agent-loop 包内 lib/index.js；类型 dsh-agent 包内 lib/types/runtime-types.d.ts | 锚定引导轮次判定与消息收窄（取 next() 返回值后决定是否直接返回） | 决策 kind 取值或瀑布 next 语义变化即引导逻辑失真 | 【已核实】 |
-| HK3 plugins/dsh-extra-plan/index.js ctx.on('agent/request-error')（try 与 finally 包 next() 那处 + 模块级 malformedRecovery 兜底） | agent/request-error（mode 为 waterfall；payload 含 turn、step、provider、failure、retryPolicy、signal；监听器返回 action.kind==='retry' 时宿主 dsh-agent-loop continue 重试该步） | dsh-tool-cordis 包内 lib/types/api-catalog.js；派发点 dsh-agent-loop 包内 lib/index.js | 请求失败时记账（finally 诊断落盘）+ MALFORMED_RESPONSE 限次兜底：llm-retry 已给 retry 则原样透传（不叠加、不重复重试），否则 malformedRecovery 按 sessionId→Set('turn:step') 同回合只兜底 1 次（防死循环），注入中文 developer 提示（模型可读、给出压缩重试建议）并返回 {kind:'retry'}；其余失败码回退原 action 透传 | payload 字段或 next 调用语义变化即记账丢失、兜底失效或重试语义漂移（重试安全前提：失败回合工具未执行、无副作用） | 【已核实】0.1.7-rc.2 源码逐行核对（waterfall retry 语义 + 注入形状） |
-| HK4 plugins/dsh-extra-plan/index.js ctx.on('agent/disposed') | agent/disposed（mode 为 emit；读 payload.agent 的 session.header.id；宿主在 driver quiescence 之后、session detachment 之前发出，监听器返回的 Promise 只被挂 catch、不被等待） | dsh-tool-cordis 包内 lib/types/api-catalog.js；payload.agent 融合 dsh-agent 包内 lib/index.js | 会话销毁时同步结算该会话末轮 usage 并按 sessionId 回收该会话状态（foldUsage 必须同步调用；不可依赖异步返回被宿主等待，否则末轮漏记窗口重开） | 钩子名、payload 形状、派发时机（quiescence/detachment 之间）或 emit 不再同步调用监听器时，末轮结算与单会话回收失效 | 【已核实】 |
-| HK5 plugins/dsh-extra-plan/index.js ctx.on('system-prompt/assemble')（三参 assembly 与 context 与 next） | system-prompt/assemble（mode 为 waterfall；三参形式） | dsh-tool-cordis 包内 lib/types/api-catalog.js；派发点 dsh-system-prompt 包内 lib/index.js；类型 dsh-system-prompt 包内 lib/types/index.d.ts | 注入 anchored 引导段（段名 extra-plan-bootstrap），收窄首轮目录 | 参数元数、瀑布语义或 PromptAssembly 形状变化即引导段丢失 | 【已核实】 |
-| HK6 plugins/dsh-extra-plan/index.js（agent/request） | agent/request（mode 为 waterfall；next() 返回 LlmCallConfig） | dsh-tool-cordis 包内 lib/types/api-catalog.js；派发点 dsh-agent-loop 包内 lib/index.js；类型 dsh-agent/lib/types/runtime-types.d.ts | planner 与非 planner child 先 await next；非 planner 显式 route 优先，未显式时 otherAgentModel 的 True 路径完成全部真实 probe/排序或已验证顶层主会话 fallback，最后返回 final LlmCallConfig；随后宿主才 prepareCall/stream | 返回值形状、payload.signal 或 waterfall 等待语义变化会让未验证路由越过屏障 | 【已核实】 |
-| HK6a plugins/dsh-extra-plan/lib/model-routing.js（probePlannerRoute 与 planner/非 planner strict resolver）；钩子侧 index.js ctx.on('agent/request') 监听器 | llm.listModels(provider) + llm.listProviders() | dsh-llm 包内 lib/index.js；类型 dsh-llm/lib/types/index.d.ts | True 路径按角色枚举 provider，并仅对 listModels 精确命中的 plannerModel 或 otherAgentModel route 进入真实探针；False 的非 planner 只查询顶层主会话 provider advisory 目录，不触碰 listProviders/真实 probe | listProviders/listModels 返回形状、advisory 语义或注册顺序变化即候选集合与排序输入变化 | 【已核实】 |
-| HK6b plugins/dsh-extra-plan/lib/model-routing.js probePlannerRoute（prepareCall + 完整 prepared stream） | llm.prepareCall(config, signal) + PreparedLlmCall.stream(options) | dsh-llm 包内 lib/index.js；类型 dsh-llm 包内 lib/types/index.d.ts 与 lib/types/types.d.ts | planner/非 planner True 均以 maxTokens:1、plugin-source OK text、无 system/tools/sessionId/purpose 的同 signal prepared stream 完整消费，finish error/aborted/缺失/超时均失败 | prepare/stream 绑定 registration、call-config 或 StreamChunk 形状变化即探针失真；该契约仅 True 使用 | 【已核实】 |
-| HK7 plugins/dsh-extra-plan/index.js ctx.on('tools/pre-execute')（硬闸门） | tools/pre-execute（mode 为 waterfall；exec 为 ToolExecution，next() 默认 allow） | dsh-tool-cordis 包内 lib/types/api-catalog.js；派发点 dsh-tools 包内 lib/index.js；类型 dsh-tools 包内 lib/types/index.d.ts | 四级机械闸门（route 与 purpose 与 clarified 与 approved）与多调用拆解拦截 | exec 契约或决策类型变化即闸门失效或误拦 | 【已核实】 |
-| HK25 plugins/dsh-extra-plan/index.js ctx.on('tools/post-execute')（呈现改写：命中记录时把 run_code 失败结果 content 替换为 Error: 加中文 reason 的返回处） | tools/post-execute（当前 0.1.7 waterfall；三参 exec/result/next，next() 默认 accept；accept.content 可替换失败结果 content，失败结果 value 禁止替换） | dsh-tool-cordis 包内 lib/types/api-catalog.js；派发点 dsh-tools 包内 lib/index.js postExecute；类型 dsh-tools 包内 lib/types/index.d.ts PostToolDecision | PTC 子调用被闸门拒绝（状态机侧 kind:'denied'）后，把宿主英文异常包装（ToolCallError 加 worker.cjs 堆栈）改写为教学式中文「Error: 加 reason」，reason 取自本插件 pre-execute 的 deny 记录（精确子串匹配，未命中即透传） | 钩子名或签名、waterfall 默认 next 语义、accept 加 content 替换失败结果 content 的允许性、失败结果 value 替换禁令任一变化即改写失效或报错（记录为空时 fail-open 透传，不吞错） | 【已核实】0.1.2-rc.1 实测契约已保持；0.1.5-rc.2 于 2026-09-23 按核验点逐项复核通过（钩子签名、waterfall 三参、next() 默认 accept、PostToolDecision 形状、accept.content 替换失败结果 content 的允许性全部保持；该版新增的 value 与 content 互斥、失败结果禁替换 value 两条守卫本插件均不触发）；实机行为面（真实 PTC 拒绝端到端改写）仍待部署后实测，不得按「实机已验证」引用 |
-| HK26 **（2026-09-25 新增；2026-09-25 订正）** plugins/dsh-extra-plan/index.js malformedRecovery 的 `agent.session.append('developer/message', { turn: payload.turn, step: payload.step, message }, { surfaceOp: 'append' })`（message 由 @deepseek-ai/dsh-llm 的 createDeveloperMessage({content, source}) 构造，自带非空 id 与 role:'developer'） | developer/message 在已知事件白名单（dsh-session 包内 lib/types/known-event-types.js）；append 必须带 surfaceOp:'append'（surface-eligible 类型缺 surfaceOp 抛错，dsh-session 包内 lib/index.js）；payload 形状 = `{ turn, step, message, headerSeq? }`；message 需非空 id、role='developer'、source.kind 非空字符串、content 数组（同文件）；纯文本 content 不得带 headerSeq（同文件）。**订正：原记「无 turn/step 约束（invariant.js 无该分支）」已被宿主源码证伪** —— v4 行准入要求 developer/message 的 turn/step 均为 ≥1 的整数，且宿主 append 只补 seq/time、**绝不补坐标**，坐标必须由调用方给出（实机报错逐字：SessionFormatError: developer/message turn must be a non-negative safe integer）；「invariant.js 无该分支」只说明关系校验 companion 未挂载于活动 profile，故只需满足行准入、不因此免除坐标要求。source 同样须为生产者自有 kind（v4 禁止旧包裹 kind:'plugin'），本插件用 plugin:@local/dsh-extra-plan | dsh-session 包内 lib/index.js 与 lib/types；dsh-session-format-v3-to-v4 包内 lib/index.js（v4 行准入）；createDeveloperMessage 导出 dsh-llm 包内 lib/index.js | MALFORMED 自愈向重试请求注入模型可读中文提示（提示永久留在会话历史：仅注入一次、文案短，可接受）；坐标非法/缺失时跳过注入但仍返回 {kind:'retry'}，自愈主路径不因注入条件失效 | append 签名/事件白名单/负载 invariant 变化即注入失败或被会话判损坏（注入失败只告警一次、不阻断 retry 自愈）；v4 起坐标缺失会直接判会话损坏（故加防御分支） | 【已核实】0.1.7-rc.2 源码逐行核对（白名单/append surfaceOp/message 形状/headerSeq 禁令）+ 2026-09-25 v4 行准入与坐标要求逐行复核（含实机报错原文） |
-| HK27 **（2026-09-25 新增·agent/error 取证）** plugins/dsh-extra-plan/index.js `ctx.on('agent/error', recordAgentError)`（emit 直连、同步回调；模块级 recordAgentError 落盘 `<插件目录>/extra-plan-agent-errors.jsonl`，行 = { ts, sessionId（payload.agent.session.header.id，非字符串取空串）, turn, step, chain（causeChainOf(error, 8)）}，appendFileSync 追加 + mkdirSync recursive 兜底，写失败一次性 console.warn 防刷屏） | agent/error（mode 为 emit；payload = { agent, turn, step, error }，error 为逐字原始错误；agent 由宿主 agentEvents fused 融进 payload） | dsh-tool-cordis 包内 lib/types/api-catalog.js（钩子签名目录）；派发点 dsh-agent-loop 包内 lib/index.js throwError | 宿主回合/步骤级错误逐字落盘取证（宿主不把该错误写 console；主会话与全部子代理各持一份插件实例，任何 runTurn 级错误——含子代理"腰斩"的流建立失败——都留痕），供根因定位与后续决策（如 llm-deepseek retryPolicy.retryableCodes 扩码清单） | payload 字段（agent/turn/step/error）或 emit 派发时机变化即取证落空；error 非 Error 形状时 causeChainOf 返回空链（行照常落盘、仅 chain 为空） | 【已核实】0.1.7-rc.2 现场静态核对（api-catalog.js 签名 + dsh-agent-loop throwError 派发点，按符号名核对） |
-| HK8 plugins/dsh-extra-plan/index.js 七个钩子回调内统一读取 payload.agent | agentEvents fused()：把 agent 融进 payload | dsh-agent 包内 lib/index.js | 所有钩子以 payload.agent 取当前 agent 与 session 上下文 | 融合机制或 payload 形状变化即取不到 agent | 【已核实】 |
-| HK9 **（0.1.7 重写）** plugins/dsh-extra-plan/index.js tool-jobs 通知识别段（判定改为 `src.kind !== 'tool-jobs' \|\| src.form !== 'notice'` 即 continue） | background job 通知的 source 二元组（**kind 为 tool-jobs**、form 为 notice、含 summary）+ 正文前缀 background job 加 id | dsh-tool-jobs 包内 lib/index.js | 识别 tool-jobs 完成通知并解析 jobId（解析失败保守不放行） | **旧三元组（kind 为 plugin、plugin 为 tool-jobs）在 0.1.7 不再产出**（'plugin' 兜底 kind 已废）→ 不改判定则完成通知永不解锁 job_output 查重；正文格式变化同样解析失败 | 【已核实】0.1.7 现场静态核对 |
-| HK11 plugins/dsh-extra-plan/cordis.patch.yml 三条 insert 行（一条相对路径行与两条 branded 子路径行） | patch 顶层数组语法 insert（无 id 的 insert 追加到根列表）+ anchorInsertedPluginNames 相对路径绝对化 | dsh-app-boot 包内 lib/index.js | 把 client-bridge 与 settings 与 preset-sync 三行注入 profile 组合树 | patch 语义或相对路径基准变化即行不注入或被 warn 跳过 | 【已核实】 |
-| HK12 plugins/dsh-extra-plan/package.json dsh.bundle.patch 两项数组 ["./cordis.patch.yml", "./assets/presets/extra-plan/preset-patch.generated.yml"] | dsh.bundle.patch（loadProfile 读取点；缺失抛 declares no dsh.bundle） | dsh-app-boot 包内 lib/index.js；profile 侧 profiles/web/package.json | 声明本包为 profile bundle 并给出 patch 入口 | 字段名或基准目录变化即 patch 不加载、启动报错 | 【已核实】 |
-| HK13 plugins/dsh-extra-plan/package.json exports 子路径（与 cordis.patch.yml 两条 branded 行对应） | exports 解析（resolve 子路径；解析失败有专门报错口径） | dsh-app-boot 包内 lib/index.js | 以 @local/dsh-extra-plan/settings 与 /preset-sync 载入宿主平面行 | exports 解析规则或报错口径变化即行解析失败 | 【已核实】 |
-| HK14 plugins/dsh-extra-plan/package.json dsh.client（platform 为 web、inject 四项） | dsh.client.platform 必须逐字 web；dsh.client.inject 决定先装载依赖 graph row；exports 必须含 ./client | dsh-client-modules 包内 lib/index.js 与 lib/client.js | 声明浏览器半 bundle 与模块图依赖顺序 | platform 值域、inject 语义或 exports 要求变化即前端 bundle 被跳过 | 【已核实】 |
-| HK15 plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml extra-plan-group 行与 cordis:group 与核心插件行 config 段 | 预设行发布进程级服务即被拒（必须置于 isolate realm 或迁到宿主组合） | dsh-agent-preset-registry 包内 lib/index.js；isolate 为 loader 入口选项（cordis-plugin-loader 包内 lib/index.js） | 解释 settings 与 preset-sync 为何必须放 bundle patch 而非 agent 预设 | 宿主放宽或收紧该强制点即组合划分前提变化 | 【已核实】 |
-| HK16 plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml path 用 !!js dshHomePath 计算账本路径的行 | ctx.provide('dshHomePath', dshHomePath) + !!js 标签 schema | dsh-app-boot 包内 lib/index.js；cordis-plugin-include 包内 lib/index.js | 用宿主提供的 dshHomePath 计算账本落盘路径（预设加载期求值） | 宿主撤掉该 provide 或改名即预设加载报错 | 【已核实】 |
-| HK17 plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml 四行 tool-subagent（provider 与 toolName 与 backgroundMode 与 persona 与 toolFilter.deny 与 maxDepth） | 行配置 schema（provider 必填、toolName 默认 subagent、backgroundMode 值域、toolFilter 的 allow 与 deny、maxDepth 默认 3） | dsh-tool-subagent 包内 lib/index.js | 定义执行者与规划者与 workflow 与 ralph 四类子代理行与 deny 清单 | schema 增删键或值域变化即预设加载报错或裁剪失效 | 【已核实】 |
-| HK18 plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml executor-spawn 行（providerName 与 delegate） | 子代理行 config 经 schema 校验后交给本仓 provider 实现 | dsh-tool-subagent 包内 lib/index.js | 把 workflow 与 ralph 两行的 provider 指向本仓 executor-spawn | config 键名或传递方式变化即委托链断裂 | 【已核实】 |
-| HK19 plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml 宿主包子路径行（tool-subagent-control 下的 list-agents 行） | 宿主包行名解析（exports 子路径，如 tool-subagent-control 下的 list-agents） | dsh-app-boot 包内 lib/index.js；对应包 dsh-tool-subagent-control 包内 lib/index.js | 在预设组合中直接挂宿主包的行 | 宿主包改名或移除子路径导出即预设加载失败 | 【已核实】 |
-| HK20 plugins/dsh-extra-plan/lib/agent-session.js isSubagentChild（header.origin/delegationDepth/descriptor 三路探测）+ lib/agent-runtime.js childPolicyNeedsFloor（沙箱下限判定，index.js 经 import 使用） | SessionHeader 的 origin 为 subagent 与 delegationDepth 与 parentSession | dsh-session 包内 lib/types/types.d.ts | 识别子代理会话，决定是否施加工作区写沙箱下限 | 字段改名或缺失即把子代理当主会话处理（沙箱下限失效） | 【已核实】 |
-| HK21 plugins/dsh-extra-plan/lib/run-code-static.js isRunCodeSubCall（exec.sub 与 exec.parent 判定） | ToolExecution.parent（宿主侧字段；另有 rootCallId 与 arguments 与 agent） | dsh-tools 包内 lib/types/index.d.ts | 判断该调用是否为委派子会话调用（闸门对象判定） | parent 语义变化即判定漂移（注意 sub 非宿主字段，见⑥） | 【已核实】 |
-| HK22 plugins/dsh-extra-plan/lib/shell-mutation.js commandTextOf（取 exec.arguments 的 command 键）与 pwshCommandOf 与 bashCommandOf（写判定包装）；调用方 index.js 的 mainGateReason 与 shellMutationReason | ToolExecution.arguments（宿主已解析对象，非 JSON 字符串） | dsh-tools 包内 lib/types/index.d.ts | 闸门按已解析参数判定命令类调用（pwsh 与 bash 同形） | 参数解析时机或形状变化即判定失效 | 【已核实】 |
-| HK24 plugins/dsh-extra-plan/lib/client-bridge.js 空壳行与 package.json dsh.client | pathLike 行须写点开头的相对路径（否则按精确包名解析、行被跳过） | dsh-app-boot 包内 lib/index.js（anchorInsertedPluginNames）；dsh-client-modules 包内 lib/index.js | 让宿主扫到本包客户端声明 | pathLike 判定或精确包名解析规则变化即行被跳过 | 【已核实】 |
-| HK10 pe-test/tools/step-06-线索落盘.mjs（构造宿主事件形状走 apply 的注册层与闸门回归） | subagent/descriptor 与 user/message 与 tool/call 与 tool/result 事件负载形状 | dsh-session 包内 lib/types/types.d.ts；dsh-subagent 包内 lib/types/descriptor.d.ts | mock ctx 回归插件注册层与闸门（夹具必须与真实负载同形） | 事件形状变化即夹具脱离真实负载、回归假绿 | 【已核实】 |
-| HK23 pe-test/tools/step-01-预设完整性.mjs（宿主包名清单与行结构静态断言） | 宿主包名与组合行结构（静态字面量，不代表宿主运行时契约） | dsh-agent-preset-registry 包内 lib/index.js；dsh-tool-subagent 包内 lib/index.js | 纯工作区模板校验（不访问生产 DSH_HOME） | 宿主包改名后该断言同时失效，不会先于预设发现漂移 | 【已核实】 |
-### ③-C 宿主数据与布局形状层（事件负载与文件布局形状，共 37 条）
-
-归层原则：会话事件负载字段解析、Session 方法形状、SessionHeader 字段、profile 层文件布局、会话日志存储布局与压缩格式、客户端 CSS 哈希类名与主题 token。
-
-| 本仓库位置(文件+符号锚点) | 宿主符号(逐字) | 宿主包+包内相对路径 | 用途 | 升级敏感点 | 核实状态 |
-|:--|:--|:--|:--|:--|:--|
-| SD1 pe-test/_shared/session-finder.mjs SESSIONS 与 parentSession（readMeta 首行渐读；step-07 复用） | 会话存储布局 sessions 目录结构 + 首行 parentSession 字段 | dsh-session-persistence-jsonl 包内 lib/index.js；字段校验 dsh-session 包内 lib/types/types.d.ts | 取证工具按布局定位会话并读首行取父会话（readMeta 为首行分块渐读：64 KB 起步 ×4 渐进、帧不完整即回退全文件，仍只取帧 0 首个非空行） | 布局或首行字段变化即取证工具全部失效 | 【已核实】 |
-| SD2 pe-test/_shared/zstd-frames.mjs MAGIC（帧魔术数）与 framesOf（step-07 复用） | 会话日志压缩后缀与 zstd 帧格式（compression 为 zstd 时后缀 .jsonl.zstd；文件名三代并列：0.1.2-rc.1=session.jsonl.zstd、0.1.5-rc.2=session.v3.jsonl.zstd、0.1.7-rc.2=session.v4.jsonl.zstd（SESSION_FORMAT_VERSION=4，见 §⑦）） | dsh-session-persistence-jsonl 包内 lib/index.js | 自实现 zstd 帧切分并用 node:zlib 解压读会话日志（`framesOf` 只返回完整帧，故分块渐读与全文件读取语义等价——step-07 `headerOfDir` 同此前提） | 宿主换压缩格式或文件名规则即解码失败 | 【已核实】 |
-| SD3 plugins/dsh-extra-plan/index.js deriveFlowState（事件流回放）+ lib/planner-budget.js toolCallsSinceUser（预算锚点） | user/message 事件负载（data.source.kind 为 user） | dsh-session 包内 lib/types/types.d.ts | 扫描会话事件流判定用户轮起点（预算锚点） | 事件键或负载形状变化即锚点判定失效 | 【已核实】 |
-| SD4 plugins/dsh-extra-plan/index.js parseAskResultData（解析 answers）与 deriveFlowState 内 tool/call 解析 | tool/call 事件负载（turn 与 step 与 callId 与 name 与 arguments，arguments 是原始 JSON 字符串） | dsh-session 包内 lib/types/types.d.ts | 识别 ask_user_question 调用与澄清选项（含第四锚点目的 ask：仍属 tool/call + options 解析，无实质变更） | arguments 由字符串改对象即 JSON.parse 抛错 | 【已核实】 |
-| SD5 plugins/dsh-extra-plan/lib/planner-budget.js toolCallCount（按块级 isError 排除被拒调用） | tool/result 事件负载（turn 与 step 与 message 与 error 与 meta）+ ToolResultBlock 的 isError | dsh-session 包内 lib/types/types.d.ts；dsh-llm 包内 lib/types/types.d.ts | 按结果与错误标记计预算（被拒调用不计） | 负载或错误标记口径变化即预算计数偏差 | 【已核实】 |
-| SD6 plugins/dsh-extra-plan/index.js foldUsage 的 assistant/message 分支（事件名判定处 + token 累加字段与来源模型与 provider 读取处） | assistant/message 事件负载（turn 与 step 与 message 与 usage 与 interrupted）+ TokenUsage + MessageSourceMap 的 model 与 provider | dsh-session 包内 lib/types/types.d.ts；dsh-llm 包内 lib/types/types.d.ts 与 lib/types/message.d.ts | usage 账本累加输入与输出与缓存读与缓存写入与推理 token 及来源模型与 provider | 字段改名或来源映射变化即账本失真 | 【已核实】 |
-| SD7 plugins/dsh-extra-plan/index.js parseDispatchAskResult 与 deriveFlowState（当前 PTC 事件形状） | tool/ptc-dispatch-start 与 tool/ptc-dispatch 负载（rootCallId/parentCallId/subCallId/name/arguments/isError/content） | dsh-tools 包内 lib/types/types.d.ts 与 lib/types/invariant.js | PTC 模式下统计 run_code 子调用与判定拆解组 | 当前事件字段或调用链不变量变化即统计与拦截失效 | 【已核实】 |
-| SD8 plugins/dsh-extra-plan/lib/agent-runtime.js isPlannerChild（按 subagent/descriptor.mode=continuable 判定；P1-4-2 起带 per-apply descriptor 缓存，未扫到 descriptor 不写缓存） | subagent/descriptor 事件（mode 取值 one-shot 或 continuable） | dsh-subagent 包内 lib/types/descriptor.d.ts | 区分可续轮子代理（规划者）与 one-shot（执行者与验收者） | mode 值域或事件版本变化即角色判定漂移 | 【已核实】 |
-| SD11 plugins/dsh-extra-plan/lib/model-routing.js requestConfigSnapshot 与 resolveAgentRouteSources（requestHeader 与 header.config） | Session.requestHeader() 返回 EpochHeader（内含 config 为 LlmCallConfig） | dsh-session 包内 lib/types/index.d.ts；dsh-llm 包内 lib/types/call-config.d.ts | 沿 parentSession 上溯顶层主会话 provider/model；planner 与非 planner True fallback 必须验证该 route，非 planner False 只对该 provider 做 advisory listModels | 返回值形状或 config 位置变化即继承/严格 fallback 取不到值 | 【已核实】 |
-| SD10 plugins/dsh-extra-plan/lib/agent-session.js sessionEvents（→ session.snapshotEvents(fromSeq, toSeqExclusive)）+ plugins/dsh-extra-plan/index.js foldUsage 的 P1-4 游标增量（session.seq 水位 + snapshotEvents(from, to) 区间读取，无新增直接返回、prevIndex > 水位回退无参全量） | Session.snapshotEvents(fromSeq, toSeqExclusive) 与 Session.snapshotEvents(from, to) 区间形态 + Session.seq（＝日志长度，SessionLogOffset 运行时为数字，等于 log.length） | dsh-session 包内 lib/types/index.d.ts 与 lib/index.js（snapshotEvents 缓存分支/区间分支、seq getter） | 读取会话事件快照（已弃用 events getter）；foldUsage 用 seq 水位做 O(1) 前提检查并只物化新增区间 | 方法签名/seq 语义（seq ≡ log 索引、append-only）变化即增量前提失效、可能漏记或错位去重 | 【已核实】 |
-
-| SD12 plugins/dsh-extra-plan/lib/agent-runtime.js agent.session.append 写入 'sandbox/mode'（写沙箱下限，createAgentRuntime 内） | Session.append(type, data) 与 sandbox/mode 事件负载（mode 与 source） | dsh-session 包内 lib/types/index.d.ts；dsh-sandbox-policy 包内 lib/types/session-mode.d.ts | 为委派子会话写沙箱下限；本插件会话事件写入共 3 处——本处 `sandbox/mode`（log-only 非 surface 事件，data.source:'delegation' 为沙箱语义字段）、index.js `malformedRecovery` 的 `developer/message`（HK26 起）、index.js 预算提醒经 `decision.messages` 由宿主 dsh-agent-loop 落盘为 `user/message`（SD37 起） | append 签名或事件键与负载变化即写入失败或被忽略 | 【已核实】 |
-| SD15 plugins/dsh-extra-plan/lib/model-routing.js probePlannerRoute 与 planner/非 planner resolver（llm.listModels(provider)） | llm（服务名）+ listModels(provider) 返回 LlmModelInfo 数组 | dsh-llm 包内 lib/index.js（签名目录 dsh-tool-cordis 包内 lib/types/api-catalog.js） | planner False 保留父 provider advisory；非 planner False 只查顶层主会话 provider；True 按角色逐 provider 精确匹配后进入真实 probe | 服务名或返回项形状变化即列表为空/候选集合变化 | 【已核实】 |
-| SD14 plugins/dsh-extra-plan/lib/model-routing.js agentFromRegistry 与 resolveAgentRouteSources（agents.get(parentSession)） | agents（服务名）+ get(id 为 SessionId) | dsh-agent 包内 lib/index.js | 判断父会话是否仍存活并上溯顶层主会话 route | 服务名或 get 语义变化即存活判定失效或 fallback 取错 | 【已核实】 |
-
-| SD16 **（0.1.7 换代：agentPresets.resolve/skills.register 旧实现已删除）** plugins/dsh-extra-plan/index.js（现：预设 skill-filesystem 行的 config.customSkillDirs 静态注册；index.js 内注释保留旧实现说明） | agentPresets（服务名）+ resolve(id) 返回 AgentPreset；skills（服务名）+ register(definition)——以上为历史面 | dsh-agent-preset-registry 包内 lib/index.js（register/resolve）；dsh-skill 包内 lib/index.js（register） | 0.1.7 起：三个 SKILL.md 随预设 skill-filesystem 行的 config.customSkillDirs 指向 @deepseek-ai/dsh-agent-preset 包内 skills/ 进入预设组合；creativeMode=false 靠 assembly-presentation 的 CREATIVE_SKILL_NAMES 投影隐藏，不再靠「不注册」 | 服务名或 skill-filesystem 行 config 键变化即 skills 装载失败 | 【已核实】0.1.7 换代（按 index.js 注释与现实现核对） |
-| SD17 plugins/dsh-extra-plan/index.js ctx.effect（生命周期绑定） | ctx.effect(callback)（cordis 插件生命周期 API） | cordis 包内 lib/index.js | 绑定 ctx.systemPrompt.variable 的 7 个 prompt variable 注册与 disposer 生命周期 | effect 语义变化即副作用泄漏或提前回收 | 【已核实】 |
-| SD18 plugins/dsh-extra-plan/lib/agent-runtime.js toolSchemasOf（取 tools.schemas(agent)） | tools（服务名，经 agent.ctx.get 取）+ schemas(scope) 返回 ToolSchema 数组 | dsh-tools 包内 lib/index.js（签名目录 dsh-tool-cordis 包内 lib/types/api-catalog.js） | 取当前作用域可见工具清单用于引导收窄 | 返回形状或作用域解析变化即收窄失效 | 【已核实】 |
-| SD19 plugins/dsh-extra-plan/lib/save-tool-factories.js defineSavePlan 与 defineSaveProbe 工具定义面（parameters 与 output.schema 与 render 与 execute）；注册点 index.js registerTool/registerSavePlan/registerSaveProbe | ToolRuntime.register(definition) 返回 disposer；restrict(filter)；ToolDefinition 与 ToolOutputDefinition 形状 | dsh-tools 包内 lib/index.js 与 lib/types/index.d.ts | 注册 save_probe 与 save_plan 两个工具（未用 restrict、未接 disposer） | 定义形状（render 与 execute 签名）变化即工具不可用 | 【已核实】 |
-| SD19b plugins/dsh-extra-plan/index.js registerTool 的 catch 段（A/B/C 失败分类与 registered.add 终态标记） | ToolRuntime.register(definition) 的抛错形态：TypeError（output.render 缺失）、TypeError（timeoutMs 非法）、JsonSchemaError（name=JsonSchemaError、code=UNSUPPORTED_SCHEMA、文案 unsupported JSON schema: ...）、Error（tool name "run_code" is reserved）、Error（重名：scope 未定义时 tool "X" is already registered ...，有 scope 时为 tool "X" is already registered in this scope，ToolLayer duplicateError 经 NamedEntries.insert 同步抛错） | dsh-tools 包内 lib/index.js 与 lib/types/index.d.ts；dsh-scope 包内 lib/index.js | 分类判据：message 含 already registered → A 重名（工具已存在，记终态不重试）；error.name 为 JsonSchemaError/TypeError 或 message 含 is reserved → B 永久性（记终态不重试）；其余（含 tools 服务未就绪与 factory 抛错）→ C 可重试（不写标记，下一步重试） | 宿主抛错文案或错误 name 改名即 A/B/C 判定漂移，失败路径退回静默重试或永久空转 | 【已核实】 |
-| SD20 plugins/dsh-extra-plan/lib/save-tool-factories.js execute(args, exec) 取 exec.agent 与 session.header.cwd | ToolRunContext 与 SessionHeader.cwd | dsh-tools 包内 lib/types/index.d.ts；dsh-session 包内 lib/types/types.d.ts | 工具执行期取会话工作区路径与 agent 上下文 | cwd 字段改名或缺失即工具拒绝执行 | 【已核实】 |
-| SD21 plugins/dsh-extra-plan/lib/save-tool-factories.js save_probe 同形取 session.header.cwd | SessionHeader.cwd（会话工作区路径） | dsh-session 包内 lib/types/types.d.ts | 落盘路径基准（线索与方案文件所在工作区） | 字段缺失即落盘不可用 | 【已核实】 |
-| SD22 plugins/dsh-extra-plan/index.js ctx.on('system-prompt/assemble') 钩子（返回 sections/contexts/tools 那处） | PromptAssembly（sections 与 contexts 与 tools 与 variables）+ AssembledSection（name 与 text） | dsh-system-prompt 包内 lib/types/index.d.ts | 以 extra-plan-bootstrap 段注入引导内容 | 结构变化即引导段被丢弃或渲染异常 | 【已核实】 |
-| SD23 plugins/dsh-extra-plan/index.js ctx.on('agent/pre-step')（PreStepDecision；kind !== 'enter' 直接返回的那处） | PreStepDecision（kind 为 reject 或 enter，enter 带 messages 与 startsRequestSeries） | dsh-agent 包内 lib/types/runtime-types.d.ts | 决定本轮是否进入请求序列并收窄 messages | 取值域变化即引导逻辑失效 | 【已核实】 |
-| SD24 plugins/dsh-extra-plan/index.js ctx.on('tools/pre-execute')（PreToolDecision 与拒绝文案；kind 为 deny 的返回处 / 放行返回处） | PreToolDecision（kind 为 allow 或 deny 或 ask 或 cancel 四态） | dsh-tools 包内 lib/types/index.d.ts | 闸门放行与拒绝与追问三态输出；同一钩子的 post 侧契约（PostToolDecision）亦被本插件使用——见 HK25（失败结果 content 改写） | 取值域变化即闸门行为异常；post 侧取值域或替换语义变化见 HK25 | 【已核实】 |
-| SD25 plugins/dsh-extra-plan/index.js ctx.on('tools/pre-execute')（exec 字段使用与瀑布链 next） | tools/pre-execute 的 exec 契约（callId 与 rootCallId 与 name 与 arguments 与 agent 与 parent 与 signal 与 token）与瀑布链 next() | dsh-tool-cordis 包内 lib/types/api-catalog.js；dsh-tools 包内 lib/types/index.d.ts | 闸门读取调用上下文并串联其他插件的 pre-execute 钩子 | 字段增删或 next 语义变化即闸门误判 | 【已核实】 |
-| SD26 plugins/dsh-extra-plan/index.js 七个钩子的事件主体解析依赖 | scoped 事件到路由 subject 的解析表（tools/pre-execute 取第一个参数的 agent；system-prompt/assemble 取第二个参数的 scope） | dsh-scope 包内 lib/invariant.js | 决定 payload.agent 与 context.scope 是否注入到本插件的钩子回调 | 映射表变化即 payload.agent 或 scope 变为 undefined | 【已核实】 |
-| SD27 plugins/dsh-extra-plan/index.js agent/request listener（返回值改写与力度抑制） | LlmCallConfig（provider 与 model 与 reasoningEffort 与 temperature 与 maxTokens 与 stop） | dsh-llm 包内 lib/types/call-config.d.ts | planner 只注入 plannerModel；非 planner 显式 route 优先，未显式时注入 otherAgentModel 或顶层主会话 fallback，并保留 maxTokens/reasoningEffort 继承 | 字段改名或校验收紧即请求构造失败 | 【已核实】 |
-| SD28 plugins/dsh-extra-plan/index.js foldUsage 内 usage 字段累加（类型字段读取处） | TokenUsage（inputTokens 与 outputTokens 与 totalTokens 与 cacheReadTokens 与 cacheWriteTokens 与 reasoningTokens） | dsh-llm 包内 lib/types/types.d.ts | usage 账本按类型累加（缺失键按 0 计） | 字段改名即账本数值归零 | 【已核实】 |
-| SD29 plugins/dsh-extra-plan/lib/planner-budget.js toolCallCount 与 tool-result 块级 isError 判定 | ToolResultBlock（type 为 tool-result 与 toolCallId 与 content 与 isError） | dsh-llm 包内 lib/types/types.d.ts | 解析工具结果内容块（排除被拒调用） | 内容块形状变化即解析失败 | 【已核实】 |
-| SD30 plugins/dsh-extra-plan/index.js 工具注册与 schemas 消费（ToolSchema） | ToolSchema（name 与 description 与 parameters） | dsh-llm 包内 lib/types/types.d.ts | 工具入参与出参 schema 声明 | 形状变化即 schema 校验失败 | 【已核实】 |
-| SD31 plugins/dsh-extra-plan/index.js ctx.on('system-prompt/assemble') 上下文消费（AssembleContext：context.agent 判定会话角色） | AssembleContext（scope 与 signal）+ dsh-agent 对它的 agent 模块增强 | dsh-system-prompt 包内 lib/types/index.d.ts；dsh-agent 包内 lib/types/runtime-types.d.ts | 从 assemble 上下文取 agent 判定会话角色 | 增强字段被移除即 context.agent 为 undefined | 【已核实】 |
-| SD32 plugins/dsh-extra-plan/index.js CHANNEL_BROKEN_CODES（白名单）与 deriveFlowState 错误码分支 | ask_user_question 错误码全集（CALLER_NOT_LIVE 与 DELEGATED_CALLER 与 BAD_INTENT 与 NO_PROVIDER 与 ASK_ABORTED 与 EMPTY_QUESTIONS） | dsh-user-questions 包内 lib/types/index.js | 通道逃生白名单依据（据错误码判定是否放行替代通道） | 错误码增删改名即逃生判定漂移 | 【已核实】 |
-| SD36 plugins/dsh-extra-plan/lib/agent-runtime.js isPlannerChild（按 subagent/descriptor.mode 判定）+ index.js probeClaimFor（认领判定） | backgroundMode 到 descriptor.mode 的映射（continuable/one-shot） | dsh-tool-subagent 包内 lib/index.js | 按 subagent/descriptor.mode 区分可续轮规划者与 one-shot；当前版本不再依赖「started subagent <id>」结果文本（全仓 0 命中） | 文本格式或映射变化即识别失败 | 【已核实】 |
-| SD37 plugins/dsh-extra-plan/lib/planner-budget.js budgetReminderMessage（createUserMessage 构造）+ index.js 使用点（agent/pre-step 内 budgetReminderMessage(reminder) 处） | createUserMessage（dsh-llm 导出：返回 {source,content,role:'user',id}，id=brandString(randomUUID())）；**v4 行准入**要求 source 为对象、kind 为非空字符串且 `kind !== "plugin"`（dsh-session-format-v3-to-v4 包内 lib/index.js，违者抛 SessionFormatError: format v4 message requires a producer-owned source kind），即 source 必须是**生产者自有 kind**：本插件统一自造 `plugin:@local/dsh-extra-plan`（＝ V3 迁移惯例 `plugin:<包名>`，无需任何 producer 注册，官方 dsh-tool-jobs 同法自造 kind `tool-jobs`）；旧包裹形状 `{ kind: 'plugin', plugin: '<包名>' }` 已废，其 **`plugin` 字段被禁**（v4 只读 kind） | dsh-llm 包内 lib/types/message.js（经 lib/index.js 导出）；dsh-session-format-v3-to-v4 包内 lib/index.js（v4 source 准入） | 会话内注入的 user/message 身份字段（id/role）必须由宿主构造器给出，手拼消息缺 id/role 会被会话判损坏，预算提醒经此构造；source.kind 必须为生产者自有值，否则预算提醒落盘即被 v4 拒收、会话当场终止（planner 腰斩根因） | createUserMessage 签名/字段变化或 user/message 身份校验收紧即注入失效；v4 source 准入规则变化即 kind 取值失效 | 【已核实】0.1.7-rc.2 源码逐行核对 + 2026-09-25 实机错误逐字复核（SessionFormatError: format v4 message requires a producer-owned source kind，两次 planner 均于 turn 1 step 5 终止） |
-| SD38 pe-test/tools/step-07-子代理模型与引导取证.mjs（显式 SESSION_ID，只读） | SessionHeader.parentSession/origin/delegationDepth；subagent/descriptor.mode；request/header、request/context、model/selection、assistant/message.source | dsh-session-persistence-jsonl、dsh-session、dsh-subagent、dsh-agent-loop、dsh-llm 包内对应类型/事件 | A42/A43 取证：直接 child 谱系只分 pro规划/非pro规划；request/header/config 与 request/context 是 attempted route，assistant/message source.kind=model 是 actual provenance；planner 首个 user/agent-message text 与父 subagent_plan prompt 用于 suffix 等级（扫描面：`headerOfDir` 有界分块头扫描 + 只解析命中 child + 事件丢弃 raw 行，输出逐字节不变） | 事件名、字段路径、三种候选日志文件名或消息 source 形状变化即 step-07 取证失真；不能以配置候选、header.system、候选 probe 或 provider/model 猜角色 | 【已核实】 |
-| SD35 plugins/dsh-extra-plan/index.js registerTool（成功路径写标记 + 分类 A/B 终态标记）与 savePlanRegistered（WeakSet 声明）与 assets/presets/extra-plan/agent.cordis.yml 四行 toolFilter.deny（deny 名单对齐） | 宿主内置工具名清单（deny 名单取值来源） | dsh-tools 包内 lib/index.js；dsh-tool-subagent 包内 lib/index.js | 预设 toolFilter.deny 必须与宿主实际注册工具名一致 | 宿主工具改名即 restrict 抛错或裁剪失效 | 【已核实】 |
-| SD33 pe-test/tools/step-04-路由与写闸门.mjs（require('js-yaml')，按 profile node_modules 锚点）；pe-test/_shared/host-deps.mjs（解析钩子，同锚点取 @deepseek-ai/dsh-llm） | profile 依赖布局 profiles/web/node_modules + 宿主包名 @deepseek-ai/dsh | dsh-app-boot 包内 lib/index.js；dsh-home-paths 包内 lib/index.js | 按 profile 解析目录锚点解析 YAML 库 | profile 布局改名或安装路径变化即解析失败 | 【已核实】 |
-| SD34 plugins/dsh-extra-plan/index.js 全文 0 处调用（反向记录：未使用的宿主面） | sessionProjections 的 stateOf(session, sandboxMode)（宿主内部实现，本插件不直接调用） | dsh-sandbox-policy 包内 lib/index.js | 记录：沙箱模式一律走 sandboxPolicy.overrideOf，不直连投影服务 | 若宿主移除 overrideOf 而只留 stateOf，插件需改道（见⑥） | 【已核实】 |
-> 本轮新增取证域：A42/A43、C11/C12 由 `pe-test/tools/step-07-子代理模型与引导取证.mjs` 承担，命令必须显式 `SESSION_ID` + `PLANNER_PROMPT_SUFFIX`，不自动猜会话、不发 Provider 请求；模型配置 snapshot 与实际 route/provenance 分栏，完整文本不截断。内存口径：277 份会话工作区下原「全工作区 parseSession 常驻」在默认堆必 OOM，改为两阶段头扫描 + 按需解析 + `readMeta` 分块渐读后默认堆可跑通，stdout 逐字节不变。
-> PROBE_LIMITS 当前 evidence 上限为 150 条、单条 evidence.text 上限为 1000 字；step-00 PR23=151、PR34/PR35 固化边界。此处与台账历史 evidence「80 条」「80+79+50=209」分属不同口径，后者保持原文；exploreBudget=18 仅是 planner 预算；根 `dsh-extra-plan/README.md` 不改，otherAgentModel 缺口由用户自行同步。
-
-### ③-D 安装配置面（包元数据与安装期解析，共 12 条）
-
-归层原则：package.json 的 dsh.bundle 与 dsh.client 与 exports 与依赖声明（postinstall 已删除）、DSH_HOME 解析、安装路径回退、预设元数据。
-
-| 本仓库位置(文件+符号锚点) | 宿主符号(逐字) | 宿主包+包内相对路径 | 用途 | 升级敏感点 | 核实状态 |
-|:--|:--|:--|:--|:--|:--|
-| CF1 **（已删除·2026-09-25 死代码清理）** plugins/dsh-extra-plan/package.json scripts.postinstall（node scripts/distribute-preset.mjs） | 安装期依赖脚本执行（dsh plugin add 转发 pnpm 执行 postinstall） | dsh 包内 package.json 与包内 lib/bin.js（plugin 子命令转发 pnpm） | 安装与更新后一次性把预设分发到 DSH_HOME/.agent-presets/extra-plan——**本包已无 postinstall，安装期零脚本动作** | 本包无 allow-build 字段，宿主或 pnpm 默认禁 build scripts 即分发静默跳过 | 【已删除·历史】 |
-| CF2 **（已删除·2026-09-25 死代码清理）** plugins/dsh-extra-plan/scripts/distribute-preset.mjs DSH_HOME 解析与 syncPreset 委派 | DSH_HOME 环境变量（env 优先，否则用户主目录下 .dsh） | dsh-home-paths 包内 lib/index.js；dsh 包内 package.json | postinstall 入口解析 DSH_HOME 后委派 syncPreset（失败不阻断并以 0 退出）——入口已删除，启动自愈独立完成 | home 解析规则变化即分发到错误目录 | 【已删除·历史】 |
-| CF4 plugins/dsh-extra-plan/package.json dsh.bundle.patch（"patch": ["./cordis.patch.yml", "./assets/presets/extra-plan/preset-patch.generated.yml"]） | dsh.bundle.patch（缺失抛 declares no dsh.bundle） | dsh 包内 package.json；读取点 dsh-app-boot 包内 lib/index.js | 声明本包为可直接叠层的 profile bundle | 字段改名或路径基准变化即 patch 不加载、启动报错 | 【已核实】 |
-| CF5 plugins/dsh-extra-plan/package.json dsh.client（"platform": "web" 与 inject 四项） | dsh.client.platform（值域 web）与 dsh.client.inject（模块图依赖顺序） | dsh-client-modules 包内 lib/index.js 与 lib/client.js | 声明浏览器半 bundle 与依赖先行装载 | platform 非 web 或 inject 形状变化即前端被跳过 | 【已核实】 |
-| CF6 plugins/dsh-extra-plan/package.json exports（含 settings 与 preset-sync 与 client 与 client-bridge） | exports 子路径解析（branded 行与客户端 bundle 必需的 ./client） | dsh-app-boot 包内 lib/index.js；dsh-client-modules 包内 lib/index.js | 宿主平面行与客户端 bundle 的解析入口 | exports 规则或必需条目口径变化即解析失败 | 【已核实】；2026-09-26 任务3：exports 新增 ./locale/*.json 与 ./preset-sync/locale/* 本地化通道（宿主 readPluginMeta 解析 `<specifier>/locale/en.json` 用；旧键全部保留、纯增量）；2026-09-26 列表页文案重定位：`./settings/locale/*` 与 `./preset-sync/locale/*` 两条映射由 `./locale/*` 改指行级目录 `./locale/settings/*`、`./locale/preset-sync/*`（包级 `./locale/*.json` 与其余键保留）。理由：readPluginMeta 的取文 specifier = 行 name，两行共用一份包级字典时包卡片与两行显示同一段文案；回归 = step-01-预设完整性 S3（exports 键 + 6 通道文件 + meta 文案 + 包自引用真实解析） |
-| CF8 plugins/dsh-extra-plan/package.json dependencies.js-yaml | js-yaml 依赖（宿主 dsh 包 dependencies 同款 ^4.2.0） | dsh 包内 package.json 与包内 node_modules/js-yaml | 本地解析 YAML，失败时回退宿主安装目录同名依赖 | 宿主移除该依赖或换 YAML 库即回退断裂 | 【已核实】 |
-| CF7 pe-test/tools/step-01-设置页配置.mjs AppData 解析（宿主安装目录）与依赖解析段 | 宿主安装目录解析（AppData 下 npm 全局 node_modules 的 @deepseek-ai/dsh）+ 依赖 @deepseek-ai/schemastery | dsh 包内 package.json；包内 node_modules/@deepseek-ai/schemastery | 回归脚本从宿主安装包解析 js-yaml 与 schemastery 后跑真实 apply 与 loopback HTTP | 安装前缀或宿主依赖清单变化即脚本不可用 | 【已核实】 |
-| CF11 pe-test/tools/step-01-qqbot-安装映射.mjs DSH_HOME 注入与 js-yaml 解析与 profiles 下 @local 夹具 | 宿主安装目录解析取 js-yaml + DSH_HOME 注入 + profiles 下 node_modules/@local 夹具 | dsh 包内 package.json；dsh-home-paths 包内 lib/index.js | qqbot 侧回归的解析与夹具基础 | 安装前缀或 profile 布局变化即夹具失真 | 【已核实】 |
-| CF12 **（2026-09-25 订正：宿主运行时包不得进 profile）** plugins/dsh-extra-plan/package.json：`dependencies` 仅 `js-yaml`（**不含任何 `@deepseek-ai/*`**）；`peerDependencies` 三项 = `@deepseek-ai/dsh` / `@deepseek-ai/dsh-llm` 同为 `'0.1.7-rc.1 || 0.1.7-rc.2'`（两版逐字列举，非范围符）+ `@deepseek-ai/schemastery` `~3.18.4` | 宿主同名依赖解析（0.1.7 运行时解析表把 installation + 已选 bundle 的包供给 profile 内模块，且 **profile `node_modules` 内本地候选优先**）+ `evaluatePluginCompatibility` 兼容门控（只查 peerDependencies 中 `@deepseek-ai/dsh` / `@deepseek-ai/dsh-` 前缀键；**只比对 peer 的 range 字符串与运行时版本、不解析包**；`semver.satisfies(runtimeVersion, range, {includePrerelease:true})` 不满足 → **bundle 整层被跳过（rc.2 起结构化为 `skippedBundles`+`reportSkippedBundles`）、loader 行被 preflight 置 disabled**；台账旧记「装载抛错」已订正） | dsh 包内 node_modules/@deepseek-ai/dsh-llm（本机实测：安装域闭包 336 包含 dsh-llm 与 schemastery，dsh-llm 经 `@deepseek-ai/dsh-agent-instructions` 进入）；dsh-app-boot 包内 lib/index.js（evaluatePluginCompatibility / routeScoped：本地候选优先 / entries：installation 优先，profile 仅补 installation 未供名）；dsh-plugin-manager 包内 lib/index.js | lib/planner-budget.js、lib/model-routing.js 顶层静态 import createUserMessage；lib/settings.js 顶层静态 import schemastery；兼容门控把「只支持 0.1.7-rc.1/rc.2」变成装载期硬门槛 | 宿主版本跨代即 bundle 被跳过（预期行为：本版明确放弃旧版同码兼容）；新 rc 发布需同步扩钉（rc.1→rc.2 已按此办理）。**把宿主运行时包声明为 `dependencies` 会把第二份副本装进 profile 并被优先解析 → 顶替宿主 llm 运行时行**：0.1.7-rc.1 副本无 `projectToolUpdates`/`toolUpdate`/`toolHistory`，会话内工具集变化（native↔PTC 切换、重启恢复后的工具差集）产生的 developer `tool-removal` 会原样序列化成线上 `tool_removal`，而 DeepSeek Messages API 只收 `tool_addition` → 422，且该 developer 消息落盘后整会话每轮必失败 | 【已核实】0.1.7-rc.2 本机现场：安装域闭包实测 + 双锚点解析实测 + 会话日志三例 422 取证（2026-09-25） |
-| CF9 pe-test/tools/step-01-安装同步.mjs 与 step-01-设置迁移.mjs（step-01-安装分发.mjs 已删除） | DSH_HOME 布局与 profiles 下 profile 目录形状（临时夹具） | dsh-home-paths 包内 lib/index.js；dsh-app-boot 包内 lib/index.js | 临时 DSH_HOME 下回归启动自愈与设置迁移状态机 | profile 布局变化即夹具与真实形状脱节 | 【已核实】 |
-| CF10 plugins/dsh-extra-plan/assets/presets/extra-plan/preset.yml name 与 description | 预设声明行 Config（id/name/description/order/plugins，支持 name 与 description 与 order）；METADATA_FILE 符号在 0.1.7-rc.2 全库 0 命中 | dsh-agent-preset 包内 lib/index.js（Config） | 预设显示元数据（预设列表展示名与描述） | 元数据契约变化即预设列表缺名或排序异常 | 【已核实】 |
-| CF3 DSH_HOME/renderer 解析：lib/preset-sync.js 的 defaultDshHome 仅保留为公共 API/回归夹具且模块内无调用；lib/assembly-presentation.js 的 resolveToolsSdkRenderer 为活动 renderer resolver；lib/settings.js 已无 DSH_HOME 解析，live-config.js 使用 configEditor.documentPath；scripts/distribute-preset.mjs 已删除 | defaultDshHome（公共 API/回归夹具）与 resolveToolsSdkRenderer（活动 resolver） | dsh-home-paths 包内 lib/index.js | defaultDshHome 无模块内调用；活动 renderer resolver 根据候选路径解析官方 SDK renderer | 宿主路径变量或 renderer 候选变化可能影响活动解析 | 【已核实】 |
-
-### ③-E 证据勾销表（209 条 evidence 逐条去向）
-
-报告 A、B、C 的每一条 evidence 都落到下面某个条目编号（或落进②覆盖总表对应文件的挂钩条目）。看表的顺序：先读②覆盖总表定位「这条 evidence 属于哪个文件、落到哪个条目编号」，再用本表的段落索引快速跳转；本表按报告内的证据顺序分段，用于确认 209 条证据全部有去向、没有整段遗漏。
-
-| 证据段（按报告内顺序） | 条数 | 归属条目编号 |
-|:--|:--|:--|
-| 报告 A（index.js 全文）证据 1-12（插件契约与 7 钩子注册） | 12 | HK1-HK10 |
-| 报告 A 证据 13-17（服务读取面与 ctx.effect 生命周期） | 5 | HS1、HS5、HS17、SD13-SD17 |
-| 报告 A 证据 18-31（子代理/沙箱下限、会话事件读取、用量账本、续轮转达） | 14 | SD3、SD4、SD5、SD6、SD9、SD12、SD20、SD21、SD22、SD27、HK9、HK21、HK22 |
-| 报告 A 证据 32-42（工具注册面、deny 与闸门 exec 契约、ask_user_question 错误码、工具名清单） | 11 | HS17、SD18、SD19、SD25、SD26、SD32、SD36 |
-| 报告 A 证据 43-50（宿主钩子签名目录与 7 钩子 mode） | 8 | HK2、HK3、HK4、HK5、HK6、HK7、HK8、HK10 |
-| 报告 A 证据 51-55（sandboxPolicy、agents、llm、agentPresets、skills 服务方法签名） | 5 | HS1-HS5、SD13、SD14、SD16、SD17 |
-| 报告 A 证据 56-69（会话事件负载类型与 Session 方法、SessionHeader、TokenUsage、ToolResultBlock） | 14 | SD1、SD3、SD4、SD5、SD7、SD8、SD10、SD11、SD12、SD20、SD23、SD28、SD29、SD30、SD31、SD32 |
-| 报告 A 证据 70-80（agent 融合、当前 PTC 事件派发点、tool-jobs 通知、子代理文本、scope 解析表） | 11 | HK1、HK7、HK8、HK9、HK10、HK21、SD7、SD17、SD24、SD26、SD31、SD35 |
-| 报告 B 证据 1-21（settings、preset-sync、preset-settings、executor-spawn、client 与 client-bridge） | 21 | HS1、HS2、HS3、HS4、HS5、HS6、HS7、HS8、HS9、HS10、HS11、HS12、HS13、HS14、HS15、HS16、HS17、HS18、HS19、HS20、HS21、HS22、HS23、HS24、HS25、HK14、HK16、HK22、SD2 |
-| 报告 B 证据 22-29（发行脚本、package.json、cordis.patch.yml、预设模板、preset.yml、dist-manifest（已删除·历史）、session-finder、zstd-frames） | 8 | HK11、HK12、HK13、HK14、HK15、HK16、HK17、HK18、HK19、HK24、SD1、SD2、CF1、CF2、CF3、CF4、CF5、CF6、CF7、CF10 |
-| 报告 B 证据 30-41（宿主图形/设置/渲染/主题/应用启动/预设/首页路径/工具子代理/网页服务器/客户端模块等服务与常量） | 12 | HS1、HS2、HS3、HS4、HS5、HS6、HS7、HS8、HS9、HS10、HS11、HS12、HS13、SD13、SD14、SD15、SD16、SD17、SD18、SD19、SD20、SD21、SD22 |
-| 报告 B 证据 42-58（宿主模块解析、locale、设置页卡片、CSS 类名、profile patch 引擎、bundle patch 加载、锚定行名、dshHomePath、隔离域、预设默认值与 schema、注入行名与插件行名等） | 17 | HK11、HK13、HK14、HK15、HK16、HK20、HK21、HK22、HS5、HS6、HS7、HS17、HS18、HS19、HS20、HS21、HS22、SD33、SD34、SD36、CF7、CF9、CF11 |
-| 报告 B 证据 59-79（客户端模块声明/路径锚定与平台校验、校验与设置命名空间、子代理提供者与能力、spawn 提供者、会话日志布局与压缩、主题 token、executor-spawn 注释过期项等） | 21 | HK10、HK13、HK19、HK23、HK24、HS8、HS9、HS10、HS11、HS12、HS13、HS14、HS15、HS16、SD1、SD2、SD35、CF2、CF3、CF4、CF5、CF6、CF7、CF8、CF9 |
-| 报告 C 证据 1-24（qqbot 插件入口、heal 自愈全链、patch 四行、package.json 契约） | 24 | QB1-QB21 |
-| 报告 C 证据 25-41（README/READAI 声明面、维护手册边界、概览声明、回归用例断言、本机 profile 反证） | 17 | QB22-QB27 |
-| 报告 C 证据 42-50（宿主 app-boot 与 agent-presets 与 cordis-host-runner 与 CLI 实证，含已删除耦合 4 处） | 9 | QB13-QB18、QB20-QB21、④-B 四处历史耦合 |
-
-说明：本仓分发清单模板 `dist-manifest.json`（已删除·历史）的 format 与 distHash 字段为【本项目自造格式，非宿主契约】（format 1 与 2 均由本仓库定义），宿主升级不比对该文件，故不入四层表。
-## ④ QQBOT 专章（qqbot 兼容插件与 qqbot 宿主耦合）
-
-
-### ④-A 活跃挂钩表（qqbot 简化插件对 DSH 宿主与 qqbot 宿主的现行耦合，共 31 条）
-
-| QB 编号 | 本仓库位置(文件+符号锚点) | 宿主符号(逐字) | 宿主包+包内相对路径 | 用途 | 升级敏感点 | 核实状态 |
-|:--|:--|:--|:--|:--|:--|:--|
-| QB1 | plugins/dsh-qqbot-user-questions/index.js export const inject = []（inject 为空数组） | cordis 插件契约 inject（空依赖即可加载） | cordis 包内 lib/index.js（宿主依赖 @deepseek-ai/cordis ^4.0.2） | 不等待任何服务即可加载（对比旧版注入 qqbot 服务名） | cordis 改 inject 语义或 apply 签名即插件加载失败 | 【已核实】 |
-| QB2 | plugins/dsh-qqbot-user-questions/index.js DSH_HOME 解析 与 scripts/heal.mjs DSH_HOME 解析 | 环境变量 DSH_HOME（默认用户主目录下 .dsh） | dsh-home-paths 包内 lib/index.js | 定位 profiles 根目录（两处字面量必须同改） | 宿主改 home 解析规则或新增变量即自愈扫错目录 | 【已核实】 |
-| QB3 | plugins/dsh-qqbot-user-questions/index.js apply 内调用 healQqbotCompatibility | bundle patch 生成的 profile 行加载时调用 cordis apply() | dsh-app-boot 包内 lib/index.js | DSH 启动即触发幂等自愈（静默、try 与 catch 不阻断） | 宿主改插件加载方式即 apply 不被调用 | 【已核实】 |
-| QB4 | plugins/dsh-qqbot-user-questions/index.js 头部能力声明注释（问答与审批能力已删，由 dsh-qqbot 0.5.0 原生 question-channel/approval-channel 承担） | question-channel 与 approval-channel | qqbot 宿主包 dsh-qqbot 的 package.json（@tencent-connect 作用域，非 DSH 宿主） | 声明问答与审批能力由 qqbot 宿主原生承担，本插件不实现 | qqbot 改名或移除这两个 channel 即能力声明空洞 | 【未核实】 |
-| QB5 | plugins/dsh-qqbot-user-questions/lib/heal.js createRequire（锚定宿主安装包取 js-yaml） | 宿主安装包路径 @deepseek-ai/dsh 的 package.json 与其依赖 js-yaml | dsh 包内 package.json 与包内 node_modules/js-yaml | 本机无 js-yaml 时借 DSH 自带解析 YAML（失败退回行级兜底解析） | 宿主移除 js-yaml 依赖或 npm 全局前缀不是 AppData 下 npm 即回退断裂 | 【已核实】 |
-| QB6 | plugins/dsh-qqbot-user-questions/lib/heal.js LEGACY_ROOT_ENTRIES（code-runtime 块） | 包名 @deepseek-ai/dsh-code-runtime-worker-thread | dsh-code-runtime-worker-thread 包内 package.json（本机 0.1.7-rc.2 安装域已不存在；LEGACY 匹配块保留，用于迁移旧版错误块） | 识别旧版错误根级块（按 id 与 name 逐字匹配） | 宿主换代码执行实现包名即迁移匹配失效、旧块残留 | 【已核实】 |
-| QB7 | plugins/dsh-qqbot-user-questions/lib/heal.js LEGACY_ROOT_ENTRIES（agent-presets 块） | 包名 @deepseek-ai/dsh-agent-presets 与 config.default 取值 standard | dsh-agent-presets 包内 lib/index.js（本机 0.1.7-rc.2 安装域已不存在；LEGACY 匹配块保留） | 识别旧版错误根级块（按 id 与 name 与 config.default 三重匹配） | 该包改名或旧默认值不再是 standard 即旧块残留 | 【已核实】 |
-| QB8 | plugins/dsh-qqbot-user-questions/lib/heal.js 锚定条件①（读 dsh.profile.bundles） | dsh.profile.bundles（profile manifest 字段） | dsh-app-boot 包内 lib/index.js（读 manifest 下 dsh.profile.bundles） | qqbot profile 锚定条件①（判断 bundles 是否含 @tencent-connect/dsh-qqbot） | 宿主改字段位置或命名即锚定恒不命中、自愈全跳过 | 【已核实】 |
-| QB9 | plugins/dsh-qqbot-user-questions/lib/heal.js 锚定条件②（查 profile 内 node_modules/@local） | profile 内 node_modules/@local 布局（@local 为本仓库约定作用域） | dsh-app-boot 包内 lib/index.js；本机 profiles/web/node_modules/@local/dsh-extra-plan 实测存在 | 锚定条件②（确认本插件装在该 profile，两条件同时满足才自愈） | 宿主或 pnpm 改落盘位置（虚拟 store 或回退目录）即锚定失败 | 【已核实】 |
-| QB10 | plugins/dsh-qqbot-user-questions/lib/heal.js 建链源（web profile 下 @local/dsh-extra-plan 落点） | profiles/web/node_modules/@local/dsh-extra-plan（web profile 包落点） | dsh-app-boot 包内 lib/index.js；本机该目录实测存在（实体目录） | 建链源：qqbot 复用 web 核心包而不自己分发 | web profile 名或布局变化、核心包改名即源缺失、跳过建链 | 【已核实】 |
-| QB11 | plugins/dsh-qqbot-user-questions/lib/heal.js symlinkSync（建 junction） | PROFILE_MODULE_FALLBACK_DIR（.dsh-module-fallback）与本机 profiles/web/.dsh-module-fallback 目录 | dsh-app-boot 包内 lib/index.js；本机实测不存在（2026-09-26 Test-Path=False） | 目标缺失时建 @local/dsh-extra-plan 到 web 包的链接（win32 用 junction） | 宿主自建回退目录接管该路径即两套机制冲突；非 Windows 用目录符号链接、权限受限会失败（仅日志、不阻断） | 【已核实】 |
-| QB12 | plugins/dsh-qqbot-user-questions/lib/heal.js 拼接 profile 下 cordis.patch.yml（heal.js 内联字面量 join(profileDir,'cordis.patch.yml')，备份 patchFile+'.bak-'+timestamp()；宿主侧同名常量 PROFILE_PATCH_FILENAME 本仓未引用、grep 0 命中） | PROFILE_PATCH_FILENAME（profile 用户层 patch 文件名） | dsh-app-boot 包内 lib/index.js | 迁移旧版错误块（写前备份、写后 YAML 校验失败恢复原文） | 宿主改文件名或用户层文件名即迁移失效 | 【已核实】 |
-| QB13 | plugins/dsh-qqbot-user-questions/lib/heal.js 重写 profile patch 并校验段（写回 cordis.patch.yml 后 YAML 校验） | AgentPresetSettingsSchema（default 为 string）与 settings 命名空间 agent-presets 与 base 注入（0.1.7 起换代：该 schema 与 settings 命名空间 agent-presets 随旧 dsh-agent-presets 包消失、本机 rc.2 全库 0 命中，现由 registry 行 config.default 承担） | dsh-agent-preset-registry 包内 lib/index.js（Config{default, selectedDefault}） | 自愈只改 setup 相关行、不碰用户自定义行（与宿主默认预设机制对齐） | 宿主 schema 改必填或换类型即相关 patch 行报错或静默忽略 | 【已核实】 |
-| QB14 | plugins/dsh-qqbot-user-questions/cordis.patch.yml（单一根级 insert 下四行） | patch 顶层数组 insert（无 id 即追加到根条目列表） | dsh-app-boot 包内 lib/index.js | 把 4 行注入 qqbot profile 的 cordis 树 | 宿主改 patch 语义（如 insert 必须带 id）即 4 行不注入、被 warn 跳过 | 【已核实】 |
-| QB15 | plugins/dsh-qqbot-user-questions/cordis.patch.yml（本插件行 id 与 name） | 插件行 id 与 name（name 必须与本包 package.json 的 name 逐字一致） | dsh-app-boot 包内 lib/index.js | 让宿主加载本插件 apply() | 任一处字面量漂移即解析不到包 | 【已核实】 |
-| QB16 | plugins/dsh-qqbot-user-questions/cordis.patch.yml（ptc-runtime 行） | 包名 @deepseek-ai/dsh-ptc-runtime-node | dsh-ptc-runtime-node 包内 package.json（本机安装内该包存在；旧 code-runtime 包随 0.1.7-rc.1 整包消失，patch 注释登记为历史） | qqbot profile 补齐代码执行运行时（run_code 依赖） | 宿主重命名或替换该包即行解析失败、run_code 不可用 | 【已核实】 |
-| QB17 | plugins/dsh-qqbot-user-questions/cordis.patch.yml（agent-preset-registry 行 config.default 为 extra-plan） | 包名 @deepseek-ai/dsh-agent-preset-registry 与 config.default（extra-plan）与 Config{default, selectedDefault} | dsh-agent-preset-registry 包内 lib/index.js；本机 DSH_HOME 下 .agent-presets/extra-plan 实测不存在（2026-09-26） | qqbot 会话默认挂 extra-plan 预设 | 宿主改 config 键名或 schema 非 string 即预设不生效 | 【已核实】 |
-| QB18 | plugins/dsh-qqbot-user-questions/cordis.patch.yml（cordis-host-runner 行） | 包名 @deepseek-ai/dsh-cordis-host-runner 与服务 cordisInspect 与 dynamicCordisRunner | dsh-cordis-host-runner 包内 lib/index.js（本机安装内该包存在） | 补齐 qqbot 宿主平面两个服务，否则预设 tool-cordis 行恒 pending、预设挂载失败 | 宿主改服务名或并入别处或改包名即预设挂载失败 | 【已核实】 |
-| QB19 | plugins/dsh-qqbot-user-questions/package.json dsh.bundle.patch（"patch": "./cordis.patch.yml"） | dsh.bundle.patch（缺失抛 declares no dsh.bundle） | dsh 包内 package.json；读取点 dsh-app-boot 包内 lib/index.js | 宿主据此把本包当 profile bundle 叠层 | 字段名或路径解析基准变化即 patch 不加载、启动报错 | 【已核实】 |
-| QB20 | plugins/dsh-qqbot-user-questions/package.json scripts.postinstall（node scripts/heal.mjs） | dsh plugin 子命令转发 pnpm 执行依赖 postinstall（README 用 allow-build 参数放行） | dsh 包内 lib/bin.js | 安装即自愈（早于启动；启动时 apply 为兜底） | pnpm 或宿主默认禁 build scripts 即静默跳过；宿主改参数透传即失效 | 【已核实】 |
-| QB21 | plugins/dsh-qqbot-user-questions/scripts/heal.mjs process.exit(0)（异常也以退出码 0 结束） | postinstall 退出码语义（非 0 会让 pnpm 安装失败） | dsh 包内 lib/bin.js（plugin 子命令转发 pnpm） | 自愈异常也不阻断安装 | 宿主或 pnpm 把非零退出升级为硬失败即该设计前提变化 | 【已核实】 |
-| QB22 | README.md 的 dsh plugin 命令段（带 profile 参数的 add 与 remove） | dsh plugin 子命令与 --profile 选项（转发 pnpm、profile 首次使用时初始化） | dsh 包内 lib/bin.js | qqbot 兼容插件安装与卸载入口（先 remove 核心包再 add） | 子命令改名或不再转发 pnpm 或 profile 语义变即 README 命令全部失效 | 【已核实】 |
-| QB23 | README.md 的 /preset 说明段（qqbot 下用 /preset 切换预设） | qqbot 侧 /preset 预设法（由 dsh-agent-preset-registry 提供，config.default 决定默认） | dsh-agent-preset-registry 包内 lib/index.js | 告知用户在 qqbot 内切换预设 | 宿主改命令名或 qqbot 宿主平面未挂 agent-preset-registry 即用法失效 | 【未核实】 |
-| QB24 | pe-test/tools/step-01-qqbot-安装映射.mjs 静态 patch 断言段与真机同形 fixture（im-qqbot 行构造与迁移断言；静态 fixture 可保留包名字面量） | 真实 qqbot profile 的 cordis.patch.yml 中 qqbot 本体行（id 为 im-qqbot；name/schema 属 QQBot 宿主） | qqbot 宿主包 dsh-qqbot 的 package.json（@tencent-connect 作用域，非 DSH 宿主） | 回归 fixture 确保 heal 只删旧错误块、保留 im-qqbot 行与用户自定义行；真实宿主 schema（含 name）由 HUMAN 核实，自动环境测试不以 name 缺失判插件安装失败 | qqbot 改 id 或包名即 fixture 与真实环境脱节 | 【未核实】 |
-| QB25 | pe-test/tools/step-01-qqbot-安装映射.mjs config.default 断言与 patch 第四行理由断言段 | 服务 cordisInspect 与 dynamicCordisRunner；config.default 严格为 extra-plan | dsh-cordis-host-runner 包内 lib/index.js；dsh-agent-preset-registry 包内 lib/index.js | 把宿主侧服务名与 config.default 取值固化成回归门槛 | 宿主服务改名即断言失效；该断言只测字面量，宿主 schema 改名后仍会通过（需人工比对宿主 schema） | 【已核实】 |
-| QB26 | plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml（qqbot 间接消费路径） | agent-preset-registry 的 config.default（extra-plan）与预设声明行装载 | dsh-agent-preset-registry 包内 lib/index.js；dsh-agent-preset 包内 lib/index.js | qqbot 只通过 agent-preset-registry 行 config.default: extra-plan 间接消费本仓预设（不自带预设） | 宿主改默认预设机制或目录名即 qqbot 侧无预设可用 | 【已核实】 |
-| QB27 | pe-test/tools/一键step测试.mjs（QQBot 项纳入一键体检；不再以 required=true 单态判定） | 无宿主符号（本仓库编排契约） | 无（不指向宿主包） | 一键报告事实为通过/部分执行/未执行/失败四态；只有真实 FAIL 计入退出码，SKIP 不把环境缺失伪装成失败 | 编排规则或统计解析漂移即报告误判；与宿主无关，仅作为升级比对入口 | 【已核实】 |
-| QB28 | pe-test/tools/step-01-qqbot-环境验证.mjs DSH_HOME 严格预检（profileDir/manifest/adapterPlugin/webCore/patch） | DSH_HOME 非空优先，否则 homedir()/.dsh；manifest 的 dsh.profile.bundles | dsh-home-paths 包内 lib/index.js；dsh-app-boot 包内 profile manifest 读取形状 | 五组同时满足才 ready；缺失原因固定码；ready=false 只输出 live-profile SKIP，不读取后续真实对象 | 宿主 home 解析、manifest 字段或 profiles 布局变化会使环境项 SKIP/FAIL；SKIP 不销账 | 【已核实·静态】 |
-| QB29 | pe-test/tools/step-01-qqbot-环境验证.mjs probeJunctionCapability/runJunctionFixture | win32 junction，其它平台 dir；lstatSync(target).isSymbolicLink + realpathSync(source/target) | node:fs symlink/lstat/realpath 能力；生产 heal.js 的链接语义 | capability 只在 mkdtemp 探针判定；支持时 fixture 覆盖缺失建链、正确 realpath、重复运行、非目标链接保留 | 沙箱/权限降级为 junction-unavailable SKIP；不得仅因 symlinkSync 未抛错判成功 | 【已核实·静态】 |
-| QB30 | pe-test/tools/step-01-qqbot-环境验证.mjs runLiveReadonly/inspectMapping | profiles/qqbot cordis.patch.yml 的顶层数组与 im-qqbot 行（不强制 name）；profiles/web/node_modules/@local/dsh-extra-plan | dsh-app-boot profile patch/包布局；qqbot 0.5.0 包名 | ready 后只读核验 findOwnQqbotProfiles、patch 字节、correct-link/missing/entity/other-link/dangling-link；im-qqbot 宿主 schema（含 name）待 HUMAN 核实，不作为插件安装失败；真实分支禁止 heal/CLI/写 | link lstat/realpath EACCES/EPERM 只 SKIP；可确定的错误链接 FAIL；/preset、消息与交互仍 HUMAN | 【已核实·静态】 |
-| QB31 | pe-test/tools/一键step测试.mjs parseResult/runOne/四态汇总 | 无宿主符号（本仓库编排契约） | 无（不指向宿主包） | AUTO 12 项；旧两字段兼容，新 skip 结构化解析；Markdown 诊断转义；部分执行/未执行不计失败 | 统计格式或退出码规则漂移会误报；环境项可 SKIP，静态 QQBot 项恒执行 | 【已核实·静态】 |
-### ④-B 已删除的历史耦合（4 处，当前版本均无）
-
-
-1. **旧版服务名依赖（已删除，当前版本无）**——旧版 plugins/dsh-qqbot-user-questions/index.js 第 19 行为 `export const inject = ['qqbot.bot', 'qqbot.sessionManager', 'userQuestions']`，直接依赖 qqbot 包内部服务名与宿主 @deepseek-ai/dsh-user-questions。旧版还对 manager.remove 做 monkey-patch 并删除会话目录。当前 index.js 为 inject 为空数组，只做幂等自愈；对应 qqbot 包内服务名一旦随版本变化即断，正是被裁剪的原因。
-2. **旧版覆盖 qqbot 包 dist 文件（已删除，当前版本无）**——旧版 postinstall 入口 scripts/apply-patch.mjs 以 `const DIST_TARGET = join(PACKAGE_ROOT, '..', '..', '@tencent-connect', 'dsh-qqbot', 'dist')` 为根，直接覆盖 qqbot 包内 gateway/bootstrap.js 与 transport/outbound.js 两个文件。当前版本已无 patches 目录与 apply-patch.mjs，改为 profile 层 patch 行与自愈。
-3. **旧版改 profile 的 im-qqbot 行（已删除，当前版本无）**——旧版给 profile 的 im-qqbot 行插入 `preset: extra-plan`（config.preset 键）。当前 cordis.patch.yml 只对 agent-preset-registry 行设 config.default 为 extra-plan，不再触碰 qqbot 本体行；旧做法在 qqbot 改 config 键名时即失效。
-4. **旧版自带越权开关（已删除，当前版本无）**——旧版 cordis.patch.yml 给 qqbot-user-questions 行带 `approvalEnabled: false`（config.approvalEnabled）。当前该行已无 config 段。
-
-### ④-C 待补核清单（自动条件核验 + 部署后 HUMAN）
-
-> **欠账状态**：本清单 6 项仍标【未核实】，**尚未销账**。环境脚本只自动核验五条件、junction 能力、patch 顶层数组与只读映射；不以 `im-qqbot.name` 缺失判定插件安装失败，宿主 schema 仍属 HUMAN/未核实；环境缺失或能力不足输出 SKIP，不能据此销账，也不触碰真实 DSH_HOME。QQBot 启动、`/preset`、question-channel、approval-channel、postinstall/allow-build 日志与真实消息收发属于部署后 HUMAN，自动脚本即使全通过也不得改成已核实。
-
-| 序号 | 待核实事项 | 补核动作（读哪个文件 / 跑哪条命令） | 核实状态 |
+| 编号 | 本仓位置 | 当前契约/升级敏感点 | 状态 |
 |:--|:--|:--|:--|
-| 1 | 静态源码是否存在 QuestionChannel/ApprovalChannel 构造（静态源码可由仓库检查；真实消息问答/审批链仍【未核实·HUMAN】） | 本轮只确认静态源码；真实消息问答/审批流程另行实测 | 【未核实】 |
-| 2 | qqbot 0.5.0 manifest 静态声明（环境脚本可只读核验 profile manifest 五条件；实际装载与运行仍【未核实】） | 先跑环境脚本；profile 实际装载与运行需部署后另行实测 | 【未核实】 |
-| 3 | im-qqbot 宿主 schema（id/name 与 config 键等） | 先跑环境脚本读取 DSH_HOME 下 profiles/qqbot/cordis.patch.yml；自动测试不判 `im-qqbot.name`，宿主 schema 与 config 语义仍需 HUMAN 比对 | 【未核实】 |
-| 4 | 建链实际结果（环境脚本只读核验 junction/realpath；部署结果仍【未核实·HUMAN】） | 先跑环境脚本；必要时用户在 qqbot 机器上用 dir 或 fsutil reparsepoint query 复核 profiles/qqbot 到 profiles/web 的目标 | 【未核实】 |
-| 5 | profile patch 的 preset-extra-plan 声明与 agent-preset-registry 的 config.default=extra-plan 是否在 QQBot /preset 中生效（HUMAN） | 用户部署后通过 QQBot /preset 核对（本轮未执行） | 【未核实】 |
-| 6 | postinstall 是否真被放行（allow-build；HUMAN） | 用户部署后执行 dsh plugin --profile qqbot add @local/dsh-qqbot-user-questions（带 allow-build 参数）并查安装日志；本轮不执行部署 | 【未核实】 |
-## ⑤ 升级比对 checklist（按序执行）
+| HS1 | `lib/settings.js` Config + `settings.configure` | 10 字段 `.volatile()`；SettingsForms 管理 describe/update/replace/mutate | 【已核实·静态】 |
+| HS2 | settings 行 `dsh-extra-plan-settings` | 行 id 同时是命名空间、configForms key、插件行详情 key | 【已核实·静态】 |
+| HS3 | `lib/settings.js` webServer prefix | `/api/dsh-extra-plan-settings` prefix 路由 | 【已核实·静态】 |
+| HS4 | `live-config.js` 路径决议 | `configPath → DSH_EXTRA_PLAN_CONFIG_PATH → configEditor.documentPath`；不读旧预设目录 | 【已核实·静态】 |
+| HS5 | `preset-sync.js` `configEditor.edit` | 事务/reconcile/回滚；插件不直写 patch | 【已核实·静态】 |
+| HS6 | `preset-patch.generated.yml` | 声明行 Config 与完整 `plugins` 组合；由生成器维护 | 【已核实·静态】 |
+| HS8 | `executor-spawn.js` `subagents.registerProvider` | provider 引用计数幂等；稳定槽键取服务实现本体 | 【已核实·静态】 |
+| HS9 | executor `delegate/getProvider` | 默认 delegate 与 providerName 解析 | 【已核实·静态】 |
+| HS10 | executor `toolFilter.deny` | deny 名单必须是宿主实际工具名 | 【已核实·静态】 |
+| HS11 | `prepareContinuable` | 能力存在时才透传 continuable | 【已核实·静态】 |
+| HS12 | `resolveChildAgentOptions` | 对象展开合并，空对象继承父路由 | 【已核实·静态】 |
+| HS13 | `preset-settings.js` `loadYaml` | 本包 js-yaml 失败时按宿主安装目录回退 | 【已核实·静态】 |
+| HS14 | `!!js` YAML 标签 | YAML_SCHEMA 对 `dshHomePath` 等表达式的解析 | 【已核实·静态】 |
+| HS15 | `SETTING_DEFINITIONS` | 10 项 source/row/projection 定位与 8+2 分组 | 【已核实·静态】 |
+| HS16 | `tool-presentation.config.mode` | 仅 `native/ptc/both` | 【已核实·静态】 |
+| HS17 | `client.js` `__ModuleLoader__` | loader id 必须与包名/组合图一致 | 【已核实·静态】 |
+| HS18 | `client.js` `require("react")` | 共享 client module 提供 React | 【已核实·静态】 |
+| HS19 | locale bind/register | 包级与行级 locale 通道 | 【已核实·静态】 |
+| HS20 | `plugins.row.config` + `configForms.whileServed` | 已安装包行详情卡片；key=`@local/dsh-extra-plan#dsh-extra-plan-settings` | 【已核实·静态】 |
+| HS21 | `client.js` `esp-*` | 本插件自持样式；不依赖旧宿主 CSS hash | 【已核实·静态】 |
+| HS22 | 主题 token | 颜色/可读性依赖主题变量名 | 【已核实·静态】 |
+| HS23 | client-bridge 空壳行 | pathLike + package exports 扫描 client | 【已核实·静态】 |
+| HS24 | extra-plan row config | 宿主 schema 将行 config 传入 apply | 【已核实·静态】 |
+| HS25 | `index.js` plugin contract | `name/inject/apply` 与 agent 预设组合 | 【已核实·静态】 |
+| HS26 | HP 首轮 `tool:read` | section、参数默认值、输出字段与手写 F 文案必须同步核对 | 【已核实·静态；行为待实机】 |
+| HS27 | `executor-spawn.js` `slotKey` | `Symbol.for('cordis.original')`/traceable 语义决定跨世代幂等 | 【已核实·静态】 |
 
-1. 先跑 `node pe-test/tools/step-01-qqbot-安装映射.mjs`（静态，必须恒执行），再跑 `node pe-test/tools/step-01-qqbot-环境验证.mjs`（条件只读）——前者发现 patch 行与包名漂移，后者按五条件/能力矩阵输出 PASS、SKIP 或真实配置 FAIL；SKIP 不销账。
-2. 跑 `node pe-test/tools/step-01-设置页配置.mjs` 与 `node pe-test/tools/step-04-路由与写闸门.mjs`——两者依赖宿主安装目录解析与 profile 布局锚点。
-3. 跑 `node pe-test/tools/一键step测试.mjs`——内置代码地图一致性检查（`代码地图生成.mjs --check`，不写盘）。
-4. 按③四层表逐层比对升级后的宿主包：先比 dsh-tool-cordis 包内 lib/types/api-catalog.js 的钩子签名目录（逐个核对本台账记下的钩子名与 mode），再比服务方法签名（settings 的 configure/describe/update/replace/mutate——settings.register 在 0.1.7 已不存在、webServer register、subagents getProvider 与 registerProvider、sandboxPolicy overrideOf、agentPresets register 与 resolve（dsh-agent-preset-registry 包）、llm listModels、agents get、tools register 与 schemas），再比事件负载类型（见③-C），最后比文件契约（cordis.patch.yml insert 语义、dsh.bundle.patch 两项数组、exports 解析、!!js dshHomePath、isolate realm 强制点、预设声明行 Config 五键）。
-5. 跑 `node pe-test/tools/代码地图生成.mjs --check`，仍须退出码为 0（本仓库结构调整后由主会话执行同步写盘）。
-6. 逐条复核本台账标注【未核实】的条目：自动条件项先看环境脚本结构化结果（SKIP 仍保持未核实），部署后 HUMAN 再核对 QQBot 启动、/preset、question-channel、approval-channel、allow-build/postinstall 日志与真实消息收发；不得把自动全通过替代这些实机结论。
+## ③ 当前 HK：钩子与文件组合契约
 
-## ⑥ 已知漂移与口径纠正（3 处）
+| 编号 | 当前本仓位置/钩子 | 当前合同与风险 | 状态 |
+|:--|:--|:--|:--|
+| HK1 | `agent/created` | serial；启动注册错误必须吞掉；`agent/session-start` 已删除 | 【已核实·静态】 |
+| HK2 | 两处 `agent/pre-step` | waterfall；引导与注册兜底必须各自保留 | 【已核实·静态】 |
+| HK3 | `agent/request-error` | waterfall retry；MALFORMED 限次恢复与诊断 | 【已核实·静态】 |
+| HK4 | `agent/disposed` | emit/void；final fold 必须同步完成 | 【已核实·静态】 |
+| HK5 | `system-prompt/assemble` | 三参 waterfall；投影保留 variables | 【已核实·静态】 |
+| HK6 | `agent/request` | next 后再做模型路由屏障与 fallback | 【已核实·静态】 |
+| HK6a | `model-routing.js` listModels/listProviders | strict 路径候选枚举；legacy 不枚举 | 【已核实·静态】 |
+| HK6b | `model-routing.js` prepareCall/stream | 真实 OK probe 完整消费、超时/abort 独立 | 【已核实·静态】 |
+| HK7 | `tools/pre-execute` | waterfall；四级闸门与组判定；next 默认 allow | 【已核实·静态】 |
+| HK8 | 七个钩子 `payload.agent` | agentEvents fused 形状 | 【已核实·静态】 |
+| HK9 | tool-jobs 通知 | `source.kind='tool-jobs'` 且 `form='notice'`；旧三元组已废 | 【已核实·静态】 |
+| HK10 | step-06 事件夹具 | 事件负载必须与真实 subagent/ask/tool 形状一致 | 【已核实·静态】 |
+| HK11 | `cordis.patch.yml` 三条 insert | client-bridge/settings/preset-sync 行注入 | 【已核实·静态】 |
+| HK12 | package `dsh.bundle.patch` | 依次装载 cordis.patch 与生成的 preset patch | 【已核实·静态】 |
+| HK13 | package exports | settings/preset-sync/client/locale 子路径必须可解析 | 【已核实·静态】 |
+| HK14 | package `dsh.client` | platform=web、inject 顺序与 `./client` export | 【已核实·静态】 |
+| HK15 | 预设 isolate | mountPreset 审计；必要/保险服务名均 `isolate: true` | 【已核实·静态】 |
+| HK16 | `!!js dshHomePath` | 宿主提供 dshHomePath 与标签 schema | 【已核实·静态】 |
+| HK17 | 四行 tool-subagent | provider/toolName/backgroundMode/toolFilter/maxDepth schema | 【已核实·静态】 |
+| HK18 | executor-spawn 行 | providerName/delegate 指向本仓薄委托层 | 【已核实·静态】 |
+| HK19 | tool-subagent-control 子路径 | 宿主 exports 子路径与行名 | 【已核实·静态】 |
+| HK20 | child 识别与 sandbox floor | `parentSession/origin/delegationDepth/descriptor.mode` | 【已核实·静态】 |
+| HK21 | run-code 子调用识别 | `exec.parent` 是宿主面；`exec.sub` 是本仓合成标记 | 【已核实·静态】 |
+| HK22 | shell mutation | 已解析 `ToolExecution.arguments.command` 与 pwsh/bash 写判定 | 【已核实·静态】 |
+| HK24 | client bridge/package | 相对路径行须满足 pathLike 扫描规则 | 【已核实·静态】 |
+| HK25 | `tools/post-execute` | 仅替换失败结果 content；PostToolDecision 静态契约可核；真实 PTC 改写仍待部署 | 【已核实·静态；行为待实机】 |
+| HK26 | `developer/message` append | `surfaceOp:'append'`、正整数 turn/step、自有 source.kind；坐标非法仍 retry | 【已核实·静态】 |
+| HK27 | `agent/error` | 同步逐字错误链落盘；静态接线不等于宿主现场运行通过 | 【已核实·静态】 |
 
-1. **exec.sub 不是宿主字段**——本仓库 plugins/dsh-extra-plan/lib/run-code-static.js isRunCodeSubCall 判断 `exec.sub === true`，但本版宿主 dsh-tools 包内 lib/types/index.d.ts 的 ToolExecution 与 ToolExecutionInput 均无 sub 字段（宿主侧只有 exec.parent；本仓 isRunCodeSubCall 第二判断按符号名核对）。sub 是本插件在 index.js 给合成成员自打的标记（index.js 内 sub: true 处），不是宿主契约；升级比对时不要在宿主类型里找 sub，只需核对 exec.parent 与 rootCallId。
-2. **sessionProjections 的 stateOf 本插件全文 0 次调用**——本插件没有任何一处直接调用 sessionProjections 的 stateOf(session, sandboxMode)；沙箱模式一律改走 sandboxPolicy 的 overrideOf（宿主 dsh-sandbox-policy 包内 lib/index.js 内部才调用 stateOf）。升级若移除或改名 overrideOf，本插件需改道直连投影服务，因此本项按「反向记录」保留在③-C 末行。
-3. **lib/executor-spawn.js 的 resolveChildAgentOptions 注释（HEAD 复核：按符号名核对仍在）的宿主行号已过期并已修正**——该注释原文把 dsh-subagent 包内 resolveChildAgentOptions 的实现位置写成一段固定的宿主行号区间，本机 0.1.2-rc.1 实测该符号实际落在包内另一区间（本台账按硬约束不写宿主行号）。本期已把该注释改为按包名与符号名核对：注释内容改为「宿主 resolveChildAgentOptions（@deepseek-ai/dsh-subagent 包内，按符号名核对）用对象展开合并」；文件中该注释的相邻两行未动，文件仍为 89 行（当时状态快照）。（2026-09-26 复核：该文件现为 153 行；注释本身已按包名与符号名核对，不再写宿主行号。）
+HK23 当前无定义，不补造编号；历史/旧钩子见归档。
 
-## ⑦ 0.1.7-rc.1 起的新失败面（本台账原未覆盖；上一版 0.1.5-rc.2 面见下方「⑦-1 历史面」）
+## ④ 当前 SD：事件、Session 与布局形状
 
-- **预设挂载 isolate 审计（最高危）**：`@deepseek-ai/dsh-agent-preset-registry` 的 `mountPreset` 在挂载后调用 `leakedServices`，把「未隔离却落到 root realm 的服务名」收集为 `leaked`，非空即抛 `Preset services require isolate realms: <names>`（两处断言同在 dsh-agent-preset-registry 包内 lib/index.js：leakedServices 与 mountPreset 挂载后审计；dsh-invariants 包无此内容）。本预设必要项（逐包 grep `extends Service` / `super(ctx,` 得出，必须隔离）：`subagentModelSelection`（`dsh-tool-subagent` 的插件类 `SubagentModelSelectionConfig extends Service`，super(ctx,'subagentModelSelection')；本预设四行 tool-subagent 各实例化一次）、`workflowEngine`（`dsh-workflow-ptc` 的 `PtcWorkflowEngine extends WorkflowEngine`，父类 `dsh-workflow` 内 `super(ctx,'workflowEngine')`）、`toolResultPruner`（`dsh-compaction-tool-result-pruner` 内 `super(ctx,'toolResultPruner')`）。保险项：`compaction`（本预设内两包零注册，保留 0 成本）、`extraPlan`（extra-plan-group 组，本仓全 .js/.mjs 零 cordis 服务注册，属「宁多勿少」）。**审计只对「少写」判错**（多写未注册名不产生 root symbol、不触发），故**宁多勿少**；**`isolate` 值一律 `true`**（`cordis-plugin-loader` 包内 lib/index.js：`label === true` → `entry.realm ??= new LocalRealm(entry)` 每条目各自隔离；字符串 → `GlobalRealm(label)` 同 label 共享——四个同名服务实例若共享 realm 会互相覆盖、破坏各自 config 语义）。
-- **settings API 整体换代**：`settings.register(ns, schema)` 在 0.1.7 **不存在**（旧写法抛 `TypeError: sctx.settings.register is not a function`）；正确范式 = Config schema 的字段链 `.volatile()` + `child.effect(() => child.settings.configure({ auto: false }, ctx.fiber))`（官方 host 样板见 `dsh-client-ui-settings` 包内 lib/index.js），表单读写统一走 SettingsForms（`describe/update/replace/mutate`，`ns` = profile 行 id，写入带 revision fencing + 事务回滚）。客户端表单经 `configForms.get(ns)` / `whileServed([ns])`，唯一实现见 dsh-client-ui-settings 包内 lib/client.js（get/whileServed；dsh-client-ui-primitives 全包 0 命中）。
-- **`settings.plugin.item` 插槽消失**：0.1.7 全库仅 1 处注释引用（dsh-client-ui-settings-models 包内 slot-contract.d.ts，无活动注册）。0.1.7 的替换面先落到 `plugins.item`（`kind:'list', scope:'root'`，官方设置页专用列表），本插件随后于 2026-09-25 再迁移到 **`plugins.row.config`**（`kind:'keyed', scope:'root'`，仅认 `key`，每键唯一；key = `@local/dsh-extra-plan#dsh-extra-plan-settings`），使配置卡片落在已安装包的行详情页而非「官方」分组。**旧卡片 key 交集机制（key 与已 serve 命名空间求交）已被 `whileServed` + `formFor(id)` 取代**（`formFor` 仍按 settings 命名空间给 `form`，与插槽无关）。
-- **用户预设目录读取方移除**：当前无任何读取 `$DSH_HOME/.agent-presets/<id>/` 的代码；预设改成 profile patch 声明行。本轮不创建、不同步 DSH_HOME 状态目录；live-config 默认真源为 configEditor.documentPath。
-- **compatibility.json / allowBuilds 门控**：bundle 装载前先跑 `evaluatePluginCompatibility`（只查 `peerDependencies` 中 `@deepseek-ai/dsh` / `@deepseek-ai/dsh-` 前缀键，`includePrerelease` 语义）；profile 的 `compatibility.json` 可豁免/告警；`allowBuilds` 未放行时 postinstall 不执行——本仓 extra-plan 包已无 postinstall（安装期零脚本动作，见 CF1）；qqbot-user-questions 包仍有 postinstall（scripts/heal.mjs），未放行即静默跳过、由启动 apply 自愈兜底。**0.1.7-rc.2 起**：bundle 跳过新增结构化字段 `skippedBundles` + `reportSkippedBundles`（启动时统一打印 stderr，呈现仍是 stderr；对应 loader 行置 disabled）；另新增槽位 `plugins.bundle.config` / `plugins.row.config`。
-- **`@deepseek-ai/dsh-workflow-worker-thread` 整包消失**：等价行 = `@deepseek-ai/dsh-workflow-ptc`（`config.provider` 保持本仓薄委托层名）；其行实例仍注册 workflowEngine，故 delegation 组 isolate 名单不变。
-- **`codeRuntime` 服务名 → `ptcRuntime`**：`dsh-ptc-runtime` 提供 `ctx.ptcRuntime`（`language` 字段仍为 'typescript'/'python'）；本插件 SDK renderer 语言来源相应改读 `ptcRuntime`，取不到回落 `typescript`。
-- **`tool:cordis` 段删除**：`dsh-tool-cordis` 侧不再产出该段名；本插件不再保留无效 section 常量，只过滤当前 2 个 Cordis 展示工具。
-- **`dsh-tool-cordis` 工具集已收敛为 2 项**：当前支持面只登记 `cordis_inspect_list`、`cordis_inspect_query`，呈现名单与宿主真值同源；step-01 继续做宿主真值对拍。旧工具名与旧运行分支不属于当前合同。
-- **dsh-app-boot sanitizeProfile 整份移走 cordis.patch.yml（A8-①；本机 0.1.7-rc.2 实测，代际【未核实·缺 rc.1 现场】）**：宿主 `@deepseek-ai/dsh-app-boot` 包内 lib/index.js `sanitizeProfile(binName, profileDir, bundles)`（按符号名核对）：备份路径 `` `${patchPath}.bak-${Date.now()}` ``（带 ordinal 防撞），`renameSync(patchPath, backupPath)` 把整份 `cordis.patch.yml` 移走（文件不存在 ENOENT 静默）；manifest 存在时重写 bundles；函数前注释声明 caller 必须先停 profile 并排除并发写。升级比对必读：宿主启动自愈会整体搬走 patch 文件 → 用户在 patch 文件上的手改可能整体丢失（备份在 .bak-<时间戳>）。
-- **dsh-config-editor edit「值==继承层即删行」（A8-②；本机 0.1.7-rc.2 实测，代际【未核实·缺 rc.1 现场】）**：宿主 `@deepseek-ai/dsh-config-editor` 包内 lib/index.js `edit(entry, change)`（按符号名核对）：取 inherited 与 next，`isDeepStrictEqual(next, inherited)` 时反向遍历同 id 非 insert 行 `row.delete('config')`，行内只剩 id+name 时 `document.delete(index)` 整行消失；否则新增/覆盖 config。升级比对必读：编辑结果与继承层等值时该行被整行删除而非写回继承值——用户观察到的「配置消失/丢失」的两条机制根源之一（另一条见上一条）。
-- **会话日志格式 v4**：`SESSION_FORMAT_VERSION = 4`，落盘名 `session.v4.jsonl.zstd`；取证工具（`_shared/session-finder.mjs`）三代候选名并存（v4/v3/旧名），step-07 代际判定三值化。
+| 编号 | 当前形状/入口 | 升级敏感点 |
+|:--|:--|:--|
+| SD1 | sessions 目录与 `parentSession` 首行 | step-07 定位直接 child；v4/v3/旧日志候选 |
+| SD2 | zstd MAGIC 与 `.jsonl.zstd` 三代文件名 | 解压/帧切分与代际判定 |
+| SD3 | user/message 锚点 | deriveFlowState 与 planner 预算起点 |
+| SD4 | tool/call turn/step/callId/name/arguments 字符串 | JSON.parse 与 ask 判定 |
+| SD5 | tool/result 与块级 `isError` | 被拒不烧预算 |
+| SD6 | assistant/message usage/source provider/model | usage ledger 字段来源 |
+| SD7 | PTC dispatch start/dispatch | root/parent/sub call 与 content/isError |
+| SD8 | subagent/descriptor.mode | continuable 与 one-shot 角色分离 |
+| SD10 | `session.seq` + `snapshotEvents(from,to)` | cursor 增量、水位未变与截断回退 |
+| SD11 | `Session.requestHeader().config` | 顶层 provider/model 与 fallback 来源 |
+| SD12 | sandbox/mode append | read-only child workspace-write floor |
+| SD14 | agents.get(parentSession) | 父链与主会话 fallback |
+| SD15 | llm.listModels | legacy advisory/strict 候选 |
+| SD16 | skill-filesystem/customSkillDirs | 当前 skill 载体；旧 resolve/register 仅历史 |
+| SD17 | ctx.effect 生命周期 | prompt variables 与作用域释放 |
+| SD18 | tools.schemas(scope) | 当前工具可见面与引导收窄 |
+| SD19 | ToolRuntime.register/definition | save 工具 schema/render/execute |
+| SD19b | register 抛错分类 | A 重名、B 永久定义错误、C 可重试错误 |
+| SD20/SD21 | SessionHeader.cwd | save_plan/save_probe 落盘基准 |
+| SD22 | PromptAssembly | sections/contexts/tools/variables 投影 |
+| SD23 | PreStepDecision | enter/reject/messages/waterfall |
+| SD24 | PreToolDecision/PostToolDecision | deny/allow 与失败 content 改写 |
+| SD25 | ToolExecution | callId/rootCallId/name/arguments/parent/signal |
+| SD26 | scoped 事件 subject 解析 | payload.agent/scope 注入 |
+| SD27 | LlmCallConfig | provider/model/reasoning/maxTokens 屏障 |
+| SD28 | TokenUsage | input/output/cache/reasoning 字段 |
+| SD29 | ToolResultBlock | 内容块与 isError 计费排除 |
+| SD30 | ToolSchema | name/description/parameters |
+| SD31 | AssembleContext | context.agent/scope |
+| SD32 | ask 错误码 | channelBroken 白名单 |
+| SD33 | profile node_modules/宿主安装锚点 | step-04/step-01 依赖解析；静态入口不等于实机通过 |
+| SD35 | 宿主工具名清单 | deny 必须与宿主真值对拍 |
+| SD36 | backgroundMode→descriptor.mode | 角色与 probe claim |
+| SD37 | createUserMessage/source.kind | v4 自有 producer kind 与 id/role |
+| SD38 | step-07 输出 | attempted/actual provenance、suffix、父子行号 |
 
-### ⑦-2 0.1.7-rc.1 → 0.1.7-rc.2 复核（2026-09-25；结论：rc.2 单侧无新增硬不兼容，rc1 侧缺现场限定）
+SD9、SD13 是历史缺定义编号，SD34 是本插件不调用 `sessionProjections.stateOf` 的反向记录；三者不补造成当前合同。
 
-- **结论**：rc.1 只读现场已不存在，本小节全部为 rc.2 单侧事实；原记 rc1↔rc2 包数差分（277/283）无法复核、不再作为结论——7 个钩子 mode/签名、settings 五方法（configure/describe/update/replace/mutate/write）、configEditor（`documentPath` / `configuration`→`[{entry,inherited,override}]` / `edit`）、`plugins.item`/`plugins.row.config`+`whileServed`、`subagentModelSelection`、`ptcRuntime`、`tools/post-execute` 守卫与失败结果 `content` 可替换、`dsh.bundle.patch` 数组、insert 语义、`leakedServices` 审计与提示串、预设声明行 Config 五键、tool-jobs 通知源、`SESSION_FORMAT_VERSION=4` 全部命中；**行为面**另有 `dsh-tool-cordis` 工具集 7→2（rc.2 实测仅注册 2 个只读工具；rc.1 现场已不存在、代际归属未核实，不并入本契约面结论），见 §⑦。底座 `cordis 4.0.4` / `cordis-plugin-loader 1.0.5` / `cordis-plugin-include 1.0.9` / `cordis-plugin-group 1.0.4` / `schemastery 3.18.4` 等 8 包**逐字节零差异**。
-- **唯一硬阻断 = 本仓自己的钉版**：`peerDependencies['@deepseek-ai/dsh'] = '0.1.7-rc.1'` 在 rc2 下 `semver.satisfies` 为 false → bundle 整层被跳过 + loader 行被 preflight 置 disabled。现行口径 = **精确钉两版** `'0.1.7-rc.1 || 0.1.7-rc.2'`（实证：rc.1 ✓ / rc.2 ✓ / rc.3 ✗ / 0.1.7 ✗）；`@deepseek-ai/dsh-llm` 同口径但**只作 `peerDependencies` 声明**（`dependencies` 不得含任何 `@deepseek-ai/*`，理由见 CF12 与本节下一条）。
-- **rc2 变化 3 处 + 新增 3 类**：① `modeSelectionEnabled` 从 agent-preset-registry 行 Config 与 roster 删除（本仓代码无引用，qqbot patch 注释已订正）；② `dsh-tools` 的 ask 新增可选 `displayReason`；③ bundle 跳过新增结构化字段 `skippedBundles` + `reportSkippedBundles`（启动时统一打印 stderr）；新增槽位 `plugins.bundle.config` / `plugins.row.config`；新增 6 包（`dsh-client-shortcuts`、`dsh-client-ui-shortcuts`、`dsh-experimental-auto-review`〔唯一带 `dsh.bundle`+`cordis.patch.yml` 的新包〕、`dsh-llm-deepseek-api-key`、`dsh-llm-deepseek-account`、`dsh-util-code-language`）。
-- **HK6a/SD15 候选集合变化**：dsh-base/cordis.patch.yml 把 llm-deepseek 行换成 api-key 包、新增 account 行（按行 id 与包名核对） → 新增 provider **`deepseek-account`**（影响 `crossProviderPlannerModel` 候选枚举与 A42/A43 实机取证的 provider 台账）。
-- **已核对（2026-09-25）：三项均无需改代码**——① HS26：`tool:read` 装配面 rc1↔rc2 全同（section 名 `tool:read`、order `TOOL_READ=1100`、参数 file_path 必填 / offset 默认 1 / limit 默认 `caps.limit`=2000、输出 schema path/offset/lines/totalLines 逐项一致）；rc2 该段文本唯一差异＝删去「Results include line numbers.」一句，真正「外移」的是语法高亮语言表（rc1 内联 `LANG_BY_EXTENSION` → rc2 新包 `@deepseek-ai/dsh-util-code-language`），只被宿主 `presentationMeta`（lang 元数据）与客户端代码面消费、模型提示面不可见；本仓 HP 借槽只认段名（`index.js` keepSectionNames 分支只改 text；`lib/assembly-presentation.js` `READ_SECTION_NAME='tool:read'`，L 段早退回宿主原文，均按符号名核对），故覆盖与文案自持均不受影响。② HK25：`displayReason` 只存在于 `PreToolDecision.ask.displayReason`（types），唯一实现消费点＝ask → approval.request（`dsh-tools/lib/index.js`）；`PostToolDecision`（types）与 rc1 逐字一致、无该字段，`postExecute`也不读取它 → 既不覆盖也不旁路 content，本插件 post-execute 的中文改写照常生效。③ HK6a/SD15：rc2 新增 provider `deepseek-account`（未登录时其模型目录为空），对本插件候选枚举与 advisory 路径无影响，见下一条。
-- **新增 provider 集合记录（HK6a/SD15，rc2 起）**：rc1 只有 `deepseek-official`（base patch 挂 `@deepseek-ai/dsh-llm-deepseek`）；rc2 ＝ 同 id 换包（`@deepseek-ai/dsh-llm-deepseek-api-key`，PROVIDER 仍 `deepseek-official`、settingsNs 仍 `llm-deepseek`）＋ 新增 `deepseek-account` 行（provider id 见 account 包 PROVIDER 常量）。本仓 rank 表（`lib/model-routing.js`）里 `deepseek-official` rank 2、新 provider rank 0 仅作后备；未登录时 account `discoverModels=[]`→ 单候选精确匹配失败只降级 `ok:false`、不上抛（model-routing 降级分支），仅「全候选无 OK 且父 fallback 非 OK」才抛阻断；非 planner advisory 路径（legacy 分支）不调 listProviders → 不受 provider 集合变化影响。**A42/A43 取证登记项**＝provider 集合 `deepseek-official` / `deepseek-account`（含登录态）/ `llm-pi-ai` 动态路由（两版同为默认 0 条）＋ `crossProviderPlannerModel` 开关值（仅 true 才枚举跨 provider 候选；默认 false：`lib/live-config.js` 的 BUILTIN_DEFAULTS.crossProviderPlannerModel、预设 `agent.cordis.yml` 的 crossProviderPlannerModel 键）。
-- **台账订正 3 处（本轮已改）**：HS21 的 CSS Module 哈希族实际前缀 `pbvGtq_`（旧记 `YyYd_a_*` 两棵树全库 0 命中，且本插件已自持 `esp-*` 内联样式）；钩子签名目录实际在 `dsh-tool-cordis/lib/types/api-catalog.js`；`agent/created` 派发点 = dsh-agent 包内 lib/index.js（按符号名核对）。CF12 的「装载抛错」已订正为「bundle 跳过 + 行 disabled」。
-- **2026-09-25 追加：宿主运行时包不得装进 profile（CF12 口径变更）**。现象 = 用户部署重启后 extra-plan 会话「本轮运行失败：`Failed to deserialize the JSON body into the target type: messages[N].content: unknown variant tool_removal, expected one of text, image, document, thinking, server_tool_use, tool_use, tool_result, web_search_tool_result, tool_addition`（422）」，且该 developer 消息落盘后**该会话每轮必失败**。取证链：① 块由宿主产生——`dsh-agent-loop` 包内 lib/index.js（tool-registry 差集写入段）以「上次请求记录的工具集 vs 本次装配」差集写 `developer/message`（`source.kind='tool-registry'`），本仓 `tool-removal|tool_removal` grep 零命中；② 三次失败（`session-a7bde00b` L726、`session-95f53f25` L1136、`session-ab62be10` L422）**全部紧跟在 `session/end-seed`（进程收尾）后的第一轮**，差集分别为 +run_code/−28 原生工具（切 PTC）、−save_plan/−save_probe（恢复瞬间插件工具未就位）、−run_code/+27 原生工具（切回 native）；纯 addition 的那次（`a7bde00b` L41，23 条）请求成功；③ rc.2 `dsh-llm` 有 `projectToolUpdates`（rc.2 dsh-llm 包内 projectToolUpdates：addition-only 路由，丢弃 removal 块），profile 内那份 rc.1 副本 `toolUpdate`/`toolHistory`/`projectToolUpdates` **命中 0** → 一旦解析到它，removal 原样上线。双锚点实测（2026-09-25）：`createRequire(<dsh>/package.json)` → 安装域 rc.2；`createRequire(<profile>/package.json)` → profile rc.1。处置：`@deepseek-ai/dsh-llm` 与 `@deepseek-ai/schemastery` 移入 `peerDependencies`（profile `autoInstallPeers=false` 不安装 → 运行时回落宿主副本，自动跟随宿主版本，无需维护钉版）；`step-01-预设完整性.mjs` 新增 S2 静态断言（`dependencies` 无 `@deepseek-ai/*`、dsh-llm 与 dsh 同范围、schemastery 已声明）；`_shared/host-deps.mjs` 新增「profile 内存在宿主同名包副本」告警（**只告警、不改解析语义**）。**待用户执行**：清 profile `node_modules` + `pnpm-lock.yaml` 后重装插件并重启，验证三项——profile 内无 `@deepseek-ai/dsh-llm`、中毒会话可继续对话、新会话切一次 native↔PTC 不再 422。
-- **证据报告**：`.extra-plan/线索-探查证据报告-rc2包树变异盘点-20260925074352.md`、`.extra-plan/线索-探查证据报告-rc2耦合面契约核对-20260925074616.md`、`.extra-plan/线索-探查证据报告-本仓rc2适配点清单-20260925074302.md`、`.extra-plan/线索-探查证据报告-HS26-read装配面-rc2核对-20260925075632.md`、`.extra-plan/线索-证据报告-HK25-post-execute-rc2核对-20260925075826.md`、`.extra-plan/线索-探查证据报告-HK6a-SD15-provider集合-rc2核-20260925075614.md`。
-### ⑦-1 历史面：0.1.5-rc.2 起的失败面（保留备查）
+## ⑤ 当前 CF：安装配置面
 
-- dsh-tools tools.restrict() 新增两处抛错守卫：无 scoped context（"tools.restrict() requires a scoped context (agent.ctx): ..."）与空过滤器 {}（"tools.restrict({}) is a no-op: ..."）；另有保留工具 run_code 命名守卫（0.1.5-rc.2 内 dsh-tools 包 lib/index.js，按符号名核对）。
-- dsh-tool-subagent：配了 toolFilter 却无 allow/deny 即抛错（"tool-subagent: `toolFilter` is configured but names neither `allow` nor `deny` — remove the key or fill the filter"；0.1.5-rc.2 内 dsh-tool-subagent 包 lib/index.js，按符号名核对）。
-- 本仓库预设四行均含 toolFilter.deny（agent.cordis.yml 四行 tool-subagent 的 toolFilter.deny；executor-spawn 行另注入 deny），按现文安全，无需改动 assets/presets/**。
+| 编号 | 当前合同 | 状态 |
+|:--|:--|:--|
+| CF3 | `defaultDshHome` 仅公共 API/夹具；活动 renderer 由 `resolveToolsSdkRenderer` 负责 | 【已核实·静态】 |
+| CF4 | package `dsh.bundle.patch` 两项入口 | 【已核实·静态】 |
+| CF5 | `dsh.client.platform=web` 与 inject | 【已核实·静态】 |
+| CF6 | exports 含 settings/preset-sync/client/client-bridge/locale 通道 | 【已核实·静态】 |
+| CF7 | step-01 设置页从宿主安装目录解析依赖 | 【已核实·静态】 |
+| CF8 | dependencies 仅 js-yaml | 【已核实·静态】 |
+| CF9 | 临时 DSH_HOME/profile 夹具形状 | 【已核实·静态】 |
+| CF10 | preset.yml 元数据与声明行 Config | 【已核实·静态】 |
+| CF11 | QQBot 映射测试的 profile/依赖夹具 | 【已核实·静态】 |
+| CF12 | `@deepseek-ai/*` 不进 dependencies；dsh/dsh-llm peer 精确钉 rc.1/rc.2；bundle 不兼容时 skipped/disabled | 【已核实·静态；profile 清理与 422 消失待 HUMAN】 |
 
-## ⑧ 预设各行 config 属宿主契约（0.1.2-rc.1 ↔ 0.1.5-rc.2 双向对照）
+CF1/CF2（extra-plan postinstall/distribute-preset）已删除，作为历史归档，不列当前安装合同。
 
-本节补记一处此前**未覆盖**的宿主契约面：③ 四层表记的是本仓库代码与宿主的挂钩点，而 `assets/presets/extra-plan/agent.cordis.yml` 里**每一行（row）的 config 键也是宿主契约**——由该行 `name` 所指宿主包的 Config schema 校验。2026-09-12 实测确认的动机：persona 行的键在 0.1.3-alpha.2 起由 `text` 改名为 `prefix`（且必填），旧键在 0.1.5-rc.2 启动时报 `$.prefix missing required value`，此前升级比对未预警。
+## ⑥ 当前 QB：QQBot 活动面与测试面
 
-**对照方法与规模**：预设 31 行条目（17 个顶层条目 + 嵌套子行）× 22 个宿主包；新版侧读本机 0.1.5-rc.2 安装包，旧版侧取 unpkg 发布的 `@0.1.2-rc.1`（22/22 均取到发布物）；每行把**真实 config** 喂进对应包的 Config 实跑校验（schemastery）。
+| 编号 | 当前契约/边界 | 状态 |
+|:--|:--|:--|
+| QB1 | 精简插件 `inject=[]` | 【已核实·静态】 |
+| QB2-QB3 | DSH_HOME/profile 解析与启动 apply 自愈 | 【已核实·静态】 |
+| QB5 | js-yaml 宿主安装回退 | 【已核实·静态】 |
+| QB8-QB9 | profile bundles 与 `node_modules/@local` 双条件锚定 | 【已核实·静态】 |
+| QB10-QB11 | web 核心包到 qqbot 的 junction/dir 建链；非目标实体不替换 | 【已核实·静态；部署结果待 HUMAN】 |
+| QB12-QB13 | patch 写前备份、写后 YAML 顶层数组/旧块校验；不引用旧 AgentPresetSettingsSchema 为当前合同 | 【已核实·静态】 |
+| QB14-QB18 | QQBot patch、ptc-runtime、agent-preset-registry、cordis-host-runner 当前行 | 【已核实·静态】 |
+| QB19 | QQBot bundle patch | 【已核实·静态】 |
+| QB20-QB21 | `scripts/heal.mjs` postinstall 与异常退出 0；allow-build 是否实际放行待 HUMAN | 【已核实·静态；HUMAN】 |
+| QB25-QB26 | 静态服务/config.default 断言与间接消费 extra-plan | 【已核实·静态】 |
+| QB27/QB31 | 一键 AUTO/四态汇总 | 【已核实·静态】 |
+| QB28-QB30 | 五条件预检、junction 能力、真实 profile 只读映射；缺环境/权限为 SKIP | 【已核实·静态；SKIP 不销账】 |
 
-**结论**：新版侧 21 行有 schema 的条目全部 PASS、0 FAIL；旧版侧 26 个宿主行 21 PASS、0 FAIL（5 行因旧包不导出 Config 无法校验）。**除 persona 外无第二个同类型断点**，本预设装回 0.1.2-rc.1 可用。
+QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；QB4、QB23、QB24 继续列为未核实，不改成通过。
 
-**persona 行现状（双写）**：`prefix: &personaText`（新宿主必填键，0.1.3-alpha.2 起）+ `text: *personaText`（旧宿主必填键，锚点引用同一段文本，长度 1499 字符两边一致）。两代 schema 实跑校验均通过。删除条件：确定不再支持 0.1.2-rc.1 时删掉 `text` 别名行即可（`prefix` 不受影响）。
+## ⑦ 当前 0.1.7 风险与开放验证
 
-**未知键为何安全（机制）**：schemastery 的 `~standard.validate` 以默认 `strict=false` 调用 `Schema.resolve`（发布物 `@deepseek-ai/schemastery@3.18.2` 的 object 处理器为 `if (!strict) merge(result, data)`）；且**即使 `strict=true`，未知键也只是被丢弃，不会抛 ValidationError**。两代 dsh 均依赖 `@deepseek-ai/schemastery: ^3.18.2`，而该包 latest 即 3.18.2，语义一致——所以双写产生的未知键在两代都不会报错。
+1. isolate 审计：`mountPreset/leakedServices` 对未隔离 root service 抛错；必要/保险名单必须保持 `isolate: true`。
+2. settings 换代：`settings.register` 不存在；`.volatile()` Config、`configure({auto:false})`、SettingsForms 与 `plugins.row.config/whileServed` 是当前面。
+3. profile patch 载体：旧 `.agent-presets` 无读取方；`compatibility.json`/peer 门控可能使 bundle skipped、loader disabled；QQBot 仍有 allow-build/postinstall 欠账。
+4. 包/服务换代：workflow-ptc、`ptcRuntime`、tool:cordis 删除、当前两项 Cordis 工具与 `customSkillDirs` 必须按当前真值核对。
+5. rc.2 单侧风险：`sanitizeProfile` 整体搬移 patch、`configEditor.edit` 值等于继承层删行；rc.1 现场缺失，不能推出跨代结论。
+6. session v4：`session.v4.jsonl.zstd`、自有 source.kind、developer/message 坐标和 step-07 三代候选必须保留。
+7. CF12 422 开放 incident：profile 中宿主运行时副本曾导致 `tool_removal` 422；清理 profile node_modules/lock、污染会话续聊、native↔PTC 切换三项均待用户验证。
 
-**反向风险清单（旧版必填、当前行内已显式给；将来若被当成冗余删掉，旧版即断）**：`persona.text`、`agent-instructions.maxBytes`、`tool-fs-search.sampleOverCapGlobResults`、`tool-subagent.provider`、`tool-todo.allowParallelInProgress`、`agent-tool-presentation.mode`。
+## ⑧ 六项 HUMAN 欠账（全部未销账）
 
-**本轮同时扫清的高危面**：`toolFilter.deny` 四张表共 14 个工具名在 0.1.5-rc.2 全部存在（且未列保留名 `run_code`、未列不可限制的 `save_plan`）；`isolate` 三个 realm 键均等于真实服务名；两处 `!!js` 求值链路完好；仓库解析器（`parsePresetYaml`）与宿主 `entryListSchema` 对 31 行的解析结果 0 差异。
+| 序号 | 待核实事项 | 后续动作 | 状态 |
+|:--|:--|:--|:--|
+| 1 | QuestionChannel/ApprovalChannel 静态声明与真实消息链 | 静态检查 + 部署后真实问答/审批 | 【未核实·HUMAN】 |
+| 2 | QQBot 0.5.0 manifest 实际装载运行 | 环境脚本只读 + 部署后运行 | 【未核实·HUMAN】 |
+| 3 | `im-qqbot` 宿主 schema/id/name/config | 用户侧按真实宿主 schema 比对 | 【未核实·HUMAN】 |
+| 4 | web→qqbot 建链真实结果 | 环境脚本只读；必要时用户 `dir`/`fsutil` 复核 | 【未核实·HUMAN】 |
+| 5 | `preset-extra-plan`/`config.default=extra-plan` 在 QQBot `/preset` 生效 | 部署后由用户执行 `/preset` | 【未核实·HUMAN】 |
+| 6 | QQBot postinstall 是否被 allow-build 放行 | 用户部署时查命令与安装日志 | 【未核实·HUMAN】 |
 
-**对升级流程的建议**：升级 DSH 前，除 ⑤ 的比对清单外，应把「预设每行 config 键对两版 schema 实跑校验」一并执行——本次 persona 断点正是靠启动报错才发现的，属事后补救。
+环境不足、权限不足或脚本输出 SKIP 不能销账；自动全通过也不能替代以上六项。
 
----
+## ⑨ 升级 checklist（顺序固定）
 
-**编号说明（P0-2 遗留清理，2026-09-20）**：编号空间中 `SD9`、`SD13` 为历史编号，③四层表当前**无定义行**（SD 段为逐行编号：SD8、SD10、SD11、SD12、SD14…，连续但缺 SD9 与 SD13）。为避免编造定义内容、并防止插入表格行导致台账行号再次整体位移，本次**保留这两个编号不做增删**，其全部引用位置登记如下，供后续补齐定义行时回溯：
-- ②覆盖总表 `plugins/dsh-extra-plan/index.js` 行（SD 列表内含 SD9、SD13）
-- ③-E 证据归属表：报告 A 证据 13-17 行（`SD13-SD17` 组）、报告 A 证据 18-31 行（含 `SD9`）、报告 A 证据 51-55 行（含 `SD13`）、报告 B 证据 30-41 行（含 `SD13`）
+1. `node pe-test/tools/step-01-qqbot-安装映射.mjs`，再 `node pe-test/tools/step-01-qqbot-环境验证.mjs`；静态先行，环境项条件只读，SKIP 不销账。
+2. `node pe-test/tools/step-01-设置页配置.mjs` 与 `node pe-test/tools/step-04-路由与写闸门.mjs`；确认 settings/configEditor/工具呈现面。
+3. `node pe-test/tools/一键step测试.mjs`；AUTO/HUMAN/参数项按脚本实际数组与四态判读。
+4. 按 HS/HK/SD/CF/QB 当前表，先钩子 mode，再服务方法，再事件/Session 形状，再 bundle/exports/patch/isolate 契约；旧 API 只作负向核对。
+5. `node pe-test/tools/代码地图生成.mjs --check`，退出码必须为 0；人工描述/固定尾部另做对拍。
+6. 逐条复核本节六项 HUMAN；保留未核实状态，用户部署后再销账。
 
-后续若补齐 SD9/SD13 定义行：请同步修正②覆盖总表的「共 N 处」计数，并复核③-E 四处引用。
+## ⑩ P2-4 与 gateWords 当前合同
 
-## ⑨ P2-4 默认生成链与模块边界
-- `preset-settings.js::resolveTemplateSettingDefault` 复用本仓 YAML_SCHEMA、locator、validator；`agent.cordis.yml` 的 exploreBudget 与 plannerPromptSuffix 两个叶值是作者真源，生成模块是派生产物，运行时不解析 YAML。
-- `preset-sync.js::syncPreset` 在 contentHash/stage/publish 前校验模板；坏模板不触碰 DSH_HOME 目标，startup 既有非阻断外壳保持（本包已无 postinstall，见 CF1）。生成/--check/prepack 失败保留 last-known-good。
-- B1 新 lib 只承接无宿主状态 helper 与 per-apply role/cache factory；usage ledger、注册/claim、disposed 同步 final fold、ctx.on 顺序与 tools/pre-execute 继续由根入口持有。升级宿主时仍按原 HS/HK/SD 条目核对这些根接触面。
-
-## ⑩ prompt variable 与闸门关键词单源（0.1.2-rc.1 合同面，v0.3.0）
-本节登记本轮新增的宿主接触面：extra-plan 把 7 个闸门关键词从 JS 常量改为 YAML 真源，因此多出一条**宿主 systemPrompt 合同依赖**。③ 四层表的既有条目不变。
-
-- **服务与注册面**：`@deepseek-ai/dsh-system-prompt` 的注册服务名是 `systemPrompt`（`ctx.systemPrompt` / `ctx.get('systemPrompt')`）；本插件 `inject = ['systemPrompt']`（`index.js`），apply 内经 `ctx.effect(() => ctx.systemPrompt.variable(name, provider))` 在当前 agent scope 注册**恰好 7 个**变量：`extra_plan_route_direct`、`extra_plan_route_plan`、`extra_plan_route_disagree`、`extra_plan_approval_approve`、`extra_plan_approval_replan`、`extra_plan_purpose_refine`、`extra_plan_purpose_redo`。provider 为 `() => 本次 apply 捕获的词值`，随 scope 释放；不注册全局变量、不跨 apply 缓存。服务缺失时 cordis 会推迟/拒绝该行挂载——这是**宿主契约**，升级比对时须确认服务名与 `variable(name, provider)` 签名未变。
-- **渲染面**：宿主严格渲染 `{{variable}}`——变量名须匹配 `[a-z][a-z0-9_]*`，malformed/unknown/undefined 引用**直接抛错**（dsh-system-prompt 包内 lib/types 与 lib/index.js，按符号名核对：按调用 scope 注册、每次 assemble 求值）。因此 persona 里 7 个变量的值必须全部由本插件注册；缺失即报 `unknown prompt variable`。宿主 `renderPrompt(assembly)` 从 `assembly.variables` 逐项插值——step-00 GWY8/GWY9 直接 import 官方包对该契约做逐字断言（prefix 与 text 两键渲染结果相等、无残留 `{{`）。
-- **persona 双键兼容**：`prefix: &personaText`（0.1.3-alpha.2 起必填）+ `text: *personaText`（0.1.2-rc.1 旧必填键，锚点引用同一段文本）保持不变；本轮只把正文里的 7 个词值替换为变量引用，两键仍逐字同源（YAML 解析后 `prefix === text`），与 ⑧ 节的双写结论一致。
-- **投射面**：`system-prompt/assemble` 钩子返回的模型可见副本一律保留入参 `variables` 映射（A/C/M/F-L 全投影路径；anchored 首轮只替换 persona section，later 恢复含变量引用的原 persona），step-04 GW23-GW27 以哨兵断言。
-- **预设载体**：0.1.7 起预设改为 profile patch 声明行装载（dsh.bundle.patch 数组第二项 preset-patch.generated.yml，见 HS6/HK12/CF4）；DSH_HOME/.agent-presets/extra-plan/ 在 0.1.7 无任何读取方（本机实测不存在，与 §⑦ 定性一致），旧记 CORE_FILES 在 0.1.7-rc.2 全库 0 命中；`config.gateWords` 位于 `agent.cordis.yml` 的 `id: extra-plan` 行 config 内，属 ⑧ 节所述「每行 config 键也是宿主契约」的外沿——但 gateWords 键名由本插件自己解析，宿主对该行 config 不做强校验（未知键按 ⑧ 的 strict=false 语义被保留/丢弃）。
-- **项目自有、非宿主合同**：本轮运行时不再创建 manifest/状态目录迁移链；唯一备份与回滚工件位于仓库 `.extra-plan/backup-dsh-extra-plan-JS审查修复-<timestamp>/`，不属于宿主合同，也不写入 DSH_HOME。
-
-
+- `agent.cordis.yml` 的 `exploreBudget`/`plannerPromptSuffix` 是作者叶值；生成器产出 `preset-defaults.generated.js` 与 `preset-patch.generated.yml`，先校验再替换，失败保留 last-known-good；运行时不解析 YAML。
+- `preset-sync` 的 idle 条件是声明行覆盖资产、本体剥离一致、投影一致；写入只走 `configEditor.edit`，无 manifest/旧迁移链。
+- gateWords 是 YAML 七键唯一值源；apply 先 `createGateRuntime`，当前 agent scope 注册七个 `systemPrompt.variable`；deny、match、状态机和投影都消费当前词表；旧词不推进。
+- `system-prompt/assemble` 的模型可见副本必须保留 variables 映射；宿主严格渲染失败、变量缺失或未知变量属于升级敏感面，静态台账不冒充实机通过。

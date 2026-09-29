@@ -2011,15 +2011,15 @@ check('GWY1 资产 YAML config.gateWords 直属键恰为 7 个闸门字段', Obj
 check('GWY2 GATE_WORD_FIELDS 恰 7 项且每项只含 field/variable 元数据', GATE_WORD_FIELDS.map((item) => Object.keys(item).sort().join('+')), GATE_FIELD_NAMES.map(() => 'field+variable'))
 check('GWY3 GATE_WORD_FIELDS 的 field/variable 与 YAML 键一一对应', GATE_WORD_FIELDS.map((item) => [item.field, item.variable]), GATE_FIELD_NAMES.map((field, index) => [field, GATE_VARIABLE_NAMES[index]]))
 
-// GWY5-GWY7：persona 锚点双键同源、7 个变量引用、无值字面量
+// GWY5-GWY7：persona prefix-only（正文仅 prefix 键）、7 个变量引用、无值字面量
 const personaRow = assetRowsAll.find((row) => row.id === 'persona')
 const personaText = personaRow.config.prefix
-check('GWY5 persona prefix === text（两代键逐字同源）', personaRow.config.text === personaText, true)
+check('GWY5 persona config 正文键集合恰为 [prefix]（prefix-only，不含旧 text 兼容键）', Object.keys(personaRow.config), ['prefix'])
 check('GWY6 persona 正文引用的变量集合恰为 7 个', Array.from(new Set(personaText.match(/\{\{extra_plan_[a-z_]+\}\}/g) || [])).sort(), GATE_VARIABLE_NAMES.map((name) => '{{' + name + '}}').sort())
 check('GWY7 persona 正文不含任何闸门值字面量', factoryValuesPattern.test(personaText), false)
 check('GWY7b lib/gate-words.js 对 7 个出厂词 0 命中（JS 侧无第二份真源）', factoryValuesPattern.test(readFileSync(GATE_WORDS_LIB_FILE, 'utf8')), false)
 
-// GWY8-GWY9：宿主严格 renderPrompt 对 prefix/text 都完成替换
+// GWY8-GWY9：宿主严格 renderPrompt 对 prefix-only 路径完成替换
 const hostSystemPromptEntry = (() => {
   const candidates = []
   if (process.platform === 'win32') {
@@ -2033,9 +2033,8 @@ const hostSystemPromptEntry = (() => {
 })()
 const hostRenderPrompt = hostSystemPromptEntry === null ? null : (await import(pathToFileURL(hostSystemPromptEntry).href)).renderPrompt
 const renderedPrefix = typeof hostRenderPrompt === 'function' ? hostRenderPrompt({ sections: [{ name: 'deployment:persona', text: personaText }], contexts: [], variables: gateRuntime.variables }) : ''
-const renderedText = typeof hostRenderPrompt === 'function' ? hostRenderPrompt({ sections: [{ name: 'deployment:persona', text: personaRow.config.text }], contexts: [], variables: gateRuntime.variables }) : null
 checkTrue('GWY8 宿主严格 renderPrompt 对 prefix 完成全部变量替换且含 7 个当前值', typeof hostRenderPrompt === 'function' && !renderedPrefix.includes('{{') && GATE_FIELD_NAMES.every((field) => renderedPrefix.includes(assetGateWords[field])))
-checkTrue('GWY9 宿主严格 renderPrompt 对 text 键（0.1.2-rc.1 旧键）结果与 prefix 逐字相等', typeof hostRenderPrompt === 'function' && renderedText === renderedPrefix && !renderedText.includes('{{'))
+checkTrue('GWY9 宿主严格 renderPrompt 走 prefix-only 路径（不依赖旧 text 键）：渲染结果非空、无残余 {{...}} 且含 7 个当前词值', typeof hostRenderPrompt === 'function' && renderedPrefix !== '' && !renderedPrefix.includes('{{') && GATE_FIELD_NAMES.every((field) => renderedPrefix.includes(assetGateWords[field])))
 
 // GWV 系列：validator 非法矩阵（表驱动，全部必须抛同一前缀）
 const cloneWords = (patch) => Object.assign({}, gateRuntime.words, patch)

@@ -6,6 +6,22 @@
 > 行号纪律：本文不写行号。排查缺陷需要行号时查 pe-test/docs/ai-代码地图.md：先看头部「意图速查」按意图词找函数名，再到「函数索引」取行号区间。
 > 本轮实机/静态报告的同一部署配置快照必须包含 A=anchoredBootstrap、C=creativeMode、M=toolPresentationMode（以及其余既有设置）；F=尚无 tool/call、L=首个 tool/call 后。C=0/C=1 均核对模型可见投影与 catalog，C=0 不把展示隐藏误当 runtime binding 安全隔离，C=1 的 HP1 首轮 catalog 暂隐是唯一时序特例。
 
+## 执行前人工确认索引（不改原文）
+
+> 以下均标记为“需维护者/实机执行前人工确认”。这里只列原位置索引；原始数字、成员、A 集合、D 映射和主语歧义继续保留，不在本轮选择一边修正文。
+
+- [A01-A48 标题与 A49/A50 新增行](#二a表闸门用例字典a01-a48)：标题范围仍写 A01-A48，但字典已有 A49/A50。
+- [S0 组判定 run_code#1](#321-s0-routenone-u1-空白回车后)：正文写 6 成员/6 条，[组1预期 header](#组1预期聚合-header) 写 7 项/7 条。
+- [B0-B4 搭车批次](#329-操作批次归并总览2026-09-26补全最少干预口径)：正文写“4 个搭车批次”，表中实际为 B0、B1、B2、B3、B4 五行。
+- [U1 用户操作表](#41-用户操作清单第一轮-u1-u6-六行-设置页-1-2-行常数项-u0-不占行)：显式 A 标签 11 项，覆盖条数写 12。
+- [U3 用户操作表](#41-用户操作清单第一轮-u1-u6-六行-设置页-1-2-行常数项-u0-不占行)：显式 A 标签 5 项，覆盖条数写 6。
+- [U6 用户操作表](#41-用户操作清单第一轮-u1-u6-六行-设置页-1-2-行常数项-u0-不占行)：显式 A 标签 5 项，覆盖条数写 6；A48 由 S4 清单覆盖但未列入该集合。
+- [A45 重置批次](#325b-a45-重置验证批次s4-已批准后-u0-常数项) 与 [D1 映射](#74-域分组d1-d9可勾选增量跑按域映射到-u-序号)：A45 正文属于 S4 后 U0，D1 却映射到 U1-U5。
+- [A46 放行侧](#322-第一轮bothcatchgatetrue拦截面轮) 与 [U2/D7](#41-用户操作清单第一轮-u1-u6-六行-设置页-1-2-行常数项-u0-不占行)：B1/D7 将 A46 归 U2，但 U2 显式集合未列 A46。
+- [A48 执行者委派](#325-s4-routeplan已批准u6-批准同意后)：S4/D6 将 A48 归 U6，U6 显式集合未列 A48。
+- [第 0 节与配置快照](#0-前置检查先检测当前模式)、[7.1 前置状态](#71-前置状态搭建)：要求完整 A/C/M 快照，但四步读取只明确 mode、runcodeCatchGate 和 gateWords，A/C 读取位置未闭合。
+- [A21 表项](#a21)：被测 run_code 与取证脚本自身的 try/catch 要求存在主语歧义；不得借精简改写测试语义。
+
 ## 0. 前置检查：先检测当前模式
 
 每个读取本文档的 AI **动手前必须先做本节四步检查**；不满足就先请用户改设置，**不得跳过**。
@@ -51,7 +67,7 @@
 - **(f) 主会话零静态 deny（2026-09-26 补全）**：主会话没有静态 deny 名单——`plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml` 全文 deny 仅 5 处（tool-subagent / tool-subagent-plan / tool-subagent-review / tool-subagent-probe 四行 toolFilter.deny 与 extra-executor-spawn 行 config.deny），主会话 `extra-plan-group` 行无 toolFilter。主会话的写/委派限制全部在执行层 `mainGateReason`（A01-A11，按路由态），模型可见面只有投影裁剪（C=0 隐藏 2 个 Cordis 展示工具、HP 形态顶层仅 run_code）。因此「deny 名单不可见」判据（A38）**不适用于主会话**；对主会话只判路由/写闸门文案（A01-A11）与投影形态（A39/A44）。
 - **(g) 角色工具面不同形（2026-09-26 补全）**：工具可见性按角色定制、不是全角色同一份：save_probe 在 probe 子会话可见、在 planner 子会话不可见；save_plan 在 planner 可见、在 probe 不可见（本轮实测 planner 工具面 save_plan=True / save_probe=False）；executor/worker 的 `write/edit` 可见（A50 对照面），planner/reviewer/probe 三行则不可见。判 A29/A31/A33/A50 等对照面时先核对角色工具面（A38），避免把「该角色本就没有此工具」误判为 deny 生效。
 
-本流程按 M 分层取证：PTC 专项分别在 C=0/C=1 的干净 A=1 顶层会话抓 F，完成首个顶层 `run_code` 后抓 L，再发第二调用确认仍为 L；native/both 的 HN/HB 回归独立编排。M=both 的机械闸门轮仍用于直呼面与 run_code 面聚合回归；已有旧会话只能提供 L，不能证明 F。
+> F/L 取证按上方 PTC 干净会话规则执行；M=both 的机械闸门轮保留直呼面与 run_code 面聚合回归，旧会话只能提供 L，不能证明 F。
 
 ## 二、A 表·闸门用例字典（A01-A48）
 
@@ -464,7 +480,7 @@ channelBroken 逃生（`CHANNEL_BROKEN_CODES` = NO_PROVIDER / CALLER_NOT_LIVE / 
 - **C 同 hash 普通重启（现场声明行/settings 行逐字保留）**：在**未升级版本**的前提下修改现场 `config.gateWords`（声明行 plugins 内 `extra-plan` 行）或其它设置，重启 Harness：
   - 判据：同 hash 判定为 idle → **声明行 plugins 与 settings 行不被改写**（preset-sync 不写盘）、`dist-manifest.json` 状态字段保持 `format: 2`、改动生效；把现场 `extra-plan` 行的 `config.gateWords` 改成缺键/非法组后重启，同样**不被自愈**，且该预设挂载时同步抛错（`extra-plan: config.gateWords …`）——即「普通重启保留用户配置」与「非法配置阻止使用」同时成立。（旧载体口径「预设目录三个核心文件逐字节不变」已不适用：`.agent-presets/extra-plan/` 现只剩审计台账。）
 - **D hash 变化版本升级（整组迁移）**：安装/更新到新的发行版本（manifest `distHash` 变化）后重启：
-  - 判据①：现场 7 词为**现场词值**（声明行 `extra-plan` 行 `config.gateWords`），非资产字段（如 `bootstrapPersona`）恢复为新版资产值，persona 的 `prefix === text` 且含 7 个 `{{extra_plan_*}}` 变量引用。
+  - 判据①：现场 7 词为**现场词值**（声明行 `extra-plan` 行 `config.gateWords`），非资产字段（如 `bootstrapPersona`）恢复为新版资产值，persona 仅含必填 prefix、不含旧 text 兼容键，且含 7 个 `{{extra_plan_*}}` 变量引用。
   - 判据②：三维判定（声明行覆盖 + 本体剥离比对 + 投影一致性）全部成立即 `idle`（不写盘）；任一不成立即按资产本体重建声明行、回填/投影 2 项宿主行；gateWords 由 carry 从声明行现值兜底（非法则保留基底词表）；**无 manifest 台账、无跨版本迁移**。
   - 判据③：**插件不落任何自有台账**（运行期状态目录与 manifest 链已于 2026-09-25 整链删除），现场与落盘内容**不出现任何额外审计文件**。
   - 判据④：新版本模板本身坏（缺键/重复/保留后缀）时同步**抛错且目标物不被替换**（声明行 plugins 与 settings 行的旧值原样保留）。
