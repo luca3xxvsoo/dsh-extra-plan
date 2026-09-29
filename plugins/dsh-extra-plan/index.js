@@ -793,6 +793,38 @@ function recordJobOutputCall(agent, exec, counters) {
   return true
 }
 
+// job_list/list_agents 主会话防轮询闸门（v0.4.0）：同锚点周期内第二次调用拒绝（首次放行）。
+// 无参数键，按调用行为计数：pollGuardCounters 为 Map<sessionId, Set<'job_list'|'list_agents'>>。
+// 只读查重；写入侧唯一位点是 recordPollGuardCall（B3 收敛同款）；vExec 无 agent（组判定成员）时
+// 跳过查重（运行时瀑布重入兜底，与 jobOutputGateReason 同口径）。
+function pollGuardGateReason(exec, pollGuardCounters) {
+  const name = exec !== undefined && exec !== null && typeof exec.name === 'string' ? exec.name : ''
+  if (name !== 'job_list' && name !== 'list_agents') return null
+  const execAgent = exec !== undefined && exec !== null ? exec.agent : undefined
+  const header = execAgent !== undefined && execAgent !== null && execAgent.session !== undefined && execAgent.session !== null ? execAgent.session.header : undefined
+  const sessId = header !== undefined && header !== null ? header.id : undefined
+  if (typeof sessId === 'string' && pollGuardCounters !== undefined && pollGuardCounters !== null) {
+    const called = pollGuardCounters.get(sessId)
+    if (called !== undefined && called !== null && called.has(name)) {
+      return '禁止轮询子代理状态，停止操作并等待子代理通知'
+    }
+  }
+  return null
+}
+// job_list/list_agents 放行后的计数器记录（唯一写入位点；仅主会话路径调用）。
+function recordPollGuardCall(agent, exec, counters) {
+  if (exec === undefined || exec === null) return false
+  if (exec.name !== 'job_list' && exec.name !== 'list_agents') return false
+  const header = agent !== undefined && agent !== null && agent.session !== undefined && agent.session !== null ? agent.session.header : undefined
+  const sessId = header !== undefined && header !== null ? header.id : undefined
+  if (typeof sessId !== 'string') return false
+  if (counters === undefined || counters === null) return false
+  let called = counters.get(sessId)
+  if (called === undefined) { called = new Set(); counters.set(sessId, called) }
+  called.add(exec.name)
+  return true
+}
+
 // 探查者级联中止告警：委派方轮次结束 → activation dispose → 宿主 jobs-local owner
 // 级联取消 one-shot 探查者 job（owner disposed）——agent/disposed 清理时若仍有未认领
 // 探查者委派计数即告警留痕。T5 后 planner 不得委派探查者（闸门拒绝），委派方只剩主
@@ -811,7 +843,7 @@ function probeDisposalWarning(remaining) {
 //    → job_output（wait 检查 + 计数器查重，只读不写入；set 由 recordJobOutputCall 在放行路径执行）→ null。
 //    save_plan 已移除路由态限制：无显式分支，由本函数兜底 return null 任意路由态放行
 //    （受限规划工件：仅写 cwd/.extra-plan 固定形状 Markdown，内容闸门与规划子代理同一实现）。
-//    gateCtx: { events, planToolName, jobOutputCallCounters, runCodeDepth, gateRuntime }（gateRuntime 必填）。
+//    gateCtx: { events, planToolName, jobOutputCallCounters, pollGuardCounters, runCodeDepth, runcodeCatchGate, getAgents(可选), gateRuntime }（gateRuntime 必填）。
 function mainGateReason(state, exec, gateCtx) {
   const ctx = gateCtx !== undefined && gateCtx !== null ? gateCtx : {}
   const gateRuntime = ctx.gateRuntime
@@ -916,8 +948,36 @@ function mainGateReason(state, exec, gateCtx) {
     }
     return null
   }
+  // 主会话层工具限制（v0.4.0 四工具治理）：job_kill 仅直行路线放行；
+  // send_message 主会话向 running 目标拒绝；job_list/list_agents 同锚点防轮询。
+  // planner/只读 child/执行者不进本函数（pre-execute 角色分流），子代理侧维持现状。
+  if (name === 'job_kill') {
+    if (!escape && state.route !== 'direct') {
+      return `当前状态禁止job_kill。如用户要求停止子代理，${gateRuntime.confirm.route}，选择「${gateRuntime.words.routeDirect}」后才可执行 job_kill`
+    }
+    return null
+  }
+  if (name === 'send_message') {
+    // 主会话调用者：目标 running → 拒；idle/未驻留/agents 服务不可用 → 放行
+    // （one-shot 目标由宿主 coldResume NOT_RESUMABLE 自拒；escape 通道逃生放行防死锁）。
+    if (!escape && typeof ctx.getAgents === 'function') {
+      const agents = ctx.getAgents()
+      if (agents !== undefined && agents !== null && typeof agents.get === 'function') {
+        const smArgs = exec !== undefined && exec !== null ? exec.arguments : undefined
+        const targetId = smArgs !== undefined && smArgs !== null && typeof smArgs === 'object' && typeof smArgs.agent_id === 'string' ? smArgs.agent_id : undefined
+        if (targetId !== undefined) {
+          const target = agents.get(targetId)
+          if (target !== undefined && target !== null && target.status === 'running') {
+            return '子代理running中，禁止打扰'
+          }
+        }
+      }
+    }
+    return null
+  }
+  if (name === 'job_list' || name === 'list_agents') return pollGuardGateReason(exec, ctx.pollGuardCounters)
   if (name === 'run_code') {
-    return runCodeGroupDenyReason(state, exec, { kind: 'main' }, { events, planToolName, jobOutputCallCounters: ctx.jobOutputCallCounters, runcodeCatchGate: ctx.runcodeCatchGate, runCodeDepth: (typeof ctx.runCodeDepth === 'number' ? ctx.runCodeDepth : 0) + 1, gateRuntime })
+    return runCodeGroupDenyReason(state, exec, { kind: 'main' }, { events, planToolName, jobOutputCallCounters: ctx.jobOutputCallCounters, pollGuardCounters: ctx.pollGuardCounters, getAgents: ctx.getAgents, runcodeCatchGate: ctx.runcodeCatchGate, runCodeDepth: (typeof ctx.runCodeDepth === 'number' ? ctx.runCodeDepth : 0) + 1, gateRuntime })
   }
   if (name === 'job_output') return jobOutputGateReason(exec, ctx.jobOutputCallCounters)
   return null
@@ -927,8 +987,10 @@ function mainGateReason(state, exec, gateCtx) {
 // state：主会话 flow state（role.kind==='main' 时必传；其它角色忽略）；缺省归一化为
 // { route:'none', clarified:false, approved:false, purpose:'none', channelBroken:false }。
 // role：{ kind:'main' } | { kind:'planner' } | { kind:'child', readOnly:boolean, probe:boolean }。
-// gateCtx 缺省：{ events:[], planToolName:'subagent_plan', jobOutputCallCounters:new Map(),
-// exploreBudget:DEFAULT_EXPLORE_BUDGET, runCodeDepth:0, runcodeCatchGate:false }；gateRuntime 必须由调用方显式传入（词表唯一值源是 config.gateWords，helper 无默认词表）。
+// gateCtx: { events, planToolName, jobOutputCallCounters, pollGuardCounters, runCodeDepth, runcodeCatchGate, getAgents(可选), gateRuntime }（gateRuntime 必填）。
+// 缺省：events:[]、planToolName:'subagent_plan'、jobOutputCallCounters:new Map()、pollGuardCounters:new Map()、
+// exploreBudget:DEFAULT_EXPLORE_BUDGET、runCodeDepth:0、runcodeCatchGate:false；getAgents 不设缺省（undefined 即 fail-open 放行）；
+// gateRuntime 必须由调用方显式传入（词表唯一值源是 config.gateWords，helper 无默认词表）。
 // 多调用容错硬闸门：成员逐项判定之后、聚合之前执行 runCodeCatchGateReason（教学式文案）。
 // 返回 null=放行；非 null=聚合拒绝文案。
 function runCodeGroupDenyReason(state, exec, role, gateCtx) {
@@ -936,6 +998,7 @@ function runCodeGroupDenyReason(state, exec, role, gateCtx) {
     events: [],
     planToolName: 'subagent_plan',
     jobOutputCallCounters: new Map(),
+    pollGuardCounters: new Map(),
     exploreBudget: DEFAULT_EXPLORE_BUDGET,
     runCodeDepth: 0,
     runcodeCatchGate: false,
@@ -1127,6 +1190,8 @@ export const decisions = {
   aggregateRunCodeDenyReason,
   jobOutputGateReason,
   recordJobOutputCall,
+  pollGuardGateReason,
+  recordPollGuardCall,
   probeDisposalWarning,
   resolveAgentRouteSources,
   decidePlannerModelUse,
@@ -1387,6 +1452,7 @@ export function apply(ctx, config) {
   // appendToolCall 后 scheduler.prepare）；jobOutputCallCounters 内存计数器不依赖该时序。
   const jobOutputCallCounters = new Map()
   const jobOutputLastAnchors = new Map() // sessionId → 上次锚点索引
+  const pollGuardCounters = new Map() // sessionId → Set<'job_list'|'list_agents'>（同锚点周期去重标记，防轮询）
   // sessionId → Map<rootCallId, 已放行子调用数>（单实例上限，planner 专属）。
   // 按 session 分桶：锚点变化 / disposed 只删当前 session 桶，不再全局 clear()——
   // 全局清空会连带清掉其它 session 正在执行的 run_code 子调用计数。
@@ -1829,6 +1895,7 @@ export function apply(ctx, config) {
       malformedRetried.delete(sessionId)
       jobOutputCallCounters.delete(sessionId)
       jobOutputLastAnchors.delete(sessionId)
+      pollGuardCounters.delete(sessionId)
       toolJobsNoticesConsumed.delete(sessionId)
       subCallCounters.delete(sessionId)
       usageCursors.delete(sessionId)
@@ -2088,13 +2155,15 @@ export function apply(ctx, config) {
         jobOutputCallCounters.delete(sessId)
         toolJobsNoticesConsumed.delete(sessId)
         subCallCounters.delete(sessId)
+        pollGuardCounters.delete(sessId)
         jobOutputLastAnchors.set(sessId, currentAnchor)
       }
     }
     // tool-jobs 完成通知解锁扫描：匹配 source.kind==='tool-jobs' && source.form==='notice'
     // （v4 形状；旧三元组表述（kind 取旧兜底值 plugin + plugin 包名字段）已废，见下方 HK9 注）
-    // 从正文用 /background job (\S+)/ 解析 jobId；若存在于本 session 的 jobOutputCallCounters 中则删除该
-    // jobId 计数（只清这一个，不清整表、不动 subCallCounters）；解析失败或未跟踪 → 无操作（保守不放行）。
+    // 从正文用 /background job (\S+)/ 解析 jobId；首次消费即标记 consumed 并执行双解锁动作：
+    // ① job_output 单键解锁（若该 jobId 被跟踪，删除幂等）② pollGuardCounters 清整表（v0.4.0）；
+    // 解析失败（无 jobId）→ 无操作（保守不放行）。
     {
       const sessId = agent.session.header.id
       const consumed = toolJobsNoticesConsumed.get(sessId)
@@ -2119,9 +2188,12 @@ export function apply(ctx, config) {
         if (m === null) continue
         const jobId = m[1]
         if (consumed !== undefined && consumed.has(jobId)) continue
+        // v0.4.0：consumed 标记与 job_output 跟踪命中解耦——通知首次被消费即标记，
+        // 同时执行两个解锁动作：① job_output 单键解锁（若该 jobId 被跟踪，删除幂等）；
+        // ② job_list/list_agents 轮询守卫清整表（无参数键，只能清整表）。
         const perSession = jobOutputCallCounters.get(sessId)
-        if (perSession === undefined || !perSession.has(jobId)) continue
-        perSession.delete(jobId)
+        if (perSession !== undefined && perSession.has(jobId)) perSession.delete(jobId)
+        pollGuardCounters.delete(sessId)
         if (consumed !== undefined) consumed.add(jobId)
         else toolJobsNoticesConsumed.set(sessId, new Set([jobId]))
       }
@@ -2210,7 +2282,7 @@ export function apply(ctx, config) {
     }
 
     const state = deriveFlowState(execEvents, gateRuntime)
-    const reason = mainGateReason(state, exec, { events: execEvents, planToolName, jobOutputCallCounters, runcodeCatchGate: runcodeCatchGateOn(), runCodeDepth: 0, gateRuntime })
+    const reason = mainGateReason(state, exec, { events: execEvents, planToolName, jobOutputCallCounters, pollGuardCounters, runcodeCatchGate: runcodeCatchGateOn(), runCodeDepth: 0, gateRuntime, getAgents: () => ctx.get('agents') })
     if (reason !== null) {
       recordRunCodeDeny(agent, exec, reason)
       return { kind: 'deny', reason }
@@ -2218,6 +2290,7 @@ export function apply(ctx, config) {
     // 放行副作用：job_output 计数器记录（B3 收敛：与 planner/只读 child 共用 recordJobOutputCall；
     // 仅在全部闸门放行后执行，时序等价）
     recordJobOutputCall(agent, exec, jobOutputCallCounters)
+    recordPollGuardCall(agent, exec, pollGuardCounters)
     return next()
   })
 

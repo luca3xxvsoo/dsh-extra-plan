@@ -21,7 +21,7 @@
 
 ## 修改后固定顺序
 
-1. 对**本轮实际修改的 JS/MJS**逐文件执行 `node --check`；本轮预期实际修改 JS/MJS 为零，因此不为 Markdown 伪造语法门。
+1. 对**本轮实际修改的 JS/MJS**逐文件执行 `node --check`；本轮实际修改为 `plugins/dsh-extra-plan/index.js` 与 `pe-test/tools/step-04-路由与写闸门.mjs` 两文件（按批准方案），两文件均须通过语法门。
 2. 在仓库根依次运行：
    - `node pe-test/tools/step-00-全流程回归.mjs`
    - `node pe-test/tools/step-04-路由与写闸门.mjs`
@@ -37,7 +37,7 @@
 
 | 改动域 | 主要检查 |
 |:--|:--|
-| 闸门、route/purpose、A/C/M、PTC 呈现 | `step-00-全流程回归.mjs`、`step-04-路由与写闸门.mjs` |
+| 闸门（含 job_kill/send_message/job_list/list_agents 四工具闸门）、route/purpose、A/C/M、PTC 呈现 | `step-00-全流程回归.mjs`、`step-04-路由与写闸门.mjs` |
 | save_plan/save_probe、journal、证据合同 | `step-00-全流程回归.mjs`、`step-06-线索落盘.mjs`；限制以 `lib/save-contract.js` 为准 |
 | 预设默认、settings、profile patch 自愈 | 对应 step-01 脚本；生成器与产物 `--check` 只读验证 |
 | 模型路由、usage、会话形状 | step-00、step-04 P4、step-07 HUMAN 取证；静态结果不替代实机 |

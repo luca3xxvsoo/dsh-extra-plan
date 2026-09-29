@@ -19,7 +19,7 @@
 |:--|:--|:--|
 | HS 服务/注册 | HS1-HS6、HS8-HS27（HS7 已删除历史） | 下面“当前 HS” |
 | HK 钩子/组合 | HK1-HK10、HK11-HK22、HK24-HK27；HK23 无定义不补造 | 下面“当前 HK” |
-| SD 数据/布局 | SD1-SD8、SD10-SD12、SD14-SD15、SD16-SD32、SD33、SD35-SD38；SD9/SD13 保留缺号说明 | 下面“当前 SD” |
+| SD 数据/布局 | SD1-SD8、SD10-SD12、SD14-SD15、SD16-SD32、SD33、SD35-SD40；SD9/SD13 保留缺号说明 | 下面“当前 SD” |
 | CF 安装配置 | CF3-CF12；CF1/CF2 已删除历史 | 下面“当前 CF” |
 | QB 兼容包 | QB1-QB3、QB5-QB21、QB25-QB26；QB27-QB31 为测试/条件环境面 | 下面“当前 QB” |
 
@@ -68,7 +68,7 @@
 | HK6b | `model-routing.js` prepareCall/stream | 真实 OK probe 完整消费、超时/abort 独立 | 【已核实·静态】 |
 | HK7 | `tools/pre-execute` | waterfall；四级闸门与组判定；next 默认 allow | 【已核实·静态】 |
 | HK8 | 七个钩子 `payload.agent` | agentEvents fused 形状 | 【已核实·静态】 |
-| HK9 | tool-jobs 通知 | `source.kind='tool-jobs'` 且 `form='notice'`；旧三元组已废 | 【已核实·静态】 |
+| HK9 | tool-jobs 通知 | `source.kind='tool-jobs'` 且 `form='notice'`；旧三元组已废；v0.4.0 起新增 job_list/list_agents 轮询守卫清整表消费方（consumed 标记与 job_output 跟踪命中解耦） | 【已核实·静态】 |
 | HK10 | step-06 事件夹具 | 事件负载必须与真实 subagent/ask/tool 形状一致 | 【已核实·静态】 |
 | HK11 | `cordis.patch.yml` 三条 insert | client-bridge/settings/preset-sync 行注入 | 【已核实·静态】 |
 | HK12 | package `dsh.bundle.patch` | 依次装载 cordis.patch 与生成的 preset patch | 【已核实·静态】 |
@@ -128,6 +128,8 @@ HK23 当前无定义，不补造编号；历史/旧钩子见归档。
 | SD36 | backgroundMode→descriptor.mode | 角色与 probe claim |
 | SD37 | createUserMessage/source.kind | v4 自有 producer kind 与 id/role |
 | SD38 | step-07 输出 | attempted/actual provenance、suffix、父子行号 |
+| SD39 | agents.get(id).status | AgentRegistry.get(id)（dsh-agent）返回驻留 Agent，.status getter 真源 dsh-agent-loop：phase idle/maintenance → 'idle' 否则 'running'；插件经 ctx.get('agents') 查询 send_message 目标运行状态 |
+| SD40 | ToolExecution.agent / arguments.agent_id | send_message 方向判定契约：agent=调用者、arguments.agent_id=目标；SD25 字段清单未列 agent 字段，此处补记 |
 
 SD9、SD13 是历史缺定义编号，SD34 是本插件不调用 `sessionProjections.stateOf` 的反向记录；三者不补造成当前合同。
 

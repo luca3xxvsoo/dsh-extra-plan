@@ -39,7 +39,7 @@ PTC C=0/C=1 必须各用干净 A=1 顶层会话取 F→首个 tool/call→L→�
 - 直行词：主会话按用户要求执行；执行类委派仍只认批准锚点。
 - 规划词：进入 ⑧-⑫。
 - 否决词、空白或取消：不动作；拒绝不清阶段状态，用户取消/中断清 `route/purpose/clarified/approved`，通道级故障只保留 `channelBroken` 逃生。
-- `send_message` 是续轮转达，不替代 route/purpose/approved；新 user/message 会切断旧事件窗。
+- `send_message` 是续轮转达，不替代 route/purpose/approved；新 user/message 会切断旧事件窗。主会话向 running 子代理发 send_message 被拒（文案『子代理running中，禁止打扰』）；目标非 running 放行。
 
 ## ⑧ 目的与澄清
 
@@ -53,7 +53,7 @@ PTC C=0/C=1 必须各用干净 A=1 顶层会话取 F→首个 tool/call→L→�
 
 ## ⑩ 规划子代理
 
-主会话用 `subagent_plan` 后台委派，prompt 自包含目标、范围、文件、用户目的和线索路径，并写明“先 read 线索，再按需补查”。规划预算由运行时计数；耗尽时走“申请继续探查”→主会话探查/委派→`save_probe`→`send_message` 转达→预算重置的往返。
+主会话用 `subagent_plan` 后台委派，prompt 自包含目标、范围、文件、用户目的和线索路径，并写明“先 read 线索，再按需补查”。规划预算由运行时计数；耗尽时走“申请继续探查”→主会话探查/委派→`save_probe`→`send_message` 转达→预算重置的往返（转达前提：planner 已停（非 running））。
 
 规划产出格式固定为：
 

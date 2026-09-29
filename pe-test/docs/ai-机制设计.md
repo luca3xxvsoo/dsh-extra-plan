@@ -28,7 +28,7 @@
 - planner 只使用 `plannerModel`；executor、reviewer、probe、workflow/ralph worker 等非 planner child 只使用 `otherAgentModel`。已显式指定的直接父 provider/model 优先，不被默认模型覆盖。
 - `crossProviderPlannerModel=false/缺失/非法` 走旧的单 provider advisory 路径；严格开启时枚举 provider，只对精确命中的模型做真实 OK probe，所有候选完成后按发起顺序收集、排序，再返回最终路由；候选失败后必须验证顶层主会话 fallback。
 - probe 是有界并发、独立超时/AbortController 的真实调用，可能有网络、额度与计费副作用；它不是目录命中，也不是 `resolveCallConfig` 的替代。成功与失败 promise 均按 Agent 隔离缓存，不跨角色/Agent 共享。
-- 唯一详版与取证入口：[model-routing.js](../../plugins/dsh-extra-plan/lib/model-routing.js)、[流程备查 ⑩-1](ai-流程备查.md#⑩-1planner-与非-planner-首请求时序屏障crossproviderplannermodel)、[step-07](../tools/step-07-子代理模型与引导取证.mjs)。step-07 必须显式提供 `SESSION_ID` 和 `PLANNER_PROMPT_SUFFIX`，request/header 是 attempted，assistant/message source 才是 actual provenance。
+- 唯一详版与取证入口：[model-routing.js](../../plugins/dsh-extra-plan/lib/model-routing.js)、[流程备查](ai-流程备查.md#⑩-规划子代理)、[step-07](../tools/step-07-子代理模型与引导取证.mjs)。step-07 必须显式提供 `SESSION_ID` 和 `PLANNER_PROMPT_SUFFIX`，request/header 是 attempted，assistant/message source 才是 actual provenance。
 
 ## 五、A/C/M 投影、P2-2 与配置默认链
 
@@ -40,7 +40,7 @@
 
 ## 六、session 生命周期与 usage 账本
 
-- 运行时状态按 `sessionId` 分桶；rootCall、job_output、tool-jobs 通知、usage cursor 不能跨会话清理。锚点变化只清当前 session 的临时桶。
+- 运行时状态按 `sessionId` 分桶；rootCall、job_output、tool-jobs 通知、usage cursor 不能跨会话清理。锚点变化只清当前 session 的临时桶。pollGuardCounters（job_list/list_agents 调用计数）按 sessionId 分桶；锚点变化与 tool-jobs 完成通知双通道清整表；通知 consumed 标记与 job_output 跟踪命中解耦。
 - `agent/disposed` 是 emit/void，宿主不等待异步 Promise；因此必须在监听器同步路径先做 final fold，再处理 pending probe，再按 sessionId 回收 Map、notice、rootCall 与 cursor。重复 disposed 幂等，其它 session 不受影响。
 - usage 增量以宿主 `session.seq` 水位配合 `snapshotEvents(from,to)` 读取新增区间；水位不变直接返回，日志截断或首次折叠才回退全量，`seq` 去重后 append 成功才推进 cursor。生产热路径不每趟同时跑全量和增量；全量对拍只在验收回归运行。
 - cursor 文件 ENOENT 按空表；损坏、解析失败或根值非对象时首次告警并保留原始字节，避免覆盖其它 session 的去重基准。账本字段缺失按空值/零兼容，五类计数全零的事件不写行。
@@ -55,6 +55,10 @@
 | 模型路由必须真实验证或可靠 fallback | `model-routing.js`；流程 ⑩-1/step-00 |
 | 展示隐藏不是 runtime 安全隔离；P2-2 cache 不跨 Agent | `assembly-presentation.js`、`sdk-text-cache.js`；step-04 |
 | usage final fold 必须同步且按 session 隔离 | 根入口/`agent-runtime.js`；step-04 P4 |
+| job_kill 仅直行放行 | `mainGateReason`；step-04 |
+| send_message 主会话向 running 目标拒绝 | `mainGateReason`（gateCtx.getAgents）；step-04 |
+| job_list/list_agents 同锚点防轮询 | `pollGuardGateReason`/`recordPollGuardCall`；step-04 |
+| 通知解锁双动作（job_output 单键+pollGuard 清表） | apply 锚点/通知扫描；step-04 TJ/PG |
 | 宿主变更先看当前台账，历史快照不作当前事实 | [ai-宿主耦合台账](ai-宿主耦合台账.md)；[宿主历史归档](ai-宿主耦合历史归档.md) |
 
 机制变化时先核对源码真源与对应回归，再同步本文件；旧事故和批次不要重新写入当前合同。

@@ -12,7 +12,7 @@
 
 | 角色 | 当前职责 | 交付边界 |
 |:--|:--|:--|
-| 主会话 | 接收需求、复杂度评估、路由/批准、分派、汇总 | 只读探查可随时做；主会话写入受路由/批准约束 |
+| 主会话 | 接收需求、复杂度评估、路由/批准、分派、汇总 | 只读探查可随时做；主会话写入受路由/批准约束；子代理干预工具（job_kill/send_message/job_list/list_agents）受主会话层闸门限制 |
 | 探查者 | 后台只读批量探查、`save_probe` 证据落盘 | 仅主会话可委派；回传路径与短摘要 |
 | 规划子代理 | 读取线索、补充只读核对、`save_plan` 双文件 | 不得委派探查者；预算耗尽走继续探查往返 |
 | 执行者 | 按方案与验收文件改工作区 | 不重新规划；逐项自验证；禁止越界写入 |
@@ -22,12 +22,12 @@
 
 | 功能域 | owner / 入口 | 当前摘要与唯一详版 |
 |:--|:--|:--|
-| 四级闸门与状态 | `plugins/dsh-extra-plan/index.js` | `route→purpose→clarified→approved`；拒绝不清状态、取消清阶段状态。详见 [机制设计](ai-机制设计.md#一四级机械锚点路由目的澄清批准)。 |
+| 四级闸门与状态 | `plugins/dsh-extra-plan/index.js` | `route→purpose→clarified→approved`；拒绝不清状态、取消清阶段状态；job_kill 仅直行放行、send_message 主会话方向限制、job_list/list_agents 同锚点防轮询。详见 [机制设计](ai-机制设计.md#一四级机械锚点路由目的澄清批准)。 |
 | gateWords | `assets/presets/extra-plan/agent.cordis.yml` + `lib/gate-words.js` | YAML 七键是唯一值源，apply 先整组校验，再注册七个变量；旧词不推进状态。详见 [机制设计](ai-机制设计.md#一-1闸门关键词单一来源与运行时词表v030)。 |
 | run_code 组判定 | `lib/run-code-static.js` + 根入口 | 成员逐点判定、组拒零副作用；多调用需独立容错，planner 单实例受预算上限。 |
 | save_plan/save_probe | `lib/save-contract.js`、`lib/save-probe-validation.js`、`lib/save-persistence.js`、`lib/save-tool-factories.js` | 合同、校验、原子提交/journal、工具工厂分层；限制值以源码为准，详见机制设计与 step-06。 |
 | planner 预算 | `lib/planner-budget.js` | 按锚点计数，提醒/耗尽后申请继续探查；`exploreBudget` 不等于历史 evidence 数。 |
-| 模型路由 | `lib/model-routing.js` | planner 与非 planner 分离；legacy/strict 由开关分流，strict 必须完成真实 probe 或已验证父 fallback。唯一流程细节见 [流程备查](ai-流程备查.md#⑩-1planner-与非-planner-首请求时序屏障crossproviderplannermodel)。 |
+| 模型路由 | `lib/model-routing.js` | planner 与非 planner 分离；legacy/strict 由开关分流，strict 必须完成真实 probe 或已验证父 fallback。唯一流程细节见 [流程备查](ai-流程备查.md#⑩-规划子代理)。 |
 | A/C/M 投影 | `lib/assembly-presentation.js` + 根入口 | 只改模型可见 assembly/schema/catalog，不替代 runtime deny；PTC 首轮手写 `tool:read`，L 段回宿主原文。 |
 | P2-2 SDK 文本 | `lib/sdk-text-cache.js` | apply 内 agent-keyed WeakMap；完整 schema/language/renderer 变化失效，同 key 并发合并，失败不缓存；调用计数 1 是硬门槛。详见 [机制设计](ai-机制设计.md#p2-2-sdk-文本复用的安全边界)。 |
 | 设置双通道 | `lib/settings.js`、`lib/client.js`、`lib/preset-settings.js` | 8 项 UI + 2 项宿主行设置进入 settings 权威值；PUT 只做声明行投影；当前入口为 Plugins 页已安装包行详情。 |

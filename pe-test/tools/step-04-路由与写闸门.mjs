@@ -183,6 +183,10 @@ function makeHarness(config = {}) {
       if (name === 'systemPrompt') return systemPrompt
       // 0.1.7 服务名换代：codeRuntime → ptcRuntime（SDK renderer 语言来源）。
       if (name === 'ptcRuntime') return { language: typeof config.language === 'string' ? config.language : 'typescript' }
+      // 四工具治理（v0.4.0）：agents 服务 mock——缺省不注入（undefined，保持
+      // createAgentRuntime/isLiveDelegation 的 agents 缺席豁免路径不破坏 child 判定）；
+      // 用例经 config.agents 显式注入 registry（如 { get: (id) => ({ status: 'running' }) }）。
+      if (name === 'agents') return config.agents
       return undefined
     },
     on: (name, fn, options) => {
@@ -202,6 +206,9 @@ function makeHarness(config = {}) {
 const harness = makeHarness({ anchoredBootstrap: false })
 const harnessBoot = makeHarness({ anchoredBootstrap: true })
 const harnessCatchOn = makeHarness({ runcodeCatchGate: true })
+// 四工具治理（v0.4.0）：agents 服务两个变体——running registry（指定 id 驻留 running）与 idle registry。
+const harnessAgents = makeHarness({ anchoredBootstrap: false, agents: { get: (id) => (id === '3a7c1e5b-9d2f-4e8a-b6c4-1f0e9d8c7b6a' || id === 'session-x') ? { status: 'running' } : undefined } })
+const harnessAgentsIdle = makeHarness({ anchoredBootstrap: false, agents: { get: () => ({ status: 'idle' }) } })
 
 const childAgent = (id) => ({
   session: {
@@ -737,9 +744,15 @@ checkTrue('R59 workflow 批准放行 → allow', r !== null && r !== undefined &
 r = preExecute(harness, approvedMain, 'ralph', {})
 checkTrue('R60 ralph 批准放行 → allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, noneMain, 'send_message', { agent_id: 'session-x', message: 'hi' })
-checkTrue('R61 send_message 任意目标 → allow（白名单已删除）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R61 send_message 主会话 目标未驻留 → allow（agents 未注入 fail-open，宿主 NOT_RESUMABLE 自理）', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harnessAgents, noneMain, 'send_message', { agent_id: 'unknown-id', message: 'hi' })
+checkTrue('R61b send_message 主会话 目标未驻留（registry 可用、get→undefined）→ allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, planChildMain, 'send_message', { agent_id: '3a7c1e5b-9d2f-4e8a-b6c4-1f0e9d8c7b6a', message: 'hi' })
-checkTrue('R62 send_message planner 目标 → allow（白名单已删除后语义不变）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R62 send_message planner 目标 未驻留 → allow（agents 未注入 fail-open 放行）', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harnessAgents, planChildMain, 'send_message', { agent_id: '3a7c1e5b-9d2f-4e8a-b6c4-1f0e9d8c7b6a', message: 'hi' })
+checkTrue('R62b send_message 主会话 目标 running → deny 且含「子代理running中，禁止打扰」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('子代理running中，禁止打扰'))
+r = preExecute(harnessAgentsIdle, planChildMain, 'send_message', { agent_id: '3a7c1e5b-9d2f-4e8a-b6c4-1f0e9d8c7b6a', message: 'hi' })
+checkTrue('R62c send_message 主会话 目标 idle → allow（非 running 放行）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, mainAgent, 'job_output', { job_id: 'j1', wait: true })
 checkTrue('R63 job_output wait → deny 且含「job_output 禁止带 wait: true」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止带 wait: true'))
 r = preExecute(harness, mainAgent, 'job_output', { job_id: 'j1' })
@@ -789,6 +802,8 @@ r = preExecute(harness, noneMain, 'cordis_inspect_query', {})
 checkTrue('R82 cordis 只读族 → allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, noneMain, 'run_code', smCode)
 checkTrue('R83 组内 send_message 成员 → allow（白名单已删除，组判定放行）', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harnessAgents, noneMain, 'run_code', smCode)
+checkTrue('R83b harnessAgents 组内 send_message 成员目标 running → deny 且聚合含「子代理running中，禁止打扰」（组判定同口径，gateCtx 透传 getAgents）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('子代理running中，禁止打扰'))
 r = preExecute(harness, approvedMain, 'run_code', revCode)
 checkTrue('R84 组内 subagent_review 成员（批准+后台）→ allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, noneMain, 'run_code', joCode)
@@ -1003,6 +1018,25 @@ checkTrue('R98 executor job_output wait → allow（执行者豁免保持）', r
 r = preExecute(harness, plannerAgent, 'run_code', joCode)
 checkTrue('R99 planner run_code 组内 job_output wait → deny 且含「job_output 禁止带 wait: true」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止带 wait: true'))
 
+// ── ⑬b 四工具治理：job_kill 仅直行路线放行（v0.4.0；编号自文件内最大 R107 顺延） ──
+const jkCode = { code: 'await tools.job_kill({ "job_id": "j1", "reason": "x" })', description: 'job_kill 成员' }
+r = preExecute(harness, noneMain, 'job_kill', { job_id: 'j1', reason: 'x' })
+checkTrue('R108 主会话 none 态 job_kill → deny 且含「当前状态禁止job_kill」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('当前状态禁止job_kill'))
+r = preExecute(harness, directMain, 'job_kill', { job_id: 'j1', reason: 'x' })
+checkTrue('R109 主会话 direct 态 job_kill → allow', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, planMain, 'job_kill', { job_id: 'j1', reason: 'x' })
+checkTrue('R110 主会话 plan 态 job_kill → deny 且含「当前状态禁止job_kill」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('当前状态禁止job_kill'))
+r = preExecute(harness, approvedMain, 'job_kill', { job_id: 'j1', reason: 'x' })
+checkTrue('R111 主会话 approved 态（pro 批准后 route 仍 plan，全程拒绝）job_kill → deny 且含「当前状态禁止job_kill」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('当前状态禁止job_kill'))
+r = preExecute(harness, channelBrokenMain, 'job_kill', { job_id: 'j1', reason: 'x' })
+checkTrue('R112 主会话 channelBroken 态 job_kill → allow（escape 逃生）', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, reselectDirectMain, 'job_kill', { job_id: 'j1', reason: 'x' })
+checkTrue('R113 批准后重选 direct 态 job_kill → allow', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, noneMain, 'run_code', jkCode)
+checkTrue('R114 主会话 none 态 run_code 组内 job_kill 成员 → deny 且聚合含「当前状态禁止job_kill」（组判定同口径）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('当前状态禁止job_kill'))
+r = preExecute(harness, directMain, 'run_code', jkCode)
+checkTrue('R115 主会话 direct 态 run_code 组内 job_kill 成员 → allow', r !== null && r !== undefined && r.kind === 'allow')
+
 // ── ⑭d 可变事件流 tool-jobs 完成通知解锁（任务4） ──────────────────────
 {
   const sharedEvents = []
@@ -1029,6 +1063,34 @@ checkTrue('R99 planner run_code 组内 job_output wait → deny 且含「job_out
   // 通知注入后 job_output j1 → allow（修复生效）
   r = preExecute(harness, mutableMain, 'job_output', { job_id: 'j1' })
   checkTrue('TJ3 可变事件流 tool-jobs 通知后 job_output j1 → allow（修复生效）', r !== null && r !== undefined && r.kind === 'allow')
+}
+
+// ── ⑭f 四工具治理：job_list/list_agents 同锚点防轮询 + 双通道重置（v0.4.0） ──
+{
+  const sharedEvents = []
+  const mutableMain2 = { session: { header: { id: 'mutable-main-2', cwd: 'C:/work' }, snapshotEvents: () => sharedEvents }, options: {}, ctx: undefined }
+  // 首次放行（隐式验证 recordPollGuardCall 生效）
+  r = preExecute(harness, mutableMain2, 'job_list', {})
+  checkTrue('PG1 job_list 首次 → allow（recordPollGuardCall 生效）', r !== null && r !== undefined && r.kind === 'allow')
+  r = preExecute(harness, mutableMain2, 'job_list', {})
+  checkTrue('PG2 job_list 同轮第二次 → deny 且含「禁止轮询子代理状态，停止操作并等待子代理通知」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('禁止轮询子代理状态，停止操作并等待子代理通知'))
+  r = preExecute(harness, mutableMain2, 'list_agents', {})
+  checkTrue('PG3 list_agents 首次 → allow（不同工具独立计数）', r !== null && r !== undefined && r.kind === 'allow')
+  r = preExecute(harness, mutableMain2, 'list_agents', {})
+  checkTrue('PG4 list_agents 同轮第二次 → deny 且含同文案', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('禁止轮询子代理状态，停止操作并等待子代理通知'))
+  // 重置通道①：注入新 user 消息（锚点变化清整表）
+  sharedEvents.push({ type: 'user/message', data: { source: { kind: 'user' }, content: [] } })
+  r = preExecute(harness, mutableMain2, 'job_list', {})
+  checkTrue('PG5 新 user 消息锚点重置后 job_list → allow（清整表）', r !== null && r !== undefined && r.kind === 'allow')
+  r = preExecute(harness, mutableMain2, 'list_agents', {})
+  checkTrue('PG6 锚点重置后 list_agents → allow（清整表）', r !== null && r !== undefined && r.kind === 'allow')
+  // 同轮第二次再拒
+  r = preExecute(harness, mutableMain2, 'job_list', {})
+  checkTrue('PG7 锚点重置后同轮 job_list 第二次 → deny 且含同文案', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('禁止轮询子代理状态，停止操作并等待子代理通知'))
+  // 重置通道②：注入 tool-jobs 完成通知（jobId 'jx' 不在 job_output 计数器中，也必须清 pollGuard——验证 consumed 解耦）
+  sharedEvents.push({ type: 'user/message', data: { source: { kind: 'tool-jobs', form: 'notice' }, content: [{ type: 'text', text: 'background job jx (subagent: test) finished [status: completed]. Read its output with job_output.' }] } })
+  r = preExecute(harness, mutableMain2, 'job_list', {})
+  checkTrue('PG8 tool-jobs 通知（未跟踪 jobId jx）后 job_list → allow（consumed 解耦清 pollGuard）', r !== null && r !== undefined && r.kind === 'allow')
 }
 
 // ── ⑭ R100-R105：runcodeCatchGate 开关 + safe 白名单 + 容器计费 + 实例上限（2026-09-06） ──
