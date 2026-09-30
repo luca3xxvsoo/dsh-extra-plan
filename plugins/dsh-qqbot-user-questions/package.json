@@ -18,6 +18,9 @@
   "scripts": {
     "postinstall": "node scripts/heal.mjs"
   },
+  "dependencies": {
+    "js-yaml": "^4.2.0"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"

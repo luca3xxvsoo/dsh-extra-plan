@@ -6,12 +6,23 @@
 
 | 项 | 当前值/口径 | 状态 |
 |:--|:--|:--|
-| DSH | `0.1.7-rc.1 || 0.1.7-rc.2` | 当前唯一支持范围；peerDependencies 为真源 |
+| DSH | `0.1.7-rc.1 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2` | 四版本精确 peer 目标；rc.2 静态核实，rc.1 未核实·HUMAN |
 | QQBot 目标 | `0.5.0` | 静态目标，不等于集成通过 |
 | 核心插件 | `@local/dsh-extra-plan` `0.3.0` | 当前包契约 |
 | QQBot 精简插件 | `@local/dsh-qqbot-user-questions` `2.0.0` | 仍有 postinstall（安装后脚本）；allow-build 是否放行待 HUMAN |
 | 预设载体 | profile patch 根级 `preset-extra-plan` 声明行 | `dsh.bundle.patch` 第二项为生成产物；旧 `.agent-presets` 不作读取方 |
 | 状态判读 | `【已核实】` 表示台账静态/源码核对；`【未核实】`、`HUMAN`、`SKIP` 不得改为通过 | 当前台账纪律 |
+
+### 四版本证据分栏
+
+| 版本 | peer 目标 | 当前静态证据 | 结论 |
+|:--|:--|:--|:--|
+| `0.1.7-rc.1` | 纳入 | 既有台账基线 | 本轮不重跑 |
+| `0.1.7-rc.2` | 纳入 | 既有台账基线 | 本轮不重跑 |
+| `0.2.0-rc.1` | 纳入（用户决策） | 本机无安装根、无 SlotMap/API 证据 | `【未核实·HUMAN】`；不得由 rc.2 推出 |
+| `0.2.0-rc.2` | 纳入 | `D:\AI项目\dsh-v0.2.0-rc2` 静态核对 | `【已核实·静态】`；未部署实测 |
+
+生产事实：用户已核实 `C:\Users\Administrator\.dsh\profiles\qqbot\node_modules\js-yaml\package.json` 为 `4.3.2`；QQBot 先从包自身解析，QB5 属于“健壮性改进”而非当前生产阻断。本轮不写入或重装生产 profile。
 
 ### 当前宿主接触面总表
 
@@ -38,14 +49,14 @@
 | HS10 | executor `toolFilter.deny` | deny 名单必须是宿主实际工具名 | 【已核实·静态】 |
 | HS11 | `prepareContinuable` | 能力存在时才透传 continuable | 【已核实·静态】 |
 | HS12 | `resolveChildAgentOptions` | 对象展开合并，空对象继承父路由 | 【已核实·静态】 |
-| HS13 | `preset-settings.js` `loadYaml` | 本包 js-yaml 失败时按宿主安装目录回退 | 【已核实·静态】 |
+| HS13 | `preset-settings.js` `loadYaml` | 核心包自有 js-yaml；QQBot 由 package-local js-yaml 依赖保障，失败返回 null | 【已核实·静态】 |
 | HS14 | `!!js` YAML 标签 | YAML_SCHEMA 对 `dshHomePath` 等表达式的解析 | 【已核实·静态】 |
 | HS15 | `SETTING_DEFINITIONS` | 10 项 source/row/projection 定位与 8+2 分组 | 【已核实·静态】 |
 | HS16 | `tool-presentation.config.mode` | 仅 `native/ptc/both` | 【已核实·静态】 |
 | HS17 | `client.js` `__ModuleLoader__` | loader id 必须与包名/组合图一致 | 【已核实·静态】 |
 | HS18 | `client.js` `require("react")` | 共享 client module 提供 React | 【已核实·静态】 |
 | HS19 | locale bind/register（语言环境绑定/注册） | 包级与行级 locale 通道 | 【已核实·静态】 |
-| HS20 | `plugins.row.config` + `configForms.whileServed` | 已安装包行详情卡片；key=`@local/dsh-extra-plan#dsh-extra-plan-settings` | 【已核实·静态】 |
+| HS20 | v0.2 `settings.plugins.tab` / 0.1.7 `plugins.row.config` + `configForms.whileServed` | CORE-V02 页签固定 `id=NS/order=90`；LEGACY-017 保留 keyed row；共享表单只有一份；rc.2 静态核实，rc.1 HUMAN | 【已核实·静态；rc.1 未核实·HUMAN】 |
 | HS21 | `client.js` `esp-*` | 本插件自持样式；不依赖旧宿主 CSS hash | 【已核实·静态】 |
 | HS22 | 主题 token | 颜色/可读性依赖主题变量名 | 【已核实·静态】 |
 | HS23 | client-bridge 空壳行 | pathLike + package exports 扫描 client | 【已核实·静态】 |
@@ -146,7 +157,7 @@ SD9、SD13 是历史缺定义编号，SD34 是本插件不调用 `sessionProject
 | CF9 | 临时 DSH_HOME/profile 夹具形状 | 【已核实·静态】 |
 | CF10 | preset.yml 元数据与声明行 Config | 【已核实·静态】 |
 | CF11 | QQBot 映射测试的 profile/依赖夹具 | 【已核实·静态】 |
-| CF12 | `@deepseek-ai/*` 不进 dependencies；dsh/dsh-llm peer 精确钉 rc.1/rc.2；bundle 不兼容时 skipped/disabled | 【已核实·静态；profile 清理与 422 消失待 HUMAN】 |
+| CF12 | `@deepseek-ai/*` 不进 dependencies；dsh/dsh-llm peer 精确钉四版本；bundle 不兼容时 skipped/disabled | 【已核实·静态；rc.2 门控核对，profile 清理与 422 消失待 HUMAN】 |
 
 CF1/CF2（extra-plan postinstall/distribute-preset）已删除，作为历史归档，不列当前安装合同。
 
@@ -156,7 +167,7 @@ CF1/CF2（extra-plan postinstall/distribute-preset）已删除，作为历史归
 |:--|:--|:--|
 | QB1 | 精简插件 `inject=[]` | 【已核实·静态】 |
 | QB2-QB3 | DSH_HOME/profile 解析与启动 apply 自愈 | 【已核实·静态】 |
-| QB5 | js-yaml 宿主安装回退 | 【已核实·静态】 |
+| QB5 | package-local `js-yaml:^4.2.0`，heal.js 移除 APPDATA/固定宿主后备；失败返回 null | 【已核实·静态；健壮性改进】 |
 | QB8-QB9 | profile bundles 与 `node_modules/@local` 双条件锚定 | 【已核实·静态】 |
 | QB10-QB11 | web 核心包到 qqbot 的 junction/dir 建链；非目标实体不替换 | 【已核实·静态；部署结果待 HUMAN】 |
 | QB12-QB13 | patch 写前备份、写后 YAML 顶层数组/旧块校验；不引用旧 AgentPresetSettingsSchema 为当前合同 | 【已核实·静态】 |
@@ -169,10 +180,10 @@ CF1/CF2（extra-plan postinstall/distribute-preset）已删除，作为历史归
 
 QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；QB4、QB23、QB24 继续列为未核实，不改成通过。
 
-## ⑦ 当前 0.1.7 风险与开放验证
+## ⑦ 四版本风险与开放验证
 
 1. isolate 审计：`mountPreset/leakedServices` 对未隔离 root service 抛错；必要/保险名单必须保持 `isolate: true`。
-2. settings 换代：`settings.register` 不存在；`.volatile()` Config、`configure({auto:false})`、SettingsForms 与 `plugins.row.config/whileServed` 是当前面。
+2. settings 换代：v0.2 `settings.plugins.tab`、`ConfigForms.get(NS)` 与 `whileServed` 是 rc.2 静态已核主路径；0.1.7 `plugins.row.config` 仅为 LEGACY-017 兼容层；rc.1 API/页面仍【未核实·HUMAN】。
 3. profile patch 载体：旧 `.agent-presets` 无读取方；`compatibility.json`/peer 门控可能使 bundle skipped、loader disabled；QQBot 仍有 allow-build/postinstall 欠账。
 4. 包/服务换代：workflow-ptc、`ptcRuntime`、tool:cordis 删除、当前两项 Cordis 工具与 `customSkillDirs` 必须按当前真值核对。
 5. rc.2 单侧风险：`sanitizeProfile` 整体搬移 patch、`configEditor.edit` 值等于继承层删行；rc.1 现场缺失，不能推出跨代结论。
@@ -194,13 +205,13 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 
 ## 当前代码落点（符号级）
 
-- 核心入口 `plugins/dsh-extra-plan/index.js` 负责宿主 hook、配置快照与 session-scoped 状态；设置权威值/投影由 `lib/settings.js`、`lib/preset-settings.js`、`lib/preset-sync.js` 分工。
+- 核心入口 `plugins/dsh-extra-plan/index.js` 负责宿主 hook、配置快照与 session-scoped 状态；设置权威值/投影由 `lib/settings.js`、`lib/preset-settings.js`、`lib/preset-sync.js` 分工；`lib/client.js` 以 SHARED 表单复用 CORE-V02 页签与 LEGACY-017 行插槽。
 - QQBot 兼容面由 `plugins/dsh-qqbot-user-questions/index.js#apply` → `lib/heal.js#healQqbotCompatibility` 驱动；CLI `scripts/heal.mjs` 不改变启动不阻断语义。
 - 当前静态核对不等于部署通过；真实 profile、消息、`/preset`、postinstall 和 allow-build 仍按本台账 HUMAN 项执行。
 
 ## ⑨ 升级 checklist（核对清单，顺序固定）
 
-1. `node pe-test/tools/step-01-qqbot-安装映射.mjs`，再 `node pe-test/tools/step-01-qqbot-环境验证.mjs`；静态先行，环境项条件只读，SKIP 不销账。
+1. 设置只读 `DSH_INSTALL_ROOT`（本机为 `D:\AI项目\dsh-v0.2.0-rc2`）后运行 `node pe-test/tools/step-01-qqbot-安装映射.mjs`，再 `node pe-test/tools/step-01-qqbot-环境验证.mjs`；静态先行，环境项条件只读，SKIP 不销账；rc.1 设备复用现有脚本并保留 HUMAN。
 2. `node pe-test/tools/step-01-设置页配置.mjs` 与 `node pe-test/tools/step-04-路由与写闸门.mjs`；确认 settings/configEditor/工具呈现面。
 3. `node pe-test/tools/一键step测试.mjs`；AUTO/HUMAN/参数项按脚本实际数组与四态判读。
 4. 按 HS/HK/SD/CF/QB 当前表，先钩子 mode，再服务方法，再事件/Session 形状，再 bundle/exports/patch/isolate 契约；旧 API 只作负向核对。

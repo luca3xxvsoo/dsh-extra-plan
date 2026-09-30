@@ -5,13 +5,42 @@
 
 import { createServer, request as httpRequest } from 'node:http'
 import { createRequire, registerHooks } from 'node:module'
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url))
 const DSH_HOME = (process.env.DSH_HOME || join(homedir(), '.dsh')).replaceAll('\\', '/')
+const DSH_INSTALL_ROOT = typeof process.env.DSH_INSTALL_ROOT === 'string' && process.env.DSH_INSTALL_ROOT.trim() !== ''
+  ? resolve(process.env.DSH_INSTALL_ROOT.trim())
+  : null
+
+function installNodeModulesRoots() {
+  if (DSH_INSTALL_ROOT === null) return []
+  const root = join(DSH_INSTALL_ROOT, 'node_modules')
+  return [root, join(root, '@deepseek-ai', 'dsh', 'node_modules')]
+}
+
+function targetManifest(name) {
+  if (DSH_INSTALL_ROOT === null) return null
+  const path = join(DSH_INSTALL_ROOT, 'node_modules', '@deepseek-ai', name, 'package.json')
+  if (!existsSync(path)) return null
+  try { return JSON.parse(readFileSync(path, 'utf8')) } catch { return null }
+}
+
+function targetText(relativePath) {
+  if (DSH_INSTALL_ROOT === null) return ''
+  try { return readFileSync(join(DSH_INSTALL_ROOT, relativePath), 'utf8') } catch { return '' }
+}
+
+const targetDsh = targetManifest('dsh')
+const targetDshLlm = targetManifest('dsh-llm')
+const targetDshVersion = targetDsh !== null && typeof targetDsh.version === 'string' ? targetDsh.version : '缺失'
+const targetDshLlmVersion = targetDshLlm !== null && typeof targetDshLlm.version === 'string' ? targetDshLlm.version : '缺失'
+const targetSlotMapText = targetText('node_modules/@deepseek-ai/dsh-client-ui-settings/lib/types/client/contract/slots.d.ts')
+const targetConfigFormText = targetText('node_modules/@deepseek-ai/dsh-client-ui-settings/lib/types/client/config-form.d.ts')
+console.log('INFO  HOST 真实安装根=' + (DSH_INSTALL_ROOT === null ? '未设置' : DSH_INSTALL_ROOT) + ' dsh=' + targetDshVersion + ' dsh-llm=' + targetDshLlmVersion)
 
 function profileNodeModulesRoots() {
   const roots = []
@@ -56,7 +85,8 @@ function hostSiteNodeModulesRoots() {
   return roots
 }
 
-const dependencyBases = profileNodeModulesRoots()
+const dependencyBases = installNodeModulesRoots()
+  .concat(profileNodeModulesRoots())
   .map((root) => join(root, 'package.json'))
   .concat(hostSiteNodeModulesRoots().map((root) => join(root, 'package.json')))
 if (dependencyBases.length === 0) throw new Error('未找到 settings.js 回归所需的依赖锚点（① profiles/<name>/node_modules ② 0.1.7 宿主现场 node_modules）')
@@ -134,7 +164,45 @@ check('C-1 settings.js 的 Config 源码文本：恰 10 处字段链 volatile（
     body.includes('...HOST_ROW_AUTHORITY_FIELDS')
 })())
 const clientCode = clientText.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n')
-check('client.js：configForms.whileServed + plugins.row.config（key = @local/dsh-extra-plan#dsh-extra-plan-settings；无 order / 无 plugins.item 卡片注册 / 无 settings.plugin.item）', clientCode.includes('ctx.configForms.whileServed([NS]') && clientCode.includes('ctx.slots.inject("plugins.row.config"') && clientCode.includes('name: "plugins.row.config"') && clientCode.includes('"@local/dsh-extra-plan#dsh-extra-plan-settings"') && !clientCode.includes('"plugins.item"') && !clientCode.includes('order: 90') && !clientCode.includes('settings.plugin.item') && !clientCode.includes('key: "dsh-extra-plan"'))
+const coreBegin = clientText.indexOf('// CORE v0.2 SETTINGS PATH BEGIN');
+const coreEnd = clientText.indexOf('// CORE v0.2 SETTINGS PATH END');
+const legacyBegin = clientText.indexOf('// COMPAT dsh-0.1.7 BEGIN');
+const legacyEnd = clientText.indexOf('// COMPAT dsh-0.1.7 END');
+const coreV02Text = coreBegin >= 0 && coreEnd > coreBegin ? clientText.slice(coreBegin, coreEnd) : '';
+const legacy017Text = legacyBegin >= 0 && legacyEnd > legacyBegin ? clientText.slice(legacyBegin, legacyEnd) : '';
+check('CORE-V02 client.js：settings.plugins.tab 仅注册固定 id/order/label/locale，并从 configForms.get(NS) 取表单',
+  coreV02Text.includes('function V02SettingsTab') && coreV02Text.includes('function registerV02SettingsTab') &&
+  coreV02Text.includes('ctx.slots.inject("settings.plugins.tab"') && coreV02Text.includes('id: NS') &&
+  coreV02Text.includes('order: 90') && coreV02Text.includes('label: () => translate("cardTitle")') &&
+  coreV02Text.includes('locale: NS') && coreV02Text.includes('ctx.configForms.get(NS)') &&
+  coreV02Text.includes('configForm: form') && !coreV02Text.includes('plugins.row.config') &&
+  !coreV02Text.includes('settings.section') && !coreV02Text.includes('settings.general.item'));
+check('LEGACY-017 client.js：旧 props/rowId/keyed 行仅在兼容区注册',
+  legacy017Text.includes('function Legacy017SettingsCard') && legacy017Text.includes('function registerLegacy017RowConfig') &&
+  legacy017Text.includes('props.form') && legacy017Text.includes('props.t') &&
+  legacy017Text.includes('LEGACY_017_ROW_CONFIG_KEY') && legacy017Text.includes('plugins.row.config') &&
+  (clientText.match(/COMPAT dsh-0\.1\.7 CALL/g) || []).length === 1 &&
+  !legacy017Text.includes('settings.plugins.tab'));
+check('SHARED client.js：ExtraPlanForm/SettingsCard/字段与保存逻辑只有一份，v0.2 不复制旧表单',
+  (clientText.match(/function ExtraPlanForm/g) || []).length === 1 &&
+  (clientText.match(/function SettingsCard/g) || []).length === 1 &&
+  clientText.includes('function SettingsCard({ configForm, translate, view })') &&
+  clientText.includes('function ExtraPlanForm') && clientText.includes('EXTRA_FIELDS') &&
+  clientText.includes('HOST_ROW_FIELDS') && !coreV02Text.includes('props.form') && !/props\.t(?:\W|$)/.test(coreV02Text));
+
+if (DSH_INSTALL_ROOT === null) {
+  console.log('SKIP  {"scope":"CORE-V02","reason":"DSH_INSTALL_ROOT 未设置，未读取宿主 SlotMap/ConfigForms"}');
+} else if (targetDshVersion === '0.2.0-rc.1' || targetDshLlmVersion === '0.2.0-rc.1') {
+  console.log('HUMAN  0.2.0-rc.1【未核实·HUMAN】：即使 peer 命中，SlotMap/ConfigForms、自动回归与实机仍待设备核验');
+} else {
+  check('CORE-V02 HOST：DSH_INSTALL_ROOT 实际宿主版本清单一致且为 rc.2 目标',
+    targetDshVersion === '0.2.0-rc.2' && targetDshLlmVersion === '0.2.0-rc.2');
+  check('CORE-V02 HOST：真实 SlotMap 有 settings.plugins.tab 且无 plugins.row.config',
+    targetSlotMapText.includes("'settings.plugins.tab'") && !targetSlotMapText.includes("'plugins.row.config'"));
+  check('CORE-V02 HOST：真实 ConfigForms 提供 get 与 whileServed',
+    targetConfigFormText.includes('get<T>') && targetConfigFormText.includes('whileServed('));
+}
+console.log('HUMAN  0.2.0-rc.1【未核实·HUMAN】：当前自动回归不覆盖 rc.1 API/运行结论，须在 rc.1 设备用现有脚本验收')
 check('client.js：外壳与注入面（__ModuleLoader__ + require(react) + slots/locale/configForms）', clientText.includes('window.__ModuleLoader__.load({') && clientText.includes('id: "@local/dsh-extra-plan"') && clientText.includes('require("react")') && clientText.includes('exports.inject = ["slots", "locale", "configForms"]'))
 check('client.js：2 项宿主行并入官方 mutate（10 op）+ esp-* 样式保留', clientText.includes('.esp-wrap{') && clientText.includes('.esp-section{') && clientText.includes('.esp-btn') && clientText.includes('HOST_ROW_FIELDS.map') && clientText.includes('hostDraft[field.key]'))
 check('U-2 client.js：2 项宿主行提示仍标明重启生效 + 保存回执极简（saved，无 savedRestart）', (() => {

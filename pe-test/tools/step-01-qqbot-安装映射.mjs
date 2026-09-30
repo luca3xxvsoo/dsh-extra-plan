@@ -18,6 +18,8 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const SOURCE_ROOT = join(HERE, '..', '..')
 const SOURCE_PACKAGE = join(SOURCE_ROOT, 'plugins', 'dsh-qqbot-user-questions')
 const SOURCE_HEAL = join(SOURCE_PACKAGE, 'scripts', 'heal.mjs')
+const SOURCE_PACKAGE_MANIFEST = join(SOURCE_PACKAGE, 'package.json')
+const SOURCE_HEAL_TEXT = readFileSync(join(SOURCE_PACKAGE, 'lib', 'heal.js'), 'utf8')
 
 let pass = 0
 let fail = 0
@@ -30,6 +32,14 @@ function check(label, condition) {
     console.log('FAIL  ' + label)
   }
 }
+
+let sourcePackageJson = null
+try { sourcePackageJson = JSON.parse(readFileSync(SOURCE_PACKAGE_MANIFEST, 'utf8')) } catch { sourcePackageJson = null }
+check('QB5 健壮性改进：QQBot package-local 声明 js-yaml ^4.2.0',
+  sourcePackageJson !== null && sourcePackageJson.dependencies !== null && typeof sourcePackageJson.dependencies === 'object' && sourcePackageJson.dependencies['js-yaml'] === '^4.2.0')
+check('QB5 健壮性改进：heal.js 仅从包自身 import.meta.url 解析，移除 APPDATA/固定宿主后备',
+  SOURCE_HEAL_TEXT.includes("createRequire(import.meta.url)('js-yaml')") && !SOURCE_HEAL_TEXT.includes('APPDATA') &&
+  !SOURCE_HEAL_TEXT.includes("from 'node:os'") && !SOURCE_HEAL_TEXT.includes('@deepseek-ai/dsh/package.json'))
 
 function isLink(path) {
   try { return lstatSync(path).isSymbolicLink() } catch { return false }
@@ -95,10 +105,16 @@ function bakCount(dir) {
   try { return readdirSync(dir).filter((f) => f.includes('.bak-')).length } catch { return 0 }
 }
 function loadTestYaml() {
-  try { return createRequire(import.meta.url)('js-yaml') } catch (firstError) {
-    const home = process.env.APPDATA || join(homedir(), 'AppData', 'Roaming')
-    try { return createRequire(join(home, 'npm', 'node_modules', '@deepseek-ai', 'dsh', 'package.json'))('js-yaml') } catch { return null }
+  const bases = [join(SOURCE_PACKAGE, 'package.json')]
+  const installRoot = typeof process.env.DSH_INSTALL_ROOT === 'string' ? process.env.DSH_INSTALL_ROOT.trim() : ''
+  if (installRoot !== '') {
+    bases.push(join(installRoot, 'package.json'))
+    bases.push(join(installRoot, 'node_modules', '@deepseek-ai', 'dsh', 'package.json'))
   }
+  for (const base of bases) {
+    try { return createRequire(base)('js-yaml') } catch { /* 继续尝试下一个明确包锚点 */ }
+  }
+  return null
 }
 function parseYaml(text) {
   const yaml = loadTestYaml()

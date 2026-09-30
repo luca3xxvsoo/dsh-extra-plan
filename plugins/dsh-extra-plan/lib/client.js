@@ -9,9 +9,7 @@ window.__ModuleLoader__.load({
     // settings 命名空间 = profile 行 id（dsh-extra-plan-settings）；同时用作 configForms 键、
     // plugins.row.config 键的 rowId 段与 locale 命名空间。
     const NS = "dsh-extra-plan-settings";
-    // 设置行的 plugins.row.config 注册键：宿主 rowConfigKey(bundle, rowId) = `${bundle}#${rowId}`。
-    // bundle 段 = profile 内包名（@local/dsh-extra-plan），rowId 段 = 设置行 id（= NS）。
-    const ROW_CONFIG_KEY = "@local/dsh-extra-plan#dsh-extra-plan-settings";
+    // 0.1.7 keyed row key is declared only inside the COMPAT boundary below.
     // 2 项宿主行设置（webFetch / toolPresentationMode）：**权威值落 settings 行**
     // （dsh-extra-plan-settings 行 config，与上面 8 项同源，跨升级/重装不丢）；
     // 声明行 plugins 内 tool-web / tool-presentation 子行只是投影（消费方是宿主行装载期快照）。
@@ -204,7 +202,7 @@ window.__ModuleLoader__.load({
       // 再走官方 configForms 一次 mutate 10 项（8 项 UI + 2 项宿主行，事务 + revision fencing）；
       // mutate 失败回滚投影。
       function ExtraPlanForm(props) {
-        const form = props.form;
+        const form = props.configForm;
         const snapshot = form !== undefined && form !== null ? form.state : undefined;
         const value = snapshot !== undefined && snapshot !== null ? snapshot.value : undefined;
         const writable = snapshot !== undefined && snapshot !== null ? snapshot.writable === true : false;
@@ -399,26 +397,57 @@ window.__ModuleLoader__.load({
         );
       }
 
-      function SettingsCard(props) {
-        const t = props.t !== undefined && props.t !== null ? props.t : (key) => key;
-        if (props.view === "summary") return t("cardDescription");
+      // SHARED SETTINGS FORM BEGIN：字段元数据、表单、GET/PUT、mutate、revision fencing、回滚与卡片只保留一份。
+      function SettingsCard({ configForm, translate, view }) {
+        const copy = translate !== undefined && translate !== null ? translate : (key) => key;
+        if (view === "summary") return copy("cardDescription");
         return el("div", { className: "esp-wrap" },
-          el(ExtraPlanForm, { form: props.form })
+          el(ExtraPlanForm, { configForm })
         );
       }
+      // SHARED SETTINGS FORM END
 
-      // 注册面（dsh 0.1.7-rc.1 / 0.1.7-rc.2）：Plugins 页「已安装包 → 行详情页」的 keyed 插槽 plugins.row.config。
-      // 宿主 plugins.item 是官方设置页专用列表（挂那里会落进「官方」分组）；旧版 settings.plugin.item 插槽在 0.1.7 已废。
-      // key = ROW_CONFIG_KEY（宿主 rowConfigKey(bundle,rowId) 形态）；keyed 插槽按 key 定位、不认 order/label。
-      // whileServed：只有宿主确实提供该 settings 命名空间时才注册卡片，
-      // 没有该命名空间的部署不显示任何痕迹。
-      ctx.effect(() => ctx.configForms.whileServed([NS], () => ctx.slots.inject("plugins.row.config", () => ctx.slots.register({
-        name: "plugins.row.config",
-        key: ROW_CONFIG_KEY,
-        label: () => t("cardTitle"),
-        locale: NS,
-        inject: () => ({})
-      }, SettingsCard))), "dsh-extra-plan-settings: plugins row config");
+      // CORE v0.2 SETTINGS PATH BEGIN：rc.2 静态已核；rc.1 API/页面仍【未核实·HUMAN】。
+      function V02SettingsTab(props) {
+        return el(SettingsCard, { configForm: props.configForm, translate: props.translate, view: props.view });
+      }
+
+      function registerV02SettingsTab() {
+        const form = ctx.configForms.get(NS);
+        const translate = ctx.locale.bind(NS);
+        return ctx.slots.inject("settings.plugins.tab", () => ctx.slots.register({
+          name: "settings.plugins.tab",
+          id: NS,
+          order: 90,
+          label: () => translate("cardTitle"),
+          locale: NS,
+          inject: () => ({ configForm: form, translate })
+        }, V02SettingsTab));
+      }
+      // CORE v0.2 SETTINGS PATH END
+      ctx.effect(() => ctx.configForms.whileServed([NS], registerV02SettingsTab), "dsh-extra-plan-settings: v0.2 settings plugins tab");
+
+      // COMPAT dsh-0.1.7 BEGIN：仅此处读取旧 props.form/props.t、使用 bundle#rowId 并注册旧 keyed 行插槽。
+      // 宿主 rowConfigKey(bundle, rowId) = `${bundle}#${rowId}`；bundle=@local/dsh-extra-plan，rowId=NS。
+      const LEGACY_017_ROW_CONFIG_KEY = "@local/dsh-extra-plan#dsh-extra-plan-settings";
+
+      function Legacy017SettingsCard(props) {
+        return el(SettingsCard, { configForm: props.form, translate: props.t, view: props.view });
+      }
+
+      function registerLegacy017RowConfig() {
+        const translate = ctx.locale.bind(NS);
+        return ctx.slots.inject("plugins.row.config", () => ctx.slots.register({
+          name: "plugins.row.config",
+          key: LEGACY_017_ROW_CONFIG_KEY,
+          label: () => translate("cardTitle"),
+          locale: NS,
+          inject: () => ({})
+        }, Legacy017SettingsCard));
+      }
+      // COMPAT dsh-0.1.7 CALL
+      ctx.effect(() => ctx.configForms.whileServed([NS], registerLegacy017RowConfig), "dsh-extra-plan-settings: legacy 0.1.7 plugins row config");
+      // COMPAT dsh-0.1.7 END
     }
 
     exports.apply = apply;

@@ -18,12 +18,26 @@ import { DEFAULT_DENY, resolveDeny } from '../../plugins/dsh-extra-plan/lib/exec
 import { HOST_CORDIS_TOOLS } from '../../plugins/dsh-extra-plan/lib/assembly-presentation.js'
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url))
+const DSH_INSTALL_ROOT = typeof process.env.DSH_INSTALL_ROOT === 'string' && process.env.DSH_INSTALL_ROOT.trim() !== ''
+  ? process.env.DSH_INSTALL_ROOT.trim()
+  : null
+const TARGET_PEER_RANGE = '0.1.7-rc.1 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2'
 const PRESET_DIR = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'assets', 'presets', 'extra-plan')
 const file = join(PRESET_DIR, 'agent.cordis.yml')
 const presetFile = join(PRESET_DIR, 'preset.yml')
 const generatedFile = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'preset-defaults.generated.js')
 const generatorFile = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'scripts', 'generate-runtime-defaults.mjs')
 const assemblySource = readFileSync(join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'assembly-presentation.js'), 'utf8')
+
+function targetManifest(name) {
+  if (DSH_INSTALL_ROOT === null) return null
+  try { return JSON.parse(readFileSync(join(DSH_INSTALL_ROOT, 'node_modules', '@deepseek-ai', name, 'package.json'), 'utf8')) } catch { return null }
+}
+const targetDsh = targetManifest('dsh')
+const targetDshLlm = targetManifest('dsh-llm')
+const targetDshVersion = targetDsh !== null && typeof targetDsh.version === 'string' ? targetDsh.version : '缺失'
+const targetDshLlmVersion = targetDshLlm !== null && typeof targetDshLlm.version === 'string' ? targetDshLlm.version : '缺失'
+console.log('INFO  HOST 真实安装根=' + (DSH_INSTALL_ROOT === null ? '未设置' : DSH_INSTALL_ROOT) + ' dsh=' + targetDshVersion + ' dsh-llm=' + targetDshLlmVersion)
 let rows
 let preset
 try {
@@ -62,11 +76,11 @@ function checkDeny(label, denyList) {
   }
 }
 
-// S-宿主真值：读本机 npm 全局宿主 dsh-tool-cordis 的 lib/index.js，提取 name 注册集，
-// 与 HOST_CORDIS_TOOLS 比对——宿主删/增 cordis 工具时此处判红（A1 类缺陷的机械拦截）。
-const hostCordisEntry = process.env.APPDATA
-  ? join(process.env.APPDATA, 'npm', 'node_modules', '@deepseek-ai', 'dsh', 'node_modules', '@deepseek-ai', 'dsh-tool-cordis', 'lib', 'index.js')
-  : null
+// S-宿主真值：优先读取显式 DSH_INSTALL_ROOT 的 dsh-tool-cordis，提取 name 注册集；
+// 未设置目标根时不伪造 rc.2 宿主结论。
+const hostCordisEntry = DSH_INSTALL_ROOT === null
+  ? null
+  : join(DSH_INSTALL_ROOT, 'node_modules', '@deepseek-ai', 'dsh-tool-cordis', 'lib', 'index.js')
 if (hostCordisEntry !== null && existsSync(hostCordisEntry)) {
   const registeredCordis = [...readFileSync(hostCordisEntry, 'utf8').matchAll(/name:\s*["'](cordis_[a-z_]+)["']/g)].map((m) => m[1])
   const truth = [...HOST_CORDIS_TOOLS].sort().join(',')
@@ -353,8 +367,8 @@ if (cordisTools.length === 2 && agentText.includes('# 0.1.7-rc.2 起 dsh-tool-co
   console.log('FAIL  Cordis 静态集合不是 2 项')
 }
 
-// S2：宿主 runtime 包不得进入 dependencies；只能由 peerDependencies 声明
-// @deepseek-ai/dsh-llm 和 schemastery，避免 profile shadow 宿主 runtime 副本。
+// S2：宿主 runtime 包不得进入 dependencies；只能由 peerDependencies 声明。
+// dsh/dsh-llm 的四版本精确并集是版本门控，不等价于 rc.1 API 或实机兼容结论。
 const pluginPkgFile = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'package.json')
 let pluginPkg
 try { pluginPkg = JSON.parse(readFileSync(pluginPkgFile, 'utf8')) } catch { pluginPkg = undefined }
@@ -365,11 +379,24 @@ const hostLeaks = Object.keys(pluginDeps).filter((name) => name.startsWith('@dee
 check('S2 dependencies 不含 @deepseek-ai/* 宿主包（profile 不得出现第二份宿主副本）'
   + (hostLeaks.length > 0 ? '，实际: ' + hostLeaks.join(', ') : ''),
   pluginPkg !== undefined && hostLeaks.length === 0)
-check('S2 peerDependencies 的 @deepseek-ai/dsh-llm 与 @deepseek-ai/dsh 同范围（当前 '
-  + String(pluginPeers['@deepseek-ai/dsh']) + '）',
-  typeof pluginPeers['@deepseek-ai/dsh-llm'] === 'string' && pluginPeers['@deepseek-ai/dsh-llm'] === pluginPeers['@deepseek-ai/dsh'])
-check('S2 peerDependencies 已声明 @deepseek-ai/schemastery（由宿主安装域供给）',
-  typeof pluginPeers['@deepseek-ai/schemastery'] === 'string' && pluginPeers['@deepseek-ai/schemastery'] !== '')
+check('S2 peerDependencies dsh 与 dsh-llm 逐字同为四版本精确并集',
+  pluginPeers['@deepseek-ai/dsh'] === TARGET_PEER_RANGE && pluginPeers['@deepseek-ai/dsh-llm'] === TARGET_PEER_RANGE)
+check('S2 peerDependencies 不使用 caret/compatibility 豁免，且 schemastery 仍由宿主供给',
+  typeof pluginPeers['@deepseek-ai/schemastery'] === 'string' && pluginPeers['@deepseek-ai/schemastery'] !== '' &&
+  !String(pluginPeers['@deepseek-ai/dsh']).includes('^') && !String(pluginPeers['@deepseek-ai/dsh-llm']).includes('^'))
+
+if (DSH_INSTALL_ROOT === null || targetDsh === null || targetDshLlm === null) {
+  console.log('SKIP  {"scope":"HOST-VERSION","reason":"DSH_INSTALL_ROOT 未提供完整 dsh/dsh-llm manifests，未伪造宿主结论"}')
+} else if (targetDshVersion === '0.2.0-rc.1' || targetDshLlmVersion === '0.2.0-rc.1') {
+  console.log('HUMAN  0.2.0-rc.1【未核实·HUMAN】：本脚本只可记录 peer/semver 门控，API/自动回归/实机仍待 rc.1 设备')
+} else {
+  let semver = null
+  try { semver = createRequire(join(DSH_INSTALL_ROOT, 'package.json'))('semver') } catch { semver = null }
+  check('S2 HOST 真实 dsh/dsh-llm manifests 均为 rc.2 目标', targetDshVersion === '0.2.0-rc.2' && targetDshLlmVersion === '0.2.0-rc.2')
+  check('S2 semver 门控命中四个精确 prerelease（仅证明范围命中，不证明 API）', semver !== null &&
+    ['0.1.7-rc.1', '0.1.7-rc.2', '0.2.0-rc.1', '0.2.0-rc.2'].every((version) => semver.satisfies(version, TARGET_PEER_RANGE, { includePrerelease: true })))
+}
+console.log('HUMAN  0.2.0-rc.1【未核实·HUMAN】：不得由 rc.2 结论推出 API/自动回归/实机通过')
 
 // S3：显示元信息本地化通道——Plugins 页包卡片标题/描述与各「行」标题/描述的唯一来源。
 //   宿主 dsh-app-boot readPluginMeta：以 `<specifier>/locale/en.json` 为锚，读同目录 `<lang>.json` 的

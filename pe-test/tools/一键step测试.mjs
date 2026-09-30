@@ -212,6 +212,7 @@ function main() {
   lines.push('## 四、结论')
   lines.push('- 自动判定项结论：通过 ' + autoPass + ' / 部分执行 ' + autoPartial + ' / 未执行 ' + autoSkip + ' / 失败 ' + autoFail + '，共 ' + AUTO.length + ' 项')
   lines.push('- 说明：部分执行/未执行不计失败；环境项的 SKIP 会保留结构化 reason/details，真实 QQBot 消息与交互仍属 HUMAN')
+  lines.push('- 说明：0.2.0-rc.1 未核实·HUMAN，当前 AUTO 不覆盖，须在 rc.1 设备用现有脚本手工验收')
   if (autoFail > 0) lines.push('- 说明：失败项含「已知预存问题」（见自动判定项表格备注列），其余失败需排查')
 
   mkdirSync(REPORTS_DIR, { recursive: true })

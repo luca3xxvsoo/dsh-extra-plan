@@ -8,6 +8,10 @@ import { fileURLToPath } from 'node:url'
 import { findOwnQqbotProfiles, healQqbotCompatibility as healFixture } from '../../plugins/dsh-qqbot-user-questions/lib/heal.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
+const REPO_ROOT = join(HERE, '..', '..')
+const SOURCE_PACKAGE = join(REPO_ROOT, 'plugins', 'dsh-qqbot-user-questions')
+const SOURCE_PACKAGE_MANIFEST = join(SOURCE_PACKAGE, 'package.json')
+const SOURCE_HEAL_TEXT = readFileSync(join(SOURCE_PACKAGE, 'lib', 'heal.js'), 'utf8')
 const LINK_TYPE = process.platform === 'win32' ? 'junction' : 'dir'
 const QQBOT_BUNDLE = '@tencent-connect/dsh-qqbot'
 const QQBOT_PACKAGE = '@local/dsh-qqbot-user-questions'
@@ -36,6 +40,14 @@ function emitSkip(scope, reason, details) {
   skipCount += 1
   console.log('SKIP  ' + JSON.stringify({ scope, reason, details }))
 }
+
+let sourcePackageJson = null
+try { sourcePackageJson = JSON.parse(readFileSync(SOURCE_PACKAGE_MANIFEST, 'utf8')) } catch { sourcePackageJson = null }
+check('QB5 健壮性改进：QQBot package-local 声明 js-yaml ^4.2.0',
+  sourcePackageJson !== null && sourcePackageJson.dependencies !== null && typeof sourcePackageJson.dependencies === 'object' && sourcePackageJson.dependencies['js-yaml'] === '^4.2.0')
+check('QB5 健壮性改进：heal.js 移除 APPDATA/固定宿主后备并保留包自身解析',
+  SOURCE_HEAL_TEXT.includes("createRequire(import.meta.url)('js-yaml')") && !SOURCE_HEAL_TEXT.includes('APPDATA') &&
+  !SOURCE_HEAL_TEXT.includes("from 'node:os'") && !SOURCE_HEAL_TEXT.includes('@deepseek-ai/dsh/package.json'))
 
 function errorCode(error) {
   if (error && typeof error.code === 'string') return error.code
@@ -175,15 +187,17 @@ let yamlResolved = false
 function loadYaml() {
   if (yamlResolved) return yamlModule
   yamlResolved = true
-  try {
-    yamlModule = createRequire(import.meta.url)('js-yaml')
-  } catch {
-    const appData = process.env.APPDATA || join(homedir(), 'AppData', 'Roaming')
+  const bases = [join(SOURCE_PACKAGE, 'package.json')]
+  const installRoot = typeof process.env.DSH_INSTALL_ROOT === 'string' ? process.env.DSH_INSTALL_ROOT.trim() : ''
+  if (installRoot !== '') {
+    bases.push(join(installRoot, 'package.json'))
+    bases.push(join(installRoot, 'node_modules', '@deepseek-ai', 'dsh', 'package.json'))
+  }
+  for (const base of bases) {
     try {
-      yamlModule = createRequire(join(appData, 'npm', 'node_modules', '@deepseek-ai', 'dsh', 'package.json'))('js-yaml')
-    } catch {
-      yamlModule = null
-    }
+      yamlModule = createRequire(base)('js-yaml')
+      break
+    } catch { /* 继续尝试下一个明确包锚点 */ }
   }
   return yamlModule
 }

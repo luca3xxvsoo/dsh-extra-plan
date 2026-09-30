@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-09-30 14:54:55（脚本自动更新时间戳行）
+> 上次同步：2026-09-30 22:13:47（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -47,7 +47,7 @@
 | 设置值行定位与捕获（sourceLocator/rowLocator/projectionLocator；group 8+2；PUT 仅投影，HTTP 200 + applied 领域回执） | lib/preset-settings.js、lib/settings.js | captureSettings、captureRowSettings、effectivePluginsOf、hostRowDefaultsFromTemplate、readProjectedValue、resolveSetting、findTextLocatorMatches、patchYamlScalar、serializeScalar、publicField |
 | 配置热读／生效标志／改设置页不重启（live-config/hot-read；增强 stamp dev/ino/size/mtimeNs/ctimeNs，兼容回退 ino/size/mtimeMs/ctimeMs） | plugins/dsh-extra-plan/lib/live-config.js、plugins/dsh-extra-plan/index.js | createLiveConfig、refresh、read、currentPath、readDiskValues、statStamp、pick、modeOr |
 | 预设声明行载体／启动自愈／三维判定（声明行覆盖 + 本体剥离比对 + 投影一致性；无 manifest（清单）/旧迁移链） | lib/preset-sync.js、lib/preset-settings.js | syncPreset、readAuthoritySettings、hostRowDefaultsFromTemplate、planHostRowProjection、effectivePluginsOf、effectiveRowConfig、restatePresetPlugins、declarationCoversAsset、declarationBodyMatchesAsset、stripUserWritable、carryUserWritable、assetPlugins、pluginRowIds、readDeclaredPluginsFromPatch、defaultDshHome、applyPlan |
-| 设置页前端 UI／已安装包行详情配置区（React/plugins.row.config/configForms.whileServed；key = `@local/dsh-extra-plan#dsh-extra-plan-settings`） | lib/client.js | apply、SettingsCard、ExtraPlanForm、renderControl |
+| 设置页前端 UI／双世代挂载（CORE-V02 `settings.plugins.tab` + LEGACY-017 `plugins.row.config`；SHARED ConfigForm/保存逻辑只有一份） | lib/client.js | apply、SettingsCard、V02SettingsTab、registerV02SettingsTab、Legacy017SettingsCard、registerLegacy017RowConfig、ExtraPlanForm、renderControl |
 | 执行者工具裁剪／deny（executor-spawn；注册引用计数幂等 = 稳定键幂等——槽键 = 服务实现本体（读全局注册符号 Symbol.for('cordis.original')，取不到时降级回代理本身），跨预设世代/行重建共享同一注册与 disposer） | lib/executor-spawn.js | apply、slotKey |
 | qqbot 兼容自愈／建链 | dsh-qqbot-user-questions/lib/heal.js（选装包，本机未安装） | healQqbotCompatibility、ensureDshExtraPlanLink |
 | YAML 默认值真源／生成／last-known-good（上次已知良好版本）（exploreBudget/plannerPromptSuffix）＋预设声明行产物生成（preset-patch.generated.yml 的 insert 行 · 顶层条目按 PLUGINS_INDENT 平移 · --check 比对） | lib/preset-settings.js、scripts/generate-runtime-defaults.mjs、lib/preset-defaults.generated.js | resolveTemplateSettingDefault、renderRuntimeDefaults、renderPresetPatch、topLevelRowsOf、generateRuntimeDefaults、indentBlock、quoteYamlSingle、assertParses、writeOrCheck |
@@ -75,7 +75,7 @@
 | plugins/dsh-extra-plan/lib/agent-session.js | 32 | 会话事件与子代理识别的唯一来源：sessionEvents/isSubagentChild 零依赖纯函数，被 index.js 与 lib/model-routing.js 共用（无镜像副本；不 import index.js） |
 | plugins/dsh-extra-plan/lib/assembly-presentation.js | 241 | A/C/M 与 skill catalog 模型可见投影；从 scoped tools 读 schema/模式，SDK renderer 按 language 整体重建；F/PTC 的 tool:read 由 index.js 手写，L 段回宿主原文。 |
 | plugins/dsh-extra-plan/lib/client-bridge.js | 7 | 客户端桥接壳：仅承载 dsh.client 加载路径指向 lib/client.js（apply 空实现） |
-| plugins/dsh-extra-plan/lib/client.js | 428 | Plugins 页已安装包行详情配置区；`plugins.row.config` + `configForms.whileServed` 注册 8 项 UI 与 2 项宿主行设置，官方 mutate 写权威值，PUT 仅投影，保存提示保持结论级。 |
+| plugins/dsh-extra-plan/lib/client.js | 457 | 双世代设置页：CORE-V02 `settings.plugins.tab` 固定 id/order/locale 并取 `ConfigForms.get(NS)`；LEGACY-017 保留 `plugins.row.config` keyed 行；SHARED 表单/官方 mutate/PUT 投影与结论级提示只有一份。 |
 | plugins/dsh-extra-plan/lib/executor-spawn.js | 132 | 执行者子代理 provider：委托宿主 spawn，注入工具 deny（防委派递归/追问）；registerProvider 走引用计数幂等（**稳定键幂等**：模块级 WeakMap 槽表的槽键 = subagents 服务实现本体——读全局注册符号 Symbol.for('cordis.original')，由 traceable 代理 get 拦截器返回 target，root 单例跨预设世代恒同一对象；取不到符号值时降级回代理本身；跨预设世代/行重建复用同一注册，归零才反注册） |
 | plugins/dsh-extra-plan/lib/gate-words.js | 114 | 闸门关键词共享契约（唯一值源是 YAML 的 config.gateWords）：字段规格 GATE_WORD_FIELDS/GATE_WORDS_GROUP_DEFINITION + 整组严格校验 validateGateWords（错误一律以 extra-plan: config.gateWords 开头）+ 运行时词表 createGateRuntime（无参默认值）；纯模块：不含任何出厂词值、不读文件与环境变量，被 index.js（运行时）与 lib/preset-sync.js（启动自愈）共享（迁移叶 locator 已随跨版本搬迁链删除） |
 | plugins/dsh-extra-plan/lib/live-config.js | 255 | 配置热读：8 项热读 + 2 项宿主行权威读口；构造期读盘一次，后续按增强 stamp（dev/ino/size/mtimeNs/ctimeNs，兼容 ino/size/mtimeMs/ctimeMs）重读；失败整组回退并告警，不读 DSH_HOME 旧目录 |
@@ -95,7 +95,7 @@
 | plugins/dsh-extra-plan/lib/shell-mutation.js | 82 | 跨平台命令文本解码与 pwsh/bash 写形态判定；纯函数、不持有 apply 状态 |
 | plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | 155 | 从 agent.cordis.yml 校验并生成 runtime 默认常量 + preset-patch.generated.yml 预设声明行（顶层条目逐字平移）；支持 --check 且坏源不覆盖 last-known-good（上次已知良好版本） |
 | plugins/dsh-qqbot-user-questions/index.js | 20 | qqbot 精简版自愈插件：apply 启动时调 healQqbotCompatibility（迁移旧错误块+建链），不阻断启动 |
-| plugins/dsh-qqbot-user-questions/lib/heal.js | 377 | 自愈纯函数模块（定位 profile/旧块迁移/建链；供 index.js/CLI/测试复用） |
+| plugins/dsh-qqbot-user-questions/lib/heal.js | 371 | 自愈纯函数模块（定位 profile/旧块迁移/建链；供 index.js/CLI/测试复用） |
 | plugins/dsh-qqbot-user-questions/scripts/heal.mjs | 26 | CLI 兜底入口（postinstall/手动触发；invokedAsMain 判定） |
 
 ## 函数索引
@@ -201,16 +201,20 @@
 | plugins/dsh-extra-plan/lib/assembly-presentation.js | toolSdkSchemasOf | L212-230 | 优先读取 tools.sdkSchemas；兼容旧服务时从 schemas 补 owned（自有） output schema，供 SDK renderer 使用 |  |
 | plugins/dsh-extra-plan/lib/assembly-presentation.js | toolPresentationModeOf | L232-241 | 从 scoped tools registry 读取 native/ptc/both 模式 |  |
 | plugins/dsh-extra-plan/lib/client-bridge.js | apply | L5-7 | 空实现（仅承载 dsh.client 加载路径指向 lib/client.js） |  |
-| plugins/dsh-extra-plan/lib/client.js | apply | L135-422 | 客户端插件入口：注入 esp-* 样式表并注册中英词条；经 configForms.whileServed 包裹后把 SettingsCard 注册到 Plugins 页行详情 keyed 插槽 plugins.row.config（key = `@local/dsh-extra-plan#dsh-extra-plan-settings`；宿主 plugins.item 是官方设置页专用列表、旧 settings.plugin.item 在 0.1.7 已废；无该 settings 命名空间则不注册；卡片 = 通用设置区（anchoredBootstrap/creativeMode/webFetch/toolPresentationMode/runcodeCatchGate）+ pro规划区（5 项）双区块 + 全卡唯一保存按钮） |  |
-| plugins/dsh-extra-plan/lib/client.js | optionLabel | L146-151 | 选项显示名：优先 optionLocale 词条，其次布尔 trueValue/falseValue，最后原值字符串 | apply 内部闭包（设置页控件共用） |
-| plugins/dsh-extra-plan/lib/client.js | optionValue | L153-159 | 把后端返回的字符串值映射回 field.options 里的原始类型（不在选项中则原样返回） | apply 内部闭包（设置页控件共用） |
-| plugins/dsh-extra-plan/lib/client.js | renderControl | L161-199 | 按 field.control 渲染受控控件：textarea／number（透传 min、step）／select（选项文案走 optionLabel、回值走 optionValue）／其余回落 text input；统一 disabled 与 onChange 回传 |  |
-| plugins/dsh-extra-plan/lib/client.js | ExtraPlanForm | L206-400 | 8 项 UI 设置表单：从宿主 ownerProps.form.state 播种 draft（value/writable/revision/status），按 general/pro 两组 esp-section 渲染字段，footer 一次性提交 mutate(set ops + revision fence) 后提示已保存/保存失败；loading/unavailable 走占位 |  |
-| plugins/dsh-extra-plan/lib/client.js | fieldValue | L265-272 | 取字段草稿值：number 控件把草稿转 Number（非有限数值原样返回），其余控件原样返回 | ExtraPlanForm 内部闭包 |
-| plugins/dsh-extra-plan/lib/client.js | reconcileHostRows | L275-293 | mutate 失败/不确定时 GET 最新 authority，再 PUT 投影并验证 projection.applied=true；失败显示结论级错误 |  |
-| plugins/dsh-extra-plan/lib/client.js | saveAll | L295-338 | 初次 PUT 严格验证 projection.applied=true；成功后一次 mutate 10 op，不确定结果收敛到最新 authority |  |
-| plugins/dsh-extra-plan/lib/client.js | renderField | L346-357 | 按 field 渲染 8 项 UI 设置中的一个字段：esp-field 内「locale 名称→renderControl（随 snapshot.writable 禁用）→静态 hint」，编辑写回 draft 并清提示 | ExtraPlanForm 内部闭包；本地稳定字段样式 |
-| plugins/dsh-extra-plan/lib/client.js | SettingsCard | L402-408 | 卡片根组件：view=summary 时返回一行卡片描述，其余渲染 esp-wrap（8 项 ExtraPlanForm + 2 项 HostRowsPanel 两段）并对 props.t 缺失做兜底 |  |
+| plugins/dsh-extra-plan/lib/client.js | apply | L133-451 | 客户端插件入口：注入 esp-* 样式表与中英词条；SHARED 卡片/表单只保留一份；CORE-V02 在 `settings.plugins.tab` 取 `ConfigForms.get(NS)`，LEGACY-017 在 `plugins.row.config` 保留 keyed 行；两路径均由 `configForms.whileServed` 约束；rc.2 静态已核，rc.1 API/页面 HUMAN。 |  |
+| plugins/dsh-extra-plan/lib/client.js | optionLabel | L144-149 | 选项显示名：优先 optionLocale 词条，其次布尔 trueValue/falseValue，最后原值字符串 | apply 内部闭包（设置页控件共用） |
+| plugins/dsh-extra-plan/lib/client.js | optionValue | L151-157 | 把后端返回的字符串值映射回 field.options 里的原始类型（不在选项中则原样返回） | apply 内部闭包（设置页控件共用） |
+| plugins/dsh-extra-plan/lib/client.js | renderControl | L159-197 | 按 field.control 渲染受控控件：textarea／number（透传 min、step）／select（选项文案走 optionLabel、回值走 optionValue）／其余回落 text input；统一 disabled 与 onChange 回传 |  |
+| plugins/dsh-extra-plan/lib/client.js | ExtraPlanForm | L204-398 | SHARED 8 项 UI 设置表单：从规范化 ConfigForm.state 播种 draft（value/writable/revision/status），按 general/pro 两组 esp-section 渲染字段，footer 一次性提交 mutate(set ops + revision fence) 后提示已保存/保存失败；loading/unavailable 走占位 |  |
+| plugins/dsh-extra-plan/lib/client.js | fieldValue | L263-270 | 取字段草稿值：number 控件把草稿转 Number（非有限数值原样返回），其余控件原样返回 | ExtraPlanForm 内部闭包 |
+| plugins/dsh-extra-plan/lib/client.js | reconcileHostRows | L273-291 | mutate 失败/不确定时 GET 最新 authority，再 PUT 投影并验证 projection.applied=true；失败显示结论级错误 |  |
+| plugins/dsh-extra-plan/lib/client.js | saveAll | L293-336 | 初次 PUT 严格验证 projection.applied=true；成功后一次 mutate 10 op，不确定结果收敛到最新 authority |  |
+| plugins/dsh-extra-plan/lib/client.js | renderField | L344-355 | 按 field 渲染 8 项 UI 设置中的一个字段：esp-field 内「locale 名称→renderControl（随 snapshot.writable 禁用）→静态 hint」，编辑写回 draft 并清提示 | ExtraPlanForm 内部闭包；本地稳定字段样式 |
+| plugins/dsh-extra-plan/lib/client.js | SettingsCard | L401-407 | SHARED 卡片根组件：接收规范化 configForm/translate，view=summary 返回一行描述，其余渲染 esp-wrap 与唯一 ExtraPlanForm；不直接读取旧宿主 props。 |  |
+| plugins/dsh-extra-plan/lib/client.js | V02SettingsTab | L411-413 | CORE-V02 页签组件：接收 registerV02SettingsTab 注入的 ConfigForms.get(NS) 表单与 locale binder，复用 SHARED SettingsCard；rc.2 静态已核，rc.1 HUMAN。 |  |
+| plugins/dsh-extra-plan/lib/client.js | registerV02SettingsTab | L415-426 | CORE-V02 唯一路径：在 whileServed 下注册 `settings.plugins.tab`，固定 `id=NS`、`order=90`、cardTitle label、`locale=NS`，注入 `configForm=ctx.configForms.get(NS)`；rc.1 不作 API 兼容结论。 |  |
+| plugins/dsh-extra-plan/lib/client.js | Legacy017SettingsCard | L434-436 | LEGACY-017 包装组件：仅在兼容区把旧 `props.form/props.t` 规范化后交给 SHARED SettingsCard；未来移除 0.1.7 时可机械删除。 |  |
+| plugins/dsh-extra-plan/lib/client.js | registerLegacy017RowConfig | L438-447 | LEGACY-017 唯一注册点：在 whileServed 下注册 keyed `plugins.row.config`，使用 `LEGACY_017_ROW_CONFIG_KEY` 与旧宿主 rowId 形状；只由唯一 COMPAT CALL 调用。 |  |
 | plugins/dsh-extra-plan/lib/executor-spawn.js | resolveDeny | L27-29 | deny 解析纯函数：config.deny 合法（非 null 对象且为数组）时原样返回，否则回退 DEFAULT_DENY | 由 apply 调用；DEFAULT_DENY 已与预设 config.deny 收敛为同集 12 项 |
 | plugins/dsh-extra-plan/lib/executor-spawn.js | slotKey | L48-54 | 稳定槽键纯函数：读全局注册符号 Symbol.for('cordis.original') 取 subagents 服务实现本体（traceable 代理 get 拦截器返回 target；root 单例跨 ctx/跨预设世代恒同一对象），非 traceable/取不到符号值时降级回代理本身 | registrationSlots 查表的键来源，槽键语义 = 幂等跨世代命中的前提 |
 | plugins/dsh-extra-plan/lib/executor-spawn.js | apply | L56-132 | 插件入口：注册执行者 provider（委托宿主 spawn，注入 deny 工具裁剪）；注册走引用计数幂等——槽键取 slotKey(ctx.subagents)（服务实现本体，不再以 ctx.subagents 代理为键），槽 count>0 时只加持有并 console.warn 后返回，count==0 且已存在同名 provider 时抛真实冲突错，全新注册时保存 host disposer（含 delegator 校验与 defaultedAgentOptions） |  |
@@ -432,28 +436,28 @@
 | plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | generateRuntimeDefaults | L106-138 | 先校验再生成或 --check 比对，失败保留旧生成物 |  |
 | plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | invokedAsMain | L140-143 | 跨平台判断脚本是否作为 CLI 主入口运行 |  |
 | plugins/dsh-qqbot-user-questions/index.js | apply | L11-20 | 插件入口：apply 启动时调 healQqbotCompatibility 自愈（迁移旧错误块+建链；try/catch 不阻断启动） |  |
-| plugins/dsh-qqbot-user-questions/lib/heal.js | loadYamlModule | L15-31 | js-yaml 双 fallback（回退） 加载（本地 createRequire 失败回退官方 APPDATA DSH 包）；惰性缓存，导入零副作用 |  |
-| plugins/dsh-qqbot-user-questions/lib/heal.js | timestamp | L33-37 | 时间戳 yyyyMMddHHmmssSSS（备份文件名唯一性，含毫秒） |  |
-| plugins/dsh-qqbot-user-questions/lib/heal.js | pad | L35 | 数字补零（timestamp 内部闭包） |  |
-| plugins/dsh-qqbot-user-questions/lib/heal.js | isObject | L63-65 | 非空普通对象判定（排除 null/数组） |  |
-| plugins/dsh-qqbot-user-questions/lib/heal.js | stripBom | L67-69 | 去除行首 BOM（迁移扫描用） |  |
-| plugins/dsh-qqbot-user-questions/lib/heal.js | lineIndent | L71-73 | 行首缩进宽度 |  |
-| plugins/dsh-qqbot-user-questions/lib/heal.js | isIgnorableLine | L75-78 | 空行/注释行判定（块扫描跳过） |  |
-| plugins/dsh-qqbot-user-questions/lib/heal.js | parseScalar | L80-88 | YAML 标量去引号（单/双引号成对时剥离） |  |
-| plugins/dsh-qqbot-user-questions/lib/heal.js | parseEntryBlock | L90-98 | 条目块文本解析为单个对象（js-yaml；失败/非单元素 → null） |  |
-| plugins/dsh-qqbot-user-questions/lib/heal.js | legacyEntryKind | L100-110 | 旧版根级完整块匹配（id+name[+config.default=standard]）→ 返回 id 或 null |  |
-| plugins/dsh-qqbot-user-questions/lib/heal.js | fallbackLegacyEntryKind | L112-146 | js-yaml 不可用时按行匹配旧版根级块（id/name/config.default 逐行核对） | 行号区间由生成器按单行箭头函数链展开维护 |
-| plugins/dsh-qqbot-user-questions/lib/heal.js | rootSequenceIndent | L148-158 | 根级序列缩进探测（首条 - 行的缩进宽度） |  |
-| plugins/dsh-qqbot-user-questions/lib/heal.js | isRootSequenceLine | L160-164 | 指定缩进处的根级序列行判定 |  |
-| plugins/dsh-qqbot-user-questions/lib/heal.js | scanRootBlocks | L166-192 | 按根级缩进切分顶层条目块（返回 lines/rootIndent/blocks） |  |
-| plugins/dsh-qqbot-user-questions/lib/heal.js | findLegacyRootBlocks | L194-204 | 扫描并返回旧版根级块清单（解析判定优先、行级兜底） |  |
-| plugins/dsh-qqbot-user-questions/lib/heal.js | removeLegacyRootBlocks | L206-217 | 移除旧版根级块（移除后无实质内容时写顶层 []） |  |
-| plugins/dsh-qqbot-user-questions/lib/heal.js | verifyMigratedPatch | L219-244 | 迁移后校验：顶层为数组且无旧块残留（js-yaml 优先、行级兜底） |  |
-| plugins/dsh-qqbot-user-questions/lib/heal.js | emptyArrayLine | L232 | 顶层空数组行（[]）判定（行级兜底用） |  |
-| plugins/dsh-qqbot-user-questions/lib/heal.js | healPatchRows | L254-292 | 幂等**迁移**旧版根级 code-runtime/agent-presets 错误块（语义是移除旧块，两行补入由包内静态 cordis.patch.yml 的 insert 唯一提供）；写前 .bak-* 备份、写后校验失败恢复；文件不存在跳过 | 函数名带 Patch/补行语义易误读，实为「清旧块」；旧描述「补两行」已失效（2026-09-12 订正） |
-| plugins/dsh-qqbot-user-questions/lib/heal.js | findOwnQqbotProfiles | L300-320 | 扫描 $DSH_HOME/profiles/* 找出锚定本插件的 qqbot profile（bundles + node_modules 双条件） |  |
-| plugins/dsh-qqbot-user-questions/lib/heal.js | ensureDshExtraPlanLink | L328-358 | 建 @local/dsh-extra-plan → web 包链接：web 缺失跳过/已正确不动/实体或非目标链接提示 pnpm 迁移/仅 ENOENT 建 junction |  |
-| plugins/dsh-qqbot-user-questions/lib/heal.js | healQqbotCompatibility | L364-377 | 对每个自有 profile 依次执行 healPatchRows（清旧错误块）与 ensureDshExtraPlanLink（建链）；整体 try/catch 只记录日志不阻断 |  |
+| plugins/dsh-qqbot-user-questions/lib/heal.js | loadYamlModule | L14-24 | js-yaml 双 fallback（回退） 加载（本地 createRequire 失败回退官方 APPDATA DSH 包）；惰性缓存，导入零副作用 |  |
+| plugins/dsh-qqbot-user-questions/lib/heal.js | timestamp | L26-30 | 时间戳 yyyyMMddHHmmssSSS（备份文件名唯一性，含毫秒） |  |
+| plugins/dsh-qqbot-user-questions/lib/heal.js | pad | L28 | 数字补零（timestamp 内部闭包） |  |
+| plugins/dsh-qqbot-user-questions/lib/heal.js | isObject | L56-58 | 非空普通对象判定（排除 null/数组） |  |
+| plugins/dsh-qqbot-user-questions/lib/heal.js | stripBom | L60-62 | 去除行首 BOM（迁移扫描用） |  |
+| plugins/dsh-qqbot-user-questions/lib/heal.js | lineIndent | L64-66 | 行首缩进宽度 |  |
+| plugins/dsh-qqbot-user-questions/lib/heal.js | isIgnorableLine | L68-71 | 空行/注释行判定（块扫描跳过） |  |
+| plugins/dsh-qqbot-user-questions/lib/heal.js | parseScalar | L73-81 | YAML 标量去引号（单/双引号成对时剥离） |  |
+| plugins/dsh-qqbot-user-questions/lib/heal.js | parseEntryBlock | L83-91 | 条目块文本解析为单个对象（js-yaml；失败/非单元素 → null） |  |
+| plugins/dsh-qqbot-user-questions/lib/heal.js | legacyEntryKind | L93-103 | 旧版根级完整块匹配（id+name[+config.default=standard]）→ 返回 id 或 null |  |
+| plugins/dsh-qqbot-user-questions/lib/heal.js | fallbackLegacyEntryKind | L105-140 | js-yaml 不可用时按行匹配旧版根级块（id/name/config.default 逐行核对） | 行号区间由生成器按单行箭头函数链展开维护 |
+| plugins/dsh-qqbot-user-questions/lib/heal.js | rootSequenceIndent | L142-152 | 根级序列缩进探测（首条 - 行的缩进宽度） |  |
+| plugins/dsh-qqbot-user-questions/lib/heal.js | isRootSequenceLine | L154-158 | 指定缩进处的根级序列行判定 |  |
+| plugins/dsh-qqbot-user-questions/lib/heal.js | scanRootBlocks | L160-186 | 按根级缩进切分顶层条目块（返回 lines/rootIndent/blocks） |  |
+| plugins/dsh-qqbot-user-questions/lib/heal.js | findLegacyRootBlocks | L188-198 | 扫描并返回旧版根级块清单（解析判定优先、行级兜底） |  |
+| plugins/dsh-qqbot-user-questions/lib/heal.js | removeLegacyRootBlocks | L200-211 | 移除旧版根级块（移除后无实质内容时写顶层 []） |  |
+| plugins/dsh-qqbot-user-questions/lib/heal.js | verifyMigratedPatch | L213-238 | 迁移后校验：顶层为数组且无旧块残留（js-yaml 优先、行级兜底） |  |
+| plugins/dsh-qqbot-user-questions/lib/heal.js | emptyArrayLine | L226 | 顶层空数组行（[]）判定（行级兜底用） |  |
+| plugins/dsh-qqbot-user-questions/lib/heal.js | healPatchRows | L248-286 | 幂等**迁移**旧版根级 code-runtime/agent-presets 错误块（语义是移除旧块，两行补入由包内静态 cordis.patch.yml 的 insert 唯一提供）；写前 .bak-* 备份、写后校验失败恢复；文件不存在跳过 | 函数名带 Patch/补行语义易误读，实为「清旧块」；旧描述「补两行」已失效（2026-09-12 订正） |
+| plugins/dsh-qqbot-user-questions/lib/heal.js | findOwnQqbotProfiles | L294-314 | 扫描 $DSH_HOME/profiles/* 找出锚定本插件的 qqbot profile（bundles + node_modules 双条件） |  |
+| plugins/dsh-qqbot-user-questions/lib/heal.js | ensureDshExtraPlanLink | L322-352 | 建 @local/dsh-extra-plan → web 包链接：web 缺失跳过/已正确不动/实体或非目标链接提示 pnpm 迁移/仅 ENOENT 建 junction |  |
+| plugins/dsh-qqbot-user-questions/lib/heal.js | healQqbotCompatibility | L358-371 | 对每个自有 profile 依次执行 healPatchRows（清旧错误块）与 ensureDshExtraPlanLink（建链）；整体 try/catch 只记录日志不阻断 |  |
 | plugins/dsh-qqbot-user-questions/scripts/heal.mjs | invokedAsMain | L9-14 | 主脚本判定（node 直跑时执行自愈；本仓插件 CLI 通用写法） |  |
 
 ---

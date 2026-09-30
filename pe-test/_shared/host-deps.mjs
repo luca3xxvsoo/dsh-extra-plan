@@ -44,10 +44,25 @@ function readFileSync0(dir) {
   return fsModule.readdirSync(dir)
 }
 
-// 锚点候选（按序探测）：返回宿主 node_modules 根 + dsh-llm 包目录的候选组合
+// 锚点候选（按序探测）：返回宿主 node_modules 根 + dsh-llm 包目录的候选组合。
+// DSH_INSTALL_ROOT 是显式只读安装根，优先于 DSH_HOME/profile，供 rc.2 本机与 rc.1 设备复用同一脚本。
 // scope 仅用于「profile 内出现宿主同名副本」告警分组，不参与解析语义。
 function anchorCandidates() {
   const list = []
+  const configuredRoot = typeof process.env.DSH_INSTALL_ROOT === 'string' ? process.env.DSH_INSTALL_ROOT.trim() : ''
+  if (configuredRoot !== '') {
+    const rootNodeModules = join(configuredRoot, 'node_modules')
+    list.push({
+      scope: 'installation',
+      nodeModules: rootNodeModules,
+      pkg: join(rootNodeModules, SCOPE, PKG_NAME, 'package.json'),
+    })
+    list.push({
+      scope: 'installation',
+      nodeModules: join(rootNodeModules, SCOPE, DSH_PKG_NAME, 'node_modules'),
+      pkg: join(rootNodeModules, SCOPE, DSH_PKG_NAME, 'node_modules', SCOPE, PKG_NAME, 'package.json'),
+    })
+  }
   const { home, names } = profileNames()
   for (const name of names) {
     list.push({
@@ -100,7 +115,12 @@ function findHostAnchor() {
     if (!existsSync(candidate.pkg)) continue
     const entry = entryOf(candidate.pkg)
     if (entry === null) continue
-    return { nodeModules: candidate.nodeModules, entry }
+    let version = '未知'
+    try {
+      const manifest = JSON.parse(readFileSync(candidate.pkg, 'utf8'))
+      if (manifest !== null && typeof manifest === 'object' && typeof manifest.version === 'string') version = manifest.version
+    } catch { /* entryOf 已确认入口，版本读取失败只保留未知 */ }
+    return { nodeModules: candidate.nodeModules, entry, version, manifest: candidate.pkg }
   }
   throw new Error(
     '[host-deps] 未找到宿主真包 ' + TARGET + '，自检无法解析该依赖。已按序探测以下候选路径：' +
@@ -154,6 +174,7 @@ export async function registerHostDeps() {
   registered = true
   warnShadowedHostCopies()
   const anchor = findHostAnchor()
+  console.log('[host-deps] 实际宿主版本: ' + anchor.version + '（' + anchor.manifest + '）')
   const scopedNodeModules = []
   // 先试锚点自身的 node_modules 根；再退到各级上溯（profiles/web/node_modules → profiles/web → …）
   let dir = anchor.nodeModules
@@ -168,8 +189,18 @@ export async function registerHostDeps() {
     }
     return null
   }
+  const resolveBare = (specifier) => {
+    if (specifier !== 'js-yaml') return null
+    for (const root of scopedNodeModules) {
+      const entry = entryOf(join(root, 'js-yaml', 'package.json'))
+      if (entry !== null) return entry
+    }
+    return null
+  }
+  const yamlEntry = resolveBare('js-yaml')
   const resolveOne = (specifier, nextResolve, context) => {
     if (specifier === TARGET) return { url: pathToFileURL(anchor.entry).href, shortCircuit: true }
+    if (specifier === 'js-yaml' && yamlEntry !== null) return { url: pathToFileURL(yamlEntry).href, shortCircuit: true }
     if (specifier.startsWith(SCOPE + '/')) {
       const scoped = resolveScoped(specifier)
       // 只接管本钩子锚点根内确实存在的包；其余（如 @deepseek-ai/cordis，由宿主包自身
@@ -195,11 +226,13 @@ export async function registerHostDeps() {
     const hookSource = [
       'const TARGET = ' + JSON.stringify(TARGET) + ';',
       'const ANCHOR = ' + JSON.stringify(pathToFileURL(anchor.entry).href) + ';',
+      'const YAML = ' + JSON.stringify(yamlEntry === null ? null : pathToFileURL(yamlEntry).href) + ';',
       'const MAP = ' + JSON.stringify(Object.fromEntries(scopedNodeModules.map((root) => [root, true]))) + ';',
       'const ROOTS = ' + JSON.stringify(scopedNodeModules) + ';',
       'const SCOPE = ' + JSON.stringify(SCOPE) + ';',
       'export async function resolve(specifier, context, nextResolve) {',
       '  if (specifier === TARGET) return { url: ANCHOR, shortCircuit: true }',
+      '  if (specifier === "js-yaml" && YAML !== null) return { url: YAML, shortCircuit: true }',
       '  if (specifier.startsWith(SCOPE + "/")) {',
       '    const rest = specifier.slice(SCOPE.length + 1).split("/")[0];',
       '    const fs = await import("node:fs");',

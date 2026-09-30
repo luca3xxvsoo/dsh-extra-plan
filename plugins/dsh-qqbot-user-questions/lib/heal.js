@@ -4,12 +4,11 @@
 // question/approval 行为由原生 QQBot 提供，不属于本兼容模块。
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 const LOG_PREFIX = '[dsh-qqbot-user-questions]'
 
-// ── js-yaml 双 fallback（惰性加载，导入零副作用）──
+// ── package-local js-yaml（惰性加载，导入零副作用）──
 let yamlModule = null
 let yamlResolved = false
 function loadYamlModule() {
@@ -18,15 +17,9 @@ function loadYamlModule() {
   try {
     yamlModule = createRequire(import.meta.url)('js-yaml')
     return yamlModule
-  } catch (firstError) {
-    const home = process.env.APPDATA || join(homedir(), 'AppData', 'Roaming')
-    try {
-      yamlModule = createRequire(join(home, 'npm', 'node_modules', '@deepseek-ai', 'dsh', 'package.json'))('js-yaml')
-      return yamlModule
-    } catch {
-      yamlModule = null
-      return null
-    }
+  } catch {
+    yamlModule = null
+    return null
   }
 }
 
@@ -138,7 +131,8 @@ function fallbackLegacyEntryKind(blockLines) {
   for (let i = 1; i < blockLines.length; i += 1) {
     if (isIgnorableLine(blockLines[i])) continue
     const indent = lineIndent(blockLines[i])
-    if (indent <= configIndent) break
+    if (indent < configIndent) break
+    if (indent === configIndent) continue
     const match = /^([ \t]*)default:\s*(.*?)\s*$/.exec(blockLines[i])
     if (match && parseScalar(match[2]) === expected.default) return id
   }
