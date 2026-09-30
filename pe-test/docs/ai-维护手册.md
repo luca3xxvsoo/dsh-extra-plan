@@ -15,22 +15,34 @@
 | profile | 当前职责 | 本仓库 AI 边界 |
 |:--|:--|:--|
 | web | 直接安装核心包；启动 `preset-sync`；承载 profile patch 预设声明行 | 不删除核心包/预设，不写生产 profile |
-| qqbot | 安装精简兼容包；静态 patch、旧块迁移与 web 包建链 | 不分发核心预设；真实消息、`/preset`、question/approval、allow-build/postinstall 为用户部署后 HUMAN |
+| qqbot | 安装精简兼容包；静态 patch、旧块迁移与 web 包建链 | 不分发核心预设；真实消息、`/preset`、question/approval（提问/批准）、allow-build/postinstall（安装后脚本）为用户部署后 HUMAN |
 
 `$DSH_HOME/profiles`、`.agent-presets` 和其它生产目录只允许用户侧部署流程触碰；本轮不做同步、清锁、重启或现场修复。
 
+## QQBot CLI 与维护所有权
+
+`plugins/dsh-qqbot-user-questions/scripts/heal.mjs` 仅是用户侧安装/手动触发的 CLI 兜底；静态映射、临时 DSH_HOME 夹具和纯函数可由 `step-01-qqbot-安装映射.mjs` 回归。真实消息、`/preset`、question/approval（提问/批准）、allow-build/postinstall（安装后脚本）与 profile 建链结果必须标为 HUMAN，不能以静态 PASS 销账。
+
 ## 修改后固定顺序
 
-1. 对**本轮实际修改的 JS/MJS**逐文件执行 `node --check`；本轮实际修改为 `plugins/dsh-extra-plan/index.js` 与 `pe-test/tools/step-04-路由与写闸门.mjs` 两文件（按批准方案），两文件均须通过语法门。
-2. 在仓库根依次运行：
+1. 对**本轮实际修改的 JS/MJS**逐文件执行 `node --check`；实际清单以交付台账为准，禁止把未改文件或 HUMAN 环境项冒充语法 PASS。
+2. 在仓库根依次运行工作区回归：
    - `node pe-test/tools/step-00-全流程回归.mjs`
+   - `node pe-test/tools/step-00-跨平台写拦截.mjs`
+   - `node pe-test/tools/step-01-executor-spawn注册幂等.mjs`
+   - `node pe-test/tools/step-01-安装同步.mjs`
+   - `node pe-test/tools/step-01-qqbot-安装映射.mjs`
+   - `node pe-test/tools/step-01-设置迁移.mjs`
+   - `node pe-test/tools/step-01-设置页配置.mjs`
+   - `node pe-test/tools/step-01-预设完整性.mjs`
    - `node pe-test/tools/step-04-路由与写闸门.mjs`
+   - `node pe-test/tools/step-06-08-v4取证回归.mjs`
    - `node pe-test/tools/step-06-线索落盘.mjs`
    - `node pe-test/tools/代码地图生成.mjs`
    - 人工复核地图描述、结构键、同名顺序
    - `node pe-test/tools/代码地图生成.mjs --check`
    - `node pe-test/tools/一键step测试.mjs`
-3. 每条命令退出码必须为 0；输出不得有 `FAIL`、`SyntaxError`、`UnhandledPromiseRejection`、漏检或导航失效。AUTO 项数量只认 [一键step测试.mjs](../tools/一键step测试.mjs) 的 `AUTO` 数组；SKIP/HUMAN 不计作通过。
+3. 每条工作区回归命令退出码必须为 0；输出不得有 `FAIL`、`SyntaxError`、`UnhandledPromiseRejection`、漏检或导航失效。AUTO 项数量只认 [一键step测试.mjs](../tools/一键step测试.mjs) 的 `AUTO` 数组；SKIP/HUMAN 单列且不计作通过。
 4. 生产部署与实机测试由用户另行执行；实机流程中现场 mode、A/C、gateWords、SESSION_ID、模型、suffix 和残留数量必须现场读取。
 
 ## 改动域 → 唯一检查入口
@@ -42,7 +54,7 @@
 | 预设默认、settings、profile patch 自愈 | 对应 step-01 脚本；生成器与产物 `--check` 只读验证 |
 | 模型路由、usage、会话形状 | step-00、step-04 P4、step-07 HUMAN 取证；静态结果不替代实机 |
 | 代码地图 | `node pe-test/tools/代码地图生成.mjs` → 人工描述复核 → `--check`；一键测试也内置 `--check` |
-| 宿主升级/QQBot | [ai-宿主耦合台账](ai-宿主耦合台账.md) 的当前 checklist；SKIP 不销账，HUMAN 不伪造通过 |
+| 宿主升级/QQBot | [ai-宿主耦合台账](ai-宿主耦合台账.md) 的当前 checklist（核对清单）；`scripts/heal.mjs` 只作用户侧 CLI；SKIP 不销账，HUMAN 不伪造通过 |
 | 实机闸门 | [ai-实机闸门测试流程](ai-实机闸门测试流程.md)；保持单文件顺序，不拆表/改编号 |
 
 ## 代码地图维护规则
@@ -50,7 +62,7 @@
 - `## 意图速查`、`## 文件总览`、`## 函数索引` 和原表头必须保留。先 grep 意图词得到函数名，再按函数名读机器行号。
 - 运行地图生成器负责路径、函数名、行号区间、增删和漏检；人工只改意图、文件说明、功能描述与备注。机器生成的行数/行号不能手填冻结。
 - 稳定匹配键是“相对路径 + 函数名 + 同名出现顺序”。本轮重点保护 `routeKey` 两条、`visit` 三条、`isIdChar` 两条顺序；`--check` 不覆盖人工描述/固定尾部的全文比较，所以需另做结构键对拍。
-- 描述必须保留当前行为关键词：证据引用成对剥除与单侧不剥、`atomicCommit` 阶段语义、`syncPreset` 三条件 idle、`createApiHandler` PUT 仅投影、P2-2 agent-only cache、usage 同步 final fold 等。
+- 描述必须保留当前行为关键词：证据引用成对剥除与单侧不剥、`atomicCommit` 阶段语义、`syncPreset` 三条件 idle（空闲稳态）、`createApiHandler` PUT 仅投影、P2-2 agent-only（仅 Agent）cache、usage 同步 final fold（最终折叠） 等。
 - 地图生成器是源码/测试索引，不是历史归档；无函数文件或纯描述变化不能只靠 `--check` 判定。
 
 ## 交付格式与回滚
@@ -65,7 +77,7 @@
 
 ## P2-4 生成链
 
-作者值在 `plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml`；运行 `node plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs` 生成派生模块/声明行，`--check` 只读比较。坏模板、生成失败或 prepack 失败必须保留 last-known-good；生成物不得手改。
+作者值在 `plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml`；运行 `node plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs` 生成派生模块/声明行，`--check` 只读比较。坏模板、生成失败或 prepack 失败必须保留 last-known-good（上次已知良好版本）；生成物不得手改。
 
 ## 单一来源提醒
 

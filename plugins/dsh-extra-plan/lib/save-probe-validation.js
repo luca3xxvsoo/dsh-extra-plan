@@ -2,11 +2,9 @@ import { existsSync } from 'node:fs'
 import { join, resolve, isAbsolute } from 'node:path'
 import { PROBE_LIMITS, LINE_FORMAT_HINT, RANGE_FORMAT_HINT } from './save-contract.js'
 
-// save_probe 机械校验（纯函数，导出供测试）：四字段必为数组；条目数/单条长度/
-// 总量 ≤ 上限；fileMap/focusAreas 的 path 必须真实存在（相对按 cwd 解析、绝对
-// 原样，不要求在工作区内）；focusAreas 的 range 若提供（非空）须匹配 rangePattern。
-// 超限一律「拒绝 + 报错」不静默截断。违规不提前返回：一次性收集全部违规并返回
-// 聚合信息（每条注明字段/下标/当前值/上限），全部满足返回 null。
+// save_probe 校验合同（纯函数，导出供测试）：四字段必须为数组；条目数、单条长度与总量均受上限约束；
+// fileMap/focusAreas 的 path 必须真实存在（相对路径按 cwd 解析、绝对路径原样保留），focusAreas 的 range
+// （非空）须匹配 rangePattern。超限统一“拒绝并报错”而不静默截断；数值限制唯一来自 save-contract.js#PROBE_LIMITS。
 export function validateProbe(args, cwd) {
   if (args === null || typeof args !== 'object') return 'save_probe: 参数必须是对象（四字段 fileMap/focusAreas/exclusions/background 均为数组）'
   const violations = []

@@ -1,5 +1,4 @@
-// @local/dsh-extra-plan runtime-static helpers.
-// Explicit-argument pure helpers only; no ctx or per-apply state.
+// 仅接受显式参数的纯 helper；不依赖 ctx，也不保存 per-apply 状态。
 
 export function causeChainOf(error, depth) {
   const chain = []

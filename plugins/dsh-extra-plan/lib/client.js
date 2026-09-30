@@ -89,7 +89,7 @@ window.__ModuleLoader__.load({
 
     // 8 项 UI 设置（settings 行 dsh-extra-plan-settings 的 volatile 字段）：客户端自带的
     // 呈现元数据（控件/选项/locale/提示）。数组内 general 组在前、pro 组在后：
-    // pro 组首项 = crossProviderPlannerModel（README「pro规划」口径 L94-99）；
+    // pro 组从 crossProviderPlannerModel 开始；该本地顺序就是 UI 合同。
     // general 组的 runcodeCatchGate 留在组末（其渲染位置由 render 段派生，见下）。
     // 写入一律交回宿主表单（ownerProps.form.mutate），不由本插件直接落盘。
     const EXTRA_FIELDS = Object.freeze([
@@ -337,11 +337,9 @@ window.__ModuleLoader__.load({
           }
         }
 
-        // 区块渲染顺序 = README「可配置项」口径（L87-99）：
-        // 通用区 = anchoredBootstrap → creativeMode → webFetch → toolPresentationMode → runcodeCatchGate；
-        // pro 区 = crossProviderPlannerModel → plannerModel → plannerPromptSuffix → exploreBudget → otherAgentModel。
-        // 实现：general 组里除 runcodeCatchGate 外的 2 项在前、2 项宿主行（HOST_ROW_FIELDS）居中、
-        // runcodeCatchGate 收尾；字段总数仍 10（8 项 UI + 2 项宿主行），区块仍 2 个。
+        // 渲染顺序是本地行为合同：general UI 字段、两个宿主行字段、
+        // runcodeCatchGate，然后是从 crossProviderPlannerModel 开始的 pro 字段。
+        // 表单仍分为两个区域，共 8 项 UI 设置和 2 项宿主行设置。
         const generalHeadFields = EXTRA_FIELDS.filter(function (field) { return field.section === "general" && field.key !== "runcodeCatchGate"; });
         const generalTailFields = EXTRA_FIELDS.filter(function (field) { return field.section === "general" && field.key === "runcodeCatchGate"; });
         const proFields = EXTRA_FIELDS.filter(function (field) { return field.section === "pro"; });

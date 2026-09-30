@@ -1,4 +1,4 @@
-// step-04-工具清单查看.mjs（原 print-header-tools.mjs）— 读取指定会话的逻辑 JSONL 并取证模型可见目录
+// step-04-工具清单查看.mjs — 读取指定 session 的逻辑 JSONL，报告 model-visible tools。
 // 用法: node step-04-工具清单查看.mjs <显式会话目录名>
 // 只读输出：request/header 的逻辑行号、前置 tool/call 数、F/L、精确 header.tools，
 // header.system 文本命中与 source.kind=skill-catalog；文本命中不冒充命名 section。
@@ -47,7 +47,7 @@ function systemTextHits(systemText) {
     // 新形态：F 段（HP 首轮）tool:read 手写文案（变量②）——中文引导句 + 四要素
     // （tools.read 调用形态 / file_path / offset / limit）；旧形态的官方骨架命中不计入本项。
     readHint: systemText.includes('在 run_code 程序里读文件') && systemText.includes('tools.read') && systemText.includes('file_path') && systemText.includes('offset') && systemText.includes('limit'),
-    // 旧形态（历史会话留痕）：官方单-read SDK 骨架（'read:' 声明）或同款参数名
+    // Legacy session shape 仅作兼容性证据：官方 single-read SDK 骨架或等价名称。
     minimalRead: (systemText.includes('read:') || systemText.includes('tools.read')) && systemText.includes('file_path') && systemText.includes('offset') && systemText.includes('limit'),
     sdkRenderer: systemText.includes('interface ToolArgsMap') && systemText.includes('declare const tools'),
     c7,

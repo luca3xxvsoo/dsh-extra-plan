@@ -1,5 +1,5 @@
 // _shared/zstd-frames.mjs — 会话日志 zstd 帧解析（step-04/05/06 取证工具共用）
-// 原实现曾分别在三个取证工具中复制，现抽为单点，避免格式升级需同步改三处。
+// step-04/05/06 取证工具共用 frame parser；调用方依赖 frame boundary。
 import { zstdDecompressSync } from 'node:zlib'
 
 export function framesOf(buf) {

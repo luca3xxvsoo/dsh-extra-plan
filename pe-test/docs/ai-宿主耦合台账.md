@@ -1,6 +1,6 @@
 # 宿主耦合台账（当前 DSH/QQBot 升级核对）
 
-> 本台账只保留当前活动契约、风险、未核实项和升级 checklist。宿主侧按“包名 + 包内相对路径 + 符号名”定位，不写宿主固定行号；本仓库函数行号见 [ai-代码地图](ai-代码地图.md)。旧版本、已删除耦合、77/217/209 等历史快照与 evidence 勾销见[宿主耦合历史归档](ai-宿主耦合历史归档.md)，不作当前统计。
+> 本台账只保留当前活动契约、风险、未核实项和升级 checklist（核对清单）。宿主侧按“包名 + 包内相对路径 + 符号名”定位，不写宿主固定行号；本仓库函数行号见 [ai-代码地图](ai-代码地图.md)。旧版本、已删除耦合、77/217/209 等历史快照与 evidence 勾销见[宿主耦合历史归档](ai-宿主耦合历史归档.md)，不作当前统计。
 
 ## ① 当前基线与判读规则
 
@@ -9,7 +9,7 @@
 | DSH | `0.1.7-rc.1 || 0.1.7-rc.2` | 当前唯一支持范围；peerDependencies 为真源 |
 | QQBot 目标 | `0.5.0` | 静态目标，不等于集成通过 |
 | 核心插件 | `@local/dsh-extra-plan` `0.3.0` | 当前包契约 |
-| QQBot 精简插件 | `@local/dsh-qqbot-user-questions` `2.0.0` | 仍有 postinstall；allow-build 是否放行待 HUMAN |
+| QQBot 精简插件 | `@local/dsh-qqbot-user-questions` `2.0.0` | 仍有 postinstall（安装后脚本）；allow-build 是否放行待 HUMAN |
 | 预设载体 | profile patch 根级 `preset-extra-plan` 声明行 | `dsh.bundle.patch` 第二项为生成产物；旧 `.agent-presets` 不作读取方 |
 | 状态判读 | `【已核实】` 表示台账静态/源码核对；`【未核实】`、`HUMAN`、`SKIP` 不得改为通过 | 当前台账纪律 |
 
@@ -44,7 +44,7 @@
 | HS16 | `tool-presentation.config.mode` | 仅 `native/ptc/both` | 【已核实·静态】 |
 | HS17 | `client.js` `__ModuleLoader__` | loader id 必须与包名/组合图一致 | 【已核实·静态】 |
 | HS18 | `client.js` `require("react")` | 共享 client module 提供 React | 【已核实·静态】 |
-| HS19 | locale bind/register | 包级与行级 locale 通道 | 【已核实·静态】 |
+| HS19 | locale bind/register（语言环境绑定/注册） | 包级与行级 locale 通道 | 【已核实·静态】 |
 | HS20 | `plugins.row.config` + `configForms.whileServed` | 已安装包行详情卡片；key=`@local/dsh-extra-plan#dsh-extra-plan-settings` | 【已核实·静态】 |
 | HS21 | `client.js` `esp-*` | 本插件自持样式；不依赖旧宿主 CSS hash | 【已核实·静态】 |
 | HS22 | 主题 token | 颜色/可读性依赖主题变量名 | 【已核实·静态】 |
@@ -59,14 +59,14 @@
 | 编号 | 当前本仓位置/钩子 | 当前合同与风险 | 状态 |
 |:--|:--|:--|:--|
 | HK1 | `agent/created` | serial；启动注册错误必须吞掉；`agent/session-start` 已删除 | 【已核实·静态】 |
-| HK2 | 两处 `agent/pre-step` | waterfall；引导与注册兜底必须各自保留 | 【已核实·静态】 |
-| HK3 | `agent/request-error` | waterfall retry；MALFORMED 限次恢复与诊断 | 【已核实·静态】 |
-| HK4 | `agent/disposed` | emit/void；final fold 必须同步完成 | 【已核实·静态】 |
-| HK5 | `system-prompt/assemble` | 三参 waterfall；投影保留 variables | 【已核实·静态】 |
-| HK6 | `agent/request` | next 后再做模型路由屏障与 fallback | 【已核实·静态】 |
-| HK6a | `model-routing.js` listModels/listProviders | strict 路径候选枚举；legacy 不枚举 | 【已核实·静态】 |
+| HK2 | 两处 `agent/pre-step` | waterfall（瀑布式处理）；引导与注册兜底必须各自保留 | 【已核实·静态】 |
+| HK3 | `agent/request-error` | waterfall retry（瀑布式重试）；MALFORMED 限次恢复与诊断 | 【已核实·静态】 |
+| HK4 | `agent/disposed` | emit/void（发出/无返回）；final fold（最终折叠）必须同步完成 | 【已核实·静态】 |
+| HK5 | `system-prompt/assemble` | 三参 waterfall（瀑布式处理）；投影保留 variables | 【已核实·静态】 |
+| HK6 | `agent/request` | next 后再做模型路由屏障与 fallback（回退） | 【已核实·静态】 |
+| HK6a | `model-routing.js` listModels/listProviders | strict（严格）路径候选枚举；legacy（兼容）不枚举 | 【已核实·静态】 |
 | HK6b | `model-routing.js` prepareCall/stream | 真实 OK probe 完整消费、超时/abort 独立 | 【已核实·静态】 |
-| HK7 | `tools/pre-execute` | waterfall；四级闸门与组判定；next 默认 allow | 【已核实·静态】 |
+| HK7 | `tools/pre-execute` | waterfall（瀑布式处理）；四级闸门与组判定；next 默认 allow | 【已核实·静态】 |
 | HK8 | 七个钩子 `payload.agent` | agentEvents fused 形状 | 【已核实·静态】 |
 | HK9 | tool-jobs 通知 | `source.kind='tool-jobs'` 且 `form='notice'`；旧三元组已废；v0.4.0 起新增 job_list/list_agents 轮询守卫清整表消费方（consumed 标记与 job_output 跟踪命中解耦） | 【已核实·静态】 |
 | HK10 | step-06 事件夹具 | 事件负载必须与真实 subagent/ask/tool 形状一致 | 【已核实·静态】 |
@@ -102,10 +102,10 @@ HK23 当前无定义，不补造编号；历史/旧钩子见归档。
 | SD7 | PTC dispatch start/dispatch | root/parent/sub call 与 content/isError |
 | SD8 | subagent/descriptor.mode | continuable 与 one-shot 角色分离 |
 | SD10 | `session.seq` + `snapshotEvents(from,to)` | cursor 增量、水位未变与截断回退 |
-| SD11 | `Session.requestHeader().config` | 顶层 provider/model 与 fallback 来源 |
-| SD12 | sandbox/mode append | read-only child workspace-write floor |
-| SD14 | agents.get(parentSession) | 父链与主会话 fallback |
-| SD15 | llm.listModels | legacy advisory/strict 候选 |
+| SD11 | `Session.requestHeader().config` | 顶层 provider/model 与 fallback（回退）来源 |
+| SD12 | sandbox/mode append | read-only（只读） child workspace-write floor（工作区写入下限） |
+| SD14 | agents.get(parentSession) | 父链与主会话 fallback（回退） |
+| SD15 | llm.listModels | legacy（兼容） advisory（建议）/strict（严格）候选 |
 | SD16 | skill-filesystem/customSkillDirs | 当前 skill 载体；旧 resolve/register 仅历史 |
 | SD17 | ctx.effect 生命周期 | prompt variables 与作用域释放 |
 | SD18 | tools.schemas(scope) | 当前工具可见面与引导收窄 |
@@ -113,7 +113,7 @@ HK23 当前无定义，不补造编号；历史/旧钩子见归档。
 | SD19b | register 抛错分类 | A 重名、B 永久定义错误、C 可重试错误 |
 | SD20/SD21 | SessionHeader.cwd | save_plan/save_probe 落盘基准 |
 | SD22 | PromptAssembly | sections/contexts/tools/variables 投影 |
-| SD23 | PreStepDecision | enter/reject/messages/waterfall |
+| SD23 | PreStepDecision | enter/reject/messages/waterfall（瀑布式处理） |
 | SD24 | PreToolDecision/PostToolDecision | deny/allow 与失败 content 改写 |
 | SD25 | ToolExecution | callId/rootCallId/name/arguments/parent/signal |
 | SD26 | scoped 事件 subject 解析 | payload.agent/scope 注入 |
@@ -127,8 +127,8 @@ HK23 当前无定义，不补造编号；历史/旧钩子见归档。
 | SD35 | 宿主工具名清单 | deny 必须与宿主真值对拍 |
 | SD36 | backgroundMode→descriptor.mode | 角色与 probe claim |
 | SD37 | createUserMessage/source.kind | v4 自有 producer kind 与 id/role |
-| SD38 | step-07 输出 | attempted/actual provenance、suffix、父子行号 |
-| SD39 | agents.get(id).status | AgentRegistry.get(id)（dsh-agent）返回驻留 Agent，.status getter 真源 dsh-agent-loop：phase idle/maintenance → 'idle' 否则 'running'；插件经 ctx.get('agents') 查询 send_message 目标运行状态 |
+| SD38 | step-07 输出 | attempted（尝试路由）/actual provenance（实际来源）、suffix、父子行号 |
+| SD39 | agents.get(id).status | AgentRegistry.get(id)（dsh-agent）返回驻留 Agent，.status getter 真源 dsh-agent-loop：phase idle/maintenance（空闲/维护）→ 'idle'，否则 'running'（运行中）；插件经 ctx.get('agents') 查询 send_message 目标运行状态 |
 | SD40 | ToolExecution.agent / arguments.agent_id | send_message 方向判定契约：agent=调用者、arguments.agent_id=目标；SD25 字段清单未列 agent 字段，此处补记 |
 
 SD9、SD13 是历史缺定义编号，SD34 是本插件不调用 `sessionProjections.stateOf` 的反向记录；三者不补造成当前合同。
@@ -192,7 +192,13 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 
 环境不足、权限不足或脚本输出 SKIP 不能销账；自动全通过也不能替代以上六项。
 
-## ⑨ 升级 checklist（顺序固定）
+## 当前代码落点（符号级）
+
+- 核心入口 `plugins/dsh-extra-plan/index.js` 负责宿主 hook、配置快照与 session-scoped 状态；设置权威值/投影由 `lib/settings.js`、`lib/preset-settings.js`、`lib/preset-sync.js` 分工。
+- QQBot 兼容面由 `plugins/dsh-qqbot-user-questions/index.js#apply` → `lib/heal.js#healQqbotCompatibility` 驱动；CLI `scripts/heal.mjs` 不改变启动不阻断语义。
+- 当前静态核对不等于部署通过；真实 profile、消息、`/preset`、postinstall 和 allow-build 仍按本台账 HUMAN 项执行。
+
+## ⑨ 升级 checklist（核对清单，顺序固定）
 
 1. `node pe-test/tools/step-01-qqbot-安装映射.mjs`，再 `node pe-test/tools/step-01-qqbot-环境验证.mjs`；静态先行，环境项条件只读，SKIP 不销账。
 2. `node pe-test/tools/step-01-设置页配置.mjs` 与 `node pe-test/tools/step-04-路由与写闸门.mjs`；确认 settings/configEditor/工具呈现面。
@@ -203,7 +209,7 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 
 ## ⑩ P2-4 与 gateWords 当前合同
 
-- `agent.cordis.yml` 的 `exploreBudget`/`plannerPromptSuffix` 是作者叶值；生成器产出 `preset-defaults.generated.js` 与 `preset-patch.generated.yml`，先校验再替换，失败保留 last-known-good；运行时不解析 YAML。
-- `preset-sync` 的 idle 条件是声明行覆盖资产、本体剥离一致、投影一致；写入只走 `configEditor.edit`，无 manifest/旧迁移链。
+- `agent.cordis.yml` 的 `exploreBudget`/`plannerPromptSuffix` 是作者叶值；生成器产出 `preset-defaults.generated.js` 与 `preset-patch.generated.yml`，先校验再替换，失败保留 last-known-good（上次已知良好版本）；运行时不解析 YAML。
+- `preset-sync` 的 idle（空闲稳态）条件是声明行覆盖资产、本体剥离一致、投影一致；写入只走 `configEditor.edit`，无 manifest（清单）/旧迁移链。
 - gateWords 是 YAML 七键唯一值源；apply 先 `createGateRuntime`，当前 agent scope 注册七个 `systemPrompt.variable`；deny、match、状态机和投影都消费当前词表；旧词不推进。
 - `system-prompt/assemble` 的模型可见副本必须保留 variables 映射；宿主严格渲染失败、变量缺失或未知变量属于升级敏感面，静态台账不冒充实机通过。

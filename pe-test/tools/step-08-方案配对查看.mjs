@@ -1,4 +1,4 @@
-// step-08-方案配对查看.mjs（原 saveplan-forensics.mjs）— 精确定位 save_plan 的 call/result 配对与错误
+// step-08-方案配对查看.mjs — 定位 save_plan 的 call/result 配对及错误。
 // 用法: node step-08-方案配对查看.mjs [sessions-dir|会话目录名|路径]
 import fs from 'node:fs'
 import path from 'node:path'

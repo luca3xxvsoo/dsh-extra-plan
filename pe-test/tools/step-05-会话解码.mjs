@@ -1,4 +1,4 @@
-// step-05-会话解码.mjs（原 decode-session.mjs）— 解码会话日志，输出事件类型统计、预设相关事件、plan/mode、request/header 摘要
+// step-05-会话解码.mjs — 解码会话日志，汇总事件类型、预设事件、plan/mode 以及 request/header 摘要。
 // 用法: node step-05-会话解码.mjs [<会话目录名>]  |  无参=自动查找最新主会话+子会话；
 //       设置环境变量 SESSION_ID=<会话ID>（uuid / session-uuid / 目录名皆兼容）按 ID 精确定位（主会话连带其子会话）
 import fs from 'node:fs'

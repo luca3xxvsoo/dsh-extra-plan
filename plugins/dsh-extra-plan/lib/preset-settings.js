@@ -1,21 +1,8 @@
-// Shared settings descriptors, YAML parsing, and format-preserving scalar patches.
-// The descriptor list is the only source of truth for settings-page fields.
-//
-// dsh 0.1.7-rc.1 载体订正（2026-09-25 二轮：权威值上移 settings 行 + 声明行投影）：
-// 设置值有三个落点，descriptor 用三套行定位元数据表达——
-//  - rowLocator：**权威值落点** = settings 行 dsh-extra-plan-settings 的 config.<key>。
-//    10 项设置（8 项 UI + 2 项宿主行）的权威值全部在此行：宿主不清理、安装/重装流程不动它
-//    （configEditor.edit 对该行的继承层是空对象，永不判「值==继承层」而删行）。
-//    captureRowSettings / live-config 的读路径都走它。
-//  - projectionLocator：**投影落点** = 声明行 preset-extra-plan 的 config.plugins 内
-//    tool-web / tool-presentation 子行（仅 2 项宿主行设置）。消费方是宿主行装载期快照，
-//    故必须投影到声明行；**投影被宿主删除是无害状态**（权威值在 settings 行，按权威值重建）。
-//  - sourceLocator：源模板（资产）的行定位 =
-//    assets/presets/extra-plan/agent.cordis.yml（顶层 id=extra-plan / tool-web /
-//    tool-presentation 行），captureSettings、resolveTemplateSettingDefault 与
-//    patchYamlScalar 都走它（跨版本搬迁链已于 2026-09-25 死代码清理删除）。
-// group 标记「消费方分组」（不表示权威值落点）：8 项 extra-plan（本插件自己热读）
-//   / 2 项 host-rows（投影给宿主行 tool-web / tool-presentation）。
+// 共享设置 descriptor、YAML 解析和保格式标量 patch 工具。
+// descriptor 列表是字段元数据的唯一来源：settings 行 config 保存全部 10 个权威值，
+// 只有 2 个宿主行值投影到声明行 plugins。
+// source locator 保持资产模板、行 id、config 路径和投影路径一致；
+// 投影被删除时可从 settings 行恢复，当前 API/JSDoc 合同均在下方。
 
 import { createRequire } from 'node:module'
 import { existsSync, readFileSync } from 'node:fs'

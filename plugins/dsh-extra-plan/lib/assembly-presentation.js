@@ -1,25 +1,19 @@
-// @local/dsh-extra-plan lib/assembly-presentation.js (v0.3.0)
-// A/C/M 展示投影与 skill catalog 投影（自 index.js 拆分，逐字保留原实现）。
-//   纯静态导出：只读入参、不改 live registry/result，不持有 per-apply 状态。
-//   唯一模块级可变状态 = sdkRendererModulePromise（SDK renderer 动态 import 缓存 promise，
-//   拆分前本就位于 index.js 模块顶层，语义不变；不得改成 per-instance）。
-// 二阶段 live 取数（toolPresentationModeOf / toolRegistryOf / toolSdkSchemasOf）已迁入本模块（v0.2.2 拆分清理）。
+// A/C/M 与 skill catalog 的静态投影 helper：只读输入，不修改 registry/result。
+// SDK renderer 的模块级 import promise 刻意共享；宿主现场读取留在本模块。
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 
-// creativeMode=false 只改变模型可见的装配投影；registry binding 与运行时执行边界保持不变。
-// 宿主真值（0.1.7-rc.2 实测：@deepseek-ai/dsh-tool-cordis lib/index.js 仅注册这 2 个只读工具；
-// 定位 = L40 cordis_inspect_list、L56 cordis_inspect_query；其余 5 名全包 0 命中）。
-// 呈现侧隐藏名单与宿主真值同源：宿主若增删 cordis 工具，step-01 宿主真值对拍即判红。
+// creativeMode=false 只改变模型可见投影；registry 绑定和 runtime 安全边界保持不变。
+// 下方显式宿主列表是静态宿主值回归的比对来源。
 export const HOST_CORDIS_TOOLS = Object.freeze([
   'cordis_inspect_list',
   'cordis_inspect_query',
 ])
 export const CORDIS_PRESENTATION_TOOLS = HOST_CORDIS_TOOLS
 export const CORDIS_PRESENTATION_TOOL_SET = new Set(CORDIS_PRESENTATION_TOOLS)
-// 2 个 Cordis 只读工具名的呈现侧隐藏仍生效；宿主已删除 tool:cordis 段。
+// 两个只读 Cordis 名称继续从呈现层隐藏；runtime binding 不变。
 export const PTC_SECTION_NAME = 'tools:ptc-only'
 export const SDK_SECTION_NAME = 'tools:sdk'
 export const READ_SECTION_NAME = 'tool:read'

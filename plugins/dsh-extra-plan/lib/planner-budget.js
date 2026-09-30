@@ -1,5 +1,5 @@
-// @local/dsh-extra-plan planner budget helpers.
-// Pure message, count, and budget-policy functions; FREE_TOOLS remains in index.js.
+// @local/dsh-extra-plan planner budget 辅助函数。
+// 纯 message、计数与预算策略函数；FREE_TOOLS 仍定义在 index.js。
 
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { DEFAULT_EXPLORE_BUDGET } from './preset-defaults.generated.js'
@@ -19,7 +19,7 @@ export function toolCallCount(events, skipNames) {
     if (d.error !== undefined && d.error !== null) continue
     const message = d.message
     if (message === null || typeof message !== 'object' || !Array.isArray(message.content)) continue
-    // 0.1.7-rc.2 起：信封拍平到 message 顶层；旧形状保留兼容。
+    // 当前 message 在顶层提供 envelope；嵌套 tool-result content 仍保持兼容。
     if (typeof message.toolCallId === 'string') {
       if (message.isError !== true) okCalls.add(message.toolCallId)
       continue
@@ -100,7 +100,7 @@ export function budgetReminderText(remaining, budget, threshold) {
 // source 形状（v4 生产者自有 kind 要求）：宿主行准入（dsh-session-format-v3-to-v4 包内
 // lib/index.js 的 source 校验）要求 source 为非空字符串 kind，并明确排除旧兜底值 plugin ——
 // 旧包裹形状（kind 取旧兜底值 plugin + plugin 包名字段）必被拒收（SessionFormatError: format v4
-// message requires a producer-owned source kind）并使会话当场终止；本插件按 V3 迁移惯例
+// message requires a producer-owned source kind）——即“消息必须提供生产者自有的 source kind”，并使会话当场终止；本插件按 V3 迁移惯例
 // 自造 kind `plugin:<包名>`，无需任何 producer 注册（官方 dsh-tool-jobs 同法自造 tool-jobs）。
 export function budgetReminderMessage(reminder) {
   return createUserMessage({ source: { kind: 'plugin:@local/dsh-extra-plan' }, content: [{ type: 'text', text: reminder }] })

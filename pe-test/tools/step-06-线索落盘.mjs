@@ -1,15 +1,7 @@
-// save_probe 注册层 + 硬闸门五态 + planner 预算回归（v1 口径）验证（v3）：
-// ①注册层断言（mock ctx 走插件 apply：主会话 save_probe 幂等 + save_plan（受限规划工件，任意路由态放行）/
-//   planner save_plan / executor 均不注册）
-// ②pre-execute save_probe 五态闸门（none→deny、plan 未澄清→deny、非通道取消后五字段清理→deny、
-//   plan 已澄清且目的已定→allow、direct→deny、channelBroken→allow；deny 文案含「探查线索未放行」）
-// ②b pre-execute save_plan 五态闸门（D8-B，主会话：受限规划工件，任意路由态→allow）
-// ③planner 预算回归（v1 口径）：18 次成功配对耗尽后 read（含线索文件路径）仍 deny
-//   （reason 含「探查预算已耗尽」）、save_plan 仍 allow——不引入任何预算豁免。
-// ④执行层冒烟（真实落盘）：save_plan 双写 / save_probe 单写 + journal 双形状自愈。
-// ⑤持久化事务逐阶段故障注入（P0-3）：atomicCommit/recoverJournals 各自的末位可选 fs 依赖桩
-//   （无全局 monkeypatch）——正常双写、tmp 写失败、journal 已落盘后写桩抛错（pre-journal 条件清理
-//   成功/失败）、两次 rename 失败、最终删 journal 失败、目标确认失败、恢复 rename 失败与缺失目标保护。
+// save_probe 注册、五态闸门、planner 预算、持久化与故障注入回归：
+// 注册保持 save_probe/save_plan 的角色可见性；闸门覆盖 none/plan/direct/cancel/channelBroken
+// 五种结果；18 个成功配对耗尽预算且 save_plan 不豁免。持久化覆盖
+// 原子双写/单写、journal 恢复及各 final fs 依赖注入，不做全局 monkeypatch。
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync, renameSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -20,13 +12,13 @@ import { registerHostDeps } from '../_shared/host-deps.mjs'
 // host-deps 先于隔离完成解析（它按候选① DSH_HOME/profiles/web 锚定宿主真包）。
 await registerHostDeps()
 
-// ── 测试隔离（方案 A 构造期读盘） ──────────────────────────────────────────
-// live-config 构造期无条件读盘一次（DSH_HOME/.agent-presets/extra-plan/agent.cordis.yml，或
-// 优先级更高的 DSH_EXTRA_PLAN_CONFIG_PATH）。本脚本的 plugin.apply 均传入 config 快照（如
-// anchoredBootstrap: false），若命中现场真值，这些按入参硬编码的期望会被现场配置污染。故在
-// 【插件 import 之前】把 DSH_HOME 指向空的临时目录、并清空 DSH_EXTRA_PLAN_CONFIG_PATH：
-// 构造期读盘必然失败 → 各实例回退到自己的 fallbackDefaults（= apply 入参）。
-// 测试结束（含 process.exit 与异常退出路径）由 process.on('exit') 恢复原值并删临时目录。
+// ── 测试隔离（构造期配置读取）─────────────────────────
+// live-config 构造期会无条件读盘一次（优先 DSH_EXTRA_PLAN_CONFIG_PATH，否则读取 settings 行的
+// configEditor.documentPath）。本脚本各 plugin.apply 都传入 config 快照（如
+// anchoredBootstrap: false），若命中现场真值，按入参硬编码的期望会被现场配置污染；因此在
+// 【插件 import 之前】将 DSH_HOME 指向空临时目录并清空 DSH_EXTRA_PLAN_CONFIG_PATH，使
+// 构造期读盘失败，各实例回退到自己的 fallbackDefaults（即 apply 入参）。
+// 测试结束（包括 process.exit 与异常退出路径）由 process.on('exit') 恢复原值并删除临时目录。
 const previousDshHome = process.env.DSH_HOME
 const previousConfigPath = process.env.DSH_EXTRA_PLAN_CONFIG_PATH
 const isolatedDshHome = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-step06-home-'))
@@ -131,8 +123,8 @@ const mainAgent = { session: { header: { id: 'main-1', cwd: 'C:/work' }, snapsho
 const plannerAgent = { session: { header: { id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => [DESC] }, options: { model: 'deepseek-v4-pro' }, ctx: agentCtx }
 const executorAgent = { session: { header: { id: 'exec-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => [] }, options: {}, ctx: agentCtx }
 
-// 0.1.7 换代：agent/session-start 已删除，改由 agent/created（serial，payload
-// { agent, source }) 承担 save_plan/save_probe 的会话启动注册。
+// 当前宿主注册钩子是 agent/created（serial，载荷 { agent, source }）；
+// 它负责 session-start 阶段的 save_plan/save_probe 注册。
 function fireAgentCreated(listeners, agent) {
   const entry = listeners['agent/created']
   if (entry === undefined || entry.length === 0) throw new Error('agent/created 监听器未注册')
@@ -428,7 +420,7 @@ for (const [name, events, expected] of SAVE_PLAN_STATES) {
   }
 }
 
-// ── ③ planner 预算回归（v1 口径，[任务4.3]/[任务7.4]） ───────────────────
+// ── ③ planner 预算回归 ───────────────────
 const plannerEvents = [DESC, umk('user')]
 check('S10b 生成默认预算仍为 18', DEFAULT_EXPLORE_BUDGET, 18)
 for (let i = 0; i < DEFAULT_EXPLORE_BUDGET; i += 1) {
@@ -594,14 +586,14 @@ function inScenario(label, body) {
   }
 }
 
-// F1 正常双写（T2.1 基线：不改调用形状时生产语义）
+// F1 正常双写：保留生产调用形状与双目标内容。
 inScenario('f1-ok', (dir) => {
   atomicCommit(dir, 'f1', pairOf('f1'), 'tagf1')
   check('F1 正常双写：两目标内容与输入一致', contentsOf(dir, ['方案-f1.md', '验收-f1.md']), ['PLAN-f1', 'CHECK-f1'])
   check('F1 正常双写：tmp/journal 无残留', leftovers(dir), [])
 })
 
-// F2 tmp 写入阶段失败（T2.2）：pre-journal，目标不存在，journal 与本次 tmp 无残留
+// F2 tmp 写入阶段失败：pre-journal，目标不存在，journal 与本次 tmp 无残留。
 inScenario('f2-tmp-write', (dir) => {
   const injected = new Error('inject: tmp write failed')
   let writes = 0
@@ -614,7 +606,7 @@ inScenario('f2-tmp-write', (dir) => {
   check('F2 tmp 写失败：journal 与本次 tmp 无残留', leftovers(dir), [])
 })
 
-// F3 journal 已实际落盘、写桩在返回前抛错（T2.3）：仍按 pre-journal 条件清理
+// F3 journal 已落盘但写桩抛错：仍按 pre-journal 条件清理。
 inScenario('f3-journal-write-throw', (dir) => {
   const injected = new Error('inject: journal write threw after landing')
   const journal = journalOf(dir, 'f3')
@@ -629,7 +621,7 @@ inScenario('f3-journal-write-throw', (dir) => {
   check('F3 未进入 rename 阶段：目标文件不存在', crossedAt(dir, 'f3'), [false, false])
 })
 
-// F4 F3 场景再注入 journal 删除失败（T2.4）：journal 与全部 tmp 同时保留、不再继续清 tmp
+// F4 journal 删除失败：journal 与全部 tmp 同时保留，不再继续清理 tmp。
 inScenario('f4-journal-unlink-fail', (dir) => {
   const injected = new Error('inject: journal write threw after landing')
   const unlinkError = new Error('inject: journal unlink failed')
@@ -645,7 +637,7 @@ inScenario('f4-journal-unlink-fail', (dir) => {
   check('F4 目标文件仍未就位', crossedAt(dir, 'f4'), [false, false])
 })
 
-// F5 第一次 rename 失败（T2.5）：post-journal 保留，正常恢复可补全两端
+// F5 第一次 rename 失败：post-journal 保留，恢复可补全两端。
 inScenario('f5-first-rename', (dir) => {
   const injected = new Error('inject: first rename failed')
   const journal = journalOf(dir, 'f5')
@@ -661,7 +653,7 @@ inScenario('f5-first-rename', (dir) => {
   check('F5 恢复后 journal/tmp 清空', leftovers(dir), [])
 })
 
-// F6 第二次 rename 失败（T2.6：P0-3 核心复现）
+// F6 第二次 rename 失败：验证 post-journal 恢复入口保留。
 inScenario('f6-second-rename', (dir) => {
   const injected = new Error('inject: second rename failed')
   const journal = journalOf(dir, 'f6')
@@ -676,7 +668,7 @@ inScenario('f6-second-rename', (dir) => {
   check('F6 恢复后无临时残留（journal/tmp 清空）', leftovers(dir), [])
 })
 
-// F7 两个 rename 完成但最终删除 journal 失败（T2.7）
+// F7 两个 rename 完成但最终删除 journal 失败。
 inScenario('f7-final-unlink', (dir) => {
   const unlinkError = new Error('inject: journal unlink failed')
   const journal = journalOf(dir, 'f7')
@@ -689,7 +681,7 @@ inScenario('f7-final-unlink', (dir) => {
   check('F7 下一次恢复只做完成确认并删 journal，目标内容不变', [existsSync(journal), contentsOf(dir, ['方案-f7.md', '验收-f7.md']), leftovers(dir)], [false, ['PLAN-f7', 'CHECK-f7'], []])
 })
 
-// F8 目标存在性确认失败（T2.8）：全部目标确认通过前不得尝试删除 journal
+// F8 目标存在性确认失败：全部目标确认通过前不得尝试删除 journal。
 inScenario('f8-target-confirm', (dir) => {
   const journal = journalOf(dir, 'f8')
   const unlinks = []

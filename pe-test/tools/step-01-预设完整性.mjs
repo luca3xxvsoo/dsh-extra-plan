@@ -36,10 +36,8 @@ try {
 console.log('PASS  工作区 agent/preset YAML 解析成功（' + (Array.isArray(rows) ? rows.length : '非数组!') + ' 行）')
 if (!Array.isArray(preset)) console.log('PASS  preset.yml 为有效 YAML 文档')
 
-// 0.1.7-rc.2 宿主事实（与 lib/assembly-presentation.js HOST_CORDIS_TOOLS 同源）：
-// dsh-tool-cordis 只注册 cordis_inspect_list（lib/index.js L40）、cordis_inspect_query（lib/index.js L56）；
-// cordis_run/cordis_define/cordis_stop/cordis_undefine/cordis_inspect_self 已不存在
-// （deny 列出未知名会使 tools.restrict() 抛错）。真值对拍见下方 S-宿主真值。
+// 从 dsh-tool-cordis 读取 Cordis 呈现面的宿主真值，并与 lib/assembly-presentation.js 的
+// HOST_CORDIS_TOOLS 比对；未知 deny 名会使 tools.restrict() 抛错。
 const cordisTools = HOST_CORDIS_TOOLS
 const registered = new Set([
   'subagent', 'subagent_review', 'subagent_probe', 'subagent_plan', 'workflow', 'ralph',
@@ -355,14 +353,8 @@ if (cordisTools.length === 2 && agentText.includes('# 0.1.7-rc.2 起 dsh-tool-co
   console.log('FAIL  Cordis 静态集合不是 2 项')
 }
 
-// S2（2026-09-25）：宿主运行时包依赖政策——`dependencies` 不得含任何 `@deepseek-ai/*`。
-// 背景：0.1.7 运行时解析表里「profile node_modules 内的本地候选优先」（dsh-app-boot routeScoped），
-//   所以装进 profile 的宿主同名包会顶替宿主的 llm 运行时行；0.1.7-rc.1 副本没有
-//   projectToolUpdates/toolUpdate/toolHistory，会话内工具集变化产生的 developer tool-removal
-//   会被原样序列化成线上 tool_removal，而 DeepSeek Messages API 只接受 tool_addition → 422，
-//   且该 developer 消息落盘后整会话每轮必失败（现场取证见 ai-宿主耦合台账.md CF12 与 ⑦-2）。
-// 口径：dsh-llm / schemastery 只作 peerDependencies 声明（profile autoInstallPeers=false 不安装），
-//   运行时由宿主安装域供给 → 自动跟随宿主版本，不需要插件自己钉一套。
+// S2：宿主 runtime 包不得进入 dependencies；只能由 peerDependencies 声明
+// @deepseek-ai/dsh-llm 和 schemastery，避免 profile shadow 宿主 runtime 副本。
 const pluginPkgFile = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'package.json')
 let pluginPkg
 try { pluginPkg = JSON.parse(readFileSync(pluginPkgFile, 'utf8')) } catch { pluginPkg = undefined }
@@ -379,7 +371,7 @@ check('S2 peerDependencies 的 @deepseek-ai/dsh-llm 与 @deepseek-ai/dsh 同范�
 check('S2 peerDependencies 已声明 @deepseek-ai/schemastery（由宿主安装域供给）',
   typeof pluginPeers['@deepseek-ai/schemastery'] === 'string' && pluginPeers['@deepseek-ai/schemastery'] !== '')
 
-// S3（2026-09-26）：显示元信息本地化通道——Plugins 页包卡片标题/描述与各「行」标题/描述的唯一来源。
+// S3：显示元信息本地化通道——Plugins 页包卡片标题/描述与各「行」标题/描述的唯一来源。
 //   宿主 dsh-app-boot readPluginMeta：以 `<specifier>/locale/en.json` 为锚，读同目录 `<lang>.json` 的
 //   meta.title / meta.description（顶层 title/description 不生效，故字典只有 meta 键）。
 //   行的 specifier = 行的 name（@local/dsh-extra-plan/settings | @local/dsh-extra-plan/preset-sync），

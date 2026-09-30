@@ -3,15 +3,9 @@ import { join, resolve } from 'node:path'
 import { PROBE_LIMITS, RANGE_FORMAT_HINT, LINE_FORMAT_HINT, sanitizeTaskName, sessionTagOf, saveArtifactBase, renderSavePlan, renderProbeMarkdown, renderSaveProbe, extractProbeEvidenceRefs } from './save-contract.js'
 import { validateProbe, probePathOf } from './save-probe-validation.js'
 
-// 证据引用报错呈现：装饰字符（反引号/引号/括号/中文标点）在裸插值下不可见，故 ref
-// 一律以 JSON.stringify 呈现；首字符属装饰集时再追加提示（工具侧诊断文本，非界面文案）。
-// 该提示**可达**、会真实触发：在「证据文件不存在」报错路径上，抛出前调用
-// probeRefDecorationHint（本文件唯一的调用点；「非探查者落盘」路径不拼接该提示，与实机
-// 判据 A36 的「第一条追加」口径一致）。判定条件 = ref 首字符落在下方 PROBE_REF_DECOR_RE
-// 的装饰集内——该集合**含 `_` 与半/全角括号**。剥除实现只对**成对包裹**生效、单侧一律
-// 不剥，故 `_private.md`、`(abc).md` 这类**合法文件名**会被原样保留，其首字符仍落在
-// 集合内：这类名字在文件不存在时会收到提示，属**可接受的轻微误报**（提示仅为诊断文本、
-// 不影响判定；A36 亦以「首字符属装饰集」为期望口径）。
+// 证据错误用 JSON.stringify 展示引用，必要时追加非权威的装饰提示。
+// 提示只检查下方诊断字符集的首字符；成对清洗在 save-contract.js，
+// 文件名中的单侧装饰保持不变，供存在性校验使用。
 const PROBE_REF_DECOR_RE = /^[`*_"'<>[\]()（）「」【】『』，。；：！？、|]/
 function probeRefDecorationHint(ref) {
   return PROBE_REF_DECOR_RE.test(ref) ? '（疑似含 Markdown 装饰；引用证据请使用裸路径，每条单独一行）' : ''

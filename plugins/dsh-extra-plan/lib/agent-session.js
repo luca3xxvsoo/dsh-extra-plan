@@ -1,17 +1,8 @@
-// @local/dsh-extra-plan lib/agent-session.js (v0.3.0)
-// sessionEvents / isSubagentChild 的唯一来源（自 index.js 拆出，函数体逐字保留原实现）。
-//   零依赖纯函数模块：只读入参、不持有任何状态，不 import index.js（避免循环依赖）。
-//   使用方：index.js（import 后供留存区各调用点使用，并继续经 decisions re-export
-//   isSubagentChild，名字数不变）、lib/model-routing.js（resolveAgentRouteSources 依赖
-//   isSubagentChild）。拆分前 lib/model-routing.js 内的逐字镜像副本已在本轮删除。
-//   改动本模块即同时影响两侧 —— 不再有镜像副本需要同步。
-
-// 会话事件快照统一读取（v0.1.2-rc.1 单版本口径）：
-// `events` 已移除，替代 API 为 `snapshotEvents()`（无参=全量冻结数组，
-// 有快照缓存，语义与旧 events getter 等价；另有 snapshotEvents(from, to) 区间读取与
-// eventAt(seq) 供单点读取）；
-// 均无返回 []（各调用点已有 Array.isArray/长度防御，空数组语义安全；
-// 时序上不抛错、不崩网关）。
+// sessionEvents/isSubagentChild 的唯一来源：零依赖纯函数只读入参、不保存模块或会话状态；
+// index.js 与 model-routing.js 共用同一实现，避免两侧漂移。
+// 当前宿主 API 以 snapshotEvents() 为主：无参返回冻结事件数组，snapshotEvents(from,to)/eventAt(seq)
+// 提供范围或单点读取；来源缺失或无效时返回 []，调用方的 Array.isArray/length 防御保持可用。
+// 子代理识别先看 session.header，再扫描 subagent/descriptor 事件；主会话不缓存 false。
 export function sessionEvents(session) {
   if (session === undefined || session === null) return []
   if (typeof session.snapshotEvents === 'function') return session.snapshotEvents()

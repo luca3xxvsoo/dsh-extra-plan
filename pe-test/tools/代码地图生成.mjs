@@ -1,11 +1,7 @@
 #!/usr/bin/env node
-// 代码地图生成.mjs — dsh-extra-plan 代码地图增量同步脚本
-// 用法：node pe-test/tools/代码地图生成.mjs [--roots <dir1,dir2>] [--map <path>] [--strict]
-// --strict：存在「未接受的疑似漏检」时以非 0 退出（供自检/CI 调用）
-// --check ：不写盘；地图与代码不一致（[新增]/[行号]/[删除]）或存在漏检/导航失效 → 非 0 退出（一键体检用）
-// 原则：地图文件的「功能描述」由 AI/人维护；本脚本只增量同步结构（行号/增删行），
-//       绝不覆盖已有描述。匹配键 = 文件路径 + 函数名 + 出现顺序（同名函数各占一行，按文件内出现顺序配对；
-//       旧地图若同名行数不一致，多出的报 [新增]、未消费的报 [删除]，并输出 [同名] 提示要求复核）。
+// 代码地图生成.mjs — 增量同步结构并保留人工描述。
+// --strict 拒绝未解决的疑似遗漏；--check 只读检查过期/新增/删除索引项和损坏导航。
+// 稳定键 = 相对路径 + 函数名 + 同名出现顺序。
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSync } from 'node:fs'
 import { join, resolve, relative, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'

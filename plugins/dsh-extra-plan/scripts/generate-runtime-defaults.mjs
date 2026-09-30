@@ -1,6 +1,5 @@
 #!/usr/bin/env node
-// Generate the runtime fallback and the preset declaration patch.
-// Both outputs are replaced only after source parsing and validation succeed.
+// 生成 runtime fallback 与预设声明行产物；替换前先解析并校验。
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
@@ -13,10 +12,8 @@ export const DEFAULT_OUTPUT = resolve(HERE, '..', 'lib', 'preset-defaults.genera
 export const DEFAULT_META_SOURCE = resolve(HERE, '..', 'assets', 'presets', 'extra-plan', 'preset.yml')
 export const DEFAULT_PATCH_OUTPUT = resolve(HERE, '..', 'assets', 'presets', 'extra-plan', 'preset-patch.generated.yml')
 
-// 预设新载体（dsh 0.1.7-rc.1）：预设不再是宿主读取 .agent-presets 的目录分发，
-// 而是 profile patch 根级 insert 一行声明行（name = @deepseek-ai/dsh-agent-preset），
-// 顶层 agent 组合逐字进入该行 config.plugins。产物 = preset-patch.generated.yml，
-// 由 package.json dsh.bundle.patch 数组随 cordis.patch.yml 一并装载。
+// 生成的 patch 是 profile 根级声明行；config.plugins 是资产顶层条目的逐字平移副本，
+// 通过 package bundle patch 加载。
 export const PRESET_ID = 'extra-plan'
 export const PRESET_ORDER = 100
 // 声明行 config.plugins 内条目缩进：根级条目（0 缩进）平移 PLUGINS_INDENT 列。
@@ -118,7 +115,7 @@ export function generateRuntimeDefaults(options = {}) {
   const patchOutput = options.patchOutputPath === undefined
     ? (usesRepositoryDefaults ? DEFAULT_PATCH_OUTPUT : null)
     : (options.patchOutputPath === null ? null : resolve(options.patchOutputPath))
-  // Read, parse, validate, and render before touching output: a bad template keeps last-known-good bytes.
+  // 先读、解析、校验并渲染，再接触输出；坏模板保留 last-known-good 字节。
   const sourceText = readFileSync(source, 'utf8')
   const rendered = renderRuntimeDefaults(sourceText)
   let renderedPatch = null

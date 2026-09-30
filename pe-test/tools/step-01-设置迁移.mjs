@@ -1,8 +1,6 @@
-// 设置描述表（descriptor）/ 行定位 / 保格式改写的共享层回归。
-// dsh 0.1.7-rc.1 载体订正后：本文件只覆盖「描述表契约 + 源模板（资产）解析与
-// 定点改写 + 新载体 settings 行捕获」，不再覆盖旧分发目录的状态机迁移矩阵
-// （那部分由 step-01-安装同步.mjs 用新载体夹具覆盖）。
-// 所有夹具都在内存或系统临时目录，不触碰生产 DSH_HOME。
+// settings descriptor、行定位、保格式改写与 settings 行捕获回归。
+// 覆盖 descriptor/schema 合同、资产模板解析、定点编辑和当前载体；
+// 所有夹具都在内存或临时目录中，不触碰生产 DSH_HOME。
 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'

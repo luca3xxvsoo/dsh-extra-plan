@@ -1,10 +1,8 @@
 import { mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, existsSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 
-// 默认文件系统操作集：冻结只读常量，键名与下方实际调用的同步 node:fs 函数逐一同义。
-// 仅作 atomicCommit/recoverJournals 末位可选依赖参数（fsOps）的缺省值；测试传入自己的局部
-// 桩对象，未提供的操作项回退到这里（测试只需列出要注入故障的那几项）。默认对象不可就地
-// 改写，合并时另建新对象，避免共享默认集被误改造成跨用例污染。
+// atomicCommit/recoverJournals 使用冻结的默认 fs 操作；测试只可注入指定操作，
+// 合并覆盖时总是创建新对象，避免夹具修改共享默认值。
 const DEFAULT_FS_OPS = Object.freeze({ mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, existsSync, unlinkSync })
 
 function fsOpsOf(overrides) {
@@ -12,21 +10,10 @@ function fsOpsOf(overrides) {
   return { ...DEFAULT_FS_OPS, ...overrides }
 }
 
-// 公共原子落盘（save_plan 双写 / save_probe 单写共用）：mkdir → 逐条写 tmp →
-// journal（新形状 {entries:[{tmp,file}]}）→ 逐条 rename → 逐项确认目标就位 → 清 journal。
-// 阶段感知的不变量：
-// ① journal 尚未成功写入（pre-journal）时失败：先删本次可能已部分落盘的 journal 并用
-//    existsSync 确认其不存在，确认后才清理本次 tmp；journal 删除失败或删除后仍存在则保留
-//    全部 tmp（不制造「journal 存在而 tmp/目标均缺失」的不可续做现场）。
-// ② journal 成功写入后（post-journal）的任何失败——任一次 rename、目标确认或 journal 删除
-//    失败——一律保留 journal 与现有现场，不再在 catch 中删除恢复入口。
-// ③ 只有全部目标 existsSync 确认就位后才尝试删除 journal。
-// ④ 任何清理错误都不得覆盖原始错误：对外始终抛原始错误。
-// tmp 后缀沿用现有 .tmp-${process.pid}-${Date.now()}。
-// sessionTag（T3）：写入方会话标识段（sessionTagOf），随 journal 落盘供
-// recoverJournals 按会话过滤；所有生产 atomicCommit journal 均带非空 session。
-// fsOps（可选，末位）：局部文件系统操作依赖（默认 DEFAULT_FS_OPS），仅供测试注入故障；
-// 生产调用（index.js → save-tool-factories.js）不传，语义与拆分前完全一致。
+// 原子提交顺序：mkdir → tmp → journal（entries: [{ tmp, file }]) → rename →
+// 确认每个目标 → 清 journal。journal 写入成功前按确认结果条件清理；
+// journal 写入成功后任何失败都保留 journal 与现场，清理失败不遮盖原始错误。
+// 提供 sessionTag 时恢复按其过滤；fsOps 仅用于测试注入。
 export function atomicCommit(dir, base, files, sessionTag, fsOps) {
   const ops = fsOpsOf(fsOps)
   ops.mkdirSync(dir, { recursive: true })
@@ -72,16 +59,8 @@ function recoveryTargetsOf(record) {
   })
 }
 
-// journal 崩溃自愈：当前 entries 形状逐项恢复；旧形状只告警并保留。
-// 完成判定：每一项「tmp 存在则 rename，随后确认目标文件存在」——已在前一次尝试中完成 rename
-// 的项凭目标存在继续（幂等续做），tmp 与目标同时缺失的项视为恢复失败；任一项恢复或确认失败
-// 即保留 journal，只有全部项都确认就位才删除该 journal。恢复失败 console.warn 且继续扫描
-// 目录内其它 journal（一个 journal 失败不阻断其它 journal）。
-// sessionTag（可选，T3）：save_plan 传入自己的会话标识段，跳过「内嵌了其它会话标识」
-// 的 journal 残留（同秒 base 撞名防护的另一半：不同调用方互不补完对方的半成品）；
-// 无标识的历史残留（旧形状、手工夹具）与 save_probe 的单写保持原恢复语义。
-// fsOps（可选，末位）：局部文件系统操作依赖（默认 DEFAULT_FS_OPS），仅供测试注入
-// readdir/read/exists/rename/unlink 故障；生产调用不传，语义与拆分前一致。
+// 恢复只接受当前非空 entries 形状；每项先将存在的 tmp rename 到目标，再确认目标存在。
+// 任一项缺失或失败就保留对应 journal，其它 journal 继续处理；sessionTag 过滤归属，fsOps 仅供测试注入。
 export function recoverJournals(dir, sessionTag, fsOps) {
   const ops = fsOpsOf(fsOps)
   let names = []

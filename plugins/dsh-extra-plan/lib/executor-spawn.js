@@ -1,29 +1,6 @@
-// @local/dsh-executor-spawn (v1.4)
-// 规划者·执行者模式专用子代理 provider：包一层宿主 spawn provider，
-// 给经它派出的子代理默认注入执行者工具裁剪（deny 委派/追问/目标/计划类工具）。
-// 模型不再注入（v1.3：子会话模型跟随父会话）——worker 请求不带 model 时由宿主
-// 继承父会话当前模型；请求显式指定的 model 优先（如 workflow 脚本显式传的模型）。
-//
-// 背景（E8 修复，2026-08）：workflow worker 与 ralph worker 由
-// dsh-workflow-worker-thread 引擎内部调用 ctx.subagents.start()，请求里
-// 不携带 toolFilter/persona，预设的 tool-subagent 行裁剪对其不生效
-// （测试证据：worker 25 工具、fork 26 工具未裁剪，防递归失效）。
-// 预设侧无法直接修：引擎 startChild 硬编码请求形状，Config 无 toolFilter
-// 字段；registerContinuableSetup 只覆盖 continuable 子代理；预设层 restrict
-// 会连规划者一起裁掉。宿主包按用户要求不动。
-//
-// 修法：本 provider 挂在 planner-executor 预设里（宿主组合不挂），把
-// spawn provider 的 start/prepareContinuable 委托出去，仅当请求未自带
-// toolFilter 时注入 deny 清单；workflow 引擎行与 ralph 行把 provider 指向
-// 'executor-spawn'，两类 one-shot worker 即与常规执行者一致地被裁剪。
-// fork 由预设 tool-subagent-fork 行自带的 toolFilter 覆盖（宿主 fork
-// provider 已支持 toolFilter，对话继承不受 deny 影响）。
-//
-// 生命周期：registerProvider 随进程存活；providerName 来自 config——默认 'executor-spawn'，
-// planner-executor 预设传 'extra-executor-spawn'。注册采用**引用计数幂等**：预设组合变更 →
-// 根 Include reload → 本行新 fiber 再次 apply 时，与仍存活的旧世代共享同一注册与 disposer
-// （同名重复注册会撞宿主 dsh-subagent 的无覆盖分支），仅最后一个持有者释放时才反注册。
-// 槽表键 = subagents 服务实现本体（root 单例；读取全局注册符号 cordis.original，取不到符号值时降级回代理本身）。
+// 执行者子代理 provider 包装宿主 spawn：请求未提供 toolFilter 时才注入执行者 deny 清单；
+// 显式 model 与 toolFilter 始终以调用方为准，不能被默认值覆盖。
+// provider 注册按稳定 subagents 服务槽位引用计数；仅最后一个持有者释放注册。
 
 export const name = 'executor-spawn'
 export const inject = ['subagents']

@@ -1,28 +1,11 @@
-// 配置热读（hot-read）：把「apply 期一次性快照」升级为「消费点现场取值」。
-//
-// 契约（方案 T6）：
-// 1) 路径决议优先级：options.configPath → process.env.DSH_EXTRA_PLAN_CONFIG_PATH →
-//    configEditor.documentPath（profile cordis.patch.yml，宿主唯一可写配置文件）。
-//    为什么用 configEditor.documentPath：dsh 0.1.7-rc.1 起设置值落在 profile patch 的
-//    settings 行（dsh-extra-plan-settings）config 内；.agent-presets/extra-plan/
-//    agent.cordis.yml 不再是任何读取方的真源（旧分发目录已退役，仅作迁移期旧值副本）。
-//    刻意不 import settings.js：该模块静态依赖 @deepseek-ai/schemastery，而 index.js 的
-//    import 图必须能在无宿主依赖的体检环境里加载（体检直接 import 本插件）。
-//    configEditor 未就绪（无路径）时整体回退 fallbackDefaults，不再回退旧预设目录。
-// 2) 变更检测：fs.statSync(path) 的 { mtimeMs, size } 作为 stamp；stamp 未变且路径未变 →
-//    直接返回缓存（不读盘、不解析 YAML）。单次取值成本 = 一次 statSync + 一次对象属性访问。
-// 3) 基线（构造期读盘）：构造期**无条件 readFileSync + captureRowSettings 读盘一次**，
-//    以文件真值作为本实例的初始基准（成功即记 stamp）。宿主在「新会话 apply」时传入的
-//    cfg 可能是改文件**之前**的快照，构造期读盘把「文件真值」直接设为第一拍基准。
-// 4) 失败回退：路径不可得 / 文件不存在 / statSync 失败 / YAML 解析失败 / 全部取值非法 →
-//    回退 fallbackDefaults + console.warn 一次（同实例防抖，不刷屏）；单个键
-//    missing/ambiguous/invalid 只回退该键。
-// 5) fallback 链：settings 行 override（profile patch 真值）→ cfg（apply 期快照）
-//    → BUILTIN_DEFAULTS。不设计 per-Agent 缓存失效策略：新 agent = 新 WeakMap 键。
-// 6) 10 项同源读取：8 项 UI 设置 + 2 项宿主行设置（webFetch / toolPresentationMode）的
-//    权威值都落在 settings 行 config（dsh-extra-plan-settings 行），本实例按同一 rowLocator 读。
-//    差别只在消费方：8 项由本插件热读（改后立即生效）；2 项由宿主行装载期快照消费，
-//    本插件只提供权威值读口，**改后需重启宿主才生效**。
+// 在消费点热读配置，不只信任 apply 快照。
+// 路径优先级：options.configPath → DSH_EXTRA_PLAN_CONFIG_PATH → configEditor.documentPath；
+// settings 行是权威值，旧预设目录不作回退。
+// stamp 由路径和 stat 元数据组成；未变则跳过读盘和 YAML 解析。
+// 构造期先读一次源文件建立初始基线，避免宿主 cfg 快照过期。
+// 路径、文件、stat、YAML 或值失败时按键回退并只告警一次。
+// 回退顺序为 settings 行覆盖 → apply cfg → BUILTIN_DEFAULTS；每个 agent 的缓存键保持隔离。
+// 10 项共享同一 row locator：8 项在此热读，2 项由宿主装载期快照消费，投影改变后需重启宿主。
 
 import { statSync, readFileSync } from 'node:fs'
 import { DEFAULT_PLANNER_PROMPT_SUFFIX } from './preset-defaults.generated.js'

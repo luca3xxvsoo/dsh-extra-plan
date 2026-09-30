@@ -35,11 +35,8 @@ export function codeMutationHints(code) {
 }
 
 export function createRunCodeStatic({ askTool, isDispatchStart }) {
-  // ── F7' v4：run_code 拆解器 + 闸门纯函数抽取 + 组判定/聚合（单一真源） ──
-  // 说明（重构原则）：listener 各分段的纯粹判定部分抽取为模块顶层纯函数；普通工具
-  // 路径（native/both 直呼）与组判定成员路径调用「同一函数」，文案字面量唯一出处，
-  // 杜绝复制漂移。所有闭包依赖（exploreBudget、planToolName、jobOutputCallCounters、
-  // probe）改为显式参数传入。抽函数内分支顺序与改前 listener 逐字同序。
+  // run_code 拆解、组判定与聚合共用单一纯函数实现；直呼与组成员路径不复制规则，
+  // 闭包依赖显式传入，分支顺序与 listener 合同保持一致。
   
   // 遮蔽代码中的字符串字面量（'...'/"..."/`...`）与注释（//、/* */）为等长空格
   // （保留换行/回车），消除字符串/注释内 tools.xxx 或裸写词的误提取；遮蔽后无引号，
@@ -234,10 +231,8 @@ export function createRunCodeStatic({ askTool, isDispatchStart }) {
     // ⑥ 裸写扫描：对遮蔽后文本中已提取工具调用区间之外的剩余片段跑 codeMutationHints
     //    （复用 RUNCODE_MUTATION_HINTS）→ hits 非空 → 追加一个 { kind:'bare-write',
     //    name:'write', hints:hits } 成员（排末尾；多个裸写命中合并为一个）。
-    //    与 v2 差异说明：v2 对全文本扫描（含嵌套工具调用参数字符串内的裸写词）；v4 屏蔽
-    //    工具调用区间后再扫，杜绝「tools.write({ content: "writeFileSync(...)" }) 的参
-    //    数字符串被误判为裸写」，属精确化改进；不影响 R35/R36/R40（它们用裸 writeFileSync
-    //    直写，仍命中）。
+    //    裸写扫描在已识别工具调用区间之外进行，参数字符串中的写词不误判；
+    //    直接写调用仍按 RUNCODE_MUTATION_HINTS 命中。
     const restChars = masked.split('')
     for (let k = 0; k < occupied.length; k += 1) { if (occupied[k]) restChars[k] = ' ' }
     const hints = codeMutationHints(restChars.join(''))
@@ -245,11 +240,10 @@ export function createRunCodeStatic({ askTool, isDispatchStart }) {
     return { members, dynamic }
   }
   
-  // run_code 多调用容错硬闸门（v0.1.10）：code 内 tools.* 调用点（未去重、含多行、含动态访问；
-  // 裸写 hint 不计）≥2 时，要求每个调用点独立容错——只认独立 try/catch 组：try 块内恰 1 个调用点、
-  // 块后紧跟 catch；allSettled 数组 / .catch 链 / 包装函数一律不认；不足 → 教学式拒绝（组判定整体拒绝）。
-  // 单调用豁免；嵌套 run_code 展平（depth 0 且参数可解析时递归扫 args.code，depth≥1 跳过）纳入；
-  // 静态识别失败方向=保守（按未保护拒绝）。decomposeRunCode 契约与 native/both 直呼路径均不变。
+  // 多调用容错闸门：tools.* 调用点（未去重、含多行与动态访问；裸写不计）≥2 时，
+  // 每点必须有独立 try/catch（try 内恰 1 点、块后紧跟 catch）；allSettled/.catch/包装函数不算。
+  // 单调用豁免；depth 0 且参数可解析的嵌套 run_code 展平，静态识别失败按未保护拒绝；
+  // decomposeRunCode 与 native/both 直呼路径保持同一合同。
   function runCodeCatchGateReason(code) {
     const text = typeof code === 'string' ? code : ''
     if (text === '') return null

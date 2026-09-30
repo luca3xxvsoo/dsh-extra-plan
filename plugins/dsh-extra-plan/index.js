@@ -1,108 +1,9 @@
-// @local/dsh-extra-plan (v0.3.0)
-// v2（2026-09-04）：agent/request planner 前置注入
-// 额外规划模式（extra-plan 预设专用）：按需规划 + 四级机械锚点（路由/目的/澄清/批准）
-// + 主会话与规划子代理 anchored 引导 + 规划子代理探查硬上限 + 力度继承 +
-// save_plan 方案落盘（原子双写）+ 子代理沙箱下限 + usage 账本。
-//
-// ── 宿主事实依赖清单（来自 force-plan v11.8.3 的踩坑记录，逐条继承） ──
-// 1. session.header.origin/delegationDepth 在会话创建时即已冻结可用；
-// 2. tools/pre-execute 的 exec.arguments 是已解析的对象，不是 JSON 字符串；
-//    会话事件里 tool/call 的 data.arguments 则是 JSON 字符串；
-// 3. 子代理判定已弃用 agents.roots()（v0.1.2-rc.1 真实机制：子代理 runtime
-//    owner=父，agent-loop enter(agent, ownerCtx.agent)——按 owner 的根判定不会
-//    把子代理当根）——一律用「子代理标记 + 父会话存活」公式；
-// 4. ask_user_question 答案以 tool/result 回流（callId/isError 在 message 顶层、
-//    content 直接是内容块），与 tool/call 的 callId 精确配对，渲染文本为 {"answers":[...]} JSON；
-//    提问通道级错误码全集（v0.1.2-rc.1 声明）：ASK_ABORTED / EMPTY_QUESTIONS /
-//    CALLER_NOT_LIVE / DELEGATED_CALLER / BAD_INTENT / NO_PROVIDER；取消码实测口径
-//    （2026-09-23 复核）：native 直呼取消上报 ASK_CANCELLED（全库唯一实证
-//    session-368b8b1f L3140），嵌套（PTC）取消无码、只有宿主文案句（见
-//    HOST_ASK_CANCEL_TEXTS）；ASK_ABORTED 全库 423 会话 0 命中；BAD_INTENT 为新增码、
-//    非通道故障，落入 else 分支重置 route/purpose/clarified/approved（安全方向）；
-//    闸门拒绝（插件中文文案）另判为 kind:'denied'，不重置路由与阶段状态（见 deriveFlowState）；
-// 5. preStep 先装配后 pre-step——目录裁剪/引导一律走 system-prompt/assemble
-//    装配级过滤（await next() 后替换），与时序无关、每次请求（含首个）生效；
-// 6. web 会话先按默认预设发布、约 3 秒后 recompose 且不重发 agent/session-start
-//    ——依赖 session-start 的逻辑需 pre-step 兜底（本插件 save_plan 注册在
-//    session-start，规划子代理由本预设行创建、session-start 必达，无需兜底）；
-// 7. 子代理经 applyChildComposition 加入父预设组合——本插件同样活在子会话里，
-//    每个会话各有一份实例，ctx 为该会话 agent 的作用域；
-// 8. dsh-subagent 在委派边界把子代理审批固定为 never；沙箱下限需插件补种
-//    （childPolicyNeedsFloor，F 系列用例已测）；
-// 9. 子代理的 reasoningEffort 由 agent/request 瀑布继承；当前 DSH AgentOptions
-//    已声明该字段，实际来源与覆盖规则见下方 agent/request 逻辑。
-//    真实机制：宿主 installModelSelection 仅由主会话侧会话控制器安装
-//    （setup: installSelection 先于 presets.mount），其 agent/request 钩子无条件
-//    覆写 provider/model/reasoningEffort（剥除 resolved 的 effort）；子代理瀑布
-//    不安装该监听器 → 插件注入在 next() 解析后执行并最终生效。
-//
-// 行为：
-//  1) 四级机械锚点（主会话，硬闸门，tools/pre-execute）：
-//     - 路由未确认（state.route==='none' 且无通道逃生）：禁 write/edit 与
-//       pwsh 写命令、禁一切委派；路由否决词（routeDisagree）保持未确认；
-//     - 直行态（route==='direct'）：放行主会话写工具；委派恒拒（无计划批准
-//       锚点，机械保证"点直行 = 不派子代理"）；
-//     - 规划态（route==='plan'）：澄清完成才放行 subagent_plan 与 save_probe
-//       （save_probe 与 subagent_plan 同条件放行，v3 口径）；
-//     - 计划已批准（approved）：放行执行类委派（subagent/subagent_fork/
-//       workflow/ralph/subagent_review）与写工具；
-//     - send_message：完全放行（目标合法性由宿主校验；续轮转达语义不变）；
-//     - save_plan：主会话同注册，任意路由态放行（受限规划工件：仅写 cwd/.extra-plan
-//       固定形状 Markdown；内容闸门与规划子代理共用同一实现，强度一致）；
-//     - subagent_probe：仅主会话可委派（任意路由状态放行 + 固定后台）；规划子代理
-//       被闸门拒绝（T5，改用「申请继续探查」升级通道）；
-//     - 空白回复（answers:[]）/取消/中断/验词失败一律视为未确认；仅提问
-//       通道级错误码白名单逃生放行（防死锁，v11 口径）。
-//  2) 规划子代理（subagent_plan 创建、model=pro 的子会话）：
-//     - save_plan 工具注册在此子会话与主会话层（session-start 时按
-//       isPlannerChild / 非子代理判定；主会话侧任意路由态放行（受限规划工件），见 1)）；
-//     - save_probe 工具注册在主会话层与已认领的探查子会话层（session-start +
-//       pre-step 幂等兜底；probe 子代理经放行-认领关联认领），规划子代理/执行者/
-//       reviewer 不可见；
-//     - 探查硬上限：自最近一条主会话发往本子代理的消息（初始任务
-//       kind=user / send_message 续轮转达 kind=agent-message；用户不直接对话
-//       子代理）起的 tool/call（含 save_plan）≥ exploreBudget 后拒绝后续
-//       工具调用并注入收敛指令；每条主会话转达消息重置预算（=用户授权继续
-//       探查）；save_plan 与宿主运行时快照（宿主自有 kind，如 runtime-context，
-//       非 user/agent-message）不重置；
-//     - write/edit 与 pwsh 写命令拒绝（toolFilter 之外的备份防线）。
-//     - plannerPromptSuffix 配置：委派的初始任务消息（kind=user）与续轮转达
-//       （kind=agent-message）末尾机械拼接「\n\n + 配置文本」（任务要求 + 回车换行
-//       + 文本）；宿主运行时快照（自有 kind，非 user/agent-message）不追加。
-//  3) anchored 引导（默认开）：主会话与规划子代理在首个 tool/call 落盘前，
-//     装配级注入极简 persona、清空运行时上下文、目录收窄——native/both 保持
-//     bootstrap shell(s)+read，sections 仅 persona；Pure PTC 只保留 run_code，
-//     sections 为 persona + tool:read（宿主 tools:ptc-only 段已按用户要求停用；tool:read 文本
-//     由 cfg.bootstrapReadHint 手写、内置中文兜底，不再调官方 renderer；L 段自动回到宿主原文）；
-//     无 shell 且无 run_code → 跳过并每实例警告一次；执行者/reviewer 子代理不引导。
-//  4) planner 与非 planner child 模型及首请求屏障：planner 只用 plannerModel，executor/reviewer/probe
-//     与 workflow/ralph worker 只用 otherAgentModel；非 planner 显式 agentOptions/provider/model 优先，
-//     未显式时 fallback 固定取顶层主会话。crossProviderPlannerModel 仅严格等于 true 时，agent/request
-//     await 全部匹配 provider 的真实 OK probe、排序和必要 fallback 验证后才返回最终 LlmCallConfig，
-//     随后宿主才可 prepareCall/stream。False、缺失、非法值的非 planner 仅查主会话 provider advisory
-//     listModels；所有 True 路由失败时固定阻断，不交未验证配置。
-//  5) 子代理沙箱下限（复用 childPolicyNeedsFloor）：read-only → workspace-write。
-//  6) usage 账本（config.usageLedger.enabled）：折叠 assistant/message.usage
-//     逐行写 JSONL，行 = 一次调用；role：main（主会话）/ planner（规划子代理）/
-//     executor（执行者/reviewer 子代理）；写入带 (sessionId,seq) 去重，
-//     保证跨插件实例安全。foldUsage 为同步函数（禁止改成异步）：agent/disposed 是
-//     emit/void，宿主只为监听器返回的 Promise 挂 catch、不等待完成，末轮 final flush
-//     必须在监听器同步路径内完成（此时 driver 已静止、session 尚未解绑）。
-//  7) 会话状态生命周期（P0-4）：运行时状态一律按 sessionId 分桶——subCallCounters 为
-//     sessionId→rootCallId→已放行子调用数，锚点变化只删当前 session 桶（已移除全局
-//     clear()）；agent/disposed 先同步 final fold（role 取 childBaseline 缓存的 WeakMap
-//     角色），再按 sessionId 回收 jobOutputCallCounters、jobOutputLastAnchors、
-//     toolJobsNoticesConsumed、subCallCounters 与 usageCursors（重复 disposed 幂等，
-//     其它 session 状态不受影响）。usageCursors 内存 Map 只保存活跃 session：同 session
-//     再次激活且内存无项时按 sessionId 从 cursor JSON 单项续载 { seq, index }（不再保留内存
-//     态 ref 字段；增量改由 session.seq 水位 + snapshotEvents(from,to) 区间读取实现）。cursor JSON 不存在（ENOENT）
-//     静默按空表；其它读取错误、JSON 解析失败或根值非对象（含数组）→ 每插件实例首次
-//     降级告警一次并进入空表降级，此后写回以「空表 + 当前 session」覆盖写（其它 session
-//     的去重基准会丢失、其后续恢复可能重复追加 ledger 行）；正常可解析时写前重读、读改写
-//     保留其它合法 session 条目。snapshot 增量扫描与 cursor 批量/延迟持久化留后续批次。
-//
-// 不挂 force-plan、不挂 plan mode、无 exit_plan_mode——本模式没有计划模式预锁
-// （快通道教训：不引入启动预锁）。
+// @local/dsh-extra-plan 入口：route/purpose/clarify/approve 四级闸门、子角色、A/C/M 投影、
+// save 工件、探查预算、模型路由、按 session 隔离的 usage 与宿主事件契约。
+// 当前本地契约紧邻决策实现；架构与历史见 pe-test/docs/ai-概览.md、ai-机制设计.md、
+// ai-宿主耦合台账.md 及历史归档。
+// 本模块不安装独立的规划模式；save_plan 仅是受限的工作工件例外。
+// 配置值来自宿主 live source；此处注释不是第二个真源。
 
 const CHANNEL_BROKEN_CODES = new Set(['NO_PROVIDER', 'CALLER_NOT_LIVE', 'DELEGATED_CALLER'])
 
@@ -156,7 +57,7 @@ const ASK_TOOL = 'ask_user_question'
 const isDispatchStart = (t) => t === 'tool/ptc-dispatch-start'
 const isDispatch = (t) => t === 'tool/ptc-dispatch'
 
-// Shell mutation helpers live in lib/shell-mutation.js; imports below preserve the public decisions bindings.
+// shell mutation 辅助函数由 lib/shell-mutation.js 提供；下方 import 保持公开 decisions 绑定。
 
 
 
@@ -172,7 +73,7 @@ const HOST_ASK_CANCEL_TEXTS = ['Error: ask_user_question was aborted before the 
 // （index.js 与 lib/model-routing.js 共用，模块内不再保留镜像副本）；见下方 import 行，
 // decisions 继续 re-export isSubagentChild（名字数不变）。
 
-// Delegation role predicates are imported from lib/agent-runtime.js below.
+// 委派角色判定由下方从 lib/agent-runtime.js 导入。
 // anchored 引导阶段判定：会话尚未落盘任何 tool/call 事件。
 function isBootstrapPhase(agent) {
   if (agent === undefined || agent === null) return false
@@ -186,7 +87,7 @@ function isBootstrapPhase(agent) {
   })
 }
 
-// Shell command decoding and mutation matching are imported from lib/shell-mutation.js.
+// shell 命令解码与 mutation 匹配由 lib/shell-mutation.js 提供。
 
 
 // 从 ask_user_question 的 tool/call 事件解析选项标签集——只收首问 questions[0] 的选项标签（第二问「补充要求／修改意见」为纯文本输入，其选项不进入验词集合）。
@@ -627,11 +528,11 @@ function deriveFlowState(events, gateRuntime) {
 }
 
 
-// Planner budget helpers are imported from lib/planner-budget.js.
+// planner budget 辅助函数由 lib/planner-budget.js 提供。
 
-// Planner prompt and budget notice helpers are imported from lib/planner-budget.js.
+// planner prompt 与预算提示辅助函数由 lib/planner-budget.js 提供。
 
-// Planner budget policy helpers are imported from lib/planner-budget.js.
+// planner budget 策略辅助函数由 lib/planner-budget.js 提供。
 // save_plan/save_probe 合同、校验与渲染已拆至 plugins/dsh-extra-plan/lib。
 
 // 工具集判定（真实工具集 tools.schemas，restrict 后非折叠；目录判定保留为 schemas 不可得时的回落）。
@@ -1642,7 +1543,7 @@ export function apply(ctx, config) {
   // skill-filesystem 行进入本预设组合；creativeMode=false 不再靠「不注册」，而由
   // assembly-presentation 的 CREATIVE_SKILL_NAMES 在 catalog 投影里隐藏（语义等价）。
 
-  // childBaseline/usageRoleOf and sandbox floor live in the per-apply agent runtime factory.
+  // childBaseline/usageRoleOf 与 sandbox floor 由每次 apply 独立创建的 agent runtime 工厂提供。
 
   // save_plan/save_probe 的合同、校验、渲染与公共原子落盘由 lib 工厂提供；此处仅保留注册与生命周期接线。
   // 工具注册公共实现：WeakSet 去重 + tools 服务取用 + warn/error 文案模板 + try/catch。
@@ -1817,7 +1718,7 @@ export function apply(ctx, config) {
   // 步，未命中回退原 action 透传（其余失败码行为不变）。
   const diagPath = typeof cfg.diagFile === 'string' && cfg.diagFile !== '' ? cfg.diagFile : DEFAULT_DIAG_FILE
   let diagWarned = false
-  // causeChainOf is imported from lib/runtime-static.js.
+  // causeChainOf 从 lib/runtime-static.js 导入。
 
   function recordRequestError(payload) {
     try {

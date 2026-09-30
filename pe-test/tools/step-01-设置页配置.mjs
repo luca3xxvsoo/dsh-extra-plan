@@ -1,9 +1,7 @@
-// 设置页 Host API 集成回归（dsh 0.1.7-rc.1 双通道写链）。
-// 依赖锚点（T9-5）：① DSH_HOME/profiles/<name>/node_modules ② 0.1.7 宿主现场 node_modules
-//   （同级 dsh-v0.1.7* 检出，或 npm 全局 dsh 包自带的 node_modules）；两锚点均缺失即 throw。
-// 运行时夹具：mock ctx（settings.configure + webServer）+ mock configEditor（configuration/edit），
-//   profile patch 内容由 edit 回填写入内存行集合，GET 再经 configuration() 读回——同一代码路径往返。
-// 不写任何生产目录；HTTP 服务器只绑定 127.0.0.1。
+// 设置页宿主 API 双写路径回归。
+// 从 profile 或安装锚点解析宿主依赖；锚点缺失立即失败。
+// mock ctx/configEditor round-trip 只在内存保存 patch 行，HTTP 服务仅绑定 127.0.0.1；
+// 不写入生产目录。
 
 import { createServer, request as httpRequest } from 'node:http'
 import { createRequire, registerHooks } from 'node:module'
@@ -235,7 +233,7 @@ function requestJson(port, method, route, value) {
       res.on('end', () => {
         const raw = chunks.join('')
         let body = null
-        try { body = JSON.parse(raw) } catch { /* keep null */ }
+        try { body = JSON.parse(raw) } catch { /* 保持 null */ }
         resolve({ status: res.statusCode, body, raw })
       })
     })

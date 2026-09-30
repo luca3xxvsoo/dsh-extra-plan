@@ -18,21 +18,21 @@
 | 执行者 | 按方案与验收文件改工作区 | 不重新规划；逐项自验证；禁止越界写入 |
 | 验收者 | 只读验收文件逐条复核 | 输出逐项通过/不通过与证据；不改文件 |
 
-## 模块 owner 与当前不变量
+## 模块负责人（owner）与当前不变量
 
-| 功能域 | owner / 入口 | 当前摘要与唯一详版 |
+| 功能域 | 负责人（owner）/ 入口 | 当前摘要与唯一详版 |
 |:--|:--|:--|
 | 四级闸门与状态 | `plugins/dsh-extra-plan/index.js` | `route→purpose→clarified→approved`；拒绝不清状态、取消清阶段状态；job_kill 仅直行放行、send_message 主会话方向限制、job_list/list_agents 同锚点防轮询。详见 [机制设计](ai-机制设计.md#一四级机械锚点路由目的澄清批准)。 |
 | gateWords | `assets/presets/extra-plan/agent.cordis.yml` + `lib/gate-words.js` | YAML 七键是唯一值源，apply 先整组校验，再注册七个变量；旧词不推进状态。详见 [机制设计](ai-机制设计.md#一-1闸门关键词单一来源与运行时词表v030)。 |
 | run_code 组判定 | `lib/run-code-static.js` + 根入口 | 成员逐点判定、组拒零副作用；多调用需独立容错，planner 单实例受预算上限。 |
 | save_plan/save_probe | `lib/save-contract.js`、`lib/save-probe-validation.js`、`lib/save-persistence.js`、`lib/save-tool-factories.js` | 合同、校验、原子提交/journal、工具工厂分层；限制值以源码为准，详见机制设计与 step-06。 |
 | planner 预算 | `lib/planner-budget.js` | 按锚点计数，提醒/耗尽后申请继续探查；`exploreBudget` 不等于历史 evidence 数。 |
-| 模型路由 | `lib/model-routing.js` | planner 与非 planner 分离；legacy/strict 由开关分流，strict 必须完成真实 probe 或已验证父 fallback。唯一流程细节见 [流程备查](ai-流程备查.md#⑩-规划子代理)。 |
+| 模型路由 | `lib/model-routing.js` | planner 与非 planner 分离；legacy（兼容）/strict（严格）由开关分流，strict 必须完成真实 probe 或已验证父 fallback（回退）。唯一流程细节见 [流程备查](ai-流程备查.md#⑩-规划子代理)。 |
 | A/C/M 投影 | `lib/assembly-presentation.js` + 根入口 | 只改模型可见 assembly/schema/catalog，不替代 runtime deny；PTC 首轮手写 `tool:read`，L 段回宿主原文。 |
 | P2-2 SDK 文本 | `lib/sdk-text-cache.js` | apply 内 agent-keyed WeakMap；完整 schema/language/renderer 变化失效，同 key 并发合并，失败不缓存；调用计数 1 是硬门槛。详见 [机制设计](ai-机制设计.md#p2-2-sdk-文本复用的安全边界)。 |
 | 设置双通道 | `lib/settings.js`、`lib/client.js`、`lib/preset-settings.js` | 8 项 UI + 2 项宿主行设置进入 settings 权威值；PUT 只做声明行投影；当前入口为 Plugins 页已安装包行详情。 |
-| P2-4 默认链 | `agent.cordis.yml` → 生成器 → `preset-defaults.generated.js` | YAML 叶值是作者真源，生成物是派生值，运行时不解析 YAML；坏模板保留 last-known-good。详见 [维护手册](ai-维护手册.md#p2-4-生成链)。 |
-| 预设自愈 | `lib/preset-sync.js` | profile patch 声明行、主体剥离比对、投影一致三条件成立才 idle；写盘只经 `configEditor.edit`，无旧状态目录。 |
+| P2-4 默认链 | `agent.cordis.yml` → 生成器 → `preset-defaults.generated.js` | YAML 叶值是作者真源，生成物是派生值，运行时不解析 YAML；坏模板保留 last-known-good（上次已知良好版本）。详见 [维护手册](ai-维护手册.md#p2-4-生成链)。 |
+| 预设自愈 | `lib/preset-sync.js` | profile patch 声明行、主体剥离比对、投影一致三条件成立才 idle（空闲稳态）；写盘只经 `configEditor.edit`，无旧状态目录。 |
 | session/usage | 根入口 + `lib/agent-runtime.js` | 状态按 sessionId 分桶；disposed 内同步 final fold 后再回收；cursor 增量按 `session.seq`/`snapshotEvents`，不跨会话清理。 |
 | 宿主升级 | [ai-宿主耦合台账](ai-宿主耦合台账.md) | 当前 HS/HK/SD/CF/QB、六项 HUMAN 与 SKIP 规则是升级入口；历史快照见[宿主历史归档](ai-宿主耦合历史归档.md)。 |
 | 实机验收 | [ai-实机闸门测试流程](ai-实机闸门测试流程.md) | 单文件、一次性、顺序完整；A/U/C/D/S/B 行与矛盾原值不可静默修正。 |
@@ -47,3 +47,7 @@
 
 - [历史故障与机制归档](ai-历史故障与机制归档.md)：旧实现、故障、日期化过程、批次叙事与已退役流程；不作当前运行真源。
 - [宿主耦合历史归档](ai-宿主耦合历史归档.md)：旧宿主版本、已删除耦合、历史覆盖快照与 evidence 勾销；不作当前升级状态。
+
+## QQBot 兼容插件边界
+
+`plugins/dsh-qqbot-user-questions/index.js` 只在启动时逐 profile 调用兼容自愈：先清理根级完整旧错误块，再按 `DSH_HOME`（env 优先，默认 `~/.dsh`）确保 web 包链接；两步幂等、失败告警且不阻断。`lib/heal.js` 是无导入副作用的纯函数实现，`scripts/heal.mjs` 只是 CLI 兜底；静态/临时夹具可由 pe-test 回归，真实消息、`/preset`、question/approval（提问/批准）、postinstall（安装后脚本）与生产 profile 仍是用户部署后的 HUMAN。

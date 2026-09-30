@@ -1,12 +1,7 @@
-// @local/dsh-qqbot-user-questions 精简版自愈模块（纯函数，无副作用导入）
-// 供 index.js（DSH 启动 apply）、scripts/heal.mjs（CLI 兜底）、pe-test 复用：
-//   1. findOwnQqbotProfiles(dshHome) 扫描 profiles/* 锚定「装了本插件的 qqbot profile」
-//   2. healPatchRows(profileDir)      迁移旧版 cordis.patch.yml 根级 code-runtime/agent-presets
-//      （0.1.5-rc.2 族）与 ptc-runtime/agent-preset-registry（0.1.7-rc.1 族）错误块
-//   3. ensureDshExtraPlanLink(dshHome, profileName) 建 web → profile 的 @local/dsh-extra-plan 链接
-//   4. healQqbotCompatibility(dshHome) 对每个自有 profile 依次先迁移再建链（整体不阻断）
-// 旧能力（问答/审批/官方包补丁/会话目录删除等 monkey-patch）已删，
-// 由 dsh-qqbot 0.5.0 原生 question-channel/approval-channel 承担。
+// QQBot 兼容自愈纯模块；import 不产生文件系统副作用。
+// 供启动 apply、CLI 兜底和测试复用：定位自有 profile，只清理完整根级旧块，再确保 web 包链接。
+// 备份/校验/恢复以及 profile/link 合同分别在对应函数内；总调度器告警但不阻断启动。
+// question/approval 行为由原生 QQBot 提供，不属于本兼容模块。
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
@@ -98,7 +93,7 @@ function parseEntryBlock(blockLines) {
   try {
     const parsed = yaml.load(blockLines.join('\n'))
     if (Array.isArray(parsed) && parsed.length === 1 && isObject(parsed[0])) return parsed[0]
-  } catch { /* invalid whole fixture still gets conservative line fallback */ }
+  } catch { /* 整个夹具无效时仍保守回退到逐行解析 */ }
   return null
 }
 
@@ -250,10 +245,9 @@ function verifyMigratedPatch(content) {
 
 /**
  * 只迁移旧版自愈生成的根级完整块：
- * - ptc-runtime 的 name 必须是 dsh-ptc-runtime-node（0.1.7 等价行）；
+ * - ptc-runtime 的 name 必须是 dsh-ptc-runtime-node；
  * - agent-preset-registry 的 name 必须匹配且 config.default 必须为 extra-plan；
- * - code-runtime / agent-presets 为 0.1.5-rc.2 及更早包族的同形残留（config.default
- *   分别为未声明与 standard）；
+ * - code-runtime / agent-presets 只按其根级形状匹配（config.default 分别为未声明与 standard）；
  * - 嵌套 insert、im-qqbot 及其他用户条目原样保留。
  * 实际迁移前备份，写后验证顶层 YAML 数组和旧块消失，失败恢复原文；无旧块零写入零备份。
  */
@@ -281,14 +275,14 @@ export function healPatchRows(profileDir) {
   try {
     writeFileSync(patchFile, merged, 'utf8')
   } catch (err) {
-    try { copyFileSync(backupFile, patchFile) } catch { /* preserve original error */ }
+    try { copyFileSync(backupFile, patchFile) } catch { /* 保留原始错误 */ }
     console.warn(LOG_PREFIX + ' 迁移失败（已恢复备份）:', err instanceof Error ? err.message : String(err))
     return { status: 'failed', reason: 'write-failed', backup: backupFile }
   }
   let verified = false
-  try { verified = verifyMigratedPatch(merged) } catch { /* treat verifier errors as validation failure */ }
+  try { verified = verifyMigratedPatch(merged) } catch { /* 将校验器异常视为校验失败 */ }
   if (!verified) {
-    try { copyFileSync(backupFile, patchFile) } catch { /* preserve original error */ }
+    try { copyFileSync(backupFile, patchFile) } catch { /* 保留原始错误 */ }
     console.warn(LOG_PREFIX + ' 迁移后校验失败，已用备份恢复: ' + patchFile)
     return { status: 'failed', reason: 'verify-failed', backup: backupFile }
   }
@@ -326,8 +320,8 @@ export function findOwnQqbotProfiles(dshHome) {
 }
 
 /**
- * 建链：整体移植旧版建链脚本 L10-42，仅参数化 profile 名与日志前缀；与旧块迁移职责分离。
- * web 缺失 → warn 跳过；已正确链接 → 不动；非目标链接/实体目录 → 保留并提示 pnpm 迁移；
+ * 建链与旧块迁移职责分离。web 缺失 → warn 跳过；已正确链接 → 不动；
+ * 非目标链接/实体目录 → 保留并提示 pnpm 迁移；
  * 仅 ENOENT → mkdirSync(@local) + symlinkSync(webPkg, target, win32 ? junction : dir)；
  * 全程 try/catch 只记录日志不阻断；目标用绝对路径 webPkg（Windows junction 支持跨盘符）。
  */
@@ -344,7 +338,7 @@ export function ensureDshExtraPlanLink(dshHome, profileName) {
       if (stat.isSymbolicLink()) {
         try {
           if (realpathSync(targetPkg) === realpathSync(webPkg)) return { status: 'up-to-date' }
-        } catch { /* fall through to warn */ }
+        } catch { /* 继续进入告警分支 */ }
         console.warn(LOG_PREFIX + ' ' + profileName + ' 目标已存在非目标链接，保留原状；请通过 pnpm 完成迁移后重试')
         return { status: 'kept', reason: 'other-link' }
       }

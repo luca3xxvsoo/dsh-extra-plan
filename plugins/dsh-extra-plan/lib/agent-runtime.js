@@ -1,10 +1,8 @@
-// @local/dsh-extra-plan per-apply agent runtime factory.
-// Role/cache state is created per createAgentRuntime call; never shared across applies.
+// 每次 apply 独立创建 agent runtime factory；role 与 cache 状态不会跨 createAgentRuntime 调用共享。
 
 import { sessionEvents, isSubagentChild } from './agent-session.js'
 
-// 此刻是否受委派（父会话 agent 存活）；调用方已确认 isSubagentChild。
-// 缺 parentSession / agents 缺席 / 读取失败一律偏安全豁免（v11 口径）。
+// 只有 parent session 存在时委派才算 live；缺少 parent/agents 或读取出错都 fail-open。
 export function isLiveDelegation(agent, agents) {
   const header = agent.session.header
   if (header === undefined || header === null) return true

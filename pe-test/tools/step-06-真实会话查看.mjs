@@ -1,4 +1,4 @@
-// step-06-真实会话查看.mjs（原 smoke-forensics-extra-plan.mjs）— extra-plan 冒烟会话取证
+// step-06-真实会话查看.mjs — 只读 extra-plan 会话冒烟取证。
 // 用法: node step-06-真实会话查看.mjs [sessions-dir|会话目录名|路径]
 // 输出: 每个会话的 request/header（model/effort/tools 数）、pwsh 调用命令与拒绝、
 //       subagent_plan/ask 调用与结果摘要、error/retry 相关事件。

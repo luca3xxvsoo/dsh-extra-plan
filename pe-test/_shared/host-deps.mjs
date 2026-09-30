@@ -118,13 +118,8 @@ function scopedEntryOf(nodeModules, specifier) {
   return entryOf(join(nodeModules, SCOPE, parts[0], 'package.json'))
 }
 
-// 现场告警（只告警，不改解析语义、不写盘）：profile 内若存在宿主同名包副本，DSH 的运行时解析
-// 会让「profile node_modules 内的本地候选」优先（dsh-app-boot routeScoped），于是这份副本会顶替
-// 宿主的同名运行时行。实测教训（2026-09-25 本机 0.1.7-rc.2 现场）：profile 里一份 0.1.7-rc.1 的
-// @deepseek-ai/dsh-llm 缺 tool-update 投影（toolUpdate/toolHistory/projectToolUpdates 全 0 命中），
-// 会话内工具集变化产生的 developer tool-removal 被原样序列化成线上 tool_removal，而 DeepSeek
-// Messages API 只接受 tool_addition → 422，且该 developer 消息落盘后整会话每轮必失败。
-// 修复：清 profile 的 node_modules + pnpm-lock.yaml 后重装插件（插件 dependencies 不得含 @deepseek-ai/*）。
+// profile 中若有 shadowing 的宿主包副本只告警；不改变解析语义或文件状态。
+// 告警只给出部署清理建议，不改动 hook。
 function warnShadowedHostCopies() {
   const found = new Map()
   const seenPaths = new Set()

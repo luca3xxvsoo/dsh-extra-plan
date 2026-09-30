@@ -1,15 +1,7 @@
-// @local/dsh-extra-plan lib/model-routing.js (v0.3.0)
-// planner / 非 planner 子代理模型路由解析（自 index.js 拆分，逐字保留原实现）。
-//   顶层纯函数：isExplicitRoute / isExplicitEffort / resolveAgentRouteSources /
-//   decidePlannerModelUse / sortPlannerCandidates + 两个阻断文案与探针超时/并发常量，
-//   经 index.js 的 decisions re-export 供场景测试直接复用（防复制漂移）。
-//   createModelRouting：per-apply 工厂。plannerModelCache / otherAgentModelCache 在工厂内
-//   新建（每次 apply 各一份 WeakMap），绝不提升为模块全局——否则跨插件实例串 Agent 缓存。
-//   llm / agents / 诊断路径按惰性 getter 取用（ctx 服务与 apply 内常量可能在工厂建立后才就绪）；
-//   3 个热读配置项（plannerModel / otherAgentModel / crossProviderPlannerModel）同样改为注入 getter，
-//   由 index.js 的 live-config 现场取值——设置页改 YAML 后新 agent 立即拿新值。
-// 依赖方向：本模块反向引用 index.js 一律禁止（避免循环依赖）。resolveAgentRouteSources 依赖的
-//   isSubagentChild 统一来自 lib/agent-session.js（唯一来源；本模块不再留镜像副本）。
+// planner 与非 planner child 的模型路由。
+// 纯 helper 重新导出供测试；createModelRouting 持有每次 apply 的 WeakMap 缓存和
+// 延迟 host/config getter，避免 Agent 结果跨插件实例；模块不 import index.js，
+// 会话分类统一来自 agent-session.js。
 import { appendFileSync } from 'node:fs'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { isSubagentChild } from './agent-session.js'
@@ -86,7 +78,7 @@ export function resolveAgentRouteSources(agent, agents) {
   return { available: true, complete, direct, source: complete ? source : null }
 }
 
-// ── T2：plannerModel 可用性判定（纯函数；resolvePlannerEntry 唯一调用点） ──
+// planner-model 可用性判定（纯函数；唯一调用方是 resolvePlannerEntry）。
 // 输入：plannerModel（string，'' = 设置页显式清空 = 继承主会话模型）、provider（父会话
 // provider，可能 undefined）、catalog（模型目录查询结果描述）：
 //   { kind: 'ok', ids: [...] }  目录查询成功且清单非空
@@ -99,7 +91,7 @@ export function resolveAgentRouteSources(agent, agents) {
 //   diag     = 需要落盘诊断时的 decision 值，否则 null
 //   reason   = 判定原因（诊断留痕用）
 // 规则（顺序即设计口径）：
-//   1. plannerModel === '' → 不覆盖（T4 置空语义），不落诊断；
+//   1. plannerModel === '' → 不覆盖（空设置表示继承），不落诊断；
 //   2. plannerModel 非空且 provider 有值：
 //      a. 目录成功、清单非空且未命中 → 不覆盖（静默降级，diag:'inherit-parent'）；
 //      b. 清单为空 / 抛错 / 取不到 llm → 保守沿用 plannerModel（目录 advisory：

@@ -1,5 +1,5 @@
 // 场景测试:extra-plan 判定逻辑（decisions 命名空间纯函数）
-// 直接 import 插件导出的 decisions（与 index.js 同一份实现，无复制品）——
+// 直接 import 插件导出的 decisions（与 index.js 共用同一实现，不复制逻辑）——
 // 插件模块顶层无副作用，可在纯 Node 环境加载。
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { registerHostDeps } from '../_shared/host-deps.mjs'
@@ -571,16 +571,15 @@ for (const [name, got, expected] of BR) check(name, got, expected)
 
 // BR7（修正，不降级）：budgetReminderMessage 现经宿主 createUserMessage 构造，字段集 = {source, content, role:'user', id}。
 // 原条目只断言 {source, content}，在构造器注入 role/id 后必然失败；此处拆为 4 条断言，覆盖全部字段。
-// 2026-09-25 订正期望 source 形状（v4 口径）：宿主行准入（dsh-session-format-v3-to-v4）要求 source.kind 为
-// 生产者自有非空字符串，旧包裹形状（kind 取旧兜底值 'plugin' + plugin 包名字段）会被拒收并终止会话；
-// 本插件统一自造 plugin:@local/dsh-extra-plan。
+// 当前 source 合同：source.kind 必须是生产者自有的非空字符串；宿主准入拒绝旧版 plugin 包装形状。
+// 本插件使用 plugin:@local/dsh-extra-plan。
 const msg = budgetReminderMessage(REMIND3)
 check('BR7a budgetReminderMessage source/content 深等值', JSON.stringify({ source: msg.source, content: msg.content }), JSON.stringify({ source: { kind: 'plugin:@local/dsh-extra-plan' }, content: [{ type: 'text', text: REMIND3 }] }))
 check('BR7b role 恒为 user', msg.role, 'user')
 check('BR7c id 为非空字符串', typeof msg.id === 'string' && msg.id.length > 0, true)
 check('BR7d 两次调用 id 唯一', budgetReminderMessage(REMIND3).id !== msg.id, true)
 
-// ── MR 系列:malformedRecovery 直呼用例（2026-09-25 新增；该命名导出此前全仓零调用） ──
+// ── MR 系列:malformedRecovery direct-call cases ──
 // 全组用桩对象：桩 session.append 只记账、桩 agent.session.header.id 固定为 stub- 前缀且各例互不相同，
 // 既不写入任何真实会话，也不与共享重试账本（malformedRetried，按 sessionId 分桶）互相串味。
 const MR_SOURCE = 'plugin:@local/dsh-extra-plan'
@@ -920,7 +919,7 @@ const E10_E12 = [
 ]
 for (const [name, got, expected] of E10_E12) check(name, got, expected)
 
-// ── PM 系列:decidePlannerModelUse（T2 静默降级判定纯函数） ─────────────────
+// ── PM 系列:decidePlannerModelUse（静默降级判定纯函数） ─────────────────
 // provider 目录只作降级启发式：目录成功且清单非空且未命中 → 静默降级（继承主会话模型）；
 // 清单为空 / 查询抛错（NO_ADAPTER）/ 取不到 llm → 保守沿用（advisory 语义，防误杀
 // 未实现发现能力的适配器）；provider 无值与 plannerModel='' → 沿用/继承，均不落诊断。
@@ -1721,10 +1720,10 @@ const fullNestedPlanApprovedEvents = [
   cdStart('ask_user_question', 'fn4', nestedApprovalArgs),
   cdEnd('fn4', answer(['同意执行'])),
 ]
-// 2026-09-23 同步（步骤 2/3 的 denied 语义）：嵌套失败结果按文案二分——
+// 嵌套失败结果按两类文案划分 denied 语义：
 // ① 插件闸门拒绝 = 'Error: ' + 中文 reason（实测形状，本常量即 purposeRouteDenyReason 产物形状）→ kind:'denied'，状态不重置；
 // ② 宿主取消句 = HOST_ASK_CANCEL_TEXTS 逐字成员 → kind:'error', code:''，resetRouteState 清四字段。
-// 原 FC7/FC11 的自造文案（'Error: ask failed' / 'Error: ask cancelled'）不在两类中，已按实测口径同步。
+// 合成的 'Error: ask failed/cancelled' 文案不属于任何一类，本 fixture 不接受。
 const FC_DENY_TEXT = 'Error: 目的确认 ask 未按路由顺序：须先 ask_user_question 路由确认（选项固定为「直接执行」「进行pro规划」「不同意」），选择「进行pro规划」后再询问规划目的（目的选项固定为「完善方案」「重新规划」）'
 const FC_CANCEL_TEXT = 'Error: ask_user_question was aborted before the user answered'
 const FC = [
@@ -1980,7 +1979,7 @@ const rcAgReason = runCodeGroupDenyReason(undefined, { name: 'run_code', argumen
 checkTrue('RC-AG1 planner write+subagent_probe 聚合 2 项且保持成员顺序', typeof rcAgReason === 'string' && rcAgReason.includes('工具组共 2 项（去重后），2 项触发闸门') && rcAgReason.includes('规划子代理只读') && rcAgReason.includes('仅主会话可用') && rcAgReason.indexOf('- write:') < rcAgReason.indexOf('- subagent_probe:'))
 
 // ── K 系列:子代理角色组判定（F7' v4;role = {kind:'planner'}/{kind:'child',readOnly,probe}） ──
-// 预算耗尽白名单 fixture（T2 修复）：18 组成功配对 = 已用 18/18（与 step-04 budgetEvents 同口径）。
+// 预算耗尽白名单 fixture：18 个成功配对使用 18/18，与 step-04 的 budgetEvents 一致。
 const budgetEventsFx = [um(), ...Array.from({ length: 18 }, (_, i) => [call('read', 'b' + i), ok('b' + i, 'ok')]).flat()]
 const K = [
   ['K1 planner+裸写 → 聚合含「只读角色仅允许只读探查」与「命中」', { kind: 'planner' }, writeCodeFx, ['只读角色仅允许只读探查', '命中']],

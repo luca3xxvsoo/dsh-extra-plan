@@ -1,30 +1,9 @@
-// Host-side preset self-healing over the dsh 0.1.7 preset carrier.
-//
-// 载体订正（方案 T2）：预设不再是「分发到 $DSH_HOME/.agent-presets/extra-plan 的目录」，
-// 而是 profile patch 根级 insert 一行 preset-extra-plan 声明行
-// （name '@deepseek-ai/dsh-agent-preset'，config.plugins = agent.cordis.yml 顶层条目逐字）。
-// 于是：
-//  - 分发目标退役；**本插件无项目自有状态目录**——运行期状态目录与台账链
-//    （状态目录初始化 / 台账 manifest 读写 / postinstall 脚本）已于 2026-09-25 死代码清理整链删除。
-//  - 启动自愈判定 = 三维：① 声明行 plugins 覆盖资产行 id 集合；② 本体剥离用户可写键后与资产
-//    逐字一致；③ 2 项宿主行投影与权威值一致。
-//    为什么不是「declaredPlugins 与资产逐字 hash 相等」：设置页写值会把整段 plugins
-//    重述进 profile patch（configEditor.edit，config 不深合并），行集合不变而部分行 config
-//    已按用户值改写——逐字 hash 永不相等会退化成「每次启动都重跑迁移」。故按行 id 集合判定。
-//    资产本体变化由维度②的剥离比对覆盖，故运行期台账不是 idle 判据的必要条件。
-//  - 写盘只经 configEditor.edit（事务 + reconcile + 回滚），本模块绝不直写 cordis.patch.yml。
-//  - **权威值 vs 投影（2026-09-25 二轮）**：2 项宿主行设置（webFetch / toolPresentationMode）
-//    的权威值在 settings 行；声明行 plugins 内 tool-web / tool-presentation 子行只是**投影**
-//    （消费方是宿主行装载期快照，只有声明行子行能被宿主读到）。
-//    投影被宿主删除 = 无害状态：投影值 == 出厂值时判稳态 idle（不反复重建），
-//    权威值非出厂值则重建投影；settings 行缺项而声明行有非出厂值 → 一次性回填 settings 行。
-//  - 0.1.6 及更早的搬迁链（旧分发副本捕获 / 迁移计划 / 审计状态机）已于 2026-09-25 整链删除
-//    （用户 2026-09-25 拍板放弃）；现场 gateWords 由
-//    restatePresetPlugins 的 carry 分支从声明行现值兜底。
-//
-// 本模块同时导出纯计算（declarationCoversAsset / declarationBodyMatchesAsset /
-// planHostRowProjection / restatePresetPlugins 等）与宿主入口（apply），使启动自愈与回归夹具
-// 共用同一份状态机。
+// profile patch 声明行上的预设启动自愈。
+// 声明行承载资产 plugin 组合；唯一写入口是 configEditor.edit。
+// idle 需同时满足：声明覆盖、本体在剥离可写字段后相等、宿主行投影一致。
+// 权威值在 settings 行；缺失投影可重建，非默认投影只做一次回填。
+// 纯规划 helper 与 apply 共用同一状态机；runtime manifest/legacy migration 不属于 idle 条件。
+// 重述 plugins 时从当前声明行 carry gateWords，不恢复已退役迁移链。
 
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
@@ -450,7 +429,7 @@ export async function syncPreset(options = {}) {
     ? { hostRowConfig: projection.hostRowConfig, gateWords: null }
     : null
   // 本体过期标记：本体比对不通过时 planned.preset 可能为 null，若无此标记则「本体刷新」会被
-  // applyPlan 的 preset 条件一并跳过（2026-09-25 现场实测：判非 idle 却什么都不写）。
+  // bodyStale 让本体刷新分支在没有投影键需要重写时仍能执行。
   planned.bodyStale = !bodyOk
   if (typeof options.apply === 'function') {
     await options.apply(planned, { action: 'written' })

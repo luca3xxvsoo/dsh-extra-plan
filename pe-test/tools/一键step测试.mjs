@@ -1,9 +1,5 @@
-// 一键step测试.mjs — pe-test 一键体检
-// 用法: node 一键step测试.mjs
-// 说明: 自动运行全部「自动判定项」，把结果（通过/部分执行/未执行/失败/人眼项）写入
-//       pe-test/reports/测试报告-<时间戳>.md 并在控制台输出摘要。
-// 前置: 本工具设计为在完整目录（pe-test 与 plugins/ 同级，即 dsh-extra-plan 仓库根）运行；
-//       若检测到缺少 plugins，仓库依赖项将标注「需完整目录」而不执行。
+// 一键step测试.mjs — 运行工作区回归矩阵，并分类 AUTO/SKIP/HUMAN 结果。
+// 用法: node 一键step测试.mjs；结果写入临时 pe-test/reports/ 报告，依赖缺失不伪装为通过。
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { join, dirname, relative } from 'node:path'

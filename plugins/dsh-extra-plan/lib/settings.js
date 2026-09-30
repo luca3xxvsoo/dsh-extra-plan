@@ -1,24 +1,9 @@
-// Host half of dsh-extra-plan-settings（dsh 0.1.7-rc.1 设置链）。
-//
-// 写链（2026-09-26：权威值统一由客户端一次 mutate 写入 + PUT 仅投影）：
-//  - 权威值唯一落点 = 本行（settings 行 dsh-extra-plan-settings）的 config，共 10 项：
-//      · 8 项 UI 设置（anchoredBootstrap/creativeMode/runcodeCatchGate/
-//        crossProviderPlannerModel/plannerModel/plannerPromptSuffix/exploreBudget/
-//        otherAgentModel）：走宿主 SettingsForms（settings.configure 只登记页面策略；
-//        读写统一走官方 configForms/remote.settings，事务 + revision fencing + 回滚）。
-//      · 2 项宿主行设置（webFetch、toolPresentationMode）：同样落在本行 config（本行即
-//        Config 的 10 个 volatile 字段），故与 8 项一样跨升级/重装不丢。
-//    10 项的写法 = 客户端官方 configForms 一次 mutate（10 个 set op，同一事务 + 同一
-//    revision fence）：先 PUT 后 mutate 会在本命名空间内自撞 fence，故 PUT 不再写本行。
-//  - 投影落点 = 声明行 preset-extra-plan 的 plugins 内 tool-web / tool-presentation 子行
-//    （消费方是宿主行装载期快照，只有声明行子行能被宿主读到，故必须投影）。
-//    PUT /api/dsh-extra-plan-settings/pro-config 仅做投影（幂等；body 仅这 2 项，含其它键 400）：
-//      校验 → 投影声明行子行。权威值已由客户端 mutate 事务写入，故投影失败不回滚权威值
-//      （投影被宿主删除是无害状态：下次启动自愈按权威值重建）。
-//  - GET 只读：权威值（本行 config.<key>）→ 声明行投影现值 → 出厂默认，逐项回退。
-//
-// 本模块不涉及 qqbot（见独立插件 dsh-qqbot-user-questions）。
-// 写盘一律经宿主 editor：本模块不直写任何 cordis.patch.yml、不写旧预设目录。
+// dsh-extra-plan-settings 的宿主侧实现。
+// settings 行 config 是全部 10 个值的权威载体（8 项 UI + 2 项宿主行设置）。
+// 客户端只做一次 SettingsForms/configForms mutate；PUT 校验后只更新声明行投影，
+// 投影失败不回滚权威行。
+// GET 按 settings 行 → 声明行投影 → 默认值逐项回退；缺失投影可恢复。
+// 本模块不写 cordis.patch.yml 或旧预设目录，也不负责 QQBot。
 
 import { readFileSync } from 'node:fs'
 import { isDeepStrictEqual } from 'node:util'

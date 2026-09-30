@@ -1,16 +1,8 @@
-// @local/dsh-extra-plan lib/gate-words.js (v0.3.0)
-// 闸门关键词共享契约：字段规格、整组严格校验与运行时词表派生。
-//
-// 设计边界（见 pe-test/docs/ai-机制设计.md）：
-//  - 唯一人工编辑位置是 YAML（声明行 config.plugins 内 extra-plan 行的
-//    config.gateWords，仓库模板 assets/presets/extra-plan/agent.cordis.yml）；
-//  - 本模块只保存字段名、prompt variable 名与校验规则，不保存任何出厂词值，
-//    不读文件、不读环境变量、不提供无参默认值——JS 侧不存在第二份真源；
-//  - 校验失败一律以 'extra-plan: config.gateWords' 开头（同步抛出，阻止预设被使用）；
-//  - 本模块是纯模块：可被 index.js（运行时）与 preset-sync.js（启动自愈）共享。
-
-// 推荐后缀白名单（与前端 parseRecommendedLabel / index.js normalizeLabel 同一口径）：
-// 四种后缀 (Recommended)/（Recommended）/(推荐)/（推荐），英文不区分大小写，前后允许空白。
+// gateWords 元数据、整组严格校验与每次 apply 的运行时词表派生。
+// YAML 的 config.gateWords 是唯一人工值源；本模块只保存字段规格与校验规则，不保存默认词值，
+// 不读文件或环境变量；非法整组以 extra-plan: config.gateWords 前缀同步抛错。
+// 有效结果冻结，并由显式参数传入各 helper；每次 apply 独立派生，避免模块全局状态串扰。
+// 推荐后缀仅按文档白名单归一，匹配仍使用当前词的精确值。
 const RECOMMENDED_SUFFIX = /\s*(?:\((?:recommended|推荐)\)|（(?:recommended|推荐)）)\s*$/i
 
 /** 7 个闸门词字段与对应 prompt variable 名（仅元数据，不含任何词值）。 */

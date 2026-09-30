@@ -1,6 +1,6 @@
-// @local/dsh-qqbot-user-questions CLI 兜底入口（postinstall 与手动触发共用）。
-// invokedAsMain 判定为插件 CLI 通用写法（本仓各插件脚本同款）；DSH_HOME env 优先、默认 ~/.dsh；
-// 调 healQqbotCompatibility 自愈；成功打印一行摘要、异常打印 stderr 后 process.exit(0)（不阻断安装）。
+// QQBot 兼容 CLI fallback，供手动或安装器触发执行。
+// invokedAsMain 使用 DSH_HOME（默认 ~/.dsh）；成功输出摘要，失败写入 stderr，
+// 仍以 exit 0 结束，确保安装/启动不被阻断。
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'

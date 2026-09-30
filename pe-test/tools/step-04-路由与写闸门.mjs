@@ -20,13 +20,12 @@ import { registerHostDeps } from '../_shared/host-deps.mjs'
 // 隔离后该锚点不存在（会退到 npm 全局候选，非确定）。
 await registerHostDeps()
 
-// ── 测试隔离（方案 A 构造期读盘） ──────────────────────────────────────────
-// live-config 构造期无条件读盘一次（DSH_HOME/.agent-presets/extra-plan/agent.cordis.yml，或
-// 优先级更高的 DSH_EXTRA_PLAN_CONFIG_PATH）。若命中现场真值，本脚本各 harness 传入的 config
-// 快照（期望值全部按入参硬编码）会被现场配置污染。故在【插件 import 之前】把 DSH_HOME 指向
-// 一个空的临时目录、并清空 DSH_EXTRA_PLAN_CONFIG_PATH，使构造期读盘必然失败 → 各实例回退到
-// 自己的 fallbackDefaults（= 该 harness 的入参）。测试结束（含 process.exit 与异常退出路径）
-// 由 process.on('exit') 恢复原值并删除临时目录。
+// ── 测试隔离（构造期配置读取）─────────────────────────
+// live-config 构造期会无条件读盘一次（优先 DSH_EXTRA_PLAN_CONFIG_PATH，否则读取 settings 行的
+// configEditor.documentPath）。若命中现场真值，各 harness 传入的 config 快照（期望值按入参硬编码）
+// 会被现场配置污染；因此在【插件 import 之前】将 DSH_HOME 指向空临时目录，并清空
+// DSH_EXTRA_PLAN_CONFIG_PATH，使构造期读盘失败，各实例回退到自己的 fallbackDefaults（即 harness 入参）。
+// 测试结束（包括 process.exit 与异常退出路径）由 process.on('exit') 恢复原值并删除临时目录。
 const previousDshHome = process.env.DSH_HOME
 const previousConfigPath = process.env.DSH_EXTRA_PLAN_CONFIG_PATH
 const isolatedDshHome = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-step04-home-'))
@@ -106,8 +105,8 @@ const require = createRequire(DSH_HOME + '/profiles/web/node_modules/package.jso
 const yaml = require('js-yaml')
 const JsExpr = new yaml.Type('tag:yaml.org,2002:js', { kind: 'scalar', resolve: () => true, construct: (data) => data })
 const schema = yaml.JSON_SCHEMA.extend(JsExpr)
-// 2026-09-10 修订：预设静态断言改为读【工作区模板资产】，与 step-01-预设完整性 同源。
-// 原实现读现场 DSH_HOME 预设，会导致「工作区已改、断言要等用户部署后才可能通过」的悖论。
+// Static preset assertions read the workspace asset, the same source as step-01-预设完整性;
+// they must not depend on a user's deployed DSH_HOME.
 const presetFile = fileURLToPath(new URL('../../plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml', import.meta.url))
 const presetText = readFileSync(presetFile, 'utf8')
 let rows
@@ -710,7 +709,7 @@ checkTrue('R50 主会话 none 态 run_code（read 去重×2+subagent_probe(run_i
 r = preExecute(harness, noneMain, 'run_code', { code: "await tools.write({ file_path: 'x', content: '1' })", description: '显式 write' })
 checkTrue('R51 主会话 none 态 run_code（code 含显式 tools.write）→ deny 且聚合含「路由未确认：write/edit」（显式 write 成员与裸写同文案）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认：write/edit'))
 
-// ── ⑩ R52-R84：全闸门补测（预算修复与测试缺口 2026-09-05） ─────────────
+// ── ⑩ R52-R84：全闸门补测（预算与覆盖回归） ─────────────
 // 预算耗尽场景：18 组成功配对 = 已用 18/18（修复A 成功配对口径；预算耗尽后 run_code 组判定仅放行全 FREE_TOOLS 白名单组）。
 const budgetEvents = [DESC, ...Array.from({ length: 18 }, (_, i) => [callE('read', 'b' + i), okE('b' + i, 'ok')]).flat()]
 const budgetPlanner = {
@@ -830,7 +829,7 @@ checkTrue('T3-5 主会话 approved 态 save_plan → allow', r !== null && r !==
 
 // ── ⑭c T5：planner 不得委派探查者（subagent_probe 仅主会话可用） ───────────
 // planner 身份由 events 含 subagent/descriptor(mode=continuable) 判定，路由态对其无意义；
-// 三态各锁一次，确保拒绝不依赖路由（闸门只看 isPlanner）。
+// 三态各锁一次，确认在隔离夹具中拒绝不依赖 route（闸门只看 isPlanner）。
 const plannerWithEvents = (events) => ({
   session: { header: { id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => [DESC, ...events] },
   options: { model: 'deepseek-v4-pro' },
@@ -1093,7 +1092,7 @@ checkTrue('R115 主会话 direct 态 run_code 组内 job_kill 成员 → allow',
   checkTrue('PG8 tool-jobs 通知（未跟踪 jobId jx）后 job_list → allow（consumed 解耦清 pollGuard）', r !== null && r !== undefined && r.kind === 'allow')
 }
 
-// ── ⑭ R100-R105：runcodeCatchGate 开关 + safe 白名单 + 容器计费 + 实例上限（2026-09-06） ──
+// ── ⑭ R100-R105：runcodeCatchGate 开关 + safe 白名单 + 容器计费 + 实例上限 ──
 r = preExecute(harness, noneMain, 'run_code', { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })", description: 'UC1 同款' })
 checkTrue('R100 默认（runcodeCatchGate 缺省=关）多调用无容错 → allow（默认关放行）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harnessCatchOn, noneMain, 'run_code', { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })", description: 'UC1 同款' })
@@ -1130,7 +1129,7 @@ r = preExecute(harness, noneMain, 'run_code', { code: 'await tools.save_plan({})
 const rc107Reason = r !== null && r !== undefined && r.kind === 'deny' ? String(r.reason) : ''
 checkTrue('R107 noneMain run_code save_plan+write → 组内 save_plan 放行、write 仍拒 → 聚合 deny（2 项 1 项触发，不含 save_plan 行）', r !== null && r !== undefined && r.kind === 'deny' && rc107Reason.includes('工具组共 2 项（去重后），1 项触发闸门') && rc107Reason.includes(routeDenyReason('write/edit', { route: 'none' }, gateRuntime)) && rc107Reason.includes('- write:') && rc107Reason.includes('save_plan') === false)
 
-// ── ⑭e P0-4：会话状态生命周期 + 末轮 usage final flush（T2/T3/T4 监听器级） ──
+// ── ⑭e P0-4：会话状态生命周期 + 末轮 usage final flush ──
 // 口径：账本用例显式传 config.usageLedger.enabled=true + 临时 config.usageLedger.path；
 // disposed 断言在监听器同步返回后立即读盘（宿主 agent/disposed 是 emit/void、不等待 Promise）；
 // console.warn 局部捕获（临时替换 + finally 还原）；全部临时文件在 finally 删除。
@@ -2172,11 +2171,9 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
   check('GW27 anchored 首轮 planner PTC 投影保留 variables', plannerAssembly.variables, sentinel)
 }
 
-// ── ⑬ live-config 构造期读盘（方案 A 新增回归） ─────────────────────────
-// 方案 A 缺口的真实形状：宿主在「新会话 apply」时传入的 cfg 可能是改文件**之前**的快照；
-// 若基线只取该快照、且文件 mtimeMs+size 恰好未变，实例第一拍就会拿到旧值。以下 5 条覆盖：
-// ①显式 configPath ②env 路径（DSH_EXTRA_PLAN_CONFIG_PATH）③apply 集成双向对照（旧快照 vs 文件
-// 真值）④文件改写后 stamp 变化仍跟进 ⑤读盘失败（文件不存在）构造期回退 fallback。
+// ── ⑬ live-config 构造期读文件场景 ─────────────────────
+// 宿主 apply 可能传入改文件前的 cfg 快照；构造期必须把文件真值建立为第一份基线。
+// 五个场景覆盖显式/env 路径、apply 集成、stamp 变化和缺文件回退。
 {
   const lcDir = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-live-config-'))
   // 夹具 = profile patch 内的 settings 行（0.1.7 新载体：captureRowSettings 按
@@ -2227,7 +2224,7 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
   rmSync(lcDir, { recursive: true, force: true })
 }
 
-// ── ⑮（DZ 段）PTC 闸门拒绝中文呈现与状态机连带修复（2026-09-23 新增） ────────
+// ── ⑮（DZ 段）PTC 闸门拒绝中文呈现与状态机连带修复 ────────
 // 编号沿用方案步骤 7 的「⑮ 段」口径（脚本内既有 ⑮ 为创造模式装配投影矩阵段，两段各归各的）。
 // 覆盖：parse 函数 denied 判别（DZ1-DZ3 嵌套 / DZ4-DZ6 native 直呼与通道码）、状态机
 // 「闸门拒绝不重置、取消仍清四字段」对照（DZ7/DZ8）、tools/post-execute 呈现改写（DZ9-DZ12）。
@@ -2287,7 +2284,7 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
   checkTrue('DZ12 消费即清：同一 rootId 第二次调用 → 透传', dzOut12 === dzPass)
 }
 
-// ── ⑰ T9-3 新契约硬门槛：isolate / volatile / 写链 / 声明行覆盖（2026-09-24） ────────
+// ── ⑰ T9-3 契约硬门槛：isolate / volatile / 写链 / 声明行覆盖 ────────
 // 四组断言全部机械可核对：isolate 名单（预设挂载必过审计）、settings 行 Config 8 字段
 // 全 volatile、2 项宿主行写链（声明行 plugins 整体重述）、声明行与生成产物一致性。
 {

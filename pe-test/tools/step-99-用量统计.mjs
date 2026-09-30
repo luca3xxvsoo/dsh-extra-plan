@@ -1,10 +1,10 @@
-// step-99-用量统计.mjs（原 ledger-summary.mjs）— usage 账本聚合工具（P3 A/B 读数）。
+// step-99-用量统计.mjs — 汇总 P3 usage ledger 行。
 // 用法：node step-99-用量统计.mjs <ledger.jsonl>
 // 口径：纯 token 统计 —— 按 sessionId | role | model 分组，统计 行数(调用次数)/hit(输入命中)/miss(输入未命中)/
 //       out(输出)/cw(缓存写入 cacheWriteTokens)/rs(推理 reasoningTokens) 合计，并展示该组 provider
 //       （同组取首个非空值，空显示 -）；旧行缺 provider/cw/rs 时按 空串/0/0 处理。
 //       只累计 token 字段，不做任何折算，也不做任何按 provider 或按 model 的汇总。
-// v11.8.1：按 (sessionId, seq) 去重（崩溃窗口可能产生的重复行；无 seq 的旧行不去重）。
+// 按 (sessionId, seq) 去重；没有 seq 的行保持兼容且不去重。
 import { readFileSync } from 'node:fs'
 
 const path = process.argv[2]

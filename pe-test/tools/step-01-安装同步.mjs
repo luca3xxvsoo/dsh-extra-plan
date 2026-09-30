@@ -1,14 +1,8 @@
-// syncPreset 启动自愈回归（dsh 0.1.7 新载体）。
-// 夹具（全部位于系统临时 DSH_HOME，绝不使用真实生产目录）：
-//   目标物 $DSH_HOME/profiles/web/cordis.patch.yml（声明行 preset-extra-plan 的 config.plugins
-//   + settings 行 dsh-extra-plan-settings 的 config = 10 项权威值落点）
-// 断言语义（2026-09-25 台账链整链删除后）：**无 manifest 台账、无旧副本迁移**；
-//   启动自愈 = 三维判定（声明行覆盖资产行 id 集合 + 本体剥离比对 + 投影一致性）：
-//   三维全成立 → idle（不写盘、apply 不被调用）；任一不成立 → written（action 恒 'written'，
-//   无 firstRun/upgraded 之分），内容经注入的 apply 回调落地（宿主侧即 configEditor.edit）。
-// 本轮新增 ⑥-6：2 项宿主行设置的「权威值（settings 行）→ 投影（声明行 plugins 子行）」链：
-//   T-1 投影被删 + 权威非出厂值 → 按权威值重建；T-2 权威改值 → 投影跟进；T-3 权威==出厂 + 投影缺失 → idle；
-//   T-4 settings 行缺项 + 声明行非出厂值 → 一次性回填（M-1/M-2）。
+// syncPreset 启动自愈回归；所有夹具都位于临时 DSH_HOME。
+// patch 夹具包含预设声明行和带 10 个权威值的 settings 行。
+// 当前合同无 manifest 台账或 legacy-copy migration；idle 需同时满足声明覆盖、
+// 去除可写字段后的本体相等与投影一致，否则 configEditor.edit 接收 written plan。
+// 宿主行测试覆盖投影删除/默认值、权威值变化和一次性回填。
 
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'

@@ -148,7 +148,7 @@ try {
   const staticRunner = staticRows.find((row) => isMap(row) && row.id === 'cordis-host-runner')
   check('兼容 patch 是顶层数组且仅有一个根级 insert', Array.isArray(staticPatch) && staticPatch.length === 1 && staticInserts.length === 1)
   check('静态 insert 第 4 行 cordis-host-runner 包名准确且无 config', isMap(staticRows.find((row) => isMap(row) && row.id === 'cordis-host-runner')) && staticRows.find((row) => isMap(row) && row.id === 'cordis-host-runner').name === '@deepseek-ai/dsh-cordis-host-runner')
-  // 静态包族由本段固定合同覆盖；严格环境命中后的真实 profile 只读核验由独立环境脚本负责。
+  // 此处覆盖静态包映射；真实 profile 的只读检查由独立环境脚本负责。
   check('静态 insert 恰四行且 qqbot-user-questions/ptc-runtime/agent-preset-registry 包名准确', staticRows.length === 4 &&
     isMap(staticCode) && staticCode.name === '@deepseek-ai/dsh-ptc-runtime-node' &&
     isMap(staticAgent) && staticAgent.name === '@deepseek-ai/dsh-agent-preset-registry' &&
