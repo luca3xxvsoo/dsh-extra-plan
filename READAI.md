@@ -16,7 +16,7 @@
 | 旧机制、故障与批次追溯（非默认） | [ai-历史故障与机制归档](pe-test/docs/ai-历史故障与机制归档.md) | 需要历史根因时 |
 | 旧宿主耦合、历史快照与证据勾销（非默认） | [ai-宿主耦合历史归档](pe-test/docs/ai-宿主耦合历史归档.md) | 需要升级历史时 |
 
-上述 8 个既有入口路径继续保留；两个归档直接位于 `pe-test/docs/`，不创建归档子目录或其它项目文档。
+上述 9 个既有入口路径继续保留；两个归档直接位于 `pe-test/docs/`，不创建归档子目录或其它项目文档。
 
 ## 当前兼容与安全边界
 
@@ -35,11 +35,11 @@
 
 ## 文档修改边界
 
-- 本轮仅按批准清单修改 11 个工作区文件（1 个插件客户端、1 个 YAML、1 个 MJS、8 个 AI/测试文档）；仓库根 `README.md` 仍不改，官方 dsh/预设、生成物、package.json、生产环境、profile 与 `$DSH_HOME` 也不改。0.2 独立 `settings.plugins.tab` 入口移除；0.1.7 原始 `plugins.row.config` keyed row 由 0.1.7/0.2 支持构建保留，宿主提供对应 legacy slot 时呈现插件详情配置，slot 缺失时走 configEditor/SettingsForms 或手工 profile 权威行后备路径；settings/Config/投影/preset-sync/live-config 后端链不变。
+- 本轮仅按批准清单修改列明的实际修改文件：22 个审查源文件和 1 个由生成器派生的 YAML（共 23 个工作区文件）；仓库根 `README.md` 仍不改，官方 dsh/官方预设、`package.json`、生产环境、profile 与 `$DSH_HOME` 也不改。0.2 独立 `settings.plugins.tab` 入口移除；0.1.7 原始 `plugins.row.config` keyed row 由 0.1.7/0.2 支持构建保留，宿主提供对应 legacy slot 时呈现插件详情配置，slot 缺失时走 configEditor/SettingsForms 或手工 profile 权威行后备路径；settings/Config/投影/preset-sync/live-config 后端链不变。
 - 工作区内 AI 维护文档（含台账）可按批准方案修改；修改前按维护手册创建唯一 `.extra-plan/backup-dsh-extra-plan-JS审查修复-<YYYYMMDDHHMMSS>/`，同一任务续跑沿用，不覆盖镜像。
 - `pe-test/reports/` 只接收临时测试产物，不纳入源改动；不调用 `git reset`、`git checkout`、`git clean`。
 - 界面文案只给结论级信息；技术细节仅放硬闸门给 AI 的文案、诊断/日志和本组 AI 文档。
 
 ## 验收顺序
 
-按[维护手册](pe-test/docs/ai-维护手册.md)执行固定顺序：7 个实际修改 JS/MJS 逐文件 `node --check`；再按设置脚本 → step-00 全流程 → step-00 跨平台 → step-04 → step-06-08 → step-06 → 代码地图生成 → 人工地图复核 → 地图 `--check` → 一键 step。Markdown 不伪造语法门结果；环境项的 SKIP/HUMAN 不计作通过。
+按[维护手册](pe-test/docs/ai-维护手册.md)执行固定顺序：批准清单中的实际修改 JS/MJS 逐文件 `node --check` → step-01 设置页配置 → step-00 全流程 → step-00 跨平台 → step-04 → step-06-08 → step-06 → 代码地图生成 → 人工描述复核 → 地图 `--check` → 一键 step。Markdown 不伪造语法门结果；环境项的 SKIP/HUMAN 不计作通过。

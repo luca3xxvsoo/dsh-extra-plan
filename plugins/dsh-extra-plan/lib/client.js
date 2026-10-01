@@ -9,7 +9,7 @@ window.__ModuleLoader__.load({
     // settings 命名空间 = profile 行 id（dsh-extra-plan-settings）；同时用作 configForms 键、
     // plugins.row.config 键的 rowId 段与 locale 命名空间。
     const NS = "dsh-extra-plan-settings";
-    // 0.1.7 keyed row key is declared only inside the COMPAT boundary below.
+    // 0.1.7 keyed row key 仅在下方 COMPAT 边界内声明。
     // 2 项宿主行设置（webFetch / toolPresentationMode）：**权威值落 settings 行**
     // （dsh-extra-plan-settings 行 config，与上面 8 项同源，跨升级/重装不丢）；
     // 声明行 plugins 内 tool-web / tool-presentation 子行只是投影（消费方是宿主行装载期快照）。

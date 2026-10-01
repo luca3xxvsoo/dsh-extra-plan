@@ -105,8 +105,8 @@ const require = createRequire(DSH_HOME + '/profiles/web/node_modules/package.jso
 const yaml = require('js-yaml')
 const JsExpr = new yaml.Type('tag:yaml.org,2002:js', { kind: 'scalar', resolve: () => true, construct: (data) => data })
 const schema = yaml.JSON_SCHEMA.extend(JsExpr)
-// Static preset assertions read the workspace asset, the same source as step-01-预设完整性;
-// they must not depend on a user's deployed DSH_HOME.
+// 预设静态断言读取工作区资产，与 step-01-预设完整性使用同一来源；
+// 不得依赖用户已部署的 DSH_HOME。
 const presetFile = fileURLToPath(new URL('../../plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml', import.meta.url))
 const presetText = readFileSync(presetFile, 'utf8')
 let rows

@@ -1,4 +1,4 @@
-// step-04-工具清单查看.mjs — 读取指定 session 的逻辑 JSONL，报告 model-visible tools。
+// step-04-工具清单查看.mjs — 读取指定 session 的逻辑 JSONL，报告模型可见工具。
 // 用法: node step-04-工具清单查看.mjs <显式会话目录名>
 // 只读输出：request/header 的逻辑行号、前置 tool/call 数、F/L、精确 header.tools，
 // header.system 文本命中与 source.kind=skill-catalog；文本命中不冒充命名 section。
@@ -47,7 +47,7 @@ function systemTextHits(systemText) {
     // 新形态：F 段（HP 首轮）tool:read 手写文案（变量②）——中文引导句 + 四要素
     // （tools.read 调用形态 / file_path / offset / limit）；旧形态的官方骨架命中不计入本项。
     readHint: systemText.includes('在 run_code 程序里读文件') && systemText.includes('tools.read') && systemText.includes('file_path') && systemText.includes('offset') && systemText.includes('limit'),
-    // Legacy session shape 仅作兼容性证据：官方 single-read SDK 骨架或等价名称。
+    // 旧会话形态仅作兼容性证据：官方 single-read SDK 骨架或等价名称。
     minimalRead: (systemText.includes('read:') || systemText.includes('tools.read')) && systemText.includes('file_path') && systemText.includes('offset') && systemText.includes('limit'),
     sdkRenderer: systemText.includes('interface ToolArgsMap') && systemText.includes('declare const tools'),
     c7,
@@ -74,12 +74,12 @@ function parsedRecords(logicalText) {
 }
 
 const found = findSession(process.argv[2])
-if (found.kind === 'notfound') { console.error('log not found:', found.arg); process.exit(1) }
+if (found.kind === 'notfound') { console.error('未找到日志：', found.arg); process.exit(1) }
 if (found.kind === 'none') { console.error('未发现使用过按需规划模式的会话'); process.exit(1) }
 for (const dir of found.dirs) {
   console.log(NL + '===== 会话 ' + dir + ' =====')
   const lp = logPath(path.join(found.base, dir))
-  if (!lp) { console.error('会话日志文件不存在（两代候选名均未命中）:', path.join(found.base, dir)); continue }
+  if (!lp) { console.error('会话日志文件不存在（三代候选名均未命中）:', path.join(found.base, dir)); continue }
   const buf = fs.readFileSync(lp)
   // 先按 frame 原顺序拼接，再按逻辑 JSONL 分行；记录可跨 zstd frame 的边界。
   const logicalText = framesOf(buf).map((frame) => decodeText(buf, frame)).join('')

@@ -475,7 +475,7 @@ function printPlannerMessages(messages) {
 }
 
 const mainDir = found.dirs[0]
-if (v4LogPath(path.join(found.base, mainDir)) === null) failInput('仅支持 dsh 0.1.7 v4：目标日志必须是 session.v4.jsonl.zstd')
+if (v4LogPath(path.join(found.base, mainDir)) === null) failInput('仅支持 v4 会话日志：目标日志必须是 session.v4.jsonl.zstd')
 const parent = parseSession(mainDir)
 if (Object.prototype.hasOwnProperty.call(parent.header, 'parentSession') && parent.header.parentSession !== undefined && parent.header.parentSession !== null && parent.header.parentSession !== '') {
   failInput('SESSION_ID 不是顶层主会话（parentSession=' + parent.header.parentSession + '）')
@@ -504,7 +504,7 @@ printParentEvidence(parentBundle, parent)
 for (const session of sessions) {
   console.log('\n===== 会话 ' + session.dir + ' =====')
   if (session.file === null) {
-    console.error('仅支持 dsh 0.1.7 v4：目标日志必须是 session.v4.jsonl.zstd：' + session.directory)
+    console.error('仅支持 v4 会话日志：目标日志必须是 session.v4.jsonl.zstd：' + session.directory)
     continue
   }
   console.log('日志文件名=' + session.fileName)

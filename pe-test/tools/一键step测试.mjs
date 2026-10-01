@@ -34,9 +34,9 @@ const AUTO = [
 const HUMAN = [
   ['step-04-工具清单查看.mjs', '参数可选: <会话目录名>；无参数自动查找最新按需规划模式主会话+其子会话，看每轮 AI 用了哪些工具（引导收窄/恢复）'],
   ['step-05-会话解码.mjs', '参数可选: <会话目录名>；无参数自动查找最新按需规划模式主会话+其子会话，看事件统计/plan模式（澄清问题问到没）'],
-  ['step-06-真实会话查看.mjs', '仅支持 dsh 0.1.7 v4（session.v4.jsonl.zstd）；参数可选: <sessions-dir>，查看拒绝记录（TOOL-ERROR）'],
-  ['step-07-子代理模型与引导取证.mjs', '仅支持 dsh 0.1.7 v4（session.v4.jsonl.zstd）；必须通过一键参数 --session <顶层主会话ID> 显式传入 SESSION_ID，并继承调用者显式提供的 PLANNER_PROMPT_SUFFIX，查看 pro规划/非pro规划 child 的 route/provenance/suffix 分栏'],
-  ['step-08-方案配对查看.mjs', '仅支持 dsh 0.1.7 v4（session.v4.jsonl.zstd）；参数可选: <sessions-dir>/<会话目录名>，查看 save_plan 调用/结果是否成对（方案+验收双写）'],
+  ['step-06-真实会话查看.mjs', '仅支持 v4 会话日志（session.v4.jsonl.zstd）；参数可选: <sessions-dir>，查看拒绝记录（TOOL-ERROR）'],
+  ['step-07-子代理模型与引导取证.mjs', '仅支持 v4 会话日志（session.v4.jsonl.zstd）；必须通过一键参数 --session <顶层主会话ID> 显式传入 SESSION_ID，并继承调用者显式提供的 PLANNER_PROMPT_SUFFIX，查看 pro规划/非pro规划 child 的 route/provenance/suffix 分栏'],
+  ['step-08-方案配对查看.mjs', '仅支持 v4 会话日志（session.v4.jsonl.zstd）；参数可选: <sessions-dir>/<会话目录名>，查看 save_plan 调用/结果是否成对（方案+验收双写）'],
 ]
 
 // 需参数项

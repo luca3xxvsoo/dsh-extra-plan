@@ -32,7 +32,7 @@ $env:SESSION_ID='<顶层主会话ID>'
 $env:PLANNER_PROMPT_SUFFIX='<同一部署快照的精确 suffix>'
 node pe-test/tools/step-07-子代理模型与引导取证.mjs
 ```
-脚本按顺序探测三种候选日志：`session.v4.jsonl.zstd` / `session.v3.jsonl.zstd` / `session.jsonl.zstd`，分开报告 request/header（attempted route，尝试路由）和 assistant/message.data.message.source（actual provenance，实际产出），只区分 pro规划/非pro规划；完整 planner 文本、budgetNotice、宿主 guidance、header.system 与 suffix 等级照实输出（对应 C11/C12）。
+共享 `session-finder/logPath` 按顺序兼容定位三代候选日志：`session.v4.jsonl.zstd` / `session.v3.jsonl.zstd` / `session.jsonl.zstd`；step-06/07/08 只接受 `session.v4.jsonl.zstd`。脚本分开报告 request/header（attempted route，尝试路由）和 assistant/message.data.message.source（actual provenance，实际产出），只区分 pro规划/非pro规划；完整 planner 文本、budgetNotice、宿主 guidance、header.system 与 suffix 等级照实输出（对应 C11/C12）。
 
 也可以直接跑单个文件（`node pe-test/tools/step-01-预设完整性.mjs`），效果一样。
 

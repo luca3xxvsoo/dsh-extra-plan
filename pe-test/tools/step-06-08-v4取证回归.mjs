@@ -159,7 +159,7 @@ try {
     const old07 = runScript(STEP07, [], { SESSION_ID: dirName, PLANNER_PROMPT_SUFFIX: 'fixture-suffix' })
     const old08 = runScript(STEP08, [oldDir])
     for (const [toolName, outcome] of [['step-06', old06], ['step-07', old07], ['step-08', old08]]) {
-      check(toolName + ' 拒绝' + label + '日志并返回非零', outcome.status !== 0 && outcome.output.includes('仅支持 dsh 0.1.7 v4'))
+      check(toolName + ' 拒绝' + label + '日志并返回非零', outcome.status !== 0 && outcome.output.includes('仅支持 v4 会话日志'))
     }
   }
 } catch (error) {

@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs'
 
 const path = process.argv[2]
 if (path === undefined) {
-  console.error('usage: node step-99-用量统计.mjs <ledger.jsonl>')
+  console.error('用法：node step-99-用量统计.mjs <ledger.jsonl>')
   process.exit(1)
 }
 const lines = readFileSync(path, 'utf8').split('\n').filter((line) => line.trim() !== '')

@@ -1,7 +1,7 @@
 # 实机闸门测试流程（AI 给脚本 · 用户照做 · 当场取证判定）
 
-> 适用对象：`@local/dsh-extra-plan`（仓库内根入口 `plugins/dsh-extra-plan/index.js`，save 合同/校验/持久化/工具工厂分别位于 `plugins/dsh-extra-plan/lib/save-contract.js`、`lib/save-probe-validation.js`、`lib/save-persistence.js`、`lib/save-tool-factories.js`；头注释 v0.3.0）。**宿主 DSH 支持 0.1.7-rc.1 / 0.1.7-rc.2 / 0.2.0-rc.1 / 0.2.0-rc.2**（会话日志 `session.v4.jsonl.zstd`，SESSION_FORMAT_VERSION=4；取证工具三代候选名并存：v4 / `session.v3.jsonl.zstd`（0.1.5-rc.2 旧日志回放）/ `session.jsonl.zstd`（0.1.2-rc.1 及更早））。0.2.0-rc.2 有用户提供的范围受限 HUMAN 兼容基线（2026-10-01 rc2 批次），本轮 post-fix A09/A10/A11 与设置入口 UI 仍待双版本复测（0.2 独立 tab 不出现；legacy row 是否可见取决于宿主 slot）；OS、profile/mode、SESSION_ID、部署 commit 与原始报告路径未提供。**真机取证由用户部署后自测（AI 不执行部署）**。
-> 用途：**发版前跑全量**；**改闸门后按域增量跑**（域分组 D1-D9 见第七部分，按域映射到 U 序号）。
+> 适用对象：`@local/dsh-extra-plan`（仓库内根入口 `plugins/dsh-extra-plan/index.js`，save 合同/校验/持久化/工具工厂分别位于 `plugins/dsh-extra-plan/lib/save-contract.js`、`lib/save-probe-validation.js`、`lib/save-persistence.js`、`lib/save-tool-factories.js`；当前插件包契约 0.3.0，当前宿主版本见宿主耦合台账）。**宿主 DSH 支持 0.1.7-rc.1 / 0.1.7-rc.2 / 0.2.0-rc.1 / 0.2.0-rc.2**（会话日志 `session.v4.jsonl.zstd`，SESSION_FORMAT_VERSION=4；取证工具三代候选名并存：v4 / `session.v3.jsonl.zstd`（0.1.5-rc.2 旧日志回放）/ `session.jsonl.zstd`（0.1.2-rc.1 及更早））。0.2.0-rc.2 有用户提供的范围受限 HUMAN 兼容基线（2026-10-01 rc2 批次），本轮 post-fix A09/A10/A11 与设置入口 UI 仍待双版本复测（0.2 独立 tab 不出现；legacy row 是否可见取决于宿主 slot）；OS、profile/mode、SESSION_ID、部署 commit 与原始报告路径未提供。**真机取证由用户部署后自测（AI 不执行部署）**。
+> 用途：**发版前跑全量**；**改闸门后按域增量跑**（域分组 D1-D10 见第七部分，按域映射到 U 序号）。
 > 被测时序：按 A/C/M 分层；PTC 专项分别用 C=0/C=1 的干净 A=1 顶层会话取 F→首个 tool/call→L→第二调用，native/both 做独立 HN/HB 回归；机械闸门的 both 轮另行保留。**动手前先做第 0 节前置检查**。
 > 行号纪律：本文不写行号。排查缺陷需要行号时查 pe-test/docs/ai-代码地图.md：先看头部「意图速查」按意图词找函数名，再到「函数索引」取行号区间。
 > 本轮实机/静态报告的同一部署配置快照必须包含 A=anchoredBootstrap、C=creativeMode、M=toolPresentationMode（以及其余既有设置）；F=尚无 tool/call、L=首个 tool/call 后。C=0/C=1 均核对模型可见投影与 catalog，C=0 不把展示隐藏误当 runtime binding（运行时绑定） 安全隔离，C=1 的 HP1 首轮 catalog 暂隐是唯一时序特例。
@@ -16,7 +16,7 @@
 - [U1 用户操作表](#41-用户操作清单第一轮-u1-u6-六行-设置页-1-2-行常数项-u0-不占行)：显式 A 标签 15 项，覆盖条数为 16（含搭车/同轮项）。
 - [U3 用户操作表](#41-用户操作清单第一轮-u1-u6-六行-设置页-1-2-行常数项-u0-不占行)：显式 A 标签 5 项，覆盖条数写 6。
 - [U6 用户操作表](#41-用户操作清单第一轮-u1-u6-六行-设置页-1-2-行常数项-u0-不占行)：显式集合列出 A48，集合与覆盖条数一致。
-- [A45 重置批次](#325b-a45-重置验证批次s4-已批准后-u0-常数项) 与 [D1 映射](#74-域分组d1-d9可勾选增量跑按域映射到-u-序号)：A45 统一映射到 U0。
+- [A45 重置批次](#325b-a45-重置验证批次s4-已批准后-u0-常数项) 与 [D1 映射](#74-域分组d1-d10可勾选增量跑按域映射到-u-序号)：A45 统一映射到 U0。
 - [A46 放行侧](#322-第一轮bothcatchgatetrue拦截面轮) 与 [U2/D7](#41-用户操作清单第一轮-u1-u6-六行-设置页-1-2-行常数项-u0-不占行)：A46 显式列入 U2。
 - [A48 执行者委派](#325-s4-routeplan已批准u6-批准同意后)：A48 显式列入 U6，并与 D6/D8 映射一致。
 - [第 0 节与配置快照](#0-前置检查先检测当前模式)、[7.1 前置状态](#71-前置状态搭建)：A/C/M 均从 settings 权威行读取，M 再与声明行 tool-presentation 投影对拍。
@@ -44,7 +44,7 @@
 - 全部运行期闸门只挂在 `ctx.on('tools/pre-execute')` 一处，统一 `return { kind: 'deny', reason }`；另有 3 类非 pre-execute 拒绝：save_plan/save_probe 工具由 `lib/save-tool-factories.js` 定义并在 `execute` 内 throw、静态层 `toolFilter.deny`（yml 四行 + executor-spawn 注入）、assemble 目录裁剪（只影响可见性、不产生文案）。根入口仅负责工厂创建、工具注册与闸门接线。
 
 ### 1.2 与 mock/静态自检的分工边界
-- 自动层（发版前工程门槛，本流程不替代）：`step-00-全流程回归` / `step-04-路由与写闸门` / `step-06-线索落盘` = mock ctx（模拟上下文）走插件 apply 的 in-process（进程内）回归（0.1.7 起 step-04 另含 isolate/volatile/写链/声明行覆盖四组硬门槛，见其 ⑰ 段）；`step-04-路由与写闸门` 实际覆盖 A/C/M/F-L × 五角色的 2×2×3×2×5=120 格，并逐格断言 C7、catalog、HP 与 HN/HB；`step-00-跨平台写拦截` = 纯函数；`step-01-*` 与 `代码地图生成.mjs --check` = 静态；`step-01-qqbot-环境验证.mjs` = 条件只读环境项；`一键step测试.mjs` 当前 AUTO 数组共 13 个自动判定项。两个 QQBot 脚本仍列 AUTO，是因为能按实际条件判定 PASS/FAIL/SKIP，并非无条件通过：解析器、适用 profile/manifest 与显式宿主条件齐全时执行断言；缺 js-yaml、适用宿主或 manifest、junction 能力时仅输出带 scope/reason/details 的结构化 SKIP，部分执行/未执行不计失败，也不算全量通过。
+- 自动层（发版前工程门槛，本流程不替代）：`step-00-全流程回归` / `step-04-路由与写闸门` / `step-06-线索落盘` = mock ctx（模拟上下文）走插件 apply 的 in-process（进程内）回归（0.1.7 起 step-04 另含 isolate/volatile/写链/声明行覆盖四组硬门槛，见其 ⑰ 段）；`step-04-路由与写闸门` 实际覆盖 A/C/M/F-L × 五角色的 2×2×3×2×5=120 格，并逐格断言 C7、catalog、HP 与 HN/HB；`step-00-跨平台写拦截` = 纯函数；安装/配置回归族（`step-01-*`）= 静态断言 + 进程内 apply/HTTP + 临时 DSH_HOME/patch fixture；QQBot 环境项（`step-01-qqbot-环境验证.mjs`）= 严格预检后的条件只读；上述自动项均不等于生产写入；`代码地图生成.mjs --check` = 静态；`一键step测试.mjs` 当前 AUTO 数组共 13 个自动判定项。两个 QQBot 脚本仍列 AUTO，是因为能按实际条件判定 PASS/FAIL/SKIP，并非无条件通过：解析器、适用 profile/manifest 与显式宿主条件齐全时执行断言；缺 js-yaml、适用宿主或 manifest、junction 能力时仅输出带 scope/reason/details 的结构化 SKIP，部分执行/未执行不计失败，也不算全量通过。
 - QQBot 自动边界：环境脚本只在严格 preflight 条件命中时读取真实 profile 的 manifest（清单）、patch 与映射；真实 profile 始终只读，禁止 heal/CLI/写操作；junction 只在临时 fixture（夹具）中探测/回归。解析器可用后的 YAML 语法错误、非顶层 patch、扫描缺失或映射断言错误必须 FAIL，不得用 SKIP 或空结果掩盖。
 - 本流程 = **实机验收层**：只做「真实会话里制造边界操作 → 对照期望文案 → 当场取证判定通过/不通过」，不重复自动层已覆盖的断言；QQBot 启动、`/preset`、question-channel、approval-channel、postinstall 日志与真实消息收发、生产与完整实机始终单列 HUMAN；0.1.7-rc.2 与 0.2.0-rc.2 的 post-fix A09/A10/A11/UI 仍须用户复测（0.2 独立 tab 不出现；legacy row 仅在宿主提供 slot 时呈现）。step-07 必须显式传入 `SESSION_ID` 与 `PLANNER_PROMPT_SUFFIX`（空 suffix 也要显式传入），缺任一项继续输入失败，不自动选择会话。
 
@@ -410,13 +410,13 @@ channelBroken 逃生（`CHANNEL_BROKEN_CODES` = NO_PROVIDER / CALLER_NOT_LIVE / 
 | 条目 | 口径 / 命令 |
 |:--|:--|
 | C1 模型侧一手证据 | 被拒调用卡片文案 =「Error: <reason>」+ `isError:true`；AI 当场照录卡片原文 |
-| C2/C3/C5 取证工具链（简） | 落盘侧：`DSH_HOME/sessions/<会话目录>/` 下 `session.v4.jsonl.zstd`（0.1.7-rc.1/rc.2，当前世代）/ `session.v3.jsonl.zstd`（0.1.5-rc.2）/ `session.jsonl.zstd`（0.1.2-rc.1 及更早）；解码 = `pe-test/_shared/session-finder.mjs`（定位）+ `zstd-frames.mjs`（真解）。`step-04-工具清单查看.mjs` 取证时必须显式传会话目录，输出逻辑行号、前置 tool/call 数、F/L、精确 header.tools、header.system 文本命中与 skill-catalog（文本命中不冒充 section 名）；其它只读视图为 `step-05-会话解码.mjs`、`step-06-真实会话查看.mjs`、`step-07-子代理模型与引导取证.mjs`、`step-08-方案配对查看.mjs`。其中 step-07 必须显式传顶层 `SESSION_ID`，并显式提供 `PLANNER_PROMPT_SUFFIX`（空串也算存在）。 |
-| C4 **判据口径（关键）** | **闸门拒绝 = content[0].isError:true 且无 data.error**；`step-06-真实会话查看` 现同时打印 data.error 与 `data.message.content` 中 `type=tool-result` 且 `isError=true` 的带行号 TOOL-ERROR，故两类拒绝均可对照；仍以卡片原文和日志为一手证据 |
+| C2/C3/C5 取证工具链（简） | 落盘侧：`DSH_HOME/sessions/<会话目录>/` 下 `session.v4.jsonl.zstd`（0.1.7-rc.1/rc.2，当前世代）/ `session.v3.jsonl.zstd`（0.1.5-rc.2）/ `session.jsonl.zstd`（0.1.2-rc.1 及更早）；共享定位 = `pe-test/_shared/session-finder.mjs` 的 `session-finder/logPath`（三代候选兼容回放），真解 = `zstd-frames.mjs`；step-06/07/08 只接受 `session.v4.jsonl.zstd`。`step-04-工具清单查看.mjs` 取证时必须显式传会话目录，输出逻辑行号、前置 tool/call 数、F/L、精确 header.tools、header.system 文本命中与 skill-catalog（文本命中不冒充 section 名）；其它只读视图为 `step-05-会话解码.mjs`、`step-06-真实会话查看.mjs`、`step-07-子代理模型与引导取证.mjs`、`step-08-方案配对查看.mjs`。其中 step-07 必须显式传顶层 `SESSION_ID`，并显式提供 `PLANNER_PROMPT_SUFFIX`（空串也算存在）。 |
+| C4 **判据口径（关键）** | **TOOL-ERROR/闸门拒绝 = v4 `tool/result` 事件的 `event.data.message.isError === true`**；文本来自 `event.data.message.content`，且不含 `data.error`；`data.error`/其它 `error` 事件按普通事件另看，不等同闸门拒绝；仍以卡片原文和日志为一手证据 |
 | C6/C7/C8（简） | 直接以 stdout/stderr 管道运行 step-07 等取证脚本（AI 用 pwsh 自动执行，非 HUMAN）可能在受限沙箱下 EPERM；一键step测试已用临时文件描述符收集 stdout/stderr 全量，若仍受限再由**用户在系统终端手动执行**，本流程不改任何 .mjs 脚本；被拒不烧预算（toolCallCount 按块级 isError!==true 配对计数）；聚合取证逐行对照（header「run_code 拆解预审未通过：工具组共 N 项（去重后），M 项触发闸门，任一触发即整体拒绝：」+ 逐行「- <标签>: <子文案>」，一次取证多条时逐行对照 A 表期望）。 |
 | C9 **聚合文案按行比对（硬判据②）** | 只比对 `- <标签>: ` 之后子文案与 A 表期望**逐字一致**（aggregateRunCodeDenyReason 直接 push 闸门原返回值，**子文案与 native 单条逐字一致**）；header 与行前缀另立模板；**禁止整卡比对**（header 计数、标签改写、参数不可解析都会造成整卡差异） |
 | C10 **unknown tool 陷阱（硬判据①）** | 直呼非 run_code 工具时宿主在 pre-execute 前早退，文案 `unknown tool "<name>": only run_code is callable directly — call <name> from inside a run_code program instead` **不算闸门证据**，不得记入任何 A 编号判定 |
 
-| C11 | 子代理模型/提供方分栏：显式 `SESSION_ID` 运行 `node pe-test/tools/step-07-子代理模型与引导取证.mjs`；脚本复用三代 zstd 解码与 session-finder，输出 session.v4.jsonl.zstd / session.v3.jsonl.zstd / session.jsonl.zstd（代际三值 v4/v3/v0 判定）、会话目录、JSONL 行号、解析失败计数、parentSession/origin/delegationDepth/descriptor.mode 及父 call/result child 关联。每个直接 child 分别记录 request/header.config.provider/model、request/context.provider/model/contextWindow、model/selection 辅助字段（均为 attempted route（尝试路由））与 assistant/message.source.kind=model 的 source.provider/model（actual provenance（实际来源））；前栏有而后栏无 = attempted-only（仅尝试），两栏均无 = no-log（无日志）；不按 provider/model 猜角色、不去重 repeated/resume/change/series |
+| C11 | 子代理模型/提供方分栏：显式 `SESSION_ID` 运行 `node pe-test/tools/step-07-子代理模型与引导取证.mjs`；共享 `session-finder/logPath` 可按三代候选定位用于兼容回放；step-06/07/08 只接受 `session.v4.jsonl.zstd`，输出会话目录、JSONL 行号、解析失败计数、parentSession/origin/delegationDepth/descriptor.mode 及父 call/result child 关联。每个直接 child 分别记录 request/header.config.provider/model、request/context.provider/model/contextWindow、model/selection 辅助字段（均为 attempted route（尝试路由））与 assistant/message.source.kind=model 的 source.provider/model（actual provenance（实际来源））；前栏有而后栏无 = attempted-only（仅尝试），两栏均无 = no-log（无日志）；不按 provider/model 猜角色、不去重 repeated/resume/change/series |
 | C12 | pro规划额外引导与完整文本：同一部署配置快照显式提供 `PLANNER_PROMPT_SUFFIX`（允许显式空串），运行 step-07；输出父 `subagent_plan` prompt、child source.kind=user/agent-message 全部 text block 与行号。suffix 必须逐字匹配；父 prompt 不含 suffix、child 初始首 text block 命中且 child ID/continuable 链完整 = verified-injection（已验证注入）；父 prompt 已含或关联材料不足 = content-only（仅内容）；有规划请求无可判定消息 = attempted-only（仅尝试）；有可读消息但无精确 suffix = absent；child.role 非 `pro规划`（且非 `role-evidence-insufficient（角色证据不足）`）或 descriptor.mode 非 continuable = role-evidence-insufficient（角色证据不足）；无相关日志 = no-log（无日志）；budgetNotice、宿主 `Your parent agent id is …` guidance（宿主引导）、header.system 分栏完整输出且不计 suffix |
 | C13 deny 可见面 AI 比对口径（2026-09-26） | 取证命令 `node pe-test/tools/step-04-工具清单查看.mjs <会话目录名>`（必须显式传会话目录）；AI read `plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml` 对应角色行 toolFilter.deny 原文，逐名比对脚本输出的 header.tools 全名清单（强证据）与 header.system 文本命中（弱证据）；结论分级、只给用户一行：「通过（强）：header.tools 无 <名单 N 项>；通过（弱）：tools:sdk 文本无 <名单 N 项> 命中（证据：脚本输出行号）」——弱证据不得表述为「已证明不可见」；历史会话 textLength/textHits 不作命中证据，只认新建会话 |
 
@@ -457,7 +457,7 @@ channelBroken 逃生（`CHANNEL_BROKEN_CODES` = NO_PROVIDER / CALLER_NOT_LIVE / 
 - 每完成一域由用户在清单勾选；支持「发版前跑全量、改闸门后按域增量」。
 - 两轮之间 AI 只发 3.3 的**转告语**，等用户完成后端权威行切换（`runcodeCatchGate` 配置热读、权威行更新即生效，轮间**无需重启**）后再继续第二轮（**无需新会话**）。
 
-### 7.4 域分组（D1-D9，可勾选；增量跑按域映射到 U 序号）
+### 7.4 域分组（D1-D10，可勾选；增量跑按域映射到 U 序号）
 
 | 域 | 范围 | A 编号 | 对应 U 序号 |
 |:--|:--|:--|:--|

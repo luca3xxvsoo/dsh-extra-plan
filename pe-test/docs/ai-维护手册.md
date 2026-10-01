@@ -6,7 +6,7 @@
 
 1. **先读与登记**：先读方案和验收文件，再读所有目标文件；按原章节建立迁移矩阵。没有矩阵证据的段落默认保留。
 2. **唯一备份**：修改前把本轮实际改动文件按原目录镜像到唯一 `.extra-plan/backup-dsh-extra-plan-JS审查修复-<YYYYMMDDHHMMSS>/`；同任务续跑沿用原目录，不覆盖原始镜像。文件镜像和子块独立回退是人工纪律，不声称已有自动闸门。
-3. **范围**：仅可按批准清单修改 17 个工作区文件（3 个插件源码、1 个 YAML、4 个 MJS、9 个 AI/测试文档）；仓库根 `README.md`、官方 dsh/预设、生成物、package.json、生产环境、profile 和 `$DSH_HOME` 禁止修改。不得执行 `git reset`、`git checkout`、`git clean`。
+3. **范围**：仅可修改批准清单列明的实际修改文件：22 个审查源文件和 1 个由生成器派生的 YAML（共 23 个工作区文件）；仓库根 `README.md`、任何 `.gitignore` 命中路径、官方 dsh/官方预设、`package.json`、生产环境、profile 和 `$DSH_HOME` 禁止修改。不得执行 `git reset`、`git checkout`、`git clean`。
 4. **备份后再改**：改预设时只改作者源并由生成器重建；本轮文档精简不改预设。生产部署由用户执行，仓库验收不是部署许可。
 5. **嵌套命令纪律**：涉及 `run_code`/PowerShell/字符串拼接时，先按最终语言写正确文本，再逐层转义，写后解析回放；Markdown 不伪造代码语法结果。
 
@@ -25,7 +25,7 @@
 
 ## 修改后固定顺序
 
-1. 对本轮实际修改的 7 个 JS/MJS 逐文件执行 `node --check`：`plugins/dsh-extra-plan/lib/shell-mutation.js`、`plugins/dsh-extra-plan/lib/run-code-static.js`、`plugins/dsh-extra-plan/lib/client.js`、`pe-test/tools/step-00-跨平台写拦截.mjs`、`pe-test/tools/step-00-全流程回归.mjs`、`pe-test/tools/step-04-路由与写闸门.mjs`、`pe-test/tools/step-01-设置页配置.mjs`。
+1. 对批准清单中的实际修改 JS/MJS 逐文件执行 `node --check`：`plugins/dsh-extra-plan/lib/client.js`、`plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs`、`pe-test/_shared/v4-tool-result.mjs`、`pe-test/tools/step-00-全流程回归.mjs`、`pe-test/tools/step-04-路由与写闸门.mjs`、`pe-test/tools/step-04-工具清单查看.mjs`、`pe-test/tools/step-05-会话解码.mjs`、`pe-test/tools/step-06-真实会话查看.mjs`、`pe-test/tools/step-07-子代理模型与引导取证.mjs`、`pe-test/tools/step-08-方案配对查看.mjs`、`pe-test/tools/step-99-用量统计.mjs`、`pe-test/tools/step-06-08-v4取证回归.mjs`、`pe-test/tools/一键step测试.mjs`。
 2. 严格按验收顺序运行：
    - `node pe-test/tools/step-01-设置页配置.mjs`
    - `node pe-test/tools/step-00-全流程回归.mjs`

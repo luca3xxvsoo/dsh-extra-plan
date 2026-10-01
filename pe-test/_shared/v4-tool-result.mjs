@@ -1,4 +1,4 @@
-// _shared/v4-tool-result.mjs — dsh 0.1.7 v4 tool/result 纯解析
+// _shared/v4-tool-result.mjs — v4 会话 tool/result 纯解析
 import fs from 'node:fs'
 import path from 'node:path'
 

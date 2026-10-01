@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-10-01 22:07:15（脚本自动更新时间戳行）
+> 上次同步：2026-10-02 07:14:21（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -62,7 +62,7 @@
 | tool-jobs 完成通知解锁（source.kind=tool-jobs 且 form=notice → 正文 /background job (\S+)/ 解析 jobId → 双动作：①只清该 jobId 的 job_output 计数（若被跟踪，删除幂等）②job_list/list_agents 轮询守卫 pollGuardCounters 清整表；consumed 标记与 job_output 跟踪命中解耦——通知首次被消费即标记，防重复动作；HK9：旧 plugin kind 已废） | plugins/dsh-extra-plan/index.js | apply、recordJobOutputCall、jobOutputGateReason、pollGuardGateReason |
 | agent/created 钩子（serial；agent/session-start 已删除）／会话启动基线＋save_plan/save_probe 注册，整块吞错不阻断会话创建 | plugins/dsh-extra-plan/index.js（agent/created 调用点）、plugins/dsh-extra-plan/lib/agent-runtime.js（childBaseline/isPlannerChild 定义）、plugins/dsh-extra-plan/lib/agent-session.js（isSubagentChild 定义） | apply、childBaseline、isPlannerChild、isSubagentChild、registerSavePlan、registerSaveProbe、probeClaimFor |
 | MALFORMED_RESPONSE 限次自愈／请求失败兜底 retry／注入模型可读提示（source.kind 用生产者自有 `plugin:@local/dsh-extra-plan`；developer/message 须自带 ≥1 的 turn/step，宿主 append 不补坐标；坐标缺失/非正整数 → 不注入但仍返回 retry） | index.js | malformedRecovery、recordRequestError |
-| 会话日志格式 v4 代际／session.v4.jsonl.zstd／三代候选名并存（v4/v3/旧名，未知形状归 v0） | pe-test/_shared/session-finder.mjs、pe-test/tools/step-07-子代理模型与引导取证.mjs |  |
+| 会话日志格式 v4 代际／session.v4.jsonl.zstd／共享 session-finder/logPath 三代候选名并存（v4/v3/旧名，未知形状归 v0）；step-06/07/08 只接受 session.v4.jsonl.zstd | pe-test/_shared/session-finder.mjs、pe-test/tools/step-07-子代理模型与引导取证.mjs |  |
 
 > QQBot 环境验证：`pe-test/tools/step-01-qqbot-环境验证.mjs` 的 `buildPreflight`（五条件/缺失码）、`probeJunctionCapability` 与 `runJunctionFixture`（能力探针/临时 fixture（夹具））、`runLiveReadonly` 与 `inspectMapping`（真实 profile patch/映射只读对拍）；该测试工具不在插件源码生成根，函数行号不手填。
 
@@ -77,7 +77,7 @@
 | plugins/dsh-extra-plan/lib/client-bridge.js | 7 | 客户端桥接壳：仅承载 dsh.client 加载路径指向 lib/client.js（apply 空实现） |
 | plugins/dsh-extra-plan/lib/client.js | 437 | 客户端模块加载共享样式/词条与共享 SettingsCard/ExtraPlanForm；0.2 独立 `settings.plugins.tab` 不注册，唯一 legacy keyed row 仅在宿主提供对应 slot 时呈现，slot 缺失时走宿主后备路径；后端 settings API/Config/投影链独立活动。 |
 | plugins/dsh-extra-plan/lib/executor-spawn.js | 132 | 执行者子代理 provider：委托宿主 spawn，注入工具 deny（防委派递归/追问）；registerProvider 走引用计数幂等（**稳定键幂等**：模块级 WeakMap 槽表的槽键 = subagents 服务实现本体——读全局注册符号 Symbol.for('cordis.original')，由 traceable 代理 get 拦截器返回 target，root 单例跨预设世代恒同一对象；取不到符号值时降级回代理本身；跨预设世代/行重建复用同一注册，归零才反注册） |
-| plugins/dsh-extra-plan/lib/gate-words.js | 114 | 闸门关键词共享契约（唯一值源是 YAML 的 config.gateWords）：字段规格 GATE_WORD_FIELDS/GATE_WORDS_GROUP_DEFINITION + 整组严格校验 validateGateWords（错误一律以 extra-plan: config.gateWords 开头）+ 运行时词表 createGateRuntime（无参默认值）；纯模块：不含任何出厂词值、不读文件与环境变量，被 index.js（运行时）与 lib/preset-sync.js（启动自愈）共享（迁移叶 locator 已随跨版本搬迁链删除） |
+| plugins/dsh-extra-plan/lib/gate-words.js | 114 | 闸门关键词共享契约（唯一值源是 YAML 的 config.gateWords）：字段规格 GATE_WORD_FIELDS/GATE_WORDS_GROUP_DEFINITION + 整组严格校验 validateGateWords（错误一律以 extra-plan: config.gateWords 开头）+ 运行时词表 createGateRuntime（显式入参严格校验，无默认词表）；纯模块：不含任何出厂词值、不读文件与环境变量，被 index.js（运行时）与 lib/preset-sync.js（启动自愈）共享（迁移叶 locator 已随跨版本搬迁链删除） |
 | plugins/dsh-extra-plan/lib/live-config.js | 255 | 配置热读：8 项热读 + 2 项宿主行权威读口；构造期读盘一次，后续按增强 stamp（dev/ino/size/mtimeNs/ctimeNs，兼容 ino/size/mtimeMs/ctimeMs）重读；失败整组回退并告警，不读 DSH_HOME 旧目录 |
 | plugins/dsh-extra-plan/lib/model-routing.js | 542 | planner/非 planner 子代理模型路由：顶层纯判定函数 + createModelRouting per-apply 工厂（per-instance WeakMap、惰性 llm/agents getter；不 import index.js） |
 | plugins/dsh-extra-plan/lib/planner-budget.js | 137 | planner 工具计数、消息后缀/预算提示/耗尽文案；**预算提醒消息经宿主 createUserMessage 构造，source 用生产者自有 kind `plugin:@local/dsh-extra-plan`（v4 行准入禁旧包裹 `plugin`，违者会话当场终止）**；默认预算由生成模块提供，FREE_TOOLS 仍在根入口 |
@@ -213,7 +213,7 @@
 | plugins/dsh-extra-plan/lib/client.js | SettingsCard | L401-407 | SHARED 卡片根组件：接收规范化 configForm/translate，view=summary 返回一行描述，其余渲染 esp-wrap 与唯一 ExtraPlanForm；不直接读取旧宿主 props。 |  |
 | plugins/dsh-extra-plan/lib/client.js | Legacy017SettingsCard | L414-416 | 0.1.7 row wrapper：逐项把旧 props.form/props.t/props.view 映射为共享 SettingsCard 的 configForm/translate/view；仅随 legacy slot 呈现。 |  |
 | plugins/dsh-extra-plan/lib/client.js | registerLegacy017RowConfig | L418-427 | 以 `LEGACY_017_ROW_CONFIG_KEY` 注册唯一 `plugins.row.config` keyed row；注入 locale 与共享卡片 wrapper，不注册 0.2 独立 tab。 |  |
-| plugins/dsh-extra-plan/lib/executor-spawn.js | resolveDeny | L27-29 | deny 解析纯函数：config.deny 合法（非 null 对象且为数组）时原样返回，否则回退 DEFAULT_DENY | 由 apply 调用；DEFAULT_DENY 已与预设 config.deny 收敛为同集 12 项 |
+| plugins/dsh-extra-plan/lib/executor-spawn.js | resolveDeny | L27-29 | deny 解析纯函数：config.deny 合法（非 null 对象且为数组）时原样返回，否则回退 DEFAULT_DENY | 由 apply 调用；DEFAULT_DENY 已与预设 config.deny 收敛为同集 11 项 |
 | plugins/dsh-extra-plan/lib/executor-spawn.js | slotKey | L48-54 | 稳定槽键纯函数：读全局注册符号 Symbol.for('cordis.original') 取 subagents 服务实现本体（traceable 代理 get 拦截器返回 target；root 单例跨 ctx/跨预设世代恒同一对象），非 traceable/取不到符号值时降级回代理本身 | registrationSlots 查表的键来源，槽键语义 = 幂等跨世代命中的前提 |
 | plugins/dsh-extra-plan/lib/executor-spawn.js | apply | L56-132 | 插件入口：注册执行者 provider（委托宿主 spawn，注入 deny 工具裁剪）；注册走引用计数幂等——槽键取 slotKey(ctx.subagents)（服务实现本体，不再以 ctx.subagents 代理为键），槽 count>0 时只加持有并 console.warn 后返回，count==0 且已存在同名 provider 时抛真实冲突错，全新注册时保存 host disposer（含 delegator 校验与 defaultedAgentOptions） |  |
 | plugins/dsh-extra-plan/lib/executor-spawn.js | releaseSlot | L82-90 | 释放一份注册持有：count 递减，归零且已有宿主 disposer 时调用它反注册并置空（以 ctx.effect 清理回调形式挂载，标签 'executor-spawn: shared provider slot'） |  |
@@ -232,7 +232,7 @@
 | plugins/dsh-extra-plan/lib/live-config.js | modeOr | L92-94 | 工具呈现模式取值：仅接受 TOOL_PRESENTATION_MODES（native/ptc/both），其他回落 fallback（回退）（toolPresentationMode） |  |
 | plugins/dsh-extra-plan/lib/live-config.js | pick | L96-106 | 按 key 的标量类型收口（布尔含 webFetch／trim 字符串／正整数／工具呈现模式枚举），非法值一律回落 fallback（回退） |  |
 | plugins/dsh-extra-plan/lib/live-config.js | normalizedFallback | L108-115 | 归一 fallback（回退）Defaults：取 10 个读取键（8 项 UI + 2 项宿主行设置），缺失键用内置兜底（与 index.js apply 期 cfg 快照同口径） |  |
-| plugins/dsh-extra-plan/lib/live-config.js | createLiveConfig | L123-255 | 热读工厂：决议路径 + 构造期**无条件读盘一次**（文件真值作首拍基准，成功即记 stamp；失败回退 fallback（回退）Defaults + warnOnce）；返回 10 个 getter（8 项热读 + 2 项宿主行设置权威值读口；取值先 refresh 再做 stamp 比对）；creativeMode getter 保留但当前无热读消费点（该项为 apply 快照）；不做监听/轮询/订阅 |  |
+| plugins/dsh-extra-plan/lib/live-config.js | createLiveConfig | L123-255 | 热读工厂：决议路径 + 构造期**无条件读盘一次**（文件真值作首拍基准，成功即记 stamp；失败回退 fallback（回退）Defaults + warnOnce）；返回 10 个 getter（8 项热读 + 2 项宿主行设置权威值读口；取值先 refresh 再做 stamp 比对）；creativeMode getter 保留且由 live-config 热读消费（与 index.js creativeModeOn 一致，消费点为 catalog 隐藏与装配投影）；不做监听/轮询/订阅 |  |
 | plugins/dsh-extra-plan/lib/live-config.js | warnOnce | L134-138 | 同实例只告警一次（防抖）：不可用原因 + 生效路径 + 「回退到 apply 期快照兜底」 |  |
 | plugins/dsh-extra-plan/lib/live-config.js | currentPath | L141-151 | 路径决议（构造期与每次取值现场调用）：显式 configPath → 环境变量 DSH_EXTRA_PLAN_CONFIG_PATH → resolver()（宿主 configEditor.documentPath）；resolver 缺失或抛出返回空串 |  |
 | plugins/dsh-extra-plan/lib/live-config.js | readDiskValues | L154-176 | 读盘→解析→取值单一实现（构造期与 stamp 变化后的刷新共用）：readFileSync + **captureRowSettings(SETTING_DEFINITIONS)（settings 行 = 10 项权威值同源落点）**，按 states[key]==='captured' 覆盖、其余键回落 fallback（回退）；未捕获到任何键视为取值失败；失败返回 { ok:false, reason } 不抛出 |  |
@@ -385,7 +385,7 @@
 | plugins/dsh-extra-plan/lib/save-contract.js | sanitizeTaskName | L4-12 | 任务名净化（截断/去非法字符） |  |
 | plugins/dsh-extra-plan/lib/save-contract.js | timestampOf | L15-18 | 生成本地 yyyyMMddHHmmss 部分，供公共 timestamp 与 artifact base 使用 |  |
 | plugins/dsh-extra-plan/lib/save-contract.js | pad | L16 | timestamp 内部数字补零 |  |
-| plugins/dsh-extra-plan/lib/save-contract.js | timestamp | L20-22 | 本地时间戳 yyyyMMddHHmmss（文件名可读且具唯一性） |  |
+| plugins/dsh-extra-plan/lib/save-contract.js | timestamp | L20-22 | 秒级公共时间戳 yyyyMMddHHmmss（仅保证格式可读；工件唯一基座见 saveArtifactBase） |  |
 | plugins/dsh-extra-plan/lib/save-contract.js | sessionTagOf | L26-28 | 会话标识段（去分隔符后取前 8 位字母数字） |  |
 | plugins/dsh-extra-plan/lib/save-contract.js | saveArtifactBase | L34-49 | 统一生成任务名+sessionTag+毫秒+process.pid+进程序号的碰撞安全 base |  |
 | plugins/dsh-extra-plan/lib/save-contract.js | savePlanBase | L52-54 | save_plan 文件名 base（任务短名 + 会话标识段 + 时间戳） |  |
@@ -442,7 +442,7 @@
 | plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | invokedAsMain | L140-143 | 跨平台判断脚本是否作为 CLI 主入口运行 |  |
 | plugins/dsh-qqbot-user-questions/index.js | apply | L11-20 | 插件入口：apply 启动时调 healQqbotCompatibility 自愈（迁移旧错误块+建链；try/catch 不阻断启动） |  |
 | plugins/dsh-qqbot-user-questions/lib/heal.js | loadYamlModule | L14-24 | js-yaml 双 fallback（回退） 加载（本地 createRequire 失败回退官方 APPDATA DSH 包）；惰性缓存，导入零副作用 |  |
-| plugins/dsh-qqbot-user-questions/lib/heal.js | timestamp | L26-30 | 时间戳 yyyyMMddHHmmssSSS（备份文件名唯一性，含毫秒） |  |
+| plugins/dsh-qqbot-user-questions/lib/heal.js | timestamp | L26-30 | 时间戳 yyyyMMddHHmmssSSS（毫秒粒度备份时间戳，不作同毫秒唯一承诺） |  |
 | plugins/dsh-qqbot-user-questions/lib/heal.js | pad | L28 | 数字补零（timestamp 内部闭包） |  |
 | plugins/dsh-qqbot-user-questions/lib/heal.js | isObject | L56-58 | 非空普通对象判定（排除 null/数组） |  |
 | plugins/dsh-qqbot-user-questions/lib/heal.js | stripBom | L60-62 | 去除行首 BOM（迁移扫描用） |  |

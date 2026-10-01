@@ -7,11 +7,11 @@ import { framesOf, decodeText } from '../_shared/zstd-frames.mjs'
 import { findSession, logPath } from '../_shared/session-finder.mjs'
 
 const found = findSession(process.argv[2])
-if (found.kind === 'notfound') { console.error('log not found:', found.arg); process.exit(1) }
+if (found.kind === 'notfound') { console.error('未找到日志：', found.arg); process.exit(1) }
 if (found.kind === 'none') { console.error('未发现使用过按需规划模式的会话'); process.exit(1) }
 for (const dir of found.dirs) {
   console.log(`\n===== 会话 ${dir} =====`)
-  const lp = logPath(path.join(found.base, dir)); if (!lp) { console.error('会话日志文件不存在（两代候选名均未命中）:', path.join(found.base, dir)); continue }
+  const lp = logPath(path.join(found.base, dir)); if (!lp) { console.error('会话日志文件不存在（三代候选名均未命中）:', path.join(found.base, dir)); continue }
   const buf = fs.readFileSync(lp)
   const frames = framesOf(buf)
   let lineNo = 0
@@ -41,11 +41,11 @@ for (const dir of found.dirs) {
       }
     }
   }
-  console.log('type counts:', JSON.stringify(types))
-  console.log('--- agent-preset related events ---')
+  console.log('事件类型计数：', JSON.stringify(types))
+  console.log('--- agent-preset 相关事件 ---')
   for (const e of presetEvents) console.log(`L${e.line} ${e.type} ${e.data}`)
-  console.log('--- plan/mode ---')
+  console.log('--- plan/mode 事件 ---')
   for (const e of planEvents) console.log(`L${e.line} ${e.data}`)
-  console.log('--- request/header summaries ---')
+  console.log('--- request/header 摘要 ---')
   for (const e of headers) console.log(`L${e.line} model=${e.model} tools=${e.ntools}`)
 }

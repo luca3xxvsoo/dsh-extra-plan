@@ -8,11 +8,11 @@ await registerHostDeps()
 const { interpolate } = await import('@deepseek-ai/cordis-plugin-loader')
 
 // ── 测试隔离（方案 A 构造期读盘） ──────────────────────────────────────────
-// live-config 构造期无条件读盘一次（DSH_HOME/.agent-presets/extra-plan/agent.cordis.yml，或
-// 优先级更高的 DSH_EXTRA_PLAN_CONFIG_PATH）。本脚本的 plugin.apply 均传入 config 快照（如
-// anchoredBootstrap: false），若命中现场真值，这些按入参硬编码的期望会被现场配置污染。故在
-// 【插件 import 之前】把 DSH_HOME 指向空的临时目录、并清空 DSH_EXTRA_PLAN_CONFIG_PATH：
-// 构造期读盘必然失败 → 各实例回退到自己的 fallbackDefaults（= apply 入参）。
+// live-config 构造期路径依次为显式 configPath → DSH_EXTRA_PLAN_CONFIG_PATH → configEditor.documentPath；旧预设目录不回退。
+// 本脚本的 plugin.apply 均传入 config 快照（如 anchoredBootstrap: false），但 mock 无可用 documentPath，
+// 因此清空显式环境路径后不会读到现场真值，这些按入参硬编码的期望不会被现场配置污染。
+// 【插件 import 之前】把 DSH_HOME 指向空的临时目录，并清空 DSH_EXTRA_PLAN_CONFIG_PATH：
+// 构造期读盘失败 → 各实例回退到自己的 apply 快照（fallbackDefaults）。
 // 测试结束（含 process.exit 与异常退出路径）由 process.on('exit') 恢复原值并删临时目录。
 const previousDshHome = process.env.DSH_HOME
 const previousConfigPath = process.env.DSH_EXTRA_PLAN_CONFIG_PATH

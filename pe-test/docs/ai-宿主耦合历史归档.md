@@ -29,7 +29,7 @@
 
 - 0.1.2-rc.1～0.1.5-rc.2 的 `settings.register`、`settings.plugin.item`、旧独立设置卡片、旧 `agentPresets.resolve/skills.register`、`codeRuntime`、`tool:cordis`、7 项旧 Cordis 工具、旧 workflow worker、旧 profile `.agent-presets` 目录均是历史迁移面。
 - 0.1.5-rc.2 历史失败面包括 `tools.restrict()` 无 scoped context/空 filter 抛错、toolFilter 配置缺少 allow/deny 抛错；当前预设已保持 deny 形状，历史错误不作 0.1.7 运行结论。
-- 旧双版本 schema 对照曾检查 persona `text`/`prefix`、agent-instructions、tool-fs-search、tool-subagent、tool-todo、agent-tool-presentation 等必填键；当前 peer 只钉 0.1.7-rc.1/rc.2，历史 PASS 不能代替当前宿主 schema 复核。
+- 旧双版本 schema 对照曾检查 persona `text`/`prefix`、agent-instructions、tool-fs-search、tool-subagent、tool-todo、agent-tool-presentation 等必填键；该历史批次当时只钉 0.1.7 系列（rc.1/rc.2）；当前 peer 版本见[ai-宿主耦合台账](ai-宿主耦合台账.md)，历史 PASS 不能代替当前宿主 schema 复核。
 - `session.jsonl.zstd` 是旧代日志名，`session.v3.jsonl.zstd` 对应中间代，`session.v4.jsonl.zstd` 是当前世代；取证工具保留三代候选是兼容回放，不表示旧宿主仍受支持。
 
 ## 0.1.7 迁移背景（保留历史，当前风险见台账）
