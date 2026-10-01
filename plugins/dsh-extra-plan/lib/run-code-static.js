@@ -34,6 +34,144 @@ export function codeMutationHints(code) {
   return hits
 }
 
+// 安全的静态参数字面量子集：先保留 JSON.parse 快路径，再用同一无执行解析器
+// 校验重复键、污染键与宽松 JS 对象/数组字面量；失败时由调用方保留原 argsText 走运行时瀑布。
+export function parseStaticLiteral(input) {
+  const source = typeof input === 'string' ? input.trim() : ''
+  if (source === '') return { ok: false, value: undefined }
+  let jsonValue
+  let jsonParsed = false
+  try {
+    jsonValue = JSON.parse(source)
+    jsonParsed = true
+  } catch (error) { /* 继续解析安全 JS literal 子集 */ }
+
+  let index = 0
+  const fail = () => { throw new Error('not a static literal') }
+  const skipWhitespace = () => {
+    while (index < source.length && /\s/.test(source[index])) index += 1
+  }
+  const isIdentifierStart = (ch) => ch !== undefined && /[A-Za-z_$]/.test(ch)
+  const isIdentifierChar = (ch) => ch !== undefined && /[A-Za-z0-9_$]/.test(ch)
+
+  const parseString = () => {
+    const quote = source[index]
+    if (quote !== "'" && quote !== '"') fail()
+    index += 1
+    let value = ''
+    while (index < source.length) {
+      const ch = source[index]
+      index += 1
+      if (ch === quote) return value
+      if (ch === '\n' || ch === '\r') fail()
+      if (ch !== '\\') {
+        value += ch
+        continue
+      }
+      if (index >= source.length) fail()
+      const escaped = source[index]
+      index += 1
+      if (escaped === 'n') value += '\n'
+      else if (escaped === 'r') value += '\r'
+      else if (escaped === 't') value += '\t'
+      else if (escaped === 'b') value += '\b'
+      else if (escaped === 'f') value += '\f'
+      else if (escaped === 'v') value += '\v'
+      else if (escaped === '0') {
+        if (/[0-9]/.test(source[index] || '')) fail()
+        value += '\0'
+      } else if (escaped === 'u') {
+        const hex = source.slice(index, index + 4)
+        if (!/^[0-9A-Fa-f]{4}$/.test(hex)) fail()
+        value += String.fromCharCode(Number.parseInt(hex, 16))
+        index += 4
+      } else if (escaped === 'x') {
+        const hex = source.slice(index, index + 2)
+        if (!/^[0-9A-Fa-f]{2}$/.test(hex)) fail()
+        value += String.fromCharCode(Number.parseInt(hex, 16))
+        index += 2
+      } else if (escaped === '\\' || escaped === '/' || escaped === "'" || escaped === '"') value += escaped
+      else fail()
+    }
+    fail()
+  }
+
+  const parseValue = () => {
+    skipWhitespace()
+    const ch = source[index]
+    if (ch === "'" || ch === '"') return parseString()
+    if (ch === '{') {
+      index += 1
+      const value = {}
+      const keys = new Set()
+      skipWhitespace()
+      if (source[index] === '}') { index += 1; return value }
+      while (true) {
+        skipWhitespace()
+        let key
+        if (source[index] === "'" || source[index] === '"') key = parseString()
+        else {
+          const match = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(source.slice(index))
+          if (match === null) fail()
+          key = match[0]
+          index += key.length
+        }
+        if (key === '__proto__' || key === 'constructor' || key === 'prototype' || keys.has(key)) fail()
+        keys.add(key)
+        skipWhitespace()
+        if (source[index] !== ':') fail()
+        index += 1
+        value[key] = parseValue()
+        skipWhitespace()
+        if (source[index] === '}') { index += 1; return value }
+        if (source[index] !== ',') fail()
+        index += 1
+        skipWhitespace()
+        if (source[index] === '}') { index += 1; return value }
+      }
+    }
+    if (ch === '[') {
+      index += 1
+      const value = []
+      skipWhitespace()
+      if (source[index] === ']') { index += 1; return value }
+      while (true) {
+        value.push(parseValue())
+        skipWhitespace()
+        if (source[index] === ']') { index += 1; return value }
+        if (source[index] !== ',') fail()
+        index += 1
+        skipWhitespace()
+        if (source[index] === ']') { index += 1; return value }
+      }
+    }
+    for (const [word, value] of [['true', true], ['false', false], ['null', null]]) {
+      if (source.startsWith(word, index) && !isIdentifierChar(source[index + word.length])) {
+        index += word.length
+        return value
+      }
+    }
+    const number = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(source.slice(index))
+    if (number !== null) {
+      const value = Number(number[0])
+      if (!Number.isFinite(value)) fail()
+      index += number[0].length
+      return value
+    }
+    if (isIdentifierStart(ch)) fail()
+    fail()
+  }
+
+  try {
+    const parsed = parseValue()
+    skipWhitespace()
+    if (index !== source.length) fail()
+    return { ok: true, value: jsonParsed ? jsonValue : parsed }
+  } catch (error) {
+    return { ok: false, value: undefined }
+  }
+}
+
 export function createRunCodeStatic({ askTool, isDispatchStart }) {
   // run_code 拆解、组判定与聚合共用单一纯函数实现；直呼与组成员路径不复制规则，
   // 闭包依赖显式传入，分支顺序与 listener 合同保持一致。
@@ -210,17 +348,12 @@ export function createRunCodeStatic({ askTool, isDispatchStart }) {
           // 自 '(' 起括号配平（遮蔽后无字符串干扰），取参数原文 innerText
           const bal = sliceBalancedArgs(masked, text, parenIdx)
           const innerText = bal.innerText.trim()
-          // ④ 参数解析：JSON.parse(innerText) 成功且为对象 → argsParsed=true；
-          //    否则 argsParsed=false、argsText=innerText（标记「参数不可解析」）。
-          let argsParsed = false
-          let args = null
-          if (innerText !== '') {
-            try {
-              const parsed = JSON.parse(innerText)
-              if (parsed !== null && typeof parsed === 'object') { args = parsed; argsParsed = true }
-            } catch (error) { /* 非 JSON：参数不可解析 */ }
-          }
-          addMember({ kind: 'tool', name, argsParsed, args: argsParsed ? args : null, argsText: innerText })
+          // ④ 参数解析：严格 JSON 或安全 JS literal 子集 → argsParsed=true；
+          //    变量/调用/污染键等失败时保留 argsText，交由运行时瀑布兜底。
+          const parsed = parseStaticLiteral(innerText)
+          const argsParsed = parsed.ok
+          const args = argsParsed ? parsed.value : null
+          addMember({ kind: 'tool', name, argsParsed, args, argsText: innerText })
           markRange(i, bal.closeIdx)
           i = bal.closeIdx + 1
           continue
@@ -262,10 +395,9 @@ export function createRunCodeStatic({ askTool, isDispatchStart }) {
       const layerSites = []
       for (const site of sites) {
         if (site.name === 'run_code' && site.innerText !== '') {
-          let parsed = null
-          try { parsed = JSON.parse(site.innerText) } catch (error) { /* 参数不可解析 */ }
-          if (parsed !== null && typeof parsed === 'object' && typeof parsed.code === 'string') {
-            scanLayer(parsed.code)
+          const parsed = parseStaticLiteral(site.innerText)
+          if (parsed.ok && parsed.value !== null && typeof parsed.value === 'object' && typeof parsed.value.code === 'string') {
+            scanLayer(parsed.value.code)
             continue
           }
         }
@@ -613,10 +745,9 @@ export function createRunCodeStatic({ askTool, isDispatchStart }) {
     let total = 0
     for (const site of sites) {
       if (site.name === 'run_code' && site.innerText !== '') {
-        let parsed = null
-        try { parsed = JSON.parse(site.innerText) } catch (error) { /* 参数不可解析 */ }
-        if (parsed !== null && typeof parsed === 'object' && typeof parsed.code === 'string') {
-          total += runCodeSiteCount(parsed.code)
+        const parsed = parseStaticLiteral(site.innerText)
+        if (parsed.ok && parsed.value !== null && typeof parsed.value === 'object' && typeof parsed.value.code === 'string') {
+          total += runCodeSiteCount(parsed.value.code)
           continue
         }
       }

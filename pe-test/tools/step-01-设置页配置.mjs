@@ -150,9 +150,8 @@ check('settings.js：无 ExtraPlanSettingsSchema、无 .agent-presets 写预设�
 check('settings.js：PUT 仅收 webFetch/toolPresentationMode 且写链=投影 edit + 整体重述 plugins（settings 行零写入）', settingsText.includes('HOST_ROW_KEYS') && settingsText.includes('unsupported field(s)') && settingsText.includes('restatePresetPlugins') && settingsText.includes('await editor.edit(presetRow.entry') && !settingsText.includes('editor.edit(settingsRow.entry') && !settingsText.includes('isLocateError'))
 check('C-3 写链：PUT 纯投影（无 settings 行写）；10 项权威值由客户端一次 mutate 提交', !settingsText.includes('editor.edit(settingsRow.entry') && !settingsText.includes('failed to write settings row') && settingsText.indexOf('await editor.edit(presetRow.entry') > 0 && settingsText.includes('projection: { applied: true }'))
 check('C-3b 投影失败不回滚权威值（200 + projection.applied=false，无 500 回退）', settingsText.includes('projection: { applied: true }') && settingsText.includes('projection: { applied: false') && settingsText.includes("declaration row not found: ' + PRESET_ROW_ID"))
-check('C-2 settings 命名空间仍为行 id dsh-extra-plan-settings（未改名；客户端 NS 与 settings 行 id 同字面量）',
-  settingsText.includes('export { SETTINGS_ROW_ID, PRESET_ROW_ID }') && clientText.includes('const NS = "dsh-extra-plan-settings"') &&
-  clientText.includes('ctx.configForms.whileServed([NS]'))
+check('C-2 settings 命名空间仍为行 id dsh-extra-plan-settings（未改名；共享表单由兼容 row 按宿主能力接线）',
+  settingsText.includes('export { SETTINGS_ROW_ID, PRESET_ROW_ID }') && clientText.includes('const NS = "dsh-extra-plan-settings"'))
 check('C-1 settings.js 的 Config 源码文本：恰 10 处字段链 volatile（8 项 UI 直接声明 + 2 项宿主行字段表）', (() => {
   const codeOnly = settingsText.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n')
   const body = codeOnly.slice(codeOnly.indexOf('export const Config = z.object({'), codeOnly.indexOf('})', codeOnly.indexOf('export const Config = z.object({')))
@@ -164,31 +163,28 @@ check('C-1 settings.js 的 Config 源码文本：恰 10 处字段链 volatile（
     body.includes('...HOST_ROW_AUTHORITY_FIELDS')
 })())
 const clientCode = clientText.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n')
-const coreBegin = clientText.indexOf('// CORE v0.2 SETTINGS PATH BEGIN');
-const coreEnd = clientText.indexOf('// CORE v0.2 SETTINGS PATH END');
-const legacyBegin = clientText.indexOf('// COMPAT dsh-0.1.7 BEGIN');
-const legacyEnd = clientText.indexOf('// COMPAT dsh-0.1.7 END');
-const coreV02Text = coreBegin >= 0 && coreEnd > coreBegin ? clientText.slice(coreBegin, coreEnd) : '';
-const legacy017Text = legacyBegin >= 0 && legacyEnd > legacyBegin ? clientText.slice(legacyBegin, legacyEnd) : '';
-check('CORE-V02 client.js：settings.plugins.tab 仅注册固定 id/order/label/locale，并从 configForms.get(NS) 取表单',
-  coreV02Text.includes('function V02SettingsTab') && coreV02Text.includes('function registerV02SettingsTab') &&
-  coreV02Text.includes('ctx.slots.inject("settings.plugins.tab"') && coreV02Text.includes('id: NS') &&
-  coreV02Text.includes('order: 90') && coreV02Text.includes('label: () => translate("cardTitle")') &&
-  coreV02Text.includes('locale: NS') && coreV02Text.includes('ctx.configForms.get(NS)') &&
-  coreV02Text.includes('configForm: form') && !coreV02Text.includes('plugins.row.config') &&
-  !coreV02Text.includes('settings.section') && !coreV02Text.includes('settings.general.item'));
-check('LEGACY-017 client.js：旧 props/rowId/keyed 行仅在兼容区注册',
-  legacy017Text.includes('function Legacy017SettingsCard') && legacy017Text.includes('function registerLegacy017RowConfig') &&
-  legacy017Text.includes('props.form') && legacy017Text.includes('props.t') &&
-  legacy017Text.includes('LEGACY_017_ROW_CONFIG_KEY') && legacy017Text.includes('plugins.row.config') &&
-  (clientText.match(/COMPAT dsh-0\.1\.7 CALL/g) || []).length === 1 &&
-  !legacy017Text.includes('settings.plugins.tab'));
-check('SHARED client.js：ExtraPlanForm/SettingsCard/字段与保存逻辑只有一份，v0.2 不复制旧表单',
+check('client.js：0.2 独立 settings.plugins.tab 注册为零、legacy plugins.row.config 接线恰一套', (() => {
+  const active = clientCode
+  return !active.includes('settings.plugins.tab') && !active.includes('V02SettingsTab') && !active.includes('registerV02SettingsTab') &&
+    (active.match(/ctx\.slots\.inject\("plugins\.row\.config"/g) || []).length === 1 &&
+    (active.match(/name: "plugins\.row\.config"/g) || []).length === 1 &&
+    (active.match(/ctx\.slots\.register\(\{/g) || []).length === 1 &&
+    (active.match(/ctx\.configForms\.whileServed/g) || []).length === 1
+})())
+check('client.js：legacy key、wrapper 的 form/t/view 适配精确', (() => {
+  return clientCode.includes('const LEGACY_017_ROW_CONFIG_KEY = "@local/dsh-extra-plan#dsh-extra-plan-settings";') &&
+    (clientCode.match(/key: LEGACY_017_ROW_CONFIG_KEY/g) || []).length === 1 &&
+    clientCode.includes('function Legacy017SettingsCard(props)') &&
+    clientCode.includes('configForm: props.form') && clientCode.includes('translate: props.t') && clientCode.includes('view: props.view') &&
+    clientCode.includes('function registerLegacy017RowConfig')
+})())
+check('SHARED client.js：ExtraPlanForm 与 SettingsCard 各一份，由唯一 legacy keyed row 按宿主能力呈现',
   (clientText.match(/function ExtraPlanForm/g) || []).length === 1 &&
   (clientText.match(/function SettingsCard/g) || []).length === 1 &&
   clientText.includes('function SettingsCard({ configForm, translate, view })') &&
   clientText.includes('function ExtraPlanForm') && clientText.includes('EXTRA_FIELDS') &&
-  clientText.includes('HOST_ROW_FIELDS') && !coreV02Text.includes('props.form') && !/props\.t(?:\W|$)/.test(coreV02Text));
+  clientText.includes('HOST_ROW_FIELDS') &&
+  clientText.includes('ctx.configForms.whileServed') && clientText.includes('ctx.slots.inject("plugins.row.config"'))
 
 if (DSH_INSTALL_ROOT === null) {
   console.log('SKIP  {"scope":"CORE-V02","reason":"DSH_INSTALL_ROOT 未设置，未读取宿主 SlotMap/ConfigForms"}');
@@ -197,8 +193,8 @@ if (DSH_INSTALL_ROOT === null) {
 } else {
   check('CORE-V02 HOST：DSH_INSTALL_ROOT 实际宿主版本清单一致且为 rc.2 目标',
     targetDshVersion === '0.2.0-rc.2' && targetDshLlmVersion === '0.2.0-rc.2');
-  check('CORE-V02 HOST：真实 SlotMap 有 settings.plugins.tab 且无 plugins.row.config',
-    targetSlotMapText.includes("'settings.plugins.tab'") && !targetSlotMapText.includes("'plugins.row.config'"));
+  check('CORE-V02 HOST：真实 SlotMap 能力仅作外部事实（不反向要求插件注册 tab 或 legacy row）',
+    targetSlotMapText.includes("'settings.plugins.tab'") || targetSlotMapText.includes("'plugins.row.config'"));
   check('CORE-V02 HOST：真实 ConfigForms 提供 get 与 whileServed',
     targetConfigFormText.includes('get<T>') && targetConfigFormText.includes('whileServed('));
 }
@@ -212,7 +208,7 @@ check('U-2 client.js：2 项宿主行提示仍标明重启生效 + 保存回执�
     clientText.includes('text: t("saved")') &&
     !clientText.includes('savedRestart')
 })())
-check('client.js：8 项走 ownerProps.form（state/mutate），无十项整批 save()', clientText.includes('form.mutate(ops, revision)') && clientText.includes('props.form') && !clientText.includes('for (const field of fields)'))
+check('client.js：共享表单保留 state/mutate 逻辑，无十项整批 save()', clientText.includes('form.mutate(ops, revision)') && clientText.includes('props.configForm') && !clientText.includes('for (const field of fields)'))
 
 if (!volatileCapable) {
   console.log('SKIP  本机可解析到的 @deepseek-ai/schemastery 无 Schema.volatile()（0.1.5 世代的 3.18.2）；')

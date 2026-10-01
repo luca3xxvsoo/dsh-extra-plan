@@ -20,7 +20,7 @@
 
 ## 当前兼容与安全边界
 
-- 当前支持范围仅为 dsh `0.1.7-rc.1 || 0.1.7-rc.2`；插件 peerDependencies 是版本真源。QQBot 是选装面：静态映射回归可执行，真实消息、`/preset`、question/approval、postinstall 与生产运行仍是用户部署后的 HUMAN，不把静态绿灯写成集成通过。
+- 当前支持范围为 dsh `0.1.7-rc.1 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2`；插件 peerDependencies 是版本真源。`0.2.0-rc.2` 已通过用户提供的 HUMAN 实机兼容测试（范围受限，2026-10-01 rc2 兼容反馈批次），但本轮修复后的 A09/A10/A11 与双版本设置入口纠偏仍待复测；OS、profile/mode、SESSION_ID、部署 commit、原始报告路径未提供。QQBot、生产、真实消息、`/preset`、question/approval、postinstall/allow-build 与完整 A01-A56 仍是 HUMAN，不外推为通过。
 - 五角色顺序：主会话 → 探查者 → 规划子代理 → 执行者 → 验收者。路由/目的/澄清/批准是机械锚点；唯一受限写例外是 `save_plan` 双文件工件，其余工作区写入按批准后的执行者流程进行。主会话干预工具（job_kill/send_message/job_list/list_agents）受主会话层闸门限制。
 - A/C/M 是模型可见投影维度：A=anchoredBootstrap，C=creativeMode，M=`native|ptc|both`；F/L 以首个 `tool/call` 为界。展示隐藏不等于运行时 binding 安全隔离，真实取证见实机流程。
 - AI 不执行生产部署；仓库验收通过后由用户操作部署与实测。工作区外写入被委派边界拒绝时，不逐条尝试，不设置 `sandbox_permissions`，只在汇报中列越界清单。
@@ -35,11 +35,11 @@
 
 ## 文档修改边界
 
-- 本轮实际修改插件源码 index.js 与 step-04 测试脚本（按批准方案）；仓库根 `README.md` 仍不改，官方文件/预设、生成物、生产环境和 `$DSH_HOME` 也不改。
+- 本轮仅按批准清单修改 11 个工作区文件（1 个插件客户端、1 个 YAML、1 个 MJS、8 个 AI/测试文档）；仓库根 `README.md` 仍不改，官方 dsh/预设、生成物、package.json、生产环境、profile 与 `$DSH_HOME` 也不改。0.2 独立 `settings.plugins.tab` 入口移除；0.1.7 原始 `plugins.row.config` keyed row 由 0.1.7/0.2 支持构建保留，宿主提供对应 legacy slot 时呈现插件详情配置，slot 缺失时走 configEditor/SettingsForms 或手工 profile 权威行后备路径；settings/Config/投影/preset-sync/live-config 后端链不变。
 - 工作区内 AI 维护文档（含台账）可按批准方案修改；修改前按维护手册创建唯一 `.extra-plan/backup-dsh-extra-plan-JS审查修复-<YYYYMMDDHHMMSS>/`，同一任务续跑沿用，不覆盖镜像。
 - `pe-test/reports/` 只接收临时测试产物，不纳入源改动；不调用 `git reset`、`git checkout`、`git clean`。
 - 界面文案只给结论级信息；技术细节仅放硬闸门给 AI 的文案、诊断/日志和本组 AI 文档。
 
 ## 验收顺序
 
-按[维护手册](pe-test/docs/ai-维护手册.md)执行固定顺序：实际修改的 JS/MJS 才逐文件 `node --check`（本轮为 `plugins/dsh-extra-plan/index.js` 与 `pe-test/tools/step-04-路由与写闸门.mjs` 两文件），然后 step-00 → step-04 → step-06 → 代码地图生成 → 人工地图复核 → 代码地图 `--check` → 一键 step 测试。Markdown 不伪造语法门结果；环境项的 SKIP/HUMAN 不计作通过。
+按[维护手册](pe-test/docs/ai-维护手册.md)执行固定顺序：7 个实际修改 JS/MJS 逐文件 `node --check`；再按设置脚本 → step-00 全流程 → step-00 跨平台 → step-04 → step-06-08 → step-06 → 代码地图生成 → 人工地图复核 → 地图 `--check` → 一键 step。Markdown 不伪造语法门结果；环境项的 SKIP/HUMAN 不计作通过。

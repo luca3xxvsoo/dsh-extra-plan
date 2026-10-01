@@ -12,8 +12,8 @@
 
 ## 二、run_code 组判定与 planner 预算
 
-- `run_code` 是批量调用边界，静态拆解出的成员逐个复用直呼闸门；任一成员拒绝则整条 run_code 拒绝，成员不执行、不落地。动态访问、无法解析参数和嵌套深度等边界按安全方向交给运行时瀑布兜底。
-- 多调用容错闸门只认“一个 try 块一个调用点、后接 catch”；单调用豁免，嵌套调用展平。主会话/planner/只读子代理受此检查，执行者保持既有豁免；ask 的返回链另有保守静态证明。
+- `run_code` 是批量调用边界，静态拆解出的成员逐个复用直呼闸门；任一成员拒绝则整条 run_code 拒绝，成员不执行、不落地。参数先走 JSON.parse 快路径，再走无 eval/Function/vm/YAML 的安全 literal 子集（对象/数组、标识符或引号键、单/双引号、布尔/null、有限数字、尾逗号）；变量、spread、computed、getter/setter/方法、调用/成员/模板/正则、重复键和污染键均保留 argsText 交运行时瀑布兜底。
+- 多调用容错闸门只认“一个 try 块一个调用点、后接 catch”；单调用豁免，嵌套 run_code 与 decompose 共用安全 literal 入口。主会话/planner/只读子代理受此检查，执行者保持既有豁免；ask 的返回链另有保守静态证明。
 - planner 预算按最近主会话消息或续轮转达的锚点计数；run_code 容器计一次，直呼工具按一次计，被拒调用不烧预算。提醒和耗尽文案由 [planner-budget.js](../../plugins/dsh-extra-plan/lib/planner-budget.js) 负责，耗尽后只能按流程申请继续探查。
 - 预算与 `save_probe` 的参数限制是两套合同：预算检查由 planner 计数实现，`PROBE_LIMITS` 的字段与数值唯一来自 [save-contract.js](../../plugins/dsh-extra-plan/lib/save-contract.js)，校验由 [save-probe-validation.js](../../plugins/dsh-extra-plan/lib/save-probe-validation.js) 执行；step-00/step-06 是回归入口，文档不复制完整值表。
 
@@ -36,7 +36,7 @@
 - Pure PTC 顶层仍只保留 `run_code`；A=1/F/main-planner/ptc 的两段是预设引导和插件手写 `tool:read`，L 段回宿主原文。native/both 的 HN/HB 只保留引导段与 read。详细时序和 120 格回归见 [step-04](../tools/step-04-路由与写闸门.mjs) 与[实机流程](ai-实机闸门测试流程.md)。
 - P2-2 cache 只存在单个 apply 闭包内，以 agent 对象为 WeakMap key；命中键包含完整 renderer-visible（渲染器可见）schema 指纹、原始 language、renderer 函数身份。并发同 key 合并，reject/空文本降级/过期 promise 不缓存；dispose、新 Agent、新 apply、重启都隔离边界。完整 L 文本逐字相等且 renderer 调用计数为 1 是硬门槛。
 - 默认链是 `agent.cordis.yml` 叶值 → `generate-runtime-defaults.mjs` 生成常量/声明行产物 → 运行时 fallback（回退）；运行时不解析 YAML。生成器先 parse/validate（解析/校验）再替换，坏模板、`--check`、prepack 失败时保留 last-known-good（上次已知良好版本）；生成物禁止手改。
-- 设置页的 8 项 UI 设置与 2 项宿主行设置共用 settings 权威值，声明行只承载宿主行投影；PUT 只做投影，GET 依次读取权威值、投影、默认值。设置表单、投影与默认链由 `lib/settings.js`、`lib/client.js`、`lib/preset-settings.js` 维护。
+- 10 项 volatile Config 共用 `dsh-extra-plan-settings` 权威行，声明行只承载 `webFetch/toolPresentationMode` 两项投影；PUT 只做投影，GET 依次读取权威值、投影、默认值。0.2 独立 `settings.plugins.tab` 移除；0.1.7 原始 `plugins.row.config` keyed row 由 0.1.7/0.2 支持构建保留，宿主提供对应 legacy slot 时在插件详情呈现共享表单；slot 缺失时走宿主 configEditor/SettingsForms 或手工 profile 权威行后备路径。settings API/Config/投影/preset-sync/live-config 后端链不变，不能用只写投影的 PUT 代替权威行更新。
 
 ## 六、session 生命周期与 usage 账本
 
@@ -66,5 +66,6 @@
 ## 七、局部安全合同指针
 
 - `lib/shell-mutation.js` 的 pwsh/bash 识别是位置敏感的写边界：段首裸写词、语法级写形态、嵌套 shell 与重定向例外必须以源码正则为准，不能用文档替代。
+- `lib/shell-mutation.js` 的 PWSH_MUTATION 识别裸 `>`/`>>`、`1-6` 流号和 `*>`/`*>>`，但保留 `2>&1`、`1>&2`、`*>&1` 等 stream→stream 合并例外；BASH_MUTATION 原合同不变。
 - `lib/sdk-text-cache.js` 只做 agent-keyed、非 session 的 JSON-like 指纹缓存；字段/数组顺序、getter/cycle 失败、dispose 与迟到 Promise 都是局部合同。
 - QQBot 自愈只处理拥有本插件且满足双锚点的 profile；迁移写前备份、写后 YAML 校验失败恢复，链接仅在 ENOENT 时建立，实体/异链保留，整体不阻断。当前机制由 `plugins/dsh-qqbot-user-questions/lib/heal.js` 与对应 step-01 夹具共同锁定。

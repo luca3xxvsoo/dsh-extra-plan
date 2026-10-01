@@ -137,6 +137,22 @@ check('空 command 对象 → 空串', bashCommandOf({ name: 'bash', arguments: 
 check('bashMutationMatches 命中', bashMutationMatches(bashExec('rm x')) === true)
 check('bashMutationMatches 放行只读', bashMutationMatches(bashExec('ls -la')) === false)
 
+console.log('== PWSH 重定向矩阵：对象 / JSON arguments（A09） ==')
+const pwshRedirectMatrix = [
+  ['Write-Output x > out.txt', true], ['Write-Output x >> out.txt', true],
+  ['Write-Output x 1> out.txt', true], ['Write-Output x 1>> out.txt', true],
+  ['Write-Output x 2> out.txt', true], ['Write-Output x 2>> out.txt', true],
+  ['Write-Output x 3> out.txt', true], ['Write-Output x 3>> out.txt', true],
+  ['Write-Output x 4> out.txt', true], ['Write-Output x 4>> out.txt', true],
+  ['Write-Output x 5> out.txt', true], ['Write-Output x 5>> out.txt', true],
+  ['Write-Output x 6> out.txt', true], ['Write-Output x 6>> out.txt', true],
+  ['Write-Output x *> out.txt', true], ['Write-Output x *>> out.txt', true],
+  ['Write-Output x 2>&1', false], ['Write-Output x 1>&2', false], ['Write-Output x *>&1', false],
+]
+for (const [cmd, expected] of pwshRedirectMatrix) {
+  for (const shape of ['object', 'string']) check(`${shape} arguments ${expected ? '拦截' : '放行'}: ${cmd}`, gateDeny(pwshExec(cmd, shape)) === expected)
+}
+
 console.log('== pwsh 对等回归（PWSH_MUTATION 行为不变） ==')
 const pwshShouldDeny = [
   'Remove-Item x',

@@ -407,26 +407,6 @@ window.__ModuleLoader__.load({
       }
       // SHARED SETTINGS FORM END
 
-      // CORE v0.2 SETTINGS PATH BEGIN：rc.2 静态已核；rc.1 API/页面仍【未核实·HUMAN】。
-      function V02SettingsTab(props) {
-        return el(SettingsCard, { configForm: props.configForm, translate: props.translate, view: props.view });
-      }
-
-      function registerV02SettingsTab() {
-        const form = ctx.configForms.get(NS);
-        const translate = ctx.locale.bind(NS);
-        return ctx.slots.inject("settings.plugins.tab", () => ctx.slots.register({
-          name: "settings.plugins.tab",
-          id: NS,
-          order: 90,
-          label: () => translate("cardTitle"),
-          locale: NS,
-          inject: () => ({ configForm: form, translate })
-        }, V02SettingsTab));
-      }
-      // CORE v0.2 SETTINGS PATH END
-      ctx.effect(() => ctx.configForms.whileServed([NS], registerV02SettingsTab), "dsh-extra-plan-settings: v0.2 settings plugins tab");
-
       // COMPAT dsh-0.1.7 BEGIN：仅此处读取旧 props.form/props.t、使用 bundle#rowId 并注册旧 keyed 行插槽。
       // 宿主 rowConfigKey(bundle, rowId) = `${bundle}#${rowId}`；bundle=@local/dsh-extra-plan，rowId=NS。
       const LEGACY_017_ROW_CONFIG_KEY = "@local/dsh-extra-plan#dsh-extra-plan-settings";

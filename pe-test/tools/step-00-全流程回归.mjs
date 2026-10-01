@@ -814,7 +814,7 @@ const PR = [
   ['PR17 path 存在（绝对）→ 过', { ...validProbe(), fileMap: [{ path: HERE + EXISTING, relation: 'r' }] }, 'pass'],
   ['PR18 range L12-x → 拒并指明', { ...validProbe(), focusAreas: [{ path: EXISTING, range: 'L12-x', note: 'n' }] }, 'reject-with', 'range'],
   ['PR19 range 12 → 过', { ...validProbe(), focusAreas: [{ path: EXISTING, range: '12', note: 'n' }] }, 'pass'],
-  ['PR20 range L12-34 → 过', { ...validProbe(), focusAreas: [{ path: EXISTING, range: 'L12-34', note: 'n' }] }, 'pass'],
+  ['PR20 range L158-162 → 过', { ...validProbe(), focusAreas: [{ path: EXISTING, range: 'L158-162', note: 'n' }] }, 'pass'],
   ['PR21 exclusions scope 概念边界（不校验存在性）→ 过', { ...validProbe(), exclusions: [{ scope: '某概念边界', note: 'n' }] }, 'pass'],
   ['PR22 evidence 非数组 → 拒', { ...validProbe(), evidence: 'not-array' }, 'reject'],
   ['PR23 evidence 151 条 → 拒', { ...validProbe(), evidence: Array.from({ length: PROBE_LIMITS.maxEvidenceEntries + 1 }, (_, i) => ({ path: EXISTING, value: `v${i}` })) }, 'reject'],
@@ -1903,7 +1903,7 @@ for (const [name, code, gateCtx, expected, role] of ASK_GROUP) {
 const J = [
   ['J1 单工具 await 提取（JSON 参数可解析）', "await tools.read({ \"file_path\": \"x\" })", { members: [{ kind: 'tool', name: 'read', argsParsed: true, args: { file_path: 'x' }, argsText: '{ "file_path": "x" }' }], dynamic: false }],
   ['J2 多工具+多行嵌套参数', "await tools.read({ \"file_path\": \"x\" })\nawait tools.glob({ \"pattern\": \"**/*.md\" })", { members: [{ kind: 'tool', name: 'read', argsParsed: true, args: { file_path: 'x' }, argsText: '{ "file_path": "x" }' }, { kind: 'tool', name: 'glob', argsParsed: true, args: { pattern: '**/*.md' }, argsText: '{ "pattern": "**/*.md" }' }], dynamic: false }],
-  ['J3 参数内括号字符串不干扰配平（单引号参数不可解析但 innerText 完整）', "await tools.read({ path: 'a)(' })", { members: [{ kind: 'tool', name: 'read', argsParsed: false, args: null, argsText: "{ path: 'a)(' }" }], dynamic: false }],
+   ['J3 参数内括号字符串不干扰配平（安全 JS literal 单引号可解析）', "await tools.read({ path: 'a)(' })", { members: [{ kind: 'tool', name: 'read', argsParsed: true, args: { path: 'a)(' }, argsText: "{ path: 'a)(' }" }], dynamic: false }],
   ['J4 字符串内 tools.read 不提取', "const s = 'tools.read({ file_path: 1 })'", { members: [], dynamic: false }],
   ['J5 注释内 tools.write 不提取', "// tools.write({})\nreadFileSync('x')", { members: [], dynamic: false }],
   ['J6 同名同参去重→1 项', "tools.read({ \"file_path\": \"x\" }); tools.read({ \"file_path\": \"x\" })", { members: [{ kind: 'tool', name: 'read', argsParsed: true, args: { file_path: 'x' }, argsText: '{ "file_path": "x" }' }], dynamic: false }],
@@ -1918,6 +1918,36 @@ const J = [
 ]
 for (const [name, code, expected] of J) {
   check(name, decomposeRunCode(code), expected)
+}
+
+// ── J-LITERAL：安全 JS literal 子集正反矩阵（A10/A11 静态参数合同） ───────
+const J_LITERAL = [
+  ['对象单引号/标识符键/尾逗号', "tools.read({ file_path: 'x', enabled: true, })", true],
+  ['数组/布尔/null/有限数字/尾逗号', "tools.read({ values: [true, false, null, -2.5e3,] })", true],
+  ['变量', 'tools.read(args)', false],
+  ['简写', 'tools.read({ args })', false],
+  ['spread', 'tools.read({ ...args })', false],
+  ['computed key', 'tools.read({ [key]: 1 })', false],
+  ['getter', 'tools.read({ get value() { return 1 } })', false],
+  ['setter', 'tools.read({ set value(next) {} })', false],
+  ['method', 'tools.read({ value() {} })', false],
+  ['调用', 'tools.read({ value: makeValue() })', false],
+  ['成员访问', 'tools.read({ value: args.value })', false],
+  ['模板插值', 'tools.read({ value: ' + String.fromCharCode(96) + '${value}' + String.fromCharCode(96) + ' })', false],
+  ['正则', 'tools.read({ value: /x/ })', false],
+  ['undefined', 'tools.read({ value: undefined })', false],
+  ['NaN', 'tools.read({ value: NaN })', false],
+  ['Infinity', 'tools.read({ value: Infinity })', false],
+  ['BigInt', 'tools.read({ value: 1n })', false],
+  ['重复键', 'tools.read({ value: 1, value: 2 })', false],
+  ['__proto__', "tools.read({ '__proto__': 1 })", false],
+  ['constructor', 'tools.read({ constructor: 1 })', false],
+  ['prototype', 'tools.read({ prototype: 1 })', false],
+]
+for (const [label, code, expected] of J_LITERAL) {
+  const result = decomposeRunCode(code)
+  const member = result.members[0]
+  checkTrue('J-LITERAL ' + label + ' → ' + (expected ? 'argsParsed=true' : 'argsParsed=false'), member !== undefined && member.argsParsed === expected && (expected || typeof member.argsText === 'string'))
 }
 
 // ── RC 系列:拆分后静态模块边界与静态 helper 直接回归 ─────────────────
@@ -1962,6 +1992,14 @@ const rcN1FlattenReason = runCodeGroupDenyReason(noneStateFx, { name: 'run_code'
 const rcN1UnparsedCode = 'await tools.run_code({ code: nested })'
 const rcN1UnparsedResult = decomposeRunCode(rcN1UnparsedCode)
 const rcN1UnparsedReason = runCodeGroupDenyReason(noneStateFx, { name: 'run_code', arguments: { code: rcN1UnparsedCode } }, { kind: 'main' }, { gateRuntime })
+const rcN2Code = "await tools.run_code({ code: 'await tools.write({})', description: 'nested', })"
+const rcN2Result = decomposeRunCode(rcN2Code)
+const rcN2Reason = runCodeGroupDenyReason(noneStateFx, { name: 'run_code', arguments: { code: rcN2Code } }, { kind: 'main' }, { gateRuntime })
+const rcN3Code = 'await tools.run_code({ code: nested, })'
+const rcN3Result = decomposeRunCode(rcN3Code)
+const rcN3Reason = runCodeGroupDenyReason(noneStateFx, { name: 'run_code', arguments: { code: rcN3Code } }, { kind: 'main' }, { gateRuntime })
+checkTrue('RC-N2 JS literal nested run_code 共用静态入口并展平拒写', rcN2Result.members.length === 1 && rcN2Result.members[0].argsParsed === true && typeof rcN2Reason === 'string' && rcN2Reason.includes('- write:'))
+checkTrue('RC-N3 动态 nested run_code 保留 argsText 并由运行时瀑布兜底', rcN3Result.members.length === 1 && rcN3Result.members[0].argsParsed === false && rcN3Result.members[0].argsText.includes('nested') && rcN3Reason === null)
 checkTrue('RC-N1 可解析嵌套 run_code 一层展平、不可解析参数保留运行时', rcN1Result.dynamic === false && rcN1Result.members.length === 1 && rcN1Result.members[0].name === 'run_code' && rcN1Result.members[0].argsParsed === true && typeof rcN1FlattenReason === 'string' && rcN1FlattenReason.includes('- write:') && rcN1UnparsedResult.members.length === 1 && rcN1UnparsedResult.members[0].name === 'run_code' && rcN1UnparsedResult.members[0].argsParsed === false && rcN1UnparsedReason === null)
 
 const rcP1Result = decomposeRunCode('tools.read({ "file_path": "x" }); tools.read({ "file_path": "y" })')

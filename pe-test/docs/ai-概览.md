@@ -4,7 +4,7 @@
 
 ## 项目身份与支持范围
 
-`@local/dsh-extra-plan` 是 dsh 的按需规划预设：AI 先只读理解，经路由、目的、澄清、批准四级机械锚点后执行；`save_plan` 是受限的方案/验收双文件写例外。当前只支持 dsh `0.1.7-rc.1 || 0.1.7-rc.2`，QQBot 真实交互与生产部署仍由用户完成并单独标记 HUMAN。
+`@local/dsh-extra-plan` 是 dsh 的按需规划预设：AI 先只读理解，经路由、目的、澄清、批准四级机械锚点后执行；`save_plan` 是受限的方案/验收双文件写例外。当前支持 dsh `0.1.7-rc.1 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2`。0.2.0-rc.2 已有用户提供的范围受限 HUMAN 兼容通过基线（2026-10-01 rc2 批次），本轮 A09/A10/A11 与双版本设置入口纠偏仍待用户复测；QQBot、生产及真实交互仍单独标记 HUMAN。
 
 高层闭环：用户需求 → 主会话只读探查 → 探查方式二选一 → 路由确认 →（需要时）目的确认/澄清 → 线索与方案/验收落盘 → 用户批准 → 执行者 → 验收者 → 用户部署与实测。路由、批准、生产部署的边界不能用 AI 自觉替代。
 
@@ -24,13 +24,13 @@
 |:--|:--|:--|
 | 四级闸门与状态 | `plugins/dsh-extra-plan/index.js` | `route→purpose→clarified→approved`；拒绝不清状态、取消清阶段状态；job_kill 仅直行放行、send_message 主会话方向限制、job_list/list_agents 同锚点防轮询。详见 [机制设计](ai-机制设计.md#一四级机械锚点路由目的澄清批准)。 |
 | gateWords | `assets/presets/extra-plan/agent.cordis.yml` + `lib/gate-words.js` | YAML 七键是唯一值源，apply 先整组校验，再注册七个变量；旧词不推进状态。详见 [机制设计](ai-机制设计.md#一-1闸门关键词单一来源与运行时词表v030)。 |
-| run_code 组判定 | `lib/run-code-static.js` + 根入口 | 成员逐点判定、组拒零副作用；多调用需独立容错，planner 单实例受预算上限。 |
+| run_code 组判定 | `lib/run-code-static.js` + 根入口 | 成员逐点判定、组拒零副作用；安全静态 literal 子集覆盖对象/数组/尾逗号，动态参数保留 argsText 走运行时瀑布；多调用需独立容错，planner 单实例受预算上限。 |
 | save_plan/save_probe | `lib/save-contract.js`、`lib/save-probe-validation.js`、`lib/save-persistence.js`、`lib/save-tool-factories.js` | 合同、校验、原子提交/journal、工具工厂分层；限制值以源码为准，详见机制设计与 step-06。 |
 | planner 预算 | `lib/planner-budget.js` | 按锚点计数，提醒/耗尽后申请继续探查；`exploreBudget` 不等于历史 evidence 数。 |
 | 模型路由 | `lib/model-routing.js` | planner 与非 planner 分离；legacy（兼容）/strict（严格）由开关分流，strict 必须完成真实 probe 或已验证父 fallback（回退）。唯一流程细节见 [流程备查](ai-流程备查.md#⑩-规划子代理)。 |
 | A/C/M 投影 | `lib/assembly-presentation.js` + 根入口 | 只改模型可见 assembly/schema/catalog，不替代 runtime deny；PTC 首轮手写 `tool:read`，L 段回宿主原文。 |
 | P2-2 SDK 文本 | `lib/sdk-text-cache.js` | apply 内 agent-keyed WeakMap；完整 schema/language/renderer 变化失效，同 key 并发合并，失败不缓存；调用计数 1 是硬门槛。详见 [机制设计](ai-机制设计.md#p2-2-sdk-文本复用的安全边界)。 |
-| 设置双通道 | `lib/settings.js`、`lib/client.js`、`lib/preset-settings.js` | 8 项 UI + 2 项宿主行设置进入 settings 权威值；PUT 只做声明行投影；当前入口为 Plugins 页已安装包行详情。 |
+| 设置后端与投影 | `lib/settings.js`、`lib/live-config.js`、`lib/preset-settings.js`、`lib/preset-sync.js` | 10 项 volatile Config/权威行、两项投影与热读保留；0.2 独立 `settings.plugins.tab` 移除，0.1.7 原始 `plugins.row.config` keyed row 由 0.1.7/0.2 支持构建保留，宿主提供对应 slot 时在插件详情呈现；slot 缺失时走 configEditor/SettingsForms 或 profile 权威行后备路径；PUT 仅投影，后端链不变。 |
 | P2-4 默认链 | `agent.cordis.yml` → 生成器 → `preset-defaults.generated.js` | YAML 叶值是作者真源，生成物是派生值，运行时不解析 YAML；坏模板保留 last-known-good（上次已知良好版本）。详见 [维护手册](ai-维护手册.md#p2-4-生成链)。 |
 | 预设自愈 | `lib/preset-sync.js` | profile patch 声明行、主体剥离比对、投影一致三条件成立才 idle（空闲稳态）；写盘只经 `configEditor.edit`，无旧状态目录。 |
 | session/usage | 根入口 + `lib/agent-runtime.js` | 状态按 sessionId 分桶；disposed 内同步 final fold 后再回收；cursor 增量按 `session.seq`/`snapshotEvents`，不跨会话清理。 |

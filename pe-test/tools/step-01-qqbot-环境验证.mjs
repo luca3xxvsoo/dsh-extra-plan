@@ -182,33 +182,51 @@ function buildPreflight(dshHome) {
   return { info, ready: info.ready, patchText, paths }
 }
 
-let yamlModule = null
-let yamlResolved = false
-function loadYaml() {
-  if (yamlResolved) return yamlModule
-  yamlResolved = true
-  const bases = [join(SOURCE_PACKAGE, 'package.json')]
+let yamlResolution = null
+function yamlCandidates(preflight) {
+  const candidates = []
+  const add = (kind, path) => {
+    const state = pathState(path)
+    candidates.push({ kind, path, available: state.exists && state.readable, error: state.error || null })
+  }
+  add('live-profile-plugin-manifest', join(preflight.paths.adapterPlugin, 'package.json'))
+  add('live-profile-manifest', preflight.paths.manifest)
+  add('workspace-qqbot-package', SOURCE_PACKAGE_MANIFEST)
   const installRoot = typeof process.env.DSH_INSTALL_ROOT === 'string' ? process.env.DSH_INSTALL_ROOT.trim() : ''
   if (installRoot !== '') {
-    bases.push(join(installRoot, 'package.json'))
-    bases.push(join(installRoot, 'node_modules', '@deepseek-ai', 'dsh', 'package.json'))
+    add('explicit-install-root', join(installRoot, 'package.json'))
+    add('explicit-host-dsh-package', join(installRoot, 'node_modules', '@deepseek-ai', 'dsh', 'package.json'))
   }
-  for (const base of bases) {
+  return candidates
+}
+function loadYaml(preflight) {
+  if (yamlResolution !== null) return yamlResolution
+  const candidates = yamlCandidates(preflight)
+  const failures = []
+  for (const candidate of candidates) {
+    if (!candidate.available) {
+      failures.push({ anchor: candidate, error: candidate.error || 'manifest-unavailable' })
+      continue
+    }
     try {
-      yamlModule = createRequire(base)('js-yaml')
-      break
-    } catch { /* 继续尝试下一个明确包锚点 */ }
+      const module = createRequire(candidate.path)('js-yaml')
+      yamlResolution = { module, anchor: candidate, candidates, failures }
+      return yamlResolution
+    } catch (error) {
+      failures.push({ anchor: candidate, error: errorCode(error) })
+    }
   }
-  return yamlModule
+  yamlResolution = { module: null, anchor: null, candidates, failures }
+  return yamlResolution
 }
 
-function parseYaml(text) {
-  const yaml = loadYaml()
-  if (yaml === null) return { ok: false, value: null, error: 'yaml-parser-unavailable' }
+function parseYaml(text, preflight) {
+  const resolution = loadYaml(preflight)
+  if (resolution.module === null) return { ok: false, value: null, error: 'yaml-parser-unavailable', anchor: null }
   try {
-    return { ok: true, value: yaml.load(text), error: null }
+    return { ok: true, value: resolution.module.load(text), error: null, anchor: resolution.anchor }
   } catch (error) {
-    return { ok: false, value: null, error: errorCode(error) }
+    return { ok: false, value: null, error: errorCode(error), anchor: resolution.anchor }
   }
 }
 
@@ -327,11 +345,20 @@ function mappingSignature(value) {
 }
 
 function runLiveReadonly(preflight) {
+  const yaml = loadYaml(preflight)
+  if (yaml.module === null) {
+    emitSkip('live-profile', 'yaml-parser-unavailable', {
+      candidates: yaml.candidates,
+      failures: yaml.failures,
+    })
+    return
+  }
+  emitInfo({ kind: 'yaml-parser', anchor: yaml.anchor, failures: yaml.failures })
   const { info, paths, patchText } = preflight
   const profiles = findOwnQqbotProfiles(info.dshHome)
   check('真实 profile 扫描结果含 qqbot', profiles.includes('qqbot'), JSON.stringify(profiles))
 
-  const parsedPatch = parseYaml(patchText)
+  const parsedPatch = parseYaml(patchText, preflight)
   check('真实 cordis.patch.yml 为顶层数组', parsedPatch.ok && Array.isArray(parsedPatch.value), parsedPatch.error || '')
   const imQqbot = parsedPatch.ok && Array.isArray(parsedPatch.value)
     ? parsedPatch.value.find((row) => isObject(row) && row.id === 'im-qqbot')

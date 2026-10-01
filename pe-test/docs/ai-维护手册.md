@@ -6,7 +6,7 @@
 
 1. **先读与登记**：先读方案和验收文件，再读所有目标文件；按原章节建立迁移矩阵。没有矩阵证据的段落默认保留。
 2. **唯一备份**：修改前把本轮实际改动文件按原目录镜像到唯一 `.extra-plan/backup-dsh-extra-plan-JS审查修复-<YYYYMMDDHHMMSS>/`；同任务续跑沿用原目录，不覆盖原始镜像。文件镜像和子块独立回退是人工纪律，不声称已有自动闸门。
-3. **范围**：本项目 AI 文档可按批准方案修改，含宿主台账；仓库根 `README.md`、插件源码、测试脚本、官方文件/预设、生成物、生产环境和 `$DSH_HOME` 禁止修改。不得执行 `git reset`、`git checkout`、`git clean`。
+3. **范围**：仅可按批准清单修改 17 个工作区文件（3 个插件源码、1 个 YAML、4 个 MJS、9 个 AI/测试文档）；仓库根 `README.md`、官方 dsh/预设、生成物、package.json、生产环境、profile 和 `$DSH_HOME` 禁止修改。不得执行 `git reset`、`git checkout`、`git clean`。
 4. **备份后再改**：改预设时只改作者源并由生成器重建；本轮文档精简不改预设。生产部署由用户执行，仓库验收不是部署许可。
 5. **嵌套命令纪律**：涉及 `run_code`/PowerShell/字符串拼接时，先按最终语言写正确文本，再逐层转义，写后解析回放；Markdown 不伪造代码语法结果。
 
@@ -25,16 +25,11 @@
 
 ## 修改后固定顺序
 
-1. 对**本轮实际修改的 JS/MJS**逐文件执行 `node --check`；实际清单以交付台账为准，禁止把未改文件或 HUMAN 环境项冒充语法 PASS。
-2. 在仓库根依次运行工作区回归：
+1. 对本轮实际修改的 7 个 JS/MJS 逐文件执行 `node --check`：`plugins/dsh-extra-plan/lib/shell-mutation.js`、`plugins/dsh-extra-plan/lib/run-code-static.js`、`plugins/dsh-extra-plan/lib/client.js`、`pe-test/tools/step-00-跨平台写拦截.mjs`、`pe-test/tools/step-00-全流程回归.mjs`、`pe-test/tools/step-04-路由与写闸门.mjs`、`pe-test/tools/step-01-设置页配置.mjs`。
+2. 严格按验收顺序运行：
+   - `node pe-test/tools/step-01-设置页配置.mjs`
    - `node pe-test/tools/step-00-全流程回归.mjs`
    - `node pe-test/tools/step-00-跨平台写拦截.mjs`
-   - `node pe-test/tools/step-01-executor-spawn注册幂等.mjs`
-   - `node pe-test/tools/step-01-安装同步.mjs`
-   - `node pe-test/tools/step-01-qqbot-安装映射.mjs`
-   - `node pe-test/tools/step-01-设置迁移.mjs`
-   - `node pe-test/tools/step-01-设置页配置.mjs`
-   - `node pe-test/tools/step-01-预设完整性.mjs`
    - `node pe-test/tools/step-04-路由与写闸门.mjs`
    - `node pe-test/tools/step-06-08-v4取证回归.mjs`
    - `node pe-test/tools/step-06-线索落盘.mjs`
@@ -42,9 +37,8 @@
    - 人工复核地图描述、结构键、同名顺序
    - `node pe-test/tools/代码地图生成.mjs --check`
    - `node pe-test/tools/一键step测试.mjs`
-3. 每条工作区回归命令退出码必须为 0；输出不得有 `FAIL`、`SyntaxError`、`UnhandledPromiseRejection`、漏检或导航失效。AUTO 项数量只认 [一键step测试.mjs](../tools/一键step测试.mjs) 的 `AUTO` 数组；SKIP/HUMAN 单列且不计作通过。
-4. 生产部署与实机测试由用户另行执行；实机流程中现场 mode、A/C、gateWords、SESSION_ID、模型、suffix 和残留数量必须现场读取。
-
+3. 自动测试不得执行真实 PowerShell 重定向写；测试前后 `pe-test/reports/_s4b_pwsh.txt` 必须不存在。每条命令退出码必须为 0；输出不得有 FAIL、SyntaxError、UnhandledPromiseRejection。SKIP/HUMAN 单列且不计 AUTO PASS。
+4. 生产部署与双版本 HUMAN 复测由用户另行执行；本轮仅保留「0.2.0-rc.2 范围受限兼容基线通过 + post-fix A09/A10/A11/UI 待复测」。
 ## 改动域 → 唯一检查入口
 
 | 改动域 | 主要检查 |

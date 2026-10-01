@@ -23,14 +23,20 @@ const SOURCE_HEAL_TEXT = readFileSync(join(SOURCE_PACKAGE, 'lib', 'heal.js'), 'u
 
 let pass = 0
 let fail = 0
-function check(label, condition) {
+let skipCount = 0
+function check(label, condition, detail = '') {
   if (condition) {
     pass += 1
     console.log('PASS  ' + label)
   } else {
     fail += 1
-    console.log('FAIL  ' + label)
+    const suffix = detail === '' ? '' : ' ' + String(detail).replace(/\r?\n/g, ' ')
+    console.log('FAIL  ' + label + suffix)
   }
+}
+function emitSkip(scope, reason, details) {
+  skipCount += 1
+  console.log('SKIP  ' + JSON.stringify({ scope, reason, details }))
 }
 
 let sourcePackageJson = null
@@ -104,22 +110,39 @@ function runCli(home, opts = {}) {
 function bakCount(dir) {
   try { return readdirSync(dir).filter((f) => f.includes('.bak-')).length } catch { return 0 }
 }
+let testYamlResolution = null
+function errorDetail(error) {
+  return error instanceof Error ? error.message : String(error)
+}
 function loadTestYaml() {
-  const bases = [join(SOURCE_PACKAGE, 'package.json')]
+  if (testYamlResolution !== null) return testYamlResolution
+  const candidates = [{ kind: 'workspace-qqbot-package', path: join(SOURCE_PACKAGE, 'package.json') }]
   const installRoot = typeof process.env.DSH_INSTALL_ROOT === 'string' ? process.env.DSH_INSTALL_ROOT.trim() : ''
   if (installRoot !== '') {
-    bases.push(join(installRoot, 'package.json'))
-    bases.push(join(installRoot, 'node_modules', '@deepseek-ai', 'dsh', 'package.json'))
+    candidates.push({ kind: 'explicit-install-root', path: join(installRoot, 'package.json') })
+    candidates.push({ kind: 'explicit-host-dsh-package', path: join(installRoot, 'node_modules', '@deepseek-ai', 'dsh', 'package.json') })
   }
-  for (const base of bases) {
-    try { return createRequire(base)('js-yaml') } catch { /* 继续尝试下一个明确包锚点 */ }
+  const failures = []
+  for (const candidate of candidates) {
+    try {
+      const module = createRequire(candidate.path)('js-yaml')
+      testYamlResolution = { module, anchor: candidate, candidates, failures }
+      return testYamlResolution
+    } catch (error) {
+      failures.push({ anchor: candidate, error: errorDetail(error) })
+    }
   }
-  return null
+  testYamlResolution = { module: null, anchor: null, candidates, failures }
+  return testYamlResolution
 }
 function parseYaml(text) {
-  const yaml = loadTestYaml()
-  if (yaml === null) return null
-  try { return yaml.load(text) } catch { return null }
+  const resolution = loadTestYaml()
+  if (resolution.module === null) return { ok: false, value: null, error: 'yaml-parser-unavailable', anchor: null }
+  try {
+    return { ok: true, value: resolution.module.load(text), error: null, anchor: resolution.anchor }
+  } catch (error) {
+    return { ok: false, value: null, error: errorDetail(error), anchor: resolution.anchor }
+  }
 }
 function isMap(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -149,31 +172,42 @@ function legacyPatch(includeIm = true) {
   return lines.join('\n') + '\n'
 }
 
-const tempRoot = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-qqbot-lite-'))
-try {
+const presetSync = readFileSync(join(SOURCE_ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'preset-sync.js'), 'utf8')
+check('preset-sync.js 不含 qqbot/code-runtime/qqbot 自愈标识符（核心零感知）', !/qqbot|code-runtime|healQqbotCompatibility|healPatchRows/i.test(presetSync))
+
+const yamlResolution = loadTestYaml()
+if (yamlResolution.module === null) {
+  emitSkip('qqbot-install-mapping', 'yaml-parser-unavailable', {
+    candidates: yamlResolution.candidates,
+    failures: yamlResolution.failures,
+  })
+} else {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-qqbot-lite-'))
+  try {
   // ① 静态兼容 patch：单一根级 insert 注册四个行，agent-presets 默认 extra-plan
   // （第 4 行 cordis-host-runner 为 T1 修复：qqbot 宿主平面补齐 cordisInspect /
   //  dynamicCordisRunner 两个服务，否则预设的 tool-cordis 行恒 pending、预设挂载失败）
   const staticPatchText = readFileSync(join(SOURCE_PACKAGE, 'cordis.patch.yml'), 'utf8')
-  const staticPatch = parseYaml(staticPatchText)
-  const staticInserts = rootInsertNodes(staticPatch)
-  const staticRows = staticInserts.length === 1 && Array.isArray(staticInserts[0].insert) ? staticInserts[0].insert : []
-  const staticCode = staticRows.find((row) => isMap(row) && row.id === 'ptc-runtime')
-  const staticAgent = staticRows.find((row) => isMap(row) && row.id === 'agent-preset-registry')
-  const staticQqbot = staticRows.find((row) => isMap(row) && row.id === 'qqbot-user-questions')
-  const staticRunner = staticRows.find((row) => isMap(row) && row.id === 'cordis-host-runner')
-  check('兼容 patch 是顶层数组且仅有一个根级 insert', Array.isArray(staticPatch) && staticPatch.length === 1 && staticInserts.length === 1)
-  check('静态 insert 第 4 行 cordis-host-runner 包名准确且无 config', isMap(staticRows.find((row) => isMap(row) && row.id === 'cordis-host-runner')) && staticRows.find((row) => isMap(row) && row.id === 'cordis-host-runner').name === '@deepseek-ai/dsh-cordis-host-runner')
+  const staticPatchResult = parseYaml(staticPatchText)
+  const staticPatch = staticPatchResult.ok ? staticPatchResult.value : null
+  const staticInserts = staticPatchResult.ok ? rootInsertNodes(staticPatch) : null
+  const staticRows = Array.isArray(staticInserts) && staticInserts.length === 1 && Array.isArray(staticInserts[0].insert) ? staticInserts[0].insert : null
+  const staticCode = Array.isArray(staticRows) ? staticRows.find((row) => isMap(row) && row.id === 'ptc-runtime') : undefined
+  const staticAgent = Array.isArray(staticRows) ? staticRows.find((row) => isMap(row) && row.id === 'agent-preset-registry') : undefined
+  const staticQqbot = Array.isArray(staticRows) ? staticRows.find((row) => isMap(row) && row.id === 'qqbot-user-questions') : undefined
+  const staticRunner = Array.isArray(staticRows) ? staticRows.find((row) => isMap(row) && row.id === 'cordis-host-runner') : undefined
+  check('兼容 patch 是顶层数组且仅有一个根级 insert', staticPatchResult.ok && Array.isArray(staticPatch) && staticPatch.length === 1 && Array.isArray(staticInserts) && staticInserts.length === 1, staticPatchResult.error || '')
+  check('静态 insert 第 4 行 cordis-host-runner 包名准确且无 config', isMap(staticRunner) && staticRunner.name === '@deepseek-ai/dsh-cordis-host-runner')
   // 此处覆盖静态包映射；真实 profile 的只读检查由独立环境脚本负责。
-  check('静态 insert 恰四行且 qqbot-user-questions/ptc-runtime/agent-preset-registry 包名准确', staticRows.length === 4 &&
+  check('静态 insert 恰四行且 qqbot-user-questions/ptc-runtime/agent-preset-registry 包名准确', Array.isArray(staticRows) && staticRows.length === 4 &&
     isMap(staticCode) && staticCode.name === '@deepseek-ai/dsh-ptc-runtime-node' &&
     isMap(staticAgent) && staticAgent.name === '@deepseek-ai/dsh-agent-preset-registry' &&
     isMap(staticQqbot) && staticQqbot.name === '@local/dsh-qqbot-user-questions')
   check('cordis-host-runner 行无 config（保持原语义）', isMap(staticRunner) && staticRunner.name === '@deepseek-ai/dsh-cordis-host-runner' && staticRunner.config === undefined)
   check('静态 agent-preset-registry 默认严格为 extra-plan', isMap(staticAgent) && isMap(staticAgent.config) && staticAgent.config.default === 'extra-plan')
-  check('ptc-runtime/agent-preset-registry 不在根级非-insert patch', Array.isArray(staticPatch) && !staticPatch.some((row) => isMap(row) && (row.id === 'ptc-runtime' || row.id === 'agent-preset-registry')))
+  check('ptc-runtime/agent-preset-registry 不在根级非-insert patch', staticPatchResult.ok && Array.isArray(staticPatch) && !staticPatch.some((row) => isMap(row) && (row.id === 'ptc-runtime' || row.id === 'agent-preset-registry')), staticPatchResult.error || '')
   check('静态 patch 不再出现 0.1.5 世代两包名', !staticPatchText.includes('@deepseek-ai/dsh-code-runtime-worker-thread') && !staticPatchText.includes('@deepseek-ai/dsh-agent-presets') && staticPatchText.includes('本机不做验证'))
-  check('cordis-host-runner 不在根级非-insert patch（无第二处 cordis 行）', Array.isArray(staticPatch) && !staticPatch.some((row) => isMap(row) && (row.id === 'cordis-host-runner' || row.name === '@deepseek-ai/dsh-cordis-host-runner')))
+  check('cordis-host-runner 不在根级非-insert patch（无第二处 cordis 行）', staticPatchResult.ok && Array.isArray(staticPatch) && !staticPatch.some((row) => isMap(row) && (row.id === 'cordis-host-runner' || row.name === '@deepseek-ai/dsh-cordis-host-runner')), staticPatchResult.error || '')
 
   // ② 生产同形 fixture：只迁移两个旧根级块，保留 im-qqbot 与备份原文
   const h1 = join(tempRoot, 's1-legacy-root')
@@ -183,14 +217,15 @@ try {
   writeFileSync(qqPatch(h1), before1, 'utf8')
   const r1 = healPatchRows(qqProfileDir(h1))
   const after1 = readFileSync(qqPatch(h1), 'utf8')
-  const parsed1 = parseYaml(after1)
+  const parsed1Result = parseYaml(after1)
+  const parsed1 = parsed1Result.ok ? parsed1Result.value : null
   const backups1 = patchBackups(qqProfileDir(h1))
   const backupText1 = backups1.length === 1 ? readFileSync(join(qqProfileDir(h1), backups1[0]), 'utf8') : ''
   const hasLegacy1 = Array.isArray(parsed1) && parsed1.some((row) => isMap(row) &&
     ((row.id === 'code-runtime' && row.name === '@deepseek-ai/dsh-code-runtime-worker-thread') ||
      (row.id === 'agent-presets' && row.name === '@deepseek-ai/dsh-agent-presets' && isMap(row.config) && row.config.default === 'standard')))
   check('生产同形 patch 只迁移两个旧根级完整块', r1.status === 'migrated' && Array.isArray(r1.migrated) && r1.migrated.join('/') === 'code-runtime/agent-presets')
-  check('迁移后顶层数组有效且 im-qqbot/非旧版完整用户行保留、旧根级块消失', Array.isArray(parsed1) && isMap(rootRow(parsed1, 'im-qqbot')) && isMap(rootRow(parsed1, 'user-custom')) && !hasLegacy1)
+  check('迁移后顶层数组有效且 im-qqbot/非旧版完整用户行保留、旧根级块消失', parsed1Result.ok && Array.isArray(parsed1) && isMap(rootRow(parsed1, 'im-qqbot')) && isMap(rootRow(parsed1, 'user-custom')) && !hasLegacy1, parsed1Result.error || '')
   check('实际迁移产生一份备份且备份字节等于迁移前', backups1.length === 1 && backupText1 === before1)
   const repeatBefore1 = after1
   const repeatResult1 = healPatchRows(qqProfileDir(h1))
@@ -204,8 +239,9 @@ try {
   writeFileSync(qqPatch(hOnly), beforeOnly, 'utf8')
   const onlyResult = healPatchRows(qqProfileDir(hOnly))
   const onlyAfter = readFileSync(qqPatch(hOnly), 'utf8')
-  const onlyParsed = parseYaml(onlyAfter)
-  check('仅剩旧块时迁移结果为顶层 [] 而非空文件', onlyResult.status === 'migrated' && onlyAfter === '[]\n' && Array.isArray(onlyParsed) && onlyParsed.length === 0)
+  const onlyParsedResult = parseYaml(onlyAfter)
+  const onlyParsed = onlyParsedResult.ok ? onlyParsedResult.value : null
+  check('仅剩旧块时迁移结果为顶层 [] 而非空文件', onlyResult.status === 'migrated' && onlyAfter === '[]\n' && onlyParsedResult.ok && Array.isArray(onlyParsed) && onlyParsed.length === 0, onlyParsedResult.error || '')
   check('仅剩旧块时产生一份备份', patchBackups(qqProfileDir(hOnly)).length === 1)
 
   const hEmpty = join(tempRoot, 's3-empty-array')
@@ -233,8 +269,9 @@ try {
   writeFileSync(qqPatch(hNested), nestedText, 'utf8')
   const nestedResult = healPatchRows(qqProfileDir(hNested))
   const nestedAfter = readFileSync(qqPatch(hNested), 'utf8')
-  const nestedParsed = parseYaml(nestedAfter)
-  check('嵌套 insert 不迁移、不追加根级目标块且无备份', nestedResult.status === 'idempotent' && nestedAfter === nestedText && patchBackups(qqProfileDir(hNested)).length === 0 && rootInsertNodes(nestedParsed).length === 1)
+  const nestedParsedResult = parseYaml(nestedAfter)
+  const nestedParsed = nestedParsedResult.ok ? nestedParsedResult.value : null
+  check('嵌套 insert 不迁移、不追加根级目标块且无备份', nestedResult.status === 'idempotent' && nestedAfter === nestedText && nestedParsedResult.ok && patchBackups(qqProfileDir(hNested)).length === 0 && rootInsertNodes(nestedParsed).length === 1, nestedParsedResult.error || '')
 
   // ⑤ 含旧块但移除后仍非法 YAML → 写后校验失败并恢复原文
   const hInvalid = join(tempRoot, 's5-invalid-after-remove')
@@ -285,8 +322,6 @@ try {
   check('未安装本插件的 profile @local 目录零创建', !existsSync(join(p10, 'node_modules', '@local')))
 
   // ⑨ 负例B：dsh-extra-plan 核心零感知（静态断言）
-  const presetSync = readFileSync(join(SOURCE_ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'preset-sync.js'), 'utf8')
-  check('preset-sync.js 不含 qqbot/code-runtime/qqbot 自愈标识符（核心零感知）', !/qqbot|code-runtime|healQqbotCompatibility|healPatchRows/i.test(presetSync))
 
   // ⑩ DSH_HOME env 优先于 ~/.dsh（index.js apply 实测）
   const h12 = join(tempRoot, 's12-env')
@@ -299,8 +334,9 @@ try {
     if (prevHome === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = prevHome
   }
-  const applied12 = parseYaml(readFileSync(qqPatch(h12), 'utf8'))
-  check('index.js apply 使用 DSH_HOME env 迁移临时 home 的旧根级块', Array.isArray(applied12) && isMap(rootRow(applied12, 'im-qqbot')) && !applied12.some((row) => isMap(row) && (row.id === 'code-runtime' || row.id === 'agent-presets')))
+  const applied12Result = parseYaml(readFileSync(qqPatch(h12), 'utf8'))
+  const applied12 = applied12Result.ok ? applied12Result.value : null
+  check('index.js apply 使用 DSH_HOME env 迁移临时 home 的旧根级块', applied12Result.ok && Array.isArray(applied12) && isMap(rootRow(applied12, 'im-qqbot')) && !applied12.some((row) => isMap(row) && (row.id === 'code-runtime' || row.id === 'agent-presets')), applied12Result.error || '')
   check('findOwnQqbotProfiles 直测命中已装插件 qqbot profile', findOwnQqbotProfiles(h12).includes('qqbot'))
 
   // CLI 冒烟：DSH_HOME env 注入临时 home，验证兜底迁移路径与退出码
@@ -309,9 +345,10 @@ try {
   installOwnPlugin(hCli, 'qqbot')
   writeFileSync(qqPatch(hCli), legacyPatch(true), 'utf8')
   const cli = runCli(hCli)
-  const cliParsed = parseYaml(readFileSync(qqPatch(hCli), 'utf8'))
+  const cliParsedResult = parseYaml(readFileSync(qqPatch(hCli), 'utf8'))
+  const cliParsed = cliParsedResult.ok ? cliParsedResult.value : null
   check('CLI 兜底退出码 0 且输出自愈完成', cli.status === 0 && cli.error === undefined && cli.stdout.includes('自愈完成'))
-  check('CLI 兜底实际迁移旧根级块', Array.isArray(cliParsed) && isMap(rootRow(cliParsed, 'im-qqbot')) && !cliParsed.some((row) => isMap(row) && (row.id === 'code-runtime' || row.id === 'agent-presets')))
+  check('CLI 兜底实际迁移旧根级块', cliParsedResult.ok && Array.isArray(cliParsed) && isMap(rootRow(cliParsed, 'im-qqbot')) && !cliParsed.some((row) => isMap(row) && (row.id === 'code-runtime' || row.id === 'agent-presets')), cliParsedResult.error || '')
   const cliRepeat = runCli(hCli)
   check('CLI 幂等重跑退出码 0', cliRepeat.status === 0 && cliRepeat.error === undefined)
   check('CLI 重复运行文件字节不变且 .bak-* 不增', bakCount(qqProfileDir(hCli)) === 1)
@@ -329,6 +366,7 @@ try {
 } finally {
   rmSync(tempRoot, { recursive: true, force: true })
 }
+}
 
-console.log('\n通过 ' + pass + ', 失败 ' + fail)
+console.log('\n通过 ' + pass + ', 失败 ' + fail + ', 跳过 ' + skipCount)
 process.exit(fail === 0 ? 0 : 1)

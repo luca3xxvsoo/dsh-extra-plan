@@ -637,6 +637,31 @@ const reselectPlanReadyMain = mainWithEvents(approvedBaseEvents.concat([callE('a
 const escapeMain = mainWithEvents([umE(), callE('ask_user_question', 'a1', routeArgsE), errE('a1', 'NO_PROVIDER')])
 const writeCode = { code: "await writeFileSync('x', '1')", description: '写文件' }
 const readOnlyCode = { code: "await readFileSync('x', 'utf8')", description: '只读' }
+const pwshRedirect = { command: 'Write-Output x > out.txt' }
+const pwshRedirectGroup = { code: "await tools.pwsh({ command: 'Write-Output x > out.txt' })", description: 'A09 重定向组成员' }
+r = preExecute(harness, noneMain, 'pwsh', pwshRedirect)
+checkTrue('A09 none 态 pwsh 重定向 → deny（路由未确认）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认'))
+r = preExecute(harness, planMain, 'pwsh', pwshRedirect)
+checkTrue('A09 plan 未批准 pwsh 重定向 → deny（路由未确认或规划态写禁令）', r !== null && r !== undefined && r.kind === 'deny')
+r = preExecute(harness, directMain, 'pwsh', pwshRedirect)
+checkTrue('A09 direct pwsh 重定向 → allow', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, approvedMain, 'pwsh', { command: 'Write-Output x > out.txt', sandbox_permissions: true })
+checkTrue('A09 approved 非 direct + sandbox_permissions 非字符串 → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('sandbox_permissions'))
+r = preExecute(harness, approvedMain, 'pwsh', pwshRedirect)
+checkTrue('A09 approved 非 direct 缺 sandbox_permissions → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('sandbox_permissions'))
+r = preExecute(harness, approvedMain, 'pwsh', { command: 'Write-Output x > out.txt', sandbox_permissions: 'workspace-write' })
+checkTrue('A09 approved 非 direct + sandbox_permissions 字符串 → allow', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, noneMain, 'run_code', pwshRedirectGroup)
+checkTrue('A09 none 态 run_code 重定向组成员 → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认'))
+r = preExecute(harness, approvedMain, 'run_code', pwshRedirectGroup)
+checkTrue('A09 approved 态 run_code 重定向组成员缺 sandbox_permissions → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('sandbox_permissions'))
+r = preExecute(harness, plannerAgent, 'pwsh', pwshRedirect)
+checkTrue('A09 planner pwsh 重定向 → deny（只读）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划子代理只读'))
+r = preExecute(harness, probeAgent, 'pwsh', pwshRedirect)
+checkTrue('A09 probe 只读 pwsh 重定向 → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('只读'))
+r = preExecute(harness, reviewer, 'run_code', pwshRedirectGroup)
+checkTrue('A09 reviewer run_code 重定向组成员 → deny（只读）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('只读'))
+
 
 // 完整批准后重选路由必须清掉 approved；重选 plan 后目的必须重新确认，按 route→purpose→clarify 才恢复放行。
 r = preExecute(harness, reselectDirectMain, 'subagent', { run_in_background: true })
@@ -682,6 +707,27 @@ r = preExecute(harness, probeAgent, 'run_code', writeCode)
 checkTrue('R40 probe（只读目录+放行记录）run_code 含写 → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('只读角色仅允许只读探查'))
 r = preExecute(harness, fresh, 'run_code', writeCode)
 checkTrue('R41 缓存未命中子代理 run_code → 放行（fail-open）', r !== null && r !== undefined && r.kind === 'allow')
+// ── A10/A11 STATIC-TOOLS：JS literal 参数与角色闸门逐项对拍 ───────────────
+const staticToolGroups = [
+  ['write', "await tools.write({ file_path: 'x', content: '1', })", noneMain, '路由未确认', false],
+  ['edit', "await tools.edit({ file_path: 'x', old_string: 'a', new_string: 'b', })", noneMain, '路由未确认', false],
+  ['subagent', "await tools.subagent({ task: '执行', })", approvedMain, '必须后台运行', false],
+  ['subagent_plan', "await tools.subagent_plan({ run_in_background: false, })", reselectPlanReadyMain, '不得传 false', false],
+  ['save_probe', "await tools.save_probe({ fileMap: [], focusAreas: [], exclusions: [], background: [], })", reselectPlanReadyMain, '', true],
+  ['job_kill', "await tools.job_kill({ job_id: 'j1', })", directMain, '', true],
+  ['ask_user_question', "await tools.ask_user_question({ questions: [{ id: 'q1', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }], })", noneMain, '', false],
+]
+for (const [name, code, agent, expectedText, expectedAllow] of staticToolGroups) {
+  r = preExecute(harness, agent, 'run_code', { code, description: '静态 literal 工具组 ' + name })
+  checkTrue('A10/A11 ' + name + ' JS literal 参数 ' + (expectedAllow ? 'allow' : 'deny'), expectedAllow ? (r !== null && r !== undefined && r.kind === 'allow') : (r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(expectedText)))
+}
+r = preExecute(harness, approvedMain, 'subagent', { task: '执行' })
+checkTrue('A11 subagent 真实对象缺 run_in_background:true → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('必须后台运行'))
+r = preExecute(harness, reselectPlanReadyMain, 'subagent_plan', { run_in_background: false })
+checkTrue('A10 subagent_plan 真实对象 false → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('不得传 false'))
+r = preExecute(harness, approvedMain, 'run_code', { code: "const task = '执行'; await tools.subagent({ task, run_in_background: true })", description: '动态参数运行时兜底' })
+checkTrue('A11 动态参数保留 argsText 并交运行时瀑布（不静态猜值）', r !== null && r !== undefined && r.kind === 'allow')
+
 
 // ── ⑨ R-ptc 系列:F7' 终版修订（ptc 死锁解除 + 嵌套瀑布等价） ───────────────
 const nestedAskCode = { code: "const ans = await tools.ask_user_question({ questions: [{ id: 'q1', options: ['直接执行', '进行pro规划', '不同意'] }] })", description: '嵌套ask' }
