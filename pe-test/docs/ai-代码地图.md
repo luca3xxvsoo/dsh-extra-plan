@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-10-01 14:44:58（脚本自动更新时间戳行）
+> 上次同步：2026-10-01 19:33:36（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -57,7 +57,7 @@
 | PTC 拒绝中文呈现／post-execute 失败结果改写／denied 判别（闸门拒绝不重置路由、取消仍清四字段；HOST_ASK_CANCEL_TEXTS 宿主取消句） | index.js | parseAskResultData、parseDispatchAskResult、askResultTextIsDenied、firstTextOfBlocks、deriveFlowState、recordRunCodeDeny |
 | 代码地图自身维护／口径／严格模式 | pe-test/tools/代码地图生成.mjs（不在索引范围，读文件头注释） |  |
 | 新载体选型与 isolate 审计（预设声明行／必要+保险隔离名单／LocalRealm vs GlobalRealm／三组 isolate 名单：extra-plan-group.extraPlan · compaction.compaction+toolResultPruner · delegation.workflowEngine+subagentModelSelection） | plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml、plugins/dsh-extra-plan/assets/presets/extra-plan/preset-patch.generated.yml、README.md（READAI.md「新载体」节） |  |
-| 创造 skill 静态注册／customSkillDirs／C=0 与 C=1 的 catalog 语义（skill-filesystem 行的 config.customSkillDirs 指向 agent-preset 包内 skills/；「不注册」已改为 catalog 隐藏） | plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml、plugins/dsh-extra-plan/lib/assembly-presentation.js、plugins/dsh-extra-plan/index.js | shouldHideCreativeCatalog、projectSkillCatalogDecision、skillCatalogEntriesOf、renderSkillCatalogText |
+| 创造 skill 静态注册／bundledSkillDir／C=0 与 C=1 的 catalog 语义（skill-filesystem 行的 config.bundledSkillDir 指向 agent-preset 包内 skills/ 且 watch: false——0.2.0-rc.2 换通道修法，旧 customSkillDirs 经 ctx.fs 扫 asar 抛非 absent 错；「不注册」已改为 catalog 隐藏） | plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml、plugins/dsh-extra-plan/lib/assembly-presentation.js、plugins/dsh-extra-plan/index.js | shouldHideCreativeCatalog、projectSkillCatalogDecision、skillCatalogEntriesOf、renderSkillCatalogText |
 | 0.1.7 服务名换代／ptcRuntime／SDK renderer 语言取值 | plugins/dsh-extra-plan/index.js、plugins/dsh-extra-plan/lib/assembly-presentation.js | apply、resolveToolsSdkRenderer、renderFilteredToolsSdk、sdkSchemasForRendering |
 | tool-jobs 完成通知解锁（source.kind=tool-jobs 且 form=notice → 正文 /background job (\S+)/ 解析 jobId → 双动作：①只清该 jobId 的 job_output 计数（若被跟踪，删除幂等）②job_list/list_agents 轮询守卫 pollGuardCounters 清整表；consumed 标记与 job_output 跟踪命中解耦——通知首次被消费即标记，防重复动作；HK9：旧 plugin kind 已废） | plugins/dsh-extra-plan/index.js | apply、recordJobOutputCall、jobOutputGateReason、pollGuardGateReason |
 | agent/created 钩子（serial；agent/session-start 已删除）／会话启动基线＋save_plan/save_probe 注册，整块吞错不阻断会话创建 | plugins/dsh-extra-plan/index.js（agent/created 调用点）、plugins/dsh-extra-plan/lib/agent-runtime.js（childBaseline/isPlannerChild 定义）、plugins/dsh-extra-plan/lib/agent-session.js（isSubagentChild 定义） | apply、childBaseline、isPlannerChild、isSubagentChild、registerSavePlan、registerSaveProbe、probeClaimFor |
@@ -70,10 +70,10 @@
 
 | 文件 | 行数 | 说明 |
 |:--|--:|:--|
-| plugins/dsh-extra-plan/index.js | 2225 | 核心入口：四级闸门、预算、save 工具注册与生命周期；接线 planner/非 planner 路由、A/C/M 投影、P2-2 cache、session 分桶 usage final fold、v4 MALFORMED 自愈。gateWords 只来自 YAML，apply 先校验再副作用。 |
+| plugins/dsh-extra-plan/index.js | 2228 | 核心入口：四级闸门、预算、save 工具注册与生命周期；接线 planner/非 planner 路由、A/C/M 投影、P2-2 cache、session 分桶 usage final fold、v4 MALFORMED 自愈。gateWords 只来自 YAML，apply 先校验再副作用。 |
 | plugins/dsh-extra-plan/lib/agent-runtime.js | 109 | 每次 apply 的角色识别、descriptor/工具 schema 缓存、usage role baseline 与 sandbox floor 工厂；不 import index.js |
 | plugins/dsh-extra-plan/lib/agent-session.js | 32 | 会话事件与子代理识别的唯一来源：sessionEvents/isSubagentChild 零依赖纯函数，被 index.js 与 lib/model-routing.js 共用（无镜像副本；不 import index.js） |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | 241 | A/C/M 与 skill catalog 模型可见投影；从 scoped tools 读 schema/模式，SDK renderer 按 language 整体重建；F/PTC 的 tool:read 由 index.js 手写，L 段回宿主原文。 |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | 242 | A/C/M 与 skill catalog 模型可见投影；从 scoped tools 读 schema/模式，SDK renderer 按 language 整体重建；F/PTC 的 tool:read 由 index.js 手写，L 段回宿主原文。 |
 | plugins/dsh-extra-plan/lib/client-bridge.js | 7 | 客户端桥接壳：仅承载 dsh.client 加载路径指向 lib/client.js（apply 空实现） |
 | plugins/dsh-extra-plan/lib/client.js | 437 | 客户端模块加载共享样式/词条与共享 SettingsCard/ExtraPlanForm；0.2 独立 `settings.plugins.tab` 不注册，唯一 legacy keyed row 仅在宿主提供对应 slot 时呈现，slot 缺失时走宿主后备路径；后端 settings API/Config/投影链独立活动。 |
 | plugins/dsh-extra-plan/lib/executor-spawn.js | 132 | 执行者子代理 provider：委托宿主 spawn，注入工具 deny（防委派递归/追问）；registerProvider 走引用计数幂等（**稳定键幂等**：模块级 WeakMap 槽表的槽键 = subagents 服务实现本体——读全局注册符号 Symbol.for('cordis.original')，由 traceable 代理 get 拦截器返回 target，root 单例跨预设世代恒同一对象；取不到符号值时降级回代理本身；跨预设世代/行重建复用同一注册，归零才反注册） |
@@ -149,7 +149,7 @@
 | plugins/dsh-extra-plan/index.js | aggregateRunCodeDenyReason | L987-999 | 聚合多成员拒绝消息 |  |
 | plugins/dsh-extra-plan/index.js | malformedRecovery | L1194-1228 | MALFORMED_RESPONSE 限次自愈：llm-retry 已给 {kind:'retry'} 原样透传（不叠加）；否则按 sessionId→Set('turn:step') 同回合只兜底 1 次（防死循环），注入 developer/message 中文提示（append 带 surfaceOp:'append'、纯文本禁带 headerSeq、source.kind 用生产者自有 plugin:@local/dsh-extra-plan）并返回 {kind:'retry'}；**payload 须自带 ≥1 的 turn/step（宿主 append 不补坐标），坐标缺失/非正整数 → 跳过注入但仍返回 {kind:'retry'}**；aborted/无 agent/超次 → null 回退原 action 透传 |  |
 | plugins/dsh-extra-plan/index.js | recordAgentError | L1242-1260 | agent/error 回合错误取证：把宿主回合/步骤级错误（payload {agent,turn,step,error}）逐字落盘到插件目录 extra-plan-agent-errors.jsonl，行 = {ts, sessionId, turn, step, chain}；整体吞错 + 一次性 warn 防刷屏；模块级函数经命名导出供回归冒烟直呼 | 与 recordRequestError 同诊断模式 |
-| plugins/dsh-extra-plan/index.js | apply | L1264-2225 | 插件主入口：第一步 createGateRuntime(cfg.gateWords)（缺失/非法同步抛错，早于任何工具/监听器/服务副作用）→ ctx.effect 在当前 agent scope 注册恰好 7 个 extra_plan_* prompt variable（provider 返回本次 apply 捕获值）→ 配置解析（含变量② bootstrapReadHint）/服务注册/工具注册/creativeMode 模型可见投影/锚点钩子（HP 首轮 tool:read text 用变量②覆盖）；planner 与非 planner child 双模型路由；会话状态按 sessionId 分桶与 agent/disposed 同步 final flush + 单会话回收 |  |
+| plugins/dsh-extra-plan/index.js | apply | L1264-2228 | 插件主入口：第一步 createGateRuntime(cfg.gateWords)（缺失/非法同步抛错，早于任何工具/监听器/服务副作用）→ ctx.effect 在当前 agent scope 注册恰好 7 个 extra_plan_* prompt variable（provider 返回本次 apply 捕获值）→ 配置解析（含变量② bootstrapReadHint）/服务注册/工具注册/creativeMode 模型可见投影/锚点钩子（HP 首轮 tool:read text 用变量②覆盖）；planner 与非 planner child 双模型路由；会话状态按 sessionId 分桶与 agent/disposed 同步 final flush + 单会话回收 |  |
 | plugins/dsh-extra-plan/index.js | plannerModel | L1317 | 热读箭头 getter：pro 规划默认模型（liveConfig.plannerModel；消费点=model-routing 的 getPlannerModel） |  |
 | plugins/dsh-extra-plan/index.js | otherAgentModel | L1318 | 热读箭头 getter：其他子代理默认模型（消费点=model-routing 的 getOtherAgentModel） |  |
 | plugins/dsh-extra-plan/index.js | exploreBudget | L1319 | 热读箭头 getter：pro 规划探查额度/单实例子调用上限（消费点=预算文案、noteRunCodeSubCall、plannerGateReason 与组判定） |  |
@@ -162,15 +162,15 @@
 | plugins/dsh-extra-plan/index.js | warnUsageCursorDegraded | L1391-1395 | cursor 降级告警：每插件实例首次降级时一次（同 ledgerWarned 口径），声明其它 session 去重基准可能丢失 |  |
 | plugins/dsh-extra-plan/index.js | usageCursorEntryOf | L1399-1406 | cursor 单项归一：兼容旧数字形状（按水位 0 处理）与 { seq, index }；不再保留内存态 ref 字段——增量由 session.seq 水位 + snapshotEvents(from,to) 区间读取实现，水位未变直接返回、截断回退全量 |  |
 | plugins/dsh-extra-plan/index.js | foldUsage | L1414-1514 | 同步 usage 折叠；append 成功后才推进内存 cursor；可解析 cursor 读改写保留其它 session，损坏/非对象只降级内存态并保留原始字节；session.seq + snapshotEvents(from,to) 增量水位语义 |  |
-| plugins/dsh-extra-plan/index.js | registerTool | L1551-1585 | 工具注册分发：注册成功、A 重名、B 永久性三类都写「已注册」标记（A/B 记终态不重试）；仅 tools 服务未就绪与 C 类可重试不写标记，留给下一次入口重试 |  |
-| plugins/dsh-extra-plan/index.js | registerSavePlan | L1588 | save_plan 注册（规划子代理层 + 主会话层；主会话侧任意路由态放行——受限规划工件，mainGateReason 兜底放行）；注册失败按 A/B/C 三分类：A/B 写标记记终态不重试，服务未就绪与 C 类不写标记、由 pre-step 每步兜底重试 |  |
-| plugins/dsh-extra-plan/index.js | registerSaveProbe | L1592 | save_probe 注册（主会话层 + 已认领的探查子代理层；规划子代理/执行者/reviewer 不是持有者）；已认领者靠 probeClaimed 粘性在下一步重试注册、不重复消费待认领计数 |  |
-| plugins/dsh-extra-plan/index.js | probeClaimFor | L1602-1618 | 放行-认领关联查核（pendingProbeClaims）：非子代理/含写子代理/规划子代理（T5 守卫）不认领，命中则消费计数并登记 save_probe |  |
-| plugins/dsh-extra-plan/index.js | shouldHideCreativeCatalog | L1648-1655 | HP1 判定：C=1、A=1、F、main/planner、M=ptc 时暂隐两个创造 skill |  |
-| plugins/dsh-extra-plan/index.js | warnPreStepFailure | L1661-1665 | pre-step 初始化/后处理异常的一次性告警 helper，保留原 decision 且保证 next 只调用一次 |  |
-| plugins/dsh-extra-plan/index.js | recordRequestError | L1723-1745 | 记录 agent/request-error 失败诊断到插件目录 extra-plan-request-errors.jsonl（diagPath 可经 cfg.diagFile 覆盖；行含 turn/step/provider/message/code/causeChain） |  |
-| plugins/dsh-extra-plan/index.js | noteRunCodeSubCall | L1999-2006 | 单实例子调用上限（planner）：按 sessionId→rootCallId 桶读计数、未超限则 +1；返回拒绝文案或 null；空 rootCallId 与 exploreBudget 文案保持 |  |
-| plugins/dsh-extra-plan/index.js | recordRunCodeDeny | L2015-2026 | pre-execute 八处 deny 出口在 return 前记录本次中文 reason（sessionId→rootCallId→Set）；仅 isRunCodeSubCall（exec.sub 或 exec.parent）且 reason 为非空字符串时写入 | 记录由 tools/post-execute 按精确子串消费（消费即清），agent/disposed 按 session 清桶；不做跨 session 共享 |
+| plugins/dsh-extra-plan/index.js | registerTool | L1553-1587 | 工具注册分发：注册成功、A 重名、B 永久性三类都写「已注册」标记（A/B 记终态不重试）；仅 tools 服务未就绪与 C 类可重试不写标记，留给下一次入口重试 |  |
+| plugins/dsh-extra-plan/index.js | registerSavePlan | L1590 | save_plan 注册（规划子代理层 + 主会话层；主会话侧任意路由态放行——受限规划工件，mainGateReason 兜底放行）；注册失败按 A/B/C 三分类：A/B 写标记记终态不重试，服务未就绪与 C 类不写标记、由 pre-step 每步兜底重试 |  |
+| plugins/dsh-extra-plan/index.js | registerSaveProbe | L1594 | save_probe 注册（主会话层 + 已认领的探查子代理层；规划子代理/执行者/reviewer 不是持有者）；已认领者靠 probeClaimed 粘性在下一步重试注册、不重复消费待认领计数 |  |
+| plugins/dsh-extra-plan/index.js | probeClaimFor | L1604-1620 | 放行-认领关联查核（pendingProbeClaims）：非子代理/含写子代理/规划子代理（T5 守卫）不认领，命中则消费计数并登记 save_probe |  |
+| plugins/dsh-extra-plan/index.js | shouldHideCreativeCatalog | L1651-1658 | HP1 判定：C=1、A=1、F、main/planner、M=ptc 时暂隐两个创造 skill |  |
+| plugins/dsh-extra-plan/index.js | warnPreStepFailure | L1664-1668 | pre-step 初始化/后处理异常的一次性告警 helper，保留原 decision 且保证 next 只调用一次 |  |
+| plugins/dsh-extra-plan/index.js | recordRequestError | L1726-1748 | 记录 agent/request-error 失败诊断到插件目录 extra-plan-request-errors.jsonl（diagPath 可经 cfg.diagFile 覆盖；行含 turn/step/provider/message/code/causeChain） |  |
+| plugins/dsh-extra-plan/index.js | noteRunCodeSubCall | L2002-2009 | 单实例子调用上限（planner）：按 sessionId→rootCallId 桶读计数、未超限则 +1；返回拒绝文案或 null；空 rootCallId 与 exploreBudget 文案保持 |  |
+| plugins/dsh-extra-plan/index.js | recordRunCodeDeny | L2018-2029 | pre-execute 八处 deny 出口在 return 前记录本次中文 reason（sessionId→rootCallId→Set）；仅 isRunCodeSubCall（exec.sub 或 exec.parent）且 reason 为非空字符串时写入 | 记录由 tools/post-execute 按精确子串消费（消费即清），agent/disposed 按 session 清桶；不做跨 session 共享 |
 | plugins/dsh-extra-plan/lib/agent-runtime.js | isLiveDelegation | L6-17 | 按父会话 registry 存活状态判定委托是否仍有效 |  |
 | plugins/dsh-extra-plan/lib/agent-runtime.js | childPolicyNeedsFloor | L20-25 | 判定 read-only（只读） 子代理是否需要 workspace-write floor |  |
 | plugins/dsh-extra-plan/lib/agent-runtime.js | createAgentRuntime | L27-109 | 创建 per-apply 角色/缓存/usage baseline 工厂 |  |
@@ -182,24 +182,24 @@
 | plugins/dsh-extra-plan/lib/agent-runtime.js | childBaseline | L98-106 | 同步确定 main/planner/executor role、fold usage 并应用 child floor |  |
 | plugins/dsh-extra-plan/lib/agent-session.js | sessionEvents | L6-10 | 取 agent.session 事件快照（缺失兜底空数组）；唯一来源 |  |
 | plugins/dsh-extra-plan/lib/agent-session.js | isSubagentChild | L17-32 | 判定会话属于子代理（header.origin/delegationDepth/descriptor 三路探测）；唯一来源，index.js 经 decisions re-export |  |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | sectionOf | L29-32 | 按名称取 PromptAssembly section |  |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | skillCatalogEntriesOf | L38-46 | 校验并提取 skill catalog 的最小 name/description 条目 |  |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | renderSkillCatalogText | L48-70 | 按条目重建系统 skill catalog 文本 |  |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | projectSkillCatalogDecision | L72-98 | 在当前消息副本中暂隐创造 skill，不注销 binding |  |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | isCordisPresentationTool | L100-102 | 判断名称是否属于固定 2 项 Cordis 模型可见工具集合 | 模型可见投影；不改变 registry binding |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | filteredCordisSchemas | L104-107 | 从 schema 数组排除固定 2 项 Cordis 工具，供 SDK 整体重建 |  |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | hasSection | L109-111 | 判断 PromptAssembly 是否含指定命名 section |  |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | hasNonEmptySection | L113-115 | 判断 tools:ptc-only 是否为有效非空 section，识别 Pure PTC |  |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | projectAssemblyForPresentation | L118-142 | 创建不原地修改的模型可见 assembly：按当前 schema 交集过滤工具，替换 SDK 文本并隐藏 tool:cordis，另支持 Pure PTC 顶层单入口 | 不改变 registry/restrict/pre-execute |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | sdkSchemasForRendering | L144-151 | 从 schema 输入排除 run_code 与 Cordis，并确保 renderer 获得输出 schema | 不读取原始 tools:sdk 文本 |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | dshToolsEntryCandidates | L153-169 | 生成 DSH_HOME/profile 与平台官方 dsh-tools SDK renderer 候选路径 | 只读加载官方包，不修改安装目录 |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | loadSdkRendererModule | L172-186 | 惰性加载官方 SDK renderer 模块；失败 promise 清空，候选补齐后可重试 |  |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | pending | L174-183 | loadSdkRendererModule 的 in-flight（进行中）module promise（模块 Promise）；reject 后 identity-check 清空供下次重试 |  |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | resolveToolsSdkRenderer | L189-194 | 按 language 选择当前官方 TypeScript/Python SDK renderer，返回函数身份供 cache key 使用；复用模块级动态 import promise |  |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | renderFilteredToolsSdk | L197-200 | 仅以过滤后的 schema 整体调用官方 renderer 生成 tools:sdk，按 ptcRuntime language 选择 TS/Python | 不做原始文本正则删块 |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | toolRegistryOf | L202-210 | 防御式读取 agent scoped tools service，服务缺失或异常返回 undefined |  |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | toolSdkSchemasOf | L212-230 | 优先读取 tools.sdkSchemas；兼容旧服务时从 schemas 补 owned（自有） output schema，供 SDK renderer 使用 |  |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | toolPresentationModeOf | L232-241 | 从 scoped tools registry 读取 native/ptc/both 模式 |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | sectionOf | L30-33 | 按名称取 PromptAssembly section |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | skillCatalogEntriesOf | L39-47 | 校验并提取 skill catalog 的最小 name/description 条目 |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | renderSkillCatalogText | L49-71 | 按条目重建系统 skill catalog 文本 |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | projectSkillCatalogDecision | L73-99 | 在当前消息副本中暂隐创造 skill，不注销 binding |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | isCordisPresentationTool | L101-103 | 判断名称是否属于固定 2 项 Cordis 模型可见工具集合 | 模型可见投影；不改变 registry binding |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | filteredCordisSchemas | L105-108 | 从 schema 数组排除固定 2 项 Cordis 工具，供 SDK 整体重建 |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | hasSection | L110-112 | 判断 PromptAssembly 是否含指定命名 section |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | hasNonEmptySection | L114-116 | 判断 tools:ptc-only 是否为有效非空 section，识别 Pure PTC |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | projectAssemblyForPresentation | L119-143 | 创建不原地修改的模型可见 assembly：按当前 schema 交集过滤工具，替换 SDK 文本并隐藏 tool:cordis，另支持 Pure PTC 顶层单入口 | 不改变 registry/restrict/pre-execute |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | sdkSchemasForRendering | L145-152 | 从 schema 输入排除 run_code 与 Cordis，并确保 renderer 获得输出 schema | 不读取原始 tools:sdk 文本 |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | dshToolsEntryCandidates | L154-170 | 生成 DSH_HOME/profile 与平台官方 dsh-tools SDK renderer 候选路径 | 只读加载官方包，不修改安装目录 |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | loadSdkRendererModule | L173-187 | 惰性加载官方 SDK renderer 模块；失败 promise 清空，候选补齐后可重试 |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | pending | L175-184 | loadSdkRendererModule 的 in-flight（进行中）module promise（模块 Promise）；reject 后 identity-check 清空供下次重试 |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | resolveToolsSdkRenderer | L190-195 | 按 language 选择当前官方 TypeScript/Python SDK renderer，返回函数身份供 cache key 使用；复用模块级动态 import promise |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | renderFilteredToolsSdk | L198-201 | 仅以过滤后的 schema 整体调用官方 renderer 生成 tools:sdk，按 ptcRuntime language 选择 TS/Python | 不做原始文本正则删块 |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | toolRegistryOf | L203-211 | 防御式读取 agent scoped tools service，服务缺失或异常返回 undefined |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | toolSdkSchemasOf | L213-231 | 优先读取 tools.sdkSchemas；兼容旧服务时从 schemas 补 owned（自有） output schema，供 SDK renderer 使用 |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | toolPresentationModeOf | L233-242 | 从 scoped tools registry 读取 native/ptc/both 模式 |  |
 | plugins/dsh-extra-plan/lib/client-bridge.js | apply | L5-7 | 空实现（仅承载 dsh.client 加载路径指向 lib/client.js） |  |
 | plugins/dsh-extra-plan/lib/client.js | apply | L133-431 | 客户端插件入口：注入 esp-* 样式表与中英词条；共享 SettingsCard/ExtraPlanForm 由唯一 legacy keyed row 按宿主 slot 条件呈现，0.2 独立 tab 不注册，slot 缺失走 configEditor/SettingsForms 或 profile 权威行后备路径；settings/preset-sync 后端组件独立活动。 |  |
 | plugins/dsh-extra-plan/lib/client.js | optionLabel | L144-149 | 选项显示名：优先 optionLocale 词条，其次布尔 trueValue/falseValue，最后原值字符串 | apply 内部闭包（设置页控件共用） |

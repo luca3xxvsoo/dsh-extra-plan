@@ -17,7 +17,8 @@ export const CORDIS_PRESENTATION_TOOL_SET = new Set(CORDIS_PRESENTATION_TOOLS)
 export const PTC_SECTION_NAME = 'tools:ptc-only'
 export const SDK_SECTION_NAME = 'tools:sdk'
 export const READ_SECTION_NAME = 'tool:read'
-// C=1 创造模式官方 skill 面（skill-filesystem 行 customSkillDirs 静态注册）：
+// C=1 创造模式官方 skill 面（skill-filesystem 行 bundledSkillDir 静态注册，0.2.0-rc.2 换通道：
+// 旧 customSkillDirs 经 ctx.fs 扫 asar 抛非 absent 错 → 改 trustedHost/node:fs 通道 + watch: false）：
 // 三个包内 SKILL.md 名。C=0 时由 projectSkillCatalogDecision 从模型可见 catalog 隐藏
 // （旧实现是「不在插件里注册」；静态注册后改为投影隐藏，语义等价）。
 export const CREATIVE_SKILL_NAMES = new Set([

@@ -117,7 +117,7 @@ HK23 当前无定义，不补造编号；历史/旧钩子见归档。
 | SD12 | sandbox/mode append | read-only（只读） child workspace-write floor（工作区写入下限） |
 | SD14 | agents.get(parentSession) | 父链与主会话 fallback（回退） |
 | SD15 | llm.listModels | legacy（兼容） advisory（建议）/strict（严格）候选 |
-| SD16 | skill-filesystem/customSkillDirs | 当前 skill 载体；旧 resolve/register 仅历史 |
+| SD16 | skill-filesystem/bundledSkillDir（0.2.0-rc.2 换通道：trustedHost=true → node:fs；watch:false；旧 customSkillDirs 因 ctx.fs 扫 asar 抛非 absent 错被 registry 整体跳过） | 当前 skill 载体；旧 customSkillDirs 静态注册与更旧 resolve/register 仅历史 |
 | SD17 | ctx.effect 生命周期 | prompt variables 与作用域释放 |
 | SD18 | tools.schemas(scope) | 当前工具可见面与引导收窄 |
 | SD19 | ToolRuntime.register/definition | save 工具 schema/render/execute |
@@ -185,7 +185,7 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 1. isolate 审计：`mountPreset/leakedServices` 对未隔离 root service 抛错；必要/保险名单必须保持 `isolate: true`。
 2. settings 换代：0.2 独立 `settings.plugins.tab` 按本轮需求移除；0.1.7 `plugins.row.config` keyed row 接线保留并由 0.1.7/0.2 支持构建携带，宿主提供对应 legacy slot 时显示插件详情配置，slot 缺失时走 configEditor/SettingsForms 或 profile 权威行后备路径；settings 行 10 项 Config、API、投影、preset-sync/live-config 仍是活动后端合同；双版本 post-fix UI/A09/A10/A11 仍待 HUMAN。
 3. profile patch 载体：旧 `.agent-presets` 无读取方；`compatibility.json`/peer 门控可能使 bundle skipped、loader disabled；QQBot 仍有 allow-build/postinstall 欠账。
-4. 包/服务换代：workflow-ptc、`ptcRuntime`、tool:cordis 删除、当前两项 Cordis 工具与 `customSkillDirs` 必须按当前真值核对。
+4. 包/服务换代：workflow-ptc、`ptcRuntime`、tool:cordis 删除、当前两项 Cordis 工具与 `bundledSkillDir`（0.2.0-rc.2 换通道，配 `watch:false`；旧 `customSkillDirs` 已删）必须按当前真值核对。
 5. rc.2 单侧风险：`sanitizeProfile` 整体搬移 patch、`configEditor.edit` 值等于继承层删行；rc.1 现场缺失，不能推出跨代结论。
 6. session v4：`session.v4.jsonl.zstd`、自有 source.kind、developer/message 坐标和 step-07 三代候选必须保留。
 7. CF12 422 开放 incident：profile 中宿主运行时副本曾导致 `tool_removal` 422；清理 profile node_modules/lock、污染会话续聊、native↔PTC 切换三项均待用户验证。

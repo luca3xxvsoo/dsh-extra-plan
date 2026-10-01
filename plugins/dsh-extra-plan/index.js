@@ -1538,10 +1538,12 @@ export function apply(ctx, config) {
   // 旧实现（0.1.2-rc.1~0.1.5-rc.2）在 apply 期经 agentPresets.resolve('cordis') 取 shipped
   // 预设目录后 skills.register 两个 SKILL.md。dsh 0.1.7-rc.1 的 resolve() 只返回 {id[,broken]}，
   // 恒无 path → 整块静默失效（预设挂载成功但 skill 永远不注册）。
-  // 现取径 = 静态注册：预设 skill-filesystem 行的 config.customSkillDirs 指向
+  // 现取径 = 静态注册：预设 skill-filesystem 行的 config.bundledSkillDir 指向
   // @deepseek-ai/dsh-agent-preset 包内 skills/（见 agent.cordis.yml），三个 SKILL.md 随
-  // skill-filesystem 行进入本预设组合；creativeMode=false 不再靠「不注册」，而由
-  // assembly-presentation 的 CREATIVE_SKILL_NAMES 在 catalog 投影里隐藏（语义等价）。
+  // skill-filesystem 行进入本预设组合；0.2.0-rc.2 换通道：旧 customSkillDirs 经 ctx.fs 扫 asar 抛
+  // 非 absent 错被 registry 整体跳过，故改 bundledSkillDir（trustedHost → node:fs）+ watch: false；
+  // creativeMode=false 不再靠「不注册」，而由 assembly-presentation 的 CREATIVE_SKILL_NAMES 在
+  // catalog 投影里隐藏（语义等价）。
 
   // childBaseline/usageRoleOf 与 sandbox floor 由每次 apply 独立创建的 agent runtime 工厂提供。
 
@@ -1642,8 +1644,9 @@ export function apply(ctx, config) {
   // 续轮转达机械拼接 plannerPromptSuffix（「任务要求 + 空行 + 配置文本」——宿主
   // exec.arguments 与消息对象均 deepFreeze，拼接走 pre-step 消息替换通道，
   // 与 agent-instructions 基线注入同通道）。
-  // C=0：三个官方 cordis skill 由 skill-filesystem 的 customSkillDirs 静态注册进本预设组合
-  // （不再靠「不注册」），一律从模型可见 catalog 隐藏——与旧「不注册」语义等价。
+  // C=0：三个官方 cordis skill 由 skill-filesystem 的 bundledSkillDir 静态注册进本预设组合
+  // （0.2.0-rc.2 换通道，旧 customSkillDirs 走 ctx.fs 扫 asar 会抛错；不再靠「不注册」），
+  // 一律从模型可见 catalog 隐藏——与旧「不注册」语义等价。
   // C=1：保留原 HP1 首轮暂隐逻辑（仅 A=1、F、main/planner、M=ptc 的极简首轮）。
   function shouldHideCreativeCatalog(agent) {
     if (!creativeModeOn()) return true

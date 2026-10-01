@@ -1778,15 +1778,16 @@ checkTrue('Cordis 固定集合恰有 2 项且名称唯一', MATRIX_CORDIS_TOOLS.
 const projectionSource = { tools: [{ name: 'read' }, { name: MATRIX_CORDIS_TOOLS[0] }], sections: [{ name: 'tool:cordis', text: 'hidden' }, { name: 'tools:sdk', text: 'old' }] }
 const projectionCopy = projectAssemblyForPresentation(projectionSource, projectionSource.tools, { sdkText: 'read:' })
 checkTrue('projectAssemblyForPresentation 返回新 assembly 且不原地修改', projectionCopy !== projectionSource && projectionSource.tools.length === 2 && projectionSource.sections[0].name === 'tool:cordis' && projectionCopy.tools.length === 1 && projectionCopy.tools[0].name === 'read' && sectionText(projectionCopy, 'tool:cordis') === '' && sectionText(projectionCopy, 'tools:sdk') === 'read:')
-// C=1 创造 skill 面（0.1.7 静态注册）：预设 skill-filesystem 行的 config.customSkillDirs
-// 指向官方包内 skills/（含 3 个 SKILL.md 目录）；表达式逐字含 createRequire(baseUrl) 与 'skills'。
+// C=1 创造 skill 面（0.2.0-rc.2 换通道）：预设 skill-filesystem 行的 config.bundledSkillDir
+// 指向官方包内 skills/（含 3 个 SKILL.md 目录）并配 watch: false；旧键 customSkillDirs 已删（坏通道）。
 const expectedCreativeSkills = ['cordis-plugin-development', 'editing-cordis-compositions', 'cordis-composition-reference']
 {
   const skillFsRow = all.find((row) => row.id === 'skill-filesystem')
-  const dirs = skillFsRow !== undefined && skillFsRow.config !== undefined && Array.isArray(skillFsRow.config.customSkillDirs) ? skillFsRow.config.customSkillDirs : []
-  checkTrue('T9-3a 预设 skill-filesystem 行 config.customSkillDirs 存在（恰 1 项）', skillFsRow !== undefined && dirs.length === 1)
-  checkTrue("T9-3b customSkillDirs 表达式逐字含 createRequire(baseUrl).resolve('@deepseek-ai/dsh-agent-preset/package.json') 与 'skills'",
-    presetText.includes("createRequire(baseUrl).resolve('@deepseek-ai/dsh-agent-preset/package.json')") && presetText.includes("'skills'"))
+  const skillFsConfig = skillFsRow !== undefined && skillFsRow.config !== undefined ? skillFsRow.config : undefined
+  const bundledDir = skillFsConfig === undefined ? undefined : skillFsConfig.bundledSkillDir
+  checkTrue('T9-3a 预设 skill-filesystem 行 config.watch === false 且 config.bundledSkillDir 为 string', skillFsConfig !== undefined && skillFsConfig.watch === false && typeof bundledDir === 'string')
+  checkTrue("T9-3b bundledSkillDir 表达式逐字含 createRequire(baseUrl) 与 'skills'，且 config.customSkillDirs === undefined",
+    typeof bundledDir === 'string' && bundledDir.includes('createRequire(baseUrl)') && bundledDir.includes("'skills'") && skillFsConfig.customSkillDirs === undefined)
 }
 // 隐藏集合（C=0 语义等价旧「不注册」）：三 id 全在 CREATIVE_SKILL_NAMES，且 C=0 时从 catalog 隐藏。
 const skillCatalogFixture = (names) => ({

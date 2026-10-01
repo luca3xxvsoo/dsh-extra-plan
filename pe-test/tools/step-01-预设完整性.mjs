@@ -254,8 +254,15 @@ check('T1 isolate 名单随组搬迁且值全为布尔 true（含 subagentModelS
   Object.values(delegationGroup.isolate).concat(Object.values(compactionGroup.isolate), Object.values(extraPlanGroup.isolate)).every((value) => value === true))
 check('T1 声明行 plugins 内不存在 @deepseek-ai/dsh-workflow-worker-thread / @deepseek-ai/dsh-agent-presets（复数包名）',
   !patchText.includes('@deepseek-ai/dsh-workflow-worker-thread') && !patchText.includes('@deepseek-ai/dsh-agent-presets'))
-check('T1 skill-filesystem 行 config.customSkillDirs 表达式逐字含 createRequire(baseUrl) 与 skills',
-  agentText.includes("customSkillDirs:") && agentText.includes("createRequire(baseUrl).resolve('@deepseek-ai/dsh-agent-preset/package.json')") && agentText.includes("'skills')"))
+// 0.2.0-rc.2 换通道：config.customSkillDirs（ctx.fs 扫 asar 抛非 absent 错）→ bundledSkillDir + watch: false。
+const skillFsBlockText = agentText.slice(agentText.indexOf('- id: skill-filesystem'), agentText.indexOf('- id: tool-skill'))
+const skillFsConfigText = skillFsBlockText.slice(skillFsBlockText.indexOf('\n  config:') + 1)
+const skillFsRow = Array.isArray(rows) ? rows.find((row) => row.id === 'skill-filesystem') : undefined
+check('T1 skill-filesystem 行 config 含 watch: false 与 bundledSkillDir 表达式逐字含 createRequire(baseUrl) 与 skills、不含 customSkillDirs',
+  skillFsRow !== undefined && skillFsRow.config !== undefined && skillFsRow.config.watch === false &&
+  skillFsConfigText.includes('watch: false') && skillFsConfigText.includes('bundledSkillDir:') &&
+  skillFsConfigText.includes("createRequire(baseUrl).resolve('@deepseek-ai/dsh-agent-preset/package.json')") && skillFsConfigText.includes("'skills')") &&
+  !skillFsConfigText.includes('customSkillDirs:'))
 check('T1 头注释已改 dsh-agent-preset-registry（不再写 dsh-agent-presets 会拒绝挂载）',
   !agentText.includes('dsh-agent-presets 会拒绝挂载') && agentText.includes('dsh-agent-preset-registry 会拒绝挂载'))
 check('T1 workflow-ptc 行 config.provider 保留 extra-executor-spawn',
