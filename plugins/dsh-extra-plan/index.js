@@ -1543,7 +1543,7 @@ export function apply(ctx, config) {
   // skill-filesystem 行进入本预设组合；0.2.0-rc.2 换通道：旧 customSkillDirs 经 ctx.fs 扫 asar 抛
   // 非 absent 错被 registry 整体跳过，故改 bundledSkillDir（trustedHost → node:fs）+ watch: false；
   // creativeMode=false 不再靠「不注册」，而由 assembly-presentation 的 CREATIVE_SKILL_NAMES 在
-  // catalog 投影里隐藏（语义等价）。
+  // catalog 投影里隐藏（只去掉名字可见性：skill 仍注册，按名调用依旧可加载，不等于真隔离）。
 
   // childBaseline/usageRoleOf 与 sandbox floor 由每次 apply 独立创建的 agent runtime 工厂提供。
 
@@ -1646,7 +1646,7 @@ export function apply(ctx, config) {
   // 与 agent-instructions 基线注入同通道）。
   // C=0：三个官方 cordis skill 由 skill-filesystem 的 bundledSkillDir 静态注册进本预设组合
   // （0.2.0-rc.2 换通道，旧 customSkillDirs 走 ctx.fs 扫 asar 会抛错；不再靠「不注册」），
-  // 一律从模型可见 catalog 隐藏——与旧「不注册」语义等价。
+  // 一律从模型可见 catalog 隐藏——只影响名字可见性，skill 仍注册、按名调用仍可加载。
   // C=1：保留原 HP1 首轮暂隐逻辑（仅 A=1、F、main/planner、M=ptc 的极简首轮）。
   function shouldHideCreativeCatalog(agent) {
     if (!creativeModeOn()) return true

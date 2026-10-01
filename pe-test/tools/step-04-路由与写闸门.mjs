@@ -1789,7 +1789,7 @@ const expectedCreativeSkills = ['cordis-plugin-development', 'editing-cordis-com
   checkTrue("T9-3b bundledSkillDir 表达式逐字含 createRequire(baseUrl) 与 'skills'，且 config.customSkillDirs === undefined",
     typeof bundledDir === 'string' && bundledDir.includes('createRequire(baseUrl)') && bundledDir.includes("'skills'") && skillFsConfig.customSkillDirs === undefined)
 }
-// 隐藏集合（C=0 语义等价旧「不注册」）：三 id 全在 CREATIVE_SKILL_NAMES，且 C=0 时从 catalog 隐藏。
+// 隐藏集合（C=0 只从 catalog 去名，旧「不注册」已废）：三 id 全在 CREATIVE_SKILL_NAMES，且 C=0 时从 catalog 隐藏。
 const skillCatalogFixture = (names) => ({
   kind: 'enter',
   messages: [{
