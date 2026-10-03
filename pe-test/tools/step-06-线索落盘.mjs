@@ -1,7 +1,7 @@
 // save_probe 注册、五态闸门、planner 预算、持久化与故障注入回归：
 // 注册保持 save_probe/save_plan 的角色可见性；闸门覆盖 none/plan/direct/cancel/channelBroken
 // 五种结果；18 个成功配对耗尽预算且 save_plan 不豁免。持久化覆盖
-// 原子双写/单写、journal 恢复及各 final fs 依赖注入，不做全局 monkeypatch。
+// 原子双写/单写、journal 恢复及各 final fs 依赖注入；fs 故障注入不做全局 monkeypatch；O1 只在 try/finally 临界区固定并恢复 Date。
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync, renameSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -34,7 +34,8 @@ function restoreIsolatedEnv() {
 process.on('exit', restoreIsolatedEnv)
 
 const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
-const { saveArtifactBase } = await import(pathToFileURL(fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/save-contract.js', import.meta.url))).href)
+const saveContractNamespace = await import(pathToFileURL(fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/save-contract.js', import.meta.url))).href)
+const { saveArtifactBase } = saveContractNamespace
 const { createSaveToolFactories } = await import(pathToFileURL(fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/save-tool-factories.js', import.meta.url))).href)
 import { DEFAULT_EXPLORE_BUDGET } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
 import { parsePresetYaml } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
@@ -70,6 +71,7 @@ const { atomicCommit, recoverJournals } = await import(pathToFileURL(PERSISTENCE
 
 let pass = 0
 let fail = 0
+checkTrue('T1 save-contract 收回 savePlanBase 且保留 saveArtifactBase', !Object.prototype.hasOwnProperty.call(saveContractNamespace, 'savePlanBase') && typeof saveContractNamespace.saveArtifactBase === 'function')
 function check(name, got, expected) {
   const okResult = JSON.stringify(got) === JSON.stringify(expected)
   if (okResult) { pass += 1 } else { fail += 1 }
@@ -464,6 +466,32 @@ try {
   mkdirSync(work)
   writeFileSync(join(work, 'a.txt'), 'hello')
   const execFake = (cwd) => ({ agent: { session: { header: { cwd, id: 'smoke-exec-1' } } } })
+  const contextProbeArgs = {
+    taskName: 'context',
+    fileMap: [{ path: join(work, 'a.txt'), relation: '相关文件' }],
+    focusAreas: [{ path: join(work, 'a.txt'), note: '重点' }],
+    exclusions: [{ note: '排除说明' }],
+    background: [{ topic: '背景', detail: '细节' }],
+  }
+  const missingCwdExec = { agent: { session: { header: { id: 'missing-cwd' } } } }
+  const invalidIdExec = { agent: { session: { header: { cwd: work, id: '---' } } } }
+  let missingCwdMessage = ''
+  let invalidIdMessage = ''
+  try { await saveProbeDef.execute(contextProbeArgs, missingCwdExec) } catch (error) { missingCwdMessage = String(error.message) }
+  try { await saveProbeDef.execute(contextProbeArgs, invalidIdExec) } catch (error) { invalidIdMessage = String(error.message) }
+  checkTrue('T3 缺 cwd 在 validateProbe 后按原文案拒绝', missingCwdMessage === 'save_probe: 会话缺少工作区路径，无法落盘')
+  checkTrue('T3 非法 session id 按原文案拒绝', invalidIdMessage === 'save_probe: 会话缺少有效标识，无法隔离落盘事务')
+  const contextCalls = []
+  const contextFactory = createSaveToolFactories({
+    savePlanDir: '.extra-plan',
+    recoverJournals: (...args) => contextCalls.push(['recover', args]),
+    atomicCommit: (...args) => contextCalls.push(['atomic', args]),
+  })
+  const contextPlanResult = await contextFactory.defineSavePlan().execute({ plan: 'p'.repeat(300), checklist: 'c'.repeat(300), taskName: 'order' }, execFake(work))
+  const contextProbeResult = await contextFactory.defineSaveProbe().execute({ ...contextProbeArgs, taskName: 'order-probe', fileMap: [{ path: 'a.txt', relation: '相关文件' }], focusAreas: [{ path: 'a.txt', note: '重点' }] }, execFake(work))
+  const atomicCalls = contextCalls.filter((item) => item[0] === 'atomic')
+  checkTrue('T3 recoverJournals 严格先于两次 atomicCommit', contextCalls.map((item) => item[0]).join('|') === 'recover|atomic|recover|atomic')
+  checkTrue('T3 save_plan 提交双文件且返回 paths，save_probe 提交单文件且返回 path', atomicCalls.length === 2 && atomicCalls[0][1][2].length === 2 && atomicCalls[1][1][2].length === 1 && Array.isArray(contextPlanResult.paths) && typeof contextProbeResult.path === 'string')
   const probeResult = await saveProbeDef.execute({
     taskName: 'smoke',
     fileMap: [{ path: 'a.txt', relation: '相关文件' }],
@@ -499,6 +527,33 @@ try {
     try { await invalidProbe.execute(badArgs, execFake(work)) } catch {}
   }
   checkTrue('S20a 非法 args 先校验且零副作用（recover/atomic/rename/unlink 均为 0）', invalidEffects.recover === 0 && invalidEffects.atomic === 0)
+  const RealDate = globalThis.Date
+  const fixedMillis = 1893456000123
+  class FixedDate extends RealDate {
+    constructor(...args) {
+      super(...(args.length === 0 ? [fixedMillis] : args))
+    }
+  }
+  let baseBefore
+  let baseAfter
+  try {
+    globalThis.Date = FixedDate
+    baseBefore = saveArtifactBase('sequence', 'session-123456')
+    try {
+      await invalidProbe.execute(null, execFake(work))
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== 'save_probe: 参数必须是对象（四字段 fileMap/focusAreas/exclusions/background 均为数组）') throw error
+    }
+    baseAfter = saveArtifactBase('sequence', 'session-123456')
+  } finally {
+    globalThis.Date = RealDate
+  }
+  const artifactTail = /-(\d{17})-(\d+)-(\d+)$/
+  const beforeMatch = baseBefore.match(artifactTail)
+  const afterMatch = baseAfter.match(artifactTail)
+  const beforeSeq = beforeMatch === null ? NaN : Number(beforeMatch[3])
+  const afterSeq = afterMatch === null ? NaN : Number(afterMatch[3])
+  checkTrue('S20c 非法 save_probe 不消耗同毫秒序号且固定 Date 已恢复', globalThis.Date === RealDate && beforeMatch !== null && afterMatch !== null && beforeMatch[1] === afterMatch[1] && beforeMatch[2] === String(process.pid) && afterMatch[2] === String(process.pid) && Number.isInteger(beforeSeq) && Number.isInteger(afterSeq) && afterSeq === beforeSeq + 1 && invalidEffects.recover === 0 && invalidEffects.atomic === 0)
   const baseA = saveArtifactBase('collision', 'session-123456')
   const baseB = saveArtifactBase('collision', 'session-123456')
   checkTrue('S20b 同 task/session 同毫秒连续 base 不碰撞且含毫秒/pid/序号', baseA !== baseB && /collision-session1-\d{17}-\d+-\d+/.test(baseA) && /collision-session1-\d{17}-\d+-\d+/.test(baseB))

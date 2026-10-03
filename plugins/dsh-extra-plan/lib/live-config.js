@@ -8,25 +8,18 @@
 // 10 项共享同一 row locator：8 项在此热读，2 项由宿主装载期快照消费，投影改变后需重启宿主。
 
 import { statSync, readFileSync } from 'node:fs'
-import { DEFAULT_PLANNER_PROMPT_SUFFIX } from './preset-defaults.generated.js'
 import {
+  EXTRA_PLAN_SETTING_DEFINITIONS,
   HOST_ROW_SETTING_DEFINITIONS,
   SETTING_DEFINITIONS,
-  TOOL_PRESENTATION_MODES,
   captureRowSettings,
+  getSettingDefinition,
+  normalizeSettingValue,
+  validateSettingValue,
 } from './preset-settings.js'
 
 // 8 个热读键（与 SETTING_DEFINITIONS 中 extra-plan 组一致）。
-const LIVE_KEYS = Object.freeze([
-  'anchoredBootstrap',
-  'creativeMode',
-  'runcodeCatchGate',
-  'crossProviderPlannerModel',
-  'plannerModel',
-  'plannerPromptSuffix',
-  'exploreBudget',
-  'otherAgentModel',
-])
+const LIVE_KEYS = Object.freeze(EXTRA_PLAN_SETTING_DEFINITIONS.map((item) => item.key))
 
 // 2 项宿主行设置键（权威值同在 settings 行；消费方是宿主行装载期快照 → 改后需重启）。
 const HOST_ROW_KEYS = Object.freeze(HOST_ROW_SETTING_DEFINITIONS.map((item) => item.key))
@@ -35,18 +28,9 @@ const READ_KEYS = Object.freeze([...LIVE_KEYS, ...HOST_ROW_KEYS])
 
 // 调用方未提供 fallbackDefaults 时的内置兜底（与 index.js apply 期 cfg 快照同口径；
 // 各键兜底与资产模板叶值 / settings.js Config 默认值同源（同一生成常量）逐字一致）。
-const BUILTIN_DEFAULTS = Object.freeze({
-  anchoredBootstrap: true,
-  creativeMode: false,
-  runcodeCatchGate: false,
-  crossProviderPlannerModel: false,
-  plannerModel: 'deepseek-v4-pro',
-  plannerPromptSuffix: DEFAULT_PLANNER_PROMPT_SUFFIX,
-  exploreBudget: 18,
-  otherAgentModel: '',
-  webFetch: false,
-  toolPresentationMode: 'native',
-})
+const BUILTIN_DEFAULTS = Object.freeze(Object.fromEntries(
+  SETTING_DEFINITIONS.map((item) => [item.key, item.defaultValue]),
+))
 
 function textOf(value) {
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : ''
@@ -77,32 +61,10 @@ function statStamp(path) {
   }
 }
 
-function booleanOr(raw, fallbackValue) {
-  return raw === true ? true : raw === false ? false : fallbackValue
-}
-
-function stringOr(raw, fallbackValue) {
-  return typeof raw === 'string' ? raw : fallbackValue
-}
-
-function positiveIntegerOr(raw, fallbackValue) {
-  return typeof raw === 'number' && Number.isInteger(raw) && raw > 0 ? raw : fallbackValue
-}
-
-function modeOr(raw, fallbackValue) {
-  return typeof raw === 'string' && TOOL_PRESENTATION_MODES.includes(raw) ? raw : fallbackValue
-}
-
 function pick(key, raw, fallbackValue) {
-  if (key === 'anchoredBootstrap' || key === 'creativeMode' || key === 'runcodeCatchGate' || key === 'crossProviderPlannerModel' || key === 'webFetch') {
-    return booleanOr(raw, fallbackValue)
-  }
-  if (key === 'plannerModel' || key === 'otherAgentModel') {
-    return typeof raw === 'string' ? raw.trim() : fallbackValue
-  }
-  if (key === 'exploreBudget') return positiveIntegerOr(raw, fallbackValue)
-  if (key === 'toolPresentationMode') return modeOr(raw, fallbackValue)
-  return stringOr(raw, fallbackValue)
+  const definition = getSettingDefinition(key)
+  if (!validateSettingValue(definition, raw)) return fallbackValue
+  return normalizeSettingValue(definition, raw)
 }
 
 function normalizedFallback(fallbackDefaults) {

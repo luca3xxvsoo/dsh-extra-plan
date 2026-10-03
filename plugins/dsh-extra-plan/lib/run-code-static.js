@@ -1,4 +1,6 @@
 // run_code 静态解析与理由函数：只接收普通参数，不持有宿主/会话运行时状态。
+import { maskCodeLiteralsAndComments, sliceBalancedArgs, collectRunCodeSites, hasDynamicRunCodeAccess } from './run-code-scanner.js'
+
 
 // run_code 静态写模式扫描黑名单（F7'，自写正则无依赖）：防偶然写；防刻意绕过有限
 // （动态 require/Function 构造/编码拼串不覆盖，见风险 R1）。白名单例外=不在黑名单：
@@ -176,70 +178,6 @@ export function createRunCodeStatic({ askTool, isDispatchStart }) {
   // run_code 拆解、组判定与聚合共用单一纯函数实现；直呼与组成员路径不复制规则，
   // 闭包依赖显式传入，分支顺序与 listener 合同保持一致。
   
-  // 遮蔽代码中的字符串字面量（'...'/"..."/`...`）与注释（//、/* */）为等长空格
-  // （保留换行/回车），消除字符串/注释内 tools.xxx 或裸写词的误提取；遮蔽后无引号，
-  // 后续括号配平不受字符串内括号干扰（未闭合字符串/注释保守遮蔽至末尾）。
-  function maskCodeLiteralsAndComments(code) {
-    const text = typeof code === 'string' ? code : ''
-    const chars = text.split('')
-    const n = chars.length
-    let i = 0
-    while (i < n) {
-      const ch = chars[i]
-      if (ch === "'" || ch === '"' || ch === '`') {
-        const quote = ch
-        let j = i + 1
-        while (j < n) {
-          if (chars[j] === '\\') { j += 2; continue }
-          if (chars[j] === quote) break
-          j += 1
-        }
-        const end = j < n ? j : n - 1
-        for (let k = i; k <= end; k += 1) { if (chars[k] !== '\n' && chars[k] !== '\r') chars[k] = ' ' }
-        i = j < n ? j + 1 : n
-        continue
-      }
-      if (ch === '/' && i + 1 < n && chars[i + 1] === '/') {
-        let j = i
-        while (j < n && chars[j] !== '\n') j += 1
-        for (let k = i; k < j; k += 1) { if (chars[k] !== '\n' && chars[k] !== '\r') chars[k] = ' ' }
-        i = j
-        continue
-      }
-      if (ch === '/' && i + 1 < n && chars[i + 1] === '*') {
-        let j = i + 2
-        while (j + 1 < n && !(chars[j] === '*' && chars[j + 1] === '/')) j += 1
-        const end = j + 1 < n ? j + 1 : n - 1
-        for (let k = i; k <= end; k += 1) { if (chars[k] !== '\n' && chars[k] !== '\r') chars[k] = ' ' }
-        i = j + 2
-        continue
-      }
-      i += 1
-    }
-    return chars.join('')
-  }
-  
-  // 从 '（' 起括号配平（计数 ( ) [ ] { }，遮蔽后无字符串干扰）取参数切片：
-  // 在遮蔽文本上配平，innerText 取原文本（JSON.parse 需要原始字面量）。
-  // 返回 { closeIdx（配平闭括号索引，未闭合取文本末尾）, innerText }。
-  function sliceBalancedArgs(maskedText, text, parenIdx) {
-    let depth = 0
-    let i = parenIdx
-    while (i < maskedText.length) {
-      const ch = maskedText[i]
-      if (ch === '(') depth += 1
-      else if (ch === ')') { depth -= 1; if (depth === 0) break }
-      else if (ch === '[') depth += 1
-      else if (ch === ']') depth -= 1
-      else if (ch === '{') depth += 1
-      else if (ch === '}') depth -= 1
-      i += 1
-    }
-    const closeIdx = i < maskedText.length ? i : text.length - 1
-    const innerText = text.slice(parenIdx + 1, i < maskedText.length ? i : text.length)
-    return { closeIdx, innerText }
-  }
-  
   // 拆解 run_code 的 code 文本为工具组（静态预审用）。返回 { members, dynamic }：
   // members = 去重后的组员数组（按出现顺序；裸写伪成员固定排末尾）；
   // dynamic = 是否出现静态不可解析的动态工具访问（tools[var] 等）——不计入组，运行时瀑布兜底。
@@ -252,20 +190,13 @@ export function createRunCodeStatic({ askTool, isDispatchStart }) {
   function decomposeRunCode(code) {
     const text = typeof code === 'string' ? code : ''
     const members = []
-    let dynamic = false
-    if (text === '') return { members, dynamic }
+    if (text === '') return { members, dynamic: false }
     const masked = maskCodeLiteralsAndComments(text)
-    const n = text.length
-    const occupied = new Array(n).fill(false)
+    const occupied = new Array(text.length).fill(false)
     const seen = new Set()
     const addMember = (member) => {
       // 去重键 = name + '\u0001' + (argsParsed ? JSON.stringify(args) : '#raw:' + argsText)。
-      // 设计理由：闸门判定结果完全由 name+arguments 决定（参数依赖检查：run_in_background/
-      // wait/sandbox_permissions/agent_id/command/questions）；同名同参重复调用判定恒同 →
-      // 合并去重，避免重复报错行；同名不同参必须各自判定（如 subagent_probe 带/不带
-      // run_in_background）；不可解析参数同名合并（参数依赖检查被跳过，判定结果与具体
-      // 参数无关）。已注明边界：JSON.stringify 依赖键序，键序不同但语义相同的字面量
-      // 视为不同成员（各自判定，安全方向）。
+      // 同名同参重复调用判定恒同，合并去重；同名不同参分别保留。
       const key = member.kind === 'bare-write'
         ? 'bare-write\u0001' + member.hints.join('\u0001')
         : member.name + '\u0001' + (member.argsParsed ? JSON.stringify(member.args) : '#raw:' + member.argsText)
@@ -276,96 +207,19 @@ export function createRunCodeStatic({ askTool, isDispatchStart }) {
     const markRange = (start, end) => {
       for (let k = start; k <= end && k < occupied.length; k += 1) occupied[k] = true
     }
-    const isIdChar = (ch) => ch !== undefined && /[A-Za-z0-9_$]/.test(ch)
-    let i = 0
-    while (i < n) {
-      const ch = text[i]
-      // ① 跳过字符串字面量与注释（遮蔽版 masked 已把对应位置留空格；扫描须在原序列
-      //    上跳过起始符，避免把字符串/注释内的 tools.xxx 当调用提取）
-      if (ch === "'" || ch === '"' || ch === '`') {
-        const quote = ch
-        let j = i + 1
-        while (j < n) {
-          if (text[j] === '\\') { j += 2; continue }
-          if (text[j] === quote) break
-          j += 1
-        }
-        i = j < n ? j + 1 : n
-        continue
-      }
-      if (ch === '/' && i + 1 < n && text[i + 1] === '/') {
-        while (i < n && text[i] !== '\n') i += 1
-        continue
-      }
-      if (ch === '/' && i + 1 < n && text[i + 1] === '*') {
-        const end = text.indexOf('*/', i + 2)
-        i = end === -1 ? n : end + 2
-        continue
-      }
-      // ② 提取工具调用（含 await 前缀无关；支持 tools.xxx(...) 与 tools['xxx'](...)/
-      //    tools["xxx"](...) 字面量方括号）；③ tools[ 的非字面量方括号访问
-      //    （如 tools[var]、tools[`x`]）→ dynamic = true，不产生成员。
-      if (text.startsWith('tools', i) && !(i > 0 && isIdChar(text[i - 1]))) {
-        let j = i + 5
-        while (j < n && /\s/.test(text[j])) j += 1
-        let name
-        let parenIdx = -1
-        if (text[j] === '.') {
-          j += 1
-          while (j < n && /\s/.test(text[j])) j += 1
-          const m = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(text.slice(j))
-          if (m !== null) {
-            name = m[0]
-            let k = j + name.length
-            while (k < n && /\s/.test(text[k])) k += 1
-            if (text[k] === '(') parenIdx = k
-          }
-        } else if (text[j] === '[') {
-          j += 1
-          while (j < n && /\s/.test(text[j])) j += 1
-          const q = text[j]
-          if (q === "'" || q === '"') {
-            let k = j + 1
-            while (k < n && text[k] !== q) { if (text[k] === '\\') k += 1; k += 1 }
-            const lit = text.slice(j + 1, k)
-            if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(lit) && k < n) {
-              k += 1
-              while (k < n && /\s/.test(text[k])) k += 1
-              if (text[k] === ']') {
-                k += 1
-                while (k < n && /\s/.test(text[k])) k += 1
-                if (text[k] === '(') { name = lit; parenIdx = k }
-              }
-            }
-            // 字面量名非法或形态不符 → 静态不可解析
-            if (name === undefined) dynamic = true
-          } else {
-            // tools[var] / tools[`x`] / tools[expr] → 动态访问
-            dynamic = true
-          }
-        }
-        if (name !== undefined && parenIdx !== -1) {
-          // 自 '(' 起括号配平（遮蔽后无字符串干扰），取参数原文 innerText
-          const bal = sliceBalancedArgs(masked, text, parenIdx)
-          const innerText = bal.innerText.trim()
-          // ④ 参数解析：严格 JSON 或安全 JS literal 子集 → argsParsed=true；
-          //    变量/调用/污染键等失败时保留 argsText，交由运行时瀑布兜底。
-          const parsed = parseStaticLiteral(innerText)
-          const argsParsed = parsed.ok
-          const args = argsParsed ? parsed.value : null
-          addMember({ kind: 'tool', name, argsParsed, args, argsText: innerText })
-          markRange(i, bal.closeIdx)
-          i = bal.closeIdx + 1
-          continue
-        }
-      }
-      i += 1
+    // 调用点唯一由共享扫描器提取；动态 tools[...] 访问不生成静态成员。
+    const sites = collectRunCodeSites(text, masked)
+    const dynamic = hasDynamicRunCodeAccess(text, masked, sites)
+    for (const site of sites) {
+      if (site.name === undefined) continue
+      const argsText = site.innerText
+      const parsed = parseStaticLiteral(argsText)
+      const argsParsed = parsed.ok
+      const args = argsParsed ? parsed.value : null
+      addMember({ kind: 'tool', name: site.name, argsParsed, args, argsText })
+      markRange(site.start, site.end)
     }
-    // ⑥ 裸写扫描：对遮蔽后文本中已提取工具调用区间之外的剩余片段跑 codeMutationHints
-    //    （复用 RUNCODE_MUTATION_HINTS）→ hits 非空 → 追加一个 { kind:'bare-write',
-    //    name:'write', hints:hits } 成员（排末尾；多个裸写命中合并为一个）。
-    //    裸写扫描在已识别工具调用区间之外进行，参数字符串中的写词不误判；
-    //    直接写调用仍按 RUNCODE_MUTATION_HINTS 命中。
+    // 裸写扫描只看已识别调用点占用区间之外的 masked 文本。
     const restChars = masked.split('')
     for (let k = 0; k < occupied.length; k += 1) { if (occupied[k]) restChars[k] = ' ' }
     const hints = codeMutationHints(restChars.join(''))
@@ -449,94 +303,6 @@ export function createRunCodeStatic({ askTool, isDispatchStart }) {
     if (total < 2) return null
     if (protectedCount === total) return null
     return 'run_code 内 ' + total + ' 个工具调用未全部独立容错：请给每个调用点各写一个独立 try/catch——一次只包 1 个调用、块后紧跟 catch。已保护 ' + protectedCount + ' 个。写法示例：try { await tools.read({ file_path: "x" }) } catch (e) {}'
-  }
-  
-  // run_code 调用点收集（镜像 decomposeRunCode 提取语义；不去重、只记 {start,end,innerText,name}）。
-  // 自 runCodeCatchGateReason 局部 collectSites 提升为模块顶层（任务1）：字符串/注释跳过、
-  // tools./tools['lit']/tools[var] 三类调用点、sliceBalancedArgs 配平；逻辑逐字未动。
-  function collectRunCodeSites(txt, msk) {
-      const sites = []
-      const tlen = txt.length
-      let i = 0
-      while (i < tlen) {
-        const ch = txt[i]
-        // 跳过字符串字面量与注释（原序列上跳过起始符，避免字符串/注释内 tools.x 当调用提取）
-        if (ch === "'" || ch === '"' || ch === '`') {
-          const quote = ch
-          let j = i + 1
-          while (j < tlen) {
-            if (txt[j] === '\\') { j += 2; continue }
-            if (txt[j] === quote) break
-            j += 1
-          }
-          i = j < tlen ? j + 1 : tlen
-          continue
-        }
-        if (ch === '/' && i + 1 < tlen && txt[i + 1] === '/') {
-          while (i < tlen && txt[i] !== '\n') i += 1
-          continue
-        }
-        if (ch === '/' && i + 1 < tlen && txt[i + 1] === '*') {
-          const end = txt.indexOf('*/', i + 2)
-          i = end === -1 ? tlen : end + 2
-          continue
-        }
-        if (txt.startsWith('tools', i) && !(i > 0 && txt[i - 1] !== undefined && /[A-Za-z0-9_$]/.test(txt[i - 1]))) {
-          let j = i + 5
-          while (j < tlen && /\s/.test(txt[j])) j += 1
-          let name = undefined
-          let parenIdx = -1
-          if (txt[j] === '.') {
-            j += 1
-            while (j < tlen && /\s/.test(txt[j])) j += 1
-            const m = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(txt.slice(j))
-            if (m !== null) {
-              const mName = m[0]
-              let k = j + mName.length
-              while (k < tlen && /\s/.test(txt[k])) k += 1
-              if (txt[k] === '(') { name = mName; parenIdx = k }
-            }
-          } else if (txt[j] === '[') {
-            j += 1
-            while (j < tlen && /\s/.test(txt[j])) j += 1
-            const q = txt[j]
-            if (q === "'" || q === '"') {
-              let k = j + 1
-              while (k < tlen && txt[k] !== q) { if (txt[k] === '\\') k += 1; k += 1 }
-              const lit = txt.slice(j + 1, k)
-              if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(lit) && k < tlen) {
-                k += 1
-                while (k < tlen && /\s/.test(txt[k])) k += 1
-                if (txt[k] === ']') {
-                  k += 1
-                  while (k < tlen && /\s/.test(txt[k])) k += 1
-                  if (txt[k] === '(') { name = lit; parenIdx = k }
-                }
-              }
-            } else {
-              // tools[var]/tools[expr] 动态访问：跳到 ']' 后 ws 再找 '('（找不到 '(' 不计，
-              // 如 const t = tools[fn] 非调用）
-              let k = j
-              let depth = 1
-              while (k < tlen && depth > 0) {
-                if (txt[k] === '[') depth += 1
-                else if (txt[k] === ']') depth -= 1
-                k += 1
-              }
-              while (k < tlen && /\s/.test(txt[k])) k += 1
-              if (txt[k] === '(') parenIdx = k
-            }
-          }
-          if (parenIdx !== -1) {
-            const bal = sliceBalancedArgs(msk, txt, parenIdx)
-            sites.push({ start: i, end: bal.closeIdx, innerText: bal.innerText.trim(), name })
-            i = bal.closeIdx + 1
-            continue
-          }
-        }
-        i += 1
-      }
-    return sites
   }
   
   // ask_user_question 返回链闸门（第一版）：只在主会话 run_code 预执行前做保守静态证明。

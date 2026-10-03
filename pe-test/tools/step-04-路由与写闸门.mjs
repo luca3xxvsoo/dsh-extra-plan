@@ -15,10 +15,14 @@ const DSH_HOME = (process.env.DSH_HOME || homedir() + '/.dsh').replaceAll('\\', 
 const PLUGIN_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/index.js', import.meta.url))
 const AGENT_RUNTIME_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/agent-runtime.js', import.meta.url))
 const SHELL_MUTATION_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/shell-mutation.js', import.meta.url))
+const GATE_DECISIONS_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/gate-decisions.js', import.meta.url))
+const USAGE_LEDGER_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/usage-ledger.js', import.meta.url))
+const RUNTIME_LIFECYCLE_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/runtime-lifecycle.js', import.meta.url))
 import { registerHostDeps } from '../_shared/host-deps.mjs'
 // host-deps 必须在隔离前完成解析：它按候选① DSH_HOME/profiles/web 锚定宿主真包，
 // 隔离后该锚点不存在（会退到 npm 全局候选，非确定）。
 await registerHostDeps()
+const { createModelRouting, resolveAgentRouteSources, PLANNER_BLOCKED_REASON, NON_PLANNER_BLOCKED_REASON, routeKey } = await import('../../plugins/dsh-extra-plan/lib/model-routing.js')
 
 // ── 测试隔离（构造期配置读取）─────────────────────────
 // live-config 构造期会无条件读盘一次（优先 DSH_EXTRA_PLAN_CONFIG_PATH，否则读取 settings 行的
@@ -99,6 +103,56 @@ check('G7 isReadOnlyChildByCatalog 只读目录 → true', isReadOnlyChildByCata
 check('G8 isReadOnlyChildByCatalog 含 write → false', isReadOnlyChildByCatalog(['write', 'read']), false)
 check('G9 isReadOnlyChildByCatalog 含 edit → false', isReadOnlyChildByCatalog(['edit']), false)
 check('G10 isReadOnlyChildByCatalog([]) → false', isReadOnlyChildByCatalog([]), false)
+
+// ── ①b 模型路由父配置/严格探针边界（[任务5]） ───────────────────────
+check('MR1 routeKey 只有统一 NUL 分隔结构', routeKey('provider', 'model'), 'provider\u0000model')
+{
+  const parentThrow = { session: { header: { id: 'parent-throw' }, requestHeader: () => { throw new Error('header failure') } } }
+  const child = { session: { header: { id: 'child-throw', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-throw' } } }
+  const unavailable = resolveAgentRouteSources(child, { get: () => parentThrow })
+  checkTrue('MR2 父 requestHeader 抛错 → route sources 保守不可用且不抛', unavailable.available === false && unavailable.complete === false && unavailable.direct === null && unavailable.source === null)
+
+  const parent = { session: { header: { id: 'parent-route' }, requestHeader: () => ({ config: { provider: 'parent-provider', model: 'parent-model', maxTokens: 512, reasoningEffort: 'low' } }) } }
+  const agents = { get: (id) => id === 'parent-route' ? parent : undefined }
+  const planner = { session: { header: { id: 'planner-route', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-route' } } }
+  const state = { listProviders: 0, listModels: [], prepare: [], finish: [] }
+  const llm = {
+    listProviders: () => { state.listProviders += 1; return Promise.resolve([{ id: 'p1', name: 'zeta' }, { id: 'p1', name: 'duplicate' }, { id: 'p2', name: 'alpha' }]) },
+    listModels: (provider) => { state.listModels.push(provider); return Promise.resolve([{ id: 'target' }]) },
+    prepareCall: async (config) => {
+      state.prepare.push(config.provider)
+      return { config, stream: async function* () {
+        if (config.provider === 'p1') await new Promise((resolve) => setTimeout(resolve, 5))
+        state.finish.push(config.provider)
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      } }
+    },
+  }
+  const routing = createModelRouting({ getPlannerModel: () => 'target', getOtherAgentModel: () => 'target', getCrossProviderPlannerModel: () => true, getLlm: () => llm, getAgents: () => agents, getDiagPath: () => join(tmpdir(), 'route-diag.jsonl') })
+  const chosen = await routing.resolvePlannerEntry(planner)
+  checkTrue('MR3 provider 重复去重 + 探针完成乱序仍按发起序选择', state.listProviders === 1 && state.listModels.join('|') === 'p1|p2' && chosen.provider === 'p2' && state.prepare.join('|') === 'p1|p2' && state.finish.join('|') === 'p2|p1')
+
+  const fallbackState = { prepare: 0 }
+  const fallbackLlm = {
+    listProviders: () => Promise.resolve([{ id: 'parent-provider', name: 'parent' }]),
+    listModels: () => Promise.resolve([{ id: 'target' }]),
+    prepareCall: async (config) => { fallbackState.prepare += 1; return { config, stream: async function* () { yield { type: 'finish', reason: { kind: 'error' } } } } },
+  }
+  const sameModelParent = { session: { header: { id: 'parent-route' }, requestHeader: () => ({ config: { provider: 'parent-provider', model: 'target', maxTokens: 512 } }) } }
+  const sameModelAgents = { get: (id) => id === 'parent-route' ? sameModelParent : undefined }
+  const sameModelPlanner = { session: { header: { id: 'planner-fallback', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-route' } } }
+  const fallbackRouting2 = createModelRouting({ getPlannerModel: () => 'target', getOtherAgentModel: () => 'target', getCrossProviderPlannerModel: () => true, getLlm: () => fallbackLlm, getAgents: () => sameModelAgents, getDiagPath: () => join(tmpdir(), 'route-diag-fallback2.jsonl') })
+  let fallbackMessage = ''
+  try { await fallbackRouting2.resolvePlannerEntry(sameModelPlanner) } catch (error) { fallbackMessage = String(error.message) }
+  checkTrue('MR4 已探测 fallback 复用 outcome 且 planner blocked reason 不变', fallbackState.prepare === 1 && fallbackMessage === PLANNER_BLOCKED_REASON)
+
+  const blockedRouting = createModelRouting({ getPlannerModel: () => 'target', getOtherAgentModel: () => 'target', getCrossProviderPlannerModel: () => true, getLlm: () => ({ listProviders: () => Promise.resolve([]) }), getAgents: () => ({ get: () => undefined }), getDiagPath: () => join(tmpdir(), 'route-diag-blocked.jsonl') })
+  let plannerBlocked = ''
+  let childBlocked = ''
+  try { await blockedRouting.resolvePlannerEntry({ session: { header: { id: 'planner-blocked', origin: 'subagent', delegationDepth: 1, parentSession: 'missing' } } }) } catch (error) { plannerBlocked = String(error.message) }
+  try { await blockedRouting.resolveOtherAgentEntry({ session: { header: { id: 'child-blocked', origin: 'subagent', delegationDepth: 1, parentSession: 'missing' } } }, undefined, false) } catch (error) { childBlocked = String(error.message) }
+  checkTrue('MR5 planner/non-planner strict blocked reason 分离且逐字保持', plannerBlocked === PLANNER_BLOCKED_REASON && childBlocked === NON_PLANNER_BLOCKED_REASON)
+}
 
 // ── ② 预设静态断言（[任务4]，读文件核对，不跑装配） ────────────────────
 const require = createRequire(DSH_HOME + '/profiles/web/node_modules/package.json')
@@ -1241,15 +1295,21 @@ const makeTmpDir = () => mkdtempSync(join(tmpdir(), 'extra-plan-p4-'))
 const pluginSource = readFileSync(PLUGIN_PATH, 'utf8')
 const agentRuntimeSource = readFileSync(AGENT_RUNTIME_PATH, 'utf8')
 const shellMutationSource = readFileSync(SHELL_MUTATION_PATH, 'utf8')
-checkTrue('P4-1 源码：无 usageCursorsLoaded 灌表路径、无 subCallCounters.clear()、foldUsage 非 async、计数走 noteRunCodeSubCall',
-  !pluginSource.includes('usageCursorsLoaded') && !pluginSource.includes('subCallCounters.clear()') && !pluginSource.includes('async function foldUsage') && pluginSource.includes('function noteRunCodeSubCall(sessionId, rid)'))
-checkTrue('P4-2 源码：disposed 先同步 fold，再按 sessionId 删除；agent runtime 独立持有角色 WeakMap 与同步 floor',
+const gateDecisionsSource = readFileSync(GATE_DECISIONS_PATH, 'utf8')
+const usageLedgerSource = readFileSync(USAGE_LEDGER_PATH, 'utf8')
+const runtimeLifecycleSource = readFileSync(RUNTIME_LIFECYCLE_PATH, 'utf8')
+const decisionSources = pluginSource + '\n' + gateDecisionsSource
+checkTrue('P4-1 源码：usage ledger 无灌表/async fold，runtime lifecycle 统一计数入口',
+  !usageLedgerSource.includes('usageCursorsLoaded') && !usageLedgerSource.includes('subCallCounters.clear()') && !usageLedgerSource.includes('async function foldUsage') && usageLedgerSource.includes('function foldUsage') && runtimeLifecycleSource.includes('function noteRunCodeSubCall(sessionId, rid, cap)'))
+checkTrue('P4-2 源码：disposed 先同步 fold，再按 sessionId 删除；账本与 lifecycle 各自持有状态',
   pluginSource.includes('foldUsage(agent, usageRoleOf(agent))')
-  && pluginSource.indexOf('foldUsage(agent, usageRoleOf(agent))') < pluginSource.indexOf('jobOutputCallCounters.delete(sessionId)')
-  && !pluginSource.includes('const usageRoles = new WeakMap()')
+  && pluginSource.indexOf('foldUsage(agent, usageRoleOf(agent))') < pluginSource.indexOf('runtimeLifecycle.disposeSession(sessionId)')
+  && usageLedgerSource.includes('disposeSession')
+  && runtimeLifecycleSource.includes('disposeSession(sessionId)')
   && agentRuntimeSource.includes('const usageRoles = new WeakMap()')
   && agentRuntimeSource.includes('foldUsage(agent, role)')
-  && agentRuntimeSource.includes("error.code === 'ENOENT'") || pluginSource.includes("error.code === 'ENOENT'"))
+  && usageLedgerSource.includes("error.code === 'ENOENT'"))
+
 
 // P4-3：两个 session 同 rootCallId 各自 1~18 allow、19 deny（计数按 session 隔离）
 {
@@ -2034,24 +2094,24 @@ checkTrue('B3-6 未知角色与缺失入参 → null（无异常）',
 
 // ③ 源码单点结构断言：唯一写入点、三处内联实现已删、监听器无二次判定、三类角色统一调用。
 {
-  const recordStart = pluginSource.indexOf('function recordJobOutputCall(')
-  const recordBody = recordStart === -1 ? '' : pluginSource.slice(recordStart, pluginSource.indexOf('\n}\n', recordStart))
+  const recordStart = gateDecisionsSource.indexOf('function recordJobOutputCall(')
+  const recordBody = recordStart === -1 ? '' : gateDecisionsSource.slice(recordStart, gateDecisionsSource.indexOf('\n}\n', recordStart))
   checkTrue('B3-13 jobId→1 写入全文件唯一（perSession.set( 恰 1 处）且只位于 recordJobOutputCall',
-    pluginSource.split('perSession.set(').length - 1 === 1 && recordBody.includes('perSession.set(args.job_id, 1)') && recordBody.includes('counters.set(sessId, perSession)'))
+    gateDecisionsSource.split('perSession.set(').length - 1 === 1 && recordBody.includes('perSession.set(args.job_id, 1)') && recordBody.includes('counters.set(sessId, perSession)'))
   checkTrue('B3-14 三处内联实现已删（无 let perSession = jobOutputCallCounters.get(sessId)）',
-    pluginSource.split('let perSession = jobOutputCallCounters.get(sessId)').length - 1 === 0)
+    decisionSources.split('let perSession = jobOutputCallCounters.get(sessId)').length - 1 === 0)
   checkTrue('B3-15 监听器无局部 jobReason 二次判定（jobReason 0 命中）',
-    pluginSource.split('jobReason').length - 1 === 0)
+    decisionSources.split('jobReason').length - 1 === 0)
   checkTrue('B3-16 三类受保护角色均调用统一记录函数：调用点恰 3 处（加定义共 4 处），执行者分支无第 4 处调用',
-    pluginSource.split('recordJobOutputCall(agent, exec, jobOutputCallCounters)').length - 1 === 3 && pluginSource.split('recordJobOutputCall(').length - 1 === 4)
+    decisionSources.split('recordJobOutputCall(agent, exec, jobOutputCallCounters)').length - 1 === 3 && decisionSources.split('recordJobOutputCall(').length - 1 === 4)
   checkTrue('B3-17 首次判定已带 counters：planner 与只读 child 监听器调用点均传 jobOutputCallCounters',
     pluginSource.includes('plannerGateReason(exec, execEvents, exploreBudget(), jobOutputCallCounters)') && pluginSource.includes('childReadonlyGateReason(exec, probe, jobOutputCallCounters)'))
-  // mutation 实现已下沉到 shell-mutation.js；根仅保留只读单点与主会话分支调用。
-  checkTrue('B3-18 shellMutationReason 唯一实现；六格文案只剩两条模板；mutation 实现位于新模块且根只保留两处调用',
-    pluginSource.split('function shellMutationReason(').length - 1 === 1
-    && pluginSource.split('仅限只读探查命令').length - 1 === 2
-    && pluginSource.split('pwshMutationMatches(exec)').length - 1 === 2
-    && pluginSource.split('bashMutationMatches(exec)').length - 1 === 2
+  // mutation 实现已下沉到 shell-mutation.js；gate-decisions 仅保留角色文案与两处调用。
+  checkTrue('B3-18 shellMutationReason 唯一实现；六格文案只剩两条模板；mutation 实现位于新模块',
+    gateDecisionsSource.split('function shellMutationReason(').length - 1 === 1
+    && gateDecisionsSource.split('仅限只读探查命令').length - 1 === 2
+    && gateDecisionsSource.split('pwshMutationMatches(exec)').length - 1 === 2
+    && gateDecisionsSource.split('bashMutationMatches(exec)').length - 1 === 2
     && shellMutationSource.split('function mutationMatches(').length - 1 === 1
     && shellMutationSource.split('export function pwshMutationMatches(exec)').length - 1 === 1
     && shellMutationSource.split('export function bashMutationMatches(exec)').length - 1 === 1)
@@ -2372,10 +2432,13 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
   const settingsText = readFileSyncE(fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/settings.js', import.meta.url)), 'utf8')
   // 只取代码行（剥注释），避免注释里的示例（如官方 maxParallelToolCalls 习语）混进字段集合。
   const settingsCodeOnly = settingsText.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n')
-  const configBody = settingsCodeOnly.slice(settingsCodeOnly.indexOf('export const Config = z.object({'), settingsCodeOnly.indexOf('})', settingsCodeOnly.indexOf('export const Config = z.object({')))
-  const volatileKeys = [...configBody.matchAll(/([A-Za-z][A-Za-z0-9]*):\s*z\.[^\n]*?\.volatile\(\)/g)].map((match) => match[1])
-  check('T9-3l settings 行 Config 恰 8 字段且每字段链 .volatile()', volatileKeys.slice().sort().join('|'), ['anchoredBootstrap', 'creativeMode', 'crossProviderPlannerModel', 'exploreBudget', 'otherAgentModel', 'plannerModel', 'plannerPromptSuffix', 'runcodeCatchGate'].sort().join('|'))
-  checkTrue('T9-3m exploreBudget 为整数字段（z.number().step(1).min(1)）且默认 18、链 .volatile()', configBody.includes('exploreBudget: z.number().step(1).min(1).default(18).volatile()'))
+  const configBody = settingsCodeOnly.slice(settingsCodeOnly.indexOf('export const Config = z.object('), settingsCodeOnly.indexOf('})', settingsCodeOnly.indexOf('export const Config = z.object(')))
+  const extraDefinitions = SETTING_DEFINITIONS_E.filter((item) => item.group === SETTING_GROUPS_E.EXTRA_PLAN)
+  const exploreDefinition = SETTING_DEFINITIONS_E.find((item) => item.key === 'exploreBudget')
+  checkTrue('T9-3l settings 行 Config 由 10 项 descriptor 映射构造，extra-plan 8 项均经 schemaField volatile',
+    extraDefinitions.length === 8 && settingsCodeOnly.includes('function schemaField(definition)') && settingsCodeOnly.includes('SETTING_DEFINITIONS.map') && settingsCodeOnly.includes('return field.default(definition.defaultValue).volatile()'))
+  checkTrue('T9-3m exploreBudget descriptor 为整数字段默认 18，settings schema 统一使用 z.number().step(1).min(1)',
+    exploreDefinition !== undefined && exploreDefinition.scalarType === 'integer' && exploreDefinition.defaultValue === 18 && exploreDefinition.ui.min === 1 && exploreDefinition.ui.step === 1 && settingsCodeOnly.includes('field = z.number().step(1).min(1)'))
   const settingsCode = settingsCodeOnly
   checkTrue('T9-3n settings.js 代码段无 settings.register / ExtraPlanSettingsSchema / 旧预设目录写入',
     !settingsCode.includes('settings.register') && !settingsCode.includes('ExtraPlanSettingsSchema') &&

@@ -122,6 +122,10 @@ export const PLANNER_PROBE_CONCURRENCY = 5
 export const PLANNER_BLOCKED_REASON = 'extra-plan: planner request blocked: no verified planner route'
 export const NON_PLANNER_BLOCKED_REASON = 'extra-plan: non-planner request blocked: no verified non-planner route'
 
+export function routeKey(provider, model) {
+  return provider + '\u0000' + model
+}
+
 function comparePlannerText(a, b) {
   const left = typeof a === 'string' ? a : ''
   const right = typeof b === 'string' ? b : ''
@@ -269,20 +273,39 @@ async function probePlannerCandidates(llm, providerIds, model, parentSignal) {
   return outcomes
 }
 
-// 从父会话 requestHeader 提取 provider/model/maxTokens（严格路径与旧流程共用的同一逻辑）。
-// 非法/缺失一律取 undefined；parent 为 undefined/null 时整体返回 null（不触碰 parent.session）。
-function extractParentEntry(parent) {
-  if (parent === undefined || parent === null) return null
-  const header = typeof parent.session.requestHeader === 'function' ? parent.session.requestHeader() : undefined
-  const pcfg = header !== undefined && header.config !== undefined && header.config !== null ? header.config : null
-  if (pcfg === null) return null
-  return {
-    provider: typeof pcfg.provider === 'string' && pcfg.provider !== '' ? pcfg.provider : undefined,
-    model: typeof pcfg.model === 'string' && pcfg.model !== '' ? pcfg.model : undefined,
-    maxTokens: typeof pcfg.maxTokens === 'number' && pcfg.maxTokens > 0 ? pcfg.maxTokens : undefined,
+function uniqueProviderCandidates(listedProviders) {
+  const seenProviderIds = new Set()
+  const candidates = []
+  for (const listed of listedProviders) {
+    if (listed === null || typeof listed !== 'object' || typeof listed.id !== 'string' || listed.id === '' || seenProviderIds.has(listed.id)) continue
+    seenProviderIds.add(listed.id)
+    candidates.push({ id: listed.id, name: typeof listed.name === 'string' ? listed.name : listed.id })
   }
+  return candidates
 }
 
+// planner/non-planner strict 路径共用 provider 去重、并发探针与按发起顺序收集。
+async function collectStrictProbeCandidates(llm, model, parentSignal) {
+  const probeOutcomes = new Map()
+  const successes = []
+  if (model === '' || typeof llm.listProviders !== 'function') return { probeOutcomes, successes }
+  let listedProviders = []
+  try {
+    const listed = await withPlannerProbeDeadline(() => llm.listProviders(), parentSignal)
+    if (!(listed !== null && typeof listed === 'object' && listed.timeout === true) && Array.isArray(listed)) listedProviders = listed
+  } catch (error) {
+    if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
+  }
+  const candidates = uniqueProviderCandidates(listedProviders)
+  const outcomes = await probePlannerCandidates(llm, candidates.map((candidate) => candidate.id), model, parentSignal)
+  for (let index = 0; index < candidates.length; index += 1) {
+    const outcome = outcomes[index]
+    if (outcome === undefined) continue
+    if (outcome.matched) probeOutcomes.set(routeKey(candidates[index].id, model), outcome)
+    if (outcome.ok) successes.push({ id: candidates[index].id, name: candidates[index].name })
+  }
+  return { probeOutcomes, successes }
+}
 // False/缺失/非法开关的旧单 provider 流程原样保留：只查父 provider 的 advisory 目录，
 // 不枚举 provider，也不调用真实 prepareCall/stream 或严格 fallback probe。
 async function resolvePlannerEntryLegacy(agent) {
@@ -300,7 +323,7 @@ async function resolvePlannerEntryLegacy(agent) {
       } catch (error) {
         parent = undefined
       }
-      const pcfg = extractParentEntry(parent)
+      const pcfg = requestConfigSnapshot(parent)
       if (pcfg !== null) {
         provider = pcfg.provider
         model = pcfg.model
@@ -359,7 +382,7 @@ async function resolvePlannerEntryStrict(agent, parentSignal) {
       } catch (error) {
         parent = undefined
       }
-      const pcfg = extractParentEntry(parent)
+      const pcfg = requestConfigSnapshot(parent)
       if (pcfg !== null) {
         provider = pcfg.provider
         model = pcfg.model
@@ -377,39 +400,9 @@ async function resolvePlannerEntryStrict(agent, parentSignal) {
   }
   if (llm === undefined || llm === null || typeof llm !== 'object') throw new Error(PLANNER_BLOCKED_REASON)
 
-  const routeKey = (routeProvider, routeModel) => routeProvider + '\u0000' + routeModel
-  const probeOutcomes = new Map()
-  const successes = []
-  if (targetModel !== '') {
-    let listedProviders = []
-    try {
-      if (typeof llm.listProviders === 'function') {
-        const listed = await withPlannerProbeDeadline(() => llm.listProviders(), parentSignal)
-        if (!(listed !== null && typeof listed === 'object' && listed.timeout === true) && Array.isArray(listed)) listedProviders = listed
-      }
-    } catch (error) {
-      if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
-    }
-    // 去重在前、并发在后：先按 listedProviders 顺序构建去重候选列表，再交给并发池（上限
-    // PLANNER_PROBE_CONCURRENCY=5），超出部分排队；结果按发起顺序回填，与串行实现逐项一致。
-    const seenProviderIds = new Set()
-    const candidates = []
-    for (const listed of listedProviders) {
-      if (listed === null || typeof listed !== 'object' || typeof listed.id !== 'string' || listed.id === '' || seenProviderIds.has(listed.id)) continue
-      seenProviderIds.add(listed.id)
-      candidates.push({ id: listed.id, name: typeof listed.name === 'string' ? listed.name : listed.id })
-    }
-    const outcomes = await probePlannerCandidates(llm, candidates.map((candidate) => candidate.id), targetModel, parentSignal)
-    // 全部候选结束后才写入（发起顺序，非完成顺序）：同 route/model 在 fallback 复用同一 outcome。
-    for (let index = 0; index < candidates.length; index += 1) {
-      const outcome = outcomes[index]
-      if (outcome === undefined) continue
-      if (outcome.matched) probeOutcomes.set(routeKey(candidates[index].id, targetModel), outcome)
-      if (outcome.ok) successes.push({ id: candidates[index].id, name: candidates[index].name })
-    }
-    const sorted = sortPlannerCandidates(successes, provider)
-    if (sorted.length > 0) return { provider: sorted[0].id, model: targetModel, maxTokens }
-  }
+  const { probeOutcomes, successes } = await collectStrictProbeCandidates(llm, targetModel, parentSignal)
+  const sorted = sortPlannerCandidates(successes, provider)
+  if (sorted.length > 0) return { provider: sorted[0].id, model: targetModel, maxTokens }
 
   if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
   if (typeof provider !== 'string' || provider === '' || typeof model !== 'string' || model === '') throw new Error(PLANNER_BLOCKED_REASON)
@@ -488,35 +481,9 @@ async function resolveOtherAgentEntryStrict(agent, parentSignal, probe) {
   if (llm === undefined || llm === null || typeof llm !== 'object') {
     throw new Error(NON_PLANNER_BLOCKED_REASON)
   }
-  const routeKey = (routeProvider, routeModel) => routeProvider + '\u0000' + routeModel
-  const probeOutcomes = new Map()
-  const successes = []
-  if (targetModel !== '' && typeof llm.listProviders === 'function') {
-    let listedProviders = []
-    try {
-      const listed = await withPlannerProbeDeadline(() => llm.listProviders(), parentSignal)
-      if (!(listed !== null && typeof listed === 'object' && listed.timeout === true) && Array.isArray(listed)) listedProviders = listed
-    } catch (error) {
-      if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
-    }
-    // 与 planner 同形：去重 → 并发池（上限 PLANNER_PROBE_CONCURRENCY=5，超出排队）→ 按发起顺序收集。
-    const seenProviderIds = new Set()
-    const candidates = []
-    for (const listed of listedProviders) {
-      if (listed === null || typeof listed !== 'object' || typeof listed.id !== 'string' || listed.id === '' || seenProviderIds.has(listed.id)) continue
-      seenProviderIds.add(listed.id)
-      candidates.push({ id: listed.id, name: typeof listed.name === 'string' ? listed.name : listed.id })
-    }
-    const outcomes = await probePlannerCandidates(llm, candidates.map((candidate) => candidate.id), targetModel, parentSignal)
-    for (let index = 0; index < candidates.length; index += 1) {
-      const outcome = outcomes[index]
-      if (outcome === undefined) continue
-      if (outcome.matched) probeOutcomes.set(routeKey(candidates[index].id, targetModel), outcome)
-      if (outcome.ok) successes.push({ id: candidates[index].id, name: candidates[index].name })
-    }
-    const sorted = sortPlannerCandidates(successes, fallback.provider)
-    if (sorted.length > 0) return { ...fallback, provider: sorted[0].id, model: targetModel }
-  }
+  const { probeOutcomes, successes } = await collectStrictProbeCandidates(llm, targetModel, parentSignal)
+  const sorted = sortPlannerCandidates(successes, fallback.provider)
+  if (sorted.length > 0) return { ...fallback, provider: sorted[0].id, model: targetModel }
   if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
   if (fallback.provider === undefined || fallback.model === undefined) throw new Error(NON_PLANNER_BLOCKED_REASON)
   const fallbackKey = routeKey(fallback.provider, fallback.model)

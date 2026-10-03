@@ -29,6 +29,7 @@ import {
   restatePluginsRow,
   serializeScalar,
 } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
+import * as presetSettingsNamespace from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
 import { DEFAULT_EXPLORE_BUDGET, DEFAULT_PLANNER_PROMPT_SUFFIX } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
 import { GATE_WORDS_GROUP_DEFINITION, createGateRuntime } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
 import { createLiveConfig } from '../../plugins/dsh-extra-plan/lib/live-config.js'
@@ -36,9 +37,33 @@ import { createLiveConfig } from '../../plugins/dsh-extra-plan/lib/live-config.j
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 const ASSET_DIR = join(HERE, '..', '..', 'plugins', 'dsh-extra-plan', 'assets', 'presets', 'extra-plan')
 const assetAgent = readFileSync(join(ASSET_DIR, 'agent.cordis.yml'), 'utf8')
+const clientText = readFileSync(join(HERE, '..', '..', 'plugins', 'dsh-extra-plan', 'lib', 'client.js'), 'utf8')
 const definition = (key) => getSettingDefinition(key)
 const keys = SETTING_DEFINITIONS.map((item) => item.key)
 const expectedKeys = ['anchoredBootstrap', 'creativeMode', 'webFetch', 'toolPresentationMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel']
+function clientFields(name) {
+  const start = clientText.indexOf('const ' + name + ' = Object.freeze([')
+  if (start < 0) return []
+  const end = clientText.indexOf(']);', start)
+  if (end < 0) return []
+  return clientText.slice(start, end).split('\n').filter((line) => line.includes('{ key:')).map((line) => {
+    const key = line.match(/key: \"([^\"]+)\"/)
+    const control = line.match(/control: \"([^\"]+)\"/)
+    const options = line.match(/options: (\[[^\]]*\])/)
+    const locale = line.match(/locale: \"([^\"]+)\"/)
+    const optionLocale = line.match(/optionLocale: (\{.*?\})/)
+    const optionLocaleValue = optionLocale === null ? undefined : Object.fromEntries([...optionLocale[1].matchAll(/([A-Za-z]+): \"([^\"]+)\"/g)].map((item) => [item[1], item[2]]))
+    return { key: key === null ? '' : key[1], control: control === null ? '' : control[1], options: options === null ? undefined : JSON.parse(options[1]), locale: locale === null ? '' : locale[1], optionLocale: optionLocaleValue }
+  })
+}
+function clientFieldContractMatches(fields, definitions) {
+  return fields.length === definitions.length && definitions.every((definition, index) => {
+    const field = fields[index]
+    return field.key === definition.key && field.control === definition.ui.control && field.locale === definition.ui.locale &&
+      JSON.stringify(field.options) === JSON.stringify(definition.ui.options) &&
+      JSON.stringify(field.optionLocale) === JSON.stringify(definition.ui.optionLocale)
+  })
+}
 
 let pass = 0
 let fail = 0
@@ -47,6 +72,7 @@ function check(label, condition) {
   else { fail += 1; console.log('FAIL  ' + label) }
 }
 
+check('T1 preset-settings 收回 PRESET_PLUGIN_NAME 且保留活动 PRESET_ROW_ID', !Object.prototype.hasOwnProperty.call(presetSettingsNamespace, 'PRESET_PLUGIN_NAME') && presetSettingsNamespace.PRESET_ROW_ID === 'preset-extra-plan')
 check('exploreBudget 默认来自生成模块且为资产 YAML 叶值', DEFAULT_EXPLORE_BUDGET === resolveSetting(parsePresetYaml(assetAgent), definition('exploreBudget'), { aliases: false }).value && DEFAULT_EXPLORE_BUDGET === 18)
 check('plannerPromptSuffix 默认来自生成模块且为资产 YAML 叶值', DEFAULT_PLANNER_PROMPT_SUFFIX === resolveSetting(parsePresetYaml(assetAgent), definition('plannerPromptSuffix'), { aliases: false }).value && DEFAULT_PLANNER_PROMPT_SUFFIX === '你的深度思考部分需要以"好了，现在我以全局视角来看待这个问题"开头')
 
@@ -136,6 +162,9 @@ function settingsRowYaml(values = {}) {
 }
 
 check('白名单恰有 10 个稳定键且顺序不变', keys.length === 10 && keys.join('|') === expectedKeys.join('|'))
+check('只读 client.js 镜像：EXTRA_FIELDS/HOST_ROW_FIELDS 与 descriptor 键序、control、options、optionLocale 一致',
+  clientFieldContractMatches(clientFields('EXTRA_FIELDS'), EXTRA_PLAN_SETTING_DEFINITIONS) &&
+  clientFieldContractMatches(clientFields('HOST_ROW_FIELDS'), HOST_ROW_SETTING_DEFINITIONS))
 check('descriptor 分组：extra-plan 8 项（本插件热读）+ host-rows 2 项（另投影到声明行 plugins 子行）',
   EXTRA_PLAN_SETTING_DEFINITIONS.length === 8 && HOST_ROW_SETTING_DEFINITIONS.length === 2 &&
   EXTRA_PLAN_SETTING_DEFINITIONS.every((item) => item.group === SETTING_GROUPS.EXTRA_PLAN) &&

@@ -48,11 +48,6 @@ export function saveArtifactBase(nameSeg, sessionId) {
   return parts.join('-')
 }
 
-// 兼容既有公共导出名；实现与 save_probe 共用唯一 base。
-export function savePlanBase(nameSeg, sessionId) {
-  return saveArtifactBase(nameSeg, sessionId)
-}
-
 // save_plan 结果的模型可见内容（v0.1.3 修复）：output.render 契约必须返回
 // ContentBlock[]（宿主第一方工具均如此，见 dsh-tool-pwsh L355），不能返回裸
 // 字符串——否则 DeepSeek 适配器 serializeMessages 的 flattenText 会对字符串调

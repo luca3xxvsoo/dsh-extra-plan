@@ -93,25 +93,31 @@ dsh-extra-plan/
 │   │   │   ├── agent-runtime.js                        # 角色运行态：createAgentRuntime 的 per-apply 判定与缓存
 │   │   │   ├── agent-session.js                        # 角色判定：sessionEvents/isSubagentChild 唯一来源
 │   │   │   ├── assembly-presentation.js                # 展示投影：A/C/M 投影与 skill catalog
-│   │   │   ├── client.js                               # 设置页前端 UI
 │   │   │   ├── client-bridge.js                        # 客户端桥接行
+│   │   │   ├── client.js                               # 设置页前端 UI
 │   │   │   ├── executor-spawn.js                       # 执行者委托层（workflow/ralph worker 注入）
+│   │   │   ├── gate-decisions.js                       # 闸门纯决策：路由/目的/澄清/批准与只读判定
 │   │   │   ├── gate-words.js                           # 闸门词契约：字段规格/整组校验/运行时派生
 │   │   │   ├── live-config.js                          # 热修改支持模块
 │   │   │   ├── model-routing.js                        # 子代理模型选择：planner/非 planner 路由解析
-│   │   │   ├── preset-settings.js                      # 设置项 descriptor 与 YAML 保格式改写（供迁移复用）
-│   │   │   ├── preset-sync.js                          # 预设分发与启动自愈
 │   │   │   ├── planner-budget.js                       # 探查预算：用量计数与提醒/耗尽文案
 │   │   │   ├── preset-defaults.generated.js            # 构建期生成：exploreBudget 默认值
-│   │   │   ├── runtime-static.js                       # 静态纯函数：显式参数 helper
+│   │   │   ├── preset-settings.js                      # 设置项 descriptor 与 YAML 处理 facade（供迁移复用）
+│   │   │   ├── preset-sync.js                          # 预设分发与启动自愈
+│   │   │   ├── preset-yaml.js                          # 预设 YAML 解析、定位与保格式改写纯模块
+│   │   │   ├── run-code-scanner.js                     # run_code 无宿主状态词法与调用点扫描
 │   │   │   ├── run-code-static.js                      # run_code：静态解析与理由函数
+│   │   │   ├── runtime-lifecycle.js                    # session 生命周期与计数状态工厂
+│   │   │   ├── runtime-static.js                       # 静态纯函数：显式参数 helper
 │   │   │   ├── save-contract.js                        # save_plan/save_probe：合同常量与 Markdown 渲染
-│   │   │   ├── save-probe-validation.js                # save_probe：参数与路径/range/evidence 校验
 │   │   │   ├── save-persistence.js                     # save_plan/save_probe：原子落盘内核与 journal 自愈
+│   │   │   ├── save-probe-validation.js                # save_probe：参数与路径/range/evidence 校验
 │   │   │   ├── save-tool-factories.js                  # save_plan/save_probe：工具定义
 │   │   │   ├── sdk-text-cache.js                       # tools:sdk缓存复用
+│   │   │   ├── settings-contract.js                    # 设置项单一合同：键、默认值、校验与元数据
 │   │   │   ├── settings.js                             # 设置页宿主端
-│   │   │   └── shell-mutation.js                       # 写操作判定：跨平台命令解码与写形态
+│   │   │   ├── shell-mutation.js                       # 写操作判定：跨平台命令解码与写形态
+│   │   │   └── usage-ledger.js                         # usage 账本与 cursor 增量折叠
 │   │   ├── locale/                                     
 │   │   │   ├── preset-sync/
 │   │   │   │   ├── en.json                     
@@ -121,8 +127,7 @@ dsh-extra-plan/
 │   │   │   │   └── zh.json                                  
 │   │   │   ├── en.json                      
 │   │   │   └── zh.json                        
-│   │   ├── scripts/                                    
-│   │   │   └── generate-runtime-defaults.mjs           # 构建期生成器：exploreBudget 叶值 → preset-defaults.generated.js
+│   │   ├── scripts/generate-runtime-defaults.mjs       # 构建期生成器：exploreBudget 叶值 → preset-defaults.generated.js
 │   │   ├── cordis.patch.yml                                      
 │   │   ├── index.js                                    # 四级闸门：路由/目的/澄清/批准 + apply 接线
 │   │   └── package.json
@@ -159,6 +164,7 @@ dsh-extra-plan/
 │       ├── step-01-设置迁移.mjs
 │       ├── step-01-设置页配置.mjs
 │       ├── step-01-预设完整性.mjs
+│       ├── step-01-qqbot-安装映射.mjs
 │       ├── step-01-qqbot-安装映射.mjs
 │       ├── step-04-工具清单查看.mjs
 │       ├── step-04-路由与写闸门.mjs

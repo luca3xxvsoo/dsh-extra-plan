@@ -18,6 +18,9 @@ import {
   effectiveRowConfig,
   restatePresetPlugins,
   carryUserWritable,
+  pluginRows,
+  pluginRowIds,
+  stripUserWritable,
   assetPlugins,
   readDeclaredPluginsFromPatch,
 } from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
@@ -189,6 +192,32 @@ try {
     findRow(userRows, 'extra-plan').config.gateWords = GATE_CUSTOM
     const carried = carryUserWritable(userRows)
     check('carry：用户改动被抽出（含穿透 group 的 gateWords）', carried.hostRowConfig['tool-presentation'].mode === 'ptc' && carried.gateWords.routeDirect === GATE_CUSTOM.routeDirect)
+
+    const nestedRows = [
+      null,
+      '非法行',
+      { id: 'outer-group', group: true, config: [
+        { id: 'tool-web', config: { fetch: true } },
+        { id: 'duplicate-id', config: { value: 1 } },
+        { id: 'inner-group', group: true, config: [
+          { id: 'tool-presentation', config: { mode: 'ptc' } },
+          { id: 'extra-plan', config: { gateWords: GATE_CUSTOM } },
+        ] },
+      ] },
+      { id: 'duplicate-id', config: { value: 2 } },
+    ]
+    const nestedBefore = JSON.stringify(nestedRows)
+    const flattened = pluginRows(nestedRows)
+    const strippedNested = stripUserWritable(nestedRows)
+    const carriedNested = carryUserWritable(nestedRows)
+    check('遍历器：空/非法输入不抛，合法行按深度优先并保留重复 id', pluginRows([]).length === 0 && pluginRows([null, 'bad', 1, {}]).length === 1 && pluginRowIds(nestedRows).join('|') === 'outer-group|tool-web|duplicate-id|inner-group|tool-presentation|extra-plan|duplicate-id')
+    check('strip/carry：多层 group 两宿主叶与 gateWords 同时等价，且 strip 不原地修改资产',
+      JSON.stringify(nestedRows) === nestedBefore &&
+      strippedNested[0] === null && strippedNested[2].config[0].config.fetch === '__user__' &&
+      strippedNested[2].config[2].config[0].config.mode === '__user__' &&
+      strippedNested[2].config[2].config[1].config.gateWords === '__user__' &&
+      carriedNested.hostRowConfig['tool-web'].fetch === true && carriedNested.hostRowConfig['tool-presentation'].mode === 'ptc' &&
+      carriedNested.gateWords.routeDirect === GATE_CUSTOM.routeDirect)
   }
 
   // ⑥-6 权威值（settings 行）↔ 投影（声明行 plugins 子行）链：投影被删/权威改值/稳态/一次性回填。

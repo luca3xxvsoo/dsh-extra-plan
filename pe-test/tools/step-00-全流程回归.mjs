@@ -32,6 +32,7 @@ const plannerBudget = await import('../../plugins/dsh-extra-plan/lib/planner-bud
 const PLUGIN_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/index.js', import.meta.url))
 const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
 import { createRunCodeStatic } from '../../plugins/dsh-extra-plan/lib/run-code-static.js'
+import * as runCodeScanner from '../../plugins/dsh-extra-plan/lib/run-code-scanner.js'
 import * as shellMutation from '../../plugins/dsh-extra-plan/lib/shell-mutation.js'
 import * as runtimeStatic from '../../plugins/dsh-extra-plan/lib/runtime-static.js'
 import * as agentRuntime from '../../plugins/dsh-extra-plan/lib/agent-runtime.js'
@@ -190,6 +191,19 @@ function check(name, got, expected) {
 }
 function checkTrue(name, got) {
   check(name, got, true)
+}
+const scannerKeys = ['collectRunCodeSites', 'hasDynamicRunCodeAccess', 'maskCodeLiteralsAndComments', 'sliceBalancedArgs']
+checkTrue('SC1 run-code-scanner 命名空间精确四项且 facade 复用三项', JSON.stringify(Object.keys(runCodeScanner).sort()) === JSON.stringify(scannerKeys) && scannerKeys.every((name) => typeof runCodeScanner[name] === 'function') && maskCodeLiteralsAndComments === runCodeScanner.maskCodeLiteralsAndComments && sliceBalancedArgs === runCodeScanner.sliceBalancedArgs && staticRunCode.collectRunCodeSites === runCodeScanner.collectRunCodeSites)
+const scannerDynamicAccessMatrix = [
+  ['顶层 tools[name]({...}) 动态下标调用', 'tools[name]({})', true],
+  ['顶层 tools["read"]({...}) 静态字符串下标调用', 'tools["read"]({})', false],
+  ['字符串字面量和行注释内伪调用', "'tools[name]({})'\n// tools[name]({})", false],
+  ['已识别静态外层调用的参数区间内嵌 tools[name](...)', 'tools.read({ nested: tools[name]({}) })', false],
+]
+for (const [label, text, expected] of scannerDynamicAccessMatrix) {
+  const masked = runCodeScanner.maskCodeLiteralsAndComments(text)
+  const sites = runCodeScanner.collectRunCodeSites(text, masked)
+  check('SC1 动态访问矩阵 ' + label, runCodeScanner.hasDynamicRunCodeAccess(text, masked, sites), expected)
 }
 
 // ── 根入口公开 named export 兼容断言：与 decisions 保持同一绑定/行为 ──

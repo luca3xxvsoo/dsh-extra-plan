@@ -10,11 +10,11 @@ import { isDeepStrictEqual } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import z from '@deepseek-ai/schemastery'
-import { DEFAULT_PLANNER_PROMPT_SUFFIX } from './preset-defaults.generated.js'
 import {
   HOST_ROW_LEAF_KEYS,
   HOST_ROW_SETTING_DEFINITIONS,
   PRESET_ROW_ID,
+  SETTING_DEFINITIONS,
   SETTINGS_ROW_ID,
   effectivePluginsOf,
   hostRowDefaultsFromTemplate,
@@ -31,37 +31,27 @@ export const inject = []
 const HERE = dirname(fileURLToPath(import.meta.url))
 const TEMPLATE_AGENT_FILE = join(HERE, '..', 'assets', 'presets', 'extra-plan', 'agent.cordis.yml')
 
-/**
- * 2 项宿主行设置的权威字段（settings 行 config 内的 webFetch / toolPresentationMode）。
- * 与 UI 8 项分开成表 = 与 descriptor 的消费方分组（extra-plan 8 / host-rows 2）同构；
- * 两项同样链 volatile（SettingsForms 只投影带该标记的字段），默认值与
- * lib/live-config.js BUILTIN_DEFAULTS 及资产模板叶值逐字一致。
- */
-export const HOST_ROW_AUTHORITY_FIELDS = Object.freeze({
-  webFetch: z.boolean().default(false).volatile(),
-  toolPresentationMode: z.string().default('native').volatile(),
-})
+/** descriptor scalarType → schemastery 字段：合同负责类型/默认值，settings 只负责宿主 schema 链。 */
+function schemaField(definition) {
+  let field
+  if (definition.scalarType === 'boolean') field = z.boolean()
+  else if (definition.scalarType === 'integer') field = z.number().step(1).min(1)
+  else field = z.string()
+  return field.default(definition.defaultValue).volatile()
+}
 
-/**
- * settings 行 config 的宿主表单 schema（10 个字段，每字段都带 volatile 标记）：8 项 UI 设置
- * 直接声明，2 项宿主行设置来自 HOST_ROW_AUTHORITY_FIELDS —— 10 项的权威值全部落在本行。
+/** 2 项宿主行设置的权威字段（settings 行 config 内的 webFetch / toolPresentationMode）。 */
+export const HOST_ROW_AUTHORITY_FIELDS = Object.freeze(Object.fromEntries(
+  HOST_ROW_SETTING_DEFINITIONS.map((definition) => [definition.key, schemaField(definition)]),
+))
+
+/** settings 行 config 的宿主表单 schema：10 个 descriptor 字段全部带 volatile 标记。
  * ns = 本行 id（profile patch 根级 insert 行，id 唯一 → configEditor 可寻址；
  * 该 insert 不带 config → 继承层恒为 {} → 宿主 edit 永不判「值==继承层」而删行）。
- * 8 项默认值与 BUILTIN_DEFAULTS 同源（同一生成常量）、与资产叶值逐字一致。
  */
-export const Config = z.object({
-  anchoredBootstrap: z.boolean().default(true).volatile(),
-  creativeMode: z.boolean().default(false).volatile(),
-  runcodeCatchGate: z.boolean().default(false).volatile(),
-  crossProviderPlannerModel: z.boolean().default(false).volatile(),
-  plannerModel: z.string().default('deepseek-v4-pro').volatile(),
-  plannerPromptSuffix: z.string().default(DEFAULT_PLANNER_PROMPT_SUFFIX).volatile(),
-  // 整数语义按宿主既有习语表达（schemastery 无 .int()；官方 volatile 整数字段同形，
-  // 见 dsh-agent-loop 的 maxParallelToolCalls: z.number().step(1).min(1).default(10) 尾链 volatile）。
-  exploreBudget: z.number().step(1).min(1).default(18).volatile(),
-  otherAgentModel: z.string().default('').volatile(),
-  ...HOST_ROW_AUTHORITY_FIELDS,
-})
+export const Config = z.object(Object.fromEntries(
+  SETTING_DEFINITIONS.map((definition) => [definition.key, schemaField(definition)]),
+))
 
 const HOST_ROW_KEYS = Object.freeze(HOST_ROW_SETTING_DEFINITIONS.map((item) => item.key))
 

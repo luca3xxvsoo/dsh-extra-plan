@@ -68,19 +68,24 @@ export function contentHash(dir) {
   return h.digest('hex')
 }
 
-/** 声明行 plugins 的行 id 集合（含 group 子行，扁平化）。 */
-export function pluginRowIds(plugins) {
-  const ids = []
-  const visit = (rows) => {
-    if (!Array.isArray(rows)) return
-    for (const row of rows) {
-      if (row === null || typeof row !== 'object') continue
-      if (typeof row.id === 'string' && row.id !== '') ids.push(row.id)
+/** 单一深度优先遍历来源：按当前数组顺序展开 group.config 子行。 */
+export function pluginRows(plugins) {
+  const rows = []
+  const visit = (items) => {
+    if (!Array.isArray(items)) return
+    for (const row of items) {
+      if (row === null || typeof row !== 'object' || Array.isArray(row)) continue
+      rows.push(row)
       if (Array.isArray(row.config)) visit(row.config)
     }
   }
   visit(plugins)
-  return ids
+  return rows
+}
+
+/** 声明行 plugins 的行 id 集合（含 group 子行，扁平化）。 */
+export function pluginRowIds(plugins) {
+  return pluginRows(plugins).filter((row) => typeof row.id === 'string' && row.id !== '').map((row) => row.id)
 }
 
 /** 声明行是否仍在承载本预设组合：行 id 集合覆盖 DECLARATION_ROW_IDS。 */
@@ -121,25 +126,17 @@ function userWritableByRow() {
 /** 剥离用户可写键（置为固定占位，保持键序与结构不变），得到「本体」视图。 */
 export function stripUserWritable(plugins) {
   if (!Array.isArray(plugins)) return plugins
+  const next = structuredClone(plugins)
   const table = userWritableByRow()
-  const stripRow = (row) => {
-    if (row === null || typeof row !== 'object' || Array.isArray(row)) return row
-    const next = { ...row }
-    if (Array.isArray(next.config)) {
-      next.config = next.config.map(stripRow)
-      return next
+  for (const row of pluginRows(next)) {
+    if (Array.isArray(row.config) || row.config === null || typeof row.config !== 'object') continue
+    const writable = typeof row.id === 'string' ? table.get(row.id) : undefined
+    if (writable === undefined) continue
+    for (const key of writable) {
+      if (Object.prototype.hasOwnProperty.call(row.config, key)) row.config[key] = '__user__'
     }
-    const writable = typeof next.id === 'string' ? table.get(next.id) : undefined
-    if (writable !== undefined && next.config !== null && typeof next.config === 'object') {
-      const config = { ...next.config }
-      for (const key of writable) {
-        if (Object.prototype.hasOwnProperty.call(config, key)) config[key] = '__user__'
-      }
-      next.config = config
-    }
-    return next
   }
-  return plugins.map(stripRow)
+  return next
 }
 
 /**
@@ -165,30 +162,22 @@ export function carryUserWritable(plugins) {
   const prefix = 'config.'
   const gatePath = GATE_WORDS_GROUP_DEFINITION.path
   const gateKey = gatePath.startsWith(prefix) ? gatePath.slice(prefix.length) : gatePath
-  const visit = (rows) => {
-    for (const row of rows) {
-      if (row === null || typeof row !== 'object') continue
-      if (Array.isArray(row.config)) {
-        visit(row.config)
-        continue
-      }
-      if (typeof row.id !== 'string' || row.config === null || typeof row.config !== 'object') continue
-      const writable = table.get(row.id)
-      if (writable === undefined) continue
-      const pick = {}
-      for (const key of writable) {
-        if (Object.prototype.hasOwnProperty.call(row.config, key)) pick[key] = row.config[key]
-      }
-      if (Object.keys(pick).length === 0) continue
-      if (row.id === gateRowId) {
-        if (Object.prototype.hasOwnProperty.call(pick, gateKey)) gateWords = pick[gateKey]
-        continue
-      }
-      const merged = hostRowConfig[row.id] === undefined ? {} : hostRowConfig[row.id]
-      hostRowConfig[row.id] = { ...merged, ...pick }
+  for (const row of pluginRows(plugins)) {
+    if (Array.isArray(row.config) || typeof row.id !== 'string' || row.config === null || typeof row.config !== 'object') continue
+    const writable = table.get(row.id)
+    if (writable === undefined) continue
+    const pick = {}
+    for (const key of writable) {
+      if (Object.prototype.hasOwnProperty.call(row.config, key)) pick[key] = row.config[key]
     }
+    if (Object.keys(pick).length === 0) continue
+    if (row.id === gateRowId) {
+      if (Object.prototype.hasOwnProperty.call(pick, gateKey)) gateWords = pick[gateKey]
+      continue
+    }
+    const merged = hostRowConfig[row.id] === undefined ? {} : hostRowConfig[row.id]
+    hostRowConfig[row.id] = { ...merged, ...pick }
   }
-  visit(plugins)
   return { hostRowConfig, gateWords }
 }
 
