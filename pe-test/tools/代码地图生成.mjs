@@ -14,7 +14,10 @@ const BS = String.fromCharCode(92)
 const REGEX_BEFORE_CHARS = new Set(['(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}', ';', '+', '-', '*', '%', '<', '>', '^', '~'])
 const REGEX_BEFORE_WORDS = new Set(['return', 'typeof', 'case', 'in', 'of', 'do', 'else', 'yield', 'await', 'void', 'delete', 'new', 'instanceof', 'default'])
 // 定义区间收尾判据：无花括号表达式的后续行若「以语句关键字开头或为 } 」→ 属于下一条语句，不算本定义
-const STATEMENT_START_RE = /^(?:const|let|var|return|console|await|if|for|while|try|throw|export|import|function|class|switch|do|break|continue)\b/
+const STATEMENT_START_RE = /^(?:const|let|var|return|console|await|if|for|while|try|throw|export|import|function|class|switch|do|break|continue|default)\b/
+// 「无分号表达式延续行」判据：以「名字(」开头且名字不是关键字/控制流 → 属于下一条表达式语句，
+// 不得被 findEndLine 的 lastOpen 吞入本定义区间（如单行箭头函数后紧跟裸调用语句）。
+const CALL_START_RE = /^([A-Za-z_$][A-Za-z0-9_$]*)[ \t]*\(/
 const CONTINUATION_CHARS = '&|+-*/%.,=?:<>('
 const args = process.argv.slice(2)
 const STRICT = args.indexOf('--strict') !== -1
@@ -131,7 +134,9 @@ function isStatementStart(line) {
   const t = line.replace(/^[ \t]+/, '')
   if (t === '') return false
   if (t[0] === '}') return true
-  return STATEMENT_START_RE.test(t)
+  if (STATEMENT_START_RE.test(t)) return true
+  const call = CALL_START_RE.exec(t)
+  return call !== null && !KEYWORDS.has(call[1])
 }
 function findEndLine(lines, masked, startIdx, limitIdx) {
   const n = lines.length
@@ -160,7 +165,17 @@ function findEndLine(lines, masked, startIdx, limitIdx) {
     if (touched || prevCont) lastOpen = li
     // 续行判定必须用「原始行」：遮罩会把字符串字面量变成尾部空格，=== 'x' 会被误看成以 = 结尾
     const orig = typeof lines[li] === 'string' ? lines[li].replace(/[ \t]+$/, '') : ''
-    prevCont = orig !== '' && CONTINUATION_CHARS.indexOf(orig[orig.length - 1]) !== -1
+    // 定义首行完整性收尾：首行扫描后括号/方括号深度归零、未遇体花括号与分号、原始行尾为 ','，
+    // 说明是一行式属性箭头（如 key: (x) => expr,），',' 是字面量属性分隔符而非表达式延续；
+    // 直接单行收尾，阻断 prevCont 链把下一条属性/收尾行/语句吞入区间（represent L28-39 类缺陷）。
+    if (li === startIdx && paren === 0 && bracket === 0 && braceStart === -1 && semiLine === -1 &&
+        orig !== '' && orig[orig.length - 1] === ',') {
+      return startIdx + 1
+    }
+    // 空行/纯注释行（遮罩后为空行或全空白行）不算续行：续行态在此中断。
+    // 否则注释行尾的 '/'（除法续行字符集成员）与上一行尾的 ')' 会把续行态带过空行与注释，
+    // 压制下一条语句的 break，使单行箭头函数被吞成多行区间（isMode L8 → L8-19 的根因）。
+    prevCont = orig !== '' && line.trim() !== '' && CONTINUATION_CHARS.indexOf(orig[orig.length - 1]) !== -1
     if (braceStart !== -1 || semiLine !== -1) break
   }
   if (braceStart !== -1 && (semiLine === -1 || braceStart < semiLine)) return braceEndLine(lines, masked, braceStart, braceCol)
@@ -170,15 +185,25 @@ function findEndLine(lines, masked, startIdx, limitIdx) {
 }
 
 // ---------- 函数提取（正则零反斜杠：空白用 [ \t]，词字符用 [A-Za-z0-9_$]） ----------
-const KEYWORDS = new Set(['if', 'for', 'while', 'switch', 'catch', 'return', 'function', 'do', 'else', 'try', 'export', 'await'])
+const KEYWORDS = new Set(['if', 'for', 'while', 'switch', 'catch', 'return', 'function', 'do', 'else', 'try', 'export', 'await', 'async', 'finally'])
 const WS = ' \t'
 const RE_SETS = [
   // 口径 = 「一切名字绑定到函数体的定义」，任意缩进（与反向计数器同口径，不再需要任何例外清单）。
-  { kind: 'function', re: new RegExp('^[' + WS + ']*(?:export[' + WS + ']+)?(?:async[' + WS + ']+)?function[' + WS + ']+([A-Za-z_$][A-Za-z0-9_$]*)[' + WS + ']*\\(', 'gm') },
+  // function 形态：补 default，支持 `export default function NAME`。
+  { kind: 'function', re: new RegExp('^[' + WS + ']*(?:export[' + WS + ']+)?(?:default[' + WS + ']+)?(?:async[' + WS + ']+)?function[' + WS + ']+([A-Za-z_$][A-Za-z0-9_$]*)[' + WS + ']*\\(', 'gm') },
   // 形态收紧：RHS 必须是 function / (…) => / name =>（原先只看 '=' 后是不是 '('，会把 const base = (a?b:c)+d 误当函数）
   { kind: 'const', re: new RegExp('^[' + WS + ']*(?:export[' + WS + ']+)?(?:const|let|var)[' + WS + ']+([A-Za-z_$][A-Za-z0-9_$]*)[' + WS + ']*=[' + WS + ']*(?:async[' + WS + ']+)?(?:function[' + WS + '(]|\\(.*\\)[' + WS + ']*=>|[A-Za-z_$][A-Za-z0-9_$]*[' + WS + ']*=>)', 'gm') },
-  { kind: 'class', re: new RegExp('^(?:export[' + WS + ']+)?(?:  )?class[' + WS + ']+([A-Za-z_$][A-Za-z0-9_$]*)', 'gm') },
-  { kind: 'method', re: new RegExp('^([A-Za-z_$][A-Za-z0-9_$]*)[' + WS + ']*\\([^)]*\\)[' + WS + ']*\\{', 'gm') },
+  // class 缩进容差：原写死 (?:  )?（仅 0/2 空格），tab 与 1/3/4 空格缩进的 class 漏收 → 改用 [ \t]*。
+  { kind: 'class', re: new RegExp('^[' + WS + ']*(?:export[' + WS + ']+)?class[' + WS + ']+([A-Za-z_$][A-Za-z0-9_$]*)', 'gm') },
+  // method 形态：去掉列 0 限制并加 async/get/set 前缀容差，覆盖对象方法、类方法、缩进方法。
+  // 实参表收紧：括号内出现 function / => 说明是「调用点把函数字面量当实参」
+  // （如 `setDraft(function (prev) {…})`、`renderControl(a, b, function (next) {…})`），
+  // 其后的 `{` 属于回调体而非方法体，`\([^)]*\)` 会把整段实参贪婪吃进来冒充方法定义 → 必须排除。
+  // 真定义（`render(args, value) {` / `get plannerModel() {`）实参表内不含函数字面量，不受影响。
+  { kind: 'method', re: new RegExp('^[' + WS + ']*(?:async[' + WS + ']+)?(?:get[' + WS + ']+|set[' + WS + ']+)?([A-Za-z_$][A-Za-z0-9_$]*)[' + WS + ']*\\((?!.*(?:function|=>))[^)]*\\)[' + WS + ']*\\{', 'gm') },
+  // property 形态：对象属性绑定函数（`key: (…) =>` / `key: name =>` / `key: async (…) =>` / `key: function (…)`），
+  // 不误收 `foo: 1`（要求 `:` 后必须是箭头函数或 function）。
+  { kind: 'property', re: new RegExp('^[' + WS + ']*([A-Za-z_$][A-Za-z0-9_$]*)[' + WS + ']*:[' + WS + ']*(?:async[' + WS + ']+)?(?:(?:\\([^)]*\\)|[A-Za-z_$][A-Za-z0-9_$]*)[' + WS + ']*=>|function[' + WS + '(])', 'gm') },
 ]
 function extractFunctions(text) {
   const lines = text.split(NL)
@@ -217,14 +242,23 @@ function extractFunctions(text) {
 // ---------- 反向计数校验（宽特征独立数一遍，抓「静默漏检」） ----------
 // 与抽取器不同：任意缩进都算、只认「名字绑定」形态（function NAME / const|let|var NAME = (…)=> | = function），
 // 因此调用回调（.map((x) => …)）与括号表达式（const x = (a ? b : c) + d）不会误报。
-const DEF_FN_LINE = /^[ \t]*(?:export[ \t]+)?(?:async[ \t]+)?function[ \t]+([A-Za-z_$][A-Za-z0-9_$]*)[ \t]*\(/
+const DEF_FN_LINE = /^[ \t]*(?:export[ \t]+)?(?:default[ \t]+)?(?:async[ \t]+)?function[ \t]+([A-Za-z_$][A-Za-z0-9_$]*)[ \t]*\(/
 const DEF_CONST_LINE = /^[ \t]*(?:export[ \t]+)?(?:const|let|var)[ \t]+([A-Za-z_$][A-Za-z0-9_$]*)[ \t]*=[ \t]*(?:async[ \t]+)?(?:(?:\(.*\)|[A-Za-z_$][A-Za-z0-9_$]*)[ \t]*=>|function[ \t(])/
+// 与 RE_SETS 的 property/method 形态一一对应（硬性要求：进抽取器的形态必须同步进计数器，
+// 否则「抽取器已收录、计数器数不出」的形态不会触发 [疑似漏检]，漏检依然静默）。
+const DEF_PROPERTY_LINE = /^[ \t]*([A-Za-z_$][A-Za-z0-9_$]*)[ \t]*:[ \t]*(?:async[ \t]+)?(?:(?:\([^)]*\)|[A-Za-z_$][A-Za-z0-9_$]*)[ \t]*=>|function[ \t(])/
+// method 计数器同步收紧（与 RE_SETS.method 逐字同口径）：实参表含 function / => 的是调用点，不算定义。
+// 只收紧抽取器不收紧计数器，会让这 5 条调用点被数成「计入数不出」→ 反而新增假 [疑似漏检]。
+const DEF_METHOD_LINE = /^[ \t]*(?:async[ \t]+)?(?:get[ \t]+|set[ \t]+)?([A-Za-z_$][A-Za-z0-9_$]*)[ \t]*\((?!.*(?:function|=>))[^)]*\)[ \t]*\{/
 function collectDefCandidates(text) {
   const found = []
   const lines = maskCode(text).split(NL)
   for (let i = 0; i < lines.length; i += 1) {
-    const m = DEF_FN_LINE.exec(lines[i]) || DEF_CONST_LINE.exec(lines[i])
-    if (m !== null) found.push({ name: m[1], line: i + 1 })
+    const m = DEF_FN_LINE.exec(lines[i]) || DEF_CONST_LINE.exec(lines[i]) ||
+      DEF_PROPERTY_LINE.exec(lines[i]) || DEF_METHOD_LINE.exec(lines[i])
+    // 与抽取器的 addHit 同口径：KEYWORDS（含 async/get/set 控制流起始）一律不算定义，
+    // 否则 `if (`/`for (`/`while (`/`catch (` 会被方法宽特征误数，产生成百条假 [疑似漏检]。
+    if (m !== null && !KEYWORDS.has(m[1])) found.push({ name: m[1], line: i + 1 })
   }
   return found
 }
@@ -370,9 +404,10 @@ for (const file of srcFiles) {
     })
     if (prev === undefined) report.push('[新增] ' + rel + ' ' + e.name + ' L' + e.line + ' 描述待补充')
     else if (prev.oldRange !== rangeR) report.push('[行号] ' + rel + ' ' + e.name + ' ' + prev.oldRange + ' -> ' + rangeR)
-    if (Math.max(list.length, nameCount.get(e.name) || 0) > 1 && list.length !== (nameCount.get(e.name) || 0) && !sameNameReported.has(key)) {
+    // 同名告警面：只要同名条数 > 1 就一律提示（原条件在「条数相等但顺序/区间错位」时不报，等于无告警）
+    if (Math.max(list.length, nameCount.get(e.name) || 0) > 1 && !sameNameReported.has(key)) {
       sameNameReported.add(key)
-      notices.push('[同名] ' + rel + ' ' + e.name + ' ×' + Math.max(list.length, nameCount.get(e.name) || 0) + '（旧 ' + (list.map((r) => r.oldRange).join(' / ') || '无') + '；描述按出现顺序配对，请复核）')
+      notices.push('[同名] ' + rel + ' ' + e.name + ' ×' + Math.max(list.length, nameCount.get(e.name) || 0) + '（旧 ' + (list.map((r) => r.oldRange).join(' / ') || '无') + '；新 ' + (nameCount.get(e.name) || 0) + ' 条；描述按出现顺序配对，请复核）')
     }
   }
 }
