@@ -35,6 +35,8 @@ export const decisions = {
   isLiveDelegation,
   childPolicyNeedsFloor,
   isBootstrapPhase,
+  filterBootstrapContextDecision,
+  dedupeProjectedSkillCatalogDecision,
   pwshCommandOf,
   pwshMutationMatches,
   catalogHasWriteTools,
@@ -133,7 +135,7 @@ import { causeChainOf } from './lib/runtime-static.js'
 import { createAgentRuntime, isLiveDelegation, childPolicyNeedsFloor } from './lib/agent-runtime.js'
 import { sessionEvents, isSubagentChild } from './lib/agent-session.js'
 import { createModelRouting, isExplicitRoute, isExplicitEffort, resolveAgentRouteSources, decidePlannerModelUse, PLANNER_PROBE_TIMEOUT_MS, PLANNER_BLOCKED_REASON, NON_PLANNER_BLOCKED_REASON, sortPlannerCandidates } from './lib/model-routing.js'
-import { CHANNEL_BROKEN_CODES, FREE_TOOLS, purposeRouteDenyReason, routeDenyReason, planDenyReason, approvalDenyReason, isBootstrapPhase, labelsOfCallData, askKindOf, askKindOfRelaxed, isExactGateSet, isPartialGateSet, categorizeGateAsk, gateAskDenyReason, validateGateAskStructure, matchRouteLabel, matchApprovalLabel, matchPurposeLabel, parseAskResultData, parseDispatchAskResult, deriveFlowState, catalogHasWriteTools, isReadOnlyChildByCatalog, schemasHasWriteTools, schemasHasTool, catalogIsCollapsed, subagentProbeGateReason, shellMutationReason, plannerGateReason, childReadonlyGateReason, jobOutputGateReason, recordJobOutputCall, pollGuardGateReason, recordPollGuardCall, probeDisposalWarning, mainGateReason, runCodeGroupDenyReason, aggregateRunCodeDenyReason, decomposeRunCode, runCodeCatchGateReason, collectRunCodeSites, askUserQuestionReturnGateReason, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, runCodeDispatchCapText } from './lib/gate-decisions.js'
+import { CHANNEL_BROKEN_CODES, FREE_TOOLS, purposeRouteDenyReason, routeDenyReason, planDenyReason, approvalDenyReason, isBootstrapPhase, labelsOfCallData, askKindOf, askKindOfRelaxed, isExactGateSet, isPartialGateSet, categorizeGateAsk, gateAskDenyReason, validateGateAskStructure, matchRouteLabel, matchApprovalLabel, matchPurposeLabel, parseAskResultData, parseDispatchAskResult, deriveFlowState, filterBootstrapContextDecision, dedupeProjectedSkillCatalogDecision, catalogHasWriteTools, isReadOnlyChildByCatalog, schemasHasWriteTools, schemasHasTool, catalogIsCollapsed, subagentProbeGateReason, shellMutationReason, plannerGateReason, childReadonlyGateReason, jobOutputGateReason, recordJobOutputCall, pollGuardGateReason, recordPollGuardCall, probeDisposalWarning, mainGateReason, runCodeGroupDenyReason, aggregateRunCodeDenyReason, decomposeRunCode, runCodeCatchGateReason, collectRunCodeSites, askUserQuestionReturnGateReason, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, runCodeDispatchCapText } from './lib/gate-decisions.js'
 import { CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilteredToolsSdk, resolveToolsSdkRenderer, sdkSchemasForRendering, toolPresentationModeOf, toolSdkSchemasOf, projectSkillCatalogDecision, PTC_SECTION_NAME, READ_SECTION_NAME, SDK_SECTION_NAME, sectionOf, hasSection, hasNonEmptySection } from './lib/assembly-presentation.js'
 import { createSdkTextCache } from './lib/sdk-text-cache.js'
 import { createUsageLedger } from './lib/usage-ledger.js'
@@ -434,22 +436,37 @@ export function apply(ctx, config) {
     return toolPresentationModeOf(agent) === 'ptc'
   }
 
-  // skill catalog 属于 agent/pre-step 消息通道；只改当前请求副本，不注销 skill binding。
-  // 仅 HP1（C=1、A=1、F、main/planner、M=ptc）暂隐两个创造 skill；L 与其它组合
-  // 保持完整 catalog。prepend 让本投影在 tool-skill 的 catalog 生成之后收到最终 decision。
+  // agent/pre-step 消息投影：prepend 让本处理在 tool-skill/agent-instructions 等内层完成后
+  // 收到最终 decision；F 只过滤当前副本，L 仍由宿主自然重组。
+  function isAnchoredContextGate(agent) {
+    if (agent === undefined || agent === null) return false
+    const planner = isPlannerChild(agent)
+    const child = isChild(agent)
+    return bootstrapOn() && isBootstrapPhase(agent) && (planner || !child)
+  }
   let preStepWarned = false
   function warnPreStepFailure(error) {
     if (preStepWarned) return
     preStepWarned = true
-    console.warn('extra-plan: agent/pre-step 初始化失败（保留原 decision）：' + (error instanceof Error ? error.message : String(error)))
+    console.warn('extra-plan: agent/pre-step 后处理失败（已尽可能保留源过滤结果）：' + (error instanceof Error ? error.message : String(error)))
   }
   ctx.on('agent/pre-step', async (payload, next) => {
     const decision = await next()
+    const gated = isAnchoredContextGate(payload.agent)
+    // source gate 是关键边界：放在可降级的 creative/去重处理之外，失败不得发送未过滤 decision。
+    const filtered = filterBootstrapContextDecision(decision, gated)
+    let projected = filtered
     try {
-      return shouldHideCreativeCatalog(payload.agent) ? projectSkillCatalogDecision(decision) : decision
+      projected = shouldHideCreativeCatalog(payload.agent) ? projectSkillCatalogDecision(projected) : projected
+      const session = payload.agent.session
+      const visibleMessages = session !== undefined && session !== null && typeof session.deriveMessages === 'function'
+        ? session.deriveMessages()
+        : undefined
+      projected = dedupeProjectedSkillCatalogDecision(projected, visibleMessages)
+      return projected
     } catch (error) {
       warnPreStepFailure(error)
-      return decision
+      return projected
     }
   }, { prepend: true })
 

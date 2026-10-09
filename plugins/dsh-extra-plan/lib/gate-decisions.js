@@ -56,6 +56,48 @@ const HOST_ASK_CANCEL_TEXTS = ['Error: ask_user_question was aborted before the 
 
 // 委派角色判定由下方从 lib/agent-runtime.js 导入。
 // anchored 引导阶段判定：会话尚未落盘任何 tool/call 事件。
+function filterBootstrapContextDecision(decision, gated) {
+  if (gated !== true || decision === null || typeof decision !== 'object' || decision.kind !== 'enter' || !Array.isArray(decision.messages)) return decision
+  const messages = decision.messages.filter((message) => {
+    if (message === null || typeof message !== 'object' || message.source === null || typeof message.source !== 'object') return true
+    return message.source.kind !== 'agent-instructions' && message.source.kind !== 'skill-catalog'
+  })
+  return messages.length === decision.messages.length ? decision : { ...decision, messages }
+}
+
+function projectedSkillCatalogSignature(message) {
+  if (message === null || typeof message !== 'object' || message.source === null || typeof message.source !== 'object' || message.source.kind !== 'skill-catalog' || !Array.isArray(message.source.entries)) return undefined
+  const entries = []
+  for (const entry of message.source.entries) {
+    if (entry === null || typeof entry !== 'object' || typeof entry.name !== 'string' || entry.name === '' || typeof entry.description !== 'string') return undefined
+    entries.push([entry.name, entry.description])
+  }
+  return JSON.stringify(entries)
+}
+
+function dedupeProjectedSkillCatalogDecision(decision, visibleMessages) {
+  if (decision === null || typeof decision !== 'object' || decision.kind !== 'enter' || !Array.isArray(decision.messages)) return decision
+  let lastSignature
+  if (Array.isArray(visibleMessages)) {
+    for (const message of visibleMessages) {
+      const signature = projectedSkillCatalogSignature(message)
+      if (signature !== undefined) lastSignature = signature
+    }
+  }
+  let changed = false
+  const messages = []
+  for (const message of decision.messages) {
+    const signature = projectedSkillCatalogSignature(message)
+    if (signature !== undefined && signature === lastSignature) {
+      changed = true
+      continue
+    }
+    messages.push(message)
+    if (signature !== undefined) lastSignature = signature
+  }
+  return changed ? { ...decision, messages } : decision
+}
+
 function isBootstrapPhase(agent) {
   if (agent === undefined || agent === null) return false
   const session = agent.session
@@ -994,7 +1036,7 @@ const {
 export {
   CHANNEL_BROKEN_CODES, FREE_TOOLS, ASK_TOOL,
   purposeRouteDenyReason, routeDenyReason, planDenyReason, approvalDenyReason,
-  isBootstrapPhase, labelsOfCallData,
+  isBootstrapPhase, filterBootstrapContextDecision, dedupeProjectedSkillCatalogDecision, labelsOfCallData,
   askKindOf, askKindOfRelaxed, isExactGateSet, isPartialGateSet, categorizeGateAsk, gateAskDenyReason, validateGateAskStructure,
   matchRouteLabel, matchApprovalLabel, matchPurposeLabel, parseAskResultData, parseDispatchAskResult, deriveFlowState,
   catalogHasWriteTools, isReadOnlyChildByCatalog, schemasHasWriteTools, schemasHasTool, catalogIsCollapsed,

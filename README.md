@@ -167,6 +167,7 @@ dsh-extra-plan/
 │       ├── step-01-qqbot-安装映射.mjs
 │       ├── step-01-qqbot-安装映射.mjs
 │       ├── step-04-工具清单查看.mjs
+│       ├── step-04-context-gate宿主回归.mjs
 │       ├── step-04-路由与写闸门.mjs
 │       ├── step-05-会话解码.mjs
 │       ├── step-06-08-v4取证回归.mjs

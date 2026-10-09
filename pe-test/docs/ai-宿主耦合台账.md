@@ -64,13 +64,14 @@
 | HS25 | `index.js` plugin contract | `name/inject/apply` 与 agent 预设组合 | 【已核实·静态】 |
 | HS26 | HP 首轮 `tool:read` | section、参数默认值、输出字段与手写 F 文案必须同步核对 | 【已核实·静态；行为待实机】 |
 | HS27 | `executor-spawn.js` `slotKey` | `Symbol.for('cordis.original')`/traceable 语义决定跨世代幂等 | 【已核实·静态】 |
+| HS28 | context-gate 宿主回归 | 当前安装根版本、生产源码 hash、公共 AgentLoop/受控 adapter、完整 request trace 与工作区 JSONL 证据；受控 adapter 不冒称真实 provider | 【已核实·集成；真实provider/HUMAN NOT-RUN】 |
 
 ## ③ 当前 HK：钩子与文件组合契约
 
 | 编号 | 当前本仓位置/钩子 | 当前合同与风险 | 状态 |
 |:--|:--|:--|:--|
 | HK1 | `agent/created` | serial；启动注册错误必须吞掉；`agent/session-start` 已删除 | 【已核实·静态】 |
-| HK2 | 两处 `agent/pre-step` | waterfall（瀑布式处理）；引导与注册兜底必须各自保留 | 【已核实·静态】 |
+| HK2 | 两处 `agent/pre-step` | waterfall（瀑布式处理）；prepend gate 在最终 decision 写入 durable user/message 前过滤 F 的两类 source，再走 C 投影/目录去重；引导与注册兜底必须各自保留 | 【已核实·静态+集成】 |
 | HK3 | `agent/request-error` | waterfall retry（瀑布式重试）；MALFORMED 限次恢复与诊断 | 【已核实·静态】 |
 | HK4 | `agent/disposed` | emit/void（发出/无返回）；final fold（最终折叠）必须同步完成 | 【已核实·静态】 |
 | HK5 | `system-prompt/assemble` | 三参 waterfall（瀑布式处理）；投影保留 variables | 【已核实·静态】 |
@@ -124,7 +125,7 @@ HK23 当前无定义，不补造编号；历史/旧钩子见归档。
 | SD19b | register 抛错分类 | A 重名、B 永久定义错误、C 可重试错误 |
 | SD20/SD21 | SessionHeader.cwd | save_plan/save_probe 落盘基准 |
 | SD22 | PromptAssembly | sections/contexts/tools/variables 投影 |
-| SD23 | PreStepDecision | enter/reject/messages/waterfall（瀑布式处理） |
+| SD23 | PreStepDecision | enter/reject/messages/waterfall（瀑布式处理）；F gate 精确过滤 agent-instructions/skill-catalog，L 由宿主自然重组 |
 | SD24 | PreToolDecision/PostToolDecision | deny/allow 与失败 content 改写 |
 | SD25 | ToolExecution | callId/rootCallId/name/arguments/parent/signal |
 | SD26 | scoped 事件 subject 解析 | payload.agent/scope 注入 |
@@ -137,6 +138,7 @@ HK23 当前无定义，不补造编号；历史/旧钩子见归档。
 | SD33 | profile node_modules/宿主安装锚点 | step-04/step-01 依赖解析；静态入口不等于实机通过 |
 | SD35 | 宿主工具名清单 | deny 必须与宿主真值对拍 |
 | SD36 | backgroundMode→descriptor.mode | 角色与 probe claim |
+| SD37 | Session.deriveMessages() | projected catalog 去重只读取当前 Session 可见 durable message surface；缺能力的 mock 不推断已发布 |
 | SD37 | createUserMessage/source.kind | v4 自有 producer kind 与 id/role |
 | SD38 | step-07 输出 | attempted（尝试路由）/actual provenance（实际来源）、suffix、父子行号 |
 | SD39 | agents.get(id).status | AgentRegistry.get(id)（dsh-agent）返回驻留 Agent，.status getter 真源 dsh-agent-loop：phase idle/maintenance（空闲/维护）→ 'idle'，否则 'running'（运行中）；插件经 ctx.get('agents') 查询 send_message 目标运行状态 |

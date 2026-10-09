@@ -56,7 +56,7 @@ import { restatePresetPlugins as restatePresetPluginsE, declarationCoversAsset a
 // 故 Config 的 volatile/默认值契约改用源码文本静态核对（机械可核对），不依赖本机 schemastery 版本。
 import { readFileSync as readFileSyncE } from 'node:fs'
 const decisions = plugin.decisions
-const { catalogHasWriteTools, isReadOnlyChildByCatalog, routeDenyReason, runCodeCatchGateReason, runCodeGroupDenyReason, askUserQuestionReturnGateReason, probeDisposalWarning, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilteredToolsSdk, toolPresentationModeOf, projectSkillCatalogDecision, isBootstrapPhase, shellMutationReason, recordJobOutputCall, parseAskResultData, parseDispatchAskResult, deriveFlowState } = decisions
+const { catalogHasWriteTools, isReadOnlyChildByCatalog, routeDenyReason, runCodeCatchGateReason, runCodeGroupDenyReason, askUserQuestionReturnGateReason, probeDisposalWarning, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilteredToolsSdk, toolPresentationModeOf, projectSkillCatalogDecision, isBootstrapPhase, filterBootstrapContextDecision, dedupeProjectedSkillCatalogDecision, shellMutationReason, recordJobOutputCall, parseAskResultData, parseDispatchAskResult, deriveFlowState } = decisions
 
 // ── F 段（HP 首轮）tool:read 手写文案（变量②）的两个基准字符串 ──────────────
 // HINT_READ_DEFAULT：内置兜底文案的逐字副本，同时是预设 bootstrapReadHint 的示例值
@@ -103,6 +103,26 @@ check('G7 isReadOnlyChildByCatalog 只读目录 → true', isReadOnlyChildByCata
 check('G8 isReadOnlyChildByCatalog 含 write → false', isReadOnlyChildByCatalog(['write', 'read']), false)
 check('G9 isReadOnlyChildByCatalog 含 edit → false', isReadOnlyChildByCatalog(['edit']), false)
 check('G10 isReadOnlyChildByCatalog([]) → false', isReadOnlyChildByCatalog([]), false)
+
+// ── ①c context-gate 纯决策契约（来源精确、冻结输入、去重签名） ─────────
+const gateMessage = (kind, extra = {}) => ({ id: kind + '-id', role: 'user', source: { kind, ...extra }, content: [{ type: 'text', text: kind }] })
+const gateCatalog = (entries) => gateMessage('skill-catalog', { entries })
+const gateDecision = { kind: 'enter', messages: [gateMessage('agent-instructions'), gateCatalog([{ name: 'skill-a', description: 'A' }]), gateMessage('user-message'), gateMessage('skill-invocation'), gateMessage('runtime-context')] }
+const gatedDecision = filterBootstrapContextDecision(gateDecision, true)
+checkTrue('CG1 gated 仅精确 agent-instructions/skill-catalog 整条过滤且保留其它顺序', gatedDecision.messages.map((message) => message.source.kind).join('|') === 'user-message|skill-invocation|runtime-context' && gatedDecision !== gateDecision)
+checkTrue('CG2 非gated透传原对象、reject/非数组也透传', filterBootstrapContextDecision(gateDecision, false) === gateDecision && filterBootstrapContextDecision({ kind: 'reject', messages: gateDecision.messages }, true).kind === 'reject' && filterBootstrapContextDecision({ kind: 'enter', messages: 'bad' }, true).messages === 'bad')
+const frozenGateDecision = Object.freeze({ kind: 'enter', messages: Object.freeze([Object.freeze(gateMessage('agent-instructions')), Object.freeze(gateMessage('user-message'))]) })
+checkTrue('CG3 冻结decision可过滤且不改变未命中消息身份', (() => { const out = filterBootstrapContextDecision(frozenGateDecision, true); return out.messages.length === 1 && out.messages[0] === frozenGateDecision.messages[1] })())
+const catalogA = gateCatalog([{ name: 'skill-a', description: 'A' }])
+const catalogB = gateCatalog([{ name: 'skill-b', description: 'B' }])
+const dedupeInput = { kind: 'enter', messages: [catalogA, catalogA, catalogB, catalogB] }
+const dedupeOutput = dedupeProjectedSkillCatalogDecision(dedupeInput, [catalogA])
+checkTrue('CG4 当前可见目录同签名去重、变更保留且批内同签名只留一次', dedupeOutput.messages.length === 1 && dedupeOutput.messages[0] === catalogB)
+const emptyCatalog = gateCatalog([])
+const emptyDedupe = dedupeProjectedSkillCatalogDecision({ kind: 'enter', messages: [emptyCatalog] }, [emptyCatalog])
+checkTrue('CG5 空entries是合法签名且重复时删除', emptyDedupe.messages.length === 0)
+const malformedCatalog = gateCatalog([{ name: '', description: 'bad' }])
+checkTrue('CG6 坏entries不作为去重基准且原消息保留', dedupeProjectedSkillCatalogDecision({ kind: 'enter', messages: [malformedCatalog] }, [malformedCatalog]).messages.length === 1)
 
 // ── ①b 模型路由父配置/严格探针边界（[任务5]） ───────────────────────
 check('MR1 routeKey 只有统一 NUL 分隔结构', routeKey('provider', 'model'), 'provider\u0000model')
@@ -288,6 +308,16 @@ const plannerAgent = {
   ctx: undefined,
 }
 
+async function runWaterfall(listeners, name, payload, terminal) {
+  const chain = Array.isArray(listeners[name]) ? listeners[name] : []
+  async function dispatch(index) {
+    const listener = chain[index]
+    if (listener === undefined) return await terminal()
+    return await listener(payload, () => dispatch(index + 1))
+  }
+  return await dispatch(0)
+}
+
 async function assemble(listeners, agent, tools, sections = []) {
   const entry = listeners['system-prompt/assemble']
   if (entry === undefined || entry.length === 0) throw new Error('assemble 监听器未注册')
@@ -297,6 +327,15 @@ function preExecute(listeners, agent, name, argumentsObj, execExtras) {
   const entry = listeners['tools/pre-execute']
   if (entry === undefined || entry.length === 0) throw new Error('pre-execute 监听器未注册')
   return entry[0]({ agent, name, arguments: argumentsObj, ...(execExtras !== undefined && execExtras !== null ? execExtras : {}) }, () => ({ kind: 'allow' }))
+}
+
+// 完整 agent/pre-step 链：prepend gate → 既有初始化/预算 listener → terminal；next 只能进入一次。
+{
+  let nextCalls = 0
+  const chainHarness = makeHarness({ anchoredBootstrap: true })
+  const chainDecision = { kind: 'enter', messages: [gateMessage('agent-instructions'), gateCatalog([{ name: 'skill-a', description: 'A' }]), gateMessage('user-message')] }
+  const chainResult = await runWaterfall(chainHarness, 'agent/pre-step', { agent: mainAgent }, async () => { nextCalls += 1; return chainDecision })
+  checkTrue('CG7 完整pre-step waterfall next恰一次且F主会话删除两类来源', nextCalls === 1 && chainResult.messages.length === 1 && chainResult.messages[0].source.kind === 'user-message')
 }
 
 // 只读目录（reviewer 类）：pwsh 写 → deny；pwsh 只读 → 放行；write/edit → deny
@@ -537,15 +576,7 @@ const failTools = (record, schemas, failFn) => ({
   },
   schemas: () => schemas,
 })
-const stepProbe = (listeners, agent) => {
-  const entry = listeners['agent/pre-step']
-  if (entry === undefined || entry.length === 0) throw new Error('pre-step 监听器未注册')
-  const chain = (i) => {
-    if (i >= entry.length) return Promise.resolve({ kind: 'enter', messages: [] })
-    return Promise.resolve(entry[i]({ agent }, () => chain(i + 1)))
-  }
-  return chain(0)
-}
+const stepProbe = (listeners, agent) => runWaterfall(listeners, 'agent/pre-step', { agent }, async () => ({ kind: 'enter', messages: [] }))
 const probeSchemas = [{ name: 'read' }, { name: 'glob' }, { name: 'save_probe' }]
 // 认领前置：每次放行 subagent_probe 给 main-1 挂 1 个待认领计数（同 R18 口径）。
 const grantClaim = () => {
@@ -1672,7 +1703,7 @@ const fullCalls = (calls) => calls.filter((pair) => pair[0] === undefined)
 // ── ⑮ 创造模式装配投影矩阵：4 × 3 × 2 × 5 = 120 ───────────────────────
 // 使用真实 registry schema 形状的 mock；只断言模型可见 assembly，不把隐藏误报为 runtime binding 安全隔离。
 const MATRIX_CORDIS_TOOLS = CORDIS_PRESENTATION_TOOLS
-const MATRIX_CREATIVE_SKILLS = ['cordis-plugin-development', 'editing-cordis-compositions']
+const MATRIX_CREATIVE_SKILLS = ['cordis-plugin-development', 'editing-cordis-compositions', 'cordis-composition-reference']
 const MATRIX_SCHEMA = (name, description, parameters) => ({
   name,
   description,
@@ -1748,8 +1779,7 @@ function matrixCatalogDecision(creativeMode) {
 }
 async function matrixCatalog(listeners, agent, creativeMode) {
   const decision = matrixCatalogDecision(creativeMode)
-  const entry = listeners['agent/pre-step'] !== undefined ? listeners['agent/pre-step'][0] : undefined
-  return entry === undefined ? decision : await entry({ agent }, async () => decision)
+  return await runWaterfall(listeners, 'agent/pre-step', { agent }, async () => decision)
 }
 const matrixModes = ['native', 'ptc', 'both']
 const matrixRoles = ['main', 'planner', 'executor', 'reviewer', 'probe']
@@ -1819,8 +1849,8 @@ for (const anchoredBootstrap of [false, true]) {
           const catalogMessage = Array.isArray(catalog.messages) ? catalog.messages.find((message) => message !== null && typeof message === 'object' && message.source !== undefined) : undefined
           const catalogEntries = catalogMessage !== undefined && catalogMessage.source !== null && typeof catalogMessage.source === 'object' && Array.isArray(catalogMessage.source.entries) ? catalogMessage.source.entries : []
           const catalogCreative = catalogEntries.filter((entry) => entry !== null && typeof entry === 'object' && MATRIX_CREATIVE_SKILLS.includes(entry.name))
-          const catalogExpected = creativeMode && !anchoredPtc ? 2 : 0
-          const catalogOk = catalogCreative.length === catalogExpected && catalogEntries.some((entry) => entry !== null && typeof entry === 'object' && entry.name === 'matrix-ordinary-skill')
+          const catalogExpected = anchored ? 0 : creativeMode ? MATRIX_CREATIVE_SKILLS.length : 0
+          const catalogOk = catalogCreative.length === catalogExpected && (anchored ? catalogEntries.length === 0 : catalogEntries.some((entry) => entry !== null && typeof entry === 'object' && entry.name === 'matrix-ordinary-skill'))
           const ordinarySkillToolOk = anchoredPtc ? schemas.some((schema) => schema.name === 'skill') : mode === 'ptc' ? sdk.includes('skill') : visibleRawTools.some((tool) => tool.name === 'skill')
           const ptcBoundaryOk = mode !== 'ptc' || (gotNames.length === 1 && gotNames[0] === 'run_code' && !gotNames.includes('read') && (anchoredPtc ? !gotSectionNames.includes('tools:ptc-only') : gotSectionNames.includes('tools:ptc-only')) && gotSectionNames.includes('tool:read') && (anchoredPtc ? !gotSectionNames.includes('tools:sdk') : gotSectionNames.includes('tools:sdk')))
           const hpOk = !anchoredPtc || (gotSectionNames.join('|') === 'extra-plan-bootstrap|tool:read' && sdk === '' && cordisSection === '' && !gotSectionNames.includes('matrix-user-section'))
