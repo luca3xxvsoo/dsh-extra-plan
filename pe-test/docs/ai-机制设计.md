@@ -35,8 +35,8 @@
 - A=anchoredBootstrap、C=creativeMode、M=`native|ptc|both` 是模型可见投影维度；F 是首个 `tool/call` 前，L 是其后。C=0 隐藏模型可见 Cordis 工具/创造 skill，但不改变 registry binding、`tools.restrict` 或 `tools/pre-execute` 安全边界。
 - Pure PTC 顶层仍只保留 `run_code`；A=1/F/main-planner/ptc 的两段是预设引导和插件手写 `tool:read`，L 段回宿主原文。native/both 的 HN/HB 只保留引导段与 read。详细时序和 120 格回归见 [step-04](../tools/step-04-路由与写闸门.mjs) 与[实机流程](ai-实机闸门测试流程.md)。
 - P2-2 cache 只存在单个 apply 闭包内，以 agent 对象为 WeakMap key；命中键包含完整 renderer-visible（渲染器可见）schema 指纹、原始 language、renderer 函数身份。并发同 key 合并，reject/空文本降级/过期 promise 不缓存；dispose、新 Agent、新 apply、重启都隔离边界。完整 L 文本逐字相等且 renderer 调用计数为 1 是硬门槛。
-- 默认链是 `agent.cordis.yml` 叶值 → `generate-runtime-defaults.mjs` 生成常量/声明行产物 → 运行时 fallback（回退）；运行时不解析 YAML。生成器先 parse/validate（解析/校验）再替换，坏模板、`--check`、prepack 失败时保留 last-known-good（上次已知良好版本）；生成物禁止手改。
-- 10 项 volatile Config 共用 `dsh-extra-plan-settings` 权威行，声明行只承载 `webFetch/toolPresentationMode` 两项投影；PUT 只做投影，GET 依次读取权威值、投影、默认值。0.2 独立 `settings.plugins.tab` 移除；0.1.7 原始 `plugins.row.config` keyed row 由 0.1.7/0.2 支持构建保留，宿主提供对应 legacy slot 时在插件详情呈现共享表单；slot 缺失时走宿主 configEditor/SettingsForms 或手工 profile 权威行后备路径。settings API/Config/投影/preset-sync/live-config 后端链不变，不能用只写投影的 PUT 代替权威行更新。
+- 默认链是 `agent.cordis.yml` 叶值 → `generate-runtime-defaults.mjs` 生成常量与纯 `preset-definition.generated.yml` → 运行时 fallback/官方 adapter；运行时不解析作者 YAML。生成器先 parse/validate（解析/校验）再替换，坏模板、`--check`、prepack 失败时保留 last-known-good（上次已知良好版本）；生成物禁止手改。
+- 10 项 volatile Config 共用 `dsh-extra-plan-settings` 权威行，`extra-plan-preset-sync` 只承载 `webFetch/toolPresentationMode/gateWords` 支持投影；PUT 只写该公开行，GET 依次读取权威值、公开投影、默认值。纯 definition 的 17 条本体与 group/isolate/!!js 由官方 AgentPreset adapter 直接复用。0.2 独立 `settings.plugins.tab` 移除；0.1.7 原始 `plugins.row.config` keyed row 保留。settings API/Config/投影/preset-sync/live-config 后端链不变，不能用只写投影的 PUT 代替权威行更新。
 
 ## 六、session 生命周期与 usage 账本
 

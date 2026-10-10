@@ -49,7 +49,8 @@ function parseResult(out) {
   const text = String(out)
   const m = text.match(/通过\s*(\d+)(?:\/\d+)?\s*[,，]\s*失败\s*(\d+)(?:\s*[,，]\s*(?:跳过\s*(\d+)|(\d+)\s*跳过))?/) || text.match(/结果：\s*(\d+) 通过，(\d+) 失败/)
   if (m === null) return null
-  return { pass: Number(m[1]), fail: Number(m[2]), skip: Number(m[3] === undefined ? (m[4] === undefined ? 0 : m[4]) : m[3]) }
+  const incompleteMatch = text.match(/INCOMPLETE\s+(\d+)/i)
+  return { pass: Number(m[1]), fail: Number(m[2]), skip: Number(m[3] === undefined ? (m[4] === undefined ? 0 : m[4]) : m[3]), incomplete: incompleteMatch === null ? 0 : Number(incompleteMatch[1]) }
 }
 
 function runOne(file, extraArgs) {
@@ -87,7 +88,9 @@ function escapeCell(value) {
 
 function classifyAuto(result) {
   if (result.error !== undefined) return '未执行'
-  if (result.status !== 0 || (result.stats !== null && result.stats.fail > 0)) return '失败'
+  if (result.stats !== null && result.stats.fail > 0) return '失败'
+  if (result.stats !== null && result.stats.incomplete > 0) return '部分执行'
+  if (result.status !== 0) return '失败'
   if (result.stats !== null && result.stats.skip > 0 && result.stats.pass === 0) return '未执行'
   if (result.stats !== null && result.stats.skip > 0 && result.stats.pass > 0) return '部分执行'
   return '通过'
@@ -95,7 +98,7 @@ function classifyAuto(result) {
 
 function statsSummary(result) {
   if (result.stats !== null) {
-    return '通过 ' + result.stats.pass + ', 失败 ' + result.stats.fail + (result.stats.skip > 0 ? ', 跳过 ' + result.stats.skip : '')
+    return '通过 ' + result.stats.pass + ', 失败 ' + result.stats.fail + (result.stats.skip > 0 ? ', 跳过 ' + result.stats.skip : '') + (result.stats.incomplete > 0 ? ', 未完成 ' + result.stats.incomplete : '')
   }
   return result.status === 0 ? '通过（无统计行）' : '失败'
 }
@@ -212,7 +215,7 @@ function main() {
   lines.push('')
   lines.push('## 四、结论')
   lines.push('- 自动判定项结论：通过 ' + autoPass + ' / 部分执行 ' + autoPartial + ' / 未执行 ' + autoSkip + ' / 失败 ' + autoFail + '，共 ' + AUTO.length + ' 项')
-  lines.push('- 说明：部分执行/未执行不计失败；环境项的 SKIP 会保留结构化 reason/details，真实 QQBot 消息与交互仍属 HUMAN')
+  lines.push('- 说明：部分执行/未执行不计失败；INCOMPLETE 单列为部分执行，不计 AUTO PASS；环境项的 SKIP 会保留结构化 reason/details，真实 QQBot 消息与交互仍属 HUMAN')
   lines.push('- 说明：0.2.0-rc.1 未核实·HUMAN，当前 AUTO 不覆盖，须在 rc.1 设备用现有脚本手工验收')
   if (autoFail > 0) lines.push('- 说明：失败项含「已知预存问题」（见自动判定项表格备注列），其余失败需排查')
 

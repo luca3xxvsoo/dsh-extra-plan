@@ -10,7 +10,7 @@
 | QQBot 目标 | `0.5.0` | 静态目标，不等于集成通过 |
 | 核心插件 | `@local/dsh-extra-plan` `0.3.0` | 当前包契约 |
 | QQBot 精简插件 | `@local/dsh-qqbot-user-questions` `2.0.0` | 仍有 postinstall（安装后脚本）；allow-build 是否放行待 HUMAN |
-| 预设载体 | profile patch 根级 `preset-extra-plan` 声明行 | `dsh.bundle.patch` 第二项为生成产物；旧 `.agent-presets` 不作读取方 |
+| 预设载体 | `extra-plan-preset-sync` 公开核对行 + 内部纯 definition | `dsh.bundle.patch` 只装载两行；旧 `preset-extra-plan` 仅非破坏读取迁移，官方 adapter/registry 直接复用 |
 | 状态判读 | `【已核实】` 表示台账静态/源码核对；`【未核实】`、`HUMAN`、`SKIP` 不得改为通过 | 当前台账纪律 |
 
 ### 四版本证据分栏
@@ -43,7 +43,7 @@
 | HS3 | `lib/settings.js` webServer prefix | `/api/dsh-extra-plan-settings` prefix 路由 | 【已核实·静态】 |
 | HS4 | `live-config.js` 路径决议 | `configPath → DSH_EXTRA_PLAN_CONFIG_PATH → configEditor.documentPath`；不读旧预设目录 | 【已核实·静态】 |
 | HS5 | `preset-sync.js` `configEditor.edit` | 事务/reconcile/回滚；插件不直写 patch | 【已核实·静态】 |
-| HS6 | `preset-patch.generated.yml` | 声明行 Config 与完整 `plugins` 组合；由生成器维护 | 【已核实·静态】 |
+| HS6 | `preset-definition.generated.yml` | 纯 definition 的 id/name/description/order/plugins；由生成器维护，preset-sync 交官方 adapter | 【已核实·静态】 |
 | HS8 | `executor-spawn.js` `subagents.registerProvider` | provider 引用计数幂等；稳定槽键取服务实现本体 | 【已核实·静态】 |
 | HS9 | executor `delegate/getProvider` | 默认 delegate 与 providerName 解析 | 【已核实·静态】 |
 | HS10 | executor `toolFilter.deny` | deny 名单必须是宿主实际工具名 | 【已核实·静态】 |
@@ -59,7 +59,7 @@
 | HS20 | 双版本 client.js 设置 UI 注册面 | 0.2 独立 `settings.plugins.tab` 已移除；0.1.7 原始 `plugins.row.config` keyed row 接线由 0.1.7/0.2 支持构建保留，宿主提供对应 legacy row slot 时在插件详情呈现；slot 缺失时走 configEditor/SettingsForms 或 profile 权威行后备路径；settings 后端/Config/投影/热读仍活动 | 【已核实·静态；双版本 post-fix HUMAN 待复测】 |
 | HS21 | `client.js` `esp-*` | 本插件自持样式；不依赖旧宿主 CSS hash | 【已核实·静态】 |
 | HS22 | 主题 token | 颜色/可读性依赖主题变量名 | 【已核实·静态】 |
-| HS23 | client-bridge 空壳行 | pathLike + package exports 扫描 client | 【已核实·静态】 |
+| HS23 | settings 内部 client-carrier | 官方 Loader Group 创建唯一 pathLike child，随 settings 生命周期同步移除并触发 client graph/HMR 更新 | 【已核实·静态】 |
 | HS24 | extra-plan row config | 宿主 schema 将行 config 传入 apply | 【已核实·静态】 |
 | HS25 | `index.js` plugin contract | `name/inject/apply` 与 agent 预设组合 | 【已核实·静态】 |
 | HS26 | HP 首轮 `tool:read` | section、参数默认值、输出字段与手写 F 文案必须同步核对 | 【已核实·静态；行为待实机】 |
@@ -82,7 +82,7 @@
 | HK8 | 七个钩子 `payload.agent` | agentEvents fused 形状 | 【已核实·静态】 |
 | HK9 | tool-jobs 通知 | `source.kind='tool-jobs'` 且 `form='notice'`；旧三元组已废；v0.4.0 起新增 job_list/list_agents 轮询守卫清整表消费方（consumed 标记与 job_output 跟踪命中解耦） | 【已核实·静态】 |
 | HK10 | step-06 事件夹具 | 事件负载必须与真实 subagent/ask/tool 形状一致 | 【已核实·静态】 |
-| HK11 | `cordis.patch.yml` 三条 insert | client-bridge/settings/preset-sync 行注入 | 【已核实·静态】 |
+| HK11 | `cordis.patch.yml` 两条 insert | settings/preset-sync 两个公开行；carrier 与官方 adapter 均归行内部 | 【已核实·静态】 |
 | HK12 | package `dsh.bundle.patch` | 依次装载 cordis.patch 与生成的 preset patch | 【已核实·静态】 |
 | HK13 | package exports | settings/preset-sync/client/locale 子路径必须可解析 | 【已核实·静态】 |
 | HK14 | package `dsh.client` | platform=web、inject 顺序与 `./client` export | 【已核实·静态】 |
@@ -153,11 +153,11 @@ SD9、SD13 是历史缺定义编号，SD34 是本插件不调用 `sessionProject
 | CF3 | `defaultDshHome` 仅公共 API/夹具；活动 renderer 由 `resolveToolsSdkRenderer` 负责 | 【已核实·静态】 |
 | CF4 | package `dsh.bundle.patch` 两项入口 | 【已核实·静态】 |
 | CF5 | `dsh.client.platform=web` 与 inject | 【已核实·静态】 |
-| CF6 | exports 含 settings/preset-sync/client/client-bridge/locale 通道 | 【已核实·静态】 |
+| CF6 | exports 含 settings/preset-sync/client/definition/locale 通道 | 不再导出 client-bridge；definition 资产供 preset-sync 读取 | 【已核实·静态】 |
 | CF7 | step-01 设置页从宿主安装目录解析依赖 | 【已核实·静态】 |
 | CF8 | dependencies 仅 js-yaml | 【已核实·静态】 |
 | CF9 | 临时 DSH_HOME/profile 夹具形状 | 【已核实·静态】 |
-| CF10 | preset.yml 元数据与声明行 Config | 【已核实·静态】 |
+| CF10 | preset.yml 元数据与纯 definition Config | id/name/description/order/plugins 与作者源同源，definition 不含 Loader insert wrapper | 【已核实·静态】 |
 | CF11 | QQBot 映射测试的 profile/依赖夹具 | 【已核实·静态】 |
 | CF12 | `@deepseek-ai/*` 不进 dependencies；dsh/dsh-llm peer 精确钉四版本；bundle 不兼容时 skipped/disabled | 【已核实·静态；rc.2 门控核对，profile 清理与 422 消失待 HUMAN】 |
 
@@ -190,7 +190,7 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 4. 包/服务换代：workflow-ptc、`ptcRuntime`、tool:cordis 删除、当前两项 Cordis 工具与 `bundledSkillDir`（0.2.0-rc.2 换通道，配 `watch:false`；旧 `customSkillDirs` 已删）必须按当前真值核对。
 5. rc.2 单侧风险：`sanitizeProfile` 整体搬移 patch、`configEditor.edit` 值等于继承层删行；rc.1 现场缺失，不能推出跨代结论。
 6. session v4：`session.v4.jsonl.zstd`、自有 source.kind、developer/message 坐标和 step-07 三代候选必须保留。
-7. CF12 422 开放 incident：profile 中宿主运行时副本曾导致 `tool_removal` 422；清理 profile node_modules/lock、污染会话续聊、native↔PTC 切换三项均待用户验证。
+7. CF12 422 开放 incident：profile 中宿主运行时副本曾导致 `tool_removal` 422；清理 profile node_modules/lock、污染会话续聊、native↔PTC 切换三项均待用户验证。当前两组件收敛后的 bundle 两行、内部 carrier、definition/adapter 仍需用户部署后 HUMAN 验证。
 
 ### 本轮 rc2 兼容基线与 post-fix 状态
 
@@ -204,7 +204,7 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 | 2 | QQBot 0.5.0 manifest 实际装载运行 | 环境脚本只读 + 部署后运行 | 【未核实·HUMAN】 |
 | 3 | `im-qqbot` 宿主 schema/id/name/config | 用户侧按真实宿主 schema 比对 | 【未核实·HUMAN】 |
 | 4 | web→qqbot 建链真实结果 | 环境脚本只读；必要时用户 `dir`/`fsutil` 复核 | 【未核实·HUMAN】 |
-| 5 | `preset-extra-plan`/`config.default=extra-plan` 在 QQBot `/preset` 生效 | 部署后由用户执行 `/preset` | 【未核实·HUMAN】 |
+| 5 | 新会话默认 `extra-plan`、旧 `preset-extra-plan` 迁移与 QQBot `/preset` 行为 | 部署后由用户执行 `/preset`；本轮不清理旧 profile 行 | 【未核实·HUMAN】 |
 | 6 | QQBot postinstall 是否被 allow-build 放行 | 用户部署时查命令与安装日志 | 【未核实·HUMAN】 |
 
 环境不足、权限不足或脚本输出 SKIP 不能销账；自动全通过也不能替代以上六项。
@@ -226,7 +226,7 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 
 ## ⑩ P2-4 与 gateWords 当前合同
 
-- `agent.cordis.yml` 的 `exploreBudget`/`plannerPromptSuffix` 是作者叶值；生成器产出 `preset-defaults.generated.js` 与 `preset-patch.generated.yml`，先校验再替换，失败保留 last-known-good（上次已知良好版本）；运行时不解析 YAML。
-- `preset-sync` 的 idle（空闲稳态）条件是声明行覆盖资产、本体剥离一致、投影一致；写入只走 `configEditor.edit`，无 manifest（清单）/旧迁移链。
+- `agent.cordis.yml` 的 `exploreBudget`/`plannerPromptSuffix` 是作者叶值；生成器产出 `preset-defaults.generated.js` 与纯 `preset-definition.generated.yml`，先校验再替换，失败保留 last-known-good（上次已知良好版本）；运行时由 preset-sync 解析 definition 并交官方 adapter。
+- `preset-sync` 的 idle（空闲稳态）以公开行支持投影/gateWords 与 settings 权威值收敛为准；旧 `preset-extra-plan` 只读迁移，不写旧 body；新写入只走 `configEditor.edit` 目标两个公开行，无 manifest（清单）台账。
 - gateWords 是 YAML 七键唯一值源；apply 先 `createGateRuntime`，当前 agent scope 注册七个 `systemPrompt.variable`；deny、match、状态机和投影都消费当前词表；旧词不推进。
 - `system-prompt/assemble` 的模型可见副本必须保留 variables 映射；宿主严格渲染失败、变量缺失或未知变量属于升级敏感面，静态台账不冒充实机通过。

@@ -13,9 +13,8 @@
     "./preset-sync": "./lib/preset-sync.js",
     "./preset-sync/locale/*": "./locale/preset-sync/*",
     "./client": "./lib/client.js",
-    "./client-bridge": "./lib/client-bridge.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
-    "./assets/presets/extra-plan/preset-patch.generated.yml": "./assets/presets/extra-plan/preset-patch.generated.yml",
+    "./assets/presets/extra-plan/preset-definition.generated.yml": "./assets/presets/extra-plan/preset-definition.generated.yml",
     "./package.json": "./package.json"
   },
   "files": [
@@ -25,7 +24,7 @@
     "scripts/generate-runtime-defaults.mjs",
     "cordis.patch.yml",
     "assets/presets/extra-plan/",
-    "assets/presets/extra-plan/preset-patch.generated.yml"
+    "assets/presets/extra-plan/preset-definition.generated.yml"
   ],
   "scripts": {
     "generate:runtime-defaults": "node scripts/generate-runtime-defaults.mjs",
@@ -35,10 +34,7 @@
   "repository": "git+https://github.com/luca3xxvsoo/dsh-extra-plan.git",
   "dsh": {
     "bundle": {
-      "patch": [
-        "./cordis.patch.yml",
-        "./assets/presets/extra-plan/preset-patch.generated.yml"
-      ]
+      "patch": "./cordis.patch.yml"
     },
     "client": {
       "platform": "web",
@@ -56,6 +52,7 @@
   "peerDependencies": {
     "@deepseek-ai/dsh": "0.1.7-rc.1 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2",
     "@deepseek-ai/dsh-llm": "0.1.7-rc.1 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2",
+    "@deepseek-ai/dsh-agent-preset": "0.1.7-rc.1 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2",
     "@deepseek-ai/schemastery": "~3.18.4"
   }
 }

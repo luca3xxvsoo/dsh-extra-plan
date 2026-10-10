@@ -87,13 +87,13 @@ dsh-extra-plan/
 │   ├── dsh-extra-plan/                                 # 模式核心插件（四级闸门/探查上限/save_plan 等）
 │   │   ├── assets/presets/extra-plan/                   
 │   │   │   ├── agent.cordis.yml                        # 预设主配置（persona/工具/插件行/delegation）
-│   │   │   ├── preset-patch.generated.yml              # 预设投递载体文件
+│   │   │   ├── preset-definition.generated.yml         # 纯预设 definition 生成资产
 │   │   │   └── preset.yml                              # 预设元信息（GUI 显示名称与描述）
 │   │   ├── lib/                                        # 模块目录
 │   │   │   ├── agent-runtime.js                        # 角色运行态：createAgentRuntime 的 per-apply 判定与缓存
 │   │   │   ├── agent-session.js                        # 角色判定：sessionEvents/isSubagentChild 唯一来源
 │   │   │   ├── assembly-presentation.js                # 展示投影：A/C/M 投影与 skill catalog
-│   │   │   ├── client-bridge.js                        # 客户端桥接行
+│   │   │   ├── client-carrier.js                       # 配置组件内部 Client 载体，不形成公开组件
 │   │   │   ├── client.js                               # 设置页前端 UI
 │   │   │   ├── executor-spawn.js                       # 执行者委托层（workflow/ralph worker 注入）
 │   │   │   ├── gate-decisions.js                       # 闸门纯决策：路由/目的/澄清/批准与只读判定

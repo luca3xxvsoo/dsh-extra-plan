@@ -1,8 +1,8 @@
 // dsh-extra-plan-settings 的宿主侧实现。
 // settings 行 config 是全部 10 个值的权威载体（8 项 UI + 2 项宿主行设置）。
-// 客户端只做一次 SettingsForms/configForms mutate；PUT 校验后只更新声明行投影，
+// 客户端只做一次 SettingsForms/configForms mutate；PUT 校验后只更新公开 preset-sync 行投影，
 // 投影失败不回滚权威行。
-// GET 按 settings 行 → 声明行投影 → 默认值逐项回退；缺失投影可恢复。
+// GET 按 settings 行 → 公开 preset-sync 行投影 → 默认值逐项回退；缺失投影可恢复。
 // 本模块不写 cordis.patch.yml 或旧预设目录，也不负责 QQBot。
 
 import { readFileSync } from 'node:fs'
@@ -11,25 +11,57 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import z from '@deepseek-ai/schemastery'
 import {
-  HOST_ROW_LEAF_KEYS,
   HOST_ROW_SETTING_DEFINITIONS,
   PRESET_ROW_ID,
   SETTING_DEFINITIONS,
   SETTINGS_ROW_ID,
-  effectivePluginsOf,
   hostRowDefaultsFromTemplate,
   normalizeSettingValue,
   readPath,
   readProjectedValue,
   validateSettingValue,
 } from './preset-settings.js'
-import { assetPlugins, effectiveRowConfig, restatePresetPlugins } from './preset-sync.js'
+import { effectiveRowConfig, restatePresetSyncConfig } from './preset-sync.js'
 
 export const name = 'dsh-extra-plan-settings'
 export const inject = []
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const TEMPLATE_AGENT_FILE = join(HERE, '..', 'assets', 'presets', 'extra-plan', 'agent.cordis.yml')
+
+const CLIENT_CARRIER_ENTRY_ID = 'dsh-extra-plan-client-carrier'
+const carrierByLoader = new WeakMap()
+function mountClientCarrier(child) {
+  const loader = typeof child.get === 'function' ? child.get('loader') : child.loader
+  const Group = loader !== undefined && loader !== null && loader.builtins !== undefined ? loader.builtins.group : undefined
+  if (loader === undefined || loader === null || typeof Group !== 'function') {
+    console.warn('[dsh-extra-plan] 宿主未提供 Loader Group，Client carrier 未挂载')
+    return undefined
+  }
+  let shared = carrierByLoader.get(loader)
+  if (shared === undefined) {
+    const fiber = child.plugin(Group, [{
+      id: CLIENT_CARRIER_ENTRY_ID,
+      name: new URL('./client-carrier.js', import.meta.url).href,
+    }])
+    shared = { fiber, refs: 0 }
+    carrierByLoader.set(loader, shared)
+  }
+  shared.refs += 1
+  let released = false
+  return () => {
+    if (released) return undefined
+    released = true
+    shared.refs -= 1
+    if (shared.refs === 0) {
+      carrierByLoader.delete(loader)
+      const fiber = shared.fiber
+      shared.fiber = undefined
+      return fiber.dispose()
+    }
+    return undefined
+  }
+}
 
 /** descriptor scalarType → schemastery 字段：合同负责类型/默认值，settings 只负责宿主 schema 链。 */
 function schemaField(definition) {
@@ -98,7 +130,7 @@ function findSettingsRow(editor) {
 
 /**
  * GET 只读语义：权威值 = settings 行 config.<key>（10 项同源落点）；
- * 权威缺失/非法时回落「声明行投影现值」（未投影或旧部署），再缺失取出厂默认。
+ * 权威缺失/非法时回落「公开 preset-sync 行投影现值」（未投影或旧部署），再缺失取出厂默认。
  * sources 逐项记录取值层（settings-row/projection/default），供 UI 与回归取证。
  */
 function readHostRowState(editor) {
@@ -109,7 +141,7 @@ function readHostRowState(editor) {
   const settingsRow = findSettingsRow(editor)
   const authority = settingsRow === undefined ? null : effectiveRowConfig(settingsRow)
   const presetRow = findPresetRow(editor)
-  const plugins = presetRow === undefined ? undefined : effectivePluginsOf(presetRow)
+  const projectionConfig = presetRow === undefined ? undefined : (effectiveRowConfig(presetRow) || {})
   for (const definition of HOST_ROW_SETTING_DEFINITIONS) {
     const key = definition.key
     overridden[key] = false
@@ -123,7 +155,7 @@ function readHostRowState(editor) {
         continue
       }
     }
-    const projected = readProjectedValue(plugins, definition)
+    const projected = readProjectedValue(projectionConfig, definition)
     if (projected !== undefined) {
       values[key] = projected
       sources[key] = 'projection'
@@ -197,16 +229,13 @@ function createApiHandler(ctx) {
             return json(res, 400, { error: definition.key + ' has an invalid value' })
           }
           const value = normalizeSettingValue(definition, input[definition.key])
-          const locator = definition.projectionLocator
           authorityValues[definition.key] = value
-          const leafKey = HOST_ROW_LEAF_KEYS[definition.key]
-          const merged = hostRowConfig[locator.pluginsRowId] === undefined ? {} : hostRowConfig[locator.pluginsRowId]
-          hostRowConfig[locator.pluginsRowId] = { ...merged, [leafKey]: value }
+          hostRowConfig[definition.key] = value
         }
         if (Object.keys(authorityValues).length === 0) {
           return json(res, 400, { error: 'at least one of ' + HOST_ROW_KEYS.join('/') + ' is required' })
         }
-        // 投影声明行 plugins 子行（消费方是宿主行装载期快照）。
+        // 投影公开 preset-sync 行（消费方是 preset-sync 生成的新 definition revision）。
         //    投影失败不回滚权威值：投影被宿主删除是无害状态，下次启动自愈会按权威值重建。
         const presetRow = findPresetRow(editor)
         if (presetRow === undefined) {
@@ -220,13 +249,17 @@ function createApiHandler(ctx) {
           // carry 词表后若与当前生效 plugins 深等 → 投影已达成，跳过 editor.edit —— 避免宿主
           // edit 在 profile patch 无声明行时 append 冻结副本与无谓 reload（reload 失败还会走
           // 宿主回滚）。深等不成立（或生效 plugins 不可读）时照常走 editor.edit（旧行为）。
-          const base = assetPlugins()
-          const currentPlugins = effectivePluginsOf(presetRow)
-          const next = restatePresetPlugins(currentPlugins === undefined ? {} : { plugins: currentPlugins }, {}, { hostRowConfig, gateWords: null }, base)
-          if (currentPlugins !== undefined && isDeepStrictEqual(next.plugins, currentPlugins)) {
+          const currentConfig = effectiveRowConfig(presetRow) || {}
+          const projectionPatch = {}
+          for (const definition of HOST_ROW_SETTING_DEFINITIONS) {
+            const value = hostRowConfig[definition.key]
+            if (value !== undefined) projectionPatch[definition.key] = value
+          }
+          const nextConfig = restatePresetSyncConfig(currentConfig, {}, projectionPatch)
+          if (isDeepStrictEqual(nextConfig, currentConfig)) {
             return json(res, 200, { ...proPayload(editor), projection: { applied: true } })
           }
-          await editor.edit(presetRow.entry, (current, inherited) => restatePresetPlugins(current, inherited, { hostRowConfig, gateWords: null }, assetPlugins()))
+          await editor.edit(presetRow.entry, (current, inherited) => restatePresetSyncConfig(current, inherited, projectionPatch))
           return json(res, 200, { ...proPayload(editor), projection: { applied: true } })
         } catch (error) {
           const message = String(error && error.message || error)
@@ -242,6 +275,9 @@ function createApiHandler(ctx) {
 }
 
 export function apply(ctx) {
+  // Client carrier 归 settings 所有：官方 Group child 随本行生命周期创建/移除，
+  // clientModules 只看到一个活动 file URL source，bundle declaredRows 仍只有两行。
+  ctx.inject(['loader'], (child) => child.effect(() => mountClientCarrier(child), 'dsh-extra-plan-settings: internal client carrier'))
   // 8 项 UI 设置：只登记本实例的页面策略（auto:false = 只走 Plugins 页自定义卡片，
   // 不生成自动页）；Config 的 volatile 字段由 SettingsForms 投影成表单，
   // 读写一律走官方 configForms（remote.settings）——本行无自建写链。

@@ -228,12 +228,23 @@ export function findPluginsRow(plugins, rowId) {
  * 返回 undefined = 该投影缺失（子行缺失 / 叶缺失 / 值非法）——判定侧一律按出厂默认参与比较。
  * 只服务 2 项宿主行设置；权威值不走这里（见 captureRowSettings）。
  */
-export function readProjectedValue(plugins, definition) {
-  const locator = definition === null || definition === undefined ? undefined : definition.projectionLocator
+export function readProjectedValue(target, definition) {
+  if (definition === null || definition === undefined) return undefined
+  // 新公开 preset-sync 行直接读取 config.<key>；旧 preset-extra-plan body
+  // 仍按 legacyProjectionLocator 读取，仅用于非破坏迁移和 carry。
+  const locator = Array.isArray(target) && definition.legacyProjectionLocator !== undefined
+    ? definition.legacyProjectionLocator
+    : definition.projectionLocator
   if (locator === undefined || locator === null) return undefined
-  const row = findPluginsRow(plugins, locator.pluginsRowId)
-  if (row === null) return undefined
-  const read = readPath(row, locator.path)
+  if (locator.pluginsRowId !== undefined) {
+    const row = findPluginsRow(target, locator.pluginsRowId)
+    if (row === null) return undefined
+    const read = readPath(row, locator.path)
+    if (!read.exists || !validateSettingValue(definition, read.value)) return undefined
+    return normalizeSettingValue(definition, read.value)
+  }
+  const path = locator.path.startsWith('config.') ? locator.path.slice('config.'.length) : locator.path
+  const read = readPath(target, path)
   if (!read.exists || !validateSettingValue(definition, read.value)) return undefined
   return normalizeSettingValue(definition, read.value)
 }

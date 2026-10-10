@@ -68,4 +68,4 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
 
 ## 当前结论回链
 
-当前必须继续遵守的结论只有：拒绝不清状态、取消清阶段；组拒无副作用；方案/验收成对原子落盘；strict 模型路由必须真实 probe 或可靠 fallback；A/C/M 仅是模型可见投影；P2-2 cache 不跨 Agent；usage final fold 同步且按 session 隔离。任何历史描述与当前合同冲突时，以 [ai-机制设计](ai-机制设计.md) 和源码/回归真源为准。
+当前必须继续遵守的结论只有：拒绝不清状态、取消清阶段；组拒无副作用；方案/验收成对原子落盘；strict 模型路由必须真实 probe 或可靠 fallback；A/C/M 仅是模型可见投影；P2-2 cache 不跨 Agent；usage final fold 同步且按 session 隔离。任何历史描述与当前合同冲突时，以 [ai-机制设计](ai-机制设计.md) 和源码/回归真源为准。 本轮索引补充：旧公开 preset 声明与 client-bridge 已退役；两公开行、内部 carrier、纯 definition 与官方 adapter 的事实以当前方案/验收和源码为准，不改写本段历史事实。

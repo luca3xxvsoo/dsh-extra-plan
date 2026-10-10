@@ -35,7 +35,7 @@
 
 ## 文档修改边界
 
-- 本轮仅按批准清单修改列明的实际修改文件：22 个审查源文件和 1 个由生成器派生的 YAML（共 23 个工作区文件）；仓库根 `README.md` 仍不改，官方 dsh/官方预设、`package.json`、生产环境、profile 与 `$DSH_HOME` 也不改。0.2 独立 `settings.plugins.tab` 入口移除；0.1.7 原始 `plugins.row.config` keyed row 由 0.1.7/0.2 支持构建保留，宿主提供对应 legacy slot 时呈现插件详情配置，slot 缺失时走 configEditor/SettingsForms 或手工 profile 权威行后备路径；settings/Config/投影/preset-sync/live-config 后端链不变。
+- 本轮按批准清单修改工作区源、测试与 AI 文档；仓库根 `README.md` 仍不改，官方 dsh/官方预设、生产环境、profile 与 `$DSH_HOME` 也不改。bundle 详情公开 insert 恰为 `dsh-extra-plan-settings`、`extra-plan-preset-sync` 两行；Client carrier 由 settings 内部官方 Loader Group 挂载，preset-sync 读取纯 definition 并直接复用官方 AgentPreset adapter。0.2 独立 `settings.plugins.tab` 入口移除；0.1.7 原始 `plugins.row.config` keyed row 由 0.1.7/0.2 支持构建保留。settings/Config/投影/preset-sync/live-config 后端链不变。
 - 工作区内 AI 维护文档（含台账）可按批准方案修改；修改前按维护手册创建唯一 `.extra-plan/backup-dsh-extra-plan-JS审查修复-<YYYYMMDDHHMMSS>/`，同一任务续跑沿用，不覆盖镜像。
 - `pe-test/reports/` 只接收临时测试产物，不纳入源改动；不调用 `git reset`、`git checkout`、`git clean`。
 - 界面文案只给结论级信息；技术细节仅放硬闸门给 AI 的文案、诊断/日志和本组 AI 文档。

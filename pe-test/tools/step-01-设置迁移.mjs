@@ -72,7 +72,7 @@ function check(label, condition) {
   else { fail += 1; console.log('FAIL  ' + label) }
 }
 
-check('T1 preset-settings 收回 PRESET_PLUGIN_NAME 且保留活动 PRESET_ROW_ID', !Object.prototype.hasOwnProperty.call(presetSettingsNamespace, 'PRESET_PLUGIN_NAME') && presetSettingsNamespace.PRESET_ROW_ID === 'preset-extra-plan')
+check('T1 preset-settings 收回 PRESET_PLUGIN_NAME 且保留新公开 PRESET_ROW_ID', !Object.prototype.hasOwnProperty.call(presetSettingsNamespace, 'PRESET_PLUGIN_NAME') && presetSettingsNamespace.PRESET_ROW_ID === 'extra-plan-preset-sync')
 check('exploreBudget 默认来自生成模块且为资产 YAML 叶值', DEFAULT_EXPLORE_BUDGET === resolveSetting(parsePresetYaml(assetAgent), definition('exploreBudget'), { aliases: false }).value && DEFAULT_EXPLORE_BUDGET === 18)
 check('plannerPromptSuffix 默认来自生成模块且为资产 YAML 叶值', DEFAULT_PLANNER_PROMPT_SUFFIX === resolveSetting(parsePresetYaml(assetAgent), definition('plannerPromptSuffix'), { aliases: false }).value && DEFAULT_PLANNER_PROMPT_SUFFIX === '你的深度思考部分需要以"好了，现在我以全局视角来看待这个问题"开头')
 
@@ -178,14 +178,16 @@ check('rowLocator 指向权威值落点：10 项一律 settings 行（含原声�
   SETTING_DEFINITIONS.every((item) => item.rowLocator.rowId === SETTINGS_ROW_ID && item.rowLocator.path === 'config.' + item.key &&
     item.rowLocator.pluginsRowId === undefined) &&
   definition('webFetch').rowLocator.path === 'config.webFetch' && definition('toolPresentationMode').rowLocator.path === 'config.toolPresentationMode')
-check('projectionLocator 只给 2 项宿主行设置：声明行 plugins 内 tool-web.fetch / tool-presentation.mode（8 项 UI 设置无投影面）',
+check('projectionLocator 只给 2 项宿主行设置：新公开行直接 config.webFetch/config.toolPresentationMode，旧 body 仅保留 legacy locator',
   PROJECTION_SETTING_DEFINITIONS.length === 2 && PROJECTION_SETTING_DEFINITIONS.every((item) => item.group === SETTING_GROUPS.HOST_ROWS) &&
   EXTRA_PLAN_SETTING_DEFINITIONS.every((item) => item.projectionLocator === undefined) &&
-  definition('webFetch').projectionLocator.rowId === PRESET_ROW_ID && definition('webFetch').projectionLocator.pluginsRowId === 'tool-web' && definition('webFetch').projectionLocator.path === 'config.fetch' &&
-  definition('toolPresentationMode').projectionLocator.pluginsRowId === 'tool-presentation' && definition('toolPresentationMode').projectionLocator.path === 'config.mode')
-check('HOST_ROW_LEAF_KEYS 与投影 locator 叶键同源（未新增第二份键名清单）',
+  definition('webFetch').projectionLocator.rowId === PRESET_ROW_ID && definition('webFetch').projectionLocator.path === 'config.webFetch' &&
+  definition('toolPresentationMode').projectionLocator.path === 'config.toolPresentationMode' &&
+  definition('webFetch').legacyProjectionLocator.pluginsRowId === 'tool-web' && definition('webFetch').legacyProjectionLocator.path === 'config.fetch' &&
+  definition('toolPresentationMode').legacyProjectionLocator.pluginsRowId === 'tool-presentation' && definition('toolPresentationMode').legacyProjectionLocator.path === 'config.mode')
+check('HOST_ROW_LEAF_KEYS 仅作为旧 body 叶键真源，新公开行使用 descriptor key',
   HOST_ROW_LEAF_KEYS.webFetch === 'fetch' && HOST_ROW_LEAF_KEYS.toolPresentationMode === 'mode' &&
-  HOST_ROW_SETTING_DEFINITIONS.every((item) => item.projectionLocator.path === 'config.' + HOST_ROW_LEAF_KEYS[item.key]))
+  HOST_ROW_SETTING_DEFINITIONS.every((item) => item.legacyProjectionLocator.path === 'config.' + HOST_ROW_LEAF_KEYS[item.key] && item.projectionLocator.path === 'config.' + item.key))
 check('禁止项不在白名单且描述不可变', !keys.some((key) => ['approvalEnabled', 'bootstrapPersona', 'bootstrapShellTools', 'bootstrapCommonTools', 'bootstrapReadHint', 'planTool', 'savePlanDir', 'usageLedger', 'searchTimeoutMs'].includes(key)) && Object.isFrozen(SETTING_DEFINITIONS) && SETTING_DEFINITIONS.every((item) => Object.isFrozen(item)))
 // T4：plannerModel 放开为空串（空串=显式清空=继承主会话模型），空白串 normalize 后归一为 ''；
 // 非 string（数字等）仍非法——validator 的类型严格性由 !validator(123) 锁定。

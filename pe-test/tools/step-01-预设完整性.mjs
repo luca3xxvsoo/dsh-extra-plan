@@ -12,7 +12,7 @@ import {
   resolveTemplateSettingDefault,
 } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
 import { DEFAULT_EXPLORE_BUDGET, DEFAULT_PLANNER_PROMPT_SUFFIX } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
-import { generateRuntimeDefaults, renderRuntimeDefaults } from '../../plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs'
+import { generateRuntimeDefaults, renderRuntimeDefaults, renderPresetDefinition } from '../../plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs'
 // S1：DEFAULT_DENY 收敛断言（执行者 deny 清单必须与预设 config.deny 逐字一致）。
 import { DEFAULT_DENY, resolveDeny } from '../../plugins/dsh-extra-plan/lib/executor-spawn.js'
 import { HOST_CORDIS_TOOLS } from '../../plugins/dsh-extra-plan/lib/assembly-presentation.js'
@@ -26,6 +26,7 @@ const PRESET_DIR = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'assets', 'prese
 const file = join(PRESET_DIR, 'agent.cordis.yml')
 const presetFile = join(PRESET_DIR, 'preset.yml')
 const generatedFile = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'preset-defaults.generated.js')
+const definitionGeneratedFile = join(PRESET_DIR, 'preset-definition.generated.yml')
 const generatorFile = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'scripts', 'generate-runtime-defaults.mjs')
 const assemblySource = readFileSync(join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'assembly-presentation.js'), 'utf8')
 
@@ -223,65 +224,44 @@ if (defaults.plannerModel === 'deepseek-v4-pro' && defaults.crossProviderPlanner
   console.log('FAIL  新版模板默认值不符合验收锚点')
 }
 
-// ── T1 声明行新载体（dsh 0.1.7-rc.1）──────────────────────────────────────
-// 预设本体 = 生成产物 assets/presets/extra-plan/preset-patch.generated.yml 的根级 insert 声明行
-// （name '@deepseek-ai/dsh-agent-preset'），config.plugins 与资产 agent.cordis.yml 顶层条目逐行逐字一致。
-const patchFile = join(PRESET_DIR, 'preset-patch.generated.yml')
-const patchText = readFileSync(patchFile, 'utf8')
-check('T1 声明行存在（- id: preset-extra-plan 且下一行 name 逐字为 @deepseek-ai/dsh-agent-preset）',
-  patchText.includes("    - id: preset-extra-plan\n      name: '@deepseek-ai/dsh-agent-preset'\n"))
-check('T1 声明行 config 含 id: extra-plan 与逐字 description（取自 preset.yml）',
-  patchText.includes('        id: extra-plan\n') && patchText.includes("        description: '" + preset.description + "'\n") && preset.description === '实现权限控制+子代理角色分配')
-const patchDoc = parsePresetYaml(patchText)
-const patchDeclaration = patchDoc[0].insert[0]
-check('T1 声明行 config 顶层条目数 = 17（group 3 + 普通 14），且与资产顶层条目逐字一致',
-  patchDeclaration.config.plugins.length === 17 && (Array.isArray(rows) ? rows.length : -1) === 17 &&
-  JSON.stringify(patchDeclaration.config.plugins) === JSON.stringify(rows))
-const assetTopText = agentText.slice(agentText.indexOf('- id: persona')).replace(/\n+$/, '')
-const generatedPluginsBlock = patchText.slice(patchText.indexOf('        plugins:\n') + 17).replace(/\n+$/, '')
-const deIndented = generatedPluginsBlock.split('\n').map((line) => (line.startsWith('          ') ? line.slice(10) : line)).join('\n')
-check('T1 生成产物 plugins 与资产顶层条目逐行逐字一致（仅整段平移 10 列缩进）', deIndented === assetTopText)
-const groupIds = patchDeclaration.config.plugins.filter((row) => row.group === true).map((row) => row.id)
-const delegationGroup = patchDeclaration.config.plugins.find((row) => row.id === 'delegation')
-const compactionGroup = patchDeclaration.config.plugins.find((row) => row.id === 'compaction')
-const extraPlanGroup = patchDeclaration.config.plugins.find((row) => row.id === 'extra-plan-group')
-check('T1 三组随组搬迁：group 行 3（extra-plan-group/compaction/delegation）且子行数 1/3/10',
-  groupIds.join('|') === 'extra-plan-group|compaction|delegation' &&
-  extraPlanGroup.config.length === 1 && compactionGroup.config.length === 3 && delegationGroup.config.length === 10)
-check('T1 isolate 名单随组搬迁且值全为布尔 true（含 subagentModelSelection / toolResultPruner / workflowEngine）',
-  delegationGroup.isolate.subagentModelSelection === true && delegationGroup.isolate.workflowEngine === true &&
-  compactionGroup.isolate.toolResultPruner === true && extraPlanGroup.isolate !== undefined &&
-  Object.values(delegationGroup.isolate).concat(Object.values(compactionGroup.isolate), Object.values(extraPlanGroup.isolate)).every((value) => value === true))
-check('T1 声明行 plugins 内不存在 @deepseek-ai/dsh-workflow-worker-thread / @deepseek-ai/dsh-agent-presets（复数包名）',
-  !patchText.includes('@deepseek-ai/dsh-workflow-worker-thread') && !patchText.includes('@deepseek-ai/dsh-agent-presets'))
-// 0.2.0-rc.2 换通道：config.customSkillDirs（ctx.fs 扫 asar 抛非 absent 错）→ bundledSkillDir + watch: false。
+// ── T1 纯 definition 资产（官方 adapter 由 preset-sync 内部挂载） ──────────────
+const definitionFile = join(PRESET_DIR, 'preset-definition.generated.yml')
+const definitionText = readFileSync(definitionFile, 'utf8')
+const definitionDoc = parsePresetYaml(definitionText)
+check('T1 生成资产是纯 definition（无 insert wrapper/官方独立公开行）',
+  !definitionText.includes('insert:') && !definitionText.includes('preset-extra-plan') && !definitionText.includes("name: '@deepseek-ai/dsh-agent-preset'"))
+check('T1 definition 元数据与 preset.yml 一致、plugins 顶层恰 17 条',
+  definitionDoc.id === 'extra-plan' && definitionDoc.name === preset.name && definitionDoc.description === preset.description && definitionDoc.order === 100 && Array.isArray(definitionDoc.plugins) && definitionDoc.plugins.length === 17)
+check('T1 definition plugins 与 agent.cordis.yml 顶层条目逐字等价', JSON.stringify(definitionDoc.plugins) === JSON.stringify(rows))
+const groupIds = definitionDoc.plugins.filter((row) => row.group === true).map((row) => row.id)
+const delegationGroup = definitionDoc.plugins.find((row) => row.id === 'delegation')
+const compactionGroup = definitionDoc.plugins.find((row) => row.id === 'compaction')
+const extraPlanGroup = definitionDoc.plugins.find((row) => row.id === 'extra-plan-group')
+check('T1 三组 group/子行数量保持 1/3/10', groupIds.join('|') === 'extra-plan-group|compaction|delegation' && extraPlanGroup.config.length === 1 && compactionGroup.config.length === 3 && delegationGroup.config.length === 10)
+check('T1 isolate 全部为 true 且覆盖三组要求', delegationGroup.isolate.subagentModelSelection === true && delegationGroup.isolate.workflowEngine === true && compactionGroup.isolate.toolResultPruner === true && Object.values(delegationGroup.isolate).concat(Object.values(compactionGroup.isolate), Object.values(extraPlanGroup.isolate)).every((value) => value === true))
+check('T1 definition 保留 raw !!js marker 文本与官方技能表达式', definitionText.includes('!!js') && definitionText.includes("createRequire(baseUrl).resolve('@deepseek-ai/dsh-agent-preset/package.json')") && definitionText.includes("'skills')"))
+check('T1 官方适配器与技能文件未复制进本仓', !existsSync(join(PRESET_DIR, 'skills')) && !existsSync(join(PRESET_DIR, 'agent.cordis.official.yml')))
+// skill-filesystem 作者真源仍需保留 watch:false/bundledSkillDir。
 const skillFsBlockText = agentText.slice(agentText.indexOf('- id: skill-filesystem'), agentText.indexOf('- id: tool-skill'))
 const skillFsConfigText = skillFsBlockText.slice(skillFsBlockText.indexOf('\n  config:') + 1)
 const skillFsRow = Array.isArray(rows) ? rows.find((row) => row.id === 'skill-filesystem') : undefined
-check('T1 skill-filesystem 行 config 含 watch: false 与 bundledSkillDir 表达式逐字含 createRequire(baseUrl) 与 skills、不含 customSkillDirs',
-  skillFsRow !== undefined && skillFsRow.config !== undefined && skillFsRow.config.watch === false &&
-  skillFsConfigText.includes('watch: false') && skillFsConfigText.includes('bundledSkillDir:') &&
-  skillFsConfigText.includes("createRequire(baseUrl).resolve('@deepseek-ai/dsh-agent-preset/package.json')") && skillFsConfigText.includes("'skills')") &&
-  !skillFsConfigText.includes('customSkillDirs:'))
-check('T1 头注释已改 dsh-agent-preset-registry（不再写 dsh-agent-presets 会拒绝挂载）',
-  !agentText.includes('dsh-agent-presets 会拒绝挂载') && agentText.includes('dsh-agent-preset-registry 会拒绝挂载'))
-check('T1 workflow-ptc 行 config.provider 保留 extra-executor-spawn',
-  agentText.includes("- id: workflow-ptc\n      name: '@deepseek-ai/dsh-workflow-ptc'\n      config:\n        provider: extra-executor-spawn\n"))
-check('T1 官方预设/技能文件未复制进本仓（assets 目录无 skills/ 与 cordis 预设拷贝）',
-  !existsSync(join(PRESET_DIR, 'skills')) && !existsSync(join(PRESET_DIR, 'agent.cordis.official.yml')))
-
+check('T1 skill-filesystem 行保留 watch:false 与 bundledSkillDir、不含 customSkillDirs', skillFsRow !== undefined && skillFsRow.config !== undefined && skillFsRow.config.watch === false && skillFsConfigText.includes('bundledSkillDir:') && !skillFsConfigText.includes('customSkillDirs:'))
+check('T1 官方 preset registry 注释/ workflow-ptc 与作者源保真', agentText.includes('dsh-agent-preset-registry 会拒绝挂载') && agentText.includes("provider: extra-executor-spawn"))
 // B2：YAML exploreBudget 是作者真源，生成模块只保存派生 fallback；非法 source 不覆盖 sentinel。
 const packageJson = JSON.parse(readFileSync(join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'package.json'), 'utf8'))
 const generatedText = readFileSync(generatedFile, 'utf8')
+const definitionGeneratedText = readFileSync(definitionGeneratedFile, 'utf8')
 check('B2 YAML 叶值、生成 export 与 resolver 同为 18', resolveTemplateSettingDefault(agentText, 'exploreBudget') === 18 && DEFAULT_EXPLORE_BUDGET === 18 && generatedText.includes('export const DEFAULT_EXPLORE_BUDGET = 18'), true)
 check('B2 YAML plannerPromptSuffix 叶值、生成 export 与 resolver 三向一致', resolveTemplateSettingDefault(agentText, 'plannerPromptSuffix') === DEFAULT_PLANNER_PROMPT_SUFFIX && DEFAULT_PLANNER_PROMPT_SUFFIX === '你的深度思考部分需要以"好了，现在我以全局视角来看待这个问题"开头' && generatedText.includes('export const DEFAULT_PLANNER_PROMPT_SUFFIX = "你的深度思考部分需要以\\"好了，现在我以全局视角来看待这个问题\\"开头"'), true)
 check('B2 render 文本与已提交生成模块逐字一致', renderRuntimeDefaults(agentText) === generatedText, true)
+check('B2 definition render 与提交资产逐字一致且 package 仅装载 cordis.patch.yml', renderPresetDefinition(agentText, readFileSync(presetFile, 'utf8')) === definitionGeneratedText && JSON.parse(readFileSync(join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'package.json'), 'utf8')).dsh.bundle.patch === './cordis.patch.yml', true)
 const packageFiles = Array.isArray(packageJson.files) ? packageJson.files : []
 check('B2 package files/scripts 含生成器、generate 与 prepack', packageFiles.includes('scripts/generate-runtime-defaults.mjs') && packageJson.scripts['generate:runtime-defaults'] === 'node scripts/generate-runtime-defaults.mjs' && packageJson.scripts.prepack === 'node scripts/generate-runtime-defaults.mjs', true)
 const generatedBeforeCheck = readFileSync(generatedFile)
+const definitionBeforeCheck = readFileSync(definitionGeneratedFile)
 let checkPassed = false
 try { generateRuntimeDefaults({ sourcePath: file, outputPath: generatedFile, check: true }); checkPassed = true } catch { checkPassed = false }
-check('B2 --check 通过且不写生成物', checkPassed && readFileSync(generatedFile).equals(generatedBeforeCheck), true)
+check('B2 --check 通过且不写生成物', checkPassed && readFileSync(generatedFile).equals(generatedBeforeCheck) && readFileSync(definitionGeneratedFile).equals(definitionBeforeCheck), true)
 
 const generatorFixture = mkdtempSync(join(tmpdir(), 'dsh-runtime-defaults-'))
 try {

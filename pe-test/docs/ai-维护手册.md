@@ -14,7 +14,7 @@
 
 | profile | 当前职责 | 本仓库 AI 边界 |
 |:--|:--|:--|
-| web | 直接安装核心包；启动 `preset-sync`；承载 profile patch 预设声明行 | 不删除核心包/预设，不写生产 profile |
+| web | 直接安装核心包；启动 `preset-sync`；承载两个公开宿主行与内部官方 adapter | 不删除核心包/预设，不写生产 profile |
 | qqbot | 安装精简兼容包；静态 patch、旧块迁移与 web 包建链 | 不分发核心预设；真实消息、`/preset`、question/approval（提问/批准）、allow-build/postinstall（安装后脚本）为用户部署后 HUMAN |
 
 `$DSH_HOME/profiles`、`.agent-presets` 和其它生产目录只允许用户侧部署流程触碰；本轮不做同步、清锁、重启或现场修复。
@@ -71,7 +71,7 @@
 
 ## P2-4 生成链
 
-作者值在 `plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml`；运行 `node plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs` 生成派生模块/声明行，`--check` 只读比较。坏模板、生成失败或 prepack 失败必须保留 last-known-good（上次已知良好版本）；生成物不得手改。
+作者值在 `plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml`；运行 `node plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs` 生成 runtime 常量与纯 `preset-definition.generated.yml`，`--check` 只读比较。坏模板、生成失败或 prepack 失败必须保留 last-known-good（上次已知良好版本）；生成物不得手改。
 
 ## 单一来源提醒
 

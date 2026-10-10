@@ -9,13 +9,15 @@ const isMode = (value) => typeof value === 'string' && modeOptions.includes(valu
 
 /** 新载体行 id（settings 命名空间 = profile 行 id）。 */
 export const SETTINGS_ROW_ID = 'dsh-extra-plan-settings'
-/** 预设声明行 id（config.plugins = agent.cordis.yml 顶层条目）。 */
-export const PRESET_ROW_ID = 'preset-extra-plan'
+/** 新公开的预设核对行 id；仅承载受支持的投影与 gateWords。 */
+export const PRESET_ROW_ID = 'extra-plan-preset-sync'
+/** 旧 profile 预设声明行：仅用于非破坏读取迁移，不再作为新写入目标。 */
+export const LEGACY_PRESET_ROW_ID = 'preset-extra-plan'
 /** 声明行 plugins 内承载 2 项宿主行设置的子行 id（投影落点的行 id）。 */
 export const HOST_ROW_IDS = Object.freeze({ webFetch: 'tool-web', toolPresentationMode: 'tool-presentation' })
 /** 投影落点的叶键（宿主行 config 内键名）：源模板与投影共用同一份 leaf 名，不新增第二份键名清单。 */
 export const HOST_ROW_LEAF_KEYS = Object.freeze({ webFetch: 'fetch', toolPresentationMode: 'mode' })
-/** descriptor 分组（消费方）：8 项落 settings 行 / 2 项另投影到声明行 plugins 子行。 */
+/** descriptor 分组（消费方）：8 项落 settings 行 / 2 项另投影到 preset-sync 公开行。 */
 export const SETTING_GROUPS = Object.freeze({ EXTRA_PLAN: 'extra-plan', HOST_ROWS: 'host-rows' })
 
 const setting = (definition) => Object.freeze({
@@ -26,6 +28,9 @@ const setting = (definition) => Object.freeze({
   ...(definition.projectionLocator === undefined
     ? {}
     : { projectionLocator: Object.freeze({ ...definition.projectionLocator }) }),
+  ...(definition.legacyProjectionLocator === undefined
+    ? {}
+    : { legacyProjectionLocator: Object.freeze({ ...definition.legacyProjectionLocator }) }),
   locatorAliases: Object.freeze((definition.locatorAliases || []).map((alias) => Object.freeze({
     rowId: alias.rowId,
     path: alias.path,
@@ -42,9 +47,14 @@ const setting = (definition) => Object.freeze({
 /** 权威值落点：settings 行（10 项统一）config.<key>。 */
 const settingsRowLocator = (key, path) => ({ rowId: SETTINGS_ROW_ID, path: path === undefined ? 'config.' + key : path })
 const sourceLocator = (key, path) => ({ rowId: 'extra-plan', path: path === undefined ? 'config.' + key : path })
-/** 投影落点：声明行 plugins 内 host-rows 子行 config.<leaf>（leaf 名与源模板同名）。 */
+/** 新公开行投影落点：extra-plan-preset-sync.config.<key>；旧 body 叶键由 legacy locator 保留。 */
 const hostRowProjectionLocator = (key) => ({
   rowId: PRESET_ROW_ID,
+  path: 'config.' + key,
+})
+/** 旧声明行内的投影定位器，仅用于读取迁移与旧 body carry。 */
+const legacyHostRowProjectionLocator = (key) => ({
+  rowId: LEGACY_PRESET_ROW_ID,
   pluginsRowId: HOST_ROW_IDS[key],
   path: 'config.' + HOST_ROW_LEAF_KEYS[key],
 })
@@ -67,6 +77,7 @@ export const SETTING_DEFINITIONS = Object.freeze([
     sourceLocator: { rowId: HOST_ROW_IDS.webFetch, path: 'config.' + HOST_ROW_LEAF_KEYS.webFetch },
     rowLocator: settingsRowLocator('webFetch'),
     projectionLocator: hostRowProjectionLocator('webFetch'),
+    legacyProjectionLocator: legacyHostRowProjectionLocator('webFetch'),
     validator: isBoolean, ui: { control: 'select', options: [true, false], locale: 'webFetch', section: 'general' }, locatorAliases: [],
   }),
   setting({
@@ -74,6 +85,7 @@ export const SETTING_DEFINITIONS = Object.freeze([
     sourceLocator: { rowId: HOST_ROW_IDS.toolPresentationMode, path: 'config.' + HOST_ROW_LEAF_KEYS.toolPresentationMode },
     rowLocator: settingsRowLocator('toolPresentationMode'),
     projectionLocator: hostRowProjectionLocator('toolPresentationMode'),
+    legacyProjectionLocator: legacyHostRowProjectionLocator('toolPresentationMode'),
     validator: isMode,
     ui: {
       control: 'select', options: modeOptions,
@@ -123,7 +135,7 @@ export const SETTING_DEFINITIONS = Object.freeze([
 export const EXTRA_PLAN_SETTING_DEFINITIONS = Object.freeze(
   SETTING_DEFINITIONS.filter((item) => item.group === SETTING_GROUPS.EXTRA_PLAN),
 )
-/** 2 项宿主行设置（权威值同样落 settings 行；另经 projectionLocator 投影到声明行 plugins 子行）。 */
+/** 2 项宿主行设置（权威值同样落 settings 行；另经 projectionLocator 投影到 preset-sync 公开行）。 */
 export const HOST_ROW_SETTING_DEFINITIONS = Object.freeze(
   SETTING_DEFINITIONS.filter((item) => item.group === SETTING_GROUPS.HOST_ROWS),
 )

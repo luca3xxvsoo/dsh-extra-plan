@@ -14,7 +14,7 @@
 
 ## 设置管理路径（0.1.7/0.2.0 rc.2）
 0.2 独立 `settings.plugins.tab` 页签移除；0.1.7 原始 `plugins.row.config` keyed row 由 0.1.7/0.2 支持构建保留。宿主提供对应 legacy row slot 时，用户从“插件 → 按需规划模式 → 按需规划模式配置”进入并保存；未提供时才走宿主 `configEditor/SettingsForms` 或手工维护 profile 权威行后备路径。10 个权威值与两项投影仍由原 settings 后端链维护，AI 本轮只读。
-自定义 `/api/dsh-extra-plan-settings/pro-config` 的 PUT 仅更新 `webFetch/toolPresentationMode` 两项声明行投影，不写 10 个权威值；8 个 extra-plan 字段没有该 PUT 写入口。`toolPresentationMode` 更新后重启 DSH 使装载期投影生效，`runcodeCatchGate` 由 live-config 热读。
+自定义 `/api/dsh-extra-plan-settings/pro-config` 的 PUT 仅更新 `extra-plan-preset-sync` 公开行中的 `webFetch/toolPresentationMode` 两项投影，不写 10 个权威值；8 个 extra-plan 字段没有该 PUT 写入口。预设本体来自纯 `preset-definition.generated.yml`，由 preset-sync 内部交给官方 AgentPreset adapter；`toolPresentationMode` 更新后重启 DSH 使新 revision 装载，`runcodeCatchGate` 由 live-config 热读。
 
 ## 怎么跑
 
@@ -22,7 +22,7 @@
 ```
 node pe-test/tools/一键step测试.mjs
 ```
-→ 自动跑全部「自动判定项」（13 个），结果保存到 `pe-test/reports/测试报告-<时间>.md`
+→ 自动跑全部「自动判定项」（14 个），结果保存到 `pe-test/reports/测试报告-<时间>.md`
 → 跑之前先确认：**在完整目录（pe-test 与 plugins 同级 = 仓库根）下运行**才有完整结果
 → QQBot 环境项默认只读真实 profile；缺环境或 junction 能力不足显示结构化 SKIP，不计失败，不会自动 heal/建链；报告末尾会列出「人眼项/需参数项」——那些需要你自己跑并人工判读，不是自动的；HUMAN 独立报告保留 stdout/stderr 全量原文
 

@@ -50,7 +50,7 @@ import { createGateRuntime } from '../../plugins/dsh-extra-plan/lib/gate-words.j
 import { createLiveConfig } from '../../plugins/dsh-extra-plan/lib/live-config.js'
 import { CREATIVE_SKILL_NAMES as CREATIVE_SKILL_NAMES_FOR_TEST } from '../../plugins/dsh-extra-plan/lib/assembly-presentation.js'
 import { SETTING_DEFINITIONS as SETTING_DEFINITIONS_E, SETTING_GROUPS as SETTING_GROUPS_E, PRESET_ROW_ID as PRESET_ROW_ID_E, SETTINGS_ROW_ID as SETTINGS_ROW_ID_E, EXTRA_PLAN_SETTING_DEFINITIONS as EXTRA_PLAN_SETTING_DEFINITIONS_E, findPluginsRow as findPluginsRowE } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
-import { restatePresetPlugins as restatePresetPluginsE, declarationCoversAsset as declarationCoversAssetE, ASSET_PATCH_FILE as ASSET_PATCH_FILE_E, pluginRowIds as pluginRowIdsE } from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
+import { restatePresetPlugins as restatePresetPluginsE, restatePresetSyncConfig as restatePresetSyncConfigE, declarationCoversAsset as declarationCoversAssetE, ASSET_DEFINITION_FILE as ASSET_DEFINITION_FILE_E, pluginRowIds as pluginRowIdsE } from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
 // 说明：不 import lib/settings.js——它顶层 import '@deepseek-ai/schemastery'，解析环境依赖宿主副本
 // （本机 npm 全局 dsh 实测 0.1.7-rc.2，profiles/web 另有 profile 内副本）；
 // 故 Config 的 volatile/默认值契约改用源码文本静态核对（机械可核对），不依赖本机 schemastery 版本。
@@ -2446,18 +2446,16 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
     compactionRow.isolate.toolResultPruner === true &&
     extraPlanGroupRow.isolate !== undefined && Object.keys(extraPlanGroupRow.isolate).length > 0)
 
-  // ② 生成产物：声明行存在 + plugins 行 id 集合覆盖资产 + 生成物与资产顶层条目逐行一致
-  const generatedPatchText = readFileSyncE(ASSET_PATCH_FILE_E, 'utf8')
-  checkTrue('T9-3i 生成产物含声明行 "- id: preset-extra-plan" 且下一行 name 为 @deepseek-ai/dsh-agent-preset',
-    generatedPatchText.includes('    - id: preset-extra-plan\n      name: \'@deepseek-ai/dsh-agent-preset\'\n'))
-  const generatedDoc = yaml.load(generatedPatchText, { schema })
-  const generatedPlugins = generatedDoc[0].insert[0].config.plugins
-  checkTrue('T9-3j 生成产物 plugins 行 id 集合覆盖资产顶层条目（declarationCoversAsset）且行数一致', declarationCoversAssetE(generatedPlugins) && pluginRowIdsE(generatedPlugins).length === pluginRowIdsE(rows).length)
+  // ② 生成纯 definition：不再公开 preset-extra-plan/官方 adapter Loader insert。
+  const generatedDefinitionText = readFileSyncE(ASSET_DEFINITION_FILE_E, 'utf8')
+  const generatedDoc = yaml.load(generatedDefinitionText, { schema })
+  checkTrue('T9-3i 生成资产是纯 definition（无 insert wrapper/旧公开行）', generatedDoc.id === 'extra-plan' && !generatedDefinitionText.includes('insert:') && !generatedDefinitionText.includes('preset-extra-plan') && !generatedDefinitionText.includes("name: '@deepseek-ai/dsh-agent-preset'"))
+  const generatedPlugins = generatedDoc.plugins
+  checkTrue('T9-3j definition plugins 顶层 17 条且与作者源逐行一致', Array.isArray(generatedPlugins) && generatedPlugins.length === 17 && JSON.stringify(generatedPlugins) === JSON.stringify(rows))
   const assetTop = presetText.slice(presetText.indexOf('- id: persona')).replace(/\n+$/, '')
-  const genPluginsText = generatedPatchText.slice(generatedPatchText.indexOf('        plugins:\n') + 17).replace(/\n+$/, '')
-  const stripped = genPluginsText.split('\n').map((line) => (line.startsWith('          ') ? line.slice(10) : line)).join('\n')
-  checkTrue('T9-3k 生成产物 plugins 与资产顶层条目逐行逐字一致（仅平移 10 列缩进）', stripped === assetTop)
-
+  const genPluginsText = generatedDefinitionText.slice(generatedDefinitionText.indexOf('plugins:\n') + 9).replace(/\n+$/, '')
+  const stripped = genPluginsText.split('\n').map((line) => (line.startsWith('  ') ? line.slice(2) : line)).join('\n')
+  checkTrue('T9-3k definition plugins 保留作者源注释/缩进语义', stripped === assetTop)
   // ③ settings 行 Config：8 字段全 volatile（源码文本静态核对）+ 2 项宿主行 descriptor 分组
   const settingsText = readFileSyncE(fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/settings.js', import.meta.url)), 'utf8')
   // 只取代码行（剥注释），避免注释里的示例（如官方 maxParallelToolCalls 习语）混进字段集合。
@@ -2474,24 +2472,17 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
     !settingsCode.includes('settings.register') && !settingsCode.includes('ExtraPlanSettingsSchema') &&
     !settingsCode.includes('.agent-presets') && settingsCode.includes("child.settings.configure({ auto: false }, ctx.fiber)"))
   check('T9-3o descriptor 分组：extra-plan 恰 8 项、host-rows 恰 2 项', EXTRA_PLAN_SETTING_DEFINITIONS_E.length + '|' + SETTING_DEFINITIONS_E.filter((item) => item.group === SETTING_GROUPS_E.HOST_ROWS).length, '8|2')
-  checkTrue('T9-3p 新载体行 id 常量与声明行一致', SETTINGS_ROW_ID_E === 'dsh-extra-plan-settings' && PRESET_ROW_ID_E === 'preset-extra-plan')
+  checkTrue('T9-3p 新载体行 id 常量与声明行一致', SETTINGS_ROW_ID_E === 'dsh-extra-plan-settings' && PRESET_ROW_ID_E === 'extra-plan-preset-sync')
 
-  // ④ 写链：2 项宿主行经 configEditor.edit 整体重述声明行 plugins（restatePresetPlugins 纯函数行为）
-  const declared = generatedPlugins
-  const restated = restatePresetPluginsE({ plugins: declared }, {}, { hostRowConfig: { 'tool-web': { fetch: true }, 'tool-presentation': { mode: 'ptc' } }, gateWords: null })
-  const webRow = restated.plugins.find((row) => row.id === 'tool-web')
-  const presentRow = restated.plugins.find((row) => row.id === 'tool-presentation')
-  checkTrue('T9-3q restatePresetPlugins 整体重述 plugins：tool-web.fetch/tool-presentation.mode 落位且其余行原样',
-    webRow.config.fetch === true && presentRow.config.mode === 'ptc' && webRow.config.searchTimeoutMs === 60000 &&
-    pluginRowIdsE(restated.plugins).length === pluginRowIdsE(declared).length && declared.find((row) => row.id === 'tool-web').config.fetch === false)
+  // ④ 写链：公开 preset-sync 行只重述三类受支持字段，不携带完整 17 条 body。
+  const projectedConfig = restatePresetSyncConfigE({}, {}, { webFetch: true, toolPresentationMode: 'ptc', gateWords: assetGateWords })
+  checkTrue('T9-3q restatePresetSyncConfig 只落 webFetch/toolPresentationMode/gateWords', projectedConfig.webFetch === true && projectedConfig.toolPresentationMode === 'ptc' && JSON.stringify(projectedConfig.gateWords) === JSON.stringify(assetGateWords) && Object.keys(projectedConfig).every((key) => ['webFetch', 'toolPresentationMode', 'gateWords'].includes(key)))
   let gateThrew = false
-  try { restatePresetPluginsE({ plugins: declared }, {}, { hostRowConfig: {}, gateWords: { routeDirect: '只有一个词' } }) } catch { gateThrew = true }
+  try { restatePresetSyncConfigE({}, {}, { gateWords: { routeDirect: '只有一个词' } }) } catch { gateThrew = true }
   checkTrue('T9-3r gateWords 整组校验失败即抛（不落盘语义）', gateThrew)
-  const gateOk = restatePresetPluginsE({ plugins: declared }, {}, { hostRowConfig: {}, gateWords: assetGateWords })
-  const gateRow = findPluginsRowE(gateOk.plugins, 'extra-plan')
-  checkTrue('T9-3s gateWords 合法整组写回 extra-plan 行 config.gateWords', gateRow !== null && JSON.stringify(gateRow.config.gateWords) === JSON.stringify(assetGateWords))
-  checkTrue('T9-3t settings.js 写链文本只经 configEditor.edit（无直写 cordis.patch.yml）',
-    settingsText.includes('editor.edit(') && settingsText.includes('restatePresetPlugins') && !settingsText.includes('writeFileSync'))
+  checkTrue('T9-3s settings.js 写链只经 configEditor.edit 且目标为公开行', settingsText.includes('editor.edit(') && settingsText.includes('restatePresetSyncConfig') && !settingsText.includes('writeFileSync'))
+  const presetSyncSource = readFileSyncE(fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/preset-sync.js', import.meta.url)), 'utf8')
+  checkTrue('T9-3t preset-sync 通过 ctx.plugin 直接挂官方 adapter，不实现 registry', presetSyncSource.includes('child.plugin(OfficialAgentPreset') && presetSyncSource.includes('@deepseek-ai/dsh-agent-preset') && !presetSyncSource.includes('agentPresets.register('))
 }
 
 console.log('\n通过 ' + pass + ', 失败 ' + fail)

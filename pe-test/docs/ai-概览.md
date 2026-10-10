@@ -32,7 +32,7 @@
 | P2-2 SDK 文本 | `lib/sdk-text-cache.js` | apply 内 agent-keyed WeakMap；完整 schema/language/renderer 变化失效，同 key 并发合并，失败不缓存；调用计数 1 是硬门槛。详见 [机制设计](ai-机制设计.md#p2-2-sdk-文本复用的安全边界)。 |
 | 设置后端与投影 | `lib/settings.js`、`lib/live-config.js`、`lib/preset-settings.js`、`lib/preset-sync.js` | 10 项 volatile Config/权威行、两项投影与热读保留；0.2 独立 `settings.plugins.tab` 移除，0.1.7 原始 `plugins.row.config` keyed row 由 0.1.7/0.2 支持构建保留，宿主提供对应 slot 时在插件详情呈现；slot 缺失时走 configEditor/SettingsForms 或 profile 权威行后备路径；PUT 仅投影，后端链不变。 |
 | P2-4 默认链 | `agent.cordis.yml` → 生成器 → `preset-defaults.generated.js` | YAML 叶值是作者真源，生成物是派生值，运行时不解析 YAML；坏模板保留 last-known-good（上次已知良好版本）。详见 [维护手册](ai-维护手册.md#p2-4-生成链)。 |
-| 预设自愈 | `lib/preset-sync.js` | profile patch 声明行、主体剥离比对、投影一致三条件成立才 idle（空闲稳态）；写盘只经 `configEditor.edit`，无旧状态目录。 |
+| 预设核对与官方装配 | `lib/preset-sync.js` | 读取纯 definition，旧 `preset-extra-plan` 仅非破坏迁移；`extra-plan-preset-sync` 只承载支持投影/gateWords，投影与 settings 权威值收敛后直接交官方 AgentPreset adapter，写盘只经 `configEditor.edit`。 |
 | session/usage | 根入口 + `lib/agent-runtime.js` | 状态按 sessionId 分桶；disposed 内同步 final fold 后再回收；cursor 增量按 `session.seq`/`snapshotEvents`，不跨会话清理。 |
 | 宿主升级 | [ai-宿主耦合台账](ai-宿主耦合台账.md) | 当前 HS/HK/SD/CF/QB、六项 HUMAN 与 SKIP 规则是升级入口；历史快照见[宿主历史归档](ai-宿主耦合历史归档.md)。 |
 | 实机验收 | [ai-实机闸门测试流程](ai-实机闸门测试流程.md) | 单文件、一次性、顺序完整；A/U/C/D/S/B 行与矛盾原值不可静默修正。 |

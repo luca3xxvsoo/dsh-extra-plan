@@ -12,9 +12,9 @@ window.__ModuleLoader__.load({
     // 0.1.7 keyed row key 仅在下方 COMPAT 边界内声明。
     // 2 项宿主行设置（webFetch / toolPresentationMode）：**权威值落 settings 行**
     // （dsh-extra-plan-settings 行 config，与上面 8 项同源，跨升级/重装不丢）；
-    // 声明行 plugins 内 tool-web / tool-presentation 子行只是投影（消费方是宿主行装载期快照）。
+    // extra-plan-preset-sync 公开行只承载两项宿主投影（消费方是 preset-sync 新 revision）。
     // 提交：2 项并入官方 configForms 一次 mutate（与 8 项同一事务 + revision fencing）；
-    // 本插件的 PUT 仅把新值投影到声明行子行（幂等）。
+    // 本插件的 PUT 仅把新值投影到公开行（幂等）。
     const PRO_CONFIG_URL = "/api/dsh-extra-plan-settings/pro-config";
 
     const zh = {
@@ -102,7 +102,7 @@ window.__ModuleLoader__.load({
     ]);
 
     // 2 项宿主行设置（权威值在 settings 行 dsh-extra-plan-settings config；
-    // 声明行 plugins 内 tool-web / tool-presentation 子行为投影，消费方是宿主行装载期快照）。
+    // extra-plan-preset-sync 公开行 config.webFetch/toolPresentationMode 是受支持投影）。
     const HOST_ROW_FIELDS = Object.freeze([
       { key: "webFetch", control: "select", options: [true, false], locale: "webFetch", hint: "是否开启web_fetch ｜ 重启生效" },
       { key: "toolPresentationMode", control: "select", options: ["native", "ptc", "both"], optionLocale: { native: "toolPresentationModeNative", ptc: "toolPresentationModePtc", both: "toolPresentationModeBoth" }, locale: "toolPresentationMode", hint: "工具呈现方式切换（默认/混合/PTC模式） ｜ 重启生效" }
@@ -295,7 +295,7 @@ window.__ModuleLoader__.load({
           if (hostDraft === null) return;
           setSaving(true);
           setMessage({ kind: "", text: "" });
-          // 第一步：PUT 仅投影 2 项宿主行到声明行子行（幂等）。投影无 revision fencing/回滚，
+          // 第一步：PUT 仅投影 2 项宿主行到 extra-plan-preset-sync 公开行（幂等）。投影无 revision fencing/回滚，
           // 失败即中止、10 项零写入，无半写风险。
           try {
             const res = await fetch(PRO_CONFIG_URL, {
