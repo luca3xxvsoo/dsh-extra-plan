@@ -26,9 +26,9 @@
 
 每个读取本文档的 AI **动手前必须先做本节四步检查**；不满足就先请用户改设置，**不得跳过**。
 
-1. **只读部署侧两个值**：先确定**当前 profile** —— 读环境变量 `DSH_PROFILE`（配合 `DSH_PROFILE_DIR` 取绝对路径），**不得按 GUI 形态、bundles 目录或文件新旧推断**。同一台机器可并存多个 profile（本机实测 `desktop` 与 `web` 各自独立），**各 profile 的 `mode`/`runcodeCatchGate` 是各自独立的值、互不联动**（2026-10-03 实测：`desktop`=both / `web`=ptc），**读错 profile 会得出相反的前置结论**；实机测试必须在当前会话所属 profile 下进行，跨 profile 的结论不得互推。随后 read `DSH_HOME/profiles/<profile>/cordis.patch.yml`（宿主权威行的正常写入路径 = configEditor.documentPath），取两处：`mode` = **统一全局行 `dsh-extra-plan-settings` 的 `config.toolPresentationMode`**，并与 definition 内 `tool-presentation.config.mode` 对拍；`runcodeCatchGate` = **settings 行 `dsh-extra-plan-settings` 的 `config.runcodeCatchGate`**（8 项 extra-plan 权威设置与 2 项宿主行值由该后端路径维护）。旧 `preset-extra-plan` 只作非破坏迁移读取。AI **只读**、不写（见 7.1）。`.agent-presets/extra-plan/` 已退役，当前不部署、不同步 DSH_HOME，宿主无任何读取方。设置页直接位于“插件 → 按需规划模式”当前包详情：优先使用 `plugins.bundle.config`，仅在 bundle slot 缺失时由当前包的 `plugins.detail.section` 回退；两种槽均缺失才记录版本 FAIL，不回到点击子组件。保存只经稳定 namespace 的 ConfigForms mutate。
+1. **只读部署侧两个值**：先确定**当前 profile** —— 读环境变量 `DSH_PROFILE`（配合 `DSH_PROFILE_DIR` 取绝对路径），**不得按 GUI 形态、bundles 目录或文件新旧推断**。同一台机器可并存多个 profile（本机实测 `desktop` 与 `web` 各自独立），**各 profile 的 `mode`/`runcodeCatchGate` 是各自独立的值、互不联动**（2026-10-03 实测：`desktop`=both / `web`=ptc），**读错 profile 会得出相反的前置结论**；实机测试必须在当前会话所属 profile 下进行，跨 profile 的结论不得互推。随后 read `DSH_HOME/profiles/<profile>/cordis.patch.yml`（宿主权威行的正常写入路径 = configEditor.documentPath），取两处：`mode` = **统一全局行 `dsh-extra-plan-settings` 的 `config.toolPresentationMode`**，并与 definition 内 `tool-presentation.config.mode` 对拍；`runcodeCatchGate` = **settings 行 `dsh-extra-plan-settings` 的 `config.runcodeCatchGate`**（8 项 extra-plan 权威设置与 2 项宿主行值由该后端路径维护）。旧 `preset-extra-plan` 只作非破坏迁移读取。AI **只读**、不写（见 7.1）。`.agent-presets/extra-plan/` 已退役，当前不部署、不同步 DSH_HOME，宿主无任何读取方。设置页直接位于“插件 → 按需规划模式”当前包详情，经 `plugins.detail.section` 渲染于行列表之后（自绘标题）；该槽缺失才记录版本 FAIL，不回到点击子组件。保存只经稳定 namespace 的 ConfigForms mutate。
 2. **mode 必须是 both**：若 `mode` 不是 `both`，先明确提示用户切换、**等用户确认后再开始**；提示语模板（照读）：
-   > 当前模式为 <值>，本流程需在 both（混合）模式执行：请优先在“插件 → 按需规划模式”当前包详情的全局管理表单保存 `toolPresentationMode=both`；若 bundle/detail 两槽均缺失，才由用户通过 configEditor/SettingsForms 或手工 profile 权威行把 `toolPresentationMode` 改为 `both`，然后重启 Harness（**不必新开会话**），完成后告诉我
+   > 当前模式为 <值>，本流程需在 both（混合）模式执行：请优先在“插件 → 按需规划模式”当前包详情的全局管理表单保存 `toolPresentationMode=both`；该表单槽缺失或被让位时，才由用户通过 configEditor/SettingsForms 或手工 profile 权威行把 `toolPresentationMode` 改为 `both`，然后重启 Harness（**不必新开会话**），完成后告诉我
    用户侧成本 = 1 次后端权威行配置更新 ＋ 重启 Harness（见 1.5、7.1）。
 3. **读取现场的 7 个闸门关键词（v0.3.0 起为强制前置）**：同一次 read 取**全局行 `dsh-extra-plan-settings` 的 `config.gateWords` 7 个字段值；若全局行缺项，再安全只读旧 `extra-plan-preset-sync` 或 `preset-extra-plan.config.plugins` 作为迁移证据**（routeDirect/routePlan/routeDisagree/approvalApprove/approvalReplan/purposeRefine/purposeRedo），**写进本轮实测记录的配置快照**。此后所有 ask 选项、deny 文案判定与「旧词拒绝」判据都以这 7 个现场值为准；**禁止只按出厂示例词（直接执行｜进行pro规划｜不同意｜同意执行｜转交pro规划｜完善方案｜重新规划）测试**。若 `config.gateWords` 缺失/非法：插件在该预设挂载时同步抛错（预设不可用），此时实测不成立——先按 7 键整组补齐（非空的 7 个互不相同字符串、首尾无空白、无 CR/LF、不以推荐后缀结尾）再开始。
 4. **第一轮固定按 `catchGate=true`（拦截面轮）执行**：起步 `runcodeCatchGate` 已是 `true` → 直接开始第一轮；起步非 true → 在切 both 的**同一次后端权威行更新**中一并设为 `true`（`toolPresentationMode` 与 `runcodeCatchGate` **同一次后端权威行更新**，搭车不新增用户操作）。第二轮再切为 `false`（见 3.3／3.4）。
@@ -52,7 +52,7 @@
 - **用户操作定义**：用户必须亲手、AI 不可代做的动作，仅四类 —— ①选选项（点选 ask 弹窗中的某一项）；②空白答复或取消（空白回车 / Esc 取消）；③更新后端权威行配置；④必要时重启进程（重启 Harness）。
 - **AI 的一切工具调用不计入**：含委派子代理、子代理会话内连调、一次 run_code 的组判定与聚合取证。
 - **常数项 U0**：一次重启（装载期快照生效）＋ 一条新的用户消息（使 route 锚点前移、回到 `route=none` 默认态）。普通闸门两轮可用既有会话（含重启后恢复的同一会话）；PTC 专项的 F 证据必须每个 C 值各用干净 A=1 顶层会话，已有会话只能作 L 证据。不计入变量操作、不单独占用户操作清单行。
-- **后端权威行配置更新与随后的重启/新开会话合并计 1 次用户操作**（同属「后端配置前置档」：`toolPresentationMode` 仍是装载期快照、改值必须重新装载才生效（重启 Harness 即可，新开会话亦可）；`runcodeCatchGate`（2026-09-23 修订）已改为插件侧配置热读，后端权威行配置更新后**立即生效**、无需重启进程或新开会话，不触发「必须重启」的记账，见 1.5(b) 与 7.1）。配置入口直接使用当前包详情的 bundle.config；仅 slot 缺失时才使用 detail.section 回退或用户侧 configEditor。所有路径都维护 `dsh-extra-plan-settings` 权威行，不能用只写旧投影的自定义 PUT 代替；空/null/数组/原始/未知/混合非法 PUT 均应 400 且零 edit，当前非法 gateWords 不可被自动 fallback。
+- **后端权威行配置更新与随后的重启/新开会话合并计 1 次用户操作**（同属「后端配置前置档」：`toolPresentationMode` 仍是装载期快照、改值必须重新装载才生效（重启 Harness 即可，新开会话亦可）；`runcodeCatchGate`（2026-09-23 修订）已改为插件侧配置热读，后端权威行配置更新后**立即生效**、无需重启进程或新开会话，不触发「必须重启」的记账，见 1.5(b) 与 7.1）。配置入口直接使用当前包详情的 detail.section 表单（行列表之后，自绘标题）；仅该槽缺失时才使用用户侧 configEditor。所有路径都维护 `dsh-extra-plan-settings` 权威行，不能用只写旧投影的自定义 PUT 代替；空/null/数组/原始/未知/混合非法 PUT 均应 400 且零 edit，当前非法 gateWords 不可被自动 fallback。
 - **空白与取消**：视为两种不同响应形态。「必测」取**空白回车**（U1）；「取消」列为可选加测（差异见 7.2 陷阱⑦）。
 
 ### 1.4 （本节空缺，编号占位）
@@ -354,15 +354,15 @@ channelBroken 逃生（`CHANNEL_BROKEN_CODES` = NO_PROVIDER / CALLER_NOT_LIVE / 
 
 > 表注（2026-09-29 v0.4.0）：四工具治理项（A51-A56）不挂 B 类搭车批次——A53 需 running 子代理目标、A55/A56 需同轮两次调用，0 用户操作搭车不可行，六条全部落实机直测、归属 U1/U2/U5 行内批次（见 4.1）。
 
-**必须重启或切开关的唯一操作**：U7（起步非 both 时切 both，必须重启 Harness——装载期快照，见 1.5(b)）；U8（轮间切 catchGate，权威行更新即生效、无需重启）；7.6 A/B 类（改现场 gateWords 后必须重启）。设置入口选择不新增操作：当前包详情由 bundle.config 直接呈现，detail.section 仅在 bundle 槽不可用时回退；两种路径仍按唯一全局权威行配置更新计数。本次补全的 B0-B4 全部不需要任何重启/切换。
+**必须重启或切开关的唯一操作**：U7（起步非 both 时切 both，必须重启 Harness——装载期快照，见 1.5(b)）；U8（轮间切 catchGate，权威行更新即生效、无需重启）；7.6 A/B 类（改现场 gateWords 后必须重启）。设置入口选择不新增操作：当前包详情由 detail.section 在行列表之后呈现唯一全局管理表单（自绘标题，不注册 bundle.config；若本包 bundle.config 槽被任何一方注册则让位）；UI 与用户侧后备路径仍按唯一全局权威行配置更新计数。本次补全的 B0-B4 全部不需要任何重启/切换。
 
 ### 3.3 轮间：1 次后端权威行配置更新（把 catchGate 切为 false；权威行更新即生效、无需重启）
 
 第一轮跑完后，AI 用下面这段**转告语**（原文入档，照读）请用户做轮间切换；**轮间不重走任何批次**：
 
-> 本轮（both ＋ catchGate=true）已覆盖 52 条实机项中的 51 条与 A21 的拦截面。剩余内容需在 catchGate=false 下验：A21 的放行面 ＋ 开关局部性佐证（第二轮 0 次状态操作）。请你优先在“插件 → 按需规划模式”当前包详情的全局管理表单中把 `runcodeCatchGate` 改为 false；若两个同页槽均缺失，才由用户通过宿主 configEditor/SettingsForms 或手工 profile 权威行修改（不能用只写投影的自定义 PUT 代替；两条路径都写同一 `dsh-extra-plan-settings` 权威行）。该开关为配置热读、**权威行更新后立即生效，无需重启 Harness、也不必新开会话**——完成后**在本会话**告诉我，我立即补测并把两轮结果合并成报告。
+> 本轮（both ＋ catchGate=true）已覆盖 52 条实机项中的 51 条与 A21 的拦截面。剩余内容需在 catchGate=false 下验：A21 的放行面 ＋ 开关局部性佐证（第二轮 0 次状态操作）。请你优先在“插件 → 按需规划模式”当前包详情的全局管理表单中把 `runcodeCatchGate` 改为 false；若该表单槽缺失或被让位，才由用户通过宿主 configEditor/SettingsForms 或手工 profile 权威行修改（不能用只写投影的自定义 PUT 代替；两条路径都写同一 `dsh-extra-plan-settings` 权威行）。该开关为配置热读、**权威行更新后立即生效，无需重启 Harness、也不必新开会话**——完成后**在本会话**告诉我，我立即补测并把两轮结果合并成报告。
 
-轮间成本 = **1 次后端权威行配置更新**（`runcodeCatchGate` true→false，`toolPresentationMode` 不动）——该开关（2026-09-23 修订）为插件侧配置热读、**权威行更新即生效，轮间无需重启 Harness、也不必新开会话**；无论通过 bundle.config/detail.section 还是槽缺失时的用户侧 configEditor 后备路径，都只计这 1 次全局权威行更新。
+轮间成本 = **1 次后端权威行配置更新**（`runcodeCatchGate` true→false，`toolPresentationMode` 不动）——该开关（2026-09-23 修订）为插件侧配置热读、**权威行更新即生效，轮间无需重启 Harness、也不必新开会话**；无论通过 detail.section 呈现的全局管理表单还是表单缺失/让位时的用户侧 configEditor 后备路径，都只计这 1 次全局权威行更新。
 
 ### 3.4 第二轮：both ＋ catchGate=false（放行面轮）
 
@@ -396,8 +396,8 @@ channelBroken 逃生（`CHANNEL_BROKEN_CODES` = NO_PROVIDER / CALLER_NOT_LIVE / 
 | U4 | 第一轮 | 目的答复（选「完善方案」或「重新规划」） | S2.5（route=plan·目的已定·未澄清） | A04,A13,A41-1,A41-2,A41-4,A41-5 | 2（＋A41 补充取证 4 项） | purpose 只有答复可置位；目的 ask 为「进行pro规划」后第一个提问；A41-1/A41-2（route=none/direct 精确目的 ask 拒绝句须含固定路由确认句）取证窗口前移至 U1/U2 顺带，plan 放行（A41-3）、ordinary 不误拦、channelBroken 逃生与重选/取消清理（A41-4/A41-5）在本窗口取证 |
 | U5 | 第一轮 | 澄清答复（选探查方式） | S3（route=plan·已澄清） | A10,A06,A16,A17,A12,A49,A53 | 7（＋planner 委派，0 用户操作） | clarified 仅当目的已定（purpose∈{完善方案,重新规划}）时由澄清答复置位；route/目的重选与非通道取消按阶段清理，channelBroken 保留旧状态，新 user/message 重开事件窗回默认态；A17 需同轮内完成（计数锚点重置见陷阱③）；A53（send_message 目标 running 拒）在 planner 委派运行中顺带直呼 |
 | U6 | 第一轮 | 批准同意（点「同意执行」） | S4（route=plan·已批准） | A07,A09,A11,A40,A48,A50 | 6（＋reviewer 委派，0 用户操作） | approved 只有「同意」可置位；A48 委派执行者，A50 为其写放行对照 |
-| U7 | 第一轮前置（**仅起步非 both 需要**，起步已 both 时省去） | 当前包详情的全局管理表单优先把 `toolPresentationMode` 切到 both、把 `runcodeCatchGate` 置 true；bundle/detail 两槽均缺失时才经用户侧 configEditor/SettingsForms 或手工 profile 权威行完成同一更新（**同一次后端权威行更新**，搭车不新增操作）＋ 重启 Harness（**不必新开会话**） | 前置（不推进 flow state） | —（0 条直接） | 0 | 两种同页/后备路径都必须维护 `dsh-extra-plan-settings` 权威行；本次重启由工具呈现模式的装载期快照口径（见 1.5(b)）决定（`runcodeCatchGate` 已热读、同次权威行更新即生效），与第一轮批次解耦；不能用只写投影的自定义 PUT 代替 |
-| U8 | 轮间（第一轮与第二轮之间） | 当前包详情全局管理表单优先把 `runcodeCatchGate` 切为 false；两个同页槽均缺失时才经用户侧 configEditor/SettingsForms 或手工 profile 权威行完成 1 次更新（`toolPresentationMode` 不动；与工具呈现模式同一次后端权威行更新口径）——配置热读、**权威行更新即生效，无需重启 Harness、不必新开会话** | 前置（不推进 flow state；第二轮 route=none 即可） | —（0 条直接；第二轮三项见 3.4） | 0 | 开关为插件侧配置热读（2026-09-23 修订，见 1.5(b)）；两条路径都维护同一 `dsh-extra-plan-settings` 权威行，不能用只写投影的自定义 PUT；轮间无需重新装载/重启，用户发一条消息即回 route=none（无需新会话）；**第二轮 0 次状态舞** |
+| U7 | 第一轮前置（**仅起步非 both 需要**，起步已 both 时省去） | 当前包详情的全局管理表单优先把 `toolPresentationMode` 切到 both、把 `runcodeCatchGate` 置 true；该表单槽缺失或被让位时才经用户侧 configEditor/SettingsForms 或手工 profile 权威行完成同一更新（**同一次后端权威行更新**，搭车不新增操作）＋ 重启 Harness（**不必新开会话**） | 前置（不推进 flow state） | —（0 条直接） | 0 | 表单与后备路径都必须维护 `dsh-extra-plan-settings` 权威行；本次重启由工具呈现模式的装载期快照口径（见 1.5(b)）决定（`runcodeCatchGate` 已热读、同次权威行更新即生效），与第一轮批次解耦；不能用只写投影的自定义 PUT 代替 |
+| U8 | 轮间（第一轮与第二轮之间） | 当前包详情全局管理表单优先把 `runcodeCatchGate` 切为 false；该表单槽缺失或被让位时才经用户侧 configEditor/SettingsForms 或手工 profile 权威行完成 1 次更新（`toolPresentationMode` 不动；与工具呈现模式同一次后端权威行更新口径）——配置热读、**权威行更新即生效，无需重启 Harness、不必新开会话** | 前置（不推进 flow state；第二轮 route=none 即可） | —（0 条直接；第二轮三项见 3.4） | 0 | 开关为插件侧配置热读（2026-09-23 修订，见 1.5(b)）；两条路径都维护同一 `dsh-extra-plan-settings` 权威行，不能用只写投影的自定义 PUT；轮间无需重新装载/重启，用户发一条消息即回 route=none（无需新会话）；**第二轮 0 次状态舞** |
 
 > 表注一：「覆盖条数」列 = 该行直接连发清单命中的 A 编号条数（合计 42 条次，含跨行重复）；由该行批次委派的子代理序列所覆盖的编号按委派批次归属同一 U 序号（planner→U5、probe→U2、reviewer→U6），合计覆盖 52 条实机可测项（2026-09-29 v0.4.0：A51→U1、A52→U2、A53→U5、A54/A55/A56→U1）。A41-1/A41-2 属 U4 行「＋A41 补充取证 4 项」的取证内容，取证窗口前移至 U1/U2（route=none/direct 顺带），条次不重复计入 U1/U2 行，合计仍 42 条次。
 > 表注二：清单行数 = 第一轮 U1-U6 共 6 行 ＋ 第二轮 0 行 ＋ 后端配置 1-2 行（U7 仅起步非 both 需要；U8 恒定）。合计：起步非 both 8 次 = U1-U6（6 次状态推进）＋ U7（1 次后端权威行配置更新）＋ U8（1 次后端权威行配置更新）；起步已 both 7 次 = U1-U6（6 次）＋ U8（1 次）。第二轮 0 行 = 第二轮 0 次状态操作（理由见 3.4）。

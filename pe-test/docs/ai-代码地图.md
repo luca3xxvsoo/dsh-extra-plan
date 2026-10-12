@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-10-12 16:42:58（脚本自动更新时间戳行）
+> 上次同步：2026-10-12 18:14:31（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -47,8 +47,8 @@
 | 设置值定位与捕获（source/row/legacy projection locator；10 项全局行 + 旧行安全读取；PUT 兼容入口合并全局值） | lib/preset-settings.js、lib/settings.js、lib/preset-sync.js | captureSettings、captureRowSettings、hostRowDefaultsFromTemplate、readProjectedValue、resolveSetting、findTextLocatorMatches、patchYamlScalar、serializeScalar、publicField、readLegacyState |
 | 配置热读／生效标志／后端权威行更新无需重启（live-config/hot-read；增强 stamp dev/ino/size/mtimeNs/ctimeNs，兼容回退 ino/size/mtimeMs/ctimeMs） | plugins/dsh-extra-plan/lib/live-config.js、plugins/dsh-extra-plan/index.js | createLiveConfig、refresh、read、currentPath、readDiskValues、statStamp、pick |
 | 预设核对／纯 definition／官方 adapter／旧行非破坏迁移 | lib/preset-sync.js、lib/preset-settings.js | syncPreset、assetDefinition、definitionWithProjection、readUnifiedState、readLegacyState、resolveUnifiedConfig、restateSettingsConfig、restatePresetPlugins、declarationBodyMatchesAsset、stripUserWritable、carryUserWritable、assetPlugins、pluginRowIds、readDeclaredPluginsFromPatch、applyPlan |
-| 同页共享客户端表单／bundle.config 优先与 detail.section 当前包回退（不注册 row/item/tab） | lib/client.js | apply、SettingsCard、ExtraPlanForm、BundleSettingsCard、DetailSettingsSection、registerClientSurfaces |
-> client.js 设置入口定位：`BundleSettingsCard`、`DetailSettingsSection` 与 `registerClientSurfaces`；bundle.config 以包名 key 优先，detail.section 仅在 bundle slot 不可用时当前包回退；ConfigForms.get(NS) 订阅快照并一次 mutate 十项，不注册 row.config/settings.plugins.tab/plugins.item。
+| 同页共享客户端表单／仅经 detail.section 渲染于 bundle 详情页行列表之后（自绘标题；不注册 bundle.config/row/item/tab，本包 bundle.config 槽被任何一方注册条目时 detail.section 让位） | lib/client.js | apply、SettingsCard、ExtraPlanForm、DetailSettingsSection、registerClientSurfaces |
+> client.js 设置入口定位：`DetailSettingsSection` 与 `registerClientSurfaces`；设置表单仅经 plugins.detail.section 渲染于 bundle 页行列表之后，若本包 bundle.config 槽被任何一方注册条目则让位保持唯一表单；ConfigForms.get(NS) 订阅快照并一次 mutate 十项，不注册 bundle.config/row.config/settings.plugins.tab/plugins.item。
 | 执行者工具裁剪／deny（executor-spawn；注册引用计数幂等 = 稳定键幂等——槽键 = 服务实现本体（读全局注册符号 Symbol.for('cordis.original')，取不到时降级回代理本身），跨预设世代/行重建共享同一注册与 disposer） | lib/executor-spawn.js | apply、slotKey |
 | qqbot 兼容自愈／建链 | dsh-qqbot-user-questions/lib/heal.js（选装包，本机未安装） | healQqbotCompatibility、ensureDshExtraPlanLink |
 | YAML 默认值真源／生成／last-known-good（上次已知良好版本）（exploreBudget/plannerPromptSuffix）＋纯 preset definition 产物（顶层条目按 PLUGINS_INDENT 平移 · --check 比对） | lib/preset-settings.js、scripts/generate-runtime-defaults.mjs、lib/preset-defaults.generated.js、assets/presets/extra-plan/preset-definition.generated.yml | resolveTemplateSettingDefault、renderRuntimeDefaults、renderPresetDefinition、topLevelRowsOf、generateRuntimeDefaults、indentBlock、quoteYamlSingle、assertDefinition、assertParses、writeOrCheck |
@@ -76,7 +76,7 @@
 | plugins/dsh-extra-plan/lib/agent-session.js | 32 | 会话事件与子代理识别的唯一来源：sessionEvents/isSubagentChild 零依赖纯函数，被 index.js 与 lib/model-routing.js 共用（无镜像副本；不 import index.js） |
 | plugins/dsh-extra-plan/lib/assembly-presentation.js | 242 | A/C/M 与 skill catalog 模型可见投影；从 scoped tools 读 schema/模式，SDK renderer 按 language 整体重建；F/PTC 的 tool:read 由 index.js 手写，L 段回宿主原文。 |
 | plugins/dsh-extra-plan/lib/client-carrier.js | 7 | settings 内部 Loader Group 的无副作用 Client carrier；不对应 bundle row/公开 export。 |
-| plugins/dsh-extra-plan/lib/client.js | 327 | 客户端模块加载共享样式/词条与 SettingsCard/ExtraPlanForm；bundle.config 在当前包详情直接呈现，detail.section 仅作当前包回退；后端全局 settings API/Config/旧值迁移与 definition/adapter 由同一 owner 活动。 |
+| plugins/dsh-extra-plan/lib/client.js | 311 | 客户端模块加载共享样式/词条与 SettingsCard/ExtraPlanForm；设置表单仅经 detail.section 渲染于当前包详情行列表之后（自绘标题，不注册 bundle.config；若本包 bundle.config 槽出现条目则让位）；后端全局 settings API/Config/旧值迁移与 definition/adapter 由同一 owner 活动。 |
 | plugins/dsh-extra-plan/lib/executor-spawn.js | 132 | 执行者子代理 provider：委托宿主 spawn，注入工具 deny（防委派递归/追问）；registerProvider 走引用计数幂等（**稳定键幂等**：模块级 WeakMap 槽表的槽键 = subagents 服务实现本体——读全局注册符号 Symbol.for('cordis.original')，由 traceable 代理 get 拦截器返回 target，root 单例跨预设世代恒同一对象；取不到符号值时降级回代理本身；跨预设世代/行重建复用同一注册，归零才反注册） |
 | plugins/dsh-extra-plan/lib/gate-decisions.js | 1046 | 四级闸门与角色分流判定纯函数集 |
 | plugins/dsh-extra-plan/lib/gate-words.js | 114 | 闸门关键词共享契约（唯一值源是 YAML 的 config.gateWords）：字段规格 GATE_WORD_FIELDS/GATE_WORDS_GROUP_DEFINITION + 整组严格校验 validateGateWords（错误一律以 extra-plan: config.gateWords 开头）+ 运行时词表 createGateRuntime（显式入参严格校验，无默认词表）；纯模块：不含任何出厂词值、不读文件与环境变量，被 index.js（运行时）与 lib/preset-sync.js（启动自愈）共享（迁移叶 locator 已随跨版本搬迁链删除） |
@@ -164,28 +164,27 @@
 | plugins/dsh-extra-plan/lib/assembly-presentation.js | toolSdkSchemasOf | L213-231 | 优先读取 tools.sdkSchemas；兼容旧服务时从 schemas 补 owned（自有） output schema，供 SDK renderer 使用 |  |
 | plugins/dsh-extra-plan/lib/assembly-presentation.js | toolPresentationModeOf | L233-242 | 从 scoped tools registry 读取 native/ptc/both 模式 |  |
 | plugins/dsh-extra-plan/lib/client-carrier.js | apply | L5-7 | 空实现的内部 Client carrier 入口：由 settings 动态 Loader entry 通过 dsh.client manifest 触发 lib/client.js 加载，不注册 row、export 或业务副作用。 |  |
-| plugins/dsh-extra-plan/lib/client.js | factory | L3-326 | 模块工厂：接收 require，装配并返回本插件客户端模块导出（apply 与 inject 声明），由 __ModuleLoader__ 调用。 |  |
-| plugins/dsh-extra-plan/lib/client.js | apply | L110-321 | 客户端插件入口：注入 esp-* 样式表与中英词条；bundle.config 优先注册，detail.section 仅在 bundle slot 不可用时当前包回退；稳定 namespace 的 ConfigForms 快照订阅与一次十项 mutate 共用一份表单，不注册 row/item/tab。 |  |
-| plugins/dsh-extra-plan/lib/client.js | useSharedConfigForm | L123-134 | 通过稳定 namespace 调用 ConfigForms.get(NS)，订阅快照并适配为页面期望的 state/mutate facade；不把 bundle key 当 namespace。 | apply 内部闭包 |
-| plugins/dsh-extra-plan/lib/client.js | update | L126 | ConfigForms 快照订阅回调：从 getSnapshot 取得最新 state，驱动同页表单刷新。 | useSharedConfigForm 内部 |
-| plugins/dsh-extra-plan/lib/client.js | mutate | L132 | ConfigForms mutate facade：把十项 set ops 与读到的 revision 交回官方 controller。 | useSharedConfigForm 内部 |
-| plugins/dsh-extra-plan/lib/client.js | optionLabel | L136-141 | 选项显示名：优先 optionLocale 词条，其次布尔 trueValue/falseValue，最后原值字符串 | apply 内部闭包（设置页控件共用） |
-| plugins/dsh-extra-plan/lib/client.js | optionValue | L143-147 | 把后端返回的字符串值映射回 field.options 里的原始类型（不在选项中则原样返回） | apply 内部闭包（设置页控件共用） |
-| plugins/dsh-extra-plan/lib/client.js | renderControl | L149-174 | 按 field.control 渲染受控控件：textarea／number（透传 min、step）／select（选项文案走 optionLabel、回值走 optionValue）／其余回落 text input；统一 disabled 与 onChange 回传 |  |
-| plugins/dsh-extra-plan/lib/client.js | onChange | L153 | textarea 分支的 onChange：把多行文本框当前字符串值透传给上层 onChange 回调。 |  |
-| plugins/dsh-extra-plan/lib/client.js | onChange | L160 | number 分支的 onChange：把数字输入框当前字符串值原样透传给上层回调，不做数值转换。 |  |
-| plugins/dsh-extra-plan/lib/client.js | onChange | L165 | select 分支的 onChange：把选中值经 optionValue 归一化回原始选项类型后交给上层回调。 |  |
-| plugins/dsh-extra-plan/lib/client.js | onChange | L172 | 默认 text 分支的 onChange（非 textarea/number/select 时）：把单行文本框字符串值透传给上层回调。 |  |
-| plugins/dsh-extra-plan/lib/client.js | ExtraPlanForm | L176-259 | 共享十项设置表单：从 ConfigForms.get(NS) 适配的 state/mutate 播种 draft（value/writable/revision/status），按 general/pro 两组 esp-section 渲染字段，footer 一次性提交十个 set ops + revision fence 后提示已保存/失败。 |  |
-| plugins/dsh-extra-plan/lib/client.js | fieldValue | L199-206 | 取字段草稿值：number 控件把草稿转 Number（非有限数值原样返回），其余控件原样返回 | ExtraPlanForm 内部闭包 |
-| plugins/dsh-extra-plan/lib/client.js | saveAll | L208-223 | 只调用一次十项 mutate(ops, revision)；accepted 非 true 或异常均显示失败，不先 PUT 旧公开行、不伪造成功。 |  |
-| plugins/dsh-extra-plan/lib/client.js | renderField | L225-234 | 按 field 渲染十项设置中的一个字段：esp-field 内「locale 名称→renderControl（随 snapshot.writable 禁用）→静态 hint」，编辑写回 draft 并清提示。 | ExtraPlanForm 内部闭包；本地稳定字段样式 |
-| plugins/dsh-extra-plan/lib/client.js | SettingsCard | L261-265 | SHARED 卡片根组件：接收规范化 configForm/translate，view=summary 返回一行描述，其余渲染 esp-wrap 与唯一 ExtraPlanForm；不直接读取旧宿主 props。 |  |
-| plugins/dsh-extra-plan/lib/client.js | BundleSettingsCard | L267-270 | bundle.config owner：使用共享 namespace form facade 渲染当前包详情 page/summary。 |  |
-| plugins/dsh-extra-plan/lib/client.js | hasBundleConfigEntry | L272-279 | 检查稳定包名 key 是否已接管 bundle.config，供 detail.section 回退避免重复表单。 |  |
-| plugins/dsh-extra-plan/lib/client.js | DetailSettingsSection | L281-287 | 仅匹配当前包 bundle subject；bundle slot 未接管时呈现同一共享表单，否则返回 null。 |  |
-| plugins/dsh-extra-plan/lib/client.js | safeInject | L289-291 | 尝试挂载正式 bundle/detail 槽位；版本缺槽时保留真实回退而不伪造 row/tab 兼容。 |  |
-| plugins/dsh-extra-plan/lib/client.js | registerClientSurfaces | L293-317 | 在 ConfigForms namespace served 时注册 bundle.config 优先与 detail.section 回退两个正式槽，生命周期由同一 owner 释放。 |  |
+| plugins/dsh-extra-plan/lib/client.js | factory | L3-310 | 模块工厂：接收 require，装配并返回本插件客户端模块导出（apply 与 inject 声明），由 __ModuleLoader__ 调用。 |  |
+| plugins/dsh-extra-plan/lib/client.js | apply | L112-305 | 客户端插件入口：注入 esp-* 样式表与中英词条；仅注册 detail.section 于当前包详情行列表之后呈现唯一表单（不注册 bundle.config；槽内出现本包条目时让位）；稳定 namespace 的 ConfigForms 快照订阅与一次十项 mutate 共用一份表单，不注册 row/item/tab。 |  |
+| plugins/dsh-extra-plan/lib/client.js | useSharedConfigForm | L125-136 | 通过稳定 namespace 调用 ConfigForms.get(NS)，订阅快照并适配为页面期望的 state/mutate facade；不把 bundle key 当 namespace。 | apply 内部闭包 |
+| plugins/dsh-extra-plan/lib/client.js | update | L128 | ConfigForms 快照订阅回调：从 getSnapshot 取得最新 state，驱动同页表单刷新。 | useSharedConfigForm 内部 |
+| plugins/dsh-extra-plan/lib/client.js | mutate | L134 | ConfigForms mutate facade：把十项 set ops 与读到的 revision 交回官方 controller。 | useSharedConfigForm 内部 |
+| plugins/dsh-extra-plan/lib/client.js | optionLabel | L138-143 | 选项显示名：优先 optionLocale 词条，其次布尔 trueValue/falseValue，最后原值字符串 | apply 内部闭包（设置页控件共用） |
+| plugins/dsh-extra-plan/lib/client.js | optionValue | L145-149 | 把后端返回的字符串值映射回 field.options 里的原始类型（不在选项中则原样返回） | apply 内部闭包（设置页控件共用） |
+| plugins/dsh-extra-plan/lib/client.js | renderControl | L151-176 | 按 field.control 渲染受控控件：textarea／number（透传 min、step）／select（选项文案走 optionLabel、回值走 optionValue）／其余回落 text input；统一 disabled 与 onChange 回传 |  |
+| plugins/dsh-extra-plan/lib/client.js | onChange | L155 | textarea 分支的 onChange：把多行文本框当前字符串值透传给上层 onChange 回调。 |  |
+| plugins/dsh-extra-plan/lib/client.js | onChange | L162 | number 分支的 onChange：把数字输入框当前字符串值原样透传给上层回调，不做数值转换。 |  |
+| plugins/dsh-extra-plan/lib/client.js | onChange | L167 | select 分支的 onChange：把选中值经 optionValue 归一化回原始选项类型后交给上层回调。 |  |
+| plugins/dsh-extra-plan/lib/client.js | onChange | L174 | 默认 text 分支的 onChange（非 textarea/number/select 时）：把单行文本框字符串值透传给上层回调。 |  |
+| plugins/dsh-extra-plan/lib/client.js | ExtraPlanForm | L178-261 | 共享十项设置表单：从 ConfigForms.get(NS) 适配的 state/mutate 播种 draft（value/writable/revision/status），按 general/pro 两组 esp-section 渲染字段，footer 一次性提交十个 set ops + revision fence 后提示已保存/失败。 |  |
+| plugins/dsh-extra-plan/lib/client.js | fieldValue | L201-208 | 取字段草稿值：number 控件把草稿转 Number（非有限数值原样返回），其余控件原样返回 | ExtraPlanForm 内部闭包 |
+| plugins/dsh-extra-plan/lib/client.js | saveAll | L210-225 | 只调用一次十项 mutate(ops, revision)；accepted 非 true 或异常均显示失败，不先 PUT 旧公开行、不伪造成功。 |  |
+| plugins/dsh-extra-plan/lib/client.js | renderField | L227-236 | 按 field 渲染十项设置中的一个字段：esp-field 内「locale 名称→renderControl（随 snapshot.writable 禁用）→静态 hint」，编辑写回 draft 并清提示。 | ExtraPlanForm 内部闭包；本地稳定字段样式 |
+| plugins/dsh-extra-plan/lib/client.js | SettingsCard | L263-271 | SHARED 卡片根组件：接收规范化 configForm/translate，view=summary 返回一行描述，其余渲染 esp-wrap 与唯一 ExtraPlanForm；不直接读取旧宿主 props。 |  |
+| plugins/dsh-extra-plan/lib/client.js | hasBundleConfigEntry | L273-280 | 检查稳定包名 key 是否已被注册进 bundle.config 槽，供 detail.section 让位避免重复表单。 |  |
+| plugins/dsh-extra-plan/lib/client.js | DetailSettingsSection | L282-288 | 仅匹配当前包 bundle subject；bundle.config 槽无本包条目时呈现同一共享表单（唯一通道），槽内出现本包条目则让位返回 null。 |  |
+| plugins/dsh-extra-plan/lib/client.js | safeInject | L290-292 | 尝试挂载 detail.section 正式槽；版本缺槽时保留真实缺失而不伪造 row/tab 兼容。 |  |
+| plugins/dsh-extra-plan/lib/client.js | registerClientSurfaces | L294-301 | 在 ConfigForms namespace served 时注册 detail.section 唯一正式槽（自绘标题呈现于行列表之后），生命周期由同一 owner 释放。 |  |
 | plugins/dsh-extra-plan/lib/executor-spawn.js | resolveDeny | L27-29 | deny 解析纯函数：config.deny 合法（非 null 对象且为数组）时原样返回，否则回退 DEFAULT_DENY | 由 apply 调用；DEFAULT_DENY 已与预设 config.deny 收敛为同集 11 项 |
 | plugins/dsh-extra-plan/lib/executor-spawn.js | slotKey | L48-54 | 稳定槽键纯函数：读全局注册符号 Symbol.for('cordis.original') 取 subagents 服务实现本体（traceable 代理 get 拦截器返回 target；root 单例跨 ctx/跨预设世代恒同一对象），非 traceable/取不到符号值时降级回代理本身 | registrationSlots 查表的键来源，槽键语义 = 幂等跨世代命中的前提 |
 | plugins/dsh-extra-plan/lib/executor-spawn.js | apply | L56-132 | 插件入口：注册执行者 provider（委托宿主 spawn，注入 deny 工具裁剪）；注册走引用计数幂等——槽键取 slotKey(ctx.subagents)（服务实现本体，不再以 ctx.subagents 代理为键），槽 count>0 时只加持有并 console.warn 后返回，count==0 且已存在同名 provider 时抛真实冲突错，全新注册时保存 host disposer（含 delegator 校验与 defaultedAgentOptions） |  |

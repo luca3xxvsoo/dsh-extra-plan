@@ -56,7 +56,7 @@
 | HS17 | `client.js` `__ModuleLoader__` | loader id 必须与包名/组合图一致 | 【已核实·静态】 |
 | HS18 | `client.js` `require("react")` | 共享 client module 提供 React | 【已核实·静态】 |
 | HS19 | locale bind/register（语言环境绑定/注册） | 包级与行级 locale 通道 | 【已核实·静态】 |
-| HS20 | client.js 同页配置注册面 | `plugins.bundle.config` 以包名 key 优先；仅在 register 成功后接管，声明释放/失败复位后由 `plugins.detail.section` 对当前包回退；ConfigForms 通过稳定 namespace 快照订阅并一次 mutate；不注册 `plugins.row.config`、`settings.plugins.tab` 或 `plugins.item` | 【已核实·静态+专项；四版本同页 HUMAN 待复测】 |
+| HS20 | client.js 同页配置注册面 | 仅注册 `plugins.detail.section`（order 100，设置表单自绘标题渲染于 bundle 详情页行列表之后）；不注册 `plugins.bundle.config`、`plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`；若本包 bundle.config 槽被任何一方注册条目，DetailSettingsSection 让位保持唯一表单；ConfigForms 通过稳定 namespace 快照订阅并一次 mutate | 【已核实·静态+专项；四版本同页 HUMAN 待复测】 |
 | HS21 | `client.js` `esp-*` | 本插件自持样式；不依赖旧宿主 CSS hash | 【已核实·静态】 |
 | HS22 | 主题 token | 颜色/可读性依赖主题变量名 | 【已核实·静态】 |
 | HS23 | settings 内部 client-carrier | 官方 Loader Group 创建唯一 pathLike child，随 settings 生命周期同步移除并触发 client graph/HMR 更新；同步队列关闭时不启动新 edit/adapter，在途 adapter 结算后恰一次释放 | 【已核实·静态+deferred/Loader专项】 |
@@ -185,7 +185,7 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 ## ⑦ 四版本风险与开放验证
 
 1. isolate 审计：`mountPreset/leakedServices` 对未隔离 root service 抛错；必要/保险名单必须保持 `isolate: true`。
-2. settings 换代：bundle.config 以包名 key 在当前插件包详情优先，detail.section 只在 bundle slot 缺失时回退当前包；ConfigForms 通过稳定 namespace 订阅快照并一次 mutate 十项。不注册 `plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`；settings 行 10 项 Config、API、旧值迁移、内存 definition/adapter 仍是活动后端合同；四版本同页 UI/A09/A10/A11 仍待 HUMAN。
+2. settings 换代：设置表单仅经 `plugins.detail.section` 渲染于当前插件包详情行列表之后（自绘标题），不注册 `plugins.bundle.config`、`plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`，若本包 bundle.config 槽被任何一方注册条目则 detail.section 让位保持唯一表单；ConfigForms 通过稳定 namespace 订阅快照并一次 mutate 十项。settings 行 10 项 Config、API、旧值迁移、内存 definition/adapter 仍是活动后端合同；四版本同页 UI/A09/A10/A11 仍待 HUMAN。
 3. profile patch 载体：旧 `.agent-presets` 无读取方；`compatibility.json`/peer 门控可能使 bundle skipped、loader disabled；QQBot 仍有 allow-build/postinstall 欠账。
 4. 包/服务换代：workflow-ptc、`ptcRuntime`、tool:cordis 删除、当前两项 Cordis 工具与 `bundledSkillDir`（0.2.0-rc.2 换通道，配 `watch:false`；旧 `customSkillDirs` 已删）必须按当前真值核对。
 5. rc.2 单侧风险：`sanitizeProfile` 整体搬移 patch、`configEditor.edit` 值等于继承层删行；rc.1 现场缺失，不能推出跨代结论。
@@ -194,7 +194,7 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 
 ### 本轮 rc2 兼容基线与 post-fix 状态
 
-0.2.0-rc.2 已通过用户提供的 HUMAN 实机兼容测试（范围受限；2026-10-01 rc2 兼容反馈批次）。该基线来源为用户反馈，未提供 OS、profile/mode、SESSION_ID、部署 commit、原始报告/日志路径；不覆盖完整 A01-A56、生产、QQBot、真实消息、/preset、question/approval、postinstall/allow-build。本轮单一全局 owner 的同页 bundle/detail 回退与关闭对照仍待用户在四个 peer 目标版本逐项 HUMAN 复测。
+0.2.0-rc.2 已通过用户提供的 HUMAN 实机兼容测试（范围受限；2026-10-01 rc2 兼容反馈批次）。该基线来源为用户反馈，未提供 OS、profile/mode、SESSION_ID、部署 commit、原始报告/日志路径；不覆盖完整 A01-A56、生产、QQBot、真实消息、/preset、question/approval、postinstall/allow-build。本轮单一全局 owner 的同页 detail.section 唯一表单（含让位防御）与关闭对照仍待用户在四个 peer 目标版本逐项 HUMAN 复测。
 
 ## ⑧ 六项 HUMAN 欠账（全部未销账）
 
@@ -211,14 +211,14 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 
 ## 当前代码落点（符号级）
 
-- 核心入口 `plugins/dsh-extra-plan/index.js` 负责宿主 hook、配置快照与 session-scoped 状态；统一全局 owner 由 `lib/settings.js` 调度 `lib/preset-sync.js`，设置合同由 `lib/preset-settings.js` 提供；`lib/client.js` 通过 bundle.config 优先/detail.section 回退接线稳定 namespace 的唯一共享表单。
+- 核心入口 `plugins/dsh-extra-plan/index.js` 负责宿主 hook、配置快照与 session-scoped 状态；统一全局 owner 由 `lib/settings.js` 调度 `lib/preset-sync.js`，设置合同由 `lib/preset-settings.js` 提供；`lib/client.js` 仅经 `plugins.detail.section` 接线稳定 namespace 的唯一共享表单（bundle.config 槽若有本包条目则让位）。
 - QQBot 兼容面由 `plugins/dsh-qqbot-user-questions/index.js#apply` → `lib/heal.js#healQqbotCompatibility` 驱动；CLI `scripts/heal.mjs` 不改变启动不阻断语义。
 - 当前静态核对不等于部署通过；真实 profile、消息、`/preset`、postinstall 和 allow-build 仍按本台账 HUMAN 项执行。
 
 ## ⑨ 升级 checklist（核对清单，顺序固定）
 
 1. 设置只读 `DSH_INSTALL_ROOT`（本机为 `D:\AI项目\dsh-v0.2.0-rc2`）后运行 `node pe-test/tools/step-01-qqbot-安装映射.mjs`，再 `node pe-test/tools/step-01-qqbot-环境验证.mjs`；静态先行，环境项条件只读，SKIP 不销账；rc.1 设备复用现有脚本并保留 HUMAN。
-2. `node pe-test/tools/step-01-设置页配置.mjs` 与 `node pe-test/tools/step-04-路由与写闸门.mjs`；确认全局 owner/configEditor 后端合同、bundle/detail 同页唯一表单、A09/A10/A11 与工具呈现面。
+2. `node pe-test/tools/step-01-设置页配置.mjs` 与 `node pe-test/tools/step-04-路由与写闸门.mjs`；确认全局 owner/configEditor 后端合同、detail.section 同页唯一表单（行列表之后）、A09/A10/A11 与工具呈现面。
 3. `node pe-test/tools/一键step测试.mjs`；AUTO/HUMAN/参数项按脚本实际数组与四态判读。
 4. 按 HS/HK/SD/CF/QB 当前表，先钩子 mode，再服务方法，再事件/Session 形状，再 bundle/exports/patch/isolate 契约；旧 API 只作负向核对。
 5. `node pe-test/tools/代码地图生成.mjs --check`，退出码必须为 0；人工描述/固定尾部另做对拍。

@@ -81,8 +81,8 @@ check('V03 中英文元数据是全局管理结论级文案', zh.meta.title === 
 check('V03 descriptor 与 Config 字段集合均恰10项且包含两项宿主值', descriptorKeys.length === 10 && configKeys.length === 10 && configKeySetMatches && descriptorKeys.includes('webFetch') && descriptorKeys.includes('toolPresentationMode') && contractText.includes('SETTING_DEFINITIONS = Object.freeze([') && settingsText.includes('SETTING_DEFINITIONS.map') && clientText.includes('const ALL_FIELDS = Object.freeze(EXTRA_FIELDS.concat(HOST_ROW_FIELDS))'))
 check('V02 当前词表严格拒绝、旧值安全解析且不求值', syncText.includes('当前全局 gateWords 非法') && syncText.includes('readLegacyState') && syncText.includes('parsePresetYaml') && !syncText.includes('eval(') && !syncText.includes('Function('))
 check('V05 client 保存有 ready/readonly/draft/saving guard 且失败提示', clientText.includes('!writable') && clientText.includes('draft === null') && clientText.includes('status !== "ready"') && clientText.includes('accepted === true') && clientText.includes('catch'))
-check('V05 bundle 接管仅在 register 成功后，释放可回退', clientText.includes('registrationOff') && clientText.includes('bundleConfigRegistered = false') && clientText.includes('throw error') && clientText.includes('hasBundleConfigEntry'))
-check('V05 仅 bundle.config/detail.section，唯一稳定 namespace 表单', clientText.includes('plugins.bundle.config') && clientText.includes('plugins.detail.section') && clientText.includes('ctx.configForms.get(NS)') && clientText.includes('sharedForm.subscribe') && !clientText.includes('plugins.row.config') && !clientText.includes('settings.plugins.tab') && !clientText.includes('plugins.item'))
+check('V05 不注册 bundle.config、仅注册 detail.section 且保留让位防御', !clientText.includes('safeInject("plugins.bundle.config"') && clientText.includes('safeInject("plugins.detail.section"') && clientText.includes('hasBundleConfigEntry') && clientText.includes('bundleConfigRegistered'))
+check('V05 detail.section 唯一同页通道、自绘标题与唯一稳定 namespace 表单', clientText.includes('plugins.detail.section') && clientText.includes('ctx.configForms.get(NS)') && clientText.includes('sharedForm.subscribe') && clientText.includes('"data-plugin-section": "dsh-extra-plan-settings-global"') && clientText.includes('.esp-panelTitle') && clientText.includes('.esp-panelHint') && !clientText.includes('plugins.row.config') && !clientText.includes('settings.plugins.tab') && !clientText.includes('plugins.item'))
 
 function slotHasKind(text, name, kind) {
   if (text === undefined) return false
@@ -105,7 +105,7 @@ if (TARGET_INSTALL_ROOT === undefined) {
     const slotText = targetSlotMap.value
     const configFormText = targetConfigForms.value
     check('F04 HOST 实际 SlotMap 提供 keyed plugins.bundle.config 与 list plugins.detail.section', slotHasKind(slotText, 'plugins.bundle.config', 'keyed') && slotHasKind(slotText, 'plugins.detail.section', 'list'))
-    check('F04 HOST 实际 ConfigForms 提供 get 与 whileServed，且本插件使用同页两槽', configFormText.includes('get<T>(entryId: string)') && configFormText.includes('whileServed(namespaces: readonly string[]') && clientText.includes('safeInject("plugins.bundle.config"') && clientText.includes('safeInject("plugins.detail.section"') && clientText.includes('ctx.configForms.get(NS)') && clientText.includes('ctx.configForms.whileServed([NS]'))
+    check('F04 HOST 实际 ConfigForms 提供 get 与 whileServed，且本插件使用 detail.section 唯一通道', configFormText.includes('get<T>(entryId: string)') && configFormText.includes('whileServed(namespaces: readonly string[]') && clientText.includes('safeInject("plugins.detail.section"') && !clientText.includes('safeInject("plugins.bundle.config"') && clientText.includes('ctx.configForms.get(NS)') && clientText.includes('ctx.configForms.whileServed([NS]'))
   }
 }
 
@@ -208,7 +208,7 @@ for (const [kind, words] of invalidApiGateCases) {
   } finally { await new Promise((resolve) => badGateRun.server.close(resolve)) }
 }
 
-function makeClientHarness(snapshot, outcome = true, failBundle = false, savingInitial = false, options = {}) {
+function makeClientHarness(snapshot, outcome = true, failDetail = false, savingInitial = false, options = {}) {
   let definition
   const registrations = []
   const injectionDisposers = {}
@@ -271,7 +271,7 @@ function makeClientHarness(snapshot, outcome = true, failBundle = false, savingI
         let slot = runner.slots[index]
         if (slot === undefined) {
           let value = typeof initialValue === 'function' ? initialValue() : initialValue
-          if (value === false && savingInitial === true && runner.name === 'form') value = true
+          if (value === false && savingInitial === true && (runner.name === 'form' || runner.name === 'detail-form')) value = true
           slot = { kind: 'state', value }
           runner.slots[index] = slot
         }
@@ -303,8 +303,6 @@ function makeClientHarness(snapshot, outcome = true, failBundle = false, savingI
     }
     return runner
   }
-  const bundleRunner = createRunner('bundle')
-  const formRunner = createRunner('form')
   const detailRunner = createRunner('detail')
   const detailFormRunner = createRunner('detail-form')
   const fakeReact = {
@@ -373,13 +371,13 @@ function makeClientHarness(snapshot, outcome = true, failBundle = false, savingI
         } catch (error) {
           record.error = error
           record.active = false
-          if (name === 'plugins.bundle.config') surfaceContext.bundleRegisterError = error
+          if (name === 'plugins.detail.section') surfaceContext.detailRegisterError = error
           throw error
         }
         return off
       },
       register: (registerOptions, component) => {
-        if (failBundle && registerOptions.name === 'plugins.bundle.config') throw new Error('bundle register failed')
+        if (failDetail && registerOptions.name === 'plugins.detail.section') throw new Error('detail register failed')
         const entry = { options: registerOptions, component }
         registrations.push(entry)
         registerCalls[registerOptions.name] = (registerCalls[registerOptions.name] || 0) + 1
@@ -430,51 +428,44 @@ function makeClientHarness(snapshot, outcome = true, failBundle = false, savingI
   function formViewFromTree(formTree, entry) {
     return { entry, button: find(formTree, (node) => node && node.type === 'button'), tree: formTree }
   }
-  function renderBundleOnce() {
-    const entry = registrations.find((item) => item.options.name === 'plugins.bundle.config')
-    if (entry === undefined) return undefined
-    const card = bundleRunner.render(entry.component, { view: 'page' })
-    const settingsCard = card.type(card.props)
-    const formElement = settingsCard.children[0]
-    const formTree = formRunner.render(formElement.type, formElement.props)
-    return formViewFromTree(formTree, entry)
-  }
-  function renderBundle(config = {}) {
-    let view
-    let rounds = 0
-    do {
-      view = renderBundleOnce()
-      rounds += 1
-      if (config.flush === false || (!bundleRunner.dirty && !formRunner.dirty) || rounds >= 12) break
-    } while (true)
-    return view
-  }
-  function renderDetail(subject = { kind: 'bundle', pkg: { name: '@local/dsh-extra-plan' } }) {
+  function renderDetailOnce(subject) {
     const entry = registrations.find((item) => item.options.name === 'plugins.detail.section')
     if (entry === undefined) return undefined
     const section = detailRunner.render(entry.component, { subject })
     if (section === null) return null
     const settingsCard = section.type(section.props)
-    const formElement = settingsCard.children[0]
-    detailFormRunner.render(formElement.type, formElement.props)
-    return section
+    const formElement = settingsCard.children.find((child) => child !== null && child !== undefined && typeof child.type === 'function' && child.type.name === 'ExtraPlanForm')
+    if (formElement === undefined) return undefined
+    const formTree = detailFormRunner.render(formElement.type, formElement.props)
+    return formViewFromTree(formTree, entry)
+  }
+  function renderDetail(config = {}, subject = { kind: 'bundle', pkg: { name: '@local/dsh-extra-plan' } }) {
+    let view
+    let rounds = 0
+    do {
+      view = renderDetailOnce(subject)
+      rounds += 1
+      if (config.flush === false || (!detailRunner.dirty && !detailFormRunner.dirty) || rounds >= 12) break
+    } while (true)
+    return view
+  }
+  function detailChrome(subject = { kind: 'bundle', pkg: { name: '@local/dsh-extra-plan' } }) {
+    const entry = registrations.find((item) => item.options.name === 'plugins.detail.section')
+    if (entry === undefined) return undefined
+    const section = detailRunner.render(entry.component, { subject })
+    if (section === null) return null
+    return { section, settingsCard: section.type(section.props) }
   }
   function rebuildSurfaces() {
     if (surfaceEffectRecord === undefined) throw new Error('surface effect not captured')
     surfaceEffectRecord.rerun()
   }
-  function releaseBundle() {
-    const off = injectionDisposers['plugins.bundle.config']
-    if (typeof off === 'function') off()
-  }
   function unmount() {
     for (const cleanup of cleanups) cleanup()
-    bundleRunner.unmount()
-    formRunner.unmount()
     detailRunner.unmount()
     detailFormRunner.unmount()
   }
-  const result = { calls, states, registrations, injectionDisposers, cleanups, context: surfaceContext, renderBundle, renderBundleOnce, renderDetail, notify, rebuildSurfaces, releaseBundle, unmount, renderStats, formController }
+  const result = { calls, states, registrations, injectionDisposers, cleanups, context: surfaceContext, renderDetail, detailChrome, notify, rebuildSurfaces, unmount, renderStats, formController }
   Object.defineProperty(result, 'registrationDisposals', { get: () => registrationDisposals })
   Object.defineProperty(result, 'registerCalls', { get: () => ({ ...registerCalls }) })
   Object.defineProperty(result, 'registerDisposeCounts', { get: () => ({ ...registerDisposeCounts }) })
@@ -490,7 +481,7 @@ function makeClientHarness(snapshot, outcome = true, failBundle = false, savingI
 const values = { anchoredBootstrap: true, creativeMode: false, webFetch: false, toolPresentationMode: 'native', runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: 'm', plannerPromptSuffix: 's', exploreBudget: 18, otherAgentModel: '' }
 async function exerciseClient(snapshot, outcome, expectedKind, label, savingInitial = false) {
   const harness = makeClientHarness(snapshot, outcome, false, savingInitial)
-  const view = harness.renderBundle()
+  const view = harness.renderDetail()
   if (view === undefined || view.button === undefined) { check(label + ' 渲染保存按钮', false); return harness }
   await view.button.props.onClick()
   const message = harness.states.find((state) => state.value !== null && typeof state.value === 'object' && state.value.kind !== undefined)
@@ -504,14 +495,14 @@ check('V05 成功保存恰一次十项 mutate、revision正确、每键一条 se
 await exerciseClient(readySnapshot, false, 'error', 'V05 mutate=false 不显示保存成功')
 await exerciseClient(readySnapshot, 'throw', 'error', 'V05 mutate抛错不显示保存成功')
 const readOnly = makeClientHarness({ ...readySnapshot, writable: false }, true)
-const readOnlyView = readOnly.renderBundle()
+const readOnlyView = readOnly.renderDetail()
 if (readOnlyView !== undefined && readOnlyView.button !== undefined) await readOnlyView.button.props.onClick()
 check('V05 readonly 实际按钮禁用且不调用 mutate', readOnlyView !== undefined && readOnlyView.button.props.disabled === true && readOnly.calls.length === 0)
 const unavailable = makeClientHarness({ ...readySnapshot, status: 'unavailable' }, true)
-const unavailableView = unavailable.renderBundle()
+const unavailableView = unavailable.renderDetail()
 check('V05 draft/status 不可用实际不渲染可提交按钮', unavailableView !== undefined && unavailableView.button === undefined && unavailable.calls.length === 0)
 const saving = makeClientHarness(readySnapshot, true, false, true)
-const savingView = saving.renderBundle()
+const savingView = saving.renderDetail()
 if (savingView !== undefined && savingView.button !== undefined) await savingView.button.props.onClick()
 check('V05 正在保存按钮禁用且 mutate为零', savingView !== undefined && savingView.button.props.disabled === true && saving.calls.length === 0)
 const updatedValues = { ...values, plannerModel: 'new-model', exploreBudget: 43 }
@@ -524,67 +515,69 @@ function opValues(call) {
   return Object.fromEntries((call === undefined ? [] : call.ops).map((op) => [op.path[0], op.value]))
 }
 const latestClient = makeClientHarness(readySnapshot, true)
-const firstPass = latestClient.renderBundle({ flush: false })
-const stable42View = latestClient.renderBundle()
+const firstPass = latestClient.renderDetail({ flush: false })
+const stable42View = latestClient.renderDetail()
 latestClient.notify(snapshot43)
-const stable43View = latestClient.renderBundle()
+const stable43View = latestClient.renderDetail()
 if (stable43View !== undefined && stable43View.button !== undefined) await stable43View.button.props.onClick()
-latestClient.renderBundle()
+latestClient.renderDetail()
 const latestCall = latestClient.calls.at(-1)
 check('V05 Q04 初次draft=null先effect后重render，通知后读取rev43新十键', firstPass !== undefined && firstPass.button === undefined && stable42View !== undefined && stable42View.button !== undefined && stable43View !== undefined && stable43View.button !== undefined && latestClient.subscribeCount === 1 && latestClient.notificationCount === 1 && latestClient.activeListeners === 1 && latestClient.renderStats.formRenders >= 3 && latestClient.renderStats.effectRuns >= 3 && latestCall !== undefined && latestCall.revision === 43 && latestCall.ops.length === 10 && isDeepStrictEqual(opValues(latestCall), updatedValues))
 
 const staleClient = makeClientHarness(readySnapshot, true)
-const stale42View = staleClient.renderBundle()
+const stale42View = staleClient.renderDetail()
 const staleButton = stale42View.button
 staleClient.notify(snapshot43)
-staleClient.renderBundle()
+staleClient.renderDetail()
 await staleButton.props.onClick()
-staleClient.renderBundle()
+staleClient.renderDetail()
 const conflictKind = messageKind(staleClient)
 const conflictCall = staleClient.calls[0]
 check('V05 Q04 旧回调携rev42被当前rev43拒绝并恢复新快照，错误而非Saved', staleClient.calls.length === 1 && conflictCall.revision === 42 && conflictKind === 'error' && staleClient.notificationCount === 2 && staleClient.activeListeners === 1)
-const fresh43View = staleClient.renderBundle()
+const fresh43View = staleClient.renderDetail()
 await fresh43View.button.props.onClick()
-staleClient.renderBundle()
+staleClient.renderDetail()
 const accepted43 = staleClient.calls.at(-1)
 check('V05 Q04 恢复后新回调用rev43成功且仍仅一条十键mutate', staleClient.calls.length === 2 && accepted43.revision === 43 && accepted43.ops.length === 10 && isDeepStrictEqual(opValues(accepted43), updatedValues) && messageKind(staleClient) === 'ok')
 
 const recoveryFailureClient = makeClientHarness(readySnapshot, true, false, false, { recoveryFailure: true })
-const recoveryOldButton = recoveryFailureClient.renderBundle().button
+const recoveryOldButton = recoveryFailureClient.renderDetail().button
 recoveryFailureClient.notify(snapshot43)
-recoveryFailureClient.renderBundle()
+recoveryFailureClient.renderDetail()
 await recoveryOldButton.props.onClick()
-recoveryFailureClient.renderBundle()
+recoveryFailureClient.renderDetail()
 check('V05 Q04 独立恢复读取失败显示错误、无Saved且不新增第二条持久写', recoveryFailureClient.calls.length === 1 && recoveryFailureClient.calls[0].revision === 42 && recoveryFailureClient.recoveryReadAttempts === 1 && messageKind(recoveryFailureClient) === 'error')
 latestClient.unmount()
 staleClient.unmount()
 recoveryFailureClient.unmount()
 
 const surface = makeClientHarness(readySnapshot)
-const surfaceView = surface.renderBundle()
-check('V05 Q05 初始注册各一份且bundle表单存在', surfaceView !== undefined && surfaceView.button !== undefined && surface.registerCalls['plugins.bundle.config'] === 1 && surface.registerCalls['plugins.detail.section'] === 1 && surface.registrations.length === 2)
-check('V05 Q05 其他包详情为空', surface.renderDetail({ kind: 'bundle', pkg: { name: '@other/package' } }) === null)
-surface.releaseBundle()
-const afterRelease = surface.renderDetail()
-check('V05 Q05 仅释放bundle后section回退可见且bundle disposer恰一次', afterRelease !== null && surface.registrations.filter((entry) => entry.options.name === 'plugins.bundle.config').length === 0 && surface.registerDisposeCounts['plugins.bundle.config'] === 1)
+const surfaceView = surface.renderDetail()
+check('V05 Q05 初始仅注册 detail.section 一份且表单可交互', surfaceView !== undefined && surfaceView.button !== undefined && surface.registerCalls['plugins.detail.section'] === 1 && surface.registerCalls['plugins.bundle.config'] === undefined && surface.registrations.length === 1)
+check('V05 Q05 detail 表单自绘区块标题、描述与定位属性', (() => { const chrome = surface.detailChrome(); return chrome !== null && chrome !== undefined && chrome.settingsCard.type === 'section' && chrome.settingsCard.props['data-plugin-section'] === 'dsh-extra-plan-settings-global' && chrome.settingsCard.children[0].type === 'h4' && chrome.settingsCard.children[0].children[0] === 'cardTitle' && chrome.settingsCard.children[1].type === 'p' && chrome.settingsCard.children[1].children[0] === 'cardDescription' })())
+check('V05 Q05 其他包详情为空', surface.renderDetail({}, { kind: 'bundle', pkg: { name: '@other/package' } }) === null)
+const thirdPartyOff = surface.context.slots.register({ name: 'plugins.bundle.config', key: '@local/dsh-extra-plan', locale: 'third-party', inject: () => ({}) }, () => null)
+const shadowed = surface.renderDetail()
+check('V05 Q05 本包 bundle.config 槽被第三方注册时 detail.section 让位', shadowed === null)
+thirdPartyOff()
+const restored = surface.renderDetail()
+check('V05 Q05 第三方条目移除后 detail.section 恢复唯一表单', restored !== undefined && restored !== null && restored.button !== undefined)
 surface.rebuildSurfaces()
-const rebuiltView = surface.renderBundle()
-check('V05 Q05 释放→回退→重建后仅一份bundle表单且section隐藏', rebuiltView !== undefined && rebuiltView.button !== undefined && surface.registrations.filter((entry) => entry.options.name === 'plugins.bundle.config').length === 1 && surface.renderDetail() === null && surface.registerCalls['plugins.bundle.config'] === 2 && surface.registerCalls['plugins.detail.section'] === 2)
-surface.releaseBundle()
-surface.releaseBundle()
+const rebuiltView = surface.renderDetail()
+check('V05 Q05 effect 重建后仍仅一份 detail.section 注册且表单可见', rebuiltView !== undefined && rebuiltView.button !== undefined && surface.registerCalls['plugins.detail.section'] === 2 && surface.registrations.length === 1)
 const failedSurface = makeClientHarness(readySnapshot, true, true)
-const failedOther = failedSurface.renderDetail({ kind: 'bundle', pkg: { name: '@other/package' } })
-check('V05 Q05 bundle注册失败保留section回退且其他包为空', failedSurface.context.bundleRegisterError !== undefined && failedSurface.registerCalls['plugins.bundle.config'] === undefined && failedSurface.registerCalls['plugins.detail.section'] === 1 && failedSurface.renderDetail() !== null && failedOther === null)
+const failedOther = failedSurface.renderDetail({}, { kind: 'bundle', pkg: { name: '@other/package' } })
+check('V05 Q05 detail.section 注册失败时零注册、不崩溃且渲染为空', failedSurface.context.detailRegisterError !== undefined && failedSurface.registerCalls['plugins.detail.section'] === undefined && failedSurface.registrations.length === 0 && failedSurface.renderDetail() === undefined && failedOther === undefined)
 
 const lifecycle = makeClientHarness(readySnapshot)
-lifecycle.renderBundle()
-const rendersBeforeUnmount = lifecycle.renderStats.bundleRenders + lifecycle.renderStats.formRenders
+lifecycle.renderDetail()
+const rendersBeforeUnmount = lifecycle.renderStats.detailRenders + lifecycle.renderStats.formRenders
 lifecycle.unmount()
 const lifecycleCounts = { disposals: lifecycle.registrationDisposals, styleRemoves: lifecycle.styleRemoves, unsubscribes: lifecycle.unsubscribeCount }
 lifecycle.unmount()
 lifecycle.notify(snapshot43)
-const rendersAfterNotify = lifecycle.renderStats.bundleRenders + lifecycle.renderStats.formRenders
-check('V05 Q05 卸载精确释放registration=2/style=1/listener=0且旧通知不setState', lifecycle.activeListeners === 0 && lifecycle.unsubscribeCount === 1 && lifecycleCounts.disposals === 2 && lifecycle.registerDisposeCounts['plugins.bundle.config'] === 1 && lifecycle.registerDisposeCounts['plugins.detail.section'] === 1 && lifecycle.styleRemoves === 1 && rendersAfterNotify === rendersBeforeUnmount && lifecycle.renderStats.postUnmountSetState === 0 && lifecycle.notificationCount === 1)
+const rendersAfterNotify = lifecycle.renderStats.detailRenders + lifecycle.renderStats.formRenders
+check('V05 Q05 卸载精确释放registration=1/style=1/listener=0且旧通知不setState', lifecycle.activeListeners === 0 && lifecycle.unsubscribeCount === 1 && lifecycleCounts.disposals === 1 && lifecycle.registerDisposeCounts['plugins.detail.section'] === 1 && lifecycle.styleRemoves === 1 && rendersAfterNotify === rendersBeforeUnmount && lifecycle.renderStats.postUnmountSetState === 0 && lifecycle.notificationCount === 1)
 check('V05 Q05 重复dispose不增加任何释放计数', lifecycle.registrationDisposals === lifecycleCounts.disposals && lifecycle.styleRemoves === lifecycleCounts.styleRemoves && lifecycle.unsubscribeCount === lifecycleCounts.unsubscribes)
 surface.unmount()
 failedSurface.unmount()

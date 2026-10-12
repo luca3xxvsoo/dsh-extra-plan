@@ -105,7 +105,9 @@ window.__ModuleLoader__.load({
       '.esp-ok{color:var(--dsw-alias-brand-primary);font-size:12px;margin:0}' +
       '.esp-err{color:var(--dsw-alias-label-error);font-size:12px;margin:0}' +
       '.esp-hint{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:1.5;margin:0}' +
-      '.esp-empty{color:var(--dsw-alias-label-tertiary);font-size:13px;margin:0}';
+      '.esp-empty{color:var(--dsw-alias-label-tertiary);font-size:13px;margin:0}' +
+      '.esp-panelTitle{font-size:14px;font-weight:600;color:var(--dsw-alias-label-primary);line-height:1.5;margin:0}' +
+      '.esp-panelHint{font-size:13px;color:var(--dsw-alias-label-tertiary);line-height:1.5;margin:0}';
 
     function apply(ctx) {
       const tag = document.createElement("style");
@@ -261,12 +263,11 @@ window.__ModuleLoader__.load({
       function SettingsCard(props) {
         const copy = props.translate !== undefined && props.translate !== null ? props.translate : function (key) { return key; };
         if (props.view === "summary") return copy("cardDescription");
-        return el("div", { className: "esp-wrap" }, el(ExtraPlanForm, { configForm: props.configForm }));
-      }
-
-      function BundleSettingsCard(props) {
-        const configForm = useSharedConfigForm();
-        return el(SettingsCard, { configForm: configForm, translate: t, view: props.view });
+        return el("section", { className: "esp-wrap", "data-plugin-section": "dsh-extra-plan-settings-global" },
+          el("h4", { className: "esp-panelTitle" }, copy("cardTitle")),
+          el("p", { className: "esp-panelHint" }, copy("cardDescription")),
+          el(ExtraPlanForm, { configForm: props.configForm })
+        );
       }
 
       function hasBundleConfigEntry() {
@@ -291,32 +292,15 @@ window.__ModuleLoader__.load({
       }
 
       function registerClientSurfaces() {
-        const bundleOff = safeInject("plugins.bundle.config", function () {
-          let registrationOff;
-          try {
-            registrationOff = ctx.slots.register({ name: "plugins.bundle.config", key: BUNDLE_NAME, locale: NS, inject: function () { return {}; } }, BundleSettingsCard);
-            bundleConfigRegistered = true;
-          } catch (error) {
-            bundleConfigRegistered = false;
-            throw error;
-          }
-          return function () {
-            bundleConfigRegistered = false;
-            if (typeof registrationOff === "function") return registrationOff();
-            return undefined;
-          };
-        });
         const detailOff = safeInject("plugins.detail.section", function () {
           return ctx.slots.register({ name: "plugins.detail.section", id: "dsh-extra-plan-settings-global", order: 100, label: function () { return t("cardTitle"); }, locale: NS }, DetailSettingsSection);
         });
         return function () {
-          bundleConfigRegistered = false;
-          if (typeof bundleOff === "function") bundleOff();
           if (typeof detailOff === "function") detailOff();
         };
       }
 
-      // bundle.config 优先；detail.section 只在 bundle.config 槽不可用时回退，永远只呈现一份表单。
+      // 设置表单仅经 plugins.detail.section 渲染于 bundle 页行列表之后；若本包 bundle.config 槽被任何一方注册，DetailSettingsSection 让位以保持唯一表单。
       ctx.effect(() => ctx.configForms.whileServed([NS], registerClientSurfaces), "dsh-extra-plan-settings: same-page config surfaces");
     }
 
