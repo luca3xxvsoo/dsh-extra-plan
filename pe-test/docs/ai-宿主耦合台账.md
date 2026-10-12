@@ -10,7 +10,7 @@
 | QQBot 目标 | `0.5.0` | 静态目标，不等于集成通过 |
 | 核心插件 | `@local/dsh-extra-plan` `0.3.0` | 当前包契约 |
 | QQBot 精简插件 | `@local/dsh-qqbot-user-questions` `2.0.0` | 仍有 postinstall（安装后脚本）；allow-build 是否放行待 HUMAN |
-| 预设载体 | `extra-plan-preset-sync` 公开核对行 + 内部纯 definition | `dsh.bundle.patch` 只装载两行；旧 `preset-extra-plan` 仅非破坏读取迁移，官方 adapter/registry 直接复用 |
+| 预设载体 | `dsh-extra-plan-settings` 全局管理行 + 内部纯 definition | `dsh.bundle.patch` 只装载一行；旧 `extra-plan-preset-sync` / `preset-extra-plan` 仅非破坏读取迁移，官方 adapter/registry 仍直接复用 |
 | 状态判读 | `【已核实】` 表示台账静态/源码核对；`【未核实】`、`HUMAN`、`SKIP` 不得改为通过 | 当前台账纪律 |
 
 ### 四版本证据分栏
@@ -38,11 +38,11 @@
 
 | 编号 | 本仓位置 | 当前契约/升级敏感点 | 状态 |
 |:--|:--|:--|:--|
-| HS1 | `lib/settings.js` Config + `settings.configure` | 10 字段 `.volatile()`；SettingsForms 管理 describe/update/replace/mutate | 【已核实·静态】 |
+| HS1 | `lib/settings.js` Config + `settings.configure` | 10 字段 `.volatile()`；全局 owner 由 ConfigForms 管理 describe/update/replace/mutate，并统一拥有同步与 adapter | 【已核实·静态】 |
 | HS2 | settings 行 `dsh-extra-plan-settings` | 行 id 同时是命名空间、configForms key、插件行详情 key | 【已核实·静态】 |
 | HS3 | `lib/settings.js` webServer prefix | `/api/dsh-extra-plan-settings` prefix 路由 | 【已核实·静态】 |
 | HS4 | `live-config.js` 路径决议 | `configPath → DSH_EXTRA_PLAN_CONFIG_PATH → configEditor.documentPath`；不读旧预设目录 | 【已核实·静态】 |
-| HS5 | `preset-sync.js` `configEditor.edit` | 事务/reconcile/回滚；插件不直写 patch | 【已核实·静态】 |
+| HS5 | `settings.js` owner → `preset-sync.js` `configEditor.edit` | 旧值迁移/补齐只 edit 唯一全局行；合法十项与 gateWords 重述不丢键；当前非法 gateWords/非法 PUT 先失败且零 edit，插件不直写 patch | 【已核实·静态+专项】 |
 | HS6 | `preset-definition.generated.yml` | 纯 definition 的 id/name/description/order/plugins；由生成器维护，preset-sync 交官方 adapter | 【已核实·静态】 |
 | HS8 | `executor-spawn.js` `subagents.registerProvider` | provider 引用计数幂等；稳定槽键取服务实现本体 | 【已核实·静态】 |
 | HS9 | executor `delegate/getProvider` | 默认 delegate 与 providerName 解析 | 【已核实·静态】 |
@@ -56,10 +56,10 @@
 | HS17 | `client.js` `__ModuleLoader__` | loader id 必须与包名/组合图一致 | 【已核实·静态】 |
 | HS18 | `client.js` `require("react")` | 共享 client module 提供 React | 【已核实·静态】 |
 | HS19 | locale bind/register（语言环境绑定/注册） | 包级与行级 locale 通道 | 【已核实·静态】 |
-| HS20 | 双版本 client.js 设置 UI 注册面 | 0.2 独立 `settings.plugins.tab` 已移除；0.1.7 原始 `plugins.row.config` keyed row 接线由 0.1.7/0.2 支持构建保留，宿主提供对应 legacy row slot 时在插件详情呈现；slot 缺失时走 configEditor/SettingsForms 或 profile 权威行后备路径；settings 后端/Config/投影/热读仍活动 | 【已核实·静态；双版本 post-fix HUMAN 待复测】 |
+| HS20 | client.js 同页配置注册面 | `plugins.bundle.config` 以包名 key 优先；仅在 register 成功后接管，声明释放/失败复位后由 `plugins.detail.section` 对当前包回退；ConfigForms 通过稳定 namespace 快照订阅并一次 mutate；不注册 `plugins.row.config`、`settings.plugins.tab` 或 `plugins.item` | 【已核实·静态+专项；四版本同页 HUMAN 待复测】 |
 | HS21 | `client.js` `esp-*` | 本插件自持样式；不依赖旧宿主 CSS hash | 【已核实·静态】 |
 | HS22 | 主题 token | 颜色/可读性依赖主题变量名 | 【已核实·静态】 |
-| HS23 | settings 内部 client-carrier | 官方 Loader Group 创建唯一 pathLike child，随 settings 生命周期同步移除并触发 client graph/HMR 更新 | 【已核实·静态】 |
+| HS23 | settings 内部 client-carrier | 官方 Loader Group 创建唯一 pathLike child，随 settings 生命周期同步移除并触发 client graph/HMR 更新；同步队列关闭时不启动新 edit/adapter，在途 adapter 结算后恰一次释放 | 【已核实·静态+deferred/Loader专项】 |
 | HS24 | extra-plan row config | 宿主 schema 将行 config 传入 apply | 【已核实·静态】 |
 | HS25 | `index.js` plugin contract | `name/inject/apply` 与 agent 预设组合 | 【已核实·静态】 |
 | HS26 | HP 首轮 `tool:read` | section、参数默认值、输出字段与手写 F 文案必须同步核对 | 【已核实·静态；行为待实机】 |
@@ -82,7 +82,7 @@
 | HK8 | 七个钩子 `payload.agent` | agentEvents fused 形状 | 【已核实·静态】 |
 | HK9 | tool-jobs 通知 | `source.kind='tool-jobs'` 且 `form='notice'`；旧三元组已废；v0.4.0 起新增 job_list/list_agents 轮询守卫清整表消费方（consumed 标记与 job_output 跟踪命中解耦） | 【已核实·静态】 |
 | HK10 | step-06 事件夹具 | 事件负载必须与真实 subagent/ask/tool 形状一致 | 【已核实·静态】 |
-| HK11 | `cordis.patch.yml` 两条 insert | settings/preset-sync 两个公开行；carrier 与官方 adapter 均归行内部 | 【已核实·静态】 |
+| HK11 | `cordis.patch.yml` 单条 insert | 仅 `dsh-extra-plan-settings` 全局行公开；carrier、同步、迁移与官方 adapter 均归同一 owner 内部 | 【已核实·静态】 |
 | HK12 | package `dsh.bundle.patch` | 依次装载 cordis.patch 与生成的 preset patch | 【已核实·静态】 |
 | HK13 | package exports | settings/preset-sync/client/locale 子路径必须可解析 | 【已核实·静态】 |
 | HK14 | package `dsh.client` | platform=web、inject 顺序与 `./client` export | 【已核实·静态】 |
@@ -151,9 +151,9 @@ SD9、SD13 是历史缺定义编号，SD34 是本插件不调用 `sessionProject
 | 编号 | 当前合同 | 状态 |
 |:--|:--|:--|
 | CF3 | `defaultDshHome` 仅公共 API/夹具；活动 renderer 由 `resolveToolsSdkRenderer` 负责 | 【已核实·静态】 |
-| CF4 | package `dsh.bundle.patch` 两项入口 | 【已核实·静态】 |
+| CF4 | package `dsh.bundle.patch` 单一入口 | 只装载 `cordis.patch.yml` 的全局管理行；definition 由 owner 读生成资产后交官方 adapter | 【已核实·静态】 |
 | CF5 | `dsh.client.platform=web` 与 inject | 【已核实·静态】 |
-| CF6 | exports 含 settings/preset-sync/client/definition/locale 通道 | 不再导出 client-bridge；definition 资产供 preset-sync 读取 | 【已核实·静态】 |
+| CF6 | exports 保留 settings/preset-sync/client/definition/locale 兼容通道 | 新 patch 不再加载 preset-sync 独立 row；definition 资产由全局 owner 读取，旧子路径仅作兼容解析 | 【已核实·静态】 |
 | CF7 | step-01 设置页从宿主安装目录解析依赖 | 【已核实·静态】 |
 | CF8 | dependencies 仅 js-yaml | 【已核实·静态】 |
 | CF9 | 临时 DSH_HOME/profile 夹具形状 | 【已核实·静态】 |
@@ -185,16 +185,16 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 ## ⑦ 四版本风险与开放验证
 
 1. isolate 审计：`mountPreset/leakedServices` 对未隔离 root service 抛错；必要/保险名单必须保持 `isolate: true`。
-2. settings 换代：0.2 独立 `settings.plugins.tab` 按本轮需求移除；0.1.7 `plugins.row.config` keyed row 接线保留并由 0.1.7/0.2 支持构建携带，宿主提供对应 legacy slot 时显示插件详情配置，slot 缺失时走 configEditor/SettingsForms 或 profile 权威行后备路径；settings 行 10 项 Config、API、投影、preset-sync/live-config 仍是活动后端合同；双版本 post-fix UI/A09/A10/A11 仍待 HUMAN。
+2. settings 换代：bundle.config 以包名 key 在当前插件包详情优先，detail.section 只在 bundle slot 缺失时回退当前包；ConfigForms 通过稳定 namespace 订阅快照并一次 mutate 十项。不注册 `plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`；settings 行 10 项 Config、API、旧值迁移、内存 definition/adapter 仍是活动后端合同；四版本同页 UI/A09/A10/A11 仍待 HUMAN。
 3. profile patch 载体：旧 `.agent-presets` 无读取方；`compatibility.json`/peer 门控可能使 bundle skipped、loader disabled；QQBot 仍有 allow-build/postinstall 欠账。
 4. 包/服务换代：workflow-ptc、`ptcRuntime`、tool:cordis 删除、当前两项 Cordis 工具与 `bundledSkillDir`（0.2.0-rc.2 换通道，配 `watch:false`；旧 `customSkillDirs` 已删）必须按当前真值核对。
 5. rc.2 单侧风险：`sanitizeProfile` 整体搬移 patch、`configEditor.edit` 值等于继承层删行；rc.1 现场缺失，不能推出跨代结论。
 6. session v4：`session.v4.jsonl.zstd`、自有 source.kind、developer/message 坐标和 step-07 三代候选必须保留。
-7. CF12 422 开放 incident：profile 中宿主运行时副本曾导致 `tool_removal` 422；清理 profile node_modules/lock、污染会话续聊、native↔PTC 切换三项均待用户验证。当前两组件收敛后的 bundle 两行、内部 carrier、definition/adapter 仍需用户部署后 HUMAN 验证。
+7. CF12 422 开放 incident：profile 中宿主运行时副本曾导致 `tool_removal` 422；清理 profile node_modules/lock、污染会话续聊、native↔PTC 切换三项均待用户验证。当前单一全局行、内部 carrier、内存 definition/adapter 仍需用户部署后 HUMAN 验证。
 
 ### 本轮 rc2 兼容基线与 post-fix 状态
 
-0.2.0-rc.2 已通过用户提供的 HUMAN 实机兼容测试（范围受限；2026-10-01 rc2 兼容反馈批次）。该基线来源为用户反馈，未提供 OS、profile/mode、SESSION_ID、部署 commit、原始报告/日志路径；不覆盖完整 A01-A56、生产、QQBot、真实消息、/preset、question/approval、postinstall/allow-build。A09/A10/A11 与本轮双版本设置入口纠偏完成后仍待用户在 0.1.7-rc.2 与 0.2.0-rc.2 复测：0.2 独立 tab 不出现，legacy row 是否可见取决于宿主是否提供对应 slot。
+0.2.0-rc.2 已通过用户提供的 HUMAN 实机兼容测试（范围受限；2026-10-01 rc2 兼容反馈批次）。该基线来源为用户反馈，未提供 OS、profile/mode、SESSION_ID、部署 commit、原始报告/日志路径；不覆盖完整 A01-A56、生产、QQBot、真实消息、/preset、question/approval、postinstall/allow-build。本轮单一全局 owner 的同页 bundle/detail 回退与关闭对照仍待用户在四个 peer 目标版本逐项 HUMAN 复测。
 
 ## ⑧ 六项 HUMAN 欠账（全部未销账）
 
@@ -211,14 +211,14 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 
 ## 当前代码落点（符号级）
 
-- 核心入口 `plugins/dsh-extra-plan/index.js` 负责宿主 hook、配置快照与 session-scoped 状态；设置权威值/投影由 `lib/settings.js`、`lib/preset-settings.js`、`lib/preset-sync.js` 分工；`lib/client.js` 保留一份共享表单并通过唯一 legacy keyed row 接线按宿主能力呈现，0.2 独立 `settings.plugins.tab` 不注册。
+- 核心入口 `plugins/dsh-extra-plan/index.js` 负责宿主 hook、配置快照与 session-scoped 状态；统一全局 owner 由 `lib/settings.js` 调度 `lib/preset-sync.js`，设置合同由 `lib/preset-settings.js` 提供；`lib/client.js` 通过 bundle.config 优先/detail.section 回退接线稳定 namespace 的唯一共享表单。
 - QQBot 兼容面由 `plugins/dsh-qqbot-user-questions/index.js#apply` → `lib/heal.js#healQqbotCompatibility` 驱动；CLI `scripts/heal.mjs` 不改变启动不阻断语义。
 - 当前静态核对不等于部署通过；真实 profile、消息、`/preset`、postinstall 和 allow-build 仍按本台账 HUMAN 项执行。
 
 ## ⑨ 升级 checklist（核对清单，顺序固定）
 
 1. 设置只读 `DSH_INSTALL_ROOT`（本机为 `D:\AI项目\dsh-v0.2.0-rc2`）后运行 `node pe-test/tools/step-01-qqbot-安装映射.mjs`，再 `node pe-test/tools/step-01-qqbot-环境验证.mjs`；静态先行，环境项条件只读，SKIP 不销账；rc.1 设备复用现有脚本并保留 HUMAN。
-2. `node pe-test/tools/step-01-设置页配置.mjs` 与 `node pe-test/tools/step-04-路由与写闸门.mjs`；确认 settings/configEditor 后端合同、0.2 独立 tab 移除、legacy row 的 slot 条件呈现、A09/A10/A11 与工具呈现面。
+2. `node pe-test/tools/step-01-设置页配置.mjs` 与 `node pe-test/tools/step-04-路由与写闸门.mjs`；确认全局 owner/configEditor 后端合同、bundle/detail 同页唯一表单、A09/A10/A11 与工具呈现面。
 3. `node pe-test/tools/一键step测试.mjs`；AUTO/HUMAN/参数项按脚本实际数组与四态判读。
 4. 按 HS/HK/SD/CF/QB 当前表，先钩子 mode，再服务方法，再事件/Session 形状，再 bundle/exports/patch/isolate 契约；旧 API 只作负向核对。
 5. `node pe-test/tools/代码地图生成.mjs --check`，退出码必须为 0；人工描述/固定尾部另做对拍。
@@ -227,6 +227,6 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 ## ⑩ P2-4 与 gateWords 当前合同
 
 - `agent.cordis.yml` 的 `exploreBudget`/`plannerPromptSuffix` 是作者叶值；生成器产出 `preset-defaults.generated.js` 与纯 `preset-definition.generated.yml`，先校验再替换，失败保留 last-known-good（上次已知良好版本）；运行时由 preset-sync 解析 definition 并交官方 adapter。
-- `preset-sync` 的 idle（空闲稳态）以公开行支持投影/gateWords 与 settings 权威值收敛为准；旧 `preset-extra-plan` 只读迁移，不写旧 body；新写入只走 `configEditor.edit` 目标两个公开行，无 manifest（清单）台账。
+- `preset-sync` 的 idle（空闲稳态）以全局行十项权威值、旧值兼容读取与 gateWords 派生收敛为准；旧 `extra-plan-preset-sync` / `preset-extra-plan` 只读迁移，不写旧 body/旧公开行；新写入只走唯一全局行 `configEditor.edit`，无 manifest（清单）台账。
 - gateWords 是 YAML 七键唯一值源；apply 先 `createGateRuntime`，当前 agent scope 注册七个 `systemPrompt.variable`；deny、match、状态机和投影都消费当前词表；旧词不推进。
 - `system-prompt/assemble` 的模型可见副本必须保留 variables 映射；宿主严格渲染失败、变量缺失或未知变量属于升级敏感面，静态台账不冒充实机通过。

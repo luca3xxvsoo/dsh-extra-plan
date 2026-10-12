@@ -9,7 +9,7 @@ const isMode = (value) => typeof value === 'string' && modeOptions.includes(valu
 
 /** 新载体行 id（settings 命名空间 = profile 行 id）。 */
 export const SETTINGS_ROW_ID = 'dsh-extra-plan-settings'
-/** 新公开的预设核对行 id；仅承载受支持的投影与 gateWords。 */
+/** 历史预设核对行 id；仅作兼容读取，不再作为新写入目标。 */
 export const PRESET_ROW_ID = 'extra-plan-preset-sync'
 /** 旧 profile 预设声明行：仅用于非破坏读取迁移，不再作为新写入目标。 */
 export const LEGACY_PRESET_ROW_ID = 'preset-extra-plan'
@@ -17,7 +17,7 @@ export const LEGACY_PRESET_ROW_ID = 'preset-extra-plan'
 export const HOST_ROW_IDS = Object.freeze({ webFetch: 'tool-web', toolPresentationMode: 'tool-presentation' })
 /** 投影落点的叶键（宿主行 config 内键名）：源模板与投影共用同一份 leaf 名，不新增第二份键名清单。 */
 export const HOST_ROW_LEAF_KEYS = Object.freeze({ webFetch: 'fetch', toolPresentationMode: 'mode' })
-/** descriptor 分组（消费方）：8 项落 settings 行 / 2 项另投影到 preset-sync 公开行。 */
+/** descriptor 分组（消费方）：10 项统一落 settings 全局行；2 项另派生到内存 definition。 */
 export const SETTING_GROUPS = Object.freeze({ EXTRA_PLAN: 'extra-plan', HOST_ROWS: 'host-rows' })
 
 const setting = (definition) => Object.freeze({
@@ -47,7 +47,7 @@ const setting = (definition) => Object.freeze({
 /** 权威值落点：settings 行（10 项统一）config.<key>。 */
 const settingsRowLocator = (key, path) => ({ rowId: SETTINGS_ROW_ID, path: path === undefined ? 'config.' + key : path })
 const sourceLocator = (key, path) => ({ rowId: 'extra-plan', path: path === undefined ? 'config.' + key : path })
-/** 新公开行投影落点：extra-plan-preset-sync.config.<key>；旧 body 叶键由 legacy locator 保留。 */
+/** 旧公开投影行的读取落点：extra-plan-preset-sync.config.<key>；新结构不再写该行。 */
 const hostRowProjectionLocator = (key) => ({
   rowId: PRESET_ROW_ID,
   path: 'config.' + key,
@@ -135,11 +135,11 @@ export const SETTING_DEFINITIONS = Object.freeze([
 export const EXTRA_PLAN_SETTING_DEFINITIONS = Object.freeze(
   SETTING_DEFINITIONS.filter((item) => item.group === SETTING_GROUPS.EXTRA_PLAN),
 )
-/** 2 项宿主行设置（权威值同样落 settings 行；另经 projectionLocator 投影到 preset-sync 公开行）。 */
+/** 2 项宿主行设置（权威值同样落 settings 行；projectionLocator 仅作旧值读取兼容）。 */
 export const HOST_ROW_SETTING_DEFINITIONS = Object.freeze(
   SETTING_DEFINITIONS.filter((item) => item.group === SETTING_GROUPS.HOST_ROWS),
 )
-/** 带投影面的设置（= 2 项宿主行设置）——投影一致性与投影 plan 的唯一遍历源。 */
+/** 带历史投影面的设置（= 2 项宿主行设置）——内存 definition 派生的唯一遍历源。 */
 export const PROJECTION_SETTING_DEFINITIONS = Object.freeze(
   SETTING_DEFINITIONS.filter((item) => item.projectionLocator !== undefined),
 )

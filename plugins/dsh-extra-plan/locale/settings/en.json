@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "Extra Plan Configuration",
-    "description": "Configure the Extra Plan mode"
+    "title": "Extra Plan Global Manager",
+    "description": "Manage configuration, preset checks, and UI loading"
   }
 }

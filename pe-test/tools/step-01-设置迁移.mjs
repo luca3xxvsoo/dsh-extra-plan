@@ -1,68 +1,76 @@
-// settings descriptor、行定位、保格式改写与 settings 行捕获回归。
-// 覆盖 descriptor/schema 合同、资产模板解析、定点编辑和当前载体；
-// 所有夹具都在内存或临时目录中，不触碰生产 DSH_HOME。
-
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+// 单一全局行迁移回归：完整值、旧投影/旧 body/默认优先级、歧义、非法词表与真实 edit 目标。
+// 所有 patch 与 editor 均为内存夹具；不访问或写入生产 profile/DSH_HOME。
+import { readFileSync } from 'node:fs'
+import { isDeepStrictEqual } from 'node:util'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
-  EXTRA_PLAN_SETTING_DEFINITIONS,
-  HOST_ROW_LEAF_KEYS,
-  HOST_ROW_SETTING_DEFINITIONS,
-  PRESET_ROW_ID,
-  PROJECTION_SETTING_DEFINITIONS,
   SETTING_DEFINITIONS,
-  SETTING_GROUPS,
   SETTINGS_ROW_ID,
-  TOOL_PRESENTATION_MODES,
   captureRowSettings,
-  captureSettings,
-  effectivePluginsOf,
-  hostRowDefaultsFromTemplate,
-  findPluginsRow,
-  getSettingDefinition,
   parsePresetYaml,
-  patchYamlScalar,
-  readProjectedValue,
-  resolveSetting,
-  restatePluginsRow,
-  serializeScalar,
 } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
-import * as presetSettingsNamespace from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
-import { DEFAULT_EXPLORE_BUDGET, DEFAULT_PLANNER_PROMPT_SUFFIX } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
-import { GATE_WORDS_GROUP_DEFINITION, createGateRuntime } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
-import { createLiveConfig } from '../../plugins/dsh-extra-plan/lib/live-config.js'
+import {
+  assetDefinition,
+  readLegacyState,
+  resolveUnifiedConfig,
+  restateSettingsConfig,
+  syncPreset,
+} from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
+import { validateGateWords } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
 
-const HERE = fileURLToPath(new URL('.', import.meta.url))
-const ASSET_DIR = join(HERE, '..', '..', 'plugins', 'dsh-extra-plan', 'assets', 'presets', 'extra-plan')
-const assetAgent = readFileSync(join(ASSET_DIR, 'agent.cordis.yml'), 'utf8')
-const clientText = readFileSync(join(HERE, '..', '..', 'plugins', 'dsh-extra-plan', 'lib', 'client.js'), 'utf8')
-const definition = (key) => getSettingDefinition(key)
-const keys = SETTING_DEFINITIONS.map((item) => item.key)
-const expectedKeys = ['anchoredBootstrap', 'creativeMode', 'webFetch', 'toolPresentationMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel']
-function clientFields(name) {
-  const start = clientText.indexOf('const ' + name + ' = Object.freeze([')
-  if (start < 0) return []
-  const end = clientText.indexOf(']);', start)
-  if (end < 0) return []
-  return clientText.slice(start, end).split('\n').filter((line) => line.includes('{ key:')).map((line) => {
-    const key = line.match(/key: \"([^\"]+)\"/)
-    const control = line.match(/control: \"([^\"]+)\"/)
-    const options = line.match(/options: (\[[^\]]*\])/)
-    const locale = line.match(/locale: \"([^\"]+)\"/)
-    const optionLocale = line.match(/optionLocale: (\{.*?\})/)
-    const optionLocaleValue = optionLocale === null ? undefined : Object.fromEntries([...optionLocale[1].matchAll(/([A-Za-z]+): \"([^\"]+)\"/g)].map((item) => [item[1], item[2]]))
-    return { key: key === null ? '' : key[1], control: control === null ? '' : control[1], options: options === null ? undefined : JSON.parse(options[1]), locale: locale === null ? '' : locale[1], optionLocale: optionLocaleValue }
-  })
+const ROOT = fileURLToPath(new URL('../..', import.meta.url))
+const ASSET = join(ROOT, 'plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml')
+function findTemplateGateWords(value) {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findTemplateGateWords(item)
+      if (found !== undefined) return found
+    }
+    return undefined
+  }
+  if (value === null || typeof value !== 'object') return undefined
+  if (value.id === 'extra-plan' && value.config !== null && typeof value.config === 'object' && value.config.gateWords !== undefined) {
+    return structuredClone(value.config.gateWords)
+  }
+  for (const child of Object.values(value)) {
+    const found = findTemplateGateWords(child)
+    if (found !== undefined) return found
+  }
+  return undefined
 }
-function clientFieldContractMatches(fields, definitions) {
-  return fields.length === definitions.length && definitions.every((definition, index) => {
-    const field = fields[index]
-    return field.key === definition.key && field.control === definition.ui.control && field.locale === definition.ui.locale &&
-      JSON.stringify(field.options) === JSON.stringify(definition.ui.options) &&
-      JSON.stringify(field.optionLocale) === JSON.stringify(definition.ui.optionLocale)
-  })
+const gate = findTemplateGateWords(parsePresetYaml(readFileSync(ASSET, 'utf8')))
+if (gate === undefined) throw new Error('模板缺少 extra-plan gateWords')
+const descriptorDefaults = Object.fromEntries(SETTING_DEFINITIONS.map((item) => [item.key, item.defaultValue]))
+const legacyProjectionDefaults = Object.freeze({ webFetch: true, toolPresentationMode: 'ptc' })
+const legacyBodyDefaults = Object.freeze({
+  anchoredBootstrap: true,
+  creativeMode: false,
+  webFetch: true,
+  toolPresentationMode: 'ptc',
+  runcodeCatchGate: false,
+  crossProviderPlannerModel: false,
+  plannerModel: 'body-model',
+  plannerPromptSuffix: 'body-suffix',
+  exploreBudget: 7,
+  otherAgentModel: 'body-other',
+})
+function defaultGlobalAfter() {
+  return { ...descriptorDefaults, gateWords: structuredClone(gate) }
+}
+const invalidGate = { routeDirect: 'one' }
+const complete = {
+  anchoredBootstrap: true,
+  creativeMode: false,
+  webFetch: false,
+  toolPresentationMode: 'native',
+  runcodeCatchGate: false,
+  crossProviderPlannerModel: false,
+  plannerModel: 'authority-model',
+  plannerPromptSuffix: 'authority-suffix',
+  exploreBudget: 31,
+  otherAgentModel: 'authority-other',
+  gateWords: gate,
 }
 
 let pass = 0
@@ -71,254 +79,466 @@ function check(label, condition) {
   if (condition) { pass += 1; console.log('PASS  ' + label) }
   else { fail += 1; console.log('FAIL  ' + label) }
 }
-
-check('T1 preset-settings 收回 PRESET_PLUGIN_NAME 且保留新公开 PRESET_ROW_ID', !Object.prototype.hasOwnProperty.call(presetSettingsNamespace, 'PRESET_PLUGIN_NAME') && presetSettingsNamespace.PRESET_ROW_ID === 'extra-plan-preset-sync')
-check('exploreBudget 默认来自生成模块且为资产 YAML 叶值', DEFAULT_EXPLORE_BUDGET === resolveSetting(parsePresetYaml(assetAgent), definition('exploreBudget'), { aliases: false }).value && DEFAULT_EXPLORE_BUDGET === 18)
-check('plannerPromptSuffix 默认来自生成模块且为资产 YAML 叶值', DEFAULT_PLANNER_PROMPT_SUFFIX === resolveSetting(parsePresetYaml(assetAgent), definition('plannerPromptSuffix'), { aliases: false }).value && DEFAULT_PLANNER_PROMPT_SUFFIX === '你的深度思考部分需要以"好了，现在我以全局视角来看待这个问题"开头')
-
-function patchAgent(values) {
-  let text = assetAgent
-  for (const [key, value] of Object.entries(values)) {
-    const patched = patchYamlScalar(text, definition(key), value)
-    if (!patched.ok) throw new Error('fixture patch failed: ' + key)
-    text = patched.text
-  }
-  return text
+function throws(fn, text) {
+  try { fn(); return false } catch (error) { return text === undefined || String(error && error.message || error).includes(text) }
 }
-
-function minimalYaml(overrides = {}, nested = false) {
-  const value = (key, fallback) => Object.prototype.hasOwnProperty.call(overrides, key) ? overrides[key] : fallback
-  const extra = [
-    '          config:',
-    '            plannerModel: ' + value('plannerModel', 'old-model'),
-    '            crossProviderPlannerModel: ' + value('crossProviderPlannerModel', 'false'),
-    '            plannerPromptSuffix: ' + value('plannerPromptSuffix', 'old-suffix'),
-    '            exploreBudget: ' + value('exploreBudget', '8'),
-    '            otherAgentModel: ' + value('otherAgentModel', "''"),
-    '            anchoredBootstrap: ' + value('anchoredBootstrap', 'true'),
-    '            creativeMode: ' + value('creativeMode', 'false'),
-    '            runcodeCatchGate: ' + value('runcodeCatchGate', 'false'),
+function yamlScalar(value) {
+  if (typeof value === 'string') return "'" + value.replaceAll("'", "''") + "'"
+  return String(value)
+}
+function gateLines(indent) {
+  return Object.entries(gate).map(([key, value]) => indent + key + ': ' + yamlScalar(value))
+}
+function syncRow(values = {}) {
+  const lines = [
+    '- id: extra-plan-preset-sync',
+    '  config:',
+    '    webFetch: ' + yamlScalar(values.webFetch === undefined ? true : values.webFetch),
+    '    toolPresentationMode: ' + yamlScalar(values.toolPresentationMode === undefined ? 'ptc' : values.toolPresentationMode),
+    '    gateWords:',
   ]
-  if (nested) {
-    return [
-      '- id: wrapper-web',
-      '  config:',
-      '    - id: tool-web',
-      '      config:',
-      '        fetch: ' + value('webFetch', 'true'),
-      '- id: wrapper-extra',
-      '  config:',
-      '    - id: deep-extra',
-      '      config:',
-      '        - id: extra-plan',
-      ...extra,
-      '- id: tool-presentation',
-      '  config:',
-      '    mode: ' + value('toolPresentationMode', 'ptc'),
-    ].join('\n') + '\n'
+  return lines.concat(gateLines('      ')).join('\n')
+}
+function bodyRow(values = {}) {
+  const plannerModel = values.plannerModel === undefined ? 'body-model' : values.plannerModel
+  const budget = values.exploreBudget === undefined ? 7 : values.exploreBudget
+  const lines = [
+    '- id: preset-extra-plan',
+    '  config:',
+    '    id: extra-plan',
+    '    name: legacy',
+    '    description: legacy',
+    '    order: 100',
+    '    plugins:',
+    '      - id: extra-plan',
+    '        config:',
+    '          anchoredBootstrap: true',
+    '          creativeMode: false',
+    '          runcodeCatchGate: false',
+    '          crossProviderPlannerModel: false',
+    '          plannerModel: ' + yamlScalar(plannerModel),
+    '          plannerPromptSuffix: body-suffix',
+    '          exploreBudget: ' + yamlScalar(budget),
+    '          otherAgentModel: body-other',
+    '          gateWords:',
+  ]
+  const bodyGate = values.gateWords === undefined ? gate : values.gateWords
+  if (bodyGate === invalidGate) lines.push('            routeDirect: !!js "not-evaluated"')
+  else lines.push(...Object.entries(bodyGate).map(([key, value]) => '            ' + key + ': ' + yamlScalar(value)))
+  lines.push('      - id: tool-web', '        config:', '          fetch: ' + yamlScalar(values.webFetch === undefined ? true : values.webFetch))
+  lines.push('      - id: tool-presentation', '        config:', '          mode: ' + yamlScalar(values.toolPresentationMode === undefined ? 'ptc' : values.toolPresentationMode))
+  return lines.join('\n')
+}
+function patchOf({ sync = false, body = false, duplicateSync = false, invalidBodyGate = false } = {}) {
+  const parts = []
+  if (sync) parts.push(syncRow())
+  if (duplicateSync) { parts.push(syncRow()); parts.push(syncRow()) }
+  if (body) parts.push(bodyRow({ gateWords: invalidBodyGate ? invalidGate : undefined }))
+  return parts.length === 0 ? '' : parts.join('\n') + '\n'
+}
+function makeEditor(initial = {}) {
+  const row = { entry: { options: { id: SETTINGS_ROW_ID, config: structuredClone(initial) } }, inherited: {}, override: {} }
+  const state = { rows: [row], edits: [] }
+  return {
+    state,
+    configuration: () => state.rows,
+    edit: async (entry, change) => {
+      const current = state.rows.find((item) => item.entry === entry)
+      if (current === undefined) throw new Error('settings entry disappeared')
+      const next = change(structuredClone(current.entry.options.config), current.inherited)
+      current.entry.options.config = next
+      state.edits.push({ id: entry.options.id, config: structuredClone(next) })
+    },
   }
-  return [
-    '- id: extra-plan-group',
-    '  config:',
-    '    - id: extra-plan',
-    '      config:',
-    '        plannerModel: ' + value('plannerModel', 'old-model'),
-    '        crossProviderPlannerModel: ' + value('crossProviderPlannerModel', 'false'),
-    '        plannerPromptSuffix: ' + value('plannerPromptSuffix', 'old-suffix'),
-    '        exploreBudget: ' + value('exploreBudget', '8'),
-    '        otherAgentModel: ' + value('otherAgentModel', "''"),
-    '        anchoredBootstrap: ' + value('anchoredBootstrap', 'true'),
-    '        creativeMode: ' + value('creativeMode', 'false'),
-    '        runcodeCatchGate: ' + value('runcodeCatchGate', 'false'),
-    '- id: tool-web',
-    '  config:',
-    '    fetch: ' + value('webFetch', 'true'),
-    '- id: tool-presentation',
-    '  config:',
-    '    mode: ' + value('toolPresentationMode', 'ptc'),
-  ].join('\n') + '\n'
 }
 
-// 新载体 settings 行夹具（profile patch 真值形状）：10 项（8 项 UI + 2 项宿主行设置）。
-function settingsRowYaml(values = {}) {
-  const pick = (key, fallback) => Object.prototype.hasOwnProperty.call(values, key) ? values[key] : fallback
-  return [
-    '- id: dsh-extra-plan-settings',
-    '  config:',
-    '    anchoredBootstrap: ' + pick('anchoredBootstrap', 'true'),
-    '    creativeMode: ' + pick('creativeMode', 'false'),
-    '    runcodeCatchGate: ' + pick('runcodeCatchGate', 'false'),
-    '    crossProviderPlannerModel: ' + pick('crossProviderPlannerModel', 'false'),
-    "    plannerModel: '" + pick('plannerModel', 'deepseek-v4-pro') + "'",
-    "    plannerPromptSuffix: '" + pick('plannerPromptSuffix', '') + "'",
-    '    exploreBudget: ' + pick('exploreBudget', '18'),
-    "    otherAgentModel: '" + pick('otherAgentModel', '') + "'",
-    '    webFetch: ' + pick('webFetch', 'false'),
-    "    toolPresentationMode: '" + pick('toolPresentationMode', 'native') + "'",
-    '- id: other-row',
-    '  config:',
-    '    keep: true',
-  ].join('\n') + '\n'
+function persistentRecordsFromPatch(patch) {
+  const parsed = typeof patch === 'string' && patch.trim() !== '' ? parsePresetYaml(patch) : []
+  return (Array.isArray(parsed) ? parsed : [])
+    .filter((row) => row !== null && typeof row === 'object' && typeof row.id === 'string')
+    .map((row, index) => {
+      const config = row.config !== null && typeof row.config === 'object' ? structuredClone(row.config) : {}
+      return {
+        id: row.id,
+        name: typeof row.name === 'string' ? row.name : 'legacy-' + row.id,
+        config,
+        gateWords: config.gateWords === undefined ? null : structuredClone(config.gateWords),
+        plugins: Array.isArray(config.plugins) ? structuredClone(config.plugins) : [],
+        metadata: { persistent: true, position: index },
+      }
+    })
 }
 
-check('白名单恰有 10 个稳定键且顺序不变', keys.length === 10 && keys.join('|') === expectedKeys.join('|'))
-check('只读 client.js 镜像：EXTRA_FIELDS/HOST_ROW_FIELDS 与 descriptor 键序、control、options、optionLocale 一致',
-  clientFieldContractMatches(clientFields('EXTRA_FIELDS'), EXTRA_PLAN_SETTING_DEFINITIONS) &&
-  clientFieldContractMatches(clientFields('HOST_ROW_FIELDS'), HOST_ROW_SETTING_DEFINITIONS))
-check('descriptor 分组：extra-plan 8 项（本插件热读）+ host-rows 2 项（另投影到声明行 plugins 子行）',
-  EXTRA_PLAN_SETTING_DEFINITIONS.length === 8 && HOST_ROW_SETTING_DEFINITIONS.length === 2 &&
-  EXTRA_PLAN_SETTING_DEFINITIONS.every((item) => item.group === SETTING_GROUPS.EXTRA_PLAN) &&
-  HOST_ROW_SETTING_DEFINITIONS.every((item) => item.group === SETTING_GROUPS.HOST_ROWS))
-check('descriptor 已无 pluginId/path 顶层字段（改 rowLocator/sourceLocator 双定位元数据）',
-  SETTING_DEFINITIONS.every((item) => !Object.prototype.hasOwnProperty.call(item, 'pluginId') && !Object.prototype.hasOwnProperty.call(item, 'path') && !Object.prototype.hasOwnProperty.call(item, 'locator')))
-check('sourceLocator 仍为源模板行 id + config 路径（资产）同形',
-  SETTING_DEFINITIONS.every((item) => item.sourceLocator.path === 'config.' + (item.key === 'webFetch' ? 'fetch' : item.key === 'toolPresentationMode' ? 'mode' : item.key)) &&
-  definition('plannerModel').sourceLocator.rowId === 'extra-plan' && definition('webFetch').sourceLocator.rowId === 'tool-web')
-check('rowLocator 指向权威值落点：10 项一律 settings 行（含原声明行子行的 2 项宿主行设置）',
-  SETTING_DEFINITIONS.every((item) => item.rowLocator.rowId === SETTINGS_ROW_ID && item.rowLocator.path === 'config.' + item.key &&
-    item.rowLocator.pluginsRowId === undefined) &&
-  definition('webFetch').rowLocator.path === 'config.webFetch' && definition('toolPresentationMode').rowLocator.path === 'config.toolPresentationMode')
-check('projectionLocator 只给 2 项宿主行设置：新公开行直接 config.webFetch/config.toolPresentationMode，旧 body 仅保留 legacy locator',
-  PROJECTION_SETTING_DEFINITIONS.length === 2 && PROJECTION_SETTING_DEFINITIONS.every((item) => item.group === SETTING_GROUPS.HOST_ROWS) &&
-  EXTRA_PLAN_SETTING_DEFINITIONS.every((item) => item.projectionLocator === undefined) &&
-  definition('webFetch').projectionLocator.rowId === PRESET_ROW_ID && definition('webFetch').projectionLocator.path === 'config.webFetch' &&
-  definition('toolPresentationMode').projectionLocator.path === 'config.toolPresentationMode' &&
-  definition('webFetch').legacyProjectionLocator.pluginsRowId === 'tool-web' && definition('webFetch').legacyProjectionLocator.path === 'config.fetch' &&
-  definition('toolPresentationMode').legacyProjectionLocator.pluginsRowId === 'tool-presentation' && definition('toolPresentationMode').legacyProjectionLocator.path === 'config.mode')
-check('HOST_ROW_LEAF_KEYS 仅作为旧 body 叶键真源，新公开行使用 descriptor key',
-  HOST_ROW_LEAF_KEYS.webFetch === 'fetch' && HOST_ROW_LEAF_KEYS.toolPresentationMode === 'mode' &&
-  HOST_ROW_SETTING_DEFINITIONS.every((item) => item.legacyProjectionLocator.path === 'config.' + HOST_ROW_LEAF_KEYS[item.key] && item.projectionLocator.path === 'config.' + item.key))
-check('禁止项不在白名单且描述不可变', !keys.some((key) => ['approvalEnabled', 'bootstrapPersona', 'bootstrapShellTools', 'bootstrapCommonTools', 'bootstrapReadHint', 'planTool', 'savePlanDir', 'usageLedger', 'searchTimeoutMs'].includes(key)) && Object.isFrozen(SETTING_DEFINITIONS) && SETTING_DEFINITIONS.every((item) => Object.isFrozen(item)))
-// T4：plannerModel 放开为空串（空串=显式清空=继承主会话模型），空白串 normalize 后归一为 ''；
-// 非 string（数字等）仍非法——validator 的类型严格性由 !validator(123) 锁定。
-check('validator 类型严格且字符串设置支持空串归一', definition('plannerModel').validator('  x  ') && definition('plannerModel').validator('') && definition('plannerModel').normalize('   ') === '' && !definition('plannerModel').validator(123) && definition('otherAgentModel').validator('') && definition('otherAgentModel').normalize('   ') === '' && !definition('otherAgentModel').validator(123) && definition('crossProviderPlannerModel').validator(true) && definition('crossProviderPlannerModel').validator(false) && !definition('crossProviderPlannerModel').validator('true') && !definition('crossProviderPlannerModel').validator(1) && definition('exploreBudget').validator(1) && !definition('exploreBudget').validator('1') && TOOL_PRESENTATION_MODES.join('/') === definition('toolPresentationMode').ui.options.join('/'))
-check('serializeScalar 三态：boolean/integer/字符串单引号', serializeScalar(true, 'boolean') === 'true' && serializeScalar(false, 'boolean') === 'false' && serializeScalar(18, 'integer') === '18' && serializeScalar("a'b", 'string') === "'a''b'" && serializeScalar('a\nb', 'string') === JSON.stringify('a\nb'))
-
-// ── 源模板（资产）定位与保格式改写 ──────────────────────────────
-const allOldValues = {
-  plannerModel: 'legacy-model',
-  crossProviderPlannerModel: true,
-  plannerPromptSuffix: 'legacy: suffix',
-  exploreBudget: 23,
-  otherAgentModel: 'legacy-other-model',
-  anchoredBootstrap: false,
-  creativeMode: true,
-  runcodeCatchGate: true,
-  webFetch: true,
-  toolPresentationMode: 'ptc',
+function patchFromPersistentStore(store) {
+  return JSON.stringify(store.legacyRows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    config: structuredClone(row.config),
+  })))
 }
-const oldText = patchAgent(allOldValues)
-const captured = captureSettings(oldText)
-check('captureSettings 10 项全 captured 且值等于旧值', Object.values(captured.states).every((state) => state === 'captured') && keys.every((key) => captured.values[key] === allOldValues[key]))
 
-const flatDoc = parsePresetYaml(minimalYaml())
-check('扁平 group 内 extra-plan 行 10 项可解析', SETTING_DEFINITIONS.every((item) => resolveSetting(flatDoc, item, { aliases: false }).kind === 'ok'))
-const nestedDoc = parsePresetYaml(minimalYaml({}, true))
-check('重排/更深嵌套 row 可递归定位', SETTING_DEFINITIONS.every((item) => resolveSetting(nestedDoc, item, { aliases: false }).kind === 'ok'))
+function makePersistentEditor(initial = {}, patch = '', legacyVisible = true) {
+  const store = {
+    settings: {
+      id: SETTINGS_ROW_ID,
+      name: '@local/dsh-extra-plan/settings',
+      config: structuredClone(initial),
+      metadata: { owner: 'dsh-extra-plan-settings' },
+    },
+    legacyRows: persistentRecordsFromPatch(patch),
+  }
+  const globalRow = {
+    entry: { options: { id: SETTINGS_ROW_ID, name: store.settings.name, config: store.settings.config } },
+    inherited: {},
+    override: {},
+  }
+  const legacyRows = store.legacyRows.map((record) => ({
+    entry: { options: { id: record.id, name: record.name, config: record.config } },
+    inherited: {},
+    override: {},
+  }))
+  const allRows = [globalRow, ...legacyRows]
+  const state = {
+    rows: legacyVisible ? allRows : [globalRow],
+    allRows,
+    store,
+    edits: [],
+    rejectedEdits: [],
+  }
+  return {
+    state,
+    configuration: () => state.rows,
+    readPatch: () => patchFromPersistentStore(state.store),
+    edit: async (entry, change) => {
+      const current = state.allRows.find((item) => item.entry === entry)
+      if (current === undefined) throw new Error('settings entry disappeared')
+      const id = entry.options.id
+      if (id !== SETTINGS_ROW_ID) {
+        state.rejectedEdits.push({ id })
+        throw new Error('legacy entry writes are forbidden: ' + id)
+      }
+      const next = change(structuredClone(current.entry.options.config), current.inherited)
+      current.entry.options.config = structuredClone(next)
+      state.store.settings.config = structuredClone(next)
+      state.edits.push({ id, config: structuredClone(next) })
+    },
+  }
+}
 
-const nestedText = minimalYaml({}, true)
-const nestedMode = patchYamlScalar(nestedText, definition('toolPresentationMode'), 'both')
-check('更深嵌套 scalar 定点替换（toolPresentationMode → both）', nestedMode.ok && resolveSetting(parsePresetYaml(nestedMode.text), definition('toolPresentationMode'), { aliases: false }).value === 'both')
-const patchedPlanner = patchYamlScalar(assetAgent, definition('plannerModel'), 'format-safe')
-check('保格式改写：仅目标叶行变化', patchedPlanner.ok && patchedPlanner.text.split('\n').filter((line, index) => line !== assetAgent.split('\n')[index]).length === 1)
+async function runPersistentSync(settingsValues, patch, legacyVisible) {
+  const editor = makePersistentEditor(settingsValues, patch, legacyVisible)
+  const legacyBefore = structuredClone(editor.state.store.legacyRows)
+  let applyCount = 0
+  let appliedPlan = null
+  const result = await syncPreset({
+    settingsValues,
+    readPatch: editor.readPatch,
+    apply: async (plan) => {
+      applyCount += 1
+      appliedPlan = plan
+      await applyPlanToEditor(plan, editor)
+    },
+  })
+  return {
+    result,
+    editor,
+    appliedPlan,
+    applyCount,
+    legacyBefore,
+    legacyAfter: structuredClone(editor.state.store.legacyRows),
+    patchAfter: editor.readPatch(),
+  }
+}
 
-const dupText = '- id: extra-plan\n  config:\n    plannerModel: a\n- id: extra-plan\n  config:\n    plannerModel: b\n'
-check('同名行重复 → ambiguous（不定点猜改）', captureSettings(dupText).states.plannerModel === 'ambiguous' && patchYamlScalar(dupText, definition('plannerModel'), 'never-guess').reason === 'ambiguous')
+async function applyPlanToEditor(plan, editor) {
+  if (plan === null || plan.settings === null) return
+  const row = editor.state.rows.find((item) => item.entry.options.id === SETTINGS_ROW_ID)
+  if (row === undefined) throw new Error('settings row missing in fixture')
+  await editor.edit(row.entry, (current, inherited) => restateSettingsConfig(current, inherited, plan.settings.values))
+}
+async function runSync(settingsValues, patch) {
+  const editor = makeEditor(settingsValues)
+  let appliedPlan = null
+  const result = await syncPreset({
+    settingsValues,
+    readPatch: () => patch,
+    apply: async (plan) => { appliedPlan = plan; await applyPlanToEditor(plan, editor) },
+  })
+  return { result, editor, appliedPlan }
+}
 
-const aliasDefinition = { ...definition('plannerModel'), locatorAliases: [{ rowId: 'legacy-planner', path: 'config.plannerModel' }] }
-const aliasDoc = parsePresetYaml('- id: legacy-planner\n  config:\n    plannerModel: legacy-alias\n')
-check('显式 locator alias 才能恢复移动字段', resolveSetting(aliasDoc, aliasDefinition).kind === 'ok' && resolveSetting(aliasDoc, aliasDefinition).value === 'legacy-alias' && resolveSetting(aliasDoc, definition('plannerModel')).kind === 'missing')
+const definition = assetDefinition()
+function findPluginRow(items, id) {
+  for (const row of items || []) {
+    if (row !== null && typeof row === 'object' && row.id === id) return row
+    if (row !== null && typeof row === 'object' && Array.isArray(row.config)) {
+      const nested = findPluginRow(row.config, id)
+      if (nested !== undefined) return nested
+    }
+  }
+  return undefined
+}
+function projectionOf(result) {
+  const plugins = result.plan === undefined ? [] : result.plan.definition.plugins
+  return {
+    webFetch: findPluginRow(plugins, 'tool-web').config.fetch,
+    toolPresentationMode: findPluginRow(plugins, 'tool-presentation').config.mode,
+    gateWords: structuredClone(findPluginRow(plugins, 'extra-plan').config.gateWords),
+  }
+}
+const expectedKeys = 'anchoredBootstrap|creativeMode|webFetch|toolPresentationMode|runcodeCatchGate|crossProviderPlannerModel|plannerModel|plannerPromptSuffix|exploreBudget|otherAgentModel'
+check('V04 descriptor 十键顺序与稳定 settings locator', SETTING_DEFINITIONS.length === 10 && SETTING_DEFINITIONS.map((item) => item.key).join('|') === expectedKeys && SETTING_DEFINITIONS.every((item) => item.rowLocator.rowId === SETTINGS_ROW_ID))
+check('V07 asset definition 17 行与 raw marker 保留（仅证明 marker 保留）', definition.plugins.length === 17 && JSON.stringify(definition).includes('__jsExpr') && readFileSync(ASSET, 'utf8').includes('!!js'))
+check('V04 合法 gateWords 恰七键且输入不可变', (() => { const before = structuredClone(gate); const after = validateGateWords(gate); return Object.keys(after).length === 7 && JSON.stringify(gate) === JSON.stringify(before) })())
 
-const emptyState = captureSettings(minimalYaml({ plannerModel: "''" }))
-check("空串标量 captured（不被判 invalid）", emptyState.states.plannerModel === 'captured' && emptyState.values.plannerModel === '')
-const blankState = captureSettings(minimalYaml({ plannerModel: '"   "' }))
-check('空白串 captured 且 normalize 归一并留待消费端 trim', blankState.states.plannerModel === 'captured' && blankState.values.plannerModel === '')
-const invalidState = captureSettings(minimalYaml({ exploreBudget: '0' }))
-check('非法值 → invalid（不进 values）', invalidState.states.exploreBudget === 'invalid' && !Object.prototype.hasOwnProperty.call(invalidState.values, 'exploreBudget'))
+const legacyBoth = patchOf({ sync: true, body: true })
+const legacyState = readLegacyState(legacyBoth)
+check('V04 旧公开行优先：投影/词表/旧 body 可解析且来源准确', legacyState.projection.webFetch === true && legacyState.projectionSources.webFetch === 'legacy-projection' && legacyState.gateWordsSource === 'legacy-projection' && legacyState.legacyPlugins !== undefined)
+const authority = resolveUnifiedConfig({ settingsValues: complete, readPatch: () => legacyBoth })
+check('V04 完整当前值优先于旧冲突，十键与词表均保留', authority.values.plannerModel === complete.plannerModel && authority.values.exploreBudget === complete.exploreBudget && authority.values.webFetch === false && authority.values.toolPresentationMode === 'native' && authority.sources.webFetch === 'settings-row' && authority.sources.gateWords === 'settings-row')
 
-// ── gateWords：源模板整组定位 ────────────────────────────
-check('gateWords 组定义与新命名 locator（rowId + sourceLocator）', GATE_WORDS_GROUP_DEFINITION.sourceLocator.rowId === 'extra-plan' && GATE_WORDS_GROUP_DEFINITION.sourceLocator.path === 'config.gateWords')
-const assetWords = resolveSetting(parsePresetYaml(assetAgent), GATE_WORDS_GROUP_DEFINITION, { aliases: false }).value
-check('资产模板 7 词整组合法且 createGateRuntime 可派生', (() => { try { return Object.keys(createGateRuntime(assetWords).words).length === 7 } catch { return false } })())
+const partial = resolveUnifiedConfig({ settingsValues: { plannerModel: complete.plannerModel }, readPatch: () => legacyBoth })
+check('V04 部分当前值回退旧投影再到旧 body/默认，来源不混淆', partial.values.plannerModel === complete.plannerModel && partial.values.webFetch === true && partial.values.toolPresentationMode === 'ptc' && partial.values.exploreBudget === 7 && partial.sources.webFetch === 'legacy-projection' && partial.sources.exploreBudget === 'legacy-preset')
+const bodyOnly = patchOf({ body: true })
+const bodyState = readLegacyState(bodyOnly)
+const bodyResolved = resolveUnifiedConfig({ settingsValues: {}, readPatch: () => bodyOnly })
+check('V04 仅旧 body 独立覆盖：值来自旧 body，不伪称旧投影', bodyState.projectionSources.webFetch === 'legacy-preset' && bodyResolved.sources.webFetch === 'legacy-preset' && bodyResolved.sources.plannerModel === 'legacy-preset')
+const projectionOnly = patchOf({ sync: true })
+const projectionResolved = resolveUnifiedConfig({ settingsValues: {}, readPatch: () => projectionOnly })
+check('V04 仅旧投影独立覆盖：实际读取 projection 行', projectionResolved.sources.webFetch === 'legacy-projection' && projectionResolved.values.webFetch === true && projectionResolved.values.toolPresentationMode === 'ptc')
+const noOldResolved = resolveUnifiedConfig({ settingsValues: {}, readPatch: () => '' })
+check('V04 完全无旧值仅使用资产默认', noOldResolved.sources.webFetch === 'default' && noOldResolved.sources.plannerModel === 'default' && noOldResolved.values.exploreBudget === 18)
 
-// ── 新载体 settings 行捕获（captureRowSettings：8 项 UI 热读键 + 10 项权威值） ────
-const rowText = settingsRowYaml({ anchoredBootstrap: 'false', exploreBudget: '7', plannerModel: 'row-model' })
-const rowCapture = captureRowSettings(rowText)
-check('captureRowSettings 按 settings 行 id 捕获 8 项', Object.keys(rowCapture.values).length === 8 && rowCapture.values.exploreBudget === 7 && rowCapture.values.anchoredBootstrap === false && rowCapture.values.plannerModel === 'row-model')
-check('settings 行缺席 → 8 项全 missing（消费端回退 cfg 快照）', (() => { const none = captureRowSettings('- id: other-row\n  config:\n    keep: true\n'); return Object.keys(none.states).length === 8 && Object.values(none.states).every((state) => state === 'missing') })())
-check('settings 行同名重复 → ambiguous（不猜值）', (() => { const dup = settingsRowYaml() + settingsRowYaml(); return captureRowSettings(dup).states.exploreBudget === 'ambiguous' })())
-check('settings 行非法叶值 → invalid（不进 values）', (() => { const bad = settingsRowYaml().replace('    exploreBudget: 18', '    exploreBudget: 0'); const capturedBad = captureRowSettings(bad); return capturedBad.states.exploreBudget === 'invalid' && !Object.prototype.hasOwnProperty.call(capturedBad.values, 'exploreBudget') })())
+const duplicatePatch = patchOf({ duplicateSync: true })
+const duplicateState = readLegacyState(duplicatePatch)
+const duplicateResolved = resolveUnifiedConfig({ settingsValues: {}, readPatch: () => duplicatePatch })
+check('V04 重复旧行同值仍歧义，保留诊断且不取第一条', duplicateState.diagnostics.some((item) => item.includes('duplicate extra-plan-preset-sync')) && duplicateState.projection.webFetch === undefined && duplicateResolved.sources.webFetch === 'default')
+const invalidOldPatch = patchOf({ body: true, invalidBodyGate: true })
+const invalidOldState = readLegacyState(invalidOldPatch)
+const invalidOldResolved = resolveUnifiedConfig({ settingsValues: {}, readPatch: () => invalidOldPatch })
+check('V04 非法旧 gateWords 仅诊断/skip，不求值且回资产默认', invalidOldState.diagnostics.some((item) => item.includes('invalid legacy body gateWords')) && invalidOldResolved.sources.gateWords === 'default' && JSON.stringify(invalidOldState.legacyPlugins).includes('__jsExpr') && JSON.stringify(invalidOldState.legacyPlugins).includes('not-evaluated'))
 
-// ── 权威值（settings 行 10 项）+ 投影读取（rowPresent / readProjectedValue） ──────
-const authorityText = settingsRowYaml({ webFetch: 'true', toolPresentationMode: 'ptc' })
-const authority = captureRowSettings(authorityText, SETTING_DEFINITIONS)
-check('权威值捕获：10 项（含 webFetch / toolPresentationMode）全 captured 且 rowPresent=true',
-  Object.keys(authority.states).length === 10 && Object.values(authority.states).every((state) => state === 'captured') &&
-  authority.values.webFetch === true && authority.values.toolPresentationMode === 'ptc' && authority.rowPresent === true)
-check('rowPresent 区分「settings 行缺席（不可判定）」与「行在但缺项（可回填）」',
-  captureRowSettings('- id: other-row\n  config:\n    keep: true\n', SETTING_DEFINITIONS).rowPresent === false &&
-  captureRowSettings('- id: dsh-extra-plan-settings\n  config:\n    creativeMode: true\n', SETTING_DEFINITIONS).rowPresent === true)
-check('settings/preset-sync 共用 helper：effectivePluginsOf 与 hostRowDefaultsFromTemplate', (() => {
-  const plugins = [{ id: 'tool-web' }, { id: 'tool-presentation' }]
-  const row = { override: { plugins }, entry: { options: { config: { plugins: [{ id: 'own' }] } } }, inherited: { plugins: [{ id: 'inherited' }] } }
-  const defaults = hostRowDefaultsFromTemplate(assetAgent)
-  return effectivePluginsOf(row) === plugins && defaults.webFetch === false && defaults.toolPresentationMode === 'native'
-})())
-check('readProjectedValue：按 projectionLocator 读声明行子行现值（缺失/非法 → undefined，判定侧按出厂值参与比较）', (() => {
-  const plugins = [{ id: 'tool-web', config: { fetch: false, searchTimeoutMs: 60000 } }, { id: 'tool-presentation', config: { mode: 'native' } }]
-  const before = readProjectedValue(plugins, definition('toolPresentationMode'))
-  findPluginsRow(plugins, 'tool-presentation').config.mode = 'ptc'
-  const after = readProjectedValue(plugins, definition('toolPresentationMode'))
-  findPluginsRow(plugins, 'tool-presentation').config.mode = 'code'
-  const illegal = readProjectedValue(plugins, definition('toolPresentationMode'))
-  const missing = readProjectedValue(undefined, definition('webFetch'))
-  return before === 'native' && after === 'ptc' && illegal === undefined && missing === undefined
-})())
+const completeRun = await runSync(complete, '')
+check('V04 完整合法当前值同步 idle，真实 editor 零 edit', completeRun.result.action === 'idle' && completeRun.editor.state.edits.length === 0)
+const partialRun = await runSync({ plannerModel: complete.plannerModel }, legacyBoth)
+check('V04 旧值迁移真实 apply 只 edit 唯一 settings entry 且保留完整十键', partialRun.result.action === 'written' && partialRun.editor.state.edits.length === 1 && partialRun.editor.state.edits[0].id === SETTINGS_ROW_ID && Object.keys(partialRun.editor.state.edits[0].config).filter((key) => key !== 'gateWords').length === 10 && partialRun.editor.state.edits[0].config.gateWords !== undefined)
+const projectionRun = await runSync({}, projectionOnly)
+check('V04 仅旧投影实际 apply 目标为唯一 settings 行，旧文本未变', projectionRun.result.action === 'written' && projectionRun.editor.state.edits.length === 1 && projectionRun.editor.state.edits[0].id === SETTINGS_ROW_ID && projectionOnly === patchOf({ sync: true }))
+const bodyRun = await runSync({}, bodyOnly)
+check('V04 仅旧 body 实际 apply 目标为唯一 settings 行且 body-model 保留', bodyRun.result.action === 'written' && bodyRun.editor.state.edits.length === 1 && bodyRun.editor.state.edits[0].id === SETTINGS_ROW_ID && bodyRun.editor.state.edits[0].config.plannerModel === 'body-model')
+const noOldRun = await runSync({}, '')
+check('V04 无旧值实际 apply 默认配置且无旧行 edit', noOldRun.result.action === 'written' && noOldRun.editor.state.edits.length === 1 && noOldRun.editor.state.edits[0].id === SETTINGS_ROW_ID && noOldRun.editor.state.edits[0].config.exploreBudget === 18)
+const duplicateRun = await runSync({}, duplicatePatch)
+check('V04 歧义迁移实际只写唯一 settings 行一次', duplicateRun.result.action === 'written' && duplicateRun.editor.state.edits.length === 1 && duplicateRun.editor.state.edits[0].id === SETTINGS_ROW_ID)
 
-// ── live-config 构造期读盘（新载体：路径来自 resolveDocumentPath） ─────────
-{
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-rowconfig-'))
+const invalidCurrentGateCases = [
+  ['missing-key', (() => { const value = structuredClone(gate); delete value.routeDirect; return value })()],
+  ['duplicate-value', { ...gate, routePlan: gate.routeDirect }],
+  ['recommended-suffix', { ...gate, routeDirect: gate.routeDirect + ' (recommended)' }],
+  ['crlf', { ...gate, routeDirect: 'direct\r\nline' }],
+  ['js-expression', { ...gate, routeDirect: { __jsExpr: 'must-not-run' } }],
+]
+for (const [kind, words] of invalidCurrentGateCases) {
+  const invalidCurrent = { ...complete, gateWords: words }
+  const resolveBefore = structuredClone(invalidCurrent)
+  const resolveFailed = throws(() => resolveUnifiedConfig({ settingsValues: invalidCurrent, readPatch: () => legacyBoth }), '当前全局 gateWords 非法')
+  check('V02 ' + kind + ' resolve 拒绝且完整当前对象深等不变', resolveFailed && isDeepStrictEqual(invalidCurrent, resolveBefore))
+
+  const restateBefore = structuredClone(invalidCurrent)
+  const restateFailed = throws(() => restateSettingsConfig(invalidCurrent, {}, { webFetch: true }), 'gateWords')
+  check('V02 ' + kind + ' restate 拒绝且输入深等不变', restateFailed && isDeepStrictEqual(invalidCurrent, restateBefore))
+
+  const invalidEditor = makeEditor(invalidCurrent)
+  const invalidSettingsConfig = invalidEditor.state.rows[0].entry.options.config
+  const syncInputBefore = structuredClone(invalidSettingsConfig)
+  const storageBefore = structuredClone(invalidEditor.state)
+  const inputIdentity = invalidSettingsConfig === invalidEditor.state.rows[0].entry.options.config
+  let applyCount = 0
+  let syncFailed = false
+  let syncError = ''
   try {
-    const offFile = join(dir, 'cordis-off.patch.yml')
-    const onFile = join(dir, 'cordis-on.patch.yml')
-    writeFileSync(offFile, settingsRowYaml({ anchoredBootstrap: 'false', runcodeCatchGate: 'true', exploreBudget: '7' }), 'utf8')
-    writeFileSync(onFile, settingsRowYaml({ anchoredBootstrap: 'true', exploreBudget: '9' }), 'utf8')
-    const lc = createLiveConfig({ resolveDocumentPath: () => offFile, fallbackDefaults: { exploreBudget: 18, runcodeCatchGate: false, anchoredBootstrap: true } })
-    check('LC-A 构造期读盘：首次取值即 settings 行真值', lc.exploreBudget === 7 && lc.runcodeCatchGate === true && lc.anchoredBootstrap === false)
-    check('LC-B resolveDocumentPath 变化 → 取值跟进（路径参与 stamp 判定）', (() => { let current = offFile; const lc2 = createLiveConfig({ resolveDocumentPath: () => current, fallbackDefaults: { exploreBudget: 18 } }); const first = lc2.exploreBudget; current = onFile; return first === 7 && lc2.exploreBudget === 9 })())
-    const missing = createLiveConfig({ resolveDocumentPath: () => join(dir, 'nope.yml'), fallbackDefaults: { exploreBudget: 18 } })
-    check('LC-C resolveDocumentPath 指向不存在文件 → 回退 fallbackDefaults（不抛）', missing.exploreBudget === 18)
-    const noPath = createLiveConfig({ resolveDocumentPath: () => '', fallbackDefaults: { exploreBudget: 18 } })
-    check('LC-D 路径不可得（configEditor 未就绪）→ 回退 fallbackDefaults（不读旧预设目录）', noPath.exploreBudget === 18)
-    writeFileSync(offFile, settingsRowYaml({ anchoredBootstrap: 'false', exploreBudget: '421' }), 'utf8')
-    check('LC-E 文件改写后 stamp 变化 → 取值跟进', lc.exploreBudget === 421)
-    // U-1：2 项宿主行设置的读取路径 = settings 行（与 8 项同一 rowLocator），
-    // 权威值非出厂值时按权威值返回；settings 行缺项时回退 fallback/内置默认。
-    writeFileSync(offFile, settingsRowYaml({ webFetch: 'true', toolPresentationMode: 'ptc' }), 'utf8')
-    const lcHostRows = createLiveConfig({ resolveDocumentPath: () => offFile, fallbackDefaults: { webFetch: false, toolPresentationMode: 'native' } })
-    check('LC-F 2 项宿主行设置读取路径 = settings 行（webFetch=true / toolPresentationMode=ptc）', lcHostRows.webFetch === true && lcHostRows.toolPresentationMode === 'ptc')
-    check('LC-F2 settings 行缺这 2 项 → 回退 fallbackDefaults（不读声明行、不读旧预设目录）', (() => {
-      writeFileSync(offFile, settingsRowYaml({ exploreBudget: '18' }).replace('    webFetch: false\n', '').replace("    toolPresentationMode: 'native'\n", ''), 'utf8')
-      const lcFallback = createLiveConfig({ resolveDocumentPath: () => offFile, fallbackDefaults: { webFetch: false, toolPresentationMode: 'native' } })
-      const lcBuiltin = createLiveConfig({ resolveDocumentPath: () => offFile })
-      return lcFallback.webFetch === false && lcFallback.toolPresentationMode === 'native' && lcBuiltin.webFetch === false && lcBuiltin.toolPresentationMode === 'native'
-    })())
-    // LC-G：无 fallbackDefaults（configEditor 未就绪）→ BUILTIN_DEFAULTS 兜底 = 生成常量（= 资产叶值）。
-    const lcSuffixDefault = createLiveConfig({ resolveDocumentPath: () => '' })
-    check('LC-G 路径不可得且无 fallback → plannerPromptSuffix 兜底 = 生成常量（资产叶值）', lcSuffixDefault.plannerPromptSuffix === '你的深度思考部分需要以"好了，现在我以全局视角来看待这个问题"开头')
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
+    await syncPreset({
+      settingsValues: invalidSettingsConfig,
+      readPatch: () => legacyBoth,
+      apply: async (plan) => {
+        applyCount += 1
+        await applyPlanToEditor(plan, invalidEditor)
+      },
+    })
+  } catch (error) {
+    syncFailed = true
+    syncError = String(error && error.message || error)
+  }
+  const inputUnchanged = isDeepStrictEqual(invalidSettingsConfig, syncInputBefore)
+  const storageUnchanged = isDeepStrictEqual(invalidEditor.state, storageBefore)
+  check('V02 ' + kind + ' sync 直接绑定真实 entry.options.config 身份', inputIdentity)
+  check('V02 ' + kind + ' sync 严格失败且错误指向当前全局 gateWords', syncFailed && syncError.includes('当前全局 gateWords 非法'))
+  check('V02 ' + kind + ' sync 在apply前失败、apply/edit均为零且输入/完整存储深等不变', applyCount === 0 && invalidEditor.state.edits.length === 0 && inputUnchanged && storageUnchanged)
+}
+
+const declaredOnlyGate = { routeDirect: '旧直', routePlan: '旧规', routeDisagree: '旧异', approvalApprove: '旧同', approvalReplan: '旧转', purposeRefine: '旧完', purposeRedo: '旧重' }
+const declaredOnlyPlugins = structuredClone(definition.plugins)
+findPluginRow(declaredOnlyPlugins, 'tool-web').config.fetch = true
+findPluginRow(declaredOnlyPlugins, 'tool-presentation').config.mode = 'ptc'
+findPluginRow(declaredOnlyPlugins, 'extra-plan').config.gateWords = structuredClone(declaredOnlyGate)
+const declaredOnlyBefore = structuredClone(declaredOnlyPlugins)
+const declaredOnlyRun = await syncPreset({ declaredPlugins: declaredOnlyPlugins })
+const declaredOnlyExpected = { webFetch: true, toolPresentationMode: 'ptc', gateWords: declaredOnlyGate }
+check('F03 syncPreset 仅 declaredPlugins 保留旧 web/mode/自定义七词', declaredOnlyRun.action === 'written' && isDeepStrictEqual(projectionOf(declaredOnlyRun), declaredOnlyExpected))
+check('F03 declaredPlugins 回归输入不变', isDeepStrictEqual(declaredOnlyPlugins, declaredOnlyBefore))
+const explicitGlobalRun = await syncPreset({
+  declaredPlugins: declaredOnlyPlugins,
+  settingsValues: { webFetch: false, toolPresentationMode: 'native', gateWords: gate },
+})
+const explicitGlobalExpected = { webFetch: false, toolPresentationMode: 'native', gateWords: gate }
+check('F03 显式全局值优先于 declaredPlugins 旧投影/词表', explicitGlobalRun.action === 'written' && isDeepStrictEqual(projectionOf(explicitGlobalRun), explicitGlobalExpected))
+let readPatchCalls = 0
+const readPatchRun = await syncPreset({ readPatch: () => { readPatchCalls += 1; return bodyOnly } })
+const readPatchExpected = { webFetch: true, toolPresentationMode: 'ptc', gateWords: gate }
+check('F03 readPatch 分支保留旧 body 解析且只读取一次原始输入', readPatchRun.action === 'written' && readPatchCalls === 1 && isDeepStrictEqual(projectionOf(readPatchRun), readPatchExpected))
+const explicitLegacyGate = { routeDirect: '显直', routePlan: '显规', routeDisagree: '显异', approvalApprove: '显同', approvalReplan: '显转', purposeRefine: '显完', purposeRedo: '显重' }
+const explicitLegacyState = {
+  authority: { values: {}, states: {} },
+  projection: { webFetch: false, toolPresentationMode: 'native' },
+  projectionSources: { webFetch: 'legacy-projection', toolPresentationMode: 'legacy-projection' },
+  gateWords: explicitLegacyGate,
+  gateWordsSource: 'legacy-projection',
+  diagnostics: ['explicit legacyState marker'],
+  legacyPlugins: declaredOnlyPlugins,
+}
+const explicitLegacyRun = await syncPreset({ declaredPlugins: declaredOnlyPlugins, readPatch: () => bodyOnly, legacyState: explicitLegacyState })
+const explicitLegacyExpected = { webFetch: false, toolPresentationMode: 'native', gateWords: explicitLegacyGate }
+check('F03 显式 legacyState 优先于 readPatch 与 declaredPlugins', explicitLegacyRun.action === 'written' && isDeepStrictEqual(projectionOf(explicitLegacyRun), explicitLegacyExpected) && explicitLegacyRun.plan.diagnostics.includes('explicit legacyState marker'))
+
+const invalidCurrent = { ...complete, gateWords: invalidGate }
+const invalidEditor = makeEditor(invalidCurrent)
+check('V02 缺键样例保留显式非法值，合法矩阵已单独覆盖', isDeepStrictEqual(invalidCurrent.gateWords, invalidGate))
+const repaired = restateSettingsConfig(invalidCurrent, {}, { gateWords: gate })
+check('V02 合法显式整组修复允许且不改输入', JSON.stringify(repaired.gateWords) === JSON.stringify(gate) && JSON.stringify(invalidCurrent.gateWords) === JSON.stringify(invalidGate))
+const validNoGatePatch = restateSettingsConfig(complete, {}, { webFetch: true })
+check('V02 合法普通 patch 保留当前 gateWords 与其它九项', validNoGatePatch.webFetch === true && validNoGatePatch.toolPresentationMode === complete.toolPresentationMode && validNoGatePatch.exploreBudget === complete.exploreBudget && JSON.stringify(validNoGatePatch.gateWords) === JSON.stringify(gate))
+const persistentMigrationCases = [
+  {
+    caseName: 'complete-current-old',
+    settingsValues: complete,
+    patch: legacyBoth,
+    expectedEditCount: 0,
+    expectedGlobalAfter: structuredClone(complete),
+  },
+  {
+    caseName: 'partial-current-old',
+    settingsValues: { plannerModel: complete.plannerModel },
+    patch: legacyBoth,
+    expectedEditCount: 1,
+    expectedGlobalAfter: {
+      ...defaultGlobalAfter(),
+      ...legacyBodyDefaults,
+      ...legacyProjectionDefaults,
+      plannerModel: complete.plannerModel,
+      gateWords: structuredClone(gate),
+    },
+  },
+  {
+    caseName: 'projection-only',
+    settingsValues: {},
+    patch: projectionOnly,
+    expectedEditCount: 1,
+    expectedGlobalAfter: {
+      ...defaultGlobalAfter(),
+      ...legacyProjectionDefaults,
+      gateWords: structuredClone(gate),
+    },
+  },
+  {
+    caseName: 'body-only',
+    settingsValues: {},
+    patch: bodyOnly,
+    expectedEditCount: 1,
+    expectedGlobalAfter: {
+      ...defaultGlobalAfter(),
+      ...legacyBodyDefaults,
+      gateWords: structuredClone(gate),
+    },
+  },
+  {
+    caseName: 'no-old-value',
+    settingsValues: {},
+    patch: '',
+    expectedEditCount: 1,
+    expectedGlobalAfter: defaultGlobalAfter(),
+  },
+  {
+    caseName: 'duplicate-old',
+    settingsValues: {},
+    patch: duplicatePatch,
+    expectedEditCount: 1,
+    expectedGlobalAfter: defaultGlobalAfter(),
+  },
+  {
+    caseName: 'invalid-old',
+    settingsValues: {},
+    patch: invalidOldPatch,
+    expectedEditCount: 1,
+    expectedGlobalAfter: {
+      ...defaultGlobalAfter(),
+      ...legacyBodyDefaults,
+      gateWords: structuredClone(gate),
+    },
+  },
+  {
+    caseName: 'complete-current-no-old',
+    settingsValues: complete,
+    patch: '',
+    expectedEditCount: 0,
+    expectedGlobalAfter: structuredClone(complete),
+  },
+]
+for (const { caseName, settingsValues, patch, expectedEditCount, expectedGlobalAfter } of persistentMigrationCases) {
+  for (const legacyVisible of [true, false]) {
+    const run = await runPersistentSync(settingsValues, patch, legacyVisible)
+    const mode = legacyVisible ? 'visible' : 'withdrawn'
+    const legacyRows = run.editor.state.store.legacyRows
+    const oldIds = legacyRows.map((row) => row.id)
+    const editedIds = run.editor.state.edits.map((edit) => edit.id)
+    const actualGlobalAfter = run.editor.state.store.settings.config
+    const expectedGlobalKeys = Object.keys(expectedGlobalAfter).sort()
+    const actualGlobalKeys = Object.keys(actualGlobalAfter).sort()
+    const allGlobalKeys = [...new Set([...expectedGlobalKeys, ...actualGlobalKeys])]
+    const differingKeys = allGlobalKeys.filter((key) => !isDeepStrictEqual(actualGlobalAfter[key], expectedGlobalAfter[key]))
+    const globalDeepEqual = isDeepStrictEqual(actualGlobalAfter, expectedGlobalAfter)
+    const globalKeySetEqual = JSON.stringify(actualGlobalKeys) === JSON.stringify(expectedGlobalKeys)
+    const legacyStoreDeepEqual = isDeepStrictEqual(run.legacyBefore, run.legacyAfter)
+    const shapeOk = legacyRows.every((row) => typeof row.id === 'string' && typeof row.name === 'string' && row.config !== null && typeof row.config === 'object' && Object.prototype.hasOwnProperty.call(row, 'gateWords') && Object.prototype.hasOwnProperty.call(row, 'plugins'))
+    const configTreeOk = legacyVisible
+      ? run.editor.state.rows.slice(1).map((row) => row.entry.options.id).join('|') === oldIds.join('|')
+      : run.editor.state.rows.length === 1 && run.editor.state.rows[0].entry.options.id === SETTINGS_ROW_ID
+    console.log('K03 ' + caseName + ' ' + mode + ' expectedGlobalAfter=' + JSON.stringify(expectedGlobalAfter) + ' actualGlobalAfter=' + JSON.stringify(actualGlobalAfter) + ' differingKeys=' + JSON.stringify(differingKeys) + ' editCount=' + run.editor.state.edits.length + ' expectedEditCount=' + expectedEditCount + ' editedIds=' + JSON.stringify(editedIds) + ' legacyStoreDeepEqual=' + legacyStoreDeepEqual)
+    check('V04 Q03 ' + caseName + ' ' + mode + ' 完整十项+gateWords实际全局与独立期望deep-equal', globalDeepEqual)
+    check('V04 Q03 ' + caseName + ' ' + mode + ' 实际全局键集合与独立期望一致', globalKeySetEqual)
+    check('V04 Q03 ' + caseName + ' ' + mode + ' 旧store含id/name/config/gateWords/plugins且before/after deep-equal', shapeOk && legacyStoreDeepEqual && run.legacyBefore.length === legacyRows.length)
+    check('V04 Q03 ' + caseName + ' ' + mode + ' configuration树与撤出状态准确，编辑仅全局ID', configTreeOk && run.editor.state.edits.length === expectedEditCount && editedIds.every((id) => id === SETTINGS_ROW_ID) && run.editor.state.rejectedEdits.length === 0)
+    if (legacyRows.length > 0) {
+      const patchBeforeProbe = run.editor.readPatch()
+      const nameBeforeProbe = legacyRows[0].name
+      legacyRows[0].name = nameBeforeProbe + '-probe'
+      const patchChanged = run.editor.readPatch() !== patchBeforeProbe
+      legacyRows[0].name = nameBeforeProbe
+      check('V04 Q03 ' + caseName + ' ' + mode + ' readPatch由可变store实时生成且恢复后deep-equal', patchChanged && isDeepStrictEqual(run.legacyBefore, run.editor.state.store.legacyRows))
+    }
   }
 }
 
-// ── 声明行 plugins 行内定位/重述原语（供 T2/T3 写链复用） ────────────────
-{
-  const plugins = [{ id: 'tool-web', name: 'x', config: { fetch: false, searchTimeoutMs: 60000 } }, { id: 'grp', name: 'cordis:group', group: true, config: [{ id: 'extra-plan', config: { creativeMode: false } }] }]
-  check('findPluginsRow 递归覆盖 group 子行；缺失返回 null', findPluginsRow(plugins, 'extra-plan') !== null && findPluginsRow(plugins, 'no-such-row') === null)
-  const restated = restatePluginsRow(plugins, 'tool-web', { fetch: true })
-  check('restatePluginsRow 深拷贝整体重述：目标键改、其余键与原对象不变', restated[0].config.fetch === true && restated[0].config.searchTimeoutMs === 60000 && plugins[0].config.fetch === false)
-  check('restatePluginsRow 目标行缺失 → null（调用方据此判定 404）', restatePluginsRow(plugins, 'no-such-row', { x: 1 }) === null)
+const blockedLegacyEditor = makePersistentEditor({}, legacyBoth, true)
+const blockedBefore = structuredClone(blockedLegacyEditor.state.store.legacyRows)
+for (const legacyId of ['extra-plan-preset-sync', 'preset-extra-plan']) {
+  const legacyEntry = blockedLegacyEditor.state.allRows.find((row) => row.entry.options.id === legacyId).entry
+  let rejected = false
+  try { await blockedLegacyEditor.edit(legacyEntry, () => ({ overwritten: true })) } catch { rejected = true }
+  check('V04 Q03 误写旧ID ' + legacyId + ' 明确失败且旧store deep-equal', rejected && blockedLegacyEditor.state.rejectedEdits.at(-1).id === legacyId && isDeepStrictEqual(blockedBefore, blockedLegacyEditor.state.store.legacyRows))
 }
+
+const captured = captureRowSettings('- id: dsh-extra-plan-settings\n  config:\n    plannerModel: x\n', SETTING_DEFINITIONS)
+check('V04 当前唯一行缺项可识别 rowPresent=true，不能猜旧行', captured.rowPresent === true && captured.states.plannerModel === 'captured' && captured.states.webFetch === 'missing')
 
 console.log('\n通过 ' + pass + ', 失败 ' + fail)
 process.exit(fail === 0 ? 0 : 1)

@@ -14,7 +14,7 @@
 
 | profile | 当前职责 | 本仓库 AI 边界 |
 |:--|:--|:--|
-| web | 直接安装核心包；启动 `preset-sync`；承载两个公开宿主行与内部官方 adapter | 不删除核心包/预设，不写生产 profile |
+| web | 直接安装核心包；由 `dsh-extra-plan-settings` 唯一全局 owner 启动内部同步、承载 10 项配置与官方 adapter | 不删除核心包/预设，不写生产 profile |
 | qqbot | 安装精简兼容包；静态 patch、旧块迁移与 web 包建链 | 不分发核心预设；真实消息、`/preset`、question/approval（提问/批准）、allow-build/postinstall（安装后脚本）为用户部署后 HUMAN |
 
 `$DSH_HOME/profiles`、`.agent-presets` 和其它生产目录只允许用户侧部署流程触碰；本轮不做同步、清锁、重启或现场修复。

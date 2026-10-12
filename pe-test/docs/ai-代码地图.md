@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-10-10 14:30:43（脚本自动更新时间戳行）
+> 上次同步：2026-10-12 16:42:58（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -43,12 +43,12 @@
 | 只读子代理／验收者只读（reviewer/readonly） | index.js | childReadonlyGateReason、shellMutationReason、isReadOnlyChildByCatalog |
 | 子代理沙箱下限／权限抬升（floor/sandbox） | lib/agent-runtime.js、index.js | childPolicyNeedsFloor、createAgentRuntime |
 | 工具目录折叠／PTC 单入口（catalog/ptc） | index.js | catalogIsCollapsed |
-| 设置后端／权威值上移 settings 行 + 公开 preset-sync 投影／configEditor.edit 写链（settings 行 10 项 volatile Config = 权威值唯一落点） | lib/settings.js、lib/preset-settings.js、lib/preset-sync.js | apply、createApiHandler、proPayload、readHostRowState、findSettingsRow、effectiveRowConfig、restatePresetSyncConfig、findPluginsRow、applyPlan |
-| 设置值行定位与捕获（sourceLocator/rowLocator/projectionLocator + legacyProjectionLocator；group 8+2；PUT 仅投影，HTTP 200 + applied 领域回执） | lib/preset-settings.js、lib/settings.js | captureSettings、captureRowSettings、hostRowDefaultsFromTemplate、readProjectedValue、resolveSetting、findTextLocatorMatches、patchYamlScalar、serializeScalar、publicField |
+| 设置后端／唯一全局 owner 与旧值迁移（10 项 volatile Config + 内存 definition/adapter） | lib/settings.js、lib/preset-settings.js、lib/preset-sync.js | apply、createApiHandler、proPayload、readUnifiedState、findSettingsRow、effectiveRowConfig、resolveUnifiedConfig、restateSettingsConfig、findPluginsRow、applyPlan、mountPresetSync |
+| 设置值定位与捕获（source/row/legacy projection locator；10 项全局行 + 旧行安全读取；PUT 兼容入口合并全局值） | lib/preset-settings.js、lib/settings.js、lib/preset-sync.js | captureSettings、captureRowSettings、hostRowDefaultsFromTemplate、readProjectedValue、resolveSetting、findTextLocatorMatches、patchYamlScalar、serializeScalar、publicField、readLegacyState |
 | 配置热读／生效标志／后端权威行更新无需重启（live-config/hot-read；增强 stamp dev/ino/size/mtimeNs/ctimeNs，兼容回退 ino/size/mtimeMs/ctimeMs） | plugins/dsh-extra-plan/lib/live-config.js、plugins/dsh-extra-plan/index.js | createLiveConfig、refresh、read、currentPath、readDiskValues、statStamp、pick |
-| 预设核对／纯 definition／官方 adapter／旧行非破坏迁移 | lib/preset-sync.js、lib/preset-settings.js | syncPreset、assetDefinition、definitionWithProjection、readAuthoritySettings、planHostRowProjection、effectiveRowConfig、restatePresetSyncConfig、restatePresetPlugins、declarationBodyMatchesAsset、stripUserWritable、carryUserWritable、assetPlugins、pluginRowIds、readLegacyPresetState、readDeclaredPluginsFromPatch、applyPlan |
-| 共享客户端表单／0.2 独立 tab 移除／legacy keyed row 条件接线（宿主 slot 缺失走后备路径；settings 后端仍活动） | lib/client.js | apply、SettingsCard、ExtraPlanForm、Legacy017SettingsCard、registerLegacy017RowConfig |
-> client.js 设置入口定位：`LEGACY_017_ROW_CONFIG_KEY` L412；`Legacy017SettingsCard` L414-L416；`registerLegacy017RowConfig` L418-L427；唯一 `configForms.whileServed` legacy effect L429。0.2 独立 `settings.plugins.tab` 不注册，legacy keyed row 是否呈现取决于宿主 slot，缺失时走后备路径。
+| 预设核对／纯 definition／官方 adapter／旧行非破坏迁移 | lib/preset-sync.js、lib/preset-settings.js | syncPreset、assetDefinition、definitionWithProjection、readUnifiedState、readLegacyState、resolveUnifiedConfig、restateSettingsConfig、restatePresetPlugins、declarationBodyMatchesAsset、stripUserWritable、carryUserWritable、assetPlugins、pluginRowIds、readDeclaredPluginsFromPatch、applyPlan |
+| 同页共享客户端表单／bundle.config 优先与 detail.section 当前包回退（不注册 row/item/tab） | lib/client.js | apply、SettingsCard、ExtraPlanForm、BundleSettingsCard、DetailSettingsSection、registerClientSurfaces |
+> client.js 设置入口定位：`BundleSettingsCard`、`DetailSettingsSection` 与 `registerClientSurfaces`；bundle.config 以包名 key 优先，detail.section 仅在 bundle slot 不可用时当前包回退；ConfigForms.get(NS) 订阅快照并一次 mutate 十项，不注册 row.config/settings.plugins.tab/plugins.item。
 | 执行者工具裁剪／deny（executor-spawn；注册引用计数幂等 = 稳定键幂等——槽键 = 服务实现本体（读全局注册符号 Symbol.for('cordis.original')，取不到时降级回代理本身），跨预设世代/行重建共享同一注册与 disposer） | lib/executor-spawn.js | apply、slotKey |
 | qqbot 兼容自愈／建链 | dsh-qqbot-user-questions/lib/heal.js（选装包，本机未安装） | healQqbotCompatibility、ensureDshExtraPlanLink |
 | YAML 默认值真源／生成／last-known-good（上次已知良好版本）（exploreBudget/plannerPromptSuffix）＋纯 preset definition 产物（顶层条目按 PLUGINS_INDENT 平移 · --check 比对） | lib/preset-settings.js、scripts/generate-runtime-defaults.mjs、lib/preset-defaults.generated.js、assets/presets/extra-plan/preset-definition.generated.yml | resolveTemplateSettingDefault、renderRuntimeDefaults、renderPresetDefinition、topLevelRowsOf、generateRuntimeDefaults、indentBlock、quoteYamlSingle、assertDefinition、assertParses、writeOrCheck |
@@ -76,7 +76,7 @@
 | plugins/dsh-extra-plan/lib/agent-session.js | 32 | 会话事件与子代理识别的唯一来源：sessionEvents/isSubagentChild 零依赖纯函数，被 index.js 与 lib/model-routing.js 共用（无镜像副本；不 import index.js） |
 | plugins/dsh-extra-plan/lib/assembly-presentation.js | 242 | A/C/M 与 skill catalog 模型可见投影；从 scoped tools 读 schema/模式，SDK renderer 按 language 整体重建；F/PTC 的 tool:read 由 index.js 手写，L 段回宿主原文。 |
 | plugins/dsh-extra-plan/lib/client-carrier.js | 7 | settings 内部 Loader Group 的无副作用 Client carrier；不对应 bundle row/公开 export。 |
-| plugins/dsh-extra-plan/lib/client.js | 437 | 客户端模块加载共享样式/词条与共享 SettingsCard/ExtraPlanForm；0.2 独立 `settings.plugins.tab` 不注册，唯一 legacy keyed row 仅在宿主提供对应 slot 时呈现，slot 缺失时走宿主后备路径；后端 settings API/Config/投影链独立活动。 |
+| plugins/dsh-extra-plan/lib/client.js | 327 | 客户端模块加载共享样式/词条与 SettingsCard/ExtraPlanForm；bundle.config 在当前包详情直接呈现，detail.section 仅作当前包回退；后端全局 settings API/Config/旧值迁移与 definition/adapter 由同一 owner 活动。 |
 | plugins/dsh-extra-plan/lib/executor-spawn.js | 132 | 执行者子代理 provider：委托宿主 spawn，注入工具 deny（防委派递归/追问）；registerProvider 走引用计数幂等（**稳定键幂等**：模块级 WeakMap 槽表的槽键 = subagents 服务实现本体——读全局注册符号 Symbol.for('cordis.original')，由 traceable 代理 get 拦截器返回 target，root 单例跨预设世代恒同一对象；取不到符号值时降级回代理本身；跨预设世代/行重建复用同一注册，归零才反注册） |
 | plugins/dsh-extra-plan/lib/gate-decisions.js | 1046 | 四级闸门与角色分流判定纯函数集 |
 | plugins/dsh-extra-plan/lib/gate-words.js | 114 | 闸门关键词共享契约（唯一值源是 YAML 的 config.gateWords）：字段规格 GATE_WORD_FIELDS/GATE_WORDS_GROUP_DEFINITION + 整组严格校验 validateGateWords（错误一律以 extra-plan: config.gateWords 开头）+ 运行时词表 createGateRuntime（显式入参严格校验，无默认词表）；纯模块：不含任何出厂词值、不读文件与环境变量，被 index.js（运行时）与 lib/preset-sync.js（启动自愈）共享（迁移叶 locator 已随跨版本搬迁链删除） |
@@ -85,7 +85,7 @@
 | plugins/dsh-extra-plan/lib/planner-budget.js | 137 | planner 工具计数、消息后缀/预算提示/耗尽文案；**预算提醒消息经宿主 createUserMessage 构造，source 用生产者自有 kind `plugin:@local/dsh-extra-plan`（v4 行准入禁旧包裹 `plugin`，违者会话当场终止）**；默认预算由生成模块提供，FREE_TOOLS 仍在根入口 |
 | plugins/dsh-extra-plan/lib/preset-defaults.generated.js | 4 | 由 YAML 模板生成的 runtime fallback（回退） 常量；generated（生成）/do not edit（勿手改） |
 | plugins/dsh-extra-plan/lib/preset-settings.js | 3 | 10 项设置描述与 YAML 定位；settings 行是权威值，声明行只投影 2 项宿主行；capture/投影读取、plugins 行整体重述与保格式标量改写。 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | 627 | 读取并严格校验纯 definition，迁移旧 preset-extra-plan 的支持投影，收敛公开 preset-sync 行后经 ctx.plugin 挂载官方 AgentPreset；新写入仅经 configEditor.edit。 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | 885 | 读取并严格校验纯 definition；旧 preset-extra-plan/extra-plan-preset-sync 仅安全读取迁移，统一全局行补齐后派生 definition 并由同一 owner 挂载官方 AgentPreset；新写入仅经唯一全局行 configEditor.edit。 |
 | plugins/dsh-extra-plan/lib/preset-yaml.js | 448 | 预设 YAML 纯职责模块：解析、行与叶定位及歧义分类、权威与投影值捕获、保格式标量改写。 |
 | plugins/dsh-extra-plan/lib/run-code-scanner.js | 216 | run_code 无宿主状态词法扫描器：字符串/注释遮蔽、括号配平、tools 调用点收集与动态访问判定。 |
 | plugins/dsh-extra-plan/lib/run-code-static.js | 569 | run_code 纯静态解析/理由模块：安全 JSON/JS literal 解析、动态 argsText 瀑布兜底、写模式 hint、工具组拆解、ask 返回值白名单、调用点计数与双兼容 dispatch cap；仅显式注入普通依赖，不持有宿主状态。 |
@@ -97,7 +97,7 @@
 | plugins/dsh-extra-plan/lib/save-tool-factories.js | 215 | 显式依赖工厂：定义 save_plan/save_probe schema/output/render/execute；证据引用报错以 JSON.stringify(ref) 呈现（首字符属装饰集时附「疑似含 Markdown 装饰」提示）；不缓存 ctx/agent/会话状态 |
 | plugins/dsh-extra-plan/lib/sdk-text-cache.js | 161 | apply 级 agent-keyed WeakMap SDK 文本缓存：完整 renderer 输入保守指纹、language/renderer 身份比较、并发 Promise 合并、reject/过期 Promise 不回写、dispose 回收；不持有 sessionId 或 PromptAssembly |
 | plugins/dsh-extra-plan/lib/settings-contract.js | 163 | 服务端设置 descriptor 单一合同：10 项的类型/默认值/校验/UI 与权威-投影双定位器，并导出分组与投影遍历源 |
-| plugins/dsh-extra-plan/lib/settings.js | 296 | 10 字段 volatile Config、页面策略与 loopback GET/PUT；权威值在 settings 行，PUT 仅投影声明行，no-op 不写盘，GET 按权威值→投影→默认回退。 |
+| plugins/dsh-extra-plan/lib/settings.js | 256 | 10 字段 volatile Config、页面策略与 loopback GET/PUT；权威值在唯一 settings 行，PUT 先拒绝空/null/数组/原始/未知/非法混合载荷并严校验当前 gateWords，再只 edit 全局行，no-op 不写盘。 |
 | plugins/dsh-extra-plan/lib/shell-mutation.js | 82 | 跨平台命令文本解码与 pwsh/bash 写形态判定；纯函数、不持有 apply 状态 |
 | plugins/dsh-extra-plan/lib/usage-ledger.js | 174 | per-apply usage 账本：cursor 表读取与降级告警、按水位增量 fold 会话 usage 并追加 JSONL。 |
 | plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | 155 | 从 agent.cordis.yml 校验并生成 runtime 默认常量 + 纯 preset-definition.generated.yml（顶层条目逐字平移）；支持 --check 且坏源不覆盖 last-known-good（上次已知良好版本） |
@@ -164,25 +164,28 @@
 | plugins/dsh-extra-plan/lib/assembly-presentation.js | toolSdkSchemasOf | L213-231 | 优先读取 tools.sdkSchemas；兼容旧服务时从 schemas 补 owned（自有） output schema，供 SDK renderer 使用 |  |
 | plugins/dsh-extra-plan/lib/assembly-presentation.js | toolPresentationModeOf | L233-242 | 从 scoped tools registry 读取 native/ptc/both 模式 |  |
 | plugins/dsh-extra-plan/lib/client-carrier.js | apply | L5-7 | 空实现的内部 Client carrier 入口：由 settings 动态 Loader entry 通过 dsh.client manifest 触发 lib/client.js 加载，不注册 row、export 或业务副作用。 |  |
-| plugins/dsh-extra-plan/lib/client.js | factory | L3-436 | 模块工厂：接收 require，装配并返回本插件客户端模块导出（apply 与 inject 声明），由 __ModuleLoader__ 调用。 |  |
-| plugins/dsh-extra-plan/lib/client.js | apply | L133-431 | 客户端插件入口：注入 esp-* 样式表与中英词条；共享 SettingsCard/ExtraPlanForm 由唯一 legacy keyed row 按宿主 slot 条件呈现，0.2 独立 tab 不注册，slot 缺失走 configEditor/SettingsForms 或 profile 权威行后备路径；settings/preset-sync 后端组件独立活动。 |  |
-| plugins/dsh-extra-plan/lib/client.js | optionLabel | L144-149 | 选项显示名：优先 optionLocale 词条，其次布尔 trueValue/falseValue，最后原值字符串 | apply 内部闭包（设置页控件共用） |
-| plugins/dsh-extra-plan/lib/client.js | optionValue | L151-157 | 把后端返回的字符串值映射回 field.options 里的原始类型（不在选项中则原样返回） | apply 内部闭包（设置页控件共用） |
-| plugins/dsh-extra-plan/lib/client.js | renderControl | L159-197 | 按 field.control 渲染受控控件：textarea／number（透传 min、step）／select（选项文案走 optionLabel、回值走 optionValue）／其余回落 text input；统一 disabled 与 onChange 回传 |  |
-| plugins/dsh-extra-plan/lib/client.js | onChange | L165 | textarea 分支的 onChange：把多行文本框当前字符串值透传给上层 onChange 回调。 |  |
-| plugins/dsh-extra-plan/lib/client.js | onChange | L176 | number 分支的 onChange：把数字输入框当前字符串值原样透传给上层回调，不做数值转换。 |  |
-| plugins/dsh-extra-plan/lib/client.js | onChange | L185 | select 分支的 onChange：把选中值经 optionValue 归一化回原始选项类型后交给上层回调。 |  |
-| plugins/dsh-extra-plan/lib/client.js | onChange | L195 | 默认 text 分支的 onChange（非 textarea/number/select 时）：把单行文本框字符串值透传给上层回调。 |  |
-| plugins/dsh-extra-plan/lib/client.js | ExtraPlanForm | L204-398 | 共享 8 项 UI 设置表单：从规范化 ConfigForm.state 播种 draft（value/writable/revision/status），按 general/pro 两组 esp-section 渲染字段，footer 一次性提交 mutate(set ops + revision fence) 后提示已保存/保存失败；由唯一 legacy keyed row 按宿主 slot 条件呈现。 |  |
-| plugins/dsh-extra-plan/lib/client.js | fieldValue | L263-270 | 取字段草稿值：number 控件把草稿转 Number（非有限数值原样返回），其余控件原样返回 | ExtraPlanForm 内部闭包 |
-| plugins/dsh-extra-plan/lib/client.js | reconcileHostRows | L273-291 | mutate 失败/不确定时 GET 最新 authority，再 PUT 投影并验证 projection.applied=true；失败显示结论级错误 |  |
-| plugins/dsh-extra-plan/lib/client.js | saveAll | L293-336 | 初次 PUT 严格验证 projection.applied=true；成功后一次 mutate 10 op，不确定结果收敛到最新 authority |  |
-| plugins/dsh-extra-plan/lib/client.js | renderField | L344-355 | 按 field 渲染 8 项 UI 设置中的一个字段：esp-field 内「locale 名称→renderControl（随 snapshot.writable 禁用）→静态 hint」，编辑写回 draft 并清提示 | ExtraPlanForm 内部闭包；本地稳定字段样式 |
-| plugins/dsh-extra-plan/lib/client.js | SettingsCard | L401-407 | SHARED 卡片根组件：接收规范化 configForm/translate，view=summary 返回一行描述，其余渲染 esp-wrap 与唯一 ExtraPlanForm；不直接读取旧宿主 props。 |  |
-| plugins/dsh-extra-plan/lib/client.js | Legacy017SettingsCard | L414-416 | 0.1.7 row wrapper：逐项把旧 props.form/props.t/props.view 映射为共享 SettingsCard 的 configForm/translate/view；仅随 legacy slot 呈现。 |  |
-| plugins/dsh-extra-plan/lib/client.js | registerLegacy017RowConfig | L418-427 | 以 `LEGACY_017_ROW_CONFIG_KEY` 注册唯一 `plugins.row.config` keyed row；注入 locale 与共享卡片 wrapper，不注册 0.2 独立 tab。 |  |
-| plugins/dsh-extra-plan/lib/client.js | label | L423 | legacy 0.1.7 行配置插槽的标签函数：返回当前语言下的卡片标题 cardTitle。 |  |
-| plugins/dsh-extra-plan/lib/client.js | inject | L425 | 该插槽注册的依赖注入声明函数：返回空对象，不向卡片注入任何依赖。 |  |
+| plugins/dsh-extra-plan/lib/client.js | factory | L3-326 | 模块工厂：接收 require，装配并返回本插件客户端模块导出（apply 与 inject 声明），由 __ModuleLoader__ 调用。 |  |
+| plugins/dsh-extra-plan/lib/client.js | apply | L110-321 | 客户端插件入口：注入 esp-* 样式表与中英词条；bundle.config 优先注册，detail.section 仅在 bundle slot 不可用时当前包回退；稳定 namespace 的 ConfigForms 快照订阅与一次十项 mutate 共用一份表单，不注册 row/item/tab。 |  |
+| plugins/dsh-extra-plan/lib/client.js | useSharedConfigForm | L123-134 | 通过稳定 namespace 调用 ConfigForms.get(NS)，订阅快照并适配为页面期望的 state/mutate facade；不把 bundle key 当 namespace。 | apply 内部闭包 |
+| plugins/dsh-extra-plan/lib/client.js | update | L126 | ConfigForms 快照订阅回调：从 getSnapshot 取得最新 state，驱动同页表单刷新。 | useSharedConfigForm 内部 |
+| plugins/dsh-extra-plan/lib/client.js | mutate | L132 | ConfigForms mutate facade：把十项 set ops 与读到的 revision 交回官方 controller。 | useSharedConfigForm 内部 |
+| plugins/dsh-extra-plan/lib/client.js | optionLabel | L136-141 | 选项显示名：优先 optionLocale 词条，其次布尔 trueValue/falseValue，最后原值字符串 | apply 内部闭包（设置页控件共用） |
+| plugins/dsh-extra-plan/lib/client.js | optionValue | L143-147 | 把后端返回的字符串值映射回 field.options 里的原始类型（不在选项中则原样返回） | apply 内部闭包（设置页控件共用） |
+| plugins/dsh-extra-plan/lib/client.js | renderControl | L149-174 | 按 field.control 渲染受控控件：textarea／number（透传 min、step）／select（选项文案走 optionLabel、回值走 optionValue）／其余回落 text input；统一 disabled 与 onChange 回传 |  |
+| plugins/dsh-extra-plan/lib/client.js | onChange | L153 | textarea 分支的 onChange：把多行文本框当前字符串值透传给上层 onChange 回调。 |  |
+| plugins/dsh-extra-plan/lib/client.js | onChange | L160 | number 分支的 onChange：把数字输入框当前字符串值原样透传给上层回调，不做数值转换。 |  |
+| plugins/dsh-extra-plan/lib/client.js | onChange | L165 | select 分支的 onChange：把选中值经 optionValue 归一化回原始选项类型后交给上层回调。 |  |
+| plugins/dsh-extra-plan/lib/client.js | onChange | L172 | 默认 text 分支的 onChange（非 textarea/number/select 时）：把单行文本框字符串值透传给上层回调。 |  |
+| plugins/dsh-extra-plan/lib/client.js | ExtraPlanForm | L176-259 | 共享十项设置表单：从 ConfigForms.get(NS) 适配的 state/mutate 播种 draft（value/writable/revision/status），按 general/pro 两组 esp-section 渲染字段，footer 一次性提交十个 set ops + revision fence 后提示已保存/失败。 |  |
+| plugins/dsh-extra-plan/lib/client.js | fieldValue | L199-206 | 取字段草稿值：number 控件把草稿转 Number（非有限数值原样返回），其余控件原样返回 | ExtraPlanForm 内部闭包 |
+| plugins/dsh-extra-plan/lib/client.js | saveAll | L208-223 | 只调用一次十项 mutate(ops, revision)；accepted 非 true 或异常均显示失败，不先 PUT 旧公开行、不伪造成功。 |  |
+| plugins/dsh-extra-plan/lib/client.js | renderField | L225-234 | 按 field 渲染十项设置中的一个字段：esp-field 内「locale 名称→renderControl（随 snapshot.writable 禁用）→静态 hint」，编辑写回 draft 并清提示。 | ExtraPlanForm 内部闭包；本地稳定字段样式 |
+| plugins/dsh-extra-plan/lib/client.js | SettingsCard | L261-265 | SHARED 卡片根组件：接收规范化 configForm/translate，view=summary 返回一行描述，其余渲染 esp-wrap 与唯一 ExtraPlanForm；不直接读取旧宿主 props。 |  |
+| plugins/dsh-extra-plan/lib/client.js | BundleSettingsCard | L267-270 | bundle.config owner：使用共享 namespace form facade 渲染当前包详情 page/summary。 |  |
+| plugins/dsh-extra-plan/lib/client.js | hasBundleConfigEntry | L272-279 | 检查稳定包名 key 是否已接管 bundle.config，供 detail.section 回退避免重复表单。 |  |
+| plugins/dsh-extra-plan/lib/client.js | DetailSettingsSection | L281-287 | 仅匹配当前包 bundle subject；bundle slot 未接管时呈现同一共享表单，否则返回 null。 |  |
+| plugins/dsh-extra-plan/lib/client.js | safeInject | L289-291 | 尝试挂载正式 bundle/detail 槽位；版本缺槽时保留真实回退而不伪造 row/tab 兼容。 |  |
+| plugins/dsh-extra-plan/lib/client.js | registerClientSurfaces | L293-317 | 在 ConfigForms namespace served 时注册 bundle.config 优先与 detail.section 回退两个正式槽，生命周期由同一 owner 释放。 |  |
 | plugins/dsh-extra-plan/lib/executor-spawn.js | resolveDeny | L27-29 | deny 解析纯函数：config.deny 合法（非 null 对象且为数组）时原样返回，否则回退 DEFAULT_DENY | 由 apply 调用；DEFAULT_DENY 已与预设 config.deny 收敛为同集 11 项 |
 | plugins/dsh-extra-plan/lib/executor-spawn.js | slotKey | L48-54 | 稳定槽键纯函数：读全局注册符号 Symbol.for('cordis.original') 取 subagents 服务实现本体（traceable 代理 get 拦截器返回 target；root 单例跨 ctx/跨预设世代恒同一对象），非 traceable/取不到符号值时降级回代理本身 | registrationSlots 查表的键来源，槽键语义 = 幂等跨世代命中的前提 |
 | plugins/dsh-extra-plan/lib/executor-spawn.js | apply | L56-132 | 插件入口：注册执行者 provider（委托宿主 spawn，注入 deny 工具裁剪）；注册走引用计数幂等——槽键取 slotKey(ctx.subagents)（服务实现本体，不再以 ctx.subagents 代理为键），槽 count>0 时只加持有并 console.warn 后返回，count==0 且已存在同名 provider 时抛真实冲突错，全新注册时保存 host disposer（含 delegator 校验与 defaultedAgentOptions） |  |
@@ -314,37 +317,53 @@
 | plugins/dsh-extra-plan/lib/preset-sync.js | carryUserWritable | L146-170 | 从现有声明行抽出用户可写项（与剥离表同源）：显式迁移值缺省时的用户值来源；**旧副本缺席（source: absent）时靠它保住现场定制**（2 项宿主行 + 7 词） |  |
 | plugins/dsh-extra-plan/lib/preset-sync.js | effectiveRowConfig | L172-183 | **权威值读取原语**：宿主 configuration() 行 → 生效 config（inherited 层 → Loader 行 declared config → profile override 浅合并，高优先层胜）；宿主 override 就是该行 config 本身，另兼容 override.config 行节点形状；无层 → null（不可判定） | settings.js 与 preset-sync.js 共用（同一实现，单点） |
 | plugins/dsh-extra-plan/lib/preset-sync.js | readAuthoritySettings | L185-208 | **权威值上移读取**：settings 行 = 10 项设置的唯一权威落点 —— 宿主侧取 options.settingsValues（present=true），夹具侧由 options.readPatch() 文本经 captureRowSettings 捕获（rowPresent 区分「行缺席」与「行在但缺项」）；两者皆无 → { present:false, values:{} }，信息不全时不改写现场 |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | projectionLeafExists | L212-222 | 投影叶「键在不在」判定（值是否合法另判）：把「键缺失」（无害删除，可稳态 idle）与「键在但值非法」（手改 YAML 等，必须按权威值/出厂值修复）区分开 | planHostRowProjection 内部前置 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | planHostRowProjection | L228-268 | **投影一致性判定 + 投影 plan**（纯计算）：期望投影值 = 权威值（settings 行现值 ∪ 迁移值）→ 缺项时取声明行非出厂现值并记 backfill（一次性回填）→ 否则出厂默认；**投影缺失按出厂默认参与比较，故「权威==出厂 且 投影缺失」判一致 = 稳态 idle（不反复重建/不空转写盘）**；键在但值非法一律按期望值修复；hostRowConfig 只含需改写的投影键 |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | assertPresetDefinition | L270-284 | 严格校验纯 definition 元数据、17 条 plugins、三个 group 与 isolate=true；拒绝 Loader insert wrapper |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | parsePresetDefinition | L286-288 | 用 !!js-preserving YAML schema 解析并校验生成 definition |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | assetDefinition | L290-293 | 读取 preset-definition.generated.yml；缺失/坏资产立即抛错，不回写目标 |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | assetPlugins | L295-297 | 读取纯 definition 的 plugins；资产缺失或解析失败一律 undefined（旧 body 夹具仍可保守回退） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | readDefinitionGateWords | L299-303 | 从 definition 的 extra-plan 行读取并整组校验七个 gateWords |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | cloneDefinitionWithProjection | L305-321 | 深拷贝 definition，仅重述两项宿主行投影与 gateWords；保留 raw !!js marker |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | definitionWithProjection | L323-325 | 读取资产并生成供官方 adapter 使用的新 revision definition |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | publicConfigOf | L327-330 | 从 configuration row 或直接对象取得 preset-sync 公开 config |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | validPublicGateWords | L332-335 | 校验公开行 gateWords；缺失返回 null，非法返回 undefined 供回落修复 |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | directProjectionFromLegacy | L337-348 | 将旧 preset body 的 tool-web/tool-presentation/gateWords 转成公开行支持字段 |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | restatePresetSyncConfig | L350-374 | 过滤未知键并重述公开 preset-sync config；不复制完整 preset body |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | restatePresetPlugins | L377-410 | 声明行 plugins 整体重述：**base 优先取 basePlugins（厂商模板）**，缺省才回落 current.plugins → inherited.plugins；再写回用户可写项 —— 宿主行 config 取「显式迁移值优先、carry（当前声明行）兜底」，gateWords 显式路径整组 validateGateWords（失败即抛）、carry 路径容错（非法则保留基底词表，不阻断本体刷新） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | assertTemplateGateWords | L412-416 | 厂商模板整组前置校验：缺失/非法一律抛错（在 hash/idle 判定与任何目标目录动作之前，坏模板不得进入发布流程） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | readDeclaredPluginsFromPatch | L418-431 | 从 profile patch 文本旁路只读旧 id=preset-extra-plan 的 config.plugins；空文本、YAML 非法或未命中返回 undefined |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | visit | L423-428 | 递归遍历 plugins（含 group 子行），按剥离表抽出用户可写键值 → hostRowConfig / gateWords | carryUserWritable 内部闭包 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | readLegacyPresetState | L433-436 | 从 profile 文本只读抽取旧 preset-extra-plan 支持投影，不删除旧行 |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | planPublicGateWords | L438-443 | 按公开行→旧 body→definition 默认优先级选 gateWords 目标 |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | syncPreset | L449-502 | 公开 preset-sync 投影与 settings 权威值收敛才写入；旧 body 只读迁移，definition 本体升级由官方 adapter 新 revision 承载；无运行期台账。 | action 在有新公开行/settings 写入时为 `written`，稳态为 `idle` |
-| plugins/dsh-extra-plan/lib/preset-sync.js | findEntry | L504-507 | 按 id 在 configuration() 行里找 entry（entry.options.id 命中），未命中返回 undefined | applyPlan 内部闭包 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | applyPlan | L509-532 | 只经 configEditor.edit 写两个公开行：preset-sync 仅接受 webFetch/toolPresentationMode/gateWords，settings 只浅合并权威回填；绝不写旧 preset-extra-plan body |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | readRawPatch | L534-538 | 只读 configEditor.documentPath，供旧行迁移；不直接写 profile |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | publicConfigFromRows | L540-543 | 读取 extra-plan-preset-sync 公开行的生效 config |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | settingsValuesFromRows | L545-548 | 读取 dsh-extra-plan-settings 权威 config；缺行返回 undefined |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | activeLegacyRow | L550-557 | 检测旧 preset-extra-plan 是否仍是活动 Loader entry，避免官方 adapter duplicate |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | definitionFromRows | L559-569 | 从公开投影/旧迁移值生成 adapter definition |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | apply | L575-625 | 插件入口：ctx.inject([configEditor]) 取编辑器后调 syncPreset（**同时取 settings 行生效 config 作权威值 settingsValues**，写盘只经 configEditor.edit） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | run | L580-608 | 串行执行 syncPreset、编辑公开行/settings、构造最终 definition 并装配 adapter | apply 内部闭包 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | apply | L591 | 传入 syncPreset 的落盘回调：把本轮规划交 applyPlan 经 configEditor 写入预设行与 settings 行。 |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | schedule | L609-612 | 通过 Promise 队列串行化启动与 internal/update，避免重复官方 adapter active revision | apply 内部闭包 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | findRowsById | L211-226 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | visit | L214-223 | 递归遍历 plugins（含 group 子行），按剥离表抽出用户可写键值 → hostRowConfig / gateWords | carryUserWritable 内部闭包 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | validDefinitionValue | L228-230 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | captureLegacyValues | L232-255 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | validGateWordsOrUndefined | L257-259 | 仅对旧迁移/兼容投影尝试整组校验，非法返回 undefined 供诊断/跳过；当前权威值走 resolveUnifiedConfig 的严格抛错路径。 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | legacyStateFromPlugins | L261-275 | 从旧声明 plugins 捕获合法十项兼容值与严格 gateWords；重复/非法保持状态诊断，不求值表达式。 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readLegacyState | L278-332 | 安全解析旧公开投影与 preset-extra-plan body；分别记录来源、重复/非法诊断，保留 !!js 数据而不求值，供缺项迁移。 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | defaultsForSettings | L334-337 | 合并十项 descriptor 默认与作者模板派生的两项宿主默认，作为统一解析最后回退层。 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | resolveUnifiedConfig | L340-418 | 解析 settings 权威值→合法旧投影→旧 body→默认；当前显式 gateWords 非法立即抛错并不生成替换 patch，记录每键来源与唯一全局行补齐计划。 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | restateSettingsConfig | L420-445 | 合并继承/当前全局 config 的合法十项与 gateWords，再应用指定 patch；不清除其它权威字段，非法 gateWords 整组抛错。 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | projectionLeafExists | L449-459 | 投影叶「键在不在」判定（值是否合法另判）：把「键缺失」（无害删除，可稳态 idle）与「键在但值非法」（手改 YAML 等，必须按权威值/出厂值修复）区分开 | planHostRowProjection 内部前置 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | planHostRowProjection | L465-505 | **投影一致性判定 + 投影 plan**（纯计算）：期望投影值 = 权威值（settings 行现值 ∪ 迁移值）→ 缺项时取声明行非出厂现值并记 backfill（一次性回填）→ 否则出厂默认；**投影缺失按出厂默认参与比较，故「权威==出厂 且 投影缺失」判一致 = 稳态 idle（不反复重建/不空转写盘）**；键在但值非法一律按期望值修复；hostRowConfig 只含需改写的投影键 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | assertPresetDefinition | L507-521 | 严格校验纯 definition 元数据、17 条 plugins、三个 group 与 isolate=true；拒绝 Loader insert wrapper |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | parsePresetDefinition | L523-525 | 用 !!js-preserving YAML schema 解析并校验生成 definition |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | assetDefinition | L527-530 | 读取 preset-definition.generated.yml；缺失/坏资产立即抛错，不回写目标 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | assetPlugins | L532-534 | 读取纯 definition 的 plugins；资产缺失或解析失败一律 undefined（旧 body 夹具仍可保守回退） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readDefinitionGateWords | L536-540 | 从 definition 的 extra-plan 行读取并整组校验七个 gateWords |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | cloneDefinitionWithProjection | L542-558 | 深拷贝 definition，仅重述两项宿主行投影与 gateWords；保留 raw !!js marker |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | definitionWithProjection | L560-562 | 读取资产并生成供官方 adapter 使用的新 revision definition |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | publicConfigOf | L564-567 | 从 configuration row 或直接对象取得 preset-sync 公开 config |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | validPublicGateWords | L569-572 | 校验公开行 gateWords；缺失返回 null，非法返回 undefined 供回落修复 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | directProjectionFromLegacy | L574-585 | 将旧 preset body 的 tool-web/tool-presentation/gateWords 转成公开行支持字段 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | restatePresetSyncConfig | L587-611 | 旧公开 preset-sync config 的兼容纯函数重述；新结构不调用、不写旧行，不复制完整 preset body。 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | restatePresetPlugins | L614-647 | 声明行 plugins 整体重述：**base 优先取 basePlugins（厂商模板）**，缺省才回落 current.plugins → inherited.plugins；再写回用户可写项 —— 宿主行 config 取「显式迁移值优先、carry（当前声明行）兜底」，gateWords 显式路径整组 validateGateWords（失败即抛）、carry 路径容错（非法则保留基底词表，不阻断本体刷新） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | assertTemplateGateWords | L649-653 | 厂商模板整组前置校验：缺失/非法一律抛错（在 hash/idle 判定与任何目标目录动作之前，坏模板不得进入发布流程） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readDeclaredPluginsFromPatch | L655-668 | 从 profile patch 文本旁路只读旧 id=preset-extra-plan 的 config.plugins；空文本、YAML 非法或未命中返回 undefined |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | visit | L660-665 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readLegacyPresetState | L670-673 | 从 profile 文本只读抽取旧 preset-extra-plan 支持投影，不删除旧行 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | planPublicGateWords | L675-680 | 按公开行→旧 body→definition 默认优先级选 gateWords 目标 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | syncPreset | L686-741 | 统一全局行同步：当前十项合法值优先，旧公开行/body/raw patch 只填缺项；两项宿主值与 gateWords 派生到纯 definition，再由 owner 交官方 adapter；无运行期台账。 | action 在全局行需要补齐或声明本体过时时为 `written`，稳态为 `idle` |
+| plugins/dsh-extra-plan/lib/preset-sync.js | findEntry | L743-746 | 按 id 在 configuration() 行里找 entry（entry.options.id 命中），未命中返回 undefined | applyPlan 内部闭包 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | applyPlan | L748-756 | 只经一次 configEditor.edit 写唯一 dsh-extra-plan-settings 全局行；深等/active fence 防止停止期间追加写入，完整保留合法十项与 gateWords，不写旧公开/body 行。 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readRawPatch | L758-762 | 只读 configEditor.documentPath，供旧行迁移；不直接写 profile |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | publicConfigFromRows | L764-767 | 仅兼容读取旧 extra-plan-preset-sync 生效 config；新 patch 不再声明或写入该行。 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | settingsValuesFromRows | L769-772 | 读取 dsh-extra-plan-settings 权威 config；缺行返回 undefined |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | activeLegacyRow | L774-781 | 检测旧 preset-extra-plan 是否仍是活动 Loader entry，避免官方 adapter duplicate |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | definitionFromRows | L783-796 | 从公开投影/旧迁移值生成 adapter definition |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readPatch | L786 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | activePresetSyncRow | L798-802 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | mountPresetSync | L808-878 | 唯一全局 owner 的同步/adapter 生命周期：Promise 队列串行处理启动与 internal/update，active gate 阻止关闭后的新 edit/adapter；await 官方 adapter 结算，关闭竞态释放候选 fiber。 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | disposeFiber | L814-817 | 安全 await adapter/fiber disposer；供 adapter 注册在途时关闭竞态回收候选资源，缺少 disposer 时保持幂等 no-op。 | mountPresetSync 内部 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | run | L818-859 | 串行执行 syncPreset、编辑公开行/settings、构造最终 definition 并装配 adapter | apply 内部闭包 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readPatch | L830 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | apply | L832 | 插件入口：ctx.inject([configEditor]) 取编辑器后调 syncPreset（**同时取 settings 行生效 config 作权威值 settingsValues**，写盘只经 configEditor.edit） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | schedule | L860-864 | 通过 Promise 队列串行化启动与 internal/update，避免重复官方 adapter active revision | apply 内部闭包 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | dispose | L866-875 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | apply | L881-883 | 传入 syncPreset 的落盘回调：把本轮规划交 applyPlan 经 configEditor 写入预设行与 settings 行。 |  |
 | plugins/dsh-extra-plan/lib/preset-yaml.js | loadYaml | L7-20 | 加载 js-yaml：先本模块 require，失败回落 %APPDATA% 下官方 dsh 包，仍失败抛原错误。 | 模块内部函数（未导出）；L22 模块加载期即调用 |
 | plugins/dsh-extra-plan/lib/preset-yaml.js | resolve | L25 | js-yaml 自定义 tag 的标量判定：仅接受字符串标量，使 !!js 表达式按原文保留而不求值。 |  |
 | plugins/dsh-extra-plan/lib/preset-yaml.js | construct | L26 | 把 !!js 标量的表达式文本包装成 { __jsExpr } 对象，供后续按对象识别与还原。 |  |
@@ -476,23 +495,25 @@
 | plugins/dsh-extra-plan/lib/settings-contract.js | setting | L23-45 | 标准化并冻结一条设置 descriptor：补齐类型、定位器、别名与 UI，产出只读条目 | 唯一构造 descriptor 的工厂，对嵌套对象逐层 Object.freeze |
 | plugins/dsh-extra-plan/lib/settings-contract.js | settingsRowLocator | L48 | 生成权威值落点定位器：settings 行 config.<key>，路径可覆盖 | 私有箭头函数，rowId 固定 SETTINGS_ROW_ID（'dsh-extra-plan-settings'） |
 | plugins/dsh-extra-plan/lib/settings-contract.js | sourceLocator | L49 | 生成源模板行定位器：声明行 extra-plan 的 config.<key>，路径可覆盖 | 私有箭头函数，rowId 固定 'extra-plan' |
-| plugins/dsh-extra-plan/lib/settings-contract.js | hostRowProjectionLocator | L51-54 | 生成新公开 preset-sync 行的直接 config.<key> 投影定位器 | 私有箭头函数，仅 2 项宿主行设置使用；旧 body 叶键由 legacyHostRowProjectionLocator 保留 |
-| plugins/dsh-extra-plan/lib/settings-contract.js | legacyHostRowProjectionLocator | L56-60 | 为旧 preset-extra-plan 声明行生成兼容投影定位：旧 row id、对应 host plugins 子行 id 与 config 叶键；仅供读取迁移和旧 body carry。 |  |
+| plugins/dsh-extra-plan/lib/settings-contract.js | hostRowProjectionLocator | L51-54 | 生成旧公开 preset-sync 行的兼容 config.<key> 读取定位器；新结构不写该行。 | 私有箭头函数，仅 2 项宿主行设置使用；旧 body 叶键由 legacyHostRowProjectionLocator 保留 |
+| plugins/dsh-extra-plan/lib/settings-contract.js | legacyHostRowProjectionLocator | L56-60 | 为旧 preset-extra-plan 声明行生成兼容投影定位：旧 row id、对应 host plugins 子行 id 与 config 叶键；仅供安全读取迁移和旧 body carry。 |  |
 | plugins/dsh-extra-plan/lib/settings-contract.js | getSettingDefinition | L152-154 | 按 key 从冻结的 descriptor 索引取设置定义，未命中返回 undefined | 导出 API，索引 descriptorByKey 在 L138 由 SETTING_DEFINITIONS 构建 |
 | plugins/dsh-extra-plan/lib/settings-contract.js | validateSettingValue | L156-158 | 用定义自带 validator 校验取值；定义缺失或无校验函数一律返回 false | 导出 API |
 | plugins/dsh-extra-plan/lib/settings-contract.js | normalizeSettingValue | L160-162 | 用定义自带 normalize 归一取值，无 normalize 时原样返回 | 导出 API，目前仅 plannerModel/otherAgentModel 带 normalize（trim） |
-| plugins/dsh-extra-plan/lib/settings.js | mountClientCarrier | L34-64 | 按 Loader 实例复用内部 Group child，注册带绝对 client-carrier.js file URL 的唯一 entry；以引用计数幂等创建与释放，最后一个 settings 卸载时 dispose 并清理缓存。 |  |
-| plugins/dsh-extra-plan/lib/settings.js | schemaField | L67-73 | 按 descriptor 的 scalarType 生成 schemastery 字段（boolean→布尔、integer→步长 1 的 ≥1 数值、其余字符串），并挂默认值与 volatile 标记。 |  |
-| plugins/dsh-extra-plan/lib/settings.js | isLoopback | L90-93 | 环回地址判定（API 仅本机） |  |
-| plugins/dsh-extra-plan/lib/settings.js | json | L95-98 | HTTP JSON 响应 |  |
-| plugins/dsh-extra-plan/lib/settings.js | readJsonBody | L100-118 | 读取请求体（限 1MB） |  |
-| plugins/dsh-extra-plan/lib/settings.js | findPresetRow | L120-123 | 从 configEditor.configuration() 中按 entry.options.id=PRESET_ROW_ID 找声明行，未命中返回 undefined |  |
-| plugins/dsh-extra-plan/lib/settings.js | findSettingsRow | L126-129 | 从 configEditor.configuration() 中按 entry.options.id=SETTINGS_ROW_ID 找 settings 行（**权威值载体**，GET 三层回退的首选读取层），未命中返回 undefined |  |
-| plugins/dsh-extra-plan/lib/settings.js | readHostRowState | L136-165 | GET 三层回退：settings 权威 config → extra-plan-preset-sync 公开投影 → definition/模板默认；返回 sources 供取证 |  |
-| plugins/dsh-extra-plan/lib/settings.js | publicField | L167-181 | 把 descriptor 构造成设置页字段描述：key/type/control/locale + 可选 options、optionLocale + value/default/overridden + source（取值层来源） |  |
-| plugins/dsh-extra-plan/lib/settings.js | proPayload | L183-196 | 设置页 API 响应体：fields（2 项宿主行的控件元数据 + 当期值/默认/覆盖标记/来源层）+ values + defaults；读取失败一律回落出厂默认（不抛） |  |
-| plugins/dsh-extra-plan/lib/settings.js | createApiHandler | L198-275 | GET/PUT loopback API：GET 按 settings 权威值→公开 preset-sync 投影→默认回退；PUT 校验后只 edit 公开行，深等 no-op，回执用 `projection.applied` 表达领域结果。 | 不含 qqbot；失败不伪装为写入成功 |
-| plugins/dsh-extra-plan/lib/settings.js | apply | L277-294 | 插件入口（HTTP 服务注册） |  |
+| plugins/dsh-extra-plan/lib/settings.js | mountClientCarrier | L35-65 | 按 Loader 实例复用内部 Group child，注册带绝对 client-carrier.js file URL 的唯一 entry；以引用计数幂等创建与释放，最后一个 settings 卸载时 dispose 并清理缓存。 |  |
+| plugins/dsh-extra-plan/lib/settings.js | schemaField | L68-74 | 按 descriptor 的 scalarType 生成 schemastery 字段（boolean→布尔、integer→步长 1 的 ≥1 数值、其余字符串），并挂默认值与 volatile 标记。 |  |
+| plugins/dsh-extra-plan/lib/settings.js | isLoopback | L83-86 | 环回地址判定（API 仅本机） |  |
+| plugins/dsh-extra-plan/lib/settings.js | json | L88-91 | HTTP JSON 响应 |  |
+| plugins/dsh-extra-plan/lib/settings.js | readJsonBody | L93-111 | 读取请求体（限 1MB） |  |
+| plugins/dsh-extra-plan/lib/settings.js | plainJsonObject | L113-115 | PUT 载荷形状守卫：只接受非 null、非数组的 JSON 对象，空对象/原始值由 API 继续拒绝。 | createApiHandler 内部 |
+| plugins/dsh-extra-plan/lib/settings.js | findSettingsRow | L117-121 | 从 configEditor.configuration() 中按 entry.options.id=SETTINGS_ROW_ID 找 settings 行（**权威值载体**，GET 三层回退的首选读取层），未命中返回 undefined |  |
+| plugins/dsh-extra-plan/lib/settings.js | readRawPatch | L123-127 | 只读 configEditor.documentPath 的原始 patch，为旧声明迁移提供安全 YAML 数据源；不可读时返回 undefined。 |  |
+| plugins/dsh-extra-plan/lib/settings.js | defaultValues | L129-132 | 由十项 descriptor 默认与作者模板两项宿主默认组成，不复制 gateWords 第二份真源。 |  |
+| plugins/dsh-extra-plan/lib/settings.js | readUnifiedState | L135-158 | 读取唯一 settings 行的完整权威快照，交 resolveUnifiedConfig 处理旧 raw patch/默认层级；非法当前 gateWords 直接抛错，供 GET/PUT 准确失败。 |  |
+| plugins/dsh-extra-plan/lib/settings.js | publicField | L160-174 | 把 descriptor 构造成设置页字段描述：key/type/control/locale + 可选 options、optionLocale + value/default/overridden + source（取值层来源） |  |
+| plugins/dsh-extra-plan/lib/settings.js | proPayload | L176-186 | 设置页 API 响应体：fields（2 项宿主行的控件元数据 + 当期值/默认/覆盖标记/来源层）+ values + defaults；读取失败一律回落出厂默认（不抛） |  |
+| plugins/dsh-extra-plan/lib/settings.js | createApiHandler | L188-242 | GET/PUT loopback API：GET 读取唯一全局行并按旧 raw patch/默认回退；PUT 先拒绝非法 JSON、null/数组/空对象、未知键、混合非法值，再合并全局十项与 gateWords，只 edit 全局行；当前非法 gateWords 报错且零写，深等 no-op 才回执 applied。 | 不含 qqbot；失败不伪装为写入成功 |
+| plugins/dsh-extra-plan/lib/settings.js | apply | L244-254 | 插件入口（HTTP 服务注册） |  |
 | plugins/dsh-extra-plan/lib/shell-mutation.js | commandTextOf | L28-40 | 解码对象/JSON 字符串两形状的 command 参数 |  |
 | plugins/dsh-extra-plan/lib/shell-mutation.js | pwshCommandOf | L42 | 提取 pwsh command 文本 |  |
 | plugins/dsh-extra-plan/lib/shell-mutation.js | bashCommandOf | L43 | 提取 bash command 文本 |  |

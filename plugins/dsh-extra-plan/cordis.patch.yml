@@ -1,12 +1,7 @@
-# 宿主平面 bundle patch：按需规划模式详情只公开两项稳定组件。
-# - dsh-extra-plan-settings：10 项 settings 权威行、设置 API 与唯一内部 Client carrier owner。
-#   carrier 使用宿主官方 Loader Group 动态挂载 lib/client-carrier.js，不形成第三个 bundle row。
-# - extra-plan-preset-sync：预设核对、生成 definition 的官方 AgentPreset adapter 与受支持投影。
-#   adapter/registry/skills 仍直接复用官方实现，不复制或重写官方文件；旧 preset-extra-plan
-#   仅作非破坏读取迁移，新的投影写入只经 configEditor.edit 写入这两个公开行。
-# 0.2 独立 settings.plugins.tab 不注册；0.1.7 legacy plugins.row.config keyed row 保留在 client。
+# 宿主平面 bundle patch：按需规划模式只公开一个全局管理组件。
+# settings 行同时拥有 10 项配置、API、内部 carrier、旧值迁移、同步核对与官方 adapter。
+# 旧 extra-plan-preset-sync / preset-extra-plan 仅在 settings 内安全读取，不再作为新公开入口或写入目标。
+# 两项宿主设置由 settings 权威值派生到内存 definition；官方启停机制与额外声明不由插件删除。
 - insert:
     - id: dsh-extra-plan-settings
       name: '@local/dsh-extra-plan/settings'
-    - id: extra-plan-preset-sync
-      name: '@local/dsh-extra-plan/preset-sync'

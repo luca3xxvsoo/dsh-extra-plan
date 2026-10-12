@@ -6,20 +6,13 @@ window.__ModuleLoader__.load({
     Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
     const React = require("react");
 
-    // settings 命名空间 = profile 行 id（dsh-extra-plan-settings）；同时用作 configForms 键、
-    // plugins.row.config 键的 rowId 段与 locale 命名空间。
+    // 技术 ID 与 ConfigForms namespace 保持兼容；bundle slot key 是包名，不能当作 namespace。
     const NS = "dsh-extra-plan-settings";
-    // 0.1.7 keyed row key 仅在下方 COMPAT 边界内声明。
-    // 2 项宿主行设置（webFetch / toolPresentationMode）：**权威值落 settings 行**
-    // （dsh-extra-plan-settings 行 config，与上面 8 项同源，跨升级/重装不丢）；
-    // extra-plan-preset-sync 公开行只承载两项宿主投影（消费方是 preset-sync 新 revision）。
-    // 提交：2 项并入官方 configForms 一次 mutate（与 8 项同一事务 + revision fencing）；
-    // 本插件的 PUT 仅把新值投影到公开行（幂等）。
-    const PRO_CONFIG_URL = "/api/dsh-extra-plan-settings/pro-config";
+    const BUNDLE_NAME = "@local/dsh-extra-plan";
 
     const zh = {
-      cardTitle: "按需规划模式配置",
-      cardDescription: "配置按需规划模式的参数",
+      cardTitle: "按需规划模式全局管理",
+      cardDescription: "统一管理按需规划模式的配置、预设核对与界面加载。",
       proSection: "pro规划",
       generalSection: "通用设置",
       plannerModel: "pro规划 | 使用模型",
@@ -39,21 +32,16 @@ window.__ModuleLoader__.load({
       saving: "保存中…",
       saved: "已保存",
       savedPartial: "保存失败",
-      hostRowsFailed: "保存失败",
-      rollbackFailed: "保存失败",
       loading: "加载中…",
-      loadFailed: "加载失败",
       unavailable: "该配置命名空间当前未由宿主提供，暂时无法编辑。",
       readOnly: "本部署的设置为只读。",
-      overridden: "已覆盖",
-      reset: "恢复默认",
       trueValue: "True",
       falseValue: "False"
     };
 
     const en = {
-      cardTitle: "Extra Plan Configuration",
-      cardDescription: "Configure pro planner settings.",
+      cardTitle: "Extra Plan Global Manager",
+      cardDescription: "Manage configuration, preset checks, and UI loading for Extra Plan.",
       proSection: "Pro Planner",
       generalSection: "General Settings",
       plannerModel: "Pro Planner | Model",
@@ -73,23 +61,14 @@ window.__ModuleLoader__.load({
       saving: "Saving…",
       saved: "Saved.",
       savedPartial: "Save failed.",
-      hostRowsFailed: "Save failed.",
-      rollbackFailed: "Save failed.",
       loading: "Loading…",
-      loadFailed: "Load failed",
       unavailable: "The Host does not serve this settings namespace right now.",
       readOnly: "This deployment stores settings read-only.",
-      overridden: "Overridden",
-      reset: "Reset to default",
       trueValue: "True",
       falseValue: "False"
     };
 
-    // 8 项 UI 设置（settings 行 dsh-extra-plan-settings 的 volatile 字段）：客户端自带的
-    // 呈现元数据（控件/选项/locale/提示）。数组内 general 组在前、pro 组在后：
-    // pro 组从 crossProviderPlannerModel 开始；该本地顺序就是 UI 合同。
-    // general 组的 runcodeCatchGate 留在组末（其渲染位置由 render 段派生，见下）。
-    // 写入一律交回宿主表单（ownerProps.form.mutate），不由本插件直接落盘。
+    // 字段顺序、校验与 descriptor 合同保持一份；两项宿主设置也在同一 ConfigForms mutate 中提交。
     const EXTRA_FIELDS = Object.freeze([
       { key: "anchoredBootstrap", control: "select", options: [true, false], locale: "anchoredBootstrap", section: "general", hint: "首轮极简工具 + 提示词 ｜ 新会话/新子代理生效" },
       { key: "creativeMode", control: "select", options: [true, false], locale: "creativeMode", section: "general", hint: "是否开启dsh官方创造模式 ｜ 重启生效" },
@@ -101,12 +80,11 @@ window.__ModuleLoader__.load({
       { key: "otherAgentModel", control: "text", locale: "otherAgentModel", section: "pro", hint: "其他子代理默认使用模型。未匹配/置空时：使用主会话模型 ｜ 新会话/新子代理生效" }
     ]);
 
-    // 2 项宿主行设置（权威值在 settings 行 dsh-extra-plan-settings config；
-    // extra-plan-preset-sync 公开行 config.webFetch/toolPresentationMode 是受支持投影）。
     const HOST_ROW_FIELDS = Object.freeze([
       { key: "webFetch", control: "select", options: [true, false], locale: "webFetch", hint: "是否开启web_fetch ｜ 重启生效" },
       { key: "toolPresentationMode", control: "select", options: ["native", "ptc", "both"], optionLocale: { native: "toolPresentationModeNative", ptc: "toolPresentationModePtc", both: "toolPresentationModeBoth" }, locale: "toolPresentationMode", hint: "工具呈现方式切换（默认/混合/PTC模式） ｜ 重启生效" }
     ]);
+    const ALL_FIELDS = Object.freeze(EXTRA_FIELDS.concat(HOST_ROW_FIELDS));
 
     const css =
       '.esp-wrap{display:flex;flex-direction:column;gap:20px;max-width:760px;color:var(--dsw-alias-label-primary)}' +
@@ -115,7 +93,6 @@ window.__ModuleLoader__.load({
       '.esp-field{display:flex;flex-direction:column;gap:6px;padding:12px 0}' +
       '.esp-fieldHead{display:flex;align-items:center;gap:8px}' +
       '.esp-label{font-size:13px;font-weight:500;line-height:1.5;color:var(--dsw-alias-label-primary)}' +
-      '.esp-badge{font-size:11px;line-height:1.4;color:var(--dsw-alias-label-tertiary);border:.5px solid var(--dsw-alias-border-l3);border-radius:6px;padding:0 6px}' +
       '.esp-field + .esp-field{border-top:.5px solid var(--dsw-alias-border-l2)}' +
       '.esp-input,.esp-select{height:34px;border:.5px solid var(--dsw-alias-border-l4);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);border-radius:8px;padding:0 12px;font:inherit;font-size:13px;width:100%;box-sizing:border-box}' +
       '.esp-textarea{border:.5px solid var(--dsw-alias-border-l4);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);border-radius:8px;padding:8px 12px;font:inherit;font-size:13px;width:100%;box-sizing:border-box;resize:vertical;min-height:80px}' +
@@ -138,8 +115,23 @@ window.__ModuleLoader__.load({
       ctx.effect(() => () => tag.remove(), "dsh-extra-plan-settings: css");
       const el = React.createElement;
       const t = ctx.locale.bind(NS);
+      const sharedForm = ctx.configForms.get(NS);
+      let bundleConfigRegistered = false;
 
       ctx.effect(() => ctx.locale.register(NS, { zh, en }), "dsh-extra-plan-settings: dictionaries");
+
+      function useSharedConfigForm() {
+        const [snapshot, setSnapshot] = React.useState(function () { return sharedForm.getSnapshot(); });
+        React.useEffect(function () {
+          const update = function () { setSnapshot(sharedForm.getSnapshot()); };
+          update();
+          return sharedForm.subscribe(update);
+        }, []);
+        return {
+          state: snapshot,
+          mutate: function (ops, revision) { return sharedForm.mutate(ops, revision); }
+        };
+      }
 
       function optionLabel(field, option) {
         const localeKey = field.optionLocale && field.optionLocale[String(option)];
@@ -150,57 +142,37 @@ window.__ModuleLoader__.load({
 
       function optionValue(field, raw) {
         if (!Array.isArray(field.options)) return raw;
-        for (const option of field.options) {
-          if (String(option) === raw) return option;
-        }
+        for (const option of field.options) if (String(option) === raw) return option;
         return raw;
       }
 
       function renderControl(field, value, disabled, onChange) {
-        if (field.control === "textarea") {
-          return el("textarea", {
-            className: "esp-textarea",
-            disabled: disabled,
-            value: value === undefined || value === null ? "" : String(value),
-            onChange: function (e) { onChange(e.target.value); }
-          });
-        }
-        if (field.control === "number") {
-          return el("input", {
-            className: "esp-input",
-            type: "number",
-            disabled: disabled,
-            min: field.min === undefined ? undefined : String(field.min),
-            step: field.step === undefined ? undefined : String(field.step),
-            value: value === undefined || value === null ? "" : String(value),
-            onChange: function (e) { onChange(e.target.value); }
-          });
-        }
-        if (field.control === "select") {
-          const options = Array.isArray(field.options) ? field.options : [];
-          return el("select", {
-            className: "esp-select",
-            disabled: disabled,
-            value: value === undefined || value === null ? "" : String(value),
-            onChange: function (e) { onChange(optionValue(field, e.target.value)); }
-          }, options.map(function (option) {
-            return el("option", { key: String(option), value: String(option) }, optionLabel(field, option));
-          }));
-        }
+        if (field.control === "textarea") return el("textarea", {
+          className: "esp-textarea", disabled: disabled,
+          value: value === undefined || value === null ? "" : String(value),
+          onChange: function (e) { onChange(e.target.value); }
+        });
+        if (field.control === "number") return el("input", {
+          className: "esp-input", type: "number", disabled: disabled,
+          min: field.min === undefined ? undefined : String(field.min),
+          step: field.step === undefined ? undefined : String(field.step),
+          value: value === undefined || value === null ? "" : String(value),
+          onChange: function (e) { onChange(e.target.value); }
+        });
+        if (field.control === "select") return el("select", {
+          className: "esp-select", disabled: disabled,
+          value: value === undefined || value === null ? "" : String(value),
+          onChange: function (e) { onChange(optionValue(field, e.target.value)); }
+        }, field.options.map(function (option) {
+          return el("option", { key: String(option), value: String(option) }, optionLabel(field, option));
+        }));
         return el("input", {
-          className: "esp-input",
-          type: "text",
-          disabled: disabled,
+          className: "esp-input", type: "text", disabled: disabled,
           value: value === undefined || value === null ? "" : String(value),
           onChange: function (e) { onChange(e.target.value); }
         });
       }
 
-      // 单卡双区块：8 项 UI 设置直接消费宿主提供的表单
-      // （ownerProps.form = ConfigPageForm{state, mutate}）；2 项宿主行设置自绘控件 + 专用 PUT（仅投影）。
-      // 全卡唯一保存按钮 → saveAll：先 PUT 纯投影 2 项宿主行（幂等，失败即中止、10 项零写入），
-      // 再走官方 configForms 一次 mutate 10 项（8 项 UI + 2 项宿主行，事务 + revision fencing）；
-      // mutate 失败回滚投影。
       function ExtraPlanForm(props) {
         const form = props.configForm;
         const snapshot = form !== undefined && form !== null ? form.state : undefined;
@@ -209,143 +181,50 @@ window.__ModuleLoader__.load({
         const revision = snapshot !== undefined && snapshot !== null ? snapshot.revision : undefined;
         const status = snapshot !== undefined && snapshot !== null ? snapshot.status : "unavailable";
         const [draft, setDraft] = React.useState(null);
-        const [hostDraft, setHostDraft] = React.useState(null);
-        const [hostStatus, setHostStatus] = React.useState("loading");
         const [saving, setSaving] = React.useState(false);
         const [message, setMessage] = React.useState({ kind: "", text: "" });
 
         React.useEffect(function () {
           const next = {};
-          for (const field of EXTRA_FIELDS) {
+          for (const field of ALL_FIELDS) {
             const raw = value !== undefined && value !== null ? value[field.key] : undefined;
             next[field.key] = raw === undefined ? "" : raw;
           }
           setDraft(next);
         }, [value]);
 
-        React.useEffect(function () {
-          let cancelled = false;
-          fetch(PRO_CONFIG_URL, { headers: { accept: "application/json" } })
-            .then(function (res) {
-              return res.json().catch(function () { return {}; }).then(function (data) {
-                if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
-                return data;
-              });
-            })
-            .then(function (data) {
-              if (cancelled) return;
-              const values = data.values && typeof data.values === "object" ? data.values : {};
-              const next = {};
-              for (const field of HOST_ROW_FIELDS) {
-                next[field.key] = Object.prototype.hasOwnProperty.call(values, field.key) ? values[field.key] : undefined;
-              }
-              setHostDraft(next);
-              setHostStatus("ready");
-            })
-            .catch(function () {
-              if (cancelled) return;
-              setHostStatus("error");
-            });
-          return function () { cancelled = true; };
-        }, []);
-
-        if (status === "loading" || draft === null) {
-          return el("div", { className: "esp-section" },
-            el("p", { className: "esp-empty" }, t("loading"))
-          );
-        }
-        if (status === "unavailable") {
-          return el("div", { className: "esp-section" },
-            el("p", { className: "esp-empty" }, t("unavailable"))
-          );
-        }
+        if (status === "loading" || draft === null) return el("div", { className: "esp-section" }, el("p", { className: "esp-empty" }, t("loading")));
+        if (status === "unavailable") return el("div", { className: "esp-section" }, el("p", { className: "esp-empty" }, t("unavailable")));
 
         function fieldValue(field) {
           const raw = draft[field.key];
           if (field.control === "number") {
-            const n = Number(raw);
-            return Number.isFinite(n) ? n : raw;
+            const number = Number(raw);
+            return Number.isFinite(number) ? number : raw;
           }
           return raw;
         }
 
-        // mutate 结果不确定/失败时，重新读取最新权威值再投影，禁止使用加载期快照覆盖并发修改。
-        async function reconcileHostRows() {
-          try {
-            const latestRes = await fetch(PRO_CONFIG_URL, { headers: { accept: "application/json" } });
-            const latestData = await latestRes.json().catch(function () { return {}; });
-            if (!latestRes.ok || latestData.values === null || typeof latestData.values !== "object") throw new Error("latest authority unavailable");
-            const latest = {};
-            for (const field of HOST_ROW_FIELDS) latest[field.key] = latestData.values[field.key];
-            const res = await fetch(PRO_CONFIG_URL, {
-              method: "PUT",
-              headers: { "content-type": "application/json", "accept": "application/json" },
-              body: JSON.stringify(latest)
-            });
-            const data = await res.json().catch(function () { return {}; });
-            if (!res.ok || data.projection === null || typeof data.projection !== "object" || data.projection.applied !== true) throw new Error("projection reconcile failed");
-            setMessage({ kind: "error", text: t("savedPartial") });
-          } catch {
-            setMessage({ kind: "error", text: t("rollbackFailed") });
-          }
-        }
-
         async function saveAll() {
-          if (form === undefined || form === null || typeof form.mutate !== "function" || saving) return;
-          if (hostDraft === null) return;
+          if (form === undefined || form === null || typeof form.mutate !== "function" || saving || !writable || draft === null || status !== "ready") return;
           setSaving(true);
           setMessage({ kind: "", text: "" });
-          // 第一步：PUT 仅投影 2 项宿主行到 extra-plan-preset-sync 公开行（幂等）。投影无 revision fencing/回滚，
-          // 失败即中止、10 项零写入，无半写风险。
-          try {
-            const res = await fetch(PRO_CONFIG_URL, {
-              method: "PUT",
-              headers: { "content-type": "application/json", "accept": "application/json" },
-              // 投影体 = 本次保存的 2 项宿主行值（hostDraft 恒只含 HOST_ROW_FIELDS 两键；含其它键即 400）。
-              body: JSON.stringify({ ...hostDraft })
-            });
-            const data = await res.json().catch(function () { return {}; });
-            if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
-            if (data.projection === null || typeof data.projection !== "object" || data.projection.applied !== true) throw new Error(data.projection && data.projection.error ? data.projection.error : "projection not applied");
-          } catch (e) {
-            console.error("dsh-extra-plan-settings save failed:", e);
-            setMessage({ kind: "error", text: t("hostRowsFailed") });
-            setSaving(false);
-            return;
-          }
-          // 第二步：官方 configForms 一次 mutate 10 项（8 项 UI + 2 项宿主行 set op，带读到的 revision 作为 fence）。
-          const ops = EXTRA_FIELDS.map(function (field) {
+          const ops = ALL_FIELDS.map(function (field) {
             return { op: "set", path: [field.key], value: fieldValue(field) };
-          }).concat(HOST_ROW_FIELDS.map(function (field) {
-            return { op: "set", path: [field.key], value: hostDraft[field.key] };
-          }));
+          });
           try {
             const accepted = await form.mutate(ops, revision);
-            if (accepted !== true) {
-              await reconcileHostRows();
-              return;
-            }
-            // 保存后状态刷新：2 项用本次保存值刷新；8 项由 form.state.value 变化触发既有 [value] effect。
-            setHostDraft({ webFetch: hostDraft.webFetch, toolPresentationMode: hostDraft.toolPresentationMode });
-            setMessage({ kind: "ok", text: t("saved") });
+            setMessage(accepted === true ? { kind: "ok", text: t("saved") } : { kind: "error", text: t("savedPartial") });
           } catch {
-            await reconcileHostRows();
+            setMessage({ kind: "error", text: t("savedPartial") });
           } finally {
             setSaving(false);
           }
         }
 
-        // 渲染顺序是本地行为合同：general UI 字段、两个宿主行字段、
-        // runcodeCatchGate，然后是从 crossProviderPlannerModel 开始的 pro 字段。
-        // 表单仍分为两个区域，共 8 项 UI 设置和 2 项宿主行设置。
-        const generalHeadFields = EXTRA_FIELDS.filter(function (field) { return field.section === "general" && field.key !== "runcodeCatchGate"; });
-        const generalTailFields = EXTRA_FIELDS.filter(function (field) { return field.section === "general" && field.key === "runcodeCatchGate"; });
-        const proFields = EXTRA_FIELDS.filter(function (field) { return field.section === "pro"; });
         function renderField(field, current, disabled, onChange) {
           return el("label", { className: "esp-field", key: field.key },
-            el("span", { className: "esp-fieldHead" },
-              el("span", { className: "esp-label" }, t(field.locale))
-            ),
+            el("span", { className: "esp-fieldHead" }, el("span", { className: "esp-label" }, t(field.locale))),
             renderControl(field, current, disabled, function (next) {
               onChange(next);
               setMessage({ kind: "", text: "" });
@@ -354,80 +233,91 @@ window.__ModuleLoader__.load({
           );
         }
 
+        const generalHeadFields = EXTRA_FIELDS.filter(function (field) { return field.section === "general" && field.key !== "runcodeCatchGate"; });
+        const generalTailFields = EXTRA_FIELDS.filter(function (field) { return field.section === "general" && field.key === "runcodeCatchGate"; });
+        const proFields = EXTRA_FIELDS.filter(function (field) { return field.section === "pro"; });
+        const disabled = saving || !writable;
         return el(React.Fragment, null,
           el("div", { className: "esp-section" },
             el("p", { className: "esp-sectionTitle" }, t("generalSection")),
-            generalHeadFields.map(function (field) {
-              return renderField(field, draft[field.key], saving || !writable, function (next) {
-                setDraft(function (prev) { return Object.assign({}, prev, { [field.key]: next }); });
-              });
-            }),
-            hostStatus === "loading" ? el("p", { className: "esp-empty" }, t("loading")) : null,
-            hostStatus === "error" ? el("p", { className: "esp-err" }, t("loadFailed")) : null,
-            hostDraft === null ? null : HOST_ROW_FIELDS.map(function (field) {
-              return renderField(field, hostDraft[field.key], saving || !writable || hostDraft === null, function (next) {
-                setHostDraft(function (prev) { return Object.assign({}, prev, { [field.key]: next }); });
-              });
-            }),
-            generalTailFields.map(function (field) {
-              return renderField(field, draft[field.key], saving || !writable, function (next) {
-                setDraft(function (prev) { return Object.assign({}, prev, { [field.key]: next }); });
-              });
-            })
+            generalHeadFields.map(function (field) { return renderField(field, draft[field.key], disabled, function (next) { setDraft(function (prev) { return Object.assign({}, prev, { [field.key]: next }); }); }); }),
+            HOST_ROW_FIELDS.map(function (field) { return renderField(field, draft[field.key], disabled, function (next) { setDraft(function (prev) { return Object.assign({}, prev, { [field.key]: next }); }); }); }),
+            generalTailFields.map(function (field) { return renderField(field, draft[field.key], disabled, function (next) { setDraft(function (prev) { return Object.assign({}, prev, { [field.key]: next }); }); }); })
           ),
           el("div", { className: "esp-section" },
             el("p", { className: "esp-sectionTitle" }, t("proSection")),
-            proFields.map(function (field) {
-              return renderField(field, draft[field.key], saving || !writable, function (next) {
-                setDraft(function (prev) { return Object.assign({}, prev, { [field.key]: next }); });
-              });
-            })
+            proFields.map(function (field) { return renderField(field, draft[field.key], disabled, function (next) { setDraft(function (prev) { return Object.assign({}, prev, { [field.key]: next }); }); }); })
           ),
           el("div", { className: "esp-cardFooter" },
             writable ? null : el("p", { className: "esp-hint" }, t("readOnly")),
             message.text ? el("p", { className: message.kind === "ok" ? "esp-ok" : "esp-err" }, message.text) : null,
-            el("div", { className: "esp-actions" },
-              el("button", {
-                className: "esp-btn esp-btnPrimary",
-                disabled: saving || !writable || hostDraft === null,
-                onClick: saveAll
-              }, saving ? t("saving") : t("save"))
-            )
+            el("div", { className: "esp-actions" }, el("button", {
+              className: "esp-btn esp-btnPrimary", disabled: disabled, onClick: saveAll
+            }, saving ? t("saving") : t("save")))
           )
         );
       }
 
-      // SHARED SETTINGS FORM BEGIN：字段元数据、表单、GET/PUT、mutate、revision fencing、回滚与卡片只保留一份。
-      function SettingsCard({ configForm, translate, view }) {
-        const copy = translate !== undefined && translate !== null ? translate : (key) => key;
-        if (view === "summary") return copy("cardDescription");
-        return el("div", { className: "esp-wrap" },
-          el(ExtraPlanForm, { configForm })
-        );
-      }
-      // SHARED SETTINGS FORM END
-
-      // COMPAT dsh-0.1.7 BEGIN：仅此处读取旧 props.form/props.t、使用 bundle#rowId 并注册旧 keyed 行插槽。
-      // 宿主 rowConfigKey(bundle, rowId) = `${bundle}#${rowId}`；bundle=@local/dsh-extra-plan，rowId=NS。
-      const LEGACY_017_ROW_CONFIG_KEY = "@local/dsh-extra-plan#dsh-extra-plan-settings";
-
-      function Legacy017SettingsCard(props) {
-        return el(SettingsCard, { configForm: props.form, translate: props.t, view: props.view });
+      function SettingsCard(props) {
+        const copy = props.translate !== undefined && props.translate !== null ? props.translate : function (key) { return key; };
+        if (props.view === "summary") return copy("cardDescription");
+        return el("div", { className: "esp-wrap" }, el(ExtraPlanForm, { configForm: props.configForm }));
       }
 
-      function registerLegacy017RowConfig() {
-        const translate = ctx.locale.bind(NS);
-        return ctx.slots.inject("plugins.row.config", () => ctx.slots.register({
-          name: "plugins.row.config",
-          key: LEGACY_017_ROW_CONFIG_KEY,
-          label: () => translate("cardTitle"),
-          locale: NS,
-          inject: () => ({})
-        }, Legacy017SettingsCard));
+      function BundleSettingsCard(props) {
+        const configForm = useSharedConfigForm();
+        return el(SettingsCard, { configForm: configForm, translate: t, view: props.view });
       }
-      // COMPAT dsh-0.1.7 CALL
-      ctx.effect(() => ctx.configForms.whileServed([NS], registerLegacy017RowConfig), "dsh-extra-plan-settings: legacy 0.1.7 plugins row config");
-      // COMPAT dsh-0.1.7 END
+
+      function hasBundleConfigEntry() {
+        if (bundleConfigRegistered) return true;
+        try {
+          return typeof ctx.slots.entries === "function" && ctx.slots.entries("plugins.bundle.config").some(function (entry) {
+            return entry.options !== undefined && entry.options.key === BUNDLE_NAME;
+          });
+        } catch { return false; }
+      }
+
+      function DetailSettingsSection(props) {
+        const configForm = useSharedConfigForm();
+        const subject = props !== undefined && props !== null ? props.subject : undefined;
+        const isBundle = subject !== undefined && subject !== null && subject.kind === "bundle" && subject.pkg !== undefined && subject.pkg.name === BUNDLE_NAME;
+        if (!isBundle || hasBundleConfigEntry()) return null;
+        return el(SettingsCard, { configForm: configForm, translate: t, view: "page" });
+      }
+
+      function safeInject(name, register) {
+        try { return ctx.slots.inject(name, register); } catch { return undefined; }
+      }
+
+      function registerClientSurfaces() {
+        const bundleOff = safeInject("plugins.bundle.config", function () {
+          let registrationOff;
+          try {
+            registrationOff = ctx.slots.register({ name: "plugins.bundle.config", key: BUNDLE_NAME, locale: NS, inject: function () { return {}; } }, BundleSettingsCard);
+            bundleConfigRegistered = true;
+          } catch (error) {
+            bundleConfigRegistered = false;
+            throw error;
+          }
+          return function () {
+            bundleConfigRegistered = false;
+            if (typeof registrationOff === "function") return registrationOff();
+            return undefined;
+          };
+        });
+        const detailOff = safeInject("plugins.detail.section", function () {
+          return ctx.slots.register({ name: "plugins.detail.section", id: "dsh-extra-plan-settings-global", order: 100, label: function () { return t("cardTitle"); }, locale: NS }, DetailSettingsSection);
+        });
+        return function () {
+          bundleConfigRegistered = false;
+          if (typeof bundleOff === "function") bundleOff();
+          if (typeof detailOff === "function") detailOff();
+        };
+      }
+
+      // bundle.config 优先；detail.section 只在 bundle.config 槽不可用时回退，永远只呈现一份表单。
+      ctx.effect(() => ctx.configForms.whileServed([NS], registerClientSurfaces), "dsh-extra-plan-settings: same-page config surfaces");
     }
 
     exports.apply = apply;

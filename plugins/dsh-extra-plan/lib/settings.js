@@ -1,27 +1,28 @@
-// dsh-extra-plan-settings 的宿主侧实现。
-// settings 行 config 是全部 10 个值的权威载体（8 项 UI + 2 项宿主行设置）。
-// 客户端只做一次 SettingsForms/configForms mutate；PUT 校验后只更新公开 preset-sync 行投影，
-// 投影失败不回滚权威行。
-// GET 按 settings 行 → 公开 preset-sync 行投影 → 默认值逐项回退；缺失投影可恢复。
-// 本模块不写 cordis.patch.yml 或旧预设目录，也不负责 QQBot。
+// dsh-extra-plan-settings 的唯一全局管理入口。
+// settings 行 config 是全部 10 个权威值的载体；gateWords 作为兼容数据同样由该 owner 严格保留。
+// 本入口统一拥有 settings/API/carrier、旧值迁移、definition 自愈与官方 AgentPreset adapter 生命周期。
+// 两项宿主设置只从权威值派生到内存 definition，不再写独立公开投影行。
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 import { isDeepStrictEqual } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import z from '@deepseek-ai/schemastery'
 import {
   HOST_ROW_SETTING_DEFINITIONS,
-  PRESET_ROW_ID,
   SETTING_DEFINITIONS,
   SETTINGS_ROW_ID,
   hostRowDefaultsFromTemplate,
   normalizeSettingValue,
   readPath,
-  readProjectedValue,
   validateSettingValue,
 } from './preset-settings.js'
-import { effectiveRowConfig, restatePresetSyncConfig } from './preset-sync.js'
+import {
+  effectiveRowConfig,
+  mountPresetSync,
+  resolveUnifiedConfig,
+  restateSettingsConfig,
+} from './preset-sync.js'
 
 export const name = 'dsh-extra-plan-settings'
 export const inject = []
@@ -63,7 +64,7 @@ function mountClientCarrier(child) {
   }
 }
 
-/** descriptor scalarType → schemastery 字段：合同负责类型/默认值，settings 只负责宿主 schema 链。 */
+/** descriptor scalarType → schemastery 字段；合同负责类型/默认值，settings 只负责宿主 schema 链。 */
 function schemaField(definition) {
   let field
   if (definition.scalarType === 'boolean') field = z.boolean()
@@ -72,15 +73,7 @@ function schemaField(definition) {
   return field.default(definition.defaultValue).volatile()
 }
 
-/** 2 项宿主行设置的权威字段（settings 行 config 内的 webFetch / toolPresentationMode）。 */
-export const HOST_ROW_AUTHORITY_FIELDS = Object.freeze(Object.fromEntries(
-  HOST_ROW_SETTING_DEFINITIONS.map((definition) => [definition.key, schemaField(definition)]),
-))
-
-/** settings 行 config 的宿主表单 schema：10 个 descriptor 字段全部带 volatile 标记。
- * ns = 本行 id（profile patch 根级 insert 行，id 唯一 → configEditor 可寻址；
- * 该 insert 不带 config → 继承层恒为 {} → 宿主 edit 永不判「值==继承层」而删行）。
- */
+/** 10 项 settings 全局行 Config；volatile 字段由官方 ConfigForms 投影。 */
 export const Config = z.object(Object.fromEntries(
   SETTING_DEFINITIONS.map((definition) => [definition.key, schemaField(definition)]),
 ))
@@ -117,51 +110,51 @@ function readJsonBody(req) {
   })
 }
 
-function findPresetRow(editor) {
-  const rows = typeof editor.configuration === 'function' ? editor.configuration() : []
-  return rows.find((row) => row !== null && typeof row === 'object' && row.entry !== undefined && row.entry.options !== undefined && row.entry.options.id === PRESET_ROW_ID)
+function plainJsonObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-/** settings 行（权威值载体）定位：entry.options.id === SETTINGS_ROW_ID。 */
 function findSettingsRow(editor) {
   const rows = typeof editor.configuration === 'function' ? editor.configuration() : []
-  return rows.find((row) => row !== null && typeof row === 'object' && row.entry !== undefined && row.entry.options !== undefined && row.entry.options.id === SETTINGS_ROW_ID)
+  const matches = rows.filter((row) => row !== null && typeof row === 'object' && row.entry !== undefined && row.entry.options !== undefined && row.entry.options.id === SETTINGS_ROW_ID)
+  return matches.length === 1 ? matches[0] : undefined
 }
 
-/**
- * GET 只读语义：权威值 = settings 行 config.<key>（10 项同源落点）；
- * 权威缺失/非法时回落「公开 preset-sync 行投影现值」（未投影或旧部署），再缺失取出厂默认。
- * sources 逐项记录取值层（settings-row/projection/default），供 UI 与回归取证。
- */
-function readHostRowState(editor) {
-  const defaults = hostRowDefaultsFromTemplate(readFileSync(TEMPLATE_AGENT_FILE, 'utf8'))
-  const values = { ...defaults }
+function readRawPatch(editor) {
+  const path = editor !== undefined && typeof editor.documentPath === 'string' ? editor.documentPath : ''
+  if (path === '' || !existsSync(path)) return undefined
+  try { return readFileSync(path, 'utf8') } catch { return undefined }
+}
+
+function defaultValues() {
+  const defaults = Object.fromEntries(SETTING_DEFINITIONS.map((definition) => [definition.key, definition.defaultValue]))
+  return { ...defaults, ...hostRowDefaultsFromTemplate(readFileSync(TEMPLATE_AGENT_FILE, 'utf8')) }
+}
+
+/** GET 只读统一全局状态；旧行/raw patch 只在当前全局值缺项时作为迁移来源。 */
+function readUnifiedState(editor) {
+  const settingsRow = findSettingsRow(editor)
+  const authority = settingsRow === undefined ? undefined : effectiveRowConfig(settingsRow)
+  const rawPatch = readRawPatch(editor)
+  const resolved = resolveUnifiedConfig({ settingsValues: authority, readPatch: () => rawPatch })
   const overridden = {}
   const sources = {}
-  const settingsRow = findSettingsRow(editor)
-  const authority = settingsRow === undefined ? null : effectiveRowConfig(settingsRow)
-  const presetRow = findPresetRow(editor)
-  const projectionConfig = presetRow === undefined ? undefined : (effectiveRowConfig(presetRow) || {})
   for (const definition of HOST_ROW_SETTING_DEFINITIONS) {
     const key = definition.key
-    overridden[key] = false
-    sources[key] = 'default'
-    if (authority !== null) {
-      const read = readPath(authority, key)
-      if (read.exists && validateSettingValue(definition, read.value)) {
-        values[key] = normalizeSettingValue(definition, read.value)
-        overridden[key] = true
-        sources[key] = 'settings-row'
-        continue
-      }
-    }
-    const projected = readProjectedValue(projectionConfig, definition)
-    if (projected !== undefined) {
-      values[key] = projected
-      sources[key] = 'projection'
-    }
+    overridden[key] = resolved.sources[key] === 'settings-row'
+    sources[key] = resolved.sources[key]
   }
-  return { located: settingsRow !== undefined || presetRow !== undefined, values, defaults, overridden, sources }
+  return {
+    located: settingsRow !== undefined || resolved.legacy.legacyPlugins !== undefined || Object.keys(resolved.legacy.projection || {}).length > 0,
+    values: { ...resolved.values },
+    defaults: { ...defaultValues() },
+    overridden,
+    sources,
+    gateWords: resolved.gateWords,
+    diagnostics: resolved.legacy.diagnostics || [],
+    authority,
+    settingsRow,
+  }
 }
 
 function publicField(definition, value, defaultValue, overridden, source) {
@@ -181,18 +174,15 @@ function publicField(definition, value, defaultValue, overridden, source) {
 }
 
 function proPayload(editor) {
-  const defaults = hostRowDefaultsFromTemplate(readFileSync(TEMPLATE_AGENT_FILE, 'utf8'))
-  const state = { located: false, values: { ...defaults }, defaults, overridden: {}, sources: {} }
-  let current = state
-  try { current = readHostRowState(editor) } catch { current = state }
+  const state = readUnifiedState(editor)
   const fields = HOST_ROW_SETTING_DEFINITIONS.map((definition) => publicField(
     definition,
-    current.values[definition.key],
-    current.defaults[definition.key],
-    current.overridden === undefined ? false : current.overridden[definition.key],
-    current.sources === undefined ? undefined : current.sources[definition.key],
+    state.values[definition.key],
+    state.defaults[definition.key],
+    state.overridden[definition.key],
+    state.sources[definition.key],
   ))
-  return { fields, values: { ...current.values }, defaults: { ...current.defaults } }
+  return { fields, values: { ...state.values }, defaults: { ...state.defaults }, diagnostics: [...state.diagnostics] }
 }
 
 function createApiHandler(ctx) {
@@ -205,68 +195,45 @@ function createApiHandler(ctx) {
       if (editor === undefined || editor === null || typeof editor.edit !== 'function') {
         return json(res, 500, { error: 'configEditor service is unavailable' })
       }
-
       if (req.method === 'GET' && path === '/api/dsh-extra-plan-settings/pro-config') {
         try { return json(res, 200, proPayload(editor)) }
-        catch (error) {
-          return json(res, 500, { error: 'failed to read declaration row plugins: ' + String(error && error.message || error) })
-        }
+        catch (error) { return json(res, 500, { error: 'failed to read global settings: ' + String(error && error.message || error) }) }
       }
-
       if (req.method === 'PUT' && path === '/api/dsh-extra-plan-settings/pro-config') {
-        const body = await readJsonBody(req)
-        const input = body !== null && typeof body === 'object' ? body : {}
-        const keys = Object.keys(input)
+        let body
+        try { body = await readJsonBody(req) }
+        catch (error) { return json(res, 400, { error: String(error && error.message || error) }) }
+        if (!plainJsonObject(body)) return json(res, 400, { error: 'payload must be a non-array JSON object' })
+        const keys = Object.keys(body)
+        if (keys.length === 0) return json(res, 400, { error: 'payload must contain at least one supported field' })
         const unknown = keys.filter((key) => !HOST_ROW_KEYS.includes(key))
-        if (unknown.length > 0) {
-          return json(res, 400, { error: 'unsupported field(s): ' + unknown.join(', ') + '（本接口仅收 ' + HOST_ROW_KEYS.join('/') + '）' })
-        }
-        const authorityValues = {}
-        const hostRowConfig = {}
+        if (unknown.length > 0) return json(res, 400, { error: 'unsupported field(s): ' + unknown.join(', ') + '（本接口仅收 ' + HOST_ROW_KEYS.join('/') + '）' })
         for (const definition of HOST_ROW_SETTING_DEFINITIONS) {
-          if (!Object.prototype.hasOwnProperty.call(input, definition.key)) continue
-          if (!validateSettingValue(definition, input[definition.key])) {
-            return json(res, 400, { error: definition.key + ' has an invalid value' })
+          const key = definition.key
+          if (Object.prototype.hasOwnProperty.call(body, key) && !validateSettingValue(definition, body[key])) {
+            return json(res, 400, { error: key + ' has an invalid value' })
           }
-          const value = normalizeSettingValue(definition, input[definition.key])
-          authorityValues[definition.key] = value
-          hostRowConfig[definition.key] = value
         }
-        if (Object.keys(authorityValues).length === 0) {
-          return json(res, 400, { error: 'at least one of ' + HOST_ROW_KEYS.join('/') + ' is required' })
+        const row = findSettingsRow(editor)
+        if (row === undefined) return json(res, 200, { ...proPayload(editor), projection: { applied: false, error: 'declaration row not found: ' + SETTINGS_ROW_ID } })
+        const state = readUnifiedState(editor)
+        const current = effectiveRowConfig(row) || {}
+        const patch = {}
+        for (const definition of SETTING_DEFINITIONS) {
+          const key = definition.key
+          const read = readPath(current, key)
+          if (!read.exists || !validateSettingValue(definition, read.value)) patch[key] = state.values[key]
         }
-        // 投影公开 preset-sync 行（消费方是 preset-sync 生成的新 definition revision）。
-        //    投影失败不回滚权威值：投影被宿主删除是无害状态，下次启动自愈会按权威值重建。
-        const presetRow = findPresetRow(editor)
-        if (presetRow === undefined) {
-          return json(res, 200, {
-            ...proPayload(editor),
-            projection: { applied: false, error: 'declaration row not found: ' + PRESET_ROW_ID },
-          })
+        for (const definition of HOST_ROW_SETTING_DEFINITIONS) {
+          const key = definition.key
+          if (Object.prototype.hasOwnProperty.call(body, key)) patch[key] = normalizeSettingValue(definition, body[key])
         }
-        try {
-          // no-op 不写盘（口径与 preset-sync 三维 idle 一致）：以资产为基底、写回本次投影值与
-          // carry 词表后若与当前生效 plugins 深等 → 投影已达成，跳过 editor.edit —— 避免宿主
-          // edit 在 profile patch 无声明行时 append 冻结副本与无谓 reload（reload 失败还会走
-          // 宿主回滚）。深等不成立（或生效 plugins 不可读）时照常走 editor.edit（旧行为）。
-          const currentConfig = effectiveRowConfig(presetRow) || {}
-          const projectionPatch = {}
-          for (const definition of HOST_ROW_SETTING_DEFINITIONS) {
-            const value = hostRowConfig[definition.key]
-            if (value !== undefined) projectionPatch[definition.key] = value
-          }
-          const nextConfig = restatePresetSyncConfig(currentConfig, {}, projectionPatch)
-          if (isDeepStrictEqual(nextConfig, currentConfig)) {
-            return json(res, 200, { ...proPayload(editor), projection: { applied: true } })
-          }
-          await editor.edit(presetRow.entry, (current, inherited) => restatePresetSyncConfig(current, inherited, projectionPatch))
-          return json(res, 200, { ...proPayload(editor), projection: { applied: true } })
-        } catch (error) {
-          const message = String(error && error.message || error)
-          return json(res, 200, { ...proPayload(editor), projection: { applied: false, error: message } })
-        }
+        if (!Object.prototype.hasOwnProperty.call(current, 'gateWords')) patch.gateWords = state.gateWords
+        const nextConfig = restateSettingsConfig(current, row.inherited, patch)
+        if (isDeepStrictEqual(nextConfig, current)) return json(res, 200, { ...proPayload(editor), projection: { applied: true, owner: SETTINGS_ROW_ID } })
+        await editor.edit(row.entry, (latest, inherited) => restateSettingsConfig(latest, inherited, patch))
+        return json(res, 200, { ...proPayload(editor), projection: { applied: true, owner: SETTINGS_ROW_ID } })
       }
-
       return json(res, 404, { error: 'not found' })
     } catch (error) {
       return json(res, 500, { error: String(error && error.message || error) })
@@ -275,22 +242,15 @@ function createApiHandler(ctx) {
 }
 
 export function apply(ctx) {
-  // Client carrier 归 settings 所有：官方 Group child 随本行生命周期创建/移除，
-  // clientModules 只看到一个活动 file URL source，bundle declaredRows 仍只有两行。
+  // Client carrier、settings API、旧值迁移、同步与官方 adapter 均由这一行 owner 持有。
   ctx.inject(['loader'], (child) => child.effect(() => mountClientCarrier(child), 'dsh-extra-plan-settings: internal client carrier'))
-  // 8 项 UI 设置：只登记本实例的页面策略（auto:false = 只走 Plugins 页自定义卡片，
-  // 不生成自动页）；Config 的 volatile 字段由 SettingsForms 投影成表单，
-  // 读写一律走官方 configForms（remote.settings）——本行无自建写链。
-  ctx.inject(['settings'], (child) => {
-    child.effect(() => child.settings.configure({ auto: false }, ctx.fiber))
-  })
-  ctx.inject(['webServer'], (webCtx) => {
-    webCtx.effect(() => webCtx.webServer.register({
-      kind: 'prefix',
-      path: '/api/dsh-extra-plan-settings',
-      handler: createApiHandler(ctx),
-    }), 'dsh-extra-plan-settings: api route')
-  })
+  ctx.inject(['settings'], (child) => child.effect(() => child.settings.configure({ auto: false }, ctx.fiber), 'dsh-extra-plan-settings: settings policy'))
+  ctx.inject(['webServer'], (webCtx) => webCtx.effect(() => webCtx.webServer.register({
+    kind: 'prefix',
+    path: '/api/dsh-extra-plan-settings',
+    handler: createApiHandler(ctx),
+  }), 'dsh-extra-plan-settings: api route'))
+  ctx.inject(['configEditor'], (child) => child.effect(() => mountPresetSync(child), 'dsh-extra-plan-settings: sync and official adapter'))
 }
 
-export { SETTINGS_ROW_ID, PRESET_ROW_ID }
+export { SETTINGS_ROW_ID }

@@ -2480,9 +2480,9 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
   let gateThrew = false
   try { restatePresetSyncConfigE({}, {}, { gateWords: { routeDirect: '只有一个词' } }) } catch { gateThrew = true }
   checkTrue('T9-3r gateWords 整组校验失败即抛（不落盘语义）', gateThrew)
-  checkTrue('T9-3s settings.js 写链只经 configEditor.edit 且目标为公开行', settingsText.includes('editor.edit(') && settingsText.includes('restatePresetSyncConfig') && !settingsText.includes('writeFileSync'))
+  checkTrue('T9-3s settings.js 写链经 restateSettingsConfig→唯一全局 row.entry edit', settingsText.includes('await editor.edit(row.entry') && settingsText.includes('restateSettingsConfig') && settingsText.includes('SETTINGS_ROW_ID') && !settingsText.includes('LEGACY_PROJECTION_RESTATEMENT') && !settingsText.includes('writeFileSync'))
   const presetSyncSource = readFileSyncE(fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/preset-sync.js', import.meta.url)), 'utf8')
-  checkTrue('T9-3t preset-sync 通过 ctx.plugin 直接挂官方 adapter，不实现 registry', presetSyncSource.includes('child.plugin(OfficialAgentPreset') && presetSyncSource.includes('@deepseek-ai/dsh-agent-preset') && !presetSyncSource.includes('agentPresets.register('))
+  checkTrue('T9-3t preset-sync 通过 mountPresetSync/官方 adapter await 挂载，不实现 registry', presetSyncSource.includes('export function mountPresetSync') && presetSyncSource.includes('await child.plugin(OfficialAgentPreset') && presetSyncSource.includes('@deepseek-ai/dsh-agent-preset') && !presetSyncSource.includes('agentPresets.register('))
 }
 
 console.log('\n通过 ' + pass + ', 失败 ' + fail)
