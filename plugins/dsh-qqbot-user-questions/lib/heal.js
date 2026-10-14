@@ -10,6 +10,7 @@ const LOG_PREFIX = '[dsh-qqbot-user-questions]'
 
 // ── package-local js-yaml（惰性加载，导入零副作用）──
 let yamlModule = null
+let yamlSchema = null
 let yamlResolved = false
 function loadYamlModule() {
   if (yamlResolved) return yamlModule
@@ -21,6 +22,22 @@ function loadYamlModule() {
     yamlModule = null
     return null
   }
+}
+
+function loadYamlSchema() {
+  const yaml = loadYamlModule()
+  if (yaml === null) return null
+  if (yamlSchema === null) {
+    const JsScalar = new yaml.Type('tag:yaml.org,2002:js', {
+      kind: 'scalar',
+      resolve: (data) => typeof data === 'string',
+      construct: (data) => ({ __jsExpr: data }),
+      predicate: (data) => data !== null && typeof data === 'object' && typeof data.__jsExpr === 'string',
+      represent: (data) => data.__jsExpr,
+    })
+    yamlSchema = yaml.JSON_SCHEMA.extend(JsScalar)
+  }
+  return yamlSchema
 }
 
 function timestamp() {
@@ -84,7 +101,7 @@ function parseEntryBlock(blockLines) {
   const yaml = loadYamlModule()
   if (yaml === null) return null
   try {
-    const parsed = yaml.load(blockLines.join('\n'))
+    const parsed = yaml.load(blockLines.join('\n'), { schema: loadYamlSchema() })
     if (Array.isArray(parsed) && parsed.length === 1 && isObject(parsed[0])) return parsed[0]
   } catch { /* 整个夹具无效时仍保守回退到逐行解析 */ }
   return null
@@ -214,7 +231,7 @@ function verifyMigratedPatch(content) {
   const yaml = loadYamlModule()
   if (yaml !== null) {
     try {
-      const parsed = yaml.load(content)
+      const parsed = yaml.load(content, { schema: loadYamlSchema() })
       if (!Array.isArray(parsed)) return false
       // 只检查解析后的顶层条目；嵌套 insert 中的同名 id 不属于迁移对象。
       return !parsed.some((entry) => legacyEntryKind(entry))
@@ -358,14 +375,20 @@ export function ensureDshExtraPlanLink(dshHome, profileName) {
 export function healQqbotCompatibility(dshHome) {
   try {
     const profiles = findOwnQqbotProfiles(dshHome)
+    const results = []
+    const failed = []
     for (const profileName of profiles) {
       const profileDir = join(dshHome, 'profiles', profileName)
-      healPatchRows(profileDir)
-      ensureDshExtraPlanLink(dshHome, profileName)
+      const patch = healPatchRows(profileDir)
+      const link = ensureDshExtraPlanLink(dshHome, profileName)
+      const summary = { profile: profileName, patch, link }
+      results.push(summary)
+      if (patch.status === 'failed' || patch.reason === 'read-failed' || link.status === 'failed') failed.push(summary)
     }
-    return { profiles, count: profiles.length }
+    return { profiles, count: profiles.length, results, failed }
   } catch (err) {
-    console.warn(LOG_PREFIX + ' 自愈遍历异常（不阻断）:', err instanceof Error ? err.message : String(err))
-    return { profiles: [], count: 0, error: err instanceof Error ? err.message : String(err) }
+    const message = err instanceof Error ? err.message : String(err)
+    console.warn(LOG_PREFIX + ' 自愈遍历异常（不阻断）:', message)
+    return { profiles: [], count: 0, results: [], failed: [], error: message }
   }
 }

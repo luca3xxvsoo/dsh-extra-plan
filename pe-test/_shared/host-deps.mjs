@@ -95,18 +95,42 @@ function anchorCandidates() {
   return list
 }
 
-function entryOf(pkgPath) {
+function exportTarget(pkg, subpath) {
+  const exportsField = pkg.exports
+  if (typeof exportsField === 'string') return subpath === '.' ? exportsField : undefined
+  if (exportsField !== null && typeof exportsField === 'object' && !Array.isArray(exportsField)) {
+    const direct = Object.prototype.hasOwnProperty.call(exportsField, subpath)
+      ? exportsField[subpath]
+      : subpath === '.' && !Object.keys(exportsField).some((key) => key.startsWith('.')) ? exportsField : undefined
+    if (typeof direct === 'string') return direct
+    if (direct !== null && typeof direct === 'object') {
+      if (typeof direct.default === 'string') return direct.default
+      if (typeof direct.import === 'string') return direct.import
+      if (typeof direct.require === 'string') return direct.require
+      if (typeof direct.node === 'string') return direct.node
+    }
+    return undefined
+  }
+  return subpath === '.' ? pkg.main : undefined
+}
+
+function entryOf(pkgPath, subpath = '.') {
   let pkg = null
   try { pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) } catch { return null }
   if (pkg === null || typeof pkg !== 'object') return null
-  let rel = undefined
-  const dot = pkg.exports !== null && typeof pkg.exports === 'object' ? pkg.exports['.'] : undefined
-  if (typeof dot === 'string') rel = dot
-  else if (dot !== null && typeof dot === 'object' && dot !== undefined) rel = dot.default !== undefined ? dot.default : dot.import
-  if (typeof rel !== 'string' || rel === '') rel = pkg.main
-  if (typeof rel !== 'string' || rel === '') rel = 'index.js'
-  const entry = join(dirname(pkgPath), rel.replace(/^\.\//, ''))
-  return existsSync(entry) ? entry : null
+  let rel = exportTarget(pkg, subpath)
+  if (typeof rel !== 'string' || rel === '') {
+    if (subpath !== '.') return null
+    rel = 'index.js'
+  }
+  let relative = rel.startsWith('./') ? rel.slice(2) : rel
+  let entry = join(dirname(pkgPath), relative)
+  if (existsSync(entry)) return entry
+  if (subpath === '.' && relative !== 'index.js') {
+    entry = join(dirname(pkgPath), 'index.js')
+    if (existsSync(entry)) return entry
+  }
+  return null
 }
 
 function findHostAnchor() {
@@ -133,9 +157,11 @@ function findHostAnchor() {
 function scopedEntryOf(nodeModules, specifier) {
   if (!specifier.startsWith(SCOPE + '/')) return null
   const rest = specifier.slice(SCOPE.length + 1)
-  const parts = rest.split('/')
-  if (parts.length === 0 || parts[0] === '') return null
-  return entryOf(join(nodeModules, SCOPE, parts[0], 'package.json'))
+  const slash = rest.indexOf('/')
+  const packageName = slash === -1 ? rest : rest.slice(0, slash)
+  if (packageName === '') return null
+  const subpath = slash === -1 ? '.' : './' + rest.slice(slash + 1)
+  return entryOf(join(nodeModules, SCOPE, packageName, 'package.json'), subpath)
 }
 
 // profile 中若有 shadowing 的宿主包副本只告警；不改变解析语义或文件状态。
@@ -165,6 +191,69 @@ function warnShadowedHostCopies() {
     + '\n  若两者版本不同，宿主运行时行为由 profile 那份决定（症状示例：会话内工具集变化 → 线上 tool_removal → API 422，整会话报废）。'
     + '\n  修复: 删除 profile 的 node_modules 与 pnpm-lock.yaml 后重装插件，再重启 dsh。',
   )
+}
+
+export function buildAsyncHookSource({ target, anchor, yaml, roots, scope = SCOPE }) {
+  const lines = [
+    'const TARGET = ' + JSON.stringify(target) + ';',
+    'const ANCHOR = ' + JSON.stringify(anchor) + ';',
+    'const YAML = ' + JSON.stringify(yaml) + ';',
+    'const ROOTS = ' + JSON.stringify(roots) + ';',
+    'const SCOPE = ' + JSON.stringify(scope) + ';',
+    'const fs = await import("node:fs");',
+    'const path = await import("node:path");',
+    'const url = await import("node:url");',
+    'function exportTarget(pkg, subpath) {',
+    '  const exportsField = pkg.exports;',
+    '  if (typeof exportsField === "string") return subpath === "." ? exportsField : undefined;',
+    '  if (exportsField !== null && typeof exportsField === "object" && !Array.isArray(exportsField)) {',
+    '    const direct = Object.prototype.hasOwnProperty.call(exportsField, subpath) ? exportsField[subpath] : (subpath === "." && !Object.keys(exportsField).some((key) => key.startsWith(".")) ? exportsField : undefined);',
+    '    if (typeof direct === "string") return direct;',
+    '    if (direct !== null && typeof direct === "object") {',
+    '      if (typeof direct.default === "string") return direct.default;',
+    '      if (typeof direct.import === "string") return direct.import;',
+    '      if (typeof direct.require === "string") return direct.require;',
+    '      if (typeof direct.node === "string") return direct.node;',
+    '    }',
+    '    return undefined;',
+    '  }',
+    '  return subpath === "." ? pkg.main : undefined;',
+    '}',
+    'function scopedEntry(specifier) {',
+    '  if (!specifier.startsWith(SCOPE + "/")) return null;',
+    '  const rest = specifier.slice(SCOPE.length + 1);',
+    '  const slash = rest.indexOf("/");',
+    '  const packageName = slash === -1 ? rest : rest.slice(0, slash);',
+    '  if (packageName === "") return null;',
+    '  const subpath = slash === -1 ? "." : "./" + rest.slice(slash + 1);',
+    '  for (const root of ROOTS) {',
+    '    const pkgPath = path.join(root, SCOPE, packageName, "package.json");',
+    '    if (!fs.existsSync(pkgPath)) continue;',
+    '    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));',
+    '    let rel = exportTarget(pkg, subpath);',
+    '    if (typeof rel !== "string" || rel === "") {',
+    '      if (subpath !== ".") continue;',
+    '      rel = "index.js";',
+    '    }',
+    '    let relative = rel.startsWith("./") ? rel.slice(2) : rel;',
+    '    let entry = path.join(path.dirname(pkgPath), relative);',
+    '    if (fs.existsSync(entry)) return url.pathToFileURL(entry).href;',
+    '    if (subpath === "." && relative !== "index.js") {',
+    '      entry = path.join(path.dirname(pkgPath), "index.js");',
+    '      if (fs.existsSync(entry)) return url.pathToFileURL(entry).href;',
+    '    }',
+    '  }',
+    '  return null;',
+    '}',
+    'export async function resolve(specifier, context, nextResolve) {',
+    '  if (specifier === TARGET) return { url: ANCHOR, shortCircuit: true };',
+    '  if (specifier === "js-yaml" && YAML !== null) return { url: YAML, shortCircuit: true };',
+    '  const scoped = scopedEntry(specifier);',
+    '  if (scoped !== null) return { url: scoped, shortCircuit: true };',
+    '  return nextResolve(specifier, context);',
+    '}',
+  ];
+  return lines.join(String.fromCharCode(10));
 }
 
 let registered = false
@@ -223,36 +312,12 @@ export async function registerHostDeps() {
     return
   }
   if (typeof module.register === 'function') {
-    const hookSource = [
-      'const TARGET = ' + JSON.stringify(TARGET) + ';',
-      'const ANCHOR = ' + JSON.stringify(pathToFileURL(anchor.entry).href) + ';',
-      'const YAML = ' + JSON.stringify(yamlEntry === null ? null : pathToFileURL(yamlEntry).href) + ';',
-      'const MAP = ' + JSON.stringify(Object.fromEntries(scopedNodeModules.map((root) => [root, true]))) + ';',
-      'const ROOTS = ' + JSON.stringify(scopedNodeModules) + ';',
-      'const SCOPE = ' + JSON.stringify(SCOPE) + ';',
-      'export async function resolve(specifier, context, nextResolve) {',
-      '  if (specifier === TARGET) return { url: ANCHOR, shortCircuit: true }',
-      '  if (specifier === "js-yaml" && YAML !== null) return { url: YAML, shortCircuit: true }',
-      '  if (specifier.startsWith(SCOPE + "/")) {',
-      '    const rest = specifier.slice(SCOPE.length + 1).split("/")[0];',
-      '    const fs = await import("node:fs");',
-      '    const path = await import("node:path");',
-      '    const url = await import("node:url");',
-      '    for (const root of ROOTS) {',
-      '      const pkgPath = path.join(root, SCOPE, rest, "package.json");',
-      '      if (!fs.existsSync(pkgPath)) continue;',
-      '      const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));',
-      '      const dot = pkg.exports && typeof pkg.exports === "object" ? pkg.exports["."] : undefined;',
-      '      let rel = typeof dot === "string" ? dot : dot && typeof dot === "object" ? (dot.default !== undefined ? dot.default : dot.import) : undefined;',
-      '      if (typeof rel !== "string" || rel === "") rel = pkg.main;',
-      '      if (typeof rel !== "string" || rel === "") rel = "index.js";',
-      '      const entry = path.join(path.dirname(pkgPath), String(rel).replace(/^\.\//, ""));',
-      '      if (fs.existsSync(entry)) return { url: url.pathToFileURL(entry).href, shortCircuit: true };',
-      '    }',
-      '  }',
-      '  return nextResolve(specifier, context)',
-      '}',
-    ].join('\n')
+    const hookSource = buildAsyncHookSource({
+      target: TARGET,
+      anchor: pathToFileURL(anchor.entry).href,
+      yaml: yamlEntry === null ? null : pathToFileURL(yamlEntry).href,
+      roots: scopedNodeModules,
+    })
     module.register('data:text/javascript;base64,' + Buffer.from(hookSource, 'utf8').toString('base64'), import.meta.url)
     return
   }

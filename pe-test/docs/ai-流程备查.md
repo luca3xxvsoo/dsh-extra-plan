@@ -80,7 +80,7 @@ PTC C=0/C=1 必须各用干净 A=1 顶层会话取 F→首个 tool/call→L→�
 
 所有修改完成后，主会话运行 `node pe-test/tools/代码地图生成.mjs`，检查 stdout 的新增/删除/行号提示；只补人工意图/描述，不手改机器路径、函数、行号和同名顺序；再运行 `--check`。修改来自执行者时也必须由主会话完成这一步。
 
-固定仓库回归顺序：批准清单中的实际修改 JS/MJS 逐文件执行 `node --check` → step-01 设置页配置 → step-00 全流程 → step-00 跨平台 → step-04 → step-06-08 → step-06 → 代码地图生成 → 人工描述复核 → 地图 `--check` → 一键 step。Markdown 不伪造 `node --check` 结果。
+固定仓库回归顺序：实际修改的 JS/MJS 逐文件 `node --check`，package JSON `JSON.parse`，生成 hookSource 展开后 ESM 解析回放 → step-01 设置页配置 → 安装同步 → QQBot 安装映射 → 预设完整性 → step-00 全流程/跨平台 → step-04 路由与 context-gate → step-06-08 → step-06 → `generate-runtime-defaults.mjs --check` → 代码地图生成 → 人工描述复核 → 地图 `--check` → 一键 step。Markdown 不伪造 `node --check` 结果，SKIP/INCOMPLETE/HUMAN/NOT-RUN 不计 PASS。
 
 ## P2-2 执行口径
 
@@ -88,4 +88,4 @@ PTC C=0/C=1 必须各用干净 A=1 顶层会话取 F→首个 tool/call→L→�
 
 ## 设置与默认链交接
 
-8 项 UI 设置与 2 项宿主行设置的权威值走 settings 行，PUT 只投影声明行；`toolPresentationMode` 为装载期值，`runcodeCatchGate` 按配置热读。默认作者值来自 `agent.cordis.yml`，生成器产物不可手改；坏模板保持 last-known-good。
+8 项 UI 设置与 2 项宿主行设置的权威值都走 `dsh-extra-plan-settings` 唯一 settings 行；PUT 只 edit 该行并保留其它字段，不再写旧公开 preset-sync 行。`./preset-sync` 与 locale exports 已退役，但 `lib/preset-sync.js` 仍由 settings owner 内部相对调用，raw patch 旧值继续迁移。`toolPresentationMode` 为装载期值，`runcodeCatchGate` 按配置热读。默认作者值来自 `agent.cordis.yml`，生成器产物不可手改；坏模板保持 last-known-good。

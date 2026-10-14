@@ -599,17 +599,17 @@ function catalogIsCollapsed(tools) {
     (only !== null && typeof only === 'object' && only.name === 'run_code')
 }
 
-// ① subagent_probe 分支（唯一功能点）：planner 角色拒绝 + run_in_background 检查。
-// T5：探查者仅主会话可委派——planner 派出的 one-shot 探查者 owner=委派者，planner 轮次
-// 结束即被宿主级联取消（owner disposed），故从源头禁止 planner 委派；拒绝分支置于函数
-// 顶部（run_in_background 检查之前、且不依赖 args 解析），两个调用点——组判定
-// （run_code 内成员）与直呼/listener——都经本函数，单点覆盖两条路径。
-// 文案必须指向「申请继续探查」（否则模型会反复重试烧预算）：planner 的探查只能自行
-// read/glob/grep，缺口走申请继续探查往返，由主会话派探查者并转达线索文件路径。
-// 参数不可解析（组判定 vExec 传字符串）时跳过 run_in_background 检查（运行时瀑布兜底）。
-function subagentProbeGateReason(exec, isPlanner) {
-  if (isPlanner) {
+// ① subagent_probe 分支：明确按 main/planner/child 角色单点判定。
+// T5：探查者仅主会话可委派——planner 与其它 child 都必须在运行时第二道防线拒绝，
+// 直呼/listener 和 run_code 组判定统一走本函数，避免 toolFilter 漏洞造成递归委派。
+// planner 文案必须引导「申请继续探查」；其它 child 保持只读角色文案。
+function subagentProbeGateReason(exec, role) {
+  const roleKind = typeof role === 'string' ? role : role !== undefined && role !== null && typeof role.kind === 'string' ? role.kind : 'child'
+  if (roleKind === 'planner') {
     return '规划子代理不得委派探查者：subagent_probe 仅主会话可用（探查者属主会话的探查能力）。请用 read/glob/grep 自行核对；确有缺口时输出「申请继续探查：<待查项> — <原因>」，由主会话派探查者并把线索文件路径转达给你（toolFilter 之外的第二道防线）'
+  }
+  if (roleKind !== 'main') {
+    return '只读子代理不得委派探查者：subagent_probe 仅主会话可用；请保持当前角色的只读边界'
   }
   const args = exec !== undefined && exec !== null ? exec.arguments : undefined
   if (args !== undefined && args !== null && typeof args === 'object' && args.run_in_background !== true) {
@@ -782,7 +782,8 @@ function mainGateReason(state, exec, gateCtx) {
       if (category === 'malformed') {
         const denyMsg = gateAskDenyReason(labels, gateRuntime)
         // 同时检查结构错误，合并为一条报错，一次性告知模型两个问题
-        const kind = askKindOfRelaxed(labels, gateRuntime) === 'approve' ? 'approve' : askKindOfRelaxed(labels, gateRuntime) === 'purpose' ? 'purpose' : 'route'
+        const askKind = askKindOfRelaxed(labels, gateRuntime)
+        const kind = askKind === 'approve' ? 'approve' : askKind === 'purpose' ? 'purpose' : 'route'
         // kind 按特异性判定（复用 askKindOfRelaxed 语义）：批准特异词→approve；路由特异词或仅共享 routeDisagree→route
         const args = exec.arguments
         const questions = args !== undefined && args !== null && typeof args === 'object' ? args.questions : undefined
@@ -840,7 +841,7 @@ function mainGateReason(state, exec, gateCtx) {
   }
   if (name === planToolName) {
     if (!escape && (state.route !== 'plan' || state.clarified !== true || (state.purpose !== 'refine' && state.purpose !== 'redo'))) {
-      return planDenyReason('subagent_plan', state, gateRuntime)
+      return planDenyReason(planToolName, state, gateRuntime)
     }
     // 新增：continuable 默认后台，传 false 是试图前台等待绕开续轮
     const args = exec.arguments
@@ -954,7 +955,7 @@ function runCodeGroupDenyReason(state, exec, role, gateCtx) {
         : { name: member.name, arguments: member.argsParsed ? member.args : member.argsText, sub: true }
       let reason = null
       if (member.name === 'subagent_probe') {
-        reason = subagentProbeGateReason(vExec, roleKind === 'planner')
+        reason = subagentProbeGateReason(vExec, roleKind)
       } else if (member.kind === 'bare-write') {
         // 裸写成员按角色分流：只读角色保留 v2 共享文案（hits 拼写与既有共享文案逐字同构）；
         // 主会话走 write/edit 闸门（routeDenyReason 与 approved 文案）；

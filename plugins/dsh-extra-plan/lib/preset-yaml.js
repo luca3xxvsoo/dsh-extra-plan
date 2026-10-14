@@ -157,18 +157,6 @@ export function captureSettings(text, definitions) {
   return { document, values, states }
 }
 
-/** 生效 plugins：profile override → Loader 行 config → 继承层。 */
-export function effectivePluginsOf(row) {
-  if (row === null || typeof row !== 'object') return undefined
-  const override = row.override
-  if (override !== null && typeof override === 'object' && Array.isArray(override.plugins)) return override.plugins
-  const own = row.entry !== undefined && row.entry.options !== undefined ? row.entry.options.config : undefined
-  if (own !== null && typeof own === 'object' && Array.isArray(own.plugins)) return own.plugins
-  const inherited = row.inherited
-  if (inherited !== null && typeof inherited === 'object' && Array.isArray(inherited.plugins)) return inherited.plugins
-  return undefined
-}
-
 /** 出厂默认（2 项宿主行）：读模板 sourceLocator，缺项/解析失败回落内置。 */
 export function hostRowDefaultsFromTemplate(templateText) {
   const fallback = { webFetch: false, toolPresentationMode: 'native' }

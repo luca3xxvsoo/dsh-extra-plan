@@ -1,8 +1,9 @@
 // 安装/启动同步回归：单一全局 owner、真实 deferred 生命周期与官方 Loader carrier 夹具。
 // 所有非 Loader 夹具均在内存中；真实 Loader 缺依赖只记录 SKIP，不以 mock 冒充通过。
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire, registerHooks } from 'node:module'
 import { join } from 'node:path'
+import { homedir, tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { isDeepStrictEqual } from 'node:util'
 import { parsePresetYaml } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
@@ -17,9 +18,10 @@ import {
   syncPreset,
 } from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
 import { GATE_WORD_FIELDS } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
+import { buildAsyncHookSource } from '../_shared/host-deps.mjs'
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url))
-const OFFICIAL_ROOT = process.env.DSH_INSTALL_ROOT || 'C:\\Users\\Administrator\\AppData\\Roaming\npm\node_modules\\@deepseek-ai\\dsh'
+const OFFICIAL_ROOT = process.env.DSH_INSTALL_ROOT || join(process.env.APPDATA || join(homedir(), 'AppData', 'Roaming'), 'npm', 'node_modules', '@deepseek-ai', 'dsh')
 try {
   const anchor = createRequire(join(OFFICIAL_ROOT, 'package.json'))
   const schemaUrl = new URL('file:///' + anchor.resolve('@deepseek-ai/schemastery').replaceAll('\\\\', '/')).href
@@ -33,6 +35,45 @@ const completeSettings = { anchoredBootstrap: true, creativeMode: false, webFetc
 let pass = 0
 let fail = 0
 function check(label, condition) { if (condition) { pass += 1; console.log('PASS  ' + label) } else { fail += 1; console.log('FAIL  ' + label) } }
+const installSource = readFileSync(fileURLToPath(import.meta.url), 'utf8')
+const officialRootLine = installSource.split('\n').find((line) => line.startsWith('const OFFICIAL_ROOT')) || ''
+check('T08 fallback 路径由 DSH_INSTALL_ROOT→APPDATA→homedir/path.join 决议且无换行/用户名硬编码', !/\r|\n/.test(OFFICIAL_ROOT) && !officialRootLine.includes('Administrator') && officialRootLine.includes("process.env.APPDATA || join(homedir(), 'AppData', 'Roaming')"))
+const hookFixture = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-host-deps-hook-'))
+try {
+  const packageDir = join(hookFixture, '@deepseek-ai', 'dsh-tool-subagent-control')
+  mkdirSync(join(packageDir, 'lib', 'types'), { recursive: true })
+  writeFileSync(join(packageDir, 'package.json'), JSON.stringify({
+    name: '@deepseek-ai/dsh-tool-subagent-control',
+    type: 'module',
+    exports: { '.': './lib/index.js', './list-agents': './lib/types/list-agents.js' },
+  }), 'utf8')
+  writeFileSync(join(packageDir, 'lib', 'index.js'), 'export const root = true\n', 'utf8')
+  writeFileSync(join(packageDir, 'lib', 'types', 'list-agents.js'), 'export const list = true\n', 'utf8')
+  const hookSource = buildAsyncHookSource({ target: '@anchor', anchor: 'file:///anchor.js', yaml: null, roots: [hookFixture] })
+  check('T08 async hookSource 删除未使用 MAP 且可被 data URL ESM 解析', !hookSource.includes('MAP') && await import('data:text/javascript;base64,' + Buffer.from(hookSource, 'utf8').toString('base64')))
+  const hookModule = await import('data:text/javascript;base64,' + Buffer.from(hookSource, 'utf8').toString('base64'))
+  const nextResolve = async (specifier) => ({ url: 'next:' + specifier })
+  const rootResolved = await hookModule.resolve('@deepseek-ai/dsh-tool-subagent-control', {}, nextResolve)
+  const listResolved = await hookModule.resolve('@deepseek-ai/dsh-tool-subagent-control/list-agents', {}, nextResolve)
+  const unknownResolved = await hookModule.resolve('@deepseek-ai/dsh-tool-subagent-control/unknown', {}, nextResolve)
+  check('T08 async hookSource exports 子路径根入口与 /list-agents 指向不同文件、未知子路径透传', rootResolved.url.endsWith('/lib/index.js') && listResolved.url.endsWith('/lib/types/list-agents.js') && rootResolved.url !== listResolved.url && unknownResolved.url === 'next:@deepseek-ai/dsh-tool-subagent-control/unknown')
+  const rootModule = await import(rootResolved.url)
+  const listModule = await import(listResolved.url)
+  check('T08 fixture 根入口与 /list-agents 实际 import 导出布尔值', rootModule.root === true && listModule.list === true)
+  const fallbackDir = join(hookFixture, '@deepseek-ai', 'dsh-tool-subagent-fallback')
+  mkdirSync(fallbackDir, { recursive: true })
+  writeFileSync(join(fallbackDir, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-tool-subagent-fallback', type: 'module' }), 'utf8')
+  writeFileSync(join(fallbackDir, 'index.js'), 'export const fallbackRoot = true\n', 'utf8')
+  const fallbackSource = buildAsyncHookSource({ target: '@anchor-fallback', anchor: 'file:///anchor-fallback.js', yaml: null, roots: [hookFixture] })
+  const fallbackModule = await import('data:text/javascript;base64,' + Buffer.from(fallbackSource, 'utf8').toString('base64'))
+  const fallbackResolved = await fallbackModule.resolve('@deepseek-ai/dsh-tool-subagent-fallback', {}, nextResolve)
+  const fallbackUnknown = await fallbackModule.resolve('@deepseek-ai/dsh-tool-subagent-fallback/unknown', {}, nextResolve)
+  const fallbackImported = await import(fallbackResolved.url)
+  check('T08 无 exports/main 根包回退 index.js 且真实 import 成功，显式未知子路径透传', fallbackResolved.url.endsWith('/index.js') && fallbackImported.fallbackRoot === true && fallbackUnknown.url === 'next:@deepseek-ai/dsh-tool-subagent-fallback/unknown')
+} finally {
+  rmSync(hookFixture, { recursive: true, force: true })
+}
+
 function deferred() { let resolve; const promise = new Promise((done) => { resolve = done }); return { promise, resolve } }
 async function flush() { await Promise.resolve(); await new Promise((resolve) => setImmediate(resolve)) }
 function findRow(rows, id) { for (const item of rows || []) { if (item !== null && typeof item === 'object' && item.id === id) return item; if (item !== null && typeof item === 'object' && Array.isArray(item.config)) { const nested = findRow(item.config, id); if (nested !== undefined) return nested } } return undefined }
@@ -65,6 +106,14 @@ check('V07 纯 definition 顶层 17 行且 raw !!js 保真', definition.plugins.
 const oldSyncPatch = '- id: extra-plan-preset-sync\n  config:\n    webFetch: true\n    toolPresentationMode: ptc\n    gateWords:\n' + Object.entries(gate).map(([key, value]) => '      ' + key + ': ' + value).join('\n') + '\n'
 const oldState = readLegacyState(oldSyncPatch)
 check('V04 旧同步公开行只读兼容并提取严格 gateWords', oldState.projection.webFetch === true && oldState.projection.toolPresentationMode === 'ptc' && oldState.gateWords !== undefined)
+const legacyPluginsFixture = structuredClone(definition.plugins)
+findRow(legacyPluginsFixture, 'tool-web').config.fetch = true
+findRow(legacyPluginsFixture, 'tool-presentation').config.mode = 'ptc'
+findRow(legacyPluginsFixture, 'extra-plan').config.plannerModel = 'legacy-body-model'
+const oldBodyPatch = JSON.stringify([{ id: 'preset-extra-plan', config: { plugins: legacyPluginsFixture } }])
+const oldBodyState = readLegacyState(oldBodyPatch)
+const oldBodySync = await syncPreset({ settingsValues: {}, readPatch: () => oldBodyPatch })
+check('V04 旧 preset-extra-plan raw patch 合法 webFetch/toolPresentationMode/plannerModel 迁入 settings', oldBodyState.projection.webFetch === true && oldBodyState.projection.toolPresentationMode === 'ptc' && oldBodyState.authority.values.plannerModel === 'legacy-body-model' && oldBodySync.plan.settings.values.plannerModel === 'legacy-body-model')
 const idle = await syncPreset({ settingsValues: completeSettings, readPatch: () => '' })
 check('V04 完整全局值启动同步为 idle，不生成公开 row 计划', idle.action === 'idle')
 let plan = null
@@ -125,6 +174,18 @@ await flush()
 reopenRegistered = reopenCtx.pluginCalls + reopenCtx2.pluginCalls
 await reopenDispose2()
 check('V06 owner 快速关开各自同生共死，无多活动 adapter', reopenRegistered === 2 && reopenDisposed === 2)
+
+// 自有 adapter 已挂载后，internal/update 才出现活动 preset-extra-plan：旧 owner 接管前恰释放自有 adapter。
+const handoffEditor = makeEditor(completeSettings)
+const handoffStats = makeContext(handoffEditor, async () => ({ dispose() {} }))
+const handoffDispose = mountPresetSync(handoffStats.ctx)
+await flush()
+handoffEditor.state.rows.push({ entry: { options: { id: 'preset-extra-plan' }, fiber: { state: 1 } }, disabled: false })
+if (typeof handoffStats.updateListener === 'function') handoffStats.updateListener()
+await flush()
+check('V06 preset-extra-plan 后出现时自有 adapter 释放恰一次且不注册第二个', handoffStats.pluginCalls === 1 && handoffStats.pluginDisposals === 1)
+await handoffDispose()
+check('V06 preset-extra-plan 接管后最终 dispose 仍幂等', handoffStats.pluginDisposals === 1)
 
 // 真实官方 Loader carrier：依赖缺失只 SKIP；能加载时检查 client-carrier entry 的实际消失。
 try {

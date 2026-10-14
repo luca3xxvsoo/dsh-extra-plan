@@ -8,13 +8,13 @@
 | 分类 | 检查什么 | 什么时候用 |
 |---|---|---|
 | **逻辑检查**（step-00） | 插件「脑子里的规矩」对不对（写命令该拦的拦不拦、预算算得对不对） | 每次改完插件后 |
-| **安装检查**（step-01，含 QQBot 静态安装映射；step-01-安装分发已删除） | 装到你电脑上后：文件全不全、后端权威配置链是否完整；QQBot 静态 patch/迁移逻辑 | 装完插件后第一次 |
+| **安装检查**（step-01，含设置页/安装同步/预设完整性/QQBot 静态映射） | 文件、唯一 settings owner、raw 旧值迁移与 QQBot patch/迁移逻辑 | 装完插件后第一次 |
 | **QQBot 环境检查**（step-01-qqbot-环境验证） | 严格环境预检、junction 能力与真实 profile 只读映射核验 | 有对应环境时自动运行；环境不足则 SKIP |
 | **痕迹检查**（step-04/05/06/07/08/99） | 跑完一次真实流程后，看日志：AI 这轮干了什么、有没有违规 | 每次试完流程后 |
 
 ## 设置管理路径（0.1.7/0.2.0 rc.2）
-0.2 独立 `settings.plugins.tab` 页签移除；0.1.7 原始 `plugins.row.config` keyed row 由 0.1.7/0.2 支持构建保留。宿主提供对应 legacy row slot 时，用户从“插件 → 按需规划模式 → 按需规划模式配置”进入并保存；未提供时才走宿主 `configEditor/SettingsForms` 或手工维护 profile 权威行后备路径。10 个权威值与两项投影仍由原 settings 后端链维护，AI 本轮只读。
-自定义 `/api/dsh-extra-plan-settings/pro-config` 的 PUT 仅更新 `extra-plan-preset-sync` 公开行中的 `webFetch/toolPresentationMode` 两项投影，不写 10 个权威值；8 个 extra-plan 字段没有该 PUT 写入口。预设本体来自纯 `preset-definition.generated.yml`，由 preset-sync 内部交给官方 AgentPreset adapter；`toolPresentationMode` 更新后重启 DSH 使新 revision 装载，`runcodeCatchGate` 由 live-config 热读。
+设置表单仅经 `plugins.detail.section` 渲染于当前 bundle 详情页行列表之后（自绘标题）；本包不注册 `plugins.bundle.config`、`plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`。若 bundle.config 槽出现本包条目，detail.section 让位，避免重复表单。ConfigForms 使用稳定 namespace，一次提交十项字段与 revision。
+唯一公开管理组件是 `@local/dsh-extra-plan/settings`；其 PUT 只 edit `dsh-extra-plan-settings` 唯一全局行，保留其它字段与 gateWords。`./preset-sync` 及其 locale exports 已退役；`lib/preset-sync.js` 仍由 settings owner 内部相对调用，raw patch 中旧 `extra-plan-preset-sync`/`preset-extra-plan` 值只作迁移来源。预设本体来自纯 `preset-definition.generated.yml`，由内部同步交给官方 AgentPreset adapter；`toolPresentationMode` 为装载期值，`runcodeCatchGate` 由 live-config 热读。
 
 ## 怎么跑
 
@@ -22,7 +22,7 @@
 ```
 node pe-test/tools/一键step测试.mjs
 ```
-→ 自动跑全部「自动判定项」（14 个），结果保存到 `pe-test/reports/测试报告-<时间>.md`
+→ 自动跑一键脚本 AUTO 数组中的全部自动判定项，结果保存到 `pe-test/reports/测试报告-<时间>.md`；历史批次数字不作为当前通过数。
 → 跑之前先确认：**在完整目录（pe-test 与 plugins 同级 = 仓库根）下运行**才有完整结果
 → QQBot 环境项默认只读真实 profile；缺环境或 junction 能力不足显示结构化 SKIP，不计失败，不会自动 heal/建链；报告末尾会列出「人眼项/需参数项」——那些需要你自己跑并人工判读，不是自动的；HUMAN 独立报告保留 stdout/stderr 全量原文
 
@@ -56,7 +56,7 @@ node pe-test/tools/step-07-子代理模型与引导取证.mjs
 | 10 验收只读 | 覆盖在 step-04-路由与写闸门 | reviewer 只读、不碰写操作 |
 | 11 代码地图一致性 | 覆盖在一键体检（`代码地图生成.mjs --check`，不写盘） | 地图与代码同步、无漏检/导航失效；**改完代码没同步地图 → 这项红**，跑 `node pe-test/tools/代码地图生成.mjs` 即可修 |
 
-**限制口径**：save_probe 的 `PROBE_LIMITS` 当前为 evidence 最多 150 条、单条 `evidence.text` 最多 1000 字；step-00 的 PR23=151 条拒绝，PR34/PR35 覆盖 1000 通过、1001 拒绝。另有 maxEvidenceValueLen=240、maxEvidenceNoteLen=400、maxTotalChars=20000、maxEvidenceTotalChars=32000 等 20 个字段；完整字段与上限以 lib/save-contract.js PROBE_LIMITS 为唯一口径、本文不复制全量以免漂移。`exploreBudget=18` 是 planner 工具预算/单实例子调用上限，不能与上述限制或台账历史「80 条」「80+79+50=209」混用。根 `dsh-extra-plan/README.md` 不在本轮 AI 修改范围，otherAgentModel 缺口由用户自行同步。
+**限制口径**：`PROBE_LIMITS` 与 `exploreBudget=18` 均以源码合同/作者 YAML 为唯一口径；本文不复制全量限制值，避免与历史批次数字漂移。报告中的源改动、删除文件、backup、reports 与 context fixture 分开统计；AUTO/HUMAN/SKIP 以报告字段为准，历史批次数字不作为当前通过数。
 
 **工具包目录说明**：pe-test/_shared/ 是取证脚本共用的解码/定位模块（session-finder / zstd-frames / host-deps / preset-hash），勿删；HUMAN 项报告沿用 `测试报告-<时间>.md` 命名，独立运行不覆盖一键体检主报告。
 

@@ -118,7 +118,7 @@ window.__ModuleLoader__.load({
       const el = React.createElement;
       const t = ctx.locale.bind(NS);
       const sharedForm = ctx.configForms.get(NS);
-      let bundleConfigRegistered = false;
+
 
       ctx.effect(() => ctx.locale.register(NS, { zh, en }), "dsh-extra-plan-settings: dictionaries");
 
@@ -262,7 +262,7 @@ window.__ModuleLoader__.load({
 
       function SettingsCard(props) {
         const copy = props.translate !== undefined && props.translate !== null ? props.translate : function (key) { return key; };
-        if (props.view === "summary") return copy("cardDescription");
+
         return el("section", { className: "esp-wrap", "data-plugin-section": "dsh-extra-plan-settings-global" },
           el("h4", { className: "esp-panelTitle" }, copy("cardTitle")),
           el("p", { className: "esp-panelHint" }, copy("cardDescription")),
@@ -271,7 +271,7 @@ window.__ModuleLoader__.load({
       }
 
       function hasBundleConfigEntry() {
-        if (bundleConfigRegistered) return true;
+
         try {
           return typeof ctx.slots.entries === "function" && ctx.slots.entries("plugins.bundle.config").some(function (entry) {
             return entry.options !== undefined && entry.options.key === BUNDLE_NAME;
@@ -284,7 +284,7 @@ window.__ModuleLoader__.load({
         const subject = props !== undefined && props !== null ? props.subject : undefined;
         const isBundle = subject !== undefined && subject !== null && subject.kind === "bundle" && subject.pkg !== undefined && subject.pkg.name === BUNDLE_NAME;
         if (!isBundle || hasBundleConfigEntry()) return null;
-        return el(SettingsCard, { configForm: configForm, translate: t, view: "page" });
+         return el(SettingsCard, { configForm: configForm, translate: t });
       }
 
       function safeInject(name, register) {

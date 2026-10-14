@@ -45,30 +45,73 @@ export function bashCommandOf(exec) { return commandTextOf(exec) }
 const SHELL_PREFIX_WORDS = new Set(['sudo', 'env', 'nohup', 'command'])
 const INNER_SHELL_WORDS = new Set(['pwsh', 'powershell', 'cmd', 'bash', 'sh'])
 
+function shellWords(segment) {
+  const words = []
+  let index = 0
+  while (index < segment.length) {
+    while (index < segment.length && /\s/.test(segment[index])) index += 1
+    if (index >= segment.length) break
+    const quote = segment[index] === "'" || segment[index] === '"' ? segment[index] : ''
+    if (quote !== '') {
+      index += 1
+      let value = ''
+      while (index < segment.length) {
+        if (segment[index] === '\\' && index + 1 < segment.length) { value += segment[index + 1]; index += 2; continue }
+        if (segment[index] === quote) { index += 1; break }
+        value += segment[index]
+        index += 1
+      }
+      words.push(value)
+      continue
+    }
+    const start = index
+    while (index < segment.length && !/\s/.test(segment[index])) index += 1
+    words.push(segment.slice(start, index))
+  }
+  return words
+}
+
+const WRAPPER_OPTION_WITH_VALUE = new Set(['-u', '-g', '-h', '-C', '-p', '--user', '--group', '--chdir', '--host', '--unset', '--prompt'])
+function isEnvAssignment(word) {
+  return /^[A-Za-z_][A-Za-z0-9_]*=/.test(word)
+}
+
 export function mutationTextMatches(text, syntaxRe, bareRe, depth) {
   if (text === '' || depth >= 4) return false
   if (syntaxRe.test(text)) return true
   const segs = text.split(/[;\r\n]|\s*&&\s*|\s*\|\|\s*|\s*\|\s*|\s*&\s*/)
-  for (let s = 0; s < segs.length; s += 1) {
-    const seg = segs[s]
-    const first = /^\s*([A-Za-z0-9_.:\/-]+)/.exec(seg)
-    if (first === null) continue
-    let word = first[1]
-    if (SHELL_PREFIX_WORDS.has(word)) {
-      const second = /^\s*([A-Za-z0-9_.:\/-]+)/.exec(seg.slice(first[0].length))
-      if (second === null) continue
-      word = second[1]
-    }
-    if (INNER_SHELL_WORDS.has(word)) {
-      const arg = /-(?:Command|c)\s+(?:"([^"]*)"|'([^']*)')/i.exec(seg)
-      if (arg !== null) {
-        const inner = arg[1] !== undefined ? arg[1] : arg[2]
-        // 内层为另一平台 shell（pwsh 内嵌 bash 或反向）时两侧写形态并判（保守方向=拦）
-        if (mutationTextMatches(inner, syntaxRe, bareRe, depth + 1) || mutationTextMatches(inner, PWSH_MUTATION, PWSH_BARE_WORDS, depth + 1) || mutationTextMatches(inner, BASH_MUTATION, BASH_BARE_WORDS, depth + 1)) return true
+  for (const seg of segs) {
+    const words = shellWords(seg)
+    let index = 0
+    let steps = 0
+    while (index < words.length && steps < 32) {
+      steps += 1
+      const word = words[index]
+      if (isEnvAssignment(word)) { index += 1; continue }
+      if (SHELL_PREFIX_WORDS.has(word)) {
+        index += 1
+        while (index < words.length) {
+          const option = words[index]
+          if (isEnvAssignment(option)) { index += 1; continue }
+          if (option === '--') { index += 1; break }
+          if (!option.startsWith('-')) break
+          if (WRAPPER_OPTION_WITH_VALUE.has(option) && index + 1 < words.length) index += 2
+          else index += 1
+        }
+        continue
       }
-      continue
+      if (INNER_SHELL_WORDS.has(word)) {
+        let commandIndex = index + 1
+        while (commandIndex < words.length && !/^(?:-Command|-c)$/i.test(words[commandIndex])) commandIndex += 1
+        if (commandIndex + 1 < words.length) {
+          const inner = words[commandIndex + 1]
+          if (mutationTextMatches(inner, syntaxRe, bareRe, depth + 1) || mutationTextMatches(inner, PWSH_MUTATION, PWSH_BARE_WORDS, depth + 1) || mutationTextMatches(inner, BASH_MUTATION, BASH_BARE_WORDS, depth + 1)) return true
+        }
+        break
+      }
+      if (bareRe.test(word)) return true
+      break
     }
-    if (bareRe.test(word)) return true
   }
   return false
 }

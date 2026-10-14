@@ -4,7 +4,7 @@
 
 ## 项目身份与支持范围
 
-`@local/dsh-extra-plan` 是 dsh 的按需规划预设：AI 先只读理解，经路由、目的、澄清、批准四级机械锚点后执行；`save_plan` 是受限的方案/验收双文件写例外。当前支持 dsh `0.1.7-rc.1 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2`。0.2.0-rc.2 已有用户提供的范围受限 HUMAN 兼容通过基线（2026-10-01 rc2 批次），本轮 A09/A10/A11 与双版本设置入口纠偏仍待用户复测；QQBot、生产及真实交互仍单独标记 HUMAN。
+`@local/dsh-extra-plan` 是 dsh 的按需规划预设：AI 先只读理解，经路由、目的、澄清、批准四级机械锚点后执行；`save_plan` 是受限的方案/验收双文件写例外。当前支持 dsh `0.1.7-rc.1 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2`。0.2.0-rc.2 已有用户提供的范围受限 HUMAN 兼容通过基线（2026-10-01 rc2 批次）；各版本实测状态、证据等级与待核实项统一见[ai-宿主耦合台账](ai-宿主耦合台账.md)。QQBot、生产及真实交互仍单独标记 HUMAN。
 
 高层闭环：用户需求 → 主会话只读探查 → 探查方式二选一 → 路由确认 →（需要时）目的确认/澄清 → 线索与方案/验收落盘 → 用户批准 → 执行者 → 验收者 → 用户部署与实测。路由、批准、生产部署的边界不能用 AI 自觉替代。
 
@@ -30,9 +30,9 @@
 | 模型路由 | `lib/model-routing.js` | planner 与非 planner 分离；legacy（兼容）/strict（严格）由开关分流，strict 必须完成真实 probe 或已验证父 fallback（回退）。唯一流程细节见 [流程备查](ai-流程备查.md#⑩-规划子代理)。 |
 | A/C/M 投影 | `lib/assembly-presentation.js` + 根入口 | 只改模型可见 assembly/schema/catalog，不替代 runtime deny；PTC 首轮手写 `tool:read`，L 段回宿主原文。 |
 | P2-2 SDK 文本 | `lib/sdk-text-cache.js` | apply 内 agent-keyed WeakMap；完整 schema/language/renderer 变化失效，同 key 并发合并，失败不缓存；调用计数 1 是硬门槛。详见 [机制设计](ai-机制设计.md#p2-2-sdk-文本复用的安全边界)。 |
-| 设置后端与同页全局管理 | `lib/settings.js`、`lib/live-config.js`、`lib/preset-settings.js`、`lib/preset-sync.js` | 10 项 volatile Config 统一由 `dsh-extra-plan-settings` 承载；两项宿主值只派生到内存 definition。设置表单仅经 detail.section 渲染于 bundle 详情页行列表之后（自绘标题），不注册 bundle.config、row.config、settings.plugins.tab 或 plugins.item；若本包 bundle.config 槽被任何一方注册条目则 detail.section 让位保持唯一表单。旧公开行只读迁移，API 兼容 PUT 适配唯一全局行；非法当前 gateWords 严格失败、零写，合法整组修复与旧非法 skip 分开。 |
+| 设置后端与同页全局管理 | `lib/settings.js`、`lib/live-config.js`、`lib/preset-settings.js`、`lib/preset-sync.js` | 10 项 volatile Config 统一由 `dsh-extra-plan-settings` 承载；live-config 只暴露 8 项热读，2 项宿主值只派生到内存 definition。设置表单仅经 detail.section 渲染于 bundle 详情页行列表之后（自绘标题），不注册 bundle.config、row.config、settings.plugins.tab 或 plugins.item；若本包 bundle.config 槽被任何一方注册条目则 detail.section 让位保持唯一表单。PUT 只 edit 唯一全局行；旧公开行/旧 body 仅 raw 读取迁移，`./preset-sync` exports 已退役；非法当前 gateWords 严格失败、零写，旧非法 skip。 |
 | P2-4 默认链 | `agent.cordis.yml` → 生成器 → `preset-defaults.generated.js` | YAML 叶值是作者真源，生成物是派生值，运行时不解析 YAML；坏模板保留 last-known-good（上次已知良好版本）。详见 [维护手册](ai-维护手册.md#p2-4-生成链)。 |
-| 预设核对与官方装配 | `lib/preset-sync.js`（由 `settings.js` owner 调用） | 读取纯 definition，旧 `preset-extra-plan` 与 `extra-plan-preset-sync` 仅非破坏读取；全局行补齐后两项宿主值/gateWords 派生到内存 definition，再由同一 owner 直接交官方 AgentPreset adapter，写盘只经唯一全局行 `configEditor.edit`。 |
+| 预设核对与官方装配 | `lib/preset-sync.js`（由 `settings.js` owner 内部相对调用） | 读取纯 definition；raw patch 中旧 `preset-extra-plan` 与 `extra-plan-preset-sync` 仅非破坏迁移来源；全局行补齐后两项宿主值/gateWords 派生到内存 definition，再由同一 owner 直接交官方 AgentPreset adapter，写盘只经唯一全局行 `configEditor.edit`。旧公开模块入口与 locale exports 已退役。 |
 | session/usage | 根入口 + `lib/agent-runtime.js` | 状态按 sessionId 分桶；disposed 内同步 final fold 后再回收；cursor 增量按 `session.seq`/`snapshotEvents`，不跨会话清理。 |
 | 宿主升级 | [ai-宿主耦合台账](ai-宿主耦合台账.md) | 当前 HS/HK/SD/CF/QB、六项 HUMAN 与 SKIP 规则是升级入口；历史快照见[宿主历史归档](ai-宿主耦合历史归档.md)。 |
 | 实机验收 | [ai-实机闸门测试流程](ai-实机闸门测试流程.md) | 单文件、一次性、顺序完整；A/U/C/D/S/B 行与矛盾原值不可静默修正。 |
@@ -50,4 +50,4 @@
 
 ## QQBot 兼容插件边界
 
-`plugins/dsh-qqbot-user-questions/index.js` 只在启动时逐 profile 调用兼容自愈：先清理根级完整旧错误块，再按 `DSH_HOME`（env 优先，默认 `~/.dsh`）确保 web 包链接；两步幂等、失败告警且不阻断。`lib/heal.js` 是无导入副作用的纯函数实现，`scripts/heal.mjs` 只是 CLI 兜底；静态/临时夹具可由 pe-test 回归，真实消息、`/preset`、question/approval（提问/批准）、postinstall（安装后脚本）与生产 profile 仍是用户部署后的 HUMAN。
+`plugins/dsh-qqbot-user-questions/index.js` 只在启动时逐 profile 调用兼容自愈：先清理根级完整旧错误块，再按 `DSH_HOME`（env 优先，默认 `~/.dsh`）确保 web 包链接；两步幂等，逐 profile patch/link 失败返回结构化摘要并告警，但仍不阻断启动/CLI，CLI 保持 exit 0。`lib/heal.js` 是无导入副作用的纯函数实现，`scripts/heal.mjs` 只是 CLI 兜底；静态/临时夹具可由 pe-test 回归，真实消息、`/preset`、question/approval（提问/批准）、postinstall（安装后脚本）与生产 profile 仍是用户部署后的 HUMAN。

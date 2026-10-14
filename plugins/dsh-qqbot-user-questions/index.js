@@ -12,7 +12,9 @@ export function apply() {
   try {
     // DSH_HOME 环境变量优先；默认值为 ~/.dsh。
     const home = process.env.DSH_HOME || join(homedir(), '.dsh')
-    healQqbotCompatibility(home)
+    const result = healQqbotCompatibility(home)
+    for (const item of result.failed || []) console.warn('[dsh-qqbot-user-questions] 自愈失败摘要: ' + JSON.stringify(item))
+    if (result.error) console.warn('[dsh-qqbot-user-questions] 自愈异常摘要: ' + JSON.stringify({ error: result.error }))
   } catch (err) {
     // 自愈不阻断启动
     console.warn('[dsh-qqbot-user-questions] 自愈失败（不阻断启动）: ' + (err instanceof Error ? err.message : String(err)))

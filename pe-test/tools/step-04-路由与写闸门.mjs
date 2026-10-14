@@ -50,7 +50,7 @@ import { createGateRuntime } from '../../plugins/dsh-extra-plan/lib/gate-words.j
 import { createLiveConfig } from '../../plugins/dsh-extra-plan/lib/live-config.js'
 import { CREATIVE_SKILL_NAMES as CREATIVE_SKILL_NAMES_FOR_TEST } from '../../plugins/dsh-extra-plan/lib/assembly-presentation.js'
 import { SETTING_DEFINITIONS as SETTING_DEFINITIONS_E, SETTING_GROUPS as SETTING_GROUPS_E, PRESET_ROW_ID as PRESET_ROW_ID_E, SETTINGS_ROW_ID as SETTINGS_ROW_ID_E, EXTRA_PLAN_SETTING_DEFINITIONS as EXTRA_PLAN_SETTING_DEFINITIONS_E, findPluginsRow as findPluginsRowE } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
-import { restatePresetPlugins as restatePresetPluginsE, restatePresetSyncConfig as restatePresetSyncConfigE, declarationCoversAsset as declarationCoversAssetE, ASSET_DEFINITION_FILE as ASSET_DEFINITION_FILE_E, pluginRowIds as pluginRowIdsE } from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
+import { ASSET_DEFINITION_FILE as ASSET_DEFINITION_FILE_E } from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
 // 说明：不 import lib/settings.js——它顶层 import '@deepseek-ai/schemastery'，解析环境依赖宿主副本
 // （本机 npm 全局 dsh 实测 0.1.7-rc.2，profiles/web 另有 profile 内副本）；
 // 故 Config 的 volatile/默认值契约改用源码文本静态核对（机械可核对），不依赖本机 schemastery 版本。
@@ -397,6 +397,26 @@ const purposeArgsE = JSON.stringify({ questions: [{ id: 'q1', options: [{ label:
 const approvalArgsE = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }] })
 const answerE = (labels) => JSON.stringify({ answers: labels.map((l) => ({ id: 'q1', selected: [l] })) })
 const mainWithEvents = (events) => ({ session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => events }, options: {}, ctx: undefined })
+{
+  const concurrentHarness = makeHarness({ anchoredBootstrap: false, exploreBudget: 10 })
+  const plannerAEvents = [DESC, umE(), ...Array.from({ length: 8 }, (_, i) => [callE('read', 'pa-' + i), okE('pa-' + i, 'ok')]).flat()]
+  const plannerBEvents = [DESC, umE()]
+  const plannerA = { session: { header: { id: 'planner-A', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => plannerAEvents }, options: { model: 'deepseek-v4-pro' }, ctx: undefined }
+  const plannerB = { session: { header: { id: 'planner-B', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => plannerBEvents }, options: { model: 'deepseek-v4-pro' }, ctx: undefined }
+  const makeDeferred = () => { let resolve; const promise = new Promise((done) => { resolve = done }); return { promise, resolve } }
+  const gateA = makeDeferred()
+  const gateB = makeDeferred()
+  const decision = { kind: 'enter', messages: [{ source: { kind: 'user-message' }, content: [{ type: 'text', text: 'task' }] }] }
+  const pendingA = runWaterfall(concurrentHarness, 'agent/pre-step', { agent: plannerA }, () => gateA.promise)
+  const pendingB = runWaterfall(concurrentHarness, 'agent/pre-step', { agent: plannerB }, () => gateB.promise)
+  gateB.resolve(decision)
+  const resultB = await pendingB
+  gateA.resolve(decision)
+  const resultA = await pendingA
+  const hasReminder = (result) => result.messages.some((message) => JSON.stringify(message).includes('本轮探查预算还剩'))
+  checkTrue('CG8 两个 Agent deferred next 交错时各自读取预算与 suffix，不共享 apply 级 Agent', hasReminder(resultA) && !hasReminder(resultB))
+}
+
 
 // direct 态：路由已确认「直接执行」；无确认态：无事件；plan+clarified 态：规划+澄清完成
 const directMain = mainWithEvents([umE(), callE('ask_user_question', 'a1', routeArgsE), okE('a1', answerE(['直接执行']))])
@@ -982,6 +1002,15 @@ r = preExecute(harness, plannerAgent, 'run_code', nestedProbeGroupCode)
 checkTrue('T5-5 planner 经 run_code 组内调用 subagent_probe 成员 → 聚合拒绝（含「仅主会话可用」与「申请继续探查」）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('run_code 拆解预审未通过') && String(r.reason).includes('仅主会话可用') && String(r.reason).includes('申请继续探查'))
 r = preExecute(harness, noneMain, 'run_code', nestedProbeGroupCode)
 checkTrue('T5-6 主会话 none 态 run_code 组内 subagent_probe → 仍放行（禁令只针对 planner）', r !== null && r !== undefined && r.kind === 'allow')
+const childProbeGate = childAgent('child-probe-gate')
+await assemble(harness, childProbeGate, [{ name: 'read' }, { name: 'glob' }, { name: 'save_probe' }])
+r = preExecute(harness, childProbeGate, 'subagent_probe', { run_in_background: true })
+checkTrue('T5-7 非 planner child 直呼 subagent_probe → 第二道防线拒绝且保持只读角色文案', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('只读子代理不得委派探查者'))
+r = preExecute(harness, childProbeGate, 'run_code', nestedProbeGroupCode)
+checkTrue('T5-8 非 planner child 经 run_code 调用 subagent_probe → 聚合拒绝', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('只读子代理不得委派探查者'))
+const customPlanHarness = makeHarness({ planTool: 'custom_plan' })
+r = preExecute(customPlanHarness, noneMain, 'custom_plan', {})
+checkTrue('T5-9 自定义 planTool 拒绝文案使用真实工具名而非 subagent_plan', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('custom_plan') && !String(r.reason).includes('子代理未放行：subagent_plan'))
 
 // ── ⑨ PTC/HN/HB 锚定基线（首轮按真实 phase、mode、role 分支） ─────────────
 // 宿主 read tool 的注册 schema 复刻（registry mock）：F/PTC 不再渲染它，仅供工具过滤/mode 判定。
@@ -1066,6 +1095,14 @@ const askReturnRunCases = [
   ['R-ASK4 .then 包装 → deny', 'return await tools.ask_user_question({}).then((x) => x)', 'deny'],
   ['R-ASK5 工具别名 → deny', 'const ask = tools.ask_user_question; return await ask({})', 'deny'],
   ['R-ASK6 动态工具访问 → deny', "const name = 'ask_user_question'; return await tools[name]({})", 'deny'],
+  ['R-ASK6b const read 动态工具访问保守 deny', "const name = 'read'; return await tools[name]({ file_path: 'x' })", 'deny'],
+  ['R-ASK6c 未知动态工具名仍保守 deny', "const name = toolName; return await tools[name]({})", 'deny'],
+  ['R-ASK6e 参数遮蔽动态访问保守 deny', "const invoke = (name) => tools[name]({}); return await invoke('read')", 'deny'],
+  ['R-ASK6f 注释伪 const 动态访问保守 deny', "// const name = 'read'\nreturn await tools[name]({ file_path: 'x' })", 'deny'],
+  ['R-ASK6g const 拼接动态访问保守 deny', "const name = 're' + 'ad'; return await tools[name]({ file_path: 'x' })", 'deny'],
+  ['R-ASK6h 方括号拼接动态访问保守 deny', "return await tools['re' + 'ad']({ file_path: 'x' })", 'deny'],
+  ['R-ASK6i 转义名动态访问保守 deny', "const name = '\\x72ead'; return await tools[name]({ file_path: 'x' })", 'deny'],
+  ['R-ASK6d ask 的动态参数对象不改变直接返回 allow', "const args = getArgs(); return await tools.ask_user_question(args)", 'allow'],
   ['R-ASK7 直接 return-await → allow', 'return await tools.ask_user_question({})', 'allow'],
   ['R-ASK8 单变量 JSON.stringify → allow', 'const q = await tools.ask_user_question({}); return JSON.stringify({ question: q })', 'allow'],
   ['R-ASK8b 单变量直接 return → allow', 'const q = await tools.ask_user_question({}); return q', 'allow'],
@@ -1193,6 +1230,20 @@ checkTrue('R115 主会话 direct 态 run_code 组内 job_kill 成员 → allow',
   // 通知注入后 job_output j1 → allow（修复生效）
   r = preExecute(harness, mutableMain, 'job_output', { job_id: 'j1' })
   checkTrue('TJ3 可变事件流 tool-jobs 通知后 job_output j1 → allow（修复生效）', r !== null && r !== undefined && r.kind === 'allow')
+
+   const multiNoticeEvents = []
+   const multiNoticeMain = { session: { header: { id: 'multi-notice-main', cwd: 'C:/work' }, snapshotEvents: () => multiNoticeEvents }, options: {}, ctx: undefined }
+   r = preExecute(harness, multiNoticeMain, 'job_output', { job_id: 'j1' })
+   const firstJ2 = preExecute(harness, multiNoticeMain, 'job_output', { job_id: 'j2' })
+   multiNoticeEvents.push(
+     { type: 'user/message', data: { source: { kind: 'tool-jobs', form: 'notice' }, content: [{ type: 'text', text: 'background job j1 (subagent: test) finished [status: completed].' }] } },
+     { type: 'user/message', data: { source: { kind: 'tool-jobs', form: 'notice' }, content: [{ type: 'text', text: 'background job j2 (subagent: test) finished [status: completed].' }] } },
+   )
+   const releasedJ1 = preExecute(harness, multiNoticeMain, 'job_output', { job_id: 'j1' })
+   const releasedJ2 = preExecute(harness, multiNoticeMain, 'job_output', { job_id: 'j2' })
+   const repeatedJ1 = preExecute(harness, multiNoticeMain, 'job_output', { job_id: 'j1' })
+   const repeatedJ2 = preExecute(harness, multiNoticeMain, 'job_output', { job_id: 'j2' })
+   checkTrue('TJ4 同一 execEvents 快照 j1+j2 通知均进入 consumed，双 job 同时解锁且再次扫描不重复', r.kind === 'allow' && firstJ2.kind === 'allow' && releasedJ1.kind === 'allow' && releasedJ2.kind === 'allow' && repeatedJ1.kind === 'deny' && repeatedJ2.kind === 'deny')
 }
 
 // ── ⑭f 四工具治理：job_list/list_agents 同锚点防轮询 + 双通道重置（v0.4.0） ──
@@ -1891,6 +1942,9 @@ const catalogNamesOf = (decision) => {
   const message = Array.isArray(decision.messages) ? decision.messages.find((item) => item !== null && typeof item === 'object' && item.source !== undefined && Array.isArray(item.source.entries)) : undefined
   return message === undefined ? [] : message.source.entries.map((entry) => entry.name)
 }
+const foreignCatalogDecision = { kind: 'enter', messages: [{ source: { kind: 'other-source', entries: [{ name: 'cordis-plugin-development', description: 'keep' }] }, content: [{ type: 'text', text: 'foreign source text' }] }] }
+const foreignProjected = projectSkillCatalogDecision(foreignCatalogDecision)
+checkTrue('T9-3c0 非 skill-catalog source 即使带 entries 也保持对象与正文原样', foreignProjected === foreignCatalogDecision && foreignProjected.messages[0].content[0].text === 'foreign source text')
 {
   checkTrue('T9-3c 隐藏集合恰含 3 个 cordis skill 且全部为 true 名单', expectedCreativeSkills.every((name) => CREATIVE_SKILL_NAMES_FOR_TEST.has(name)) && CREATIVE_SKILL_NAMES_FOR_TEST.size === 3)
   const offHarness = makeHarness({ anchoredBootstrap: false, creativeMode: false })
@@ -2357,6 +2411,8 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
   // ⑤ 读盘失败（文件不存在）→ 构造期回退 fallbackDefaults 且不抛（自带一次 console.warn 防抖）
   const lcMissing = createLiveConfig({ configPath: join(lcDir, 'missing.cordis.yml'), fallbackDefaults: { exploreBudget: 18 } })
   check('LC5 文件不存在 → 构造期回退 fallback exploreBudget=18（不抛）', lcMissing.exploreBudget, 18)
+   const liveGetterNames = ['anchoredBootstrap', 'creativeMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel']
+   checkTrue('LC6 live-config 仅暴露八项热读 getter，webFetch/toolPresentationMode 不再作为运行时 getter', liveGetterNames.every((key) => key in lcExplicit) && !('webFetch' in lcExplicit) && !('toolPresentationMode' in lcExplicit))
 
   rmSync(lcDir, { recursive: true, force: true })
 }
@@ -2473,15 +2529,11 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
     !settingsCode.includes('.agent-presets') && settingsCode.includes("child.settings.configure({ auto: false }, ctx.fiber)"))
   check('T9-3o descriptor 分组：extra-plan 恰 8 项、host-rows 恰 2 项', EXTRA_PLAN_SETTING_DEFINITIONS_E.length + '|' + SETTING_DEFINITIONS_E.filter((item) => item.group === SETTING_GROUPS_E.HOST_ROWS).length, '8|2')
   checkTrue('T9-3p 新载体行 id 常量与声明行一致', SETTINGS_ROW_ID_E === 'dsh-extra-plan-settings' && PRESET_ROW_ID_E === 'extra-plan-preset-sync')
-
-  // ④ 写链：公开 preset-sync 行只重述三类受支持字段，不携带完整 17 条 body。
-  const projectedConfig = restatePresetSyncConfigE({}, {}, { webFetch: true, toolPresentationMode: 'ptc', gateWords: assetGateWords })
-  checkTrue('T9-3q restatePresetSyncConfig 只落 webFetch/toolPresentationMode/gateWords', projectedConfig.webFetch === true && projectedConfig.toolPresentationMode === 'ptc' && JSON.stringify(projectedConfig.gateWords) === JSON.stringify(assetGateWords) && Object.keys(projectedConfig).every((key) => ['webFetch', 'toolPresentationMode', 'gateWords'].includes(key)))
-  let gateThrew = false
-  try { restatePresetSyncConfigE({}, {}, { gateWords: { routeDirect: '只有一个词' } }) } catch { gateThrew = true }
-  checkTrue('T9-3r gateWords 整组校验失败即抛（不落盘语义）', gateThrew)
-  checkTrue('T9-3s settings.js 写链经 restateSettingsConfig→唯一全局 row.entry edit', settingsText.includes('await editor.edit(row.entry') && settingsText.includes('restateSettingsConfig') && settingsText.includes('SETTINGS_ROW_ID') && !settingsText.includes('LEGACY_PROJECTION_RESTATEMENT') && !settingsText.includes('writeFileSync'))
-  const presetSyncSource = readFileSyncE(fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/preset-sync.js', import.meta.url)), 'utf8')
+   // ④ 当前写链只经 settings row；旧 preset-sync helper/公开写入入口已退役。
+   const presetSyncSource = readFileSyncE(fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/preset-sync.js', import.meta.url)), 'utf8')
+   const retiredPresetSyncExports = [['restate', 'Preset', 'Plugins'], ['restate', 'Preset', 'SyncConfig'], ['active', 'Preset', 'SyncRow'], ['public', 'Config', 'FromRows']].map((parts) => parts.join(''))
+   checkTrue('T9-3q preset-sync 仅保留 raw legacy 读取与 mountPresetSync，旧 helper/export 均移除', presetSyncSource.includes('export function readLegacyState') && presetSyncSource.includes('export function mountPresetSync') && !presetSyncSource.includes('export function apply') && retiredPresetSyncExports.every((name) => !presetSyncSource.includes(name)))
+   checkTrue('T9-3r settings.js 写链经 restateSettingsConfig→唯一全局 row.entry edit', settingsText.includes('await editor.edit(row.entry') && settingsText.includes('restateSettingsConfig') && settingsText.includes('SETTINGS_ROW_ID') && !settingsText.includes('LEGACY_PROJECTION_RESTATEMENT') && !settingsText.includes('writeFileSync'))
   checkTrue('T9-3t preset-sync 通过 mountPresetSync/官方 adapter await 挂载，不实现 registry', presetSyncSource.includes('export function mountPresetSync') && presetSyncSource.includes('await child.plugin(OfficialAgentPreset') && presetSyncSource.includes('@deepseek-ai/dsh-agent-preset') && !presetSyncSource.includes('agentPresets.register('))
 }
 

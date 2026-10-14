@@ -55,7 +55,7 @@ dsh plugin --profile qqbot remove @local/dsh-qqbot-user-questions
 
 ### 平台实测说明
 
-跨平台兼容改造的**逻辑层**已由 `pe-test/tools/step-00-跨平台写拦截.mjs` 验证（本仓库 Windows 环境实测 68 用例全过，脚本三平台通用）；但仅在 **Windows 环境实测正常**，**Linux/macOS 尚未在真实环境验证**
+仅在 **Windows 环境实测正常**，**Linux/macOS 尚未在真实环境验证**
 
 ### dsh-v0.1.7-rc2 已知问题
 
@@ -63,7 +63,7 @@ cordis_inspect_query 无超时导致探查者、执行者、验收者调用直�
 
 ## 4. 可配置项
 
-DSH web界面 -> 插件 -> @local/dsh-extra-plan -> 按需规划模式配置
+DSH web界面 -> 插件 -> 按需规划模式配置
 
 **通用设置**：
   - anchored开关：首轮极简工具 + 提示词
@@ -103,7 +103,7 @@ dsh-extra-plan/
 │   │   │   ├── planner-budget.js                       # 探查预算：用量计数与提醒/耗尽文案
 │   │   │   ├── preset-defaults.generated.js            # 构建期生成：exploreBudget 默认值
 │   │   │   ├── preset-settings.js                      # 设置项 descriptor 与 YAML 处理 facade（供迁移复用）
-│   │   │   ├── preset-sync.js                          # 预设分发与启动自愈
+│   │   │   ├── preset-sync.js                          # settings owner 内部同步/adapter 与 raw 旧值迁移
 │   │   │   ├── preset-yaml.js                          # 预设 YAML 解析、定位与保格式改写纯模块
 │   │   │   ├── run-code-scanner.js                     # run_code 无宿主状态词法与调用点扫描
 │   │   │   ├── run-code-static.js                      # run_code：静态解析与理由函数
@@ -119,9 +119,6 @@ dsh-extra-plan/
 │   │   │   ├── shell-mutation.js                       # 写操作判定：跨平台命令解码与写形态
 │   │   │   └── usage-ledger.js                         # usage 账本与 cursor 增量折叠
 │   │   ├── locale/                                     
-│   │   │   ├── preset-sync/
-│   │   │   │   ├── en.json                     
-│   │   │   │   └── zh.json   
 │   │   │   ├── settings/  
 │   │   │   │   ├── en.json                     
 │   │   │   │   └── zh.json                                  
@@ -165,7 +162,7 @@ dsh-extra-plan/
 │       ├── step-01-设置页配置.mjs
 │       ├── step-01-预设完整性.mjs
 │       ├── step-01-qqbot-安装映射.mjs
-│       ├── step-01-qqbot-安装映射.mjs
+│       ├── step-01-qqbot-环境验证.mjs
 │       ├── step-04-工具清单查看.mjs
 │       ├── step-04-context-gate宿主回归.mjs
 │       ├── step-04-路由与写闸门.mjs

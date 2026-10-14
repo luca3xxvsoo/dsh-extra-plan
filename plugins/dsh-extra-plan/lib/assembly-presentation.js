@@ -37,7 +37,7 @@ export function sectionOf(sections, name) {
 // 删除时全仓 grep 确认其中「取 section 文本」无调用点，随组一并删除。
 
 export function skillCatalogEntriesOf(source) {
-  if (source === null || typeof source !== 'object' || !Array.isArray(source.entries)) return undefined
+  if (source === null || typeof source !== 'object' || source.kind !== 'skill-catalog' || !Array.isArray(source.entries)) return undefined
   const entries = []
   for (const entry of source.entries) {
     if (entry === null || typeof entry !== 'object' || typeof entry.name !== 'string' || typeof entry.description !== 'string') return undefined

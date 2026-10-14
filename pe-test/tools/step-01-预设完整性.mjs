@@ -385,15 +385,14 @@ if (DSH_INSTALL_ROOT === null || targetDsh === null || targetDshLlm === null) {
 }
 console.log('HUMAN  0.2.0-rc.1【未核实·HUMAN】：不得由 rc.2 结论推出 API/自动回归/实机通过')
 
-// S3：包级、全局管理行与 legacy preset-sync locale 通过 package exports 真实解析。
+// S3：包级与全局管理行 locale 通过 exports 真实解析；旧 preset-sync 通道必须退役。
 const LOCALE_CHANNELS = [
   { label: '包卡片', specifier: '@local/dsh-extra-plan', dir: 'locale', zh: { title: '按需规划模式', description: '按需规划模式的预设、设置与启动核对' }, en: { title: 'Extra Plan', description: 'Preset, settings, and startup check' } },
   { label: '全局管理行', specifier: '@local/dsh-extra-plan/settings', dir: join('locale', 'settings'), zh: { title: '按需规划模式全局管理', description: '统一管理配置、预设核对与界面加载' }, en: { title: 'Extra Plan Global Manager', description: 'Manage configuration, preset checks, and UI loading' } },
-  { label: 'legacy preset-sync locale', specifier: '@local/dsh-extra-plan/preset-sync', dir: join('locale', 'preset-sync'), zh: { title: '预设核对', description: '启动时核对预设，不一致时自动修复' }, en: { title: 'Preset Check', description: 'Verifies the preset at startup' } },
 ]
 const pluginDir = join(REPO_ROOT, 'plugins', 'dsh-extra-plan')
 const exportsMap = pluginPkg !== undefined ? asRecord(pluginPkg.exports) : {}
-check('S3 exports 保留全局管理行与 legacy locale 通道', exportsMap['./settings/locale/*'] === './locale/settings/*' && exportsMap['./preset-sync/locale/*'] === './locale/preset-sync/*' && exportsMap['./locale/*.json'] === './locale/*.json')
+check('S3 exports 保留根包/settings locale，明确删除 preset-sync 与其 locale 通道', exportsMap['./settings/locale/*'] === './locale/settings/*' && exportsMap['./locale/*.json'] === './locale/*.json' && exportsMap['./preset-sync'] === undefined && exportsMap['./preset-sync/locale/*'] === undefined)
 const localeProblems = []
 for (const channel of LOCALE_CHANNELS) {
   for (const lang of ['zh', 'en']) {
@@ -407,7 +406,7 @@ for (const channel of LOCALE_CHANNELS) {
     if (meta.description !== expected.description) localeProblems.push(channel.label + '/' + lang + ' description 不符')
   }
 }
-check('S3 三组字典真实文件只有 meta 键且文案精确匹配' + (localeProblems.length > 0 ? '，异常: ' + localeProblems.join('; ') : ''), localeProblems.length === 0)
+check('S3 两组字典真实文件只有 meta 键且文案精确匹配' + (localeProblems.length > 0 ? '，异常: ' + localeProblems.join('; ') : ''), localeProblems.length === 0)
 const resolveProblems = []
 for (const channel of LOCALE_CHANNELS) {
   for (const lang of ['zh', 'en']) {
@@ -417,7 +416,12 @@ for (const channel of LOCALE_CHANNELS) {
     if (resolved !== target) resolveProblems.push(channel.label + "/" + lang + " 解析到 " + resolved)
   }
 }
-check('S3 六个 specifier 经包 exports 真实解析命中各自 locale 文件' + (resolveProblems.length > 0 ? '，异常: ' + resolveProblems.join('; ') : ''), resolveProblems.length === 0)
+check('S3 四个当前 locale specifier 经 exports 真实解析命中各自文件' + (resolveProblems.length > 0 ? '，异常: ' + resolveProblems.join('; ') : ''), resolveProblems.length === 0)
+const retiredResolveProblems = []
+for (const specifier of ['@local/dsh-extra-plan/preset-sync', '@local/dsh-extra-plan/preset-sync/locale/en.json', '@local/dsh-extra-plan/preset-sync/locale/zh.json']) {
+  try { createRequire(join(pluginDir, 'package.json')).resolve(specifier); retiredResolveProblems.push(specifier + ' 仍可解析') } catch { /* 退役路径应失败 */ }
+}
+check('S3 退役 preset-sync 根/locale 子路径均不可解析', retiredResolveProblems.length === 0)
 check('S4 空 schema 为权威空集合且退役 tool:cordis section 不产出', assemblySource.includes('schemaNames === null || schemaNames.has(tool.name)') && !assemblySource.includes('CORDIS_SECTION_NAME') && assemblySource.includes("section.name !== 'tool:cordis'"))
 console.log('\n通过 ' + pass + ', 失败 ' + fail)
 process.exit(fail === 0 ? 0 : 1)

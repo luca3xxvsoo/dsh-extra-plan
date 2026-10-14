@@ -86,6 +86,12 @@ const bashShouldDeny = [
   // 附加边界（写操作）
   'rm file.txt',
   'sudo rm -rf /var/tmp/x',
+  'sudo env rm -rf /var/tmp/x',
+  'sudo command rm -rf /var/tmp/x',
+  'nohup env mv a.txt b.txt',
+  'sudo -n env FOO=bar rm -f x',
+  'sudo -p prompt rm -f x',
+  'sudo --prompt=prompt rm -f x',
   'git reset HEAD~1',
   'git switch feature',
   'git clean -fd',
@@ -121,6 +127,8 @@ const bashShouldAllow = [
   'echo x 1>&2',
   'which node',
   'env | grep PATH',
+  'sudo -p rm true',
+  'sudo --prompt rm true',
   'pwd',
   'whoami',
   'tar -tf archive.tar', // 已知边界：tar 只读列目录不拦截

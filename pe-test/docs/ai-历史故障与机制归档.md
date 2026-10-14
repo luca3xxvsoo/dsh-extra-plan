@@ -13,7 +13,7 @@
 1. **旧预设载体**：早期文档把预设描述为分发到 `$DSH_HOME/.agent-presets/extra-plan/` 的目录，并配套 `postinstall`/`distribute-preset.mjs`、manifest 和状态目录迁移。0.1.7 后改为 profile patch 根级 `preset-extra-plan` 声明行；extra-plan 核心包无 postinstall，启动自愈由 `lib/preset-sync.js` 负责。
 2. **旧宿主 API/插槽**：`settings.register`、`settings.plugin.item` 与旧的独立设置卡片属于已退役路径；当前 0.2 独立 `settings.plugins.tab` 不再注册，但 0.1.7 原始 `plugins.row.config` keyed row 兼容接线由 0.1.7/0.2 支持构建保留，宿主提供对应 slot 时显示插件详情配置，slot 缺失时走 configEditor/SettingsForms 或 profile 权威行后备路径。后端 `.volatile()` Config、settings API、权威行/投影/热读仍活动。
 3. **旧运行面**：`tool:cordis` 段、7 项 Cordis 工具、`codeRuntime`、`agentPresets.resolve/skills.register`、旧 workflow worker 包和旧工具结果信封不属于当前合同；旧 `customSkillDirs` 已被 `bundledSkillDir` 取代；当前只保留两项 Cordis 展示工具、`ptcRuntime` 与当前 PTC dispatch。
-4. **旧兼容面**：0.1.2-rc.1～0.1.5-rc.2 的同码兼容、旧 `session.jsonl.zstd` 主世代、旧 profile 副本和旧预设迁移链只作历史回放背景；当前 peer 范围为 0.1.7-rc.1/rc.2 与 0.2.0-rc.1/rc.2，0.2.0-rc.2 仅有用户提供的范围受限 HUMAN 基线，不能外推本轮 post-fix 通过。
+4. **旧兼容面**：0.1.2-rc.1～0.1.5-rc.2 的同码兼容、旧 `session.jsonl.zstd` 主世代、旧 profile 副本和旧预设迁移链只作历史回放背景；当前 peer 范围为 0.1.7-rc.1/rc.2 与 0.2.0-rc.1/rc.2，0.2.0-rc.2 仅有用户提供的范围受限 HUMAN 基线（2026-10-01 rc2 兼容反馈批次），不能把该命名批次之外的修复说成已通过。
 5. **旧流程**：原 13 步流程已由主会话探查二选一、route→purpose→clarify、批准和执行/验收交接替换；旧步骤编号只用于历史报告配对。
 
 ## 故障与修复时间线
@@ -68,4 +68,4 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
 
 ## 当前结论回链
 
-当前必须继续遵守的结论只有：拒绝不清状态、取消清阶段；组拒无副作用；方案/验收成对原子落盘；strict 模型路由必须真实 probe 或可靠 fallback；A/C/M 仅是模型可见投影；P2-2 cache 不跨 Agent；usage final fold 同步且按 session 隔离。任何历史描述与当前合同冲突时，以 [ai-机制设计](ai-机制设计.md) 和源码/回归真源为准。 本轮索引补充：旧公开 preset 声明与 client-bridge 已退役；两公开行、内部 carrier、纯 definition 与官方 adapter 的事实以当前方案/验收和源码为准，不改写本段历史事实。
+当前必须继续遵守的结论只有：拒绝不清状态、取消清阶段；组拒无副作用；方案/验收成对原子落盘；strict 模型路由必须真实 probe 或可靠 fallback；A/C/M 仅是模型可见投影；P2-2 cache 不跨 Agent；usage final fold 同步且按 session 隔离。任何历史描述与当前合同冲突时，以 [ai-机制设计](ai-机制设计.md) 和源码/回归真源为准。 2026-09-29 文档索引补充：旧公开 preset 声明与 client-bridge 已退役；两公开行、内部 carrier、纯 definition 与官方 adapter 的事实以该命名批次方案/验收和源码为准，不改写本段历史事实。

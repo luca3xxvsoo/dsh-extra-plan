@@ -234,7 +234,6 @@ export function createRunCodeStatic({ askTool, isDispatchStart }) {
   function runCodeCatchGateReason(code) {
     const text = typeof code === 'string' ? code : ''
     if (text === '') return null
-    const n = text.length
     // 调用点收集：模块顶层 collectRunCodeSites（逻辑自本函数局部 collectSites 逐字提升，见函数定义处）。
     let total = 0
     let protectedCount = 0
@@ -337,16 +336,19 @@ export function createRunCodeStatic({ askTool, isDispatchStart }) {
             if (!askStarts.has(idx)) invalidReference = true
           }
         } else if (masked[k] === '[') {
-          let q = skipWs(text, k + 1)
+          const close = masked.indexOf(']', k + 1)
+          const q = skipWs(text, k + 1)
           if (text[q] === "'" || text[q] === '"') {
             const quote = text[q]
-            let end = q + 1
-            while (end < text.length) {
-              if (text[end] === '\\') { end += 2; continue }
-              if (text[end] === quote) break
-              end += 1
+            let endQuote = q + 1
+            while (endQuote < text.length) {
+              if (text[endQuote] === '\\') { endQuote += 2; continue }
+              if (text[endQuote] === quote) break
+              endQuote += 1
             }
-            if (text.slice(q + 1, end) === askTool) invalidReference = true
+            const literal = text.slice(q + 1, endQuote)
+            const afterQuote = skipWs(text, endQuote + 1)
+            if (close === -1 || afterQuote !== close || literal === askTool || literal.includes('\\')) invalidReference = true
           } else {
             invalidReference = true
           }

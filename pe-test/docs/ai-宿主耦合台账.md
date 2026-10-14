@@ -6,23 +6,23 @@
 
 | 项 | 当前值/口径 | 状态 |
 |:--|:--|:--|
-| DSH | `0.1.7-rc.1 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2` | 四版本精确 peer 目标；0.2.0-rc.2 有用户提供的范围受限 HUMAN 兼容基线，rc.1 与本轮 post-fix 待复测 |
+| DSH | `0.1.7-rc.1 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2` | 四版本精确 peer 目标；0.2.0-rc.2 有用户提供的范围受限 HUMAN 兼容基线，其他版本的实机状态与待复测项按日期、证据等级记录于本台账 |
 | QQBot 目标 | `0.5.0` | 静态目标，不等于集成通过 |
 | 核心插件 | `@local/dsh-extra-plan` `0.3.0` | 当前包契约 |
 | QQBot 精简插件 | `@local/dsh-qqbot-user-questions` `2.0.0` | 仍有 postinstall（安装后脚本）；allow-build 是否放行待 HUMAN |
-| 预设载体 | `dsh-extra-plan-settings` 全局管理行 + 内部纯 definition | `dsh.bundle.patch` 只装载一行；旧 `extra-plan-preset-sync` / `preset-extra-plan` 仅非破坏读取迁移，官方 adapter/registry 仍直接复用 |
+| 预设载体 | `dsh-extra-plan-settings` 全局管理行 + 内部纯 definition | `dsh.bundle.patch` 只装载一行；旧 `extra-plan-preset-sync` / `preset-extra-plan` 仅 raw patch 非破坏读取迁移，`./preset-sync` 与 locale exports 已退役，官方 adapter 仍由 settings owner 内部复用 |
 | 状态判读 | `【已核实】` 表示台账静态/源码核对；`【未核实】`、`HUMAN`、`SKIP` 不得改为通过 | 当前台账纪律 |
 
 ### 四版本证据分栏
 
 | 版本 | peer 目标 | 当前静态证据 | 结论 |
 |:--|:--|:--|:--|
-| `0.1.7-rc.1` | 纳入 | 既有台账基线 | 本轮不重跑 |
-| `0.1.7-rc.2` | 纳入 | 既有台账基线 | 本轮不重跑 |
-| `0.2.0-rc.1` | 纳入（用户决策） | 本机无安装根、无 SlotMap/API 证据 | `【未核实·HUMAN】`；不得由 rc.2 推出 |
-| `0.2.0-rc.2` | 纳入 | 用户提供的 2026-10-01 rc2 兼容反馈批次；本机仅作静态回归 | `【HUMAN 基线通过·范围受限】`；本轮 post-fix A09/A10/A11/UI 待复测 |
+| `0.1.7-rc.1` | 纳入 | 2026-09-29 既有静态台账基线 | `【静态·未重新取证】` |
+| `0.1.7-rc.2` | 纳入 | 2026-09-29 既有静态台账基线 | `【静态·未重新取证】` |
+| `0.2.0-rc.1` | 纳入（用户决策） | 2026-09-29 本机无安装根、无 SlotMap/API 证据 | `【未核实·HUMAN】`；不得由 rc.2 推出 |
+| `0.2.0-rc.2` | 纳入 | 用户提供的 2026-10-01 rc2 兼容反馈批次；本机仅作静态回归 | `【HUMAN 基线通过·范围受限】`；同页 UI/A09/A10/A11 仍待用户复测 |
 
-生产事实：用户已核实 `C:\Users\Administrator\.dsh\profiles\qqbot\node_modules\js-yaml\package.json` 为 `4.3.2`；QQBot 先从包自身解析，QB5 属于“健壮性改进”而非当前生产阻断。本轮不写入或重装生产 profile。
+生产事实：用户已核实 `C:\Users\Administrator\.dsh\profiles\qqbot\node_modules\js-yaml\package.json` 为 `4.3.2`；QQBot 先从包自身解析，QB5 属于“健壮性改进”而非当前生产阻断。AI 不写入或重装生产 profile，生产动作仅由用户部署流程执行。
 
 ### 当前宿主接触面总表
 
@@ -56,7 +56,7 @@
 | HS17 | `client.js` `__ModuleLoader__` | loader id 必须与包名/组合图一致 | 【已核实·静态】 |
 | HS18 | `client.js` `require("react")` | 共享 client module 提供 React | 【已核实·静态】 |
 | HS19 | locale bind/register（语言环境绑定/注册） | 包级与行级 locale 通道 | 【已核实·静态】 |
-| HS20 | client.js 同页配置注册面 | 仅注册 `plugins.detail.section`（order 100，设置表单自绘标题渲染于 bundle 详情页行列表之后）；不注册 `plugins.bundle.config`、`plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`；若本包 bundle.config 槽被任何一方注册条目，DetailSettingsSection 让位保持唯一表单；ConfigForms 通过稳定 namespace 快照订阅并一次 mutate | 【已核实·静态+专项；四版本同页 HUMAN 待复测】 |
+| HS20 | client.js 同页配置注册面 | 仅注册 `plugins.detail.section`（order 100，设置表单自绘标题渲染于 bundle 详情页行列表之后）；实时检查 bundle.config 槽并让位；不注册 `plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`；ConfigForms 通过稳定 namespace 快照订阅并一次 mutate，SettingsCard 固定 page 形态 | 【已核实·静态+专项；四版本同页 HUMAN 待复测】 |
 | HS21 | `client.js` `esp-*` | 本插件自持样式；不依赖旧宿主 CSS hash | 【已核实·静态】 |
 | HS22 | 主题 token | 颜色/可读性依赖主题变量名 | 【已核实·静态】 |
 | HS23 | settings 内部 client-carrier | 官方 Loader Group 创建唯一 pathLike child，随 settings 生命周期同步移除并触发 client graph/HMR 更新；同步队列关闭时不启动新 edit/adapter，在途 adapter 结算后恰一次释放 | 【已核实·静态+deferred/Loader专项】 |
@@ -65,6 +65,7 @@
 | HS26 | HP 首轮 `tool:read` | section、参数默认值、输出字段与手写 F 文案必须同步核对 | 【已核实·静态；行为待实机】 |
 | HS27 | `executor-spawn.js` `slotKey` | `Symbol.for('cordis.original')`/traceable 语义决定跨世代幂等 | 【已核实·静态】 |
 | HS28 | context-gate 宿主回归 | 当前安装根版本、生产源码 hash、公共 AgentLoop/受控 adapter、完整 request trace 与工作区 JSONL 证据；受控 adapter 不冒称真实 provider | 【已核实·集成；真实provider/HUMAN NOT-RUN】 |
+| HS29 | `pe-test/_shared/host-deps.mjs` | scoped package exports 按完整 `./subpath` 解析；根入口与 `/list-agents` 分离；根包无可用 exports/main 时回退 `index.js`，显式未知子路径透传；同步/异步 hook 共用语义，生成 data URL hookSource 需 ESM 回放 | 【已核实·step-01 安装同步；真实宿主/HUMAN NOT-RUN】 |
 
 ## ③ 当前 HK：钩子与文件组合契约
 
@@ -84,7 +85,7 @@
 | HK10 | step-06 事件夹具 | 事件负载必须与真实 subagent/ask/tool 形状一致 | 【已核实·静态】 |
 | HK11 | `cordis.patch.yml` 单条 insert | 仅 `dsh-extra-plan-settings` 全局行公开；carrier、同步、迁移与官方 adapter 均归同一 owner 内部 | 【已核实·静态】 |
 | HK12 | package `dsh.bundle.patch` | 依次装载 cordis.patch 与生成的 preset patch | 【已核实·静态】 |
-| HK13 | package exports | settings/preset-sync/client/locale 子路径必须可解析 | 【已核实·静态】 |
+| HK13 | package exports | 根包、settings/client、根 locale/settings locale 当前子路径必须可解析；`./preset-sync` 根与 locale 子路径必须解析失败 | 【已核实·静态】 |
 | HK14 | package `dsh.client` | platform=web、inject 顺序与 `./client` export | 【已核实·静态】 |
 | HK15 | 预设 isolate | mountPreset 审计；必要/保险服务名均 `isolate: true` | 【已核实·静态】 |
 | HK16 | `!!js dshHomePath` | 宿主提供 dshHomePath 与标签 schema | 【已核实·静态】 |
@@ -150,10 +151,10 @@ SD9、SD13 是历史缺定义编号，SD34 是本插件不调用 `sessionProject
 
 | 编号 | 当前合同 | 状态 |
 |:--|:--|:--|
-| CF3 | `defaultDshHome` 仅公共 API/夹具；活动 renderer 由 `resolveToolsSdkRenderer` 负责 | 【已核实·静态】 |
+| CF3 | SDK renderer 只读候选路径 | `dshToolsEntryCandidates`/`resolveToolsSdkRenderer` 负责活动 renderer 加载；preset-sync 不再提供旧 DSH_HOME 决议公共 helper | 【已核实·静态】 |
 | CF4 | package `dsh.bundle.patch` 单一入口 | 只装载 `cordis.patch.yml` 的全局管理行；definition 由 owner 读生成资产后交官方 adapter | 【已核实·静态】 |
 | CF5 | `dsh.client.platform=web` 与 inject | 【已核实·静态】 |
-| CF6 | exports 保留 settings/preset-sync/client/definition/locale 兼容通道 | 新 patch 不再加载 preset-sync 独立 row；definition 资产由全局 owner 读取，旧子路径仅作兼容解析 | 【已核实·静态】 |
+| CF6 | exports 单一公开组件 | 新 patch 只加载 settings owner；definition 资产由全局 owner 读取，旧 `./preset-sync` 根/locale 子路径已退役且应解析失败，raw patch 仍作迁移来源 | 【已核实·静态】 |
 | CF7 | step-01 设置页从宿主安装目录解析依赖 | 【已核实·静态】 |
 | CF8 | dependencies 仅 js-yaml | 【已核实·静态】 |
 | CF9 | 临时 DSH_HOME/profile 夹具形状 | 【已核实·静态】 |
@@ -185,16 +186,16 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 ## ⑦ 四版本风险与开放验证
 
 1. isolate 审计：`mountPreset/leakedServices` 对未隔离 root service 抛错；必要/保险名单必须保持 `isolate: true`。
-2. settings 换代：设置表单仅经 `plugins.detail.section` 渲染于当前插件包详情行列表之后（自绘标题），不注册 `plugins.bundle.config`、`plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`，若本包 bundle.config 槽被任何一方注册条目则 detail.section 让位保持唯一表单；ConfigForms 通过稳定 namespace 订阅快照并一次 mutate 十项。settings 行 10 项 Config、API、旧值迁移、内存 definition/adapter 仍是活动后端合同；四版本同页 UI/A09/A10/A11 仍待 HUMAN。
+2. settings 换代：设置表单仅经 `plugins.detail.section` 渲染于当前插件包详情行列表之后（自绘标题），不注册 `plugins.bundle.config`、`plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`，若本包 bundle.config 槽被任何一方注册条目则 detail.section 让位保持唯一表单；ConfigForms 通过稳定 namespace 订阅快照并一次 mutate 十项。settings 行 10 项 Config、API、旧值迁移、内存 definition/adapter 仍是活动后端合同；截至 2026-10-01，四版本同页 UI/A09/A10/A11 仍为 HUMAN 待复测。
 3. profile patch 载体：旧 `.agent-presets` 无读取方；`compatibility.json`/peer 门控可能使 bundle skipped、loader disabled；QQBot 仍有 allow-build/postinstall 欠账。
 4. 包/服务换代：workflow-ptc、`ptcRuntime`、tool:cordis 删除、当前两项 Cordis 工具与 `bundledSkillDir`（0.2.0-rc.2 换通道，配 `watch:false`；旧 `customSkillDirs` 已删）必须按当前真值核对。
 5. rc.2 单侧风险：`sanitizeProfile` 整体搬移 patch、`configEditor.edit` 值等于继承层删行；rc.1 现场缺失，不能推出跨代结论。
 6. session v4：`session.v4.jsonl.zstd`、自有 source.kind、developer/message 坐标和 step-07 三代候选必须保留。
 7. CF12 422 开放 incident：profile 中宿主运行时副本曾导致 `tool_removal` 422；清理 profile node_modules/lock、污染会话续聊、native↔PTC 切换三项均待用户验证。当前单一全局行、内部 carrier、内存 definition/adapter 仍需用户部署后 HUMAN 验证。
 
-### 本轮 rc2 兼容基线与 post-fix 状态
+### 当前验证状态（截至 2026-10-01 已知证据）
 
-0.2.0-rc.2 已通过用户提供的 HUMAN 实机兼容测试（范围受限；2026-10-01 rc2 兼容反馈批次）。该基线来源为用户反馈，未提供 OS、profile/mode、SESSION_ID、部署 commit、原始报告/日志路径；不覆盖完整 A01-A56、生产、QQBot、真实消息、/preset、question/approval、postinstall/allow-build。本轮单一全局 owner 的同页 detail.section 唯一表单（含让位防御）与关闭对照仍待用户在四个 peer 目标版本逐项 HUMAN 复测。
+0.2.0-rc.2 已通过用户提供的 HUMAN 实机兼容测试（范围受限；2026-10-01 rc2 兼容反馈批次）。该基线来源为用户反馈，未提供 OS、profile/mode、SESSION_ID、部署 commit、原始报告/日志路径；不覆盖完整 A01-A56、生产、QQBot、真实消息、/preset、question/approval、postinstall/allow-build。单一全局 owner 的同页 detail.section 唯一表单（含让位防御）与关闭对照仍待用户在四个 peer 目标版本逐项 HUMAN 复测。
 
 ## ⑧ 六项 HUMAN 欠账（全部未销账）
 
@@ -204,7 +205,7 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 | 2 | QQBot 0.5.0 manifest 实际装载运行 | 环境脚本只读 + 部署后运行 | 【未核实·HUMAN】 |
 | 3 | `im-qqbot` 宿主 schema/id/name/config | 用户侧按真实宿主 schema 比对 | 【未核实·HUMAN】 |
 | 4 | web→qqbot 建链真实结果 | 环境脚本只读；必要时用户 `dir`/`fsutil` 复核 | 【未核实·HUMAN】 |
-| 5 | 新会话默认 `extra-plan`、旧 `preset-extra-plan` 迁移与 QQBot `/preset` 行为 | 部署后由用户执行 `/preset`；本轮不清理旧 profile 行 | 【未核实·HUMAN】 |
+| 5 | 新会话默认 `extra-plan`、旧 `preset-extra-plan` 迁移与 QQBot `/preset` 行为 | 部署后由用户执行 `/preset`；AI 不清理旧 profile 行 | 【未核实·HUMAN】 |
 | 6 | QQBot postinstall 是否被 allow-build 放行 | 用户部署时查命令与安装日志 | 【未核实·HUMAN】 |
 
 环境不足、权限不足或脚本输出 SKIP 不能销账；自动全通过也不能替代以上六项。

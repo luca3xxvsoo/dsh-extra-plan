@@ -20,7 +20,7 @@
 
 ## 当前兼容与安全边界
 
-- 当前支持范围为 dsh `0.1.7-rc.1 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2`；插件 peerDependencies 是版本真源。`0.2.0-rc.2` 已通过用户提供的 HUMAN 实机兼容测试（范围受限，2026-10-01 rc2 兼容反馈批次），但本轮修复后的 A09/A10/A11 与双版本设置入口纠偏仍待复测；OS、profile/mode、SESSION_ID、部署 commit、原始报告路径未提供。QQBot、生产、真实消息、`/preset`、question/approval、postinstall/allow-build 与完整 A01-A56 仍是 HUMAN，不外推为通过。
+- 当前支持范围为 dsh `0.1.7-rc.1 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2`；插件 peerDependencies 是版本真源。`0.2.0-rc.2` 已有用户提供的范围受限 HUMAN 实机兼容基线（2026-10-01 rc2 兼容反馈批次）。各 peer 版本、日期、证据等级与待复测项统一见[ai-宿主耦合台账](pe-test/docs/ai-宿主耦合台账.md)的当前验证状态；QQBot、生产、真实消息、`/preset`、question/approval、postinstall/allow-build 与完整 A01-A56 仍是 HUMAN，不外推为通过。OS、profile/mode、SESSION_ID、部署 commit、原始报告路径等缺失现场信息按台账如实保留。
 - 五角色顺序：主会话 → 探查者 → 规划子代理 → 执行者 → 验收者。路由/目的/澄清/批准是机械锚点；唯一受限写例外是 `save_plan` 双文件工件，其余工作区写入按批准后的执行者流程进行。主会话干预工具（job_kill/send_message/job_list/list_agents）受主会话层闸门限制。
 - A/C/M 是模型可见投影维度：A=anchoredBootstrap，C=creativeMode，M=`native|ptc|both`；F/L 以首个 `tool/call` 为界。展示隐藏不等于运行时 binding 安全隔离，真实取证见实机流程。
 - AI 不执行生产部署；仓库验收通过后由用户操作部署与实测。工作区外写入被委派边界拒绝时，不逐条尝试，不设置 `sandbox_permissions`，只在汇报中列越界清单。
@@ -35,11 +35,11 @@
 
 ## 文档修改边界
 
-- 本轮按批准清单修改工作区源、测试与 AI 文档；仓库根 `README.md` 仍不改，官方 dsh/官方预设、生产环境、profile 与 `$DSH_HOME` 也不改。bundle 详情公开 insert 恰为 `dsh-extra-plan-settings` 一行；该全局 owner 统一拥有 10 项 Config、API、carrier、旧值迁移、同步核对与官方 AgentPreset adapter。旧 `extra-plan-preset-sync` / `preset-extra-plan` 只作安全读取来源，不是新写入目标；当前显式非法 `gateWords` 严格失败且零写，旧非法值仅诊断跳过。配置仅经 `plugins.detail.section` 渲染于 bundle 详情页行列表之后（自绘标题），`plugins.bundle.config` 加入不注册清单；不注册 `plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`。
-- 工作区内 AI 维护文档（含台账）可按批准方案修改；修改前按维护手册创建唯一 `.extra-plan/backup-dsh-extra-plan-JS审查修复-<YYYYMMDDHHMMSS>/`，同一任务续跑沿用，不覆盖镜像。
+- 工作区普通文件仅按用户真实需求和已批准方案修改；根 `README.md`、`plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml` 及其中全部引导词是 AI 禁改面，不存在临时授权覆盖这些边界的说法。官方 dsh/官方预设、生产环境、profile、`$DSH_HOME` 与真实会话同样不改。bundle 详情公开 insert 恰为 `dsh-extra-plan-settings` 一行；该全局 owner 统一拥有 10 项 Config、API、carrier、旧值迁移、同步核对与官方 AgentPreset adapter。旧 `extra-plan-preset-sync` / `preset-extra-plan` 只作 raw patch 安全读取来源，不是新写入目标；`./preset-sync` 及其 locale exports 已退役。当前显式非法 `gateWords` 严格失败且零写，旧非法值仅诊断跳过。配置仅经 `plugins.detail.section` 渲染于 bundle 详情页行列表之后（自绘标题），不注册 `plugins.bundle.config`、`plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`。
+- 维护任务按实际目标文件建立唯一 `.extra-plan/backup-dsh-extra-plan-<任务名>-<YYYYMMDDHHMMSS>/` 备份；同一任务续跑沿用对应目录，不覆盖已有镜像。JS/MJS、JSON、生成代码和领域回归按实际改动域选择，具体任务命令留在方案与验收工件中。
 - `pe-test/reports/` 只接收临时测试产物，不纳入源改动；不调用 `git reset`、`git checkout`、`git clean`。
 - 界面文案只给结论级信息；技术细节仅放硬闸门给 AI 的文案、诊断/日志和本组 AI 文档。
 
 ## 验收顺序
 
-按[维护手册](pe-test/docs/ai-维护手册.md)执行固定顺序：批准清单中的实际修改 JS/MJS 逐文件 `node --check` → step-01 设置页配置 → step-00 全流程 → step-00 跨平台 → step-04 → step-06-08 → step-06 → 代码地图生成 → 人工描述复核 → 地图 `--check` → 一键 step。Markdown 不伪造语法门结果；环境项的 SKIP/HUMAN 不计作通过。
+按[维护手册](pe-test/docs/ai-维护手册.md)执行固定顺序：按实际改动域对 JS/MJS 逐文件 `node --check`、package JSON `JSON.parse` 与生成 hookSource ESM 回放，再执行对应的 step-01/00/04/06 回归；需要更新代码地图时先按任务方案处理生成器，再人工复核并运行地图 `--check`。Markdown 不伪造语法门结果；SKIP/INCOMPLETE/HUMAN/NOT-RUN 单列且不计 PASS。

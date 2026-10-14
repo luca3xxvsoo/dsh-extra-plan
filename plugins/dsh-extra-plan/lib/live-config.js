@@ -10,7 +10,6 @@
 import { statSync, readFileSync } from 'node:fs'
 import {
   EXTRA_PLAN_SETTING_DEFINITIONS,
-  HOST_ROW_SETTING_DEFINITIONS,
   SETTING_DEFINITIONS,
   captureRowSettings,
   getSettingDefinition,
@@ -21,10 +20,8 @@ import {
 // 8 个热读键（与 SETTING_DEFINITIONS 中 extra-plan 组一致）。
 const LIVE_KEYS = Object.freeze(EXTRA_PLAN_SETTING_DEFINITIONS.map((item) => item.key))
 
-// 2 项宿主行设置键（权威值同在 settings 行；消费方是宿主行装载期快照 → 改后需重启）。
-const HOST_ROW_KEYS = Object.freeze(HOST_ROW_SETTING_DEFINITIONS.map((item) => item.key))
-// 本实例一次读盘覆盖的全部键（10 项）。
-const READ_KEYS = Object.freeze([...LIVE_KEYS, ...HOST_ROW_KEYS])
+// 本实例一次读盘覆盖的全部热读键（8 项）；宿主行设置由宿主装载期快照消费。
+const READ_KEYS = LIVE_KEYS
 
 // 调用方未提供 fallbackDefaults 时的内置兜底（与 index.js apply 期 cfg 快照同口径；
 // 各键兜底与资产模板叶值 / settings.js Config 默认值同源（同一生成常量）逐字一致）。
@@ -116,7 +113,7 @@ export function createLiveConfig(options) {
   function readDiskValues() {
     let captured = null
     try {
-      // 10 项同源：全部按 rowLocator（settings 行 id + config.<key>）定位。
+      // 8 项同源：全部按 rowLocator（settings 行 id + config.<key>）定位。
       captured = captureRowSettings(readFileSync(path, 'utf8'), SETTING_DEFINITIONS)
     } catch (error) {
       return { ok: false, reason: '解析失败 ' + String(error !== null && typeof error === 'object' ? error.message : error) }
@@ -208,10 +205,6 @@ export function createLiveConfig(options) {
     get exploreBudget() { return read('exploreBudget') },
     // 其他子代理默认模型（消费点：lib/model-routing.js 非 planner 解析）
     get otherAgentModel() { return read('otherAgentModel') },
-    // 2 项宿主行设置的权威值读口（落点 = settings 行 config；消费方是宿主行装载期快照，
-    // 本插件不消费它们——改后需重启宿主才生效，与上面 8 项的「立即生效」不同）
-    get webFetch() { return read('webFetch') },
-    get toolPresentationMode() { return read('toolPresentationMode') },
   }
   return Object.freeze(live)
 }

@@ -19,7 +19,7 @@ function cwdOf(exec) {
 }
 
 // 两个工具共享会话/目录/base 构造，但各自保留参数校验与提交形状。
-function resolveSaveContext(toolName, args, exec, savePlanDir) {
+function resolveSaveContext(args, exec, savePlanDir) {
   const session = exec !== undefined && exec !== null && exec.agent !== undefined && exec.agent !== null ? exec.agent.session : undefined
   const header = session !== undefined && session !== null && session.header !== undefined && session.header !== null ? session.header : undefined
   const cwd = cwdOf(exec)
@@ -28,7 +28,7 @@ function resolveSaveContext(toolName, args, exec, savePlanDir) {
   const dir = resolve(join(cwd, savePlanDir))
   const nameSeg = sanitizeTaskName(args !== undefined && args !== null && typeof args === 'object' ? args.taskName : undefined)
   const base = saveArtifactBase(nameSeg, sessionId)
-  return { toolName, session, cwd, sessionId, sessionTag, dir, nameSeg, base, errorPrefix: toolName + ': ' }
+  return { cwd, sessionTag, dir, base }
 }
 
 // save_plan/save_probe 工具定义只捕获显式目录与持久化依赖，不持有宿主会话状态。
@@ -67,7 +67,7 @@ export function createSaveToolFactories({ savePlanDir, atomicCommit, recoverJour
         if (/【未探查·待确认】/.test(plan) || /待确认假设清单/.test(plan)) {
           throw new Error('save_plan: 方案中包含【未探查·待确认】步骤或「待确认假设清单」。请先申请追加预算继续探查，确认所有项均已探查核实后再调用 save_plan')
         }
-        const context = resolveSaveContext('save_plan', args, exec, savePlanDir)
+        const context = resolveSaveContext(args, exec, savePlanDir)
         const { cwd, sessionTag, dir, base } = context
         if (cwd === '') throw new Error('save_plan: 会话缺少工作区路径，无法落盘')
         // 【探查者已核实】证据校验：方案中标注引用的证据文件必须真实存在、且为探查者
@@ -195,7 +195,7 @@ export function createSaveToolFactories({ savePlanDir, atomicCommit, recoverJour
         const probeCwd = cwdOf(exec)
         const invalid = validateProbe(args, probeCwd)
         if (invalid !== null) throw new Error(invalid)
-        const context = resolveSaveContext('save_probe', args, exec, savePlanDir)
+        const context = resolveSaveContext(args, exec, savePlanDir)
         const { cwd, sessionTag, dir, base } = context
         if (cwd === '') throw new Error('save_probe: 会话缺少工作区路径，无法落盘')
         if (sessionTag === '') throw new Error('save_probe: 会话缺少有效标识，无法隔离落盘事务')

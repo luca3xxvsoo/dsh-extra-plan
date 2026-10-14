@@ -126,7 +126,9 @@ function loadTestYaml() {
   for (const candidate of candidates) {
     try {
       const module = createRequire(candidate.path)('js-yaml')
-      testYamlResolution = { module, anchor: candidate, candidates, failures }
+      const JsScalar = new module.Type('tag:yaml.org,2002:js', { kind: 'scalar', resolve: (data) => typeof data === 'string', construct: (data) => ({ __jsExpr: data }), predicate: (data) => data !== null && typeof data === 'object' && typeof data.__jsExpr === 'string', represent: (data) => data.__jsExpr })
+      const schema = module.JSON_SCHEMA.extend(JsScalar)
+      testYamlResolution = { module, schema, anchor: candidate, candidates, failures }
       return testYamlResolution
     } catch (error) {
       failures.push({ anchor: candidate, error: errorDetail(error) })
@@ -139,7 +141,7 @@ function parseYaml(text) {
   const resolution = loadTestYaml()
   if (resolution.module === null) return { ok: false, value: null, error: 'yaml-parser-unavailable', anchor: null }
   try {
-    return { ok: true, value: resolution.module.load(text), error: null, anchor: resolution.anchor }
+    return { ok: true, value: resolution.module.load(text, { schema: resolution.schema }), error: null, anchor: resolution.anchor }
   } catch (error) {
     return { ok: false, value: null, error: errorDetail(error), anchor: resolution.anchor }
   }
@@ -213,8 +215,10 @@ if (yamlResolution.module === null) {
   const h1 = join(tempRoot, 's1-legacy-root')
   makeProfile(h1, 'qqbot')
   installOwnPlugin(h1, 'qqbot')
-  const before1 = legacyPatch(true) + "- id: user-custom\n  name: '@local/user-custom'\n"
+  const markerExpr = "globalThis.__qqbotFixtureSideEffect = 'executed'"
+  const before1 = legacyPatch(true) + "- id: user-custom\n  name: '@local/user-custom'\n  config:\n    marker: !!js \"globalThis.__qqbotFixtureSideEffect = 'executed'\"\n"
   writeFileSync(qqPatch(h1), before1, 'utf8')
+  delete globalThis.__qqbotFixtureSideEffect
   const r1 = healPatchRows(qqProfileDir(h1))
   const after1 = readFileSync(qqPatch(h1), 'utf8')
   const parsed1Result = parseYaml(after1)
@@ -226,6 +230,8 @@ if (yamlResolution.module === null) {
      (row.id === 'agent-presets' && row.name === '@deepseek-ai/dsh-agent-presets' && isMap(row.config) && row.config.default === 'standard')))
   check('生产同形 patch 只迁移两个旧根级完整块', r1.status === 'migrated' && Array.isArray(r1.migrated) && r1.migrated.join('/') === 'code-runtime/agent-presets')
   check('迁移后顶层数组有效且 im-qqbot/非旧版完整用户行保留、旧根级块消失', parsed1Result.ok && Array.isArray(parsed1) && isMap(rootRow(parsed1, 'im-qqbot')) && isMap(rootRow(parsed1, 'user-custom')) && !hasLegacy1, parsed1Result.error || '')
+  const parsedMarker1 = rootRow(parsed1, 'user-custom')?.config?.marker
+  check('合法非目标 !!js 条目迁移后保留原表达式且不求值', after1.includes('marker: !!js "' + markerExpr + '"') && !after1.includes(markerExpr + '()') && parsedMarker1?.__jsExpr === markerExpr && globalThis.__qqbotFixtureSideEffect === undefined)
   check('实际迁移产生一份备份且备份字节等于迁移前', backups1.length === 1 && backupText1 === before1)
   const repeatBefore1 = after1
   const repeatResult1 = healPatchRows(qqProfileDir(h1))
@@ -291,7 +297,27 @@ if (yamlResolution.module === null) {
   const invalidResult = healPatchRows(qqProfileDir(hInvalid))
   const invalidAfter = readFileSync(qqPatch(hInvalid), 'utf8')
   check('非法 YAML 写后校验失败并恢复原文', invalidResult.status === 'failed' && invalidResult.reason === 'verify-failed' && invalidAfter === invalidText && patchBackups(qqProfileDir(hInvalid)).length === 1)
+   const invalidSummary = captureWarn(() => healQqbotCompatibility(hInvalid))
+   check('healQqbotCompatibility 返回逐 profile patch/link 摘要并收集 failed', invalidSummary.result !== undefined && invalidSummary.result.results.length === 1 && invalidSummary.result.failed.length === 1 && invalidSummary.result.failed[0].patch.status === 'failed')
+   const previousSummaryHome = process.env.DSH_HOME
+   process.env.DSH_HOME = hInvalid
+   const applySummary = captureWarn(() => applyLitePlugin())
+   if (previousSummaryHome === undefined) delete process.env.DSH_HOME
+   else process.env.DSH_HOME = previousSummaryHome
+   check('启动 apply 对 failed 项输出结构化失败摘要且不抛', applySummary.messages.some((message) => message.includes('自愈失败摘要') && message.includes('verify-failed')))
+   const cliInvalid = runCli(hInvalid)
+   check('CLI 对 failed 项输出结构化 stderr 摘要且保持 exit 0', cliInvalid.status === 0 && cliInvalid.stderr.includes('自愈失败摘要') && cliInvalid.stderr.includes('verify-failed'))
 
+  // ⑤b patch 文件可见但读取失败：保留 healPatchRows 原形状，汇总进入 failed，CLI 仍 exit 0
+  const hReadFailed = join(tempRoot, 's5b-read-failed')
+  makeProfile(hReadFailed, 'qqbot')
+  installOwnPlugin(hReadFailed, 'qqbot')
+  mkdirSync(qqPatch(hReadFailed), { recursive: true })
+  const readFailedSummary = captureWarn(() => healQqbotCompatibility(hReadFailed))
+  const readFailedPatch = readFailedSummary.result?.results?.[0]?.patch
+  check('read-failed 保留 healPatchRows 原形状且进入 failed 汇总', readFailedPatch !== undefined && readFailedPatch.status === 'skipped' && readFailedPatch.reason === 'read-failed' && Object.keys(readFailedPatch).join('/') === 'status/reason' && readFailedSummary.result.failed.length === 1 && readFailedSummary.result.failed[0].patch === readFailedPatch)
+  const cliReadFailed = runCli(hReadFailed)
+  check('read-failed CLI 输出结构化摘要且 exit 0', cliReadFailed.status === 0 && cliReadFailed.stderr.includes('自愈失败摘要') && cliReadFailed.stderr.includes('read-failed'))
   // ⑥ web 包缺失 → 跳过建链不报错
   const h4 = join(tempRoot, 's6-web-missing')
   makeProfile(h4, 'qqbot')

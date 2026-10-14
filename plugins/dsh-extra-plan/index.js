@@ -135,7 +135,7 @@ import { causeChainOf } from './lib/runtime-static.js'
 import { createAgentRuntime, isLiveDelegation, childPolicyNeedsFloor } from './lib/agent-runtime.js'
 import { sessionEvents, isSubagentChild } from './lib/agent-session.js'
 import { createModelRouting, isExplicitRoute, isExplicitEffort, resolveAgentRouteSources, decidePlannerModelUse, PLANNER_PROBE_TIMEOUT_MS, PLANNER_BLOCKED_REASON, NON_PLANNER_BLOCKED_REASON, sortPlannerCandidates } from './lib/model-routing.js'
-import { CHANNEL_BROKEN_CODES, FREE_TOOLS, purposeRouteDenyReason, routeDenyReason, planDenyReason, approvalDenyReason, isBootstrapPhase, labelsOfCallData, askKindOf, askKindOfRelaxed, isExactGateSet, isPartialGateSet, categorizeGateAsk, gateAskDenyReason, validateGateAskStructure, matchRouteLabel, matchApprovalLabel, matchPurposeLabel, parseAskResultData, parseDispatchAskResult, deriveFlowState, filterBootstrapContextDecision, dedupeProjectedSkillCatalogDecision, catalogHasWriteTools, isReadOnlyChildByCatalog, schemasHasWriteTools, schemasHasTool, catalogIsCollapsed, subagentProbeGateReason, shellMutationReason, plannerGateReason, childReadonlyGateReason, jobOutputGateReason, recordJobOutputCall, pollGuardGateReason, recordPollGuardCall, probeDisposalWarning, mainGateReason, runCodeGroupDenyReason, aggregateRunCodeDenyReason, decomposeRunCode, runCodeCatchGateReason, collectRunCodeSites, askUserQuestionReturnGateReason, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, runCodeDispatchCapText } from './lib/gate-decisions.js'
+import { CHANNEL_BROKEN_CODES, FREE_TOOLS, routeDenyReason, planDenyReason, approvalDenyReason, isBootstrapPhase, labelsOfCallData, askKindOf, askKindOfRelaxed, isExactGateSet, isPartialGateSet, categorizeGateAsk, gateAskDenyReason, validateGateAskStructure, matchRouteLabel, matchApprovalLabel, matchPurposeLabel, parseAskResultData, parseDispatchAskResult, deriveFlowState, filterBootstrapContextDecision, dedupeProjectedSkillCatalogDecision, catalogHasWriteTools, isReadOnlyChildByCatalog, schemasHasWriteTools, schemasHasTool, catalogIsCollapsed, subagentProbeGateReason, shellMutationReason, plannerGateReason, childReadonlyGateReason, jobOutputGateReason, recordJobOutputCall, pollGuardGateReason, recordPollGuardCall, probeDisposalWarning, mainGateReason, runCodeGroupDenyReason, aggregateRunCodeDenyReason, decomposeRunCode, runCodeCatchGateReason, collectRunCodeSites, askUserQuestionReturnGateReason, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, runCodeDispatchCapText } from './lib/gate-decisions.js'
 import { CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilteredToolsSdk, resolveToolsSdkRenderer, sdkSchemasForRendering, toolPresentationModeOf, toolSdkSchemasOf, projectSkillCatalogDecision, PTC_SECTION_NAME, READ_SECTION_NAME, SDK_SECTION_NAME, sectionOf, hasSection, hasNonEmptySection } from './lib/assembly-presentation.js'
 import { createSdkTextCache } from './lib/sdk-text-cache.js'
 import { createUsageLedger } from './lib/usage-ledger.js'
@@ -398,8 +398,6 @@ export function apply(ctx, config) {
     recordRunCodeDeny, takeRunCodeDenyRecords, recordProbeClaim,
   } = runtimeLifecycle
   const noteRunCodeSubCall = (sessionId, rid) => runtimeLifecycle.noteRunCodeSubCall(sessionId, rid, exploreBudget())
-  let selfAgent = undefined
-
   // 1) 会话启动：子代理基线（账本 + 沙箱下限）；规划子代理与主会话注册 save_plan
   //    （主会话侧任意路由态放行：受限规划工件，判定在 mainGateReason 兜底）；主会话与探查子代理
   //    注册 save_probe（scoped；recompose 不重发 session-start，pre-step 兜底）。
@@ -410,7 +408,6 @@ export function apply(ctx, config) {
     try {
       const agent = payload.agent
       if (agent === undefined) return
-      selfAgent = agent
       childBaseline(agent)
       if (isPlannerChild(agent) || !isSubagentChild(agent)) registerSavePlan(agent)
       if (!isSubagentChild(agent) || probeClaimFor(agent)) { registerSaveProbe(agent) }
@@ -471,16 +468,17 @@ export function apply(ctx, config) {
   }, { prepend: true })
 
   ctx.on('agent/pre-step', async (payload, next) => {
+    // 每次 pre-step 在 await next() 前捕获自己的 Agent；不得使用 apply 级共享引用。
+    const agent = payload !== undefined && payload !== null ? payload.agent : undefined
     let initializationFailed = false
-    if (payload.agent !== undefined) {
+    if (agent !== undefined) {
       try {
-        selfAgent = payload.agent
-        childBaseline(payload.agent)
+        childBaseline(agent)
         // T3：save_plan 与 save_probe 同构——主会话侧同样在 pre-step 幂等兜底注册
         // （web 会话先按默认预设发布、recompose 不重发 session-start，仅靠 session-start
         // 会漏注册；registerTool 的 WeakSet 保证不重复注册）。
-        if (isPlannerChild(payload.agent) || !isSubagentChild(payload.agent)) registerSavePlan(payload.agent)
-        if (!isSubagentChild(payload.agent) || probeClaimFor(payload.agent)) { registerSaveProbe(payload.agent) }
+        if (isPlannerChild(agent) || !isSubagentChild(agent)) registerSavePlan(agent)
+        if (!isSubagentChild(agent) || probeClaimFor(agent)) { registerSaveProbe(agent) }
       } catch (error) {
         initializationFailed = true
         warnPreStepFailure(error)
@@ -489,17 +487,17 @@ export function apply(ctx, config) {
     const decision = await next()
     if (initializationFailed) return decision
     try {
-    if (decision.kind !== 'enter') return decision
-    if (selfAgent === undefined || !isPlannerChild(selfAgent)) return decision
-    if (!Array.isArray(decision.messages)) return decision
-    // 预算告知（先于 suffix 拼接，suffix 为空也生效）+ 阈值提示（剩余 ≤3 且未注入过时追加一条）。
-    const budgetNotice = budgetNoticeText(exploreBudget())
-    const used = toolCallsSinceUser(sessionEvents(selfAgent.session), FREE_TOOLS)
-    const reminder = budgetReminderText(exploreBudget() - used, exploreBudget(), BUDGET_REMINDER_THRESHOLD)
-    let messages = decision.messages.map((message) => withPlannerPromptSuffix(withBudgetNotice(message, budgetNotice), plannerPromptSuffix()))
-    if (reminder !== '' && !budgetReminderSent(sessionEvents(selfAgent.session), '本轮探查预算还剩 ')) {
-      messages = [...messages, budgetReminderMessage(reminder)]
-    }
+      if (decision.kind !== 'enter') return decision
+      if (agent === undefined || !isPlannerChild(agent)) return decision
+      if (!Array.isArray(decision.messages)) return decision
+      // 预算告知（先于 suffix 拼接，suffix 为空也生效）+ 阈值提示（剩余 ≤3 且未注入过时追加一条）。
+      const budgetNotice = budgetNoticeText(exploreBudget())
+      const used = toolCallsSinceUser(sessionEvents(agent.session), FREE_TOOLS)
+      const reminder = budgetReminderText(exploreBudget() - used, exploreBudget(), BUDGET_REMINDER_THRESHOLD)
+      let messages = decision.messages.map((message) => withPlannerPromptSuffix(withBudgetNotice(message, budgetNotice), plannerPromptSuffix()))
+      if (reminder !== '' && !budgetReminderSent(sessionEvents(agent.session), '本轮探查预算还剩 ')) {
+        messages = [...messages, budgetReminderMessage(reminder)]
+      }
       return { ...decision, messages }
     } catch (error) {
       warnPreStepFailure(error)
@@ -827,7 +825,11 @@ export function apply(ctx, config) {
     // 解析失败（无 jobId）→ 无操作（保守不放行）。
     {
       const sessId = agent.session.header.id
-      const consumed = toolJobsNoticesConsumed.get(sessId)
+      let consumed = toolJobsNoticesConsumed.get(sessId)
+      if (consumed === undefined) {
+        consumed = new Set()
+        toolJobsNoticesConsumed.set(sessId, consumed)
+      }
       for (const se of execEvents) {
         if (se === null || typeof se !== 'object' || se.type !== 'user/message') continue
         const sd = se.data
@@ -848,15 +850,14 @@ export function apply(ctx, config) {
         const m = noticeText.match(/background job (\S+)/)
         if (m === null) continue
         const jobId = m[1]
-        if (consumed !== undefined && consumed.has(jobId)) continue
+        if (consumed.has(jobId)) continue
         // v0.4.0：consumed 标记与 job_output 跟踪命中解耦——通知首次被消费即标记，
         // 同时执行两个解锁动作：① job_output 单键解锁（若该 jobId 被跟踪，删除幂等）；
         // ② job_list/list_agents 轮询守卫清整表（无参数键，只能清整表）。
         const perSession = jobOutputCallCounters.get(sessId)
         if (perSession !== undefined && perSession.has(jobId)) perSession.delete(jobId)
         pollGuardCounters.delete(sessId)
-        if (consumed !== undefined) consumed.add(jobId)
-        else toolJobsNoticesConsumed.set(sessId, new Set([jobId]))
+        consumed.add(jobId)
       }
     }
     const child = childBaseline(agent, execEvents)
@@ -867,18 +868,10 @@ export function apply(ctx, config) {
     // subagent_probe 仅主会话可委派；放行时挂「待认领计数」供 probe 子会话
     // session-start 认领（否则 probe 子会话经 parentSession 无放行痕迹）。
     if (exec.name === 'subagent_probe') {
-      const reason = subagentProbeGateReason(exec, planner)
+      const reason = subagentProbeGateReason(exec, planner ? 'planner' : child ? 'child' : 'main')
       if (reason !== null) {
         recordRunCodeDeny(agent, exec, reason)
         return { kind: 'deny', reason }
-      }
-      if (planner && isRunCodeSubCall(exec)) {
-        const rid = typeof exec.rootCallId === 'string' ? exec.rootCallId : ''
-        const capReason = noteRunCodeSubCall(agent.session.header.id, rid)
-        if (capReason !== null) {
-          recordRunCodeDeny(agent, exec, capReason)
-          return { kind: 'deny', reason: capReason }
-        }
       }
       const parentId = agent.session.header.id
       recordProbeClaim(parentId)

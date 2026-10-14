@@ -144,9 +144,6 @@ export const PROJECTION_SETTING_DEFINITIONS = Object.freeze(
   SETTING_DEFINITIONS.filter((item) => item.projectionLocator !== undefined),
 )
 
-export const TOOL_PRESENTATION_MODES = Object.freeze([
-  ...SETTING_DEFINITIONS.find((item) => item.key === 'toolPresentationMode').ui.options,
-])
 const descriptorByKey = new Map(SETTING_DEFINITIONS.map((item) => [item.key, item]))
 
 export function getSettingDefinition(key) {
