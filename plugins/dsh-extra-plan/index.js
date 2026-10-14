@@ -404,6 +404,7 @@ export function apply(ctx, config) {
     const sessionId = header !== null && typeof header === 'object' && !Array.isArray(header) ? header.id : undefined
     if (typeof sessionId !== 'string' || sessionId === '') return false
     if (message === null || typeof message !== 'object' || Array.isArray(message)) return false
+    if (typeof message.id !== 'string' || message.id.trim() === '') return false
     const source = message.source
     if (source === null || typeof source !== 'object' || Array.isArray(source)) return false
     if (source.kind !== 'tool-jobs' || source.form !== 'notice') return false
@@ -418,8 +419,9 @@ export function apply(ctx, config) {
     const match = noticeText.match(/background job (\S+)/)
     if (match === null) return false
     const jobId = match[1]
+    const noticeId = message.id
     let consumed = toolJobsNoticesConsumed.get(sessionId)
-    if (consumed !== undefined && consumed.has(jobId)) return false
+    if (consumed !== undefined && consumed.has(noticeId)) return false
     if (consumed === undefined) {
       consumed = new Set()
       toolJobsNoticesConsumed.set(sessionId, consumed)
@@ -427,7 +429,7 @@ export function apply(ctx, config) {
     const perSession = jobOutputCallCounters.get(sessionId)
     if (perSession !== undefined && perSession.has(jobId)) perSession.delete(jobId)
     pollGuardCounters.delete(sessionId)
-    consumed.add(jobId)
+    consumed.add(noticeId)
     return true
   }
   ctx.on('agent/inbox/claimed', (payload) => {
@@ -843,11 +845,11 @@ export function apply(ctx, config) {
       }
       const lastAnchor = jobOutputLastAnchors.get(sessId)
       if (lastAnchor !== currentAnchor) {
-        // 只清当前 session：job_output 查重、tool-jobs 消费集与本 session 的 rootCall 桶。
+        // 只清当前 session：job_output 查重与本 session 的 rootCall 桶。已消费 notice-id 集合
+        // 跨用户/agent-message 锚点保留，直到 agent/disposed 的 disposeSession 按 session 回收。
         // subCallCounters 已按 sessionId 分桶，故删除全局 clear()——它会把其它 session
         // 正在执行的 run_code 子调用计数一并清掉（跨会话锚点互不干扰）。
         jobOutputCallCounters.delete(sessId)
-        toolJobsNoticesConsumed.delete(sessId)
         subCallCounters.delete(sessId)
         pollGuardCounters.delete(sessId)
         jobOutputLastAnchors.set(sessId, currentAnchor)

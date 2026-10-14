@@ -1228,6 +1228,8 @@ checkTrue('R115 主会话 direct 态 run_code 组内 job_kill 成员 → allow',
     type: 'user/message',
     data: {
       // 0.1.7 换代：dsh-tool-jobs 的完成通知源为 { kind:'tool-jobs', form:'notice' }（旧 plugin 兜底 kind 已废）。
+      id: 'tj-j1-notice',
+      role: 'user',
       source: { kind: 'tool-jobs', form: 'notice' },
       content: [{ type: 'text', text: 'background job j1 (subagent: test) finished [status: completed]. Read its output with job_output.' }],
     },
@@ -1241,8 +1243,8 @@ checkTrue('R115 主会话 direct 态 run_code 组内 job_kill 成员 → allow',
    r = preExecute(harness, multiNoticeMain, 'job_output', { job_id: 'j1' })
    const firstJ2 = preExecute(harness, multiNoticeMain, 'job_output', { job_id: 'j2' })
    multiNoticeEvents.push(
-     { type: 'user/message', data: { source: { kind: 'tool-jobs', form: 'notice' }, content: [{ type: 'text', text: 'background job j1 (subagent: test) finished [status: completed].' }] } },
-     { type: 'user/message', data: { source: { kind: 'tool-jobs', form: 'notice' }, content: [{ type: 'text', text: 'background job j2 (subagent: test) finished [status: completed].' }] } },
+     { type: 'user/message', data: { id: 'tj-multi-j1', role: 'user', source: { kind: 'tool-jobs', form: 'notice' }, content: [{ type: 'text', text: 'background job j1 (subagent: test) finished [status: completed].' }] } },
+     { type: 'user/message', data: { id: 'tj-multi-j2', role: 'user', source: { kind: 'tool-jobs', form: 'notice' }, content: [{ type: 'text', text: 'background job j2 (subagent: test) finished [status: completed].' }] } },
    )
    const releasedJ1 = preExecute(harness, multiNoticeMain, 'job_output', { job_id: 'j1' })
    const releasedJ2 = preExecute(harness, multiNoticeMain, 'job_output', { job_id: 'j2' })
@@ -1265,7 +1267,7 @@ checkTrue('R115 主会话 direct 态 run_code 组内 job_kill 成员 → allow',
   r = preExecute(harness, mutableMain2, 'list_agents', {})
   checkTrue('PG4 list_agents 同轮第二次 → deny 且含同文案', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('禁止轮询子代理状态，停止操作并等待子代理通知'))
   // 重置通道①：注入新 user 消息（锚点变化清整表）
-  sharedEvents.push({ type: 'user/message', data: { source: { kind: 'user' }, content: [] } })
+  sharedEvents.push({ type: 'user/message', data: { id: 'pg-user-anchor', role: 'user', source: { kind: 'user' }, content: [] } })
   r = preExecute(harness, mutableMain2, 'job_list', {})
   checkTrue('PG5 新 user 消息锚点重置后 job_list → allow（清整表）', r !== null && r !== undefined && r.kind === 'allow')
   r = preExecute(harness, mutableMain2, 'list_agents', {})
@@ -1274,7 +1276,7 @@ checkTrue('R115 主会话 direct 态 run_code 组内 job_kill 成员 → allow',
   r = preExecute(harness, mutableMain2, 'job_list', {})
   checkTrue('PG7 锚点重置后同轮 job_list 第二次 → deny 且含同文案', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('禁止轮询子代理状态，停止操作并等待子代理通知'))
   // 重置通道②：注入 tool-jobs 完成通知（jobId 'jx' 不在 job_output 计数器中，也必须清 pollGuard——验证 consumed 解耦）
-  sharedEvents.push({ type: 'user/message', data: { source: { kind: 'tool-jobs', form: 'notice' }, content: [{ type: 'text', text: 'background job jx (subagent: test) finished [status: completed]. Read its output with job_output.' }] } })
+  sharedEvents.push({ type: 'user/message', data: { id: 'pg-jx-notice', role: 'user', source: { kind: 'tool-jobs', form: 'notice' }, content: [{ type: 'text', text: 'background job jx (subagent: test) finished [status: completed]. Read its output with job_output.' }] } })
   r = preExecute(harness, mutableMain2, 'job_list', {})
   checkTrue('PG8 tool-jobs 通知（未跟踪 jobId jx）后 job_list → allow（consumed 解耦清 pollGuard）', r !== null && r !== undefined && r.kind === 'allow')
 }
@@ -1283,10 +1285,13 @@ checkTrue('R115 主会话 direct 态 run_code 组内 job_kill 成员 → allow',
 {
   const sharedEvents = []
   const claimedMain = { session: { header: { id: 'claimed-main', cwd: 'C:/work' }, snapshotEvents: () => sharedEvents }, options: {}, ctx: undefined }
-  const noticeOf = (jobId) => ({
+  const noticeOf = (jobId, noticeId) => ({
+    id: noticeId,
+    role: 'user',
     source: { kind: 'tool-jobs', form: 'notice' },
     content: [{ type: 'text', text: 'background job ' + jobId + ' (subagent: test) finished [status: completed]. Read its output with job_output.' }],
   })
+  const currentNotice = noticeOf('j3', 'current-notice')
 
   // pre-durable 预热：没有 push user/message，三类工具均首调 allow、后两调 deny。
   r = preExecute(harness, claimedMain, 'job_output', { job_id: 'j3' })
@@ -1311,7 +1316,7 @@ checkTrue('R115 主会话 direct 态 run_code 组内 job_kill 成员 → allow',
   checkTrue('CN2 claimed 前后 sharedEvents 始终为空（通知尚未落 durable）', sharedEvents.length === 0)
 
   // claimed 同步消费后立即解锁，未 await、未 append；每工具首调 allow，下一调恢复 deny。
-  emitClaimed(harness, claimedMain, noticeOf('j3'))
+  emitClaimed(harness, claimedMain, currentNotice)
   checkTrue('CN3 同步 claimed 返回后立即仍无 durable event', sharedEvents.length === 0)
   r = preExecute(harness, claimedMain, 'job_output', { job_id: 'j3' })
   const claimedPostOutputFirst = r !== null && r !== undefined && r.kind === 'allow'
@@ -1327,15 +1332,25 @@ checkTrue('R115 主会话 direct 态 run_code 组内 job_kill 成员 → allow',
   const claimedPostAgentsSecond = r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('禁止轮询子代理状态，停止操作并等待子代理通知')
   checkTrue('CN4 有效 claimed 后三工具首调 allow、各自第二调恢复原 deny', claimedPostOutputFirst && claimedPostListFirst && claimedPostAgentsFirst && claimedPostOutputSecond && claimedPostListSecond && claimedPostAgentsSecond)
 
-  // 重复 claimed：先重建计数，再重复 emit；不得再次清理新计数。
-  emitClaimed(harness, claimedMain, noticeOf('j3'))
+  // 锚点变化后重复 claimed + durable：同一 message.id 仍只允许一次状态迁移。
+  sharedEvents.push({ type: 'user/message', data: { id: 'claimed-user-anchor', role: 'user', source: { kind: 'user' }, content: [] } })
+  r = preExecute(harness, claimedMain, 'read', {})
+  const claimedAnchorReset = r !== null && r !== undefined && r.kind === 'allow'
+  r = preExecute(harness, claimedMain, 'job_output', { job_id: 'j3' })
+  const claimedAnchorWarmOutput = r !== null && r !== undefined && r.kind === 'allow'
+  r = preExecute(harness, claimedMain, 'job_list', {})
+  const claimedAnchorWarmList = r !== null && r !== undefined && r.kind === 'allow'
+  r = preExecute(harness, claimedMain, 'list_agents', {})
+  const claimedAnchorWarmAgents = r !== null && r !== undefined && r.kind === 'allow'
+  emitClaimed(harness, claimedMain, currentNotice)
+  sharedEvents.push({ type: 'user/message', data: currentNotice })
   r = preExecute(harness, claimedMain, 'job_output', { job_id: 'j3' })
   const claimedDuplicateOutput = r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止对同一 job 重复调用')
   r = preExecute(harness, claimedMain, 'job_list', {})
   const claimedDuplicateList = r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('禁止轮询子代理状态，停止操作并等待子代理通知')
   r = preExecute(harness, claimedMain, 'list_agents', {})
   const claimedDuplicateAgents = r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('禁止轮询子代理状态，停止操作并等待子代理通知')
-  checkTrue('CN5 重复 claimed 不清理通知后重建的三类计数', claimedDuplicateOutput && claimedDuplicateList && claimedDuplicateAgents && sharedEvents.length === 0)
+  checkTrue('CN5 同 id claimed+durable 幂等且跨锚点保留：不清理通知后重建的三类计数', claimedAnchorReset && claimedAnchorWarmOutput && claimedAnchorWarmList && claimedAnchorWarmAgents && claimedDuplicateOutput && claimedDuplicateList && claimedDuplicateAgents && sharedEvents.length === 2)
 
   // 同 session 多 job：j1 通知只清 j1，不能提前放行 j2。
   const multiJobEvents = []
@@ -1348,12 +1363,12 @@ checkTrue('R115 主会话 direct 态 run_code 组内 job_kill 成员 → allow',
   const multiJ2Warm = r !== null && r !== undefined && r.kind === 'allow'
   r = preExecute(harness, multiJobMain, 'job_output', { job_id: 'j2' })
   const multiJ2WarmDeny = r !== null && r !== undefined && r.kind === 'deny'
-  emitClaimed(harness, multiJobMain, noticeOf('j1'))
+  emitClaimed(harness, multiJobMain, noticeOf('j1', 'multi-job-j1'))
   r = preExecute(harness, multiJobMain, 'job_output', { job_id: 'j1' })
   const multiJ1Released = r !== null && r !== undefined && r.kind === 'allow'
   r = preExecute(harness, multiJobMain, 'job_output', { job_id: 'j2' })
   const multiJ2StillDenied = r !== null && r !== undefined && r.kind === 'deny'
-  emitClaimed(harness, multiJobMain, noticeOf('j2'))
+  emitClaimed(harness, multiJobMain, noticeOf('j2', 'multi-job-j2'))
   r = preExecute(harness, multiJobMain, 'job_output', { job_id: 'j2' })
   const multiJ2Released = r !== null && r !== undefined && r.kind === 'allow'
   checkTrue('CN6 同 session j1/j2 精确 jobId：j1 通知不放行 j2，随后 j2 独立解锁', multiJ1Warm && multiJ1WarmDeny && multiJ2Warm && multiJ2WarmDeny && multiJ1Released && multiJ2StillDenied && multiJ2Released && multiJobEvents.length === 0)
@@ -1374,7 +1389,7 @@ checkTrue('R115 主会话 direct 态 run_code 组内 job_kill 成员 → allow',
     const listSecond = r !== null && r !== undefined && r.kind === 'deny'
     if (!(outputFirst && outputSecond && listFirst && listSecond)) fail += 1
   }
-  emitClaimed(harness, sessionA, noticeOf('shared-job'))
+  emitClaimed(harness, sessionA, noticeOf('shared-job', 'session-a-shared-job'))
   r = preExecute(harness, sessionA, 'job_output', { job_id: 'shared-job' })
   const sessionAOutputReleased = r !== null && r !== undefined && r.kind === 'allow'
   r = preExecute(harness, sessionA, 'job_list', {})
@@ -1384,7 +1399,7 @@ checkTrue('R115 主会话 direct 态 run_code 组内 job_kill 成员 → allow',
   r = preExecute(harness, sessionB, 'job_list', {})
   const sessionBListStillDenied = r !== null && r !== undefined && r.kind === 'deny'
   checkTrue('CN7 session 隔离：A 通知不放行 B 的同 jobId 与 pollGuard', sessionAOutputReleased && sessionAListReleased && sessionBOutputStillDenied && sessionBListStillDenied && sessionEventsA.length === 0 && sessionEventsB.length === 0)
-  emitClaimed(harness, sessionB, noticeOf('shared-job'))
+  emitClaimed(harness, sessionB, noticeOf('shared-job', 'session-b-shared-job'))
   r = preExecute(harness, sessionB, 'job_output', { job_id: 'shared-job' })
   const sessionBOutputReleased = r !== null && r !== undefined && r.kind === 'allow'
   r = preExecute(harness, sessionB, 'job_list', {})
@@ -1406,22 +1421,25 @@ checkTrue('R115 主会话 direct 态 run_code 组内 job_kill 成员 → allow',
   const badWarmAgents = r !== null && r !== undefined && r.kind === 'allow'
   r = preExecute(harness, badMain, 'list_agents', {})
   const badWarmAgentsDeny = r !== null && r !== undefined && r.kind === 'deny'
-  const validContent = noticeOf('bad-job').content
+  const validContent = noticeOf('bad-job', 'valid-bad-notice').content
   const invalidMessages = [
     null,
-    { source: { kind: 'other', form: 'notice' }, content: validContent },
-    { source: { kind: 'tool-jobs', form: 'summary' }, content: validContent },
-    { source: { kind: 'tool-jobs', form: 'notice' }, content: [] },
-    { source: { kind: 'tool-jobs', form: 'notice' }, content: [{ type: 'image' }] },
-    { source: { kind: 'tool-jobs', form: 'notice' }, content: [{ type: 'text', text: 'not a completion notice' }] },
-    { source: { kind: 'tool-jobs', form: 'notice' }, content: { text: 'background job bad-job' } },
+    { id: 'bad-source-kind', role: 'user', source: { kind: 'other', form: 'notice' }, content: validContent },
+    { id: 'bad-source-form', role: 'user', source: { kind: 'tool-jobs', form: 'summary' }, content: validContent },
+    { id: 'bad-empty-content', role: 'user', source: { kind: 'tool-jobs', form: 'notice' }, content: [] },
+    { id: 'bad-image-content', role: 'user', source: { kind: 'tool-jobs', form: 'notice' }, content: [{ type: 'image' }] },
+    { id: 'bad-text-content', role: 'user', source: { kind: 'tool-jobs', form: 'notice' }, content: [{ type: 'text', text: 'not a completion notice' }] },
+    { id: 'bad-content-shape', role: 'user', source: { kind: 'tool-jobs', form: 'notice' }, content: { text: 'background job bad-job' } },
+    { role: 'user', source: { kind: 'tool-jobs', form: 'notice' }, content: validContent },
+    { id: '', role: 'user', source: { kind: 'tool-jobs', form: 'notice' }, content: validContent },
+    { id: '   ', role: 'user', source: { kind: 'tool-jobs', form: 'notice' }, content: validContent },
   ]
   let invalidThrew = false
   for (const message of invalidMessages) {
     try { emitClaimed(harness, badMain, message) } catch (error) { invalidThrew = true }
   }
   for (const agent of [undefined, null, {}, { session: { header: {} } }, { session: { header: { id: '' } } }]) {
-    try { emitClaimed(harness, agent, noticeOf('bad-job')) } catch (error) { invalidThrew = true }
+    try { emitClaimed(harness, agent, noticeOf('bad-job', 'bad-agent-notice')) } catch (error) { invalidThrew = true }
   }
   r = preExecute(harness, badMain, 'job_output', { job_id: 'bad-job' })
   const badOutputStillDenied = r !== null && r !== undefined && r.kind === 'deny'
@@ -1441,6 +1459,58 @@ checkTrue('R115 主会话 direct 态 run_code 组内 job_kill 成员 → allow',
   const groupListAfter = preExecute(harness, groupMain, 'job_list', {})
   const groupAgentsAfter = preExecute(harness, groupMain, 'list_agents', {})
   checkTrue('CN10 含三工具成员的整体 deny 不污染计数：直接首调仍 allow', groupDenied && groupOutputAfter !== null && groupOutputAfter.kind === 'allow' && groupListAfter !== null && groupListAfter.kind === 'allow' && groupAgentsAfter !== null && groupAgentsAfter.kind === 'allow' && groupEvents.length === 0)
+
+  // P0 碰撞：同一长 session 的历史 durable notice 与新 incarnation 复用 subagent-1。
+  const collisionJobId = 'subagent-1'
+  const collisionOldNoticeId = 'old-notice-id'
+  const collisionNewNoticeId = 'new-notice-id'
+  const collisionEvents = [{ type: 'user/message', data: noticeOf(collisionJobId, collisionOldNoticeId) }]
+  const collisionMain = { session: { header: { id: 'claimed-collision', cwd: 'C:/work' }, snapshotEvents: () => collisionEvents }, options: {}, ctx: undefined }
+  // 先消费历史 durable notice 建立 notice-id 基线，再追加新 user 锚点；锚点扫描不得删基线。
+  r = preExecute(harness, collisionMain, 'read', {})
+  const collisionHistoryBaseline = r !== null && r !== undefined && r.kind === 'allow'
+  collisionEvents.push({ type: 'user/message', data: { id: 'collision-user-anchor', role: 'user', source: { kind: 'user' }, content: [] } })
+  r = preExecute(harness, collisionMain, 'read', {})
+  const collisionAnchorAfterHistory = r !== null && r !== undefined && r.kind === 'allow'
+  r = preExecute(harness, collisionMain, 'job_output', { job_id: collisionJobId })
+  const collisionWarmOutput = r !== null && r !== undefined && r.kind === 'allow'
+  r = preExecute(harness, collisionMain, 'job_list', {})
+  const collisionWarmList = r !== null && r !== undefined && r.kind === 'allow'
+  r = preExecute(harness, collisionMain, 'list_agents', {})
+  const collisionWarmAgents = r !== null && r !== undefined && r.kind === 'allow'
+  r = preExecute(harness, collisionMain, 'job_output', { job_id: collisionJobId })
+  const collisionWarmOutputDeny = r !== null && r !== undefined && r.kind === 'deny'
+  r = preExecute(harness, collisionMain, 'job_list', {})
+  const collisionWarmListDeny = r !== null && r !== undefined && r.kind === 'deny'
+  r = preExecute(harness, collisionMain, 'list_agents', {})
+  const collisionWarmAgentsDeny = r !== null && r !== undefined && r.kind === 'deny'
+  const collisionNotice = noticeOf(collisionJobId, collisionNewNoticeId)
+  emitClaimed(harness, collisionMain, collisionNotice)
+  const collisionOutputFirst = preExecute(harness, collisionMain, 'job_output', { job_id: collisionJobId })
+  const collisionOutputSecond = preExecute(harness, collisionMain, 'job_output', { job_id: collisionJobId })
+  const collisionListFirst = preExecute(harness, collisionMain, 'job_list', {})
+  const collisionListSecond = preExecute(harness, collisionMain, 'job_list', {})
+  const collisionAgentsFirst = preExecute(harness, collisionMain, 'list_agents', {})
+  const collisionAgentsSecond = preExecute(harness, collisionMain, 'list_agents', {})
+  checkTrue('CN11 P0 旧 notice-id+新 user 锚点+同 subagent-1 新 notice-id：三类运行中计数先 deny', collisionHistoryBaseline && collisionAnchorAfterHistory && collisionWarmOutput && collisionWarmList && collisionWarmAgents && collisionWarmOutputDeny && collisionWarmListDeny && collisionWarmAgentsDeny && collisionOldNoticeId !== collisionNewNoticeId && collisionJobId === 'subagent-1')
+  checkTrue('CN12 P0 新 claimed 消费后同 jobId 三工具各首调 allow、各第二调 deny', collisionOutputFirst.kind === 'allow' && collisionOutputSecond.kind === 'deny' && collisionListFirst.kind === 'allow' && collisionListSecond.kind === 'deny' && collisionAgentsFirst.kind === 'allow' && collisionAgentsSecond.kind === 'deny')
+
+  // durable-only 对照：只追加新 notice-id，不经过 claimed，也必须解锁三类工具。
+  const durableOnlyEvents = []
+  const durableOnlyMain = { session: { header: { id: 'durable-only-main', cwd: 'C:/work' }, snapshotEvents: () => durableOnlyEvents }, options: {}, ctx: undefined }
+  const durableOnlyJobId = 'subagent-2'
+  const durableOnlyNotice = noticeOf(durableOnlyJobId, 'durable-only-notice-id')
+  const durableWarmOutput = preExecute(harness, durableOnlyMain, 'job_output', { job_id: durableOnlyJobId })
+  const durableWarmList = preExecute(harness, durableOnlyMain, 'job_list', {})
+  const durableWarmAgents = preExecute(harness, durableOnlyMain, 'list_agents', {})
+  durableOnlyEvents.push({ type: 'user/message', data: durableOnlyNotice })
+  const durableOnlyOutputFirst = preExecute(harness, durableOnlyMain, 'job_output', { job_id: durableOnlyJobId })
+  const durableOnlyOutputSecond = preExecute(harness, durableOnlyMain, 'job_output', { job_id: durableOnlyJobId })
+  const durableOnlyListFirst = preExecute(harness, durableOnlyMain, 'job_list', {})
+  const durableOnlyListSecond = preExecute(harness, durableOnlyMain, 'job_list', {})
+  const durableOnlyAgentsFirst = preExecute(harness, durableOnlyMain, 'list_agents', {})
+  const durableOnlyAgentsSecond = preExecute(harness, durableOnlyMain, 'list_agents', {})
+  checkTrue('CN13 durable-only 新 id 不经过 claimed 也解锁三类工具且随后恢复 deny', durableWarmOutput.kind === 'allow' && durableWarmList.kind === 'allow' && durableWarmAgents.kind === 'allow' && durableOnlyOutputFirst.kind === 'allow' && durableOnlyOutputSecond.kind === 'deny' && durableOnlyListFirst.kind === 'allow' && durableOnlyListSecond.kind === 'deny' && durableOnlyAgentsFirst.kind === 'allow' && durableOnlyAgentsSecond.kind === 'deny' && durableOnlyEvents.length === 1 && durableOnlyNotice.id === 'durable-only-notice-id' && durableOnlyNotice.role === 'user')
 }
 
 // ── ⑭ R100-R105：runcodeCatchGate 开关 + safe 白名单 + 容器计费 + 实例上限 ──
@@ -1550,6 +1620,13 @@ const gateDecisionsSource = readFileSync(GATE_DECISIONS_PATH, 'utf8')
 const usageLedgerSource = readFileSync(USAGE_LEDGER_PATH, 'utf8')
 const runtimeLifecycleSource = readFileSync(RUNTIME_LIFECYCLE_PATH, 'utf8')
 const decisionSources = pluginSource + '\n' + gateDecisionsSource
+checkTrue('P4-0 源码：通知按 message.id 判重、jobId 仅精确删当前 session，锚点不删 notice-id Set',
+  pluginSource.includes('const noticeId = message.id')
+  && pluginSource.includes('consumed.has(noticeId)')
+  && pluginSource.includes('consumed.add(noticeId)')
+  && !pluginSource.includes('consumed.has(jobId)')
+  && !pluginSource.includes('consumed.add(jobId)')
+  && !pluginSource.includes('toolJobsNoticesConsumed.delete(sessId)'))
 checkTrue('P4-1 源码：usage ledger 无灌表/async fold，runtime lifecycle 统一计数入口',
   !usageLedgerSource.includes('usageCursorsLoaded') && !usageLedgerSource.includes('subCallCounters.clear()') && !usageLedgerSource.includes('async function foldUsage') && usageLedgerSource.includes('function foldUsage') && runtimeLifecycleSource.includes('function noteRunCodeSubCall(sessionId, rid, cap)'))
 checkTrue('P4-2 源码：disposed 先同步 fold，再按 sessionId 删除；账本与 lifecycle 各自持有状态',
