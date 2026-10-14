@@ -40,7 +40,7 @@
 
 ## 六、session 生命周期与 usage 账本
 
-- 运行时状态按 `sessionId` 分桶；rootCall、job_output、tool-jobs 通知、usage cursor 不能跨会话清理。锚点变化只清当前 session 的临时桶。pollGuardCounters（job_list/list_agents 调用计数）按 sessionId 分桶；锚点变化与 tool-jobs 完成通知双通道清整表；一次 execEvents 快照内先惰性创建并持续复用 notice consumed Set，通知 consumed 标记与 job_output 跟踪命中解耦，j1/j2 不互相覆盖。
+- 运行时状态按 `sessionId` 分桶；rootCall、job_output、tool-jobs 通知、usage cursor 不能跨会话清理。锚点变化只清当前 session 的临时桶。通知消费合同是 **agent/inbox/claimed 同步主入口 + durable snapshot fallback + 统一幂等 helper**：claimed 直接取 `payload.message`，在消息尚未进入 `snapshotEvents` 时先解锁；`tools/pre-execute` 只扫描 durable `user/message` 的 `event.data` 作恢复、重放与旧日志兜底，两入口都调用 `consumeToolJobsNotice(agent, message)`。helper 严格校验 `source.kind/form` 与 `/background job (\S+)/`，首次有效通知先按 session 精确删除 `jobOutputCallCounters` 的该 jobId，再清 `pollGuardCounters` 整表，双解锁完成后才写 `consumed`；重复通知无副作用。job_output 仍按 session+job_id 精确键，job_list/list_agents 仍按 session 内工具名独立计数，用户/agent-message 锚点仍可重置同 session 全表；这些 Map 是可重建缓存，不是 job running/terminal 状态合同，resume/replay 仍以 durable user/message 为兜底。
 - `agent/disposed` 是 emit/void，宿主不等待异步 Promise；因此必须在监听器同步路径先做 final fold，再处理 pending probe，再按 sessionId 回收 Map、notice、rootCall 与 cursor。每次 `agent/pre-step` 在 await next 前捕获本次 payload.agent，预算、suffix、sessionEvents 不读取 apply 级共享 Agent。重复 disposed 幂等，其它 session 不受影响。
 - usage 增量以宿主 `session.seq` 水位配合 `snapshotEvents(from,to)` 读取新增区间；水位不变直接返回，日志截断或首次折叠才回退全量，`seq` 去重后 append 成功才推进 cursor。生产热路径不每趟同时跑全量和增量；全量对拍只在验收回归运行。
 - cursor 文件 ENOENT 按空表；损坏、解析失败或根值非对象时首次告警并保留原始字节，避免覆盖其它 session 的去重基准。账本字段缺失按空值/零兼容，五类计数全零的事件不写行。
@@ -58,7 +58,7 @@
 | job_kill 仅直行放行 | `mainGateReason`；step-04 |
 | send_message 主会话向 running 目标拒绝 | `mainGateReason`（gateCtx.getAgents）；step-04 |
 | job_list/list_agents 同锚点防轮询 | `pollGuardGateReason`/`recordPollGuardCall`；step-04 |
-| 通知解锁双动作（job_output 单键+pollGuard 清表） | apply 锚点/通知扫描；step-04 TJ/PG |
+| 通知解锁双动作（job_output 单键+pollGuard 清表） | apply 的 `agent/inbox/claimed` 同步主入口 + `tools/pre-execute` durable snapshot fallback，共用 `consumeToolJobsNotice`；step-04 TJ/PG/CN |
 | 宿主变更先看当前台账，历史快照不作当前事实 | [ai-宿主耦合台账](ai-宿主耦合台账.md)；[宿主历史归档](ai-宿主耦合历史归档.md) |
 
 机制变化时先核对源码真源与对应回归，再同步本文件；旧事故和批次不要重新写入当前合同。

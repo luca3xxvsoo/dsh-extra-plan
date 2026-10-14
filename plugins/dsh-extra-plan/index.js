@@ -398,6 +398,41 @@ export function apply(ctx, config) {
     recordRunCodeDeny, takeRunCodeDenyRecords, recordProbeClaim,
   } = runtimeLifecycle
   const noteRunCodeSubCall = (sessionId, rid) => runtimeLifecycle.noteRunCodeSubCall(sessionId, rid, exploreBudget())
+  const consumeToolJobsNotice = (agent, message) => {
+    const session = agent !== null && typeof agent === 'object' && !Array.isArray(agent) ? agent.session : undefined
+    const header = session !== null && typeof session === 'object' && !Array.isArray(session) ? session.header : undefined
+    const sessionId = header !== null && typeof header === 'object' && !Array.isArray(header) ? header.id : undefined
+    if (typeof sessionId !== 'string' || sessionId === '') return false
+    if (message === null || typeof message !== 'object' || Array.isArray(message)) return false
+    const source = message.source
+    if (source === null || typeof source !== 'object' || Array.isArray(source)) return false
+    if (source.kind !== 'tool-jobs' || source.form !== 'notice') return false
+    if (!Array.isArray(message.content)) return false
+    let noticeText = ''
+    for (const block of message.content) {
+      if (block !== null && typeof block === 'object' && !Array.isArray(block) && block.type === 'text' && typeof block.text === 'string') {
+        noticeText = block.text
+        break
+      }
+    }
+    const match = noticeText.match(/background job (\S+)/)
+    if (match === null) return false
+    const jobId = match[1]
+    let consumed = toolJobsNoticesConsumed.get(sessionId)
+    if (consumed !== undefined && consumed.has(jobId)) return false
+    if (consumed === undefined) {
+      consumed = new Set()
+      toolJobsNoticesConsumed.set(sessionId, consumed)
+    }
+    const perSession = jobOutputCallCounters.get(sessionId)
+    if (perSession !== undefined && perSession.has(jobId)) perSession.delete(jobId)
+    pollGuardCounters.delete(sessionId)
+    consumed.add(jobId)
+    return true
+  }
+  ctx.on('agent/inbox/claimed', (payload) => {
+    consumeToolJobsNotice(payload?.agent, payload?.message)
+  })
   // 1) 会话启动：子代理基线（账本 + 沙箱下限）；规划子代理与主会话注册 save_plan
   //    （主会话侧任意路由态放行：受限规划工件，判定在 mainGateReason 兜底）；主会话与探查子代理
   //    注册 save_probe（scoped；recompose 不重发 session-start，pre-step 兜底）。
@@ -818,47 +853,11 @@ export function apply(ctx, config) {
         jobOutputLastAnchors.set(sessId, currentAnchor)
       }
     }
-    // tool-jobs 完成通知解锁扫描：匹配 source.kind==='tool-jobs' && source.form==='notice'
-    // （v4 形状；旧三元组表述（kind 取旧兜底值 plugin + plugin 包名字段）已废，见下方 HK9 注）
-    // 从正文用 /background job (\S+)/ 解析 jobId；首次消费即标记 consumed 并执行双解锁动作：
-    // ① job_output 单键解锁（若该 jobId 被跟踪，删除幂等）② pollGuardCounters 清整表（v0.4.0）；
-    // 解析失败（无 jobId）→ 无操作（保守不放行）。
-    {
-      const sessId = agent.session.header.id
-      let consumed = toolJobsNoticesConsumed.get(sessId)
-      if (consumed === undefined) {
-        consumed = new Set()
-        toolJobsNoticesConsumed.set(sessId, consumed)
-      }
-      for (const se of execEvents) {
-        if (se === null || typeof se !== 'object' || se.type !== 'user/message') continue
-        const sd = se.data
-        if (sd === null || typeof sd !== 'object' || sd.source === null || typeof sd.source !== 'object') continue
-        const src = sd.source
-        // HK9（0.1.7 换代）：dsh-tool-jobs 的完成通知源已改为
-        // { kind: 'tool-jobs', form: 'notice', summary }（旧 'plugin' 兜底 kind 已废）。
-        if (src.kind !== 'tool-jobs' || src.form !== 'notice') continue
-        if (!Array.isArray(sd.content)) continue
-        let noticeText = ''
-        for (const block of sd.content) {
-          if (block !== null && typeof block === 'object' && block.type === 'text' && typeof block.text === 'string') {
-            noticeText = block.text
-            break
-          }
-        }
-        if (noticeText === '') continue
-        const m = noticeText.match(/background job (\S+)/)
-        if (m === null) continue
-        const jobId = m[1]
-        if (consumed.has(jobId)) continue
-        // v0.4.0：consumed 标记与 job_output 跟踪命中解耦——通知首次被消费即标记，
-        // 同时执行两个解锁动作：① job_output 单键解锁（若该 jobId 被跟踪，删除幂等）；
-        // ② job_list/list_agents 轮询守卫清整表（无参数键，只能清整表）。
-        const perSession = jobOutputCallCounters.get(sessId)
-        if (perSession !== undefined && perSession.has(jobId)) perSession.delete(jobId)
-        pollGuardCounters.delete(sessId)
-        consumed.add(jobId)
-      }
+    // tool-jobs 完成通知 durable fallback：仅扫描 user/message 事件；实时 claimed 主入口与此处
+    // 复用同一个 consumeToolJobsNotice 幂等 helper，claimed 尚未进入 durable snapshot 时也能解锁。
+    for (const se of execEvents) {
+      if (se === null || typeof se !== 'object' || se.type !== 'user/message') continue
+      consumeToolJobsNotice(agent, se.data)
     }
     const child = childBaseline(agent, execEvents)
     const planner = isPlannerChild(agent, execEvents)

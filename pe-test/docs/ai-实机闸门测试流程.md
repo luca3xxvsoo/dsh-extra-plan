@@ -442,6 +442,21 @@ channelBroken 逃生（`CHANNEL_BROKEN_CODES` = NO_PROVIDER / CALLER_NOT_LIVE / 
 ① channelBroken 逃生：每组实测前确认该会话 ask 通道无通道级故障码（NO_PROVIDER / CALLER_NOT_LIVE / DELEGATED_CALLER）；出现逃生码则该组作废重测（替代手法见 3.2.8：mock 事件流断言 step-04 已有）。
 ② 被拒不烧预算：A24/A25/A26 必须真实连调 18 次，不能靠重复被拒凑数。
 ③ job_output 计数锚点重置：A17 的两次调用必须发生在**同一轮内**（中间插入一条新的 user/message 或 send_message 续轮即重置）。
+
+#### HUMAN 专项 H-JOB-NOTICE-01（用户部署后执行；本轮 AI 标记 NOT-RUN）
+
+本专项不新增或重编号 A01-A56，不计入既有统计；仅在用户部署测试 profile、确认当前版本已含 `agent/inbox/claimed` 修复后执行。AI 不部署、不改 profile/DSH_HOME、不重启生产环境，也不代替用户操作真实会话。先记录部署 commit、profile、A/C/M、runcodeCatchGate、测试会话 `sessionId`。
+
+1. 用户在真实会话中启动只读后台 PowerShell 任务（不要写文件）：
+   ```powershell
+   $START = Get-Date; Start-Sleep -Seconds 60
+   ```
+   以宿主后台方式运行并记录实际 `START`；从任务返回/通知中取得同一 `jobId`，等待自然完成，不提前取消。命令只读、实际 `END` 与 `ELAPSED_SECONDS` 以现场记录为准，不照抄旧基线 60.021 秒。
+2. 任务运行中不发送新的 human user message，不调用 `send_message`，不插入任何人工锚点。对同一 `jobId` 依次各调用三次 `job_output`（不带 `wait:true`）、`job_list`、`list_agents`：每工具第 1 次必须 allow，第 2/3 次必须 deny，拒绝文案分别命中 A17、A55、A56 原合同。每次记录工具名、`sessionId`、`jobId`（无 jobId 的工具记空）、时间、解码事件 `seq` 与 `isError`。
+3. 只等待自然完成通知；通知后不补 user/message、不发送 `send_message`。按 `job_output → job_list → list_agents` 各调用一次：三者均须非 Error，`job_output` 返回同一 `jobId` 的 terminal 结果；随后三者各再调用一次，必须重新命中原有拒绝文案。记录通知前后时间、事件 `seq`、`isError` 与实际返回摘要。
+4. 判定：运行中三工具均为 `1 allow + 2 deny`，通知后为三工具各 `1 allow + 1 deny`，且无额外 human 锚点，即行为通过；任何通知前重复调用被放行、通知后首调仍 Error/重复拒绝、jobId 不同、或出现人工锚点均失败。
+5. 取证边界：session JSONL 通常只证明用户操作、工具结果、通知消息与 seq，不记录插件内部 `claimed` listener、Map 删除或 `consumed` Set。日志没有内部轨迹时必须如实写「HUMAN 行为证据；内部 helper 未由 session 日志直接证明」，禁止伪造 hook 已运行、Map 已清理等内部结论。保存 `START`、`END`、`ELAPSED_SECONDS`、`exitCode`、`sessionId`、`jobId`、事件 `seq`/`isError` 与原始报告路径。
+
 ④ A21 主语：A21 检查被测 run_code 内每个 tools.* 调用点各自的 try/catch；测试脚本自身的外层 try/catch 只是 harness 保护，不能替代被测代码合同。
 ⑤ step-07 会话定位禁 auto：一律显式传顶层会话目录名 / SESSION_ID（auto 可能取到别的「按需规划模式」会话）；其他旧视图的 auto 结果不能用作 A42/A43 实机结论。
 ⑥ 人眼项取证 EPERM：直接运行工具若遇 EPERM 可由用户在系统终端执行；一键step测试使用临时文件描述符保留全量 stdout/stderr（见 C6）。
