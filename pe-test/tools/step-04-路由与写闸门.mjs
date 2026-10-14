@@ -56,7 +56,7 @@ import { ASSET_DEFINITION_FILE as ASSET_DEFINITION_FILE_E } from '../../plugins/
 // 故 Config 的 volatile/默认值契约改用源码文本静态核对（机械可核对），不依赖本机 schemastery 版本。
 import { readFileSync as readFileSyncE } from 'node:fs'
 const decisions = plugin.decisions
-const { catalogHasWriteTools, isReadOnlyChildByCatalog, routeDenyReason, runCodeCatchGateReason, runCodeGroupDenyReason, askUserQuestionReturnGateReason, probeDisposalWarning, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilteredToolsSdk, toolPresentationModeOf, projectSkillCatalogDecision, isBootstrapPhase, filterBootstrapContextDecision, dedupeProjectedSkillCatalogDecision, shellMutationReason, recordJobOutputCall, parseAskResultData, parseDispatchAskResult, deriveFlowState } = decisions
+const { catalogHasWriteTools, isReadOnlyChildByCatalog, routeDenyReason, runCodeCatchGateReason, runCodeGroupDenyReason, askUserQuestionReturnGateReason, probeDisposalWarning, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilteredToolsSdk, toolPresentationModeOf, projectSkillCatalogDecision, isBootstrapPhase, filterBootstrapContextDecision, dedupeProjectedContextDecision, shellMutationReason, recordJobOutputCall, parseAskResultData, parseDispatchAskResult, deriveFlowState } = decisions
 
 // ── F 段（HP 首轮）tool:read 手写文案（变量②）的两个基准字符串 ──────────────
 // HINT_READ_DEFAULT：内置兜底文案的逐字副本，同时是预设 bootstrapReadHint 的示例值
@@ -107,6 +107,7 @@ check('G10 isReadOnlyChildByCatalog([]) → false', isReadOnlyChildByCatalog([])
 // ── ①c context-gate 纯决策契约（来源精确、冻结输入、去重签名） ─────────
 const gateMessage = (kind, extra = {}) => ({ id: kind + '-id', role: 'user', source: { kind, ...extra }, content: [{ type: 'text', text: kind }] })
 const gateCatalog = (entries) => gateMessage('skill-catalog', { entries })
+const gateInstructions = (text, extra = {}, role = 'user', id = 'agent-instructions-id') => ({ id, role, source: { kind: 'agent-instructions', ...extra }, content: [{ type: 'text', text }] })
 const gateDecision = { kind: 'enter', messages: [gateMessage('agent-instructions'), gateCatalog([{ name: 'skill-a', description: 'A' }]), gateMessage('user-message'), gateMessage('skill-invocation'), gateMessage('runtime-context')] }
 const gatedDecision = filterBootstrapContextDecision(gateDecision, true)
 checkTrue('CG1 gated 仅精确 agent-instructions/skill-catalog 整条过滤且保留其它顺序', gatedDecision.messages.map((message) => message.source.kind).join('|') === 'user-message|skill-invocation|runtime-context' && gatedDecision !== gateDecision)
@@ -115,15 +116,26 @@ const frozenGateDecision = Object.freeze({ kind: 'enter', messages: Object.freez
 checkTrue('CG3 冻结decision可过滤且不改变未命中消息身份', (() => { const out = filterBootstrapContextDecision(frozenGateDecision, true); return out.messages.length === 1 && out.messages[0] === frozenGateDecision.messages[1] })())
 const catalogA = gateCatalog([{ name: 'skill-a', description: 'A' }])
 const catalogB = gateCatalog([{ name: 'skill-b', description: 'B' }])
-const dedupeInput = { kind: 'enter', messages: [catalogA, catalogA, catalogB, catalogB] }
-const dedupeOutput = dedupeProjectedSkillCatalogDecision(dedupeInput, [catalogA])
-checkTrue('CG4 当前可见目录同签名去重、变更保留且批内同签名只留一次', dedupeOutput.messages.length === 1 && dedupeOutput.messages[0] === catalogB)
+const instructionA = gateInstructions('A', { seq: 1, source: 'dynamic-a' }, 'user', 'instruction-a')
+const instructionAChangedMetadata = gateInstructions('A', { seq: 99, source: 'dynamic-b', id: 'source-b' }, 'assistant', 'instruction-b')
+const instructionB = gateInstructions('B', { seq: 100 }, 'assistant', 'instruction-c')
+const sameBaseline = dedupeProjectedContextDecision({ kind: 'enter', messages: [instructionAChangedMetadata, catalogA] }, [instructionA, catalogA])
+checkTrue('CG4 agent-instructions 与 catalog 同 baseline 去重且动态 id/seq/role/source 不参与身份', sameBaseline.messages.length === 0)
+const changedBatch = dedupeProjectedContextDecision({ kind: 'enter', messages: [instructionB, instructionB, catalogB, catalogB] }, [instructionA, catalogA])
+checkTrue('CG5 agent-instructions/catalog 变化保留且批内同签名只留一次', changedBatch.messages.length === 2 && changedBatch.messages[0] === instructionB && changedBatch.messages[1] === catalogB)
 const emptyCatalog = gateCatalog([])
-const emptyDedupe = dedupeProjectedSkillCatalogDecision({ kind: 'enter', messages: [emptyCatalog] }, [emptyCatalog])
-checkTrue('CG5 空entries是合法签名且重复时删除', emptyDedupe.messages.length === 0)
-const malformedCatalog = gateCatalog([{ name: '', description: 'bad' }])
-checkTrue('CG6 坏entries不作为去重基准且原消息保留', dedupeProjectedSkillCatalogDecision({ kind: 'enter', messages: [malformedCatalog] }, [malformedCatalog]).messages.length === 1)
-
+const emptyDedupe = dedupeProjectedContextDecision({ kind: 'enter', messages: [emptyCatalog] }, [emptyCatalog])
+checkTrue('CG6 空entries是合法签名且重复时删除', emptyDedupe.messages.length === 0)
+const malformedInstruction = { id: 'bad', role: 'user', source: { kind: 'agent-instructions' }, content: 'bad' }
+checkTrue('CG7 坏content不作agent-instructions基准且原消息保留', dedupeProjectedContextDecision({ kind: 'enter', messages: [malformedInstruction] }, [malformedInstruction]).messages.length === 1)
+const reappeared = dedupeProjectedContextDecision({ kind: 'enter', messages: [instructionA, instructionA] }, [catalogA])
+checkTrue('CG8 从surface移除后重现保留首条并抑制批内重复', reappeared.messages.length === 1 && reappeared.messages[0] === instructionA)
+const foreignMessage = gateMessage('foreign', { entries: [{ name: 'skill-a', description: 'A' }] })
+const foreignDecision = { kind: 'enter', messages: [foreignMessage] }
+checkTrue('CG9 未知source即使带entries也保持原对象与消息身份', dedupeProjectedContextDecision(foreignDecision, [foreignMessage]) === foreignDecision && foreignDecision.messages[0] === foreignMessage)
+const frozenDedupeDecision = Object.freeze({ kind: 'enter', messages: Object.freeze([Object.freeze(instructionA)]) })
+const frozenDedupe = dedupeProjectedContextDecision(frozenDedupeDecision, [instructionA])
+checkTrue('CG10 冻结输入可去重且不改写原数组', frozenDedupe.messages.length === 0 && frozenDedupeDecision.messages.length === 1)
 // ── ①b 模型路由父配置/严格探针边界（[任务5]） ───────────────────────
 check('MR1 routeKey 只有统一 NUL 分隔结构', routeKey('provider', 'model'), 'provider\u0000model')
 {
@@ -2753,11 +2765,11 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
   const generatedDoc = yaml.load(generatedDefinitionText, { schema })
   checkTrue('T9-3i 生成资产是纯 definition（无 insert wrapper/旧公开行）', generatedDoc.id === 'extra-plan' && !generatedDefinitionText.includes('insert:') && !generatedDefinitionText.includes('preset-extra-plan') && !generatedDefinitionText.includes("name: '@deepseek-ai/dsh-agent-preset'"))
   const generatedPlugins = generatedDoc.plugins
-  checkTrue('T9-3j definition plugins 顶层 17 条且与作者源逐行一致', Array.isArray(generatedPlugins) && generatedPlugins.length === 17 && JSON.stringify(generatedPlugins) === JSON.stringify(rows))
+  checkTrue('T9-3j definition plugins 顶层 17 条且与作者源 parsed plugins 深等', Array.isArray(generatedPlugins) && generatedPlugins.length === 17 && JSON.stringify(generatedPlugins) === JSON.stringify(rows))
   const assetTop = presetText.slice(presetText.indexOf('- id: persona')).replace(/\n+$/, '')
   const genPluginsText = generatedDefinitionText.slice(generatedDefinitionText.indexOf('plugins:\n') + 9).replace(/\n+$/, '')
   const stripped = genPluginsText.split('\n').map((line) => (line.startsWith('  ') ? line.slice(2) : line)).join('\n')
-  checkTrue('T9-3k definition plugins 保留作者源注释/缩进语义', stripped === assetTop)
+  checkTrue('T9-3k definition plugins 文本逐字保留作者源注释/缩进语义', stripped === assetTop)
   // ③ settings 行 Config：8 字段全 volatile（源码文本静态核对）+ 2 项宿主行 descriptor 分组
   const settingsText = readFileSyncE(fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/settings.js', import.meta.url)), 'utf8')
   // 只取代码行（剥注释），避免注释里的示例（如官方 maxParallelToolCalls 习语）混进字段集合。

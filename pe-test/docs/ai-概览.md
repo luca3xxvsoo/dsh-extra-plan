@@ -4,7 +4,7 @@
 
 ## 项目身份与支持范围
 
-`@local/dsh-extra-plan` 是 dsh 的按需规划预设：AI 先只读理解，经路由、目的、澄清、批准四级机械锚点后执行；`save_plan` 是受限的方案/验收双文件写例外。当前支持 dsh `0.1.7-rc.1 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2`。0.2.0-rc.2 已有用户提供的范围受限 HUMAN 兼容通过基线（2026-10-01 rc2 批次）；各版本实测状态、证据等级与待核实项统一见[ai-宿主耦合台账](ai-宿主耦合台账.md)。QQBot、生产及真实交互仍单独标记 HUMAN。
+`dsh-extra-plan` 是 dsh 的按需规划预设：AI 先只读理解，经路由、目的、澄清、批准四级机械锚点后执行；`save_plan` 是受限的方案/验收双文件写例外。当前支持 dsh `0.1.7-rc.1 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2`。0.2.0-rc.2 已有用户提供的范围受限 HUMAN 兼容通过基线（2026-10-01 rc2 批次）；各版本实测状态、证据等级与待核实项统一见[ai-宿主耦合台账](ai-宿主耦合台账.md)。QQBot、生产及真实交互仍单独标记 HUMAN。
 
 高层闭环：用户需求 → 主会话只读探查 → 探查方式二选一 → 路由确认 →（需要时）目的确认/澄清 → 线索与方案/验收落盘 → 用户批准 → 执行者 → 验收者 → 用户部署与实测。路由、批准、生产部署的边界不能用 AI 自觉替代。
 
@@ -50,4 +50,4 @@
 
 ## QQBot 兼容插件边界
 
-`plugins/dsh-qqbot-user-questions/index.js` 只在启动时逐 profile 调用兼容自愈：先清理根级完整旧错误块，再按 `DSH_HOME`（env 优先，默认 `~/.dsh`）确保 web 包链接；两步幂等，逐 profile patch/link 失败返回结构化摘要并告警，但仍不阻断启动/CLI，CLI 保持 exit 0。`lib/heal.js` 是无导入副作用的纯函数实现，`scripts/heal.mjs` 只是 CLI 兜底；静态/临时夹具可由 pe-test 回归，真实消息、`/preset`、question/approval（提问/批准）、postinstall（安装后脚本）与生产 profile 仍是用户部署后的 HUMAN。
+`dsh-extra-plan-qqbot`（仓库目录为 `plugins/dsh-extra-plan-qqbot`）只在启动时逐 profile 调用兼容自愈：自身安装判定为 `node_modules/dsh-extra-plan-qqbot`，先清理根级完整旧错误块，再按 `DSH_HOME`（env 优先，默认 `~/.dsh`）确保 Web 的 `node_modules/dsh-extra-plan` 平铺链接；两步幂等，逐 profile patch/link 失败返回结构化摘要并告警，但仍不阻断启动/CLI，CLI 保持 exit 0。`lib/heal.js` 是无导入副作用的纯函数实现，`scripts/heal.mjs` 只是 CLI 兜底；静态/临时夹具可由 pe-test 回归，真实消息、`/preset`、question/approval（提问/批准）、postinstall（安装后脚本）与生产 profile 仍是用户部署后的 HUMAN。

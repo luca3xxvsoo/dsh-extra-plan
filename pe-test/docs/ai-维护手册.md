@@ -21,7 +21,7 @@
 
 ## QQBot CLI 与维护所有权
 
-`plugins/dsh-qqbot-user-questions/scripts/heal.mjs` 仅是用户侧安装/手动触发的 CLI 兜底；静态映射、临时 DSH_HOME 夹具和纯函数可由 `step-01-qqbot-安装映射.mjs` 回归。真实消息、`/preset`、question/approval（提问/批准）、allow-build/postinstall（安装后脚本）与 profile 建链结果必须标为 HUMAN，不能以静态 PASS 销账。
+`plugins/dsh-extra-plan-qqbot/scripts/heal.mjs` 仅是用户侧安装/手动触发的 CLI 兜底；静态映射、临时 DSH_HOME 夹具和纯函数可由 `step-01-qqbot-安装映射.mjs` 回归。真实消息、`/preset`、question/approval（提问/批准）、allow-build/postinstall（安装后脚本）与 profile 建链结果必须标为 HUMAN，不能以静态 PASS 销账。
 
 1. 逐文件对实际修改的全部 JS/MJS 执行 `node --check`；`package.json` 执行 `JSON.parse`。嵌套生成的 host-deps hookSource 必须展开成 data URL 后做 ESM 解析回放，不能只检查外层。
 2. 严格按验收顺序运行：

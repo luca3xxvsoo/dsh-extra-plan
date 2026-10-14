@@ -68,12 +68,12 @@
 - `lib/shell-mutation.js` 的 pwsh/bash 识别是位置敏感的写边界：段首裸写词、语法级写形态、连续剥离 sudo/env/nohup/command wrapper、带值 wrapper 选项（含 sudo 的 `-p`/`--prompt`；`--prompt=value` 是单 token）与 NAME=VALUE 环境赋值、嵌套 shell 与重定向例外必须以源码纯函数为准，不能用文档替代。
 - `lib/shell-mutation.js` 的 PWSH_MUTATION 识别裸 `>`/`>>`、`1-6` 流号和 `*>`/`*>>`，但保留 `2>&1`、`1>&2`、`*>&1` 等 stream→stream 合并例外；BASH_MUTATION 原合同不变。
 - `lib/sdk-text-cache.js` 只做 agent-keyed、非 session 的 JSON-like 指纹缓存；字段/数组顺序、getter/cycle 失败、dispose 与迟到 Promise 都是局部合同。
-- QQBot 自愈只处理拥有本插件且满足双锚点的 profile；迁移写前备份、写后 YAML 校验失败恢复，链接仅在 ENOENT 时建立，实体/异链保留，整体不阻断。当前机制由 `plugins/dsh-qqbot-user-questions/lib/heal.js` 与对应 step-01 夹具共同锁定。
+- QQBot 自愈只处理拥有本插件且满足双锚点的 profile；迁移写前备份、写后 YAML 校验失败恢复，链接仅在 ENOENT 时建立，实体/异链保留，整体不阻断。当前机制由 `plugins/dsh-extra-plan-qqbot/lib/heal.js` 与对应 step-01 夹具共同锁定。
 
 ## 八、context-gate：F 写闸门与 projected catalog 去重
 
 - 当 `anchoredBootstrap=true`、当前 Session 为 F（尚无任意 durable `tool/call`）、角色为 main/planner 时，现有 `agent/pre-step` prepend hook 在 `await next()` 得到最终 decision 后，按 source.kind 精确过滤整条 `agent-instructions` 与 `skill-catalog` 消息；不按正文、role 或未知 source 推断。A=0、executor/reviewer/probe 不新增 gate。
 - 首个字符串 `tool/call` 或数组包含 `tool/call` 的 durable 事件结束 F；L 不 replay F，宿主 agent-instructions/tool-skill 自然重组最新 baseline/catalog。assistant-only、宿主内部扫描/读取不晋升 L；Session/父子历史各自隔离。
 - 过滤是 source gate 的关键边界，先于现有 C 投影与目录去重；关键 gate/phase 失败走宿主错误路径，不把未过滤 decision 发送出去。
-- `projectSkillCatalogDecision` 只处理 `source.kind=skill-catalog` 且 entries 合法的消息；其它 source 即使带 entries 也保持对象和正文不变。`dedupeProjectedSkillCatalogDecision` 只读当前 agent `session.deriveMessages()` 最后一个合法可见目录，以有序 `[name,description]` 签名去重；空 entries 合法，坏 entries 不作基准，变更/空 replacement/移出 surface 必须保留。无共享缓存、无 sent/released 标志，不比较父 Session。
-- 纯函数 `filterBootstrapContextDecision` 与 `dedupeProjectedSkillCatalogDecision` 不读文件/环境/registry/Inbox，不持有 agent/global 状态；冻结输入可用，无变化透传原对象。
+- `projectSkillCatalogDecision` 只处理 `source.kind=skill-catalog` 且 entries 合法的消息；其它 source 即使带 entries 也保持对象和正文不变。`dedupeProjectedContextDecision` 分别按 source.kind 读取当前 agent `session.deriveMessages()` 最后一个合法可见签名：skill-catalog 只比较有序 `[name,description]`，agent-instructions 只比较非空 `content` 的 JSON 形状并忽略动态 id/seq/role/source；空 catalog 合法，坏形状、变化、移出 surface 后重现必须保留。无共享缓存、无 sent/released 标志，不比较父 Session。
+- 纯函数 `filterBootstrapContextDecision` 与 `dedupeProjectedContextDecision` 不读文件/环境/registry/Inbox，不持有 agent/global 状态；冻结输入可用，无变化透传原对象，未知 source 原样保留。

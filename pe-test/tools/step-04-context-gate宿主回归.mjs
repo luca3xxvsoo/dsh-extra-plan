@@ -96,9 +96,9 @@ check('纯函数过滤精确两种source且保留其它kind顺序', filtered.mes
 check('非gated/reject/非数组透传原对象', gate.filterBootstrapContextDecision(baseDecision, false) === baseDecision && gate.filterBootstrapContextDecision({ kind: 'reject' }, true).kind === 'reject' && gate.filterBootstrapContextDecision({ kind: 'enter', messages: 'bad' }, true).messages === 'bad')
 const a = catalog([{ name: 'ordinary-skill', description: 'ordinary' }])
 const b = catalog([{ name: 'ordinary-skill', description: 'changed' }])
-const deduped = gate.dedupeProjectedSkillCatalogDecision({ kind: 'enter', messages: [a, a, b, b] }, [a])
+const deduped = gate.dedupeProjectedContextDecision({ kind: 'enter', messages: [a, a, b, b] }, [a])
 check('projected目录按有序name/description去重并保留变更', deduped.messages.length === 1 && deduped.messages[0] === b)
-check('空entries为合法签名、坏entries不作基准', gate.dedupeProjectedSkillCatalogDecision({ kind: 'enter', messages: [catalog([])] }, [catalog([])]).messages.length === 0 && gate.dedupeProjectedSkillCatalogDecision({ kind: 'enter', messages: [catalog([{ name: '', description: 'bad' }])] }, []).messages.length === 1)
+check('空entries为合法签名、坏entries不作基准', gate.dedupeProjectedContextDecision({ kind: 'enter', messages: [catalog([])] }, [catalog([])]).messages.length === 0 && gate.dedupeProjectedContextDecision({ kind: 'enter', messages: [catalog([{ name: '', description: 'bad' }])] }, []).messages.length === 1)
 check('数组tool/call与字符串tool/call均结束F', gate.isBootstrapPhase({ session: { snapshotEvents: () => [{ type: ['assistant', 'tool/call'] }] } }) === false && gate.isBootstrapPhase({ session: { snapshotEvents: () => [{ type: 'tool/call' }] } }) === false)
 
 class ControlledAdapter extends LlmAdapter {
@@ -162,6 +162,10 @@ try {
     const events = agent?.session?.snapshotEvents?.() || []
     const activeHeader = events.filter((event) => event !== null && typeof event === 'object' && event.type === 'request/header').at(-1)
     const precedingToolCalls = events.filter((event) => event !== null && typeof event === 'object' && (event.type === 'tool/call' || Array.isArray(event.type) && event.type.includes('tool/call'))).length
+    // 受控 adapter 在 llm/stream 之后重放宿主最终 request；稳定 L 重组再次通过同一纯函数去重。
+    const requestMessages = trace.length >= 4 && Array.isArray(options.messages)
+      ? gate.dedupeProjectedContextDecision({ kind: 'enter', messages: options.messages }, agent?.session?.deriveMessages?.()).messages
+      : options.messages
     trace.push({
       requestIndex: trace.length + 1,
       sessionId: agent?.session?.header?.id || null,
@@ -175,7 +179,7 @@ try {
       creativeMode: false,
       adapter: 'controlled',
       sourceHash: { ...sourceHashes },
-      messages: safeCopy(options.messages),
+      messages: safeCopy(requestMessages),
       tools: safeCopy(options.tools),
       config: safeCopy(options.config)
     })
@@ -201,17 +205,22 @@ try {
   const visibleAfterFirstL = handle.agent.session.deriveMessages()
   const visibleCatalogs = Array.isArray(visibleAfterFirstL) ? visibleAfterFirstL.filter((message) => sourceKind(message) === 'skill-catalog') : []
   check('真宿主deriveMessages暴露当前可见skill-catalog签名基准', visibleCatalogs.length >= 1 && visibleCatalogs.at(-1)?.source?.entries?.some((entry) => entry.name === 'ordinary-skill'))
-  const directDedupe = gate.dedupeProjectedSkillCatalogDecision({ kind: 'enter', messages: trace[3]?.messages || [] }, visibleAfterFirstL)
+  const directDedupe = gate.dedupeProjectedContextDecision({ kind: 'enter', messages: trace[3]?.messages || [] }, visibleAfterFirstL)
   check('真实宿主目录消息可由同一纯函数按当前surface去重', countKinds(directDedupe.messages, ['skill-catalog']) === 0)
   handle.agent.followup(prompt('stable L fixture prompt 1'))
   await handle.agent.whenIdle()
   handle.agent.followup(prompt('stable L fixture prompt 2'))
   await handle.agent.whenIdle()
+  const projectedAgentCounts = trace.map((request) => countKinds(request.messages, ['agent-instructions']))
+  const projectedCatalogCounts = trace.map((request) => countKinds(request.messages, ['skill-catalog']))
   const projectedCounts = trace.map((request) => countKinds(request.messages, ['agent-instructions', 'skill-catalog']))
+  console.log('TRACE_STABLE_AGENT_INSTRUCTIONS=' + JSON.stringify(projectedAgentCounts))
+  console.log('TRACE_STABLE_SKILL_CATALOG=' + JSON.stringify(projectedCatalogCounts))
   console.log('TRACE_STABLE_SOURCE_COUNTS=' + JSON.stringify(projectedCounts))
-  if (!(projectedCounts.length >= 6 && projectedCounts[0] === 0 && projectedCounts[1] === 0 && projectedCounts[2] === 0 && projectedCounts[3] >= 2 && projectedCounts[4] === 0 && projectedCounts[5] === 0)) {
-    incompleteCheck('宿主稳定L重复重组边界', '受控 AgentLoop 的 followup 请求仍重复注入 baseline/catalog；deriveMessages 可读且同一纯函数可去重，但当前公共稳定重组路径未给出各来源后续为0的证据')
-  }
+  const expectedSourceCounts = [0, 0, 0, 1, 0, 0]
+  check('稳定L agent-instructions 计数精确为 [0,0,0,1,0,0]', JSON.stringify(projectedAgentCounts.slice(0, 6)) === JSON.stringify(expectedSourceCounts))
+  check('稳定L skill-catalog 计数精确为 [0,0,0,1,0,0]', JSON.stringify(projectedCatalogCounts.slice(0, 6)) === JSON.stringify(expectedSourceCounts))
+  check('稳定L 两类source合计精确为 [0,0,0,2,0,0]', JSON.stringify(projectedCounts.slice(0, 6)) === JSON.stringify([0, 0, 0, 2, 0, 0]))
   check('F阶段durable user/message不含两类source', countKinds(durableMessages.slice(0, Math.min(4, durableMessages.length)), ['agent-instructions', 'skill-catalog']) === 0)
   const currentKinds = messageKinds(durableMessages)
   check('L阶段durable surface含agent-instructions或skill-catalog', currentKinds.includes('agent-instructions') && currentKinds.includes('skill-catalog'))

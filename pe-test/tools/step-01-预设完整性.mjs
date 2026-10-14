@@ -27,6 +27,8 @@ const file = join(PRESET_DIR, 'agent.cordis.yml')
 const presetFile = join(PRESET_DIR, 'preset.yml')
 const generatedFile = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'preset-defaults.generated.js')
 const definitionGeneratedFile = join(PRESET_DIR, 'preset-definition.generated.yml')
+const coreManifestFile = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'package.json')
+const qqbotManifestFile = join(REPO_ROOT, 'plugins', 'dsh-extra-plan-qqbot', 'package.json')
 const generatorFile = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'scripts', 'generate-runtime-defaults.mjs')
 const assemblySource = readFileSync(join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'assembly-presentation.js'), 'utf8')
 
@@ -101,21 +103,24 @@ function flatten(list) {
   return out
 }
 
-const all = flatten(Array.isArray(rows) ? rows : [])
+const definitionGeneratedText = readFileSync(definitionGeneratedFile, 'utf8')
+const definitionDoc = parsePresetYaml(definitionGeneratedText)
+const runtimeRows = definitionDoc !== null && typeof definitionDoc === 'object' && Array.isArray(definitionDoc.plugins) ? definitionDoc.plugins : []
+const all = flatten(runtimeRows)
 const subagentRows = all.filter((row) => row.name === '@deepseek-ai/dsh-tool-subagent' && row.disabled !== true)
 for (const row of subagentRows) {
   const deny = row.config && row.config.toolFilter && Array.isArray(row.config.toolFilter.deny) ? row.config.toolFilter.deny : []
   checkDeny('toolFilter deny [' + row.config.toolName + ']', deny)
 }
 for (const inner of all) {
-  if (inner.name === '@local/dsh-extra-plan/executor-spawn') {
+  if (inner.name === 'dsh-extra-plan/executor-spawn') {
     const deny = inner.config && Array.isArray(inner.config.deny) ? inner.config.deny : []
     checkDeny('executor-spawn deny', deny)
   }
 }
 
 // S1-07 ~ S1-11：DEFAULT_DENY 已收敛为预设 config.deny 同集（11 项），resolveDeny 为纯函数回退。
-const executorRow = all.find((row) => row.name === '@local/dsh-extra-plan/executor-spawn')
+const executorRow = all.find((row) => row.name === 'dsh-extra-plan/executor-spawn')
 const ymlDeny = executorRow !== undefined && executorRow.config && Array.isArray(executorRow.config.deny)
   ? executorRow.config.deny : []
 if (DEFAULT_DENY.length === 11) {
@@ -168,9 +173,9 @@ if (denyFallbackCases.every((ok) => ok)) {
 
 const names = all.map((row) => typeof row.name === 'string' ? row.name : '')
 const required = [
-  '@deepseek-ai/dsh-persona', '@local/dsh-extra-plan', '@deepseek-ai/dsh-tool-ask-user',
+  '@deepseek-ai/dsh-persona', 'dsh-extra-plan', '@deepseek-ai/dsh-tool-ask-user',
   '@deepseek-ai/dsh-tool-subagent', '@deepseek-ai/dsh-tool-subagent-control',
-  '@deepseek-ai/dsh-tool-subagent-control/list-agents', '@local/dsh-extra-plan/executor-spawn',
+  '@deepseek-ai/dsh-tool-subagent-control/list-agents', 'dsh-extra-plan/executor-spawn',
   '@deepseek-ai/dsh-workflow-ptc', '@deepseek-ai/dsh-tool-workflow',
   '@deepseek-ai/dsh-tool-ralph', '@deepseek-ai/dsh-compaction-basic', '@deepseek-ai/dsh-tool-cordis',
 ]
@@ -226,13 +231,13 @@ if (defaults.plannerModel === 'deepseek-v4-pro' && defaults.crossProviderPlanner
 
 // ── T1 纯 definition 资产（官方 adapter 由 preset-sync 内部挂载） ──────────────
 const definitionFile = join(PRESET_DIR, 'preset-definition.generated.yml')
-const definitionText = readFileSync(definitionFile, 'utf8')
-const definitionDoc = parsePresetYaml(definitionText)
+const definitionText = definitionGeneratedText
 check('T1 生成资产是纯 definition（无 insert wrapper/官方独立公开行）',
   !definitionText.includes('insert:') && !definitionText.includes('preset-extra-plan') && !definitionText.includes("name: '@deepseek-ai/dsh-agent-preset'"))
 check('T1 definition 元数据与 preset.yml 一致、plugins 顶层恰 17 条',
   definitionDoc.id === 'extra-plan' && definitionDoc.name === preset.name && definitionDoc.description === preset.description && definitionDoc.order === 100 && Array.isArray(definitionDoc.plugins) && definitionDoc.plugins.length === 17)
-check('T1 definition plugins 与 agent.cordis.yml 顶层条目逐字等价', JSON.stringify(definitionDoc.plugins) === JSON.stringify(rows))
+check('T1 作者源保留 17 条顶层结构、引导词与新 specifier', Array.isArray(rows) && rows.length === 17 && agentText.includes('收到需求后，理解用户需求') && (agentText.match(/name: 'dsh-extra-plan'/g) || []).length === 1 && (agentText.match(/name: 'dsh-extra-plan\/executor-spawn'/g) || []).length === 1)
+check('T1 definition 与作者源 parsed plugins 深等、两处新 specifier 且无旧运行时 specifier', Array.isArray(definitionDoc.plugins) && definitionDoc.plugins.length === 17 && JSON.stringify(definitionDoc.plugins) === JSON.stringify(rows) && all.filter((row) => row.name === 'dsh-extra-plan').length === 1 && all.filter((row) => row.name === 'dsh-extra-plan/executor-spawn').length === 1 && !definitionText.includes('@local/dsh-extra-plan'))
 const groupIds = definitionDoc.plugins.filter((row) => row.group === true).map((row) => row.id)
 const delegationGroup = definitionDoc.plugins.find((row) => row.id === 'delegation')
 const compactionGroup = definitionDoc.plugins.find((row) => row.id === 'compaction')
@@ -248,15 +253,20 @@ const skillFsRow = Array.isArray(rows) ? rows.find((row) => row.id === 'skill-fi
 check('T1 skill-filesystem 行保留 watch:false 与 bundledSkillDir、不含 customSkillDirs', skillFsRow !== undefined && skillFsRow.config !== undefined && skillFsRow.config.watch === false && skillFsConfigText.includes('bundledSkillDir:') && !skillFsConfigText.includes('customSkillDirs:'))
 check('T1 官方 preset registry 注释/ workflow-ptc 与作者源保真', agentText.includes('dsh-agent-preset-registry 会拒绝挂载') && agentText.includes("provider: extra-executor-spawn"))
 // B2：YAML exploreBudget 是作者真源，生成模块只保存派生 fallback；非法 source 不覆盖 sentinel。
-const packageJson = JSON.parse(readFileSync(join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'package.json'), 'utf8'))
+const packageJson = JSON.parse(readFileSync(coreManifestFile, 'utf8'))
+const qqbotPackageJson = JSON.parse(readFileSync(qqbotManifestFile, 'utf8'))
 const generatedText = readFileSync(generatedFile, 'utf8')
-const definitionGeneratedText = readFileSync(definitionGeneratedFile, 'utf8')
 check('B2 YAML 叶值、生成 export 与 resolver 同为 18', resolveTemplateSettingDefault(agentText, 'exploreBudget') === 18 && DEFAULT_EXPLORE_BUDGET === 18 && generatedText.includes('export const DEFAULT_EXPLORE_BUDGET = 18'), true)
 check('B2 YAML plannerPromptSuffix 叶值、生成 export 与 resolver 三向一致', resolveTemplateSettingDefault(agentText, 'plannerPromptSuffix') === DEFAULT_PLANNER_PROMPT_SUFFIX && DEFAULT_PLANNER_PROMPT_SUFFIX === '你的深度思考部分需要以"好了，现在我以全局视角来看待这个问题"开头' && generatedText.includes('export const DEFAULT_PLANNER_PROMPT_SUFFIX = "你的深度思考部分需要以\\"好了，现在我以全局视角来看待这个问题\\"开头"'), true)
 check('B2 render 文本与已提交生成模块逐字一致', renderRuntimeDefaults(agentText) === generatedText, true)
 check('B2 definition render 与提交资产逐字一致且 package 仅装载 cordis.patch.yml', renderPresetDefinition(agentText, readFileSync(presetFile, 'utf8')) === definitionGeneratedText && JSON.parse(readFileSync(join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'package.json'), 'utf8')).dsh.bundle.patch === './cordis.patch.yml', true)
 const packageFiles = Array.isArray(packageJson.files) ? packageJson.files : []
+const qqbotExports = qqbotPackageJson.exports !== null && typeof qqbotPackageJson.exports === 'object' ? qqbotPackageJson.exports : {}
+const qqbotFiles = Array.isArray(qqbotPackageJson.files) ? qqbotPackageJson.files : []
 check('B2 package files/scripts 含生成器、generate 与 prepack', packageFiles.includes('scripts/generate-runtime-defaults.mjs') && packageJson.scripts['generate:runtime-defaults'] === 'node scripts/generate-runtime-defaults.mjs' && packageJson.scripts.prepack === 'node scripts/generate-runtime-defaults.mjs', true)
+check('M1 核心 manifest name/version/repository/client/deps/patch/private 契约', packageJson.name === 'dsh-extra-plan' && packageJson.version === '0.3.0' && packageJson.repository === 'git+https://github.com/luca3xxvsoo/dsh-extra-plan.git' && packageJson.dsh?.bundle?.patch === './cordis.patch.yml' && packageJson.dsh?.client?.platform === 'web' && Array.isArray(packageJson.dsh?.client?.inject) && packageJson.dependencies?.['js-yaml'] === '^4.2.0' && !Object.prototype.hasOwnProperty.call(packageJson, 'private') && !JSON.stringify(packageJson).includes('@local/dsh-extra-plan'))
+check('M2 核心 exports/files 保持所需子路径与四项 peer 范围', packageJson.exports?.['.'] === './index.js' && packageJson.exports?.['./settings'] === './lib/settings.js' && packageJson.exports?.['./executor-spawn'] === './lib/executor-spawn.js' && packageFiles.includes('index.js') && packageFiles.includes('lib/') && packageFiles.includes('locale/') && packageFiles.includes('cordis.patch.yml') && packageJson.peerDependencies?.['@deepseek-ai/dsh'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/dsh-llm'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/dsh-agent-preset'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/schemastery'] === '~3.18.4')
+check('M3 QQBot manifest name/version/exports/files/dependency/postinstall/patch/private 契约', qqbotPackageJson.name === 'dsh-extra-plan-qqbot' && qqbotPackageJson.version === '2.0.0' && qqbotExports['.'] === './index.js' && qqbotExports['./cordis.patch.yml'] === './cordis.patch.yml' && qqbotExports['./package.json'] === './package.json' && JSON.stringify(qqbotFiles) === JSON.stringify(['index.js', 'cordis.patch.yml', 'lib/', 'scripts/']) && qqbotPackageJson.dependencies?.['js-yaml'] === '^4.2.0' && qqbotPackageJson.scripts?.postinstall === 'node scripts/heal.mjs' && qqbotPackageJson.dsh?.bundle?.patch === './cordis.patch.yml' && !Object.prototype.hasOwnProperty.call(qqbotPackageJson, 'private') && !JSON.stringify(qqbotPackageJson).includes('@local/dsh-qqbot-user-questions'))
 const generatedBeforeCheck = readFileSync(generatedFile)
 const definitionBeforeCheck = readFileSync(definitionGeneratedFile)
 let checkPassed = false
@@ -314,7 +324,7 @@ if (probeRow !== undefined && probeRow.config.backgroundMode === 'one-shot' && p
   fail += 1
   console.log('FAIL  subagent_probe 行缺失或配置不完整')
 }
-const pluginRow = all.find((row) => row.name === '@local/dsh-extra-plan')
+const pluginRow = all.find((row) => row.name === 'dsh-extra-plan')
 // T4：plannerModel 允许置空（空串 = 继承主会话模型）；键存在且为 string 即合法，
 // 不再要求非空（禁止项：空串误报为配置缺失回填资产默认）。
 const plannerModelRaw = pluginRow !== undefined && pluginRow.config ? pluginRow.config.plannerModel : undefined
@@ -334,7 +344,7 @@ if (pluginRow !== undefined && pluginRow.config && pluginRow.config.creativeMode
   console.log('FAIL  extra-plan 插件行 config 缺失')
 }
 
-// T1 禁止项：本修复走宿主 patch（dsh-qqbot-user-questions/cordis.patch.yml 补
+// T1 禁止项：本修复走宿主 patch（dsh-extra-plan-qqbot/cordis.patch.yml 补
 // cordis-host-runner 行），资产预设的 tool-cordis 行必须逐字未变（仅 id + name 两行、无 config）。
 const toolCordisRow = all.find((row) => row.id === 'tool-cordis')
 const toolCordisTextRe = /- id: tool-cordis\n  name: '@deepseek-ai\/dsh-tool-cordis'(?:\n|$)/
@@ -387,8 +397,8 @@ console.log('HUMAN  0.2.0-rc.1【未核实·HUMAN】：不得由 rc.2 结论推�
 
 // S3：包级与全局管理行 locale 通过 exports 真实解析；旧 preset-sync 通道必须退役。
 const LOCALE_CHANNELS = [
-  { label: '包卡片', specifier: '@local/dsh-extra-plan', dir: 'locale', zh: { title: '按需规划模式', description: '按需规划模式的预设、设置与启动核对' }, en: { title: 'Extra Plan', description: 'Preset, settings, and startup check' } },
-  { label: '全局管理行', specifier: '@local/dsh-extra-plan/settings', dir: join('locale', 'settings'), zh: { title: '按需规划模式全局管理', description: '统一管理配置、预设核对与界面加载' }, en: { title: 'Extra Plan Global Manager', description: 'Manage configuration, preset checks, and UI loading' } },
+  { label: '包卡片', specifier: 'dsh-extra-plan', dir: 'locale', zh: { title: '按需规划模式', description: '按需规划模式的预设、设置与启动核对' }, en: { title: 'Extra Plan', description: 'Preset, settings, and startup check' } },
+  { label: '全局管理行', specifier: 'dsh-extra-plan/settings', dir: join('locale', 'settings'), zh: { title: '按需规划模式全局管理', description: '统一管理配置、预设核对与界面加载' }, en: { title: 'Extra Plan Global Manager', description: 'Manage configuration, preset checks, and UI loading' } },
 ]
 const pluginDir = join(REPO_ROOT, 'plugins', 'dsh-extra-plan')
 const exportsMap = pluginPkg !== undefined ? asRecord(pluginPkg.exports) : {}
@@ -418,7 +428,7 @@ for (const channel of LOCALE_CHANNELS) {
 }
 check('S3 四个当前 locale specifier 经 exports 真实解析命中各自文件' + (resolveProblems.length > 0 ? '，异常: ' + resolveProblems.join('; ') : ''), resolveProblems.length === 0)
 const retiredResolveProblems = []
-for (const specifier of ['@local/dsh-extra-plan/preset-sync', '@local/dsh-extra-plan/preset-sync/locale/en.json', '@local/dsh-extra-plan/preset-sync/locale/zh.json']) {
+for (const specifier of ['dsh-extra-plan/preset-sync', 'dsh-extra-plan/preset-sync/locale/en.json', 'dsh-extra-plan/preset-sync/locale/zh.json']) {
   try { createRequire(join(pluginDir, 'package.json')).resolve(specifier); retiredResolveProblems.push(specifier + ' 仍可解析') } catch { /* 退役路径应失败 */ }
 }
 check('S3 退役 preset-sync 根/locale 子路径均不可解析', retiredResolveProblems.length === 0)

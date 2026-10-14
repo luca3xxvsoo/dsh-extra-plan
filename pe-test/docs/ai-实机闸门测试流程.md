@@ -1,10 +1,14 @@
 # 实机闸门测试流程（AI 给脚本 · 用户照做 · 当场取证判定）
 
-> 适用对象：`@local/dsh-extra-plan`（仓库内根入口 `plugins/dsh-extra-plan/index.js`，save 合同/校验/持久化/工具工厂分别位于 `plugins/dsh-extra-plan/lib/save-contract.js`、`lib/save-probe-validation.js`、`lib/save-persistence.js`、`lib/save-tool-factories.js`；当前插件包契约 0.3.0，当前宿主版本见宿主耦合台账）。**宿主 DSH 支持 0.1.7-rc.1 / 0.1.7-rc.2 / 0.2.0-rc.1 / 0.2.0-rc.2**（会话日志 `session.v4.jsonl.zstd`，SESSION_FORMAT_VERSION=4；取证工具三代候选名并存：v4 / `session.v3.jsonl.zstd`（0.1.5-rc.2 旧日志回放）/ `session.jsonl.zstd`（0.1.2-rc.1 及更早））。0.2.0-rc.2 有用户提供的范围受限 HUMAN 兼容基线（2026-10-01 rc2 反馈批次）；版本、日期、证据等级与 HUMAN/NOT-RUN 状态以[宿主耦合台账](ai-宿主耦合台账.md)的当前验证状态与开放项为准，缺失的 OS、profile/mode、SESSION_ID、部署 commit 与原始报告路径继续如实标记。**真机取证由用户部署后自测（AI 不执行部署）**。
+> 适用对象：`dsh-extra-plan`（仓库内根入口 `plugins/dsh-extra-plan/index.js`，save 合同/校验/持久化/工具工厂分别位于 `plugins/dsh-extra-plan/lib/save-contract.js`、`lib/save-probe-validation.js`、`lib/save-persistence.js`、`lib/save-tool-factories.js`；当前插件包契约 0.3.0，当前宿主版本见宿主耦合台账）。**宿主 DSH 支持 0.1.7-rc.1 / 0.1.7-rc.2 / 0.2.0-rc.1 / 0.2.0-rc.2**（会话日志 `session.v4.jsonl.zstd`，SESSION_FORMAT_VERSION=4；取证工具三代候选名并存：v4 / `session.v3.jsonl.zstd`（0.1.5-rc.2 旧日志回放）/ `session.jsonl.zstd`（0.1.2-rc.1 及更早））。0.2.0-rc.2 有用户提供的范围受限 HUMAN 兼容基线（2026-10-01 rc2 反馈批次）；版本、日期、证据等级与 HUMAN/NOT-RUN 状态以[宿主耦合台账](ai-宿主耦合台账.md)的当前验证状态与开放项为准，缺失的 OS、profile/mode、SESSION_ID、部署 commit 与原始报告路径继续如实标记。**真机取证由用户部署后自测（AI 不执行部署）**。
 > 用途：**发版前跑全量**；**改闸门后按域增量跑**（域分组 D1-D10 见第七部分，按域映射到 U 序号）。
 > 被测时序：按 A/C/M 分层；PTC 专项分别用 C=0/C=1 的干净 A=1 顶层会话取 F→首个 tool/call→L→第二调用，native/both 做独立 HN/HB 回归；机械闸门的 both 轮另行保留。**动手前先做第 0 节前置检查**。
 > 行号纪律：本文不写行号。排查缺陷需要行号时查 pe-test/docs/ai-代码地图.md：先看头部「意图速查」按意图词找函数名，再到「函数索引」取行号区间。
 > 每次实机/静态报告的同一部署配置快照必须包含 A=anchoredBootstrap、C=creativeMode、M=toolPresentationMode（以及其余既有设置）；F=尚无 tool/call、L=首个 tool/call 后。C=0/C=1 均核对模型可见投影与 catalog；A=1/F/main-planner 在 durable user/message 写入前整条过滤 agent-instructions 与 skill-catalog，A=1/L 由宿主自然恢复；C=0 不把展示隐藏误当 runtime binding（运行时绑定）安全隔离，C 差异在 L/非 gated 面核对。
+
+## 双插件迁出 `@local` 的 HUMAN 部署顺序
+
+本节仅供用户在新 commit 推送后执行，静态回归不得代替结论：停止相关进程后，依次移除 QQBot 的 `@local/dsh-qqbot-user-questions`、QQBot 的 `@local/dsh-extra-plan`、Web 的 `@local/dsh-extra-plan`；逐一确认三个旧精确路径与 profile bundle 旧条目均不存在，不得整删整个 `node_modules/@local`。随后安装核心 `https://github.com/luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan` 与 QQBot `https://github.com/luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan-qqbot`。QQBot allow-build 精确值为 `dsh-extra-plan-qqbot@git+https://github.com/luca3xxvsoo/dsh-extra-plan.git`，bundle 只应为 `dsh-extra-plan-qqbot` 与 `dsh-extra-plan`；用户另行确认 manifest、realpath、重启、设置页、`/preset`、真实 question/approval 与消息。不得自动删除用户 settings 或无关 raw patch 历史行，AI 不执行生产部署与真实 QQBot 操作。
 
 ## 执行前人工确认索引（不改原文）
 
@@ -517,9 +521,9 @@ channelBroken 逃生（`CHANNEL_BROKEN_CODES` = NO_PROVIDER / CALLER_NOT_LIVE / 
 
 - 配置快照记录 `A=anchoredBootstrap`、`C=creativeMode`、`M`、角色、Session/父 id、宿主版本与源码 hash；F=Session 尚无任意 durable `tool/call`，L=首个字符串或数组包含 `tool/call` 的 durable 事件后。
 - A=1/F/main-planner 的最终 request.messages 与 durable user/message 中，source.kind 精确为 `agent-instructions` 或 `skill-catalog` 的整条消息数必须均为 0；user-message、skill-invocation、runtime-context、tool-jobs、预算及未知 source 保持。A=0、executor/reviewer/probe 不新增 gate。
-- 首个 tool/call 后宿主自然重组最新 baseline/catalog；稳定非空 baseline 与完整目录时首个 L 每类新增恰 1，后两次稳定 L 各 0。F 两次、assistant-only、文件/目录更新、snapshot 不完整→完整、reject/pending/空进入、父子/restore 隔离均须逐项记录。
-- projected catalog 身份只用当前 Session `deriveMessages()` 最后合法可见的有序 `[name,description]`；C=0 隐藏三项创造 skill 但保留普通项与 skill schema/registry/按名调用；坏 entries、父 Session、旧日志全集、id/update/提醒文案不得作去重身份。
-- `step-04-context-gate宿主回归.mjs` 的受控 adapter/JSONL/完整 request trace 仅属集成证据；真实 provider、生产、GUI、HUMAN 必须写 NOT-RUN/INCOMPLETE，不可用 mock 或旧报告冒充。独立脚本退出条件为 `fail=0 && incomplete=0`；一键执行将 INCOMPLETE 结构化为部分执行，不计 PASS。
+- 首个 tool/call 后宿主自然重组最新 baseline/catalog；稳定非空 baseline 与完整目录时首个 L 的 agent-instructions 与 skill-catalog 各新增恰 1，后两次稳定 L 各 0。F 两次、assistant-only、文件/目录更新、snapshot 不完整→完整、reject/pending/空进入、父子/restore 隔离均须逐项记录。
+- context 投影身份按 source.kind 分离：skill-catalog 只用当前 Session `deriveMessages()` 最后合法可见的有序 `[name,description]`，agent-instructions 只用非空 `content` JSON 形状并忽略动态 id/seq/role/source；C=0 隐藏三项创造 skill 但保留普通项与 skill schema/registry/按名调用；坏形状、父 Session、旧日志全集、id/update/提醒文案不得作去重身份。
+- `step-04-context-gate宿主回归.mjs` 的受控 adapter/JSONL/完整 request trace 仅属集成证据；真实 provider、生产、GUI、HUMAN 必须写 NOT-RUN，不可用 mock 或旧报告冒充。受控脚本退出条件为 `fail=0 && incomplete=0`，稳定 L 重复不得归入 INCOMPLETE；一键执行不得把 NOT-RUN 结构化成 PASS。
 
 ## 八、收尾
 - 全量（或增量域）跑完后执行：`node pe-test/tools/代码地图生成.mjs --check`（**不写盘**；一致性 / 漏检 / 导航失效判非 0 退出）。

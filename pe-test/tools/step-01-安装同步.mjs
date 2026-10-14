@@ -101,8 +101,8 @@ function makeContext(editor, pluginImpl) {
 }
 
 const patch = parsePresetYaml(patchText)
-check('V07 patch 公开 insert 恰一行且无旧同步公开 row', Array.isArray(patch) && patch.length === 1 && patch[0].insert.length === 1 && patch[0].insert[0].id === SETTINGS_ROW_ID && patch[0].insert.filter((row) => row.id === PRESET_ROW_ID).length === 0)
-check('V07 纯 definition 顶层 17 行且 raw !!js 保真', definition.plugins.length === 17 && JSON.stringify(definition).includes('__jsExpr'))
+check('V07 patch 公开 insert 恰一行、settings name 为新包且无旧同步公开 row', Array.isArray(patch) && patch.length === 1 && patch[0].insert.length === 1 && patch[0].insert[0].id === SETTINGS_ROW_ID && patch[0].insert[0].name === 'dsh-extra-plan/settings' && patch[0].insert.filter((row) => row.id === PRESET_ROW_ID).length === 0 && !patchText.includes('@local/dsh-extra-plan/settings'))
+check('V07 生成 definition 顶层 17 行、raw !!js 保真且两处运行时 specifier 已映射', definition.plugins.length === 17 && JSON.stringify(definition).includes('__jsExpr') && JSON.stringify(definition).includes('dsh-extra-plan') && JSON.stringify(definition).includes('dsh-extra-plan/executor-spawn') && !JSON.stringify(definition).includes('@local/dsh-extra-plan'))
 const oldSyncPatch = '- id: extra-plan-preset-sync\n  config:\n    webFetch: true\n    toolPresentationMode: ptc\n    gateWords:\n' + Object.entries(gate).map(([key, value]) => '      ' + key + ': ' + value).join('\n') + '\n'
 const oldState = readLegacyState(oldSyncPatch)
 check('V04 旧同步公开行只读兼容并提取严格 gateWords', oldState.projection.webFetch === true && oldState.projection.toolPresentationMode === 'ptc' && oldState.gateWords !== undefined)

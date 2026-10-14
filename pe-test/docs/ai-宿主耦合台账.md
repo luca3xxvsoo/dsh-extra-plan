@@ -8,8 +8,8 @@
 |:--|:--|:--|
 | DSH | `0.1.7-rc.1 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2` | 四版本精确 peer 目标；0.2.0-rc.2 有用户提供的范围受限 HUMAN 兼容基线，其他版本的实机状态与待复测项按日期、证据等级记录于本台账 |
 | QQBot 目标 | `0.5.0` | 静态目标，不等于集成通过 |
-| 核心插件 | `@local/dsh-extra-plan` `0.3.0` | 当前包契约 |
-| QQBot 精简插件 | `@local/dsh-qqbot-user-questions` `2.0.0` | 仍有 postinstall（安装后脚本）；allow-build 是否放行待 HUMAN |
+| 核心插件 | `dsh-extra-plan` `0.3.0` | 当前包契约；仓库子目录安装路径不变 |
+| QQBot 精简插件 | `dsh-extra-plan-qqbot` `2.0.0` | 仓库子目录为 plugins/dsh-extra-plan-qqbot；仍有 postinstall（安装后脚本）；allow-build 是否放行待 HUMAN |
 | 预设载体 | `dsh-extra-plan-settings` 全局管理行 + 内部纯 definition | `dsh.bundle.patch` 只装载一行；旧 `extra-plan-preset-sync` / `preset-extra-plan` 仅 raw patch 非破坏读取迁移，`./preset-sync` 与 locale exports 已退役，官方 adapter 仍由 settings owner 内部复用 |
 | 状态判读 | `【已核实】` 表示台账静态/源码核对；`【未核实】`、`HUMAN`、`SKIP` 不得改为通过 | 当前台账纪律 |
 
@@ -72,7 +72,7 @@
 | 编号 | 当前本仓位置/钩子 | 当前合同与风险 | 状态 |
 |:--|:--|:--|:--|
 | HK1 | `agent/created` | serial；启动注册错误必须吞掉；`agent/session-start` 已删除 | 【已核实·静态】 |
-| HK2 | 两处 `agent/pre-step` | waterfall（瀑布式处理）；prepend gate 在最终 decision 写入 durable user/message 前过滤 F 的两类 source，再走 C 投影/目录去重；引导与注册兜底必须各自保留 | 【已核实·静态+集成】 |
+| HK2 | 两处 `agent/pre-step` | waterfall（瀑布式处理）；prepend gate 在最终 decision 写入 durable user/message 前过滤 F 的两类 source，再走 C 投影/按 source.kind 的 context 去重；引导与注册兜底必须各自保留 | 【已核实·静态+集成】 |
 | HK3 | `agent/request-error` | waterfall retry（瀑布式重试）；MALFORMED 限次恢复与诊断 | 【已核实·静态】 |
 | HK4 | `agent/disposed` | emit/void（发出/无返回）；final fold（最终折叠）必须同步完成 | 【已核实·静态】 |
 | HK5 | `system-prompt/assemble` | 三参 waterfall（瀑布式处理）；投影保留 variables | 【已核实·静态】 |
@@ -139,7 +139,7 @@ HK23 当前无定义，不补造编号；历史/旧钩子见归档。
 | SD33 | profile node_modules/宿主安装锚点 | step-04/step-01 依赖解析；静态入口不等于实机通过 |
 | SD35 | 宿主工具名清单 | deny 必须与宿主真值对拍 |
 | SD36 | backgroundMode→descriptor.mode | 角色与 probe claim |
-| SD37 | Session.deriveMessages() | projected catalog 去重只读取当前 Session 可见 durable message surface；缺能力的 mock 不推断已发布 |
+| SD37 | Session.deriveMessages() | context 去重按 kind 只读取当前 Session 可见 durable message surface；catalog 比较有序 [name,description]，agent-instructions 比较非空 content JSON 形状；缺能力的 mock 不推断已发布 |
 | SD37 | createUserMessage/source.kind | v4 自有 producer kind 与 id/role |
 | SD38 | step-07 输出 | attempted（尝试路由）/actual provenance（实际来源）、suffix、父子行号 |
 | SD39 | agents.get(id).status | AgentRegistry.get(id)（dsh-agent）返回驻留 Agent，.status getter 真源 dsh-agent-loop：phase idle/maintenance（空闲/维护）→ 'idle'，否则 'running'（运行中）；插件经 ctx.get('agents') 查询 send_message 目标运行状态 |
@@ -171,8 +171,8 @@ CF1/CF2（extra-plan postinstall/distribute-preset）已删除，作为历史归
 | QB1 | 精简插件 `inject=[]` | 【已核实·静态】 |
 | QB2-QB3 | DSH_HOME/profile 解析与启动 apply 自愈 | 【已核实·静态】 |
 | QB5 | package-local `js-yaml:^4.2.0`，heal.js 移除 APPDATA/固定宿主后备；失败返回 null | 【已核实·静态；健壮性改进】 |
-| QB8-QB9 | profile bundles 与 `node_modules/@local` 双条件锚定 | 【已核实·静态】 |
-| QB10-QB11 | web 核心包到 qqbot 的 junction/dir 建链；非目标实体不替换 | 【已核实·静态；部署结果待 HUMAN】 |
+| QB8-QB9 | profile bundles 与 `node_modules/dsh-extra-plan-qqbot` 双条件锚定 | 【已核实·静态】 |
+| QB10-QB11 | Web `node_modules/dsh-extra-plan` 到 QQBot `node_modules/dsh-extra-plan` 的 junction/dir 建链；非目标实体不替换 | 【已核实·静态；部署结果待 HUMAN】 |
 | QB12-QB13 | patch 写前备份、写后 YAML 顶层数组/旧块校验；不引用旧 AgentPresetSettingsSchema 为当前合同 | 【已核实·静态】 |
 | QB14-QB18 | QQBot patch、ptc-runtime、agent-preset-registry、cordis-host-runner 当前行 | 【已核实·静态】 |
 | QB19 | QQBot bundle patch | 【已核实·静态】 |
@@ -213,7 +213,7 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 ## 当前代码落点（符号级）
 
 - 核心入口 `plugins/dsh-extra-plan/index.js` 负责宿主 hook、配置快照与 session-scoped 状态；统一全局 owner 由 `lib/settings.js` 调度 `lib/preset-sync.js`，设置合同由 `lib/preset-settings.js` 提供；`lib/client.js` 仅经 `plugins.detail.section` 接线稳定 namespace 的唯一共享表单（bundle.config 槽若有本包条目则让位）。
-- QQBot 兼容面由 `plugins/dsh-qqbot-user-questions/index.js#apply` → `lib/heal.js#healQqbotCompatibility` 驱动；CLI `scripts/heal.mjs` 不改变启动不阻断语义。
+- QQBot 兼容面由 `plugins/dsh-extra-plan-qqbot/index.js#apply` → `lib/heal.js#healQqbotCompatibility` 驱动；CLI `scripts/heal.mjs` 不改变启动不阻断语义。
 - 当前静态核对不等于部署通过；真实 profile、消息、`/preset`、postinstall 和 allow-build 仍按本台账 HUMAN 项执行。
 
 ## ⑨ 升级 checklist（核对清单，顺序固定）

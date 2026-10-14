@@ -75,29 +75,77 @@ function projectedSkillCatalogSignature(message) {
   return JSON.stringify(entries)
 }
 
-function dedupeProjectedSkillCatalogDecision(decision, visibleMessages) {
+function jsonShapeSignature(value, active = new Set()) {
+  if (value === null) return 'null'
+  if (typeof value === 'string') return JSON.stringify(value)
+  if (typeof value === 'boolean') return value ? 'true' : 'false'
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : undefined
+  if (typeof value !== 'object') return undefined
+  if (active.has(value)) return undefined
+  active.add(value)
+  try {
+    if (Array.isArray(value)) {
+      const items = []
+      for (const item of value) {
+        const signature = jsonShapeSignature(item, active)
+        if (signature === undefined) return undefined
+        items.push(signature)
+      }
+      return '[' + items.join(',') + ']'
+    }
+    const prototype = Object.getPrototypeOf(value)
+    if (prototype !== Object.prototype && prototype !== null) return undefined
+    const parts = []
+    for (const key of Object.keys(value).sort()) {
+      const signature = jsonShapeSignature(value[key], active)
+      if (signature === undefined) return undefined
+      parts.push(JSON.stringify(key) + ':' + signature)
+    }
+    return '{' + parts.join(',') + '}'
+  } catch {
+    return undefined
+  } finally {
+    active.delete(value)
+  }
+}
+
+function projectedAgentInstructionsSignature(message) {
+  if (message === null || typeof message !== 'object' || message.source === null || typeof message.source !== 'object' || message.source.kind !== 'agent-instructions') return undefined
+  if (!Array.isArray(message.content) || message.content.length === 0) return undefined
+  return jsonShapeSignature(message.content)
+}
+
+function projectedContextSignature(message) {
+  if (message === null || typeof message !== 'object' || message.source === null || typeof message.source !== 'object') return undefined
+  const kind = message.source.kind
+  const signature = kind === 'agent-instructions'
+    ? projectedAgentInstructionsSignature(message)
+    : kind === 'skill-catalog' ? projectedSkillCatalogSignature(message) : undefined
+  return signature === undefined ? undefined : { kind, signature }
+}
+
+function dedupeProjectedContextDecision(decision, visibleMessages) {
   if (decision === null || typeof decision !== 'object' || decision.kind !== 'enter' || !Array.isArray(decision.messages)) return decision
-  let lastSignature
+  const baselines = new Map()
   if (Array.isArray(visibleMessages)) {
     for (const message of visibleMessages) {
-      const signature = projectedSkillCatalogSignature(message)
-      if (signature !== undefined) lastSignature = signature
+      const projected = projectedContextSignature(message)
+      if (projected !== undefined) baselines.set(projected.kind, projected.signature)
     }
   }
   let changed = false
   const messages = []
   for (const message of decision.messages) {
-    const signature = projectedSkillCatalogSignature(message)
-    if (signature !== undefined && signature === lastSignature) {
+    const projected = projectedContextSignature(message)
+    if (projected !== undefined && baselines.get(projected.kind) === projected.signature) {
       changed = true
       continue
     }
     messages.push(message)
-    if (signature !== undefined) lastSignature = signature
+    if (projected !== undefined) baselines.set(projected.kind, projected.signature)
   }
   return changed ? { ...decision, messages } : decision
 }
-
 function isBootstrapPhase(agent) {
   if (agent === undefined || agent === null) return false
   const session = agent.session
@@ -1037,7 +1085,7 @@ const {
 export {
   CHANNEL_BROKEN_CODES, FREE_TOOLS, ASK_TOOL,
   purposeRouteDenyReason, routeDenyReason, planDenyReason, approvalDenyReason,
-  isBootstrapPhase, filterBootstrapContextDecision, dedupeProjectedSkillCatalogDecision, labelsOfCallData,
+  isBootstrapPhase, filterBootstrapContextDecision, dedupeProjectedContextDecision, labelsOfCallData,
   askKindOf, askKindOfRelaxed, isExactGateSet, isPartialGateSet, categorizeGateAsk, gateAskDenyReason, validateGateAskStructure,
   matchRouteLabel, matchApprovalLabel, matchPurposeLabel, parseAskResultData, parseDispatchAskResult, deriveFlowState,
   catalogHasWriteTools, isReadOnlyChildByCatalog, schemasHasWriteTools, schemasHasTool, catalogIsCollapsed,

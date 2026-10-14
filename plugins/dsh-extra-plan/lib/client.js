@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({
-  id: "@local/dsh-extra-plan",
+  id: "dsh-extra-plan",
   factory: (require) => {
     var module = { exports: {} };
     var exports = module.exports;
@@ -8,7 +8,7 @@ window.__ModuleLoader__.load({
 
     // 技术 ID 与 ConfigForms namespace 保持兼容；bundle slot key 是包名，不能当作 namespace。
     const NS = "dsh-extra-plan-settings";
-    const BUNDLE_NAME = "@local/dsh-extra-plan";
+    const BUNDLE_NAME = "dsh-extra-plan";
 
     const zh = {
       cardTitle: "按需规划模式全局管理",

@@ -14,7 +14,11 @@
 
 ## 设置管理路径（0.1.7/0.2.0 rc.2）
 设置表单仅经 `plugins.detail.section` 渲染于当前 bundle 详情页行列表之后（自绘标题）；本包不注册 `plugins.bundle.config`、`plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`。若 bundle.config 槽出现本包条目，detail.section 让位，避免重复表单。ConfigForms 使用稳定 namespace，一次提交十项字段与 revision。
-唯一公开管理组件是 `@local/dsh-extra-plan/settings`；其 PUT 只 edit `dsh-extra-plan-settings` 唯一全局行，保留其它字段与 gateWords。`./preset-sync` 及其 locale exports 已退役；`lib/preset-sync.js` 仍由 settings owner 内部相对调用，raw patch 中旧 `extra-plan-preset-sync`/`preset-extra-plan` 值只作迁移来源。预设本体来自纯 `preset-definition.generated.yml`，由内部同步交给官方 AgentPreset adapter；`toolPresentationMode` 为装载期值，`runcodeCatchGate` 由 live-config 热读。
+唯一公开管理组件是 `dsh-extra-plan/settings`；其 PUT 只 edit `dsh-extra-plan-settings` 唯一全局行，保留其它字段与 gateWords。`./preset-sync` 及其 locale exports 已退役；`lib/preset-sync.js` 仍由 settings owner 内部相对调用，raw patch 中旧 `extra-plan-preset-sync`/`preset-extra-plan` 值只作迁移来源。预设本体来自纯 `preset-definition.generated.yml`，由内部同步交给官方 AgentPreset adapter；`toolPresentationMode` 为装载期值，`runcodeCatchGate` 由 live-config 热读。
+
+## 非 `@local` 迁移部署（HUMAN）
+
+停止相关进程后，按顺序卸载 QQBot 的 `@local/dsh-qqbot-user-questions`、QQBot 的 `@local/dsh-extra-plan`、Web 的 `@local/dsh-extra-plan`；确认三个旧精确路径和 profile bundle 旧条目均不存在。随后从 `https://github.com/luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan` 安装核心包，从 `https://github.com/luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan-qqbot` 安装 QQBot 包。QQBot allow-build 必须精确使用 `dsh-extra-plan-qqbot@git+https://github.com/luca3xxvsoo/dsh-extra-plan.git`，bundle 值为 `dsh-extra-plan-qqbot` 与 `dsh-extra-plan`。不得整删 `node_modules/@local`，也不得自动删除用户 settings 配置或与包改名无关的 raw patch 历史行；重启、设置页、`/preset`、真实 question/approval 与消息仍由用户验收。
 
 ## 怎么跑
 

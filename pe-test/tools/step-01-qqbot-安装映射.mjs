@@ -11,12 +11,12 @@ import {
   findOwnQqbotProfiles,
   healPatchRows,
   healQqbotCompatibility,
-} from '../../plugins/dsh-qqbot-user-questions/lib/heal.js'
-import { apply as applyLitePlugin } from '../../plugins/dsh-qqbot-user-questions/index.js'
+} from '../../plugins/dsh-extra-plan-qqbot/lib/heal.js'
+import { apply as applyLitePlugin } from '../../plugins/dsh-extra-plan-qqbot/index.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const SOURCE_ROOT = join(HERE, '..', '..')
-const SOURCE_PACKAGE = join(SOURCE_ROOT, 'plugins', 'dsh-qqbot-user-questions')
+const SOURCE_PACKAGE = join(SOURCE_ROOT, 'plugins', 'dsh-extra-plan-qqbot')
 const SOURCE_HEAL = join(SOURCE_PACKAGE, 'scripts', 'heal.mjs')
 const SOURCE_PACKAGE_MANIFEST = join(SOURCE_PACKAGE, 'package.json')
 const SOURCE_HEAL_TEXT = readFileSync(join(SOURCE_PACKAGE, 'lib', 'heal.js'), 'utf8')
@@ -46,14 +46,16 @@ check('QB5 健壮性改进：QQBot package-local 声明 js-yaml ^4.2.0',
 check('QB5 健壮性改进：heal.js 仅从包自身 import.meta.url 解析，移除 APPDATA/固定宿主后备',
   SOURCE_HEAL_TEXT.includes("createRequire(import.meta.url)('js-yaml')") && !SOURCE_HEAL_TEXT.includes('APPDATA') &&
   !SOURCE_HEAL_TEXT.includes("from 'node:os'") && !SOURCE_HEAL_TEXT.includes('@deepseek-ai/dsh/package.json'))
+check('QB6 manifest 身份为 dsh-extra-plan-qqbot@2.0.0 且无 private', sourcePackageJson !== null && sourcePackageJson.name === 'dsh-extra-plan-qqbot' && sourcePackageJson.version === '2.0.0' && !Object.prototype.hasOwnProperty.call(sourcePackageJson, 'private') && sourcePackageJson.scripts?.postinstall === 'node scripts/heal.mjs')
+check('QB6 heal 只暴露新 QQBot/核心平铺路径且不含旧 @local 包路径', SOURCE_HEAL_TEXT.includes('dsh-extra-plan-qqbot') && SOURCE_HEAL_TEXT.includes("'node_modules', 'dsh-extra-plan'") && !SOURCE_HEAL_TEXT.includes('node_modules/@local') && !SOURCE_HEAL_TEXT.includes("'@local'"))
 
 function isLink(path) {
   try { return lstatSync(path).isSymbolicLink() } catch { return false }
 }
 function qqProfileDir(home) { return join(home, 'profiles', 'qqbot') }
 function qqPatch(home) { return join(home, 'profiles', 'qqbot', 'cordis.patch.yml') }
-function qqExtraPlanDir(home) { return join(home, 'profiles', 'qqbot', 'node_modules', '@local', 'dsh-extra-plan') }
-function webExtraPlanDir(home) { return join(home, 'profiles', 'web', 'node_modules', '@local', 'dsh-extra-plan') }
+function qqExtraPlanDir(home) { return join(home, 'profiles', 'qqbot', 'node_modules', 'dsh-extra-plan') }
+function webExtraPlanDir(home) { return join(home, 'profiles', 'web', 'node_modules', 'dsh-extra-plan') }
 
 function makeProfile(home, name) {
   const dir = join(home, 'profiles', name)
@@ -62,13 +64,13 @@ function makeProfile(home, name) {
   return dir
 }
 function installOwnPlugin(home, name) {
-  const dir = join(home, 'profiles', name, 'node_modules', '@local', 'dsh-qqbot-user-questions')
+  const dir = join(home, 'profiles', name, 'node_modules', 'dsh-extra-plan-qqbot')
   mkdirSync(dir, { recursive: true })
 }
 function createWebPackage(home) {
   const dir = webExtraPlanDir(home)
   mkdirSync(dir, { recursive: true })
-  writeFileSync(join(dir, 'package.json'), '{"name":"@local/dsh-extra-plan"}\n', 'utf8')
+  writeFileSync(join(dir, 'package.json'), '{"name":"dsh-extra-plan"}\n', 'utf8')
   return dir
 }
 function captureWarn(fn) {
@@ -204,11 +206,11 @@ if (yamlResolution.module === null) {
   check('静态 insert 恰四行且 qqbot-user-questions/ptc-runtime/agent-preset-registry 包名准确', Array.isArray(staticRows) && staticRows.length === 4 &&
     isMap(staticCode) && staticCode.name === '@deepseek-ai/dsh-ptc-runtime-node' &&
     isMap(staticAgent) && staticAgent.name === '@deepseek-ai/dsh-agent-preset-registry' &&
-    isMap(staticQqbot) && staticQqbot.name === '@local/dsh-qqbot-user-questions')
+    isMap(staticQqbot) && staticQqbot.name === 'dsh-extra-plan-qqbot')
   check('cordis-host-runner 行无 config（保持原语义）', isMap(staticRunner) && staticRunner.name === '@deepseek-ai/dsh-cordis-host-runner' && staticRunner.config === undefined)
   check('静态 agent-preset-registry 默认严格为 extra-plan', isMap(staticAgent) && isMap(staticAgent.config) && staticAgent.config.default === 'extra-plan')
   check('ptc-runtime/agent-preset-registry 不在根级非-insert patch', staticPatchResult.ok && Array.isArray(staticPatch) && !staticPatch.some((row) => isMap(row) && (row.id === 'ptc-runtime' || row.id === 'agent-preset-registry')), staticPatchResult.error || '')
-  check('静态 patch 不再出现 0.1.5 世代两包名', !staticPatchText.includes('@deepseek-ai/dsh-code-runtime-worker-thread') && !staticPatchText.includes('@deepseek-ai/dsh-agent-presets') && staticPatchText.includes('本机不做验证'))
+  check('静态 patch 不再出现旧 QQBot 包路径且不再出现 0.1.5 世代两包名', !staticPatchText.includes('@local/dsh-qqbot-user-questions') && !staticPatchText.includes('@deepseek-ai/dsh-code-runtime-worker-thread') && !staticPatchText.includes('@deepseek-ai/dsh-agent-presets') && staticPatchText.includes('本机不做验证'))
   check('cordis-host-runner 不在根级非-insert patch（无第二处 cordis 行）', staticPatchResult.ok && Array.isArray(staticPatch) && !staticPatch.some((row) => isMap(row) && (row.id === 'cordis-host-runner' || row.name === '@deepseek-ai/dsh-cordis-host-runner')), staticPatchResult.error || '')
 
   // ② 生产同形 fixture：只迁移两个旧根级块，保留 im-qqbot 与备份原文
@@ -324,7 +326,7 @@ if (yamlResolution.module === null) {
   installOwnPlugin(h4, 'qqbot')
   const w4 = captureWarn(() => healQqbotCompatibility(h4))
   check('web 包缺失时 heal 不抛异常且输出跳过警告', w4.messages.some((m) => m.includes('未找到 web 的 dsh-extra-plan，跳过映射')))
-  check('web 包缺失时不创建 qqbot 目标链接', !existsSync(qqExtraPlanDir(h4)))
+  check('web 包缺失时不创建 qqbot 新平铺目标链接或 @local 目录', !existsSync(qqExtraPlanDir(h4)) && !existsSync(join(h4, 'profiles', 'qqbot', 'node_modules', '@local')))
 
   // ⑦ 实体目录 → 保留并提示 pnpm 迁移
   const h9a = join(tempRoot, 's9a-entity')
@@ -336,6 +338,7 @@ if (yamlResolution.module === null) {
   writeFileSync(join(entityTarget, 'marker.txt'), 'old entity\n', 'utf8')
   const w9a = captureWarn(() => healQqbotCompatibility(h9a))
   check('实体目录保留且提示 pnpm 迁移', existsSync(join(entityTarget, 'marker.txt')) && !isLink(entityTarget) && w9a.messages.some((m) => m.includes('请通过 pnpm 完成迁移')))
+   check('实体目录场景也不创建 node_modules/@local', !existsSync(join(h9a, 'profiles', 'qqbot', 'node_modules', '@local')))
 
   // ⑧ 负例A：bundles 锚定但未装本插件 → 零改动
   const h10 = join(tempRoot, 's10-negative-a')

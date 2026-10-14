@@ -31,11 +31,11 @@
 
 1. 安装
 ```powershell 7+ 在线
-$repo='luca3xxvsoo/dsh-extra-plan'; $q="$repo#path:/plugins/dsh-qqbot-user-questions"; $allow='@local/dsh-qqbot-user-questions@git+https://github.com/luca3xxvsoo/dsh-extra-plan.git'; dsh plugin --profile qqbot add $q --allow-build="$allow"; $exitCode=$LASTEXITCODE; if($exitCode -ne 0){dsh plugin --profile qqbot approve-builds --all; dsh plugin --profile qqbot add $q --allow-build="$allow"; $exitCode=$LASTEXITCODE}; if($exitCode -eq 0){dsh plugin --profile qqbot approve-builds --all; if($LASTEXITCODE -eq 0){$profileDir=Join-Path $env:USERPROFILE '.dsh\profiles\qqbot'; Push-Location $profileDir; try { node -e "const fs=require('node:fs'),p='package.json';if(!fs.existsSync('node_modules/@local/dsh-extra-plan'))throw new Error('缺少 qqbot 到 web 的 dsh-extra-plan 链接');const j=JSON.parse(fs.readFileSync(p,'utf8'));j.dsh=j.dsh||{};j.dsh.profile=j.dsh.profile||{};const b=j.dsh.profile.bundles=Array.isArray(j.dsh.profile.bundles)?j.dsh.profile.bundles:[];let changed=false;for(const n of ['@local/dsh-qqbot-user-questions','@local/dsh-extra-plan'])if(!b.includes(n)){b.push(n);changed=true};if(changed){fs.copyFileSync(p,p+'.bak');fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n')}" ; $nodeExit=$LASTEXITCODE } finally { Pop-Location }; if($nodeExit -eq 0){Write-Host '完整安装并激活成功，请重启 QQBot'}else{Write-Error 'bundle 激活失败'}}}else{Write-Error '插件安装失败'}
+$repo='luca3xxvsoo/dsh-extra-plan'; $q="$repo#path:/plugins/dsh-extra-plan-qqbot"; $allow='dsh-extra-plan-qqbot@git+https://github.com/luca3xxvsoo/dsh-extra-plan.git'; dsh plugin --profile qqbot add $q --allow-build="$allow"; $exitCode=$LASTEXITCODE; if($exitCode -ne 0){dsh plugin --profile qqbot approve-builds --all; dsh plugin --profile qqbot add $q --allow-build="$allow"; $exitCode=$LASTEXITCODE}; if($exitCode -eq 0){dsh plugin --profile qqbot approve-builds --all; if($LASTEXITCODE -eq 0){$profileDir=Join-Path $env:USERPROFILE '.dsh\profiles\qqbot'; Push-Location $profileDir; try { node -e "const fs=require('node:fs'),p='package.json';if(!fs.existsSync('node_modules/dsh-extra-plan'))throw new Error('缺少 qqbot 到 web 的 dsh-extra-plan 链接');const j=JSON.parse(fs.readFileSync(p,'utf8'));j.dsh=j.dsh||{};j.dsh.profile=j.dsh.profile||{};const b=j.dsh.profile.bundles=Array.isArray(j.dsh.profile.bundles)?j.dsh.profile.bundles:[];let changed=false;for(const n of ['dsh-extra-plan-qqbot','dsh-extra-plan'])if(!b.includes(n)){b.push(n);changed=true};if(changed){fs.copyFileSync(p,p+'.bak');fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n')}" ; $nodeExit=$LASTEXITCODE } finally { Pop-Location }; if($nodeExit -eq 0){Write-Host '完整安装并激活成功，请重启 QQBot'}else{Write-Error 'bundle 激活失败'}}}else{Write-Error '插件安装失败'}
 ```
 或
 ```powershell 7+ 离线
-$src='[解压路径]\dsh-extra-plan-main'; $pkg=(Resolve-Path (Join-Path $src 'plugins\dsh-qqbot-user-questions')).Path -replace '\\','/'; $spec="file:///$pkg"; $allow="@local/dsh-qqbot-user-questions@file:$pkg"; dsh plugin --profile qqbot add $spec --allow-build="$allow"; $exitCode=$LASTEXITCODE; if($exitCode -ne 0){dsh plugin --profile qqbot approve-builds --all; dsh plugin --profile qqbot add $spec --allow-build="$allow"; $exitCode=$LASTEXITCODE}; if($exitCode -eq 0){dsh plugin --profile qqbot approve-builds --all; if($LASTEXITCODE -eq 0){$profileDir=Join-Path $env:USERPROFILE '.dsh\profiles\qqbot'; Push-Location $profileDir; try { node -e "const fs=require('node:fs'),p='package.json';if(!fs.existsSync('node_modules/@local/dsh-extra-plan'))throw new Error('缺少 qqbot 到 web 的 dsh-extra-plan 链接');const j=JSON.parse(fs.readFileSync(p,'utf8'));j.dsh=j.dsh||{};j.dsh.profile=j.dsh.profile||{};const b=j.dsh.profile.bundles=Array.isArray(j.dsh.profile.bundles)?j.dsh.profile.bundles:[];let c=false;for(const n of ['@local/dsh-qqbot-user-questions','@local/dsh-extra-plan'])if(!b.includes(n)){b.push(n);c=true};if(c){fs.copyFileSync(p,p+'.bak');fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n')}" ; $nodeExit=$LASTEXITCODE } finally { Pop-Location }; if($nodeExit -eq 0){Write-Host '本地插件安装并激活完成，请重启 QQBot'}}}
+$src='[解压路径]\dsh-extra-plan-main'; $pkg=(Resolve-Path (Join-Path $src 'plugins\dsh-extra-plan-qqbot')).Path -replace '\\','/'; $spec="file:///$pkg"; $allow="dsh-extra-plan-qqbot@file:$pkg"; dsh plugin --profile qqbot add $spec --allow-build="$allow"; $exitCode=$LASTEXITCODE; if($exitCode -ne 0){dsh plugin --profile qqbot approve-builds --all; dsh plugin --profile qqbot add $spec --allow-build="$allow"; $exitCode=$LASTEXITCODE}; if($exitCode -eq 0){dsh plugin --profile qqbot approve-builds --all; if($LASTEXITCODE -eq 0){$profileDir=Join-Path $env:USERPROFILE '.dsh\profiles\qqbot'; Push-Location $profileDir; try { node -e "const fs=require('node:fs'),p='package.json';if(!fs.existsSync('node_modules/dsh-extra-plan'))throw new Error('缺少 qqbot 到 web 的 dsh-extra-plan 链接');const j=JSON.parse(fs.readFileSync(p,'utf8'));j.dsh=j.dsh||{};j.dsh.profile=j.dsh.profile||{};const b=j.dsh.profile.bundles=Array.isArray(j.dsh.profile.bundles)?j.dsh.profile.bundles:[];let c=false;for(const n of ['dsh-extra-plan-qqbot','dsh-extra-plan'])if(!b.includes(n)){b.push(n);c=true};if(c){fs.copyFileSync(p,p+'.bak');fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n')}" ; $nodeExit=$LASTEXITCODE } finally { Pop-Location }; if($nodeExit -eq 0){Write-Host '本地插件安装并激活完成，请重启 QQBot'}}}
 ```
 2. **重启 DSH 进程**使插件生效
 3. qqbot下使用 /preset 切换预设
@@ -44,12 +44,12 @@ $src='[解压路径]\dsh-extra-plan-main'; $pkg=(Resolve-Path (Join-Path $src 'p
 
 1. 核心卸载
 ```powershell 7+
-dsh plugin --profile web remove @local/dsh-extra-plan
+dsh plugin --profile web remove dsh-extra-plan
 ```
 2. qqbot兼容插件卸载 (如装)
 ```powershell 7+
-dsh plugin --profile qqbot remove @local/dsh-extra-plan
-dsh plugin --profile qqbot remove @local/dsh-qqbot-user-questions
+dsh plugin --profile qqbot remove dsh-extra-plan
+dsh plugin --profile qqbot remove dsh-extra-plan-qqbot
 ```
 3. **重启 DSH 进程**
 
@@ -128,7 +128,7 @@ dsh-extra-plan/
 │   │   ├── cordis.patch.yml                                      
 │   │   ├── index.js                                    # 四级闸门：路由/目的/澄清/批准 + apply 接线
 │   │   └── package.json
-│   └── dsh-qqbot-user-questions/                  
+│   └── dsh-extra-plan-qqbot/                  
 │       ├── lib/heal.js                                 # 自愈函数
 │       ├── scripts/heal.mjs                            # 自愈分发                      
 │       ├── cordis.patch.yml                    

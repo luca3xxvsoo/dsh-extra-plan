@@ -1,4 +1,4 @@
-// @local/dsh-extra-plan shell mutation 辅助函数。
+// dsh-extra-plan shell mutation 辅助函数。
 // 纯命令解码与跨平台写入形态匹配；不持有 host 或 apply 状态。
 
 // PWSH 写动词判定（P2 位置判定）：语法级写形态全文本匹配（git 写子命令/.NET 静态/COM FSO/

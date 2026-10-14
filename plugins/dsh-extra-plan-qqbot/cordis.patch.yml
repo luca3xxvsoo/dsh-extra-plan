@@ -4,7 +4,7 @@
 # 增加而不是覆盖
 - insert:
     - id: qqbot-user-questions
-      name: '@local/dsh-qqbot-user-questions'
+      name: 'dsh-extra-plan-qqbot'
     # 0.1.7-rc.1：旧 code-runtime 行（worker-thread 族的 code-runtime 包）整包消失，
     # 等价行 = ptc-runtime（dsh-base 同形行：id: ptc-runtime / name:
     # '@deepseek-ai/dsh-ptc-runtime-node'，提供 ctx.ptcRuntime）。

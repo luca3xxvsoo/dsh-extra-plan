@@ -4,4 +4,4 @@
 # 两项宿主设置由 settings 权威值派生到内存 definition；官方启停机制与额外声明不由插件删除。
 - insert:
     - id: dsh-extra-plan-settings
-      name: '@local/dsh-extra-plan/settings'
+      name: 'dsh-extra-plan/settings'

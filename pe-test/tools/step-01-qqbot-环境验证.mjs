@@ -5,17 +5,17 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSy
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { findOwnQqbotProfiles, healQqbotCompatibility as healFixture } from '../../plugins/dsh-qqbot-user-questions/lib/heal.js'
+import { findOwnQqbotProfiles, healQqbotCompatibility as healFixture } from '../../plugins/dsh-extra-plan-qqbot/lib/heal.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = join(HERE, '..', '..')
-const SOURCE_PACKAGE = join(REPO_ROOT, 'plugins', 'dsh-qqbot-user-questions')
+const SOURCE_PACKAGE = join(REPO_ROOT, 'plugins', 'dsh-extra-plan-qqbot')
 const SOURCE_PACKAGE_MANIFEST = join(SOURCE_PACKAGE, 'package.json')
 const SOURCE_HEAL_TEXT = readFileSync(join(SOURCE_PACKAGE, 'lib', 'heal.js'), 'utf8')
 const LINK_TYPE = process.platform === 'win32' ? 'junction' : 'dir'
 const QQBOT_BUNDLE = '@tencent-connect/dsh-qqbot'
-const QQBOT_PACKAGE = '@local/dsh-qqbot-user-questions'
-const WEB_PACKAGE = '@local/dsh-extra-plan'
+const QQBOT_PACKAGE = 'dsh-extra-plan-qqbot'
+const WEB_PACKAGE = 'dsh-extra-plan'
 
 let pass = 0
 let fail = 0
@@ -48,6 +48,7 @@ check('QB5 健壮性改进：QQBot package-local 声明 js-yaml ^4.2.0',
 check('QB5 健壮性改进：heal.js 移除 APPDATA/固定宿主后备并保留包自身解析',
   SOURCE_HEAL_TEXT.includes("createRequire(import.meta.url)('js-yaml')") && !SOURCE_HEAL_TEXT.includes('APPDATA') &&
   !SOURCE_HEAL_TEXT.includes("from 'node:os'") && !SOURCE_HEAL_TEXT.includes('@deepseek-ai/dsh/package.json'))
+check('QB6 环境验证常量与 heal 实现均使用 dsh-extra-plan-qqbot/dsh-extra-plan 平铺路径', QQBOT_PACKAGE === 'dsh-extra-plan-qqbot' && WEB_PACKAGE === 'dsh-extra-plan' && SOURCE_HEAL_TEXT.includes('dsh-extra-plan-qqbot') && SOURCE_HEAL_TEXT.includes("'node_modules', 'dsh-extra-plan'") && !SOURCE_HEAL_TEXT.includes('node_modules/@local') && !SOURCE_HEAL_TEXT.includes("'@local'"))
 
 function errorCode(error) {
   if (error && typeof error.code === 'string') return error.code
@@ -92,10 +93,10 @@ function profilePaths(dshHome) {
   return {
     profileDir,
     manifest: join(profileDir, 'package.json'),
-    adapterPlugin: join(profileDir, 'node_modules', '@local', 'dsh-qqbot-user-questions'),
-    webCore: join(dshHome, 'profiles', 'web', 'node_modules', '@local', 'dsh-extra-plan'),
+    adapterPlugin: join(profileDir, 'node_modules', 'dsh-extra-plan-qqbot'),
+    webCore: join(dshHome, 'profiles', 'web', 'node_modules', 'dsh-extra-plan'),
     patch: join(profileDir, 'cordis.patch.yml'),
-    mapping: join(profileDir, 'node_modules', '@local', 'dsh-extra-plan'),
+    mapping: join(profileDir, 'node_modules', 'dsh-extra-plan'),
   }
 }
 
@@ -259,10 +260,10 @@ function fixturePaths(home, name = 'qqbot') {
   return {
     profileDir,
     manifest: join(profileDir, 'package.json'),
-    adapterPlugin: join(profileDir, 'node_modules', '@local', 'dsh-qqbot-user-questions'),
-    webCore: join(home, 'profiles', 'web', 'node_modules', '@local', 'dsh-extra-plan'),
+    adapterPlugin: join(profileDir, 'node_modules', 'dsh-extra-plan-qqbot'),
+    webCore: join(home, 'profiles', 'web', 'node_modules', 'dsh-extra-plan'),
     patch: join(profileDir, 'cordis.patch.yml'),
-    mapping: join(profileDir, 'node_modules', '@local', 'dsh-extra-plan'),
+    mapping: join(profileDir, 'node_modules', 'dsh-extra-plan'),
   }
 }
 
@@ -293,9 +294,10 @@ function runJunctionFixture() {
     healFixture(first.home)
     check('临时 fixture 目标缺失时建立 junction/dir link', isLink(first.paths.mapping))
     check('临时 fixture 新建链接 realpath 指向 web', sameTarget(first.paths.mapping, first.paths.webCore))
+    check('临时 fixture 不创建 node_modules/@local', !existsSync(join(first.home, 'profiles', 'qqbot', 'node_modules', '@local')))
     const before = realpathSync(first.paths.mapping)
     healFixture(first.home)
-    check('临时 fixture 重复运行保持正确链接', isLink(first.paths.mapping) && realpathSync(first.paths.mapping) === before)
+    check('临时 fixture 重复运行保持正确链接且不创建 @local', isLink(first.paths.mapping) && realpathSync(first.paths.mapping) === before && !existsSync(join(first.home, 'profiles', 'qqbot', 'node_modules', '@local')))
 
     const other = makeFixtureHome('dsh-extra-plan-qqbot-other-link-')
     homes.push(other.home)

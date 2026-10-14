@@ -5,7 +5,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { healQqbotCompatibility } from './lib/heal.js'
 
-export const name = 'dsh-qqbot-user-questions'
+export const name = 'dsh-extra-plan-qqbot'
 export const inject = []
 
 export function apply() {
@@ -13,10 +13,10 @@ export function apply() {
     // DSH_HOME 环境变量优先；默认值为 ~/.dsh。
     const home = process.env.DSH_HOME || join(homedir(), '.dsh')
     const result = healQqbotCompatibility(home)
-    for (const item of result.failed || []) console.warn('[dsh-qqbot-user-questions] 自愈失败摘要: ' + JSON.stringify(item))
-    if (result.error) console.warn('[dsh-qqbot-user-questions] 自愈异常摘要: ' + JSON.stringify({ error: result.error }))
+    for (const item of result.failed || []) console.warn('[dsh-extra-plan-qqbot] 自愈失败摘要: ' + JSON.stringify(item))
+    if (result.error) console.warn('[dsh-extra-plan-qqbot] 自愈异常摘要: ' + JSON.stringify({ error: result.error }))
   } catch (err) {
     // 自愈不阻断启动
-    console.warn('[dsh-qqbot-user-questions] 自愈失败（不阻断启动）: ' + (err instanceof Error ? err.message : String(err)))
+    console.warn('[dsh-extra-plan-qqbot] 自愈失败（不阻断启动）: ' + (err instanceof Error ? err.message : String(err)))
   }
 }

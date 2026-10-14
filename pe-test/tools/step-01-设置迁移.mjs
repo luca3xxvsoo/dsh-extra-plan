@@ -181,7 +181,7 @@ function makePersistentEditor(initial = {}, patch = '', legacyVisible = true) {
   const store = {
     settings: {
       id: SETTINGS_ROW_ID,
-      name: '@local/dsh-extra-plan/settings',
+      name: 'dsh-extra-plan/settings',
       config: structuredClone(initial),
       metadata: { owner: 'dsh-extra-plan-settings' },
     },

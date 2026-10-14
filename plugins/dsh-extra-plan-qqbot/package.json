@@ -1,7 +1,6 @@
 {
-  "name": "@local/dsh-qqbot-user-questions",
+  "name": "dsh-extra-plan-qqbot",
   "version": "2.0.0",
-  "private": true,
   "type": "module",
   "main": "index.js",
   "exports": {

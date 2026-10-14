@@ -113,7 +113,7 @@ if (TARGET_INSTALL_ROOT === undefined) {
 const gateWords = { routeDirect: '甲', routePlan: '乙', routeDisagree: '丙', approvalApprove: '丁', approvalReplan: '戊', purposeRefine: '己', purposeRedo: '庚' }
 const initial = { anchoredBootstrap: true, creativeMode: false, webFetch: false, toolPresentationMode: 'native', runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: 'stable-model', plannerPromptSuffix: 'suffix', exploreBudget: 19, otherAgentModel: '', gateWords }
 function makeEditor(config = initial) {
-  const row = { entry: { options: { id: 'dsh-extra-plan-settings', name: '@local/dsh-extra-plan/settings', config: structuredClone(config) }, fiber: {} }, inherited: {}, override: {} }
+  const row = { entry: { options: { id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: structuredClone(config) }, fiber: {} }, inherited: {}, override: {} }
   const state = { rows: [row], edits: [] }
   return {
     state,
@@ -440,7 +440,7 @@ function makeClientHarness(snapshot, outcome = true, failDetail = false, savingI
     const formTree = detailFormRunner.render(formElement.type, formElement.props)
     return formViewFromTree(formTree, entry)
   }
-  function renderDetail(config = {}, subject = { kind: 'bundle', pkg: { name: '@local/dsh-extra-plan' } }) {
+  function renderDetail(config = {}, subject = { kind: 'bundle', pkg: { name: 'dsh-extra-plan' } }) {
     let view
     let rounds = 0
     do {
@@ -450,7 +450,7 @@ function makeClientHarness(snapshot, outcome = true, failDetail = false, savingI
     } while (true)
     return view
   }
-  function detailChrome(subject = { kind: 'bundle', pkg: { name: '@local/dsh-extra-plan' } }) {
+  function detailChrome(subject = { kind: 'bundle', pkg: { name: 'dsh-extra-plan' } }) {
     const entry = registrations.find((item) => item.options.name === 'plugins.detail.section')
     if (entry === undefined) return undefined
     const section = detailRunner.render(entry.component, { subject })
@@ -557,7 +557,7 @@ const surfaceView = surface.renderDetail()
 check('V05 Q05 初始仅注册 detail.section 一份且表单可交互', surfaceView !== undefined && surfaceView.button !== undefined && surface.registerCalls['plugins.detail.section'] === 1 && surface.registerCalls['plugins.bundle.config'] === undefined && surface.registrations.length === 1)
 check('V05 Q05 detail 表单自绘区块标题、描述与定位属性', (() => { const chrome = surface.detailChrome(); return chrome !== null && chrome !== undefined && chrome.settingsCard.type === 'section' && chrome.settingsCard.props['data-plugin-section'] === 'dsh-extra-plan-settings-global' && chrome.settingsCard.children[0].type === 'h4' && chrome.settingsCard.children[0].children[0] === 'cardTitle' && chrome.settingsCard.children[1].type === 'p' && chrome.settingsCard.children[1].children[0] === 'cardDescription' })())
 check('V05 Q05 其他包详情为空', surface.renderDetail({}, { kind: 'bundle', pkg: { name: '@other/package' } }) === null)
-const thirdPartyOff = surface.context.slots.register({ name: 'plugins.bundle.config', key: '@local/dsh-extra-plan', locale: 'third-party', inject: () => ({}) }, () => null)
+const thirdPartyOff = surface.context.slots.register({ name: 'plugins.bundle.config', key: 'dsh-extra-plan', locale: 'third-party', inject: () => ({}) }, () => null)
 const shadowed = surface.renderDetail()
 check('V05 Q05 本包 bundle.config 槽被第三方注册时 detail.section 让位', shadowed === null)
 thirdPartyOff()

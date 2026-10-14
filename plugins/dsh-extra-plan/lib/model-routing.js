@@ -229,7 +229,7 @@ async function probePlannerRoute(llm, provider, model, parentSignal, checkCatalo
         ...(preparedConfig.maxTokens === undefined ? {} : { maxTokens: preparedConfig.maxTokens }),
         ...(preparedConfig.stop === undefined ? {} : { stop: preparedConfig.stop }),
         // source 用生产者自有 kind（v4 行准入禁止旧包裹形状：kind 取旧兜底值 plugin + plugin 包名字段）；与插件其余注入消息同形。
-        messages: [createUserMessage({ source: { kind: 'plugin:@local/dsh-extra-plan' }, content: [{ type: 'text', text: 'OK' }] })],
+        messages: [createUserMessage({ source: { kind: 'plugin:dsh-extra-plan' }, content: [{ type: 'text', text: 'OK' }] })],
         signal,
       }
       let finishCount = 0

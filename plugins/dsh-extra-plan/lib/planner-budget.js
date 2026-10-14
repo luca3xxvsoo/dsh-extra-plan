@@ -1,4 +1,4 @@
-// @local/dsh-extra-plan planner budget 辅助函数。
+// dsh-extra-plan planner budget 辅助函数。
 // 纯 message、计数与预算策略函数；FREE_TOOLS 仍定义在 index.js。
 
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -103,7 +103,7 @@ export function budgetReminderText(remaining, budget, threshold) {
 // message requires a producer-owned source kind）——即“消息必须提供生产者自有的 source kind”，并使会话当场终止；本插件按 V3 迁移惯例
 // 自造 kind `plugin:<包名>`，无需任何 producer 注册（官方 dsh-tool-jobs 同法自造 tool-jobs）。
 export function budgetReminderMessage(reminder) {
-  return createUserMessage({ source: { kind: 'plugin:@local/dsh-extra-plan' }, content: [{ type: 'text', text: reminder }] })
+  return createUserMessage({ source: { kind: 'plugin:dsh-extra-plan' }, content: [{ type: 'text', text: reminder }] })
 }
 
 export function budgetReminderSent(events, marker) {

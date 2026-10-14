@@ -18,11 +18,11 @@ if (invokedAsMain) {
   try {
     const result = healQqbotCompatibility(dshHome)
     const names = result.profiles.length === 0 ? '无' : result.profiles.join(', ')
-    for (const item of result.failed || []) process.stderr.write('[dsh-qqbot-user-questions] 自愈失败摘要: ' + JSON.stringify(item) + '\n')
-    if (result.error) process.stderr.write('[dsh-qqbot-user-questions] 自愈异常摘要: ' + JSON.stringify({ error: result.error }) + '\n')
-    process.stdout.write('[dsh-qqbot-user-questions] 自愈完成（自愈 profile：' + names + '）\n')
+    for (const item of result.failed || []) process.stderr.write('[dsh-extra-plan-qqbot] 自愈失败摘要: ' + JSON.stringify(item) + '\n')
+    if (result.error) process.stderr.write('[dsh-extra-plan-qqbot] 自愈异常摘要: ' + JSON.stringify({ error: result.error }) + '\n')
+    process.stdout.write('[dsh-extra-plan-qqbot] 自愈完成（自愈 profile：' + names + '）\n')
   } catch (error) {
-    process.stderr.write('[dsh-qqbot-user-questions] 自愈失败（不阻断安装）：' + (error instanceof Error ? error.message : String(error)) + '\n')
+    process.stderr.write('[dsh-extra-plan-qqbot] 自愈失败（不阻断安装）：' + (error instanceof Error ? error.message : String(error)) + '\n')
     process.exit(0)
   }
 }

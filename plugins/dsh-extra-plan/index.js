@@ -1,4 +1,4 @@
-// @local/dsh-extra-plan 入口：route/purpose/clarify/approve 四级闸门、子角色、A/C/M 投影、
+// dsh-extra-plan 入口：route/purpose/clarify/approve 四级闸门、子角色、A/C/M 投影、
 // save 工件、探查预算、模型路由、按 session 隔离的 usage 与宿主事件契约。
 // 当前本地契约紧邻决策实现；架构与历史见 pe-test/docs/ai-概览.md、ai-机制设计.md、
 // ai-宿主耦合台账.md 及历史归档。
@@ -36,7 +36,7 @@ export const decisions = {
   childPolicyNeedsFloor,
   isBootstrapPhase,
   filterBootstrapContextDecision,
-  dedupeProjectedSkillCatalogDecision,
+  dedupeProjectedContextDecision,
   pwshCommandOf,
   pwshMutationMatches,
   catalogHasWriteTools,
@@ -135,7 +135,7 @@ import { causeChainOf } from './lib/runtime-static.js'
 import { createAgentRuntime, isLiveDelegation, childPolicyNeedsFloor } from './lib/agent-runtime.js'
 import { sessionEvents, isSubagentChild } from './lib/agent-session.js'
 import { createModelRouting, isExplicitRoute, isExplicitEffort, resolveAgentRouteSources, decidePlannerModelUse, PLANNER_PROBE_TIMEOUT_MS, PLANNER_BLOCKED_REASON, NON_PLANNER_BLOCKED_REASON, sortPlannerCandidates } from './lib/model-routing.js'
-import { CHANNEL_BROKEN_CODES, FREE_TOOLS, routeDenyReason, planDenyReason, approvalDenyReason, isBootstrapPhase, labelsOfCallData, askKindOf, askKindOfRelaxed, isExactGateSet, isPartialGateSet, categorizeGateAsk, gateAskDenyReason, validateGateAskStructure, matchRouteLabel, matchApprovalLabel, matchPurposeLabel, parseAskResultData, parseDispatchAskResult, deriveFlowState, filterBootstrapContextDecision, dedupeProjectedSkillCatalogDecision, catalogHasWriteTools, isReadOnlyChildByCatalog, schemasHasWriteTools, schemasHasTool, catalogIsCollapsed, subagentProbeGateReason, shellMutationReason, plannerGateReason, childReadonlyGateReason, jobOutputGateReason, recordJobOutputCall, pollGuardGateReason, recordPollGuardCall, probeDisposalWarning, mainGateReason, runCodeGroupDenyReason, aggregateRunCodeDenyReason, decomposeRunCode, runCodeCatchGateReason, collectRunCodeSites, askUserQuestionReturnGateReason, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, runCodeDispatchCapText } from './lib/gate-decisions.js'
+import { CHANNEL_BROKEN_CODES, FREE_TOOLS, routeDenyReason, planDenyReason, approvalDenyReason, isBootstrapPhase, labelsOfCallData, askKindOf, askKindOfRelaxed, isExactGateSet, isPartialGateSet, categorizeGateAsk, gateAskDenyReason, validateGateAskStructure, matchRouteLabel, matchApprovalLabel, matchPurposeLabel, parseAskResultData, parseDispatchAskResult, deriveFlowState, filterBootstrapContextDecision, dedupeProjectedContextDecision, catalogHasWriteTools, isReadOnlyChildByCatalog, schemasHasWriteTools, schemasHasTool, catalogIsCollapsed, subagentProbeGateReason, shellMutationReason, plannerGateReason, childReadonlyGateReason, jobOutputGateReason, recordJobOutputCall, pollGuardGateReason, recordPollGuardCall, probeDisposalWarning, mainGateReason, runCodeGroupDenyReason, aggregateRunCodeDenyReason, decomposeRunCode, runCodeCatchGateReason, collectRunCodeSites, askUserQuestionReturnGateReason, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, runCodeDispatchCapText } from './lib/gate-decisions.js'
 import { CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilteredToolsSdk, resolveToolsSdkRenderer, sdkSchemasForRendering, toolPresentationModeOf, toolSdkSchemasOf, projectSkillCatalogDecision, PTC_SECTION_NAME, READ_SECTION_NAME, SDK_SECTION_NAME, sectionOf, hasSection, hasNonEmptySection } from './lib/assembly-presentation.js'
 import { createSdkTextCache } from './lib/sdk-text-cache.js'
 import { createUsageLedger } from './lib/usage-ledger.js'
@@ -191,7 +191,7 @@ export const Config = z.object({
 // developer/message 自带 turn/step 且均为 ≥1 的整数，宿主 append 只补 seq/time、绝不补坐标，
 // 坐标必须由调用方给出（实机报错为 SessionFormatError: developer/message turn must be a
 // non-negative safe integer）；关系校验 companion 未挂载于活动 profile，故只需满足行准入。
-// source 同须用生产者自有 kind，v4 禁止旧包裹形状（kind 取旧兜底值 plugin + plugin 包名字段）；本插件统一 plugin:@local/dsh-extra-plan。
+// source 同须用生产者自有 kind，v4 禁止旧包裹形状（kind 取旧兜底值 plugin + plugin 包名字段）；本插件统一 plugin:dsh-extra-plan。
 const MALFORMED_RETRY_HINT = '你上一次的某个工具调用参数在传输中被截断，宿主侧无法把参数解析成合法 JSON，本次请求以 MALFORMED_RESPONSE 失败，该工具未执行、没有产生任何副作用。请在重试时压缩并重写该工具调用的参数：缩短长文本与证据列表、只保留核实结论必需的行号/数值/文案，确保参数是完整合法的 JSON，再原样重发同一调用。'
 
 // sessionId → Set('turn:step')：同一回合同一步只兜底 1 次（防重试死循环）。
@@ -226,7 +226,7 @@ function malformedRecovery(payload) {
     // { kind: 'retry' }，使自愈主路径不因注入条件不满足而失效。
     if (Number.isInteger(payload.turn) && payload.turn >= 1 && Number.isInteger(payload.step) && payload.step >= 1) {
       try {
-        const message = createDeveloperMessage({ content: [{ type: 'text', text: MALFORMED_RETRY_HINT }], source: { kind: 'plugin:@local/dsh-extra-plan' } })
+        const message = createDeveloperMessage({ content: [{ type: 'text', text: MALFORMED_RETRY_HINT }], source: { kind: 'plugin:dsh-extra-plan' } })
         agent.session.append('developer/message', { turn: payload.turn, step: payload.step, message }, { surfaceOp: 'append' })
       } catch (error) {
         console.warn(`extra-plan: malformed retry hint append failed: ${error instanceof Error ? error.message : String(error)}`)
@@ -496,7 +496,7 @@ export function apply(ctx, config) {
       const visibleMessages = session !== undefined && session !== null && typeof session.deriveMessages === 'function'
         ? session.deriveMessages()
         : undefined
-      projected = dedupeProjectedSkillCatalogDecision(projected, visibleMessages)
+      projected = dedupeProjectedContextDecision(projected, visibleMessages)
       return projected
     } catch (error) {
       warnPreStepFailure(error)

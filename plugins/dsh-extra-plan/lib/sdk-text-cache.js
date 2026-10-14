@@ -1,4 +1,4 @@
-// @local/dsh-extra-plan lib/sdk-text-cache.js
+// dsh-extra-plan lib/sdk-text-cache.js
 // agent-keyed、仅内存的 SDK 文本缓存；不持有 sessionId，也不缓存 PromptAssembly。
 
 const hasOwn = Object.prototype.hasOwnProperty

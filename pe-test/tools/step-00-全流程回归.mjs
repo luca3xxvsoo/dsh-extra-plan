@@ -586,9 +586,9 @@ for (const [name, got, expected] of BR) check(name, got, expected)
 // BR7（修正，不降级）：budgetReminderMessage 现经宿主 createUserMessage 构造，字段集 = {source, content, role:'user', id}。
 // 原条目只断言 {source, content}，在构造器注入 role/id 后必然失败；此处拆为 4 条断言，覆盖全部字段。
 // 当前 source 合同：source.kind 必须是生产者自有的非空字符串；宿主准入拒绝旧版 plugin 包装形状。
-// 本插件使用 plugin:@local/dsh-extra-plan。
+// 本插件使用 plugin:dsh-extra-plan。
 const msg = budgetReminderMessage(REMIND3)
-check('BR7a budgetReminderMessage source/content 深等值', JSON.stringify({ source: msg.source, content: msg.content }), JSON.stringify({ source: { kind: 'plugin:@local/dsh-extra-plan' }, content: [{ type: 'text', text: REMIND3 }] }))
+check('BR7a budgetReminderMessage source/content 深等值', JSON.stringify({ source: msg.source, content: msg.content }), JSON.stringify({ source: { kind: 'plugin:dsh-extra-plan' }, content: [{ type: 'text', text: REMIND3 }] }))
 check('BR7b role 恒为 user', msg.role, 'user')
 check('BR7c id 为非空字符串', typeof msg.id === 'string' && msg.id.length > 0, true)
 check('BR7d 两次调用 id 唯一', budgetReminderMessage(REMIND3).id !== msg.id, true)
@@ -596,7 +596,7 @@ check('BR7d 两次调用 id 唯一', budgetReminderMessage(REMIND3).id !== msg.i
 // ── MR 系列:malformedRecovery direct-call cases ──
 // 全组用桩对象：桩 session.append 只记账、桩 agent.session.header.id 固定为 stub- 前缀且各例互不相同，
 // 既不写入任何真实会话，也不与共享重试账本（malformedRetried，按 sessionId 分桶）互相串味。
-const MR_SOURCE = 'plugin:@local/dsh-extra-plan'
+const MR_SOURCE = 'plugin:dsh-extra-plan'
 function mrStub(tag, patch) {
   const appends = []
   const session = {
@@ -615,7 +615,7 @@ const mrLegalCall = mrLegal.appends[0]
 check('MR1a 合法坐标 → 仍返回 retry', mrLegalResult, { kind: 'retry' })
 check('MR1b 注入恰一次 developer/message', Array.isArray(mrLegal.appends) && mrLegal.appends.length === 1 && mrLegalCall.type === 'developer/message', true)
 check('MR1c payload 坐标源自 payload.turn/step', mrLegalCall.payload.turn === 3 && mrLegalCall.payload.step === 2, true)
-check('MR1d 注入 message.source 为 plugin:@local/dsh-extra-plan', JSON.stringify(mrLegalCall.payload.message.source), JSON.stringify({ kind: MR_SOURCE }))
+check('MR1d 注入 message.source 为 plugin:dsh-extra-plan', JSON.stringify(mrLegalCall.payload.message.source), JSON.stringify({ kind: MR_SOURCE }))
 check('MR1e 注入 message 为 developer 且 id 非空', mrLegalCall.payload.message.role === 'developer' && typeof mrLegalCall.payload.message.id === 'string' && mrLegalCall.payload.message.id.length > 0, true)
 check('MR1f 注入带 surfaceOp:append', mrLegalCall.options.surfaceOp, 'append')
 // MR2：坐标缺失 → 不注入，但自愈主路径仍返回 retry
@@ -972,7 +972,7 @@ function plannerRequestShape(call) {
     && forbidden.every((key) => !Object.prototype.hasOwnProperty.call(request, key))
     && Array.isArray(request.messages) && request.messages.length === 1
     && message !== undefined && message.role === 'user'
-    && message.source !== undefined && message.source.kind === 'plugin:@local/dsh-extra-plan'
+    && message.source !== undefined && message.source.kind === 'plugin:dsh-extra-plan'
     && Array.isArray(message.content) && message.content.length === 1
     && message.content[0].type === 'text' && message.content[0].text === 'OK'
 }

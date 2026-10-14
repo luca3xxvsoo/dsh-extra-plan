@@ -112,7 +112,7 @@ plugins:
       extraPlan: true
     config:
       - id: extra-plan
-        name: '@local/dsh-extra-plan'
+        name: 'dsh-extra-plan'
         config:
           anchoredBootstrap: true
           creativeMode: false
@@ -344,7 +344,7 @@ plugins:
       # save_plan 不可见无需列）；模型不在薄层注入，worker 由非 planner resolver 选择 otherAgentModel
       # 或回退顶层主会话（请求显式指定 provider/model 时优先）。
       - id: executor-spawn
-        name: '@local/dsh-extra-plan/executor-spawn'
+        name: 'dsh-extra-plan/executor-spawn'
         config:
           providerName: extra-executor-spawn
           delegate: spawn

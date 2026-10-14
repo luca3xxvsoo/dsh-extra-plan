@@ -1,5 +1,5 @@
 {
-  "name": "@local/dsh-extra-plan",
+  "name": "dsh-extra-plan",
   "version": "0.3.0",
   "description": "实现权限控制+子代理角色分配",
   "type": "module",

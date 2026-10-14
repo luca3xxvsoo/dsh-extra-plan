@@ -6,7 +6,7 @@ import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSy
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 
-const LOG_PREFIX = '[dsh-qqbot-user-questions]'
+const LOG_PREFIX = '[dsh-extra-plan-qqbot]'
 
 // ── package-local js-yaml（惰性加载，导入零副作用）──
 let yamlModule = null
@@ -305,7 +305,7 @@ export function healPatchRows(profileDir) {
 /**
  * 扫描 $DSH_HOME/profiles/*，锚定「安装了本插件的 qqbot profile」：
  * ① package.json 可读且 dsh.profile.bundles 含 '@tencent-connect/dsh-qqbot'；
- * ② node_modules/@local/dsh-qqbot-user-questions 目录存在（本插件已装）。
+ * ② node_modules/dsh-extra-plan-qqbot 目录存在（本插件已装）。
  * 任一不满足 → 跳过；只处理标准位置，E 盘副本/未装插件的 profile 天然排除。
  */
 export function findOwnQqbotProfiles(dshHome) {
@@ -323,7 +323,7 @@ export function findOwnQqbotProfiles(dshHome) {
       const bundles = pkg && pkg.dsh && pkg.dsh.profile && Array.isArray(pkg.dsh.profile.bundles)
         ? pkg.dsh.profile.bundles : []
       if (!bundles.includes('@tencent-connect/dsh-qqbot')) continue
-      if (!existsSync(join(profileDir, 'node_modules', '@local', 'dsh-qqbot-user-questions'))) continue
+      if (!existsSync(join(profileDir, 'node_modules', 'dsh-extra-plan-qqbot'))) continue
       out.push(name)
     } catch { /* 单个 profile 读取异常不阻断 */ }
   }
@@ -333,13 +333,13 @@ export function findOwnQqbotProfiles(dshHome) {
 /**
  * 建链与旧块迁移职责分离。web 缺失 → warn 跳过；已正确链接 → 不动；
  * 非目标链接/实体目录 → 保留并提示 pnpm 迁移；
- * 仅 ENOENT → mkdirSync(@local) + symlinkSync(webPkg, target, win32 ? junction : dir)；
+ * 仅 ENOENT → mkdirSync(node_modules) + symlinkSync(webPkg, target, win32 ? junction : dir)；
  * 全程 try/catch 只记录日志不阻断；目标用绝对路径 webPkg（Windows junction 支持跨盘符）。
  */
 export function ensureDshExtraPlanLink(dshHome, profileName) {
   try {
-    const webPkg = join(dshHome, 'profiles', 'web', 'node_modules', '@local', 'dsh-extra-plan')
-    const targetPkg = join(dshHome, 'profiles', profileName, 'node_modules', '@local', 'dsh-extra-plan')
+    const webPkg = join(dshHome, 'profiles', 'web', 'node_modules', 'dsh-extra-plan')
+    const targetPkg = join(dshHome, 'profiles', profileName, 'node_modules', 'dsh-extra-plan')
     if (!existsSync(webPkg)) {
       console.warn(LOG_PREFIX + ' 未找到 web 的 dsh-extra-plan，跳过映射')
       return { status: 'skipped', reason: 'web-missing' }
@@ -358,7 +358,7 @@ export function ensureDshExtraPlanLink(dshHome, profileName) {
     } catch (err) {
       if (err && err.code !== 'ENOENT') throw err
     }
-    mkdirSync(join(dshHome, 'profiles', profileName, 'node_modules', '@local'), { recursive: true })
+    mkdirSync(join(dshHome, 'profiles', profileName, 'node_modules'), { recursive: true })
     symlinkSync(webPkg, targetPkg, process.platform === 'win32' ? 'junction' : 'dir')
     console.log(LOG_PREFIX + ' 已建立映射: ' + profileName + ' → web')
     return { status: 'linked' }
