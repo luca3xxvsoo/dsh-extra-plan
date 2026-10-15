@@ -637,14 +637,73 @@ function definitionFromRows(legacyPlugins, settingsValues, rawPatch) {
   })
 }
 
+function structuralValue(value, seen = new Set()) {
+  if (value === null || typeof value !== 'object') return typeof value === 'function' ? '[function]' : value
+  if (seen.has(value)) return '[cycle]'
+  seen.add(value)
+  if (Array.isArray(value)) return value.map((item) => structuralValue(item, seen))
+  const out = {}
+  for (const key of Object.keys(value).sort()) {
+    if (key === 'fiber' || key === 'entry') continue
+    out[key] = structuralValue(value[key], seen)
+  }
+  return out
+}
+
+function rowStructureRecord(row) {
+  if (row === null || typeof row !== 'object' || Array.isArray(row)) return undefined
+  const entry = row.entry !== null && typeof row.entry === 'object' && row.entry.options !== null && typeof row.entry.options === 'object'
+    ? row.entry.options
+    : undefined
+  const id = entry !== undefined && typeof entry.id === 'string'
+    ? entry.id
+    : typeof row.id === 'string' ? row.id : row.override !== null && typeof row.override === 'object' && typeof row.override.id === 'string' ? row.override.id : ''
+  if (id === SETTINGS_ROW_ID) return undefined
+  const config = entry !== undefined && Object.prototype.hasOwnProperty.call(entry, 'config')
+    ? entry.config
+    : Object.prototype.hasOwnProperty.call(row, 'config') ? row.config : row.override !== null && typeof row.override === 'object' ? row.override.config : undefined
+  return {
+    id,
+    name: entry !== undefined && typeof entry.name === 'string' ? entry.name : typeof row.name === 'string' ? row.name : '',
+    disabled: row.disabled === true || (entry !== undefined && entry.disabled === true),
+    config: structuralValue(config),
+    override: structuralValue(row.override),
+  }
+}
+
+/** 非 settings 结构指纹：settings 行及其十项/gateWords 永不参与 adapter handoff 判定。 */
+export function structuralFingerprint(rows) {
+  const records = []
+  const visit = (items) => {
+    if (!Array.isArray(items)) return
+    for (const row of items) {
+      if (row === null || typeof row !== 'object' || Array.isArray(row)) continue
+      const record = rowStructureRecord(row)
+      if (record === undefined) continue
+      records.push(record)
+      const entry = row.entry !== null && typeof row.entry === 'object' && row.entry.options !== null && typeof row.entry.options === 'object'
+        ? row.entry.options
+        : undefined
+      const nested = entry !== undefined && Array.isArray(entry.config) ? entry.config : Array.isArray(row.config) ? row.config : undefined
+      if (nested !== undefined) visit(nested)
+    }
+  }
+  visit(rows)
+  return JSON.stringify({ owner: activeLegacyRow(rows) ? 'legacy' : 'official', rows: records })
+}
+
 export function mountPresetSync(ctx, options = {}) {
   const child = ctx
   const onSettledSettings = typeof options.onSettledSettings === 'function' ? options.onSettledSettings : undefined
   const onSettledError = typeof options.onSettledError === 'function' ? options.onSettledError : undefined
+  const onAdapterError = typeof options.onAdapterError === 'function' ? options.onAdapterError : undefined
   let active = true
   let disposed = false
   let adapterFiber
-  let queue = Promise.resolve()
+  let adapterOwner = 'none'
+  let settledQueue = Promise.resolve()
+  let structuralQueue = Promise.resolve()
+  let lastStructureKey
   const disposeFiber = async (fiber) => {
     if (fiber !== undefined && fiber !== null && typeof fiber.dispose === 'function') return fiber.dispose()
     return undefined
@@ -657,97 +716,170 @@ export function mountPresetSync(ctx, options = {}) {
       console.warn('[dsh-extra-plan] settled settings error reporter failed：' + (reportError instanceof Error ? reportError.message : String(reportError)))
     }
   }
-  const notifySettled = async (latestRows, latestRawPatch, latestLegacyState) => {
-    if (!active || onSettledSettings === undefined) return
-    let resolved
+  const reportAdapterError = (error, phase) => {
+    const diagnostic = { phase, message: error instanceof Error ? error.message : String(error) }
     try {
-      resolved = resolveUnifiedConfig({
-        settingsValues: settingsValuesFromRows(latestRows),
-        readPatch: () => latestRawPatch,
-        legacyState: latestLegacyState,
-      })
-    } catch (error) {
-      await reportSettledError(error, undefined)
-      return
+      if (onAdapterError !== undefined) onAdapterError(diagnostic)
+      else console.warn('[dsh-extra-plan] adapter diagnostic phase=' + phase + '：' + diagnostic.message)
+    } catch (reportError) {
+      console.warn('[dsh-extra-plan] adapter diagnostic reporter failed：' + (reportError instanceof Error ? reportError.message : String(reportError)))
     }
-    const snapshot = {
+  }
+  const readState = () => {
+    const editor = child.configEditor
+    const rows = typeof editor.configuration === 'function' ? editor.configuration() : []
+    const rawPatch = readRawPatch(editor)
+    const legacyState = readLegacyState(rawPatch)
+    return {
+      editor,
+      rows,
+      rawPatch,
+      legacyState,
+      structureKey: structuralFingerprint(rows),
+      owner: activeLegacyRow(rows) ? 'legacy' : 'official',
+    }
+  }
+  const snapshotOf = (state) => {
+    const resolved = resolveUnifiedConfig({
+      settingsValues: settingsValuesFromRows(state.rows),
+      readPatch: () => state.rawPatch,
+      legacyState: state.legacyState,
+    })
+    return {
       values: { ...resolved.values },
       gateWords: structuredClone(resolved.gateWords),
     }
-    try {
-      await onSettledSettings(snapshot)
-    } catch (error) {
-      await reportSettledError(error, snapshot)
-    }
   }
-  const run = async () => {
-    if (!active) return
+  const enqueueSettled = (snapshot) => {
+    const work = settledQueue.then(async () => {
+      if (!active) return
+      try {
+        if (onSettledSettings !== undefined) await onSettledSettings(structuredClone(snapshot))
+      } catch (error) {
+        await reportSettledError(error, snapshot)
+      }
+    })
+    settledQueue = work.catch(() => undefined)
+    return work
+  }
+  const settledSettingsUpdate = (state) => {
+    let snapshot
     try {
-      const editor = ctx.configEditor
-      const rows = typeof editor.configuration === 'function' ? editor.configuration() : []
-      const rawPatch = readRawPatch(editor)
-      const legacyState = readLegacyState(rawPatch)
-      const legacyPlugins = legacyState.legacyPlugins
-      const result = await syncPreset({
-        declaredPlugins: legacyPlugins,
-        settingsValues: settingsValuesFromRows(rows),
-        readPatch: () => rawPatch,
-        legacyState,
-        apply: async (planned) => applyPlan(editor, rows, planned, () => active),
+      snapshot = snapshotOf(state)
+    } catch (error) {
+      return reportSettledError(error, undefined)
+    }
+    return enqueueSettled(snapshot)
+  }
+  const enqueueStructural = (task) => {
+    const work = structuralQueue.then(task, task)
+    const safe = work.catch((error) => {
+      reportAdapterError(error, 'structuralHandoff')
+      console.warn('[dsh-extra-plan] structural handoff failed（不阻断 settled/profile sync）：' + (error instanceof Error ? error.message : String(error)))
+    })
+    structuralQueue = safe
+    return safe
+  }
+  const mountOfficialAdapter = async (definition) => {
+    if (OfficialAgentPreset === undefined) throw new Error('@deepseek-ai/dsh-agent-preset 官方 adapter 不可用')
+    if (!active) return
+    adapterOwner = 'official'
+    const mounted = await child.plugin(OfficialAgentPreset, definition)
+    if (!active) {
+      await disposeFiber(mounted)
+      return
+    }
+    adapterFiber = mounted
+  }
+  const disposeCurrentAdapter = async () => {
+    const previous = adapterFiber
+    adapterFiber = undefined
+    if (previous !== undefined) await disposeFiber(previous)
+  }
+  const structuralHandoff = async (state, settledPromise) => {
+    await settledPromise
+    if (!active) return
+    const current = readState()
+    const editor = current.editor
+    const rows = current.rows
+    const result = await syncPreset({
+      declaredPlugins: current.legacyState.legacyPlugins,
+      settingsValues: settingsValuesFromRows(rows),
+      readPatch: () => current.rawPatch,
+      legacyState: current.legacyState,
+      apply: async (planned) => applyPlan(editor, rows, planned, () => active),
+    })
+    if (!active) return
+    const latest = readState()
+    const definition = result.plan !== undefined && result.plan.definition !== undefined
+      ? result.plan.definition
+      : definitionFromRows(latest.legacyState.legacyPlugins, settingsValuesFromRows(latest.rows), latest.rawPatch)
+    if (latest.owner === 'legacy') {
+      await disposeCurrentAdapter()
+      adapterOwner = 'legacy'
+      return
+    }
+    if (adapterOwner === 'official') await disposeCurrentAdapter()
+    await mountOfficialAdapter(definition)
+  }
+  const initialMount = async () => {
+    if (!active) return
+    const initial = readState()
+    lastStructureKey = initial.structureKey
+    let result
+    try {
+      result = await syncPreset({
+        declaredPlugins: initial.legacyState.legacyPlugins,
+        settingsValues: settingsValuesFromRows(initial.rows),
+        readPatch: () => initial.rawPatch,
+        legacyState: initial.legacyState,
+        apply: async (planned) => applyPlan(initial.editor, initial.rows, planned, () => active),
       })
       if (!active) return
-      const latestRows = typeof editor.configuration === 'function' ? editor.configuration() : rows
-      const latestRawPatch = readRawPatch(editor)
-      const latestLegacyState = readLegacyState(latestRawPatch)
+      const latest = readState()
+      lastStructureKey = latest.structureKey
+      const settledPromise = settledSettingsUpdate(latest)
+      await settledPromise
+      if (!active) return
       const definition = result.plan !== undefined && result.plan.definition !== undefined
         ? result.plan.definition
-        : definitionFromRows(latestLegacyState.legacyPlugins, settingsValuesFromRows(latestRows), latestRawPatch)
-      // 历史 preset-extra-plan 声明仍活动时由旧 owner 接管；先释放自有 adapter，
-      // 不停用、编辑或删除旧声明行。
-      if (activeLegacyRow(latestRows)) {
-        if (adapterFiber !== undefined) {
-          const previous = adapterFiber
-          adapterFiber = undefined
-          await disposeFiber(previous)
-        }
-        await notifySettled(latestRows, latestRawPatch, latestLegacyState)
+        : definitionFromRows(latest.legacyState.legacyPlugins, settingsValuesFromRows(latest.rows), latest.rawPatch)
+      if (latest.owner === 'legacy') {
+        adapterOwner = 'legacy'
         return
       }
-      if (OfficialAgentPreset === undefined) throw new Error('@deepseek-ai/dsh-agent-preset 官方 adapter 不可用')
-      if (adapterFiber !== undefined) {
-        const previous = adapterFiber
-        adapterFiber = undefined
-        await disposeFiber(previous)
-      }
-      if (!active) return
-      const mounted = await child.plugin(OfficialAgentPreset, definition)
-      if (!active) {
-        await disposeFiber(mounted)
-        return
-      }
-      adapterFiber = mounted
-      await notifySettled(latestRows, latestRawPatch, latestLegacyState)
+      await mountOfficialAdapter(definition)
     } catch (error) {
-      console.warn('[dsh-extra-plan] 预设 definition/adapter 启动核对失败（不阻断启动）：' + (error instanceof Error ? error.message : String(error)))
+      reportAdapterError(error, 'initialMount')
+      console.warn('[dsh-extra-plan] initial mount/adapter failed（不阻断 settled/profile sync）：' + (error instanceof Error ? error.message : String(error)))
     }
   }
-  const schedule = () => {
-    if (!active) return queue
-    queue = queue.then(run, run)
-    return queue
-  }
-  const offUpdate = typeof ctx.on === 'function' ? ctx.on('internal/update', () => { void schedule() }) : undefined
+  const settledOnlyUpdate = (state) => settledSettingsUpdate(state)
+  const offUpdate = typeof child.on === 'function' ? child.on('internal/update', () => {
+    if (!active) return
+    let state
+    try {
+      state = readState()
+    } catch (error) {
+      void reportSettledError(error, undefined)
+      return
+    }
+    const settledPromise = settledOnlyUpdate(state)
+    const structural = lastStructureKey === undefined || state.structureKey !== lastStructureKey
+    lastStructureKey = state.structureKey
+    if (!structural) return
+    void enqueueStructural(() => structuralHandoff(state, settledPromise))
+  }) : undefined
   const dispose = async () => {
     if (disposed) return undefined
     disposed = true
     active = false
     if (typeof offUpdate === 'function') offUpdate()
-    await queue
-    const fiber = adapterFiber
-    adapterFiber = undefined
-    return disposeFiber(fiber)
+    await settledQueue
+    await structuralQueue
+    await disposeCurrentAdapter()
   }
-  void schedule()
+  void enqueueStructural(initialMount)
   return dispose
 }
 

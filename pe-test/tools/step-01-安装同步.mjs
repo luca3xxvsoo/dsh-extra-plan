@@ -1,292 +1,362 @@
-// 安装/启动同步回归：单一全局 owner、真实 deferred 生命周期与官方 Loader carrier 夹具。
-// 所有非 Loader 夹具均在内存中；真实 Loader 缺依赖只记录 SKIP，不以 mock 冒充通过。
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+// 安装/启动同步专项：初始官方 adapter、settled-only 保存与结构 handoff 分离。
+// 不触碰真实 DSH_HOME/profile；真实 Loader/生产消息链保留 HUMAN 边界。
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire, registerHooks } from 'node:module'
 import { join } from 'node:path'
-import { homedir, tmpdir } from 'node:os'
-import { fileURLToPath } from 'node:url'
+import { tmpdir } from 'node:os'
 import { isDeepStrictEqual } from 'node:util'
 import { parsePresetYaml } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
 import {
   SETTINGS_ROW_ID,
-  PRESET_ROW_ID,
   activeLegacyRow,
   assetDefinition,
   definitionWithProjection,
   mountPresetSync,
-  readLegacyState,
-  syncPreset,
+  structuralFingerprint,
 } from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
 import { GATE_WORD_FIELDS } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
-import { buildAsyncHookSource } from '../_shared/host-deps.mjs'
+import { createQqbotSettingsSynchronizer } from '../../plugins/dsh-extra-plan/lib/qqbot-settings-sync.js'
 
-const ROOT = fileURLToPath(new URL('../..', import.meta.url))
-const OFFICIAL_ROOT = process.env.DSH_INSTALL_ROOT || join(process.env.APPDATA || join(homedir(), 'AppData', 'Roaming'), 'npm', 'node_modules', '@deepseek-ai', 'dsh')
+const ROOT = new URL('../..', import.meta.url)
+const OFFICIAL_ROOT = 'C:\\Users\\Administrator\\AppData\\Roaming\\npm\\node_modules\\@deepseek-ai\\dsh'
 try {
   const anchor = createRequire(join(OFFICIAL_ROOT, 'package.json'))
-  const schemaUrl = new URL('file:///' + anchor.resolve('@deepseek-ai/schemastery').replaceAll('\\\\', '/')).href
-  if (typeof registerHooks === 'function') registerHooks({ resolve(specifier, context, next) { return specifier === '@deepseek-ai/schemastery' ? { url: schemaUrl, shortCircuit: true } : next(specifier, context) } })
-} catch { /* 静态/生命周期夹具仍可执行 */ }
-
-const patchText = readFileSync(join(ROOT, 'plugins/dsh-extra-plan/cordis.patch.yml'), 'utf8')
+  const yamlUrl = new URL('file:///' + anchor.resolve('js-yaml').replaceAll('\\\\', '/')).href
+  if (typeof registerHooks === 'function') registerHooks({ resolve(specifier, context, next) {
+    if (specifier === 'js-yaml') return { url: yamlUrl, shortCircuit: true }
+    return next(specifier, context)
+  } })
+} catch { /* 静态合同仍可执行；宿主缺依赖时运行时项会明确失败 */ }
+const patchText = readFileSync(new URL('plugins/dsh-extra-plan/cordis.patch.yml', ROOT), 'utf8')
 const definition = assetDefinition()
 const gate = Object.fromEntries(GATE_WORD_FIELDS.map((item, index) => [item.field, '词' + index]))
-const completeSettings = { anchoredBootstrap: true, creativeMode: false, webFetch: true, toolPresentationMode: 'ptc', runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: 'm', plannerPromptSuffix: 's', exploreBudget: 18, otherAgentModel: '', gateWords: gate }
+const completeSettings = {
+  anchoredBootstrap: true,
+  creativeMode: false,
+  webFetch: true,
+  toolPresentationMode: 'ptc',
+  runcodeCatchGate: false,
+  crossProviderPlannerModel: false,
+  plannerModel: 'model-initial',
+  plannerPromptSuffix: 'suffix-initial',
+  exploreBudget: 18,
+  otherAgentModel: '',
+  gateWords: gate,
+}
 let pass = 0
 let fail = 0
-function check(label, condition) { if (condition) { pass += 1; console.log('PASS  ' + label) } else { fail += 1; console.log('FAIL  ' + label) } }
-const installSource = readFileSync(fileURLToPath(import.meta.url), 'utf8')
-const officialRootLine = installSource.split('\n').find((line) => line.startsWith('const OFFICIAL_ROOT')) || ''
-check('T08 fallback 路径由 DSH_INSTALL_ROOT→APPDATA→homedir/path.join 决议且无换行/用户名硬编码', !/\r|\n/.test(OFFICIAL_ROOT) && !officialRootLine.includes('Administrator') && officialRootLine.includes("process.env.APPDATA || join(homedir(), 'AppData', 'Roaming')"))
-const hookFixture = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-host-deps-hook-'))
-try {
-  const packageDir = join(hookFixture, '@deepseek-ai', 'dsh-tool-subagent-control')
-  mkdirSync(join(packageDir, 'lib', 'types'), { recursive: true })
-  writeFileSync(join(packageDir, 'package.json'), JSON.stringify({
-    name: '@deepseek-ai/dsh-tool-subagent-control',
-    type: 'module',
-    exports: { '.': './lib/index.js', './list-agents': './lib/types/list-agents.js' },
-  }), 'utf8')
-  writeFileSync(join(packageDir, 'lib', 'index.js'), 'export const root = true\n', 'utf8')
-  writeFileSync(join(packageDir, 'lib', 'types', 'list-agents.js'), 'export const list = true\n', 'utf8')
-  const hookSource = buildAsyncHookSource({ target: '@anchor', anchor: 'file:///anchor.js', yaml: null, roots: [hookFixture] })
-  check('T08 async hookSource 删除未使用 MAP 且可被 data URL ESM 解析', !hookSource.includes('MAP') && await import('data:text/javascript;base64,' + Buffer.from(hookSource, 'utf8').toString('base64')))
-  const hookModule = await import('data:text/javascript;base64,' + Buffer.from(hookSource, 'utf8').toString('base64'))
-  const nextResolve = async (specifier) => ({ url: 'next:' + specifier })
-  const rootResolved = await hookModule.resolve('@deepseek-ai/dsh-tool-subagent-control', {}, nextResolve)
-  const listResolved = await hookModule.resolve('@deepseek-ai/dsh-tool-subagent-control/list-agents', {}, nextResolve)
-  const unknownResolved = await hookModule.resolve('@deepseek-ai/dsh-tool-subagent-control/unknown', {}, nextResolve)
-  check('T08 async hookSource exports 子路径根入口与 /list-agents 指向不同文件、未知子路径透传', rootResolved.url.endsWith('/lib/index.js') && listResolved.url.endsWith('/lib/types/list-agents.js') && rootResolved.url !== listResolved.url && unknownResolved.url === 'next:@deepseek-ai/dsh-tool-subagent-control/unknown')
-  const rootModule = await import(rootResolved.url)
-  const listModule = await import(listResolved.url)
-  check('T08 fixture 根入口与 /list-agents 实际 import 导出布尔值', rootModule.root === true && listModule.list === true)
-  const fallbackDir = join(hookFixture, '@deepseek-ai', 'dsh-tool-subagent-fallback')
-  mkdirSync(fallbackDir, { recursive: true })
-  writeFileSync(join(fallbackDir, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-tool-subagent-fallback', type: 'module' }), 'utf8')
-  writeFileSync(join(fallbackDir, 'index.js'), 'export const fallbackRoot = true\n', 'utf8')
-  const fallbackSource = buildAsyncHookSource({ target: '@anchor-fallback', anchor: 'file:///anchor-fallback.js', yaml: null, roots: [hookFixture] })
-  const fallbackModule = await import('data:text/javascript;base64,' + Buffer.from(fallbackSource, 'utf8').toString('base64'))
-  const fallbackResolved = await fallbackModule.resolve('@deepseek-ai/dsh-tool-subagent-fallback', {}, nextResolve)
-  const fallbackUnknown = await fallbackModule.resolve('@deepseek-ai/dsh-tool-subagent-fallback/unknown', {}, nextResolve)
-  const fallbackImported = await import(fallbackResolved.url)
-  check('T08 无 exports/main 根包回退 index.js 且真实 import 成功，显式未知子路径透传', fallbackResolved.url.endsWith('/index.js') && fallbackImported.fallbackRoot === true && fallbackUnknown.url === 'next:@deepseek-ai/dsh-tool-subagent-fallback/unknown')
-} finally {
-  rmSync(hookFixture, { recursive: true, force: true })
+function check(label, condition) {
+  if (condition) { pass += 1; console.log('PASS  ' + label) }
+  else { fail += 1; console.log('FAIL  ' + label) }
 }
-
-function deferred() { let resolve; const promise = new Promise((done) => { resolve = done }); return { promise, resolve } }
-async function flush() { await Promise.resolve(); await new Promise((resolve) => setImmediate(resolve)) }
-function findRow(rows, id) { for (const item of rows || []) { if (item !== null && typeof item === 'object' && item.id === id) return item; if (item !== null && typeof item === 'object' && Array.isArray(item.config)) { const nested = findRow(item.config, id); if (nested !== undefined) return nested } } return undefined }
-function makeEditor(config, editGate, documentPath = '') {
-  const row = { entry: { options: { id: SETTINGS_ROW_ID, config: structuredClone(config) }, fiber: {} }, inherited: {}, override: {} }
+function deferred() {
+  let resolve
+  const promise = new Promise((done) => { resolve = done })
+  return { promise, resolve }
+}
+async function flush(times = 4) {
+  for (let i = 0; i < times; i += 1) {
+    await Promise.resolve()
+    await new Promise((resolve) => setImmediate(resolve))
+  }
+}
+function makeEditor(config) {
+  const row = { entry: { options: { id: SETTINGS_ROW_ID, config: structuredClone(config) } }, inherited: {}, override: {} }
   const state = { rows: [row], edits: 0 }
   return {
     state,
     configuration: () => state.rows,
-    documentPath,
-    edit: async (entry, change) => { state.edits += 1; if (editGate !== undefined) await editGate.promise; const current = state.rows.find((item) => item.entry === entry); if (current === undefined) throw new Error('entry disappeared'); current.entry.options.config = change(structuredClone(current.entry.options.config), current.inherited) },
+    documentPath: '',
+    edit: async (entry, change) => {
+      const current = state.rows.find((item) => item.entry === entry)
+      if (current === undefined) throw new Error('entry disappeared')
+      current.entry.options.config = change(structuredClone(current.entry.options.config), current.inherited)
+      state.edits += 1
+    },
   }
 }
-function makeContext(editor, pluginImpl) {
+function makeContext(editor, pluginImpl, trace = [], adapterFailureEvent = 'adapter-rejected') {
   let updateListener
   let updateOff = 0
   let pluginCalls = 0
   let pluginDisposals = 0
+  const received = []
   const ctx = {
     configEditor: editor,
-    on: (event, callback) => { if (event === 'internal/update') updateListener = callback; return () => { updateOff += 1 } },
-    plugin: async () => { pluginCalls += 1; const fiber = await pluginImpl(); return { dispose: async () => { pluginDisposals += 1; if (fiber !== undefined && typeof fiber.dispose === 'function') return fiber.dispose() } } },
+    on: (event, callback) => {
+      if (event !== 'internal/update') return undefined
+      updateListener = callback
+      return () => { updateOff += 1; updateListener = undefined }
+    },
+    plugin: async (preset, receivedDefinition) => {
+      pluginCalls += 1
+      received.push(receivedDefinition)
+      trace.push('adapter-start')
+      try {
+        const fiber = await pluginImpl(receivedDefinition)
+        trace.push('adapter-resolved')
+        return { dispose: async () => { pluginDisposals += 1; trace.push('adapter-dispose'); if (fiber !== undefined && typeof fiber.dispose === 'function') await fiber.dispose() } }
+      } catch (error) {
+        trace.push(adapterFailureEvent)
+        throw error
+      }
+    },
   }
-  return { ctx, get updateListener() { return updateListener }, get updateOff() { return updateOff }, get pluginCalls() { return pluginCalls }, get pluginDisposals() { return pluginDisposals } }
+  return {
+    ctx,
+    received,
+    get updateListener() { return updateListener },
+    get updateOff() { return updateOff },
+    get pluginCalls() { return pluginCalls },
+    get pluginDisposals() { return pluginDisposals },
+  }
 }
-
-const patch = parsePresetYaml(patchText)
-check('V07 patch 公开 insert 恰一行、settings name 为新包且无旧同步公开 row', Array.isArray(patch) && patch.length === 1 && patch[0].insert.length === 1 && patch[0].insert[0].id === SETTINGS_ROW_ID && patch[0].insert[0].name === 'dsh-extra-plan/settings' && patch[0].insert.filter((row) => row.id === PRESET_ROW_ID).length === 0 && !patchText.includes('@local/dsh-extra-plan/settings'))
-check('V07 生成 definition 顶层 17 行、raw !!js 保真且两处运行时 specifier 已映射', definition.plugins.length === 17 && JSON.stringify(definition).includes('__jsExpr') && JSON.stringify(definition).includes('dsh-extra-plan') && JSON.stringify(definition).includes('dsh-extra-plan/executor-spawn') && !JSON.stringify(definition).includes('@local/dsh-extra-plan'))
-const oldSyncPatch = '- id: extra-plan-preset-sync\n  config:\n    webFetch: true\n    toolPresentationMode: ptc\n    gateWords:\n' + Object.entries(gate).map(([key, value]) => '      ' + key + ': ' + value).join('\n') + '\n'
-const oldState = readLegacyState(oldSyncPatch)
-check('V04 旧同步公开行只读兼容并提取严格 gateWords', oldState.projection.webFetch === true && oldState.projection.toolPresentationMode === 'ptc' && oldState.gateWords !== undefined)
-const legacyPluginsFixture = structuredClone(definition.plugins)
-findRow(legacyPluginsFixture, 'tool-web').config.fetch = true
-findRow(legacyPluginsFixture, 'tool-presentation').config.mode = 'ptc'
-findRow(legacyPluginsFixture, 'extra-plan').config.plannerModel = 'legacy-body-model'
-const oldBodyPatch = JSON.stringify([{ id: 'preset-extra-plan', config: { plugins: legacyPluginsFixture } }])
-const oldBodyState = readLegacyState(oldBodyPatch)
-const oldBodySync = await syncPreset({ settingsValues: {}, readPatch: () => oldBodyPatch })
-check('V04 旧 preset-extra-plan raw patch 合法 webFetch/toolPresentationMode/plannerModel 迁入 settings', oldBodyState.projection.webFetch === true && oldBodyState.projection.toolPresentationMode === 'ptc' && oldBodyState.authority.values.plannerModel === 'legacy-body-model' && oldBodySync.plan.settings.values.plannerModel === 'legacy-body-model')
-const idle = await syncPreset({ settingsValues: completeSettings, readPatch: () => '' })
-check('V04 完整全局值启动同步为 idle，不生成公开 row 计划', idle.action === 'idle')
-let plan = null
-const migrated = await syncPreset({ settingsValues: { plannerModel: 'm' }, readPatch: () => oldSyncPatch, apply: async (value) => { plan = value } })
-check('V04 缺项迁移只计划 settings 全局行 edit', migrated.action === 'written' && plan !== null && plan.settings !== null && plan.preset === null && plan.definition.plugins.length === 17)
-const projected = definitionWithProjection({ webFetch: true, toolPresentationMode: 'both', gateWords: gate })
-check('V07 两项宿主值仅派生到内存 definition，原资产不变', findRow(projected.plugins, 'tool-web').config.fetch === true && findRow(projected.plugins, 'tool-presentation').config.mode === 'both' && findRow(assetDefinition().plugins, 'tool-web').config.fetch === false)
-check('V06 历史 preset-extra-plan 状态 0/1/2 占用 adapter，禁用/无fiber/3+不占用', [0, 1, 2].every((state) => activeLegacyRow([{ entry: { options: { id: 'preset-extra-plan' }, fiber: { state } } }])) && !activeLegacyRow([{ entry: { options: { id: 'preset-extra-plan' }, disabled: true, fiber: { state: 2 } } }]) && !activeLegacyRow([{ entry: { options: { id: 'preset-extra-plan' } } }]) && !activeLegacyRow([{ entry: { options: { id: 'preset-extra-plan' }, fiber: { state: 3 } } }]))
-
 function settledShape(snapshot) {
   return snapshot !== null && typeof snapshot === 'object' && snapshot.values !== undefined && snapshot.gateWords !== undefined &&
     Object.keys(snapshot.values).sort().join('/') === 'anchoredBootstrap/creativeMode/crossProviderPlannerModel/exploreBudget/otherAgentModel/plannerModel/plannerPromptSuffix/runcodeCatchGate/toolPresentationMode/webFetch' &&
-    isDeepStrictEqual(snapshot.gateWords, gate)
+    Object.keys(snapshot.gateWords).sort().join('/') === GATE_WORD_FIELDS.map((item) => item.field).sort().join('/')
 }
-let settledEvents = []
-let settledErrors = 0
-let settledInFlight = 0
-let settledMaxInFlight = 0
-const settledEditor = makeEditor(completeSettings, undefined, 'C:\\neutral-fixture\\document.yml')
-const settledStats = makeContext(settledEditor, async () => ({ dispose() {} }))
-const settledDispose = mountPresetSync(settledStats.ctx, {
-  onSettledSettings: async (snapshot) => {
-    settledInFlight += 1
-    settledMaxInFlight = Math.max(settledMaxInFlight, settledInFlight)
-    await Promise.resolve()
-    settledEvents.push(snapshot)
-    settledInFlight -= 1
-  },
-  onSettledError: async () => { settledErrors += 1 },
-})
-await flush(); await flush()
-check('V06 mountPresetSync initial run 在最终值确定后回调完整十项/gateWords', settledEvents.length === 1 && settledShape(settledEvents[0]))
-settledEditor.state.rows[0].entry.options.config.plannerModel = 'fast-one'
-if (typeof settledStats.updateListener === 'function') settledStats.updateListener()
-settledEditor.state.rows[0].entry.options.config.plannerModel = 'fast-two'
-if (typeof settledStats.updateListener === 'function') settledStats.updateListener()
-await flush(); await flush(); await flush()
-check('V06 internal/update 快速更新经同一队列串行且最终值稳定', settledEvents.length === 3 && settledEvents.at(-1).values.plannerModel === 'fast-two' && settledMaxInFlight === 1)
-await settledDispose()
+const SETTING_KEYS = Object.freeze(['anchoredBootstrap', 'creativeMode', 'webFetch', 'toolPresentationMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel'])
+function targetConfigOf(text) {
+  const parsed = parsePresetYaml(text)
+  const row = Array.isArray(parsed) ? parsed.find((item) => item !== null && typeof item === 'object' && (item.id === SETTINGS_ROW_ID || item.override?.id === SETTINGS_ROW_ID)) : undefined
+  return row === undefined ? undefined : row.override?.config || row.config
+}
+function completeSyncConfig(text, snapshot) {
+  try { return isDeepStrictEqual(targetConfigOf(text), { ...snapshot.values, gateWords: snapshot.gateWords }) } catch { return false }
+}
+function makeProfileFixture() {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-install-adapter-'))
+  const webDir = join(root, 'profiles', 'web')
+  const qqDir = join(root, 'profiles', 'qqbot-sync')
+  mkdirSync(webDir, { recursive: true })
+  mkdirSync(join(qqDir, 'node_modules', 'dsh-extra-plan-qqbot'), { recursive: true })
+  writeFileSync(join(webDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }), 'utf8')
+  writeFileSync(join(qqDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: ['@tencent-connect/dsh-qqbot'] } } }), 'utf8')
+  const webPatch = join(webDir, 'cordis.patch.yml')
+  const qqPatch = join(qqDir, 'cordis.patch.yml')
+  writeFileSync(webPatch, '[]', 'utf8')
+  writeFileSync(qqPatch, '- id: user-custom\n  name: custom\n', 'utf8')
+  return { root, webPatch, qqPatch }
+}
+function createProfileSync(fixture, trace) {
+  const terminal = []
+  const synchronizer = createQqbotSettingsSynchronizer({ onResult: (result) => { terminal.push(result); trace.push('profile-sync-terminal') } })
+  const settle = async (snapshot) => {
+    trace.push('settled-snapshot')
+    writeFileSync(fixture.webPatch, JSON.stringify([{ id: SETTINGS_ROW_ID, config: { ...snapshot.values, gateWords: snapshot.gateWords } }]), 'utf8')
+    trace.push('web-patch-written')
+    return await synchronizer.enqueue({ documentPath: fixture.webPatch, snapshot, env: { DSH_HOME: undefined, DSH_PROFILE: undefined } })
+  }
+  return { settle, terminal }
+}
+function profileSyncOk(fixture, snapshot, terminal) {
+  return terminal.length > 0 && terminal.at(-1).status === 'synced' && terminal.at(-1).pending === false && existsSync(fixture.webPatch) && existsSync(fixture.qqPatch) && completeSyncConfig(readFileSync(fixture.webPatch, 'utf8'), snapshot) && completeSyncConfig(readFileSync(fixture.qqPatch, 'utf8'), snapshot)
+}
+function trigger(stats) {
+  if (typeof stats.updateListener === 'function') stats.updateListener()
+}
 
-let rejectingErrors = 0
-const rejectingEditor = makeEditor(completeSettings, undefined, 'C:\\neutral-fixture\\document.yml')
-const rejectingStats = makeContext(rejectingEditor, async () => ({ dispose() {} }))
-const rejectingDispose = mountPresetSync(rejectingStats.ctx, {
-  onSettledSettings: async () => { throw new Error('settled callback rejected') },
-  onSettledError: async () => { rejectingErrors += 1 },
-})
-await flush(); await flush()
-check('V06 settled 回调拒绝不阻断 adapter 生命周期且交由 onSettledError', rejectingStats.pluginCalls === 1 && rejectingErrors === 1)
-await rejectingDispose()
+check('DEFINITION_INITIAL_17_ROWS_OK', definition.id === 'extra-plan' && definition.plugins.length === 17 && definitionWithProjection({ webFetch: true, toolPresentationMode: 'both', gateWords: gate }).plugins.length === 17)
+check('LEGACY_OWNER_STATES_OK', [0, 1, 2].every((state) => activeLegacyRow([{ entry: { options: { id: 'preset-extra-plan' }, fiber: { state } } }])) && !activeLegacyRow([{ entry: { options: { id: 'preset-extra-plan' }, fiber: { state: 3 } } }]))
+const source = readFileSync(new URL('../../plugins/dsh-extra-plan/lib/preset-sync.js', import.meta.url), 'utf8')
+function sourceBlock(sourceText, marker) {
+  const start = sourceText.indexOf(marker)
+  if (start < 0) return ''
+  const firstOpen = sourceText.indexOf('{', start)
+  const signatureClose = sourceText.indexOf(')', start)
+  const open = signatureClose >= 0 && firstOpen < signatureClose ? sourceText.indexOf('{', signatureClose) : firstOpen
+  if (open < 0) return sourceText.slice(start)
+  let depth = 0
+  let quote = ''
+  let escaped = false
+  let lineComment = false
+  let blockComment = false
+  for (let index = open; index < sourceText.length; index += 1) {
+    const char = sourceText[index]
+    const next = sourceText[index + 1]
+    if (lineComment) { if (char === String.fromCharCode(10)) lineComment = false; continue }
+    if (blockComment) { if (char === '*' && next === '/') { blockComment = false; index += 1 }; continue }
+    if (quote !== '') {
+      if (escaped) { escaped = false; continue }
+      if (char === String.fromCharCode(92)) { escaped = true; continue }
+      if (char === quote) quote = ''
+      continue
+    }
+    if (char === '/' && next === '/') { lineComment = true; index += 1; continue }
+    if (char === '/' && next === '*') { blockComment = true; index += 1; continue }
+    if (char === String.fromCharCode(34) || char === "'" || char === String.fromCharCode(96)) { quote = char; continue }
+    if (char === '{') depth += 1
+    if (char === '}') { depth -= 1; if (depth === 0) return sourceText.slice(start, index + 1) }
+  }
+  return sourceText.slice(start)
+}
+const mountSource = sourceBlock(source, 'export function mountPresetSync')
+const initialSource = sourceBlock(mountSource, 'const initialMount = async () =>')
+const structuralSource = sourceBlock(mountSource, 'const structuralHandoff = async')
+const settledStart = mountSource.indexOf('const settledOnlyUpdate =')
+const settledEnd = mountSource.indexOf('const offUpdate', settledStart)
+const settledSource = settledStart >= 0 && settledEnd > settledStart ? mountSource.slice(settledStart, settledEnd) : ''
+const updateSource = sourceBlock(mountSource, "const offUpdate = typeof child.on === 'function' ? child.on('internal/update'")
+const structuralStop = updateSource.indexOf('if (!structural) return')
+const settingsOnlySource = structuralStop >= 0 ? updateSource.slice(0, structuralStop + 'if (!structural) return'.length) : ''
+const noRemountStaticOk =
+  mountSource.includes('child.plugin(OfficialAgentPreset') &&
+  mountSource.includes('activeLegacyRow(') &&
+  mountSource.includes('structuralFingerprint') &&
+  mountSource.includes('structuralHandoff') &&
+  /const settledOnlyUpdate\s*=\s*\(state\) => settledSettingsUpdate\(state\)/.test(settledSource) &&
+  settingsOnlySource.includes('const settledPromise = settledOnlyUpdate(state)') &&
+  settingsOnlySource.includes('if (!structural) return') &&
+  !/child\.plugin\s*\(|disposeFiber\s*\(|adapterFiber/.test(settledSource + settingsOnlySource) &&
+  initialSource.indexOf('settledSettingsUpdate') >= 0 &&
+  initialSource.indexOf('mountOfficialAdapter') > initialSource.indexOf('settledSettingsUpdate') &&
+  structuralSource.indexOf('await settledPromise') >= 0 &&
+  structuralSource.indexOf('await mountOfficialAdapter') > structuralSource.indexOf('await settledPromise')
+check('SETTLED_STRUCTURAL_LIFECYCLE_SYMBOLS_OK', mountSource.includes('initialMount') && mountSource.includes('settledOnlyUpdate') && mountSource.includes('structuralHandoff') && mountSource.includes('structuralFingerprint'))
+if (noRemountStaticOk) console.log('SETTINGS_ONLY_NO_REMOUNT_STATIC_OK')
+else { console.log('FAIL SETTINGS_ONLY_NO_REMOUNT_STATIC_OK'); fail += 1 }
 
-const settledGate = deferred()
-let waitingStarted = 0
-const waitingEditor = makeEditor(completeSettings, undefined, 'C:\\neutral-fixture\\document.yml')
-const waitingStats = makeContext(waitingEditor, async () => ({ dispose() {} }))
-const waitingDispose = mountPresetSync(waitingStats.ctx, {
-  onSettledSettings: async () => { waitingStarted += 1; await settledGate.promise },
-})
-await flush(); await flush()
-const waitingClose = waitingDispose()
+const settledEvents = []
+const initialEditor = makeEditor(completeSettings)
+const initialStats = makeContext(initialEditor, async () => ({ dispose: async () => {} }))
+const initialDispose = mountPresetSync(initialStats.ctx, { onSettledSettings: async (snapshot) => { settledEvents.push(snapshot) } })
 await flush()
-check('V06 dispose 等待在途 settled 回调且关闭后不启动新调用', waitingStarted === 1 && waitingStats.updateOff === 1)
-settledGate.resolve()
-await waitingClose
-await flush()
-if (typeof waitingStats.updateListener === 'function') waitingStats.updateListener()
-await flush()
-check('V06 在途 settled 回调结算后关闭完成、后续 update 调用数不增加', waitingStarted === 1 && waitingStats.pluginCalls === 1)
-
-// 排队后关闭：已在途 edit 允许结算，关闭后排队 run 不得再 edit/注册。
-const editGate = deferred()
-const queuedEditor = makeEditor({ plannerModel: 'm' }, editGate)
-const queuedStats = makeContext(queuedEditor, async () => ({ dispose() {} }))
-const queuedDispose = mountPresetSync(queuedStats.ctx)
-await flush()
-if (typeof queuedStats.updateListener === 'function') { queuedStats.updateListener(); queuedStats.updateListener() }
-const queuedClosing = queuedDispose()
-await flush()
-check('V06 editor.edit 在途时关闭不启动新 edit，旧 edit保持原生在途', queuedEditor.state.edits === 1 && queuedStats.pluginCalls === 0)
-editGate.resolve()
-await queuedClosing
-await flush()
-if (typeof queuedStats.updateListener === 'function') queuedStats.updateListener()
-await flush()
-check('V06 关闭后旧 update listener 回调不产生新增写入/adapter', queuedEditor.state.edits === 1 && queuedStats.pluginCalls === 0 && queuedStats.updateOff === 1)
-await queuedDispose()
-check('V06 重复 dispose 幂等', queuedStats.pluginDisposals === 0)
-
-// adapter await 竞态：plugin 返回 deferred，关闭先发生；结算后候选 fiber 恰一次 dispose。
-const adapterGate = deferred()
-const adapterEditor = makeEditor(completeSettings)
-const adapterStats = makeContext(adapterEditor, async () => adapterGate.promise)
-const adapterDispose = mountPresetSync(adapterStats.ctx)
-await flush()
-check('V06 adapter 注册进入在途 await', adapterStats.pluginCalls === 1 && adapterStats.pluginDisposals === 0)
-const adapterClosing = adapterDispose()
-await flush()
-check('V06 adapter await 未结算前 dispose 等待、不重复注册', adapterStats.pluginDisposals === 0 && adapterStats.pluginCalls === 1)
-adapterGate.resolve({ dispose: async () => {} })
-await adapterClosing
-await flush()
-check('V06 adapter await 结算后释放恰一次且重复 dispose 幂等', adapterStats.pluginDisposals === 1)
-await adapterDispose()
-check('V06 关闭后不存在活动 adapter source', adapterStats.pluginDisposals === 1)
-
-// owner 快速关开：上一 owner 释放后新 owner 可重新注册，互不共享活动资源。
-let reopenRegistered = 0
-let reopenDisposed = 0
-const reopenEditor = makeEditor(completeSettings)
-const reopenCtx = makeContext(reopenEditor, async () => ({ dispose: async () => { reopenDisposed += 1 } }))
-const reopenDispose = mountPresetSync(reopenCtx.ctx)
-await flush()
-await reopenDispose()
-const reopenEditor2 = makeEditor(completeSettings)
-const reopenCtx2 = makeContext(reopenEditor2, async () => ({ dispose: async () => { reopenDisposed += 1 } }))
-const reopenDispose2 = mountPresetSync(reopenCtx2.ctx)
-await flush()
-reopenRegistered = reopenCtx.pluginCalls + reopenCtx2.pluginCalls
-await reopenDispose2()
-check('V06 owner 快速关开各自同生共死，无多活动 adapter', reopenRegistered === 2 && reopenDisposed === 2)
-
-// 自有 adapter 已挂载后，internal/update 才出现活动 preset-extra-plan：旧 owner 接管前恰释放自有 adapter。
-const handoffEditor = makeEditor(completeSettings)
-const handoffStats = makeContext(handoffEditor, async () => ({ dispose() {} }))
-const handoffDispose = mountPresetSync(handoffStats.ctx)
-await flush()
-handoffEditor.state.rows.push({ entry: { options: { id: 'preset-extra-plan' }, fiber: { state: 1 } }, disabled: false })
-if (typeof handoffStats.updateListener === 'function') handoffStats.updateListener()
-await flush()
-check('V06 preset-extra-plan 后出现时自有 adapter 释放恰一次且不注册第二个', handoffStats.pluginCalls === 1 && handoffStats.pluginDisposals === 1)
-await handoffDispose()
-check('V06 preset-extra-plan 接管后最终 dispose 仍幂等', handoffStats.pluginDisposals === 1)
-
-// 真实官方 Loader carrier：依赖缺失只 SKIP；能加载时检查 client-carrier entry 的实际消失。
-try {
-  const { registerHostDeps } = await import('../_shared/host-deps.mjs')
-  await registerHostDeps()
-  const { Context } = await import('@deepseek-ai/cordis')
-  const { default: Loader, Group } = await import('@deepseek-ai/cordis-plugin-loader')
-  const carrierRoot = new Context()
-  await carrierRoot.plugin(Loader, { baseUrl: import.meta.url })
-  carrierRoot.loader.builtins.group = Group
-  await carrierRoot.loader.create({ id: 'settings', name: new URL('../../plugins/dsh-extra-plan/lib/settings.js', import.meta.url).href })
-  await carrierRoot.loader.await()
-  const activeEntries = [...carrierRoot.loader.entries()].filter((entry) => String(entry.options.name).includes('client-carrier.js'))
-  check('V06 真实 Loader carrier 实际注册唯一 source', activeEntries.length === 1 && activeEntries[0].options.id === 'dsh-extra-plan-client-carrier')
-  await carrierRoot.loader.remove('settings')
-  await carrierRoot.loader.await()
+check('INITIAL_OFFICIAL_ADAPTER_REGISTER_1_17_DEFINITION_OK', initialStats.pluginCalls === 1 && initialStats.received.length === 1 && initialStats.received[0].plugins.length === 17)
+check('INITIAL_SETTLED_COMPLETE_10_PLUS_GATE_OK', settledEvents.length === 1 && settledShape(settledEvents[0]))
+const initialCalls = initialStats.pluginCalls
+const initialDisposals = initialStats.pluginDisposals
+const settingsChanges = {
+  anchoredBootstrap: false,
+  creativeMode: true,
+  webFetch: false,
+  toolPresentationMode: 'native',
+  runcodeCatchGate: true,
+  crossProviderPlannerModel: true,
+  plannerModel: 'model-next',
+  plannerPromptSuffix: 'suffix-next',
+  exploreBudget: 27,
+  otherAgentModel: 'other-next',
+  gateWords: Object.fromEntries(GATE_WORD_FIELDS.map((item, index) => [item.field, '新词' + index])),
+}
+for (const [key, value] of Object.entries(settingsChanges)) {
+  initialEditor.state.rows[0].entry.options.config[key] = structuredClone(value)
+  trigger(initialStats)
   await flush()
-  const remainingEntries = [...carrierRoot.loader.entries()].filter((entry) => String(entry.options.name).includes('client-carrier.js'))
-  check('V06 真实 Loader 卸载移除 carrier source', remainingEntries.length === 0)
+}
+check('SETTINGS_ONLY_ADAPTER_REGISTER_0_DISPOSE_0_OK', initialStats.pluginCalls === initialCalls && initialStats.pluginDisposals === initialDisposals && settledEvents.length === 12 && settledShape(settledEvents.at(-1)))
+await initialDispose()
 
-  const { default: OfficialAgentPreset } = await import('@deepseek-ai/dsh-agent-preset')
-  const adapterStats = { registered: 0, disposed: 0, received: undefined }
-  const adapterRoot = new Context()
-  adapterRoot.provide('agentPresets', {
-    register: async (received) => {
-      adapterStats.registered += 1
-      adapterStats.received = received
-      return async () => { adapterStats.disposed += 1 }
-    },
+const baseSnapshot = { values: Object.fromEntries(SETTING_KEYS.map((key) => [key, completeSettings[key]])), gateWords: completeSettings.gateWords }
+async function runFixtureFailureCase(label, pluginImpl, failureEvent, plannerModel) {
+  const trace = []
+  const diagnostics = []
+  const fixture = makeProfileFixture()
+  const profileSync = createProfileSync(fixture, trace)
+  const editor = makeEditor(completeSettings)
+  const stats = makeContext(editor, pluginImpl, trace, failureEvent)
+  const dispose = mountPresetSync(stats.ctx, {
+    onSettledSettings: profileSync.settle,
+    onAdapterError: (diagnostic) => { diagnostics.push(diagnostic); trace.push('adapter-diagnostic') },
   })
-  const adapterFiber = adapterRoot.plugin(OfficialAgentPreset, definition)
-  await adapterFiber
-  check('F04 真实 Cordis Context/官方 AgentPreset 收到正确 definition 且 register 恰一次', adapterStats.registered === 1 && isDeepStrictEqual(adapterStats.received, definition))
-  await adapterFiber.dispose()
-  await flush()
-  check('F04 真实官方 adapter disposer 恰一次', adapterStats.disposed === 1)
-} catch (error) {
-  const message = String(error && error.message || error)
-  if (/Cannot find module|ERR_MODULE_NOT_FOUND|找不到|not found|依赖/.test(message)) console.log('SKIP  {"scope":"REAL-LOADER-OR-ADAPTER","reason":"官方 Loader 依赖不可用: ' + message.replaceAll('\n', ' ') + '"}')
-  else { fail += 1; console.error('FAIL  真实 Loader carrier 夹具异常: ' + String(error && error.stack || error)) }
+  await flush(8)
+  editor.state.rows[0].entry.options.config.plannerModel = plannerModel
+  trigger(stats)
+  await flush(8)
+  const snapshot = { values: { ...baseSnapshot.values, plannerModel }, gateWords: baseSnapshot.gateWords }
+  const terminalIndex = trace.indexOf('profile-sync-terminal')
+  const adapterStartIndex = trace.indexOf('adapter-start')
+  const failureIndex = trace.indexOf(failureEvent)
+  const ok = profileSync.terminal.length >= 2 && profileSyncOk(fixture, snapshot, profileSync.terminal) &&
+    terminalIndex >= 0 && terminalIndex < adapterStartIndex && adapterStartIndex < failureIndex &&
+    trace.filter((event) => event === failureEvent).length === 1 && stats.pluginCalls === 1 && stats.pluginDisposals === 0 &&
+    diagnostics.length === 1 && diagnostics[0].phase === 'initialMount'
+  console.log('FIXTURE_TRACE ' + JSON.stringify({ case: failureEvent, trace, terminalIndex, adapterStartIndex, failureIndex, pluginCalls: stats.pluginCalls, pluginDisposals: stats.pluginDisposals, terminal: profileSync.terminal.at(-1) }))
+  check(label, ok)
+  await dispose()
+  rmSync(fixture.root, { recursive: true, force: true })
 }
+await runFixtureFailureCase('FIXTURE_ADAPTER_THROW_COMPLETE_PATCH_SETTLED_BEFORE_FAILURE_OK', () => { throw new Error('adapter throw') }, 'adapter-thrown', 'after-throw')
+await runFixtureFailureCase('FIXTURE_ADAPTER_REJECT_COMPLETE_PATCH_SETTLED_BEFORE_FAILURE_OK', () => Promise.reject(new Error('adapter reject')), 'adapter-rejected', 'after-reject')
 
+const adapterGate = deferred()
+let hangingResolved = false
+const hangingTrace = []
+const hangingDiagnostics = []
+const hangingFixture = makeProfileFixture()
+const hangingProfileSync = createProfileSync(hangingFixture, hangingTrace)
+const hangingEditor = makeEditor(completeSettings)
+const hangingStats = makeContext(hangingEditor, async () => adapterGate.promise.then((fiber) => { hangingResolved = true; return fiber }), hangingTrace)
+const hangingDispose = mountPresetSync(hangingStats.ctx, {
+  onSettledSettings: hangingProfileSync.settle,
+  onAdapterError: (diagnostic) => { hangingDiagnostics.push(diagnostic); hangingTrace.push('adapter-diagnostic') },
+})
+await flush(8)
+hangingEditor.state.rows[0].entry.options.config.plannerModel = 'while-adapter-hangs'
+trigger(hangingStats)
+await flush(8)
+const hangingSnapshot = { values: { ...baseSnapshot.values, plannerModel: 'while-adapter-hangs' }, gateWords: baseSnapshot.gateWords }
+const hangingTerminalIndex = hangingTrace.indexOf('profile-sync-terminal')
+const hangingAdapterStartIndex = hangingTrace.indexOf('adapter-start')
+const hangingBeforeRelease = profileSyncOk(hangingFixture, hangingSnapshot, hangingProfileSync.terminal) &&
+  hangingTerminalIndex >= 0 && hangingTerminalIndex < hangingAdapterStartIndex && hangingResolved === false &&
+  !hangingTrace.includes('adapter-resolved') && !hangingTrace.includes('adapter-diagnostic') &&
+  hangingStats.pluginCalls === 1 && hangingStats.pluginDisposals === 0 && hangingDiagnostics.length === 0
+adapterGate.resolve({ dispose: async () => {} })
+await flush(8)
+const hangingResolvedIndex = hangingTrace.indexOf('adapter-resolved')
+const hangingAfterRelease = hangingResolved && hangingResolvedIndex > hangingTerminalIndex && hangingStats.pluginDisposals === 0
+await hangingDispose()
+const hangingOk = hangingBeforeRelease && hangingAfterRelease && hangingStats.pluginDisposals === 1
+console.log('FIXTURE_TRACE ' + JSON.stringify({ case: 'hang', trace: hangingTrace, terminalIndex: hangingTerminalIndex, adapterStartIndex: hangingAdapterStartIndex, resolvedIndex: hangingResolvedIndex, pluginCalls: hangingStats.pluginCalls, pluginDisposals: hangingStats.pluginDisposals }))
+check('FIXTURE_ADAPTER_HANG_COMPLETE_PATCH_SETTLED_BEFORE_RESOLVE_OK', hangingOk)
+rmSync(hangingFixture.root, { recursive: true, force: true })
+
+const structuralEditor = makeEditor(completeSettings)
+const structuralStats = makeContext(structuralEditor, async () => ({ dispose: async () => {} }))
+const structuralEvents = []
+const structuralDispose = mountPresetSync(structuralStats.ctx, { onSettledSettings: async (snapshot) => { structuralEvents.push(snapshot) } })
+await flush()
+const beforeStructural = structuralStats.pluginCalls
+structuralEditor.state.rows.push({ entry: { options: { id: 'non-settings-declaration', name: 'declaration', config: { enabled: true } } }, disabled: false })
+trigger(structuralStats)
+await flush(8)
+const afterAdd = structuralStats.pluginCalls
+structuralEditor.state.rows.pop()
+trigger(structuralStats)
+await flush(8)
+const afterRemove = structuralStats.pluginCalls
+const legacyRow = { entry: { options: { id: 'preset-extra-plan', name: 'legacy', config: {} }, fiber: { state: 1 } }, disabled: false }
+structuralEditor.state.rows.push(legacyRow)
+trigger(structuralStats)
+await flush(8)
+const afterLegacy = structuralStats.pluginCalls
+structuralEditor.state.rows.pop()
+trigger(structuralStats)
+await flush(8)
+const afterReturn = structuralStats.pluginCalls
+check('STRUCTURAL_HANDOFF_ONLY_OK', beforeStructural === 1 && afterAdd === 2 && afterRemove === 3 && afterLegacy === 3 && afterReturn === 4 && structuralStats.pluginDisposals === 3 && structuralEvents.length >= 5)
+await structuralDispose()
+
+const disposeGate = deferred()
+let disposeSettledStarted = 0
+const disposeEditor = makeEditor(completeSettings)
+const disposeStats = makeContext(disposeEditor, async () => ({ dispose: async () => {} }))
+const disposeOwner = mountPresetSync(disposeStats.ctx, { onSettledSettings: async () => { disposeSettledStarted += 1; await disposeGate.promise } })
+await flush()
+const closing = disposeOwner()
+await flush()
+check('DISPOSE_WAITS_IN_FLIGHT_SETTLED_AND_OFFS_UPDATES', disposeSettledStarted === 1 && disposeStats.updateOff === 1)
+disposeGate.resolve()
+await closing
+trigger(disposeStats)
+await flush()
+check('DISPOSE_AFTER_SETTLED_NO_NEW_ADAPTER_OR_SYNC', disposeStats.pluginCalls === 0 && disposeStats.pluginDisposals === 0)
+await disposeOwner()
+
+console.log('HUMAN  {"scope":"REAL-LOADER-OR-ADAPTER","reason":"未执行真实部署/生产 profile；官方 adapter 图由部署后复测"}')
 console.log('\n通过 ' + pass + ', 失败 ' + fail)
-process.exit(fail === 0 ? 0 : 1)
+if (fail > 0) {
+  process.exitCode = 1
+  process.exit(1)
+}

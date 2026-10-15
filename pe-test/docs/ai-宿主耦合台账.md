@@ -78,6 +78,16 @@
 | 状态与生效 | `synced`/`not-installed`/`unavailable`/`failed`/`partial` 结构化回执；8 项沿既有热读，`webFetch` 与 `toolPresentationMode` 为 2 项宿主重启生效，不发送跨进程 reload | 【已核实·专项】 |
 | 与 HS4 边界 | `live-config.js` 的 `DSH_EXTRA_PLAN_CONFIG_PATH` 热读优先级只服务 Web 核心消费，不是跨 profile 根定位依据；两条用途不得混用 | 【已核实·专项】 |
 
+### ②-B settings-only no-remount 生命周期合同
+
+| 场景 | 允许动作 | 禁止/失败语义 | 状态 |
+|:--|:--|:--|:--|
+| 首次启动 | 读取/迁移 settings、构造 17 条纯 definition；无旧 owner 时官方 AgentPreset register=1 | 不是每次保存的前置；旧 owner 活动时不抢占、不编辑、不删除 | 【已核实·专项】 |
+| settings-only | 读取最终完整 10 项 + `gateWords`，settled-only 队列直接交 `profileSync`/QQBot | **no-remount**：adapter register/dispose/rebuild 均不得发生；不调用、不等待、不 dispose 官方 AgentPreset | 【已核实·专项】 |
+| structuralHandoff | 仅非 settings 声明结构变化或旧 owner ↔ 官方 transition 才进入 adapter/structural 队列 | 与 settled-only 分离；adapter failure/reject/hang 不得撤销 Web 或阻断 QQBot 同步 | 【已核实·专项】 |
+| profileSync | 初始 `pending=true`，terminal 后 `pending=false`；记录真实 `synced/not-installed/unavailable/failed/partial` | 禁止 `pending/pending=false`、双端成功伪造或用 adapter register 充当保存成功条件 | 【已核实·专项】 |
+| 生效分组 | 8 项沿 live-config 热读；`webFetch`/`toolPresentationMode` 为 2 项需重启投影；完整 7 键 `gateWords` 立即持久化 | 当前 apply 词表不原地换词；重启、旧词拒绝、非法词无 fallback 为 HUMAN | 【已核实·专项/HUMAN】 |
+
 ## ③ 当前 HK：钩子与文件组合契约
 
 | 编号 | 当前本仓位置/钩子 | 当前合同与风险 | 状态 |

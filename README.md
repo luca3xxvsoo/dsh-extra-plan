@@ -154,6 +154,7 @@ dsh-extra-plan/
 │   │   └── ai-代码地图.md         
 │   └── tools/                                          # 测试工具
 │       ├── 一键step测试.mjs                             # 可以通过输入真实session_id进行测试
+│       ├── 生成-no-remount证据.mjs
 │       ├── step-00-跨平台写拦截.mjs
 │       ├── step-00-全流程回归.mjs
 │       ├── step-01-executor-spawn注册幂等.mjs

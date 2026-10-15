@@ -1,6 +1,6 @@
 // dsh-extra-plan-settings 的唯一全局管理入口。
 // settings 行 config 是全部 10 个权威值的载体；gateWords 作为兼容数据同样由该 owner 严格保留。
-// 本入口统一拥有 settings/API/carrier、旧值迁移、definition 自愈与官方 AgentPreset adapter 生命周期。
+// 本入口统一拥有 settings/API/carrier、旧值迁移与 profileSync；AgentPreset 仅由 preset-sync 初始/结构路径管理。
 // 两项宿主设置只从权威值派生到内存 definition，不再写独立公开投影行。
 
 import { readFileSync, existsSync } from 'node:fs'
@@ -209,7 +209,7 @@ function proPayload(editor, profileSync) {
     state.overridden[definition.key],
     state.sources[definition.key],
   ))
-  const sync = profileSync === undefined ? { status: 'pending', pending: false } : { ...profileSync, pending: profileSync.pending === true }
+  const sync = profileSync === undefined ? { status: 'pending', pending: true } : { ...profileSync, pending: profileSync.pending === true }
   return { fields, values: { ...state.values }, defaults: { ...state.defaults }, diagnostics: [...state.diagnostics], profileSync: sync }
 }
 
@@ -277,8 +277,8 @@ function createApiHandler(ctx, syncEditor, getProfileSync) {
 }
 
 export function apply(ctx) {
-  // Client carrier、settings API、旧值迁移、同步与官方 adapter 均由这一行 owner 持有。
-  let profileSync = { status: 'pending', pending: false }
+  // Client carrier、settings API、旧值迁移与 profileSync 由这一行 owner 持有；adapter 生命周期独立。
+  let profileSync = { status: 'pending', pending: true }
   const synchronizer = createQqbotSettingsSynchronizer({
     onResult: (result) => { profileSync = { ...result, pending: false }; reportProfileSync(result) },
   })
@@ -315,7 +315,12 @@ export function apply(ctx) {
     }
   }
   const settledSettings = async (snapshot) => syncEditor(editorOf(ctx.configEditor), snapshot)
-  const settledError = async (error) => { console.warn('[dsh-extra-plan] profile sync settled callback failed：' + String(error && error.message || error)) }
+  const settledError = async (error) => {
+    const result = { status: 'failed', pending: false, reason: 'settled-error:' + String(error && error.message || error) }
+    profileSync = result
+    reportProfileSync(result)
+    console.warn('[dsh-extra-plan] profile sync settled callback failed：' + String(error && error.message || error))
+  }
   ctx.inject(['loader'], (child) => child.effect(() => mountClientCarrier(child), 'dsh-extra-plan-settings: internal client carrier'))
   ctx.inject(['settings'], (child) => child.effect(() => child.settings.configure({ auto: false }, ctx.fiber), 'dsh-extra-plan-settings: settings policy'))
   ctx.inject(['webServer'], (webCtx) => webCtx.effect(() => webCtx.webServer.register({
@@ -323,7 +328,7 @@ export function apply(ctx) {
     path: '/api/dsh-extra-plan-settings',
     handler: createApiHandler(ctx, (editor) => syncEditor(editor), () => profileSync),
   }), 'dsh-extra-plan-settings: api route'))
-  ctx.inject(['configEditor'], (child) => child.effect(() => mountPresetSync(child, { onSettledSettings: settledSettings, onSettledError: settledError }), 'dsh-extra-plan-settings: sync and official adapter'))
+  ctx.inject(['configEditor'], (child) => child.effect(() => mountPresetSync(child, { onSettledSettings: settledSettings, onSettledError: settledError }), 'dsh-extra-plan-settings: sync and adapter lifecycle'))
 }
 
 export { SETTINGS_ROW_ID }

@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-10-15 08:05:01（脚本自动更新时间戳行）
+> 上次同步：2026-10-15 10:41:02（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -43,11 +43,11 @@
 | 只读子代理／验收者只读（reviewer/readonly） | index.js | childReadonlyGateReason、shellMutationReason、isReadOnlyChildByCatalog |
 | 子代理沙箱下限／权限抬升（floor/sandbox） | lib/agent-runtime.js、index.js | childPolicyNeedsFloor、createAgentRuntime |
 | 工具目录折叠／PTC 单入口（catalog/ptc） | index.js | catalogIsCollapsed |
-| 设置后端／唯一全局 owner 与旧值迁移（10 项 volatile Config + 内存 definition/adapter + Web→QQBot settled 镜像与失败诊断） | lib/settings.js、lib/preset-settings.js、lib/preset-sync.js | apply、createApiHandler、proPayload、readUnifiedState、findSettingsRow、effectiveRowConfig、resolveUnifiedConfig、restateSettingsConfig、findPluginsRow、applyPlan、mountPresetSync、syncEditor、settledSettings、profileSyncPath、reportProfileSync |
+| 设置后端／唯一全局 owner／settings-only no-remount（10 项 volatile Config + profileSync settled 镜像；adapter failure 独立；8 热读/2 需重启/gateWords restart） | lib/settings.js、lib/preset-settings.js、lib/preset-sync.js | apply、createApiHandler、proPayload、readUnifiedState、findSettingsRow、effectiveRowConfig、resolveUnifiedConfig、restateSettingsConfig、findPluginsRow、applyPlan、mountPresetSync、initialMount、settledSettingsUpdate、structuralHandoff、syncEditor、settledSettings、profileSyncPath、reportProfileSync |
 | Web→QQBot profile 同步／documentPath 首选／显式备用／双锚点／局部 YAML 安全写与恢复 | plugins/dsh-extra-plan/lib/qqbot-settings-sync.js；pe-test/tools/step-01-设置页配置.mjs、step-01-安装同步.mjs、step-01-qqbot-安装映射.mjs（分别覆盖路径/API、settled 生命周期、YAML 正负例） | resolveProfilesRoot、findOwnQqbotProfiles、validateSettingsSnapshot、planQqbotSettingsPatch、writeQqbotSettingsPatch、createQqbotSettingsSynchronizer |
 | 设置值定位与捕获（source/row/legacy projection locator；10 项全局行 + 旧行安全读取；PUT 兼容入口合并全局值） | lib/preset-settings.js、lib/settings.js、lib/preset-sync.js | captureSettings、captureRowSettings、hostRowDefaultsFromTemplate、readProjectedValue、resolveSetting、findTextLocatorMatches、patchYamlScalar、serializeScalar、publicField、readLegacyState |
 | 配置热读／生效标志／后端权威行更新无需重启（live-config/hot-read；增强 stamp dev/ino/size/mtimeNs/ctimeNs，兼容回退 ino/size/mtimeMs/ctimeMs） | plugins/dsh-extra-plan/lib/live-config.js、plugins/dsh-extra-plan/index.js | createLiveConfig、refresh、read、currentPath、readDiskValues、statStamp、pick |
-| 预设核对／纯 definition／官方 adapter／旧行非破坏迁移／settled 通用回调 | lib/preset-sync.js、lib/preset-settings.js | syncPreset、assetDefinition、definitionWithProjection、readUnifiedState、readLegacyState、resolveUnifiedConfig、restateSettingsConfig、declarationBodyMatchesAsset、stripUserWritable、carryUserWritable、assetPlugins、pluginRowIds、readDeclaredPluginsFromPatch、applyPlan、mountPresetSync、notifySettled、reportSettledError |
+| 预设核对／纯 definition／首次 adapter／旧行非破坏迁移／settled-only 与 structuralHandoff 分离 | lib/preset-sync.js、lib/preset-settings.js | syncPreset、assetDefinition、definitionWithProjection、readUnifiedState、readLegacyState、resolveUnifiedConfig、restateSettingsConfig、declarationBodyMatchesAsset、stripUserWritable、carryUserWritable、assetPlugins、pluginRowIds、readDeclaredPluginsFromPatch、applyPlan、structuralFingerprint、mountPresetSync、initialMount、settledSettingsUpdate、structuralHandoff、reportSettledError |
 | 同页共享客户端表单／仅经 detail.section 渲染于 bundle 详情页行列表之后（自绘标题；不注册 bundle.config/row/item/tab，本包 bundle.config 槽被任何一方注册条目时 detail.section 让位） | lib/client.js | apply、SettingsCard、ExtraPlanForm、DetailSettingsSection、registerClientSurfaces |
 > client.js 设置入口定位：`DetailSettingsSection` 与 `registerClientSurfaces`；设置表单仅经 plugins.detail.section 渲染于 bundle 页行列表之后，若本包 bundle.config 槽被任何一方注册条目则让位保持唯一表单；ConfigForms.get(NS) 订阅快照并一次 mutate 十项，不注册 bundle.config/row.config/settings.plugins.tab/plugins.item。
 | 执行者工具裁剪／deny（executor-spawn；注册引用计数幂等 = 稳定键幂等——槽键 = 服务实现本体（读全局注册符号 Symbol.for('cordis.original')，取不到时降级回代理本身），跨预设世代/行重建共享同一注册与 disposer） | lib/executor-spawn.js | apply、slotKey |
@@ -89,7 +89,7 @@
 | plugins/dsh-extra-plan/lib/planner-budget.js | 137 | planner 工具计数、消息后缀/预算提示/耗尽文案；**预算提醒消息经宿主 createUserMessage 构造，source 用生产者自有 kind `plugin:dsh-extra-plan`（v4 行准入禁旧包裹 `plugin`，违者会话当场终止）**；默认预算由生成模块提供，FREE_TOOLS 仍在根入口 |
 | plugins/dsh-extra-plan/lib/preset-defaults.generated.js | 4 | 由 YAML 模板生成的 runtime fallback（回退） 常量；generated（生成）/do not edit（勿手改） |
 | plugins/dsh-extra-plan/lib/preset-settings.js | 3 | 10 项设置描述与 YAML 定位；settings 行是权威值，声明行只投影 2 项宿主行；capture/投影读取、plugins 行整体重述与保格式标量改写。 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | 755 | 读取并严格校验纯 definition；旧 preset-extra-plan/extra-plan-preset-sync 仅安全读取迁移，统一全局行补齐后派生 definition 并由同一 owner 挂载官方 AgentPreset；新写入仅经唯一全局行 configEditor.edit；mountPresetSync 以通用 settled 回调交付最终十项/gateWords。 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | 875 | 读取并严格校验纯 definition；旧 preset-extra-plan/extra-plan-preset-sync 仅安全读取迁移，统一全局行补齐后派生 definition 并由同一 owner 挂载官方 AgentPreset；新写入仅经唯一全局行 configEditor.edit；mountPresetSync 以通用 settled 回调交付最终十项/gateWords。 |
 | plugins/dsh-extra-plan/lib/preset-yaml.js | 436 | 预设 YAML 纯职责模块：解析、行与叶定位及歧义分类、权威与投影值捕获、保格式标量改写。 |
 | plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | 684 | Web documentPath 首选、显式 DSH_HOME 备用、双锚点 profile 扫描、完整 10 项/gateWords 安全快照、局部 YAML 保格式写入、排他临时/备份/恢复与串行同步队列；不读用户目录、不触碰未知根。 |
 | plugins/dsh-extra-plan/lib/run-code-scanner.js | 216 | run_code 无宿主状态词法扫描器：字符串/注释遮蔽、括号配平、tools 调用点收集与动态访问判定。 |
@@ -102,7 +102,7 @@
 | plugins/dsh-extra-plan/lib/save-tool-factories.js | 215 | 显式依赖工厂：定义 save_plan/save_probe schema/output/render/execute；证据引用报错以 JSON.stringify(ref) 呈现（首字符属装饰集时附「疑似含 Markdown 装饰」提示）；不缓存 ctx/agent/会话状态 |
 | plugins/dsh-extra-plan/lib/sdk-text-cache.js | 161 | apply 级 agent-keyed WeakMap SDK 文本缓存：完整 renderer 输入保守指纹、language/renderer 身份比较、并发 Promise 合并、reject/过期 Promise 不回写、dispose 回收；不持有 sessionId 或 PromptAssembly |
 | plugins/dsh-extra-plan/lib/settings-contract.js | 160 | 服务端设置 descriptor 单一合同：10 项的类型/默认值/校验/UI 与权威-投影双定位器，并导出分组与投影遍历源 |
-| plugins/dsh-extra-plan/lib/settings.js | 329 | 10 字段 volatile Config、页面策略与 loopback GET/PUT；权威值在唯一 settings 行，PUT 先拒绝空/null/数组/原始/未知/非法混合载荷并严校验当前 gateWords，再只 edit 全局行，no-op 也重读最终快照并等待 profileSync，结构化区分 synced/not-installed/unavailable/failed/partial。 |
+| plugins/dsh-extra-plan/lib/settings.js | 334 | 10 字段 volatile Config、页面策略与 loopback GET/PUT；权威值在唯一 settings 行，PUT 先拒绝空/null/数组/原始/未知/非法混合载荷并严校验当前 gateWords，再只 edit 全局行，no-op 也重读最终快照并等待 profileSync，结构化区分 synced/not-installed/unavailable/failed/partial。 |
 | plugins/dsh-extra-plan/lib/shell-mutation.js | 125 | 跨平台命令文本解码与 pwsh/bash 写形态判定；纯函数、不持有 apply 状态 |
 | plugins/dsh-extra-plan/lib/usage-ledger.js | 174 | per-apply usage 账本：cursor 表读取与降级告警、按水位增量 fold 会话 usage 并追加 JSONL。 |
 | plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | 155 | 从 agent.cordis.yml 校验并生成 runtime 默认常量 + 纯 preset-definition.generated.yml（顶层结构逐字平移并保留 group/isolate/!!js）；支持 --check 且坏源不覆盖 last-known-good（上次已知良好版本） |
@@ -379,16 +379,29 @@
 | plugins/dsh-extra-plan/lib/preset-sync.js | activeLegacyRow | L617-624 | 检测旧 preset-extra-plan 是否仍是活动 Loader entry，避免官方 adapter duplicate |  |
 | plugins/dsh-extra-plan/lib/preset-sync.js | definitionFromRows | L626-638 | 以 settings 权威值为首选，结合 captured raw patch 与旧 body/声明迁移值解析统一配置；再从纯资产 definition 生成带两项宿主投影与 gateWords 的 adapter definition |  |
 | plugins/dsh-extra-plan/lib/preset-sync.js | readPatch | L629 | 对象字面量中的 captured rawPatch 快照回调，供 definitionFromRows 传入统一配置解析；不直接读取 configEditor | mountPresetSync 内部 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | mountPresetSync | L640-752 | 唯一全局 owner 的同步/adapter 生命周期：Promise 队列串行处理启动与 internal/update，active gate 阻止关闭后的新 edit/adapter；await 官方 adapter 结算，关闭竞态释放候选 fiber。 |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | disposeFiber | L648-651 | 安全 await adapter/fiber disposer；供 adapter 注册在途时关闭竞态回收候选资源，缺少 disposer 时保持幂等 no-op。 | mountPresetSync 内部 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | reportSettledError | L652-659 | 把 settled 回调异常交给独立 reporter，不污染 adapter 主异常路径 | mountPresetSync 内部闭包 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | notifySettled | L660-682 | 重新解析最终十项/gateWords 后调用通用 onSettledSettings；回调失败只走 onSettledError | mountPresetSync 内部闭包 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | readPatch | L666 | 对象字面量中的 captured rawPatch 快照回调，将 run 已读的 patch 传入 syncPreset；不直接读取 configEditor | mountPresetSync 内部 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | run | L683-733 | 串行同步：补齐唯一 settings 行并构造最终 definition；若活动 preset-extra-plan 仍存在则释放自有 adapter fiber 并交旧声明 owner 接管，否则装配官方 adapter | mountPresetSync 内部闭包 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | readPatch | L694 | settled 回调前的 raw patch 快照读取闭包，不推导路径、不执行写入 | mountPresetSync 内部 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | apply | L696 | syncPreset 参数对象中的落盘回调：调用 applyPlan 写唯一 settings 行；不是 Cordis 插件入口 |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | schedule | L734-738 | 通过 Promise 队列串行化启动与 internal/update，避免重复官方 adapter active revision | mountPresetSync 内部闭包 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | dispose | L740-749 | 关闭 settings owner 的 update listener、等待在途队列并幂等释放 adapter fiber | mountPresetSync 内部 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | structuralValue | L640-651 | 结构指纹的稳定递归序列化：忽略 fiber/entry 动态对象并保留声明配置结构 | mountPresetSync 内部 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | rowStructureRecord | L653-672 | 提取非 settings 行的 id/name/非 settings config/禁用状态/override，settings 行直接排除 | structuralFingerprint 内部 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | structuralFingerprint | L675-693 | 生成不含 settings 行十项/gateWords 的结构指纹，并纳入 active legacy owner 状态；决定是否 handoff | settings-only no-remount 闸门 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | visit | L677-690 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | mountPresetSync | L695-872 | 分离 initialMount、settled-only/update 与 structuralHandoff：settings-only 不调用/等待/dispose/rebuild adapter；结构 handoff 独立，关闭等待 settled 与结构在途工作 | no-remount 硬合同；adapter failure 不阻断 profile sync |
+| plugins/dsh-extra-plan/lib/preset-sync.js | disposeFiber | L706-709 | 安全 await adapter/fiber disposer；供 adapter 注册在途时关闭竞态回收候选资源，缺少 disposer 时保持幂等 no-op。 | mountPresetSync 内部 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | reportSettledError | L710-717 | 把 settled 回调异常交给独立 reporter，不污染 adapter 主异常路径 | mountPresetSync 内部闭包 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readState | L718-731 | 现场快照 configEditor rows、raw patch、legacyState、结构指纹与 owner，供 settled/structural 两条队列共享 | mountPresetSync 内部 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | snapshotOf | L732-742 | 从当前 settings row/raw patch/legacyState 解析最终完整 10 项与 gateWords 快照 | settled-only 输入 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readPatch | L735 | 对象字面量中的 captured rawPatch 快照回调，将 run 已读的 patch 传入 syncPreset；不直接读取 configEditor | mountPresetSync 内部 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | enqueueSettled | L743-754 | 串行提交完整 10 项/gateWords settled 快照；回调失败只进入独立 settledError | settled-only 队列 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | settledSettingsUpdate | L755-763 | 从当前 rows/raw patch 解析最终完整快照并立即排入 profileSync，不触碰 adapter 生命周期 | settings-only 保存路径 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | enqueueStructural | L764-771 | 独立串行结构队列；结构 handoff 异常只告警，不撤销 settled/profile 同步 | adapter/structural 生命周期 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | mountOfficialAdapter | L772-782 | 仅首次启动或结构 handoff 调用官方 AgentPreset child.plugin；关闭竞态释放候选 fiber | settings-only 禁止进入 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | disposeCurrentAdapter | L783-787 | 结构 handoff/关闭时安全释放当前官方 adapter fiber；settled-only 不调用 | settings-only no-remount |
+| plugins/dsh-extra-plan/lib/preset-sync.js | structuralHandoff | L788-813 | 等待先提交的 settled 快照后处理非 settings 结构/legacy owner transition，才允许 dispose/rebuild 官方 adapter | adapter failure 不阻断 QQBot |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readPatch | L797 | settled 回调前的 raw patch 快照读取闭包，不推导路径、不执行写入 | mountPresetSync 内部 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | apply | L799 | syncPreset 参数对象中的落盘回调：调用 applyPlan 写唯一 settings 行；不是 Cordis 插件入口 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | initialMount | L814-844 | 首次读取/迁移 settings、提交完整 settled 快照，再按 activeLegacyRow 保留旧 owner 或 register 官方 AgentPreset 一次 | 首次启动路径 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readPatch | L823 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | apply | L825 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | settledOnlyUpdate | L845 | internal/update 的 settings-only 入口：只解析并入队最终快照，绝不调用 child.plugin/disposeFiber/等待 adapter | no-remount 闸门 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | dispose | L861-869 | 关闭 settings owner 的 update listener、等待在途队列并幂等释放 adapter fiber | mountPresetSync 内部 |
 | plugins/dsh-extra-plan/lib/preset-yaml.js | loadYaml | L7-20 | 加载 js-yaml：先本模块 require，失败回落 %APPDATA% 下官方 dsh 包，仍失败抛原错误。 | 模块内部函数（未导出）；L22 模块加载期即调用 |
 | plugins/dsh-extra-plan/lib/preset-yaml.js | resolve | L25 | js-yaml 自定义 tag 的标量判定：仅接受字符串标量，使 !!js 表达式按原文保留而不求值。 |  |
 | plugins/dsh-extra-plan/lib/preset-yaml.js | construct | L26 | 把 !!js 标量的表达式文本包装成 { __jsExpr } 对象，供后续按对象识别与还原。 |  |
@@ -596,14 +609,14 @@
 | plugins/dsh-extra-plan/lib/settings.js | proPayload | L203-214 | 设置页 API 响应体：fields（2 项宿主行的控件元数据 + 当期值/默认/覆盖标记/来源层）+ values + defaults；读取失败一律回落出厂默认（不抛） |  |
 | plugins/dsh-extra-plan/lib/settings.js | createApiHandler | L216-277 | GET/PUT loopback API：GET 读取唯一全局行并按旧 raw patch/默认回退；PUT 先拒绝非法 JSON、null/数组/空对象、未知键、混合非法值，再合并全局十项与 gateWords，只 edit 全局行；当前非法 gateWords 报错且零写，深等 no-op 才回执 applied。 | 不含 qqbot；失败不伪装为写入成功 |
 | plugins/dsh-extra-plan/lib/settings.js | responseForProfile | L217-222 | 把 profileSync 状态映射为 HTTP 状态、overall 与 web.applied |  |
-| plugins/dsh-extra-plan/lib/settings.js | apply | L279-327 | 插件入口（HTTP 服务注册） |  |
+| plugins/dsh-extra-plan/lib/settings.js | apply | L279-332 | 插件入口（HTTP 服务注册） |  |
 | plugins/dsh-extra-plan/lib/settings.js | onResult | L283 | 接收同步器结果并更新 API 状态 |  |
 | plugins/dsh-extra-plan/lib/settings.js | editorOf | L285-292 | 安全取得当前 configEditor |  |
 | plugins/dsh-extra-plan/lib/settings.js | documentPathOf | L293-300 | 现场读取 configEditor.documentPath |  |
 | plugins/dsh-extra-plan/lib/settings.js | environmentSnapshot | L301 | 捕获显式 DSH_HOME/DSH_PROFILE 快照 |  |
 | plugins/dsh-extra-plan/lib/settings.js | syncEditor | L302-316 | 从最新 editor 状态入队完整快照与路径 |  |
 | plugins/dsh-extra-plan/lib/settings.js | settledSettings | L317 | 把通用 settled 快照交给同步器 |  |
-| plugins/dsh-extra-plan/lib/settings.js | settledError | L318 | 独立记录 settled 回调异常 |  |
+| plugins/dsh-extra-plan/lib/settings.js | settledError | L318-323 | 独立记录 settled 回调异常 |  |
 | plugins/dsh-extra-plan/lib/shell-mutation.js | commandTextOf | L28-40 | 解码对象/JSON 字符串两形状的 command 参数 |  |
 | plugins/dsh-extra-plan/lib/shell-mutation.js | pwshCommandOf | L42 | 提取 pwsh command 文本 |  |
 | plugins/dsh-extra-plan/lib/shell-mutation.js | bashCommandOf | L43 | 提取 bash command 文本 |  |

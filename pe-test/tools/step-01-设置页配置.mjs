@@ -79,6 +79,8 @@ const presetSettings = await import('../../plugins/dsh-extra-plan/lib/preset-set
 const { parsePresetYaml, SETTING_DEFINITIONS } = presetSettings
 try { patch = parsePresetYaml(patchText) } catch (error) { console.error('FAIL  patch YAML parse: ' + String(error)); process.exit(1) }
 const { Config } = await import('../../plugins/dsh-extra-plan/lib/settings.js')
+const { createLiveConfig } = await import('../../plugins/dsh-extra-plan/lib/live-config.js')
+const { createGateRuntime, GATE_WORD_FIELDS } = await import('../../plugins/dsh-extra-plan/lib/gate-words.js')
 const descriptorKeys = SETTING_DEFINITIONS.map((definition) => definition.key)
 const configDict = Config !== undefined && Config !== null && Config.dict !== undefined && Config.dict !== null ? Config.dict : {}
 const configKeys = Object.keys(configDict)
@@ -120,7 +122,7 @@ if (TARGET_INSTALL_ROOT === undefined) {
 
 const gateWords = { routeDirect: '甲', routePlan: '乙', routeDisagree: '丙', approvalApprove: '丁', approvalReplan: '戊', purposeRefine: '己', purposeRedo: '庚' }
 const initial = { anchoredBootstrap: true, creativeMode: false, webFetch: false, toolPresentationMode: 'native', runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: 'stable-model', plannerPromptSuffix: 'suffix', exploreBudget: 19, otherAgentModel: '', gateWords }
-function makeEditor(config = initial, documentPath = '') {
+function makeEditor(config = initial, documentPath = '', options = {}) {
   const row = { entry: { options: { id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: structuredClone(config) }, fiber: {} }, inherited: {}, override: {} }
   const state = { rows: [row], edits: [] }
   return {
@@ -132,6 +134,7 @@ function makeEditor(config = initial, documentPath = '') {
       if (current === undefined) throw new Error('entry disappeared')
       const next = change(structuredClone(current.entry.options.config), current.inherited)
       current.entry.options.config = next
+      if (options.persistDocument === true && documentPath !== '') writeFileSync(documentPath, JSON.stringify([{ id: entry.options.id, config: next }]), 'utf8')
       state.edits.push({ id: entry.options.id, next: structuredClone(next) })
     },
   }
@@ -152,9 +155,47 @@ function requestRaw(port, method, route, raw) {
   })
 }
 function requestJson(port, method, route, value) { return requestRaw(port, method, route, JSON.stringify(value)) }
-async function start(editor) {
+async function requestApiJson(port, method, route, value, trace) {
+  const response = await requestJson(port, method, route, value)
+  if (Array.isArray(trace) && response.body?.profileSync?.pending === false) trace.push('api-profile-sync-terminal')
+  return response
+}
+function deferred() {
+  let resolve
+  const promise = new Promise((done) => { resolve = done })
+  return { promise, resolve }
+}
+async function flush(times = 5) {
+  for (let i = 0; i < times; i += 1) {
+    await Promise.resolve()
+    await new Promise((resolve) => setImmediate(resolve))
+  }
+}
+async function waitForTerminal(port) {
+  let last
+  for (let i = 0; i < 40; i += 1) {
+    last = await requestJson(port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
+    if (last.body === null || last.body.profileSync === undefined || last.body.profileSync.pending !== true) return last
+    await flush(2)
+  }
+  return last
+}
+async function waitForAdapterRegister(counts, expected = 1) {
+  for (let i = 0; i < 40; i += 1) {
+    if (counts.register >= expected) return
+    await flush(2)
+  }
+}
+async function waitForTrace(trace, event) {
+  for (let i = 0; i < 40; i += 1) {
+    if (trace.includes(event)) return
+    await flush(2)
+  }
+}
+async function start(editor, options = {}) {
   const routes = []
   const policies = []
+  const lifecycle = { cleanup: undefined, update: undefined }
   const ctx = {
     fiber: { uid: 'settings-test' },
     get: (name) => name === 'configEditor' ? editor : undefined,
@@ -162,7 +203,32 @@ async function start(editor) {
       if (deps[0] === 'loader') { callback({ get: () => undefined, loader: { builtins: {} }, effect: (fn) => fn() }); return }
       if (deps[0] === 'settings') { callback({ settings: { configure: (policy, owner) => { policies.push({ policy, owner }); return () => {} } }, effect: (fn) => fn() }); return }
       if (deps[0] === 'webServer') { callback({ webServer: { register: (definition) => { routes.push(definition); return () => {} } }, effect: (fn) => fn() }); return }
-      if (deps[0] === 'configEditor') return
+      if (deps[0] === 'configEditor') {
+        if (options.mount !== true) return
+        const child = {
+          configEditor: editor,
+          on: (event, callback) => {
+            if (event !== 'internal/update') return undefined
+            lifecycle.update = callback
+            return () => { lifecycle.update = undefined }
+          },
+          plugin: async (...args) => {
+            const trace = Array.isArray(options.trace) ? options.trace : undefined
+            if (trace !== undefined) trace.push('adapter-start')
+            try {
+              const fiber = typeof options.plugin === 'function' ? await options.plugin(...args) : { dispose: async () => {} }
+              if (trace !== undefined) trace.push('adapter-resolved')
+              return fiber
+            } catch (error) {
+              if (trace !== undefined) trace.push(options.adapterFailureEvent || 'adapter-rejected')
+              throw error
+            }
+          },
+          effect: (fn) => { lifecycle.cleanup = fn(); return lifecycle.cleanup },
+        }
+        callback(child)
+        return
+      }
       throw new Error('unexpected inject ' + deps.join(','))
     },
   }
@@ -172,7 +238,7 @@ async function start(editor) {
   check('V03 apply 注册单一路由与 auto:false policy', route !== undefined && policies.length === 1 && policies[0].policy.auto === false)
   const server = createServer((req, res) => Promise.resolve(route.handler(req, res)).catch((error) => { if (!res.headersSent) { res.writeHead(500, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: String(error) })) } }))
   const port = await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', () => resolve(server.address().port)) })
-  return { server, port }
+  return { server, port, lifecycle }
 }
 
 const TEST_ENV_KEYS = Object.freeze(['DSH_HOME', 'DSH_PROFILE', 'USERPROFILE', 'HOME'])
@@ -204,6 +270,7 @@ const run = await start(editor)
 try {
   const before = await requestJson(run.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
   check('V03 GET 读取统一行两项宿主值', before.status === 200 && before.body.values.webFetch === false && before.body.values.toolPresentationMode === 'native' && before.body.fields.length === 2)
+  check('PROFILE_SYNC_INITIAL_PENDING_TRUE', before.status === 200 && before.body.profileSync.status === 'pending' && before.body.profileSync.pending === true)
   const put = await requestJson(run.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true, toolPresentationMode: 'ptc' })
   const rowConfig = editor.state.rows[0].entry.options.config
   check('V03 合法 PUT 仅 edit 唯一全局行并保留另八项与 gateWords（矛盾路径显式 partial）', put.status >= 400 && put.body.profileSync.status === 'unavailable' && put.body.overall === 'partial' && put.body.web.applied === true && put.body.projection.owner === 'dsh-extra-plan-settings' && editor.state.edits.length === 1 && editor.state.edits[0].id === 'dsh-extra-plan-settings' && rowConfig.webFetch === true && rowConfig.toolPresentationMode === 'ptc' && rowConfig.plannerModel === initial.plannerModel && rowConfig.exploreBudget === initial.exploreBudget && JSON.stringify(rowConfig.gateWords) === JSON.stringify(gateWords))
@@ -305,6 +372,26 @@ function syncConfigOf(text) {
   const parsed = parsePresetYaml(text)
   const row = Array.isArray(parsed) ? parsed.find((item) => item && typeof item === 'object' && (item.id === 'dsh-extra-plan-settings' || item.override?.id === 'dsh-extra-plan-settings')) : undefined
   return row?.override?.config || row?.config
+}
+function apiTerminalBodyOk(response) {
+  return response !== null && response !== undefined && response.status >= 200 && response.status < 300 && response.body !== null &&
+    response.body.web?.applied === true && response.body.projection?.applied === true && response.body.overall === 'synced' &&
+    response.body.profileSync?.status === 'synced' && response.body.profileSync?.pending === false
+}
+function apiPatchDetails(fixture, snapshot) {
+  const expected = { ...snapshot.values, gateWords: snapshot.gateWords }
+  try {
+    const webConfig = syncConfigOf(readFileSync(fixture.webPatch, 'utf8'))
+    const qqConfig = syncConfigOf(readFileSync(fixture.qqPatch, 'utf8'))
+    return { expected, webConfig, qqConfig, webMatch: isDeepStrictEqual(webConfig, expected), qqMatch: isDeepStrictEqual(qqConfig, expected) }
+  } catch (error) { return { expected, error: String(error) } }
+}
+function apiPatchOk(fixture, snapshot) {
+  const details = apiPatchDetails(fixture, snapshot)
+  return details.webMatch === true && details.qqMatch === true
+}
+function apiSnapshotBodyOk(response, snapshot) {
+  return response?.body?.values !== undefined && isDeepStrictEqual(response.body.values, snapshot.values)
 }
 const syncValues = { anchoredBootstrap: false, creativeMode: true, webFetch: true, toolPresentationMode: 'both', runcodeCatchGate: true, crossProviderPlannerModel: true, plannerModel: 'planner-sync-test', plannerPromptSuffix: 'sync-suffix-test', exploreBudget: 37, otherAgentModel: 'other-sync-test' }
 const syncGateWords = { routeDirect: '甲', routePlan: '乙', routeDisagree: '丙', approvalApprove: '丁', approvalReplan: '戊', purposeRefine: '己', purposeRedo: '庚' }
@@ -450,6 +537,132 @@ try {
   restoreEnvironment(previousSyncEnvironment)
   for (const root of syncFixtureRoots) rmSync(root, { recursive: true, force: true })
 }
+
+const adapterFixtureRoots = []
+const adapterFixture = makeSyncFixture(); adapterFixtureRoots.push(adapterFixture.root)
+const adapterEditor = makeEditor({ ...syncValues, gateWords: syncGateWords }, adapterFixture.webPatch)
+const adapterCounts = { register: 0, dispose: 0 }
+let adapterNoRemount = false
+const adapterRun = await start(adapterEditor, {
+  mount: true,
+  plugin: async () => { adapterCounts.register += 1; return { dispose: async () => { adapterCounts.dispose += 1 } } },
+})
+try {
+  await flush(8)
+  const adapterInitial = await waitForTerminal(adapterRun.port)
+  await waitForAdapterRegister(adapterCounts)
+  adapterEditor.state.rows[0].entry.options.config.plannerModel = 'no-remount-model'
+  if (typeof adapterRun.lifecycle.update === 'function') adapterRun.lifecycle.update()
+  await flush(8)
+  const adapterAfter = await waitForTerminal(adapterRun.port)
+  await waitForAdapterRegister(adapterCounts)
+  adapterNoRemount = adapterInitial.body.profileSync.status === 'synced' && adapterAfter.body.profileSync.status === 'synced' && adapterCounts.register === 1 && adapterCounts.dispose === 0
+  check('SETTINGS_ONLY_HTTP_SAVE_ADAPTER_REGISTER_0_DISPOSE_0', adapterNoRemount)
+} finally {
+  if (typeof adapterRun.lifecycle.cleanup === 'function') await adapterRun.lifecycle.cleanup()
+  await new Promise((resolve) => adapterRun.server.close(resolve))
+}
+
+async function runApiAdapterCase(label, caseName, failureEvent, changed) {
+  const fixture = makeSyncFixture(); adapterFixtureRoots.push(fixture.root)
+  const trace = []
+  const counts = { register: 0, dispose: 0 }
+  const gate = deferred()
+  const fiber = { dispose: async () => { counts.dispose += 1 } }
+  const editor = makeEditor({ ...syncValues, gateWords: syncGateWords }, fixture.webPatch, { persistDocument: true })
+  const run = await start(editor, {
+    mount: true,
+    trace,
+    adapterFailureEvent: failureEvent,
+    plugin: async () => {
+      counts.register += 1
+      await gate.promise
+      if (caseName === 'throw') throw new Error('injected adapter throw')
+      if (caseName === 'reject') return Promise.reject(new Error('injected adapter reject'))
+      return fiber
+    },
+  })
+  let released = false
+  let cleaned = false
+  const release = () => {
+    if (released) return
+    released = true
+    gate.resolve(caseName === 'hang' ? fiber : undefined)
+  }
+  try {
+    await waitForTrace(trace, 'adapter-start')
+    const snapshot = { values: { ...syncValues, ...changed }, gateWords: syncGateWords }
+    const put = await requestApiJson(run.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', changed, trace)
+    const adapterStartIndex = trace.indexOf('adapter-start')
+    const terminalIndex = trace.indexOf('api-profile-sync-terminal')
+    let ok = apiTerminalBodyOk(put) && apiSnapshotBodyOk(put, snapshot) && apiPatchOk(fixture, snapshot) &&
+      adapterStartIndex >= 0 && terminalIndex > adapterStartIndex && counts.register === 1 && counts.dispose === 0
+    if (caseName === 'hang') {
+      const beforeRelease = ok && !trace.includes('adapter-resolved') && !trace.includes('adapter-thrown') && !trace.includes('adapter-rejected')
+      release()
+      await waitForTrace(trace, 'adapter-resolved')
+      const resolvedIndex = trace.indexOf('adapter-resolved')
+      const afterRelease = resolvedIndex > terminalIndex && counts.dispose === 0
+      const get = await requestJson(run.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
+      if (typeof run.lifecycle.cleanup === 'function') { await run.lifecycle.cleanup(); cleaned = true }
+      ok = beforeRelease && afterRelease && apiTerminalBodyOk({ status: 200, body: { web: { applied: true }, projection: { applied: true }, overall: 'synced', profileSync: get.body.profileSync } }) &&
+        apiSnapshotBodyOk(get, snapshot) && apiPatchOk(fixture, snapshot) && counts.register === 1 && counts.dispose === 1
+      console.log('API_TRACE ' + JSON.stringify({ case: caseName, trace, adapterStartIndex, terminalIndex, putStatus: put.status, apiBodyOk: apiTerminalBodyOk(put), snapshotBodyOk: apiSnapshotBodyOk(put, snapshot), patchOk: apiPatchOk(fixture, snapshot), patchDetails: apiPatchDetails(fixture, snapshot), resolvedIndex, pluginCalls: counts.register, pluginDisposals: counts.dispose }))
+    } else {
+      release()
+      await waitForTrace(trace, failureEvent)
+      const failureIndex = trace.indexOf(failureEvent)
+      const get = await requestJson(run.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
+      ok = ok && failureIndex > terminalIndex && trace.filter((event) => event === failureEvent).length === 1 &&
+        get.status >= 200 && get.status < 300 && get.body.profileSync?.status === 'synced' && get.body.profileSync?.pending === false &&
+        apiSnapshotBodyOk(get, snapshot) && apiPatchOk(fixture, snapshot) && counts.register === 1 && counts.dispose === 0
+      console.log('API_TRACE ' + JSON.stringify({ case: caseName, trace, adapterStartIndex, terminalIndex, putStatus: put.status, apiBodyOk: apiTerminalBodyOk(put), snapshotBodyOk: apiSnapshotBodyOk(put, snapshot), patchOk: apiPatchOk(fixture, snapshot), patchDetails: apiPatchDetails(fixture, snapshot), failureIndex, pluginCalls: counts.register, pluginDisposals: counts.dispose }))
+    }
+    check(label, ok)
+  } finally {
+    release()
+    await flush(8)
+    if (!cleaned && typeof run.lifecycle.cleanup === 'function') await run.lifecycle.cleanup()
+    await new Promise((resolve) => run.server.close(resolve))
+  }
+}
+await runApiAdapterCase('API_ADAPTER_THROW_COMPLETE_PATCH_SETTLED_BEFORE_FAILURE_OK', 'throw', 'adapter-thrown', { webFetch: false })
+await runApiAdapterCase('API_ADAPTER_REJECT_COMPLETE_PATCH_SETTLED_BEFORE_FAILURE_OK', 'reject', 'adapter-rejected', { webFetch: false })
+await runApiAdapterCase('API_ADAPTER_HANG_COMPLETE_PATCH_SETTLED_BEFORE_RESOLVE_OK', 'hang', 'adapter-resolved', { webFetch: false })
+
+
+const liveRoot = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-live-config-'))
+const liveDir = join(liveRoot, 'profiles', 'web')
+mkdirSync(liveDir, { recursive: true })
+let livePath = join(liveDir, 'cordis.patch.yml')
+const hotKeys = ['anchoredBootstrap', 'creativeMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel']
+const hotGetters = { anchoredBootstrap: 'anchoredBootstrap', creativeMode: 'creativeMode', runcodeCatchGate: 'runcodeCatchGate', crossProviderPlannerModel: 'crossProviderPlannerModel', plannerModel: 'plannerModel', plannerPromptSuffix: 'plannerPromptSuffix', exploreBudget: 'exploreBudget', otherAgentModel: 'otherAgentModel' }
+const hotNext = { anchoredBootstrap: true, creativeMode: false, runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: 'hot-model', plannerPromptSuffix: 'hot-suffix', exploreBudget: 47, otherAgentModel: 'hot-other' }
+writeFileSync(livePath, JSON.stringify([{ id: 'dsh-extra-plan-settings', config: { ...syncValues } }]), 'utf8')
+const liveConfig = createLiveConfig({ resolveDocumentPath: () => livePath, fallbackDefaults: syncValues })
+let hotReadOk = true
+for (const key of hotKeys) {
+  const next = { ...syncValues, [key]: hotNext[key] }
+  livePath = join(liveDir, 'cordis.patch.' + key + '.yml')
+  writeFileSync(livePath, JSON.stringify([{ id: 'dsh-extra-plan-settings', config: next }]), 'utf8')
+  if (!Object.is(liveConfig[hotGetters[key]], hotNext[key])) hotReadOk = false
+}
+check('HOT_READ_WITHOUT_AGENTPRESET_REMOUNT_OK', hotReadOk && adapterNoRemount)
+const generatedDefinition = parsePresetYaml(readFileSync(join(REPO_ROOT, 'plugins/dsh-extra-plan/assets/presets/extra-plan/preset-definition.generated.yml'), 'utf8'))
+const restartRows = generatedDefinition.plugins || []
+const restartWeb = restartRows.find((row) => row && row.id === 'tool-web')
+const restartPresentation = restartRows.find((row) => row && row.id === 'tool-presentation')
+const restartOk = restartWeb !== undefined && restartPresentation !== undefined && restartWeb.config !== undefined && restartPresentation.config !== undefined &&
+  !hotKeys.includes('webFetch') && !hotKeys.includes('toolPresentationMode')
+console.log('HOT=8 RESTART=2')
+check('RESTART_2_DEFINITION_PROJECTIONS_REMAIN_LOAD_TIME', restartOk)
+const oldRuntime = createGateRuntime(syncGateWords)
+const restartGate = Object.fromEntries(GATE_WORD_FIELDS.map((item, index) => [item.field, '重词' + index]))
+const nextRuntime = createGateRuntime(restartGate)
+check('GATEWORDS_FULL_SYNC_RESTART_SEMANTICS', oldRuntime.words.routeDirect === syncGateWords.routeDirect && nextRuntime.words.routeDirect === restartGate.routeDirect && oldRuntime.words.routeDirect !== nextRuntime.words.routeDirect)
+console.log('HUMAN  {"scope":"RESTART-AND-GATEWORDS","reason":"真实 Harness/QQBot 重启、旧词拒绝与非法词无 fallback 需部署后复测"}')
+rmSync(liveRoot, { recursive: true, force: true })
+for (const root of adapterFixtureRoots) rmSync(root, { recursive: true, force: true })
 
 const invalidApiGateCases = [
   ['missing-key', (() => { const value = structuredClone(gateWords); delete value.routeDirect; return value })()],
