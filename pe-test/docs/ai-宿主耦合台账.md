@@ -266,3 +266,9 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 - 每次 API PUT、`settled-initial`、`settled-update` 都生成 `saveRunId`、单调 `syncRevision`、固定 10 项 values + 7 键 gateWords 的 `snapshotHash` 与 trigger；PUT 返回 request/terminal 全等，GET 无参数只显示 `source=last-terminal-cache,cache=true,terminalMatch=false`。
 - Web 与每个 QQBot 目标分别保留 bytes/mtime/raw SHA、managed snapshot hash、backup 路径/SHA；raw SHA 可不同，但 managed hash 必须和 request snapshotHash 相等。外部 writer 漂移归类 `drift-detected`，不回写旧 backup。
 - `creativeMode` 自动验收只看双端即时 patch/managed hash 和 terminal 关联；运行时重启、真实 profile 清理、QQBot 消息链继续 `HUMAN`。
+
+## ⑬ UI 保存不产生 internal/update（宿主契约事实）
+
+- 真实 UI 保存走宿主 ConfigForms `form.mutate`（dsh-client-ui-settings ConfigForm.mutate → remote.settings.mutate → settings.mutate → configEditor.edit）；10 项 settings 字段全部 `.volatile()`，Loader 判定 volatile-only（`equalExceptVolatile` 把 volatile 字段视为相等）后就地替换 `fiber._config` 直接 return，不调 `fiber.update`，`internal/update` waterfall 根本不运行（dsh 0.2.0-rc.2 / cordis 4.0.4 宿主源码核对）。
+- 即使产生该事件，`internal/update` 也是 fiber 定向 waterfall（非 global 注册存入注册者 `child.fiber._hooks`，`thisArg`=被 update 的 fiber）；`preset-sync.js` 的监听器位于 `ctx.inject(['configEditor'])` child fiber ≠ settings 行 entry.fiber，永远收不到。两层都断 ⇒ 保存时不产生可消费的 settled 链。
+- 结论：UI 保存的 QQBot 同步主触发是 client.js saveAll 第二步同源 PUT（`api-put` trigger，无条件全量 syncEditor）；settled 链仅作 Web 宿主重启/装载兜底（settled-initial）。生产漂移取证：`.extra-plan/线索-生产实况取证-Web到QQBot配置漂移-be2839cd-20261015151724897-24332-0.md`（settledCount 停在 1、缓存停在 settled-initial+syncRevision=1）。【已核实·宿主源码+生产取证】

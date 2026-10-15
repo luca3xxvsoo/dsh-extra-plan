@@ -3,7 +3,7 @@
 // 本入口统一拥有 settings/API/carrier、旧值迁移与 profileSync；AgentPreset 仅由 preset-sync 初始/结构路径管理。
 // 两项宿主设置只从权威值派生到内存 definition，不再写独立公开投影行。
 
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { readFileSync, existsSync, statSync } from 'node:fs'
 import { isDeepStrictEqual } from 'node:util'
 import { fileURLToPath } from 'node:url'
@@ -335,6 +335,28 @@ function cacheProfileSync(profileSync) {
   return { ...base, pending: base.pending === true, cache: true, terminalMatch: false, source: 'last-terminal-cache' }
 }
 
+/** GET 无参缓存兜底：terminal 缓存内 Web patch 指纹与磁盘现状不一致时标记 stale；只读，不触发同步。 */
+function cacheProfileSyncWithStale(profileSync, editor) {
+  const base = cacheProfileSync(profileSync)
+  try {
+    const fingerprint = profileSync !== null && typeof profileSync === 'object' && profileSync.rawWebPatchFingerprint !== null && typeof profileSync.rawWebPatchFingerprint === 'object'
+      ? profileSync.rawWebPatchFingerprint
+      : undefined
+    const cachedSha256 = fingerprint !== undefined && typeof fingerprint.patchSha256 === 'string' && fingerprint.patchSha256 !== '' ? fingerprint.patchSha256 : undefined
+    if (cachedSha256 === undefined || editor === undefined || editor === null) return base
+    const documentPath = editor.documentPath
+    if (typeof documentPath !== 'string' || documentPath.trim() === '') return base
+    const bytes = readFileSync(documentPath)
+    const diskSha256 = createHash('sha256').update(bytes).digest('hex')
+    if (diskSha256 === cachedSha256) return base
+    const cachedBytes = Number.isFinite(fingerprint.patchBytes) ? fingerprint.patchBytes : null
+    console.warn('[dsh-extra-plan] QQBot profile sync status=stale-terminal-cache pathSource=editor.documentPath path=' + documentPath + ' cachedPatchSha256=' + cachedSha256 + ' diskPatchSha256=' + diskSha256 + ' cachedBytes=' + (cachedBytes === null ? 'unknown' : String(cachedBytes)) + ' diskBytes=' + String(bytes.length))
+    return { ...base, stale: true, source: 'stale-terminal-cache' }
+  } catch {
+    return base
+  }
+}
+
 function requestProfileSync(profileSync, request) {
   const same = profileSync !== null && profileSync !== undefined && request !== undefined &&
     profileSync.saveRunId === request.saveRunId && profileSync.syncRevision === request.syncRevision && profileSync.snapshotHash === request.snapshotHash
@@ -404,7 +426,7 @@ function createApiHandler(ctx, syncEditor, getProfileSync) {
           const matched = { ...cached, pending: false, cache: false, source: 'terminal-query', terminalMatch: true, request: { saveRunId: cached.saveRunId, syncRevision: cached.syncRevision, snapshotHash: cached.snapshotHash, trigger: cached.trigger } }
           return json(res, 200, { ...proPayload(editor, cached, matched), overall: cached.status === 'synced' ? 'synced' : 'partial' })
         }
-        return json(res, 200, { ...proPayload(editor, cached, cacheProfileSync(cached)), overall: 'cache' })
+        return json(res, 200, { ...proPayload(editor, cached, cacheProfileSyncWithStale(cached, editor)), overall: 'cache' })
       }
       if (req.method === 'PUT' && path === '/api/dsh-extra-plan-settings/pro-config') {
         let body

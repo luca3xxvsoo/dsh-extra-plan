@@ -573,6 +573,48 @@ try {
   check('creativeMode 单字段保存先核对双端 managed hash，运行时重启留 HUMAN', creativeOk)
 } finally { await new Promise((resolve) => creativeRun.server.close(resolve)); rmSync(creativeFixture.root, { recursive: true, force: true }) }
 
+const staleFingerprintFixture = makeSyncFixture()
+const staleFingerprintEditor = makeEditor({ ...syncValues, gateWords: syncGateWords }, staleFingerprintFixture.webPatch)
+const staleFingerprintRun = await start(staleFingerprintEditor)
+try {
+  const stalePut = await requestJson(staleFingerprintRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
+  const staleFresh = await requestJson(staleFingerprintRun.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
+  const staleFreshOk = stalePut.status === 200 && stalePut.body.profileSync?.status === 'synced' && staleFresh.status === 200 && staleFresh.body.profileSync?.cache === true && staleFresh.body.profileSync?.source === 'last-terminal-cache' && staleFresh.body.profileSync?.stale === undefined
+  if (staleFreshOk) console.log('GET_CACHE_FINGERPRINT_FRESH_OK')
+  check('GET 无参缓存指纹一致：保持缓存视图现状且无 stale 键', staleFreshOk)
+  const driftedPatchText = [
+    '# drifted web patch（仍含合法 settings 行，authority 保持 ok）',
+    '- id: dsh-extra-plan-settings',
+    '  name: dsh-extra-plan/settings',
+    '  config:',
+    '    anchoredBootstrap: false',
+    '    creativeMode: false',
+    '    webFetch: false',
+    '    toolPresentationMode: native',
+    '    runcodeCatchGate: false',
+    '    crossProviderPlannerModel: false',
+    '    plannerModel: drifted-value',
+    '    plannerPromptSuffix: drifted',
+    '    exploreBudget: 3',
+    '    otherAgentModel: drifted',
+    '    gateWords:',
+    ...GATE_WORD_FIELDS.map((item) => '      ' + item.field + ': 漂移词' + item.field),
+  ].join('\n') + '\n'
+  writeFileSync(staleFingerprintFixture.webPatch, driftedPatchText, 'utf8')
+  const staleMarked = await requestJson(staleFingerprintRun.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
+  const staleMarkedOk = staleMarked.status === 200 && staleMarked.body.profileSync?.stale === true && staleMarked.body.profileSync?.source === 'stale-terminal-cache'
+  if (staleMarkedOk) console.log('GET_CACHE_FINGERPRINT_STALE_MARKED_OK')
+  check('GET 无参缓存指纹与磁盘不一致：profileSync.stale===true 且 source=stale-terminal-cache', staleMarkedOk)
+} finally { await new Promise((resolve) => staleFingerprintRun.server.close(resolve)); rmSync(staleFingerprintFixture.root, { recursive: true, force: true }) }
+
+const pendingDocumentFixture = makeSyncFixture()
+const pendingDocumentEditor = makeEditor({ ...syncValues, gateWords: syncGateWords }, pendingDocumentFixture.webPatch)
+const pendingDocumentRun = await start(pendingDocumentEditor)
+try {
+  const pendingGet = await requestJson(pendingDocumentRun.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
+  check('GET 无缓存无指纹（stale 检测异常输入提前返回）：仍 200、无 stale 键且不抛错', pendingGet.status === 200 && pendingGet.body.profileSync?.status === 'pending' && pendingGet.body.profileSync?.stale === undefined)
+} finally { await new Promise((resolve) => pendingDocumentRun.server.close(resolve)); rmSync(pendingDocumentFixture.root, { recursive: true, force: true }) }
+
 const externalDriftFixture = makeSyncFixture()
 const externalDriftEditor = makeEditor({ ...syncValues, gateWords: syncGateWords }, externalDriftFixture.webPatch, { persistDocument: true })
 const externalDriftText = '# external writer value\n- id: external-writer\n  name: external\n  config:\n    marker: !!js \"globalThis.__externalWriter = true\"\n'
@@ -1030,6 +1072,7 @@ function makeClientHarness(snapshot, outcome = true, failDetail = false, savingI
   let notificationCount = 0
   let recoveryReadAttempts = 0
   const calls = []
+  const fetchCalls = []
 
   function sameDeps(left, right) {
     if (left === undefined || right === undefined) return false
@@ -1120,7 +1163,19 @@ function makeClientHarness(snapshot, outcome = true, failDetail = false, savingI
     head: { appendChild() { styleAppends += 1 } },
     createElement: () => ({ dataset: {}, remove() { styleRemoves += 1 } }),
   }
-  const sandbox = { window: { __ModuleLoader__: { load(value) { definition = value } } }, document, console, Symbol, Object, Array, String, Number, Boolean, JSON, structuredClone, Set, Map, Error }
+  const fetchResponses = {
+    synced: { ok: true, status: 200, json: async () => ({ overall: 'synced', profileSync: { status: 'synced', pending: false } }) },
+    'not-installed': { ok: true, status: 200, json: async () => ({ overall: 'not-installed', profileSync: { status: 'not-installed', pending: false } }) },
+    failed: { ok: false, status: 502, json: async () => ({ overall: 'partial', profileSync: { status: 'failed', profiles: [{ profile: 'qqbot', reason: 'snapshot-hash-mismatch' }] } }) },
+    conflict: { ok: false, status: 409, json: async () => ({ overall: 'conflict', profileSync: { status: 'conflict', reason: 'terminal-saveRunId-mismatch' } }) },
+  }
+  const sandbox = { window: { __ModuleLoader__: { load(value) { definition = value } } }, document, console, Symbol, Object, Array, String, Number, Boolean, JSON, structuredClone, Set, Map, Error,
+    fetch: async (url, init) => {
+      fetchCalls.push({ url: String(url), method: init === undefined || init === null ? 'GET' : String(init.method || 'GET'), body: init === undefined || init === null || typeof init.body !== 'string' ? undefined : JSON.parse(init.body) })
+      if (options.fetchBehavior === 'network') throw new Error('network down')
+      return fetchResponses[options.fetchBehavior] || fetchResponses.synced
+    },
+  }
   runInNewContext(clientText, sandbox)
   const moduleExports = definition.factory((name) => { if (name === 'react') return fakeReact; throw new Error('unexpected require ' + name) })
 
@@ -1264,7 +1319,7 @@ function makeClientHarness(snapshot, outcome = true, failDetail = false, savingI
     detailRunner.unmount()
     detailFormRunner.unmount()
   }
-  const result = { calls, states, registrations, injectionDisposers, cleanups, context: surfaceContext, renderDetail, detailChrome, notify, rebuildSurfaces, unmount, renderStats, formController }
+  const result = { calls, fetchCalls, states, registrations, injectionDisposers, cleanups, context: surfaceContext, renderDetail, detailChrome, notify, rebuildSurfaces, unmount, renderStats, formController }
   Object.defineProperty(result, 'registrationDisposals', { get: () => registrationDisposals })
   Object.defineProperty(result, 'registerCalls', { get: () => ({ ...registerCalls }) })
   Object.defineProperty(result, 'registerDisposeCounts', { get: () => ({ ...registerDisposeCounts }) })
@@ -1293,6 +1348,28 @@ const successClient = await exerciseClient(readySnapshot, true, 'ok', 'V05 实�
 check('V05 成功保存恰一次十项 mutate、revision正确、每键一条 set op', successClient.calls.length === 1 && successClient.calls[0].revision === 42 && successClient.calls[0].ops.length === 10 && new Set(successClient.calls[0].ops.map((op) => op.path[0])).size === 10 && successClient.calls[0].ops.every((op) => op.op === 'set'))
 await exerciseClient(readySnapshot, false, 'error', 'V05 mutate=false 不显示保存成功')
 await exerciseClient(readySnapshot, 'throw', 'error', 'V05 mutate抛错不显示保存成功')
+const clientPutAccepted = makeClientHarness(readySnapshot, true, false, false, { fetchBehavior: 'synced' })
+const acceptedPutView = clientPutAccepted.renderDetail()
+if (acceptedPutView === undefined || acceptedPutView.button === undefined) {
+  check('UI双步保存 accepted 渲染保存按钮', false)
+} else {
+  await acceptedPutView.button.props.onClick()
+  check('UI双步保存第二步恰一次同源 PUT /api/dsh-extra-plan-settings/pro-config 且 body 为十项 draft 值', clientPutAccepted.fetchCalls.length === 1 && clientPutAccepted.fetchCalls[0].method === 'PUT' && clientPutAccepted.fetchCalls[0].url.includes('/api/dsh-extra-plan-settings/pro-config') && clientPutAccepted.fetchCalls[0].body !== undefined && JSON.stringify(Object.keys(clientPutAccepted.fetchCalls[0].body).sort()) === JSON.stringify([...keys].sort()) && isDeepStrictEqual(clientPutAccepted.fetchCalls[0].body, values))
+  check('UI双步保存 mutate 仍恰一次十项且失败路径不变', clientPutAccepted.calls.length === 1 && clientPutAccepted.calls[0].ops.length === 10)
+  check('UI双步保存 mutate accepted → PUT 被调用（fetch mock 断言）且提示 saved', clientPutAccepted.fetchCalls.length === 1 && messageKind(clientPutAccepted) === 'ok' && messageText(clientPutAccepted) === 'saved')
+}
+const clientPutRejected = makeClientHarness(readySnapshot, false)
+const rejectedPutView = clientPutRejected.renderDetail()
+if (rejectedPutView !== undefined && rejectedPutView.button !== undefined) await rejectedPutView.button.props.onClick()
+check('UI双步保存 mutate 失败（false）→ 无 PUT 且提示 savedPartial', clientPutRejected.fetchCalls.length === 0 && messageKind(clientPutRejected) === 'error' && messageText(clientPutRejected) === 'savedPartial')
+const clientPutThrown = makeClientHarness(readySnapshot, 'throw')
+const thrownPutView = clientPutThrown.renderDetail()
+if (thrownPutView !== undefined && thrownPutView.button !== undefined) await thrownPutView.button.props.onClick()
+check('UI双步保存 mutate 抛错 → 无 PUT 且提示 savedPartial', clientPutThrown.fetchCalls.length === 0 && messageKind(clientPutThrown) === 'error' && messageText(clientPutThrown) === 'savedPartial')
+const clientPutNetwork = makeClientHarness(readySnapshot, true, false, false, { fetchBehavior: 'network' })
+const networkPutView = clientPutNetwork.renderDetail()
+if (networkPutView !== undefined && networkPutView.button !== undefined) await networkPutView.button.props.onClick()
+check('UI双步保存 PUT 网络失败静默吞异常且提示仍 saved', clientPutNetwork.fetchCalls.length === 1 && messageKind(clientPutNetwork) === 'ok' && messageText(clientPutNetwork) === 'saved')
 const readOnly = makeClientHarness({ ...readySnapshot, writable: false }, true)
 const readOnlyView = readOnly.renderDetail()
 if (readOnlyView !== undefined && readOnlyView.button !== undefined) await readOnlyView.button.props.onClick()
@@ -1309,6 +1386,10 @@ const snapshot43 = { status: 'ready', writable: true, revision: 43, value: updat
 function messageKind(harness) {
   const message = [...harness.states].reverse().find((state) => state.value !== null && typeof state.value === 'object' && state.value.kind !== undefined)
   return message === undefined ? '' : message.value.kind
+}
+function messageText(harness) {
+  const message = [...harness.states].reverse().find((state) => state.value !== null && typeof state.value === 'object' && state.value.kind !== undefined)
+  return message === undefined ? '' : message.value.text
 }
 function opValues(call) {
   return Object.fromEntries((call === undefined ? [] : call.ops).map((op) => [op.path[0], op.value]))

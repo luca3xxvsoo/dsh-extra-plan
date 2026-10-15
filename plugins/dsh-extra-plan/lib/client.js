@@ -216,6 +216,16 @@ window.__ModuleLoader__.load({
           });
           try {
             const accepted = await form.mutate(ops, revision);
+            if (accepted === true) {
+              // form.mutate 已完成宿主规范写盘；此处同源 PUT 静默触发 QQBot 全量同步（volatile-only 保存
+              // 不产生 internal/update，settled 链不会运行，宿主契约事实）。PUT 结果不驱动 UI 提示，
+              // 同步状态经 GET /api/dsh-extra-plan-settings/pro-config 查询（含 stale 检测）。
+              try {
+                const payload = {};
+                for (const op of ops) payload[op.path[0]] = op.value;
+                await fetch("/api/dsh-extra-plan-settings/pro-config", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+              } catch { /* 同步静默失败，不影响保存提示 */ }
+            }
             setMessage(accepted === true ? { kind: "ok", text: t("saved") } : { kind: "error", text: t("savedPartial") });
           } catch {
             setMessage({ kind: "error", text: t("savedPartial") });

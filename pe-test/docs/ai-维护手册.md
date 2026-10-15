@@ -23,6 +23,10 @@
 - 只有 `configEditor.documentPath` 缺失时，才接受显式绝对 `DSH_HOME` 加 `DSH_PROFILE=web`，状态中的来源记为 `explicit-DSH_HOME`；不存在 homedir、USERPROFILE/HOME 或 `home/.dsh` 猜测。
 - 结果必须区分 `synced`、`not-installed`、`unavailable`、`failed` 与 `partial`。Web owner 已成功落盘而镜像失败时保留 `web.applied=true`、`overall=partial`，不伪造双端成功。
 - 镜像只持久化完整 10 项和完整 `gateWords`；其中 8 项沿既有热读语义，`webFetch` 与 `toolPresentationMode` 仍是 2 项宿主重启生效值，不发送 reload、不改变生效机制。
+- **UI 双步保存合同**：设置页保存第一步 `form.mutate(ops, revision)`（宿主 ConfigForms 规范写盘，accepted 才算 Web 侧成功）；第二步在 accepted 分支内同源 `PUT /api/dsh-extra-plan-settings/pro-config`（绝对路径，body 为 10 项字段对象，值与 ops 同源）静默执行——独立 try/catch 吞异常，PUT 响应与结果不驱动 UI 消息。UI 提示不变：accepted→原「已保存」、非 accepted 或异常→原「保存失败」；同步状态不进提示，经 GET `/api/dsh-extra-plan-settings/pro-config` 查询（含 stale 检测）。volatile-only UI 保存不产生 `internal/update`，第二步 PUT 是 QQBot 同步的主触发。
+- **PUT 同值修复漂移**：PUT 请求值与当前 patch 深等时跳过 `editor.edit` 但无条件 `syncEditor`（全量 10+7 关联同步），同值重试保存即可把漂移的 QQBot patch 修复为最新值（回归锁定：`SYNC 同值保存仍检查并修复 QQBot 漂移`）。
+- **GET 无参 stale 语义**：GET 无 `saveRunId` 返回 last-terminal-cache 前，若缓存 terminal 含 `rawWebPatchFingerprint` 且其 `patchSha256` 与 `editor.documentPath` 磁盘现算 sha256 不一致，`profileSync` 附加 `stale:true`、`source:'stale-terminal-cache'` 并 console.warn 一行漂移提示；GET 保持无副作用（不自动触发同步）；documentPath 不可读/异常按现状返回不报错；指纹一致时响应结构与改动前一致（无 stale 键）。
+- **settled 链仅作 Web 宿主重启兜底**：volatile 快路径 + fiber 定向 waterfall 使真实 UI 保存的 `internal/update` 不到达 preset-sync 监听器（宿主契约事实，见台账⑬）；`settled-initial` 仅在 Web 宿主重启/插件装载时补同步 QQBot，不作为保存链同步依据。
 
 `$DSH_HOME/profiles`、`.agent-presets` 和其它生产目录只允许用户侧部署流程触碰；AI 不代替用户做同步、清锁、重启或现场修复。
 
