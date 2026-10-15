@@ -252,3 +252,10 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 - `preset-sync` 的 idle（空闲稳态）以全局行十项权威值、旧值兼容读取与 gateWords 派生收敛为准；旧 `extra-plan-preset-sync` / `preset-extra-plan` 只读迁移，不写旧 body/旧公开行；新写入只走唯一全局行 `configEditor.edit`，无 manifest（清单）台账。
 - gateWords 是 YAML 七键唯一值源；apply 先 `createGateRuntime`，当前 agent scope 注册七个 `systemPrompt.variable`；deny、match、状态机和投影都消费当前词表；旧词不推进。
 - `system-prompt/assemble` 的模型可见副本必须保留 variables 映射；宿主严格渲染失败、变量缺失或未知变量属于升级敏感面，静态台账不冒充实机通过。
+
+## ⑪ 生产注入修复工作区批次
+
+- settled callback 在触发时经 `editorOf(undefined)` 使用 `ctx.get('configEditor')` 解析当前服务；`mountPresetSync` 仍只在 `ctx.inject(['configEditor'])` 的 child 作用域读取 editor，未把 child 捕获到外层。
+- 本轮受控证据使用四态 host-proxy：`normal-injection` 要求外层直接访问保留 `cannot get property "configEditor" without inject`、ctx.get 成功、初始 settled 先于 adapter；`get-only/no-op-inject` 为 `HUMAN`（`HOST-PROXY-GET-ONLY`），不得以 register=0 销账；`inject-throws` 与 `child-missing-configEditor` 保留显式失败。
+- 单字段触发仍核对完整十项 values 与完整七键 gateWords，并对 Web patch、每个 QQBot patch 与 terminal 输入做同一快照对拍；旧 no-remount 批次 `AUTO_REGRESSION_PASS=NO`，不可作为本轮结果。
+- 缺少 `DSH_INSTALL_ROOT`、真实宿主/provider/profile、生产 QQBot、GUI、消息链与重启均保持结构化 `HUMAN`；本轮仅写工作区，不作生产副本部署。

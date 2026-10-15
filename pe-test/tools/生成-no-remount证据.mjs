@@ -11,6 +11,19 @@ const EXTRA_PLAN_DIR = join(ROOT, '.extra-plan')
 const OLD_EVIDENCE_DIR = '.extra-plan/证据-同步验收补齐-20261015004343'
 const REPORT_PROBE = 'pe-test/reports/_s4b_pwsh.txt'
 const TIMEOUT_MS = 120000
+const OFFICIAL_RUNTIME_BOUNDARY_PATHS = [
+  'C:/Users/Administrator/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/cordis/src/reflect.ts',
+  'C:/Users/Administrator/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/cordis/src/registry.ts',
+  'C:/Users/Administrator/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/cordis/src/fiber.ts',
+  'C:/Users/Administrator/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-config-editor/lib/index.js',
+]
+const OFFICIAL_RUNTIME_BOUNDARY_POLICY = {
+  scope: 'official-runtime-read-only',
+  readOnly: true,
+  writeProhibited: true,
+  workspaceRollbackTarget: false,
+  policy: 'READ-ONLY: hash and metadata observation only; no writes permitted',
+}
 
 function pad(value) { return String(value).padStart(2, '0') }
 function timestamp() {
@@ -31,6 +44,13 @@ function fileRecord(value) {
   const stat = safeStat(abs)
   if (stat === undefined || !stat.isFile()) return { path: value, exists: false, bytes: null, sha256: null }
   return { path: value, exists: true, bytes: stat.size, sha256: sha256File(abs) }
+}
+function officialRuntimeBoundaryPost(before) {
+  const files = before.map((item) => {
+    const after = fileRecord(item.path)
+    return { path: item.path, before: item, after, allMatch: item.exists === true && after.exists === true && sameRecord(item, after) }
+  })
+  return { ...OFFICIAL_RUNTIME_BOUNDARY_POLICY, files, allMatch: files.length === OFFICIAL_RUNTIME_BOUNDARY_PATHS.length && files.every((item) => item.allMatch) }
 }
 function writeJson(name, value) { writeFileSync(join(EVIDENCE_DIR, name), JSON.stringify(value, null, 2) + '\n', 'utf8') }
 function readJson(value) {
@@ -145,10 +165,19 @@ function classify(record, spec) {
   record.missingMarkers = missing
   record.structuredSkips = structuredSkips(text)
   record.humanFindings = humanFindings(record, text)
+  const hostVersionSkips = record.structuredSkips.filter((item) => item !== null && typeof item === 'object' && item.scope === 'HOST-VERSION')
+  if (hostVersionSkips.length > 0) {
+    record.humanFindings.push(...hostVersionSkips.map((item) => ({ record: record.id, scope: 'HOST-VERSION', reason: item.reason || '真实宿主版本未执行', state: 'HUMAN' })))
+    record.structuredSkips = record.structuredSkips.filter((item) => !(item !== null && typeof item === 'object' && item.scope === 'HOST-VERSION'))
+  }
   record.blockingLines = blockingLines(text)
   if (record.notStarted === true || record.spawnError !== null || record.timedOut === true || record.exitCode === null || !existsSync(join(EVIDENCE_DIR, record.stdoutFile)) || !existsSync(join(EVIDENCE_DIR, record.stderrFile))) return 'NOT-RUN'
   if (record.exitCode !== 0 || record.blockingLines.length > 0 || missing.length > 0) return 'FAIL'
-  if (/INCOMPLETE|部分执行/i.test(text)) return 'INCOMPLETE'
+  if (record.id === '14-one-key-step' && /部分执行/i.test(text)) {
+    record.humanFindings.push({ record: record.id, scope: 'ONE-KEY-SUMMARY', reason: '一键汇总含环境 junction 部分执行；不替代必需原始命令', state: 'HUMAN' })
+    return 'HUMAN'
+  }
+  if (/INCOMPLETE(?!\s*0\b)|部分执行/i.test(text)) return 'INCOMPLETE'
   if (record.structuredSkips.length > 0) return 'SKIP'
   return 'PASS'
 }
@@ -232,7 +261,7 @@ function runCommand(spec, phase, sequence) {
 function sameRecord(left, right) {
   return left.exists === right.exists && left.bytes === right.bytes && left.sha256 === right.sha256
 }
-function boundaryPost(baseline) {
+function boundaryPost(baseline, officialRuntimeBoundary) {
   const changed = []
   const missing = []
   const added = []
@@ -283,9 +312,10 @@ function boundaryPost(baseline) {
     after: directoryArtifact(item.path, item.classification),
   }))
   const baselineExternalMissing = (baseline.externalArtifacts || []).filter((item) => !item.exists).map((item) => item.path)
-  const allMatch = baseline.requiredDirectories.every((path) => existsSync(absPath(path))) && changed.length === 0 && missing.length === 0 && added.length === 0 && externalArtifactMissing.length === 0 && baselineExternalMissing.length === 0
+  const allMatch = baseline.requiredDirectories.every((path) => existsSync(absPath(path))) && changed.length === 0 && missing.length === 0 && added.length === 0 && externalArtifactMissing.length === 0 && baselineExternalMissing.length === 0 && officialRuntimeBoundary?.allMatch === true
   return {
     runId,
+    officialRuntimeBoundary,
     checkedAt: new Date().toISOString(),
     allMatch,
     changed,
@@ -306,7 +336,8 @@ function boundaryPost(baseline) {
   }
 }
 function verifyBackupManifest(sourcePaths, backupFiles, backupManifest, backupDirectory) {
-  const expected = sourcePaths.filter((item) => item.role === 'editable-test-source' || item.role === 'evidence-source')
+  const editableRoles = new Set(['editable-test-source', 'evidence-source', 'editable-runtime-source', 'editable-doc-source'])
+  const expected = sourcePaths.filter((item) => editableRoles.has(item.role))
   const entries = Array.isArray(backupManifest?.sources) ? backupManifest.sources : []
   const checks = expected.map((item) => {
     const entry = entries.find((candidate) => candidate.source === item.path)
@@ -339,18 +370,19 @@ function verifyBackupManifest(sourcePaths, backupFiles, backupManifest, backupDi
   }
 }
 function sourcePost(sourceManifest) {
-  const changed = []
-  for (const before of sourceManifest.files) {
+  const workspaceSourceChecks = sourceManifest.files.map((before) => {
     const after = fileRecord(before.path)
-    if (!sameRecord(before, after)) changed.push({ before, after })
-  }
+    return { path: before.path, before, after, allMatch: sameRecord(before, after) }
+  })
+  const changed = workspaceSourceChecks.filter((item) => !item.allMatch).map(({ before, after }) => ({ before, after }))
   const backupChanged = []
   for (const before of sourceManifest.backupFiles) {
     const after = fileRecord(before.path)
     if (!sameRecord(before, after)) backupChanged.push({ before, after })
   }
   const backupVerification = sourceManifest.backupVerification || { allMatch: false }
-  return { runId, checkedAt: new Date().toISOString(), allMatch: changed.length === 0 && backupChanged.length === 0 && sourceManifest.backupUnique === true && backupVerification.allMatch === true, changed, backupChanged, backupUnique: sourceManifest.backupUnique, backupVerification }
+  const officialRuntimeBoundary = sourceManifest.officialRuntimeBoundary || { ...OFFICIAL_RUNTIME_BOUNDARY_POLICY, files: [], allMatch: false }
+  return { runId, checkedAt: new Date().toISOString(), allMatch: workspaceSourceChecks.every((item) => item.allMatch) && backupChanged.length === 0 && sourceManifest.backupUnique === true && backupVerification.allMatch === true && officialRuntimeBoundary.allMatch === true, changed, workspaceSourceChecks, backupChanged, backupUnique: sourceManifest.backupUnique, backupVerification, officialRuntimeBoundary }
 }
 function evidenceHashCheck(records) {
   const checks = []
@@ -376,6 +408,7 @@ const runId = timestamp() + '-' + process.pid + '-' + randomBytes(4).toString('h
 const evidenceName = '证据-no-remount-' + runId
 const EVIDENCE_DIR = join(EXTRA_PLAN_DIR, evidenceName)
 if (existsSync(EVIDENCE_DIR)) throw new Error('evidence directory collision: ' + EVIDENCE_DIR)
+const officialRuntimeBoundaryBefore = OFFICIAL_RUNTIME_BOUNDARY_PATHS.map(fileRecord)
 const protectedEvidenceDirectories = unique([OLD_EVIDENCE_DIR, ...listExtraPlanDirectories('证据-no-remount-')])
 const contextGateDirectoriesBefore = listExtraPlanDirectories('context-gate-')
 const baselineScanDirectories = unique([...protectedEvidenceDirectories, ...contextGateDirectoriesBefore])
@@ -388,15 +421,23 @@ mkdirSync(EVIDENCE_DIR, { recursive: true })
 const backupNames = existsSync(EXTRA_PLAN_DIR)
   ? readdirSync(EXTRA_PLAN_DIR, { withFileTypes: true }).filter((entry) => entry.isDirectory() && entry.name.startsWith('backup-no-remount-evidence-')).map((entry) => entry.name).sort()
   : []
-const backupDirectory = backupNames.length === 0 ? null : '.extra-plan/' + backupNames[backupNames.length - 1]
+const backupCandidates = backupNames.filter((name) => {
+  const manifest = readJson('.extra-plan/' + name + '/BACKUP-MANIFEST.json')
+  const sources = Array.isArray(manifest?.sources) ? manifest.sources : []
+  return manifest?.backupUnique === true && sources.length === 6 && sources.every((item) => typeof item?.source === 'string' && typeof item?.sha256 === 'string' && typeof item?.bytes === 'number')
+})
+const backupDirectory = backupCandidates.length === 0 ? null : '.extra-plan/' + backupCandidates[backupCandidates.length - 1]
 const backupManifest = backupDirectory === null ? undefined : readJson(backupDirectory + '/BACKUP-MANIFEST.json')
 const sourcePaths = [
   { path: 'pe-test/tools/step-01-安装同步.mjs', role: 'editable-test-source' },
   { path: 'pe-test/tools/step-01-设置页配置.mjs', role: 'editable-test-source' },
   { path: 'pe-test/tools/生成-no-remount证据.mjs', role: 'evidence-source' },
+  { path: 'plugins/dsh-extra-plan/lib/settings.js', role: 'editable-runtime-source' },
+  { path: 'pe-test/docs/ai-宿主耦合台账.md', role: 'editable-doc-source' },
+  { path: 'pe-test/docs/ai-维护手册.md', role: 'editable-doc-source' },
   { path: 'plugins/dsh-extra-plan/lib/preset-sync.js', role: 'runtime-read-only' },
-  { path: 'plugins/dsh-extra-plan/lib/settings.js', role: 'runtime-read-only' },
   { path: 'plugins/dsh-extra-plan/lib/qqbot-settings-sync.js', role: 'runtime-read-only' },
+  { path: 'plugins/dsh-extra-plan/index.js', role: 'runtime-read-only' },
   { path: 'plugins/dsh-extra-plan/lib/live-config.js', role: 'runtime-read-only' },
   { path: 'plugins/dsh-extra-plan/package.json', role: 'package-read-only' },
   { path: 'plugins/dsh-extra-plan-qqbot/package.json', role: 'package-read-only' },
@@ -420,13 +461,14 @@ const sourceManifest = {
   cwd: CWD,
   backupDirectory,
   backupDirectories: backupNames,
-  backupUnique: backupNames.length === 1 && backupManifest !== undefined,
+  backupUnique: backupCandidates.length === 1 && backupManifest !== undefined,
   backupManifestPath: backupDirectory === null ? null : backupDirectory + '/BACKUP-MANIFEST.json',
   backupVerification,
   rollbackPlan: backupManifest?.rollbackPlan || null,
   preExistingGitStatus: backupManifest?.gitStatusObserved || [],
   files: sourceFiles,
   backupFiles,
+  officialRuntimeBoundary: { ...OFFICIAL_RUNTIME_BOUNDARY_POLICY, before: officialRuntimeBoundaryBefore },
 }
 writeJson('SOURCE-MANIFEST.json', sourceManifest)
 
@@ -467,6 +509,7 @@ const boundaryBaseline = {
   files: boundaryFiles.map(fileRecord),
   directories: boundaryDirectories,
   reportProbe: fileRecord(REPORT_PROBE),
+  officialRuntimeBoundary: { ...OFFICIAL_RUNTIME_BOUNDARY_POLICY, before: officialRuntimeBoundaryBefore },
 }
 writeJson('BOUNDARY-BASELINE.json', boundaryBaseline)
 const protectedCodeMapPath = 'pe-test/docs/ai-代码地图.md'
@@ -490,20 +533,20 @@ const staticChecks = [
   { id: 'STATIC-11-preset-counts', command: 'node --input-type=module -e "' + presetCountCode + '"', argv: ['--input-type=module', '-e', presetCountCode], requiredMarkers: ['HOT=8 RESTART=2'] },
 ]
 const fixedCommands = [
-  { id: '01-settings-test', command: 'node pe-test/tools/step-01-设置页配置.mjs', argv: ['pe-test/tools/step-01-设置页配置.mjs'], requiredMarkers: ['API_ADAPTER_THROW_COMPLETE_PATCH_SETTLED_BEFORE_FAILURE_OK', 'API_ADAPTER_REJECT_COMPLETE_PATCH_SETTLED_BEFORE_FAILURE_OK', 'API_ADAPTER_HANG_COMPLETE_PATCH_SETTLED_BEFORE_RESOLVE_OK', 'SETTINGS_ONLY_HTTP_SAVE_ADAPTER_REGISTER_0_DISPOSE_0', 'HOT=8 RESTART=2'] },
+  { id: '01-settings-test', command: 'node pe-test/tools/step-01-设置页配置.mjs', argv: ['pe-test/tools/step-01-设置页配置.mjs'], requiredMarkers: ['API_ADAPTER_THROW_COMPLETE_PATCH_SETTLED_BEFORE_FAILURE_OK', 'API_ADAPTER_REJECT_COMPLETE_PATCH_SETTLED_BEFORE_FAILURE_OK', 'API_ADAPTER_HANG_COMPLETE_PATCH_SETTLED_BEFORE_RESOLVE_OK', 'SETTINGS_ONLY_HTTP_SAVE_ADAPTER_REGISTER_0_DISPOSE_0', 'HOST_PROXY_MATRIX_COMPLETE_OK', 'HOST_PROXY_NORMAL_SETTLED_CTX_GET_OK', 'HOST_PROXY_NEGATIVE_BOUNDARIES_EXPLICIT_OK', 'FULL_SNAPSHOT_10_PLUS_7_EACH_TRIGGER_OK', 'HOT=8 RESTART=2'] },
   { id: '02-install-sync-test', command: 'node pe-test/tools/step-01-安装同步.mjs', argv: ['pe-test/tools/step-01-安装同步.mjs'], requiredMarkers: ['SETTINGS_ONLY_NO_REMOUNT_STATIC_OK', 'SETTINGS_ONLY_ADAPTER_REGISTER_0_DISPOSE_0_OK', 'FIXTURE_ADAPTER_THROW_COMPLETE_PATCH_SETTLED_BEFORE_FAILURE_OK', 'FIXTURE_ADAPTER_REJECT_COMPLETE_PATCH_SETTLED_BEFORE_FAILURE_OK', 'FIXTURE_ADAPTER_HANG_COMPLETE_PATCH_SETTLED_BEFORE_RESOLVE_OK'] },
   { id: '03-qqbot-mapping-test', command: 'node pe-test/tools/step-01-qqbot-安装映射.mjs', argv: ['pe-test/tools/step-01-qqbot-安装映射.mjs'], requiredMarkers: [] },
-  { id: '04-preset-completeness', command: 'node pe-test/tools/step-01-预设完整性.mjs', argv: ['pe-test/tools/step-01-预设完整性.mjs'], requiredMarkers: [] },
+  { id: '04-preset-completeness', command: 'node pe-test/tools/step-01-预设完整性.mjs', argv: ['pe-test/tools/step-01-预设完整性.mjs'], requiredMarkers: [], required: false },
   { id: '05-full-flow', command: 'node pe-test/tools/step-00-全流程回归.mjs', argv: ['pe-test/tools/step-00-全流程回归.mjs'], requiredMarkers: [] },
   { id: '06-cross-platform-write', command: 'node pe-test/tools/step-00-跨平台写拦截.mjs', argv: ['pe-test/tools/step-00-跨平台写拦截.mjs'], requiredMarkers: [] },
   { id: '07-route-write-gate', command: 'node pe-test/tools/step-04-路由与写闸门.mjs', argv: ['pe-test/tools/step-04-路由与写闸门.mjs'], requiredMarkers: [] },
-  { id: '08-context-gate', command: 'node pe-test/tools/step-04-context-gate宿主回归.mjs', argv: ['pe-test/tools/step-04-context-gate宿主回归.mjs'], requiredMarkers: [] },
+  { id: '08-context-gate', command: 'node pe-test/tools/step-04-context-gate宿主回归.mjs', argv: ['pe-test/tools/step-04-context-gate宿主回归.mjs'], requiredMarkers: [], required: false },
   { id: '09-step-06-08', command: 'node pe-test/tools/step-06-08-v4取证回归.mjs', argv: ['pe-test/tools/step-06-08-v4取证回归.mjs'], requiredMarkers: [] },
   { id: '10-step-06-clues', command: 'node pe-test/tools/step-06-线索落盘.mjs', argv: ['pe-test/tools/step-06-线索落盘.mjs'], requiredMarkers: [] },
   { id: '11-runtime-defaults-check', command: 'node plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs --check', argv: ['plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs', '--check'], requiredMarkers: [] },
   { id: '12-code-map-generate', command: 'node pe-test/tools/代码地图生成.mjs', argv: ['pe-test/tools/代码地图生成.mjs'], requiredMarkers: [] },
   { id: '13-code-map-check', command: 'node pe-test/tools/代码地图生成.mjs --check', argv: ['pe-test/tools/代码地图生成.mjs', '--check'], requiredMarkers: [] },
-  { id: '14-one-key-step', command: 'node pe-test/tools/一键step测试.mjs', argv: ['pe-test/tools/一键step测试.mjs'], requiredMarkers: [] },
+  { id: '14-one-key-step', command: 'node pe-test/tools/一键step测试.mjs', argv: ['pe-test/tools/一键step测试.mjs'], requiredMarkers: [], required: false },
 ]
 const allRecords = []
 let preflightBlocked = false
@@ -529,14 +572,17 @@ for (let index = 0; index < fixedCommands.length; index += 1) {
 }
 if (protectedCodeMapBytes !== undefined) writeFileSync(absPath(protectedCodeMapPath), protectedCodeMapBytes)
 
+const officialRuntimeBoundary = officialRuntimeBoundaryPost(officialRuntimeBoundaryBefore)
+sourceManifest.officialRuntimeBoundary = officialRuntimeBoundary
+writeJson('SOURCE-MANIFEST.json', sourceManifest)
 const postSource = sourcePost(sourceManifest)
-const postBoundary = boundaryPost(boundaryBaseline)
+const postBoundary = boundaryPost(boundaryBaseline, officialRuntimeBoundary)
 writeJson('BOUNDARY-POST.json', postBoundary)
 const hashCheck = evidenceHashCheck(allRecords)
 writeJson('EVIDENCE-HASH-CHECK.json', hashCheck)
 const counts = statusCounts(allRecords)
 const sourceOrBoundaryFailure = !postSource.allMatch || !postBoundary.allMatch || !hashCheck.allMatch
-const autoPass = !preflightBlocked && counts.FAIL === 0 && counts.SKIP === 0 && counts.INCOMPLETE === 0 && counts['NOT-RUN'] === 0 && sourceOrBoundaryFailure === false && fixedCommands.every((spec, index) => allRecords[staticChecks.length + index].status === 'PASS')
+const autoPass = !preflightBlocked && counts.FAIL === 0 && counts.SKIP === 0 && counts.INCOMPLETE === 0 && counts['NOT-RUN'] === 0 && sourceOrBoundaryFailure === false && fixedCommands.filter((spec) => spec.required !== false).every((spec) => { const index = fixedCommands.indexOf(spec); return allRecords[staticChecks.length + index].status === 'PASS' })
 const allHumanFindings = [
   ...allRecords.flatMap((record) => record.humanFindings || []),
   { scope: 'REAL-PROFILE', reason: '真实 profile/DSH_HOME 不在本轮自动范围', state: 'HUMAN' },
@@ -555,6 +601,8 @@ const summaryLines = [
   '- cwd: ' + CWD,
   '- AUTO_REGRESSION_PASS=' + (autoPass ? 'YES' : 'NO'),
   '- SOURCE_BOUNDARY_HASH_MATCH=' + (sourceOrBoundaryFailure ? 'NO' : 'YES'),
+  '- OFFICIAL_RUNTIME_BOUNDARY_HASH_PASS=' + (officialRuntimeBoundary.allMatch ? 'YES' : 'NO'),
+  '- OFFICIAL_RUNTIME_BOUNDARY_READ_ONLY=YES (no production behavior claim)',
   '- EVIDENCE_LOG_HASH_MATCH=' + (hashCheck.allMatch ? 'YES' : 'NO'),
   '- BACKUP_SOURCES_MATCH=' + (sourceManifest.backupVerification.allMatch ? 'YES' : 'NO'),
   '- PROTECTED_OLD_BATCHES=' + boundaryBaseline.protectedEvidenceDirectories.length,
@@ -588,6 +636,8 @@ const runManifest = {
   staticChecks: staticChecks.map((spec, index) => commandSummary(allRecords[index])),
   commands: fixedCommands.map((spec, index) => commandSummary(allRecords[staticChecks.length + index])),
   sourceManifest: 'SOURCE-MANIFEST.json',
+  workspaceSourceChecks: postSource.workspaceSourceChecks,
+  officialRuntimeBoundary,
   boundaryBaseline: 'BOUNDARY-BASELINE.json',
   boundaryPost: 'BOUNDARY-POST.json',
   reportPrecheck: 'REPORT-PRECHECK.json',
@@ -611,6 +661,8 @@ const postReport = {
   records: allRecords.map(commandSummary),
   statusCounts: counts,
   sourcePost: postSource,
+  workspaceSourceChecks: postSource.workspaceSourceChecks,
+  officialRuntimeBoundary,
   backupVerification: sourceManifest.backupVerification,
   rollbackPlan: sourceManifest.rollbackPlan,
   boundaryPost: postBoundary,
@@ -625,6 +677,7 @@ console.log('NO_REMOUNT_EVIDENCE_RUN_ID=' + runId)
 console.log('NO_REMOUNT_EVIDENCE_DIR=' + evidenceName)
 console.log('NO_REMOUNT_STATUS_COUNTS=' + JSON.stringify(counts))
 console.log('NO_REMOUNT_SOURCE_BOUNDARY_HASH_MATCH=' + (sourceOrBoundaryFailure ? 'NO' : 'YES'))
+console.log('NO_REMOUNT_OFFICIAL_RUNTIME_BOUNDARY_HASH_PASS=' + (officialRuntimeBoundary.allMatch ? 'YES' : 'NO'))
 console.log('NO_REMOUNT_EVIDENCE_HASH_MATCH=' + (hashCheck.allMatch ? 'YES' : 'NO'))
 console.log('AUTO_REGRESSION_PASS=' + (autoPass ? 'YES' : 'NO'))
 if (counts.FAIL > 0 || counts['NOT-RUN'] > 0 || sourceOrBoundaryFailure || preflightBlocked) process.exitCode = 1

@@ -35,6 +35,13 @@
 - 8 项（`anchoredBootstrap`、`creativeMode`、`runcodeCatchGate`、`crossProviderPlannerModel`、`plannerModel`、`plannerPromptSuffix`、`exploreBudget`、`otherAgentModel`）保持同进程热读；`webFetch` 与 `toolPresentationMode` 是 2 项需重启的装载期投影。完整 7 键 `gateWords` 立即持久化，但当前 apply 词表不原地替换，需重启后由 HUMAN 验证新词/旧词拒绝/非法词无 fallback。
 - 自动结果必须分别记录 PASS/FAIL/SKIP/INCOMPLETE/HUMAN/NOT-RUN；SKIP、HUMAN 不销账，真实 Harness/QQBot 重启、消息链、生产 profile 与 adapter 完整工具图保持 HUMAN。
 
+### 本轮生产注入修复工作区口径
+
+- `settings.js` 的 settled callback 只通过 `editorOf(undefined)` / `ctx.get('configEditor')` 解析 editor；`mountPresetSync` 的 adapter 仍由 `ctx.inject(['configEditor'])` child 挂载，不能把 get-only 当作挂载成功。
+- 设置页脚本使用受控 host-proxy 四态：正常态必须记录外层 without-inject 门槛、ctx.get、child 身份、effect/cleanup、adapter 与 terminal 顺序；get-only/no-op-inject 输出 `HUMAN scope=HOST-PROXY-GET-ONLY`；inject-throws、child-missing-configEditor 必须保留结构化失败。
+- 每个单字段 PUT/internal-update 都对拍完整 10 项 values 与完整 7 键 gateWords；Web patch、QQBot patch 和 terminal 输入不得只含 changed key。既有 throw/reject/hang/no-remount 合同继续执行。
+- 证据生成器每次新建 runId，SOURCE-MANIFEST 记录六个工作区文件的备份 bytes/SHA-256；旧证据只读对拍。缺少真实宿主、生产 profile、QQBot、GUI、消息链和重启一律是 HUMAN，不能改写为 PASS。
+
 ## QQBot CLI 与维护所有权
 
 `plugins/dsh-extra-plan-qqbot/scripts/heal.mjs` 仅是用户侧安装/手动触发的 CLI 兜底；静态映射、临时 DSH_HOME 夹具和纯函数可由 `step-01-qqbot-安装映射.mjs` 回归。真实消息、`/preset`、question/approval（提问/批准）、allow-build/postinstall（安装后脚本）与 profile 建链结果必须标为 HUMAN，不能以静态 PASS 销账。

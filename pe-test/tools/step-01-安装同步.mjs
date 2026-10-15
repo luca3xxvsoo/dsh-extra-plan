@@ -75,14 +75,15 @@ function makeEditor(config) {
     },
   }
 }
-function makeContext(editor, pluginImpl, trace = [], adapterFailureEvent = 'adapter-rejected') {
+function makeContext(editor, pluginImpl, trace = [], adapterFailureEvent = 'adapter-rejected', options = {}) {
   let updateListener
   let updateOff = 0
   let pluginCalls = 0
   let pluginDisposals = 0
   const received = []
-  const ctx = {
-    configEditor: editor,
+  const mode = options.mode || 'normal-injection'
+  const childTarget = {
+    ...(mode === 'child-missing-configEditor' ? {} : { configEditor: editor }),
     on: (event, callback) => {
       if (event !== 'internal/update') return undefined
       updateListener = callback
@@ -102,8 +103,27 @@ function makeContext(editor, pluginImpl, trace = [], adapterFailureEvent = 'adap
       }
     },
   }
+  const ctx = mode === 'child-missing-configEditor'
+    ? new Proxy(childTarget, { get(target, property, receiver) { if (property === 'configEditor') { trace.push('child-configEditor-missing'); throw new Error('cannot get property "configEditor" without inject') }; return Reflect.get(target, property, receiver) } })
+    : childTarget
+  const outerTarget = {
+    get: (name) => name === 'configEditor' ? editor : undefined,
+    inject: (deps, callback) => {
+      trace.push('inject:' + deps[0])
+      if (deps[0] === 'configEditor') {
+        if (mode === 'inject-throws') throw new Error('inject-error')
+        if (mode === 'get-only/no-op-inject') return undefined
+        callback(ctx)
+      }
+    },
+  }
+  const outer = new Proxy(outerTarget, { get(target, property, receiver) { if (property === 'configEditor') { trace.push('outer-configEditor-error'); throw new Error('cannot get property "configEditor" without inject') }; return Reflect.get(target, property, receiver) } })
+  let outerDirectError
+  try { void outer.configEditor } catch (error) { outerDirectError = error.message }
   return {
     ctx,
+    outer,
+    outerDirectError,
     received,
     get updateListener() { return updateListener },
     get updateOff() { return updateOff },
@@ -159,6 +179,27 @@ function trigger(stats) {
 
 check('DEFINITION_INITIAL_17_ROWS_OK', definition.id === 'extra-plan' && definition.plugins.length === 17 && definitionWithProjection({ webFetch: true, toolPresentationMode: 'both', gateWords: gate }).plugins.length === 17)
 check('LEGACY_OWNER_STATES_OK', [0, 1, 2].every((state) => activeLegacyRow([{ entry: { options: { id: 'preset-extra-plan' }, fiber: { state } } }])) && !activeLegacyRow([{ entry: { options: { id: 'preset-extra-plan' }, fiber: { state: 3 } } }]))
+const hostProxyEditor = makeEditor(completeSettings)
+const hostProxyTrace = []
+const hostProxyNormal = makeContext(hostProxyEditor, async () => ({ dispose: async () => {} }), hostProxyTrace)
+const hostProxyNormalDirect = hostProxyNormal.ctx.configEditor === hostProxyEditor
+const hostProxyOuterError = hostProxyNormal.outerDirectError === 'cannot get property "configEditor" without inject'
+const hostProxyMissingTrace = []
+const hostProxyMissing = makeContext(hostProxyEditor, async () => ({ dispose: async () => {} }), hostProxyMissingTrace, 'adapter-rejected', { mode: 'child-missing-configEditor' })
+const hostProxyMissingDiagnostics = []
+const hostProxyMissingDispose = mountPresetSync(hostProxyMissing.ctx, { onAdapterError: (diagnostic) => hostProxyMissingDiagnostics.push(diagnostic) })
+await flush(8)
+const hostProxyThrowsTrace = []
+const hostProxyThrows = makeContext(hostProxyEditor, async () => ({ dispose: async () => {} }), hostProxyThrowsTrace, 'adapter-rejected', { mode: 'inject-throws' })
+let hostProxyInjectError
+try { hostProxyThrows.outer.inject(['configEditor'], () => {}) } catch (error) { hostProxyInjectError = error.message }
+const hostProxyGetOnlyTrace = []
+const hostProxyGetOnly = makeContext(hostProxyEditor, async () => ({ dispose: async () => {} }), hostProxyGetOnlyTrace, 'adapter-rejected', { mode: 'get-only/no-op-inject' })
+hostProxyGetOnly.outer.inject(['configEditor'], () => {})
+const hostProxyFixtureOk = hostProxyNormalDirect && hostProxyOuterError && hostProxyMissingTrace.includes('child-configEditor-missing') && hostProxyMissingDiagnostics.some((item) => String(item.message).includes('configEditor')) && hostProxyMissing.pluginCalls === 0 && hostProxyInjectError === 'inject-error' && hostProxyGetOnlyTrace.includes('inject:configEditor')
+check('FIXTURE_HOST_PROXY_BOUNDARY_EXPLICIT_OK', hostProxyFixtureOk)
+await hostProxyMissingDispose()
+
 const source = readFileSync(new URL('../../plugins/dsh-extra-plan/lib/preset-sync.js', import.meta.url), 'utf8')
 function sourceBlock(sourceText, marker) {
   const start = sourceText.indexOf(marker)

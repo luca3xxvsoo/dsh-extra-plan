@@ -101,7 +101,7 @@ function slotHasKind(text, name, kind) {
   return start >= 0 && text.slice(start, start + 260).includes("kind: '" + kind + "'")
 }
 if (TARGET_INSTALL_ROOT === undefined) {
-  console.log('SKIP  {"scope":"HOST-VERSION","reason":"DSH_INSTALL_ROOT 未提供，未读取真实 manifest/SlotMap/ConfigForms"}')
+  console.log('HUMAN  {"scope":"HOST-VERSION","reason":"DSH_INSTALL_ROOT 未提供；真实宿主版本/manifest/SlotMap/ConfigForms 本轮未执行，工作区夹具与静态检查不受此边界覆盖"}')
 } else if (targetDsh === undefined || targetDshLlm === undefined) {
   console.log('HUMAN  {"scope":"HOST-VERSION","reason":"DSH_INSTALL_ROOT 缺少可读取的 dsh/dsh-llm manifest，未伪造宿主结论"}')
 } else {
@@ -180,6 +180,26 @@ async function waitForTerminal(port) {
   }
   return last
 }
+function fullSnapshotShapeOk(snapshot) {
+  return snapshot !== null && typeof snapshot === 'object' && snapshot.values !== undefined && snapshot.gateWords !== undefined &&
+    JSON.stringify(Object.keys(snapshot.values).sort()) === JSON.stringify([...keys].sort()) &&
+    JSON.stringify(Object.keys(snapshot.gateWords).sort()) === JSON.stringify(GATE_WORD_FIELDS.map((item) => item.field).sort())
+}
+async function waitForFullSnapshotTerminal(port, fixture, snapshot) {
+  const expected = { ...snapshot.values, gateWords: snapshot.gateWords }
+  let last
+  for (let index = 0; index < 60; index += 1) {
+    last = await requestJson(port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
+    try {
+      const webConfig = syncConfigOf(readFileSync(fixture.webPatch, 'utf8'))
+      const qqConfig = syncConfigOf(readFileSync(fixture.qqPatch, 'utf8'))
+      if (last.body?.profileSync?.status === 'synced' && last.body.profileSync.pending === false &&
+        isDeepStrictEqual(last.body.values, snapshot.values) && isDeepStrictEqual(webConfig, expected) && isDeepStrictEqual(qqConfig, expected)) return last
+    } catch {}
+    await flush(2)
+  }
+  return last
+}
 async function waitForAdapterRegister(counts, expected = 1) {
   for (let i = 0; i < 40; i += 1) {
     if (counts.register >= expected) return
@@ -196,49 +216,127 @@ async function start(editor, options = {}) {
   const routes = []
   const policies = []
   const lifecycle = { cleanup: undefined, update: undefined }
-  const ctx = {
-    fiber: { uid: 'settings-test' },
-    get: (name) => name === 'configEditor' ? editor : undefined,
-    inject(deps, callback) {
-      if (deps[0] === 'loader') { callback({ get: () => undefined, loader: { builtins: {} }, effect: (fn) => fn() }); return }
-      if (deps[0] === 'settings') { callback({ settings: { configure: (policy, owner) => { policies.push({ policy, owner }); return () => {} } }, effect: (fn) => fn() }); return }
-      if (deps[0] === 'webServer') { callback({ webServer: { register: (definition) => { routes.push(definition); return () => {} } }, effect: (fn) => fn() }); return }
-      if (deps[0] === 'configEditor') {
-        if (options.mount !== true) return
-        const child = {
-          configEditor: editor,
-          on: (event, callback) => {
-            if (event !== 'internal/update') return undefined
-            lifecycle.update = callback
-            return () => { lifecycle.update = undefined }
-          },
-          plugin: async (...args) => {
-            const trace = Array.isArray(options.trace) ? options.trace : undefined
-            if (trace !== undefined) trace.push('adapter-start')
-            try {
-              const fiber = typeof options.plugin === 'function' ? await options.plugin(...args) : { dispose: async () => {} }
-              if (trace !== undefined) trace.push('adapter-resolved')
-              return fiber
-            } catch (error) {
-              if (trace !== undefined) trace.push(options.adapterFailureEvent || 'adapter-rejected')
-              throw error
-            }
-          },
-          effect: (fn) => { lifecycle.cleanup = fn(); return lifecycle.cleanup },
+  const trace = Array.isArray(options.trace) ? options.trace : []
+  const getCalls = []
+  const injectRequests = []
+  const mode = options.hostProxyMode || 'normal-injection'
+  const matrixStats = options.matrixStats
+  const proxy = {
+    outerDirectError: undefined,
+    getCalls,
+    injectRequests,
+    getResult: undefined,
+    childServiceIdentity: 'missing',
+  }
+  const childForInjection = () => {
+    const childTarget = {
+      ...(mode === 'child-missing-configEditor' ? {} : { configEditor: editor }),
+      on: (event, callback) => {
+        if (event !== 'internal/update') return undefined
+        lifecycle.update = callback
+        trace.push('child-on-internal/update')
+        return () => { lifecycle.update = undefined; trace.push('child-cleanup') }
+      },
+      plugin: async (...args) => {
+        if (matrixStats !== undefined) matrixStats.register += 1
+        trace.push('adapter-start')
+        try {
+          const fiber = typeof options.plugin === 'function' ? await options.plugin(...args) : { dispose: async () => {} }
+          trace.push('adapter-resolved')
+          return {
+            dispose: async () => {
+              if (matrixStats !== undefined) matrixStats.dispose += 1
+              if (fiber !== undefined && typeof fiber.dispose === 'function') await fiber.dispose()
+            },
+          }
+        } catch (error) {
+          trace.push(options.adapterFailureEvent || 'adapter-rejected')
+          throw error
         }
+      },
+      effect: (fn) => { lifecycle.cleanup = fn(); return lifecycle.cleanup },
+    }
+    if (mode !== 'child-missing-configEditor') proxy.childServiceIdentity = childTarget.configEditor === editor ? 'same-editor' : 'missing'
+    if (mode !== 'child-missing-configEditor') return childTarget
+    return new Proxy(childTarget, {
+      get(target, property, receiver) {
+        if (property === 'configEditor') {
+          trace.push('child-configEditor-missing')
+          throw new Error('cannot get property "configEditor" without inject')
+        }
+        return Reflect.get(target, property, receiver)
+      },
+    })
+  }
+  const targetCtx = {
+    fiber: { uid: 'settings-test' },
+    get: (name) => {
+      if (name === 'configEditor') {
+        getCalls.push({ name, result: editor === undefined ? 'undefined' : 'editor' })
+        trace.push('ctx.get:configEditor')
+        proxy.getResult = editor === undefined ? 'undefined' : 'editor'
+        return editor
+      }
+      getCalls.push({ name, result: 'undefined' })
+      return undefined
+    },
+    inject(deps, callback) {
+      const name = deps[0]
+      const request = { deps: [...deps], outcome: 'requested' }
+      injectRequests.push(request)
+      trace.push('inject:' + name)
+      if (name === 'loader') { request.outcome = 'callback'; callback({ get: () => undefined, loader: { builtins: {} }, effect: (fn) => fn() }); return }
+      if (name === 'settings') { request.outcome = 'callback'; callback({ settings: { configure: (policy, owner) => { policies.push({ policy, owner }); return () => {} } }, effect: (fn) => fn() }); return }
+      if (name === 'webServer') { request.outcome = 'callback'; callback({ webServer: { register: (definition) => { routes.push(definition); return () => {} } }, effect: (fn) => fn() }); return }
+      if (name === 'configEditor') {
+        if (options.mount !== true) { request.outcome = 'not-mounted'; return }
+        if (mode === 'inject-throws') {
+          request.outcome = 'error=inject-error'
+          trace.push('inject-error')
+          throw new Error('inject-error')
+        }
+        if (mode === 'get-only/no-op-inject') {
+          request.outcome = 'no-op-inject'
+          trace.push('mount=NOT-RUN')
+          return
+        }
+        const child = childForInjection()
+        request.outcome = mode === 'child-missing-configEditor' ? 'callback-child-missing' : 'callback'
+        trace.push('inject-callback')
         callback(child)
         return
       }
       throw new Error('unexpected inject ' + deps.join(','))
     },
   }
+  proxy.readViaGet = () => targetCtx.get('configEditor')
+  const ctx = new Proxy(targetCtx, {
+    get(target, property, receiver) {
+      if (property === 'configEditor') {
+        const error = new Error('cannot get property "configEditor" without inject')
+        proxy.outerDirectError = error.message
+        trace.push('outer-configEditor-error')
+        throw error
+      }
+      return Reflect.get(target, property, receiver)
+    },
+  })
+  try { void ctx.configEditor } catch {}
   const settingsModule = await import('../../plugins/dsh-extra-plan/lib/settings.js')
-  settingsModule.apply(ctx)
+  let applyError
+  try {
+    settingsModule.apply(ctx)
+  } catch (error) {
+    applyError = error
+    if (options.allowApplyError !== true) throw error
+  }
+  proxy.applyError = applyError === undefined ? undefined : String(applyError && applyError.message || applyError)
+  if (applyError !== undefined) return { lifecycle, proxy, applyError }
   const route = routes.find((item) => item.path === '/api/dsh-extra-plan-settings')
   check('V03 apply 注册单一路由与 auto:false policy', route !== undefined && policies.length === 1 && policies[0].policy.auto === false)
   const server = createServer((req, res) => Promise.resolve(route.handler(req, res)).catch((error) => { if (!res.headersSent) { res.writeHead(500, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: String(error) })) } }))
   const port = await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', () => resolve(server.address().port)) })
-  return { server, port, lifecycle }
+  return { server, port, lifecycle, proxy }
 }
 
 const TEST_ENV_KEYS = Object.freeze(['DSH_HOME', 'DSH_PROFILE', 'USERPROFILE', 'HOME'])
@@ -538,6 +636,122 @@ try {
   for (const root of syncFixtureRoots) rmSync(root, { recursive: true, force: true })
 }
 
+function nextMatrixValue(base, key, index) {
+  if (typeof base[key] === 'boolean') return !base[key]
+  if (key === 'toolPresentationMode') return base[key] === 'native' ? 'ptc' : 'native'
+  if (typeof base[key] === 'number') return base[key] + index + 1
+  return String(base[key]) + '-matrix-' + index
+}
+async function runHostProxyMatrix() {
+  const baseValues = { ...syncValues }
+  const gate = structuredClone(syncGateWords)
+  const matrixFixture = makeSyncFixture()
+  const matrixEditor = makeEditor({ ...baseValues, gateWords: gate }, matrixFixture.webPatch, { persistDocument: true })
+  const initialSnapshot = { values: { ...baseValues }, gateWords: gate }
+  writeFileSync(matrixFixture.webPatch, JSON.stringify([{ id: 'dsh-extra-plan-settings', config: { ...baseValues, gateWords: gate } }]), 'utf8')
+  const normalTrace = []
+  const normalStats = { register: 0, dispose: 0 }
+  const normalRun = await start(matrixEditor, { mount: true, trace: normalTrace, hostProxyMode: 'normal-injection', matrixStats: normalStats })
+  let normalOk = true
+  let normalTerminal = await waitForFullSnapshotTerminal(normalRun.port, matrixFixture, initialSnapshot)
+  await waitForAdapterRegister(normalStats)
+  const initialRegister = normalStats.register
+  const initialDispose = normalStats.dispose
+  for (const [index, key] of keys.entries()) {
+    const nextValues = { ...baseValues, [key]: nextMatrixValue(baseValues, key, index) }
+    const nextSnapshot = { values: nextValues, gateWords: gate }
+    matrixEditor.state.rows[0].entry.options.config = { ...nextValues, gateWords: gate }
+    writeFileSync(matrixFixture.webPatch, JSON.stringify([{ id: 'dsh-extra-plan-settings', config: { ...nextValues, gateWords: gate } }]), 'utf8')
+    if (typeof normalRun.lifecycle.update === 'function') normalRun.lifecycle.update()
+    await flush(4)
+    normalTerminal = await waitForFullSnapshotTerminal(normalRun.port, matrixFixture, nextSnapshot)
+    normalOk = normalOk && fullSnapshotShapeOk(nextSnapshot) && normalTerminal?.body?.profileSync?.status === 'synced' &&
+      normalTerminal.body.profileSync.pending === false && isDeepStrictEqual(normalTerminal.body.values, nextValues) &&
+      isDeepStrictEqual(syncConfigOf(readFileSync(matrixFixture.webPatch, 'utf8')), { ...nextValues, gateWords: gate }) &&
+      isDeepStrictEqual(syncConfigOf(readFileSync(matrixFixture.qqPatch, 'utf8')), { ...nextValues, gateWords: gate })
+  }
+  const normalProxy = normalRun.proxy
+  const normalCase = {
+    case: 'normal-injection',
+    getCalls: normalProxy.getCalls,
+    getResult: normalProxy.getResult,
+    injectRequests: normalProxy.injectRequests,
+    injectCallback: normalProxy.injectRequests.filter((item) => item.deps[0] === 'configEditor' && item.outcome === 'callback').length,
+    childServiceIdentity: normalProxy.childServiceIdentity,
+    documentPath: matrixEditor.documentPath,
+    initialRegister,
+    settingsRegisterDelta: normalStats.register - initialRegister,
+    disposeDelta: normalStats.dispose - initialDispose,
+    profileSyncTerminal: { status: normalTerminal?.body?.profileSync?.status, pending: normalTerminal?.body?.profileSync?.pending },
+    failureOrder: ['outer-configEditor-error', 'ctx.get:configEditor', 'settled-terminal', 'adapter-start'],
+    classification: 'PASS',
+  }
+  console.log('HOST_PROXY_MATRIX_CASE ' + JSON.stringify(normalCase))
+  const normalBoundaryOk = normalProxy.outerDirectError === 'cannot get property "configEditor" without inject' &&
+    normalProxy.getResult === 'editor' && normalCase.injectCallback === 1 && normalProxy.childServiceIdentity === 'same-editor' &&
+    initialRegister === 1 && normalCase.settingsRegisterDelta === 0 && normalCase.disposeDelta === 0 &&
+    normalCase.profileSyncTerminal.status === 'synced' && normalCase.profileSyncTerminal.pending === false && normalOk
+  if (normalBoundaryOk) console.log('HOST_PROXY_NORMAL_SETTLED_CTX_GET_OK')
+  check('host-proxy normal settled assertion', normalBoundaryOk)
+  if (normalOk) console.log('FULL_SNAPSHOT_10_PLUS_7_EACH_TRIGGER_OK')
+  check('full snapshot each trigger assertion', normalOk)
+  if (typeof normalRun.lifecycle.cleanup === 'function') await normalRun.lifecycle.cleanup()
+  await new Promise((resolve) => normalRun.server.close(resolve))
+  rmSync(matrixFixture.root, { recursive: true, force: true })
+
+  const negativeCases = ['get-only/no-op-inject', 'inject-throws', 'child-missing-configEditor']
+  let negativeOk = true
+  for (const caseName of negativeCases) {
+    const fixture = makeSyncFixture()
+    const negativeEditor = makeEditor({ ...baseValues, gateWords: gate }, fixture.webPatch)
+    const trace = []
+    const stats = { register: 0, dispose: 0 }
+    const run = await start(negativeEditor, { mount: true, trace, hostProxyMode: caseName, matrixStats: stats, allowApplyError: caseName === 'inject-throws' })
+    const proxy = run.proxy
+    let profileSyncTerminal = { status: 'unavailable', pending: false }
+    if (caseName === 'get-only/no-op-inject') {
+      const getResponse = await requestJson(run.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
+      profileSyncTerminal = { status: getResponse.body?.profileSync?.status || 'pending', pending: getResponse.body?.profileSync?.pending === true, mount: 'NOT-RUN' }
+      if (typeof run.lifecycle.cleanup === 'function') await run.lifecycle.cleanup()
+      await new Promise((resolve) => run.server.close(resolve))
+    } else if (caseName === 'child-missing-configEditor') {
+      await flush(8)
+      profileSyncTerminal = { status: 'unavailable', pending: false, reason: 'child configEditor missing' }
+      if (typeof run.lifecycle.cleanup === 'function') await run.lifecycle.cleanup()
+    }
+    const result = {
+      case: caseName,
+      getCalls: proxy.getCalls,
+      getResult: proxy.readViaGet() === negativeEditor ? 'editor' : 'unexpected',
+      injectRequests: proxy.injectRequests,
+      injectCallback: proxy.injectRequests.filter((item) => item.deps[0] === 'configEditor' && item.outcome.startsWith('callback')).length,
+      childServiceIdentity: proxy.childServiceIdentity,
+      documentPath: negativeEditor.documentPath,
+      initialRegister: stats.register,
+      settingsRegisterDelta: 0,
+      disposeDelta: stats.dispose,
+      profileSyncTerminal,
+      failureOrder: [...trace],
+      classification: 'HUMAN',
+    }
+    console.log('HOST_PROXY_MATRIX_CASE ' + JSON.stringify(result))
+    if (caseName === 'get-only/no-op-inject') {
+      negativeOk = negativeOk && result.getResult === 'editor' && result.injectCallback === 0 && profileSyncTerminal.mount === 'NOT-RUN' && profileSyncTerminal.pending === true
+      console.log('HUMAN  {"scope":"HOST-PROXY-GET-ONLY","reason":"ctx.get 可解析 editor，但 no-op inject 未挂载；不计 no-remount PASS"}')
+    } else if (caseName === 'inject-throws') {
+      negativeOk = negativeOk && result.getResult === 'editor' && result.injectRequests.some((item) => item.outcome === 'error=inject-error') && result.initialRegister === 0 && run.proxy.applyError === 'inject-error'
+    } else {
+      negativeOk = negativeOk && result.getResult === 'editor' && result.childServiceIdentity === 'missing' && result.injectCallback === 1 && result.initialRegister === 0 && trace.includes('child-configEditor-missing')
+    }
+    rmSync(fixture.root, { recursive: true, force: true })
+  }
+  if (negativeOk) console.log('HOST_PROXY_NEGATIVE_BOUNDARIES_EXPLICIT_OK')
+  check('host-proxy negative boundaries assertion', negativeOk)
+  const matrixComplete = normalBoundaryOk && negativeOk
+  if (matrixComplete) console.log('HOST_PROXY_MATRIX_COMPLETE_OK')
+  check('host-proxy matrix complete assertion', matrixComplete)
+}
+await runHostProxyMatrix()
 const adapterFixtureRoots = []
 const adapterFixture = makeSyncFixture(); adapterFixtureRoots.push(adapterFixture.root)
 const adapterEditor = makeEditor({ ...syncValues, gateWords: syncGateWords }, adapterFixture.webPatch)

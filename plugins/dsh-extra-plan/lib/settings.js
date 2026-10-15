@@ -314,7 +314,7 @@ export function apply(ctx) {
       return result
     }
   }
-  const settledSettings = async (snapshot) => syncEditor(editorOf(ctx.configEditor), snapshot)
+  const settledSettings = async (snapshot) => syncEditor(editorOf(undefined), snapshot)
   const settledError = async (error) => {
     const result = { status: 'failed', pending: false, reason: 'settled-error:' + String(error && error.message || error) }
     profileSync = result
