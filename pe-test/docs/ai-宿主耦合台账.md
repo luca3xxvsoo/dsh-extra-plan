@@ -67,6 +67,17 @@
 | HS28 | context-gate 宿主回归 | 当前安装根版本、生产源码 hash、公共 AgentLoop/受控 adapter、完整 request trace 与工作区 JSONL 证据；受控 adapter 不冒称真实 provider | 【已核实·集成；真实provider/HUMAN NOT-RUN】 |
 | HS29 | `pe-test/_shared/host-deps.mjs` | scoped package exports 按完整 `./subpath` 解析；根入口与 `/list-agents` 分离；根包无可用 exports/main 时回退 `index.js`，显式未知子路径透传；同步/异步 hook 共用语义，生成 data URL hookSource 需 ESM 回放 | 【已核实·step-01 安装同步；真实宿主/HUMAN NOT-RUN】 |
 
+## ②-A Web→QQBot 镜像路径契约（独立于 HS4）
+
+| 项 | 当前合同 | 状态 |
+|:--|:--|:--|
+| Web→QQBot 真源 | Web `configEditor.documentPath` 首选；由 `profiles/web/cordis.patch.yml` 反推同级 `profiles`，不从当前进程 cwd 或用户目录猜测 | 【已核实·专项】 |
+| 显式备用 | 仅 documentPath 缺失时接受绝对 `DSH_HOME` 且 `DSH_PROFILE=web`，来源标记为 `explicit-DSH_HOME`；不使用 homedir、USERPROFILE/HOME 或 `home/.dsh` 回退 | 【已核实·专项】 |
+| QQBot 双锚点 | 直接同级 profile 的 `package.json` 必须含 `@tencent-connect/dsh-qqbot` bundle，且 `node_modules/dsh-extra-plan-qqbot` 存在；否则不写 | 【已核实·专项】 |
+| 持久化范围 | 同步完整 10 项与完整 `gateWords`；局部 YAML 安全改写保留未知行、注释、`!!js` 与嵌套 insert，写前临时文件/备份/落盘后终验并支持恢复 | 【已核实·专项】 |
+| 状态与生效 | `synced`/`not-installed`/`unavailable`/`failed`/`partial` 结构化回执；8 项沿既有热读，`webFetch` 与 `toolPresentationMode` 为 2 项宿主重启生效，不发送跨进程 reload | 【已核实·专项】 |
+| 与 HS4 边界 | `live-config.js` 的 `DSH_EXTRA_PLAN_CONFIG_PATH` 热读优先级只服务 Web 核心消费，不是跨 profile 根定位依据；两条用途不得混用 | 【已核实·专项】 |
+
 ## ③ 当前 HK：钩子与文件组合契约
 
 | 编号 | 当前本仓位置/钩子 | 当前合同与风险 | 状态 |

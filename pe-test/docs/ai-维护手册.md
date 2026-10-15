@@ -17,6 +17,13 @@
 | web | 直接安装核心包；由 `dsh-extra-plan-settings` 唯一全局 owner 启动内部同步、承载 10 项配置与官方 adapter | 不删除核心包/预设，不写生产 profile |
 | qqbot | 安装精简兼容包；静态 patch、旧块迁移与 web 包建链 | 不分发核心预设；真实消息、`/preset`、question/approval（提问/批准）、allow-build/postinstall（安装后脚本）为用户部署后 HUMAN |
 
+### Web→QQBot 配置同步契约
+
+- Web 保存后的首要路径真源是 `configEditor.documentPath`：仅当它是绝对的 `profiles/web/cordis.patch.yml` 形状时，才推导同级 `profiles` 并扫描直接子 profile。
+- 只有 `configEditor.documentPath` 缺失时，才接受显式绝对 `DSH_HOME` 加 `DSH_PROFILE=web`，状态中的来源记为 `explicit-DSH_HOME`；不存在 homedir、USERPROFILE/HOME 或 `home/.dsh` 猜测。
+- 结果必须区分 `synced`、`not-installed`、`unavailable`、`failed` 与 `partial`。Web owner 已成功落盘而镜像失败时保留 `web.applied=true`、`overall=partial`，不伪造双端成功。
+- 镜像只持久化完整 10 项和完整 `gateWords`；其中 8 项沿既有热读语义，`webFetch` 与 `toolPresentationMode` 仍是 2 项宿主重启生效值，不发送 reload、不改变生效机制。
+
 `$DSH_HOME/profiles`、`.agent-presets` 和其它生产目录只允许用户侧部署流程触碰；AI 不代替用户做同步、清锁、重启或现场修复。
 
 ## QQBot CLI 与维护所有权

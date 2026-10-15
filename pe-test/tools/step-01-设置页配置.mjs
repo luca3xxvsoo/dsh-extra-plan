@@ -1,9 +1,11 @@
 // 设置页同页配置、HTTP 写闸门与真实 lazy client 保存回归；只使用内存 editor/slot/React 夹具。
 import { createServer, request as httpRequest } from 'node:http'
-import { createRequire, registerHooks } from 'node:module'
+import { createRequire, registerHooks, syncBuiltinESMExports } from 'node:module'
 import { isDeepStrictEqual } from 'node:util'
-import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import fs from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { runInNewContext } from 'node:vm'
 
@@ -51,7 +53,12 @@ const OFFICIAL_ROOT = process.env.DSH_INSTALL_ROOT || 'C:\\Users\\Administrator\
 try {
   const anchor = createRequire(join(OFFICIAL_ROOT, 'package.json'))
   const schemaUrl = new URL('file:///' + anchor.resolve('@deepseek-ai/schemastery').replaceAll('\\\\', '/')).href
-  if (typeof registerHooks === 'function') registerHooks({ resolve(specifier, context, next) { return specifier === '@deepseek-ai/schemastery' ? { url: schemaUrl, shortCircuit: true } : next(specifier, context) } })
+  const yamlUrl = new URL('file:///' + anchor.resolve('js-yaml').replaceAll('\\\\', '/')).href
+  if (typeof registerHooks === 'function') registerHooks({ resolve(specifier, context, next) {
+    if (specifier === '@deepseek-ai/schemastery') return { url: schemaUrl, shortCircuit: true }
+    if (specifier === 'js-yaml') return { url: yamlUrl, shortCircuit: true }
+    return next(specifier, context)
+  } })
 } catch { /* 静态合同仍可执行；宿主缺依赖时运行时项会明确失败 */ }
 
 const patchText = readFileSync(join(REPO_ROOT, 'plugins/dsh-extra-plan/cordis.patch.yml'), 'utf8')
@@ -68,15 +75,16 @@ let fail = 0
 function check(label, condition) { if (condition) { pass += 1; console.log('PASS  ' + label) } else { fail += 1; console.log('FAIL  ' + label) } }
 
 let patch
-try { const { parsePresetYaml } = await import('../../plugins/dsh-extra-plan/lib/preset-settings.js'); patch = parsePresetYaml(patchText) } catch (error) { console.error('FAIL  patch YAML parse: ' + String(error)); process.exit(1) }
-const { SETTING_DEFINITIONS } = await import('../../plugins/dsh-extra-plan/lib/preset-settings.js')
+const presetSettings = await import('../../plugins/dsh-extra-plan/lib/preset-settings.js')
+const { parsePresetYaml, SETTING_DEFINITIONS } = presetSettings
+try { patch = parsePresetYaml(patchText) } catch (error) { console.error('FAIL  patch YAML parse: ' + String(error)); process.exit(1) }
 const { Config } = await import('../../plugins/dsh-extra-plan/lib/settings.js')
 const descriptorKeys = SETTING_DEFINITIONS.map((definition) => definition.key)
 const configDict = Config !== undefined && Config !== null && Config.dict !== undefined && Config.dict !== null ? Config.dict : {}
 const configKeys = Object.keys(configDict)
 const configKeySetMatches = JSON.stringify([...configKeys].sort()) === JSON.stringify([...descriptorKeys].sort())
 check('V03 patch 顶层公开 insert 恰一行且稳定 id=dsh-extra-plan-settings', Array.isArray(patch) && patch.length === 1 && Array.isArray(patch[0].insert) && patch[0].insert.length === 1 && patch[0].insert[0].id === 'dsh-extra-plan-settings')
-check('V03 settings owner 接管 configEditor/loader/settings/webServer 生命周期', settingsText.includes("ctx.inject(['configEditor']") && settingsText.includes("ctx.inject(['loader']") && settingsText.includes("ctx.inject(['settings']") && settingsText.includes("ctx.inject(['webServer']") && settingsText.includes('mountPresetSync(child)'))
+check('V03 settings owner 接管 configEditor/loader/settings/webServer 生命周期', settingsText.includes("ctx.inject(['configEditor']") && settingsText.includes("ctx.inject(['loader']") && settingsText.includes("ctx.inject(['settings']") && settingsText.includes("ctx.inject(['webServer']") && settingsText.includes('mountPresetSync(child,') && settingsText.includes('onSettledSettings'))
 check('V03 中英文元数据是全局管理结论级文案', zh.meta.title === '按需规划模式全局管理' && zh.meta.description.includes('统一管理') && en.meta.title === 'Extra Plan Global Manager' && en.meta.description.includes('Manage'))
 check('V03 descriptor 与 Config 字段集合均恰10项且包含两项宿主值', descriptorKeys.length === 10 && configKeys.length === 10 && configKeySetMatches && descriptorKeys.includes('webFetch') && descriptorKeys.includes('toolPresentationMode') && contractText.includes('SETTING_DEFINITIONS = Object.freeze([') && settingsText.includes('SETTING_DEFINITIONS.map') && clientText.includes('const ALL_FIELDS = Object.freeze(EXTRA_FIELDS.concat(HOST_ROW_FIELDS))'))
 check('V02 当前词表严格拒绝、旧值安全解析且不求值', syncText.includes('当前全局 gateWords 非法') && syncText.includes('readLegacyState') && syncText.includes('parsePresetYaml') && !syncText.includes('eval(') && !syncText.includes('Function('))
@@ -112,12 +120,12 @@ if (TARGET_INSTALL_ROOT === undefined) {
 
 const gateWords = { routeDirect: '甲', routePlan: '乙', routeDisagree: '丙', approvalApprove: '丁', approvalReplan: '戊', purposeRefine: '己', purposeRedo: '庚' }
 const initial = { anchoredBootstrap: true, creativeMode: false, webFetch: false, toolPresentationMode: 'native', runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: 'stable-model', plannerPromptSuffix: 'suffix', exploreBudget: 19, otherAgentModel: '', gateWords }
-function makeEditor(config = initial) {
+function makeEditor(config = initial, documentPath = '') {
   const row = { entry: { options: { id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: structuredClone(config) }, fiber: {} }, inherited: {}, override: {} }
   const state = { rows: [row], edits: [] }
   return {
     state,
-    documentPath: '',
+    documentPath,
     configuration: () => state.rows,
     edit: async (entry, change) => {
       const current = state.rows.find((item) => item.entry === entry)
@@ -167,16 +175,40 @@ async function start(editor) {
   return { server, port }
 }
 
-const editor = makeEditor()
+const TEST_ENV_KEYS = Object.freeze(['DSH_HOME', 'DSH_PROFILE', 'USERPROFILE', 'HOME'])
+function captureEnvironment() {
+  return Object.fromEntries(TEST_ENV_KEYS.map((key) => [key, process.env[key]]))
+}
+function restoreEnvironment(snapshot) {
+  for (const key of TEST_ENV_KEYS) {
+    if (snapshot[key] === undefined) delete process.env[key]
+    else process.env[key] = snapshot[key]
+  }
+}
+async function withEnvironment(changes, action) {
+  const previous = captureEnvironment()
+  try {
+    for (const key of TEST_ENV_KEYS) {
+      if (!Object.prototype.hasOwnProperty.call(changes, key)) continue
+      if (changes[key] === undefined) delete process.env[key]
+      else process.env[key] = changes[key]
+    }
+    return await action()
+  } finally {
+    restoreEnvironment(previous)
+  }
+}
+const testEnvironment = captureEnvironment()
+const editor = makeEditor(initial, 'relative-document-path')
 const run = await start(editor)
 try {
   const before = await requestJson(run.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
   check('V03 GET 读取统一行两项宿主值', before.status === 200 && before.body.values.webFetch === false && before.body.values.toolPresentationMode === 'native' && before.body.fields.length === 2)
   const put = await requestJson(run.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true, toolPresentationMode: 'ptc' })
   const rowConfig = editor.state.rows[0].entry.options.config
-  check('V03 合法 PUT 仅 edit 唯一全局行并保留另八项与 gateWords', put.status === 200 && put.body.projection.owner === 'dsh-extra-plan-settings' && editor.state.edits.length === 1 && editor.state.edits[0].id === 'dsh-extra-plan-settings' && rowConfig.webFetch === true && rowConfig.toolPresentationMode === 'ptc' && rowConfig.plannerModel === initial.plannerModel && rowConfig.exploreBudget === initial.exploreBudget && JSON.stringify(rowConfig.gateWords) === JSON.stringify(gateWords))
+  check('V03 合法 PUT 仅 edit 唯一全局行并保留另八项与 gateWords（矛盾路径显式 partial）', put.status >= 400 && put.body.profileSync.status === 'unavailable' && put.body.overall === 'partial' && put.body.web.applied === true && put.body.projection.owner === 'dsh-extra-plan-settings' && editor.state.edits.length === 1 && editor.state.edits[0].id === 'dsh-extra-plan-settings' && rowConfig.webFetch === true && rowConfig.toolPresentationMode === 'ptc' && rowConfig.plannerModel === initial.plannerModel && rowConfig.exploreBudget === initial.exploreBudget && JSON.stringify(rowConfig.gateWords) === JSON.stringify(gateWords))
   const noOp = await requestJson(run.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true, toolPresentationMode: 'ptc' })
-  check('V03 同值 PUT 深等 no-op 零新增 edit', noOp.status === 200 && noOp.body.projection.applied === true && editor.state.edits.length === 1)
+  check('V03 同值 PUT 深等 no-op 零新增 edit（矛盾路径保持 partial）', noOp.status >= 400 && noOp.body.profileSync.status === 'unavailable' && noOp.body.projection.applied === true && editor.state.edits.length === 1)
   const invalidCases = [
     ['empty', {}], ['null', null], ['array', []], ['primitive', 'raw'], ['unknown', { plannerModel: 'x' }],
     ['bad-type', { webFetch: 1 }], ['mixed', { webFetch: false, unknown: true }],
@@ -190,6 +222,234 @@ try {
   const sameServerEmpty = await requestJson(run.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', {})
   check('V03 成功后同一 server 收到空对象仍拒绝，不是成功 no-op', sameServerEmpty.status === 400 && editor.state.edits.length === 1)
 } finally { await new Promise((resolve) => run.server.close(resolve)) }
+
+function makeSyncFixture() {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-web-qqbot-settings-'))
+  const webDir = join(root, 'profiles', 'web')
+  const profileDir = join(root, 'profiles', 'qqbot-sync')
+  mkdirSync(webDir, { recursive: true })
+  mkdirSync(join(profileDir, 'node_modules', 'dsh-extra-plan-qqbot'), { recursive: true })
+  writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'qqbot-sync-profile', dsh: { profile: { bundles: ['@tencent-connect/dsh-qqbot'] } } }), 'utf8')
+  const webPatch = join(webDir, 'cordis.patch.yml')
+  const qqPatch = join(profileDir, 'cordis.patch.yml')
+  writeFileSync(webPatch, '# web fixture\n- id: web-fixture\n  name: web\n', 'utf8')
+  writeFileSync(qqPatch, '# keep this row\n- id: user-custom\n  name: custom\n  config:\n    marker: !!js "globalThis.__syncFixture = true"\n', 'utf8')
+  return { root, webPatch, profileDir, qqPatch }
+}
+const FS_PROBE_METHODS = Object.freeze(['accessSync', 'statSync', 'readdirSync', 'readFileSync', 'existsSync', 'openSync', 'writeFileSync', 'copyFileSync', 'renameSync', 'unlinkSync'])
+function createFsAccessProbe(entries) {
+  const roots = entries.map(({ name, root }) => ({ name, root: resolve(root) }))
+  const counts = Object.fromEntries(roots.map(({ name }) => [name, 0]))
+  const originals = new Map()
+  let installed = false
+  const pathValue = (value) => typeof value === 'string' ? value : undefined
+  const record = (value) => {
+    const valuePath = pathValue(value)
+    if (valuePath === undefined) return
+    const normalized = resolve(valuePath)
+    for (const entry of roots) {
+      if (normalized === entry.root || normalized.startsWith(entry.root + '\\')) counts[entry.name] += 1
+    }
+  }
+  const restore = () => {
+    if (!installed) return
+    for (const [name, original] of originals) fs[name] = original
+    syncBuiltinESMExports()
+    installed = false
+  }
+  const install = () => {
+    if (installed) throw new Error('fs probe already installed')
+    originals.clear()
+    try {
+      for (const name of FS_PROBE_METHODS) {
+        const original = fs[name]
+        originals.set(name, original)
+        const pathIndexes = name === 'copyFileSync' || name === 'renameSync' ? [0, 1] : [0]
+        fs[name] = (...args) => {
+          for (const index of pathIndexes) record(args[index])
+          return original(...args)
+        }
+      }
+      syncBuiltinESMExports()
+      installed = true
+    } catch (error) {
+      for (const [name, original] of originals) fs[name] = original
+      syncBuiltinESMExports()
+      throw error
+    }
+  }
+  return { install, restore, count: (name) => counts[name] || 0 }
+}
+async function withFsAccessProbe(probe, action) {
+  let installed = false
+  try {
+    probe.install()
+    installed = true
+    return await action()
+  } finally {
+    if (installed) probe.restore()
+  }
+}
+function addAnchoredProfile(root, name, patchText) {
+  const dir = join(root, 'profiles', name)
+  mkdirSync(join(dir, 'node_modules', 'dsh-extra-plan-qqbot'), { recursive: true })
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: name + '-profile', dsh: { profile: { bundles: ['@tencent-connect/dsh-qqbot'] } } }), 'utf8')
+  const patch = join(dir, 'cordis.patch.yml')
+  if (patchText !== undefined) writeFileSync(patch, patchText, 'utf8')
+  return { dir, patch }
+}
+function patchBackupCount(profileDir) {
+  try { return readdirSync(profileDir).filter((name) => name.startsWith('cordis.patch.yml.bak-dsh-extra-plan-settings-')).length } catch { return 0 }
+}
+function syncConfigOf(text) {
+  const parsed = parsePresetYaml(text)
+  const row = Array.isArray(parsed) ? parsed.find((item) => item && typeof item === 'object' && (item.id === 'dsh-extra-plan-settings' || item.override?.id === 'dsh-extra-plan-settings')) : undefined
+  return row?.override?.config || row?.config
+}
+const syncValues = { anchoredBootstrap: false, creativeMode: true, webFetch: true, toolPresentationMode: 'both', runcodeCatchGate: true, crossProviderPlannerModel: true, plannerModel: 'planner-sync-test', plannerPromptSuffix: 'sync-suffix-test', exploreBudget: 37, otherAgentModel: 'other-sync-test' }
+const syncGateWords = { routeDirect: '甲', routePlan: '乙', routeDisagree: '丙', approvalApprove: '丁', approvalReplan: '戊', purposeRefine: '己', purposeRedo: '庚' }
+const syncSnapshot = { values: syncValues, gateWords: syncGateWords }
+const syncFixtureRoots = []
+const previousSyncEnvironment = captureEnvironment()
+try {
+  const webFixture = makeSyncFixture(); syncFixtureRoots.push(webFixture.root)
+  delete process.env.DSH_HOME; delete process.env.DSH_PROFILE
+  const webEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, webFixture.webPatch)
+  const webRun = await start(webEditor)
+  try {
+    const webPut = await requestJson(webRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
+    const qqConfig = syncConfigOf(readFileSync(webFixture.qqPatch, 'utf8'))
+    check('SYNC documentPath 首选且无 DSH_HOME 仍双端 synced、完整十项/gateWords 深等', webPut.status >= 200 && webPut.status < 300 && webPut.body.profileSync.status === 'synced' && webPut.body.profileSync.pathSource === 'configEditor.documentPath' && webPut.body.web.applied === true && isDeepStrictEqual(webEditor.state.rows[0].entry.options.config, { ...syncValues, gateWords: syncGateWords }) && isDeepStrictEqual(qqConfig, { ...syncValues, gateWords: syncGateWords }))
+    check('SYNC Web documentPath 目标使用 override 且保留目标外 !!js/用户行', readFileSync(webFixture.qqPatch, 'utf8').includes('globalThis.__syncFixture = true') && readFileSync(webFixture.qqPatch, 'utf8').includes('user-custom'))
+  } finally { await new Promise((resolve) => webRun.server.close(resolve)) }
+
+  const decoy = makeSyncFixture(); syncFixtureRoots.push(decoy.root)
+  const decoyBefore = readFileSync(decoy.qqPatch, 'utf8')
+  const decoyBeforeBytes = readFileSync(decoy.qqPatch)
+  const decoyBeforeStat = statSync(decoy.qqPatch)
+  const decoyBeforeBackups = patchBackupCount(decoy.profileDir)
+  const decoyBeforeEntries = readdirSync(decoy.profileDir).sort().join('\n')
+  const targetBeforeBackups = patchBackupCount(webFixture.profileDir)
+  process.env.DSH_HOME = decoy.root; process.env.DSH_PROFILE = 'web'
+  const priorityEditor = makeEditor({ ...syncValues, gateWords: syncGateWords }, webFixture.webPatch)
+  const priorityRun = await start(priorityEditor)
+  try {
+    const priorityProbe = createFsAccessProbe([
+      { name: 'targetProfilesRoot', root: join(webFixture.root, 'profiles') },
+      { name: 'decoyProfilesRoot', root: join(decoy.root, 'profiles') },
+    ])
+    const priorityPut = await withFsAccessProbe(priorityProbe, () => requestJson(priorityRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { toolPresentationMode: 'native' }))
+    const decoyAfterBytes = readFileSync(decoy.qqPatch)
+    const decoyAfterStat = statSync(decoy.qqPatch)
+    const decoyAfterBackups = patchBackupCount(decoy.profileDir)
+    const decoyAfterEntries = readdirSync(decoy.profileDir).sort().join('\n')
+    check('SYNC 有效 documentPath 真实同级目标访问>0、诱饵profiles根访问=0且仅写目标：target访问=' + priorityProbe.count('targetProfilesRoot') + ' decoyProfiles访问=' + priorityProbe.count('decoyProfilesRoot'), priorityPut.status >= 200 && priorityPut.status < 300 && priorityPut.body.profileSync.pathSource === 'configEditor.documentPath' && priorityProbe.count('targetProfilesRoot') > 0 && priorityProbe.count('decoyProfilesRoot') === 0 && decoyAfterBytes.equals(decoyBeforeBytes) && decoyAfterStat.mtimeMs === decoyBeforeStat.mtimeMs && decoyAfterBackups === decoyBeforeBackups && decoyAfterEntries === decoyBeforeEntries && patchBackupCount(webFixture.profileDir) === targetBeforeBackups + 1)
+    check('SYNC 诱饵目标零变化：patch字节/mtimeMs/备份数/目录项均相等', decoyAfterBytes.equals(decoyBeforeBytes) && decoyAfterStat.mtimeMs === decoyBeforeStat.mtimeMs && decoyAfterBackups === decoyBeforeBackups && decoyAfterEntries === decoyBeforeEntries)
+  } finally { await new Promise((resolve) => priorityRun.server.close(resolve)) }
+
+  const fallback = makeSyncFixture(); syncFixtureRoots.push(fallback.root)
+  const fallbackEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, '')
+  process.env.DSH_HOME = fallback.root; process.env.DSH_PROFILE = 'web'
+  const fallbackRun = await start(fallbackEditor)
+  try {
+    const fallbackPut = await requestJson(fallbackRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
+    check('SYNC documentPath 缺失时显式 DSH_HOME+DSH_PROFILE=web 备用成功', fallbackPut.status >= 200 && fallbackPut.status < 300 && fallbackPut.body.profileSync.status === 'synced' && fallbackPut.body.profileSync.pathSource === 'explicit-DSH_HOME' && fallbackPut.body.profileSync.fallbackReason === 'document-path-unavailable')
+  } finally { await new Promise((resolve) => fallbackRun.server.close(resolve)) }
+
+  const failedFixture = makeSyncFixture(); syncFixtureRoots.push(failedFixture.root)
+  const failedEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, failedFixture.webPatch)
+  rmSync(failedFixture.qqPatch, { force: true })
+  const failedRun = await start(failedEditor)
+  try {
+    const failedPut = await requestJson(failedRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
+    const failedProfile = failedPut.body?.profileSync?.profiles?.[0]
+    check('SYNC API 写失败返回非2xx/failed、Web applied且逐 profile reason，不伪造 synced', failedPut.status >= 400 && failedPut.body.web.applied === true && failedPut.body.overall === 'partial' && failedPut.body.profileSync.status === 'failed' && failedPut.body.profileSync.status !== 'synced' && failedProfile?.status === 'failed' && failedProfile.reason === 'patch-missing')
+  } finally { await new Promise((resolve) => failedRun.server.close(resolve)) }
+
+  const invalidRequestFixture = makeSyncFixture(); syncFixtureRoots.push(invalidRequestFixture.root)
+  const invalidRequestEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, invalidRequestFixture.webPatch)
+  const invalidRequestBefore = readFileSync(invalidRequestFixture.qqPatch, 'utf8')
+  const invalidRequestRun = await start(invalidRequestEditor)
+  try {
+    const invalidRequest = await requestJson(invalidRequestRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: 1 })
+    check('SYNC API 非法写请求400且Web/QQBot均零写', invalidRequest.status === 400 && invalidRequestEditor.state.edits.length === 0 && readFileSync(invalidRequestFixture.qqPatch, 'utf8') === invalidRequestBefore && patchBackupCount(invalidRequestFixture.profileDir) === 0)
+  } finally { await new Promise((resolve) => invalidRequestRun.server.close(resolve)) }
+
+  const partialFixture = makeSyncFixture(); syncFixtureRoots.push(partialFixture.root)
+  const partialFailed = addAnchoredProfile(partialFixture.root, 'qqbot-partial-failed')
+  rmSync(partialFailed.patch, { force: true })
+  const partialEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, partialFixture.webPatch)
+  const partialRun = await start(partialEditor)
+  try {
+    const partialPut = await requestJson(partialRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
+    const partialProfiles = partialPut.body?.profileSync?.profiles || []
+    check('SYNC API 多目标 partial 同时报告 applied/failed 与逐 profile reason', partialPut.status >= 400 && partialPut.body.web.applied === true && partialPut.body.overall === 'partial' && partialPut.body.profileSync.status === 'failed' && partialProfiles.some((item) => item.status === 'applied') && partialProfiles.some((item) => item.status === 'failed' && item.reason === 'patch-missing'))
+  } finally { await new Promise((resolve) => partialRun.server.close(resolve)) }
+
+  const unavailable = makeSyncFixture(); syncFixtureRoots.push(unavailable.root)
+  const unavailableBeforeBytes = readFileSync(unavailable.qqPatch)
+  const unavailableBeforeStat = statSync(unavailable.qqPatch)
+  const unavailableBeforeBackups = patchBackupCount(unavailable.profileDir)
+  const unavailableBeforeEntries = readdirSync(unavailable.profileDir).sort().join('\n')
+  const unavailableUserProfile = join(unavailable.root, 'missing-userprofile')
+  const unavailableHome = join(unavailable.root, 'missing-home')
+  rmSync(unavailableUserProfile, { recursive: true, force: true })
+  rmSync(unavailableHome, { recursive: true, force: true })
+  const unavailableProfilesRoot = join(unavailable.root, 'profiles')
+  let unavailableProbe
+  await withEnvironment({ DSH_HOME: undefined, DSH_PROFILE: undefined, USERPROFILE: unavailableUserProfile, HOME: unavailableHome }, async () => {
+    const unavailableEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, '')
+    const unavailableRun = await start(unavailableEditor)
+    try {
+      unavailableProbe = createFsAccessProbe([{ name: 'unavailableTarget', root: unavailableProfilesRoot }])
+      const unavailablePut = await withFsAccessProbe(unavailableProbe, () => requestJson(unavailableRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true }))
+      const unavailableAfterBytes = readFileSync(unavailable.qqPatch)
+      const unavailableAfterStat = statSync(unavailable.qqPatch)
+      const unavailableAfterBackups = patchBackupCount(unavailable.profileDir)
+      const unavailableAfterEntries = readdirSync(unavailable.profileDir).sort().join('\n')
+      const unavailableTempEntries = unavailableAfterEntries.split('\n').filter((name) => name.startsWith('cordis.patch.yml.tmp-dsh-extra-plan-settings-'))
+      check('SYNC USERPROFILE/HOME 两不存在来源零创建且目标访问=0：target访问=' + unavailableProbe.count('unavailableTarget'), !(unavailablePut.status >= 200 && unavailablePut.status < 300) && unavailablePut.body.profileSync.status === 'unavailable' && unavailablePut.body.profileSync.reason === 'document-path-unavailable' && unavailablePut.body.web.applied === true && unavailablePut.body.overall === 'partial' && unavailableProbe.count('unavailableTarget') === 0 && unavailableBeforeBytes.equals(unavailableAfterBytes) && unavailableAfterStat.mtimeMs === unavailableBeforeStat.mtimeMs && unavailableAfterBackups === unavailableBeforeBackups && unavailableAfterEntries === unavailableBeforeEntries && unavailableTempEntries.length === 0 && unavailableUserProfile !== unavailableHome && !existsSync(unavailableUserProfile) && !existsSync(unavailableHome))
+    } finally { await new Promise((resolve) => unavailableRun.server.close(resolve)) }
+  })
+
+  const invalidPaths = [
+    'profiles/web/cordis.patch.yml',
+    join(webFixture.root, 'profiles', 'desktop', 'cordis.patch.yml'),
+    join(webFixture.root, 'profiles', 'web', 'wrong.yml'),
+    join(webFixture.root, 'other', 'web', 'cordis.patch.yml'),
+  ]
+  for (const invalidPath of invalidPaths) {
+    const invalidEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, invalidPath)
+    const invalidRun = await start(invalidEditor)
+    try {
+      const invalidPut = await requestJson(invalidRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
+      check('SYNC 非空矛盾 documentPath 禁止降级 DSH_HOME：' + invalidPath, invalidPut.status >= 400 && invalidPut.body.profileSync.status === 'unavailable' && invalidPut.body.profileSync.reason === 'invalid-document-path' && readFileSync(decoy.qqPatch, 'utf8') === decoyBefore)
+    } finally { await new Promise((resolve) => invalidRun.server.close(resolve)) }
+  }
+
+  const noTarget = makeSyncFixture(); syncFixtureRoots.push(noTarget.root)
+  rmSync(join(noTarget.profileDir, 'node_modules', 'dsh-extra-plan-qqbot'), { recursive: true, force: true })
+  const noTargetEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, noTarget.webPatch)
+  const noTargetRun = await start(noTargetEditor)
+  try {
+    const noTargetPut = await requestJson(noTargetRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
+    check('SYNC 已证明 profilesRoot 但无双锚点目标返回 200/not-installed', noTargetPut.status === 200 && noTargetPut.body.profileSync.status === 'not-installed' && noTargetPut.body.profileSync.status !== 'synced')
+  } finally { await new Promise((resolve) => noTargetRun.server.close(resolve)) }
+
+  const drift = makeSyncFixture(); syncFixtureRoots.push(drift.root)
+  const driftEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, drift.webPatch)
+  const driftRun = await start(driftEditor)
+  try {
+    const first = await requestJson(driftRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
+    const driftText = '- override:\n    id: dsh-extra-plan-settings\n    config:\n      plannerModel: drifted\n      gateWords:\n        routeDirect: 甲\n        routePlan: 乙\n        routeDisagree: 丙\n        approvalApprove: 丁\n        approvalReplan: 戊\n        purposeRefine: 己\n        purposeRedo: 庚\n'
+    writeFileSync(drift.qqPatch, driftText, 'utf8')
+    const second = await requestJson(driftRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
+    check('SYNC 同值保存仍检查并修复 QQBot 漂移', first.body.profileSync.status === 'synced' && second.body.profileSync.status === 'synced' && syncConfigOf(readFileSync(drift.qqPatch, 'utf8')).plannerModel === syncValues.plannerModel)
+  } finally { await new Promise((resolve) => driftRun.server.close(resolve)) }
+} finally {
+  restoreEnvironment(previousSyncEnvironment)
+  for (const root of syncFixtureRoots) rmSync(root, { recursive: true, force: true })
+}
 
 const invalidApiGateCases = [
   ['missing-key', (() => { const value = structuredClone(gateWords); delete value.routeDirect; return value })()],
@@ -583,5 +843,7 @@ check('V05 Q05 重复dispose不增加任何释放计数', lifecycle.registration
 surface.unmount()
 failedSurface.unmount()
 
-console.log('\\n通过 ' + pass + ', 失败 ' + fail)
+restoreEnvironment(testEnvironment)
+check('ENV DSH_HOME/DSH_PROFILE/USERPROFILE/HOME 精确恢复原先不存在/原值状态', TEST_ENV_KEYS.every((key) => process.env[key] === testEnvironment[key]))
+console.log('\n通过 ' + pass + ', 失败 ' + fail)
 process.exit(fail === 0 ? 0 : 1)

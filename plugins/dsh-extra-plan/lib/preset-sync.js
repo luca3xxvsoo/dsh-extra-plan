@@ -637,8 +637,10 @@ function definitionFromRows(legacyPlugins, settingsValues, rawPatch) {
   })
 }
 
-export function mountPresetSync(ctx) {
+export function mountPresetSync(ctx, options = {}) {
   const child = ctx
+  const onSettledSettings = typeof options.onSettledSettings === 'function' ? options.onSettledSettings : undefined
+  const onSettledError = typeof options.onSettledError === 'function' ? options.onSettledError : undefined
   let active = true
   let disposed = false
   let adapterFiber
@@ -646,6 +648,37 @@ export function mountPresetSync(ctx) {
   const disposeFiber = async (fiber) => {
     if (fiber !== undefined && fiber !== null && typeof fiber.dispose === 'function') return fiber.dispose()
     return undefined
+  }
+  const reportSettledError = async (error, snapshot) => {
+    try {
+      if (onSettledError !== undefined) await onSettledError(error, snapshot)
+      else console.warn('[dsh-extra-plan] settled settings callback failed（不阻断 adapter）：' + (error instanceof Error ? error.message : String(error)))
+    } catch (reportError) {
+      console.warn('[dsh-extra-plan] settled settings error reporter failed：' + (reportError instanceof Error ? reportError.message : String(reportError)))
+    }
+  }
+  const notifySettled = async (latestRows, latestRawPatch, latestLegacyState) => {
+    if (!active || onSettledSettings === undefined) return
+    let resolved
+    try {
+      resolved = resolveUnifiedConfig({
+        settingsValues: settingsValuesFromRows(latestRows),
+        readPatch: () => latestRawPatch,
+        legacyState: latestLegacyState,
+      })
+    } catch (error) {
+      await reportSettledError(error, undefined)
+      return
+    }
+    const snapshot = {
+      values: { ...resolved.values },
+      gateWords: structuredClone(resolved.gateWords),
+    }
+    try {
+      await onSettledSettings(snapshot)
+    } catch (error) {
+      await reportSettledError(error, snapshot)
+    }
   }
   const run = async () => {
     if (!active) return
@@ -677,6 +710,7 @@ export function mountPresetSync(ctx) {
           adapterFiber = undefined
           await disposeFiber(previous)
         }
+        await notifySettled(latestRows, latestRawPatch, latestLegacyState)
         return
       }
       if (OfficialAgentPreset === undefined) throw new Error('@deepseek-ai/dsh-agent-preset 官方 adapter 不可用')
@@ -692,6 +726,7 @@ export function mountPresetSync(ctx) {
         return
       }
       adapterFiber = mounted
+      await notifySettled(latestRows, latestRawPatch, latestLegacyState)
     } catch (error) {
       console.warn('[dsh-extra-plan] 预设 definition/adapter 启动核对失败（不阻断启动）：' + (error instanceof Error ? error.message : String(error)))
     }

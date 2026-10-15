@@ -77,13 +77,13 @@ try {
 function deferred() { let resolve; const promise = new Promise((done) => { resolve = done }); return { promise, resolve } }
 async function flush() { await Promise.resolve(); await new Promise((resolve) => setImmediate(resolve)) }
 function findRow(rows, id) { for (const item of rows || []) { if (item !== null && typeof item === 'object' && item.id === id) return item; if (item !== null && typeof item === 'object' && Array.isArray(item.config)) { const nested = findRow(item.config, id); if (nested !== undefined) return nested } } return undefined }
-function makeEditor(config, editGate) {
+function makeEditor(config, editGate, documentPath = '') {
   const row = { entry: { options: { id: SETTINGS_ROW_ID, config: structuredClone(config) }, fiber: {} }, inherited: {}, override: {} }
   const state = { rows: [row], edits: 0 }
   return {
     state,
     configuration: () => state.rows,
-    documentPath: '',
+    documentPath,
     edit: async (entry, change) => { state.edits += 1; if (editGate !== undefined) await editGate.promise; const current = state.rows.find((item) => item.entry === entry); if (current === undefined) throw new Error('entry disappeared'); current.entry.options.config = change(structuredClone(current.entry.options.config), current.inherited) },
   }
 }
@@ -122,6 +122,66 @@ check('V04 缺项迁移只计划 settings 全局行 edit', migrated.action === '
 const projected = definitionWithProjection({ webFetch: true, toolPresentationMode: 'both', gateWords: gate })
 check('V07 两项宿主值仅派生到内存 definition，原资产不变', findRow(projected.plugins, 'tool-web').config.fetch === true && findRow(projected.plugins, 'tool-presentation').config.mode === 'both' && findRow(assetDefinition().plugins, 'tool-web').config.fetch === false)
 check('V06 历史 preset-extra-plan 状态 0/1/2 占用 adapter，禁用/无fiber/3+不占用', [0, 1, 2].every((state) => activeLegacyRow([{ entry: { options: { id: 'preset-extra-plan' }, fiber: { state } } }])) && !activeLegacyRow([{ entry: { options: { id: 'preset-extra-plan' }, disabled: true, fiber: { state: 2 } } }]) && !activeLegacyRow([{ entry: { options: { id: 'preset-extra-plan' } } }]) && !activeLegacyRow([{ entry: { options: { id: 'preset-extra-plan' }, fiber: { state: 3 } } }]))
+
+function settledShape(snapshot) {
+  return snapshot !== null && typeof snapshot === 'object' && snapshot.values !== undefined && snapshot.gateWords !== undefined &&
+    Object.keys(snapshot.values).sort().join('/') === 'anchoredBootstrap/creativeMode/crossProviderPlannerModel/exploreBudget/otherAgentModel/plannerModel/plannerPromptSuffix/runcodeCatchGate/toolPresentationMode/webFetch' &&
+    isDeepStrictEqual(snapshot.gateWords, gate)
+}
+let settledEvents = []
+let settledErrors = 0
+let settledInFlight = 0
+let settledMaxInFlight = 0
+const settledEditor = makeEditor(completeSettings, undefined, 'C:\\neutral-fixture\\document.yml')
+const settledStats = makeContext(settledEditor, async () => ({ dispose() {} }))
+const settledDispose = mountPresetSync(settledStats.ctx, {
+  onSettledSettings: async (snapshot) => {
+    settledInFlight += 1
+    settledMaxInFlight = Math.max(settledMaxInFlight, settledInFlight)
+    await Promise.resolve()
+    settledEvents.push(snapshot)
+    settledInFlight -= 1
+  },
+  onSettledError: async () => { settledErrors += 1 },
+})
+await flush(); await flush()
+check('V06 mountPresetSync initial run 在最终值确定后回调完整十项/gateWords', settledEvents.length === 1 && settledShape(settledEvents[0]))
+settledEditor.state.rows[0].entry.options.config.plannerModel = 'fast-one'
+if (typeof settledStats.updateListener === 'function') settledStats.updateListener()
+settledEditor.state.rows[0].entry.options.config.plannerModel = 'fast-two'
+if (typeof settledStats.updateListener === 'function') settledStats.updateListener()
+await flush(); await flush(); await flush()
+check('V06 internal/update 快速更新经同一队列串行且最终值稳定', settledEvents.length === 3 && settledEvents.at(-1).values.plannerModel === 'fast-two' && settledMaxInFlight === 1)
+await settledDispose()
+
+let rejectingErrors = 0
+const rejectingEditor = makeEditor(completeSettings, undefined, 'C:\\neutral-fixture\\document.yml')
+const rejectingStats = makeContext(rejectingEditor, async () => ({ dispose() {} }))
+const rejectingDispose = mountPresetSync(rejectingStats.ctx, {
+  onSettledSettings: async () => { throw new Error('settled callback rejected') },
+  onSettledError: async () => { rejectingErrors += 1 },
+})
+await flush(); await flush()
+check('V06 settled 回调拒绝不阻断 adapter 生命周期且交由 onSettledError', rejectingStats.pluginCalls === 1 && rejectingErrors === 1)
+await rejectingDispose()
+
+const settledGate = deferred()
+let waitingStarted = 0
+const waitingEditor = makeEditor(completeSettings, undefined, 'C:\\neutral-fixture\\document.yml')
+const waitingStats = makeContext(waitingEditor, async () => ({ dispose() {} }))
+const waitingDispose = mountPresetSync(waitingStats.ctx, {
+  onSettledSettings: async () => { waitingStarted += 1; await settledGate.promise },
+})
+await flush(); await flush()
+const waitingClose = waitingDispose()
+await flush()
+check('V06 dispose 等待在途 settled 回调且关闭后不启动新调用', waitingStarted === 1 && waitingStats.updateOff === 1)
+settledGate.resolve()
+await waitingClose
+await flush()
+if (typeof waitingStats.updateListener === 'function') waitingStats.updateListener()
+await flush()
+check('V06 在途 settled 回调结算后关闭完成、后续 update 调用数不增加', waitingStarted === 1 && waitingStats.pluginCalls === 1)
 
 // 排队后关闭：已在途 edit 允许结算，关闭后排队 run 不得再 edit/注册。
 const editGate = deferred()

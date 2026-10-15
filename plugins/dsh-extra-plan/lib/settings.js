@@ -23,6 +23,7 @@ import {
   resolveUnifiedConfig,
   restateSettingsConfig,
 } from './preset-sync.js'
+import { createQqbotSettingsSynchronizer } from './qqbot-settings-sync.js'
 
 export const name = 'dsh-extra-plan-settings'
 export const inject = []
@@ -173,7 +174,33 @@ function publicField(definition, value, defaultValue, overridden, source) {
   }
 }
 
-function proPayload(editor) {
+function profileSyncPath(result, item) {
+  if (item !== null && typeof item === 'object') {
+    if (typeof item.path === 'string' && item.path !== '') return item.path
+    if (typeof item.profile === 'string' && (item.profile.includes('\\') || item.profile.includes('/'))) return item.profile
+  }
+  if (result !== null && typeof result === 'object' && typeof result.profilesRoot === 'string' && result.profilesRoot !== '') {
+    if (item !== null && typeof item === 'object' && typeof item.profile === 'string' && item.profile !== '') return join(result.profilesRoot, item.profile)
+    return result.profilesRoot
+  }
+  return '<unresolved>'
+}
+
+function reportProfileSync(result) {
+  if (result === null || typeof result !== 'object') return
+  const status = typeof result.status === 'string' ? result.status : 'unknown'
+  if (status !== 'failed' && status !== 'unavailable' && status !== 'not-installed') return
+  const pathSource = typeof result.pathSource === 'string' ? result.pathSource : '<unknown>'
+  const profiles = Array.isArray(result.profiles) ? result.profiles : []
+  const details = profiles.length === 0
+    ? 'profile=<none> path=' + profileSyncPath(result, undefined) + ' reason=' + String(result.reason || 'no-installed-target')
+    : profiles.map((item) => 'profile=' + String(item && item.profile || '<unknown>') + ' path=' + profileSyncPath(result, item) + ' reason=' + String(item && (item.reason || item.status) || result.reason || 'unknown')).join('; ')
+  const message = '[dsh-extra-plan] QQBot profile sync status=' + status + ' pathSource=' + pathSource + ' ' + details
+  if (status === 'failed') console.error(message)
+  else console.warn(message)
+}
+
+function proPayload(editor, profileSync) {
   const state = readUnifiedState(editor)
   const fields = HOST_ROW_SETTING_DEFINITIONS.map((definition) => publicField(
     definition,
@@ -182,10 +209,17 @@ function proPayload(editor) {
     state.overridden[definition.key],
     state.sources[definition.key],
   ))
-  return { fields, values: { ...state.values }, defaults: { ...state.defaults }, diagnostics: [...state.diagnostics] }
+  const sync = profileSync === undefined ? { status: 'pending', pending: false } : { ...profileSync, pending: profileSync.pending === true }
+  return { fields, values: { ...state.values }, defaults: { ...state.defaults }, diagnostics: [...state.diagnostics], profileSync: sync }
 }
 
-function createApiHandler(ctx) {
+function createApiHandler(ctx, syncEditor, getProfileSync) {
+  const responseForProfile = (editor, profileSync, webApplied) => {
+    const status = profileSync !== null && profileSync !== undefined ? profileSync.status : 'pending'
+    const overall = status === 'synced' ? 'synced' : status === 'not-installed' ? 'not-installed' : 'partial'
+    const httpStatus = status === 'failed' || status === 'unavailable' ? 502 : 200
+    return { httpStatus, body: { ...proPayload(editor, profileSync), web: { applied: webApplied === true }, overall } }
+  }
   return async (req, res) => {
     if (!isLoopback(req)) return json(res, 403, { error: 'forbidden: loopback only' })
     const url = new URL(req.url, 'http://localhost')
@@ -196,7 +230,7 @@ function createApiHandler(ctx) {
         return json(res, 500, { error: 'configEditor service is unavailable' })
       }
       if (req.method === 'GET' && path === '/api/dsh-extra-plan-settings/pro-config') {
-        try { return json(res, 200, proPayload(editor)) }
+        try { return json(res, 200, proPayload(editor, getProfileSync())) }
         catch (error) { return json(res, 500, { error: 'failed to read global settings: ' + String(error && error.message || error) }) }
       }
       if (req.method === 'PUT' && path === '/api/dsh-extra-plan-settings/pro-config') {
@@ -215,7 +249,7 @@ function createApiHandler(ctx) {
           }
         }
         const row = findSettingsRow(editor)
-        if (row === undefined) return json(res, 200, { ...proPayload(editor), projection: { applied: false, error: 'declaration row not found: ' + SETTINGS_ROW_ID } })
+        if (row === undefined) return json(res, 200, { ...proPayload(editor, getProfileSync()), projection: { applied: false, error: 'declaration row not found: ' + SETTINGS_ROW_ID } })
         const state = readUnifiedState(editor)
         const current = effectiveRowConfig(row) || {}
         const patch = {}
@@ -230,9 +264,10 @@ function createApiHandler(ctx) {
         }
         if (!Object.prototype.hasOwnProperty.call(current, 'gateWords')) patch.gateWords = state.gateWords
         const nextConfig = restateSettingsConfig(current, row.inherited, patch)
-        if (isDeepStrictEqual(nextConfig, current)) return json(res, 200, { ...proPayload(editor), projection: { applied: true, owner: SETTINGS_ROW_ID } })
-        await editor.edit(row.entry, (latest, inherited) => restateSettingsConfig(latest, inherited, patch))
-        return json(res, 200, { ...proPayload(editor), projection: { applied: true, owner: SETTINGS_ROW_ID } })
+        if (!isDeepStrictEqual(nextConfig, current)) await editor.edit(row.entry, (latest, inherited) => restateSettingsConfig(latest, inherited, patch))
+        const profileSync = await syncEditor(editor)
+        const response = responseForProfile(editor, profileSync, true)
+        return json(res, response.httpStatus, { ...response.body, projection: { applied: true, owner: SETTINGS_ROW_ID } })
       }
       return json(res, 404, { error: 'not found' })
     } catch (error) {
@@ -243,14 +278,52 @@ function createApiHandler(ctx) {
 
 export function apply(ctx) {
   // Client carrier、settings API、旧值迁移、同步与官方 adapter 均由这一行 owner 持有。
+  let profileSync = { status: 'pending', pending: false }
+  const synchronizer = createQqbotSettingsSynchronizer({
+    onResult: (result) => { profileSync = { ...result, pending: false }; reportProfileSync(result) },
+  })
+  const editorOf = (fallback) => {
+    try {
+      const value = typeof ctx.get === 'function' ? ctx.get('configEditor') : fallback
+      return value === undefined || value === null ? fallback : value
+    } catch {
+      return fallback
+    }
+  }
+  const documentPathOf = (editor) => {
+    try {
+      const value = editor === undefined || editor === null ? undefined : editor.documentPath
+      return typeof value === 'string' ? value : undefined
+    } catch {
+      return undefined
+    }
+  }
+  const environmentSnapshot = () => ({ DSH_HOME: process.env.DSH_HOME, DSH_PROFILE: process.env.DSH_PROFILE })
+  const syncEditor = async (editor, settledSnapshot) => {
+    try {
+      const state = settledSnapshot === undefined ? readUnifiedState(editor) : undefined
+      const snapshot = settledSnapshot === undefined
+        ? { values: { ...state.values }, gateWords: structuredClone(state.gateWords) }
+        : { values: { ...settledSnapshot.values }, gateWords: structuredClone(settledSnapshot.gateWords) }
+      profileSync = { ...profileSync, pending: true }
+      return await synchronizer.enqueue({ documentPath: documentPathOf(editor), snapshot, env: environmentSnapshot() })
+    } catch (error) {
+      const result = { status: 'failed', pending: false, reason: String(error && error.message || error) }
+      profileSync = result
+      reportProfileSync(result)
+      return result
+    }
+  }
+  const settledSettings = async (snapshot) => syncEditor(editorOf(ctx.configEditor), snapshot)
+  const settledError = async (error) => { console.warn('[dsh-extra-plan] profile sync settled callback failed：' + String(error && error.message || error)) }
   ctx.inject(['loader'], (child) => child.effect(() => mountClientCarrier(child), 'dsh-extra-plan-settings: internal client carrier'))
   ctx.inject(['settings'], (child) => child.effect(() => child.settings.configure({ auto: false }, ctx.fiber), 'dsh-extra-plan-settings: settings policy'))
   ctx.inject(['webServer'], (webCtx) => webCtx.effect(() => webCtx.webServer.register({
     kind: 'prefix',
     path: '/api/dsh-extra-plan-settings',
-    handler: createApiHandler(ctx),
+    handler: createApiHandler(ctx, (editor) => syncEditor(editor), () => profileSync),
   }), 'dsh-extra-plan-settings: api route'))
-  ctx.inject(['configEditor'], (child) => child.effect(() => mountPresetSync(child), 'dsh-extra-plan-settings: sync and official adapter'))
+  ctx.inject(['configEditor'], (child) => child.effect(() => mountPresetSync(child, { onSettledSettings: settledSettings, onSettledError: settledError }), 'dsh-extra-plan-settings: sync and official adapter'))
 }
 
 export { SETTINGS_ROW_ID }

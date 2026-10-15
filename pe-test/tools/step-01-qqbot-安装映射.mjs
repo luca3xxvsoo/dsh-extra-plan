@@ -2,11 +2,13 @@
 // + scripts/heal.mjs CLI 子进程冒烟（DSH_HOME env 注入）。全部场景 mkdtemp 临时目录，
 // 不触碰工作区或生产 profile；环境相关 junction 能力与真实 profile 只读核验见独立脚本。
 import { spawnSync } from 'node:child_process'
-import { createRequire } from 'node:module'
-import { closeSync, existsSync, lstatSync, mkdtempSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { createRequire, registerHooks, syncBuiltinESMExports } from 'node:module'
+import fs from 'node:fs'
+import { closeSync, existsSync, lstatSync, mkdtempSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { isDeepStrictEqual } from 'node:util'
 import {
   findOwnQqbotProfiles,
   healPatchRows,
@@ -87,11 +89,9 @@ function runCli(home, opts = {}) {
   let result
   try {
     const env = { ...process.env, DSH_HOME: home }
-    if (opts.noDshHome) {
-      delete env.DSH_HOME
-      // 无 DSH_HOME 时默认 ~/.dsh（homedir 读 USERPROFILE/HOME），指向临时目录避免触碰真实环境
-      env.USERPROFILE = home
-      env.HOME = home
+    if (opts.explicitDshHome) {
+      // QQBot CLI 旧合同改为显式临时 DSH_HOME；Web 同步不复用此 CLI 兜底。
+      env.DSH_HOME = home
     }
     result = spawnSync(process.execPath, [SOURCE_HEAL], {
       cwd: home,
@@ -119,7 +119,9 @@ function errorDetail(error) {
 function loadTestYaml() {
   if (testYamlResolution !== null) return testYamlResolution
   const candidates = [{ kind: 'workspace-qqbot-package', path: join(SOURCE_PACKAGE, 'package.json') }]
-  const installRoot = typeof process.env.DSH_INSTALL_ROOT === 'string' ? process.env.DSH_INSTALL_ROOT.trim() : ''
+  const installRoot = typeof process.env.DSH_INSTALL_ROOT === 'string' && process.env.DSH_INSTALL_ROOT.trim() !== ''
+    ? process.env.DSH_INSTALL_ROOT.trim()
+    : 'C:\\Users\\Administrator\\AppData\\Roaming\\npm\\node_modules\\@deepseek-ai\\dsh'
   if (installRoot !== '') {
     candidates.push({ kind: 'explicit-install-root', path: join(installRoot, 'package.json') })
     candidates.push({ kind: 'explicit-host-dsh-package', path: join(installRoot, 'node_modules', '@deepseek-ai', 'dsh', 'package.json') })
@@ -160,6 +162,17 @@ function rootRow(parsed, id) {
 function patchBackups(dir) {
   try { return readdirSync(dir).filter((f) => f.startsWith('cordis.patch.yml.bak-')) } catch { return [] }
 }
+async function withBuiltinFsPatch(name, replacement, action) {
+  const original = fs[name]
+  try {
+    fs[name] = replacement
+    syncBuiltinESMExports()
+    return await action()
+  } finally {
+    fs[name] = original
+    syncBuiltinESMExports()
+  }
+}
 function legacyPatch(includeIm = true) {
   const lines = []
   if (includeIm) {
@@ -180,6 +193,13 @@ const presetSync = readFileSync(join(SOURCE_ROOT, 'plugins', 'dsh-extra-plan', '
 check('preset-sync.js 不含 qqbot/code-runtime/qqbot 自愈标识符（核心零感知）', !/qqbot|code-runtime|healQqbotCompatibility|healPatchRows/i.test(presetSync))
 
 const yamlResolution = loadTestYaml()
+if (yamlResolution.module !== null && typeof registerHooks === 'function') {
+  try {
+    const yamlUrl = new URL('file:///' + createRequire(yamlResolution.anchor.path).resolve('js-yaml').replaceAll('\\\\', '/')).href
+    registerHooks({ resolve(specifier, context, next) { return specifier === 'js-yaml' ? { url: yamlUrl, shortCircuit: true } : next(specifier, context) } })
+  } catch { /* 下面的统一 SKIP/失败结论负责显式报告依赖问题 */ }
+}
+const qqbotSync = await import('../../plugins/dsh-extra-plan/lib/qqbot-settings-sync.js')
 if (yamlResolution.module === null) {
   emitSkip('qqbot-install-mapping', 'yaml-parser-unavailable', {
     candidates: yamlResolution.candidates,
@@ -302,10 +322,14 @@ if (yamlResolution.module === null) {
    const invalidSummary = captureWarn(() => healQqbotCompatibility(hInvalid))
    check('healQqbotCompatibility 返回逐 profile patch/link 摘要并收集 failed', invalidSummary.result !== undefined && invalidSummary.result.results.length === 1 && invalidSummary.result.failed.length === 1 && invalidSummary.result.failed[0].patch.status === 'failed')
    const previousSummaryHome = process.env.DSH_HOME
-   process.env.DSH_HOME = hInvalid
-   const applySummary = captureWarn(() => applyLitePlugin())
-   if (previousSummaryHome === undefined) delete process.env.DSH_HOME
-   else process.env.DSH_HOME = previousSummaryHome
+   let applySummary
+   try {
+     process.env.DSH_HOME = hInvalid
+     applySummary = captureWarn(() => applyLitePlugin())
+   } finally {
+     if (previousSummaryHome === undefined) delete process.env.DSH_HOME
+     else process.env.DSH_HOME = previousSummaryHome
+   }
    check('启动 apply 对 failed 项输出结构化失败摘要且不抛', applySummary.messages.some((message) => message.includes('自愈失败摘要') && message.includes('verify-failed')))
    const cliInvalid = runCli(hInvalid)
    check('CLI 对 failed 项输出结构化 stderr 摘要且保持 exit 0', cliInvalid.status === 0 && cliInvalid.stderr.includes('自愈失败摘要') && cliInvalid.stderr.includes('verify-failed'))
@@ -352,7 +376,7 @@ if (yamlResolution.module === null) {
 
   // ⑨ 负例B：dsh-extra-plan 核心零感知（静态断言）
 
-  // ⑩ DSH_HOME env 优先于 ~/.dsh（index.js apply 实测）
+  // ⑩ DSH_HOME env 优先（index.js apply 实测）
   const h12 = join(tempRoot, 's12-env')
   makeProfile(h12, 'qqbot')
   installOwnPlugin(h12, 'qqbot')
@@ -382,13 +406,164 @@ if (yamlResolution.module === null) {
   check('CLI 幂等重跑退出码 0', cliRepeat.status === 0 && cliRepeat.error === undefined)
   check('CLI 重复运行文件字节不变且 .bak-* 不增', bakCount(qqProfileDir(hCli)) === 1)
 
-  // CLI 无命中 profile（空 DSH_HOME）时也可执行且退出码 0（不阻断口径）
+  // CLI 显式临时 DSH_HOME 无命中 profile 时也可执行且退出码 0（不阻断口径）
   const hEmptyCli = join(tempRoot, 'cli-empty')
   mkdirSync(hEmptyCli, { recursive: true })
   const cliEmpty = runCli(hEmptyCli)
   check('CLI 无命中 profile 时退出码 0 且不报错', cliEmpty.status === 0 && cliEmpty.error === undefined && !cliEmpty.stderr.includes('自愈失败'))
-  const cliNoEnv = runCli(hEmptyCli, { noDshHome: true })
-  check('CLI 无 DSH_HOME 时（默认 ~/.dsh 指向临时目录）退出码 0 且不报错', cliNoEnv.status === 0 && cliNoEnv.error === undefined && !cliNoEnv.stderr.includes('自愈失败'))
+  const cliExplicitHome = runCli(hEmptyCli, { explicitDshHome: true })
+  check('CLI 显式临时 DSH_HOME 无命中 profile 时退出码 0 且不报错', cliExplicitHome.status === 0 && cliExplicitHome.error === undefined && !cliExplicitHome.stderr.includes('自愈失败'))
+
+  // ⑪ Web documentPath 真源、双锚点与完整快照局部写回
+  const syncKeys = ['anchoredBootstrap', 'creativeMode', 'webFetch', 'toolPresentationMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel']
+  const syncValues = { anchoredBootstrap: false, creativeMode: true, webFetch: true, toolPresentationMode: 'both', runcodeCatchGate: true, crossProviderPlannerModel: true, plannerModel: 'planner-sync-test', plannerPromptSuffix: 'sync-suffix-test', exploreBudget: 37, otherAgentModel: 'other-sync-test' }
+  const syncGateWords = { routeDirect: '甲', routePlan: '乙', routeDisagree: '丙', approvalApprove: '丁', approvalReplan: '戊', purposeRefine: '己', purposeRedo: '庚' }
+  const syncSnapshot = { values: syncValues, gateWords: syncGateWords }
+  function makeSyncDocument(home) {
+    const dir = join(home, 'profiles', 'web')
+    mkdirSync(dir, { recursive: true })
+    const path = join(dir, 'cordis.patch.yml')
+    writeFileSync(path, '# web document fixture\n- id: web\n  name: web\n', 'utf8')
+    return path
+  }
+  function makeSyncProfile(home, name, text) {
+    const dir = makeProfile(home, name)
+    installOwnPlugin(home, name)
+    writeFileSync(join(dir, 'cordis.patch.yml'), text === undefined ? '# keep\n- id: user-row\n  name: user\n  config:\n    marker: !!js "globalThis.__sync = true"\n' : text, 'utf8')
+    return dir
+  }
+  function syncConfigOf(text) {
+    const parsed = parseYaml(text)
+    if (!parsed.ok || !Array.isArray(parsed.value)) return undefined
+    const row = parsed.value.find((item) => isMap(item) && (item.id === 'dsh-extra-plan-settings' || (isMap(item.override) && item.override.id === 'dsh-extra-plan-settings')))
+    return row === undefined ? undefined : row.override?.config || row.config
+  }
+  function syncProjection(config) {
+    if (!isMap(config)) return undefined
+    return { ...Object.fromEntries(syncKeys.map((key) => [key, config[key]])), gateWords: config.gateWords }
+  }
+  function syncBackupCount(dir) { return patchBackups(dir).length }
+  const syncHome = join(tempRoot, 'sync-document-root')
+  const syncDocument = makeSyncDocument(syncHome)
+  const syncTarget = makeSyncProfile(syncHome, 'sync-target')
+  const syncProfilesRoot = join(syncHome, 'profiles')
+  const syncRootResult = qqbotSync.resolveProfilesRoot(syncDocument, {})
+  const syncNames = qqbotSync.findOwnQqbotProfiles(syncProfilesRoot)
+  const healNames = findOwnQqbotProfiles(syncHome)
+  check('SYNC 新模块与 heal.js 双锚点命中集合相等且只扫 profiles 直接子目录', isDeepStrictEqual(syncNames, healNames) && syncNames.join('/') === 'sync-target')
+  check('SYNC documentPath 证明 profilesRoot 且来源标记正确', syncRootResult.status === 'available' && syncRootResult.profilesRoot === syncProfilesRoot && syncRootResult.pathSource === 'configEditor.documentPath')
+  const firstSync = qqbotSync.writeQqbotSettingsPatch(syncTarget, syncSnapshot)
+  const firstText = readFileSync(join(syncTarget, 'cordis.patch.yml'), 'utf8')
+  const firstConfig = syncConfigOf(firstText)
+  check('SYNC 缺 settings 行时末尾追加 override 且完整十项/gateWords 深等', firstSync.status === 'applied' && isDeepStrictEqual(syncProjection(firstConfig), { ...syncValues, gateWords: syncGateWords }) && firstText.includes('globalThis.__sync = true') && firstText.includes('user-row'))
+  const firstBackupCount = syncBackupCount(syncTarget)
+  const repeatSync = qqbotSync.writeQqbotSettingsPatch(syncTarget, syncSnapshot)
+  check('SYNC 同字节重复写返回 idempotent 且备份数不增加', repeatSync.status === 'idempotent' && readFileSync(join(syncTarget, 'cordis.patch.yml'), 'utf8') === firstText && syncBackupCount(syncTarget) === firstBackupCount)
+
+  const directText = '# outside comment\n- id: dsh-extra-plan-settings\n  metadata: keep\n  config:\n    customKey: !!js "globalThis.__unknown = true"\n    plannerModel: old-model\n    exploreBudget: invalid\n    gateWords:\n      routeDirect: 乙\n      routePlan: 乙\n      routeDisagree: 丙\n      approvalApprove: 丁\n      approvalReplan: 戊\n      purposeRefine: 己\n      purposeRedo: 庚\n- insert:\n    - id: nested-user-row\n      config:\n        marker: !!js "globalThis.__nested = true"\n'
+  writeFileSync(join(syncTarget, 'cordis.patch.yml'), directText, 'utf8')
+  const directBefore = readFileSync(join(syncTarget, 'cordis.patch.yml'), 'utf8')
+  const directSync = qqbotSync.writeQqbotSettingsPatch(syncTarget, syncSnapshot)
+  const directAfter = readFileSync(join(syncTarget, 'cordis.patch.yml'), 'utf8')
+  check('SYNC 已有 direct settings 行更新并修复非法托管值，未知 config/注释/嵌套 insert 保留', directSync.status === 'applied' && directAfter.includes('customKey: !!js "globalThis.__unknown = true"') && directAfter.includes('nested-user-row') && directAfter.includes('# outside comment') && isDeepStrictEqual(syncProjection(syncConfigOf(directAfter)), { ...syncValues, gateWords: syncGateWords }) && directBefore !== directAfter)
+
+  const missingConfig = makeSyncProfile(syncHome, 'missing-config', '- override:\n    id: dsh-extra-plan-settings\n    metadata: keep\n')
+  const missingConfigResult = qqbotSync.writeQqbotSettingsPatch(missingConfig, syncSnapshot)
+  check('SYNC 已有唯一 override 但缺 config 时补 map', missingConfigResult.status === 'applied' && isDeepStrictEqual(syncProjection(syncConfigOf(readFileSync(join(missingConfig, 'cordis.patch.yml'), 'utf8'))), { ...syncValues, gateWords: syncGateWords }))
+
+  function assertNoWrite(label, home, name, patchText, snapshot = syncSnapshot) {
+    const dir = makeSyncProfile(home, name, patchText)
+    const path = join(dir, 'cordis.patch.yml')
+    const before = readFileSync(path, 'utf8')
+    const result = qqbotSync.writeQqbotSettingsPatch(dir, snapshot)
+    const after = readFileSync(path, 'utf8')
+    check(label, (result.status === 'failed' || result.status === 'fatal') && before === after && syncBackupCount(dir) === 0)
+    return { dir, path, before, result }
+  }
+  const negativeHome = join(tempRoot, 'sync-negative-root')
+  makeSyncDocument(negativeHome)
+  const missingBundle = makeProfile(negativeHome, 'missing-plugin')
+  installOwnPlugin(negativeHome, 'missing-plugin')
+  writeFileSync(join(missingBundle, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: ['other-bundle'] } } }), 'utf8')
+  const onlyBundle = makeProfile(negativeHome, 'missing-own-plugin')
+  writeFileSync(join(onlyBundle, 'cordis.patch.yml'), '# unchanged\n[]\n', 'utf8')
+  const negativeNames = qqbotSync.findOwnQqbotProfiles(join(negativeHome, 'profiles'))
+  check('SYNC 双锚点任缺其一均跳过且与 heal.js 集合一致', negativeNames.length === 0 && isDeepStrictEqual(negativeNames, findOwnQqbotProfiles(negativeHome)))
+  const badPackage = makeProfile(negativeHome, 'bad-package')
+  installOwnPlugin(negativeHome, 'bad-package')
+  writeFileSync(join(badPackage, 'package.json'), '{bad json', 'utf8')
+  check('SYNC 坏 package.json 不命中且零写', !qqbotSync.findOwnQqbotProfiles(join(negativeHome, 'profiles')).includes('bad-package'))
+  const missingPatch = makeSyncProfile(negativeHome, 'missing-patch')
+  rmSync(join(missingPatch, 'cordis.patch.yml'), { force: true })
+  const missingPatchResult = qqbotSync.writeQqbotSettingsPatch(missingPatch, syncSnapshot)
+  check('SYNC 目标 patch 缺失返回 failed 且不创建猜测文件/备份', missingPatchResult.status === 'failed' && missingPatchResult.reason === 'patch-missing' && syncBackupCount(missingPatch) === 0 && !existsSync(join(missingPatch, 'cordis.patch.yml')))
+  const unreadablePatch = makeSyncProfile(negativeHome, 'unreadable-patch')
+  rmSync(join(unreadablePatch, 'cordis.patch.yml'), { force: true })
+  mkdirSync(join(unreadablePatch, 'cordis.patch.yml'))
+  const unreadableResult = qqbotSync.writeQqbotSettingsPatch(unreadablePatch, syncSnapshot)
+  check('SYNC 目标 patch 读取失败返回 failed 且零备份', unreadableResult.status === 'failed' && syncBackupCount(unreadablePatch) === 0)
+  assertNoWrite('SYNC 非法 YAML 原文不变且零备份', negativeHome, 'invalid-yaml', 'broken: [invalid\n')
+  assertNoWrite('SYNC 顶层非数组原文不变且零备份', negativeHome, 'top-not-array', 'settings: true\n')
+  assertNoWrite('SYNC 重复 settings 行原文不变且零备份', negativeHome, 'duplicate-row', '- id: dsh-extra-plan-settings\n  config: {}\n- override:\n    id: dsh-extra-plan-settings\n    config: {}\n')
+  assertNoWrite('SYNC config 非 map 原文不变且零备份', negativeHome, 'config-not-map', '- override:\n    id: dsh-extra-plan-settings\n    config: []\n')
+  const invalidSnapshot = { values: { ...syncValues }, gateWords: { ...syncGateWords } }
+  delete invalidSnapshot.values.plannerModel
+  assertNoWrite('SYNC 源快照缺键原文不变且零备份', negativeHome, 'invalid-snapshot-missing', '- id: user\n', invalidSnapshot)
+  const invalidType = { values: { ...syncValues, exploreBudget: 0 }, gateWords: { ...syncGateWords } }
+  assertNoWrite('SYNC 源快照类型/范围非法原文不变且零备份', negativeHome, 'invalid-snapshot-type', '- id: user\n', invalidType)
+  const invalidGate = { values: { ...syncValues }, gateWords: { ...syncGateWords, routeDirect: syncGateWords.routePlan } }
+  assertNoWrite('SYNC 源 gateWords 非法原文不变且零备份', negativeHome, 'invalid-snapshot-gate', '- id: user\n', invalidGate)
+
+  function faultCase(label, hookName) {
+    const dir = makeSyncProfile(negativeHome, 'fault-' + hookName, '- id: user\n  name: user\n')
+    const path = join(dir, 'cordis.patch.yml')
+    const before = readFileSync(path, 'utf8')
+    const result = qqbotSync.writeQqbotSettingsPatch(dir, syncSnapshot, { hooks: { [hookName]: () => { throw new Error(hookName) } } })
+    const after = readFileSync(path, 'utf8')
+    check(label, (result.status === 'failed' || result.status === 'fatal') && after === before && result.status !== 'synced')
+  }
+  faultCase('SYNC 注入临时写错误返回 failed/fatal 且原文保留', 'beforeTempWrite')
+  faultCase('SYNC 注入备份错误返回 failed/fatal 且原文保留', 'beforeBackup')
+  faultCase('SYNC 注入 rename 错误恢复原文且不伪装 synced', 'beforeRename')
+  faultCase('SYNC 注入终验错误从备份恢复原文且不伪装 synced', 'beforeFinalVerify')
+
+  const missingRootDoc = join(tempRoot, 'missing-root', 'profiles', 'web', 'cordis.patch.yml')
+  const unavailableRoot = qqbotSync.resolveProfilesRoot(missingRootDoc, {})
+  check('SYNC profilesRoot 不存在时 unavailable 且不创建目录', unavailableRoot.status === 'unavailable' && !existsSync(join(tempRoot, 'missing-root')))
+
+  const unreadableRootHome = join(tempRoot, 'sync-unreadable-profiles-root')
+  const unreadableDocument = makeSyncDocument(unreadableRootHome)
+  const unreadableTarget = makeSyncProfile(unreadableRootHome, 'unreadable-target')
+  const unreadableProfilesRoot = join(unreadableRootHome, 'profiles')
+  const unreadablePatchPath = join(unreadableTarget, 'cordis.patch.yml')
+  const unreadableBeforeBytes = readFileSync(unreadablePatchPath)
+  const unreadableBeforeStat = statSync(unreadablePatchPath)
+  const unreadableBeforeBackups = patchBackups(unreadableTarget)
+  const unreadableBeforeEntries = readdirSync(unreadableTarget).sort().join('\n')
+  const unreadableRootPath = resolve(unreadableProfilesRoot)
+  const unreadableSynchronizer = qqbotSync.createQqbotSettingsSynchronizer()
+  const originalUnreadableReaddirSync = fs.readdirSync
+  const unreadableRootResult = await withBuiltinFsPatch('readdirSync', (...args) => {
+    if (typeof args[0] === 'string' && resolve(args[0]) === unreadableRootPath) {
+      const error = new Error('profiles root intentionally unreadable')
+      error.code = 'EACCES'
+      throw error
+    }
+    return originalUnreadableReaddirSync(...args)
+  }, () => unreadableSynchronizer.enqueue({ documentPath: unreadableDocument, env: {}, snapshot: syncSnapshot }))
+  const unreadableAfterBytes = readFileSync(unreadablePatchPath)
+  const unreadableAfterStat = statSync(unreadablePatchPath)
+  const unreadableAfterBackups = patchBackups(unreadableTarget)
+  const unreadableAfterEntries = readdirSync(unreadableTarget).sort().join('\n')
+  const unreadableTempEntries = unreadableAfterEntries.split('\n').filter((name) => name.startsWith('cordis.patch.yml.tmp-dsh-extra-plan-settings-'))
+  check('SYNC 不可读 profilesRoot 精确EACCES注入返回 unavailable：status=' + unreadableRootResult.status + ' reason=' + unreadableRootResult.reason, unreadableRootResult.status === 'unavailable' && unreadableRootResult.reason === 'profiles-root-unavailable' && unreadableRootResult.pathSource === 'configEditor.documentPath' && Array.isArray(unreadableRootResult.profiles) && unreadableRootResult.profiles.length === 0 && unreadableRootResult.status !== 'synced')
+  check('SYNC 不可读 profilesRoot 恢复后目标 patch/mtimeMs/备份/目录项/临时文件均零变化', unreadableBeforeBytes.equals(unreadableAfterBytes) && unreadableAfterStat.mtimeMs === unreadableBeforeStat.mtimeMs && unreadableAfterBackups.length === unreadableBeforeBackups.length && unreadableAfterEntries === unreadableBeforeEntries && unreadableTempEntries.length === 0)
+
+  const sourceEvents = []
+  const synchronizer = qqbotSync.createQqbotSettingsSynchronizer({ onResult: (result) => sourceEvents.push(result) })
+  const syncResultOne = await synchronizer.enqueue({ documentPath: syncDocument, env: {}, snapshot: syncSnapshot })
+  const syncResultTwo = await synchronizer.enqueue({ documentPath: '', env: { DSH_HOME: syncHome, DSH_PROFILE: 'web' }, snapshot: syncSnapshot })
+  check('SYNC synchronizer 串行持久化并区分 documentPath/显式备用 pathSource', syncResultOne.status === 'synced' && syncResultOne.pathSource === 'configEditor.documentPath' && syncResultTwo.status === 'synced' && syncResultTwo.pathSource === 'explicit-DSH_HOME' && sourceEvents.length === 2)
 } catch (err) {
   fail += 1
   console.error('FAIL  精简版自愈回归异常: ' + String(err && err.stack || err))
