@@ -1,7 +1,7 @@
 // Web configEditor → QQBot profile settings mirror.
 // This module proves the profile root first, scans only direct children, and rewrites one YAML block locally.
 import { createRequire } from 'node:module'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import {
   accessSync,
   closeSync,
@@ -217,6 +217,61 @@ export function validateSettingsSnapshot(snapshot) {
 function expectedManaged(snapshot) {
   const checked = snapshot.values !== undefined ? snapshot : validateSettingsSnapshot(snapshot)
   return { ...checked.values, gateWords: checked.gateWords }
+}
+
+function canonicalSnapshot(checked) {
+  return {
+    values: Object.fromEntries(MANAGED_KEYS.map((key) => [key, checked.values[key]])),
+    gateWords: Object.fromEntries(GATE_KEYS.map((key) => [key, checked.gateWords[key]])),
+  }
+}
+
+/** 固定 10 项 values + 7 项 gateWords 的规范快照哈希。 */
+export function stableSnapshotHash(snapshot) {
+  const checked = validateSettingsSnapshot(snapshot)
+  return createHash('sha256').update(JSON.stringify(canonicalSnapshot(checked))).digest('hex')
+}
+
+function managedSnapshotHashFromConfig(config) {
+  if (!plainObject(config) || !MANAGED_KEYS.every((key) => Object.prototype.hasOwnProperty.call(config, key))) return null
+  let gateWords
+  try { gateWords = validateGateWords(config.gateWords) } catch { return null }
+  const values = Object.fromEntries(MANAGED_KEYS.map((key) => [key, config[key]]))
+  try { return stableSnapshotHash({ values, gateWords }) } catch { return null }
+}
+
+function patchDiagnostic(path, backupFile) {
+  const result = {
+    patchPath: typeof path === 'string' ? path : null,
+    patchBytes: null,
+    patchMtimeMs: null,
+    patchSha256: null,
+    managedSnapshotHash: null,
+    backupPath: backupFile === undefined ? null : backupFile,
+    backupSha256: null,
+  }
+  if (typeof path === 'string' && path !== '') {
+    try {
+      const bytes = readFileSync(path)
+      const stat = statSync(path)
+      const text = bytes.toString('utf8')
+      const parsed = parseYaml(text)
+      const target = parsedTarget(parsed)
+      const config = target.kind === 'ok' && target.hit !== undefined ? configHolder(target.hit.row, target.hit.kind).config : undefined
+      result.patchBytes = bytes.length
+      result.patchMtimeMs = stat.mtimeMs
+      result.patchSha256 = createHash('sha256').update(bytes).digest('hex')
+      result.managedSnapshotHash = managedSnapshotHashFromConfig(config)
+    } catch { /* missing/invalid patch is represented by null metadata */ }
+  }
+  if (typeof backupFile === 'string' && backupFile !== '') {
+    try { result.backupSha256 = createHash('sha256').update(readFileSync(backupFile)).digest('hex') } catch { /* backup is absent for idempotent/failed writes */ }
+  }
+  return result
+}
+
+function strictAssociation(input) {
+  return input !== null && typeof input === 'object' && input.associated === true && typeof input.saveRunId === 'string' && input.saveRunId !== ''
 }
 
 function splitText(text) {
@@ -532,16 +587,20 @@ export function writeQqbotSettingsPatch(profileDir, snapshot, options = {}) {
     renameSync,
     unlinkSync,
   }
+  const before = patchDiagnostic(patchFile, undefined)
   let original
   try {
-    if (!fsApi.existsSync(patchFile)) return { status: 'failed', reason: 'patch-missing' }
+    if (!fsApi.existsSync(patchFile)) return { ...before, status: 'failed', profile: profileDir, reason: 'patch-missing', before, after: before }
     original = fsApi.readFileSync(patchFile, 'utf8')
   } catch (error) {
-    return { status: 'failed', reason: 'patch-read-failed:' + errorText(error) }
+    return { ...before, status: 'failed', profile: profileDir, reason: 'patch-read-failed:' + errorText(error), before, after: before }
   }
   const plan = planQqbotSettingsPatch(original, checked)
-  if (plan.status === 'idempotent') return { status: 'idempotent', profile: profileDir }
-  if (plan.status !== 'planned') return { status: 'failed', reason: plan.reason || plan.status }
+  if (plan.status === 'idempotent') {
+    const after = patchDiagnostic(patchFile, undefined)
+    return { ...after, status: 'idempotent', profile: profileDir, before, after, backup: null, backupPath: null, backupSha256: null }
+  }
+  if (plan.status !== 'planned') return { ...before, status: 'failed', profile: profileDir, reason: plan.reason || plan.status, before, after: before }
   const hooks = options.hooks || {}
   const tempFile = nextFilePath(patchFile, '.tmp-dsh-extra-plan-settings-', fsApi)
   let backupFile
@@ -566,10 +625,16 @@ export function writeQqbotSettingsPatch(profileDir, snapshot, options = {}) {
     const landed = fsApi.readFileSync(patchFile, 'utf8')
     const verify = reparseAndCheck(landed, expectedManaged(checked))
     if (!verify.ok) throw new Error(verify.reason || 'final-verify-failed')
-    return { status: 'applied', profile: profileDir, backup: backupFile }
+    const after = patchDiagnostic(patchFile, backupFile)
+    return { ...after, status: 'applied', profile: profileDir, backup: backupFile, backupPath: backupFile, before, after }
   } catch (error) {
     let restored = true
-    if (backupFile !== undefined && backupVerified) {
+    let externalDrift = false
+    try {
+      const currentText = fsApi.readFileSync(patchFile, 'utf8')
+      externalDrift = currentText !== plan.text && currentText !== original
+    } catch { /* patch disappearance is handled as ordinary recovery failure */ }
+    if (backupFile !== undefined && backupVerified && !externalDrift) {
       try { fsApi.copyFileSync(backupFile, patchFile) } catch { restored = false }
     }
     if (tempCreated || fsApi.existsSync(tempFile)) {
@@ -578,8 +643,20 @@ export function writeQqbotSettingsPatch(profileDir, snapshot, options = {}) {
     if (backupFile !== undefined && !backupVerified) {
       try { fsApi.unlinkSync(backupFile) } catch { /* cleanup best effort */ }
     }
-    return { status: restored ? 'failed' : 'fatal', reason: errorText(error), backup: backupFile }
-  } finally {
+    const after = patchDiagnostic(patchFile, backupFile)
+    const failureStatus = externalDrift ? 'drift-detected' : restored ? 'failed' : 'fatal'
+    const driftDiagnostic = externalDrift ? {
+      failureOrder: ['before-final-verify', 'external-writer-drift', 'preserve-external-value'],
+      diagnostic: {
+        target: 'qqbot',
+        stage: 'before-final-verify',
+        reason: 'external-writer-drift',
+        preserveExternalValue: true,
+        before,
+        after,
+      },
+    } : {}
+    return { ...after, status: failureStatus, ...driftDiagnostic, profile: profileDir, reason: externalDrift ? 'external-writer-drift' : errorText(error), backup: backupFile, backupPath: backupFile, before, after }  } finally {
     try { if (fsApi.existsSync(tempFile)) fsApi.unlinkSync(tempFile) } catch { /* cleanup best effort */ }
   }
 }
@@ -600,6 +677,14 @@ function resultForPath(pathInfo, status, extra = {}) {
 }
 
 /** Queue API and internal/update share one serialized synchronizer. */
+/** Queue API and internal/update share one serialized synchronizer. */
+function webDocumentPath(documentPath, pathInfo) {
+  const direct = rootFromDocumentPath(documentPath)
+  if (direct.kind === 'valid') return direct.path
+  if (pathInfo !== null && pathInfo !== undefined && typeof pathInfo.profilesRoot === 'string') return join(pathInfo.profilesRoot, 'web', 'cordis.patch.yml')
+  return documentPath
+}
+
 export function createQqbotSettingsSynchronizer(options = {}) {
   const onResult = typeof options.onResult === 'function' ? options.onResult : undefined
   let tail = Promise.resolve()
@@ -612,29 +697,53 @@ export function createQqbotSettingsSynchronizer(options = {}) {
       try { onResult({ ...state }) } catch { /* diagnostics callback cannot break the write queue */ }
     }
   }
-  const execute = async (input) => {
+  const execute = async (input = {}) => {
+    const startedAt = new Date().toISOString()
+    const associated = strictAssociation(input)
+    const meta = {
+      saveRunId: typeof input.saveRunId === 'string' && input.saveRunId !== '' ? input.saveRunId : randomUUID(),
+      syncRevision: Number.isInteger(input.syncRevision) ? input.syncRevision : 0,
+      snapshotHash: typeof input.snapshotHash === 'string' && input.snapshotHash !== '' ? input.snapshotHash : null,
+      trigger: typeof input.trigger === 'string' && input.trigger !== '' ? input.trigger : 'direct',
+    }
+    const finish = (result) => {
+      const final = {
+        ...result,
+        ...meta,
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        pending: false,
+        terminalMatch: associated && meta.snapshotHash !== null && result.status === 'synced',
+        request: { ...meta },
+      }
+      emit(final)
+      return final
+    }
     let snapshot
-    try { snapshot = validateSettingsSnapshot(input.snapshot) } catch (error) {
-      const result = { status: 'failed', reason: errorText(error), pending: false }
-      emit(result)
-      return result
+    try {
+      snapshot = validateSettingsSnapshot(input.snapshot)
+      const calculatedHash = stableSnapshotHash(snapshot)
+      if (meta.snapshotHash === null) meta.snapshotHash = calculatedHash
+      else if (meta.snapshotHash !== calculatedHash) return finish({ status: 'failed', reason: 'snapshot-hash-mismatch' })
+    } catch (error) {
+      return finish({ status: 'failed', reason: errorText(error) })
     }
     const pathInfo = resolveProfilesRoot(input.documentPath, input.env === undefined ? process.env : input.env)
     if (pathInfo.status !== 'available') {
-      const result = resultForPath(pathInfo, 'unavailable', { profiles: [], diagnostics: [] })
-      emit(result)
-      return result
+      return finish(resultForPath(pathInfo, 'unavailable', { profiles: [], diagnostics: [] }))
+    }
+    let webBefore
+    const webPath = associated ? webDocumentPath(input.documentPath, pathInfo) : undefined
+    if (associated) {
+      webBefore = patchDiagnostic(webPath, undefined)
+      if (webBefore.managedSnapshotHash !== meta.snapshotHash) return finish(resultForPath(pathInfo, 'drift-detected', { profiles: [], diagnostics: [{ reason: 'web-managed-snapshot-mismatch' }], webBefore, webAfter: webBefore, rawWebPatchFingerprint: webBefore, managedWebSnapshotHash: webBefore.managedSnapshotHash }))
     }
     const scanned = scanOwnQqbotProfiles(pathInfo.profilesRoot)
     if (scanned.status === 'unavailable') {
-      const result = resultForPath(pathInfo, 'unavailable', { profiles: [], diagnostics: scanned.diagnostics })
-      emit(result)
-      return result
+      return finish(resultForPath(pathInfo, 'unavailable', { profiles: [], diagnostics: scanned.diagnostics, ...(associated ? { webBefore, webAfter: webBefore, rawWebPatchFingerprint: webBefore, managedWebSnapshotHash: webBefore.managedSnapshotHash } : {}) }))
     }
     if (scanned.profiles.length === 0) {
-      const result = resultForPath(pathInfo, 'not-installed', { profiles: [], diagnostics: scanned.diagnostics })
-      emit(result)
-      return result
+      return finish(resultForPath(pathInfo, 'not-installed', { profiles: [], diagnostics: scanned.diagnostics, ...(associated ? { webBefore, webAfter: webBefore, rawWebPatchFingerprint: webBefore, managedWebSnapshotHash: webBefore.managedSnapshotHash } : {}) }))
     }
     const profiles = []
     for (const profile of scanned.profiles) {
@@ -642,10 +751,35 @@ export function createQqbotSettingsSynchronizer(options = {}) {
       const written = writeQqbotSettingsPatch(profileDir, snapshot, options)
       profiles.push({ profile, status: written.status === 'applied' || written.status === 'idempotent' ? written.status : 'failed', ...written })
     }
+    const webAfter = associated ? patchDiagnostic(webPath, undefined) : undefined
+    const webDrift = associated && webAfter.patchSha256 !== webBefore.patchSha256
+    const webDiagnostic = webDrift ? {
+      target: 'web',
+      stage: 'final-web-verify',
+      reason: 'external-writer-drift',
+      preserveExternalValue: true,
+      failureOrder: ['final-web-verify', 'external-writer-drift', 'preserve-external-value'],
+      before: webBefore,
+      after: webAfter,
+    } : null
+    const profileDiagnostics = profiles
+      .filter((item) => item.diagnostic !== undefined)
+      .map((item) => ({ profile: item.profile, failureOrder: item.failureOrder, ...item.diagnostic }))
+    const driftDiagnostics = webDiagnostic === null ? profileDiagnostics : [webDiagnostic, ...profileDiagnostics]
+    const failureOrder = [...new Set(driftDiagnostics.flatMap((item) => Array.isArray(item.failureOrder) ? item.failureOrder : []))]
     const failed = profiles.filter((item) => item.status === 'failed' || item.status === 'fatal')
-    const result = resultForPath(pathInfo, failed.length === 0 ? 'synced' : 'failed', { profiles, diagnostics: scanned.diagnostics })
-    emit(result)
-    return result
+    const profileManagedOk = profiles.length > 0 && profiles.every((item) => (item.status === 'applied' || item.status === 'idempotent') && item.managedSnapshotHash === meta.snapshotHash)
+    const webManagedOk = !associated || (webAfter.managedSnapshotHash === meta.snapshotHash && webAfter.patchSha256 === webBefore.patchSha256)
+    let status
+    if (failed.length > 0) status = 'failed'
+    else if (!profileManagedOk || !webManagedOk) status = 'drift-detected'
+    else status = 'synced'
+    return finish(resultForPath(pathInfo, status, {
+      profiles,
+      diagnostics: [...scanned.diagnostics, ...driftDiagnostics],
+      failureOrder,
+      ...(associated ? { webBefore, webAfter, rawWebPatchFingerprint: webAfter, managedWebSnapshotHash: webAfter.managedSnapshotHash } : {}),
+    }))
   }
   const enqueue = (input = {}) => {
     const rawSnapshot = input.snapshot
@@ -654,7 +788,8 @@ export function createQqbotSettingsSynchronizer(options = {}) {
       checked = null
     }
     const pathInfo = checked === null ? null : resolveProfilesRoot(input.documentPath, input.env === undefined ? process.env : input.env)
-    const key = fingerprint(pathInfo === null ? undefined : pathInfo.profilesRoot, pathInfo === null ? 'invalid' : pathInfo.pathSource, checked === null ? { values: {}, gateWords: null } : checked)
+    const association = [input.saveRunId || '', input.syncRevision === undefined ? '' : String(input.syncRevision), input.trigger || ''].join('|')
+    const key = fingerprint(pathInfo === null ? undefined : pathInfo.profilesRoot, pathInfo === null ? 'invalid' : pathInfo.pathSource, checked === null ? { values: {}, gateWords: null } : checked) + '|' + association
     if (pendingKey === key && pendingPromise !== null) return pendingPromise
     state = { ...state, pending: true, pathSource: pathInfo === null ? undefined : pathInfo.pathSource }
     const run = tail.then(() => execute({ ...input, snapshot: rawSnapshot }))

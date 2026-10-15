@@ -1,4 +1,5 @@
 // YAML 解析、行定位、捕获和保格式文本 patch 纯职责。
+import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -37,6 +38,7 @@ import {
   normalizeSettingValue,
   validateSettingValue,
 } from './settings-contract.js'
+import { GATE_WORD_FIELDS, validateGateWords } from './gate-words.js'
 
 export function parsePresetYaml(text) {
   return yaml.load(text, { schema: YAML_SCHEMA })
@@ -59,21 +61,36 @@ export function readPath(object, path) {
   return { exists: true, value }
 }
 
-function rowsById(document, rowId) {
+function collectRowsById(document, rowId) {
   const rows = []
   const seen = new Set()
-  const visit = (value) => {
+  const visit = (value, path) => {
     if (value === null || typeof value !== 'object' || seen.has(value)) return
     seen.add(value)
-    if (hasOwn(value, 'id') && value.id === rowId) rows.push(value)
+    if (hasOwn(value, 'id') && value.id === rowId) rows.push({ row: value, path: [...path] })
     if (Array.isArray(value)) {
-      for (const item of value) visit(item)
+      for (let index = 0; index < value.length; index += 1) visit(value[index], [...path, index])
     } else {
-      for (const child of Object.values(value)) visit(child)
+      for (const [key, child] of Object.entries(value)) visit(child, [...path, key])
     }
   }
-  visit(document)
+  visit(document, [])
   return rows
+}
+
+/** 深度优先返回指定 id 的行；仅返回行对象，兼容既有消费者。 */
+export function rowsById(document, rowId) {
+  return collectRowsById(document, rowId).map((item) => item.row)
+}
+
+/** 返回指定 id 的全部候选及 YAML 数据路径，供唯一行诊断/迁移使用。 */
+export function rowsByIdWithPath(document, rowId) {
+  return collectRowsById(document, rowId).map((item, index) => ({
+    index,
+    row: item.row,
+    path: item.path,
+    pathText: item.path.map((part) => String(part)).join('.'),
+  }))
 }
 
 function resolveLocator(document, locator) {
@@ -197,6 +214,132 @@ export function captureRowSettings(text, definitions) {
   return { document, values, states, rowPresent: rowsById(document, SETTINGS_ROW_ID).length > 0 }
 }
 
+const CANONICAL_SETTINGS_NAME = 'dsh-extra-plan/settings'
+const MIGRATION_KEYS = Object.freeze(SETTING_DEFINITIONS.map((item) => item.key))
+const MIGRATION_GATE_KEYS = Object.freeze(GATE_WORD_FIELDS.map((item) => item.field))
+
+function migrationEntryName(entry) {
+  if (entry !== null && typeof entry === 'object' && entry.entry !== undefined && entry.entry.options !== undefined) return entry.entry.options.name
+  return entry !== null && typeof entry === 'object' ? entry.name : undefined
+}
+
+function migrationEntryConfig(entry) {
+  if (entry === null || typeof entry !== 'object') return undefined
+  const inherited = entry.inherited !== null && typeof entry.inherited === 'object' ? entry.inherited : {}
+  const own = entry.entry !== undefined && entry.entry.options !== undefined && entry.entry.options.config !== null && typeof entry.entry.options.config === 'object' ? entry.entry.options.config : entry.config
+  const override = entry.override !== null && typeof entry.override === 'object' ? (entry.override.config !== undefined ? entry.override.config : entry.override) : {}
+  return { ...inherited, ...(own !== null && typeof own === 'object' && !Array.isArray(own) ? own : {}), ...(override !== null && typeof override === 'object' && !Array.isArray(override) ? override : {}) }
+}
+
+function migrationManagedConfig(config) {
+  if (config === null || typeof config !== 'object' || Array.isArray(config)) return undefined
+  const values = {}
+  for (const definition of SETTING_DEFINITIONS) {
+    if (!hasOwn(config, definition.key) || !validateSettingValue(definition, config[definition.key])) return undefined
+    values[definition.key] = normalizeSettingValue(definition, config[definition.key])
+  }
+  let gateWords
+  try { gateWords = validateGateWords(config.gateWords) } catch { return undefined }
+  return { values, gateWords }
+}
+
+function migrationComparable(config) {
+  const checked = migrationManagedConfig(config)
+  return checked === undefined ? undefined : { ...checked.values, gateWords: { ...checked.gateWords } }
+}
+
+function migrationHash(text) { return createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex') }
+function migrationIgnorable(line) { const value = line.trim(); return value === '' || value.startsWith('#') }
+function migrationIndent(line) { return (line.match(/^[ \t]*/) || [''])[0].length }
+
+function migrationScalarToken(value) {
+  const token = value.trim().replace(/\s+#.*$/, '').trim()
+  if (token.startsWith('"') && token.endsWith('"')) { try { return JSON.parse(token) } catch { return token.slice(1, -1) } }
+  if (token.startsWith("'") && token.endsWith("'")) return token.slice(1, -1).replace(/''/g, "'")
+  return token
+}
+
+function migrationRowStarts(lines) {
+  const starts = []
+  for (let index = 0; index < lines.length; index += 1) {
+    if (/^[ \t]*-\s*(?:id\s*:|override\s*:)/.test(lines[index])) starts.push(index)
+  }
+  return starts
+}
+
+function migrationRowId(lines, start, end) {
+  for (let index = start; index < end; index += 1) {
+    const match = lines[index].match(/^[ \t]*(?:-\s*)?id\s*:\s*(.*?)\s*(?:#.*)?$/)
+    if (match !== null) return migrationScalarToken(match[1])
+  }
+  return undefined
+}
+
+/** 仅规划临时 fixture 的 canonical settings 行迁移，不写文件。 */
+export function planCanonicalSettingsMigration(rawText, effectiveEntry) {
+  if (typeof rawText !== 'string') return { status: 'failed', reason: 'raw-patch-not-readable' }
+  if (migrationEntryName(effectiveEntry) !== CANONICAL_SETTINGS_NAME) return { status: 'conflict', reason: 'effective-entry-not-canonical' }
+  const effective = migrationManagedConfig(migrationEntryConfig(effectiveEntry))
+  if (effective === undefined) return { status: 'conflict', reason: 'effective-config-incomplete' }
+  let document
+  try { document = parsePresetYaml(rawText) } catch (error) { return { status: 'invalid', reason: 'invalid-yaml:' + String(error && error.message || error) } }
+  const targets = rowsByIdWithPath(document, SETTINGS_ROW_ID)
+  if (targets.length === 0) return { status: 'conflict', reason: 'settings-row-missing', rawRowCount: 0, canonicalNameCount: 0 }
+  const canonicalIndexes = targets.map((item, index) => migrationEntryName(item.row) === CANONICAL_SETTINGS_NAME || item.row.name === CANONICAL_SETTINGS_NAME ? index : -1).filter((index) => index >= 0)
+  if (canonicalIndexes.length !== 1) return { status: 'conflict', reason: 'canonical-name-ambiguous', rawRowCount: targets.length, canonicalNameCount: canonicalIndexes.length }
+  const canonicalIndex = canonicalIndexes[0]
+  const canonicalComparable = migrationComparable(targets[canonicalIndex].row.config !== undefined ? targets[canonicalIndex].row.config : targets[canonicalIndex].row.override?.config)
+  if (canonicalComparable === undefined || JSON.stringify(canonicalComparable) !== JSON.stringify({ ...effective.values, gateWords: effective.gateWords })) return { status: 'conflict', reason: 'canonical-effective-mismatch', rawRowCount: targets.length, canonicalNameCount: 1 }
+  const eol = rawText.includes('\r\n') ? '\r\n' : '\n'
+  const trailing = rawText.endsWith('\n')
+  const lines = rawText.split(/\r?\n/)
+  if (trailing) lines.pop()
+  const starts = migrationRowStarts(lines)
+  const blocks = []
+  for (let index = 0; index < starts.length; index += 1) {
+    const start = starts[index]
+    const nextStart = index + 1 < starts.length ? starts[index + 1] : lines.length
+    let end = nextStart
+    while (end > start + 1 && migrationIgnorable(lines[end - 1])) end -= 1
+    blocks.push({ start, end, id: migrationRowId(lines, start, nextStart) })
+  }
+  const targetBlocks = blocks.filter((item) => item.id === SETTINGS_ROW_ID)
+  if (targetBlocks.length !== targets.length) return { status: 'conflict', reason: 'text-row-boundary-unproven', rawRowCount: targets.length, textRowCount: targetBlocks.length, canonicalNameCount: 1 }
+  const remove = []
+  for (let index = 0; index < targets.length; index += 1) {
+    if (index !== canonicalIndex) remove.push(targetBlocks[index])
+  }
+  const beforeBytes = Buffer.byteLength(rawText, 'utf8')
+  const beforeSha256 = migrationHash(rawText)
+  const nextLines = [...lines]
+  for (const item of [...remove].sort((left, right) => right.start - left.start)) nextLines.splice(item.start, item.end - item.start)
+  const afterText = nextLines.join(eol) + (trailing ? eol : '')
+  let afterDocument
+  try { afterDocument = parsePresetYaml(afterText) } catch (error) { return { status: 'invalid', reason: 'after-parse-failed:' + String(error && error.message || error) } }
+  const afterRows = rowsByIdWithPath(afterDocument, SETTINGS_ROW_ID)
+  const afterCanonicalNameCount = afterRows.filter((item) => item.row.name === CANONICAL_SETTINGS_NAME).length
+  const afterConfig = afterRows.length === 1 ? migrationComparable(afterRows[0].row.config !== undefined ? afterRows[0].row.config : afterRows[0].row.override?.config) : undefined
+  if (afterRows.length !== 1 || afterCanonicalNameCount !== 1 || afterConfig === undefined || JSON.stringify(afterConfig) !== JSON.stringify({ ...effective.values, gateWords: effective.gateWords })) return { status: 'conflict', reason: 'after-unique-check-failed', beforeBytes, beforeSha256, rawRowCount: targets.length, canonicalNameCount: 1 }
+  const afterBytes = Buffer.byteLength(afterText, 'utf8')
+  const afterSha256 = migrationHash(afterText)
+  return {
+    status: remove.length === 0 ? 'idempotent' : 'planned',
+    rawRowCount: targets.length,
+    canonicalNameCount: 1,
+    afterRawCount: afterRows.length,
+    afterCanonicalNameCount,
+    removedRows: remove.length,
+    beforeBytes,
+    beforeSha256,
+    afterBytes,
+    afterSha256,
+    rollbackBytes: beforeBytes,
+    rollbackSha256: beforeSha256,
+    rollback: { bytes: beforeBytes, sha256: beforeSha256, text: rawText },
+    beforeText: rawText,
+    afterText,
+  }
+}
 /** 声明行 config.plugins 内按 id 定位子行（含 group 行的 config 子行数组，深度优先；找不到返回 null）。 */
 export function findPluginsRow(plugins, rowId) {
   if (!Array.isArray(plugins)) return null

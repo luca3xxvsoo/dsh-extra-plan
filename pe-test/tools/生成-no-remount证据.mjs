@@ -340,15 +340,15 @@ function verifyBackupManifest(sourcePaths, backupFiles, backupManifest, backupDi
   const expected = sourcePaths.filter((item) => editableRoles.has(item.role))
   const entries = Array.isArray(backupManifest?.sources) ? backupManifest.sources : []
   const checks = expected.map((item) => {
-    const entry = entries.find((candidate) => candidate.source === item.path)
+    const entry = entries.find((candidate) => candidate.source === item.path || candidate.sourceRelative === item.path || normalizeWorkspacePath(candidate.sourceRelative || candidate.source) === item.path)
     const actual = backupFiles.find((candidate) => candidate.source === item.path)
     const sourceExists = entry?.sourceExistedBeforeBackup ?? entry?.existsBeforeBackup
     const backupExists = entry?.backupExists
     const rollback = entry?.rollback || {}
-    const metadataMatch = entry?.source === item.path && sourceExists === true && typeof entry?.bytes === 'number' && typeof entry?.sha256 === 'string' && backupExists === true && typeof entry?.backupBytes === 'number' && typeof entry?.backupSha256 === 'string'
+    const metadataMatch = (entry?.source === item.path || entry?.sourceRelative === item.path || normalizeWorkspacePath(entry?.sourceRelative || entry?.source) === item.path) && sourceExists === true && typeof entry?.bytes === 'number' && typeof entry?.sha256 === 'string' && backupExists === true && typeof entry?.backupBytes === 'number' && typeof entry?.backupSha256 === 'string'
     const pathMatch = metadataMatch && normalizeWorkspacePath(entry.backup) === normalizeWorkspacePath(actual?.path)
-    const bytesShaMatch = metadataMatch && actual?.exists === true && actual.bytes === entry.backupBytes && actual.sha256 === entry.backupSha256
-    const rollbackMatch = typeof rollback.action === 'string' && rollback.action.length > 0 && rollback.restoreTarget === item.path && rollback.sourceExistedBeforeBackup === sourceExists
+    const bytesShaMatch = metadataMatch && actual?.exists === true && actual.bytes === entry.backupBytes && String(actual.sha256 || '').toLowerCase() === String(entry.backupSha256 || '').toLowerCase()
+    const rollbackMatch = typeof rollback.action === 'string' && rollback.action.length > 0 && (rollback.restoreTarget === item.path || normalizeWorkspacePath(rollback.restoreTarget) === item.path) && rollback.sourceExistedBeforeBackup === sourceExists
     return {
       source: item.path,
       manifestBackupPath: entry?.backup || null,
@@ -419,12 +419,12 @@ const externalBatchDirectoriesBefore = unique([
 mkdirSync(EVIDENCE_DIR, { recursive: true })
 
 const backupNames = existsSync(EXTRA_PLAN_DIR)
-  ? readdirSync(EXTRA_PLAN_DIR, { withFileTypes: true }).filter((entry) => entry.isDirectory() && entry.name.startsWith('backup-no-remount-evidence-')).map((entry) => entry.name).sort()
+  ? readdirSync(EXTRA_PLAN_DIR, { withFileTypes: true }).filter((entry) => entry.isDirectory() && (entry.name.startsWith('backup-no-remount-evidence-') || entry.name.startsWith('BACKUP-唯一settings-'))).map((entry) => entry.name).sort()
   : []
 const backupCandidates = backupNames.filter((name) => {
   const manifest = readJson('.extra-plan/' + name + '/BACKUP-MANIFEST.json')
   const sources = Array.isArray(manifest?.sources) ? manifest.sources : []
-  return manifest?.backupUnique === true && sources.length === 6 && sources.every((item) => typeof item?.source === 'string' && typeof item?.sha256 === 'string' && typeof item?.bytes === 'number')
+  return manifest?.backupUnique === true && sources.length === 8 && sources.every((item) => (typeof item?.source === 'string' || typeof item?.sourceRelative === 'string') && typeof item?.sha256 === 'string' && typeof item?.bytes === 'number')
 })
 const backupDirectory = backupCandidates.length === 0 ? null : '.extra-plan/' + backupCandidates[backupCandidates.length - 1]
 const backupManifest = backupDirectory === null ? undefined : readJson(backupDirectory + '/BACKUP-MANIFEST.json')
@@ -433,10 +433,11 @@ const sourcePaths = [
   { path: 'pe-test/tools/step-01-设置页配置.mjs', role: 'editable-test-source' },
   { path: 'pe-test/tools/生成-no-remount证据.mjs', role: 'evidence-source' },
   { path: 'plugins/dsh-extra-plan/lib/settings.js', role: 'editable-runtime-source' },
+  { path: 'plugins/dsh-extra-plan/lib/preset-yaml.js', role: 'editable-runtime-source' },
+  { path: 'plugins/dsh-extra-plan/lib/qqbot-settings-sync.js', role: 'editable-runtime-source' },
   { path: 'pe-test/docs/ai-宿主耦合台账.md', role: 'editable-doc-source' },
   { path: 'pe-test/docs/ai-维护手册.md', role: 'editable-doc-source' },
   { path: 'plugins/dsh-extra-plan/lib/preset-sync.js', role: 'runtime-read-only' },
-  { path: 'plugins/dsh-extra-plan/lib/qqbot-settings-sync.js', role: 'runtime-read-only' },
   { path: 'plugins/dsh-extra-plan/index.js', role: 'runtime-read-only' },
   { path: 'plugins/dsh-extra-plan/lib/live-config.js', role: 'runtime-read-only' },
   { path: 'plugins/dsh-extra-plan/package.json', role: 'package-read-only' },
@@ -478,6 +479,7 @@ const boundaryFiles = unique([
   'plugins/dsh-extra-plan/index.js',
   'plugins/dsh-extra-plan/lib/preset-sync.js',
   'plugins/dsh-extra-plan/lib/settings.js',
+  'plugins/dsh-extra-plan/lib/preset-yaml.js',
   'plugins/dsh-extra-plan/lib/qqbot-settings-sync.js',
   'plugins/dsh-extra-plan/lib/live-config.js',
   'plugins/dsh-extra-plan/package.json',
@@ -522,7 +524,7 @@ const presetCountCode = "const m=await import('./plugins/dsh-extra-plan/lib/pres
 const staticChecks = [
   { id: 'STATIC-01-node-check-sync', command: 'node --check plugins/dsh-extra-plan/lib/qqbot-settings-sync.js', argv: ['--check', 'plugins/dsh-extra-plan/lib/qqbot-settings-sync.js'], requiredMarkers: [] },
   { id: 'STATIC-02-node-check-settings', command: 'node --check plugins/dsh-extra-plan/lib/settings.js', argv: ['--check', 'plugins/dsh-extra-plan/lib/settings.js'], requiredMarkers: [] },
-  { id: 'STATIC-03-node-check-preset-sync', command: 'node --check plugins/dsh-extra-plan/lib/preset-sync.js', argv: ['--check', 'plugins/dsh-extra-plan/lib/preset-sync.js'], requiredMarkers: [] },
+  { id: 'STATIC-03-node-check-preset-yaml', command: 'node --check plugins/dsh-extra-plan/lib/preset-yaml.js', argv: ['--check', 'plugins/dsh-extra-plan/lib/preset-yaml.js'], requiredMarkers: [] },
   { id: 'STATIC-04-node-check-settings-test', command: 'node --check pe-test/tools/step-01-设置页配置.mjs', argv: ['--check', 'pe-test/tools/step-01-设置页配置.mjs'], requiredMarkers: [] },
   { id: 'STATIC-05-node-check-install-sync-test', command: 'node --check pe-test/tools/step-01-安装同步.mjs', argv: ['--check', 'pe-test/tools/step-01-安装同步.mjs'], requiredMarkers: [] },
   { id: 'STATIC-06-node-check-evidence-generator', command: 'node --check pe-test/tools/生成-no-remount证据.mjs', argv: ['--check', 'pe-test/tools/生成-no-remount证据.mjs'], requiredMarkers: [] },
@@ -533,7 +535,7 @@ const staticChecks = [
   { id: 'STATIC-11-preset-counts', command: 'node --input-type=module -e "' + presetCountCode + '"', argv: ['--input-type=module', '-e', presetCountCode], requiredMarkers: ['HOT=8 RESTART=2'] },
 ]
 const fixedCommands = [
-  { id: '01-settings-test', command: 'node pe-test/tools/step-01-设置页配置.mjs', argv: ['pe-test/tools/step-01-设置页配置.mjs'], requiredMarkers: ['API_ADAPTER_THROW_COMPLETE_PATCH_SETTLED_BEFORE_FAILURE_OK', 'API_ADAPTER_REJECT_COMPLETE_PATCH_SETTLED_BEFORE_FAILURE_OK', 'API_ADAPTER_HANG_COMPLETE_PATCH_SETTLED_BEFORE_RESOLVE_OK', 'SETTINGS_ONLY_HTTP_SAVE_ADAPTER_REGISTER_0_DISPOSE_0', 'HOST_PROXY_MATRIX_COMPLETE_OK', 'HOST_PROXY_NORMAL_SETTLED_CTX_GET_OK', 'HOST_PROXY_NEGATIVE_BOUNDARIES_EXPLICIT_OK', 'FULL_SNAPSHOT_10_PLUS_7_EACH_TRIGGER_OK', 'HOT=8 RESTART=2'] },
+  { id: '01-settings-test', command: 'node pe-test/tools/step-01-设置页配置.mjs', argv: ['pe-test/tools/step-01-设置页配置.mjs'], requiredMarkers: ['API_ADAPTER_THROW_COMPLETE_PATCH_SETTLED_BEFORE_FAILURE_OK', 'API_ADAPTER_REJECT_COMPLETE_PATCH_SETTLED_BEFORE_FAILURE_OK', 'API_ADAPTER_HANG_COMPLETE_PATCH_SETTLED_BEFORE_RESOLVE_OK', 'SETTINGS_ONLY_HTTP_SAVE_ADAPTER_REGISTER_0_DISPOSE_0', 'HOST_PROXY_MATRIX_COMPLETE_OK', 'HOST_PROXY_NORMAL_SETTLED_CTX_GET_OK', 'HOST_PROXY_NEGATIVE_BOUNDARIES_EXPLICIT_OK', 'SETTINGS_ROW_UNIQUE_OR_CONFLICT_EXPLICIT_OK', 'SAVE_RUN_ID_TERMINAL_HASH_MATCH_OK', 'PATCH_MTIME_MANAGED_HASH_COMPARE_OK', 'FULL_SNAPSHOT_10_PLUS_7_EACH_TRIGGER_OK', 'CREATIVE_PERSISTED_BEFORE_RESTART_OK', 'HOT=8 RESTART=2'] },
   { id: '02-install-sync-test', command: 'node pe-test/tools/step-01-安装同步.mjs', argv: ['pe-test/tools/step-01-安装同步.mjs'], requiredMarkers: ['SETTINGS_ONLY_NO_REMOUNT_STATIC_OK', 'SETTINGS_ONLY_ADAPTER_REGISTER_0_DISPOSE_0_OK', 'FIXTURE_ADAPTER_THROW_COMPLETE_PATCH_SETTLED_BEFORE_FAILURE_OK', 'FIXTURE_ADAPTER_REJECT_COMPLETE_PATCH_SETTLED_BEFORE_FAILURE_OK', 'FIXTURE_ADAPTER_HANG_COMPLETE_PATCH_SETTLED_BEFORE_RESOLVE_OK'] },
   { id: '03-qqbot-mapping-test', command: 'node pe-test/tools/step-01-qqbot-安装映射.mjs', argv: ['pe-test/tools/step-01-qqbot-安装映射.mjs'], requiredMarkers: [] },
   { id: '04-preset-completeness', command: 'node pe-test/tools/step-01-预设完整性.mjs', argv: ['pe-test/tools/step-01-预设完整性.mjs'], requiredMarkers: [], required: false },

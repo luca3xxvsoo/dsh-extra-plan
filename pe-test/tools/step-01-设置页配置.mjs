@@ -1,4 +1,5 @@
 // 设置页同页配置、HTTP 写闸门与真实 lazy client 保存回归；只使用内存 editor/slot/React 夹具。
+import { createHash } from 'node:crypto'
 import { createServer, request as httpRequest } from 'node:http'
 import { createRequire, registerHooks, syncBuiltinESMExports } from 'node:module'
 import { isDeepStrictEqual } from 'node:util'
@@ -81,6 +82,8 @@ try { patch = parsePresetYaml(patchText) } catch (error) { console.error('FAIL  
 const { Config } = await import('../../plugins/dsh-extra-plan/lib/settings.js')
 const { createLiveConfig } = await import('../../plugins/dsh-extra-plan/lib/live-config.js')
 const { createGateRuntime, GATE_WORD_FIELDS } = await import('../../plugins/dsh-extra-plan/lib/gate-words.js')
+const { createQqbotSettingsSynchronizer, stableSnapshotHash } = await import('../../plugins/dsh-extra-plan/lib/qqbot-settings-sync.js')
+const { planCanonicalSettingsMigration } = await import('../../plugins/dsh-extra-plan/lib/preset-yaml.js')
 const descriptorKeys = SETTING_DEFINITIONS.map((definition) => definition.key)
 const configDict = Config !== undefined && Config !== null && Config.dict !== undefined && Config.dict !== null ? Config.dict : {}
 const configKeys = Object.keys(configDict)
@@ -125,6 +128,8 @@ const initial = { anchoredBootstrap: true, creativeMode: false, webFetch: false,
 function makeEditor(config = initial, documentPath = '', options = {}) {
   const row = { entry: { options: { id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: structuredClone(config) }, fiber: {} }, inherited: {}, override: {} }
   const state = { rows: [row], edits: [] }
+  const persistDocument = documentPath !== '' && existsSync(documentPath)
+  if (persistDocument) writeFileSync(documentPath, JSON.stringify([{ id: row.entry.options.id, name: row.entry.options.name, config: row.entry.options.config }]), 'utf8')
   return {
     state,
     documentPath,
@@ -134,7 +139,7 @@ function makeEditor(config = initial, documentPath = '', options = {}) {
       if (current === undefined) throw new Error('entry disappeared')
       const next = change(structuredClone(current.entry.options.config), current.inherited)
       current.entry.options.config = next
-      if (options.persistDocument === true && documentPath !== '') writeFileSync(documentPath, JSON.stringify([{ id: entry.options.id, config: next }]), 'utf8')
+      if (persistDocument) writeFileSync(documentPath, JSON.stringify([{ id: entry.options.id, name: entry.options.name, config: next }]), 'utf8')
       state.edits.push({ id: entry.options.id, next: structuredClone(next) })
     },
   }
@@ -363,19 +368,32 @@ async function withEnvironment(changes, action) {
   }
 }
 const testEnvironment = captureEnvironment()
-const editor = makeEditor(initial, 'relative-document-path')
+const initialAuthorityFixture = makeSyncFixture()
+const editor = makeEditor(initial, initialAuthorityFixture.webPatch)
 const run = await start(editor)
 try {
   const before = await requestJson(run.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
   check('V03 GET 读取统一行两项宿主值', before.status === 200 && before.body.values.webFetch === false && before.body.values.toolPresentationMode === 'native' && before.body.fields.length === 2)
   check('PROFILE_SYNC_INITIAL_PENDING_TRUE', before.status === 200 && before.body.profileSync.status === 'pending' && before.body.profileSync.pending === true)
   const put = await requestJson(run.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true, toolPresentationMode: 'ptc' })
+
+
+
   const rowConfig = editor.state.rows[0].entry.options.config
-  check('V03 合法 PUT 仅 edit 唯一全局行并保留另八项与 gateWords（矛盾路径显式 partial）', put.status >= 400 && put.body.profileSync.status === 'unavailable' && put.body.overall === 'partial' && put.body.web.applied === true && put.body.projection.owner === 'dsh-extra-plan-settings' && editor.state.edits.length === 1 && editor.state.edits[0].id === 'dsh-extra-plan-settings' && rowConfig.webFetch === true && rowConfig.toolPresentationMode === 'ptc' && rowConfig.plannerModel === initial.plannerModel && rowConfig.exploreBudget === initial.exploreBudget && JSON.stringify(rowConfig.gateWords) === JSON.stringify(gateWords))
+   const matchingGet = await requestJson(run.port, 'GET', '/api/dsh-extra-plan-settings/pro-config?saveRunId=' + encodeURIComponent(put.body.profileSync.saveRunId), {})
+   const mismatchGet = await requestJson(run.port, 'GET', '/api/dsh-extra-plan-settings/pro-config?saveRunId=missing-run-id', {})
+   const cacheGet = await requestJson(run.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
+   const terminal = put.body.profileSync
+   const profile = terminal?.profiles?.[0]
+   const associationOk = put.status === 200 && terminal?.request?.saveRunId === terminal?.saveRunId && terminal.request.syncRevision === terminal.syncRevision && terminal.request.snapshotHash === terminal.snapshotHash && terminal.terminalMatch === true && matchingGet.status === 200 && matchingGet.body.profileSync.terminalMatch === true && mismatchGet.status === 409 && mismatchGet.body.profileSync.terminalMatch === false && mismatchGet.body.profileSync.status !== 'synced' && mismatchGet.body.profileSync.source === 'last-terminal-cache' && cacheGet.body.profileSync.cache === true && cacheGet.body.profileSync.terminalMatch === false && cacheGet.body.profileSync.source === 'last-terminal-cache'
+   const patchMetadataOk = typeof terminal.snapshotHash === 'string' && terminal.webAfter?.patchBytes > 0 && typeof terminal.webAfter.patchMtimeMs === 'number' && typeof terminal.webAfter.patchSha256 === 'string' && terminal.webAfter.managedSnapshotHash === terminal.snapshotHash && profile?.patchBytes > 0 && typeof profile.patchMtimeMs === 'number' && typeof profile.patchSha256 === 'string' && profile.managedSnapshotHash === terminal.snapshotHash && typeof profile.backupPath === 'string' && typeof profile.backupSha256 === 'string' && profile.before?.patchSha256 !== undefined && profile.after?.patchSha256 === profile.patchSha256
+   if (associationOk) console.log('SAVE_RUN_ID_TERMINAL_HASH_MATCH_OK')
+   if (patchMetadataOk) console.log('PATCH_MTIME_MANAGED_HASH_COMPARE_OK')
+   check('V03 合法 PUT 仅 edit 唯一全局行并保留另八项与 gateWords（终态关联）', put.status === 200 && put.body.profileSync.status === 'synced' && put.body.profileSync.terminalMatch === true && put.body.overall === 'synced' && put.body.web.applied === true && put.body.projection.owner === 'dsh-extra-plan-settings' && editor.state.edits.length === 1 && editor.state.edits[0].id === 'dsh-extra-plan-settings' && rowConfig.webFetch === true && rowConfig.toolPresentationMode === 'ptc' && rowConfig.plannerModel === initial.plannerModel && rowConfig.exploreBudget === initial.exploreBudget && JSON.stringify(rowConfig.gateWords) === JSON.stringify(gateWords))
   const noOp = await requestJson(run.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true, toolPresentationMode: 'ptc' })
-  check('V03 同值 PUT 深等 no-op 零新增 edit（矛盾路径保持 partial）', noOp.status >= 400 && noOp.body.profileSync.status === 'unavailable' && noOp.body.projection.applied === true && editor.state.edits.length === 1)
+   check('V03 同值 PUT 深等 no-op 零新增 edit且产生新关联终态', noOp.status === 200 && noOp.body.profileSync.status === 'synced' && noOp.body.profileSync.terminalMatch === true && noOp.body.projection.applied === true && editor.state.edits.length === 1 && noOp.body.profileSync.saveRunId !== put.body.profileSync.saveRunId && noOp.body.profileSync.webAfter?.managedSnapshotHash === noOp.body.profileSync.snapshotHash)
   const invalidCases = [
-    ['empty', {}], ['null', null], ['array', []], ['primitive', 'raw'], ['unknown', { plannerModel: 'x' }],
+    ['empty', {}], ['null', null], ['array', []], ['primitive', 'raw'], ['unknown', { notAField: 'x' }],
     ['bad-type', { webFetch: 1 }], ['mixed', { webFetch: false, unknown: true }],
   ]
   for (const [label, value] of invalidCases) {
@@ -386,7 +404,7 @@ try {
   check('V03 PUT 非法 JSON 返回 400 且零 edit', invalidJson.status === 400 && editor.state.edits.length === 1)
   const sameServerEmpty = await requestJson(run.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', {})
   check('V03 成功后同一 server 收到空对象仍拒绝，不是成功 no-op', sameServerEmpty.status === 400 && editor.state.edits.length === 1)
-} finally { await new Promise((resolve) => run.server.close(resolve)) }
+} finally { await new Promise((resolve) => run.server.close(resolve)); rmSync(initialAuthorityFixture.root, { recursive: true, force: true }) }
 
 function makeSyncFixture() {
   const root = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-web-qqbot-settings-'))
@@ -494,6 +512,95 @@ function apiSnapshotBodyOk(response, snapshot) {
 const syncValues = { anchoredBootstrap: false, creativeMode: true, webFetch: true, toolPresentationMode: 'both', runcodeCatchGate: true, crossProviderPlannerModel: true, plannerModel: 'planner-sync-test', plannerPromptSuffix: 'sync-suffix-test', exploreBudget: 37, otherAgentModel: 'other-sync-test' }
 const syncGateWords = { routeDirect: '甲', routePlan: '乙', routeDisagree: '丙', approvalApprove: '丁', approvalReplan: '戊', purposeRefine: '己', purposeRedo: '庚' }
 const syncSnapshot = { values: syncValues, gateWords: syncGateWords }
+
+function migrationRow(name, config) {
+  const lines = ['- id: dsh-extra-plan-settings', '  name: ' + JSON.stringify(name), '  config:']
+  for (const key of keys) if (key !== 'gateWords') lines.push('    ' + key + ': ' + JSON.stringify(config[key]))
+  lines.push('    gateWords:')
+  for (const item of GATE_WORD_FIELDS) lines.push('      ' + item.field + ': ' + JSON.stringify(config.gateWords[item.field]))
+  return lines.join('\n')
+}
+
+const duplicateFixture = makeSyncFixture()
+const duplicateEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, creativeMode: false }, duplicateFixture.webPatch)
+const duplicateBefore = readFileSync(duplicateFixture.qqPatch)
+const duplicateRaw = [
+  '# migration comment',
+  migrationRow('@local/dsh-extra-plan/settings', { ...syncValues, gateWords: syncGateWords, creativeMode: true }),
+  '# keep between duplicate rows',
+  migrationRow('dsh-extra-plan/settings', { ...syncValues, gateWords: syncGateWords, creativeMode: false }),
+  '- id: user-row',
+  '  name: user',
+  '  config:',
+  '    marker: !!js \"globalThis.__migrationUser = true\"'
+].join('\n') + '\n'
+writeFileSync(duplicateFixture.webPatch, duplicateRaw, 'utf8')
+const duplicateRun = await start(duplicateEditor)
+try {
+  const duplicateGet = await requestJson(duplicateRun.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
+  const duplicatePut = await requestJson(duplicateRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { creativeMode: true })
+  const duplicateProfile = duplicatePut.body?.profileSync
+  const conflictOk = duplicateGet.status === 409 && duplicatePut.status === 409 && duplicateGet.body?.settingsRow?.rawCount === 2 && duplicateGet.body?.settingsRow?.effectiveCount === 1 && duplicateGet.body?.settingsRow?.canonicalNameCount === 1 && duplicateGet.body?.settingsRow?.status === 'conflict' && duplicatePut.body?.projection?.applied === false && duplicateProfile?.status === 'conflict' && duplicateEditor.state.edits.length === 0 && readFileSync(duplicateFixture.qqPatch).equals(duplicateBefore) && patchBackupCount(duplicateFixture.profileDir) === 0
+  if (conflictOk) console.log('SETTINGS_ROW_UNIQUE_OR_CONFLICT_EXPLICIT_OK')
+
+  check('重复 settings 行 GET/PUT 显式 conflict 且零 edit/enqueue/QQBot 写', conflictOk)
+  const migrationEffective = duplicateEditor.state.rows[0]
+  const migration = planCanonicalSettingsMigration(duplicateRaw, migrationEffective)
+  let migrationAfterRows = []
+  try {
+    const parsedAfter = parsePresetYaml(migration.afterText)
+    migrationAfterRows = Array.isArray(parsedAfter) ? parsedAfter.filter((row) => row && typeof row === 'object' && row.id === 'dsh-extra-plan-settings') : []
+  } catch {}
+  const migrationConfig = migrationAfterRows[0]?.config
+  const migrationSnapshot = migrationConfig === undefined ? undefined : { values: Object.fromEntries(keys.map((key) => [key, migrationConfig[key]])), gateWords: migrationConfig.gateWords }
+  const migrationOk = (migration.status === 'planned' || migration.status === 'idempotent') && migration.rawRowCount === 2 && migration.afterRawCount === 1 && migration.afterCanonicalNameCount === 1 && migration.removedRows === 1 && migration.beforeBytes === migration.rollbackBytes && migration.beforeSha256 === migration.rollbackSha256 && migration.beforeText === migration.rollback.text && migration.afterText.includes('# migration comment') && migration.afterText.includes('# keep between duplicate rows') && migration.afterText.includes('globalThis.__migrationUser = true') && migrationAfterRows[0]?.name === 'dsh-extra-plan/settings' && fullSnapshotShapeOk(migrationSnapshot) && migrationSnapshot.values.creativeMode === false
+  if (migrationOk) console.log('CANONICAL_MIGRATION_PLANNER_OK')
+  check('canonical migration 取 effective canonical 值、删 duplicate、保留无关内容并可 rollback', migrationOk)
+} finally { await new Promise((resolve) => duplicateRun.server.close(resolve)); rmSync(duplicateFixture.root, { recursive: true, force: true }) }
+
+const creativeFixture = makeSyncFixture()
+const creativeBase = { ...syncValues, gateWords: syncGateWords, creativeMode: false }
+const creativeEditor = makeEditor(creativeBase, creativeFixture.webPatch)
+const creativeRun = await start(creativeEditor)
+try {
+  const creativePut = await requestJson(creativeRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { creativeMode: true })
+  const creativeExpected = { ...creativeBase, creativeMode: true }
+  const creativeWeb = syncConfigOf(readFileSync(creativeFixture.webPatch, 'utf8'))
+  const creativeQq = syncConfigOf(readFileSync(creativeFixture.qqPatch, 'utf8'))
+  const creativeOk = creativePut.status === 200 && creativePut.body.profileSync?.status === 'synced' && creativePut.body.profileSync.terminalMatch === true && creativePut.body.values.creativeMode === true && isDeepStrictEqual(creativeWeb, creativeExpected) && isDeepStrictEqual(creativeQq, creativeExpected) && creativePut.body.profileSync.webAfter?.managedSnapshotHash === creativePut.body.profileSync.snapshotHash && creativePut.body.profileSync.profiles?.every((item) => item.managedSnapshotHash === creativePut.body.profileSync.snapshotHash)
+  if (creativeOk) console.log('CREATIVE_PERSISTED_BEFORE_RESTART_OK')
+
+  check('creativeMode 单字段保存先核对双端 managed hash，运行时重启留 HUMAN', creativeOk)
+} finally { await new Promise((resolve) => creativeRun.server.close(resolve)); rmSync(creativeFixture.root, { recursive: true, force: true }) }
+
+const externalDriftFixture = makeSyncFixture()
+const externalDriftEditor = makeEditor({ ...syncValues, gateWords: syncGateWords }, externalDriftFixture.webPatch, { persistDocument: true })
+const externalDriftText = '# external writer value\n- id: external-writer\n  name: external\n  config:\n    marker: !!js \"globalThis.__externalWriter = true\"\n'
+const externalDriftSynchronizer = createQqbotSettingsSynchronizer({ hooks: { beforeFinalVerify: ({ patchFile }) => writeFileSync(patchFile, externalDriftText, 'utf8') } })
+const externalDriftRun = await externalDriftSynchronizer.enqueue({ documentPath: externalDriftFixture.webPatch, env: {}, snapshot: syncSnapshot, saveRunId: 'external-drift-run', syncRevision: 1, snapshotHash: stableSnapshotHash(syncSnapshot), trigger: 'api-put', associated: true })
+const externalDriftAfter = readFileSync(externalDriftFixture.qqPatch, 'utf8')
+const externalDriftProfile = externalDriftRun.profiles?.find((item) => item.status === 'drift-detected')
+const externalDriftSha256 = createHash('sha256').update(externalDriftAfter).digest('hex')
+const externalDriftOk = externalDriftRun.status === 'drift-detected' &&
+  externalDriftRun.terminalMatch === false &&
+  externalDriftRun.failureOrder?.includes('before-final-verify') &&
+  externalDriftRun.failureOrder?.includes('external-writer-drift') &&
+  externalDriftRun.diagnostics?.some((item) => item.stage === 'before-final-verify' && item.reason === 'external-writer-drift') &&
+  externalDriftProfile?.after?.patchSha256 === externalDriftSha256 &&
+  externalDriftProfile.after.managedSnapshotHash === null &&
+  typeof externalDriftProfile.backupSha256 === 'string' &&
+  externalDriftProfile.backupSha256 === externalDriftProfile.after.backupSha256 &&
+  externalDriftProfile.before.patchSha256 !== externalDriftProfile.after.patchSha256 &&
+  !externalDriftRun.profiles?.some((item) => item.status === 'synced') &&
+  externalDriftAfter.includes('external-writer') &&
+  !externalDriftAfter.includes('dsh-extra-plan-settings')
+if (externalDriftOk) {
+  console.log('EXTERNAL_WRITER_DRIFT_BLOCKED_OK')
+  console.log('EXTERNAL_WRITER_DRIFT_EVIDENCE ' + JSON.stringify({ status: externalDriftRun.status, terminalMatch: externalDriftRun.terminalMatch, failureOrder: externalDriftRun.failureOrder, diagnostics: externalDriftRun.diagnostics, before: externalDriftProfile.before, after: externalDriftProfile.after, externalContent: externalDriftAfter }))
+}
+check('外部 writer 在 terminal 前漂移不被旧 backup 覆盖且不伪造 synced', externalDriftOk)
+rmSync(externalDriftFixture.root, { recursive: true, force: true })
+
 const syncFixtureRoots = []
 const previousSyncEnvironment = captureEnvironment()
 try {
@@ -533,7 +640,8 @@ try {
   } finally { await new Promise((resolve) => priorityRun.server.close(resolve)) }
 
   const fallback = makeSyncFixture(); syncFixtureRoots.push(fallback.root)
-  const fallbackEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, '')
+   const fallbackEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, fallback.webPatch)
+   fallbackEditor.syncDocumentPath = ''
   process.env.DSH_HOME = fallback.root; process.env.DSH_PROFILE = 'web'
   const fallbackRun = await start(fallbackEditor)
   try {
@@ -583,10 +691,11 @@ try {
   const unavailableProfilesRoot = join(unavailable.root, 'profiles')
   let unavailableProbe
   await withEnvironment({ DSH_HOME: undefined, DSH_PROFILE: undefined, USERPROFILE: unavailableUserProfile, HOME: unavailableHome }, async () => {
-    const unavailableEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, '')
+     const unavailableEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, unavailable.webPatch)
+     unavailableEditor.syncDocumentPath = ''
     const unavailableRun = await start(unavailableEditor)
     try {
-      unavailableProbe = createFsAccessProbe([{ name: 'unavailableTarget', root: unavailableProfilesRoot }])
+      unavailableProbe = createFsAccessProbe([{ name: 'unavailableTarget', root: unavailable.profileDir }])
       const unavailablePut = await withFsAccessProbe(unavailableProbe, () => requestJson(unavailableRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true }))
       const unavailableAfterBytes = readFileSync(unavailable.qqPatch)
       const unavailableAfterStat = statSync(unavailable.qqPatch)
@@ -604,7 +713,8 @@ try {
     join(webFixture.root, 'other', 'web', 'cordis.patch.yml'),
   ]
   for (const invalidPath of invalidPaths) {
-    const invalidEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, invalidPath)
+     const invalidEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, webFixture.webPatch)
+     invalidEditor.syncDocumentPath = invalidPath
     const invalidRun = await start(invalidEditor)
     try {
       const invalidPut = await requestJson(invalidRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
@@ -648,7 +758,7 @@ async function runHostProxyMatrix() {
   const matrixFixture = makeSyncFixture()
   const matrixEditor = makeEditor({ ...baseValues, gateWords: gate }, matrixFixture.webPatch, { persistDocument: true })
   const initialSnapshot = { values: { ...baseValues }, gateWords: gate }
-  writeFileSync(matrixFixture.webPatch, JSON.stringify([{ id: 'dsh-extra-plan-settings', config: { ...baseValues, gateWords: gate } }]), 'utf8')
+  writeFileSync(matrixFixture.webPatch, JSON.stringify([{ id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: { ...baseValues, gateWords: gate } }]), 'utf8')
   const normalTrace = []
   const normalStats = { register: 0, dispose: 0 }
   const normalRun = await start(matrixEditor, { mount: true, trace: normalTrace, hostProxyMode: 'normal-injection', matrixStats: normalStats })
@@ -661,7 +771,7 @@ async function runHostProxyMatrix() {
     const nextValues = { ...baseValues, [key]: nextMatrixValue(baseValues, key, index) }
     const nextSnapshot = { values: nextValues, gateWords: gate }
     matrixEditor.state.rows[0].entry.options.config = { ...nextValues, gateWords: gate }
-    writeFileSync(matrixFixture.webPatch, JSON.stringify([{ id: 'dsh-extra-plan-settings', config: { ...nextValues, gateWords: gate } }]), 'utf8')
+    writeFileSync(matrixFixture.webPatch, JSON.stringify([{ id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: { ...nextValues, gateWords: gate } }]), 'utf8')
     if (typeof normalRun.lifecycle.update === 'function') normalRun.lifecycle.update()
     await flush(4)
     normalTerminal = await waitForFullSnapshotTerminal(normalRun.port, matrixFixture, nextSnapshot)
@@ -682,7 +792,7 @@ async function runHostProxyMatrix() {
     initialRegister,
     settingsRegisterDelta: normalStats.register - initialRegister,
     disposeDelta: normalStats.dispose - initialDispose,
-    profileSyncTerminal: { status: normalTerminal?.body?.profileSync?.status, pending: normalTerminal?.body?.profileSync?.pending },
+     profileSyncTerminal: { status: normalTerminal?.body?.profileSync?.status, pending: normalTerminal?.body?.profileSync?.pending, saveRunId: normalTerminal?.body?.profileSync?.saveRunId, syncRevision: normalTerminal?.body?.profileSync?.syncRevision, snapshotHash: normalTerminal?.body?.profileSync?.snapshotHash, trigger: normalTerminal?.body?.profileSync?.trigger },
     failureOrder: ['outer-configEditor-error', 'ctx.get:configEditor', 'settled-terminal', 'adapter-start'],
     classification: 'PASS',
   }
@@ -690,7 +800,7 @@ async function runHostProxyMatrix() {
   const normalBoundaryOk = normalProxy.outerDirectError === 'cannot get property "configEditor" without inject' &&
     normalProxy.getResult === 'editor' && normalCase.injectCallback === 1 && normalProxy.childServiceIdentity === 'same-editor' &&
     initialRegister === 1 && normalCase.settingsRegisterDelta === 0 && normalCase.disposeDelta === 0 &&
-    normalCase.profileSyncTerminal.status === 'synced' && normalCase.profileSyncTerminal.pending === false && normalOk
+     normalCase.profileSyncTerminal.status === 'synced' && normalCase.profileSyncTerminal.pending === false && typeof normalCase.profileSyncTerminal.saveRunId === 'string' && normalCase.profileSyncTerminal.saveRunId !== '' && Number.isInteger(normalCase.profileSyncTerminal.syncRevision) && normalCase.profileSyncTerminal.syncRevision > 0 && typeof normalCase.profileSyncTerminal.snapshotHash === 'string' && normalCase.profileSyncTerminal.trigger === 'settled-update' && normalOk
   if (normalBoundaryOk) console.log('HOST_PROXY_NORMAL_SETTLED_CTX_GET_OK')
   check('host-proxy normal settled assertion', normalBoundaryOk)
   if (normalOk) console.log('FULL_SNAPSHOT_10_PLUS_7_EACH_TRIGGER_OK')
@@ -766,6 +876,7 @@ try {
   const adapterInitial = await waitForTerminal(adapterRun.port)
   await waitForAdapterRegister(adapterCounts)
   adapterEditor.state.rows[0].entry.options.config.plannerModel = 'no-remount-model'
+   writeFileSync(adapterEditor.documentPath, JSON.stringify([{ id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: adapterEditor.state.rows[0].entry.options.config }]), 'utf8')
   if (typeof adapterRun.lifecycle.update === 'function') adapterRun.lifecycle.update()
   await flush(8)
   const adapterAfter = await waitForTerminal(adapterRun.port)
@@ -852,13 +963,13 @@ let livePath = join(liveDir, 'cordis.patch.yml')
 const hotKeys = ['anchoredBootstrap', 'creativeMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel']
 const hotGetters = { anchoredBootstrap: 'anchoredBootstrap', creativeMode: 'creativeMode', runcodeCatchGate: 'runcodeCatchGate', crossProviderPlannerModel: 'crossProviderPlannerModel', plannerModel: 'plannerModel', plannerPromptSuffix: 'plannerPromptSuffix', exploreBudget: 'exploreBudget', otherAgentModel: 'otherAgentModel' }
 const hotNext = { anchoredBootstrap: true, creativeMode: false, runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: 'hot-model', plannerPromptSuffix: 'hot-suffix', exploreBudget: 47, otherAgentModel: 'hot-other' }
-writeFileSync(livePath, JSON.stringify([{ id: 'dsh-extra-plan-settings', config: { ...syncValues } }]), 'utf8')
+writeFileSync(livePath, JSON.stringify([{ id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: { ...syncValues } }]), 'utf8')
 const liveConfig = createLiveConfig({ resolveDocumentPath: () => livePath, fallbackDefaults: syncValues })
 let hotReadOk = true
 for (const key of hotKeys) {
   const next = { ...syncValues, [key]: hotNext[key] }
   livePath = join(liveDir, 'cordis.patch.' + key + '.yml')
-  writeFileSync(livePath, JSON.stringify([{ id: 'dsh-extra-plan-settings', config: next }]), 'utf8')
+  writeFileSync(livePath, JSON.stringify([{ id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: next }]), 'utf8')
   if (!Object.is(liveConfig[hotGetters[key]], hotNext[key])) hotReadOk = false
 }
 check('HOT_READ_WITHOUT_AGENTPRESET_REMOUNT_OK', hotReadOk && adapterNoRemount)
@@ -892,7 +1003,7 @@ for (const [kind, words] of invalidApiGateCases) {
   try {
     const badGet = await requestJson(badGateRun.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
     const badPut = await requestJson(badGateRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
-    check('V02 API ' + kind + ' GET/PUT均失败、零edit且完整存储深等不变', badGet.status === 500 && badPut.status === 500 && badGateEditor.state.edits.length === 0 && isDeepStrictEqual(badGateEditor.state.rows[0].entry.options.config, originalConfig))
+     check('V02 API ' + kind + ' GET/PUT均冲突、零edit且完整存储深等不变', badGet.status === 409 && badPut.status === 409 && badGet.body?.settingsRow?.status === 'conflict' && badPut.body?.settingsRow?.status === 'conflict' && badGateEditor.state.edits.length === 0 && isDeepStrictEqual(badGateEditor.state.rows[0].entry.options.config, originalConfig))
   } finally { await new Promise((resolve) => badGateRun.server.close(resolve)) }
 }
 
