@@ -111,6 +111,7 @@ dsh-extra-plan/
 │   │   │   ├── runtime-static.js                       # 静态纯函数：显式参数 helper
 │   │   │   ├── save-contract.js                        # save_plan/save_probe：合同常量与 Markdown 渲染
 │   │   │   ├── save-persistence.js                     # save_plan/save_probe：原子落盘内核与 journal 自愈
+│   │   │   ├── save-plan-validation.js                 # save_plan：文档解析校验
 │   │   │   ├── save-probe-validation.js                # save_probe：参数与路径/range/evidence 校验
 │   │   │   ├── save-tool-factories.js                  # save_plan/save_probe：工具定义
 │   │   │   ├── sdk-text-cache.js                       # tools:sdk缓存复用

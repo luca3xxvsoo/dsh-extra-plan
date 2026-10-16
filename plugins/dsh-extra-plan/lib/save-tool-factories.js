@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { PROBE_LIMITS, RANGE_FORMAT_HINT, LINE_FORMAT_HINT, sanitizeTaskName, sessionTagOf, saveArtifactBase, renderSavePlan, renderProbeMarkdown, renderSaveProbe, extractProbeEvidenceRefs } from './save-contract.js'
+import { PROBE_LIMITS, SAVE_PLAN_LIMITS, RANGE_FORMAT_HINT, LINE_FORMAT_HINT, sanitizeTaskName, sessionTagOf, saveArtifactBase, renderSavePlan, renderProbeMarkdown, renderSaveProbe, extractProbeEvidenceRefs } from './save-contract.js'
 import { validateProbe, probePathOf } from './save-probe-validation.js'
+import { validateSavePlanContract } from './save-plan-validation.js'
 
 // 证据错误用 JSON.stringify 展示引用，必要时追加非权威的装饰提示。
 // 提示只检查下方诊断字符集的首字符；成对清洗在 save-contract.js，
@@ -36,12 +37,12 @@ export function createSaveToolFactories({ savePlanDir, atomicCommit, recoverJour
   function defineSavePlan() {
     return {
       name: 'save_plan',
-      description: '写入规划方案和验收清单（plan、checklist 必填）。plan 不得含「【未探查·待确认】」或「待确认假设清单」；【探查者已核实】步骤须写「证据：<路径>」，该路径必须指向标题含「探查证据报告」的现有文件。返回两个文件路径。',
+      description: '严格写入方案和验收清单。两份正文先声明相同的 single 或 batch 模式，再按任务、可选收尾、checklist 检查定义构成合同；工具只校验/双写，不启动代理、不执行检查命令。single 最小结构见 plan/checklist 参数说明，成功 structured output 只有 paths。',
       parameters: {
         type: 'object',
         properties: {
-          plan: { type: 'string', description: '规划方案全文（Markdown，至少 200 字；所有假设必须已确认）' },
-          checklist: { type: 'string', description: '验收清单全文（Markdown，至少 200 字；每条须有任务编号并可机械核对）' },
+          plan: { type: 'string', description: '严格方案全文（至少 200 字符）。卷首列首写 - 执行模式：single 或 batch、- 派遣说明：非空；single 最小任务块为 [任务1] 标题、- 主文件：plugins/example/file.js、- 执行组：G1、- 依赖：无、- 依赖理由：无、- 分组理由：无、- 修改：具体动作、- 自检：有限检查。可重复 - 关联文件：、- 修改：、- 自检：；最多 ' + SAVE_PLAN_LIMITS.maxTasks + ' 个数字任务，可选 [收尾]。路径必须是裸工作区相对路径。' },
+          checklist: { type: 'string', description: '严格验收全文（至少 200 字符）。卷首列首写 - 执行模式：同值、- 验收说明：非空；每个同ID任务含主/关联文件、至少一条 - 期望：与 - 禁止：、恰一条 - 正式验收：[检查1]；随后定义 [检查N] 标题及 - 验收组：R1、- 取证方式：只读复核或执行取证、- 工作目录：.、- 检查：、- 验收证据：。可选 [收尾] 与最后 [全局验收]。' },
           taskName: { type: 'string', description: `可选任务短名（最多 ${PROBE_LIMITS.maxTaskNameLen} 字；不要传路径）` },
         },
         required: ['plan', 'checklist'],
@@ -55,7 +56,12 @@ export function createSaveToolFactories({ savePlanDir, atomicCommit, recoverJour
           additionalProperties: false,
         },
         render(args, value) {
-          return renderSavePlan(value)
+          let summary
+          if (args !== null && typeof args === 'object') {
+            const checked = validateSavePlanContract(args.plan, args.checklist)
+            if (checked.ok) summary = checked.summary
+          }
+          return renderSavePlan(value, summary)
         },
       },
       timeoutMs: 30000,
@@ -67,6 +73,8 @@ export function createSaveToolFactories({ savePlanDir, atomicCommit, recoverJour
         if (/【未探查·待确认】/.test(plan) || /待确认假设清单/.test(plan)) {
           throw new Error('save_plan: 方案中包含【未探查·待确认】步骤或「待确认假设清单」。请先申请追加预算继续探查，确认所有项均已探查核实后再调用 save_plan')
         }
+        const contract = validateSavePlanContract(plan, args.checklist)
+        if (!contract.ok) throw new Error(contract.error)
         const context = resolveSaveContext(args, exec, savePlanDir)
         const { cwd, sessionTag, dir, base } = context
         if (cwd === '') throw new Error('save_plan: 会话缺少工作区路径，无法落盘')

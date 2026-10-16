@@ -48,13 +48,77 @@ export function saveArtifactBase(nameSeg, sessionId) {
   return parts.join('-')
 }
 
+export const SAVE_PLAN_LIMITS = Object.freeze({
+  maxTasks: 20,
+  maxSummaryChars: 12000
+})
+
+function summaryList(value) {
+  return Array.isArray(value) ? value.map((item) => String(item)).join('、') : ''
+}
+
+function summaryBool(value) {
+  return value === true ? '是' : '否'
+}
+
+// 只格式化确定性派遣正文；不包含本次落盘生成的方案/验收路径。
+export function formatSavePlanSummary(summary) {
+  const value = summary !== null && typeof summary === 'object' ? summary : {}
+  const lines = []
+  lines.push('模式=' + String(value.mode || '') + '；任务数=' + String(value.taskCount || 0) + '；任务文件数=' + String(value.taskFileCount || 0) + '；收尾文件数=' + String(value.closureFileCount || 0) + '；文件总数=' + String(value.fileCount || 0))
+  lines.push('执行组数=' + String(value.groupCount || 0) + '；验收组数=' + String(value.reviewGroupCount || 0) + '；检查数=' + String(value.checkCount || 0) + '；有收尾=' + summaryBool(value.hasClosure) + '；有全局验收=' + summaryBool(value.hasGlobalAcceptance))
+  for (const task of Array.isArray(value.tasks) ? value.tasks : []) {
+    lines.push('任务' + String(task.id) + '「' + String(task.title || '') + '」：主文件=' + summaryList(task.mainFiles) + '；关联文件=' + summaryList(task.relatedFiles) + '；执行组=' + String(task.executionGroup || task.group || '') + '；依赖=' + summaryList(task.dependencies) + '；依赖理由=' + String(task.dependencyReason || '') + '；分组理由=' + String(task.groupReason || '') + '；独占资源=' + summaryList(task.resources))
+    lines.push('任务' + String(task.id) + '修改=' + summaryList(task.modifications) + '；自检=' + summaryList(task.selfChecks))
+  }
+  for (const group of Array.isArray(value.groups) ? value.groups : []) {
+    lines.push('执行组' + String(group.id || group.group || '') + '：成员=' + summaryList(group.members) + '；内部顺序=' + summaryList(group.internalOrder) + '；组外依赖=' + summaryList(group.groupDependsOn || group.externalDependencies) + '；initialState=' + String(group.initialState || '') + '；静态资格=' + String(group.staticEligibility || ''))
+  }
+  for (const check of Array.isArray(value.checks) ? value.checks : []) {
+    const coverage = check.coverage || {}
+    lines.push('检查' + String(check.id) + '「' + String(check.title || '') + '」：验收组=' + String(check.reviewGroup || '') + '；取证=' + String(check.evidenceMode || '') + '；目录=' + String(check.workdir || '') + '；覆盖任务=' + summaryList(coverage.tasks) + '；覆盖收尾=' + summaryBool(coverage.closure) + '；覆盖全局=' + summaryBool(coverage.global) + '；独占资源=' + summaryList(check.resources))
+    lines.push('检查' + String(check.id) + '动作=' + summaryList(check.checks) + '；证据=' + summaryList(check.evidence))
+  }
+  for (const group of Array.isArray(value.reviewGroups) ? value.reviewGroups : []) {
+    const coverage = group.coverage || {}
+    lines.push('验收组' + String(group.id || group.reviewGroup || '') + '：检查顺序=' + summaryList(group.checks) + '；覆盖任务=' + summaryList(coverage.tasks) + '；覆盖收尾=' + summaryBool(coverage.closure) + '；覆盖全局=' + summaryBool(coverage.global))
+  }
+  if (value.closure !== null && value.closure !== undefined) {
+    lines.push('收尾：文件=' + summaryList(value.closure.files) + '；依赖=' + summaryList(value.closure.dependencies) + '；正式验收=' + summaryList(value.closure.checkRefs) + '；coverageKey=' + String(value.closure.coverageKey || 'closure'))
+  } else {
+    lines.push('收尾：无')
+  }
+  if (value.globalAcceptance !== null && value.globalAcceptance !== undefined) {
+    lines.push('全局验收：正式验收=' + summaryList(value.globalAcceptance.checkRefs) + '；coverageKey=' + String(value.globalAcceptance.coverageKey || 'global'))
+  } else {
+    lines.push('全局验收：无')
+  }
+  lines.push('职责：工具只校验并原子双写；主会话负责派遣、冻结与正式验收，工具不启动代理、不执行检查命令、不维护运行状态机。')
+  return lines.join('\n')
+}
+
 // save_plan 结果的模型可见内容（v0.1.3 修复）：output.render 契约必须返回
 // ContentBlock[]（宿主第一方工具均如此，见 dsh-tool-pwsh L355），不能返回裸
 // 字符串——否则 DeepSeek 适配器 serializeMessages 的 flattenText 会对字符串调
 // .filter 抛 TypeError，被外层包装成 TRANSPORT、重试 3 连败（毫秒级），表现为
 // "save_plan 后子代理必死"。此函数导出供场景测试锁死契约。
-export function renderSavePlan(value) {
-  return [{ type: 'text', text: '方案已落盘（原子双写）：\n- ' + value.paths.join('\n- ') }]
+export function renderSavePlan(value, summary) {
+  const paths = value !== null && typeof value === 'object' && Array.isArray(value.paths) ? value.paths : []
+  const lines = ['方案已落盘（原子双写）：']
+  for (const path of paths) lines.push('- ' + String(path))
+  if (summary !== null && summary !== undefined
+      && Number.isInteger(summary.taskCount) && summary.taskCount >= 0
+      && Number.isInteger(summary.taskFileCount) && summary.taskFileCount >= 0
+      && Number.isInteger(summary.closureFileCount) && summary.closureFileCount >= 0
+      && Number.isInteger(summary.fileCount) && summary.fileCount >= 0
+      && Number.isInteger(summary.groupCount) && summary.groupCount >= 0) {
+    const summaryText = formatSavePlanSummary(summary)
+    lines.push('- 任务数：' + summary.taskCount + '；任务文件数：' + summary.taskFileCount + '；收尾文件数：' + summary.closureFileCount + '；文件总数：' + summary.fileCount + '；执行组数：' + summary.groupCount + '；验收组数：' + String(summary.reviewGroupCount || 0) + '；检查数：' + String(summary.checkCount || 0))
+    lines.push('- 派遣摘要（' + summaryText.length + '/' + SAVE_PLAN_LIMITS.maxSummaryChars + ' 字符）：')
+    for (const line of summaryText.split('\n')) lines.push('  ' + line)
+    lines.push('- 提示：同组任务由同一执行者领取，独立执行组按依赖/资源并行；验收组只复用同轮检查证据，工具不自动调度或执行命令')
+  }
+  return [{ type: 'text', text: lines.join('\n') }]
 }
 
 // save_probe 数值限制的唯一现行来源；测试通过导出对象断言，文档只链接此符号，不复制运行时限制表。

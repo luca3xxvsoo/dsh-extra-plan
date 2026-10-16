@@ -43,6 +43,9 @@ import { dirname, join } from 'node:path'
 import { parsePresetYaml } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
 import { GATE_WORD_FIELDS, createGateRuntime, validateGateWords } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
 import { probePathOf } from '../../plugins/dsh-extra-plan/lib/save-probe-validation.js'
+import { validateSavePlanContract as validateRealSavePlanContract } from '../../plugins/dsh-extra-plan/lib/save-plan-validation.js'
+import { SAVE_PLAN_LIMITS as REAL_SAVE_PLAN_LIMITS, formatSavePlanSummary as formatRealSavePlanSummary, renderSavePlan as renderRealSavePlan } from '../../plugins/dsh-extra-plan/lib/save-contract.js'
+import { createSaveToolFactories } from '../../plugins/dsh-extra-plan/lib/save-tool-factories.js'
 const {
   CHANNEL_BROKEN_CODES,
   routeDenyReason,
@@ -869,11 +872,391 @@ const schemaAgent = {
 }
 // 0.1.7 换代：agent/session-start 已删除，启动注册改由 agent/created（serial）承担。
 schemaRegistration.listeners['agent/created'][0]({ agent: schemaAgent, source: 'startup' })
+
 const schemaSaveProbe = schemaRegistration.registered.find((definition) => definition.name === 'save_probe')
 const schemaSavePlan = schemaRegistration.registered.find((definition) => definition.name === 'save_plan')
 const schemaPlanDescription = schemaSavePlan === undefined ? '' : String(schemaSavePlan.description || ''); const schemaPlanParameters = schemaSavePlan === undefined || schemaSavePlan.parameters === undefined ? {} : schemaSavePlan.parameters; const schemaDescription = schemaSaveProbe === undefined ? '' : String(schemaSaveProbe.description || ''); const evidenceDescription = schemaSaveProbe === undefined || schemaSaveProbe.parameters === undefined || schemaSaveProbe.parameters.properties === undefined || schemaSaveProbe.parameters.properties.evidence === undefined ? '' : String(schemaSaveProbe.parameters.properties.evidence.description || ''); const planProperties = schemaPlanParameters.properties || {}; const probeParameters = schemaSaveProbe === undefined || schemaSaveProbe.parameters === undefined ? {} : schemaSaveProbe.parameters; const probeProperties = probeParameters.properties || {}; const planText = JSON.stringify(schemaPlanParameters); const probeText = JSON.stringify(probeParameters); const forbiddenPlan = ['原子双写', '插件将校验', '插件会净化', '不得编造内容、数值或行号']; const forbiddenProbe = ['pro 规划子代理', 'subagent_plan', '委派', '主会话线索模式', '超限会拒绝', '不静默截断', '插件会净化']
-check('SCHEMA1 save_plan 描述/schema 精确契约', schemaPlanDescription === '写入规划方案和验收清单（plan、checklist 必填）。plan 不得含「【未探查·待确认】」或「待确认假设清单」；【探查者已核实】步骤须写「证据：<路径>」，该路径必须指向标题含「探查证据报告」的现有文件。返回两个文件路径。' && schemaPlanDescription.length === 116 && JSON.stringify(schemaPlanParameters).length === 324 && Object.keys(planProperties).length === 3 && JSON.stringify(schemaPlanParameters.required) === JSON.stringify(['plan', 'checklist']) && schemaPlanParameters.additionalProperties === false && planProperties.plan.description === '规划方案全文（Markdown，至少 200 字；所有假设必须已确认）' && planProperties.checklist.description === '验收清单全文（Markdown，至少 200 字；每条须有任务编号并可机械核对）' && planProperties.taskName.description === '可选任务短名（最多 32 字；不要传路径）' && schemaPlanDescription.includes('证据：<路径>') && schemaPlanDescription.includes('探查证据报告') && forbiddenPlan.every((word) => !planText.includes(word)), true)
+check('SCHEMA1 save_plan 描述/schema 反映严格合同与长度边界', schemaSavePlan !== undefined && schemaPlanDescription.includes('严格写入方案和验收清单') && schemaPlanDescription.includes('不启动代理') && schemaPlanDescription.includes('不执行检查命令') && schemaPlanParameters.type === 'object' && JSON.stringify(schemaPlanParameters.required) === JSON.stringify(['plan', 'checklist']) && schemaPlanParameters.additionalProperties === false && Object.keys(planProperties).length === 3 && planProperties.plan.description.includes('严格方案全文') && planProperties.plan.description.includes('至少 200 字符') && planProperties.plan.description.includes('single') && planProperties.checklist.description.includes('严格验收全文') && planProperties.checklist.description.includes('至少 200 字符') && planProperties.checklist.description.includes('正式验收') && schemaSavePlan.output !== undefined && schemaSavePlan.output.schema !== undefined && Object.keys(schemaSavePlan.output.schema.properties || {}).length === 1 && schemaSavePlan.output.schema.properties.paths !== undefined && JSON.stringify(schemaSavePlan.output.schema.required) === JSON.stringify(['paths']) && schemaSavePlan.output.schema.additionalProperties === false && schemaPlanDescription.length > 0 && JSON.stringify(schemaPlanParameters).length > 0 && forbiddenPlan.every((word) => !planText.includes(word)), true)
 check('SCHEMA2 save_probe 描述/schema 精确契约', schemaDescription === '写入只读探查结果。fileMap、focusAreas、exclusions、background 四个数组必填，按 JSON 序列化计总量最多 20000 字；evidence 可选，非空时生成证据报告，否则生成线索文件。字段格式和单项上限见参数说明；返回文件路径。' && schemaDescription.length === 134 && JSON.stringify(probeParameters).length === 2016 && Object.keys(probeProperties).length === 6 && JSON.stringify(probeParameters.required) === JSON.stringify(['fileMap', 'focusAreas', 'exclusions', 'background']) && probeParameters.additionalProperties === false && probeProperties.fileMap.description === '相关文件列表（最多 50 项）' && probeProperties.focusAreas.description === '重点区域列表（最多 50 项）' && probeProperties.exclusions.description === '排除项列表（最多 20 项；scope 可为概念边界，无须对应现有路径）' && probeProperties.background.description === '背景与意图列表（最多 20 项）' && probeProperties.fileMap.items.properties.path.description === '现有文件路径（相对路径按工作区解析，最多 1024 字）' && probeProperties.fileMap.items.properties.relation.description === '文件与任务的关系（最多 400 字）' && probeProperties.focusAreas.items.properties.path.description === '现有文件路径（相对路径按工作区解析，最多 1024 字）' && probeProperties.focusAreas.items.properties.range.description.includes('最多 20 字') && probeProperties.focusAreas.items.properties.range.description.includes('仅 focusAreas.range 允许区间（12 或 L12-34）') && probeProperties.focusAreas.items.properties.note.description === '重点和补查方向（最多 400 字）' && probeProperties.exclusions.items.properties.scope.description === '可选排除范围' && probeProperties.exclusions.items.properties.note.description === '排除原因（最多 400 字）' && probeProperties.background.items.properties.topic.description === '背景主题（最多 120 字）' && probeProperties.background.items.properties.detail.description === '背景或用户意图（最多 1000 字）' && probeProperties.evidence.description === '可选证据列表（最多 150 项，按 JSON 序列化计总量最多 32000 字）；非空时生成证据报告。每项 path 必须存在，并至少填写 line、value、text 之一。' && probeProperties.evidence.items.properties.path.description === '现有被核实文件路径（相对路径按工作区解析，最多 1024 字）' && probeProperties.evidence.items.properties.line.description.includes('最多 20 字') && probeProperties.evidence.items.properties.line.description.includes('仅接受单个行号（12 或 L12），禁止区间（如 L158-162），区间信息请写入 evidence.text 并取代表性行号') && probeProperties.evidence.items.properties.value.description === '可选核实值（最多 240 字）' && probeProperties.evidence.items.properties.text.description === '可选原文摘录（最多 1000 字）' && probeProperties.evidence.items.properties.note.description === '可选备注（最多 400 字）' && probeProperties.evidence.items.properties.line !== undefined && probeProperties.evidence.items.properties.value !== undefined && probeProperties.evidence.items.properties.text !== undefined && probeProperties.taskName.description === '可选任务短名（最多 32 字；不要传路径）' && ['20000', '32000', '50', '20', '150', '1024', '400', '120', '1000', '240', '32'].every((value) => (schemaDescription + probeText).includes(value)) && forbiddenProbe.every((word) => !probeText.includes(word)), true)
+
+// ── SAVE-CONTRACT/G2 系列：真实生产合同结构、交接、摘要与工厂接线 ────────
+// 这些夹具只拼接合同文本并调用生产导出，不在测试中复制解析器或固化本轮任务数量。
+function g2Task(id, overrides = {}) {
+  return Object.assign({
+    id,
+    title: '合成任务' + id,
+    mainFile: 'g2-synthetic/task-' + id + '.js',
+    relatedFiles: [],
+    group: 'G' + id,
+    dependencies: '无',
+    dependencyReason: '无',
+    groupReason: '无',
+    modifications: ['完成合成任务' + id],
+    selfChecks: ['核对合成任务' + id],
+    resource: '无',
+    acceptance: '[检查1]',
+  }, overrides)
+}
+
+function g2Check(id, overrides = {}) {
+  return Object.assign({
+    id,
+    title: '核对检查' + id,
+    reviewGroup: 'R' + id,
+    evidenceMode: '只读复核',
+    workdir: '.',
+    checks: ['读取合成文件并核对结果'],
+    evidence: ['原始结果与期望一致'],
+    resource: '无',
+  }, overrides)
+}
+
+function g2PlanText({ mode = 'single', tasks = [g2Task(1)], instruction = '先读两份工件，完成后冻结再验收', closure = null } = {}) {
+  const lines = ['- 执行模式：' + mode, '- 派遣说明：' + instruction]
+  for (const task of tasks) {
+    lines.push('[任务' + task.id + '] ' + task.title)
+    lines.push('- 主文件：' + task.mainFile)
+    for (const related of task.relatedFiles || []) lines.push('- 关联文件：' + related)
+    lines.push('- 执行组：' + task.group)
+    lines.push('- 依赖：' + task.dependencies)
+    lines.push('- 依赖理由：' + task.dependencyReason)
+    lines.push('- 分组理由：' + task.groupReason)
+    for (const modification of task.modifications || []) lines.push('- 修改：' + modification)
+    for (const selfCheck of task.selfChecks || []) lines.push('- 自检：' + selfCheck)
+    lines.push('- 独占资源：' + task.resource)
+  }
+  if (closure !== null) {
+    lines.push('[收尾]')
+    for (const file of closure.files || []) lines.push('- 收尾文件：' + file)
+    lines.push('- 收尾依赖：' + closure.dependencies)
+    for (const action of closure.actions || []) lines.push('- 收尾动作：' + action)
+    for (const selfCheck of closure.selfChecks || []) lines.push('- 自检：' + selfCheck)
+    lines.push('- 独占资源：' + (closure.resource || '无'))
+  }
+  return lines.join('\n')
+}
+
+function g2ChecklistText({ mode = 'single', tasks = [g2Task(1)], instruction = '按检查ID复核，漏项不得通过', checks = [g2Check(1)], closure = null, global = null } = {}) {
+  const lines = ['- 执行模式：' + mode, '- 验收说明：' + instruction]
+  for (const task of tasks) {
+    lines.push('[任务' + task.id + '] 验收' + task.title)
+    lines.push('- 主文件：' + task.mainFile)
+    for (const related of task.relatedFiles || []) lines.push('- 关联文件：' + related)
+    for (const expectation of task.expectations || ['结构结果可复核']) lines.push('- 期望：' + expectation)
+    for (const prohibition of task.prohibitions || ['不得越界修改']) lines.push('- 禁止：' + prohibition)
+    lines.push('- 正式验收：' + (task.acceptance || '[检查1]'))
+  }
+  if (closure !== null) {
+    lines.push('[收尾]')
+    for (const file of closure.files || []) lines.push('- 收尾文件：' + file)
+    for (const expectation of closure.expectations || ['收尾结果可复核']) lines.push('- 期望：' + expectation)
+    for (const prohibition of closure.prohibitions || ['不得遗漏收尾']) lines.push('- 禁止：' + prohibition)
+    lines.push('- 正式验收：' + (closure.acceptance || '[检查1]'))
+  }
+  for (const check of checks) {
+    lines.push('[检查' + check.id + '] ' + check.title)
+    lines.push('- 验收组：' + check.reviewGroup)
+    lines.push('- 取证方式：' + check.evidenceMode)
+    lines.push('- 工作目录：' + check.workdir)
+    for (const action of check.checks || []) lines.push('- 检查：' + action)
+    for (const evidence of check.evidence || []) lines.push('- 验收证据：' + evidence)
+    lines.push('- 独占资源：' + check.resource)
+  }
+  if (global !== null) {
+    lines.push('[全局验收]')
+    for (const expectation of global.expectations || ['全部范围可恢复']) lines.push('- 期望：' + expectation)
+    for (const prohibition of global.prohibitions || ['不得漏项']) lines.push('- 禁止：' + prohibition)
+    lines.push('- 正式验收：' + (global.acceptance || '[检查1]'))
+  }
+  return lines.join('\n')
+}
+
+function g2Pair({ mode = 'single', tasks = [g2Task(1)], checks = [g2Check(1)], planInstruction, checklistInstruction, closure = null, global = null } = {}) {
+  return {
+    plan: g2PlanText({ mode, tasks, instruction: planInstruction || '先读两份工件，完成后冻结再验收', closure }),
+    checklist: g2ChecklistText({ mode, tasks, instruction: checklistInstruction || '按检查ID复核，漏项不得通过', checks, closure, global }),
+  }
+}
+
+function g2Tasks(count, mapper) {
+  return Array.from({ length: count }, (_, index) => mapper === undefined ? g2Task(index + 1) : mapper(index + 1))
+}
+
+function g2Pad(text, minimum = 200) {
+  if (text.length >= minimum) return text
+  return text + '\n普通说明：' + 'x'.repeat(minimum - text.length + 1)
+}
+
+function g2Reject(name, pair, options) {
+  const result = validateRealSavePlanContract(pair.plan, pair.checklist, options)
+  check(name, result.ok, false)
+  return result
+}
+
+const g2SinglePair = g2Pair()
+const g2SingleResult = validateRealSavePlanContract(g2SinglePair.plan, g2SinglePair.checklist)
+check('G2-A single恰一个任务通过', g2SingleResult.ok, true)
+check('G2-A single两个任务拒绝', validateRealSavePlanContract(g2Pair({ mode: 'single', tasks: g2Tasks(2) }).plan, g2Pair({ mode: 'single', tasks: g2Tasks(2) }).checklist).ok, false)
+check('G2-A batch一个任务拒绝', validateRealSavePlanContract(g2Pair({ mode: 'batch' }).plan, g2Pair({ mode: 'batch' }).checklist).ok, false)
+check('G2-A batch两个任务通过', validateRealSavePlanContract(g2Pair({ mode: 'batch', tasks: g2Tasks(2) }).plan, g2Pair({ mode: 'batch', tasks: g2Tasks(2) }).checklist).ok, true)
+const g2Batch20Pair = g2Pair({ mode: 'batch', tasks: g2Tasks(20) })
+check('G2-A batch二十任务边界通过', validateRealSavePlanContract(g2Batch20Pair.plan, g2Batch20Pair.checklist).ok, true)
+const g2Batch21Pair = g2Pair({ mode: 'batch', tasks: g2Tasks(21) })
+check('G2-A batch二十一个任务边界拒绝', validateRealSavePlanContract(g2Batch21Pair.plan, g2Batch21Pair.checklist).ok, false)
+g2Reject('G2-A 缺失执行模式拒绝', { plan: g2SinglePair.plan.replace('- 执行模式：single\n', ''), checklist: g2SinglePair.checklist })
+g2Reject('G2-A 重复执行模式拒绝', { plan: g2SinglePair.plan.replace('- 执行模式：single', '- 执行模式：single\n- 执行模式：single') , checklist: g2SinglePair.checklist })
+const g2ConflictPair = { plan: g2Pair({ mode: 'single', tasks: g2Tasks(2) }).plan, checklist: g2Pair({ mode: 'batch', tasks: g2Tasks(2) }).checklist }
+g2Reject('G2-A 双文档模式冲突拒绝', g2ConflictPair)
+g2Reject('G2-A 空说明拒绝', { plan: g2SinglePair.plan.replace('- 派遣说明：先读两份工件，完成后冻结再验收', '- 派遣说明：'), checklist: g2SinglePair.checklist.replace('- 验收说明：按检查ID复核，漏项不得通过', '- 验收说明：') })
+g2Reject('G2-A 说明出现在任务后拒绝', { plan: g2SinglePair.plan + '\n- 派遣说明：迟到说明', checklist: g2SinglePair.checklist })
+g2Reject('G2-A 空字段拒绝', { plan: g2SinglePair.plan.replace('- 主文件：g2-synthetic/task-1.js', '- 主文件：'), checklist: g2SinglePair.checklist })
+g2Reject('G2-A 职责错位字段拒绝', { plan: g2SinglePair.plan + '\n- 检查：方案任务不应出现检查定义', checklist: g2SinglePair.checklist + '\n- 修改：验收任务不应声明修改' })
+const g2SingleFieldMutations = [
+  ['主文件', '- 主文件：g2-synthetic/task-1.js'],
+  ['执行组', '- 执行组：G1'],
+  ['依赖', '- 依赖：无'],
+  ['依赖理由', '- 依赖理由：无'],
+  ['分组理由', '- 分组理由：无'],
+  ['独占资源', '- 独占资源：无'],
+]
+for (const field of g2SingleFieldMutations) {
+  g2Reject('G2-A 单值字段' + field[0] + '重复拒绝', { plan: g2SinglePair.plan.replace(field[1], field[1] + '\n' + field[1]), checklist: g2SinglePair.checklist })
+}
+g2Reject('G2-A 验收任务正式验收单值重复拒绝', { plan: g2SinglePair.plan, checklist: g2SinglePair.checklist.replace('- 正式验收：[检查1]', '- 正式验收：[检查1]\n- 正式验收：[检查1]') })
+g2Reject('G2-A 非连续任务ID拒绝', g2Pair({ mode: 'batch', tasks: [g2Task(1), g2Task(3)] }))
+g2Reject('G2-A 重复任务ID拒绝', g2Pair({ mode: 'batch', tasks: [g2Task(1), g2Task(1)] }))
+const g2MultiValuePair = g2Pair({
+  tasks: [g2Task(1, { modifications: ['动作一', '动作二'], selfChecks: ['自检一', '自检二'] })],
+  checks: [g2Check(1, { checks: ['检查一', '检查二'], evidence: ['证据一', '证据二'] })],
+})
+check('G2-A 多值修改/自检/检查/证据重复行合法', validateRealSavePlanContract(g2MultiValuePair.plan, g2MultiValuePair.checklist).ok, true)
+const g2Fence = String.fromCharCode(96).repeat(3)
+const g2PseudoPrefix = g2Fence + '\n[任务99] 围栏伪任务\n- 主文件：not-real.js\n' + g2Fence + '\n  [任务88] 缩进伪任务\n'
+check('G2-A 围栏与缩进示例不成为结构块', validateRealSavePlanContract(g2PseudoPrefix + g2SinglePair.plan, g2PseudoPrefix + g2SinglePair.checklist).ok, true)
+
+const g2WithClosure = {
+  files: ['g2-synthetic/closure.md'],
+  dependencies: '[任务1]',
+  actions: ['完成收尾核对'],
+  selfChecks: ['复核收尾文件'],
+  acceptance: '[检查1]',
+}
+const g2WithGlobal = { expectations: ['全局范围可恢复'], prohibitions: ['不得静默漏项'], acceptance: '[检查1]' }
+const g2ClosureGlobalPair = g2Pair({ closure: g2WithClosure, global: g2WithGlobal })
+const g2ClosureGlobalResult = validateRealSavePlanContract(g2ClosureGlobalPair.plan, g2ClosureGlobalPair.checklist)
+check('G2-A 检查/收尾/全局边界不吞入前任务', g2ClosureGlobalResult.ok && g2ClosureGlobalResult.summary.hasClosure && g2ClosureGlobalResult.summary.hasGlobalAcceptance, true)
+
+const g2PathCases = [
+  ['绝对路径', '/abs/a.js'],
+  ['盘符路径', 'C:/abs/a.js'],
+  ['反斜杠路径', 'g2-synthetic\\a.js'],
+  ['点段路径', 'g2-synthetic/../a.js'],
+  ['空路径段', 'g2-synthetic//a.js'],
+  ['尾斜杠路径', 'g2-synthetic/'],
+  ['Markdown包裹路径', '[g2-synthetic/a.js]'],
+  ['空路径', ''],
+]
+for (const item of g2PathCases) {
+  const task = g2Task(1, { mainFile: item[1] })
+  g2Reject('G2-B ' + item[0] + '拒绝', g2Pair({ tasks: [task] }))
+}
+const g2NewTargetPair = g2Pair({ tasks: [g2Task(1, { mainFile: 'g2-synthetic/not-yet-created.js' })] })
+check('G2-B 合法新增目标不要求预先存在', validateRealSavePlanContract(g2NewTargetPair.plan, g2NewTargetPair.checklist).ok, true)
+const g2RelatedTask = g2Task(1, { relatedFiles: ['g2-synthetic/helper.js'], groupReason: '主文件与辅助文件必须同一修改上下文' })
+check('G2-B 单个关联文件有非空拆分理由通过', validateRealSavePlanContract(g2Pair({ tasks: [g2RelatedTask] }).plan, g2Pair({ tasks: [g2RelatedTask] }).checklist).ok, true)
+g2Reject('G2-B 任意关联文件缺分组理由拒绝', g2Pair({ tasks: [g2Task(1, { relatedFiles: ['g2-synthetic/helper.js'], groupReason: '无' })] }))
+const g2CrossDocumentMismatch = g2Pair()
+g2Reject('G2-B 双文档主文件不一致拒绝', { plan: g2CrossDocumentMismatch.plan, checklist: g2CrossDocumentMismatch.checklist.replace('g2-synthetic/task-1.js', 'g2-synthetic/other.js') })
+const g2RelatedMismatchPlan = g2Pair({ tasks: [g2RelatedTask] })
+g2Reject('G2-B 双文档关联文件集合不一致拒绝', { plan: g2RelatedMismatchPlan.plan, checklist: g2SinglePair.checklist })
+g2Reject('G2-B 同组跨任务重复文件拒绝', g2Pair({ mode: 'batch', tasks: [g2Task(1, { mainFile: 'g2-synthetic/shared.js', group: 'G1', groupReason: '同组共同实现' }), g2Task(2, { mainFile: 'g2-synthetic/shared.js', group: 'G1', groupReason: '同组共同实现' })] }))
+const g2CasePair = g2Pair({ mode: 'batch', tasks: [g2Task(1, { mainFile: 'g2-synthetic/A.js' }), g2Task(2, { mainFile: 'g2-synthetic/a.js' })] })
+check('G2-B Windows大小写文件冲突拒绝', validateRealSavePlanContract(g2CasePair.plan, g2CasePair.checklist, { platform: 'win32' }).ok, false)
+check('G2-B 大小写敏感平台区分路径通过', validateRealSavePlanContract(g2CasePair.plan, g2CasePair.checklist, { platform: 'posix' }).ok, true)
+
+const g2ChainTasks = [
+  g2Task(1, { group: 'G1', groupReason: '同组按内部拓扑共同实现' }),
+  g2Task(2, { group: 'G1', dependencies: '[任务1]', dependencyReason: '先完成任务1再继续', groupReason: '同组按内部拓扑共同实现' }),
+  g2Task(3, { group: 'G2', dependencies: '[任务2]', dependencyReason: '先取得G1交付', groupReason: '无' }),
+]
+const g2ChainResult = validateRealSavePlanContract(g2Pair({ mode: 'batch', tasks: g2ChainTasks }).plan, g2Pair({ mode: 'batch', tasks: g2ChainTasks }).checklist)
+check('G2-C 真实链与同组内部顺序通过', g2ChainResult.ok && JSON.stringify(g2ChainResult.summary.groups[0].internalOrder) === JSON.stringify([1, 2]) && JSON.stringify(g2ChainResult.summary.groups[1].groupDependsOn) === JSON.stringify(['G1']) && g2ChainResult.summary.groups[1].initialState === 'waiting', true)
+const g2DiamondTasks = [
+  g2Task(1, { group: 'G1' }),
+  g2Task(2, { group: 'G2', dependencies: '[任务1]', dependencyReason: '先取得根任务结果' }),
+  g2Task(3, { group: 'G3', dependencies: '[任务1]', dependencyReason: '先取得根任务结果' }),
+  g2Task(4, { group: 'G4', dependencies: '[任务2]、[任务3]', dependencyReason: '汇合两个前置结果' }),
+]
+check('G2-C 菱形依赖与并列根通过', validateRealSavePlanContract(g2Pair({ mode: 'batch', tasks: g2DiamondTasks }).plan, g2Pair({ mode: 'batch', tasks: g2DiamondTasks }).checklist).ok, true)
+g2Reject('G2-C 不存在依赖引用拒绝', g2Pair({ mode: 'batch', tasks: [g2Task(1), g2Task(2, { dependencies: '[任务9]', dependencyReason: '缺失前置' })] }))
+g2Reject('G2-C 自依赖拒绝', g2Pair({ mode: 'batch', tasks: [g2Task(1, { dependencies: '[任务1]', dependencyReason: '自依赖错误' }), g2Task(2)] }))
+g2Reject('G2-C 重复依赖引用拒绝', g2Pair({ mode: 'batch', tasks: [g2Task(1), g2Task(2, { dependencies: '[任务1]、[任务1]', dependencyReason: '重复前置' })] }))
+g2Reject('G2-C 任务依赖环拒绝', g2Pair({ mode: 'batch', tasks: [g2Task(1, { group: 'G1', dependencies: '[任务2]', dependencyReason: '先取得任务2' }), g2Task(2, { group: 'G2', dependencies: '[任务1]', dependencyReason: '先取得任务1' })] }))
+const g2GroupCycleTasks = [
+  g2Task(1, { group: 'G1', groupReason: '同组共同实现', dependencies: '[任务2]', dependencyReason: '先取得G2中间结果' }),
+  g2Task(2, { group: 'G2', dependencies: '[任务3]', dependencyReason: '先取得G1后续结果' }),
+  g2Task(3, { group: 'G1', groupReason: '同组共同实现' }),
+]
+g2Reject('G2-C 任务无环但组折叠成环拒绝', g2Pair({ mode: 'batch', tasks: g2GroupCycleTasks }))
+g2Reject('G2-C 无依赖却写非无理由拒绝', g2Pair({ tasks: [g2Task(1, { dependencyReason: '错误依赖理由' })] }))
+g2Reject('G2-C 有依赖却写无理由拒绝', g2Pair({ mode: 'batch', tasks: [g2Task(1), g2Task(2, { dependencies: '[任务1]', dependencyReason: '无' })] }))
+g2Reject('G2-C 同组理由不一致拒绝', g2Pair({ mode: 'batch', tasks: [g2Task(1, { group: 'G1', groupReason: '同组共同实现' }), g2Task(2, { group: 'G1', groupReason: '另一理由' })] }))
+g2Reject('G2-C 同组多任务写无理由拒绝', g2Pair({ mode: 'batch', tasks: [g2Task(1, { group: 'G1', groupReason: '无' }), g2Task(2, { group: 'G1', groupReason: '无' })] }))
+const g2ResourceSameGroup = g2Pair({ mode: 'batch', tasks: [g2Task(1, { group: 'G1', groupReason: '同组共享资源顺序实现', resource: 'repo-regression' }), g2Task(2, { group: 'G1', groupReason: '同组共享资源顺序实现', resource: 'repo-regression' })] })
+check('G2-C 同组共享执行资源通过', validateRealSavePlanContract(g2ResourceSameGroup.plan, g2ResourceSameGroup.checklist).ok, true)
+g2Reject('G2-C 跨执行组资源冲突拒绝', g2Pair({ mode: 'batch', tasks: [g2Task(1, { group: 'G1', resource: 'repo-regression' }), g2Task(2, { group: 'G2', resource: 'repo-regression' })] }))
+g2Reject('G2-C 单字段资源标识重复拒绝', g2Pair({ tasks: [g2Task(1, { resource: 'cache,cache' })] }))
+const g2IndependentGroups = validateRealSavePlanContract(g2Pair({ mode: 'batch', tasks: [g2Task(1, { group: 'G1' }), g2Task(2, { group: 'G2' })] }).plan, g2Pair({ mode: 'batch', tasks: [g2Task(1, { group: 'G1' }), g2Task(2, { group: 'G2' })] }).checklist)
+check('G2-C 独立执行组均为静态eligible且不等价人数', g2IndependentGroups.ok && g2IndependentGroups.summary.groups.every((group) => group.initialState === 'eligible') && g2IndependentGroups.summary.groupCount === 2 && g2IndependentGroups.summary.executorCount === undefined, true)
+
+const g2SharedCheckPair = g2Pair({ mode: 'batch', tasks: [g2Task(1), g2Task(2)] })
+const g2SharedCheckResult = validateRealSavePlanContract(g2SharedCheckPair.plan, g2SharedCheckPair.checklist)
+check('G2-D 多任务复用一个检查通过并记录覆盖', g2SharedCheckResult.ok && JSON.stringify(g2SharedCheckResult.summary.checks[0].coverage.tasks) === JSON.stringify([1, 2]), true)
+const g2TwoCheckTasks = [g2Task(1, { acceptance: '[检查1]、[检查2]' }), g2Task(2, { acceptance: '[检查1]' })]
+const g2TwoChecks = [g2Check(1, { reviewGroup: 'R1' }), g2Check(2, { reviewGroup: 'R2', checks: ['核对第二范围'], evidence: ['第二范围证据'] })]
+const g2TwoCheckResult = validateRealSavePlanContract(g2Pair({ mode: 'batch', tasks: g2TwoCheckTasks, checks: g2TwoChecks }).plan, g2Pair({ mode: 'batch', tasks: g2TwoCheckTasks, checks: g2TwoChecks }).checklist)
+check('G2-D 一任务引用多个检查且R组独立通过', g2TwoCheckResult.ok && g2TwoCheckResult.summary.reviewGroupCount === 2, true)
+const g2MissingReviewGroup = g2Pair().checklist.replace('- 验收组：R1\n', '')
+g2Reject('G2-D 缺验收组字段拒绝', { plan: g2SinglePair.plan, checklist: g2MissingReviewGroup })
+g2Reject('G2-D 非法取证方式拒绝', { plan: g2SinglePair.plan, checklist: g2SinglePair.checklist.replace('- 取证方式：只读复核', '- 取证方式：自由执行') })
+const g2ExecutionEvidence = validateRealSavePlanContract(g2Pair({ checks: [g2Check(1, { evidenceMode: '执行取证' })] }).plan, g2Pair({ checks: [g2Check(1, { evidenceMode: '执行取证' })] }).checklist)
+check('G2-D 执行取证只记录声明不放宽运行时权限', g2ExecutionEvidence.ok && g2ExecutionEvidence.summary.checks[0].evidenceMode === '执行取证', true)
+g2Reject('G2-D 非法工作目录边界拒绝', { plan: g2SinglePair.plan, checklist: g2SinglePair.checklist.replace('- 工作目录：.', '- 工作目录：C:/outside') })
+g2Reject('G2-D 缺检查动作拒绝', { plan: g2SinglePair.plan, checklist: g2SinglePair.checklist.replace('- 检查：读取合成文件并核对结果\n', '') })
+g2Reject('G2-D 缺验收证据拒绝', { plan: g2SinglePair.plan, checklist: g2SinglePair.checklist.replace('- 验收证据：原始结果与期望一致\n', '') })
+const g2OrphanChecks = [g2Check(1), g2Check(2, { checks: ['孤儿检查动作'], evidence: ['孤儿证据'] })]
+g2Reject('G2-D 孤儿检查定义拒绝', g2Pair({ checks: g2OrphanChecks }))
+g2Reject('G2-D 不存在检查引用拒绝', g2Pair({ tasks: [g2Task(1, { acceptance: '[检查9]' })] }))
+g2Reject('G2-D 重复检查引用拒绝', g2Pair({ tasks: [g2Task(1, { acceptance: '[检查1]、[检查1]' })] }))
+const g2DuplicateSignatureChecks = [g2Check(1, { reviewGroup: 'R1' }), g2Check(2, { reviewGroup: 'R1', title: '相同签名不同标题' })]
+g2Reject('G2-D 完全相同检查签名拒绝', g2Pair({ tasks: [g2Task(1, { acceptance: '[检查1]、[检查2]' })], checks: g2DuplicateSignatureChecks }))
+const g2DistinctSignatureChecks = [g2Check(1, { checks: ['动作一', '动作二'] }), g2Check(2, { title: '顺序不同', checks: ['动作二', '动作一'] })]
+check('G2-D 检查动作顺序不同不误合并', validateRealSavePlanContract(g2Pair({ tasks: [g2Task(1, { acceptance: '[检查1]、[检查2]' })], checks: g2DistinctSignatureChecks }).plan, g2Pair({ tasks: [g2Task(1, { acceptance: '[检查1]、[检查2]' })], checks: g2DistinctSignatureChecks }).checklist).ok, true)
+const g2WorkdirDistinctChecks = [g2Check(1, { workdir: 'src' }), g2Check(2, { title: '目录不同', workdir: 'src/sub' })]
+check('G2-D 检查工作目录不同不误合并', validateRealSavePlanContract(g2Pair({ tasks: [g2Task(1, { acceptance: '[检查1]、[检查2]' })], checks: g2WorkdirDistinctChecks }).plan, g2Pair({ tasks: [g2Task(1, { acceptance: '[检查1]、[检查2]' })], checks: g2WorkdirDistinctChecks }).checklist).ok, true)
+const g2CheckCaseChecks = [g2Check(1, { workdir: 'src' }), g2Check(2, { title: '大小写目录', workdir: 'SRC' })]
+const g2CheckCasePair = g2Pair({ tasks: [g2Task(1, { acceptance: '[检查1]、[检查2]' })], checks: g2CheckCaseChecks })
+check('G2-D Windows工作目录规范化拒绝重复签名', validateRealSavePlanContract(g2CheckCasePair.plan, g2CheckCasePair.checklist, { platform: 'win32' }).ok, false)
+check('G2-D posix工作目录大小写可区分', validateRealSavePlanContract(g2CheckCasePair.plan, g2CheckCasePair.checklist, { platform: 'posix' }).ok, true)
+const g2ReviewResourceChecks = [g2Check(1, { reviewGroup: 'R1', resource: 'repo-regression' }), g2Check(2, { reviewGroup: 'R2', title: '资源冲突检查', checks: ['核对冲突'], evidence: ['冲突证据'], resource: 'repo-regression' })]
+g2Reject('G2-D 跨验收组资源冲突拒绝', g2Pair({ tasks: [g2Task(1, { acceptance: '[检查1]、[检查2]' })], checks: g2ReviewResourceChecks }))
+const g2ReviewResourceSame = [g2Check(1, { reviewGroup: 'R1', resource: 'repo-regression' }), g2Check(2, { reviewGroup: 'R1', title: '同组资源', checks: ['核对同组'], evidence: ['同组证据'], resource: 'repo-regression' })]
+check('G2-D 同验收组资源可共享', validateRealSavePlanContract(g2Pair({ tasks: [g2Task(1, { acceptance: '[检查1]、[检查2]' })], checks: g2ReviewResourceSame }).plan, g2Pair({ tasks: [g2Task(1, { acceptance: '[检查1]、[检查2]' })], checks: g2ReviewResourceSame }).checklist).ok, true)
+
+check('G2-E 无收尾无全局合法', validateRealSavePlanContract(g2SinglePair.plan, g2SinglePair.checklist).ok, true)
+check('G2-E 仅收尾合法', validateRealSavePlanContract(g2Pair({ closure: g2WithClosure }).plan, g2Pair({ closure: g2WithClosure }).checklist).ok, true)
+check('G2-E 仅全局合法', validateRealSavePlanContract(g2Pair({ global: g2WithGlobal }).plan, g2Pair({ global: g2WithGlobal }).checklist).ok, true)
+check('G2-E 收尾和全局同时合法', g2ClosureGlobalResult.ok, true)
+const g2NoFileClosure = { files: [], dependencies: '[任务1]', actions: ['完成无文件收尾'], selfChecks: ['核对无文件收尾'], acceptance: '[检查1]' }
+check('G2-E 无收尾文件但有收尾检查合法', validateRealSavePlanContract(g2Pair({ closure: g2NoFileClosure }).plan, g2Pair({ closure: g2NoFileClosure }).checklist).ok, true)
+g2Reject('G2-E 收尾单边存在拒绝', { plan: g2Pair({ closure: g2WithClosure }).plan, checklist: g2SinglePair.checklist })
+g2Reject('G2-E 收尾文件集合不一致拒绝', { plan: g2Pair({ closure: g2WithClosure }).plan, checklist: g2Pair({ closure: Object.assign({}, g2WithClosure, { files: ['g2-synthetic/other-closure.md'] }) }).checklist })
+g2Reject('G2-E 收尾文件与任务文件重叠拒绝', { plan: g2Pair({ closure: Object.assign({}, g2WithClosure, { files: ['g2-synthetic/task-1.js'] }) }).plan, checklist: g2Pair({ closure: Object.assign({}, g2WithClosure, { files: ['g2-synthetic/task-1.js'] }) }).checklist })
+g2Reject('G2-E 收尾依赖缺任务拒绝', { plan: g2Pair({ mode: 'batch', tasks: g2Tasks(2), closure: Object.assign({}, g2WithClosure, { dependencies: '[任务1]' }) }).plan, checklist: g2Pair({ mode: 'batch', tasks: g2Tasks(2), closure: Object.assign({}, g2WithClosure, { dependencies: '[任务1]' }) }).checklist })
+g2Reject('G2-E 收尾依赖引用不存在任务拒绝', { plan: g2Pair({ closure: Object.assign({}, g2WithClosure, { dependencies: '[任务9]' }) }).plan, checklist: g2Pair({ closure: Object.assign({}, g2WithClosure, { dependencies: '[任务9]' }) }).checklist })
+const g2DuplicateClosure = g2Pair({ closure: g2WithClosure })
+g2Reject('G2-E 重复收尾块拒绝', { plan: g2DuplicateClosure.plan + '\n[收尾]\n- 收尾动作：重复', checklist: g2DuplicateClosure.checklist + '\n[收尾]\n- 期望：重复' })
+const g2GlobalOutOfOrderPair = g2Pair({ global: g2WithGlobal })
+const g2GlobalBlock = g2GlobalOutOfOrderPair.checklist.slice(g2GlobalOutOfOrderPair.checklist.indexOf('[全局验收]'))
+const g2GlobalBeforeCheck = g2SinglePair.checklist.replace('[检查1] 核对检查1', g2GlobalBlock + '\n[检查1] 核对检查1')
+g2Reject('G2-E 全局验收不在最后拒绝', { plan: g2SinglePair.plan, checklist: g2GlobalBeforeCheck })
+g2Reject('G2-E 方案出现全局验收拒绝', { plan: g2Pair().plan + '\n[全局验收]\n- 期望：错误\n- 禁止：错误\n- 正式验收：[检查1]', checklist: g2SinglePair.checklist })
+const g2DuplicateGlobal = g2Pair({ global: g2WithGlobal })
+g2Reject('G2-E 重复全局验收块拒绝', { plan: g2SinglePair.plan, checklist: g2DuplicateGlobal.checklist + '\n[全局验收]\n- 期望：重复\n- 禁止：重复\n- 正式验收：[检查1]' })
+
+const g2SummaryTasks = [
+  g2Task(1, { group: 'G1', relatedFiles: ['g2-synthetic/related.js'], groupReason: '主文件与关联文件共同实现', acceptance: '[检查1]' }),
+  g2Task(2, { group: 'G2', dependencies: '[任务1]', dependencyReason: '先取得G1交付', acceptance: '[检查1]、[检查2]' }),
+]
+const g2SummaryChecks = [g2Check(1, { reviewGroup: 'R1' }), g2Check(2, { reviewGroup: 'R2', title: '共享范围检查', checks: ['核对共享范围'], evidence: ['共享范围结果'] })]
+const g2SummaryClosure = { files: ['g2-synthetic/closure-summary.md'], dependencies: '[任务1]、[任务2]', actions: ['完成总结收尾'], selfChecks: ['复核总结收尾'], acceptance: '[检查2]' }
+const g2SummaryPair = g2Pair({ mode: 'batch', tasks: g2SummaryTasks, checks: g2SummaryChecks, closure: g2SummaryClosure, global: { expectations: ['所有范围可恢复'], prohibitions: ['不得把组数当人数'], acceptance: '[检查1]' } })
+const g2SummaryResult = validateRealSavePlanContract(g2SummaryPair.plan, g2SummaryPair.checklist)
+check('G2-F summary含完整任务/组/R组/共享检查/收尾全局', g2SummaryResult.ok && g2SummaryResult.summary.taskCount === 2 && g2SummaryResult.summary.taskFileCount === 3 && g2SummaryResult.summary.closureFileCount === 1 && g2SummaryResult.summary.fileCount === 4 && g2SummaryResult.summary.totalFileCount === 4 && g2SummaryResult.summary.groupCount === 2 && g2SummaryResult.summary.reviewGroupCount === 2 && g2SummaryResult.summary.checkCount === 2 && g2SummaryResult.summary.hasClosure && g2SummaryResult.summary.hasGlobalAcceptance && g2SummaryResult.summary.groups[1].initialState === 'waiting' && g2SummaryResult.summary.checks[1].coverage.closure && g2SummaryResult.summary.reviewGroups.length === 2, true)
+const g2SummaryText = g2SummaryResult.ok ? formatRealSavePlanSummary(g2SummaryResult.summary) : ''
+check('G2-F summary保留完整文件与职责说明且不暴露路径依赖', g2SummaryText.includes('g2-synthetic/closure-summary.md') && g2SummaryText.includes('执行组G1') && g2SummaryText.includes('验收组R2') && g2SummaryText.includes('工具只校验并原子双写'), true)
+const g2RenderedSummary = g2SummaryResult.ok ? renderRealSavePlan({ paths: ['g2-synthetic/方案.md', 'g2-synthetic/验收.md'] }, g2SummaryResult.summary) : []
+check('G2-F render单一text块且保留双路径和完整范围', Array.isArray(g2RenderedSummary) && g2RenderedSummary.length === 1 && g2RenderedSummary[0].type === 'text' && g2RenderedSummary[0].text.includes('g2-synthetic/方案.md') && g2RenderedSummary[0].text.includes('g2-synthetic/验收.md') && g2RenderedSummary[0].text.includes('任务文件数：3') && g2RenderedSummary[0].text.includes('收尾文件数：1') && g2RenderedSummary[0].text.includes('验收组R2'), true)
+check('G2-F 计数使用生产限制且不把groupCount当executorCount', REAL_SAVE_PLAN_LIMITS.maxTasks === 20 && REAL_SAVE_PLAN_LIMITS.maxSummaryChars === 12000 && g2SummaryResult.summary.executorCount === undefined, true)
+const g2SummaryBaseTasks = g2Tasks(20).map((task, index) => index === 0 ? Object.assign({}, task, { title: 'A' }) : task)
+const g2SummaryBasePair = g2Pair({ mode: 'batch', tasks: g2SummaryBaseTasks })
+const g2SummaryBaseResult = validateRealSavePlanContract(g2SummaryBasePair.plan, g2SummaryBasePair.checklist)
+const g2SummaryBaseLength = g2SummaryBaseResult.ok ? formatRealSavePlanSummary(g2SummaryBaseResult.summary).length : -1
+const g2SummaryExactExtra = Math.max(0, REAL_SAVE_PLAN_LIMITS.maxSummaryChars - g2SummaryBaseLength)
+const g2SummaryExactTasks = g2SummaryBaseTasks.map((task, index) => index === 0 ? Object.assign({}, task, { title: 'A' + 'x'.repeat(g2SummaryExactExtra) }) : task)
+const g2SummaryExactPair = g2Pair({ mode: 'batch', tasks: g2SummaryExactTasks })
+const g2SummaryExactResult = validateRealSavePlanContract(g2SummaryExactPair.plan, g2SummaryExactPair.checklist)
+const g2SummaryOverTasks = g2SummaryBaseTasks.map((task, index) => index === 0 ? Object.assign({}, task, { title: 'A' + 'x'.repeat(g2SummaryExactExtra + 1) }) : task)
+const g2SummaryOverPair = g2Pair({ mode: 'batch', tasks: g2SummaryOverTasks })
+const g2SummaryOverResult = validateRealSavePlanContract(g2SummaryOverPair.plan, g2SummaryOverPair.checklist)
+check('G2-F 摘要恰12000字符通过', g2SummaryExactResult.ok && formatRealSavePlanSummary(g2SummaryExactResult.summary).length === REAL_SAVE_PLAN_LIMITS.maxSummaryChars, true)
+check('G2-F 摘要12001字符拒绝', !g2SummaryOverResult.ok && g2SummaryOverResult.error.includes('派遣摘要'), true)
+
+const g2Recovered = validateRealSavePlanContract(g2SummaryPair.plan, g2SummaryPair.checklist)
+const g2RecoveredScope = g2Recovered.ok ? {
+  tasks: g2Recovered.summary.tasks.map((task) => ({ id: task.id, files: task.files, executionGroup: task.executionGroup })),
+  groups: g2Recovered.summary.groups.map((group) => ({ group: group.group, members: group.members, groupDependsOn: group.groupDependsOn, initialState: group.initialState })),
+  reviewGroups: g2Recovered.summary.reviewGroups.map((group) => ({ reviewGroup: group.reviewGroup, checks: group.checks })),
+  checks: g2Recovered.summary.checks.map((checkItem) => ({ id: checkItem.id, coverage: checkItem.coverage })),
+} : null
+check('G2-G 父会话仅凭两份合成正文恢复两执行组两验收组共享检查', g2RecoveredScope !== null && g2RecoveredScope.tasks[0].files.includes('g2-synthetic/related.js') && g2RecoveredScope.groups[1].groupDependsOn[0] === 'G1' && g2RecoveredScope.reviewGroups.length === 2 && g2RecoveredScope.checks[0].coverage.tasks.length === 2, true)
+check('G2-G 恢复证据不依赖planner render且不冒充真实代理执行', g2RecoveredScope !== null && g2RenderedSummary.length === 1 && g2RecoveredScope.realAgentExecution !== true, true)
+function g2HandoffStatus(expectedTasks, expectedChecks, reports, sourceChanged) {
+  if (sourceChanged) return '需复验'
+  if (reports.tasks.some((id) => !expectedTasks.includes(id)) || reports.checks.some((id) => !expectedChecks.includes(id))) return 'FAIL'
+  if (new Set(reports.tasks).size !== reports.tasks.length || new Set(reports.checks).size !== reports.checks.length) return 'FAIL'
+  if (reports.tasks.length !== expectedTasks.length || reports.checks.length !== expectedChecks.length) return 'INCOMPLETE'
+  return 'PASS'
+}
+check('G2-G 漏任务或漏检查回报分类为INCOMPLETE', g2HandoffStatus([1, 2], [1, 2], { tasks: [1], checks: [1, 2] }, false), 'INCOMPLETE')
+check('G2-G 错误ID回报分类为FAIL', g2HandoffStatus([1, 2], [1, 2], { tasks: [1, 3], checks: [1, 2] }, false), 'FAIL')
+check('G2-G 矛盾/重复回报分类为FAIL', g2HandoffStatus([1, 2], [1, 2], { tasks: [1, 2], checks: [1, 1] }, false), 'FAIL')
+function g2ContradictionStatus(reports) {
+  const statuses = new Map()
+  for (const report of reports) {
+    if (statuses.has(report.id) && statuses.get(report.id) !== report.status) return 'FAIL'
+    statuses.set(report.id, report.status)
+  }
+  return 'PASS'
+}
+check('G2-G 同ID矛盾结论分类为FAIL', g2ContradictionStatus([{ id: 1, status: 'PASS' }, { id: 1, status: 'FAIL' }]), 'FAIL')
+check('G2-G 源变更回报分类为需复验', g2HandoffStatus([1, 2], [1, 2], { tasks: [1, 2], checks: [1, 2] }, true), '需复验')
+
+const g2MinimalPair = {
+  plan: '- 执行模式：single\n- 派遣说明：先读两份工件\n[任务1] 结构\n- 主文件：src/a.js\n- 执行组：G1\n- 依赖：无\n- 依赖理由：无\n- 分组理由：无\n- 修改：完成结构\n- 自检：运行检查',
+  checklist: '- 执行模式：single\n- 验收说明：按检查ID复核\n[任务1] 结构\n- 主文件：src/a.js\n- 期望：结构正确\n- 禁止：不得越界\n- 正式验收：[检查1]\n[检查1] 结构检查\n- 验收组：R1\n- 取证方式：只读复核\n- 工作目录：.\n- 检查：read src/a.js\n- 验收证据：读取结果正确',
+}
+check('G2-H 纯validator允许短single', g2MinimalPair.plan.length < 200 && g2MinimalPair.checklist.length < 200 && validateRealSavePlanContract(g2MinimalPair.plan, g2MinimalPair.checklist).ok, true)
+const g2FactoryIo = { recover: 0, atomic: 0, committed: null }
+const g2Factories = createSaveToolFactories({
+  savePlanDir: '.extra-plan',
+  recoverJournals: () => { g2FactoryIo.recover += 1 },
+  atomicCommit: (...args) => { g2FactoryIo.atomic += 1; g2FactoryIo.committed = args },
+})
+const g2SavePlanDefinition = g2Factories.defineSavePlan()
+let g2ShortFactoryError = null
+try { await g2SavePlanDefinition.execute(g2MinimalPair) } catch (error) { g2ShortFactoryError = error instanceof Error ? error.message : String(error) }
+check('G2-H factory短single按双方至少200字符拒绝', g2ShortFactoryError !== null && g2ShortFactoryError.includes('内容过短') && g2FactoryIo.recover === 0 && g2FactoryIo.atomic === 0, true)
+const g2InvalidLongPair = {
+  plan: g2Pad(g2SinglePair.plan),
+  checklist: g2Pad(g2SinglePair.checklist.replace('- 正式验收：[检查1]', '- 正式验收：[检查9]')),
+}
+let g2InvalidFactoryError = null
+try { await g2SavePlanDefinition.execute(g2InvalidLongPair) } catch (error) { g2InvalidFactoryError = error instanceof Error ? error.message : String(error) }
+check('G2-H 非法结构在recover/atomic前拒绝', g2InvalidFactoryError !== null && g2InvalidFactoryError.startsWith('save_plan: 文件级任务合同校验不通过') && g2FactoryIo.recover === 0 && g2FactoryIo.atomic === 0, true)
+const g2FactoryValidPlan = g2Pad(g2MinimalPair.plan + '\n普通方案补充：保持正文逐字保存')
+const g2FactoryValidChecklist = g2Pad(g2MinimalPair.checklist + '\n普通验收补充：保持正文逐字保存')
+let g2FactoryResult = null
+let g2FactoryError = null
+try {
+  g2FactoryResult = await g2SavePlanDefinition.execute({ plan: g2FactoryValidPlan, checklist: g2FactoryValidChecklist }, { agent: { session: { header: { cwd: 'D:/g2-synthetic-workspace', id: 'g2-factory' } } } })
+} catch (error) { g2FactoryError = error instanceof Error ? error.message : String(error) }
+check('G2-H factory合法正文双方至少200字符并返回两paths', g2FactoryError === null && g2FactoryValidPlan.length >= 200 && g2FactoryValidChecklist.length >= 200 && g2FactoryResult !== null && Array.isArray(g2FactoryResult.paths) && g2FactoryResult.paths.length === 2 && g2FactoryIo.recover === 1 && g2FactoryIo.atomic === 1, true)
+check('G2-H factory原子双写逐字保留两正文', g2FactoryIo.committed !== null && Array.isArray(g2FactoryIo.committed[2]) && g2FactoryIo.committed[2][0].content === g2FactoryValidPlan && g2FactoryIo.committed[2][1].content === g2FactoryValidChecklist, true)
+const g2FactoryRendered = g2FactoryResult === null ? [] : g2SavePlanDefinition.output.render({ plan: g2FactoryValidPlan, checklist: g2FactoryValidChecklist }, g2FactoryResult)
+check('G2-H factory structured output只含paths且render仍为单text', JSON.stringify(Object.keys(g2SavePlanDefinition.output.schema.properties || {})) === JSON.stringify(['paths']) && JSON.stringify(g2SavePlanDefinition.output.schema.required) === JSON.stringify(['paths']) && g2SavePlanDefinition.output.schema.additionalProperties === false && Array.isArray(g2FactoryRendered) && g2FactoryRendered.length === 1 && g2FactoryRendered[0].type === 'text', true)
+const g2TokenMeasurement = 'NOT-RUN'
+check('G2-H schema与renderer字符可测且token口径保持NOT-RUN', typeof schemaPlanDescription === 'string' && schemaPlanDescription.length > 0 && JSON.stringify(schemaPlanParameters).length > 0 && g2FactoryRendered.length === 1 && g2FactoryRendered[0].text.includes('派遣摘要（') && g2TokenMeasurement === 'NOT-RUN' && !g2FactoryRendered[0].text.includes('token'), true)
 
 // ── RENDER4+ 系列:renderSaveProbe / renderProbeMarkdown 契约（v3） ────────
 const probeRendered = renderSaveProbe({ path: 'C:/w/.extra-plan/线索-x-20260816090000.md' })

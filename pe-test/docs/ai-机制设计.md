@@ -77,3 +77,13 @@
 - 过滤是 source gate 的关键边界，先于现有 C 投影与目录去重；关键 gate/phase 失败走宿主错误路径，不把未过滤 decision 发送出去。
 - `projectSkillCatalogDecision` 只处理 `source.kind=skill-catalog` 且 entries 合法的消息；其它 source 即使带 entries 也保持对象和正文不变。`dedupeProjectedContextDecision` 分别按 source.kind 读取当前 agent `session.deriveMessages()` 最后一个合法可见签名：skill-catalog 只比较有序 `[name,description]`，agent-instructions 只比较非空 `content` 的 JSON 形状并忽略动态 id/seq/role/source；空 catalog 合法，坏形状、变化、移出 surface 后重现必须保留。无共享缓存、无 sent/released 标志，不比较父 Session。
 - 纯函数 `filterBootstrapContextDecision` 与 `dedupeProjectedContextDecision` 不读文件/环境/registry/Inbox，不持有 agent/global 状态；冻结输入可用，无变化透传原对象，未知 source 原样保留。
+
+## 九、save_plan 并行派遣与分组验收合同
+
+- `save_plan` 仍是成对的方案/验收工件。两份正文必须各自携带模式与职责说明；`single` 只有一个数字任务，`batch` 才允许多个连续任务，未来规模由实际工件决定，不由当前批次的任务、检查、组或文件数量决定。工件本身要能恢复派遣、验收和交接，不依赖父会话看到 planner render 或本仓维护文档。
+- 数字任务声明主/关联文件的唯一所有权、真实实现依赖和执行组；文件重叠、未说明的共享输出或不确定的物理别名不能被文本合同宣称为安全并行。收尾文件与数字任务文件分开计入覆盖，全局验收只是引用同轮检查，不是第二套调度。
+- 执行组由其成员任务的依赖并集折叠：只保留组外依赖，`groupDependsOn` 为空时 `initialState=eligible`，否则为 `waiting`。这只是静态初始资格，不是 ready/running/done 的实时状态，也不启动调度器；同组保留内部拓扑顺序且不可拆派，但可与资源独立的其它组并行。一名执行者可以领取多个组，组数不等于人数。
+- 独占资源是稳定的声明边界，用来标识共享输出目录、缓存或固定环境等非修改文件冲突；同资源的数字任务应归并执行组，不同验收组声明同资源应合并。资源声明不能证明隐藏共享状态、物理别名、命令无副作用或代理实际遵守范围。
+- 检查定义有唯一身份，可由多个任务、收尾或全局引用；完全相同的取证方式、工作目录和按序检查行不得另建重复 ID。公共检查只由一个领取者在同一冻结源与条件下运行，其他引用复用原始结果；执行组 G 与验收组 R 是独立命名空间，不要求对应。
+- 只读复核由 reviewer 在只读权限内完成；执行取证由已获批准的执行者或直行主会话运行，reviewer 只读原始 stdout/stderr、退出码和源文件后独立判定。取证方式是职责声明，不自动放宽 route/approved、文件写入或命令安全权限。
+- 结构、关系、交叉引用和摘要边界必须早于 context/base、证据 IO、journal 恢复与 atomic commit 拒绝；合法正文逐字双写，structured output 仍只有 `paths`，render 只是摘要，不是父会话唯一事实源。任何源文件变化都会使受影响任务、依赖消费者和共享检查的旧证据失效；无法证明无影响时按固定顺序复验。main 最后汇总任务、检查、收尾和全局覆盖，漏项、矛盾或过期证据不得宣布通过。

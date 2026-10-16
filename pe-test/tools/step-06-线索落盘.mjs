@@ -36,6 +36,7 @@ process.on('exit', restoreIsolatedEnv)
 const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
 const saveContractNamespace = await import(pathToFileURL(fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/save-contract.js', import.meta.url))).href)
 const { saveArtifactBase } = saveContractNamespace
+const { validateSavePlanContract } = await import(pathToFileURL(fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/save-plan-validation.js', import.meta.url))).href)
 const { createSaveToolFactories } = await import(pathToFileURL(fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/save-tool-factories.js', import.meta.url))).href)
 import { DEFAULT_EXPLORE_BUDGET } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
 import { parsePresetYaml } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
@@ -405,6 +406,7 @@ checkTrue('S8gg 重选 plan 后目的→澄清完成的 subagent_plan → allow'
 // ── ②b pre-execute save_plan 路由矩阵（D8-B，主会话：任意路由态放行） ───────
 // 与上表同五态：direct / none / plan 未澄清（目的未定）/ approved / 非通道取消后五字段清理 → 全部 allow
 // （save_plan 已移除路由态限制，由 mainGateReason 兜底 return null 放行；内容闸门见 ④ 执行层冒烟，与规划子代理同一实现）。
+const ROUTE_GATE_ARGS = { plan: '路由闸门样例方案', checklist: '路由闸门样例验收' }
 const SAVE_PLAN_STATES = [
   ['S28 主会话 route=direct → save_plan allow', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['直接执行']))], 'allow'],
   ['S29 主会话 route=none → save_plan allow（受限工件）', [um()], 'allow'],
@@ -414,7 +416,7 @@ const SAVE_PLAN_STATES = [
 ]
 for (const [name, events, expected] of SAVE_PLAN_STATES) {
   const agent = { session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => events }, options: {}, ctx: agentCtx }
-  const r = preExecute(harness, agent, 'save_plan', { plan: 'p', checklist: 'c' })
+  const r = preExecute(harness, agent, 'save_plan', ROUTE_GATE_ARGS)
   if (expected === 'deny') {
     checkTrue(`${name}`, r !== null && r !== undefined && r.kind === 'deny')
   } else {
@@ -432,7 +434,7 @@ for (let i = 0; i < DEFAULT_EXPLORE_BUDGET; i += 1) {
 const exhaustedPlanner = { session: { header: { id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => plannerEvents }, options: { model: 'deepseek-v4-pro' }, ctx: agentCtx }
 r = preExecute(harness, exhaustedPlanner, 'read', { file_path: 'C:/work/.extra-plan/线索-x-20260816090000.md' })
 checkTrue('S11 预算耗尽后 read 线索文件 → deny（read 线索计入预算，v1 口径）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('探查预算已耗尽'))
-r = preExecute(harness, exhaustedPlanner, 'save_plan', { plan: 'p', checklist: 'c' })
+r = preExecute(harness, exhaustedPlanner, 'save_plan', ROUTE_GATE_ARGS)
 checkTrue('S12 预算耗尽后 save_plan → allow（跳过名单仍仅 save_plan）', r !== null && r !== undefined && r.kind === 'allow')
 // 11 次成功配对后第 12 次 read（线索文件）不拒绝——12 ≤ DEFAULT_EXPLORE_BUDGET（默认）未超预算
 const plannerEvents11 = [DESC, umk('user')]
@@ -454,11 +456,205 @@ const smokePlanner = { session: { header: { id: 'smoke-planner', origin: 'subage
 registered.length = 0
 fireAgentCreated(harness, smokeMain)
 const saveProbeDef = registered.find((t) => t.name === 'save_probe')
+const smokeMainPlanDef = registered.find((t) => t.name === 'save_plan')
 registered.length = 0
 fireAgentCreated(harness, smokePlanner)
 const savePlanDef = registered.find((t) => t.name === 'save_plan')
+const smokePlannerPlanDef = savePlanDef
+const g3TmpRoot = mkdtempSync(join(tmpdir(), 'extra-plan-g3-fixture-'))
+const work = join(g3TmpRoot, 'work')
+mkdirSync(work)
+writeFileSync(join(work, 'a.txt'), 'hello')
+const execFake = (cwd) => ({ agent: { session: { header: { cwd, id: 'g3-exec-1' } } } })
 check('S14 冒烟捕获 save_probe 工具定义', saveProbeDef !== undefined && typeof saveProbeDef.execute === 'function', true)
 check('S15 冒烟捕获 save_plan 工具定义', savePlanDef !== undefined && typeof savePlanDef.execute === 'function', true)
+const savePlanDefinitionShape = (definition) => definition === undefined ? null : { name: definition.name, description: definition.description, parameters: definition.parameters, outputSchema: definition.output === undefined ? undefined : definition.output.schema }
+checkTrue('G3-H main/planner 共用同一save_plan合同', JSON.stringify(savePlanDefinitionShape(smokeMainPlanDef)) === JSON.stringify(savePlanDefinitionShape(smokePlannerPlanDef)))
+check('G3-H save_plan structured schema只声明paths', Object.keys(savePlanDef.output.schema.properties), ['paths'])
+
+// ── ④b G3 合同夹具与早拒回归（矩阵 A/E/H；只用真实合同正文） ───────
+function g3PlanTask({ id, file, relatedFiles, group, dependency, dependencyReason, groupReason, resource, pad }) {
+  const lines = [
+    '[任务' + id + '] G3真实合同任务' + pad,
+    '- 主文件：' + file,
+    '- 执行组：' + group,
+    '- 依赖：' + dependency,
+    '- 依赖理由：' + dependencyReason,
+    '- 分组理由：' + groupReason,
+    '- 修改：按任务范围完成实现并保留原始正文' + pad,
+    '- 自检：运行有限结构与落盘断言，不执行完整回归' + pad,
+    '- 独占资源：' + resource,
+  ]
+  if (Array.isArray(relatedFiles) && relatedFiles.length > 0) lines.splice(2, 0, ...relatedFiles.map((filePath) => '- 关联文件：' + filePath))
+  return lines.join('\n')
+}
+function g3ChecklistTask({ id, file, relatedFiles, checkRefs, pad }) {
+  const lines = [
+    '[任务' + id + '] G3真实验收任务' + pad,
+    '- 主文件：' + file,
+    '- 期望：任务文件范围、合同关系与逐字落盘结果均可复核' + pad,
+    '- 禁止：不得把任意占位正文当作合法成功输入' + pad,
+    '- 正式验收：' + checkRefs,
+  ]
+  if (Array.isArray(relatedFiles) && relatedFiles.length > 0) lines.splice(2, 0, ...relatedFiles.map((filePath) => '- 关联文件：' + filePath))
+  return lines.join('\n')
+}
+function makeG3Fixture({ slug = 'fixture', mode = 'single', related = false, dependent = false, closure = false, global = false, taskCount, resourceConflict = false, pad = '' } = {}) {
+  const count = taskCount === undefined ? (mode === 'single' ? 1 : 2) : taskCount
+  const planTasks = []
+  const checklistTasks = []
+  const taskIds = Array.from({ length: count }, (_, index) => index + 1)
+  for (const id of taskIds) {
+    const file = 'pe-test/g3-fixtures/' + slug + '-task-' + id + '.mjs'
+    const relatedFiles = related && id === 1 ? ['pe-test/g3-fixtures/' + slug + '-helper-' + id + '.mjs'] : []
+    const dependency = dependent && id === 2 ? '[任务1]' : '无'
+    const dependencyReason = dependent && id === 2 ? '先完成任务1再实现任务2' : '无'
+    const groupReason = relatedFiles.length > 0 ? '关联文件必须与主文件共同修改并核对' : '无'
+    const resource = resourceConflict ? 'g3-shared-fixture-resource' : '无'
+    const checkRefs = count > 1 && id === 2 ? '[检查1]、[检查2]' : '[检查1]'
+    planTasks.push(g3PlanTask({ id, file, relatedFiles, group: 'G' + id, dependency, dependencyReason, groupReason, resource, pad }))
+    checklistTasks.push(g3ChecklistTask({ id, file, relatedFiles, checkRefs, pad }))
+  }
+  const planParts = [
+    '- 执行模式：' + mode,
+    '- 派遣说明：本夹具声明实际任务、文件、依赖与执行组，完成后按原文冻结并验收',
+    planTasks.join('\n'),
+  ]
+  const checklistParts = [
+    '- 执行模式：' + mode,
+    '- 验收说明：按任务和检查ID复核合同，漏项、矛盾与过期证据不得通过',
+    checklistTasks.join('\n'),
+  ]
+  const closurePath = 'pe-test/g3-fixtures/' + slug + '-closure.mjs'
+  const closureDependencies = taskIds.map((id) => '[任务' + id + ']').join('、')
+  if (closure) {
+    planParts.push('', '[收尾]', '- 收尾文件：' + closurePath, '- 收尾依赖：' + closureDependencies, '- 收尾动作：核对全部数字任务交付并更新收尾文件', '- 自检：确认收尾文件与冻结源状态一致')
+  }
+  if (closure) checklistParts.push('', '[收尾]', '- 收尾文件：' + closurePath, '- 期望：收尾文件独立于数字任务且覆盖全部任务', '- 禁止：收尾不得重写数字任务文件', '- 正式验收：[检查1]')
+  checklistParts.push('', '[检查1] G3共享合同与正文复核', '- 验收组：R1', '- 取证方式：只读复核', '- 工作目录：.', '- 检查：逐字读取方案、验收及任务文件范围', '- 验收证据：两份正文逐字一致，结构摘要与覆盖范围可复核')
+  if (count > 1) checklistParts.push('', '[检查2] G3第二验收组独立复核', '- 验收组：R2', '- 取证方式：只读复核', '- 工作目录：.', '- 检查：复核第二任务依赖、执行组与R组分工', '- 验收证据：真实依赖或独立组状态与文件所有权符合合同')
+  if (global) checklistParts.push('', '[全局验收]', '- 期望：任务、收尾与共享检查覆盖完整', '- 禁止：不得以单组或过期证据推断全局通过', '- 正式验收：[检查1]')
+  planParts.push('', '补充说明：本方案夹具用于验证真实结构、早拒顺序、执行组关系和有限自检，不代表代理已执行。')
+  checklistParts.push('', '补充说明：本验收夹具用于验证期望、禁止、检查引用和共享验收组，不替代正式回归。')
+  return { plan: planParts.join('\n'), checklist: checklistParts.join('\n'), mode, taskCount: count, related, dependent, closureEnabled: closure, globalEnabled: global }
+}
+const g3ShortSingle = {
+  plan: ['- 执行模式：single', '- 派遣说明：先读两份工件，完成后冻结再验收', '[任务1] 短单任务', '- 主文件：src/a.js', '- 执行组：G1', '- 依赖：无', '- 依赖理由：无', '- 分组理由：无', '- 修改：完成短单任务', '- 自检：运行结构检查'].join('\n'),
+  checklist: ['- 执行模式：single', '- 验收说明：按检查ID复核，漏项不得通过', '[任务1] 验收短单任务', '- 主文件：src/a.js', '- 期望：结构解析正确', '- 禁止：不得自动执行命令', '- 正式验收：[检查1]', '[检查1] 核对结构合同', '- 验收组：R1', '- 取证方式：只读复核', '- 工作目录：.', '- 检查：读取src/a.js', '- 验收证据：读取结果符合合同'].join('\n'),
+}
+const shortValidation = validateSavePlanContract(g3ShortSingle.plan, g3ShortSingle.checklist)
+checkTrue('G3-A 纯validator允许短single且不受factory长度门槛影响', shortValidation.ok === true && g3ShortSingle.plan.length < 200 && g3ShortSingle.checklist.length < 200)
+const g3FixtureCases = [
+  ['G3-A single单文件无可选块', makeG3Fixture({ slug: 'single-file', mode: 'single' })],
+  ['G3-B single关联文件', makeG3Fixture({ slug: 'single-related', mode: 'single', related: true })],
+  ['G3-E single仅收尾', makeG3Fixture({ slug: 'single-closure', mode: 'single', closure: true })],
+  ['G3-E single仅全局', makeG3Fixture({ slug: 'single-global', mode: 'single', global: true })],
+  ['G3-C batch独立双组共享检查', makeG3Fixture({ slug: 'batch-independent', mode: 'batch' })],
+  ['G3-C batch真实依赖', makeG3Fixture({ slug: 'batch-dependent', mode: 'batch', dependent: true })],
+  ['G3-E batch收尾全局组合', makeG3Fixture({ slug: 'batch-closure-global', mode: 'batch', closure: true, global: true })],
+]
+const g3Validations = new Map()
+for (const [label, fixture] of g3FixtureCases) {
+  const validation = validateSavePlanContract(fixture.plan, fixture.checklist)
+  g3Validations.set(label, validation)
+  checkTrue(label + ' 真实validator通过', validation.ok === true)
+  checkTrue(label + ' factory两正文各至少200字符', fixture.plan.length >= 200 && fixture.checklist.length >= 200)
+}
+const independentSummary = g3Validations.get('G3-C batch独立双组共享检查').summary
+check('G3-C 独立双组均为初始可派且共享检查覆盖两任务', independentSummary.groups.map((group) => [group.group, group.groupDependsOn, group.initialState]), [['G1', [], 'eligible'], ['G2', [], 'eligible']])
+check('G3-D R组独立且共享检查覆盖正确', [independentSummary.reviewGroups.map((group) => group.reviewGroup), independentSummary.checks.map((item) => item.coverage.tasks)], [['R1', 'R2'], [[1, 2], [2]]])
+const dependentSummary = g3Validations.get('G3-C batch真实依赖').summary
+check('G3-C 真实依赖折叠为G2等待G1交付', dependentSummary.groups.map((group) => [group.group, group.groupDependsOn, group.initialState]), [['G1', [], 'eligible'], ['G2', ['G1'], 'waiting']])
+for (const [label, fixture] of g3FixtureCases.filter((entry) => entry[1].mode === 'single')) {
+  const summary = g3Validations.get(label).summary
+  check(label + ' 收尾/全局组合标志', [summary.hasClosure, summary.hasGlobalAcceptance], [fixture.closureEnabled, fixture.globalEnabled])
+}
+const closureGlobalSummary = g3Validations.get('G3-E batch收尾全局组合').summary
+check('G3-E batch收尾全局组合标志', [closureGlobalSummary.hasClosure, closureGlobalSummary.hasGlobalAcceptance], [true, true])
+check('G3-F fileCount/totalFileCount包含收尾文件', [closureGlobalSummary.taskFileCount, closureGlobalSummary.closureFileCount, closureGlobalSummary.fileCount, closureGlobalSummary.totalFileCount], [2, 1, 3, 3])
+
+const g3StubCalls = []
+const g3StubFactory = createSaveToolFactories({
+  savePlanDir: '.extra-plan',
+  recoverJournals: (...args) => g3StubCalls.push(['recover', args]),
+  atomicCommit: (...args) => g3StubCalls.push(['atomic', args]),
+})
+const g3StubPlanDef = g3StubFactory.defineSavePlan()
+for (let index = 0; index < g3FixtureCases.length; index += 1) {
+  const [label, fixture] = g3FixtureCases[index]
+  const before = g3StubCalls.length
+  let result
+  try {
+    result = await g3StubPlanDef.execute({ plan: fixture.plan, checklist: fixture.checklist, taskName: 'g3-' + index }, execFake(work))
+  } catch (error) {
+    result = null
+    checkTrue(label + ' stub execute合法正文未抛错：' + String(error.message), false)
+  }
+  const calls = g3StubCalls.slice(before)
+  const atomic = calls.find((item) => item[0] === 'atomic')
+  const entries = atomic !== undefined && Array.isArray(atomic[1][2]) ? atomic[1][2] : []
+  check('G3-H ' + label + ' recover先于atomic且双写两项', calls.map((item) => item[0]), ['recover', 'atomic'])
+  check('G3-H ' + label + ' 两项正文逐字保持', entries.map((entry) => entry.content), [fixture.plan, fixture.checklist])
+  check('G3-H ' + label + ' structured output仅paths', result === null ? [] : Object.keys(result), ['paths'])
+  checkTrue('G3-H ' + label + ' 返回两个路径', result !== null && Array.isArray(result.paths) && result.paths.length === 2 && result.paths.every((path) => typeof path === 'string'))
+}
+
+const invalidStructurePlan = g3FixtureCases[0][1].plan + '\n- 期望：方案中不允许的错位字段\n【探查者已核实】证据：pe-test/g3-fixtures/missing-evidence-report.md'
+const invalidReference = {
+  plan: g3FixtureCases[0][1].plan,
+  checklist: g3FixtureCases[0][1].checklist.replace('- 正式验收：[检查1]', '- 正式验收：[检查9]'),
+}
+const invalidResource = makeG3Fixture({ slug: 'invalid-resource', mode: 'batch', resourceConflict: true })
+const closureFixture = makeG3Fixture({ slug: 'invalid-closure', mode: 'single', closure: true })
+const closureStart = closureFixture.checklist.indexOf('\n[收尾]')
+const checkStart = closureFixture.checklist.indexOf('\n[检查1]', closureStart)
+const invalidClosure = {
+  plan: closureFixture.plan,
+  checklist: closureStart >= 0 && checkStart > closureStart ? closureFixture.checklist.slice(0, closureStart) + closureFixture.checklist.slice(checkStart) : closureFixture.checklist,
+}
+const oversizedSummary = makeG3Fixture({ slug: 'invalid-summary', mode: 'batch', taskCount: 20, pad: '摘要上限复现文本'.repeat(120) })
+const invalidCases = [
+  ['G3-H 非法结构含证据标记', { plan: invalidStructurePlan, checklist: g3FixtureCases[0][1].checklist, needle: '字段出现在错误结构块', evidenceGuard: true }],
+  ['G3-H 非法检查引用', { plan: invalidReference.plan, checklist: invalidReference.checklist, needle: '正式验收引用的检查 ID 不存在' }],
+  ['G3-H 跨执行组资源冲突', { plan: invalidResource.plan, checklist: invalidResource.checklist, needle: '独占资源' }],
+  ['G3-E 收尾双文档不一致', { plan: invalidClosure.plan, checklist: invalidClosure.checklist, needle: '收尾' }],
+  ['G3-F 摘要超过12000字符', { plan: oversizedSummary.plan, checklist: oversizedSummary.checklist, needle: '派遣摘要' }],
+]
+const invalidEffects = { recover: 0, atomic: 0 }
+const invalidFactory = createSaveToolFactories({
+  savePlanDir: '.extra-plan',
+  recoverJournals: () => { invalidEffects.recover += 1 },
+  atomicCommit: () => { invalidEffects.atomic += 1 },
+})
+const invalidPlanDef = invalidFactory.defineSavePlan()
+async function rejectG3BeforeIO(label, item) {
+  let message = ''
+  try {
+    await invalidPlanDef.execute({ plan: item.plan, checklist: item.checklist, taskName: 'g3-invalid' }, execFake(work))
+  } catch (error) {
+    message = String(error.message)
+  }
+  checkTrue(label + ' 在context/base、证据IO、recover、atomic前拒绝', message.includes(item.needle) && message.includes('文件级任务合同校验不通过'))
+  if (item.evidenceGuard === true) checkTrue(label + ' 未先触发证据文件IO', !message.includes('证据文件不存在'))
+}
+const g3DateBeforeInvalid = globalThis.Date
+const g3FixedMillis = 1893456000123
+class G3FixedDate extends g3DateBeforeInvalid {
+  constructor(...args) { super(...(args.length === 0 ? [g3FixedMillis] : args)) }
+}
+let invalidBaseBefore
+let invalidBaseAfter
+try {
+  globalThis.Date = G3FixedDate
+  invalidBaseBefore = saveArtifactBase('g3-invalid-sequence', 'g3-session-123')
+  for (const [label, item] of invalidCases) await rejectG3BeforeIO(label, item)
+  invalidBaseAfter = saveArtifactBase('g3-invalid-sequence', 'g3-session-123')
+} finally {
+  globalThis.Date = g3DateBeforeInvalid
+}
+const g3BaseSequence = (value) => Number((String(value).match(/-(\d+)$/) || [])[1])
+checkTrue('G3-H 所有非法合同不消耗context/base序号且恢复Date', globalThis.Date === g3DateBeforeInvalid && g3BaseSequence(invalidBaseAfter) === g3BaseSequence(invalidBaseBefore) + 1 && invalidEffects.recover === 0 && invalidEffects.atomic === 0)
+rmSync(g3TmpRoot, { recursive: true, force: true })
 
 const tmpRoot = mkdtempSync(join(tmpdir(), 'extra-plan-smoke-'))
 try {
@@ -487,11 +683,14 @@ try {
     recoverJournals: (...args) => contextCalls.push(['recover', args]),
     atomicCommit: (...args) => contextCalls.push(['atomic', args]),
   })
-  const contextPlanResult = await contextFactory.defineSavePlan().execute({ plan: 'p'.repeat(300), checklist: 'c'.repeat(300), taskName: 'order' }, execFake(work))
+  const contextSingleFixture = g3FixtureCases[0][1]
+  const contextPlanResult = await contextFactory.defineSavePlan().execute({ plan: contextSingleFixture.plan, checklist: contextSingleFixture.checklist, taskName: 'order' }, execFake(work))
   const contextProbeResult = await contextFactory.defineSaveProbe().execute({ ...contextProbeArgs, taskName: 'order-probe', fileMap: [{ path: 'a.txt', relation: '相关文件' }], focusAreas: [{ path: 'a.txt', note: '重点' }] }, execFake(work))
   const atomicCalls = contextCalls.filter((item) => item[0] === 'atomic')
   checkTrue('T3 recoverJournals 严格先于两次 atomicCommit', contextCalls.map((item) => item[0]).join('|') === 'recover|atomic|recover|atomic')
   checkTrue('T3 save_plan 提交双文件且返回 paths，save_probe 提交单文件且返回 path', atomicCalls.length === 2 && atomicCalls[0][1][2].length === 2 && atomicCalls[1][1][2].length === 1 && Array.isArray(contextPlanResult.paths) && typeof contextProbeResult.path === 'string')
+  check('T3 合法single正文逐字交给atomicCommit', atomicCalls[0][1][2].map((entry) => entry.content), [contextSingleFixture.plan, contextSingleFixture.checklist])
+  check('T3 save_plan structured output仅paths', Object.keys(contextPlanResult), ['paths'])
   const probeResult = await saveProbeDef.execute({
     taskName: 'smoke',
     fileMap: [{ path: 'a.txt', relation: '相关文件' }],
@@ -571,9 +770,12 @@ try {
   writeFileSync(staleCheckTmp, '旧残留-验收')
   const staleWarnings = captureWarn(() => recoverJournals(ep))
   checkTrue('S20b 旧形状 journal：告警且 journal/tmp 字节原样保留', staleWarnings.some((t) => t.includes('journal recovery failed')) && readFileSync(staleJournal, 'utf8') === staleRecord && readFileSync(stalePlanTmp, 'utf8') === '旧残留-方案' && readFileSync(staleCheckTmp, 'utf8') === '旧残留-验收')
-  const planResult = await savePlanDef.execute({ plan: 'p'.repeat(300), checklist: 'c'.repeat(300), taskName: 'smoke2' }, execFake(work))
+  const productionFixture = g3FixtureCases.find((entry) => entry[0] === 'G3-E batch收尾全局组合')[1]
+  const planResult = await savePlanDef.execute({ plan: productionFixture.plan, checklist: productionFixture.checklist, taskName: 'smoke2' }, execFake(work))
   const tsMatch = (p) => (String(p).match(/-[A-Za-z0-9]+-(\d{17})-\d+-\d+\.md$/) || [])[1]
   checkTrue('S21 save_plan 双文件落盘成功（同毫秒 artifact base）', Array.isArray(planResult.paths) && planResult.paths.length === 2 && existsSync(planResult.paths[0]) && existsSync(planResult.paths[1]) && tsMatch(planResult.paths[0]) === tsMatch(planResult.paths[1]))
+  check('S21a 合法batch正文逐字双写', planResult.paths.map((path) => readFileSync(path, 'utf8')), [productionFixture.plan, productionFixture.checklist])
+  check('S21b save_plan structured output仅paths', Object.keys(planResult), ['paths'])
   checkTrue('S22 旧形状 journal 保留（方案-stale.md 不被自愈）', !existsSync(stalePlan) && existsSync(stalePlanTmp))
   checkTrue('S22b 旧形状 journal 另一端原样保留（验收-stale.md 不被自愈）', !existsSync(staleCheck) && existsSync(staleCheckTmp))
   checkTrue('S23 当前 save_plan 完成但旧 journal/tmp 现场保留', existsSync(staleJournal) && existsSync(stalePlanTmp) && existsSync(staleCheckTmp))

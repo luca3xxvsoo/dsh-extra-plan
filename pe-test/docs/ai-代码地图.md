@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-10-15 16:56:43（脚本自动更新时间戳行）
+> 上次同步：2026-10-16 07:15:42（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -30,12 +30,17 @@
 | 规划子代理分支闸门（planner 写禁+预算） | index.js | plannerGateReason、shellMutationReason |
 | 会话事件快照/子代理角色识别／单次快照复用（execEvents）／planner descriptor 缓存／events 可选入参 | lib/agent-session.js、lib/agent-runtime.js、index.js | sessionEvents、isSubagentChild、isLiveDelegation、childPolicyNeedsFloor、createAgentRuntime、isChild、isPlannerChild、toolSchemasOf、usageRoleOf、childBaseline |
 | 会话状态生命周期／disposed 收尾／末轮 usage 结算／usage 账本续载／可信用量字段（provider/cw/rs）（session 分桶、final flush、cursor 降级、session.seq 水位 + snapshotEvents(from,to) 区间增量、水位未变直接返回、截断回退全量） | index.js、lib/agent-runtime.js | foldUsage、readUsageCursorTable、warnUsageCursorDegraded、usageCursorEntryOf、usageRoleOf、noteRunCodeSubCall、childBaseline |
-| 方案与验收落盘／save_plan 双写（plan/checklist；主会话侧任意路由态放行的受限规划工件，仅写 cwd/.extra-plan） | lib/save-tool-factories.js、lib/save-contract.js、index.js | defineSavePlan、registerSavePlan、saveArtifactBase |
+| 方案与验收落盘／save_plan 双写（严格 plan/checklist 合同；主会话侧任意路由态放行的受限规划工件，仅写 cwd/.extra-plan；工具不自动调度） | lib/save-tool-factories.js、lib/save-contract.js、index.js | defineSavePlan、registerSavePlan、saveArtifactBase |
 | 落盘原子提交／journal 崩溃自愈（atomic/commit） | lib/save-persistence.js、index.js | atomicCommit、recoverJournals |
 | 线索落盘／save_probe／证据报告（probe/evidence；限制值唯一来自 `save-contract.js#PROBE_LIMITS`；step-00 PR23/PR34/PR35 回归；主会话侧放行条件保持现状——route=plan + 目的已定 + 澄清完成；extractProbeEvidenceRefs 顺序固定：整体成对剥除（循环）→ 按顿号/分号/竖线拆分 → 逐段成对剥除 + trim → 过滤空串 → 去重；拆分符与剥除集均不含空格、半角逗号、`.`、`/`，单侧一律不剥） | lib/save-contract.js、lib/save-probe-validation.js、lib/save-tool-factories.js、index.js | validateProbe、renderProbeMarkdown、extractProbeEvidenceRefs |
-| save 合同／限制值／ContentBlock 渲染（统一 artifact base：sessionTag/毫秒/pid/序号；PROBE_LIMITS、LINE_FORMAT_HINT、RANGE_FORMAT_HINT 与渲染合同） | lib/save-contract.js | sanitizeTaskName、timestamp、sessionTagOf、saveArtifactBase、renderSavePlan、renderProbeMarkdown、renderSaveProbe、extractProbeEvidenceRefs |
+| save_plan 限制值／确定性 summary／ContentBlock 渲染（SAVE_PLAN_LIMITS；formatSavePlanSummary 与 renderSavePlan 共用同一摘要口径；并保留 save_probe 合同） | lib/save-contract.js | sanitizeTaskName、timestamp、sessionTagOf、saveArtifactBase、formatSavePlanSummary、renderSavePlan、renderProbeMarkdown、renderSaveProbe、extractProbeEvidenceRefs |
 | save_probe 校验／路径存在性与聚合拒绝 | lib/save-probe-validation.js | validateProbe、probePathOf |
-| save 工具显式依赖工厂 | lib/save-tool-factories.js | createSaveToolFactories、defineSavePlan、defineSaveProbe |
+| save 工具工厂／严格校验顺序／paths-only | lib/save-tool-factories.js | createSaveToolFactories、defineSavePlan、resolveSaveContext、defineSaveProbe |
+| save_plan 模式／任务块／卷首职责与块边界 | plugins/dsh-extra-plan/lib/save-plan-validation.js | parseTaskDocument、validateIds、validateTaskShape |
+| save_plan 路径／资源／文件所有权与组 DAG（initialState 仅静态资格） | plugins/dsh-extra-plan/lib/save-plan-validation.js | pathIssue、parseResources、validatePlanRelations、buildInternalOrder、buildSummary |
+| save_plan 检查引用／验收组／收尾全局／早拒 | plugins/dsh-extra-plan/lib/save-plan-validation.js | parseCheckRefs、validateChecks、validateClosure、validateGlobal、validateSavePlanContract |
+| step-00／step-06 save_plan 通用合同回归覆盖（模式、任务/组 DAG、资源/检查引用、收尾/全局、摘要/早拒、paths-only 与零副作用） | pe-test/tools/step-00-全流程回归.mjs、pe-test/tools/step-06-线索落盘.mjs |  |
+| 五份文档的通用派遣／验收边界（工件自包含；执行组与人数分离；执行者自检与 reviewer 验收分离；冻结、证据复用、失败复验、生产与 HUMAN 边界） | READAI.md、pe-test/docs/ai-概览.md、pe-test/docs/ai-机制设计.md、pe-test/docs/ai-流程备查.md、pe-test/docs/ai-维护手册.md |  |
 | PTC F→L／native-both HN-HB 实机取证 | pe-test/docs/ai-实机闸门测试流程.md |  |
 | 实机子代理模型／提供方／planner 引导取证（A42/A43、C11/C12、HUMAN；显式 SESSION_ID + PLANNER_PROMPT_SUFFIX；request/header attempted route（尝试路由） 与 assistant/message actual provenance（实际来源） 分栏；suffix 等级与完整文本；两阶段头扫描 `headerOfDir` 只解析命中直接 child、事件不保留 raw，默认堆可跑通） | pe-test/tools/step-07-子代理模型与引导取证.mjs |  |
 | 120格 A/C/M/F-L 路由与目录断言／显式 header catalog 取证 | pe-test/tools/step-04-路由与写闸门.mjs、pe-test/tools/step-04-工具清单查看.mjs |  |
@@ -96,10 +101,11 @@
 | plugins/dsh-extra-plan/lib/run-code-static.js | 571 | run_code 纯静态解析/理由模块：安全 JSON/JS literal 解析、动态 argsText 瀑布兜底、写模式 hint、工具组拆解、ask 返回值白名单、调用点计数与双兼容 dispatch cap；仅显式注入普通依赖，不持有宿主状态。 |
 | plugins/dsh-extra-plan/lib/runtime-lifecycle.js | 124 | per-apply 运行时生命周期：save 工具注册、probe 名额认领与 run_code 子调用计数/拒绝记录，状态在闭包内并按会话清理 |
 | plugins/dsh-extra-plan/lib/runtime-static.js | 15 | 显式参数纯 helper：SKILL frontmatter 与 cause 链解析；不持有宿主状态 |
-| plugins/dsh-extra-plan/lib/save-contract.js | 191 | save 合同唯一真源：任务名/sessionTag/base、PROBE_LIMITS、ContentBlock/Markdown 渲染与证据引用清洗；无宿主状态，限制值只在本文件维护。 |
+| plugins/dsh-extra-plan/lib/save-contract.js | 255 | save 合同唯一真源：任务名/sessionTag/base、SAVE_PLAN_LIMITS 与确定性 summary/render、PROBE_LIMITS、ContentBlock/Markdown 渲染与证据引用清洗；无宿主状态，运行时限制只在本文件维护。 |
 | plugins/dsh-extra-plan/lib/save-persistence.js | 85 | 阶段感知公共原子落盘与 journal 自愈：tmp→journal→rename→逐项确认目标就位→清 journal；pre-journal 条件清理（先删 journal 并确认不存在才清 tmp）、post-journal 一律保留 journal 与现场、全目标确认后才删 journal；恢复逐项确认目标存在、全项就位才清 journal，形状非法/目标缺失保留 journal 并告警；按 sessionTag 过滤；末位可选 fs 依赖默认同义映射 node:fs（冻结只读、未提供项回退默认） |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | 937 | save_plan 文本合同校验：模式/任务/路径所有权/依赖与执行组 DAG/资源/检查引用与验收组/收尾全局/摘要早拒；不启动代理或执行命令。 |
 | plugins/dsh-extra-plan/lib/save-probe-validation.js | 113 | save_probe 参数校验：数组/条目/长度/总量/path 存在性/range/evidence 聚合拒绝 |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | 215 | 显式依赖工厂：定义 save_plan/save_probe schema/output/render/execute；证据引用报错以 JSON.stringify(ref) 呈现（首字符属装饰集时附「疑似含 Markdown 装饰」提示）；不缓存 ctx/agent/会话状态 |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | 223 | 显式依赖工厂：save_plan 按类型/长度→合同/摘要→context/base→证据 IO→recoverJournals→atomicCommit 严格接线；合法正文逐字双写、structured output 仅 paths、render 为 text ContentBlock；save_probe 保留既有证据诊断与落盘；不缓存 ctx/agent/会话状态。 |
 | plugins/dsh-extra-plan/lib/sdk-text-cache.js | 161 | apply 级 agent-keyed WeakMap SDK 文本缓存：完整 renderer 输入保守指纹、language/renderer 身份比较、并发 Promise 合并、reject/过期 Promise 不回写、dispose 回收；不持有 sessionId 或 PromptAssembly |
 | plugins/dsh-extra-plan/lib/settings-contract.js | 160 | 服务端设置 descriptor 单一合同：10 项的类型/默认值/校验/UI 与权威-投影双定位器，并导出分组与投影遍历源 |
 | plugins/dsh-extra-plan/lib/settings.js | 584 | 10 字段 volatile Config、页面策略与 loopback GET/PUT；权威值在唯一 settings 行，PUT 先拒绝空/null/数组/原始/未知/非法混合载荷并严校验当前 gateWords，再只 edit 全局行，no-op 也重读最终快照并等待 profileSync，结构化区分 synced/not-installed/unavailable/failed/partial。 |
@@ -571,27 +577,74 @@
 | plugins/dsh-extra-plan/lib/save-contract.js | timestamp | L20-22 | 秒级公共时间戳 yyyyMMddHHmmss（仅保证格式可读；工件唯一基座见 saveArtifactBase） |  |
 | plugins/dsh-extra-plan/lib/save-contract.js | sessionTagOf | L26-28 | 会话标识段（去分隔符后取前 8 位字母数字） |  |
 | plugins/dsh-extra-plan/lib/save-contract.js | saveArtifactBase | L34-49 | 统一生成任务名+sessionTag+毫秒+process.pid+进程序号的碰撞安全 base |  |
-| plugins/dsh-extra-plan/lib/save-contract.js | renderSavePlan | L56-58 | save_plan 结果渲染为单元素 ContentBlock[] |  |
-| plugins/dsh-extra-plan/lib/save-contract.js | renderProbeMarkdown | L93-134 | save_probe 线索/证据报告 Markdown 渲染（固定标题与五节模板） |  |
-| plugins/dsh-extra-plan/lib/save-contract.js | trimProbeEvidenceDecor | L160-171 | 成对剥除装饰并循环；单侧装饰不剥，`.` 与 `/` 保留，避免误伤合法路径。 | extractProbeEvidenceRefs 整体/逐段调用；step-00 E10-E12 |
-| plugins/dsh-extra-plan/lib/save-contract.js | extractProbeEvidenceRefs | L172-185 | 按“整体成对剥除→顿号/分号/竖线拆分→逐段成对剥除→trim→过滤→按序去重”提取证据路径；拆分不含空格/半角逗号。 | step-00 E1-E12 覆盖路径与清洗边界 |
-| plugins/dsh-extra-plan/lib/save-contract.js | renderSaveProbe | L189-191 | save_probe 结果渲染为单元素 ContentBlock[] |  |
+| plugins/dsh-extra-plan/lib/save-contract.js | summaryList | L56-58 | 将摘要数组稳定连接为确定性展示片段。 |  |
+| plugins/dsh-extra-plan/lib/save-contract.js | summaryBool | L60-62 | 将 summary 布尔覆盖标志格式化为中文是或否。 |  |
+| plugins/dsh-extra-plan/lib/save-contract.js | formatSavePlanSummary | L65-98 | 格式化不含落盘路径的确定性派遣摘要，覆盖任务、文件、执行组、R 组、检查、收尾、全局与职责，供限长和 render 共用。 |  |
+| plugins/dsh-extra-plan/lib/save-contract.js | renderSavePlan | L105-122 | save_plan 结果渲染为单元素 text ContentBlock[]，展示双路径、完整 summary 范围与职责提示，不替代原始工件。 |  |
+| plugins/dsh-extra-plan/lib/save-contract.js | renderProbeMarkdown | L157-198 | save_probe 线索/证据报告 Markdown 渲染（固定标题与五节模板） |  |
+| plugins/dsh-extra-plan/lib/save-contract.js | trimProbeEvidenceDecor | L224-235 | 成对剥除装饰并循环；单侧装饰不剥，`.` 与 `/` 保留，避免误伤合法路径。 | extractProbeEvidenceRefs 整体/逐段调用；step-00 E10-E12 |
+| plugins/dsh-extra-plan/lib/save-contract.js | extractProbeEvidenceRefs | L236-249 | 按“整体成对剥除→顿号/分号/竖线拆分→逐段成对剥除→trim→过滤→按序去重”提取证据路径；拆分不含空格/半角逗号。 | step-00 E1-E12 覆盖路径与清洗边界 |
+| plugins/dsh-extra-plan/lib/save-contract.js | renderSaveProbe | L253-255 | save_probe 结果渲染为单元素 ContentBlock[] |  |
 | plugins/dsh-extra-plan/lib/save-persistence.js | fsOpsOf | L8-11 | 合并末位可选文件系统操作依赖：未提供的操作项回退冻结只读的默认 node:fs 同义实现（另建新对象，不就地改写共享默认集） |  |
 | plugins/dsh-extra-plan/lib/save-persistence.js | atomicCommit | L17-47 | 阶段感知提交：mkdir→tmp→journal→逐项 rename→确认目标→清 journal；pre-journal 条件清理，post-journal 失败保留 journal/现场，抛原始错误。 | 末位 fs 依赖可注入；step-06 故障恢复覆盖 |
 | plugins/dsh-extra-plan/lib/save-persistence.js | recoveryTargetsOf | L51-60 | journal 只接受非空当前 entries 列表；旧形状/非法形状只告警并保留 journal 与 tmp |  |
 | plugins/dsh-extra-plan/lib/save-persistence.js | recoverJournals | L64-85 | journal 崩溃自愈：逐项「tmp 存在则 rename、随后确认目标存在」，已完成项凭目标存在幂等续做，任一项失败保留 journal，全项就位才删；形状非法/目标缺失告警后保留并继续扫其它 journal；兼容新旧形状并按 sessionTag 过滤；末位可选 fs 依赖注入 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | newTask | L46-54 | 创建带字段数组、文件集合和引用缓存的数字任务中间结构。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | newClosure | L56-62 | 创建收尾中间结构，承载文件、依赖、动作、自检与覆盖引用。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | newCheck | L64-70 | 创建检查定义中间结构，承载验收组、取证、动作、证据与覆盖。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | newGlobal | L72-74 | 创建全局验收中间结构及正式检查引用。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | makeDiagnostic | L76-85 | 统一生成含最小修复模板的结构诊断对象。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | defaultTemplate | L87-114 | 按字段提供有界的最小合法修复模板。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | normalizeText | L116-118 | 统一 CRLF 和 CR 为 LF，保持合同文本解析口径。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | fieldOf | L120-125 | 按列首字段前缀识别结构字段及其值。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | headingCandidate | L127-139 | 识别任务、检查、收尾、全局块，并将伪标题归入早拒诊断。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | pushEmptyFieldDiagnostic | L141-145 | 拒绝空结构字段并附字段级诊断。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | parseTaskDocument | L147-316 | 按模式与职责解析 plan 或 checklist 的任务、收尾、检查、全局块；忽略围栏和缩进伪标记并记录顺序及职责错误。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | flush | L161-168 | 结束当前结构块并写入对应任务、检查、收尾或全局集合。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | wrongHeading | L170-172 | 记录列首结构标题、顺序或职责错位的早拒诊断。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | validateIds | L318-329 | 验证任务或检查 ID 唯一、连续且按序出现。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | isMarkdownWrapped | L331-342 | 识别路径是否被 Markdown 或成对装饰包裹。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | pathIssue | L344-356 | 拒绝绝对、盘符、反斜杠、点段、空段、尾斜杠或 Markdown 包裹路径。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | workdirIssue | L358-363 | 允许根目录点号并复用相对路径规则校验检查工作目录。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | platformIsCaseInsensitive | L365-369 | 按注入平台或开关决定路径键的大小写口径。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | pathKey | L371-374 | 生成按平台归一化的路径所有权和冲突比较键。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | parseDependencies | L376-385 | 解析“无”或任务引用列表，拒绝空、非法及重复依赖。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | parseResources | L387-395 | 解析可选独占资源列表，拒绝空、重复或“无”混用。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | parseCheckRefs | L397-405 | 解析正式验收检查引用列表，拒绝空、非法或重复 ID。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | addPathDiagnostics | L407-412 | 对主、关联、收尾文件或工作目录统一追加路径诊断。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | validatePathSet | L414-428 | 校验任务文件集合、路径键重复并缓存原始和规范集合。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | validateResourceField | L430-438 | 校验独占资源单值基数并解析资源标识。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | validateTaskShape | L440-475 | 校验任务标题、文件、执行组、依赖、修改自检，或期望禁止及正式验收字段。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | graphCycles | L477-498 | 对任务或执行组依赖图检测并去重环路。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | visit | L482-495 | 深度优先访问依赖图节点并收集环路，供 graphCycles 使用。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | groupSort | L500-504 | 按 G 组编号稳定排序。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | firstTaskForGroup | L506-509 | 定位执行组首个任务，用于组环诊断归属。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | validatePlanRelations | L511-583 | 校验任务依赖与组折叠 DAG、文件所有权、同组理由及执行资源冲突。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | equalRawSets | L585-589 | 比较双文档路径或收尾文件的原始集合。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | validateCrossDocument | L591-608 | 校验 plan 和 checklist 的模式、任务 ID、文件集合及收尾存在性一致。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | validateClosure | L610-658 | 校验收尾文件、全任务依赖、所有权隔离、动作自检、资源及正式验收引用。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | validateGlobal | L660-670 | 校验全局期望、禁止与唯一正式验收引用。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | validateChecks | L672-729 | 校验检查 ID、验收组、取证、目录、动作、证据、资源、签名去重、引用覆盖及孤儿拒绝。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | attachRefs | L707-720 | 将任务、收尾或全局正式验收引用解析为覆盖关系，早拒不存在检查。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | sortIds | L731-733 | 去重并数值排序覆盖 ID。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | buildInternalOrder | L735-759 | 按任务依赖计算执行组内拓扑顺序。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | reviewGroupSort | L761-765 | 按 R 组编号稳定排序。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | buildSummary | L767-882 | 构造通用派遣摘要：任务、文件、执行组外依赖与 initialState、检查及 R 组覆盖、收尾和全局；不输出人数或实时状态。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | formatDiagnostic | L884-889 | 将诊断压缩为有界且可修复的文本。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | finalizeFailure | L891-897 | 限制展示诊断数量并汇总剩余数，形成失败结果。 |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | validateSavePlanContract | L899-934 | 按类型、双文档解析、结构关系、检查覆盖及摘要限长顺序校验；合法返回 summary，失败早于工厂的 context/base、证据 IO、recover 和 atomic。 |  |
 | plugins/dsh-extra-plan/lib/save-probe-validation.js | validateProbe | L8-107 | save_probe 参数校验：上限、路径存在性、range/evidence 规则与聚合拒绝 |  |
 | plugins/dsh-extra-plan/lib/save-probe-validation.js | probePathOf | L110-113 | 相对路径按 cwd 解析、绝对路径原样返回 |  |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | probeRefDecorationHint | L10-12 | ref 首字符属装饰集（反引号/引号/半全角括号/中文标点等）时返回「疑似含 Markdown 装饰；引用证据请使用裸路径，每条单独一行」提示，否则返回空串 | 工具侧诊断文本（非界面文案）；报错中 ref 一律 JSON.stringify 呈现 |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | cwdOf | L15-19 | 从 exec.agent.session.header 读取会话工作区 cwd：任一层缺失或 cwd 非字符串时返回空串；不计算目录、短名或工件 base。 |  |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | resolveSaveContext | L22-32 | 返回 save 工具共用的四字段 `{ cwd, sessionTag, dir, base }`；cwd/会话标签、落盘目录与工件 base 各自按输入解析，参数校验与提交形状仍由各工具自理 |  |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | createSaveToolFactories | L35-215 | 创建只捕获目录与原子持久化依赖的 save 工具定义工厂；注入依赖：savePlanDir、atomicCommit、recoverJournals |  |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | defineSavePlan | L36-98 | save_plan schema/output/render/execute（双写与证据引用校验） |  |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | render | L57-59 | save_plan 工具结果渲染：把落盘后的方案与验收清单两个文件路径格式化为模型可见文本块。 |  |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | execute | L62-96 | save_plan 执行体：校验 plan/checklist 与证据引用后原子双写方案、验收两文件，返回其路径。 |  |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | defineSaveProbe | L100-212 | save_probe schema/output/render/execute（限制校验与线索/证据落盘） |  |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | render | L188-190 | save_probe 工具结果渲染：结合是否含 evidence 生成模型可见提示，说明落盘的是证据报告还是线索文件。 |  |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | execute | L193-210 | save_probe 执行体：校验参数与路径后，将探查结果渲染为 Markdown 原子落盘单文件，返回其路径。 |  |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | probeRefDecorationHint | L11-13 | ref 首字符属装饰集（反引号/引号/半全角括号/中文标点等）时返回「疑似含 Markdown 装饰；引用证据请使用裸路径，每条单独一行」提示，否则返回空串 | 工具侧诊断文本（非界面文案）；报错中 ref 一律 JSON.stringify 呈现 |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | cwdOf | L16-20 | 从 exec.agent.session.header 读取会话工作区 cwd：任一层缺失或 cwd 非字符串时返回空串；不计算目录、短名或工件 base。 |  |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | resolveSaveContext | L23-33 | 返回 save 工具共用的四字段 `{ cwd, sessionTag, dir, base }`；cwd/会话标签、落盘目录与工件 base 各自按输入解析，参数校验与提交形状仍由各工具自理 |  |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | createSaveToolFactories | L36-223 | 创建只捕获目录与原子持久化依赖的 save 工具定义工厂；注入 savePlanDir、atomicCommit、recoverJournals，不持有宿主会话状态。 |  |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | defineSavePlan | L37-106 | 定义 save_plan schema、paths-only output、ContentBlock render 与 execute；合同校验和证据校验先于原子双写。 |  |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | render | L58-65 | save_plan render 复用合同 summary，返回单个 text ContentBlock；structured output 不扩展 paths。 |  |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | execute | L68-104 | save_plan 按类型和长度、未探查标记、合同摘要、context/base、证据 IO、recoverJournals、atomicCommit 顺序执行；合法正文逐字双写并仅返回 paths，早拒不触碰后续 IO。 |  |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | defineSaveProbe | L108-220 | save_probe schema/output/render/execute（限制校验与线索/证据落盘） |  |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | render | L196-198 | save_probe 工具结果渲染：结合是否含 evidence 生成模型可见提示，说明落盘的是证据报告还是线索文件。 |  |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | execute | L201-218 | save_probe 执行体：校验参数与路径后，将探查结果渲染为 Markdown 原子落盘单文件，返回其路径。 |  |
 | plugins/dsh-extra-plan/lib/sdk-text-cache.js | isWeakKey | L7-9 | 判断值是否可作为 WeakMap key |  |
 | plugins/dsh-extra-plan/lib/sdk-text-cache.js | numberTag | L11-17 | 为 NaN/Infinity/-0 等数字生成无歧义指纹标签 |  |
 | plugins/dsh-extra-plan/lib/sdk-text-cache.js | isArrayIndexKey | L19-23 | 识别数组数字索引，保留额外自有字段顺序 |  |
