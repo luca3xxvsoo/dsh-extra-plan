@@ -1,7 +1,6 @@
 // YAML 解析、行定位、捕获和保格式文本 patch 纯职责。
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
-import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -38,7 +37,7 @@ import {
   normalizeSettingValue,
   validateSettingValue,
 } from './settings-contract.js'
-import { GATE_WORD_FIELDS, validateGateWords } from './gate-words.js'
+import { validateGateWords } from './gate-words.js'
 
 export function parsePresetYaml(text) {
   return yaml.load(text, { schema: YAML_SCHEMA })
@@ -215,9 +214,6 @@ export function captureRowSettings(text, definitions) {
 }
 
 const CANONICAL_SETTINGS_NAME = 'dsh-extra-plan/settings'
-const MIGRATION_KEYS = Object.freeze(SETTING_DEFINITIONS.map((item) => item.key))
-const MIGRATION_GATE_KEYS = Object.freeze(GATE_WORD_FIELDS.map((item) => item.field))
-
 function migrationEntryName(entry) {
   if (entry !== null && typeof entry === 'object' && entry.entry !== undefined && entry.entry.options !== undefined) return entry.entry.options.name
   return entry !== null && typeof entry === 'object' ? entry.name : undefined

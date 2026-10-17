@@ -4,7 +4,7 @@
 // 两项宿主设置只从权威值派生到内存 definition，不再写独立公开投影行。
 
 import { createHash, randomUUID } from 'node:crypto'
-import { readFileSync, existsSync, statSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 import { isDeepStrictEqual } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'

@@ -161,6 +161,21 @@ for (const [cmd, expected] of pwshRedirectMatrix) {
   for (const shape of ['object', 'string']) check(`${shape} arguments ${expected ? '拦截' : '放行'}: ${cmd}`, gateDeny(pwshExec(cmd, shape)) === expected)
 }
 
+console.log('== cmd/cmd.exe /c 包装矩阵：写命令拦截、dir/echo 只读对照 ==')
+const cmdWrapperMatrix = [
+  ['cmd /c del x.txt', true],
+  ['cmd.exe /c del x.txt', true],
+  ['CMD.EXE /C "Remove-Item x.txt"', true],
+  ['"cmd.exe" /c "del x.txt"', true],
+  ['cmd /c "echo hi > out.txt"', true],
+  ['cmd /c dir', false],
+  ['cmd.exe /C "echo hi"', false],
+  ['"CMD.EXE" /c "echo del done"', false],
+]
+for (const [cmd, expected] of cmdWrapperMatrix) {
+  for (const shape of ['object', 'string']) check(`${shape} arguments ${expected ? '拦截' : '放行'} cmd包装: ${cmd}`, gateDeny(pwshExec(cmd, shape)) === expected)
+}
+
 console.log('== pwsh 对等回归（PWSH_MUTATION 行为不变） ==')
 const pwshShouldDeny = [
   'Remove-Item x',

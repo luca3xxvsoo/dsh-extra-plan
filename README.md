@@ -140,7 +140,8 @@ dsh-extra-plan/
 │   ├── _shared/                                        
 │   │   ├── host-deps.mjs  
 │   │   ├── preset-hash.mjs      
-│   │   ├── session-finder.mjs    
+│   │   ├── session-finder.mjs     
+│   │   ├── test-output.mjs  
 │   │   ├── v4-tool-result.mjs
 │   │   └── zstd-frames.mjs  
 │   ├── docs/                                           # AI文档

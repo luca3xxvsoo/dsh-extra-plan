@@ -19,6 +19,13 @@
 - 只读复核、执行取证、静态检查和用户实机分别记录 PASS/FAIL/INCOMPLETE/NOT-RUN/SKIP/HUMAN；命令退出 0 不替代期望/禁止核对。字符测量使用 `String.length`，token 只有真实同口径数据才记录，否则 `NOT-RUN`。
 - 固定回归顺序仍按本手册“QQBot CLI 与维护所有权”部分逐项执行；一键 runner 内部重跑既有收口命令必须如实注明，不能声称共享检查从不复跑。简单未来方案可按实际改动域取对应检查，不因本轮规模强制完整矩阵。
 
+## MJS 测试输出合同与 HUMAN 取证分层
+
+- 统一实现位为 `pe-test/_shared/test-output.mjs`：默认 `compact`，`--verbose` 只增加成功断言名称，`--full` 优先于 `--verbose` 并恢复成功 `expected/actual` 与查看器原始事件；三种模式不得改变断言集合、状态分类、计数、退出码或执行顺序。
+- compact 成功断言不逐条输出，只保留最终统计和必要结构化索引；失败、validator 原文、deny reason、首错/阶段/cause、清理残留永不压缩。设置矩阵成功行只保留 case/status/计数/索引/差异摘要；失败或 `--full` 才展示完整配置/trace。
+- `step-07-子代理模型与引导取证.mjs` 默认输出 A42/A43 索引：SESSION_ID、父 `subagent_plan` 关联、父子行号、attempted route、actual provenance、首个 planner 文本块摘要、suffix 等级与 exact match；`--full` 才输出 prompt/event/text 原文。`step-04-工具清单查看.mjs` 默认保留精确工具名、消息 ID/角色/source/行号和 `REQUEST_EXACT`，INBOX_ONLY 只引用已输出 MESSAGE；`step-05-会话解码.mjs` 默认保留 plan/mode 行号与计数摘要。
+- `一键step测试.mjs` 主报告只做索引；人眼工具按能力传参：step-04/05/07 追加 `--full`，step-06/08 保持原参数合同。完整 stdout/stderr 写入独立 raw 文件，摘要登记相对路径、bytes、lines、SHA-256 与有限结构化行；step-07 缺显式 `--session` 或 `PLANNER_PROMPT_SUFFIX` 未显式存在时记 `NOT-RUN` 并保留 raw 原因。`pe-test/reports/` 的 raw/Markdown 是临时证据，不纳入源改动；报告中的 HUMAN、SKIP、NOT-RUN、INCOMPLETE 均不计 AUTO PASS。
+- 回看 raw 时按摘要中的相对路径逐字读取，并用 SHA-256、字节数、行数三项核对；摘要或 hash 不能替代原文，也不能把真实宿主、GUI、QQBot、生产 profile 或会话结论改写为 PASS。
 ## Web/QQBot 所有权与部署边界
 
 | profile | 当前职责 | 本仓库 AI 边界 |
@@ -80,14 +87,14 @@
    - `node pe-test/tools/step-06-线索落盘.mjs`
    - `node plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs --check`
    - 代码地图生成、人工描述复核、代码地图 `--check`、最后一键 step。
-3. 自动测试不得执行真实 PowerShell 重定向写；测试前后 `pe-test/reports/_s4b_pwsh.txt` 必须不存在。常规回归命令退出码必须为 0，输出不得有 FAIL、SyntaxError、UnhandledPromiseRejection；context-gate 独立脚本若有 INCOMPLETE 必须非零，一键结果结构化标为部分执行而不计 PASS。SKIP/INCOMPLETE/HUMAN/NOT-RUN 单列且不计 AUTO PASS。
+3. 自动测试不得执行真实 PowerShell 重定向写；测试前后 `pe-test/reports/_s4b_pwsh.txt` 必须不存在。常规回归命令退出码必须为 0，输出不得有 FAIL、SyntaxError、UnhandledPromiseRejection；runner 的 ETIMEDOUT 明确归失败而非环境未执行，普通说明含 FAIL/Error/导航失效不单独判失败，必须以退出码/结构化统计为准；context-gate 独立脚本若有 INCOMPLETE 必须非零，一键结果结构化标为部分执行而不计 PASS。SKIP/INCOMPLETE/HUMAN/NOT-RUN 单列且不计 AUTO PASS。
 4. 生产部署与双版本 HUMAN 复测由用户另行执行；静态 PASS 不替代真实 provider、GUI、QQBot 消息、生产 profile 或四个 peer 版本实机结论。
 ## 改动域 → 唯一检查入口
 
 | 改动域 | 主要检查 |
 |:--|:--|
 | 闸门（含 job_kill/send_message/job_list/list_agents 四工具闸门）、route/purpose、A/C/M、PTC 呈现 | `step-00-全流程回归.mjs`、`step-04-路由与写闸门.mjs` |
-| save_plan/save_probe、journal、证据合同 | `step-00-全流程回归.mjs`、`step-06-线索落盘.mjs`；限制以 `lib/save-contract.js` 为准 |
+| save_plan/save_probe、单次失败清理、证据合同 | `step-00-全流程回归.mjs`、`step-06-线索落盘.mjs`；限制以 `lib/save-contract.js` 为准；失败保留首错/阶段并由 AI 主动重试，不扫描旧 journal |
 | 预设默认、settings、profile patch 自愈 | 对应 step-01 脚本；生成器与产物 `--check` 只读验证 |
 | 模型路由、usage、会话形状 | step-00、step-04 P4、step-07 HUMAN 取证；静态结果不替代实机 |
 | 代码地图 | `node pe-test/tools/代码地图生成.mjs` → 人工描述复核 → `--check`；一键测试也内置 `--check` |

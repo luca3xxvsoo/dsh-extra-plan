@@ -87,24 +87,16 @@ function isIgnorableLine(line) {
   return trimmed.length === 0 || trimmed.startsWith('#')
 }
 
-function parseScalar(value) {
-  const trimmed = value.trim()
-  if (trimmed.length >= 2) {
-    const first = trimmed[0]
-    const last = trimmed[trimmed.length - 1]
-    if ((first === "'" && last === "'") || (first === '"' && last === '"')) return trimmed.slice(1, -1)
-  }
-  return trimmed
-}
+
 
 function parseEntryBlock(blockLines) {
   const yaml = loadYamlModule()
-  if (yaml === null) return null
+  if (yaml === null) return { status: 'yaml-unavailable', entry: null }
   try {
     const parsed = yaml.load(blockLines.join('\n'), { schema: loadYamlSchema() })
-    if (Array.isArray(parsed) && parsed.length === 1 && isObject(parsed[0])) return parsed[0]
-  } catch { /* 整个夹具无效时仍保守回退到逐行解析 */ }
-  return null
+    if (Array.isArray(parsed) && parsed.length === 1 && isObject(parsed[0])) return { status: 'parsed', entry: parsed[0] }
+  } catch { return { status: 'parse-failed', entry: null } }
+  return { status: 'parse-failed', entry: null }
 }
 
 function legacyEntryKind(entry) {
@@ -115,43 +107,6 @@ function legacyEntryKind(entry) {
       if (!isObject(entry.config) || entry.config.default !== legacy.default) continue
     }
     return legacy.id
-  }
-  return null
-}
-
-function fallbackLegacyEntryKind(blockLines) {
-  const first = stripBom(blockLines[0] || '')
-  const idMatch = /^\s*-\s*id:\s*(['"]?)([^'"\s]+)\1\s*$/.exec(first)
-  if (!idMatch) return null
-  const id = idMatch[2]
-  const rootIndent = lineIndent(first)
-  let name = null
-  for (let i = 1; i < blockLines.length; i += 1) {
-    const match = /^([ \t]*)name:\s*(.*?)\s*$/.exec(blockLines[i])
-    if (match && match[1].length > rootIndent) {
-      name = parseScalar(match[2])
-      break
-    }
-  }
-  const expected = LEGACY_ROOT_ENTRIES.find((entry) => entry.id === id)
-  if (!expected || name !== expected.name) return null
-  if (expected.default === undefined) return id
-  let configIndent = -1
-  for (let i = 1; i < blockLines.length; i += 1) {
-    const match = /^([ \t]*)config:\s*$/.exec(blockLines[i])
-    if (match && match[1].length > rootIndent) {
-      configIndent = match[1].length
-      break
-    }
-  }
-  if (configIndent < 0) return null
-  for (let i = 1; i < blockLines.length; i += 1) {
-    if (isIgnorableLine(blockLines[i])) continue
-    const indent = lineIndent(blockLines[i])
-    if (indent < configIndent) break
-    if (indent === configIndent) continue
-    const match = /^([ \t]*)default:\s*(.*?)\s*$/.exec(blockLines[i])
-    if (match && parseScalar(match[2]) === expected.default) return id
   }
   return null
 }
@@ -205,13 +160,18 @@ function scanRootBlocks(content) {
 function findLegacyRootBlocks(content) {
   const scan = scanRootBlocks(content)
   const legacyBlocks = []
+  let parseIssue = null
   for (const block of scan.blocks) {
     const blockLines = scan.lines.slice(block.start, block.end)
-    const parsedKind = legacyEntryKind(parseEntryBlock(blockLines))
-    const kind = parsedKind || fallbackLegacyEntryKind(blockLines)
+    const parsed = parseEntryBlock(blockLines)
+    if (parsed.status !== 'parsed') {
+      parseIssue = parseIssue === null ? parsed.status : parseIssue
+      continue
+    }
+    const kind = legacyEntryKind(parsed.entry)
     if (kind !== null) legacyBlocks.push({ ...block, kind })
   }
-  return { ...scan, blocks: legacyBlocks }
+  return { ...scan, blocks: legacyBlocks, parseIssue }
 }
 
 function removeLegacyRootBlocks(content, migration) {
@@ -229,30 +189,16 @@ function removeLegacyRootBlocks(content, migration) {
 
 function verifyMigratedPatch(content) {
   const yaml = loadYamlModule()
-  if (yaml !== null) {
-    try {
-      const parsed = yaml.load(content, { schema: loadYamlSchema() })
-      if (!Array.isArray(parsed)) return false
-      // 只检查解析后的顶层条目；嵌套 insert 中的同名 id 不属于迁移对象。
-      return !parsed.some((entry) => legacyEntryKind(entry))
-    } catch {
-      return false
-    }
+  if (yaml === null) return false
+  try {
+    const parsed = yaml.load(content, { schema: loadYamlSchema() })
+    if (!Array.isArray(parsed)) return false
+    return !parsed.some((entry) => legacyEntryKind(entry))
+  } catch {
+    return false
   }
-  const lines = content.split(/\r?\n/)
-  const emptyArrayLine = (line) => /^\s*\[\s*\]\s*$/.test(line)
-  if (lines.some(emptyArrayLine) && lines.every((line) => isIgnorableLine(line) || emptyArrayLine(line))) return true
-  const scan = scanRootBlocks(content)
-  if (scan.rootIndent === null || scan.blocks.length === 0) return false
-  const malformedRootLine = lines.some((line) => {
-    const normalized = stripBom(line)
-    if (isIgnorableLine(normalized) || isRootSequenceLine(normalized, scan.rootIndent)) return false
-    const trimmedLine = normalized.trim()
-    return lineIndent(normalized) <= scan.rootIndent && trimmedLine !== '---' && trimmedLine !== '...'
-  })
-  if (malformedRootLine) return false
-  return !scan.blocks.some((block) => fallbackLegacyEntryKind(scan.lines.slice(block.start, block.end)) !== null)
 }
+
 
 /**
  * 只迁移旧版自愈生成的根级完整块：
@@ -273,6 +219,10 @@ export function healPatchRows(profileDir) {
     return { status: 'skipped', reason: 'read-failed' }
   }
   const migration = findLegacyRootBlocks(content)
+  if (migration.parseIssue !== null) {
+    console.warn(LOG_PREFIX + ' 解析 patch 失败，跳过迁移：' + migration.parseIssue)
+    return { status: 'skipped', reason: migration.parseIssue }
+  }
   if (migration.blocks.length === 0) return { status: 'idempotent' }
   const merged = removeLegacyRootBlocks(content, migration)
   if (merged === content) return { status: 'idempotent' }

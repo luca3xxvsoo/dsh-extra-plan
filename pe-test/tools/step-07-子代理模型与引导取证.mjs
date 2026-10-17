@@ -6,7 +6,9 @@ import path from 'node:path'
 import { framesOf, decodeText } from '../_shared/zstd-frames.mjs'
 import { findSession } from '../_shared/session-finder.mjs'
 import { toolResultOf, v4LogPath } from '../_shared/v4-tool-result.mjs'
+import { createOutput, sha256Text } from '../_shared/test-output.mjs'
 
+const output = createOutput({ argv: process.argv.slice(2) })
 const hasOwn = (name) => Object.prototype.hasOwnProperty.call(process.env, name)
 const failInput = (message) => {
   console.error('输入错误：' + message)
@@ -402,10 +404,20 @@ function printFullText(label, text) {
   console.log(text)
 }
 function printParentEvidence(parentBundle, parent) {
-  console.log('--- 父会话 subagent_plan 原始材料（逐条、完整） ---')
   const planCalls = parentBundle.calls.filter((call) => call.name === 'subagent_plan')
   const planCallIds = new Set(planCalls.map((call) => call.callId).filter((id) => id !== undefined))
   const planResults = parentBundle.results.filter((result) => planCallIds.has(result.callId))
+  if (output.mode !== 'full') {
+    console.log('A42 parent subagent_plan index session=' + parent.dir + ' calls=' + planCalls.length + ' results=' + planResults.length)
+    for (const call of planCalls) {
+      const childIds = parentBundle.links.filter((link) => link.call === call).map((link) => link.dir)
+      console.log('L' + call.line + ' PARENT CALL subagent_plan callId=' + valueText(call.callId) + ' childIds=' + jsonText(childIds))
+    }
+    for (const result of planResults) console.log('L' + result.line + ' PARENT RESULT subagent_plan callId=' + valueText(result.callId) + ' isError=' + (result.isError ? 'true' : 'false'))
+    console.log('父会话=' + parent.dir + '；subagent_plan association indexed=true')
+    return
+  }
+  console.log('--- 父会话 subagent_plan 原始材料（逐条、完整） ---')
   if (planCalls.length === 0 && planResults.length === 0) console.log('(无 subagent_plan call/result)')
   for (const call of planCalls) {
     const prompt = call.arguments !== null && typeof call.arguments.prompt === 'string' ? call.arguments.prompt : undefined
@@ -425,6 +437,16 @@ function printParentEvidence(parentBundle, parent) {
 }
 
 function printRouteEvidence(route) {
+  if (output.mode !== 'full') {
+    console.log('A42 attempted route index headers=' + route.headers.length + ' contexts=' + route.contexts.length + ' selections=' + route.selections.length)
+    for (const record of route.headers) {
+      const config = isObject(record.event?.data?.header?.config) ? record.event.data.header.config : {}
+      console.log('L' + record.line + ' REQUEST/HEADER attempted route provider=' + valueText(config.provider) + ' model=' + valueText(config.model))
+    }
+    for (const record of route.contexts) console.log('L' + record.line + ' REQUEST/CONTEXT attempted route provider=' + valueText(record.provider) + ' model=' + valueText(record.model) + ' contextWindow=' + valueText(record.contextWindow))
+    for (const record of route.selections) console.log('L' + record.line + ' MODEL/SELECTION attempted route fields=' + jsonText(Object.keys(record.data).sort()))
+    return
+  }
   console.log('--- 请求/路由证据（attempted route；逐条保留） ---')
   if (route.headers.length === 0 && route.contexts.length === 0 && route.selections.length === 0) console.log('(无 request/header、request/context、model/selection)')
   for (const record of route.headers) {
@@ -444,6 +466,11 @@ function printRouteEvidence(route) {
   for (const system of route.systems) printFullText('L' + system.line + ' header.system（完整；not suffix）', valueText(system.value))
 }
 function printProvenanceEvidence(provenance) {
+  if (output.mode !== 'full') {
+    console.log('A42 actual provenance index count=' + provenance.length)
+    for (const record of provenance) console.log('L' + record.line + ' ASSISTANT/MESSAGE actual provenance source.kind=model provider=' + valueText(record.source.provider) + ' model=' + valueText(record.source.model))
+    return
+  }
   console.log('--- 实际产出 provenance（assistant/message；逐条保留） ---')
   if (provenance.length === 0) console.log('(无 assistant/message.data.message.source.kind=model)')
   for (const record of provenance) {
@@ -452,6 +479,18 @@ function printProvenanceEvidence(provenance) {
   }
 }
 function printPlannerMessages(messages) {
+  if (output.mode !== 'full') {
+    console.log('A43 planner message index count=' + messages.length)
+    const first = firstTextForSuffix(messages)
+    if (first !== null) {
+      const firstMessage = messages[0]
+      const textExcludingBudget = budgetFragmentsOf(first.text).reduce((t, f) => t.replaceAll(f, ''), first.text)
+      const exact = plannerPromptSuffix !== '' && !isHostGuidance(first.text) && textExcludingBudget.includes(plannerPromptSuffix)
+      console.log('L' + firstMessage.line + ' first planner text block kind=' + firstMessage.kind + ' block[' + first.index + '] length=' + first.text.length + ' sha256=' + sha256Text(first.text))
+      console.log('suffix exact match=' + (exact ? 'yes' : 'no'))
+    }
+    return
+  }
   console.log('--- planner user/agent-message（逐块完整；仅首个 text block参与 suffix 判定） ---')
   if (messages.length === 0) console.log('(无 source.kind=user/agent-message 的可读 text block)')
   for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
@@ -497,7 +536,8 @@ const linksByDir = new Map(children.map((child) => [child.dir, parentBundle.link
 
 console.log('SESSION_ID（显式顶层主会话）=' + sessionId)
 console.log('PLANNER_PROMPT_SUFFIX（显式存在=' + (hasOwn('PLANNER_PROMPT_SUFFIX') ? '是' : '否') + '；' + (plannerPromptSuffix === '' ? '空串' : '逐字基线') + '）')
-printFullText('suffix baseline（完整）', plannerPromptSuffix === '' ? '<empty string>' : plannerPromptSuffix)
+if (output.mode === 'full') printFullText('suffix baseline（完整）', plannerPromptSuffix === '' ? '<empty string>' : plannerPromptSuffix)
+else console.log('suffix baseline index length=' + plannerPromptSuffix.length + ' sha256=' + sha256Text(plannerPromptSuffix))
 console.log('定位结果：' + found.kind + '；主会话=' + parent.dir + '；直接 child=' + children.length)
 printParentEvidence(parentBundle, parent)
 
@@ -511,9 +551,13 @@ for (const session of sessions) {
   console.log('会话目录=' + session.directory)
   console.log('日志代际=' + session.generation + '；header.version=' + valueText(session.header.version))
   console.log('JSONL行数=' + session.lineCount + '；解析失败计数=' + session.parseFailures + '；帧解码失败计数=' + session.decodeFailures)
-  console.log('session header（完整叶字段）=' + jsonText(session.header))
+  if (output.mode === 'full') console.log('session header（完整叶字段）=' + jsonText(session.header))
+  else console.log('session header index keys=' + jsonText(Object.keys(session.header).sort()))
   const descriptors = descriptorRecordsOf(session)
-  for (const descriptor of descriptors) console.log('L' + descriptor.line + ' DESCRIPTOR（完整）=' + jsonText(descriptor.event))
+  for (const descriptor of descriptors) {
+    if (output.mode === 'full') console.log('L' + descriptor.line + ' DESCRIPTOR（完整）=' + jsonText(descriptor.event))
+    else console.log('L' + descriptor.line + ' DESCRIPTOR index mode=' + valueText(descriptor.data.mode || descriptor.data.descriptor?.mode))
+  }
   if (session === parent) continue
   const links = linksByDir.get(session.dir) || []
   const mode = descriptorModeOf(session)

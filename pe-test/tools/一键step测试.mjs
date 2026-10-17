@@ -1,16 +1,18 @@
 // 一键step测试.mjs — 运行工作区回归矩阵，并分类 AUTO/SKIP/HUMAN 结果。
 // 用法: node 一键step测试.mjs；结果写入临时 pe-test/reports/ 报告，依赖缺失不伪装为通过。
 import { spawnSync } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { join, dirname, relative } from 'node:path'
 import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { findSession } from '../_shared/session-finder.mjs'
+import { createOutput, writeRawEvidence } from '../_shared/test-output.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO_PLUGIN = join(HERE, '..', '..', 'plugins', 'dsh-extra-plan', 'index.js')
 const FULL_DIR = existsSync(REPO_PLUGIN)
 const REPORTS_DIR = join(dirname(HERE), 'reports')
+const output = createOutput({ argv: process.argv.slice(2) })
 
 // 自动判定项: [文件, 依赖仓库, 已知预存问题说明]
 const AUTO = [
@@ -40,17 +42,46 @@ const HUMAN = [
   ['step-08-方案配对查看.mjs', '仅支持 v4 会话日志（session.v4.jsonl.zstd）；参数可选: <sessions-dir>/<会话目录名>，查看 save_plan 调用/结果是否成对（方案+验收双写）'],
 ]
 
+const MODE_FORENSIC_FILES = new Set([
+  'step-04-工具清单查看.mjs',
+  'step-05-会话解码.mjs',
+  'step-07-子代理模型与引导取证.mjs',
+])
+const STEP07_FILE = 'step-07-子代理模型与引导取证.mjs'
+
+export function forensicArgs(file, sessionArg) {
+  const args = []
+  if (sessionArg !== undefined && file !== STEP07_FILE) args.push(String(sessionArg))
+  if (MODE_FORENSIC_FILES.has(file)) args.push('--full')
+  return args
+}
+
+export function forensicNotRunReason(file, sessionArg, env = process.env) {
+  if (file !== STEP07_FILE) return null
+  const reasons = []
+  if (sessionArg === undefined) reasons.push('缺少显式 --session <顶层主会话ID>')
+  if (!Object.prototype.hasOwnProperty.call(env, 'PLANNER_PROMPT_SUFFIX')) reasons.push('调用环境未显式提供 PLANNER_PROMPT_SUFFIX')
+  return reasons.length === 0 ? null : 'NOT-RUN: step-07 ' + reasons.join('；')
+}
+
+export function forensicCommand(file, args = []) {
+  return ['node', file, ...args].map((value) => /[\s"']/u.test(String(value)) ? JSON.stringify(String(value)) : String(value)).join(' ')
+}
+
 // 需参数项
 const NEED_ARG = [
   ['step-99-用量统计.mjs', '参数: <ledger.jsonl>，统计 token 用量'],
 ]
 
-function parseResult(out) {
+export function parseResult(out) {
   const text = String(out)
-  const m = text.match(/通过\s*(\d+)(?:\/\d+)?\s*[,，]\s*失败\s*(\d+)(?:\s*[,，]\s*(?:跳过\s*(\d+)|(\d+)\s*跳过))?/) || text.match(/结果：\s*(\d+) 通过，(\d+) 失败/)
+  const m = text.match(/RESULT\s*:\s*(\d+)\s*(?:PASS|通过)\s*[,，]\s*(\d+)\s*(?:FAIL|失败)/i)
+    || text.match(/通过\s*(\d+)(?:\/\d+)?\s*[,，]\s*失败\s*(\d+)(?:\s*[,，]\s*(?:跳过\s*(\d+)|(\d+)\s*跳过))?/)
+    || text.match(/结果：\s*(\d+) 通过，(\d+) 失败/)
   if (m === null) return null
   const incompleteMatch = text.match(/INCOMPLETE\s+(\d+)/i)
-  return { pass: Number(m[1]), fail: Number(m[2]), skip: Number(m[3] === undefined ? (m[4] === undefined ? 0 : m[4]) : m[3]), incomplete: incompleteMatch === null ? 0 : Number(incompleteMatch[1]) }
+  const skip = m[3] === undefined ? (m[4] === undefined ? 0 : m[4]) : m[3]
+  return { pass: Number(m[1]), fail: Number(m[2]), skip: Number(skip), incomplete: incompleteMatch === null ? 0 : Number(incompleteMatch[1]) }
 }
 
 function runOne(file, extraArgs) {
@@ -74,42 +105,97 @@ function runOne(file, extraArgs) {
   const out = readFileSync(stdoutPath, 'utf8') + readFileSync(stderrPath, 'utf8')
   rmSync(captureDir, { recursive: true, force: true })
   const stats = parseResult(out)
+  const timedOut = r.error !== undefined && String(r.error.code || '') === 'ETIMEDOUT'
   const failLines = String(out).split('\n').filter((l) => l.includes('FAIL') || l.includes('Error:') || l.includes('地图与代码不一致') || l.includes('疑似漏检') || l.includes('导航失效')).slice(0, 8)
   const skipLines = []
+  const humanLines = []
   for (const line of String(out).split(/\r?\n/)) {
-    if (!line.startsWith('SKIP  ')) continue
-    try { skipLines.push(JSON.parse(line.slice('SKIP  '.length))) } catch { /* 非结构化 SKIP 不计入统计 */ }
+    if (line.startsWith('SKIP  ')) {
+      try { skipLines.push(JSON.parse(line.slice('SKIP  '.length))) } catch { /* 非结构化 SKIP 不计入统计 */ }
+      continue
+    }
+    if (line.startsWith('HUMAN  ')) {
+      const payload = line.slice('HUMAN  '.length)
+      if (payload === '') continue
+      try { humanLines.push(JSON.parse(payload)) } catch { humanLines.push(payload) }
+    }
   }
-  return { status: r.status, stats, failLines, skipLines, error: r.error, out }
+  return { status: r.status, stats, failLines, skipLines, humanLines, error: r.error, timedOut, out }
 }
 function escapeCell(value) {
   return String(value === undefined || value === null ? '' : value).replace(/\r?\n/g, '<br>').replace(/\|/g, '\\|')
 }
 
-function classifyAuto(result) {
+function positiveCount(value) {
+  const number = Number(value)
+  return Number.isFinite(number) && number > 0 ? number : 0
+}
+
+function effectiveSkipCount(result) {
+  const statsSkip = result.stats === null || result.stats === undefined ? 0 : positiveCount(result.stats.skip)
+  const markerSkip = Array.isArray(result.skipLines) ? result.skipLines.length : 0
+  return Math.max(statsSkip, markerSkip)
+}
+
+function humanCount(result) {
+  return Array.isArray(result.humanLines) ? result.humanLines.length : 0
+}
+
+export function classifyAuto(result) {
+  const stats = result.stats
+  if (result.timedOut === true) return '失败'
   if (result.error !== undefined) return '未执行'
-  if (result.stats !== null && result.stats.fail > 0) return '失败'
-  if (result.stats !== null && result.stats.incomplete > 0) return '部分执行'
+  if (stats !== null && stats !== undefined && positiveCount(stats.fail) > 0) return '失败'
+  if (stats !== null && stats !== undefined && positiveCount(stats.incomplete) > 0) return '部分执行'
   if (result.status !== 0) return '失败'
-  if (result.stats !== null && result.stats.skip > 0 && result.stats.pass === 0) return '未执行'
-  if (result.stats !== null && result.stats.skip > 0 && result.stats.pass > 0) return '部分执行'
+  if (effectiveSkipCount(result) > 0 || humanCount(result) > 0) {
+    return stats !== null && stats !== undefined && positiveCount(stats.pass) > 0 ? '部分执行' : '未执行'
+  }
   return '通过'
 }
 
-function statsSummary(result) {
-  if (result.stats !== null) {
-    return '通过 ' + result.stats.pass + ', 失败 ' + result.stats.fail + (result.stats.skip > 0 ? ', 跳过 ' + result.stats.skip : '') + (result.stats.incomplete > 0 ? ', 未完成 ' + result.stats.incomplete : '')
+function markerCountSuffix(result) {
+  const parts = []
+  const skip = effectiveSkipCount(result)
+  const human = humanCount(result)
+  if (skip > 0) parts.push('跳过 ' + skip)
+  if (human > 0) parts.push('HUMAN ' + human)
+  return parts.length === 0 ? '' : ', ' + parts.join(', ')
+}
+
+export function statsSummary(result) {
+  const suffix = markerCountSuffix(result)
+  if (result.stats !== null && result.stats !== undefined) {
+    return '通过 ' + positiveCount(result.stats.pass) + ', 失败 ' + positiveCount(result.stats.fail) + suffix + (positiveCount(result.stats.incomplete) > 0 ? ', 未完成 ' + positiveCount(result.stats.incomplete) : '')
   }
+  if (suffix !== '') return (result.status === 0 ? '无统计行' : '失败') + suffix
   return result.status === 0 ? '通过（无统计行）' : '失败'
 }
 
-function structuredSkipSummary(result) {
-  if (result.skipLines.length > 0) return result.skipLines.map((value) => JSON.stringify(value)).join('；')
-  return ''
+function markerValue(value) {
+  if (typeof value === 'string') return value
+  const encoded = JSON.stringify(value)
+  return encoded === undefined ? String(value) : encoded
+}
+
+export function structuredMarkerSummary(result) {
+  const parts = []
+  if (Array.isArray(result.skipLines) && result.skipLines.length > 0) {
+    parts.push('跳过：' + result.skipLines.map(markerValue).join('；'))
+  }
+  if (Array.isArray(result.humanLines) && result.humanLines.length > 0) {
+    parts.push('HUMAN：' + result.humanLines.map(markerValue).join('；'))
+  }
+  return parts.join('；')
 }
 
 // 人眼项取证: 运行取证工具，stdout+stderr 全量拼接（无任何截断/过滤/摘要）
 function runForensic(file, sessionArg) {
+  const argv = forensicArgs(file, sessionArg)
+  const notRunReason = forensicNotRunReason(file, sessionArg)
+  if (notRunReason !== null) {
+    return { status: null, out: notRunReason + '\n', stdout: '', stderr: notRunReason + '\n', error: undefined, argv, notRunReason }
+  }
   const env = sessionArg !== undefined
     ? { ...process.env, SESSION_ID: String(sessionArg) }
     : process.env
@@ -122,22 +208,49 @@ function runForensic(file, sessionArg) {
   const stderrFd = openSync(stderrPath, 'w')
   let r
   try {
-    r = spawnSync(process.execPath, [join(HERE, file)], {
+    // 仅支持输出模式的查看器以 --full 取证；step-06/08 保持原参数合同。
+    r = spawnSync(process.execPath, [join(HERE, file), ...argv], {
       timeout: 120000, stdio: ['ignore', stdoutFd, stderrFd], env,
     })
   } finally {
     closeSync(stdoutFd)
     closeSync(stderrFd)
   }
-  const out = readFileSync(stdoutPath, 'utf8') + readFileSync(stderrPath, 'utf8')
+  const stdout = readFileSync(stdoutPath, 'utf8')
+  const stderr = readFileSync(stderrPath, 'utf8')
+  const out = stdout + stderr
   rmSync(captureDir, { recursive: true, force: true })
-  return { status: r.status, out, error: r.error }
+  return { status: r.status, out, stdout, stderr, error: r.error, argv, notRunReason: null }
 }
 
 function ts() {
   const d = new Date()
   const p = (n) => String(n).padStart(2, '0')
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
+}
+
+function modeArg(mode) {
+  return mode === 'full' ? '--full' : mode === 'verbose' ? '--verbose' : '--compact'
+}
+
+export function forensicKeyLines(text) {
+  const lines = String(text).split(/\r?\n/)
+  const include = /^(SESSION_ID|PLANNER_PROMPT_SUFFIX|定位结果|A42|A43|child谱系|父工具关联：|suffix判定=|模型证据等级=|事件类型计数：|INCOMPLETE|NOT-RUN|输入错误|未找到|未发现|仅支持 v4|L\d+ (REQUEST|CONTEXT|MODEL|ASSISTANT|first planner|PLANNER-MESSAGE)|REQUEST_EXACT=|HEADER line=)/
+  return lines.filter((line) => {
+    if (!include.test(line)) return false
+    if (line.includes('（完整') || line.includes('event（完整）') || line.includes('arguments.prompt') || line.includes('arguments（完整）')) return false
+    return line.trim() !== ''
+  }).slice(0, 120).map((line) => line.length > 500 ? line.slice(0, 500) + '…' : line)
+}
+
+export function classifyForensic(result) {
+  if (result.notRunReason !== null && result.notRunReason !== undefined) return 'NOT-RUN'
+  if (result.error !== undefined) return 'NOT-RUN'
+  return 'HUMAN'
+}
+
+function evidenceRelative(filePath) {
+  return relative(HERE, filePath).replaceAll('\\', '/')
 }
 
 function main() {
@@ -147,6 +260,7 @@ function main() {
   const sessionLoc = findSession(sessionArg)
   const lines = []
   lines.push(`# pe-test 体检报告 ${stamp}`)
+  lines.push(`- 输出模式: ${output.mode}（--full 优先于 --verbose；失败与raw证据不压缩）`)
   lines.push('')
   lines.push(`- 运行目录: ${HERE}`)
   lines.push(`- 完整目录检测（plugins 同级）: ${FULL_DIR ? '完整' : '非完整'}`)
@@ -181,10 +295,14 @@ function main() {
       lines.push('| ' + escapeCell(file) + ' | 未执行 | — | — | 需完整目录' + (known ? '；' + escapeCell(known) : '') + ' |')
       continue
     }
-    const r = runOne(file, extraArgs)
+    const r = runOne(file, (Array.isArray(extraArgs) ? extraArgs : []).concat(modeArg(output.mode)))
     let state
-    let diagnostic = structuredSkipSummary(r)
-    if (r.error !== undefined) {
+    let diagnostic = structuredMarkerSummary(r)
+    if (r.timedOut === true) {
+      state = '失败'
+      autoFail += 1
+      diagnostic = '执行超时（ETIMEDOUT）' + (known ? '；' + known : '')
+    } else if (r.error !== undefined) {
       state = '未执行'
       autoSkip += 1
       diagnostic = '运行环境受限（spawn 失败: ' + String(r.error.code || r.error.message).slice(0, 80) + ')' + (known ? '；' + known : '')
@@ -215,35 +333,56 @@ function main() {
   lines.push('')
   lines.push('## 四、结论')
   lines.push('- 自动判定项结论：通过 ' + autoPass + ' / 部分执行 ' + autoPartial + ' / 未执行 ' + autoSkip + ' / 失败 ' + autoFail + '，共 ' + AUTO.length + ' 项')
-  lines.push('- 说明：部分执行/未执行不计失败；INCOMPLETE 单列为部分执行，不计 AUTO PASS；环境项的 SKIP 会保留结构化 reason/details，真实 QQBot 消息与交互仍属 HUMAN')
+  lines.push('- 说明：部分执行/未执行不计失败；INCOMPLETE 单列为部分执行，不计 AUTO PASS；结构化 SKIP/HUMAN 会分别保留在统计与诊断，真实 QQBot 消息与交互仍属 HUMAN')
   lines.push('- 说明：0.2.0-rc.1 未核实·HUMAN，当前 AUTO 不覆盖，须在 rc.1 设备用现有脚本手工验收')
   if (autoFail > 0) lines.push('- 说明：失败项含「已知预存问题」（见自动判定项表格备注列），其余失败需排查')
 
   mkdirSync(REPORTS_DIR, { recursive: true })
   const reportFile = join(REPORTS_DIR, `测试报告-${stamp}.md`)
-  // 人眼项取证独立文件（与主报告同 stamp；输出全量包裹，无截断）
+  const humanRecords = []
+  // 人眼项独立摘要 + 双通道raw；主报告只建立索引，不嵌入r.out。
   for (const [file, note] of HUMAN) {
     const tool = file.replace(/\.mjs$/, '')
     const r = runForensic(file, sessionArg)
+    const raw = writeRawEvidence({
+      directory: REPORTS_DIR,
+      baseName: `测试报告-${tool}-${stamp}`,
+      stdout: r.stdout || '',
+      stderr: r.stderr || '',
+    })
+    const state = classifyForensic(r)
+    const keyLines = forensicKeyLines(r.out)
     const body = []
-    body.push(`# pe-test 人眼项取证 · ${tool} · ${stamp}`)
+    body.push(`# pe-test 人眼项取证摘要 · ${tool} · ${stamp}`)
     body.push('')
     body.push(`- 工具用途: ${note}`)
     body.push(...sessionLocLines)
-    body.push(`- 运行命令: node ${file}`)
-    if (r.error !== undefined) {
-      body.push(`- 运行环境受限（spawn 失败: ${String(r.error.code || r.error.message)}）`)
-    } else {
-      body.push(`- 退出码: ${r.status}`)
-      if (r.out === '') body.push('- 备注: （无输出）')
-      body.push('')
-      body.push('## 原始输出（全量）')
-      body.push('```text')
-      body.push(r.out)
-      body.push('```')
+    body.push(`- 运行命令: ${forensicCommand(file, r.argv)}`)
+    if (file === STEP07_FILE) {
+      body.push(`- 调用环境: SESSION_ID=${sessionArg === undefined ? '缺失' : '显式'}；PLANNER_PROMPT_SUFFIX=${Object.prototype.hasOwnProperty.call(process.env, 'PLANNER_PROMPT_SUFFIX') ? '显式' : '缺失'}`)
     }
+    body.push(`- 状态: ${state}`)
+    body.push(`- 退出码: ${r.status === null ? 'null' : r.status}`)
+    if (r.error !== undefined) body.push(`- 运行环境受限（spawn 失败: ${String(r.error.code || r.error.message)}）`)
+    if (r.notRunReason !== null && r.notRunReason !== undefined) body.push(`- 原因: ${r.notRunReason}`)
+    if (r.out === '') body.push('- 备注: （无输出）')
     body.push('')
-    writeFileSync(join(REPORTS_DIR, `测试报告-${tool}-${stamp}.md`), body.join('\n') + '\n')
+    body.push('## 关键结构化行（有限摘要）')
+    if (keyLines.length === 0) body.push('- （无可摘要结构化行；完整内容见raw）')
+    else for (const line of keyLines) body.push('- ' + line.replaceAll('\n', ' '))
+    body.push('')
+    body.push('## raw证据')
+    for (const item of raw.files) body.push(`- ${item.channel}: ${evidenceRelative(item.path)}；bytes=${item.bytes}；lines=${item.lines}；sha256=${item.sha256}`)
+    body.push(`- combined: bytes=${raw.bytes}；lines=${raw.lines}；sha256=${raw.sha256}`)
+    body.push('')
+    const summaryPath = join(REPORTS_DIR, `测试报告-${tool}-${stamp}.md`)
+    writeFileSync(summaryPath, body.join('\n') + '\n')
+    humanRecords.push({ tool, file, state, exitCode: r.status, summaryPath, raw, keyLines })
+  }
+  lines.push('')
+  lines.push('## 五、人眼取证raw索引（不计AUTO PASS）')
+  for (const record of humanRecords) {
+    lines.push(`- ${record.file}: ${record.state}；摘要=${evidenceRelative(record.summaryPath)}；raw=${record.raw.files.map((item) => evidenceRelative(item.path)).join(', ')}`)
   }
   writeFileSync(reportFile, lines.join('\n') + '\n')
   console.log(lines.join('\n'))
@@ -251,4 +390,4 @@ function main() {
   process.exit(autoFail === 0 ? 0 : 1)
 }
 
-main()
+if (process.argv[1] !== undefined && pathToFileURL(process.argv[1]).href === import.meta.url) main()

@@ -26,7 +26,7 @@ const parseArg = (name, fallback) => {
   const i = args.indexOf(name)
   return i !== -1 && i + 1 < args.length ? args[i + 1] : fallback
 }
-const ROOTS = (parseArg('--roots', 'plugins') || 'plugins').split(',').map((s) => s.trim()).filter(Boolean)
+const ROOTS = (parseArg('--roots', 'plugins,pe-test/_shared') || 'plugins,pe-test/_shared').split(',').map((s) => s.trim()).filter(Boolean)
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const MAP_PATH = resolve(PROJECT_ROOT, parseArg('--map', 'pe-test/docs/ai-代码地图.md') || 'pe-test/docs/ai-代码地图.md')
 

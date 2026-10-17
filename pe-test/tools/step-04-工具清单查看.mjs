@@ -6,7 +6,9 @@ import path from 'node:path'
 import { framesOf, decodeText } from '../_shared/zstd-frames.mjs'
 import { findSession, logPath } from '../_shared/session-finder.mjs'
 import { CORDIS_PRESENTATION_TOOLS } from '../../plugins/dsh-extra-plan/lib/assembly-presentation.js'
+import { createOutput } from '../_shared/test-output.mjs'
 
+const output = createOutput({ argv: process.argv.slice(2) })
 const NL = String.fromCharCode(10)
 const CREATIVE_SKILLS = new Set(['cordis-plugin-development', 'editing-cordis-compositions', 'cordis-composition-reference'])
 function jsonText(value) {
@@ -111,7 +113,9 @@ function strictMessages(records, meta) {
     if (record.types.includes('request/header')) {
       const header = headerOf(event)
       activeHeaderSeq = Number.isInteger(event.seq) ? event.seq : activeHeaderSeq
-      console.log('HEADER line=' + record.line + ' seq=' + String(activeHeaderSeq) + ' sessionId=' + meta.id + ' version=' + meta.version + ' cwd=' + meta.cwd + ' tools=' + jsonText(header.tools || []) + ' systemTextEvidenceOnly=' + jsonText(systemTextHits(textOf(header.system || header.message || ''))))
+      const headerTools = Array.isArray(header.tools) ? header.tools : []
+      if (output.mode === 'full') console.log('HEADER line=' + record.line + ' seq=' + String(activeHeaderSeq) + ' sessionId=' + meta.id + ' version=' + meta.version + ' cwd=' + meta.cwd + ' tools=' + jsonText(headerTools) + ' systemTextEvidenceOnly=' + jsonText(systemTextHits(textOf(header.system || header.message || ''))))
+      else console.log('HEADER line=' + record.line + ' seq=' + String(activeHeaderSeq) + ' sessionId=' + meta.id + ' version=' + meta.version + ' cwd=' + meta.cwd + ' toolNames=' + jsonText(toolNamesOf(headerTools)) + ' toolCount=' + headerTools.length + ' systemTextEvidenceOnly=' + jsonText(systemTextHits(textOf(header.system || header.message || ''))))
     }
     const inbox = record.types.some((type) => type.startsWith('agent/inbox/'))
     const message = messageFromEvent(record)
@@ -140,6 +144,32 @@ function strictMessages(records, meta) {
   }
   return { output, inboxOnly }
 }
+function compactMessage(message) {
+  const blocks = Array.isArray(message.content) ? message.content : []
+  return {
+    line: message.line,
+    seq: message.seq,
+    type: message.type,
+    sessionId: message.sessionId,
+    parentSession: message.parentSession,
+    id: message.id,
+    role: message.role,
+    source: message.source,
+    surfaceOp: message.surfaceOp,
+    sourceEventSeqs: message.sourceEventSeqs,
+    precedingDurableToolCalls: message.precedingDurableToolCalls,
+    activeHeaderSeq: message.activeHeaderSeq,
+    contentBlocks: blocks.length,
+    contentTextLengths: blocks.map((block) => block !== null && typeof block === 'object' && typeof block.text === 'string' ? block.text.length : 0),
+    inboxOnly: false,
+  }
+}
+function compactInboxMessage(message) {
+  return { line: message.line, seq: message.seq, type: message.type, id: message.id, role: message.role, source: message.source, messageLine: message.line, messageId: message.id, inboxOnly: true }
+}
+function toolNamesOf(tools) {
+  return (Array.isArray(tools) ? tools : []).map((tool) => typeof tool === 'string' ? tool : tool !== null && typeof tool === 'object' ? tool.name : tool)
+}
 function strictSessionDir(value) {
   if (value === undefined || value.startsWith('--')) throw new Error('--messages必须显式传入单会话目录')
   const dir = path.resolve(value)
@@ -167,8 +197,12 @@ function printTrace(tracePath, sessionId) {
   const trace = traceRequests(tracePath)
   if (trace.meta.sessionId !== undefined && trace.meta.sessionId !== sessionId) throw new Error('trace sessionId不匹配: ' + trace.meta.sessionId + ' != ' + sessionId)
   if (trace.requests.some((request) => request.sessionId !== undefined && request.sessionId !== sessionId)) throw new Error('trace存在错SessionId request')
-  console.log('REQUEST_EXACT=' + String(trace.requests.length > 0 && trace.requests.every((request) => request.sessionId === sessionId && Number.isInteger(request.requestIndex))))
-  for (const request of trace.requests) console.log('REQUEST ' + JSON.stringify(request))
+  const exact = trace.requests.length > 0 && trace.requests.every((request) => request.sessionId === sessionId && Number.isInteger(request.requestIndex))
+  console.log('REQUEST_EXACT=' + String(exact))
+  for (const request of trace.requests) {
+    if (output.mode === 'full') console.log('REQUEST ' + JSON.stringify(request))
+    else console.log('REQUEST ' + JSON.stringify({ sessionId: request.sessionId, requestIndex: request.requestIndex, tool: request.tool || request.name, status: request.status, keys: Object.keys(request).sort() }))
+  }
 }
 function legacySummary(args) {
   const found = findSession(args[0])
@@ -190,32 +224,50 @@ function legacySummary(args) {
         const toolNames = rawTools.map((tool) => typeof tool === 'string' ? tool : tool !== null && typeof tool === 'object' ? tool.name : tool)
         const systemText = textOf(header.system || header.message || '')
         previousHeader = { line: record.line, phase: precedingToolCalls === 0 ? 'first' : 'later', precedingToolCalls, tools: rawTools }
-        console.log('L' + record.line + ' session=' + dir + ' precedingToolCalls=' + precedingToolCalls + ' phase=' + previousHeader.phase + ' header.tools=' + jsonText(rawTools) + ' tools.names=' + jsonText(toolNames))
-        console.log('L' + record.line + ' header.system.textLength=' + systemText.length + ' textHits=' + jsonText(systemTextHits(systemText)) + ' textEvidenceOnly=true sectionNames=not-inferred-from-text')
+        if (output.mode === 'full') {
+          console.log('L' + record.line + ' session=' + dir + ' precedingToolCalls=' + precedingToolCalls + ' phase=' + previousHeader.phase + ' header.tools=' + jsonText(rawTools) + ' tools.names=' + jsonText(toolNames))
+          console.log('L' + record.line + ' header.system.textLength=' + systemText.length + ' textHits=' + jsonText(systemTextHits(systemText)) + ' textEvidenceOnly=true sectionNames=not-inferred-from-text')
+        } else {
+          console.log('L' + record.line + ' session=' + dir + ' precedingToolCalls=' + precedingToolCalls + ' phase=' + previousHeader.phase + ' tools.names=' + jsonText(toolNames) + ' toolCount=' + rawTools.length)
+          console.log('L' + record.line + ' header.system.textLength=' + systemText.length + ' textHits=' + jsonText(systemTextHits(systemText)) + ' textEvidenceOnly=true sectionNames=not-inferred-from-text')
+        }
       }
       for (const source of skillCatalogSources(record.event)) {
         const names = source.entries.filter((entry) => entry !== null && typeof entry === 'object' && typeof entry.name === 'string').map((entry) => entry.name)
         const creative = names.filter((name) => CREATIVE_SKILLS.has(name))
         const ordinary = names.filter((name) => !CREATIVE_SKILLS.has(name))
-        console.log('L' + record.line + ' source.kind=skill-catalog entries=' + jsonText(names) + ' ordinary=' + jsonText(ordinary) + ' creativeSkills=' + jsonText(creative) + ' creativeCount=' + creative.length + ' adjacentHeader=' + jsonText(previousHeader))
+        if (output.mode === 'full') console.log('L' + record.line + ' source.kind=skill-catalog entries=' + jsonText(names) + ' ordinary=' + jsonText(ordinary) + ' creativeSkills=' + jsonText(creative) + ' creativeCount=' + creative.length + ' adjacentHeader=' + jsonText(previousHeader))
+        else console.log('L' + record.line + ' source.kind=skill-catalog entries=' + jsonText(names) + ' ordinary=' + jsonText(ordinary) + ' creativeSkills=' + jsonText(creative) + ' creativeCount=' + creative.length + ' adjacentHeaderLine=' + (previousHeader === null ? '?' : previousHeader.line))
       }
       if (record.types.includes('tool/call')) precedingToolCalls += 1
     }
   }
 }
 const argv = process.argv.slice(2)
+function positionalArgsOf(args = []) {
+  const positional = []
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = String(args[index])
+    if (arg === '--compact' || arg === '--verbose' || arg === '--full' || arg === '--messages') continue
+    if (arg === '--output-mode' || arg === '--request-trace') { index += 1; continue }
+    if (arg.startsWith('--output-mode=')) continue
+    if (arg.startsWith('--')) continue
+    positional.push(arg)
+  }
+  return positional
+}
 const messagesMode = argv.includes('--messages')
 if (!messagesMode) {
-  legacySummary(argv.filter((arg) => !arg.startsWith('--')))
+  legacySummary(positionalArgsOf(argv))
 } else {
   try {
-    const positional = argv.filter((arg, index) => !arg.startsWith('--') && argv[index - 1] !== '--request-trace')
+    const positional = positionalArgsOf(argv)
     if (positional.length !== 1) throw new Error('--messages要求恰好一个显式单会话目录')
     const session = readStrictSession(positional[0])
     console.log('SESSION_META ' + JSON.stringify(session.meta))
     const messages = strictMessages(session.records, session.meta)
-    for (const message of messages.output) console.log('MESSAGE ' + JSON.stringify(message))
-    for (const message of messages.inboxOnly) console.log('INBOX_ONLY ' + JSON.stringify(message))
+    for (const message of messages.output) console.log('MESSAGE ' + JSON.stringify(output.mode === 'full' ? message : compactMessage(message)))
+    for (const message of messages.inboxOnly) console.log('INBOX_ONLY ' + JSON.stringify(compactInboxMessage(message)))
     const traceIndex = argv.indexOf('--request-trace')
     if (traceIndex >= 0) {
       const tracePath = argv[traceIndex + 1]

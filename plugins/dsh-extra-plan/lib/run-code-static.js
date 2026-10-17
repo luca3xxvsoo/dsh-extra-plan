@@ -538,8 +538,8 @@ export function createRunCodeStatic({ askTool, isDispatchStart }) {
     return `run_code 实例（rootCallId ${rid}）子调用数 ${count} 超过上限 ${cap}（exploreBudget）：请拆分 run_code 或提高 exploreBudget；循环/动态放大同样受限`
   }
   
-  // 运行时单实例上限判定（planner 专属）：统计 events 中 type 命中双兼容 dispatch-start 事件（新名 tool/ptc-dispatch-start / 旧名 tool/code-dispatch-start）且
-  // data.rootCallId===rid 的条数 count；count>cap → 返回 T3 文案；否则 null。
+  // 运行时单实例上限判定（planner 专属）：统计调用方接线传入的现行 dispatch-start 事件且
+  // data.rootCallId===rid 的条数 count；当前宿主接线仅识别 tool/ptc-dispatch-start，旧 code-dispatch 已删除。
   // exec.rootCallId 非 string / events 非数组 / cap 非正整数 → null。
   function runCodeDispatchGateReason(events, exec, cap) {
     const rid = exec !== null && exec !== undefined ? exec.rootCallId : undefined

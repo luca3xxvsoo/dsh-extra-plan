@@ -93,7 +93,7 @@ export function formatSavePlanSummary(summary) {
   } else {
     lines.push('全局验收：无')
   }
-  lines.push('职责：工具只校验并原子双写；主会话负责派遣、冻结与正式验收，工具不启动代理、不执行检查命令、不维护运行状态机。')
+  lines.push('职责：工具只校验并在单次调用内写入/发布；失败由本次调用有限清理并报错，主会话负责派遣、冻结与正式验收，工具不启动代理、不执行检查命令、不维护运行状态机。')
   return lines.join('\n')
 }
 
@@ -104,7 +104,7 @@ export function formatSavePlanSummary(summary) {
 // "save_plan 后子代理必死"。此函数导出供场景测试锁死契约。
 export function renderSavePlan(value, summary) {
   const paths = value !== null && typeof value === 'object' && Array.isArray(value.paths) ? value.paths : []
-  const lines = ['方案已落盘（原子双写）：']
+  const lines = ['方案已落盘（两份文件按序发布；失败由AI主动重试）：']
   for (const path of paths) lines.push('- ' + String(path))
   if (summary !== null && summary !== undefined
       && Number.isInteger(summary.taskCount) && summary.taskCount >= 0

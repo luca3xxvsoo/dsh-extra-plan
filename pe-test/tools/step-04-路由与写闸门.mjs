@@ -19,6 +19,7 @@ const GATE_DECISIONS_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/
 const USAGE_LEDGER_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/usage-ledger.js', import.meta.url))
 const RUNTIME_LIFECYCLE_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/runtime-lifecycle.js', import.meta.url))
 import { registerHostDeps } from '../_shared/host-deps.mjs'
+import { createOutput } from '../_shared/test-output.mjs'
 // host-deps 必须在隔离前完成解析：它按候选① DSH_HOME/profiles/web 锚定宿主真包，
 // 隔离后该锚点不存在（会退到 npm 全局候选，非确定）。
 await registerHostDeps()
@@ -81,15 +82,16 @@ function hintReadOk(text) {
 
 let pass = 0
 let fail = 0
+const output = createOutput({ argv: process.argv.slice(2) })
 function check(name, got, expected) {
   const okResult = JSON.stringify(got) === JSON.stringify(expected)
   if (okResult) { pass += 1 } else { fail += 1 }
-  console.log(`${okResult ? 'PASS' : 'FAIL'}  ${name}  (期望 ${JSON.stringify(expected)}, 实际 ${JSON.stringify(got)})`)
+  output.assertion(okResult, name, expected, got)
 }
 function checkTrue(name, got) {
   const okResult = got === true
   if (okResult) { pass += 1 } else { fail += 1 }
-  console.log(`${okResult ? 'PASS' : 'FAIL'}  ${name}  (期望 true, 实际 ${JSON.stringify(got)})`)
+  output.assertion(okResult, name, true, got)
 }
 
 // ── ① 纯函数断言（[任务5]） ────────────────────────────────────────────
@@ -199,10 +201,10 @@ let rows
 try {
   rows = yaml.load(presetText, { schema })
 } catch (error) {
-  console.error(`FAIL  YAML 解析失败: ${error.message}`)
+  output.error(`FAIL  YAML 解析失败: ${error.message}`)
   process.exit(1)
 }
-console.log(`PASS  YAML 解析成功（${Array.isArray(rows) ? rows.length : '非数组!'} 行）`)
+output.assertion(true, 'YAML 解析成功', '数组', Array.isArray(rows) ? rows.length : '非数组!')
 
 function flatten(list) {
   const out = []
@@ -229,19 +231,16 @@ function checkDeny(id, expectCount, mustContain, mustNotContain, label) {
   const deny = row !== undefined && row.config !== undefined && Array.isArray(row.config.toolFilter.deny) ? row.config.toolFilter.deny : null
   if (deny === null) {
     fail += 1
-    console.log(`FAIL  ${label} 缺 toolFilter.deny`)
+    output.assertion(false, label, 'toolFilter.deny', undefined)
     return
   }
   const okCount = expectCount === null || deny.length === expectCount
   const okContains = mustContain.every((n) => deny.includes(n))
   const okExcludes = mustNotContain.every((n) => !deny.includes(n))
-  if (okCount && okContains && okExcludes) {
-    pass += 1
-    console.log(`PASS  ${label}（${deny.length} 项${mustContain.length > 0 ? '，含 ' + mustContain.join('/') : ''}${mustNotContain.length > 0 ? '，不含 ' + mustNotContain.join('/') : ''}）`)
-  } else {
-    fail += 1
-    console.log(`FAIL  ${label}（实际 ${deny.length} 项: ${deny.join(', ')}）`)
-  }
+  const okResult = okCount && okContains && okExcludes
+  if (okResult) pass += 1
+  else fail += 1
+  output.assertion(okResult, label, { count: expectCount, contains: mustContain, excludes: mustNotContain }, { count: deny.length, values: deny })
 }
 checkDeny('tool-subagent-review', 13, ['write', 'edit', 'subagent_probe'], [], 'reviewer deny 恰 13 项且含 write/edit/subagent_probe')
 checkDeny('tool-subagent', 11, ['subagent_probe'], ['write', 'edit'], 'executor deny 恰 11 项、不含 write/edit、含 subagent_probe')
@@ -363,6 +362,12 @@ checkTrue('R1 reviewer pwsh New-Item → deny', r !== null && r !== undefined &&
 checkTrue('R2 reviewer pwsh deny 文案含只读限定', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('pwsh 仅限只读探查命令，禁止创建/修改/删除文件'))
 r = preExecute(harness, reviewer, 'pwsh', { command: 'Set-Content a.txt x' })
 checkTrue('R3 reviewer pwsh Set-Content → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('验收复核者只读'))
+r = preExecute(harness, reviewer, 'pwsh', { command: 'cmd /c del x.txt' })
+checkTrue('R3a reviewer pwsh cmd /c 写命令 → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('验收复核者只读'))
+r = preExecute(harness, reviewer, 'pwsh', { command: 'CMD.EXE /C "del x.txt"' })
+checkTrue('R3b reviewer pwsh CMD.EXE /C 引号写命令 → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('验收复核者只读'))
+r = preExecute(harness, reviewer, 'pwsh', { command: 'cmd.exe /C "dir"' })
+checkTrue('R3c reviewer pwsh cmd.exe /C dir 只读 → allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, reviewer, 'pwsh', { command: 'Get-ChildItem' })
 checkTrue('R4 reviewer pwsh Get-ChildItem → 放行', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, reviewer, 'write', {})
@@ -387,10 +392,14 @@ r = preExecute(harness, mainAgent, 'write', {})
 checkTrue('R9 主会话路由未确认 write → deny（回归）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认'))
 r = preExecute(harness, mainAgent, 'pwsh', { command: 'New-Item x.txt' })
 checkTrue('R10 主会话路由未确认 pwsh 写 → deny（回归）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认'))
+r = preExecute(harness, mainAgent, 'pwsh', { command: 'cmd.exe /C "del x.txt"' })
+checkTrue('R10a 主会话路由未确认 cmd.exe /C 写 → deny（回归）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认'))
 
 // planner 分支拦截照旧（write deny 文案含「规划子代理只读」）
 r = preExecute(harness, plannerAgent, 'write', {})
 checkTrue('R11 planner write → deny（回归）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划子代理只读'))
+r = preExecute(harness, plannerAgent, 'pwsh', { command: 'cmd /c "Remove-Item x.txt"' })
+checkTrue('R11a planner pwsh cmd /c 引号写 → deny（回归）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划子代理只读'))
 
 // bootstrapOn=true：主会话/规划子代理首轮目录收窄为 shell+read；executor 不引导
 const bootMain = await assemble(harnessBoot, mainAgent, [{ name: 'read' }, { name: 'pwsh' }, { name: 'write' }, { name: 'glob' }])
@@ -484,6 +493,8 @@ r = preExecute(harness, probeAgent, 'write', {})
 checkTrue('R15 probe 会话 write → deny 且文案含「探查者只读」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('探查者只读'))
 r = preExecute(harness, probeAgent, 'pwsh', { command: 'Get-ChildItem' })
 checkTrue('R16 probe 会话 pwsh 只读 → 放行', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, probeAgent, 'pwsh', { command: 'cmd.exe /C "del x.txt"' })
+checkTrue('R16a probe 会话 pwsh cmd.exe /C 写 → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('探查者只读'))
 r = preExecute(harness, probeAgent, 'save_probe', { fileMap: [], focusAreas: [], exclusions: [], background: [] })
 checkTrue('R17 probe 会话 save_probe → 放行', r !== null && r !== undefined && r.kind === 'allow')
 
@@ -1399,7 +1410,7 @@ checkTrue('R115 主会话 direct 态 run_code 组内 job_kill 成员 → allow',
     const listFirst = r !== null && r !== undefined && r.kind === 'allow'
     r = preExecute(harness, agent, 'job_list', {})
     const listSecond = r !== null && r !== undefined && r.kind === 'deny'
-    if (!(outputFirst && outputSecond && listFirst && listSecond)) fail += 1
+    if (!(outputFirst && outputSecond && listFirst && listSecond)) { fail += 1; output.error('FAIL  CN7 同 session jobId/pollGuard 预热边界') }
   }
   emitClaimed(harness, sessionA, noticeOf('shared-job', 'session-a-shared-job'))
   r = preExecute(harness, sessionA, 'job_output', { job_id: 'shared-job' })
@@ -2521,7 +2532,7 @@ check('GW2 provider 逐项返回当前 apply 的 config.gateWords 值', harness.
     try { rawHarness(config, badListeners, badVariables) } catch (error) { message = error instanceof Error ? error.message : String(error) }
     if (message === null || !message.startsWith('extra-plan: config.gateWords')) {
       allThrowWithPrefix = false
-      console.log('     坏配置用例未按前缀抛错: ' + label + ' -> ' + String(message))
+      output.error('     坏配置用例未按前缀抛错: ' + label + ' -> ' + String(message))
     }
   }
   checkTrue('GW3 坏配置（缺组/缺键/数组/重复值）apply 同步抛错且错误前缀为 extra-plan: config.gateWords', allThrowWithPrefix)
@@ -2795,5 +2806,5 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
   checkTrue('T9-3t preset-sync 通过 mountPresetSync/官方 adapter await 挂载，不实现 registry', presetSyncSource.includes('export function mountPresetSync') && presetSyncSource.includes('await child.plugin(OfficialAgentPreset') && presetSyncSource.includes('@deepseek-ai/dsh-agent-preset') && !presetSyncSource.includes('agentPresets.register('))
 }
 
-console.log('\n通过 ' + pass + ', 失败 ' + fail)
+output.summary(pass, fail)
 process.exit(fail === 0 ? 0 : 1)

@@ -18,6 +18,7 @@ import {
   syncPreset,
 } from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
 import { validateGateWords } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
+import { createOutput } from '../_shared/test-output.mjs'
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url))
 const ASSET = join(ROOT, 'plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml')
@@ -75,9 +76,11 @@ const complete = {
 
 let pass = 0
 let fail = 0
+const output = createOutput({ argv: process.argv.slice(2) })
 function check(label, condition) {
-  if (condition) { pass += 1; console.log('PASS  ' + label) }
-  else { fail += 1; console.log('FAIL  ' + label) }
+  if (condition) pass += 1
+  else fail += 1
+  output.assertion(condition, label, true, condition)
 }
 function throws(fn, text) {
   try { fn(); return false } catch (error) { return text === undefined || String(error && error.message || error).includes(text) }
@@ -512,7 +515,7 @@ for (const { caseName, settingsValues, patch, expectedEditCount, expectedGlobalA
     const configTreeOk = legacyVisible
       ? run.editor.state.rows.slice(1).map((row) => row.entry.options.id).join('|') === oldIds.join('|')
       : run.editor.state.rows.length === 1 && run.editor.state.rows[0].entry.options.id === SETTINGS_ROW_ID
-    console.log('K03 ' + caseName + ' ' + mode + ' expectedGlobalAfter=' + JSON.stringify(expectedGlobalAfter) + ' actualGlobalAfter=' + JSON.stringify(actualGlobalAfter) + ' differingKeys=' + JSON.stringify(differingKeys) + ' editCount=' + run.editor.state.edits.length + ' expectedEditCount=' + expectedEditCount + ' editedIds=' + JSON.stringify(editedIds) + ' legacyStoreDeepEqual=' + legacyStoreDeepEqual)
+    output.structured('K03', { case: caseName, mode, expectedGlobalAfter, actualGlobalAfter, differingKeys, editCount: run.editor.state.edits.length, expectedEditCount, editedIds, legacyStoreDeepEqual, deepEqual: globalDeepEqual }, { case: caseName, mode, editCount: run.editor.state.edits.length, expectedEditCount, differingKeys, editedIds, deepEqual: globalDeepEqual, status: globalDeepEqual ? 'PASS' : 'FAIL' }, { failure: !globalDeepEqual })
     check('V04 Q03 ' + caseName + ' ' + mode + ' 完整十项+gateWords实际全局与独立期望deep-equal', globalDeepEqual)
     check('V04 Q03 ' + caseName + ' ' + mode + ' 实际全局键集合与独立期望一致', globalKeySetEqual)
     check('V04 Q03 ' + caseName + ' ' + mode + ' 旧store含id/name/config/gateWords/plugins且before/after deep-equal', shapeOk && legacyStoreDeepEqual && run.legacyBefore.length === legacyRows.length)
@@ -540,5 +543,5 @@ for (const legacyId of ['extra-plan-preset-sync', 'preset-extra-plan']) {
 const captured = captureRowSettings('- id: dsh-extra-plan-settings\n  config:\n    plannerModel: x\n', SETTING_DEFINITIONS)
 check('V04 当前唯一行缺项可识别 rowPresent=true，不能猜旧行', captured.rowPresent === true && captured.states.plannerModel === 'captured' && captured.states.webFetch === 'missing')
 
-console.log('\n通过 ' + pass + ', 失败 ' + fail)
+output.summary(pass, fail)
 process.exit(fail === 0 ? 0 : 1)

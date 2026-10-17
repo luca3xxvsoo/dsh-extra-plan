@@ -15,6 +15,7 @@ import {
   structuralFingerprint,
 } from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
 import { GATE_WORD_FIELDS } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
+import { createOutput } from '../_shared/test-output.mjs'
 import { createQqbotSettingsSynchronizer } from '../../plugins/dsh-extra-plan/lib/qqbot-settings-sync.js'
 
 const ROOT = new URL('../..', import.meta.url)
@@ -45,9 +46,11 @@ const completeSettings = {
 }
 let pass = 0
 let fail = 0
+const output = createOutput({ argv: process.argv.slice(2) })
 function check(label, condition) {
-  if (condition) { pass += 1; console.log('PASS  ' + label) }
-  else { fail += 1; console.log('FAIL  ' + label) }
+  if (condition) pass += 1
+  else fail += 1
+  output.assertion(condition, label, true, condition)
 }
 function deferred() {
   let resolve
@@ -255,8 +258,8 @@ const noRemountStaticOk =
   structuralSource.indexOf('await settledPromise') >= 0 &&
   structuralSource.indexOf('await mountOfficialAdapter') > structuralSource.indexOf('await settledPromise')
 check('SETTLED_STRUCTURAL_LIFECYCLE_SYMBOLS_OK', mountSource.includes('initialMount') && mountSource.includes('settledOnlyUpdate') && mountSource.includes('structuralHandoff') && mountSource.includes('structuralFingerprint'))
-if (noRemountStaticOk) console.log('SETTINGS_ONLY_NO_REMOUNT_STATIC_OK')
-else { console.log('FAIL SETTINGS_ONLY_NO_REMOUNT_STATIC_OK'); fail += 1 }
+if (noRemountStaticOk) output.emit('SETTINGS_ONLY_NO_REMOUNT_STATIC_OK')
+else { output.error('FAIL SETTINGS_ONLY_NO_REMOUNT_STATIC_OK'); fail += 1 }
 
 const settledEvents = []
 const initialEditor = makeEditor(completeSettings)
@@ -312,7 +315,7 @@ async function runFixtureFailureCase(label, pluginImpl, failureEvent, plannerMod
     terminalIndex >= 0 && terminalIndex < adapterStartIndex && adapterStartIndex < failureIndex &&
     trace.filter((event) => event === failureEvent).length === 1 && stats.pluginCalls === 1 && stats.pluginDisposals === 0 &&
     diagnostics.length === 1 && diagnostics[0].phase === 'initialMount'
-  console.log('FIXTURE_TRACE ' + JSON.stringify({ case: failureEvent, trace, terminalIndex, adapterStartIndex, failureIndex, pluginCalls: stats.pluginCalls, pluginDisposals: stats.pluginDisposals, terminal: profileSync.terminal.at(-1) }))
+  output.structured('FIXTURE_TRACE', { case: failureEvent, trace, terminalIndex, adapterStartIndex, failureIndex, pluginCalls: stats.pluginCalls, pluginDisposals: stats.pluginDisposals, terminal: profileSync.terminal.at(-1) }, { case: failureEvent, status: ok ? 'PASS' : 'FAIL', events: trace.length, terminalIndex, adapterStartIndex, failureIndex, calls: stats.pluginCalls, disposals: stats.pluginDisposals, terminalStatus: profileSync.terminal.at(-1)?.status, terminalPending: profileSync.terminal.at(-1)?.pending }, { failure: !ok })
   check(label, ok)
   await dispose()
   rmSync(fixture.root, { recursive: true, force: true })
@@ -349,7 +352,7 @@ const hangingResolvedIndex = hangingTrace.indexOf('adapter-resolved')
 const hangingAfterRelease = hangingResolved && hangingResolvedIndex > hangingTerminalIndex && hangingStats.pluginDisposals === 0
 await hangingDispose()
 const hangingOk = hangingBeforeRelease && hangingAfterRelease && hangingStats.pluginDisposals === 1
-console.log('FIXTURE_TRACE ' + JSON.stringify({ case: 'hang', trace: hangingTrace, terminalIndex: hangingTerminalIndex, adapterStartIndex: hangingAdapterStartIndex, resolvedIndex: hangingResolvedIndex, pluginCalls: hangingStats.pluginCalls, pluginDisposals: hangingStats.pluginDisposals }))
+output.structured('FIXTURE_TRACE', { case: 'hang', trace: hangingTrace, terminalIndex: hangingTerminalIndex, adapterStartIndex: hangingAdapterStartIndex, resolvedIndex: hangingResolvedIndex, pluginCalls: hangingStats.pluginCalls, pluginDisposals: hangingStats.pluginDisposals }, { case: 'hang', status: hangingOk ? 'PASS' : 'FAIL', events: hangingTrace.length, terminalIndex: hangingTerminalIndex, adapterStartIndex: hangingAdapterStartIndex, resolvedIndex: hangingResolvedIndex, calls: hangingStats.pluginCalls, disposals: hangingStats.pluginDisposals }, { failure: !hangingOk })
 check('FIXTURE_ADAPTER_HANG_COMPLETE_PATCH_SETTLED_BEFORE_RESOLVE_OK', hangingOk)
 rmSync(hangingFixture.root, { recursive: true, force: true })
 
@@ -396,7 +399,7 @@ check('DISPOSE_AFTER_SETTLED_NO_NEW_ADAPTER_OR_SYNC', disposeStats.pluginCalls =
 await disposeOwner()
 
 console.log('HUMAN  {"scope":"REAL-LOADER-OR-ADAPTER","reason":"未执行真实部署/生产 profile；官方 adapter 图由部署后复测"}')
-console.log('\n通过 ' + pass + ', 失败 ' + fail)
+output.summary(pass, fail)
 if (fail > 0) {
   process.exitCode = 1
   process.exit(1)

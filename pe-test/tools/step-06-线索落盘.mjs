@@ -1,7 +1,7 @@
 // save_probe 注册、五态闸门、planner 预算、持久化与故障注入回归：
 // 注册保持 save_probe/save_plan 的角色可见性；闸门覆盖 none/plan/direct/cancel/channelBroken
 // 五种结果；18 个成功配对耗尽预算且 save_plan 不豁免。持久化覆盖
-// 原子双写/单写、journal 恢复及各 final fs 依赖注入；fs 故障注入不做全局 monkeypatch；O1 只在 try/finally 临界区固定并恢复 Date。
+// 单次双写/单写、失败阶段与有限清理及各 fs 依赖注入；不扫描/恢复 journal；fs 故障注入不做全局 monkeypatch；O1 只在 try/finally 临界区固定并恢复 Date。
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync, renameSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -9,6 +9,7 @@ import { join } from 'node:path'
 
 const PLUGIN_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/index.js', import.meta.url))
 import { registerHostDeps } from '../_shared/host-deps.mjs'
+import { createOutput } from '../_shared/test-output.mjs'
 // host-deps 先于隔离完成解析（它按候选① DSH_HOME/profiles/web 锚定宿主真包）。
 await registerHostDeps()
 
@@ -68,20 +69,21 @@ function systemPromptMock(registry) {
 
 // P0-3：持久化函数直连导入（故障注入用；与 index.js 注入给 save 工具工厂的是同一模块实例）
 const PERSISTENCE_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/save-persistence.js', import.meta.url))
-const { atomicCommit, recoverJournals } = await import(pathToFileURL(PERSISTENCE_PATH).href)
+const { atomicCommit } = await import(pathToFileURL(PERSISTENCE_PATH).href)
 
 let pass = 0
 let fail = 0
+const output = createOutput({ argv: process.argv.slice(2) })
 checkTrue('T1 save-contract 收回 savePlanBase 且保留 saveArtifactBase', !Object.prototype.hasOwnProperty.call(saveContractNamespace, 'savePlanBase') && typeof saveContractNamespace.saveArtifactBase === 'function')
 function check(name, got, expected) {
   const okResult = JSON.stringify(got) === JSON.stringify(expected)
   if (okResult) { pass += 1 } else { fail += 1 }
-  console.log(`${okResult ? 'PASS' : 'FAIL'}  ${name}  (期望 ${JSON.stringify(expected)}, 实际 ${JSON.stringify(got)})`)
+  output.assertion(okResult, name, expected, got)
 }
 function checkTrue(name, got) {
   const okResult = got === true
   if (okResult) { pass += 1 } else { fail += 1 }
-  console.log(`${okResult ? 'PASS' : 'FAIL'}  ${name}  (期望 true, 实际 ${JSON.stringify(got)})`)
+  output.assertion(okResult, name, true, got)
 }
 
 // ── 事件构造（同 step-00-全流程回归.mjs 真实形状） ─────────────────────
@@ -450,7 +452,7 @@ const transferredPlanner = { session: { header: { id: 'planner-1', origin: 'suba
 r = preExecute(harness, transferredPlanner, 'read', { file_path: 'C:/work/.extra-plan/线索-x-20260816090000.md' })
 checkTrue('S14 预算耗尽后收到 agent-message 转达 → 预算重置 read allow', r !== null && r !== undefined && r.kind === 'allow')
 
-// ── ④ 执行层冒烟（真实落盘：原子双写/单写 + journal 双形状自愈，[任务1]） ──
+// ── ④ 执行层冒烟（真实落盘：单次双写/单写 + 失败主动重试，[任务1]） ──
 const smokeMain = { session: { header: { id: 'smoke-main', cwd: 'C:/work' }, snapshotEvents: () => [] }, options: {}, ctx: agentCtx }
 const smokePlanner = { session: { header: { id: 'smoke-planner', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => [DESC] }, options: { model: 'deepseek-v4-pro' }, ctx: agentCtx }
 registered.length = 0
@@ -576,7 +578,6 @@ check('G3-F fileCount/totalFileCount包含收尾文件', [closureGlobalSummary.t
 const g3StubCalls = []
 const g3StubFactory = createSaveToolFactories({
   savePlanDir: '.extra-plan',
-  recoverJournals: (...args) => g3StubCalls.push(['recover', args]),
   atomicCommit: (...args) => g3StubCalls.push(['atomic', args]),
 })
 const g3StubPlanDef = g3StubFactory.defineSavePlan()
@@ -593,7 +594,7 @@ for (let index = 0; index < g3FixtureCases.length; index += 1) {
   const calls = g3StubCalls.slice(before)
   const atomic = calls.find((item) => item[0] === 'atomic')
   const entries = atomic !== undefined && Array.isArray(atomic[1][2]) ? atomic[1][2] : []
-  check('G3-H ' + label + ' recover先于atomic且双写两项', calls.map((item) => item[0]), ['recover', 'atomic'])
+  check('G3-H ' + label + ' 只调用一次atomic且双写两项', calls.map((item) => item[0]), ['atomic'])
   check('G3-H ' + label + ' 两项正文逐字保持', entries.map((entry) => entry.content), [fixture.plan, fixture.checklist])
   check('G3-H ' + label + ' structured output仅paths', result === null ? [] : Object.keys(result), ['paths'])
   checkTrue('G3-H ' + label + ' 返回两个路径', result !== null && Array.isArray(result.paths) && result.paths.length === 2 && result.paths.every((path) => typeof path === 'string'))
@@ -620,10 +621,9 @@ const invalidCases = [
   ['G3-E 收尾双文档不一致', { plan: invalidClosure.plan, checklist: invalidClosure.checklist, needle: '收尾' }],
   ['G3-F 摘要超过12000字符', { plan: oversizedSummary.plan, checklist: oversizedSummary.checklist, needle: '派遣摘要' }],
 ]
-const invalidEffects = { recover: 0, atomic: 0 }
+const invalidEffects = { atomic: 0 }
 const invalidFactory = createSaveToolFactories({
   savePlanDir: '.extra-plan',
-  recoverJournals: () => { invalidEffects.recover += 1 },
   atomicCommit: () => { invalidEffects.atomic += 1 },
 })
 const invalidPlanDef = invalidFactory.defineSavePlan()
@@ -634,7 +634,7 @@ async function rejectG3BeforeIO(label, item) {
   } catch (error) {
     message = String(error.message)
   }
-  checkTrue(label + ' 在context/base、证据IO、recover、atomic前拒绝', message.includes(item.needle) && message.includes('文件级任务合同校验不通过'))
+  checkTrue(label + ' 在context/base、证据IO、atomic前拒绝', message.includes(item.needle) && message.includes('文件级任务合同校验不通过'))
   if (item.evidenceGuard === true) checkTrue(label + ' 未先触发证据文件IO', !message.includes('证据文件不存在'))
 }
 const g3DateBeforeInvalid = globalThis.Date
@@ -653,7 +653,7 @@ try {
   globalThis.Date = g3DateBeforeInvalid
 }
 const g3BaseSequence = (value) => Number((String(value).match(/-(\d+)$/) || [])[1])
-checkTrue('G3-H 所有非法合同不消耗context/base序号且恢复Date', globalThis.Date === g3DateBeforeInvalid && g3BaseSequence(invalidBaseAfter) === g3BaseSequence(invalidBaseBefore) + 1 && invalidEffects.recover === 0 && invalidEffects.atomic === 0)
+checkTrue('G3-H 所有非法合同不消耗context/base序号且恢复Date', globalThis.Date === g3DateBeforeInvalid && g3BaseSequence(invalidBaseAfter) === g3BaseSequence(invalidBaseBefore) + 1 && invalidEffects.atomic === 0)
 rmSync(g3TmpRoot, { recursive: true, force: true })
 
 const tmpRoot = mkdtempSync(join(tmpdir(), 'extra-plan-smoke-'))
@@ -680,14 +680,13 @@ try {
   const contextCalls = []
   const contextFactory = createSaveToolFactories({
     savePlanDir: '.extra-plan',
-    recoverJournals: (...args) => contextCalls.push(['recover', args]),
     atomicCommit: (...args) => contextCalls.push(['atomic', args]),
   })
   const contextSingleFixture = g3FixtureCases[0][1]
   const contextPlanResult = await contextFactory.defineSavePlan().execute({ plan: contextSingleFixture.plan, checklist: contextSingleFixture.checklist, taskName: 'order' }, execFake(work))
   const contextProbeResult = await contextFactory.defineSaveProbe().execute({ ...contextProbeArgs, taskName: 'order-probe', fileMap: [{ path: 'a.txt', relation: '相关文件' }], focusAreas: [{ path: 'a.txt', note: '重点' }] }, execFake(work))
   const atomicCalls = contextCalls.filter((item) => item[0] === 'atomic')
-  checkTrue('T3 recoverJournals 严格先于两次 atomicCommit', contextCalls.map((item) => item[0]).join('|') === 'recover|atomic|recover|atomic')
+  checkTrue('T3 两次保存只各自调用一次 atomicCommit，不扫描旧事务', contextCalls.map((item) => item[0]).join('|') === 'atomic|atomic')
   checkTrue('T3 save_plan 提交双文件且返回 paths，save_probe 提交单文件且返回 path', atomicCalls.length === 2 && atomicCalls[0][1][2].length === 2 && atomicCalls[1][1][2].length === 1 && Array.isArray(contextPlanResult.paths) && typeof contextProbeResult.path === 'string')
   check('T3 合法single正文逐字交给atomicCommit', atomicCalls[0][1][2].map((entry) => entry.content), [contextSingleFixture.plan, contextSingleFixture.checklist])
   check('T3 save_plan structured output仅paths', Object.keys(contextPlanResult), ['paths'])
@@ -716,16 +715,15 @@ try {
   })()
   checkTrue('S20 校验拒绝面：不存在路径 → execute 抛错并指明', rejectResult)
 
-  const invalidEffects = { recover: 0, atomic: 0 }
+  const invalidEffects = { atomic: 0 }
   const invalidProbe = createSaveToolFactories({
     savePlanDir: '.extra-plan',
-    recoverJournals: () => { invalidEffects.recover += 1 },
     atomicCommit: () => { invalidEffects.atomic += 1 },
   }).defineSaveProbe()
   for (const badArgs of [null, undefined, {}]) {
     try { await invalidProbe.execute(badArgs, execFake(work)) } catch {}
   }
-  checkTrue('S20a 非法 args 先校验且零副作用（recover/atomic/rename/unlink 均为 0）', invalidEffects.recover === 0 && invalidEffects.atomic === 0)
+  checkTrue('S20a 非法 args 先校验且零副作用（atomic/rename/unlink 均为 0）', invalidEffects.atomic === 0)
   const RealDate = globalThis.Date
   const fixedMillis = 1893456000123
   class FixedDate extends RealDate {
@@ -752,12 +750,12 @@ try {
   const afterMatch = baseAfter.match(artifactTail)
   const beforeSeq = beforeMatch === null ? NaN : Number(beforeMatch[3])
   const afterSeq = afterMatch === null ? NaN : Number(afterMatch[3])
-  checkTrue('S20c 非法 save_probe 不消耗同毫秒序号且固定 Date 已恢复', globalThis.Date === RealDate && beforeMatch !== null && afterMatch !== null && beforeMatch[1] === afterMatch[1] && beforeMatch[2] === String(process.pid) && afterMatch[2] === String(process.pid) && Number.isInteger(beforeSeq) && Number.isInteger(afterSeq) && afterSeq === beforeSeq + 1 && invalidEffects.recover === 0 && invalidEffects.atomic === 0)
+  checkTrue('S20c 非法 save_probe 不消耗同毫秒序号且固定 Date 已恢复', globalThis.Date === RealDate && beforeMatch !== null && afterMatch !== null && beforeMatch[1] === afterMatch[1] && beforeMatch[2] === String(process.pid) && afterMatch[2] === String(process.pid) && Number.isInteger(beforeSeq) && Number.isInteger(afterSeq) && afterSeq === beforeSeq + 1 && invalidEffects.atomic === 0)
   const baseA = saveArtifactBase('collision', 'session-123456')
   const baseB = saveArtifactBase('collision', 'session-123456')
   checkTrue('S20b 同 task/session 同毫秒连续 base 不碰撞且含毫秒/pid/序号', baseA !== baseB && /collision-session1-\d{17}-\d+-\d+/.test(baseA) && /collision-session1-\d{17}-\d+-\d+/.test(baseB))
 
-  // 旧形状 journal 只告警并原样保留：不再提供历史恢复分支。
+  // 旧 journal 仅作为历史哨兵：本轮保存不读取、不重放、不删除。
   const ep = join(work, '.extra-plan')
   const stalePlan = join(ep, '方案-stale.md')
   const staleCheck = join(ep, '验收-stale.md')
@@ -768,26 +766,24 @@ try {
   writeFileSync(staleJournal, staleRecord)
   writeFileSync(stalePlanTmp, '旧残留-方案')
   writeFileSync(staleCheckTmp, '旧残留-验收')
-  const staleWarnings = captureWarn(() => recoverJournals(ep))
-  checkTrue('S20b 旧形状 journal：告警且 journal/tmp 字节原样保留', staleWarnings.some((t) => t.includes('journal recovery failed')) && readFileSync(staleJournal, 'utf8') === staleRecord && readFileSync(stalePlanTmp, 'utf8') === '旧残留-方案' && readFileSync(staleCheckTmp, 'utf8') === '旧残留-验收')
   const productionFixture = g3FixtureCases.find((entry) => entry[0] === 'G3-E batch收尾全局组合')[1]
   const planResult = await savePlanDef.execute({ plan: productionFixture.plan, checklist: productionFixture.checklist, taskName: 'smoke2' }, execFake(work))
   const tsMatch = (p) => (String(p).match(/-[A-Za-z0-9]+-(\d{17})-\d+-\d+\.md$/) || [])[1]
   checkTrue('S21 save_plan 双文件落盘成功（同毫秒 artifact base）', Array.isArray(planResult.paths) && planResult.paths.length === 2 && existsSync(planResult.paths[0]) && existsSync(planResult.paths[1]) && tsMatch(planResult.paths[0]) === tsMatch(planResult.paths[1]))
   check('S21a 合法batch正文逐字双写', planResult.paths.map((path) => readFileSync(path, 'utf8')), [productionFixture.plan, productionFixture.checklist])
   check('S21b save_plan structured output仅paths', Object.keys(planResult), ['paths'])
-  checkTrue('S22 旧形状 journal 保留（方案-stale.md 不被自愈）', !existsSync(stalePlan) && existsSync(stalePlanTmp))
-  checkTrue('S22b 旧形状 journal 另一端原样保留（验收-stale.md 不被自愈）', !existsSync(staleCheck) && existsSync(staleCheckTmp))
-  checkTrue('S23 当前 save_plan 完成但旧 journal/tmp 现场保留', existsSync(staleJournal) && existsSync(stalePlanTmp) && existsSync(staleCheckTmp))
+  const staleBefore = [readFileSync(staleJournal, 'utf8'), readFileSync(stalePlanTmp, 'utf8'), readFileSync(staleCheckTmp, 'utf8')]
+  checkTrue('S22 旧 journal/tmp 哨兵在 save_plan 后字节不变且不生成目标', !existsSync(stalePlan) && !existsSync(staleCheck) && JSON.stringify(staleBefore) === JSON.stringify([readFileSync(staleJournal, 'utf8'), readFileSync(stalePlanTmp, 'utf8'), readFileSync(staleCheckTmp, 'utf8')]))
 
-  // 新形状 journal 自愈：entries 残留 → 触发 save_probe 补完
+  // 新 journal 哨兵同样不被下一次 save_probe 扫描或清理；本次只发布新参数对应文件。
   const staleTmp = join(ep, '线索-stale.md.tmp-y')
   const staleFile = join(ep, '线索-stale.md')
+  const staleJournal2 = join(ep, '.journal-stale2.json')
   writeFileSync(staleTmp, 'stale')
-  writeFileSync(join(ep, '.journal-stale2.json'), JSON.stringify({ session: 'smokeexe', entries: [{ tmp: staleTmp, file: staleFile }] }))
-  await saveProbeDef.execute({ taskName: 'stale', fileMap: [{ path: 'a.txt', relation: 'r' }], focusAreas: [], exclusions: [], background: [] }, execFake(work))
-  checkTrue('S24 新形状 journal 残留被补完（线索-stale.md 存在）', existsSync(staleFile))
-  checkTrue('S25 当前 entries 补完后无自身 .tmp/.journal（旧形状现场仍保留）', !existsSync(staleTmp) && !existsSync(join(ep, '.journal-stale2.json')) && existsSync(staleJournal))
+  writeFileSync(staleJournal2, JSON.stringify({ session: 'smokeexe', entries: [{ tmp: staleTmp, file: staleFile }] }))
+  await saveProbeDef.execute({ taskName: 'stale-new-call', fileMap: [{ path: 'a.txt', relation: 'r' }], focusAreas: [], exclusions: [], background: [] }, execFake(work))
+  checkTrue('S23 save_probe 只处理新参数：旧 journal/tmp/目标字节均不变', existsSync(staleJournal2) && existsSync(staleTmp) && !existsSync(staleFile) && readFileSync(staleTmp, 'utf8') === 'stale')
+  check('S24 正常 save_probe 不产生新 journal（仅保留两个历史哨兵）', readdirSync(ep).filter((name) => name.startsWith('.journal-')).sort(), ['.journal-stale.json', '.journal-stale2.json'])
   const emptyArgsReject = await (async () => {
     try {
       await savePlanDef.execute({}, execFake(work))
@@ -810,26 +806,17 @@ try {
   rmSync(tmpRoot, { recursive: true, force: true })
 }
 
-// ── ⑤ 持久化事务逐阶段故障注入（P0-3：atomicCommit/recoverJournals 各自的末位可选 fs 依赖桩） ──
+// ── ⑤ 单次持久化逐阶段故障注入（无跨调用恢复） ─────────────────────────
 // 桩只交给对应的一次调用（局部依赖对象），未提供的操作项回退默认 node:fs 实现；不使用全局 monkeypatch。
-// 每个场景使用独立临时目录，finally 清理。
-const isJournalName = (n) => n.startsWith('.journal-')
-const isTmpName = (n) => n.indexOf('.tmp-') >= 0
-const leftovers = (dir) => readdirSync(dir).filter((n) => isJournalName(n) || isTmpName(n)).sort()
-const tmpBaseNames = (dir) => readdirSync(dir).filter(isTmpName).map((n) => n.replace(/\.tmp-\d+-\d+$/, '')).sort()
-const contentsOf = (dir, names) => names.map((n) => readFileSync(join(dir, n), 'utf8'))
+// 每个场景使用独立临时目录，finally 清理；失败断言保留首错、阶段和本次清理结果。
+const isTmpName = (name) => name.indexOf('.tmp-') >= 0
+const leftovers = (dir) => readdirSync(dir).filter(isTmpName).sort()
+const tmpBaseNames = (dir) => readdirSync(dir).filter(isTmpName).map((name) => name.replace(/\.tmp-\d+-\d+$/, '')).sort()
+const contentsOf = (dir, names) => names.map((name) => readFileSync(join(dir, name), 'utf8'))
 const pairOf = (base) => [{ name: '方案-' + base + '.md', content: 'PLAN-' + base }, { name: '验收-' + base + '.md', content: 'CHECK-' + base }]
-const journalOf = (dir, base) => join(dir, '.journal-' + base + '.json')
 const crossedAt = (dir, base) => [existsSync(join(dir, '方案-' + base + '.md')), existsSync(join(dir, '验收-' + base + '.md'))]
 function thrownBy(fn) {
   try { fn(); return null } catch (error) { return error }
-}
-function captureWarn(fn) {
-  const backup = console.warn
-  const logs = []
-  console.warn = function () { logs.push(Array.prototype.join.call(arguments, ' ')) }
-  try { fn() } finally { console.warn = backup }
-  return logs
 }
 function inScenario(label, body) {
   const dir = mkdtempSync(join(tmpdir(), 'extra-plan-fault-' + label + '-'))
@@ -837,220 +824,119 @@ function inScenario(label, body) {
     body(dir)
   } catch (error) {
     fail += 1
-    console.log('FAIL  F-' + label + ' 场景自身异常  (' + (error instanceof Error ? error.message : String(error)) + ')')
+    output.error('FAIL  F-' + label + ' 场景自身异常  (' + (error instanceof Error ? error.message : String(error)) + ')')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
 }
 
-// F1 正常双写：保留生产调用形状与双目标内容。
+// F1 正常保存：两文件按序发布，成功不产生 journal/tmp。
 inScenario('f1-ok', (dir) => {
-  atomicCommit(dir, 'f1', pairOf('f1'), 'tagf1')
+  atomicCommit(dir, 'f1', pairOf('f1'))
   check('F1 正常双写：两目标内容与输入一致', contentsOf(dir, ['方案-f1.md', '验收-f1.md']), ['PLAN-f1', 'CHECK-f1'])
-  check('F1 正常双写：tmp/journal 无残留', leftovers(dir), [])
+  check('F1 正常双写：tmp/journal 无残留', [leftovers(dir), readdirSync(dir).filter((name) => name.startsWith('.journal-'))], [[], []])
 })
 
-// F2 tmp 写入阶段失败：pre-journal，目标不存在，journal 与本次 tmp 无残留。
-inScenario('f2-tmp-write', (dir) => {
-  const injected = new Error('inject: tmp write failed')
+// F2 首次临时写失败：部分文件也只清理本次尝试的临时文件。
+inScenario('f2-first-write', (dir) => {
+  const injected = new Error('inject: first write failed')
   let writes = 0
-  const error = thrownBy(() => atomicCommit(dir, 'f2', pairOf('f2'), undefined, {
-    writeFileSync: () => { writes += 1; throw injected },
+  const error = thrownBy(() => atomicCommit(dir, 'f2', pairOf('f2'), {
+    writeFileSync: (path, content, encoding) => {
+      writes += 1
+      writeFileSync(path, 'PARTIAL-f2', encoding)
+      throw injected
+    },
   }))
-  check('F2 tmp 写失败：对外抛注入错误', error === injected, true)
-  check('F2 tmp 写失败：第一次写即失败', writes, 1)
-  check('F2 tmp 写失败：无目标文件', crossedAt(dir, 'f2'), [false, false])
-  check('F2 tmp 写失败：journal 与本次 tmp 无残留', leftovers(dir), [])
+  checkTrue('F2 首写失败：保留首错与临时写入1阶段', error !== null && error.cause === injected && error.message.includes('阶段=临时写入1') && error.message.includes('inject: first write failed'))
+  check('F2 首写失败：只清理本次临时文件且目标未发布', [writes, leftovers(dir), crossedAt(dir, 'f2')], [1, [], [false, false]])
 })
 
-// F3 journal 已落盘但写桩抛错：仍按 pre-journal 条件清理。
-inScenario('f3-journal-write-throw', (dir) => {
-  const injected = new Error('inject: journal write threw after landing')
-  const journal = journalOf(dir, 'f3')
-  const error = thrownBy(() => atomicCommit(dir, 'f3', pairOf('f3'), undefined, {
-    writeFileSync: (p, c, enc) => { writeFileSync(p, c, enc); if (String(p) === journal) throw injected },
+// F3 后续临时写失败：首个临时文件和失败中的第二个临时文件均清理。
+inScenario('f3-second-write', (dir) => {
+  const injected = new Error('inject: second write failed')
+  let writes = 0
+  const error = thrownBy(() => atomicCommit(dir, 'f3', pairOf('f3'), {
+    writeFileSync: (path, content, encoding) => {
+      writes += 1
+      writeFileSync(path, content, encoding)
+      if (writes === 2) throw injected
+    },
   }))
-  check('F3 journal 已落盘但写桩抛错：对外抛原始写入错误', error === injected, true)
-  check('F3 pre-journal 条件清理：journal 已删除并确认不存在', existsSync(journal), false)
-  check('F3 pre-journal 条件清理：本次 tmp 全部清理', leftovers(dir), [])
-  recoverJournals(dir)
-  check('F3 后续 recoverJournals 不发现该事务', readdirSync(dir).filter(isJournalName), [])
-  check('F3 未进入 rename 阶段：目标文件不存在', crossedAt(dir, 'f3'), [false, false])
+  checkTrue('F3 后续写失败：保留首错与临时写入2阶段', error !== null && error.cause === injected && error.message.includes('阶段=临时写入2') && error.message.includes('inject: second write failed'))
+  check('F3 后续写失败：两笔临时文件清理且目标未发布', [writes, leftovers(dir), crossedAt(dir, 'f3')], [2, [], [false, false]])
 })
 
-// F4 journal 删除失败：journal 与全部 tmp 同时保留，不再继续清理 tmp。
-inScenario('f4-journal-unlink-fail', (dir) => {
-  const injected = new Error('inject: journal write threw after landing')
-  const unlinkError = new Error('inject: journal unlink failed')
-  const journal = journalOf(dir, 'f4')
-  const unlinks = []
-  const error = thrownBy(() => atomicCommit(dir, 'f4', pairOf('f4'), undefined, {
-    writeFileSync: (p, c, enc) => { writeFileSync(p, c, enc); if (String(p) === journal) throw injected },
-    unlinkSync: (p) => { unlinks.push(String(p)); if (String(p) === journal) throw unlinkError },
-  }))
-  check('F4 journal 删不掉：对外仍抛原始写入错误（非清理错误）', error === injected, true)
-  check('F4 journal 与全部 tmp 同时保留', [existsSync(journal), tmpBaseNames(dir)], [true, ['方案-f4.md', '验收-f4.md']])
-  check('F4 tmp 清理不再继续（unlink 只试探过 journal）', unlinks.filter(isTmpName), [])
-  check('F4 目标文件仍未就位', crossedAt(dir, 'f4'), [false, false])
-})
-
-// F5 第一次 rename 失败：post-journal 保留，恢复可补全两端。
-inScenario('f5-first-rename', (dir) => {
-  const injected = new Error('inject: first rename failed')
-  const journal = journalOf(dir, 'f5')
+// F4 首次发布失败：未发布目标不产生半套新工件。
+inScenario('f4-first-publish', (dir) => {
+  const injected = new Error('inject: first publish failed')
   let renames = 0
-  const error = thrownBy(() => atomicCommit(dir, 'f5', pairOf('f5'), undefined, {
-    renameSync: (a, b) => { renames += 1; if (renames === 1) throw injected; renameSync(a, b) },
+  const error = thrownBy(() => atomicCommit(dir, 'f4', pairOf('f4'), {
+    renameSync: (from, to) => {
+      renames += 1
+      if (renames === 1) throw injected
+      renameSync(from, to)
+    },
   }))
-  check('F5 第一次 rename 失败：对外抛注入错误', error === injected, true)
-  check('F5 post-journal：journal 未删除（保留恢复入口）', existsSync(journal), true)
-  check('F5 post-journal：两笔 tmp 保留、两目标均未就位', [tmpBaseNames(dir), crossedAt(dir, 'f5')], [['方案-f5.md', '验收-f5.md'], [false, false]])
-  recoverJournals(dir)
-  check('F5 正常恢复：两目标内容与输入一致', contentsOf(dir, ['方案-f5.md', '验收-f5.md']), ['PLAN-f5', 'CHECK-f5'])
-  check('F5 恢复后 journal/tmp 清空', leftovers(dir), [])
+  checkTrue('F4 首次发布失败：保留首错与发布1阶段', error !== null && error.cause === injected && error.message.includes('阶段=发布1') && error.message.includes('inject: first publish failed'))
+  check('F4 首次发布失败：临时文件清理且目标未发布', [renames, leftovers(dir), crossedAt(dir, 'f4')], [1, [], [false, false]])
 })
 
-// F6 第二次 rename 失败：验证 post-journal 恢复入口保留。
-inScenario('f6-second-rename', (dir) => {
-  const injected = new Error('inject: second rename failed')
-  const journal = journalOf(dir, 'f6')
+// F5 后续发布失败：已发布的首个新目标也属于本次半套工件并清理。
+inScenario('f5-second-publish', (dir) => {
+  const injected = new Error('inject: second publish failed')
   let renames = 0
-  const error = thrownBy(() => atomicCommit(dir, 'f6', pairOf('f6'), undefined, {
-    renameSync: (a, b) => { renames += 1; if (renames === 2) throw injected; renameSync(a, b) },
+  const error = thrownBy(() => atomicCommit(dir, 'f5', pairOf('f5'), {
+    renameSync: (from, to) => {
+      renames += 1
+      if (renames === 2) throw injected
+      renameSync(from, to)
+    },
   }))
-  check('F6 第二次 rename 失败：对外抛注入错误', error === injected, true)
-  check('F6 首个目标已存在、第二个 tmp 与 journal 保留', [crossedAt(dir, 'f6'), tmpBaseNames(dir), existsSync(journal)], [[true, false], ['验收-f6.md'], true])
-  recoverJournals(dir)
-  check('F6 恢复后两目标内容均正确', contentsOf(dir, ['方案-f6.md', '验收-f6.md']), ['PLAN-f6', 'CHECK-f6'])
-  check('F6 恢复后无临时残留（journal/tmp 清空）', leftovers(dir), [])
+  checkTrue('F5 后续发布失败：保留首错与发布2阶段', error !== null && error.cause === injected && error.message.includes('阶段=发布2') && error.message.includes('inject: second publish failed'))
+  check('F5 后续发布失败：已发布目标与余下临时文件均清理', [renames, leftovers(dir), crossedAt(dir, 'f5')], [2, [], [false, false]])
 })
 
-// F7 两个 rename 完成但最终删除 journal 失败。
-inScenario('f7-final-unlink', (dir) => {
-  const unlinkError = new Error('inject: journal unlink failed')
-  const journal = journalOf(dir, 'f7')
-  const error = thrownBy(() => atomicCommit(dir, 'f7', pairOf('f7'), undefined, {
-    unlinkSync: (p) => { if (String(p) === journal) throw unlinkError; unlinkSync(p) },
+// F6 清理失败：首错/阶段不被覆盖，并报告残留路径与清理原因；其它本次文件继续清理。
+inScenario('f6-cleanup-fail', (dir) => {
+  const injected = new Error('inject: publish failed before cleanup')
+  const cleanupError = new Error('inject: cleanup failed')
+  let cleanupAttempts = 0
+  const error = thrownBy(() => atomicCommit(dir, 'f6', pairOf('f6'), {
+    renameSync: () => { throw injected },
+    unlinkSync: (path) => {
+      cleanupAttempts += 1
+      if (cleanupAttempts === 1) throw cleanupError
+      unlinkSync(path)
+    },
   }))
-  check('F7 最终删 journal 失败：对外抛注入错误', error === unlinkError, true)
-  check('F7 两目标已就位且 journal 保留', [crossedAt(dir, 'f7'), existsSync(journal)], [[true, true], true])
-  recoverJournals(dir)
-  check('F7 下一次恢复只做完成确认并删 journal，目标内容不变', [existsSync(journal), contentsOf(dir, ['方案-f7.md', '验收-f7.md']), leftovers(dir)], [false, ['PLAN-f7', 'CHECK-f7'], []])
+  checkTrue('F6 清理失败：保留发布首错/阶段并附清理原因', error !== null && error.cause === injected && error.message.includes('阶段=发布1') && error.message.includes('inject: publish failed before cleanup') && error.message.includes('清理失败') && error.message.includes('inject: cleanup failed'))
+  checkTrue('F6 清理失败：残留仅为本次首个临时文件且记录清理尝试', leftovers(dir).length === 1 && cleanupAttempts === 2)
 })
 
-// F8 目标存在性确认失败：全部目标确认通过前不得尝试删除 journal。
-inScenario('f8-target-confirm', (dir) => {
-  const journal = journalOf(dir, 'f8')
-  const unlinks = []
-  const error = thrownBy(() => atomicCommit(dir, 'f8', pairOf('f8'), undefined, {
-    existsSync: (p) => (String(p).indexOf('验收-f8.md') >= 0 ? false : existsSync(p)),
-    unlinkSync: (p) => { unlinks.push(String(p)); unlinkSync(p) },
+// F7 预存文件保护：不覆盖预存目标，也不因失败清理它。
+inScenario('f7-preexisting', (dir) => {
+  const existing = join(dir, '方案-f7.md')
+  writeFileSync(existing, 'PREEXISTING-f7')
+  let writes = 0
+  const error = thrownBy(() => atomicCommit(dir, 'f7', pairOf('f7'), {
+    writeFileSync: (...args) => { writes += 1; writeFileSync(...args) },
   }))
-  checkTrue('F8 目标未确认就位即抛错', error !== null && String(error.message).indexOf('目标文件未就位') >= 0)
-  check('F8 全部目标确认通过前不调用 unlinkSync（不删 journal）', unlinks, [])
-  check('F8 post-journal：journal 与两目标均在（rename 均已执行）', [existsSync(journal), crossedAt(dir, 'f8')], [true, [true, true]])
+  checkTrue('F7 预存目标立即拒绝且阶段/原因明确', error !== null && error.message.includes('阶段=准备目标') && error.message.includes('预存目标已存在'))
+  check('F7 预存目标字节不变且未进入写入/清理', [writes, readFileSync(existing, 'utf8'), leftovers(dir), crossedAt(dir, 'f7')], [0, 'PREEXISTING-f7', [], [true, false]])
 })
 
-// R1 恢复过程中第二次 rename 注入失败（T3.4：用 recoverJournals 自己的末位 fs 依赖）
-inScenario('r1-recovery-rename-fail', (dir) => {
-  const journal = journalOf(dir, 'r1')
-  let setupRenames = 0
-  thrownBy(() => atomicCommit(dir, 'r1', pairOf('r1'), undefined, {
-    renameSync: (a, b) => { setupRenames += 1; if (setupRenames === 1) throw new Error('setup: first rename failed'); renameSync(a, b) },
-  }))
-  let renames = 0
-  const logs = captureWarn(() => recoverJournals(dir, undefined, {
-    renameSync: (a, b) => { renames += 1; if (renames === 2) throw new Error('inject: recovery rename 2 failed'); renameSync(a, b) },
-  }))
-  check('R1 恢复中第二次 rename 注入失败：journal 保留', existsSync(journal), true)
-  checkTrue('R1 恢复失败走既有告警路径', logs.some((t) => t.indexOf('journal recovery failed') >= 0))
-  recoverJournals(dir)
-  check('R1 移除故障后再调用：补全两目标并清理 journal/tmp', [contentsOf(dir, ['方案-r1.md', '验收-r1.md']), leftovers(dir)], [['PLAN-r1', 'CHECK-r1'], []])
+// F8 旧 journal 哨兵与预存文件不参与后续调用；第二次调用只发布自己的新参数。
+inScenario('f8-retry-new-args', (dir) => {
+  const oldJournal = join(dir, '.journal-old-sentinel.json')
+  const oldTarget = join(dir, '方案-old-sentinel.md')
+  writeFileSync(oldJournal, 'OLD-JOURNAL-BYTES')
+  writeFileSync(oldTarget, 'OLD-TARGET-BYTES')
+  atomicCommit(dir, 'f8', pairOf('f8'))
+  atomicCommit(dir, 'f9', pairOf('f9'))
+  check('F8/F9 第二次调用只处理新参数且旧现场字节不变', [contentsOf(dir, ['方案-f8.md', '验收-f8.md', '方案-f9.md', '验收-f9.md']), readFileSync(oldJournal, 'utf8'), readFileSync(oldTarget, 'utf8')], [['PLAN-f8', 'CHECK-f8', 'PLAN-f9', 'CHECK-f9'], 'OLD-JOURNAL-BYTES', 'OLD-TARGET-BYTES'])
+  check('F8/F9 正常调用无新 journal/tmp', [leftovers(dir), readdirSync(dir).filter((name) => name.startsWith('.journal-'))], [[], ['.journal-old-sentinel.json']])
 })
 
-// R2 某项 tmp 已不存在但目标存在（T3.2）：按已完成处理并继续后续项
-inScenario('r2-tmp-done', (dir) => {
-  const journal = journalOf(dir, 'r2')
-  writeFileSync(join(dir, '方案-r2.md'), 'DONE-r2')
-  writeFileSync(join(dir, '验收-r2.md.tmp-z'), 'PENDING-r2')
-  writeFileSync(journal, JSON.stringify({ entries: [
-    { tmp: join(dir, '方案-r2.md.tmp-z'), file: join(dir, '方案-r2.md') },
-    { tmp: join(dir, '验收-r2.md.tmp-z'), file: join(dir, '验收-r2.md') },
-  ] }))
-  recoverJournals(dir)
-  check('R2 已完成的项凭目标存在继续，后续项照常补完并清 journal', [contentsOf(dir, ['方案-r2.md', '验收-r2.md']), leftovers(dir)], [['DONE-r2', 'PENDING-r2'], []])
-})
-
-// R3 某项 tmp 与目标同时缺失（T3.3）：journal 保留 + 既有告警，不被误判为完成
-inScenario('r3-missing-both', (dir) => {
-  const journal = journalOf(dir, 'r3')
-  writeFileSync(join(dir, '方案-r3.md.tmp-z'), 'PARTIAL-r3')
-  writeFileSync(journal, JSON.stringify({ entries: [
-    { tmp: join(dir, '方案-r3.md.tmp-z'), file: join(dir, '方案-r3.md') },
-    { tmp: join(dir, '验收-r3.md.tmp-z'), file: join(dir, '验收-r3.md') },
-  ] }))
-  const logs = captureWarn(() => recoverJournals(dir))
-  check('R3 tmp 与目标均缺失：journal 保留不被误删', [existsSync(journal), existsSync(join(dir, '验收-r3.md'))], [true, false])
-  checkTrue('R3 输出既有恢复失败告警', logs.some((t) => t.indexOf('journal recovery failed') >= 0))
-})
-
-// R4 旧形状 journal：只告警并保留 journal/tmp，当前版不再恢复四字段。
-inScenario('r4-legacy-shape', (dir) => {
-  const journal = journalOf(dir, 'r4')
-  const planTmp = join(dir, '方案-r4.md.tmp-z')
-  const checkTmp = join(dir, '验收-r4.md.tmp-z')
-  writeFileSync(planTmp, 'PLAN-r4')
-  writeFileSync(checkTmp, 'CHECK-r4')
-  const record = JSON.stringify({ planTmp, checkTmp, planFile: join(dir, '方案-r4.md'), checkFile: join(dir, '验收-r4.md') })
-  writeFileSync(journal, record)
-  const logs = captureWarn(() => recoverJournals(dir))
-  check('R4 旧形状 journal：告警、字节与 tmp 原样保留', [existsSync(journal), readFileSync(journal, 'utf8') === record, existsSync(planTmp), existsSync(checkTmp), logs.some((t) => t.includes('journal recovery failed'))], [true, true, true, true, true])
-})
-
-// R5 形状非法/字段缺失的 journal（T3.1）：走既有告警路径并保留 journal
-const BAD_SHAPES = [
-  ['entries 为空数组', () => ({ entries: [] })],
-  ['记录为空对象', () => ({})],
-  ['旧形状缺半对', (dir) => ({ planTmp: join(dir, 'x.md.tmp-z') })],
-  ['entries 条目形状非法', (dir) => ({ entries: [{ tmp: join(dir, 'x.md.tmp-z') }] })],
-  ['记录非对象', () => null],
-]
-for (let i = 0; i < BAD_SHAPES.length; i += 1) {
-  const label = 'r5-shape-' + i
-  const name = BAD_SHAPES[i][0]
-  const recordOf = BAD_SHAPES[i][1]
-  inScenario(label, (dir) => {
-    const journal = journalOf(dir, label)
-    writeFileSync(journal, JSON.stringify(recordOf(dir)))
-    const logs = captureWarn(() => recoverJournals(dir))
-    check('R5 ' + name + '：journal 保留且输出既有告警', [existsSync(journal), logs.some((t) => t.indexOf('journal recovery failed') >= 0)], [true, true])
-  })
-}
-
-// R6 sessionTag 不匹配仍跳过（T3.5）：不恢复、不告警、不删 journal
-inScenario('r6-session-tag', (dir) => {
-  const other = journalOf(dir, 'r6other')
-  const mine = journalOf(dir, 'r6mine')
-  writeFileSync(join(dir, '方案-r6other.md.tmp-z'), 'OTHER')
-  writeFileSync(other, JSON.stringify({ session: 'other001', entries: [{ tmp: join(dir, '方案-r6other.md.tmp-z'), file: join(dir, '方案-r6other.md') }] }))
-  writeFileSync(join(dir, '方案-r6mine.md.tmp-z'), 'MINE')
-  writeFileSync(mine, JSON.stringify({ session: 'mine0001', entries: [{ tmp: join(dir, '方案-r6mine.md.tmp-z'), file: join(dir, '方案-r6mine.md') }] }))
-  const logs = captureWarn(() => recoverJournals(dir, 'mine0001'))
-  check('R6 sessionTag 不匹配：跳过且不告警、journal 保留', [existsSync(other), existsSync(join(dir, '方案-r6other.md')), logs.length], [true, false, 0])
-  check('R6 sessionTag 匹配：正常恢复并清 journal', [existsSync(join(dir, '方案-r6mine.md')), existsSync(mine)], [true, false])
-})
-
-// R7 一个 journal 失败不阻断目录内其它 journal 的扫描（T3.5）
-inScenario('r7-isolation', (dir) => {
-  const bad = journalOf(dir, 'r7bad')
-  const good = journalOf(dir, 'r7good')
-  writeFileSync(bad, JSON.stringify({ entries: [{ tmp: join(dir, '方案-r7bad.md.tmp-z'), file: join(dir, '方案-r7bad.md') }] }))
-  writeFileSync(join(dir, '方案-r7good.md.tmp-z'), 'GOOD')
-  writeFileSync(good, JSON.stringify({ entries: [{ tmp: join(dir, '方案-r7good.md.tmp-z'), file: join(dir, '方案-r7good.md') }] }))
-  const logs = captureWarn(() => recoverJournals(dir))
-  check('R7 失败 journal 保留、其它 journal 照常恢复清理', [existsSync(bad), existsSync(good), existsSync(join(dir, '方案-r7good.md')), logs.length >= 1], [true, false, true, true])
-})
-
-
-console.log(`\n通过 ${pass}, 失败 ${fail}`)
+output.summary(pass, fail)
 process.exit(fail === 0 ? 0 : 1)

@@ -28,7 +28,11 @@ export function framesOf(buf) {
       const bs = bh >> 3
       if (bt === 3 || bs > 0x20000) { q = buf.length + 5; break }
       last = (bh & 1) === 1
-      q += 3 + bs
+      // RLE 块的 Block_Size 是解压后重复次数，压缩载荷始终只有 1 字节。
+      // raw/compressed 块才按 Block_Size 跳过，避免 RLE 边界错位。
+      const payloadSize = bt === 1 ? 1 : bs
+      if (q + 3 + payloadSize > buf.length) { q = buf.length + 5; break }
+      q += 3 + payloadSize
     }
     if (checksum) q += 4
     if (q <= buf.length) { frames.push({ start: pos, end: q }); pos = q }

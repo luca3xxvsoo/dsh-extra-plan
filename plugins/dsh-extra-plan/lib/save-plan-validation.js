@@ -10,7 +10,6 @@ const CLOSURE_HEADING_RE = /^\[收尾\][ \t]*$/
 const GLOBAL_HEADING_RE = /^\[全局验收\][ \t]*$/
 const CLOSURE_CANDIDATE_RE = /^\[收尾/
 const GLOBAL_CANDIDATE_RE = /^\[全局验收/
-const FENCE_RE = /^(?:\x60{3,}|~{3,})/
 const GROUP_RE = /^G[1-9]\d*$/
 const REVIEW_GROUP_RE = /^R[1-9]\d*$/
 const DEPENDENCY_RE = /^\[任务([1-9]\d*)\]$/

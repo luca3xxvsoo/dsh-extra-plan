@@ -125,7 +125,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PROBE_LIMITS, sanitizeTaskName, timestamp, renderSavePlan, renderSaveProbe, renderProbeMarkdown, extractProbeEvidenceRefs } from './lib/save-contract.js'
 import { validateProbe } from './lib/save-probe-validation.js'
-import { atomicCommit, recoverJournals } from './lib/save-persistence.js'
+import { atomicCommit } from './lib/save-persistence.js'
 import { createSaveToolFactories } from './lib/save-tool-factories.js'
 import { RUNCODE_MUTATION_HINTS, codeMutationHints } from './lib/run-code-static.js'
 import { PWSH_MUTATION, BASH_MUTATION, PWSH_BARE_WORDS, BASH_BARE_WORDS, pwshCommandOf, bashCommandOf, pwshMutationMatches, bashMutationMatches } from './lib/shell-mutation.js'
@@ -295,9 +295,8 @@ export function apply(ctx, config) {
   const { defineSavePlan, defineSaveProbe } = createSaveToolFactories({
     savePlanDir,
     atomicCommit,
-    recoverJournals,
   })
-  // ── 配置热读：7 项设置从「apply 期一次性常量」改为「消费点现场取值」 ──────
+  // ── 配置热读：8 项设置从「apply 期一次性常量」改为「消费点现场取值」 ──────
   // 设置页改 YAML 后同会话即时生效（无需重启）；取值经 mtime+size 变更检测缓存，
   // 文件未变时零读盘零解析，详见 lib/live-config.js。fallbackDefaults = apply 期
   // cfg 快照：既是磁盘不可用/解析失败时的兜底，也是本实例初始值（生产上与该
@@ -324,7 +323,7 @@ export function apply(ctx, config) {
       crossProviderPlannerModel: cfg.crossProviderPlannerModel === true,
     },
   })
-  // ── 7 项热读：消费点现场取值（全部加括号调用） ──
+  // ── 8 项热读：消费点现场取值（全部加括号调用） ──
   const plannerModel = () => liveConfig.plannerModel
   const otherAgentModel = () => liveConfig.otherAgentModel
   const exploreBudget = () => liveConfig.exploreBudget
@@ -386,7 +385,7 @@ export function apply(ctx, config) {
 
   // childBaseline/usageRoleOf 与 sandbox floor 由每次 apply 独立创建的 agent runtime 工厂提供。
 
-  // save_plan/save_probe 的合同、校验、渲染与公共原子落盘由 lib 工厂提供；此处仅保留注册与生命周期接线。
+  // save_plan/save_probe 的合同、校验、渲染与单次落盘由 lib 工厂提供；此处仅保留注册与生命周期接线。
   const runtimeLifecycle = createRuntimeLifecycle({
     defineSavePlan, defineSaveProbe, isSubagentChild, isPlannerChild, toolSchemasOf,
     schemasHasWriteTools, isRunCodeSubCall, runCodeDispatchCapText,

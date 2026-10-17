@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
+import { createOutput } from '../_shared/test-output.mjs'
 import { runInNewContext } from 'node:vm'
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url))
@@ -73,7 +74,12 @@ const keys = ['anchoredBootstrap', 'creativeMode', 'webFetch', 'toolPresentation
 
 let pass = 0
 let fail = 0
-function check(label, condition) { if (condition) { pass += 1; console.log('PASS  ' + label) } else { fail += 1; console.log('FAIL  ' + label) } }
+const output = createOutput({ argv: process.argv.slice(2) })
+function check(label, condition) {
+  if (condition) pass += 1
+  else fail += 1
+  output.assertion(condition, label, true, condition)
+}
 
 let patch
 const presetSettings = await import('../../plugins/dsh-extra-plan/lib/preset-settings.js')
@@ -638,7 +644,7 @@ const externalDriftOk = externalDriftRun.status === 'drift-detected' &&
   !externalDriftAfter.includes('dsh-extra-plan-settings')
 if (externalDriftOk) {
   console.log('EXTERNAL_WRITER_DRIFT_BLOCKED_OK')
-  console.log('EXTERNAL_WRITER_DRIFT_EVIDENCE ' + JSON.stringify({ status: externalDriftRun.status, terminalMatch: externalDriftRun.terminalMatch, failureOrder: externalDriftRun.failureOrder, diagnostics: externalDriftRun.diagnostics, before: externalDriftProfile.before, after: externalDriftProfile.after, externalContent: externalDriftAfter }))
+  output.structured('EXTERNAL_WRITER_DRIFT_EVIDENCE', { status: externalDriftRun.status, terminalMatch: externalDriftRun.terminalMatch, failureOrder: externalDriftRun.failureOrder, diagnostics: externalDriftRun.diagnostics, before: externalDriftProfile.before, after: externalDriftProfile.after, externalContent: externalDriftAfter }, { status: externalDriftRun.status, terminalMatch: externalDriftRun.terminalMatch, failureOrder: externalDriftRun.failureOrder, diagnosticCount: Array.isArray(externalDriftRun.diagnostics) ? externalDriftRun.diagnostics.length : 0, beforeHash: externalDriftProfile.before?.patchSha256, afterHash: externalDriftProfile.after?.patchSha256, externalContentBytes: Buffer.byteLength(String(externalDriftAfter || ''), 'utf8') }, { failure: externalDriftRun.status === 'failed' })
 }
 check('外部 writer 在 terminal 前漂移不被旧 backup 覆盖且不伪造 synced', externalDriftOk)
 rmSync(externalDriftFixture.root, { recursive: true, force: true })
@@ -838,7 +844,7 @@ async function runHostProxyMatrix() {
     failureOrder: ['outer-configEditor-error', 'ctx.get:configEditor', 'settled-terminal', 'adapter-start'],
     classification: 'PASS',
   }
-  console.log('HOST_PROXY_MATRIX_CASE ' + JSON.stringify(normalCase))
+  output.structured('HOST_PROXY_MATRIX_CASE', normalCase, { case: normalCase.case, status: normalCase.classification, getCalls: normalCase.getCalls.length, injectRequests: normalCase.injectRequests.length, injectCallback: normalCase.injectCallback, initialRegister: normalCase.initialRegister, settingsRegisterDelta: normalCase.settingsRegisterDelta, disposeDelta: normalCase.disposeDelta, profileSyncTerminal: normalCase.profileSyncTerminal, failureOrder: normalCase.failureOrder })
   const normalBoundaryOk = normalProxy.outerDirectError === 'cannot get property "configEditor" without inject' &&
     normalProxy.getResult === 'editor' && normalCase.injectCallback === 1 && normalProxy.childServiceIdentity === 'same-editor' &&
     initialRegister === 1 && normalCase.settingsRegisterDelta === 0 && normalCase.disposeDelta === 0 &&
@@ -886,7 +892,7 @@ async function runHostProxyMatrix() {
       failureOrder: [...trace],
       classification: 'HUMAN',
     }
-    console.log('HOST_PROXY_MATRIX_CASE ' + JSON.stringify(result))
+    output.structured('HOST_PROXY_MATRIX_CASE', result, { case: result.case, status: result.classification, getCalls: result.getCalls.length, injectRequests: result.injectRequests.length, injectCallback: result.injectCallback, initialRegister: result.initialRegister, settingsRegisterDelta: result.settingsRegisterDelta, disposeDelta: result.disposeDelta, profileSyncTerminal: result.profileSyncTerminal, failureOrder: result.failureOrder })
     if (caseName === 'get-only/no-op-inject') {
       negativeOk = negativeOk && result.getResult === 'editor' && result.injectCallback === 0 && profileSyncTerminal.mount === 'NOT-RUN' && profileSyncTerminal.pending === true
       console.log('HUMAN  {"scope":"HOST-PROXY-GET-ONLY","reason":"ctx.get 可解析 editor，但 no-op inject 未挂载；不计 no-remount PASS"}')
@@ -974,7 +980,7 @@ async function runApiAdapterCase(label, caseName, failureEvent, changed) {
       if (typeof run.lifecycle.cleanup === 'function') { await run.lifecycle.cleanup(); cleaned = true }
       ok = beforeRelease && afterRelease && apiTerminalBodyOk({ status: 200, body: { web: { applied: true }, projection: { applied: true }, overall: 'synced', profileSync: get.body.profileSync } }) &&
         apiSnapshotBodyOk(get, snapshot) && apiPatchOk(fixture, snapshot) && counts.register === 1 && counts.dispose === 1
-      console.log('API_TRACE ' + JSON.stringify({ case: caseName, trace, adapterStartIndex, terminalIndex, putStatus: put.status, apiBodyOk: apiTerminalBodyOk(put), snapshotBodyOk: apiSnapshotBodyOk(put, snapshot), patchOk: apiPatchOk(fixture, snapshot), patchDetails: apiPatchDetails(fixture, snapshot), resolvedIndex, pluginCalls: counts.register, pluginDisposals: counts.dispose }))
+      output.structured('API_TRACE', { case: caseName, trace, adapterStartIndex, terminalIndex, putStatus: put.status, apiBodyOk: apiTerminalBodyOk(put), snapshotBodyOk: apiSnapshotBodyOk(put, snapshot), patchOk: apiPatchOk(fixture, snapshot), patchDetails: apiPatchDetails(fixture, snapshot), resolvedIndex, pluginCalls: counts.register, pluginDisposals: counts.dispose }, { case: caseName, status: ok ? 'PASS' : 'FAIL', events: trace.length, adapterStartIndex, terminalIndex, resolvedIndex, putStatus: put.status, apiBodyOk: apiTerminalBodyOk(put), snapshotBodyOk: apiSnapshotBodyOk(put, snapshot), patchOk: apiPatchOk(fixture, snapshot), pluginCalls: counts.register, pluginDisposals: counts.dispose }, { failure: !ok })
     } else {
       release()
       await waitForTrace(trace, failureEvent)
@@ -983,7 +989,7 @@ async function runApiAdapterCase(label, caseName, failureEvent, changed) {
       ok = ok && failureIndex > terminalIndex && trace.filter((event) => event === failureEvent).length === 1 &&
         get.status >= 200 && get.status < 300 && get.body.profileSync?.status === 'synced' && get.body.profileSync?.pending === false &&
         apiSnapshotBodyOk(get, snapshot) && apiPatchOk(fixture, snapshot) && counts.register === 1 && counts.dispose === 0
-      console.log('API_TRACE ' + JSON.stringify({ case: caseName, trace, adapterStartIndex, terminalIndex, putStatus: put.status, apiBodyOk: apiTerminalBodyOk(put), snapshotBodyOk: apiSnapshotBodyOk(put, snapshot), patchOk: apiPatchOk(fixture, snapshot), patchDetails: apiPatchDetails(fixture, snapshot), failureIndex, pluginCalls: counts.register, pluginDisposals: counts.dispose }))
+      output.structured('API_TRACE', { case: caseName, trace, adapterStartIndex, terminalIndex, putStatus: put.status, apiBodyOk: apiTerminalBodyOk(put), snapshotBodyOk: apiSnapshotBodyOk(put, snapshot), patchOk: apiPatchOk(fixture, snapshot), patchDetails: apiPatchDetails(fixture, snapshot), failureIndex, pluginCalls: counts.register, pluginDisposals: counts.dispose }, { case: caseName, status: ok ? 'PASS' : 'FAIL', events: trace.length, adapterStartIndex, terminalIndex, failureIndex, putStatus: put.status, apiBodyOk: apiTerminalBodyOk(put), snapshotBodyOk: apiSnapshotBodyOk(put, snapshot), patchOk: apiPatchOk(fixture, snapshot), pluginCalls: counts.register, pluginDisposals: counts.dispose }, { failure: !ok })
     }
     check(label, ok)
   } finally {
@@ -1464,5 +1470,5 @@ failedSurface.unmount()
 
 restoreEnvironment(testEnvironment)
 check('ENV DSH_HOME/DSH_PROFILE/USERPROFILE/HOME 精确恢复原先不存在/原值状态', TEST_ENV_KEYS.every((key) => process.env[key] === testEnvironment[key]))
-console.log('\n通过 ' + pass + ', 失败 ' + fail)
+output.summary(pass, fail)
 process.exit(fail === 0 ? 0 : 1)

@@ -5,8 +5,24 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { framesOf, decodeText } from '../_shared/zstd-frames.mjs'
 import { findSession, logPath } from '../_shared/session-finder.mjs'
+import { createOutput, summarizeValue } from '../_shared/test-output.mjs'
 
-const found = findSession(process.argv[2])
+const argv = process.argv.slice(2)
+
+export function positionalArgsOf(args = []) {
+  const positional = []
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = String(args[index])
+    if (arg === '--compact' || arg === '--verbose' || arg === '--full') continue
+    if (arg === '--output-mode') { index += 1; continue }
+    if (arg.startsWith('--output-mode=')) continue
+    positional.push(arg)
+  }
+  return positional
+}
+
+const output = createOutput({ argv })
+const found = findSession(positionalArgsOf(argv)[0])
 if (found.kind === 'notfound') { console.error('未找到日志：', found.arg); process.exit(1) }
 if (found.kind === 'none') { console.error('未发现使用过按需规划模式的会话'); process.exit(1) }
 for (const dir of found.dirs) {
@@ -32,7 +48,7 @@ for (const dir of found.dirs) {
       for (const k of keys) { const s = String(k); types[s] = (types[s] || 0) + 1 }
       const joined = keys.join('|')
       if (joined.includes('agent-preset')) {
-        presetEvents.push({ line: lineNo, type: joined, data: JSON.stringify(ev.data).slice(0, 240) })
+        presetEvents.push({ line: lineNo, type: joined, data: JSON.stringify(ev.data) })
       }
       if (joined === 'plan/mode') planEvents.push({ line: lineNo, data: JSON.stringify(ev.data) })
       if (joined === 'request/header') {
@@ -42,10 +58,21 @@ for (const dir of found.dirs) {
     }
   }
   console.log('事件类型计数：', JSON.stringify(types))
-  console.log('--- agent-preset 相关事件 ---')
-  for (const e of presetEvents) console.log(`L${e.line} ${e.type} ${e.data}`)
-  console.log('--- plan/mode 事件 ---')
-  for (const e of planEvents) console.log(`L${e.line} ${e.data}`)
+  if (output.mode === 'full') {
+    console.log('--- agent-preset 相关事件 ---')
+    for (const e of presetEvents) console.log(`L${e.line} ${e.type} ${e.data}`)
+    console.log('--- plan/mode 事件 ---')
+    for (const e of planEvents) console.log(`L${e.line} ${e.data}`)
+  } else {
+    console.log('--- agent-preset 相关事件 count=' + presetEvents.length + ' ---')
+    for (const e of presetEvents) console.log(`L${e.line} ${e.type}`)
+    console.log('--- plan/mode 事件 count=' + planEvents.length + ' ---')
+    for (const e of planEvents) {
+      let parsed
+      try { parsed = JSON.parse(e.data) } catch { parsed = { textLength: e.data.length } }
+      console.log('L' + e.line + ' summary=' + JSON.stringify(summarizeValue(parsed)))
+    }
+  }
   console.log('--- request/header 摘要 ---')
   for (const e of headers) console.log(`L${e.line} model=${e.model} tools=${e.ntools}`)
 }

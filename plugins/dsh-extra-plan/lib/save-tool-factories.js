@@ -19,7 +19,7 @@ function cwdOf(exec) {
   return header !== undefined && typeof header.cwd === 'string' ? header.cwd : ''
 }
 
-// 两个工具共享会话/目录/base 构造，但各自保留参数校验与提交形状。
+// 两个工具共享会话/目录/base 构造，但各自保留参数校验与提交形状；失败只由本次调用处理。
 function resolveSaveContext(args, exec, savePlanDir) {
   const session = exec !== undefined && exec !== null && exec.agent !== undefined && exec.agent !== null ? exec.agent.session : undefined
   const header = session !== undefined && session !== null && session.header !== undefined && session.header !== null ? session.header : undefined
@@ -33,11 +33,11 @@ function resolveSaveContext(args, exec, savePlanDir) {
 }
 
 // save_plan/save_probe 工具定义只捕获显式目录与持久化依赖，不持有宿主会话状态。
-export function createSaveToolFactories({ savePlanDir, atomicCommit, recoverJournals }) {
+export function createSaveToolFactories({ savePlanDir, atomicCommit }) {
   function defineSavePlan() {
     return {
       name: 'save_plan',
-      description: '严格写入方案和验收清单。两份正文先声明相同的 single 或 batch 模式，再按任务、可选收尾、checklist 检查定义构成合同；工具只校验/双写，不启动代理、不执行检查命令。single 最小结构见 plan/checklist 参数说明，成功 structured output 只有 paths。',
+      description: '严格写入方案和验收清单，形成供执行者与验收者逐项机械执行和核对的自包含工件。方案必须完整写明任务文件、修改动作、依赖顺序和有限自检；验收清单必须完整写明客观期望、禁止项、检查动作和证据标准。正文可依据已落盘线索继续核实，并可引用已核实的探查证据报告；引用时必须写明已核实结论和证据路径。线索与证据仅作为事实来源和追溯依据，不得替代正文中的执行步骤、验收标准或判定规则，也不得要求下游从父会话上下文、工具返回摘要或其他方案/验收文件补全这些内容。不得保留待定设计选择，使下游无需重新规划或自行补全规则。两份正文须声明相同的 single 或 batch 模式，并按任务、可选收尾和 checklist 检查合同组织；具体格式见 plan/checklist 参数说明。工具仅校验并双写工件，不启动代理、不执行检查命令或其他任务；成功 structured output 仅含 paths',
       parameters: {
         type: 'object',
         properties: {
@@ -86,17 +86,15 @@ export function createSaveToolFactories({ savePlanDir, atomicCommit, recoverJour
           const head = readFileSync(resolved, 'utf8').slice(0, 200)
           if (!head.includes('探查证据报告')) throw new Error(`save_plan: 【探查者已核实】证据文件非探查者落盘（缺「探查证据报告」标题）：${JSON.stringify(ref)}`)
         }
-        // T3：base 内嵌调用方会话标识段（主会话与规划子代理同秒落盘不再撞名）；
-        // journal 恢复按同一标识过滤（跨角色互恢复防护）。
+        // T3：base 内嵌调用方会话标识段（主会话与规划子代理同秒落盘不再撞名）。
         if (sessionTag === '') throw new Error('save_plan: 会话缺少有效标识，无法隔离落盘事务')
         const planFile = join(dir, `方案-${base}.md`)
         const checkFile = join(dir, `验收-${base}.md`)
-        recoverJournals(dir, sessionTag)
         try {
           atomicCommit(dir, base, [
             { name: `方案-${base}.md`, content: args.plan },
             { name: `验收-${base}.md`, content: args.checklist },
-          ], sessionTag)
+          ])
         } catch (error) {
           throw new Error(`save_plan: 落盘失败：${error instanceof Error ? error.message : String(error)}`)
         }
@@ -207,10 +205,9 @@ export function createSaveToolFactories({ savePlanDir, atomicCommit, recoverJour
         const { cwd, sessionTag, dir, base } = context
         if (cwd === '') throw new Error('save_probe: 会话缺少工作区路径，无法落盘')
         if (sessionTag === '') throw new Error('save_probe: 会话缺少有效标识，无法隔离落盘事务')
-        recoverJournals(dir, sessionTag)
         const fileName = `线索-${base}.md`
         try {
-          atomicCommit(dir, base, [{ name: fileName, content: renderProbeMarkdown(args) }], sessionTag)
+          atomicCommit(dir, base, [{ name: fileName, content: renderProbeMarkdown(args) }])
         } catch (error) {
           throw new Error(`save_probe: 落盘失败：${error instanceof Error ? error.message : String(error)}`)
         }

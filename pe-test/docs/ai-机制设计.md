@@ -20,7 +20,7 @@
 ## 三、规划工件与原子落盘
 
 - `save_plan` 必须成对写入方案与验收文件，主会话侧是任意路由态可用的受限规划工件；内容、目录和文件名合同不因路由放宽。`save_probe` 只在主会话/已认领探查者层可用，规划子代理不得委派探查者。
-- [save-persistence.js](../../plugins/dsh-extra-plan/lib/save-persistence.js) 的当前顺序是 tmp → journal → 逐项 rename → 确认目标 → 清 journal。pre-journal 失败按条件清理；post-journal 失败保留 journal 与现场；恢复只接受当前非空 `entries` 形状，全部目标确认就位后才清 journal。
+- [save-persistence.js](../../plugins/dsh-extra-plan/lib/save-persistence.js) 只处理单次调用：mkdir → 临时文件逐项写入 → 逐项检查并顺序发布。失败保留首错与阶段，仅有限清理本次临时文件/已发布半套工件；清理失败附残留路径与原因，预存文件不覆盖，下一次调用不扫描、不恢复旧 journal，由 AI 主动重试。
 - 双写、单写共用阶段感知提交；不承诺跨进程 fsync。工具 schema/输出/渲染/execute 在 [save-tool-factories.js](../../plugins/dsh-extra-plan/lib/save-tool-factories.js)，路径基准取会话 cwd；限制与证据引用合同不能由入口文档另写第二份。
 
 ## 四、模型路由与真实探针
@@ -51,7 +51,7 @@
 |:--|:--|
 | 拒绝不能造成状态残留清除；取消必须清四字段 | 根入口状态机；step-04 DZ 对照 |
 | 组拒绝无工具副作用；参数不可解析不能绕过状态闸门 | `run-code-static.js`；step-00/04 |
-| 方案/验收必须成对、journal 不完整不清理 | save 四模块；step-06 |
+| 方案/验收必须成对、失败按本次有限清理并主动重试 | save 四模块；step-06 |
 | 模型路由必须真实验证或可靠 fallback（回退） | `model-routing.js`；流程 ⑩-1/step-00 |
 | 展示隐藏不是 runtime 安全隔离；P2-2 cache 不跨 Agent | `assembly-presentation.js`、`sdk-text-cache.js`；step-04 |
 | usage final fold 必须同步且按 session 隔离 | 根入口/`agent-runtime.js`；step-04 P4 |
@@ -86,4 +86,4 @@
 - 独占资源是稳定的声明边界，用来标识共享输出目录、缓存或固定环境等非修改文件冲突；同资源的数字任务应归并执行组，不同验收组声明同资源应合并。资源声明不能证明隐藏共享状态、物理别名、命令无副作用或代理实际遵守范围。
 - 检查定义有唯一身份，可由多个任务、收尾或全局引用；完全相同的取证方式、工作目录和按序检查行不得另建重复 ID。公共检查只由一个领取者在同一冻结源与条件下运行，其他引用复用原始结果；执行组 G 与验收组 R 是独立命名空间，不要求对应。
 - 只读复核由 reviewer 在只读权限内完成；执行取证由已获批准的执行者或直行主会话运行，reviewer 只读原始 stdout/stderr、退出码和源文件后独立判定。取证方式是职责声明，不自动放宽 route/approved、文件写入或命令安全权限。
-- 结构、关系、交叉引用和摘要边界必须早于 context/base、证据 IO、journal 恢复与 atomic commit 拒绝；合法正文逐字双写，structured output 仍只有 `paths`，render 只是摘要，不是父会话唯一事实源。任何源文件变化都会使受影响任务、依赖消费者和共享检查的旧证据失效；无法证明无影响时按固定顺序复验。main 最后汇总任务、检查、收尾和全局覆盖，漏项、矛盾或过期证据不得宣布通过。
+- 结构、关系、交叉引用和摘要边界必须早于 context/base、证据 IO 与单次发布拒绝；合法正文逐字保存，structured output 仍只有 `paths`，render 只是摘要，不是父会话唯一事实源。失败不跨调用恢复旧事务，AI 必须根据首错/阶段主动重试。任何源文件变化都会使受影响任务、依赖消费者和共享检查的旧证据失效；无法证明无影响时按固定顺序复验。main 最后汇总任务、检查、收尾和全局覆盖，漏项、矛盾或过期证据不得宣布通过。

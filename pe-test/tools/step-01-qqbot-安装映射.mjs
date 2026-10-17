@@ -7,7 +7,7 @@ import fs from 'node:fs'
 import { closeSync, existsSync, lstatSync, mkdtempSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { isDeepStrictEqual } from 'node:util'
 import {
   findOwnQqbotProfiles,
@@ -88,7 +88,12 @@ function runCli(home, opts = {}) {
   const stderrFd = openSync(stderrPath, 'w')
   let result
   try {
+    const resolvedYaml = yamlResolution !== null && yamlResolution.module !== null && yamlResolution.anchor !== null
+      ? createRequire(yamlResolution.anchor.path).resolve('js-yaml')
+      : ''
+    const yamlNodePath = resolvedYaml === '' ? '' : dirname(dirname(resolvedYaml))
     const env = { ...process.env, DSH_HOME: home }
+    if (yamlNodePath !== '') env.NODE_PATH = [yamlNodePath, env.NODE_PATH].filter((value) => typeof value === 'string' && value !== '').join(process.platform === 'win32' ? ';' : ':')
     if (opts.explicitDshHome) {
       // QQBot CLI 旧合同改为显式临时 DSH_HOME；Web 同步不复用此 CLI 兜底。
       env.DSH_HOME = home
@@ -300,6 +305,50 @@ if (yamlResolution.module === null) {
   const nestedParsedResult = parseYaml(nestedAfter)
   const nestedParsed = nestedParsedResult.ok ? nestedParsedResult.value : null
   check('嵌套 insert 不迁移、不追加根级目标块且无备份', nestedResult.status === 'idempotent' && nestedAfter === nestedText && nestedParsedResult.ok && patchBackups(qqProfileDir(hNested)).length === 0 && rootInsertNodes(nestedParsed).length === 1, nestedParsedResult.error || '')
+
+  // ④b 正常 parser 下根级 id 搭配嵌套 config.name/default/insert 不是旧根级条目。
+  const hNestedFields = join(tempRoot, 's4b-nested-fields')
+  makeProfile(hNestedFields, 'qqbot')
+  installOwnPlugin(hNestedFields, 'qqbot')
+  const nestedFieldsText = [
+    '- id: code-runtime',
+    '  config:',
+    "    name: '@deepseek-ai/dsh-code-runtime-worker-thread'",
+    '- id: agent-presets',
+    '  config:',
+    "    name: '@deepseek-ai/dsh-agent-presets'",
+    '    default: standard',
+    '- id: user-row',
+    '  config:',
+    '    insert:',
+    '      - id: code-runtime',
+    "        name: '@deepseek-ai/dsh-code-runtime-worker-thread'",
+    '',
+  ].join('\n')
+  writeFileSync(qqPatch(hNestedFields), nestedFieldsText, 'utf8')
+  const nestedFieldsResult = healPatchRows(qqProfileDir(hNestedFields))
+  check('正常 parser 下嵌套 name/default/insert 不误删且零备份', nestedFieldsResult.status === 'idempotent' && readFileSync(qqPatch(hNestedFields), 'utf8') === nestedFieldsText && bakCount(qqProfileDir(hNestedFields)) === 0)
+
+  // ④c 解析失败时不猜测迁移：原文与备份均不变。
+  const hParseFailed = join(tempRoot, 's4c-parse-failed')
+  makeProfile(hParseFailed, 'qqbot')
+  installOwnPlugin(hParseFailed, 'qqbot')
+  const parseFailedText = "- id: code-runtime\n  name: '@deepseek-ai/dsh-code-runtime-worker-thread'\n  config: [\n"
+  writeFileSync(qqPatch(hParseFailed), parseFailedText, 'utf8')
+  const parseFailedResult = healPatchRows(qqProfileDir(hParseFailed))
+  check('解析失败跳过迁移并说明原因、原文零写零备份', parseFailedResult.status === 'skipped' && parseFailedResult.reason === 'parse-failed' && readFileSync(qqPatch(hParseFailed), 'utf8') === parseFailedText && bakCount(qqProfileDir(hParseFailed)) === 0)
+
+  // ④d 将 heal.js 放到无 js-yaml 搜索路径，验证解析器不可用同样跳过且不写。
+  const hYamlUnavailable = join(tempRoot, 's4d-yaml-unavailable')
+  makeProfile(hYamlUnavailable, 'qqbot')
+  installOwnPlugin(hYamlUnavailable, 'qqbot')
+  const unavailablePatch = legacyPatch(false)
+  writeFileSync(qqPatch(hYamlUnavailable), unavailablePatch, 'utf8')
+  const isolatedHealPath = join(tempRoot, 'heal-no-yaml.mjs')
+  writeFileSync(isolatedHealPath, SOURCE_HEAL_TEXT.replace("createRequire(import.meta.url)('js-yaml')", "createRequire(import.meta.url)('definitely-missing-js-yaml-for-test')"), 'utf8')
+  const isolatedHeal = await import(pathToFileURL(isolatedHealPath).href + '?yaml-unavailable')
+  const unavailableResult = isolatedHeal.healPatchRows(qqProfileDir(hYamlUnavailable))
+  check('解析器不可用跳过迁移并说明原因、原文零写零备份', unavailableResult.status === 'skipped' && unavailableResult.reason === 'yaml-unavailable' && readFileSync(qqPatch(hYamlUnavailable), 'utf8') === unavailablePatch && bakCount(qqProfileDir(hYamlUnavailable)) === 0)
 
   // ⑤ 含旧块但移除后仍非法 YAML → 写后校验失败并恢复原文
   const hInvalid = join(tempRoot, 's5-invalid-after-remove')

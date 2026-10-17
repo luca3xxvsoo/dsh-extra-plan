@@ -3,6 +3,7 @@
 // 插件模块顶层无副作用，可在纯 Node 环境加载。
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { registerHostDeps } from '../_shared/host-deps.mjs'
+import { assertionLine, createOutput, parseOutputMode, stableStringify, sha256Text, writeRawEvidence } from '../_shared/test-output.mjs'
 // host-deps 先于隔离完成解析（它按候选① DSH_HOME/profiles/web 锚定宿主真包）。
 await registerHostDeps()
 const { interpolate } = await import('@deepseek-ai/cordis-plugin-loader')
@@ -37,7 +38,7 @@ import * as shellMutation from '../../plugins/dsh-extra-plan/lib/shell-mutation.
 import * as runtimeStatic from '../../plugins/dsh-extra-plan/lib/runtime-static.js'
 import * as agentRuntime from '../../plugins/dsh-extra-plan/lib/agent-runtime.js'
 import { DEFAULT_EXPLORE_BUDGET as GENERATED_DEFAULT_EXPLORE_BUDGET, DEFAULT_PLANNER_PROMPT_SUFFIX as GENERATED_DEFAULT_PLANNER_PROMPT_SUFFIX } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
-import { existsSync, readFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { parsePresetYaml } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
@@ -187,14 +188,71 @@ const nestedPurposeArgs = { questions: [{ id: 'q1', options: [{ label: '完善�
 
 let pass = 0
 let fail = 0
+const output = createOutput({ argv: process.argv.slice(2) })
 function check(name, got, expected) {
   const okResult = JSON.stringify(got) === JSON.stringify(expected)
   if (okResult) { pass += 1 } else { fail += 1 }
-  console.log(`${okResult ? 'PASS' : 'FAIL'}  ${name}  (期望 ${JSON.stringify(expected)}, 实际 ${JSON.stringify(got)})`)
+  output.assertion(okResult, name, expected, got)
 }
 function checkTrue(name, got) {
   check(name, got, true)
 }
+
+// 共享输出合同纯函数回归：模式优先级、成功显示边界、失败完整性与稳定序列化。
+check('OUTPUT0 默认模式为compact', parseOutputMode([]), 'compact')
+check('OUTPUT1 --verbose仅显示成功名称', assertionLine('verbose', true, '成功项', { expected: 'large' }, { actual: 'large' }), 'PASS  成功项')
+check('OUTPUT2 --full优先于--verbose', parseOutputMode(['--verbose', '--full']), 'full')
+check('OUTPUT3 compact成功断言不逐条打印', assertionLine('compact', true, '成功项', { expected: 'large' }, { actual: 'large' }), '')
+checkTrue('OUTPUT4 compact失败保留完整expected/actual', assertionLine('compact', false, '失败项', 'expected', 'actual').includes('expected') && assertionLine('compact', false, '失败项', 'expected', 'actual').includes('actual'))
+checkTrue('OUTPUT5 stable JSON按键排序', stableStringify({ z: 1, a: { y: 2, x: 3 } }) === JSON.stringify({ a: { x: 3, y: 2 }, z: 1 }))
+let outputInvalid = false
+try { parseOutputMode(['--output-mode=invalid']) } catch { outputInvalid = true }
+checkTrue('OUTPUT6 非法模式按合同报错', outputInvalid)
+
+// 收尾共享 runner 纯入口矩阵：导入不执行 main、不写 reports；失败统计依赖结构化结果，不扫描普通文本。
+const runnerReportsDir = join(dirname(HERE), 'reports')
+const runnerReportSnapshot = () => existsSync(runnerReportsDir) ? readdirSync(runnerReportsDir).sort() : null
+const runnerReportsBefore = runnerReportSnapshot()
+const runnerModule = await import('./一键step测试.mjs')
+const runnerReportsAfter = runnerReportSnapshot()
+checkTrue('RUNNER0 导入不自动执行main或写reports', JSON.stringify(runnerReportsAfter) === JSON.stringify(runnerReportsBefore) && typeof runnerModule.parseResult === 'function' && typeof runnerModule.classifyAuto === 'function')
+const forensicArgCases = [
+  ['step-04-工具清单查看.mjs', ['fixture-session', '--full']],
+  ['step-05-会话解码.mjs', ['fixture-session', '--full']],
+  ['step-06-真实会话查看.mjs', ['fixture-session']],
+  ['step-07-子代理模型与引导取证.mjs', ['--full']],
+  ['step-08-方案配对查看.mjs', ['fixture-session']],
+]
+for (const [file, expected] of forensicArgCases) check('RUNNER15 ' + file + '真实argv合同', runnerModule.forensicArgs(file, 'fixture-session'), expected)
+check('RUNNER16 step-07缺显式前置为NOT-RUN', runnerModule.forensicNotRunReason('step-07-子代理模型与引导取证.mjs', undefined, {}).startsWith('NOT-RUN:'), true)
+check('RUNNER17 step-07显式前置齐全不NOT-RUN', runnerModule.forensicNotRunReason('step-07-子代理模型与引导取证.mjs', 'fixture-session', { PLANNER_PROMPT_SUFFIX: 'fixture' }), null)
+check('RUNNER18 step-08实际非零仍为HUMAN', runnerModule.classifyForensic({ status: 1, error: undefined, notRunReason: null }), 'HUMAN')
+checkTrue('RUNNER19 INCOMPLETE/NOT-RUN进入有限摘要', runnerModule.forensicKeyLines('INCOMPLETE reason\nNOT-RUN reason\n').join('\n').includes('INCOMPLETE reason') && runnerModule.forensicKeyLines('INCOMPLETE reason\nNOT-RUN reason\n').join('\n').includes('NOT-RUN reason'))
+const rawFixtureDir = mkdtempSync(join(tmpdir(), 'dsh-runner-raw-fixture-'))
+const rawFixture = writeRawEvidence({ directory: rawFixtureDir, baseName: 'fixture', stdout: 'PASS compact\n', stderr: 'INCOMPLETE raw reason\n' })
+const rawCombined = 'PASS compact\nINCOMPLETE raw reason\n'
+checkTrue('RUNNER20 raw bytes/lines/hash可回看', rawFixture.files[0].bytes === Buffer.byteLength('PASS compact\n', 'utf8') && rawFixture.files[1].lines === 1 && rawFixture.bytes === Buffer.byteLength(rawCombined, 'utf8') && rawFixture.lines === 2 && rawFixture.sha256 === sha256Text(rawCombined))
+rmSync(rawFixtureDir, { recursive: true, force: true })
+const runnerSkipMarker = { scope: 'fixture', reason: 'unavailable' }
+const runnerHumanMarker = '人工核验'
+const runnerMatrix = [
+  ['RUNNER1 明确失败+exit0仍失败', runnerModule.classifyAuto({ timedOut: false, error: undefined, stats: { pass: 4, fail: 1, skip: 0, incomplete: 0 }, status: 0 }), '失败'],
+  ['RUNNER2 普通说明含FAIL/Error/导航失效不误报', runnerModule.classifyAuto({ timedOut: false, error: undefined, stats: null, status: 0, out: 'FAIL is a word; Error: note; 导航失效说明' }), '通过'],
+  ['RUNNER3 ETIMEDOUT明确失败', runnerModule.classifyAuto({ timedOut: true, error: { code: 'ETIMEDOUT' }, stats: null, status: null }), '失败'],
+  ['RUNNER4 环境错误保持未执行', runnerModule.classifyAuto({ timedOut: false, error: { code: 'ENOENT' }, stats: null, status: null }), '未执行'],
+  ['RUNNER5 v4 RESULT统计可解析', runnerModule.parseResult('RESULT: 5 PASS, 1 FAIL'), { pass: 5, fail: 1, skip: 0, incomplete: 0 }],
+  ['RUNNER6 既有中文统计可解析', runnerModule.parseResult('通过 3，失败 0，跳过 2'), { pass: 3, fail: 0, skip: 2, incomplete: 0 }],
+  ['RUNNER7 SKIP无通过保持未执行', runnerModule.classifyAuto({ timedOut: false, error: undefined, stats: { pass: 0, fail: 0, skip: 2, incomplete: 0 }, status: 0 }), '未执行'],
+  ['RUNNER8 INCOMPLETE单列部分执行', runnerModule.classifyAuto({ timedOut: false, error: undefined, stats: { pass: 3, fail: 0, skip: 0, incomplete: 1 }, status: 0 }), '部分执行'],
+  ['RUNNER9 stats未声明skip但skipLines存在且有PASS', runnerModule.classifyAuto({ timedOut: false, error: undefined, stats: { pass: 2, fail: 0, incomplete: 0 }, status: 0, skipLines: [runnerSkipMarker] }), '部分执行'],
+  ['RUNNER10 HUMAN存在且有PASS', runnerModule.classifyAuto({ timedOut: false, error: undefined, stats: { pass: 2, fail: 0, skip: 0, incomplete: 0 }, status: 0, humanLines: [runnerHumanMarker] }), '部分执行'],
+  ['RUNNER11 无PASS仅SKIP/HUMAN', runnerModule.classifyAuto({ timedOut: false, error: undefined, stats: { pass: 0, fail: 0, incomplete: 0 }, status: 0, skipLines: [runnerSkipMarker], humanLines: [runnerHumanMarker] }), '未执行'],
+  ['RUNNER12 已有stats.skip与同一skipLines不重复', runnerModule.statsSummary({ stats: { pass: 2, fail: 0, skip: 1, incomplete: 0 }, status: 0, skipLines: [runnerSkipMarker] }) === '通过 2, 失败 0, 跳过 1', true],
+  ['RUNNER13 未声明stats.skip时保留SKIP/HUMAN统计', runnerModule.statsSummary({ stats: { pass: 2, fail: 0, incomplete: 0 }, status: 0, skipLines: [runnerSkipMarker], humanLines: [runnerHumanMarker] }) === '通过 2, 失败 0, 跳过 1, HUMAN 1', true],
+  ['RUNNER14 诊断明确列出SKIP与HUMAN', runnerModule.structuredMarkerSummary({ skipLines: [runnerSkipMarker], humanLines: [runnerHumanMarker] }) === '跳过：{"scope":"fixture","reason":"unavailable"}；HUMAN：人工核验', true],
+]
+for (const [name, got, expected] of runnerMatrix) check(name, got, expected)
+
 const scannerKeys = ['collectRunCodeSites', 'hasDynamicRunCodeAccess', 'maskCodeLiteralsAndComments', 'sliceBalancedArgs']
 checkTrue('SC1 run-code-scanner 命名空间精确四项且 facade 复用三项', JSON.stringify(Object.keys(runCodeScanner).sort()) === JSON.stringify(scannerKeys) && scannerKeys.every((name) => typeof runCodeScanner[name] === 'function') && maskCodeLiteralsAndComments === runCodeScanner.maskCodeLiteralsAndComments && sliceBalancedArgs === runCodeScanner.sliceBalancedArgs && staticRunCode.collectRunCodeSites === runCodeScanner.collectRunCodeSites)
 const scannerDynamicAccessMatrix = [
@@ -606,7 +664,7 @@ function mrStub(tag, patch) {
     header: { id: 'stub-malformed-' + tag },
     append(type, payload, options) {
       appends.push({ type, payload, options })
-      console.log('[MR-stub:' + tag + '] append ' + type + ' turn=' + payload.turn + ' step=' + payload.step)
+      output.detail('[MR-stub:' + tag + '] append ' + type + ' turn=' + payload.turn + ' step=' + payload.step)
     },
   }
   return { appends, payload: Object.assign({ agent: { session }, failure: { code: 'MALFORMED_RESPONSE' } }, patch) }
@@ -641,7 +699,7 @@ for (let i = 0; i < MR_BAD_COORDS.length; i += 1) {
   const [label, coords] = MR_BAD_COORDS[i]
   const stub = mrStub('bad-' + i, coords)
   const result = plugin.malformedRecovery(stub.payload)
-  console.log('[MR3] ' + label + ' → ' + (stub.appends.length === 0 ? 'no-append' : 'APPENDED'))
+  output.detail('[MR3] ' + label + ' → ' + (stub.appends.length === 0 ? 'no-append' : 'APPENDED'))
   mrBadResults.push(label + ':' + (stub.appends.length === 0 ? 'no-append' : 'APPENDED') + '/' + JSON.stringify(result))
 }
 check('MR3 非法坐标 8 例全部不注入且仍返回 retry', mrBadResults, MR_BAD_COORDS.map(([label]) => label + ':no-append/{"kind":"retry"}'))
@@ -852,7 +910,7 @@ for (const [name, args, mode, substr] of PR) {
   const got = validateProbe(args, HERE)
   const okResult = mode === 'pass' ? got === null : mode === 'reject' ? typeof got === 'string' && got.length > 0 : mode === 'reject-all' ? typeof got === 'string' && Array.isArray(substr) && substr.every((s) => got.includes(s)) : typeof got === 'string' && got.includes(substr)
   if (okResult) { pass += 1 } else { fail += 1 }
-  console.log(`${okResult ? 'PASS' : 'FAIL'}  ${name}  (实际 ${JSON.stringify(got)})`)
+  output.assertion(okResult, name, mode, got)
 }
 
 // ── SCHEMA 系列：save_probe 注册后核验实际动态描述（不复制限制常量） ────────
@@ -1174,7 +1232,7 @@ const g2SummaryPair = g2Pair({ mode: 'batch', tasks: g2SummaryTasks, checks: g2S
 const g2SummaryResult = validateRealSavePlanContract(g2SummaryPair.plan, g2SummaryPair.checklist)
 check('G2-F summary含完整任务/组/R组/共享检查/收尾全局', g2SummaryResult.ok && g2SummaryResult.summary.taskCount === 2 && g2SummaryResult.summary.taskFileCount === 3 && g2SummaryResult.summary.closureFileCount === 1 && g2SummaryResult.summary.fileCount === 4 && g2SummaryResult.summary.totalFileCount === 4 && g2SummaryResult.summary.groupCount === 2 && g2SummaryResult.summary.reviewGroupCount === 2 && g2SummaryResult.summary.checkCount === 2 && g2SummaryResult.summary.hasClosure && g2SummaryResult.summary.hasGlobalAcceptance && g2SummaryResult.summary.groups[1].initialState === 'waiting' && g2SummaryResult.summary.checks[1].coverage.closure && g2SummaryResult.summary.reviewGroups.length === 2, true)
 const g2SummaryText = g2SummaryResult.ok ? formatRealSavePlanSummary(g2SummaryResult.summary) : ''
-check('G2-F summary保留完整文件与职责说明且不暴露路径依赖', g2SummaryText.includes('g2-synthetic/closure-summary.md') && g2SummaryText.includes('执行组G1') && g2SummaryText.includes('验收组R2') && g2SummaryText.includes('工具只校验并原子双写'), true)
+check('G2-F summary保留完整文件与职责说明且不暴露路径依赖', g2SummaryText.includes('g2-synthetic/closure-summary.md') && g2SummaryText.includes('执行组G1') && g2SummaryText.includes('验收组R2') && g2SummaryText.includes('工具只校验并在单次调用内写入/发布'), true)
 const g2RenderedSummary = g2SummaryResult.ok ? renderRealSavePlan({ paths: ['g2-synthetic/方案.md', 'g2-synthetic/验收.md'] }, g2SummaryResult.summary) : []
 check('G2-F render单一text块且保留双路径和完整范围', Array.isArray(g2RenderedSummary) && g2RenderedSummary.length === 1 && g2RenderedSummary[0].type === 'text' && g2RenderedSummary[0].text.includes('g2-synthetic/方案.md') && g2RenderedSummary[0].text.includes('g2-synthetic/验收.md') && g2RenderedSummary[0].text.includes('任务文件数：3') && g2RenderedSummary[0].text.includes('收尾文件数：1') && g2RenderedSummary[0].text.includes('验收组R2'), true)
 check('G2-F 计数使用生产限制且不把groupCount当executorCount', REAL_SAVE_PLAN_LIMITS.maxTasks === 20 && REAL_SAVE_PLAN_LIMITS.maxSummaryChars === 12000 && g2SummaryResult.summary.executorCount === undefined, true)
@@ -1227,23 +1285,22 @@ const g2MinimalPair = {
   checklist: '- 执行模式：single\n- 验收说明：按检查ID复核\n[任务1] 结构\n- 主文件：src/a.js\n- 期望：结构正确\n- 禁止：不得越界\n- 正式验收：[检查1]\n[检查1] 结构检查\n- 验收组：R1\n- 取证方式：只读复核\n- 工作目录：.\n- 检查：read src/a.js\n- 验收证据：读取结果正确',
 }
 check('G2-H 纯validator允许短single', g2MinimalPair.plan.length < 200 && g2MinimalPair.checklist.length < 200 && validateRealSavePlanContract(g2MinimalPair.plan, g2MinimalPair.checklist).ok, true)
-const g2FactoryIo = { recover: 0, atomic: 0, committed: null }
+const g2FactoryIo = { atomic: 0, committed: null }
 const g2Factories = createSaveToolFactories({
   savePlanDir: '.extra-plan',
-  recoverJournals: () => { g2FactoryIo.recover += 1 },
   atomicCommit: (...args) => { g2FactoryIo.atomic += 1; g2FactoryIo.committed = args },
 })
 const g2SavePlanDefinition = g2Factories.defineSavePlan()
 let g2ShortFactoryError = null
 try { await g2SavePlanDefinition.execute(g2MinimalPair) } catch (error) { g2ShortFactoryError = error instanceof Error ? error.message : String(error) }
-check('G2-H factory短single按双方至少200字符拒绝', g2ShortFactoryError !== null && g2ShortFactoryError.includes('内容过短') && g2FactoryIo.recover === 0 && g2FactoryIo.atomic === 0, true)
+check('G2-H factory短single按双方至少200字符拒绝', g2ShortFactoryError !== null && g2ShortFactoryError.includes('内容过短') && g2FactoryIo.atomic === 0, true)
 const g2InvalidLongPair = {
   plan: g2Pad(g2SinglePair.plan),
   checklist: g2Pad(g2SinglePair.checklist.replace('- 正式验收：[检查1]', '- 正式验收：[检查9]')),
 }
 let g2InvalidFactoryError = null
 try { await g2SavePlanDefinition.execute(g2InvalidLongPair) } catch (error) { g2InvalidFactoryError = error instanceof Error ? error.message : String(error) }
-check('G2-H 非法结构在recover/atomic前拒绝', g2InvalidFactoryError !== null && g2InvalidFactoryError.startsWith('save_plan: 文件级任务合同校验不通过') && g2FactoryIo.recover === 0 && g2FactoryIo.atomic === 0, true)
+check('G2-H 非法结构在atomic前拒绝', g2InvalidFactoryError !== null && g2InvalidFactoryError.startsWith('save_plan: 文件级任务合同校验不通过') && g2FactoryIo.atomic === 0, true)
 const g2FactoryValidPlan = g2Pad(g2MinimalPair.plan + '\n普通方案补充：保持正文逐字保存')
 const g2FactoryValidChecklist = g2Pad(g2MinimalPair.checklist + '\n普通验收补充：保持正文逐字保存')
 let g2FactoryResult = null
@@ -1251,8 +1308,8 @@ let g2FactoryError = null
 try {
   g2FactoryResult = await g2SavePlanDefinition.execute({ plan: g2FactoryValidPlan, checklist: g2FactoryValidChecklist }, { agent: { session: { header: { cwd: 'D:/g2-synthetic-workspace', id: 'g2-factory' } } } })
 } catch (error) { g2FactoryError = error instanceof Error ? error.message : String(error) }
-check('G2-H factory合法正文双方至少200字符并返回两paths', g2FactoryError === null && g2FactoryValidPlan.length >= 200 && g2FactoryValidChecklist.length >= 200 && g2FactoryResult !== null && Array.isArray(g2FactoryResult.paths) && g2FactoryResult.paths.length === 2 && g2FactoryIo.recover === 1 && g2FactoryIo.atomic === 1, true)
-check('G2-H factory原子双写逐字保留两正文', g2FactoryIo.committed !== null && Array.isArray(g2FactoryIo.committed[2]) && g2FactoryIo.committed[2][0].content === g2FactoryValidPlan && g2FactoryIo.committed[2][1].content === g2FactoryValidChecklist, true)
+check('G2-H factory合法正文双方至少200字符并返回两paths', g2FactoryError === null && g2FactoryValidPlan.length >= 200 && g2FactoryValidChecklist.length >= 200 && g2FactoryResult !== null && Array.isArray(g2FactoryResult.paths) && g2FactoryResult.paths.length === 2 && g2FactoryIo.atomic === 1, true)
+check('G2-H factory双正文逐字保留', g2FactoryIo.committed !== null && Array.isArray(g2FactoryIo.committed[2]) && g2FactoryIo.committed[2][0].content === g2FactoryValidPlan && g2FactoryIo.committed[2][1].content === g2FactoryValidChecklist, true)
 const g2FactoryRendered = g2FactoryResult === null ? [] : g2SavePlanDefinition.output.render({ plan: g2FactoryValidPlan, checklist: g2FactoryValidChecklist }, g2FactoryResult)
 check('G2-H factory structured output只含paths且render仍为单text', JSON.stringify(Object.keys(g2SavePlanDefinition.output.schema.properties || {})) === JSON.stringify(['paths']) && JSON.stringify(g2SavePlanDefinition.output.schema.required) === JSON.stringify(['paths']) && g2SavePlanDefinition.output.schema.additionalProperties === false && Array.isArray(g2FactoryRendered) && g2FactoryRendered.length === 1 && g2FactoryRendered[0].type === 'text', true)
 const g2TokenMeasurement = 'NOT-RUN'
@@ -2252,7 +2309,7 @@ for (const [name, code, expected] of ASK_RETURN) {
     ? got === null
     : typeof got === 'string' && got.includes('结果未正确返回用户层')
   if (okResult) { pass += 1 } else { fail += 1 }
-  console.log((okResult ? 'PASS' : 'FAIL') + '  ' + name + '  (期望 ' + JSON.stringify(expected) + ', 实际 ' + JSON.stringify(got) + ')')
+  output.assertion(okResult, name, expected, got)
 }
 
 // ── I 系列:runCodeGroupDenyReason 主会话组判定（F7' v4:拆解 → 组判定 → 聚合） ──
@@ -2275,7 +2332,7 @@ for (const [name, code, state, expected] of I) {
   const got = mainGroupReason(state, code)
   const okResult = expected === null ? got === null : typeof got === 'string' && expected.every((s) => got.includes(s))
   if (okResult) { pass += 1 } else { fail += 1 }
-  console.log(`${okResult ? 'PASS' : 'FAIL'}  ${name}  (期望 ${JSON.stringify(expected)}, 实际 ${JSON.stringify(got)})`)
+  output.assertion(okResult, name, expected, got)
 }
 
 // ── ASK-G 系列:主会话组判定硬闸门（与 runcodeCatchGate 解耦） ─────────────
@@ -2293,7 +2350,7 @@ for (const [name, code, gateCtx, expected, role] of ASK_GROUP) {
     ? got === null
     : typeof got === 'string' && got.includes('结果未正确返回用户层')
   if (okResult) { pass += 1 } else { fail += 1 }
-  console.log((okResult ? 'PASS' : 'FAIL') + '  ' + name + '  (期望 ' + JSON.stringify(expected) + ', 实际 ' + JSON.stringify(got) + ')')
+  output.assertion(okResult, name, expected, got)
 }
 
 // ── J 系列:decomposeRunCode 拆解器（F7' v4 静态预审，返回 {members,dynamic} 全文） ──
@@ -2432,7 +2489,7 @@ for (const [name, role, code, expected, gateCtx] of K) {
   const got = runCodeGroupDenyReason(undefined, { arguments: { code } }, role, Object.assign({}, gateCtx !== undefined ? gateCtx : {}, { gateRuntime }))
   const okResult = expected === null ? got === null : typeof got === 'string' && expected.every((s) => got.includes(s))
   if (okResult) { pass += 1 } else { fail += 1 }
-  console.log(`${okResult ? 'PASS' : 'FAIL'}  ${name}  (期望 ${JSON.stringify(expected)}, 实际 ${JSON.stringify(got)})`)
+  output.assertion(okResult, name, expected, got)
 }
 
 // ── GW 系列：YAML 单一来源、prompt variable 契约、严格校验与动态词表 ────────
@@ -2496,7 +2553,7 @@ for (const [label, raw] of GWV) {
   try { validateGateWords(raw) } catch (error) { message = error instanceof Error ? error.message : String(error) }
   if (message === null || !message.startsWith('extra-plan: config.gateWords')) {
     validatorMatrixOk = false
-    console.log('     validator 矩阵未按前缀抛错: ' + label + ' -> ' + String(message))
+    output.error('     validator 矩阵未按前缀抛错: ' + label + ' -> ' + String(message))
   }
 }
 checkTrue('GWV1 非法配置矩阵（15 例）全部抛出以 extra-plan: config.gateWords 开头的错误', validatorMatrixOk)
@@ -2528,5 +2585,5 @@ check('GWC11 定制 runtime 下提交旧出厂词 → 全部未确认', deriveFl
 check('GWC12 定制 runtime 下旧词 + 推荐后缀仍不推进', deriveFlowState([um(), call('ask_user_question', 'go4', routeArgs), ok('go4', answer([assetGateWords.routeDirect + '（推荐）']))], customRuntime).route, 'none')
 check('GWC13 默认 runtime 下定制词不误推进（双向隔离）', deriveFlowState([um(), call('ask_user_question', 'gm1', customRouteArgs), ok('gm1', answer([CUSTOM_WORDS.routeDirect]))], gateRuntime).route, 'none')
 
-console.log(`\n通过 ${pass}, 失败 ${fail}`)
+output.summary(pass, fail)
 process.exit(fail === 0 ? 0 : 1)

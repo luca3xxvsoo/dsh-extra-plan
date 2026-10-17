@@ -43,7 +43,7 @@ export function pwshCommandOf(exec) { return commandTextOf(exec) }
 export function bashCommandOf(exec) { return commandTextOf(exec) }
 
 const SHELL_PREFIX_WORDS = new Set(['sudo', 'env', 'nohup', 'command'])
-const INNER_SHELL_WORDS = new Set(['pwsh', 'powershell', 'cmd', 'bash', 'sh'])
+const INNER_SHELL_WORDS = new Set(['pwsh', 'powershell', 'cmd', 'cmd.exe', 'bash', 'sh'])
 
 function shellWords(segment) {
   const words = []
@@ -72,6 +72,11 @@ function shellWords(segment) {
 }
 
 const WRAPPER_OPTION_WITH_VALUE = new Set(['-u', '-g', '-h', '-C', '-p', '--user', '--group', '--chdir', '--host', '--unset', '--prompt'])
+
+function isInnerShellWord(word) {
+  const normalized = word.toLowerCase()
+  return INNER_SHELL_WORDS.has(normalized) || /(?:^|[\\/])cmd\.exe$/.test(normalized)
+}
 function isEnvAssignment(word) {
   return /^[A-Za-z_][A-Za-z0-9_]*=/.test(word)
 }
@@ -100,9 +105,9 @@ export function mutationTextMatches(text, syntaxRe, bareRe, depth) {
         }
         continue
       }
-      if (INNER_SHELL_WORDS.has(word)) {
+      if (isInnerShellWord(word)) {
         let commandIndex = index + 1
-        while (commandIndex < words.length && !/^(?:-Command|-c)$/i.test(words[commandIndex])) commandIndex += 1
+        while (commandIndex < words.length && !/^(?:-Command|-c|\/c)$/i.test(words[commandIndex])) commandIndex += 1
         if (commandIndex + 1 < words.length) {
           const inner = words[commandIndex + 1]
           if (mutationTextMatches(inner, syntaxRe, bareRe, depth + 1) || mutationTextMatches(inner, PWSH_MUTATION, PWSH_BARE_WORDS, depth + 1) || mutationTextMatches(inner, BASH_MUTATION, BASH_BARE_WORDS, depth + 1)) return true

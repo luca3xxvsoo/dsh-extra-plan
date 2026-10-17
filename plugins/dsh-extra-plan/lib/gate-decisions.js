@@ -1,7 +1,7 @@
 // plugins 根入口的纯决策与 run_code 聚合；无反向 index.js 依赖。
-import { sessionEvents, isSubagentChild } from './agent-session.js'
+import { sessionEvents } from './agent-session.js'
 import { budgetExceeded, budgetExhaustedReason, toolCallsSinceUser, DEFAULT_EXPLORE_BUDGET } from './planner-budget.js'
-import { runCodeTextOf, codeMutationHints, createRunCodeStatic } from './run-code-static.js'
+import { runCodeTextOf, createRunCodeStatic } from './run-code-static.js'
 import { pwshMutationMatches, bashMutationMatches } from './shell-mutation.js'
 import { normalizeGateLabel } from './gate-words.js'
 
@@ -50,9 +50,7 @@ function approvalDenyReason(action, state, gateRuntime) {
 // 不触发 resetRouteState（状态机连带修复）。
 const HOST_ASK_CANCEL_TEXTS = ['Error: ask_user_question was aborted before the user answered', 'Error: the user cancelled ask_user_question']
 
-// 会话事件快照（sessionEvents）与子代理识别（isSubagentChild）的唯一来源 = lib/agent-session.js
-// （index.js 与 lib/model-routing.js 共用，模块内不再保留镜像副本）；见下方 import 行，
-// decisions 继续 re-export isSubagentChild（名字数不变）。
+// 会话事件快照的唯一来源 = lib/agent-session.js；本模块不复制子代理识别逻辑。
 
 // 委派角色判定由下方从 lib/agent-runtime.js 导入。
 // anchored 引导阶段判定：会话尚未落盘任何 tool/call 事件。
@@ -1070,7 +1068,7 @@ function aggregateRunCodeDenyReason(members, denies) {
 
 
 
-// run_code 静态 helper 单向接线：依赖只由根的 ASK_TOOL 与双兼容 dispatch 判定显式注入。
+// run_code 静态 helper 单向接线：依赖只由根的 ASK_TOOL 与当前 PTC dispatch 判定显式注入。
 const {
   decomposeRunCode,
   runCodeCatchGateReason,
