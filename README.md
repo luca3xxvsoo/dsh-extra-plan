@@ -4,7 +4,7 @@
 
 **作者从reasonix得到的灵感，实现权限控制+子代理角色分配的agent模板**
 
-**兼容性**：DSH = v0.1.7-rc.1 ~ v0.2.0-rc.2、qqbot 0.5.0(暂未测试)。旧版本兼容详见Releases
+**兼容性**：DSH = v0.2.1-rc.2、qqbot 0.5.0(暂未测试)。旧版本兼容详见Releases
 
 ## 2. 核心优势
 
@@ -84,78 +84,83 @@ DSH web界面 -> 插件 -> 按需规划模式配置
 ```
 dsh-extra-plan/
 ├── plugins/              
-│   ├── dsh-extra-plan/                                 # 模式核心插件（四级闸门/探查上限/save_plan 等）
-│   │   ├── assets/presets/extra-plan/                   
-│   │   │   ├── agent.cordis.yml                        # 预设主配置（persona/工具/插件行/delegation）
-│   │   │   ├── preset-definition.generated.yml         # 纯预设 definition 生成资产
-│   │   │   └── preset.yml                              # 预设元信息（GUI 显示名称与描述）
-│   │   ├── lib/                                        # 模块目录
-│   │   │   ├── agent-runtime.js                        # 角色运行态：createAgentRuntime 的 per-apply 判定与缓存
-│   │   │   ├── agent-session.js                        # 角色判定：sessionEvents/isSubagentChild 唯一来源
-│   │   │   ├── assembly-presentation.js                # 展示投影：A/C/M 投影与 skill catalog
-│   │   │   ├── client-carrier.js                       # 配置组件内部 Client 载体，不形成公开组件
-│   │   │   ├── client.js                               # 设置页前端 UI
-│   │   │   ├── executor-spawn.js                       # 执行者委托层（workflow/ralph worker 注入）
-│   │   │   ├── gate-decisions.js                       # 闸门纯决策：路由/目的/澄清/批准与只读判定
-│   │   │   ├── gate-words.js                           # 闸门词契约：字段规格/整组校验/运行时派生
-│   │   │   ├── live-config.js                          # 热修改支持模块
-│   │   │   ├── model-routing.js                        # 子代理模型选择：planner/非 planner 路由解析
-│   │   │   ├── planner-budget.js                       # 探查预算：用量计数与提醒/耗尽文案
-│   │   │   ├── preset-defaults.generated.js            # 构建期生成：exploreBudget 默认值
-│   │   │   ├── preset-settings.js                      # 设置项 descriptor 与 YAML 处理 facade（供迁移复用）
-│   │   │   ├── preset-sync.js                          # settings owner 内部同步/adapter 与 raw 旧值迁移
-│   │   │   ├── preset-yaml.js                          # 预设 YAML 解析、定位与保格式改写纯模块
-│   │   │   ├── run-code-scanner.js                     # run_code 无宿主状态词法与调用点扫描
-│   │   │   ├── run-code-static.js                      # run_code：静态解析与理由函数
-│   │   │   ├── runtime-lifecycle.js                    # session 生命周期与计数状态工厂
-│   │   │   ├── runtime-static.js                       # 静态纯函数：显式参数 helper
-│   │   │   ├── save-contract.js                        # save_plan/save_probe：合同常量与 Markdown 渲染
-│   │   │   ├── save-persistence.js                     # save_plan/save_probe：原子落盘内核与 journal 自愈
-│   │   │   ├── save-plan-validation.js                 # save_plan：文档解析校验
-│   │   │   ├── save-probe-validation.js                # save_probe：参数与路径/range/evidence 校验
-│   │   │   ├── save-tool-factories.js                  # save_plan/save_probe：工具定义
-│   │   │   ├── sdk-text-cache.js                       # tools:sdk缓存复用
-│   │   │   ├── settings-contract.js                    # 设置项单一合同：键、默认值、校验与元数据
-│   │   │   ├── settings.js                             # 设置页宿主端
-│   │   │   ├── shell-mutation.js                       # 写操作判定：跨平台命令解码与写形态
-│   │   │   └── usage-ledger.js                         # usage 账本与 cursor 增量折叠
+│   ├── dsh-extra-plan/                                               # 模式核心插件（四级闸门/探查上限/save_plan 等）
+│   │   ├── assets/presets/extra-plan/                                 
+│   │   │   ├── agent.cordis.yml                                      # 预设主配置（persona/工具/插件行/delegation）
+│   │   │   ├── preset-definition.generated.yml                       # 纯预设 definition 生成资产
+│   │   │   ├── preset-definition-extra-plan-executor.generated.yml   # 执行者角色预设 definition（生成物）
+│   │   │   ├── preset-definition-extra-plan-planner.generated.yml    # 规划者角色预设 definition（生成物）
+│   │   │   ├── preset-definition-extra-plan-reviewer.generated.yml   # 验收者角色预设 definition（生成物）
+│   │   │   ├── preset-definition-extra-plan-prober.generated.yml     # 探查者角色预设 definition（生成物）
+│   │   │   └── preset.yml                                            # 预设元信息（GUI 显示名称与描述）
+│   │   ├── lib/                                                      # 模块目录
+│   │   │   ├── agent-runtime.js                                      # 角色运行态：createAgentRuntime 的 per-apply 判定与缓存
+│   │   │   ├── agent-session.js                                      # 角色判定：sessionEvents/isSubagentChild 唯一来源
+│   │   │   ├── assembly-presentation.js                              # 展示投影：A/C/M 投影与 skill catalog
+│   │   │   ├── client-carrier.js                                     # 配置组件内部 Client 载体，不形成公开组件
+│   │   │   ├── client.js                                             # 设置页前端 UI
+│   │   │   ├── executor-spawn.js                                     # 执行者委托层（workflow/ralph worker 注入）
+│   │   │   ├── gate-decisions.js                                     # 闸门纯决策：路由/目的/澄清/批准与只读判定
+│   │   │   ├── gate-words.js                                         # 闸门词契约：字段规格/整组校验/运行时派生
+│   │   │   ├── live-config.js                                        # 热修改支持模块
+│   │   │   ├── model-routing.js                                      # 子代理模型选择：planner/非 planner 路由解析
+│   │   │   ├── planner-budget.js                                     # 探查预算：用量计数与提醒/耗尽文案
+│   │   │   ├── preset-defaults.generated.js                          # 构建期生成：exploreBudget 默认值
+│   │   │   ├── preset-settings.js                                    # 设置项 descriptor 与 YAML 处理 facade（供迁移复用）
+│   │   │   ├── preset-sync.js                                        # settings owner 内部同步/adapter 与 raw 旧值迁移
+│   │   │   ├── preset-yaml.js                                        # 预设 YAML 解析、定位与保格式改写纯模块
+│   │   │   ├── qqbot-settings-sync.js                                # QQBot 设置同步：Web→QQBot 持久化与回执
+│   │   │   ├── run-code-scanner.js                                   # run_code 无宿主状态词法与调用点扫描
+│   │   │   ├── run-code-static.js                                    # run_code：静态解析与理由函数
+│   │   │   ├── runtime-lifecycle.js                                  # session 生命周期与计数状态工厂
+│   │   │   ├── runtime-static.js                                     # 静态纯函数：显式参数 helper
+│   │   │   ├── save-contract.js                                      # save_plan/save_probe：合同常量与 Markdown 渲染
+│   │   │   ├── save-persistence.js                                   # save_plan/save_probe：原子落盘内核与 journal 自愈
+│   │   │   ├── save-plan-validation.js                               # save_plan：文档解析校验
+│   │   │   ├── save-probe-validation.js                              # save_probe：参数与路径/range/evidence 校验
+│   │   │   ├── save-tool-factories.js                                # save_plan/save_probe：工具定义
+│   │   │   ├── sdk-text-cache.js                                     # tools:sdk缓存复用
+│   │   │   ├── settings-contract.js                                  # 设置项单一合同：键、默认值、校验与元数据
+│   │   │   ├── settings.js                                           # 设置页宿主端
+│   │   │   ├── shell-mutation.js                                     # 写操作判定：跨平台命令解码与写形态
+│   │   │   └── usage-ledger.js                                       # usage 账本与 cursor 增量折叠
 │   │   ├── locale/                                     
 │   │   │   ├── settings/  
 │   │   │   │   ├── en.json                     
 │   │   │   │   └── zh.json                                  
 │   │   │   ├── en.json                      
 │   │   │   └── zh.json                        
-│   │   ├── scripts/generate-runtime-defaults.mjs       # 构建期生成器：exploreBudget 叶值 → preset-defaults.generated.js
-│   │   ├── cordis.patch.yml                                      
-│   │   ├── index.js                                    # 四级闸门：路由/目的/澄清/批准 + apply 接线
-│   │   └── package.json
-│   └── dsh-extra-plan-qqbot/                  
-│       ├── lib/heal.js                                 # 自愈函数
-│       ├── scripts/heal.mjs                            # 自愈分发                      
-│       ├── cordis.patch.yml                    
-│       ├── index.js                      
-│       └── package.json        
-├── pe-test/                                            # 自检/取证工具
-│   ├── README.md                                       # 自检/取证工具介绍
-│   ├── _shared/                                        
-│   │   ├── host-deps.mjs  
-│   │   ├── preset-hash.mjs      
-│   │   ├── session-finder.mjs     
-│   │   ├── test-output.mjs  
-│   │   ├── v4-tool-result.mjs
-│   │   └── zstd-frames.mjs  
-│   ├── docs/                                           # AI文档
-│   │   ├── ai-概览.md  
-│   │   ├── ai-机制设计.md  
-│   │   ├── ai-流程备查.md  
-│   │   ├── ai-维护手册.md  
-│   │   ├── ai-实机闸门测试流程.md 
-│   │   ├── ai-宿主耦合台账.md 
-│   │   ├── ai-宿主耦合历史归档.md 
-│   │   ├── ai-历史故障与机制归档.md 
-│   │   └── ai-代码地图.md         
-│   └── tools/                                          # 测试工具
-│       ├── 一键step测试.mjs                             # 可以通过输入真实session_id进行测试
+│   │   ├── scripts/generate-runtime-defaults.mjs                     # 构建期生成器：exploreBudget 叶值 → preset-defaults.generated.js
+│   │   ├── cordis.patch.yml                                                    
+│   │   ├── index.js                                                  # 四级闸门：路由/目的/澄清/批准 + apply 接线
+│   │   └── package.json              
+│   └── dsh-extra-plan-qqbot/                                
+│       ├── lib/heal.js                                               # 自愈函数
+│       ├── scripts/heal.mjs                                          # 自愈分发                      
+│       ├── cordis.patch.yml                                  
+│       ├── index.js                                    
+│       └── package.json                      
+├── pe-test/                                                          # 自检/取证工具
+│   ├── README.md                                                     # 自检/取证工具介绍
+│   ├── _shared/                                                      
+│   │   ├── host-deps.mjs                
+│   │   ├── preset-hash.mjs                    
+│   │   ├── session-finder.mjs                   
+│   │   ├── test-output.mjs                
+│   │   ├── v4-tool-result.mjs              
+│   │   └── zstd-frames.mjs                
+│   ├── docs/                                                         # AI文档
+│   │   ├── ai-概览.md                
+│   │   ├── ai-机制设计.md                
+│   │   ├── ai-流程备查.md                
+│   │   ├── ai-维护手册.md                
+│   │   ├── ai-实机闸门测试流程.md               
+│   │   ├── ai-宿主耦合台账.md               
+│   │   ├── ai-宿主耦合历史归档.md               
+│   │   ├── ai-历史故障与机制归档.md               
+│   │   └── ai-代码地图.md                       
+│   └── tools/                                                        # 测试工具
+│       ├── 一键step测试.mjs                                           # 可以通过输入真实session_id进行测试
 │       ├── 生成-no-remount证据.mjs
 │       ├── step-00-跨平台写拦截.mjs
 │       ├── step-00-全流程回归.mjs
@@ -170,6 +175,7 @@ dsh-extra-plan/
 │       ├── step-04-context-gate宿主回归.mjs
 │       ├── step-04-路由与写闸门.mjs
 │       ├── step-05-会话解码.mjs
+│       ├── step-05-角色预设宿主回归.mjs                 
 │       ├── step-06-08-v4取证回归.mjs
 │       ├── step-06-线索落盘.mjs
 │       ├── step-06-真实会话查看.mjs
@@ -178,9 +184,9 @@ dsh-extra-plan/
 │       ├── step-99-用量统计.mjs
 │       ├── 代码地图生成.mjs                           
 │       └── readme.md
-├── README.md                                            # 本文档
-├── READAI.md                                            # AI 入口导航（分层）
-└── LICENSE                                              # MIT 许可
+├── README.md                                                          # 本文档
+├── READAI.md                                                          # AI 入口导航（分层）
+└── LICENSE                                                            # MIT 许可
 ```
 
 ## 6. 许可

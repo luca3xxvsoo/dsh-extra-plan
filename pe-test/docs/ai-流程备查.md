@@ -8,9 +8,9 @@
 
 ## ② 展示时序
 
-A=anchoredBootstrap、C=creativeMode、M=`native|ptc|both`；F 是会话尚无 `tool/call`，首个工具调用后为 L。A=1/F/main-planner 的 PTC 形态顶层只保留 `run_code` 与两段引导/read 文案，native/both 为 HN/HB；C=0 只改变模型可见面，不改变 runtime binding、deny 或 `tools/pre-execute`。
+A=anchoredBootstrap、C=creativeMode、M=`native|ptc`；F 是会话尚无 `tool/call`，首个工具调用后为 L。A=1/F/main-planner 的 PTC 形态顶层只保留 `run_code` 与两段引导/read 文案，native 为 HN、ptc 为 HP；C=0 只改变模型可见面，不改变 runtime binding、deny 或 `tools/pre-execute`。
 
-PTC C=0/C=1 必须各用干净 A=1 顶层会话取 F→首个 tool/call→L→第二调用；native/both HN/HB 另行取证。历史会话只能提供 L，不能证明 F。
+PTC C=0/C=1 必须各用干净 A=1 顶层会话取 F→首个 tool/call→L→第二调用；native HN 与 ptc HP 分别取证。历史会话只能提供 L，不能证明 F。
 
 ## ③ 接收需求
 
@@ -25,7 +25,7 @@ PTC C=0/C=1 必须各用干净 A=1 顶层会话取 F→首个 tool/call→L→�
 复杂度评估后必须用 `ask_user_question` 二选一：**主会话探查** / **探查者探查**，推荐项排第一，用户选择决定路径。并行收益、上下文隔离收益、方向侦察收益只用于形成推荐，不自动替用户决策。
 
 - 主会话探查：主会话自己只读查证。
-- 探查者探查：主会话以 `run_in_background:true` 委派探查者；探查者只读、可 `save_probe` 落盘证据，回主会话只给“路径 + 2-3 行摘要”。
+- 探查者探查：主会话用 `subagent_probe` 委派探查者；探查者只读、可 `save_probe` 落盘证据，回主会话只给“路径 + 2-3 行摘要”。
 - 探查者只由主会话委派；规划子代理、执行者、验收者不得递归委派探查者。规划子代理有缺口时输出“申请继续探查：<待查项> — <原因>”，交回主会话。
 
 ## ⑥ 复杂度与推荐路由

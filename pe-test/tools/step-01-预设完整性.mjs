@@ -12,7 +12,7 @@ import {
   resolveTemplateSettingDefault,
 } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
 import { DEFAULT_EXPLORE_BUDGET, DEFAULT_PLANNER_PROMPT_SUFFIX } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
-import { generateRuntimeDefaults, renderRuntimeDefaults, renderPresetDefinition } from '../../plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs'
+import { generateRuntimeDefaults, renderRuntimeDefaults, renderPresetDefinition, renderRoleDefinitions, secondDocumentOf, ROLE_IDS, roleDefinitionFile } from '../../plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs'
 // S1：DEFAULT_DENY 收敛断言（执行者 deny 清单必须与预设 config.deny 逐字一致）。
 import { DEFAULT_DENY, resolveDeny } from '../../plugins/dsh-extra-plan/lib/executor-spawn.js'
 import { HOST_CORDIS_TOOLS } from '../../plugins/dsh-extra-plan/lib/assembly-presentation.js'
@@ -21,7 +21,9 @@ const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url))
 const DSH_INSTALL_ROOT = typeof process.env.DSH_INSTALL_ROOT === 'string' && process.env.DSH_INSTALL_ROOT.trim() !== ''
   ? process.env.DSH_INSTALL_ROOT.trim()
   : null
-const TARGET_PEER_RANGE = '0.1.7-rc.1 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2'
+// 0.2.1-rc.2 起只兼容单一宿主版本（旧版兼容已迁出本分支）：版本门读这一份声明。
+const TARGET_PEER_RANGE = '0.2.1-rc.2'
+const LEGACY_HOST_VERSIONS = ['0.1.7-rc.1', '0.1.7-rc.2', '0.2.0-rc.1', '0.2.0-rc.2']
 const PRESET_DIR = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'assets', 'presets', 'extra-plan')
 const file = join(PRESET_DIR, 'agent.cordis.yml')
 const presetFile = join(PRESET_DIR, 'preset.yml')
@@ -108,9 +110,15 @@ const definitionDoc = parsePresetYaml(definitionGeneratedText)
 const runtimeRows = definitionDoc !== null && typeof definitionDoc === 'object' && Array.isArray(definitionDoc.plugins) ? definitionDoc.plugins : []
 const all = flatten(runtimeRows)
 const subagentRows = all.filter((row) => row.name === '@deepseek-ai/dsh-tool-subagent' && row.disabled !== true)
+// 0.2.1 契约：persona 与 toolFilter 会被宿主抛错、backgroundMode 已无此键，四行只留三键；
+// 人设与工具面改由角色预设承载（agentPreset 指向 4 个角色 id）。
+const ROLE_PRESET_OF_TOOL = { subagent: 'extra-plan-executor', subagent_plan: 'extra-plan-planner', subagent_review: 'extra-plan-reviewer', subagent_probe: 'extra-plan-prober' }
+check('T2 四行 tool-subagent 齐备且按 toolName 对应角色预设', subagentRows.length === 4 && Object.keys(ROLE_PRESET_OF_TOOL).every((toolName) => subagentRows.some((row) => row.config && row.config.toolName === toolName)))
 for (const row of subagentRows) {
-  const deny = row.config && row.config.toolFilter && Array.isArray(row.config.toolFilter.deny) ? row.config.toolFilter.deny : []
-  checkDeny('toolFilter deny [' + row.config.toolName + ']', deny)
+  const config = row.config !== null && typeof row.config === 'object' ? row.config : {}
+  const keys = Object.keys(config).sort().join(',')
+  check('T2 tool-subagent[' + config.toolName + '] 恰三键 provider/toolName/agentPreset 且 agentPreset 指向角色 id',
+    keys === 'agentPreset,provider,toolName' && config.provider === 'spawn' && ROLE_PRESET_OF_TOOL[config.toolName] === config.agentPreset)
 }
 for (const inner of all) {
   if (inner.name === 'dsh-extra-plan/executor-spawn') {
@@ -172,12 +180,13 @@ if (denyFallbackCases.every((ok) => ok)) {
 }
 
 const names = all.map((row) => typeof row.name === 'string' ? row.name : '')
+// 0.2.1：workflow-ptc / tool-workflow / tool-ralph 三段在作者源里是注释（暂不挂载），
+// 故 required 不再要求三者存在；executor-spawn 行保留可执行（lib 与 export 一并保留）。
 const required = [
   '@deepseek-ai/dsh-persona', 'dsh-extra-plan', '@deepseek-ai/dsh-tool-ask-user',
   '@deepseek-ai/dsh-tool-subagent', '@deepseek-ai/dsh-tool-subagent-control',
   '@deepseek-ai/dsh-tool-subagent-control/list-agents', 'dsh-extra-plan/executor-spawn',
-  '@deepseek-ai/dsh-workflow-ptc', '@deepseek-ai/dsh-tool-workflow',
-  '@deepseek-ai/dsh-tool-ralph', '@deepseek-ai/dsh-compaction-basic', '@deepseek-ai/dsh-tool-cordis',
+  '@deepseek-ai/dsh-compaction-basic', '@deepseek-ai/dsh-tool-cordis',
 ]
 for (const req of required) {
   if (names.includes(req)) { pass += 1 } else { fail += 1; console.log('FAIL  缺少行: ' + req) }
@@ -242,7 +251,7 @@ const groupIds = definitionDoc.plugins.filter((row) => row.group === true).map((
 const delegationGroup = definitionDoc.plugins.find((row) => row.id === 'delegation')
 const compactionGroup = definitionDoc.plugins.find((row) => row.id === 'compaction')
 const extraPlanGroup = definitionDoc.plugins.find((row) => row.id === 'extra-plan-group')
-check('T1 三组 group/子行数量保持 1/3/10', groupIds.join('|') === 'extra-plan-group|compaction|delegation' && extraPlanGroup.config.length === 1 && compactionGroup.config.length === 3 && delegationGroup.config.length === 10)
+check('T1 三组 group/子行数量保持 1/3/7（workflow/ralph 三段已注释）', groupIds.join('|') === 'extra-plan-group|compaction|delegation' && extraPlanGroup.config.length === 1 && compactionGroup.config.length === 3 && delegationGroup.config.length === 7)
 check('T1 isolate 全部为 true 且覆盖三组要求', delegationGroup.isolate.subagentModelSelection === true && delegationGroup.isolate.workflowEngine === true && compactionGroup.isolate.toolResultPruner === true && Object.values(delegationGroup.isolate).concat(Object.values(compactionGroup.isolate), Object.values(extraPlanGroup.isolate)).every((value) => value === true))
 check('T1 definition 保留 raw !!js marker 文本与官方技能表达式', definitionText.includes('!!js') && definitionText.includes("createRequire(baseUrl).resolve('@deepseek-ai/dsh-agent-preset/package.json')") && definitionText.includes("'skills')"))
 check('T1 官方适配器与技能文件未复制进本仓', !existsSync(join(PRESET_DIR, 'skills')) && !existsSync(join(PRESET_DIR, 'agent.cordis.official.yml')))
@@ -265,8 +274,49 @@ const qqbotExports = qqbotPackageJson.exports !== null && typeof qqbotPackageJso
 const qqbotFiles = Array.isArray(qqbotPackageJson.files) ? qqbotPackageJson.files : []
 check('B2 package files/scripts 含生成器、generate 与 prepack', packageFiles.includes('scripts/generate-runtime-defaults.mjs') && packageJson.scripts['generate:runtime-defaults'] === 'node scripts/generate-runtime-defaults.mjs' && packageJson.scripts.prepack === 'node scripts/generate-runtime-defaults.mjs', true)
 check('M1 核心 manifest name/version/repository/client/deps/patch/private 契约', packageJson.name === 'dsh-extra-plan' && packageJson.version === '0.3.0' && packageJson.repository === 'git+https://github.com/luca3xxvsoo/dsh-extra-plan.git' && packageJson.dsh?.bundle?.patch === './cordis.patch.yml' && packageJson.dsh?.client?.platform === 'web' && Array.isArray(packageJson.dsh?.client?.inject) && packageJson.dependencies?.['js-yaml'] === '^4.2.0' && !Object.prototype.hasOwnProperty.call(packageJson, 'private') && !JSON.stringify(packageJson).includes('@local/dsh-extra-plan'))
-check('M2 核心 exports/files 保持所需子路径与四项 peer 范围', packageJson.exports?.['.'] === './index.js' && packageJson.exports?.['./settings'] === './lib/settings.js' && packageJson.exports?.['./executor-spawn'] === './lib/executor-spawn.js' && packageFiles.includes('index.js') && packageFiles.includes('lib/') && packageFiles.includes('locale/') && packageFiles.includes('cordis.patch.yml') && packageJson.peerDependencies?.['@deepseek-ai/dsh'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/dsh-llm'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/dsh-agent-preset'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/schemastery'] === '~3.18.4')
+check('M2 核心 engines.dsh 与三项 @deepseek-ai peer 同为 0.2.1-rc.2', packageJson.engines?.dsh === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/dsh'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/dsh-llm'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/dsh-agent-preset'] === TARGET_PEER_RANGE)
+check('M2 核心 exports/files 保持所需子路径与 peer 范围', packageJson.exports?.['.'] === './index.js' && packageJson.exports?.['./settings'] === './lib/settings.js' && packageJson.exports?.['./executor-spawn'] === './lib/executor-spawn.js' && packageFiles.includes('index.js') && packageFiles.includes('lib/') && packageFiles.includes('locale/') && packageFiles.includes('cordis.patch.yml') && packageJson.peerDependencies?.['@deepseek-ai/dsh'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/dsh-llm'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/dsh-agent-preset'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/schemastery'] === '~3.18.4')
 check('M3 QQBot manifest name/version/exports/files/dependency/postinstall/patch/private 契约', qqbotPackageJson.name === 'dsh-extra-plan-qqbot' && qqbotPackageJson.version === '2.0.0' && qqbotExports['.'] === './index.js' && qqbotExports['./cordis.patch.yml'] === './cordis.patch.yml' && qqbotExports['./package.json'] === './package.json' && JSON.stringify(qqbotFiles) === JSON.stringify(['index.js', 'cordis.patch.yml', 'lib/', 'scripts/']) && qqbotPackageJson.dependencies?.['js-yaml'] === '^4.2.0' && qqbotPackageJson.scripts?.postinstall === 'node scripts/heal.mjs' && qqbotPackageJson.dsh?.bundle?.patch === './cordis.patch.yml' && !Object.prototype.hasOwnProperty.call(qqbotPackageJson, 'private') && !JSON.stringify(qqbotPackageJson).includes('@local/dsh-qqbot-user-questions'))
+// ── T3 角色预设链：作者源第二文档 4 角色 + 4 个生成 definition（persona 逐字相等） ─────
+const roleSourceText = secondDocumentOf(agentText)
+const roleSource = parsePresetYaml(roleSourceText)
+const roleRow = Array.isArray(roleSource) ? roleSource : []
+check('T3 角色作者源 4 项且 id/order 唯一（101..104）',
+  roleRow.length === 4 && JSON.stringify(roleRow.map((role) => role.id)) === JSON.stringify([...ROLE_IDS])
+  && JSON.stringify(roleRow.map((role) => role.order)) === JSON.stringify([101, 102, 103, 104]))
+const mainExtraRow = Array.isArray(definitionDoc.plugins) ? (definitionDoc.plugins.find((row) => row.id === 'extra-plan-group')?.config || []).find((row) => row.id === 'extra-plan') : undefined
+const mainExtraConfigJson = mainExtraRow === undefined ? 'missing' : JSON.stringify(mainExtraRow.config)
+for (const role of roleRow) {
+  const roleFile = roleDefinitionFile(role.id, PRESET_DIR)
+  let roleDef = null
+  try { roleDef = parsePresetYaml(readFileSync(roleFile, 'utf8')) } catch (error) { roleDef = null }
+  const leading = roleDef === null ? [] : roleDef.plugins.slice(0, 2).map((row) => row.id)
+  check('T3 ' + role.id + ' definition 首两行为 persona/extra-plan、config 与主预设逐字相等、persona 与作者源逐字相等',
+    roleDef !== null && roleDef.id === role.id && roleDef.order === role.order && roleDef.name === role.name && roleDef.description === role.description
+    && JSON.stringify(leading) === JSON.stringify(['persona', 'extra-plan'])
+    && roleDef.plugins[0].name === '@deepseek-ai/dsh-persona' && roleDef.plugins[0].config?.prefix === role.personaPrefix
+    && roleDef.plugins[1].name === 'dsh-extra-plan' && JSON.stringify(roleDef.plugins[1].config) === mainExtraConfigJson)
+  const toolRows = roleDef === null ? [] : roleDef.plugins.slice(2)
+  const toolNames = toolRows.map((row) => row.name)
+  const forbidden = ['@deepseek-ai/dsh-tool-subagent', '@deepseek-ai/dsh-tool-subagent-control', '@deepseek-ai/dsh-tool-subagent-control/list-agents', '@deepseek-ai/dsh-tool-workflow', '@deepseek-ai/dsh-tool-ralph', '@deepseek-ai/dsh-tool-ask-user', '@deepseek-ai/dsh-tool-todo']
+  const fsRow = toolRows.find((row) => row.name === '@deepseek-ai/dsh-tool-fs')
+  const writable = fsRow !== undefined && fsRow.config !== undefined && fsRow.config.write === true
+  const readOnlyOk = role.id === 'extra-plan-executor'
+    ? fsRow !== undefined && (fsRow.config === undefined || (fsRow.config.write !== false && fsRow.config.edit !== false))
+    : fsRow !== undefined && fsRow.config?.write === false && fsRow.config?.edit === false
+  const shellRows = toolNames.filter((name) => name === '@deepseek-ai/dsh-tool-pwsh' || name === '@deepseek-ai/dsh-tool-bash')
+  check('T3 ' + role.id + ' 工具面按只读/可写/shell 规则裁剪',
+    forbidden.every((name) => !toolNames.includes(name))
+    && readOnlyOk
+    && (role.id === 'extra-plan-executor' ? shellRows.length === 2 : shellRows.length === 0)
+    && toolNames.includes('@deepseek-ai/dsh-tool-fs-search') && toolNames.includes('@deepseek-ai/dsh-tool-skill')
+    && toolNames.includes('@deepseek-ai/dsh-skill-filesystem') && toolNames.includes('@deepseek-ai/dsh-tool-jobs')
+    && (!writable || role.id === 'extra-plan-executor'))
+}
+const renderedRoles = renderRoleDefinitions(roleSourceText, definitionGeneratedText)
+check('T3 角色 definition 渲染与已提交 4 个生成物逐字一致（生成器单源）',
+  renderedRoles.length === ROLE_IDS.length && renderedRoles.every((role) => readFileSync(roleDefinitionFile(role.roleId, PRESET_DIR), 'utf8') === role.text))
+
 const generatedBeforeCheck = readFileSync(generatedFile)
 const definitionBeforeCheck = readFileSync(definitionGeneratedFile)
 let checkPassed = false
@@ -317,9 +367,10 @@ try {
 
 const planRow = subagentRows.find((row) => row.config && row.config.toolName === 'subagent_plan')
 const probeRow = subagentRows.find((row) => row.config && row.config.toolName === 'subagent_probe')
-if (probeRow !== undefined && probeRow.config.backgroundMode === 'one-shot' && probeRow.config.provider === 'spawn' && Array.isArray(probeRow.config.toolFilter.deny) && probeRow.config.toolFilter.deny.includes('subagent_probe')) {
+if (probeRow !== undefined && probeRow.config.provider === 'spawn' && probeRow.config.agentPreset === 'extra-plan-prober'
+  && JSON.stringify(Object.keys(probeRow.config).sort()) === JSON.stringify(['agentPreset', 'provider', 'toolName'])) {
   pass += 1
-  console.log('PASS  subagent_probe 行存在（one-shot/spawn/deny 含 subagent_probe）')
+  console.log('PASS  subagent_probe 行存在（provider/agentPreset 三键，探查器只读面在角色预设）')
 } else {
   fail += 1
   console.log('FAIL  subagent_probe 行缺失或配置不完整')
@@ -376,8 +427,9 @@ const hostLeaks = Object.keys(pluginDeps).filter((name) => name.startsWith('@dee
 check('S2 dependencies 不含 @deepseek-ai/* 宿主包（profile 不得出现第二份宿主副本）'
   + (hostLeaks.length > 0 ? '，实际: ' + hostLeaks.join(', ') : ''),
   pluginPkg !== undefined && hostLeaks.length === 0)
-check('S2 peerDependencies dsh 与 dsh-llm 逐字同为四版本精确并集',
-  pluginPeers['@deepseek-ai/dsh'] === TARGET_PEER_RANGE && pluginPeers['@deepseek-ai/dsh-llm'] === TARGET_PEER_RANGE)
+check('S2 peerDependencies dsh 与 dsh-llm 逐字同为 0.2.1-rc.2（旧版兼容已迁出）',
+  pluginPeers['@deepseek-ai/dsh'] === TARGET_PEER_RANGE && pluginPeers['@deepseek-ai/dsh-llm'] === TARGET_PEER_RANGE
+  && !LEGACY_HOST_VERSIONS.some((version) => String(pluginPeers['@deepseek-ai/dsh']).includes(version)))
 check('S2 peerDependencies 不使用 caret/compatibility 豁免，且 schemastery 仍由宿主供给',
   typeof pluginPeers['@deepseek-ai/schemastery'] === 'string' && pluginPeers['@deepseek-ai/schemastery'] !== '' &&
   !String(pluginPeers['@deepseek-ai/dsh']).includes('^') && !String(pluginPeers['@deepseek-ai/dsh-llm']).includes('^'))
@@ -389,11 +441,17 @@ if (DSH_INSTALL_ROOT === null || targetDsh === null || targetDshLlm === null) {
 } else {
   let semver = null
   try { semver = createRequire(join(DSH_INSTALL_ROOT, 'package.json'))('semver') } catch { semver = null }
-  check('S2 HOST 真实 dsh/dsh-llm manifests 均为 rc.2 目标', targetDshVersion === '0.2.0-rc.2' && targetDshLlmVersion === '0.2.0-rc.2')
-  check('S2 semver 门控命中四个精确 prerelease（仅证明范围命中，不证明 API）', semver !== null &&
-    ['0.1.7-rc.1', '0.1.7-rc.2', '0.2.0-rc.1', '0.2.0-rc.2'].every((version) => semver.satisfies(version, TARGET_PEER_RANGE, { includePrerelease: true })))
+  // 版本门改为语义门：不再硬编码目标版本号，改由声明范围（peer for dsh/dsh-llm）判定宿主是否被支持。
+  const declaredDsh = typeof pluginPeers['@deepseek-ai/dsh'] === 'string' ? pluginPeers['@deepseek-ai/dsh'] : ''
+  const declaredLlm = typeof pluginPeers['@deepseek-ai/dsh-llm'] === 'string' ? pluginPeers['@deepseek-ai/dsh-llm'] : ''
+  check('S2 语义门：HOST 真实 dsh/dsh-llm manifests 均落在声明范围（' + declaredDsh + ' / ' + declaredLlm + '）',
+    semver !== null && declaredDsh !== '' && declaredLlm !== ''
+    && semver.satisfies(targetDshVersion, declaredDsh, { includePrerelease: true })
+    && semver.satisfies(targetDshLlmVersion, declaredLlm, { includePrerelease: true }))
+  check('S2 语义门拒绝四个旧版（0.1.7-rc.1/0.1.7-rc.2/0.2.0-rc.1/0.2.0-rc.2）',
+    semver !== null && declaredDsh !== '' && LEGACY_HOST_VERSIONS.every((version) => !semver.satisfies(version, declaredDsh, { includePrerelease: true })))
 }
-console.log('HUMAN  0.2.0-rc.1【未核实·HUMAN】：不得由 rc.2 结论推出 API/自动回归/实机通过')
+console.log('HUMAN  旧宿主 0.1.7/0.2.0 与实机模型行为【未核实·HUMAN】：本脚本只证明单一声明范围的语义门，不证明旧版 API/自动回归/实机通过')
 
 // S3：包级与全局管理行 locale 通过 exports 真实解析；旧 preset-sync 通道必须退役。
 const LOCALE_CHANNELS = [

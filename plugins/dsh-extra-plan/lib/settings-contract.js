@@ -4,7 +4,9 @@ import { DEFAULT_EXPLORE_BUDGET, DEFAULT_PLANNER_PROMPT_SUFFIX } from './preset-
 const isString = (value) => typeof value === 'string'
 const isPositiveInteger = (value) => typeof value === 'number' && Number.isInteger(value) && value > 0
 const isBoolean = (value) => typeof value === 'boolean'
-const modeOptions = Object.freeze(['native', 'ptc', 'both'])
+// 0.2.1：呈现模式二值化（dsh-agent-tool-presentation 只接受 native/ptc，同一 composition
+// 二次 presentAs 会抛错）；旧混合值不写迁移，由归一化路径回落 native。
+const modeOptions = Object.freeze(['native', 'ptc'])
 const isMode = (value) => typeof value === 'string' && modeOptions.includes(value)
 
 /** 新载体行 id（settings 命名空间 = profile 行 id）。 */
@@ -89,7 +91,7 @@ export const SETTING_DEFINITIONS = Object.freeze([
     validator: isMode,
     ui: {
       control: 'select', options: modeOptions,
-      optionLocale: { native: 'toolPresentationModeNative', ptc: 'toolPresentationModePtc', both: 'toolPresentationModeBoth' },
+      optionLocale: { native: 'toolPresentationModeNative', ptc: 'toolPresentationModePtc' },
       locale: 'toolPresentationMode',
       section: 'general',
     },

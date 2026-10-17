@@ -19,6 +19,8 @@ const GATE_DECISIONS_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/
 const USAGE_LEDGER_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/usage-ledger.js', import.meta.url))
 const RUNTIME_LIFECYCLE_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/runtime-lifecycle.js', import.meta.url))
 import { registerHostDeps } from '../_shared/host-deps.mjs'
+// 0.2.1 起 planner 身份判据是会话 header.agentPreset（插件 isPlannerChild 读该值，descriptor.mode 不再参与）。
+const PLANNER_PRESET = 'extra-plan-planner'
 import { createOutput } from '../_shared/test-output.mjs'
 // host-deps 必须在隔离前完成解析：它按候选① DSH_HOME/profiles/web 锚定宿主真包，
 // 隔离后该锚点不存在（会退到 npm 全局候选，非确定）。
@@ -51,7 +53,7 @@ import { createGateRuntime } from '../../plugins/dsh-extra-plan/lib/gate-words.j
 import { createLiveConfig } from '../../plugins/dsh-extra-plan/lib/live-config.js'
 import { CREATIVE_SKILL_NAMES as CREATIVE_SKILL_NAMES_FOR_TEST } from '../../plugins/dsh-extra-plan/lib/assembly-presentation.js'
 import { SETTING_DEFINITIONS as SETTING_DEFINITIONS_E, SETTING_GROUPS as SETTING_GROUPS_E, PRESET_ROW_ID as PRESET_ROW_ID_E, SETTINGS_ROW_ID as SETTINGS_ROW_ID_E, EXTRA_PLAN_SETTING_DEFINITIONS as EXTRA_PLAN_SETTING_DEFINITIONS_E, findPluginsRow as findPluginsRowE } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
-import { ASSET_DEFINITION_FILE as ASSET_DEFINITION_FILE_E } from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
+import { ASSET_DEFINITION_FILE as ASSET_DEFINITION_FILE_E, roleDefinitionOf } from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
 // 说明：不 import lib/settings.js——它顶层 import '@deepseek-ai/schemastery'，解析环境依赖宿主副本
 // （本机 npm 全局 dsh 实测 0.1.7-rc.2，profiles/web 另有 profile 内副本）；
 // 故 Config 的 volatile/默认值契约改用源码文本静态核对（机械可核对），不依赖本机 schemastery 版本。
@@ -148,7 +150,7 @@ check('MR1 routeKey 只有统一 NUL 分隔结构', routeKey('provider', 'model'
 
   const parent = { session: { header: { id: 'parent-route' }, requestHeader: () => ({ config: { provider: 'parent-provider', model: 'parent-model', maxTokens: 512, reasoningEffort: 'low' } }) } }
   const agents = { get: (id) => id === 'parent-route' ? parent : undefined }
-  const planner = { session: { header: { id: 'planner-route', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-route' } } }
+  const planner = { session: { header: { id: 'planner-route', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-route', agentPreset: PLANNER_PRESET } } }
   const state = { listProviders: 0, listModels: [], prepare: [], finish: [] }
   const llm = {
     listProviders: () => { state.listProviders += 1; return Promise.resolve([{ id: 'p1', name: 'zeta' }, { id: 'p1', name: 'duplicate' }, { id: 'p2', name: 'alpha' }]) },
@@ -174,7 +176,7 @@ check('MR1 routeKey 只有统一 NUL 分隔结构', routeKey('provider', 'model'
   }
   const sameModelParent = { session: { header: { id: 'parent-route' }, requestHeader: () => ({ config: { provider: 'parent-provider', model: 'target', maxTokens: 512 } }) } }
   const sameModelAgents = { get: (id) => id === 'parent-route' ? sameModelParent : undefined }
-  const sameModelPlanner = { session: { header: { id: 'planner-fallback', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-route' } } }
+  const sameModelPlanner = { session: { header: { id: 'planner-fallback', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-route', agentPreset: PLANNER_PRESET } } }
   const fallbackRouting2 = createModelRouting({ getPlannerModel: () => 'target', getOtherAgentModel: () => 'target', getCrossProviderPlannerModel: () => true, getLlm: () => fallbackLlm, getAgents: () => sameModelAgents, getDiagPath: () => join(tmpdir(), 'route-diag-fallback2.jsonl') })
   let fallbackMessage = ''
   try { await fallbackRouting2.resolvePlannerEntry(sameModelPlanner) } catch (error) { fallbackMessage = String(error.message) }
@@ -183,7 +185,7 @@ check('MR1 routeKey 只有统一 NUL 分隔结构', routeKey('provider', 'model'
   const blockedRouting = createModelRouting({ getPlannerModel: () => 'target', getOtherAgentModel: () => 'target', getCrossProviderPlannerModel: () => true, getLlm: () => ({ listProviders: () => Promise.resolve([]) }), getAgents: () => ({ get: () => undefined }), getDiagPath: () => join(tmpdir(), 'route-diag-blocked.jsonl') })
   let plannerBlocked = ''
   let childBlocked = ''
-  try { await blockedRouting.resolvePlannerEntry({ session: { header: { id: 'planner-blocked', origin: 'subagent', delegationDepth: 1, parentSession: 'missing' } } }) } catch (error) { plannerBlocked = String(error.message) }
+  try { await blockedRouting.resolvePlannerEntry({ session: { header: { id: 'planner-blocked', origin: 'subagent', delegationDepth: 1, parentSession: 'missing', agentPreset: PLANNER_PRESET } } }) } catch (error) { plannerBlocked = String(error.message) }
   try { await blockedRouting.resolveOtherAgentEntry({ session: { header: { id: 'child-blocked', origin: 'subagent', delegationDepth: 1, parentSession: 'missing' } } }, undefined, false) } catch (error) { childBlocked = String(error.message) }
   checkTrue('MR5 planner/non-planner strict blocked reason 分离且逐字保持', plannerBlocked === PLANNER_BLOCKED_REASON && childBlocked === NON_PLANNER_BLOCKED_REASON)
 }
@@ -199,7 +201,9 @@ const presetFile = fileURLToPath(new URL('../../plugins/dsh-extra-plan/assets/pr
 const presetText = readFileSync(presetFile, 'utf8')
 let rows
 try {
-  rows = yaml.load(presetText, { schema })
+  // 作者源是多文档（第一文档=主预设，第二文档=4 角色）：与 parsePresetYaml 同口径只取第一文档。
+  const documents = yaml.loadAll(presetText, { schema })
+  rows = documents.length === 0 ? undefined : documents[0]
 } catch (error) {
   output.error(`FAIL  YAML 解析失败: ${error.message}`)
   process.exit(1)
@@ -226,26 +230,33 @@ const assetGateWords = assetExtraPlanConfig.gateWords
 const gateRuntime = createGateRuntime(assetGateWords)
 const ROUTE_CONFIRM_TEXT = gateRuntime.confirm.route
 function withGateWords(config) { return { gateWords: assetGateWords, ...config } }
-function checkDeny(id, expectCount, mustContain, mustNotContain, label) {
-  const row = all.find((r) => r.id === id)
-  const deny = row !== undefined && row.config !== undefined && Array.isArray(row.config.toolFilter.deny) ? row.config.toolFilter.deny : null
-  if (deny === null) {
+// 0.2.1：tool-subagent 不再接受 persona/toolFilter（宿主 apply 直接抛错），原 deny 清单改由
+// 角色预设的工具面承载——「不可见」等价于「角色 definition 里不挂该工具」。断言编号保留。
+function checkRoleTools(roleId, mustInclude, mustExclude, label) {
+  let definition
+  try { definition = roleDefinitionOf(roleId) } catch (error) {
     fail += 1
-    output.assertion(false, label, 'toolFilter.deny', undefined)
+    output.assertion(false, label, 'roleDefinition', error instanceof Error ? error.message : String(error))
     return
   }
-  const okCount = expectCount === null || deny.length === expectCount
-  const okContains = mustContain.every((n) => deny.includes(n))
-  const okExcludes = mustNotContain.every((n) => !deny.includes(n))
-  const okResult = okCount && okContains && okExcludes
+  const names = definition.plugins.map((row) => row.name)
+  const okResult = mustInclude.every((name) => names.includes(name)) && mustExclude.every((name) => !names.includes(name))
   if (okResult) pass += 1
   else fail += 1
-  output.assertion(okResult, label, { count: expectCount, contains: mustContain, excludes: mustNotContain }, { count: deny.length, values: deny })
+  output.assertion(okResult, label, { mustInclude, mustExclude }, names)
 }
-checkDeny('tool-subagent-review', 13, ['write', 'edit', 'subagent_probe'], [], 'reviewer deny 恰 13 项且含 write/edit/subagent_probe')
-checkDeny('tool-subagent', 11, ['subagent_probe'], ['write', 'edit'], 'executor deny 恰 11 项、不含 write/edit、含 subagent_probe')
-checkDeny('tool-subagent-plan', 13, ['write', 'edit', 'subagent_probe'], [], 'planner deny 恰 13 项且含 write/edit/subagent_probe')
-checkDeny('tool-subagent-probe', 14, ['write', 'edit', 'subagent_probe'], ['subagent_fork'], 'probe deny 恰 14 项且含 write/edit/subagent_probe、不含 subagent_fork')
+const FORBIDDEN_ROLE_TOOLS = ['@deepseek-ai/dsh-tool-subagent', '@deepseek-ai/dsh-tool-subagent-control', '@deepseek-ai/dsh-tool-subagent-control/list-agents', '@deepseek-ai/dsh-tool-workflow', '@deepseek-ai/dsh-tool-ralph', '@deepseek-ai/dsh-tool-ask-user', '@deepseek-ai/dsh-tool-todo']
+checkRoleTools('extra-plan-reviewer', ['@deepseek-ai/dsh-tool-fs', '@deepseek-ai/dsh-persona', 'dsh-extra-plan'], FORBIDDEN_ROLE_TOOLS, 'reviewer 角色工具面：只读 fs、不挂 subagent/workflow/ralph/ask-user/todo（原 13 项 deny 语义）')
+checkRoleTools('extra-plan-executor', ['@deepseek-ai/dsh-tool-fs', '@deepseek-ai/dsh-tool-pwsh', '@deepseek-ai/dsh-tool-bash'], [...FORBIDDEN_ROLE_TOOLS, '@deepseek-ai/dsh-tool-ask-user'], 'executor 角色工具面：可写 fs + 双 shell、不挂委派类工具（原 11 项 deny 语义）')
+checkRoleTools('extra-plan-planner', ['@deepseek-ai/dsh-tool-fs', '@deepseek-ai/dsh-persona', 'dsh-extra-plan'], FORBIDDEN_ROLE_TOOLS, 'planner 角色工具面：只读 fs、不挂委派/交互类工具（原 13 项 deny 语义）')
+checkRoleTools('extra-plan-prober', ['@deepseek-ai/dsh-tool-fs', '@deepseek-ai/dsh-tool-fs-search'], [...FORBIDDEN_ROLE_TOOLS, '@deepseek-ai/dsh-tool-cordis'], 'prober 角色工具面：只读 fs、不挂 cordis 查询工具（原 14 项 deny 语义）')
+for (const [rowId, toolName, presetId] of [['tool-subagent', 'subagent', 'extra-plan-executor'], ['tool-subagent-plan', 'subagent_plan', 'extra-plan-planner'], ['tool-subagent-review', 'subagent_review', 'extra-plan-reviewer'], ['tool-subagent-probe', 'subagent_probe', 'extra-plan-prober']]) {
+  const row = all.find((r) => r.id === rowId)
+  const config = row !== undefined && row.config !== null && typeof row.config === 'object' ? row.config : {}
+  checkTrue('P0-' + toolName + ' 行恰三键 provider/toolName/agentPreset（' + presetId + '）',
+    JSON.stringify(Object.keys(config).sort()) === JSON.stringify(['agentPreset', 'provider', 'toolName'])
+    && config.provider === 'spawn' && config.toolName === toolName && config.agentPreset === presetId)
+}
 {
   const extraPlanRow = all.find((r) => r.id === 'extra-plan')
   const presetHint = extraPlanRow !== undefined && extraPlanRow.config !== undefined ? extraPlanRow.config.bootstrapReadHint : undefined
@@ -311,10 +322,13 @@ const mainAgent = {
 // 修复（mock 数据补齐）：插件判定 planner 身份要求会话 events 含
 // subagent/descriptor 事件且 data.mode === 'continuable'（与 step-06-线索落盘同款 DESC）。
 // 缺此事件时 planner 被误判为普通执行者，R11（planner write 应 deny）与 R13（收窄）走错分支。
+// 0.2.1 起 subagent descriptor 的 mode 恒为 continuable，planner 身份改由会话 header.agentPreset
+// 判定（插件 isPlannerChild 读 session.header.agentPreset === 'extra-plan-planner'）；
+// DESC 仅保留为「确属子代理会话」的日志形状，不再承担 planner 判据。
 const DESC = { type: 'subagent/descriptor', data: { mode: 'continuable' } }
 
 const plannerAgent = {
-  session: { header: { id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => [DESC] },
+  session: { header: { id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work', agentPreset: PLANNER_PRESET }, snapshotEvents: () => [DESC] },
   options: { model: 'deepseek-v4-pro' },
   ctx: undefined,
 }
@@ -427,8 +441,8 @@ const mainWithEvents = (events) => ({ session: { header: { id: 'main-1', cwd: 'C
   const concurrentHarness = makeHarness({ anchoredBootstrap: false, exploreBudget: 10 })
   const plannerAEvents = [DESC, umE(), ...Array.from({ length: 8 }, (_, i) => [callE('read', 'pa-' + i), okE('pa-' + i, 'ok')]).flat()]
   const plannerBEvents = [DESC, umE()]
-  const plannerA = { session: { header: { id: 'planner-A', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => plannerAEvents }, options: { model: 'deepseek-v4-pro' }, ctx: undefined }
-  const plannerB = { session: { header: { id: 'planner-B', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => plannerBEvents }, options: { model: 'deepseek-v4-pro' }, ctx: undefined }
+  const plannerA = { session: { header: { id: 'planner-A', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work', agentPreset: PLANNER_PRESET }, snapshotEvents: () => plannerAEvents }, options: { model: 'deepseek-v4-pro' }, ctx: undefined }
+  const plannerB = { session: { header: { id: 'planner-B', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work', agentPreset: PLANNER_PRESET }, snapshotEvents: () => plannerBEvents }, options: { model: 'deepseek-v4-pro' }, ctx: undefined }
   const makeDeferred = () => { let resolve; const promise = new Promise((done) => { resolve = done }); return { promise, resolve } }
   const gateA = makeDeferred()
   const gateB = makeDeferred()
@@ -475,7 +489,8 @@ checkTrue('R18g 主会话 none 态 ordinary 澄清 ask → allow', r !== null &&
 r = preExecute(harness, directMain, 'subagent_probe', { run_in_background: true })
 checkTrue('R18 主会话 direct 态 subagent_probe(run_in_background: true) → 放行', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, directMain, 'subagent_probe', {})
-checkTrue('R19 主会话 direct 态 subagent_probe(缺 run_in_background) → deny 且文案含 run_in_background: true', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('run_in_background: true'))
+// 0.2.1：委派工具参数表已无后台标志，原「缺后台即拒」断言退役 → 缺省参数同样放行（后台约束在宿主层）。
+checkTrue('R19 主会话 direct 态 subagent_probe(无后台参数) → 放行（后台闸门已上移宿主层）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, noneMain, 'subagent_probe', { run_in_background: true })
 checkTrue('R20 主会话无路由确认态 subagent_probe(run_in_background: true) → 放行（任意状态放行）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, planMain, 'subagent_probe', { run_in_background: true })
@@ -844,8 +859,9 @@ checkTrue('R41 缓存未命中子代理 run_code → 放行（fail-open）', r !
 const staticToolGroups = [
   ['write', "await tools.write({ file_path: 'x', content: '1', })", noneMain, '路由未确认', false],
   ['edit', "await tools.edit({ file_path: 'x', old_string: 'a', new_string: 'b', })", noneMain, '路由未确认', false],
-  ['subagent', "await tools.subagent({ task: '执行', })", approvedMain, '必须后台运行', false],
-  ['subagent_plan', "await tools.subagent_plan({ run_in_background: false, })", reselectPlanReadyMain, '不得传 false', false],
+  // 0.2.1：两条后台标志判定已删除（委派恒立即返回），故 literal 参数用例改为放行侧。
+  ['subagent', "await tools.subagent({ task: '执行', })", approvedMain, '', true],
+  ['subagent_plan', "await tools.subagent_plan({ task: '规划', })", reselectPlanReadyMain, '', true],
   ['save_probe', "await tools.save_probe({ fileMap: [], focusAreas: [], exclusions: [], background: [], })", reselectPlanReadyMain, '', true],
   ['job_kill', "await tools.job_kill({ job_id: 'j1', })", directMain, '', true],
   ['ask_user_question', "await tools.ask_user_question({ questions: [{ id: 'q1', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }], })", noneMain, '', false],
@@ -855,9 +871,9 @@ for (const [name, code, agent, expectedText, expectedAllow] of staticToolGroups)
   checkTrue('A10/A11 ' + name + ' JS literal 参数 ' + (expectedAllow ? 'allow' : 'deny'), expectedAllow ? (r !== null && r !== undefined && r.kind === 'allow') : (r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(expectedText)))
 }
 r = preExecute(harness, approvedMain, 'subagent', { task: '执行' })
-checkTrue('A11 subagent 真实对象缺 run_in_background:true → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('必须后台运行'))
-r = preExecute(harness, reselectPlanReadyMain, 'subagent_plan', { run_in_background: false })
-checkTrue('A10 subagent_plan 真实对象 false → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('不得传 false'))
+checkTrue('A11 subagent 真实对象（无后台参数）→ 放行（0.2.1 后台约束在宿主层）', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, reselectPlanReadyMain, 'subagent_plan', { task: '规划' })
+checkTrue('A10 subagent_plan 真实对象（无后台参数）→ 放行（continuable 由宿主管理）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, approvedMain, 'run_code', { code: "const task = '执行'; await tools.subagent({ task, run_in_background: true })", description: '动态参数运行时兜底' })
 checkTrue('A11 动态参数保留 argsText 并交运行时瀑布（不静态猜值）', r !== null && r !== undefined && r.kind === 'allow')
 
@@ -892,7 +908,7 @@ checkTrue('R51 主会话 none 态 run_code（code 含显式 tools.write）→ de
 // 预算耗尽场景：18 组成功配对 = 已用 18/18（修复A 成功配对口径；预算耗尽后 run_code 组判定仅放行全 FREE_TOOLS 白名单组）。
 const budgetEvents = [DESC, ...Array.from({ length: 18 }, (_, i) => [callE('read', 'b' + i), okE('b' + i, 'ok')]).flat()]
 const budgetPlanner = {
-  session: { header: { id: 'planner-budget', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => budgetEvents },
+  session: { header: { id: 'planner-budget', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work', agentPreset: PLANNER_PRESET }, snapshotEvents: () => budgetEvents },
   options: { model: 'deepseek-v4-pro' },
   ctx: undefined,
 }
@@ -908,7 +924,7 @@ checkTrue('R52 subagent_review 无批准 → deny 且含「执行类委派未放
 r = preExecute(harness, approvedMain, 'subagent_review', { run_in_background: true })
 checkTrue('R53 subagent_review 批准放行 → allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, approvedMain, 'subagent_review', {})
-checkTrue('R54 subagent_review 缺后台 → deny 且含「执行者/reviewer 必须后台运行」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('执行者/reviewer 必须后台运行'))
+checkTrue('R54 subagent_review 批准态无后台参数 → 放行（批准态判定仍在，后台闸门已删）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, noneMain, 'subagent_fork', {})
 checkTrue('R55 subagent_fork 无批准 → deny 且含「执行类委派未放行：subagent_fork」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('执行类委派未放行：subagent_fork'))
 r = preExecute(harness, noneMain, 'workflow', {})
@@ -972,8 +988,8 @@ r = preExecute(harness, probeAgent, 'send_message', { agent_id: 'parent', messag
 checkTrue('R80 probe send_message → allow（child 分支不拦）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, planMain, 'subagent_plan', { run_in_background: false })
 checkTrue('R81 subagent_plan 目的未定+前台参数 → deny 且含「规划目的尚未确认」、不含「规划子代理不可前台等待」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划目的尚未确认') && !String(r.reason).includes('规划子代理不可前台等待'))
-r = preExecute(harness, planPurposeMain, 'subagent_plan', { run_in_background: false })
-checkTrue('R81b subagent_plan 目的已定+前台参数 → deny 且含「规划子代理不可前台等待」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划子代理不可前台等待'))
+r = preExecute(harness, planPurposeMain, 'subagent_plan', { task: '规划' })
+checkTrue('R81b subagent_plan 目的已定+无后台参数 → 放行（前台等待断言已随参数删除退役）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, planPurposeMain, 'subagent_plan', {})
 checkTrue('R81c subagent_plan 目的已定+不传参 → allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, noneMain, 'cordis_inspect_query', {})
@@ -1010,7 +1026,7 @@ checkTrue('T3-5 主会话 approved 态 save_plan → allow', r !== null && r !==
 // planner 身份由 events 含 subagent/descriptor(mode=continuable) 判定，路由态对其无意义；
 // 三态各锁一次，确认在隔离夹具中拒绝不依赖 route（闸门只看 isPlanner）。
 const plannerWithEvents = (events) => ({
-  session: { header: { id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => [DESC, ...events] },
+  session: { header: { id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work', agentPreset: PLANNER_PRESET }, snapshotEvents: () => [DESC, ...events] },
   options: { model: 'deepseek-v4-pro' },
   ctx: undefined,
 })
@@ -1073,7 +1089,7 @@ check('P4 HP0 tool:read 逐字等于变量②手写文案（默认值）', hpRea
 checkTrue('P4a HP0 tool:read 含四要素（tools.read/file_path/offset/limit/totalLines）且不含官方骨架与宿主原文',
   hintReadOk(hpReadText) && !hpReadText.includes('Use the read tool') && !CORDIS_PRESENTATION_TOOLS.some((name) => hpReadText.includes(name)))
 checkTrue('P4b HP0 tool:read 不再由宿主原文/官方 renderer 生成（与直通夹具文本可区分）', hpReadText !== HOST_READ_TEXT && !hpReadText.includes('Use the read tool'))
-const hpPlanner = { ...ptcBootAgent, session: { ...ptcBootAgent.session, header: { id: 'ptc-boot-planner', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => [DESC] } }
+const hpPlanner = { ...ptcBootAgent, session: { ...ptcBootAgent.session, header: { id: 'ptc-boot-planner', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work', agentPreset: PLANNER_PRESET }, snapshotEvents: () => [DESC] } }
 const hpPlannerAssembly = await assemble(harnessBoot, hpPlanner, [{ name: 'run_code' }], ptcBootSections)
 check('P5 HP0 planner sections 恰为 persona/read 两项（宿主 tools:ptc-only 段已停用）', hpPlannerAssembly.sections.map((section) => section.name), ['extra-plan-bootstrap', 'tool:read'])
 checkTrue('P6 HP0 planner 仍只暴露 run_code', hpPlannerAssembly.tools.map((tool) => tool.name).join('|') === 'run_code')
@@ -1105,9 +1121,10 @@ checkTrue('P6 HP0 planner 仍只暴露 run_code', hpPlannerAssembly.tools.map((t
   check('P8 无 shell 无 run_code → sections 原样（未注入 persona）', emptyBoot.sections, [])
 }
 {
-  const bothMain = await assemble(harnessBoot, mainAgent, [{ name: 'read' }, { name: 'pwsh' }, { name: 'run_code' }, { name: 'write' }])
-  check('P9 有 shell 目录 run_code 仍被滤掉（keep=shells+read 现状保持）', Array.isArray(bothMain.tools) ? bothMain.tools.map((t) => t.name).sort() : null, ['pwsh', 'read'])
-  check('P10 有 shell 目录 sections 仍为极简 persona 单条', bothMain.sections, [{ name: 'extra-plan-bootstrap', text: 'You are a helpful software engineer assistant.' }])
+  // 两轮同口径：native 轮目录无 run_code、ptc 轮目录含 run_code；anchored keep 均为 shells+read。
+  const nativeRoundMain = await assemble(harnessBoot, mainAgent, [{ name: 'read' }, { name: 'pwsh' }, { name: 'run_code' }, { name: 'write' }])
+  check('P9 有 shell 目录 run_code 仍被滤掉（keep=shells+read 现状保持）', Array.isArray(nativeRoundMain.tools) ? nativeRoundMain.tools.map((t) => t.name).sort() : null, ['pwsh', 'read'])
+  check('P10 有 shell 目录 sections 仍为极简 persona 单条', nativeRoundMain.sections, [{ name: 'extra-plan-bootstrap', text: 'You are a helpful software engineer assistant.' }])
 }
 {
   const ptcExecutor = await assemble(harnessBoot, executor, [{ name: 'run_code' }])
@@ -1578,7 +1595,7 @@ checkTrue('R107 noneMain run_code save_plan+write → 组内 save_plan 放行、
 // disposed 断言在监听器同步返回后立即读盘（宿主 agent/disposed 是 emit/void、不等待 Promise）；
 // console.warn 局部捕获（临时替换 + finally 还原）；全部临时文件在 finally 删除。
 const plannerWithId = (id, events) => ({
-  session: { header: { id, origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => events, append: () => {} },
+  session: { header: { id, origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work', agentPreset: PLANNER_PRESET }, snapshotEvents: () => events, append: () => {} },
   options: { model: 'deepseek-v4-pro' },
   ctx: undefined,
 })
@@ -2054,8 +2071,8 @@ function matrixSchemasFor(role) {
 }
 function matrixDirectTools(schemas, mode) {
   if (mode === 'ptc') return schemas.filter((schema) => schema.name === 'run_code')
-  if (mode === 'native') return schemas.filter((schema) => schema.name !== 'run_code')
-  return schemas
+  // native（含任何旧值回落）＝ 全部直呼工具、无 run_code
+  return schemas.filter((schema) => schema.name !== 'run_code')
 }
 function matrixSections(mode) {
   const sections = []
@@ -2064,7 +2081,8 @@ function matrixSections(mode) {
   // 变量②手写文案，断言据此要求「逐字等于 HINT_READ_DEFAULT 且不等于本夹具文本」。
   sections.push({ name: 'tool:read', text: HOST_READ_TEXT })
   sections.push({ name: 'tool:cordis', text: 'Cordis guidance: ' + MATRIX_CORDIS_TOOLS.join(', ') })
-  if (mode !== 'native') sections.push({ name: 'tools:sdk', text: 'Original SDK declarations: ' + MATRIX_CORDIS_TOOLS.join(', ') + ', read, skill, file_path, offset, limit.' })
+  // 观察面：native 轮看 request/header 的 tools（无 tools:sdk 段）；ptc 轮看 header.system 的 tools:sdk 段。
+  if (mode === 'ptc') sections.push({ name: 'tools:sdk', text: 'Original SDK declarations: ' + MATRIX_CORDIS_TOOLS.join(', ') + ', read, skill, file_path, offset, limit.' })
   sections.push({ name: 'matrix-user-section', text: 'ordinary user skill and prompt section' })
   return sections
 }
@@ -2075,7 +2093,7 @@ function matrixAgent(role, phase, serial, mode, sdkSchemasOverride) {
   if (role === 'planner') events.unshift(DESC)
   const header = role === 'main'
     ? { id: 'matrix-main-' + serial, cwd: 'C:/work' }
-    : { id: 'matrix-' + role + '-' + serial, origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }
+    : { id: 'matrix-' + role + '-' + serial, origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work', ...role === 'planner' ? { agentPreset: PLANNER_PRESET } : {} }
   return {
     session: { header, snapshotEvents: () => events },
     options: {},
@@ -2101,7 +2119,8 @@ async function matrixCatalog(listeners, agent, creativeMode) {
   const decision = matrixCatalogDecision(creativeMode)
   return await runWaterfall(listeners, 'agent/pre-step', { agent }, async () => decision)
 }
-const matrixModes = ['native', 'ptc', 'both']
+// 0.2.1 呈现模式二值化：both 退出，矩阵按 native 轮 与 ptc 轮两组跑（用例编号不变）。
+const matrixModes = ['native', 'ptc']
 const matrixRoles = ['main', 'planner', 'executor', 'reviewer', 'probe']
 let matrixCases = 0
 let matrixSerial = 0
@@ -2183,7 +2202,8 @@ for (const anchoredBootstrap of [false, true]) {
     }
   }
 }
-check('装配矩阵案例总数', matrixCases, 120)
+// 二值化后矩阵 = 2(anchoredBootstrap) × 2(creative) × 2(mode) × 2(phase) × 5(role) = 80
+check('装配矩阵案例总数（native/ptc 两轮）', matrixCases, 80)
 checkTrue('Cordis 固定集合恰有 2 项且名称唯一', MATRIX_CORDIS_TOOLS.length === 2 && new Set(MATRIX_CORDIS_TOOLS).size === 2)
 const projectionSource = { tools: [{ name: 'read' }, { name: MATRIX_CORDIS_TOOLS[0] }], sections: [{ name: 'tool:cordis', text: 'hidden' }, { name: 'tools:sdk', text: 'old' }] }
 const projectionCopy = projectAssemblyForPresentation(projectionSource, projectionSource.tools, { sdkText: 'read:' })
@@ -2343,7 +2363,7 @@ checkTrue('P2-17 entry 三元组按 renderer 身份比较且 dispose 可回收',
   && !sdkTextCacheEntryMatches({ fingerprint: 'f', language: 'typescript', renderer: p2Renderer }, 'f', 'python', p2Renderer)
   && !sdkTextCacheEntryMatches({ fingerprint: 'f', language: 'typescript', renderer: p2Renderer }, 'f', 'typescript', alternateRenderer))
 const p2Source = pluginSource
-checkTrue('P2-18 F/native 与 F/both 不渲染完整 SDK，L 才按完整 renderer 输入接 cache',
+checkTrue('P2-18 F/native 与 F/ptc 不渲染完整 SDK，L 才按完整 renderer 输入接 cache',
   p2Source.includes('if (!anchoredFirst && hasSection(result.sections, SDK_SECTION_NAME))')
   && p2Source.includes('const effectiveSchemas = toolSdkSchemasOf(agent) ?? schemas')
   && p2Source.includes('const rendererInput = sdkSchemasForRendering(effectiveSchemas)')
@@ -2361,26 +2381,33 @@ Object.defineProperty(p2RendererTrapSchema, 'name', {
 })
 const p2OriginalWarn = console.warn
 let p2FNative
-let p2FBoth
+let p2FPtc
 const p2RendererWarnings = await captureFilteredSdkWarnings(async () => {
   const p2FNativeAgent = matrixAgent('main', 'first', 1001, 'native', [p2RendererTrapSchema])
-  const p2FBothAgent = matrixAgent('main', 'first', 1002, 'both', [p2RendererTrapSchema])
+  const p2FPtcAgent = matrixAgent('main', 'first', 1002, 'ptc', [p2RendererTrapSchema])
   p2FNative = await assemble(p2FTrapHarness, p2FNativeAgent, matrixDirectTools(matrixSchemasFor('main'), 'native'), matrixSections('native'))
-  p2FBoth = await assemble(p2FTrapHarness, p2FBothAgent, matrixDirectTools(matrixSchemasFor('main'), 'both'), matrixSections('both'))
+  p2FPtc = await assemble(p2FTrapHarness, p2FPtcAgent, matrixDirectTools(matrixSchemasFor('main'), 'ptc'), matrixSections('ptc'))
 })
-checkTrue('P2-19 F/native 与 F/both 模型可见面不含完整 tools:sdk',
-  !sectionNames(p2FNative).includes('tools:sdk') && !sectionNames(p2FBoth).includes('tools:sdk')
+checkTrue('P2-19 F/native 与 F/ptc 模型可见面不含完整 tools:sdk',
+  !sectionNames(p2FNative).includes('tools:sdk') && !sectionNames(p2FPtc).includes('tools:sdk')
   && sectionNames(p2FNative).join('|') === 'extra-plan-bootstrap'
-  && sectionNames(p2FBoth).join('|') === 'extra-plan-bootstrap')
-checkTrue('P2-19 F/native 与 F/both 不进入完整 SDK renderer（sentinel trap 无 warning/入径，console.warn 已恢复）',
+  && sectionNames(p2FPtc).join('|') === 'extra-plan-bootstrap|tool:read')
+checkTrue('P2-19 F/native 与 F/ptc 不进入完整 SDK renderer（sentinel trap 无 warning/入径，console.warn 已恢复）',
   p2RendererWarnings.length === 0 && p2FullSdkRendererPathAttempts === 0 && console.warn === p2OriginalWarn)
-const p2LLaterAgent = matrixAgent('main', 'later', 1003, 'both')
-const p2LLater = await assemble(p2PresentationHarness, p2LLaterAgent, matrixDirectTools(matrixSchemasFor('main'), 'both'), matrixSections('both'))
-checkTrue('P2-20 C=0 L 对拍 tools/sections：Cordis 隐藏、SDK 保留 read 且不缓存 assembly',
+const p2LLaterAgent = matrixAgent('main', 'later', 1003, 'native')
+const p2LLater = await assemble(p2PresentationHarness, p2LLaterAgent, matrixDirectTools(matrixSchemasFor('main'), 'native'), matrixSections('native'))
+const p2LPtcAgent = matrixAgent('main', 'later', 1004, 'ptc')
+const p2LPtc = await assemble(p2PresentationHarness, p2LPtcAgent, matrixDirectTools(matrixSchemasFor('main'), 'ptc'), matrixSections('ptc'))
+checkTrue('P2-20 native 轮 C=0 L 对拍：Cordis 隐藏、无 tools:sdk 段、目录不塌缩',
   !p2LLater.tools.some((tool) => MATRIX_CORDIS_TOOLS.includes(tool.name))
   && !sectionNames(p2LLater).includes('tool:cordis')
-  && sectionText(p2LLater, 'tools:sdk').includes('read')
-  && sectionText(p2LLater, 'tools:sdk').includes('file_path'))
+  && !sectionNames(p2LLater).includes('tools:sdk')
+  && p2LLater.tools.length > 1)
+checkTrue('P2-20 ptc 轮 C=0 L 对拍：Cordis 隐藏、tools:sdk 保留 read/file_path（观察面=header.system 的 tools:sdk 段）',
+  !p2LPtc.tools.some((tool) => MATRIX_CORDIS_TOOLS.includes(tool.name))
+  && !sectionNames(p2LPtc).includes('tool:cordis')
+  && sectionText(p2LPtc, 'tools:sdk').includes('read')
+  && sectionText(p2LPtc, 'tools:sdk').includes('file_path'))
 const p2RuntimeDeny = preExecute(harness, mainAgent, 'write', {})
 checkTrue('P2-21 C=0 runtime deny/权限行为保持：主会话未确认 write 仍 deny', p2RuntimeDeny !== null && p2RuntimeDeny.kind === 'deny' && String(p2RuntimeDeny.reason).includes('路由未确认'))
 
@@ -2613,7 +2640,7 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
   check('GW22 旧词带推荐后缀 → 仍不推进', oldWordSuffixState.route, 'none')
 }
 
-// A/C/M/F-L 装配投影：variables 哨兵必须在普通/过滤/anchored native-both/PTC/later 全部保留。
+// A/C/M/F-L 装配投影：variables 哨兵必须在普通/过滤/anchored native/PTC/later 全部保留。
 {
   const sentinel = { extra_plan_route_direct: 'SENTINEL-DIRECT', extra_plan_route_plan: 'SENTINEL-PLAN' }
   const sentinelTools = [{ name: 'read' }, { name: 'pwsh' }, { name: 'run_code' }]
@@ -2623,7 +2650,7 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
   const anchoredPtc = await assembleWithVariables(harnessBoot, mainAgent, sentinelTools, ptcSections, sentinel)
   check('GW24 anchored 首轮 PTC 投影保留 variables', anchoredPtc.variables, sentinel)
   const anchoredNative = await assembleWithVariables(harnessBoot, mainAgent, sentinelTools, [{ name: 'matrix-user-section', text: 'x' }], sentinel)
-  check('GW25 anchored 首轮 native/both 投影保留 variables', anchoredNative.variables, sentinel)
+  check('GW25 anchored 首轮 native 投影保留 variables', anchoredNative.variables, sentinel)
   const laterAgent = mainWithEvents([callE('read', 'later-1')])
   const laterAssembly = await assembleWithVariables(harnessBoot, laterAgent, sentinelTools, ptcSections, sentinel)
   check('GW26 anchored later 恢复原 persona 变量引用且保留 variables', laterAssembly.variables, sentinel)
@@ -2777,7 +2804,9 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
   checkTrue('T9-3i 生成资产是纯 definition（无 insert wrapper/旧公开行）', generatedDoc.id === 'extra-plan' && !generatedDefinitionText.includes('insert:') && !generatedDefinitionText.includes('preset-extra-plan') && !generatedDefinitionText.includes("name: '@deepseek-ai/dsh-agent-preset'"))
   const generatedPlugins = generatedDoc.plugins
   checkTrue('T9-3j definition plugins 顶层 17 条且与作者源 parsed plugins 深等', Array.isArray(generatedPlugins) && generatedPlugins.length === 17 && JSON.stringify(generatedPlugins) === JSON.stringify(rows))
-  const assetTop = presetText.slice(presetText.indexOf('- id: persona')).replace(/\n+$/, '')
+  // 作者源是多文档：取第一文档（分隔行之前）再比，第二文档（角色）不属于主 definition。
+  const assetFirstDocument = presetText.slice(0, presetText.search(/^---\s*$/m) === -1 ? presetText.length : presetText.search(/^---\s*$/m))
+  const assetTop = assetFirstDocument.slice(assetFirstDocument.indexOf('- id: persona')).replace(/\n+$/, '')
   const genPluginsText = generatedDefinitionText.slice(generatedDefinitionText.indexOf('plugins:\n') + 9).replace(/\n+$/, '')
   const stripped = genPluginsText.split('\n').map((line) => (line.startsWith('  ') ? line.slice(2) : line)).join('\n')
   checkTrue('T9-3k definition plugins 文本逐字保留作者源注释/缩进语义', stripped === assetTop)

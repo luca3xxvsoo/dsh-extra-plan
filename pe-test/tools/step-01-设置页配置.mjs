@@ -36,9 +36,10 @@ function hostCandidates(relativePath) {
     join(TARGET_INSTALL_ROOT, 'node_modules', '@deepseek-ai', 'dsh', relativePath),
   ]
 }
+// 0.2.1：优先读安装根 node_modules 下的 dsh 清单（真实宿主安装形态），根 package.json 只作后备。
 const targetDsh = TARGET_INSTALL_ROOT === undefined
   ? undefined
-  : readHostJson([join(TARGET_INSTALL_ROOT, 'package.json'), join(TARGET_INSTALL_ROOT, 'node_modules', '@deepseek-ai', 'dsh', 'package.json')])
+  : readHostJson([join(TARGET_INSTALL_ROOT, 'node_modules', '@deepseek-ai', 'dsh', 'package.json'), join(TARGET_INSTALL_ROOT, 'package.json')])
 const targetDshLlm = readHostJson([
   ...hostCandidates('node_modules/@deepseek-ai/dsh-llm/package.json'),
   ...hostCandidates('node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-llm/package.json'),
@@ -117,8 +118,24 @@ if (TARGET_INSTALL_ROOT === undefined) {
   const dshVersion = targetDsh.value !== null && typeof targetDsh.value === 'object' ? targetDsh.value.version : undefined
   const dshLlmVersion = targetDshLlm.value !== null && typeof targetDshLlm.value === 'object' ? targetDshLlm.value.version : undefined
   console.log('INFO  HOST 真实 manifest dsh=' + String(dshVersion) + ' dsh-llm=' + String(dshLlmVersion) + ' root=' + TARGET_INSTALL_ROOT)
-  if (dshVersion !== '0.2.0-rc.2' || dshLlmVersion !== '0.2.0-rc.2') {
-    console.log('HUMAN  {"scope":"HOST-VERSION","reason":"目标宿主版本不在本专项支持的 rc.2 类型探针范围内"}')
+  // 版本门改为语义门：以本包 package.json 声明的 peer/semver 范围判定宿主是否被支持，不硬编码版本号。
+  let semverModule = null
+  try { semverModule = createRequire(join(TARGET_INSTALL_ROOT, 'package.json'))('semver') } catch { semverModule = null }
+  let declaredDsh = null
+  let declaredLlm = null
+  try {
+    const manifest = JSON.parse(readFileSync(new URL('../../plugins/dsh-extra-plan/package.json', import.meta.url), 'utf8'))
+    declaredDsh = manifest.peerDependencies?.['@deepseek-ai/dsh']
+    declaredLlm = manifest.peerDependencies?.['@deepseek-ai/dsh-llm']
+  } catch { declaredDsh = null; declaredLlm = null }
+  const versionGateOk = typeof declaredDsh === 'string' && typeof declaredLlm === 'string'
+    && typeof dshVersion === 'string' && typeof dshLlmVersion === 'string'
+    && (semverModule === null
+      ? (declaredDsh.split('||').map((part) => part.trim()).includes(dshVersion) && declaredLlm.split('||').map((part) => part.trim()).includes(dshLlmVersion))
+      : (semverModule.satisfies(dshVersion, declaredDsh, { includePrerelease: true }) && semverModule.satisfies(dshLlmVersion, declaredLlm, { includePrerelease: true })))
+  console.log('INFO  HOST 语义门 declared=' + String(declaredDsh) + ' / ' + String(declaredLlm) + ' actual=' + String(dshVersion) + ' / ' + String(dshLlmVersion) + ' ok=' + String(versionGateOk))
+  if (!versionGateOk) {
+    console.log('HUMAN  {"scope":"HOST-VERSION","reason":"目标宿主版本不满足本包声明的 peer 语义门（未伪造宿主结论）"}')
   } else if (targetSlotMap === undefined || targetConfigForms === undefined) {
     console.log('HUMAN  {"scope":"HOST-CONTRACT","reason":"目标宿主缺少正式插件管理 SlotMap 或 ConfigForms 类型定义"}')
   } else {
@@ -515,7 +532,7 @@ function apiPatchOk(fixture, snapshot) {
 function apiSnapshotBodyOk(response, snapshot) {
   return response?.body?.values !== undefined && isDeepStrictEqual(response.body.values, snapshot.values)
 }
-const syncValues = { anchoredBootstrap: false, creativeMode: true, webFetch: true, toolPresentationMode: 'both', runcodeCatchGate: true, crossProviderPlannerModel: true, plannerModel: 'planner-sync-test', plannerPromptSuffix: 'sync-suffix-test', exploreBudget: 37, otherAgentModel: 'other-sync-test' }
+const syncValues = { anchoredBootstrap: false, creativeMode: true, webFetch: true, toolPresentationMode: 'ptc', runcodeCatchGate: true, crossProviderPlannerModel: true, plannerModel: 'planner-sync-test', plannerPromptSuffix: 'sync-suffix-test', exploreBudget: 37, otherAgentModel: 'other-sync-test' }
 const syncGateWords = { routeDirect: '甲', routePlan: '乙', routeDisagree: '丙', approvalApprove: '丁', approvalReplan: '戊', purposeRefine: '己', purposeRedo: '庚' }
 const syncSnapshot = { values: syncValues, gateWords: syncGateWords }
 
@@ -847,7 +864,8 @@ async function runHostProxyMatrix() {
   output.structured('HOST_PROXY_MATRIX_CASE', normalCase, { case: normalCase.case, status: normalCase.classification, getCalls: normalCase.getCalls.length, injectRequests: normalCase.injectRequests.length, injectCallback: normalCase.injectCallback, initialRegister: normalCase.initialRegister, settingsRegisterDelta: normalCase.settingsRegisterDelta, disposeDelta: normalCase.disposeDelta, profileSyncTerminal: normalCase.profileSyncTerminal, failureOrder: normalCase.failureOrder })
   const normalBoundaryOk = normalProxy.outerDirectError === 'cannot get property "configEditor" without inject' &&
     normalProxy.getResult === 'editor' && normalCase.injectCallback === 1 && normalProxy.childServiceIdentity === 'same-editor' &&
-    initialRegister === 1 && normalCase.settingsRegisterDelta === 0 && normalCase.disposeDelta === 0 &&
+    // 0.2.1 预设链注册 5 个 definition（主 + 4 角色）：初始化注册数 = 5，settings-only 增量仍为 0。
+    initialRegister === 5 && normalCase.settingsRegisterDelta === 0 && normalCase.disposeDelta === 0 &&
      normalCase.profileSyncTerminal.status === 'synced' && normalCase.profileSyncTerminal.pending === false && typeof normalCase.profileSyncTerminal.saveRunId === 'string' && normalCase.profileSyncTerminal.saveRunId !== '' && Number.isInteger(normalCase.profileSyncTerminal.syncRevision) && normalCase.profileSyncTerminal.syncRevision > 0 && typeof normalCase.profileSyncTerminal.snapshotHash === 'string' && normalCase.profileSyncTerminal.trigger === 'settled-update' && normalOk
   if (normalBoundaryOk) console.log('HOST_PROXY_NORMAL_SETTLED_CTX_GET_OK')
   check('host-proxy normal settled assertion', normalBoundaryOk)
@@ -929,8 +947,10 @@ try {
   await flush(8)
   const adapterAfter = await waitForTerminal(adapterRun.port)
   await waitForAdapterRegister(adapterCounts)
-  adapterNoRemount = adapterInitial.body.profileSync.status === 'synced' && adapterAfter.body.profileSync.status === 'synced' && adapterCounts.register === 1 && adapterCounts.dispose === 0
+  // no-remount 合同（0.2.1）：初次挂载登记 5 个 definition（主 + 4 角色），settings-only 保存不新增 register、dispose 恒 0。
+  adapterNoRemount = adapterInitial.body.profileSync.status === 'synced' && adapterAfter.body.profileSync.status === 'synced' && adapterCounts.register === 5 && adapterCounts.dispose === 0
   check('SETTINGS_ONLY_HTTP_SAVE_ADAPTER_REGISTER_0_DISPOSE_0', adapterNoRemount)
+  check('SETTINGS_ONLY_HTTP_SAVE_ADAPTER_MOUNT_COUNT_5', adapterCounts.register === 5)
 } finally {
   if (typeof adapterRun.lifecycle.cleanup === 'function') await adapterRun.lifecycle.cleanup()
   await new Promise((resolve) => adapterRun.server.close(resolve))
@@ -979,7 +999,8 @@ async function runApiAdapterCase(label, caseName, failureEvent, changed) {
       const get = await requestJson(run.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
       if (typeof run.lifecycle.cleanup === 'function') { await run.lifecycle.cleanup(); cleaned = true }
       ok = beforeRelease && afterRelease && apiTerminalBodyOk({ status: 200, body: { web: { applied: true }, projection: { applied: true }, overall: 'synced', profileSync: get.body.profileSync } }) &&
-        apiSnapshotBodyOk(get, snapshot) && apiPatchOk(fixture, snapshot) && counts.register === 1 && counts.dispose === 1
+        // hang 释放后主 + 4 角色顺序挂载 = 5 次 register；cleanup 时整体回滚 5 次 dispose。
+        apiSnapshotBodyOk(get, snapshot) && apiPatchOk(fixture, snapshot) && counts.register === 5 && counts.dispose === 5
       output.structured('API_TRACE', { case: caseName, trace, adapterStartIndex, terminalIndex, putStatus: put.status, apiBodyOk: apiTerminalBodyOk(put), snapshotBodyOk: apiSnapshotBodyOk(put, snapshot), patchOk: apiPatchOk(fixture, snapshot), patchDetails: apiPatchDetails(fixture, snapshot), resolvedIndex, pluginCalls: counts.register, pluginDisposals: counts.dispose }, { case: caseName, status: ok ? 'PASS' : 'FAIL', events: trace.length, adapterStartIndex, terminalIndex, resolvedIndex, putStatus: put.status, apiBodyOk: apiTerminalBodyOk(put), snapshotBodyOk: apiSnapshotBodyOk(put, snapshot), patchOk: apiPatchOk(fixture, snapshot), pluginCalls: counts.register, pluginDisposals: counts.dispose }, { failure: !ok })
     } else {
       release()
@@ -988,6 +1009,7 @@ async function runApiAdapterCase(label, caseName, failureEvent, changed) {
       const get = await requestJson(run.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
       ok = ok && failureIndex > terminalIndex && trace.filter((event) => event === failureEvent).length === 1 &&
         get.status >= 200 && get.status < 300 && get.body.profileSync?.status === 'synced' && get.body.profileSync?.pending === false &&
+        // 首个（主）definition 挂载即 throw/reject → register 恰 1 次、无已挂载项可回滚（角色尚未开始挂载）。
         apiSnapshotBodyOk(get, snapshot) && apiPatchOk(fixture, snapshot) && counts.register === 1 && counts.dispose === 0
       output.structured('API_TRACE', { case: caseName, trace, adapterStartIndex, terminalIndex, putStatus: put.status, apiBodyOk: apiTerminalBodyOk(put), snapshotBodyOk: apiSnapshotBodyOk(put, snapshot), patchOk: apiPatchOk(fixture, snapshot), patchDetails: apiPatchDetails(fixture, snapshot), failureIndex, pluginCalls: counts.register, pluginDisposals: counts.dispose }, { case: caseName, status: ok ? 'PASS' : 'FAIL', events: trace.length, adapterStartIndex, terminalIndex, failureIndex, putStatus: put.status, apiBodyOk: apiTerminalBodyOk(put), snapshotBodyOk: apiSnapshotBodyOk(put, snapshot), patchOk: apiPatchOk(fixture, snapshot), pluginCalls: counts.register, pluginDisposals: counts.dispose }, { failure: !ok })
     }

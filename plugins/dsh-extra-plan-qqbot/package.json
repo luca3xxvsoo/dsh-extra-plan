@@ -20,6 +20,9 @@
   "dependencies": {
     "js-yaml": "^4.2.0"
   },
+  "engines": {
+    "dsh": "0.2.1-rc.2"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"

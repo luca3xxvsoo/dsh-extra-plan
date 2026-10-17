@@ -657,10 +657,9 @@ function subagentProbeGateReason(exec, role) {
   if (roleKind !== 'main') {
     return '只读子代理不得委派探查者：subagent_probe 仅主会话可用；请保持当前角色的只读边界'
   }
-  const args = exec !== undefined && exec !== null ? exec.arguments : undefined
-  if (args !== undefined && args !== null && typeof args === 'object' && args.run_in_background !== true) {
-    return '探查者必须后台运行：请传 run_in_background: true'
-  }
+  // 0.2.1 起委派工具参数表里已无后台标志（dsh-tool-subagent 只暴露 cwd/description/prompt 与
+  // 可选模型项）：委派恒为立即返回 subagentId 加完成通知，原「必须后台」断言不再成立，
+  // 后台约束上移到宿主层，本闸门只保留名称级放行。
   return null
 }
 
@@ -889,11 +888,8 @@ function mainGateReason(state, exec, gateCtx) {
     if (!escape && (state.route !== 'plan' || state.clarified !== true || (state.purpose !== 'refine' && state.purpose !== 'redo'))) {
       return planDenyReason(planToolName, state, gateRuntime)
     }
-    // 新增：continuable 默认后台，传 false 是试图前台等待绕开续轮
-    const args = exec.arguments
-    if (args !== undefined && args !== null && typeof args === 'object' && args.run_in_background === false) {
-      return '规划子代理不可前台等待：run_in_background 参数不得传 false（continuable 固定后台运行）。请移除 run_in_background: false 或省略该参数'
-    }
+    // 0.2.1 起委派工具参数表里已无后台标志：规划子代理的续轮由宿主 continuable 后端固定为
+    // 立即返回加通知，前台等待不存在，故只保留路由态判定。
     return null
   }
   if (name === 'save_probe') {
@@ -906,13 +902,8 @@ function mainGateReason(state, exec, gateCtx) {
     if (!escape && state.approved !== true) {
       return approvalDenyReason(name, state, gateRuntime)
     }
-    // 新增：one-shot 默认前台，需模型显式传 true 走后台 job
-    if (name === 'subagent' || name === 'subagent_review') {
-      const args = exec.arguments
-      if (args !== undefined && args !== null && typeof args === 'object' && args.run_in_background !== true) {
-        return '执行者/reviewer 必须后台运行：请传 run_in_background: true'
-      }
-    }
+    // 0.2.1 起委派工具参数表里已无后台标志：subagent/subagent_review 恒为立即返回 subagentId
+    // 加完成通知，后台约束在宿主层，本处只保留批准态判定。
     return null
   }
   // 主会话层工具限制（v0.4.0 四工具治理）：job_kill 仅直行路线放行；

@@ -3,7 +3,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire, registerHooks } from 'node:module'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { isDeepStrictEqual } from 'node:util'
 import { parsePresetYaml } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
 import {
@@ -19,7 +19,27 @@ import { createOutput } from '../_shared/test-output.mjs'
 import { createQqbotSettingsSynchronizer } from '../../plugins/dsh-extra-plan/lib/qqbot-settings-sync.js'
 
 const ROOT = new URL('../..', import.meta.url)
-const OFFICIAL_ROOT = 'C:\\Users\\Administrator\\AppData\\Roaming\\npm\\node_modules\\@deepseek-ai\\dsh'
+// 0.2.1：安装根优先取显式 DSH_INSTALL_ROOT（<root>/node_modules/@deepseek-ai/dsh）；
+// 缺省时从已安装的 dsh-llm 反推同一作用域根，再回退到该根下的 dsh 包目录。
+function resolveOfficialRoot() {
+  const explicit = typeof process.env.DSH_INSTALL_ROOT === 'string' ? process.env.DSH_INSTALL_ROOT.trim() : ''
+  const scopes = []
+  if (explicit !== '') scopes.push(join(explicit, 'node_modules'))
+  if (process.env.APPDATA) scopes.push(join(process.env.APPDATA, 'npm', 'node_modules'))
+  scopes.push(join(homedir(), 'AppData', 'Roaming', 'npm', 'node_modules'))
+  scopes.push(join(homedir(), '.npm-global', 'lib', 'node_modules'))
+  scopes.push(join('/usr', 'local', 'lib', 'node_modules'))
+  for (const scope of scopes) {
+    const llmManifest = join(scope, '@deepseek-ai', 'dsh-llm', 'package.json')
+    const dshDir = join(scope, '@deepseek-ai', 'dsh')
+    if (!existsSync(llmManifest)) continue
+    // 反推成功：dsh 与 dsh-llm 同作用域并列；dsh 缺失时退到 dsh 包内嵌 node_modules
+    if (existsSync(join(dshDir, 'package.json'))) return dshDir
+    return join(dshDir, 'node_modules', '@deepseek-ai', 'dsh')
+  }
+  return join(homedir(), 'AppData', 'Roaming', 'npm', 'node_modules', '@deepseek-ai', 'dsh')
+}
+const OFFICIAL_ROOT = resolveOfficialRoot()
 try {
   const anchor = createRequire(join(OFFICIAL_ROOT, 'package.json'))
   const yamlUrl = new URL('file:///' + anchor.resolve('js-yaml').replaceAll('\\\\', '/')).href
@@ -180,7 +200,7 @@ function trigger(stats) {
   if (typeof stats.updateListener === 'function') stats.updateListener()
 }
 
-check('DEFINITION_INITIAL_17_ROWS_OK', definition.id === 'extra-plan' && definition.plugins.length === 17 && definitionWithProjection({ webFetch: true, toolPresentationMode: 'both', gateWords: gate }).plugins.length === 17)
+check('DEFINITION_INITIAL_17_ROWS_OK', definition.id === 'extra-plan' && definition.plugins.length === 17 && definitionWithProjection({ webFetch: true, toolPresentationMode: 'ptc', gateWords: gate }).plugins.length === 17)
 check('LEGACY_OWNER_STATES_OK', [0, 1, 2].every((state) => activeLegacyRow([{ entry: { options: { id: 'preset-extra-plan' }, fiber: { state } } }])) && !activeLegacyRow([{ entry: { options: { id: 'preset-extra-plan' }, fiber: { state: 3 } } }]))
 const hostProxyEditor = makeEditor(completeSettings)
 const hostProxyTrace = []
@@ -266,7 +286,9 @@ const initialEditor = makeEditor(completeSettings)
 const initialStats = makeContext(initialEditor, async () => ({ dispose: async () => {} }))
 const initialDispose = mountPresetSync(initialStats.ctx, { onSettledSettings: async (snapshot) => { settledEvents.push(snapshot) } })
 await flush()
-check('INITIAL_OFFICIAL_ADAPTER_REGISTER_1_17_DEFINITION_OK', initialStats.pluginCalls === 1 && initialStats.received.length === 1 && initialStats.received[0].plugins.length === 17)
+// 0.2.1 预设链：一次 initialMount 顺序挂载 5 个 definition（主 17 条在前，4 个角色在后）。
+check('INITIAL_OFFICIAL_ADAPTER_REGISTER_1_17_DEFINITION_OK', initialStats.pluginCalls === 5 && initialStats.received.length === 5 && initialStats.received[0].plugins.length === 17
+  && JSON.stringify(initialStats.received.slice(1).map((item) => item.id)) === JSON.stringify(['extra-plan-executor', 'extra-plan-planner', 'extra-plan-reviewer', 'extra-plan-prober']))
 check('INITIAL_SETTLED_COMPLETE_10_PLUS_GATE_OK', settledEvents.length === 1 && settledShape(settledEvents[0]))
 const initialCalls = initialStats.pluginCalls
 const initialDisposals = initialStats.pluginDisposals
@@ -351,7 +373,7 @@ await flush(8)
 const hangingResolvedIndex = hangingTrace.indexOf('adapter-resolved')
 const hangingAfterRelease = hangingResolved && hangingResolvedIndex > hangingTerminalIndex && hangingStats.pluginDisposals === 0
 await hangingDispose()
-const hangingOk = hangingBeforeRelease && hangingAfterRelease && hangingStats.pluginDisposals === 1
+const hangingOk = hangingBeforeRelease && hangingAfterRelease && hangingStats.pluginDisposals === 5
 output.structured('FIXTURE_TRACE', { case: 'hang', trace: hangingTrace, terminalIndex: hangingTerminalIndex, adapterStartIndex: hangingAdapterStartIndex, resolvedIndex: hangingResolvedIndex, pluginCalls: hangingStats.pluginCalls, pluginDisposals: hangingStats.pluginDisposals }, { case: 'hang', status: hangingOk ? 'PASS' : 'FAIL', events: hangingTrace.length, terminalIndex: hangingTerminalIndex, adapterStartIndex: hangingAdapterStartIndex, resolvedIndex: hangingResolvedIndex, calls: hangingStats.pluginCalls, disposals: hangingStats.pluginDisposals }, { failure: !hangingOk })
 check('FIXTURE_ADAPTER_HANG_COMPLETE_PATCH_SETTLED_BEFORE_RESOLVE_OK', hangingOk)
 rmSync(hangingFixture.root, { recursive: true, force: true })
@@ -379,7 +401,9 @@ structuralEditor.state.rows.pop()
 trigger(structuralStats)
 await flush(8)
 const afterReturn = structuralStats.pluginCalls
-check('STRUCTURAL_HANDOFF_ONLY_OK', beforeStructural === 1 && afterAdd === 2 && afterRemove === 3 && afterLegacy === 3 && afterReturn === 4 && structuralStats.pluginDisposals === 3 && structuralEvents.length >= 5)
+// 每次（重）挂载 = 5 个 definition：结构切换 4 次挂载、4 次回滚。0.2.1 起旧行（preset-extra-plan）
+// 不再切换 adapter owner、也不再抑制挂载——旧行出现/移除各触发一次结构差异重挂载。
+check('STRUCTURAL_HANDOFF_ONLY_OK', beforeStructural === 5 && afterAdd === 10 && afterRemove === 15 && afterLegacy === 20 && afterReturn === 25 && structuralStats.pluginDisposals === 20 && structuralEvents.length >= 5)
 await structuralDispose()
 
 const disposeGate = deferred()

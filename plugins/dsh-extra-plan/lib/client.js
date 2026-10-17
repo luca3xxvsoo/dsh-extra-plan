@@ -26,7 +26,6 @@ window.__ModuleLoader__.load({
       webFetch: "web_fetch开关",
       toolPresentationMode: "工具呈现模式",
       toolPresentationModeNative: "默认",
-      toolPresentationModeBoth: "混合",
       toolPresentationModePtc: "PTC模式",
       save: "保存",
       saving: "保存中…",
@@ -55,8 +54,7 @@ window.__ModuleLoader__.load({
       webFetch: "Web Fetch",
       toolPresentationMode: "Tool Presentation Mode",
       toolPresentationModeNative: "Native",
-      toolPresentationModeBoth: "Both",
-      toolPresentationModePtc: "Pure PTC",
+          toolPresentationModePtc: "Pure PTC",
       save: "Save",
       saving: "Saving…",
       saved: "Saved.",
@@ -82,7 +80,7 @@ window.__ModuleLoader__.load({
 
     const HOST_ROW_FIELDS = Object.freeze([
       { key: "webFetch", control: "select", options: [true, false], locale: "webFetch", hint: "是否开启web_fetch ｜ 重启生效" },
-      { key: "toolPresentationMode", control: "select", options: ["native", "ptc", "both"], optionLocale: { native: "toolPresentationModeNative", ptc: "toolPresentationModePtc", both: "toolPresentationModeBoth" }, locale: "toolPresentationMode", hint: "工具呈现方式切换（默认/混合/PTC模式） ｜ 重启生效" }
+      { key: "toolPresentationMode", control: "select", options: ["native", "ptc"], optionLocale: { native: "toolPresentationModeNative", ptc: "toolPresentationModePtc" }, locale: "toolPresentationMode", hint: "工具呈现方式切换（默认/PTC模式） ｜ 重启生效" }
     ]);
     const ALL_FIELDS = Object.freeze(EXTRA_FIELDS.concat(HOST_ROW_FIELDS));
 

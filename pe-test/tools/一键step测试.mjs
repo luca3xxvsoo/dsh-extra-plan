@@ -22,7 +22,7 @@ const AUTO = [
   ['step-01-设置迁移.mjs', true, ''],
   ['step-01-安装同步.mjs', true, ''],
   ['step-01-预设完整性.mjs', false, ''],
-  ['step-01-executor-spawn注册幂等.mjs', false, ''],
+  // executor-spawn 行在 0.2.1 下保留可执行但注入失效（任务2 已注释 workflow/ralph），用例退出 AUTO；脚本文件保留。
   ['step-01-设置页配置.mjs', false, ''],
   ['step-01-qqbot-安装映射.mjs', true, ''],
   ['step-01-qqbot-环境验证.mjs', true, ''],

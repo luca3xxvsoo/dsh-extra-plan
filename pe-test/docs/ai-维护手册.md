@@ -31,7 +31,7 @@
 | profile | 当前职责 | 本仓库 AI 边界 |
 |:--|:--|:--|
 | web | 直接安装核心包；由 `dsh-extra-plan-settings` 唯一全局 owner 启动内部同步、承载 10 项配置与官方 adapter | 不删除核心包/预设，不写生产 profile |
-| qqbot | 安装精简兼容包；静态 patch、旧块迁移与 web 包建链 | 不分发核心预设；真实消息、`/preset`、question/approval（提问/批准）、allow-build/postinstall（安装后脚本）为用户部署后 HUMAN |
+| qqbot | 安装精简兼容包；静态 patch（0.2.1 起写 `- id: dsh-extra-plan-settings` + 全量 config，不再写 override 包装键）、旧块迁移与 web 包建链 | 不分发核心预设；真实消息、`/preset`、question/approval（提问/批准）、allow-build/postinstall（安装后脚本）为用户部署后 HUMAN。**profile 的 `pnpm-workspace.yaml` 必须把 `dsh-extra-plan-qqbot` 放行到 `allowBuilds`（或等价 onlyBuiltDependencies），否则 postinstall 不执行、patch 不落盘** |
 
 ### Web→QQBot 配置同步契约
 
@@ -83,6 +83,7 @@
    - `node pe-test/tools/step-00-跨平台写拦截.mjs`
    - `node pe-test/tools/step-04-路由与写闸门.mjs`
    - `node pe-test/tools/step-04-context-gate宿主回归.mjs`
+   - `node pe-test/tools/step-05-角色预设宿主回归.mjs`（角色预设机械契约：roster/assertProvider/header.agentPreset/工具面/persona 渲染/旧值回落）
    - `node pe-test/tools/step-06-08-v4取证回归.mjs`
    - `node pe-test/tools/step-06-线索落盘.mjs`
    - `node plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs --check`

@@ -1,6 +1,9 @@
 // 每次 apply 独立创建 agent runtime factory；role 与 cache 状态不会跨 createAgentRuntime 调用共享。
 
-import { sessionEvents, isSubagentChild } from './agent-session.js'
+import { isSubagentChild } from './agent-session.js'
+
+// 规划子代理的会话角色预设 id（与 assets/presets/extra-plan/agent.cordis.yml 第二文档一致）。
+export const PLANNER_PRESET_ID = 'extra-plan-planner'
 
 // 只有 parent session 存在时委派才算 live；缺少 parent/agents 或读取出错都 fail-open。
 export function isLiveDelegation(agent, agents) {
@@ -28,7 +31,7 @@ export function createAgentRuntime({ getAgents, sandboxPolicy, foldUsage, warn }
   const getAgentsOf = typeof getAgents === 'function' ? getAgents : () => undefined
   const warnOf = typeof warn === 'function' ? warn : (...args) => console.warn(...args)
   const subagentAsPlannerWarned = new WeakSet()
-  const plannerDescriptorCache = new WeakMap()
+  const plannerPresetCache = new Map()
   const usageRoles = new WeakMap()
 
   function isChild(agent, events) {
@@ -41,25 +44,22 @@ export function createAgentRuntime({ getAgents, sandboxPolicy, foldUsage, warn }
     return child
   }
 
-  // 规划子代理：子会话且 descriptor.mode === 'continuable'；无 descriptor 不缓存 false。
+  // 规划子代理：子会话且 session.header.agentPreset === 'extra-plan-planner'。
+  // dsh 0.2.1-rc.2 起 subagent descriptor 的 mode 恒为 continuable（宿主 manager 固定值），
+  // 不能再作判据；判据改为会话 header 的角色预设 id，其余值与缺失一律非 planner。
+  // 缓存按 agentPreset 值缓存（同一预设的判定与会话无关）。
   function isPlannerChild(agent, events) {
-    const cached = plannerDescriptorCache.get(agent)
-    if (cached !== undefined) return cached
-    if (!isSubagentChild(agent, events)) return false
+    if (agent === undefined || agent === null) return false
     const session = agent.session
     if (session === undefined || session === null) return false
-    const scanEvents = events === undefined ? sessionEvents(session) : events
-    if (!Array.isArray(scanEvents)) return false
-    for (const event of scanEvents) {
-      if (event !== null && typeof event === 'object' && event.type === 'subagent/descriptor'
-          && event.data !== undefined && event.data !== null
-          && typeof event.data.mode === 'string') {
-        const planner = event.data.mode === 'continuable'
-        plannerDescriptorCache.set(agent, planner)
-        return planner
-      }
-    }
-    return false
+    const header = session.header
+    if (header === undefined || header === null) return false
+    const preset = typeof header.agentPreset === 'string' ? header.agentPreset : ''
+    const cached = plannerPresetCache.get(preset)
+    if (cached !== undefined) return cached
+    const planner = preset === PLANNER_PRESET_ID && isSubagentChild(agent, events)
+    plannerPresetCache.set(preset, planner)
+    return planner
   }
 
   // 真实工具集防御取数：不缓存，服务缺失/异常/非数组均返回 undefined。

@@ -39,8 +39,11 @@ import {
 } from './settings-contract.js'
 import { validateGateWords } from './gate-words.js'
 
+// 多文档作者源（agent.cordis.yml：第一文档=主预设，第二文档=4 角色）只取第一文档；
+// 空流仍返回 undefined，单文档结果与 yaml.load 逐字一致。
 export function parsePresetYaml(text) {
-  return yaml.load(text, { schema: YAML_SCHEMA })
+  const documents = yaml.loadAll(text, { schema: YAML_SCHEMA })
+  return documents.length === 0 ? undefined : documents[0]
 }
 
 function hasOwn(object, key) {

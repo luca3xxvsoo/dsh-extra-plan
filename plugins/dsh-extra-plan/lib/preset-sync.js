@@ -57,6 +57,11 @@ export const DECLARATION_ROW_IDS = Object.freeze(['extra-plan', HOST_ROW_IDS.web
 const HERE = dirname(fileURLToPath(import.meta.url))
 export const ASSET_DIR = join(HERE, '..', 'assets', 'presets', PRESET_ID)
 export const ASSET_DEFINITION_FILE = join(ASSET_DIR, 'preset-definition.generated.yml')
+/** 角色预设固定顺序（order 101..104），与生成器 ROLE_IDS 同源同序：主在前、角色在后。 */
+export const ROLE_IDS = Object.freeze(['extra-plan-executor', 'extra-plan-planner', 'extra-plan-reviewer', 'extra-plan-prober'])
+export const ROLE_DEFINITION_FILES = Object.freeze(ROLE_IDS.map((roleId) => join(ASSET_DIR, 'preset-definition-' + roleId + '.generated.yml')))
+/** 角色 definition 里固定前两行：dsh-persona 与 dsh-extra-plan。 */
+export const ROLE_DEFINITION_LEADING_ROW_IDS = Object.freeze(['persona', 'extra-plan'])
 
 export function contentHash(dir) {
   const h = createHash('sha256')
@@ -452,6 +457,34 @@ export function assetDefinition() {
   return parsePresetDefinition(readFileSync(ASSET_DEFINITION_FILE, 'utf8'))
 }
 
+/** 角色 definition 校验：不套用主预设的 17 条/三组契约，只固定 id/name/description/order 与前两行。 */
+function assertRoleDefinition(definition, roleId, label) {
+  if (!plainObject(definition)) throw new Error(label + ' 必须是对象')
+  if (definition.id !== roleId) throw new Error(label + ' id 必须为 ' + roleId)
+  if (typeof definition.name !== 'string' || definition.name === '') throw new Error(label + ' name 非法')
+  if (typeof definition.description !== 'string' || definition.description === '') throw new Error(label + ' description 非法')
+  if (!Number.isInteger(definition.order)) throw new Error(label + ' order 非法')
+  if (!Array.isArray(definition.plugins) || definition.plugins.length < 3) throw new Error(label + ' plugins 至少 3 行')
+  if (definition.plugins.some((row) => !plainObject(row) || row.insert !== undefined)) throw new Error(label + ' 不得包含 Loader insert wrapper')
+  const leading = definition.plugins.slice(0, 2).map((row) => row.id)
+  if (JSON.stringify(leading) !== JSON.stringify(ROLE_DEFINITION_LEADING_ROW_IDS)) throw new Error(label + ' 首两行必须为 persona 与 extra-plan')
+  if (definition.plugins[0].name !== '@deepseek-ai/dsh-persona' || definition.plugins[1].name !== 'dsh-extra-plan') throw new Error(label + ' 首两行 name 不符')
+  return definition
+}
+
+export function roleDefinitionOf(roleId) {
+  const index = ROLE_IDS.indexOf(roleId)
+  if (index === -1) throw new Error('未知角色预设：' + roleId)
+  const file = ROLE_DEFINITION_FILES[index]
+  if (!existsSync(file)) throw new Error('角色 definition 缺失：' + file)
+  return assertRoleDefinition(parsePresetYaml(readFileSync(file, 'utf8')), roleId, '角色 definition ' + roleId)
+}
+
+/** 注册顺序：主 definition 在前，4 个角色 definition 按 order 101..104 在后。 */
+export function assetDefinitions() {
+  return [assetDefinition(), ...ROLE_IDS.map((roleId) => roleDefinitionOf(roleId))]
+}
+
 export function assetPlugins() {
   try { return assetDefinition().plugins } catch { return undefined }
 }
@@ -623,14 +656,13 @@ export function activeLegacyRow(rows) {
     && (entry.fiber.state === 0 || entry.fiber.state === 1 || entry.fiber.state === 2)
 }
 
-function definitionFromRows(legacyPlugins, settingsValues, rawPatch) {
+/** 幂等落定路径的 definition：只按当前 settings 行与 raw patch 投影，不再走旧行（preset-extra-plan）迁移。 */
+function projectedAssetDefinition(settingsValues, rawPatch) {
   const resolved = resolveUnifiedConfig({
     settingsValues,
     readPatch: () => rawPatch,
-    declaredPlugins: legacyPlugins,
   })
-  const asset = assetDefinition()
-  return cloneDefinitionWithProjection(asset, {
+  return cloneDefinitionWithProjection(assetDefinition(), {
     webFetch: resolved.values.webFetch,
     toolPresentationMode: resolved.values.toolPresentationMode,
     gateWords: resolved.gateWords,
@@ -699,7 +731,8 @@ export function mountPresetSync(ctx, options = {}) {
   const onAdapterError = typeof options.onAdapterError === 'function' ? options.onAdapterError : undefined
   let active = true
   let disposed = false
-  let adapterFiber
+  /** 已挂载的官方 adapter fiber（主 definition + 4 角色），按注册顺序保存以便整体回滚。 */
+  let adapterFibers = []
   let adapterOwner = 'none'
   let settledQueue = Promise.resolve()
   let structuralQueue = Promise.resolve()
@@ -780,21 +813,40 @@ export function mountPresetSync(ctx, options = {}) {
     structuralQueue = safe
     return safe
   }
-  const mountOfficialAdapter = async (definition) => {
+  /**
+   * 顺序挂载 5 个 definition（主在前、角色在后）；任一角色失败即整体回滚已挂载的全部 fiber，
+   * 并把诊断按 phase=mount:<presetId> 上报，不留下半套注册。
+   */
+  const mountOfficialAdapter = async (definitions) => {
     if (OfficialAgentPreset === undefined) throw new Error('@deepseek-ai/dsh-agent-preset 官方 adapter 不可用')
     if (!active) return
-    adapterOwner = 'official'
-    const mounted = await child.plugin(OfficialAgentPreset, definition)
-    if (!active) {
-      await disposeFiber(mounted)
-      return
+    const mounted = []
+    for (const definition of definitions) {
+      if (!active) {
+        for (let index = mounted.length - 1; index >= 0; index -= 1) await disposeFiber(mounted[index])
+        return
+      }
+      try {
+        mounted.push(await child.plugin(OfficialAgentPreset, definition))
+      } catch (error) {
+        // 整体回滚已挂载的 definition，再把失败冒泡给 initialMount/structuralHandoff 的
+        // 既有单点诊断（phase 保持 initialMount/structuralHandoff），消息里带上失败的 preset id。
+        for (let index = mounted.length - 1; index >= 0; index -= 1) {
+          try { await disposeFiber(mounted[index]) } catch (disposeError) {
+            reportAdapterError(disposeError, 'rollback:' + definition.id)
+          }
+        }
+        const detail = error instanceof Error ? error.message : String(error)
+        throw new Error('mount ' + definition.id + ' failed: ' + detail)
+      }
     }
-    adapterFiber = mounted
+    adapterOwner = 'official'
+    adapterFibers = mounted
   }
   const disposeCurrentAdapter = async () => {
-    const previous = adapterFiber
-    adapterFiber = undefined
-    if (previous !== undefined) await disposeFiber(previous)
+    const previous = adapterFibers
+    adapterFibers = []
+    for (let index = previous.length - 1; index >= 0; index -= 1) await disposeFiber(previous[index])
   }
   const structuralHandoff = async (state, settledPromise) => {
     await settledPromise
@@ -811,16 +863,11 @@ export function mountPresetSync(ctx, options = {}) {
     })
     if (!active) return
     const latest = readState()
-    const definition = result.plan !== undefined && result.plan.definition !== undefined
+    const mainDefinition = result.plan !== undefined && result.plan.definition !== undefined
       ? result.plan.definition
-      : definitionFromRows(latest.legacyState.legacyPlugins, settingsValuesFromRows(latest.rows), latest.rawPatch)
-    if (latest.owner === 'legacy') {
-      await disposeCurrentAdapter()
-      adapterOwner = 'legacy'
-      return
-    }
+      : projectedAssetDefinition(settingsValuesFromRows(latest.rows), latest.rawPatch)
     if (adapterOwner === 'official') await disposeCurrentAdapter()
-    await mountOfficialAdapter(definition)
+    await mountOfficialAdapter([mainDefinition, ...assetDefinitions().slice(1)])
   }
   const initialMount = async () => {
     if (!active) return
@@ -841,14 +888,10 @@ export function mountPresetSync(ctx, options = {}) {
       const settledPromise = settledSettingsUpdate(latest)
       await settledPromise
       if (!active) return
-      const definition = result.plan !== undefined && result.plan.definition !== undefined
+      const mainDefinition = result.plan !== undefined && result.plan.definition !== undefined
         ? result.plan.definition
-        : definitionFromRows(latest.legacyState.legacyPlugins, settingsValuesFromRows(latest.rows), latest.rawPatch)
-      if (latest.owner === 'legacy') {
-        adapterOwner = 'legacy'
-        return
-      }
-      await mountOfficialAdapter(definition)
+        : projectedAssetDefinition(settingsValuesFromRows(latest.rows), latest.rawPatch)
+      await mountOfficialAdapter([mainDefinition, ...assetDefinitions().slice(1)])
     } catch (error) {
       reportAdapterError(error, 'initialMount')
       console.warn('[dsh-extra-plan] initial mount/adapter failed（不阻断 settled/profile sync）：' + (error instanceof Error ? error.message : String(error)))

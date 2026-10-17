@@ -629,7 +629,7 @@ export function apply(ctx, config) {
   })
 
   // 3) anchored 引导（默认开）：主会话与规划子代理首轮极简；执行者/reviewer 不引导。
-  //    native/both 首轮保留 bootstrap shell(s)+read，sections 仅 persona；Pure PTC
+  //    native 首轮保留 bootstrap shell(s)+read，sections 仅 persona；Pure PTC
   //    首轮保留唯一 run_code、persona 与 tool:read 手写文案——宿主 tools:ptc-only 段已按
   //    用户要求停用、不透传；借宿主段名覆盖 text（cfg.bootstrapReadHint），不生成完整 SDK。
   //    无 shell 无 run_code 跳过+警告一次。钩子常驻（bootstrapOn=false 时也注册）：
@@ -660,9 +660,8 @@ export function apply(ctx, config) {
     // 展示决策按 phase → creative → mode 分层；所有分支只返回模型可见副本。
     const phase = isBootstrapPhase(agent) ? 'first' : 'later'
     const role = planner ? 'planner' : child ? 'executor' : 'main'
-    const mode = hasNonEmptySection(result.sections, PTC_SECTION_NAME)
-      ? 'ptc'
-      : hasNonEmptySection(result.sections, SDK_SECTION_NAME) ? 'both' : 'native'
+    // 呈现模式二值化（0.2.1）：有非空 PTC 段即 ptc，其余（含宿主 SDK 段）一律 native。
+    const mode = hasNonEmptySection(result.sections, PTC_SECTION_NAME) ? 'ptc' : 'native'
     const anchoredFirst = bootstrapOn() && phase === 'first' && (role === 'main' || role === 'planner')
     const anchoredPtc = anchoredFirst && mode === 'ptc'
     let presented = result
@@ -675,7 +674,7 @@ export function apply(ctx, config) {
       })
     } else if (!creativeModeOn()) {
       let sdkText
-      // F/native 与 F/both 随后只返回 bootstrap shell(s)+read，不能为被剥离的完整 SDK 预热。
+      // F/native 随后只返回 bootstrap shell(s)+read，不能为被剥离的完整 SDK 预热。
       if (!anchoredFirst && hasSection(result.sections, SDK_SECTION_NAME)) {
         let language = 'typescript'
         try {

@@ -1481,7 +1481,8 @@ function makePlannerHarness(options = {}) {
   const parent = { session: { header: { id: 'parent-id' }, requestHeader: () => ({ config: parentConfig }) } }
   const agent = {
     session: {
-      header: { id: 'planner-id', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-id' },
+      // 0.2.1：planner 身份判据改为 header.agentPreset（descriptor.mode 恒 continuable，不再作判据）。
+      header: { id: 'planner-id', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-id', agentPreset: 'extra-plan-planner' },
       snapshotEvents: () => [{ type: 'subagent/descriptor', data: { mode: 'continuable' } }],
     },
   }
@@ -1807,7 +1808,7 @@ function makeNonPlannerHarness(options = {}) {
   }
   const planner = {
     session: {
-      header: { id: 'planner-id', origin: 'subagent', delegationDepth: 1, parentSession: 'main-id' },
+      header: { id: 'planner-id', origin: 'subagent', delegationDepth: 1, parentSession: 'main-id', agentPreset: 'extra-plan-planner' },
       snapshotEvents: () => [{ type: 'subagent/descriptor', data: { mode: 'continuable' } }],
       requestHeader: () => ({ config: plannerConfig }),
     },
@@ -2264,7 +2265,7 @@ const CLC = [
   ['CLC1 [{name:run_code}] → true(ptc 折叠形态)', [{ name: 'run_code' }], true],
   ['CLC2 [run_code] → true(字符串形状折叠)', ['run_code'], true],
   ['CLC3 [{name:read}] → false', [{ name: 'read' }], false],
-  ['CLC4 [{name:run_code},{name:read}] → false(both 形态不折叠)', [{ name: 'run_code' }, { name: 'read' }], false],
+  ['CLC4 [{name:run_code},{name:read}] → false(混合目录不折叠；0.2.1 both 已退出，保留为历史形态对照)', [{ name: 'run_code' }, { name: 'read' }], false],
   ['CLC5 [write,edit] → false', ['write', 'edit'], false],
 ]
 for (const [name, tools, expected] of CLC) {

@@ -398,10 +398,11 @@ function renderedConfig(snapshot, configIndent) {
   return lines
 }
 
+// 0.2.1 patch 方言：新写入一律用「- id: <设置行 id> + 全量 config」的朴素行，不再写 override 包装键。
 function renderedRow(snapshot, rootIndent) {
   const spaces = (value) => ' '.repeat(value)
-  const lines = [spaces(rootIndent) + '- override:', spaces(rootIndent + 4) + 'id: ' + SETTINGS_ROW_ID, spaces(rootIndent + 4) + 'config:']
-  lines.push(...renderedConfig(snapshot, rootIndent + 4))
+  const lines = [spaces(rootIndent) + '- id: ' + SETTINGS_ROW_ID, spaces(rootIndent + 2) + 'config:']
+  lines.push(...renderedConfig(snapshot, rootIndent + 2))
   return lines
 }
 

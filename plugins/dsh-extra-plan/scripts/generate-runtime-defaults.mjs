@@ -1,20 +1,32 @@
 #!/usr/bin/env node
 // 生成 runtime fallback 与纯 preset definition 资产；替换前先解析并校验。
+// 主 definition 来自 agent.cordis.yml 第一文档；4 个角色 definition 来自同文件第二文档
+// （用 --- 分隔多文档；personaPrefix 逐字搬运，extra-plan 行 config 从主 definition 同 id 行逐字复制）。
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parsePresetYaml, resolveTemplateSettingDefault } from '../lib/preset-settings.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-export const DEFAULT_SOURCE = resolve(HERE, '..', 'assets', 'presets', 'extra-plan', 'agent.cordis.yml')
+const PRESET_ASSET_DIR = resolve(HERE, '..', 'assets', 'presets', 'extra-plan')
+export const DEFAULT_SOURCE = resolve(PRESET_ASSET_DIR, 'agent.cordis.yml')
 export const DEFAULT_OUTPUT = resolve(HERE, '..', 'lib', 'preset-defaults.generated.js')
-export const DEFAULT_META_SOURCE = resolve(HERE, '..', 'assets', 'presets', 'extra-plan', 'preset.yml')
-export const DEFAULT_DEFINITION_OUTPUT = resolve(HERE, '..', 'assets', 'presets', 'extra-plan', 'preset-definition.generated.yml')
+export const DEFAULT_META_SOURCE = resolve(PRESET_ASSET_DIR, 'preset.yml')
+export const DEFAULT_DEFINITION_OUTPUT = resolve(PRESET_ASSET_DIR, 'preset-definition.generated.yml')
 
 export const PRESET_ID = 'extra-plan'
 export const PRESET_ORDER = 100
 export const PLUGINS_INDENT = 2
+/** 角色预设固定顺序（order 101..104）：执行者 → 规划者 → 验收者 → 探查者。 */
+export const ROLE_IDS = Object.freeze(['extra-plan-executor', 'extra-plan-planner', 'extra-plan-reviewer', 'extra-plan-prober'])
+export const ROLE_ORDERS = Object.freeze([101, 102, 103, 104])
+/** 角色 definition 里固定前两行：dsh-persona（prefix=personaPrefix）与 dsh-extra-plan（主预设同 id 行 config）。 */
+export const ROLE_FIRST_ROW_IDS = Object.freeze(['persona', 'extra-plan'])
+
+export function roleDefinitionFile(roleId, dir = PRESET_ASSET_DIR) {
+  return join(dir, 'preset-definition-' + roleId + '.generated.yml')
+}
 
 export function renderRuntimeDefaults(defaultText) {
   const budget = resolveTemplateSettingDefault(defaultText, 'exploreBudget')
@@ -28,21 +40,70 @@ export function renderRuntimeDefaults(defaultText) {
   ].join('\n')
 }
 
-/** 抽取 agent.cordis.yml 的顶层条目区间，保留注释、group、isolate 与 !!js。 */
+/** 顶格 YAML 文档分隔行（作者源第一文档结束、第二文档开始的唯一边界）。 */
+const DOCUMENT_SEPARATOR = /^---\s*$/
+
+function separatorIndexOf(lines) {
+  return lines.findIndex((line) => DOCUMENT_SEPARATOR.test(line))
+}
+
+/** 抽取 agent.cordis.yml 第一文档的顶层条目区间（结束边界=首个「---」行），保留注释、group、isolate 与 !!js。 */
 export function topLevelRowsOf(defaultText) {
   const lines = String(defaultText).split('\n')
   const start = lines.findIndex((line) => /^- (?:id|insert):/.test(line))
   if (start === -1) throw new Error('agent.cordis.yml 顶层条目缺失（未找到根级「- id:」行）')
-  let end = lines.length
+  const separator = separatorIndexOf(lines)
+  let end = separator === -1 ? lines.length : separator
   while (end > start && lines[end - 1].trim() === '') end -= 1
   const block = lines.slice(start, end)
   if (block.length === 0) throw new Error('agent.cordis.yml 顶层条目为空')
   return block
 }
 
+/** 抽取 agent.cordis.yml 第二文档原文（分隔行之后全部行，保留注释与工具面原文）；缺分隔行即抛。 */
+export function secondDocumentOf(defaultText) {
+  const lines = String(defaultText).split('\n')
+  const separator = separatorIndexOf(lines)
+  if (separator === -1) throw new Error('agent.cordis.yml 缺少第二文档分隔行「---」')
+  return lines.slice(separator + 1).join('\n')
+}
+
 function indentBlock(block, columns = PLUGINS_INDENT) {
   const pad = ' '.repeat(columns)
   return block.map((line) => (line === '' ? line : pad + line))
+}
+
+function indentOf(line) {
+  let count = 0
+  while (count < line.length && line[count] === ' ') count += 1
+  return count
+}
+
+function shiftBlock(block, delta) {
+  if (delta === 0) return block.slice()
+  return block.map((line) => {
+    if (line.trim() === '') return ''
+    const next = indentOf(line) + delta
+    if (next < 0) throw new Error('缩进平移越界：' + JSON.stringify(line))
+    return ' '.repeat(next) + line.slice(indentOf(line))
+  })
+}
+
+/**
+ * 取出「起始行 + 其后更深缩进的非空行」为一整块 raw 文本：
+ * 遇到缩进 <= base 的非空行即结束（同级注释留给外层），尾部空行剔除。
+ */
+export function rawBlockFrom(lines, startIndex, baseIndent) {
+  if (startIndex < 0 || startIndex >= lines.length) throw new Error('raw 块起点越界')
+  const block = [lines[startIndex]]
+  for (let index = startIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index]
+    if (line.trim() === '') { block.push(''); continue }
+    if (indentOf(line) <= baseIndent) break
+    block.push(line)
+  }
+  while (block.length > 1 && block[block.length - 1].trim() === '') block.pop()
+  return block
 }
 
 function quoteYamlSingle(value) {
@@ -80,6 +141,141 @@ export function renderPresetDefinition(defaultText, metaText) {
   return rendered
 }
 
+/** extra-plan 行（主 definition 内 group 子行）的 raw 块：id 行 + name 行 + 整段 config。 */
+function mainExtraPlanRowBlock(definitionText) {
+  const lines = String(definitionText).split('\n')
+  const start = lines.findIndex((line) => /^\s*- id: extra-plan$/.test(line))
+  if (start === -1) throw new Error('主 definition 缺少 extra-plan 行')
+  const base = indentOf(lines[start])
+  const block = rawBlockFrom(lines, start, base)
+  const nameLine = block.find((line) => /^\s*name:/.test(line))
+  if (nameLine === undefined) throw new Error('主 definition 的 extra-plan 行缺少 name')
+  const configIndex = block.findIndex((line) => /^\s*config:$/.test(line))
+  if (configIndex === -1) throw new Error('主 definition 的 extra-plan 行缺少 config')
+  return { block, base, configBlock: block.slice(configIndex), configIndex }
+}
+
+/** 角色源里某角色的 personaPrefix 折叠块 raw 行（首行为 key 行）。 */
+function personaPrefixBlock(roleText, personaText) {
+  const lines = String(roleText).split('\n')
+  const start = lines.findIndex((line) => line.trim() === 'personaPrefix: >-')
+  if (start === -1) throw new Error('角色源缺少 personaPrefix: >- 块')
+  const keyIndent = indentOf(lines[start])
+  // 定位属于本条目的 personaPrefix：按角色顺序逐个消费，这里以 personaText 内容做唯一性校验。
+  const candidates = []
+  for (let index = 0; index < lines.length; index += 1) {
+    if (lines[index].trim() === 'personaPrefix: >-') candidates.push(index)
+  }
+  for (const index of candidates) {
+    const block = rawBlockFrom(lines, index, indentOf(lines[index]))
+    const body = block.slice(1)
+    const probe = 'probe' + '\n'
+    const text = [
+      'x:',
+      '  personaPrefix: >-',
+      ...body,
+      '',
+    ].join('\n')
+    let parsed
+    try { parsed = parsePresetYaml(text) } catch { continue }
+    if (parsed !== null && typeof parsed === 'object' && parsed.x !== undefined && parsed.x.personaPrefix === personaText) {
+      return { block, keyIndent, body }
+    }
+  }
+  throw new Error('角色源 personaPrefix 块与解析值不匹配（' + keyIndent + '）')
+}
+
+/** 角色源里 tools 列表的 raw 行（首行为「tools:」行）。 */
+function roleToolsBlock(roleText, roleIndex, roleCount) {
+  const lines = String(roleText).split('\n')
+  const starts = []
+  for (let index = 0; index < lines.length; index += 1) {
+    if (lines[index].trim() === 'tools:') starts.push(index)
+  }
+  if (starts.length !== roleCount) throw new Error('角色源 tools: 行数与角色数不符（' + starts.length + '/' + roleCount + '）')
+  const index = starts[roleIndex]
+  const base = indentOf(lines[index])
+  const block = rawBlockFrom(lines, index, base)
+  return { block: block.slice(1), base }
+}
+
+function assertRoleSource(roles, label = '角色源') {
+  if (!Array.isArray(roles) || roles.length !== ROLE_IDS.length) throw new Error(label + ' 必须恰有 ' + ROLE_IDS.length + ' 个角色')
+  const ids = roles.map((role) => role !== null && typeof role === 'object' ? role.id : undefined)
+  if (JSON.stringify(ids) !== JSON.stringify(ROLE_IDS)) throw new Error(label + ' id 顺序/取值必须为 ' + ROLE_IDS.join(','))
+  const orders = roles.map((role) => role.order)
+  if (JSON.stringify(orders) !== JSON.stringify(ROLE_ORDERS)) throw new Error(label + ' order 必须为 ' + ROLE_ORDERS.join(','))
+  for (const role of roles) {
+    if (typeof role.name !== 'string' || role.name === '') throw new Error(label + ' ' + role.id + ' 缺少中文 name')
+    if (typeof role.description !== 'string' || role.description === '') throw new Error(label + ' ' + role.id + ' 缺少 description')
+    if (typeof role.personaPrefix !== 'string' || role.personaPrefix === '') throw new Error(label + ' ' + role.id + ' 缺少 personaPrefix')
+    if (!Array.isArray(role.tools) || role.tools.length === 0) throw new Error(label + ' ' + role.id + ' 缺少 tools 行')
+    if (role.gateWords !== undefined) throw new Error(label + ' ' + role.id + ' 不得手写 gateWords（唯一编辑位置是 agent.cordis.yml）')
+    for (const row of role.tools) {
+      if (row === null || typeof row !== 'object' || typeof row.name !== 'string' || row.name === '') throw new Error(label + ' ' + role.id + ' 的 tools 行缺少 name')
+      if (row.insert !== undefined) throw new Error(label + ' ' + role.id + ' 的 tools 行不得含 insert wrapper')
+    }
+  }
+  return roles
+}
+
+function assertRoleDefinition(definition, role, label) {
+  if (definition === null || typeof definition !== 'object' || Array.isArray(definition)) throw new Error(label + ' 不是对象')
+  if (definition.id !== role.id) throw new Error(label + ' id 必须为 ' + role.id)
+  if (definition.name !== role.name) throw new Error(label + ' name 与作者源不符')
+  if (definition.description !== role.description) throw new Error(label + ' description 与作者源不符')
+  if (definition.order !== role.order) throw new Error(label + ' order 与作者源不符')
+  if (!Array.isArray(definition.plugins) || definition.plugins.length !== role.tools.length + ROLE_FIRST_ROW_IDS.length) throw new Error(label + ' plugins 行数不符')
+  if (definition.plugins[0].id !== ROLE_FIRST_ROW_IDS[0] || definition.plugins[0].name !== '@deepseek-ai/dsh-persona') throw new Error(label + ' 首行必须是 dsh-persona')
+  if (definition.plugins[0].config === undefined || definition.plugins[0].config.prefix !== role.personaPrefix) throw new Error(label + ' persona prefix 必须逐字等于 personaPrefix')
+  if (definition.plugins[1].id !== ROLE_FIRST_ROW_IDS[1] || definition.plugins[1].name !== 'dsh-extra-plan') throw new Error(label + ' 第二行必须是 dsh-extra-plan')
+  if (definition.plugins.some((row) => row === null || typeof row !== 'object' || row.insert !== undefined)) throw new Error(label + ' 不得含 Loader insert wrapper')
+  return definition
+}
+
+/**
+ * 渲染 4 个角色 definition：plugins = [dsh-persona(prefix=personaPrefix),
+ * dsh-extra-plan(主预设同 id 行 config 逐字复制), ...角色 tools 行]。
+ */
+export function renderRoleDefinitions(roleText, definitionText) {
+  const roles = assertRoleSource(parsePresetYaml(roleText))
+  const mainExtra = mainExtraPlanRowBlock(definitionText)
+  const mainParsed = parsePresetYaml(mainExtra.block.join('\n'))
+  const mainRow = Array.isArray(mainParsed) ? mainParsed[0] : mainParsed
+  const mainConfigJson = JSON.stringify(mainRow !== null && typeof mainRow === 'object' && mainRow.config !== undefined ? mainRow.config : undefined)
+  if (mainConfigJson === undefined) throw new Error('主 definition 的 extra-plan 行缺少 config')
+  const configBlock = shiftBlock(mainExtra.configBlock, -4)
+  return roles.map((role, index) => {
+    const persona = personaPrefixBlock(roleText, role.personaPrefix)
+    const tools = roleToolsBlock(roleText, index, roles.length)
+    const rendered = [
+      '# GENERATED FILE - DO NOT EDIT.',
+      '# Generated by plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs（源：agent.cordis.yml 第二文档）。',
+      '# 角色预设 definition：dsh-persona 取 personaPrefix 原文，dsh-extra-plan 的行 config 由主预设同 id 行逐字复制，',
+      '# 其余为角色 tools 行。人设与工具面在这里承载；主预设不再写 persona/toolFilter/backgroundMode。',
+      'id: ' + role.id,
+      'name: ' + quoteYamlSingle(role.name),
+      'description: ' + quoteYamlSingle(role.description),
+      'order: ' + String(role.order),
+      'plugins:',
+      '  - id: persona',
+      "    name: '@deepseek-ai/dsh-persona'",
+      '    config:',
+      '      prefix: >-',
+      ...persona.body,
+      '  - id: extra-plan',
+      "    name: 'dsh-extra-plan'",
+      ...configBlock,
+      ...shiftBlock(tools.block, -2),
+    ].join('\n') + '\n'
+    const parsed = parsePresetYaml(rendered)
+    assertRoleDefinition(parsed, role, '生成角色 definition ' + role.id)
+    const copied = JSON.stringify(parsed.plugins[1].config)
+    if (copied !== mainConfigJson) throw new Error('生成角色 definition ' + role.id + ' 的 extra-plan config 与主预设不逐字相等')
+    return { roleId: role.id, order: role.order, text: rendered }
+  })
+}
+
 function assertParses(text, what) {
   try {
     const parsed = parsePresetYaml(text)
@@ -104,6 +300,7 @@ function writeOrCheck(output, rendered, check, label) {
 /**
  * @param options.sourcePath / outputPath 自定义夹具路径时，默认不触碰仓库 definition 资产。
  * @param options.definitionOutputPath 显式 definition 路径；传 null 关闭 definition 生成。
+ * @param options.roleDefinitionDir 显式角色产出目录；传 null 关闭角色生成（角色作者源即 sourcePath 的第二文档）。
  */
 export function generateRuntimeDefaults(options = {}) {
   const sourcePath = options.sourcePath === undefined ? DEFAULT_SOURCE : options.sourcePath
@@ -117,24 +314,41 @@ export function generateRuntimeDefaults(options = {}) {
   const definitionOutput = options.definitionOutputPath === undefined
     ? (usesRepositoryDefaults ? DEFAULT_DEFINITION_OUTPUT : null)
     : (options.definitionOutputPath === null ? null : resolve(options.definitionOutputPath))
-  // 先读、解析、校验并渲染，再接触输出；坏模板保留 last-known-good 字节。
+  const roleDir = options.roleDefinitionDir === undefined
+    ? (definitionOutput === null ? null : (usesRepositoryDefaults ? PRESET_ASSET_DIR : null))
+    : (options.roleDefinitionDir === null ? null : resolve(options.roleDefinitionDir))
+  // 角色作者源与主预设同文件：第二文档由同一份 sourceText 切分，不再读独立文件。
+  const roleSource = roleDir === null ? null : source
+  // 先读、解析、校验并渲染，再接触输出；坏模板/缺失输入保留 last-known-good 字节。
   const sourceText = readFileSync(source, 'utf8')
   const rendered = renderRuntimeDefaults(sourceText)
   let renderedDefinition = null
+  let renderedRoles = []
   if (definitionOutput !== null) {
     const metaText = readFileSync(metaSource, 'utf8')
     assertParses(metaText, 'preset.yml')
     renderedDefinition = renderPresetDefinition(sourceText, metaText)
     assertParses(renderedDefinition, 'preset-definition.generated.yml')
   }
+  if (roleDir !== null && renderedDefinition !== null) {
+    const roleText = secondDocumentOf(sourceText)
+    renderedRoles = renderRoleDefinitions(roleText, renderedDefinition)
+  }
+  const roleOutputs = renderedRoles.map((role) => resolve(roleDefinitionFile(role.roleId, roleDir)))
   if (check) {
     writeOrCheck(output, rendered, true, 'generated output')
     if (definitionOutput !== null) writeOrCheck(definitionOutput, renderedDefinition, true, 'generated preset definition')
-    return { source, output, metaSource, definitionOutput, rendered, renderedDefinition, changed: false }
+    for (let index = 0; index < renderedRoles.length; index += 1) {
+      writeOrCheck(roleOutputs[index], renderedRoles[index].text, true, 'generated role definition ' + renderedRoles[index].roleId)
+    }
+    return { source, output, metaSource, definitionOutput, roleSource, roleOutputs, rendered, renderedDefinition, renderedRoles, changed: false }
   }
   writeOrCheck(output, rendered, false, 'generated output')
   if (definitionOutput !== null) writeOrCheck(definitionOutput, renderedDefinition, false, 'generated preset definition')
-  return { source, output, metaSource, definitionOutput, rendered, renderedDefinition, changed: true }
+  for (let index = 0; index < renderedRoles.length; index += 1) {
+    writeOrCheck(roleOutputs[index], renderedRoles[index].text, false, 'generated role definition ' + renderedRoles[index].roleId)
+  }
+  return { source, output, metaSource, definitionOutput, roleSource, roleOutputs, rendered, renderedDefinition, renderedRoles, changed: true }
 }
 
 function invokedAsMain() {
@@ -148,6 +362,7 @@ if (invokedAsMain()) {
     const result = generateRuntimeDefaults({ check })
     process.stdout.write((check ? '[check] ' : '[generated] ') + result.output + '\n')
     if (result.definitionOutput !== null) process.stdout.write((check ? '[check] ' : '[generated] ') + result.definitionOutput + '\n')
+    for (const roleOutput of result.roleOutputs) process.stdout.write((check ? '[check] ' : '[generated] ') + roleOutput + '\n')
   } catch (error) {
     process.stderr.write('[generate-runtime-defaults] ' + (error instanceof Error ? error.message : String(error)) + '\n')
     process.exitCode = 1
