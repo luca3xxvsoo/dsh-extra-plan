@@ -20,7 +20,7 @@
 
 ## 当前兼容与安全边界
 
-- 当前支持范围为 dsh `0.2.1-rc.2`（单一版本：`engines.dsh` 与三项 @deepseek-ai peer 同值，插件 package.json 是版本真源）；旧版 0.1.7-rc.1/0.1.7-rc.2/0.2.0-rc.1/0.2.0-rc.2 兼容已迁出本分支。当前证据等级（静态/集成/HUMAN）与待复测项统一见[ai-宿主耦合台账](pe-test/docs/ai-宿主耦合台账.md)的当前验证状态；QQBot、生产、真实消息、`/preset`、question/approval、GUI 与模型行为仍需部署后 HUMAN 复测。
+- 当前支持范围为 dsh `0.2.1-rc.2`（单一版本：`engines.dsh` 与三项 @deepseek-ai peer 同值，插件 package.json 是版本真源）；旧版兼容见旧版分支。当前证据等级（静态/集成/HUMAN）与待复测项统一见[ai-宿主耦合台账](pe-test/docs/ai-宿主耦合台账.md)的当前验证状态；QQBot、生产、真实消息、`/preset`、question/approval、GUI 与模型行为仍需部署后 HUMAN 复测。
 - 五角色顺序：主会话 → 探查者 → 规划子代理 → 执行者 → 验收者。路由/目的/澄清/批准是机械锚点；唯一受限写例外是 `save_plan` 双文件工件，其余工作区写入按批准后的执行者流程进行。主会话干预工具（job_kill/send_message/job_list/list_agents）受主会话层闸门限制。
 - A/C/M 是模型可见投影维度：A=anchoredBootstrap，C=creativeMode，M=`native|ptc`（`both` 随 0.2.1 二值化退出，旧值归一化回落 native）；F/L 以首个 `tool/call` 为界。展示隐藏不等于运行时 binding 安全隔离，真实取证见实机流程。
 - AI 不执行生产部署；仓库验收通过后由用户操作部署与实测。工作区外写入被委派边界拒绝时，不逐条尝试，不设置 `sandbox_permissions`，只在汇报中列越界清单。

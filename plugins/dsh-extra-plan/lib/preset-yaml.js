@@ -547,7 +547,7 @@ function scalarTypeFor(definitionOrLocator) {
 
 /**
  * 保格式定点改写 YAML 标量（按 sourceLocator 定位）。仅用于迁移期文本改写，
- * 纯字符串处理、不写文件；dsh 0.1.7-rc.1 的宿主写链一律走 configEditor.edit。
+ * 纯字符串处理、不写文件；宿主写链一律走 configEditor.edit。
  */
 export function patchYamlScalar(text, definitionOrLocator, value, options = {}) {
   const locator = locatorFor(definitionOrLocator)

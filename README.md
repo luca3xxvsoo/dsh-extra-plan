@@ -57,10 +57,6 @@ dsh plugin --profile qqbot remove dsh-extra-plan-qqbot
 
 仅在 **Windows 环境实测正常**，**Linux/macOS 尚未在真实环境验证**
 
-### dsh-v0.1.7-rc2 已知问题
-
-cordis_inspect_query 无超时导致探查者、执行者、验收者调用直接卡死。避免方案：创造模式开关设置为关
-
 ## 4. 可配置项
 
 DSH web界面 -> 插件 -> 按需规划模式配置

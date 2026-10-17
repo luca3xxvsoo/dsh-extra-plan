@@ -66,6 +66,281 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
 - 实机/批次：`线索-闸门流程证据-962d9715-20260929141857735-8148-0.md`、`线索-闸门流程顺序探查-ea77ca39-20260929143056782-8148-0.md`、`线索-实机闸门流程核对-a916aad4-20260929142411974-8148-0.md`。
 - 原始当前入口与源码证据：`ai-机制设计.md`（备份版）、`plugins/dsh-extra-plan/index.js`、`lib/save-contract.js`、`lib/save-persistence.js`、`lib/model-routing.js`、`lib/sdk-text-cache.js`、`plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml`。
 
+## 0.1.7 / 0.2.0 阶段宿主契约变化依据
+
+> 本节由「单版本口径（仅 dsh 0.2.1-rc.2）」清理迁入：以下 27 条注释原文原先散落在插件源码、预设作者源、QQBot patch 与回归脚本里，说明「为什么当前实现是这个形状」。清理后活代码不再保留版本依据注释，原文逐字存此备查。行号为清理前快照行号（原文件镜像见 `.extra-plan/backup-dsh-extra-plan-清理0-1-7与0-2-0残留-20261018000842/`）。本节只作历史依据，不是当前合同；当前契约以源码、[ai-机制设计](ai-机制设计.md) 与回归脚本为准。
+### 插件主入口 `plugins/dsh-extra-plan/index.js`
+
+**1. `plugins/dsh-extra-plan/index.js:186`**（原文 186-194 行）
+
+```text
+// 注入形状（已按宿主 0.1.7-rc.2 源码核实；2026-09-25 订正）：developer/message 在已知事件白名单
+// （dsh-session lib/types/known-event-types.js L36）；append 必须带 surfaceOp:'append'
+// （dsh-session lib/index.js L294-308）；message 需非空 id、role='developer'、source.kind
+// 非空字符串、content 数组（同文件 L1151-1176）；纯文本 content 不得带 headerSeq（L246-256）。
+// **原记「invariant.js 无该分支（故无需坐标）」已被宿主源码证伪**：v4 行准入要求
+// developer/message 自带 turn/step 且均为 ≥1 的整数，宿主 append 只补 seq/time、绝不补坐标，
+// 坐标必须由调用方给出（实机报错为 SessionFormatError: developer/message turn must be a
+// non-negative safe integer）；关系校验 companion 未挂载于活动 profile，故只需满足行准入。
+// source 同须用生产者自有 kind，v4 禁止旧包裹形状（kind 取旧兜底值 plugin + plugin 包名字段）；本插件统一 plugin:dsh-extra-plan。
+```
+
+- 解释的当前行为：`malformedRecovery` 注入 developer/message 时必须自带 turn/step 坐标、`surfaceOp:'append'`、`source.kind` 用插件自有值 `plugin:dsh-extra-plan`；纯文本 content 不带 headerSeq。当前代码的注入形状按此实现。
+
+**2. `plugins/dsh-extra-plan/index.js:377`**（原文 377-378 行）
+
+```text
+  // 预设目录后 skills.register 两个 SKILL.md。dsh 0.1.7-rc.1 的 resolve() 只返回 {id[,broken]}，
+  // 恒无 path → 整块静默失效（预设挂载成功但 skill 永远不注册）。
+```
+
+- 解释的当前行为：说明为什么不能在 apply 期经 `agentPresets.resolve('cordis')` + `skills.register` 注册官方 SKILL.md：resolve 只返回 `{id[,broken]}`，恒无 path，整块静默失效。
+
+**3. `plugins/dsh-extra-plan/index.js:381`**（原文 381-382 行）
+
+```text
+  // skill-filesystem 行进入本预设组合；0.2.0-rc.2 换通道：旧 customSkillDirs 经 ctx.fs 扫 asar 抛
+  // 非 absent 错被 registry 整体跳过，故改 bundledSkillDir（trustedHost → node:fs）+ watch: false；
+```
+
+- 解释的当前行为：当前 C=1 创造 skill 面改由预设 `skill-filesystem` 行 `bundledSkillDir`（trustedHost → node:fs、watch:false）静态注册。
+
+**4. `plugins/dsh-extra-plan/index.js:440`**（原文 440-442 行）
+
+```text
+  // HK1（0.1.7 换代）：agent/session-start 已删除；agent/created 升为 serial——
+  // 监听器被宿主 await，任何抛出都会让会话创建失败。故整块必须吞错：内部异常只
+  // console.warn 留痕，绝不放任传播（gateRuntime 已在 apply 期求值，此处不再抛）。
+```
+
+- 解释的当前行为：`agent/created` 为 serial：监听器内异常只 `console.warn` 留痕，不得放任传播导致会话创建失败。
+
+**5. `plugins/dsh-extra-plan/index.js:460`**（原文 460-461 行）
+
+```text
+  // （0.2.0-rc.2 换通道，旧 customSkillDirs 走 ctx.fs 扫 asar 会抛错；不再靠「不注册」），
+  // 一律从模型可见 catalog 隐藏——只影响名字可见性，skill 仍注册、按名调用仍可加载。
+```
+
+- 解释的当前行为：C=0 用 catalog 投影隐藏三个官方 cordis skill 名；skill 仍静态注册、按名调用仍可加载，不靠「不注册」实现隐藏。
+
+**6. `plugins/dsh-extra-plan/index.js:681`**（原文 681 行）
+
+```text
+          // 0.1.7 服务名换代：codeRuntime → ptcRuntime（dsh-tools 的 PTC 运行服务）。
+```
+
+- 解释的当前行为：SDK renderer 语言取 `ctx.get('ptcRuntime').language`；旧服务名 `codeRuntime` 已不存在，缺失时回退 `typescript`。
+
+### 预设作者源 `plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml`
+
+**7. `plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml:99`**（原文 99-103 行）
+
+```text
+  # 【换通道修法】dsh 0.2.0-rc.2 下 customSkillDirs 经 ctx.fs 扫 asar 内路径会抛非 absent 错误
+  # （realpath.native 非 asar 感知 + stat bigint 混算），provider 被 registry 整体跳过 → catalog 一条不发
+  # （官方 cordis 预设同坏，session-ffcf6cc8 实测）。故改用 bundledSkillDir：trustedHost=true → 走裸
+  # node:fs 通道（Electron 对 asar 感知），trustedHost 语义 = 跳过 ctx.fs 沙箱、指向官方只读内容；
+  # 并加 watch: false（asar 目录不可 watch，否则 list() complete=false 同样不发 catalog）。
+```
+
+- 解释的当前行为：`skill-filesystem` 行改用 `bundledSkillDir` + `watch: false` 的换通道理由（asar 下的 ctx.fs 通道会抛非 absent 错、provider 被 registry 整体跳过、catalog 一条不发）。
+
+**8. `plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml:301`**（原文 301-303 行）
+
+```text
+    # 0.1.7：旧的 worker-thread 工作流行（worker-thread 替身包）整包消失，替身为 dsh-workflow-ptc
+    # （其行实例 PtcWorkflowEngine 继承 dsh-workflow 的 WorkflowEngine，仍注册 workflowEngine，
+    # 由本组 isolate.workflowEngine 覆盖）；provider 保留本仓自定义薄委托层名。
+```
+
+- 解释的当前行为：预设 workflow 行替身为 `dsh-workflow-ptc`（PtcWorkflowEngine 继承 WorkflowEngine，仍注册 workflowEngine），由本组 `isolate.workflowEngine` 覆盖。
+
+**9. `plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml:348`**（原文 348-357 行）
+
+```text
+# 0.1.7-rc.2 起 dsh-tool-cordis 只注册两个只读工具：列表工具（cordis_inspect_list，host
+# 即时返回）与查询工具（cordis_inspect 系列的 _query 后缀名，对 client 平台无超时、直到页面
+# 应答或取消才返回，见 step-01 S-宿主真值）；cordis_run 等 5 名已不存在，故不在任何 deny
+# 清单中列出（deny 未知名会使宿主 tools.restrict() 抛错、子代理创建失败）。若某受支持版本
+# 仍注册该 5 名工具：主会话由插件硬闸门按 write/edit 同规则管控（路由未确认拒绝、批准/直行
+# 放行）；执行者/规划/验收/探查四子代理改由运行时闸门（plannerGateReason /
+# childReadonlyGateReason）兜住。查询工具对 client 平台可能永久 pending（等页面应答），
+# 0.2.1 起四角色预设（本文件第二文档）不挂 dsh-tool-cordis，查询工具天然不可见
+# （探查者为一次性子代理，卡死即整条线索丢失）；主会话仍放行；列表工具 host 即时返回、
+# 无卡死风险，不入任何 deny。
+```
+
+- 解释的当前行为：`dsh-tool-cordis` 只注册两个只读工具（cordis_inspect_list 与 cordis_inspect 的 _query 名），`cordis_run` 等 5 名不得写进 deny（未知名会让 `tools.restrict()` 抛错）；第二文档四角色不挂该行，故查询工具对子代理天然不可见。
+
+### QQBot 静态 patch `plugins/dsh-extra-plan-qqbot/cordis.patch.yml`
+
+**10. `plugins/dsh-extra-plan-qqbot/cordis.patch.yml:2`**（原文 2-3 行）
+
+```text
+# 【待有 QQBOT 环境再测试，本机不做验证】本文件两行按 dsh 0.1.7-rc.1 新包族静态重写，
+# 无 qqbot 0.5.0 包可实测（方案 U3/U4 未核实项）。
+```
+
+- 解释的当前行为：本文件按 dsh `0.2.1-rc.2` 包族维护两行 insert；本机无 qqbot 0.5.0 包可实测，该环境项仍是 HUMAN。
+
+**11. `plugins/dsh-extra-plan-qqbot/cordis.patch.yml:8`**（原文 8-11 行）
+
+```text
+    # 0.1.7-rc.1：旧 code-runtime 行（worker-thread 族的 code-runtime 包）整包消失，
+    # 等价行 = ptc-runtime（dsh-base 同形行：id: ptc-runtime / name:
+    # '@deepseek-ai/dsh-ptc-runtime-node'，提供 ctx.ptcRuntime）。
+    # 若目标 qqbot 宿主的基础组合已带该行，本行须删除以免重复注册。
+```
+
+- 解释的当前行为：patch 里 insert 的 `ptc-runtime` 行提供 `ctx.ptcRuntime`；若目标 qqbot 宿主基础组合已带该行，本行必须删除以免重复注册。
+
+**12. `plugins/dsh-extra-plan-qqbot/cordis.patch.yml:14`**（原文 14-16 行）
+
+```text
+    # 0.1.7-rc.1：旧 agent-presets 行（复数包）整包消失，替身 = dsh-agent-preset-registry
+    # （Config{default, selectedDefault}；modeSelectionEnabled 已在 dsh 0.1.7-rc.2 删除，勿再写；
+    # 预设声明行由各 bundle patch 提供）。
+```
+
+- 解释的当前行为：patch 里 insert 的 `agent-preset-registry` 行提供 `Config{default, selectedDefault}`；`modeSelectionEnabled` 已不属于该行契约。
+
+**13. `plugins/dsh-extra-plan-qqbot/cordis.patch.yml:15`**（原文 15 行）
+
+```text
+    # （Config{default, selectedDefault}；modeSelectionEnabled 已在 dsh 0.1.7-rc.2 删除，勿再写；
+```
+
+- 解释的当前行为：同上块续行：`modeSelectionEnabled` 不得再写，预设声明行由各 bundle patch 提供。
+
+### 回归脚本 `pe-test/tools/step-04-路由与写闸门.mjs`
+
+**14. `pe-test/tools/step-04-路由与写闸门.mjs:58`**（原文 58-59 行）
+
+```text
+// （本机 npm 全局 dsh 实测 0.1.7-rc.2，profiles/web 另有 profile 内副本）；
+// 故 Config 的 volatile/默认值契约改用源码文本静态核对（机械可核对），不依赖本机 schemastery 版本。
+```
+
+- 解释的当前行为：该测试不 import `lib/settings.js`（顶层依赖宿主 schemastery），改为源码文本静态核对 Config 的 volatile/默认值契约，避免依赖本机 schemastery 版本。
+
+**15. `pe-test/tools/step-04-路由与写闸门.mjs:268`**（原文 268-270 行）
+
+```text
+// 0.1.7 取径订正：C=1 创造 skill 面不再经 agentPresets.resolve('cordis') 运行期注册
+// （该 resolve 在 0.1.7 只返回 {id[,broken]}，path 恒 undefined），改为预设 skill-filesystem
+// 行 config.customSkillDirs 静态注册——故 agentPresets/skills mock 与其断言整体退役。
+```
+
+- 解释的当前行为：创造 skill 面改为预设行静态注册后，`agentPresets`/`skills` mock 及其断言整体退役；mock harness 只保留 ptcRuntime 等现行服务。
+
+**16. `pe-test/tools/step-04-路由与写闸门.mjs:269`**（原文 269 行）
+
+```text
+// （该 resolve 在 0.1.7 只返回 {id[,broken]}，path 恒 undefined），改为预设 skill-filesystem
+```
+
+- 解释的当前行为：同上块续行：resolve 只返回 `{id[,broken]}`、path 恒 undefined，这是静态注册取径的直接依据。
+
+**17. `pe-test/tools/step-04-路由与写闸门.mjs:279`**（原文 279 行）
+
+```text
+      // 0.1.7 服务名换代：codeRuntime → ptcRuntime（SDK renderer 语言来源）。
+```
+
+- 解释的当前行为：harness 的 `ctx.get('ptcRuntime')` mock 对应插件 SDK renderer 语言来源，服务名为换代后的 `ptcRuntime`。
+
+**18. `pe-test/tools/step-04-路由与写闸门.mjs:598`**（原文 598-599 行）
+
+```text
+// 0.1.7 换代：agent/session-start 已删除，会话启动注册改由 agent/created（serial，payload
+// { agent, source }) 承担——监听器被宿主 await，抛错即会话创建失败。
+```
+
+- 解释的当前行为：回归夹具统一用 `agent/created`（serial，payload `{ agent, source }`）驱动会话启动注册，不再有 `agent/session-start` 通道。
+
+**19. `pe-test/tools/step-04-路由与写闸门.mjs:1270`**（原文 1270 行）
+
+```text
+      // 0.1.7 换代：dsh-tool-jobs 的完成通知源为 { kind:'tool-jobs', form:'notice' }（旧 plugin 兜底 kind 已废）。
+```
+
+- 解释的当前行为：tool-jobs 完成通知的源形状是 `{ kind:'tool-jobs', form:'notice' }`；旧 `plugin` 兜底 kind 不再参与 job_output 重复调用放行。
+
+**20. `pe-test/tools/step-04-路由与写闸门.mjs:2211`**（原文 2211-2212 行）
+
+```text
+// C=1 创造 skill 面（0.2.0-rc.2 换通道）：预设 skill-filesystem 行的 config.bundledSkillDir
+// 指向官方包内 skills/（含 3 个 SKILL.md 目录）并配 watch: false；旧键 customSkillDirs 已删（坏通道）。
+```
+
+- 解释的当前行为：装配矩阵对 `skill-filesystem` 行的期望是 `config.bundledSkillDir` 指向官方包内 skills/ 且 `watch: false`；旧键 `customSkillDirs` 已删。
+
+**21. `pe-test/tools/step-04-路由与写闸门.mjs:2666`**（原文 2666-2668 行）
+
+```text
+  // 夹具 = profile patch 内的 settings 行（0.1.7 新载体：captureRowSettings 按
+  // id='dsh-extra-plan-settings' + config.<key> 定位），exploreBudget 取与内置默认 18
+  // 不同的值，确保「读到文件」与「回退 fallback」可区分。
+```
+
+- 解释的当前行为：live-config 夹具取 profile patch 内的 `settings` 行（`id='dsh-extra-plan-settings'` + `config.<key>` 定位），exploreBudget 取非默认值以区分「读到文件」与「回退 fallback」。
+
+### 其它回归脚本与共享模块
+
+**22. `pe-test/tools/step-00-全流程回归.mjs:931`**（原文 931 行）
+
+```text
+// 0.1.7 换代：agent/session-start 已删除，启动注册改由 agent/created（serial）承担。
+```
+
+- 解释的当前行为：schema 段启动注册由 `agent/created` 承担，回归脚本直接调用其监听器。
+
+**23. `pe-test/tools/step-00-跨平台写拦截.mjs:104`**（原文 104 行）
+
+```text
+  'nano notes.txt',       // 文本编辑器写文件：拦截（v0.1.7 起 BASH_MUTATION 覆盖 nano/vim/vi）
+```
+
+- 解释的当前行为：`nano`/`vim`/`vi` 文本编辑器写文件归入 `BASH_MUTATION` 拦截集合，用例数据保持该行。
+
+**24. `plugins/dsh-extra-plan/lib/executor-spawn.js:9`**（原文 9-10 行）
+
+```text
+// config.deny（11 项，含 subagent_plan；0.1.7 起宿主已无 cordis 执行口工具 cordis_run，
+// 故不列出——deny 未知名会使宿主 tools.restrict() 抛错），预设加载路径下本清单不可达；
+```
+
+- 解释的当前行为：`DEFAULT_DENY` 仅作 fallback（11 项，含 subagent_plan）；不列 `cordis_run` 的原因是 deny 未知名会让 `tools.restrict()` 抛错，预设加载路径恒以 `config.deny` 为准。
+
+**25. `pe-test/_shared/host-deps.mjs:14`**（原文 14-15 行）
+
+```text
+//   不写盘）——profile 副本会被 DSH 优先解析并顶替宿主同名运行时行（0.1.7-rc.1 副本缺 tool-update 投影 →
+//   会话内工具集变化产生的线上 tool_removal 被 API 422 拒绝、整会话报废；详见 ai-宿主耦合台账.md CF12）。
+```
+
+- 解释的当前行为：现场告警语义：profile 副本会被 DSH 优先解析并顶替宿主同名运行时行（缺 tool-update 投影），线上 `tool_removal` 会被 API 422 拒绝、整会话报废；只告警不改解析。
+
+### 插件库 `plugins/dsh-extra-plan/lib`
+
+**26. `plugins/dsh-extra-plan/lib/assembly-presentation.js:20`**（原文 20-21 行）
+
+```text
+// C=1 创造模式官方 skill 面（skill-filesystem 行 bundledSkillDir 静态注册，0.2.0-rc.2 换通道：
+// 旧 customSkillDirs 经 ctx.fs 扫 asar 抛非 absent 错 → 改 trustedHost/node:fs 通道 + watch: false）：
+```
+
+- 解释的当前行为：`CREATIVE_SKILL_NAMES` 对应 `skill-filesystem` 行的 `bundledSkillDir` 静态注册（trustedHost/node:fs 通道 + watch:false），C=0 时只做投影隐藏。
+
+**27. `plugins/dsh-extra-plan/lib/preset-yaml.js:550`**（原文 550 行）
+
+```text
+ * 纯字符串处理、不写文件；dsh 0.1.7-rc.1 的宿主写链一律走 configEditor.edit。
+```
+
+- 解释的当前行为：`patchYamlScalar` 只做纯字符串、保格式的迁移期文本改写，不写文件；宿主写链一律走 `configEditor.edit`。
+
 ## 当前结论回链
 
 当前必须继续遵守的结论只有：拒绝不清状态、取消清阶段；组拒无副作用；方案/验收成对原子落盘；strict 模型路由必须真实 probe 或可靠 fallback；A/C/M 仅是模型可见投影；P2-2 cache 不跨 Agent；usage final fold 同步且按 session 隔离。任何历史描述与当前合同冲突时，以 [ai-机制设计](ai-机制设计.md) 和源码/回归真源为准。 2026-09-29 文档索引补充：旧公开 preset 声明与 client-bridge 已退役；两公开行、内部 carrier、纯 definition 与官方 adapter 的事实以该命名批次方案/验收和源码为准，不改写本段历史事实。

@@ -82,7 +82,7 @@ plugins:
     name: '@deepseek-ai/dsh-skill-filesystem'
     # C=1 创造模式的官方 skill 面：静态根为 @deepseek-ai/dsh-agent-preset 包内 skills/（含
     # editing-cordis-compositions、cordis-plugin-development、cordis-composition-reference 等 SKILL.md）。
-    # 【换通道修法】dsh 0.2.0-rc.2 下 customSkillDirs 经 ctx.fs 扫 asar 内路径会抛非 absent 错误
+    # 【换通道修法】旧 customSkillDirs 经 ctx.fs 扫 asar 内路径会抛非 absent 错误
     # （realpath.native 非 asar 感知 + stat bigint 混算），provider 被 registry 整体跳过 → catalog 一条不发
     # （官方 cordis 预设同坏，session-ffcf6cc8 实测）。故改用 bundledSkillDir：trustedHost=true → 走裸
     # node:fs 通道（Electron 对 asar 感知），trustedHost 语义 = 跳过 ctx.fs 沙箱、指向官方只读内容；
@@ -284,7 +284,7 @@ plugins:
             - todo_write
             - subagent_plan
 
-      # 0.1.7：旧的 worker-thread 工作流行（worker-thread 替身包）整包消失，替身为 dsh-workflow-ptc
+      # 旧的 worker-thread 工作流行（worker-thread 替身包）整包消失，替身为 dsh-workflow-ptc
       # （其行实例 PtcWorkflowEngine 继承 dsh-workflow 的 WorkflowEngine，仍注册 workflowEngine，
       # 由本组 isolate.workflowEngine 覆盖）；provider 保留本仓自定义薄委托层名。
       # 【暂不挂载】以下 workflow-ptc / tool-workflow / tool-ralph 三段在 dsh 0.2.1-rc.2 下不挂载：
@@ -331,7 +331,7 @@ plugins:
 
   # ── cordis（官方创造模式工具集，只读引用官方包） ──────────────────────────
 
-  # 0.1.7-rc.2 起 dsh-tool-cordis 只注册两个只读工具：列表工具（cordis_inspect_list，host
+  # dsh-tool-cordis 只注册两个只读工具：列表工具（cordis_inspect_list，host
   # 即时返回）与查询工具（cordis_inspect 系列的 _query 后缀名，对 client 平台无超时、直到页面
   # 应答或取消才返回，见 step-01 S-宿主真值）；cordis_run 等 5 名已不存在，故不在任何 deny
   # 清单中列出（deny 未知名会使宿主 tools.restrict() 抛错、子代理创建失败）。若某受支持版本

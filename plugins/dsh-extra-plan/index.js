@@ -183,7 +183,7 @@ export const Config = z.object({
 // per-session 重试账本 malformedRetried 按 sessionId 分桶（本插件每个会话各持一份 apply
 // 实例，模块级 Map + sessionId 键在「模块共享/每会话独立」两种装载模型下语义一致），
 // disposed 时按 sessionId 回收（见 agent/disposed 监听器）。
-// 注入形状（已按宿主 0.1.7-rc.2 源码核实；2026-09-25 订正）：developer/message 在已知事件白名单
+// 注入形状（已按当前宿主源码核实；2026-09-25 订正）：developer/message 在已知事件白名单
 // （dsh-session lib/types/known-event-types.js L36）；append 必须带 surfaceOp:'append'
 // （dsh-session lib/index.js L294-308）；message 需非空 id、role='developer'、source.kind
 // 非空字符串、content 数组（同文件 L1151-1176）；纯文本 content 不得带 headerSeq（L246-256）。
@@ -374,11 +374,11 @@ export function apply(ctx, config) {
 
   // ── C=1 创造模式的官方 skill 面（T5-3 取径订正）────────────────────────────
   // 旧实现（0.1.2-rc.1~0.1.5-rc.2）在 apply 期经 agentPresets.resolve('cordis') 取 shipped
-  // 预设目录后 skills.register 两个 SKILL.md。dsh 0.1.7-rc.1 的 resolve() 只返回 {id[,broken]}，
+  // 预设目录后 skills.register 两个 SKILL.md。宿主 resolve() 只返回 {id[,broken]}，
   // 恒无 path → 整块静默失效（预设挂载成功但 skill 永远不注册）。
   // 现取径 = 静态注册：预设 skill-filesystem 行的 config.bundledSkillDir 指向
   // @deepseek-ai/dsh-agent-preset 包内 skills/（见 agent.cordis.yml），三个 SKILL.md 随
-  // skill-filesystem 行进入本预设组合；0.2.0-rc.2 换通道：旧 customSkillDirs 经 ctx.fs 扫 asar 抛
+  // skill-filesystem 行进入本预设组合；换通道后旧 customSkillDirs 经 ctx.fs 扫 asar 抛
   // 非 absent 错被 registry 整体跳过，故改 bundledSkillDir（trustedHost → node:fs）+ watch: false；
   // creativeMode=false 不再靠「不注册」，而由 assembly-presentation 的 CREATIVE_SKILL_NAMES 在
   // catalog 投影里隐藏（只去掉名字可见性：skill 仍注册，按名调用依旧可加载，不等于真隔离）。
@@ -437,7 +437,7 @@ export function apply(ctx, config) {
   // 1) 会话启动：子代理基线（账本 + 沙箱下限）；规划子代理与主会话注册 save_plan
   //    （主会话侧任意路由态放行：受限规划工件，判定在 mainGateReason 兜底）；主会话与探查子代理
   //    注册 save_probe（scoped；recompose 不重发 session-start，pre-step 兜底）。
-  // HK1（0.1.7 换代）：agent/session-start 已删除；agent/created 升为 serial——
+  // HK1（事件与状态模型换代）：agent/session-start 已删除；agent/created 升为 serial——
   // 监听器被宿主 await，任何抛出都会让会话创建失败。故整块必须吞错：内部异常只
   // console.warn 留痕，绝不放任传播（gateRuntime 已在 apply 期求值，此处不再抛）。
   ctx.on('agent/created', (payload) => {
@@ -457,7 +457,7 @@ export function apply(ctx, config) {
   // exec.arguments 与消息对象均 deepFreeze，拼接走 pre-step 消息替换通道，
   // 与 agent-instructions 基线注入同通道）。
   // C=0：三个官方 cordis skill 由 skill-filesystem 的 bundledSkillDir 静态注册进本预设组合
-  // （0.2.0-rc.2 换通道，旧 customSkillDirs 走 ctx.fs 扫 asar 会抛错；不再靠「不注册」），
+  // （换通道后旧 customSkillDirs 走 ctx.fs 扫 asar 会抛错；不再靠「不注册」），
   // 一律从模型可见 catalog 隐藏——只影响名字可见性，skill 仍注册、按名调用仍可加载。
   // C=1：保留原 HP1 首轮暂隐逻辑（仅 A=1、F、main/planner、M=ptc 的极简首轮）。
   function shouldHideCreativeCatalog(agent) {
@@ -678,7 +678,7 @@ export function apply(ctx, config) {
       if (!anchoredFirst && hasSection(result.sections, SDK_SECTION_NAME)) {
         let language = 'typescript'
         try {
-          // 0.1.7 服务名换代：codeRuntime → ptcRuntime（dsh-tools 的 PTC 运行服务）。
+          // 服务名换代：codeRuntime → ptcRuntime（dsh-tools 的 PTC 运行服务）。
           const runtime = typeof ctx.get === 'function' ? ctx.get('ptcRuntime') : undefined
           if (runtime !== undefined && runtime !== null && typeof runtime.language === 'string') language = runtime.language
         } catch (error) { /* 缺少 ptcRuntime 时按测试/兼容默认使用 TypeScript renderer */ }

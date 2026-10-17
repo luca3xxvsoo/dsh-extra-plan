@@ -159,7 +159,7 @@ if (stillPresent.length === 0) {
 }
 if (DEFAULT_DENY.includes('subagent_plan') === true && DEFAULT_DENY.includes('cordis_run') === false) {
   pass += 1
-  console.log('PASS  S1 DEFAULT_DENY 含 subagent_plan 且不含 cordis_run（0.1.7 宿主无此工具）')
+  console.log('PASS  S1 DEFAULT_DENY 含 subagent_plan 且不含 cordis_run（当前宿主无此工具）')
 } else {
   fail += 1
   console.log('FAIL  S1 DEFAULT_DENY 缺少 subagent_plan 或仍含 cordis_run')
@@ -407,12 +407,19 @@ if (toolCordisRow !== undefined && toolCordisRow.name === '@deepseek-ai/dsh-tool
   fail += 1
   console.log('FAIL  T1 资产预设 tool-cordis 行被改动或形状不符')
 }
-if (cordisTools.length === 2 && agentText.includes('# 0.1.7-rc.2 起 dsh-tool-cordis 只注册') && toolCordisRow !== undefined) {
+// 结构化核对（不依赖 agent.cordis.yml 的注释原文）：静态集合恰为两个只读工具、
+// tool-cordis 行不带 config、且任何 deny 清单都不列已不存在的执行口 cordis_run
+// （deny 未知名会让宿主 tools.restrict() 抛错）。
+const denyHasCordisRun = all.some((row) => row.config !== null && typeof row.config === 'object'
+  && Array.isArray(row.config.deny) && row.config.deny.includes('cordis_run'))
+const toolCordisRowStructural = toolCordisRow !== undefined && toolCordisRow.config === undefined
+if (cordisTools.length === 2 && cordisTools.includes('cordis_run') === false
+  && toolCordisRowStructural && denyHasCordisRun === false) {
   pass += 1
-  console.log('PASS  Cordis 静态集合恰有 2 项（rc.2 宿主实际注册集）')
+  console.log('PASS  Cordis 静态集合恰有 2 项只读工具、不含执行口，且 deny 清单未列 cordis_run（宿主实际注册集）')
 } else {
   fail += 1
-  console.log('FAIL  Cordis 静态集合不是 2 项')
+  console.log('FAIL  Cordis 静态集合不是 2 项、形状不符或 deny 列了执行口')
 }
 
 // S2：宿主 runtime 包不得进入 dependencies；只能由 peerDependencies 声明。
@@ -436,8 +443,6 @@ check('S2 peerDependencies 不使用 caret/compatibility 豁免，且 schemaster
 
 if (DSH_INSTALL_ROOT === null || targetDsh === null || targetDshLlm === null) {
   console.log('SKIP  {"scope":"HOST-VERSION","reason":"DSH_INSTALL_ROOT 未提供完整 dsh/dsh-llm manifests，未伪造宿主结论"}')
-} else if (targetDshVersion === '0.2.0-rc.1' || targetDshLlmVersion === '0.2.0-rc.1') {
-  console.log('HUMAN  0.2.0-rc.1【未核实·HUMAN】：本脚本只可记录 peer/semver 门控，API/自动回归/实机仍待 rc.1 设备')
 } else {
   let semver = null
   try { semver = createRequire(join(DSH_INSTALL_ROOT, 'package.json'))('semver') } catch { semver = null }
@@ -451,7 +456,7 @@ if (DSH_INSTALL_ROOT === null || targetDsh === null || targetDshLlm === null) {
   check('S2 语义门拒绝四个旧版（0.1.7-rc.1/0.1.7-rc.2/0.2.0-rc.1/0.2.0-rc.2）',
     semver !== null && declaredDsh !== '' && LEGACY_HOST_VERSIONS.every((version) => !semver.satisfies(version, declaredDsh, { includePrerelease: true })))
 }
-console.log('HUMAN  旧宿主 0.1.7/0.2.0 与实机模型行为【未核实·HUMAN】：本脚本只证明单一声明范围的语义门，不证明旧版 API/自动回归/实机通过')
+console.log('HUMAN  旧宿主与实机模型行为【未核实·HUMAN】：本脚本只证明单一声明范围的语义门，不证明旧版 API/自动回归/实机通过')
 
 // S3：包级与全局管理行 locale 通过 exports 真实解析；旧 preset-sync 通道必须退役。
 const LOCALE_CHANNELS = [

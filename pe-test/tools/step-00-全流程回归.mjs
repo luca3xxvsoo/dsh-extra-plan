@@ -928,7 +928,7 @@ const schemaAgent = {
   session: { header: { id: 'schema-main' }, snapshotEvents: () => [] },
   ctx: { get: (name) => name === 'tools' ? schemaTools : undefined },
 }
-// 0.1.7 换代：agent/session-start 已删除，启动注册改由 agent/created（serial）承担。
+// 事件换代：agent/session-start 已删除，启动注册改由 agent/created（serial）承担。
 schemaRegistration.listeners['agent/created'][0]({ agent: schemaAgent, source: 'startup' })
 
 const schemaSaveProbe = schemaRegistration.registered.find((definition) => definition.name === 'save_probe')

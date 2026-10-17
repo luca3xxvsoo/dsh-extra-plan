@@ -55,7 +55,7 @@ import { CREATIVE_SKILL_NAMES as CREATIVE_SKILL_NAMES_FOR_TEST } from '../../plu
 import { SETTING_DEFINITIONS as SETTING_DEFINITIONS_E, SETTING_GROUPS as SETTING_GROUPS_E, PRESET_ROW_ID as PRESET_ROW_ID_E, SETTINGS_ROW_ID as SETTINGS_ROW_ID_E, EXTRA_PLAN_SETTING_DEFINITIONS as EXTRA_PLAN_SETTING_DEFINITIONS_E, findPluginsRow as findPluginsRowE } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
 import { ASSET_DEFINITION_FILE as ASSET_DEFINITION_FILE_E, roleDefinitionOf } from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
 // 说明：不 import lib/settings.js——它顶层 import '@deepseek-ai/schemastery'，解析环境依赖宿主副本
-// （本机 npm 全局 dsh 实测 0.1.7-rc.2，profiles/web 另有 profile 内副本）；
+// （本机 npm 全局 dsh 与 profiles/web 的 profile 内副本都可能提供该依赖）；
 // 故 Config 的 volatile/默认值契约改用源码文本静态核对（机械可核对），不依赖本机 schemastery 版本。
 import { readFileSync as readFileSyncE } from 'node:fs'
 const decisions = plugin.decisions
@@ -265,8 +265,8 @@ for (const [rowId, toolName, presetId] of [['tool-subagent', 'subagent', 'extra-
 }
 
 // ── ③ 真实监听器拦截行为（[任务5]，mock ctx 走插件 apply） ─────────────
-// 0.1.7 取径订正：C=1 创造 skill 面不再经 agentPresets.resolve('cordis') 运行期注册
-// （该 resolve 在 0.1.7 只返回 {id[,broken]}，path 恒 undefined），改为预设 skill-filesystem
+// 取径订正：C=1 创造 skill 面不再经 agentPresets.resolve('cordis') 运行期注册
+// （该 resolve 只返回 {id[,broken]}，path 恒 undefined），改为预设 skill-filesystem
 // 行 config.customSkillDirs 静态注册——故 agentPresets/skills mock 与其断言整体退役。
 function makeHarness(config = {}) {
   const listeners = {}
@@ -276,7 +276,7 @@ function makeHarness(config = {}) {
     systemPrompt,
     get: (name) => {
       if (name === 'systemPrompt') return systemPrompt
-      // 0.1.7 服务名换代：codeRuntime → ptcRuntime（SDK renderer 语言来源）。
+      // 服务名换代：codeRuntime → ptcRuntime（SDK renderer 语言来源）。
       if (name === 'ptcRuntime') return { language: typeof config.language === 'string' ? config.language : 'typescript' }
       // 四工具治理（v0.4.0）：agents 服务 mock——缺省不注入（undefined，保持
       // createAgentRuntime/isLiveDelegation 的 agents 缺席豁免路径不破坏 child 判定）；
@@ -595,7 +595,7 @@ const claimChild = (id, parentSession, tools) => ({
   options: {},
   ctx: { get: (n) => (n === 'tools' ? tools : undefined) },
 })
-// 0.1.7 换代：agent/session-start 已删除，会话启动注册改由 agent/created（serial，payload
+// 事件换代：agent/session-start 已删除，会话启动注册改由 agent/created（serial，payload
 // { agent, source }) 承担——监听器被宿主 await，抛错即会话创建失败。
 const agentCreated = (listeners, agent) => {
   const entry = listeners['agent/created']
@@ -1267,7 +1267,7 @@ checkTrue('R115 主会话 direct 态 run_code 组内 job_kill 成员 → allow',
   sharedEvents.push({
     type: 'user/message',
     data: {
-      // 0.1.7 换代：dsh-tool-jobs 的完成通知源为 { kind:'tool-jobs', form:'notice' }（旧 plugin 兜底 kind 已废）。
+      // dsh-tool-jobs 的完成通知源为 { kind:'tool-jobs', form:'notice' }（旧 plugin 兜底 kind 已废）。
       id: 'tj-j1-notice',
       role: 'user',
       source: { kind: 'tool-jobs', form: 'notice' },
@@ -2208,7 +2208,7 @@ checkTrue('Cordis 固定集合恰有 2 项且名称唯一', MATRIX_CORDIS_TOOLS.
 const projectionSource = { tools: [{ name: 'read' }, { name: MATRIX_CORDIS_TOOLS[0] }], sections: [{ name: 'tool:cordis', text: 'hidden' }, { name: 'tools:sdk', text: 'old' }] }
 const projectionCopy = projectAssemblyForPresentation(projectionSource, projectionSource.tools, { sdkText: 'read:' })
 checkTrue('projectAssemblyForPresentation 返回新 assembly 且不原地修改', projectionCopy !== projectionSource && projectionSource.tools.length === 2 && projectionSource.sections[0].name === 'tool:cordis' && projectionCopy.tools.length === 1 && projectionCopy.tools[0].name === 'read' && sectionText(projectionCopy, 'tool:cordis') === '' && sectionText(projectionCopy, 'tools:sdk') === 'read:')
-// C=1 创造 skill 面（0.2.0-rc.2 换通道）：预设 skill-filesystem 行的 config.bundledSkillDir
+// C=1 创造 skill 面（换通道后）：预设 skill-filesystem 行的 config.bundledSkillDir
 // 指向官方包内 skills/（含 3 个 SKILL.md 目录）并配 watch: false；旧键 customSkillDirs 已删（坏通道）。
 const expectedCreativeSkills = ['cordis-plugin-development', 'editing-cordis-compositions', 'cordis-composition-reference']
 {
@@ -2663,7 +2663,7 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
 // 五个场景覆盖显式/env 路径、apply 集成、stamp 变化和缺文件回退。
 {
   const lcDir = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-live-config-'))
-  // 夹具 = profile patch 内的 settings 行（0.1.7 新载体：captureRowSettings 按
+  // 夹具 = profile patch 内的 settings 行（当前载体：captureRowSettings 按
   // id='dsh-extra-plan-settings' + config.<key> 定位），exploreBudget 取与内置默认 18
   // 不同的值，确保「读到文件」与「回退 fallback」可区分。
   const lcFixture = (anchored, budget) => '- id: dsh-extra-plan-settings\n  config:\n    anchoredBootstrap: ' + anchored + '\n    runcodeCatchGate: true\n    exploreBudget: ' + budget + '\n'

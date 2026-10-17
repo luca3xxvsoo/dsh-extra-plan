@@ -101,7 +101,7 @@ const bashShouldDeny = [
   'mv a.txt b.txt',
   'cp -r src/ dst/',
   'chown user:group file.txt',
-  'nano notes.txt',       // 文本编辑器写文件：拦截（v0.1.7 起 BASH_MUTATION 覆盖 nano/vim/vi）
+  'nano notes.txt',       // 文本编辑器写文件：拦截（BASH_MUTATION 覆盖 nano/vim/vi）
 ]
 for (const cmd of bashShouldDeny) check(`应拦截 bash: ${cmd}`, gateDeny(bashExec(cmd)) === true)
 

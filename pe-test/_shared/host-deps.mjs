@@ -11,7 +11,7 @@
 //   ② 宿主现场 node_modules（npm 全局前缀下 @deepseek-ai/dsh-llm，或 dsh 包自带的
 //      node_modules/@deepseek-ai/dsh-llm）
 // 现场告警：profile 与安装域同时存在 @deepseek-ai/dsh-llm 时打印一行「注意」（只告警、不改解析语义、
-//   不写盘）——profile 副本会被 DSH 优先解析并顶替宿主同名运行时行（0.1.7-rc.1 副本缺 tool-update 投影 →
+//   不写盘）——profile 副本会被 DSH 优先解析并顶替宿主同名运行时行（副本缺 tool-update 投影 →
 //   会话内工具集变化产生的线上 tool_removal 被 API 422 拒绝、整会话报废；详见 ai-宿主耦合台账.md CF12）。
 // 纪律（反作弊）：锚点全缺失即 throw（文案含候选路径清单）——绝不返回伪造模块，
 //   否则自检会「假绿」。同作用域其它包也只在同一 node_modules 根内解析，缺失即抛。
