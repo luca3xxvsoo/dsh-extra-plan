@@ -17,14 +17,16 @@
 - [A01-A56 用例字典](#二a表闸门用例字典a01-a56)：标题、字典与批次引用统一覆盖 A01-A56。
 - [S0 组判定 run_code#1](#321-s0-routenone-u1-空白回车后)：正文写 6 成员/6 条，[组1预期 header](#组1预期聚合-header) 写 6 项/6 条。
 - [B0-B4 搭车批次](#329-操作批次归并总览2026-09-26补全最少干预口径)：固定为 5 个批次 B0、B1、B2、B3、B4。
-- [U1 用户操作表](#41-用户操作清单第一轮-u1-u6-六行-设置页-1-2-行常数项-u0-不占行)：显式 A 标签 15 项，覆盖条数为 16（含搭车/同轮项）。
-- [U3 用户操作表](#41-用户操作清单第一轮-u1-u6-六行-设置页-1-2-行常数项-u0-不占行)：显式 A 标签 5 项，覆盖条数写 6。
-- [U6 用户操作表](#41-用户操作清单第一轮-u1-u6-六行-设置页-1-2-行常数项-u0-不占行)：显式集合列出 A48，集合与覆盖条数一致。
+- [U1 用户操作表](#41-用户操作清单第一轮-u1-u6-六行--第二轮-u1bu6b-六行--后端配置-2-3-行常数项-u0-不占行)：显式 A 标签 15 项，覆盖条数为 16（含搭车/同轮项）。
+- [U3 用户操作表](#41-用户操作清单第一轮-u1-u6-六行--第二轮-u1bu6b-六行--后端配置-2-3-行常数项-u0-不占行)：显式 A 标签 5 项，覆盖条数写 6。
+- [U6 用户操作表](#41-用户操作清单第一轮-u1-u6-六行--第二轮-u1bu6b-六行--后端配置-2-3-行常数项-u0-不占行)：显式集合列出 A48，集合与覆盖条数一致。
 - [A45 重置批次](#325b-a45-重置验证批次s4-已批准后-u0-常数项) 与 [D1 映射](#74-域分组d1-d10可勾选增量跑按域映射到-u-序号)：A45 统一映射到 U0。
-- [A46 放行侧](#322-第一轮nativecatchgatetrue拦截面轮) 与 [U2/D7](#41-用户操作清单第一轮-u1-u6-六行-设置页-1-2-行常数项-u0-不占行)：A46 显式列入 U2。
+- [A46 放行侧](#322-第一轮nativecatchgatetrue拦截面轮) 与 [U2/D7](#41-用户操作清单第一轮-u1-u6-六行--第二轮-u1bu6b-六行--后端配置-2-3-行常数项-u0-不占行)：A46 显式列入 U2。
 - [A48 执行者委派](#325-s4-routeplan已批准u6-批准同意后)：A48 显式列入 U6，并与 D6/D8 映射一致。
 - [第 0 节与配置快照](#0-前置检查先检测当前模式)、[7.1 前置状态](#71-前置状态搭建)：A/C/M 均从 settings 权威行读取，M 直接取统一全局行，并与 definition 内存派生的 tool-presentation 对拍。
 - [A21 表项](#a21)：主语固定为被测 run_code 内每个 tools.* 调用点；脚本自身的外层 try/catch 不替代该合同。
+- A21 两段归属：拦截面归**第二轮 2A 段**（见 3.2.7 的归轮定稿与 3.4.1 的「A21 拦截面批」），放行面归 **2B 段**（见 3.4.8 第 1 项）；本条与 A 表 A21 行分档同口径。
+- C9 判据：已改为**跨轮判据**（见第六部分 C9 条目）——同轮内不可能同时取得直呼单条与聚合行，第一轮直呼单条卡片 ↔ 第二轮 run_code 聚合行必须跨轮逐字比对。
 
 ## 0. 前置检查：先检测当前模式
 
@@ -35,10 +37,10 @@
    > 当前模式为 <值>，本流程需按 native 轮与 ptc 轮两轮执行：请优先在“插件 → 按需规划模式”当前包详情的全局管理表单保存 `toolPresentationMode=native`（第一轮）／`ptc`（第二轮）；该表单槽缺失或被让位时，才由用户通过 configEditor/SettingsForms 或手工 profile 权威行改同一键，然后重启 Harness（**不必新开会话**），完成后按本流程进入后续取证
    用户侧成本 = 每轮 1 次后端权威行配置更新 ＋ 重启 Harness（见 1.5、7.1）。
 3. **读取现场的 7 个闸门关键词（v0.3.0 起为强制前置）**：同一次 read 取**全局行 `dsh-extra-plan-settings` 的 `config.gateWords` 7 个字段值；若全局行缺项，再安全只读旧 `extra-plan-preset-sync` 或 `preset-extra-plan.config.plugins` 作为迁移证据**（routeDirect/routePlan/routeDisagree/approvalApprove/approvalReplan/purposeRefine/purposeRedo），**写进该次实测记录的配置快照**。此后所有 ask 选项、deny 文案判定与「旧词拒绝」判据都以这 7 个现场值为准；**禁止只按出厂示例词（直接执行｜进行pro规划｜不同意｜同意执行｜转交pro规划｜完善方案｜重新规划）测试**。若 `config.gateWords` 缺失/非法：插件在该预设挂载时同步抛错（预设不可用），此时实测不成立——先按 7 键整组补齐（非空的 7 个互不相同字符串、首尾无空白、无 CR/LF、不以推荐后缀结尾）再开始。
-4. **catchGate 两轮**：第一轮（native 轮）固定按 `catchGate=true`（拦截面轮）执行：起步已是 `true` → 直接开始；起步非 true → 在切 native 的**同一次后端权威行更新**中一并设为 `true`。第二轮切到 `ptc` 时同一次更新把 `runcodeCatchGate` 切为 `false`（放行面轮，见 3.3／3.4）。
+4. **catchGate 三段口径**：①第一轮（native 轮）固定按 `catchGate=true`（拦截面轮）执行：起步已是 `true` → 直接开始；起步非 true → 在切 native 的**同一次后端权威行更新**中一并设为 `true`。②第二轮切到 `ptc`（U8）时 **`runcodeCatchGate` 保持 `true` 不动**，2A 段仍在拦截面下取聚合行（见 3.3／3.4.1-3.4.7）。③2A 段全部跑完后由 **U9** 把 `runcodeCatchGate` 切为 `false`（放行面段，见 3.4.8）：该键为插件侧配置热读、权威行更新即生效，**不重启、不新开会话**。
 
-> 第 0 节的两轮 mode 前置、catchGate 两轮与「现场 7 词快照」只约束机械闸门回归；PTC 专项的干净 F/L 取证在 ptc 轮内按 C=0/C=1 各开一条 A=1 顶层会话执行。
-> 观察面分工：native 轮看 request/header 的 `tools`（全部直呼工具、无 run_code；anchored 首轮收窄为 shells+read）；ptc 轮看 `header.system` 的 `tools:sdk` 段文本与 run_code 成员聚合行。A29/A31/A33 仅 ptc 轮可达（native 无 run_code 成员入口）。
+> 第 0 节的两轮 mode 前置、catchGate 三段口径（第一轮 true／第二轮 2A 段仍 true／2B 段由 U9 切 false）与「现场 7 词快照」只约束机械闸门回归；PTC 专项的干净 F/L 取证在 ptc 轮内按 C=0/C=1 各开一条 A=1 顶层会话执行。
+> 观察面分工：native 轮看 request/header 的 `tools`（全部直呼工具、无 run_code；anchored 首轮收窄为 shells+read），取证物是**直呼单条 `Error:` 卡片**；ptc 轮看 `header.system` 的 `tools:sdk` 段文本与 run_code 成员聚合行，取证物是**「- <标签>: <子文案>」聚合行**。每轮各自只取一个观察面——同轮内不可能同时取得直呼单条与聚合行，C9 的逐字比对跨轮完成。两轮各自的可实机项：第一轮 = A01-A56 的直呼侧（A21 只有 mock/静态兜底，A29/A31/A33 机制上不可达）；第二轮 = **2A 段**（catchGate=true）取 A21 拦截面、A29/A31/A33、A38 弱证据与全部 run_code 聚合面，**2B 段**（catchGate=false）取 A21 放行面与开关局部性佐证（见 3.4）。
 
 ## 一、总则
 
@@ -63,6 +65,7 @@
 - **AI 的一切工具调用不计入**：含委派子代理、子代理会话内连调、一次 run_code 的组判定与聚合取证。
 - **常数项 U0**：一次重启（装载期快照生效）＋ 一条新的用户消息（使 route 锚点前移、回到 `route=none` 默认态）。普通闸门两轮可用既有会话（含重启后恢复的同一会话）；PTC 专项的 F 证据必须每个 C 值各用干净 A=1 顶层会话，已有会话只能作 L 证据。不计入变量操作、不单独占用户操作清单行。
 - **后端权威行配置更新与随后的重启/新开会话合并计 1 次用户操作**（同属「后端配置前置档」：`toolPresentationMode` 仍是装载期快照、改值必须重新装载才生效（重启 Harness 即可，新开会话亦可）；`runcodeCatchGate`（2026-09-23 修订）已改为插件侧配置热读，后端权威行配置更新后**立即生效**、无需重启进程或新开会话，不触发「必须重启」的记账，见 1.5(b) 与 7.1）。配置入口直接使用当前包详情的 detail.section 表单（行列表之后，自绘标题）；仅该槽缺失时才使用用户侧 configEditor。所有路径都维护 `dsh-extra-plan-settings` 权威行，不能用只写旧投影的自定义 PUT 代替；空/null/数组/原始/未知/混合非法 PUT 均应 400 且零 edit，当前非法 gateWords 不可被自动 fallback。
+- **两轮状态推进同计（不重复膨胀）**：第二轮 2A 段按 3.4.1-3.4.6 重走 U1 到 U6（编号 U1b-U6b），与第一轮**同计 6 次**状态推进，两轮合计 **12 次**（6 加 6）；`U9` 只是 `runcodeCatchGate` 的**热读切换**（权威行更新即生效），**不触发重启记账**、不重启、不新开会话，因此不计入状态推进、也不占任何状态操作行。两轮**后端权威行更新合计 2 次**（U8 切 mode 到 ptc ＋ U9 切 catchGate 为 false），起步 mode/catchGate 不合规时为 **3 次**（U7 ＋ U8 ＋ U9）；**报告落盘窗口单列、不计行**（见第八部分）。
 - **空白与取消**：视为两种不同响应形态。「必测」取**空白回车**（U1）；「取消」列为可选加测（差异见 7.2 陷阱⑦）。
 
 ### 1.4 （本节空缺，编号占位）
@@ -82,7 +85,7 @@
 ## 二、A 表·闸门用例字典（A01-A56）
 
 定位：**用例字典**。验收与编排表共同引用编号；本表不描述编排顺序（见第三部分）。
-可实机性分档口径：**实机直测**（默认前置）｜**实机·需后端配置前置**（runcodeCatchGate，预设默认 false；本流程第一轮固定 catchGate=true）｜**实机·仅 ptc 可实机**（A29/A31/A33：仅 ptc 轮经 run_code 成员可达；native 轮无 run_code 成员入口，机制上不可达）｜**目录观察**（工具面裁剪不产生文案，看工具清单）｜**静态断言替代**（实机走不到，见 A40 行）。
+可实机性分档口径：**实机直测**（默认前置）｜**实机·需后端配置前置**（runcodeCatchGate，预设默认 false；本流程第一轮固定 catchGate=true，第二轮 2A 段保持 true、2B 段由 U9 切 false）｜**实机·仅 ptc 可实机**（A29/A31/A33：仅 ptc 轮经 run_code 成员可达；native 轮无 run_code 成员入口，机制上不可达）｜**实机·第二轮可实机**（第二轮 2A 段经 run_code 成员形态取拦截面、2B 段取放行面；A21 归此档，见 3.4.1／3.4.8）｜**目录观察**（工具面裁剪不产生文案，看工具清单）｜**静态断言替代**（实机走不到，见 A40 行）。
 
 | 编号 | 生效角色 | 前置状态 | 触发操作 | 期望结果（拒文案关键句） | 判定方式 | 可实机性分档 |
 |:--|:--|:--|:--|:--|:--|:--|
@@ -107,7 +110,7 @@
 | A18 | planner | — | planner 的 run_code 写 19 个 tools.* 调用点 | `run_code 静态调用点 19 处超过单实例子调用上限 18（exploreBudget）：请拆分多个 run_code 或减少单次调用点` | 同上（聚合行「- run_code: …」） | 实机直测（planner 序列） |
 | A19 | planner / 只读 child | — | run_code 内裸写 writeFileSync 等写特征 | `只读角色仅允许只读探查：run_code 代码命中写模式特征 N 处（…）。请改用 read/glob/grep 或 shell 只读命令` | 同上（聚合标签形如 `write（裸写特征：…）`） | 实机直测（planner/probe 序列） |
 | A20 | planner | — | 单次 run_code 循环 25 次子调用（**全 FREE_TOOLS 成员**，如 save_plan 每次传过短参数 → 执行期 throw A34、零落盘；循环 read 等非 FREE_TOOLS 形态会先被 budget 白名单整体拒，取不到分档） | 25 次尝试中 18 次放行、7 次因单实例子调用上限拒绝；拒绝文案含「超过上限」与「exploreBudget」（`子调用数`具体数字仅照录，不作通过条件） | 同上（planner 序列，预算耗尽后发起） | 实机直测（planner 序列） |
-| A21 | 主会话 / planner | runcodeCatchGate 为 true（预设默认 false） | 被测 run_code 内 ≥2 tools.* 调用点且未逐点独立 try/catch（每个调用点各自 try/catch；不指脚本自身） | `run_code 内 N 个工具调用未全部独立容错：请给每个调用点各写一个独立 try/catch——一次只包 1 个调用、块后紧跟 catch。已保护 M 个。写法示例：try { await tools.read({ file_path: "x" }) } catch (e) {}` | 同上 | 实机（第一轮拦截面 ＋ 第二轮放行面）；planner 侧由 mock 兜底（3.2.6.1／3.2.7） |
+| A21 | 主会话 / planner | runcodeCatchGate 为 true（预设默认 false） | 被测 run_code 内 ≥2 tools.* 调用点且未逐点独立 try/catch（每个调用点各自 try/catch；不指脚本自身） | `run_code 内 N 个工具调用未全部独立容错：请给每个调用点各写一个独立 try/catch——一次只包 1 个调用、块后紧跟 catch。已保护 M 个。写法示例：try { await tools.read({ file_path: "x" }) } catch (e) {}` | 同上 | 实机·第二轮可实机（第二轮 2A 段拦截面 ＋ 2B 段放行面，见 3.4.1／3.4.8）；planner 侧由 mock 兜底（3.2.6.1／3.2.7） |
 | A22 | 主会话（恒开） | — | run_code 内 ask 的结果未正确返回用户层，或无法静态证明返回链（如只调用、只赋值、别名/动态访问、.then/函数包装） | `run_code 内 ask_user_question 结果未正确返回用户层：请直接 return await tools.ask_user_question(...)，或先用变量接收后在紧随的顶层 return 中返回该结果；不得只调用、只赋值、通过别名/动态访问，或用 .then/函数包装结果` | 同上 | 实机直测 |
 | A23 | 随 A18/A19/A21/A22 | 组内 ≥1 成员触发闸门 | 一次 run_code 触发任一闸门 | `run_code 拆解预审未通过：工具组共 ${members.length} 项（去重后），${denies.length} 项触发闸门，任一触发即整体拒绝：` + 逐行 `- <标签>: <子文案>` | 聚合文案逐行对照 | 随各批自带（0 用户操作） |
 | A24 | planner | 本轮非白名单工具真实调用已达 18 次 | 第 19 次真实调用非白名单工具 | `探查预算已耗尽（本轮已用 ${used}/${budget}）：输出「申请继续探查：<待查项> — <原因>」。主会话将探查待查项并转达线索文件路径，你读取线索继续工作。探查完成则直接调用 save_plan 落盘。` | 同上（预算随锚点前移重置口径见 3.2.6.1） | 实机直测（planner 序列，须真实连调，见陷阱②） |
@@ -132,7 +135,7 @@
 | A51 | 主会话 | route≠direct（含 none/plan/approved；v0.4.0 四工具闸门） | 直呼 job_kill | `当前状态禁止job_kill。如用户要求停止子代理，须先 ask_user_question 路由确认（选项固定为「直接执行」「进行pro规划」「不同意」），选择「直接执行」后才可执行 job_kill` | 卡片 Error 文案 + step-05 解码 | 实机直测（run_code 组内成员同口径，C9 聚合文案逐字） |
 | A52 | 主会话 | route=direct | 直呼 job_kill | 无拒绝文案：job_kill 放行（宿主侧 job owner 隔离自理） | 卡片照录（无 Error） | 实机直测 |
 | A53 | 主会话 | 目标子代理 running（已驻留，如 S3 批次委派的 planner） | 直呼 send_message（agent_id=running 目标） | `子代理running中，禁止打扰` | 卡片 Error 文案 + step-05 解码 | 实机直测（run_code 组内成员同口径，C9 聚合文案逐字） |
-| A54 | 主会话 | 目标非 running（idle 或未驻留） | 直呼 send_message（agent_id=idle/未驻留目标） | 无拒绝文案：send_message 放行（one-shot 未驻留目标由宿主 coldResume NOT_RESUMABLE 自拒） | 卡片照录（无 Error） | 实机直测 |
+| A54 | 主会话 | 目标非 running（idle 或未驻留） | 直呼 send_message（agent_id=idle/未驻留目标） | 无拒绝文案：send_message 放行（未驻留或已回收目标由宿主 coldResume NOT_RESUMABLE 自拒；0.2.1 起委派恒为续轮子代理，不存在不可续轮的委派目标） | 卡片照录（无 Error） | 实机直测 |
 | A55 | 主会话 | 同一轮内已成功调用过 job_list | 同轮内第二次调 job_list | `禁止轮询子代理状态，停止操作并等待子代理通知` | 卡片 Error 文案 + step-05 解码 | 实机直测（须同轮内，见陷阱③；run_code 组内成员同口径，C9 聚合文案逐字） |
 | A56 | 主会话 | 同一轮内已成功调用过 list_agents | 同轮内第二次调 list_agents | `禁止轮询子代理状态，停止操作并等待子代理通知`（与 A55 同文案，两工具独立计数） | 卡片 Error 文案 + step-05 解码 | 实机直测（须同轮内，见陷阱③；run_code 组内成员同口径，C9 聚合文案逐字） |
 | A39 | 主会话 / planner | A=1 且 F | **按轮观察**：native 轮看 request/header 的 `tools`（首轮收窄 keep={bash,pwsh,read}，无 run_code）与 sections 仅 extra-plan-bootstrap；ptc 轮看 `header.system` 的 `tools:sdk` 段（顶层仅 run_code、sections 精确两项：persona + 手写 tool:read，不含宿主 tools:ptc-only）。两轮都核对最终 request.messages/durable user/message 不含 source.kind=agent-instructions 或 skill-catalog | 不产生拒绝文案；F 的两类 source 计数必须为 0，首个 durable tool/call 后 L 由宿主自然恢复；ptc 轮 tool:read 逐字等于手写文案，native 轮明确无 tool:read；L 回 N/P | 新宿主回归完整 request/JSONL trace + step-04 两轮矩阵 + 工具清单严格模式 | 集成/目录观察（显式 F/L） |
@@ -148,8 +151,8 @@
 
 | A42 | 直接 child（pro规划 / 非pro规划） | — | 显式 SESSION_ID 运行 step-07，读取直接 child 的模型/提供方 | request/header.data.header.config.provider/model = attempted route（尝试路由）；assistant/message.data.message.source.kind=model 的 source.provider/model = actual provenance（实际来源）；不是闸门拒绝 | step-07 HUMAN，逐条保留日志名、代际、行号与两栏 | 实机 HUMAN 证据（非拒绝） |
 | A43 | pro规划 child | 同一部署快照的 PLANNER_PROMPT_SUFFIX | 运行 step-07，关联父 subagent_plan call/result 与 child 初始首个 text block，逐字核对 suffix | parent prompt 不含 suffix、child 首 text block 精确命中且链完整 → verified-injection（已验证注入）；父 prompt 已含或关联不足 → content-only（仅内容）；其余按 attempted-only（仅尝试）/absent/no-log（无日志） | step-07 HUMAN，budgetNotice/host guidance（宿主引导）/header.system 单列且不计 suffix | 实机 HUMAN 证据（非拒绝） |
-> 表注：A29/A31/A33 共 3 条已升级为实机条目（标注「仅 ptc 可实机」——native 轮无 run_code 成员入口，机制上不可达，触发手法见 3.2.6 的 planner／probe／reviewer 序列，须在 ptc 轮执行）；A40 为静态断言替代项；A41-1～A41-5 是 A41 目的顺序与状态清理的补充取证行，不新增功能范围；A42/A43 是 step-07 的实机 HUMAN 证据项（实际 provider/model 与 pro规划额外引导），不是闸门拒绝。A44 为模型可见投影观察项（C7/catalog 两栏），由 step-04 两轮矩阵 mock 覆盖，非闸门拒绝项。
-> 表注（2026-09-26 补全，0.2.1 口径更新）：新增 A49（save_probe 放行侧）与 A50（执行者 write/edit 放行对照）两行，插入于 A48 行之后，现有 A01-A56 编号统一；补全内容按 native/ptc 两轮分别取证（native 看 header.tools、ptc 看 header.system 的 tools:sdk）。A38 判据改为与角色预设 `agent.cordis.yml` 第二文档（及生成物 `preset-definition-<role>.generated.yml`）的 tools 行逐字比对（不硬编码名单），并按证据强度分级（header.tools 全名清单=强证据、tools:sdk 文本命中=弱证据）。主会话零静态 deny 口径见 1.5(f)。实机可测项总数由 44 增至 52（第一轮 43→51），见 3.3/3.5/4.1 表注一。
+> 表注：A29/A31/A33 共 3 条已升级为实机条目（标注「仅 ptc 可实机」——native 轮无 run_code 成员入口，机制上不可达，触发手法见 3.2.6 的 planner／probe／reviewer 序列，须在第二轮 2A 段执行，见 3.4.7）；A21 归「实机·第二轮可实机」（拦截面在第二轮 2A 段见 3.4.1、放行面在 2B 段见 3.4.8）；A40 为静态断言替代项；A41-1～A41-5 是 A41 目的顺序与状态清理的补充取证行，不新增功能范围；A42/A43 是 step-07 的实机 HUMAN 证据项（实际 provider/model 与 pro规划额外引导），不是闸门拒绝。A44 为模型可见投影观察项（C7/catalog 两栏），由 step-04 两轮矩阵 mock 覆盖，非闸门拒绝项。
+> 表注（2026-09-26 补全，0.2.1 口径更新）：新增 A49（save_probe 放行侧）与 A50（执行者 write/edit 放行对照）两行，插入于 A48 行之后，现有 A01-A56 编号统一；补全内容按 native/ptc 两轮分别取证（native 看 header.tools、ptc 看 header.system 的 tools:sdk），第二轮再分两段：2A 段（catchGate=true，拦截面与 run_code 聚合面，见 3.4.1-3.4.7）、2B 段（catchGate=false，放行面，见 3.4.8）。A38 判据改为与角色预设 `agent.cordis.yml` 第二文档（及生成物 `preset-definition-<role>.generated.yml`）的 tools 行逐字比对（不硬编码名单），并按证据强度分级（header.tools 全名清单=强证据、tools:sdk 文本命中=弱证据）。主会话零静态 deny 口径见 1.5(f)。实机可测项总数由 44 增至 52（第一轮 43→51），见 3.3/3.5/4.1 表注一。
 > 表注（2026-09-29 v0.4.0）：新增 A51-A56 六行（四工具主会话层闸门：job_kill 仅直行放行／send_message 目标 running 拒绝／job_list·list_agents 同锚点防轮询），插入于 A50 行之后，既有编号不变；六条全部为实机直测项（A55/A56 须同轮内，见陷阱③），不挂 B 类搭车批次（理由见 3.2.9 表注），期望文案与代码/step-04 断言三方逐字一致。
 
 ## 三、编排表（轮次 × 配置组合 × 你的操作 × 覆盖内容）
@@ -159,17 +162,17 @@
 - `aggregateRunCodeDenyReason` 输出 header「run_code 拆解预审未通过：工具组共 ${members.length} 项（去重后），${denies.length} 项触发闸门，任一触发即整体拒绝：」+ 逐行「- <标签>: <子文案>」；标签规则：普通成员 = 工具名、裸写 = `write（裸写特征：…）`、参数不可解析 = `<工具名>（参数不可解析）`、catch/cap/budget = 成员 name。**两侧子文案逐字一致**（同一条闸门返回值，C9）。
 - **组拒零副作用**：denies≥1 时 `if (denies.length === 0) return null` 不成立 → 返回聚合文案、run_code 整体不执行、成员全部不落地。
 - 放行侧（denies=0 才真执行）成员**只设计为只读工具**：read / glob / grep / job_output / job_list（job_output/job_list 同轮第二次会被防轮询闸门拒绝（A17/A55），放行侧编排须用同轮首次调用）/ cordis_inspect_*；确需副作用的放行侧一律走**直呼**且限定单成员（如 subagent_probe 单成员直呼、send_message 单成员组——仅子代理调用者或目标非 running 场景（A54））。0.2.1 委派工具参数表已无后台标志，直呼即立即返回 subagentId 加完成通知。
-- **两轮同口径、两个观察面**：同一条闸门既可经 run_code 成员取聚合行（ptc 轮）、也可经直呼取单条 `Error:` 卡片（native 轮）；native 轮全部直呼工具可见、无 run_code，ptc 轮顶层仅 run_code、直呼面不可达。两轮只在 `toolPresentationMode`（native↔ptc）与 `runcodeCatchGate`（true→false）两个开关上分叉（见 3.5 轮次总表）。
+- **两轮同口径、两个观察面**：同一条闸门既可经 run_code 成员取聚合行（ptc 轮）、也可经直呼取单条 `Error:` 卡片（native 轮）；native 轮全部直呼工具可见、无 run_code，ptc 轮顶层仅 run_code、直呼面不可达。两轮只在 `toolPresentationMode`（native↔ptc）与 `runcodeCatchGate`（true→false）两个开关上分叉（见 3.5 轮次总表）。**每轮各自只取一个观察面**（native 取直呼单条卡片、ptc 取 run_code 聚合行），同轮内不可能同时取得两者，C9 的逐字比对跨轮完成。
 - 各节「期望文案」列只给**关键句**，逐字模板以 A 表为准（两处一致）。
 
 ### 3.2 第一轮：native ＋ catchGate=true（拦截面轮／直呼面）
-配置 = **native ＋ catchGate=true**（`runcodeCatchGateOn` 配置热读、权威行更新即生效，见 1.5(b)；`toolPresentationMode=native` 为装载期快照、须重启 Harness 生效）；U1-U6 六批按 **A01-A56 编号集合**执行（AI 连发、用户 0 额外工具操作），A42/A43 由 AI 在全部子代理完成后用 pwsh 自动运行 step-07 取证（集成到自动化批次）；A21 的拦截面一并覆盖。**观察面 = request/header 的 `tools`**。
+配置 = **native ＋ catchGate=true**（`runcodeCatchGateOn` 配置热读、权威行更新即生效，见 1.5(b)；`toolPresentationMode=native` 为装载期快照、须重启 Harness 生效）；U1-U6 六批按 **A01-A56 编号集合**执行（AI 连发、用户 0 额外工具操作），A42/A43 由 AI 在全部子代理完成后用 pwsh 自动运行 step-07 取证（集成到自动化批次）；**A21 的拦截面不在本轮**——归第二轮 2A 段（3.4.1），第一轮只做 A02/A22/A39 复验（见 3.2.7）。**观察面 = request/header 的 `tools`**。
 
 #### 3.2.1 S0 route=none（U1 空白回车后）
 状态：route=none、clarified=false、approved=false（deriveFlowState 默认态）。
-> **取证前置（成员参数合同）**：组判定 run_code 成员参数先接受严格 JSON 或安全 JS literal（对象/数组、单/双引号、标识符/引号键、布尔/null、有限数字、尾逗号）；变量、spread、computed、getter/setter/方法、调用/成员/模板/正则、重复键与污染键仍标记「参数不可解析」、保留 argsText 并交运行时瀑布兜底。`await tools.subagent_probe({ prompt: '…' })` 与单引号对象均可静态拆解；`job_id` 用变量引用等动态形态仍可能跳过参数相关闸门，需按现场实际标签判读。
+> **取证前置（成员参数合同）**：组判定 run_code 成员参数先接受严格 JSON 或安全 JS literal（对象/数组、单/双引号、标识符/引号键、布尔/null、有限数字、尾逗号）；变量、spread、computed、getter/setter/方法、调用/成员/模板/正则、重复键与污染键仍标记「参数不可解析」、保留 argsText 并交运行时瀑布兜底。`await tools.subagent_probe({ prompt: '…' })` 与单引号对象均可静态拆解；`job_id` 用变量引用等动态形态仍可能跳过参数相关闸门，需按现场实际标签判读。**本批的聚合面在第二轮 3.4.1 由 run_code 成员补齐**（第一轮只取直呼单条卡片，跨轮按 C9 比对）。
 
-一次性连发清单（AI 一轮内全部发出，用户 0 操作；native 轮以直呼面为主，run_code 不可达 → 组判定成员改为直呼对照）：
+单轮连发清单（AI 一轮内全部发出，用户 0 操作；native 轮以直呼面为主，run_code 不可达 → 组判定成员改为直呼对照）：
 1. **组判定 run_code#1**（6 成员，一次聚合取证 6 条）：write / subagent_plan / save_probe / subagent / subagent_probe / job_output（wait:true）——save_plan 是任意路由态放行的受限规划工件，不是组拒成员；0.2.1 委派工具已无后台参数，A30 改判放行侧。
 2. 直呼 ask#1：非标选项 ask（只含「直接执行」）→ A14
 3. 直呼 ask#3：精确目的二选一 ask（选项恰为「完善方案」「重新规划」两项、结构 1 问）→ A41-1（route=none 拒绝，原因逐字含固定路由确认句）
@@ -207,7 +210,7 @@
 #### 3.2.2 S1 route=direct（U2 选「直接执行」后）
 状态：route=direct。
 > **取证前置**：该组 run_code#3 的成员参数按同一安全静态 literal 合同解析；变量、spread、computed、调用、成员访问、模板、重复/污染键等动态形态会保留 argsText 并交运行时瀑布，不能假设静态参数闸门已命中。
-一次性连发清单：
+单轮连发清单：
 1. **组判定 run_code#3**（5 成员）：subagent_plan / save_probe / subagent / subagent_probe / job_output（wait:true）
 2. 直呼放行侧：subagent_probe 直呼 → 放行（A30 放行侧；0.2.1 无后台参数），随即委派 **probe 会话**执行 3.2.6.2 序列（0 用户操作）
 3. 直呼 ask#4：精确目的二选一 ask（形态同 S0 的 ask#3）→ A41-2（route=direct 拒绝，原因逐字含固定路由确认句）
@@ -228,7 +231,7 @@
 
 #### 3.2.3 S2 route=plan·未澄清（U3 选「进行pro规划」后）
 状态：route=plan、clarified=false、purpose=none。选「进行pro规划」后**第一个提问一定是目的 ask**（单问、选项仅有「完善方案」「重新规划」）——未答复前 save_probe 与 subagent_plan 一律被目的闸门教学式拒绝（A41）。
-一次性连发清单：
+单轮连发清单：
 1. **组判定 run_code#4**（5 成员，一次聚合）：write / subagent_plan / save_probe / subagent / job_output（wait:true）——save_plan 已不在组拒清单内。
 
 | 命中 A | 成员/路径 | 期望文案关键句 |
@@ -242,7 +245,7 @@
 
 #### 3.2.3b S2.5 route=plan·目的已定·未澄清（U4 目的答复后）
 状态：route=plan、purpose=refine|redo、clarified=false。（S2.5 为正常可达态：目的未定（或路由未确认）时普通 ask 的答复不置 clarified；U4 后 U5 前在此窗口直测 A04/A13。）精确目的 ask 的补充顺序取证：**A41-1/A41-2（route=none / route=direct 必须 deny，且每个拒绝逐字包含 `须先 ask_user_question 路由确认（选项固定为「直接执行」「进行pro规划」「不同意」）`）的取证窗口已前移至 S0/S1 批次顺带完成**；本窗口（U4 目的答复后）仅剩：route=plan 且 1 问 allow（A41-3）；channelBroken=true allow（A41-4，静态替代）；ordinary 探查/澄清 ask 在 route=none 仍 allow（A41-5）。
-一次性连发清单：
+单轮连发清单：
 1. **组判定 run_code#4b**（2 成员，一次聚合）：subagent_plan / save_probe（目的已定、澄清未完成 → 两条各落澄清文案）
 
 | 命中 A | 成员/路径 | 期望文案关键句 |
@@ -252,7 +255,7 @@
 
 #### 3.2.4 S3 route=plan·已澄清（U5 澄清答复后）
 状态：route=plan、clarified=true、purpose=refine|redo。（clarified=true 必须经目的已定后的澄清答复置位）
-一次性连发清单：
+单轮连发清单：
 1. **组判定 run_code#5**（3 成员，ptc 轮执行）：subagent_plan / subagent / job_output（wait:true）——save_plan 已不在组拒清单内；native 轮同一批改直呼对照（A05/A06/A16）
 2. 起一个后台 pwsh job（只读命令，如列目录）→ **同轮内** job_output 调两次（第一次放行、第二次拒 → A17）；ptc 轮推荐写成**同一次 run_code 内两次同参 job_output**（组判定同参去重只留 1 成员，第二次为运行时嵌套 re-entry 被拒），native 轮直呼两次为对照写法；A55/A56 仿此同轮直呼两次模板（job_list/list_agents 首次放行、第二次拒）
 3. 直呼放行侧：委派 **planner 会话**（subagent_plan；0.2.1 无后台参数，参数跳过检查=放行）执行 3.2.6.1 序列（0 用户操作）
@@ -272,7 +275,7 @@
 
 #### 3.2.5 S4 route=plan·已批准（U6 批准「同意执行」后）
 状态：route=plan、approved=true、purpose 已定（refine|redo）。
-一次性连发清单：
+单轮连发清单：
 1. **组判定 run_code#6**（3 成员）：write / pwsh 写命令（不带 sandbox_permissions）/ subagent——save_plan 已不在组拒清单内。
 2. 直呼放行侧：subagent_review 直呼 → 放行（A11 放行侧），随即委派 **reviewer 会话**执行 3.2.6.3 序列（0 用户操作）
 3. **A48 执行者委派**：直呼 subagent 委派 flash 执行者（0.2.1 无后台参数）→ 执行者子会话内先发 read 进 L 态 → 观察工具面（A38：角色预设未挂的工具不出现）→ 验证能读方案/验收文件干活（0 用户操作）
@@ -292,7 +295,7 @@
 #### 3.2.5b A45 重置验证批次（S4 已批准后，U0 常数项）
 
 状态：S4（route=plan·已批准）完成后，发一条普通文字消息（新 user/message）—— 该操作为 U0 常数项（见 1.3），不占用户操作清单行。随后 route 回 none。
-一次性连发清单：
+单轮连发清单：
 1. 直呼 write → 应被 A02 拒（`路由未确认：write/edit。…` route 回 none）
 
 | 命中 A | 成员/路径 | 期望文案关键句 |
@@ -300,7 +303,7 @@
 | `A45` | 直呼 write（文字消息后） | write 被 A02 拒：`路由未确认：write/edit。…`（route 回 none） |
 
 #### 3.2.6 S5 子代理三序列（0 用户操作）
-统一口径：planner（U5 批次委派）、probe（U2 批次委派）、reviewer（U6 批次委派）；**各只开 1 个会话、各 1 条指令序列**；序列内连调全部由 AI 完成，用户 **0 操作**；序列结束由主会话收口判定。呈现模式是预设级形态 → **子代理与父同一 standing 组合**（1.5 (a)）：native 轮子会话无 run_code、只能直呼判读；ptc 轮子会话内直呼面与 run_code 面并用，但子会话 F 态首轮仅 shell(s)+read（A39 目录口径），须先发一个 read 调用进入 L 态后才可用 run_code。
+统一口径：planner（U5 批次委派）、probe（U2 批次委派）、reviewer（U6 批次委派）；**各只开 1 个会话、各 1 条指令序列**；序列内连调全部由 AI 完成，用户 **0 操作**；序列结束由主会话收口判定。呈现模式是预设级形态 → **子代理与父同一 standing 组合**（1.5 (a)）：native 轮子会话无 run_code、只能直呼判读；ptc 轮子会话内直呼面与 run_code 面并用，但子会话 F 态首轮仅 shell(s)+read（A39 目录口径），须先发一个 read 调用进入 L 态后才可用 run_code。**三个序列在第二轮 3.4.7 重跑**以取 A29、A31、A33（三处委派一律写成 run_code 单成员）。
 
 **两轮取证口径（0.2.1）**：同一条用例在 native 轮取直呼面、在 ptc 轮取 run_code 聚合面。角色工具面判据（A38）改为与 `plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml` 第二文档（及生成物 `preset-definition-<role>.generated.yml`）的 tools 行逐字比对：强证据 = 子会话 request/header.tools 全名清单（native 轮）；弱证据 = header.system 的 tools:sdk 段文本命中（ptc 轮，脚本仅 includes、textEvidenceOnly，只作辅助、不得单独证明不可见）。判读流程 =「跑 step-04-工具清单查看 → AI 比对角色 tools 行 → 给用户『通过（强/弱）+ 一行证据』」，人眼干预压到最低。0.2.1 起四角色预设不挂 workflow/ralph/ask-user/todo/subagent 系列工具，故这些名字在角色工具面里本就不存在。
 
@@ -337,15 +340,16 @@
 4. job_output 带 wait:true → A16。
 5. 工具清单观察 → A38（**native 轮强证据**：reviewer 角色 tools 行不含 write/edit、不塌缩；**ptc 轮弱证据**：tools:sdk 段无 write/edit 命中）。
 
-#### 3.2.7 S6 第一轮·A21 拦截面批次（catchGate=true；0 用户操作）
-配置：**native ＋ catchGate=true**（catchGate 配置热读、权威行更新即生效，见 1.5(b)，已在第一轮生效；mode 装载期快照）；**固定 S0 同轮发起（route=none 默认态）**，批次内包含路由相关成员（write→A02 仅 route=none 时成立），不可在 S1-S4 状态下执行。A21 的 catch 闸门属组判定内读点，native 轮无 run_code 可达 → **本批次 A21 拦截面整体移到 ptc 轮（3.4 并入）**，native 轮只做 A02 直呼复验与 A39 观察。
-一次性连发清单：
-1. **组判定 run_code#7**（2 成员）：一个含 ≥2 个调用点、未逐点独立 try/catch 的代码块（→ A21）+ write 成员（→ A02 复验）（A02 仅在 route=none 下成立；固定 S0 执行确保期望吻合）→ 验证**同批双闸门聚合**（header + A21 行 + A02 行）
-2. **组判定 run_code#8**：裸 `await tools.ask_user_question(...)`（不 return，→ A22 复验）
+#### 3.2.7 S6 第一轮·A21 归轮与 A02/A22/A39 复验批次（catchGate=true；0 用户操作）
+**A21 归轮定稿**：拦截面在**第二轮 2A 段**取证（catchGate=true，含 ≥2 个未逐点独立 try/catch 的调用点 → 见 3.4.1 的「A21 拦截面批」），放行面在**2B 段**取证（catchGate=false → 见 3.4.8 第 1 项）；两处口径与 A 表 A21 行分档一致，本文档不再有「拦截面归第一轮」的表述。
+配置：**native ＋ catchGate=true**（catchGate 配置热读、权威行更新即生效，见 1.5(b)，已在第一轮生效；mode 装载期快照）；**固定 S0 同轮发起（route=none 默认态）**：批次内的 A02 复验仅在 route=none 时成立（A21 的 catch 闸门属组判定内读点、native 轮无 run_code 可达，故拦截面不在本轮取）。不可在 S1-S4 状态下执行。
+单轮连发清单：
+1. 直呼 write → 单条 `Error:` 卡片（A02 复验；route=none 下成立，固定 S0 执行确保期望吻合）
+2. **组判定 run_code#8**：裸 `await tools.ask_user_question(...)`（不 return，→ A22 复验）；聚合面同样在第二轮 3.4.1 补齐
 3. 目录观察：首轮 tools 清单（→ A39 复验，native 轮判据 = 全部直呼工具、无 run_code）
-期望文案：A21 行 = `run_code 内 N 个工具调用未全部独立容错：请给每个调用点各写一个独立 try/catch…`；A02 行 = `路由未确认：write/edit。…`。
-A21 的 **planner 侧**另由 mock 兜底（不另开 planner 会话）：`step-04-路由与写闸门.mjs` UC1-UC26 系列（runCodeCatchGateReason / runCodeSiteCount / isRunCodeSubCall 纯函数矩阵）。
-陷阱：该次脚本自身必须逐调用点独立 try/catch，否则先被 A21 拒（陷阱④）。
+期望文案：A02 单条 = `路由未确认：write/edit。只读探查可随时进行。创建/修改/删除文件须先 ask_user_question 路由确认（选项固定为「直接执行」「进行pro规划」「不同意」），用户批准后才可动手`；A22 聚合行 = `run_code 内 ask_user_question 结果未正确返回用户层：…`。
+A21 的 **planner 侧**另由 mock 兜底（不另开 planner 会话）：`step-04-路由与写闸门.mjs` UC1-UC26 系列（runCodeCatchGateReason / runCodeSiteCount / isRunCodeSubCall 纯函数矩阵）；实机拦截面按 3.4.1、放行面按 3.4.8。
+陷阱：A22 复验脚本是单调用点 run_code——A21 只在「调用点不少于 2 处且未逐点独立 try/catch」时才判，故该探针不需要、也不得加 try/catch；加了会把 ask 推进非顶层，A22 仍出同一行但理由错误（陷阱④）。
 
 #### 3.2.8 通道故障特例（不占编排批次）
 channelBroken 逃生（`CHANNEL_BROKEN_CODES` = NO_PROVIDER / CALLER_NOT_LIVE / DELEGATED_CALLER，另有总开关）会让主会话锚点闸门**整体放行**；本地实机制造通道级故障码不可控 → 由 mock 事件流断言（step-04 已有）替代 ＋ 陷阱①，**不占任何编排批次**。
@@ -364,39 +368,195 @@ channelBroken 逃生（`CHANNEL_BROKEN_CODES` = NO_PROVIDER / CALLER_NOT_LIVE / 
 
 > 表注（2026-09-29 v0.4.0）：四工具治理项（A51-A56）不挂 B 类搭车批次——A53 需 running 子代理目标、A55/A56 需同轮两次调用，0 用户操作搭车不可行，六条全部落实机直测、归属 U1/U2/U5 行内批次（见 4.1）。
 
-**必须重启或切开关的唯一操作**：U7（起步既非 native 也非 ptc 时切到本轮 mode，必须重启 Harness——装载期快照，见 1.5(b)）；U8（轮间切 mode 与 catchGate；catchGate 热读、无需重启，mode 需重启）；7.6 A/B 类（改现场 gateWords 后必须重启）。设置入口选择不新增操作：当前包详情由 detail.section 在行列表之后呈现唯一全局管理表单（自绘标题，不注册 bundle.config；若本包 bundle.config 槽被任何一方注册则让位）；UI 与用户侧后备路径仍按唯一全局权威行配置更新计数。2026-09-26 补全的 B0-B4 全部不需要任何重启/切换。
+**必须重启或切开关的唯一操作（U7、U8、U9 三个操作）**：U7（起步既非 native 也非 ptc、或 catchGate 非 true 时，切到本轮 native 并搭车把 catchGate 置 true，必须重启 Harness——mode 是装载期快照，见 1.5(b)）；U8（轮间只把 `toolPresentationMode` 切为 ptc，`runcodeCatchGate` **保持 true 不动**；mode 需重启）；U9（2A 段全部跑完后把 `runcodeCatchGate` 切为 false，插件侧配置热读、权威行更新即生效，**不重启、不新开会话**）；7.6 A/B 类（改现场 gateWords 后必须重启）。设置入口选择不新增操作：当前包详情由 detail.section 在行列表之后呈现唯一全局管理表单（自绘标题，不注册 bundle.config；若本包 bundle.config 槽被任何一方注册则让位）；UI 与用户侧后备路径仍按唯一全局权威行配置更新计数。2026-09-26 补全的 B0-B4 全部不需要任何重启/切换。
 
-### 3.3 轮间：1 次后端权威行配置更新（把 catchGate 切为 false；权威行更新即生效、无需重启）
+### 3.3 轮间：1 次后端权威行配置更新（只把 `toolPresentationMode` 切为 ptc；`runcodeCatchGate` 保持 true）
 
-第一轮跑完后，AI 用下面这段**转告语**（原文入档，照读）请用户做轮间切换；**轮间不重走任何批次**：
+第一轮跑完后，AI 用下面这段**转告语**（原文入档，照读）请用户做轮间切换；**轮间不重走任何批次**，第二轮 2A 段按 3.4.1-3.4.7 重走 U1-U6：
 
-> 2026-09-26 取证记录（历史：both ＋ catchGate=true）已覆盖 52 条实机项中的 51 条与 A21 的拦截面。0.2.1 起按 native 轮与 ptc 轮两轮重建：第一轮 native（直呼面）已覆盖 A01-A56 的直呼侧；第二轮 ptc 补验 A21 拦截面与放行面、A29/A31/A33 与 run_code 聚合面。用户应在“插件 → 按需规划模式”当前包详情的全局管理表单中把 `toolPresentationMode` 改为 `ptc`、并把 `runcodeCatchGate` 改为 false；该表单槽缺失或被让位时，才由用户通过宿主 configEditor/SettingsForms 或手工 profile 权威行修改（不能用只写投影的自定义 PUT 代替；两条路径都写同一 `dsh-extra-plan-settings` 权威行）。mode 需重启 Harness 生效（不必新开会话），catchGate 权威行更新即生效；用户完成后按本流程补测并把两轮取证结果合并到日期化报告。
+> 第一轮（native ＋ catchGate=true）已完成。轮间只做**一次**后端权威行更新：请在「插件 → 按需规划模式」当前包详情的全局管理表单把 `toolPresentationMode` 改为 `ptc`；**`runcodeCatchGate` 保持 true、本次不要动**——第二轮分两段，2A 段仍在 catchGate=true 下取 A21 拦截面与各批 run_code 聚合行（见 3.4.1-3.4.7），2A 段全部跑完后才由 U9 把它切成 false 取放行面（见 3.4.8）。该表单槽缺失或被让位时，才由用户通过宿主 configEditor/SettingsForms 或手工 profile 权威行修改同一键（不能用只写投影的自定义 PUT 代替；两条路径都写同一 `dsh-extra-plan-settings` 权威行）。mode 是装载期快照，改完请重启 Harness（**不必新开会话**）。
 
-轮间成本 = **1 次后端权威行配置更新**（`runcodeCatchGate` true→false，`toolPresentationMode` 不动）——该开关（2026-09-23 修订）为插件侧配置热读、**权威行更新即生效，轮间无需重启 Harness、也不必新开会话**；无论通过 detail.section 呈现的全局管理表单还是表单缺失/让位时的用户侧 configEditor 后备路径，都只计这 1 次全局权威行更新。
+轮间成本 = **1 次后端权威行配置更新**（`toolPresentationMode` native→ptc）＋ **1 次重启 Harness**（mode 装载期快照，见 1.5(b)）；无论通过 detail.section 呈现的全局管理表单还是表单缺失/让位时的用户侧 configEditor 后备路径，都只计这 1 次全局权威行更新。**U9（`runcodeCatchGate` true→false）不在本段执行**——它发生在 2A 段全部跑完之后、2B 段（3.4.8）开始之前，为插件侧配置热读、**权威行更新即生效，不重启 Harness、也不必新开会话**（见 3.2.9 的 U7／U8／U9 三个操作）。
 
-### 3.4 第二轮：ptc ＋ catchGate=false（放行面轮／run_code 聚合面）
+> 2026-09-26 取证记录（历史：both ＋ catchGate=true）已覆盖 52 条实机项中的 51 条与 A21 的拦截面。0.2.1 起按 native 轮与 ptc 轮两轮重建：第一轮 native（直呼面）覆盖 A01-A56 的直呼侧；第二轮 ptc 分 **2A 段**（catchGate=true：A21 拦截面、A29/A31/A33、全部 run_code 聚合面、A38 弱证据）与 **2B 段**（catchGate=false：A21 放行面、开关局部性佐证、planner 续测）两段补验。用户完成轮间更新后按本流程补测并把两轮取证结果合并到日期化报告。
 
-第二轮配置 = **ptc ＋ catchGate=false**；**0 次状态操作**（route=none 即可。理由：catchGate 的运行期**唯一读点**是组判定内的 catch 闸门接入，仅 `runcodeCatchGate===true` 时生效；组判定逐成员走 mainGateReason／plannerGateReason／childReadonlyGateReason，与 catchGate 无关 → 第二轮补验内容不依赖 U1-U6 任何状态）。**只做四件事，不再重走 U1-U6 的任何批次**（观察面 = header.system 的 tools:sdk 段与 run_code 聚合行）：
+### 3.4 第二轮：ptc 两段（2A 段 catchGate=true 取拦截面；2B 段 catchGate=false 取放行面）
+
+第二轮配置 = **ptc**，按 `runcodeCatchGate` 切成两段：**2A 段**（ptc ＋ catchGate=true）在 ptc 下按第一轮同一套状态推进**重走 U1 到 U6**（编号 U1b-U6b，共 6 次状态推进），**成员集合与第一轮同批完全一致、但全部改写成 run_code 成员形态**，观察面 = `header.system` 的 `tools:sdk` 段与 run_code 聚合行；**2B 段**（ptc ＋ catchGate=false，U9 把 catchGate 切成 false 之后）**只补放行面**，不推进任何路由状态。分段依据：catchGate 的运行期**唯一读点**是组判定内的 catch 闸门接入，仅 `runcodeCatchGate===true` 时生效；组判定逐成员走 mainGateReason／plannerGateReason／childReadonlyGateReason，与 catchGate 无关 → 故 2A 段能取 A21 拦截面与全部聚合行，2B 段能取 A21 放行面与开关局部性佐证。
+
+> **机械约束一（2A 段每个调用点独立 try/catch）**：2A 段每次 run_code 必须**逐调用点独立 try/catch**——一次只包 1 个 `tools.*` 调用、块后紧跟 catch；否则先被 A21 拦截面整组拒、污染该批期望行（陷阱④）。**两处例外：① 3.4.1 末尾的「A21 拦截面批」——故意不逐点保护，专门用来取 A21 拦截面聚合行；② 单成员的 ask 探针（A14／A15／A41-1／A22）——必须不包裹 try/catch，按 3.4.1 的 ask 探针口径写成单成员顶层调用。**
+> **机械约束二（2A 段一律不用直呼）**：2A 段全部成员一律写成 run_code 成员形态（`await tools.<name>(…)` 放进 run_code），**不用直呼**——ptc 下宿主在 `tools/pre-execute` 之前就以 `unknown tool "<name>": only run_code is callable directly — call <name> from inside a run_code program instead` 早退（C10），**该文案不算闸门证据**，也取不到第一轮那种直呼单条 `Error:` 卡片。
+
+#### 3.4.1 S0 route=none（U1b 空白回车后）
+
+**状态前置**：空白回车（U1b）后 route=none、clarified=false、approved=false（与 3.2.1 同一 S0 默认态）。本批全部调用改为 run_code 成员形态，并逐调用点独立 try/catch（两处例外＝本节末尾的 A21 拦截面批，以及本节 ask 系单成员探针：后者不包裹 try/catch）。
+
+**成员与 A 编号（集合与 3.2.1 同批完全一致）**：组 `run_code#1b`（6 成员）= write / subagent_plan / save_probe / subagent / subagent_probe / job_output（`wait: true`）；同窗搭车 ask 系四条（非标选项 ask、结构错 ask、精确目的二选一 ask、裸 ask 不 return）、只读对照（read/glob/grep）、A12 放行侧、A39 目录观察，以及四工具治理四条（A51 / A54 / A55 / A56）。
+
+**聚合行期望（`- <标签>: <子文案>`，逐字取 A 表对应行，不改写、不新增措辞）**：
+
+| A 编号 | run_code 成员形态 | 聚合行期望（逐字照录） |
+|:--|:--|:--|
+| `A02` | `tools.write` | `- write: 路由未确认：write/edit。只读探查可随时进行。创建/修改/删除文件须先 ask_user_question 路由确认（选项固定为「直接执行」「进行pro规划」「不同意」），用户批准后才可动手` |
+| `A05` | `tools.subagent_plan` | `- subagent_plan: 子代理未放行：subagent_plan。须先 ask_user_question 路由确认（选项固定为「直接执行」「进行pro规划」「不同意」），意图澄清问答后再调用 subagent_plan` |
+| `A13` | `tools.save_probe` | `- save_probe: 子代理未放行：save_probe。须先 ask_user_question 路由确认（选项固定为「直接执行」「进行pro规划」「不同意」），意图澄清问答后再调用 save_probe`（route=none 分支） |
+| `A06` | `tools.subagent` | `- subagent: 执行类委派未放行：subagent。须先 ask_user_question 让用户对方案点「同意执行」（批准选项固定为「同意执行」「转交pro规划」「不同意」），用户批准后才可委派` |
+| `A30` | `tools.subagent_probe`（不带后台参数） | 无聚合行（0.2.1 起该拒因退役，记「已退役·放行」，编号保留） |
+| `A16` | `tools.job_output({ wait: true })` | `- job_output: job_output 禁止带 wait: true 前台等待。请省略 wait 参数或设 wait: false，job 完成后会收到通知` |
+
+**同窗搭车项的期望（同样逐字取 A 表）**：ask 系探针一律各自单独成一次 run_code（单成员），且 tools.ask_user_question 的调用点必须写在顶层——前三条写成 return await tools.ask_user_question(...)，第四条（A22）写成裸 await tools.ask_user_question(...)（不 return）。不得用 try/catch 包裹 ask：单调用点时 A21 不触发（run_code 内调用点少于 2 处即不判），而 ask 一旦进入 try 块就不再是顶层调用点，A22 会按「无法静态证明返回链」直接拒绝；前三条若被包裹，该批会多出 A22 行、污染期望。
+- `A14`：run_code 成员 `tools.ask_user_question`（只含「直接执行」一项）→ 聚合行 `- ask_user_question: ask 选项不规范。路由 ask 选项固定为「直接执行」「进行pro规划」「不同意」；批准 ask 选项固定为「同意执行」「转交pro规划」「不同意」；目的 ask 选项固定为「完善方案」「重新规划」。 当前路由 ask 缺少：…。 同时，路由 ask 结构错误：… 请一并修正后重提。`（缺少清单与尾句逐字见 A 表 A14 行）
+- `A15`：run_code 成员 `tools.ask_user_question`（标准三词但结构错）→ 聚合行 `- ask_user_question: 路由 ask 结构错误：须至少 2 个问题（第一个为路由选项固定为「直接执行」「进行pro规划」「不同意」，第二个为补充要求可空），当前 N 个问题`
+- `A41-1`：run_code 成员 `tools.ask_user_question`（精确目的二选一、route=none）→ deny 原因逐字包含 `须先 ask_user_question 路由确认（选项固定为「直接执行」「进行pro规划」「不同意」）`
+- `A22`：`run_code#2b` 裸 `await tools.ask_user_question(...)`（不 return）→ 聚合行 `- ask_user_question: run_code 内 ask_user_question 结果未正确返回用户层：请直接 return await tools.ask_user_question(...)，或先用变量接收后在紧随的顶层 return 中返回该结果；不得只调用、只赋值、通过别名/动态访问，或用 .then/函数包装结果`
+- 只读对照：`tools.read` / `tools.glob` / `tools.grep` 单成员各一次 → 放行、无聚合行
+- `A12`：`tools.save_plan` 单成员（plan/checklist 各 ≥200 字、无未探查标记、无证据引用）→ 无拒绝文案，返回 paths 数组含两个 `.md` 文件路径（方案-{base}.md、验收-{base}.md）
+- `A39`：目录观察（ptc 段判据 = `header.system` 的 `tools:sdk` 段：顶层仅 run_code、sections 精确两项 persona + 手写 `tool:read`，不含宿主 `tools:ptc-only`）
+- `A51`：`tools.job_kill` 单成员（route=none）→ 聚合行 `- job_kill: 当前状态禁止job_kill。如用户要求停止子代理，须先 ask_user_question 路由确认（选项固定为「直接执行」「进行pro规划」「不同意」），选择「直接执行」后才可执行 job_kill`
+- `A54`：`tools.send_message` 单成员（目标非 running）→ 放行、无拒绝文案
+- `A55`：同一次 run_code 内 `tools.job_list` 两次（同参去重只留 1 成员，第二次为运行时嵌套 re-entry）→ 聚合行 `- job_list: 禁止轮询子代理状态，停止操作并等待子代理通知`
+- `A56`：同 A55 写法，`tools.list_agents` 同文案 `禁止轮询子代理状态，停止操作并等待子代理通知`
+
+**判定方式**：按 C9 与第一轮 3.2.1 的直呼单条卡片**跨轮逐字比对**——只比 `- <标签>: ` 之后的子文案与 A 表期望逐字一致；标签后缀（如 `write（参数不可解析）`）照录、不作通过条件；A39 按 ptc 段判据（顶层仅 run_code、sections 精确两项 persona + 手写 `tool:read`）另记一行结论。
+
+**A21 拦截面批（2A 段唯一的 try/catch 例外）**：在 S0 同轮发一个含 ≥2 个 `tools.*` 调用点且**故意不逐点独立 try/catch** 的 run_code，成员含 write（route=none → 兼作 A02 复验）→ 期望**同批双闸门聚合**：`- run_code: run_code 内 N 个工具调用未全部独立容错：请给每个调用点各写一个独立 try/catch——一次只包 1 个调用、块后紧跟 catch。已保护 M 个。写法示例：try { await tools.read({ file_path: "x" }) } catch (e) {}` ＋ `- write: 路由未确认：write/edit。只读探查可随时进行。创建/修改/删除文件须先 ask_user_question 路由确认（选项固定为「直接执行」「进行pro规划」「不同意」），用户批准后才可动手`。判定：按 C9 与第一轮 3.2.7 的 A21 mock/静态兜底及 A 表 A21 行逐字对齐；planner 侧仍由 mock 兜底。
+
+#### 3.4.2 S1 route=direct（U2b 选「直接执行」后）
+
+**状态前置**：选「直接执行」后 route=direct（与 3.2.2 同一 S1）。全部成员为 run_code 形态、逐调用点独立 try/catch。
+
+**成员与 A 编号（集合与 3.2.2 同批完全一致）**：组 `run_code#3b`（5 成员）= subagent_plan / save_probe / subagent / subagent_probe / job_output（`wait: true`）；同窗搭车：ask#4（精确目的二选一 → A41-2）、Cordis 对照（cordis_inspect_list 放行、cordis_inspect_query 部分豁免）、`A46` 放行侧（save_plan 单成员）、`A52`（direct 态 job_kill 放行）、以及 probe 委派（`tools.subagent_probe` 单成员 → 序列见 3.4.7）。
+
+**聚合行期望（逐字取 A 表对应行）**：
+
+| A 编号 | run_code 成员形态 | 聚合行期望（逐字照录） |
+|:--|:--|:--|
+| `A03` | `tools.subagent_plan` | `- subagent_plan: 直行态下不可规划：subagent_plan。「直接执行」已选，请直接使用 write/edit/pwsh/bash 等工具动手完成任务` |
+| `A03` | `tools.save_probe` | `- save_probe: 直行态下不可规划：save_probe。「直接执行」已选，请直接使用 write/edit/pwsh/bash 等工具动手完成任务` |
+| `A06` | `tools.subagent` | `- subagent: 执行类委派未放行：subagent。须先 ask_user_question 让用户对方案点「同意执行」（批准选项固定为「同意执行」「转交pro规划」「不同意」），用户批准后才可委派` |
+| `A30` | `tools.subagent_probe`（不带后台参数） | 无聚合行（0.2.1 起无拒因，记「已退役·放行」；直呼侧放行面同口径） |
+| `A16` | `tools.job_output({ wait: true })` | `- job_output: job_output 禁止带 wait: true 前台等待。请省略 wait 参数或设 wait: false，job 完成后会收到通知` |
+
+**同窗搭车项**：`A41-2` → deny 原因逐字包含 `须先 ask_user_question 路由确认（选项固定为「直接执行」「进行pro规划」「不同意」）`；Cordis 对照 → 无拒绝文案（cordis_inspect_query 部分豁免）；`A46` → 无拒绝文案、返回 paths 数组含两个 `.md`；`A52` → 无拒绝文案（job_kill 放行，宿主侧 job owner 隔离自理）；A30 放行侧 → 无拒绝文案、返回 subagentId（probe 子会话序列见 3.4.7）。
+
+**判定方式**：按 C9 与第一轮 3.2.2 的直呼单条卡片跨轮逐字比对。
+
+#### 3.4.3 S2 route=plan·未澄清（U3b 选「进行pro规划」后）
+
+**状态前置**：route=plan、clarified=false、purpose=none（与 3.2.3 同一 S2）；选「进行pro规划」后第一个提问一定是目的 ask，未答复前 save_probe 与 subagent_plan 一律被目的闸门拒绝。
+
+**成员与 A 编号（集合与 3.2.3 同批完全一致）**：组 `run_code#4b`（5 成员）= write / subagent_plan / save_probe / subagent / job_output（`wait: true`）；同窗搭车 `A41-3`（route=plan、结构恰 1 问的目的二选一 ask → allow）。
+
+**聚合行期望（逐字取 A 表对应行）**：
+
+| A 编号 | run_code 成员形态 | 聚合行期望（逐字照录） |
+|:--|:--|:--|
+| `A01` | `tools.write` | `- write: 规划态下主会话不可写文件：write/edit。探查请走 save_probe，写文件请等方案批准后走执行者委派` |
+| `A41` | `tools.subagent_plan` | `- subagent_plan: 规划目的尚未确认：subagent_plan。须先 ask_user_question 询问用户本次 pro 规划的目的（选项固定为「完善方案」「重新规划」），答复后再调用 subagent_plan` |
+| `A41` | `tools.save_probe` | `- save_probe: 规划目的尚未确认：save_probe。须先 ask_user_question 询问用户本次 pro 规划的目的（选项固定为「完善方案」「重新规划」），答复后再调用 save_probe` |
+| `A06` | `tools.subagent` | `- subagent: 执行类委派未放行：subagent。须先 ask_user_question 让用户对方案点「同意执行」（批准选项固定为「同意执行」「转交pro规划」「不同意」），用户批准后才可委派` |
+| `A16` | `tools.job_output({ wait: true })` | `- job_output: job_output 禁止带 wait: true 前台等待。请省略 wait 参数或设 wait: false，job 完成后会收到通知` |
+
+**同窗搭车项**：`A41-3` → run_code 成员 `tools.ask_user_question`（精确目的二选一、结构恰 1 问、route=plan）→ allow、无拒绝文案（与 3.2.3b 的 plan 放行窗口同口径）。
+
+**判定方式**：按 C9 与第一轮 3.2.3 的直呼单条卡片跨轮逐字比对。
+
+#### 3.4.4 S2.5 route=plan·目的已定·未澄清（U4b 目的答复后）
+
+**状态前置**：route=plan、purpose=refine|redo、clarified=false（与 3.2.3b 同一 S2.5，正常可达态）；A41-1/A41-2 的取证窗口沿用第一轮口径前移在 3.4.1／3.4.2 顺带完成，本窗口只取 A04/A13。
+
+**成员与 A 编号（集合与 3.2.3b 同批完全一致）**：组 `run_code#4c`（对应第一轮 3.2.3b 的 run_code#4b，2 成员）= subagent_plan / save_probe。
+
+**聚合行期望（逐字取 A 表对应行）**：
+
+| A 编号 | run_code 成员形态 | 聚合行期望（逐字照录） |
+|:--|:--|:--|
+| `A04` | `tools.subagent_plan` | `- subagent_plan: 澄清问答尚未完成：subagent_plan。请先独立发一次 ask_user_question 做澄清问答（1-3 个关键问题，给候选选项），完成后再调用 subagent_plan` |
+| `A13` | `tools.save_probe` | `- save_probe: 澄清问答尚未完成：save_probe。请先独立发一次 ask_user_question 做澄清问答（1-3 个关键问题，给候选选项），完成后再调用 save_probe`（澄清文案分支） |
+
+**判定方式**：按 C9 与第一轮 3.2.3b 的直呼单条卡片跨轮逐字比对；A41 补充取证四项（A41-1～A41-5）与第一轮 U4 行同口径（A41-1/A41-2 在 3.4.1／3.4.2、A41-3 在 3.4.3、A41-4/A41-5 静态断言替代）。
+
+#### 3.4.5 S3 route=plan·已澄清（U5b 澄清答复后）
+
+**状态前置**：route=plan、clarified=true、purpose=refine|redo（与 3.2.4 同一 S3；clarified=true 必须经目的已定后的澄清答复置位）。
+
+**成员与 A 编号（集合与 3.2.4 同批完全一致）**：组 `run_code#5b`（3 成员）= subagent_plan / subagent / job_output（`wait: true`）；同窗搭车：A17（同一次 run_code 内两次同参 `tools.job_output`）、planner 委派（`tools.subagent_plan` 单成员 → 序列见 3.4.7）、A12 放行侧（save_plan 单成员）、A49 放行侧（save_probe 单成员）、A53（目标 running 的 `tools.send_message` 成员）。
+
+**聚合行期望（逐字取 A 表对应行）**：
+
+| A 编号 | run_code 成员形态 | 聚合行期望（逐字照录） |
+|:--|:--|:--|
+| `A10` | `tools.subagent_plan` | 无聚合行（0.2.1 起无拒因：记「已退役·放行」） |
+| `A06` | `tools.subagent` | `- subagent: 执行类委派未放行：subagent。须先 ask_user_question 让用户对方案点「同意执行」（批准选项固定为「同意执行」「转交pro规划」「不同意」），用户批准后才可委派` |
+| `A16` | `tools.job_output({ wait: true })` | `- job_output: job_output 禁止带 wait: true 前台等待。请省略 wait 参数或设 wait: false，job 完成后会收到通知` |
+| `A17` | 同一次 run_code 内第二次同参 `tools.job_output` | `- job_output: job_output 禁止对同一 job 重复调用。job "<job_id>" 在本轮已调用过，请等待子代理返回结果，禁止提前收尾、结束` |
+| `A53` | `tools.send_message`（agent_id=running 目标） | `- send_message: 子代理running中，禁止打扰` |
+
+**同窗搭车项**：`A12` → 无拒绝文案、paths 数组含两个 `.md`、read 验证两文件可读；`A49` → 无拒绝文案、`.extra-plan/` 新增「线索-」前缀 Markdown、read 验证可读。
+
+**判定方式**：按 C9 与第一轮 3.2.4 的直呼单条卡片跨轮逐字比对；A17 必须与第一次**放行**调用同轮内完成（中间不插入新的 user/message 或 send_message 续轮，锚点重置机制见陷阱③）。
+
+#### 3.4.6 S4 route=plan·已批准（U6b 批准「同意执行」后）
+
+**状态前置**：route=plan、approved=true、purpose 已定（refine|redo）（与 3.2.5 同一 S4）。
+
+**成员与 A 编号（集合与 3.2.5 同批完全一致）**：组 `run_code#6b`（3 成员）= write / pwsh 写命令（不带 sandbox_permissions）/ subagent；同窗搭车：subagent_review 放行侧（`tools.subagent_review` 单成员 → 序列见 3.4.7）、A48（`tools.subagent` 单成员委派 flash 执行者）、A50（A48 委派话术携带 write 指令）、A40（`tools.workflow` / `tools.ralph` 单成员委派 → worker 工具面观察）。
+
+**聚合行期望（逐字取 A 表对应行）**：
+
+| A 编号 | run_code 成员形态 | 聚合行期望（逐字照录） |
+|:--|:--|:--|
+| `A07` | `tools.write` | `- write: 方案已批准，执行请走 subagent 委派 flash 执行者（读方案/验收文件执行）。主会话直做仅限越界操作（工作区外写入，走 shell（Windows 用 pwsh、Linux/macOS 用 bash）+ sandbox_permissions）` |
+| `A09` | `tools.pwsh` 写命令（不带 sandbox_permissions） | `- pwsh: 方案已批准，工作区内写入请走 subagent 委派执行者。越界操作（工作区外写入）请带 sandbox_permissions 参数（如 sandbox_permissions: "workspace-write"）与 justification 重试` |
+| `A11` | `tools.subagent` | 无聚合行（0.2.1 起无拒因：记「已退役·放行」） |
+
+**同窗搭车项**：`A11` 放行侧 → `tools.subagent_review` 单成员无拒绝文案、reviewer 子会话开始（立即返回加通知）；`A48` → 角色预设未挂的工具不可见（A38），且能读方案/验收文件执行；`A50` → 委派话术携带 write 指令后在 `pe-test/reports/` 写临时文件，无拒绝文案、主会话 read 验证存在、随后删除清理；`A40` → 无拒绝文案，worker `header.tools` 中 executor-spawn deny 11 项不可见（AI 逐字比对 `agent.cordis.yml`），取不到 worker 日志则记静态断言替代。
+
+**判定方式**：按 C9 与第一轮 3.2.5 的直呼单条卡片跨轮逐字比对。
+
+#### 3.4.7 子代理三序列（ptc 下重跑：A29/A31/A33 ＋ A38 弱证据）
+
+**形态约束**：三处委派一律写成 **run_code 单成员**（`tools.subagent_plan` / `tools.subagent_probe` / `tools.subagent_review`，各调用点独立 try/catch）；子会话内的取证序列与第一轮**逐条相同**（3.2.6.1 planner／3.2.6.2 probe／3.2.6.3 reviewer），只把「直呼」改写成「run_code 成员」形态。委派挂靠窗口：planner → 3.4.5（U5b）、probe → 3.4.2（U2b）、reviewer → 3.4.6（U6b）；序列内用户 0 操作。
+
+**覆盖项与聚合行期望（逐字取 A 表对应行）**：
+
+| A 编号 | 序列与步骤 | 聚合行期望（逐字照录） |
+|:--|:--|:--|
+| `A29` | planner 序列（3.2.6.1 第 7 步）：run_code 成员 write/edit | `- write: 规划子代理只读：方案经 save_plan 落盘，其余写入一律禁止（toolFilter 之外的第二道防线）`（edit 同文案，标签照录） |
+| `A31` | planner 序列（3.2.6.1 第 7 步）：run_code 成员 subagent_probe | `- subagent_probe: 规划子代理不得委派探查者：subagent_probe 仅主会话可用（探查者属主会话的探查能力）。请用 read/glob/grep 自行核对；确有缺口时输出「申请继续探查：<待查项> — <原因>」，由主会话派探查者并把线索文件路径转达给你（toolFilter 之外的第二道防线）` |
+| `A33` | probe 序列（3.2.6.2 第 6 步）：run_code 成员 write/edit | `- write（参数不可解析）: 探查者只读：探查不修改任何文件，write/edit 一律禁止（工具目录判定）`（标签后缀照录、不作通过条件） |
+| `A33` | reviewer 序列（3.2.6.3 第 3 步）：run_code 成员 write/edit | `- write（参数不可解析）: 验收复核者只读：验收复核不修改任何文件，write/edit 一律禁止（工具目录判定）`（标签后缀照录、不作通过条件） |
+| `A38` | planner/probe/reviewer 各跑一次 `node pe-test/tools/step-04-工具清单查看.mjs <子会话目录>` | 目录观察（不产生文案）：**弱证据** = `header.system` 的 `tools:sdk` 段文本对角色未挂工具名无命中（脚本仅 includes、textEvidenceOnly，只作辅助、**不得单独证明不可见**） |
+
+**判定方式**：A29/A31/A33 按 C9 与 A 表逐字比对（只比 `- <标签>: ` 之后的子文案），并与第一轮 mock/直调面跨轮对齐；A38 只给一行结论「通过（弱）：tools:sdk 文本无 <名单 N 项> 命中（证据：脚本输出行号）」，不表述为「已证明不可见」。
+
+#### 3.4.8 2B 段（catchGate=false：A21 放行面 ＋ 开关局部性佐证 ＋ planner 续测）
+
+**状态前置**：2A 段（3.4.1-3.4.7）全部跑完后，U9 把 `runcodeCatchGate` 切为 false（**插件侧配置热读、不重启、不新开会话**，见 3.3）；进入本段时由常数项 U0 口径的一条新 user/message 把 route 锚点前移回 `route=none`（常数项不占用户操作清单行，见 1.3）。观察面 = `header.system` 的 `tools:sdk` 段与 run_code 聚合行；本段三个 run_code 仍逐调用点独立 try/catch（A21 已不拦截，独立 try/catch 只用于满足其它机械口径）。
+
+**形态约束**：本段三项一律写成 run_code 成员形态（`send_message` 也写成 run_code 单成员），**不用直呼**——ptc 下直呼只会拿到 C10 的 unknown tool 早退文案、不算闸门证据。
 
 | 项 | 操作（AI 发起，用户 0 操作） | 判定口径 |
 |:--|:--|:--|
-| ① A21 放行面 | 发**与第一轮完全相同**的未逐点独立 try/catch 代码（≥2 个调用点、不含 write 成员） | **放行、无 A21 行**：catch 闸门只在 `runcodeCatchGate===true` 时接入组判定 |
-| ② 开关局部性佐证 | route=none 下发一个**带 write 成员**的 run_code | 组内 write **仍被 A02 拒**（`路由未确认：write/edit。…`）→ 佐证该开关不改其它闸门（组判定逐成员走 mainGateReason/plannerGateReason/childReadonlyGateReason） |
-| ③ planner 续测 A21 放行面 | send_message 向第一轮委派的 planner 子会话发送「发一个含 ≥2 调用点、未逐点独立 try/catch 的 run_code」指令（转达前提：目标 planner 已停（非 running），否则被 A53 拒），planner 执行后看返回 | catchGate=false → 放行（无拒绝文案）→ 佐证 catch 闸门仅在 catchGate=true 时生效，planner 侧与主会话侧同口径 |
+| ① A21 放行面 | 发**与第一轮完全相同**的未逐点独立 try/catch 代码（≥2 个 `tools.*` 调用点、不含 write 成员），单成员 run_code | **放行、无 A21 行**：`- run_code: run_code 内 N 个工具调用未全部独立容错…` 不得出现（catch 闸门只在 `runcodeCatchGate===true` 时接入组判定）；判定 = 与 3.4.1 的 A21 拦截面聚合行及 A 表 A21 行反向核对 |
+| ② 开关局部性佐证 | route=none 下发一个**带 write 成员**的 run_code | 组内 write **仍被 A02 拒**：`- write: 路由未确认：write/edit。只读探查可随时进行。创建/修改/删除文件须先 ask_user_question 路由确认（选项固定为「直接执行」「进行pro规划」「不同意」），用户批准后才可动手` → 佐证该开关不改其它闸门（组判定逐成员走 mainGateReason／plannerGateReason／childReadonlyGateReason）；判定按 C9 与 3.4.1 的同一行跨段逐字一致 |
+| ③ planner 续测 A21 放行面 | `tools.send_message` 写成 **run_code 单成员**（逐调用点独立 try/catch），向第一轮委派的 planner 子会话发送「发一个含 ≥2 调用点、未逐点独立 try/catch 的 run_code」指令（转达前提：目标 planner 已停（非 running），否则被 A53 拒）；planner 执行后看返回 | catchGate=false → 放行、无拒绝文案 → 佐证 catch 闸门仅在 catchGate=true 时生效，planner 侧与主会话侧同口径；若被 A53 拒则先按 `- send_message: 子代理running中，禁止打扰` 记 A53、待 planner 停止后重发本项 |
 
-第二轮结束后：AI 把两轮结果合并成报告（落点与命名见第八部分）。
+第二轮结束后：AI 把两轮结果合并成报告（落点与命名见第八部分，逐条交叉比对与 C9 跨轮结论按第八部分报告内容项登记）。
 
 ### 3.5 轮次总表（轮次 × 配置组合 × 你的操作 × 覆盖内容）
 
 | 轮次 | 配置组合 | 你的操作 | 覆盖内容 |
 |:--|:--|:--|:--|
-| 第一轮（native 拦截面轮） | native ＋ catchGate=true（起步 catchGate 非 true 时在切 native 的**同一次后端权威行更新**中搭车设为 true） | 6 次状态推进（U1-U6，见第四部分）＋ 后端配置前置档 1 次后端权威行配置更新（仅起步 mode/catchGate 不合规需要） | 52 条实机项中直呼侧全部 ＋ A02/A39 复验（观察面 = request/header 的 tools） |
-| 轮间 | 后端权威行配置更新 1 次：mode native→ptc（装载期快照，需重启 Harness）＋ runcodeCatchGate true→false（配置热读、权威行更新即生效） | 1 次后端权威行配置更新（**无需新开会话**） | —（不产出判定） |
-| 第二轮（ptc 放行面轮） | ptc ＋ catchGate=false | **0 次状态操作**（不推进任何路由状态，无需复走 U1-U6） | A21 的拦截面与放行面 ＋ A29/A31/A33（仅 ptc 可达）＋ 开关局部性佐证（观察面 = header.system 的 tools:sdk 段） |
+| 第一轮（native 拦截面轮） | native ＋ catchGate=true（起步 catchGate 非 true 时在切 native 的**同一次后端权威行更新**中搭车设为 true） | 6 次状态推进（U1-U6，见第四部分）＋ 后端配置前置档 1 次后端权威行配置更新（仅起步 mode/catchGate 不合规需要，即 U7） | 52 条实机项中直呼侧全部 ＋ A02/A22/A39 复验（观察面 = request/header 的 tools） |
+| 轮间 U8 | 后端权威行配置更新 1 次：只把 mode native→ptc（装载期快照，需重启 Harness）；`runcodeCatchGate` **保持 true 不动** | 1 次后端权威行配置更新 ＋ 重启 Harness（**无需新开会话**） | —（不产出判定） |
+| 第二轮 2A 段（ptc 拦截面段） | ptc ＋ catchGate=true | 6 次状态推进（U1b-U6b，见 4.1 与 3.4.1-3.4.7） | A21 拦截面 ＋ A01-A56 的 run_code 聚合面 ＋ A29/A31/A33（仅 ptc 可达，见 3.4.7）＋ A38 弱证据（观察面 = header.system 的 tools:sdk 段与 run_code 聚合行） |
+| 轮间 U9 | 后端权威行配置更新 1 次：只把 `runcodeCatchGate` true→false（插件侧配置热读、权威行更新即生效，**不重启、不新开会话**） | 1 次后端权威行配置更新 | —（不产出判定） |
+| 第二轮 2B 段（ptc 放行面段） | ptc ＋ catchGate=false | 0 次状态推进（沿用 route=none；U0 常数项的一条新 user/message 前移锚点、不计清单行） | A21 放行面 ＋ 开关局部性佐证 ＋ planner 续测放行面（见 3.4.8；观察面 = header.system 的 tools:sdk 段） |
 
 ## 四、用户操作清单
 
-### 4.1 用户操作清单（第一轮 U1-U6 六行 ＋ 后端配置 1-2 行；常数项 U0 不占行）
+### 4.1 用户操作清单（第一轮 U1-U6 六行 ＋ 第二轮 U1b-U6b 六行 ＋ 后端配置 2-3 行；常数项 U0 不占行）
 
 | 序号 | 轮次 | 用户动作 | 推进到状态 | 覆盖 A 编号集合 | 覆盖条数 | 合并理由 |
 |:--|:--|:--|:--|:--|:--|:--|
@@ -407,11 +567,18 @@ channelBroken 逃生（`CHANNEL_BROKEN_CODES` = NO_PROVIDER / CALLER_NOT_LIVE / 
 | U5 | 第一轮 | 澄清答复（选探查方式） | S3（route=plan·已澄清） | A10,A06,A16,A17,A12,A49,A53 | 7（＋planner 委派，0 用户操作） | clarified 仅当目的已定（purpose∈{完善方案,重新规划}）时由澄清答复置位；route/目的重选与非通道取消按阶段清理，channelBroken 保留旧状态，新 user/message 重开事件窗回默认态；A17 需同轮内完成（计数锚点重置见陷阱③）；A53（send_message 目标 running 拒）在 planner 委派运行中顺带直呼 |
 | U6 | 第一轮 | 批准同意（点「同意执行」） | S4（route=plan·已批准） | A07,A09,A11,A40,A48,A50 | 6（＋reviewer 委派，0 用户操作） | approved 只有「同意」可置位；A48 委派执行者，A50 为其写放行对照 |
 | U7 | 第一轮前置（**仅起步 mode 非 native 或 catchGate 非 true 需要**，否则省去） | 当前包详情的全局管理表单优先把 `toolPresentationMode` 切到 native、把 `runcodeCatchGate` 置 true；该表单槽缺失或被让位时才经用户侧 configEditor/SettingsForms 或手工 profile 权威行完成同一更新（**同一次后端权威行更新**，搭车不新增操作）＋ 重启 Harness（**不必新开会话**） | 前置（不推进 flow state） | —（0 条直接） | 0 | 表单与后备路径都必须维护 `dsh-extra-plan-settings` 权威行；本次重启由工具呈现模式的装载期快照口径（见 1.5(b)）决定（`runcodeCatchGate` 已热读、同次权威行更新即生效），与第一轮批次解耦；不能用只写投影的自定义 PUT 代替 |
-| U8 | 轮间（first→second 之间） | 当前包详情全局管理表单优先把 `toolPresentationMode` 切为 ptc 并把 `runcodeCatchGate` 切为 false；该表单槽缺失或被让位时才经用户侧 configEditor/SettingsForms 或手工 profile 权威行完成 1 次更新（**同一次后端权威行更新**）＋ 重启 Harness（mode 装载期生效，**不必新开会话**） | 前置（不推进 flow state；第二轮 route=none 即可） | —（0 条直接；第二轮四项见 3.4） | 0 | catchGate 为插件侧配置热读（2026-09-23 修订，见 1.5(b)）、mode 为装载期快照；两条路径都维护同一 `dsh-extra-plan-settings` 权威行，不能用只写投影的自定义 PUT；**第二轮 0 次状态舞** |
+| U8 | 轮间（first→second 之间） | 当前包详情全局管理表单优先把 `toolPresentationMode` 切为 ptc；**`runcodeCatchGate` 保持 true、本次不动**；该表单槽缺失或被让位时才经用户侧 configEditor/SettingsForms 或手工 profile 权威行完成 1 次更新（**同一次后端权威行更新**）＋ 重启 Harness（mode 装载期生效，**不必新开会话**） | 前置（不推进 flow state） | —（0 条直接；第二轮 2A 段见 U1b-U6b） | 0 | mode 为装载期快照（见 1.5(b)）、需重启；两条路径都维护同一 `dsh-extra-plan-settings` 权威行，不能用只写投影的自定义 PUT；catchGate 的 true→false 不在此行，由 U9 单独热读切换 |
+| U1b | 第二轮 2A 段 | 空白回车（路由 ask，与 U1 同一动作） | S0（route=none 默认态） | A02,A05,A06,A13,A14,A15,A16,A22,A30,A39,A12,A51,A54,A55,A56（与 U1 行完全一致） | 16 | 状态推进成本 1 次（U1b-U6b 合计 6 次）；成员集合与 U1 行完全一致、全部改写成 run_code 成员形态（见 3.4.1），逐调用点独立 try/catch（两处例外＝A21 拦截面批与单成员 ask 探针）；聚合面按 C9 与 U1 行直呼单条跨轮逐字比对 |
+| U2b | 第二轮 2A 段 | 选「直接执行」（与 U2 同一动作） | S1（route=direct） | A03,A06,A16,A30,A46,A52（与 U2 行完全一致） | 6（＋probe 委派，0 用户操作） | 状态推进成本 1 次；probe 委派改写成 run_code 单成员（见 3.4.2／3.4.7）；A52 以 run_code 成员形态取放行侧；聚合面按 C9 与 U2 行跨轮逐字比对 |
+| U3b | 第二轮 2A 段 | 选「进行pro规划」（与 U3 同一动作） | S2（route=plan·未澄清·目的未定） | A01,A06,A16,A41,A41-3（与 U3 行完全一致） | 6 | 状态推进成本 1 次；S2 下 subagent_plan/save_probe 两条同落 A41（目的闸门先于澄清判定）；A41-3 以 run_code 成员形态取放行侧（见 3.4.3） |
+| U4b | 第二轮 2A 段 | 目的答复（选「完善方案」或「重新规划」，与 U4 同一动作） | S2.5（route=plan·目的已定·未澄清） | A04,A13,A41-1,A41-2,A41-4,A41-5（与 U4 行完全一致） | 2（＋A41 补充取证 4 项） | 状态推进成本 1 次；A41-1/A41-2 窗口沿用前移口径在 U1b/U2b 顺带，A41-3 在 U3b、A41-4/A41-5 静态断言替代（见 3.4.4） |
+| U5b | 第二轮 2A 段 | 澄清答复（选探查方式，与 U5 同一动作） | S3（route=plan·已澄清） | A10,A06,A16,A17,A12,A49,A53（与 U5 行完全一致） | 7（＋planner 委派，0 用户操作） | 状态推进成本 1 次；A17 需同轮内完成；A53 以 run_code 成员形态取 running 目标拒绝；planner 委派改写成 run_code 单成员（见 3.4.5／3.4.7） |
+| U6b | 第二轮 2A 段 | 批准同意（点「同意执行」，与 U6 同一动作） | S4（route=plan·已批准） | A07,A09,A11,A40,A48,A50（与 U6 行完全一致） | 6（＋reviewer 委派，0 用户操作） | 状态推进成本 1 次；A48/A50 仍为执行者委派搭车、A40 为 worker 工具面观察，reviewer 委派改写成 run_code 单成员（见 3.4.6／3.4.7） |
+| U9 | 第二轮 2A 段之后、2B 段之前 | 当前包详情全局管理表单优先把 `runcodeCatchGate` 切为 false（`toolPresentationMode` 保持 ptc 不动）；该表单槽缺失或被让位时才经用户侧 configEditor/SettingsForms 或手工 profile 权威行完成同一更新（**1 次后端权威行更新**）；**不重启、不新开会话** | 前置（不推进 flow state；2B 段沿用 route=none） | —（0 条直接；2B 段三项见 3.4.8） | 0 | `runcodeCatchGate` 为插件侧配置热读（2026-09-23 修订，见 1.5(b)）、权威行更新即生效、**不触发重启记账**；两条路径都维护同一 `dsh-extra-plan-settings` 权威行，不能用只写投影的自定义 PUT |
 
-> 表注一：「覆盖条数」列 = 该行直接连发清单命中的 A 编号条数（合计 42 条次，含跨行重复）；由该行批次委派的子代理序列所覆盖的编号按委派批次归属同一 U 序号（planner→U5、probe→U2、reviewer→U6），合计覆盖 52 条实机可测项（2026-09-29 v0.4.0：A51→U1、A52→U2、A53→U5、A54/A55/A56→U1）。A41-1/A41-2 属 U4 行「＋A41 补充取证 4 项」的取证内容，取证窗口前移至 U1/U2（route=none/direct 顺带），条次不重复计入 U1/U2 行，合计仍 42 条次。
-> 表注二：清单行数 = 第一轮 U1-U6 共 6 行 ＋ 第二轮 0 行 ＋ 后端配置 1-2 行（U7 仅起步 mode/catchGate 不合规时需要；U8 恒定）。合计：需切 mode 8 次 = U1-U6（6 次状态推进）＋ U7（1 次后端权威行配置更新）＋ U8（1 次后端权威行配置更新）；起步已合规 7 次 = U1-U6（6 次）＋ U8（1 次）。第二轮 0 行 = 第二轮 0 次状态操作（理由见 3.4）。
-> 表注三：后端权威行动作均含「切 mode（native↔ptc）／切 catchGate」与 `runcodeCatchGate`、同一次后端权威行配置更新措辞；**第二轮不新增任何用户状态操作行**。
+> 表注一：「覆盖条数」列 = 该行直接连发清单命中的 A 编号条数（合计 42 条次，含跨行重复）；由该行批次委派的子代理序列所覆盖的编号按委派批次归属同一 U 序号（planner→U5、probe→U2、reviewer→U6），合计覆盖 52 条实机可测项（2026-09-29 v0.4.0：A51→U1、A52→U2、A53→U5、A54/A55/A56→U1）。A41-1/A41-2 属 U4 行「＋A41 补充取证 4 项」的取证内容，取证窗口前移至 U1/U2（route=none/direct 顺带），条次不重复计入 U1/U2 行，合计仍 42 条次。第二轮 U1b-U6b 与第一轮同行覆盖 A 集合完全一致，不重复计入合计。
+> 表注二：清单行数 = 第一轮 U1-U6 共 6 行 ＋ 第二轮 U1b-U6b 共 6 行 ＋ 后端配置 2-3 行（U7 仅起步 mode/catchGate 不合规时需要；U8、U9 恒定）。**状态推进合计 12 次（第一轮 6 加第二轮 6）**；**权威行更新 2 次（U8 切 mode 到 ptc ＋ U9 切 catchGate 为 false），起步 mode/catchGate 不合规时为 3 次（U7 ＋ U8 ＋ U9）**；**报告落盘窗口单列、不计行**（见第八部分）。
+> 表注三：U8 只切 `toolPresentationMode`（native→ptc，装载期快照、需重启 Harness），`runcodeCatchGate` 保持 true；U9 只切 `runcodeCatchGate`（true→false，插件侧配置热读、权威行更新即生效，不重启、不新开会话）；两条路径都维护同一 `dsh-extra-plan-settings` 权威行，不能用只写投影的自定义 PUT 代替。第二轮的状态操作行 = U1b-U6b 六行，**不新增任何其他用户状态操作行**。
 
 ## 五、（本节空缺，编号占位）
 
@@ -423,7 +590,7 @@ channelBroken 逃生（`CHANNEL_BROKEN_CODES` = NO_PROVIDER / CALLER_NOT_LIVE / 
 | C2/C3/C5 取证工具链（简） | 落盘侧：`DSH_HOME/sessions/<会话目录>/` 下 `session.v4.jsonl.zstd`（0.2.1-rc.2，当前世代）/ `session.v3.jsonl.zstd`（0.1.5-rc.2）/ `session.jsonl.zstd`（0.1.2-rc.1 及更早）；共享定位 = `pe-test/_shared/session-finder.mjs` 的 `session-finder/logPath`（三代候选兼容回放），真解 = `zstd-frames.mjs`；step-06/07/08 只接受 `session.v4.jsonl.zstd`。`step-04-工具清单查看.mjs` 取证时必须显式传会话目录；默认输出逻辑行号、前置 tool/call 数、F/L、工具名、消息引用与 skill-catalog，追加 `--full` 才恢复精确 header.tools/header.system/MESSAGE/REQUEST 原文（文本命中不冒充 section 名）；其它只读视图为 `step-05-会话解码.mjs`、`step-06-真实会话查看.mjs`、`step-07-子代理模型与引导取证.mjs`、`step-08-方案配对查看.mjs`。其中 step-07 必须显式传顶层 `SESSION_ID`，并显式提供 `PLANNER_PROMPT_SUFFIX`（空串也算存在）。 |
 | C4 **判据口径（关键）** | **TOOL-ERROR/闸门拒绝 = v4 `tool/result` 事件的 `event.data.message.isError === true`**；文本来自 `event.data.message.content`，且不含 `data.error`；`data.error`/其它 `error` 事件按普通事件另看，不等同闸门拒绝；仍以卡片原文和日志为一手证据 |
 | C6/C7/C8（简） | 直接以 stdout/stderr 管道运行 step-07 等取证脚本（AI 用 pwsh 自动执行，非 HUMAN）可能在受限沙箱下 EPERM；一键step测试已用临时文件描述符收集 stdout/stderr 全量，若仍受限再由**用户在系统终端手动执行**，本流程不改任何 .mjs 脚本；被拒不烧预算（toolCallCount 按块级 isError!==true 配对计数）；聚合取证逐行对照（header「run_code 拆解预审未通过：工具组共 N 项（去重后），M 项触发闸门，任一触发即整体拒绝：」+ 逐行「- <标签>: <子文案>」，一次取证多条时逐行对照 A 表期望）。 |
-| C9 **聚合文案按行比对（硬判据②）** | 只比对 `- <标签>: ` 之后子文案与 A 表期望**逐字一致**（aggregateRunCodeDenyReason 直接 push 闸门原返回值，**子文案与 native 单条逐字一致**）；header 与行前缀另立模板；**禁止整卡比对**（header 计数、标签改写、参数不可解析都会造成整卡差异） |
+| C9 **聚合文案按行比对（硬判据②，跨轮）** | **跨轮硬判据**：只比对 `- <标签>: ` 之后子文案与 A 表期望**逐字一致**（aggregateRunCodeDenyReason 直接 push 闸门原返回值，**子文案与 native 单条逐字一致**）；**同轮内不可能同时取得直呼单条与聚合行**（native 轮顶层无 run_code、ptc 轮顶层仅 run_code 且直呼面不可达，直呼只会拿到 C10 的 unknown tool 早退文案），故**第一轮直呼单条卡片 ↔ 第二轮 run_code 聚合行必须跨轮逐字比对**，每轮各自只取一个观察面；header 与行前缀另立模板；**禁止整卡比对**（header 计数、标签改写、参数不可解析都会造成整卡差异）；**禁止同轮内比对** |
 | C10 **unknown tool 陷阱（硬判据①）** | 直呼非 run_code 工具时宿主在 pre-execute 前早退，文案 `unknown tool "<name>": only run_code is callable directly — call <name> from inside a run_code program instead` **不算闸门证据**，不得记入任何 A 编号判定 |
 
 | C11 | 子代理模型/提供方分栏：显式 `SESSION_ID` 运行 `node pe-test/tools/step-07-子代理模型与引导取证.mjs`；共享 `session-finder/logPath` 可按三代候选定位用于兼容回放；step-06/07/08 只接受 `session.v4.jsonl.zstd`，输出会话目录、JSONL 行号、解析失败计数、parentSession/origin/delegationDepth/descriptor.mode 及父 call/result child 关联。每个直接 child 分别记录 request/header.config.provider/model、request/context.provider/model/contextWindow、model/selection 辅助字段（均为 attempted route（尝试路由））与 assistant/message.source.kind=model 的 source.provider/model（actual provenance（实际来源））；前栏有而后栏无 = attempted-only（仅尝试），两栏均无 = no-log（无日志）；不按 provider/model 猜角色、不去重 repeated/resume/change/series |
@@ -443,7 +610,7 @@ channelBroken 逃生（`CHANNEL_BROKEN_CODES` = NO_PROVIDER / CALLER_NOT_LIVE / 
 
   → 以第 0 节自查结果为准：起步 M 既非 native 也非 ptc → 按第 0 节第 2 步提示用户切到本轮 mode（1 次后端权威行配置更新＋重启 Harness，不必新开会话）；A/C 只记录现场 settings 权威值；起步 runcodeCatchGate 已是 true → 第一轮固定 catchGate=true，可直接开始；起步非 true → 切 native 的同一次后端权威行更新搭车设为 true。
 - 其它前置值（报告须记录同一部署配置快照）：exploreBudget、savePlanDir=.extra-plan、plannerModel、otherAgentModel、crossProviderPlannerModel、plannerPromptSuffix；save_probe 限制只引用 `plugins/dsh-extra-plan/lib/save-contract.js#PROBE_LIMITS`（不在本 runbook 维护第二份操作表）。
-- **后端权威行改动（由用户操作，AI 只旁读）**：第一轮前置 = 把「工具呈现模式」**切到 native** ＋ 把 `runcodeCatchGate` 置 true（**同一次后端权威行更新**），随后重启 Harness（**不必新开会话**）；轮间 = 再 1 次后端权威行配置更新把模式切到 `ptc`、`runcodeCatchGate` 切为 false（同一次更新，随后重启 Harness）。两次后端权威行配置更新即 4.1 的 U7／U8。
+- **后端权威行改动（由用户操作，AI 只旁读）**：第一轮前置 = 把「工具呈现模式」**切到 native** ＋ 把 `runcodeCatchGate` 置 true（**同一次后端权威行更新**），随后重启 Harness（**不必新开会话**），即 4.1 的 U7；轮间 U8 = 再 1 次后端权威行配置更新**只把模式切到 `ptc`**（`runcodeCatchGate` 保持 true 不动），随后重启 Harness；2A 段跑完后 U9 = 1 次后端权威行更新**只把 `runcodeCatchGate` 切为 false**（插件侧配置热读、权威行更新即生效，**不重启、不新开会话**）。后端权威行配置更新共 2 次（U8、U9），起步 mode/catchGate 不合规时为 3 次（U7、U8、U9）。
 - 全程只动工作区会话；**AI 不触碰生产环境**（DSH_HOME/profiles、.agent-presets 零操作）；后端权威行改动**由用户操作** —— 其受管文件为 profile patch `DSH_HOME/profiles/<profile>/cordis.patch.yml`（10 项权威设置统一落 `dsh-extra-plan-settings` 全局行，2 项宿主值仅由该快照派生到内存 definition），即后端权威行的**正常写入路径**（不是 AI 的写入路径）；旧公开/旧 body 只读迁移，不作为写入目标。
 
 - A42/A43 AI 自动取证命令（pwsh 运行，在子代理完成后执行）：`$env:SESSION_ID='<顶层主会话ID>'; $env:PLANNER_PROMPT_SUFFIX='<同一部署快照的精确 suffix>'; node pe-test/tools/step-07-子代理模型与引导取证.mjs --full`。SESSION_ID 缺失或找不到必须报输入错误；PLANNER_PROMPT_SUFFIX 必须显式存在，空串也要显式传入；只读日志，不自动猜会话、不发请求。plannerModel / otherAgentModel / crossProviderPlannerModel 由报告人只读部署侧 settings 行 `dsh-extra-plan-settings` 的 config.* 取得（step-07 脚本不输出），与 PLANNER_PROMPT_SUFFIX 一并作为同一部署快照记录。同一部署快照还须一并登记 llm provider 集合与登录态（rc2 起含 `deepseek-account`，未登录时其模型目录为空）与 `crossProviderPlannerModel` 开关值。
@@ -481,22 +648,22 @@ channelBroken 逃生（`CHANNEL_BROKEN_CODES` = NO_PROVIDER / CALLER_NOT_LIVE / 
 ### 7.3 用户配合协议
 - AI 逐条给出精确操作脚本（点哪个选项、空白回车、连续调某个工具 N 次、带哪个参数）；用户照做；AI **当场**照录工具卡片文案并判定「通过（文案与期望关键句一致）/ 不通过（给出实际文案）」。
 - 每完成一域由用户在清单勾选；支持「发版前跑全量、改闸门后按域增量」。
-- 两轮之间 AI 只发 3.3 的**转告语**，等用户完成后端权威行切换（`runcodeCatchGate` 配置热读、权威行更新即生效，轮间**无需重启**）后再继续第二轮（**无需新会话**）。
+- 两轮之间 AI 只发 3.3 的**转告语**，等用户把 `toolPresentationMode` 切到 ptc 并重启 Harness（mode 为装载期快照）后**再继续第二轮**（**无需新会话**）；`runcodeCatchGate` 的 true→false 由 U9 在 2A 段结束后单独热读切换（权威行更新即生效、**无需重启**），随后进入 2B 段（3.4.8）。
 
 ### 7.4 域分组（D1-D10，可勾选；增量跑按域映射到 U 序号）
 
 | 域 | 范围 | A 编号 | 对应 U 序号 |
 |:--|:--|:--|:--|
-| D1 | 锚点（route/purpose/clarified/approved 与 ask 结构） | A01-A06、A14、A15、A41、A41-1～A41-5、A47、A45、A51、A52（job_kill 路由态限制） | U0/U1/U2/U3/U4/U5 |
-| D2 | 写/cordis/shell/planTool/委派 ＋ save_plan 受限工件放行（任意路由态）· save_probe 主会话路由（条件不变） | A07-A13、A49 | U1/U2/U3/U4/U5/U6 |
-| D3 | job_output / job_list 防轮询 | A16、A17、A55 | U1-U6（A17 仅 U5；A55 同轮两次） |
-| D4 | run_code 组判定 | A18-A23 | U1（3.2.7 拦截面）/ U5（planner 序列）/ U8（第二轮放行面） |
-| D5 | planner 预算 | A24-A28（A29 实机，仅 ptc） | U5（planner 序列） |
-| D6 | 子代理侧 | A30-A33（A31/A33 实机，仅 ptc）、A48 | U1/U2/U5/U6（A48→U6） |
-| D7 | 落盘 | A34-A37、A46 | U5（planner 序列）/ U2（probe 序列） |
-| D8 | 静态目录 | A38-A40、A44、A50（A40 静态断言替代＋实机观察搭车；A44 模型可见投影观察；A50 执行者写放行对照） | U2/U5/U6（A50→U6；工具清单观察） |
+| D1 | 锚点（route/purpose/clarified/approved 与 ask 结构） | A01-A06、A14、A15、A41、A41-1～A41-5、A47、A45、A51、A52（job_kill 路由态限制） | U0/U1/U2/U3/U4/U5；第二轮 U1b/U2b/U3b/U4b/U5b |
+| D2 | 写/cordis/shell/planTool/委派 ＋ save_plan 受限工件放行（任意路由态）· save_probe 主会话路由（条件不变） | A07-A13、A49 | U1/U2/U3/U4/U5/U6；第二轮 U1b-U6b |
+| D3 | job_output / job_list 防轮询 | A16、A17、A55 | U1-U6（A17 仅 U5；A55 同轮两次）；第二轮 U1b-U6b（A17 仅 U5b；A55 同轮两次） |
+| D4 | run_code 组判定 | A18-A23 | U1b（3.4.1 A21 拦截面）/ U5（planner 序列）/ U9（3.4.8 放行面） |
+| D5 | planner 预算 | A24-A28（A29 实机，仅 ptc） | U5（planner 序列）；第二轮 U5b |
+| D6 | 子代理侧 | A30-A33（A31/A33 实机，仅 ptc）、A48 | U1/U2/U5/U6（A48→U6）；第二轮 U1b/U2b/U5b/U6b（A48→U6b） |
+| D7 | 落盘 | A34-A37、A46 | U5（planner 序列）/ U2（probe 序列）；第二轮 U5b/U2b |
+| D8 | 静态目录 | A38-A40、A44、A50（A40 静态断言替代＋实机观察搭车；A44 模型可见投影观察；A50 执行者写放行对照） | U2/U5/U6（A50→U6；工具清单观察）；第二轮 U2b/U5b/U6b（A50→U6b；工具清单观察） |
 | D9 | 子代理模型/提供方与 pro规划引导取证 | A42-A43 | AI 自动（pwsh step-07，显式 SESSION_ID + PLANNER_PROMPT_SUFFIX） |
-| D10 | send_message 方向限制 / list_agents 防轮询（四工具治理） | A53、A54、A56 | U1/U5（A53 需 running 子代理目标） |
+| D10 | send_message 方向限制 / list_agents 防轮询（四工具治理） | A53、A54、A56 | U1/U5（A53 需 running 子代理目标）；第二轮 U1b/U5b |
 
 ## 7.5 P2-2 SDK 文本复用取证（新增）
 - **F→L→L**：另开干净 PTC、C=0 顶层会话；首轮 F 只核对 `tool:read` 的手写文案（变量② `cfg.bootstrapReadHint`；含 tools.read/file_path/offset/limit，且不含官方骨架），不把完整 `tools:sdk` 文本当作 F 证据。进入 L 后连续两次保持有效输入不变，记录 `tools:sdk` 全文并逐字对拍。
@@ -507,7 +674,7 @@ channelBroken 逃生（`CHANNEL_BROKEN_CODES` = NO_PROVIDER / CALLER_NOT_LIVE / 
 ## 7.6 闸门关键词单源实机取证（v0.3.0，新增）
 前置：完成第 0 节四步（含**现场 7 词快照**）。本节四类步骤必须在**同一份现场快照**下至少执行 A、B 两类；C/D 两类在改了词或升级版本时必须执行。
 
-- **A 定制词识别（证明词表来自 profile 全局行，不是作者默认或 JS 常量）**：由用户在当前 profile 的 `DSH_HOME/profiles/<profile>/cordis.patch.yml` 中把唯一全局行 `dsh-extra-plan-settings.config.gateWords` 7 个字段**全部换成与出厂词不重叠的新词**（例如 甲直行/乙规划/丙否决/丁批准/戊转规划/己完整/庚重做；7 值必须两两不同），**重启 Harness（不必新开会话）**，然后按第一轮编排重跑路由 ask、目的 ask、批准 ask；作者 `plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml` 仅作默认真源，不是现场改动对象；旧 `extra-plan-preset-sync`/`preset-extra-plan` 仅作只读迁移证据。
+- **A 定制词识别（证明词表来自 profile 全局行，不是作者默认或 JS 常量）**：由用户在当前 profile 的 `DSH_HOME/profiles/<profile>/cordis.patch.yml` 中把唯一全局行 `dsh-extra-plan-settings.config.gateWords` 7 个字段**全部换成与出厂词不重叠的新词**（例如 甲直行/乙规划/丙否决/丁批准/戊转规划/己完整/庚重做；7 值必须两两不同），**重启 Harness（不必新开会话）**，然后按第一轮编排重跑路由 ask、目的 ask、批准 ask；作者 `plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml` 仅作默认真源，不是现场改动对象；旧 `extra-plan-preset-sync`/`preset-extra-plan` 仅作只读迁移证据。**A 类与 B 类取证在两轮中各执行一次**：第二轮用 run_code 成员形态重跑路由 ask、目的 ask、批准 ask（分别见 3.4.1／3.4.3／3.4.5，主会话侧一律写成 run_code 成员、不用直呼）。
   - 判据①：ask 选项用**新词**时状态机正常推进（route→purpose→clarify→approved 依次置位，写工具与委派按锚点放行）。
   - 判据②：deny 卡片文案里的「选项固定为…」逐字等于**新词**拼出的句子（不再出现任何出厂词）。
   - 判据③：模型侧或日志里 persona 生效文本中的选项词等于新词（变量注册成功、宿主严格渲染通过）。
@@ -534,9 +701,9 @@ channelBroken 逃生（`CHANNEL_BROKEN_CODES` = NO_PROVIDER / CALLER_NOT_LIVE / 
 ## 八、收尾
 - 全量（或增量域）跑完后执行：`node pe-test/tools/代码地图生成.mjs --check`（**不写盘**；一致性 / 漏检 / 导航失效判非 0 退出）。
 - 报告落点：`pe-test/reports/实机闸门测试报告-<yyyyMMddHHmmss>.md`（沿用 `测试报告-<stamp>.md` 命名风格；`pe-test/reports/` 被 .gitignore 忽略、不入库）。
-- **报告落盘窗口（2026-09-26 补全）**：主会话 write 在 route=none 被 A02 拒、route=plan 被 A01 拒、approved=true 被 A07 限走执行者委派 → 报告落盘三选一：① **route=direct 窗口**：另发一次路由 ask、用户选「直接执行」后由主会话 write 落盘（代价 +1 次用户操作，2026-09-26 实测采用）；② S4 批准态经执行者委派落盘（0 额外用户操作，须在批准窗口内完成）；③ 由用户在系统终端手动保存（0 用户操作）。该窗口操作为收尾窗口操作、不占 U1-U8 清单行，记录用户操作总数时单列「＋1 报告落盘窗口」。
+- **报告落盘窗口（2026-09-26 补全）**：主会话 write 在 route=none 被 A02 拒、route=plan 被 A01 拒、approved=true 被 A07 限走执行者委派 → 报告落盘三选一：① **route=direct 窗口**：另发一次路由 ask、用户选「直接执行」后由主会话 write 落盘（代价 +1 次用户操作，2026-09-26 实测采用）；② S4 批准态经执行者委派落盘（0 额外用户操作，须在批准窗口内完成）；③ 由用户在系统终端手动保存（0 用户操作）。该窗口操作为收尾窗口操作、不占 U1-U9 清单行，记录用户操作总数时单列「＋1 报告落盘窗口」。
 - **探针残留清理**：A36/放行侧探针若产生 `.extra-plan/` 落盘残留（`方案-`/`验收-` 前缀文件），由有写权限窗口（route=direct 主会话 write 或 S4 执行者委派）删除；清理后核对 `Test-Path=False` 且 `*<会话标识>*` 搜索为空（2026-09-26 实测清理 4 个残留文件）。
-- 报告内容：逐条 A 编号 → 批次/序列 → 实际文案（逐字照录）→ 通过/不通过 → 取证方式（卡片照录 / step-05 解码）；域勾选结果；**现场 7 词快照与 7.6 四类判据结果（定制词识别/旧词拒绝/同 hash idle/hash 变化升级迁移）**；未跑项与原因（含静态断言替代项 A40）；另列 PTC C=0/C=1 的干净 F→L 证据、native HN 独立回归、ptc 轮的 run_code 聚合面证据及旧会话仅作 L 的限制。
+- 报告内容：逐条 A 编号 → 批次/序列 → 实际文案（逐字照录）→ 通过/不通过 → 取证方式（卡片照录 / step-05 解码）；域勾选结果；**现场 7 词快照与 7.6 四类判据结果（定制词识别/旧词拒绝/同 hash idle/hash 变化升级迁移）**；未跑项与原因（含静态断言替代项 A40）；另列 PTC C=0/C=1 的干净 F→L 证据、native HN 独立回归、ptc 轮的 run_code 聚合面证据及旧会话仅作 L 的限制；**三项必列**：①**两轮逐条交叉比对结果**（第一轮直呼单条卡片 ↔ 第二轮 run_code 聚合行逐条并列，按 A 编号成对登记）；②**C9 跨轮比对结论**（只比 `- <标签>: ` 之后子文案，逐字一致/不一致列表及不一致项归因）；③**A21 两段证据分列**（2A 段拦截面聚合行原文 ＋ 2B 段放行面无拒绝文案的实据）。
 - A42/A43 报告必须记录显式 SESSION_ID、日志文件名/代际/会话目录、同一部署快照的 plannerModel/otherAgentModel/crossProviderPlannerModel/plannerPromptSuffix、child 角色及父/子行号；配置 snapshot（快照）与实际 route 分列，通过 `--full` 或 raw 回看完整 request/header/context/model-selection、assistant provenance、planner 文本及 verified-injection（已验证注入）/content-only（仅内容）/absent/attempted-only（仅尝试）/no-log（无日志） 等等级。无参 auto、mock/fake/临时 DSH_HOME、候选 probe 均不得作为实机结论。
 - 根 `README.md` 由用户维护，AI 不将其作为实机改动目标；其中 otherAgentModel 文档缺口由用户自行同步，不能列入 AI 改动或实机结论。
 - 收尾检查：每次实测都应记录工作区源码/脚本/维护文档校验结果；生产环境零操作（DSH_HOME/profiles、.agent-presets 不触碰），边界为仅模型可见面，非运行时安全隔离。

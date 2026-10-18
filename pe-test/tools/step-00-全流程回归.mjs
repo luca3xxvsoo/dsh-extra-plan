@@ -795,6 +795,7 @@ check('FLOOR2 部署默认 read-only → 抬升', childPolicyNeedsFloor({}, sp(u
 check('FLOOR3 workspace-write → 不动', childPolicyNeedsFloor({}, sp(undefined, 'workspace-write')), false)
 
 // ── AR 系列:createAgentRuntime per-apply 状态、快照与同步 fold ─────────────
+// 口径：0.2.1 起 planner 判据是 session.header.agentPreset === 'extra-plan-planner'，descriptor.mode 恒为 continuable、不再作判据（与文件内 L1486、L1811 的既有写法同口径）。
 const runtimeDescriptor = { type: 'subagent/descriptor', data: { mode: 'continuable' } }
 const runtimeEvents = []
 const runtimeParentIds = new Set(['runtime-parent'])
@@ -811,9 +812,10 @@ const runtime = agentRuntime.createAgentRuntime({
   foldUsage: (_agent, role) => runtimeFoldRoles.push(role),
   warn: (message) => runtimeWarnings.push(message),
 })
-check('AR1 无 descriptor 不缓存 false', runtime.isPlannerChild(runtimeChild, []), false)
+check('AR1 无 agentPreset 判 false（按预设值缓存）', runtime.isPlannerChild(runtimeChild, []), false)
 runtimeEvents.push(runtimeDescriptor)
-check('AR2 后补 descriptor 可纠正为 planner=true', runtime.isPlannerChild(runtimeChild, runtimeEvents), true)
+runtimeChild.session.header.agentPreset = 'extra-plan-planner' // 只在断言前追加：初始 header 保持无 agentPreset（AR1 语义）
+check('AR2 后设 agentPreset 可纠正为 planner=true（descriptor 不再是判据）', runtime.isPlannerChild(runtimeChild, runtimeEvents) === true && runtime.isPlannerChild(runtimeChild, []) === true, true)
 let explicitSnapshotCalls = 0
 const explicitSnapshotAgent = {
   session: { header: { id: 'runtime-explicit', origin: 'subagent', delegationDepth: 1, parentSession: 'runtime-parent' }, snapshotEvents: () => { explicitSnapshotCalls += 1; return [runtimeDescriptor] } },

@@ -263,7 +263,7 @@
         # 人设与工具面由角色预设 extra-plan-reviewer 承载（作者源：本文件第二文档）。
 
     # 探查子代理（非 planner child）：优先使用 otherAgentModel，空/未匹配/真实探针失败回退顶层主会话；只读探查 + save_probe 落盘【含证据报告】
-    # one-shot（不可续轮）；模型由非 planner resolver 处理（不配 agentOptions，显式指定优先）
+    # 模型由非 planner resolver 处理（不配 agentOptions，显式指定优先）
     - id: tool-subagent-probe
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
@@ -353,7 +353,7 @@
 # 放行）；执行者/规划/验收/探查四子代理改由运行时闸门（plannerGateReason /
 # childReadonlyGateReason）兜住。查询工具对 client 平台可能永久 pending（等页面应答），
 # 0.2.1 起四角色预设（本文件第二文档）不挂 dsh-tool-cordis，查询工具天然不可见
-# （探查者为一次性子代理，卡死即整条线索丢失）；主会话仍放行；列表工具 host 即时返回、
+# 主会话仍放行；列表工具 host 即时返回、
 # 无卡死风险，不入任何 deny。
 - id: tool-cordis
   name: '@deepseek-ai/dsh-tool-cordis'

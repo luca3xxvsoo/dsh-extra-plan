@@ -739,7 +739,7 @@ export function apply(ctx, config) {
 
   // 4) 模型与力度继承：子代理 agent/request 解析后，把 provider/model/maxTokens
   //    与 reasoningEffort 注入为父会话当前配置（requestHeader().config，非创建时
-  //    快照）。one-shot（执行者/验收者）直接继承当前值；planner（continuable）的
+  //    快照）。执行者/验收者等非 planner 子代理直接继承当前值；planner 的
   //    有效模型由 resolvePlannerEntry 现场解析并缓存（本钩子只读缓存，不再做
   //    模型目录查询）：已创建的 planner 不随父会话改模型而变。
   //    真实机制（注释订正）：宿主 installModelSelection 仅由主会话侧会话控制器安装
@@ -749,7 +749,7 @@ export function apply(ctx, config) {
   //    显式选择不覆盖：resolved（next() 结果，首请求=创建时 AgentOptions、后续请求=
   //    logged header）的 provider/model 与父会话当前值不同 → 视为显式（官方
   //    routeChanged 口径）→ 不注入；未显式维持现状注入。父会话在子代理运行期间
-  //    切换模型 → 子代理保持创建时值（planner 已有 entry 缓存同语义，one-shot 亦冻结）。
+  //    切换模型 → 子代理保持创建时值（planner 已有 entry 缓存同语义，非 planner 子代理亦冻结）。
   //    effort：resolved 存在且 ≠ 父值 → 显式不注入；路由显式且 resolved 无 effort →
   //    不注入（对齐官方 routeChanged 清 effort）；其余维持父 effort 继承（现状）。
   ctx.on('agent/request', async (payload, next) => {
@@ -862,7 +862,7 @@ export function apply(ctx, config) {
     const child = childBaseline(agent, execEvents)
     const planner = isPlannerChild(agent, execEvents)
     // 探查者委派属只读探查能力（与 read/glob/grep 同级）：主会话在任意路由状态放行，
-    // 仅强制 one-shot 固定后台（与 subagent/subagent_review 同机械闸门口径）。
+    // 0.2.1 起委派工具已无后台参数，固定后台语义上移宿主；本处只保留角色判定。
     // 置于 planner/child 判定之前，但闸门函数内首先按角色拒绝 planner（T5）：
     // subagent_probe 仅主会话可委派；放行时挂「待认领计数」供 probe 子会话
     // session-start 认领（否则 probe 子会话经 parentSession 无放行痕迹）。

@@ -791,14 +791,14 @@ function recordPollGuardCall(agent, exec, counters) {
 }
 
 // 探查者级联中止告警：委派方轮次结束 → activation dispose → 宿主 jobs-local owner
-// 级联取消 one-shot 探查者 job（owner disposed）——agent/disposed 清理时若仍有未认领
+// 级联取消探查者续轮会话的后台 job（owner disposed）——agent/disposed 清理时若仍有未认领
 // 探查者委派计数即告警留痕。T5 后 planner 不得委派探查者（闸门拒绝），委派方只剩主
 // 会话，故文案中性化为「委派方会话销毁时」（触发路径 = 主会话在探查者认领前被销毁；
 // 原硬编码「规划子代理」属错配）。已知引擎限制：根治需官方包配合（dsh-jobs-local/
 // dsh-tool-subagent/dsh-subagent），extra-plan 侧只能告警+文档说明（见教训索引）。
 function probeDisposalWarning(remaining) {
   if (!Number.isInteger(remaining) || remaining <= 0) return null
-  return '委派方会话销毁时仍有 ' + remaining + ' 个未认领探查者委派：其后台 job 可能已被宿主级联取消（owner disposed）。已知引擎限制：one-shot 探查者 owner=委派者，级联取消修复需官方包配合（dsh-jobs-local/dsh-tool-subagent/dsh-subagent）'
+  return '委派方会话销毁时仍有 ' + remaining + ' 个未认领探查者委派：其后台 job 可能已被宿主级联取消（owner disposed）。已知引擎限制：探查者为续轮子代理、owner=委派者，级联取消修复需官方包配合（dsh-jobs-local/dsh-tool-subagent/dsh-subagent）'
 }
 
 // ④ 主会话段（mainGateReason；自 apply 内提取的纯部分，分支顺序逐字同序）：
@@ -917,7 +917,7 @@ function mainGateReason(state, exec, gateCtx) {
   }
   if (name === 'send_message') {
     // 主会话调用者：目标 running → 拒；idle/未驻留/agents 服务不可用 → 放行
-    // （one-shot 目标由宿主 coldResume NOT_RESUMABLE 自拒；escape 通道逃生放行防死锁）。
+    // （未驻留或已回收目标由宿主 coldResume NOT_RESUMABLE 自拒；escape 通道逃生放行防死锁）。
     if (!escape && typeof ctx.getAgents === 'function') {
       const agents = ctx.getAgents()
       if (agents !== undefined && agents !== null && typeof agents.get === 'function') {
