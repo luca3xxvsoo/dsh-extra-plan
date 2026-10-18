@@ -80,7 +80,7 @@ window.__ModuleLoader__.load({
 
     const HOST_ROW_FIELDS = Object.freeze([
       { key: "webFetch", control: "select", options: [true, false], locale: "webFetch", hint: "是否开启web_fetch ｜ 重启生效" },
-      { key: "toolPresentationMode", control: "select", options: ["native", "ptc"], optionLocale: { native: "toolPresentationModeNative", ptc: "toolPresentationModePtc" }, locale: "toolPresentationMode", hint: "工具呈现方式切换（默认/PTC模式） ｜ 重启生效" }
+      { key: "toolPresentationMode", control: "select", options: ["native", "ptc"], optionLocale: { native: "toolPresentationModeNative", ptc: "toolPresentationModePtc" }, locale: "toolPresentationMode", hint: "工具呈现方式切换（默认/PTC模式），无法进行会话内切换 ｜ 重启生效" }
     ]);
     const ALL_FIELDS = Object.freeze(EXTRA_FIELDS.concat(HOST_ROW_FIELDS));
 

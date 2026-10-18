@@ -102,6 +102,11 @@ const bashShouldDeny = [
   'cp -r src/ dst/',
   'chown user:group file.txt',
   'nano notes.txt',       // 文本编辑器写文件：拦截（BASH_MUTATION 覆盖 nano/vim/vi）
+  // 块级命令位判定：段首块关键字 then/do/else 之后仍为命令位
+  'if true; then rm -f x; fi',
+  'for f in a b; do rm -f $f; done',
+  'while true; do touch f; done',
+  'if [ -f x ]; then echo hi; else rm x; fi',
 ]
 for (const cmd of bashShouldDeny) check(`应拦截 bash: ${cmd}`, gateDeny(bashExec(cmd)) === true)
 
@@ -134,6 +139,10 @@ const bashShouldAllow = [
   'tar -tf archive.tar', // 已知边界：tar 只读列目录不拦截
   'npm ls --depth=0',    // 已知边界：npm 只读子命令不拦截
   "sed 's/-i/x/' file.txt", // sed 只读输出，参数含 -i 字符串不误拦（收紧后）
+  // 块级命令位判定：参数位整词与引号内块关键字、参数位花括号不误拦
+  'echo if then rm',
+  'grep -rn "then rm" src/',
+  'echo { rm }',
 ]
 for (const cmd of bashShouldAllow) check(`放行 bash: ${cmd}`, gateDeny(bashExec(cmd)) === false)
 
@@ -174,6 +183,26 @@ const cmdWrapperMatrix = [
 ]
 for (const [cmd, expected] of cmdWrapperMatrix) {
   for (const shape of ['object', 'string']) check(`${shape} arguments ${expected ? '拦截' : '放行'} cmd包装: ${cmd}`, gateDeny(pwshExec(cmd, shape)) === expected)
+}
+
+console.log('== PWSH 块级矩阵：块级命令位判定回归（块体内写动词拦截、参数位整词放行） ==')
+const pwshBlockMatrix = [
+  // 拦截侧：块关键字之后、块体左花括号之后恢复命令位
+  ['try { Set-Content f.txt "x" }', true],
+  ['$x = 1; try { Set-Content f.txt "x" }', true],
+  ['if ($true) { Set-Content f.txt "x" }', true],
+  ['foreach ($f in $files) { Remove-Item $f }', true],
+  ['while ($true) { New-Item -ItemType File f.txt }', true],
+  ['switch ($x) { Out-File f.txt }', true],
+  // 放行侧：参数位整词、空块与脚本块花括号不参与命令位判定
+  ['echo if then rm', false],
+  ['Get-Content if.txt', false],
+  ['Write-Output { }', false],
+  ['Where-Object { $_ -eq 1 }', false],
+  ['Get-ChildItem -Filter Set-Content', false],
+]
+for (const [cmd, expected] of pwshBlockMatrix) {
+  for (const shape of ['object', 'string']) check(`${shape} arguments ${expected ? '拦截' : '放行'} pwsh块级: ${cmd}`, gateDeny(pwshExec(cmd, shape)) === expected)
 }
 
 console.log('== pwsh 对等回归（PWSH_MUTATION 行为不变） ==')

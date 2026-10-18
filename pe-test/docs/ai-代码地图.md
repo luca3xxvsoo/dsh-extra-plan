@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-10-18 11:01:21（脚本自动更新时间戳行）
+> 上次同步：2026-10-18 17:23:09（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -116,7 +116,7 @@
 | plugins/dsh-extra-plan/lib/sdk-text-cache.js | 161 | apply 级 agent-keyed WeakMap SDK 文本缓存：完整 renderer 输入保守指纹、language/renderer 身份比较、并发 Promise 合并、reject/过期 Promise 不回写、dispose 回收；不持有 sessionId 或 PromptAssembly |
 | plugins/dsh-extra-plan/lib/settings-contract.js | 162 | 服务端设置 descriptor 单一合同：10 项的类型/默认值/校验/UI 与权威-投影双定位器，并导出分组与投影遍历源 |
 | plugins/dsh-extra-plan/lib/settings.js | 584 | 10 字段 volatile Config、页面策略与 loopback GET/PUT；权威值在唯一 settings 行，PUT 先拒绝空/null/数组/原始/未知/非法混合载荷并严校验当前 gateWords，再只 edit 全局行，no-op 也重读最终快照并等待 profileSync，结构化区分 synced/not-installed/unavailable/failed/partial。 |
-| plugins/dsh-extra-plan/lib/shell-mutation.js | 130 | 跨平台命令文本解码与 pwsh/bash 写形态判定；纯函数、不持有 apply 状态 |
+| plugins/dsh-extra-plan/lib/shell-mutation.js | 180 | 跨平台命令文本解码与 pwsh/bash 写形态判定；纯函数、不持有 apply 状态 |
 | plugins/dsh-extra-plan/lib/usage-ledger.js | 174 | per-apply usage 账本：cursor 表读取与降级告警、按水位增量 fold 会话 usage 并追加 JSONL。 |
 | plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | 427 | 从 agent.cordis.yml 校验并生成 runtime 默认常量 + 纯 preset-definition.generated.yml（顶层结构逐字平移并保留 group/isolate/!!js）；支持 --check 且坏源不覆盖 last-known-good（上次已知良好版本） |
 
@@ -757,16 +757,16 @@
 | plugins/dsh-extra-plan/lib/settings.js | syncEditor | L517-555 | 从最新 editor 状态入队完整快照与路径 |  |
 | plugins/dsh-extra-plan/lib/settings.js | settledSettings | L556-560 | 把通用 settled 快照交给同步器 |  |
 | plugins/dsh-extra-plan/lib/settings.js | settledError | L561-573 | 独立记录 settled 回调异常 |  |
-| plugins/dsh-extra-plan/lib/shell-mutation.js | commandTextOf | L28-40 | 解码对象/JSON 字符串两形状的 command 参数 |  |
-| plugins/dsh-extra-plan/lib/shell-mutation.js | pwshCommandOf | L42 | 提取 pwsh command 文本 |  |
-| plugins/dsh-extra-plan/lib/shell-mutation.js | bashCommandOf | L43 | 提取 bash command 文本 |  |
-| plugins/dsh-extra-plan/lib/shell-mutation.js | shellWords | L48-72 | 将 shell segment 按引号与空白拆成词，供 wrapper/内层 shell 位置判定 | 纯函数 |
-| plugins/dsh-extra-plan/lib/shell-mutation.js | isInnerShellWord | L76-79 | 识别大小写无关的 pwsh/bash/cmd 包装，并支持 cmd.exe 路径及引号包装。 | 纯函数；/c 内层命令交回既有 mutation 判定。 |
-| plugins/dsh-extra-plan/lib/shell-mutation.js | isEnvAssignment | L80-82 | 识别 NAME=VALUE 前缀，避免 env wrapper 赋值被当作命令 | 纯函数 |
-| plugins/dsh-extra-plan/lib/shell-mutation.js | mutationTextMatches | L84-122 | 按正则、段首词与内嵌 shell 深度判定写操作 |  |
-| plugins/dsh-extra-plan/lib/shell-mutation.js | mutationMatches | L124-127 | 组合 command 提取与写模式判定 |  |
-| plugins/dsh-extra-plan/lib/shell-mutation.js | pwshMutationMatches | L129 | 判定 pwsh 命令是否包含写操作 |  |
-| plugins/dsh-extra-plan/lib/shell-mutation.js | bashMutationMatches | L130 | 判定 bash 命令是否包含写操作 |  |
+| plugins/dsh-extra-plan/lib/shell-mutation.js | commandTextOf | L36-48 | 解码对象/JSON 字符串两形状的 command 参数 |  |
+| plugins/dsh-extra-plan/lib/shell-mutation.js | pwshCommandOf | L50 | 提取 pwsh command 文本 |  |
+| plugins/dsh-extra-plan/lib/shell-mutation.js | bashCommandOf | L51 | 提取 bash command 文本 |  |
+| plugins/dsh-extra-plan/lib/shell-mutation.js | shellWords | L56-80 | 将 shell segment 按引号与空白拆成词，供 wrapper/内层 shell 位置判定 | 纯函数 |
+| plugins/dsh-extra-plan/lib/shell-mutation.js | isInnerShellWord | L84-87 | 识别大小写无关的 pwsh/bash/cmd 包装，并支持 cmd.exe 路径及引号包装。 | 纯函数；/c 内层命令交回既有 mutation 判定。 |
+| plugins/dsh-extra-plan/lib/shell-mutation.js | isEnvAssignment | L88-90 | 识别 NAME=VALUE 前缀，避免 env wrapper 赋值被当作命令 | 纯函数 |
+| plugins/dsh-extra-plan/lib/shell-mutation.js | mutationTextMatches | L97-172 | 按正则、段首词与内嵌 shell 深度判定写操作 |  |
+| plugins/dsh-extra-plan/lib/shell-mutation.js | mutationMatches | L174-177 | 组合 command 提取与写模式判定 |  |
+| plugins/dsh-extra-plan/lib/shell-mutation.js | pwshMutationMatches | L179 | 判定 pwsh 命令是否包含写操作 |  |
+| plugins/dsh-extra-plan/lib/shell-mutation.js | bashMutationMatches | L180 | 判定 bash 命令是否包含写操作 |  |
 | plugins/dsh-extra-plan/lib/usage-ledger.js | createUsageLedger | L4-174 | usage 账本工厂：读 enabled/path 选项建立闭包状态，返回 foldUsage 与 disposeSession。 | cursor 路径由 account 路径拼 '.cursor.json'；被 index.js L347 以 { enabled, path } 调用。地图行号区间 L4-174。 |
 | plugins/dsh-extra-plan/lib/usage-ledger.js | readUsageCursorTable | L24-45 | 读取 cursor JSON 并返回 {ok, table}：文件不存在按空表正常返回，其余读取/解析/形状错误降级空表并告警。 | createUsageLedger（L4）内部闭包。ENOENT 静默 ok:true；其它错误 ok:false。地图行号区间 L24-45。 |
 | plugins/dsh-extra-plan/lib/usage-ledger.js | warnUsageCursorDegraded | L48-52 | cursor 读取降级时每个插件实例只打印一次告警，避免重复刷屏。 | createUsageLedger（L4）内部闭包，靠 cursorDegradedWarned 标志限一次。地图行号区间 L48-52。 |
