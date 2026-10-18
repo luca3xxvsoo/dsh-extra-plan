@@ -309,3 +309,38 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 **五、状态行**
 
 【已核实·集成（复现）】：wire 形态由宿主模块在真实会话数据上重放得出，400 原文以上游返回为准；不作通过、不销任何 HUMAN 欠账。
+
+## ⑮ settings 行定位合同与重复行风险（0.2.1-rc.2）
+
+**一、定位规则（id + 规范 name）**
+
+- settings 行按「id = `dsh-extra-plan-settings` 且 name = `dsh-extra-plan/settings`」精确定位：`lib/settings-contract.js` 的 `settingsRowLocator` 产出 `rowName: SETTINGS_ROW_NAME`，`lib/preset-yaml.js#resolveLocator` 先按 id 收集候选行、再按 name 严格相等过滤，之后才走「0 行 missing / 多行 ambiguous / 1 行读叶 ok」的既有分支。
+- 旧别名 `@local/dsh-extra-plan/settings` 不再作为候选：该 descriptor 的 `locatorAliases` 已清空，`resolveSetting` 不再把旧名字行并入候选集。
+- 同 id 多行时：只有一行是规范名 → 取规范行（ok）；都非规范名、或都规范名 → ambiguous。`locator` 不带 `rowName` 的旧调用（源模板行、宿主行投影等）行为与收紧前逐字一致。
+
+**二、宿主事实（重复行不报错）**
+
+- Cordis Loader 对同 id 条目不做唯一性校验、不报错（静默共存）：0.2.1-rc.2 安装根 `node_modules/@deepseek-ai/cordis-plugin-loader/lib/index.js` 的 `ensureId` 只为缺 id 的条目补随机 id（且仅避让 `store` 键），入口装载与 `resolve` 均无唯一性断言，因此 profile patch 里并列的两条 `- id: dsh-extra-plan-settings` 不会被宿主拒绝。
+- 插件侧因此多命中：只按 id 收候选会拿到 2 行 → ambiguous → 回退 apply 期 cfg 快照/兜底值，用户刚改的值看起来不生效（本次现场即 `creativeMode` 被读成 false）。
+
+**三、装载期严格校验与运行期热读**
+
+- 装载期（apply 构造 `createLiveConfig`）严格校验：settings 行存在但出现缺键（missing）、非法（invalid）、多命中（ambiguous）→ 直接抛 `extra-plan: settings 行校验失败：<key> = <state>（期望在 dsh-extra-plan-settings 行、name 为 dsh-extra-plan/settings 的 config 内取得合法值）`，插件拒绝装载。
+- 整行缺席（首次安装、profile 无任何 settings 覆盖）仍按出厂形态静默：不抛错、不告警，整组取 cfg 快照。
+- 运行期热读保留 fail-safe（未 captured 的键一律沿用 fallback，fallback 取值顺序不变），但 ambiguous 与 invalid 改为 `warnOnce` 告警，missing 仍静默——配置被改坏变得可见，不再无声吞掉。
+
+**四、本次 desktop profile 清理（生产操作，有备份）**
+
+- 目标：`~/.dsh/profiles/desktop/cordis.patch.yml`；删除第 32–346 行（首个顶层 `- id: preset-extra-plan` 起的旧 preset 定义块 + `name: "@local/dsh-extra-plan/settings"` 旧 settings 行），384 行 → 69 行（删 315 行）。
+- 备份：`.extra-plan/backup-dsh-extra-plan-desktop-旧settings行-20261018194246/cordis.patch.yml`，SHA-256 `dcf349bb519e9342e7dabbf8796f0d5556bcd7f76fd2df6b939a0bee643c1fa6`（384 行）。
+- 清理后：SHA-256 `b23179b04f9d65ee1b70dce639625fba3b2aee8b95dcc2f3b07b433d0ee44ca7`（69 行）；剩余顶层 settings 行 1 条且 `name: dsh-extra-plan/settings`，全文无 `@local` 与 `preset-extra-plan` 残留。
+- 取值不变性：清理前后 gateWords 七键 7/7、十项 settings 取值 10/10 逐项一致（对齐备份第 358–379 行与清理后第 43–64 行，块级 diff 计 0 行）。
+
+**五、实机验证与夹具修正**
+
+- 清理后实机 skill catalog 由 10 项变为 13 项，新增 `cordis-plugin-development`、`editing-cordis-compositions`、`cordis-composition-reference`（正是 `creativeMode=true` 才投影的 creative 技能组），证明此前 C=1 失效根因是同 id 重复行导致 ambiguous 回退、C 被读成 false，改宿主或 schema 并非必要。
+- 同步修正两处测试夹具：`pe-test/tools/step-04-路由与写闸门.mjs` 的 `lcFixture` 与 `pe-test/tools/step-01-设置迁移.mjs` 的 `captureRowSettings` 夹具均补上规范 `name: dsh-extra-plan/settings` 并补齐热读键，否则夹具在新合同下会被判 missing/ambiguous 而产生假失败。
+
+**状态行**
+
+【已核实·静态（待部署复测）】：不作通过、不销任何 HUMAN 欠账。

@@ -11,6 +11,8 @@ const isMode = (value) => typeof value === 'string' && modeOptions.includes(valu
 
 /** 新载体行 id（settings 命名空间 = profile 行 id）。 */
 export const SETTINGS_ROW_ID = 'dsh-extra-plan-settings'
+/** settings 行的规范 name：定位落点 = 行 id + 该 name 双条件（旧 @local 别名行不再作候选）。 */
+export const SETTINGS_ROW_NAME = 'dsh-extra-plan/settings'
 /** 历史预设核对行 id；仅作兼容读取，不再作为新写入目标。 */
 export const PRESET_ROW_ID = 'extra-plan-preset-sync'
 /** 旧 profile 预设声明行：仅用于非破坏读取迁移，不再作为新写入目标。 */
@@ -46,8 +48,15 @@ const setting = (definition) => Object.freeze({
   }),
 })
 
-/** 权威值落点：settings 行（10 项统一）config.<key>。 */
-const settingsRowLocator = (key, path) => ({ rowId: SETTINGS_ROW_ID, path: path === undefined ? 'config.' + key : path })
+/**
+ * 权威值落点：settings 行（10 项统一）config.<key>，rowName 精确过滤规范名
+ * （旧 @local/dsh-extra-plan/settings 别名行不参与候选；descriptor 的 locatorAliases 均为空）。
+ */
+export const settingsRowLocator = (key, path) => ({
+  rowId: SETTINGS_ROW_ID,
+  rowName: SETTINGS_ROW_NAME,
+  path: path === undefined ? 'config.' + key : path,
+})
 const sourceLocator = (key, path) => ({ rowId: 'extra-plan', path: path === undefined ? 'config.' + key : path })
 /** 旧公开投影行的读取落点：extra-plan-preset-sync.config.<key>；新结构不再写该行。 */
 const hostRowProjectionLocator = (key) => ({

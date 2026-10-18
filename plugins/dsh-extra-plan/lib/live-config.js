@@ -3,13 +3,18 @@
 // settings 行是权威值，旧预设目录不作回退。
 // stamp 由路径和 stat 元数据组成；未变则跳过读盘和 YAML 解析。
 // 构造期先读一次源文件建立初始基线，避免宿主 cfg 快照过期。
-// 路径、文件、stat、YAML 或值失败时按键回退并只告警一次。
+// 构造期同时做装载期严格校验：settings 行在（按行 id）但 8 个热读键出现 missing /
+// ambiguous / invalid → 直接抛错、插件不装载；整行缺席（出厂形态）仍静默按 cfg 快照启动。
+// 运行期（refresh 触发的读盘）保持 fail-safe：路径、文件、stat、YAML 或值失败时按键回退
+// 并只告警一次，其中 ambiguous / invalid 显性告警、missing 静默。
 // 回退顺序为 settings 行覆盖 → apply cfg → BUILTIN_DEFAULTS；每个 agent 的缓存键保持隔离。
 // 10 项共享同一 row locator：8 项在此热读，2 项由宿主装载期快照消费，投影改变后需重启宿主。
 
 import { statSync, readFileSync } from 'node:fs'
 import {
   EXTRA_PLAN_SETTING_DEFINITIONS,
+  SETTINGS_ROW_ID,
+  SETTINGS_ROW_NAME,
   SETTING_DEFINITIONS,
   captureRowSettings,
   getSettingDefinition,
@@ -64,6 +69,11 @@ function pick(key, raw, fallbackValue) {
   return normalizeSettingValue(definition, raw)
 }
 
+// 出错键清单文案：'<key> = <state>' 逗号连接（装载期抛错与运行期告警共用）。
+function describeProblems(problems) {
+  return problems.map((item) => item.key + ' = ' + item.state).join(', ')
+}
+
 function normalizedFallback(fallbackDefaults) {
   const source = fallbackDefaults !== null && typeof fallbackDefaults === 'object' ? fallbackDefaults : {}
   const out = {}
@@ -109,11 +119,13 @@ export function createLiveConfig(options) {
     }
   }
 
-  // 读盘 → 解析 → 取值。失败不抛出，返回 { ok:false, reason } 由调用方回退 + 告警。
+  // 读盘 → 解析 → 取值。读盘/解析失败不抛出，返回 { ok:false, reason } 由调用方回退 + 告警。
+  // 行在但键状态非 captured 时额外返回 problems（[{key, state}]）且 reason 携带出错键清单：
+  // 构造期据此抛错（装载期严格校验），运行期只对 ambiguous / invalid 告警、missing 静默。
   function readDiskValues() {
     let captured = null
     try {
-      // 8 项同源：全部按 rowLocator（settings 行 id + config.<key>）定位。
+      // 8 项同源：全部按 rowLocator（settings 行 id + 规范 name + config.<key>）定位。
       captured = captureRowSettings(readFileSync(path, 'utf8'), SETTING_DEFINITIONS)
     } catch (error) {
       return { ok: false, reason: '解析失败 ' + String(error !== null && typeof error === 'object' ? error.message : error) }
@@ -121,17 +133,22 @@ export function createLiveConfig(options) {
     const rawValues = captured !== null && captured.values !== null && typeof captured.values === 'object' ? captured.values : {}
     const states = captured !== null && captured.states !== null && typeof captured.states === 'object' ? captured.states : {}
     const next = {}
-    let capturedCount = 0
+    const problems = []
     for (const key of READ_KEYS) {
-      // 只有 capturedRowSettings 判定 captured 的键才覆盖；missing/ambiguous/invalid 一律回退 cfg 快照。
-      const hit = states[key] === 'captured' && Object.prototype.hasOwnProperty.call(rawValues, key)
-      if (hit) capturedCount += 1
+      // 只有 capturedRowSettings 判定 captured 的键才覆盖；missing/ambiguous/invalid 收集后回退 cfg 快照。
+      const state = typeof states[key] === 'string' ? states[key] : 'missing'
+      const hit = state === 'captured' && Object.prototype.hasOwnProperty.call(rawValues, key)
+      if (!hit) problems.push({ key, state })
       next[key] = hit ? pick(key, rawValues[key], fallbackValues[key]) : fallbackValues[key]
     }
-    // profile patch 内没有 settings 行（首次安装＝无任何 override）→ 视为「无热读真值」，
-    // 整组回退 cfg 快照且不告警（这是正常的出厂形态，不是故障）。
-    if (capturedCount === 0) return { ok: false, reason: 'none', silent: true }
-    return { ok: true, values: next }
+    // profile patch 内没有任何 settings 行（首次安装＝无任何 override）→ 视为「无热读真值」，
+    // 整组回退 cfg 快照且不告警（这是正常的出厂形态，不是故障），也不做装载期严格校验。
+    if (captured === null || captured.rowPresent !== true) {
+      return { ok: false, reason: 'none', silent: true, values: next }
+    }
+    if (problems.length === 0) return { ok: true, values: next }
+    // 行在但键不全（missing，说明该行不完整）/ 歧义（ambiguous）/ 非法（invalid）→ 携带出错键清单。
+    return { ok: false, reason: describeProblems(problems), problems, values: next }
   }
 
   // ── 构造期读盘：无条件读盘一次，以文件真值作为本实例的初始基准 ──
@@ -146,6 +163,12 @@ export function createLiveConfig(options) {
       // stat 成功即记基线（即便随后解析失败）：stamp 未变时后续取值零读盘零解析，也不重复告警。
       stamp = boot.stamp
       const parsed = readDiskValues()
+      // 装载期严格校验：settings 行在、但热读键出现 missing / ambiguous / invalid → 显性失败，
+      // 插件不装载（整行缺席的出厂形态不在此列，见 readDiskValues 的 silent 'none'）。
+      if (Array.isArray(parsed.problems) && parsed.problems.length > 0) {
+        throw new Error('extra-plan: settings 行校验失败：' + parsed.reason
+          + '（期望在 ' + SETTINGS_ROW_ID + ' 行、name 为 ' + SETTINGS_ROW_NAME + ' 的 config 内取得合法值）')
+      }
       if (parsed.ok) values = parsed.values
       else if (parsed.silent !== true) warnOnce(parsed.reason)
     }
@@ -179,7 +202,14 @@ export function createLiveConfig(options) {
       values = parsed.values
       return
     }
+    // 运行期 fail-safe：一律先回退 fallback；行校验问题只把 ambiguous / invalid 告警一次，
+    // missing 仍按出厂形态静默（本次不改变 fallback 取值顺序）。
     values = { ...fallbackValues }
+    if (Array.isArray(parsed.problems)) {
+      const hard = parsed.problems.filter((item) => item.state === 'ambiguous' || item.state === 'invalid')
+      if (hard.length > 0) warnOnce('settings 行键值不可用：' + describeProblems(hard))
+      return
+    }
     if (parsed.silent !== true) warnOnce(parsed.reason)
   }
 

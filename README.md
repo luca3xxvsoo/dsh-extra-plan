@@ -178,7 +178,8 @@ dsh-extra-plan/
 │       ├── step-07-子代理模型与引导取证.mjs
 │       ├── step-08-方案配对查看.mjs
 │       ├── step-99-用量统计.mjs
-│       ├── 代码地图生成.mjs                           
+│       ├── 代码地图生成.mjs    
+│       ├── 清理desktop旧settings行.mjs                       
 │       └── readme.md
 ├── README.md                                                          # 本文档
 ├── READAI.md                                                          # AI 入口导航（分层）

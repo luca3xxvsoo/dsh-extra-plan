@@ -2679,7 +2679,7 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
   // 夹具 = profile patch 内的 settings 行（当前载体：captureRowSettings 按
   // id='dsh-extra-plan-settings' + config.<key> 定位），exploreBudget 取与内置默认 18
   // 不同的值，确保「读到文件」与「回退 fallback」可区分。
-  const lcFixture = (anchored, budget) => '- id: dsh-extra-plan-settings\n  config:\n    anchoredBootstrap: ' + anchored + '\n    runcodeCatchGate: true\n    exploreBudget: ' + budget + '\n'
+  const lcFixture = (anchored, budget) => '- id: dsh-extra-plan-settings\n  name: dsh-extra-plan/settings\n  config:\n    anchoredBootstrap: ' + anchored + '\n    creativeMode: false\n    runcodeCatchGate: true\n    crossProviderPlannerModel: false\n    plannerModel: deepseek-v4-pro\n    plannerPromptSuffix: probe\n    exploreBudget: ' + budget + '\n    otherAgentModel: ""\n'
   const lcOffFile = join(lcDir, 'agent-off.cordis.yml')
   const lcOnFile = join(lcDir, 'agent-on.cordis.yml')
   writeFileSync(lcOffFile, lcFixture(false, 7), 'utf8')

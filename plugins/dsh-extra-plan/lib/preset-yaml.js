@@ -96,7 +96,13 @@ export function rowsByIdWithPath(document, rowId) {
 }
 
 function resolveLocator(document, locator) {
-  const rows = rowsById(document, locator.rowId)
+  let rows = rowsById(document, locator.rowId)
+  // 可选 rowName 精确过滤：settings 行落点从「id」收紧为「id + 规范 name」双条件，
+  // 同 id 的旧行（如 name 为 @local/dsh-extra-plan/settings 的历史行）不再参与候选；
+  // locator 无 rowName 时行为与收紧前逐字一致（源模板行、宿主行投影不受影响）。
+  if (typeof locator.rowName === 'string') {
+    rows = rows.filter((row) => row !== null && typeof row === 'object' && row.name === locator.rowName)
+  }
   if (rows.length === 0) return { kind: 'missing', locator }
   if (rows.length > 1) return { kind: 'ambiguous', locator, matches: rows.length }
   const value = readPath(rows[0], locator.path)
@@ -119,7 +125,8 @@ function aliasesFor(definitionOrLocator) {
 }
 
 /**
- * 行定位解析：接受 descriptor（用其 sourceLocator）或裸 locator { rowId, path }。
+ * 行定位解析：接受 descriptor（用其 sourceLocator）或裸 locator { rowId, rowName?, path }。
+ * rowName 为字符串时先按 id 收集、再按 name 精确过滤（settings 行 = id + 规范 name）。
  * 多命中/别名歧义 → ambiguous；缺行或缺叶 → missing；否则 ok。
  */
 export function resolveSetting(document, definitionOrLocator, options = {}) {
@@ -194,9 +201,12 @@ export function hostRowDefaultsFromTemplate(templateText) {
 }
 
 /**
- * 权威值捕获（settings 行）：逐项按 rowLocator（行 id SETTINGS_ROW_ID + config.<key>）解析，
- * 形状与 captureSettings 同构。行缺失/多命中/叶缺失一律 missing/ambiguous → 消费端回退。
- * rowPresent 区分「settings 行缺席（不可判定，保守不改写现场）」与「行在但缺该项（可一次性回填）」。
+ * 权威值捕获（settings 行）：逐项按 rowLocator（行 id SETTINGS_ROW_ID + 规范 name
+ * SETTINGS_ROW_NAME + config.<key>）解析，形状与 captureSettings 同构。
+ * 只有旧别名行（name 非规范值）时行候选为空 → 一律 missing，不再读旧行的值。
+ * 行缺失/多命中/叶缺失一律 missing/ambiguous → 消费端回退。
+ * rowPresent（按行 id 计数，不判 name）区分「settings 行缺席（不可判定，保守不改写现场）」
+ * 与「行在但缺该项（可一次性回填）」；装载期严格校验据此区分出厂形态与行不完整。
  */
 export function captureRowSettings(text, definitions) {
   const document = parsePresetYaml(text)

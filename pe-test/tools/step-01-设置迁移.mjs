@@ -540,7 +540,7 @@ for (const legacyId of ['extra-plan-preset-sync', 'preset-extra-plan']) {
   check('V04 Q03 误写旧ID ' + legacyId + ' 明确失败且旧store deep-equal', rejected && blockedLegacyEditor.state.rejectedEdits.at(-1).id === legacyId && isDeepStrictEqual(blockedBefore, blockedLegacyEditor.state.store.legacyRows))
 }
 
-const captured = captureRowSettings('- id: dsh-extra-plan-settings\n  config:\n    plannerModel: x\n', SETTING_DEFINITIONS)
+const captured = captureRowSettings('- id: dsh-extra-plan-settings\n  name: dsh-extra-plan/settings\n  config:\n    plannerModel: x\n', SETTING_DEFINITIONS)
 check('V04 当前唯一行缺项可识别 rowPresent=true，不能猜旧行', captured.rowPresent === true && captured.states.plannerModel === 'captured' && captured.states.webFetch === 'missing')
 
 output.summary(pass, fail)
