@@ -193,14 +193,23 @@ for (const req of required) {
 }
 
 const agentText = readFileSync(file, 'utf8')
+// 设置白名单 locator 的唯一性只在【第一文档（主预设）】内统计：源模板是多文档（第一文档=主预设，
+// 第二文档=4 角色），第二文档的角色 tools 行不是权威声明——回填工具面后 tool-web 在四个角色段
+// 各出现一次（fetch: false 同形），全文统计会把 1 次污染成 5 次。断言语义不变：权威文档内每个
+// sourceLocator 仍必须恰好命中 1 次，命中 0 次或 ≥2 次照样 FAIL。
+const mainPresetText = (() => {
+  const lines = agentText.split('\n')
+  const separator = lines.findIndex((line) => /^---\s*$/.test(line))
+  return (separator === -1 ? lines : lines.slice(0, separator)).join('\n')
+})()
 const locatorChecks = SETTING_DEFINITIONS.map((definition) => {
   const parsed = resolveSetting(rows, definition, { aliases: false })
-  const textMatches = findTextLocatorMatches(agentText, definition.sourceLocator)
+  const textMatches = findTextLocatorMatches(mainPresetText, definition.sourceLocator)
   return { definition, parsed, textMatches }
 })
 if (SETTING_DEFINITIONS.length === 10 && locatorChecks.every((item) => item.parsed.kind === 'ok' && item.textMatches.length === 1)) {
   pass += 1
-  console.log('PASS  设置白名单恰有 10 个唯一 sourceLocator（源模板/旧分发副本同形）')
+  console.log('PASS  设置白名单恰有 10 个唯一 sourceLocator（第一文档权威声明内各命中 1 次）')
 } else {
   fail += 1
   console.log('FAIL  设置白名单 locator 不完整或有歧义')
@@ -298,19 +307,27 @@ for (const role of roleRow) {
     && roleDef.plugins[1].name === 'dsh-extra-plan' && JSON.stringify(roleDef.plugins[1].config) === mainExtraConfigJson)
   const toolRows = roleDef === null ? [] : roleDef.plugins.slice(2)
   const toolNames = toolRows.map((row) => row.name)
-  const forbidden = ['@deepseek-ai/dsh-tool-subagent', '@deepseek-ai/dsh-tool-subagent-control', '@deepseek-ai/dsh-tool-subagent-control/list-agents', '@deepseek-ai/dsh-tool-workflow', '@deepseek-ai/dsh-tool-ralph', '@deepseek-ai/dsh-tool-ask-user', '@deepseek-ai/dsh-tool-todo']
+  // 公共禁用（四角色一律不挂）：委派/工作流/交互类工具 + list-agents 子行。
+  const forbidden = ['@deepseek-ai/dsh-tool-subagent', '@deepseek-ai/dsh-tool-subagent-control/list-agents', '@deepseek-ai/dsh-tool-workflow', '@deepseek-ai/dsh-tool-ralph', '@deepseek-ai/dsh-tool-ask-user', '@deepseek-ai/dsh-tool-todo']
+  // tool-subagent-control 单列：0.2.1 该包同时注册 send_message 与 interrupt_agent（包不可拆），
+  // planner 以 send_message 回报故合法挂载；reviewer/prober/executor 仍必须不挂。
+  const forbiddenIfNotPlanner = role.id === 'extra-plan-planner' ? [] : ['@deepseek-ai/dsh-tool-subagent-control']
   const fsRow = toolRows.find((row) => row.name === '@deepseek-ai/dsh-tool-fs')
   const writable = fsRow !== undefined && fsRow.config !== undefined && fsRow.config.write === true
   const readOnlyOk = role.id === 'extra-plan-executor'
     ? fsRow !== undefined && (fsRow.config === undefined || (fsRow.config.write !== false && fsRow.config.edit !== false))
     : fsRow !== undefined && fsRow.config?.write === false && fsRow.config?.edit === false
   const shellRows = toolNames.filter((name) => name === '@deepseek-ai/dsh-tool-pwsh' || name === '@deepseek-ai/dsh-tool-bash')
+  // 工具面回填 5f3cc68 实际可见面：四角色均挂双 shell（pwsh/bash，按平台条件 disabled）、
+  // tool-web（fetch:false）与只读 tool-cordis。
   check('T3 ' + role.id + ' 工具面按只读/可写/shell 规则裁剪',
     forbidden.every((name) => !toolNames.includes(name))
+    && forbiddenIfNotPlanner.every((name) => !toolNames.includes(name))
     && readOnlyOk
-    && (role.id === 'extra-plan-executor' ? shellRows.length === 2 : shellRows.length === 0)
+    && shellRows.length === 2
     && toolNames.includes('@deepseek-ai/dsh-tool-fs-search') && toolNames.includes('@deepseek-ai/dsh-tool-skill')
     && toolNames.includes('@deepseek-ai/dsh-skill-filesystem') && toolNames.includes('@deepseek-ai/dsh-tool-jobs')
+    && toolNames.includes('@deepseek-ai/dsh-tool-web') && toolNames.includes('@deepseek-ai/dsh-tool-cordis')
     && (!writable || role.id === 'extra-plan-executor'))
 }
 const renderedRoles = renderRoleDefinitions(roleSourceText, definitionGeneratedText)

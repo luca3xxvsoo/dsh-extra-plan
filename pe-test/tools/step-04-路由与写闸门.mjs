@@ -245,11 +245,24 @@ function checkRoleTools(roleId, mustInclude, mustExclude, label) {
   else fail += 1
   output.assertion(okResult, label, { mustInclude, mustExclude }, names)
 }
-const FORBIDDEN_ROLE_TOOLS = ['@deepseek-ai/dsh-tool-subagent', '@deepseek-ai/dsh-tool-subagent-control', '@deepseek-ai/dsh-tool-subagent-control/list-agents', '@deepseek-ai/dsh-tool-workflow', '@deepseek-ai/dsh-tool-ralph', '@deepseek-ai/dsh-tool-ask-user', '@deepseek-ai/dsh-tool-todo']
-checkRoleTools('extra-plan-reviewer', ['@deepseek-ai/dsh-tool-fs', '@deepseek-ai/dsh-persona', 'dsh-extra-plan'], FORBIDDEN_ROLE_TOOLS, 'reviewer 角色工具面：只读 fs、不挂 subagent/workflow/ralph/ask-user/todo（原 13 项 deny 语义）')
-checkRoleTools('extra-plan-executor', ['@deepseek-ai/dsh-tool-fs', '@deepseek-ai/dsh-tool-pwsh', '@deepseek-ai/dsh-tool-bash'], [...FORBIDDEN_ROLE_TOOLS, '@deepseek-ai/dsh-tool-ask-user'], 'executor 角色工具面：可写 fs + 双 shell、不挂委派类工具（原 11 项 deny 语义）')
-checkRoleTools('extra-plan-planner', ['@deepseek-ai/dsh-tool-fs', '@deepseek-ai/dsh-persona', 'dsh-extra-plan'], FORBIDDEN_ROLE_TOOLS, 'planner 角色工具面：只读 fs、不挂委派/交互类工具（原 13 项 deny 语义）')
-checkRoleTools('extra-plan-prober', ['@deepseek-ai/dsh-tool-fs', '@deepseek-ai/dsh-tool-fs-search'], [...FORBIDDEN_ROLE_TOOLS, '@deepseek-ai/dsh-tool-cordis'], 'prober 角色工具面：只读 fs、不挂 cordis 查询工具（原 14 项 deny 语义）')
+// 工具面回填 5f3cc68 实际可见面（0.2.1 角色预设显式 tools 列表）：四角色均挂只读 fs 家族 +
+// 只读 shell（pwsh/bash 按平台条件 disabled）+ tool-web（fetch:false）+ 只读 tool-cordis。
+const TOOL_PWSH = '@deepseek-ai/dsh-tool-pwsh'
+const TOOL_BASH = '@deepseek-ai/dsh-tool-bash'
+const TOOL_WEB = '@deepseek-ai/dsh-tool-web'
+const TOOL_CORDIS = '@deepseek-ai/dsh-tool-cordis'
+// 公共禁用（四角色一律不挂）：委派/工作流/交互类工具，以及 tool-subagent-control 的 list-agents 子行
+// （planner 虽合法挂 tool-subagent-control 本体，list_agents 仍不得可见）。
+const FORBIDDEN_ROLE_TOOLS_SHARED = ['@deepseek-ai/dsh-tool-subagent', '@deepseek-ai/dsh-tool-subagent-control/list-agents', '@deepseek-ai/dsh-tool-workflow', '@deepseek-ai/dsh-tool-ralph', '@deepseek-ai/dsh-tool-ask-user', '@deepseek-ai/dsh-tool-todo']
+// tool-subagent-control 单列：0.2.1 该包同时注册 send_message 与 interrupt_agent、无配置可拆，
+// planner 以 send_message 回报故合法挂载（连带可见 interrupt_agent，属包不可拆差异）；
+// reviewer/prober/executor 仍必须不挂。
+const FORBIDDEN_SUBAGENT_CONTROL = '@deepseek-ai/dsh-tool-subagent-control'
+const FORBIDDEN_ROLE_TOOLS = [...FORBIDDEN_ROLE_TOOLS_SHARED, FORBIDDEN_SUBAGENT_CONTROL]
+checkRoleTools('extra-plan-reviewer', ['@deepseek-ai/dsh-tool-fs', '@deepseek-ai/dsh-persona', 'dsh-extra-plan', TOOL_PWSH, TOOL_BASH, TOOL_WEB, TOOL_CORDIS], FORBIDDEN_ROLE_TOOLS, 'reviewer 角色工具面：只读 fs + 只读 shell/web/cordis、不挂 subagent/subagent-control/workflow/ralph/ask-user/todo（原 13 项 deny 语义）')
+checkRoleTools('extra-plan-executor', ['@deepseek-ai/dsh-tool-fs', TOOL_PWSH, TOOL_BASH, TOOL_WEB, TOOL_CORDIS], [...FORBIDDEN_ROLE_TOOLS, '@deepseek-ai/dsh-tool-ask-user'], 'executor 角色工具面：可写 fs + 双 shell + web/cordis、不挂委派类工具（原 11 项 deny 语义）')
+checkRoleTools('extra-plan-planner', ['@deepseek-ai/dsh-tool-fs', '@deepseek-ai/dsh-persona', 'dsh-extra-plan', TOOL_PWSH, TOOL_BASH, TOOL_WEB, TOOL_CORDIS, FORBIDDEN_SUBAGENT_CONTROL], FORBIDDEN_ROLE_TOOLS_SHARED, 'planner 角色工具面：只读 fs + 只读 shell/web/cordis、合法挂 tool-subagent-control（list-agents 仍禁）、不挂 subagent/workflow/ralph/ask-user/todo')
+checkRoleTools('extra-plan-prober', ['@deepseek-ai/dsh-tool-fs', '@deepseek-ai/dsh-tool-fs-search', TOOL_PWSH, TOOL_BASH, TOOL_WEB, TOOL_CORDIS], FORBIDDEN_ROLE_TOOLS, 'prober 角色工具面：只读 fs + 只读 shell/web/cordis、不挂委派/交互类工具（原 14 项 deny 语义，cordis 已合法）')
 for (const [rowId, toolName, presetId] of [['tool-subagent', 'subagent', 'extra-plan-executor'], ['tool-subagent-plan', 'subagent_plan', 'extra-plan-planner'], ['tool-subagent-review', 'subagent_review', 'extra-plan-reviewer'], ['tool-subagent-probe', 'subagent_probe', 'extra-plan-prober']]) {
   const row = all.find((r) => r.id === rowId)
   const config = row !== undefined && row.config !== null && typeof row.config === 'object' ? row.config : {}

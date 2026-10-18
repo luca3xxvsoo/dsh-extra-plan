@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-10-18 09:28:54（脚本自动更新时间戳行）
+> 上次同步：2026-10-18 11:01:21（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -101,12 +101,12 @@
 | plugins/dsh-extra-plan/lib/planner-budget.js | 137 | planner 工具计数、消息后缀/预算提示/耗尽文案；**预算提醒消息经宿主 createUserMessage 构造，source 用生产者自有 kind `plugin:dsh-extra-plan`（v4 行准入禁旧包裹 `plugin`，违者会话当场终止）**；默认预算由生成模块提供，FREE_TOOLS 仍在根入口 |
 | plugins/dsh-extra-plan/lib/preset-defaults.generated.js | 4 | 由 YAML 模板生成的 runtime fallback（回退） 常量；generated（生成）/do not edit（勿手改） |
 | plugins/dsh-extra-plan/lib/preset-settings.js | 3 | 10 项设置描述与 YAML 定位；settings 行是权威值，声明行只投影 2 项宿主行；capture/投影读取、plugins 行整体重述与保格式标量改写。 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | 930 | 读取并严格校验纯 definition；旧 preset-extra-plan/extra-plan-preset-sync 仅安全读取迁移，统一全局行补齐后派生 definition 并由同一 owner 挂载官方 AgentPreset；新写入仅经唯一全局行 configEditor.edit；mountPresetSync 以通用 settled 回调交付最终十项/gateWords。 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | 971 | 读取并严格校验纯 definition；旧 preset-extra-plan/extra-plan-preset-sync 仅安全读取迁移，统一全局行补齐后派生 definition 并由同一 owner 挂载官方 AgentPreset；新写入仅经唯一全局行 configEditor.edit；mountPresetSync 以通用 settled 回调交付最终十项/gateWords。 |
 | plugins/dsh-extra-plan/lib/preset-yaml.js | 578 | 预设 YAML 纯职责模块：解析、行与叶定位及歧义分类、权威与投影值捕获、保格式标量改写。 |
 | plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | 820 | Web documentPath 首选、显式 DSH_HOME 备用、双锚点 profile 扫描、完整 10 项/gateWords 安全快照、局部 YAML 保格式写入、排他临时/备份/恢复与串行同步队列；不读用户目录、不触碰未知根。 |
 | plugins/dsh-extra-plan/lib/run-code-scanner.js | 216 | run_code 无宿主状态词法扫描器：字符串/注释遮蔽、括号配平、tools 调用点收集与动态访问判定。 |
 | plugins/dsh-extra-plan/lib/run-code-static.js | 571 | run_code 纯静态解析/理由模块：安全 JSON/JS literal 解析、动态 argsText 瀑布兜底、写模式 hint、工具组拆解、ask 返回值白名单、调用点计数与当前 PTC dispatch cap；仅显式注入普通依赖，不持有宿主状态。 |
-| plugins/dsh-extra-plan/lib/runtime-lifecycle.js | 124 | per-apply 运行时生命周期：save 工具注册、probe 名额认领与 run_code 子调用计数/拒绝记录，状态在闭包内并按会话清理 |
+| plugins/dsh-extra-plan/lib/runtime-lifecycle.js | 145 | per-apply 运行时生命周期：save 工具注册、probe 名额认领与 run_code 子调用计数/拒绝记录，状态在闭包内并按会话清理 |
 | plugins/dsh-extra-plan/lib/runtime-static.js | 15 | 显式参数纯 helper：SKILL frontmatter 与 cause 链解析；不持有宿主状态 |
 | plugins/dsh-extra-plan/lib/save-contract.js | 255 | save 合同唯一真源：任务名/sessionTag/base、SAVE_PLAN_LIMITS 与确定性 summary/render、PROBE_LIMITS、ContentBlock/Markdown 渲染与证据引用清洗；无宿主状态，运行时限制只在本文件维护。 |
 | plugins/dsh-extra-plan/lib/save-persistence.js | 76 | 单次调用阶段感知提交：mkdir→临时文件逐项写入→逐项检查并顺序发布；失败保留首错/阶段，仅清理本次临时与已发布半套工件，清理失败附残留路径与原因，预存目标不覆盖；不创建/扫描/恢复跨调用 journal；末位 fs 依赖可注入。 |
@@ -118,7 +118,7 @@
 | plugins/dsh-extra-plan/lib/settings.js | 584 | 10 字段 volatile Config、页面策略与 loopback GET/PUT；权威值在唯一 settings 行，PUT 先拒绝空/null/数组/原始/未知/非法混合载荷并严校验当前 gateWords，再只 edit 全局行，no-op 也重读最终快照并等待 profileSync，结构化区分 synced/not-installed/unavailable/failed/partial。 |
 | plugins/dsh-extra-plan/lib/shell-mutation.js | 130 | 跨平台命令文本解码与 pwsh/bash 写形态判定；纯函数、不持有 apply 状态 |
 | plugins/dsh-extra-plan/lib/usage-ledger.js | 174 | per-apply usage 账本：cursor 表读取与降级告警、按水位增量 fold 会话 usage 并追加 JSONL。 |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | 370 | 从 agent.cordis.yml 校验并生成 runtime 默认常量 + 纯 preset-definition.generated.yml（顶层结构逐字平移并保留 group/isolate/!!js）；支持 --check 且坏源不覆盖 last-known-good（上次已知良好版本） |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | 427 | 从 agent.cordis.yml 校验并生成 runtime 默认常量 + 纯 preset-definition.generated.yml（顶层结构逐字平移并保留 group/isolate/!!js）；支持 --check 且坏源不覆盖 last-known-good（上次已知良好版本） |
 
 ## 函数索引
 
@@ -417,48 +417,50 @@
 | plugins/dsh-extra-plan/lib/preset-sync.js | assertRoleDefinition | L461-473 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/preset-sync.js | roleDefinitionOf | L475-481 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/preset-sync.js | assetDefinitions | L484-486 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | assetPlugins | L488-490 | 读取纯 definition 的 plugins；资产缺失或解析失败一律 undefined（旧 body 夹具仍可保守回退） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | readDefinitionGateWords | L492-496 | 从 definition 的 extra-plan 行读取并整组校验七个 gateWords |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | cloneDefinitionWithProjection | L498-514 | 深拷贝 definition，仅重述两项宿主行投影与 gateWords；保留 raw !!js marker |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | definitionWithProjection | L516-518 | 读取资产并生成供官方 adapter 使用的新 revision definition |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | publicConfigOf | L520-523 | 兼容 configuration row wrapper 与直接 config 对象：前者取 effectiveRowConfig，后者取 plain object；其它值返回空对象 |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | directProjectionFromLegacy | L525-536 | 将旧 preset body 的 tool-web/tool-presentation/gateWords 转成公开行支持字段 |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | assertTemplateGateWords | L538-542 | 厂商模板整组前置校验：缺失/非法一律抛错（在 hash/idle 判定与任何目标目录动作之前，坏模板不得进入发布流程） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | readDeclaredPluginsFromPatch | L544-557 | 从 profile patch 文本旁路只读旧 id=preset-extra-plan 的 config.plugins；空文本、YAML 非法或未命中返回 undefined |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | visit | L549-554 | 递归遍历 raw patch 对象，提取旧 preset-extra-plan plugins | readDeclaredPluginsFromPatch 内部 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | readLegacyPresetState | L559-562 | 从 profile 文本只读抽取旧 preset-extra-plan 支持投影，不删除旧行 |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | syncPreset | L568-622 | 统一全局行同步：当前十项合法值优先，旧公开行/body/raw patch 只填缺项；两项宿主值与 gateWords 派生到纯 definition，再由 owner 交官方 adapter；无运行期台账。 | action 在全局行需要补齐或声明本体过时时为 `written`，稳态为 `idle` |
-| plugins/dsh-extra-plan/lib/preset-sync.js | findEntry | L624-627 | 在 configuration() rows 中按 entry.options.id 匹配唯一 entry，供 activeLegacyRow 与 applyPlan 共用；非唯一或未命中返回 undefined |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | applyPlan | L629-637 | 仅在 planned.settings 非 null 时定位唯一 dsh-extra-plan-settings 行并执行一次 configEditor.edit；settings 为空（包括仅声明/body 差异）为 no-op，active fence 防止停止期间写入，完整保留合法十项与 gateWords，不写旧公开/body 行 |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | readRawPatch | L639-643 | 只读 configEditor.documentPath，供旧行迁移；不直接写 profile |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | settingsValuesFromRows | L645-648 | 读取 dsh-extra-plan-settings 权威 config；缺行返回 undefined |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | activeLegacyRow | L650-657 | 检测旧 preset-extra-plan 是否仍是活动 Loader entry，避免官方 adapter duplicate |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | projectedAssetDefinition | L660-670 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | readPatch | L663 | 对象字面量中的 captured rawPatch 快照回调，供 definitionFromRows 传入统一配置解析；不直接读取 configEditor | mountPresetSync 内部 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | structuralValue | L672-683 | 结构指纹的稳定递归序列化：忽略 fiber/entry 动态对象并保留声明配置结构 | mountPresetSync 内部 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | rowStructureRecord | L685-704 | 提取非 settings 行的 id/name/非 settings config/禁用状态/override，settings 行直接排除 | structuralFingerprint 内部 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | structuralFingerprint | L707-725 | 生成不含 settings 行十项/gateWords 的结构指纹，并纳入 active legacy owner 状态；决定是否 handoff | settings-only no-remount 闸门 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | visit | L709-722 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | mountPresetSync | L727-927 | 分离 initialMount、settled-only/update 与 structuralHandoff：settings-only 不调用/等待/dispose/rebuild adapter；结构 handoff 独立，关闭等待 settled 与结构在途工作 | no-remount 硬合同；adapter failure 不阻断 profile sync |
-| plugins/dsh-extra-plan/lib/preset-sync.js | disposeFiber | L740-743 | 安全 await adapter/fiber disposer；供 adapter 注册在途时关闭竞态回收候选资源，缺少 disposer 时保持幂等 no-op。 | mountPresetSync 内部 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | reportSettledError | L744-751 | 把 settled 回调异常交给独立 reporter，不污染 adapter 主异常路径 | mountPresetSync 内部闭包 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | reportAdapterError | L752-760 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | readState | L761-774 | 现场快照 configEditor rows、raw patch、legacyState、结构指纹与 owner，供 settled/structural 两条队列共享 | mountPresetSync 内部 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | snapshotOf | L775-785 | 从当前 settings row/raw patch/legacyState 解析最终完整 10 项与 gateWords 快照 | settled-only 输入 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | readPatch | L778 | 对象字面量中的 captured rawPatch 快照回调，将 run 已读的 patch 传入 syncPreset；不直接读取 configEditor | mountPresetSync 内部 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | enqueueSettled | L786-797 | 串行提交完整 10 项/gateWords settled 快照；回调失败只进入独立 settledError | settled-only 队列 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | settledSettingsUpdate | L798-806 | 从当前 rows/raw patch 解析最终完整快照并立即排入 profileSync，不触碰 adapter 生命周期 | settings-only 保存路径 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | enqueueStructural | L807-815 | 独立串行结构队列；结构 handoff 异常只告警，不撤销 settled/profile 同步 | adapter/structural 生命周期 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | mountOfficialAdapter | L820-845 | 仅首次启动或结构 handoff 调用官方 AgentPreset child.plugin；关闭竞态释放候选 fiber | settings-only 禁止进入 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | disposeCurrentAdapter | L846-850 | 结构 handoff/关闭时安全释放当前官方 adapter fiber；settled-only 不调用 | settings-only no-remount |
-| plugins/dsh-extra-plan/lib/preset-sync.js | structuralHandoff | L851-871 | 等待先提交的 settled 快照后处理非 settings 结构/legacy owner transition，才允许 dispose/rebuild 官方 adapter | adapter failure 不阻断 QQBot |
-| plugins/dsh-extra-plan/lib/preset-sync.js | readPatch | L860 | settled 回调前的 raw patch 快照读取闭包，不推导路径、不执行写入 | mountPresetSync 内部 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | apply | L862 | syncPreset 参数对象中的落盘回调：调用 applyPlan 写唯一 settings 行；不是 Cordis 插件入口 |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | initialMount | L872-899 | 首次读取/迁移 settings、提交完整 settled 快照，再按 activeLegacyRow 保留旧 owner 或 register 官方 AgentPreset 一次 | 首次启动路径 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | readPatch | L881 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | apply | L883 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | settledOnlyUpdate | L900 | internal/update 的 settings-only 入口：只解析并入队最终快照，绝不调用 child.plugin/disposeFiber/等待 adapter | no-remount 闸门 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | dispose | L916-924 | 关闭 settings owner 的 update listener、等待在途队列并幂等释放 adapter fiber | mountPresetSync 内部 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | roleDefinitionsWithPresentation | L494-516 | 把权威 toolPresentationMode 派生进四个角色 definition 的 tool-presentation 行；行缺失或行数不等于 1 时原样返回，派生异常保留生成物默认值且不抛错 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | assetPlugins | L518-520 | 读取纯 definition 的 plugins；资产缺失或解析失败一律 undefined（旧 body 夹具仍可保守回退） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readDefinitionGateWords | L522-526 | 从 definition 的 extra-plan 行读取并整组校验七个 gateWords |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | projectHostRow | L534-541 | 宿主行派生原语：按 HOST_ROW_IDS/HOST_ROW_LEAF_KEYS 定位行与叶、经 validateSettingValue/normalizeSettingValue 校验后写入叶值；主 definition 与角色 definition 两条路径共用 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | cloneDefinitionWithProjection | L543-555 | 深拷贝 definition，仅重述两项宿主行投影与 gateWords；保留 raw !!js marker |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | definitionWithProjection | L557-559 | 读取资产并生成供官方 adapter 使用的新 revision definition |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | publicConfigOf | L561-564 | 兼容 configuration row wrapper 与直接 config 对象：前者取 effectiveRowConfig，后者取 plain object；其它值返回空对象 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | directProjectionFromLegacy | L566-577 | 将旧 preset body 的 tool-web/tool-presentation/gateWords 转成公开行支持字段 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | assertTemplateGateWords | L579-583 | 厂商模板整组前置校验：缺失/非法一律抛错（在 hash/idle 判定与任何目标目录动作之前，坏模板不得进入发布流程） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readDeclaredPluginsFromPatch | L585-598 | 从 profile patch 文本旁路只读旧 id=preset-extra-plan 的 config.plugins；空文本、YAML 非法或未命中返回 undefined |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | visit | L590-595 | 递归遍历 raw patch 对象，提取旧 preset-extra-plan plugins | readDeclaredPluginsFromPatch 内部 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readLegacyPresetState | L600-603 | 从 profile 文本只读抽取旧 preset-extra-plan 支持投影，不删除旧行 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | syncPreset | L609-663 | 统一全局行同步：当前十项合法值优先，旧公开行/body/raw patch 只填缺项；两项宿主值与 gateWords 派生到纯 definition，再由 owner 交官方 adapter；无运行期台账。 | action 在全局行需要补齐或声明本体过时时为 `written`，稳态为 `idle` |
+| plugins/dsh-extra-plan/lib/preset-sync.js | findEntry | L665-668 | 在 configuration() rows 中按 entry.options.id 匹配唯一 entry，供 activeLegacyRow 与 applyPlan 共用；非唯一或未命中返回 undefined |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | applyPlan | L670-678 | 仅在 planned.settings 非 null 时定位唯一 dsh-extra-plan-settings 行并执行一次 configEditor.edit；settings 为空（包括仅声明/body 差异）为 no-op，active fence 防止停止期间写入，完整保留合法十项与 gateWords，不写旧公开/body 行 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readRawPatch | L680-684 | 只读 configEditor.documentPath，供旧行迁移；不直接写 profile |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | settingsValuesFromRows | L686-689 | 读取 dsh-extra-plan-settings 权威 config；缺行返回 undefined |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | activeLegacyRow | L691-698 | 检测旧 preset-extra-plan 是否仍是活动 Loader entry，避免官方 adapter duplicate |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | projectedAssetDefinition | L701-711 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readPatch | L704 | 对象字面量中的 captured rawPatch 快照回调，供 definitionFromRows 传入统一配置解析；不直接读取 configEditor | mountPresetSync 内部 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | structuralValue | L713-724 | 结构指纹的稳定递归序列化：忽略 fiber/entry 动态对象并保留声明配置结构 | mountPresetSync 内部 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | rowStructureRecord | L726-745 | 提取非 settings 行的 id/name/非 settings config/禁用状态/override，settings 行直接排除 | structuralFingerprint 内部 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | structuralFingerprint | L748-766 | 生成不含 settings 行十项/gateWords 的结构指纹，并纳入 active legacy owner 状态；决定是否 handoff | settings-only no-remount 闸门 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | visit | L750-763 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | mountPresetSync | L768-968 | 分离 initialMount、settled-only/update 与 structuralHandoff：settings-only 不调用/等待/dispose/rebuild adapter；结构 handoff 独立，关闭等待 settled 与结构在途工作 | no-remount 硬合同；adapter failure 不阻断 profile sync |
+| plugins/dsh-extra-plan/lib/preset-sync.js | disposeFiber | L781-784 | 安全 await adapter/fiber disposer；供 adapter 注册在途时关闭竞态回收候选资源，缺少 disposer 时保持幂等 no-op。 | mountPresetSync 内部 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | reportSettledError | L785-792 | 把 settled 回调异常交给独立 reporter，不污染 adapter 主异常路径 | mountPresetSync 内部闭包 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | reportAdapterError | L793-801 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readState | L802-815 | 现场快照 configEditor rows、raw patch、legacyState、结构指纹与 owner，供 settled/structural 两条队列共享 | mountPresetSync 内部 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | snapshotOf | L816-826 | 从当前 settings row/raw patch/legacyState 解析最终完整 10 项与 gateWords 快照 | settled-only 输入 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readPatch | L819 | 对象字面量中的 captured rawPatch 快照回调，将 run 已读的 patch 传入 syncPreset；不直接读取 configEditor | mountPresetSync 内部 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | enqueueSettled | L827-838 | 串行提交完整 10 项/gateWords settled 快照；回调失败只进入独立 settledError | settled-only 队列 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | settledSettingsUpdate | L839-847 | 从当前 rows/raw patch 解析最终完整快照并立即排入 profileSync，不触碰 adapter 生命周期 | settings-only 保存路径 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | enqueueStructural | L848-856 | 独立串行结构队列；结构 handoff 异常只告警，不撤销 settled/profile 同步 | adapter/structural 生命周期 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | mountOfficialAdapter | L861-886 | 仅首次启动或结构 handoff 调用官方 AgentPreset child.plugin；关闭竞态释放候选 fiber | settings-only 禁止进入 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | disposeCurrentAdapter | L887-891 | 结构 handoff/关闭时安全释放当前官方 adapter fiber；settled-only 不调用 | settings-only no-remount |
+| plugins/dsh-extra-plan/lib/preset-sync.js | structuralHandoff | L892-912 | 等待先提交的 settled 快照后处理非 settings 结构/legacy owner transition，才允许 dispose/rebuild 官方 adapter | adapter failure 不阻断 QQBot |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readPatch | L901 | settled 回调前的 raw patch 快照读取闭包，不推导路径、不执行写入 | mountPresetSync 内部 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | apply | L903 | syncPreset 参数对象中的落盘回调：调用 applyPlan 写唯一 settings 行；不是 Cordis 插件入口 |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | initialMount | L913-940 | 首次读取/迁移 settings、提交完整 settled 快照，再按 activeLegacyRow 保留旧 owner 或 register 官方 AgentPreset 一次 | 首次启动路径 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readPatch | L922 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | apply | L924 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | settledOnlyUpdate | L941 | internal/update 的 settings-only 入口：只解析并入队最终快照，绝不调用 child.plugin/disposeFiber/等待 adapter | no-remount 闸门 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | dispose | L957-965 | 关闭 settings owner 的 update listener、等待在途队列并幂等释放 adapter fiber | mountPresetSync 内部 |
 | plugins/dsh-extra-plan/lib/preset-yaml.js | loadYaml | L7-20 | 加载 js-yaml：先本模块 require，失败回落 %APPDATA% 下官方 dsh 包，仍失败抛原错误。 | 模块内部函数（未导出）；L22 模块加载期即调用 |
 | plugins/dsh-extra-plan/lib/preset-yaml.js | resolve | L25 | js-yaml 自定义 tag 的标量判定：仅接受字符串标量，使 !!js 表达式按原文保留而不求值。 |  |
 | plugins/dsh-extra-plan/lib/preset-yaml.js | construct | L26 | 把 !!js 标量的表达式文本包装成 { __jsExpr } 对象，供后续按对象识别与还原。 |  |
@@ -609,17 +611,18 @@
 | plugins/dsh-extra-plan/lib/run-code-static.js | isRunCodeSubCall | L529-534 | 子调用判定：exec.sub 或 exec.parent!==undefined |  |
 | plugins/dsh-extra-plan/lib/run-code-static.js | runCodeDispatchCapText | L537-539 | 单实例子调用超限文案（T3 逐字）：rootCallId 实例子调用数超过 exploreBudget 上限 |  |
 | plugins/dsh-extra-plan/lib/run-code-static.js | runCodeDispatchGateReason | L544-558 | 运行时单实例上限（planner）：按 rootCallId 计数，超 cap 返回 T3 文案 |  |
-| plugins/dsh-extra-plan/lib/runtime-lifecycle.js | createRuntimeLifecycle | L2-124 | per-apply 运行时生命周期：save 工具注册、探查名额认领、子调用计数与拒绝记录的共享容器，返回 API | 顶层导出工厂，依赖全部经 options 显式注入，内部状态为 WeakSet/Map |
+| plugins/dsh-extra-plan/lib/runtime-lifecycle.js | createRuntimeLifecycle | L2-145 | per-apply 运行时生命周期：save 工具注册、探查名额认领、子调用计数与拒绝记录的共享容器，返回 API | 顶层导出工厂，依赖全部经 options 显式注入，内部状态为 WeakSet/Map |
 | plugins/dsh-extra-plan/lib/runtime-lifecycle.js | registerTool | L9-38 | 按 agent 单次注册工具定义：查重后注册；tools 服务缺失或已存在/永久非法时只告警并记账，不重试 | 工厂内闭包，被 registerSavePlan/registerSaveProbe 转调 |
 | plugins/dsh-extra-plan/lib/runtime-lifecycle.js | registerSavePlan | L51 | 以 save_plan 定义注册工具的一次性薄封装 | 内部闭包，转调 registerTool（savePlanRegistered WeakSet 去重） |
 | plugins/dsh-extra-plan/lib/runtime-lifecycle.js | registerSaveProbe | L52 | 以 save_probe 定义注册工具的一次性薄封装 | 内部闭包，转调 registerTool（saveProbeRegistered WeakSet 去重） |
-| plugins/dsh-extra-plan/lib/runtime-lifecycle.js | probeClaimFor | L54-69 | 探查子会话认领放行名额：非普通子代理、planner、无父会话或带写工具即拒；成功扣减名额并返回 true | 内部闭包。名额由 index.js L867 recordProbeClaim 产生，此处消费（pending-1，归零即删键） |
-| plugins/dsh-extra-plan/lib/runtime-lifecycle.js | recordProbeClaim | L71-73 | 主会话放行 subagent_probe 时为其记一个待认领名额，同会话累加 | 内部闭包，写 pendingProbeClaims（Map<parentSessionId, count>） |
-| plugins/dsh-extra-plan/lib/runtime-lifecycle.js | noteRunCodeSubCall | L75-82 | 按 rootCallId 记 run_code 子调用数：达上限或 rootCallId 缺失返回超限文案，否则加一返回 null | 内部闭包，cap 由 index.js L398 以 exploreBudget() 传入 |
-| plugins/dsh-extra-plan/lib/runtime-lifecycle.js | recordRunCodeDeny | L84-95 | 记录 run_code 子调用被拒原因：非子调用、原因为空或无会话 id 不记；按会话与根调用 id 去重累计 | 内部闭包，写 runCodeDenyRecords（Map<sessionId, Map<rid, Set<reason>>>） |
-| plugins/dsh-extra-plan/lib/runtime-lifecycle.js | takeRunCodeDenyRecords | L97-105 | 取出并删除某会话某根调用的拒绝原因集合（消费即清），无记录或参数非法返回 undefined | 内部闭包，消费方 index.js L947-963 命中原因时改写失败结果文本 |
-| plugins/dsh-extra-plan/lib/runtime-lifecycle.js | disposeSession | L107-115 | 会话销毁时清空该 sessionId 在名额、拒绝记录、各类计数与通知中的残留条目 | 内部闭包，只清 7 个 Map，不清 WeakSet（按 agent 键自然回收） |
-| plugins/dsh-extra-plan/lib/runtime-lifecycle.js | pendingProbeCount | L122 | 读取指定会话尚未认领的探查计数：无记录时返回 0。 |  |
+| plugins/dsh-extra-plan/lib/runtime-lifecycle.js | isProberRole | L58-71 | 角色身份判据：读 session.header.agentPreset === 'extra-plan-prober'；header 缺失或取值非字符串时吞错返回 false，供 save_probe 注册使用（F1：认领表跨实例不可见，故以角色身份兜底） |  |
+| plugins/dsh-extra-plan/lib/runtime-lifecycle.js | probeClaimFor | L73-90 | 探查子会话认领放行名额：非普通子代理、planner、无父会话或带写工具即拒；成功扣减名额并返回 true | 内部闭包。名额由 index.js L867 recordProbeClaim 产生，此处消费（pending-1，归零即删键） |
+| plugins/dsh-extra-plan/lib/runtime-lifecycle.js | recordProbeClaim | L92-94 | 主会话放行 subagent_probe 时为其记一个待认领名额，同会话累加 | 内部闭包，写 pendingProbeClaims（Map<parentSessionId, count>） |
+| plugins/dsh-extra-plan/lib/runtime-lifecycle.js | noteRunCodeSubCall | L96-103 | 按 rootCallId 记 run_code 子调用数：达上限或 rootCallId 缺失返回超限文案，否则加一返回 null | 内部闭包，cap 由 index.js L398 以 exploreBudget() 传入 |
+| plugins/dsh-extra-plan/lib/runtime-lifecycle.js | recordRunCodeDeny | L105-116 | 记录 run_code 子调用被拒原因：非子调用、原因为空或无会话 id 不记；按会话与根调用 id 去重累计 | 内部闭包，写 runCodeDenyRecords（Map<sessionId, Map<rid, Set<reason>>>） |
+| plugins/dsh-extra-plan/lib/runtime-lifecycle.js | takeRunCodeDenyRecords | L118-126 | 取出并删除某会话某根调用的拒绝原因集合（消费即清），无记录或参数非法返回 undefined | 内部闭包，消费方 index.js L947-963 命中原因时改写失败结果文本 |
+| plugins/dsh-extra-plan/lib/runtime-lifecycle.js | disposeSession | L128-136 | 会话销毁时清空该 sessionId 在名额、拒绝记录、各类计数与通知中的残留条目 | 内部闭包，只清 7 个 Map，不清 WeakSet（按 agent 键自然回收） |
+| plugins/dsh-extra-plan/lib/runtime-lifecycle.js | pendingProbeCount | L143 | 读取指定会话尚未认领的探查计数：无记录时返回 0。 |  |
 | plugins/dsh-extra-plan/lib/runtime-static.js | causeChainOf | L3-15 | 按显式 depth 提取错误 cause 链 |  |
 | plugins/dsh-extra-plan/lib/save-contract.js | sanitizeTaskName | L4-12 | 任务名净化（截断/去非法字符） |  |
 | plugins/dsh-extra-plan/lib/save-contract.js | timestampOf | L15-18 | 生成本地 yyyyMMddHHmmss 部分，供公共 timestamp 与 artifact base 使用 |  |
@@ -769,28 +772,30 @@
 | plugins/dsh-extra-plan/lib/usage-ledger.js | warnUsageCursorDegraded | L48-52 | cursor 读取降级时每个插件实例只打印一次告警，避免重复刷屏。 | createUsageLedger（L4）内部闭包，靠 cursorDegradedWarned 标志限一次。地图行号区间 L48-52。 |
 | plugins/dsh-extra-plan/lib/usage-ledger.js | usageCursorEntryOf | L56-63 | 归一单个会话的 cursor 项：兼容旧数字形状与 {seq,index}，无法识别返回 undefined。 | createUsageLedger（L4）内部闭包，旧数字形状按水位 index=0 处理。地图行号区间 L56-63。 |
 | plugins/dsh-extra-plan/lib/usage-ledger.js | foldUsage | L71-171 | 按水位增量或全量扫描会话事件，把 assistant/message 的 usage 追加到账本并推进 cursor。 | createUsageLedger（L4）内部闭包；无新增行时只推进内存水位、不触碰账本与 cursor 文件。地图行号区间 L71-171。 |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | roleDefinitionFile | L27-29 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | renderRuntimeDefaults | L31-41 | 校验模板并渲染 DEFAULT_EXPLORE_BUDGET 与 DEFAULT_PLANNER_PROMPT_SUFFIX 两个默认常量生成文本 |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | separatorIndexOf | L46-48 | 返回首个顶格 YAML 文档分隔行「---」的下标，缺分隔行返回 -1。 | 模块内部函数（未导出） |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | topLevelRowsOf | L51-61 | 抽取 agent.cordis.yml 第一文档的顶层条目区间（首个根级「- id:/insert:」行到首个顶格「---」分隔行，无分隔行才到末个非空行）；缺失/空即抛，注释、锚点、!!js 与 isolate 键逐字保留 |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | secondDocumentOf | L64-69 | 抽取 agent.cordis.yml 第二文档原文（分隔行之后全部行，保留注释与工具面原文）；缺分隔行即抛。 |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | indentBlock | L71-74 | 整段平移 PLUGINS_INDENT 列缩进（空行保持空行），供声明行 config.plugins 嵌套 |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | indentOf | L76-80 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | shiftBlock | L82-90 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | rawBlockFrom | L96-107 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | quoteYamlSingle | L109-111 | YAML 单引号标量：整体加单引号并把内部单引号双写 |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | assertDefinition | L113-121 | 严格校验 preset definition 为 extra-plan 对象，要求元数据完整、顶层 17 条 plugins 且禁止 Loader insert wrapper。 |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | renderPresetDefinition | L123-142 | 从 agent.cordis.yml 抽取顶层行并缩进，结合 preset.yml 元数据生成纯 definition YAML；保留 group、isolate、!!js 原文并回解析校验。 |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | mainExtraPlanRowBlock | L145-156 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | personaPrefixBlock | L159-186 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | roleToolsBlock | L189-200 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | assertRoleSource | L202-220 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | assertRoleDefinition | L222-234 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | renderRoleDefinitions | L240-277 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | assertParses | L279-287 | 用 parsePresetYaml 预解析校验文本，失败抛出带标签的 YAML parse failed 错误 |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | writeOrCheck | L289-298 | --check 模式只比对产物（缺失或文本不一致即抛），否则 mkdir -p 后写盘 |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | generateRuntimeDefaults | L305-352 | 先校验再生成或 --check 比对，失败保留旧生成物 |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | invokedAsMain | L354-357 | 跨平台判断脚本是否作为 CLI 主入口运行 |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | roleDefinitionFile | L33-35 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | renderRuntimeDefaults | L37-47 | 校验模板并渲染 DEFAULT_EXPLORE_BUDGET 与 DEFAULT_PLANNER_PROMPT_SUFFIX 两个默认常量生成文本 |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | separatorIndexOf | L52-54 | 返回首个顶格 YAML 文档分隔行「---」的下标，缺分隔行返回 -1。 | 模块内部函数（未导出） |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | topLevelRowsOf | L57-67 | 抽取 agent.cordis.yml 第一文档的顶层条目区间（首个根级「- id:/insert:」行到首个顶格「---」分隔行，无分隔行才到末个非空行）；缺失/空即抛，注释、锚点、!!js 与 isolate 键逐字保留 |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | secondDocumentOf | L70-75 | 抽取 agent.cordis.yml 第二文档原文（分隔行之后全部行，保留注释与工具面原文）；缺分隔行即抛。 |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | indentBlock | L77-80 | 整段平移 PLUGINS_INDENT 列缩进（空行保持空行），供声明行 config.plugins 嵌套 |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | indentOf | L82-86 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | shiftBlock | L88-96 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | rawBlockFrom | L102-113 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | quoteYamlSingle | L115-117 | YAML 单引号标量：整体加单引号并把内部单引号双写 |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | assertDefinition | L119-127 | 严格校验 preset definition 为 extra-plan 对象，要求元数据完整、顶层 17 条 plugins 且禁止 Loader insert wrapper。 |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | renderPresetDefinition | L129-148 | 从 agent.cordis.yml 抽取顶层行并缩进，结合 preset.yml 元数据生成纯 definition YAML；保留 group、isolate、!!js 原文并回解析校验。 |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | mainExtraPlanRowBlock | L151-162 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | personaPrefixBlock | L165-192 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | roleToolsBlock | L195-206 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | findRowById | L209-220 | 生成器内按行 id 在插件行数组中查找，未命中返回 undefined，供取主 definition 的 tool-presentation 默认 mode 使用 |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | mainToolPresentationMode | L226-238 | 从主 definition 的 tool-presentation 行取默认 mode；缺失、值非法或解析异常一律回落 native，不抛错 |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | assertRoleSource | L240-260 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | assertRoleDefinition | L262-281 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | renderRoleDefinitions | L288-334 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | assertParses | L336-344 | 用 parsePresetYaml 预解析校验文本，失败抛出带标签的 YAML parse failed 错误 |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | writeOrCheck | L346-355 | --check 模式只比对产物（缺失或文本不一致即抛），否则 mkdir -p 后写盘 |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | generateRuntimeDefaults | L362-409 | 先校验再生成或 --check 比对，失败保留旧生成物 |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | invokedAsMain | L411-414 | 跨平台判断脚本是否作为 CLI 主入口运行 |  |
 
 ---
 

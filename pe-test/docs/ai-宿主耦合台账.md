@@ -65,8 +65,8 @@
 | HS26 | HP 首轮 `tool:read` | section、参数默认值、输出字段与手写 F 文案必须同步核对 | 【已核实·静态；行为待实机】 |
 | HS27 | `executor-spawn.js` `slotKey` | `Symbol.for('cordis.original')`/traceable 语义决定跨世代幂等 | 【已核实·静态】 |
 | HS28 | context-gate 宿主回归 | 当前安装根版本、生产源码 hash、公共 AgentLoop/受控 adapter、完整 request trace 与工作区 JSONL 证据；受控 adapter 不冒称真实 provider | 【已核实·集成；真实provider/HUMAN NOT-RUN】 |
-| HS30 | 角色预设 definition（`agent.cordis.yml` 第二文档 → `preset-definition-<role>.generated.yml`） | 4 角色（order 101..104）personaPrefix 由作者源逐字搬运、extra-plan 行 config 由主预设同 id 行逐字复制（含 gateWords）；生成物不得手改；注册顺序主在前角色在后 | 【已核实·静态+宿主回归】 |
-| HS31 | `pe-test/tools/step-05-角色预设宿主回归.mjs` | 七组断言：roster 5 id、三键 tool-subagent 装载（assertProvider）、planner header.agentPreset/isPlannerChild、executor 工具面、planner 只读、persona 渲染、both 旧值回落 native | 【已核实·集成；真实 provider/模型/GUI NOT-RUN】 |
+| HS30 | 角色预设 definition（`agent.cordis.yml` 第二文档 → `preset-definition-<role>.generated.yml`） | 4 角色（order 101..104）personaPrefix 由作者源逐字搬运、extra-plan 行 config 由主预设同 id 行逐字复制（含 gateWords）；工具面按 5f3cc68 可见面回填：planner/reviewer/prober 各挂 `tool-pwsh`/`tool-bash`（win32 条件 disabled）/`tool-web`（fetch:false、searchTimeoutMs:60000）/`tool-cordis` 且 `dsh-tool-fs` 置 write/edit=false，planner 另挂 `tool-subagent-control`（连带可见 `interrupt_agent`，0.2.1 包不可拆）；executor 保留 write/edit 与既有两行 shell，另挂 `tool-web`/`tool-cordis`；四个角色 definition 的派生范围跟随同一 `toolPresentationMode`（与主 definition 同源派生、各恰一行 `tool-presentation`，派生异常保留生成物默认值且不抛错）；生成物不得手改；注册顺序主在前角色在后 | 【已核实·静态+宿主回归】 |
+| HS31 | `pe-test/tools/step-05-角色预设宿主回归.mjs` | 七组断言：roster 5 id、三键 tool-subagent 装载（assertProvider）、planner header.agentPreset/isPlannerChild、executor 工具面（可写 + 双 shell + web/cordis）、planner 只读（无 write/edit、有 pwsh）、persona 渲染、both 旧值回落 native | 【已核实·集成；真实 provider/模型/GUI NOT-RUN】 |
 | HS29 | `pe-test/_shared/host-deps.mjs` | scoped package exports 按完整 `./subpath` 解析；根入口与 `/list-agents` 分离；根包无可用 exports/main 时回退 `index.js`，显式未知子路径透传；同步/异步 hook 共用语义，生成 data URL hookSource 需 ESM 回放 | 【已核实·step-01 安装同步；真实宿主/HUMAN NOT-RUN】 |
 
 ## ②-A Web→QQBot 镜像路径契约（独立于 HS4）

@@ -51,8 +51,29 @@ export function createRuntimeLifecycle(options = {}) {
   function registerSavePlan(agent) { registerTool(savePlanRegistered, 'save_plan', defineSavePlan, agent) }
   function registerSaveProbe(agent) { registerTool(saveProbeRegistered, 'save_probe', defineSaveProbe, agent) }
 
+  // F1：prober 角色的预设身份判据。pendingProbeClaims 是 per-apply 实例 Map，父实例写入的
+  // 认领子实例读不到，故先按 session.header.agentPreset 的身份直接放行。本函数只读一个字符串
+  // 字段：header 缺失、agentPreset 非字符串或读取过程异常一律返回 false，绝不抛错
+  // （agent/created 与 agent/pre-step 都是禁抛点）。
+  function isProberRole(agent) {
+    try {
+      if (agent === undefined || agent === null) return false
+      const session = agent.session
+      if (session === undefined || session === null) return false
+      const header = session.header
+      if (header === undefined || header === null) return false
+      const agentPreset = header.agentPreset
+      if (typeof agentPreset !== 'string') return false
+      return agentPreset === 'extra-plan-prober'
+    } catch (error) {
+      return false
+    }
+  }
+
   function probeClaimFor(agent) {
     if (probeClaimed.has(agent)) return true
+    // 身份判据优先；未命中回退下面的 pendingProbeClaims 认领逻辑（写工具判定与计数扣减原样保留）。
+    if (isProberRole(agent)) return true
     if (typeof isSubagentChild !== 'function' || !isSubagentChild(agent)) return false
     if (typeof isPlannerChild === 'function' && isPlannerChild(agent)) return false
     const header = agent.session.header

@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 // 生成 runtime fallback 与纯 preset definition 资产；替换前先解析并校验。
 // 主 definition 来自 agent.cordis.yml 第一文档；4 个角色 definition 来自同文件第二文档
-// （用 --- 分隔多文档；personaPrefix 逐字搬运，extra-plan 行 config 从主 definition 同 id 行逐字复制）。
+// （用 --- 分隔多文档；personaPrefix 逐字搬运，extra-plan 行 config 从主 definition 同 id 行逐字复制，
+// plugins 列表末尾固定追加恰一行 tool-presentation，config.mode 取主 definition 同 id 行的默认值）。
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { parsePresetYaml, resolveTemplateSettingDefault } from '../lib/preset-settings.js'
+import { SETTING_DEFINITIONS, normalizeSettingValue, parsePresetYaml, resolveTemplateSettingDefault, validateSettingValue } from '../lib/preset-settings.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PRESET_ASSET_DIR = resolve(HERE, '..', 'assets', 'presets', 'extra-plan')
@@ -23,6 +24,11 @@ export const ROLE_IDS = Object.freeze(['extra-plan-executor', 'extra-plan-planne
 export const ROLE_ORDERS = Object.freeze([101, 102, 103, 104])
 /** 角色 definition 里固定前两行：dsh-persona（prefix=personaPrefix）与 dsh-extra-plan（主预设同 id 行 config）。 */
 export const ROLE_FIRST_ROW_IDS = Object.freeze(['persona', 'extra-plan'])
+/** 角色 definition plugins 末尾固定追加的宿主行：工具呈现模式（恰一行，config.mode 跟随主 definition 同 id 行）。 */
+export const ROLE_LAST_ROW_ID = 'tool-presentation'
+export const ROLE_LAST_ROW_NAME = '@deepseek-ai/dsh-agent-tool-presentation'
+/** 主 definition 同 id 行缺失/非法/解析异常时回落的内置默认（agent.cordis.yml 第一文档现值同为 native）。 */
+export const DEFAULT_TOOL_PRESENTATION_MODE = 'native'
 
 export function roleDefinitionFile(roleId, dir = PRESET_ASSET_DIR) {
   return join(dir, 'preset-definition-' + roleId + '.generated.yml')
@@ -199,6 +205,38 @@ function roleToolsBlock(roleText, roleIndex, roleCount) {
   return { block: block.slice(1), base }
 }
 
+/** 按行 id 深度优先查子行（含 group 行的 config 子行数组），与 preset-sync 的定位口径同形；找不到返回 null。 */
+function findRowById(rows, rowId) {
+  if (!Array.isArray(rows)) return null
+  for (const row of rows) {
+    if (row === null || typeof row !== 'object' || Array.isArray(row)) continue
+    if (row.id === rowId) return row
+    if (Array.isArray(row.config)) {
+      const nested = findRowById(row.config, rowId)
+      if (nested !== null) return nested
+    }
+  }
+  return null
+}
+
+/**
+ * 主 definition 里 tool-presentation 行的默认 mode（角色 definition 末行取同一个值）。
+ * 行缺失/叶缺失/值非法/解析异常一律回落内置默认值，不抛错。
+ */
+export function mainToolPresentationMode(definitionText) {
+  try {
+    const setting = SETTING_DEFINITIONS.find((item) => item.key === 'toolPresentationMode')
+    const parsed = parsePresetYaml(definitionText)
+    const plugins = parsed !== null && typeof parsed === 'object' && Array.isArray(parsed.plugins) ? parsed.plugins : []
+    const row = findRowById(plugins, ROLE_LAST_ROW_ID)
+    const mode = row !== null && row.config !== null && typeof row.config === 'object' && !Array.isArray(row.config) ? row.config.mode : undefined
+    if (!validateSettingValue(setting, mode)) return DEFAULT_TOOL_PRESENTATION_MODE
+    return normalizeSettingValue(setting, mode)
+  } catch {
+    return DEFAULT_TOOL_PRESENTATION_MODE
+  }
+}
+
 function assertRoleSource(roles, label = '角色源') {
   if (!Array.isArray(roles) || roles.length !== ROLE_IDS.length) throw new Error(label + ' 必须恰有 ' + ROLE_IDS.length + ' 个角色')
   const ids = roles.map((role) => role !== null && typeof role === 'object' ? role.id : undefined)
@@ -214,28 +252,38 @@ function assertRoleSource(roles, label = '角色源') {
     for (const row of role.tools) {
       if (row === null || typeof row !== 'object' || typeof row.name !== 'string' || row.name === '') throw new Error(label + ' ' + role.id + ' 的 tools 行缺少 name')
       if (row.insert !== undefined) throw new Error(label + ' ' + role.id + ' 的 tools 行不得含 insert wrapper')
+      // 生成器在 plugins 末尾固定追加恰一行 tool-presentation：作者源手写会产生第二行（宿主判为矛盾、拒绝挂载）。
+      if (row.id === ROLE_LAST_ROW_ID || row.name === ROLE_LAST_ROW_NAME) throw new Error(label + ' ' + role.id + ' 不得手写 tool-presentation 行（由生成器固定追加恰一行）')
     }
   }
   return roles
 }
 
-function assertRoleDefinition(definition, role, label) {
+function assertRoleDefinition(definition, role, label, presentationMode) {
   if (definition === null || typeof definition !== 'object' || Array.isArray(definition)) throw new Error(label + ' 不是对象')
   if (definition.id !== role.id) throw new Error(label + ' id 必须为 ' + role.id)
   if (definition.name !== role.name) throw new Error(label + ' name 与作者源不符')
   if (definition.description !== role.description) throw new Error(label + ' description 与作者源不符')
   if (definition.order !== role.order) throw new Error(label + ' order 与作者源不符')
-  if (!Array.isArray(definition.plugins) || definition.plugins.length !== role.tools.length + ROLE_FIRST_ROW_IDS.length) throw new Error(label + ' plugins 行数不符')
+  if (!Array.isArray(definition.plugins) || definition.plugins.length !== role.tools.length + ROLE_FIRST_ROW_IDS.length + 1) throw new Error(label + ' plugins 行数不符（应为首两行 + tools 行 + 末行 tool-presentation）')
   if (definition.plugins[0].id !== ROLE_FIRST_ROW_IDS[0] || definition.plugins[0].name !== '@deepseek-ai/dsh-persona') throw new Error(label + ' 首行必须是 dsh-persona')
   if (definition.plugins[0].config === undefined || definition.plugins[0].config.prefix !== role.personaPrefix) throw new Error(label + ' persona prefix 必须逐字等于 personaPrefix')
   if (definition.plugins[1].id !== ROLE_FIRST_ROW_IDS[1] || definition.plugins[1].name !== 'dsh-extra-plan') throw new Error(label + ' 第二行必须是 dsh-extra-plan')
   if (definition.plugins.some((row) => row === null || typeof row !== 'object' || row.insert !== undefined)) throw new Error(label + ' 不得含 Loader insert wrapper')
+  // 同一 definition 内绝不允许第二行 tool-presentation（宿主判为矛盾并拒绝挂载）。
+  const presentationRows = definition.plugins.filter((row) => row.id === ROLE_LAST_ROW_ID)
+  if (presentationRows.length !== 1) throw new Error(label + ' 必须恰有一行 tool-presentation（实际 ' + presentationRows.length + ' 行）')
+  const lastRow = definition.plugins[definition.plugins.length - 1]
+  if (lastRow.id !== ROLE_LAST_ROW_ID || lastRow.name !== ROLE_LAST_ROW_NAME) throw new Error(label + ' 末行必须是 tool-presentation / ' + ROLE_LAST_ROW_NAME)
+  if (lastRow.config === null || typeof lastRow.config !== 'object' || Array.isArray(lastRow.config)) throw new Error(label + ' tool-presentation 行必须带 config 对象')
+  if (lastRow.config.mode !== presentationMode) throw new Error(label + ' tool-presentation.config.mode 必须与主 definition 同 id 行一致')
   return definition
 }
 
 /**
  * 渲染 4 个角色 definition：plugins = [dsh-persona(prefix=personaPrefix),
- * dsh-extra-plan(主预设同 id 行 config 逐字复制), ...角色 tools 行]。
+ * dsh-extra-plan(主预设同 id 行 config 逐字复制), ...角色 tools 行,
+ * tool-presentation(恰一行，config.mode 取主 definition 同 id 行的默认值)]。
  */
 export function renderRoleDefinitions(roleText, definitionText) {
   const roles = assertRoleSource(parsePresetYaml(roleText))
@@ -245,6 +293,13 @@ export function renderRoleDefinitions(roleText, definitionText) {
   const mainConfigJson = JSON.stringify(mainRow !== null && typeof mainRow === 'object' && mainRow.config !== undefined ? mainRow.config : undefined)
   if (mainConfigJson === undefined) throw new Error('主 definition 的 extra-plan 行缺少 config')
   const configBlock = shiftBlock(mainExtra.configBlock, -4)
+  const presentationMode = mainToolPresentationMode(definitionText)
+  const presentationBlock = [
+    '  - id: ' + ROLE_LAST_ROW_ID,
+    "    name: '" + ROLE_LAST_ROW_NAME + "'",
+    '    config:',
+    '      mode: ' + presentationMode,
+  ]
   return roles.map((role, index) => {
     const persona = personaPrefixBlock(roleText, role.personaPrefix)
     const tools = roleToolsBlock(roleText, index, roles.length)
@@ -252,7 +307,8 @@ export function renderRoleDefinitions(roleText, definitionText) {
       '# GENERATED FILE - DO NOT EDIT.',
       '# Generated by plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs（源：agent.cordis.yml 第二文档）。',
       '# 角色预设 definition：dsh-persona 取 personaPrefix 原文，dsh-extra-plan 的行 config 由主预设同 id 行逐字复制，',
-      '# 其余为角色 tools 行。人设与工具面在这里承载；主预设不再写 persona/toolFilter/backgroundMode。',
+      '# 其余为角色 tools 行，plugins 末尾固定追加恰一行 tool-presentation（config.mode 取主预设同 id 行的默认值）。',
+      '# 人设与工具面在这里承载；主预设不再写 persona/toolFilter/backgroundMode。',
       'id: ' + role.id,
       'name: ' + quoteYamlSingle(role.name),
       'description: ' + quoteYamlSingle(role.description),
@@ -267,9 +323,10 @@ export function renderRoleDefinitions(roleText, definitionText) {
       "    name: 'dsh-extra-plan'",
       ...configBlock,
       ...shiftBlock(tools.block, -2),
+      ...presentationBlock,
     ].join('\n') + '\n'
     const parsed = parsePresetYaml(rendered)
-    assertRoleDefinition(parsed, role, '生成角色 definition ' + role.id)
+    assertRoleDefinition(parsed, role, '生成角色 definition ' + role.id, presentationMode)
     const copied = JSON.stringify(parsed.plugins[1].config)
     if (copied !== mainConfigJson) throw new Error('生成角色 definition ' + role.id + ' 的 extra-plan config 与主预设不逐字相等')
     return { roleId: role.id, order: role.order, text: rendered }

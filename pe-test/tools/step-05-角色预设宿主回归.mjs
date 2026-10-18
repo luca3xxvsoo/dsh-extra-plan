@@ -124,6 +124,11 @@ try {
     { id: 'jobs-local', name: '@deepseek-ai/dsh-jobs-local' },
     { id: 'skills', name: '@deepseek-ai/dsh-skill' },
     { id: 'skills-filesystem', name: '@deepseek-ai/dsh-skill-filesystem' },
+    // tool-web / tool-cordis 行的服务夹具：tool-web inject ["tools","web","systemPrompt"]，
+    // tool-cordis inject ["tools","cordisInspect"]。角色预设回填后四角色均挂这两行，
+    // 缺服务会让 preset mount 永久 wait（INCOMPLETE）；此处按宿主同形补 web 与 cordis 检查服务。
+    { id: 'web', name: '@deepseek-ai/dsh-web' },
+    { id: 'cordis-host-runner', name: '@deepseek-ai/dsh-cordis-host-runner' },
     { id: 'tools', name: '@deepseek-ai/dsh-tools', config: { mode: 'native' } },
     { id: 'system-prompt', name: '@deepseek-ai/dsh-system-prompt', config: { personaPrefix: '' } },
     { id: 'agent', name: '@deepseek-ai/dsh-agent' },
@@ -139,8 +144,9 @@ try {
   console.log('CORE_SERVICES=ok')
 
   // ── 组 1：5 个 definition 注册后 roster 含 5 个 id ─────────────────────────
-  // 说明：主 definition 的完整挂载需要宿主全组合（skill-filesystem 的 bundledSkillDir、compaction、
-  // tool-web 等），夹具不模拟；本组只断言 roster 含 5 个 id，角色契约由组 3-6 在 4 个角色预设上验证。
+  // 说明：主 definition 的完整挂载需要宿主全组合（skill-filesystem 的 bundledSkillDir、compaction 等），
+  // 夹具不模拟；角色预设的工具面行（含 tool-web / tool-cordis）已由上方 web / cordis-host-runner
+  // 服务行补齐，故组 3-6 是真实挂载后的断言而非跳过。本组只断言 roster 含 5 个 id。
   const definitions = assetDefinitions()
   const adapters = []
   for (const definition of definitions) adapters.push(await root.plugin(AgentPresetAdapter, definition))
@@ -215,9 +221,16 @@ try {
   check('组4 executor 子会话工具面含 write 与 edit', executorTools.includes('write') && executorTools.includes('edit'), JSON.stringify(executorTools))
   console.log('EXECUTOR_TOOLS=' + JSON.stringify(executorTools))
 
-  // ── 组 5：planner 只读（无 write/edit） ───────────────────────────────────
+  // ── 组 5：planner 只读（无 write/edit、有只读 shell pwsh） ─────────────────
   const plannerTools = namesOf(root.tools.schemas(plannerAgent))
-  check('组5 planner 子会话工具面不含 write 与 edit', !plannerTools.includes('write') && !plannerTools.includes('edit'), JSON.stringify(plannerTools.includes('write') ? 'has write' : plannerTools.includes('edit') ? 'has edit' : 'clean'))
+  check('组5 planner 子会话工具面不含 write/edit 且含只读 shell pwsh',
+    !plannerTools.includes('write') && !plannerTools.includes('edit') && plannerTools.includes('pwsh'),
+    JSON.stringify({ write: plannerTools.includes('write'), edit: plannerTools.includes('edit'), pwsh: plannerTools.includes('pwsh') }))
+  // 新增夹具的真实性取证：tool-web（fetch:false）与只读 tool-cordis 行确实在子作用域注册了工具
+  // （web_search 可见、web_fetch 因 fetch:false 不注册；cordis_inspect_list 可见）。
+  check('组5 planner 子会话工具面含 tool-web/tool-cordis 注册的只读工具且 web_fetch 按 fetch:false 不注册',
+    plannerTools.includes('web_search') && plannerTools.includes('cordis_inspect_list') && !plannerTools.includes('web_fetch'),
+    JSON.stringify(plannerTools.filter((name) => name.startsWith('web_') || name.startsWith('cordis_'))))
   console.log('PLANNER_TOOLS=' + JSON.stringify(plannerTools))
 
   // ── 组 6：planner 组装输出含角色 persona 原文、不含主会话 persona 前缀 ──────

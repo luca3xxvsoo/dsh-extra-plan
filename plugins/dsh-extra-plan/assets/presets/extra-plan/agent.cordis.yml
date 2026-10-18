@@ -367,9 +367,15 @@
 # config 逐字复制进角色 definition。
 # 工具面规则：四角色共同保留 dsh-persona、dsh-extra-plan、dsh-agent-instructions、dsh-tool-fs、
 # dsh-tool-fs-search、dsh-tool-skill、dsh-skill-filesystem、dsh-tool-jobs（前两者由生成器固定产出，
-# 不写进 tools）；planner/reviewer/prober 的 dsh-tool-fs 只读（write/edit=false），executor 可写；
-# 四角色均不挂 dsh-tool-subagent、dsh-tool-subagent-control、list-agents、dsh-tool-workflow、
-# dsh-tool-ralph、dsh-tool-ask-user、dsh-tool-todo；executor 另挂 dsh-tool-pwsh 与 dsh-tool-bash。
+# 不写进 tools）；planner/reviewer/prober 的 dsh-tool-fs 只读（write/edit=false），executor 可写
+# （四角色均不新增 write/edit 权限）；四角色一律挂 tool-web（fetch: false、searchTimeoutMs: 60000）
+# 与只读 dsh-tool-cordis；planner/reviewer/prober 另挂 shell 两行 tool-pwsh / tool-bash
+# （win32 条件 disabled，写法同第一文档，写命令由运行时只读闸门拦下），executor 沿用既有两行 shell；
+# 【已知差异】planner 另挂 dsh-tool-subagent-control（send_message 回报所需）：该包同时注册
+# send_message 与 interrupt_agent、且不提供拆分配置（0.2.1 包不可拆），故 planner 会连带可见
+# interrupt_agent，属与 5f3cc68「deny 掉 interrupt_agent」口径的已知差异；reviewer/prober/executor
+# 不挂该包；四角色均不挂 dsh-tool-subagent、list-agents、dsh-tool-workflow、dsh-tool-ralph、
+# dsh-tool-ask-user、dsh-tool-todo。
 
 - id: extra-plan-executor
   name: 执行者
@@ -406,6 +412,13 @@
     - id: tool-bash
       name: '@deepseek-ai/dsh-tool-bash'
       disabled: !!js process.platform === 'win32'
+    - id: tool-web
+      name: '@deepseek-ai/dsh-tool-web'
+      config:
+        fetch: false
+        searchTimeoutMs: 60000
+    - id: tool-cordis
+      name: '@deepseek-ai/dsh-tool-cordis'
 
 - id: extra-plan-planner
   name: 规划者
@@ -445,6 +458,21 @@
         watch: false
     - id: tool-jobs
       name: '@deepseek-ai/dsh-tool-jobs'
+    - id: tool-pwsh
+      name: '@deepseek-ai/dsh-tool-pwsh'
+      disabled: !!js process.platform !== 'win32'
+    - id: tool-bash
+      name: '@deepseek-ai/dsh-tool-bash'
+      disabled: !!js process.platform === 'win32'
+    - id: tool-web
+      name: '@deepseek-ai/dsh-tool-web'
+      config:
+        fetch: false
+        searchTimeoutMs: 60000
+    - id: tool-cordis
+      name: '@deepseek-ai/dsh-tool-cordis'
+    - id: tool-subagent-control
+      name: '@deepseek-ai/dsh-tool-subagent-control'
 
 - id: extra-plan-reviewer
   name: 验收者
@@ -474,6 +502,19 @@
         watch: false
     - id: tool-jobs
       name: '@deepseek-ai/dsh-tool-jobs'
+    - id: tool-pwsh
+      name: '@deepseek-ai/dsh-tool-pwsh'
+      disabled: !!js process.platform !== 'win32'
+    - id: tool-bash
+      name: '@deepseek-ai/dsh-tool-bash'
+      disabled: !!js process.platform === 'win32'
+    - id: tool-web
+      name: '@deepseek-ai/dsh-tool-web'
+      config:
+        fetch: false
+        searchTimeoutMs: 60000
+    - id: tool-cordis
+      name: '@deepseek-ai/dsh-tool-cordis'
 
 - id: extra-plan-prober
   name: 探查者
@@ -508,3 +549,16 @@
         watch: false
     - id: tool-jobs
       name: '@deepseek-ai/dsh-tool-jobs'
+    - id: tool-pwsh
+      name: '@deepseek-ai/dsh-tool-pwsh'
+      disabled: !!js process.platform !== 'win32'
+    - id: tool-bash
+      name: '@deepseek-ai/dsh-tool-bash'
+      disabled: !!js process.platform === 'win32'
+    - id: tool-web
+      name: '@deepseek-ai/dsh-tool-web'
+      config:
+        fetch: false
+        searchTimeoutMs: 60000
+    - id: tool-cordis
+      name: '@deepseek-ai/dsh-tool-cordis'

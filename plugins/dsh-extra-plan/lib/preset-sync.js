@@ -485,6 +485,36 @@ export function assetDefinitions() {
   return [assetDefinition(), ...ROLE_IDS.map((roleId) => roleDefinitionOf(roleId))]
 }
 
+/**
+ * 四个角色 definition 跟随主 definition 的 toolPresentationMode：取值 = 主 definition
+ * （已由 cloneDefinitionWithProjection 按权威快照派生）内 tool-presentation 行的 config.mode——
+ * 复用同一派生结果，不新增第二份配置读取；落点与原语走 projectHostRow（与主 definition 同一条派生路径）。
+ * 行缺失/重复/值非法/克隆异常时原样返回生成物 definition（保留生成物默认值），永不抛错、不中断预设挂载。
+ */
+export function roleDefinitionsWithPresentation(mainDefinition) {
+  const definitions = assetDefinitions().slice(1)
+  let mode
+  try {
+    const plugins = mainDefinition !== null && typeof mainDefinition === 'object' ? mainDefinition.plugins : undefined
+    const row = findPluginsRow(plugins, HOST_ROW_IDS.toolPresentationMode)
+    if (row === null || !plainObject(row.config)) return definitions
+    mode = row.config[HOST_ROW_LEAF_KEYS.toolPresentationMode]
+  } catch {
+    return definitions
+  }
+  return definitions.map((definition) => {
+    try {
+      const next = structuredClone(definition)
+      if (projectHostRow(next.plugins, 'toolPresentationMode', mode) !== 'ok') return definition
+      // 同一 definition 内绝不允许第二行 tool-presentation（宿主判为矛盾并拒绝挂载）：行数不为 1 时保留生成物默认值。
+      if (pluginRowIds(next.plugins).filter((id) => id === HOST_ROW_IDS.toolPresentationMode).length !== 1) return definition
+      return next
+    } catch {
+      return definition
+    }
+  })
+}
+
 export function assetPlugins() {
   try { return assetDefinition().plugins } catch { return undefined }
 }
@@ -495,15 +525,26 @@ export function readDefinitionGateWords(definition = assetDefinition()) {
   return validateGateWords(row.config.gateWords)
 }
 
+/**
+ * 宿主行投影的单一实现：主 definition 与 4 个角色 definition 共用同一张定位表（HOST_ROW_IDS /
+ * HOST_ROW_LEAF_KEYS）与同一套校验/归一化原语（validateSettingValue / normalizeSettingValue）。
+ * 返回 'ok' = 已重述该叶；'skipped' = 值非法或非投影键（调用方跳过）；'missing' = 值合法但 definition
+ * 缺该行或行内无 config 对象（主 definition 视为坏资产，角色 definition 保留生成物默认值）。
+ */
+function projectHostRow(plugins, key, value) {
+  const setting = PROJECTION_SETTING_DEFINITIONS.find((item) => item.key === key)
+  if (setting === undefined || !validateSettingValue(setting, value)) return 'skipped'
+  const row = findPluginsRow(plugins, HOST_ROW_IDS[key])
+  if (row === null || !plainObject(row.config)) return 'missing'
+  row.config[HOST_ROW_LEAF_KEYS[key]] = normalizeSettingValue(setting, value)
+  return 'ok'
+}
+
 function cloneDefinitionWithProjection(definition, projection = {}) {
   const next = structuredClone(definition)
   for (const [key, value] of Object.entries(projection)) {
     if (key === 'gateWords') continue
-    const setting = PROJECTION_SETTING_DEFINITIONS.find((item) => item.key === key)
-    if (setting === undefined || !validateSettingValue(setting, value)) continue
-    const row = findPluginsRow(next.plugins, HOST_ROW_IDS[key])
-    if (row === null || !plainObject(row.config)) throw new Error('definition 缺少宿主行 ' + HOST_ROW_IDS[key])
-    row.config[HOST_ROW_LEAF_KEYS[key]] = normalizeSettingValue(setting, value)
+    if (projectHostRow(next.plugins, key, value) === 'missing') throw new Error('definition 缺少宿主行 ' + HOST_ROW_IDS[key])
   }
   if (projection.gateWords !== undefined && projection.gateWords !== null) {
     const row = findPluginsRow(next.plugins, GATE_WORDS_GROUP_DEFINITION.rowId)
@@ -867,7 +908,7 @@ export function mountPresetSync(ctx, options = {}) {
       ? result.plan.definition
       : projectedAssetDefinition(settingsValuesFromRows(latest.rows), latest.rawPatch)
     if (adapterOwner === 'official') await disposeCurrentAdapter()
-    await mountOfficialAdapter([mainDefinition, ...assetDefinitions().slice(1)])
+    await mountOfficialAdapter([mainDefinition, ...roleDefinitionsWithPresentation(mainDefinition)])
   }
   const initialMount = async () => {
     if (!active) return
@@ -891,7 +932,7 @@ export function mountPresetSync(ctx, options = {}) {
       const mainDefinition = result.plan !== undefined && result.plan.definition !== undefined
         ? result.plan.definition
         : projectedAssetDefinition(settingsValuesFromRows(latest.rows), latest.rawPatch)
-      await mountOfficialAdapter([mainDefinition, ...assetDefinitions().slice(1)])
+      await mountOfficialAdapter([mainDefinition, ...roleDefinitionsWithPresentation(mainDefinition)])
     } catch (error) {
       reportAdapterError(error, 'initialMount')
       console.warn('[dsh-extra-plan] initial mount/adapter failed（不阻断 settled/profile sync）：' + (error instanceof Error ? error.message : String(error)))
