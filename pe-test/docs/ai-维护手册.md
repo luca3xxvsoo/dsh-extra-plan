@@ -38,7 +38,7 @@
 - Web 保存后的首要路径真源是 `configEditor.documentPath`：仅当它是绝对的 `profiles/web/cordis.patch.yml` 形状时，才推导同级 `profiles` 并扫描直接子 profile。
 - 只有 `configEditor.documentPath` 缺失时，才接受显式绝对 `DSH_HOME` 加 `DSH_PROFILE=web`，状态中的来源记为 `explicit-DSH_HOME`；不存在 homedir、USERPROFILE/HOME 或 `home/.dsh` 猜测。
 - 结果必须区分 `synced`、`not-installed`、`unavailable`、`failed` 与 `partial`。Web owner 已成功落盘而镜像失败时保留 `web.applied=true`、`overall=partial`，不伪造双端成功。
-- 镜像只持久化完整 10 项和完整 `gateWords`；其中 8 项沿既有热读语义，`webFetch` 与 `toolPresentationMode` 仍是 2 项宿主重启生效值，不发送 reload、不改变生效机制。
+- 镜像只持久化完整 10 项和完整 `gateWords`；其中 8 项沿既有热读语义，`webFetch` 与 `toolPresentationMode` 仍是 2 项宿主重启生效值，不发送 reload、不改变生效机制；toolPresentationMode 切换后必须新开会话，原会话不可继续（见台账 ⑭）。
 - **UI 双步保存合同**：设置页保存第一步 `form.mutate(ops, revision)`（宿主 ConfigForms 规范写盘，accepted 才算 Web 侧成功）；第二步在 accepted 分支内同源 `PUT /api/dsh-extra-plan-settings/pro-config`（绝对路径，body 为 10 项字段对象，值与 ops 同源）静默执行——独立 try/catch 吞异常，PUT 响应与结果不驱动 UI 消息。UI 提示不变：accepted→原「已保存」、非 accepted 或异常→原「保存失败」；同步状态不进提示，经 GET `/api/dsh-extra-plan-settings/pro-config` 查询（含 stale 检测）。volatile-only UI 保存不产生 `internal/update`，第二步 PUT 是 QQBot 同步的主触发。
 - **PUT 同值修复漂移**：PUT 请求值与当前 patch 深等时跳过 `editor.edit` 但无条件 `syncEditor`（全量 10+7 关联同步），同值重试保存即可把漂移的 QQBot patch 修复为最新值（回归锁定：`SYNC 同值保存仍检查并修复 QQBot 漂移`）。
 - **GET 无参 stale 语义**：GET 无 `saveRunId` 返回 last-terminal-cache 前，若缓存 terminal 含 `rawWebPatchFingerprint` 且其 `patchSha256` 与 `editor.documentPath` 磁盘现算 sha256 不一致，`profileSync` 附加 `stale:true`、`source:'stale-terminal-cache'` 并 console.warn 一行漂移提示；GET 保持无副作用（不自动触发同步）；documentPath 不可读/异常按现状返回不报错；指纹一致时响应结构与改动前一致（无 stale 键）。
@@ -52,7 +52,7 @@
 - **settings-only** 保存是 **no-remount**：只读取最终完整 10 项与 `gateWords`，立即进入 settled/profileSync 并同步 QQBot；绝不调用、等待、dispose 或重建 AgentPreset。唯一允许 adapter register/dispose 的增量为 0/0。
 - 非 settings 声明结构变化，或旧 owner ↔ 官方 owner transition，才进入 `structuralHandoff`；settled-only 与 adapter/structural 队列独立，adapter failure、reject 或 hang 不得阻断 profileSync。
 - `profileSync` 初始为 `status=pending,pending=true`；任何同步终态（`synced`、`not-installed`、`unavailable`、`failed`、`partial`）后才 `pending=false`，禁止伪造双端成功。
-- 8 项（`anchoredBootstrap`、`creativeMode`、`runcodeCatchGate`、`crossProviderPlannerModel`、`plannerModel`、`plannerPromptSuffix`、`exploreBudget`、`otherAgentModel`）保持同进程热读；`webFetch` 与 `toolPresentationMode` 是 2 项需重启的装载期投影。完整 7 键 `gateWords` 立即持久化，但当前 apply 词表不原地替换，需重启后由 HUMAN 验证新词/旧词拒绝/非法词无 fallback。
+- 8 项（`anchoredBootstrap`、`creativeMode`、`runcodeCatchGate`、`crossProviderPlannerModel`、`plannerModel`、`plannerPromptSuffix`、`exploreBudget`、`otherAgentModel`）保持同进程热读；`webFetch` 与 `toolPresentationMode` 是 2 项需重启的装载期投影；toolPresentationMode 切换后必须新开会话，原会话不可继续（见台账 ⑭）。完整 7 键 `gateWords` 立即持久化，但当前 apply 词表不原地替换，需重启后由 HUMAN 验证新词/旧词拒绝/非法词无 fallback。
 - 自动结果必须分别记录 PASS/FAIL/SKIP/INCOMPLETE/HUMAN/NOT-RUN；SKIP、HUMAN 不销账，真实 Harness/QQBot 重启、消息链、生产 profile 与 adapter 完整工具图保持 HUMAN。
 
 ### 本轮生产注入修复工作区口径

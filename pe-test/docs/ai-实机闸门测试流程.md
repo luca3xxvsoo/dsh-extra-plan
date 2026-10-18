@@ -34,8 +34,8 @@
 
 - **各 profile 的 `mode`/`runcodeCatchGate` 是各自独立的值、互不联动**（2026-10-03 历史实测：`desktop`/`web` 取值不同），**读错 profile 会得出相反的前置结论**；实机测试必须在当前会话所属 profile 下进行，跨 profile 的结论不得互推。
 2. **mode 必须是两值之一（native 或 ptc）**：`both` 已随宿主 0.2.1-rc.2 的 `dsh-agent-tool-presentation` 二值契约退出，读到 `both` 视为非法旧值（插件归一化回落 native，但仍须先改成显式值）。若 `mode` 既非 native 也非 ptc，先明确提示用户切换、**等用户确认后再开始**；提示语模板（照读）：
-   > 当前模式为 <值>，本流程需按 native 轮与 ptc 轮两轮执行：请优先在“插件 → 按需规划模式”当前包详情的全局管理表单保存 `toolPresentationMode=native`（第一轮）／`ptc`（第二轮）；该表单槽缺失或被让位时，才由用户通过 configEditor/SettingsForms 或手工 profile 权威行改同一键，然后重启 Harness（**不必新开会话**），完成后按本流程进入后续取证
-   用户侧成本 = 每轮 1 次后端权威行配置更新 ＋ 重启 Harness（见 1.5、7.1）。
+   > 当前模式为 <值>，本流程需按 native 轮与 ptc 轮两轮执行：请优先在“插件 → 按需规划模式”当前包详情的全局管理表单保存 `toolPresentationMode=native`（第一轮）／`ptc`（第二轮）；该表单槽缺失或被让位时，才由用户通过 configEditor/SettingsForms 或手工 profile 权威行改同一键，然后重启 Harness 并**新开会话**（切 mode 后原会话不可继续：native 开头的会话切到 ptc 后 resume 会因工具面全 deferred 被上游 400 拒），完成后按本流程进入后续取证
+   用户侧成本 = 每轮 1 次后端权威行配置更新 ＋ 重启 Harness ＋ 新开会话（见 1.5、7.1）。
 3. **读取现场的 7 个闸门关键词（v0.3.0 起为强制前置）**：同一次 read 取**全局行 `dsh-extra-plan-settings` 的 `config.gateWords` 7 个字段值；若全局行缺项，再安全只读旧 `extra-plan-preset-sync` 或 `preset-extra-plan.config.plugins` 作为迁移证据**（routeDirect/routePlan/routeDisagree/approvalApprove/approvalReplan/purposeRefine/purposeRedo），**写进该次实测记录的配置快照**。此后所有 ask 选项、deny 文案判定与「旧词拒绝」判据都以这 7 个现场值为准；**禁止只按出厂示例词（直接执行｜进行pro规划｜不同意｜同意执行｜转交pro规划｜完善方案｜重新规划）测试**。若 `config.gateWords` 缺失/非法：插件在该预设挂载时同步抛错（预设不可用），此时实测不成立——先按 7 键整组补齐（非空的 7 个互不相同字符串、首尾无空白、无 CR/LF、不以推荐后缀结尾）再开始。
 4. **catchGate 三段口径**：①第一轮（native 轮）固定按 `catchGate=true`（拦截面轮）执行：起步已是 `true` → 直接开始；起步非 true → 在切 native 的**同一次后端权威行更新**中一并设为 `true`。②第二轮切到 `ptc`（U8）时 **`runcodeCatchGate` 保持 `true` 不动**，2A 段仍在拦截面下取聚合行（见 3.3／3.4.1-3.4.7）。③2A 段全部跑完后由 **U9** 把 `runcodeCatchGate` 切为 `false`（放行面段，见 3.4.8）：该键为插件侧配置热读、权威行更新即生效，**不重启、不新开会话**。
 
@@ -64,7 +64,7 @@
 - **用户操作定义**：用户必须亲手、AI 不可代做的动作，仅四类 —— ①选选项（点选 ask 弹窗中的某一项）；②空白答复或取消（空白回车 / Esc 取消）；③更新后端权威行配置；④必要时重启进程（重启 Harness）。
 - **AI 的一切工具调用不计入**：含委派子代理、子代理会话内连调、一次 run_code 的组判定与聚合取证。
 - **常数项 U0**：一次重启（装载期快照生效）＋ 一条新的用户消息（使 route 锚点前移、回到 `route=none` 默认态）。普通闸门两轮可用既有会话（含重启后恢复的同一会话）；PTC 专项的 F 证据必须每个 C 值各用干净 A=1 顶层会话，已有会话只能作 L 证据。不计入变量操作、不单独占用户操作清单行。
-- **后端权威行配置更新与随后的重启/新开会话合并计 1 次用户操作**（同属「后端配置前置档」：`toolPresentationMode` 仍是装载期快照、改值必须重新装载才生效（重启 Harness 即可，新开会话亦可）；`runcodeCatchGate`（2026-09-23 修订）已改为插件侧配置热读，后端权威行配置更新后**立即生效**、无需重启进程或新开会话，不触发「必须重启」的记账，见 1.5(b) 与 7.1）。配置入口直接使用当前包详情的 detail.section 表单（行列表之后，自绘标题）；仅该槽缺失时才使用用户侧 configEditor。所有路径都维护 `dsh-extra-plan-settings` 权威行，不能用只写旧投影的自定义 PUT 代替；空/null/数组/原始/未知/混合非法 PUT 均应 400 且零 edit，当前非法 gateWords 不可被自动 fallback。
+- **后端权威行配置更新与随后的重启/新开会话合并计 1 次用户操作**（同属「后端配置前置档」：`toolPresentationMode` 仍是装载期快照、改值必须重新装载才生效（必须重启 Harness 并**新开会话**；原会话在切 mode 后不可继续）；`runcodeCatchGate`（2026-09-23 修订）已改为插件侧配置热读，后端权威行配置更新后**立即生效**、无需重启进程或新开会话，不触发「必须重启」的记账，见 1.5(b) 与 7.1）。配置入口直接使用当前包详情的 detail.section 表单（行列表之后，自绘标题）；仅该槽缺失时才使用用户侧 configEditor。所有路径都维护 `dsh-extra-plan-settings` 权威行，不能用只写旧投影的自定义 PUT 代替；空/null/数组/原始/未知/混合非法 PUT 均应 400 且零 edit，当前非法 gateWords 不可被自动 fallback。
 - **两轮状态推进同计（不重复膨胀）**：第二轮 2A 段按 3.4.1-3.4.6 重走 U1 到 U6（编号 U1b-U6b），与第一轮**同计 6 次**状态推进，两轮合计 **12 次**（6 加 6）；`U9` 只是 `runcodeCatchGate` 的**热读切换**（权威行更新即生效），**不触发重启记账**、不重启、不新开会话，因此不计入状态推进、也不占任何状态操作行。两轮**后端权威行更新合计 2 次**（U8 切 mode 到 ptc ＋ U9 切 catchGate 为 false），起步 mode/catchGate 不合规时为 **3 次**（U7 ＋ U8 ＋ U9）；**报告落盘窗口单列、不计行**（见第八部分）。
 - **空白与取消**：视为两种不同响应形态。「必测」取**空白回车**（U1）；「取消」列为可选加测（差异见 7.2 陷阱⑦）。
 
@@ -74,7 +74,7 @@
 
 - **(a) 预设级、全角色同形**：后端权威 key = `toolPresentationMode` → `tool-presentation` 的 `config.mode`；宿主 `presentAs` 声明落在预设的 **standing mount scope（常驻挂载作用域）** 上，**影响该预设下全部 agent**（主会话与 planner/probe/reviewer 子代理同形 —— 子代理绑定父的同一 standing 组合）。
 - **(b) 装载期快照**：mode 在装载期定格；文件 stamp 优先使用 dev/ino/size/mtimeNs/ctimeNs，兼容回退 ino/size/mtimeMs/ctimeMs。runcodeCatchGateOn 走配置热读，权威行更新后立即生效；toolPresentationMode 仍按宿主装载期规则生效。
-- **(c) 已开会话锁死**：**进程内**已开会话不能原地切换模式 —— swap 抛 `agent-preset/locked`。但**重启进程后原会话会按新配置重新装载**（2026-09-12 实测：重启后同一既有会话直呼面可用、装载期开关已生效）→ 故本条**不构成「必须新开会话」的理由**，只说明「不能在一个正在运行的进程里原地切换」。
+- **(c) 已开会话锁死**：**进程内**已开会话不能原地切换模式 —— swap 抛 `agent-preset/locked`。但**重启进程后原会话会按新配置重新装载**（2026-09-12 实测：重启后同一既有会话直呼面可用、装载期开关已生效）→ 故本条**不构成「必须新开会话」的理由**，只说明「不能在一个正在运行的进程里原地切换」。但 0.2.1-rc.2 实测：native 开头的会话把 mode 切到 ptc 并重启后，resume 该会话每轮请求都会以 tools: at least one tool must have defer_loading=false 被拒（工具面仅 run_code 且被标 defer），故旧结论不再适用，PTC 轮必须新开会话；切回 native 重启可恢复该会话。
 - **(d) 取值与两栏现状**：取值域 native／ptc（`both` 已退出，旧值由归一化回落 native、不写迁移）；**仓库默认** = agent.cordis.yml `mode: native`、`runcodeCatchGate: false`；**部署实况** = 以第 0 节自查为准（历史实测起点 `mode='ptc'`、`runcodeCatchGate=true`；此后值可能已变化，不得写死）。
 - **(e) F 判据需要干净会话**（2026-09-12 新增）：`isBootstrapPhase` 只看「首个 `tool/call` 落盘前」，既有会话早已越过该相位、永远不会再进引导态。PTC 专项必须为 C=0、C=1 各开一条干净 A=1/M=ptc 顶层会话观察 HP0/HP1 的 F；完成首个顶层 `run_code` 后在同一条会话观察 L 与第二调用。HN（native）回归独立记录；普通第二轮可继续复用既有会话。
 - **(f) 主会话零静态 deny（2026-09-26 补全，0.2.1 口径更新）**：主会话没有静态 deny 名单——`plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml` 全文 deny 仅剩 1 处（extra-executor-spawn 行 `config.deny` 11 项；四行 tool-subagent 的 persona/toolFilter 已被 0.2.1 宿主拒收、人设与工具面改由 `agent.cordis.yml` 第二文档的角色预设承载）。主会话的写/委派限制全部在执行层 `mainGateReason`（A01-A11，按路由态），模型可见面只有投影裁剪（C=0 隐藏 2 个 Cordis 展示工具、HP 形态顶层仅 run_code）。因此「工具不可见」判据（A38）**不适用于主会话**；对主会话只判路由/写闸门文案（A01-A11）与投影形态（A39/A44）。
@@ -368,15 +368,15 @@ channelBroken 逃生（`CHANNEL_BROKEN_CODES` = NO_PROVIDER / CALLER_NOT_LIVE / 
 
 > 表注（2026-09-29 v0.4.0）：四工具治理项（A51-A56）不挂 B 类搭车批次——A53 需 running 子代理目标、A55/A56 需同轮两次调用，0 用户操作搭车不可行，六条全部落实机直测、归属 U1/U2/U5 行内批次（见 4.1）。
 
-**必须重启或切开关的唯一操作（U7、U8、U9 三个操作）**：U7（起步既非 native 也非 ptc、或 catchGate 非 true 时，切到本轮 native 并搭车把 catchGate 置 true，必须重启 Harness——mode 是装载期快照，见 1.5(b)）；U8（轮间只把 `toolPresentationMode` 切为 ptc，`runcodeCatchGate` **保持 true 不动**；mode 需重启）；U9（2A 段全部跑完后把 `runcodeCatchGate` 切为 false，插件侧配置热读、权威行更新即生效，**不重启、不新开会话**）；7.6 A/B 类（改现场 gateWords 后必须重启）。设置入口选择不新增操作：当前包详情由 detail.section 在行列表之后呈现唯一全局管理表单（自绘标题，不注册 bundle.config；若本包 bundle.config 槽被任何一方注册则让位）；UI 与用户侧后备路径仍按唯一全局权威行配置更新计数。2026-09-26 补全的 B0-B4 全部不需要任何重启/切换。
+**必须重启或切开关的唯一操作（U7、U8、U9 三个操作）**：U7（起步既非 native 也非 ptc、或 catchGate 非 true 时，切到本轮 native 并搭车把 catchGate 置 true，必须重启 Harness 并新开会话——mode 是装载期快照，见 1.5(b)）；U8（轮间只把 `toolPresentationMode` 切为 ptc，`runcodeCatchGate` **保持 true 不动**；mode 需重启 Harness 并新开会话）；U9（2A 段全部跑完后把 `runcodeCatchGate` 切为 false，插件侧配置热读、权威行更新即生效，**不重启、不新开会话**）；7.6 A/B 类（改现场 gateWords 后必须重启）。设置入口选择不新增操作：当前包详情由 detail.section 在行列表之后呈现唯一全局管理表单（自绘标题，不注册 bundle.config；若本包 bundle.config 槽被任何一方注册则让位）；UI 与用户侧后备路径仍按唯一全局权威行配置更新计数。2026-09-26 补全的 B0-B4 全部不需要任何重启/切换。
 
 ### 3.3 轮间：1 次后端权威行配置更新（只把 `toolPresentationMode` 切为 ptc；`runcodeCatchGate` 保持 true）
 
 第一轮跑完后，AI 用下面这段**转告语**（原文入档，照读）请用户做轮间切换；**轮间不重走任何批次**，第二轮 2A 段按 3.4.1-3.4.7 重走 U1-U6：
 
-> 第一轮（native ＋ catchGate=true）已完成。轮间只做**一次**后端权威行更新：请在「插件 → 按需规划模式」当前包详情的全局管理表单把 `toolPresentationMode` 改为 `ptc`；**`runcodeCatchGate` 保持 true、本次不要动**——第二轮分两段，2A 段仍在 catchGate=true 下取 A21 拦截面与各批 run_code 聚合行（见 3.4.1-3.4.7），2A 段全部跑完后才由 U9 把它切成 false 取放行面（见 3.4.8）。该表单槽缺失或被让位时，才由用户通过宿主 configEditor/SettingsForms 或手工 profile 权威行修改同一键（不能用只写投影的自定义 PUT 代替；两条路径都写同一 `dsh-extra-plan-settings` 权威行）。mode 是装载期快照，改完请重启 Harness（**不必新开会话**）。
+> 第一轮（native ＋ catchGate=true）已完成。轮间只做**一次**后端权威行更新：请在「插件 → 按需规划模式」当前包详情的全局管理表单把 `toolPresentationMode` 改为 `ptc`；**`runcodeCatchGate` 保持 true、本次不要动**——第二轮分两段，2A 段仍在 catchGate=true 下取 A21 拦截面与各批 run_code 聚合行（见 3.4.1-3.4.7），2A 段全部跑完后才由 U9 把它切成 false 取放行面（见 3.4.8）。该表单槽缺失或被让位时，才由用户通过宿主 configEditor/SettingsForms 或手工 profile 权威行修改同一键（不能用只写投影的自定义 PUT 代替；两条路径都写同一 `dsh-extra-plan-settings` 权威行）。mode 是装载期快照，改完请重启 Harness 并**新开一个会话**继续第二轮，不要沿用第一轮的会话。
 
-轮间成本 = **1 次后端权威行配置更新**（`toolPresentationMode` native→ptc）＋ **1 次重启 Harness**（mode 装载期快照，见 1.5(b)）；无论通过 detail.section 呈现的全局管理表单还是表单缺失/让位时的用户侧 configEditor 后备路径，都只计这 1 次全局权威行更新。**U9（`runcodeCatchGate` true→false）不在本段执行**——它发生在 2A 段全部跑完之后、2B 段（3.4.8）开始之前，为插件侧配置热读、**权威行更新即生效，不重启 Harness、也不必新开会话**（见 3.2.9 的 U7／U8／U9 三个操作）。
+轮间成本 = **1 次后端权威行配置更新**（`toolPresentationMode` native→ptc）＋ **1 次重启 Harness ＋ 新开会话**（mode 装载期快照，见 1.5(b) 与 1.5(c)）；无论通过 detail.section 呈现的全局管理表单还是表单缺失/让位时的用户侧 configEditor 后备路径，都只计这 1 次全局权威行更新。**U9（`runcodeCatchGate` true→false）不在本段执行**——它发生在 2A 段全部跑完之后、2B 段（3.4.8）开始之前，为插件侧配置热读、**权威行更新即生效，不重启 Harness、也不新开会话**（见 3.2.9 的 U7／U8／U9 三个操作）。
 
 > 2026-09-26 取证记录（历史：both ＋ catchGate=true）已覆盖 52 条实机项中的 51 条与 A21 的拦截面。0.2.1 起按 native 轮与 ptc 轮两轮重建：第一轮 native（直呼面）覆盖 A01-A56 的直呼侧；第二轮 ptc 分 **2A 段**（catchGate=true：A21 拦截面、A29/A31/A33、全部 run_code 聚合面、A38 弱证据）与 **2B 段**（catchGate=false：A21 放行面、开关局部性佐证、planner 续测）两段补验。用户完成轮间更新后按本流程补测并把两轮取证结果合并到日期化报告。
 
@@ -549,7 +549,7 @@ channelBroken 逃生（`CHANNEL_BROKEN_CODES` = NO_PROVIDER / CALLER_NOT_LIVE / 
 | 轮次 | 配置组合 | 你的操作 | 覆盖内容 |
 |:--|:--|:--|:--|
 | 第一轮（native 拦截面轮） | native ＋ catchGate=true（起步 catchGate 非 true 时在切 native 的**同一次后端权威行更新**中搭车设为 true） | 6 次状态推进（U1-U6，见第四部分）＋ 后端配置前置档 1 次后端权威行配置更新（仅起步 mode/catchGate 不合规需要，即 U7） | 52 条实机项中直呼侧全部 ＋ A02/A22/A39 复验（观察面 = request/header 的 tools） |
-| 轮间 U8 | 后端权威行配置更新 1 次：只把 mode native→ptc（装载期快照，需重启 Harness）；`runcodeCatchGate` **保持 true 不动** | 1 次后端权威行配置更新 ＋ 重启 Harness（**无需新开会话**） | —（不产出判定） |
+| 轮间 U8 | 后端权威行配置更新 1 次：只把 mode native→ptc（装载期快照，需重启 Harness）；`runcodeCatchGate` **保持 true 不动** | 1 次后端权威行配置更新 ＋ 重启 Harness ＋ 新开会话 | —（不产出判定） |
 | 第二轮 2A 段（ptc 拦截面段） | ptc ＋ catchGate=true | 6 次状态推进（U1b-U6b，见 4.1 与 3.4.1-3.4.7） | A21 拦截面 ＋ A01-A56 的 run_code 聚合面 ＋ A29/A31/A33（仅 ptc 可达，见 3.4.7）＋ A38 弱证据（观察面 = header.system 的 tools:sdk 段与 run_code 聚合行） |
 | 轮间 U9 | 后端权威行配置更新 1 次：只把 `runcodeCatchGate` true→false（插件侧配置热读、权威行更新即生效，**不重启、不新开会话**） | 1 次后端权威行配置更新 | —（不产出判定） |
 | 第二轮 2B 段（ptc 放行面段） | ptc ＋ catchGate=false | 0 次状态推进（沿用 route=none；U0 常数项的一条新 user/message 前移锚点、不计清单行） | A21 放行面 ＋ 开关局部性佐证 ＋ planner 续测放行面（见 3.4.8；观察面 = header.system 的 tools:sdk 段） |
@@ -566,8 +566,8 @@ channelBroken 逃生（`CHANNEL_BROKEN_CODES` = NO_PROVIDER / CALLER_NOT_LIVE / 
 | U4 | 第一轮 | 目的答复（选「完善方案」或「重新规划」） | S2.5（route=plan·目的已定·未澄清） | A04,A13,A41-1,A41-2,A41-4,A41-5 | 2（＋A41 补充取证 4 项） | purpose 只有答复可置位；目的 ask 为「进行pro规划」后第一个提问；A41-1/A41-2（route=none/direct 精确目的 ask 拒绝句须含固定路由确认句）取证窗口前移至 U1/U2 顺带，plan 放行（A41-3）、ordinary 不误拦、channelBroken 逃生与重选/取消清理（A41-4/A41-5）在本窗口取证 |
 | U5 | 第一轮 | 澄清答复（选探查方式） | S3（route=plan·已澄清） | A10,A06,A16,A17,A12,A49,A53 | 7（＋planner 委派，0 用户操作） | clarified 仅当目的已定（purpose∈{完善方案,重新规划}）时由澄清答复置位；route/目的重选与非通道取消按阶段清理，channelBroken 保留旧状态，新 user/message 重开事件窗回默认态；A17 需同轮内完成（计数锚点重置见陷阱③）；A53（send_message 目标 running 拒）在 planner 委派运行中顺带直呼 |
 | U6 | 第一轮 | 批准同意（点「同意执行」） | S4（route=plan·已批准） | A07,A09,A11,A40,A48,A50 | 6（＋reviewer 委派，0 用户操作） | approved 只有「同意」可置位；A48 委派执行者，A50 为其写放行对照 |
-| U7 | 第一轮前置（**仅起步 mode 非 native 或 catchGate 非 true 需要**，否则省去） | 当前包详情的全局管理表单优先把 `toolPresentationMode` 切到 native、把 `runcodeCatchGate` 置 true；该表单槽缺失或被让位时才经用户侧 configEditor/SettingsForms 或手工 profile 权威行完成同一更新（**同一次后端权威行更新**，搭车不新增操作）＋ 重启 Harness（**不必新开会话**） | 前置（不推进 flow state） | —（0 条直接） | 0 | 表单与后备路径都必须维护 `dsh-extra-plan-settings` 权威行；本次重启由工具呈现模式的装载期快照口径（见 1.5(b)）决定（`runcodeCatchGate` 已热读、同次权威行更新即生效），与第一轮批次解耦；不能用只写投影的自定义 PUT 代替 |
-| U8 | 轮间（first→second 之间） | 当前包详情全局管理表单优先把 `toolPresentationMode` 切为 ptc；**`runcodeCatchGate` 保持 true、本次不动**；该表单槽缺失或被让位时才经用户侧 configEditor/SettingsForms 或手工 profile 权威行完成 1 次更新（**同一次后端权威行更新**）＋ 重启 Harness（mode 装载期生效，**不必新开会话**） | 前置（不推进 flow state） | —（0 条直接；第二轮 2A 段见 U1b-U6b） | 0 | mode 为装载期快照（见 1.5(b)）、需重启；两条路径都维护同一 `dsh-extra-plan-settings` 权威行，不能用只写投影的自定义 PUT；catchGate 的 true→false 不在此行，由 U9 单独热读切换 |
+| U7 | 第一轮前置（**仅起步 mode 非 native 或 catchGate 非 true 需要**，否则省去） | 当前包详情的全局管理表单优先把 `toolPresentationMode` 切到 native、把 `runcodeCatchGate` 置 true；该表单槽缺失或被让位时才经用户侧 configEditor/SettingsForms 或手工 profile 权威行完成同一更新（**同一次后端权威行更新**，搭车不新增操作）＋ 重启 Harness 并新开会话 | 前置（不推进 flow state） | —（0 条直接） | 0 | 表单与后备路径都必须维护 `dsh-extra-plan-settings` 权威行；本次重启由工具呈现模式的装载期快照口径（见 1.5(b)）决定（`runcodeCatchGate` 已热读、同次权威行更新即生效），与第一轮批次解耦；不能用只写投影的自定义 PUT 代替 |
+| U8 | 轮间（first→second 之间） | 当前包详情全局管理表单优先把 `toolPresentationMode` 切为 ptc；**`runcodeCatchGate` 保持 true、本次不动**；该表单槽缺失或被让位时才经用户侧 configEditor/SettingsForms 或手工 profile 权威行完成 1 次更新（**同一次后端权威行更新**）＋ 重启 Harness 并新开会话（mode 装载期生效） | 前置（不推进 flow state） | —（0 条直接；第二轮 2A 段见 U1b-U6b） | 0 | mode 为装载期快照（见 1.5(b)）、需重启；两条路径都维护同一 `dsh-extra-plan-settings` 权威行，不能用只写投影的自定义 PUT；catchGate 的 true→false 不在此行，由 U9 单独热读切换 |
 | U1b | 第二轮 2A 段 | 空白回车（路由 ask，与 U1 同一动作） | S0（route=none 默认态） | A02,A05,A06,A13,A14,A15,A16,A22,A30,A39,A12,A51,A54,A55,A56（与 U1 行完全一致） | 16 | 状态推进成本 1 次（U1b-U6b 合计 6 次）；成员集合与 U1 行完全一致、全部改写成 run_code 成员形态（见 3.4.1），逐调用点独立 try/catch（两处例外＝A21 拦截面批与单成员 ask 探针）；聚合面按 C9 与 U1 行直呼单条跨轮逐字比对 |
 | U2b | 第二轮 2A 段 | 选「直接执行」（与 U2 同一动作） | S1（route=direct） | A03,A06,A16,A30,A46,A52（与 U2 行完全一致） | 6（＋probe 委派，0 用户操作） | 状态推进成本 1 次；probe 委派改写成 run_code 单成员（见 3.4.2／3.4.7）；A52 以 run_code 成员形态取放行侧；聚合面按 C9 与 U2 行跨轮逐字比对 |
 | U3b | 第二轮 2A 段 | 选「进行pro规划」（与 U3 同一动作） | S2（route=plan·未澄清·目的未定） | A01,A06,A16,A41,A41-3（与 U3 行完全一致） | 6 | 状态推进成本 1 次；S2 下 subagent_plan/save_probe 两条同落 A41（目的闸门先于澄清判定）；A41-3 以 run_code 成员形态取放行侧（见 3.4.3） |
@@ -608,9 +608,9 @@ channelBroken 逃生（`CHANNEL_BROKEN_CODES` = NO_PROVIDER / CALLER_NOT_LIVE / 
 | 仓库默认（settings/asset 对拍） | true | false | native（声明行同值） | false |
 | 部署实况（`DSH_HOME/profiles/<profile>/cordis.patch.yml`；A/C/M/runcodeCatchGate 均以当前 settings 权威行读取，M 另对拍 definition 内存派生值） | 现场读取 | 现场读取 | 现场读取并与 definition 内存派生值对拍 | 现场读取 |
 
-  → 以第 0 节自查结果为准：起步 M 既非 native 也非 ptc → 按第 0 节第 2 步提示用户切到本轮 mode（1 次后端权威行配置更新＋重启 Harness，不必新开会话）；A/C 只记录现场 settings 权威值；起步 runcodeCatchGate 已是 true → 第一轮固定 catchGate=true，可直接开始；起步非 true → 切 native 的同一次后端权威行更新搭车设为 true。
+  → 以第 0 节自查结果为准：起步 M 既非 native 也非 ptc → 按第 0 节第 2 步提示用户切到本轮 mode（1 次后端权威行配置更新＋重启 Harness 并新开会话；A/C 只记录现场 settings 权威值；起步 runcodeCatchGate 已是 true → 第一轮固定 catchGate=true，可直接开始；起步非 true → 切 native 的同一次后端权威行更新搭车设为 true。
 - 其它前置值（报告须记录同一部署配置快照）：exploreBudget、savePlanDir=.extra-plan、plannerModel、otherAgentModel、crossProviderPlannerModel、plannerPromptSuffix；save_probe 限制只引用 `plugins/dsh-extra-plan/lib/save-contract.js#PROBE_LIMITS`（不在本 runbook 维护第二份操作表）。
-- **后端权威行改动（由用户操作，AI 只旁读）**：第一轮前置 = 把「工具呈现模式」**切到 native** ＋ 把 `runcodeCatchGate` 置 true（**同一次后端权威行更新**），随后重启 Harness（**不必新开会话**），即 4.1 的 U7；轮间 U8 = 再 1 次后端权威行配置更新**只把模式切到 `ptc`**（`runcodeCatchGate` 保持 true 不动），随后重启 Harness；2A 段跑完后 U9 = 1 次后端权威行更新**只把 `runcodeCatchGate` 切为 false**（插件侧配置热读、权威行更新即生效，**不重启、不新开会话**）。后端权威行配置更新共 2 次（U8、U9），起步 mode/catchGate 不合规时为 3 次（U7、U8、U9）。
+- **后端权威行改动（由用户操作，AI 只旁读）**：第一轮前置 = 把「工具呈现模式」**切到 native** ＋ 把 `runcodeCatchGate` 置 true（**同一次后端权威行更新**），随后重启 Harness 并新开会话，即 4.1 的 U7；轮间 U8 = 再 1 次后端权威行配置更新**只把模式切到 `ptc`**（`runcodeCatchGate` 保持 true 不动），随后重启 Harness 并新开会话；2A 段跑完后 U9 = 1 次后端权威行更新**只把 `runcodeCatchGate` 切为 false**（插件侧配置热读、权威行更新即生效，**不重启、不新开会话**）。后端权威行配置更新共 2 次（U8、U9），起步 mode/catchGate 不合规时为 3 次（U7、U8、U9）。
 - 全程只动工作区会话；**AI 不触碰生产环境**（DSH_HOME/profiles、.agent-presets 零操作）；后端权威行改动**由用户操作** —— 其受管文件为 profile patch `DSH_HOME/profiles/<profile>/cordis.patch.yml`（10 项权威设置统一落 `dsh-extra-plan-settings` 全局行，2 项宿主值仅由该快照派生到内存 definition），即后端权威行的**正常写入路径**（不是 AI 的写入路径）；旧公开/旧 body 只读迁移，不作为写入目标。
 
 - A42/A43 AI 自动取证命令（pwsh 运行，在子代理完成后执行）：`$env:SESSION_ID='<顶层主会话ID>'; $env:PLANNER_PROMPT_SUFFIX='<同一部署快照的精确 suffix>'; node pe-test/tools/step-07-子代理模型与引导取证.mjs --full`。SESSION_ID 缺失或找不到必须报输入错误；PLANNER_PROMPT_SUFFIX 必须显式存在，空串也要显式传入；只读日志，不自动猜会话、不发请求。plannerModel / otherAgentModel / crossProviderPlannerModel 由报告人只读部署侧 settings 行 `dsh-extra-plan-settings` 的 config.* 取得（step-07 脚本不输出），与 PLANNER_PROMPT_SUFFIX 一并作为同一部署快照记录。同一部署快照还须一并登记 llm provider 集合与登录态（rc2 起含 `deepseek-account`，未登录时其模型目录为空）与 `crossProviderPlannerModel` 开关值。
@@ -652,7 +652,7 @@ channelBroken 逃生（`CHANNEL_BROKEN_CODES` = NO_PROVIDER / CALLER_NOT_LIVE / 
 ### 7.3 用户配合协议
 - AI 逐条给出精确操作脚本（点哪个选项、空白回车、连续调某个工具 N 次、带哪个参数）；用户照做；AI **当场**照录工具卡片文案并判定「通过（文案与期望关键句一致）/ 不通过（给出实际文案）」。
 - 每完成一域由用户在清单勾选；支持「发版前跑全量、改闸门后按域增量」。
-- 两轮之间 AI 只发 3.3 的**转告语**，等用户把 `toolPresentationMode` 切到 ptc 并重启 Harness（mode 为装载期快照）后**再继续第二轮**（**无需新会话**）；`runcodeCatchGate` 的 true→false 由 U9 在 2A 段结束后单独热读切换（权威行更新即生效、**无需重启**），随后进入 2B 段（3.4.8）。
+- 两轮之间 AI 只发 3.3 的**转告语**，等用户把 `toolPresentationMode` 切到 ptc 并重启 Harness（mode 为装载期快照）后**再继续第二轮**（**须新开一个会话，不沿用第一轮的会话**）；`runcodeCatchGate` 的 true→false 由 U9 在 2A 段结束后单独热读切换（权威行更新即生效、**无需重启**），随后进入 2B 段（3.4.8）。
 
 ### 7.4 域分组（D1-D10，可勾选；增量跑按域映射到 U 序号）
 
@@ -678,7 +678,7 @@ channelBroken 逃生（`CHANNEL_BROKEN_CODES` = NO_PROVIDER / CALLER_NOT_LIVE / 
 ## 7.6 闸门关键词单源实机取证（v0.3.0，新增）
 前置：完成第 0 节四步（含**现场 7 词快照**）。本节四类步骤必须在**同一份现场快照**下至少执行 A、B 两类；C/D 两类在改了词或升级版本时必须执行。
 
-- **A 定制词识别（证明词表来自 profile 全局行，不是作者默认或 JS 常量）**：由用户在当前 profile 的 `DSH_HOME/profiles/<profile>/cordis.patch.yml` 中把唯一全局行 `dsh-extra-plan-settings.config.gateWords` 7 个字段**全部换成与出厂词不重叠的新词**（例如 甲直行/乙规划/丙否决/丁批准/戊转规划/己完整/庚重做；7 值必须两两不同），**重启 Harness（不必新开会话）**，然后按第一轮编排重跑路由 ask、目的 ask、批准 ask；作者 `plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml` 仅作默认真源，不是现场改动对象；旧 `extra-plan-preset-sync`/`preset-extra-plan` 仅作只读迁移证据。**A 类与 B 类取证在两轮中各执行一次**：第二轮用 run_code 成员形态重跑路由 ask、目的 ask、批准 ask（分别见 3.4.1／3.4.3／3.4.5，主会话侧一律写成 run_code 成员、不用直呼）。
+- **A 定制词识别（证明词表来自 profile 全局行，不是作者默认或 JS 常量）**：由用户在当前 profile 的 `DSH_HOME/profiles/<profile>/cordis.patch.yml` 中把唯一全局行 `dsh-extra-plan-settings.config.gateWords` 7 个字段**全部换成与出厂词不重叠的新词**（例如 甲直行/乙规划/丙否决/丁批准/戊转规划/己完整/庚重做；7 值必须两两不同），**重启 Harness（不新开会话）**，然后按第一轮编排重跑路由 ask、目的 ask、批准 ask；作者 `plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml` 仅作默认真源，不是现场改动对象；旧 `extra-plan-preset-sync`/`preset-extra-plan` 仅作只读迁移证据。**A 类与 B 类取证在两轮中各执行一次**：第二轮用 run_code 成员形态重跑路由 ask、目的 ask、批准 ask（分别见 3.4.1／3.4.3／3.4.5，主会话侧一律写成 run_code 成员、不用直呼）。
   - 判据①：ask 选项用**新词**时状态机正常推进（route→purpose→clarify→approved 依次置位，写工具与委派按锚点放行）。
   - 判据②：deny 卡片文案里的「选项固定为…」逐字等于**新词**拼出的句子（不再出现任何出厂词）。
   - 判据③：模型侧或日志里 persona 生效文本中的选项词等于新词（变量注册成功、宿主严格渲染通过）。

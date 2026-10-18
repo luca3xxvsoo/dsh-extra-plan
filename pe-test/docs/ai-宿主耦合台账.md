@@ -215,7 +215,7 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 4. 包/服务换代：workflow-ptc/tool-workflow/tool-ralph 三段在作者源里已注释（暂不挂载，恢复条件见 agent.cordis.yml）；`ptcRuntime` 服务名、tool:cordis 只注册两项只读工具、`bundledSkillDir`（配 `watch:false`；旧 `customSkillDirs` 已删）必须按当前真值核对。
 5. rc.2 单侧风险：`sanitizeProfile` 整体搬移 patch、`configEditor.edit` 值等于继承层删行；0.2.1-rc.2 是当前唯一目标，旧版现场不再保留、不能推出跨代结论。
 6. session v4：`session.v4.jsonl.zstd`、自有 source.kind、developer/message 坐标和 step-07 三代候选必须保留。
-7. CF12 422 开放 incident：profile 中宿主运行时副本曾导致 `tool_removal` 422；清理 profile node_modules/lock、污染会话续聊、native↔PTC 切换三项均待用户验证。当前单一全局行、内部 carrier、内存 definition/adapter 仍需用户部署后 HUMAN 验证。
+7. CF12 422 开放 incident：profile 中宿主运行时副本曾导致 `tool_removal` 422；清理 profile node_modules/lock、污染会话续聊、native↔PTC 切换三项均待用户验证。当前单一全局行、内部 carrier、内存 definition/adapter 仍需用户部署后 HUMAN 验证。native↔PTC 切换的会话边界与规避见 ⑭。
 
 ### 当前验证状态（截至 2026-10-01 已知证据）
 
@@ -276,3 +276,36 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 - 真实 UI 保存走宿主 ConfigForms `form.mutate`（dsh-client-ui-settings ConfigForm.mutate → remote.settings.mutate → settings.mutate → configEditor.edit）；10 项 settings 字段全部 `.volatile()`，Loader 判定 volatile-only（`equalExceptVolatile` 把 volatile 字段视为相等）后就地替换 `fiber._config` 直接 return，不调 `fiber.update`，`internal/update` waterfall 根本不运行（cordis 4.0.4 宿主源码核对）。
 - 即使产生该事件，`internal/update` 也是 fiber 定向 waterfall（非 global 注册存入注册者 `child.fiber._hooks`，`thisArg`=被 update 的 fiber）；`preset-sync.js` 的监听器位于 `ctx.inject(['configEditor'])` child fiber ≠ settings 行 entry.fiber，永远收不到。两层都断 ⇒ 保存时不产生可消费的 settled 链。
 - 结论：UI 保存的 QQBot 同步主触发是 client.js saveAll 第二步同源 PUT（`api-put` trigger，无条件全量 syncEditor）；settled 链仅作 Web 宿主重启/装载兜底（settled-initial）。生产漂移取证：`.extra-plan/线索-生产实况取证-Web到QQBot配置漂移-be2839cd-20261015151724897-24332-0.md`（settledCount 停在 1、缓存停在 settled-initial+syncRevision=1）。【已核实·宿主源码+生产取证】
+
+## ⑭ toolPresentationMode 切换与会话边界（0.2.1-rc.2 实测）
+
+**一、操作契约**
+
+- 切换 `toolPresentationMode` 后必须重启 Harness 并**新开会话**；原会话在切 mode 后不可继续。
+- `native` 开头的会话切到 `ptc` 并重启后，resume 该会话的每一轮请求都以 400 被拒，上游原文为 `tools: at least one tool must have defer_loading=false. All tools cannot be deferred.`（code `INVALID_REQUEST`；宿主只透传上游 message，不做本地校验）。
+- 同配置下**新开会话**正常：工具面只有 `run_code` 且不带 defer 标记，可正常回答。
+- 把 mode 切回 `native` 并重启后，该原会话恢复（投影回到 25 个直呼工具、零 deferred）。
+- 边界：本条只约束 `toolPresentationMode` 切换；`runcodeCatchGate`（U9）与 `pe-test/docs/ai-实机闸门测试流程.md` 7.6 的 `gateWords` 定制是热读/词表面，**不重启、不新开会话**，不在本契约内。
+
+**二、机制链**
+
+- 宿主 `dsh-session` 的 `ToolHistoryProjection`：baseline 固化在会话首条 `request/header`；`resume` 落盘的新 header（`reason=resume`、无 `startsSeries`）不重建 baseline（只有 `reason=series`／`startsSeries`／redeclared 才重置），故 `history.tools` 仍是 native 轮的 25 项声明。
+- 宿主 `dsh-llm` 的 `toolDeclarations`：对 baseline 之外的 `tool-addition` 定义一律补 `deferLoading: true`；当前工具面里的 `run_code` 正落这一支。
+- `deepseek-flash`（DeepSeek-V4.1-Flash）目录元数据 `toolUpdate: "addition-only"`：该模式裁掉所有非当前 active 的声明，裁完只剩 `run_code`，而它正是被标 deferred 的那个 ⇒ wire 上全 deferred。
+- 适配器对照：`dsh-llm-deepseek` 只把 `deferLoading` 原样映射成 wire 字段 `defer_loading`，**没有** all-deferred 兜底；`dsh-llm-pi-ai` 在 `anthropic-messages` 路由且 `tools.every(deferLoading === true)` 时前置占位工具 `DeferredToolPlaceholder`，DeepSeek Messages 路由永不进入该兜底。
+
+**三、插件侧边界（三条均封死）**
+
+- `run_code` 是宿主保留名：`tools.register` 直接抛 `tool name "run_code" is reserved for the PTC mode presentation transport and cannot be registered or shadowed`，插件不能自建同名工具去提供非 deferred 声明。
+- PTC 视图按名字 filter：`projectAssemblyForPresentation` 的 `ptcOnly` 分支只保留 `run_code`（`if (ptcOnly && tool.name !== 'run_code') return false`），插件只裁工具面、不重写 schema、不加任何标记字段。
+- 插件无 baseline 与 defer 写入点：插件全仓对 `defer_loading`/`deferLoading` 零命中（仓内 `deferred()` 只是测试用 Promise 辅助），baseline 由宿主 `request/header` 决定，插件侧没有写入接口。
+- 结论：三条均无绕行空间，插件没有技术规避手段；修复点只能在宿主（`ToolHistoryProjection` 按新 declaration series 重建 baseline、`toolDeclarations` 不把当前 active 定义标 deferred、`dsh-llm-deepseek` 补齐全 deferred 兜底）。
+
+**四、本次实机证据（2026-10-18）**
+
+- PTC 轮 2A＋2B 全项通过：切到 `ptc` 后**新开会话**跑第二轮两段（2A 段 `catchGate=true` 取拦截面与 `run_code` 聚合面、2B 段 `catchGate=false` 取放行面），全部通过、无 400。
+- 重放复现：用宿主 `ToolHistoryProjection` 与 `projectToolUpdates`（`addition-only`）对真实会话重放，resume 场景的 wire 为 `[{"name":"run_code","defer_loading":true}]`；对照新开会话的 wire 为 `[{"name":"run_code"}]`，后者即上游接受的形态。
+
+**五、状态行**
+
+【已核实·集成（复现）】：wire 形态由宿主模块在真实会话数据上重放得出，400 原文以上游返回为准；不作通过、不销任何 HUMAN 欠账。
