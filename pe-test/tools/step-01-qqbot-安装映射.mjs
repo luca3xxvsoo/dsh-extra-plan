@@ -50,6 +50,7 @@ check('QB5 健壮性改进：heal.js 仅从包自身 import.meta.url 解析，�
   !SOURCE_HEAL_TEXT.includes("from 'node:os'") && !SOURCE_HEAL_TEXT.includes('@deepseek-ai/dsh/package.json'))
 check('QB6 manifest 身份为 dsh-extra-plan-qqbot@2.0.0 且无 private', sourcePackageJson !== null && sourcePackageJson.name === 'dsh-extra-plan-qqbot' && sourcePackageJson.version === '2.0.0' && !Object.prototype.hasOwnProperty.call(sourcePackageJson, 'private') && sourcePackageJson.scripts?.postinstall === 'node scripts/heal.mjs')
 check('QB6 heal 只暴露新 QQBot/核心平铺路径且不含旧 @local 包路径', SOURCE_HEAL_TEXT.includes('dsh-extra-plan-qqbot') && SOURCE_HEAL_TEXT.includes("'node_modules', 'dsh-extra-plan'") && !SOURCE_HEAL_TEXT.includes('node_modules/@local') && !SOURCE_HEAL_TEXT.includes("'@local'"))
+check('G5 恢复失败提示只称已尝试恢复且不伪报成功', SOURCE_HEAL_TEXT.includes('已尝试用备份恢复，请核对备份') && !SOURCE_HEAL_TEXT.includes('迁移失败（已恢复备份）') && !SOURCE_HEAL_TEXT.includes('迁移后校验失败，已用备份恢复'))
 
 function isLink(path) {
   try { return lstatSync(path).isSymbolicLink() } catch { return false }
@@ -263,6 +264,50 @@ if (yamlResolution.module === null) {
   const repeatBefore1 = after1
   const repeatResult1 = healPatchRows(qqProfileDir(h1))
   check('迁移重复调用字节不变且不新增备份', repeatResult1.status === 'idempotent' && readFileSync(qqPatch(h1), 'utf8') === repeatBefore1 && patchBackups(qqProfileDir(h1)).length === 1)
+
+  // G5：根级注释可出现在旧块前后或映射键之间；CRLF 与无末尾换行均须保真。
+  const hComments = join(tempRoot, 's2-comments-crlf-noeol')
+  makeProfile(hComments, 'qqbot')
+  installOwnPlugin(hComments, 'qqbot')
+  const commentsBefore = [
+    '# before-old',
+    '- id: user-before',
+    '  name: user',
+    '# root comment between rows',
+    '- id: code-runtime',
+    "  name: '@deepseek-ai/dsh-code-runtime-worker-thread'",
+    '# root comment between mapping keys',
+    '  config:',
+    '    enabled: true',
+    '# root comment after old block',
+    '- id: agent-presets',
+    "  name: '@deepseek-ai/dsh-agent-presets'",
+    '  config:',
+    '    default: standard',
+    '# file-tail',
+  ].join('\r\n')
+  writeFileSync(qqPatch(hComments), commentsBefore, 'utf8')
+  const commentsResult = healPatchRows(qqProfileDir(hComments))
+  const commentsAfter = readFileSync(qqPatch(hComments), 'utf8')
+  const commentsParsed = parseYaml(commentsAfter)
+  const commentsBackups = patchBackups(qqProfileDir(hComments))
+  const commentsOldGone = !commentsAfter.includes('code-runtime-worker-thread') && !commentsAfter.includes('dsh-agent-presets')
+  check('G5 旧块前后/块内根级注释保留且旧块完整删除', commentsResult.status === 'migrated' && commentsOldGone && commentsAfter.includes('# before-old') && commentsAfter.includes('# root comment between rows') && commentsAfter.includes('# root comment between mapping keys') && commentsAfter.includes('# root comment after old block') && commentsAfter.includes('# file-tail') && commentsAfter.includes('user-before') && commentsParsed.ok)
+  check('G5 注释夹具保留CRLF与无末尾换行、备份保留原字节', !commentsAfter.includes('\n') || commentsAfter.includes('\r\n') && !commentsAfter.replace(/\r\n/g, '').includes('\n') && !commentsAfter.endsWith('\n') && commentsBackups.length === 1 && readFileSync(join(qqProfileDir(hComments), commentsBackups[0]), 'utf8') === commentsBefore)
+  const commentsRepeat = healPatchRows(qqProfileDir(hComments))
+  check('G5 注释夹具二次迁移幂等且备份不增', commentsRepeat.status === 'idempotent' && readFileSync(qqPatch(hComments), 'utf8') === commentsAfter && patchBackups(qqProfileDir(hComments)).length === 1)
+
+  // 仅余根级注释时补合法顶层空数组，保留CRLF和无末尾换行。
+  const hOnlyComments = join(tempRoot, 's3-only-comments-crlf-noeol')
+  makeProfile(hOnlyComments, 'qqbot')
+  installOwnPlugin(hOnlyComments, 'qqbot')
+  const onlyCommentsBefore = ['# top', '- id: code-runtime', "  name: '@deepseek-ai/dsh-code-runtime-worker-thread'", '  config:', '    enabled: true', '# tail'].join('\r\n')
+  writeFileSync(qqPatch(hOnlyComments), onlyCommentsBefore, 'utf8')
+  const onlyCommentsResult = healPatchRows(qqProfileDir(hOnlyComments))
+  const onlyCommentsAfter = readFileSync(qqPatch(hOnlyComments), 'utf8')
+  const onlyCommentsParsed = parseYaml(onlyCommentsAfter)
+  check('G5 仅余根级注释时保留注释并补[]/EOL', onlyCommentsResult.status === 'migrated' && onlyCommentsAfter === '# top\r\n[]\r\n# tail' && onlyCommentsParsed.ok && Array.isArray(onlyCommentsParsed.value))
+  check('G5 仅余注释二次迁移幂等', healPatchRows(qqProfileDir(hOnlyComments)).status === 'idempotent')
 
   // ③ 仅剩旧块 → 写入 []；正确 [] 与重复调用均不写不备份
   const hOnly = join(tempRoot, 's3-only-legacy')

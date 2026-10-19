@@ -189,8 +189,8 @@ const KEYWORDS = new Set(['if', 'for', 'while', 'switch', 'catch', 'return', 'fu
 const WS = ' \t'
 const RE_SETS = [
   // 口径 = 「一切名字绑定到函数体的定义」，任意缩进（与反向计数器同口径，不再需要任何例外清单）。
-  // function 形态：补 default，支持 `export default function NAME`。
-  { kind: 'function', re: new RegExp('^[' + WS + ']*(?:export[' + WS + ']+)?(?:default[' + WS + ']+)?(?:async[' + WS + ']+)?function[' + WS + ']+([A-Za-z_$][A-Za-z0-9_$]*)[' + WS + ']*\\(', 'gm') },
+  // function 形态：补 default，支持 export default function NAME 与具名生成器；普通声明要求空白，生成器允许星号两侧空白。
+  { kind: 'function', re: new RegExp('^[' + WS + ']*(?:export[' + WS + ']+)?(?:default[' + WS + ']+)?(?:async[' + WS + ']+)?function(?:[' + WS + ']+|[' + WS + ']*\\*[' + WS + ']*)([A-Za-z_$][A-Za-z0-9_$]*)[' + WS + ']*\\(', 'gm') },
   // 形态收紧：RHS 必须是 function / (…) => / name =>（原先只看 '=' 后是不是 '('，会把 const base = (a?b:c)+d 误当函数）
   { kind: 'const', re: new RegExp('^[' + WS + ']*(?:export[' + WS + ']+)?(?:const|let|var)[' + WS + ']+([A-Za-z_$][A-Za-z0-9_$]*)[' + WS + ']*=[' + WS + ']*(?:async[' + WS + ']+)?(?:function[' + WS + '(]|\\(.*\\)[' + WS + ']*=>|[A-Za-z_$][A-Za-z0-9_$]*[' + WS + ']*=>)', 'gm') },
   // class 缩进容差：原写死 (?:  )?（仅 0/2 空格），tab 与 1/3/4 空格缩进的 class 漏收 → 改用 [ \t]*。
@@ -240,9 +240,9 @@ function extractFunctions(text) {
 }
 
 // ---------- 反向计数校验（宽特征独立数一遍，抓「静默漏检」） ----------
-// 与抽取器不同：任意缩进都算、只认「名字绑定」形态（function NAME / const|let|var NAME = (…)=> | = function），
+// 与抽取器不同：任意缩进都算、只认「名字绑定」形态（function NAME / function* NAME / const|let|var NAME = (…)=> | = function），
 // 因此调用回调（.map((x) => …)）与括号表达式（const x = (a ? b : c) + d）不会误报。
-const DEF_FN_LINE = /^[ \t]*(?:export[ \t]+)?(?:default[ \t]+)?(?:async[ \t]+)?function[ \t]+([A-Za-z_$][A-Za-z0-9_$]*)[ \t]*\(/
+const DEF_FN_LINE = /^[ \t]*(?:export[ \t]+)?(?:default[ \t]+)?(?:async[ \t]+)?function(?:[ \t]+|[ \t]*\*[ \t]*)([A-Za-z_$][A-Za-z0-9_$]*)[ \t]*\(/
 const DEF_CONST_LINE = /^[ \t]*(?:export[ \t]+)?(?:const|let|var)[ \t]+([A-Za-z_$][A-Za-z0-9_$]*)[ \t]*=[ \t]*(?:async[ \t]+)?(?:(?:\(.*\)|[A-Za-z_$][A-Za-z0-9_$]*)[ \t]*=>|function[ \t(])/
 // 与 RE_SETS 的 property/method 形态一一对应（硬性要求：进抽取器的形态必须同步进计数器，
 // 否则「抽取器已收录、计数器数不出」的形态不会触发 [疑似漏检]，漏检依然静默）。

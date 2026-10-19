@@ -15,7 +15,7 @@
 - 续跑先沿用对应任务的既有增量备份目录；原始镜像及 manifest 不覆盖。失败修复另建独立 checkpoint，不能把失败版本写回原镜像，也不能用回滚删除此前已存在的 validator 或保留的未提交实现。
 - `SAVE_PLAN_LIMITS` 的唯一限制真源是 [save-contract.js](../../plugins/dsh-extra-plan/lib/save-contract.js)；本文只引用真源，不复制运行时限值。方案/验收工件自身携带模式、任务/组、检查/交接范围，当前轮的任务、检查、文件数量不作为未来模板。
 - 执行者回报任务/文件范围、自检和阻塞；自检不等于正式验收。需要写临时产物的执行取证由获批执行者或直行主会话运行并保存原始 stdout/stderr/退出码，reviewer 保持只读并独立读取；同一公共检查只由一个领取者运行，其他任务/收尾/全局复用同一冻结轮证据。
-- 所有数字任务与收尾完成后记录冻结状态，再开始正式验收。源文件、检查条件、授权范围或源版本发生变化，旧共享证据不可跨版本复用并立即失效；重跑受影响任务、依赖消费者及共享检查，影响不能证明时按固定顺序从头复验。正式失败最多两轮，分类原样保留。
+- 各组产出稳定后可先记录组级快照并开始对应组验收；所有数字任务与收尾完成后再记录最终冻结状态并做全局收口。源文件、检查条件、授权范围或源版本发生变化，受影响共享证据（同轮证据亦然）不可跨相关源变化复用并立即失效；重跑受影响任务、依赖消费者及共享检查，影响不能证明时按固定顺序从头复验。正式失败最多两轮，分类原样保留。
 - 只读复核、执行取证、静态检查和用户实机分别记录 PASS/FAIL/INCOMPLETE/NOT-RUN/SKIP/HUMAN；命令退出 0 不替代期望/禁止核对。字符测量使用 `String.length`，token 只有真实同口径数据才记录，否则 `NOT-RUN`。
 - 固定回归顺序仍按本手册“QQBot CLI 与维护所有权”部分逐项执行；一键 runner 内部重跑既有收口命令必须如实注明，不能声称共享检查从不复跑。简单未来方案可按实际改动域取对应检查，不因本轮规模强制完整矩阵。
 
@@ -48,7 +48,7 @@
 
 ### settings-only 保存与 AgentPreset 生命周期（硬合同）
 
-- **首次启动**保留官方 AgentPreset register=1；若检测到活动旧 owner，只保留旧 owner，不抢占、不编辑、不删除旧声明。
+- **首次启动**：官方 AgentPreset 的主预设 register=1 仅表示主 definition 一次注册；同轮仍由同一 owner 尝试挂载主预设 1 份与 4 个角色 definition，共 5 份。旧 owner/旧行只参与结构指纹与 adapter 诊断，不作为抑制挂载条件；同 ID 可能装载失败，真实相遇效果留 HUMAN，不宣称已抢占、已避免 duplicate 或已保证只保留旧 owner。
 - **settings-only** 保存是 **no-remount**：只读取最终完整 10 项与 `gateWords`，立即进入 settled/profileSync 并同步 QQBot；绝不调用、等待、dispose 或重建 AgentPreset。唯一允许 adapter register/dispose 的增量为 0/0。
 - 非 settings 声明结构变化，或旧 owner ↔ 官方 owner transition，才进入 `structuralHandoff`；settled-only 与 adapter/structural 队列独立，adapter failure、reject 或 hang 不得阻断 profileSync。
 - `profileSync` 初始为 `status=pending,pending=true`；任何同步终态（`synced`、`not-installed`、`unavailable`、`failed`、`partial`）后才 `pending=false`，禁止伪造双端成功。
@@ -87,9 +87,9 @@
    - `node pe-test/tools/step-06-08-v4取证回归.mjs`
    - `node pe-test/tools/step-06-线索落盘.mjs`
    - `node plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs --check`
-   - 代码地图生成、人工描述复核、代码地图 `--check`、最后一键 step。
+   - 冻结前完成代码地图生成与人工描述复核；正式阶段只运行代码地图 `--check`，避免普通生成改时间戳，再执行最后一键 step。
 3. 自动测试不得执行真实 PowerShell 重定向写；测试前后 `pe-test/reports/_s4b_pwsh.txt` 必须不存在。常规回归命令退出码必须为 0，输出不得有 FAIL、SyntaxError、UnhandledPromiseRejection；runner 的 ETIMEDOUT 明确归失败而非环境未执行，普通说明含 FAIL/Error/导航失效不单独判失败，必须以退出码/结构化统计为准；context-gate 独立脚本若有 INCOMPLETE 必须非零，一键结果结构化标为部分执行而不计 PASS。SKIP/INCOMPLETE/HUMAN/NOT-RUN 单列且不计 AUTO PASS。
-4. 生产部署与双版本 HUMAN 复测由用户另行执行；静态 PASS 不替代真实 provider、GUI、QQBot 消息、生产 profile 或四个 peer 版本实机结论。
+4. 生产部署与当前唯一目标 dsh `0.2.1-rc.2` 的 HUMAN 复测由用户另行执行；三项 `@deepseek-ai` peer 与该版本同值，静态 PASS 不替代真实 provider、GUI、QQBot 消息、生产 profile 或其它 HUMAN 结论。
 ## 改动域 → 唯一检查入口
 
 | 改动域 | 主要检查 |
@@ -122,7 +122,7 @@
 
 ## P2-4 生成链
 
-作者值在 `plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml`；运行 `node plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs` 生成 runtime 常量与纯 `preset-definition.generated.yml`，`--check` 只读比较。坏模板、生成失败或 prepack 失败必须保留 last-known-good（上次已知良好版本）；生成物不得手改。
+作者值在 `plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml`；运行 `node plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs` 先完整校验/渲染，失败时零输出写；坏模板、生成失败或 prepack 失败保留 last-known-good（上次已知良好版本）。通过后使用单次同目录暂存、顺序发布与有限回滚，恢复失败保留首错、备份与残留，不承诺任意磁盘故障或断电原子。该生成链不等同于 `save-persistence.js` 的方案工件落盘责任；`--check` 只读比较，生成物不得手改。
 
 ## 单一来源提醒
 

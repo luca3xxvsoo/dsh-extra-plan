@@ -31,7 +31,6 @@ export function createAgentRuntime({ getAgents, sandboxPolicy, foldUsage, warn }
   const getAgentsOf = typeof getAgents === 'function' ? getAgents : () => undefined
   const warnOf = typeof warn === 'function' ? warn : (...args) => console.warn(...args)
   const subagentAsPlannerWarned = new WeakSet()
-  const plannerPresetCache = new Map()
   const usageRoles = new WeakMap()
 
   function isChild(agent, events) {
@@ -47,7 +46,6 @@ export function createAgentRuntime({ getAgents, sandboxPolicy, foldUsage, warn }
   // 规划子代理：子会话且 session.header.agentPreset === 'extra-plan-planner'。
   // dsh 0.2.1-rc.2 起 subagent descriptor 的 mode 恒为 continuable（宿主 manager 固定值），
   // 不能再作判据；判据改为会话 header 的角色预设 id，其余值与缺失一律非 planner。
-  // 缓存按 agentPreset 值缓存（同一预设的判定与会话无关）。
   function isPlannerChild(agent, events) {
     if (agent === undefined || agent === null) return false
     const session = agent.session
@@ -55,11 +53,7 @@ export function createAgentRuntime({ getAgents, sandboxPolicy, foldUsage, warn }
     const header = session.header
     if (header === undefined || header === null) return false
     const preset = typeof header.agentPreset === 'string' ? header.agentPreset : ''
-    const cached = plannerPresetCache.get(preset)
-    if (cached !== undefined) return cached
-    const planner = preset === PLANNER_PRESET_ID && isSubagentChild(agent, events)
-    plannerPresetCache.set(preset, planner)
-    return planner
+    return preset === PLANNER_PRESET_ID && isSubagentChild(agent, events)
   }
 
   // 真实工具集防御取数：不缓存，服务缺失/异常/非数组均返回 undefined。

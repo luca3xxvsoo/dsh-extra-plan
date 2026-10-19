@@ -137,20 +137,20 @@ export const PROBE_LIMITS = {
   maxTopicLen: 120, // 主题/标题最大长度
   maxDetailLen: 1000, // 详细说明最大长度
   maxTotalChars: 20000, // 整个探测内容总字符数上限
-  rangePattern: '^L?\\d+(?:-\\d+)?$', // 范围格式正则：匹配 123、L123、123-456、L123-456；L 可能表示 Line
+  rangePattern: '^L?0*[1-9]\\d*(?:-0*[1-9]\\d*)?$', // 范围格式正则：端点从 1 开始，匹配 123、L123、123-456、L123-456；L 可能表示 Line
   maxEvidenceEntries: 150, // 证据条目最大数量
   maxEvidenceLineLen: 20, // 证据行号字符串最大长度，例如 "L123"
   maxEvidenceValueLen: 240, // 证据 value 字段最大长度
   maxEvidenceTextLen: 1000, // 证据正文/文本内容最大长度
   maxEvidenceNoteLen: 400, // 证据备注最大长度
   maxEvidenceTotalChars: 32000, // 所有证据内容总字符数上限
-  evidenceLinePattern: '^L?\\d+$', // 证据行号格式正则：匹配 123 或 L123，不支持范围
+  evidenceLinePattern: '^L?0*[1-9]\\d*$', // 证据行号格式正则：端点从 1 开始，匹配 123 或 L123，不支持范围
   maxTaskNameLen: 32, // 任务名称最大长度
 }
 
-// line/range 格式提示统一文案（描述与报错共用；格式正则本体不变）。
-export const LINE_FORMAT_HINT = '仅接受单个行号（12 或 L12），禁止区间（如 L158-162），区间信息请写入 evidence.text 并取代表性行号'
-export const RANGE_FORMAT_HINT = '仅 focusAreas.range 允许区间（12 或 L12-34）'
+// line/range 格式提示统一文案（描述与报错共用；格式正则本体见 PROBE_LIMITS）。
+export const LINE_FORMAT_HINT = '仅接受从 1 开始的单个行号（12 或 L12），禁止区间（如 L158-162），区间信息请写入 evidence.text 并取代表性行号'
+export const RANGE_FORMAT_HINT = '仅 focusAreas.range 允许从 1 开始的区间（12 或 L12-34）'
 
 // 线索/证据报告 Markdown 渲染（模板固定）：标题 + 卷首声明 + 四节；evidence 非空时
 // 标题/卷首切换为证据报告语义并追加「## 五、证据」节。导出供测试核对内容契约。
@@ -198,8 +198,8 @@ export function renderProbeMarkdown(args) {
 }
 
 // 从【探查者已核实】标记提取证据文件路径；调用方与测试共用这个纯 helper。
-// 捕获引用必须符合「证据：<path>」；装饰清洗不包含 . 或 /，因此路径语法保持不变。
-const PROBE_EVIDENCE_RE = /【探查者已核实】[^\n]*?证据[：:]\s*([^\s，。；）】\n]+)/g
+// 捕获引用兼容「证据：<path>」和「证据来源：<path>」；装饰清洗不包含 . 或 /，因此路径语法保持不变。
+const PROBE_EVIDENCE_RE = /【探查者已核实】[^\n]*?证据(?:来源)?[：:]\s*([^\s，。；）】\n]+)/g
 // 多个引用只按 、 ; ； | 拆分；空格已由捕获正则排除，半角逗号仍属于合法路径而不是分隔符。
 // 后续 trimProbeEvidenceDecor 只清洗成对外层装饰，单侧装饰保留，避免误改文件名。
 const PROBE_EVIDENCE_SPLIT_RE = /[、;；|]+/

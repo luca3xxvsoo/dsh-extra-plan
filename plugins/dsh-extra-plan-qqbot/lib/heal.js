@@ -177,14 +177,25 @@ function findLegacyRootBlocks(content) {
 function removeLegacyRootBlocks(content, migration) {
   const removed = new Set()
   for (const block of migration.blocks) {
-    for (let i = block.start; i < block.end; i += 1) removed.add(i)
+    for (let i = block.start; i < block.end; i += 1) {
+      const normalized = stripBom(migration.lines[i])
+      const trimmed = normalized.trim()
+      if (trimmed.length === 0) continue
+      if (trimmed.startsWith('#') && lineIndent(normalized) <= migration.rootIndent) continue
+      removed.add(i)
+    }
   }
-  const kept = migration.lines.filter((_line, index) => !removed.has(index))
   const eol = content.includes('\r\n') ? '\r\n' : '\n'
-  const meaningful = kept.filter((line) => !isIgnorableLine(line))
-  // 旧块是唯一内容时，遵循官方 loader 要求写成非空的顶层空数组。
-  if (meaningful.length === 0) return '[]' + (content.endsWith('\n') ? eol : '')
-  return kept.join(eol)
+  const kept = migration.lines.filter((_line, index) => !removed.has(index))
+  const hasMeaningful = kept.some((line) => !isIgnorableLine(line))
+  if (hasMeaningful) return kept.join(eol)
+  const firstRemoved = Math.min(...removed)
+  const output = []
+  for (let index = 0; index < migration.lines.length; index += 1) {
+    if (index === firstRemoved) output.push('[]')
+    if (!removed.has(index)) output.push(migration.lines[index])
+  }
+  return output.join(eol)
 }
 
 function verifyMigratedPatch(content) {
@@ -237,14 +248,14 @@ export function healPatchRows(profileDir) {
     writeFileSync(patchFile, merged, 'utf8')
   } catch (err) {
     try { copyFileSync(backupFile, patchFile) } catch { /* 保留原始错误 */ }
-    console.warn(LOG_PREFIX + ' 迁移失败（已恢复备份）:', err instanceof Error ? err.message : String(err))
+    console.warn(LOG_PREFIX + ' 迁移失败（已尝试用备份恢复，请核对备份）:', err instanceof Error ? err.message : String(err))
     return { status: 'failed', reason: 'write-failed', backup: backupFile }
   }
   let verified = false
   try { verified = verifyMigratedPatch(merged) } catch { /* 将校验器异常视为校验失败 */ }
   if (!verified) {
     try { copyFileSync(backupFile, patchFile) } catch { /* 保留原始错误 */ }
-    console.warn(LOG_PREFIX + ' 迁移后校验失败，已用备份恢复: ' + patchFile)
+    console.warn(LOG_PREFIX + ' 迁移后校验失败，已尝试用备份恢复，请核对备份: ' + patchFile)
     return { status: 'failed', reason: 'verify-failed', backup: backupFile }
   }
   const migrated = migration.blocks.map((block) => block.kind)

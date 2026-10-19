@@ -189,7 +189,6 @@ export function createLiveConfig(options) {
     if (path === '') return
     const probe = statStamp(path)
     if (!probe.ok) {
-      if (stamp === null) return
       stamp = null
       values = { ...fallbackValues }
       warnOnce('stat 失败 ' + probe.reason)

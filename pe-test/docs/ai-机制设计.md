@@ -52,7 +52,7 @@
 | 拒绝不能造成状态残留清除；取消必须清四字段 | 根入口状态机；step-04 DZ 对照 |
 | 组拒绝无工具副作用；参数不可解析不能绕过状态闸门 | `run-code-static.js`；step-00/04 |
 | 方案/验收必须成对、失败按本次有限清理并主动重试 | save 四模块；step-06 |
-| 模型路由必须真实验证或可靠 fallback（回退） | `model-routing.js`；流程 ⑩-1/step-00 |
+| 模型路由必须真实验证或可靠 fallback（回退） | `model-routing.js`；流程 ⑩/step-00 |
 | 展示隐藏不是 runtime 安全隔离；P2-2 cache 不跨 Agent | `assembly-presentation.js`、`sdk-text-cache.js`；step-04 |
 | usage final fold 必须同步且按 session 隔离 | 根入口/`agent-runtime.js`；step-04 P4 |
 | job_kill 仅直行放行 | `mainGateReason`；step-04 |

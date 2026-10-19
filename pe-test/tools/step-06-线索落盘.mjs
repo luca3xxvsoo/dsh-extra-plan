@@ -38,6 +38,7 @@ const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
 const saveContractNamespace = await import(pathToFileURL(fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/save-contract.js', import.meta.url))).href)
 const { saveArtifactBase } = saveContractNamespace
 const { validateSavePlanContract } = await import(pathToFileURL(fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/save-plan-validation.js', import.meta.url))).href)
+const { validateProbe } = await import(pathToFileURL(fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/save-probe-validation.js', import.meta.url))).href)
 const { createSaveToolFactories } = await import(pathToFileURL(fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/save-tool-factories.js', import.meta.url))).href)
 import { DEFAULT_EXPLORE_BUDGET } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
 import { parsePresetYaml } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
@@ -468,6 +469,38 @@ const work = join(g3TmpRoot, 'work')
 mkdirSync(work)
 writeFileSync(join(work, 'a.txt'), 'hello')
 const execFake = (cwd) => ({ agent: { session: { header: { cwd, id: 'g3-exec-1' } } } })
+
+async function runG5EvidenceCases() {
+// G5 任务11：旧「证据：」与推荐「证据来源：」均实际走 save_plan 校验；
+// 缺失推荐证据必须在 atomicCommit 前拒绝，不能以存在性字符串断言替代实现调用。
+const evidenceBase = g3FixtureCases[0][1]
+const evidenceMarker = '- 派遣说明：本夹具声明实际任务、文件、依赖与执行组，完成后按原文冻结并验收'
+const missingEvidencePlan = evidenceBase.plan.replace(evidenceMarker, evidenceMarker + '【探查者已核实】·证据来源：missing-report.md')
+const legalEvidenceA = join(work, 'evidence-old.md')
+const legalEvidenceB = join(work, 'evidence-recommended.md')
+writeFileSync(legalEvidenceA, '# 探查证据报告（旧格式）\n', 'utf8')
+writeFileSync(legalEvidenceB, '# 探查证据报告（推荐格式）\n', 'utf8')
+const legalEvidencePlan = evidenceBase.plan.replace(evidenceMarker, evidenceMarker + '【探查者已核实】·证据：evidence-old.md 与【探查者已核实】·证据来源：evidence-recommended.md')
+check('G5 旧/推荐证据关键词均被真实提取', saveContractNamespace.extractProbeEvidenceRefs(legalEvidencePlan), ['evidence-old.md', 'evidence-recommended.md'])
+const evidenceCalls = []
+const evidenceFactory = createSaveToolFactories({ savePlanDir: '.extra-plan', atomicCommit: (...args) => evidenceCalls.push(args) })
+let missingEvidenceError = ''
+try { await evidenceFactory.defineSavePlan().execute({ plan: missingEvidencePlan, checklist: evidenceBase.checklist, taskName: 'missing-evidence' }, execFake(work)) } catch (error) { missingEvidenceError = String(error.message) }
+checkTrue('G5 缺失推荐证据在提交前失败且 atomicCommit=0', missingEvidenceError.includes('证据文件不存在') && evidenceCalls.length === 0)
+let legalEvidenceError = ''
+try { await evidenceFactory.defineSavePlan().execute({ plan: legalEvidencePlan, checklist: evidenceBase.checklist, taskName: 'legal-evidence' }, execFake(work)) } catch (error) { legalEvidenceError = String(error.message) }
+checkTrue('G5 旧/推荐合法证据报告均可提交', legalEvidenceError === '' && evidenceCalls.length === 1 && evidenceCalls[0][2].length === 2)
+
+// 证据行号只接受从1开始的单行号：保留前导零，拒绝全零端点。
+const probeArgs = (range, line) => ({ fileMap: [], focusAreas: [{ path: 'a.txt', range, note: '重点' }], exclusions: [], background: [], evidence: [{ path: 'a.txt', line, value: 'v' }] })
+for (const value of ['0', 'L0', '00', '0-0', 'L0-1']) checkTrue('G5 非法零端点拒绝 ' + value, validateProbe(probeArgs(value, '1'), work) !== null)
+for (const value of ['1', 'L1', '001', 'L001', '1-2', 'L001-002']) check('G5 合法正端点通过 ' + value, validateProbe(probeArgs(value, value.split('-')[0]), work), null)
+checkTrue('G5 evidence 行号0拒绝', validateProbe(probeArgs('1', '0'), work) !== null)
+checkTrue('G5 evidence 行号L0拒绝', validateProbe(probeArgs('1', 'L0'), work) !== null)
+const missingMode = validateSavePlanContract(evidenceBase.plan.replace('- 执行模式：single\n', ''), evidenceBase.checklist)
+checkTrue('G5 执行模式诊断模板为 single 或 batch', typeof missingMode.error === 'string' && missingMode.error.includes('最小修复模板：- 执行模式：single 或 batch'))
+}
+
 check('S14 冒烟捕获 save_probe 工具定义', saveProbeDef !== undefined && typeof saveProbeDef.execute === 'function', true)
 check('S15 冒烟捕获 save_plan 工具定义', savePlanDef !== undefined && typeof savePlanDef.execute === 'function', true)
 const savePlanDefinitionShape = (definition) => definition === undefined ? null : { name: definition.name, description: definition.description, parameters: definition.parameters, outputSchema: definition.output === undefined ? undefined : definition.output.schema }
@@ -555,6 +588,7 @@ const g3FixtureCases = [
   ['G3-C batch真实依赖', makeG3Fixture({ slug: 'batch-dependent', mode: 'batch', dependent: true })],
   ['G3-E batch收尾全局组合', makeG3Fixture({ slug: 'batch-closure-global', mode: 'batch', closure: true, global: true })],
 ]
+await runG5EvidenceCases()
 const g3Validations = new Map()
 for (const [label, fixture] of g3FixtureCases) {
   const validation = validateSavePlanContract(fixture.plan, fixture.checklist)

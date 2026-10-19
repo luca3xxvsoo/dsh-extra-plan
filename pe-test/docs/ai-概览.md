@@ -21,7 +21,7 @@
 ## save_plan 派遣与验收职责
 
 - 规划子代理写入成对的方案/验收工件；每份工件自行携带模式、任务/文件/依赖/执行组、检查/验收组、证据方式、收尾/全局和交接规则。它只保存合同，不自动创建、启动、监听或重试代理。
-- 主会话读取两份工件后按任务 ID、完整执行组和依赖交付派遣，维护领取/回报并汇总全覆盖；确认全部实现及收尾完成后冻结源状态，再组织正式验收。工具 render 不是交接真源。
+- 主会话读取两份工件后按任务 ID、完整执行组和依赖交付派遣，维护领取/回报并汇总全覆盖；各组产出稳定后即可组织对应组级验收，全部任务与收尾完成后再冻结源状态并做最终全局收口。工具 render 不是交接真源；同轮共享证据仅在相关源与条件未变化时复用。
 - 执行者只修改获批任务和文件，先读两份工件，完成修改与快速自检；获明确授权时由执行者或直行主会话运行声明的执行取证并保存原始结果。执行者自检不等于正式验收。
 - reviewer 按指定任务/检查范围只读复核期望、禁止和原始证据；只读复核由 reviewer 完成，需要写临时证据的执行取证由获批执行者或直行主会话完成，reviewer 读取结果后独立下结论。
 - 执行组是逻辑打包/并行边界，不等于人数；一人可领取多个独立执行组，多任务不强制多人。验收组 R 与执行组 G 独立；相同公共检查只有唯一领取者，其他引用复用同一冻结轮证据。
@@ -30,14 +30,14 @@
 
 | 功能域 | 负责人（owner）/ 入口 | 当前摘要与唯一详版 |
 |:--|:--|:--|
-| 四级闸门与状态 | `plugins/dsh-extra-plan/index.js` | `route→purpose→clarified→approved`；拒绝不清状态、取消清阶段状态；job_kill 仅直行放行、send_message 主会话方向限制、job_list/list_agents 同锚点防轮询。详见 [机制设计](ai-机制设计.md#一四级机械锚点路由目的澄清批准)。 |
-| gateWords | `assets/presets/extra-plan/agent.cordis.yml` + `lib/gate-words.js` | YAML 七键是唯一值源，apply 先整组校验，再注册七个变量；旧词不推进状态。详见 [机制设计](ai-机制设计.md#一-1闸门关键词单一来源与运行时词表v030)。 |
+| 四级闸门与状态 | `plugins/dsh-extra-plan/index.js` | `route→purpose→clarified→approved`；拒绝不清状态、取消清阶段状态；job_kill 仅直行放行、send_message 主会话方向限制、job_list/list_agents 同锚点防轮询。详见 [机制设计](ai-机制设计.md#一四级机械锚点与-gatewords)。 |
+| gateWords | `assets/presets/extra-plan/agent.cordis.yml` + `lib/gate-words.js` | YAML 七键是唯一值源，apply 先整组校验，再注册七个变量；旧词不推进状态。详见 [机制设计](ai-机制设计.md#一四级机械锚点与-gatewords)。 |
 | run_code 组判定 | `lib/run-code-static.js` + 根入口 | 成员逐点判定、组拒零副作用；安全静态 literal 子集覆盖对象/数组/尾逗号，动态参数保留 argsText 走运行时瀑布；多调用需独立容错，planner 单实例受预算上限。 |
 | save_plan/save_probe | `lib/save-contract.js`、`lib/save-probe-validation.js`、`lib/save-persistence.js`、`lib/save-tool-factories.js` | 合同、校验、单次临时写入/顺序发布与有限清理、工具工厂分层；失败明确报错，由 AI 主动重试，不跨调用恢复旧事务。限制值以源码为准，详见机制设计与 step-06。 |
 | planner 预算 | `lib/planner-budget.js` | 按锚点计数，提醒/耗尽后申请继续探查；`exploreBudget` 不等于历史 evidence 数。 |
 | 模型路由 | `lib/model-routing.js` | planner 与非 planner 分离；legacy（兼容）/strict（严格）由开关分流，strict 必须完成真实 probe 或已验证父 fallback（回退）。唯一流程细节见 [流程备查](ai-流程备查.md#⑩-规划子代理)。 |
 | A/C/M 投影 | `lib/assembly-presentation.js` + 根入口 | 只改模型可见 assembly/schema/catalog，不替代 runtime deny；PTC 首轮手写 `tool:read`，L 段回宿主原文。 |
-| P2-2 SDK 文本 | `lib/sdk-text-cache.js` | apply 内 agent-keyed WeakMap；完整 schema/language/renderer 变化失效，同 key 并发合并，失败不缓存；调用计数 1 是硬门槛。详见 [机制设计](ai-机制设计.md#p2-2-sdk-文本复用的安全边界)。 |
+| P2-2 SDK 文本 | `lib/sdk-text-cache.js` | apply 内 agent-keyed WeakMap；完整 schema/language/renderer 变化失效，同 key 并发合并，失败不缓存；调用计数 1 是硬门槛。详见 [机制设计](ai-机制设计.md#五acm-投影p2-2-与配置默认链)。 |
 | 设置后端与同页全局管理 | `lib/settings.js`、`lib/live-config.js`、`lib/preset-settings.js`、`lib/preset-sync.js` | 10 项 volatile Config 统一由 `dsh-extra-plan-settings` 承载；live-config 只暴露 8 项热读，2 项宿主值只派生到内存 definition。设置表单仅经 detail.section 渲染于 bundle 详情页行列表之后（自绘标题），不注册 bundle.config、row.config、settings.plugins.tab 或 plugins.item；若本包 bundle.config 槽被任何一方注册条目则 detail.section 让位保持唯一表单。PUT 只 edit 唯一全局行；旧公开行/旧 body 仅 raw 读取迁移，`./preset-sync` exports 已退役；非法当前 gateWords 严格失败、零写，旧非法 skip。 |
 | P2-4 默认链 | `agent.cordis.yml` → 生成器 → `preset-defaults.generated.js` | YAML 叶值是作者真源，生成物是派生值，运行时不解析 YAML；坏模板保留 last-known-good（上次已知良好版本）。详见 [维护手册](ai-维护手册.md#p2-4-生成链)。 |
 | 预设核对与官方装配 | `lib/preset-sync.js`（由 `settings.js` owner 内部相对调用） | 读取纯 definition；raw patch 中旧 `preset-extra-plan` 与 `extra-plan-preset-sync` 仅非破坏迁移来源；全局行补齐后两项宿主值/gateWords 派生到内存 definition，其中 `toolPresentationMode` 的派生范围含主 definition 与四个角色 definition（各恰一行 `tool-presentation`，派生异常保留生成物默认值且不中断挂载），再由同一 owner 直接交官方 AgentPreset adapter，写盘只经唯一全局行 `configEditor.edit`。四角色 tools 行按 5f3cc68 可见面回填：planner/reviewer/prober 的 `dsh-tool-fs` 只读（write/edit=false）且均挂只读意图的双 shell（`tool-pwsh`/`tool-bash`）与 `tool-web`/`tool-cordis`，executor 可写并沿用双 shell；`save_probe` 仅主会话与 prober 可见（prober 由插件按角色预设注册），planner 另挂 `tool-subagent-control`、连带可见 `interrupt_agent`（0.2.1 包不可拆）。旧公开模块入口与 locale exports 已退役。 |

@@ -77,6 +77,7 @@ const {
   RUNCODE_MUTATION_HINTS,
   codeMutationHints,
   decomposeRunCode,
+  runCodeCatchGateReason,
   runCodeGroupDenyReason,
   askUserQuestionReturnGateReason,
   deriveFlowState,
@@ -259,13 +260,43 @@ const scannerDynamicAccessMatrix = [
   ['顶层 tools[name]({...}) 动态下标调用', 'tools[name]({})', true],
   ['顶层 tools["read"]({...}) 静态字符串下标调用', 'tools["read"]({})', false],
   ['字符串字面量和行注释内伪调用', "'tools[name]({})'\n// tools[name]({})", false],
-  ['已识别静态外层调用的参数区间内嵌 tools[name](...)', 'tools.read({ nested: tools[name]({}) })', false],
+  ['已识别静态外层调用的参数区间内嵌 tools[name](...)', 'tools.read({ nested: tools[name]({}) })', true],
 ]
 for (const [label, text, expected] of scannerDynamicAccessMatrix) {
   const masked = runCodeScanner.maskCodeLiteralsAndComments(text)
   const sites = runCodeScanner.collectRunCodeSites(text, masked)
   check('SC1 动态访问矩阵 ' + label, runCodeScanner.hasDynamicRunCodeAccess(text, masked, sites), expected)
 }
+// G5 共享回归：直接调用修复后的扫描器，锁定嵌套/动态下标/正则以及对象字面量后的除法。
+const scannerG5Cases = [
+  ['嵌套 tools 调用保留内外站点', 'tools.read({ nested: tools.write({}) })', ['read', 'write'], false],
+  ['动态方括号调用判动态', 'tools[fn]({})', [undefined], true],
+  ['正则正文 tools 字样不算调用', 'const re = /tools\.edit\(/gi; tools.read({})', ['read'], false],
+  ['对象字面量结束后的除法调用可见', 'const value = {} / tools.edit({})', ['edit'], false],
+  ['嵌套对象结束后的除法调用可见', 'const value = { outer: { inner: 1 } } / tools.write({})', ['write'], false],
+  ['括号对象结束后的除法调用可见', 'const value = ({ outer: {} }) / tools.read({})', ['read'], false],
+  ["属性关键词后的除法", "const value = data.return / tools.edit({}) / 2", ["edit"], false],
+  ["属性控制词调用后的除法", "const value = data.if() / tools.edit({}) / 2", ["edit"], false],
+  ["行注释后保留除法上下文", "const value = 12 // expression continues\n / tools.edit({}) / 2", ["edit"], false],
+  ["匿名函数表达式后的除法", "const value = function() {} / tools.edit({}) / 2", ["edit"], false],
+  ["具名函数表达式后的除法", "const value = function named() {} / tools.edit({}) / 2", ["edit"], false],
+  ["async函数表达式后的除法", "const value = async function() {} / tools.edit({}) / 2", ["edit"], false],
+  ["生成器表达式后的除法", "const value = function*() {} / tools.edit({}) / 2", ["edit"], false],
+  ["函数声明后正则仍遮蔽", "function declared() {} /tools.edit({})/; tools.read({})", ["read"], false],
+  ["async函数声明后正则仍遮蔽", "async function declared() {} /tools.edit({})/; tools.read({})", ["read"], false],
+]
+for (const [label, text, expectedNames, expectedDynamic] of scannerG5Cases) {
+  const masked = runCodeScanner.maskCodeLiteralsAndComments(text)
+  const sites = runCodeScanner.collectRunCodeSites(text, masked)
+  check('SC1-G5 ' + label + '（站点）', sites.map((site) => site.name), expectedNames)
+  check('SC1-G5 ' + label + '（动态判定）', runCodeScanner.hasDynamicRunCodeAccess(text, masked, sites), expectedDynamic)
+}
+
+for (const [index, code] of ["const value = data.return / tools.edit({}) / 2","const value = 12 // expression continues\n / tools.edit({}) / 2","const value = function() {} / tools.edit({}) / 2"].entries()) {
+  const reason = runCodeCatchGateReason('tools.read({}); ' + code)
+  checkTrue('SC1-G5 除法真实第二调用仍须独立catch ' + index, typeof reason === 'string' && reason.includes('2 个工具调用'))
+}
+check('SC1-G5 除法调用分别独立catch可通过', runCodeCatchGateReason('try { tools.read({}) } catch (e) {} try { const value = data.return / tools.edit({}) / 2 } catch (e) {}'), null)
 
 // ── 根入口公开 named export 兼容断言：与 decisions 保持同一绑定/行为 ──
 check('公开导出 PROBE_LIMITS 与 decisions 同一绑定', plugin.PROBE_LIMITS === plugin.decisions.PROBE_LIMITS, true)
@@ -904,7 +935,7 @@ const PR = [
   ['PR30 evidence 未传 → 过（旧调用不变）', validProbe(), 'pass'],
   ['PR31 多违规一次性全报（聚合）', { ...validProbe(), fileMap: [{ path: '不存在-聚合-xyz.md', relation: 'r' }], background: [{ topic: 't', detail: 'x'.repeat(PROBE_LIMITS.maxDetailLen + 1) }] }, 'reject-all', ['不存在', 'background[0].detail', '处违规']],
   ['PR32 evidence.line 区间报错含修正法', { ...validProbe(), evidence: [{ path: EXISTING, line: 'L158-162', value: 'v' }] }, 'reject-all', ['禁止区间', 'evidence.text', '单个行号']],
-  ['PR33 focusAreas.range 非法报错含区间说明', { ...validProbe(), focusAreas: [{ path: EXISTING, range: 'L12-x', note: 'n' }] }, 'reject-all', ['range', '仅 focusAreas.range 允许区间']],
+  ['PR33 focusAreas.range 非法报错含区间说明', { ...validProbe(), focusAreas: [{ path: EXISTING, range: 'L12-x', note: 'n' }] }, 'reject-all', ['range', '仅 focusAreas.range 允许从 1 开始的区间']],
   ['PR34 evidence[0].text 1000 字 → 过', { ...validProbe(), evidence: [{ path: EXISTING, text: 't'.repeat(PROBE_LIMITS.maxEvidenceTextLen) }] }, 'pass'],
   ['PR35 evidence[0].text 1001 字 → 拒', { ...validProbe(), evidence: [{ path: EXISTING, text: 't'.repeat(PROBE_LIMITS.maxEvidenceTextLen + 1) }] }, 'reject'],
 ]
@@ -937,7 +968,7 @@ const schemaSaveProbe = schemaRegistration.registered.find((definition) => defin
 const schemaSavePlan = schemaRegistration.registered.find((definition) => definition.name === 'save_plan')
 const schemaPlanDescription = schemaSavePlan === undefined ? '' : String(schemaSavePlan.description || ''); const schemaPlanParameters = schemaSavePlan === undefined || schemaSavePlan.parameters === undefined ? {} : schemaSavePlan.parameters; const schemaDescription = schemaSaveProbe === undefined ? '' : String(schemaSaveProbe.description || ''); const evidenceDescription = schemaSaveProbe === undefined || schemaSaveProbe.parameters === undefined || schemaSaveProbe.parameters.properties === undefined || schemaSaveProbe.parameters.properties.evidence === undefined ? '' : String(schemaSaveProbe.parameters.properties.evidence.description || ''); const planProperties = schemaPlanParameters.properties || {}; const probeParameters = schemaSaveProbe === undefined || schemaSaveProbe.parameters === undefined ? {} : schemaSaveProbe.parameters; const probeProperties = probeParameters.properties || {}; const planText = JSON.stringify(schemaPlanParameters); const probeText = JSON.stringify(probeParameters); const forbiddenPlan = ['原子双写', '插件将校验', '插件会净化', '不得编造内容、数值或行号']; const forbiddenProbe = ['pro 规划子代理', 'subagent_plan', '委派', '主会话线索模式', '超限会拒绝', '不静默截断', '插件会净化']
 check('SCHEMA1 save_plan 描述/schema 反映严格合同与长度边界', schemaSavePlan !== undefined && schemaPlanDescription.includes('严格写入方案和验收清单') && schemaPlanDescription.includes('不启动代理') && schemaPlanDescription.includes('不执行检查命令') && schemaPlanParameters.type === 'object' && JSON.stringify(schemaPlanParameters.required) === JSON.stringify(['plan', 'checklist']) && schemaPlanParameters.additionalProperties === false && Object.keys(planProperties).length === 3 && planProperties.plan.description.includes('严格方案全文') && planProperties.plan.description.includes('至少 200 字符') && planProperties.plan.description.includes('single') && planProperties.checklist.description.includes('严格验收全文') && planProperties.checklist.description.includes('至少 200 字符') && planProperties.checklist.description.includes('正式验收') && schemaSavePlan.output !== undefined && schemaSavePlan.output.schema !== undefined && Object.keys(schemaSavePlan.output.schema.properties || {}).length === 1 && schemaSavePlan.output.schema.properties.paths !== undefined && JSON.stringify(schemaSavePlan.output.schema.required) === JSON.stringify(['paths']) && schemaSavePlan.output.schema.additionalProperties === false && schemaPlanDescription.length > 0 && JSON.stringify(schemaPlanParameters).length > 0 && forbiddenPlan.every((word) => !planText.includes(word)), true)
-check('SCHEMA2 save_probe 描述/schema 精确契约', schemaDescription === '写入只读探查结果。fileMap、focusAreas、exclusions、background 四个数组必填，按 JSON 序列化计总量最多 20000 字；evidence 可选，非空时生成证据报告，否则生成线索文件。字段格式和单项上限见参数说明；返回文件路径。' && schemaDescription.length === 134 && JSON.stringify(probeParameters).length === 2016 && Object.keys(probeProperties).length === 6 && JSON.stringify(probeParameters.required) === JSON.stringify(['fileMap', 'focusAreas', 'exclusions', 'background']) && probeParameters.additionalProperties === false && probeProperties.fileMap.description === '相关文件列表（最多 50 项）' && probeProperties.focusAreas.description === '重点区域列表（最多 50 项）' && probeProperties.exclusions.description === '排除项列表（最多 20 项；scope 可为概念边界，无须对应现有路径）' && probeProperties.background.description === '背景与意图列表（最多 20 项）' && probeProperties.fileMap.items.properties.path.description === '现有文件路径（相对路径按工作区解析，最多 1024 字）' && probeProperties.fileMap.items.properties.relation.description === '文件与任务的关系（最多 400 字）' && probeProperties.focusAreas.items.properties.path.description === '现有文件路径（相对路径按工作区解析，最多 1024 字）' && probeProperties.focusAreas.items.properties.range.description.includes('最多 20 字') && probeProperties.focusAreas.items.properties.range.description.includes('仅 focusAreas.range 允许区间（12 或 L12-34）') && probeProperties.focusAreas.items.properties.note.description === '重点和补查方向（最多 400 字）' && probeProperties.exclusions.items.properties.scope.description === '可选排除范围' && probeProperties.exclusions.items.properties.note.description === '排除原因（最多 400 字）' && probeProperties.background.items.properties.topic.description === '背景主题（最多 120 字）' && probeProperties.background.items.properties.detail.description === '背景或用户意图（最多 1000 字）' && probeProperties.evidence.description === '可选证据列表（最多 150 项，按 JSON 序列化计总量最多 32000 字）；非空时生成证据报告。每项 path 必须存在，并至少填写 line、value、text 之一。' && probeProperties.evidence.items.properties.path.description === '现有被核实文件路径（相对路径按工作区解析，最多 1024 字）' && probeProperties.evidence.items.properties.line.description.includes('最多 20 字') && probeProperties.evidence.items.properties.line.description.includes('仅接受单个行号（12 或 L12），禁止区间（如 L158-162），区间信息请写入 evidence.text 并取代表性行号') && probeProperties.evidence.items.properties.value.description === '可选核实值（最多 240 字）' && probeProperties.evidence.items.properties.text.description === '可选原文摘录（最多 1000 字）' && probeProperties.evidence.items.properties.note.description === '可选备注（最多 400 字）' && probeProperties.evidence.items.properties.line !== undefined && probeProperties.evidence.items.properties.value !== undefined && probeProperties.evidence.items.properties.text !== undefined && probeProperties.taskName.description === '可选任务短名（最多 32 字；不要传路径）' && ['20000', '32000', '50', '20', '150', '1024', '400', '120', '1000', '240', '32'].every((value) => (schemaDescription + probeText).includes(value)) && forbiddenProbe.every((word) => !probeText.includes(word)), true)
+check('SCHEMA2 save_probe 描述/schema 精确契约', schemaDescription === '写入只读探查结果。fileMap、focusAreas、exclusions、background 四个数组必填，按 JSON 序列化计总量最多 20000 字；evidence 可选，非空时生成证据报告，否则生成线索文件。字段格式和单项上限见参数说明；返回文件路径。' && schemaDescription.length === 134 && JSON.stringify(probeParameters).length === 2030 && Object.keys(probeProperties).length === 6 && JSON.stringify(probeParameters.required) === JSON.stringify(['fileMap', 'focusAreas', 'exclusions', 'background']) && probeParameters.additionalProperties === false && probeProperties.fileMap.description === '相关文件列表（最多 50 项）' && probeProperties.focusAreas.description === '重点区域列表（最多 50 项）' && probeProperties.exclusions.description === '排除项列表（最多 20 项；scope 可为概念边界，无须对应现有路径）' && probeProperties.background.description === '背景与意图列表（最多 20 项）' && probeProperties.fileMap.items.properties.path.description === '现有文件路径（相对路径按工作区解析，最多 1024 字）' && probeProperties.fileMap.items.properties.relation.description === '文件与任务的关系（最多 400 字）' && probeProperties.focusAreas.items.properties.path.description === '现有文件路径（相对路径按工作区解析，最多 1024 字）' && probeProperties.focusAreas.items.properties.range.description.includes('最多 20 字') && probeProperties.focusAreas.items.properties.range.description.includes('仅 focusAreas.range 允许从 1 开始的区间（12 或 L12-34）') && probeProperties.focusAreas.items.properties.note.description === '重点和补查方向（最多 400 字）' && probeProperties.exclusions.items.properties.scope.description === '可选排除范围' && probeProperties.exclusions.items.properties.note.description === '排除原因（最多 400 字）' && probeProperties.background.items.properties.topic.description === '背景主题（最多 120 字）' && probeProperties.background.items.properties.detail.description === '背景或用户意图（最多 1000 字）' && probeProperties.evidence.description === '可选证据列表（最多 150 项，按 JSON 序列化计总量最多 32000 字）；非空时生成证据报告。每项 path 必须存在，并至少填写 line、value、text 之一。' && probeProperties.evidence.items.properties.path.description === '现有被核实文件路径（相对路径按工作区解析，最多 1024 字）' && probeProperties.evidence.items.properties.line.description.includes('最多 20 字') && probeProperties.evidence.items.properties.line.description.includes('仅接受从 1 开始的单个行号（12 或 L12），禁止区间（如 L158-162），区间信息请写入 evidence.text 并取代表性行号') && probeProperties.evidence.items.properties.value.description === '可选核实值（最多 240 字）' && probeProperties.evidence.items.properties.text.description === '可选原文摘录（最多 1000 字）' && probeProperties.evidence.items.properties.note.description === '可选备注（最多 400 字）' && probeProperties.evidence.items.properties.line !== undefined && probeProperties.evidence.items.properties.value !== undefined && probeProperties.evidence.items.properties.text !== undefined && probeProperties.taskName.description === '可选任务短名（最多 32 字；不要传路径）' && ['20000', '32000', '50', '20', '150', '1024', '400', '120', '1000', '240', '32'].every((value) => (schemaDescription + probeText).includes(value)) && forbiddenProbe.every((word) => !probeText.includes(word)), true)
 
 // ── SAVE-CONTRACT/G2 系列：真实生产合同结构、交接、摘要与工厂接线 ────────
 // 这些夹具只拼接合同文本并调用生产导出，不在测试中复制解析器或固化本轮任务数量。
@@ -2416,7 +2447,9 @@ const rcL1Code = [
 ].join('\n')
 const rcL1Masked = maskCodeLiteralsAndComments(rcL1Code)
 const rcL1Result = decomposeRunCode(rcL1Code)
-checkTrue('RC-L1 转义单/双引号、反引号与模板插值不产生成员', rcL1Masked.length === rcL1Code.length && rcL1Result.dynamic === false && rcL1Result.members.length === 1 && rcL1Result.members[0].name === 'read')
+checkTrue('RC-L1 模板纯文本 write 忽略、${tools.edit(...)} 计入并与后续 read 共2成员', rcL1Masked.length === rcL1Code.length && rcL1Result.dynamic === false && rcL1Result.members.length === 2 && rcL1Result.members.map((member) => member.name).join('|') === 'edit|read')
+const rcL1NestedTemplateCode = 'const nested = ' + String.fromCharCode(96) + 'outer ' + String.fromCharCode(36) + '{' + String.fromCharCode(96) + 'inner ' + String.fromCharCode(36) + '{tools.edit({})}' + String.fromCharCode(96) + '}' + String.fromCharCode(96)
+check('RC-L1 嵌套模板插值实际调用计入', decomposeRunCode(rcL1NestedTemplateCode).members.map((member) => member.name), ['edit'])
 
 const rcL2Code = "// tools.write({})\r\n/* tools.edit({}) */\r\ntools.read({})"
 const rcL2Masked = maskCodeLiteralsAndComments(rcL2Code)

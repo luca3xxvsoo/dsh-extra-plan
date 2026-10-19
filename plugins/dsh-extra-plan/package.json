@@ -1,6 +1,6 @@
 {
   "name": "dsh-extra-plan",
-  "version": "0.3.0",
+  "version": "1.6.0",
   "description": "实现权限控制+子代理角色分配",
   "type": "module",
   "main": "index.js",

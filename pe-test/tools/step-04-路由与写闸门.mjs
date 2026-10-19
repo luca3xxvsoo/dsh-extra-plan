@@ -48,6 +48,8 @@ function restoreIsolatedEnv() {
 process.on('exit', restoreIsolatedEnv)
 
 const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
+const agentRuntimeModule = await import(pathToFileURL(AGENT_RUNTIME_PATH).href)
+const shellMutationModule = await import(pathToFileURL(SHELL_MUTATION_PATH).href)
 import { createSdkTextCache, sdkSchemasFingerprint, sdkTextCacheEntryMatches } from '../../plugins/dsh-extra-plan/lib/sdk-text-cache.js'
 import { createGateRuntime } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
 import { createLiveConfig } from '../../plugins/dsh-extra-plan/lib/live-config.js'
@@ -95,6 +97,23 @@ function checkTrue(name, got) {
   if (okResult) { pass += 1 } else { fail += 1 }
   output.assertion(okResult, name, true, got)
 }
+
+// G5 任务11：同一 createAgentRuntime 实例分别验证 root→child 与 child→root，
+// 两次顺序各自共享自己的 runtime，避免跨实例缓存把顺序差异遮掉。
+const roleAgent = (id, child) => ({ session: { header: { id, agentPreset: PLANNER_PRESET, ...(child ? { origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1' } : {}) }, snapshotEvents: () => [] } })
+const roleRoot = roleAgent('g5-root', false)
+const roleChild = roleAgent('g5-child', true)
+const roleRuntimeRootFirst = agentRuntimeModule.createAgentRuntime({ foldUsage: () => {}, warn: () => {} })
+const roleRuntimeChildFirst = agentRuntimeModule.createAgentRuntime({ foldUsage: () => {}, warn: () => {} })
+check('G5 角色缓存 root→child 同实例分别为 false/true', [roleRuntimeRootFirst.isPlannerChild(roleRoot, []), roleRuntimeRootFirst.isPlannerChild(roleChild, [])], [false, true])
+check('G5 角色缓存 child→root 同实例分别为 true/false', [roleRuntimeChildFirst.isPlannerChild(roleChild, []), roleRuntimeChildFirst.isPlannerChild(roleRoot, [])], [true, false])
+const g5ShellExec = (command) => ({ arguments: { command } })
+for (const word of ['If', 'IF', 'TRY', 'Foreach']) checkTrue('G5 PowerShell 大小写块关键字 ' + word + ' 识别写命令', shellMutationModule.pwshMutationMatches(g5ShellExec(word + ' { Remove-Item x }')))
+checkTrue('G5 PowerShell 小写块关键字维持识别', shellMutationModule.pwshMutationMatches(g5ShellExec('if { remove-item x }')))
+check('G5 PowerShell 只读命令不误拦', shellMutationModule.pwshMutationMatches(g5ShellExec('IF { Get-Item x }')), false)
+check('G5 PowerShell 参数位写词不误拦', shellMutationModule.pwshMutationMatches(g5ShellExec('IF { Write-Output Remove-Item }')), false)
+check('G5 bash 大写 If 不新增关键字', shellMutationModule.bashMutationMatches(g5ShellExec('IF { rm x }')), false)
+checkTrue('G5 bash 小写 if 保持原识别', shellMutationModule.bashMutationMatches(g5ShellExec('if { rm x }')))
 
 // ── ① 纯函数断言（[任务5]） ────────────────────────────────────────────
 check('G1 catalogHasWriteTools 只读目录 → false', catalogHasWriteTools(['read', 'pwsh']), false)
@@ -2050,7 +2069,7 @@ const fullCalls = (calls) => calls.filter((pair) => pair[0] === undefined)
   } finally { rmSync(dirA, { recursive: true, force: true }); rmSync(dirB, { recursive: true, force: true }) }
 }
 
-// ── ⑮ 创造模式装配投影矩阵：4 × 3 × 2 × 5 = 120 ───────────────────────
+// ── ⑮ 创造模式装配投影矩阵：2 × 2 × 2 × 2 × 5 = 80 ───────────────────────
 // 使用真实 registry schema 形状的 mock；只断言模型可见 assembly，不把隐藏误报为 runtime binding 安全隔离。
 const MATRIX_CORDIS_TOOLS = CORDIS_PRESENTATION_TOOLS
 const MATRIX_CREATIVE_SKILLS = ['cordis-plugin-development', 'editing-cordis-compositions', 'cordis-composition-reference']

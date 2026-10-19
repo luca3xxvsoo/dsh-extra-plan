@@ -19,7 +19,7 @@ import {
 } from 'node:fs'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
-import { SETTING_DEFINITIONS } from './preset-settings.js'
+import { SETTING_DEFINITIONS, SETTINGS_ROW_NAME } from './preset-settings.js'
 import { GATE_WORD_FIELDS, validateGateWords } from './gate-words.js'
 
 const SETTINGS_ROW_ID = 'dsh-extra-plan-settings'
@@ -401,7 +401,11 @@ function renderedConfig(snapshot, configIndent) {
 // 0.2.1 patch 方言：新写入一律用「- id: <设置行 id> + 全量 config」的朴素行，不再写 override 包装键。
 function renderedRow(snapshot, rootIndent) {
   const spaces = (value) => ' '.repeat(value)
-  const lines = [spaces(rootIndent) + '- id: ' + SETTINGS_ROW_ID, spaces(rootIndent + 2) + 'config:']
+  const lines = [
+    spaces(rootIndent) + '- id: ' + SETTINGS_ROW_ID,
+    spaces(rootIndent + 2) + 'name: ' + SETTINGS_ROW_NAME,
+    spaces(rootIndent + 2) + 'config:',
+  ]
   lines.push(...renderedConfig(snapshot, rootIndent + 2))
   return lines
 }
@@ -459,50 +463,83 @@ function reparseAndCheck(text, expected) {
   const target = parsedTarget(parsed)
   if (target.kind !== 'ok' || target.hit === undefined) return { ok: false, reason: target.reason || 'verify-settings-row-missing' }
   const holder = configHolder(target.hit.row, target.hit.kind)
+  if (holder.name !== SETTINGS_ROW_NAME) return { ok: false, reason: 'verify-settings-name-mismatch' }
   if (!plainObject(holder.config) || !equalManaged(holder.config, expected)) return { ok: false, reason: 'verify-settings-mismatch' }
   return { ok: true, parsed }
+}
+
+function existingNameState(holder, blockLines, rootIndent, kind) {
+  const expectedIndent = kind === 'override' ? rootIndent + 4 : rootIndent + 2
+  const names = []
+  for (let i = 0; i < blockLines.length; i += 1) {
+    const parsed = keyMatch(blockLines[i])
+    if (parsed !== null && parsed.indent === expectedIndent && parsed.key === 'name') names.push({ index: i, ...parsed })
+  }
+  if (names.length > 1) return { kind: 'conflict', reason: 'duplicate-name' }
+  if (names.length === 0) {
+    if (Object.prototype.hasOwnProperty.call(holder, 'name')) return { kind: 'conflict', reason: 'name-boundary-unproven' }
+    return { kind: 'missing', line: null }
+  }
+  if (holder.name === SETTINGS_ROW_NAME) return { kind: 'canonical', line: names[0] }
+  if (holder.name === null || holder.name === undefined || (typeof holder.name === 'string' && holder.name.trim() === '')) {
+    return { kind: 'missing', line: names[0] }
+  }
+  return { kind: 'conflict', reason: 'settings-row-name-conflict' }
 }
 
 function applyExistingTarget(parts, block, hit, snapshot, rootIndent) {
   const blockLines = parts.lines.slice(block.start, block.end)
   const state = configState(hit.row, hit.kind, blockLines, block.start, block.end, rootIndent)
   if (state.kind === 'conflict' || state.kind === 'invalid') return { status: state.kind, reason: state.reason }
+  const holder = configHolder(hit.row, hit.kind)
+  const nameState = existingNameState(holder, blockLines, rootIndent, hit.kind)
+  if (nameState.kind === 'conflict') return { status: 'conflict', reason: nameState.reason }
   const expected = expectedManaged(snapshot)
-  if (state.kind === 'map' && equalManaged(configHolder(hit.row, hit.kind).config, expected)) return { status: 'idempotent', text: joinText(parts) }
+  if (state.kind === 'map' && nameState.kind === 'canonical' && equalManaged(holder.config, expected)) {
+    return { status: 'idempotent', text: joinText(parts) }
+  }
+  const edits = []
+  if (nameState.kind === 'missing') {
+    const nameIndent = hit.kind === 'override' ? rootIndent + 4 : rootIndent + 2
+    if (nameState.line !== null) {
+      const comment = /\s+(#.*)$/.exec(nameState.line.rest)
+      const suffix = comment === null ? '' : ' ' + comment[1]
+      edits.push({ start: nameState.line.index, end: nameState.line.index + 1, lines: [' '.repeat(nameIndent) + 'name: ' + SETTINGS_ROW_NAME + suffix] })
+    } else {
+      const nameIndex = state.line === null ? blockLines.length : state.line.index
+      edits.push({ start: nameIndex, end: nameIndex, lines: [' '.repeat(nameIndent) + 'name: ' + SETTINGS_ROW_NAME] })
+    }
+  }
   if (state.kind === 'missing') {
     const configIndent = state.line === null ? (hit.kind === 'override' ? rootIndent + 4 : rootIndent + 2) : state.line.indent
     const insert = []
     if (state.line === null) insert.push(' '.repeat(configIndent) + 'config:')
     insert.push(...renderedConfig(snapshot, configIndent))
-    const nextLines = [...parts.lines]
-    nextLines.splice(block.end, 0, ...insert)
-    const next = joinText({ ...parts, lines: nextLines })
-    const verified = reparseAndCheck(next, expected)
-    return verified.ok ? { status: 'planned', text: next } : { status: 'invalid', reason: verified.reason }
-  }
-  const edits = []
-  for (const key of PATCH_KEYS) {
-    const matches = directKeyLines(blockLines, state.line.index + 1, state.end, state.childIndent, key)
-    if (matches.length > 1) return { status: 'conflict', reason: 'duplicate-config-key:' + key }
-    if (matches.length === 1) {
-      const match = matches[0]
-      edits.push({ start: match.index, end: blockEndForChild(blockLines, match.index + 1, state.end, state.childIndent), lines: key === 'gateWords' ? (() => {
-        const out = [' '.repeat(state.childIndent) + 'gateWords:']
-        for (const gateKey of GATE_KEYS) out.push(' '.repeat(state.childIndent + 2) + gateKey + ': ' + scalar(snapshot.gateWords[gateKey]))
-        return out
-      })() : [' '.repeat(state.childIndent) + key + ': ' + scalar(snapshot.values[key])] })
+    edits.push({ start: blockLines.length, end: blockLines.length, lines: insert })
+  } else {
+    for (const key of PATCH_KEYS) {
+      const matches = directKeyLines(blockLines, state.line.index + 1, state.end, state.childIndent, key)
+      if (matches.length > 1) return { status: 'conflict', reason: 'duplicate-config-key:' + key }
+      if (matches.length === 1) {
+        const match = matches[0]
+        edits.push({ start: match.index, end: blockEndForChild(blockLines, match.index + 1, state.end, state.childIndent), lines: key === 'gateWords' ? (() => {
+          const out = [' '.repeat(state.childIndent) + 'gateWords:']
+          for (const gateKey of GATE_KEYS) out.push(' '.repeat(state.childIndent + 2) + gateKey + ': ' + scalar(snapshot.gateWords[gateKey]))
+          return out
+        })() : [' '.repeat(state.childIndent) + key + ': ' + scalar(snapshot.values[key])] })
+      }
     }
-  }
-  const missing = PATCH_KEYS.filter((key) => directKeyLines(blockLines, state.line.index + 1, state.end, state.childIndent, key).length === 0)
-  if (missing.length > 0) {
-    const add = []
-    for (const key of missing) {
-      if (key === 'gateWords') {
-        add.push(' '.repeat(state.childIndent) + 'gateWords:')
-        for (const gateKey of GATE_KEYS) add.push(' '.repeat(state.childIndent + 2) + gateKey + ': ' + scalar(snapshot.gateWords[gateKey]))
-      } else add.push(' '.repeat(state.childIndent) + key + ': ' + scalar(snapshot.values[key]))
+    const missing = PATCH_KEYS.filter((key) => directKeyLines(blockLines, state.line.index + 1, state.end, state.childIndent, key).length === 0)
+    if (missing.length > 0) {
+      const add = []
+      for (const key of missing) {
+        if (key === 'gateWords') {
+          add.push(' '.repeat(state.childIndent) + 'gateWords:')
+          for (const gateKey of GATE_KEYS) add.push(' '.repeat(state.childIndent + 2) + gateKey + ': ' + scalar(snapshot.gateWords[gateKey]))
+        } else add.push(' '.repeat(state.childIndent) + key + ': ' + scalar(snapshot.values[key]))
+      }
+      edits.push({ start: state.end, end: state.end, lines: add })
     }
-    edits.push({ start: state.end, end: state.end, lines: add })
   }
   edits.sort((left, right) => right.start - left.start)
   const nextBlock = [...blockLines]
@@ -521,12 +558,46 @@ function appendTarget(parts, snapshot, rootIndent, parsed) {
   if (emptyLineIndex >= 0 && Array.isArray(parsed) && parsed.length === 0) nextLines.splice(emptyLineIndex, 1, ...row)
   else {
     while (nextLines.length > 0 && nextLines[nextLines.length - 1] === '') nextLines.pop()
-    if (nextLines.length > 0) nextLines.push(...row)
-    else nextLines.push(...row)
+    nextLines.push(...row)
   }
   const next = joinText({ ...parts, lines: nextLines })
   const verified = reparseAndCheck(next, expectedManaged(snapshot))
   return verified.ok ? { status: 'planned', text: next } : { status: 'invalid', reason: verified.reason }
+}
+
+function scalarTokenEquals(value, expected) {
+  const token = value.trim().replace(/\s+#.*$/, '').trim()
+  return token === expected || token === JSON.stringify(expected) || token === "'" + expected + "'"
+}
+
+function duplicateTargetNameText(text) {
+  const parts = splitText(text)
+  const root = rootSequenceInfo(parts.lines)
+  if (root.rootIndent === null) return false
+  for (let index = 0; index < root.starts.length; index += 1) {
+    const start = root.starts[index]
+    const end = index + 1 < root.starts.length ? root.starts[index + 1] : parts.lines.length
+    const rowLine = parts.lines[start]
+    const direct = /^([ \t]*)-\s+id\s*:(.*)$/.exec(rowLine)
+    const emptyDash = /^([ \t]*)-\s*$/.exec(rowLine)
+    const override = /^([ \t]*)-\s+override\s*:/.test(rowLine)
+    let directTarget = direct !== null && direct[1].length === root.rootIndent && scalarTokenEquals(direct[2], SETTINGS_ROW_ID)
+    let overrideTarget = false
+    for (let lineIndex = start + 1; lineIndex < end; lineIndex += 1) {
+      const parsed = keyMatch(parts.lines[lineIndex])
+      if (override && parsed !== null && parsed.key === 'id' && parsed.indent === root.rootIndent + 4 && scalarTokenEquals(parsed.rest, SETTINGS_ROW_ID)) overrideTarget = true
+      if (emptyDash !== null && parsed !== null && parsed.key === 'id' && parsed.indent === root.rootIndent + 2 && scalarTokenEquals(parsed.rest, SETTINGS_ROW_ID)) directTarget = true
+    }
+    const nameIndent = overrideTarget ? root.rootIndent + 4 : root.rootIndent + 2
+    if (!directTarget && !overrideTarget) continue
+    let count = 0
+    for (let lineIndex = start; lineIndex < end; lineIndex += 1) {
+      const parsed = keyMatch(parts.lines[lineIndex])
+      if (parsed !== null && parsed.key === 'name' && parsed.indent === nameIndent) count += 1
+    }
+    if (count > 1) return true
+  }
+  return false
 }
 
 /** Plan a local textual patch; no filesystem mutation occurs here. */
@@ -535,7 +606,10 @@ export function planQqbotSettingsPatch(patchText, snapshot) {
   try { checked = validateSettingsSnapshot(snapshot) } catch (error) { return { status: 'invalid', reason: errorText(error) } }
   if (typeof patchText !== 'string') return { status: 'failed', reason: 'patch-not-readable' }
   let parsed
-  try { parsed = parseYaml(patchText) } catch (error) { return { status: 'invalid', reason: 'invalid-yaml:' + errorText(error) } }
+  try { parsed = parseYaml(patchText) } catch (error) {
+    if (duplicateTargetNameText(patchText)) return { status: 'conflict', reason: 'duplicate-name' }
+    return { status: 'invalid', reason: 'invalid-yaml:' + errorText(error) }
+  }
   const target = parsedTarget(parsed)
   if (target.kind !== 'ok') return { status: target.kind, reason: target.reason }
   const parts = splitText(patchText)
@@ -677,8 +751,7 @@ function resultForPath(pathInfo, status, extra = {}) {
   }
 }
 
-/** Queue API and internal/update share one serialized synchronizer. */
-/** Queue API and internal/update share one serialized synchronizer. */
+// Queue API 与 internal/update 共用同一串行同步器。
 function webDocumentPath(documentPath, pathInfo) {
   const direct = rootFromDocumentPath(documentPath)
   if (direct.kind === 'valid') return direct.path
@@ -750,7 +823,7 @@ export function createQqbotSettingsSynchronizer(options = {}) {
     for (const profile of scanned.profiles) {
       const profileDir = join(pathInfo.profilesRoot, profile)
       const written = writeQqbotSettingsPatch(profileDir, snapshot, options)
-      profiles.push({ profile, status: written.status === 'applied' || written.status === 'idempotent' ? written.status : 'failed', ...written })
+      profiles.push({ ...written, profile })
     }
     const webAfter = associated ? patchDiagnostic(webPath, undefined) : undefined
     const webDrift = associated && webAfter.patchSha256 !== webBefore.patchSha256

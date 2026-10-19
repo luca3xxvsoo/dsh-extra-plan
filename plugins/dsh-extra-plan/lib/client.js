@@ -20,7 +20,7 @@ window.__ModuleLoader__.load({
       plannerPromptSuffix: "pro规划 | 额外引导",
       exploreBudget: "pro规划 | 探查额度",
       otherAgentModel: "其他子代理 | 使用模型",
-      anchoredBootstrap: "anchored开关",
+      anchoredBootstrap: "首轮引导开关",
       creativeMode: "创造模式开关",
       runcodeCatchGate: "run_code 容错检查",
       webFetch: "web_fetch开关",
@@ -34,8 +34,8 @@ window.__ModuleLoader__.load({
       loading: "加载中…",
       unavailable: "该配置命名空间当前未由宿主提供，暂时无法编辑。",
       readOnly: "本部署的设置为只读。",
-      trueValue: "True",
-      falseValue: "False"
+      trueValue: "开启",
+      falseValue: "关闭"
     };
 
     const en = {
@@ -69,7 +69,7 @@ window.__ModuleLoader__.load({
     // 字段顺序、校验与 descriptor 合同保持一份；两项宿主设置也在同一 ConfigForms mutate 中提交。
     const EXTRA_FIELDS = Object.freeze([
       { key: "anchoredBootstrap", control: "select", options: [true, false], locale: "anchoredBootstrap", section: "general", hint: "首轮极简工具 + 提示词 ｜ 新会话/新子代理生效" },
-      { key: "creativeMode", control: "select", options: [true, false], locale: "creativeMode", section: "general", hint: "是否开启dsh官方创造模式 ｜ 重启生效" },
+      { key: "creativeMode", control: "select", options: [true, false], locale: "creativeMode", section: "general", hint: "是否开启dsh官方创造模式 ｜ 立即生效" },
       { key: "runcodeCatchGate", control: "select", options: [true, false], locale: "runcodeCatchGate", section: "general", hint: "PTC模式下，增加每个工具调用需要try catch的闸门。通过限制+建议的模式保障仅单个调用报错 ｜ 立即生效" },
       { key: "crossProviderPlannerModel", control: "select", options: [true, false], locale: "crossProviderPlannerModel", section: "pro", hint: "允许跨提供方选择模型。开启时将以 其他提供方 - 主会话提供方 - deepseek官方 的顺序，获取可用模型。关闭时仅从主会话提供方获取。默认关闭 ｜ 新会话/新子代理生效" },
       { key: "plannerModel", control: "text", locale: "plannerModel", section: "pro", hint: "pro规划默认使用模型。未匹配/置空时：使用主会话模型 ｜ 新会话/新子代理生效" },

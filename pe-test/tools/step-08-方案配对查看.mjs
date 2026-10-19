@@ -2,7 +2,7 @@
 // 用法: node step-08-方案配对查看.mjs [sessions-dir|会话目录名|路径]
 import fs from 'node:fs'
 import path from 'node:path'
-import { framesOf, decodeText } from '../_shared/zstd-frames.mjs'
+import { decodedJsonlLines } from '../_shared/zstd-frames.mjs'
 import { findSession } from '../_shared/session-finder.mjs'
 import { toolResultOf, v4LogPath } from '../_shared/v4-tool-result.mjs'
 
@@ -15,26 +15,43 @@ for (const dir of found.dirs) {
   console.log(`===== ${dir} =====`)
   const lp = v4LogPath(path.join(found.base, dir)); if (!lp) { invalidLog = true; console.error('仅支持 v4 会话日志：目标日志必须是 session.v4.jsonl.zstd：', path.join(found.base, dir)); continue }
   const buf = fs.readFileSync(lp)
-  const lines = []
-  for (const f of framesOf(buf)) lines.push(...decodeText(buf, f).split('\n'))
   const calls = new Map()
-  for (let i = 0; i < lines.length; i++) {
-    let ev
-    try { ev = JSON.parse(lines[i]) } catch { continue }
-    if (ev.type === 'tool/call' && ev.data?.name === 'save_plan') {
-      const callId = ev.data.callId
-      let keys = []
-      try { keys = Object.keys(JSON.parse(ev.data.arguments)) } catch {}
-      console.log(`L${i + 1} save_plan CALL id=${callId} 参数键=[${keys.join(',')}]`)
-      calls.set(callId, i + 1)
-    } else if (ev.type === 'tool/result') {
-      const result = toolResultOf(ev)
-      if (result !== null && calls.has(result.callId)) {
-        calls.delete(result.callId)
-        const txt = (result.text || '<无 text block>').slice(0, 160)
-        console.log(`  → L${i + 1} 结果 ${result.isError ? 'ERROR' : 'OK'}: ${txt}`)
+  let recordCount = 0
+  try {
+    for (const { lineNo, line: raw } of decodedJsonlLines(buf)) {
+      const line = raw.trim()
+      if (!line) continue
+      let ev
+      try {
+        ev = JSON.parse(line)
+      } catch (error) {
+        invalidLog = true
+        console.error('INCOMPLETE L' + lineNo + ' invalid JSON: ' + (error instanceof Error ? error.message : String(error)))
+        continue
+      }
+      recordCount += 1
+      if (ev.type === 'tool/call' && ev.data?.name === 'save_plan') {
+        const callId = ev.data.callId
+        let keys = []
+        try { keys = Object.keys(JSON.parse(ev.data.arguments)) } catch {}
+        console.log('L' + lineNo + ' save_plan CALL id=' + callId + ' 参数键=[' + keys.join(',') + ']')
+        calls.set(callId, lineNo)
+      } else if (ev.type === 'tool/result') {
+        const result = toolResultOf(ev)
+        if (result !== null && calls.has(result.callId)) {
+          calls.delete(result.callId)
+          const txt = (result.text || '<无 text block>').slice(0, 160)
+          console.log('  → L' + lineNo + ' 结果 ' + (result.isError ? 'ERROR' : 'OK') + ': ' + txt)
+        }
       }
     }
+  } catch (error) {
+    invalidLog = true
+    console.error('INCOMPLETE ' + (error instanceof Error ? error.message : String(error)))
+  }
+  if (recordCount === 0) {
+    invalidLog = true
+    console.error('INCOMPLETE no JSON records')
   }
   for (const [callId, at] of calls) {
     unmatchedCount += 1

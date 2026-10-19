@@ -120,7 +120,7 @@ export const decisions = {
 export const name = 'extra-plan'
 export const inject = ['systemPrompt']
 
-import { mkdirSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync, appendFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PROBE_LIMITS, sanitizeTaskName, timestamp, renderSavePlan, renderSaveProbe, renderProbeMarkdown, extractProbeEvidenceRefs } from './lib/save-contract.js'

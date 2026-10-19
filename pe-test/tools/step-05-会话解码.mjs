@@ -3,7 +3,7 @@
 //       设置环境变量 SESSION_ID=<会话ID>（uuid / session-uuid / 目录名皆兼容）按 ID 精确定位（主会话连带其子会话）
 import fs from 'node:fs'
 import path from 'node:path'
-import { framesOf, decodeText } from '../_shared/zstd-frames.mjs'
+import { decodedJsonlLines } from '../_shared/zstd-frames.mjs'
 import { findSession, logPath } from '../_shared/session-finder.mjs'
 import { createOutput, summarizeValue } from '../_shared/test-output.mjs'
 
@@ -29,20 +29,24 @@ for (const dir of found.dirs) {
   console.log(`\n===== 会话 ${dir} =====`)
   const lp = logPath(path.join(found.base, dir)); if (!lp) { console.error('会话日志文件不存在（三代候选名均未命中）:', path.join(found.base, dir)); continue }
   const buf = fs.readFileSync(lp)
-  const frames = framesOf(buf)
-  let lineNo = 0
+  let incompleteReasons = []
+  let recordCount = 0
   const types = {}
   const presetEvents = []
   const planEvents = []
   const headers = []
-  for (const f of frames) {
-    const text = decodeText(buf, f)
-    for (const raw of text.split('\n')) {
-      lineNo++
+  try {
+    for (const { lineNo, line: raw } of decodedJsonlLines(buf)) {
       const line = raw.trim()
       if (!line) continue
       let ev
-      try { ev = JSON.parse(line) } catch { continue }
+      try {
+        ev = JSON.parse(line)
+      } catch (error) {
+        incompleteReasons.push('L' + lineNo + ' invalid JSON: ' + (error instanceof Error ? error.message : String(error)))
+        continue
+      }
+      recordCount += 1
       const t = ev.type
       const keys = Array.isArray(t) ? t : [t]
       for (const k of keys) { const s = String(k); types[s] = (types[s] || 0) + 1 }
@@ -56,7 +60,10 @@ for (const dir of found.dirs) {
         headers.push({ line: lineNo, model: h.config && h.config.model, ntools: Array.isArray(h.tools) ? h.tools.length : 0 })
       }
     }
+  } catch (error) {
+    incompleteReasons.push(error instanceof Error ? error.message : String(error))
   }
+  if (recordCount === 0) incompleteReasons.push('no JSON records')
   console.log('事件类型计数：', JSON.stringify(types))
   if (output.mode === 'full') {
     console.log('--- agent-preset 相关事件 ---')
@@ -75,4 +82,8 @@ for (const dir of found.dirs) {
   }
   console.log('--- request/header 摘要 ---')
   for (const e of headers) console.log(`L${e.line} model=${e.model} tools=${e.ntools}`)
+  if (incompleteReasons.length > 0) {
+    console.log('INCOMPLETE ' + incompleteReasons.join('; '))
+    process.exitCode = 1
+  }
 }

@@ -89,13 +89,14 @@ function isEnvAssignment(word) {
   return /^[A-Za-z_][A-Za-z0-9_]*=/.test(word)
 }
 
-// 块头关键字（整词等值比较，区分大小写）：其后应跟块体左花括号，块体内恢复命令位。
+// 块头关键字按 shell 语法比较：PowerShell 不区分大小写，bash 保留区分大小写；其后应跟块体左花括号。
 const SHELL_BLOCK_HEAD_WORDS = new Set(['try', 'catch', 'finally', 'if', 'elseif', 'else', 'foreach', 'for', 'while', 'do', 'switch'])
 // 段首块关键字（整词等值比较）：以段首形式出现、其后不跟花括号，其后仍是命令位。
 const SHELL_BLOCK_SEGMENT_WORDS = new Set(['then', 'do', 'else', 'elif', 'fi', 'done', 'esac', 'in'])
 
 export function mutationTextMatches(text, syntaxRe, bareRe, depth) {
   if (text === '' || depth >= 4) return false
+  const isPowerShell = syntaxRe === PWSH_MUTATION || bareRe === PWSH_BARE_WORDS
   if (syntaxRe.test(text)) return true
   const segs = text.split(/[;\r\n]|\s*&&\s*|\s*\|\|\s*|\s*\|\s*|\s*&\s*/)
   for (const seg of segs) {
@@ -157,8 +158,9 @@ export function mutationTextMatches(text, syntaxRe, bareRe, depth) {
         // 段首块关键字先于块头关键字判定：do/else 同属两集合，而它们后面通常直接跟命令
         // （bash 的 while true; do touch f; done、if …; else rm x; fi），按块头处理会把
         // 其后整段命令吞掉漏拦；两者都只把后面的词留在命令位。
-        if (SHELL_BLOCK_SEGMENT_WORDS.has(word)) { index += 1; continue }
-        if (SHELL_BLOCK_HEAD_WORDS.has(word)) { blockPending = true; index += 1; continue }
+        const blockWord = isPowerShell ? word.toLowerCase() : word
+        if (SHELL_BLOCK_SEGMENT_WORDS.has(blockWord)) { index += 1; continue }
+        if (SHELL_BLOCK_HEAD_WORDS.has(blockWord)) { blockPending = true; index += 1; continue }
         if (bareRe.test(word)) return true
         expectCommand = false
         index += 1

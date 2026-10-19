@@ -62,7 +62,7 @@ PTC C=0/C=1 必须各用干净 A=1 顶层会话取 F→首个 tool/call→L→�
 
 ## ⑪ 回传、展示与批准
 
-主会话用 `read` 读取方案和验收文件，**原样展示给用户，不改写、不润色**，再发批准 ask。批准 ask 仍为两问：第一问取当前批准/转规划/否决词，第二问是纯文本“修改意见”。批准词进入 ⑫，转规划词回到规划，否决词回到 ⑦。
+主会话用 `read` 读取方案和验收文件，核对任务、文件、修改内容与用户意图，再总结为“文件/修改内容/有无验收”表向用户展示，不要求原样全文展示，随后发批准 ask。批准 ask 仍为两问：第一问取当前批准/转规划/否决词，第二问是纯文本“修改意见”。批准词进入 ⑫，转规划词回到规划，否决词回到 ⑦。
 
 ## ⑫ 执行
 
@@ -84,9 +84,9 @@ PTC C=0/C=1 必须各用干净 A=1 顶层会话取 F→首个 tool/call→L→�
 
 ## ⑭ 地图维护与收口
 
-所有修改完成后，主会话运行 `node pe-test/tools/代码地图生成.mjs`，检查 stdout 的新增/删除/行号提示；只补人工意图/描述，不手改机器路径、函数、行号和同名顺序；再运行 `--check`。修改来自执行者时也必须由主会话完成这一步。
+所有修改完成后、最终冻结前，主会话运行 `node pe-test/tools/代码地图生成.mjs`，检查 stdout 的新增/删除/行号提示；只补人工意图/描述，不手改机器路径、函数、行号和同名顺序；再运行 `--check`。地图生成与人工描述复核必须在最终冻结前完成；正式验收阶段只运行地图 `--check`，避免生成时间戳使冻结指纹漂移。修改来自执行者时也必须由主会话完成这一步。
 
-固定仓库回归顺序：实际修改的 JS/MJS 逐文件 `node --check`，package JSON `JSON.parse`，生成 hookSource 展开后 ESM 解析回放 → step-01 设置页配置 → 安装同步 → QQBot 安装映射 → 预设完整性 → step-00 全流程/跨平台 → step-04 路由与 context-gate → step-06-08 → step-06 → `generate-runtime-defaults.mjs --check` → 代码地图生成 → 人工描述复核 → 地图 `--check` → 一键 step。Markdown 不伪造 `node --check` 结果，SKIP/INCOMPLETE/HUMAN/NOT-RUN 不计 PASS。
+固定仓库回归顺序：实际修改的 JS/MJS 逐文件 `node --check`，package JSON `JSON.parse`，生成 hookSource 展开后 ESM 解析回放 → step-01 设置页配置 → 安装同步 → QQBot 安装映射 → 预设完整性 → step-00 全流程/跨平台 → step-04 路由与 context-gate → step-06-08 → step-06 → `generate-runtime-defaults.mjs --check` →（冻结前）代码地图生成 → 人工描述复核 → 地图 `--check` → 一键 step。Markdown 不伪造 `node --check` 结果，SKIP/INCOMPLETE/HUMAN/NOT-RUN 不计 PASS。
 
 ## P2-2 执行口径
 

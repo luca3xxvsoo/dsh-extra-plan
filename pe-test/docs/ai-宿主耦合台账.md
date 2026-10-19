@@ -8,9 +8,9 @@
 |:--|:--|:--|
 | DSH | `0.2.1-rc.2` | 单一声明范围（`engines.dsh` 与三项 @deepseek-ai peer 同值）；旧版兼容见旧版分支，不再声明也不设兼容开关 |
 | QQBot 目标 | `0.5.0` | 静态目标，不等于集成通过 |
-| 核心插件 | `dsh-extra-plan` `0.3.0` | 当前包契约；仓库子目录安装路径不变 |
+| 核心插件 | `dsh-extra-plan` `1.6.0` | 当前包契约；仓库子目录安装路径不变 |
 | QQBot 精简插件 | `dsh-extra-plan-qqbot` `2.0.0` | 仓库子目录为 plugins/dsh-extra-plan-qqbot；仍有 postinstall（安装后脚本）；allow-build 是否放行待 HUMAN |
-| 预设载体 | `dsh-extra-plan-settings` 全局管理行 + 内部纯 definition（主 1 + 角色 4） | `dsh.bundle.patch` 只装载一行；旧 `extra-plan-preset-sync` / `preset-extra-plan` 仅 raw patch 非破坏读取迁移，`./preset-sync` 与 locale exports 已退役；官方 adapter 由 settings owner 内部顺序挂载 5 个 definition（主在前、角色 101..104 在后，任一角色失败整体回滚） |
+| 预设载体 | `dsh-extra-plan-settings` 全局管理行 + 内部纯 definition（主 1 + 角色 4） | `dsh.bundle.patch` 只装载一行；旧 `extra-plan-preset-sync` / `preset-extra-plan` 仅 raw patch 非破坏读取迁移，`./preset-sync` 与 locale exports 已退役；官方 adapter 由 settings owner 内部按主在前、角色 101..104 在后的顺序尝试挂载 5 个 definition；旧行参与结构指纹与 adapter 诊断而非抑制挂载，同 ID 可能装载失败，任一角色失败整体回滚；真实相遇效果仍 HUMAN |
 | 状态判读 | `【已核实】` 表示台账静态/源码核对；`【未核实】`、`HUMAN`、`SKIP` 不得改为通过 | 当前台账纪律 |
 
 ### 单版本基线与证据口径
@@ -44,7 +44,7 @@
 | HS4 | `live-config.js` 路径决议 | `configPath → DSH_EXTRA_PLAN_CONFIG_PATH → configEditor.documentPath`；不读旧预设目录 | 【已核实·静态】 |
 | HS5 | `settings.js` owner → `preset-sync.js` `configEditor.edit` | 旧值迁移/补齐只 edit 唯一全局行；合法十项与 gateWords 重述不丢键；当前非法 gateWords/非法 PUT 先失败且零 edit，插件不直写 patch | 【已核实·静态+专项】 |
 | HS6 | `preset-definition.generated.yml` | 纯 definition 的 id/name/description/order/plugins；由生成器维护，preset-sync 交官方 adapter | 【已核实·静态】 |
-| HS8 | `executor-spawn.js` `subagents.registerProvider` | 薄委托层保留可执行（lib 与 `./executor-spawn` export 均在），但 0.2.1 不再对 worker 应用 deny 注入，故注入失效；provider 引用计数幂等与稳定槽键语义不变 | 【已核实·静态；失效面已记录】 |
+| HS8 | `executor-spawn.js` `subagents.registerProvider` | 薄委托层保留可执行（lib 与 `./executor-spawn` export 均在），但 0.2.1 起旧 worker deny 注入已退役；provider 引用计数幂等与稳定槽键语义不变 | 【已核实·静态；失效面已记录】 |
 | HS9 | executor `delegate/getProvider` | 默认 delegate 与 providerName 解析仍可装载；当前无 worker 行引用（workflow-ptc/tool-ralph 段已注释） | 【已核实·静态】 |
 | HS10 | executor `toolFilter.deny`（历史面） | 0.2.1 起 worker 不再接收 deny 注入；角色的「不可见」改由角色预设不挂对应工具实现（`agent.cordis.yml` 第二文档），executor-spawn 行仅留历史 11 项清单 | 【已核实·静态】 |
 | HS11 | `prepareContinuable` | 能力存在时才透传 continuable；0.2.1 宿主把 descriptor.mode 固定为 continuable，该能力不再是角色判据 | 【已核实·静态】 |
@@ -56,7 +56,7 @@
 | HS17 | `client.js` `__ModuleLoader__` | loader id 必须与包名/组合图一致 | 【已核实·静态】 |
 | HS18 | `client.js` `require("react")` | 共享 client module 提供 React | 【已核实·静态】 |
 | HS19 | locale bind/register（语言环境绑定/注册） | 包级与行级 locale 通道 | 【已核实·静态】 |
-| HS20 | client.js 同页配置注册面 | 仅注册 `plugins.detail.section`（order 100，设置表单自绘标题渲染于 bundle 详情页行列表之后）；实时检查 bundle.config 槽并让位；不注册 `plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`；ConfigForms 通过稳定 namespace 快照订阅并一次 mutate，SettingsCard 固定 page 形态 | 【已核实·静态+专项；四版本同页 HUMAN 待复测】 |
+| HS20 | client.js 同页配置注册面 | 仅注册 `plugins.detail.section`（order 100，设置表单自绘标题渲染于 bundle 详情页行列表之后）；实时检查 bundle.config 槽并让位；不注册 `plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`；ConfigForms 通过稳定 namespace 快照订阅并一次 mutate，SettingsCard 固定 page 形态 | 【已核实·静态+专项；0.2.1-rc.2 同页 HUMAN 待复测】 |
 | HS21 | `client.js` `esp-*` | 本插件自持样式；不依赖旧宿主 CSS hash | 【已核实·静态】 |
 | HS22 | 主题 token | 颜色/可读性依赖主题变量名 | 【已核实·静态】 |
 | HS23 | settings 内部 client-carrier | 官方 Loader Group 创建唯一 pathLike child，随 settings 生命周期同步移除并触发 client graph/HMR 更新；同步队列关闭时不启动新 edit/adapter，在途 adapter 结算后恰一次释放 | 【已核实·静态+deferred/Loader专项】 |
@@ -84,7 +84,7 @@
 
 | 场景 | 允许动作 | 禁止/失败语义 | 状态 |
 |:--|:--|:--|:--|
-| 首次启动 | 读取/迁移 settings、构造 17 条纯 definition；无旧 owner 时官方 AgentPreset register=1 | 不是每次保存的前置；旧 owner 活动时不抢占、不编辑、不删除 | 【已核实·专项】 |
+| 首次启动 | 读取/迁移 settings、构造 17 条纯 definition；官方 AgentPreset 主预设 register=1 仅表示主 definition 一次注册，同轮按主 1 份 + 角色 4 份共 5 份尝试挂载 | 旧 owner/旧行参与结构指纹与 adapter 诊断，不据此抑制挂载；同 ID 可能失败，真实相遇效果仍 HUMAN | 【已核实·专项】 |
 | settings-only | 读取最终完整 10 项 + `gateWords`，settled-only 队列直接交 `profileSync`/QQBot | **no-remount**：adapter register/dispose/rebuild 均不得发生；不调用、不等待、不 dispose 官方 AgentPreset | 【已核实·专项】 |
 | structuralHandoff | 仅非 settings 声明结构变化或旧 owner ↔ 官方 transition 才进入 adapter/structural 队列 | 与 settled-only 分离；adapter failure/reject/hang 不得撤销 Web 或阻断 QQBot 同步 | 【已核实·专项】 |
 | profileSync | 初始 `pending=true`，terminal 后 `pending=false`；记录真实 `synced/not-installed/unavailable/failed/partial` | 禁止 `pending/pending=false`、双端成功伪造或用 adapter register 充当保存成功条件 | 【已核实·专项】 |
@@ -114,7 +114,7 @@
 | HK16 | `!!js dshHomePath` | 宿主提供 dshHomePath 与标签 schema | 【已核实·静态】 |
 | HK17 | 四行 tool-subagent | 合法键仅 `provider`/`toolName`/`modelSelectionSettings`/`agentOptions`/`agentPreset`/`allowedAgentPresets`/`maxDepth`；本预设四行各留三键（provider/toolName/agentPreset）并指向 4 个角色 id；persona/toolFilter 会被宿主抛错、backgroundMode 已无此键 | 【已核实·静态】 |
 | HK28 | 委派工具参数表（0.2.1） | 已无后台标志：subagent/subagent_plan/subagent_review/subagent_probe 恒为立即返回 subagentId 加完成通知；本仓闸门不再判定该参数（后台约束上移宿主层） | 【已核实·静态+两轮矩阵】 |
-| HK18 | executor-spawn 行 | providerName/delegate 仍指向本仓薄委托层（保留可执行），但 0.2.1 下 deny 注入失效；恢复条件见 agent.cordis.yml 注释 | 【已核实·静态】 |
+| HK18 | executor-spawn 行 | providerName/delegate 仍指向本仓薄委托层（保留可执行），但 0.2.1 下旧 deny 注入已退役；恢复条件见 agent.cordis.yml 注释 | 【已核实·静态】 |
 | HK19 | tool-subagent-control 子路径 | 宿主 exports 子路径与行名 | 【已核实·静态】 |
 | HK20 | child 识别与 sandbox floor | `parentSession/origin/delegationDepth` 仍是 child 判据；planner 判据改为 `session.header.agentPreset === 'extra-plan-planner'`（descriptor.mode 恒 continuable，不再参与） | 【已核实·静态+宿主回归】 |
 | HK21 | run-code 子调用识别 | `exec.parent` 是宿主面；`exec.sub` 是本仓合成标记 | 【已核实·静态】 |
@@ -210,7 +210,7 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 ## ⑦ 单版本（0.2.1-rc.2）风险与开放验证
 
 1. isolate 审计：`mountPreset/leakedServices` 对未隔离 root service 抛错；必要/保险名单必须保持 `isolate: true`。
-2. settings 换代：设置表单仅经 `plugins.detail.section` 渲染于当前插件包详情行列表之后（自绘标题），不注册 `plugins.bundle.config`、`plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`，若本包 bundle.config 槽被任何一方注册条目则 detail.section 让位保持唯一表单；ConfigForms 通过稳定 namespace 订阅快照并一次 mutate 十项。settings 行 10 项 Config、API、旧值迁移、内存 definition/adapter 仍是活动后端合同；截至 2026-10-01，四版本同页 UI/A09/A10/A11 仍为 HUMAN 待复测。
+2. settings 换代：设置表单仅经 `plugins.detail.section` 渲染于当前插件包详情行列表之后（自绘标题），不注册 `plugins.bundle.config`、`plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`，若本包 bundle.config 槽被任何一方注册条目则 detail.section 让位保持唯一表单；ConfigForms 通过稳定 namespace 订阅快照并一次 mutate 十项。settings 行 10 项 Config、API、旧值迁移、内存 definition/adapter 仍是活动后端合同；截至 2026-10-01，0.2.1-rc.2 同页 UI/A09/A10/A11 仍为 HUMAN 待复测。
 3. profile patch 载体：旧 `.agent-presets` 无读取方；`compatibility.json`/peer 门控可能使 bundle skipped、loader disabled；QQBot 仍有 allow-build/postinstall 欠账。
 4. 包/服务换代：workflow-ptc/tool-workflow/tool-ralph 三段在作者源里已注释（暂不挂载，恢复条件见 agent.cordis.yml）；`ptcRuntime` 服务名、tool:cordis 只注册两项只读工具、`bundledSkillDir`（配 `watch:false`；旧 `customSkillDirs` 已删）必须按当前真值核对。
 5. rc.2 单侧风险：`sanitizeProfile` 整体搬移 patch、`configEditor.edit` 值等于继承层删行；0.2.1-rc.2 是当前唯一目标，旧版现场不再保留、不能推出跨代结论。
@@ -285,7 +285,7 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 - `native` 开头的会话切到 `ptc` 并重启后，resume 该会话的每一轮请求都以 400 被拒，上游原文为 `tools: at least one tool must have defer_loading=false. All tools cannot be deferred.`（code `INVALID_REQUEST`；宿主只透传上游 message，不做本地校验）。
 - 同配置下**新开会话**正常：工具面只有 `run_code` 且不带 defer 标记，可正常回答。
 - 把 mode 切回 `native` 并重启后，该原会话恢复（投影回到 25 个直呼工具、零 deferred）。
-- 边界：本条只约束 `toolPresentationMode` 切换；`runcodeCatchGate`（U9）与 `pe-test/docs/ai-实机闸门测试流程.md` 7.6 的 `gateWords` 定制是热读/词表面，**不重启、不新开会话**，不在本契约内。
+- 边界：本条只约束 `toolPresentationMode` 切换；`creativeMode` 属 8 项热读；`runcodeCatchGate`（U9）继续热读、无需重启/新开会话，`gateWords` 则在 apply 时捕获，改词需重启 Harness（不因词表切换要求新开会话），均不改变本契约。
 
 **二、机制链**
 

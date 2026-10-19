@@ -1,5 +1,6 @@
 // extra-plan 预设静态校验：只读工作区模板，不访问生产 DSH_HOME。
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -282,7 +283,7 @@ const packageFiles = Array.isArray(packageJson.files) ? packageJson.files : []
 const qqbotExports = qqbotPackageJson.exports !== null && typeof qqbotPackageJson.exports === 'object' ? qqbotPackageJson.exports : {}
 const qqbotFiles = Array.isArray(qqbotPackageJson.files) ? qqbotPackageJson.files : []
 check('B2 package files/scripts 含生成器、generate 与 prepack', packageFiles.includes('scripts/generate-runtime-defaults.mjs') && packageJson.scripts['generate:runtime-defaults'] === 'node scripts/generate-runtime-defaults.mjs' && packageJson.scripts.prepack === 'node scripts/generate-runtime-defaults.mjs', true)
-check('M1 核心 manifest name/version/repository/client/deps/patch/private 契约', packageJson.name === 'dsh-extra-plan' && packageJson.version === '0.3.0' && packageJson.repository === 'git+https://github.com/luca3xxvsoo/dsh-extra-plan.git' && packageJson.dsh?.bundle?.patch === './cordis.patch.yml' && packageJson.dsh?.client?.platform === 'web' && Array.isArray(packageJson.dsh?.client?.inject) && packageJson.dependencies?.['js-yaml'] === '^4.2.0' && !Object.prototype.hasOwnProperty.call(packageJson, 'private') && !JSON.stringify(packageJson).includes('@local/dsh-extra-plan'))
+check('M1 核心 manifest name/version/repository/client/deps/patch/private 契约', packageJson.name === 'dsh-extra-plan' && packageJson.version === '1.6.0' && packageJson.repository === 'git+https://github.com/luca3xxvsoo/dsh-extra-plan.git' && packageJson.dsh?.bundle?.patch === './cordis.patch.yml' && packageJson.dsh?.client?.platform === 'web' && Array.isArray(packageJson.dsh?.client?.inject) && packageJson.dependencies?.['js-yaml'] === '^4.2.0' && !Object.prototype.hasOwnProperty.call(packageJson, 'private') && !JSON.stringify(packageJson).includes('@local/dsh-extra-plan'))
 check('M2 核心 engines.dsh 与三项 @deepseek-ai peer 同为 0.2.1-rc.2', packageJson.engines?.dsh === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/dsh'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/dsh-llm'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/dsh-agent-preset'] === TARGET_PEER_RANGE)
 check('M2 核心 exports/files 保持所需子路径与 peer 范围', packageJson.exports?.['.'] === './index.js' && packageJson.exports?.['./settings'] === './lib/settings.js' && packageJson.exports?.['./executor-spawn'] === './lib/executor-spawn.js' && packageFiles.includes('index.js') && packageFiles.includes('lib/') && packageFiles.includes('locale/') && packageFiles.includes('cordis.patch.yml') && packageJson.peerDependencies?.['@deepseek-ai/dsh'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/dsh-llm'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/dsh-agent-preset'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/schemastery'] === '~3.18.4')
 check('M3 QQBot manifest name/version/exports/files/dependency/postinstall/patch/private 契约', qqbotPackageJson.name === 'dsh-extra-plan-qqbot' && qqbotPackageJson.version === '2.0.0' && qqbotExports['.'] === './index.js' && qqbotExports['./cordis.patch.yml'] === './cordis.patch.yml' && qqbotExports['./package.json'] === './package.json' && JSON.stringify(qqbotFiles) === JSON.stringify(['index.js', 'cordis.patch.yml', 'lib/', 'scripts/']) && qqbotPackageJson.dependencies?.['js-yaml'] === '^4.2.0' && qqbotPackageJson.scripts?.postinstall === 'node scripts/heal.mjs' && qqbotPackageJson.dsh?.bundle?.patch === './cordis.patch.yml' && !Object.prototype.hasOwnProperty.call(qqbotPackageJson, 'private') && !JSON.stringify(qqbotPackageJson).includes('@local/dsh-qqbot-user-questions'))
@@ -380,6 +381,112 @@ try {
   }
 } finally {
   rmSync(generatorFixture, { recursive: true, force: true })
+}
+
+// G5 任务11：六产物真实暂存/发布/有限回滚夹具；所有输出只在临时 fixture，作者源与仓库生成物不写。
+const g5PublishFixture = mkdtempSync(join(tmpdir(), 'dsh-runtime-publish-g5-'))
+try {
+  const outputDir = join(g5PublishFixture, 'outputs')
+  const outputPath = join(outputDir, 'preset-defaults.generated.js')
+  const definitionOutputPath = join(outputDir, 'preset-definition.generated.yml')
+  const roleDefinitionDir = join(outputDir, 'roles')
+  const rolePaths = ROLE_IDS.map((roleId) => roleDefinitionFile(roleId, roleDefinitionDir))
+  const publishPaths = [outputPath, definitionOutputPath, ...rolePaths]
+  const publishOptions = { sourcePath: file, outputPath, metaSourcePath: presetFile, definitionOutputPath, roleDefinitionDir }
+  const publishSnapshot = (paths, includeMtime = true) => paths.map((path) => {
+    const bytes = readFileSync(path)
+    return { path, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), ...(includeMtime ? { mtimeMs: statSync(path).mtimeMs } : {}) }
+  })
+  const publishAuxiliary = (root) => {
+    if (!existsSync(root)) return []
+    const out = []
+    const visit = (dir) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name)
+        if (entry.isDirectory()) visit(path)
+        else if (entry.name.includes('.tmp-') || entry.name.includes('.bak-')) out.push(path)
+      }
+    }
+    visit(root)
+    return out
+  }
+  let initialError = null
+  try { generateRuntimeDefaults(publishOptions) } catch (error) { initialError = error }
+  check('G5 临时 fixture 正常生成完整六产物', initialError === null && publishPaths.every((path) => existsSync(path)), true)
+  const initialPublishSnapshot = publishSnapshot(publishPaths)
+  let checkError = null
+  try { generateRuntimeDefaults({ ...publishOptions, check: true }) } catch (error) { checkError = error }
+  check('G5 check=true 六产物字节/mtime不变且无辅助残留', checkError === null && JSON.stringify(initialPublishSnapshot) === JSON.stringify(publishSnapshot(publishPaths)) && publishAuxiliary(g5PublishFixture).length === 0, true)
+
+  // 用不同于新渲染内容的旧字节，避免遗漏恢复时仍因新旧相同而通过。
+  for (const [index, path] of publishPaths.entries()) writeFileSync(path, 'ORIGINAL-G5-SENTINEL-' + index + '\n', 'utf8')
+  const sentinelSnapshot = publishSnapshot(publishPaths, false)
+  check('G5 六份旧哨兵彼此不同且不同于新生成内容', new Set(sentinelSnapshot.map((item) => item.sha256)).size === 6 && sentinelSnapshot.every((item, index) => item.sha256 !== initialPublishSnapshot[index].sha256), true)
+  const stageBefore = publishSnapshot(publishPaths, false)
+  let stageError = null
+  let stageWrites = 0
+  try {
+    generateRuntimeDefaults({ ...publishOptions, fsOps: {
+      writeFileSync(...args) {
+        stageWrites += 1
+        if (stageWrites === 2) throw new Error('stage-two')
+        return writeFileSync(...args)
+      },
+    } })
+  } catch (error) { stageError = error }
+  check('G5 第二产物暂存失败保留首错/阶段且恢复全部旧字节', stageError !== null && stageError.message.includes('stage-two') && stageError.message.includes('阶段=暂存第2') && JSON.stringify(stageBefore) === JSON.stringify(publishSnapshot(publishPaths, false)) && publishAuxiliary(g5PublishFixture).length === 0, true)
+
+  const renameBefore = publishSnapshot(publishPaths, false)
+  let renameError = null
+  let renameCount = 0
+  try {
+    generateRuntimeDefaults({ ...publishOptions, fsOps: {
+      renameSync(...args) {
+        renameCount += 1
+        if (renameCount === 3) throw new Error('rename-third')
+        return renameSync(...args)
+      },
+    } })
+  } catch (error) { renameError = error }
+  check('G5 第三产物发布失败保留首错/阶段并恢复全部旧字节', renameError !== null && renameError.message.includes('rename-third') && renameError.message.includes('阶段=发布第3') && JSON.stringify(renameBefore) === JSON.stringify(publishSnapshot(publishPaths, false)) && publishAuxiliary(g5PublishFixture).length === 0, true)
+
+  rmSync(outputDir, { recursive: true, force: true })
+  let absentError = null
+  let absentRenameCount = 0
+  try {
+    generateRuntimeDefaults({ ...publishOptions, fsOps: {
+      renameSync(...args) {
+        absentRenameCount += 1
+        if (absentRenameCount === 3) throw new Error('rename-third-absent')
+        return renameSync(...args)
+      },
+    } })
+  } catch (error) { absentError = error }
+  check('G5 原先缺席目标发布失败保留缺席状态且无辅助残留', absentError !== null && absentError.message.includes('rename-third-absent') && publishPaths.every((path) => !existsSync(path)) && publishAuxiliary(g5PublishFixture).length === 0, true)
+
+  rmSync(outputDir, { recursive: true, force: true })
+  generateRuntimeDefaults(publishOptions)
+  let recoveryError = null
+  let recoveryCopyCount = 0
+  let recoveryRenameCount = 0
+  try {
+    generateRuntimeDefaults({ ...publishOptions, fsOps: {
+      copyFileSync(...args) {
+        recoveryCopyCount += 1
+        if (recoveryCopyCount === 7) throw new Error('restore-copy')
+        return copyFileSync(...args)
+      },
+      renameSync(...args) {
+        recoveryRenameCount += 1
+        if (recoveryRenameCount === 3) throw new Error('rename-third-recovery')
+        return renameSync(...args)
+      },
+    } })
+  } catch (error) { recoveryError = error }
+  const recoveryAuxiliary = publishAuxiliary(g5PublishFixture)
+  check('G5 恢复再次失败非成功且保留首错/恢复错/备份路径', recoveryError !== null && recoveryError.message.includes('rename-third-recovery') && recoveryError.message.includes('恢复失败') && recoveryError.message.includes('restore-copy') && recoveryError.message.includes('残留/备份路径') && recoveryAuxiliary.some((path) => path.includes('.bak-')), true)
+} finally {
+  rmSync(g5PublishFixture, { recursive: true, force: true })
 }
 
 const planRow = subagentRows.find((row) => row.config && row.config.toolName === 'subagent_plan')

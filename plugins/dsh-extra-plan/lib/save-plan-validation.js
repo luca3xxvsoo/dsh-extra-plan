@@ -85,7 +85,7 @@ function makeDiagnostic(document, taskId, field, value, message, template) {
 
 function defaultTemplate(field, taskId) {
   const id = Number.isInteger(taskId) ? taskId : 1
-  if (field === '模式') return '- 执行模式：single 或 batch'
+  if (field === '执行模式') return '- 执行模式：single 或 batch'
   if (field === '派遣说明') return '- 派遣说明：先读方案和验收文件；完成后冻结再验收'
   if (field === '验收说明') return '- 验收说明：按检查ID分组复核，漏项不得通过'
   if (field === '任务块' || field === '任务ID') return '[任务' + id + '] 标题 / - 主文件：plugins/example/file.js / - 执行组：G1 / - 依赖：无'

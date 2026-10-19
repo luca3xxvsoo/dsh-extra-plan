@@ -4,7 +4,7 @@
 // （用 --- 分隔多文档；personaPrefix 逐字搬运，extra-plan 行 config 从主 definition 同 id 行逐字复制，
 // plugins 列表末尾固定追加恰一行 tool-presentation，config.mode 取主 definition 同 id 行的默认值）。
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { constants as fsConstants, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SETTING_DEFINITIONS, normalizeSettingValue, parsePresetYaml, resolveTemplateSettingDefault, validateSettingValue } from '../lib/preset-settings.js'
@@ -158,7 +158,7 @@ function mainExtraPlanRowBlock(definitionText) {
   if (nameLine === undefined) throw new Error('主 definition 的 extra-plan 行缺少 name')
   const configIndex = block.findIndex((line) => /^\s*config:$/.test(line))
   if (configIndex === -1) throw new Error('主 definition 的 extra-plan 行缺少 config')
-  return { block, base, configBlock: block.slice(configIndex), configIndex }
+  return { block, configBlock: block.slice(configIndex) }
 }
 
 /** 角色源里某角色的 personaPrefix 折叠块 raw 行（首行为 key 行）。 */
@@ -175,7 +175,6 @@ function personaPrefixBlock(roleText, personaText) {
   for (const index of candidates) {
     const block = rawBlockFrom(lines, index, indentOf(lines[index]))
     const body = block.slice(1)
-    const probe = 'probe' + '\n'
     const text = [
       'x:',
       '  personaPrefix: >-',
@@ -185,7 +184,7 @@ function personaPrefixBlock(roleText, personaText) {
     let parsed
     try { parsed = parsePresetYaml(text) } catch { continue }
     if (parsed !== null && typeof parsed === 'object' && parsed.x !== undefined && parsed.x.personaPrefix === personaText) {
-      return { block, keyIndent, body }
+      return { body }
     }
   }
   throw new Error('角色源 personaPrefix 块与解析值不匹配（' + keyIndent + '）')
@@ -202,7 +201,7 @@ function roleToolsBlock(roleText, roleIndex, roleCount) {
   const index = starts[roleIndex]
   const base = indentOf(lines[index])
   const block = rawBlockFrom(lines, index, base)
-  return { block: block.slice(1), base }
+  return { block: block.slice(1) }
 }
 
 /** 按行 id 深度优先查子行（含 group 行的 config 子行数组），与 preset-sync 的定位口径同形；找不到返回 null。 */
@@ -343,16 +342,144 @@ function assertParses(text, what) {
   }
 }
 
-function writeOrCheck(output, rendered, check, label) {
-  if (check) {
-    if (!existsSync(output)) throw new Error(label + ' missing: ' + output)
-    const existing = readFileSync(output, 'utf8')
-    if (existing !== rendered) throw new Error(label + ' out of date: ' + output)
-    return
-  }
-  mkdirSync(dirname(output), { recursive: true })
-  writeFileSync(output, rendered, 'utf8')
+function checkOutput(output, rendered, label) {
+  if (!existsSync(output)) throw new Error(label + ' missing: ' + output)
+  const existing = readFileSync(output, 'utf8')
+  if (existing !== rendered) throw new Error(label + ' out of date: ' + output)
 }
+
+const DEFAULT_PUBLISH_FS_OPS = Object.freeze({ copyFileSync, existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync })
+let publishSequence = 0
+
+function publishFsOpsOf(overrides) {
+  if (overrides === null || overrides === undefined || typeof overrides !== 'object') return DEFAULT_PUBLISH_FS_OPS
+  return { ...DEFAULT_PUBLISH_FS_OPS, ...overrides }
+}
+
+function errorText(error) {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function uniquePaths(paths) {
+  return [...new Set(paths)]
+}
+
+function cleanupPublishFiles(paths, ops) {
+  const failures = []
+  for (const path of uniquePaths(paths)) {
+    try {
+      if (ops.existsSync(path)) ops.unlinkSync(path)
+    } catch (error) {
+      failures.push(path + '（' + errorText(error) + '）')
+    }
+  }
+  return failures
+}
+
+function restorePublishedEntry(entry, ops) {
+  try {
+    if (entry.originalExists) {
+      if (ops.existsSync(entry.path)) ops.unlinkSync(entry.path)
+      ops.copyFileSync(entry.pathBackup, entry.path, fsConstants.COPYFILE_EXCL)
+      if (!ops.existsSync(entry.path)) throw new Error('恢复后目标未就位：' + entry.path)
+    } else if (ops.existsSync(entry.path)) {
+      ops.unlinkSync(entry.path)
+    }
+    return null
+  } catch (error) {
+    return entry.path + '（' + errorText(error) + '）'
+  }
+}
+
+function publishFailure(stage, original, rollbackErrors, cleanupErrors, remainingPaths) {
+  const details = []
+  if (rollbackErrors.length > 0) details.push('恢复失败：' + rollbackErrors.join('；'))
+  if (cleanupErrors.length > 0) details.push('清理失败：' + cleanupErrors.join('；'))
+  if (remainingPaths.length > 0) details.push('残留/备份路径：' + remainingPaths.join('；'))
+  const failure = new Error('生成链发布失败；阶段=' + stage + '；原始失败=' + errorText(original) + (details.length === 0 ? '' : '；' + details.join('；')))
+  failure.cause = original
+  failure.stage = stage
+  failure.rollbackErrors = rollbackErrors
+  failure.cleanupErrors = cleanupErrors
+  failure.remainingPaths = remainingPaths
+  return failure
+}
+
+function normalizedOutputEntries(entries) {
+  const seen = new Map()
+  return entries.map((entry) => {
+    const path = resolve(entry.path)
+    const previous = seen.get(path)
+    if (previous !== undefined) throw new Error('生成目标重复：' + path + '（' + previous + ' 与 ' + entry.label + '）')
+    seen.set(path, entry.label)
+    return { ...entry, path }
+  })
+}
+
+function publishGeneratedOutputs(entries, fsOps) {
+  publishSequence += 1
+  const suffix = String(process.pid) + '-' + String(Date.now()) + '-' + String(publishSequence)
+  const prepared = entries.map((entry, index) => ({
+    ...entry,
+    tempPath: entry.path + '.tmp-' + suffix + '-' + String(index),
+    pathBackup: entry.path + '.bak-' + suffix + '-' + String(index),
+    originalExists: false,
+  }))
+  const tempPaths = prepared.map((entry) => entry.tempPath)
+  const backupPaths = []
+  const createdTempPaths = []
+  const createdBackupPaths = []
+  const publishAttempts = []
+  const ops = publishFsOpsOf(fsOps)
+  let stage = '准备'
+  try {
+    stage = '暂存'
+    for (let index = 0; index < prepared.length; index += 1) {
+      const entry = prepared[index]
+      stage = '暂存第' + String(index + 1)
+      ops.mkdirSync(dirname(entry.path), { recursive: true })
+      entry.originalExists = ops.existsSync(entry.path)
+      if (entry.originalExists) {
+        backupPaths.push(entry.pathBackup)
+        if (ops.existsSync(entry.pathBackup)) throw new Error('备份文件已存在：' + entry.pathBackup)
+        createdBackupPaths.push(entry.pathBackup)
+        ops.copyFileSync(entry.path, entry.pathBackup, fsConstants.COPYFILE_EXCL)
+      }
+      if (ops.existsSync(entry.tempPath)) throw new Error('临时文件已存在：' + entry.tempPath)
+      createdTempPaths.push(entry.tempPath)
+      ops.writeFileSync(entry.tempPath, entry.content, { encoding: 'utf8', flag: 'wx' })
+    }
+    stage = '发布'
+    for (let index = 0; index < prepared.length; index += 1) {
+      const entry = prepared[index]
+      stage = '发布第' + String(index + 1)
+      publishAttempts.push(entry)
+      if (entry.originalExists) ops.unlinkSync(entry.path)
+      ops.renameSync(entry.tempPath, entry.path)
+      if (!ops.existsSync(entry.path)) throw new Error('发布后目标未就位：' + entry.path)
+    }
+  } catch (original) {
+    const rollbackErrors = []
+    for (let index = publishAttempts.length - 1; index >= 0; index -= 1) {
+      const rollbackError = restorePublishedEntry(publishAttempts[index], ops)
+      if (rollbackError !== null) rollbackErrors.push(rollbackError)
+    }
+    if (rollbackErrors.length > 0) {
+      throw publishFailure(stage, original, rollbackErrors, [], uniquePaths([...tempPaths, ...backupPaths]))
+    }
+    const cleanupErrors = cleanupPublishFiles([...createdTempPaths, ...createdBackupPaths], ops)
+    if (cleanupErrors.length > 0) {
+      throw publishFailure(stage, original, [], cleanupErrors, uniquePaths([...tempPaths, ...backupPaths]))
+    }
+    throw publishFailure(stage, original, [], [], [])
+  }
+  const cleanupErrors = cleanupPublishFiles([...createdTempPaths, ...createdBackupPaths], ops)
+  if (cleanupErrors.length > 0) {
+    const cleanupError = new Error(cleanupErrors.join('；'))
+    throw publishFailure('清理', cleanupError, [], cleanupErrors, uniquePaths([...tempPaths, ...backupPaths]))
+  }
+}
+
 
 /**
  * @param options.sourcePath / outputPath 自定义夹具路径时，默认不触碰仓库 definition 资产。
@@ -392,19 +519,20 @@ export function generateRuntimeDefaults(options = {}) {
     renderedRoles = renderRoleDefinitions(roleText, renderedDefinition)
   }
   const roleOutputs = renderedRoles.map((role) => resolve(roleDefinitionFile(role.roleId, roleDir)))
+  const outputEntries = normalizedOutputEntries([
+    { path: output, content: rendered, label: 'generated output' },
+    ...(definitionOutput === null ? [] : [{ path: definitionOutput, content: renderedDefinition, label: 'generated preset definition' }]),
+    ...renderedRoles.map((role, index) => ({
+      path: roleOutputs[index],
+      content: role.text,
+      label: 'generated role definition ' + role.roleId,
+    })),
+  ])
   if (check) {
-    writeOrCheck(output, rendered, true, 'generated output')
-    if (definitionOutput !== null) writeOrCheck(definitionOutput, renderedDefinition, true, 'generated preset definition')
-    for (let index = 0; index < renderedRoles.length; index += 1) {
-      writeOrCheck(roleOutputs[index], renderedRoles[index].text, true, 'generated role definition ' + renderedRoles[index].roleId)
-    }
+    for (const entry of outputEntries) checkOutput(entry.path, entry.content, entry.label)
     return { source, output, metaSource, definitionOutput, roleSource, roleOutputs, rendered, renderedDefinition, renderedRoles, changed: false }
   }
-  writeOrCheck(output, rendered, false, 'generated output')
-  if (definitionOutput !== null) writeOrCheck(definitionOutput, renderedDefinition, false, 'generated preset definition')
-  for (let index = 0; index < renderedRoles.length; index += 1) {
-    writeOrCheck(roleOutputs[index], renderedRoles[index].text, false, 'generated role definition ' + renderedRoles[index].roleId)
-  }
+  publishGeneratedOutputs(outputEntries, options.fsOps)
   return { source, output, metaSource, definitionOutput, roleSource, roleOutputs, rendered, renderedDefinition, renderedRoles, changed: true }
 }
 

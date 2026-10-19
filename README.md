@@ -62,7 +62,7 @@ dsh plugin --profile qqbot remove dsh-extra-plan-qqbot
 DSH web界面 -> 插件 -> 按需规划模式配置
 
 **通用设置**：
-  - anchored开关：首轮极简工具 + 提示词
+  - 首轮引导开关：首轮极简工具 + 提示词
   - 创造模式开关：是否开启dsh官方创造模式
   - web_fetch开关：是否开启web_fetch
   - 工具呈现模式：工具呈现方式切换（默认/PTC模式），无法进行会话内切换

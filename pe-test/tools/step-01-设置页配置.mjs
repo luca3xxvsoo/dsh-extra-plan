@@ -89,7 +89,7 @@ try { patch = parsePresetYaml(patchText) } catch (error) { console.error('FAIL  
 const { Config } = await import('../../plugins/dsh-extra-plan/lib/settings.js')
 const { createLiveConfig } = await import('../../plugins/dsh-extra-plan/lib/live-config.js')
 const { createGateRuntime, GATE_WORD_FIELDS } = await import('../../plugins/dsh-extra-plan/lib/gate-words.js')
-const { createQqbotSettingsSynchronizer, stableSnapshotHash } = await import('../../plugins/dsh-extra-plan/lib/qqbot-settings-sync.js')
+const { createQqbotSettingsSynchronizer, stableSnapshotHash, planQqbotSettingsPatch, writeQqbotSettingsPatch } = await import('../../plugins/dsh-extra-plan/lib/qqbot-settings-sync.js')
 const { planCanonicalSettingsMigration } = await import('../../plugins/dsh-extra-plan/lib/preset-yaml.js')
 const descriptorKeys = SETTING_DEFINITIONS.map((definition) => definition.key)
 const configDict = Config !== undefined && Config !== null && Config.dict !== undefined && Config.dict !== null ? Config.dict : {}
@@ -101,6 +101,7 @@ check('V03 中英文元数据是全局管理结论级文案', zh.meta.title === 
 check('V03 descriptor 与 Config 字段集合均恰10项且包含两项宿主值', descriptorKeys.length === 10 && configKeys.length === 10 && configKeySetMatches && descriptorKeys.includes('webFetch') && descriptorKeys.includes('toolPresentationMode') && contractText.includes('SETTING_DEFINITIONS = Object.freeze([') && settingsText.includes('SETTING_DEFINITIONS.map') && clientText.includes('const ALL_FIELDS = Object.freeze(EXTRA_FIELDS.concat(HOST_ROW_FIELDS))'))
 check('V02 当前词表严格拒绝、旧值安全解析且不求值', syncText.includes('当前全局 gateWords 非法') && syncText.includes('readLegacyState') && syncText.includes('parsePresetYaml') && !syncText.includes('eval(') && !syncText.includes('Function('))
 check('V05 client 保存有 ready/readonly/draft/saving guard 且失败提示', clientText.includes('!writable') && clientText.includes('draft === null') && clientText.includes('status !== "ready"') && clientText.includes('accepted === true') && clientText.includes('catch'))
+check('G5 中文展示文案与布尔值合同不变', clientText.includes('trueValue: "开启"') && clientText.includes('falseValue: "关闭"') && clientText.includes('anchoredBootstrap: "首轮引导开关"') && clientText.includes('trueValue: "True"') && clientText.includes('falseValue: "False"') && clientText.includes('web_fetch ｜ 重启生效') && clientText.includes('无法进行会话内切换 ｜ 重启生效'))
 const retiredBundleStateFlag = ['bundle', 'Config', 'Registered'].join('')
 check('V05 不注册 bundle.config、仅注册 detail.section 且保留实时让位防御', !clientText.includes('safeInject("plugins.bundle.config"') && clientText.includes('safeInject("plugins.detail.section"') && clientText.includes('hasBundleConfigEntry') && !clientText.includes(retiredBundleStateFlag) && !clientText.includes('props.view') && !clientText.includes('summary'))
 check('V05 detail.section 唯一同页通道、自绘标题与唯一稳定 namespace 表单', clientText.includes('plugins.detail.section') && clientText.includes('ctx.configForms.get(NS)') && clientText.includes('sharedForm.subscribe') && clientText.includes('"data-plugin-section": "dsh-extra-plan-settings-global"') && clientText.includes('.esp-panelTitle') && clientText.includes('.esp-panelHint') && !clientText.includes('plugins.row.config') && !clientText.includes('settings.plugins.tab') && !clientText.includes('plugins.item'))
@@ -535,6 +536,76 @@ function apiSnapshotBodyOk(response, snapshot) {
 const syncValues = { anchoredBootstrap: false, creativeMode: true, webFetch: true, toolPresentationMode: 'ptc', runcodeCatchGate: true, crossProviderPlannerModel: true, plannerModel: 'planner-sync-test', plannerPromptSuffix: 'sync-suffix-test', exploreBudget: 37, otherAgentModel: 'other-sync-test' }
 const syncGateWords = { routeDirect: '甲', routePlan: '乙', routeDisagree: '丙', approvalApprove: '丁', approvalReplan: '戊', purposeRefine: '己', purposeRedo: '庚' }
 const syncSnapshot = { values: syncValues, gateWords: syncGateWords }
+
+// G5 任务11：直接调用QQBot同步修复模块，覆盖新行、既有id-only、冲突零写和fatal汇总。
+const qbotConfigValues = { ...syncValues, gateWords: syncGateWords }
+function qbotSettingsRow(values, options = {}) {
+  const eol = options.eol === undefined ? '\n' : options.eol
+  const lines = [options.override === true ? '- override:' : '- id: dsh-extra-plan-settings']
+  if (options.override === true) lines.push('    id: dsh-extra-plan-settings')
+  if (options.name !== undefined) lines.push((options.override === true ? '    ' : '  ') + 'name: ' + options.name)
+  if (options.metadata === true) lines.push((options.override === true ? '    ' : '  ') + 'metadata: keep')
+  lines.push((options.override === true ? '    ' : '  ') + 'config:')
+  const indent = options.override === true ? '      ' : '    '
+  if (options.extra === true) lines.push(indent + 'customKey: !!js "globalThis.__g5Unknown = true"')
+  for (const key of keys) lines.push(indent + key + ': ' + JSON.stringify(values[key]))
+  lines.push(indent + 'gateWords:')
+  for (const item of GATE_WORD_FIELDS) lines.push(indent + '  ' + item.field + ': ' + JSON.stringify(values.gateWords[item.field]))
+  return lines.join(eol)
+}
+function qbotManagedCaptured(text) {
+  const captured = presetSettings.captureRowSettings(text, SETTING_DEFINITIONS)
+  return { captured, ok: SETTING_DEFINITIONS.every((definition) => captured.states[definition.key] === 'captured') }
+}
+const qbotEmptyPlan = planQqbotSettingsPatch('[]', syncSnapshot)
+const qbotEmptyCaptured = qbotManagedCaptured(qbotEmptyPlan.text || '')
+check('G5 QQBot空patch新增规范name与完整10+7快照', qbotEmptyPlan.status === 'planned' && qbotEmptyPlan.text.includes('name: dsh-extra-plan/settings') && qbotEmptyCaptured.ok && qbotEmptyCaptured.captured.values.plannerModel === syncValues.plannerModel)
+const qbotDirectIdOnly = '# outside comment\r\n' + qbotSettingsRow(qbotConfigValues, { metadata: true, extra: true, eol: '\r\n' }) + '\r\n# trailing comment'
+const qbotDirectPlan = planQqbotSettingsPatch(qbotDirectIdOnly, syncSnapshot)
+const qbotDirectAgain = qbotDirectPlan.text === undefined ? null : planQqbotSettingsPatch(qbotDirectPlan.text, syncSnapshot)
+check('G5 既有同值id-only补name并保留未知字段/CRLF', qbotDirectPlan.status === 'planned' && qbotDirectPlan.text.includes('name: dsh-extra-plan/settings') && qbotDirectPlan.text.includes('customKey: !!js "globalThis.__g5Unknown = true"') && qbotDirectPlan.text.includes('\r\n') && !qbotDirectPlan.text.replace(/\r\n/g, '').includes('\n'))
+check('G5 QQBot补名后二次保存幂等', qbotDirectAgain?.status, 'idempotent')
+const qbotWrongNameText = qbotSettingsRow(qbotConfigValues, { name: 'wrong/name' })
+const qbotDuplicateNameText = '- id: dsh-extra-plan-settings\n  name: wrong/name\n  name: another/name\n  config:\n    plannerModel: ' + JSON.stringify(syncValues.plannerModel) + '\n'
+check('G5 非空错名计划conflict且零文本', planQqbotSettingsPatch(qbotWrongNameText, syncSnapshot).status, 'conflict')
+check('G5 重名计划conflict且零文本', planQqbotSettingsPatch(qbotDuplicateNameText, syncSnapshot).status, 'conflict')
+const foreignDuplicateInputs = [
+  '- override:\n    id: unrelated\n    name: x\n    name: y\n',
+  '- id: unrelated\n  config:\n    id: dsh-extra-plan-settings\n    name: x\n    name: y\n',
+]
+for (const [index, text] of foreignDuplicateInputs.entries()) {
+  const result = planQqbotSettingsPatch(text, syncSnapshot)
+  check('G5 非目标重名保留原始YAML错误 ' + index, result.status === 'invalid' && result.reason.startsWith('invalid-yaml:') && result.text === undefined)
+}
+const qbotNoWriteRoot = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-g5-qqbot-negative-'))
+try {
+  for (const [label, text, expectedReason] of [['wrong-name', qbotWrongNameText, 'settings-row-name-conflict'], ['duplicate-name', qbotDuplicateNameText, 'duplicate-name']]) {
+    const dir = join(qbotNoWriteRoot, label)
+    mkdirSync(dir, { recursive: true })
+    const patch = join(dir, 'cordis.patch.yml')
+    writeFileSync(patch, text, 'utf8')
+    const before = readFileSync(patch)
+    const result = writeQqbotSettingsPatch(dir, syncSnapshot)
+    const after = readFileSync(patch)
+    const aux = readdirSync(dir).filter((name) => name.includes('.bak-dsh-extra-plan-settings-') || name.includes('.tmp-dsh-extra-plan-settings-'))
+    check('G5 ' + label + '实际零写零备份', result.status === 'failed' && result.reason === expectedReason && before.equals(after) && aux.length === 0)
+  }
+  const overridePlan = planQqbotSettingsPatch(qbotSettingsRow(qbotConfigValues, { override: true }), syncSnapshot)
+  check('G5 旧override兼容holder补规范name', overridePlan.status === 'planned' && overridePlan.text.includes('    name: dsh-extra-plan/settings'))
+} finally {
+  rmSync(qbotNoWriteRoot, { recursive: true, force: true })
+}
+const fatalRoot = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-g5-fatal-'))
+try {
+  addAnchoredProfile(fatalRoot, 'fatal-profile', qbotSettingsRow(qbotConfigValues))
+  const fatalFs = { ...fs, copyFileSync() { throw new Error('restore-fault') } }
+  const fatalSync = createQqbotSettingsSynchronizer({ fs: fatalFs, hooks: { beforeFinalVerify() { throw new Error('final-fault') } } })
+  const fatalResult = await fatalSync.enqueue({ env: { DSH_HOME: fatalRoot, DSH_PROFILE: 'web' }, snapshot: syncSnapshot })
+  const fatalProfile = fatalResult.profiles?.[0]
+  check('G5 profile汇总保留profile名称与fatal状态', fatalResult.status === 'failed' && fatalProfile?.profile === 'fatal-profile' && fatalProfile?.status === 'fatal' && fatalProfile?.reason === 'final-fault')
+} finally {
+  rmSync(fatalRoot, { recursive: true, force: true })
+}
 
 function migrationRow(name, config) {
   const lines = ['- id: dsh-extra-plan-settings', '  name: ' + JSON.stringify(name), '  config:']
@@ -1034,15 +1105,32 @@ const hotKeys = ['anchoredBootstrap', 'creativeMode', 'runcodeCatchGate', 'cross
 const hotGetters = { anchoredBootstrap: 'anchoredBootstrap', creativeMode: 'creativeMode', runcodeCatchGate: 'runcodeCatchGate', crossProviderPlannerModel: 'crossProviderPlannerModel', plannerModel: 'plannerModel', plannerPromptSuffix: 'plannerPromptSuffix', exploreBudget: 'exploreBudget', otherAgentModel: 'otherAgentModel' }
 const hotNext = { anchoredBootstrap: true, creativeMode: false, runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: 'hot-model', plannerPromptSuffix: 'hot-suffix', exploreBudget: 47, otherAgentModel: 'hot-other' }
 writeFileSync(livePath, JSON.stringify([{ id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: { ...syncValues } }]), 'utf8')
-const liveConfig = createLiveConfig({ resolveDocumentPath: () => livePath, fallbackDefaults: syncValues })
-let hotReadOk = true
-for (const key of hotKeys) {
-  const next = { ...syncValues, [key]: hotNext[key] }
-  livePath = join(liveDir, 'cordis.patch.' + key + '.yml')
-  writeFileSync(livePath, JSON.stringify([{ id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: next }]), 'utf8')
-  if (!Object.is(liveConfig[hotGetters[key]], hotNext[key])) hotReadOk = false
+const liveWarnings = []
+const liveWarn = console.warn
+console.warn = (...args) => liveWarnings.push(args.map(String).join(' '))
+try {
+  const liveConfig = createLiveConfig({ resolveDocumentPath: () => livePath, fallbackDefaults: syncValues })
+  let hotReadOk = true
+  for (const key of hotKeys) {
+    const next = { ...syncValues, [key]: hotNext[key] }
+    livePath = join(liveDir, 'cordis.patch.' + key + '.yml')
+    writeFileSync(livePath, JSON.stringify([{ id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: next }]), 'utf8')
+    if (!Object.is(liveConfig[hotGetters[key]], hotNext[key])) hotReadOk = false
+  }
+  const missingLivePath = join(liveDir, 'cordis.patch.missing.yml')
+  livePath = missingLivePath
+  const fallbackAfterMissing = Object.fromEntries(hotKeys.map((key) => [key, liveConfig[hotGetters[key]]]))
+  const fallbackOk = hotKeys.every((key) => Object.is(fallbackAfterMissing[key], syncValues[key]))
+  const warningsAfterMissing = liveWarnings.length
+  livePath = join(liveDir, 'cordis.patch.recovered.yml')
+  const recoveredValues = { ...syncValues, ...hotNext }
+  writeFileSync(livePath, JSON.stringify([{ id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: recoveredValues }]), 'utf8')
+  const recovered = Object.fromEntries(hotKeys.map((key) => [key, liveConfig[hotGetters[key]]]))
+  const recoveredOk = hotKeys.every((key) => Object.is(recovered[key], hotNext[key]))
+  check('G5 A可读→B缺失→B可读：8项回退/恢复且缺失最多一次告警', hotReadOk && fallbackOk && recoveredOk && warningsAfterMissing === 1 && liveWarnings.length === 1 && adapterNoRemount)
+} finally {
+  console.warn = liveWarn
 }
-check('HOT_READ_WITHOUT_AGENTPRESET_REMOUNT_OK', hotReadOk && adapterNoRemount)
 const generatedDefinition = parsePresetYaml(readFileSync(join(REPO_ROOT, 'plugins/dsh-extra-plan/assets/presets/extra-plan/preset-definition.generated.yml'), 'utf8'))
 const restartRows = generatedDefinition.plugins || []
 const restartWeb = restartRows.find((row) => row && row.id === 'tool-web')
