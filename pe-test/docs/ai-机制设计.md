@@ -14,10 +14,11 @@
 
 ## 二、run_code 组判定与 planner 预算
 
-- `run_code` 是批量调用边界，静态拆解出的成员逐个复用直呼闸门；任一成员拒绝则整条 run_code 拒绝，成员不执行、不落地。参数先走 JSON.parse 快路径，再走无 eval/Function/vm/YAML 的安全 literal 子集（对象/数组、标识符或引号键、单/双引号、布尔/null、有限数字、尾逗号）；变量、spread、computed、getter/setter/方法、调用/成员/模板/正则、重复键和污染键均保留 argsText 交运行时瀑布兜底。
-- 多调用容错闸门只认“一个 try 块一个调用点、后接 catch”；单调用豁免，嵌套 run_code 与 decompose 共用安全 literal 入口。主会话/planner/只读子代理受此检查，执行者保持既有豁免；ask 的返回链另有保守静态证明。动态 tools[...] 访问（包括 const 绑定、参数遮蔽、注释伪绑定、字符串拼接、方括号拼接和转义名）统一 fail-closed；只有直接 tools.ask_user_question(args) 的参数可动态，直接 return-await 语义不变。
-- planner 预算按最近主会话消息或续轮转达的锚点计数；run_code 容器计一次，直呼工具按一次计，被拒调用不烧预算。提醒和耗尽文案由 [planner-budget.js](../../plugins/dsh-extra-plan/lib/planner-budget.js) 负责，耗尽后只能按流程申请继续探查。
+- `run_code` 是批量调用边界，静态拆解出的成员逐个复用直呼闸门；任一成员拒绝则整条 run_code 拒绝，成员不执行、不落地。参数先走 JSON.parse 快路径，再走无 eval/Function/vm/YAML 的安全 literal 子集（对象/数组、标识符或引号键、单/双引号、布尔/null、有限数字、尾逗号）；变量、spread、computed、getter/setter/方法、调用/成员/模板/正则、重复键和污染键均保留 argsText 交运行时瀑布兜底。静态方括号工具名允许 MCP 合同中的连字符，并按 masked 文本跳过 `]` 后行/块注释；不放开点访问或真正动态表达式。
+- 多调用容错闸门只认“一个 try 块一个调用点、后接 catch”；单调用豁免，嵌套 run_code 与 decompose 共用安全 literal 入口。主会话/planner/只读子代理受此检查，执行者保持既有豁免；ask 的返回链另有保守静态证明。真正动态 `tools[var]`、const 绑定、参数遮蔽、注释伪绑定、字符串/方括号拼接和转义名仍按原约束处理；非 ask 静态工具别名的既有边界不夸大为统一预审拒绝。只有直接 `tools.ask_user_question(args)` 的参数可动态，直接 return-await 语义不变。
+- planner 预算按最近主会话消息或续轮转达的锚点计数；run_code 容器计一次，直呼工具按一次计，被拒调用不烧预算。提醒和耗尽文案由 [planner-budget.js](../../plugins/dsh-extra-plan/lib/planner-budget.js) 负责，耗尽后只能按流程申请继续探查。四角色控制包不拆分，四角色当前均可见 `send_message`/`interrupt_agent` 与两只读 Cordis 工具，插件不额外设置中断禁闸；宿主目标纪律仍是 send 直属父子、interrupt 仅调用者获授权的后代。Client 查询有界等待（默认 10000ms 为配置口径、非现场时延实测），C 投影也不是安全隔离。
 - 预算与 `save_probe` 的参数限制是两套合同：预算检查由 planner 计数实现，`PROBE_LIMITS` 的字段与数值唯一来自 [save-contract.js](../../plugins/dsh-extra-plan/lib/save-contract.js)，校验由 [save-probe-validation.js](../../plugins/dsh-extra-plan/lib/save-probe-validation.js) 执行；step-00/step-06 是回归入口，文档不复制完整值表。
+
 
 ## 三、规划工件与原子落盘
 

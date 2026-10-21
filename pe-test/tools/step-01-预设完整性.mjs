@@ -340,9 +340,9 @@ for (const role of roleRow) {
   const toolNames = toolRows.map((row) => row.name)
   // 公共禁用（四角色一律不挂）：委派/工作流/交互类工具 + list-agents 子行。
   const forbidden = ['@deepseek-ai/dsh-tool-subagent', '@deepseek-ai/dsh-tool-subagent-control/list-agents', '@deepseek-ai/dsh-tool-workflow', '@deepseek-ai/dsh-tool-ralph', '@deepseek-ai/dsh-tool-ask-user', '@deepseek-ai/dsh-tool-todo']
-  // tool-subagent-control 单列：0.2.1 该包同时注册 send_message 与 interrupt_agent（包不可拆），
-  // planner 以 send_message 回报故合法挂载；reviewer/prober/executor 仍必须不挂。
-  const forbiddenIfNotPlanner = role.id === 'extra-plan-planner' ? [] : ['@deepseek-ai/dsh-tool-subagent-control']
+  // tool-subagent-control：四角色均挂同一官方包；send_message 与 interrupt_agent 同时绑定且不可拆。
+  const controlToolName = '@deepseek-ai/dsh-tool-subagent-control'
+  const controlToolCount = toolNames.filter((name) => name === controlToolName).length
   const fsRow = toolRows.find((row) => row.name === '@deepseek-ai/dsh-tool-fs')
   const writable = fsRow !== undefined && fsRow.config !== undefined && fsRow.config.write === true
   const readOnlyOk = role.id === 'extra-plan-executor'
@@ -353,7 +353,7 @@ for (const role of roleRow) {
   // tool-web（fetch:false）与只读 tool-cordis。
   check('T3 ' + role.id + ' 工具面按只读/可写/shell 规则裁剪',
     forbidden.every((name) => !toolNames.includes(name))
-    && forbiddenIfNotPlanner.every((name) => !toolNames.includes(name))
+    && controlToolCount === 1
     && readOnlyOk
     && shellRows.length === 2
     && toolNames.includes('@deepseek-ai/dsh-tool-fs-search') && toolNames.includes('@deepseek-ai/dsh-tool-skill')

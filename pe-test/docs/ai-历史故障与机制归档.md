@@ -41,7 +41,14 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
 
 - P2-2 从每次完整渲染改为 apply 内 agent-keyed WeakMap；F/PTC 不读完整 SDK cache，L 才按完整 schema/language/renderer key 复用。renderer reject、降级空文本、迟到 promise、dispose 都加入边界回归。
 - step-07 从全工作区 `parseSession` 常驻改为 `headerOfDir` 两阶段头扫描，只解析命中的直接 child，解决默认堆 OOM；输出语义保持 attempted route 与 actual provenance 分栏。
-- 实机流程补入 A49/A50、B0-B4、C13 和 deny 强/弱证据分级；这些是历史补全来源，不得据此改写当前 A/U/C/D/S/B 原始矛盾。
+- 2026-09-26 实机流程补入 A49/A50、B0-B4、C13 和 deny 强/弱证据分级；来源为既有实机流程历史表注，这些是历史补全来源，不得据此改写当前 A/U/C/D/S/B 原始矛盾。
+- 2026-09-26 取证记录（历史原值）：both ＋ catchGate=true 已覆盖 52 条实机项中的 51 条与 A21 的拦截面。0.2.1 起按 native 轮与 ptc 轮两轮重建：第一轮 native（直呼面）覆盖 A01-A56 的直呼侧；第二轮 ptc 分 2A 段（catchGate=true：A21 拦截面、A29/A31/A33、全部 run_code 聚合面、A38 弱证据）与 2B 段（catchGate=false：A21 放行面、开关局部性佐证、planner 续测）两段补验。用户完成轮间更新后按实机流程补测并把两轮取证结果合并到日期化报告。
+- P2-2 历史取证曾以完整 L 首次渲染 2 次为未修复基线；后续边界回归将硬判据收敛为完整 L 首次 1、第二次仍 1，文本逐字相等，耗时只记录不设毫秒阈值。
+
+### 2026-09-29：v0.4.0 四工具闸门与统计演进
+
+- v0.4.0 增补 A51-A56：job_kill 仅直行放行、send_message 对 running 目标拒绝、job_list/list_agents 同锚点防轮询；六项均为实机直测项，A55/A56 要求同轮内第二次调用。来源为既有实机流程表注与 step-04 断言，旧编号及文案不在当前归档外重写。
+- 该批次保留实机可测项统计由 44→52、第一轮 43→51 的演进值；统计只属于当时表口径，不替代当前脚本真实计数。
 
 ## 历史批次与标签
 

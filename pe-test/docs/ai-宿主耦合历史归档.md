@@ -76,6 +76,16 @@
 - `D:\AI项目\dsh-extra-plan\.extra-plan\线索-文档职责核对-9d3fa918-20260929142106718-8148-0.md`
 - 原备份台账中的 HS/HK/SD/CF/QB 四层表、③-E evidence 勾销表、④-B 历史耦合与 ⑦-1 历史面。
 
+## 历史生产注入、模式现场与清理回放
+
+- 生产注入批次的受控 host-proxy 曾分为 normal-injection、get-only/no-op-inject、inject-throws、child-missing-configEditor 四态；normal 需保留外层直接访问错误“cannot get property "configEditor" without inject”、ctx.get 成功、settled 先于 adapter；get-only/no-op-inject 固定为 HUMAN（HOST-PROXY-GET-ONLY），inject-throws 与 child-missing-configEditor 保留失败。该批次的旧 no-remount 结果为 `AUTO_REGRESSION_PASS=NO`，不能销当前 HUMAN。
+- 当时 SOURCE-MANIFEST 以八个工作区文件记录备份 bytes/SHA-256；这是该批次证据元数据，不是当前通用任务规模。单次生产漂移取证记录 settledCount 停在 1、缓存停在 settled-initial + syncRevision=1，来源为既有“生产实况取证-Web到QQBot配置漂移”证据；不得据此伪报保存链通过。
+- 2026-09-12 旧模式观察记录：重启后同一既有会话的 native 直呼面曾可用；随后 0.2.1-rc.2 的 all-deferred 400 复现推翻了“重启即可继续原 PTC 会话”的旧结论，相关现场原文保留在 [ai-实机闸门测试流程](ai-实机闸门测试流程.md) 的模式历史表注。
+- 2026-10-03 profile 现场观察记录 desktop/web 的 mode 与 runcodeCatchGate 取值可不同；该值差异只说明跨 profile 不可互推，来源同上实机流程。
+- 2026-10-18 模式实测/重放：PTC 2A＋2B 在切换后新开会话完成；真实会话重放的 resume wire 为 [{"name":"run_code","defer_loading":true}]，新会话 wire 为 [{"name":"run_code"}]；现场结果保留“全部通过、无 400”的原文，但不销真实 provider、GUI、生产与消息 HUMAN。
+- 2026-10-18 desktop 清理全过程：目标 `~/.dsh/profiles/desktop/cordis.patch.yml`，删除第 32–346 行（首个顶层 `- id: preset-extra-plan` 块及 `name: "@local/dsh-extra-plan/settings"` 旧行），384 行→69 行，删除 315 行；备份 `.extra-plan/backup-dsh-extra-plan-desktop-旧settings行-20261018194246/cordis.patch.yml` 的 SHA-256 为 `dcf349bb519e9342e7dabbf8796f0d5556bcd7f76fd2df6b939a0bee643c1fa6`（384 行），清理后 SHA-256 为 `b23179b04f9d65ee1b70dce639625fba3b2aee8b95dcc2f3b07b433d0ee44ca7`（69 行）；清理前后 gateWords 7/7、十项 settings 10/10，块级 diff 0 行。
+- 清理后的现场 skill catalog 由 10 项变为 13 项，新增 `cordis-plugin-development`、`editing-cordis-compositions`、`cordis-composition-reference`；并同步修正 `pe-test/tools/step-04-路由与写闸门.mjs` 的 `lcFixture` 与 `pe-test/tools/step-01-设置迁移.mjs` 的 `captureRowSettings`，补规范 `name: dsh-extra-plan/settings` 与热读键。以上是历史现场经过，不作为当前运行状态。
+
 ## 当前入口
 
 需要当前版本升级判断时返回 [ai-宿主耦合台账](ai-宿主耦合台账.md)；需要机制当前结论时返回 [ai-机制设计](ai-机制设计.md)。本归档中的历史版本、历史日期、77/217/209 和已删除实现不得覆盖当前现场读取结果。

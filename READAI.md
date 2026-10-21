@@ -21,22 +21,25 @@
 ## 当前兼容与安全边界
 
 - 当前支持范围为 dsh `0.2.1-rc.2`（单一版本：`engines.dsh` 与三项 @deepseek-ai peer 同值，插件 package.json 是版本真源）；旧版兼容见旧版分支。当前证据等级（静态/集成/HUMAN）与待复测项统一见[ai-宿主耦合台账](pe-test/docs/ai-宿主耦合台账.md)的当前验证状态；QQBot、生产、真实消息、`/preset`、question/approval、GUI 与模型行为仍需部署后 HUMAN 复测。
-- 五角色顺序：主会话 → 探查者 → 规划子代理 → 执行者 → 验收者。路由/目的/澄清/批准是机械锚点；唯一受限写例外是 `save_plan` 双文件工件，其余工作区写入按批准后的执行者流程进行。主会话干预工具（job_kill/send_message/job_list/list_agents）受主会话层闸门限制。
-- A/C/M 是模型可见投影维度：A=anchoredBootstrap，C=creativeMode，M=`native|ptc`（`both` 随 0.2.1 二值化退出，旧值归一化回落 native）；F/L 以首个 `tool/call` 为界。展示隐藏不等于运行时 binding 安全隔离，真实取证见实机流程。
+- 五角色顺序：主会话 → 探查者 → 规划子代理 → 执行者 → 验收者。四个子角色均绑定官方 `send_message`/`interrupt_agent` 控制包与只读 Cordis 两工具；能力不等于任意目标控制：send 受直属父子边界、interrupt 仅调用者获授权的后代，主向 running 子发送仍保留原禁扰。路由/目的/澄清/批准是机械锚点；唯一受限写例外是 `save_plan` 双文件工件，其余工作区写入按批准后的执行者流程进行。
+- A/C/M 是模型可见投影维度：A=anchoredBootstrap，C=creativeMode，M=`native|ptc`（`both` 随 0.2.1 二值化退出，旧值归一化回落 native）；F/L 以首个 `tool/call` 为界。MCP public tool 名遵循 `[A-Za-z0-9_-]`，静态 `tools['mcp__...-...'](...)` 可被预审识别，真正动态/拼接/转义访问与 ask 返回链约束不变。展示隐藏不等于运行时 binding 安全隔离，真实取证见实机流程。
 - AI 不执行生产部署；仓库验收通过后由用户操作部署与实测。工作区外写入被委派边界拒绝时，不逐条尝试，不设置 `sandbox_permissions`，只在汇报中列越界清单。
 
 ## 真相源短表
 
 - gateWords 唯一人工值源：[agent.cordis.yml](plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml) 的 `config.gateWords`；`lib/gate-words.js` 只负责字段、校验和运行时派生。
 - save_probe 限制与渲染合同：[save-contract.js](plugins/dsh-extra-plan/lib/save-contract.js)；验证：[save-probe-validation.js](plugins/dsh-extra-plan/lib/save-probe-validation.js)。文档不维护第二份限制值表。
-- save_plan 结构合同、校验与工具接线：[save-plan-validation.js](plugins/dsh-extra-plan/lib/save-plan-validation.js)、[save-contract.js](plugins/dsh-extra-plan/lib/save-contract.js)、[save-tool-factories.js](plugins/dsh-extra-plan/lib/save-tool-factories.js)；两份方案/验收工件自包含模式、任务/组、检查与交接约定。此处只做一跳导航，不复述完整语法、限制值或本次任务规模。
+- save_plan 结构合同、校验与工具接线：[save-plan-validation.js](plugins/dsh-extra-plan/lib/save-plan-validation.js)、[save-contract.js](plugins/dsh-extra-plan/lib/save-contract.js)、[save-tool-factories.js](plugins/dsh-extra-plan/lib/save-tool-factories.js)；两份方案/验收工件自包含模式、任务/组、检查与交接约定。此处只做一跳导航，不复述完整语法、限制值或某次任务规模。
 - 默认值与预设声明产物：[generate-runtime-defaults.mjs](plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs)；生成物只读、不得手改。
 - 函数路径/行号/结构：[代码地图生成.mjs](pe-test/tools/代码地图生成.mjs) 与 [ai-代码地图](pe-test/docs/ai-代码地图.md)；人工描述与机器索引分工不同。
 - 当前宿主状态：[ai-宿主耦合台账](pe-test/docs/ai-宿主耦合台账.md)；历史数字与已删除耦合只在[历史归档](pe-test/docs/ai-宿主耦合历史归档.md)中追溯。
 
 ## 文档修改边界
 
-- 工作区普通文件仅按用户真实需求和已批准方案修改；根 `README.md`、`plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml` 及其中全部引导词是 AI 禁改面，不存在临时授权覆盖这些边界的说法。官方 dsh/官方预设、生产环境、profile、`$DSH_HOME` 与真实会话同样不改。bundle 详情公开 insert 恰为 `dsh-extra-plan-settings` 一行；该全局 owner 统一拥有 10 项 Config、API、carrier、旧值迁移、同步核对与官方 AgentPreset adapter。旧 `extra-plan-preset-sync` / `preset-extra-plan` 只作 raw patch 安全读取来源，不是新写入目标；`./preset-sync` 及其 locale exports 已退役。当前显式非法 `gateWords` 严格失败且零写，旧非法值仅诊断跳过。配置仅经 `plugins.detail.section` 渲染于 bundle 详情页行列表之后（自绘标题），不注册 `plugins.bundle.config`、`plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`。
+- 本项目文档规则只适用于 dsh-extra-plan 项目维护；其他项目或非本项目工作可忽略本条，但不能忽略其它安全边界。正式非归档文档只保留当前有效规则、当前状态和当前待验证项；任务批次、增量口径、完成过程、旧新对比如需保留，只进入现有两份历史归档，不在当前正文重复。
+- 每次派遣本项目执行者或验收者时，prompt、方案/验收工件都必须显式携带上述适用范围、历史归档与当前态约束；不得仅假定对方读过 READAI。
+- 工作区普通文件仅按用户真实需求和已批准方案修改；根 `README.md`、官方 dsh/官方预设、生产环境、profile、`$DSH_HOME` 与真实会话仍是禁改面。所有引导词与 persona 原文冻结；作者源非引导词仅在用户明确授权且批准方案列明时有限修改，单次授权不延续。
+- bundle 详情公开 insert 恰为 `dsh-extra-plan-settings` 一行；该全局 owner 统一拥有 10 项 Config、API、carrier、旧值迁移、同步核对与官方 AgentPreset adapter。旧 `extra-plan-preset-sync` / `preset-extra-plan` 只作 raw patch 安全读取来源，不是新写入目标；`./preset-sync` 及其 locale exports 已退役。当前显式非法 `gateWords` 严格失败且零写，旧非法值仅诊断跳过。配置仅经 `plugins.detail.section` 渲染于 bundle 详情页行列表之后（自绘标题），不注册 `plugins.bundle.config`、`plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`。九个既有入口和根 README/地图职责保持不变，不新增正式文档。
 - 维护任务按实际目标文件建立唯一 `.extra-plan/backup-dsh-extra-plan-<任务名>-<YYYYMMDDHHMMSS>/` 备份；同一任务续跑沿用对应目录，不覆盖已有镜像。JS/MJS、JSON、生成代码和领域回归按实际改动域选择，具体任务命令留在方案与验收工件中。
 - `pe-test/reports/` 只接收临时测试产物，不纳入源改动；不调用 `git reset`、`git checkout`、`git clean`。
 - 界面文案只给结论级信息；技术细节仅放硬闸门给 AI 的文案、诊断/日志和本组 AI 文档。

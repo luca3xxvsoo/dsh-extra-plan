@@ -65,8 +65,8 @@
 | HS26 | HP 首轮 `tool:read` | section、参数默认值、输出字段与手写 F 文案必须同步核对 | 【已核实·静态；行为待实机】 |
 | HS27 | `executor-spawn.js` `slotKey` | `Symbol.for('cordis.original')`/traceable 语义决定跨世代幂等 | 【已核实·静态】 |
 | HS28 | context-gate 宿主回归 | 当前安装根版本、生产源码 hash、公共 AgentLoop/受控 adapter、完整 request trace 与工作区 JSONL 证据；受控 adapter 不冒称真实 provider | 【已核实·集成；真实provider/HUMAN NOT-RUN】 |
-| HS30 | 角色预设 definition（`agent.cordis.yml` 第二文档 → `preset-definition-<role>.generated.yml`） | 4 角色的 id/order 由 `ROLE_IDS`/`ROLE_ORDERS` 统一校验（身份常量不承载权限）；personaPrefix 由作者源逐字搬运、extra-plan 行 config 由主预设同 id 行逐字复制（含 gateWords）；工具面按 5f3cc68 可见面回填：planner/reviewer/prober 各挂 `tool-pwsh`/`tool-bash`（win32 条件 disabled）/`tool-web`（fetch:false、searchTimeoutMs:60000）/`tool-cordis` 且 `dsh-tool-fs` 置 write/edit=false，planner 另挂 `tool-subagent-control`（连带可见 `interrupt_agent`，0.2.1 包不可拆）；executor 保留 write/edit 与既有两行 shell，另挂 `tool-web`/`tool-cordis`；四个角色 definition 的派生范围跟随同一 `toolPresentationMode`（与主 definition 同源派生、各恰一行 `tool-presentation`，派生异常保留生成物默认值且不抛错）；生成物不得手改；注册顺序主在前角色在后 | 【已核实·静态+宿主回归】 |
-| HS31 | `pe-test/tools/step-05-角色预设宿主回归.mjs` | 七组断言：roster 5 id、三键 tool-subagent 装载（assertProvider）、planner header.agentPreset/isPlannerChild、executor 工具面（可写 + 双 shell + web/cordis）、planner 只读（无 write/edit、有 pwsh）、persona 渲染、both 旧值回落 native | 【已核实·集成；真实 provider/模型/GUI NOT-RUN】 |
+| HS30 | 角色预设 definition（`agent.cordis.yml` 第二文档 → `preset-definition-<role>.generated.yml`） | 4 角色的 id/order 由 `ROLE_IDS`/`ROLE_ORDERS` 统一校验（身份常量不承载权限）；personaPrefix 由作者源逐字搬运、extra-plan 行 config 由主预设同 id 行逐字复制（含 gateWords）；四角色均挂 `tool-web`（fetch:false、searchTimeoutMs:60000）、只读 `tool-cordis` 与不可拆的 `tool-subagent-control`，后者同时绑定 `send_message`/`interrupt_agent`；planner/reviewer/prober 的 `dsh-tool-fs` 置 write/edit=false，executor 保留 write/edit 与既有两行 shell；宿主目标纪律仍是 send 直属父子、interrupt 调用者后代；四个角色 definition 的派生范围跟随同一 `toolPresentationMode`（各恰一行 `tool-presentation`，派生异常保留生成物默认值且不抛错）；生成物不得手改；native/PTC 双模式由宿主回归实际 mount、schemas/get、sdkSchemas 与 SDK 文本解析取证 | 【已核实·静态+宿主回归；真实消息/中断 HUMAN】 |
+| HS31 | `pe-test/tools/step-05-角色预设宿主回归.mjs` | 两个串行独立 Context 注册原始五 ID；各模式真实 agents.create + preset mount，planner 两模式均以原 ID 与 `isPlannerChild` 核实；四角色每模式以 `tools.schemas`/`tools.get` 核实四 binding，装配统一传公开 `assembleContextFor(agent)`；PTC F 只核顶层 `run_code`，planner 不强求完整 SDK，非 planner 只作 `tools:sdk` 控制文本观察且 Cordis 文本隐藏、registry/get 仍可用；保留 roster、三键 tool-subagent、只读/可写、persona、both 回落与禁委派/list_agents；不证明真实父子投递/中断 | 【已核实·集成；真实 provider/模型/GUI/消息/中断 HUMAN】 |
 | HS29 | `pe-test/_shared/host-deps.mjs` | scoped package exports 按完整 `./subpath` 解析；根入口与 `/list-agents` 分离；根包无可用 exports/main 时回退 `index.js`，显式未知子路径透传；同步/异步 hook 共用语义，生成 data URL hookSource 需 ESM 回放 | 【已核实·step-01 安装同步；真实宿主/HUMAN NOT-RUN】 |
 
 ## ②-A Web→QQBot 镜像路径契约（独立于 HS4）
@@ -212,7 +212,7 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 1. isolate 审计：`mountPreset/leakedServices` 对未隔离 root service 抛错；必要/保险名单必须保持 `isolate: true`。
 2. settings 换代：设置表单仅经 `plugins.detail.section` 渲染于当前插件包详情行列表之后（自绘标题），不注册 `plugins.bundle.config`、`plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`，若本包 bundle.config 槽被任何一方注册条目则 detail.section 让位保持唯一表单；ConfigForms 通过稳定 namespace 订阅快照并一次 mutate 十项。settings 行 10 项 Config、API、旧值迁移、内存 definition/adapter 仍是活动后端合同；截至 2026-10-01，0.2.1-rc.2 同页 UI/A09/A10/A11 仍为 HUMAN 待复测。
 3. profile patch 载体：旧 `.agent-presets` 无读取方；`compatibility.json`/peer 门控可能使 bundle skipped、loader disabled；QQBot 仍有 allow-build/postinstall 欠账。
-4. 包/服务换代：workflow-ptc/tool-workflow/tool-ralph 三段在作者源里已注释（暂不挂载，恢复条件见 agent.cordis.yml）；`ptcRuntime` 服务名、tool:cordis 只注册两项只读工具、`bundledSkillDir`（配 `watch:false`；旧 `customSkillDirs` 已删）必须按当前真值核对。
+4. 包/服务换代：workflow-ptc/tool-workflow/tool-ralph 三段在作者源里已注释（暂不挂载，恢复条件见 agent.cordis.yml）；`ptcRuntime` 服务名、tool:cordis 只注册两项只读工具、Client 查询有界等待（默认 10000ms 为配置口径、非实测）、`bundledSkillDir`（配 `watch:false`；旧 `customSkillDirs` 已删）必须按当前真值核对。MCP `publicToolName` 只允许 `[A-Za-z0-9_-]`（当前前缀形如 `mcp__chrome-devtools-mcp__...`），不支持点或 Unicode；静态扫描器仅同步连字符与注释遮蔽合同。
 5. rc.2 单侧风险：`sanitizeProfile` 整体搬移 patch、`configEditor.edit` 值等于继承层删行；0.2.1-rc.2 是当前唯一目标，旧版现场不再保留、不能推出跨代结论。
 6. session v4：`session.v4.jsonl.zstd`、自有 source.kind、developer/message 坐标和 step-07 三代候选必须保留。
 7. CF12 422 开放 incident：profile 中宿主运行时副本曾导致 `tool_removal` 422；清理 profile node_modules/lock、污染会话续聊、native↔PTC 切换三项均待用户验证。当前单一全局行、内部 carrier、内存 definition/adapter 仍需用户部署后 HUMAN 验证。native↔PTC 切换的会话边界与规避见 ⑭。
@@ -260,12 +260,12 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 - gateWords 是 YAML 七键唯一值源；apply 先 `createGateRuntime`，当前 agent scope 注册七个 `systemPrompt.variable`；deny、match、状态机和投影都消费当前词表；旧词不推进。
 - `system-prompt/assemble` 的模型可见副本必须保留 variables 映射；宿主严格渲染失败、变量缺失或未知变量属于升级敏感面，静态台账不冒充实机通过。
 
-## ⑪ 生产注入修复工作区批次
+## ⑪ 生产注入与取证合同
 
 - settled callback 在触发时经 `editorOf(undefined)` 使用 `ctx.get('configEditor')` 解析当前服务；`mountPresetSync` 仍只在 `ctx.inject(['configEditor'])` 的 child 作用域读取 editor，未把 child 捕获到外层。
 - 本轮受控证据使用四态 host-proxy：`normal-injection` 要求外层直接访问保留 `cannot get property "configEditor" without inject`、ctx.get 成功、初始 settled 先于 adapter；`get-only/no-op-inject` 为 `HUMAN`（`HOST-PROXY-GET-ONLY`），不得以 register=0 销账；`inject-throws` 与 `child-missing-configEditor` 保留显式失败。
-- 单字段触发仍核对完整十项 values 与完整七键 gateWords，并对 Web patch、每个 QQBot patch 与 terminal 输入做同一快照对拍；旧 no-remount 批次 `AUTO_REGRESSION_PASS=NO`，不可作为本轮结果。
-- 缺少 `DSH_INSTALL_ROOT`、真实宿主/provider/profile、生产 QQBot、GUI、消息链与重启均保持结构化 `HUMAN`；本轮仅写工作区，不作生产副本部署。
+- 单字段触发仍核对完整十项 values 与完整七键 gateWords，并对 Web patch、每个 QQBot patch 与 terminal 输入做同一快照对拍；旧 no-remount 结果只作历史归档，不能销当前验证状态。
+- 缺少 `DSH_INSTALL_ROOT`、真实宿主/provider/profile、生产 QQBot、GUI、消息链与重启均保持结构化 `HUMAN`；本项目维护只写工作区，不作生产副本部署。
 
 ## ⑫ 唯一 settings 行与可关联保存终态
 
@@ -278,9 +278,9 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 
 - 真实 UI 保存走宿主 ConfigForms `form.mutate`（dsh-client-ui-settings ConfigForm.mutate → remote.settings.mutate → settings.mutate → configEditor.edit）；10 项 settings 字段全部 `.volatile()`，Loader 判定 volatile-only（`equalExceptVolatile` 把 volatile 字段视为相等）后就地替换 `fiber._config` 直接 return，不调 `fiber.update`，`internal/update` waterfall 根本不运行（cordis 4.0.4 宿主源码核对）。
 - 即使产生该事件，`internal/update` 也是 fiber 定向 waterfall（非 global 注册存入注册者 `child.fiber._hooks`，`thisArg`=被 update 的 fiber）；`preset-sync.js` 的监听器位于 `ctx.inject(['configEditor'])` child fiber ≠ settings 行 entry.fiber，永远收不到。两层都断 ⇒ 保存时不产生可消费的 settled 链。
-- 结论：UI 保存的 QQBot 同步主触发是 client.js saveAll 第二步同源 PUT（`api-put` trigger，无条件全量 syncEditor）；settled 链仅作 Web 宿主重启/装载兜底（settled-initial）。生产漂移取证：`.extra-plan/线索-生产实况取证-Web到QQBot配置漂移-be2839cd-20261015151724897-24332-0.md`（settledCount 停在 1、缓存停在 settled-initial+syncRevision=1）。【已核实·宿主源码+生产取证】
+- 结论：UI 保存的 QQBot 同步主触发是 client.js saveAll 第二步同源 PUT（`api-put` trigger，无条件全量 syncEditor）；settled 链仅作 Web 宿主重启/装载兜底（settled-initial）。真实生产漂移、旧批次证据和部署动作保持 HUMAN，历史经过见[宿主耦合历史归档](ai-宿主耦合历史归档.md)。
 
-## ⑭ toolPresentationMode 切换与会话边界（0.2.1-rc.2 实测）
+## ⑭ toolPresentationMode 切换与会话边界（0.2.1-rc.2 当前合同）
 
 **一、操作契约**
 
@@ -304,10 +304,9 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 - 插件无 baseline 与 defer 写入点：插件全仓对 `defer_loading`/`deferLoading` 零命中（仓内 `deferred()` 只是测试用 Promise 辅助），baseline 由宿主 `request/header` 决定，插件侧没有写入接口。
 - 结论：三条均无绕行空间，插件没有技术规避手段；修复点只能在宿主（`ToolHistoryProjection` 按新 declaration series 重建 baseline、`toolDeclarations` 不把当前 active 定义标 deferred、`dsh-llm-deepseek` 补齐全 deferred 兜底）。
 
-**四、本次实机证据（2026-10-18）**
+**四、当前验证状态**
 
-- PTC 轮 2A＋2B 全项通过：切到 `ptc` 后**新开会话**跑第二轮两段（2A 段 `catchGate=true` 取拦截面与 `run_code` 聚合面、2B 段 `catchGate=false` 取放行面），全部通过、无 400。
-- 重放复现：用宿主 `ToolHistoryProjection` 与 `projectToolUpdates`（`addition-only`）对真实会话重放，resume 场景的 wire 为 `[{"name":"run_code","defer_loading":true}]`；对照新开会话的 wire 为 `[{"name":"run_code"}]`，后者即上游接受的形态。
+- 真实宿主重启、provider、GUI、生产 profile、消息链与中断保持 HUMAN；历史现场实测/重放原文只在[宿主耦合历史归档](ai-宿主耦合历史归档.md)追溯。
 
 **五、状态行**
 
@@ -332,17 +331,9 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 - 整行缺席（首次安装、profile 无任何 settings 覆盖）仍按出厂形态静默：不抛错、不告警，整组取 cfg 快照。
 - 运行期热读保留 fail-safe（未 captured 的键一律沿用 fallback，fallback 取值顺序不变），但 ambiguous 与 invalid 改为 `warnOnce` 告警，missing 仍静默——配置被改坏变得可见，不再无声吞掉。
 
-**四、本次 desktop profile 清理（生产操作，有备份）**
+**四、当前验证状态**
 
-- 目标：`~/.dsh/profiles/desktop/cordis.patch.yml`；删除第 32–346 行（首个顶层 `- id: preset-extra-plan` 起的旧 preset 定义块 + `name: "@local/dsh-extra-plan/settings"` 旧 settings 行），384 行 → 69 行（删 315 行）。
-- 备份：`.extra-plan/backup-dsh-extra-plan-desktop-旧settings行-20261018194246/cordis.patch.yml`，SHA-256 `dcf349bb519e9342e7dabbf8796f0d5556bcd7f76fd2df6b939a0bee643c1fa6`（384 行）。
-- 清理后：SHA-256 `b23179b04f9d65ee1b70dce639625fba3b2aee8b95dcc2f3b07b433d0ee44ca7`（69 行）；剩余顶层 settings 行 1 条且 `name: dsh-extra-plan/settings`，全文无 `@local` 与 `preset-extra-plan` 残留。
-- 取值不变性：清理前后 gateWords 七键 7/7、十项 settings 取值 10/10 逐项一致（对齐备份第 358–379 行与清理后第 43–64 行，块级 diff 计 0 行）。
-
-**五、实机验证与夹具修正**
-
-- 清理后实机 skill catalog 由 10 项变为 13 项，新增 `cordis-plugin-development`、`editing-cordis-compositions`、`cordis-composition-reference`（正是 `creativeMode=true` 才投影的 creative 技能组），证明此前 C=1 失效根因是同 id 重复行导致 ambiguous 回退、C 被读成 false，改宿主或 schema 并非必要。
-- 同步修正两处测试夹具：`pe-test/tools/step-04-路由与写闸门.mjs` 的 `lcFixture` 与 `pe-test/tools/step-01-设置迁移.mjs` 的 `captureRowSettings` 夹具均补上规范 `name: dsh-extra-plan/settings` 并补齐热读键，否则夹具在新合同下会被判 missing/ambiguous 而产生假失败。
+- 生产 profile 清理、历史 bytes/SHA/行数、skill catalog 现场值和夹具修正经过已移入[宿主耦合历史归档](ai-宿主耦合历史归档.md)；当前不以历史现场结果销账，部署复测仍按 HUMAN 保留。
 
 **状态行**
 

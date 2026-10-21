@@ -331,15 +331,9 @@ plugins:
 
   # ── cordis（官方创造模式工具集，只读引用官方包） ──────────────────────────
 
-  # dsh-tool-cordis 只注册两个只读工具：列表工具（cordis_inspect_list，host
-  # 即时返回）与查询工具（cordis_inspect 系列的 _query 后缀名，对 client 平台无超时、直到页面
-  # 应答或取消才返回，见 step-01 S-宿主真值）；cordis_run 等 5 名已不存在，故不在任何 deny
-  # 清单中列出（deny 未知名会使宿主 tools.restrict() 抛错、子代理创建失败）。若某受支持版本
-  # 仍注册该 5 名工具：主会话由插件硬闸门按 write/edit 同规则管控（路由未确认拒绝、批准/直行
-  # 放行）；执行者/规划/验收/探查四子代理改由运行时闸门（plannerGateReason /
-  # childReadonlyGateReason）兜住。查询工具对 client 平台可能永久 pending（等页面应答），
-  # 0.2.1 起四角色预设（本文件第二文档）不挂 dsh-tool-cordis，查询工具天然不可见
-  # 主会话仍放行；列表工具 host 即时返回、
-  # 无卡死风险，不入任何 deny。
+  # dsh-tool-cordis 当前只提供两个只读 Inspect 工具：cordis_inspect_list 与 cordis_inspect_query；主预设和四角色均挂载该包。
+  # cordis_inspect_list 读取 Host 已知目录，Host 查询在本地执行；只有 Client 查询受 clientInspectTimeoutMs 约束。
+  # 默认 10000ms 是配置值而非现场时延实测；不承诺 Host 即时返回或统一有界，也不把仅核注册名的 S-宿主真值当超时证据。
+  # cordis_run 等旧工具名不属于当前工具集，不写入 deny；deny 未知名会使宿主 tools.restrict() 抛错、子代理创建失败。
   - id: tool-cordis
     name: '@deepseek-ai/dsh-tool-cordis'

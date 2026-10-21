@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-10-21 08:21:56（脚本自动更新时间戳行）
+> 上次同步：2026-10-21 12:31:45（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -592,11 +592,11 @@
 | plugins/dsh-extra-plan/lib/run-code-scanner.js | scanTemplate | L52-68 | 遮蔽模板字面量文本；遇 ${...} 递归扫描实际表达式，保持行号和索引对齐。 |  |
 | plugins/dsh-extra-plan/lib/run-code-scanner.js | scanCode | L69-193 | 维护表达式、属性名、控制括号与函数声明/表达式体上下文，区分正则与除法；模板表达式递归扫描，注释保留此前词法状态。 |  |
 | plugins/dsh-extra-plan/lib/run-code-scanner.js | sliceBalancedArgs | L202-218 | 从调用括号起在遮蔽文本上配平括号并从原文切出参数片段，未闭合时取文末。 | 返回 { closeIdx, innerText }，保留原始参数文本供安全解析。 |
-| plugins/dsh-extra-plan/lib/run-code-scanner.js | hasDynamicRunCodeAccess | L222-272 | 标记无法静态证明的 tools[...] 访问；外层静态调用的参数继续扫描，不遮蔽内层动态访问。 | 字符串键且后接调用时可判静态；其他形态标记 dynamic，由调用方按现有运行时合同处理，本函数不直接拒绝。 |
+| plugins/dsh-extra-plan/lib/run-code-scanner.js | hasDynamicRunCodeAccess | L222-272 | 标记无法静态证明的 tools[...] 访问；未转义 ASCII 静态方括号键允许连字符，按遮蔽文本定位闭括号及 ] 后行/块注释后的调用；外层静态调用的参数继续扫描，不遮蔽内层动态访问。 | 真正动态键、拼接、转义或无法配平仍判 dynamic；由调用方按现有运行时合同处理，本函数不直接拒绝。 |
 | plugins/dsh-extra-plan/lib/run-code-scanner.js | isIdentifierPart | L225 | 判定 tools[...] 动态访问中的标识符边界字符。 |  |
 | plugins/dsh-extra-plan/lib/run-code-scanner.js | skipWhitespace | L226-230 | 从给定位置跳过连续空白字符，返回首个非空白字符的索引。 | hasDynamicRunCodeAccess 内部闭包，在遮蔽文本上处理空白或中括号边界。 |
 | plugins/dsh-extra-plan/lib/run-code-scanner.js | bracketEndOf | L231-241 | 从 '[' 起配平中括号，返回匹配的闭括号位置，未闭合返回 -1。 | hasDynamicRunCodeAccess 内部闭包，在遮蔽文本上处理空白或中括号边界。 |
-| plugins/dsh-extra-plan/lib/run-code-scanner.js | collectRunCodeSites | L274-341 | 收集静态与动态 tools 调用站点，保留起止位置、参数原文与名称；外层参数中的内层调用也收录。 | tools[动态键](...) 也计站点，无法证明静态键时 name=undefined；是否动态由 hasDynamicRunCodeAccess 标记。 |
+| plugins/dsh-extra-plan/lib/run-code-scanner.js | collectRunCodeSites | L274-341 | 收集静态与动态 tools 调用站点，保留起止位置、参数原文与 name；未转义 ASCII 静态方括号工具名允许连字符，] 后行/块注释按遮蔽文本定位；外层参数中的内层调用也收录。 | 真正动态键、拼接、转义或无法证明静态键的调用仍计入站点并保留 name=undefined；未知 name 站点不丢弃，动态性由 hasDynamicRunCodeAccess 标记。非 ask 静态属性别名若没有直接调用点仍沿用运行时兜底，不宣称所有别名均被预审拒绝。 |
 | plugins/dsh-extra-plan/lib/run-code-scanner.js | isIdentifierStart | L278 | 判定 tools.静态成员名的起始字符。 |  |
 | plugins/dsh-extra-plan/lib/run-code-scanner.js | isIdentifierPart | L279 | 判定 tools.静态成员名和标识符边界的后续字符。 |  |
 | plugins/dsh-extra-plan/lib/run-code-scanner.js | skipWhitespace | L280-284 | 跳过工具访问语法间的连续空白，定位下一个有效字符。 |  |
@@ -616,7 +616,7 @@
 | plugins/dsh-extra-plan/lib/run-code-static.js | markRange | L207-209 | 标记已占用区间（decomposeRunCode 内部闭包） |  |
 | plugins/dsh-extra-plan/lib/run-code-static.js | runCodeCatchGateReason | L234-305 | run_code 多调用容错闸门：tools.* 调用点≥2 时要求每点独立容错，不足即教学式拒绝（单调用豁免；嵌套展平） |  |
 | plugins/dsh-extra-plan/lib/run-code-static.js | within | L261 | 调用点区间包含判定（site.start 是否落在 a、b 之间）：把调用点归入 try 块或数组实参区间 |  |
-| plugins/dsh-extra-plan/lib/run-code-static.js | askUserQuestionReturnGateReason | L309-504 | 主会话 run_code 的 ask 返回链闸门：动态 tools[...] 访问统一 fail-closed；仅允许直接 return-await 或变量接收后紧随顶层 return 引用结果，直接 ask 的参数可动态 |  |
+| plugins/dsh-extra-plan/lib/run-code-static.js | askUserQuestionReturnGateReason | L309-504 | 主会话 run_code 的 ask 返回链闸门：静态 MCP 方括号调用不再误串 ask；真正 ask 仅允许直接 return-await，或变量接收后在紧随的顶层 return 中按标识符边界返回；直接 ask 的参数可动态。 | 真正 ask 的只调用、只赋值、别名/动态访问、.then 或函数包装仍拒绝；非 ask 静态属性别名缺直接调用点时沿用运行时兜底，不宣称所有别名均被预审拒绝。 |
 | plugins/dsh-extra-plan/lib/run-code-static.js | isIdChar | L314 | 标识符字符判定（decomposeRunCode 内部闭包） |  |
 | plugins/dsh-extra-plan/lib/run-code-static.js | skipWs | L315-319 | 自 start 起跳过空白字符，返回首个非空白字符下标（词法扫描的跳白工具） |  |
 | plugins/dsh-extra-plan/lib/run-code-static.js | isTopLevel | L404 | 位置是否处于花括号/圆括号/方括号深度全为 0 的顶层语句中 |  |

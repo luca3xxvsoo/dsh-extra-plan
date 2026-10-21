@@ -266,6 +266,8 @@ checkTrue('SC1 run-code-scanner 命名空间精确四项且 facade 复用三项'
 const scannerDynamicAccessMatrix = [
   ['顶层 tools[name]({...}) 动态下标调用', 'tools[name]({})', true],
   ['顶层 tools["read"]({...}) 静态字符串下标调用', 'tools["read"]({})', false],
+  ['MCP单引号连字符静态下标调用', "tools['mcp__chrome-devtools-mcp__list_pages']({})", false],
+  ['MCP双引号且右括号后注释静态下标调用', 'tools["mcp__chrome-devtools-mcp__list_pages"] /* MCP comment */ ({})', false],
   ['字符串字面量和行注释内伪调用', "'tools[name]({})'\n// tools[name]({})", false],
   ['已识别静态外层调用的参数区间内嵌 tools[name](...)', 'tools.read({ nested: tools[name]({}) })', true],
 ]
@@ -277,6 +279,8 @@ for (const [label, text, expected] of scannerDynamicAccessMatrix) {
 // G5 共享回归：直接调用修复后的扫描器，锁定嵌套/动态下标/正则以及对象字面量后的除法。
 const scannerG5Cases = [
   ['嵌套 tools 调用保留内外站点', 'tools.read({ nested: tools.write({}) })', ['read', 'write'], false],
+  ['MCP静态单引号保留真实name', "tools['mcp__chrome-devtools-mcp__list_pages']({})", ['mcp__chrome-devtools-mcp__list_pages'], false],
+  ['MCP静态双引号带注释与动态参数保留真实name', 'tools["mcp__chrome-devtools-mcp__take_snapshot"] /* comment */ ({ query: args })', ['mcp__chrome-devtools-mcp__take_snapshot'], false],
   ['动态方括号调用判动态', 'tools[fn]({})', [undefined], true],
   ['正则正文 tools 字样不算调用', 'const re = /tools\.edit\(/gi; tools.read({})', ['read'], false],
   ['对象字面量结束后的除法调用可见', 'const value = {} / tools.edit({})', ['edit'], false],
@@ -304,6 +308,7 @@ for (const [index, code] of ["const value = data.return / tools.edit({}) / 2","c
   checkTrue('SC1-G5 除法真实第二调用仍须独立catch ' + index, typeof reason === 'string' && reason.includes('2 个工具调用'))
 }
 check('SC1-G5 除法调用分别独立catch可通过', runCodeCatchGateReason('try { tools.read({}) } catch (e) {} try { const value = data.return / tools.edit({}) / 2 } catch (e) {}'), null)
+check('SC1-G5 MCP静态调用与普通调用独立catch可通过', runCodeCatchGateReason("try { await tools['mcp__chrome-devtools-mcp__list_pages']({}) } catch (e) {}\ntry { await tools.read({}) } catch (e) {}"), null)
 
 // ── 根入口公开 named export 兼容断言：与 decisions 保持同一绑定/行为 ──
 check('公开导出 PROBE_LIMITS 与 decisions 同一绑定', plugin.PROBE_LIMITS === plugin.decisions.PROBE_LIMITS, true)
@@ -2471,6 +2476,7 @@ const ASK_RETURN = [
   ['AR10 动态工具访问 → 拒绝', "const name = 'ask_user_question'; return await tools[name]({})", 'deny'],
   ['AR11 动态复杂包装 → 拒绝', 'return await Promise.resolve(tools.ask_user_question({}))', 'deny'],
   ['AR12 字符串/注释中的 ask 不触发', "const s = 'tools.ask_user_question({})'; // tools.ask_user_question({})", null],
+  ['AR13 MCP静态方括号调用不误判 ask 返回链', "return await tools['mcp__chrome-devtools-mcp__list_pages']({})", null],
 ]
 for (const [name, code, expected] of ASK_RETURN) {
   const got = askUserQuestionReturnGateReason(code)
@@ -2535,6 +2541,11 @@ const J = [
   ['J9 裸写 writeFileSync→{kind:bare-write,name:write,hints:[fs-write]}', "await writeFileSync('x', '1')", { members: [{ kind: 'bare-write', name: 'write', hints: ['fs-write'] }], dynamic: false }],
   ['J10 工具+裸写同现→2 项且裸写排末尾', "tools.read({ \"file_path\": \"x\" }); writeFileSync('x', '1')", { members: [{ kind: 'tool', name: 'read', argsParsed: true, args: { file_path: 'x' }, argsText: '{ "file_path": "x" }' }, { kind: 'bare-write', name: 'write', hints: ['fs-write'] }], dynamic: false }],
   ['J11 tools[\'write\'] 字面量方括号→静态名 write', "await tools['write']({ \"file_path\": \"x\", \"content\": \"1\" })", { members: [{ kind: 'tool', name: 'write', argsParsed: true, args: { file_path: 'x', content: '1' }, argsText: '{ "file_path": "x", "content": "1" }' }], dynamic: false }],
+  ['J-MCP1 单引号连字符名→真实成员', "tools['mcp__chrome-devtools-mcp__list_pages']({})", { members: [{ kind: 'tool', name: 'mcp__chrome-devtools-mcp__list_pages', argsParsed: true, args: {}, argsText: '{}' }], dynamic: false }],
+  ['J-MCP2 双引号/右括号后注释→真实成员', 'tools["mcp__chrome-devtools-mcp__list_pages"] /* comment */ ({})', { members: [{ kind: 'tool', name: 'mcp__chrome-devtools-mcp__list_pages', argsParsed: true, args: {}, argsText: '{}' }], dynamic: false }],
+  ['J-MCP3 动态参数对象保留真实name且argsParsed=false', 'tools["mcp__chrome-devtools-mcp__take_snapshot"]({ query: args })', { members: [{ kind: 'tool', name: 'mcp__chrome-devtools-mcp__take_snapshot', argsParsed: false, args: null, argsText: '{ query: args }' }], dynamic: false }],
+  ['J-MCP4 同名同参连字符调用去重→1项', "tools['mcp__chrome-devtools-mcp__list_pages']({}); tools['mcp__chrome-devtools-mcp__list_pages']({})", { members: [{ kind: 'tool', name: 'mcp__chrome-devtools-mcp__list_pages', argsParsed: true, args: {}, argsText: '{}' }], dynamic: false }],
+  ['J-MCP5 方括号拼接名→dynamic=true', "tools['mcp__chrome-' + 'devtools-mcp__list_pages']({})", { members: [], dynamic: true }],
   ['J12 tools[name](...)→members=[] 且 dynamic=true', "const name = 'read'; tools[name]({ file_path: 'x' })", { members: [], dynamic: true }],
   ['J13 空 code→{members:[],dynamic:false}', '', { members: [], dynamic: false }],
   ['J14 纯只读裸代码→空组', "await readFileSync('x', 'utf8')", { members: [], dynamic: false }],
@@ -2542,6 +2553,9 @@ const J = [
 for (const [name, code, expected] of J) {
   check(name, decomposeRunCode(code), expected)
 }
+const escapedMcpCode = 'tools["mcp__chrome' + String.fromCharCode(92) + 'x2ddevtools-mcp__list_pages"]({})'
+const escapedMcpResult = decomposeRunCode(escapedMcpCode)
+checkTrue('J-MCP6 转义连字符名保持动态且不生成假成员', escapedMcpResult.members.length === 0 && escapedMcpResult.dynamic === true)
 
 // ── J-LITERAL：安全 JS literal 子集正反矩阵（A10/A11 静态参数合同） ───────
 const J_LITERAL = [
@@ -2609,6 +2623,10 @@ const rcD1Sites = plugin.decisions.collectRunCodeSites(rcD1Code, maskCodeLiteral
 const rcD1NonCallCode = 'const name = tools[name]'
 const rcD1NonCallSites = plugin.decisions.collectRunCodeSites(rcD1NonCallCode, maskCodeLiteralsAndComments(rcD1NonCallCode))
 checkTrue('RC-D1 tools[name](...) dynamic=true、site.name=undefined，非调用不计 site', rcD1Result.dynamic === true && rcD1Result.members.length === 0 && rcD1Sites.length === 1 && rcD1Sites[0].name === undefined && rcD1NonCallSites.length === 0)
+const rcMcpCode = 'return await tools[\"mcp__chrome-devtools-mcp__list_pages\"]({})'
+const rcMcpResult = decomposeRunCode(rcMcpCode)
+const rcMcpSites = plugin.decisions.collectRunCodeSites(rcMcpCode, maskCodeLiteralsAndComments(rcMcpCode))
+checkTrue('RC-D2 MCP静态双引号真实name、dynamic=false且单站点', rcMcpResult.dynamic === false && rcMcpResult.members.length === 1 && rcMcpResult.members[0].name === 'mcp__chrome-devtools-mcp__list_pages' && rcMcpSites.length === 1 && rcMcpSites[0].name === 'mcp__chrome-devtools-mcp__list_pages')
 
 const rcN1Inner = 'await tools.write({})'
 const rcN1Code = 'await tools.run_code({ "code": ' + JSON.stringify(rcN1Inner) + ' })'
@@ -2655,6 +2673,7 @@ const K = [
   ['K8 执行者+tools.write → 放行(null)', { kind: 'child', readOnly: false, probe: false }, "await tools.write({ file_path: 'x', content: '1' })", null],
   ['K9 planner+预算耗尽+仅 save_plan 成员 → 放行(null)', { kind: 'planner' }, 'await tools.save_plan({ "plan": "p", "checklist": "c" })', null, { events: budgetEventsFx, exploreBudget: 18 }],
   ['K10 planner+预算耗尽+read 成员 → 聚合含「探查预算已耗尽（本轮已用 18/18）」与「仅可调用 save_plan/send_message」', { kind: 'planner' }, "await tools.read({ file_path: 'x' })", ['探查预算已耗尽（本轮已用 18/18）', '仅可调用 save_plan/send_message'], { events: budgetEventsFx, exploreBudget: 18 }],
+  ['K11 main+MCP静态只读成员 → 放行(null)且不误判ask', { kind: 'main' }, "try { await tools['mcp__chrome-devtools-mcp__list_pages']({}) } catch (e) {}", null],
 ]
 for (const [name, role, code, expected, gateCtx] of K) {
   const got = runCodeGroupDenyReason(undefined, { arguments: { code } }, role, Object.assign({}, gateCtx !== undefined ? gateCtx : {}, { gateRuntime }))
@@ -2662,6 +2681,8 @@ for (const [name, role, code, expected, gateCtx] of K) {
   if (okResult) { pass += 1 } else { fail += 1 }
   output.assertion(okResult, name, expected, got)
 }
+const mcpWriteReason = runCodeGroupDenyReason(noneStateFx, { name: 'run_code', arguments: { code: "try { await tools['mcp__chrome-devtools-mcp__list_pages']({}) } catch (e) {}\nawait tools.write({ file_path: 'x', content: '1' })" } }, { kind: 'main' }, { gateRuntime })
+checkTrue('K12 MCP独立catch+受阻write混合组只报write且不出现假ask', typeof mcpWriteReason === 'string' && mcpWriteReason.includes('路由未确认：write/edit') && !mcpWriteReason.includes('结果未正确返回用户层'))
 
 // ── GW 系列：YAML 单一来源、prompt variable 契约、严格校验与动态词表 ────────
 const GATE_FIELD_NAMES = ['routeDirect', 'routePlan', 'routeDisagree', 'approvalApprove', 'approvalReplan', 'purposeRefine', 'purposeRedo']

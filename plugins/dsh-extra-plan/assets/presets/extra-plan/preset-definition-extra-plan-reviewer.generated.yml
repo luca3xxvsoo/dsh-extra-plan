@@ -97,6 +97,8 @@ plugins:
       searchTimeoutMs: 60000
   - id: tool-cordis
     name: '@deepseek-ai/dsh-tool-cordis'
+  - id: tool-subagent-control
+    name: '@deepseek-ai/dsh-tool-subagent-control'
   - id: tool-presentation
     name: '@deepseek-ai/dsh-agent-tool-presentation'
     config:

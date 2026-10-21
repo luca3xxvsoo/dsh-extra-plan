@@ -23,6 +23,7 @@ if (typeof moduleHooks.registerHooks === 'function') {
   } })
 }
 const { Context } = await import('@deepseek-ai/cordis')
+const { assembleContextFor } = await import('@deepseek-ai/dsh-agent')
 const { default: Loader } = await import('@deepseek-ai/cordis-plugin-loader')
 const { default: AgentPresetAdapter } = await import('@deepseek-ai/dsh-agent-preset')
 const { parsePresetYaml } = await import('../../plugins/dsh-extra-plan/lib/preset-settings.js')
@@ -79,7 +80,7 @@ function sectionTexts(assembly) {
   return Array.isArray(assembly.sections) ? assembly.sections.map((section) => typeof section.text === 'string' ? section.text : '').join('\n') : ''
 }
 
-const { assetDefinitions, assetDefinition, definitionWithProjection } = await import('../../plugins/dsh-extra-plan/lib/preset-sync.js')
+const { assetDefinitions, assetDefinition, definitionWithProjection, roleDefinitionsWithPresentation } = await import('../../plugins/dsh-extra-plan/lib/preset-sync.js')
 
 const EXPECTED_ROSTER = ['extra-plan', 'extra-plan-executor', 'extra-plan-planner', 'extra-plan-reviewer', 'extra-plan-prober']
 const EXPECTED_ROSTER_RECORDS = [
@@ -103,185 +104,206 @@ console.log('HOST_INSTALL_ROOT=' + INSTALL_ROOT)
 console.log('BATCH_DIR=' + BATCH_DIR)
 console.log('MAIN_PERSONA_SENTINEL=' + JSON.stringify(MAIN_PERSONA_SENTINEL))
 
-let root
-const handles = []
-try {
-  root = new Context()
-  // definition 内 !!js 求值域：宿主由 dsh-app-boot 的 ctx.provide('dshHomePath', ...) 提供，夹具等价提供。
-  root.provide('dshHomePath', (...parts) => join(HOME_DIR, ...parts.map((part) => String(part))))
-  // 角色 definition 里 dsh-extra-plan 行写的是包名（生产由 profile 安装解析）；夹具在临时目录里
-  // 建 node_modules 软链，使 Loader 以该目录为 baseUrl 时能按包名解析到本仓插件源码。
-  const loaderRoot = join(BATCH_DIR, 'loader-root')
-  mkdirSync(join(loaderRoot, 'node_modules'), { recursive: true })
-  try { symlinkSync(join(ROOT, 'plugins', 'dsh-extra-plan'), join(loaderRoot, 'node_modules', 'dsh-extra-plan'), 'junction') } catch { /* 已存在 */ }
-  await root.plugin(Loader, { baseUrl: pathToFileURL(join(loaderRoot, 'fixture-entry.mjs')).href })
-  const rows = [
-    { id: 'session', name: '@deepseek-ai/dsh-session' },
-    { id: 'session-projection', name: '@deepseek-ai/dsh-session-projection' },
-    { id: 'session-persistence-jsonl', name: '@deepseek-ai/dsh-session-persistence-jsonl', config: { root: SESSION_ROOT, compression: 'zstd' } },
-    { id: 'llm', name: '@deepseek-ai/dsh-llm' },
-    { id: 'fs', name: '@deepseek-ai/dsh-fs' },
-    { id: 'fs-local', name: '@deepseek-ai/dsh-fs-local', config: { cwd: WORKSPACE } },
-    { id: 'subprocess', name: '@deepseek-ai/dsh-subprocess-local' },
-    { id: 'working-directory', name: '@deepseek-ai/dsh-working-directory', config: { defaultDirectory: WORKSPACE } },
-    { id: 'shell', name: '@deepseek-ai/dsh-shell' },
-    { id: 'shell-env', name: '@deepseek-ai/dsh-shell-env', config: { dshHome: HOME_DIR } },
-    { id: 'pwsh-local', name: '@deepseek-ai/dsh-pwsh-local' },
-    { id: 'jobs', name: '@deepseek-ai/dsh-jobs' },
-    { id: 'jobs-local', name: '@deepseek-ai/dsh-jobs-local' },
-    { id: 'skills', name: '@deepseek-ai/dsh-skill' },
-    { id: 'skills-filesystem', name: '@deepseek-ai/dsh-skill-filesystem' },
-    // tool-web / tool-cordis 行的服务夹具：tool-web inject ["tools","web","systemPrompt"]，
-    // tool-cordis inject ["tools","cordisInspect"]。角色预设回填后四角色均挂这两行，
-    // 缺服务会让 preset mount 永久 wait（INCOMPLETE）；此处按宿主同形补 web 与 cordis 检查服务。
-    { id: 'web', name: '@deepseek-ai/dsh-web' },
-    { id: 'cordis-host-runner', name: '@deepseek-ai/dsh-cordis-host-runner' },
-    { id: 'tools', name: '@deepseek-ai/dsh-tools', config: { mode: 'native' } },
-    { id: 'system-prompt', name: '@deepseek-ai/dsh-system-prompt', config: { personaPrefix: '' } },
-    { id: 'agent', name: '@deepseek-ai/dsh-agent' },
-    { id: 'agent-loop', name: '@deepseek-ai/dsh-agent-loop', config: { agents: [] } },
-    { id: 'subagent', name: '@deepseek-ai/dsh-subagent' },
-    { id: 'subagent-spawn', name: '@deepseek-ai/dsh-subagent-spawn-in-process' },
-    { id: 'agent-preset-registry', name: '@deepseek-ai/dsh-agent-preset-registry', config: { default: 'extra-plan' } },
-  ]
-  for (const row of rows) await root.loader.create(row)
-  await root.loader.await()
-  const entries = new Map()
-  for (const entry of root.loader.entries()) entries.set(entry.options.id, entry)
-  console.log('CORE_SERVICES=ok')
-
-  // ── 组 1：5 个 definition 注册后 roster 含 5 个 id ─────────────────────────
-  // 说明：主 definition 的完整挂载需要宿主全组合（skill-filesystem 的 bundledSkillDir、compaction 等），
-  // 夹具不模拟；角色预设的工具面行（含 tool-web / tool-cordis）已由上方 web / cordis-host-runner
-  // 服务行补齐，故组 3-6 是真实挂载后的断言而非跳过。本组只断言 roster 含 5 个 id。
-  const definitions = assetDefinitions()
+async function runMode(mode) {
+  let root
+  const handles = []
   const adapters = []
-  for (const definition of definitions) adapters.push(await root.plugin(AgentPresetAdapter, definition))
-  const roster = await root.agentPresets.list()
-  const rosterIds = roster.map((item) => item.id)
-  check('组1 roster 含 5 个 definition id（主在前、角色 101..104 在后）', JSON.stringify(rosterIds) === JSON.stringify(EXPECTED_ROSTER), JSON.stringify(rosterIds))
-  const rosterRecords = roster.map((item) => ({ id: item.id, order: item.order, name: item.name }))
-  check('组1 registry.list 实际主名/四角色新展示名与 ID/order 精确匹配', JSON.stringify(rosterRecords) === JSON.stringify(EXPECTED_ROSTER_RECORDS), JSON.stringify(rosterRecords))
-  check('组1 主 definition 顶层 17 条、4 个角色 definition 首两行为 persona/extra-plan',
-    definitions[0].plugins.length === 17 && definitions.slice(1).every((item) => JSON.stringify(item.plugins.slice(0, 2).map((row) => row.id)) === JSON.stringify(['persona', 'extra-plan'])))
-
-  // tool-subagent 的 validate() 会 readDocument(agentPreset)，必须等 5 个 definition 注册完成后再装载。
-  await root.loader.create({ id: 'tool-subagent', name: '@deepseek-ai/dsh-tool-subagent', config: { provider: 'spawn', toolName: 'subagent', agentPreset: 'extra-plan-executor' } })
-  await root.loader.await()
-  for (const entry of root.loader.entries()) entries.set(entry.options.id, entry)
-
-  // ── 组 2：tool-subagent 装载不抛错即 assertProvider 通过 ──────────────────
-  let toolSubagentRow = null
-  const rowEntry = entries.get('tool-subagent')
-  const toolSubagentMounted = rowEntry !== undefined && rowEntry.fiber !== undefined && rowEntry.fiber !== null && rowEntry.fiber.state === 2
-  check('组2 tool-subagent 三键行装载成功（provider/toolName/agentPreset），即宿主 assertProvider 通过', toolSubagentMounted,
-    rowEntry === undefined ? 'loader entry missing' : 'fiberState=' + String(rowEntry.fiber === undefined ? 'undefined' : rowEntry.fiber.state))
-  if (rowEntry !== undefined) {
-    const config = rowEntry.options !== undefined && rowEntry.options.config !== undefined ? rowEntry.options.config : {}
-    toolSubagentRow = { provider: config.provider, toolName: config.toolName, agentPreset: config.agentPreset, keys: Object.keys(config).sort() }
-  }
-  check('组2 tool-subagent 配置恰三键且 agentPreset=extra-plan-executor',
-    toolSubagentRow !== null && JSON.stringify(toolSubagentRow.keys) === JSON.stringify(['agentPreset', 'provider', 'toolName'])
-    && toolSubagentRow.provider === 'spawn' && toolSubagentRow.toolName === 'subagent' && toolSubagentRow.agentPreset === 'extra-plan-executor',
-    toolSubagentRow === null ? 'row missing' : JSON.stringify(toolSubagentRow))
-  const spawner = root.subagents.getProvider('spawn')
-  check('组2 spawn 提供者声明 agentPreset 能力且不继承父上下文（assertProvider 的判据）',
-    spawner !== undefined && spawner.capabilities !== undefined && spawner.capabilities.agentPreset === true && spawner.inheritsParentContext !== true,
-    spawner === undefined ? 'provider missing' : JSON.stringify({ agentPreset: spawner.capabilities?.agentPreset, inherits: spawner.inheritsParentContext }))
-  const rootSchemas = namesOf(root.tools.schemas(root))
-  check('组2 委派工具 subagent 已注册到根工具面', rootSchemas.includes('subagent'), JSON.stringify(rootSchemas.slice(0, 12)))
-  // 组 3-6 观察的是角色预设内的工具面；根级夹具委派行属夹具自身，先摘除以免污染子会话工具清单
-  // （生产里 subagent 工具由主预设 composition 提供，不在根作用域）。
-  root.loader.root.remove('tool-subagent')
-  await root.loader.await()
-  check('组2 摘除夹具根级委派行后子作用域不再继承 subagent 工具', !namesOf(root.tools.schemas(root)).includes('subagent'))
-
-  // ── 子会话工厂：真实 agents.create + 角色预设 mount（agentPreset 写入 header） ──
-  async function createChild(presetId, index) {
-    const sessionId = 'role-preset-' + presetId + '-' + String(index)
-    const handle = await root.agents.create({
-      sessionId,
-      meta: { cwd: WORKSPACE, agentPreset: presetId, origin: 'subagent', delegationDepth: 1, isSeeded: false },
-      setup: async (agentCtx) => {
-        const presets = agentCtx.get ? agentCtx.get('agentPresets') : undefined
-        if (presets === undefined) throw new Error('agentPresets service unavailable in child setup')
-        await presets.mount(agentCtx, presetId)
-      },
-    })
-    handles.push(handle)
-    return handle.agent
-  }
-  const { createAgentRuntime } = await import('../../plugins/dsh-extra-plan/lib/agent-runtime.js')
-  const runtime = createAgentRuntime({ getAgents: () => root.agents, sandboxPolicy: undefined, foldUsage: () => {}, warn: () => {} })
-
-  // ── 组 3：planner 子会话 header.agentPreset 与 isPlannerChild ──────────────
-  const plannerAgent = await createChild('extra-plan-planner', 1)
-  check('组3 planner 子会话 header.agentPreset === extra-plan-planner', plannerAgent.session.header.agentPreset === 'extra-plan-planner', String(plannerAgent.session.header.agentPreset))
-  check('组3 isPlannerChild(planner 子会话) === true', runtime.isPlannerChild(plannerAgent) === true)
-  check('组3 isPlannerChild(主会话/非 planner 子会话) === false',
-    runtime.isPlannerChild({ session: { header: { id: 'planner-like-main', cwd: WORKSPACE }, snapshotEvents: () => [] } }) === false)
-
-  // ── 组 4：executor 子会话工具面 ───────────────────────────────────────────
-  const executorAgent = await createChild('extra-plan-executor', 2)
-  const executorTools = namesOf(root.tools.schemas(executorAgent))
-  const FORBIDDEN = ['subagent', 'workflow', 'ralph', 'ask_user_question', 'todo_write']
-  check('组4 executor 子会话工具面不含 subagent/workflow/ralph/ask_user_question/todo_write',
-    FORBIDDEN.every((name) => !executorTools.includes(name)), JSON.stringify(FORBIDDEN.filter((name) => executorTools.includes(name))))
-  check('组4 executor 子会话工具面含 write 与 edit', executorTools.includes('write') && executorTools.includes('edit'), JSON.stringify(executorTools))
-  console.log('EXECUTOR_TOOLS=' + JSON.stringify(executorTools))
-
-  // ── 组 5：planner 只读（无 write/edit、有只读 shell pwsh） ─────────────────
-  const plannerTools = namesOf(root.tools.schemas(plannerAgent))
-  check('组5 planner 子会话工具面不含 write/edit 且含只读 shell pwsh',
-    !plannerTools.includes('write') && !plannerTools.includes('edit') && plannerTools.includes('pwsh'),
-    JSON.stringify({ write: plannerTools.includes('write'), edit: plannerTools.includes('edit'), pwsh: plannerTools.includes('pwsh') }))
-  // 新增夹具的真实性取证：tool-web（fetch:false）与只读 tool-cordis 行确实在子作用域注册了工具
-  // （web_search 可见、web_fetch 因 fetch:false 不注册；cordis_inspect_list 可见）。
-  check('组5 planner 子会话工具面含 tool-web/tool-cordis 注册的只读工具且 web_fetch 按 fetch:false 不注册',
-    plannerTools.includes('web_search') && plannerTools.includes('cordis_inspect_list') && !plannerTools.includes('web_fetch'),
-    JSON.stringify(plannerTools.filter((name) => name.startsWith('web_') || name.startsWith('cordis_'))))
-  console.log('PLANNER_TOOLS=' + JSON.stringify(plannerTools))
-
-  // ── 组 6：planner 组装输出含角色 persona 原文、不含主会话 persona 前缀 ──────
-  let plannerPrompt = ''
+  const entries = new Map()
+  const modeHome = join(HOME_DIR, mode)
+  const modeSessionRoot = join(SESSION_ROOT, mode)
+  const modeWorkspace = join(WORKSPACE, mode)
+  const modeTemp = join(BATCH_DIR, 'temp', mode)
+  for (const dir of [modeHome, modeSessionRoot, modeWorkspace, modeTemp, join(modeHome, 'skills')]) mkdirSync(dir, { recursive: true })
+  writeFileSync(join(modeWorkspace, 'AGENTS.md'), '# role preset fixture\nfixture baseline instructions\n', 'utf8')
   try {
-    const assembly = await root.systemPrompt.assemble({ scope: plannerAgent })
-    plannerPrompt = sectionTexts(assembly)
+    root = new Context()
+    root.provide('dshHomePath', (...parts) => join(modeHome, ...parts.map((part) => String(part))))
+    const loaderRoot = join(BATCH_DIR, 'loader-root-' + mode)
+    mkdirSync(join(loaderRoot, 'node_modules'), { recursive: true })
+    try { symlinkSync(join(ROOT, 'plugins', 'dsh-extra-plan'), join(loaderRoot, 'node_modules', 'dsh-extra-plan'), 'junction') } catch { /* 已存在 */ }
+    await root.plugin(Loader, { baseUrl: pathToFileURL(join(loaderRoot, 'fixture-entry.mjs')).href })
+    const rows = [
+      { id: 'session', name: '@deepseek-ai/dsh-session' },
+      { id: 'session-projection', name: '@deepseek-ai/dsh-session-projection' },
+      { id: 'session-persistence-jsonl', name: '@deepseek-ai/dsh-session-persistence-jsonl', config: { root: modeSessionRoot, compression: 'zstd' } },
+      { id: 'llm', name: '@deepseek-ai/dsh-llm' },
+      { id: 'subprocess', name: '@deepseek-ai/dsh-subprocess-local' },
+      { id: 'sandbox-policy', name: '@deepseek-ai/dsh-sandbox-policy', config: { mode: 'workspace-write', workspaceRoot: modeWorkspace } },
+      { id: 'fs-sandbox', name: '@deepseek-ai/dsh-fs-sandbox', config: { cwd: modeWorkspace } },
+      { id: 'fs-observation-policy', name: '@deepseek-ai/dsh-fs-observation-policy' },
+      { id: 'sandbox', name: '@deepseek-ai/dsh-sandbox' },
+      { id: 'ptc-runtime', name: '@deepseek-ai/dsh-ptc-runtime-node' },
+      { id: 'working-directory', name: '@deepseek-ai/dsh-working-directory', config: { defaultDirectory: modeWorkspace } },
+      { id: 'shell', name: '@deepseek-ai/dsh-shell' },
+      { id: 'shell-env', name: '@deepseek-ai/dsh-shell-env', config: { dshHome: modeHome } },
+      { id: 'pwsh-local', name: '@deepseek-ai/dsh-pwsh-local' },
+      { id: 'jobs', name: '@deepseek-ai/dsh-jobs' },
+      { id: 'jobs-local', name: '@deepseek-ai/dsh-jobs-local' },
+      { id: 'skills', name: '@deepseek-ai/dsh-skill' },
+      { id: 'skills-filesystem', name: '@deepseek-ai/dsh-skill-filesystem' },
+      { id: 'web', name: '@deepseek-ai/dsh-web' },
+      { id: 'cordis-host-runner', name: '@deepseek-ai/dsh-cordis-host-runner' },
+      { id: 'tools', name: '@deepseek-ai/dsh-tools', config: { mode: 'native' } },
+      { id: 'system-prompt', name: '@deepseek-ai/dsh-system-prompt', config: { personaPrefix: '' } },
+      { id: 'agent', name: '@deepseek-ai/dsh-agent' },
+      { id: 'agent-loop', name: '@deepseek-ai/dsh-agent-loop', config: { agents: [] } },
+      { id: 'subagent', name: '@deepseek-ai/dsh-subagent' },
+      { id: 'subagent-spawn', name: '@deepseek-ai/dsh-subagent-spawn-in-process' },
+      { id: 'agent-preset-registry', name: '@deepseek-ai/dsh-agent-preset-registry', config: { default: 'extra-plan' } },
+    ]
+    for (const row of rows) await root.loader.create(row)
+    await root.loader.await()
+    for (const entry of root.loader.entries()) entries.set(entry.options.id, entry)
+    console.log('CORE_SERVICES=' + mode + '=ok')
+    check('组0 ' + mode + ' 宿主 fs 提供方公开 resolve 可用', root.fs !== undefined && typeof root.fs.resolve === 'function')
+
+    const sourceDefinitions = assetDefinitions()
+    const mainDefinition = definitionWithProjection({ toolPresentationMode: mode })
+    const definitions = [mainDefinition, ...roleDefinitionsWithPresentation(mainDefinition)]
+    const projectedRecords = definitions.map((item) => ({ id: item.id, order: item.order, name: item.name }))
+    check('组1 ' + mode + ' source definition 的主名/四角色 ID-order 保持冻结', JSON.stringify(sourceDefinitions.map((item) => ({ id: item.id, order: item.order, name: item.name }))) === JSON.stringify(EXPECTED_ROSTER_RECORDS))
+    check('组1 ' + mode + ' 内存投影不改主/角色 ID-name-order', JSON.stringify(projectedRecords) === JSON.stringify(EXPECTED_ROSTER_RECORDS), JSON.stringify(projectedRecords))
+    check('组1 ' + mode + ' 主 definition 顶层 17 条、角色首两行为 persona/extra-plan', definitions[0].plugins.length === 17 && definitions.slice(1).every((item) => JSON.stringify(item.plugins.slice(0, 2).map((row) => row.id)) === JSON.stringify(['persona', 'extra-plan'])))
+    check('组1 ' + mode + ' 仅内存切换全部 tool-presentation.mode', definitions.every((item) => item.plugins.filter((row) => row.id === 'tool-presentation').length === 1 && item.plugins.find((row) => row.id === 'tool-presentation').config.mode === mode))
+
+    for (const definition of definitions) adapters.push(await root.plugin(AgentPresetAdapter, definition))
+    const roster = await root.agentPresets.list()
+    const rosterIds = roster.map((item) => item.id)
+    check('组1 ' + mode + ' roster 含原始 5 个 definition id（无 PTC 副本）', JSON.stringify(rosterIds) === JSON.stringify(EXPECTED_ROSTER), JSON.stringify(rosterIds))
+    const rosterRecords = roster.map((item) => ({ id: item.id, order: item.order, name: item.name }))
+    check('组1 ' + mode + ' registry.list 实际主名/四角色展示名与 ID/order 精确匹配', JSON.stringify(rosterRecords) === JSON.stringify(EXPECTED_ROSTER_RECORDS), JSON.stringify(rosterRecords))
+
+    await root.loader.create({ id: 'tool-subagent', name: '@deepseek-ai/dsh-tool-subagent', config: { provider: 'spawn', toolName: 'subagent', agentPreset: 'extra-plan-executor' } })
+    await root.loader.await()
+    for (const entry of root.loader.entries()) entries.set(entry.options.id, entry)
+    let toolSubagentRow = null
+    const rowEntry = entries.get('tool-subagent')
+    const toolSubagentMounted = rowEntry !== undefined && rowEntry.fiber !== undefined && rowEntry.fiber !== null && rowEntry.fiber.state === 2
+    check('组2 ' + mode + ' tool-subagent 三键行装载成功（provider/toolName/agentPreset），即宿主 assertProvider 通过', toolSubagentMounted, rowEntry === undefined ? 'loader entry missing' : 'fiberState=' + String(rowEntry.fiber === undefined ? 'undefined' : rowEntry.fiber.state))
+    if (rowEntry !== undefined) {
+      const config = rowEntry.options !== undefined && rowEntry.options.config !== undefined ? rowEntry.options.config : {}
+      toolSubagentRow = { provider: config.provider, toolName: config.toolName, agentPreset: config.agentPreset, keys: Object.keys(config).sort() }
+    }
+    check('组2 ' + mode + ' tool-subagent 配置恰三键且 agentPreset=extra-plan-executor', toolSubagentRow !== null && JSON.stringify(toolSubagentRow.keys) === JSON.stringify(['agentPreset', 'provider', 'toolName']) && toolSubagentRow.provider === 'spawn' && toolSubagentRow.toolName === 'subagent' && toolSubagentRow.agentPreset === 'extra-plan-executor', toolSubagentRow === null ? 'row missing' : JSON.stringify(toolSubagentRow))
+    const spawner = root.subagents.getProvider('spawn')
+    check('组2 ' + mode + ' spawn 提供者声明 agentPreset 能力且不继承父上下文', spawner !== undefined && spawner.capabilities !== undefined && spawner.capabilities.agentPreset === true && spawner.inheritsParentContext !== true, spawner === undefined ? 'provider missing' : JSON.stringify({ agentPreset: spawner.capabilities?.agentPreset, inherits: spawner.inheritsParentContext }))
+    const rootSchemas = namesOf(root.tools.schemas(root))
+    check('组2 ' + mode + ' 委派工具 subagent 已注册到根工具面', rootSchemas.includes('subagent'), JSON.stringify(rootSchemas.slice(0, 12)))
+    root.loader.root.remove('tool-subagent')
+    await root.loader.await()
+    check('组2 ' + mode + ' 摘除夹具根级委派行后子作用域不再继承 subagent 工具', !namesOf(root.tools.schemas(root)).includes('subagent'))
+
+    async function createChild(presetId, index) {
+      const sessionId = 'role-preset-' + mode + '-' + presetId + '-' + String(index)
+      const handle = await root.agents.create({
+        sessionId,
+        meta: { cwd: modeWorkspace, agentPreset: presetId, origin: 'subagent', delegationDepth: 1, isSeeded: false },
+        setup: async (agentCtx) => {
+          const presets = agentCtx.get ? agentCtx.get('agentPresets') : undefined
+          if (presets === undefined) throw new Error('agentPresets service unavailable in child setup')
+          await presets.mount(agentCtx, presetId)
+        },
+      })
+      handles.push(handle)
+      return handle.agent
+    }
+    const { createAgentRuntime } = await import('../../plugins/dsh-extra-plan/lib/agent-runtime.js')
+    const runtime = createAgentRuntime({ getAgents: () => root.agents, sandboxPolicy: undefined, foldUsage: () => {}, warn: () => {} })
+    const plannerAgent = await createChild('extra-plan-planner', 1)
+    check('组3 ' + mode + ' planner 子会话 header.agentPreset === extra-plan-planner', plannerAgent.session.header.agentPreset === 'extra-plan-planner', String(plannerAgent.session.header.agentPreset))
+    check('组3 ' + mode + ' isPlannerChild(planner 子会话) === true', runtime.isPlannerChild(plannerAgent) === true)
+    check('组3 ' + mode + ' isPlannerChild(主会话/非 planner 子会话) === false', runtime.isPlannerChild({ session: { header: { id: 'planner-like-main', cwd: modeWorkspace }, snapshotEvents: () => [] } }) === false)
+
+    const executorAgent = await createChild('extra-plan-executor', 2)
+    const executorTools = namesOf(root.tools.schemas(executorAgent))
+    const FORBIDDEN = ['subagent', 'workflow', 'ralph', 'ask_user_question', 'todo_write']
+    check('组4 ' + mode + ' executor 工具面不含 subagent/workflow/ralph/ask_user_question/todo_write', FORBIDDEN.every((name) => !executorTools.includes(name)), JSON.stringify(FORBIDDEN.filter((name) => executorTools.includes(name))))
+    check('组4 ' + mode + ' executor 工具面含 write 与 edit', executorTools.includes('write') && executorTools.includes('edit'), JSON.stringify(executorTools))
+    console.log('EXECUTOR_TOOLS=' + JSON.stringify({ mode, tools: executorTools }))
+    const reviewerAgent = await createChild('extra-plan-reviewer', 3)
+    const proberAgent = await createChild('extra-plan-prober', 4)
+    const plannerTools = namesOf(root.tools.schemas(plannerAgent))
+    check('组5 ' + mode + ' planner 工具面不含 write/edit 且含只读 shell pwsh', !plannerTools.includes('write') && !plannerTools.includes('edit') && plannerTools.includes('pwsh'), JSON.stringify({ write: plannerTools.includes('write'), edit: plannerTools.includes('edit'), pwsh: plannerTools.includes('pwsh') }))
+    check('组5 ' + mode + ' planner 工具面含 web/coredis 只读工具且 web_fetch 按 fetch=false 不注册', plannerTools.includes('web_search') && plannerTools.includes('cordis_inspect_list') && !plannerTools.includes('web_fetch'), JSON.stringify(plannerTools.filter((name) => name.startsWith('web_') || name.startsWith('cordis_'))))
+    console.log('PLANNER_TOOLS=' + JSON.stringify({ mode, tools: plannerTools }))
+
+    const CONTROL_BINDING_NAMES = ['send_message', 'interrupt_agent', 'cordis_inspect_list', 'cordis_inspect_query']
+    const roleCases = [['executor', executorAgent], ['planner', plannerAgent], ['reviewer', reviewerAgent], ['prober', proberAgent]]
+    for (const [roleName, agent] of roleCases) {
+      const schemas = root.tools.schemas(agent)
+      const schemaNames = namesOf(schemas)
+      const bindingDefinitions = CONTROL_BINDING_NAMES.map((name) => root.tools.get(name, agent))
+      const bindingNames = bindingDefinitions.map((definition) => definition === undefined ? undefined : definition.name)
+      const bindingOk = CONTROL_BINDING_NAMES.every((name, index) => schemaNames.includes(name) && bindingNames[index] === name)
+      check('组8 ' + mode + ' ' + roleName + ' schemas/get 四 binding 均为真实定义', bindingOk, JSON.stringify({ names: schemaNames, get: bindingNames }))
+      if (mode === 'ptc') {
+        let assembly = null
+        let assemblyError = ''
+        try {
+          assembly = await root.systemPrompt.assemble(assembleContextFor(agent))
+        } catch (error) {
+          assemblyError = error instanceof Error ? error.message : String(error)
+        }
+        const assemblySections = assembly !== null && Array.isArray(assembly.sections) ? assembly.sections : []
+        const assemblyTools = assembly !== null ? namesOf(assembly.tools) : []
+        const sdkSection = assemblySections.find((section) => section.name === 'tools:sdk')
+        const sdkText = sdkSection === undefined ? '' : (typeof sdkSection.text === 'string' ? sdkSection.text : '')
+        const ptcTopLevelOk = assemblyTools.length === 1 && assemblyTools[0] === 'run_code'
+        const ptcTextOk = roleName === 'planner' || (sdkText.includes('send_message') && sdkText.includes('interrupt_agent') && !sdkText.includes('cordis_inspect_list') && !sdkText.includes('cordis_inspect_query'))
+        check('组8 ' + mode + ' ' + roleName + ' PTC F 顶层仅 run_code、binding/get 保留、tools:sdk 文本观察', ptcTopLevelOk && bindingOk && ptcTextOk, JSON.stringify({ topLevel: assemblyTools, sections: assemblySections.map((section) => section.name), sdkTextObserved: roleName === 'planner' ? 'planner-not-required' : ptcTextOk, assemblyError }))
+        console.log('ROLE_BINDING=' + JSON.stringify({ mode, role: roleName, phase: 'F', creative: false, schemas: schemaNames, binding: bindingNames, topLevel: assemblyTools, sdkTextObserved: roleName === 'planner' ? 'planner-not-required' : ptcTextOk, cordisHidden: roleName === 'planner' ? 'not-required' : !sdkText.includes('cordis_inspect_list') && !sdkText.includes('cordis_inspect_query') }))
+      } else {
+        console.log('ROLE_BINDING=' + JSON.stringify({ mode, role: roleName, phase: 'native', creative: false, schemas: schemaNames, binding: bindingNames, sdkTextObserved: 'NOT-RUN' }))
+      }
+    }
+
+    let plannerPrompt = ''
+    let plannerAssembly = null
+    try {
+      plannerAssembly = await root.systemPrompt.assemble(assembleContextFor(plannerAgent))
+      plannerPrompt = sectionTexts(plannerAssembly)
+    } catch (error) {
+      plannerPrompt = ''
+      console.log('ASSEMBLE_ERROR=' + JSON.stringify({ mode, role: 'planner', phase: mode === 'ptc' ? 'F' : 'native', creative: false, error: error instanceof Error ? error.message : String(error) }))
+    }
+    const rolePersona = ROLE_PERSONAS['extra-plan-planner']
+    const roleDefinition = definitions.find((item) => item.id === 'extra-plan-planner')
+    const rolePrefix = roleDefinition?.plugins?.find((row) => row.id === 'persona')?.config?.prefix
+    check('组6 ' + mode + ' planner personaPrefix 基础注册层保持原文（不证明最终请求）', typeof rolePersona === 'string' && rolePersona !== '' && rolePrefix === rolePersona, 'prefixLen=' + String(typeof rolePrefix === 'string' ? rolePrefix.length : 0))
+    check('组6 ' + mode + ' planner assembleContextFor 返回文本（不把基础 persona 当最终请求）', plannerPrompt !== '', 'promptLen=' + String(plannerPrompt.length))
+    check('组6 ' + mode + ' planner 组装输出不含主会话 persona 前缀', plannerPrompt !== '' && MAIN_PERSONA_SENTINEL !== '' && !plannerPrompt.includes(MAIN_PERSONA_SENTINEL))
+    console.log('ASSEMBLY=' + JSON.stringify({ mode, role: 'planner', phase: mode === 'ptc' ? 'F' : 'native', creative: false, textObserved: plannerPrompt !== '', sectionNames: plannerAssembly === null ? [] : plannerAssembly.sections.map((section) => section.name), contextNames: plannerAssembly === null ? [] : plannerAssembly.contexts.map((context) => context.name) }))
+
+    let fallbackOk = false
+    let fallbackDetail = ''
+    try {
+      const projected = definitionWithProjection({ toolPresentationMode: 'both' })
+      const row = projected.plugins.find((item) => item.id === 'tool-presentation')
+      fallbackOk = row !== undefined && row.config !== undefined && row.config.mode === 'native'
+      fallbackDetail = row === undefined ? 'row missing' : JSON.stringify(row.config)
+    } catch (error) {
+      fallbackDetail = error instanceof Error ? error.message : String(error)
+    }
+    check('组7 ' + mode + ' 旧值 both 回落 native 且不抛错', fallbackOk, fallbackDetail)
+    const nativeProjected = definitionWithProjection({ toolPresentationMode: 'ptc' })
+    check('组7 ' + mode + ' 合法值 ptc 原样投影（回落只作用于旧值）', nativeProjected.plugins.find((item) => item.id === 'tool-presentation').config.mode === 'ptc')
   } catch (error) {
-    plannerPrompt = ''
-    console.log('ASSEMBLE_ERROR=' + (error instanceof Error ? error.message : String(error)))
+    incompleteCheck('角色预设宿主回归集成层[' + mode + ']', error instanceof Error ? error.stack || error.message : String(error))
+  } finally {
+    await Promise.all(adapters.map((dispose) => Promise.resolve(typeof dispose === 'function' ? dispose() : undefined)))
+    for (const handle of handles) {
+      try { await handle.dispose() } catch (error) { console.error('宿主 handle dispose failed: ' + (error instanceof Error ? error.message : String(error))) }
+    }
+    if (root !== undefined) {
+      try { if (root.fiber !== undefined && typeof root.fiber.dispose === 'function') await root.fiber.dispose() } catch (error) { console.error('Cordis root dispose failed: ' + (error instanceof Error ? error.message : String(error))) }
+    }
   }
-  const rolePersona = ROLE_PERSONAS['extra-plan-planner']
-  check('组6 planner 组装输出含角色 persona 原文', plannerPrompt !== '' && rolePersona !== undefined && plannerPrompt.includes(rolePersona), 'promptLen=' + String(plannerPrompt.length))
-  check('组6 planner 组装输出不含主会话 persona 前缀', plannerPrompt !== '' && MAIN_PERSONA_SENTINEL !== '' && !plannerPrompt.includes(MAIN_PERSONA_SENTINEL))
-
-  // ── 组 7：toolPresentationMode 旧值 both 回落 native 且不抛错 ──────────────
-  let fallbackOk = false
-  let fallbackDetail = ''
-  try {
-    const projected = definitionWithProjection({ toolPresentationMode: 'both' })
-    const row = projected.plugins.find((item) => item.id === 'tool-presentation')
-    fallbackOk = row !== undefined && row.config !== undefined && row.config.mode === 'native'
-    fallbackDetail = row === undefined ? 'row missing' : JSON.stringify(row.config)
-  } catch (error) {
-    fallbackDetail = error instanceof Error ? error.message : String(error)
-  }
-  check('组7 旧值 both 回落 native 且不抛错', fallbackOk, fallbackDetail)
-  const nativeProjected = definitionWithProjection({ toolPresentationMode: 'ptc' })
-  check('组7 合法值 ptc 原样投影（回落只作用于旧值）', nativeProjected.plugins.find((item) => item.id === 'tool-presentation').config.mode === 'ptc')
-
-  await Promise.all(adapters.map((dispose) => Promise.resolve(typeof dispose === 'function' ? dispose() : undefined)))
-} catch (error) {
-  incompleteCheck('角色预设宿主回归集成层', error instanceof Error ? error.stack || error.message : String(error))
 }
 
-for (const handle of handles) {
-  try { await handle.dispose() } catch (error) { console.error('宿主 handle dispose failed: ' + (error instanceof Error ? error.message : String(error))) }
-}
-if (root !== undefined) {
-  try { if (root.fiber !== undefined && typeof root.fiber.dispose === 'function') await root.fiber.dispose() } catch (error) { console.error('Cordis root dispose failed: ' + (error instanceof Error ? error.message : String(error))) }
-}
-console.log('真实 provider/模型行为/GUI/生产 profile/HUMAN: NOT-RUN')
+await runMode('native')
+await runMode('ptc')
+console.log('CONTROL_BINDINGS=send_message/interrupt_agent/Cordis；send 仅直属父子，interrupt 仅调用者后代；真实投递/中断=HUMAN/NOT-RUN；createChild 非 managedActivation')
+console.log('真实 provider/模型行为/GUI/生产 profile/消息投递/中断生命周期: NOT-RUN')
 console.log('首失败=' + (firstFailure === null ? '无' : firstFailure.label + ' @line ' + String(firstFailure.line)))
 console.log('通过 ' + pass + ', 失败 ' + fail + ', INCOMPLETE ' + incomplete)
 process.exitCode = fail === 0 && incomplete === 0 ? 0 : 1

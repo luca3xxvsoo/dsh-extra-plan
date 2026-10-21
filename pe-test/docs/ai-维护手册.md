@@ -4,16 +4,16 @@
 
 ## 动手前
 
-1. **先读与登记**：先读方案和验收文件，再读所有目标文件；按原章节建立迁移矩阵。没有矩阵证据的段落默认保留。
+1. **先读与登记**：先读方案和验收文件，再读所有目标文件；按原章节建立迁移矩阵。没有矩阵证据的段落默认保留。维护 dsh-extra-plan 项目时，每次派遣执行者或验收者都要让 prompt、方案和验收工件显式携带项目专属当前态/历史归档约束及适用范围。
 2. **唯一备份**：修改前把实际改动文件按原目录镜像到唯一 `.extra-plan/backup-dsh-extra-plan-<任务名>-<YYYYMMDDHHMMSS>/`；同一任务续跑沿用对应目录，不覆盖原始镜像。文件镜像和子块独立回退是人工纪律，不声称已有自动闸门。
-3. **范围**：仅修改用户真实需求对应且已批准方案列明的工作区文件；根 `README.md`、`plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml` 及其中全部引导词硬性禁改。官方 dsh/官方预设、生产环境、profile、`$DSH_HOME`、真实会话、reports、backup 与 context fixture 不作源改动，其他文件按任务批准范围执行。不得执行 `git reset`、`git checkout`、`git clean`。
-4. **备份后再改**：改预设时只改作者源并由生成器重建，生成物不得手改；文档任务不把预设或引导词当作可改目标。生产部署由用户执行，仓库验收不是部署许可。
+3. **范围**：仅修改用户真实需求对应且已批准方案列明的工作区文件；根 `README.md`、官方 dsh/官方预设、生产环境、profile、`$DSH_HOME`、真实会话、reports、backup 与 context fixture 不作源改动。`agent.cordis.yml` 的非引导词说明/工具行仅在用户明确授权且批准方案列明时有限修改；persona、四角色 personaPrefix、bootstrapPersona/bootstrapReadHint/plannerPromptSuffix、gateWords 与其它引导词原文冻结，单次授权不延续，其他文件按任务批准范围执行。不得执行 `git reset`、`git checkout`、`git clean`。
+4. **备份后再改**：改预设时只改作者源并由生成器重建，生成物不得手改；作者源非引导词只按当前明确授权和批准方案有限修改，全部引导词逐字对拍冻结。生产部署由用户执行，仓库验收不是部署许可。
 5. **嵌套命令纪律**：涉及 `run_code`/PowerShell/字符串拼接时，先按最终语言写正确文本，再逐层转义，写后解析回放；Markdown 不伪造代码语法结果。
 
 ## save_plan 并行交接、冻结与复验
 
 - 续跑先沿用对应任务的既有增量备份目录；原始镜像及 manifest 不覆盖。失败修复另建独立 checkpoint，不能把失败版本写回原镜像，也不能用回滚删除此前已存在的 validator 或保留的未提交实现。
-- `SAVE_PLAN_LIMITS` 的唯一限制真源是 [save-contract.js](../../plugins/dsh-extra-plan/lib/save-contract.js)；本文只引用真源，不复制运行时限值。方案/验收工件自身携带模式、任务/组、检查/交接范围，当前轮的任务、检查、文件数量不作为未来模板。
+- `SAVE_PLAN_LIMITS` 的唯一限制真源是 [save-contract.js](../../plugins/dsh-extra-plan/lib/save-contract.js)；本文只引用真源，不复制运行时限值。方案/验收工件自身携带模式、任务/组、检查与交接约定，某次任务的任务、检查、文件数量不作为未来模板。
 - 正文格式和字段关系以 [save-plan-validation.js](../../plugins/dsh-extra-plan/lib/save-plan-validation.js) 为真源，保存时真实源文件核实以 [save-tool-factories.js](../../plugins/dsh-extra-plan/lib/save-tool-factories.js) 为准；这里不复制另一张硬限制数值表。
 - **新 save_plan 合同**：主文件、关联文件和带文件收尾都必须逐项声明文件操作与 `M` 修改点；既有文本修改的每个点写修改前范围、唯一原文锚点和具体动作，新建、删除、生成按受控例外填写。新调用强制新合同，旧工件只作历史，不自动补行。
 - 验收按同文件、同操作、对应 `M` 点、修改后新定位和客观期望核对，不要求改后行号等于改前；取证写当前真实行号，原方案不回写追坐标。
@@ -23,7 +23,7 @@
 - 执行者回报任务/文件范围、自检和阻塞；自检不等于正式验收。需要写临时产物的执行取证由获批执行者或直行主会话运行并保存原始 stdout/stderr/退出码，reviewer 保持只读并独立读取；同一公共检查只由一个领取者运行，其他任务/收尾/全局复用同一冻结轮证据。
 - 各组产出稳定后可先记录组级快照并开始对应组验收；所有数字任务与收尾完成后再记录最终冻结状态并做全局收口。源文件、检查条件、授权范围或源版本发生变化，受影响共享证据（同轮证据亦然）不可跨相关源变化复用并立即失效；重跑受影响任务、依赖消费者及共享检查，影响不能证明时按固定顺序从头复验。正式失败最多两轮，分类原样保留。
 - 只读复核、执行取证、静态检查和用户实机分别记录 PASS/FAIL/INCOMPLETE/NOT-RUN/SKIP/HUMAN；命令退出 0 不替代期望/禁止核对。字符测量使用 `String.length`，token 只有真实同口径数据才记录，否则 `NOT-RUN`。
-- 固定回归顺序仍按本手册“QQBot CLI 与维护所有权”部分逐项执行；一键 runner 内部重跑既有收口命令必须如实注明，不能声称共享检查从不复跑。简单未来方案可按实际改动域取对应检查，不因本轮规模强制完整矩阵。
+- 固定回归顺序仍按本手册“QQBot CLI 与维护所有权”部分逐项执行；一键 runner 内部重跑既有收口命令必须如实注明，不能声称共享检查从不复跑。简单未来方案可按实际改动域取对应检查，不因任务规模强制完整矩阵。
 
 ## MJS 测试输出合同与 HUMAN 取证分层
 
@@ -68,14 +68,14 @@
 - 8 项（`anchoredBootstrap`、`creativeMode`、`runcodeCatchGate`、`crossProviderPlannerModel`、`plannerModel`、`plannerPromptSuffix`、`exploreBudget`、`otherAgentModel`）保持同进程热读；`webFetch` 与 `toolPresentationMode` 是 2 项需重启的装载期投影；toolPresentationMode 切换后必须新开会话，原会话不可继续（见台账 ⑭）。完整 7 键 `gateWords` 立即持久化，但当前 apply 词表不原地替换，需重启后由 HUMAN 验证新词/旧词拒绝/非法词无 fallback。
 - 自动结果必须分别记录 PASS/FAIL/SKIP/INCOMPLETE/HUMAN/NOT-RUN；SKIP、HUMAN 不销账，真实 Harness/QQBot 重启、消息链、生产 profile 与 adapter 完整工具图保持 HUMAN。
 
-### 本轮生产注入修复工作区口径
+### 生产注入与证据范围
 
 - `settings.js` 的 settled callback 只通过 `editorOf(undefined)` / `ctx.get('configEditor')` 解析 editor；`mountPresetSync` 的 adapter 仍由 `ctx.inject(['configEditor'])` child 挂载，不能把 get-only 当作挂载成功。
 - 设置页脚本使用受控 host-proxy 四态：正常态必须记录外层 without-inject 门槛、ctx.get、child 身份、effect/cleanup、adapter 与 terminal 顺序；get-only/no-op-inject 输出 `HUMAN scope=HOST-PROXY-GET-ONLY`；inject-throws、child-missing-configEditor 必须保留结构化失败。
 - 每个单字段 PUT/internal-update 都对拍完整 10 项 values 与完整 7 键 gateWords；Web patch、QQBot patch 和 terminal 输入不得只含 changed key。既有 throw/reject/hang/no-remount 合同继续执行。
-- 证据生成器每次新建 runId，SOURCE-MANIFEST 记录本轮八个工作区文件的备份 bytes/SHA-256；旧证据只读对拍。缺少真实宿主、生产 profile、QQBot、GUI、消息链和重启一律是 HUMAN，不能改写为 PASS。
+- 证据生成器每次新建 runId，SOURCE-MANIFEST 按取证脚本实际声明的源文件记录备份 bytes/SHA-256；不得把某次任务的固定文件数当通用规模。旧证据只读对拍。缺少真实宿主、生产 profile、QQBot、GUI、消息链和重启一律是 HUMAN，不能改写为 PASS。
 
-## 本轮唯一 settings 行与保存终态维护规则
+## 唯一 settings 行与保存终态维护规则
 
 - 只允许 canonical `id=dsh-extra-plan-settings/name=dsh-extra-plan/settings` 作为新写入目标；`rawCount/effectiveCount/canonicalNameCount` 任一不满足唯一条件时，GET/PUT 必须停在 409 conflict，不能用旧 projection 或旧 terminal 绿灯。
 - `profileSync` 的 cache 与 requestResult 分离：无参数 GET 只能显示最后 terminal 的 cache 元数据；只有带相同 `saveRunId` 查询或当前 PUT 的 request/terminal 三元组全等，才可将 `terminalMatch` 置为 true。
@@ -131,7 +131,7 @@
 2. **自验证结论**：逐项写通过/不通过，并给一行证据；
 3. **越界需求**：列出命令、目标路径、用途、预期内容；没有则写“无”。
 
-回滚只能从唯一备份按文件/子块恢复，删除该任务新增归档，再运行地图 `--check`、step-00、step-04、step-06；不使用 Git 破坏性命令。`pe-test/reports/` 是临时产物，不纳入源改动。
+回滚只能从唯一备份按文件/子块恢复，删除该维护任务新增归档，再运行地图 `--check`、step-00、step-04、step-06；不使用 Git 破坏性命令。`pe-test/reports/` 是临时产物，不纳入源改动。
 
 ## P2-4 生成链
 

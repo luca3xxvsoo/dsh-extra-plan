@@ -345,16 +345,10 @@
 
 # ── cordis（官方创造模式工具集，只读引用官方包） ──────────────────────────
 
-# dsh-tool-cordis 只注册两个只读工具：列表工具（cordis_inspect_list，host
-# 即时返回）与查询工具（cordis_inspect 系列的 _query 后缀名，对 client 平台无超时、直到页面
-# 应答或取消才返回，见 step-01 S-宿主真值）；cordis_run 等 5 名已不存在，故不在任何 deny
-# 清单中列出（deny 未知名会使宿主 tools.restrict() 抛错、子代理创建失败）。若某受支持版本
-# 仍注册该 5 名工具：主会话由插件硬闸门按 write/edit 同规则管控（路由未确认拒绝、批准/直行
-# 放行）；执行者/规划/验收/探查四子代理改由运行时闸门（plannerGateReason /
-# childReadonlyGateReason）兜住。查询工具对 client 平台可能永久 pending（等页面应答），
-# 0.2.1 起四角色预设（本文件第二文档）不挂 dsh-tool-cordis，查询工具天然不可见
-# 主会话仍放行；列表工具 host 即时返回、
-# 无卡死风险，不入任何 deny。
+# dsh-tool-cordis 当前只提供两个只读 Inspect 工具：cordis_inspect_list 与 cordis_inspect_query；主预设和四角色均挂载该包。
+# cordis_inspect_list 读取 Host 已知目录，Host 查询在本地执行；只有 Client 查询受 clientInspectTimeoutMs 约束。
+# 默认 10000ms 是配置值而非现场时延实测；不承诺 Host 即时返回或统一有界，也不把仅核注册名的 S-宿主真值当超时证据。
+# cordis_run 等旧工具名不属于当前工具集，不写入 deny；deny 未知名会使宿主 tools.restrict() 抛错、子代理创建失败。
 - id: tool-cordis
   name: '@deepseek-ai/dsh-tool-cordis'
 
@@ -371,11 +365,11 @@
 # （四角色均不新增 write/edit 权限）；四角色一律挂 tool-web（fetch: false、searchTimeoutMs: 60000）
 # 与只读 dsh-tool-cordis；planner/reviewer/prober 另挂 shell 两行 tool-pwsh / tool-bash
 # （win32 条件 disabled，写法同第一文档，写命令由运行时只读闸门拦下），executor 沿用既有两行 shell；
-# 【已知差异】planner 另挂 dsh-tool-subagent-control（send_message 回报所需）：该包同时注册
-# send_message 与 interrupt_agent、且不提供拆分配置（0.2.1 包不可拆），故 planner 会连带可见
-# interrupt_agent，属与 5f3cc68「deny 掉 interrupt_agent」口径的已知差异；reviewer/prober/executor
-# 不挂该包；四角色均不挂 dsh-tool-subagent、list-agents、dsh-tool-workflow、dsh-tool-ralph、
-# dsh-tool-ask-user、dsh-tool-todo。
+# 四角色均挂 dsh-tool-subagent-control；官方包同时绑定 send_message 与 interrupt_agent、且不提供
+# 拆分配置（0.2.1 包不可拆）。宿主目标纪律仍有效：send_message 仅直属父子，interrupt_agent 仅
+# 调用者自己的后代；调用者不得主动干预父/兄弟或任意目标，主向 running 子发送的原禁扰规则保留。
+# 这只记录工具绑定与宿主授权边界，不新增插件禁闸；四角色均不挂 dsh-tool-subagent、list-agents、
+# dsh-tool-workflow、dsh-tool-ralph、dsh-tool-ask-user、dsh-tool-todo。
 
 - id: extra-plan-executor
   name: 按需规划模式-执行者
@@ -419,6 +413,8 @@
         searchTimeoutMs: 60000
     - id: tool-cordis
       name: '@deepseek-ai/dsh-tool-cordis'
+    - id: tool-subagent-control
+      name: '@deepseek-ai/dsh-tool-subagent-control'
 
 - id: extra-plan-planner
   name: 按需规划模式-规划者
@@ -515,6 +511,8 @@
         searchTimeoutMs: 60000
     - id: tool-cordis
       name: '@deepseek-ai/dsh-tool-cordis'
+    - id: tool-subagent-control
+      name: '@deepseek-ai/dsh-tool-subagent-control'
 
 - id: extra-plan-prober
   name: 按需规划模式-探查者
@@ -562,3 +560,5 @@
         searchTimeoutMs: 60000
     - id: tool-cordis
       name: '@deepseek-ai/dsh-tool-cordis'
+    - id: tool-subagent-control
+      name: '@deepseek-ai/dsh-tool-subagent-control'

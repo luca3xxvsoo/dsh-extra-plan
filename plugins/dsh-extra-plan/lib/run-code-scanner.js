@@ -257,10 +257,10 @@ export function hasDynamicRunCodeAccess(txt, msk, sites = []) {
         endQuote += 1
       }
       const literal = text.slice(q + 1, endQuote)
-      if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(literal) && endQuote < text.length) {
+      if (/^[A-Za-z_$][A-Za-z0-9_$-]*$/.test(literal) && endQuote < text.length) {
         const afterQuote = skipWhitespace(text, endQuote + 1)
         if (afterQuote === close) {
-          const afterBracket = skipWhitespace(text, close + 1)
+          const afterBracket = skipWhitespace(masked, close + 1)
           staticCall = text[afterBracket] === '('
         }
       }
@@ -323,7 +323,7 @@ export function collectRunCodeSites(txt, msk) {
               endQuote += 1
             }
             const literal = text.slice(q + 1, endQuote)
-            if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(literal) && endQuote < text.length && skipWhitespace(text, endQuote + 1) === close) name = literal
+            if (/^[A-Za-z_$][A-Za-z0-9_$-]*$/.test(literal) && endQuote < text.length && skipWhitespace(text, endQuote + 1) === close) name = literal
           }
           parenIdx = k
         }

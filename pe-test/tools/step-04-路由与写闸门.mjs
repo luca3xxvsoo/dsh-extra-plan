@@ -266,23 +266,22 @@ function checkRoleTools(roleId, mustInclude, mustExclude, label) {
   output.assertion(okResult, label, { mustInclude, mustExclude }, names)
 }
 // 工具面回填 5f3cc68 实际可见面（0.2.1 角色预设显式 tools 列表）：四角色均挂只读 fs 家族 +
-// 只读 shell（pwsh/bash 按平台条件 disabled）+ tool-web（fetch:false）+ 只读 tool-cordis。
+// 只读 shell（pwsh/bash 按平台条件 disabled）+ tool-web（fetch:false）+ 只读 tool-cordis +
+// 同一官方 tool-subagent-control；该包同时绑定 send_message 与 interrupt_agent，宿主目标纪律不在此拆分。
 const TOOL_PWSH = '@deepseek-ai/dsh-tool-pwsh'
 const TOOL_BASH = '@deepseek-ai/dsh-tool-bash'
 const TOOL_WEB = '@deepseek-ai/dsh-tool-web'
 const TOOL_CORDIS = '@deepseek-ai/dsh-tool-cordis'
-// 公共禁用（四角色一律不挂）：委派/工作流/交互类工具，以及 tool-subagent-control 的 list-agents 子行
-// （planner 虽合法挂 tool-subagent-control 本体，list_agents 仍不得可见）。
+const TOOL_SUBAGENT_CONTROL = '@deepseek-ai/dsh-tool-subagent-control'
+// 公共禁用（四角色一律不挂）：委派/工作流/交互类工具，以及 tool-subagent-control 的 list-agents 子行。
+// tool-subagent-control 本体四角色均合法可见；send_message/interrupt_agent 的直属父子/后代目标
+// 边界由宿主执行，主向 running 子发送的原禁扰规则仍由运行时闸门覆盖。
 const FORBIDDEN_ROLE_TOOLS_SHARED = ['@deepseek-ai/dsh-tool-subagent', '@deepseek-ai/dsh-tool-subagent-control/list-agents', '@deepseek-ai/dsh-tool-workflow', '@deepseek-ai/dsh-tool-ralph', '@deepseek-ai/dsh-tool-ask-user', '@deepseek-ai/dsh-tool-todo']
-// tool-subagent-control 单列：0.2.1 该包同时注册 send_message 与 interrupt_agent、无配置可拆，
-// planner 以 send_message 回报故合法挂载（连带可见 interrupt_agent，属包不可拆差异）；
-// reviewer/prober/executor 仍必须不挂。
-const FORBIDDEN_SUBAGENT_CONTROL = '@deepseek-ai/dsh-tool-subagent-control'
-const FORBIDDEN_ROLE_TOOLS = [...FORBIDDEN_ROLE_TOOLS_SHARED, FORBIDDEN_SUBAGENT_CONTROL]
-checkRoleTools('extra-plan-reviewer', ['@deepseek-ai/dsh-tool-fs', '@deepseek-ai/dsh-persona', 'dsh-extra-plan', TOOL_PWSH, TOOL_BASH, TOOL_WEB, TOOL_CORDIS], FORBIDDEN_ROLE_TOOLS, 'reviewer 角色工具面：只读 fs + 只读 shell/web/cordis、不挂 subagent/subagent-control/workflow/ralph/ask-user/todo（原 13 项 deny 语义）')
-checkRoleTools('extra-plan-executor', ['@deepseek-ai/dsh-tool-fs', TOOL_PWSH, TOOL_BASH, TOOL_WEB, TOOL_CORDIS], [...FORBIDDEN_ROLE_TOOLS, '@deepseek-ai/dsh-tool-ask-user'], 'executor 角色工具面：可写 fs + 双 shell + web/cordis、不挂委派类工具（原 11 项 deny 语义）')
-checkRoleTools('extra-plan-planner', ['@deepseek-ai/dsh-tool-fs', '@deepseek-ai/dsh-persona', 'dsh-extra-plan', TOOL_PWSH, TOOL_BASH, TOOL_WEB, TOOL_CORDIS, FORBIDDEN_SUBAGENT_CONTROL], FORBIDDEN_ROLE_TOOLS_SHARED, 'planner 角色工具面：只读 fs + 只读 shell/web/cordis、合法挂 tool-subagent-control（list-agents 仍禁）、不挂 subagent/workflow/ralph/ask-user/todo')
-checkRoleTools('extra-plan-prober', ['@deepseek-ai/dsh-tool-fs', '@deepseek-ai/dsh-tool-fs-search', TOOL_PWSH, TOOL_BASH, TOOL_WEB, TOOL_CORDIS], FORBIDDEN_ROLE_TOOLS, 'prober 角色工具面：只读 fs + 只读 shell/web/cordis、不挂委派/交互类工具（原 14 项 deny 语义，cordis 已合法）')
+const FORBIDDEN_ROLE_TOOLS = FORBIDDEN_ROLE_TOOLS_SHARED
+checkRoleTools('extra-plan-reviewer', ['@deepseek-ai/dsh-tool-fs', '@deepseek-ai/dsh-persona', 'dsh-extra-plan', TOOL_PWSH, TOOL_BASH, TOOL_WEB, TOOL_CORDIS, TOOL_SUBAGENT_CONTROL], FORBIDDEN_ROLE_TOOLS, 'reviewer 角色工具面：只读 fs + 只读 shell/web/cordis/control，四角色均绑定 send/interrupt（list-agents 仍禁）')
+checkRoleTools('extra-plan-executor', ['@deepseek-ai/dsh-tool-fs', TOOL_PWSH, TOOL_BASH, TOOL_WEB, TOOL_CORDIS, TOOL_SUBAGENT_CONTROL], FORBIDDEN_ROLE_TOOLS, 'executor 角色工具面：可写 fs + 双 shell + web/cordis/control，四角色均绑定 send/interrupt')
+checkRoleTools('extra-plan-planner', ['@deepseek-ai/dsh-tool-fs', '@deepseek-ai/dsh-persona', 'dsh-extra-plan', TOOL_PWSH, TOOL_BASH, TOOL_WEB, TOOL_CORDIS, TOOL_SUBAGENT_CONTROL], FORBIDDEN_ROLE_TOOLS_SHARED, 'planner 角色工具面：只读 fs + 只读 shell/web/cordis/control，list-agents 仍禁')
+checkRoleTools('extra-plan-prober', ['@deepseek-ai/dsh-tool-fs', '@deepseek-ai/dsh-tool-fs-search', TOOL_PWSH, TOOL_BASH, TOOL_WEB, TOOL_CORDIS, TOOL_SUBAGENT_CONTROL], FORBIDDEN_ROLE_TOOLS, 'prober 角色工具面：只读 fs + 只读 shell/web/cordis/control，四角色均绑定 send/interrupt')
 for (const [rowId, toolName, presetId] of [['tool-subagent', 'subagent', 'extra-plan-executor'], ['tool-subagent-plan', 'subagent_plan', 'extra-plan-planner'], ['tool-subagent-review', 'subagent_review', 'extra-plan-reviewer'], ['tool-subagent-probe', 'subagent_probe', 'extra-plan-prober']]) {
   const row = all.find((r) => r.id === rowId)
   const config = row !== undefined && row.config !== null && typeof row.config === 'object' ? row.config : {}
@@ -381,10 +380,13 @@ async function assemble(listeners, agent, tools, sections = []) {
   if (entry === undefined || entry.length === 0) throw new Error('assemble 监听器未注册')
   return await entry[0](null, { agent }, async () => ({ tools, sections, contexts: [] }))
 }
-function preExecute(listeners, agent, name, argumentsObj, execExtras) {
+function preExecute(listeners, agent, name, argumentsObj, execExtras, nextSpy) {
   const entry = listeners['tools/pre-execute']
   if (entry === undefined || entry.length === 0) throw new Error('pre-execute 监听器未注册')
-  return entry[0]({ agent, name, arguments: argumentsObj, ...(execExtras !== undefined && execExtras !== null ? execExtras : {}) }, () => ({ kind: 'allow' }))
+  return entry[0]({ agent, name, arguments: argumentsObj, ...(execExtras !== undefined && execExtras !== null ? execExtras : {}) }, () => {
+    if (typeof nextSpy === 'function') nextSpy()
+    return { kind: 'allow' }
+  })
 }
 function emitClaimed(listeners, agent, message) {
   const entry = listeners['agent/inbox/claimed']
@@ -1180,6 +1182,9 @@ const askReturnRunCases = [
   ['R-ASK6g const 拼接动态访问保守 deny', "const name = 're' + 'ad'; return await tools[name]({ file_path: 'x' })", 'deny'],
   ['R-ASK6h 方括号拼接动态访问保守 deny', "return await tools['re' + 'ad']({ file_path: 'x' })", 'deny'],
   ['R-ASK6i 转义名动态访问保守 deny', "const name = '\\x72ead'; return await tools[name]({ file_path: 'x' })", 'deny'],
+  ['R-ASK6j MCP静态单引号连字符名不误判ask → allow', "return await tools['mcp__chrome-devtools-mcp__list_pages']({})", 'allow'],
+  ['R-ASK6k MCP静态双引号且右括号后注释不误判ask → allow', 'return await tools["mcp__chrome-devtools-mcp__list_pages"] /* comment */ ({})', 'allow'],
+  ['R-ASK6l MCP静态名动态参数不误判ask → allow', 'return await tools["mcp__chrome-devtools-mcp__take_snapshot"]({ query: args })', 'allow'],
   ['R-ASK6d ask 的动态参数对象不改变直接返回 allow', "const args = getArgs(); return await tools.ask_user_question(args)", 'allow'],
   ['R-ASK7 直接 return-await → allow', 'return await tools.ask_user_question({})', 'allow'],
   ['R-ASK8 单变量 JSON.stringify → allow', 'const q = await tools.ask_user_question({}); return JSON.stringify({ question: q })', 'allow'],
@@ -1215,6 +1220,7 @@ checkTrue('UC11 嵌套展平无保护→触发', (() => { const got = runCodeCat
 checkTrue('UC12 嵌套各自 try→null', runCodeCatchGateReason("await tools.run_code({ \"code\": \"try { await tools.read({ file_path: 'x' }) } catch (e) {}\" })\ntry { await tools.read({ file_path: 'y' }) } catch (e) {}") === null)
 checkTrue('UC13 注释/字符串内 tools.x 不计数→null', runCodeCatchGateReason("const s = 'tools.read({ file_path: 1 })'\n// tools.write({})\nawait tools.glob({ pattern: '**/*.md' })") === null)
 checkTrue("UC14 tools['read'] 字面量方括号计数→触发", (() => { const got = runCodeCatchGateReason("await tools['read']({ file_path: 'x' })\nawait tools['read']({ file_path: 'y' })"); return typeof got === 'string' && got.includes('run_code 内 2 个') })())
+checkTrue('UC14b MCP同名同参两调用计数→触发且真实name不丢', (() => { const got = runCodeCatchGateReason("await tools['mcp__chrome-devtools-mcp__list_pages']({})\nawait tools['mcp__chrome-devtools-mcp__list_pages']({})"); return typeof got === 'string' && got.includes('run_code 内 2 个') })())
 checkTrue('UC15 probeDisposalWarning(0)→null 且 (2)→含「2 个未认领探查者委派」与「委派方会话销毁时」（T5 文案中性化，不再硬编码「规划子代理会话销毁」）', probeDisposalWarning(0) === null && (() => { const got = probeDisposalWarning(2); return typeof got === 'string' && got.includes('2 个未认领探查者委派') && got.includes('委派方会话销毁时') && !got.includes('规划子代理会话销毁') })())
 checkTrue('UC16 runcodeCatchGate:false → null（开关关纯函数）', runCodeGroupDenyReason(undefined, { name: 'run_code', arguments: { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })" } }, { kind: 'main' }, { runcodeCatchGate: false, gateRuntime }) === null)
 checkTrue('UC17 显式 runcodeCatchGate:true → 拒且含「未全部独立容错」', (() => { const got = runCodeGroupDenyReason(undefined, { name: 'run_code', arguments: { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })" } }, { kind: 'main' }, { runcodeCatchGate: true, gateRuntime }); return typeof got === 'string' && got.includes('未全部独立容错') })())
@@ -1525,13 +1531,14 @@ checkTrue('R115 主会话 direct 态 run_code 组内 job_kill 成员 → allow',
   // run_code 组内整体 deny 不得预写成员计数；随后三者直接首调仍 allow。
   const groupEvents = []
   const groupMain = { session: { header: { id: 'claimed-group-preflight', cwd: 'C:/work' }, snapshotEvents: () => groupEvents }, options: {}, ctx: undefined }
-  const groupCode = { code: "await tools.job_output({ job_id: 'group-job' })\nawait tools.job_list({})\nawait tools.list_agents({})\nawait tools.write({ file_path: 'blocked.txt', content: 'x' })", description: 'claimed 组拒零计数' }
-  r = preExecute(harness, groupMain, 'run_code', groupCode)
+  const groupCode = { code: "try { await tools['mcp__chrome-devtools-mcp__list_pages']({}) } catch (e) {}\nawait tools.job_output({ job_id: 'group-job' })\nawait tools.job_list({})\nawait tools.list_agents({})\nawait tools.write({ file_path: 'blocked.txt', content: 'x' })", description: 'MCP+claimed 组拒零计数' }
+  let groupNextCalls = 0
+  r = preExecute(harness, groupMain, 'run_code', groupCode, undefined, () => { groupNextCalls += 1 })
   const groupDenied = r !== null && r !== undefined && r.kind === 'deny'
   const groupOutputAfter = preExecute(harness, groupMain, 'job_output', { job_id: 'group-job' })
   const groupListAfter = preExecute(harness, groupMain, 'job_list', {})
   const groupAgentsAfter = preExecute(harness, groupMain, 'list_agents', {})
-  checkTrue('CN10 含三工具成员的整体 deny 不污染计数：直接首调仍 allow', groupDenied && groupOutputAfter !== null && groupOutputAfter.kind === 'allow' && groupListAfter !== null && groupListAfter.kind === 'allow' && groupAgentsAfter !== null && groupAgentsAfter.kind === 'allow' && groupEvents.length === 0)
+  checkTrue('CN10 MCP独立catch+三工具+受阻write整体 deny 不污染计数：next=0且直接首调仍 allow', groupDenied && groupNextCalls === 0 && groupOutputAfter !== null && groupOutputAfter.kind === 'allow' && groupListAfter !== null && groupListAfter.kind === 'allow' && groupAgentsAfter !== null && groupAgentsAfter.kind === 'allow' && groupEvents.length === 0)
 
   // P0 碰撞：同一长 session 的历史 durable notice 与新 incarnation 复用 subagent-1。
   const collisionJobId = 'subagent-1'
