@@ -378,7 +378,7 @@
 # dsh-tool-ask-user、dsh-tool-todo。
 
 - id: extra-plan-executor
-  name: 执行者
+  name: 按需规划模式-执行者
   description: 执行委派任务并在完工前自验证；可写工作区，越界需求写进汇报
   order: 101
   personaPrefix: >-
@@ -421,7 +421,7 @@
       name: '@deepseek-ai/dsh-tool-cordis'
 
 - id: extra-plan-planner
-  name: 规划者
+  name: 按需规划模式-规划者
   description: 只读探查并用 save_plan 落盘方案与验收清单，禁止执行任务或修改文件
   order: 102
   personaPrefix: >-
@@ -475,7 +475,7 @@
       name: '@deepseek-ai/dsh-tool-subagent-control'
 
 - id: extra-plan-reviewer
-  name: 验收者
+  name: 按需规划模式-验收者
   description: 按验收文件逐条机械核对指定执行组的产出，只读不写，给出单一结论
   order: 103
   personaPrefix: >-
@@ -517,7 +517,7 @@
       name: '@deepseek-ai/dsh-tool-cordis'
 
 - id: extra-plan-prober
-  name: 探查者
+  name: 按需规划模式-探查者
   description: 只读探查并把证据落盘为证据报告，回主会话只给路径与摘要
   order: 104
   personaPrefix: >-

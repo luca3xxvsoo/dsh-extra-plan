@@ -19,6 +19,7 @@ import {
   SETTINGS_ROW_ID,
   SETTING_DEFINITIONS,
   captureRowSettings,
+  createDefaultSettings,
   hostRowDefaultsFromTemplate,
   findPluginsRow,
   normalizeSettingValue,
@@ -29,7 +30,8 @@ import {
   GATE_WORDS_GROUP_DEFINITION,
   validateGateWords,
 } from './gate-words.js'
-import { parsePresetYaml, resolveSetting, resolveTemplateSettingDefault } from './preset-settings.js'
+import { parsePresetYaml, resolveSetting } from './preset-settings.js'
+import { ROLE_IDS } from './role-contract.js'
 
 const localRequire = createRequire(import.meta.url)
 function loadOfficialAgentPreset() {
@@ -58,7 +60,7 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 export const ASSET_DIR = join(HERE, '..', 'assets', 'presets', PRESET_ID)
 export const ASSET_DEFINITION_FILE = join(ASSET_DIR, 'preset-definition.generated.yml')
 /** 角色预设固定顺序（order 101..104），与生成器 ROLE_IDS 同源同序：主在前、角色在后。 */
-export const ROLE_IDS = Object.freeze(['extra-plan-executor', 'extra-plan-planner', 'extra-plan-reviewer', 'extra-plan-prober'])
+export { ROLE_IDS }
 export const ROLE_DEFINITION_FILES = Object.freeze(ROLE_IDS.map((roleId) => join(ASSET_DIR, 'preset-definition-' + roleId + '.generated.yml')))
 /** 角色 definition 里固定前两行：dsh-persona 与 dsh-extra-plan。 */
 export const ROLE_DEFINITION_LEADING_ROW_IDS = Object.freeze(['persona', 'extra-plan'])
@@ -326,16 +328,10 @@ export function readLegacyState(text) {
   }
 }
 
-function defaultsForSettings(templateText) {
-  const defaults = Object.fromEntries(SETTING_DEFINITIONS.map((definition) => [definition.key, definition.defaultValue]))
-  return { ...defaults, ...hostRowDefaultsFromTemplate(templateText) }
-}
-
 /** 统一解析全局权威值；当前 settings 行合法值优先，旧值仅填缺项。 */
 export function resolveUnifiedConfig(options = {}) {
   const input = options !== null && typeof options === 'object' ? options : {}
-  const templateText = readFileSync(join(ASSET_DIR, 'agent.cordis.yml'), 'utf8')
-  const defaults = defaultsForSettings(templateText)
+  const defaults = createDefaultSettings()
   const legacy = input.legacyState !== undefined
     ? input.legacyState
     : (input.declaredPlugins !== undefined && typeof input.readPatch !== 'function'
@@ -610,7 +606,6 @@ export async function syncPreset(options = {}) {
   const templateFile = join(ASSET_DIR, 'agent.cordis.yml')
   if (!existsSync(templateFile)) throw new Error('预设模板缺失：' + templateFile)
   const templateText = readFileSync(templateFile, 'utf8')
-  resolveTemplateSettingDefault(templateText, 'exploreBudget')
   assertTemplateGateWords(templateText)
   const currentHash = contentHash(ASSET_DIR)
   if (currentHash === null) throw new Error('预设资产缺失：' + ASSET_DIR)

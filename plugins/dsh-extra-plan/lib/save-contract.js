@@ -70,6 +70,17 @@ export function formatSavePlanSummary(summary) {
   for (const task of Array.isArray(value.tasks) ? value.tasks : []) {
     lines.push('任务' + String(task.id) + '「' + String(task.title || '') + '」：主文件=' + summaryList(task.mainFiles) + '；关联文件=' + summaryList(task.relatedFiles) + '；执行组=' + String(task.executionGroup || task.group || '') + '；依赖=' + summaryList(task.dependencies) + '；依赖理由=' + String(task.dependencyReason || '') + '；分组理由=' + String(task.groupReason || '') + '；独占资源=' + summaryList(task.resources))
     lines.push('任务' + String(task.id) + '修改=' + summaryList(task.modifications) + '；自检=' + summaryList(task.selfChecks))
+    for (const fileRecord of Array.isArray(task.fileRecords) ? task.fileRecords : []) {
+      lines.push('任务' + String(task.id) + '文件=' + String(fileRecord.path || '') + '；操作=' + String(fileRecord.operation || '') + '；角色=' + String(fileRecord.role || ''))
+      for (const point of Array.isArray(fileRecord.points) ? fileRecord.points : []) {
+        lines.push('任务' + String(task.id) + '文件点=' + String(fileRecord.path || '') + '#' + String(point.id || '') + '；操作=' + String(fileRecord.operation || '') + '；修改位置=' + String(point.modificationLocation || '') + '；锚点=' + String(point.anchor || ''))
+      }
+    }
+    for (const fileRecord of Array.isArray(task.acceptanceFileRecords) ? task.acceptanceFileRecords : []) {
+      for (const point of Array.isArray(fileRecord.points) ? fileRecord.points : []) {
+        lines.push('任务' + String(task.id) + '验收点=' + String(fileRecord.path || '') + '#' + String(point.id || '') + '；验收定位=' + String(point.acceptanceLocation || '') + '；客观期望=' + summaryList(point.expectations))
+      }
+    }
   }
   for (const group of Array.isArray(value.groups) ? value.groups : []) {
     lines.push('执行组' + String(group.id || group.group || '') + '：成员=' + summaryList(group.members) + '；内部顺序=' + summaryList(group.internalOrder) + '；组外依赖=' + summaryList(group.groupDependsOn || group.externalDependencies) + '；initialState=' + String(group.initialState || '') + '；静态资格=' + String(group.staticEligibility || ''))
@@ -85,6 +96,17 @@ export function formatSavePlanSummary(summary) {
   }
   if (value.closure !== null && value.closure !== undefined) {
     lines.push('收尾：文件=' + summaryList(value.closure.files) + '；依赖=' + summaryList(value.closure.dependencies) + '；正式验收=' + summaryList(value.closure.checkRefs) + '；coverageKey=' + String(value.closure.coverageKey || 'closure'))
+    for (const fileRecord of Array.isArray(value.closure.fileRecords) ? value.closure.fileRecords : []) {
+      lines.push('收尾文件点=' + String(fileRecord.path || '') + '；操作=' + String(fileRecord.operation || '') + '；角色=' + String(fileRecord.role || ''))
+      for (const point of Array.isArray(fileRecord.points) ? fileRecord.points : []) {
+        lines.push('收尾文件点=' + String(fileRecord.path || '') + '#' + String(point.id || '') + '；操作=' + String(fileRecord.operation || '') + '；修改位置=' + String(point.modificationLocation || '') + '；锚点=' + String(point.anchor || ''))
+      }
+    }
+    for (const fileRecord of Array.isArray(value.closure.acceptanceFileRecords) ? value.closure.acceptanceFileRecords : []) {
+      for (const point of Array.isArray(fileRecord.points) ? fileRecord.points : []) {
+        lines.push('收尾验收点=' + String(fileRecord.path || '') + '#' + String(point.id || '') + '；验收定位=' + String(point.acceptanceLocation || '') + '；客观期望=' + summaryList(point.expectations))
+      }
+    }
   } else {
     lines.push('收尾：无')
   }

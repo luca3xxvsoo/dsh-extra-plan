@@ -6,6 +6,7 @@
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
+import { isDeepStrictEqual } from 'node:util'
 import { readFileSync, writeFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 
@@ -1686,29 +1687,25 @@ const makeTmpDir = () => mkdtempSync(join(tmpdir(), 'extra-plan-p4-'))
 
 // P4-1/P4-2：源码级不变量（T2.2/T3.1/T3.5/T4.1/T4.7）
 const pluginSource = readFileSync(PLUGIN_PATH, 'utf8')
-const agentRuntimeSource = readFileSync(AGENT_RUNTIME_PATH, 'utf8')
-const shellMutationSource = readFileSync(SHELL_MUTATION_PATH, 'utf8')
 const gateDecisionsSource = readFileSync(GATE_DECISIONS_PATH, 'utf8')
 const usageLedgerSource = readFileSync(USAGE_LEDGER_PATH, 'utf8')
 const runtimeLifecycleSource = readFileSync(RUNTIME_LIFECYCLE_PATH, 'utf8')
-const decisionSources = pluginSource + '\n' + gateDecisionsSource
-checkTrue('P4-0 源码：通知按 message.id 判重、jobId 仅精确删当前 session，锚点不删 notice-id Set',
-  pluginSource.includes('const noticeId = message.id')
-  && pluginSource.includes('consumed.has(noticeId)')
-  && pluginSource.includes('consumed.add(noticeId)')
-  && !pluginSource.includes('consumed.has(jobId)')
-  && !pluginSource.includes('consumed.add(jobId)')
-  && !pluginSource.includes('toolJobsNoticesConsumed.delete(sessId)'))
+checkTrue('P4-0 通知行为：同 message.id 幂等、同 job 新 id 可解锁且 session 隔离', (() => {
+  const behaviorHarness = makeHarness({ anchoredBootstrap: false })
+  const events = []
+  const agent = { session: { header: { id: 'p4-cn-behavior', cwd: 'C:/work' }, snapshotEvents: () => events }, options: {}, ctx: undefined }
+  const notice = (id) => ({ id, role: 'user', source: { kind: 'tool-jobs', form: 'notice' }, content: [{ type: 'text', text: 'background job p4-cn-job (subagent: test) finished [status: completed]. Read its output with job_output.' }] })
+  const first = preExecute(behaviorHarness, agent, 'job_output', { job_id: 'p4-cn-job' })
+  const warmDeny = preExecute(behaviorHarness, agent, 'job_output', { job_id: 'p4-cn-job' })
+  emitClaimed(behaviorHarness, agent, notice('p4-cn-notice'))
+  const released = preExecute(behaviorHarness, agent, 'job_output', { job_id: 'p4-cn-job' })
+  emitClaimed(behaviorHarness, agent, notice('p4-cn-notice'))
+  const duplicate = preExecute(behaviorHarness, agent, 'job_output', { job_id: 'p4-cn-job' })
+  return first?.kind === 'allow' && warmDeny?.kind === 'deny' && released?.kind === 'allow' && duplicate?.kind === 'deny' && events.length === 0
+})())
 checkTrue('P4-1 源码：usage ledger 无灌表/async fold，runtime lifecycle 统一计数入口',
   !usageLedgerSource.includes('usageCursorsLoaded') && !usageLedgerSource.includes('subCallCounters.clear()') && !usageLedgerSource.includes('async function foldUsage') && usageLedgerSource.includes('function foldUsage') && runtimeLifecycleSource.includes('function noteRunCodeSubCall(sessionId, rid, cap)'))
-checkTrue('P4-2 源码：disposed 先同步 fold，再按 sessionId 删除；账本与 lifecycle 各自持有状态',
-  pluginSource.includes('foldUsage(agent, usageRoleOf(agent))')
-  && pluginSource.indexOf('foldUsage(agent, usageRoleOf(agent))') < pluginSource.indexOf('runtimeLifecycle.disposeSession(sessionId)')
-  && usageLedgerSource.includes('disposeSession')
-  && runtimeLifecycleSource.includes('disposeSession(sessionId)')
-  && agentRuntimeSource.includes('const usageRoles = new WeakMap()')
-  && agentRuntimeSource.includes('foldUsage(agent, role)')
-  && usageLedgerSource.includes("error.code === 'ENOENT'"))
+
 
 
 // P4-3：两个 session 同 rootCallId 各自 1~18 allow、19 deny（计数按 session 隔离）
@@ -1821,6 +1818,7 @@ checkTrue('P4-2 源码：disposed 先同步 fold，再按 sessionId 删除；账
     disposedListener(h, orphan)
     const rows2 = readLedgerRows(ledger)
     checkTrue('P4-15 无 childBaseline 缓存（从未 session-start/pre-step）的 disposed 走稳定兜底：role=executor', rows2.length === 2 && rows2[1].role === 'executor' && rows2[1].sessionId === 'p4-orphan-child')
+    checkTrue('P4-2 disposed final fold 行为：监听器同步返回后已写末轮、planner role 缓存与 orphan executor 兜底均成立', rows.length === 1 && rows[0].role === 'planner' && rows[0].seq === 8 && rows2.length === 2 && rows2[1].role === 'executor' && readLedgerRows(ledger).length === 2)
   } finally { rmSync(dir, { recursive: true, force: true }) }
 }
 
@@ -2394,12 +2392,18 @@ checkTrue('P2-17 entry 三元组按 renderer 身份比较且 dispose 可回收',
   sdkTextCacheEntryMatches({ fingerprint: 'f', language: 'typescript', renderer: p2Renderer }, 'f', 'typescript', p2Renderer)
   && !sdkTextCacheEntryMatches({ fingerprint: 'f', language: 'typescript', renderer: p2Renderer }, 'f', 'python', p2Renderer)
   && !sdkTextCacheEntryMatches({ fingerprint: 'f', language: 'typescript', renderer: p2Renderer }, 'f', 'typescript', alternateRenderer))
-const p2Source = pluginSource
-checkTrue('P2-18 F/native 与 F/ptc 不渲染完整 SDK，L 才按完整 renderer 输入接 cache',
-  p2Source.includes('if (!anchoredFirst && hasSection(result.sections, SDK_SECTION_NAME))')
-  && p2Source.includes('const effectiveSchemas = toolSdkSchemasOf(agent) ?? schemas')
-  && p2Source.includes('const rendererInput = sdkSchemasForRendering(effectiveSchemas)')
-  && p2Source.includes('sdkTextCache.dispose(agent)'))
+const p2BehaviorCache = createSdkTextCache()
+const p2BehaviorAgent = { session: { header: { id: 'p2-behavior-contract' } } }
+const p2BehaviorCalls = []
+const p2BehaviorRenderer = async (input) => {
+  p2BehaviorCalls.push(JSON.parse(JSON.stringify(input)))
+  return 'SDK<' + JSON.stringify(input) + '>'
+}
+const p2BehaviorFText = await p2BehaviorRenderer(p2ReadInput)
+const p2BehaviorL1 = await p2BehaviorCache.getOrCreate(p2BehaviorAgent, p2FullInput, 'typescript', p2BehaviorRenderer)
+const p2BehaviorL2 = await p2BehaviorCache.getOrCreate(p2BehaviorAgent, p2FullInput, 'typescript', p2BehaviorRenderer)
+const p2BehaviorFullCalls = p2BehaviorCalls.filter((input) => input.length === p2FullInput.length)
+checkTrue('P2-18 缓存行为独立夹具：F 输入只渲染 read，L 完整输入只渲染一次且同 key 命中复用', p2BehaviorCalls.length === 2 && p2BehaviorCalls[0].length === 1 && p2BehaviorCalls[0][0].name === 'read' && p2BehaviorFullCalls.length === 1 && p2BehaviorL1 === p2BehaviorL2 && p2BehaviorFText !== p2BehaviorL1)
 const p2PresentationHarness = makeHarness({ anchoredBootstrap: true, creativeMode: false })
 const p2FTrapHarness = makeHarness({ anchoredBootstrap: true, creativeMode: false, language: '__p2-unsupported-renderer-sentinel__' })
 let p2FullSdkRendererPathAttempts = 0
@@ -2504,31 +2508,24 @@ checkTrue('B3-6 未知角色与缺失入参 → null（无异常）',
     counters.size === 2 && counters.get('b3-sess-A').size === 2 && counters.get('b3-sess-B').size === 1 && !counters.has('undefined'))
 }
 
-// ③ 源码单点结构断言：唯一写入点、三处内联实现已删、监听器无二次判定、三类角色统一调用。
+// ③ B3 helper 行为：统一记录函数和 shell 文案通过实际调用结果覆盖正反边界。
 {
-  const recordStart = gateDecisionsSource.indexOf('function recordJobOutputCall(')
-  const recordBody = recordStart === -1 ? '' : gateDecisionsSource.slice(recordStart, gateDecisionsSource.indexOf('\n}\n', recordStart))
-  checkTrue('B3-13 jobId→1 写入全文件唯一（perSession.set( 恰 1 处）且只位于 recordJobOutputCall',
-    gateDecisionsSource.split('perSession.set(').length - 1 === 1 && recordBody.includes('perSession.set(args.job_id, 1)') && recordBody.includes('counters.set(sessId, perSession)'))
-  checkTrue('B3-14 三处内联实现已删（无 let perSession = jobOutputCallCounters.get(sessId)）',
-    decisionSources.split('let perSession = jobOutputCallCounters.get(sessId)').length - 1 === 0)
-  checkTrue('B3-15 监听器无局部 jobReason 二次判定（jobReason 0 命中）',
-    decisionSources.split('jobReason').length - 1 === 0)
-  checkTrue('B3-16 三类受保护角色均调用统一记录函数：调用点恰 3 处（加定义共 4 处），执行者分支无第 4 处调用',
-    decisionSources.split('recordJobOutputCall(agent, exec, jobOutputCallCounters)').length - 1 === 3 && decisionSources.split('recordJobOutputCall(').length - 1 === 4)
-  checkTrue('B3-17 首次判定已带 counters：planner 与只读 child 监听器调用点均传 jobOutputCallCounters',
-    pluginSource.includes('plannerGateReason(exec, execEvents, exploreBudget(), jobOutputCallCounters)') && pluginSource.includes('childReadonlyGateReason(exec, probe, jobOutputCallCounters)'))
-  // mutation 实现已下沉到 shell-mutation.js；gate-decisions 仅保留角色文案与两处调用。
-  checkTrue('B3-18 shellMutationReason 唯一实现；六格文案只剩两条模板；mutation 实现位于新模块',
-    gateDecisionsSource.split('function shellMutationReason(').length - 1 === 1
-    && gateDecisionsSource.split('仅限只读探查命令').length - 1 === 2
-    && gateDecisionsSource.split('pwshMutationMatches(exec)').length - 1 === 2
-    && gateDecisionsSource.split('bashMutationMatches(exec)').length - 1 === 2
-    && shellMutationSource.split('function mutationMatches(').length - 1 === 1
-    && shellMutationSource.split('export function pwshMutationMatches(exec)').length - 1 === 1
-    && shellMutationSource.split('export function bashMutationMatches(exec)').length - 1 === 1)
-  checkTrue('B3-19 decisions 导出两个新函数（测试直接复用生产实现，无镜像副本）',
-    typeof decisions.shellMutationReason === 'function' && typeof decisions.recordJobOutputCall === 'function')
+  const behaviorCounters = new Map()
+  const behaviorAgent = { session: { header: { id: 'b3-behavior-session' } } }
+  const behaviorCall = (jobId) => ({ name: 'job_output', arguments: { job_id: jobId } })
+  const first = recordJobOutputCall(behaviorAgent, behaviorCall('b3-job'), behaviorCounters)
+  const second = recordJobOutputCall(behaviorAgent, behaviorCall('b3-job'), behaviorCounters)
+  const other = recordJobOutputCall(behaviorAgent, behaviorCall('b3-other'), behaviorCounters)
+  checkTrue('B3-13 helper 实际调用：首次/同job幂等/新job 三态可观察', first === true && second === true && other === true && behaviorCounters.get('b3-behavior-session')?.get('b3-job') === 1 && behaviorCounters.get('b3-behavior-session')?.get('b3-other') === 1)
+  checkTrue('B3-14 helper 非法入参零副作用', recordJobOutputCall(behaviorAgent, { name: 'job_output', arguments: {} }, behaviorCounters) === false && behaviorCounters.get('b3-behavior-session')?.size === 2)
+  checkTrue('B3-15 shellMutationReason 实际矩阵正反识别', SHELL_MATRIX.every(([role, toolName, args, expected]) => shellMutationReason(role, { name: toolName, arguments: args }) === expected) && shellMutationReason('planner', { name: 'pwsh', arguments: { command: 'Get-ChildItem' } }) === null && shellMutationReason('executor', { name: 'pwsh', arguments: { command: 'New-Item x' } }) === null)
+  checkTrue('B3-16 helper 导出复用同一生产函数且角色未知安全返回', typeof decisions.shellMutationReason === 'function' && typeof decisions.recordJobOutputCall === 'function' && shellMutationReason(undefined, undefined) === null)
+  checkTrue('B3-17 组拒行为不提前记录 job_output（真实 re-entry 后首次仍可观察）', (() => {
+    const groupAgent = plannerWithId('b3-behavior-group', [DESC])
+    const groupResult = preExecute(harness, groupAgent, 'run_code', { code: "await tools.job_output({ job_id: 'b3-group' })\nawait tools.write({})", description: 'B3 behavior group reject' })
+    const directResult = preExecute(harness, groupAgent, 'job_output', { job_id: 'b3-group' })
+    return groupResult?.kind === 'deny' && directResult?.kind === 'allow'
+  })())
 }
 
 // ④ 监听器级：job_output 子调用真实 re-entry（首次放行后记录、同 job 第二次拒绝）与组拒零副作用。
@@ -2863,7 +2860,96 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
    const presetSyncSource = readFileSyncE(fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/preset-sync.js', import.meta.url)), 'utf8')
    const retiredPresetSyncExports = [['restate', 'Preset', 'Plugins'], ['restate', 'Preset', 'SyncConfig'], ['active', 'Preset', 'SyncRow'], ['public', 'Config', 'FromRows']].map((parts) => parts.join(''))
    checkTrue('T9-3q preset-sync 仅保留 raw legacy 读取与 mountPresetSync，旧 helper/export 均移除', presetSyncSource.includes('export function readLegacyState') && presetSyncSource.includes('export function mountPresetSync') && !presetSyncSource.includes('export function apply') && retiredPresetSyncExports.every((name) => !presetSyncSource.includes(name)))
-   checkTrue('T9-3r settings.js 写链经 restateSettingsConfig→唯一全局 row.entry edit', settingsText.includes('await editor.edit(row.entry') && settingsText.includes('restateSettingsConfig') && settingsText.includes('SETTINGS_ROW_ID') && !settingsText.includes('LEGACY_PROJECTION_RESTATEMENT') && !settingsText.includes('writeFileSync'))
+  const settingsModuleForT9 = await import('../../plugins/dsh-extra-plan/lib/settings.js')
+  const T9_SETTING_KEYS = ['anchoredBootstrap', 'creativeMode', 'webFetch', 'toolPresentationMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel']
+  const t9Target = { anchoredBootstrap: false, creativeMode: true, webFetch: true, toolPresentationMode: 'ptc', runcodeCatchGate: true, crossProviderPlannerModel: true, plannerModel: 't9-planner', plannerPromptSuffix: 't9-suffix', exploreBudget: 9, otherAgentModel: 't9-other' }
+  const t9Initial = { anchoredBootstrap: true, creativeMode: false, webFetch: false, toolPresentationMode: 'native', runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: 'initial-planner', plannerPromptSuffix: 'initial-suffix', exploreBudget: 8, otherAgentModel: 'initial-other' }
+  const t9Dir = mkdtempSync(join(tmpdir(), 'dsh-g3-t9-settings-'))
+  try {
+    const t9DocumentPath = join(t9Dir, 'cordis.patch.yml')
+    const t9PatchText = [
+      '- id: dsh-extra-plan-settings',
+      '  name: dsh-extra-plan/settings',
+      '  config:',
+      '    anchoredBootstrap: false',
+      '    creativeMode: true',
+      '    webFetch: true',
+      '    toolPresentationMode: ptc',
+      '    runcodeCatchGate: true',
+      '    crossProviderPlannerModel: true',
+      '    plannerModel: t9-planner',
+      '    plannerPromptSuffix: t9-suffix',
+      '    exploreBudget: 9',
+      '    otherAgentModel: t9-other',
+      '    gateWords:',
+      '      routeDirect: ' + gateRuntime.words.routeDirect,
+      '      routePlan: ' + gateRuntime.words.routePlan,
+      '      routeDisagree: ' + gateRuntime.words.routeDisagree,
+      '      approvalApprove: ' + gateRuntime.words.approvalApprove,
+      '      approvalReplan: ' + gateRuntime.words.approvalReplan,
+      '      purposeRefine: ' + gateRuntime.words.purposeRefine,
+      '      purposeRedo: ' + gateRuntime.words.purposeRedo,
+      '',
+    ].join('\n')
+    writeFileSync(t9DocumentPath, t9PatchText, 'utf8')
+    const t9Row = {
+      entry: { options: { id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: { ...t9Initial, gateWords: structuredClone(gateRuntime.words) } }, fiber: {} },
+      inherited: {},
+      override: {},
+    }
+    const t9Editor = {
+      documentPath: t9DocumentPath,
+      state: { rows: [t9Row], edits: [] },
+      configuration: () => [t9Row],
+      edit: async (entry, change) => {
+        const before = structuredClone(entry.options.config)
+        const next = change(structuredClone(entry.options.config), t9Row.inherited)
+        entry.options.config = next
+        t9Editor.state.edits.push({ entry, change, before, after: structuredClone(next) })
+      },
+    }
+    const t9Policies = []
+    const t9Injects = []
+    let t9Route
+    const t9Ctx = {
+      fiber: { uid: 't9-settings-api' },
+      get: (name) => name === 'configEditor' ? t9Editor : undefined,
+      inject: (deps, callback) => {
+        const name = deps[0]
+        t9Injects.push(name)
+        if (name === 'loader') return callback({ get: () => undefined, loader: { builtins: {} }, effect: (fn) => fn() })
+        if (name === 'settings') return callback({ settings: { configure: (policy, owner) => { t9Policies.push({ policy, owner }); return () => {} } }, effect: (fn) => fn() })
+        if (name === 'webServer') return callback({ webServer: { register: (definition) => { t9Route = definition; return () => {} } }, effect: (fn) => fn() })
+        if (name === 'configEditor') return undefined
+        throw new Error('unexpected settings inject ' + name)
+      },
+    }
+    settingsModuleForT9.apply(t9Ctx)
+    const invokeT9 = (method, value) => new Promise((resolve, reject) => {
+      const listeners = {}
+      let status = 200
+      const req = {
+        method, url: '/api/dsh-extra-plan-settings/pro-config', socket: { remoteAddress: '127.0.0.1' },
+        on: (name, fn) => {
+          if (listeners[name] === undefined) listeners[name] = []
+          listeners[name].push(fn)
+          if (name === 'end') queueMicrotask(() => { if (value !== undefined) for (const data of listeners.data || []) data(Buffer.from(JSON.stringify(value))); for (const done of listeners.end || []) done() })
+          return req
+        },
+      }
+      const res = { writeHead: (code) => { status = code }, end: (text) => { let body = null; try { body = JSON.parse(text) } catch {} resolve({ status, body }) } }
+      Promise.resolve(t9Route.handler(req, res)).catch(reject)
+    })
+    const t9Put = await invokeT9('PUT', t9Target)
+    const t9Get = await invokeT9('GET', undefined)
+    const t9Edit = t9Editor.state.edits[0]
+    const t9AfterValues = t9Edit === undefined ? undefined : Object.fromEntries(T9_SETTING_KEYS.map((key) => [key, t9Edit.after[key]]))
+    const t9Observation = { routePath: t9Route?.path, injects: t9Injects, policyCount: t9Policies.length, editCount: t9Editor.state.edits.length, entryMatch: t9Edit?.entry === t9Row.entry, changeType: typeof t9Edit?.change, targetKeys: Object.keys(t9Target).sort(), expectedKeys: T9_SETTING_KEYS.slice().sort(), after: t9AfterValues, putStatus: t9Put?.status, putValues: t9Put?.body?.values, putBody: t9Put?.body, getStatus: t9Get?.status, getValues: t9Get?.body?.values, getBody: t9Get?.body, rowConfig: t9Row.entry.options.config }
+    console.log('T9-3r_BEHAVIOR ' + JSON.stringify(t9Observation))
+    checkTrue('T9-3r settings API 行为：唯一 row.entry edit、完整十键参数与写链结果', t9Route !== undefined && t9Route.path === '/api/dsh-extra-plan-settings' && t9Injects.includes('webServer') && t9Policies.length === 1 && t9Editor.state.edits.length === 1 && t9Edit.entry === t9Row.entry && typeof t9Edit.change === 'function' && JSON.stringify(Object.keys(t9Target).sort()) === JSON.stringify(T9_SETTING_KEYS.slice().sort()) && isDeepStrictEqual(t9AfterValues, t9Target) && t9Put.body !== null && isDeepStrictEqual(t9Put.body.values, t9Target) && t9Get.body !== null && isDeepStrictEqual(t9Get.body.values, t9Target))
+  } finally {
+    rmSync(t9Dir, { recursive: true, force: true })
+  }
   checkTrue('T9-3t preset-sync 通过 mountPresetSync/官方 adapter await 挂载，不实现 registry', presetSyncSource.includes('export function mountPresetSync') && presetSyncSource.includes('await child.plugin(OfficialAgentPreset') && presetSyncSource.includes('@deepseek-ai/dsh-agent-preset') && !presetSyncSource.includes('agentPresets.register('))
 }
 

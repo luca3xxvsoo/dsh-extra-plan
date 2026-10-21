@@ -4,7 +4,7 @@
 # 其余为角色 tools 行，plugins 末尾固定追加恰一行 tool-presentation（config.mode 取主预设同 id 行的默认值）。
 # 人设与工具面在这里承载；主预设不再写 persona/toolFilter/backgroundMode。
 id: extra-plan-prober
-name: '探查者'
+name: '按需规划模式-探查者'
 description: '只读探查并把证据落盘为证据报告，回主会话只给路径与摘要'
 order: 104
 plugins:

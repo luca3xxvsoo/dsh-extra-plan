@@ -1,4 +1,6 @@
 // per-apply runtime lifecycle：save 注册、probe 认领、计数器与 run_code 拒绝记录。
+import { PROBER_PRESET_ID } from './role-contract.js'
+
 export function createRuntimeLifecycle(options = {}) {
   const {
     defineSavePlan, defineSaveProbe,
@@ -64,7 +66,7 @@ export function createRuntimeLifecycle(options = {}) {
       if (header === undefined || header === null) return false
       const agentPreset = header.agentPreset
       if (typeof agentPreset !== 'string') return false
-      return agentPreset === 'extra-plan-prober'
+      return agentPreset === PROBER_PRESET_ID
     } catch (error) {
       return false
     }

@@ -29,6 +29,7 @@ const JsExpr = new yaml.Type('tag:yaml.org,2002:js', {
 })
 export const YAML_SCHEMA = yaml.JSON_SCHEMA.extend(JsExpr)
 import {
+  DEFAULT_SETTINGS,
   EXTRA_PLAN_SETTING_DEFINITIONS,
   PROJECTION_SETTING_DEFINITIONS,
   SETTING_DEFINITIONS,
@@ -185,7 +186,7 @@ export function captureSettings(text, definitions) {
 
 /** 出厂默认（2 项宿主行）：读模板 sourceLocator，缺项/解析失败回落内置。 */
 export function hostRowDefaultsFromTemplate(templateText) {
-  const fallback = { webFetch: false, toolPresentationMode: 'native' }
+  const fallback = { webFetch: DEFAULT_SETTINGS.webFetch, toolPresentationMode: DEFAULT_SETTINGS.toolPresentationMode }
   try {
     const captured = captureSettings(templateText)
     const out = {}

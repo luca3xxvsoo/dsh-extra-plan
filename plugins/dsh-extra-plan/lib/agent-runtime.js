@@ -1,9 +1,10 @@
 // 每次 apply 独立创建 agent runtime factory；role 与 cache 状态不会跨 createAgentRuntime 调用共享。
 
 import { isSubagentChild } from './agent-session.js'
+import { PLANNER_PRESET_ID } from './role-contract.js'
 
 // 规划子代理的会话角色预设 id（与 assets/presets/extra-plan/agent.cordis.yml 第二文档一致）。
-export const PLANNER_PRESET_ID = 'extra-plan-planner'
+export { PLANNER_PRESET_ID } from './role-contract.js'
 
 // 只有 parent session 存在时委派才算 live；缺少 parent/agents 或读取出错都 fail-open。
 export function isLiveDelegation(agent, agents) {

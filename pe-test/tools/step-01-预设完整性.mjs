@@ -1,10 +1,12 @@
 // extra-plan 预设静态校验：只读工作区模板，不访问生产 DSH_HOME。
 import { createHash } from 'node:crypto'
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
+import { isDeepStrictEqual } from 'node:util'
+import { Script } from 'node:vm'
 import {
   SETTING_DEFINITIONS,
   parsePresetYaml,
@@ -12,7 +14,7 @@ import {
   findTextLocatorMatches,
   resolveTemplateSettingDefault,
 } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
-import { DEFAULT_EXPLORE_BUDGET, DEFAULT_PLANNER_PROMPT_SUFFIX } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
+import { DEFAULT_SETTINGS, DEFAULT_EXPLORE_BUDGET, DEFAULT_PLANNER_PROMPT_SUFFIX } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
 import { generateRuntimeDefaults, renderRuntimeDefaults, renderPresetDefinition, renderRoleDefinitions, secondDocumentOf, ROLE_IDS, roleDefinitionFile } from '../../plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs'
 // S1：DEFAULT_DENY 收敛断言（执行者 deny 清单必须与预设 config.deny 逐字一致）。
 import { DEFAULT_DENY, resolveDeny } from '../../plugins/dsh-extra-plan/lib/executor-spawn.js'
@@ -35,15 +37,26 @@ const qqbotManifestFile = join(REPO_ROOT, 'plugins', 'dsh-extra-plan-qqbot', 'pa
 const generatorFile = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'scripts', 'generate-runtime-defaults.mjs')
 const assemblySource = readFileSync(join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'assembly-presentation.js'), 'utf8')
 
-function targetManifest(name) {
+function targetManifestPath(name) {
   if (DSH_INSTALL_ROOT === null) return null
-  try { return JSON.parse(readFileSync(join(DSH_INSTALL_ROOT, 'node_modules', '@deepseek-ai', name, 'package.json'), 'utf8')) } catch { return null }
+  const candidates = [
+    join(DSH_INSTALL_ROOT, 'node_modules', '@deepseek-ai', name, 'package.json'),
+    join(DSH_INSTALL_ROOT, 'node_modules', '@deepseek-ai', 'dsh', 'node_modules', '@deepseek-ai', name, 'package.json'),
+  ]
+  return candidates.find((path) => existsSync(path)) || null
 }
+function targetManifest(name) {
+  const path = targetManifestPath(name)
+  if (path === null) return null
+  try { return JSON.parse(readFileSync(path, 'utf8')) } catch { return null }
+}
+const targetDshManifestPath = targetManifestPath('dsh')
+const targetDshLlmManifestPath = targetManifestPath('dsh-llm')
 const targetDsh = targetManifest('dsh')
 const targetDshLlm = targetManifest('dsh-llm')
 const targetDshVersion = targetDsh !== null && typeof targetDsh.version === 'string' ? targetDsh.version : '缺失'
 const targetDshLlmVersion = targetDshLlm !== null && typeof targetDshLlm.version === 'string' ? targetDshLlm.version : '缺失'
-console.log('INFO  HOST 真实安装根=' + (DSH_INSTALL_ROOT === null ? '未设置' : DSH_INSTALL_ROOT) + ' dsh=' + targetDshVersion + ' dsh-llm=' + targetDshLlmVersion)
+console.log('INFO  HOST 真实安装根=' + (DSH_INSTALL_ROOT === null ? '未设置' : DSH_INSTALL_ROOT) + ' dsh=' + targetDshVersion + ' path=' + String(targetDshManifestPath) + ' dsh-llm=' + targetDshLlmVersion + ' path=' + String(targetDshLlmManifestPath))
 let rows
 let preset
 try {
@@ -84,16 +97,15 @@ function checkDeny(label, denyList) {
 
 // S-宿主真值：优先读取显式 DSH_INSTALL_ROOT 的 dsh-tool-cordis，提取 name 注册集；
 // 未设置目标根时不伪造 rc.2 宿主结论。
-const hostCordisEntry = DSH_INSTALL_ROOT === null
-  ? null
-  : join(DSH_INSTALL_ROOT, 'node_modules', '@deepseek-ai', 'dsh-tool-cordis', 'lib', 'index.js')
+const hostCordisManifestPath = targetManifestPath('dsh-tool-cordis')
+const hostCordisEntry = hostCordisManifestPath === null ? null : join(dirname(hostCordisManifestPath), 'lib', 'index.js')
 if (hostCordisEntry !== null && existsSync(hostCordisEntry)) {
   const registeredCordis = [...readFileSync(hostCordisEntry, 'utf8').matchAll(/name:\s*["'](cordis_[a-z_]+)["']/g)].map((m) => m[1])
   const truth = [...HOST_CORDIS_TOOLS].sort().join(',')
   const actual = [...new Set(registeredCordis)].sort().join(',')
   check('S-宿主真值：dsh-tool-cordis 注册集 = HOST_CORDIS_TOOLS（' + actual + '）', actual === truth)
 } else {
-  console.log('PASS  S-宿主真值：本机未安装宿主 dsh-tool-cordis，跳过对拍')
+  console.log('SKIP  {"scope":"HOST-CORDIS","reason":"本机未安装宿主 dsh-tool-cordis，未进行注册集对拍"}')
 }
 
 function flatten(list) {
@@ -275,8 +287,9 @@ check('T1 官方 preset registry 注释/ workflow-ptc 与作者源保真', agent
 const packageJson = JSON.parse(readFileSync(coreManifestFile, 'utf8'))
 const qqbotPackageJson = JSON.parse(readFileSync(qqbotManifestFile, 'utf8'))
 const generatedText = readFileSync(generatedFile, 'utf8')
-check('B2 YAML 叶值、生成 export 与 resolver 同为 18', resolveTemplateSettingDefault(agentText, 'exploreBudget') === 18 && DEFAULT_EXPLORE_BUDGET === 18 && generatedText.includes('export const DEFAULT_EXPLORE_BUDGET = 18'), true)
-check('B2 YAML plannerPromptSuffix 叶值、生成 export 与 resolver 三向一致', resolveTemplateSettingDefault(agentText, 'plannerPromptSuffix') === DEFAULT_PLANNER_PROMPT_SUFFIX && DEFAULT_PLANNER_PROMPT_SUFFIX === '你的深度思考部分需要以"好了，现在我以全局视角来看待这个问题"开头' && generatedText.includes('export const DEFAULT_PLANNER_PROMPT_SUFFIX = "你的深度思考部分需要以\\"好了，现在我以全局视角来看待这个问题\\"开头"'), true)
+const EXPECTED_DEFAULT_SETTINGS = { anchoredBootstrap: true, creativeMode: false, webFetch: false, toolPresentationMode: 'native', runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: 'deepseek-v4-pro', plannerPromptSuffix: '你的深度思考部分需要以"好了，现在我以全局视角来看待这个问题"开头', exploreBudget: 18, otherAgentModel: '' }
+check('B2 导入生成物 DEFAULT_SETTINGS 恰十键/值/冻结且旧别名同值', Object.isFrozen(DEFAULT_SETTINGS) && isDeepStrictEqual(DEFAULT_SETTINGS, EXPECTED_DEFAULT_SETTINGS) && DEFAULT_EXPLORE_BUDGET === DEFAULT_SETTINGS.exploreBudget && DEFAULT_PLANNER_PROMPT_SUFFIX === DEFAULT_SETTINGS.plannerPromptSuffix && resolveTemplateSettingDefault(agentText, 'exploreBudget') === DEFAULT_SETTINGS.exploreBudget && resolveTemplateSettingDefault(agentText, 'plannerPromptSuffix') === DEFAULT_SETTINGS.plannerPromptSuffix, true)
+
 check('B2 render 文本与已提交生成模块逐字一致', renderRuntimeDefaults(agentText) === generatedText, true)
 check('B2 definition render 与提交资产逐字一致且 package 仅装载 cordis.patch.yml', renderPresetDefinition(agentText, readFileSync(presetFile, 'utf8')) === definitionGeneratedText && JSON.parse(readFileSync(join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'package.json'), 'utf8')).dsh.bundle.patch === './cordis.patch.yml', true)
 const packageFiles = Array.isArray(packageJson.files) ? packageJson.files : []
@@ -291,6 +304,23 @@ check('M3 QQBot manifest name/version/exports/files/dependency/postinstall/patch
 const roleSourceText = secondDocumentOf(agentText)
 const roleSource = parsePresetYaml(roleSourceText)
 const roleRow = Array.isArray(roleSource) ? roleSource : []
+const EXPECTED_ROLE_NAMES = {
+  'extra-plan-executor': '按需规划模式-执行者',
+  'extra-plan-planner': '按需规划模式-规划者',
+  'extra-plan-reviewer': '按需规划模式-验收者',
+  'extra-plan-prober': '按需规划模式-探查者',
+}
+const EXPECTED_ROLE_RECORDS = [
+  { id: 'extra-plan-executor', order: 101, name: '按需规划模式-执行者' },
+  { id: 'extra-plan-planner', order: 102, name: '按需规划模式-规划者' },
+  { id: 'extra-plan-reviewer', order: 103, name: '按需规划模式-验收者' },
+  { id: 'extra-plan-prober', order: 104, name: '按需规划模式-探查者' },
+]
+for (const expected of EXPECTED_ROLE_RECORDS) {
+  const sourceRole = roleRow.find((role) => role.id === expected.id)
+  check('T3 独立字面源期望 ' + expected.id, sourceRole !== undefined && sourceRole.order === expected.order && sourceRole.name === expected.name, true)
+}
+check('T3 角色作者源四个展示名独立精确字面期望', roleRow.length === 4 && roleRow.every((role) => role.name === EXPECTED_ROLE_NAMES[role.id]), true)
 check('T3 角色作者源 4 项且 id/order 唯一（101..104）',
   roleRow.length === 4 && JSON.stringify(roleRow.map((role) => role.id)) === JSON.stringify([...ROLE_IDS])
   && JSON.stringify(roleRow.map((role) => role.order)) === JSON.stringify([101, 102, 103, 104]))
@@ -302,7 +332,7 @@ for (const role of roleRow) {
   try { roleDef = parsePresetYaml(readFileSync(roleFile, 'utf8')) } catch (error) { roleDef = null }
   const leading = roleDef === null ? [] : roleDef.plugins.slice(0, 2).map((row) => row.id)
   check('T3 ' + role.id + ' definition 首两行为 persona/extra-plan、config 与主预设逐字相等、persona 与作者源逐字相等',
-    roleDef !== null && roleDef.id === role.id && roleDef.order === role.order && roleDef.name === role.name && roleDef.description === role.description
+    roleDef !== null && roleDef.id === role.id && roleDef.order === role.order && roleDef.name === EXPECTED_ROLE_NAMES[role.id] && roleDef.name === role.name && roleDef.description === role.description
     && JSON.stringify(leading) === JSON.stringify(['persona', 'extra-plan'])
     && roleDef.plugins[0].name === '@deepseek-ai/dsh-persona' && roleDef.plugins[0].config?.prefix === role.personaPrefix
     && roleDef.plugins[1].name === 'dsh-extra-plan' && JSON.stringify(roleDef.plugins[1].config) === mainExtraConfigJson)
@@ -343,13 +373,39 @@ check('B2 --check 通过且不写生成物', checkPassed && readFileSync(generat
 
 const generatorFixture = mkdtempSync(join(tmpdir(), 'dsh-runtime-defaults-'))
 try {
-  const validMini = '- id: extra-plan\n  config:\n    exploreBudget: 18\n    plannerPromptSuffix: x\n'
+  const validMini = [
+    '- id: extra-plan',
+    '  config:',
+    '    anchoredBootstrap: true',
+    '    creativeMode: false',
+    '    runcodeCatchGate: false',
+    '    crossProviderPlannerModel: false',
+    '    plannerModel: deepseek-v4-pro',
+    "    otherAgentModel: ''",
+    '    exploreBudget: 18',
+    '    plannerPromptSuffix: plain-suffix',
+    '- id: tool-web',
+    '  config:',
+    '    fetch: false',
+    '- id: tool-presentation',
+    '  config:',
+    '    mode: native',
+    '',
+  ].join('\n')
   const validSource = join(generatorFixture, 'valid.yml')
   const validOutput = join(generatorFixture, 'valid.generated.js')
   writeFileSync(validSource, validMini, 'utf8')
   const validRendered = renderRuntimeDefaults(validMini)
   generateRuntimeDefaults({ sourcePath: validSource, outputPath: validOutput })
-  check('B2 临时 source/output 可生成并逐字等于 render', readFileSync(validOutput, 'utf8') === validRendered, true)
+  check('B2 完整十项 source/output 可生成并逐字等于 render', readFileSync(validOutput, 'utf8') === validRendered, true)
+  const richSuffix = '前缀 "引号"\\路径\n换行'
+  const richMini = validMini.replace('    plannerPromptSuffix: plain-suffix\n', '    plannerPromptSuffix: ' + JSON.stringify(richSuffix) + '\n')
+  const richSource = join(generatorFixture, 'rich.yml')
+  const richOutput = join(generatorFixture, 'rich.generated.js')
+  writeFileSync(richSource, richMini, 'utf8')
+  generateRuntimeDefaults({ sourcePath: richSource, outputPath: richOutput })
+  const richModule = await import(pathToFileURL(richOutput).href + '?rich=' + String(Date.now()))
+  check('B2 合法 false/空串/引号反斜线换行后缀以导入值对拍', richModule.DEFAULT_SETTINGS.anchoredBootstrap === true && richModule.DEFAULT_SETTINGS.creativeMode === false && richModule.DEFAULT_SETTINGS.otherAgentModel === '' && richModule.DEFAULT_SETTINGS.plannerPromptSuffix === richSuffix, true)
   const mismatchOutput = join(generatorFixture, 'mismatch.generated.js')
   writeFileSync(mismatchOutput, 'SENTINEL-CHECK', 'utf8')
   let mismatchFailed = false
@@ -358,16 +414,33 @@ try {
   let missingFailed = false
   try { generateRuntimeDefaults({ sourcePath: validSource, outputPath: join(generatorFixture, 'missing.generated.js'), check: true }) } catch { missingFailed = true }
   check('B2 --check 缺失生成物时非 0', missingFailed, true)
+  const replaceLine = (text, from, to) => text.replace(from + '\n', to + '\n')
   const invalidTemplates = [
-    ['missing', '- id: extra-plan\n  config:\n    plannerModel: x\n'],
-    ['ambiguous', validMini + validMini],
-    ['zero', '- id: extra-plan\n  config:\n    exploreBudget: 0\n'],
-    ['negative', '- id: extra-plan\n  config:\n    exploreBudget: -1\n'],
-    ['decimal', '- id: extra-plan\n  config:\n    exploreBudget: 1.5\n'],
-    ['string', "- id: extra-plan\n  config:\n    exploreBudget: '18'\n"],
-    ['null', '- id: extra-plan\n  config:\n    exploreBudget: null\n'],
-    ['syntax', '- id: [broken\n'],
-    ['suffix-numeric', '- id: extra-plan\n  config:\n    exploreBudget: 18\n    plannerPromptSuffix: 123\n'],
+    ['missing-anchoredBootstrap', validMini.replace('    anchoredBootstrap: true\n', '')],
+    ['missing-creativeMode', validMini.replace('    creativeMode: false\n', '')],
+    ['missing-runcodeCatchGate', validMini.replace('    runcodeCatchGate: false\n', '')],
+    ['missing-crossProviderPlannerModel', validMini.replace('    crossProviderPlannerModel: false\n', '')],
+    ['missing-plannerModel', validMini.replace('    plannerModel: deepseek-v4-pro\n', '')],
+    ['missing-otherAgentModel', validMini.replace("    otherAgentModel: ''\n", '')],
+    ['missing-exploreBudget', validMini.replace('    exploreBudget: 18\n', '')],
+    ['missing-plannerPromptSuffix', validMini.replace('    plannerPromptSuffix: plain-suffix\n', '')],
+    ['missing-webFetch', validMini.replace('    fetch: false\n', '')],
+    ['missing-toolPresentationMode', validMini.replace('    mode: native\n', '')],
+    ['wrong-anchoredBootstrap', replaceLine(validMini, '    anchoredBootstrap: true', "    anchoredBootstrap: 'true'")],
+    ['wrong-creativeMode', replaceLine(validMini, '    creativeMode: false', '    creativeMode: 0')],
+    ['wrong-runcodeCatchGate', replaceLine(validMini, '    runcodeCatchGate: false', '    runcodeCatchGate: no')],
+    ['wrong-crossProviderPlannerModel', replaceLine(validMini, '    crossProviderPlannerModel: false', '    crossProviderPlannerModel: 0')],
+    ['wrong-plannerModel', replaceLine(validMini, '    plannerModel: deepseek-v4-pro', '    plannerModel: 18')],
+    ['wrong-otherAgentModel', replaceLine(validMini, "    otherAgentModel: ''", '    otherAgentModel: 18')],
+    ['wrong-exploreBudget', replaceLine(validMini, '    exploreBudget: 18', "    exploreBudget: '18'")],
+    ['wrong-plannerPromptSuffix', replaceLine(validMini, '    plannerPromptSuffix: plain-suffix', '    plannerPromptSuffix: 18')],
+    ['wrong-webFetch', replaceLine(validMini, '    fetch: false', "    fetch: 'false'")],
+    ['wrong-toolPresentationMode', replaceLine(validMini, '    mode: native', '    mode: hybrid')],
+    ['duplicate-locator', validMini.replace('    plannerModel: deepseek-v4-pro\n', '    plannerModel: deepseek-v4-pro\n    plannerModel: another-model\n')],
+    ['budget-zero', replaceLine(validMini, '    exploreBudget: 18', '    exploreBudget: 0')],
+    ['budget-negative', replaceLine(validMini, '    exploreBudget: 18', '    exploreBudget: -1')],
+    ['budget-decimal', replaceLine(validMini, '    exploreBudget: 18', '    exploreBudget: 1.5')],
+    ['yaml-syntax', replaceLine(validMini, '    plannerModel: deepseek-v4-pro', '    plannerModel: [broken')],
   ]
   for (const [label, sourceText] of invalidTemplates) {
     const sourcePath = join(generatorFixture, label + '.yml')
@@ -381,6 +454,123 @@ try {
   }
 } finally {
   rmSync(generatorFixture, { recursive: true, force: true })
+}
+
+// G3 客户端七产物夹具：显式临时 source/output 才启用 client，仓库 client 只读对拍。
+const g3ClientFixture = mkdtempSync(join(tmpdir(), 'dsh-runtime-client-g3-'))
+try {
+  const outputDir = join(g3ClientFixture, 'outputs')
+  const sourcePath = join(g3ClientFixture, 'client-source.js')
+  const clientOutputPath = join(outputDir, 'client.js')
+  const outputPath = join(outputDir, 'preset-defaults.generated.js')
+  const definitionOutputPath = join(outputDir, 'preset-definition.generated.yml')
+  const roleDefinitionDir = join(outputDir, 'roles')
+  const rolePaths = ROLE_IDS.map((roleId) => roleDefinitionFile(roleId, roleDefinitionDir))
+  const sevenPaths = [outputPath, definitionOutputPath, ...rolePaths, clientOutputPath]
+  const clientSource = readFileSync(join(REPO_ROOT, 'plugins/dsh-extra-plan/lib/client.js'), 'utf8')
+  writeFileSync(sourcePath, clientSource, 'utf8')
+  const sevenOptions = { sourcePath: file, outputPath, metaSourcePath: presetFile, definitionOutputPath, roleDefinitionDir, clientSourcePath: sourcePath, clientOutputPath }
+  const snapshot = (paths, includeMtime = true) => paths.map((path) => {
+    const bytes = readFileSync(path)
+    return { path, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), ...(includeMtime ? { mtimeMs: statSync(path).mtimeMs } : {}) }
+  })
+  const outsideClientBlock = (text) => {
+    const begin = text.indexOf('// BEGIN GENERATED SETTINGS FIELDS')
+    const end = text.indexOf('// END GENERATED SETTINGS FIELDS')
+    if (begin < 0 || end < begin) return null
+    const endLine = end + '// END GENERATED SETTINGS FIELDS'.length
+    return text.slice(0, begin) + '\u0000' + text.slice(endLine)
+  }
+  generateRuntimeDefaults(sevenOptions)
+  check('G3 七产物临时 client 明确启用并逐路径存在', sevenPaths.length === 7 && sevenPaths.every((path) => existsSync(path)) && readFileSync(clientOutputPath, 'utf8').includes('// BEGIN GENERATED SETTINGS FIELDS'), true)
+  const generatedClientText = readFileSync(clientOutputPath, 'utf8')
+  const clientBlockStart = generatedClientText.indexOf('// BEGIN GENERATED SETTINGS FIELDS')
+  const clientBlockEnd = generatedClientText.indexOf('// END GENERATED SETTINGS FIELDS')
+  const clientBlock = clientBlockStart >= 0 && clientBlockEnd > clientBlockStart ? generatedClientText.slice(clientBlockStart, clientBlockEnd) : ''
+  check('G3 client 只替换标记区块且区块外字节不变/metadata 无默认值与函数', outsideClientBlock(generatedClientText) === outsideClientBlock(clientSource) && ['anchoredBootstrap','creativeMode','webFetch','toolPresentationMode','runcodeCatchGate','crossProviderPlannerModel','plannerModel','plannerPromptSuffix','exploreBudget','otherAgentModel'].every((key) => clientBlock.includes('\"key\":\"' + key + '\"')) && !clientBlock.includes('defaultValue') && !clientBlock.includes('validator') && !clientBlock.includes('function '), true)
+  let clientCompiled = true
+  try { new Script(generatedClientText, { filename: clientOutputPath }) } catch { clientCompiled = false }
+  check('G3 最终 client JS 可编译', clientCompiled, true)
+  const beforeClientCheck = snapshot(sevenPaths)
+  let clientCheckError = null
+  try { generateRuntimeDefaults({ ...sevenOptions, check: true }) } catch (error) { clientCheckError = error }
+  check('G3 七产物 --check 零写且 bytes/mtime 不变', clientCheckError === null && JSON.stringify(beforeClientCheck) === JSON.stringify(snapshot(sevenPaths)), true)
+  writeFileSync(clientOutputPath, 'STALE-CLIENT', 'utf8')
+  let staleError = null
+  try { generateRuntimeDefaults({ ...sevenOptions, check: true }) } catch (error) { staleError = error }
+  check('G3 client --check 过期非零且保留 sentinel', staleError !== null && readFileSync(clientOutputPath, 'utf8') === 'STALE-CLIENT', true)
+  rmSync(clientOutputPath, { force: true })
+  let missingClientError = null
+  try { generateRuntimeDefaults({ ...sevenOptions, check: true }) } catch (error) { missingClientError = error }
+  check('G3 client --check 缺失非零且不写回', missingClientError !== null && !existsSync(clientOutputPath), true)
+  generateRuntimeDefaults(sevenOptions)
+  const repoClientPath = join(REPO_ROOT, 'plugins/dsh-extra-plan/lib/client.js')
+  const repoClientBefore = snapshot([repoClientPath])
+  const customNoClientSource = join(g3ClientFixture, 'custom-source.yml')
+  const customNoClientOutput = join(g3ClientFixture, 'custom-output.js')
+  const customNoClientText = ['- id: extra-plan', '  config:', '    anchoredBootstrap: true', '    creativeMode: false', '    runcodeCatchGate: false', '    crossProviderPlannerModel: false', '    plannerModel: deepseek-v4-pro', "    otherAgentModel: ''", '    exploreBudget: 18', '    plannerPromptSuffix: plain-suffix', '- id: tool-web', '  config:', '    fetch: false', '- id: tool-presentation', '  config:', '    mode: native', ''].join('\n')
+  writeFileSync(customNoClientSource, customNoClientText, 'utf8')
+  generateRuntimeDefaults({ sourcePath: customNoClientSource, outputPath: customNoClientOutput, definitionOutputPath: null, roleDefinitionDir: null })
+  check('G3 自定义 source/output 未显式 client 时不写仓库 client', JSON.stringify(repoClientBefore) === JSON.stringify(snapshot([repoClientPath])) && existsSync(customNoClientOutput), true)
+  const clientVariants = [
+    ['missing-begin', clientSource.replace('// BEGIN GENERATED SETTINGS FIELDS\n', '')],
+    ['missing-end', clientSource.replace('// END GENERATED SETTINGS FIELDS\n', '')],
+    ['missing-both', clientSource.replace('// BEGIN GENERATED SETTINGS FIELDS\n', '').replace('// END GENERATED SETTINGS FIELDS\n', '')],
+    ['duplicate-begin', clientSource.replace('// BEGIN GENERATED SETTINGS FIELDS', '// BEGIN GENERATED SETTINGS FIELDS\n    // BEGIN GENERATED SETTINGS FIELDS')],
+    ['reverse-markers', clientSource.replace('// BEGIN GENERATED SETTINGS FIELDS', '__BEGIN__').replace('// END GENERATED SETTINGS FIELDS', '// BEGIN GENERATED SETTINGS FIELDS').replace('__BEGIN__', '// END GENERATED SETTINGS FIELDS')],
+  ]
+  for (const [label, variant] of clientVariants) {
+    const variantSource = join(g3ClientFixture, label + '.js')
+    const variantOutput = join(g3ClientFixture, label + '.out.js')
+    writeFileSync(variantSource, variant, 'utf8')
+    writeFileSync(variantOutput, 'SENTINEL-' + label, 'utf8')
+    let variantError = null
+    try { generateRuntimeDefaults({ ...sevenOptions, clientSourcePath: variantSource, clientOutputPath: variantOutput }) } catch (error) { variantError = error }
+    check('G3 client 标记异常 ' + label + ' 失败且不覆盖 sentinel', variantError !== null && readFileSync(variantOutput, 'utf8') === 'SENTINEL-' + label, true)
+  }
+  const setSentinels = (prefix) => { for (const [index, path] of sevenPaths.entries()) writeFileSync(path, prefix + '-' + String(index), 'utf8') }
+  const outputSnapshot = (includeMtime = false) => snapshot(sevenPaths, includeMtime)
+  // 七产物逐路径暂存故障：按目标路径注入，不绑定实现 copy 次数。
+  for (const target of sevenPaths) {
+    setSentinels('SEVEN-STAGE')
+    const before = outputSnapshot()
+    let stageError = null
+    try { generateRuntimeDefaults({ ...sevenOptions, fsOps: { writeFileSync(...args) { if (String(args[0]).startsWith(target + '.tmp-')) throw new Error('stage-' + target); return writeFileSync(...args) } } }) } catch (error) { stageError = error }
+    check('G3 七产物逐路径暂存失败恢复 ' + target.split('\\').at(-1), stageError !== null && JSON.stringify(before) === JSON.stringify(outputSnapshot()) && publishAuxiliaryForTest(g3ClientFixture).length === 0, true)
+  }
+  // 七产物逐路径 rename 故障：目标存在时恢复旧字节。
+  for (const target of sevenPaths) {
+    setSentinels('SEVEN-RENAME')
+    const before = outputSnapshot()
+    let renameError = null
+    try { generateRuntimeDefaults({ ...sevenOptions, fsOps: { renameSync(...args) { if (resolve(args[1]) === resolve(target)) throw new Error('rename-' + target); return renameSync(...args) } } }) } catch (error) { renameError = error }
+    check('G3 七产物逐路径 rename 失败恢复 ' + target.split('\\').at(-1), renameError !== null && JSON.stringify(before) === JSON.stringify(outputSnapshot()) && publishAuxiliaryForTest(g3ClientFixture).length === 0, true)
+  }
+  rmSync(outputDir, { recursive: true, force: true })
+  let absentError = null
+  const absentTarget = sevenPaths[3]
+  try { generateRuntimeDefaults({ ...sevenOptions, fsOps: { renameSync(...args) { if (resolve(args[1]) === resolve(absentTarget)) throw new Error('rename-absent-' + absentTarget); return renameSync(...args) } } }) } catch (error) { absentError = error }
+  check('G3 七产物目标原先缺席时失败保持全缺席', absentError !== null && sevenPaths.every((path) => !existsSync(path)) && publishAuxiliaryForTest(g3ClientFixture).length === 0, true)
+  mkdirSync(outputDir, { recursive: true })
+  generateRuntimeDefaults(sevenOptions)
+  setSentinels('SEVEN-RECOVERY')
+  let recoveryError = null
+  const recoveryRenameTarget = sevenPaths[2]
+  const recoveryCopyTarget = sevenPaths[1]
+  try { generateRuntimeDefaults({ ...sevenOptions, fsOps: {
+    copyFileSync(...args) { if (resolve(args[1]) === resolve(recoveryCopyTarget)) throw new Error('seven-restore-copy'); return copyFileSync(...args) },
+    renameSync(...args) { if (resolve(args[1]) === resolve(recoveryRenameTarget)) throw new Error('seven-rename-recovery'); return renameSync(...args) },
+  } }) } catch (error) { recoveryError = error }
+  check('G3 七产物恢复失败保留首错/恢复错/备份路径', recoveryError !== null && recoveryError.message.includes('seven-rename-recovery') && recoveryError.message.includes('seven-restore-copy') && recoveryError.message.includes('恢复失败') && recoveryError.message.includes('残留/备份路径') && publishAuxiliaryForTest(g3ClientFixture).some((path) => path.includes('.bak-')), true)
+} finally {
+  rmSync(g3ClientFixture, { recursive: true, force: true })
+}
+function publishAuxiliaryForTest(root) {
+  if (!existsSync(root)) return []
+  const out = []
+  const visit = (dir) => { for (const entry of readdirSync(dir, { withFileTypes: true })) { const path = join(dir, entry.name); if (entry.isDirectory()) visit(path); else if (entry.name.includes('.tmp-') || entry.name.includes('.bak-')) out.push(path) } }
+  visit(root)
+  return out
 }
 
 // G5 任务11：六产物真实暂存/发布/有限回滚夹具；所有输出只在临时 fixture，作者源与仓库生成物不写。
@@ -467,18 +657,16 @@ try {
   rmSync(outputDir, { recursive: true, force: true })
   generateRuntimeDefaults(publishOptions)
   let recoveryError = null
-  let recoveryCopyCount = 0
-  let recoveryRenameCount = 0
+  const recoveryRenameTarget = rolePaths[2]
+  const recoveryCopyTarget = rolePaths[1]
   try {
     generateRuntimeDefaults({ ...publishOptions, fsOps: {
       copyFileSync(...args) {
-        recoveryCopyCount += 1
-        if (recoveryCopyCount === 7) throw new Error('restore-copy')
+        if (resolve(args[1]) === resolve(recoveryCopyTarget)) throw new Error('restore-copy')
         return copyFileSync(...args)
       },
       renameSync(...args) {
-        recoveryRenameCount += 1
-        if (recoveryRenameCount === 3) throw new Error('rename-third-recovery')
+        if (resolve(args[1]) === resolve(recoveryRenameTarget)) throw new Error('rename-third-recovery')
         return renameSync(...args)
       },
     } })
@@ -569,7 +757,10 @@ if (DSH_INSTALL_ROOT === null || targetDsh === null || targetDshLlm === null) {
   console.log('SKIP  {"scope":"HOST-VERSION","reason":"DSH_INSTALL_ROOT 未提供完整 dsh/dsh-llm manifests，未伪造宿主结论"}')
 } else {
   let semver = null
-  try { semver = createRequire(join(DSH_INSTALL_ROOT, 'package.json'))('semver') } catch { semver = null }
+  const semverRequireCandidates = [join(DSH_INSTALL_ROOT, 'package.json'), targetDshManifestPath].filter((path) => typeof path === 'string')
+  for (const manifestPath of semverRequireCandidates) {
+    try { semver = createRequire(manifestPath)('semver'); if (semver !== null) break } catch {}
+  }
   // 版本门改为语义门：不再硬编码目标版本号，改由声明范围（peer for dsh/dsh-llm）判定宿主是否被支持。
   const declaredDsh = typeof pluginPeers['@deepseek-ai/dsh'] === 'string' ? pluginPeers['@deepseek-ai/dsh'] : ''
   const declaredLlm = typeof pluginPeers['@deepseek-ai/dsh-llm'] === 'string' ? pluginPeers['@deepseek-ai/dsh-llm'] : ''

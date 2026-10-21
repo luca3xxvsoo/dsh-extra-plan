@@ -129,8 +129,8 @@ import { atomicCommit } from './lib/save-persistence.js'
 import { createSaveToolFactories } from './lib/save-tool-factories.js'
 import { RUNCODE_MUTATION_HINTS, codeMutationHints } from './lib/run-code-static.js'
 import { PWSH_MUTATION, BASH_MUTATION, PWSH_BARE_WORDS, BASH_BARE_WORDS, pwshCommandOf, bashCommandOf, pwshMutationMatches, bashMutationMatches } from './lib/shell-mutation.js'
-import { DEFAULT_PLANNER_PROMPT_SUFFIX } from './lib/preset-defaults.generated.js'
-import { DEFAULT_EXPLORE_BUDGET, toolCallCount, toolCallsSinceUser, withPlannerPromptSuffix, BUDGET_REMINDER_THRESHOLD, budgetNoticeText, withBudgetNotice, budgetReminderText, budgetReminderMessage, budgetReminderSent, budgetExhaustedReason, budgetExceeded } from './lib/planner-budget.js'
+import { DEFAULT_SETTINGS } from './lib/preset-defaults.generated.js'
+import { toolCallCount, toolCallsSinceUser, withPlannerPromptSuffix, BUDGET_REMINDER_THRESHOLD, budgetNoticeText, withBudgetNotice, budgetReminderText, budgetReminderMessage, budgetReminderSent, budgetExhaustedReason, budgetExceeded } from './lib/planner-budget.js'
 import { causeChainOf } from './lib/runtime-static.js'
 import { createAgentRuntime, isLiveDelegation, childPolicyNeedsFloor } from './lib/agent-runtime.js'
 import { sessionEvents, isSubagentChild } from './lib/agent-session.js'
@@ -153,14 +153,14 @@ export const Config = z.object({
   gateWords: z.dict(z.string()).required(),
   planTool: z.string().default('subagent_plan'),
   savePlanDir: z.string().default('.extra-plan'),
-  plannerModel: z.string().default('deepseek-v4-pro'),
-  otherAgentModel: z.string().default(''),
-  exploreBudget: z.number().step(1).min(1).default(DEFAULT_EXPLORE_BUDGET),
-  plannerPromptSuffix: z.string().default(DEFAULT_PLANNER_PROMPT_SUFFIX),
-  anchoredBootstrap: z.boolean().default(true),
-  creativeMode: z.boolean().default(false),
-  runcodeCatchGate: z.boolean().default(false),
-  crossProviderPlannerModel: z.boolean().default(false),
+  plannerModel: z.string().default(DEFAULT_SETTINGS.plannerModel),
+  otherAgentModel: z.string().default(DEFAULT_SETTINGS.otherAgentModel),
+  exploreBudget: z.number().step(1).min(1).default(DEFAULT_SETTINGS.exploreBudget),
+  plannerPromptSuffix: z.string().default(DEFAULT_SETTINGS.plannerPromptSuffix),
+  anchoredBootstrap: z.boolean().default(DEFAULT_SETTINGS.anchoredBootstrap),
+  creativeMode: z.boolean().default(DEFAULT_SETTINGS.creativeMode),
+  runcodeCatchGate: z.boolean().default(DEFAULT_SETTINGS.runcodeCatchGate),
+  crossProviderPlannerModel: z.boolean().default(DEFAULT_SETTINGS.crossProviderPlannerModel),
   bootstrapPersona: z.string().default('You are a helpful software engineer assistant.'),
   bootstrapReadHint: z.string().default(BOOTSTRAP_READ_HINT_FALLBACK),
   bootstrapShellTools: z.array(z.string()).default(['bash', 'pwsh']),
@@ -313,14 +313,14 @@ export function apply(ctx, config) {
       }
     },
     fallbackDefaults: {
-      plannerModel: typeof cfg.plannerModel === 'string' ? cfg.plannerModel : 'deepseek-v4-pro',
-      otherAgentModel: typeof cfg.otherAgentModel === 'string' ? cfg.otherAgentModel.trim() : '',
-      exploreBudget: Number.isInteger(cfg.exploreBudget) && cfg.exploreBudget > 0 ? cfg.exploreBudget : DEFAULT_EXPLORE_BUDGET,
-      plannerPromptSuffix: typeof cfg.plannerPromptSuffix === 'string' ? cfg.plannerPromptSuffix : DEFAULT_PLANNER_PROMPT_SUFFIX,
-      anchoredBootstrap: cfg.anchoredBootstrap !== false,
-      creativeMode: cfg.creativeMode === true,
-      runcodeCatchGate: cfg.runcodeCatchGate === true,
-      crossProviderPlannerModel: cfg.crossProviderPlannerModel === true,
+      plannerModel: typeof cfg.plannerModel === 'string' ? cfg.plannerModel : DEFAULT_SETTINGS.plannerModel,
+      otherAgentModel: typeof cfg.otherAgentModel === 'string' ? cfg.otherAgentModel.trim() : DEFAULT_SETTINGS.otherAgentModel,
+      exploreBudget: Number.isInteger(cfg.exploreBudget) && cfg.exploreBudget > 0 ? cfg.exploreBudget : DEFAULT_SETTINGS.exploreBudget,
+      plannerPromptSuffix: typeof cfg.plannerPromptSuffix === 'string' ? cfg.plannerPromptSuffix : DEFAULT_SETTINGS.plannerPromptSuffix,
+      anchoredBootstrap: typeof cfg.anchoredBootstrap === 'boolean' ? cfg.anchoredBootstrap : DEFAULT_SETTINGS.anchoredBootstrap,
+      creativeMode: typeof cfg.creativeMode === 'boolean' ? cfg.creativeMode : DEFAULT_SETTINGS.creativeMode,
+      runcodeCatchGate: typeof cfg.runcodeCatchGate === 'boolean' ? cfg.runcodeCatchGate : DEFAULT_SETTINGS.runcodeCatchGate,
+      crossProviderPlannerModel: typeof cfg.crossProviderPlannerModel === 'boolean' ? cfg.crossProviderPlannerModel : DEFAULT_SETTINGS.crossProviderPlannerModel,
     },
   })
   // ── 8 项热读：消费点现场取值（全部加括号调用） ──

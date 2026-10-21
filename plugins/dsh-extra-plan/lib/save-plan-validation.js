@@ -22,6 +22,15 @@ const REVIEW_PREFIX = '- 验收说明：'
 const FIELD_DEFINITIONS = Object.freeze([
   ['mainFiles', '主文件', '- 主文件：'],
   ['relatedFiles', '关联文件', '- 关联文件：'],
+  ['fileOperations', '文件操作', '- 文件操作：'],
+  ['modificationPoints', '修改点', '- 修改点：'],
+  ['modificationLocations', '修改位置', '- 修改位置：'],
+  ['anchors', '定位锚点', '- 定位锚点：'],
+  ['generationSources', '生成来源', '- 生成来源：'],
+  ['generationCommands', '生成命令', '- 生成命令：'],
+  ['generationOutputs', '生成产物', '- 生成产物：'],
+  ['acceptancePointRefs', '对应修改点', '- 对应修改点：'],
+  ['acceptanceLocations', '验收定位', '- 验收定位：'],
   ['groups', '执行组', '- 执行组：'],
   ['dependencyFields', '依赖', '- 依赖：'],
   ['dependencyReasons', '依赖理由', '- 依赖理由：'],
@@ -42,23 +51,37 @@ const FIELD_DEFINITIONS = Object.freeze([
   ['evidence', '验收证据', '- 验收证据：']
 ])
 
+function newFileRecord(path, role) {
+  return { path, role, operations: [], points: [], currentPoint: null }
+}
+
 function newTask(id, title, line) {
   return {
     kind: 'task', id, title, line,
-    mainFiles: [], relatedFiles: [], groups: [], dependencyFields: [], dependencyReasons: [],
+    mainFiles: [], relatedFiles: [], files: [], currentFile: null,
+    groups: [], dependencyFields: [], dependencyReasons: [],
     groupReasons: [], modifications: [], selfChecks: [], resources: [], expectations: [],
     prohibitions: [], formalAcceptance: [], checkRefs: [], dependencies: [], resourceIds: [],
+    fileOperations: [], modificationPoints: [], modificationLocations: [], anchors: [],
+    generationSources: [], generationCommands: [], generationOutputs: [],
+    acceptancePointRefs: [], acceptanceLocations: [],
     fileSet: new Set(), fileKeys: new Set()
   }
 }
 
 function newClosure(line) {
   return {
-    kind: 'closure', line, closureFiles: [], closureDependencies: [], closureActions: [],
+    kind: 'closure', line, closureFiles: [], files: [], currentFile: null,
+    closureDependencies: [], closureActions: [],
     selfChecks: [], resources: [], expectations: [], prohibitions: [], formalAcceptance: [],
-    checkRefs: [], dependencies: [], resourceIds: [], fileSet: new Set(), fileKeys: new Set()
+    checkRefs: [], dependencies: [], resourceIds: [],
+    fileOperations: [], modificationPoints: [], modificationLocations: [], anchors: [],
+    generationSources: [], generationCommands: [], generationOutputs: [],
+    acceptancePointRefs: [], acceptanceLocations: [],
+    fileSet: new Set(), fileKeys: new Set()
   }
 }
+
 
 function newCheck(id, title, line) {
   return {
@@ -94,6 +117,14 @@ function defaultTemplate(field, taskId) {
   if (field === '全局验收块') return '[全局验收] / - 期望：全部覆盖 / - 禁止：漏项 / - 正式验收：[检查1]'
   if (field === '主文件' || field === '收尾文件') return '- ' + field + '：plugins/example/file.js'
   if (field === '关联文件') return '- 关联文件：plugins/example/helper.js'
+  if (field === '文件操作') return '- 文件操作：修改'
+  if (field === '修改点' || field === '对应修改点') return '- ' + field + '：M1'
+  if (field === '修改位置') return '- 修改位置：L12-34'
+  if (field === '定位锚点') return '- 定位锚点：function example()'
+  if (field === '生成来源') return '- 生成来源：plugins/example/source.js'
+  if (field === '生成命令') return '- 生成命令：node generator.mjs'
+  if (field === '生成产物') return '- 生成产物：说明目标文件结构'
+  if (field === '验收定位') return '- 验收定位：修改后的符号或文件存在条件'
   if (field === '执行组') return '- 执行组：G1'
   if (field === '依赖' || field === '收尾依赖') return '- ' + field + '：无'
   if (field === '依赖理由') return '- 依赖理由：无'
@@ -122,6 +153,37 @@ function fieldOf(line) {
   }
   return null
 }
+
+const FILE_PATH_FIELD_KEYS = new Set(['mainFiles', 'relatedFiles', 'closureFiles'])
+const POINT_FIELD_KEYS = new Set(['modificationLocations', 'anchors', 'generationSources', 'generationCommands', 'generationOutputs', 'acceptanceLocations'])
+const FILE_OPERATION_RE = /^(修改|新建|删除|生成)$/
+const MODIFICATION_POINT_RE = /^M[1-9]\d*$/
+const LOCATION_RE = /^L([1-9]\d*)(?:-([1-9]\d*))?$/
+const EMPTY_FILE_MARKER = '空文件'
+
+function isPlaceholderAnchor(value) {
+  return /^(?:整个文件|相关逻辑|执行时再找|待确认|待定|占位|TODO|TBD)$/i.test(String(value).trim())
+}
+
+function isAcceptancePlaceholder(value) {
+  const normalized = String(value).trim().replace(/[。；;，,：:]+$/g, '').trim()
+  return /^(?:同方案|同上|同前|按方案|见方案|同前文|按上文|M[1-9]\d*)$/.test(normalized)
+}
+
+function parseLocation(value) {
+  if (typeof value !== 'string') return null
+  const match = value.trim().match(LOCATION_RE)
+  if (match === null) return null
+  const start = Number(match[1])
+  const end = match[2] === undefined ? start : Number(match[2])
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 1 || end < start) return null
+  return { start, end }
+}
+
+function pointIdentity(point) {
+  return point === null || point === undefined ? '' : String(point.id || '')
+}
+
 
 function headingCandidate(line) {
   const task = line.match(TASK_HEADING_RE)
@@ -168,6 +230,26 @@ function parseTaskDocument(text, document) {
 
   const wrongHeading = (kind, line, message) => {
     diagnostics.push(makeDiagnostic(document, null, kind, line, message))
+  }
+
+  const pushField = (owner, field) => {
+    owner[field.key].push(field.value)
+    const emptyDiagnostic = pushEmptyFieldDiagnostic(document, owner, field)
+    if (emptyDiagnostic !== undefined) diagnostics.push(emptyDiagnostic)
+  }
+
+  const requireFile = (field) => {
+    if (current.currentFile !== null) return current.currentFile
+    diagnostics.push(makeDiagnostic(document, current.kind === 'task' ? current.id : null, field.label, field.value, '文件级字段必须紧跟在主文件、关联文件或收尾文件之后'))
+    return null
+  }
+
+  const requirePoint = (field) => {
+    const file = requireFile(field)
+    if (file === null) return null
+    if (file.currentPoint !== null) return file.currentPoint
+    diagnostics.push(makeDiagnostic(document, current.kind === 'task' ? current.id : null, field.label, field.value, '定位字段必须先声明对应的修改点或验收对应修改点'))
+    return null
   }
 
   for (let index = 0; index < lines.length; index += 1) {
@@ -278,14 +360,14 @@ function parseTaskDocument(text, document) {
     }
     const allowed = isPlan
       ? (current.kind === 'task'
-        ? new Set(['mainFiles', 'relatedFiles', 'groups', 'dependencyFields', 'dependencyReasons', 'groupReasons', 'modifications', 'selfChecks', 'resources'])
+        ? new Set(['mainFiles', 'relatedFiles', 'fileOperations', 'modificationPoints', 'modificationLocations', 'anchors', 'generationSources', 'generationCommands', 'generationOutputs', 'groups', 'dependencyFields', 'dependencyReasons', 'groupReasons', 'modifications', 'selfChecks', 'resources'])
         : current.kind === 'closure'
-          ? new Set(['closureFiles', 'closureDependencies', 'closureActions', 'selfChecks', 'resources'])
+          ? new Set(['closureFiles', 'fileOperations', 'modificationPoints', 'modificationLocations', 'anchors', 'generationSources', 'generationCommands', 'generationOutputs', 'closureDependencies', 'closureActions', 'selfChecks', 'resources'])
           : new Set())
       : (current.kind === 'task'
-        ? new Set(['mainFiles', 'relatedFiles', 'expectations', 'prohibitions', 'formalAcceptance'])
+        ? new Set(['mainFiles', 'relatedFiles', 'fileOperations', 'acceptancePointRefs', 'acceptanceLocations', 'expectations', 'prohibitions', 'formalAcceptance'])
         : current.kind === 'closure'
-          ? new Set(['closureFiles', 'expectations', 'prohibitions', 'formalAcceptance'])
+          ? new Set(['closureFiles', 'fileOperations', 'acceptancePointRefs', 'acceptanceLocations', 'expectations', 'prohibitions', 'formalAcceptance'])
           : current.kind === 'check'
             ? new Set(['reviewGroups', 'evidenceModes', 'workdirs', 'checks', 'evidence', 'resources'])
             : current.kind === 'global'
@@ -296,9 +378,76 @@ function parseTaskDocument(text, document) {
       diagnostics.push(makeDiagnostic(document, taskId, field.label, field.value, '字段出现在错误结构块或职责位置'))
       continue
     }
-    current[field.key].push(field.value)
-    const emptyDiagnostic = pushEmptyFieldDiagnostic(document, current, field)
-    if (emptyDiagnostic !== undefined) diagnostics.push(emptyDiagnostic)
+
+    if (FILE_PATH_FIELD_KEYS.has(field.key)) {
+      pushField(current, field)
+      const role = field.key === 'mainFiles' ? 'main' : field.key === 'relatedFiles' ? 'related' : 'closure'
+      const file = newFileRecord(field.value, role)
+      current.files.push(file)
+      current.currentFile = file
+      continue
+    }
+    if (field.key === 'fileOperations') {
+      pushField(current, field)
+      const file = requireFile(field)
+      if (file !== null) file.operations.push(field.value)
+      continue
+    }
+    if (isPlan && field.key === 'modificationPoints') {
+      pushField(current, field)
+      const file = requireFile(field)
+      if (file !== null) {
+        const point = { id: field.value, locations: [], anchors: [], actions: [], sources: [], commands: [], outputs: [] }
+        file.points.push(point)
+        file.currentPoint = point
+      }
+      continue
+    }
+    if (!isPlan && field.key === 'acceptancePointRefs') {
+      pushField(current, field)
+      const file = requireFile(field)
+      if (file !== null) {
+        const point = { id: field.value, locations: [], expectations: [] }
+        file.points.push(point)
+        file.currentPoint = point
+      }
+      continue
+    }
+    if (POINT_FIELD_KEYS.has(field.key)) {
+      pushField(current, field)
+      const point = requirePoint(field)
+      if (point !== null) {
+        if (field.key === 'modificationLocations' || field.key === 'acceptanceLocations') point.locations.push(field.value)
+        else if (field.key === 'anchors') point.anchors.push(field.value)
+        else if (field.key === 'generationSources') point.sources.push(field.value)
+        else if (field.key === 'generationCommands') point.commands.push(field.value)
+        else if (field.key === 'generationOutputs') point.outputs.push(field.value)
+      }
+      continue
+    }
+    if (field.key === 'modifications') {
+      pushField(current, field)
+      const point = requirePoint(field)
+      if (point !== null) point.actions.push(field.value)
+      continue
+    }
+    if (field.key === 'closureActions') {
+      pushField(current, field)
+      if (current.kind === 'closure' && current.currentFile !== null) {
+        const point = requirePoint(field)
+        if (point !== null) point.actions.push(field.value)
+      }
+      continue
+    }
+    if (field.key === 'expectations') {
+      pushField(current, field)
+      if (!isPlan && (current.kind === 'task' || current.kind === 'closure') && current.currentFile !== null) {
+        const point = requirePoint(field)
+        if (point !== null) point.expectations.push(field.value)
+      }
+      continue
+    }
+    pushField(current, field)
   }
   flush()
 
@@ -343,6 +492,7 @@ function isMarkdownWrapped(path) {
 function pathIssue(value) {
   if (typeof value !== 'string' || value.trim() === '') return '路径不能为空'
   const path = value.trim()
+  if (/(?:#|:|\s+)(?:L)?[1-9]\d*(?:-[1-9]\d*)?$/.test(path)) return '拒绝把行号拼进路径，行号必须写在修改位置字段'
   if (/^[A-Za-z]:/.test(path)) return '拒绝盘符路径，必须使用工作区相对路径'
   if (/^[\\/]/.test(path)) return '拒绝绝对路径，必须使用工作区相对路径'
   if (path.includes('\\')) return '拒绝反斜杠路径，只使用正斜杠'
@@ -436,11 +586,100 @@ function validateResourceField(owner, document, taskId, diagnostics) {
   }
 }
 
+function validatePointIds(file, document, taskId, diagnostics, label) {
+  const seen = new Set()
+  for (const point of file.points) {
+    const id = pointIdentity(point)
+    if (!MODIFICATION_POINT_RE.test(id)) diagnostics.push(makeDiagnostic(document, taskId, label, id, '修改点 ID 必须是 M 后接非零正整数'))
+    if (seen.has(id)) diagnostics.push(makeDiagnostic(document, taskId, label, id, '同一文件内修改点 ID 不得重复'))
+    seen.add(id)
+  }
+}
+
+function validatePlanFileRecord(file, document, taskId, diagnostics, options) {
+  const pathIssueValue = pathIssue(file.path)
+  if (pathIssueValue !== null) diagnostics.push(makeDiagnostic(document, taskId, file.role === 'closure' ? '收尾文件' : file.role === 'main' ? '主文件' : '关联文件', file.path, pathIssueValue))
+  if (file.operations.length !== 1) diagnostics.push(makeDiagnostic(document, taskId, '文件操作', file.operations.join('、'), '每个主、关联或带文件收尾必须恰好有一条文件操作'))
+  const operation = file.operations.length === 1 ? file.operations[0] : ''
+  if (operation !== '' && !FILE_OPERATION_RE.test(operation)) diagnostics.push(makeDiagnostic(document, taskId, '文件操作', operation, '文件操作只能是修改、新建、删除或生成'))
+  if (file.points.length === 0) diagnostics.push(makeDiagnostic(document, taskId, '修改点', '', '每个文件必须至少绑定一个修改点'))
+  validatePointIds(file, document, taskId, diagnostics, '修改点')
+  if (operation === '修改') {
+    for (const point of file.points) {
+      if (point.locations.length !== 1) diagnostics.push(makeDiagnostic(document, taskId, '修改位置', point.locations.join('、'), '修改操作的每个修改点必须恰好有一条修改位置'))
+      if (point.anchors.length !== 1) diagnostics.push(makeDiagnostic(document, taskId, '定位锚点', point.anchors.join('、'), '修改操作的每个修改点必须恰好有一条定位锚点'))
+      if (point.actions.filter((value) => value !== '').length === 0) diagnostics.push(makeDiagnostic(document, taskId, '修改', '', '修改操作的每个修改点必须有非空具体动作'))
+      const location = point.locations.length === 1 ? point.locations[0] : ''
+      const anchor = point.anchors.length === 1 ? point.anchors[0] : ''
+      if (location === EMPTY_FILE_MARKER || anchor === EMPTY_FILE_MARKER) {
+        if (file.points.length !== 1 || location !== EMPTY_FILE_MARKER || anchor !== EMPTY_FILE_MARKER) diagnostics.push(makeDiagnostic(document, taskId, '空文件', location + ' / ' + anchor, '空文件例外必须是唯一修改点，且修改位置与定位锚点都写“空文件”'))
+      } else {
+        if (parseLocation(location) === null) diagnostics.push(makeDiagnostic(document, taskId, '修改位置', location, '修改位置必须是 L12 或 L12-34，端点须为安全正整数且不倒序'))
+        if (anchor === '' || anchor.includes('\n') || anchor.includes('\r') || isPlaceholderAnchor(anchor)) diagnostics.push(makeDiagnostic(document, taskId, '定位锚点', anchor, '定位锚点必须是去首尾空白后的非空单行原文片段，不得使用文件级或执行时查找占位'))
+      }
+      if (point.sources.length > 0 || point.commands.length > 0 || point.outputs.length > 0) diagnostics.push(makeDiagnostic(document, taskId, '生成字段', pointIdentity(point), '生成来源、生成命令和生成产物只能用于生成操作'))
+    }
+  } else if (operation === '新建' || operation === '删除' || operation === '生成') {
+    if (file.points.length !== 1) diagnostics.push(makeDiagnostic(document, taskId, '修改点', String(file.points.length), operation + '操作的每个文件必须恰好有一个修改点'))
+    const point = file.points.length === 1 ? file.points[0] : null
+    if (point !== null) {
+      if (point.actions.filter((value) => value !== '').length === 0) diagnostics.push(makeDiagnostic(document, taskId, '修改', pointIdentity(point), operation + '操作必须填写具体操作说明'))
+      if (point.locations.length > 0 || point.anchors.length > 0) diagnostics.push(makeDiagnostic(document, taskId, '修改位置', pointIdentity(point), operation + '操作不得伪填修改位置或原文锚点'))
+      if (operation === '删除') {
+        const action = point.actions.join(' ')
+        if (!/(整文件|整个文件|全文件)/.test(action) || !/(理由|原因|因为)/.test(action) || !/(引用|调用|清理)/.test(action)) diagnostics.push(makeDiagnostic(document, taskId, '修改', action, '删除操作说明必须包含整文件删除、理由与引用清理'))
+      }
+      if (operation === '生成') {
+        if (point.sources.filter((value) => value !== '').length === 0) diagnostics.push(makeDiagnostic(document, taskId, '生成来源', pointIdentity(point), '生成操作必须列出至少一个非空现有工作区来源'))
+        if (point.commands.filter((value) => value !== '').length !== 1) diagnostics.push(makeDiagnostic(document, taskId, '生成命令', point.commands.join('、'), '生成操作必须恰好列出一条非空生成命令'))
+        if (point.actions.filter((value) => value !== '').length === 0 && point.outputs.filter((value) => value !== '').length === 0) diagnostics.push(makeDiagnostic(document, taskId, '生成产物', pointIdentity(point), '生成操作必须描述产物'))
+        for (const source of point.sources) {
+          const issue = pathIssue(source)
+          if (issue !== null) diagnostics.push(makeDiagnostic(document, taskId, '生成来源', source, issue))
+          if (pathKey(source, options) === pathKey(file.path, options)) diagnostics.push(makeDiagnostic(document, taskId, '生成来源', source, '生成来源不得指向自身'))
+        }
+      } else if (point.sources.length > 0 || point.commands.length > 0 || point.outputs.length > 0) diagnostics.push(makeDiagnostic(document, taskId, '生成字段', pointIdentity(point), '生成来源、生成命令和生成产物只能用于生成操作'))
+    }
+  }
+}
+
+function validatePlanFileRecords(owner, document, taskId, diagnostics, options) {
+  if (owner.files.length === 0) diagnostics.push(makeDiagnostic(document, taskId, '文件记录', '', '新合同必须为每个主、关联或收尾文件声明文件操作与修改点'))
+  const expectedCount = (owner.mainFiles || []).length + (owner.relatedFiles || []).length + (owner.closureFiles || []).length
+  if (owner.files.length !== expectedCount) diagnostics.push(makeDiagnostic(document, taskId, '文件记录', owner.files.length, '文件记录必须与主、关联、收尾文件逐一对应'))
+  for (const file of owner.files) validatePlanFileRecord(file, document, taskId, diagnostics, options)
+}
+
+function validateAcceptanceFileRecord(file, document, taskId, diagnostics, options) {
+  const pathIssueValue = pathIssue(file.path)
+  if (pathIssueValue !== null) diagnostics.push(makeDiagnostic(document, taskId, file.role === 'closure' ? '收尾文件' : file.role === 'main' ? '主文件' : '关联文件', file.path, pathIssueValue))
+  if (file.operations.length !== 1) diagnostics.push(makeDiagnostic(document, taskId, '文件操作', file.operations.join('、'), '验收中的每个文件必须恰好有一条文件操作'))
+  const operation = file.operations.length === 1 ? file.operations[0] : ''
+  if (operation !== '' && !FILE_OPERATION_RE.test(operation)) diagnostics.push(makeDiagnostic(document, taskId, '文件操作', operation, '文件操作只能是修改、新建、删除或生成'))
+  if (file.points.length === 0) diagnostics.push(makeDiagnostic(document, taskId, '对应修改点', '', '每个验收文件必须绑定至少一个对应修改点'))
+  validatePointIds(file, document, taskId, diagnostics, '对应修改点')
+  for (const point of file.points) {
+    if (point.locations.length !== 1) diagnostics.push(makeDiagnostic(document, taskId, '验收定位', point.locations.join('、'), '每个对应修改点必须恰好有一条非空验收定位'))
+    const expectations = point.expectations.filter((value) => value !== '')
+    if (expectations.length === 0) diagnostics.push(makeDiagnostic(document, taskId, '期望', pointIdentity(point), '每个对应修改点必须有至少一条客观期望'))
+    if (expectations.some(isAcceptancePlaceholder)) diagnostics.push(makeDiagnostic(document, taskId, '期望', expectations.join('、'), '客观期望不得使用同方案、同上、同前或纯 M 编号占位'))
+    const location = point.locations.length === 1 ? point.locations[0] : ''
+    if (location === '' || location.includes('\n') || location.includes('\r') || isPlaceholderAnchor(location) || isAcceptancePlaceholder(location) || parseLocation(location) !== null) diagnostics.push(makeDiagnostic(document, taskId, '验收定位', location, '验收定位必须是修改后的符号、结构/行为条件或文件存在/不存在条件，不得使用同方案、同上、同前、纯 M 编号或旧行号占位'))
+  }
+}
+function validateAcceptanceFileRecords(owner, document, taskId, diagnostics, options) {
+  if (owner.files.length === 0) diagnostics.push(makeDiagnostic(document, taskId, '文件记录', '', '新合同必须为每个主、关联或收尾文件声明文件操作与验收对应修改点'))
+  const expectedCount = (owner.mainFiles || []).length + (owner.relatedFiles || []).length + (owner.closureFiles || []).length
+  if (owner.files.length !== expectedCount) diagnostics.push(makeDiagnostic(document, taskId, '文件记录', owner.files.length, '验收文件记录必须与主、关联、收尾文件逐一对应'))
+  for (const file of owner.files) validateAcceptanceFileRecord(file, document, taskId, diagnostics, options)
+}
+
 function validateTaskShape(task, document, isPlan, diagnostics, options) {
   if (task.title === '') diagnostics.push(makeDiagnostic(document, task.id, '标题', '', '任务标题不能为空'))
   if (task.mainFiles.length !== 1) diagnostics.push(makeDiagnostic(document, task.id, '主文件', task.mainFiles.join('、'), '每个任务必须恰好有一个非空主文件'))
   validatePathSet(task, document, diagnostics, options)
   if (isPlan) {
+    validatePlanFileRecords(task, document, task.id, diagnostics, options)
     if (task.groups.length !== 1) diagnostics.push(makeDiagnostic(document, task.id, '执行组', task.groups.join('、'), '每个方案任务必须恰好有一个执行组'))
     for (const group of task.groups) if (!GROUP_RE.test(group)) diagnostics.push(makeDiagnostic(document, task.id, '执行组', group, '执行组必须匹配 G1、G2 等正整数组名'))
     if (task.dependencyFields.length !== 1) {
@@ -462,6 +701,7 @@ function validateTaskShape(task, document, isPlan, diagnostics, options) {
     if (task.groupReasons.length === 1 && task.relatedFiles.length > 0 && task.groupReasons[0].trim() === '无') diagnostics.push(makeDiagnostic(document, task.id, '分组理由', task.groupReasons[0], '存在关联文件时必须说明不能安全拆分的原因'))
     validateResourceField(task, document, task.id, diagnostics)
   } else {
+    validateAcceptanceFileRecords(task, document, task.id, diagnostics, options)
     if (task.expectations.filter((value) => value !== '').length === 0) diagnostics.push(makeDiagnostic(document, task.id, '期望', task.expectations.join('、'), '验收任务至少需要一条非空期望'))
     if (task.prohibitions.filter((value) => value !== '').length === 0) diagnostics.push(makeDiagnostic(document, task.id, '禁止', task.prohibitions.join('、'), '验收任务至少需要一条非空禁止'))
     if (task.formalAcceptance.length !== 1) diagnostics.push(makeDiagnostic(document, task.id, '正式验收', task.formalAcceptance.join('、'), '每个验收任务必须恰好有一条正式验收引用列表'))
@@ -581,13 +821,45 @@ function validatePlanRelations(tasks, diagnostics, options) {
   }
 }
 
-function equalRawSets(left, right) {
+function fileRecordKey(file, options) {
+  return String(file.role || '') + '|' + pathKey(file.path, options)
+}
+
+function pointIdSet(file) {
+  return new Set(file.points.map((point) => pointIdentity(point)))
+}
+
+function equalStringSets(left, right) {
   if (left.size !== right.size) return false
   for (const value of left) if (!right.has(value)) return false
   return true
 }
 
-function validateCrossDocument(plan, checklist, diagnostics) {
+function validateFileRecordMapping(planOwner, checklistOwner, documentLabel, taskId, diagnostics, options) {
+  const planFiles = new Map()
+  const checklistFiles = new Map()
+  for (const file of planOwner.files || []) if (!planFiles.has(fileRecordKey(file, options))) planFiles.set(fileRecordKey(file, options), file)
+  for (const file of checklistOwner.files || []) if (!checklistFiles.has(fileRecordKey(file, options))) checklistFiles.set(fileRecordKey(file, options), file)
+  const keys = new Set(Array.from(planFiles.keys()).concat(Array.from(checklistFiles.keys())))
+  for (const key of keys) {
+    const planFile = planFiles.get(key)
+    const checklistFile = checklistFiles.get(key)
+    if (planFile === undefined) {
+      diagnostics.push(makeDiagnostic(documentLabel, taskId, '文件记录', key, '验收缺少方案中的文件记录'))
+      continue
+    }
+    if (checklistFile === undefined) {
+      diagnostics.push(makeDiagnostic(documentLabel, taskId, '文件记录', key, '方案文件缺少验收对应文件记录'))
+      continue
+    }
+    const planOperation = planFile.operations.length === 1 ? planFile.operations[0] : ''
+    const checklistOperation = checklistFile.operations.length === 1 ? checklistFile.operations[0] : ''
+    if (planOperation !== checklistOperation) diagnostics.push(makeDiagnostic(documentLabel, taskId, '文件操作', planFile.path + '：' + planOperation + ' <> ' + checklistOperation, '方案与验收的同文件操作必须一致'))
+    if (!equalStringSets(pointIdSet(planFile), pointIdSet(checklistFile))) diagnostics.push(makeDiagnostic(documentLabel, taskId, '修改点', planFile.path, '方案与验收的同文件修改点 ID 集合必须精确一致'))
+  }
+}
+
+function validateCrossDocument(plan, checklist, diagnostics, options) {
   if (plan.mode !== checklist.mode) diagnostics.push(makeDiagnostic('plan/checklist', null, '执行模式', String(plan.mode) + ' <> ' + String(checklist.mode), '方案与验收的执行模式必须一致'))
   const planById = new Map()
   const checklistById = new Map()
@@ -599,17 +871,26 @@ function validateCrossDocument(plan, checklist, diagnostics) {
     const checklistTask = checklistById.get(id)
     if (planTask === undefined) { diagnostics.push(makeDiagnostic('plan/checklist', id, '任务ID', id, '方案缺少验收中存在的任务 ID')); continue }
     if (checklistTask === undefined) { diagnostics.push(makeDiagnostic('plan/checklist', id, '任务ID', id, '验收缺少方案中存在的任务 ID')); continue }
-    if ((planTask.mainFiles[0] || '') !== (checklistTask.mainFiles[0] || '')) diagnostics.push(makeDiagnostic('plan/checklist', id, '主文件', (planTask.mainFiles[0] || '') + ' <> ' + (checklistTask.mainFiles[0] || ''), '方案与验收的主文件必须一致'))
-    if (!equalRawSets(new Set(planTask.mainFiles.concat(planTask.relatedFiles)), new Set(checklistTask.mainFiles.concat(checklistTask.relatedFiles)))) diagnostics.push(makeDiagnostic('plan/checklist', id, '文件集合', Array.from(planTask.fileSet).join('、') + ' <> ' + Array.from(checklistTask.fileSet).join('、'), '方案与验收的主文件加关联文件集合必须一致'))
+    if ((planTask.mainFiles[0] || '') !== (checklistTask.mainFiles[0] || '') && pathKey(planTask.mainFiles[0] || '', options) !== pathKey(checklistTask.mainFiles[0] || '', options)) diagnostics.push(makeDiagnostic('plan/checklist', id, '主文件', (planTask.mainFiles[0] || '') + ' <> ' + (checklistTask.mainFiles[0] || ''), '方案与验收的主文件必须一致'))
+    const planSet = new Set(planTask.mainFiles.concat(planTask.relatedFiles).map((value) => pathKey(value, options)))
+    const checklistSet = new Set(checklistTask.mainFiles.concat(checklistTask.relatedFiles).map((value) => pathKey(value, options)))
+    if (!equalStringSets(planSet, checklistSet)) diagnostics.push(makeDiagnostic('plan/checklist', id, '文件集合', Array.from(planTask.fileSet).join('、') + ' <> ' + Array.from(checklistTask.fileSet).join('、'), '方案与验收的主文件加关联文件集合必须一致'))
+    validateFileRecordMapping(planTask, checklistTask, 'plan/checklist', id, diagnostics, options)
   }
   if ((plan.closure === null) !== (checklist.closure === null)) diagnostics.push(makeDiagnostic('plan/checklist', null, '收尾', '', '方案与验收必须同时存在或同时省略收尾'))
-  if (plan.closure !== null && checklist.closure !== null && !equalRawSets(new Set(plan.closure.closureFiles), new Set(checklist.closure.closureFiles))) diagnostics.push(makeDiagnostic('plan/checklist', null, '收尾文件', plan.closure.closureFiles.join('、') + ' <> ' + checklist.closure.closureFiles.join('、'), '方案与验收的收尾文件集合必须一致'))
+  if (plan.closure !== null && checklist.closure !== null) {
+    const planClosureFiles = new Set(plan.closure.closureFiles.map((value) => pathKey(value, options)))
+    const checklistClosureFiles = new Set(checklist.closure.closureFiles.map((value) => pathKey(value, options)))
+    if (!equalStringSets(planClosureFiles, checklistClosureFiles)) diagnostics.push(makeDiagnostic('plan/checklist', null, '收尾文件', plan.closure.closureFiles.join('、') + ' <> ' + checklist.closure.closureFiles.join('、'), '方案与验收的收尾文件集合必须一致'))
+    validateFileRecordMapping(plan.closure, checklist.closure, 'plan/checklist', null, diagnostics, options)
+  }
 }
 
 function validateClosure(closure, document, isPlan, tasks, diagnostics, options) {
   if (closure === null) return
   if (isPlan) {
     addPathDiagnostics(closure.closureFiles, document, null, '收尾文件', diagnostics, options, false)
+    if (closure.closureFiles.length > 0) validatePlanFileRecords(closure, document, null, diagnostics, options)
     const rawSet = new Set()
     const keySet = new Set()
     for (const value of closure.closureFiles) {
@@ -634,6 +915,7 @@ function validateClosure(closure, document, isPlan, tasks, diagnostics, options)
     for (const file of closure.fileKeys) if (tasks.some((task) => task.fileKeys.has(file))) diagnostics.push(makeDiagnostic(document, null, '收尾文件', file, '收尾文件不得与数字任务修改文件重叠'))
   } else {
     addPathDiagnostics(closure.closureFiles, document, null, '收尾文件', diagnostics, options, false)
+    if (closure.closureFiles.length > 0) validateAcceptanceFileRecords(closure, document, null, diagnostics, options)
     const rawSet = new Set()
     const keySet = new Set()
     for (const value of closure.closureFiles) {
@@ -763,6 +1045,29 @@ function reviewGroupSort(left, right) {
   return a - b || String(left).localeCompare(String(right))
 }
 
+function summarizeFileRecord(file) {
+  return {
+    path: file.path,
+    role: file.role,
+    operation: file.operations.length === 1 ? file.operations[0] : '',
+    points: file.points.map((point) => {
+      const locations = Array.isArray(point.locations) ? point.locations : []
+      const anchors = Array.isArray(point.anchors) ? point.anchors : []
+      return {
+        id: pointIdentity(point),
+        modificationLocation: locations.length > 0 ? locations[0] : '',
+        anchor: anchors.length > 0 ? anchors[0] : '',
+        actions: Array.isArray(point.actions) ? point.actions.slice() : [],
+        generationSources: Array.isArray(point.sources) ? point.sources.slice() : [],
+        generationCommands: Array.isArray(point.commands) ? point.commands.slice() : [],
+        generationOutputs: Array.isArray(point.outputs) ? point.outputs.slice() : [],
+        acceptanceLocation: locations.length > 0 ? locations[0] : '',
+        expectations: Array.isArray(point.expectations) ? point.expectations.slice() : []
+      }
+    })
+  }
+}
+
 function buildSummary(plan, checklist) {
   const taskById = new Map(plan.tasks.map((task) => [task.id, task]))
   const files = new Set()
@@ -801,21 +1106,27 @@ function buildSummary(plan, checklist) {
       resources: Array.from(new Set(resources))
     }
   })
-  const tasks = plan.tasks.map((task) => ({
-    id: task.id,
-    title: task.title,
-    mainFiles: task.mainFiles.slice(),
-    relatedFiles: task.relatedFiles.slice(),
-    files: task.mainFiles.concat(task.relatedFiles),
-    executionGroup: task.groups[0],
-    group: task.groups[0],
-    dependencies: task.dependencies.slice(),
-    dependencyReason: task.dependencyReasons[0] || '',
-    groupReason: task.groupReasons[0] || '',
-    modifications: task.modifications.slice(),
-    selfChecks: task.selfChecks.slice(),
-    resources: task.resourceIds.slice()
-  }))
+  const checklistById = new Map(checklist.tasks.map((task) => [task.id, task]))
+  const tasks = plan.tasks.map((task) => {
+    const checklistTask = checklistById.get(task.id)
+    return {
+      id: task.id,
+      title: task.title,
+      mainFiles: task.mainFiles.slice(),
+      relatedFiles: task.relatedFiles.slice(),
+      files: task.mainFiles.concat(task.relatedFiles),
+      fileRecords: task.files.map(summarizeFileRecord),
+      acceptanceFileRecords: checklistTask === undefined ? [] : checklistTask.files.map(summarizeFileRecord),
+      executionGroup: task.groups[0],
+      group: task.groups[0],
+      dependencies: task.dependencies.slice(),
+      dependencyReason: task.dependencyReasons[0] || '',
+      groupReason: task.groupReasons[0] || '',
+      modifications: task.modifications.slice(),
+      selfChecks: task.selfChecks.slice(),
+      resources: task.resourceIds.slice()
+    }
+  })
   const checks = checklist.checks.map((check) => ({
     id: check.id,
     title: check.title,
@@ -850,6 +1161,8 @@ function buildSummary(plan, checklist) {
     selfChecks: plan.closure.selfChecks.slice(),
     resources: plan.closure.resourceIds.slice(),
     checkRefs: checklist.closure === null ? [] : checklist.closure.checkRefs.slice(),
+    fileRecords: plan.closure.files.map(summarizeFileRecord),
+    acceptanceFileRecords: checklist.closure === null ? [] : checklist.closure.files.map(summarizeFileRecord),
     coverageKey: 'closure'
   }
   const globalAcceptance = checklist.global === null ? null : {
@@ -918,7 +1231,7 @@ export function validateSavePlanContract(plan, checklist, options) {
   validatePlanRelations(parsedPlan.tasks, diagnostics, options)
   validateClosure(parsedPlan.closure, 'plan', true, parsedPlan.tasks, diagnostics, options)
   validateClosure(parsedChecklist.closure, 'checklist', false, parsedChecklist.tasks, diagnostics, options)
-  validateCrossDocument(parsedPlan, parsedChecklist, diagnostics)
+  validateCrossDocument(parsedPlan, parsedChecklist, diagnostics, options)
   validateGlobal(parsedChecklist.global, diagnostics)
   validateChecks(parsedChecklist, diagnostics, options)
   if (diagnostics.length > 0) return finalizeFailure(diagnostics)

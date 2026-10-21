@@ -106,6 +106,7 @@ dsh-extra-plan/
 │   │   │   ├── preset-sync.js                                        # settings owner 内部同步/adapter 与 raw 旧值迁移
 │   │   │   ├── preset-yaml.js                                        # 预设 YAML 解析、定位与保格式改写纯模块
 │   │   │   ├── qqbot-settings-sync.js                                # QQBot 设置同步：Web→QQBot 持久化与回执
+│   │   │   ├── role-contract.js                                      # 角色身份常量表
 │   │   │   ├── run-code-scanner.js                                   # run_code 无宿主状态词法与调用点扫描
 │   │   │   ├── run-code-static.js                                    # run_code：静态解析与理由函数
 │   │   │   ├── runtime-lifecycle.js                                  # session 生命周期与计数状态工厂

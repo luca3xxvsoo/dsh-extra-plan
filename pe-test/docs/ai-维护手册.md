@@ -14,6 +14,12 @@
 
 - 续跑先沿用对应任务的既有增量备份目录；原始镜像及 manifest 不覆盖。失败修复另建独立 checkpoint，不能把失败版本写回原镜像，也不能用回滚删除此前已存在的 validator 或保留的未提交实现。
 - `SAVE_PLAN_LIMITS` 的唯一限制真源是 [save-contract.js](../../plugins/dsh-extra-plan/lib/save-contract.js)；本文只引用真源，不复制运行时限值。方案/验收工件自身携带模式、任务/组、检查/交接范围，当前轮的任务、检查、文件数量不作为未来模板。
+- 正文格式和字段关系以 [save-plan-validation.js](../../plugins/dsh-extra-plan/lib/save-plan-validation.js) 为真源，保存时真实源文件核实以 [save-tool-factories.js](../../plugins/dsh-extra-plan/lib/save-tool-factories.js) 为准；这里不复制另一张硬限制数值表。
+- **新 save_plan 合同**：主文件、关联文件和带文件收尾都必须逐项声明文件操作与 `M` 修改点；既有文本修改的每个点写修改前范围、唯一原文锚点和具体动作，新建、删除、生成按受控例外填写。新调用强制新合同，旧工件只作历史，不自动补行。
+- 验收按同文件、同操作、对应 `M` 点、修改后新定位和客观期望核对，不要求改后行号等于改前；取证写当前真实行号，原方案不回写追坐标。
+- **字段示意（仅示意，不是当前仓库可直接保存的完整输入）**：真实使用须先读当前文件并替换路径、范围、锚点，同时保留卷首、组、依赖、自检、检查定义、200 字符等完整合同；行号仅作为字段值，不拼入路径或新顶层 JSON 参数。
+  - 方案段：`主文件：src/example.js` → `文件操作：修改` → `修改点：M1` → `修改位置：L12-20` → `定位锚点：function buildConfig` → `修改：删改……`
+  - 验收段：`同文件/操作：src/example.js / 修改` → `对应修改点：M1` → `验收定位：buildConfig 及行为用例` → `客观期望：……` → `禁止/正式验收：……`
 - 执行者回报任务/文件范围、自检和阻塞；自检不等于正式验收。需要写临时产物的执行取证由获批执行者或直行主会话运行并保存原始 stdout/stderr/退出码，reviewer 保持只读并独立读取；同一公共检查只由一个领取者运行，其他任务/收尾/全局复用同一冻结轮证据。
 - 各组产出稳定后可先记录组级快照并开始对应组验收；所有数字任务与收尾完成后再记录最终冻结状态并做全局收口。源文件、检查条件、授权范围或源版本发生变化，受影响共享证据（同轮证据亦然）不可跨相关源变化复用并立即失效；重跑受影响任务、依赖消费者及共享检查，影响不能证明时按固定顺序从头复验。正式失败最多两轮，分类原样保留。
 - 只读复核、执行取证、静态检查和用户实机分别记录 PASS/FAIL/INCOMPLETE/NOT-RUN/SKIP/HUMAN；命令退出 0 不替代期望/禁止核对。字符测量使用 `String.length`，token 只有真实同口径数据才记录，否则 `NOT-RUN`。
@@ -26,6 +32,13 @@
 - `step-07-子代理模型与引导取证.mjs` 默认输出 A42/A43 索引：SESSION_ID、父 `subagent_plan` 关联、父子行号、attempted route、actual provenance、首个 planner 文本块摘要、suffix 等级与 exact match；`--full` 才输出 prompt/event/text 原文。`step-04-工具清单查看.mjs` 默认保留精确工具名、消息 ID/角色/source/行号和 `REQUEST_EXACT`，INBOX_ONLY 只引用已输出 MESSAGE；`step-05-会话解码.mjs` 默认保留 plan/mode 行号与计数摘要。
 - `一键step测试.mjs` 主报告只做索引；人眼工具按能力传参：step-04/05/07 追加 `--full`，step-06/08 保持原参数合同。完整 stdout/stderr 写入独立 raw 文件，摘要登记相对路径、bytes、lines、SHA-256 与有限结构化行；step-07 缺显式 `--session` 或 `PLANNER_PROMPT_SUFFIX` 未显式存在时记 `NOT-RUN` 并保留 raw 原因。`pe-test/reports/` 的 raw/Markdown 是临时证据，不纳入源改动；报告中的 HUMAN、SKIP、NOT-RUN、INCOMPLETE 均不计 AUTO PASS。
 - 回看 raw 时按摘要中的相对路径逐字读取，并用 SHA-256、字节数、行数三项核对；摘要或 hash 不能替代原文，也不能把真实宿主、GUI、QQBot、生产 profile 或会话结论改写为 PASS。
+
+## G3 行为回归与夹具边界
+
+- 设置页回归复用实际 factory/React/slot/ConfigForms 执行；完整性回归从完整正确基底逐字段变异，覆盖 source locator、默认链、客户端标记和七产物事务；全流程/路由回归观察真实状态、通知、生命周期、缓存和写闸门结果。
+- 正夹具验证等价格式/注释/私有命名仍通过，反夹具验证缺少呈现选项、漏保存键、错误 YAML、逐项发布/恢复故障被识别；expected 必须独立，不得由被测实现同时生成。
+- 这些是隔离内存/受控宿主边界的行为证据，不等于真实 GUI、QQBot 消息、provider、重启、生产 profile 或部署通过；适用项缺失、超时、SKIP、INCOMPLETE、HUMAN、NOT-RUN 均单列。
+
 ## Web/QQBot 所有权与部署边界
 
 | profile | 当前职责 | 本仓库 AI 边界 |
@@ -95,7 +108,7 @@
 | 改动域 | 主要检查 |
 |:--|:--|
 | 闸门（含 job_kill/send_message/job_list/list_agents 四工具闸门）、route/purpose、A/C/M、PTC 呈现 | `step-00-全流程回归.mjs`、`step-04-路由与写闸门.mjs` |
-| save_plan/save_probe、单次失败清理、证据合同 | `step-00-全流程回归.mjs`、`step-06-线索落盘.mjs`；限制以 `lib/save-contract.js` 为准；失败保留首错/阶段并由 AI 主动重试，不扫描旧 journal |
+| save_plan/save_probe、单次失败清理、证据合同 | `step-00-全流程回归.mjs`、`step-06-线索落盘.mjs`；save_plan 按逐文件操作/M点和真实源核实合同执行，验收按新定位取证；限制以 `lib/save-contract.js` 为准；失败保留首错/阶段并由 AI 主动重试，不扫描旧 journal |
 | 预设默认、settings、profile patch 自愈 | 对应 step-01 脚本；生成器与产物 `--check` 只读验证 |
 | 模型路由、usage、会话形状 | step-00、step-04 P4、step-07 HUMAN 取证；静态结果不替代实机 |
 | 代码地图 | `node pe-test/tools/代码地图生成.mjs` → 人工描述复核 → `--check`；一键测试也内置 `--check` |
@@ -122,8 +135,12 @@
 
 ## P2-4 生成链
 
-作者值在 `plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml`；运行 `node plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs` 先完整校验/渲染，失败时零输出写；坏模板、生成失败或 prepack 失败保留 last-known-good（上次已知良好版本）。通过后使用单次同目录暂存、顺序发布与有限回滚，恢复失败保留首错、备份与残留，不承诺任意磁盘故障或断电原子。该生成链不等同于 `save-persistence.js` 的方案工件落盘责任；`--check` 只读比较，生成物不得手改。
+作者值在 `plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml`；`runtimeDefaultsFromTemplate` 按十项 sourceLocator 完整解析并由 `renderRuntimeDefaults` 生成 `DEFAULT_SETTINGS` 与兼容别名，运行时不解析作者 YAML。迁移顺序固定为：先改/校验生成器并生成新导出，再切换 settings-contract、Config/fallback、快照、同步和 client 消费者；未确认新导出前不得切消费者。
+
+`client.js` 的 `EXTRA_FIELDS`/`HOST_ROW_FIELDS`/`ALL_FIELDS` 只允许生成器替换成对标记区块，标记内只派生 UI metadata，不带默认值、validator 或宿主对象，禁止手工编辑。默认仓库路径一并发布七个输出（运行时常量、主 definition、四角色 definition、client）；自定义 source/output 默认关闭仓库 client，显式 client source/output 才启用。
+
+生成器先 parse/validate/编译 client，再进入同目录暂存、备份、顺序发布与逆序有限回滚；任一失败不得留下新版本，恢复失败保留首错、阶段、备份和残留。`--check` 只读比较并零写；该生成链不等同于 `save-persistence.js` 的方案工件落盘责任，生成物不得手改。
 
 ## 单一来源提醒
 
-`gateWords` 只改 YAML；`SAVE_PLAN_LIMITS` 与 save_plan 合同只读 [lib/save-contract.js](../../plugins/dsh-extra-plan/lib/save-contract.js)，`PROBE_LIMITS` 同样只读该源码；文档不维护第二份运行时限值表。模型/usage/投影细节分别以对应 lib 与 step 脚本为准；历史故障、旧宿主面、77/217/209 等历史统计读[归档](ai-宿主耦合历史归档.md)，不作为当前值。
+`gateWords` 只改 YAML；`SAVE_PLAN_LIMITS` 与 save_plan 限制数值只读 [lib/save-contract.js](../../plugins/dsh-extra-plan/lib/save-contract.js)，正文格式与字段关系以 [lib/save-plan-validation.js](../../plugins/dsh-extra-plan/lib/save-plan-validation.js) 为真源，真实源核实以 [lib/save-tool-factories.js](../../plugins/dsh-extra-plan/lib/save-tool-factories.js) 为准；`PROBE_LIMITS` 同样只读 save-contract 源码，文档不维护第二份运行时限值表。模型/usage/投影细节分别以对应 lib 与 step 脚本为准；历史故障、旧宿主面、77/217/209 等历史统计读[归档](ai-宿主耦合历史归档.md)，不作为当前值。

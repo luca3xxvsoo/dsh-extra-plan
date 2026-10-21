@@ -33,7 +33,7 @@ const ROOT = resolve(HERE, '..', '..')
 const PLUGIN_PATH = join(ROOT, 'plugins', 'dsh-extra-plan', 'index.js')
 const PRESET_DIR = join(ROOT, 'plugins', 'dsh-extra-plan', 'assets', 'presets', 'extra-plan')
 const INSTALL_ROOT = resolve(process.env.DSH_INSTALL_ROOT || join(homedir(), 'AppData', 'Roaming', 'npm', 'node_modules', '@deepseek-ai', 'dsh'))
-const BATCH_DIR = resolve(process.env.ROLE_PRESET_BATCH_DIR || join(ROOT, '.extra-plan', 'step-05-角色预设', 'run-' + String(Date.now())))
+const BATCH_DIR = resolve(process.env.ROLE_PRESET_BATCH_DIR || (process.env.PLAN_EVIDENCE_DIR ? join(process.env.PLAN_EVIDENCE_DIR, 'G3', 'resume1', 'fixture-role-host') : join(ROOT, '.extra-plan', 'step-05-角色预设', 'run-' + String(Date.now()))))
 const HOME_DIR = join(BATCH_DIR, 'home')
 const SESSION_ROOT = join(BATCH_DIR, 'sessions')
 const WORKSPACE = join(BATCH_DIR, 'workspace')
@@ -82,6 +82,13 @@ function sectionTexts(assembly) {
 const { assetDefinitions, assetDefinition, definitionWithProjection } = await import('../../plugins/dsh-extra-plan/lib/preset-sync.js')
 
 const EXPECTED_ROSTER = ['extra-plan', 'extra-plan-executor', 'extra-plan-planner', 'extra-plan-reviewer', 'extra-plan-prober']
+const EXPECTED_ROSTER_RECORDS = [
+  { id: 'extra-plan', order: 100, name: '按需规划模式' },
+  { id: 'extra-plan-executor', order: 101, name: '按需规划模式-执行者' },
+  { id: 'extra-plan-planner', order: 102, name: '按需规划模式-规划者' },
+  { id: 'extra-plan-reviewer', order: 103, name: '按需规划模式-验收者' },
+  { id: 'extra-plan-prober', order: 104, name: '按需规划模式-探查者' },
+]
 const ROLE_PERSONAS = {}
 for (const roleId of EXPECTED_ROSTER.slice(1)) {
   const file = join(PRESET_DIR, 'preset-definition-' + roleId + '.generated.yml')
@@ -153,6 +160,8 @@ try {
   const roster = await root.agentPresets.list()
   const rosterIds = roster.map((item) => item.id)
   check('组1 roster 含 5 个 definition id（主在前、角色 101..104 在后）', JSON.stringify(rosterIds) === JSON.stringify(EXPECTED_ROSTER), JSON.stringify(rosterIds))
+  const rosterRecords = roster.map((item) => ({ id: item.id, order: item.order, name: item.name }))
+  check('组1 registry.list 实际主名/四角色新展示名与 ID/order 精确匹配', JSON.stringify(rosterRecords) === JSON.stringify(EXPECTED_ROSTER_RECORDS), JSON.stringify(rosterRecords))
   check('组1 主 definition 顶层 17 条、4 个角色 definition 首两行为 persona/extra-plan',
     definitions[0].plugins.length === 17 && definitions.slice(1).every((item) => JSON.stringify(item.plugins.slice(0, 2).map((row) => row.id)) === JSON.stringify(['persona', 'extra-plan'])))
 

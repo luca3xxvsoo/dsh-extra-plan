@@ -6,14 +6,12 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { readFileSync, existsSync } from 'node:fs'
 import { isDeepStrictEqual } from 'node:util'
-import { fileURLToPath } from 'node:url'
-import { dirname, join } from 'node:path'
 import z from '@deepseek-ai/schemastery'
 import {
   HOST_ROW_SETTING_DEFINITIONS,
   SETTING_DEFINITIONS,
   SETTINGS_ROW_ID,
-  hostRowDefaultsFromTemplate,
+  createDefaultSettings,
   normalizeSettingValue,
   readPath,
   validateSettingValue,
@@ -30,9 +28,6 @@ import { GATE_WORD_FIELDS, validateGateWords } from './gate-words.js'
 
 export const name = 'dsh-extra-plan-settings'
 export const inject = []
-
-const HERE = dirname(fileURLToPath(import.meta.url))
-const TEMPLATE_AGENT_FILE = join(HERE, '..', 'assets', 'presets', 'extra-plan', 'agent.cordis.yml')
 
 const CLIENT_CARRIER_ENTRY_ID = 'dsh-extra-plan-client-carrier'
 const carrierByLoader = new WeakMap()
@@ -243,11 +238,6 @@ export function stableSnapshot(snapshot) {
 }
 
 
-function defaultValues() {
-  const defaults = Object.fromEntries(SETTING_DEFINITIONS.map((definition) => [definition.key, definition.defaultValue]))
-  return { ...defaults, ...hostRowDefaultsFromTemplate(readFileSync(TEMPLATE_AGENT_FILE, 'utf8')) }
-}
-
 /** GET 只读统一全局状态；旧行/raw patch 只在当前全局值缺项时作为迁移来源。 */
 /** 只从唯一 canonical authority 解析；conflict 不回落旧 raw projection。 */
 function readUnifiedState(editor) {
@@ -278,7 +268,7 @@ function readUnifiedState(editor) {
     conflict: false,
     located: true,
     values: { ...resolved.values },
-    defaults: { ...defaultValues() },
+    defaults: { ...createDefaultSettings() },
     overridden,
     sources,
     gateWords: resolved.gateWords,

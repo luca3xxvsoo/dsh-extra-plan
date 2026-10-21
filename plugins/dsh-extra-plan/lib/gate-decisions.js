@@ -470,6 +470,49 @@ function parseDispatchAskResult(data) {
   return { callId, kind: 'ok', answersLen, selected }
 }
 
+function resetStageState(state) {
+  state.purpose = 'none'
+  state.clarified = false
+  state.approved = false
+}
+
+function resetRouteState(state) {
+  state.route = 'none'
+  resetStageState(state)
+}
+
+function applyAskOutcome(state, kind, result, gateRuntime) {
+  // 闸门拒绝不改变任何状态；错误结果保留通道故障与取消的原有差异。
+  if (result.kind === 'denied') return
+  if (result.kind === 'error') {
+    if (CHANNEL_BROKEN_CODES.has(result.code)) state.channelBroken = true
+    else resetRouteState(state)
+    return
+  }
+
+  if (kind === 'route') {
+    resetStageState(state)
+    const matched = matchRouteLabel(result.selected, gateRuntime)
+    if (matched === 'direct') state.route = 'direct'
+    else if (matched === 'plan') state.route = 'plan'
+    else state.route = 'none'
+  } else if (kind === 'purpose') {
+    if (state.route === 'plan' && result.answersLen > 0) {
+      const matched = matchPurposeLabel(result.selected, gateRuntime)
+      if (matched !== null) {
+        resetStageState(state)
+        state.purpose = matched
+      }
+    }
+  } else if (kind === 'clarify') {
+    if (result.answersLen > 0 && state.route === 'plan' && (state.purpose === 'refine' || state.purpose === 'redo')) state.clarified = true
+  } else if (kind === 'approve') {
+    const matched = matchApprovalLabel(result.selected, gateRuntime)
+    if (matched === 'approve') state.approved = true
+    else state.approved = false
+  }
+}
+
 // 四级锚点状态机（纯函数，自最近一条人类消息起的事件推导）：
 //   route: 'none' | 'direct' | 'plan'（routeDisagree → 回 'none'，保持未确认）
 //   clarified: 是否有完成的澄清问答（空白回复不算）
@@ -480,15 +523,6 @@ function parseDispatchAskResult(data) {
 // 通道码置 channelBroken，其余（含宿主取消句 / ASK_CANCELLED）resetRouteState 清四字段。
 function deriveFlowState(events, gateRuntime) {
   const state = { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }
-  const resetStageState = () => {
-    state.purpose = 'none'
-    state.clarified = false
-    state.approved = false
-  }
-  const resetRouteState = () => {
-    state.route = 'none'
-    resetStageState()
-  }
   if (!Array.isArray(events)) return state
   let lastHuman = -1
   for (let i = events.length - 1; i >= 0; i -= 1) {
@@ -522,72 +556,13 @@ function deriveFlowState(events, gateRuntime) {
         typeof e.data.subCallId === 'string') {
       const result = parseDispatchAskResult(e.data)
       if (result.callId === undefined || !asks.has(result.callId)) continue
-      // 闸门拒绝不重置：route/purpose/clarified/approved 原样保留（合规重提即可放行）；
-      // 取消/中断/通道错误仍走下方 error 分支（清四字段语义不变）。
-      if (result.kind === 'denied') continue
-      if (result.kind === 'error') {
-        if (CHANNEL_BROKEN_CODES.has(result.code)) state.channelBroken = true
-        else resetRouteState()
-        continue
-      }
-      const kind = asks.get(result.callId)
-      if (kind === 'route') {
-        resetStageState()
-        const matched = matchRouteLabel(result.selected, gateRuntime)
-        if (matched === 'direct') state.route = 'direct'
-        else if (matched === 'plan') state.route = 'plan'
-        else state.route = 'none'
-      } else if (kind === 'purpose') {
-        if (state.route === 'plan' && result.answersLen > 0) {
-          const matched = matchPurposeLabel(result.selected, gateRuntime)
-          if (matched !== null) {
-            resetStageState()
-            state.purpose = matched
-          }
-        }
-      } else if (kind === 'clarify') {
-        if (result.answersLen > 0 && state.route === 'plan' && (state.purpose === 'refine' || state.purpose === 'redo')) state.clarified = true
-      } else if (kind === 'approve') {
-        const matched = matchApprovalLabel(result.selected, gateRuntime)
-        if (matched === 'approve') state.approved = true
-        else state.approved = false
-      }
+      applyAskOutcome(state, asks.get(result.callId), result, gateRuntime)
       continue
     }
     if (e.type !== 'tool/result') continue
     const result = parseAskResultData(e.data)
     if (result.callId === undefined || !asks.has(result.callId)) continue
-    // 同 dispatch 分支：闸门拒绝（denied）不重置任何状态字段。
-    if (result.kind === 'denied') continue
-    if (result.kind === 'error') {
-      if (CHANNEL_BROKEN_CODES.has(result.code)) state.channelBroken = true
-      else resetRouteState()
-      continue
-    }
-    const kind = asks.get(result.callId)
-    if (kind === 'route') {
-      resetStageState()
-      const matched = matchRouteLabel(result.selected, gateRuntime)
-      if (matched === 'direct') state.route = 'direct'
-      else if (matched === 'plan') state.route = 'plan'
-      // disagree 与其它未识别标签同义：路由不成立（原 else if (disagree) 与本分支同值，合并）。
-      else state.route = 'none'
-    } else if (kind === 'purpose') {
-      if (state.route === 'plan' && result.answersLen > 0) {
-        const matched = matchPurposeLabel(result.selected, gateRuntime)
-        if (matched !== null) {
-          resetStageState()
-          state.purpose = matched
-        }
-      }
-    } else if (kind === 'clarify') {
-      if (result.answersLen > 0 && state.route === 'plan' && (state.purpose === 'refine' || state.purpose === 'redo')) state.clarified = true
-    } else if (kind === 'approve') {
-      const matched = matchApprovalLabel(result.selected, gateRuntime)
-      if (matched === 'approve') state.approved = true
-      // replan/disagree 与其它未识别标签同义：未获批准（原 else if (replan|disagree) 与本分支同值，合并）。
-      else state.approved = false
-    }
+    applyAskOutcome(state, asks.get(result.callId), result, gateRuntime)
   }
   return state
 }

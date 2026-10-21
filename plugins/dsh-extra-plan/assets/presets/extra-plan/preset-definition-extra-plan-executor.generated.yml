@@ -4,7 +4,7 @@
 # 其余为角色 tools 行，plugins 末尾固定追加恰一行 tool-presentation（config.mode 取主预设同 id 行的默认值）。
 # 人设与工具面在这里承载；主预设不再写 persona/toolFilter/backgroundMode。
 id: extra-plan-executor
-name: '执行者'
+name: '按需规划模式-执行者'
 description: '执行委派任务并在完工前自验证；可写工作区，越界需求写进汇报'
 order: 101
 plugins:

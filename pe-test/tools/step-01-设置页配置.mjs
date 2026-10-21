@@ -65,12 +65,8 @@ try {
 } catch { /* 静态合同仍可执行；宿主缺依赖时运行时项会明确失败 */ }
 
 const patchText = readFileSync(join(REPO_ROOT, 'plugins/dsh-extra-plan/cordis.patch.yml'), 'utf8')
-const settingsText = readFileSync(join(REPO_ROOT, 'plugins/dsh-extra-plan/lib/settings.js'), 'utf8')
 const syncText = readFileSync(join(REPO_ROOT, 'plugins/dsh-extra-plan/lib/preset-sync.js'), 'utf8')
-const contractText = readFileSync(join(REPO_ROOT, 'plugins/dsh-extra-plan/lib/settings-contract.js'), 'utf8')
 const clientText = readFileSync(join(REPO_ROOT, 'plugins/dsh-extra-plan/lib/client.js'), 'utf8')
-const zh = JSON.parse(readFileSync(join(REPO_ROOT, 'plugins/dsh-extra-plan/locale/settings/zh.json'), 'utf8'))
-const en = JSON.parse(readFileSync(join(REPO_ROOT, 'plugins/dsh-extra-plan/locale/settings/en.json'), 'utf8'))
 const keys = ['anchoredBootstrap', 'creativeMode', 'webFetch', 'toolPresentationMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel']
 
 let pass = 0
@@ -96,15 +92,14 @@ const configDict = Config !== undefined && Config !== null && Config.dict !== un
 const configKeys = Object.keys(configDict)
 const configKeySetMatches = JSON.stringify([...configKeys].sort()) === JSON.stringify([...descriptorKeys].sort())
 check('V03 patch 顶层公开 insert 恰一行且稳定 id=dsh-extra-plan-settings', Array.isArray(patch) && patch.length === 1 && Array.isArray(patch[0].insert) && patch[0].insert.length === 1 && patch[0].insert[0].id === 'dsh-extra-plan-settings')
-check('V03 settings owner 接管 configEditor/loader/settings/webServer 生命周期', settingsText.includes("ctx.inject(['configEditor']") && settingsText.includes("ctx.inject(['loader']") && settingsText.includes("ctx.inject(['settings']") && settingsText.includes("ctx.inject(['webServer']") && settingsText.includes('mountPresetSync(child,') && settingsText.includes('onSettledSettings'))
-check('V03 中英文元数据是全局管理结论级文案', zh.meta.title === '按需规划模式全局管理' && zh.meta.description.includes('统一管理') && en.meta.title === 'Extra Plan Global Manager' && en.meta.description.includes('Manage'))
-check('V03 descriptor 与 Config 字段集合均恰10项且包含两项宿主值', descriptorKeys.length === 10 && configKeys.length === 10 && configKeySetMatches && descriptorKeys.includes('webFetch') && descriptorKeys.includes('toolPresentationMode') && contractText.includes('SETTING_DEFINITIONS = Object.freeze([') && settingsText.includes('SETTING_DEFINITIONS.map') && clientText.includes('const ALL_FIELDS = Object.freeze(EXTRA_FIELDS.concat(HOST_ROW_FIELDS))'))
+
+
+check('V03 descriptor 与 Config 实际字段集合均恰10项且包含两项宿主值', descriptorKeys.length === 10 && configKeys.length === 10 && configKeySetMatches && JSON.stringify([...configKeys].sort()) === JSON.stringify(keys.slice().sort()) && descriptorKeys.includes('webFetch') && descriptorKeys.includes('toolPresentationMode'))
 check('V02 当前词表严格拒绝、旧值安全解析且不求值', syncText.includes('当前全局 gateWords 非法') && syncText.includes('readLegacyState') && syncText.includes('parsePresetYaml') && !syncText.includes('eval(') && !syncText.includes('Function('))
-check('V05 client 保存有 ready/readonly/draft/saving guard 且失败提示', clientText.includes('!writable') && clientText.includes('draft === null') && clientText.includes('status !== "ready"') && clientText.includes('accepted === true') && clientText.includes('catch'))
-check('G5 中文展示文案与布尔值合同不变', clientText.includes('trueValue: "开启"') && clientText.includes('falseValue: "关闭"') && clientText.includes('anchoredBootstrap: "首轮引导开关"') && clientText.includes('trueValue: "True"') && clientText.includes('falseValue: "False"') && clientText.includes('web_fetch ｜ 重启生效') && clientText.includes('无法进行会话内切换 ｜ 重启生效'))
-const retiredBundleStateFlag = ['bundle', 'Config', 'Registered'].join('')
-check('V05 不注册 bundle.config、仅注册 detail.section 且保留实时让位防御', !clientText.includes('safeInject("plugins.bundle.config"') && clientText.includes('safeInject("plugins.detail.section"') && clientText.includes('hasBundleConfigEntry') && !clientText.includes(retiredBundleStateFlag) && !clientText.includes('props.view') && !clientText.includes('summary'))
-check('V05 detail.section 唯一同页通道、自绘标题与唯一稳定 namespace 表单', clientText.includes('plugins.detail.section') && clientText.includes('ctx.configForms.get(NS)') && clientText.includes('sharedForm.subscribe') && clientText.includes('"data-plugin-section": "dsh-extra-plan-settings-global"') && clientText.includes('.esp-panelTitle') && clientText.includes('.esp-panelHint') && !clientText.includes('plugins.row.config') && !clientText.includes('settings.plugins.tab') && !clientText.includes('plugins.item'))
+
+
+
+
 
 function slotHasKind(text, name, kind) {
   if (text === undefined) return false
@@ -143,7 +138,7 @@ if (TARGET_INSTALL_ROOT === undefined) {
     const slotText = targetSlotMap.value
     const configFormText = targetConfigForms.value
     check('F04 HOST 实际 SlotMap 提供 keyed plugins.bundle.config 与 list plugins.detail.section', slotHasKind(slotText, 'plugins.bundle.config', 'keyed') && slotHasKind(slotText, 'plugins.detail.section', 'list'))
-    check('F04 HOST 实际 ConfigForms 提供 get 与 whileServed，且本插件使用 detail.section 唯一通道', configFormText.includes('get<T>(entryId: string)') && configFormText.includes('whileServed(namespaces: readonly string[]') && clientText.includes('safeInject("plugins.detail.section"') && !clientText.includes('safeInject("plugins.bundle.config"') && clientText.includes('ctx.configForms.get(NS)') && clientText.includes('ctx.configForms.whileServed([NS]'))
+    check('F04 HOST 实际 ConfigForms 提供 get 与 whileServed', configFormText.includes('get<T>(entryId: string)') && configFormText.includes('whileServed(namespaces: readonly string[]'))
   }
 }
 
@@ -940,6 +935,7 @@ async function runHostProxyMatrix() {
      normalCase.profileSyncTerminal.status === 'synced' && normalCase.profileSyncTerminal.pending === false && typeof normalCase.profileSyncTerminal.saveRunId === 'string' && normalCase.profileSyncTerminal.saveRunId !== '' && Number.isInteger(normalCase.profileSyncTerminal.syncRevision) && normalCase.profileSyncTerminal.syncRevision > 0 && typeof normalCase.profileSyncTerminal.snapshotHash === 'string' && normalCase.profileSyncTerminal.trigger === 'settled-update' && normalOk
   if (normalBoundaryOk) console.log('HOST_PROXY_NORMAL_SETTLED_CTX_GET_OK')
   check('host-proxy normal settled assertion', normalBoundaryOk)
+  check('V03 settings owner 生命周期由真实 host-proxy trace 覆盖', normalBoundaryOk && ['loader', 'settings', 'webServer', 'configEditor'].every((name) => normalCase.injectRequests.some((item) => item.deps[0] === name)) && normalTrace.includes('ctx.get:configEditor') && normalTrace.includes('adapter-start'))
   if (normalOk) console.log('FULL_SNAPSHOT_10_PLUS_7_EACH_TRIGGER_OK')
   check('full snapshot each trigger assertion', normalOk)
   if (typeof normalRun.lifecycle.cleanup === 'function') await normalRun.lifecycle.cleanup()
@@ -1189,6 +1185,11 @@ function makeClientHarness(snapshot, outcome = true, failDetail = false, savingI
   let recoveryReadAttempts = 0
   const calls = []
   const fetchCalls = []
+  const localeRegisters = []
+  const configFormGets = []
+  const configFormServes = []
+  const slotInjectCalls = []
+  const slotRegisterCalls = []
 
   function sameDeps(left, right) {
     if (left === undefined || right === undefined) return false
@@ -1292,7 +1293,8 @@ function makeClientHarness(snapshot, outcome = true, failDetail = false, savingI
       return fetchResponses[options.fetchBehavior] || fetchResponses.synced
     },
   }
-  runInNewContext(clientText, sandbox)
+  const clientSourceText = typeof options.clientSourceText === 'string' ? options.clientSourceText : clientText
+  runInNewContext(clientSourceText, sandbox)
   const moduleExports = definition.factory((name) => { if (name === 'react') return fakeReact; throw new Error('unexpected require ' + name) })
 
   function notify(nextSnapshot = controllerState.snapshot) {
@@ -1320,13 +1322,17 @@ function makeClientHarness(snapshot, outcome = true, failDetail = false, savingI
     },
   }
   const surfaceContext = {
-    locale: { bind: () => (key) => key, register: () => () => {} },
+    locale: {
+      bind: () => (key) => key,
+      register: (namespace, dictionaries) => { localeRegisters.push({ namespace, dictionaries: structuredClone(dictionaries) }); return () => {} },
+    },
     configForms: {
-      get: () => formController,
-      whileServed: (names, callback) => callback(),
+      get: (namespace) => { configFormGets.push(namespace); return formController },
+      whileServed: (names, callback) => { configFormServes.push([...names]); return callback() },
     },
     slots: {
       inject: (name, callback) => {
+        slotInjectCalls.push(name)
         const record = { name, callback, active: true, cleanup: undefined }
         const off = () => {
           if (!record.active) return
@@ -1347,6 +1353,7 @@ function makeClientHarness(snapshot, outcome = true, failDetail = false, savingI
         return off
       },
       register: (registerOptions, component) => {
+        slotRegisterCalls.push({ ...registerOptions })
         if (failDetail && registerOptions.name === 'plugins.detail.section') throw new Error('detail register failed')
         const entry = { options: registerOptions, component }
         registrations.push(entry)
@@ -1404,8 +1411,9 @@ function makeClientHarness(snapshot, outcome = true, failDetail = false, savingI
     const section = detailRunner.render(entry.component, { subject })
     if (section === null) return null
     const settingsCard = section.type(section.props)
-    const formElement = settingsCard.children.find((child) => child !== null && child !== undefined && typeof child.type === 'function' && child.type.name === 'ExtraPlanForm')
-    if (formElement === undefined) return undefined
+    const formCandidates = (settingsCard.children || []).filter((child) => child !== null && child !== undefined && typeof child.type === 'function' && child.props !== null && child.props !== undefined && Object.prototype.hasOwnProperty.call(child.props, 'configForm'))
+    if (formCandidates.length !== 1) return undefined
+    const formElement = formCandidates[0]
     const formTree = detailFormRunner.render(formElement.type, formElement.props)
     return formViewFromTree(formTree, entry)
   }
@@ -1435,7 +1443,7 @@ function makeClientHarness(snapshot, outcome = true, failDetail = false, savingI
     detailRunner.unmount()
     detailFormRunner.unmount()
   }
-  const result = { calls, fetchCalls, states, registrations, injectionDisposers, cleanups, context: surfaceContext, renderDetail, detailChrome, notify, rebuildSurfaces, unmount, renderStats, formController }
+  const result = { calls, fetchCalls, localeRegisters, configFormGets, configFormServes, slotInjectCalls, slotRegisterCalls, states, registrations, injectionDisposers, cleanups, context: surfaceContext, renderDetail, detailChrome, notify, rebuildSurfaces, unmount, renderStats, formController }
   Object.defineProperty(result, 'registrationDisposals', { get: () => registrationDisposals })
   Object.defineProperty(result, 'registerCalls', { get: () => ({ ...registerCalls }) })
   Object.defineProperty(result, 'registerDisposeCounts', { get: () => ({ ...registerDisposeCounts }) })
@@ -1449,6 +1457,71 @@ function makeClientHarness(snapshot, outcome = true, failDetail = false, savingI
   return result
 }
 const values = { anchoredBootstrap: true, creativeMode: false, webFetch: false, toolPresentationMode: 'native', runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: 'm', plannerPromptSuffix: 's', exploreBudget: 18, otherAgentModel: '' }
+function walkTree(node, output = []) {
+  if (node === null || node === undefined) return output
+  if (Array.isArray(node)) { for (const child of node) walkTree(child, output); return output }
+  output.push(node)
+  for (const child of node.children || []) walkTree(child, output)
+  return output
+}
+function fieldRowsOf(view) {
+  return walkTree(view?.tree).filter((node) => node !== null && node !== undefined && node.type === 'label' && Array.isArray(node.children) && node.children.length >= 3).map((label) => ({
+    key: label.children[0]?.children?.[0]?.children?.[0],
+    control: label.children[1],
+    hint: label.children[2]?.children?.[0],
+  }))
+}
+const UI_FIELD_ORDER = ['anchoredBootstrap', 'creativeMode', 'webFetch', 'toolPresentationMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel']
+const UI_HINTS = {
+  anchoredBootstrap: '首轮极简工具 + 提示词 ｜ 新会话/新子代理生效',
+  creativeMode: '是否开启dsh官方创造模式 ｜ 立即生效',
+  webFetch: '是否开启web_fetch ｜ 重启生效',
+  toolPresentationMode: '工具呈现方式切换（默认/PTC模式），无法进行会话内切换 ｜ 重启生效',
+  runcodeCatchGate: 'PTC模式下，增加每个工具调用需要try catch的闸门。通过限制+建议的模式保障仅单个调用报错 ｜ 立即生效',
+  crossProviderPlannerModel: '允许跨提供方选择模型。开启时将以 其他提供方 - 主会话提供方 - deepseek官方 的顺序，获取可用模型。关闭时仅从主会话提供方获取。默认关闭 ｜ 新会话/新子代理生效',
+  plannerModel: 'pro规划默认使用模型。未匹配/置空时：使用主会话模型 ｜ 新会话/新子代理生效',
+  plannerPromptSuffix: '在主会话发送给pro规划的任务结尾，拼接上的内容。可能能增加pro规划的智商（未验证）。可置空 ｜ 立即生效',
+  exploreBudget: '允许pro规划调用工具的次数，避免后台无限制调用。同时限制一次runcode内可调用的工具上限数 ｜ 立即生效',
+  otherAgentModel: '其他子代理默认使用模型。未匹配/置空时：使用主会话模型 ｜ 新会话/新子代理生效',
+}
+function uiFieldContractOk(rows) {
+  if (rows.length !== UI_FIELD_ORDER.length || JSON.stringify(rows.map((row) => row.key)) !== JSON.stringify(UI_FIELD_ORDER)) return false
+  const booleanKeys = new Set(['anchoredBootstrap', 'creativeMode', 'webFetch', 'runcodeCatchGate', 'crossProviderPlannerModel'])
+  for (const row of rows) {
+    if (row.hint !== UI_HINTS[row.key]) return false
+    const optionValues = (row.control?.children || []).flatMap((child) => Array.isArray(child) ? child : [child]).map((option) => option?.props?.value)
+    if (booleanKeys.has(row.key)) {
+      if (row.control?.type !== 'select' || JSON.stringify(optionValues) !== JSON.stringify(['true', 'false'])) return false
+    } else if (row.key === 'toolPresentationMode') {
+      if (row.control?.type !== 'select' || JSON.stringify(optionValues) !== JSON.stringify(['native', 'ptc'])) return false
+    } else if (row.key === 'plannerPromptSuffix') {
+      if (row.control?.type !== 'textarea') return false
+    } else if (row.key === 'exploreBudget') {
+      if (row.control?.type !== 'input' || row.control.props?.type !== 'number' || row.control.props?.min !== '1' || row.control.props?.step !== '1') return false
+    } else if (row.control?.type !== 'input' || row.control.props?.type !== 'text') return false
+  }
+  return true
+}
+async function exerciseInteractiveControls(snapshot, options = {}) {
+  const harness = makeClientHarness(snapshot, true, false, false, options)
+  const firstView = harness.renderDetail()
+  const rows = fieldRowsOf(firstView)
+  const target = options.target === undefined ? { anchoredBootstrap: false, creativeMode: true, webFetch: true, toolPresentationMode: 'ptc', runcodeCatchGate: true, crossProviderPlannerModel: true, plannerModel: 'interactive-model', plannerPromptSuffix: 'changed\n"suffix\\path', exploreBudget: 27, otherAgentModel: 'child-model' } : options.target
+  for (const row of rows) if (Object.prototype.hasOwnProperty.call(target, row.key)) row.control.props.onChange({ target: { value: String(target[row.key]) } })
+  const changedView = harness.renderDetail()
+  const button = changedView?.button
+  if (button !== undefined) await button.props.onClick()
+  const call = harness.calls[0]
+  return { harness, rows, target, call }
+}
+function interactiveSaveContract(result) {
+  if (result === undefined || result.call === undefined || result.harness.calls.length !== 1) return false
+  const ops = result.call.ops
+  const values = Object.fromEntries(ops.map((op) => [op.path[0], op.value]))
+  const expectedTypes = { anchoredBootstrap: 'boolean', creativeMode: 'boolean', webFetch: 'boolean', toolPresentationMode: 'string', runcodeCatchGate: 'boolean', crossProviderPlannerModel: 'boolean', plannerModel: 'string', plannerPromptSuffix: 'string', exploreBudget: 'number', otherAgentModel: 'string' }
+  const put = result.harness.fetchCalls[0]
+  return result.call.revision === 42 && ops.length === 10 && new Set(ops.map((op) => op.path[0])).size === 10 && ops.every((op) => op.op === 'set') && isDeepStrictEqual(values, result.target) && Object.entries(expectedTypes).every(([key, type]) => typeof values[key] === type) && result.harness.fetchCalls.length === 1 && put.method === 'PUT' && put.url.includes('/api/dsh-extra-plan-settings/pro-config') && isDeepStrictEqual(put.body, result.target)
+}
 async function exerciseClient(snapshot, outcome, expectedKind, label, savingInitial = false) {
   const harness = makeClientHarness(snapshot, outcome, false, savingInitial)
   const view = harness.renderDetail()
@@ -1460,6 +1533,31 @@ async function exerciseClient(snapshot, outcome, expectedKind, label, savingInit
   return harness
 }
 const readySnapshot = { status: 'ready', writable: true, revision: 42, value: values }
+const interactive = await exerciseInteractiveControls(readySnapshot)
+const interactiveOps = interactive.call === undefined ? [] : interactive.call.ops
+const interactiveValues = Object.fromEntries(interactiveOps.map((op) => [op.path[0], op.value]))
+check('V05 实际渲染十控件顺序/控件类型/选项/min-step/hint', uiFieldContractOk(interactive.rows))
+check('V05 点选十控件后一次 mutate 带全十键、revision42 与正确类型', interactive.call !== undefined && interactive.call.revision === 42 && interactiveOps.length === 10 && new Set(interactiveOps.map((op) => op.path[0])).size === 10 && isDeepStrictEqual(interactiveValues, interactive.target) && typeof interactiveValues.anchoredBootstrap === 'boolean' && typeof interactiveValues.creativeMode === 'boolean' && typeof interactiveValues.webFetch === 'boolean' && typeof interactiveValues.toolPresentationMode === 'string' && typeof interactiveValues.runcodeCatchGate === 'boolean' && typeof interactiveValues.crossProviderPlannerModel === 'boolean' && typeof interactiveValues.plannerModel === 'string' && typeof interactiveValues.plannerPromptSuffix === 'string' && typeof interactiveValues.exploreBudget === 'number' && typeof interactiveValues.otherAgentModel === 'string')
+const commentClientText = clientText.replace('function ExtraPlanForm(props) {', '// equivalent comment variant\n      function ExtraPlanForm(props) {')
+const newlineClientText = clientText.replace('const ALL_FIELDS = Object.freeze(EXTRA_FIELDS.concat(HOST_ROW_FIELDS));', 'const ALL_FIELDS = Object.freeze(\n      EXTRA_FIELDS.concat(HOST_ROW_FIELDS)\n    );')
+const renamedClientText = clientText.replace('function ExtraPlanForm(props)', 'function RenamedSettingsForm(props)').replace('el(ExtraPlanForm, { configForm: props.configForm })', 'el(RenamedSettingsForm, { configForm: props.configForm })')
+const commentInteractive = await exerciseInteractiveControls(readySnapshot, { clientSourceText: commentClientText, target: { anchoredBootstrap: true, creativeMode: true, webFetch: false, toolPresentationMode: 'native', runcodeCatchGate: false, crossProviderPlannerModel: true, plannerModel: 'comment-model', plannerPromptSuffix: 'comment\n"suffix\\path', exploreBudget: 31, otherAgentModel: 'comment-child' } })
+const newlineInteractive = await exerciseInteractiveControls(readySnapshot, { clientSourceText: newlineClientText, target: { anchoredBootstrap: false, creativeMode: false, webFetch: true, toolPresentationMode: 'ptc', runcodeCatchGate: true, crossProviderPlannerModel: false, plannerModel: 'newline-model', plannerPromptSuffix: 'newline\n"suffix\\path', exploreBudget: 32, otherAgentModel: 'newline-child' } })
+const renamedInteractive = await exerciseInteractiveControls(readySnapshot, { clientSourceText: renamedClientText, target: { anchoredBootstrap: true, creativeMode: false, webFetch: true, toolPresentationMode: 'ptc', runcodeCatchGate: false, crossProviderPlannerModel: true, plannerModel: 'renamed-model', plannerPromptSuffix: 'renamed\n"suffix\\path', exploreBudget: 33, otherAgentModel: 'renamed-child' } })
+check('V05 注释等价内存变体真实十键交互/保存/revision/mutate/PUT', commentClientText !== clientText && interactiveSaveContract(commentInteractive))
+check('V05 等价换行内存变体真实十键交互/保存/revision/mutate/PUT', newlineClientText !== clientText && interactiveSaveContract(newlineInteractive))
+check('V05 等价私有表单函数改名内存变体真实十键交互/保存/revision/mutate/PUT', renamedClientText !== clientText && interactiveSaveContract(renamedInteractive))
+const missingPtcText = clientText.replace('{"key":"toolPresentationMode","control":"select","options":["native","ptc"]', '{"key":"toolPresentationMode","control":"select","options":["native"]')
+const missingPtcClient = makeClientHarness(readySnapshot, true, false, false, { clientSourceText: missingPtcText })
+const missingPtcRows = fieldRowsOf(missingPtcClient.renderDetail())
+const missingPtcOptions = (missingPtcRows.find((row) => row.key === 'toolPresentationMode')?.control?.children || []).flatMap((child) => Array.isArray(child) ? child : [child]).map((option) => option?.props?.value)
+const missingPtcDetected = missingPtcOptions.join('|') !== 'native|ptc'
+check('V05 错误变体漏 ptc 选项被独立观察识别', missingPtcText !== clientText && missingPtcDetected)
+const missingSaveKeyText = clientText.replace('const ALL_FIELDS = Object.freeze(EXTRA_FIELDS.concat(HOST_ROW_FIELDS));', 'const ALL_FIELDS = Object.freeze(EXTRA_FIELDS.slice(0, -1).concat(HOST_ROW_FIELDS));')
+const missingSaveKeyClient = makeClientHarness(readySnapshot, true, false, false, { clientSourceText: missingSaveKeyText })
+const missingSaveView = missingSaveKeyClient.renderDetail()
+if (missingSaveView?.button !== undefined) await missingSaveView.button.props.onClick()
+check('V05 错误变体漏保存键被独立观察识别', missingSaveKeyText !== clientText && missingSaveKeyClient.calls.length === 1 && missingSaveKeyClient.calls[0].ops.length !== 10)
 const successClient = await exerciseClient(readySnapshot, true, 'ok', 'V05 实际 lazy client 成功保存')
 check('V05 成功保存恰一次十项 mutate、revision正确、每键一条 set op', successClient.calls.length === 1 && successClient.calls[0].revision === 42 && successClient.calls[0].ops.length === 10 && new Set(successClient.calls[0].ops.map((op) => op.path[0])).size === 10 && successClient.calls[0].ops.every((op) => op.op === 'set'))
 await exerciseClient(readySnapshot, false, 'error', 'V05 mutate=false 不显示保存成功')
@@ -1550,6 +1648,8 @@ recoveryFailureClient.unmount()
 const surface = makeClientHarness(readySnapshot)
 const surfaceView = surface.renderDetail()
 check('V05 Q05 初始仅注册 detail.section 一份且表单可交互', surfaceView !== undefined && surfaceView.button !== undefined && surface.registerCalls['plugins.detail.section'] === 1 && surface.registerCalls['plugins.bundle.config'] === undefined && surface.registrations.length === 1)
+const localeRegistration = surface.localeRegisters.find((item) => item.namespace === 'dsh-extra-plan-settings')
+check('V03/V05 locale.register 与 ConfigForms/slot 实际 trace 输入正确', localeRegistration !== undefined && localeRegistration.dictionaries.zh.cardTitle === '按需规划模式全局管理' && localeRegistration.dictionaries.zh.trueValue === '开启' && localeRegistration.dictionaries.en.cardTitle === 'Extra Plan Global Manager' && localeRegistration.dictionaries.en.trueValue === 'True' && surface.configFormGets.includes('dsh-extra-plan-settings') && surface.configFormServes.some((names) => names.length === 1 && names[0] === 'dsh-extra-plan-settings') && surface.slotInjectCalls.includes('plugins.detail.section') && surface.slotRegisterCalls.some((item) => item.name === 'plugins.detail.section' && item.id === 'dsh-extra-plan-settings-global'))
 check('V05 Q05 detail 表单自绘区块标题、描述与定位属性', (() => { const chrome = surface.detailChrome(); return chrome !== null && chrome !== undefined && chrome.settingsCard.type === 'section' && chrome.settingsCard.props['data-plugin-section'] === 'dsh-extra-plan-settings-global' && chrome.settingsCard.children[0].type === 'h4' && chrome.settingsCard.children[0].children[0] === 'cardTitle' && chrome.settingsCard.children[1].type === 'p' && chrome.settingsCard.children[1].children[0] === 'cardDescription' })())
 check('V05 Q05 其他包详情为空', surface.renderDetail({}, { kind: 'bundle', pkg: { name: '@other/package' } }) === null)
 const thirdPartyOff = surface.context.slots.register({ name: 'plugins.bundle.config', key: 'dsh-extra-plan', locale: 'third-party', inject: () => ({}) }, () => null)

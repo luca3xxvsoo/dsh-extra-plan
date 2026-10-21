@@ -2,6 +2,7 @@
 // 直接 import 插件导出的 decisions（与 index.js 共用同一实现，不复制逻辑）——
 // 插件模块顶层无副作用，可在纯 Node 环境加载。
 import { pathToFileURL, fileURLToPath } from 'node:url'
+import { isDeepStrictEqual } from 'node:util'
 import { registerHostDeps } from '../_shared/host-deps.mjs'
 import { assertionLine, createOutput, parseOutputMode, stableStringify, sha256Text, writeRawEvidence } from '../_shared/test-output.mjs'
 // host-deps 先于隔离完成解析（它按候选① DSH_HOME/profiles/web 锚定宿主真包）。
@@ -32,16 +33,20 @@ process.on('exit', restoreIsolatedEnv)
 const plannerBudget = await import('../../plugins/dsh-extra-plan/lib/planner-budget.js')
 const PLUGIN_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/index.js', import.meta.url))
 const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
+const { Config: SETTINGS_CONFIG } = await import('../../plugins/dsh-extra-plan/lib/settings.js')
 import { createRunCodeStatic } from '../../plugins/dsh-extra-plan/lib/run-code-static.js'
 import * as runCodeScanner from '../../plugins/dsh-extra-plan/lib/run-code-scanner.js'
 import * as shellMutation from '../../plugins/dsh-extra-plan/lib/shell-mutation.js'
 import * as runtimeStatic from '../../plugins/dsh-extra-plan/lib/runtime-static.js'
 import * as agentRuntime from '../../plugins/dsh-extra-plan/lib/agent-runtime.js'
+const roleGenerator = await import('../../plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs')
 import { DEFAULT_EXPLORE_BUDGET as GENERATED_DEFAULT_EXPLORE_BUDGET, DEFAULT_PLANNER_PROMPT_SUFFIX as GENERATED_DEFAULT_PLANNER_PROMPT_SUFFIX } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
-import { existsSync, readFileSync, readdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { parsePresetYaml } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
+import { parsePresetYaml, createDefaultSettings } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
+import { ROLE_IDS, ROLE_ORDERS, PLANNER_PRESET_ID, PROBER_PRESET_ID } from '../../plugins/dsh-extra-plan/lib/role-contract.js'
+import { ROLE_IDS as PRESET_SYNC_ROLE_IDS, ROLE_DEFINITION_FILES } from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
 import { GATE_WORD_FIELDS, createGateRuntime, validateGateWords } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
 import { probePathOf } from '../../plugins/dsh-extra-plan/lib/save-probe-validation.js'
 import { validateSavePlanContract as validateRealSavePlanContract } from '../../plugins/dsh-extra-plan/lib/save-plan-validation.js'
@@ -186,6 +191,8 @@ const nestedRouteArgs = { questions: [{ id: 'q1', options: [{ label: '直接执�
 const nestedApprovalArgs = { questions: [{ id: 'q1', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }] }
 const nestedClarifyArgs = { questions: [{ id: 'q1', options: [{ label: '方案A' }, { label: '方案B' }] }] }
 const nestedPurposeArgs = { questions: [{ id: 'q1', options: [{ label: '完善方案' }, { label: '重新规划' }] }] }
+const ptcStart = (sid, name, argsObj) => ({ type: 'tool/ptc-dispatch-start', data: { rootCallId: 'matrix-root', parentCallId: 'matrix-parent', subCallId: sid, name, arguments: argsObj } })
+const ptcEnd = (sid, text, isError = false) => ({ type: 'tool/ptc-dispatch', data: { rootCallId: 'matrix-root', parentCallId: 'matrix-parent', subCallId: sid, name: 'ask_user_question', arguments: {}, isError, content: [{ type: 'text', text }] } })
 
 let pass = 0
 let fail = 0
@@ -972,8 +979,32 @@ check('SCHEMA2 save_probe 描述/schema 精确契约', schemaDescription === '�
 
 // ── SAVE-CONTRACT/G2 系列：真实生产合同结构、交接、摘要与工厂接线 ────────
 // 这些夹具只拼接合同文本并调用生产导出，不在测试中复制解析器或固化本轮任务数量。
-function g2Task(id, overrides = {}) {
+function g2Point(id = 'M1', overrides = {}) {
   return Object.assign({
+    id,
+    location: 'L1',
+    anchor: 'fixture line',
+    action: '完成具体修改',
+    acceptance: '修改后的 fixture line 结构成立',
+    expectations: ['结果可验证'],
+    sources: [],
+    commands: [],
+    outputs: [],
+  }, overrides)
+}
+
+function g2File(path, overrides = {}) {
+  const operation = overrides.operation || '修改'
+  const defaultPoint = operation === '修改'
+    ? g2Point('M1')
+    : operation === '生成'
+      ? g2Point('M1', { location: '', anchor: '', sources: ['g2-synthetic/generator-source.js'], commands: ['node generator.mjs'], outputs: ['生成目标文件'] })
+      : g2Point('M1', { location: '', anchor: '', action: operation === '删除' ? '整文件删除，理由是测试替换；清理全部引用和调用' : '新建一个独立目标文件' })
+  return Object.assign({ path, role: 'main', operation, points: [defaultPoint] }, overrides)
+}
+
+function g2Task(id, overrides = {}) {
+  const task = Object.assign({
     id,
     title: '合成任务' + id,
     mainFile: 'g2-synthetic/task-' + id + '.js',
@@ -982,11 +1013,21 @@ function g2Task(id, overrides = {}) {
     dependencies: '无',
     dependencyReason: '无',
     groupReason: '无',
-    modifications: ['完成合成任务' + id],
     selfChecks: ['核对合成任务' + id],
     resource: '无',
     acceptance: '[检查1]',
+    fileOperation: '修改',
   }, overrides)
+  if (!Object.prototype.hasOwnProperty.call(overrides, 'fileSpecs')) {
+    task.fileSpecs = [g2File(task.mainFile, {
+      role: 'main',
+      operation: task.fileOperation,
+      ...(task.points === undefined ? {} : { points: task.points }),
+      ...(task.fileSpec || {}),
+    })]
+    for (const path of task.relatedFiles) task.fileSpecs.push(g2File(path, { role: 'related', operation: task.relatedOperation || task.fileOperation }))
+  }
+  return task
 }
 
 function g2Check(id, overrides = {}) {
@@ -1002,12 +1043,28 @@ function g2Check(id, overrides = {}) {
   }, overrides)
 }
 
+function g2PlanFile(lines, label, record, actionLabel = '修改') {
+  lines.push('- ' + label + '：' + record.path)
+  lines.push('- 文件操作：' + record.operation)
+  for (const point of record.points || []) {
+    lines.push('- 修改点：' + point.id)
+    if (record.operation === '修改') {
+      lines.push('- 修改位置：' + point.location)
+      lines.push('- 定位锚点：' + point.anchor)
+    }
+    for (const source of point.sources || []) lines.push('- 生成来源：' + source)
+    for (const command of point.commands || []) lines.push('- 生成命令：' + command)
+    for (const output of point.outputs || []) lines.push('- 生成产物：' + output)
+    lines.push('- ' + actionLabel + '：' + point.action)
+  }
+}
+
 function g2PlanText({ mode = 'single', tasks = [g2Task(1)], instruction = '先读两份工件，完成后冻结再验收', closure = null } = {}) {
   const lines = ['- 执行模式：' + mode, '- 派遣说明：' + instruction]
   for (const task of tasks) {
     lines.push('[任务' + task.id + '] ' + task.title)
-    lines.push('- 主文件：' + task.mainFile)
-    for (const related of task.relatedFiles || []) lines.push('- 关联文件：' + related)
+    const specs = task.fileSpecs || [g2File(task.mainFile)]
+    for (const record of specs) g2PlanFile(lines, record.role === 'related' ? '关联文件' : '主文件', record)
     lines.push('- 执行组：' + task.group)
     lines.push('- 依赖：' + task.dependencies)
     lines.push('- 依赖理由：' + task.dependencyReason)
@@ -1018,7 +1075,8 @@ function g2PlanText({ mode = 'single', tasks = [g2Task(1)], instruction = '先�
   }
   if (closure !== null) {
     lines.push('[收尾]')
-    for (const file of closure.files || []) lines.push('- 收尾文件：' + file)
+    const closureSpecs = closure.fileSpecs || (closure.files || []).map((path) => g2File(path, { role: 'closure' }))
+    for (const record of closureSpecs) g2PlanFile(lines, '收尾文件', record, '收尾动作')
     lines.push('- 收尾依赖：' + closure.dependencies)
     for (const action of closure.actions || []) lines.push('- 收尾动作：' + action)
     for (const selfCheck of closure.selfChecks || []) lines.push('- 自检：' + selfCheck)
@@ -1027,20 +1085,31 @@ function g2PlanText({ mode = 'single', tasks = [g2Task(1)], instruction = '先�
   return lines.join('\n')
 }
 
+function g2ChecklistFile(lines, label, record) {
+  lines.push('- ' + label + '：' + record.path)
+  lines.push('- 文件操作：' + record.operation)
+  for (const point of record.points || []) {
+    lines.push('- 对应修改点：' + point.id)
+    lines.push('- 验收定位：' + point.acceptance)
+    for (const expectation of point.expectations || ['结果可验证']) lines.push('- 期望：' + expectation)
+  }
+}
+
 function g2ChecklistText({ mode = 'single', tasks = [g2Task(1)], instruction = '按检查ID复核，漏项不得通过', checks = [g2Check(1)], closure = null, global = null } = {}) {
   const lines = ['- 执行模式：' + mode, '- 验收说明：' + instruction]
   for (const task of tasks) {
     lines.push('[任务' + task.id + '] 验收' + task.title)
-    lines.push('- 主文件：' + task.mainFile)
-    for (const related of task.relatedFiles || []) lines.push('- 关联文件：' + related)
-    for (const expectation of task.expectations || ['结构结果可复核']) lines.push('- 期望：' + expectation)
+    const specs = task.fileSpecs || [g2File(task.mainFile)]
+    for (const record of specs) g2ChecklistFile(lines, record.role === 'related' ? '关联文件' : '主文件', record)
+    for (const expectation of task.expectations || []) lines.push('- 期望：' + expectation)
     for (const prohibition of task.prohibitions || ['不得越界修改']) lines.push('- 禁止：' + prohibition)
     lines.push('- 正式验收：' + (task.acceptance || '[检查1]'))
   }
   if (closure !== null) {
     lines.push('[收尾]')
-    for (const file of closure.files || []) lines.push('- 收尾文件：' + file)
-    for (const expectation of closure.expectations || ['收尾结果可复核']) lines.push('- 期望：' + expectation)
+    const closureSpecs = closure.fileSpecs || (closure.files || []).map((path) => g2File(path, { role: 'closure' }))
+    for (const record of closureSpecs) g2ChecklistFile(lines, '收尾文件', record)
+    for (const expectation of closure.expectations || []) lines.push('- 期望：' + expectation)
     for (const prohibition of closure.prohibitions || ['不得遗漏收尾']) lines.push('- 禁止：' + prohibition)
     lines.push('- 正式验收：' + (closure.acceptance || '[检查1]'))
   }
@@ -1130,6 +1199,8 @@ const g2WithClosure = {
   dependencies: '[任务1]',
   actions: ['完成收尾核对'],
   selfChecks: ['复核收尾文件'],
+  expectations: ['收尾期望可验证'],
+  prohibitions: ['不得绕过收尾'],
   acceptance: '[检查1]',
 }
 const g2WithGlobal = { expectations: ['全局范围可恢复'], prohibitions: ['不得静默漏项'], acceptance: '[检查1]' }
@@ -1151,7 +1222,7 @@ for (const item of g2PathCases) {
   const task = g2Task(1, { mainFile: item[1] })
   g2Reject('G2-B ' + item[0] + '拒绝', g2Pair({ tasks: [task] }))
 }
-const g2NewTargetPair = g2Pair({ tasks: [g2Task(1, { mainFile: 'g2-synthetic/not-yet-created.js' })] })
+const g2NewTargetPair = g2Pair({ tasks: [g2Task(1, { mainFile: 'g2-synthetic/not-yet-created.js', fileOperation: '新建' })] })
 check('G2-B 合法新增目标不要求预先存在', validateRealSavePlanContract(g2NewTargetPair.plan, g2NewTargetPair.checklist).ok, true)
 const g2RelatedTask = g2Task(1, { relatedFiles: ['g2-synthetic/helper.js'], groupReason: '主文件与辅助文件必须同一修改上下文' })
 check('G2-B 单个关联文件有非空拆分理由通过', validateRealSavePlanContract(g2Pair({ tasks: [g2RelatedTask] }).plan, g2Pair({ tasks: [g2RelatedTask] }).checklist).ok, true)
@@ -1238,7 +1309,7 @@ check('G2-E 无收尾无全局合法', validateRealSavePlanContract(g2SinglePair
 check('G2-E 仅收尾合法', validateRealSavePlanContract(g2Pair({ closure: g2WithClosure }).plan, g2Pair({ closure: g2WithClosure }).checklist).ok, true)
 check('G2-E 仅全局合法', validateRealSavePlanContract(g2Pair({ global: g2WithGlobal }).plan, g2Pair({ global: g2WithGlobal }).checklist).ok, true)
 check('G2-E 收尾和全局同时合法', g2ClosureGlobalResult.ok, true)
-const g2NoFileClosure = { files: [], dependencies: '[任务1]', actions: ['完成无文件收尾'], selfChecks: ['核对无文件收尾'], acceptance: '[检查1]' }
+const g2NoFileClosure = { files: [], dependencies: '[任务1]', actions: ['完成无文件收尾'], selfChecks: ['核对无文件收尾'], expectations: ['无文件收尾结果可复核'], prohibitions: ['不得绕过只读收尾'], acceptance: '[检查1]' }
 check('G2-E 无收尾文件但有收尾检查合法', validateRealSavePlanContract(g2Pair({ closure: g2NoFileClosure }).plan, g2Pair({ closure: g2NoFileClosure }).checklist).ok, true)
 g2Reject('G2-E 收尾单边存在拒绝', { plan: g2Pair({ closure: g2WithClosure }).plan, checklist: g2SinglePair.checklist })
 g2Reject('G2-E 收尾文件集合不一致拒绝', { plan: g2Pair({ closure: g2WithClosure }).plan, checklist: g2Pair({ closure: Object.assign({}, g2WithClosure, { files: ['g2-synthetic/other-closure.md'] }) }).checklist })
@@ -1313,40 +1384,51 @@ function g2ContradictionStatus(reports) {
 check('G2-G 同ID矛盾结论分类为FAIL', g2ContradictionStatus([{ id: 1, status: 'PASS' }, { id: 1, status: 'FAIL' }]), 'FAIL')
 check('G2-G 源变更回报分类为需复验', g2HandoffStatus([1, 2], [1, 2], { tasks: [1, 2], checks: [1, 2] }, true), '需复验')
 
-const g2MinimalPair = {
-  plan: '- 执行模式：single\n- 派遣说明：先读两份工件\n[任务1] 结构\n- 主文件：src/a.js\n- 执行组：G1\n- 依赖：无\n- 依赖理由：无\n- 分组理由：无\n- 修改：完成结构\n- 自检：运行检查',
-  checklist: '- 执行模式：single\n- 验收说明：按检查ID复核\n[任务1] 结构\n- 主文件：src/a.js\n- 期望：结构正确\n- 禁止：不得越界\n- 正式验收：[检查1]\n[检查1] 结构检查\n- 验收组：R1\n- 取证方式：只读复核\n- 工作目录：.\n- 检查：read src/a.js\n- 验收证据：读取结果正确',
-}
-check('G2-H 纯validator允许短single', g2MinimalPair.plan.length < 200 && g2MinimalPair.checklist.length < 200 && validateRealSavePlanContract(g2MinimalPair.plan, g2MinimalPair.checklist).ok, true)
-const g2FactoryIo = { atomic: 0, committed: null }
-const g2Factories = createSaveToolFactories({
-  savePlanDir: '.extra-plan',
-  atomicCommit: (...args) => { g2FactoryIo.atomic += 1; g2FactoryIo.committed = args },
-})
-const g2SavePlanDefinition = g2Factories.defineSavePlan()
-let g2ShortFactoryError = null
-try { await g2SavePlanDefinition.execute(g2MinimalPair) } catch (error) { g2ShortFactoryError = error instanceof Error ? error.message : String(error) }
-check('G2-H factory短single按双方至少200字符拒绝', g2ShortFactoryError !== null && g2ShortFactoryError.includes('内容过短') && g2FactoryIo.atomic === 0, true)
-const g2InvalidLongPair = {
-  plan: g2Pad(g2SinglePair.plan),
-  checklist: g2Pad(g2SinglePair.checklist.replace('- 正式验收：[检查1]', '- 正式验收：[检查9]')),
-}
-let g2InvalidFactoryError = null
-try { await g2SavePlanDefinition.execute(g2InvalidLongPair) } catch (error) { g2InvalidFactoryError = error instanceof Error ? error.message : String(error) }
-check('G2-H 非法结构在atomic前拒绝', g2InvalidFactoryError !== null && g2InvalidFactoryError.startsWith('save_plan: 文件级任务合同校验不通过') && g2FactoryIo.atomic === 0, true)
-const g2FactoryValidPlan = g2Pad(g2MinimalPair.plan + '\n普通方案补充：保持正文逐字保存')
-const g2FactoryValidChecklist = g2Pad(g2MinimalPair.checklist + '\n普通验收补充：保持正文逐字保存')
-let g2FactoryResult = null
-let g2FactoryError = null
+const preserveG2Fixture = typeof process.env.PLAN_EVIDENCE_DIR === 'string' && process.env.PLAN_EVIDENCE_DIR !== ''
+const g2FactoryEvidenceRoot = preserveG2Fixture
+  ? join(process.env.PLAN_EVIDENCE_DIR, 'G3', 'resume1', 'fixture-step00')
+  : mkdtempSync(join(tmpdir(), 'dsh-g3-step00-fixture-'))
 try {
-  g2FactoryResult = await g2SavePlanDefinition.execute({ plan: g2FactoryValidPlan, checklist: g2FactoryValidChecklist }, { agent: { session: { header: { cwd: 'D:/g2-synthetic-workspace', id: 'g2-factory' } } } })
-} catch (error) { g2FactoryError = error instanceof Error ? error.message : String(error) }
-check('G2-H factory合法正文双方至少200字符并返回两paths', g2FactoryError === null && g2FactoryValidPlan.length >= 200 && g2FactoryValidChecklist.length >= 200 && g2FactoryResult !== null && Array.isArray(g2FactoryResult.paths) && g2FactoryResult.paths.length === 2 && g2FactoryIo.atomic === 1, true)
-check('G2-H factory双正文逐字保留', g2FactoryIo.committed !== null && Array.isArray(g2FactoryIo.committed[2]) && g2FactoryIo.committed[2][0].content === g2FactoryValidPlan && g2FactoryIo.committed[2][1].content === g2FactoryValidChecklist, true)
-const g2FactoryRendered = g2FactoryResult === null ? [] : g2SavePlanDefinition.output.render({ plan: g2FactoryValidPlan, checklist: g2FactoryValidChecklist }, g2FactoryResult)
-check('G2-H factory structured output只含paths且render仍为单text', JSON.stringify(Object.keys(g2SavePlanDefinition.output.schema.properties || {})) === JSON.stringify(['paths']) && JSON.stringify(g2SavePlanDefinition.output.schema.required) === JSON.stringify(['paths']) && g2SavePlanDefinition.output.schema.additionalProperties === false && Array.isArray(g2FactoryRendered) && g2FactoryRendered.length === 1 && g2FactoryRendered[0].type === 'text', true)
-const g2TokenMeasurement = 'NOT-RUN'
-check('G2-H schema与renderer字符可测且token口径保持NOT-RUN', typeof schemaPlanDescription === 'string' && schemaPlanDescription.length > 0 && JSON.stringify(schemaPlanParameters).length > 0 && g2FactoryRendered.length === 1 && g2FactoryRendered[0].text.includes('派遣摘要（') && g2TokenMeasurement === 'NOT-RUN' && !g2FactoryRendered[0].text.includes('token'), true)
+  const g2FactoryCwd = join(g2FactoryEvidenceRoot, 'work')
+  mkdirSync(join(g2FactoryCwd, 'g2-fixture'), { recursive: true })
+  writeFileSync(join(g2FactoryCwd, 'g2-fixture', 'minimal.js'), 'fixture\n', 'utf8')
+  const g2MinimalPair = {
+    plan: '- 执行模式：single\n- 派遣说明：x\n[任务1] x\n- 主文件：g2-fixture/minimal.js\n- 文件操作：修改\n- 修改点：M1\n- 修改位置：L1\n- 定位锚点：fixture\n- 修改：x\n- 执行组：G1\n- 依赖：无\n- 依赖理由：无\n- 分组理由：无\n- 自检：x',
+    checklist: '- 执行模式：single\n- 验收说明：x\n[任务1] x\n- 主文件：g2-fixture/minimal.js\n- 文件操作：修改\n- 对应修改点：M1\n- 验收定位：minimal.js exists\n- 期望：x\n- 禁止：x\n- 正式验收：[检查1]\n[检查1] x\n- 验收组：R1\n- 取证方式：只读复核\n- 工作目录：.\n- 检查：x\n- 验收证据：x',
+  }
+  check('G2-H 纯validator允许短single', g2MinimalPair.plan.length < 200 && g2MinimalPair.checklist.length < 200 && validateRealSavePlanContract(g2MinimalPair.plan, g2MinimalPair.checklist).ok, true)
+  const g2FactoryIo = { atomic: 0, committed: null }
+  const g2Factories = createSaveToolFactories({
+    savePlanDir: '.extra-plan',
+    atomicCommit: (...args) => { g2FactoryIo.atomic += 1; g2FactoryIo.committed = args },
+  })
+  const g2SavePlanDefinition = g2Factories.defineSavePlan()
+  let g2ShortFactoryError = null
+  try { await g2SavePlanDefinition.execute(g2MinimalPair) } catch (error) { g2ShortFactoryError = error instanceof Error ? error.message : String(error) }
+  check('G2-H factory短single按双方至少200字符拒绝', g2ShortFactoryError !== null && g2ShortFactoryError.includes('内容过短') && g2FactoryIo.atomic === 0, true)
+  const g2InvalidLongPair = {
+    plan: g2Pad(g2SinglePair.plan),
+    checklist: g2Pad(g2SinglePair.checklist.replace('- 正式验收：[检查1]', '- 正式验收：[检查9]')),
+  }
+  let g2InvalidFactoryError = null
+  try { await g2SavePlanDefinition.execute(g2InvalidLongPair) } catch (error) { g2InvalidFactoryError = error instanceof Error ? error.message : String(error) }
+  check('G2-H 非法结构在atomic前拒绝', g2InvalidFactoryError !== null && g2InvalidFactoryError.startsWith('save_plan: 文件级任务合同校验不通过') && g2FactoryIo.atomic === 0, true)
+  const g2FactoryValidPlan = g2Pad(g2MinimalPair.plan + '\n普通方案补充：保持正文逐字保存')
+  const g2FactoryValidChecklist = g2Pad(g2MinimalPair.checklist + '\n普通验收补充：保持正文逐字保存')
+  let g2FactoryResult = null
+  let g2FactoryError = null
+  try {
+    g2FactoryResult = await g2SavePlanDefinition.execute({ plan: g2FactoryValidPlan, checklist: g2FactoryValidChecklist }, { agent: { session: { header: { cwd: g2FactoryCwd, id: 'g2-factory' } } } })
+  } catch (error) { g2FactoryError = error instanceof Error ? error.message : String(error) }
+  check('G2-H factory合法正文双方至少200字符并返回两paths', g2FactoryError === null && g2FactoryValidPlan.length >= 200 && g2FactoryValidChecklist.length >= 200 && g2FactoryResult !== null && Array.isArray(g2FactoryResult.paths) && g2FactoryResult.paths.length === 2 && g2FactoryIo.atomic === 1, true)
+  check('G2-H factory双正文逐字保留', g2FactoryIo.committed !== null && Array.isArray(g2FactoryIo.committed[2]) && g2FactoryIo.committed[2][0].content === g2FactoryValidPlan && g2FactoryIo.committed[2][1].content === g2FactoryValidChecklist, true)
+  const g2FactoryRendered = g2FactoryResult === null ? [] : g2SavePlanDefinition.output.render({ plan: g2FactoryValidPlan, checklist: g2FactoryValidChecklist }, g2FactoryResult)
+  check('G2-H factory structured output只含paths且render仍为单text', JSON.stringify(Object.keys(g2SavePlanDefinition.output.schema.properties || {})) === JSON.stringify(['paths']) && JSON.stringify(g2SavePlanDefinition.output.schema.required) === JSON.stringify(['paths']) && g2SavePlanDefinition.output.schema.additionalProperties === false && Array.isArray(g2FactoryRendered) && g2FactoryRendered.length === 1 && g2FactoryRendered[0].type === 'text', true)
+  const g2TokenMeasurement = 'NOT-RUN'
+  check('G2-H schema与renderer字符可测且token口径保持NOT-RUN', typeof schemaPlanDescription === 'string' && schemaPlanDescription.length > 0 && JSON.stringify(schemaPlanParameters).length > 0 && g2FactoryRendered.length === 1 && g2FactoryRendered[0].text.includes('派遣摘要（') && g2TokenMeasurement === 'NOT-RUN' && !g2FactoryRendered[0].text.includes('token'), true)
+} finally {
+  if (!preserveG2Fixture) rmSync(g2FactoryEvidenceRoot, { recursive: true, force: true })
+}
 
 // ── RENDER4+ 系列:renderSaveProbe / renderProbeMarkdown 契约（v3） ────────
 const probeRendered = renderSaveProbe({ path: 'C:/w/.extra-plan/线索-x-20260816090000.md' })
@@ -2232,6 +2314,59 @@ for (const [name, events, expected] of FC) {
   check(name, deriveFlowState(events, gateRuntime), expected)
 }
 
+// ── F-MATRIX：普通 tool/result 与 PTC dispatch 的可表达语义对照（独立期望） ──
+const FLOW_DEFAULT = { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }
+const FLOW_FULL = { route: 'plan', clarified: true, approved: true, purpose: 'refine', channelBroken: false }
+function nativePlanFull(prefix = 'mx') {
+  return [um(), call('ask_user_question', prefix + '-route', routeArgs), ok(prefix + '-route', answer(['进行pro规划'])), call('ask_user_question', prefix + '-purpose', purposeArgs), ok(prefix + '-purpose', answer(['完善方案'])), call('ask_user_question', prefix + '-clarify', clarifyArgs), ok(prefix + '-clarify', answer(['方案A'])), call('ask_user_question', prefix + '-approve', approvalArgs), ok(prefix + '-approve', answer(['同意执行']))]
+}
+function ptcPlanFull(prefix = 'mx') {
+  return [um(), ptcStart(prefix + '-route', 'ask_user_question', nestedRouteArgs), ptcEnd(prefix + '-route', answer(['进行pro规划'])), ptcStart(prefix + '-purpose', 'ask_user_question', nestedPurposeArgs), ptcEnd(prefix + '-purpose', answer(['完善方案'])), ptcStart(prefix + '-clarify', 'ask_user_question', nestedClarifyArgs), ptcEnd(prefix + '-clarify', answer(['方案A'])), ptcStart(prefix + '-approve', 'ask_user_question', nestedApprovalArgs), ptcEnd(prefix + '-approve', answer(['同意执行']))]
+}
+const STATE_MATRIX = [
+  ['direct', [um(), call('ask_user_question', 'mx-direct', routeArgs), ok('mx-direct', answer(['直接执行']))], [um(), ptcStart('mx-direct', 'ask_user_question', nestedRouteArgs), ptcEnd('mx-direct', answer(['直接执行']))], { route: 'direct', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
+  ['plan-refine-clarify-approve', nativePlanFull(), ptcPlanFull(), FLOW_FULL],
+  ['disagree', [um(), call('ask_user_question', 'mx-disagree', routeArgs), ok('mx-disagree', answer(['不同意']))], [um(), ptcStart('mx-disagree', 'ask_user_question', nestedRouteArgs), ptcEnd('mx-disagree', answer(['不同意']))], FLOW_DEFAULT],
+  ['purpose-redo', [um(), call('ask_user_question', 'mx-route', routeArgs), ok('mx-route', answer(['进行pro规划'])), call('ask_user_question', 'mx-purpose', purposeArgs), ok('mx-purpose', answer(['重新规划']))], [um(), ptcStart('mx-route', 'ask_user_question', nestedRouteArgs), ptcEnd('mx-route', answer(['进行pro规划'])), ptcStart('mx-purpose', 'ask_user_question', nestedPurposeArgs), ptcEnd('mx-purpose', answer(['重新规划']))], { route: 'plan', clarified: false, approved: false, purpose: 'redo', channelBroken: false }],
+]
+for (const [name, nativeEvents, ptcEvents, expected] of STATE_MATRIX) {
+  const nativeState = deriveFlowState(nativeEvents, gateRuntime)
+  const ptcState = deriveFlowState(ptcEvents, gateRuntime)
+  check('F-MATRIX ' + name + ' 普通通道独立期望', nativeState, expected)
+  check('F-MATRIX ' + name + ' PTC通道同语义对照', ptcState, expected)
+  check('F-MATRIX ' + name + ' 两通道规范化字段一致', nativeState, ptcState)
+}
+const deniedNative = nativePlanFull('mx-deny').concat([call('ask_user_question', 'mx-deny-route', routeArgs), deny('mx-deny-route', '路由闸门拒绝')])
+const deniedPtc = ptcPlanFull('mx-deny').concat([ptcStart('mx-deny-route', 'ask_user_question', nestedRouteArgs), ptcEnd('mx-deny-route', FC_DENY_TEXT, true)])
+check('F-MATRIX denied 普通拒绝保持既有五字段', deriveFlowState(deniedNative, gateRuntime), FLOW_FULL)
+check('F-MATRIX denied PTC文本拒绝保持既有五字段', deriveFlowState(deniedPtc, gateRuntime), FLOW_FULL)
+const cancelNative = nativePlanFull('mx-cancel').concat([call('ask_user_question', 'mx-cancel-route', routeArgs), err('mx-cancel-route', 'ASK_CANCELLED')])
+const cancelPtc = ptcPlanFull('mx-cancel').concat([ptcStart('mx-cancel-route', 'ask_user_question', nestedRouteArgs), ptcEnd('mx-cancel-route', 'Error: ask_user_question was aborted before the user answered', true)])
+check('F-MATRIX cancel 普通 ASK_CANCELLED 清理阶段', deriveFlowState(cancelNative, gateRuntime), FLOW_DEFAULT)
+check('F-MATRIX cancel PTC宿主取消文本清理阶段', deriveFlowState(cancelPtc, gateRuntime), FLOW_DEFAULT)
+const nativeChannel = [um(), call('ask_user_question', 'mx-channel', routeArgs), ok('mx-channel', answer(['直接执行'])), call('ask_user_question', 'mx-channel-fail', routeArgs), err('mx-channel-fail', 'NO_PROVIDER')]
+const ptcTextError = [um(), ptcStart('mx-channel', 'ask_user_question', nestedRouteArgs), ptcEnd('mx-channel', answer(['直接执行'])), ptcStart('mx-channel-fail', 'ask_user_question', nestedRouteArgs), ptcEnd('mx-channel-fail', 'Error: NO_PROVIDER', true)]
+check('F-MATRIX native code NO_PROVIDER 置 channelBroken 且保留 route', deriveFlowState(nativeChannel, gateRuntime), { route: 'direct', clarified: false, approved: false, purpose: 'none', channelBroken: true })
+check('F-MATRIX PTC文本 NO_PROVIDER 不推断原生 code（拒绝语义不置 channelBroken）', deriveFlowState(ptcTextError, gateRuntime), { route: 'direct', clarified: false, approved: false, purpose: 'none', channelBroken: false })
+checkTrue('F-MATRIX native code 与 PTC 文本错误差异保留', JSON.stringify(deriveFlowState(nativeChannel, gateRuntime)) !== JSON.stringify(deriveFlowState(ptcTextError, gateRuntime)))
+check('F-MATRIX 新 human 消息普通通道重置窗口', deriveFlowState(nativePlanFull('mx-human').concat([um()]), gateRuntime), FLOW_DEFAULT)
+check('F-MATRIX 新 human 消息 PTC通道重置窗口', deriveFlowState(ptcPlanFull('mx-human').concat([um()]), gateRuntime), FLOW_DEFAULT)
+const badNative = [um(), call('ask_user_question', 'mx-bad', routeArgs), { type: 'tool/result', data: { message: { toolCallId: 'mx-bad', isError: false, content: 'bad-shape' } } }, ok('unpaired', answer(['直接执行']))]
+const badPtc = [um(), ptcStart('mx-bad', 'ask_user_question', { bad: true }), { type: 'tool/ptc-dispatch', data: { subCallId: 'mx-bad', isError: false, content: 'bad-shape' } }, ptcEnd('unpaired', answer(['直接执行']))]
+check('F-MATRIX 坏形状/未配对普通事件忽略', deriveFlowState(badNative, gateRuntime), FLOW_DEFAULT)
+check('F-MATRIX 坏形状/未配对 PTC事件忽略', deriveFlowState(badPtc, gateRuntime), FLOW_DEFAULT)
+
+// ── CFG-DEFAULT：十项默认、显式 false/空串与角色边界独立期望 ──
+const EXPECTED_SETTINGS_DEFAULTS = { anchoredBootstrap: true, creativeMode: false, webFetch: false, toolPresentationMode: 'native', runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: 'deepseek-v4-pro', plannerPromptSuffix: GENERATED_DEFAULT_PLANNER_PROMPT_SUFFIX, exploreBudget: 18, otherAgentModel: '' }
+checkTrue('CFG-DEFAULT createDefaultSettings 恰十键且当前默认值逐项独立匹配', isDeepStrictEqual(createDefaultSettings(), EXPECTED_SETTINGS_DEFAULTS))
+const explicitSettings = { anchoredBootstrap: false, creativeMode: false, webFetch: false, toolPresentationMode: 'ptc', runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: '', plannerPromptSuffix: '', exploreBudget: 1, otherAgentModel: '' }
+let explicitResolved = null
+try { explicitResolved = SETTINGS_CONFIG(explicitSettings) } catch {}
+const explicitResolvedValues = explicitResolved === null ? null : Object.fromEntries(Object.entries(explicitResolved).map(([key, reference]) => [key, typeof reference?.get === 'function' ? reference.get() : reference]))
+check('CFG-DEFAULT 显式 false/空串/ptc/额度1 不被默认覆盖', explicitResolvedValues, explicitSettings)
+const EXPECTED_ROLE_IDS = ['extra-plan-executor', 'extra-plan-planner', 'extra-plan-reviewer', 'extra-plan-prober']
+const EXPECTED_ROLE_ORDERS = [101, 102, 103, 104]
+checkTrue('ROLE-BOUNDARY 角色常量/生成器/preset-sync/agent-runtime 重导出与独立 ID/order 对拍', JSON.stringify([...ROLE_IDS]) === JSON.stringify(EXPECTED_ROLE_IDS) && JSON.stringify([...ROLE_ORDERS]) === JSON.stringify(EXPECTED_ROLE_ORDERS) && roleGenerator.ROLE_IDS === ROLE_IDS && roleGenerator.ROLE_ORDERS === ROLE_ORDERS && PRESET_SYNC_ROLE_IDS === ROLE_IDS && agentRuntime.PLANNER_PRESET_ID === PLANNER_PRESET_ID && PLANNER_PRESET_ID === EXPECTED_ROLE_IDS[1] && PROBER_PRESET_ID === EXPECTED_ROLE_IDS[3] && ROLE_DEFINITION_FILES.length === EXPECTED_ROLE_IDS.length && ROLE_DEFINITION_FILES.every((file, index) => String(file).replaceAll('\\', '/').endsWith('/preset-definition-' + EXPECTED_ROLE_IDS[index] + '.generated.yml')))
 
 // ── C-code/CU-code 系列:toolCallCount / toolCallsSinceUser 计入嵌套调用（F2 桥接） ──
 const CC = [

@@ -9,6 +9,8 @@
 - 闸门拒绝 `kind:'denied'` 不清除阶段状态，便于按拒绝文案修正后重提；用户取消/中断清 `route/purpose/clarified/approved`；通道级故障只置 `channelBroken` 逃生位；新 user/message 切断旧事件窗。
 - `config.gateWords` 在 [agent.cordis.yml](../../plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml) 中是唯一人工值源。[gate-words.js](../../plugins/dsh-extra-plan/lib/gate-words.js) 只保存字段元数据、整组严格校验、运行时派生和七个 prompt variable；apply 先校验再产生工具/监听器/服务副作用。
 - 所有 match、deny 文案和状态推导都消费同一 `gateRuntime`；推荐后缀只做白名单归一，推进状态必须与当前词精确相等，旧词不会复活旧事件。
+- 两种 ask 结果先分别由 `parseAskResultData`（普通 result）与 `parseDispatchAskResult`（PTC dispatch）解码，匹配后的规范化结果只进入 `applyAskOutcome` 这一处，再由 `deriveFlowState` 推进状态；保留普通错误码与 PTC 文本错误的原有差异。
+- `ROLE_IDS`、`ROLE_ORDERS`、`PLANNER_PRESET_ID`、`PROBER_PRESET_ID` 只提供冻结身份/装配顺序；角色标识不承载工具权限、沙箱或生命周期策略。
 
 ## 二、run_code 组判定与 planner 预算
 
@@ -35,8 +37,10 @@
 - A=anchoredBootstrap、C=creativeMode、M=`native|ptc`（`both` 随 0.2.1 二值契约退出，旧值归一化回落 native）是模型可见投影维度；F 是首个 `tool/call` 前，L 是其后。C=0 隐藏模型可见 Cordis 工具/创造 skill，但不改变 registry binding、`tools.restrict` 或 `tools/pre-execute` 安全边界。
 - Pure PTC 顶层仍只保留 `run_code`；A=1/F/main-planner/ptc 的两段是预设引导和插件手写 `tool:read`，L 段回宿主原文。native 轮的 HN 只保留引导段与 read（观察面 = request/header 的 tools），ptc 轮的观察面是 header.system 的 tools:sdk 段。详细时序和两轮矩阵（80 格）见 [step-04](../tools/step-04-路由与写闸门.mjs) 与[实机流程](ai-实机闸门测试流程.md)。
 - P2-2 cache 只存在单个 apply 闭包内，以 agent 对象为 WeakMap key；命中键包含完整 renderer-visible（渲染器可见）schema 指纹、原始 language、renderer 函数身份。并发同 key 合并，reject/空文本降级/过期 promise 不缓存；dispose、新 Agent、新 apply、重启都隔离边界。完整 L 文本逐字相等且 renderer 调用计数为 1 是硬门槛。
-- 默认链是 `agent.cordis.yml` 叶值 → `generate-runtime-defaults.mjs` 生成常量与纯 `preset-definition.generated.yml` → 运行时 fallback/官方 adapter；运行时不解析作者 YAML。生成器先 parse/validate（解析/校验）再替换，坏模板、`--check`、prepack 失败时保留 last-known-good（上次已知良好版本）；生成物禁止手改。
+- 默认链是 `agent.cordis.yml` 十项设置叶值 → `generate-runtime-defaults.mjs#runtimeDefaultsFromTemplate/renderRuntimeDefaults` → 生成的 `DEFAULT_SETTINGS` 与兼容别名，再由 settings contract、Config/fallback、快照和同步消费者统一消费；运行时不解析作者 YAML。生成器先 parse/validate（解析/校验）全部输入，再渲染 runtime、纯 definition、角色 definition 与 client 标记区块；坏模板、`--check`、prepack 失败时保留 last-known-good（上次已知良好版本），生成物禁止手改。
+- 作者 sourceLocator、合同 validator/合法性规则、UI metadata 是三类不同来源：前者只用于生成默认值，`SETTING_DEFINITIONS` 手工维护校验与界面元数据，`createDefaultSettings()` 每次返回十键新对象；`client.js` 只由生成器在成对标记区块内派生控件元数据，不带默认值/validator/宿主对象。
 - 10 项 volatile Config 共用 `dsh-extra-plan-settings` 唯一全局行，旧 `extra-plan-preset-sync` / `preset-extra-plan` 只作 raw patch 非破坏读取；`./preset-sync` 与 locale exports 已退役，settings.js 仍内部相对调用 `mountPresetSync`。两项宿主设置与合法 gateWords 由全局快照派生到内存 definition。当前显式非法 gateWords 必须在 resolve/restate/sync/API 入口抛错或失败回执，零 edit、零自动替换；旧非法值只诊断并跳过，合法整组显式修复单独放行。PUT 只 edit 唯一全局行并保留其它字段；前端保存一次带 revision 的十项 mutate，readonly/false/throw/恢复失败均不显示成功。纯 definition 的 17 条本体与 group/isolate/!!js 由官方 AgentPreset adapter 直接复用。设置表单仅经 detail.section 渲染于 bundle 详情页行列表之后（自绘标题），不注册 bundle.config、row.config、settings.plugins.tab 或 plugins.item；若本包 bundle.config 槽被任何一方注册条目则 detail.section 让位保持唯一表单。
+- 生成迁移顺序固定为“先生成并校验新导出，再切换消费者”；默认仓库路径包含七个输出，自定义 source/output 默认不生成仓库 client，只有显式 client source/output 才启用。发布采用同目录暂存、备份、顺序 rename 与逆序有限回滚，失败不保留新版本；恢复失败必须保留首错、阶段、残留与诊断。
 
 ## 六、session 生命周期与 usage 账本
 
@@ -82,6 +86,10 @@
 
 - `save_plan` 仍是成对的方案/验收工件。两份正文必须各自携带模式与职责说明；`single` 只有一个数字任务，`batch` 才允许多个连续任务，未来规模由实际工件决定，不由当前批次的任务、检查、组或文件数量决定。工件本身要能恢复派遣、验收和交接，不依赖父会话看到 planner render 或本仓维护文档。
 - 数字任务声明主/关联文件的唯一所有权、真实实现依赖和执行组；文件重叠、未说明的共享输出或不确定的物理别名不能被文本合同宣称为安全并行。收尾文件与数字任务文件分开计入覆盖，全局验收只是引用同轮检查，不是第二套调度。
+- 新合同校验分两层：纯文本、关系和摘要先于 `cwd`、`base` 与全部源/证据 IO；文本合法后才在当前源工作区做只读核实，并且早于 `base` 构造、目录/临时文件和发布。每个主文件、关联文件和带文件收尾均绑定文件操作与 `M` 点；计划与验收按（任务或 `closure`、文件、M点）身份键及点集合精确对应。
+- 方案中的修改位置和唯一原文锚点是源的旧基线，验收定位是未来修改后的符号、结构或行为，两者分离；行漂移按目标/锚点确认，证据记录实际新行号，不回写方案追坐标。
+- 路径先用 `canonicalRealpath` 原生解析，再以 `relative`/分隔符边界判断是否包含于真实工作区；原生解析不可用即拒绝。主文件、关联文件和生成来源的计划目标必须在真实工作区内；既有证据报告引用仍沿用原绝对/相对只读合同，不夸大为所有读文件均禁止工作区外。
+- 空文件以及新建、删除、生成使用受控例外：不伪填旧行号；生成只核实声明的工作区来源、命令和产物，不执行命令。工具不执行生成命令、不调度代理、不限制源码 `read` 窗口；未做真实同口径测量不宣称 token 已下降。
 - 执行组由其成员任务的依赖并集折叠：只保留组外依赖，`groupDependsOn` 为空时 `initialState=eligible`，否则为 `waiting`。这只是静态初始资格，不是 ready/running/done 的实时状态，也不启动调度器；同组保留内部拓扑顺序且不可拆派，但可与资源独立的其它组并行。一名执行者可以领取多个组，组数不等于人数。
 - 独占资源是稳定的声明边界，用来标识共享输出目录、缓存或固定环境等非修改文件冲突；同资源的数字任务应归并执行组，不同验收组声明同资源应合并。资源声明不能证明隐藏共享状态、物理别名、命令无副作用或代理实际遵守范围。
 - 检查定义有唯一身份，可由多个任务、收尾或全局引用；完全相同的取证方式、工作目录和按序检查行不得另建重复 ID。公共检查只由一个领取者在同一冻结源与条件下运行，其他引用复用原始结果；执行组 G 与验收组 R 是独立命名空间，不要求对应。

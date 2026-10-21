@@ -51,12 +51,12 @@
 | HS12 | `resolveChildAgentOptions` | 对象展开合并，空对象继承父路由；child 角色改由 `agentPreset` 选组合 | 【已核实·静态】 |
 | HS13 | `preset-settings.js` `loadYaml` | 核心包自有 js-yaml；QQBot 由 package-local js-yaml 依赖保障，失败返回 null | 【已核实·静态】 |
 | HS14 | `!!js` YAML 标签 | YAML_SCHEMA 对 `dshHomePath` 等表达式的解析 | 【已核实·静态】 |
-| HS15 | `SETTING_DEFINITIONS` | 10 项 source/row/projection 定位与 8+2 分组 | 【已核实·静态】 |
+| HS15 | `settings-contract.js` `SETTING_DEFINITIONS` + `DEFAULT_SETTINGS` | 10 项 source/row/projection 定位与 8+2 分组；默认值来自生成对象，validator/合法性与 UI metadata 仍以合同手工声明 | 【已核实·静态】 |
 | HS16 | `tool-presentation.config.mode` | 二值 `native/ptc`（`both` 随 0.2.1 二值化退出；旧值归一化回落 native、不写迁移） | 【已核实·静态】 |
 | HS17 | `client.js` `__ModuleLoader__` | loader id 必须与包名/组合图一致 | 【已核实·静态】 |
 | HS18 | `client.js` `require("react")` | 共享 client module 提供 React | 【已核实·静态】 |
 | HS19 | locale bind/register（语言环境绑定/注册） | 包级与行级 locale 通道 | 【已核实·静态】 |
-| HS20 | client.js 同页配置注册面 | 仅注册 `plugins.detail.section`（order 100，设置表单自绘标题渲染于 bundle 详情页行列表之后）；实时检查 bundle.config 槽并让位；不注册 `plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`；ConfigForms 通过稳定 namespace 快照订阅并一次 mutate，SettingsCard 固定 page 形态 | 【已核实·静态+专项；0.2.1-rc.2 同页 HUMAN 待复测】 |
+| HS20 | `client.js` 同页配置注册面 | `EXTRA_FIELDS`/`HOST_ROW_FIELDS`/`ALL_FIELDS` 只在生成器成对标记区块内派生 UI metadata；仅注册 `plugins.detail.section`（order 100，设置表单自绘标题渲染于 bundle 详情页行列表之后）；实时检查 bundle.config 槽并让位；不注册 `plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`；ConfigForms 通过稳定 namespace 快照订阅并一次 mutate，SettingsCard 固定 page 形态 | 【已核实·静态+专项；0.2.1-rc.2 同页 HUMAN 待复测】 |
 | HS21 | `client.js` `esp-*` | 本插件自持样式；不依赖旧宿主 CSS hash | 【已核实·静态】 |
 | HS22 | 主题 token | 颜色/可读性依赖主题变量名 | 【已核实·静态】 |
 | HS23 | settings 内部 client-carrier | 官方 Loader Group 创建唯一 pathLike child，随 settings 生命周期同步移除并触发 client graph/HMR 更新；同步队列关闭时不启动新 edit/adapter，在途 adapter 结算后恰一次释放 | 【已核实·静态+deferred/Loader专项】 |
@@ -65,7 +65,7 @@
 | HS26 | HP 首轮 `tool:read` | section、参数默认值、输出字段与手写 F 文案必须同步核对 | 【已核实·静态；行为待实机】 |
 | HS27 | `executor-spawn.js` `slotKey` | `Symbol.for('cordis.original')`/traceable 语义决定跨世代幂等 | 【已核实·静态】 |
 | HS28 | context-gate 宿主回归 | 当前安装根版本、生产源码 hash、公共 AgentLoop/受控 adapter、完整 request trace 与工作区 JSONL 证据；受控 adapter 不冒称真实 provider | 【已核实·集成；真实provider/HUMAN NOT-RUN】 |
-| HS30 | 角色预设 definition（`agent.cordis.yml` 第二文档 → `preset-definition-<role>.generated.yml`） | 4 角色（order 101..104）personaPrefix 由作者源逐字搬运、extra-plan 行 config 由主预设同 id 行逐字复制（含 gateWords）；工具面按 5f3cc68 可见面回填：planner/reviewer/prober 各挂 `tool-pwsh`/`tool-bash`（win32 条件 disabled）/`tool-web`（fetch:false、searchTimeoutMs:60000）/`tool-cordis` 且 `dsh-tool-fs` 置 write/edit=false，planner 另挂 `tool-subagent-control`（连带可见 `interrupt_agent`，0.2.1 包不可拆）；executor 保留 write/edit 与既有两行 shell，另挂 `tool-web`/`tool-cordis`；四个角色 definition 的派生范围跟随同一 `toolPresentationMode`（与主 definition 同源派生、各恰一行 `tool-presentation`，派生异常保留生成物默认值且不抛错）；生成物不得手改；注册顺序主在前角色在后 | 【已核实·静态+宿主回归】 |
+| HS30 | 角色预设 definition（`agent.cordis.yml` 第二文档 → `preset-definition-<role>.generated.yml`） | 4 角色的 id/order 由 `ROLE_IDS`/`ROLE_ORDERS` 统一校验（身份常量不承载权限）；personaPrefix 由作者源逐字搬运、extra-plan 行 config 由主预设同 id 行逐字复制（含 gateWords）；工具面按 5f3cc68 可见面回填：planner/reviewer/prober 各挂 `tool-pwsh`/`tool-bash`（win32 条件 disabled）/`tool-web`（fetch:false、searchTimeoutMs:60000）/`tool-cordis` 且 `dsh-tool-fs` 置 write/edit=false，planner 另挂 `tool-subagent-control`（连带可见 `interrupt_agent`，0.2.1 包不可拆）；executor 保留 write/edit 与既有两行 shell，另挂 `tool-web`/`tool-cordis`；四个角色 definition 的派生范围跟随同一 `toolPresentationMode`（与主 definition 同源派生、各恰一行 `tool-presentation`，派生异常保留生成物默认值且不抛错）；生成物不得手改；注册顺序主在前角色在后 | 【已核实·静态+宿主回归】 |
 | HS31 | `pe-test/tools/step-05-角色预设宿主回归.mjs` | 七组断言：roster 5 id、三键 tool-subagent 装载（assertProvider）、planner header.agentPreset/isPlannerChild、executor 工具面（可写 + 双 shell + web/cordis）、planner 只读（无 write/edit、有 pwsh）、persona 渲染、both 旧值回落 native | 【已核实·集成；真实 provider/模型/GUI NOT-RUN】 |
 | HS29 | `pe-test/_shared/host-deps.mjs` | scoped package exports 按完整 `./subpath` 解析；根入口与 `/list-agents` 分离；根包无可用 exports/main 时回退 `index.js`，显式未知子路径透传；同步/异步 hook 共用语义，生成 data URL hookSource 需 ESM 回放 | 【已核实·step-01 安装同步；真实宿主/HUMAN NOT-RUN】 |
 
@@ -236,7 +236,7 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 
 ## 当前代码落点（符号级）
 
-- 核心入口 `plugins/dsh-extra-plan/index.js` 负责宿主 hook、配置快照与 session-scoped 状态；统一全局 owner 由 `lib/settings.js` 调度 `lib/preset-sync.js`，设置合同由 `lib/preset-settings.js` 提供；`lib/client.js` 仅经 `plugins.detail.section` 接线稳定 namespace 的唯一共享表单（bundle.config 槽若有本包条目则让位）。
+- 核心入口 `plugins/dsh-extra-plan/index.js` 负责宿主 hook、配置快照与 session-scoped 状态；统一全局 owner 由 `lib/settings.js` 调度 `lib/preset-sync.js`，设置合同由 `lib/preset-settings.js`/`lib/settings-contract.js` 提供；`lib/client.js` 仅经 `plugins.detail.section` 接线稳定 namespace 的唯一共享表单（bundle.config 槽若有本包条目则让位）。角色身份与装配顺序由 `lib/role-contract.js` 提供，不参与权限策略。
 - QQBot 兼容面由 `plugins/dsh-extra-plan-qqbot/index.js#apply` → `lib/heal.js#healQqbotCompatibility` 驱动；CLI `scripts/heal.mjs` 不改变启动不阻断语义。
 - 当前静态核对不等于部署通过；真实 profile、消息、`/preset`、postinstall 和 allow-build 仍按本台账 HUMAN 项执行。
 
@@ -251,8 +251,11 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 
 ## ⑩ P2-4 与 gateWords 当前合同
 
-- `agent.cordis.yml` 的 `exploreBudget`/`plannerPromptSuffix` 是作者叶值；生成器产出 `preset-defaults.generated.js` 与纯 `preset-definition.generated.yml`，先校验再替换，失败保留 last-known-good（上次已知良好版本）；运行时由 preset-sync 解析 definition 并交官方 adapter。
+- `agent.cordis.yml` 的十项设置叶值由 `SETTING_DEFINITIONS` 的 sourceLocator 唯一定位；`generate-runtime-defaults.mjs#runtimeDefaultsFromTemplate/renderRuntimeDefaults` 生成 `DEFAULT_SETTINGS` 与兼容别名，运行时由 settings contract、Config/fallback、快照和 preset-sync 统一消费，不解析作者 YAML。
 - 角色作者源与主预设同文件（`---` 分隔多文档）：第一文档=主预设 17 条顶层条目，第二文档=4 角色定义；人工真源收敛为 1 个文件，生成器按首个 `---` 行切分（主 definition 边界止于分隔行，角色数据取自第二文档）；`parsePresetYaml` 只取首文档，角色侧另走第二文档读取。
+- `SETTING_DEFINITIONS` 的 validator/合法性与 UI metadata 仍是合同手工来源；`createDefaultSettings()` 提供非共享默认快照，`preset-yaml#hostRowDefaultsFromTemplate` 的兼容 fallback 也回到生成默认对象，不作为 settings/sync 的作者 YAML 读取入口。
+- `client.js` 的三组字段常量只允许生成器在成对标记区块内更新；默认仓库路径七个输出一并校验/发布，自定义 source/output 默认关闭仓库 client，显式 client source/output 才启用。
+- 迁移顺序固定为先生成并验证新导出，再切换消费者；生成器先完整 parse/validate/编译，再同目录暂存、备份、顺序发布和逆序有限回滚。`--check` 零写；失败不保留新版本，恢复失败保留首错、阶段和残留诊断。
 - `preset-sync` 的 idle（空闲稳态）以全局行十项权威值、旧值兼容读取与 gateWords 派生收敛为准；旧 `extra-plan-preset-sync` / `preset-extra-plan` 只读迁移，不写旧 body/旧公开行；新写入只走唯一全局行 `configEditor.edit`，无 manifest（清单）台账。
 - gateWords 是 YAML 七键唯一值源；apply 先 `createGateRuntime`，当前 agent scope 注册七个 `systemPrompt.variable`；deny、match、状态机和投影都消费当前词表；旧词不推进。
 - `system-prompt/assemble` 的模型可见副本必须保留 variables 映射；宿主严格渲染失败、变量缺失或未知变量属于升级敏感面，静态台账不冒充实机通过。
