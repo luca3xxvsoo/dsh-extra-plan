@@ -2021,6 +2021,22 @@ checkTrue('P4-1 源码：usage ledger 无灌表/async fold，runtime lifecycle �
   } finally { rmSync(dir, { recursive: true, force: true }) }
 }
 
+// P4-32：0 字节 cursor → 空表自愈（一次性提示）+ 本次 fold 重建 cursor JSON
+{
+  const dir = makeTmpDir()
+  try {
+    const ledger = join(dir, 'usage-ledger-v2.jsonl')
+    const cursorPath = ledger + '.cursor.json'
+    writeFileSync(cursorPath, '', 'utf8')
+    const h = makeHarness({ anchoredBootstrap: false, agents: P4_USAGE_AGENTS, usageLedger: { enabled: true, path: ledger } })
+    const emptyAgent = childWithId('p4-empty', [usageRowE(3, 1, 1, 1, 'm', {})])
+    const warnings = captureWarnings(() => { agentCreatedListener(h, emptyAgent) })
+    const table = JSON.parse(readFileSync(cursorPath, 'utf8'))
+    checkTrue('P4-32 0字节cursor按空表自愈：恰1条empty提示、cursor重建、本session基准写回',
+      cursorWarnings(warnings).length === 1 && cursorWarnings(warnings)[0].includes('empty') && readLedgerRows(ledger).length === 1 && table['p4-empty'] !== undefined && table['p4-empty'].seq === 3)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+}
+
 // P4-21：final fold 写入失败 → 既有单次 warning、不抛出、不阻断单会话状态清理
 {
   const dir = makeTmpDir()

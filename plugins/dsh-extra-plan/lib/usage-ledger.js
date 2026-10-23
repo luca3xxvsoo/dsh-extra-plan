@@ -197,6 +197,8 @@ export function createUsageLedger(options = {}) {
   // cursor 降级告警口径：每插件实例（= 每个会话各一份）首次进入空表降级时告警一次
   // （与 ledgerWarned 同一次式风格）；同一实例内多次降级读不重复告警。
   let cursorDegradedWarned = false
+  // 0 字节/纯空白 cursor 文件的一次性自愈提示标志（与 cursorDegradedWarned 同口径：每插件实例一次）。
+  let cursorEmptyWarned = false
   let staleLockWarned = false
   let releaseFailureWarned = false
   // usageCursors 只保存活跃 session：sessionId → { seq, index }（index = 上次折叠时读到的
@@ -224,6 +226,15 @@ export function createUsageLedger(options = {}) {
       if (error !== null && typeof error === 'object' && error.code === 'ENOENT') return { ok: true, table: {} }
       warnUsageCursorDegraded(error)
       return { ok: false, table: {} }
+    }
+    // 0 字节/纯空白文件：不可能存在任何 session 基准，按 ENOENT 同口径空表自愈
+    // （一次性提示保留线索；本次 fold rows>0 时即重建 cursor JSON，解除 0B 永不写回死锁）。
+    if (raw.trim() === '') {
+      if (!cursorEmptyWarned) {
+        cursorEmptyWarned = true
+        console.warn('extra-plan: usage cursor JSON file is empty — treating as an empty cursor table; other sessions dedupe baselines are already lost and the cursor file will be rebuilt on the next write')
+      }
+      return { ok: true, table: {} }
     }
     let saved
     try {
