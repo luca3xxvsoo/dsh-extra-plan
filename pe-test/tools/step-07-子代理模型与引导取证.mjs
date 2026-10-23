@@ -200,6 +200,19 @@ const CHILD_TOOL_NAMES = new Set([
   'subagent_plan', 'subagent', 'subagent_probe', 'subagent_review', 'subagent_fork',
   'workflow', 'ralph', 'subagent_run',
 ])
+function ptcDispatchCallOf(item) {
+  if (!hasType(item.event, 'tool/ptc-dispatch-start')) return null
+  const data = dataOf(item.event)
+  if (typeof data.name !== 'string' || !CHILD_TOOL_NAMES.has(data.name)) return null
+  return {
+    line: item.line,
+    name: data.name,
+    callId: data.subCallId,
+    arguments: parseCallArguments(data.arguments),
+    rawArguments: data.arguments,
+    event: item.event,
+  }
+}
 function toolCallOf(item) {
   if (!hasType(item.event, 'tool/call')) return null
   const data = dataOf(item.event)
@@ -257,6 +270,23 @@ function buildParentLinks(parent, children) {
   const aliases = aliasMapOf(children)
   const calls = parent.events.map(toolCallOf).filter((call) => call !== null)
   const results = resultRecordsOf(parent)
+  const dispatchCalls = parent.events.map(ptcDispatchCallOf).filter((call) => call !== null)
+  const dispatchResults = parent.events.map((item) => {
+    if (!hasType(item.event, 'tool/ptc-dispatch')) return null
+    const data = dataOf(item.event)
+    if (typeof data.subCallId !== 'string' || data.subCallId === '') return null
+    if (typeof data.name !== 'string' || !CHILD_TOOL_NAMES.has(data.name)) return null
+    const text = (Array.isArray(data.content) ? data.content : []).map((block) => isObject(block) && block !== null && typeof block.text === 'string' ? block.text : '').join('')
+    return { line: item.line, callId: data.subCallId, isError: data.isError === true, text, event: item.event }
+  }).filter((result) => result !== null)
+  const seenCallIds = new Set(calls.map((call) => call.callId).filter((id) => id !== undefined))
+  for (const call of dispatchCalls) {
+    if (call.callId === undefined || seenCallIds.has(call.callId)) continue
+    seenCallIds.add(call.callId)
+    calls.push(call)
+    const result = dispatchResults.find((record) => record.callId === call.callId)
+    if (result !== undefined) results.push(result)
+  }
   const links = []
   for (const result of results) {
     const matchedCalls = calls.filter((call) => result.callId !== undefined && call.callId === result.callId)

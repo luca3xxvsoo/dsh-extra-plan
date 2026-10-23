@@ -103,9 +103,25 @@ function messageFromEvent(record) {
   if (type.includes('system/message') || type.includes('developer/message') || type.includes('assistant/message') || type.includes('tool/result')) return data?.message
   return undefined
 }
+function systemMessagesOf(records) {
+  let firstText = null
+  let latestText = null
+  for (const record of records) {
+    if (!record.types.includes('system/message')) continue
+    const message = messageFromEvent(record)
+    if (message === undefined) continue
+    const source = sourceOfMessage(message)
+    if (source === null || typeof source !== 'object' || source.kind !== 'system-prompt') continue
+    const entry = { line: record.line, text: textOf(message) }
+    if (firstText === null) firstText = entry
+    latestText = entry
+  }
+  return { firstText, latestText }
+}
 function strictMessages(records, meta) {
   const output = []
   const inboxOnly = []
+  const systemMessages = systemMessagesOf(records)
   let precedingToolCalls = 0
   let activeHeaderSeq = null
   for (const record of records) {
@@ -114,8 +130,10 @@ function strictMessages(records, meta) {
       const header = headerOf(event)
       activeHeaderSeq = Number.isInteger(event.seq) ? event.seq : activeHeaderSeq
       const headerTools = Array.isArray(header.tools) ? header.tools : []
-      if (output.mode === 'full') console.log('HEADER line=' + record.line + ' seq=' + String(activeHeaderSeq) + ' sessionId=' + meta.id + ' version=' + meta.version + ' cwd=' + meta.cwd + ' tools=' + jsonText(headerTools) + ' systemTextEvidenceOnly=' + jsonText(systemTextHits(textOf(header.system || header.message || ''))))
-      else console.log('HEADER line=' + record.line + ' seq=' + String(activeHeaderSeq) + ' sessionId=' + meta.id + ' version=' + meta.version + ' cwd=' + meta.cwd + ' toolNames=' + jsonText(toolNamesOf(headerTools)) + ' toolCount=' + headerTools.length + ' systemTextEvidenceOnly=' + jsonText(systemTextHits(textOf(header.system || header.message || ''))))
+      const phaseSystemMessage = precedingToolCalls === 0 ? systemMessages.firstText : systemMessages.latestText
+      const phaseText = phaseSystemMessage === null ? '' : phaseSystemMessage.text
+      if (output.mode === 'full') console.log('HEADER line=' + record.line + ' seq=' + String(activeHeaderSeq) + ' sessionId=' + meta.id + ' version=' + meta.version + ' cwd=' + meta.cwd + ' tools=' + jsonText(headerTools) + ' systemMessageEvidenceOnly=' + jsonText(systemTextHits(phaseText)))
+      else console.log('HEADER line=' + record.line + ' seq=' + String(activeHeaderSeq) + ' sessionId=' + meta.id + ' version=' + meta.version + ' cwd=' + meta.cwd + ' toolNames=' + jsonText(toolNamesOf(headerTools)) + ' toolCount=' + headerTools.length + ' systemMessageEvidenceOnly=' + jsonText(systemTextHits(phaseText)))
     }
     const inbox = record.types.some((type) => type.startsWith('agent/inbox/'))
     const message = messageFromEvent(record)
@@ -215,6 +233,7 @@ function legacySummary(args) {
     const buf = fs.readFileSync(lp)
     const logicalText = framesOf(buf).map((frame) => decodeText(buf, frame)).join('')
     const records = parseRecordsStrict(logicalText)
+    const systemMessages = systemMessagesOf(records)
     let previousHeader = null
     let precedingToolCalls = 0
     for (const record of records) {
@@ -222,14 +241,14 @@ function legacySummary(args) {
         const header = headerOf(record.event)
         const rawTools = Array.isArray(header.tools) ? header.tools : []
         const toolNames = rawTools.map((tool) => typeof tool === 'string' ? tool : tool !== null && typeof tool === 'object' ? tool.name : tool)
-        const systemText = textOf(header.system || header.message || '')
+        const systemText = precedingToolCalls === 0 ? (systemMessages.firstText === null ? '' : systemMessages.firstText.text) : (systemMessages.latestText === null ? '' : systemMessages.latestText.text)
         previousHeader = { line: record.line, phase: precedingToolCalls === 0 ? 'first' : 'later', precedingToolCalls, tools: rawTools }
         if (output.mode === 'full') {
           console.log('L' + record.line + ' session=' + dir + ' precedingToolCalls=' + precedingToolCalls + ' phase=' + previousHeader.phase + ' header.tools=' + jsonText(rawTools) + ' tools.names=' + jsonText(toolNames))
-          console.log('L' + record.line + ' header.system.textLength=' + systemText.length + ' textHits=' + jsonText(systemTextHits(systemText)) + ' textEvidenceOnly=true sectionNames=not-inferred-from-text')
+          console.log('L' + record.line + ' systemMessage.textLength=' + systemText.length + ' textHits=' + jsonText(systemTextHits(systemText)) + ' textEvidenceOnly=true sectionNames=not-inferred-from-text systemPhase=' + previousHeader.phase)
         } else {
           console.log('L' + record.line + ' session=' + dir + ' precedingToolCalls=' + precedingToolCalls + ' phase=' + previousHeader.phase + ' tools.names=' + jsonText(toolNames) + ' toolCount=' + rawTools.length)
-          console.log('L' + record.line + ' header.system.textLength=' + systemText.length + ' textHits=' + jsonText(systemTextHits(systemText)) + ' textEvidenceOnly=true sectionNames=not-inferred-from-text')
+          console.log('L' + record.line + ' systemMessage.textLength=' + systemText.length + ' textHits=' + jsonText(systemTextHits(systemText)) + ' textEvidenceOnly=true sectionNames=not-inferred-from-text systemPhase=' + previousHeader.phase)
         }
       }
       for (const source of skillCatalogSources(record.event)) {

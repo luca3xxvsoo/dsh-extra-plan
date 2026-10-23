@@ -50,7 +50,7 @@ main 保留 `send_message`、`interrupt_agent`、`list_agents`；四角色 defin
 
 ## 维护与回归入口
 
-- 地图：先 grep [ai-代码地图](ai-代码地图.md) 的意图速查，再按真实函数名取机器行号；冻结前运行普通生成，正式检查阶段只运行 `node pe-test/tools/代码地图生成.mjs --check`。
+- 地图：先 grep [ai-代码地图](ai-代码地图.md) 的意图速查，再按真实函数名取机器行号；扫描根内代码改动时冻结前运行普通生成，正式检查阶段只运行 `node pe-test/tools/代码地图生成.mjs --check`。
 - 自动回归：按 [ai-维护手册](ai-维护手册.md) 的固定顺序执行领域、生成器、地图及一键命令；AUTO 数量以 `pe-test/tools/一键step测试.mjs` 的数组为准，ETIMEDOUT、SKIP、INCOMPLETE、HUMAN、NOT-RUN 不由退出码0改写为 PASS。
 - 生成链与证据：先生成新导出再切换消费者；客户端标记区块禁手改，默认仓库产物为七输出，自定义 source/output 默认不写仓库 client。领域测试的正反夹具只证明隔离行为/受控宿主边界；step-07 必须显式 `SESSION_ID` 与 `PLANNER_PROMPT_SUFFIX`，静态/Mock 结果不能冒充生产实机。AI 在仓库验收通过前不触碰生产环境。
 

@@ -100,7 +100,7 @@
    - `node pe-test/tools/step-06-08-v4取证回归.mjs`
    - `node pe-test/tools/step-06-线索落盘.mjs`
    - `node plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs --check`
-   - 冻结前完成代码地图生成与人工描述复核；正式阶段只运行代码地图 `--check`，避免普通生成改时间戳，再执行最后一键 step。
+   - 扫描根内代码改动时冻结前完成代码地图生成与人工描述复核；正式阶段只运行代码地图 `--check`，避免普通生成改时间戳，再执行最后一键 step。
 3. 自动测试不得执行真实 PowerShell 重定向写；测试前后 `pe-test/reports/_s4b_pwsh.txt` 必须不存在。常规回归命令退出码必须为 0，输出不得有 FAIL、SyntaxError、UnhandledPromiseRejection；runner 的 ETIMEDOUT 明确归失败而非环境未执行，普通说明含 FAIL/Error/导航失效不单独判失败，必须以退出码/结构化统计为准；context-gate 独立脚本若有 INCOMPLETE 必须非零，一键结果结构化标为部分执行而不计 PASS。SKIP/INCOMPLETE/HUMAN/NOT-RUN 单列且不计 AUTO PASS。
 4. 生产部署与当前唯一目标 dsh `0.2.1-rc.2` 的 HUMAN 复测由用户另行执行；三项 `@deepseek-ai` peer 与该版本同值，静态 PASS 不替代真实 provider、GUI、QQBot 消息、生产 profile 或其它 HUMAN 结论。
 ## 改动域 → 唯一检查入口
@@ -122,6 +122,7 @@
 - 稳定匹配键是“相对路径 + 函数名 + 同名出现顺序”。维护时必须保持 `routeKey` 1 条、`visit` 4 条、`isIdChar` 1 条的顺序；`--check` 不覆盖人工描述/固定尾部的全文比较，所以需另做结构键对拍。
 - 描述必须保留当前行为关键词：证据引用成对剥除与单侧不剥、`atomicCommit` 阶段语义、`syncPreset` 三条件 idle（空闲稳态）、`createApiHandler` PUT 仅投影、P2-2 agent-only（仅 Agent）cache、usage 同步 final fold（最终折叠） 等。
 - 地图生成器是源码/测试索引，不是历史归档；无函数文件或纯描述变化不能只靠 `--check` 判定。
+- 扫描根 = `代码地图生成.mjs` 的 `--roots` 默认 `plugins,pe-test/_shared`（不含 pe-test/tools）。仅扫描根内 .js/.mjs 增删或行号漂移、或地图人工描述需维护时运行普通生成；纯文档、pe-test/docs、pe-test/tools、pe-test/reports 改动不触发地图更新，收尾与验收只运行 `--check`。
 
 ## 交付格式与回滚
 

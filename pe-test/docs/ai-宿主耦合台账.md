@@ -30,7 +30,7 @@
 |:--|:--|:--|
 | HS 服务/注册 | HS1-HS6、HS8-HS27（HS7 已删除历史） | 下面“当前 HS” |
 | HK 钩子/组合 | HK1-HK10、HK11-HK22、HK24-HK27；HK23 无定义不补造 | 下面“当前 HK” |
-| SD 数据/布局 | SD1-SD8、SD10-SD12、SD14-SD15、SD16-SD32、SD33、SD35-SD40；SD9/SD13 保留缺号说明 | 下面“当前 SD” |
+| SD 数据/布局 | SD1-SD8、SD10-SD33、SD35-SD40；SD9 保留缺号说明 | 下面“当前 SD” |
 | CF 安装配置 | CF3-CF12；CF1/CF2 已删除历史 | 下面“当前 CF” |
 | QB 兼容包 | QB1-QB3、QB5-QB21、QB25-QB26；QB27-QB31 为测试/条件环境面 | 下面“当前 QB” |
 
@@ -137,6 +137,7 @@ HK23 当前无定义，不补造编号；历史/旧钩子见归档。
 | SD5 | tool/result 与块级 `isError` | 被拒不烧预算 |
 | SD6 | assistant/message usage/source provider/model | usage ledger 字段来源 |
 | SD7 | PTC dispatch start/dispatch | root/parent/sub call 与 content/isError |
+| SD13 | v4 request/header 不落 system 字段；system 段以独立 system/message 事件落盘（source.kind=system-prompt） | F 段=bootstrap persona 与手写 tool:read 文案、L 段=宿主原文（含 run_code SDK 指引）；tools:sdk 判据观察面以 system/message 为准（2026-10-23 实机复现） |
 | SD8 | subagent/descriptor.mode（历史形状） | 0.2.1 起 mode 恒为 continuable（宿主 manager 固定值），角色分离改判 `session.header.agentPreset`；descriptor 仅作「确属子代理会话」的日志形状 |
 | SD10 | `session.seq` + `snapshotEvents(from,to)` | cursor 增量、水位未变与截断回退 |
 | SD11 | `Session.requestHeader().config` | 顶层 provider/model 与 fallback（回退）来源 |
@@ -169,7 +170,7 @@ HK23 当前无定义，不补造编号；历史/旧钩子见归档。
 | SD39 | agents.get(id).status | AgentRegistry.get(id)（dsh-agent）返回驻留 Agent，.status getter 真源 dsh-agent-loop：phase idle/maintenance（空闲/维护）→ 'idle'，否则 'running'（运行中）；插件经 ctx.get('agents') 查询 main `send_message` 目标运行状态，child 不进入该放行路径 |
 | SD40 | ToolExecution.agent / arguments.agent_id | main `send_message` 方向判定契约：agent=调用者、arguments.agent_id=目标；child 控制工具由 `isSubagentChild` 硬拒；SD25 字段清单未列 agent 字段，此处补记 |
 
-SD9、SD13 是历史缺定义编号，SD34 是本插件不调用 `sessionProjections.stateOf` 的反向记录；三者不补造成当前合同。
+SD9 是历史缺定义编号、保留不补；SD34 是本插件不调用 `sessionProjections.stateOf` 的反向记录；SD13 已由 2026-10-23 实机核证定义为 system 段落盘形态合同。
 
 ## ⑤ 当前 CF：安装配置面
 

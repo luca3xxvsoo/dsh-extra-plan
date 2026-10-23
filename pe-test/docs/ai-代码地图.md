@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-10-23 09:14:24（脚本自动更新时间戳行）
+> 上次同步：2026-10-23 16:56:02（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -132,7 +132,7 @@
 | plugins/dsh-extra-plan/lib/settings-contract.js | 176 | 服务端设置 descriptor 单一合同：10 项的类型/生成默认引用/校验/UI metadata 与权威-投影双定位器，并导出 `createDefaultSettings`、分组与投影遍历源 |
 | plugins/dsh-extra-plan/lib/settings.js | 574 | 10 字段 volatile Config、页面策略与 loopback GET/PUT；权威值在唯一 settings 行，PUT 先拒绝空/null/数组/原始/未知/非法混合载荷并严校验当前 gateWords，再只 edit 全局行，no-op 也重读最终快照并等待 profileSync，结构化区分 synced/not-installed/unavailable/failed/partial。 |
 | plugins/dsh-extra-plan/lib/shell-mutation.js | 182 | 跨平台命令文本解码与 pwsh/bash 写形态判定；纯函数、不持有 apply 状态 |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | 444 | per-apply V2 usage writer 与跨进程排他锁：固定15键（rootSessionId/agentPreset 可空）、owner PID/token、bounded acquire/release、锁内同步 fold、身份血缘与四桶 JSONL、cursor 续载；timeout 静默返回 `delayed`、后续 fold 补记，stale 每实例一次告警并由维护者显式处理，release 失败显式返回状态。 |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | 455 | per-apply V2 usage writer 与跨进程排他锁：固定15键（rootSessionId/agentPreset 可空）、owner PID/token、bounded acquire/release、锁内同步 fold、身份血缘与四桶 JSONL、cursor 续载；timeout 静默返回 `delayed`、后续 fold 补记，stale 每实例一次告警并由维护者显式处理，release 失败显式返回状态。 |
 | plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | 647 | 从 agent.cordis.yml 校验并生成 runtime 默认常量、纯主/角色 definition 与 client 标记区块（顶层结构逐字平移并保留 group/isolate/!!js）；默认仓库七输出，自定义 client 默认关闭；支持 --check 且坏源不覆盖 last-known-good（上次已知良好版本） |
 
 ## 函数索引
@@ -845,13 +845,13 @@
 | plugins/dsh-extra-plan/lib/usage-ledger.js | usageLedgerLockPath | L132-134 | 导出 active 对应的 lock 路径，供统计/归档诊断。 | public lock API。 |
 | plugins/dsh-extra-plan/lib/usage-ledger.js | acquireUsageLedgerLock | L136-160 | 导出有界原子加锁：返回 owner/token，超时返回 timeout；检测到死 PID 返回 stale-lock，canonical lock 原样保留。 | 活 PID 不强删；stale 需确认 owner 后显式维护。 |
 | plugins/dsh-extra-plan/lib/usage-ledger.js | releaseUsageLedgerLock | L162-188 | 核对 token 后把自己的 lock 原子移到唯一临时路径再删除，避免误释他者 lock；失败返回明确 released:false/reason。 | public release API；调用方不得静默成功。 |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | createUsageLedger | L190-444 | 按 enabled/path 建立同步 V2 fold、共享锁、cursor 与单 session 回收，返回 foldUsage 与 disposeSession。 | cursor 路径为 ledgerPath + .cursor.json；被 index.js 的 usageLedger 配置调用。 |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | readUsageCursorTable | L219-240 | 读取 cursor JSON 并返回 {ok, table}：ENOENT 按空表，其余读取/解析/形状错误降级并一次告警。 | createUsageLedger 内部闭包；降级保留原始 cursor 字节。 |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | warnUsageCursorDegraded | L243-247 | 对 cursor 读取/形状降级发出每实例一次告警。 | createUsageLedger 内部闭包。 |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | warnStaleLock | L249-257 | 对每个 writer 实例的 stale-lock 首次阻塞发出一次可见 owner(PID/token)告警；不接管、不删除 canonical lock，要求核实 owner 后显式维护。 | createUsageLedger 内部闭包。 |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | usageCursorEntryOf | L261-269 | 只接受单会话 V2 cursor 的 {seq,index} 非负整数形状；数字旧项及其它形状一律无效并回退。 | createUsageLedger 内部闭包。 |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | isUsageContext | L271-279 | 校验 session/parent/root/preset/depth/role 类型与必填边界；rootSessionId、agentPreset 可为空字符串，只有非法 context 被拒绝。 | foldUsage 内部闭包；非法 context 不落账。 |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | foldUsage | L287-441 | 在共享锁临界区按 session.seq/snapshotEvents 增量或回退全量扫描 assistant/message；只写固定15键的 schemaVersion=2 行、身份血缘、provider/model 与四桶，append 成功后推进 cursor。 | createUsageLedger 内部闭包；合法空 root/preset 落账，锁忙/timeout 静默返回 delayed 且零推进、后续 fold 补记；stale 每实例一次告警并由维护者核实 owner 后显式维护；release 失败返回 failed/release-failed 且不伪装回滚已提交写入。 |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | createUsageLedger | L190-455 | 按 enabled/path 建立同步 V2 fold、共享锁、cursor 与单 session 回收，返回 foldUsage 与 disposeSession。 | cursor 路径为 ledgerPath + .cursor.json；被 index.js 的 usageLedger 配置调用。 |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | readUsageCursorTable | L221-251 | 读取 cursor JSON 并返回 {ok, table}：ENOENT 按空表，其余读取/解析/形状错误降级并一次告警。 | createUsageLedger 内部闭包；降级保留原始 cursor 字节。 |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | warnUsageCursorDegraded | L254-258 | 对 cursor 读取/形状降级发出每实例一次告警。 | createUsageLedger 内部闭包。 |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | warnStaleLock | L260-268 | 对每个 writer 实例的 stale-lock 首次阻塞发出一次可见 owner(PID/token)告警；不接管、不删除 canonical lock，要求核实 owner 后显式维护。 | createUsageLedger 内部闭包。 |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | usageCursorEntryOf | L272-280 | 只接受单会话 V2 cursor 的 {seq,index} 非负整数形状；数字旧项及其它形状一律无效并回退。 | createUsageLedger 内部闭包。 |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | isUsageContext | L282-290 | 校验 session/parent/root/preset/depth/role 类型与必填边界；rootSessionId、agentPreset 可为空字符串，只有非法 context 被拒绝。 | foldUsage 内部闭包；非法 context 不落账。 |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | foldUsage | L298-452 | 在共享锁临界区按 session.seq/snapshotEvents 增量或回退全量扫描 assistant/message；只写固定15键的 schemaVersion=2 行、身份血缘、provider/model 与四桶，append 成功后推进 cursor。 | createUsageLedger 内部闭包；合法空 root/preset 落账，锁忙/timeout 静默返回 delayed 且零推进、后续 fold 补记；stale 每实例一次告警并由维护者核实 owner 后显式维护；release 失败返回 failed/release-failed 且不伪装回滚已提交写入。 |
 | plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | roleDefinitionFile | L37-39 | （待补充） |  |
 | plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | runtimeDefaultsFromTemplate | L41-46 | （待补充） |  |
 | plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | renderRuntimeDefaults | L48-58 | （待补充） |  |
