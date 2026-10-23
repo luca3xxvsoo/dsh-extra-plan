@@ -1,7 +1,7 @@
 // 每次 apply 独立创建 agent runtime factory；role 与 cache 状态不会跨 createAgentRuntime 调用共享。
 
 import { isSubagentChild } from './agent-session.js'
-import { PLANNER_PRESET_ID } from './role-contract.js'
+import { PLANNER_PRESET_ID, USAGE_ROLE_BY_PRESET } from './role-contract.js'
 
 // 规划子代理的会话角色预设 id（与 assets/presets/extra-plan/agent.cordis.yml 第二文档一致）。
 export { PLANNER_PRESET_ID } from './role-contract.js'
@@ -32,7 +32,8 @@ export function createAgentRuntime({ getAgents, sandboxPolicy, foldUsage, warn }
   const getAgentsOf = typeof getAgents === 'function' ? getAgents : () => undefined
   const warnOf = typeof warn === 'function' ? warn : (...args) => console.warn(...args)
   const subagentAsPlannerWarned = new WeakSet()
-  const usageRoles = new WeakMap()
+  const usageContexts = new WeakMap()
+  const MAX_USAGE_PARENT_DEPTH = 8
 
   function isChild(agent, events) {
     if (!isSubagentChild(agent, events)) return false
@@ -55,6 +56,61 @@ export function createAgentRuntime({ getAgents, sandboxPolicy, foldUsage, warn }
     if (header === undefined || header === null) return false
     const preset = typeof header.agentPreset === 'string' ? header.agentPreset : ''
     return preset === PLANNER_PRESET_ID && isSubagentChild(agent, events)
+  }
+
+  function usageRootOf(sessionId, parentSessionId, delegationDepth) {
+    if (parentSessionId === '') return sessionId
+    if (delegationDepth === 1) return parentSessionId
+    let agents
+    try {
+      agents = getAgentsOf()
+    } catch (error) {
+      return ''
+    }
+    if (agents === undefined || agents === null || typeof agents.get !== 'function') return ''
+    const seen = new Set()
+    if (sessionId !== '') seen.add(sessionId)
+    let currentId = parentSessionId
+    for (let level = 0; level < MAX_USAGE_PARENT_DEPTH; level += 1) {
+      if (typeof currentId !== 'string' || currentId === '' || seen.has(currentId)) return ''
+      seen.add(currentId)
+      let parent
+      try {
+        parent = agents.get(currentId)
+      } catch (error) {
+        return ''
+      }
+      if (parent === undefined || parent === null || parent.session === undefined || parent.session === null) return ''
+      const header = parent.session.header
+      if (header === undefined || header === null) return ''
+      const nextId = typeof header.parentSession === 'string' ? header.parentSession : ''
+      if (nextId === '') return currentId
+      if (seen.has(nextId)) return ''
+      currentId = nextId
+    }
+    return ''
+  }
+
+  function usageContextOf(agent, events) {
+    const cached = usageContexts.get(agent)
+    if (cached !== undefined) return cached
+    const session = agent !== undefined && agent !== null ? agent.session : undefined
+    const header = session !== undefined && session !== null ? session.header : undefined
+    const sessionId = header !== undefined && header !== null && typeof header.id === 'string' ? header.id : ''
+    const parentSessionId = header !== undefined && header !== null && typeof header.parentSession === 'string' ? header.parentSession : ''
+    const agentPreset = header !== undefined && header !== null && typeof header.agentPreset === 'string' ? header.agentPreset : ''
+    const delegationDepth = header !== undefined && header !== null && Number.isInteger(header.delegationDepth) && header.delegationDepth >= 0 ? header.delegationDepth : 0
+    const child = isSubagentChild(agent, events)
+    const context = Object.freeze({
+      sessionId,
+      parentSessionId,
+      rootSessionId: child ? (parentSessionId === '' ? '' : usageRootOf(sessionId, parentSessionId, delegationDepth)) : sessionId,
+      agentPreset,
+      delegationDepth,
+      role: child ? (USAGE_ROLE_BY_PRESET[agentPreset] ?? 'child') : 'main',
+    })
+    usageContexts.set(agent, context)
+    return context
   }
 
   // 真实工具集防御取数：不缓存，服务缺失/异常/非数组均返回 undefined。
@@ -84,21 +140,14 @@ export function createAgentRuntime({ getAgents, sandboxPolicy, foldUsage, warn }
     }
   }
 
-  function usageRoleOf(agent) {
-    const cached = usageRoles.get(agent)
-    if (cached !== undefined) return cached
-    return isPlannerChild(agent) ? 'planner' : isChild(agent) ? 'executor' : 'main'
-  }
 
   function childBaseline(agent, events) {
     const child = isChild(agent, events)
-    const planner = isPlannerChild(agent, events)
-    const role = planner ? 'planner' : child ? 'executor' : 'main'
-    usageRoles.set(agent, role)
-    foldUsage(agent, role)
+    const context = usageContextOf(agent, events)
+    foldUsage(agent, context)
     if (child) floorChildPolicy(agent)
     return child
   }
 
-  return { isChild, isPlannerChild, toolSchemasOf, usageRoleOf, childBaseline }
+  return { isChild, isPlannerChild, toolSchemasOf, usageContextOf, childBaseline }
 }

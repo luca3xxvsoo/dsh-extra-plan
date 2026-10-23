@@ -65,8 +65,8 @@
 | HS26 | HP 首轮 `tool:read` | section、参数默认值、输出字段与手写 F 文案必须同步核对 | 【已核实·静态；行为待实机】 |
 | HS27 | `executor-spawn.js` `slotKey` | `Symbol.for('cordis.original')`/traceable 语义决定跨世代幂等 | 【已核实·静态】 |
 | HS28 | context-gate 宿主回归 | 当前安装根版本、生产源码 hash、公共 AgentLoop/受控 adapter、完整 request trace 与工作区 JSONL 证据；受控 adapter 不冒称真实 provider | 【已核实·集成；真实provider/HUMAN NOT-RUN】 |
-| HS30 | 角色预设 definition（`agent.cordis.yml` 第二文档 → `preset-definition-<role>.generated.yml`） | 4 角色的 id/order 由 `ROLE_IDS`/`ROLE_ORDERS` 统一校验（身份常量不承载权限）；personaPrefix 由作者源逐字搬运、extra-plan 行 config 由主预设同 id 行逐字复制（含 gateWords）；四角色均挂 `tool-web`（fetch:false、searchTimeoutMs:60000）、只读 `tool-cordis` 与不可拆的 `tool-subagent-control`，后者同时绑定 `send_message`/`interrupt_agent`；planner/reviewer/prober 的 `dsh-tool-fs` 置 write/edit=false，executor 保留 write/edit 与既有两行 shell；宿主目标纪律仍是 send 直属父子、interrupt 调用者后代；四个角色 definition 的派生范围跟随同一 `toolPresentationMode`（各恰一行 `tool-presentation`，派生异常保留生成物默认值且不抛错）；生成物不得手改；native/PTC 双模式由宿主回归实际 mount、schemas/get、sdkSchemas 与 SDK 文本解析取证 | 【已核实·静态+宿主回归；真实消息/中断 HUMAN】 |
-| HS31 | `pe-test/tools/step-05-角色预设宿主回归.mjs` | 两个串行独立 Context 注册原始五 ID；各模式真实 agents.create + preset mount，planner 两模式均以原 ID 与 `isPlannerChild` 核实；四角色每模式以 `tools.schemas`/`tools.get` 核实四 binding，装配统一传公开 `assembleContextFor(agent)`；PTC F 只核顶层 `run_code`，planner 不强求完整 SDK，非 planner 只作 `tools:sdk` 控制文本观察且 Cordis 文本隐藏、registry/get 仍可用；保留 roster、三键 tool-subagent、只读/可写、persona、both 回落与禁委派/list_agents；不证明真实父子投递/中断 | 【已核实·集成；真实 provider/模型/GUI/消息/中断 HUMAN】 |
+| HS30 | 角色预设 definition（`agent.cordis.yml` 第二文档 → `preset-definition-<role>.generated.yml`） | 4 角色的 id/order 由 `ROLE_IDS`/`ROLE_ORDERS` 统一校验（身份常量不承载权限）；personaPrefix 由作者源逐字搬运、extra-plan 行 config 由主预设同 id 行逐字复制（含 gateWords）；各角色均挂 `tool-web`（fetch:false、searchTimeoutMs:60000）与只读 `tool-cordis`，四角色 definition 均不挂 `tool-subagent-control`/`send_message`/`interrupt_agent`；main definition 保留 `tool-subagent-control` 与 `list-agents`。运行时按原始 `isSubagentChild` 对 child 的两控制工具直呼与 `run_code` 成员硬拒，覆盖 unknown/断链 child；main 的 send 直属父子、interrupt 仅调用者获授权后代、running 子原禁扰与自动最终结果保持。planner/reviewer/prober 的 `dsh-tool-fs` 置 write/edit=false，executor 保留 write/edit 与既有两行 shell；四个角色 definition 的派生范围跟随同一 `toolPresentationMode`（各恰一行 `tool-presentation`，派生异常保留生成物默认值且不抛错）；生成物不得手改；native/PTC 双模式由宿主回归实际 mount、schemas/get、sdkSchemas 与 SDK 文本解析取证 | 【已核实·静态+宿主回归；真实消息/中断 HUMAN】 |
+| HS31 | `pe-test/tools/step-05-角色预设宿主回归.mjs` | 两个串行独立 Context 注册原始五 ID；各模式真实 agents.create + preset mount，planner 两模式均以原 ID 与 `isPlannerChild` 核实；每角色/每模式以 `tools.schemas`/`tools.get` 同时核实 `send_message`/`interrupt_agent` 缺席和 Cordis 两工具存在；PTC F 顶层仅 `run_code` 且 `tools:sdk` 无 control 文本；Cordis schemas/get 仍在；保留 roster、三键 tool-subagent、只读/可写、persona、both 回落与禁委派/list_agents；不证明真实父子投递/中断 | 【已核实·集成；真实 provider/模型/GUI/消息/中断 HUMAN】 |
 | HS29 | `pe-test/_shared/host-deps.mjs` | scoped package exports 按完整 `./subpath` 解析；根入口与 `/list-agents` 分离；根包无可用 exports/main 时回退 `index.js`，显式未知子路径透传；同步/异步 hook 共用语义，生成 data URL hookSource 需 ESM 回放 | 【已核实·step-01 安装同步；真实宿主/HUMAN NOT-RUN】 |
 
 ## ②-A Web→QQBot 镜像路径契约（独立于 HS4）
@@ -166,8 +166,8 @@ HK23 当前无定义，不补造编号；历史/旧钩子见归档。
 | SD37 | Session.deriveMessages() | context 去重按 kind 只读取当前 Session 可见 durable message surface；catalog 比较有序 [name,description]，agent-instructions 比较非空 content JSON 形状；缺能力的 mock 不推断已发布 |
 | SD37 | createUserMessage/source.kind | v4 自有 producer kind 与 id/role |
 | SD38 | step-07 输出 | attempted（尝试路由）/actual provenance（实际来源）、suffix、父子行号 |
-| SD39 | agents.get(id).status | AgentRegistry.get(id)（dsh-agent）返回驻留 Agent，.status getter 真源 dsh-agent-loop：phase idle/maintenance（空闲/维护）→ 'idle'，否则 'running'（运行中）；插件经 ctx.get('agents') 查询 send_message 目标运行状态 |
-| SD40 | ToolExecution.agent / arguments.agent_id | send_message 方向判定契约：agent=调用者、arguments.agent_id=目标；SD25 字段清单未列 agent 字段，此处补记 |
+| SD39 | agents.get(id).status | AgentRegistry.get(id)（dsh-agent）返回驻留 Agent，.status getter 真源 dsh-agent-loop：phase idle/maintenance（空闲/维护）→ 'idle'，否则 'running'（运行中）；插件经 ctx.get('agents') 查询 main `send_message` 目标运行状态，child 不进入该放行路径 |
+| SD40 | ToolExecution.agent / arguments.agent_id | main `send_message` 方向判定契约：agent=调用者、arguments.agent_id=目标；child 控制工具由 `isSubagentChild` 硬拒；SD25 字段清单未列 agent 字段，此处补记 |
 
 SD9、SD13 是历史缺定义编号，SD34 是本插件不调用 `sessionProjections.stateOf` 的反向记录；三者不补造成当前合同。
 

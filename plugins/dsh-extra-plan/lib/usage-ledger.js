@@ -1,5 +1,191 @@
 // per-apply usage 账本：cursor 表、增量 fold 与一次性告警。
-import { mkdirSync, readFileSync, appendFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, appendFileSync, writeFileSync, openSync, closeSync, writeSync, renameSync, unlinkSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { dirname } from 'node:path'
+
+export const WRITER_LOCK_WAIT_MS = 1000
+const LOCK_POLL_MS = 25
+const LOCK_WAIT_BUFFER = new Int32Array(new SharedArrayBuffer(4))
+
+function lockPathOf(activePath) {
+  return typeof activePath === 'string' && activePath !== '' ? activePath + '.lock' : ''
+}
+
+function staleLockPathOf(lockPath) {
+  return lockPath + '.stale-' + process.pid + '-' + randomUUID()
+}
+
+function errorCodeOf(error) {
+  return error !== null && typeof error === 'object' && typeof error.code === 'string' ? error.code : ''
+}
+
+function errorMessageOf(error) {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function validLockOwner(owner) {
+  return owner !== null && typeof owner === 'object' && !Array.isArray(owner)
+    && Number.isInteger(owner.pid) && owner.pid > 0
+    && typeof owner.token === 'string' && owner.token !== ''
+    && owner.createdAt !== undefined
+}
+
+function readLockOwner(lockPath) {
+  try {
+    const owner = JSON.parse(readFileSync(lockPath, 'utf8'))
+    return validLockOwner(owner) ? owner : undefined
+  } catch (error) {
+    return undefined
+  }
+}
+
+function pidIsAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return undefined
+  if (pid === process.pid) return true
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    const code = errorCodeOf(error)
+    if (code === 'ESRCH' || code === 'EINVAL' || code === 'ENOENT') return false
+    return true
+  }
+}
+
+function tryCreateLock(lockPath) {
+  const owner = { pid: process.pid, token: randomUUID(), createdAt: Date.now() }
+  let fd
+  let created = false
+  let closeAttempted = false
+  let cleanupAttempted = false
+  let cleanupResult
+  let failureDecorated = false
+  const cleanupCreatedLock = () => {
+    if (cleanupAttempted) return cleanupResult
+    cleanupAttempted = true
+    try {
+      unlinkSync(lockPath)
+      cleanupResult = { ok: true, path: lockPath }
+    } catch (error) {
+      cleanupResult = { ok: false, path: lockPath, error }
+    }
+    return cleanupResult
+  }
+  const decorateFailure = (error, closeError, includeCleanup) => {
+    const details = []
+    if (closeError !== undefined) details.push('closeSync failed: ' + errorMessageOf(closeError))
+    if (includeCleanup || (cleanupResult !== undefined && cleanupResult.ok !== true)) {
+      if (cleanupResult === undefined) {
+        details.push('cleanup not attempted: ' + lockPath)
+      } else if (cleanupResult.ok) {
+        details.push('cleanup succeeded: ' + cleanupResult.path)
+      } else {
+        details.push('cleanup failed: ' + errorMessageOf(cleanupResult.error) + '; residual lock path: ' + cleanupResult.path)
+      }
+    }
+    if (details.length > 0 && error !== null && (typeof error === 'object' || typeof error === 'function')) {
+      error.message = errorMessageOf(error) + '; ' + details.join('; ')
+    }
+    return error
+  }
+  try {
+    fd = openSync(lockPath, 'wx')
+    created = true
+    writeSync(fd, JSON.stringify(owner), 0, 'utf8')
+    try {
+      closeSync(fd)
+      fd = undefined
+      closeAttempted = true
+    } catch (closeError) {
+      closeAttempted = true
+      fd = undefined
+      cleanupCreatedLock()
+      const failure = new Error('usage lock creation failed after successful write')
+      failure.cause = closeError
+      decorateFailure(failure, closeError, true)
+      failureDecorated = true
+      throw failure
+    }
+    return { acquired: true, lockPath, token: owner.token, owner }
+  } catch (error) {
+    let closeError
+    if (fd !== undefined && !closeAttempted) {
+      closeAttempted = true
+      try {
+        closeSync(fd)
+      } catch (errorOnClose) {
+        closeError = errorOnClose
+      }
+      fd = undefined
+    }
+    if (created) cleanupCreatedLock()
+    if (!created && errorCodeOf(error) === 'EEXIST') return undefined
+    if (!failureDecorated) decorateFailure(error, closeError, closeError !== undefined)
+    throw error
+  }
+}
+
+function sleepSync(ms) {
+  if (ms > 0) Atomics.wait(LOCK_WAIT_BUFFER, 0, 0, ms)
+}
+
+export function usageLedgerLockPath(activePath) {
+  return lockPathOf(activePath)
+}
+
+export function acquireUsageLedgerLock(activePath, options = WRITER_LOCK_WAIT_MS) {
+  const lockPath = lockPathOf(activePath)
+  if (lockPath === '') return { acquired: false, reason: 'invalid-path', lockPath, owner: undefined }
+  const requestedWait = typeof options === 'number' && Number.isFinite(options)
+    ? options
+    : options !== null && typeof options === 'object' && Number.isFinite(options.waitMs)
+      ? options.waitMs
+      : options !== null && typeof options === 'object' && Number.isFinite(options.timeoutMs)
+        ? options.timeoutMs
+        : WRITER_LOCK_WAIT_MS
+  const waitMs = Math.max(0, requestedWait)
+  const deadline = Date.now() + waitMs
+  let owner
+  while (true) {
+    const acquired = tryCreateLock(lockPath)
+    if (acquired !== undefined) return acquired
+    owner = readLockOwner(lockPath)
+    if (owner !== undefined && pidIsAlive(owner.pid) === false) {
+      return { acquired: false, reason: 'stale-lock', lockPath, owner }
+    }
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) return { acquired: false, reason: 'timeout', lockPath, owner }
+    sleepSync(Math.min(LOCK_POLL_MS, remaining))
+  }
+}
+
+export function releaseUsageLedgerLock(handle) {
+  if (handle === null || typeof handle !== 'object' || handle.acquired !== true
+    || typeof handle.lockPath !== 'string' || handle.lockPath === ''
+    || typeof handle.token !== 'string' || handle.token === '') {
+    return { released: false, reason: 'not-owner' }
+  }
+  const current = readLockOwner(handle.lockPath)
+  if (current === undefined) return { released: false, reason: 'missing-or-invalid' }
+  if (current.token !== handle.token) return { released: false, reason: 'token-mismatch', owner: current }
+  const stalePath = staleLockPathOf(handle.lockPath)
+  try {
+    renameSync(handle.lockPath, stalePath)
+  } catch (error) {
+    return { released: false, reason: errorCodeOf(error) === 'ENOENT' ? 'missing' : 'rename-failed' }
+  }
+  const moved = readLockOwner(stalePath)
+  if (moved === undefined || moved.token !== handle.token) {
+    try { renameSync(stalePath, handle.lockPath) } catch (restoreError) { /* do not delete another owner's lock */ }
+    return { released: false, reason: 'token-mismatch', owner: moved }
+  }
+  try {
+    unlinkSync(stalePath)
+  } catch (error) {
+    if (errorCodeOf(error) !== 'ENOENT') return { released: false, reason: 'delete-failed' }
+  }
+  return { released: true }
+}
 
 export function createUsageLedger(options = {}) {
   // usage 账本（写入带 (sessionId,seq) 去重，跨插件实例安全）
@@ -11,11 +197,20 @@ export function createUsageLedger(options = {}) {
   // cursor 降级告警口径：每插件实例（= 每个会话各一份）首次进入空表降级时告警一次
   // （与 ledgerWarned 同一次式风格）；同一实例内多次降级读不重复告警。
   let cursorDegradedWarned = false
+  let staleLockWarned = false
+  let releaseFailureWarned = false
   // usageCursors 只保存活跃 session：sessionId → { seq, index }（index = 上次折叠时读到的
   // session.seq 水位＝会话日志长度）。disposed final fold 后删除本 session 项；同 session 再次
   // 激活且内存无项时按 sessionId 从 cursor JSON 单项续载（水位可续做增量：只读 [index, seq)
   // 区间；水位不可读/日志截断/首次折叠才回退全量扫描，靠 seq 跳过旧消息）。
   const usageCursors = new Map()
+  const injectedLockApi = source.lockApi !== undefined ? source.lockApi : source.lockOps
+  const lockAcquire = injectedLockApi !== null && typeof injectedLockApi === 'object' && typeof injectedLockApi.acquire === 'function'
+    ? injectedLockApi.acquire
+    : typeof source.acquireLock === 'function' ? source.acquireLock : acquireUsageLedgerLock
+  const lockRelease = injectedLockApi !== null && typeof injectedLockApi === 'object' && typeof injectedLockApi.release === 'function'
+    ? injectedLockApi.release
+    : typeof source.releaseLock === 'function' ? source.releaseLock : releaseUsageLedgerLock
   // cursor JSON 读取（续载与写回前的现状盘点共用）：返回 { ok, table }。
   // - ENOENT（首次运行尚无 cursor 文件）→ ok:true + 空表，静默不告警（本就没有可保留内容）；
   // - 其它读取错误 / JSON 解析失败 / 根值非对象（null、数组、标量）→ 本实例首次降级告警一次，
@@ -51,122 +246,197 @@ export function createUsageLedger(options = {}) {
     console.warn('extra-plan: usage cursor JSON unreadable or corrupt — falling back to an empty cursor table; other sessions dedupe baselines may be lost on the next write: ' + (error instanceof Error ? error.message : String(error)))
   }
 
-  // cursor 单项归一：兼容旧数字形状（sessionId: seq，按水位 0 处理）与现有 { seq, index } 形状。
-  // 不再保留内存 ref 字段——增量改由 session.seq 水位 + snapshotEvents(from, to) 区间读取实现。
+  function warnStaleLock(lock) {
+    if (staleLockWarned) return
+    staleLockWarned = true
+    const lockPath = lock !== null && typeof lock === 'object' && typeof lock.lockPath === 'string' ? lock.lockPath : ledgerPath + '.lock'
+    const owner = lock !== null && typeof lock === 'object' && lock.owner !== null && typeof lock.owner === 'object' ? lock.owner : {}
+    const pid = owner.pid === undefined ? 'unknown' : String(owner.pid)
+    const token = owner.token === undefined ? 'unknown' : String(owner.token)
+    console.warn('extra-plan: usage ledger stale-lock blocked; lockPath=' + lockPath + '; owner pid=' + pid + ' token=' + token + '；不会自动接管或删除，请核实owner后显式维护')
+  }
+
+  // cursor 单项归一：只接受 V2 的 { seq, index } 形状；其它形状均视为无效。
+  // 增量改由 session.seq 水位 + snapshotEvents(from, to) 区间读取实现。
   function usageCursorEntryOf(table, sessionId) {
     const value = table[sessionId]
-    if (typeof value === 'number') return { seq: value, index: 0 }
-    if (value !== null && typeof value === 'object' && typeof value.seq === 'number') {
-      return { seq: value.seq, index: typeof value.index === 'number' ? value.index : 0 }
+    if (value !== null && typeof value === 'object' && !Array.isArray(value)
+      && Number.isInteger(value.seq) && value.seq >= 0
+      && Number.isInteger(value.index) && value.index >= 0) {
+      return { seq: value.seq, index: value.index }
     }
     return undefined
   }
 
+  function isUsageContext(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value)
+      && typeof value.sessionId === 'string' && value.sessionId.trim() !== ''
+      && typeof value.parentSessionId === 'string'
+      && typeof value.rootSessionId === 'string'
+      && typeof value.agentPreset === 'string'
+      && Number.isInteger(value.delegationDepth) && value.delegationDepth >= 0
+      && typeof value.role === 'string' && value.role.trim() !== ''
+  }
+
   // usage 折叠：同步函数（禁止改成 async——agent/disposed 是 emit/void，宿主不等待 Promise，
-  // 异步文件 I/O 会重新打开末轮漏记窗口）。既有语义保持：事件扫描、token/model/role 与 JSONL
-  // 字段、只有新增行才追加并持久化 cursor、cursor JSON 整文件改写。
+  // 异步文件 I/O 会重新打开末轮漏记窗口）。只扫描 assistant/message，写入 V2 上下文与四桶。
+  // 只有新增行才追加并持久化 cursor、cursor JSON 整文件改写。
   // 增量口径（P1-4）：以宿主 session.seq（＝会话日志长度，O(1)、不物化数组）为水位，配合
   // session.snapshotEvents(from, to) 区间读取只物化新增区间；水位不可读 / prevIndex > 水位
   // （日志截断）/ 首次折叠（无 prev）才回退全量快照。绝不在同一趟里同时跑全量与增量再对拍。
-  function foldUsage(agent, role) {
-    if (!ledgerOn || ledgerPath === '') return
-    const session = agent.session
-    if (session === undefined || session === null) return
-    if (typeof session.snapshotEvents !== 'function') return
+  function foldUsage(agent, usageContext) {
+    if (!ledgerOn || ledgerPath === '') return { status: 'disabled' }
+    const session = agent !== undefined && agent !== null ? agent.session : undefined
+    if (session === undefined || session === null) return { status: 'ignored' }
     try {
-      const sid = session.header.id
-      // ① 水位读取（O(1)，不物化数组）：宿主 session.seq ≡ 日志长度（seq === 索引的宿主契约）。
-      const logLen = session.seq
-      const hasWatermark = typeof logLen === 'number' && Number.isFinite(logLen) && logLen >= 0
-      // 内存无项（首次 fold / disposed 回收后同 session 再次激活）→ 只按 sessionId 从 cursor JSON
-      // 续载本项；不再把 JSON 里其它历史 session 一次性灌进内存 Map。
-      let prev = usageCursors.get(sid)
-      if (prev === undefined) prev = usageCursorEntryOf(readUsageCursorTable().table, sid)
-      let cursor = 0
-      let prevIndex = -1
-      if (prev !== undefined && prev !== null) {
-        cursor = typeof prev === 'number' ? prev : (typeof prev.seq === 'number' ? prev.seq : 0)
-        if (typeof prev.index === 'number' && Number.isFinite(prev.index) && prev.index >= 0) prevIndex = prev.index
+      if (!isUsageContext(usageContext)) throw new Error('usage context is invalid')
+      if (typeof session.snapshotEvents !== 'function') return { status: 'ignored' }
+      const context = usageContext
+      const sid = context.sessionId
+      const dir = dirname(ledgerPath)
+      if (dir !== '.') mkdirSync(dir, { recursive: true })
+      const lock = lockAcquire(ledgerPath, WRITER_LOCK_WAIT_MS)
+      if (lock.acquired !== true) {
+        if (lock.reason === 'stale-lock') warnStaleLock(lock)
+        return { status: 'delayed', reason: lock.reason, lockPath: lock.lockPath, owner: lock.owner }
       }
-      let start = 0
-      let events
-      if (hasWatermark && prevIndex === logLen) return // ② 无新增 → 直接返回（不物化数组、不写文件）
-      if (hasWatermark && prevIndex >= 0 && prevIndex <= logLen) {
-        // ③ 增量路径：只物化 [prevIndex, logLen) 区间
-        start = prevIndex
-        events = session.snapshotEvents(prevIndex, logLen)
-      } else {
-        // ④ 回退全量：首次折叠（无 prev）/ 会话无水位（非宿主会话对象）/ prevIndex > logLen（日志截断）
-        events = session.snapshotEvents()
+      let operationResult
+      let operationError
+      let releaseResult
+      let releaseError
+      try {
+        // ① 共享锁覆盖 cursor 读取、事件折叠、ledger append 与 cursor 写回。
+        const logLen = session.seq
+        const hasWatermark = typeof logLen === 'number' && Number.isFinite(logLen) && logLen >= 0
+        let prev = usageCursors.get(sid)
+        if (prev === undefined) prev = usageCursorEntryOf(readUsageCursorTable().table, sid)
+        let cursor = 0
+        let prevIndex = -1
+        if (prev !== undefined && prev !== null) {
+          cursor = prev.seq
+          prevIndex = prev.index
+        }
+        let start = 0
+        let events
+        if (hasWatermark && prevIndex === logLen) {
+          operationResult = { status: 'unchanged', rows: 0 }
+        } else {
+          if (hasWatermark && prevIndex >= 0 && prevIndex <= logLen) {
+            start = prevIndex
+            events = session.snapshotEvents(prevIndex, logLen)
+          } else {
+            events = session.snapshotEvents()
+          }
+          if (!Array.isArray(events)) {
+            operationResult = { status: 'ignored' }
+          } else {
+            const rows = []
+            for (let idx = 0; idx < events.length; idx += 1) {
+              const event = events[idx]
+              if (event === null || typeof event !== 'object' || event.type !== 'assistant/message') continue
+              const seq = typeof event.seq === 'number' ? event.seq : start + idx
+              if (seq <= cursor) continue
+              cursor = seq
+              const data = event.data
+              if (data === null || typeof data !== 'object') continue
+              const usage = data.usage
+              if (usage === null || typeof usage !== 'object') continue
+              const inputTokens = typeof usage.inputTokens === 'number' ? usage.inputTokens : 0
+              const cacheReadTokens = typeof usage.cacheReadTokens === 'number' ? usage.cacheReadTokens : 0
+              const cacheWriteTokens = typeof usage.cacheWriteTokens === 'number' ? usage.cacheWriteTokens : 0
+              const outputTokens = typeof usage.outputTokens === 'number' ? usage.outputTokens : 0
+              if (inputTokens === 0 && cacheReadTokens === 0 && cacheWriteTokens === 0 && outputTokens === 0) continue
+              const msg = data.message
+              const model = msg !== null && typeof msg === 'object' && msg.source !== null && typeof msg.source === 'object' && typeof msg.source.model === 'string' ? msg.source.model : ''
+              const provider = msg !== null && typeof msg === 'object' && msg.source !== null && typeof msg.source === 'object' && typeof msg.source.provider === 'string' ? msg.source.provider : ''
+              rows.push(JSON.stringify({
+                schemaVersion: 2,
+                ts: new Date().toISOString(),
+                sessionId: sid,
+                parentSessionId: context.parentSessionId,
+                rootSessionId: context.rootSessionId,
+                agentPreset: context.agentPreset,
+                delegationDepth: context.delegationDepth,
+                role: context.role,
+                model,
+                provider,
+                inputTokens,
+                cacheReadTokens,
+                cacheWriteTokens,
+                outputTokens,
+                seq,
+              }))
+            }
+            const nextIndex = hasWatermark ? logLen : events.length
+            const nextCursor = { seq: cursor, index: nextIndex }
+            if (rows.length === 0) {
+              usageCursors.set(sid, nextCursor)
+              operationResult = { status: 'advanced', rows: 0, cursor: nextCursor }
+            } else {
+              appendFileSync(ledgerPath, rows.join('\n') + '\n', 'utf8')
+              usageCursors.set(sid, nextCursor)
+              const current = readUsageCursorTable()
+              if (!current.ok) {
+                operationResult = { status: 'written', rows: rows.length, cursorPersisted: false }
+              } else {
+                const persisted = {}
+                for (const key of Object.keys(current.table)) {
+                  if (key === sid) continue
+                  const entry = usageCursorEntryOf(current.table, key)
+                  if (entry === undefined) continue
+                  persisted[key] = { seq: entry.seq, index: entry.index }
+                }
+                persisted[sid] = nextCursor
+                let cursorPersisted = true
+                try {
+                  writeFileSync(ledgerCursorPath, JSON.stringify(persisted), 'utf8')
+                } catch (error) {
+                  cursorPersisted = false
+                }
+                operationResult = { status: 'written', rows: rows.length, cursor: nextCursor, cursorPersisted }
+              }
+            }
+          }
+        }
+      } catch (error) {
+        operationError = error
+      } finally {
+        try {
+          releaseResult = lockRelease(lock)
+          if (releaseResult === null || typeof releaseResult !== 'object' || releaseResult.released !== true) {
+            const reason = releaseResult !== null && releaseResult !== undefined ? String(releaseResult.reason || 'unknown') : 'unknown'
+            releaseError = new Error('usage ledger lock release failed: ' + reason)
+          }
+        } catch (error) {
+          releaseError = error
+        }
       }
-      if (!Array.isArray(events)) return
-      const rows = []
-      for (let idx = 0; idx < events.length; idx += 1) {
-        const event = events[idx]
-        if (event === null || typeof event !== 'object' || event.type !== 'assistant/message') continue
-        const seq = typeof event.seq === 'number' ? event.seq : start + idx
-        if (seq <= cursor) continue
-        cursor = seq
-        const data = event.data
-        if (data === null || typeof data !== 'object') continue
-        const usage = data.usage
-        if (usage === null || typeof usage !== 'object') continue
-        const hit = typeof usage.cacheReadTokens === 'number' ? usage.cacheReadTokens : 0
-        const miss = typeof usage.inputTokens === 'number' ? usage.inputTokens : 0
-        const out = typeof usage.outputTokens === 'number' ? usage.outputTokens : 0
-        const cacheWriteTokens = typeof usage.cacheWriteTokens === 'number' ? usage.cacheWriteTokens : 0
-        const reasoningTokens = typeof usage.reasoningTokens === 'number' ? usage.reasoningTokens : 0
-        if (hit === 0 && miss === 0 && out === 0 && cacheWriteTokens === 0 && reasoningTokens === 0) continue
-        const msg = data.message
-        const model = msg !== null && typeof msg === 'object' && msg.source !== null && typeof msg.source === 'object' && typeof msg.source.model === 'string' ? msg.source.model : ''
-        const provider = msg !== null && typeof msg === 'object' && msg.source !== null && typeof msg.source === 'object' && typeof msg.source.provider === 'string' ? msg.source.provider : ''
-        rows.push(JSON.stringify({
-          ts: new Date().toISOString(),
-          sessionId: sid,
-          role,
-          model,
-          provider,
-          hit,
-          miss,
-          out,
-          cacheWriteTokens,
-          reasoningTokens,
-          seq,
-        }))
+      if (releaseError !== undefined) {
+        const detail = releaseError instanceof Error ? releaseError.message : String(releaseError)
+        if (!releaseFailureWarned) {
+          releaseFailureWarned = true
+          console.warn('extra-plan: usage ledger release failed: ' + detail)
+        }
+        const failed = {
+          status: 'failed',
+          reason: 'release-failed',
+          releaseFailed: true,
+          operationStatus: operationResult === undefined ? undefined : operationResult.status,
+          operationResult,
+          releaseResult,
+          releaseError: detail,
+        }
+        if (operationError !== undefined) failed.operationError = operationError instanceof Error ? operationError.message : String(operationError)
+        return failed
       }
-      // 游标写回：index 为本次读到的水位（增量下一次从该水位续做）；无水位会话退化为本次快照长度。
-      const nextIndex = hasWatermark ? logLen : events.length
-      const nextCursor = { seq: cursor, index: nextIndex }
-      // 无 usage 行时只推进当前进程内存水位，避免重复扫描；不触碰账本或 cursor 文件。
-      if (rows.length === 0) {
-        usageCursors.set(sid, nextCursor)
-        return
-      }
-      const sepA = ledgerPath.lastIndexOf('\\')
-      const sepB = ledgerPath.lastIndexOf('/')
-      const dir = ledgerPath.slice(0, Math.max(sepA, sepB))
-      if (dir !== '') mkdirSync(dir, { recursive: true })
-      appendFileSync(ledgerPath, rows.join('\n') + '\n', 'utf8')
-      // append 成功后才推进内存游标；append 失败时下一次 fold 必须再次输出同一批 seq。
-      usageCursors.set(sid, nextCursor)
-      // cursor 持久化：写前重读现状——可解析时更新本 session 项并逐项保留其它合法 session。
-      // 重读降级（读不到/解析失败/根值非对象）时原样保留 cursor 文件，不覆盖其它 session 基准。
-      const current = readUsageCursorTable()
-      if (!current.ok) return
-      const persisted = {}
-      for (const key of Object.keys(current.table)) {
-        if (key === sid) continue
-        const entry = usageCursorEntryOf(current.table, key)
-        if (entry === undefined) continue
-        persisted[key] = { seq: entry.seq, index: entry.index }
-      }
-      persisted[sid] = nextCursor
-      try { writeFileSync(ledgerCursorPath, JSON.stringify(persisted), 'utf8') } catch (error) { /* cursor 持久化尽力而为 */ }
+      if (operationError !== undefined) throw operationError
+      return operationResult
     } catch (error) {
       if (!ledgerWarned) {
         ledgerWarned = true
-        console.warn(`extra-plan: usage ledger fold failed: ${error instanceof Error ? error.message : String(error)}`)
+        console.warn('extra-plan: usage ledger fold failed: ' + (error instanceof Error ? error.message : String(error)))
       }
+      return { status: 'failed' }
     }
   }
 

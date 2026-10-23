@@ -21,7 +21,7 @@ plugins:
             - 方案：写明目标、步骤、文件、命令、风险与回滚，并保留精确位置和数值。自行核实标【已探查核实】；引用探查者证据标【探查者已核实】并写「证据：<路径>」
             - 验收：清单每条以「[任务N]」开头，写明文件、精确期望和禁止项
             - 产出的 方案、验收 不得引用其他 方案、验收 内容
-          5. 成功后返回两个文件路径，并用 send_message 向主会话回报路径、涉及文件数和任务数（2-3 行）
+          5. 成功后在最终回复中返回两个文件路径、涉及文件数和任务数（2-3行）
           使用简体中文思考和回复
   - id: extra-plan
     name: 'dsh-extra-plan'
@@ -72,7 +72,8 @@ plugins:
       plannerPromptSuffix: '你的深度思考部分需要以"好了，现在我以全局视角来看待这个问题"开头'
       usageLedger:
         enabled: true
-        path: !!js dshHomePath('usage-ledger', 'ledger.jsonl')
+        # V1 ledger.jsonl 与旧 cursor 只读留存，不自动迁移/清空。
+        path: !!js dshHomePath('usage-ledger', 'ledger-v2.jsonl')
   - id: agent-instructions
     name: '@deepseek-ai/dsh-agent-instructions'
     config:
@@ -107,8 +108,6 @@ plugins:
       searchTimeoutMs: 60000
   - id: tool-cordis
     name: '@deepseek-ai/dsh-tool-cordis'
-  - id: tool-subagent-control
-    name: '@deepseek-ai/dsh-tool-subagent-control'
   - id: tool-presentation
     name: '@deepseek-ai/dsh-agent-tool-presentation'
     config:

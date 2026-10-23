@@ -70,7 +70,7 @@ export function forensicCommand(file, args = []) {
 
 // 需参数项
 const NEED_ARG = [
-  ['step-99-用量统计.mjs', '参数: <ledger.jsonl>，统计 token 用量'],
+  ['step-99-用量统计.mjs', '参数: <ledger-v2.jsonl>；默认只读合并同目录 ledger-v2.archive.jsonl+ledger-v2.jsonl，在线短锁约1秒；writer约1秒超时静默返回delayed、不推进cursor，后续fold补记；仅stale-lock需核实owner后显式维护，不自动接管或删锁；显式 --archive <active> 约30秒锁预算，失败回滚；V1/坏JSON不迁移'],
 ]
 
 export function parseResult(out) {

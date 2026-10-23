@@ -6,7 +6,7 @@ import { DEFAULT_EXPLORE_BUDGET } from './preset-defaults.generated.js'
 
 export { DEFAULT_EXPLORE_BUDGET }
 
-// 会话内 tool/call 成功配对计数（排除 skipNames，如 save_plan/send_message）——探查硬上限判据。
+// 会话内 tool/call 成功配对计数（排除 skipNames，如 save_plan）——探查硬上限判据。
 // 直呼 = tool/call + tool/result(ok) 配对；run_code 子调用由实例上限单独约束。
 export function toolCallCount(events, skipNames) {
   if (!Array.isArray(events)) return 0

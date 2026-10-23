@@ -326,6 +326,14 @@ check('T3 角色作者源 4 项且 id/order 唯一（101..104）',
   && JSON.stringify(roleRow.map((role) => role.order)) === JSON.stringify([101, 102, 103, 104]))
 const mainExtraRow = Array.isArray(definitionDoc.plugins) ? (definitionDoc.plugins.find((row) => row.id === 'extra-plan-group')?.config || []).find((row) => row.id === 'extra-plan') : undefined
 const mainExtraConfigJson = mainExtraRow === undefined ? 'missing' : JSON.stringify(mainExtraRow.config)
+const CONTROL_TOOL_SOURCE = '@deepseek-ai/dsh-tool-subagent-control'
+const LIST_AGENTS_TOOL_SOURCE = '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+const mainAuthorRows = flatten(Array.isArray(rows) ? rows : [])
+const mainDefinitionRows = flatten(definitionDoc !== null && typeof definitionDoc === 'object' && Array.isArray(definitionDoc.plugins) ? definitionDoc.plugins : [])
+check('T3 主作者源控制与 list-agents 各恰 1 行', mainAuthorRows.filter((row) => row.name === CONTROL_TOOL_SOURCE).length, 1)
+check('T3 主作者源 list-agents 控制子行恰 1 行', mainAuthorRows.filter((row) => row.name === LIST_AGENTS_TOOL_SOURCE).length, 1)
+check('T3 主 definition 控制与 list-agents 各恰 1 行', mainDefinitionRows.filter((row) => row.name === CONTROL_TOOL_SOURCE).length, 1)
+check('T3 主 definition list-agents 控制子行恰 1 行', mainDefinitionRows.filter((row) => row.name === LIST_AGENTS_TOOL_SOURCE).length, 1)
 for (const role of roleRow) {
   const roleFile = roleDefinitionFile(role.id, PRESET_DIR)
   let roleDef = null
@@ -338,9 +346,8 @@ for (const role of roleRow) {
     && roleDef.plugins[1].name === 'dsh-extra-plan' && JSON.stringify(roleDef.plugins[1].config) === mainExtraConfigJson)
   const toolRows = roleDef === null ? [] : roleDef.plugins.slice(2)
   const toolNames = toolRows.map((row) => row.name)
-  // 公共禁用（四角色一律不挂）：委派/工作流/交互类工具 + list-agents 子行。
-  const forbidden = ['@deepseek-ai/dsh-tool-subagent', '@deepseek-ai/dsh-tool-subagent-control/list-agents', '@deepseek-ai/dsh-tool-workflow', '@deepseek-ai/dsh-tool-ralph', '@deepseek-ai/dsh-tool-ask-user', '@deepseek-ai/dsh-tool-todo']
-  // tool-subagent-control：四角色均挂同一官方包；send_message 与 interrupt_agent 同时绑定且不可拆。
+  // 公共禁用（四角色一律不挂）：控制/委派/工作流/交互类工具 + list-agents 子行。
+  const forbidden = ['@deepseek-ai/dsh-tool-subagent-control', '@deepseek-ai/dsh-tool-subagent', '@deepseek-ai/dsh-tool-subagent-control/list-agents', '@deepseek-ai/dsh-tool-workflow', '@deepseek-ai/dsh-tool-ralph', '@deepseek-ai/dsh-tool-ask-user', '@deepseek-ai/dsh-tool-todo']
   const controlToolName = '@deepseek-ai/dsh-tool-subagent-control'
   const controlToolCount = toolNames.filter((name) => name === controlToolName).length
   const fsRow = toolRows.find((row) => row.name === '@deepseek-ai/dsh-tool-fs')
@@ -353,7 +360,8 @@ for (const role of roleRow) {
   // tool-web（fetch:false）与只读 tool-cordis。
   check('T3 ' + role.id + ' 工具面按只读/可写/shell 规则裁剪',
     forbidden.every((name) => !toolNames.includes(name))
-    && controlToolCount === 1
+    && controlToolCount === 0
+    && (role.id !== 'extra-plan-planner' || !String(role.personaPrefix || '').includes('send_message'))
     && readOnlyOk
     && shellRows.length === 2
     && toolNames.includes('@deepseek-ai/dsh-tool-fs-search') && toolNames.includes('@deepseek-ai/dsh-tool-skill')
@@ -706,6 +714,17 @@ if (pluginRow !== undefined && pluginRow.config && pluginRow.config.creativeMode
   fail += 1
   console.log('FAIL  extra-plan 插件行 config 缺失')
 }
+const V2_USAGE_PATH_TEXT = "path: !!js dshHomePath('usage-ledger', 'ledger-v2.jsonl')"
+const V1_USAGE_PATH_TEXT = "path: !!js dshHomePath('usage-ledger', 'ledger.jsonl')"
+const usagePathSources = [
+  ['作者源 agent.cordis.yml', agentText],
+  ['主 preset-definition.generated.yml', definitionText],
+  ...ROLE_IDS.map((roleId) => [roleId + ' definition', readFileSync(roleDefinitionFile(roleId, PRESET_DIR), 'utf8')]),
+]
+for (const [label, sourceText] of usagePathSources) {
+  check('M13 ' + label + ' usageLedger 唯一路径为 ledger-v2.jsonl（旧默认引用失败）', sourceText.includes(V2_USAGE_PATH_TEXT) && !sourceText.includes(V1_USAGE_PATH_TEXT))
+}
+
 
 // T1 禁止项：本修复走宿主 patch（dsh-extra-plan-qqbot/cordis.patch.yml 补
 // cordis-host-runner 行），资产预设的 tool-cordis 行必须逐字未变（仅 id + name 两行、无 config）。

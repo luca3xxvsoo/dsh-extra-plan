@@ -21,7 +21,7 @@
 ## 当前兼容与安全边界
 
 - 当前支持范围为 dsh `0.2.1-rc.2`（单一版本：`engines.dsh` 与三项 @deepseek-ai peer 同值，插件 package.json 是版本真源）；旧版兼容见旧版分支。当前证据等级（静态/集成/HUMAN）与待复测项统一见[ai-宿主耦合台账](pe-test/docs/ai-宿主耦合台账.md)的当前验证状态；QQBot、生产、真实消息、`/preset`、question/approval、GUI 与模型行为仍需部署后 HUMAN 复测。
-- 五角色顺序：主会话 → 探查者 → 规划子代理 → 执行者 → 验收者。四个子角色均绑定官方 `send_message`/`interrupt_agent` 控制包与只读 Cordis 两工具；能力不等于任意目标控制：send 受直属父子边界、interrupt 仅调用者获授权的后代，主向 running 子发送仍保留原禁扰。路由/目的/澄清/批准是机械锚点；唯一受限写例外是 `save_plan` 双文件工件，其余工作区写入按批准后的执行者流程进行。
+- 五角色顺序：主会话 → 探查者 → 规划子代理 → 执行者 → 验收者。main 保留官方 `send_message`/`interrupt_agent`/`list_agents`；四角色 definition 不挂 control 包，运行时按原始 `isSubagentChild` 对 `send_message`/`interrupt_agent` 直呼与 `run_code` 成员硬拒（含 unknown/断链 child）。自动最终结果仍返回；child 的阻塞疑问以最终回复返回，main 可向 idle child 续轮。只读 Cordis 两工具仍按角色预设保留；main 的目标纪律是 send 直属父子、interrupt 仅调用者获授权的后代，主向 running 子发送仍保留原禁扰；`FREE_TOOLS` 仅 `save_plan`。路由/目的/澄清/批准是机械锚点，其他工作区写入按批准后的执行者流程进行。
 - A/C/M 是模型可见投影维度：A=anchoredBootstrap，C=creativeMode，M=`native|ptc`（`both` 随 0.2.1 二值化退出，旧值归一化回落 native）；F/L 以首个 `tool/call` 为界。MCP public tool 名遵循 `[A-Za-z0-9_-]`，静态 `tools['mcp__...-...'](...)` 可被预审识别，真正动态/拼接/转义访问与 ask 返回链约束不变。展示隐藏不等于运行时 binding 安全隔离，真实取证见实机流程。
 - AI 不执行生产部署；仓库验收通过后由用户操作部署与实测。工作区外写入被委派边界拒绝时，不逐条尝试，不设置 `sandbox_permissions`，只在汇报中列越界清单。
 

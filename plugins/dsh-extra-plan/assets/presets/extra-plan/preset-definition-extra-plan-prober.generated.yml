@@ -67,7 +67,8 @@ plugins:
       plannerPromptSuffix: '你的深度思考部分需要以"好了，现在我以全局视角来看待这个问题"开头'
       usageLedger:
         enabled: true
-        path: !!js dshHomePath('usage-ledger', 'ledger.jsonl')
+        # V1 ledger.jsonl 与旧 cursor 只读留存，不自动迁移/清空。
+        path: !!js dshHomePath('usage-ledger', 'ledger-v2.jsonl')
   - id: agent-instructions
     name: '@deepseek-ai/dsh-agent-instructions'
     config:
@@ -102,8 +103,6 @@ plugins:
       searchTimeoutMs: 60000
   - id: tool-cordis
     name: '@deepseek-ai/dsh-tool-cordis'
-  - id: tool-subagent-control
-    name: '@deepseek-ai/dsh-tool-subagent-control'
   - id: tool-presentation
     name: '@deepseek-ai/dsh-agent-tool-presentation'
     config:

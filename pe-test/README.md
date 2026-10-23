@@ -68,6 +68,8 @@ node pe-test/tools/step-07-子代理模型与引导取证.mjs
 
 1. **`tools/readme.md` 是测试数据（不是文档）**：`step-00-全流程回归` 的检查项依赖它存在，**别删、别改名**。
 2. **运行前提**：部分文件要 `import 仓库里的插件代码`（相对路径 `../../plugins/...`）——如果运行时报「找不到模块」，说明当前目录不是完整目录；把 pe-test 挪回仓库根（或你准备挪回工作区时带齐 plugins）再跑。
-3. `step-99-用量统计.mjs` 需要参数：`node step-99-用量统计.mjs <账本文件路径>`。口径＝**纯 token 统计**：输出一张按 `sessionId | role | model` 分组的明细表，列为
-   `sessionId | role | model | provider | calls | hit | miss | out | cw | rs`（calls=调用次数、hit=输入命中、miss=输入未命中、out=输出、cw=缓存写入 cacheWriteTokens、rs=推理 reasoningTokens），
-   provider 取该组首个非空值、空值显示 `-`；不做任何按 provider 或按 model 的汇总，也不输出任何折算后的数字。旧账本行（缺 provider/cw/rs）按 空串/0/0 统计，不会报错也不会被跳过。
+3. `step-99-用量统计.mjs` 需要参数：`node step-99-用量统计.mjs <ledger-v2.jsonl>`；显式归档用 `node step-99-用量统计.mjs --archive <ledger-v2.jsonl>`。
+   - 固定文件为同目录 `ledger-v2.jsonl`（active）、`ledger-v2.archive.jsonl`（archive）和 `ledger-v2.jsonl.lock`（active + `.lock`）。锁内容记录 owner 的 PID、token、创建时间；统计与 writer 共用排他锁。
+   - 默认统计只在锁内读取 archive+active 字节快照，释放锁后自动合并解析，零写入、cursor 不读写；按完整九字段身份键 `schemaVersion | rootSessionId | sessionId | parentSessionId | agentPreset | delegationDepth | role | model | provider` 分组，输出四桶、`maxSeq`、`ts` 及派生总量，不输出调用计数列。writer/严格归档固定15键，`rootSessionId` 与 `agentPreset` 合法为空字符串；archive 每个完整身份仅保留一条累计行，`seq` 是身份累计水位而非调用数，active 中同身份 `seq` 不大于该水位的重放行跳过并计入 `covered`。
+   - `--archive` 可在 DSH 运行中调用：全程持锁，在约 30 秒预算内聚合历史、原子发布 archive 并清空 active，cursor 不读写；AI 思考和参数准备阶段不持锁。释放后 writer 可继续向 active 追加。
+   - writer 最多短等约 1 秒；timeout 静默返回 `delayed`，不推进 ledger/cursor，后续 fold 补记。stale-lock 每个 writer 实例最多告警一次且不自动接管/删除，先核实 owner PID/token 后显式维护；非法输入拒绝。`--archive` 的发布失败在发布前或回滚后保持 canonical 一致；release 失败返回明确的 `failed`/`release-failed`，已提交写入不伪装回滚。V1 不迁移。

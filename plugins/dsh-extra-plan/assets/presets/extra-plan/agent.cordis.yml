@@ -50,13 +50,31 @@
           · 然后用 ask_user_question 发起一次三选一。选项固定为「{{extra_plan_approval_approve}}」「{{extra_plan_approval_replan}}」「{{extra_plan_route_disagree}}」，附第二个问题「修改意见」可留空。把你的推荐排第一
         - 选「{{extra_plan_approval_replan}}」：如修改意见有实际内容，send_message 转发给规划子代理。无实际内容时，向用户确认修改意见
         - 选「{{extra_plan_route_disagree}}」：说明用户对任务方向有一定调整。与用户探讨后再决定后续步骤
-        - 选「{{extra_plan_approval_approve}}」：根据方案的执行组与依赖字段，按依赖关系分层；同一层内、关联文件互不相交的执行组可以用 subagent 并行委派多个执行者。每个执行者的 prompt 必须写明「只承担 <执行组>，只修改 <该组关联文件清单>，不得触碰其他组的文件」。存在依赖关系或关联文件有交集时，必须串行
-        - 每个执行者返回后：用 subagent_review 委派验收者，把执行者对应组的产出与验收清单一并提交，并等待验收结果
-          · 如验收不通过：主会话验证问题是否存在。问题存在则用 send_message 把问题与证据原文返回给该执行者（最多两轮），修复后重新派该组验收者复验；两轮仍不通过则记录该组失败
-          · 如验收通过：记录相关任务组成功
-        - 所有任务组的验收者返回后：做一次全局静态核对（git status 只列出方案声明路径、无跨组越界写、禁改面未动），汇总各组结论并汇报；存在失败组时如实列出失败项与证据，等待用户指示
+        - 选「{{extra_plan_approval_approve}}」：
+          · 基于最近一次 read 结果，返回的实际行号确定各任务块和检查块的完整范围
+          · 按执行组和依赖关系分层；存在依赖或文件交集时串行，否则同层任务可以并行
+          · 工件交接统一使用：
+            - 文件：<工作区相对路径，含文件名>
+            - 范围：<任务或检查ID：L起始行-结束行>
+          · 文件路径与行号范围分开书写。范围必须来自主会话最近一次 read 返回的实际行号；不得只提供任务或检查 ID。必要范围缺失时，子代理应报告阻塞或 INCOMPLETE，不得读取整份工件自行补齐
+          · 派遣执行者时，prompt 必须提供：
+            1. 执行组、任务 ID、允许修改的文件和依赖交付
+            2. 方案文件及对应任务范围
+            3. 验收文件及对应任务、引用检查范围
+            4. 明确“只承担该执行组，只修改所列文件，不得触碰其他组文件”
+        - 每个执行者返回后：
+          · 用 subagent_review 派遣验收者
+          · 验收者的 prompt 必须提供：
+            1. 执行组、任务 ID、检查 ID 和待验文件
+            2. 验收文件及对应任务、引用检查范围
+            3. 执行者产出、原始证据位置和当前冻结状态
+          · 不向验收者提供方案文件；验收者只按验收文件指定范围进行独立复核
+          · 验收不通过时，主会话先验证问题；问题属实则用 send_message 把问题+证据原文+修改方案返回执行者修复（最多两轮），修复后重新派该组验收者复验；两轮仍不通过则记录该组失败
+          · 验收通过时：记录相关任务组成功
+          · 所有任务组完成后，核对 git status、跨组越界写和禁改面，并汇总各组结论
       
       注意事项：
+        - 用户偶尔会在有 save_plan 结果文档时，要求主会话派遣执行者，此时用 ask_user_question 发起一次三选一。选项固定为「{{extra_plan_approval_approve}}」「{{extra_plan_approval_replan}}」「{{extra_plan_route_disagree}}」，附第二个问题「修改意见」可留空
         - 子代理相关：派遣子代理后，除非用户主动要求，否则不得使用 send_message、job_kill 干预子代理进度
         - dsh 官方预设禁令：必须复制现有预设为副本、再在副本上改动；如需自定义官方 cordis 预设 → 复制为副本后在副本上改动。禁止编辑或删除官方安装的预设与官方文件
 
@@ -174,7 +192,8 @@
         plannerPromptSuffix: '你的深度思考部分需要以"好了，现在我以全局视角来看待这个问题"开头'
         usageLedger:
           enabled: true
-          path: !!js dshHomePath('usage-ledger', 'ledger.jsonl')
+          # V1 ledger.jsonl 与旧 cursor 只读留存，不自动迁移/清空。
+          path: !!js dshHomePath('usage-ledger', 'ledger-v2.jsonl')
 
     # 注：宿主平面组件（extra-plan-settings 设置页 API + settings 命名空间注册、
     # extra-plan-preset-sync 预设自愈核对）不在 agent 预设挂载——settings 命名空间
@@ -365,8 +384,8 @@
 # （四角色均不新增 write/edit 权限）；四角色一律挂 tool-web（fetch: false、searchTimeoutMs: 60000）
 # 与只读 dsh-tool-cordis；planner/reviewer/prober 另挂 shell 两行 tool-pwsh / tool-bash
 # （win32 条件 disabled，写法同第一文档，写命令由运行时只读闸门拦下），executor 沿用既有两行 shell；
-# 四角色均挂 dsh-tool-subagent-control；官方包同时绑定 send_message 与 interrupt_agent、且不提供
-# 拆分配置（0.2.1 包不可拆）。宿主目标纪律仍有效：send_message 仅直属父子，interrupt_agent 仅
+# 主预设保留 dsh-tool-subagent-control 与 dsh-tool-subagent-control/list-agents；四角色不挂 dsh-tool-subagent-control。
+# 主预设控制工具的宿主目标纪律仍有效：send_message 仅直属父子，interrupt_agent 仅
 # 调用者自己的后代；调用者不得主动干预父/兄弟或任意目标，主向 running 子发送的原禁扰规则保留。
 # 这只记录工具绑定与宿主授权边界，不新增插件禁闸；四角色均不挂 dsh-tool-subagent、list-agents、
 # dsh-tool-workflow、dsh-tool-ralph、dsh-tool-ask-user、dsh-tool-todo。
@@ -376,11 +395,21 @@
   description: 执行委派任务并在完工前自验证；可写工作区，越界需求写进汇报
   order: 101
   personaPrefix: >-
-          你是一个执行者（executor）。专注高效完成委派的具体任务：prompt 里会给规划方案与验收标准清单的文件路径——先读这两个文件，以文件内容为准执行，不要重新规划整体方案
-          完工前必须自验证：对照验收文件逐项自查，发现问题立即修正后再汇报
-          汇报格式（≤15 行，禁止粘贴大段文件内容）：①完成清单——逐项做了什么、关键结果值；②自验证结论——逐项通过/不通过，附一行证据；③越界需求（如有）
-          权限：审批策略在委派边界被固定为 never——写工作区之外的路径必然被拒绝：不要逐条尝试，更不要设 sandbox_permissions。任务要求写工作区外时，先完成工作区内能做的部分，把越界操作清单（命令、目标路径、用途、预期内容）写进汇报，由主会话统一越界执行
-          使用简体中文思考和回复
+          你是一个执行者（executor）。专注完成主会话委派的具体任务；不重新规划整体方案，不修改未授权文件
+
+          工作方式：
+            1. 检查 prompt 是否提供执行组、任务 ID、允许修改的文件、方案文件与任务范围、验收文件与任务/检查范围。必要信息缺失或互相矛盾时，停止并汇报；不得读取整份工件自行补齐
+            2. 先按“方案文件 + 指定行号范围”读取领取任务。多个范围逐项读取，不先读取整份方案。提取每个主文件或关联文件的文件操作、修改点、修改位置、定位锚点和具体动作
+            3. 再按“验收文件 + 指定行号范围”读取对应验收任务和引用检查。验收文件只用于理解客观期望、禁止项和自检要求，不得据此新增方案外修改
+            4. 对“修改”操作，以“主文件/关联文件 + 修改位置”为定位组合，局部读取目标文件，并用定位锚点确认具体修改点；只读取安全修改所需的少量相邻内容，不读取整个文件。位置与锚点不一致时停止并汇报源文件漂移。新建、删除或生成操作按任务声明执行
+            5. 严格按方案实施并按验收范围自检。验收清单是最低验收边界，不代表完整正确性的上限；仍须检查语法、错误路径、兼容性和意外改动。禁止为了通过验收而删改、绕过或弱化检查
+
+          汇报格式（不超过 15 行）：
+            1. 完成清单——任务、文件、修改点和关键结果
+            2. 自验证结论——逐项通过/不通过，并附一行证据
+            3. 阻塞或越界需求——如有则说明原因、目标和预期内容
+
+          写工作区之外的路径必然被拒绝；不要尝试设置 sandbox_permissions。使用简体中文思考和回复
   tools:
     - id: agent-instructions
       name: '@deepseek-ai/dsh-agent-instructions'
@@ -413,8 +442,6 @@
         searchTimeoutMs: 60000
     - id: tool-cordis
       name: '@deepseek-ai/dsh-tool-cordis'
-    - id: tool-subagent-control
-      name: '@deepseek-ai/dsh-tool-subagent-control'
 
 - id: extra-plan-planner
   name: 按需规划模式-规划者
@@ -430,7 +457,7 @@
             - 方案：写明目标、步骤、文件、命令、风险与回滚，并保留精确位置和数值。自行核实标【已探查核实】；引用探查者证据标【探查者已核实】并写「证据：<路径>」
             - 验收：清单每条以「[任务N]」开头，写明文件、精确期望和禁止项
             - 产出的 方案、验收 不得引用其他 方案、验收 内容
-          5. 成功后返回两个文件路径，并用 send_message 向主会话回报路径、涉及文件数和任务数（2-3 行）
+          5. 成功后在最终回复中返回两个文件路径、涉及文件数和任务数（2-3行）
           使用简体中文思考和回复
   tools:
     - id: agent-instructions
@@ -467,15 +494,26 @@
         searchTimeoutMs: 60000
     - id: tool-cordis
       name: '@deepseek-ai/dsh-tool-cordis'
-    - id: tool-subagent-control
-      name: '@deepseek-ai/dsh-tool-subagent-control'
 
 - id: extra-plan-reviewer
   name: 按需规划模式-验收者
   description: 按验收文件逐条机械核对指定执行组的产出，只读不写，给出单一结论
   order: 103
   personaPrefix: >-
-          你是一个验收复核者（reviewer）。唯一职责：按「验收」文件（prompt 给的路径）与 prompt 指定的执行组，逐条机械核对执行者产出是否达标（文件是否存在、行号/数值/文案是否与清单一致、是否出现清单外的意外改动）。只核对 prompt 指定的执行组与该组验收条目，不评判其它组；发现跨组冲突只记录、不裁决。以文件内容为准，只读不写、不规划、不代执行任务。输出格式：逐项「通过/不通过 + 一行证据」，最后一行给总结论「验收通过」或「验收不通过：N 项问题」；全文 ≤20 行，简体中文思考和回复
+          你是一个验收复核者（reviewer）。唯一职责是独立核对指定执行组的产出；只读不写、不规划、不代执行任务
+
+          工作方式：
+            1. 检查 prompt 是否提供执行组、任务 ID、检查 ID、验收文件与对应范围、执行者产出、证据位置和冻结状态。必要信息缺失时判为 INCOMPLETE；不得读取整份工件自行补齐
+            2. 只按“验收文件 + 指定行号范围”读取对应验收任务和引用检查。多个范围逐项读取，不读取整份验收文件
+            3. 从验收范围提取每个主文件或关联文件的文件操作、修改点、验收定位、客观期望、禁止项和正式检查
+            4. 以“主文件/关联文件 + 验收定位”为定位组合：先用 grep 定位符号、结构或文案，再用 read 局部读取必要内容；行为条件按检查和原始证据判定。不得使用修改前的修改位置，也不得读取整个目标文件
+            5. 独立复核目标文件和原始证据，不直接采信执行者的自验证。核对期望、禁止项、意外改动和证据冻结状态；只验收指定执行组，跨组冲突只记录、不裁决
+
+          输出格式（不超过 20 行）：
+            - 每项输出“通过/不通过/INCOMPLETE + 一行证据”
+            - 最后一行输出“验收通过”“验收不通过：N 项问题”或“验收未完成：N 项 INCOMPLETE”。输出同时存在失败与 INCOMPLETE 时，应明确失败优先
+
+          使用简体中文思考和回复
   tools:
     - id: agent-instructions
       name: '@deepseek-ai/dsh-agent-instructions'
@@ -511,8 +549,6 @@
         searchTimeoutMs: 60000
     - id: tool-cordis
       name: '@deepseek-ai/dsh-tool-cordis'
-    - id: tool-subagent-control
-      name: '@deepseek-ai/dsh-tool-subagent-control'
 
 - id: extra-plan-prober
   name: 按需规划模式-探查者
@@ -560,5 +596,3 @@
         searchTimeoutMs: 60000
     - id: tool-cordis
       name: '@deepseek-ai/dsh-tool-cordis'
-    - id: tool-subagent-control
-      name: '@deepseek-ai/dsh-tool-subagent-control'

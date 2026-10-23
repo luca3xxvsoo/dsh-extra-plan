@@ -183,7 +183,7 @@ function labelsOfCallData(data) {
 // purposeSet）；模块内不再保留任何静态 Set，也不存在默认词表。
 
 // 免计瀑布预算的工具白名单（planner 预算计数与 pre-execute 闸门豁免共用）。
-const FREE_TOOLS = new Set(['save_plan', 'send_message'])
+const FREE_TOOLS = new Set(['save_plan'])
 
 // 白名单后缀剥离：把选项标签末尾的推荐标记去掉，用于精确匹配前净化。
 // 四种白名单后缀：(Recommended)、（Recommended）、(推荐)、（推荐）；英文不区分大小写。
@@ -658,9 +658,18 @@ function shellMutationReason(role, exec) {
   return null
 }
 
+// 子代理控制工具硬闸：仅主会话可用；保持纯函数以供直呼与 run_code 组判定复用。
+function childControlGateReason(exec) {
+  const name = exec !== undefined && exec !== null && typeof exec.name === 'string' ? exec.name : ''
+  if (name !== 'send_message' && name !== 'interrupt_agent') return null
+  return `子代理禁止调用 ${name}：send_message 与 interrupt_agent 仅主会话可用`
+}
+
 // ② planner 分支（plannerGateReason；自 apply 内提取的纯部分）：write/edit → shell 写命令
 // （shellMutationReason）→ job_output → 预算；不含 run_code（由调用方处理）。
 function plannerGateReason(exec, events, exploreBudget, jobOutputCallCounters) {
+  const controlReason = childControlGateReason(exec)
+  if (controlReason !== null) return controlReason
   if (exec.name === 'write' || exec.name === 'edit') {
     return '规划子代理只读：方案经 save_plan 落盘，其余写入一律禁止（toolFilter 之外的第二道防线）'
   }
@@ -679,6 +688,8 @@ function plannerGateReason(exec, events, exploreBudget, jobOutputCallCounters) {
 // ③ child 只读块（childReadonlyGateReason；自 apply 内提取的纯部分）：write/edit → shell 写命令
 // （shellMutationReason，probe 布尔选角色）→ job_output；不含 run_code。
 function childReadonlyGateReason(exec, probe, jobOutputCallCounters) {
+  const controlReason = childControlGateReason(exec)
+  if (controlReason !== null) return controlReason
   if (exec.name === 'write' || exec.name === 'edit') {
     return probe ? '探查者只读：探查不修改任何文件，write/edit 一律禁止（工具目录判定）' : '验收复核者只读：验收复核不修改任何文件，write/edit 一律禁止（工具目录判定）'
   }
@@ -965,10 +976,10 @@ function runCodeGroupDenyReason(state, exec, role, gateCtx) {
       const vExec = member.kind === 'bare-write'
         ? { name: 'write', bare: true, hints: member.hints, arguments: {}, sub: true }
         : { name: member.name, arguments: member.argsParsed ? member.args : member.argsText, sub: true }
-      let reason = null
-      if (member.name === 'subagent_probe') {
+      let reason = roleKind !== 'main' ? childControlGateReason(vExec) : null
+      if (reason === null && ctx.controlOnly !== true && member.name === 'subagent_probe') {
         reason = subagentProbeGateReason(vExec, roleKind)
-      } else if (member.kind === 'bare-write') {
+      } else if (reason === null && ctx.controlOnly !== true && member.kind === 'bare-write') {
         // 裸写成员按角色分流：只读角色保留 v2 共享文案（hits 拼写与既有共享文案逐字同构）；
         // 主会话走 write/edit 闸门（routeDenyReason 与 approved 文案）；
         // 执行者（child 非只读）豁免。
@@ -978,22 +989,22 @@ function runCodeGroupDenyReason(state, exec, role, gateCtx) {
         } else if (roleKind === 'main') {
           reason = mainGateReason(st, vExec, ctx)
         } // 执行者豁免：reason 保持 null
-      } else if (roleKind === 'planner') {
+      } else if (reason === null && ctx.controlOnly !== true && roleKind === 'planner') {
         reason = plannerGateReason(vExec, ctx.events !== undefined ? ctx.events : [], ctx.exploreBudget, ctx.jobOutputCallCounters)
-      } else if (roleKind === 'child') {
+      } else if (reason === null && ctx.controlOnly !== true && roleKind === 'child') {
         reason = r.readOnly === true ? childReadonlyGateReason(vExec, r.probe === true, ctx.jobOutputCallCounters) : null
-      } else {
+      } else if (reason === null && ctx.controlOnly !== true) {
         reason = mainGateReason(st, vExec, ctx)
       }
       if (reason !== null) denies.push({ member, reason })
     }
   }
   visit(runCodeTextOf(exec), ctx.runCodeDepth)
-  if (ctx.runcodeCatchGate === true) {
+  if (ctx.controlOnly !== true && ctx.runcodeCatchGate === true) {
     const catchReason = runCodeCatchGateReason(runCodeTextOf(exec))
     if (catchReason !== null) denies.push({ member: { kind: 'catch', name: 'run_code' }, reason: catchReason })
   }
-  if (roleKind === 'planner') {
+  if (ctx.controlOnly !== true && roleKind === 'planner') {
     const siteCount = runCodeSiteCount(runCodeTextOf(exec))
     if (siteCount > ctx.exploreBudget) denies.push({ member: { kind: 'cap', name: 'run_code' }, reason: `run_code 静态调用点 ${siteCount} 处超过单实例子调用上限 ${ctx.exploreBudget}（exploreBudget）：请拆分多个 run_code 或减少单次调用点` })
     // 新增（T2 修复）：预算耗尽白名单把关——budgetExceeded(toolCallsSinceUser(events, FREE_TOOLS)+1, exploreBudget) 时，
@@ -1053,7 +1064,7 @@ export {
   askKindOf, askKindOfRelaxed, isExactGateSet, isPartialGateSet, categorizeGateAsk, gateAskDenyReason, validateGateAskStructure,
   matchRouteLabel, matchApprovalLabel, matchPurposeLabel, parseAskResultData, parseDispatchAskResult, deriveFlowState,
   catalogHasWriteTools, isReadOnlyChildByCatalog, schemasHasWriteTools, schemasHasTool, catalogIsCollapsed,
-  subagentProbeGateReason, shellMutationReason, plannerGateReason, childReadonlyGateReason, jobOutputGateReason, recordJobOutputCall,
+  subagentProbeGateReason, shellMutationReason, childControlGateReason, plannerGateReason, childReadonlyGateReason, jobOutputGateReason, recordJobOutputCall,
   pollGuardGateReason, recordPollGuardCall, probeDisposalWarning, mainGateReason, runCodeGroupDenyReason, aggregateRunCodeDenyReason,
   decomposeRunCode, runCodeCatchGateReason, collectRunCodeSites, askUserQuestionReturnGateReason, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, runCodeDispatchCapText,
 }

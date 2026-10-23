@@ -91,6 +91,7 @@ export const decisions = {
   runCodeDispatchGateReason,
   runCodeDispatchCapText,
   runCodeGroupDenyReason,
+  childControlGateReason,
   subagentProbeGateReason,
   shellMutationReason,
   plannerGateReason,
@@ -135,7 +136,7 @@ import { causeChainOf } from './lib/runtime-static.js'
 import { createAgentRuntime, isLiveDelegation, childPolicyNeedsFloor } from './lib/agent-runtime.js'
 import { sessionEvents, isSubagentChild } from './lib/agent-session.js'
 import { createModelRouting, isExplicitRoute, isExplicitEffort, resolveAgentRouteSources, decidePlannerModelUse, PLANNER_PROBE_TIMEOUT_MS, PLANNER_BLOCKED_REASON, NON_PLANNER_BLOCKED_REASON, sortPlannerCandidates } from './lib/model-routing.js'
-import { CHANNEL_BROKEN_CODES, FREE_TOOLS, routeDenyReason, planDenyReason, approvalDenyReason, isBootstrapPhase, labelsOfCallData, askKindOf, askKindOfRelaxed, isExactGateSet, isPartialGateSet, categorizeGateAsk, gateAskDenyReason, validateGateAskStructure, matchRouteLabel, matchApprovalLabel, matchPurposeLabel, parseAskResultData, parseDispatchAskResult, deriveFlowState, filterBootstrapContextDecision, dedupeProjectedContextDecision, catalogHasWriteTools, isReadOnlyChildByCatalog, schemasHasWriteTools, schemasHasTool, catalogIsCollapsed, subagentProbeGateReason, shellMutationReason, plannerGateReason, childReadonlyGateReason, jobOutputGateReason, recordJobOutputCall, pollGuardGateReason, recordPollGuardCall, probeDisposalWarning, mainGateReason, runCodeGroupDenyReason, aggregateRunCodeDenyReason, decomposeRunCode, runCodeCatchGateReason, collectRunCodeSites, askUserQuestionReturnGateReason, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, runCodeDispatchCapText } from './lib/gate-decisions.js'
+import { CHANNEL_BROKEN_CODES, FREE_TOOLS, routeDenyReason, planDenyReason, approvalDenyReason, isBootstrapPhase, labelsOfCallData, askKindOf, askKindOfRelaxed, isExactGateSet, isPartialGateSet, categorizeGateAsk, gateAskDenyReason, validateGateAskStructure, matchRouteLabel, matchApprovalLabel, matchPurposeLabel, parseAskResultData, parseDispatchAskResult, deriveFlowState, filterBootstrapContextDecision, dedupeProjectedContextDecision, catalogHasWriteTools, isReadOnlyChildByCatalog, schemasHasWriteTools, schemasHasTool, catalogIsCollapsed, subagentProbeGateReason, shellMutationReason, childControlGateReason, plannerGateReason, childReadonlyGateReason, jobOutputGateReason, recordJobOutputCall, pollGuardGateReason, recordPollGuardCall, probeDisposalWarning, mainGateReason, runCodeGroupDenyReason, aggregateRunCodeDenyReason, decomposeRunCode, runCodeCatchGateReason, collectRunCodeSites, askUserQuestionReturnGateReason, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, runCodeDispatchCapText } from './lib/gate-decisions.js'
 import { CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilteredToolsSdk, resolveToolsSdkRenderer, sdkSchemasForRendering, toolPresentationModeOf, toolSdkSchemasOf, projectSkillCatalogDecision, PTC_SECTION_NAME, READ_SECTION_NAME, SDK_SECTION_NAME, sectionOf, hasSection, hasNonEmptySection } from './lib/assembly-presentation.js'
 import { createSdkTextCache } from './lib/sdk-text-cache.js'
 import { createUsageLedger } from './lib/usage-ledger.js'
@@ -352,7 +353,7 @@ export function apply(ctx, config) {
   const { foldUsage } = usageLedger
 
   const sandboxPolicy = ctx.get('sandboxPolicy')
-  const { isChild, isPlannerChild, toolSchemasOf, usageRoleOf, childBaseline } = createAgentRuntime({
+  const { isChild, isPlannerChild, toolSchemasOf, usageContextOf, childBaseline } = createAgentRuntime({
     getAgents: () => ctx.get('agents'),
     sandboxPolicy,
     foldUsage,
@@ -383,7 +384,7 @@ export function apply(ctx, config) {
   // creativeMode=false 不再靠「不注册」，而由 assembly-presentation 的 CREATIVE_SKILL_NAMES 在
   // catalog 投影里隐藏（只去掉名字可见性：skill 仍注册，按名调用依旧可加载，不等于真隔离）。
 
-  // childBaseline/usageRoleOf 与 sandbox floor 由每次 apply 独立创建的 agent runtime 工厂提供。
+  // childBaseline/usageContextOf 与 sandbox floor 由每次 apply 独立创建的 agent runtime 工厂提供。
 
   // save_plan/save_probe 的合同、校验、渲染与单次落盘由 lib 工厂提供；此处仅保留注册与生命周期接线。
   const runtimeLifecycle = createRuntimeLifecycle({
@@ -595,7 +596,7 @@ export function apply(ctx, config) {
   // 4) 会话销毁：同步 final flush + 单会话状态回收。必须保持同步回调——agent/disposed 是
   //    emit/void，宿主调用监听器后只对返回的 Promise 挂 catch、不等待完成；此处 driver 已静止、
   //    session 尚未解绑，同步路径内才能读到最终 snapshot 并结算末轮 usage。
-  //    顺序不可换：① 先按缓存 role 同步 foldUsage（在任何 Map 删除之前）；② 保留
+  //    顺序不可换：① 先按缓存 usage context 同步 foldUsage（在任何 Map 删除之前）；② 保留
   //    pendingProbeClaims 的剩余数量告警语义，再删除该 session 的待认领计数（含
   //    runCodeDenyRecords 的 PTC 拒绝记录桶）；③ 最后按
   //    sessionId 依次回收 jobOutputCallCounters、jobOutputLastAnchors、toolJobsNoticesConsumed、
@@ -613,7 +614,7 @@ export function apply(ctx, config) {
       console.warn('extra-plan: agent/disposed text cache cleanup failed: ' + (error instanceof Error ? error.message : String(error)))
     }
     try {
-      foldUsage(agent, usageRoleOf(agent))
+      foldUsage(agent, usageContextOf(agent))
     } catch (error) {
       console.warn('extra-plan: agent/disposed final usage fold failed: ' + (error instanceof Error ? error.message : String(error)))
     } finally {
@@ -859,8 +860,23 @@ export function apply(ctx, config) {
       if (se === null || typeof se !== 'object' || se.type !== 'user/message') continue
       consumeToolJobsNotice(agent, se.data)
     }
+    // 控制工具硬闸必须使用原始子代理判定：不依赖 live parent，覆盖 unknown、断链与恢复 child。
+    const subagentChild = isSubagentChild(agent, execEvents)
     const child = childBaseline(agent, execEvents)
     const planner = isPlannerChild(agent, execEvents)
+    const controlReason = subagentChild ? childControlGateReason(exec) : null
+    if (controlReason !== null) {
+      recordRunCodeDeny(agent, exec, controlReason)
+      return { kind: 'deny', reason: controlReason }
+    }
+    // 执行者与断链 child 的 run_code 先只做控制成员预审，再进入既有角色/root 闸门。
+    if (subagentChild && exec.name === 'run_code') {
+      const controlRunReason = runCodeGroupDenyReason(undefined, exec, { kind: 'child' }, { controlOnly: true, gateRuntime })
+      if (controlRunReason !== null) {
+        recordRunCodeDeny(agent, exec, controlRunReason)
+        return { kind: 'deny', reason: controlRunReason }
+      }
+    }
     // 探查者委派属只读探查能力（与 read/glob/grep 同级）：主会话在任意路由状态放行，
     // 0.2.1 起委派工具已无后台参数，固定后台语义上移宿主；本处只保留角色判定。
     // 置于 planner/child 判定之前，但闸门函数内首先按角色拒绝 planner（T5）：

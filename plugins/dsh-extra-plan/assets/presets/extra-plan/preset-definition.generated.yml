@@ -36,13 +36,31 @@ plugins:
             · 然后用 ask_user_question 发起一次三选一。选项固定为「{{extra_plan_approval_approve}}」「{{extra_plan_approval_replan}}」「{{extra_plan_route_disagree}}」，附第二个问题「修改意见」可留空。把你的推荐排第一
           - 选「{{extra_plan_approval_replan}}」：如修改意见有实际内容，send_message 转发给规划子代理。无实际内容时，向用户确认修改意见
           - 选「{{extra_plan_route_disagree}}」：说明用户对任务方向有一定调整。与用户探讨后再决定后续步骤
-          - 选「{{extra_plan_approval_approve}}」：根据方案的执行组与依赖字段，按依赖关系分层；同一层内、关联文件互不相交的执行组可以用 subagent 并行委派多个执行者。每个执行者的 prompt 必须写明「只承担 <执行组>，只修改 <该组关联文件清单>，不得触碰其他组的文件」。存在依赖关系或关联文件有交集时，必须串行
-          - 每个执行者返回后：用 subagent_review 委派验收者，把执行者对应组的产出与验收清单一并提交，并等待验收结果
-            · 如验收不通过：主会话验证问题是否存在。问题存在则用 send_message 把问题与证据原文返回给该执行者（最多两轮），修复后重新派该组验收者复验；两轮仍不通过则记录该组失败
-            · 如验收通过：记录相关任务组成功
-          - 所有任务组的验收者返回后：做一次全局静态核对（git status 只列出方案声明路径、无跨组越界写、禁改面未动），汇总各组结论并汇报；存在失败组时如实列出失败项与证据，等待用户指示
+          - 选「{{extra_plan_approval_approve}}」：
+            · 基于最近一次 read 结果，返回的实际行号确定各任务块和检查块的完整范围
+            · 按执行组和依赖关系分层；存在依赖或文件交集时串行，否则同层任务可以并行
+            · 工件交接统一使用：
+              - 文件：<工作区相对路径，含文件名>
+              - 范围：<任务或检查ID：L起始行-结束行>
+            · 文件路径与行号范围分开书写。范围必须来自主会话最近一次 read 返回的实际行号；不得只提供任务或检查 ID。必要范围缺失时，子代理应报告阻塞或 INCOMPLETE，不得读取整份工件自行补齐
+            · 派遣执行者时，prompt 必须提供：
+              1. 执行组、任务 ID、允许修改的文件和依赖交付
+              2. 方案文件及对应任务范围
+              3. 验收文件及对应任务、引用检查范围
+              4. 明确“只承担该执行组，只修改所列文件，不得触碰其他组文件”
+          - 每个执行者返回后：
+            · 用 subagent_review 派遣验收者
+            · 验收者的 prompt 必须提供：
+              1. 执行组、任务 ID、检查 ID 和待验文件
+              2. 验收文件及对应任务、引用检查范围
+              3. 执行者产出、原始证据位置和当前冻结状态
+            · 不向验收者提供方案文件；验收者只按验收文件指定范围进行独立复核
+            · 验收不通过时，主会话先验证问题；问题属实则用 send_message 把问题+证据原文+修改方案返回执行者修复（最多两轮），修复后重新派该组验收者复验；两轮仍不通过则记录该组失败
+            · 验收通过时：记录相关任务组成功
+            · 所有任务组完成后，核对 git status、跨组越界写和禁改面，并汇总各组结论
         
         注意事项：
+          - 用户偶尔会在有 save_plan 结果文档时，要求主会话派遣执行者，此时用 ask_user_question 发起一次三选一。选项固定为「{{extra_plan_approval_approve}}」「{{extra_plan_approval_replan}}」「{{extra_plan_route_disagree}}」，附第二个问题「修改意见」可留空
           - 子代理相关：派遣子代理后，除非用户主动要求，否则不得使用 send_message、job_kill 干预子代理进度
           - dsh 官方预设禁令：必须复制现有预设为副本、再在副本上改动；如需自定义官方 cordis 预设 → 复制为副本后在副本上改动。禁止编辑或删除官方安装的预设与官方文件
 
@@ -160,7 +178,8 @@ plugins:
           plannerPromptSuffix: '你的深度思考部分需要以"好了，现在我以全局视角来看待这个问题"开头'
           usageLedger:
             enabled: true
-            path: !!js dshHomePath('usage-ledger', 'ledger.jsonl')
+            # V1 ledger.jsonl 与旧 cursor 只读留存，不自动迁移/清空。
+            path: !!js dshHomePath('usage-ledger', 'ledger-v2.jsonl')
 
       # 注：宿主平面组件（extra-plan-settings 设置页 API + settings 命名空间注册、
       # extra-plan-preset-sync 预设自愈核对）不在 agent 预设挂载——settings 命名空间

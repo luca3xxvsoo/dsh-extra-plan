@@ -33,6 +33,7 @@ process.on('exit', restoreIsolatedEnv)
 const plannerBudget = await import('../../plugins/dsh-extra-plan/lib/planner-budget.js')
 const PLUGIN_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/index.js', import.meta.url))
 const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
+const { FREE_TOOLS } = await import('../../plugins/dsh-extra-plan/lib/gate-decisions.js')
 const { Config: SETTINGS_CONFIG } = await import('../../plugins/dsh-extra-plan/lib/settings.js')
 import { createRunCodeStatic } from '../../plugins/dsh-extra-plan/lib/run-code-static.js'
 import * as runCodeScanner from '../../plugins/dsh-extra-plan/lib/run-code-scanner.js'
@@ -40,8 +41,10 @@ import * as shellMutation from '../../plugins/dsh-extra-plan/lib/shell-mutation.
 import * as runtimeStatic from '../../plugins/dsh-extra-plan/lib/runtime-static.js'
 import * as agentRuntime from '../../plugins/dsh-extra-plan/lib/agent-runtime.js'
 const roleGenerator = await import('../../plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs')
+const usageStats = await import('./step-99-用量统计.mjs')
+import * as usageLedgerModule from '../../plugins/dsh-extra-plan/lib/usage-ledger.js'
 import { DEFAULT_EXPLORE_BUDGET as GENERATED_DEFAULT_EXPLORE_BUDGET, DEFAULT_PLANNER_PROMPT_SUFFIX as GENERATED_DEFAULT_PLANNER_PROMPT_SUFFIX } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
-import { existsSync, readFileSync, readdirSync, mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, mkdtempSync, rmSync, mkdirSync, writeFileSync, renameSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { parsePresetYaml, createDefaultSettings } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
@@ -84,6 +87,8 @@ const {
   decomposeRunCode,
   runCodeCatchGateReason,
   runCodeGroupDenyReason,
+  childControlGateReason,
+  mainGateReason,
   askUserQuestionReturnGateReason,
   deriveFlowState,
   toolCallCount,
@@ -837,50 +842,491 @@ check('FLOOR1 会话级 read-only → 抬升', childPolicyNeedsFloor({}, sp('rea
 check('FLOOR2 部署默认 read-only → 抬升', childPolicyNeedsFloor({}, sp(undefined, 'read-only')), true)
 check('FLOOR3 workspace-write → 不动', childPolicyNeedsFloor({}, sp(undefined, 'workspace-write')), false)
 
-// ── AR 系列:createAgentRuntime per-apply 状态、快照与同步 fold ─────────────
-// 口径：0.2.1 起 planner 判据是 session.header.agentPreset === 'extra-plan-planner'，descriptor.mode 恒为 continuable、不再作判据（与文件内 L1486、L1811 的既有写法同口径）。
+// ── AR 系列:createAgentRuntime usage context 矩阵、缓存、快照与同步 fold ─────
+// 口径：main 与五类 child 分开记录精确 preset/role；root 只沿 live registry 追溯，最多 8 层并拒绝断链、循环与自指。
 const runtimeDescriptor = { type: 'subagent/descriptor', data: { mode: 'continuable' } }
-const runtimeEvents = []
-const runtimeParentIds = new Set(['runtime-parent'])
-const runtimeFoldRoles = []
-const runtimeFloorWrites = []
-const runtimeWarnings = []
-const runtimeChild = {
-  session: { header: { id: 'runtime-child', origin: 'subagent', delegationDepth: 1, parentSession: 'runtime-parent' }, snapshotEvents: () => runtimeEvents, append: (...args) => runtimeFloorWrites.push(args) },
-  ctx: undefined,
+const arAgent = ({ id, child = false, parentSession = '', preset = '', depth = 0, events = [] }) => {
+  const header = { id }
+  if (child) Object.assign(header, { origin: 'subagent', delegationDepth: depth, parentSession })
+  if (typeof preset === 'string') header.agentPreset = preset
+  return { session: { header, snapshotEvents: () => events, append: (...args) => args }, ctx: undefined }
 }
-const runtime = agentRuntime.createAgentRuntime({
-  getAgents: () => ({ get: (id) => runtimeParentIds.has(id) ? {} : undefined }),
-  sandboxPolicy: { overrideOf: () => 'read-only', defaultMode: 'workspace-write' },
-  foldUsage: (_agent, role) => runtimeFoldRoles.push(role),
-  warn: (message) => runtimeWarnings.push(message),
-})
-check('AR1 无 agentPreset 判 false（按预设值缓存）', runtime.isPlannerChild(runtimeChild, []), false)
-runtimeEvents.push(runtimeDescriptor)
-runtimeChild.session.header.agentPreset = 'extra-plan-planner' // 只在断言前追加：初始 header 保持无 agentPreset（AR1 语义）
-check('AR2 后设 agentPreset 可纠正为 planner=true（descriptor 不再是判据）', runtime.isPlannerChild(runtimeChild, runtimeEvents) === true && runtime.isPlannerChild(runtimeChild, []) === true, true)
+const arMain = arAgent({ id: 'ar-main', preset: '' })
+const arRoleCases = [
+  { label: 'main', agent: arMain, expected: { sessionId: 'ar-main', parentSessionId: '', rootSessionId: 'ar-main', agentPreset: '', delegationDepth: 0, role: 'main' } },
+  { label: 'planner', agent: arAgent({ id: 'ar-planner', child: true, parentSession: 'ar-main', preset: 'extra-plan-planner', depth: 1 }), expected: { sessionId: 'ar-planner', parentSessionId: 'ar-main', rootSessionId: 'ar-main', agentPreset: 'extra-plan-planner', delegationDepth: 1, role: 'planner' } },
+  { label: 'prober', agent: arAgent({ id: 'ar-prober', child: true, parentSession: 'ar-main', preset: 'extra-plan-prober', depth: 1 }), expected: { sessionId: 'ar-prober', parentSessionId: 'ar-main', rootSessionId: 'ar-main', agentPreset: 'extra-plan-prober', delegationDepth: 1, role: 'prober' } },
+  { label: 'executor', agent: arAgent({ id: 'ar-executor', child: true, parentSession: 'ar-main', preset: 'extra-plan-executor', depth: 1 }), expected: { sessionId: 'ar-executor', parentSessionId: 'ar-main', rootSessionId: 'ar-main', agentPreset: 'extra-plan-executor', delegationDepth: 1, role: 'executor' } },
+  { label: 'reviewer', agent: arAgent({ id: 'ar-reviewer', child: true, parentSession: 'ar-main', preset: 'extra-plan-reviewer', depth: 1 }), expected: { sessionId: 'ar-reviewer', parentSessionId: 'ar-main', rootSessionId: 'ar-main', agentPreset: 'extra-plan-reviewer', delegationDepth: 1, role: 'reviewer' } },
+  { label: 'unknown-child', agent: arAgent({ id: 'ar-unknown', child: true, parentSession: 'ar-main', preset: 'extra-plan-unknown', depth: 1 }), expected: { sessionId: 'ar-unknown', parentSessionId: 'ar-main', rootSessionId: 'ar-main', agentPreset: 'extra-plan-unknown', delegationDepth: 1, role: 'child' } },
+]
+const arRegistry = new Map([['ar-main', arMain], ...arRoleCases.slice(1).map((item) => [item.agent.session.header.id, item.agent])])
+const arRuntime = agentRuntime.createAgentRuntime({ getAgents: () => ({ get: (id) => arRegistry.get(id) }), foldUsage: () => {}, warn: () => {} })
+for (const item of arRoleCases) {
+  const context = arRuntime.usageContextOf(item.agent, [])
+  checkTrue('AR-' + item.label + ' usage context 精确包含自身/父/根/preset/depth/role', isDeepStrictEqual(context, item.expected))
+  check('AR-' + item.label + ' planner 身份只由精确 preset 判定', arRuntime.isPlannerChild(item.agent, []), item.label === 'planner')
+}
+const cachedPlannerContext = arRuntime.usageContextOf(arRoleCases[1].agent, [])
+arRegistry.delete('ar-main')
+const cachedPlannerAfterRegistryLoss = arRuntime.usageContextOf(arRoleCases[1].agent, [])
+checkTrue('AR-cache usageContextOf WeakMap 命中：registry 脱离后仍返回同一完整planner上下文', cachedPlannerContext === cachedPlannerAfterRegistryLoss && cachedPlannerAfterRegistryLoss.rootSessionId === 'ar-main' && cachedPlannerAfterRegistryLoss.role === 'planner')
+arRegistry.set('ar-main', arMain)
+const arDirectOrphan = arAgent({ id: 'ar-direct-orphan', child: true, parentSession: 'ar-unlisted-parent', preset: 'extra-plan-prober', depth: 1 })
+const arDirectOrphanContext = arRuntime.usageContextOf(arDirectOrphan, [])
+checkTrue('AR-direct 一级父registry缺席仍以真实parent为root', arDirectOrphanContext.sessionId === 'ar-direct-orphan' && arDirectOrphanContext.parentSessionId === 'ar-unlisted-parent' && arDirectOrphanContext.rootSessionId === 'ar-unlisted-parent' && arDirectOrphanContext.delegationDepth === 1)
 let explicitSnapshotCalls = 0
-const explicitSnapshotAgent = {
-  session: { header: { id: 'runtime-explicit', origin: 'subagent', delegationDepth: 1, parentSession: 'runtime-parent' }, snapshotEvents: () => { explicitSnapshotCalls += 1; return [runtimeDescriptor] } },
-  ctx: undefined,
-}
-const explicitEvents = [runtimeDescriptor]
-runtime.isPlannerChild(explicitSnapshotAgent, explicitEvents)
-runtime.isChild(explicitSnapshotAgent, explicitEvents)
-check('AR3 显式 events 快照复用且不读取 session.snapshotEvents', explicitSnapshotCalls, 0)
-check('AR4 缺失 agent/ctx/tools/schema 降级为 undefined', runtime.toolSchemasOf(undefined) === undefined && runtime.toolSchemasOf({}) === undefined && runtime.toolSchemasOf({ ctx: { get: () => ({}) } }) === undefined, true)
+const explicitSnapshotAgent = arAgent({ id: 'ar-explicit', child: true, parentSession: 'ar-main', preset: 'extra-plan-planner', depth: 1, events: [runtimeDescriptor] })
+explicitSnapshotAgent.session.snapshotEvents = () => { explicitSnapshotCalls += 1; return [runtimeDescriptor] }
+arRuntime.isPlannerChild(explicitSnapshotAgent, [runtimeDescriptor])
+arRuntime.isChild(explicitSnapshotAgent, [runtimeDescriptor])
+check('AR-snapshot 显式 events 复用且不读取 session.snapshotEvents', explicitSnapshotCalls, 0)
+check('AR-tools 缺失 agent/ctx/tools/schema 降级为 undefined', arRuntime.toolSchemasOf(undefined) === undefined && arRuntime.toolSchemasOf({}) === undefined && arRuntime.toolSchemasOf({ ctx: { get: () => ({}) } }) === undefined, true)
 let schemaCalls = 0
 const runtimeSchemaAgent = { ctx: { get: (name) => name === 'tools' ? { schemas: () => { schemaCalls += 1; return [{ name: 'read' }] } } : undefined } }
-check('AR5 toolSchemasOf 成功返回数组且不缓存', JSON.stringify(runtime.toolSchemasOf(runtimeSchemaAgent)), JSON.stringify([{ name: 'read' }]))
-runtime.toolSchemasOf(runtimeSchemaAgent)
-check('AR5b toolSchemasOf 每次重新读取 schemas', schemaCalls, 2)
-check('AR6 childBaseline 同步 fold 后追加 workspace-write floor', runtime.childBaseline(runtimeChild, runtimeEvents) === true && runtimeFoldRoles.at(-1) === 'planner' && runtimeFloorWrites.length === 1, true)
-runtimeParentIds.clear()
-check('AR7 usageRoleOf 优先缓存，registry 脱离后仍为 planner', runtime.usageRoleOf(runtimeChild), 'planner')
-const runtimeMain = { session: { header: { id: 'runtime-main' }, snapshotEvents: () => [] }, ctx: undefined }
-runtime.childBaseline(runtimeMain, [])
-check('AR8 main baseline 同步 fold 且不追加 floor', runtimeFoldRoles.at(-1) === 'main' && runtimeFloorWrites.length === 1 && runtimeWarnings.length === 0, true)
+check('AR-tools 成功返回数组且不缓存', JSON.stringify(arRuntime.toolSchemasOf(runtimeSchemaAgent)), JSON.stringify([{ name: 'read' }]))
+arRuntime.toolSchemasOf(runtimeSchemaAgent)
+check('AR-tools 每次重新读取 schemas', schemaCalls, 2)
 
+// 完整父链最多 8 层；第 9 个父链节点必须因深度边界返回空根。
+const arChain = new Map()
+const arChainRoot = arAgent({ id: 'ar-chain-root', preset: '' })
+arChain.set('ar-chain-root', arChainRoot)
+let previousChainId = 'ar-chain-root'
+for (let depth = 1; depth <= 9; depth += 1) {
+  const id = 'ar-chain-' + depth
+  const node = arAgent({ id, child: true, parentSession: previousChainId, preset: 'extra-plan-executor', depth })
+  arChain.set(id, node)
+  previousChainId = id
+}
+const arChainRuntime = agentRuntime.createAgentRuntime({ getAgents: () => ({ get: (id) => arChain.get(id) }), foldUsage: () => {}, warn: () => {} })
+const arChain8 = arChainRuntime.usageContextOf(arChain.get('ar-chain-8'), [])
+const arChain9 = arChainRuntime.usageContextOf(arChain.get('ar-chain-9'), [])
+checkTrue('AR-chain 完整 8 层：根为 ar-chain-root、父为 ar-chain-7、depth=8', arChain8.rootSessionId === 'ar-chain-root' && arChain8.parentSessionId === 'ar-chain-7' && arChain8.delegationDepth === 8)
+checkTrue('AR-chain 8 层边界外第9层：保留自身/父但根为空', arChain9.rootSessionId === '' && arChain9.parentSessionId === 'ar-chain-8' && arChain9.delegationDepth === 9)
+
+// 断链、自指、循环均不得伪造 root。
+const arBroken = arAgent({ id: 'ar-broken', child: true, parentSession: 'ar-missing', preset: 'extra-plan-prober', depth: 2 })
+const arSelf = arAgent({ id: 'ar-self', child: true, parentSession: 'ar-self', preset: 'extra-plan-executor', depth: 2 })
+const arCycleA = arAgent({ id: 'ar-cycle-a', child: true, parentSession: 'ar-cycle-b', preset: 'extra-plan-reviewer', depth: 2 })
+const arCycleB = arAgent({ id: 'ar-cycle-b', child: true, parentSession: 'ar-cycle-a', preset: 'extra-plan-reviewer', depth: 2 })
+const arBrokenRegistry = new Map([['ar-self', arSelf], ['ar-cycle-a', arCycleA], ['ar-cycle-b', arCycleB]])
+const arBrokenRuntime = agentRuntime.createAgentRuntime({ getAgents: () => ({ get: (id) => arBrokenRegistry.get(id) }), foldUsage: () => {}, warn: () => {} })
+const arBrokenContext = arBrokenRuntime.usageContextOf(arBroken, [])
+const arSelfContext = arBrokenRuntime.usageContextOf(arSelf, [])
+const arCycleContext = arBrokenRuntime.usageContextOf(arCycleA, [])
+checkTrue('AR-chain 断链：自身/父保留，root 为空', arBrokenContext.sessionId === 'ar-broken' && arBrokenContext.parentSessionId === 'ar-missing' && arBrokenContext.rootSessionId === '')
+checkTrue('AR-chain 自身父链：不把自身伪造为root', arSelfContext.sessionId === 'ar-self' && arSelfContext.parentSessionId === 'ar-self' && arSelfContext.rootSessionId === '')
+checkTrue('AR-chain 循环父链：不把循环节点伪造为root', arCycleContext.sessionId === 'ar-cycle-a' && arCycleContext.parentSessionId === 'ar-cycle-b' && arCycleContext.rootSessionId === '')
+
+// 既有 gate/floor 不变量：live child 才抬升 floor；断链 child 仍可折叠上下文但不抬升；main 永不抬升。
+const arGateMain = arAgent({ id: 'ar-gate-main', preset: '' })
+const arGateChild = arAgent({ id: 'ar-gate-child', child: true, parentSession: 'ar-gate-main', preset: 'extra-plan-executor', depth: 1 })
+const arGateBroken = arAgent({ id: 'ar-gate-broken', child: true, parentSession: 'ar-gate-missing', preset: 'extra-plan-executor', depth: 1 })
+const arGateRegistry = new Map([['ar-gate-main', arGateMain]])
+const arGateFold = []
+const arGateFloor = []
+const arGateWarnings = []
+const arGateRuntime = agentRuntime.createAgentRuntime({
+  getAgents: () => ({ get: (id) => arGateRegistry.get(id) }),
+  sandboxPolicy: { overrideOf: () => 'read-only', defaultMode: 'workspace-write' },
+  foldUsage: (_agent, context) => arGateFold.push(context),
+  warn: (message) => arGateWarnings.push(message),
+})
+checkTrue('AR-gate live child 仍为执行者且可过live delegation', arGateRuntime.isChild(arGateChild, []) === true)
+checkTrue('AR-floor live child 同步fold且不改变既有gate结果', arGateRuntime.childBaseline(arGateChild, []) === true && arGateFold.at(-1).role === 'executor')
+const arFloorChild = arAgent({ id: 'ar-floor-child', child: true, parentSession: 'ar-gate-main', preset: 'extra-plan-executor', depth: 1 })
+arFloorChild.session.append = (...args) => arGateFloor.push(args)
+checkTrue('AR-floor live child 写入一次 workspace-write floor', arGateRuntime.childBaseline(arFloorChild, []) === true && arGateFloor.length === 1 && arGateFloor[0][0] === 'sandbox/mode' && arGateFloor[0][1].mode === 'workspace-write')
+checkTrue('AR-gate 断链 child 同步fold但不抬升floor', arGateRuntime.isChild(arGateBroken, []) === false && arGateRuntime.childBaseline(arGateBroken, []) === false && arGateFold.at(-1).role === 'executor' && arGateFloor.length === 1 && arGateWarnings.length === 1)
+arGateRuntime.childBaseline(arGateMain, [])
+checkTrue('AR-gate main 同步fold且不抬升floor', arGateFold.at(-1).role === 'main' && arGateFloor.length === 1)
+
+// ── M6 系列：step-99 导入、临时双文件统计/归档、严格拒绝与事务回滚 ───────
+checkTrue('M6 step-99 导入仅暴露函数且不触发CLI副作用', typeof usageStats.main === 'function' && typeof usageStats.statLedger === 'function' && typeof usageStats.archiveLedger === 'function' && process.exitCode === undefined)
+const archiveRow = (patch = {}) => ({
+  schemaVersion: 2,
+  ts: '2026-10-22T00:00:00.000Z',
+  sessionId: 'm6-session',
+  parentSessionId: 'm6-parent',
+  rootSessionId: 'm6-root',
+  agentPreset: 'extra-plan-executor',
+  delegationDepth: 1,
+  role: 'executor',
+  model: 'm6-model',
+  provider: 'm6-provider-a',
+  inputTokens: 1,
+  cacheReadTokens: 2,
+  cacheWriteTokens: 3,
+  outputTokens: 4,
+  seq: 1,
+  ...patch,
+})
+const archiveBytesOf = (path) => existsSync(path) ? readFileSync(path, 'utf8') : ''
+const archiveResiduals = (directory) => readdirSync(directory).filter((name) => name.includes('.tmp-') || name.includes('.bak-') || name.includes('.lock'))
+const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => JSON.stringify(row)).join('\n') + (rows.length > 0 ? '\n' : ''), 'utf8')
+const step99SourceText = readFileSync(fileURLToPath(new URL('./step-99-用量统计.mjs', import.meta.url)), 'utf8')
+const step99SourceLines = step99SourceText.split('\n')
+const step99TargetLineOf = (startMarker, endMarker, targetMarker) => {
+  const start = step99SourceLines.findIndex((line) => line.includes(startMarker))
+  if (start < 0) return 0
+  const end = step99SourceLines.findIndex((line, index) => index > start && line.includes(endMarker))
+  if (end < 0) return 0
+  const target = step99SourceLines.findIndex((line, index) => index > start && index < end && line.includes(targetMarker))
+  return target < 0 ? 0 : target + 1
+}
+const step99UniqueCheckLine = step99TargetLineOf('function assertUniqueArchiveRows', 'export function summarizeSnapshotTexts', 'if (check !== undefined) check()')
+const step99ArchiveEntriesCheckLine = step99TargetLineOf('for (const [key, row] of archiveEntries)', 'let coveredByArchiveRows = 0', 'if (check !== undefined) check()')
+const stackHitsStep99Line = (stack, lineNumber, functionName) => lineNumber > 0 && stack.split('\n').some((line) => line.includes('step-99-') && line.includes(':' + lineNumber + ':')) && stack.includes('at ' + functionName + ' (')
+
+// M6-G2-1：实际 createUsageLedger 生成 main 空 preset 与深层断链空 root，逐行严格归档。
+{
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-g2-generated-'))
+  try {
+    const active = join(dir, 'ledger-v2.jsonl')
+    const makeAgent = (event) => ({ session: { seq: 1, snapshotEvents: () => [event] } })
+    const usageEvent = (seq, model, provider) => ({ type: 'assistant/message', seq, data: { usage: { inputTokens: 1, cacheReadTokens: 2, cacheWriteTokens: 3, outputTokens: 4 }, message: { source: { model, provider } } } })
+    const ledger = usageLedgerModule.createUsageLedger({ enabled: true, path: active })
+    const mainResult = ledger.foldUsage(makeAgent(usageEvent(1, 'g2-main-model', 'g2-main-provider')), { sessionId: 'g2-generated-main', parentSessionId: '', rootSessionId: 'g2-generated-main', agentPreset: '', delegationDepth: 0, role: 'main' })
+    const deepResult = ledger.foldUsage(makeAgent(usageEvent(1, 'g2-deep-model', 'g2-deep-provider')), { sessionId: 'g2-generated-deep', parentSessionId: 'g2-chain-8', rootSessionId: '', agentPreset: 'extra-plan-executor', delegationDepth: 9, role: 'child' })
+    const rows = archiveBytesOf(active).trim().split('\n').filter((line) => line !== '').map((line) => JSON.parse(line))
+    const fixedKeys = usageStats.V2_KEYS.slice().sort()
+    const strictRowsOk = rows.length === 2 && rows.every((row) => JSON.stringify(Object.keys(row).sort()) === JSON.stringify(fixedKeys) && usageStats.parseLedgerText(JSON.stringify(row) + '\n', { strict: true }).rows.length === 1 && !Object.hasOwn(row, 'calls'))
+    checkTrue('M6-G2-1 createUsageLedger真实main空agentPreset/深层空root：两行固定15键且strict parse成功', mainResult.status === 'written' && deepResult.status === 'written' && strictRowsOk && rows.some((row) => row.sessionId === 'g2-generated-main' && row.agentPreset === '' && row.rootSessionId === 'g2-generated-main') && rows.some((row) => row.sessionId === 'g2-generated-deep' && row.rootSessionId === '' && row.parentSessionId === 'g2-chain-8'))
+    const archiveResult = usageStats.archiveLedger(active)
+    const archived = archiveBytesOf(usageStats.archivePathOf(active))
+    checkTrue('M6-G2-1 真实生成main/断链行strict归档成功且active清空', archiveResult.rows === 2 && archiveResult.groups === 2 && archiveBytesOf(active) === '' && usageStats.parseLedgerText(archived, { strict: true }).rows.length === 2 && !existsSync(usageLedgerModule.usageLedgerLockPath(active)) && archiveResiduals(dir).length === 0)
+    const strictFailureCode = (row) => {
+      try { usageStats.parseLedgerText(JSON.stringify(row) + '\n', { strict: true }) } catch (error) { return error.code }
+      return ''
+    }
+    checkTrue('M6-G2-1 sessionId/role空值仍被strict拒绝', strictFailureCode({ ...rows[0], sessionId: '' }) === 'invalid-v2' && strictFailureCode({ ...rows[0], role: '' }) === 'invalid-v2')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// M6-G2-2：archive 水位重放矩阵、provider 隔离、cursor 字节/哈希与二次归档幂等。
+{
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-g2-watermark-'))
+  try {
+    const active = join(dir, 'ledger-v2.jsonl')
+    const archive = usageStats.archivePathOf(active)
+    const cursor = active + '.cursor.json'
+    const identityKeys = ['schemaVersion', 'rootSessionId', 'sessionId', 'parentSessionId', 'agentPreset', 'delegationDepth', 'role', 'model', 'provider']
+    const baseIdentity = Object.freeze({
+      schemaVersion: 2,
+      rootSessionId: 'm6-root',
+      sessionId: 'g2-watermark',
+      parentSessionId: 'm6-parent',
+      agentPreset: 'extra-plan-executor',
+      delegationDepth: 1,
+      role: 'executor',
+      model: 'm6-model',
+      provider: 'g2-provider-a',
+    })
+    const expectedA = Object.freeze({ ...baseIdentity })
+    const expectedB = Object.freeze({ ...baseIdentity, provider: 'g2-provider-b' })
+    const sameIdentity = (row, expected) => row !== undefined && identityKeys.every((key) => row[key] === expected[key])
+    const archiveCumulative = archiveRow({ ...expectedA, ts: '2026-10-22T00:00:20.000Z', inputTokens: 30, cacheReadTokens: 300, cacheWriteTokens: 3000, outputTokens: 30000, seq: 20 })
+    const replay10 = archiveRow({ ...expectedA, ts: '2026-10-22T00:00:10.000Z', inputTokens: 10, cacheReadTokens: 100, cacheWriteTokens: 1000, outputTokens: 10000, seq: 10 })
+    const replay20 = archiveRow({ ...expectedA, ts: '2026-10-22T00:00:20.000Z', inputTokens: 20, cacheReadTokens: 200, cacheWriteTokens: 2000, outputTokens: 20000, seq: 20 })
+    const providerB = archiveRow({ ...expectedB, ts: '2026-10-22T00:00:11.000Z', inputTokens: 7, cacheReadTokens: 8, cacheWriteTokens: 9, outputTokens: 10, seq: 11 })
+    const seq21 = archiveRow({ ...expectedA, ts: '2026-10-22T00:00:21.000Z', inputTokens: 21, cacheReadTokens: 210, cacheWriteTokens: 2100, outputTokens: 21000, seq: 21 })
+    checkTrue('M6-G2-2 夹具契约：base/A/B均为冻结九字段，A/B仅provider不同且写入行身份不漂移', Object.isFrozen(baseIdentity) && Object.isFrozen(expectedA) && Object.isFrozen(expectedB) && identityKeys.every((key) => Object.hasOwn(baseIdentity, key) && Object.hasOwn(expectedA, key) && Object.hasOwn(expectedB, key)) && Object.keys(baseIdentity).length === identityKeys.length && Object.keys(expectedA).length === identityKeys.length && Object.keys(expectedB).length === identityKeys.length && identityKeys.filter((key) => key !== 'provider').every((key) => expectedA[key] === expectedB[key]) && expectedA.provider !== expectedB.provider && sameIdentity(archiveCumulative, expectedA) && sameIdentity(replay10, expectedA) && sameIdentity(replay20, expectedA) && sameIdentity(seq21, expectedA) && sameIdentity(providerB, expectedB) && providerB.seq === 11 && providerB.seq < 20 && providerB.seq !== 10 && providerB.seq !== 20)
+    archiveWriteRows(archive, [archiveCumulative])
+    archiveWriteRows(active, [replay10, replay20, providerB])
+    writeFileSync(cursor, '{"g2-watermark":{"seq":20,"index":99},"other":{"seq":7,"index":3}}', 'utf8')
+    const cursorBefore = archiveBytesOf(cursor)
+    const cursorHash = sha256Text(cursorBefore)
+    const statBefore = { active: archiveBytesOf(active), archive: archiveBytesOf(archive), cursor: archiveBytesOf(cursor) }
+    const stats = usageStats.statLedger(active)
+    const statsA = stats.groups.find((group) => sameIdentity(group, expectedA))
+    const statsB = stats.groups.find((group) => sameIdentity(group, expectedB))
+    checkTrue('M6-G2-2 stat水位覆盖seq10/20不增Token、provider完整身份且默认stat三文件零写', stats.rows.length === 4 && stats.groups.length === 2 && stats.coveredByArchiveRows === 2 && statsA !== undefined && sameIdentity(statsA, expectedA) && statsA.inputTokens === 30 && statsA.cacheReadTokens === 300 && statsA.cacheWriteTokens === 3000 && statsA.outputTokens === 30000 && statsA.maxSeq === 20 && statsA.latestTs === '2026-10-22T00:00:20.000Z' && statsB !== undefined && sameIdentity(statsB, expectedB) && statsB.inputTokens === 7 && statsB.cacheReadTokens === 8 && statsB.cacheWriteTokens === 9 && statsB.outputTokens === 10 && statsB.maxSeq === 11 && statsB.latestTs === '2026-10-22T00:00:11.000Z' && stats.groups.every((group) => !Object.hasOwn(group, 'calls')) && !usageStats.renderStats(stats).includes('calls') && archiveBytesOf(active) === statBefore.active && archiveBytesOf(archive) === statBefore.archive && archiveBytesOf(cursor) === statBefore.cursor && sha256Text(archiveBytesOf(cursor)) === cursorHash)
+    const archiveResult = usageStats.archiveLedger(active)
+    const archiveAfterReplay = archiveBytesOf(archive)
+    const replayRows = usageStats.parseLedgerText(archiveAfterReplay, { strict: true }).rows
+    const replayA = replayRows.find((row) => sameIdentity(row, expectedA))
+    const replayB = replayRows.find((row) => sameIdentity(row, expectedB))
+    checkTrue('M6-G2-2 archive水位重放不加Token、provider完整身份独立发布/无calls', archiveResult.rows === 4 && archiveResult.groups === 2 && archiveResult.coveredByArchiveRows === 2 && replayRows.length === 2 && replayA !== undefined && sameIdentity(replayA, expectedA) && replayA.inputTokens === 30 && replayA.cacheReadTokens === 300 && replayA.cacheWriteTokens === 3000 && replayA.outputTokens === 30000 && replayA.seq === 20 && replayB !== undefined && sameIdentity(replayB, expectedB) && replayB.inputTokens === 7 && replayB.cacheReadTokens === 8 && replayB.cacheWriteTokens === 9 && replayB.outputTokens === 10 && replayB.seq === 11 && replayRows.every((row) => !Object.hasOwn(row, 'calls')) && archiveBytesOf(active) === '' && archiveBytesOf(cursor) === cursorBefore && sha256Text(archiveBytesOf(cursor)) === cursorHash)
+    archiveWriteRows(active, [seq21])
+    const stats21 = usageStats.statLedger(active)
+    const statsA21 = stats21.groups.find((group) => sameIdentity(group, expectedA))
+    checkTrue('M6-G2-2 archive水位后seq21只增一次且maxSeq/latestTs正确', stats21.coveredByArchiveRows === 0 && statsA21 !== undefined && statsA21.inputTokens === 51 && statsA21.cacheReadTokens === 510 && statsA21.cacheWriteTokens === 5100 && statsA21.outputTokens === 51000 && statsA21.maxSeq === 21 && statsA21.latestTs === '2026-10-22T00:00:21.000Z')
+    const archiveResult21 = usageStats.archiveLedger(active)
+    const archiveAfter21 = archiveBytesOf(archive)
+    const finalRows = usageStats.parseLedgerText(archiveAfter21, { strict: true }).rows
+    const finalA = finalRows.find((row) => sameIdentity(row, expectedA))
+    const finalB = finalRows.find((row) => sameIdentity(row, expectedB))
+    checkTrue('M6-G2-2 seq21 archive只提交一次且A/B完整身份、四桶/maxSeq/latestTs正确', archiveResult21.rows === 3 && archiveResult21.groups === 2 && archiveResult21.coveredByArchiveRows === 0 && finalRows.length === 2 && finalA !== undefined && sameIdentity(finalA, expectedA) && finalA.inputTokens === 51 && finalA.cacheReadTokens === 510 && finalA.cacheWriteTokens === 5100 && finalA.outputTokens === 51000 && finalA.seq === 21 && finalA.ts === '2026-10-22T00:00:21.000Z' && finalB !== undefined && sameIdentity(finalB, expectedB) && finalB.inputTokens === 7 && finalB.cacheReadTokens === 8 && finalB.cacheWriteTokens === 9 && finalB.outputTokens === 10 && finalB.seq === 11 && archiveBytesOf(active) === '' && archiveBytesOf(cursor) === cursorBefore && sha256Text(archiveBytesOf(cursor)) === cursorHash)
+    usageStats.archiveLedger(active)
+    checkTrue('M6-G2-2 二次archive字节稳定且无calls/lock/temp残留', archiveBytesOf(archive) === archiveAfter21 && archiveBytesOf(active) === '' && archiveBytesOf(cursor) === cursorBefore && sha256Text(archiveBytesOf(cursor)) === cursorHash && usageStats.parseLedgerText(archiveBytesOf(archive), { strict: true }).rows.every((row) => !Object.hasOwn(row, 'calls')) && !existsSync(usageLedgerModule.usageLedgerLockPath(active)) && archiveResiduals(dir).length === 0)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// M6-G2-3：strict archive 同一完整身份的多累计行在发布前拒绝，三文件字节保持不变。
+{
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-g2-duplicate-archive-'))
+  try {
+    const active = join(dir, 'ledger-v2.jsonl')
+    const archive = usageStats.archivePathOf(active)
+    const cursor = active + '.cursor.json'
+    archiveWriteRows(archive, [archiveRow({ sessionId: 'g2-duplicate', provider: 'g2-duplicate-provider', inputTokens: 10, seq: 10 }), archiveRow({ sessionId: 'g2-duplicate', provider: 'g2-duplicate-provider', inputTokens: 30, seq: 20 })])
+    archiveWriteRows(active, [])
+    writeFileSync(cursor, '{"g2-duplicate":{"seq":20,"index":2}}', 'utf8')
+    const before = { active: archiveBytesOf(active), archive: archiveBytesOf(archive), cursor: archiveBytesOf(cursor) }
+    let failure
+    try { usageStats.archiveLedger(active) } catch (error) { failure = error }
+    checkTrue('M6-G2-3 strict archive同完整身份多累计行发布前duplicate-archive拒绝且三文件/lock/temp不变', failure !== undefined && failure.code === 'duplicate-archive' && archiveBytesOf(active) === before.active && archiveBytesOf(archive) === before.archive && archiveBytesOf(cursor) === before.cursor && !existsSync(usageLedgerModule.usageLedgerLockPath(active)) && archiveResiduals(dir).length === 0)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+{
+
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-g3-archive-'))
+  try {
+    const active = join(dir, 'ledger-v2.jsonl')
+    const archive = usageStats.archivePathOf(active)
+    const cursor = active + '.cursor.json'
+    const archiveRow1 = archiveRow({ ts: '2026-10-22T00:00:01.000Z', inputTokens: 10, cacheReadTokens: 20, cacheWriteTokens: 30, outputTokens: 40, seq: 1 })
+    const activeRow2 = archiveRow({ ts: '2026-10-22T00:00:02.000Z', inputTokens: 1, cacheReadTokens: 2, cacheWriteTokens: 3, outputTokens: 4, seq: 2 })
+    const activeRow2Duplicate = archiveRow({ ts: '2026-10-22T00:00:03.000Z', inputTokens: 99, cacheReadTokens: 99, cacheWriteTokens: 99, outputTokens: 99, seq: 2 })
+    const activeRowProviderB = archiveRow({ ts: '2026-10-22T00:00:05.000Z', provider: 'm6-provider-b', inputTokens: 5, cacheReadTokens: 6, cacheWriteTokens: 7, outputTokens: 8, seq: 5 })
+    archiveWriteRows(archive, [archiveRow1])
+    archiveWriteRows(active, [activeRow2, activeRow2Duplicate, activeRowProviderB])
+    writeFileSync(cursor, '{"m6-session":{"seq":77,"index":9}}', 'utf8')
+    const activeBefore = archiveBytesOf(active)
+    const archiveBefore = archiveBytesOf(archive)
+    const cursorBefore = archiveBytesOf(cursor)
+    checkTrue('M6 AI思考/CLI前无canonical lock', !existsSync(usageLedgerModule.usageLedgerLockPath(active)))
+    const stats = usageStats.statLedger(active)
+    const statsA = stats.groups.find((group) => group.provider === 'm6-provider-a')
+    const statsB = stats.groups.find((group) => group.provider === 'm6-provider-b')
+    checkTrue('M6 默认archive+active统计零写且完整provider分组/四桶/maxSeq/ts/无calls',
+      stats.groups.length === 2
+      && statsA !== undefined && statsA.inputTokens === 11 && statsA.cacheReadTokens === 22 && statsA.cacheWriteTokens === 33 && statsA.outputTokens === 44 && statsA.maxSeq === 2 && statsA.latestTs === '2026-10-22T00:00:02.000Z'
+      && statsB !== undefined && statsB.inputTokens === 5 && statsB.cacheReadTokens === 6 && statsB.cacheWriteTokens === 7 && statsB.outputTokens === 8 && statsB.maxSeq === 5 && statsB.latestTs === '2026-10-22T00:00:05.000Z'
+      && stats.groups.every((group) => !Object.hasOwn(group, 'calls'))
+      && archiveBytesOf(active) === activeBefore && archiveBytesOf(archive) === archiveBefore && archiveBytesOf(cursor) === cursorBefore
+      && !existsSync(usageLedgerModule.usageLedgerLockPath(active)) && archiveResiduals(dir).length === 0)
+    const archiveResult = usageStats.archiveLedger(active)
+    const archiveAfter = archiveBytesOf(archive)
+    const cursorAfter = archiveBytesOf(cursor)
+    checkTrue('M6 成功archive清空active、cursor不变、聚合行含provider且无calls/残留',
+      archiveResult.rows === 3 && archiveBytesOf(active) === '' && cursorAfter === cursorBefore
+      && usageStats.parseLedgerText(archiveAfter, { strict: true }).rows.length === 2
+      && usageStats.parseLedgerText(archiveAfter, { strict: true }).rows.every((row) => !Object.hasOwn(row, 'calls'))
+      && !existsSync(usageLedgerModule.usageLedgerLockPath(active)) && archiveResiduals(dir).length === 0)
+    usageStats.archiveLedger(active)
+    checkTrue('M6 二次archive字节稳定且active仍空/cursor仍不变', archiveBytesOf(archive) === archiveAfter && archiveBytesOf(active) === '' && archiveBytesOf(cursor) === cursorBefore && archiveResiduals(dir).length === 0)
+
+    const invalidCases = [
+      ['V1严格拒绝', JSON.stringify({ schemaVersion: 1, sessionId: 'v1' }) + '\n', 'non-v2'],
+      ['坏JSON严格拒绝', '{"schemaVersion":2\n', 'bad-json'],
+      ['额外键严格拒绝', JSON.stringify({ ...archiveRow(), calls: [] }) + '\n', 'invalid-v2'],
+    ]
+    for (const [label, text, code] of invalidCases) {
+      archiveWriteRows(archive, [archiveRow({ seq: 8, ts: '2026-10-22T00:00:08.000Z' })])
+      writeFileSync(active, text, 'utf8')
+      const before = { active: archiveBytesOf(active), archive: archiveBytesOf(archive), cursor: archiveBytesOf(cursor) }
+      let failure
+      try { usageStats.archiveLedger(active) } catch (error) { failure = error }
+      checkTrue('M6 ' + label + '发布前零改写/无lock-temp-backup', failure !== undefined && failure.code === code && archiveBytesOf(active) === before.active && archiveBytesOf(archive) === before.archive && archiveBytesOf(cursor) === before.cursor && !existsSync(usageLedgerModule.usageLedgerLockPath(active)) && archiveResiduals(dir).length === 0)
+    }
+
+    // M6-B1：多行 parseLedgerText 中途预算超时；可控 clock 第10次才超时，证明不是调用前立即失败。
+    {
+      const budgetDir = mkdtempSync(join(tmpdir(), 'dsh-g3-budget-parse-'))
+      try {
+        const budgetActive = join(budgetDir, 'ledger-v2.jsonl')
+        const budgetArchive = usageStats.archivePathOf(budgetActive)
+        const budgetCursor = budgetActive + '.cursor.json'
+        const parseArchiveRows = Array.from({ length: 4 }, (_, index) => archiveRow({ sessionId: 'm6-parse-archive-' + index, provider: 'parse-archive-' + index, seq: index + 1 }))
+        const parseActiveRows = Array.from({ length: 4 }, (_, index) => archiveRow({ sessionId: 'm6-parse-active-' + index, provider: 'parse-active-' + index, seq: index + 5 }))
+        archiveWriteRows(budgetArchive, parseArchiveRows)
+        archiveWriteRows(budgetActive, parseActiveRows)
+        writeFileSync(budgetCursor, '{"m6-parse":{"seq":12,"index":8}}', 'utf8')
+        const parseBefore = { active: archiveBytesOf(budgetActive), archive: archiveBytesOf(budgetArchive), cursor: archiveBytesOf(budgetCursor) }
+        let parseClockCalls = 0
+        const parseIo = { write: 0, move: 0, remove: 0 }
+        let parseFailure
+        try {
+          usageStats.archiveLedger(budgetActive, {
+            budgetMs: 1,
+            clock: () => { parseClockCalls += 1; return parseClockCalls >= 10 ? 1 : 0 },
+            fsOps: {
+              writeFileSync: (...args) => { parseIo.write += 1; return writeFileSync(...args) },
+              renameSync: (...args) => { parseIo.move += 1; return renameSync(...args) },
+              unlinkSync: (...args) => { parseIo.remove += 1; return unlinkSync(...args) },
+            },
+          })
+        } catch (error) { parseFailure = error }
+        checkTrue('M6-B1 多行解析中途budget-timeout：clock第10次触发且任何write/move/remove前三文件hash不变', parseFailure !== undefined && parseFailure.code === 'budget-timeout' && parseClockCalls === 10 && parseIo.write === 0 && parseIo.move === 0 && parseIo.remove === 0 && archiveBytesOf(budgetActive) === parseBefore.active && archiveBytesOf(budgetArchive) === parseBefore.archive && archiveBytesOf(budgetCursor) === parseBefore.cursor && archiveResiduals(budgetDir).length === 0)
+      } finally { rmSync(budgetDir, { recursive: true, force: true }) }
+    }
+    // M6-B2：多组 archiveTextOf 序列化中途预算超时；第49次 clock 才超时且发布尚未开始。
+    {
+      const budgetDir = mkdtempSync(join(tmpdir(), 'dsh-g3-budget-archive-text-'))
+      try {
+        const budgetActive = join(budgetDir, 'ledger-v2.jsonl')
+        const budgetArchive = usageStats.archivePathOf(budgetActive)
+        const budgetCursor = budgetActive + '.cursor.json'
+        const serializeArchiveRows = Array.from({ length: 4 }, (_, index) => archiveRow({ sessionId: 'm6-serialize-archive-' + index, provider: 'serialize-archive-' + index, seq: index + 1 }))
+        const serializeActiveRows = Array.from({ length: 4 }, (_, index) => archiveRow({ sessionId: 'm6-serialize-active-' + index, provider: 'serialize-active-' + index, seq: index + 5 }))
+        archiveWriteRows(budgetArchive, serializeArchiveRows)
+        archiveWriteRows(budgetActive, serializeActiveRows)
+        writeFileSync(budgetCursor, '{"m6-serialize":{"seq":12,"index":8}}', 'utf8')
+        const serializeBefore = { active: archiveBytesOf(budgetActive), archive: archiveBytesOf(budgetArchive), cursor: archiveBytesOf(budgetCursor) }
+        let serializeClockCalls = 0
+        const serializeIo = { write: 0, move: 0, remove: 0 }
+        let serializeFailure
+        try {
+          usageStats.archiveLedger(budgetActive, {
+            budgetMs: 1,
+            clock: () => { serializeClockCalls += 1; return serializeClockCalls >= 49 ? 1 : 0 },
+            fsOps: {
+              writeFileSync: (...args) => { serializeIo.write += 1; return writeFileSync(...args) },
+              renameSync: (...args) => { serializeIo.move += 1; return renameSync(...args) },
+              unlinkSync: (...args) => { serializeIo.remove += 1; return unlinkSync(...args) },
+            },
+          })
+        } catch (error) { serializeFailure = error }
+        checkTrue('M6-B2 多组archiveTextOf中途budget-timeout：clock第49次触发且任何write/move/remove前三文件hash不变', serializeFailure !== undefined && serializeFailure.code === 'budget-timeout' && serializeClockCalls === 49 && serializeIo.write === 0 && serializeIo.move === 0 && serializeIo.remove === 0 && archiveBytesOf(budgetActive) === serializeBefore.active && archiveBytesOf(budgetArchive) === serializeBefore.archive && archiveBytesOf(budgetCursor) === serializeBefore.cursor && archiveResiduals(budgetDir).length === 0)
+      } finally { rmSync(budgetDir, { recursive: true, force: true }) }
+    }
+
+    // M6-B3：目标预算check必须命中 assertUniqueArchiveRows 的真实调用栈与动态源码行。
+    {
+      const budgetDir = mkdtempSync(join(tmpdir(), 'dsh-g2-budget-unique-'))
+      try {
+        const budgetActive = join(budgetDir, 'ledger-v2.jsonl')
+        const budgetArchive = usageStats.archivePathOf(budgetActive)
+        const budgetCursor = budgetActive + '.cursor.json'
+        const uniqueRows = Array.from({ length: 5 }, (_, index) => archiveRow({ sessionId: 'g2-unique-' + index, provider: 'g2-unique-provider-' + index, seq: index + 1 }))
+        archiveWriteRows(budgetArchive, uniqueRows)
+        archiveWriteRows(budgetActive, [])
+        writeFileSync(budgetCursor, '{"g2-unique":{"seq":5,"index":5}}', 'utf8')
+        const before = { active: archiveBytesOf(budgetActive), archive: archiveBytesOf(budgetArchive), cursor: archiveBytesOf(budgetCursor) }
+        const io = { write: 0, move: 0, remove: 0 }
+        let targetSeen = false
+        const clock = () => {
+          const stack = new Error().stack || ''
+          if (stackHitsStep99Line(stack, step99UniqueCheckLine, 'assertUniqueArchiveRows')) { targetSeen = true; return 1 }
+          return 0
+        }
+        let failure
+        try {
+          usageStats.archiveLedger(budgetActive, { budgetMs: 1, clock, fsOps: { writeFileSync: (...args) => { io.write += 1; return writeFileSync(...args) }, renameSync: (...args) => { io.move += 1; return renameSync(...args) }, unlinkSync: (...args) => { io.remove += 1; return unlinkSync(...args) } } })
+        } catch (error) { failure = error }
+        checkTrue('M6-B3 唯一性目标check真实命中：stack/动态源码行证明budget-timeout且无发布IO/三文件不变/锁释放', failure !== undefined && failure.code === 'budget-timeout' && targetSeen && io.write === 0 && io.move === 0 && io.remove === 0 && archiveBytesOf(budgetActive) === before.active && archiveBytesOf(budgetArchive) === before.archive && archiveBytesOf(budgetCursor) === before.cursor && !existsSync(usageLedgerModule.usageLedgerLockPath(budgetActive)) && archiveResiduals(budgetDir).length === 0)
+      } finally { rmSync(budgetDir, { recursive: true, force: true }) }
+    }
+    // M6-B4：archiveEntries目标预算check必须命中真实调用栈与动态源码行，禁止后续groups循环假通过。
+    {
+      const budgetDir = mkdtempSync(join(tmpdir(), 'dsh-g2-budget-archive-entries-'))
+      try {
+        const budgetActive = join(budgetDir, 'ledger-v2.jsonl')
+        const budgetArchive = usageStats.archivePathOf(budgetActive)
+        const budgetCursor = budgetActive + '.cursor.json'
+        const archiveEntryRows = Array.from({ length: 5 }, (_, index) => archiveRow({ sessionId: 'g2-archive-entry-' + index, provider: 'g2-archive-entry-provider-' + index, seq: index + 1 }))
+        archiveWriteRows(budgetArchive, archiveEntryRows)
+        archiveWriteRows(budgetActive, [])
+        writeFileSync(budgetCursor, '{"g2-archive-entry":{"seq":5,"index":5}}', 'utf8')
+        const before = { active: archiveBytesOf(budgetActive), archive: archiveBytesOf(budgetArchive), cursor: archiveBytesOf(budgetCursor) }
+        const io = { write: 0, move: 0, remove: 0 }
+        let targetSeen = false
+        const clock = () => {
+          const stack = new Error().stack || ''
+          if (stackHitsStep99Line(stack, step99ArchiveEntriesCheckLine, 'summarizeSourceRows')) { targetSeen = true; return 1 }
+          return 0
+        }
+        let failure
+        try {
+          usageStats.archiveLedger(budgetActive, { budgetMs: 1, clock, fsOps: { writeFileSync: (...args) => { io.write += 1; return writeFileSync(...args) }, renameSync: (...args) => { io.move += 1; return renameSync(...args) }, unlinkSync: (...args) => { io.remove += 1; return unlinkSync(...args) } } })
+        } catch (error) { failure = error }
+        checkTrue('M6-B4 archiveEntries目标check真实命中：stack/动态源码行证明budget-timeout且无发布IO/三文件不变/锁释放', failure !== undefined && failure.code === 'budget-timeout' && targetSeen && io.write === 0 && io.move === 0 && io.remove === 0 && archiveBytesOf(budgetActive) === before.active && archiveBytesOf(budgetArchive) === before.archive && archiveBytesOf(budgetCursor) === before.cursor && !existsSync(usageLedgerModule.usageLedgerLockPath(budgetActive)) && archiveResiduals(budgetDir).length === 0)
+      } finally { rmSync(budgetDir, { recursive: true, force: true }) }
+    }
+
+    archiveWriteRows(archive, [archiveRow({ seq: 9, ts: '2026-10-22T00:00:09.000Z' })])
+    archiveWriteRows(active, [archiveRow({ seq: 10, ts: '2026-10-22T00:00:10.000Z' })])
+    const budgetBefore = { active: archiveBytesOf(active), archive: archiveBytesOf(archive), cursor: archiveBytesOf(cursor) }
+    let budgetFailure
+    try { usageStats.archiveLedger(active, { budgetMs: 0, clock: () => 0 }) } catch (error) { budgetFailure = error }
+    checkTrue('M6 archive预算超时循环在发布前拒绝且三文件字节不变', budgetFailure !== undefined && budgetFailure.code === 'budget-timeout' && archiveBytesOf(active) === budgetBefore.active && archiveBytesOf(archive) === budgetBefore.archive && archiveBytesOf(cursor) === budgetBefore.cursor && !existsSync(usageLedgerModule.usageLedgerLockPath(active)) && archiveResiduals(dir).length === 0)
+
+    const publishFaultCases = [
+      ['archive-temp-write', 'write-archive-temp'],
+      ['active-temp-write', 'write-active-temp'],
+      ['archive-backup-move', 'move-archive-backup'],
+      ['active-backup-move', 'move-active-backup'],
+      ['archive-publish-move', 'move-archive-publish'],
+      ['active-publish-move', 'move-active-publish'],
+      ['active-backup-remove', 'remove-active-backup'],
+      ['archive-backup-remove', 'remove-archive-backup'],
+    ]
+    for (const [label, point] of publishFaultCases) {
+      const faultDir = mkdtempSync(join(tmpdir(), 'dsh-g3-publish-' + point + '-'))
+      try {
+        const faultActive = join(faultDir, 'ledger-v2.jsonl')
+        const faultArchive = usageStats.archivePathOf(faultActive)
+        const faultCursor = faultActive + '.cursor.json'
+        archiveWriteRows(faultArchive, [archiveRow({ sessionId: 'm6-publish-archive-' + point, provider: 'publish-archive', seq: 1 })])
+        archiveWriteRows(faultActive, [archiveRow({ sessionId: 'm6-publish-active-' + point, provider: 'publish-active', seq: 2 })])
+        writeFileSync(faultCursor, '{"m6-publish":{"seq":22,"index":2}}', 'utf8')
+        const before = { active: archiveBytesOf(faultActive), archive: archiveBytesOf(faultArchive), cursor: archiveBytesOf(faultCursor) }
+        const io = { write: 0, move: 0, remove: 0 }
+        let injected = false
+        const inject = () => {
+          injected = true
+          const error = new Error('injected publish fault: ' + label)
+          error.code = 'EIO'
+          throw error
+        }
+        let failure
+        try {
+          usageStats.archiveLedger(faultActive, {
+            fsOps: {
+              writeFileSync: (target, ...args) => {
+                io.write += 1
+                if (!injected && ((point === 'write-archive-temp' && String(target).includes('ledger-v2.archive.jsonl.tmp-')) || (point === 'write-active-temp' && String(target).includes('ledger-v2.jsonl.tmp-')))) inject()
+                return writeFileSync(target, ...args)
+              },
+              renameSync: (from, to) => {
+                io.move += 1
+                const source = String(from)
+                const destination = String(to)
+                if (!injected && ((point === 'move-archive-backup' && destination.includes('ledger-v2.archive.jsonl.bak-')) || (point === 'move-active-backup' && destination.includes('ledger-v2.jsonl.bak-')) || (point === 'move-archive-publish' && source.includes('ledger-v2.archive.jsonl.tmp-') && destination.endsWith('ledger-v2.archive.jsonl')) || (point === 'move-active-publish' && source.includes('ledger-v2.jsonl.tmp-') && destination.endsWith('ledger-v2.jsonl')))) inject()
+                return renameSync(from, to)
+              },
+              unlinkSync: (target) => {
+                io.remove += 1
+                const value = String(target)
+                if (!injected && ((point === 'remove-active-backup' && value.includes('ledger-v2.jsonl.bak-')) || (point === 'remove-archive-backup' && value.includes('ledger-v2.archive.jsonl.bak-')))) inject()
+                return unlinkSync(target)
+              },
+            },
+          })
+        } catch (error) { failure = error }
+        const reached = point.startsWith('write-') ? io.write >= 1 : point.startsWith('move-') ? io.move >= 1 : io.remove >= 1
+        checkTrue('M6 发布故障点 ' + label + ' 独立注入并恢复active/archive/cursor原字节、无tmp/bak残留', failure instanceof Error && typeof failure.code === 'string' && failure.code !== '' && injected && reached && archiveBytesOf(faultActive) === before.active && archiveBytesOf(faultArchive) === before.archive && archiveBytesOf(faultCursor) === before.cursor && !existsSync(usageLedgerModule.usageLedgerLockPath(faultActive)) && archiveResiduals(faultDir).length === 0)
+      } finally { rmSync(faultDir, { recursive: true, force: true }) }
+    }
+
+    const stalePath = usageLedgerModule.usageLedgerLockPath(active)
+    const staleBytes = JSON.stringify({ pid: 2147483647, token: 'm6-stale-token', createdAt: Date.now() })
+    writeFileSync(stalePath, staleBytes, 'utf8')
+    const staleResult = usageLedgerModule.acquireUsageLedgerLock(active, 0)
+    checkTrue('M6 stale-lock返回stale-lock且canonical字节不变/不自动接管', staleResult.reason === 'stale-lock' && archiveBytesOf(stalePath) === staleBytes && archiveResiduals(dir).every((name) => !name.includes('.stale-')))
+    rmSync(stalePath, { force: true })
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
 // ── RENDER 系列:save_plan 渲染契约（v0.1.3 回归：必须返回 ContentBlock[]）──
 const rendered = renderSavePlan({ paths: ['a.md', 'b.md'] })
 check('RENDER1 render 返回数组', Array.isArray(rendered), true)
@@ -2672,7 +3118,7 @@ const K = [
   ['K7 执行者+裸写 → 放行(null)', { kind: 'child', readOnly: false, probe: false }, writeCodeFx, null],
   ['K8 执行者+tools.write → 放行(null)', { kind: 'child', readOnly: false, probe: false }, "await tools.write({ file_path: 'x', content: '1' })", null],
   ['K9 planner+预算耗尽+仅 save_plan 成员 → 放行(null)', { kind: 'planner' }, 'await tools.save_plan({ "plan": "p", "checklist": "c" })', null, { events: budgetEventsFx, exploreBudget: 18 }],
-  ['K10 planner+预算耗尽+read 成员 → 聚合含「探查预算已耗尽（本轮已用 18/18）」与「仅可调用 save_plan/send_message」', { kind: 'planner' }, "await tools.read({ file_path: 'x' })", ['探查预算已耗尽（本轮已用 18/18）', '仅可调用 save_plan/send_message'], { events: budgetEventsFx, exploreBudget: 18 }],
+  ['K10 planner+预算耗尽+read 成员 → 聚合含「探查预算已耗尽（本轮已用 18/18）」与「仅可调用 save_plan」', { kind: 'planner' }, "await tools.read({ file_path: 'x' })", ['探查预算已耗尽（本轮已用 18/18）', '仅可调用 save_plan'], { events: budgetEventsFx, exploreBudget: 18 }],
   ['K11 main+MCP静态只读成员 → 放行(null)且不误判ask', { kind: 'main' }, "try { await tools['mcp__chrome-devtools-mcp__list_pages']({}) } catch (e) {}", null],
 ]
 for (const [name, role, code, expected, gateCtx] of K) {
@@ -2680,6 +3126,27 @@ for (const [name, role, code, expected, gateCtx] of K) {
   const okResult = expected === null ? got === null : typeof got === 'string' && expected.every((s) => got.includes(s))
   if (okResult) { pass += 1 } else { fail += 1 }
   output.assertion(okResult, name, expected, got)
+}
+// ── CONTROL-GATE：FREE_TOOLS 与全角色控制工具矩阵（子代理硬拒、主会话对照） ──
+check('CONTROL1 FREE_TOOLS 恰为 save_plan', [...FREE_TOOLS], ['save_plan'])
+const controlRoles = [
+  ['planner', { kind: 'planner' }],
+  ['readOnly', { kind: 'child', readOnly: true, probe: true }],
+  ['executor', { kind: 'child', readOnly: false, probe: false }],
+  ['unknown-child', { kind: 'child', readOnly: false, probe: false }],
+]
+for (const [roleName, role] of controlRoles) {
+  for (const controlName of ['send_message', 'interrupt_agent']) {
+    const directReason = runCodeGroupDenyReason(undefined, { name: 'run_code', arguments: { code: 'await tools.' + controlName + '({})' } }, role, { gateRuntime })
+    checkTrue('CONTROL2 ' + roleName + ' ' + controlName + ' 直呼语义 → childControlGateReason deny', typeof childControlGateReason({ name: controlName }) === 'string' && typeof directReason === 'string' && directReason.includes(controlName))
+    const nestedCode = 'await tools.run_code({ "code": ' + JSON.stringify('await tools.' + controlName + '({})') + ' })'
+    const nestedReason = runCodeGroupDenyReason(undefined, { name: 'run_code', arguments: { code: nestedCode } }, role, { gateRuntime })
+    checkTrue('CONTROL3 ' + roleName + ' ' + controlName + ' 一层嵌套 run_code → 稳定 deny', typeof nestedReason === 'string' && nestedReason.includes(controlName))
+  }
+}
+for (const controlName of ['send_message', 'interrupt_agent']) {
+  check('CONTROL4 main ' + controlName + ' helper 对照不命中', mainGateReason(noneStateFx, { name: controlName, arguments: {} }, { gateRuntime }), null)
+  check('CONTROL5 main ' + controlName + ' group 对照不命中', runCodeGroupDenyReason(noneStateFx, { name: 'run_code', arguments: { code: 'await tools.' + controlName + '({})' } }, { kind: 'main' }, { gateRuntime }), null)
 }
 const mcpWriteReason = runCodeGroupDenyReason(noneStateFx, { name: 'run_code', arguments: { code: "try { await tools['mcp__chrome-devtools-mcp__list_pages']({}) } catch (e) {}\nawait tools.write({ file_path: 'x', content: '1' })" } }, { kind: 'main' }, { gateRuntime })
 checkTrue('K12 MCP独立catch+受阻write混合组只报write且不出现假ask', typeof mcpWriteReason === 'string' && mcpWriteReason.includes('路由未确认：write/edit') && !mcpWriteReason.includes('结果未正确返回用户层'))

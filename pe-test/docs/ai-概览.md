@@ -12,13 +12,13 @@
 
 | 角色 | 当前职责 | 交付边界 |
 |:--|:--|:--|
-| 主会话 | 接收需求、复杂度评估、路由/批准、分派、汇总 | 只读探查可随时做；主会话写入受路由/批准约束；子代理干预工具（job_kill/send_message/job_list/list_agents）受主会话层闸门限制 |
+| 主会话 | 接收需求、复杂度评估、路由/批准、分派、汇总 | 只读探查可随时做；主会话写入受路由/批准约束；main 保留 `send_message`/`interrupt_agent`/`list_agents`，job_kill 与轮询仍受主会话层闸门限制 |
 | 探查者 | 后台只读批量探查、`save_probe` 证据落盘 | 仅主会话可委派；回传路径与短摘要 |
 | 规划子代理 | 读取线索、补充只读核对、`save_plan` 双文件 | 不得委派探查者；预算耗尽走继续探查往返 |
 | 执行者 | 按方案与验收文件改工作区 | 不重新规划；逐项自验证；禁止越界写入 |
 | 验收者 | 只读验收文件逐条复核（每个执行者返回后按组派遣，主会话汇总） | 输出逐项通过/不通过与证据；不改文件 |
 
-四个子角色当前均有 `send_message`、`interrupt_agent` 与 `cordis_inspect_list`/`cordis_inspect_query` 两只读 Cordis binding；send 仅直属父子，interrupt 仅调用者获任务/用户授权的后代。工具开放不授予任意目标中断、横向通信、递归委派或额外写权限；真实消息/中断仍留部署后 HUMAN。
+main 保留 `send_message`、`interrupt_agent`、`list_agents`；四角色 definition 均不挂 control binding，运行时按 `isSubagentChild` 对 `send_message`/`interrupt_agent` 的直呼与 `run_code` 成员硬拒，覆盖 planner、只读 child、executor 及 unknown/断链 child。自动最终结果不受影响；child 遇阻塞疑问以最终回复返回，main 可向 idle child 续轮。四角色仍按各自 definition 保留只读 `cordis_inspect_list`/`cordis_inspect_query`；main 的 send 仅直属父子、interrupt 仅调用者获任务/用户授权的后代，真实消息/中断仍留部署后 HUMAN。
 
 ## save_plan 派遣与验收职责
 
@@ -44,7 +44,7 @@
 | 设置后端与同页全局管理 | `lib/settings.js`、`lib/settings-contract.js`、`lib/live-config.js`、`lib/preset-settings.js`、`lib/preset-sync.js`、`lib/client.js` | 10 项 volatile Config 统一由 `dsh-extra-plan-settings` 承载；`SETTING_DEFINITIONS` 消费生成的 `DEFAULT_SETTINGS`，校验规则与 UI metadata 仍由合同手工维护，`createDefaultSettings()` 每次返回新对象。live-config 只暴露 8 项热读，2 项宿主值只派生到内存 definition。`client.js` 的字段常量只在生成标记区块内更新，表单仍仅经 detail.section 渲染于 bundle 详情页行列表之后；PUT 只 edit 唯一全局行，旧公开行/旧 body 仅 raw 读取迁移；非法当前 gateWords 严格失败、零写，旧非法 skip。 |
 | P2-4 默认/definition/client 生成链 | `agent.cordis.yml` → `generate-runtime-defaults.mjs` → `preset-defaults.generated.js`、纯 definition 与 `client.js` 标记区块 | YAML 叶值按 sourceLocator 校验并生成完整默认对象；运行时只消费生成物，不解析作者 YAML。默认仓库路径发布 7 个输出（运行时常量、主 definition、4 个角色 definition、client），自定义 source/output 默认关闭 client，只有显式 client 路径才生成；坏模板保留 last-known-good。详见 [维护手册](ai-维护手册.md#p2-4-生成链)。 |
 | 预设核对与官方装配 | `lib/preset-sync.js`（由 `settings.js` owner 内部相对调用） | 读取纯 definition；raw patch 中旧 `preset-extra-plan` 与 `extra-plan-preset-sync` 仅非破坏迁移来源；全局行补齐后两项宿主值/gateWords 派生到内存 definition，其中 `toolPresentationMode` 的派生范围含主 definition 与四个角色 definition（各恰一行 `tool-presentation`，派生异常保留生成物默认值且不中断挂载），再由同一 owner 直接交官方 AgentPreset adapter，写盘只经唯一全局行 `configEditor.edit`。四角色 definition/文件顺序跟随 `ROLE_IDS`/`ROLE_ORDERS`，常量只描述身份和装配顺序，不替代工具权限判定；旧公开模块入口与 locale exports 已退役。 |
-| session/usage | 根入口 + `lib/agent-runtime.js` | 状态按 sessionId 分桶；disposed 内同步 final fold 后再回收；cursor 增量按 `session.seq`/`snapshotEvents`，不跨会话清理。 |
+| session/usage | 根入口 + `lib/agent-runtime.js` + `lib/usage-ledger.js` | 成功的 `assistant/message` usage 写入独立 `ledger-v2.jsonl`，记录 root/自身 session 血缘、精确 role、provider 与四桶；深层断链/循环仍落账且 `rootSessionId` 可为空。archive 按完整九字段身份的累计 `seq` 水位防重放并计 `covered`；disposed 内同步 final fold 后再回收，stale/release 异常可见；writer timeout 静默返回 `delayed`、后续 fold 补记，stale-lock 仅在核实 owner 后显式维护。 |
 | 宿主升级 | [ai-宿主耦合台账](ai-宿主耦合台账.md) | 当前 HS/HK/SD/CF/QB、六项 HUMAN 与 SKIP 规则是升级入口；历史快照见[宿主历史归档](ai-宿主耦合历史归档.md)。 |
 | 实机验收 | [ai-实机闸门测试流程](ai-实机闸门测试流程.md) | 单文件、一次性、顺序完整；A/U/C/D/S/B 行与矛盾原值不可静默修正。 |
 

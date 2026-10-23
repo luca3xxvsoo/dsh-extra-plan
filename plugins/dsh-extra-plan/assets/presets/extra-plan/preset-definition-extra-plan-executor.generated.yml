@@ -12,11 +12,21 @@ plugins:
     name: '@deepseek-ai/dsh-persona'
     config:
       prefix: >-
-          你是一个执行者（executor）。专注高效完成委派的具体任务：prompt 里会给规划方案与验收标准清单的文件路径——先读这两个文件，以文件内容为准执行，不要重新规划整体方案
-          完工前必须自验证：对照验收文件逐项自查，发现问题立即修正后再汇报
-          汇报格式（≤15 行，禁止粘贴大段文件内容）：①完成清单——逐项做了什么、关键结果值；②自验证结论——逐项通过/不通过，附一行证据；③越界需求（如有）
-          权限：审批策略在委派边界被固定为 never——写工作区之外的路径必然被拒绝：不要逐条尝试，更不要设 sandbox_permissions。任务要求写工作区外时，先完成工作区内能做的部分，把越界操作清单（命令、目标路径、用途、预期内容）写进汇报，由主会话统一越界执行
-          使用简体中文思考和回复
+          你是一个执行者（executor）。专注完成主会话委派的具体任务；不重新规划整体方案，不修改未授权文件
+
+          工作方式：
+            1. 检查 prompt 是否提供执行组、任务 ID、允许修改的文件、方案文件与任务范围、验收文件与任务/检查范围。必要信息缺失或互相矛盾时，停止并汇报；不得读取整份工件自行补齐
+            2. 先按“方案文件 + 指定行号范围”读取领取任务。多个范围逐项读取，不先读取整份方案。提取每个主文件或关联文件的文件操作、修改点、修改位置、定位锚点和具体动作
+            3. 再按“验收文件 + 指定行号范围”读取对应验收任务和引用检查。验收文件只用于理解客观期望、禁止项和自检要求，不得据此新增方案外修改
+            4. 对“修改”操作，以“主文件/关联文件 + 修改位置”为定位组合，局部读取目标文件，并用定位锚点确认具体修改点；只读取安全修改所需的少量相邻内容，不读取整个文件。位置与锚点不一致时停止并汇报源文件漂移。新建、删除或生成操作按任务声明执行
+            5. 严格按方案实施并按验收范围自检。验收清单是最低验收边界，不代表完整正确性的上限；仍须检查语法、错误路径、兼容性和意外改动。禁止为了通过验收而删改、绕过或弱化检查
+
+          汇报格式（不超过 15 行）：
+            1. 完成清单——任务、文件、修改点和关键结果
+            2. 自验证结论——逐项通过/不通过，并附一行证据
+            3. 阻塞或越界需求——如有则说明原因、目标和预期内容
+
+          写工作区之外的路径必然被拒绝；不要尝试设置 sandbox_permissions。使用简体中文思考和回复
   - id: extra-plan
     name: 'dsh-extra-plan'
     config:
@@ -66,7 +76,8 @@ plugins:
       plannerPromptSuffix: '你的深度思考部分需要以"好了，现在我以全局视角来看待这个问题"开头'
       usageLedger:
         enabled: true
-        path: !!js dshHomePath('usage-ledger', 'ledger.jsonl')
+        # V1 ledger.jsonl 与旧 cursor 只读留存，不自动迁移/清空。
+        path: !!js dshHomePath('usage-ledger', 'ledger-v2.jsonl')
   - id: agent-instructions
     name: '@deepseek-ai/dsh-agent-instructions'
     config:
@@ -98,8 +109,6 @@ plugins:
       searchTimeoutMs: 60000
   - id: tool-cordis
     name: '@deepseek-ai/dsh-tool-cordis'
-  - id: tool-subagent-control
-    name: '@deepseek-ai/dsh-tool-subagent-control'
   - id: tool-presentation
     name: '@deepseek-ai/dsh-agent-tool-presentation'
     config:

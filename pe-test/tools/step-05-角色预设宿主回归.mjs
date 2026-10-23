@@ -227,15 +227,19 @@ async function runMode(mode) {
     check('组5 ' + mode + ' planner 工具面含 web/coredis 只读工具且 web_fetch 按 fetch=false 不注册', plannerTools.includes('web_search') && plannerTools.includes('cordis_inspect_list') && !plannerTools.includes('web_fetch'), JSON.stringify(plannerTools.filter((name) => name.startsWith('web_') || name.startsWith('cordis_'))))
     console.log('PLANNER_TOOLS=' + JSON.stringify({ mode, tools: plannerTools }))
 
-    const CONTROL_BINDING_NAMES = ['send_message', 'interrupt_agent', 'cordis_inspect_list', 'cordis_inspect_query']
+    const CONTROL_BINDING_NAMES = ['send_message', 'interrupt_agent']
+    const CORDIS_BINDING_NAMES = ['cordis_inspect_list', 'cordis_inspect_query']
     const roleCases = [['executor', executorAgent], ['planner', plannerAgent], ['reviewer', reviewerAgent], ['prober', proberAgent]]
     for (const [roleName, agent] of roleCases) {
       const schemas = root.tools.schemas(agent)
       const schemaNames = namesOf(schemas)
       const bindingDefinitions = CONTROL_BINDING_NAMES.map((name) => root.tools.get(name, agent))
-      const bindingNames = bindingDefinitions.map((definition) => definition === undefined ? undefined : definition.name)
-      const bindingOk = CONTROL_BINDING_NAMES.every((name, index) => schemaNames.includes(name) && bindingNames[index] === name)
-      check('组8 ' + mode + ' ' + roleName + ' schemas/get 四 binding 均为真实定义', bindingOk, JSON.stringify({ names: schemaNames, get: bindingNames }))
+      const bindingNames = bindingDefinitions.map((definition) => definition === undefined || definition === null ? undefined : definition.name)
+      const cordisDefinitions = CORDIS_BINDING_NAMES.map((name) => root.tools.get(name, agent))
+      const cordisNames = cordisDefinitions.map((definition) => definition === undefined || definition === null ? undefined : definition.name)
+      const controlAbsent = CONTROL_BINDING_NAMES.every((name, index) => !schemaNames.includes(name) && bindingNames[index] === undefined)
+      const cordisOk = CORDIS_BINDING_NAMES.every((name, index) => schemaNames.includes(name) && cordisNames[index] === name)
+      check('组8 ' + mode + ' ' + roleName + ' schemas/get 无 send/interrupt 且 Cordis 两工具为真实定义', controlAbsent && cordisOk, JSON.stringify({ names: schemaNames, control: bindingNames, cordis: cordisNames }))
       if (mode === 'ptc') {
         let assembly = null
         let assemblyError = ''
@@ -249,11 +253,11 @@ async function runMode(mode) {
         const sdkSection = assemblySections.find((section) => section.name === 'tools:sdk')
         const sdkText = sdkSection === undefined ? '' : (typeof sdkSection.text === 'string' ? sdkSection.text : '')
         const ptcTopLevelOk = assemblyTools.length === 1 && assemblyTools[0] === 'run_code'
-        const ptcTextOk = roleName === 'planner' || (sdkText.includes('send_message') && sdkText.includes('interrupt_agent') && !sdkText.includes('cordis_inspect_list') && !sdkText.includes('cordis_inspect_query'))
-        check('组8 ' + mode + ' ' + roleName + ' PTC F 顶层仅 run_code、binding/get 保留、tools:sdk 文本观察', ptcTopLevelOk && bindingOk && ptcTextOk, JSON.stringify({ topLevel: assemblyTools, sections: assemblySections.map((section) => section.name), sdkTextObserved: roleName === 'planner' ? 'planner-not-required' : ptcTextOk, assemblyError }))
-        console.log('ROLE_BINDING=' + JSON.stringify({ mode, role: roleName, phase: 'F', creative: false, schemas: schemaNames, binding: bindingNames, topLevel: assemblyTools, sdkTextObserved: roleName === 'planner' ? 'planner-not-required' : ptcTextOk, cordisHidden: roleName === 'planner' ? 'not-required' : !sdkText.includes('cordis_inspect_list') && !sdkText.includes('cordis_inspect_query') }))
+        const ptcTextOk = !sdkText.includes('send_message') && !sdkText.includes('interrupt_agent')
+        check('组8 ' + mode + ' ' + roleName + ' PTC F 顶层仅 run_code、SDK 无 send/interrupt、Cordis schemas/get 保留', ptcTopLevelOk && controlAbsent && cordisOk && ptcTextOk, JSON.stringify({ topLevel: assemblyTools, sections: assemblySections.map((section) => section.name), sdkControlAbsent: ptcTextOk, cordis: cordisNames, assemblyError }))
+        console.log('ROLE_BINDING=' + JSON.stringify({ mode, role: roleName, phase: 'F', creative: false, schemas: schemaNames, controlBindings: bindingNames, cordisBindings: cordisNames, topLevel: assemblyTools, sdkControlAbsent: ptcTextOk, sdkCordisObserved: sdkText.includes('cordis_inspect_list') || sdkText.includes('cordis_inspect_query') }))
       } else {
-        console.log('ROLE_BINDING=' + JSON.stringify({ mode, role: roleName, phase: 'native', creative: false, schemas: schemaNames, binding: bindingNames, sdkTextObserved: 'NOT-RUN' }))
+        console.log('ROLE_BINDING=' + JSON.stringify({ mode, role: roleName, phase: 'native', creative: false, schemas: schemaNames, controlBindings: bindingNames, cordisBindings: cordisNames, sdkControlAbsent: 'NOT-RUN' }))
       }
     }
 
@@ -302,8 +306,8 @@ async function runMode(mode) {
 
 await runMode('native')
 await runMode('ptc')
-console.log('CONTROL_BINDINGS=send_message/interrupt_agent/Cordis；send 仅直属父子，interrupt 仅调用者后代；真实投递/中断=HUMAN/NOT-RUN；createChild 非 managedActivation')
-console.log('真实 provider/模型行为/GUI/生产 profile/消息投递/中断生命周期: NOT-RUN')
+console.log('CONTROL_BINDINGS=四角色 schemas/get/native/PTC SDK 均无 send_message/interrupt_agent；Cordis 两工具 schemas/get 真实存在；真实投递/中断=HUMAN/NOT-RUN；createChild 非 managedActivation')
+console.log('HUMAN 真实 provider/模型行为/GUI/生产 profile/消息投递/中断生命周期: 未核实，不计 PASS；native/PTC SDK 仅完成静态呈现核对')
 console.log('首失败=' + (firstFailure === null ? '无' : firstFailure.label + ' @line ' + String(firstFailure.line)))
 console.log('通过 ' + pass + ', 失败 ' + fail + ', INCOMPLETE ' + incomplete)
 process.exitCode = fail === 0 && incomplete === 0 ? 0 : 1
