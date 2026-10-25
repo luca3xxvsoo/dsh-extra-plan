@@ -95,7 +95,6 @@ dsh-extra-plan/
 │   │   │   ├── assembly-presentation.js                              # 展示投影：A/C/M 投影与 skill catalog
 │   │   │   ├── client-carrier.js                                     # 配置组件内部 Client 载体，不形成公开组件
 │   │   │   ├── client.js                                             # 设置页前端 UI
-│   │   │   ├── executor-spawn.js                                     # 执行者委托层（workflow/ralph worker 注入）
 │   │   │   ├── gate-decisions.js                                     # 闸门纯决策：路由/目的/澄清/批准与只读判定
 │   │   │   ├── gate-words.js                                         # 闸门词契约：字段规格/整组校验/运行时派生
 │   │   │   ├── live-config.js                                        # 热修改支持模块
@@ -161,7 +160,6 @@ dsh-extra-plan/
 │       ├── 生成-no-remount证据.mjs
 │       ├── step-00-跨平台写拦截.mjs
 │       ├── step-00-全流程回归.mjs
-│       ├── step-01-executor-spawn注册幂等.mjs
 │       ├── step-01-安装同步.mjs
 │       ├── step-01-设置迁移.mjs
 │       ├── step-01-设置页配置.mjs

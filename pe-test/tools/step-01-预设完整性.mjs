@@ -16,8 +16,6 @@ import {
 } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
 import { DEFAULT_SETTINGS, DEFAULT_EXPLORE_BUDGET, DEFAULT_PLANNER_PROMPT_SUFFIX } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
 import { generateRuntimeDefaults, renderRuntimeDefaults, renderPresetDefinition, renderRoleDefinitions, secondDocumentOf, ROLE_IDS, roleDefinitionFile } from '../../plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs'
-// S1：DEFAULT_DENY 收敛断言（执行者 deny 清单必须与预设 config.deny 逐字一致）。
-import { DEFAULT_DENY, resolveDeny } from '../../plugins/dsh-extra-plan/lib/executor-spawn.js'
 import { HOST_CORDIS_TOOLS } from '../../plugins/dsh-extra-plan/lib/assembly-presentation.js'
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url))
@@ -72,27 +70,12 @@ if (!Array.isArray(preset)) console.log('PASS  preset.yml 为有效 YAML 文档'
 // 从 dsh-tool-cordis 读取 Cordis 呈现面的宿主真值，并与 lib/assembly-presentation.js 的
 // HOST_CORDIS_TOOLS 比对；未知 deny 名会使 tools.restrict() 抛错。
 const cordisTools = HOST_CORDIS_TOOLS
-const registered = new Set([
-  'subagent', 'subagent_review', 'subagent_probe', 'subagent_plan', 'workflow', 'ralph',
-  'send_message', 'interrupt_agent', 'list_agents', 'ask_user_question',
-  'todo_write', 'write', 'edit', 'read', 'glob', 'grep', 'pwsh', 'web_search', ...cordisTools,
-])
 
 let pass = 0
 let fail = 0
 function check(label, condition) {
   if (condition) { pass += 1; console.log('PASS  ' + label) }
   else { fail += 1; console.log('FAIL  ' + label) }
-}
-function checkDeny(label, denyList) {
-  const unknown = denyList.filter((name) => !registered.has(name))
-  if (unknown.length > 0) {
-    fail += 1
-    console.log('FAIL  ' + label + ' 含本预设不存在的工具名: ' + unknown.join(', '))
-  } else {
-    pass += 1
-    console.log('PASS  ' + label + '（' + denyList.length + ' 项，全部存在）')
-  }
 }
 
 // S-宿主真值：优先读取显式 DSH_INSTALL_ROOT 的 dsh-tool-cordis，提取 name 注册集；
@@ -133,72 +116,36 @@ for (const row of subagentRows) {
   check('T2 tool-subagent[' + config.toolName + '] 恰三键 provider/toolName/agentPreset 且 agentPreset 指向角色 id',
     keys === 'agentPreset,provider,toolName' && config.provider === 'spawn' && ROLE_PRESET_OF_TOOL[config.toolName] === config.agentPreset)
 }
-for (const inner of all) {
-  if (inner.name === 'dsh-extra-plan/executor-spawn') {
-    const deny = inner.config && Array.isArray(inner.config.deny) ? inner.config.deny : []
-    checkDeny('executor-spawn deny', deny)
+const RETIRED_EXECUTOR_SPAWN = ['executor-spawn', 'dsh-extra-plan/executor-spawn', 'extra-executor-spawn']
+function hasRetiredExecutorSpawn(value) {
+  if (Array.isArray(value)) return value.some(hasRetiredExecutorSpawn)
+  if (value === null || typeof value !== 'object') return false
+  const fields = [value.id, value.name, value.config?.provider, value.providerName, value.subagentProvider]
+  return fields.some((field) => RETIRED_EXECUTOR_SPAWN.includes(field)) || Object.values(value).some(hasRetiredExecutorSpawn)
+}
+const cleanExecutorSpawnFixture = structuredClone(runtimeRows)
+check('T1 退役残留判定器：干净结构克隆通过', !hasRetiredExecutorSpawn(cleanExecutorSpawnFixture))
+const executorSpawnPollutions = [
+  { field: 'id', row: (value) => ({ id: value }) },
+  { field: 'name', row: (value) => ({ name: value }) },
+  { field: 'config.provider', row: (value) => ({ config: { provider: value } }) },
+  { field: 'providerName', row: (value) => ({ providerName: value }) },
+  { field: 'subagentProvider', row: (value) => ({ subagentProvider: value }) },
+]
+for (const pollution of executorSpawnPollutions) {
+  for (const value of RETIRED_EXECUTOR_SPAWN) {
+    const polluted = structuredClone(cleanExecutorSpawnFixture)
+    polluted.push({ group: true, config: [pollution.row(value)] })
+    check('T1 退役残留反例 ' + pollution.field + '=' + value, hasRetiredExecutorSpawn(polluted))
   }
 }
-
-// S1-07 ~ S1-11：DEFAULT_DENY 已收敛为预设 config.deny 同集（11 项），resolveDeny 为纯函数回退。
-const executorRow = all.find((row) => row.name === 'dsh-extra-plan/executor-spawn')
-const ymlDeny = executorRow !== undefined && executorRow.config && Array.isArray(executorRow.config.deny)
-  ? executorRow.config.deny : []
-if (DEFAULT_DENY.length === 11) {
-  pass += 1
-  console.log('PASS  S1 DEFAULT_DENY 恰有 11 项')
-} else {
-  fail += 1
-  console.log('FAIL  S1 DEFAULT_DENY 项数不是 11：' + DEFAULT_DENY.length)
-}
-const defaultDenySet = new Set(DEFAULT_DENY)
-const ymlDenySet = new Set(ymlDeny)
-if (defaultDenySet.size === DEFAULT_DENY.length && defaultDenySet.size === ymlDenySet.size
-  && [...defaultDenySet].every((name) => ymlDenySet.has(name))) {
-  pass += 1
-  console.log('PASS  S1 DEFAULT_DENY 与 agent.cordis.yml config.deny 集合逐字一致（11 项）')
-} else {
-  fail += 1
-  console.log('FAIL  S1 DEFAULT_DENY 与 agent.cordis.yml config.deny 集合不一致')
-}
-const removedDenyNames = ['subagent_fork', 'create_goal', 'update_goal', 'get_goal', 'exit_plan_mode']
-const stillPresent = removedDenyNames.filter((name) => DEFAULT_DENY.includes(name))
-if (stillPresent.length === 0) {
-  pass += 1
-  console.log('PASS  S1 DEFAULT_DENY 不含已移除 5 名（subagent_fork/create_goal/update_goal/get_goal/exit_plan_mode）')
-} else {
-  fail += 1
-  console.log('FAIL  S1 DEFAULT_DENY 仍含：' + stillPresent.join(', '))
-}
-if (DEFAULT_DENY.includes('subagent_plan') === true && DEFAULT_DENY.includes('cordis_run') === false) {
-  pass += 1
-  console.log('PASS  S1 DEFAULT_DENY 含 subagent_plan 且不含 cordis_run（当前宿主无此工具）')
-} else {
-  fail += 1
-  console.log('FAIL  S1 DEFAULT_DENY 缺少 subagent_plan 或仍含 cordis_run')
-}
-const denyFallbackCases = [
-  resolveDeny(undefined) === DEFAULT_DENY,
-  resolveDeny({}) === DEFAULT_DENY,
-  Array.isArray(resolveDeny({ deny: ['x', 'y'] }))
-    && resolveDeny({ deny: ['x', 'y'] })[0] === 'x' && resolveDeny({ deny: ['x', 'y'] })[1] === 'y'
-    && resolveDeny({ deny: ['x', 'y'] }).length === 2,
-]
-if (denyFallbackCases.every((ok) => ok)) {
-  pass += 1
-  console.log('PASS  S1 resolveDeny(undefined/{}) 回退 DEFAULT_DENY，resolveDeny({deny:["x","y"]}) 原样返回')
-} else {
-  fail += 1
-  console.log('FAIL  S1 resolveDeny 回退或原样返回行为不符')
-}
+check('T1 退役残留判定器不扫描普通文本字段', !hasRetiredExecutorSpawn({ description: RETIRED_EXECUTOR_SPAWN.join(' '), config: { note: 'executor-spawn' } }))
 
 const names = all.map((row) => typeof row.name === 'string' ? row.name : '')
-// 0.2.1：workflow-ptc / tool-workflow / tool-ralph 三段在作者源里是注释（暂不挂载），
-// 故 required 不再要求三者存在；executor-spawn 行保留可执行（lib 与 export 一并保留）。
 const required = [
   '@deepseek-ai/dsh-persona', 'dsh-extra-plan', '@deepseek-ai/dsh-tool-ask-user',
   '@deepseek-ai/dsh-tool-subagent', '@deepseek-ai/dsh-tool-subagent-control',
-  '@deepseek-ai/dsh-tool-subagent-control/list-agents', 'dsh-extra-plan/executor-spawn',
+  '@deepseek-ai/dsh-tool-subagent-control/list-agents',
   '@deepseek-ai/dsh-compaction-basic', '@deepseek-ai/dsh-tool-cordis',
 ]
 for (const req of required) {
@@ -267,14 +214,14 @@ check('T1 生成资产是纯 definition（无 insert wrapper/官方独立公开�
   !definitionText.includes('insert:') && !definitionText.includes('preset-extra-plan') && !definitionText.includes("name: '@deepseek-ai/dsh-agent-preset'"))
 check('T1 definition 元数据与 preset.yml 一致、plugins 顶层恰 17 条',
   definitionDoc.id === 'extra-plan' && definitionDoc.name === preset.name && definitionDoc.description === preset.description && definitionDoc.order === 100 && Array.isArray(definitionDoc.plugins) && definitionDoc.plugins.length === 17)
-check('T1 作者源保留 17 条顶层结构、引导词与新 specifier', Array.isArray(rows) && rows.length === 17 && agentText.includes('收到需求后，理解用户需求') && (agentText.match(/name: 'dsh-extra-plan'/g) || []).length === 1 && (agentText.match(/name: 'dsh-extra-plan\/executor-spawn'/g) || []).length === 1)
-check('T1 definition 与作者源 parsed plugins 深等、两处新 specifier 且无旧运行时 specifier', Array.isArray(definitionDoc.plugins) && definitionDoc.plugins.length === 17 && JSON.stringify(definitionDoc.plugins) === JSON.stringify(rows) && all.filter((row) => row.name === 'dsh-extra-plan').length === 1 && all.filter((row) => row.name === 'dsh-extra-plan/executor-spawn').length === 1 && !definitionText.includes('@local/dsh-extra-plan'))
+check('T1 作者源保留 17 条顶层结构、引导词与主包 specifier、无退役包装层', Array.isArray(rows) && rows.length === 17 && agentText.includes('收到需求后，理解用户需求') && (agentText.match(/name: 'dsh-extra-plan'/g) || []).length === 1 && !hasRetiredExecutorSpawn(rows))
+check('T1 definition 与作者源 parsed plugins 深等、主包 specifier 且无退役包装层/旧运行时 specifier', Array.isArray(definitionDoc.plugins) && definitionDoc.plugins.length === 17 && JSON.stringify(definitionDoc.plugins) === JSON.stringify(rows) && all.filter((row) => row.name === 'dsh-extra-plan').length === 1 && !hasRetiredExecutorSpawn(definitionDoc) && !definitionText.includes('@local/dsh-extra-plan'))
 const groupIds = definitionDoc.plugins.filter((row) => row.group === true).map((row) => row.id)
 const delegationGroup = definitionDoc.plugins.find((row) => row.id === 'delegation')
 const compactionGroup = definitionDoc.plugins.find((row) => row.id === 'compaction')
 const extraPlanGroup = definitionDoc.plugins.find((row) => row.id === 'extra-plan-group')
-check('T1 三组 group/子行数量保持 1/3/7（workflow/ralph 三段已注释）', groupIds.join('|') === 'extra-plan-group|compaction|delegation' && extraPlanGroup.config.length === 1 && compactionGroup.config.length === 3 && delegationGroup.config.length === 7)
-check('T1 isolate 全部为 true 且覆盖三组要求', delegationGroup.isolate.subagentModelSelection === true && delegationGroup.isolate.workflowEngine === true && compactionGroup.isolate.toolResultPruner === true && Object.values(delegationGroup.isolate).concat(Object.values(compactionGroup.isolate), Object.values(extraPlanGroup.isolate)).every((value) => value === true))
+check('T1 三组 group/子行数量保持 1/3/6', groupIds.join('|') === 'extra-plan-group|compaction|delegation' && extraPlanGroup.config.length === 1 && compactionGroup.config.length === 3 && delegationGroup.config.length === 6)
+check('T1 isolate 全部为 true、保留模型选择隔离且 workflowEngine 缺席', delegationGroup.isolate.subagentModelSelection === true && !Object.prototype.hasOwnProperty.call(delegationGroup.isolate, 'workflowEngine') && compactionGroup.isolate.toolResultPruner === true && Object.values(delegationGroup.isolate).concat(Object.values(compactionGroup.isolate), Object.values(extraPlanGroup.isolate)).every((value) => value === true))
 check('T1 definition 保留 raw !!js marker 文本与官方技能表达式', definitionText.includes('!!js') && definitionText.includes("createRequire(baseUrl).resolve('@deepseek-ai/dsh-agent-preset/package.json')") && definitionText.includes("'skills')"))
 check('T1 官方适配器与技能文件未复制进本仓', !existsSync(join(PRESET_DIR, 'skills')) && !existsSync(join(PRESET_DIR, 'agent.cordis.official.yml')))
 // skill-filesystem 作者真源仍需保留 watch:false/bundledSkillDir。
@@ -282,7 +229,7 @@ const skillFsBlockText = agentText.slice(agentText.indexOf('- id: skill-filesyst
 const skillFsConfigText = skillFsBlockText.slice(skillFsBlockText.indexOf('\n  config:') + 1)
 const skillFsRow = Array.isArray(rows) ? rows.find((row) => row.id === 'skill-filesystem') : undefined
 check('T1 skill-filesystem 行保留 watch:false 与 bundledSkillDir、不含 customSkillDirs', skillFsRow !== undefined && skillFsRow.config !== undefined && skillFsRow.config.watch === false && skillFsConfigText.includes('bundledSkillDir:') && !skillFsConfigText.includes('customSkillDirs:'))
-check('T1 官方 preset registry 注释/ workflow-ptc 与作者源保真', agentText.includes('dsh-agent-preset-registry 会拒绝挂载') && agentText.includes("provider: extra-executor-spawn"))
+check('T1 作者源保留官方 preset registry 说明且无包装层恢复配方', agentText.includes('dsh-agent-preset-registry 会拒绝挂载') && !agentText.includes("provider: extra-executor-spawn"))
 // B2：YAML exploreBudget 是作者真源，生成模块只保存派生 fallback；非法 source 不覆盖 sentinel。
 const packageJson = JSON.parse(readFileSync(coreManifestFile, 'utf8'))
 const qqbotPackageJson = JSON.parse(readFileSync(qqbotManifestFile, 'utf8'))
@@ -298,7 +245,7 @@ const qqbotFiles = Array.isArray(qqbotPackageJson.files) ? qqbotPackageJson.file
 check('B2 package files/scripts 含生成器、generate 与 prepack', packageFiles.includes('scripts/generate-runtime-defaults.mjs') && packageJson.scripts['generate:runtime-defaults'] === 'node scripts/generate-runtime-defaults.mjs' && packageJson.scripts.prepack === 'node scripts/generate-runtime-defaults.mjs', true)
 check('M1 核心 manifest name/version/repository/client/deps/patch/private 契约', packageJson.name === 'dsh-extra-plan' && packageJson.version === '1.6.0' && packageJson.repository === 'git+https://github.com/luca3xxvsoo/dsh-extra-plan.git' && packageJson.dsh?.bundle?.patch === './cordis.patch.yml' && packageJson.dsh?.client?.platform === 'web' && Array.isArray(packageJson.dsh?.client?.inject) && packageJson.dependencies?.['js-yaml'] === '^4.2.0' && !Object.prototype.hasOwnProperty.call(packageJson, 'private') && !JSON.stringify(packageJson).includes('@local/dsh-extra-plan'))
 check('M2 核心 engines.dsh 与三项 @deepseek-ai peer 同为 0.2.1-rc.2', packageJson.engines?.dsh === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/dsh'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/dsh-llm'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/dsh-agent-preset'] === TARGET_PEER_RANGE)
-check('M2 核心 exports/files 保持所需子路径与 peer 范围', packageJson.exports?.['.'] === './index.js' && packageJson.exports?.['./settings'] === './lib/settings.js' && packageJson.exports?.['./executor-spawn'] === './lib/executor-spawn.js' && packageFiles.includes('index.js') && packageFiles.includes('lib/') && packageFiles.includes('locale/') && packageFiles.includes('cordis.patch.yml') && packageJson.peerDependencies?.['@deepseek-ai/dsh'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/dsh-llm'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/dsh-agent-preset'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/schemastery'] === '~3.18.4')
+check('M2 核心 exports/files 保持所需子路径与 peer 范围、包装层 export/实现均缺席', packageJson.exports?.['.'] === './index.js' && packageJson.exports?.['./settings'] === './lib/settings.js' && !Object.prototype.hasOwnProperty.call(packageJson.exports || {}, './executor-spawn') && !existsSync(join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'executor-spawn.js')) && packageFiles.includes('index.js') && packageFiles.includes('lib/') && packageFiles.includes('locale/') && packageFiles.includes('cordis.patch.yml') && packageJson.peerDependencies?.['@deepseek-ai/dsh'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/dsh-llm'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/dsh-agent-preset'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/schemastery'] === '~3.18.4')
 check('M3 QQBot manifest name/version/exports/files/dependency/postinstall/patch/private 契约', qqbotPackageJson.name === 'dsh-extra-plan-qqbot' && qqbotPackageJson.version === '2.0.0' && qqbotExports['.'] === './index.js' && qqbotExports['./cordis.patch.yml'] === './cordis.patch.yml' && qqbotExports['./package.json'] === './package.json' && JSON.stringify(qqbotFiles) === JSON.stringify(['index.js', 'cordis.patch.yml', 'lib/', 'scripts/']) && qqbotPackageJson.dependencies?.['js-yaml'] === '^4.2.0' && qqbotPackageJson.scripts?.postinstall === 'node scripts/heal.mjs' && qqbotPackageJson.dsh?.bundle?.patch === './cordis.patch.yml' && !Object.prototype.hasOwnProperty.call(qqbotPackageJson, 'private') && !JSON.stringify(qqbotPackageJson).includes('@local/dsh-qqbot-user-questions'))
 // ── T3 角色预设链：作者源第二文档 4 角色 + 4 个生成 definition（persona 逐字相等） ─────
 const roleSourceText = secondDocumentOf(agentText)
@@ -338,6 +285,7 @@ for (const role of roleRow) {
   const roleFile = roleDefinitionFile(role.id, PRESET_DIR)
   let roleDef = null
   try { roleDef = parsePresetYaml(readFileSync(roleFile, 'utf8')) } catch (error) { roleDef = null }
+  check('T3 ' + role.id + ' 作者源/definition 无退役包装层结构残留', roleDef !== null && !hasRetiredExecutorSpawn(role) && !hasRetiredExecutorSpawn(roleDef))
   const leading = roleDef === null ? [] : roleDef.plugins.slice(0, 2).map((row) => row.id)
   check('T3 ' + role.id + ' definition 首两行为 persona/extra-plan、config 与主预设逐字相等、persona 与作者源逐字相等',
     roleDef !== null && roleDef.id === role.id && roleDef.order === role.order && roleDef.name === EXPECTED_ROLE_NAMES[role.id] && roleDef.name === role.name && roleDef.description === role.description

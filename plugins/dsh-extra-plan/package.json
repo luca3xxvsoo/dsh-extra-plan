@@ -9,7 +9,6 @@
     "./settings": "./lib/settings.js",
     "./settings/locale/*": "./locale/settings/*",
     "./locale/*.json": "./locale/*.json",
-    "./executor-spawn": "./lib/executor-spawn.js",
     "./client": "./lib/client.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./assets/presets/extra-plan/preset-definition.generated.yml": "./assets/presets/extra-plan/preset-definition.generated.yml",

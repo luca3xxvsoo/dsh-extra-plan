@@ -13,6 +13,24 @@
 
 ### extra-plan 核心包
 
+#### executor-spawn 退役与文档迁移（2026-10-24）
+
+- 退役归属：HS12 现归官方 spawn／四类 tool-subagent，采用父路由继承、显式 `agentOptions` 覆盖与 `agentPreset` 选择子角色组合；旧 provider/deny/workflow 配方及专用测试随包装层退役。17 条合同不变，子组 7→6，AUTO13。
+- 以下原记录依据唯一备份逐字保存：
+
+```text
+| HS8 | `executor-spawn.js` `subagents.registerProvider` | 薄委托层保留可执行（lib 与 `./executor-spawn` export 均在），但 0.2.1 起旧 worker deny 注入已退役；provider 引用计数幂等与稳定槽键语义不变 | 【已核实·静态；失效面已记录】 |
+| HS9 | executor `delegate/getProvider` | 默认 delegate 与 providerName 解析仍可装载；当前无 worker 行引用（workflow-ptc/tool-ralph 段已注释） | 【已核实·静态】 |
+| HS10 | executor `toolFilter.deny`（历史面） | 0.2.1 起 worker 不再接收 deny 注入；角色的「不可见」改由角色预设不挂对应工具实现（`agent.cordis.yml` 第二文档），executor-spawn 行仅留历史 11 项清单 | 【已核实·静态】 |
+| HS11 | `prepareContinuable` | 能力存在时才透传 continuable；0.2.1 宿主把 descriptor.mode 固定为 continuable，该能力不再是角色判据 | 【已核实·静态】 |
+| HS27 | `executor-spawn.js` `slotKey` | `Symbol.for('cordis.original')`/traceable 语义决定跨世代幂等 | 【已核实·静态】 |
+| HK18 | executor-spawn 行 | providerName/delegate 仍指向本仓薄委托层（保留可执行），但 0.2.1 下旧 deny 注入已退役；恢复条件见 agent.cordis.yml 注释 | 【已核实·静态】 |
+| A40 | workflow / ralph worker（退役面） | approved=true | worker 请求缺 toolFilter 时不再注入执行者 deny；旧 executor-spawn 行仅作 11 项结构指纹，不抑制当前角色 definition 挂载 | 不产生拒绝文案；实机无委派入口，取不到 worker 会话，继续以静态保留项记录，不把旧行当当前工具不可见机制 | 静态说明（step-04 可保留旧行指纹对拍；不代表当前 worker 挂载） | **静态断言替代** |
+```
+
+- 原 U1-U6 覆盖数显示 `16+6+6+2+7+6=43`，而表注旧值为 `42`，两者矛盾；A40 删除后 U6/U6b 各显示 5，状态操作仍为 12。这里只归档原数与矛盾，不臆造新总数。
+- 根 README 原 98/164 行的两目录项是明确文档偏差，禁改；另一历史归档不重写。
+
 1. `CF1`：旧 `plugins/dsh-extra-plan/package.json` 的 `scripts.postinstall` 与 `distribute-preset.mjs`，曾在安装后解析 DSH_HOME、分发 `.agent-presets/extra-plan`；2026-09-25 死代码清理后核心包无 postinstall。
 2. `CF2`：旧 `plugins/dsh-extra-plan/scripts/distribute-preset.mjs` 的 DSH_HOME 解析与 `syncPreset` 委派；当前启动自愈独立由 `lib/preset-sync.js` 处理。
 3. `HS7`：旧 `cleanupLegacyFlashGuidePatches`/flash-guide 清理链；恒空转并直写 patch，因违反 configEditor 写链纪律删除。

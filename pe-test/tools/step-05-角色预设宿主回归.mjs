@@ -15,10 +15,8 @@ await registerHostDeps()
 const moduleHooks = await import('node:module')
 if (typeof moduleHooks.registerHooks === 'function') {
   const PLUGIN_ENTRY = pathToFileURL(join(resolve(dirname(fileURLToPath(import.meta.url)), '..', '..'), 'plugins', 'dsh-extra-plan', 'index.js')).href
-  const SPAWN_ENTRY = pathToFileURL(join(resolve(dirname(fileURLToPath(import.meta.url)), '..', '..'), 'plugins', 'dsh-extra-plan', 'lib', 'executor-spawn.js')).href
   moduleHooks.registerHooks({ resolve(specifier, context, nextResolve) {
     if (specifier === 'dsh-extra-plan') return { url: PLUGIN_ENTRY, shortCircuit: true }
-    if (specifier === 'dsh-extra-plan/executor-spawn') return { url: SPAWN_ENTRY, shortCircuit: true }
     return nextResolve(specifier, context)
   } })
 }
@@ -185,6 +183,8 @@ async function runMode(mode) {
       toolSubagentRow = { provider: config.provider, toolName: config.toolName, agentPreset: config.agentPreset, keys: Object.keys(config).sort() }
     }
     check('组2 ' + mode + ' tool-subagent 配置恰三键且 agentPreset=extra-plan-executor', toolSubagentRow !== null && JSON.stringify(toolSubagentRow.keys) === JSON.stringify(['agentPreset', 'provider', 'toolName']) && toolSubagentRow.provider === 'spawn' && toolSubagentRow.toolName === 'subagent' && toolSubagentRow.agentPreset === 'extra-plan-executor', toolSubagentRow === null ? 'row missing' : JSON.stringify(toolSubagentRow))
+    check('组2 ' + mode + ' extra-executor-spawn provider 缺席', root.subagents.getProvider('extra-executor-spawn') === undefined)
+    check('组2 ' + mode + ' executor-spawn provider 缺席', root.subagents.getProvider('executor-spawn') === undefined)
     const spawner = root.subagents.getProvider('spawn')
     check('组2 ' + mode + ' spawn 提供者声明 agentPreset 能力且不继承父上下文', spawner !== undefined && spawner.capabilities !== undefined && spawner.capabilities.agentPreset === true && spawner.inheritsParentContext !== true, spawner === undefined ? 'provider missing' : JSON.stringify({ agentPreset: spawner.capabilities?.agentPreset, inherits: spawner.inheritsParentContext }))
     const rootSchemas = namesOf(root.tools.schemas(root))

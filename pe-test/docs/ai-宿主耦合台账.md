@@ -28,8 +28,8 @@
 
 | 层 | 当前活动范围 | 复核入口 |
 |:--|:--|:--|
-| HS 服务/注册 | HS1-HS6、HS8-HS27（HS7 已删除历史） | 下面“当前 HS” |
-| HK 钩子/组合 | HK1-HK10、HK11-HK22、HK24-HK27；HK23 无定义不补造 | 下面“当前 HK” |
+| HS 服务/注册 | HS1-HS6、HS12-HS26、HS28-HS31 | 下面“当前 HS” |
+| HK 钩子/组合 | HK1-HK17（含6a/6b）、HK19-HK22、HK24-HK28 | 下面“当前 HK” |
 | SD 数据/布局 | SD1-SD8、SD10-SD33、SD35-SD40；SD9 保留缺号说明 | 下面“当前 SD” |
 | CF 安装配置 | CF3-CF12；CF1/CF2 已删除历史 | 下面“当前 CF” |
 | QB 兼容包 | QB1-QB3、QB5-QB21、QB25-QB26；QB27-QB31 为测试/条件环境面 | 下面“当前 QB” |
@@ -44,11 +44,7 @@
 | HS4 | `live-config.js` 路径决议 | `configPath → DSH_EXTRA_PLAN_CONFIG_PATH → configEditor.documentPath`；不读旧预设目录 | 【已核实·静态】 |
 | HS5 | `settings.js` owner → `preset-sync.js` `configEditor.edit` | 旧值迁移/补齐只 edit 唯一全局行；合法十项与 gateWords 重述不丢键；当前非法 gateWords/非法 PUT 先失败且零 edit，插件不直写 patch | 【已核实·静态+专项】 |
 | HS6 | `preset-definition.generated.yml` | 纯 definition 的 id/name/description/order/plugins；由生成器维护，preset-sync 交官方 adapter | 【已核实·静态】 |
-| HS8 | `executor-spawn.js` `subagents.registerProvider` | 薄委托层保留可执行（lib 与 `./executor-spawn` export 均在），但 0.2.1 起旧 worker deny 注入已退役；provider 引用计数幂等与稳定槽键语义不变 | 【已核实·静态；失效面已记录】 |
-| HS9 | executor `delegate/getProvider` | 默认 delegate 与 providerName 解析仍可装载；当前无 worker 行引用（workflow-ptc/tool-ralph 段已注释） | 【已核实·静态】 |
-| HS10 | executor `toolFilter.deny`（历史面） | 0.2.1 起 worker 不再接收 deny 注入；角色的「不可见」改由角色预设不挂对应工具实现（`agent.cordis.yml` 第二文档），executor-spawn 行仅留历史 11 项清单 | 【已核实·静态】 |
-| HS11 | `prepareContinuable` | 能力存在时才透传 continuable；0.2.1 宿主把 descriptor.mode 固定为 continuable，该能力不再是角色判据 | 【已核实·静态】 |
-| HS12 | `resolveChildAgentOptions` | 对象展开合并，空对象继承父路由；child 角色改由 `agentPreset` 选组合 | 【已核实·静态】 |
+| HS12 | 官方 spawn／四类 tool-subagent | 父路由继承；显式 `agentOptions` 覆盖；`agentPreset` 选择子角色组合 | 【已核实·静态】 |
 | HS13 | `preset-settings.js` `loadYaml` | 核心包自有 js-yaml；QQBot 由 package-local js-yaml 依赖保障，失败返回 null | 【已核实·静态】 |
 | HS14 | `!!js` YAML 标签 | YAML_SCHEMA 对 `dshHomePath` 等表达式的解析 | 【已核实·静态】 |
 | HS15 | `settings-contract.js` `SETTING_DEFINITIONS` + `DEFAULT_SETTINGS` | 10 项 source/row/projection 定位与 8+2 分组；默认值来自生成对象，validator/合法性与 UI metadata 仍以合同手工声明 | 【已核实·静态】 |
@@ -63,7 +59,6 @@
 | HS24 | extra-plan row config | 宿主 schema 将行 config 传入 apply | 【已核实·静态】 |
 | HS25 | `index.js` plugin contract | `name/inject/apply` 与 agent 预设组合 | 【已核实·静态】 |
 | HS26 | HP 首轮 `tool:read` | section、参数默认值、输出字段与手写 F 文案必须同步核对 | 【已核实·静态；行为待实机】 |
-| HS27 | `executor-spawn.js` `slotKey` | `Symbol.for('cordis.original')`/traceable 语义决定跨世代幂等 | 【已核实·静态】 |
 | HS28 | context-gate 宿主回归 | 当前安装根版本、生产源码 hash、公共 AgentLoop/受控 adapter、完整 request trace 与工作区 JSONL 证据；受控 adapter 不冒称真实 provider | 【已核实·集成；真实provider/HUMAN NOT-RUN】 |
 | HS30 | 角色预设 definition（`agent.cordis.yml` 第二文档 → `preset-definition-<role>.generated.yml`） | 4 角色的 id/order 由 `ROLE_IDS`/`ROLE_ORDERS` 统一校验（身份常量不承载权限）；personaPrefix 由作者源逐字搬运、extra-plan 行 config 由主预设同 id 行逐字复制（含 gateWords）；各角色均挂 `tool-web`（fetch:false、searchTimeoutMs:60000）与只读 `tool-cordis`，四角色 definition 均不挂 `tool-subagent-control`/`send_message`/`interrupt_agent`；main definition 保留 `tool-subagent-control` 与 `list-agents`。运行时按原始 `isSubagentChild` 对 child 的两控制工具直呼与 `run_code` 成员硬拒，覆盖 unknown/断链 child；main 的 send 直属父子、interrupt 仅调用者获授权后代、running 子原禁扰与自动最终结果保持。planner/reviewer/prober 的 `dsh-tool-fs` 置 write/edit=false，executor 保留 write/edit 与既有两行 shell；四个角色 definition 的派生范围跟随同一 `toolPresentationMode`（各恰一行 `tool-presentation`，派生异常保留生成物默认值且不抛错）；生成物不得手改；native/PTC 双模式由宿主回归实际 mount、schemas/get、sdkSchemas 与 SDK 文本解析取证 | 【已核实·静态+宿主回归；真实消息/中断 HUMAN】 |
 | HS31 | `pe-test/tools/step-05-角色预设宿主回归.mjs` | 两个串行独立 Context 注册原始五 ID；各模式真实 agents.create + preset mount，planner 两模式均以原 ID 与 `isPlannerChild` 核实；每角色/每模式以 `tools.schemas`/`tools.get` 同时核实 `send_message`/`interrupt_agent` 缺席和 Cordis 两工具存在；PTC F 顶层仅 `run_code` 且 `tools:sdk` 无 control 文本；Cordis schemas/get 仍在；保留 roster、三键 tool-subagent、只读/可写、persona、both 回落与禁委派/list_agents；不证明真实父子投递/中断 | 【已核实·集成；真实 provider/模型/GUI/消息/中断 HUMAN】 |
@@ -114,7 +109,6 @@
 | HK16 | `!!js dshHomePath` | 宿主提供 dshHomePath 与标签 schema | 【已核实·静态】 |
 | HK17 | 四行 tool-subagent | 合法键仅 `provider`/`toolName`/`modelSelectionSettings`/`agentOptions`/`agentPreset`/`allowedAgentPresets`/`maxDepth`；本预设四行各留三键（provider/toolName/agentPreset）并指向 4 个角色 id；persona/toolFilter 会被宿主抛错、backgroundMode 已无此键 | 【已核实·静态】 |
 | HK28 | 委派工具参数表（0.2.1） | 已无后台标志：subagent/subagent_plan/subagent_review/subagent_probe 恒为立即返回 subagentId 加完成通知；本仓闸门不再判定该参数（后台约束上移宿主层） | 【已核实·静态+两轮矩阵】 |
-| HK18 | executor-spawn 行 | providerName/delegate 仍指向本仓薄委托层（保留可执行），但 0.2.1 下旧 deny 注入已退役；恢复条件见 agent.cordis.yml 注释 | 【已核实·静态】 |
 | HK19 | tool-subagent-control 子路径 | 宿主 exports 子路径与行名 | 【已核实·静态】 |
 | HK20 | child 识别与 sandbox floor | `parentSession/origin/delegationDepth` 仍是 child 判据；planner 判据改为 `session.header.agentPreset === 'extra-plan-planner'`（descriptor.mode 恒 continuable，不再参与） | 【已核实·静态+宿主回归】 |
 | HK21 | run-code 子调用识别 | `exec.parent` 是宿主面；`exec.sub` 是本仓合成标记 | 【已核实·静态】 |

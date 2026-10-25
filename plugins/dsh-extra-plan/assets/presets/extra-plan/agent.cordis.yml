@@ -13,7 +13,7 @@
 # goal 行、plan-mode 行，因此 deny 不列 subagent_fork / create_goal / update_goal /
 # get_goal / exit_plan_mode（列了会 tools.restrict 抛错、子代理无法创建）。dsh 0.2.1-rc.2 起
 # tool-subagent 不再接受 persona/toolFilter，四角色的 deny 与只读面改由角色预设
-# （本文件第二文档）承载，主预设内仅 executor-spawn 保留一份历史 deny 清单。
+# （本文件第二文档）承载。
 # save_plan 注册于主会话与规划子代理层（主会话层 scoped：仅可写 cwd/.extra-plan）；
 # 执行者与验收者不是持有者，仍不可见、无需 deny。
 
@@ -228,19 +228,14 @@
 # ── delegation and workflows ────────────────────────────────────────────────
 
 # subagents 注册表与 spawn/fork 后端在宿主组合（进程单例、provider 名全局唯一）。
-# 本预设贡献委派工具行；executor 薄委托层使用独立 provider 名 'extra-executor-spawn'
+# 本预设贡献四类委派工具行，统一使用官方 spawn 与独立角色预设。
 - id: delegation
   name: cordis:group
   group: true
   # subagentModelSelection【必要】：本组四行 dsh-tool-subagent 的插件类即 SubagentModelSelectionConfig
   # extends Service，super(ctx,'subagentModelSelection')——每个实例行各注册一次，未隔离即泄漏到 root realm，
   # 预设挂载抛 'Preset services require isolate realms: subagentModelSelection'。
-  # workflowEngine【必要，保留】：workflow-ptc 行当前已注释暂不挂载（0.2.1 无对应角色承载），
-  # 恢复挂载时需要该 isolate 键：PtcWorkflowEngine extends WorkflowEngine，父类
-  # super(ctx,'workflowEngine')。两键值一律 true（各自 LocalRealm）——同名服务共用具名 GlobalRealm
-  # 会互相覆盖、破坏各自 config 语义。
   isolate:
-    workflowEngine: true
     subagentModelSelection: true
   config:
     - id: tool-subagent-control
@@ -291,54 +286,6 @@
         agentPreset: extra-plan-prober
         # 人设与工具面由角色预设 extra-plan-prober 承载（作者源：本文件第二文档）。
 
-    # executor-spawn 薄委托层（保留可执行，但 0.2.1 下失效）：
-    # 【失效说明】本行仍随预设装载（package.json 的 ./executor-spawn export 与 lib/executor-spawn.js
-    # 一并保留），但 dsh 0.2.1-rc.2 不再对 worker 应用 toolFilter/deny 注入，且五角色已改由角色预设
-    # 承载，故其 deny 注入不再生效；当前仅作为 workflow-ptc/tool-ralph 行的历史 provider 名保留。
-    # 恢复条件：宿主恢复 worker deny 注入契约、并解除下面三段 workflow 注释后重新启用。
-    # 历史职责：workflow/ralph worker 请求缺 toolFilter 时注入执行者 deny（11 项，含 subagent_plan
-    # 防 worker 再规划、含 subagent_probe 防 worker 委派探查者；save_plan 不可见无需列）；模型不在
-    # 薄层注入，worker 由非 planner resolver 选择 otherAgentModel 或回退顶层主会话（请求显式指定时优先）。
-    - id: executor-spawn
-      name: 'dsh-extra-plan/executor-spawn'
-      config:
-        providerName: extra-executor-spawn
-        delegate: spawn
-        deny:
-          - subagent
-          - subagent_review
-          - subagent_probe
-          - workflow
-          - ralph
-          - send_message
-          - interrupt_agent
-          - list_agents
-          - ask_user_question
-          - todo_write
-          - subagent_plan
-
-    # 旧的 worker-thread 工作流行（worker-thread 替身包）整包消失，替身为 dsh-workflow-ptc
-    # （其行实例 PtcWorkflowEngine 继承 dsh-workflow 的 WorkflowEngine，仍注册 workflowEngine，
-    # 由本组 isolate.workflowEngine 覆盖）；provider 保留本仓自定义薄委托层名。
-    # 【暂不挂载】以下 workflow-ptc / tool-workflow / tool-ralph 三段在 dsh 0.2.1-rc.2 下不挂载：
-    # 三者委派链依赖本仓薄委托层 provider extra-executor-spawn，而 0.2.1 对 worker 不再应用 deny
-    # 注入，五角色改由角色预设（本文件第二文档）承载，workflow/ralph 工具面无对应角色。
-    # 恢复条件：宿主恢复 worker deny 注入契约且本仓重建 executor-spawn 注入路径后，去掉下列注释，
-    # 并同步本组 isolate.workflowEngine 与 step-01 预设完整性断言。
-    #
-    # - id: workflow-ptc
-    #   name: '@deepseek-ai/dsh-workflow-ptc'
-    #   config:
-    #     provider: extra-executor-spawn
-    #
-    # - id: tool-workflow
-    #   name: '@deepseek-ai/dsh-tool-workflow'
-    #
-    # - id: tool-ralph
-    #   name: '@deepseek-ai/dsh-tool-ralph'
-    #   config:
-    #     subagentProvider: extra-executor-spawn
-    #     maxRounds: 64
 
 # ── remaining model-facing rows ─────────────────────────────────────────────
 

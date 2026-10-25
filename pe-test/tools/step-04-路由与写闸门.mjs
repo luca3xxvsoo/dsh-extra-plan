@@ -3086,8 +3086,8 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
 // 四组断言全部机械可核对：isolate 名单（预设挂载必过审计）、settings 行 Config 8 字段
 // 全 volatile、2 项宿主行写链（声明行 plugins 整体重述）、声明行与生成产物一致性。
 {
-  // ① isolate：三组名单 ⊇ {subagentModelSelection, toolResultPruner, workflowEngine} 且值全 true。
-  const requiredIsolate = ['subagentModelSelection', 'toolResultPruner', 'workflowEngine']
+  // ① isolate：三组名单 ⊇ {subagentModelSelection, toolResultPruner} 且值全 true，delegation 不含 workflowEngine。
+  const requiredIsolate = ['subagentModelSelection', 'toolResultPruner']
   const isolateGroups = all.filter((row) => row.group === true)
   const isolateMap = {}
   for (const group of isolateGroups) {
@@ -3097,15 +3097,15 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
       if (isolateMap[name][1] !== true) isolateMap[name][1] = value
     }
   }
-  checkTrue('T9-3f 预设三组 isolate 名单 ⊇ {subagentModelSelection, toolResultPruner, workflowEngine}', requiredIsolate.every((name) => Object.prototype.hasOwnProperty.call(isolateMap, name)))
-  checkTrue('T9-3g 三组 isolate 值全部 === true（禁止具名字符串 label）', Object.values(isolateMap).every((entry) => entry[1] === true) && requiredIsolate.every((name) => isolateMap[name][1] === true))
+  checkTrue('T9-3f 预设三组 isolate 名单 ⊇ {subagentModelSelection, toolResultPruner}', requiredIsolate.every((name) => Object.prototype.hasOwnProperty.call(isolateMap, name)))
+  checkTrue('T9-3g 三组 isolate 值全部 === true（禁止具名字符串 label）', Object.values(isolateMap).every((entry) => entry[1] === true) && requiredIsolate.every((name) => isolateMap[name]?.[1] === true))
   const delegationRow = all.find((row) => row.id === 'delegation')
   const compactionRow = all.find((row) => row.id === 'compaction')
   const extraPlanGroupRow = all.find((row) => row.id === 'extra-plan-group')
-  checkTrue('T9-3h delegation/compaction/extra-plan-group 各自带 isolate 键且覆盖必要项',
-    delegationRow.isolate.subagentModelSelection === true && delegationRow.isolate.workflowEngine === true &&
-    compactionRow.isolate.toolResultPruner === true &&
-    extraPlanGroupRow.isolate !== undefined && Object.keys(extraPlanGroupRow.isolate).length > 0)
+  checkTrue('T9-3h 三组带 isolate 且覆盖必要项、delegation 的 workflowEngine 缺席',
+    delegationRow?.isolate?.subagentModelSelection === true && !Object.prototype.hasOwnProperty.call(delegationRow.isolate, 'workflowEngine') &&
+    compactionRow?.isolate?.toolResultPruner === true &&
+    extraPlanGroupRow?.isolate !== undefined && extraPlanGroupRow.isolate !== null && Object.keys(extraPlanGroupRow.isolate).length > 0)
 
   // ② 生成纯 definition：不再公开 preset-extra-plan/官方 adapter Loader insert。
   const generatedDefinitionText = readFileSyncE(ASSET_DEFINITION_FILE_E, 'utf8')
