@@ -4,7 +4,7 @@
 
 **作者从reasonix得到的灵感，实现权限控制+子代理角色分配的agent模板**
 
-**兼容性**：DSH = v0.2.1-rc.2、qqbot 0.5.0(暂未测试)。旧版本兼容详见Releases
+**兼容性**：DSH = v0.2.1-rc.2、dsh-qqbot 0.5.2。旧版本兼容详见Releases
 
 ## 2. 核心优势
 
@@ -31,11 +31,20 @@
 
 1. 安装
 ```powershell 7+ 在线
-$repo='luca3xxvsoo/dsh-extra-plan'; $q="$repo#path:/plugins/dsh-extra-plan-qqbot"; $allow='dsh-extra-plan-qqbot@git+https://github.com/luca3xxvsoo/dsh-extra-plan.git'; dsh plugin --profile qqbot add $q --allow-build="$allow"; $exitCode=$LASTEXITCODE; if($exitCode -ne 0){dsh plugin --profile qqbot approve-builds --all; dsh plugin --profile qqbot add $q --allow-build="$allow"; $exitCode=$LASTEXITCODE}; if($exitCode -eq 0){dsh plugin --profile qqbot approve-builds --all; if($LASTEXITCODE -eq 0){dsh plugin --profile qqbot rebuild dsh-extra-plan-qqbot; if($LASTEXITCODE -ne 0){throw '兼容插件 rebuild 失败'}; $profileDir=Join-Path $env:USERPROFILE '.dsh\profiles\qqbot'; Push-Location $profileDir; try { node -e "const fs=require('node:fs'),p='package.json';if(!fs.existsSync('node_modules/dsh-extra-plan'))throw new Error('缺少 qqbot 到 web 的 dsh-extra-plan 链接');const j=JSON.parse(fs.readFileSync(p,'utf8'));j.dsh=j.dsh||{};j.dsh.profile=j.dsh.profile||{};const b=j.dsh.profile.bundles=Array.isArray(j.dsh.profile.bundles)?j.dsh.profile.bundles:[];let changed=false;for(const n of ['dsh-extra-plan-qqbot','dsh-extra-plan'])if(!b.includes(n)){b.push(n);changed=true};if(changed){fs.copyFileSync(p,p+'.bak');fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n')}" ; $nodeExit=$LASTEXITCODE } finally { Pop-Location }; if($nodeExit -eq 0){Write-Host '完整安装并激活成功，请重启 QQBot'}else{Write-Error 'bundle 激活失败'}}}else{Write-Error '插件安装失败'}
+dsh plugin --profile qqbot add 'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan-qqbot' --allow-build='dsh-extra-plan-qqbot@git+https://github.com/luca3xxvsoo/dsh-extra-plan.git'
+
+if ($LASTEXITCODE -eq 0) {
+    dsh plugin --profile qqbot rebuild dsh-extra-plan-qqbot
+}
 ```
-或
 ```powershell 7+ 离线
-$src='[解压路径]\dsh-extra-plan-main'; $pkg=(Resolve-Path (Join-Path $src 'plugins\dsh-extra-plan-qqbot')).Path -replace '\\','/'; $spec="file:///$pkg"; $allow="dsh-extra-plan-qqbot@file:$pkg"; dsh plugin --profile qqbot add $spec --allow-build="$allow"; $exitCode=$LASTEXITCODE; if($exitCode -ne 0){dsh plugin --profile qqbot approve-builds --all; dsh plugin --profile qqbot add $spec --allow-build="$allow"; $exitCode=$LASTEXITCODE}; if($exitCode -eq 0){dsh plugin --profile qqbot approve-builds --all; if($LASTEXITCODE -eq 0){dsh plugin --profile qqbot rebuild dsh-extra-plan-qqbot; if($LASTEXITCODE -ne 0){throw '兼容插件 rebuild 失败'}; $profileDir=Join-Path $env:USERPROFILE '.dsh\profiles\qqbot'; Push-Location $profileDir; try { node -e "const fs=require('node:fs'),p='package.json';if(!fs.existsSync('node_modules/dsh-extra-plan'))throw new Error('缺少 qqbot 到 web 的 dsh-extra-plan 链接');const j=JSON.parse(fs.readFileSync(p,'utf8'));j.dsh=j.dsh||{};j.dsh.profile=j.dsh.profile||{};const b=j.dsh.profile.bundles=Array.isArray(j.dsh.profile.bundles)?j.dsh.profile.bundles:[];let c=false;for(const n of ['dsh-extra-plan-qqbot','dsh-extra-plan'])if(!b.includes(n)){b.push(n);c=true};if(c){fs.copyFileSync(p,p+'.bak');fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n')}" ; $nodeExit=$LASTEXITCODE } finally { Pop-Location }; if($nodeExit -eq 0){Write-Host '本地插件安装并激活完成，请重启 QQBot'}}}
+$pkg = (Resolve-Path '[解压路径]\dsh-extra-plan-main\plugins\dsh-extra-plan-qqbot').Path -replace '\\', '/'
+
+dsh plugin --profile qqbot add "file:///$pkg" --preserve-absolute-paths --allow-build="dsh-extra-plan-qqbot@file:$pkg"
+
+if ($LASTEXITCODE -eq 0) {
+    dsh plugin --profile qqbot rebuild dsh-extra-plan-qqbot
+}
 ```
 2. **重启 DSH 进程**使插件生效
 3. qqbot下使用 /preset 切换预设
@@ -48,10 +57,12 @@ dsh plugin --profile web remove dsh-extra-plan
 ```
 2. qqbot兼容插件卸载 (如装)
 ```powershell 7+
-dsh plugin --profile qqbot remove dsh-extra-plan
 dsh plugin --profile qqbot remove dsh-extra-plan-qqbot
 ```
-3. **重启 DSH 进程**
+
+    手动删除qqbot环境下的文件夹：dsh-extra-plan
+
+4. **重启 DSH 进程**
 
 ### 平台实测说明
 
@@ -164,6 +175,7 @@ dsh-extra-plan/
 │       ├── step-01-设置迁移.mjs
 │       ├── step-01-设置页配置.mjs
 │       ├── step-01-预设完整性.mjs
+│       ├── step-01-qqbot-单命令安装.mjs
 │       ├── step-01-qqbot-安装映射.mjs
 │       ├── step-01-qqbot-环境验证.mjs
 │       ├── step-04-工具清单查看.mjs

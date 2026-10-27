@@ -61,4 +61,4 @@ main 保留 `send_message`、`interrupt_agent`、`list_agents`；四角色 defin
 
 ## QQBot 兼容插件边界
 
-`dsh-extra-plan-qqbot`（仓库目录为 `plugins/dsh-extra-plan-qqbot`）只在启动时逐 profile 调用兼容自愈：自身安装判定为 `node_modules/dsh-extra-plan-qqbot`，先清理根级完整旧错误块，再按 `DSH_HOME`（env 优先，默认 `~/.dsh`）确保 Web 的 `node_modules/dsh-extra-plan` 平铺链接；两步幂等，逐 profile patch/link 失败返回结构化摘要并告警，但仍不阻断启动/CLI，CLI 保持 exit 0。`lib/heal.js` 是无导入副作用的纯函数实现，`scripts/heal.mjs` 只是 CLI 兜底；静态/临时夹具可由 pe-test 回归，真实消息、`/preset`、question/approval（提问/批准）、postinstall（安装后脚本）与生产 profile 仍是用户部署后的 HUMAN。
+`dsh-extra-plan-qqbot`（仓库目录为 `plugins/dsh-extra-plan-qqbot`）分两条路径：授权安装由 `postinstall` 调用 `scripts/heal.mjs --install`，严格校验唯一目标、Web 核心源和最终 realpath 建链；普通启动由 `index.js#apply` 调用 `healQqbotCompatibility` 非阻断兜底，`profileNames` 仅可选缩小已发现自有 profile。兼容 bundle 以 `id: dsh-extra-plan-settings` / `name: dsh-extra-plan/settings` 的 canonical 行激活；核心包独立安装且不分发核心预设。严格入口失败非零、无参兜底仍 exit 0；真实消息、`/preset`、question/approval（提问/批准）、postinstall/allow-build 与生产 profile 仍是用户部署/重启后的 HUMAN，静态和受控 compose 证据不等于真实安装或 QQBot 运行通过。

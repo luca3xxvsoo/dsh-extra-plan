@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-10-25 13:48:41（脚本自动更新时间戳行）
+> 上次同步：2026-10-27 07:28:27（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -70,7 +70,7 @@
 | 预设核对／纯 definition／首次 adapter／旧行非破坏迁移／settled-only 与 structuralHandoff 分离 | lib/preset-sync.js、lib/preset-settings.js | syncPreset、assetDefinition、definitionWithProjection、readUnifiedState、readLegacyState、resolveUnifiedConfig、restateSettingsConfig、declarationBodyMatchesAsset、stripUserWritable、carryUserWritable、assetPlugins、pluginRowIds、readDeclaredPluginsFromPatch、applyPlan、structuralFingerprint、mountPresetSync、initialMount、settledSettingsUpdate、structuralHandoff、reportSettledError |
 | 同页共享客户端表单／仅经 detail.section 渲染于 bundle 详情页行列表之后（自绘标题；字段常量只来自生成器标记区块；不注册 bundle.config/row/item/tab，本包 bundle.config 槽被任何一方注册条目时 detail.section 让位） | lib/client.js、scripts/generate-runtime-defaults.mjs | apply、SettingsCard、ExtraPlanForm、DetailSettingsSection、registerClientSurfaces |
 > client.js 设置入口定位：`DetailSettingsSection` 与 `registerClientSurfaces`；设置表单仅经 plugins.detail.section 渲染于 bundle 页行列表之后，若本包 bundle.config 槽被任何一方注册条目则让位保持唯一表单；ConfigForms.get(NS) 订阅快照并一次 mutate 十项，不注册 bundle.config/row.config/settings.plugins.tab/plugins.item。
-| qqbot 兼容自愈／建链 | dsh-extra-plan-qqbot（仓库目录 plugins/dsh-extra-plan-qqbot）/lib/heal.js（选装包，本机未安装） | healQqbotCompatibility、ensureDshExtraPlanLink |
+| qqbot 严格安装／shared sameRealPath 路径比较／可选目标 profile 筛选／兼容自愈建链 | dsh-extra-plan-qqbot（仓库目录 plugins/dsh-extra-plan-qqbot）/lib/heal.js、scripts/heal.mjs | sameRealPath、strictInstall、findOwnQqbotProfiles、healQqbotCompatibility、ensureDshExtraPlanLink |
 | 十项默认值 sourceLocator → DEFAULT_SETTINGS／兼容别名／消费者；纯 definition、四角色 definition 与 client 标记区块生成／last-known-good／事务发布（默认仓库七输出；自定义 client 默认关闭；--check 零写） | lib/preset-settings.js、lib/settings-contract.js、scripts/generate-runtime-defaults.mjs、lib/preset-defaults.generated.js、lib/client.js、assets/presets/extra-plan/preset-definition.generated.yml | resolveTemplateSettingDefault、runtimeDefaultsFromTemplate、renderRuntimeDefaults、renderClientFieldBlock、renderClientFields、renderPresetDefinition、topLevelRowsOf、generateRuntimeDefaults、normalizedOutputEntries、publishGeneratedOutputs、checkOutput |
 | 闸门关键词单一来源／7 词唯一手工编辑位／prompt variable 注册／旧词拒绝／严格校验（gateWords/extra_plan_*） | plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml、plugins/dsh-extra-plan/lib/gate-words.js、index.js | validateGateWords、createGateRuntime、normalizeGateLabel、matchExactKind、deriveFlowState、mainGateReason |
 | gateWords 启动核对／厂商模板整组校验／旧声明行 carry（无破坏性迁移） | plugins/dsh-extra-plan/lib/preset-sync.js | syncPreset、readDefinitionGateWords、assertTemplateGateWords、readLegacyState |
@@ -98,8 +98,8 @@
 | pe-test/_shared/v4-tool-result.mjs | 28 | 识别v4会话日志并提取tool result |
 | pe-test/_shared/zstd-frames.mjs | 107 | 解析zstd帧并解码会话文本 |
 | plugins/dsh-extra-plan-qqbot/index.js | 22 | qqbot 精简版自愈插件：apply 启动时调 healQqbotCompatibility 自愈（迁移旧错误块+建链），不阻断启动 |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | 355 | 自愈纯函数模块（定位 profile/旧块迁移/建链；供 index.js/CLI/测试复用） |
-| plugins/dsh-extra-plan-qqbot/scripts/heal.mjs | 28 | CLI 兜底入口（postinstall/手动触发；invokedAsMain 判定） |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | 367 | 自愈纯函数模块（共享 sameRealPath 路径比较；profileNames 可缩小 profile 候选；定位/旧块迁移/建链；供 index.js/CLI/测试复用） |
+| plugins/dsh-extra-plan-qqbot/scripts/heal.mjs | 134 | CLI 入口：--install 严格安装模式（失败非零）；无参启动/手动触发走告警但 exit 0 的兜底；invokedAsMain 判定 |
 | plugins/dsh-extra-plan/index.js | 989 | 核心入口：四级闸门、预算、save 工具注册与生命周期；接线 planner/非 planner 路由、A/C/M 投影、P2-2 cache、V2 session 分桶 usage final fold、v4 MALFORMED 自愈。gateWords 只来自 YAML，apply 先校验再副作用；tools/pre-execute 先用原始 `isSubagentChild` 预审 child 控制工具，再进入角色/root 闸门，main 控制与自动最终结果保持。 |
 | plugins/dsh-extra-plan/lib/agent-runtime.js | 153 | 每次 apply 的角色识别、descriptor/工具 schema 缓存、usage 血缘上下文与 role baseline、sandbox floor 工厂；不 import index.js |
 | plugins/dsh-extra-plan/lib/agent-session.js | 32 | 会话事件与子代理识别的唯一来源：sessionEvents/isSubagentChild 零依赖纯函数，被 index.js 与 lib/model-routing.js 共用（无镜像副本；不 import index.js） |
@@ -184,31 +184,35 @@
 | pe-test/_shared/zstd-frames.mjs | decompressedFrameBytes | L58-85 | 逐帧计算一次边界并解压，边界解析次数随帧数线性增长；按长度跳过 skippable 载荷，产出每帧 Buffer，截断/非法 magic/无完整帧抛出不完整错误。 | skippable 载荷内的 zstd magic 不作为真实帧。 |
 | pe-test/_shared/zstd-frames.mjs | decodedJsonlLines | L87-107 | 以 fatal UTF-8 TextDecoder 跨帧累积并按物理换行 yield { lineNo, line }，保留 CR/空行/末行无换行；帧截断、非法 UTF-8 和无完整帧由调用方归类 INCOMPLETE。 |  |
 | plugins/dsh-extra-plan-qqbot/index.js | apply | L11-22 | 插件入口：apply 启动时调 healQqbotCompatibility 自愈（迁移旧错误块+建链；try/catch 不阻断启动） |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | loadYamlModule | L15-25 | 仅按 package-local import.meta.url 惰性加载 js-yaml；不可用时由迁移入口保守跳过，导入零副作用。 |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | loadYamlSchema | L27-41 | 惰性构造只保留 Loader `!!js` 标量的 JSON schema，表达式只转 __jsExpr 不求值 |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | resolve | L33 | 惰性 js-yaml 类型的标量判定，仅接受字符串数据 |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | construct | L34 | 将 `!!js` 标量包装为惰性 __jsExpr 标记，绝不执行 |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | predicate | L35 | 识别惰性 __jsExpr 标记对象 |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | represent | L36 | 为 schema 重新表示惰性表达式文本 |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | timestamp | L43-47 | 时间戳 yyyyMMddHHmmssSSS（毫秒粒度备份时间戳，不作同毫秒唯一承诺） |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | pad | L45 | 数字补零（timestamp 内部闭包） |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | isObject | L73-75 | 非空普通对象判定（排除 null/数组） |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | stripBom | L77-79 | 去除行首 BOM（迁移扫描用） |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | lineIndent | L81-83 | 行首缩进宽度 |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | isIgnorableLine | L85-88 | 空行/注释行判定（块扫描跳过） |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | parseEntryBlock | L92-100 | 用 js-yaml 严格解析单个根级条目，返回 parsed/yaml-unavailable/parse-failed 状态；不做文本猜测。 |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | legacyEntryKind | L102-112 | 旧版根级完整块匹配（id+name[+config.default=standard]）→ 返回 id 或 null |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | rootSequenceIndent | L114-124 | 根级序列缩进探测（首条 - 行的缩进宽度） |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | isRootSequenceLine | L126-130 | 指定缩进处的根级序列行判定 |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | scanRootBlocks | L132-158 | 按根级缩进切分顶层条目块（返回 lines/rootIndent/blocks） |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | findLegacyRootBlocks | L160-175 | 扫描根级块并仅按解析对象匹配完整旧条目；任一解析不可用/失败返回 parseIssue，整体跳过删除。 |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | removeLegacyRootBlocks | L177-199 | 移除旧版根级块（移除后无实质内容时写顶层 []） |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | verifyMigratedPatch | L201-211 | 迁移后只用 js-yaml 校验顶层数组且无完整旧块残留，不使用行级 fallback。 |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | healPatchRows | L222-264 | 幂等迁移旧版根级 code-runtime/agent-presets 错误块（实为清旧块；静态补行由包内 cordis.patch.yml 唯一提供）；写前 .bak-* 备份、写后校验失败恢复；文件不存在跳过 |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | findOwnQqbotProfiles | L272-292 | 扫描 $DSH_HOME/profiles/* 找出锚定本插件的 qqbot profile（bundles + node_modules 双条件） |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | ensureDshExtraPlanLink | L300-330 | 建平铺 dsh-extra-plan → Web 包链接：web 缺失跳过/已正确不动/实体或非目标链接提示 pnpm 迁移/仅 ENOENT 建 junction |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | healQqbotCompatibility | L336-355 | 对每个自有 profile 依次执行 healPatchRows（清旧错误块）与 ensureDshExtraPlanLink（建链）；整体 try/catch 只记录日志不阻断 |  |
-| plugins/dsh-extra-plan-qqbot/scripts/heal.mjs | invokedAsMain | L9-14 | 主脚本判定（node 直跑时执行自愈；本仓插件 CLI 通用写法） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | sameRealPath | L11-13 | 共享路径比较 helper：Windows 忽略大小写、其它平台精确比较；供 CLI 入口、目标包与最终链接校验复用。 |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | loadYamlModule | L19-29 | 仅按 package-local import.meta.url 惰性加载 js-yaml；不可用时由迁移入口保守跳过，导入零副作用。 |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | loadYamlSchema | L31-45 | 惰性构造只保留 Loader `!!js` 标量的 JSON schema，表达式只转 __jsExpr 不求值 |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | resolve | L37 | 惰性 js-yaml 类型的标量判定，仅接受字符串数据 |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | construct | L38 | 将 `!!js` 标量包装为惰性 __jsExpr 标记，绝不执行 |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | predicate | L39 | 识别惰性 __jsExpr 标记对象 |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | represent | L40 | 为 schema 重新表示惰性表达式文本 |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | timestamp | L47-51 | 时间戳 yyyyMMddHHmmssSSS（毫秒粒度备份时间戳，不作同毫秒唯一承诺） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | pad | L49 | 数字补零（timestamp 内部闭包） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | isObject | L77-79 | 非空普通对象判定（排除 null/数组） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | stripBom | L81-83 | 去除行首 BOM（迁移扫描用） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | lineIndent | L85-87 | 行首缩进宽度 |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | isIgnorableLine | L89-92 | 空行/注释行判定（块扫描跳过） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | parseEntryBlock | L96-104 | 用 js-yaml 严格解析单个根级条目，返回 parsed/yaml-unavailable/parse-failed 状态；不做文本猜测。 |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | legacyEntryKind | L106-116 | 旧版根级完整块匹配（id+name[+config.default=standard]）→ 返回 id 或 null |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | rootSequenceIndent | L118-128 | 根级序列缩进探测（首条 - 行的缩进宽度） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | isRootSequenceLine | L130-134 | 指定缩进处的根级序列行判定 |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | scanRootBlocks | L136-162 | 按根级缩进切分顶层条目块（返回 lines/rootIndent/blocks） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | findLegacyRootBlocks | L164-179 | 扫描根级块并仅按解析对象匹配完整旧条目；任一解析不可用/失败返回 parseIssue，整体跳过删除。 |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | removeLegacyRootBlocks | L181-203 | 移除旧版根级块（移除后无实质内容时写顶层 []） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | verifyMigratedPatch | L205-215 | 迁移后只用 js-yaml 校验顶层数组且无完整旧块残留，不使用行级 fallback。 |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | healPatchRows | L226-268 | 幂等迁移旧版根级 code-runtime/agent-presets 错误块（实为清旧块；静态补行由包内 cordis.patch.yml 唯一提供）；写前 .bak-* 备份、写后校验失败恢复；文件不存在跳过 |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | findOwnQqbotProfiles | L276-296 | 扫描 $DSH_HOME/profiles/* 找出锚定本插件的 qqbot profile（bundles + node_modules 双条件） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | ensureDshExtraPlanLink | L304-334 | 建平铺 dsh-extra-plan → Web 包链接：web 缺失跳过/已正确不动/实体或非目标链接提示 pnpm 迁移/仅 ENOENT 建 junction |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | healQqbotCompatibility | L340-367 | 按可选 profileNames 将 findOwnQqbotProfiles 结果缩小候选后，逐 profile 执行 healPatchRows（清旧错误块）与 ensureDshExtraPlanLink（建链），汇总 results/failed；整体异常只告警并返回 error，不阻断加载。 |  |
+| plugins/dsh-extra-plan-qqbot/scripts/heal.mjs | invokedAsMain | L10-15 | 主脚本判定（node 直跑时执行自愈；本仓插件 CLI 通用写法） |  |
+| plugins/dsh-extra-plan-qqbot/scripts/heal.mjs | installFailure | L17-21 | 将严格安装失败原因与可选 detail 组装为 { error } 结构，供各失败分支统一返回。 |  |
+| plugins/dsh-extra-plan-qqbot/scripts/heal.mjs | strictInstall | L23-99 | --install 严格预检并收口：校验 Web 源、双锚点包根唯一匹配、目标实体与链；以 profileNames 限定自愈，要求 patch/link 成功态并复核最终 lstat/realpath，失败统一返回 error。 |  |
+| plugins/dsh-extra-plan-qqbot/scripts/heal.mjs | reportInstallFailure | L101-104 | 将严格安装失败结构化 JSON 写入 stderr，并设置 process.exitCode=1。 |  |
 | plugins/dsh-extra-plan/index.js | malformedRecovery | L206-240 | MALFORMED_RESPONSE 限次自愈：llm-retry 已给 {kind:'retry'} 原样透传（不叠加）；否则按 sessionId→Set('turn:step') 同回合只兜底 1 次（防死循环），注入 developer/message 中文提示（append 带 surfaceOp:'append'、纯文本禁带 headerSeq、source.kind 用生产者自有 plugin:dsh-extra-plan）并返回 {kind:'retry'}；**payload 须自带 ≥1 的 turn/step（宿主 append 不补坐标），坐标缺失/非正整数 → 跳过注入但仍返回 {kind:'retry'}**；aborted/无 agent/超次 → null 回退原 action 透传 |  |
 | plugins/dsh-extra-plan/index.js | recordAgentError | L254-272 | agent/error 回合错误取证：把宿主回合/步骤级错误（payload {agent,turn,step,error}）逐字落盘到插件目录 extra-plan-agent-errors.jsonl，行 = {ts, sessionId, turn, step, chain}；整体吞错 + 一次性 warn 防刷屏；模块级函数经命名导出供回归冒烟直呼 | 与 recordRequestError 同诊断模式 |
 | plugins/dsh-extra-plan/index.js | apply | L276-989 | 插件主入口：第一步 createGateRuntime(cfg.gateWords)（缺失/非法同步抛错，早于任何工具/监听器/服务副作用）→ ctx.effect 在当前 agent scope 注册恰好 7 个 extra_plan_* prompt variable（provider 返回本次 apply 捕获值）→ 配置解析（含变量② bootstrapReadHint）/服务注册/工具注册/creativeMode 模型可见投影/锚点钩子（HP 首轮 tool:read text 用变量②覆盖）；planner 与非 planner child 双模型路由；会话状态按 sessionId 分桶与 agent/disposed 同步 final flush + 单会话回收；tool-jobs 通知由 `agent/inbox/claimed` 同步主入口与 `tools/pre-execute` durable snapshot fallback 共用 `consumeToolJobsNotice`，以 notice `message.id` 建立跨锚点基线，复用 jobId 的新 incarnation 仍可解锁 |  |

@@ -104,6 +104,11 @@
 - 2026-10-18 desktop 清理全过程：目标 `~/.dsh/profiles/desktop/cordis.patch.yml`，删除第 32–346 行（首个顶层 `- id: preset-extra-plan` 块及 `name: "@local/dsh-extra-plan/settings"` 旧行），384 行→69 行，删除 315 行；备份 `.extra-plan/backup-dsh-extra-plan-desktop-旧settings行-20261018194246/cordis.patch.yml` 的 SHA-256 为 `dcf349bb519e9342e7dabbf8796f0d5556bcd7f76fd2df6b939a0bee643c1fa6`（384 行），清理后 SHA-256 为 `b23179b04f9d65ee1b70dce639625fba3b2aee8b95dcc2f3b07b433d0ee44ca7`（69 行）；清理前后 gateWords 7/7、十项 settings 10/10，块级 diff 0 行。
 - 清理后的现场 skill catalog 由 10 项变为 13 项，新增 `cordis-plugin-development`、`editing-cordis-compositions`、`cordis-composition-reference`；并同步修正 `pe-test/tools/step-04-路由与写闸门.mjs` 的 `lcFixture` 与 `pe-test/tools/step-01-设置迁移.mjs` 的 `captureRowSettings`，补规范 `name: dsh-extra-plan/settings` 与热读键。以上是历史现场经过，不作为当前运行状态。
 
+- 历史：旧重复 canonical settings 行的现场曾导致 `creativeMode` 回退 `false`；不覆盖当前规则/HUMAN。
+- 历史：2026-09-26 曾验证 planner 锚点重置；不覆盖当前规则/HUMAN。
+- 历史：A36 曾产生 4 个残留并通过有写权限窗口清理；报告曾采用 `route=direct` 窗口；不覆盖当前规则/HUMAN。
+- 历史：C13 强/弱证据规则由该批次补全；不覆盖当前规则/HUMAN。
+
 ## 当前入口
 
 需要当前版本升级判断时返回 [ai-宿主耦合台账](ai-宿主耦合台账.md)；需要机制当前结论时返回 [ai-机制设计](ai-机制设计.md)。本归档中的历史版本、历史日期、77/217/209 和已删除实现不得覆盖当前现场读取结果。

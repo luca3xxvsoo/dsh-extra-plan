@@ -9,7 +9,7 @@
 | DSH | `0.2.1-rc.2` | 单一声明范围（`engines.dsh` 与三项 @deepseek-ai peer 同值）；旧版兼容见旧版分支，不再声明也不设兼容开关 |
 | QQBot 目标 | `0.5.0` | 静态目标，不等于集成通过 |
 | 核心插件 | `dsh-extra-plan` `1.6.0` | 当前包契约；仓库子目录安装路径不变 |
-| QQBot 精简插件 | `dsh-extra-plan-qqbot` `2.0.0` | 仓库子目录为 plugins/dsh-extra-plan-qqbot；仍有 postinstall（安装后脚本）；allow-build 是否放行待 HUMAN |
+| QQBot 精简插件 | `dsh-extra-plan-qqbot` `2.0.1` | 源码合同为 `2.0.1`，仓库子目录为 plugins/dsh-extra-plan-qqbot；标准包 `postinstall` 的 `--install` 受 `--allow-build=dsh-extra-plan-qqbot` 授权后执行严格单目标校验，普通启动保留非阻断兜底；核心/宿主范围不变，公共发布、真实安装/运行及 allow-build 放行仍未核实（HUMAN） |
 | 预设载体 | `dsh-extra-plan-settings` 全局管理行 + 内部纯 definition（主 1 + 角色 4） | `dsh.bundle.patch` 只装载一行；旧 `extra-plan-preset-sync` / `preset-extra-plan` 仅 raw patch 非破坏读取迁移，`./preset-sync` 与 locale exports 已退役；官方 adapter 由 settings owner 内部按主在前、角色 101..104 在后的顺序尝试挂载 5 个 definition；旧行参与结构指纹与 adapter 诊断而非抑制挂载，同 ID 可能装载失败，任一角色失败整体回滚；真实相遇效果仍 HUMAN |
 | 状态判读 | `【已核实】` 表示台账静态/源码核对；`【未核实】`、`HUMAN`、`SKIP` 不得改为通过 | 当前台账纪律 |
 
@@ -194,10 +194,10 @@ CF1/CF2（extra-plan postinstall/distribute-preset）已删除，作为历史归
 | QB10-QB11 | Web `node_modules/dsh-extra-plan` 到 QQBot `node_modules/dsh-extra-plan` 的 junction/dir 建链；非目标实体不替换 | 【已核实·静态；部署结果待 HUMAN】 |
 | QB12-QB13 | patch 写前备份、写后 YAML 顶层数组/旧块校验；不引用旧 AgentPresetSettingsSchema 为当前合同 | 【已核实·静态】 |
 | QB14-QB18 | QQBot patch、ptc-runtime、agent-preset-registry、cordis-host-runner 当前行 | 【已核实·静态】 |
-| QB19 | QQBot bundle patch | 【已核实·静态】 |
-| QB20-QB21 | `scripts/heal.mjs` postinstall 与异常退出 0；allow-build 是否实际放行待 HUMAN | 【已核实·静态；HUMAN】 |
+| QB19 | QQBot bundle patch 第五行 `- insert:` 下保留 canonical 行 `id: dsh-extra-plan-settings` / `name: dsh-extra-plan/settings`；核心 bundle/预设仍由核心独立提供 | 【已核实·源码静态；受控 compose 有效实例】 |
+| QB20-QB21 | `scripts/heal.mjs --install` 为 postinstall 严格入口：单目标、patch/link/最终 realpath 失败 exit 1；普通无参启动兜底告警但 exit 0 且不阻断；allow-build 放行与实际生命周期安装待 HUMAN | 【已核实·源码静态；lifecycle 尚无完整通过证据】 |
 | QB25-QB26 | 静态服务/config.default 断言与间接消费 extra-plan | 【已核实·静态】 |
-| QB27/QB31 | 一键 AUTO/四态汇总 | 【已核实·静态】 |
+| QB27/QB31 | 一键 AUTO/四态汇总仅引用对应原始证据；install、compose、cache 分开判定，install/cache 的 INCOMPLETE/NOT-RUN 不改写为 AUTO PASS；只有实际证实跳钩子且缺链才记 CACHE-BLOCKED，受限 child-spawn EPERM 保持 INCOMPLETE；六项 HUMAN 单列且不销账 | 【已核实·证据边界】 |
 | QB28-QB30 | 五条件预检、junction 能力、真实 profile 只读映射；缺环境/权限为 SKIP | 【已核实·静态；SKIP 不销账】 |
 
 QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；QB4、QB23、QB24 继续列为未核实，不改成通过。
@@ -232,12 +232,12 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 ## 当前代码落点（符号级）
 
 - 核心入口 `plugins/dsh-extra-plan/index.js` 负责宿主 hook、配置快照与 session-scoped 状态；统一全局 owner 由 `lib/settings.js` 调度 `lib/preset-sync.js`，设置合同由 `lib/preset-settings.js`/`lib/settings-contract.js` 提供；`lib/client.js` 仅经 `plugins.detail.section` 接线稳定 namespace 的唯一共享表单（bundle.config 槽若有本包条目则让位）。角色身份与装配顺序由 `lib/role-contract.js` 提供，不参与权限策略。
-- QQBot 兼容面由 `plugins/dsh-extra-plan-qqbot/index.js#apply` → `lib/heal.js#healQqbotCompatibility` 驱动；CLI `scripts/heal.mjs` 不改变启动不阻断语义。
-- 当前静态核对不等于部署通过；真实 profile、消息、`/preset`、postinstall 和 allow-build 仍按本台账 HUMAN 项执行。
+- QQBot 启动默认路径仍为 `plugins/dsh-extra-plan-qqbot/index.js#apply` → `lib/heal.js#healQqbotCompatibility`；严格安装入口为 `scripts/heal.mjs --install`，共享编排器的 `profileNames` 仅可选缩小筛选，CLI 不改变启动不阻断语义。
+- 当前静态核对不等于部署通过；真实 profile、消息、`/preset`、postinstall 和 allow-build 仍按本台账 HUMAN 项执行，严格入口不扩张核心/生产写入授权。
 
 ## ⑨ 升级 checklist（核对清单，顺序固定）
 
-1. 设置只读 `DSH_INSTALL_ROOT`（本机为 `E:/Soft/AI项目/dsh-v0.2.1-rc.2`）后运行 `node pe-test/tools/step-01-qqbot-安装映射.mjs`，再 `node pe-test/tools/step-01-qqbot-环境验证.mjs`；静态先行，环境项条件只读，SKIP 不销账；rc.1 设备复用现有脚本并保留 HUMAN。
+1. 从当前 `dsh` 命令与安装 `package.json` 只读取得绝对安装根后设置 `DSH_INSTALL_ROOT`，再运行 `node pe-test/tools/step-01-qqbot-安装映射.mjs`，再 `node pe-test/tools/step-01-qqbot-环境验证.mjs`；当前目标为 `0.2.1-rc.2`，静态先行，环境项条件只读，SKIP/HUMAN 不销账。
 2. `node pe-test/tools/step-01-设置页配置.mjs` 与 `node pe-test/tools/step-04-路由与写闸门.mjs`；确认全局 owner/configEditor 后端合同、detail.section 同页唯一表单（行列表之后）、A09/A10/A11 与工具呈现面。
 3. `node pe-test/tools/一键step测试.mjs`；AUTO/HUMAN/参数项按脚本实际数组与四态判读。
 4. 按 HS/HK/SD/CF/QB 当前表，先钩子 mode，再服务方法，再事件/Session 形状，再 bundle/exports/patch/isolate 契约；旧 API 只作负向核对。
@@ -258,7 +258,7 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 ## ⑪ 生产注入与取证合同
 
 - settled callback 在触发时经 `editorOf(undefined)` 使用 `ctx.get('configEditor')` 解析当前服务；`mountPresetSync` 仍只在 `ctx.inject(['configEditor'])` 的 child 作用域读取 editor，未把 child 捕获到外层。
-- 本轮受控证据使用四态 host-proxy：`normal-injection` 要求外层直接访问保留 `cannot get property "configEditor" without inject`、ctx.get 成功、初始 settled 先于 adapter；`get-only/no-op-inject` 为 `HUMAN`（`HOST-PROXY-GET-ONLY`），不得以 register=0 销账；`inject-throws` 与 `child-missing-configEditor` 保留显式失败。
+- 受控证据合同分四态 host-proxy：`normal-injection` 要求外层直接访问保留 `cannot get property "configEditor" without inject`、ctx.get 成功、初始 settled 先于 adapter；`get-only/no-op-inject` 为 `HUMAN`（`HOST-PROXY-GET-ONLY`），不得以 register=0 销账；`inject-throws` 与 `child-missing-configEditor` 保留显式失败。
 - 单字段触发仍核对完整十项 values 与完整七键 gateWords，并对 Web patch、每个 QQBot patch 与 terminal 输入做同一快照对拍；旧 no-remount 结果只作历史归档，不能销当前验证状态。
 - 缺少 `DSH_INSTALL_ROOT`、真实宿主/provider/profile、生产 QQBot、GUI、消息链与重启均保持结构化 `HUMAN`；本项目维护只写工作区，不作生产副本部署。
 
@@ -318,7 +318,7 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 **二、宿主事实（重复行不报错）**
 
 - Cordis Loader 对同 id 条目不做唯一性校验、不报错（静默共存）：0.2.1-rc.2 安装根 `node_modules/@deepseek-ai/cordis-plugin-loader/lib/index.js` 的 `ensureId` 只为缺 id 的条目补随机 id（且仅避让 `store` 键），入口装载与 `resolve` 均无唯一性断言，因此 profile patch 里并列的两条 `- id: dsh-extra-plan-settings` 不会被宿主拒绝。
-- 插件侧因此多命中：只按 id 收候选会拿到 2 行 → ambiguous → 回退 apply 期 cfg 快照/兜底值，用户刚改的值看起来不生效（本次现场即 `creativeMode` 被读成 false）。
+- 插件侧因此多命中：只按 id 收候选会拿到 2 行 → ambiguous → 回退 apply 期 cfg 快照/兜底值，可能表现为用户值未生效。
 
 **三、装载期严格校验与运行期热读**
 

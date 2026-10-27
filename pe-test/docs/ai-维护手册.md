@@ -44,7 +44,7 @@
 | profile | 当前职责 | 本仓库 AI 边界 |
 |:--|:--|:--|
 | web | 直接安装核心包；由 `dsh-extra-plan-settings` 唯一全局 owner 启动内部同步、承载 10 项配置与官方 adapter | 不删除核心包/预设，不写生产 profile |
-| qqbot | 安装精简兼容包；静态 patch（0.2.1 起写 `- id: dsh-extra-plan-settings` + 全量 config，不再写 override 包装键）、旧块迁移与 web 包建链 | 不分发核心预设；真实消息、`/preset`、question/approval（提问/批准）、allow-build/postinstall（安装后脚本）为用户部署后 HUMAN。**profile 的 `pnpm-workspace.yaml` 必须把 `dsh-extra-plan-qqbot` 放行到 `allowBuilds`（或等价 onlyBuiltDependencies），否则 postinstall 不执行、patch 不落盘** |
+| qqbot | 标准包 `dsh-extra-plan-qqbot` 的严格 `--install`：以双锚点包根 realpath 唯一匹配目标，预检 Web 核心后校验 patch、建链及最终 realpath；兼容 bundle 以 canonical 行 `id: dsh-extra-plan-settings` / `name: dsh-extra-plan/settings` 激活，普通启动由 `index.js#apply` 兜底 | 核心包独立安装；不分发核心预设；真实消息、`/preset`、question/approval（提问/批准）、allow-build/postinstall（安装后脚本）与用户部署/重启后的效果为 HUMAN；严格失败非零，无参启动告警/exit 0 |
 
 ### Web→QQBot 配置同步契约
 
@@ -84,7 +84,11 @@
 
 ## QQBot CLI 与维护所有权
 
-`plugins/dsh-extra-plan-qqbot/scripts/heal.mjs` 仅是用户侧安装/手动触发的 CLI 兜底；静态映射、临时 DSH_HOME 夹具和纯函数可由 `step-01-qqbot-安装映射.mjs` 回归。真实消息、`/preset`、question/approval（提问/批准）、allow-build/postinstall（安装后脚本）与 profile 建链结果必须标为 HUMAN，不能以静态 PASS 销账。
+`dsh-extra-plan-qqbot@2.0.1` 的标准包安装只在授权命令 `dsh plugin --profile qqbot add dsh-extra-plan-qqbot --allow-build=dsh-extra-plan-qqbot` 中启用；参数是 `--allow-build`（不是 `--allow-scripts`），它只表示允许构建/生命周期脚本，不保证命中缓存时强制重跑。`postinstall` 进入 `scripts/heal.mjs --install` 严格模式：双锚点包根 realpath 必须唯一匹配，Web 核心名称/源、目标实体或异链及最终 lstat/realpath 必须通过；成功只接受 patch `idempotent`/`migrated` 或 `skipped/no-file` 与 link `linked`/`up-to-date`，否则 exit 1。普通无参启动/CLI 兜底仍告警但 exit 0，模块导入无副作用。
+
+隔离验证入口仅为 `pe-test/tools/step-01-qqbot-单命令安装.mjs --dsh-root <真实 DSH 根> --case=install|compose|cache`：`install`、`compose`、`cache` 分别独立判定；缺条件为 `INCOMPLETE`，不把受控 compose 当作真实 QQBot。共用 store 的缓存复用若跳过钩子并缺链，整体只能记为 `PARTIAL/BLOCKED`；`--allow-build` 不授权追加 rebuild、清缓存或关闭安全策略。
+
+源码合同版本为 `2.0.1`，本仓库尚未据此断言已发布/已部署；标准包消费者无需本地 tgz，公共 registry 名称、可达性与版本可用性须发布前由用户确认，私有 registry 打包仅用于测试。当前已有证据可支撑源码静态检查和受控 Loader compose；真实生命周期安装与 cache case 尚无完整通过证据，受限环境的 child-spawn `EPERM` 不等同已证实 `CACHE-BLOCKED`，仍须授权环境复测。六项 HUMAN（包括用户部署/重启后的真实消息、`/preset`、question/approval 等）继续单列，不以静态或受控结果销账。
 
 1. 逐文件对实际修改的全部 JS/MJS 执行 `node --check`；`package.json` 执行 `JSON.parse`。嵌套生成的 host-deps hookSource 必须展开成 data URL 后做 ESM 解析回放，不能只检查外层。
 2. 严格按验收顺序运行：

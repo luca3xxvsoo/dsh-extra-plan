@@ -11,6 +11,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { isDeepStrictEqual } from 'node:util'
 import {
   findOwnQqbotProfiles,
+  sameRealPath,
   healPatchRows,
   healQqbotCompatibility,
 } from '../../plugins/dsh-extra-plan-qqbot/lib/heal.js'
@@ -22,6 +23,7 @@ const SOURCE_PACKAGE = join(SOURCE_ROOT, 'plugins', 'dsh-extra-plan-qqbot')
 const SOURCE_HEAL = join(SOURCE_PACKAGE, 'scripts', 'heal.mjs')
 const SOURCE_PACKAGE_MANIFEST = join(SOURCE_PACKAGE, 'package.json')
 const SOURCE_HEAL_TEXT = readFileSync(join(SOURCE_PACKAGE, 'lib', 'heal.js'), 'utf8')
+const SOURCE_CLI_TEXT = readFileSync(SOURCE_HEAL, 'utf8')
 
 let pass = 0
 let fail = 0
@@ -48,9 +50,22 @@ check('QB5 健壮性改进：QQBot package-local 声明 js-yaml ^4.2.0',
 check('QB5 健壮性改进：heal.js 仅从包自身 import.meta.url 解析，移除 APPDATA/固定宿主后备',
   SOURCE_HEAL_TEXT.includes("createRequire(import.meta.url)('js-yaml')") && !SOURCE_HEAL_TEXT.includes('APPDATA') &&
   !SOURCE_HEAL_TEXT.includes("from 'node:os'") && !SOURCE_HEAL_TEXT.includes('@deepseek-ai/dsh/package.json'))
-check('QB6 manifest 身份为 dsh-extra-plan-qqbot@2.0.0 且无 private', sourcePackageJson !== null && sourcePackageJson.name === 'dsh-extra-plan-qqbot' && sourcePackageJson.version === '2.0.0' && !Object.prototype.hasOwnProperty.call(sourcePackageJson, 'private') && sourcePackageJson.scripts?.postinstall === 'node scripts/heal.mjs')
+check('QB6 manifest 身份为 dsh-extra-plan-qqbot@2.0.1 且 postinstall 严格进入 --install、无 private', sourcePackageJson !== null && sourcePackageJson.name === 'dsh-extra-plan-qqbot' && sourcePackageJson.version === '2.0.1' && !Object.prototype.hasOwnProperty.call(sourcePackageJson, 'private') && sourcePackageJson.scripts?.postinstall === 'node scripts/heal.mjs --install')
 check('QB6 heal 只暴露新 QQBot/核心平铺路径且不含旧 @local 包路径', SOURCE_HEAL_TEXT.includes('dsh-extra-plan-qqbot') && SOURCE_HEAL_TEXT.includes("'node_modules', 'dsh-extra-plan'") && !SOURCE_HEAL_TEXT.includes('node_modules/@local') && !SOURCE_HEAL_TEXT.includes("'@local'"))
 check('G5 恢复失败提示只称已尝试恢复且不伪报成功', SOURCE_HEAL_TEXT.includes('已尝试用备份恢复，请核对备份') && !SOURCE_HEAL_TEXT.includes('迁移失败（已恢复备份）') && !SOURCE_HEAL_TEXT.includes('迁移后校验失败，已用备份恢复'))
+check('G1 sameRealPath 在 win32 下忽略大小写', sameRealPath('C:/DSH/Profiles/QQBot', 'c:/dsh/profiles/qqbot', 'win32'))
+check('G1 sameRealPath 在非 win32 下区分大小写', !sameRealPath('C:/DSH/Profiles/QQBot', 'c:/dsh/profiles/qqbot', 'linux'))
+check('G1 CLI 与库共用 sameRealPath 且无重复实现',
+  SOURCE_CLI_TEXT.includes('sameRealPath') &&
+  !SOURCE_CLI_TEXT.includes('function sameRealPath') &&
+  !SOURCE_CLI_TEXT.includes('.toLowerCase()') &&
+  SOURCE_CLI_TEXT.includes('sameRealPath(called, self)') &&
+  SOURCE_CLI_TEXT.includes('sameRealPath(candidateRoot, packageRoot)') &&
+  SOURCE_CLI_TEXT.includes('sameRealPath(targetRealPath, webRealPath)') &&
+  SOURCE_CLI_TEXT.includes('sameRealPath(finalSource, finalTarget)'))
+check('G1 ensureDshExtraPlanLink 使用共享 sameRealPath',
+  SOURCE_HEAL_TEXT.includes('export function sameRealPath') &&
+  SOURCE_HEAL_TEXT.includes("if (sameRealPath(realpathSync(targetPkg), realpathSync(webPkg))) return { status: 'up-to-date' }"))
 
 function isLink(path) {
   try { return lstatSync(path).isSymbolicLink() } catch { return false }
@@ -214,7 +229,7 @@ if (yamlResolution.module === null) {
 } else {
   const tempRoot = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-qqbot-lite-'))
   try {
-  // ① 静态兼容 patch：单一根级 insert 注册四个行，agent-presets 默认 extra-plan
+  // ① 静态兼容 patch：单一根级 insert 注册五个行，agent-presets 默认 extra-plan
   // （第 4 行 cordis-host-runner 为 T1 修复：qqbot 宿主平面补齐 cordisInspect /
   //  dynamicCordisRunner 两个服务，否则预设的 tool-cordis 行恒 pending、预设挂载失败）
   const staticPatchText = readFileSync(join(SOURCE_PACKAGE, 'cordis.patch.yml'), 'utf8')
@@ -226,17 +241,19 @@ if (yamlResolution.module === null) {
   const staticAgent = Array.isArray(staticRows) ? staticRows.find((row) => isMap(row) && row.id === 'agent-preset-registry') : undefined
   const staticQqbot = Array.isArray(staticRows) ? staticRows.find((row) => isMap(row) && row.id === 'qqbot-user-questions') : undefined
   const staticRunner = Array.isArray(staticRows) ? staticRows.find((row) => isMap(row) && row.id === 'cordis-host-runner') : undefined
+  const staticSettings = Array.isArray(staticRows) ? staticRows.find((row) => isMap(row) && row.id === 'dsh-extra-plan-settings') : undefined
   check('兼容 patch 是顶层数组且仅有一个根级 insert', staticPatchResult.ok && Array.isArray(staticPatch) && staticPatch.length === 1 && Array.isArray(staticInserts) && staticInserts.length === 1, staticPatchResult.error || '')
   check('静态 insert 第 4 行 cordis-host-runner 包名准确且无 config', isMap(staticRunner) && staticRunner.name === '@deepseek-ai/dsh-cordis-host-runner')
   // 此处覆盖静态包映射；真实 profile 的只读检查由独立环境脚本负责。
-  check('静态 insert 恰四行且 qqbot-user-questions/ptc-runtime/agent-preset-registry 包名准确', Array.isArray(staticRows) && staticRows.length === 4 &&
+  check('静态 insert 恰五行且 qqbot-user-questions/ptc-runtime/agent-preset-registry 包名准确', Array.isArray(staticRows) && staticRows.length === 5 &&
     isMap(staticCode) && staticCode.name === '@deepseek-ai/dsh-ptc-runtime-node' &&
     isMap(staticAgent) && staticAgent.name === '@deepseek-ai/dsh-agent-preset-registry' &&
     isMap(staticQqbot) && staticQqbot.name === 'dsh-extra-plan-qqbot')
+  check('静态 canonical settings 行 id/name 且无 config/disabled', isMap(staticSettings) && staticSettings.id === 'dsh-extra-plan-settings' && staticSettings.name === 'dsh-extra-plan/settings' && staticSettings.config === undefined && staticSettings.disabled === undefined)
   check('cordis-host-runner 行无 config（保持原语义）', isMap(staticRunner) && staticRunner.name === '@deepseek-ai/dsh-cordis-host-runner' && staticRunner.config === undefined)
   check('静态 agent-preset-registry 默认严格为 extra-plan', isMap(staticAgent) && isMap(staticAgent.config) && staticAgent.config.default === 'extra-plan')
   check('ptc-runtime/agent-preset-registry 不在根级非-insert patch', staticPatchResult.ok && Array.isArray(staticPatch) && !staticPatch.some((row) => isMap(row) && (row.id === 'ptc-runtime' || row.id === 'agent-preset-registry')), staticPatchResult.error || '')
-  check('静态 patch 不再出现旧 QQBot 包路径且不再出现 0.1.5 世代两包名', !staticPatchText.includes('@local/dsh-qqbot-user-questions') && !staticPatchText.includes('@deepseek-ai/dsh-code-runtime-worker-thread') && !staticPatchText.includes('@deepseek-ai/dsh-agent-presets') && staticPatchText.includes('本机不做验证'))
+  check('静态 patch 不再出现旧 QQBot 包路径/0.1.5 包名且拒绝旧过程措辞', !staticPatchText.includes('@local/dsh-qqbot-user-questions') && !staticPatchText.includes('@deepseek-ai/dsh-code-runtime-worker-thread') && !staticPatchText.includes('@deepseek-ai/dsh-agent-presets') && !staticPatchText.includes('本机不做验证') && !staticPatchText.includes('方案 U3') && !staticPatchText.includes('方案 U4') && !staticPatchText.includes('待有 QQBOT 环境再测试') && !staticPatchText.includes('未核实项'))
   check('cordis-host-runner 不在根级非-insert patch（无第二处 cordis 行）', staticPatchResult.ok && Array.isArray(staticPatch) && !staticPatch.some((row) => isMap(row) && (row.id === 'cordis-host-runner' || row.name === '@deepseek-ai/dsh-cordis-host-runner')), staticPatchResult.error || '')
 
   // ② 生产同形 fixture：只迁移两个旧根级块，保留 im-qqbot 与备份原文

@@ -8,6 +8,10 @@ import { join } from 'node:path'
 
 const LOG_PREFIX = '[dsh-extra-plan-qqbot]'
 
+export function sameRealPath(left, right, platform = process.platform) {
+  return platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right
+}
+
 // ── package-local js-yaml（惰性加载，导入零副作用）──
 let yamlModule = null
 let yamlSchema = null
@@ -309,7 +313,7 @@ export function ensureDshExtraPlanLink(dshHome, profileName) {
       const stat = lstatSync(targetPkg)
       if (stat.isSymbolicLink()) {
         try {
-          if (realpathSync(targetPkg) === realpathSync(webPkg)) return { status: 'up-to-date' }
+          if (sameRealPath(realpathSync(targetPkg), realpathSync(webPkg))) return { status: 'up-to-date' }
         } catch { /* 继续进入告警分支 */ }
         console.warn(LOG_PREFIX + ' ' + profileName + ' 目标已存在非目标链接，保留原状；请通过 pnpm 完成迁移后重试')
         return { status: 'kept', reason: 'other-link' }
@@ -331,11 +335,19 @@ export function ensureDshExtraPlanLink(dshHome, profileName) {
 
 /**
  * 对 findOwnQqbotProfiles 命中的每个 profile 先迁移旧块再 ensureDshExtraPlanLink；
- * 整体 try/catch 只记录日志，不阻断插件加载与 DSH 启动。
+ * options.profileNames 只能缩小原候选集，整体 try/catch 仍不阻断插件加载与 DSH 启动。
  */
-export function healQqbotCompatibility(dshHome) {
+export function healQqbotCompatibility(dshHome, options) {
   try {
-    const profiles = findOwnQqbotProfiles(dshHome)
+    if (options !== undefined && !isObject(options)) {
+      return { profiles: [], count: 0, results: [], failed: [], error: 'invalid-options' }
+    }
+    const requested = options === undefined ? undefined : options.profileNames
+    if (requested !== undefined && (!Array.isArray(requested) || requested.some((name) => typeof name !== 'string'))) {
+      return { profiles: [], count: 0, results: [], failed: [], error: 'invalid-profileNames' }
+    }
+    const discovered = findOwnQqbotProfiles(dshHome)
+    const profiles = requested === undefined ? discovered : discovered.filter((name) => requested.includes(name))
     const results = []
     const failed = []
     for (const profileName of profiles) {
