@@ -9,7 +9,7 @@
 - 双根合同 B3：相对值按用途固定基准——普通相对值、CLI、覆盖、任务源、工件/fixture/temp/home/cache/capture/report 归 W，运行时账本按用途归 H；不以 `exists` 在两根间试探，不展开 `~`/环境变量。无选择为 `NOT-RUN`/目标 IO 0；会话仅以 `--session-dir`，或 `--session`+`--sessions-dir` 精确选择，子发现必须显式 `--discover-children`，最多 128 候选、每个日志头 262144 字节，坏头/超限为 `INCOMPLETE`；通用 `pathBoundary` 默认只产唯一 W 报告，可选 W 审计最多 128 条，不依赖旧批次；H/W 合法重叠按用途分类而非一概拒绝。
 - 双根合同 B4：Host 文档/数据的维护取证只经精确能力只读，Host 代码只读；测试与生成暂存、报告、备份和回滚只写 W。Host `--archive`/清理 `--apply` 在 H IO 前拒绝且零 Host 写，W 的统计、归档、清理、备份与回滚功能保留；无根、冲突或不合法输入在对应 IO 前失败。
 
-- 状态不是四次提问，而是事件流推导的 `{ route, purpose, clarified, approved, channelBroken }`。主会话顺序固定为 `route → purpose → clarify`；ordinary（普通）探查/澄清可在路由前发生。
+- 状态不是四次提问，而是事件流推导的 `{ route, purpose, clarified, approved, channelBroken }`。主会话顺序固定为 `route → purpose → clarify`；ordinary（普通）探查/澄清可在路由前发生。入口判定只决定引导词顺序，不改变 `route`、`purpose`、`clarified`、`approved` 四个机械锚点。
 - route 规划词后，第一个 purpose ask（目的提问）必须是当前 `config.gateWords` 的二选一；只有 `route=plan` 且目的已定后，澄清答复才置 `clarified=true`。`save_probe` 与 `subagent_plan` 需要目的和澄清，执行类委派只认独立的 `approved` 锚点。
 - 闸门拒绝 `kind:'denied'` 不清除阶段状态，便于按拒绝文案修正后重提；用户取消/中断清 `route/purpose/clarified/approved`；通道级故障只置 `channelBroken` 逃生位；新 user/message 切断旧事件窗。
 - `config.gateWords` 在 [agent.cordis.yml](../../plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml) 中是唯一人工值源。[gate-words.js](../../plugins/dsh-extra-plan/lib/gate-words.js) 只保存字段元数据、整组严格校验、运行时派生和七个 prompt variable；apply 先校验再产生工具/监听器/服务副作用。
@@ -94,7 +94,7 @@
 
 ## 九、save_plan 并行派遣与分组验收合同
 
-- `save_plan` 仍是成对的方案/验收工件。两份正文必须各自携带模式与职责说明；`single` 只有一个数字任务，`batch` 才允许多个连续任务，未来规模由实际工件决定，不由当前批次的任务、检查、组或文件数量决定。工件本身要能恢复派遣、验收和交接，不依赖父会话看到 planner render 或本仓维护文档。
+- `save_plan` 仍是成对的方案/验收工件。两份正文必须各自携带职责说明；数字任务规模由实际任务数决定，不由当前批次的任务、检查、组或文件数量决定。工件本身要能恢复派遣、验收和交接，不依赖父会话看到 planner render 或本仓维护文档。
 - 数字任务声明主/关联文件的唯一所有权、真实实现依赖和执行组；文件重叠、未说明的共享输出或不确定的物理别名不能被文本合同宣称为安全并行。收尾文件与数字任务文件分开计入覆盖，全局验收只是引用同轮检查，不是第二套调度。
 - 新合同校验分两层：纯文本、关系和摘要先于 `cwd`、`base` 与全部源/证据 IO；文本合法后才在当前源工作区做只读核实，并且早于 `base` 构造、目录/临时文件和发布。每个主文件、关联文件和带文件收尾均绑定文件操作与 `M` 点；计划与验收按（任务或 `closure`、文件、M点）身份键及点集合精确对应。
 - 方案中的修改位置和唯一原文锚点是源的旧基线，验收定位是未来修改后的符号、结构或行为，两者分离；行漂移按目标/锚点确认，证据记录实际新行号，不回写方案追坐标。

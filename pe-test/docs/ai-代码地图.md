@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-10-31 18:33:09（脚本自动更新时间戳行）
+> 上次同步：2026-10-31 21:17:06（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -129,7 +129,7 @@
 | plugins/dsh-extra-plan/lib/runtime-static.js | 15 | 显式参数纯 helper：SKILL frontmatter 与 cause 链解析；不持有宿主状态 |
 | plugins/dsh-extra-plan/lib/save-contract.js | 263 | save 合同唯一真源：任务名/sessionTag/base、SAVE_PLAN_LIMITS 与内部确定性 summary、paths-only ContentBlock 投影、PROBE_LIMITS、Markdown 渲染与证据引用清洗；无宿主状态，运行时限制只在本文件维护。 |
 | plugins/dsh-extra-plan/lib/save-persistence.js | 112 | 单次调用阶段感知提交：mkdir→临时文件逐项写入→逐项检查并顺序发布；失败保留首错/阶段，仅清理本次临时与已发布半套工件，清理失败附残留路径与原因，预存目标不覆盖；不创建/扫描/恢复跨调用 journal；末位 fs 依赖可注入。 |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | 1249 | save_plan 文本合同校验：模式/任务/路径所有权/依赖与执行组 DAG/资源/检查引用与验收组/收尾全局/摘要早拒；不启动代理或执行命令。 |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | 1231 | save_plan 文本合同校验：模式/任务/路径所有权/依赖与执行组 DAG/资源/检查引用与验收组/收尾全局/摘要早拒；不启动代理或执行命令。 |
 | plugins/dsh-extra-plan/lib/save-probe-validation.js | 175 | save_probe 参数校验：数组/条目/长度/总量/path 存在性/range/evidence 聚合拒绝 |
 | plugins/dsh-extra-plan/lib/save-tool-factories.js | 389 | 显式依赖工厂：save_plan 按类型/长度→合同/摘要→context/base→证据 IO→单次 atomicCommit 严格接线；合法正文逐字保存、structured output 仅 paths、render 仅将两个 paths 投影为唯一 text ContentBlock；save_probe 保留既有证据诊断与落盘；不缓存 ctx/agent/会话状态。 |
 | plugins/dsh-extra-plan/lib/sdk-text-cache.js | 161 | apply 级 agent-keyed WeakMap SDK 文本缓存：完整 renderer 输入保守指纹、language/renderer 身份比较、并发 Promise 合并、reject/过期 Promise 不回写、dispose 回收；不持有 sessionId 或 PromptAssembly |
@@ -906,67 +906,67 @@
 | plugins/dsh-extra-plan/lib/save-persistence.js | cleanupCreated | L38-49 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/save-persistence.js | commitError | L51-57 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/save-persistence.js | atomicCommit | L62-112 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | newFileRecord | L54-56 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | newTask | L58-70 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | newClosure | L72-83 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | newCheck | L86-92 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | newGlobal | L94-96 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | makeDiagnostic | L98-107 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | defaultTemplate | L109-144 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | normalizeText | L146-148 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | fieldOf | L150-155 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | isPlaceholderAnchor | L164-166 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | isAcceptancePlaceholder | L168-171 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | parseLocation | L173-181 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | pointIdentity | L183-185 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | headingCandidate | L188-200 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | pushEmptyFieldDiagnostic | L202-206 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | parseTaskDocument | L208-464 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | flush | L222-229 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | wrongHeading | L231-233 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | pushField | L235-239 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | requireFile | L241-245 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | requirePoint | L247-253 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | validateIds | L466-477 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | isMarkdownWrapped | L479-490 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | pathIssue | L492-505 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | workdirIssue | L507-512 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | platformIsCaseInsensitive | L514-518 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | pathKey | L520-523 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | parseDependencies | L525-534 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | parseResources | L536-544 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | parseCheckRefs | L546-554 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | addPathDiagnostics | L556-561 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | validatePathSet | L563-577 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | validateResourceField | L579-587 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | validatePointIds | L589-597 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | validatePlanFileRecord | L599-644 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | validatePlanFileRecords | L646-651 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | validateAcceptanceFileRecord | L653-669 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | validateAcceptanceFileRecords | L670-675 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | validateTaskShape | L677-714 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | graphCycles | L716-737 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | visit | L721-734 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | groupSort | L739-743 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | firstTaskForGroup | L745-748 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | validatePlanRelations | L750-822 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | fileRecordKey | L824-826 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | pointIdSet | L828-830 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | equalStringSets | L832-836 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | validateFileRecordMapping | L838-860 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | validateCrossDocument | L862-887 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | validateClosure | L889-939 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | validateGlobal | L941-951 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | validateChecks | L953-1010 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | attachRefs | L988-1001 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | sortIds | L1012-1014 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | buildInternalOrder | L1016-1040 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | reviewGroupSort | L1042-1046 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | summarizeFileRecord | L1048-1069 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | buildSummary | L1071-1194 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | formatDiagnostic | L1196-1201 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | finalizeFailure | L1203-1209 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-plan-validation.js | validateSavePlanContract | L1211-1246 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | newFileRecord | L53-55 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | newTask | L57-69 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | newClosure | L71-82 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | newCheck | L85-91 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | newGlobal | L93-95 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | makeDiagnostic | L97-106 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | defaultTemplate | L108-142 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | normalizeText | L144-146 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | fieldOf | L148-153 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | isPlaceholderAnchor | L162-164 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | isAcceptancePlaceholder | L166-169 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | parseLocation | L171-179 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | pointIdentity | L181-183 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | headingCandidate | L186-198 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | pushEmptyFieldDiagnostic | L200-204 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | parseTaskDocument | L206-450 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | flush | L219-226 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | wrongHeading | L228-230 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | pushField | L232-236 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | requireFile | L238-242 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | requirePoint | L244-250 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | validateIds | L452-463 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | isMarkdownWrapped | L465-476 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | pathIssue | L478-491 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | workdirIssue | L493-498 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | platformIsCaseInsensitive | L500-504 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | pathKey | L506-509 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | parseDependencies | L511-520 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | parseResources | L522-530 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | parseCheckRefs | L532-540 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | addPathDiagnostics | L542-547 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | validatePathSet | L549-563 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | validateResourceField | L565-573 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | validatePointIds | L575-583 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | validatePlanFileRecord | L585-630 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | validatePlanFileRecords | L632-637 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | validateAcceptanceFileRecord | L639-655 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | validateAcceptanceFileRecords | L656-661 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | validateTaskShape | L663-700 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | graphCycles | L702-723 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | visit | L707-720 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | groupSort | L725-729 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | firstTaskForGroup | L731-734 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | validatePlanRelations | L736-808 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | fileRecordKey | L810-812 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | pointIdSet | L814-816 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | equalStringSets | L818-822 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | validateFileRecordMapping | L824-846 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | validateCrossDocument | L848-872 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | validateClosure | L874-924 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | validateGlobal | L926-936 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | validateChecks | L938-995 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | attachRefs | L973-986 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | sortIds | L997-999 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | buildInternalOrder | L1001-1025 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | reviewGroupSort | L1027-1031 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | summarizeFileRecord | L1033-1054 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | buildSummary | L1056-1178 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | formatDiagnostic | L1180-1185 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | finalizeFailure | L1187-1193 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-plan-validation.js | validateSavePlanContract | L1195-1228 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/save-probe-validation.js | errorCodeOf | L6-8 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/save-probe-validation.js | contextOf | L10-14 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/save-probe-validation.js | resolveAbsoluteProbeTarget | L16-41 | （待补充） |  |

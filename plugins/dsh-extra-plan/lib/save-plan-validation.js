@@ -15,7 +15,6 @@ const REVIEW_GROUP_RE = /^R[1-9]\d*$/
 const DEPENDENCY_RE = /^\[任务([1-9]\d*)\]$/
 const CHECK_REF_RE = /^\[检查([1-9]\d*)\]$/
 
-const MODE_PREFIX = '- 执行模式：'
 const DISPATCH_PREFIX = '- 派遣说明：'
 const REVIEW_PREFIX = '- 验收说明：'
 
@@ -108,7 +107,6 @@ function makeDiagnostic(document, taskId, field, value, message, template) {
 
 function defaultTemplate(field, taskId) {
   const id = Number.isInteger(taskId) ? taskId : 1
-  if (field === '执行模式') return '- 执行模式：single 或 batch'
   if (field === '派遣说明') return '- 派遣说明：先读方案和验收文件；完成后冻结再验收'
   if (field === '验收说明') return '- 验收说明：按检查ID分组复核，漏项不得通过'
   if (field === '任务块' || field === '任务ID') return '[任务' + id + '] 标题 / - 主文件：plugins/example/file.js / - 执行组：G1 / - 依赖：无'
@@ -211,7 +209,6 @@ function parseTaskDocument(text, document) {
   const tasks = []
   const checks = []
   const diagnostics = []
-  const modeEntries = []
   const instructionEntries = []
   let closure = null
   let global = null
@@ -262,13 +259,6 @@ function parseTaskDocument(text, document) {
     if (line.startsWith('~~~')) { fence = '~'; continue }
     if (line !== line.trimStart()) continue
 
-    if (line.startsWith(MODE_PREFIX)) {
-      const value = line.slice(MODE_PREFIX.length).trim()
-      if (stage !== 0) diagnostics.push(makeDiagnostic(document, null, '执行模式', value, '执行模式必须位于首个任务前'))
-      modeEntries.push({ value, line: index + 1 })
-      if (value === '') diagnostics.push(makeDiagnostic(document, null, '执行模式', value, '执行模式不能为空'))
-      continue
-    }
     const instructionPrefix = isPlan ? DISPATCH_PREFIX : REVIEW_PREFIX
     if (line.startsWith(instructionPrefix)) {
       const value = line.slice(instructionPrefix.length).trim()
@@ -451,16 +441,12 @@ function parseTaskDocument(text, document) {
   }
   flush()
 
-  const mode = modeEntries.length === 1 ? modeEntries[0].value : null
   const instruction = instructionEntries.length === 1 ? instructionEntries[0].value : null
-  if (modeEntries.length === 0) diagnostics.push(makeDiagnostic(document, null, '执行模式', '', '必须在首个任务前声明且只声明一次执行模式'))
-  if (modeEntries.length > 1) diagnostics.push(makeDiagnostic(document, null, '执行模式', modeEntries.map((item) => item.value).join('、'), '执行模式不得重复'))
-  if (mode !== null && mode !== 'single' && mode !== 'batch') diagnostics.push(makeDiagnostic(document, null, '执行模式', mode, '执行模式只能是 single 或 batch'))
   const instructionLabel = isPlan ? '派遣说明' : '验收说明'
   if (instructionEntries.length === 0) diagnostics.push(makeDiagnostic(document, null, instructionLabel, '', '卷首必须声明且只声明一次说明'))
   if (instructionEntries.length > 1) diagnostics.push(makeDiagnostic(document, null, instructionLabel, instructionEntries.map((item) => item.value).join('、'), instructionLabel + '不得重复'))
 
-  return { document, isPlan, mode, instruction, tasks, closure, checks, global, diagnostics }
+  return { document, isPlan, instruction, tasks, closure, checks, global, diagnostics }
 }
 
 function validateIds(items, document, diagnostics, kind) {
@@ -860,7 +846,6 @@ function validateFileRecordMapping(planOwner, checklistOwner, documentLabel, tas
 }
 
 function validateCrossDocument(plan, checklist, diagnostics, options) {
-  if (plan.mode !== checklist.mode) diagnostics.push(makeDiagnostic('plan/checklist', null, '执行模式', String(plan.mode) + ' <> ' + String(checklist.mode), '方案与验收的执行模式必须一致'))
   const planById = new Map()
   const checklistById = new Map()
   for (const task of plan.tasks) if (!planById.has(task.id)) planById.set(task.id, task)
@@ -1172,7 +1157,6 @@ function buildSummary(plan, checklist) {
     coverageKey: 'global'
   }
   return {
-    mode: plan.mode,
     taskCount: plan.tasks.length,
     taskFileCount,
     fileCount,
@@ -1222,10 +1206,8 @@ export function validateSavePlanContract(plan, checklist, options) {
   if (parsedChecklist.tasks.length === 0) diagnostics.push(makeDiagnostic('checklist', null, '任务块', '', '验收至少需要一个任务块'))
   validateIds(parsedPlan.tasks, 'plan', diagnostics, '任务')
   validateIds(parsedChecklist.tasks, 'checklist', diagnostics, '任务')
-  if (parsedPlan.mode === 'single' && parsedPlan.tasks.length !== 1) diagnostics.push(makeDiagnostic('plan', null, '执行模式', parsedPlan.mode, 'single 模式必须恰有一个数字任务'))
-  if (parsedChecklist.mode === 'single' && parsedChecklist.tasks.length !== 1) diagnostics.push(makeDiagnostic('checklist', null, '执行模式', parsedChecklist.mode, 'single 模式必须恰有一个数字任务'))
-  if (parsedPlan.mode === 'batch' && (parsedPlan.tasks.length < 2 || parsedPlan.tasks.length > SAVE_PLAN_LIMITS.maxTasks)) diagnostics.push(makeDiagnostic('plan', null, '执行模式', parsedPlan.tasks.length, 'batch 模式必须有 2 至 ' + SAVE_PLAN_LIMITS.maxTasks + ' 个连续数字任务'))
-  if (parsedChecklist.mode === 'batch' && (parsedChecklist.tasks.length < 2 || parsedChecklist.tasks.length > SAVE_PLAN_LIMITS.maxTasks)) diagnostics.push(makeDiagnostic('checklist', null, '执行模式', parsedChecklist.tasks.length, 'batch 模式必须有 2 至 ' + SAVE_PLAN_LIMITS.maxTasks + ' 个连续数字任务'))
+  if (parsedPlan.tasks.length > SAVE_PLAN_LIMITS.maxTasks) diagnostics.push(makeDiagnostic('plan', null, '任务数', parsedPlan.tasks.length, '任务数不得超过 ' + SAVE_PLAN_LIMITS.maxTasks + ' 个'))
+  if (parsedChecklist.tasks.length > SAVE_PLAN_LIMITS.maxTasks) diagnostics.push(makeDiagnostic('checklist', null, '任务数', parsedChecklist.tasks.length, '任务数不得超过 ' + SAVE_PLAN_LIMITS.maxTasks + ' 个'))
   for (const task of parsedPlan.tasks) validateTaskShape(task, 'plan', true, diagnostics, options)
   for (const task of parsedChecklist.tasks) validateTaskShape(task, 'checklist', false, diagnostics, options)
   validatePlanRelations(parsedPlan.tasks, diagnostics, options)

@@ -216,7 +216,7 @@ check('T1 生成资产是纯 definition（无 insert wrapper/官方独立公开�
   !definitionText.includes('insert:') && !definitionText.includes('preset-extra-plan') && !definitionText.includes("name: '@deepseek-ai/dsh-agent-preset'"))
 check('T1 definition 元数据与 preset.yml 一致、plugins 顶层恰 17 条',
   definitionDoc.id === 'extra-plan' && definitionDoc.name === preset.name && definitionDoc.description === preset.description && definitionDoc.order === 100 && Array.isArray(definitionDoc.plugins))
-check('T1 作者源保留 17 条顶层结构、引导词与主包 specifier、无退役包装层', Array.isArray(rows) && rows.length === 17 && agentText.includes('收到需求后，理解用户需求') && (agentText.match(/name: 'dsh-extra-plan'/g) || []).length === 1 && !hasRetiredExecutorSpawn(rows))
+check('T1 作者源保留 17 条顶层结构、主包 specifier、无退役包装层', Array.isArray(rows) && rows.length === 17 && (agentText.match(/name: 'dsh-extra-plan'/g) || []).length === 1 && !hasRetiredExecutorSpawn(rows))
 check('T1 definition 与作者源 parsed plugins 深等、主包 specifier 且无退役包装层/旧运行时 specifier', Array.isArray(definitionDoc.plugins) && JSON.stringify(definitionDoc.plugins) === JSON.stringify(rows) && all.filter((row) => row.name === 'dsh-extra-plan').length === 1 && !hasRetiredExecutorSpawn(definitionDoc) && !definitionText.includes('@local/dsh-extra-plan'))
 const groupIds = definitionDoc.plugins.filter((row) => row.group === true).map((row) => row.id)
 const delegationGroup = definitionDoc.plugins.find((row) => row.id === 'delegation')

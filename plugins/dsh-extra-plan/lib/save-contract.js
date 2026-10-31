@@ -65,7 +65,7 @@ function summaryBool(value) {
 export function formatSavePlanSummary(summary) {
   const value = summary !== null && typeof summary === 'object' ? summary : {}
   const lines = []
-  lines.push('模式=' + String(value.mode || '') + '；任务数=' + String(value.taskCount || 0) + '；任务文件数=' + String(value.taskFileCount || 0) + '；收尾文件数=' + String(value.closureFileCount || 0) + '；文件总数=' + String(value.fileCount || 0))
+  lines.push('任务数=' + String(value.taskCount || 0) + '；任务文件数=' + String(value.taskFileCount || 0) + '；收尾文件数=' + String(value.closureFileCount || 0) + '；文件总数=' + String(value.fileCount || 0))
   lines.push('执行组数=' + String(value.groupCount || 0) + '；验收组数=' + String(value.reviewGroupCount || 0) + '；检查数=' + String(value.checkCount || 0) + '；有收尾=' + summaryBool(value.hasClosure) + '；有全局验收=' + summaryBool(value.hasGlobalAcceptance))
   for (const task of Array.isArray(value.tasks) ? value.tasks : []) {
     lines.push('任务' + String(task.id) + '「' + String(task.title || '') + '」：主文件=' + summaryList(task.mainFiles) + '；关联文件=' + summaryList(task.relatedFiles) + '；执行组=' + String(task.executionGroup || task.group || '') + '；依赖=' + summaryList(task.dependencies) + '；依赖理由=' + String(task.dependencyReason || '') + '；分组理由=' + String(task.groupReason || '') + '；独占资源=' + summaryList(task.resources))
