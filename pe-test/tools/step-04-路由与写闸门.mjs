@@ -425,27 +425,29 @@ function emitClaimed(listeners, agent, message) {
 // 只读目录（reviewer 类）：pwsh 写 → deny；pwsh 只读 → 放行；write/edit → deny
 const reviewer = childAgent('reviewer-1')
 await assemble(harness, reviewer, [{ name: 'read' }, { name: 'glob' }, { name: 'grep' }, { name: 'pwsh' }])
-const H3_ROUTE_CONFIRM = '须先 ask_user_question 路由确认（选项固定为「直接执行」「进行pro规划」「不同意」）'
+// 拒句不复制文案：14 个只读角色格按各断言点的实际入参由 shellMutationReason 派生；
+// 5 个主会话格按 none/plan/approved 三态由 mainGateReason 派生（shell 分支与 shellMutationReason 共用 withShellEvidence）。
+const h3MainReason = (route, approved, args) => decisions.mainGateReason({ route, clarified: true, approved, purpose: 'refine', channelBroken: false }, { name: 'pwsh', arguments: args }, { gateRuntime })
 const H3_REASONS = Object.freeze({
-  reviewerPwshNewItem: '验收复核者只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件；触发依据：pwsh PWSH_BARE_WORDS 命中 New-Item',
-  reviewerPwshSetContent: '验收复核者只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件；触发依据：pwsh PWSH_BARE_WORDS 命中 Set-Content',
-  reviewerPwshCmdDel: '验收复核者只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件；触发依据：pwsh PWSH_BARE_WORDS 命中 del',
-  reviewerPwshRemoveItem: '验收复核者只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件；触发依据：pwsh PWSH_BARE_WORDS 命中 Remove-Item',
-  reviewerBashRedirect: '验收复核者只读：bash 仅限只读探查命令，禁止创建/修改/删除文件；触发依据：bash BASH_MUTATION',
-  plannerPwshNewItem: '规划子代理只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件；触发依据：pwsh PWSH_BARE_WORDS 命中 New-Item',
-  plannerPwshRemoveItem: '规划子代理只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件；触发依据：pwsh PWSH_BARE_WORDS 命中 Remove-Item',
-  plannerPwshRedirect: '规划子代理只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件；触发依据：pwsh PWSH_MUTATION',
-  probePwshRedirect: '探查者只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件；触发依据：pwsh PWSH_MUTATION',
-  reviewerPwshRedirect: '验收复核者只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件；触发依据：pwsh PWSH_MUTATION',
-  plannerBashRm: '规划子代理只读：bash 仅限只读探查命令，禁止创建/修改/删除文件；触发依据：bash BASH_BARE_WORDS 命中 rm',
-  probePwshSetContent: '探查者只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件；触发依据：pwsh PWSH_BARE_WORDS 命中 Set-Content',
-  probeBashRm: '探查者只读：bash 仅限只读探查命令，禁止创建/修改/删除文件；触发依据：bash BASH_BARE_WORDS 命中 rm',
-  probeBashMkdir: '探查者只读：bash 仅限只读探查命令，禁止创建/修改/删除文件；触发依据：bash BASH_BARE_WORDS 命中 mkdir',
-  mainNonePwshNewItem: '路由未确认：pwsh。只读探查可随时进行。创建/修改/删除文件' + H3_ROUTE_CONFIRM + '，用户批准后才可动手；触发依据：pwsh PWSH_BARE_WORDS 命中 New-Item',
-  mainNonePwshCmdDel: '路由未确认：pwsh。只读探查可随时进行。创建/修改/删除文件' + H3_ROUTE_CONFIRM + '，用户批准后才可动手；触发依据：pwsh PWSH_BARE_WORDS 命中 del',
-  mainNonePwshRedirect: '路由未确认：pwsh。只读探查可随时进行。创建/修改/删除文件' + H3_ROUTE_CONFIRM + '，用户批准后才可动手；触发依据：pwsh PWSH_MUTATION',
-  mainPlanPwshRedirect: '规划态下主会话不可写文件：pwsh。探查请走 save_probe，写文件请等方案批准后走执行者委派；触发依据：pwsh PWSH_MUTATION',
-  mainApprovedPwshRedirect: '方案已批准，工作区内写入请走 subagent 委派执行者。越界操作（工作区外写入）请带 sandbox_permissions 参数（如 sandbox_permissions: "workspace-write"）与 justification 重试；触发依据：pwsh PWSH_MUTATION',
+  reviewerPwshNewItem: shellMutationReason('reviewer', { name: 'pwsh', arguments: { command: 'New-Item x.txt' } }),
+  reviewerPwshSetContent: shellMutationReason('reviewer', { name: 'pwsh', arguments: { command: 'Set-Content a.txt x' } }),
+  reviewerPwshCmdDel: shellMutationReason('reviewer', { name: 'pwsh', arguments: { command: 'cmd /c del x.txt' } }),
+  reviewerPwshRemoveItem: shellMutationReason('reviewer', { name: 'pwsh', arguments: { command: 'Remove-Item x' } }),
+  reviewerBashRedirect: shellMutationReason('reviewer', { name: 'bash', arguments: { command: 'echo hi > f.txt' } }),
+  plannerPwshNewItem: shellMutationReason('planner', { name: 'pwsh', arguments: { command: 'New-Item x.txt' } }),
+  plannerPwshRemoveItem: shellMutationReason('planner', { name: 'pwsh', arguments: { command: 'cmd /c "Remove-Item x.txt"' } }),
+  plannerPwshRedirect: shellMutationReason('planner', { name: 'pwsh', arguments: { command: 'Write-Output x > out.txt' } }),
+  probePwshRedirect: shellMutationReason('probe', { name: 'pwsh', arguments: { command: 'Write-Output x > out.txt' } }),
+  reviewerPwshRedirect: shellMutationReason('reviewer', { name: 'pwsh', arguments: { command: 'Write-Output x > out.txt' } }),
+  plannerBashRm: shellMutationReason('planner', { name: 'bash', arguments: { command: 'rm -rf x' } }),
+  probePwshSetContent: shellMutationReason('probe', { name: 'pwsh', arguments: { command: 'Set-Content a.txt x' } }),
+  probeBashRm: shellMutationReason('probe', { name: 'bash', arguments: { command: 'rm -rf x' } }),
+  probeBashMkdir: shellMutationReason('probe', { name: 'bash', arguments: { command: 'mkdir d' } }),
+  mainNonePwshNewItem: h3MainReason('none', false, { command: 'New-Item x.txt' }),
+  mainNonePwshCmdDel: h3MainReason('none', false, { command: 'cmd.exe /C "del x.txt"' }),
+  mainNonePwshRedirect: h3MainReason('none', false, { command: 'Write-Output x > out.txt' }),
+  mainPlanPwshRedirect: h3MainReason('plan', false, { command: 'Write-Output x > out.txt' }),
+  mainApprovedPwshRedirect: h3MainReason('plan', true, { command: 'Write-Output x > out.txt' }),
 })
 const H3_EVIDENCE_CASES = [
   ['pwsh New-Item', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: 'New-Item x.txt' } }), { rule: 'PWSH_BARE_WORDS', value: 'New-Item' }],

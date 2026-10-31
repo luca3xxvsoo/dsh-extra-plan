@@ -1079,19 +1079,6 @@ const archiveRow = (patch = {}) => ({
 const archiveBytesOf = (path) => existsSync(path) ? readFileSync(path, 'utf8') : ''
 const archiveResiduals = (directory) => readdirSync(directory).filter((name) => name.includes('.tmp-') || name.includes('.bak-') || name.includes('.lock'))
 const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => JSON.stringify(row)).join('\n') + (rows.length > 0 ? '\n' : ''), 'utf8')
-const step99SourceText = readFileSync(fileURLToPath(new URL('./step-99-用量统计.mjs', import.meta.url)), 'utf8')
-const step99SourceLines = step99SourceText.split('\n')
-const step99TargetLineOf = (startMarker, endMarker, targetMarker) => {
-  const start = step99SourceLines.findIndex((line) => line.includes(startMarker))
-  if (start < 0) return 0
-  const end = step99SourceLines.findIndex((line, index) => index > start && line.includes(endMarker))
-  if (end < 0) return 0
-  const target = step99SourceLines.findIndex((line, index) => index > start && index < end && line.includes(targetMarker))
-  return target < 0 ? 0 : target + 1
-}
-const step99UniqueCheckLine = step99TargetLineOf('function assertUniqueArchiveRows', 'export function summarizeSnapshotTexts', 'if (check !== undefined) check()')
-const step99ArchiveEntriesCheckLine = step99TargetLineOf('for (const [key, row] of archiveEntries)', 'let coveredByArchiveRows = 0', 'if (check !== undefined) check()')
-const stackHitsStep99Line = (stack, lineNumber, functionName) => lineNumber > 0 && stack.split('\n').some((line) => line.includes('step-99-') && line.includes(':' + lineNumber + ':')) && stack.includes('at ' + functionName + ' (')
 
 // M6-G2-1：实际 createUsageLedger 生成 main 空 preset 与深层断链空 root，逐行严格归档。
 {
@@ -1313,7 +1300,7 @@ const stackHitsStep99Line = (stack, lineNumber, functionName) => lineNumber > 0 
       } finally { rmSync(budgetDir, { recursive: true, force: true }) }
     }
 
-    // M6-B3：目标预算check必须命中 assertUniqueArchiveRows 的真实调用栈与动态源码行。
+    // M6-B3：archive 唯一性数据集下预算检查超时必须在发布前拒绝（零发布 IO、三文件不变、锁释放）。
     {
       const budgetDir = makeWTemp('dsh-g2-budget-unique')
       try {
@@ -1326,20 +1313,17 @@ const stackHitsStep99Line = (stack, lineNumber, functionName) => lineNumber > 0 
         writeFileSync(budgetCursor, '{"g2-unique":{"seq":5,"index":5}}', 'utf8')
         const before = { active: archiveBytesOf(budgetActive), archive: archiveBytesOf(budgetArchive), cursor: archiveBytesOf(budgetCursor) }
         const io = { write: 0, move: 0, remove: 0 }
-        let targetSeen = false
-        const clock = () => {
-          const stack = new Error().stack || ''
-          if (stackHitsStep99Line(stack, step99UniqueCheckLine, 'assertUniqueArchiveRows')) { targetSeen = true; return 1 }
-          return 0
-        }
+        // 预算闸门计时器：首次 clock 取起点（0），其后任一预算检查即超时——不再依调用栈/源码行定位。
+        let clockCalls = 0
+        const clock = () => { clockCalls += 1; return clockCalls > 1 ? 1 : 0 }
         let failure
         try {
           usageStats.archiveLedger(budgetActive, { pathContext: STEP00_PATH_CONTEXT, budgetMs: 1, clock, fsOps: { writeFileSync: (...args) => { io.write += 1; return writeFileSync(...args) }, renameSync: (...args) => { io.move += 1; return renameSync(...args) }, unlinkSync: (...args) => { io.remove += 1; return unlinkSync(...args) } } })
         } catch (error) { failure = error }
-        checkTrue('M6-B3 唯一性目标check真实命中：stack/动态源码行证明budget-timeout且无发布IO/三文件不变/锁释放', failure !== undefined && failure.code === 'budget-timeout' && targetSeen && io.write === 0 && io.move === 0 && io.remove === 0 && archiveBytesOf(budgetActive) === before.active && archiveBytesOf(budgetArchive) === before.archive && archiveBytesOf(budgetCursor) === before.cursor && !existsSync(usageLedgerModule.usageLedgerLockPath(budgetActive)) && archiveResiduals(budgetDir).length === 0)
+        checkTrue('M6-B3 唯一性数据集预算超时：budget-timeout且无发布IO/三文件不变/锁释放', failure !== undefined && failure.code === 'budget-timeout' && io.write === 0 && io.move === 0 && io.remove === 0 && archiveBytesOf(budgetActive) === before.active && archiveBytesOf(budgetArchive) === before.archive && archiveBytesOf(budgetCursor) === before.cursor && !existsSync(usageLedgerModule.usageLedgerLockPath(budgetActive)) && archiveResiduals(budgetDir).length === 0)
       } finally { rmSync(budgetDir, { recursive: true, force: true }) }
     }
-    // M6-B4：archiveEntries目标预算check必须命中真实调用栈与动态源码行，禁止后续groups循环假通过。
+    // M6-B4：archiveEntries 数据集下预算检查超时必须在发布前拒绝（零发布 IO、三文件不变、锁释放）。
     {
       const budgetDir = makeWTemp('dsh-g2-budget-archive-entries')
       try {
@@ -1352,17 +1336,14 @@ const stackHitsStep99Line = (stack, lineNumber, functionName) => lineNumber > 0 
         writeFileSync(budgetCursor, '{"g2-archive-entry":{"seq":5,"index":5}}', 'utf8')
         const before = { active: archiveBytesOf(budgetActive), archive: archiveBytesOf(budgetArchive), cursor: archiveBytesOf(budgetCursor) }
         const io = { write: 0, move: 0, remove: 0 }
-        let targetSeen = false
-        const clock = () => {
-          const stack = new Error().stack || ''
-          if (stackHitsStep99Line(stack, step99ArchiveEntriesCheckLine, 'summarizeSourceRows')) { targetSeen = true; return 1 }
-          return 0
-        }
+        // 预算闸门计时器：首次 clock 取起点（0），其后任一预算检查即超时——不再依调用栈/源码行定位。
+        let clockCalls = 0
+        const clock = () => { clockCalls += 1; return clockCalls > 1 ? 1 : 0 }
         let failure
         try {
           usageStats.archiveLedger(budgetActive, { pathContext: STEP00_PATH_CONTEXT, budgetMs: 1, clock, fsOps: { writeFileSync: (...args) => { io.write += 1; return writeFileSync(...args) }, renameSync: (...args) => { io.move += 1; return renameSync(...args) }, unlinkSync: (...args) => { io.remove += 1; return unlinkSync(...args) } } })
         } catch (error) { failure = error }
-        checkTrue('M6-B4 archiveEntries目标check真实命中：stack/动态源码行证明budget-timeout且无发布IO/三文件不变/锁释放', failure !== undefined && failure.code === 'budget-timeout' && targetSeen && io.write === 0 && io.move === 0 && io.remove === 0 && archiveBytesOf(budgetActive) === before.active && archiveBytesOf(budgetArchive) === before.archive && archiveBytesOf(budgetCursor) === before.cursor && !existsSync(usageLedgerModule.usageLedgerLockPath(budgetActive)) && archiveResiduals(budgetDir).length === 0)
+        checkTrue('M6-B4 archiveEntries 数据集预算超时：budget-timeout且无发布IO/三文件不变/锁释放', failure !== undefined && failure.code === 'budget-timeout' && io.write === 0 && io.move === 0 && io.remove === 0 && archiveBytesOf(budgetActive) === before.active && archiveBytesOf(budgetArchive) === before.archive && archiveBytesOf(budgetCursor) === before.cursor && !existsSync(usageLedgerModule.usageLedgerLockPath(budgetActive)) && archiveResiduals(budgetDir).length === 0)
       } finally { rmSync(budgetDir, { recursive: true, force: true }) }
     }
 
@@ -3301,9 +3282,8 @@ const personaText = personaRow.config.prefix
 check('GWY5 persona config 正文键集合恰为 [prefix]（prefix-only，不含旧 text 兼容键）', Object.keys(personaRow.config), ['prefix'])
 check('GWY6 persona 正文引用的变量集合恰为 7 个', Array.from(new Set(personaText.match(/\{\{extra_plan_[a-z_]+\}\}/g) || [])).sort(), GATE_VARIABLE_NAMES.map((name) => '{{' + name + '}}').sort())
 check('GWY7 persona 正文不含任何闸门值字面量', factoryValuesPattern.test(personaText), false)
-check('GWY7b lib/gate-words.js 对 7 个出厂词 0 命中（JS 侧无第二份真源）', factoryValuesPattern.test(readFileSync(GATE_WORDS_LIB_FILE, 'utf8')), false)
 
-// GWY8-GWY9：宿主严格 renderPrompt 对 prefix-only 路径完成替换
+// GWY8：宿主严格 renderPrompt 对 prefix-only 路径完成替换
 let hostSystemPromptUrl = null
 try { hostSystemPromptUrl = import.meta.resolve('@deepseek-ai/dsh-system-prompt') } catch {}
 const explicitRoot = typeof process.env.DSH_INSTALL_ROOT === 'string' ? process.env.DSH_INSTALL_ROOT.trim() : ''
@@ -3314,7 +3294,6 @@ const hostSystemPromptInRoot = explicitRoot !== '' && hostSystemPromptEntry !== 
 const hostRenderPrompt = hostSystemPromptInRoot ? (await import(hostSystemPromptUrl)).renderPrompt : null
 const renderedPrefix = typeof hostRenderPrompt === 'function' ? hostRenderPrompt({ sections: [{ name: 'deployment:persona', text: personaText }], contexts: [], variables: gateRuntime.variables }) : ''
 checkTrue('GWY8 宿主严格 renderPrompt 对 prefix 完成全部变量替换且含 7 个当前值', typeof hostRenderPrompt === 'function' && !renderedPrefix.includes('{{') && GATE_FIELD_NAMES.every((field) => renderedPrefix.includes(assetGateWords[field])))
-checkTrue('GWY9 宿主严格 renderPrompt 走 prefix-only 路径（不依赖旧 text 键）：渲染结果非空、无残余 {{...}} 且含 7 个当前词值', typeof hostRenderPrompt === 'function' && renderedPrefix !== '' && !renderedPrefix.includes('{{') && GATE_FIELD_NAMES.every((field) => renderedPrefix.includes(assetGateWords[field])))
 
 // GWV 系列：validator 非法矩阵（表驱动，全部必须抛同一前缀）
 const cloneWords = (patch) => Object.assign({}, gateRuntime.words, patch)

@@ -109,7 +109,7 @@
    - `node plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs --check`
    - 扫描根内代码改动时冻结前完成代码地图生成与人工描述复核；本组纯文档改动不生成正式地图，正式阶段只运行 `node pe-test/tools/代码地图生成.mjs --check`，避免普通生成改时间戳，再执行最后一键 step。
 3. 自动测试不得执行真实 PowerShell 重定向写；测试前后 `pe-test/reports/_s4b_pwsh.txt` 必须不存在。常规回归命令退出码必须为 0，输出不得有 FAIL、SyntaxError、UnhandledPromiseRejection；runner 的 ETIMEDOUT 明确归失败而非环境未执行，普通说明含 FAIL/Error/导航失效不单独判失败，必须以退出码/结构化统计为准；context-gate 独立脚本若有 INCOMPLETE 必须非零，一键结果结构化标为部分执行而不计 PASS。SKIP/INCOMPLETE/HUMAN/NOT-RUN 单列且不计 AUTO PASS。
-4. 当前声明范围为 dsh `0.2.1-rc.1 || 0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4` 四版本精确并集；rc.1/rc.3 无样本记 `NOT-RUN`，rc.2 保留既有证据来源且证据等级不提升，rc.4 仅在显式 `DSH_INSTALL_ROOT=<本次真实代码根>` 的只读代码样本与隔离自动结果中核实。生产部署及真实 provider、GUI、QQBot 消息、重启和六项 HUMAN 由用户另行复测；静态/隔离 PASS 不替代 HUMAN。
+4. 当前声明范围为 dsh `0.2.1-rc.1 || 0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4 || 0.2.1-rc.5` 五版本精确并集；rc.1/rc.3 无样本记 `NOT-RUN`，rc.5 仅有只读静态核对、同样为 `NOT-RUN`，rc.2 保留既有证据来源且证据等级不提升，rc.4 仅在显式 `DSH_INSTALL_ROOT=<本次真实代码根>` 的只读代码样本与隔离自动结果中核实。生产部署及真实 provider、GUI、QQBot 消息、重启和六项 HUMAN 由用户另行复测；静态/隔离 PASS 不替代 HUMAN。
 ## 改动域 → 唯一检查入口
 
 | 改动域 | 主要检查 |

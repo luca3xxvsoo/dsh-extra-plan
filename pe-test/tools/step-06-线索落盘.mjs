@@ -6,6 +6,7 @@ import { pathToFileURL, fileURLToPath } from 'node:url'
 import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync, renameSync, unlinkSync, lstatSync, rmdirSync, realpathSync, symlinkSync } from 'node:fs'
 import { makeFixtureDir } from '../_shared/workspace-paths.mjs'
 import { createPathContext } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
+import { renderProbeMarkdown } from '../../plugins/dsh-extra-plan/lib/save-contract.js'
 import { join } from 'node:path'
 
 const PLUGIN_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/index.js', import.meta.url))
@@ -1158,20 +1159,18 @@ try {
   checkTrue('T3 save_plan 提交双文件且返回 paths，save_probe 提交单文件且返回 path', atomicCalls.length === 2 && atomicCalls[0][1][2].length === 2 && atomicCalls[1][1][2].length === 1 && Array.isArray(contextPlanResult.paths) && typeof contextProbeResult.path === 'string')
   check('T3 合法single正文逐字交给atomicCommit', atomicCalls[0][1][2].map((entry) => entry.content), [contextSingleFixture.plan, contextSingleFixture.checklist])
   check('T3 save_plan structured output仅paths', Object.keys(contextPlanResult), ['paths'])
-  const probeResult = await saveProbeDef.execute({
+  const probeRenderArgs = {
     taskName: 'smoke',
     fileMap: [{ path: 'a.txt', relation: '相关文件' }],
     focusAreas: [{ path: 'a.txt', note: '重点' }],
     exclusions: [{ note: '排除说明' }],
     background: [{ topic: '背景', detail: '细节' }],
-  }, execFake(work))
+  }
+  const probeResult = await saveProbeDef.execute(probeRenderArgs, execFake(work))
   checkTrue('S16 save_probe 返回 {path}', probeResult !== null && typeof probeResult === 'object' && typeof probeResult.path === 'string')
   const probeFile = probeResult.path
   checkTrue('S17 线索文件位于 .extra-plan 且命名含 sessionTag/毫秒/pid/序号', typeof probeFile === 'string' && probeFile.includes(join(work, '.extra-plan')) && /线索-smoke-[A-Za-z0-9]+-\d{17}-\d+-\d+\.md$/.test(probeFile))
-  checkTrue('S18 线索文件存在且含标题/卷首声明/四节', existsSync(probeFile) && (() => {
-    const c = readFileSync(probeFile, 'utf8')
-    return c.includes('# 探查线索（save_probe 落盘，非结论）') && c.includes('只有定位线索、没有证据') && ['## 一、文件地图', '## 二、重点区域', '## 三、排除项', '## 四、背景与意图'].every((s) => c.includes(s))
-  })())
+  checkTrue('S18 线索文件存在且与 renderProbeMarkdown 渲染期望逐字全等', existsSync(probeFile) && readFileSync(probeFile, 'utf8') === renderProbeMarkdown(probeRenderArgs))
   checkTrue('S19 落盘后无残留 .tmp/.journal', readdirSync(join(work, '.extra-plan')).every((n) => !n.startsWith('.tmp-') && !n.startsWith('.journal-')))
   const rejectResult = await (async () => {
     try {

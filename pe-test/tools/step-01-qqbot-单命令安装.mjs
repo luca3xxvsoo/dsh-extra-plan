@@ -8,7 +8,21 @@ import { dirname, join, relative, resolve, basename, delimiter, isAbsolute, sep 
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { isDeepStrictEqual } from 'node:util'
 
-const EXPECTED_DSH_VERSION = '0.2.1-rc.4'
+// DSH版本期望不写死：允许集合取自核心包 package.json 的 engines.dsh（以双竖线分隔多个受支持版本）。
+// 读取或解析失败必须 fail-closed——抛 IncompleteError 并回显路径，绝不回退到任何硬编码版本。
+function coreManifestPath() {
+  return join(WORKSPACE, 'plugins', CORE_PACKAGE, 'package.json')
+}
+
+function allowedDshVersions() {
+  const manifestPath = coreManifestPath()
+  const manifest = tryReadJson(manifestPath)
+  if (!manifest) throw new IncompleteError('核心包package.json不可读: ' + manifestPath)
+  const declared = manifest.engines && typeof manifest.engines.dsh === 'string' ? manifest.engines.dsh : ''
+  const allowed = declared.split('||').map((item) => item.trim()).filter((item) => item !== '')
+  if (allowed.length === 0) throw new IncompleteError('核心包engines.dsh未声明允许的DSH版本: ' + manifestPath)
+  return allowed
+}
 const TARGET_PACKAGE = 'dsh-extra-plan-qqbot'
 const CORE_PACKAGE = 'dsh-extra-plan'
 const TARGET_VERSION = '2.0.1'
@@ -164,7 +178,8 @@ function validateDshRoot(root) {
   const manifestPath = join(realRoot, 'package.json')
   const manifest = tryReadJson(manifestPath)
   if (!manifest || manifest.name !== '@deepseek-ai/dsh') throw new IncompleteError('DSH根package.json不匹配: ' + manifestPath)
-  if (manifest.version !== EXPECTED_DSH_VERSION) throw new IncompleteError('DSH版本不符: 实际 ' + String(manifest.version) + '，需要 ' + EXPECTED_DSH_VERSION)
+  const allowedDsh = allowedDshVersions()
+  if (!allowedDsh.includes(String(manifest.version))) throw new IncompleteError('DSH版本不符: 实际 ' + String(manifest.version) + '，允许 ' + allowedDsh.join(' || ') + '（声明于 ' + coreManifestPath() + '）')
   const binValue = typeof manifest.bin === 'string' ? manifest.bin : manifest.bin && manifest.bin.dsh
   if (!binValue) throw new IncompleteError('DSH package.json缺少dsh入口')
   const cliPath = resolve(realRoot, binValue)

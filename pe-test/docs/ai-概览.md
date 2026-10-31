@@ -4,7 +4,7 @@
 
 ## 项目身份与支持范围
 
-`dsh-extra-plan` 是 dsh 的按需规划预设：AI 先只读理解，经路由、目的、澄清、批准四级机械锚点后执行；`save_plan` 是受限的方案/验收双文件写例外。当前声明支持范围为 dsh `0.2.1-rc.1 || 0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4` 四版本精确并集；旧版兼容见旧版分支。逐版本实测状态、证据等级与待核实项统一见[ai-宿主耦合台账](ai-宿主耦合台账.md)。QQBot、生产及真实交互仍单独标记 HUMAN。
+`dsh-extra-plan` 是 dsh 的按需规划预设：AI 先只读理解，经路由、目的、澄清、批准四级机械锚点后执行；`save_plan` 是受限的方案/验收双文件写例外。当前声明支持范围为 dsh `0.2.1-rc.1 || 0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4 || 0.2.1-rc.5` 五版本精确并集；旧版兼容见旧版分支。逐版本实测状态、证据等级与待核实项统一见[ai-宿主耦合台账](ai-宿主耦合台账.md)。QQBot、生产及真实交互仍单独标记 HUMAN。
 
 根与角色口径：维护 W 取可信源树布局，不取 `process.cwd`、插件安装根或普通文件 `dirname`；部署/会话 W 取保存方案的 `session.header.cwd`，部署脚本仍把工件、fixture、报告等写在 W，不是只能访问 H。H 仅由真实 Host context/精确能力或测试显式 `--host-root` 与精确目标授权；`DSH_HOME`/`DSH_PROFILE`/`SESSION_ID` 的存在不授根，`DSH_INSTALL_ROOT`+host-preload 只授只读代码根，扩展名也不代表授权。标准 Web/QQ 由可信 `profileContext.name`/`startedBundles` 识别，Web→QQ 镜像保留，QQ 不适用返回 `not-applicable`，不误启动跨 profile；缺根、Other、非法/冲突来源均在 IO 前拒绝，H/W 重叠按用途分类，隔离 fixture 不等于实机。
 

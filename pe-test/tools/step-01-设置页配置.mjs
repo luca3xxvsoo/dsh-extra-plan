@@ -623,11 +623,13 @@ const qbotDirectIdOnly = '# outside comment\r\n' + qbotSettingsRow(qbotConfigVal
 const qbotDirectPlan = planQqbotSettingsPatch(qbotDirectIdOnly, syncSnapshot)
 const qbotDirectAgain = qbotDirectPlan.text === undefined ? null : planQqbotSettingsPatch(qbotDirectPlan.text, syncSnapshot)
 check('G5 既有同值id-only补name并保留未知字段/CRLF', qbotDirectPlan.status === 'planned' && qbotDirectPlan.text.includes('name: dsh-extra-plan/settings') && qbotDirectPlan.text.includes('customKey: !!js "globalThis.__g5Unknown = true"') && qbotDirectPlan.text.includes('\r\n') && !qbotDirectPlan.text.replace(/\r\n/g, '').includes('\n'))
-check('G5 QQBot补名后二次保存幂等', qbotDirectAgain?.status, 'idempotent')
+check('G5 QQBot补名后二次保存幂等', qbotDirectAgain?.status === 'idempotent')
 const qbotWrongNameText = qbotSettingsRow(qbotConfigValues, { name: 'wrong/name' })
 const qbotDuplicateNameText = '- id: dsh-extra-plan-settings\n  name: wrong/name\n  name: another/name\n  config:\n    plannerModel: ' + JSON.stringify(syncValues.plannerModel) + '\n'
-check('G5 非空错名计划conflict且零文本', planQqbotSettingsPatch(qbotWrongNameText, syncSnapshot).status, 'conflict')
-check('G5 重名计划conflict且零文本', planQqbotSettingsPatch(qbotDuplicateNameText, syncSnapshot).status, 'conflict')
+const qbotWrongNamePlan = planQqbotSettingsPatch(qbotWrongNameText, syncSnapshot)
+const qbotDuplicateNamePlan = planQqbotSettingsPatch(qbotDuplicateNameText, syncSnapshot)
+check('G5 非空错名计划conflict且零文本', qbotWrongNamePlan.status === 'conflict' && qbotWrongNamePlan.text === undefined)
+check('G5 重名计划conflict且零文本', qbotDuplicateNamePlan.status === 'conflict' && qbotDuplicateNamePlan.text === undefined)
 const foreignDuplicateInputs = [
   '- override:\n    id: unrelated\n    name: x\n    name: y\n',
   '- id: unrelated\n  config:\n    id: dsh-extra-plan-settings\n    name: x\n    name: y\n',
