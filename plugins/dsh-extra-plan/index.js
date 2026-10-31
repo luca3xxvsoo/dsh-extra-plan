@@ -121,9 +121,9 @@ export const decisions = {
 export const name = 'extra-plan'
 export const inject = ['systemPrompt']
 
-import { mkdirSync, writeFileSync, appendFileSync } from 'node:fs'
-import { join, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { mkdirSync, appendFileSync } from 'node:fs'
+import { join, dirname, isAbsolute, resolve as pathResolve } from 'node:path'
+import { createPathContext, resolveWorkspacePath, resolveHostPath, prepareWriteTarget } from './lib/path-policy.js'
 import { PROBE_LIMITS, sanitizeTaskName, timestamp, renderSavePlan, renderSaveProbe, renderProbeMarkdown, extractProbeEvidenceRefs } from './lib/save-contract.js'
 import { validateProbe } from './lib/save-probe-validation.js'
 import { atomicCommit } from './lib/save-persistence.js'
@@ -146,7 +146,7 @@ import { createLiveConfig } from './lib/live-config.js'
 import { createDeveloperMessage } from '@deepseek-ai/dsh-llm'
 import z from '@deepseek-ai/schemastery'
 
-const DEFAULT_DIAG_FILE = join(dirname(fileURLToPath(import.meta.url)), 'extra-plan-request-errors.jsonl')
+const DEFAULT_DIAG_FILE = 'extra-plan-request-errors.jsonl'
 
 // 主插件 Config 对应 id=extra-plan；lib/settings.js 的 Config 对应 id=dsh-extra-plan-settings。
 // 二者不复用、不互相导入；settings Config 仍独立维护 10 个 volatile 字段。
@@ -247,11 +247,218 @@ function malformedRecovery(payload) {
 // 失败）都会留痕。
 // recordAgentError 为模块级函数（须被导出供回归冒烟直呼）：与 recordRequestError
 // 同模式——整体 try/catch 吞错、写失败一次性 console.warn 防刷屏；落盘文件与
-// diagPath 同目录（diagPath 默认 = 本插件目录，此处同由本模块文件位置派生）。
-const agentErrorDiagPath = join(dirname(fileURLToPath(import.meta.url)), 'extra-plan-agent-errors.jsonl')
+// 诊断文件始终按已授权日志根解析；缺根时非阻断且不写包目录。
 let agentErrorDiagWarned = false
 
-function recordAgentError(payload) {
+function safeContextGet(ctx, key) {
+  try {
+    return ctx !== undefined && ctx !== null && typeof ctx.get === 'function' ? ctx.get(key) : undefined
+  } catch (error) {
+    return undefined
+  }
+}
+
+const QQBOT_BUNDLE = '@tencent-connect/dsh-qqbot'
+
+function absoluteRoot(value) {
+  if (typeof value !== 'string' || value.trim() === '') return null
+  try {
+    return createPathContext({ workspaceRoot: value }).workspaceRoot
+  } catch {
+    return null
+  }
+}
+
+function profileIdentityOf(profile) {
+  const name = profile !== undefined && profile !== null && typeof profile.name === 'string' ? profile.name.trim().toLowerCase() : null
+  const startedBundles = profile !== undefined && profile !== null && Array.isArray(profile.startedBundles) && profile.startedBundles.every((item) => typeof item === 'string')
+    ? [...profile.startedBundles]
+    : null
+  if (name === null || startedBundles === null) return { state: 'unknown', kind: 'unknown', name, startedBundles, reason: 'profile-identity-missing' }
+  const qqbot = startedBundles.includes(QQBOT_BUNDLE)
+  if (name === 'web' && !qqbot) return { state: 'valid', kind: 'web', name, startedBundles, reason: null }
+  if (name === 'qqbot' && qqbot) return { state: 'valid', kind: 'qqbot', name, startedBundles, reason: null }
+  if (name !== 'web' && name !== 'qqbot') return { state: 'unknown', kind: 'unknown', name, startedBundles, reason: 'profile-name-unknown' }
+  return { state: 'conflict', kind: 'unknown', name, startedBundles, reason: 'profile-identity-conflict' }
+}
+
+function rootFact(value, present) {
+  if (present !== true) return { state: 'missing', path: null }
+  const normalized = absoluteRoot(value)
+  return normalized === null ? { state: 'invalid', path: null } : { state: 'valid', path: normalized }
+}
+
+function sameRoot(left, right) {
+  if (left === null || right === null) return false
+  const a = pathResolve(left)
+  const b = pathResolve(right)
+  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b
+}
+
+function configEditorServiceOf(ctx) {
+  const editor = safeContextGet(ctx, 'configEditor')
+  return editor !== undefined && editor !== null && typeof editor.configuration === 'function' && typeof editor.edit === 'function' ? editor : null
+}
+
+function documentFact(value, present) {
+  if (present !== true || value === undefined || value === null || value === '') return { state: 'missing', path: null }
+  const normalized = absoluteRoot(value)
+  return normalized === null ? { state: 'invalid', path: null } : { state: 'valid', path: normalized }
+}
+
+function profileFactsOf(ctx) {
+  const profile = safeContextGet(ctx, 'profileContext')
+  const has = (key) => profile !== undefined && profile !== null && Object.prototype.hasOwnProperty.call(profile, key)
+  const profileHomeFact = rootFact(profile?.home, has('home'))
+  const profileDirFact = rootFact(profile?.dir, has('dir'))
+  const profilePatchFact = rootFact(profile?.patchPath, has('patchPath'))
+  const installAnchorFact = rootFact(profile?.installAnchor, has('installAnchor'))
+  const editor = configEditorServiceOf(ctx)
+  let editorDocumentFact = { state: 'missing', path: null }
+  if (editor !== null) {
+    try { editorDocumentFact = documentFact(editor.documentPath, editor.documentPath !== undefined) } catch (error) { editorDocumentFact = { state: 'invalid', path: null } }
+  }
+  let documentState = 'missing'
+  let documentPath = null
+  let documentCapability = null
+  if (profilePatchFact.state === 'invalid' || editorDocumentFact.state === 'invalid') documentState = 'invalid'
+  else if (profilePatchFact.state === 'valid' && editorDocumentFact.state === 'valid' && !sameRoot(profilePatchFact.path, editorDocumentFact.path)) documentState = 'conflict'
+  else if (editorDocumentFact.state === 'valid') {
+    documentState = 'valid'
+    documentPath = editorDocumentFact.path
+    documentCapability = profilePatchFact.state === 'valid' ? 'profilePatch' : 'editorDocument'
+  } else if (profilePatchFact.state === 'valid') {
+    documentState = 'valid'
+    documentPath = profilePatchFact.path
+    documentCapability = 'profilePatch'
+  }
+  const homeProvider = safeContextGet(ctx, 'dshHomePath')
+  let dshHomeFact = { state: 'missing', path: null }
+  if (typeof homeProvider === 'function') {
+    try { dshHomeFact = rootFact(homeProvider(), true) } catch (error) { dshHomeFact = { state: 'invalid', path: null } }
+  }
+  const envPresent = Object.prototype.hasOwnProperty.call(process.env, 'DSH_HOME')
+  const envHomeFact = rootFact(process.env.DSH_HOME, envPresent)
+  const trustedSources = [profileHomeFact, dshHomeFact]
+  const invalidTrustedSource = trustedSources.some((item) => item.state === 'invalid')
+  const validSources = trustedSources.filter((item) => item.state === 'valid')
+  const trustedConflict = validSources.some((item) => !sameRoot(item.path, validSources[0]?.path))
+  const envConflict = validSources.length > 0 && envHomeFact.state === 'valid' && !sameRoot(envHomeFact.path, validSources[0]?.path)
+  const envInvalidWithTrustedRoot = validSources.length > 0 && envHomeFact.state === 'invalid'
+  const hostConflict = trustedConflict || envConflict
+  const hostState = invalidTrustedSource || envInvalidWithTrustedRoot ? 'invalid' : hostConflict ? 'conflict' : validSources.length === 0 ? 'missing' : 'valid'
+  const hostDataRoot = hostState === 'valid' ? validSources[0].path : null
+  const identity = profileIdentityOf(profile)
+  return {
+    profile,
+    profileName: identity.name,
+    startedBundles: identity.startedBundles,
+    profileKind: identity.kind,
+    profileIdentityState: identity.state,
+    profileIdentityReason: identity.reason,
+    envHome: envHomeFact.state === 'valid' ? envHomeFact.path : null,
+    envHomeState: envHomeFact.state,
+    hostDataRoot,
+    hostConflict,
+    hostState,
+    profileDir: profileDirFact.state === 'valid' ? profileDirFact.path : null,
+    profileDirState: profileDirFact.state,
+    profilePatch: profilePatchFact.state === 'valid' ? profilePatchFact.path : null,
+    profilePatchState: profilePatchFact.state,
+    documentState,
+    documentPath,
+    documentCapability,
+    installAnchor: installAnchorFact.state === 'valid' ? installAnchorFact.path : null,
+    installAnchorState: installAnchorFact.state,
+  }
+}
+
+function installAnchorOf(ctx) {
+  return profileFactsOf(ctx).installAnchor
+}
+
+function pathContextFor(ctx, cwd) {
+  const facts = profileFactsOf(ctx)
+  const workspaceRoot = absoluteRoot(cwd)
+  const capabilities = {}
+  if (facts.profileDir !== null) capabilities.profileDir = { path: facts.profileDir, type: 'directory', access: 'write', purpose: 'qqbot-settings-sync' }
+  if (facts.profilePatch !== null) capabilities.profilePatch = { path: facts.profilePatch, type: 'file', access: 'write', purpose: 'config-editor' }
+  if (facts.documentCapability === 'editorDocument' && facts.documentPath !== null) capabilities.editorDocument = { path: facts.documentPath, type: 'file', access: 'read', purpose: 'config-editor' }
+  if (facts.installAnchor !== null) capabilities.installAnchor = { path: facts.installAnchor, type: 'file', access: 'read', purpose: 'install-anchor' }
+  const options = { hostCapabilities: capabilities }
+  if (workspaceRoot !== null) options.workspaceRoot = workspaceRoot
+  if (facts.hostState === 'valid' && facts.hostDataRoot !== null) options.hostDataRoot = facts.hostDataRoot
+  if (options.workspaceRoot === undefined && options.hostDataRoot === undefined && Object.keys(capabilities).length === 0) return null
+  try { return createPathContext(options) } catch (error) { return null }
+}
+
+function resolveDocumentTargetFor(ctx, agent) {
+  const facts = profileFactsOf(ctx)
+  if (facts.documentState === 'invalid') throw new Error('配置文档事实非法，拒绝热读')
+  if (facts.documentState === 'conflict') throw new Error('配置文档事实矛盾，拒绝热读')
+  if (facts.documentPath === null || facts.documentCapability === null) return ''
+  const context = pathContextFor(ctx, sessionCwdOf(agent))
+  if (context === null) return ''
+  return resolveHostPath(context, facts.documentPath, { capability: facts.documentCapability, purpose: 'config-editor' })
+}
+
+function sessionCwdOf(agent) {
+  const session = agent !== undefined && agent !== null ? agent.session : undefined
+  const header = session !== undefined && session !== null ? session.header : undefined
+  return header !== undefined && header !== null && typeof header.cwd === 'string' ? header.cwd : ''
+}
+
+function resolveAbsoluteLogTarget(context, value, purpose) {
+  let hostError
+  let workspaceError
+  try { return resolveHostPath(context, value, { purpose }) } catch (error) { hostError = error }
+  try { return resolveWorkspacePath(context, value, { purpose }) } catch (error) { workspaceError = error }
+  throw hostError || workspaceError || new Error('诊断路径不在授权H/W根内')
+}
+
+function diagnosticTargetOf(ctx, agent, configured, purpose = 'diagnostics') {
+  const cwd = sessionCwdOf(agent)
+  const context = pathContextFor(ctx, cwd)
+  if (context === null) return null
+  const facts = profileFactsOf(ctx)
+  const value = typeof configured === 'string' && configured !== '' ? configured : DEFAULT_DIAG_FILE
+  const bare = !isAbsolute(value) && !/[\\/]/.test(value)
+  if (bare) {
+    if (facts.hostState === 'invalid' || facts.hostState === 'conflict') return null
+    if (facts.hostState === 'valid' && facts.hostDataRoot !== null) return resolveHostPath(context, join('logs', 'dsh-extra-plan', value), { purpose })
+    if (facts.hostState === 'missing' && absoluteRoot(cwd) !== null) return resolveWorkspacePath(context, join('.extra-plan', 'logs', value), { purpose })
+    return null
+  }
+  if (isAbsolute(value)) return resolveAbsoluteLogTarget(context, value, purpose)
+  return resolveWorkspacePath(context, value, { purpose })
+}
+
+function prepareDiagnosticPath(ctx, agent, configured) {
+  try {
+    const target = diagnosticTargetOf(ctx, agent, configured)
+    if (target === null) return ''
+    const context = pathContextFor(ctx, sessionCwdOf(agent))
+    if (context === null) return ''
+    const parent = target.kind === 'host'
+      ? resolveHostPath(context, dirname(target.path), { purpose: 'diagnostics' })
+      : resolveWorkspacePath(context, dirname(target.path), { purpose: 'diagnostics' })
+    prepareWriteTarget(context, parent, { expectedType: 'any', purpose: 'diagnostics' })
+    mkdirSync(parent.path, { recursive: true })
+    prepareWriteTarget(context, target, { expectedType: 'file', purpose: 'diagnostics' })
+    return target.path
+  } catch (error) {
+    return ''
+  }
+}
+
+function appendDiagnostic(ctx, agent, configured, row) {
+  const path = prepareDiagnosticPath(ctx, agent, configured)
+  if (path === '') return false
+  appendFileSync(path, JSON.stringify(row) + '\n', { encoding: 'utf8' })
+  return true
+}
+
+function recordAgentError(payload, options = {}) {
   try {
     const sessionId = payload?.agent?.session?.header?.id
     const row = {
@@ -261,12 +468,11 @@ function recordAgentError(payload) {
       step: payload.step,
       chain: causeChainOf(payload.error, 8),
     }
-    mkdirSync(dirname(agentErrorDiagPath), { recursive: true })
-    appendFileSync(agentErrorDiagPath, JSON.stringify(row) + '\n', { encoding: 'utf8' })
+    if (!appendDiagnostic(options.ctx, payload?.agent, 'extra-plan-agent-errors.jsonl', row)) throw new Error('agent diagnostics root unavailable')
   } catch (error) {
     if (!agentErrorDiagWarned) {
       agentErrorDiagWarned = true
-      console.warn(`extra-plan: agent-error diagnostics write failed: ${error instanceof Error ? error.message : String(error)}`)
+      console.warn('extra-plan: agent-error diagnostics write failed: ' + (error instanceof Error ? error.message : String(error)))
     }
   }
 }
@@ -296,6 +502,7 @@ export function apply(ctx, config) {
   const { defineSavePlan, defineSaveProbe } = createSaveToolFactories({
     savePlanDir,
     atomicCommit,
+    getPathContext: (cwd) => pathContextFor(ctx, cwd),
   })
   // ── 配置热读：8 项设置从「apply 期一次性常量」改为「消费点现场取值」 ──────
   // 设置页改 YAML 后同会话即时生效（无需重启）；取值经 mtime+size 变更检测缓存，
@@ -303,16 +510,10 @@ export function apply(ctx, config) {
   // cfg 快照：既是磁盘不可用/解析失败时的兜底，也是本实例初始值（生产上与该
   // YAML 同源——cfg 就是该文件当时的解析结果）。
   const liveConfig = createLiveConfig({
-    // 路径决议（T6）：profile cordis.patch.yml（configEditor.documentPath）——设置值的新落点
-    // （settings 行 config）；旧 .agent-presets/extra-plan/agent.cordis.yml 已无读取方。
-    resolveDocumentPath: () => {
-      try {
-        const editor = ctx.get('configEditor')
-        return editor !== undefined && editor !== null && typeof editor.documentPath === 'string' ? editor.documentPath : ''
-      } catch (error) {
-        return ''
-      }
-    },
+    // 路径决议（T6）：只消费真实ctx服务/可信profile事实生成的精确Host目标；
+    // 不把裸 configEditor.documentPath 交给通用H根，也不由普通路径形状自授能力。
+    resolveDocumentTarget: (agent) => resolveDocumentTargetFor(ctx, agent),
+    getPathContext: (agent) => pathContextFor(ctx, sessionCwdOf(agent)),
     fallbackDefaults: {
       plannerModel: typeof cfg.plannerModel === 'string' ? cfg.plannerModel : DEFAULT_SETTINGS.plannerModel,
       otherAgentModel: typeof cfg.otherAgentModel === 'string' ? cfg.otherAgentModel.trim() : DEFAULT_SETTINGS.otherAgentModel,
@@ -325,16 +526,16 @@ export function apply(ctx, config) {
     },
   })
   // ── 8 项热读：消费点现场取值（全部加括号调用） ──
-  const plannerModel = () => liveConfig.plannerModel
-  const otherAgentModel = () => liveConfig.otherAgentModel
-  const exploreBudget = () => liveConfig.exploreBudget
-  const plannerPromptSuffix = () => liveConfig.plannerPromptSuffix
-  const bootstrapOn = () => liveConfig.anchoredBootstrap
-  const runcodeCatchGateOn = () => liveConfig.runcodeCatchGate
-  const crossProviderPlannerModelOn = () => liveConfig.crossProviderPlannerModel
+  const plannerModel = (agent) => liveConfig.get('plannerModel', agent)
+  const otherAgentModel = (agent) => liveConfig.get('otherAgentModel', agent)
+  const exploreBudget = (agent) => liveConfig.get('exploreBudget', agent)
+  const plannerPromptSuffix = (agent) => liveConfig.get('plannerPromptSuffix', agent)
+  const bootstrapOn = (agent) => liveConfig.get('anchoredBootstrap', agent)
+  const runcodeCatchGateOn = (agent) => liveConfig.get('runcodeCatchGate', agent)
+  const crossProviderPlannerModel = (agent) => liveConfig.get('crossProviderPlannerModel', agent)
   // creativeMode 三消费点全部改走 live-config getter（T5-5）：C 隐藏集合（shouldHideCreativeCatalog）
   // 与装配投影 hideCordis 两处现场取值，链 = settings 行 override → cfg 快照 → BUILTIN_DEFAULTS。
-  const creativeModeOn = () => liveConfig.creativeMode
+  const creativeModeOn = (agent) => liveConfig.get('creativeMode', agent)
   const bootstrapPersona = typeof cfg.bootstrapPersona === 'string' ? cfg.bootstrapPersona : 'You are a helpful software engineer assistant.'
   // 变量②：F 段（HP 首轮）tool:read 的手写文案；空串/非字符串一律回退内置同文案兜底。
   const bootstrapReadHint = typeof cfg.bootstrapReadHint === 'string' && cfg.bootstrapReadHint !== ''
@@ -349,6 +550,7 @@ export function apply(ctx, config) {
   const usageLedger = createUsageLedger({
     enabled: ledgerConfig !== null && ledgerConfig.enabled === true,
     path: ledgerConfig !== null && typeof ledgerConfig.path === 'string' ? ledgerConfig.path : '',
+    pathContext: pathContextFor(ctx, ''),
   })
   const { foldUsage } = usageLedger
 
@@ -365,12 +567,12 @@ export function apply(ctx, config) {
   // 见 lib/model-routing.js：plannerModelCache / otherAgentModelCache 每次 apply 各新建一份
   // WeakMap（绝不提升为模块全局）；llm/agents/诊断路径按惰性 getter 取用。
   const { resolvePlannerEntry, resolveOtherAgentEntry } = createModelRouting({
-    getPlannerModel: () => liveConfig.plannerModel,
-    getOtherAgentModel: () => liveConfig.otherAgentModel,
-    getCrossProviderPlannerModel: () => liveConfig.crossProviderPlannerModel,
+    getPlannerModel: (agent) => plannerModel(agent),
+    getOtherAgentModel: (agent) => otherAgentModel(agent),
+    getCrossProviderPlannerModel: (agent) => crossProviderPlannerModel(agent),
     getLlm: () => ctx.get('llm'),
     getAgents: () => ctx.get('agents'),
-    getDiagPath: () => diagPath,
+    getDiagPath: (agent) => prepareDiagnosticPath(ctx, agent, diagPath),
   })
 
   // ── C=1 创造模式的官方 skill 面（T5-3 取径订正）────────────────────────────
@@ -397,7 +599,7 @@ export function apply(ctx, config) {
     subCallCounters, toolJobsNoticesConsumed,
     recordRunCodeDeny, takeRunCodeDenyRecords, recordProbeClaim,
   } = runtimeLifecycle
-  const noteRunCodeSubCall = (sessionId, rid) => runtimeLifecycle.noteRunCodeSubCall(sessionId, rid, exploreBudget())
+  const noteRunCodeSubCall = (agent, sessionId, rid) => runtimeLifecycle.noteRunCodeSubCall(sessionId, rid, exploreBudget(agent))
   const consumeToolJobsNotice = (agent, message) => {
     const session = agent !== null && typeof agent === 'object' && !Array.isArray(agent) ? agent.session : undefined
     const header = session !== null && typeof session === 'object' && !Array.isArray(session) ? session.header : undefined
@@ -462,8 +664,8 @@ export function apply(ctx, config) {
   // 一律从模型可见 catalog 隐藏——只影响名字可见性，skill 仍注册、按名调用仍可加载。
   // C=1：保留原 HP1 首轮暂隐逻辑（仅 A=1、F、main/planner、M=ptc 的极简首轮）。
   function shouldHideCreativeCatalog(agent) {
-    if (!creativeModeOn()) return true
-    if (!bootstrapOn() || !isBootstrapPhase(agent)) return false
+    if (!creativeModeOn(agent)) return true
+    if (!bootstrapOn(agent) || !isBootstrapPhase(agent)) return false
     const planner = isPlannerChild(agent)
     const child = isChild(agent)
     if (!planner && child) return false
@@ -476,7 +678,7 @@ export function apply(ctx, config) {
     if (agent === undefined || agent === null) return false
     const planner = isPlannerChild(agent)
     const child = isChild(agent)
-    return bootstrapOn() && isBootstrapPhase(agent) && (planner || !child)
+    return bootstrapOn(agent) && isBootstrapPhase(agent) && (planner || !child)
   }
   let preStepWarned = false
   function warnPreStepFailure(error) {
@@ -528,10 +730,10 @@ export function apply(ctx, config) {
       if (agent === undefined || !isPlannerChild(agent)) return decision
       if (!Array.isArray(decision.messages)) return decision
       // 预算告知（先于 suffix 拼接，suffix 为空也生效）+ 阈值提示（剩余 ≤3 且未注入过时追加一条）。
-      const budgetNotice = budgetNoticeText(exploreBudget())
+      const budgetNotice = budgetNoticeText(exploreBudget(agent))
       const used = toolCallsSinceUser(sessionEvents(agent.session), FREE_TOOLS)
-      const reminder = budgetReminderText(exploreBudget() - used, exploreBudget(), BUDGET_REMINDER_THRESHOLD)
-      let messages = decision.messages.map((message) => withPlannerPromptSuffix(withBudgetNotice(message, budgetNotice), plannerPromptSuffix()))
+      const reminder = budgetReminderText(exploreBudget(agent) - used, exploreBudget(agent), BUDGET_REMINDER_THRESHOLD)
+      let messages = decision.messages.map((message) => withPlannerPromptSuffix(withBudgetNotice(message, budgetNotice), plannerPromptSuffix(agent)))
       if (reminder !== '' && !budgetReminderSent(sessionEvents(agent.session), '本轮探查预算还剩 ')) {
         messages = [...messages, budgetReminderMessage(reminder)]
       }
@@ -565,9 +767,7 @@ export function apply(ctx, config) {
         ...(payload.failure !== undefined && payload.failure !== null && payload.failure.code !== undefined ? { code: String(payload.failure.code) } : {}),
         causeChain: causeChainOf(payload.failure, 8),
       }
-      const dir = diagPath.slice(0, Math.max(diagPath.lastIndexOf('\\'), diagPath.lastIndexOf('/')))
-      if (dir !== '') mkdirSync(dir, { recursive: true })
-      writeFileSync(diagPath, JSON.stringify(row) + '\n', { flag: 'a', encoding: 'utf8' })
+      if (!appendDiagnostic(ctx, payload.agent, diagPath, row)) throw new Error('request diagnostics root unavailable')
     } catch (error) {
       if (!diagWarned) {
         diagWarned = true
@@ -591,7 +791,7 @@ export function apply(ctx, config) {
   // console，由 recordAgentError 逐字落盘诊断文件供根因定位
   // （含子代理"腰斩"的流建立失败等 runTurn 级错误）；recordAgentError 内部全吞错、
   // 写失败仅一次性告警，监听器绝不放大故障。
-  ctx.on('agent/error', recordAgentError)
+  ctx.on('agent/error', (payload) => recordAgentError(payload, { ctx }))
 
   // 4) 会话销毁：同步 final flush + 单会话状态回收。必须保持同步回调——agent/disposed 是
   //    emit/void，宿主调用监听器后只对返回的 Promise 挂 catch、不等待完成；此处 driver 已静止、
@@ -663,17 +863,17 @@ export function apply(ctx, config) {
     const role = planner ? 'planner' : child ? 'executor' : 'main'
     // 呈现模式二值化（0.2.1）：有非空 PTC 段即 ptc，其余（含宿主 SDK 段）一律 native。
     const mode = hasNonEmptySection(result.sections, PTC_SECTION_NAME) ? 'ptc' : 'native'
-    const anchoredFirst = bootstrapOn() && phase === 'first' && (role === 'main' || role === 'planner')
+    const anchoredFirst = bootstrapOn(agent) && phase === 'first' && (role === 'main' || role === 'planner')
     const anchoredPtc = anchoredFirst && mode === 'ptc'
     let presented = result
     if (anchoredPtc) {
       // HP0/HP1：PTC 首轮只保留传输、persona 与手写 read 文案（覆盖 tool:read 的 text）；不先生成完整 SDK。
       presented = projectAssemblyForPresentation(result, schemas, {
-        hideCordis: !creativeModeOn(),
+        hideCordis: !creativeModeOn(agent),
         ptcOnly: true,
         keepSectionNames: new Set([PTC_SECTION_NAME, READ_SECTION_NAME]),
       })
-    } else if (!creativeModeOn()) {
+    } else if (!creativeModeOn(agent)) {
       let sdkText
       // F/native 随后只返回 bootstrap shell(s)+read，不能为被剥离的完整 SDK 预热。
       if (!anchoredFirst && hasSection(result.sections, SDK_SECTION_NAME)) {
@@ -686,14 +886,14 @@ export function apply(ctx, config) {
         try {
           const effectiveSchemas = toolSdkSchemasOf(agent) ?? schemas
           const rendererInput = sdkSchemasForRendering(effectiveSchemas)
-          const renderer = await resolveToolsSdkRenderer(language)
+          const renderer = await resolveToolsSdkRenderer(language, installAnchorOf(ctx))
           sdkText = await sdkTextCache.getOrCreate(agent, rendererInput, language, renderer)
         } catch (error) {
           console.warn('extra-plan: filtered tools:sdk render failed (' + (error instanceof Error ? error.message : String(error)) + ')')
           sdkText = ''
         }
       }
-      presented = projectAssemblyForPresentation(result, schemas, { sdkText, hideCordis: !creativeModeOn(), ptcOnly: mode === 'ptc' })
+      presented = projectAssemblyForPresentation(result, schemas, { sdkText, hideCordis: !creativeModeOn(agent), ptcOnly: mode === 'ptc' })
     } else if (mode === 'ptc') {
       // Pure PTC 的保留传输始终是唯一顶层工具；其余 binding 只在嵌套 SDK 中出现。
       presented = projectAssemblyForPresentation(result, schemas, { hideCordis: false, ptcOnly: true })
@@ -893,7 +1093,7 @@ export function apply(ctx, config) {
       return next()
     }
     if (planner) {
-      let reason = plannerGateReason(exec, execEvents, exploreBudget(), jobOutputCallCounters)
+      let reason = plannerGateReason(exec, execEvents, exploreBudget(agent), jobOutputCallCounters)
       // 预算耗尽时 run_code 不在此直拒：plannerGateReason 对 run_code 仅可能因预算耗尽返回非 null
       // （run_code 非 write/edit/pwsh/bash/job_output），置 null 让预算判定进入组判定——组判定内按白名单把关：
       // 成员组非空且全部 ∈ FREE_TOOLS 才放行；含非白名单成员或空组/动态访问 → 拒绝（动态拼接文案）。
@@ -903,7 +1103,7 @@ export function apply(ctx, config) {
         return { kind: 'deny', reason }
       }
       if (exec.name === 'run_code') {
-        const runReason = runCodeGroupDenyReason(undefined, exec, { kind: 'planner' }, { events: execEvents, exploreBudget: exploreBudget(), jobOutputCallCounters, runcodeCatchGate: runcodeCatchGateOn(), gateRuntime })
+        const runReason = runCodeGroupDenyReason(undefined, exec, { kind: 'planner' }, { events: execEvents, exploreBudget: exploreBudget(agent), jobOutputCallCounters, runcodeCatchGate: runcodeCatchGateOn(agent), gateRuntime })
         if (runReason !== null) {
           recordRunCodeDeny(agent, exec, runReason)
           return { kind: 'deny', reason: runReason }
@@ -916,7 +1116,7 @@ export function apply(ctx, config) {
       }
       if (planner && isRunCodeSubCall(exec)) {
         const rid = typeof exec.rootCallId === 'string' ? exec.rootCallId : ''
-        const capReason = noteRunCodeSubCall(agent.session.header.id, rid)
+        const capReason = noteRunCodeSubCall(agent, agent.session.header.id, rid)
         if (capReason !== null) {
           recordRunCodeDeny(agent, exec, capReason)
           return { kind: 'deny', reason: capReason }
@@ -935,7 +1135,7 @@ export function apply(ctx, config) {
           return { kind: 'deny', reason }
         }
         if (exec.name === 'run_code') {
-          const runReason = runCodeGroupDenyReason(undefined, exec, { kind: 'child', readOnly: true, probe }, { jobOutputCallCounters, runcodeCatchGate: runcodeCatchGateOn(), gateRuntime })
+          const runReason = runCodeGroupDenyReason(undefined, exec, { kind: 'child', readOnly: true, probe }, { jobOutputCallCounters, runcodeCatchGate: runcodeCatchGateOn(agent), gateRuntime })
           if (runReason !== null) {
             recordRunCodeDeny(agent, exec, runReason)
             return { kind: 'deny', reason: runReason }
@@ -951,7 +1151,7 @@ export function apply(ctx, config) {
     }
 
     const state = deriveFlowState(execEvents, gateRuntime)
-    const reason = mainGateReason(state, exec, { events: execEvents, planToolName, jobOutputCallCounters, pollGuardCounters, runcodeCatchGate: runcodeCatchGateOn(), runCodeDepth: 0, gateRuntime, getAgents: () => ctx.get('agents') })
+    const reason = mainGateReason(state, exec, { events: execEvents, planToolName, jobOutputCallCounters, pollGuardCounters, runcodeCatchGate: runcodeCatchGateOn(agent), runCodeDepth: 0, gateRuntime, getAgents: () => ctx.get('agents') })
     if (reason !== null) {
       recordRunCodeDeny(agent, exec, reason)
       return { kind: 'deny', reason }

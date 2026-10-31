@@ -1,14 +1,20 @@
-// step-04-工具清单查看.mjs — 读取指定 session 的逻辑 JSONL，报告模型可见工具。
-// 旧摘要模式：node step-04-工具清单查看.mjs <显式会话目录名>
+// step-04-工具清单查看.mjs — 读取显式选择 session 的逻辑 JSONL，报告模型可见工具。
+// 旧摘要模式：node step-04-工具清单查看.mjs <显式会话目录名或路径>
 // 严格模式：node step-04-工具清单查看.mjs <单会话目录> --messages [--request-trace <工作区trace>]
+// 无显式位置目标或公共会话选项时 NOT-RUN，不探测会话目录。
 import fs from 'node:fs'
 import path from 'node:path'
 import { framesOf, decodeText } from '../_shared/zstd-frames.mjs'
-import { findSession, logPath } from '../_shared/session-finder.mjs'
+import { authorizedSessionLogPath, findSession } from '../_shared/session-finder.mjs'
+import { parseMaintenanceArgs, createMaintenanceContext } from '../_shared/workspace-paths.mjs'
+import { validateReadTarget } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
 import { CORDIS_PRESENTATION_TOOLS } from '../../plugins/dsh-extra-plan/lib/assembly-presentation.js'
 import { createOutput } from '../_shared/test-output.mjs'
 
-const output = createOutput({ argv: process.argv.slice(2) })
+const maintenanceArgs = parseMaintenanceArgs(process.argv.slice(2))
+const maintenanceContext = createMaintenanceContext(maintenanceArgs)
+const argv = maintenanceArgs.domainArgv
+const output = createOutput({ argv })
 const NL = String.fromCharCode(10)
 const CREATIVE_SKILLS = new Set(['cordis-plugin-development', 'editing-cordis-compositions', 'cordis-composition-reference'])
 function jsonText(value) {
@@ -188,16 +194,19 @@ function compactInboxMessage(message) {
 function toolNamesOf(tools) {
   return (Array.isArray(tools) ? tools : []).map((tool) => typeof tool === 'string' ? tool : tool !== null && typeof tool === 'object' ? tool.name : tool)
 }
-function strictSessionDir(value) {
-  if (value === undefined || value.startsWith('--')) throw new Error('--messages必须显式传入单会话目录')
-  const dir = path.resolve(value)
-  if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) throw new Error('单会话目录不存在: ' + dir)
-  const log = logPath(dir)
-  if (!log) throw new Error('会话日志文件不存在: ' + dir)
-  return { dir, log }
+function strictSessionDir(value, context) {
+  if (value !== undefined && value.startsWith('--')) throw new Error('--messages必须显式传入单会话目录')
+  const selected = findSession(value, { maintenanceContext: context })
+  if (selected.kind === 'unavailable') throw new Error('单会话目录不可用：' + selected.reason)
+  if (selected.kind === 'incomplete') throw new Error('INCOMPLETE ' + selected.reason)
+  if (selected.kind !== 'explicit' || selected.dirs.length !== 1) throw new Error('--messages必须显式传入单会话目录')
+  const dir = path.join(selected.base, selected.dirs[0])
+  const log = authorizedSessionLogPath(dir, selected.pathContext, { kind: selected.pathKind })
+  if (log === null) throw new Error('会话日志文件不存在: ' + dir)
+  return { dir: log.kind === 'host' || log.kind === 'workspace' ? path.dirname(log.realPath) : dir, log: log.realPath, pathContext: selected.pathContext, pathKind: selected.pathKind }
 }
-function readStrictSession(value) {
-  const found = strictSessionDir(value)
+function readStrictSession(value, context) {
+  const found = strictSessionDir(value, context)
   const bytes = fs.readFileSync(found.log)
   let logicalText
   try { logicalText = framesOf(bytes).map((frame) => decodeText(bytes, frame)).join('') } catch (error) { throw new Error('frame/尾部不完整或不支持: ' + (error instanceof Error ? error.message : String(error))) }
@@ -205,14 +214,16 @@ function readStrictSession(value) {
   const meta = physicalMeta(records, found.dir)
   return { ...found, records, meta }
 }
-function traceRequests(value) {
-  const raw = JSON.parse(fs.readFileSync(value, 'utf8'))
+function traceRequests(target, pathContext) {
+  if (target === null || target.kind !== 'workspace' || target.policyTarget === undefined) throw new Error('request trace必须是W内显式目标')
+  const realPath = validateReadTarget(pathContext, target.policyTarget, { expectedType: 'file', purpose: 'request-trace' }).realPath
+  const raw = JSON.parse(fs.readFileSync(realPath, 'utf8'))
   if (Array.isArray(raw)) return { meta: {}, requests: raw }
   if (raw === null || typeof raw !== 'object' || !Array.isArray(raw.requests)) throw new Error('request trace必须是数组或{requests:[]}')
   return { meta: raw, requests: raw.requests }
 }
-function printTrace(tracePath, sessionId) {
-  const trace = traceRequests(tracePath)
+function printTrace(traceTarget, sessionId, pathContext) {
+  const trace = traceRequests(traceTarget, pathContext)
   if (trace.meta.sessionId !== undefined && trace.meta.sessionId !== sessionId) throw new Error('trace sessionId不匹配: ' + trace.meta.sessionId + ' != ' + sessionId)
   if (trace.requests.some((request) => request.sessionId !== undefined && request.sessionId !== sessionId)) throw new Error('trace存在错SessionId request')
   const exact = trace.requests.length > 0 && trace.requests.every((request) => request.sessionId === sessionId && Number.isInteger(request.requestIndex))
@@ -222,15 +233,17 @@ function printTrace(tracePath, sessionId) {
     else console.log('REQUEST ' + JSON.stringify({ sessionId: request.sessionId, requestIndex: request.requestIndex, tool: request.tool || request.name, status: request.status, keys: Object.keys(request).sort() }))
   }
 }
-function legacySummary(args) {
-  const found = findSession(args[0])
+function legacySummary(args, context) {
+  const found = findSession(args[0], { maintenanceContext: context })
+  if (found.kind === 'none') { console.log('NOT-RUN：未显式选择会话；未读取会话日志'); return }
+  if (found.kind === 'unavailable') { console.log('NOT-RUN：会话 Host 根不可用；' + found.reason); return }
+  if (found.kind === 'incomplete') { console.error('INCOMPLETE ' + found.reason); process.exitCode = 1; return }
   if (found.kind === 'notfound') { console.error('未找到日志：', found.arg); process.exitCode = 1; return }
-  if (found.kind === 'none') { console.error('未发现使用过按需规划模式的会话'); process.exitCode = 1; return }
   for (const dir of found.dirs) {
     console.log(NL + '===== 会话 ' + dir + ' =====')
-    const lp = logPath(path.join(found.base, dir))
-    if (!lp) { console.error('会话日志文件不存在（三代候选名均未命中）:', path.join(found.base, dir)); process.exitCode = 1; continue }
-    const buf = fs.readFileSync(lp)
+    const lp = authorizedSessionLogPath(path.join(found.base, dir), found.pathContext, { kind: found.pathKind })
+    if (lp === null) { console.error('会话日志文件不存在（三代候选名均未命中）：', path.join(found.base, dir)); process.exitCode = 1; continue }
+    const buf = fs.readFileSync(lp.realPath)
     const logicalText = framesOf(buf).map((frame) => decodeText(buf, frame)).join('')
     const records = parseRecordsStrict(logicalText)
     const systemMessages = systemMessagesOf(records)
@@ -262,13 +275,12 @@ function legacySummary(args) {
     }
   }
 }
-const argv = process.argv.slice(2)
 function positionalArgsOf(args = []) {
   const positional = []
   for (let index = 0; index < args.length; index += 1) {
     const arg = String(args[index])
     if (arg === '--compact' || arg === '--verbose' || arg === '--full' || arg === '--messages') continue
-    if (arg === '--output-mode' || arg === '--request-trace') { index += 1; continue }
+    if (arg === '--output-mode') { index += 1; continue }
     if (arg.startsWith('--output-mode=')) continue
     if (arg.startsWith('--')) continue
     positional.push(arg)
@@ -277,22 +289,18 @@ function positionalArgsOf(args = []) {
 }
 const messagesMode = argv.includes('--messages')
 if (!messagesMode) {
-  legacySummary(positionalArgsOf(argv))
+  legacySummary(positionalArgsOf(argv), maintenanceContext)
 } else {
   try {
     const positional = positionalArgsOf(argv)
-    if (positional.length !== 1) throw new Error('--messages要求恰好一个显式单会话目录')
-    const session = readStrictSession(positional[0])
+    if (positional.length > 1) throw new Error('--messages要求恰好一个显式单会话目录')
+    const session = readStrictSession(positional[0], maintenanceContext)
     console.log('SESSION_META ' + JSON.stringify(session.meta))
     const messages = strictMessages(session.records, session.meta)
     for (const message of messages.output) console.log('MESSAGE ' + JSON.stringify(output.mode === 'full' ? message : compactMessage(message)))
     for (const message of messages.inboxOnly) console.log('INBOX_ONLY ' + JSON.stringify(compactInboxMessage(message)))
-    const traceIndex = argv.indexOf('--request-trace')
-    if (traceIndex >= 0) {
-      const tracePath = argv[traceIndex + 1]
-      if (tracePath === undefined || tracePath.startsWith('--') || !fs.existsSync(tracePath)) throw new Error('--request-trace目标不存在')
-      printTrace(tracePath, session.meta.id)
-    } else console.log('REQUEST_EXACT=false')
+    if (maintenanceContext.requestTrace !== null) printTrace(maintenanceContext.requestTrace, session.meta.id, maintenanceContext.pathContext)
+    else console.log('REQUEST_EXACT=false')
   } catch (error) {
     console.error('INCOMPLETE ' + (error instanceof Error ? error.message : String(error)))
     process.exitCode = 1

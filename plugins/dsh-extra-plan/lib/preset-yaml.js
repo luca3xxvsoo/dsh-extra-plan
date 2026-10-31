@@ -1,22 +1,10 @@
 // YAML 解析、行定位、捕获和保格式文本 patch 纯职责。
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
 
 function loadYaml() {
   const localRequire = createRequire(import.meta.url)
-  try {
-    return localRequire('js-yaml')
-  } catch (firstError) {
-    const home = process.env.APPDATA || join(homedir(), 'AppData', 'Roaming')
-    try {
-      const officialRequire = createRequire(join(home, 'npm', 'node_modules', '@deepseek-ai', 'dsh', 'package.json'))
-      return officialRequire('js-yaml')
-    } catch {
-      throw firstError
-    }
-  }
+  return localRequire('js-yaml')
 }
 
 const yaml = loadYaml()

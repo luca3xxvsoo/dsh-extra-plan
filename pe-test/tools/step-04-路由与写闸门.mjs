@@ -7,13 +7,19 @@ import { pathToFileURL, fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
 import { isDeepStrictEqual } from 'node:util'
-import { readFileSync, writeFileSync, existsSync, readdirSync, mkdtempSync, rmSync, statSync } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
+import { readFileSync, writeFileSync, existsSync, readdirSync, rmSync, statSync, mkdirSync } from 'node:fs'
+import { makeFixtureDir } from '../_shared/workspace-paths.mjs'
+import { createPathContext } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
 import { acquireUsageLedgerLock, releaseUsageLedgerLock, usageLedgerLockPath, createUsageLedger } from '../../plugins/dsh-extra-plan/lib/usage-ledger.js'
 
 // 隔离前的原始 DSH_HOME：仅供下方 createRequire 锚定宿主 profile 的 js-yaml；
 // 插件运行时的 DSH_HOME 见紧随 registerHostDeps 之后的隔离块。
-const DSH_HOME = (process.env.DSH_HOME || homedir() + '/.dsh').replaceAll('\\', '/')
+const ROUTE_FIXTURE = makeFixtureDir({ label: 'route-gate' })
+const DSH_HOME = ROUTE_FIXTURE.home.replaceAll('\\', '/')
+const ROUTE_PATH_CONTEXT = createPathContext({ hostDataRoot: ROUTE_FIXTURE.home })
+const ROUTE_INSTALL_ROOT = typeof process.env.DSH_INSTALL_ROOT === 'string' && process.env.DSH_INSTALL_ROOT.trim() !== '' ? process.env.DSH_INSTALL_ROOT.trim() : null
+const DSH_PACKAGE_MANIFEST = ROUTE_INSTALL_ROOT === null ? null : join(ROUTE_INSTALL_ROOT, 'node_modules', '@deepseek-ai', 'dsh', 'package.json')
+const makeTmpDir = (label) => { const dir = join(ROUTE_FIXTURE.home, 'tmp', String(label).replace(/[^A-Za-z0-9_-]+/g, '-')); mkdirSync(dir, { recursive: true }); return dir }
 const PLUGIN_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/index.js', import.meta.url))
 const AGENT_RUNTIME_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/agent-runtime.js', import.meta.url))
 const SHELL_MUTATION_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/shell-mutation.js', import.meta.url))
@@ -26,6 +32,16 @@ const PLANNER_PRESET = 'extra-plan-planner'
 import { createOutput } from '../_shared/test-output.mjs'
 // host-deps 必须在隔离前完成解析：它按候选① DSH_HOME/profiles/web 锚定宿主真包，
 // 隔离后该锚点不存在（会退到 npm 全局候选，非确定）。
+const previousRouteDshHome = process.env.DSH_HOME
+const previousRouteConfigPath = process.env.DSH_EXTRA_PLAN_CONFIG_PATH
+const previousRouteTemp = process.env.TEMP
+const previousRouteTmp = process.env.TMP
+const previousRouteTmpDir = process.env.TMPDIR
+process.env.DSH_HOME = ROUTE_FIXTURE.home
+process.env.TEMP = ROUTE_FIXTURE.temp
+process.env.TMP = ROUTE_FIXTURE.temp
+process.env.TMPDIR = ROUTE_FIXTURE.temp
+delete process.env.DSH_EXTRA_PLAN_CONFIG_PATH
 await registerHostDeps()
 const { createModelRouting, resolveAgentRouteSources, PLANNER_BLOCKED_REASON, NON_PLANNER_BLOCKED_REASON, routeKey } = await import('../../plugins/dsh-extra-plan/lib/model-routing.js')
 
@@ -35,17 +51,19 @@ const { createModelRouting, resolveAgentRouteSources, PLANNER_BLOCKED_REASON, NO
 // 会被现场配置污染；因此在【插件 import 之前】将 DSH_HOME 指向空临时目录，并清空
 // DSH_EXTRA_PLAN_CONFIG_PATH，使构造期读盘失败，各实例回退到自己的 fallbackDefaults（即 harness 入参）。
 // 测试结束（包括 process.exit 与异常退出路径）由 process.on('exit') 恢复原值并删除临时目录。
-const previousDshHome = process.env.DSH_HOME
-const previousConfigPath = process.env.DSH_EXTRA_PLAN_CONFIG_PATH
-const isolatedDshHome = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-step04-home-'))
-process.env.DSH_HOME = isolatedDshHome
-delete process.env.DSH_EXTRA_PLAN_CONFIG_PATH
+const isolatedDshHome = ROUTE_FIXTURE.home
 function restoreIsolatedEnv() {
-  if (previousDshHome === undefined) delete process.env.DSH_HOME
-  else process.env.DSH_HOME = previousDshHome
-  if (previousConfigPath === undefined) delete process.env.DSH_EXTRA_PLAN_CONFIG_PATH
-  else process.env.DSH_EXTRA_PLAN_CONFIG_PATH = previousConfigPath
-  rmSync(isolatedDshHome, { recursive: true, force: true })
+  if (previousRouteDshHome === undefined) delete process.env.DSH_HOME
+  else process.env.DSH_HOME = previousRouteDshHome
+  if (previousRouteConfigPath === undefined) delete process.env.DSH_EXTRA_PLAN_CONFIG_PATH
+  else process.env.DSH_EXTRA_PLAN_CONFIG_PATH = previousRouteConfigPath
+  if (previousRouteTemp === undefined) delete process.env.TEMP
+  else process.env.TEMP = previousRouteTemp
+  if (previousRouteTmp === undefined) delete process.env.TMP
+  else process.env.TMP = previousRouteTmp
+  if (previousRouteTmpDir === undefined) delete process.env.TMPDIR
+  else process.env.TMPDIR = previousRouteTmpDir
+  rmSync(ROUTE_FIXTURE.root, { recursive: true, force: true })
 }
 process.on('exit', restoreIsolatedEnv)
 
@@ -56,7 +74,8 @@ import { createSdkTextCache, sdkSchemasFingerprint, sdkTextCacheEntryMatches } f
 import { createGateRuntime } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
 import { createLiveConfig } from '../../plugins/dsh-extra-plan/lib/live-config.js'
 import { CREATIVE_SKILL_NAMES as CREATIVE_SKILL_NAMES_FOR_TEST } from '../../plugins/dsh-extra-plan/lib/assembly-presentation.js'
-import { SETTING_DEFINITIONS as SETTING_DEFINITIONS_E, SETTING_GROUPS as SETTING_GROUPS_E, PRESET_ROW_ID as PRESET_ROW_ID_E, SETTINGS_ROW_ID as SETTINGS_ROW_ID_E, EXTRA_PLAN_SETTING_DEFINITIONS as EXTRA_PLAN_SETTING_DEFINITIONS_E, findPluginsRow as findPluginsRowE } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
+const routeAssemblyPresentation = await import('../../plugins/dsh-extra-plan/lib/assembly-presentation.js')
+import { SETTING_DEFINITIONS as SETTING_DEFINITIONS_E, SETTING_GROUPS as SETTING_GROUPS_E, PRESET_ROW_ID as PRESET_ROW_ID_E, SETTINGS_ROW_ID as SETTINGS_ROW_ID_E, EXTRA_PLAN_SETTING_DEFINITIONS as EXTRA_PLAN_SETTING_DEFINITIONS_E } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
 import { ASSET_DEFINITION_FILE as ASSET_DEFINITION_FILE_E, roleDefinitionOf } from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
 // 说明：不 import lib/settings.js——它顶层 import '@deepseek-ai/schemastery'，解析环境依赖宿主副本
 // （本机 npm 全局 dsh 与 profiles/web 的 profile 内副本都可能提供该依赖）；
@@ -185,7 +204,7 @@ check('MR1 routeKey 只有统一 NUL 分隔结构', routeKey('provider', 'model'
       } }
     },
   }
-  const routing = createModelRouting({ getPlannerModel: () => 'target', getOtherAgentModel: () => 'target', getCrossProviderPlannerModel: () => true, getLlm: () => llm, getAgents: () => agents, getDiagPath: () => join(tmpdir(), 'route-diag.jsonl') })
+  const routing = createModelRouting({ getPlannerModel: () => 'target', getOtherAgentModel: () => 'target', getCrossProviderPlannerModel: () => true, getLlm: () => llm, getAgents: () => agents, getDiagPath: () => makeTmpDir('route-diag.jsonl') })
   const chosen = await routing.resolvePlannerEntry(planner)
   checkTrue('MR3 provider 重复去重 + 探针完成乱序仍按发起序选择', state.listProviders === 1 && state.listModels.join('|') === 'p1|p2' && chosen.provider === 'p2' && state.prepare.join('|') === 'p1|p2' && state.finish.join('|') === 'p2|p1')
 
@@ -198,12 +217,12 @@ check('MR1 routeKey 只有统一 NUL 分隔结构', routeKey('provider', 'model'
   const sameModelParent = { session: { header: { id: 'parent-route' }, requestHeader: () => ({ config: { provider: 'parent-provider', model: 'target', maxTokens: 512 } }) } }
   const sameModelAgents = { get: (id) => id === 'parent-route' ? sameModelParent : undefined }
   const sameModelPlanner = { session: { header: { id: 'planner-fallback', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-route', agentPreset: PLANNER_PRESET } } }
-  const fallbackRouting2 = createModelRouting({ getPlannerModel: () => 'target', getOtherAgentModel: () => 'target', getCrossProviderPlannerModel: () => true, getLlm: () => fallbackLlm, getAgents: () => sameModelAgents, getDiagPath: () => join(tmpdir(), 'route-diag-fallback2.jsonl') })
+  const fallbackRouting2 = createModelRouting({ getPlannerModel: () => 'target', getOtherAgentModel: () => 'target', getCrossProviderPlannerModel: () => true, getLlm: () => fallbackLlm, getAgents: () => sameModelAgents, getDiagPath: () => makeTmpDir('route-diag-fallback2.jsonl') })
   let fallbackMessage = ''
   try { await fallbackRouting2.resolvePlannerEntry(sameModelPlanner) } catch (error) { fallbackMessage = String(error.message) }
   checkTrue('MR4 已探测 fallback 复用 outcome 且 planner blocked reason 不变', fallbackState.prepare === 1 && fallbackMessage === PLANNER_BLOCKED_REASON)
 
-  const blockedRouting = createModelRouting({ getPlannerModel: () => 'target', getOtherAgentModel: () => 'target', getCrossProviderPlannerModel: () => true, getLlm: () => ({ listProviders: () => Promise.resolve([]) }), getAgents: () => ({ get: () => undefined }), getDiagPath: () => join(tmpdir(), 'route-diag-blocked.jsonl') })
+  const blockedRouting = createModelRouting({ getPlannerModel: () => 'target', getOtherAgentModel: () => 'target', getCrossProviderPlannerModel: () => true, getLlm: () => ({ listProviders: () => Promise.resolve([]) }), getAgents: () => ({ get: () => undefined }), getDiagPath: () => makeTmpDir('route-diag-blocked.jsonl') })
   let plannerBlocked = ''
   let childBlocked = ''
   try { await blockedRouting.resolvePlannerEntry({ session: { header: { id: 'planner-blocked', origin: 'subagent', delegationDepth: 1, parentSession: 'missing', agentPreset: PLANNER_PRESET } } }) } catch (error) { plannerBlocked = String(error.message) }
@@ -212,7 +231,7 @@ check('MR1 routeKey 只有统一 NUL 分隔结构', routeKey('provider', 'model'
 }
 
 // ── ② 预设静态断言（[任务4]，读文件核对，不跑装配） ────────────────────
-const require = createRequire(DSH_HOME + '/profiles/web/node_modules/package.json')
+const require = DSH_PACKAGE_MANIFEST === null ? null : createRequire(DSH_PACKAGE_MANIFEST)
 const yaml = require('js-yaml')
 const JsExpr = new yaml.Type('tag:yaml.org,2002:js', { kind: 'scalar', resolve: () => true, construct: (data) => data })
 const schema = yaml.JSON_SCHEMA.extend(JsExpr)
@@ -312,6 +331,8 @@ function makeHarness(config = {}) {
       // createAgentRuntime/isLiveDelegation 的 agents 缺席豁免路径不破坏 child 判定）；
       // 用例经 config.agents 显式注入 registry（如 { get: (id) => ({ status: 'running' }) }）。
       if (name === 'agents') return config.agents
+      if (name === 'profileContext') return { home: ROUTE_FIXTURE.home, installAnchor: DSH_PACKAGE_MANIFEST }
+      if (name === 'dshHomePath') return (...parts) => join(ROUTE_FIXTURE.home, ...parts.map((part) => String(part)))
       return undefined
     },
     on: (name, fn, options) => {
@@ -404,15 +425,57 @@ function emitClaimed(listeners, agent, message) {
 // 只读目录（reviewer 类）：pwsh 写 → deny；pwsh 只读 → 放行；write/edit → deny
 const reviewer = childAgent('reviewer-1')
 await assemble(harness, reviewer, [{ name: 'read' }, { name: 'glob' }, { name: 'grep' }, { name: 'pwsh' }])
+const H3_ROUTE_CONFIRM = '须先 ask_user_question 路由确认（选项固定为「直接执行」「进行pro规划」「不同意」）'
+const H3_REASONS = Object.freeze({
+  reviewerPwshNewItem: '验收复核者只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件；触发依据：pwsh PWSH_BARE_WORDS 命中 New-Item',
+  reviewerPwshSetContent: '验收复核者只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件；触发依据：pwsh PWSH_BARE_WORDS 命中 Set-Content',
+  reviewerPwshCmdDel: '验收复核者只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件；触发依据：pwsh PWSH_BARE_WORDS 命中 del',
+  reviewerPwshRemoveItem: '验收复核者只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件；触发依据：pwsh PWSH_BARE_WORDS 命中 Remove-Item',
+  reviewerBashRedirect: '验收复核者只读：bash 仅限只读探查命令，禁止创建/修改/删除文件；触发依据：bash BASH_MUTATION',
+  plannerPwshNewItem: '规划子代理只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件；触发依据：pwsh PWSH_BARE_WORDS 命中 New-Item',
+  plannerPwshRemoveItem: '规划子代理只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件；触发依据：pwsh PWSH_BARE_WORDS 命中 Remove-Item',
+  plannerPwshRedirect: '规划子代理只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件；触发依据：pwsh PWSH_MUTATION',
+  probePwshRedirect: '探查者只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件；触发依据：pwsh PWSH_MUTATION',
+  reviewerPwshRedirect: '验收复核者只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件；触发依据：pwsh PWSH_MUTATION',
+  plannerBashRm: '规划子代理只读：bash 仅限只读探查命令，禁止创建/修改/删除文件；触发依据：bash BASH_BARE_WORDS 命中 rm',
+  probePwshSetContent: '探查者只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件；触发依据：pwsh PWSH_BARE_WORDS 命中 Set-Content',
+  probeBashRm: '探查者只读：bash 仅限只读探查命令，禁止创建/修改/删除文件；触发依据：bash BASH_BARE_WORDS 命中 rm',
+  probeBashMkdir: '探查者只读：bash 仅限只读探查命令，禁止创建/修改/删除文件；触发依据：bash BASH_BARE_WORDS 命中 mkdir',
+  mainNonePwshNewItem: '路由未确认：pwsh。只读探查可随时进行。创建/修改/删除文件' + H3_ROUTE_CONFIRM + '，用户批准后才可动手；触发依据：pwsh PWSH_BARE_WORDS 命中 New-Item',
+  mainNonePwshCmdDel: '路由未确认：pwsh。只读探查可随时进行。创建/修改/删除文件' + H3_ROUTE_CONFIRM + '，用户批准后才可动手；触发依据：pwsh PWSH_BARE_WORDS 命中 del',
+  mainNonePwshRedirect: '路由未确认：pwsh。只读探查可随时进行。创建/修改/删除文件' + H3_ROUTE_CONFIRM + '，用户批准后才可动手；触发依据：pwsh PWSH_MUTATION',
+  mainPlanPwshRedirect: '规划态下主会话不可写文件：pwsh。探查请走 save_probe，写文件请等方案批准后走执行者委派；触发依据：pwsh PWSH_MUTATION',
+  mainApprovedPwshRedirect: '方案已批准，工作区内写入请走 subagent 委派执行者。越界操作（工作区外写入）请带 sandbox_permissions 参数（如 sandbox_permissions: "workspace-write"）与 justification 重试；触发依据：pwsh PWSH_MUTATION',
+})
+const H3_EVIDENCE_CASES = [
+  ['pwsh New-Item', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: 'New-Item x.txt' } }), { rule: 'PWSH_BARE_WORDS', value: 'New-Item' }],
+  ['pwsh Set-Content', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: 'Set-Content x.txt x' } }), { rule: 'PWSH_BARE_WORDS', value: 'Set-Content' }],
+  ['pwsh Remove-Item', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: 'Remove-Item x.txt' } }), { rule: 'PWSH_BARE_WORDS', value: 'Remove-Item' }],
+  ['pwsh git add', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: 'git add .' } }), { rule: 'PWSH_MUTATION', value: '' }],
+  ['pwsh redirect', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: 'Write-Output x > out.txt' } }), { rule: 'PWSH_MUTATION', value: '' }],
+  ['pwsh cmd nested', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: 'cmd /c del x.txt' } }), { rule: 'PWSH_BARE_WORDS', value: 'del' }],
+  ['pwsh nested shell', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: 'pwsh -Command "Remove-Item x.txt"' } }), { rule: 'PWSH_BARE_WORDS', value: 'Remove-Item' }],
+  ['bash rm', () => shellMutationModule.bashMutationEvidence({ arguments: { command: 'rm -rf x' } }), { rule: 'BASH_BARE_WORDS', value: 'rm' }],
+  ['bash git add JSON', () => shellMutationModule.bashMutationEvidence({ arguments: JSON.stringify({ command: 'git add .' }) }), { rule: 'BASH_MUTATION', value: '' }],
+  ['bash nested shell', () => shellMutationModule.bashMutationEvidence({ arguments: { command: "bash -c 'rm x'" } }), { rule: 'BASH_BARE_WORDS', value: 'rm' }],
+  ['pwsh stream merge', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: 'Write-Output x 2>&1' } }), null],
+  ['pwsh read-only', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: 'Get-ChildItem' } }), null],
+  ['quoted parameter', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: 'echo "Remove-Item"' } }), null],
+  ['quoted semicolon existing boundary', () => shellMutationModule.bashMutationEvidence({ arguments: { command: 'echo "x; then rm"' } }), { rule: 'BASH_BARE_WORDS', value: 'rm' }],
+  ['depth boundary', () => shellMutationModule.mutationTextEvidence('New-Item x', shellMutationModule.PWSH_MUTATION, shellMutationModule.PWSH_BARE_WORDS, 4), null],
+  ['nested depth boundary', () => shellMutationModule.mutationTextEvidence('pwsh -Command "New-Item x"', shellMutationModule.PWSH_MUTATION, shellMutationModule.PWSH_BARE_WORDS, 3), null],
+  ['nested depth allowed', () => shellMutationModule.mutationTextEvidence('pwsh -Command "New-Item x"', shellMutationModule.PWSH_MUTATION, shellMutationModule.PWSH_BARE_WORDS, 2), { rule: 'PWSH_BARE_WORDS', value: 'New-Item' }],
+]
+for (const [label, getEvidence, expected] of H3_EVIDENCE_CASES) check('H3 ' + label + ' evidence 独立完整期望', getEvidence(), expected)
 let r = preExecute(harness, reviewer, 'pwsh', { command: 'New-Item x.txt' })
-checkTrue('R1 reviewer pwsh New-Item → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('验收复核者只读'))
+checkTrue('R1 reviewer pwsh New-Item → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === H3_REASONS.reviewerPwshNewItem)
 checkTrue('R2 reviewer pwsh deny 文案含只读限定', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('pwsh 仅限只读探查命令，禁止创建/修改/删除文件'))
 r = preExecute(harness, reviewer, 'pwsh', { command: 'Set-Content a.txt x' })
-checkTrue('R3 reviewer pwsh Set-Content → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('验收复核者只读'))
+checkTrue('R3 reviewer pwsh Set-Content → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === H3_REASONS.reviewerPwshSetContent)
 r = preExecute(harness, reviewer, 'pwsh', { command: 'cmd /c del x.txt' })
-checkTrue('R3a reviewer pwsh cmd /c 写命令 → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('验收复核者只读'))
+checkTrue('R3a reviewer pwsh cmd /c 写命令 → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === H3_REASONS.reviewerPwshCmdDel)
 r = preExecute(harness, reviewer, 'pwsh', { command: 'CMD.EXE /C "del x.txt"' })
-checkTrue('R3b reviewer pwsh CMD.EXE /C 引号写命令 → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('验收复核者只读'))
+checkTrue('R3b reviewer pwsh CMD.EXE /C 引号写命令 → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === H3_REASONS.reviewerPwshCmdDel)
 r = preExecute(harness, reviewer, 'pwsh', { command: 'cmd.exe /C "dir"' })
 checkTrue('R3c reviewer pwsh cmd.exe /C dir 只读 → allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, reviewer, 'pwsh', { command: 'Get-ChildItem' })
@@ -438,15 +501,15 @@ checkTrue('R8 缓存未命中（未装配）→ 放行 fail-open', r !== null &&
 r = preExecute(harness, mainAgent, 'write', {})
 checkTrue('R9 主会话路由未确认 write → deny（回归）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认'))
 r = preExecute(harness, mainAgent, 'pwsh', { command: 'New-Item x.txt' })
-checkTrue('R10 主会话路由未确认 pwsh 写 → deny（回归）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认'))
+checkTrue('R10 主会话路由未确认 pwsh 写 → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === H3_REASONS.mainNonePwshNewItem)
 r = preExecute(harness, mainAgent, 'pwsh', { command: 'cmd.exe /C "del x.txt"' })
-checkTrue('R10a 主会话路由未确认 cmd.exe /C 写 → deny（回归）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认'))
+checkTrue('R10a 主会话路由未确认 cmd.exe /C 写 → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === H3_REASONS.mainNonePwshCmdDel)
 
 // planner 分支拦截照旧（write deny 文案含「规划子代理只读」）
 r = preExecute(harness, plannerAgent, 'write', {})
 checkTrue('R11 planner write → deny（回归）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划子代理只读'))
 r = preExecute(harness, plannerAgent, 'pwsh', { command: 'cmd /c "Remove-Item x.txt"' })
-checkTrue('R11a planner pwsh cmd /c 引号写 → deny（回归）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划子代理只读'))
+checkTrue('R11a planner pwsh cmd /c 引号写 → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === H3_REASONS.plannerPwshRemoveItem)
 
 // bootstrapOn=true：主会话/规划子代理首轮目录收窄为 shell+read；executor 不引导
 const bootMain = await assemble(harnessBoot, mainAgent, [{ name: 'read' }, { name: 'pwsh' }, { name: 'write' }, { name: 'glob' }])
@@ -820,28 +883,35 @@ const writeCode = { code: "await writeFileSync('x', '1')", description: '写文�
 const readOnlyCode = { code: "await readFileSync('x', 'utf8')", description: '只读' }
 const pwshRedirect = { command: 'Write-Output x > out.txt' }
 const pwshRedirectGroup = { code: "await tools.pwsh({ command: 'Write-Output x > out.txt' })", description: 'A09 重定向组成员' }
+const h3NewItemGroup = { code: "await tools.pwsh({ command: 'New-Item x.txt' })", description: 'H3 直呼聚合同源' }
+r = preExecute(harness, noneMain, 'pwsh', { command: 'New-Item x.txt' })
+const h3DirectReason = r !== null && r !== undefined && r.kind === 'deny' ? String(r.reason) : ''
+let h3GroupNextCalls = 0
+const h3Group = preExecute(harness, noneMain, 'run_code', h3NewItemGroup, undefined, () => { h3GroupNextCalls += 1 })
+const h3GroupReason = h3Group !== null && h3Group !== undefined && h3Group.kind === 'deny' ? String(h3Group.reason) : ''
+checkTrue('H3 直呼/聚合子句同源且整组 next=0', h3DirectReason === H3_REASONS.mainNonePwshNewItem && h3GroupReason.includes('- pwsh: ' + h3DirectReason) && h3GroupNextCalls === 0)
 r = preExecute(harness, noneMain, 'pwsh', pwshRedirect)
-checkTrue('A09 none 态 pwsh 重定向 → deny（路由未确认）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认'))
+checkTrue('A09 none 态 pwsh 重定向 → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === H3_REASONS.mainNonePwshRedirect)
 r = preExecute(harness, planMain, 'pwsh', pwshRedirect)
-checkTrue('A09 plan 未批准 pwsh 重定向 → deny（路由未确认或规划态写禁令）', r !== null && r !== undefined && r.kind === 'deny')
+checkTrue('A09 plan 未批准 pwsh 重定向 → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === H3_REASONS.mainPlanPwshRedirect)
 r = preExecute(harness, directMain, 'pwsh', pwshRedirect)
 checkTrue('A09 direct pwsh 重定向 → allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, approvedMain, 'pwsh', { command: 'Write-Output x > out.txt', sandbox_permissions: true })
-checkTrue('A09 approved 非 direct + sandbox_permissions 非字符串 → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('sandbox_permissions'))
+checkTrue('A09 approved 非 direct + sandbox_permissions 非字符串 → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === H3_REASONS.mainApprovedPwshRedirect)
 r = preExecute(harness, approvedMain, 'pwsh', pwshRedirect)
-checkTrue('A09 approved 非 direct 缺 sandbox_permissions → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('sandbox_permissions'))
+checkTrue('A09 approved 非 direct 缺 sandbox_permissions → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === H3_REASONS.mainApprovedPwshRedirect)
 r = preExecute(harness, approvedMain, 'pwsh', { command: 'Write-Output x > out.txt', sandbox_permissions: 'workspace-write' })
 checkTrue('A09 approved 非 direct + sandbox_permissions 字符串 → allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, noneMain, 'run_code', pwshRedirectGroup)
-checkTrue('A09 none 态 run_code 重定向组成员 → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认'))
+checkTrue('A09 none 态 run_code 重定向组成员 → deny + H3 子句同源', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('- pwsh: ' + H3_REASONS.mainNonePwshRedirect))
 r = preExecute(harness, approvedMain, 'run_code', pwshRedirectGroup)
-checkTrue('A09 approved 态 run_code 重定向组成员缺 sandbox_permissions → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('sandbox_permissions'))
+checkTrue('A09 approved 态 run_code 重定向组成员缺 sandbox_permissions → deny + H3 子句同源', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('- pwsh: ' + H3_REASONS.mainApprovedPwshRedirect))
 r = preExecute(harness, plannerAgent, 'pwsh', pwshRedirect)
-checkTrue('A09 planner pwsh 重定向 → deny（只读）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划子代理只读'))
+checkTrue('A09 planner pwsh 重定向 → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === H3_REASONS.plannerPwshRedirect)
 r = preExecute(harness, probeAgent, 'pwsh', pwshRedirect)
-checkTrue('A09 probe 只读 pwsh 重定向 → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('只读'))
+checkTrue('A09 probe 只读 pwsh 重定向 → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === H3_REASONS.probePwshRedirect)
 r = preExecute(harness, reviewer, 'run_code', pwshRedirectGroup)
-checkTrue('A09 reviewer run_code 重定向组成员 → deny（只读）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('只读'))
+checkTrue('A09 reviewer run_code 重定向组成员 → deny + H3 子句同源', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('- pwsh: ' + H3_REASONS.reviewerPwshRedirect))
 
 
 // 完整批准后重选路由必须清掉 approved；重选 plan 后目的必须重新确认，按 route→purpose→clarify 才恢复放行。
@@ -1010,11 +1080,11 @@ checkTrue('R74b planner 预算耗尽 动态访问成员（tools[var]）→ deny 
 r = preExecute(harness, budgetPlanner, 'run_code', spOnlyCode)
 checkTrue('R75 planner 预算耗尽 仅 save_plan 单成员 → allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, plannerAgent, 'pwsh', { command: 'New-Item x.txt' })
-checkTrue('R76 planner pwsh 写 → deny 且「规划子代理只读：pwsh 仅限只读探查命令」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划子代理只读：pwsh 仅限只读探查命令'))
+checkTrue('R76 planner pwsh 写 → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === H3_REASONS.plannerPwshNewItem)
 r = preExecute(harness, plannerAgent, 'bash', { command: 'rm -rf x' })
-checkTrue('R77 planner bash 写 → deny 且「规划子代理只读：bash 仅限只读探查命令」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划子代理只读：bash 仅限只读探查命令'))
+checkTrue('R77 planner bash 写 → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === H3_REASONS.plannerBashRm)
 r = preExecute(harness, probeAgent, 'bash', { command: 'rm -rf x' })
-checkTrue('R78 probe bash 写 → deny 且「探查者只读：bash 仅限只读探查命令」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('探查者只读：bash 仅限只读探查命令'))
+checkTrue('R78 probe bash 写 → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === H3_REASONS.probeBashRm)
 const unknownControlChild = { session: { header: { id: 'unknown-control-child', origin: 'subagent', delegationDepth: 1, parentSession: 'missing-live-parent', agentPreset: 'extra-plan-unknown' }, snapshotEvents: () => [] }, options: {}, ctx: undefined }
 const controlChildCases = [
   ['planner', plannerAgent, harness],
@@ -1752,7 +1822,7 @@ const captureFilteredSdkWarnings = async (fn) => {
   return messages
 }
 const cursorWarnings = (messages) => messages.filter((message) => message.includes('usage cursor JSON'))
-const makeTmpDir = () => mkdtempSync(join(tmpdir(), 'extra-plan-p4-'))
+// P4 fixture directories use the shared W-only makeTmpDir factory.
 const P4_USAGE_AGENTS = {
   get: (id) => {
     if (id === 'parent-1') return { session: { header: { id: 'parent-1', parentSession: 'p4-root' } } }
@@ -1933,7 +2003,7 @@ checkTrue('P4-1 源码：usage ledger 无灌表/async fold，runtime lifecycle �
       && expectV2Row(rows[3], { sessionId: 'p4-unknown-jsonl', parentSessionId: 'parent-1', rootSessionId: 'parent-1', delegationDepth: 1, role: 'child', agentPreset: 'extra-plan-unknown', seq: 4, model: 'unknown-model', provider: 'unknown-provider', inputTokens: 4, cacheReadTokens: 5, cacheWriteTokens: 0, outputTokens: 6 })
       && rows.every((row) => !Object.hasOwn(row, 'calls')))
     const invalidLedgerPath = join(dir, 'invalid-context.jsonl')
-    const invalidLedger = createUsageLedger({ enabled: true, path: invalidLedgerPath })
+    const invalidLedger = createUsageLedger({ enabled: true, path: invalidLedgerPath, pathContext: ROUTE_PATH_CONTEXT })
     const invalidAgent = { session: { seq: 1, snapshotEvents: () => [usageRowE(1, 1, 1, 1, 'invalid-model')] } }
     let invalidResult
     const invalidWarnings = captureWarnings(() => { invalidResult = invalidLedger.foldUsage(invalidAgent, { sessionId: '' }) })
@@ -1948,7 +2018,7 @@ checkTrue('P4-1 源码：usage ledger 无灌表/async fold，runtime lifecycle �
     const ledgerPath = join(dir, 'deep-chain.jsonl')
     const events = [usageRowE(9, 2, 3, 4, 'deep-chain-model', { provider: 'deep-chain-provider' })]
     const agent = { session: { seq: 1, snapshotEvents: () => events } }
-    const writer = createUsageLedger({ enabled: true, path: ledgerPath })
+    const writer = createUsageLedger({ enabled: true, path: ledgerPath, pathContext: ROUTE_PATH_CONTEXT })
     const result = writer.foldUsage(agent, { sessionId: 'p4-deep-chain', parentSessionId: 'p4-chain-8', rootSessionId: '', agentPreset: 'extra-plan-executor', delegationDepth: 9, role: 'child' })
     const rows = readLedgerRows(ledgerPath)
     checkTrue('P4-G2-1 createUsageLedger真实深层断链root为空落盘：固定15键/其它context有效', result.status === 'written' && rows.length === 1 && expectV2Row(rows[0], { sessionId: 'p4-deep-chain', parentSessionId: 'p4-chain-8', rootSessionId: '', delegationDepth: 9, role: 'child', agentPreset: 'extra-plan-executor', seq: 9, model: 'deep-chain-model', provider: 'deep-chain-provider', inputTokens: 2, cacheReadTokens: 3, cacheWriteTokens: 0, outputTokens: 4 }) && statSync(ledgerPath).isFile())
@@ -2187,16 +2257,16 @@ const fullCalls = (calls) => calls.filter((pair) => pair[0] === undefined)
 // P4-27：水位前提不成立（cursor.index > session.seq，日志截断）→ 回退无参全量快照；
 // seq 去重（seq <= cursor.seq → skip）保证不重写已折叠行；结果与增量路径对同一输入一致。
 {
-  const dirA = makeTmpDir()
-  const dirB = makeTmpDir()
+  const dirA = makeTmpDir('p4-cursor-trunc-a')
+  const dirB = makeTmpDir('p4-cursor-trunc-b')
   try {
     const sid = 'p4-cursor-trunc'
     const ledgerA = join(dirA, 'usage-ledger-v2.jsonl')
     const ledgerB = join(dirB, 'usage-ledger-v2.jsonl')
     // 预置游标：index=99 远超水位 4（截断模拟）；另含数字 cursor 项（V2 归一时应跳过）。
     writeFileSync(ledgerA + '.cursor.json', JSON.stringify({ [sid]: { seq: 2, index: 99 }, 'other-session': 7 }), 'utf8')
-    const hA = makeHarness({ anchoredBootstrap: false, agents: P4_USAGE_AGENTS, usageLedger: { enabled: true, path: ledgerA } })
-    const hB = makeHarness({ anchoredBootstrap: false, agents: P4_USAGE_AGENTS, usageLedger: { enabled: true, path: ledgerB } })
+    const hA = makeHarness({ anchoredBootstrap: false, agents: P4_USAGE_AGENTS, usageLedger: { enabled: true, path: ledgerA, pathContext: ROUTE_PATH_CONTEXT } })
+    const hB = makeHarness({ anchoredBootstrap: false, agents: P4_USAGE_AGENTS, usageLedger: { enabled: true, path: ledgerB, pathContext: ROUTE_PATH_CONTEXT } })
     // seq 1..4（同 P4-26：seq 0 落在初始去重窗口内）；预置游标 seq=2 表示「前两行已折叠」。
     const log = [usageRowE(1, 1, 1, 1, 'deepseek-v4-pro', {}), usageRowE(2, 2, 2, 2, 'deepseek-v4-pro', {}), usageRowE(3, 3, 3, 3, 'deepseek-v4-reasoner', {}), usageRowE(4, 4, 4, 4, 'deepseek-v4-reasoner', {})]
     const wTrunc = watermarkSession(sid, log)
@@ -2204,11 +2274,10 @@ const fullCalls = (calls) => calls.filter((pair) => pair[0] === undefined)
     const truncated = readLedgerRows(ledgerA)
     const tableA = JSON.parse(readFileSync(ledgerA + '.cursor.json', 'utf8'))
     // 增量参考：同 sid 分两步折叠（首折全量 + 追加后区间）→ 其增量段即回退路径应当得到的行。
-    const logB = log.slice(0, 2)
-    const wRef = watermarkSession(sid, logB)
-    agentCreatedListener(hB, wRef.agent)
-    logB.push(log[2], log[3])
-    agentCreatedListener(hB, wRef.agent)
+    const wRefFirst = watermarkSession(sid, log.slice(0, 2))
+    agentCreatedListener(hB, wRefFirst.agent)
+    const wRefSecond = watermarkSession(sid, log.slice())
+    agentCreatedListener(hB, wRefSecond.agent)
     const refRows = readLedgerRows(ledgerB)
     const rc = rangeCalls(wTrunc.calls)
     checkTrue('P4-27 回退全量：index(99) > session.seq(4) → 无参全量快照、V2 seq去重仅保留3/4且血缘完整；数字cursor项跳过',
@@ -2234,7 +2303,7 @@ const fullCalls = (calls) => calls.filter((pair) => pair[0] === undefined)
       ctx: undefined,
     }
     const h = makeHarness({ anchoredBootstrap: false, agents: P4_USAGE_AGENTS, usageLedger: { enabled: true, path: ledger } })
-    const held = acquireUsageLedgerLock(ledger, 0)
+    const held = acquireUsageLedgerLock(ledger, { waitMs: 0, pathContext: ROUTE_PATH_CONTEXT, purpose: 'usage-ledger' })
     const ledgerBefore = existsSync(ledger) ? readFileSync(ledger, 'utf8') : ''
     const cursorBefore = existsSync(ledger + '.cursor.json') ? readFileSync(ledger + '.cursor.json', 'utf8') : ''
     const startedAt = Date.now()
@@ -2242,7 +2311,7 @@ const fullCalls = (calls) => calls.filter((pair) => pair[0] === undefined)
     const elapsed = Date.now() - startedAt
     const ledgerBusy = existsSync(ledger) ? readFileSync(ledger, 'utf8') : ''
     const cursorBusy = existsSync(ledger + '.cursor.json') ? readFileSync(ledger + '.cursor.json', 'utf8') : ''
-    const directDelayed = createUsageLedger({ enabled: true, path: ledger }).foldUsage(lockAgent, { sessionId: 'p4-lock-child', parentSessionId: 'parent-1', rootSessionId: 'parent-1', agentPreset: 'extra-plan-executor', delegationDepth: 1, role: 'executor' })
+    const directDelayed = createUsageLedger({ enabled: true, path: ledger, pathContext: ROUTE_PATH_CONTEXT }).foldUsage(lockAgent, { sessionId: 'p4-lock-child', parentSessionId: 'parent-1', rootSessionId: 'parent-1', agentPreset: 'extra-plan-executor', delegationDepth: 1, role: 'executor' })
     checkTrue('P4-28 活PID锁约1秒delayed且静默：snapshot/ledger/cursor/内存水位均不推进且canonical保留', directDelayed.status === 'delayed' && held.acquired === true && elapsed >= 900 && elapsed < 2500 && delayedWarnings.length === 0 && snapshotCalls === 0 && ledgerBusy === ledgerBefore && cursorBusy === cursorBefore && existsSync(usageLedgerLockPath(ledger)) && !readdirSync(dir).some((name) => name.includes('.stale-')))
     const released = releaseUsageLedgerLock(held)
     agentCreatedListener(h, lockAgent)
@@ -2251,7 +2320,7 @@ const fullCalls = (calls) => calls.filter((pair) => pair[0] === undefined)
     agentCreatedListener(h, lockAgent)
     checkTrue('P4-29 释放后下一fold只补写一次且cursor推进/无lock残留', released.released === true && rowsAfterRelease.length === 1 && rowsAfterRelease[0].seq === 1 && snapshotCalls === 1 && cursorAfterRelease['p4-lock-child'] !== undefined && cursorAfterRelease['p4-lock-child'].seq === 1 && !existsSync(usageLedgerLockPath(ledger)))
 
-    const heldAgain = acquireUsageLedgerLock(ledger, 0)
+    const heldAgain = acquireUsageLedgerLock(ledger, { waitMs: 0, pathContext: ROUTE_PATH_CONTEXT, purpose: 'usage-ledger' })
     const mismatch = releaseUsageLedgerLock({ ...heldAgain, token: 'wrong-token' })
     const lockAfterMismatch = existsSync(usageLedgerLockPath(ledger))
     const releasedAgain = releaseUsageLedgerLock(heldAgain)
@@ -2260,7 +2329,7 @@ const fullCalls = (calls) => calls.filter((pair) => pair[0] === undefined)
     const stalePath = usageLedgerLockPath(ledger)
     const staleBytes = JSON.stringify({ pid: 2147483647, token: 'p4-stale-token', createdAt: Date.now() })
     writeFileSync(stalePath, staleBytes, 'utf8')
-    const stale = acquireUsageLedgerLock(ledger, 0)
+    const stale = acquireUsageLedgerLock(ledger, { waitMs: 0, pathContext: ROUTE_PATH_CONTEXT, purpose: 'usage-ledger' })
     checkTrue('P4-31 stale-lock仅诊断死PID：canonical字节不变/不自动接管/无stale残留', stale.acquired === false && stale.reason === 'stale-lock' && readFileSync(stalePath, 'utf8') === staleBytes && readdirSync(dir).every((name) => !name.includes('.stale-')))
     rmSync(stalePath, { force: true })
 
@@ -2286,7 +2355,7 @@ const fullCalls = (calls) => calls.filter((pair) => pair[0] === undefined)
     let snapshotCalls = 0
     const agent = { session: { header: { id: 'p4-g2-stale', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work', agentPreset: 'extra-plan-executor' }, get seq() { return events.length }, snapshotEvents: () => { snapshotCalls += 1; return events }, append: () => {} }, options: {}, ctx: undefined }
     const context = { sessionId: 'p4-g2-stale', parentSessionId: 'parent-1', rootSessionId: 'parent-1', agentPreset: 'extra-plan-executor', delegationDepth: 1, role: 'executor' }
-    const writer = createUsageLedger({ enabled: true, path: ledgerPath })
+    const writer = createUsageLedger({ enabled: true, path: ledgerPath, pathContext: ROUTE_PATH_CONTEXT })
     let first
     let second
     const warnings1 = captureWarnings(() => { first = writer.foldUsage(agent, context) })
@@ -2310,7 +2379,7 @@ const runReleaseFailureCase = (label, release) => {
     const events = [usageRowE(1, 3, 4, 5, 'release-model', { provider: 'release-provider' })]
     const agent = { session: { header: { id: 'p4-g2-release-' + label, origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work', agentPreset: 'extra-plan-executor' }, get seq() { return events.length }, snapshotEvents: () => events }, options: {}, ctx: undefined }
     const context = { sessionId: 'p4-g2-release-' + label, parentSessionId: 'parent-1', rootSessionId: 'parent-1', agentPreset: 'extra-plan-executor', delegationDepth: 1, role: 'executor' }
-    const writer = createUsageLedger({ enabled: true, path: ledgerPath, lockApi: { acquire: () => ({ acquired: true, lockPath: ledgerPath + '.lock', token: 'p4-g2-release-token-' + label }), release } })
+    const writer = createUsageLedger({ enabled: true, path: ledgerPath, pathContext: ROUTE_PATH_CONTEXT, lockApi: { acquire: () => ({ acquired: true, lockPath: ledgerPath + '.lock', token: 'p4-g2-release-token-' + label }), release } })
     let first
     let second
     const warnings = captureWarnings(() => { first = writer.foldUsage(agent, context); second = writer.foldUsage(agent, context) })
@@ -2322,29 +2391,24 @@ const runReleaseFailureCase = (label, release) => {
 runReleaseFailureCase('return-false', () => ({ released: false, reason: 'injected-release-false' }))
 runReleaseFailureCase('throw-error', () => { throw new Error('injected-release-throw') })
 
-// P4-G2-4：裸相对 path 实际切换 cwd 写入当前目录，不创建旧 bug 的截断文件名目录，且 cwd/f夹具彻底恢复清理。
+// P4-G2-4：裸相对 path 按 runtime H 数据根解析，不借 chdir 取得写权限，且夹具彻底恢复清理。
 {
-  const dir = makeTmpDir()
-  const previousCwd = process.cwd()
-  let restored = false
+  const dir = makeTmpDir('dsh-g2-relative')
   let targetIsFile = false
   let childDirectories = []
   let result
   try {
-    process.chdir(dir)
-    const relativePath = 'relative-ledger.jsonl'
-    const writer = createUsageLedger({ enabled: true, path: relativePath })
+    const relativePath = join('tmp', 'dsh-g2-relative', 'relative-ledger.jsonl')
+    const writer = createUsageLedger({ enabled: true, path: relativePath, pathContext: ROUTE_PATH_CONTEXT })
     const agent = { session: { seq: 1, snapshotEvents: () => [usageRowE(1, 1, 1, 1, 'relative-model', {})] } }
     result = writer.foldUsage(agent, { sessionId: 'p4-g2-relative', parentSessionId: '', rootSessionId: 'p4-g2-relative', agentPreset: '', delegationDepth: 0, role: 'main' })
-    const target = join(dir, relativePath)
+    const target = join(ROUTE_FIXTURE.home, relativePath)
     targetIsFile = existsSync(target) && statSync(target).isFile()
     childDirectories = readdirSync(dir).filter((name) => statSync(join(dir, name)).isDirectory())
   } finally {
-    process.chdir(previousCwd)
-    restored = process.cwd() === previousCwd
     rmSync(dir, { recursive: true, force: true })
   }
-  checkTrue('P4-G2-4 裸相对path实际fold写当前目录目标文件且无截断文件名目录/cwd已恢复', result !== undefined && result.status === 'written' && targetIsFile && childDirectories.length === 0 && restored)
+  checkTrue('P4-G2-4 裸相对path按runtime H数据根fold写目标文件且无截断文件名目录', result !== undefined && result.status === 'written' && targetIsFile && childDirectories.length === 0)
 }
 
 // ── ⑮ 创造模式装配投影矩阵：2 × 2 × 2 × 2 × 5 = 80 ───────────────────────
@@ -2684,6 +2748,19 @@ const p2BehaviorL1 = await p2BehaviorCache.getOrCreate(p2BehaviorAgent, p2FullIn
 const p2BehaviorL2 = await p2BehaviorCache.getOrCreate(p2BehaviorAgent, p2FullInput, 'typescript', p2BehaviorRenderer)
 const p2BehaviorFullCalls = p2BehaviorCalls.filter((input) => input.length === p2FullInput.length)
 checkTrue('P2-18 缓存行为独立夹具：F 输入只渲染 read，L 完整输入只渲染一次且同 key 命中复用', p2BehaviorCalls.length === 2 && p2BehaviorCalls[0].length === 1 && p2BehaviorCalls[0][0].name === 'read' && p2BehaviorFullCalls.length === 1 && p2BehaviorL1 === p2BehaviorL2 && p2BehaviorFText !== p2BehaviorL1)
+const routeSdkAnchor = DSH_PACKAGE_MANIFEST
+if (routeSdkAnchor !== null) {
+  try {
+    const routeTsRenderer = await routeAssemblyPresentation.resolveToolsSdkRenderer('typescript', routeSdkAnchor)
+    const routePyRenderer = await routeAssemblyPresentation.resolveToolsSdkRenderer('python', routeSdkAnchor)
+    checkTrue('P2-18b 实际SDK renderer 使用 language+installAnchor 文件锚（typescript/python）', typeof routeTsRenderer === 'function' && typeof routePyRenderer === 'function')
+  } catch (error) {
+    checkTrue('P2-18b 实际SDK renderer 使用 language+installAnchor 文件锚（typescript/python）', false)
+    output.error('P2-18b renderer: ' + String(error && error.message || error))
+  }
+} else {
+  console.log('NOT-RUN  {\"scope\":\"HOST-SDK-RENDERER\",\"reason\":\"缺少显式DSH_INSTALL_ROOT\"}')
+}
 const p2PresentationHarness = makeHarness({ anchoredBootstrap: true, creativeMode: false })
 const p2FTrapHarness = makeHarness({ anchoredBootstrap: true, creativeMode: false, language: '__p2-unsupported-renderer-sentinel__' })
 let p2FullSdkRendererPathAttempts = 0
@@ -2730,12 +2807,12 @@ checkTrue('P2-21 C=0 runtime deny/权限行为保持：主会话未确认 write 
 // ── ⑯ B3 收敛：shell 只读文案单源 + job_output 记录单源（T2/T3） ─────────────
 // ① 六格逐字矩阵：完整字符串等值比较（不用 includes），负例锁 null 边界。
 const SHELL_MATRIX = [
-  ['planner', 'pwsh', { command: 'New-Item x.txt' }, '规划子代理只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件'],
-  ['planner', 'bash', { command: 'rm -rf x' }, '规划子代理只读：bash 仅限只读探查命令，禁止创建/修改/删除文件'],
-  ['probe', 'pwsh', { command: 'Set-Content a.txt x' }, '探查者只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件'],
-  ['probe', 'bash', { command: 'mkdir d' }, '探查者只读：bash 仅限只读探查命令，禁止创建/修改/删除文件'],
-  ['reviewer', 'pwsh', { command: 'Remove-Item x' }, '验收复核者只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件'],
-  ['reviewer', 'bash', { command: 'echo hi > f.txt' }, '验收复核者只读：bash 仅限只读探查命令，禁止创建/修改/删除文件'],
+  ['planner', 'pwsh', { command: 'New-Item x.txt' }, H3_REASONS.plannerPwshNewItem],
+  ['planner', 'bash', { command: 'rm -rf x' }, H3_REASONS.plannerBashRm],
+  ['probe', 'pwsh', { command: 'Set-Content a.txt x' }, H3_REASONS.probePwshSetContent],
+  ['probe', 'bash', { command: 'mkdir d' }, H3_REASONS.probeBashMkdir],
+  ['reviewer', 'pwsh', { command: 'Remove-Item x' }, H3_REASONS.reviewerPwshRemoveItem],
+  ['reviewer', 'bash', { command: 'echo hi > f.txt' }, H3_REASONS.reviewerBashRedirect],
 ]
 for (const [role, toolName, args, expected] of SHELL_MATRIX) {
   check('B3-1 ' + role + '×' + toolName + ' shellMutationReason 逐字等值', shellMutationReason(role, { name: toolName, arguments: args }), expected)
@@ -2971,7 +3048,9 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
 // 宿主 apply 可能传入改文件前的 cfg 快照；构造期必须把文件真值建立为第一份基线。
 // 五个场景覆盖显式/env 路径、apply 集成、stamp 变化和缺文件回退。
 {
-  const lcDir = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-live-config-'))
+  const lcDir = join(ROUTE_FIXTURE.root, 'live-config')
+  const lcPathContext = createPathContext({ workspaceRoot: ROUTE_FIXTURE.root, hostDataRoot: ROUTE_FIXTURE.home })
+  mkdirSync(lcDir, { recursive: true })
   // 夹具 = profile patch 内的 settings 行（当前载体：captureRowSettings 按
   // id='dsh-extra-plan-settings' + config.<key> 定位），exploreBudget 取与内置默认 18
   // 不同的值，确保「读到文件」与「回退 fallback」可区分。
@@ -2982,7 +3061,7 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
   writeFileSync(lcOnFile, lcFixture(true, 7), 'utf8')
 
   // ① 显式 configPath：构造完成即可取到文件真值，不需要任何 stamp 变化
-  const lcExplicit = createLiveConfig({ configPath: lcOffFile, fallbackDefaults: { exploreBudget: 18, runcodeCatchGate: false, anchoredBootstrap: true } })
+  const lcExplicit = createLiveConfig({ configPath: lcOffFile, getPathContext: () => lcPathContext, fallbackDefaults: { exploreBudget: 18, runcodeCatchGate: false, anchoredBootstrap: true } })
   check('LC1 构造期读盘（显式 configPath）：首次取值即文件值 exploreBudget=7（fallback 18 未生效）', lcExplicit.exploreBudget, 7)
   check('LC1b 构造期读盘：布尔键同样首拍取文件真值（runcodeCatchGate=true 覆盖 fallback false）', lcExplicit.runcodeCatchGate, true)
 
@@ -2990,19 +3069,20 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
   try {
     // ② 路径决议 env 分支（测试隔离已清空该变量，此处临时指向夹具文件）
     process.env.DSH_EXTRA_PLAN_CONFIG_PATH = lcOffFile
-    const lcByEnv = createLiveConfig({ fallbackDefaults: { exploreBudget: 18 } })
+    const lcByEnv = createLiveConfig({ getPathContext: () => lcPathContext, fallbackDefaults: { exploreBudget: 18 } })
     check('LC2 构造期读盘（DSH_EXTRA_PLAN_CONFIG_PATH）：首次取值即文件值 exploreBudget=7', lcByEnv.exploreBudget, 7)
 
     // ③ apply 集成双向对照：传入 cfg 快照与文件真值相反时，首拍装配必须听文件（判据 = 是否注入
     //    extra-plan-bootstrap 段；anchoredBootstrap 的唯一装配读点在本插件 pre-step 装配路径）。
     const lcTools = [{ name: 'read' }, { name: 'pwsh' }, { name: 'run_code' }]
     const lcSections = [{ name: 'tools:ptc-only', text: 'Only the run_code transport is directly callable.' }]
+    const lcAgent = { ...mainAgent, session: { ...mainAgent.session, header: { ...mainAgent.session.header, cwd: ROUTE_FIXTURE.root } } }
     const lcOldTrueHarness = makeHarness({ anchoredBootstrap: true })
-    const lcOldTrueAssembly = await assemble(lcOldTrueHarness, mainAgent, lcTools, lcSections)
+    const lcOldTrueAssembly = await assemble(lcOldTrueHarness, lcAgent, lcTools, lcSections)
     checkTrue('LC3 旧快照(true) vs 文件真值(false)：首拍装配不注入 extra-plan-bootstrap（文件真值胜出）', !lcOldTrueAssembly.sections.some((section) => section.name === 'extra-plan-bootstrap'))
     process.env.DSH_EXTRA_PLAN_CONFIG_PATH = lcOnFile
     const lcOldFalseHarness = makeHarness({ anchoredBootstrap: false })
-    const lcOldFalseAssembly = await assemble(lcOldFalseHarness, mainAgent, lcTools, lcSections)
+    const lcOldFalseAssembly = await assemble(lcOldFalseHarness, lcAgent, lcTools, lcSections)
     checkTrue('LC3b 反向对照：旧快照(false) vs 文件真值(true) → 首拍装配注入 extra-plan-bootstrap（判据敏感）', lcOldFalseAssembly.sections.some((section) => section.name === 'extra-plan-bootstrap'))
   } finally {
     if (lcSavedConfigPath === undefined) delete process.env.DSH_EXTRA_PLAN_CONFIG_PATH
@@ -3014,7 +3094,7 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
   check('LC4 文件改写后 stamp 变化 → 取值跟进 exploreBudget=421', lcExplicit.exploreBudget, 421)
 
   // ⑤ 读盘失败（文件不存在）→ 构造期回退 fallbackDefaults 且不抛（自带一次 console.warn 防抖）
-  const lcMissing = createLiveConfig({ configPath: join(lcDir, 'missing.cordis.yml'), fallbackDefaults: { exploreBudget: 18 } })
+  const lcMissing = createLiveConfig({ configPath: join(lcDir, 'missing.cordis.yml'), getPathContext: () => lcPathContext, fallbackDefaults: { exploreBudget: 18 } })
   check('LC5 文件不存在 → 构造期回退 fallback exploreBudget=18（不抛）', lcMissing.exploreBudget, 18)
    const liveGetterNames = ['anchoredBootstrap', 'creativeMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel']
    checkTrue('LC6 live-config 仅暴露八项热读 getter，webFetch/toolPresentationMode 不再作为运行时 getter', liveGetterNames.every((key) => key in lcExplicit) && !('webFetch' in lcExplicit) && !('toolPresentationMode' in lcExplicit))
@@ -3144,7 +3224,7 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
   const T9_SETTING_KEYS = ['anchoredBootstrap', 'creativeMode', 'webFetch', 'toolPresentationMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel']
   const t9Target = { anchoredBootstrap: false, creativeMode: true, webFetch: true, toolPresentationMode: 'ptc', runcodeCatchGate: true, crossProviderPlannerModel: true, plannerModel: 't9-planner', plannerPromptSuffix: 't9-suffix', exploreBudget: 9, otherAgentModel: 't9-other' }
   const t9Initial = { anchoredBootstrap: true, creativeMode: false, webFetch: false, toolPresentationMode: 'native', runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: 'initial-planner', plannerPromptSuffix: 'initial-suffix', exploreBudget: 8, otherAgentModel: 'initial-other' }
-  const t9Dir = mkdtempSync(join(tmpdir(), 'dsh-g3-t9-settings-'))
+  const t9Dir = makeTmpDir('dsh-g3-t9-settings')
   try {
     const t9DocumentPath = join(t9Dir, 'cordis.patch.yml')
     const t9PatchText = [
@@ -3230,7 +3310,8 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
   } finally {
     rmSync(t9Dir, { recursive: true, force: true })
   }
-  checkTrue('T9-3t preset-sync 通过 mountPresetSync/官方 adapter await 挂载，不实现 registry', presetSyncSource.includes('export function mountPresetSync') && presetSyncSource.includes('await child.plugin(OfficialAgentPreset') && presetSyncSource.includes('@deepseek-ai/dsh-agent-preset') && !presetSyncSource.includes('agentPresets.register('))
+  const officialPresetAwait = /\bawait\s+[\w$]+\.plugin\(\s*[\w$]*official[\w$]*agent[\w$]*preset\b/i.test(presetSyncSource)
+  checkTrue('T9-3t preset-sync 通过 mountPresetSync/官方 adapter await 挂载，不实现 registry', presetSyncSource.includes('export function mountPresetSync') && officialPresetAwait && presetSyncSource.includes('@deepseek-ai/dsh-agent-preset') && !presetSyncSource.includes('agentPresets.register('))
 }
 
 output.summary(pass, fail)

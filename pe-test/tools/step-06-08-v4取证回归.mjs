@@ -1,10 +1,10 @@
 // step-06-08-v4取证回归.mjs — 隔离 v4 取证脚本回归
-// 只在系统临时目录生成 session.v4.jsonl.zstd，不读取生产会话或运行实机人眼项。
+// 只在工作区内隔离fixture生成 session.v4.jsonl.zstd，不读取生产会话或运行实机人眼项。
 import { spawnSync } from 'node:child_process'
-import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { makeFixtureDir } from '../_shared/workspace-paths.mjs'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { zstdCompressSync, zstdDecompressSync } from 'node:zlib'
 import { decodeText, decodedJsonlLines, framesOf } from '../_shared/zstd-frames.mjs'
 import { createOutput, sha256Text, writeRawEvidence } from '../_shared/test-output.mjs'
@@ -16,6 +16,7 @@ const STEP05 = join(HERE, 'step-05-会话解码.mjs')
 const STEP06 = join(HERE, 'step-06-真实会话查看.mjs')
 const STEP07 = join(HERE, 'step-07-子代理模型与引导取证.mjs')
 const STEP08 = join(HERE, 'step-08-方案配对查看.mjs')
+const HOST_PRELOAD = join(ROOT, 'pe-test', '_shared', 'host-preload.mjs')
 const previousDshHome = process.env.DSH_HOME
 let pass = 0
 let fail = 0
@@ -175,18 +176,23 @@ expectDecodedThrow('无完整帧', g5NoFrame)
 expectDecodedThrow('非法UTF8', g5InvalidUtf8Compressed)
 
 function runScript(script, args, extraEnv = {}) {
-  const captureDir = mkdtempSync(join(tmpdir(), 'dsh-v4-capture-'))
+  const captureDir = join(v4Fixture.capture, 'capture-' + String(++captureSequence))
+  const childTemp = join(v4Fixture.temp, 'child-' + String(captureSequence))
+  mkdirSync(captureDir, { recursive: true })
+  mkdirSync(childTemp, { recursive: true })
   const stdoutPath = join(captureDir, 'stdout.log')
   const stderrPath = join(captureDir, 'stderr.log')
   const stdoutFd = openSync(stdoutPath, 'w')
   const stderrFd = openSync(stderrPath, 'w')
-  const env = { ...process.env, ...extraEnv, DSH_HOME: fixtureHome }
+  const env = { ...process.env, ...extraEnv, TEMP: childTemp, TMP: childTemp, TMPDIR: childTemp }
+  delete env.DSH_HOME
+  delete env.DSH_PROFILE
   delete env.DSH_EXTRA_PLAN_CONFIG_PATH
-  if (!Object.prototype.hasOwnProperty.call(extraEnv, 'SESSION_ID')) delete env.SESSION_ID
+  delete env.SESSION_ID
   if (!Object.prototype.hasOwnProperty.call(extraEnv, 'PLANNER_PROMPT_SUFFIX')) delete env.PLANNER_PROMPT_SUFFIX
   let child
   try {
-    child = spawnSync(process.execPath, [script, ...args], {
+    child = spawnSync(process.execPath, ['--import', pathToFileURL(HOST_PRELOAD).href, script, ...args], {
       cwd: ROOT,
       env,
       timeout: 120000,
@@ -197,6 +203,11 @@ function runScript(script, args, extraEnv = {}) {
     closeSync(stderrFd)
   }
   const output = readFileSync(stdoutPath, 'utf8') + readFileSync(stderrPath, 'utf8')
+  if ((child.status !== 0 || child.error !== undefined) && !firstChildFailureLogged) {
+    firstChildFailureLogged = true
+    console.error('CHILD_FIRST_FAIL status=' + String(child.status) + ' error=' + String(child.error || '') + ' argv=' + JSON.stringify([script, ...args]) + ' output=' + output.slice(0, 2400))
+  }
+  if (script === STEP07 && (child.status !== 0 || child.error !== undefined)) console.error('STEP07_CHILD_FAIL status=' + String(child.status) + ' argv=' + JSON.stringify([script, ...args]) + ' output=' + output.slice(0, 3200))
   rmSync(captureDir, { recursive: true, force: true })
   return { status: child.status, output, error: child.error, argv: [script, ...args] }
 }
@@ -205,16 +216,21 @@ function countOf(text, value) {
   return String(text).split(value).length - 1
 }
 
-const fixtureHome = mkdtempSync(join(tmpdir(), 'dsh-v4-forensics-home-'))
+const v4Fixture = makeFixtureDir({ label: 'v4-forensics' })
+const fixtureHome = v4Fixture.home
+let captureSequence = 0
+let firstChildFailureLogged = false
 let cleaned = false
 try {
   const sessionsRoot = join(fixtureHome, 'sessions')
+  const exactSessionArgs = (sessionDir, ...domainArgs) => ['--host-root', fixtureHome, '--session-dir', sessionDir, ...domainArgs]
+  const idSessionArgs = (sessionId, sessionsDir = sessionsRoot, ...domainArgs) => ['--host-root', fixtureHome, '--session', sessionId, '--sessions-dir', sessionsDir, ...domainArgs]
   function writeG5Workspace(label, bytes) {
     const workspace = join(sessionsRoot, 'g5-' + label + '-workspace')
     const sessionDir = join(workspace, 'g5-' + label + '-main')
     mkdirSync(sessionDir, { recursive: true })
     writeFileSync(join(sessionDir, 'session.v4.jsonl.zstd'), bytes)
-    return workspace
+    return sessionDir
   }
   const g5ValidWorkspace = writeG5Workspace('valid-skippable', g5SkippableCompressed)
   const g5BadWorkspace = writeG5Workspace('bad-json', g5BadCompressed)
@@ -223,27 +239,27 @@ try {
   const g5EmptyWorkspace = writeG5Workspace('empty-jsonl', g5EmptyCompressed)
   const g5NoFrameWorkspace = writeG5Workspace('no-frame', g5NoFrame)
   const g5NoSaveWorkspace = writeG5Workspace('no-save-plan', g5NoSaveCompressed)
-  const g5Step05Valid = runScript(STEP05, [g5ValidWorkspace, '--compact'])
+  const g5Step05Valid = runScript(STEP05, exactSessionArgs(g5ValidWorkspace, '--compact'))
   check('G5 step05跨帧/skippable成功且物理行号准确', g5Step05Valid.status === 0 && g5Step05Valid.output.includes('L3 model=g5-model tools=0'), true)
-  const g5Step06Valid = runScript(STEP06, [g5ValidWorkspace])
+  const g5Step06Valid = runScript(STEP06, exactSessionArgs(g5ValidWorkspace))
   check('G5 step06跨帧/skippable成功且物理行号准确', g5Step06Valid.status === 0 && g5Step06Valid.output.includes('L3 HEADER model=g5-model'), true)
-  const g5Step08Valid = runScript(STEP08, [g5ValidWorkspace])
+  const g5Step08Valid = runScript(STEP08, exactSessionArgs(g5ValidWorkspace))
   check('G5 step08跨帧/skippable配对使用物理行号', g5Step08Valid.status === 0 && g5Step08Valid.output.includes('L4 save_plan CALL id=g5-call') && g5Step08Valid.output.includes('L5 结果 OK: g5 save ok'), true)
   for (const [label, script] of [['step05', STEP05], ['step06', STEP06], ['step08', STEP08]]) {
-    const bad = runScript(script, [g5BadWorkspace])
+    const bad = runScript(script, exactSessionArgs(g5BadWorkspace))
     check('G5 ' + label + '非空坏JSON退出非零且INCOMPLETE', bad.status !== 0 && bad.output.includes('INCOMPLETE'), true)
-    const invalid = runScript(script, [g5InvalidUtf8Workspace])
+    const invalid = runScript(script, exactSessionArgs(g5InvalidUtf8Workspace))
     check('G5 ' + label + '非法UTF8退出非零且INCOMPLETE', invalid.status !== 0 && invalid.output.includes('INCOMPLETE'), true)
-    const truncated = runScript(script, [g5TruncatedWorkspace])
+    const truncated = runScript(script, exactSessionArgs(g5TruncatedWorkspace))
     check('G5 ' + label + '截断普通帧退出非零且INCOMPLETE', truncated.status !== 0 && truncated.output.includes('INCOMPLETE'), true)
   }
   for (const [label, script] of [['step05', STEP05], ['step06', STEP06], ['step08', STEP08]]) {
-    const empty = runScript(script, [g5EmptyWorkspace])
+    const empty = runScript(script, exactSessionArgs(g5EmptyWorkspace))
     check('G5 ' + label + '无JSON记录不成功', empty.status !== 0 && empty.output.includes('INCOMPLETE'), true)
-    const noSave = runScript(script, [g5NoSaveWorkspace])
+    const noSave = runScript(script, exactSessionArgs(g5NoSaveWorkspace))
     check('G5 ' + label + '有效无save_plan日志不失败', noSave.status === 0, true)
   }
-  const noFrame = runScript(STEP06, [g5NoFrameWorkspace])
+  const noFrame = runScript(STEP06, exactSessionArgs(g5NoFrameWorkspace))
   check('G5 step06无完整帧不成功', noFrame.status !== 0 && noFrame.output.includes('INCOMPLETE'), true)
 
   const v4Workspace = join(sessionsRoot, 'v4-workspace')
@@ -277,45 +293,50 @@ try {
     const replay = replayJsonl(file)
     check('fixture 解压后 JSONL 全部可解析：' + file.split(/[\\/]/).slice(-2).join('/'), replay.frameCount > 0 && replay.rowCount > 0 && replay.invalid === 0)
   }
-  check('fixture DSH_HOME 为临时目录且不等于调用者 DSH_HOME', previousDshHome === undefined || fixtureHome !== previousDshHome)
-  check('fixture 不在生产 DSH_HOME 下', previousDshHome === undefined || !fixtureHome.startsWith(previousDshHome))
+  check('fixture W路径不继承调用者DSH_HOME授权', previousDshHome === undefined || fixtureHome !== previousDshHome)
+  check('fixture W路径不在调用者DSH_HOME下', previousDshHome === undefined || !fixtureHome.startsWith(previousDshHome))
 
-  const step04 = runScript(STEP04, [v4Workspace])
-  const step04Full = runScript(STEP04, [v4Workspace, '--full'])
-  check('step-04 compact/full argv按真实合同', JSON.stringify(step04.argv.slice(-1)) === JSON.stringify([v4Workspace]) && JSON.stringify(step04Full.argv.slice(-2)) === JSON.stringify([v4Workspace, '--full']))
+  const step04Args = exactSessionArgs(mainDir)
+  const step04FullArgs = exactSessionArgs(mainDir, '--full')
+  const step04 = runScript(STEP04, step04Args)
+  const step04Full = runScript(STEP04, step04FullArgs)
+  check('step-04 compact/full argv按新显式根/会话目录合同', JSON.stringify(step04.argv.slice(1)) === JSON.stringify(step04Args) && JSON.stringify(step04Full.argv.slice(1)) === JSON.stringify(step04FullArgs))
   check('step-04 compact/full均成功且full保留header原文', step04.status === 0 && step04Full.status === 0 && step04.output.includes('tools.names=') && step04Full.output.includes('header.tools=') && step04Full.output.length > step04.output.length)
 
-  const step05 = runScript(STEP05, [v4Workspace, '--compact'])
-  const step05Full = runScript(STEP05, [v4Workspace, '--output-mode', 'full'])
-  check('step-05 compact/full argv过滤模式参数', JSON.stringify(step05.argv.slice(-2)) === JSON.stringify([v4Workspace, '--compact']) && JSON.stringify(step05Full.argv.slice(-3)) === JSON.stringify([v4Workspace, '--output-mode', 'full']))
+  const step05Args = exactSessionArgs(mainDir, '--compact')
+  const step05FullArgs = exactSessionArgs(mainDir, '--output-mode', 'full')
+  const step05 = runScript(STEP05, step05Args)
+  const step05Full = runScript(STEP05, step05FullArgs)
+  check('step-05 compact/full argv保留显式根/会话目录与输出模式', JSON.stringify(step05.argv.slice(1)) === JSON.stringify(step05Args) && JSON.stringify(step05Full.argv.slice(1)) === JSON.stringify(step05FullArgs))
   check('step-05 compact/full统计一致且full保留data', step05.status === 0 && step05Full.status === 0 && step05.output.includes('事件类型计数：') && step05.output.includes('summary=') && step05Full.output.includes('--- agent-preset 相关事件 ---') && step05Full.output.includes('fixture-plan-data'))
 
+  const step07SelectionArgs = idSessionArgs('main-v4', v4Workspace, '--discover-children')
   const step07MissingSession = runScript(STEP07, ['--full'], { PLANNER_PROMPT_SUFFIX: 'fixture-suffix' })
-  const step07MissingSuffix = runScript(STEP07, ['--full'], { SESSION_ID: 'main-v4' })
-  check('step-07 缺显式SESSION_ID为NOT-RUN输入错误', step07MissingSession.status !== 0 && step07MissingSession.output.includes('必须显式设置 SESSION_ID'))
-  check('step-07 缺显式PLANNER_PROMPT_SUFFIX为NOT-RUN输入错误', step07MissingSuffix.status !== 0 && step07MissingSuffix.output.includes('必须显式设置 PLANNER_PROMPT_SUFFIX'))
+  const step07MissingSuffix = runScript(STEP07, [...step07SelectionArgs, '--full'])
+  check('step-07 无显式会话选择按新合同NOT-RUN且exit0', step07MissingSession.status === 0 && step07MissingSession.output.includes('NOT-RUN'))
+  check('step-07 显式会话但缺PLANNER_PROMPT_SUFFIX为输入错误', step07MissingSuffix.status !== 0 && step07MissingSuffix.output.includes('必须显式设置 PLANNER_PROMPT_SUFFIX'))
 
-  const step07 = runScript(STEP07, [], { SESSION_ID: 'main-v4', PLANNER_PROMPT_SUFFIX: 'fixture-suffix' })
-  check('step-07 compact argv保持原合同', step07.argv.length === 1)
+  const step07 = runScript(STEP07, step07SelectionArgs, { PLANNER_PROMPT_SUFFIX: 'fixture-suffix' })
+  check('step-07 compact argv按显式ID/会话根/子发现合同', JSON.stringify(step07.argv.slice(1)) === JSON.stringify(step07SelectionArgs))
   check('step-07 v4 fixture 退出码为 0', step07.status === 0, String(step07.status))
   check('step-07 输出父工具关联 subagent_plan complete=yes', step07.output.includes('父工具关联：subagent_plan') && step07.output.includes('complete=yes'))
   check('step-07 输出 role=pro规划', step07.output.includes('role=pro规划') && !step07.output.includes('role-evidence-insufficient'))
   check('step-07 输出 suffix verified-injection', step07.output.includes('suffix判定=verified-injection') && !step07.output.includes('suffix判定=content-only'))
   check('step-07 保留 actual provenance 分栏', step07.output.includes('actual provenance source.kind=model provider=openai-codex model=gpt-5.6-sol'))
-  const step07Verbose = runScript(STEP07, ['--verbose'], { SESSION_ID: 'main-v4', PLANNER_PROMPT_SUFFIX: 'fixture-suffix' })
-  const step07Full = runScript(STEP07, ['--full'], { SESSION_ID: 'main-v4', PLANNER_PROMPT_SUFFIX: 'fixture-suffix' })
+  const step07Verbose = runScript(STEP07, [...step07SelectionArgs, '--verbose'], { PLANNER_PROMPT_SUFFIX: 'fixture-suffix' })
+  const step07Full = runScript(STEP07, [...step07SelectionArgs, '--full'], { PLANNER_PROMPT_SUFFIX: 'fixture-suffix' })
   check('step-07 full argv保留--full', JSON.stringify(step07Full.argv.slice(-1)) === JSON.stringify(['--full']))
   check('step-07 compact/verbose/full 退出码与核心字段一致', step07.status === 0 && step07Verbose.status === 0 && step07Full.status === 0 && step07Verbose.output.includes('suffix判定=verified-injection') && step07Full.output.includes('suffix判定=verified-injection') && step07Full.output.includes('assistant/message event（完整）='))
   check('step-07 compact 不嵌完整事件且显著小于full', !step07.output.includes('assistant/message event（完整）=') && !step07.output.includes('arguments（完整）=') && step07.output.length < step07Full.output.length)
   const step07Raw = writeRawEvidence({ directory: join(fixtureHome, 'evidence'), baseName: 'step07', stdout: step07.output, stderr: '' })
   check('step-07 摘要raw bytes/lines/hash可回看', step07Raw.bytes === Buffer.byteLength(step07.output, 'utf8') && step07Raw.lines === (step07.output === '' ? 0 : step07.output.split(/\r?\n/).length - (step07.output.endsWith('\n') ? 1 : 0)) && step07Raw.sha256 === sha256Text(step07.output))
 
-  const step06 = runScript(STEP06, [v4Workspace])
+  const step06 = runScript(STEP06, exactSessionArgs(mainDir))
   check('step-06 v4 fixture 退出码为 0', step06.status === 0, String(step06.status))
   check('step-06 错误文本恰展示一次', countOf(step06.output, 'TOOL-ERROR') === 1 && countOf(step06.output, 'fixture-error-text') === 1)
   check('step-06 成功 result 不产生 TOOL-ERROR', !step06.output.includes('TOOL-ERROR fixture save ok'))
 
-  const step08 = runScript(STEP08, [v4Workspace])
+  const step08 = runScript(STEP08, exactSessionArgs(mainDir))
   check('step-08 悬空 call 退出码精确为 1', step08.status === 1, String(step08.status))
   check('step-08 成功与失败 result 均正确配对', step08.output.includes('结果 OK: fixture save ok') && step08.output.includes('结果 ERROR: fixture-error-text') && !step08.output.includes('未找到配对结果'))
   check('step-08 悬空 call 输出 ANSI 红色和纯文本标记', step08.output.includes('\u001b[31m🔴 未配对') && step08.output.includes('🔴 未配对'))
@@ -331,7 +352,7 @@ try {
   ])
   const pairReplay = replayJsonl(join(pairDir, 'session.v4.jsonl.zstd'))
   check('pair-only fixture 解压 JSONL 可解析', pairReplay.frameCount > 0 && pairReplay.invalid === 0)
-  const pairResult = runScript(STEP08, [pairWorkspace])
+  const pairResult = runScript(STEP08, exactSessionArgs(pairDir))
   check('step-08 全部已配对退出码精确为 0', pairResult.status === 0, String(pairResult.status))
   check('step-08 全部已配对无红色未配对标记', pairResult.output.includes('结果 OK: pair ok') && pairResult.output.includes('结果 ERROR: pair error') && !pairResult.output.includes('未配对'))
 
@@ -345,12 +366,10 @@ try {
   copyFileSync(join(HERE, '..', '_shared', 'session-finder.mjs'), join(partialShared, 'session-finder.mjs'))
   copyFileSync(join(HERE, '..', '_shared', 'test-output.mjs'), join(partialShared, 'test-output.mjs'))
   copyFileSync(join(HERE, '..', '_shared', 'zstd-frames.mjs'), join(partialShared, 'zstd-frames.mjs'))
-  const partialDshHome = join(partialRunnerRoot, 'empty-dsh-home')
   const partialTemp = join(partialRunnerRoot, 'temp')
   const partialTmp = join(partialRunnerRoot, 'tmp')
   const partialTmpDir = join(partialRunnerRoot, 'tmpdir')
   const partialCapture = join(partialRunnerRoot, 'capture')
-  mkdirSync(partialDshHome, { recursive: true })
   mkdirSync(partialTemp, { recursive: true })
   mkdirSync(partialTmp, { recursive: true })
   mkdirSync(partialTmpDir, { recursive: true })
@@ -360,10 +379,14 @@ try {
   const partialStdoutFd = openSync(partialStdoutPath, 'w')
   const partialStderrFd = openSync(partialStderrPath, 'w')
   let partialChild
+  const partialEnv = { ...process.env, TEMP: partialTemp, TMP: partialTmp, TMPDIR: partialTmpDir }
+  delete partialEnv.DSH_HOME
+  delete partialEnv.DSH_PROFILE
+  delete partialEnv.SESSION_ID
   try {
-    partialChild = spawnSync(process.execPath, [join(partialTools, '一键step测试.mjs')], {
+    partialChild = spawnSync(process.execPath, ['--import', pathToFileURL(HOST_PRELOAD).href, join(partialTools, '一键step测试.mjs')], {
       cwd: partialRunnerRoot,
-      env: { ...process.env, DSH_HOME: partialDshHome, TEMP: partialTemp, TMP: partialTmp, TMPDIR: partialTmpDir },
+      env: partialEnv,
       stdio: ['ignore', partialStdoutFd, partialStderrFd],
     })
   } finally {
@@ -379,10 +402,27 @@ try {
   const partialAutoEnd = partialReportText.indexOf('## 二、人眼项', partialAutoStart)
   const partialAutoSection = partialAutoStart >= 0 && partialAutoEnd > partialAutoStart ? partialReportText.slice(partialAutoStart, partialAutoEnd) : ''
   const partialAutoRows = partialAutoSection.split(/\r?\n/).filter((line) => /^\| [^|]+\.mjs \|/.test(line))
+  const partialExpectedAuto = [
+    'step-00-路径边界.mjs',
+    'step-00-全流程回归.mjs',
+    'step-06-08-v4取证回归.mjs',
+    'step-00-跨平台写拦截.mjs',
+    'step-01-设置迁移.mjs',
+    'step-01-安装同步.mjs',
+    'step-01-预设完整性.mjs',
+    'step-01-设置页配置.mjs',
+    'step-01-qqbot-安装映射.mjs',
+    'step-01-qqbot-环境验证.mjs',
+    'step-04-路由与写闸门.mjs',
+    'step-04-context-gate宿主回归.mjs',
+    'step-06-线索落盘.mjs',
+    '代码地图生成.mjs'
+  ]
+  const partialAutoFiles = partialAutoRows.map((line) => line.split('|')[1].trim())
   const partialThree = ['step-06-08-v4取证回归.mjs', 'step-01-预设完整性.mjs', 'step-01-设置页配置.mjs']
   check('G5 partial-runner 子进程退出0', partialChild?.status === 0, 'status=' + String(partialChild?.status) + '; output=' + partialOutput.slice(0, 1200))
   check('G5 partial-runner 无plugins', !existsSync(join(partialRunnerRoot, 'plugins')), 'plugins=' + String(existsSync(join(partialRunnerRoot, 'plugins'))))
-  check('G5 partial-runner AUTO恰13项且均未执行', partialAutoRows.length === 13 && partialAutoRows.every((line) => line.includes('| 未执行 |')), 'rows=' + String(partialAutoRows.length) + '；reports=' + partialReports.join(',') + '；output=' + partialOutput.slice(0, 1200) + '；' + partialAutoRows.join(' || '))
+  check('G5 partial-runner AUTO按受控表14项且均未执行', partialAutoFiles.length === partialExpectedAuto.length && new Set(partialAutoFiles).size === partialExpectedAuto.length && partialExpectedAuto.every((file) => partialAutoFiles.includes(file)) && partialAutoRows.every((line) => line.includes('| 未执行 |')), 'rows=' + String(partialAutoRows.length) + '；expected=' + partialExpectedAuto.join(',') + '；reports=' + partialReports.join(',') + '；output=' + partialOutput.slice(0, 1200) + '；' + partialAutoRows.join(' || '))
   check('G5 partial-runner 三项仓库依赖未进入spawn', partialThree.every((file) => partialAutoRows.some((line) => line.includes('| ' + file + ' | 未执行 |') && line.includes('需完整目录'))), partialAutoRows.join(' || '))
 
   const oldCases = [
@@ -392,9 +432,10 @@ try {
   for (const [label, workspaceName, dirName, fileName] of oldCases) {
     const oldDir = join(sessionsRoot, workspaceName, dirName)
     writeSession(oldDir, fileName, [session(dirName)])
-    const old06 = runScript(STEP06, [oldDir])
-    const old07 = runScript(STEP07, [], { SESSION_ID: dirName, PLANNER_PROMPT_SUFFIX: 'fixture-suffix' })
-    const old08 = runScript(STEP08, [oldDir])
+    const oldSelectionArgs = idSessionArgs(dirName, join(sessionsRoot, workspaceName))
+    const old06 = runScript(STEP06, oldSelectionArgs)
+    const old07 = runScript(STEP07, oldSelectionArgs, { PLANNER_PROMPT_SUFFIX: 'fixture-suffix' })
+    const old08 = runScript(STEP08, oldSelectionArgs)
     for (const [toolName, outcome] of [['step-06', old06], ['step-07', old07], ['step-08', old08]]) {
       check(toolName + ' 拒绝' + label + '日志并返回非零', outcome.status !== 0 && outcome.output.includes('仅支持 v4 会话日志'))
     }
@@ -406,6 +447,6 @@ try {
   rmSync(fixtureHome, { recursive: true, force: true })
   cleaned = !existsSync(fixtureHome)
 }
-check('fixture finally 清理系统临时目录', cleaned)
+check('fixture finally 清理工作区fixture目录', cleaned)
 output.summary(pass, fail)
 process.exitCode = fail === 0 ? 0 : 1

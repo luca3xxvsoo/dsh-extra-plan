@@ -1,13 +1,15 @@
-// step-05-会话解码.mjs — 解码会话日志，汇总事件类型、预设事件、plan/mode 以及 request/header 摘要。
-// 用法: node step-05-会话解码.mjs [<会话目录名>]  |  无参=自动查找最新主会话+子会话；
-//       设置环境变量 SESSION_ID=<会话ID>（uuid / session-uuid / 目录名皆兼容）按 ID 精确定位（主会话连带其子会话）
+// step-05-会话解码.mjs — 解码显式选择的会话日志，汇总事件类型、预设事件、plan/mode 以及 request/header 摘要。
+// 用法: node step-05-会话解码.mjs [<会话目录名或路径>] [--session <ID> --sessions-dir <根>]；无选择=NOT-RUN，不扫描会话目录。
 import fs from 'node:fs'
 import path from 'node:path'
 import { decodedJsonlLines } from '../_shared/zstd-frames.mjs'
-import { findSession, logPath } from '../_shared/session-finder.mjs'
+import { authorizedSessionLogPath, findSession } from '../_shared/session-finder.mjs'
+import { parseMaintenanceArgs, createMaintenanceContext } from '../_shared/workspace-paths.mjs'
 import { createOutput, summarizeValue } from '../_shared/test-output.mjs'
 
-const argv = process.argv.slice(2)
+const maintenanceArgs = parseMaintenanceArgs(process.argv.slice(2))
+const maintenanceContext = createMaintenanceContext(maintenanceArgs)
+const argv = maintenanceArgs.domainArgv
 
 export function positionalArgsOf(args = []) {
   const positional = []
@@ -22,13 +24,16 @@ export function positionalArgsOf(args = []) {
 }
 
 const output = createOutput({ argv })
-const found = findSession(positionalArgsOf(argv)[0])
-if (found.kind === 'notfound') { console.error('未找到日志：', found.arg); process.exit(1) }
-if (found.kind === 'none') { console.error('未发现使用过按需规划模式的会话'); process.exit(1) }
+const found = findSession(positionalArgsOf(argv)[0], { maintenanceContext })
+if (found.kind === 'none') { console.log('NOT-RUN：未显式选择会话；未读取会话日志'); process.exitCode = 0 }
+else if (found.kind === 'unavailable') { console.log('NOT-RUN：会话 Host 根不可用；' + found.reason); process.exitCode = 0 }
+else if (found.kind === 'incomplete') { console.error('INCOMPLETE ' + found.reason); process.exit(1) }
+else if (found.kind === 'notfound') { console.error('未找到日志：', found.arg); process.exit(1) }
+if (found.kind === 'none' || found.kind === 'unavailable') process.exit(0)
 for (const dir of found.dirs) {
   console.log(`\n===== 会话 ${dir} =====`)
-  const lp = logPath(path.join(found.base, dir)); if (!lp) { console.error('会话日志文件不存在（三代候选名均未命中）:', path.join(found.base, dir)); continue }
-  const buf = fs.readFileSync(lp)
+  const lp = authorizedSessionLogPath(path.join(found.base, dir), found.pathContext, { kind: found.pathKind }); if (lp === null) { console.error('会话日志文件不存在（三代候选名均未命中）：', path.join(found.base, dir)); continue }
+  const buf = fs.readFileSync(lp.realPath)
   let incompleteReasons = []
   let recordCount = 0
   const types = {}

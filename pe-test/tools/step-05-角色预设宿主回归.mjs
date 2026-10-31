@@ -6,9 +6,35 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { symlinkSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { createIsolatedEnv, makeFixtureDir } from '../_shared/workspace-paths.mjs'
+import { createPathContext } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
 import { registerHostDeps } from '../_shared/host-deps.mjs'
 
+
+
+const HERE = dirname(fileURLToPath(import.meta.url))
+const THIS_FILE = fileURLToPath(import.meta.url)
+const ROOT = resolve(HERE, '..', '..')
+const PLUGIN_PATH = join(ROOT, 'plugins', 'dsh-extra-plan', 'index.js')
+const PRESET_DIR = join(ROOT, 'plugins', 'dsh-extra-plan', 'assets', 'presets', 'extra-plan')
+const INSTALL_ROOT_RAW = typeof process.env.DSH_INSTALL_ROOT === 'string' && process.env.DSH_INSTALL_ROOT.trim() !== '' ? process.env.DSH_INSTALL_ROOT.trim() : null
+const roleFixture = makeFixtureDir({ label: 'role-preset' })
+const BATCH_DIR = roleFixture.root
+const HOME_DIR = join(BATCH_DIR, 'home')
+const SESSION_ROOT = join(BATCH_DIR, 'sessions')
+const WORKSPACE = join(BATCH_DIR, 'workspace')
+for (const dir of [HOME_DIR, SESSION_ROOT, WORKSPACE, join(BATCH_DIR, 'temp'), join(HOME_DIR, 'skills')]) mkdirSync(dir, { recursive: true })
+writeFileSync(join(WORKSPACE, 'AGENTS.md'), '# role preset fixture\nfixture baseline instructions\n', 'utf8')
+const ROLE_ENV_KEYS = Object.freeze(['DSH_HOME', 'HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'XDG_CACHE_HOME', 'DSH_EXTRA_PLAN_CAPTURE_DIR', 'DSH_EXTRA_PLAN_REPORT_DIR', 'TEMP', 'TMP', 'TMPDIR', 'DSH_PROFILE', 'DSH_EXTRA_PLAN_CONFIG_PATH'])
+const previousEnv = Object.fromEntries(ROLE_ENV_KEYS.map((key) => [key, process.env[key]]))
+const roleIsolatedEnv = createIsolatedEnv({ fixture: roleFixture, extra: { DSH_PROFILE: 'role-preset', DSH_EXTRA_PLAN_CONFIG_PATH: undefined } })
+for (const key of ROLE_ENV_KEYS) {
+  const value = roleIsolatedEnv[key]
+  if (value === undefined) delete process.env[key]
+  else process.env[key] = value
+}
+const INSTALL_ROOT = INSTALL_ROOT_RAW === null ? null : createPathContext({ hostDataRoot: INSTALL_ROOT_RAW }).hostDataRoot
+const INSTALL_ANCHOR = INSTALL_ROOT === null ? null : join(INSTALL_ROOT, 'node_modules', '@deepseek-ai', 'dsh', 'package.json')
 await registerHostDeps()
 // 角色/主 definition 里的插件行写的是包名（生产由 profile 安装解析）。夹具用进程级解析钩子把
 // 本仓插件名映射到源码，等价于生产安装后的 'dsh-extra-plan' 解析，不改宿主也不写仓库。
@@ -25,24 +51,6 @@ const { assembleContextFor } = await import('@deepseek-ai/dsh-agent')
 const { default: Loader } = await import('@deepseek-ai/cordis-plugin-loader')
 const { default: AgentPresetAdapter } = await import('@deepseek-ai/dsh-agent-preset')
 const { parsePresetYaml } = await import('../../plugins/dsh-extra-plan/lib/preset-settings.js')
-
-const HERE = dirname(fileURLToPath(import.meta.url))
-const THIS_FILE = fileURLToPath(import.meta.url)
-const ROOT = resolve(HERE, '..', '..')
-const PLUGIN_PATH = join(ROOT, 'plugins', 'dsh-extra-plan', 'index.js')
-const PRESET_DIR = join(ROOT, 'plugins', 'dsh-extra-plan', 'assets', 'presets', 'extra-plan')
-const INSTALL_ROOT = resolve(process.env.DSH_INSTALL_ROOT || join(homedir(), 'AppData', 'Roaming', 'npm', 'node_modules', '@deepseek-ai', 'dsh'))
-const BATCH_DIR = resolve(process.env.ROLE_PRESET_BATCH_DIR || (process.env.PLAN_EVIDENCE_DIR ? join(process.env.PLAN_EVIDENCE_DIR, 'G3', 'resume1', 'fixture-role-host') : join(ROOT, '.extra-plan', 'step-05-角色预设', 'run-' + String(Date.now()))))
-const HOME_DIR = join(BATCH_DIR, 'home')
-const SESSION_ROOT = join(BATCH_DIR, 'sessions')
-const WORKSPACE = join(BATCH_DIR, 'workspace')
-for (const dir of [HOME_DIR, SESSION_ROOT, WORKSPACE, join(BATCH_DIR, 'temp'), join(HOME_DIR, 'skills')]) mkdirSync(dir, { recursive: true })
-writeFileSync(join(WORKSPACE, 'AGENTS.md'), '# role preset fixture\nfixture baseline instructions\n', 'utf8')
-const previousEnv = { DSH_HOME: process.env.DSH_HOME, TEMP: process.env.TEMP, TMP: process.env.TMP, DSH_EXTRA_PLAN_CONFIG_PATH: process.env.DSH_EXTRA_PLAN_CONFIG_PATH }
-process.env.DSH_HOME = HOME_DIR
-process.env.TEMP = join(BATCH_DIR, 'temp')
-process.env.TMP = process.env.TEMP
-delete process.env.DSH_EXTRA_PLAN_CONFIG_PATH
 
 let pass = 0
 let fail = 0
@@ -115,11 +123,15 @@ async function runMode(mode) {
   writeFileSync(join(modeWorkspace, 'AGENTS.md'), '# role preset fixture\nfixture baseline instructions\n', 'utf8')
   try {
     root = new Context()
-    root.provide('dshHomePath', (...parts) => join(modeHome, ...parts.map((part) => String(part))))
+    // AgentPresetRegistry stores the declaring Loader context.baseUrl in its public definition record.
     const loaderRoot = join(BATCH_DIR, 'loader-root-' + mode)
+    const resolutionBase = pathToFileURL(join(loaderRoot, 'fixture-entry.mjs')).href
+    root.baseUrl = resolutionBase
+    root.provide('dshHomePath', (...parts) => join(modeHome, ...parts.map((part) => String(part))))
+    root.provide('profileContext', { home: modeHome, dir: modeHome, patchPath: join(modeHome, 'cordis.patch.yml'), installAnchor: INSTALL_ANCHOR })
     mkdirSync(join(loaderRoot, 'node_modules'), { recursive: true })
     try { symlinkSync(join(ROOT, 'plugins', 'dsh-extra-plan'), join(loaderRoot, 'node_modules', 'dsh-extra-plan'), 'junction') } catch { /* 已存在 */ }
-    await root.plugin(Loader, { baseUrl: pathToFileURL(join(loaderRoot, 'fixture-entry.mjs')).href })
+    await root.plugin(Loader, { baseUrl: resolutionBase })
     const rows = [
       { id: 'session', name: '@deepseek-ai/dsh-session' },
       { id: 'session-projection', name: '@deepseek-ai/dsh-session-projection' },
@@ -199,6 +211,10 @@ async function runMode(mode) {
         sessionId,
         meta: { cwd: modeWorkspace, agentPreset: presetId, origin: 'subagent', delegationDepth: 1, isSeeded: false },
         setup: async (agentCtx) => {
+          // rc.4 AgentPresetRegistry 的 profile preflight 读取 ctx.baseUrl；真实 AgentLoop child context 不自动继承 Loader tree 元数据，按公开 Context.baseUrl 字段补齐同一 W fixture 基准。
+          const childBaseUrl = agentCtx.baseUrl ?? root.baseUrl ?? resolutionBase
+          if (typeof childBaseUrl !== 'string' || childBaseUrl === '') throw new Error('role-preset fixture resolution base unavailable')
+          agentCtx.baseUrl = childBaseUrl
           const presets = agentCtx.get ? agentCtx.get('agentPresets') : undefined
           if (presets === undefined) throw new Error('agentPresets service unavailable in child setup')
           await presets.mount(agentCtx, presetId)

@@ -94,10 +94,25 @@ const SHELL_BLOCK_HEAD_WORDS = new Set(['try', 'catch', 'finally', 'if', 'elseif
 // 段首块关键字（整词等值比较）：以段首形式出现、其后不跟花括号，其后仍是命令位。
 const SHELL_BLOCK_SEGMENT_WORDS = new Set(['then', 'do', 'else', 'elif', 'fi', 'done', 'esac', 'in'])
 
-export function mutationTextMatches(text, syntaxRe, bareRe, depth) {
-  if (text === '' || depth >= 4) return false
+function syntaxRuleOf(syntaxRe) {
+  if (syntaxRe === PWSH_MUTATION) return 'PWSH_MUTATION'
+  if (syntaxRe === BASH_MUTATION) return 'BASH_MUTATION'
+  return null
+}
+
+function bareRuleOf(bareRe) {
+  if (bareRe === PWSH_BARE_WORDS) return 'PWSH_BARE_WORDS'
+  if (bareRe === BASH_BARE_WORDS) return 'BASH_BARE_WORDS'
+  return null
+}
+
+export function mutationTextEvidence(text, syntaxRe, bareRe, depth) {
+  if (text === '' || depth >= 4) return null
   const isPowerShell = syntaxRe === PWSH_MUTATION || bareRe === PWSH_BARE_WORDS
-  if (syntaxRe.test(text)) return true
+  if (syntaxRe.test(text)) {
+    const rule = syntaxRuleOf(syntaxRe)
+    return rule === null ? null : { rule, value: '' }
+  }
   const segs = text.split(/[;\r\n]|\s*&&\s*|\s*\|\|\s*|\s*\|\s*|\s*&\s*/)
   for (const seg of segs) {
     const words = shellWords(seg)
@@ -151,7 +166,12 @@ export function mutationTextMatches(text, syntaxRe, bareRe, depth) {
           while (commandIndex < words.length && !/^(?:-Command|-c|\/c)$/i.test(words[commandIndex])) commandIndex += 1
           if (commandIndex + 1 < words.length) {
             const inner = words[commandIndex + 1]
-            if (mutationTextMatches(inner, syntaxRe, bareRe, depth + 1) || mutationTextMatches(inner, PWSH_MUTATION, PWSH_BARE_WORDS, depth + 1) || mutationTextMatches(inner, BASH_MUTATION, BASH_BARE_WORDS, depth + 1)) return true
+            const nestedEvidence = mutationTextEvidence(inner, syntaxRe, bareRe, depth + 1)
+            if (nestedEvidence !== null) return nestedEvidence
+            const pwshEvidence = mutationTextEvidence(inner, PWSH_MUTATION, PWSH_BARE_WORDS, depth + 1)
+            if (pwshEvidence !== null) return pwshEvidence
+            const bashEvidence = mutationTextEvidence(inner, BASH_MUTATION, BASH_BARE_WORDS, depth + 1)
+            if (bashEvidence !== null) return bashEvidence
           }
           break
         }
@@ -161,7 +181,12 @@ export function mutationTextMatches(text, syntaxRe, bareRe, depth) {
         const blockWord = isPowerShell ? word.toLowerCase() : word
         if (SHELL_BLOCK_SEGMENT_WORDS.has(blockWord)) { index += 1; continue }
         if (SHELL_BLOCK_HEAD_WORDS.has(blockWord)) { blockPending = true; index += 1; continue }
-        if (bareRe.test(word)) return true
+        const bareMatch = bareRe.exec(word)
+        if (bareMatch !== null) {
+          const rule = bareRuleOf(bareRe)
+          const value = bareMatch[1]
+          if (rule !== null && typeof value === 'string') return { rule, value }
+        }
         expectCommand = false
         index += 1
         continue
@@ -170,13 +195,19 @@ export function mutationTextMatches(text, syntaxRe, bareRe, depth) {
       index += 1
     }
   }
-  return false
+  return null
 }
 
-function mutationMatches(commandOf, exec, syntaxRe, bareRe) {
+export function mutationTextMatches(text, syntaxRe, bareRe, depth) {
+  return mutationTextEvidence(text, syntaxRe, bareRe, depth) !== null
+}
+
+function mutationEvidence(commandOf, exec, syntaxRe, bareRe) {
   const cmd = commandOf(exec)
-  return cmd !== '' && mutationTextMatches(cmd, syntaxRe, bareRe, 0)
+  return cmd !== '' ? mutationTextEvidence(cmd, syntaxRe, bareRe, 0) : null
 }
 
-export function pwshMutationMatches(exec) { return mutationMatches(pwshCommandOf, exec, PWSH_MUTATION, PWSH_BARE_WORDS) }
-export function bashMutationMatches(exec) { return mutationMatches(bashCommandOf, exec, BASH_MUTATION, BASH_BARE_WORDS) }
+export function pwshMutationEvidence(exec) { return mutationEvidence(pwshCommandOf, exec, PWSH_MUTATION, PWSH_BARE_WORDS) }
+export function bashMutationEvidence(exec) { return mutationEvidence(bashCommandOf, exec, BASH_MUTATION, BASH_BARE_WORDS) }
+export function pwshMutationMatches(exec) { return pwshMutationEvidence(exec) !== null }
+export function bashMutationMatches(exec) { return bashMutationEvidence(exec) !== null }

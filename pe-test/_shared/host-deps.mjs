@@ -1,98 +1,133 @@
 // host-deps.mjs —— pe-test 自检侧的「宿主真包解析钩子」（仅测试侧，不属插件源码）
-// 背景：仓库根与 plugins/dsh-extra-plan 下都没有 node_modules，而插件 index.js 顶层有
-//   静态 import { createUserMessage } from '@deepseek-ai/dsh-llm'，lib/settings.js 顶层有
-//   静态 import z from '@deepseek-ai/schemastery'；纯 Node 环境直接加载会 ERR_MODULE_NOT_FOUND。
-//   自检要跑真实插件模块，就必须把这些 specifier 解析到宿主真包。
-// 做法：先按锚点顺序确定宿主 node_modules 根（TARGET = '@deepseek-ai/dsh-llm' 的包目录上溯），
-//   再为同一 @deepseek-ai 作用域下的其它 specifier（如 schemastery）在同一根里解析；
-//   入口取 package.json 的 exports['.'].default（缺省回退 main）；其余 specifier 一律透传。
-// 锚点顺序（T9-6）：
-//   ① DSH_HOME（默认 ~/.dsh）下 profiles/<name>/node_modules/@deepseek-ai/dsh-llm/package.json
-//   ② 宿主现场 node_modules（npm 全局前缀下 @deepseek-ai/dsh-llm，或 dsh 包自带的
-//      node_modules/@deepseek-ai/dsh-llm）
-// 现场告警：profile 与安装域同时存在 @deepseek-ai/dsh-llm 时打印一行「注意」（只告警、不改解析语义、
-//   不写盘）——profile 副本会被 DSH 优先解析并顶替宿主同名运行时行（副本缺 tool-update 投影 →
-//   会话内工具集变化产生的线上 tool_removal 被 API 422 拒绝、整会话报废；详见 ai-宿主耦合台账.md CF12）。
-// 纪律（反作弊）：锚点全缺失即 throw（文案含候选路径清单）——绝不返回伪造模块，
-//   否则自检会「假绿」。同作用域其它包也只在同一 node_modules 根内解析，缺失即抛。
-// 本文件只在测试侧解析路径，不写盘、不改宿主。
-import { existsSync, readFileSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
-import { pathToFileURL } from 'node:url'
+// 只接受命令显式提供的 DSH_INSTALL_ROOT；宿主包解析与生成的 ESM 回放均 fail-closed。
+import { lstatSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { dirname, isAbsolute, join, relative, sep } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import * as module from 'node:module'
+import { createPathContext } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
 
 const TARGET = '@deepseek-ai/dsh-llm'
 const SCOPE = '@deepseek-ai'
 const PKG_NAME = 'dsh-llm'
 const DSH_PKG_NAME = 'dsh'
+const nativeRealpath = typeof realpathSync.native === 'function' ? realpathSync.native : realpathSync
 
-function profileNames() {
-  const home = process.env.DSH_HOME || join(homedir(), '.dsh')
-  const names = ['web']
+function samePath(left, right) {
+  return relative(left, right) === ''
+}
+
+function isWithinRoot(root, candidate) {
+  if (typeof root !== 'string' || typeof candidate !== 'string' || !isAbsolute(root) || !isAbsolute(candidate)) return false
+  const child = relative(root, candidate)
+  return child === '' || (child !== '..' && !child.startsWith('..' + sep) && !isAbsolute(child))
+}
+
+function explicitPath(value, label) {
   try {
-    for (const name of readFileSync0(join(home, 'profiles'))) {
-      if (!names.includes(name)) names.push(name)
+    return createPathContext({ hostDataRoot: value }).hostDataRoot
+  } catch (error) {
+    throw new Error('[host-deps] 无效显式安装根 ' + label + ': ' + String(error && error.message || error))
+  }
+}
+
+function assertWithinRoot(root, candidate, label) {
+  if (root === null || root === undefined) throw new Error('[host-deps] 缺少显式安装根: ' + label)
+  if (isWithinRoot(root, candidate)) return candidate
+  throw new Error('[host-deps] 显式安装根拒绝根外解析: ' + label + ' -> ' + candidate)
+}
+
+function physicalRoot(root, label) {
+  const lexicalRoot = explicitPath(root, label)
+  let realRoot
+  try { realRoot = nativeRealpath(lexicalRoot) } catch (error) {
+    throw new Error('[host-deps] 显式安装根无法证明真实路径: ' + label + ' -> ' + String(error && error.code || error))
+  }
+  let rootStat
+  try { rootStat = statSync(realRoot) } catch (error) {
+    throw new Error('[host-deps] 显式安装根无法读取: ' + label + ' -> ' + String(error && error.code || error))
+  }
+  if (!rootStat.isDirectory()) throw new Error('[host-deps] 显式安装根不是目录: ' + label)
+  return realRoot
+}
+
+function proveCandidate(root, candidate, label, options = {}) {
+  assertWithinRoot(root, candidate, label)
+  const rootRealPath = options.rootRealPath || physicalRoot(root, label + ' root')
+  let cursor = candidate
+  let candidateStat = null
+  let candidateRealPath = null
+  let actualStat = null
+  while (true) {
+    let stat
+    try {
+      stat = lstatSync(cursor)
+    } catch (error) {
+      if (error && (error.code === 'ENOENT' || error.code === 'ENOTDIR')) {
+        const parent = dirname(cursor)
+        if (samePath(parent, cursor)) throw new Error('[host-deps] 找不到授权根父链: ' + label)
+        cursor = parent
+        continue
+      }
+      throw new Error('[host-deps] 路径探查失败: ' + label + ' -> ' + String(error && error.code || error))
     }
-  } catch { /* 无 profiles 目录：只留 web */ }
-  return { home, names }
+    let realPath
+    try { realPath = nativeRealpath(cursor) } catch (error) {
+      throw new Error('[host-deps] 无法验证真实路径: ' + label + ' -> ' + String(error && error.code || error))
+    }
+    if (!isWithinRoot(rootRealPath, realPath)) throw new Error('[host-deps] 真实路径越过显式安装根: ' + label + ' -> ' + realPath)
+    if (samePath(cursor, candidate)) {
+      candidateStat = stat
+      candidateRealPath = realPath
+      try { actualStat = statSync(cursor) } catch (error) {
+        throw new Error('[host-deps] 候选不可读取: ' + label + ' -> ' + String(error && error.code || error))
+      }
+    }
+    if (samePath(cursor, root)) break
+    const parent = dirname(cursor)
+    if (samePath(parent, cursor)) throw new Error('[host-deps] 未到达显式安装根: ' + label)
+    cursor = parent
+  }
+  if (options.requireExists === true && candidateStat === null) throw new Error('[host-deps] 候选不存在: ' + label + ' -> ' + candidate)
+  return { rootRealPath, candidateStat, candidateRealPath, actualStat, exists: candidateStat !== null }
 }
 
-function readFileSync0(dir) {
-  // 局部小工具：只列目录名（避免顶层再 import readdirSync 造成语义混淆）
-  const fsModule = module.createRequire(import.meta.url)('node:fs')
-  return fsModule.readdirSync(dir)
+function checkHostResolvedResult(root, result, label) {
+  if (root === null || root === undefined) throw new Error('[host-deps] 缺少显式安装根: ' + label)
+  if (result === null || typeof result !== 'object' || typeof result.url !== 'string' || !result.url.startsWith('file:')) {
+    const url = result !== null && typeof result === 'object' ? result.url : undefined
+    throw new Error('[host-deps] Host请求必须解析为file URL: ' + label + ' -> ' + String(url))
+  }
+  let filePath
+  try { filePath = fileURLToPath(result.url) } catch { throw new Error('[host-deps] Host请求返回无效file URL: ' + label) }
+  const proof = proveCandidate(root, filePath, label, { requireExists: true })
+  if (proof.actualStat === null || !proof.actualStat.isFile()) throw new Error('[host-deps] Host请求必须指向真实文件: ' + label)
+  return result
 }
 
-// 锚点候选（按序探测）：返回宿主 node_modules 根 + dsh-llm 包目录的候选组合。
-// DSH_INSTALL_ROOT 是显式只读安装根，优先于 DSH_HOME/profile，供 rc.2 本机与 rc.1 设备复用同一脚本。
-// scope 仅用于「profile 内出现宿主同名副本」告警分组，不参与解析语义。
-function anchorCandidates() {
-  const list = []
+function isHostSpecifier(specifier) {
+  return specifier === 'js-yaml' || specifier.startsWith(SCOPE + '/')
+}
+
+function explicitInstallRoot() {
   const configuredRoot = typeof process.env.DSH_INSTALL_ROOT === 'string' ? process.env.DSH_INSTALL_ROOT.trim() : ''
-  if (configuredRoot !== '') {
-    const rootNodeModules = join(configuredRoot, 'node_modules')
-    list.push({
+  if (configuredRoot === '') throw new Error('[host-deps] 缺少显式 DSH_INSTALL_ROOT；不会探测profile、全局前缀或家目录')
+  return explicitPath(configuredRoot, 'DSH_INSTALL_ROOT')
+}
+
+function anchorCandidates(strictRoot) {
+  const rootNodeModules = join(strictRoot, 'node_modules')
+  return [
+    {
       scope: 'installation',
       nodeModules: rootNodeModules,
       pkg: join(rootNodeModules, SCOPE, PKG_NAME, 'package.json'),
-    })
-    list.push({
+    },
+    {
       scope: 'installation',
       nodeModules: join(rootNodeModules, SCOPE, DSH_PKG_NAME, 'node_modules'),
       pkg: join(rootNodeModules, SCOPE, DSH_PKG_NAME, 'node_modules', SCOPE, PKG_NAME, 'package.json'),
-    })
-  }
-  const { home, names } = profileNames()
-  for (const name of names) {
-    list.push({
-      scope: 'profile',
-      nodeModules: join(home, 'profiles', name, 'node_modules'),
-      pkg: join(home, 'profiles', name, 'node_modules', SCOPE, PKG_NAME, 'package.json'),
-    })
-  }
-  const prefixes = []
-  if (process.platform === 'win32') {
-    if (process.env.APPDATA) prefixes.push(join(process.env.APPDATA, 'npm', 'node_modules'))
-    prefixes.push(join(homedir(), 'AppData', 'Roaming', 'npm', 'node_modules'))
-  } else {
-    prefixes.push(join('/usr', 'local', 'lib', 'node_modules'))
-    prefixes.push(join(homedir(), '.npm-global', 'lib', 'node_modules'))
-    prefixes.push(join(homedir(), 'node_modules'))
-  }
-  for (const prefix of prefixes) {
-    list.push({
-      scope: 'installation',
-      nodeModules: prefix,
-      pkg: join(prefix, SCOPE, PKG_NAME, 'package.json'),
-    })
-    list.push({
-      scope: 'installation',
-      nodeModules: join(prefix, SCOPE, DSH_PKG_NAME, 'node_modules'),
-      pkg: join(prefix, SCOPE, DSH_PKG_NAME, 'node_modules', SCOPE, PKG_NAME, 'package.json'),
-    })
-  }
-  return list
+    },
+  ]
 }
 
 function exportTarget(pkg, subpath) {
@@ -114,7 +149,9 @@ function exportTarget(pkg, subpath) {
   return subpath === '.' ? pkg.main : undefined
 }
 
-function entryOf(pkgPath, subpath = '.') {
+function entryOf(pkgPath, subpath = '.', strictRoot) {
+  const manifestProof = proveCandidate(strictRoot, pkgPath, 'package manifest ' + pkgPath)
+  if (!manifestProof.exists || manifestProof.actualStat === null || !manifestProof.actualStat.isFile()) return null
   let pkg = null
   try { pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) } catch { return null }
   if (pkg === null || typeof pkg !== 'object') return null
@@ -123,86 +160,130 @@ function entryOf(pkgPath, subpath = '.') {
     if (subpath !== '.') return null
     rel = 'index.js'
   }
-  let relative = rel.startsWith('./') ? rel.slice(2) : rel
-  let entry = join(dirname(pkgPath), relative)
-  if (existsSync(entry)) return entry
-  if (subpath === '.' && relative !== 'index.js') {
+  const relativeEntry = rel.startsWith('./') ? rel.slice(2) : rel
+  let entry = join(dirname(pkgPath), relativeEntry)
+  assertWithinRoot(strictRoot, entry, 'package entry ' + subpath)
+  let entryProof = proveCandidate(strictRoot, entry, 'package entry ' + subpath)
+  if (entryProof.exists && entryProof.actualStat !== null && entryProof.actualStat.isFile()) return entry
+  if (subpath === '.' && relativeEntry !== 'index.js') {
     entry = join(dirname(pkgPath), 'index.js')
-    if (existsSync(entry)) return entry
+    assertWithinRoot(strictRoot, entry, 'package fallback entry')
+    entryProof = proveCandidate(strictRoot, entry, 'package fallback entry')
+    if (entryProof.exists && entryProof.actualStat !== null && entryProof.actualStat.isFile()) return entry
   }
   return null
 }
 
-function findHostAnchor() {
-  const candidates = anchorCandidates()
+function findHostAnchor(strictRoot) {
+  const rootRealPath = physicalRoot(strictRoot, 'DSH_INSTALL_ROOT')
+  const candidates = anchorCandidates(strictRoot)
   for (const candidate of candidates) {
-    if (!existsSync(candidate.pkg)) continue
-    const entry = entryOf(candidate.pkg)
+    const manifestProof = proveCandidate(strictRoot, candidate.pkg, TARGET + ' manifest', { rootRealPath })
+    if (!manifestProof.exists || manifestProof.actualStat === null || !manifestProof.actualStat.isFile()) continue
+    const entry = entryOf(candidate.pkg, '.', strictRoot)
     if (entry === null) continue
     let version = '未知'
     try {
       const manifest = JSON.parse(readFileSync(candidate.pkg, 'utf8'))
       if (manifest !== null && typeof manifest === 'object' && typeof manifest.version === 'string') version = manifest.version
     } catch { /* entryOf 已确认入口，版本读取失败只保留未知 */ }
+    assertWithinRoot(strictRoot, candidate.pkg, TARGET + ' manifest')
+    assertWithinRoot(strictRoot, entry, TARGET)
     return { nodeModules: candidate.nodeModules, entry, version, manifest: candidate.pkg }
   }
   throw new Error(
-    '[host-deps] 未找到宿主真包 ' + TARGET + '，自检无法解析该依赖。已按序探测以下候选路径：' +
-    '\n  - ' + candidates.map((candidate) => candidate.pkg).join('\n  - ') +
-    '\n请检查 DSH_HOME 或 npm 全局安装前缀；本钩子不提供伪造模块（缺失即报错，避免自检假绿）。'
+    '[host-deps] 显式安装根内未找到宿主真包 ' + TARGET + '，自检无法解析该依赖。已探测：' +
+    '\n  - ' + candidates.map((candidate) => candidate.pkg).join('\n  - ')
   )
 }
 
-// specifier → 宿主 node_modules 根下的真实入口：只处理 @deepseek-ai/<name>（可带子路径）
-function scopedEntryOf(nodeModules, specifier) {
+function scopedEntryOf(nodeModules, specifier, strictRoot) {
   if (!specifier.startsWith(SCOPE + '/')) return null
   const rest = specifier.slice(SCOPE.length + 1)
   const slash = rest.indexOf('/')
   const packageName = slash === -1 ? rest : rest.slice(0, slash)
   if (packageName === '') return null
   const subpath = slash === -1 ? '.' : './' + rest.slice(slash + 1)
-  return entryOf(join(nodeModules, SCOPE, packageName, 'package.json'), subpath)
+  const pkgPath = join(nodeModules, SCOPE, packageName, 'package.json')
+  assertWithinRoot(strictRoot, pkgPath, specifier + ' manifest')
+  return entryOf(pkgPath, subpath, strictRoot)
 }
 
-// profile 中若有 shadowing 的宿主包副本只告警；不改变解析语义或文件状态。
-// 告警只给出部署清理建议，不改动 hook。
-function warnShadowedHostCopies() {
-  const found = new Map()
-  const seenPaths = new Set()
-  for (const candidate of anchorCandidates()) {
-    if (!existsSync(candidate.pkg)) continue
-    if (seenPaths.has(candidate.pkg)) continue // 多前缀候选可能指向同一份包（如 APPDATA 与 homedir 两种写法）
-    seenPaths.add(candidate.pkg)
-    let version = '未知'
-    try {
-      const manifest = JSON.parse(readFileSync(candidate.pkg, 'utf8'))
-      if (manifest !== null && typeof manifest === 'object' && typeof manifest.version === 'string') version = manifest.version
-    } catch { /* 清单不可读：按未知版本记录，不影响告警判定 */ }
-    if (!found.has(candidate.scope)) found.set(candidate.scope, [])
-    found.get(candidate.scope).push(version + ' @ ' + candidate.pkg)
-  }
-  const profileCopies = found.get('profile')
-  const installCopies = found.get('installation')
-  if (profileCopies === undefined || installCopies === undefined) return
-  console.warn(
-    '[host-deps] 注意: profile 内存在宿主同名包副本（' + TARGET + '），DSH 解析本地候选优先 → 会顶替宿主的同名运行时行。'
-    + '\n  profile 副本: ' + profileCopies.join(' | ')
-    + '\n  安装域副本: ' + installCopies.join(' | ')
-    + '\n  若两者版本不同，宿主运行时行为由 profile 那份决定（症状示例：会话内工具集变化 → 线上 tool_removal → API 422，整会话报废）。'
-    + '\n  修复: 删除 profile 的 node_modules 与 pnpm-lock.yaml 后重装插件，再重启 dsh。',
-  )
-}
-
-export function buildAsyncHookSource({ target, anchor, yaml, roots, scope = SCOPE }) {
+export function buildAsyncHookSource({ target, anchor, yaml, roots, scope = SCOPE, strictRoot = null }) {
+  const strictRootValue = strictRoot === null || strictRoot === undefined || strictRoot === '' ? null : explicitPath(strictRoot, 'async hook strictRoot')
+  const rootValues = Array.isArray(roots) ? roots.map((root, index) => assertWithinRoot(strictRootValue, root, 'async hook root ' + String(index))) : []
   const lines = [
     'const TARGET = ' + JSON.stringify(target) + ';',
     'const ANCHOR = ' + JSON.stringify(anchor) + ';',
     'const YAML = ' + JSON.stringify(yaml) + ';',
-    'const ROOTS = ' + JSON.stringify(roots) + ';',
+    'const ROOTS = ' + JSON.stringify(rootValues) + ';',
     'const SCOPE = ' + JSON.stringify(scope) + ';',
+    'const STRICT_ROOT = ' + JSON.stringify(strictRootValue) + ';',
     'const fs = await import("node:fs");',
     'const path = await import("node:path");',
     'const url = await import("node:url");',
+    'const nativeRealpath = typeof fs.realpathSync.native === "function" ? fs.realpathSync.native : fs.realpathSync;',
+    'function samePath(left, right) { return path.relative(left, right) === ""; }',
+    'function isWithinRoot(root, candidate) {',
+    '  if (typeof root !== "string" || typeof candidate !== "string" || !path.isAbsolute(root) || !path.isAbsolute(candidate)) return false;',
+    '  const child = path.relative(root, candidate);',
+    '  return child === "" || (child !== ".." && !child.startsWith(".." + path.sep) && !path.isAbsolute(child));',
+    '}',
+    'function assertWithinRoot(root, candidate, label) {',
+    '  if (root === null || root === undefined) throw new Error("[host-deps] 缺少显式安装根: " + label);',
+    '  if (!isWithinRoot(root, candidate)) throw new Error("[host-deps] 显式安装根拒绝根外解析: " + label + " -> " + candidate);',
+    '  return candidate;',
+    '}',
+    'function proveCandidate(root, candidate, label, options = {}) {',
+    '  assertWithinRoot(root, candidate, label);',
+    '  let rootRealPath;',
+    '  try { rootRealPath = options.rootRealPath || nativeRealpath(root); } catch (error) { throw new Error("[host-deps] 显式安装根无法证明真实路径: " + label + " -> " + String(error && error.code || error)); }',
+    '  let cursor = candidate;',
+    '  let candidateStat = null;',
+    '  let candidateRealPath = null;',
+    '  let actualStat = null;',
+    '  while (true) {',
+    '    let stat;',
+    '    try { stat = fs.lstatSync(cursor); } catch (error) {',
+    '      if (error && (error.code === "ENOENT" || error.code === "ENOTDIR")) {',
+    '        const parent = path.dirname(cursor);',
+    '        if (samePath(parent, cursor)) throw new Error("[host-deps] 找不到授权根父链: " + label);',
+    '        cursor = parent;',
+    '        continue;',
+    '      }',
+    '      throw new Error("[host-deps] 路径探查失败: " + label + " -> " + String(error && error.code || error));',
+    '    }',
+    '    let realPath;',
+    '    try { realPath = nativeRealpath(cursor); } catch (error) { throw new Error("[host-deps] 无法验证真实路径: " + label + " -> " + String(error && error.code || error)); }',
+    '    if (!isWithinRoot(rootRealPath, realPath)) throw new Error("[host-deps] 真实路径越过显式安装根: " + label + " -> " + realPath);',
+    '    if (samePath(cursor, candidate)) {',
+    '      candidateStat = stat;',
+    '      candidateRealPath = realPath;',
+    '      try { actualStat = fs.statSync(cursor); } catch (error) { throw new Error("[host-deps] 候选不可读取: " + label + " -> " + String(error && error.code || error)); }',
+    '    }',
+    '    if (samePath(cursor, root)) break;',
+    '    const parent = path.dirname(cursor);',
+    '    if (samePath(parent, cursor)) throw new Error("[host-deps] 未到达显式安装根: " + label);',
+    '    cursor = parent;',
+    '  }',
+    '  if (options.requireExists === true && candidateStat === null) throw new Error("[host-deps] 候选不存在: " + label + " -> " + candidate);',
+    '  return { rootRealPath, candidateStat, candidateRealPath, actualStat, exists: candidateStat !== null };',
+    '}',
+    'function checkHostResolvedResult(root, result, label) {',
+    '  if (root === null || root === undefined) throw new Error("[host-deps] 缺少显式安装根: " + label);',
+    '  if (result === null || typeof result !== "object" || typeof result.url !== "string" || !result.url.startsWith("file:")) {',
+    '    const value = result !== null && typeof result === "object" ? result.url : undefined;',
+    '    throw new Error("[host-deps] Host请求必须解析为file URL: " + label + " -> " + String(value));',
+    '  }',
+    '  let filePath;',
+    '  try { filePath = url.fileURLToPath(result.url); } catch { throw new Error("[host-deps] Host请求返回无效file URL: " + label); }',
+    '  const proof = proveCandidate(root, filePath, label, { requireExists: true });',
+    '  if (proof.actualStat === null || !proof.actualStat.isFile()) throw new Error("[host-deps] Host请求必须指向真实文件: " + label);',
+    '  return result;',
+    '}',
+    'function isHostSpecifier(specifier) {',
+    '  return specifier === "js-yaml" || specifier.startsWith(SCOPE + "/");',
+    '}',
     'function exportTarget(pkg, subpath) {',
     '  const exportsField = pkg.exports;',
     '  if (typeof exportsField === "string") return subpath === "." ? exportsField : undefined;',
@@ -228,98 +309,104 @@ export function buildAsyncHookSource({ target, anchor, yaml, roots, scope = SCOP
     '  const subpath = slash === -1 ? "." : "./" + rest.slice(slash + 1);',
     '  for (const root of ROOTS) {',
     '    const pkgPath = path.join(root, SCOPE, packageName, "package.json");',
-    '    if (!fs.existsSync(pkgPath)) continue;',
+    '    const manifestProof = proveCandidate(STRICT_ROOT, pkgPath, specifier + " manifest");',
+    '    if (!manifestProof.exists || manifestProof.actualStat === null || !manifestProof.actualStat.isFile()) continue;',
     '    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));',
     '    let rel = exportTarget(pkg, subpath);',
     '    if (typeof rel !== "string" || rel === "") {',
     '      if (subpath !== ".") continue;',
     '      rel = "index.js";',
     '    }',
-    '    let relative = rel.startsWith("./") ? rel.slice(2) : rel;',
-    '    let entry = path.join(path.dirname(pkgPath), relative);',
-    '    if (fs.existsSync(entry)) return url.pathToFileURL(entry).href;',
-    '    if (subpath === "." && relative !== "index.js") {',
+    '    const relativeEntry = rel.startsWith("./") ? rel.slice(2) : rel;',
+    '    let entry = path.join(path.dirname(pkgPath), relativeEntry);',
+    '    const entryProof = proveCandidate(STRICT_ROOT, entry, specifier + " entry");',
+    '    if (entryProof.exists && entryProof.actualStat !== null && entryProof.actualStat.isFile()) return url.pathToFileURL(entry).href;',
+    '    if (subpath === "." && relativeEntry !== "index.js") {',
     '      entry = path.join(path.dirname(pkgPath), "index.js");',
-    '      if (fs.existsSync(entry)) return url.pathToFileURL(entry).href;',
+    '      const fallbackProof = proveCandidate(STRICT_ROOT, entry, specifier + " fallback entry");',
+    '      if (fallbackProof.exists && fallbackProof.actualStat !== null && fallbackProof.actualStat.isFile()) return url.pathToFileURL(entry).href;',
     '    }',
     '  }',
     '  return null;',
     '}',
+    'async function resolveHost(specifier, context, nextResolve) {',
+    '  if (specifier === TARGET) return checkHostResolvedResult(STRICT_ROOT, { url: ANCHOR, shortCircuit: true }, specifier);',
+    '  if (specifier === "js-yaml" && YAML !== null) return checkHostResolvedResult(STRICT_ROOT, { url: YAML, shortCircuit: true }, specifier);',
+    '  const scoped = specifier.startsWith(SCOPE + "/") ? scopedEntry(specifier) : null;',
+    '  if (scoped !== null) return checkHostResolvedResult(STRICT_ROOT, { url: scoped, shortCircuit: true }, specifier);',
+    '  return checkHostResolvedResult(STRICT_ROOT, await nextResolve(specifier, context), specifier);',
+    '}',
     'export async function resolve(specifier, context, nextResolve) {',
-    '  if (specifier === TARGET) return { url: ANCHOR, shortCircuit: true };',
-    '  if (specifier === "js-yaml" && YAML !== null) return { url: YAML, shortCircuit: true };',
-    '  const scoped = scopedEntry(specifier);',
-    '  if (scoped !== null) return { url: scoped, shortCircuit: true };',
+    '  if (isHostSpecifier(specifier)) return resolveHost(specifier, context, nextResolve);',
     '  return nextResolve(specifier, context);',
     '}',
-  ];
-  return lines.join(String.fromCharCode(10));
+  ]
+  return lines.join(String.fromCharCode(10))
 }
 
-let registered = false
+const registeredRoots = new Set()
 
 export async function registerHostDeps() {
-  if (registered) return
-  registered = true
-  warnShadowedHostCopies()
-  const anchor = findHostAnchor()
-  console.log('[host-deps] 实际宿主版本: ' + anchor.version + '（' + anchor.manifest + '）')
+  const strictRoot = explicitInstallRoot()
+  if (registeredRoots.has(strictRoot)) return
+  const anchor = findHostAnchor(strictRoot)
   const scopedNodeModules = []
-  // 先试锚点自身的 node_modules 根；再退到各级上溯（profiles/web/node_modules → profiles/web → …）
   let dir = anchor.nodeModules
   for (let i = 0; i < 6 && dir !== dirname(dir); i += 1) {
+    assertWithinRoot(strictRoot, dir, 'scoped node_modules')
+    const proof = proveCandidate(strictRoot, dir, 'scoped node_modules')
+    if (!proof.exists || proof.actualStat === null || !proof.actualStat.isDirectory()) break
     scopedNodeModules.push(dir)
-    dir = dirname(dir)
+    const parent = dirname(dir)
+    if (!isWithinRoot(strictRoot, parent)) break
+    dir = parent
   }
   const resolveScoped = (specifier) => {
     for (const root of scopedNodeModules) {
-      const entry = scopedEntryOf(root, specifier)
-      if (entry !== null) return entry
+      const entry = scopedEntryOf(root, specifier, strictRoot)
+      if (entry !== null) return assertWithinRoot(strictRoot, entry, specifier)
     }
     return null
   }
-  const resolveBare = (specifier) => {
-    if (specifier !== 'js-yaml') return null
+  const resolveBare = () => {
     for (const root of scopedNodeModules) {
-      const entry = entryOf(join(root, 'js-yaml', 'package.json'))
-      if (entry !== null) return entry
+      const entry = entryOf(join(root, 'js-yaml', 'package.json'), '.', strictRoot)
+      if (entry !== null) return assertWithinRoot(strictRoot, entry, 'js-yaml')
     }
     return null
   }
-  const yamlEntry = resolveBare('js-yaml')
+  const yamlEntry = resolveBare()
   const resolveOne = (specifier, nextResolve, context) => {
-    if (specifier === TARGET) return { url: pathToFileURL(anchor.entry).href, shortCircuit: true }
-    if (specifier === 'js-yaml' && yamlEntry !== null) return { url: pathToFileURL(yamlEntry).href, shortCircuit: true }
-    if (specifier.startsWith(SCOPE + '/')) {
+    if (isHostSpecifier(specifier)) {
+      if (specifier === TARGET) return checkHostResolvedResult(strictRoot, { url: pathToFileURL(anchor.entry).href, shortCircuit: true }, specifier)
+      if (specifier === 'js-yaml') {
+        if (yamlEntry !== null) return checkHostResolvedResult(strictRoot, { url: pathToFileURL(yamlEntry).href, shortCircuit: true }, specifier)
+        throw new Error('[host-deps] 显式安装根内缺少 Host 依赖: js-yaml')
+      }
       const scoped = resolveScoped(specifier)
-      // 只接管本钩子锚点根内确实存在的包；其余（如 @deepseek-ai/cordis，由宿主包自身
-      // node_modules 就近解析）一律透传给 Node 原生解析器——不透传会把正常依赖打成假故障。
-      if (scoped !== null) return { url: pathToFileURL(scoped).href, shortCircuit: true }
+      if (scoped !== null) return checkHostResolvedResult(strictRoot, { url: pathToFileURL(scoped).href, shortCircuit: true }, specifier)
+      return checkHostResolvedResult(strictRoot, nextResolve(specifier, context), specifier)
     }
     return nextResolve(specifier, context)
   }
-  // 优先同步钩子（Node >= 22.15 的 registerHooks）；否则退到异步钩子（Node >= 20.6 的 module.register）。
-  if (typeof module.registerHooks === 'function') {
-    module.registerHooks({
-      resolve(specifier, context, nextResolve) {
-        try {
-          return resolveOne(specifier, nextResolve, context)
-        } catch (error) {
-          throw error
-        }
-      },
-    })
-    return
+  try {
+    if (typeof module.registerHooks === 'function') {
+      module.registerHooks({ resolve(specifier, context, nextResolve) { return resolveOne(specifier, nextResolve, context) } })
+    } else if (typeof module.register === 'function') {
+      const hookSource = buildAsyncHookSource({
+        target: TARGET,
+        anchor: pathToFileURL(anchor.entry).href,
+        yaml: yamlEntry === null ? null : pathToFileURL(yamlEntry).href,
+        roots: scopedNodeModules,
+        strictRoot,
+      })
+      module.register('data:text/javascript;base64,' + Buffer.from(hookSource, 'utf8').toString('base64'), import.meta.url)
+    } else {
+      throw new Error('[host-deps] 当前 Node 既无 module.registerHooks 也无 module.register（需 Node >= 20.6），无法注册宿主解析钩子')
+    }
+    registeredRoots.add(strictRoot)
+    console.log('[host-deps] 实际宿主版本: ' + anchor.version + '（' + anchor.manifest + '）')
+  } catch (error) {
+    throw error
   }
-  if (typeof module.register === 'function') {
-    const hookSource = buildAsyncHookSource({
-      target: TARGET,
-      anchor: pathToFileURL(anchor.entry).href,
-      yaml: yamlEntry === null ? null : pathToFileURL(yamlEntry).href,
-      roots: scopedNodeModules,
-    })
-    module.register('data:text/javascript;base64,' + Buffer.from(hookSource, 'utf8').toString('base64'), import.meta.url)
-    return
-  }
-  throw new Error('[host-deps] 当前 Node 既无 module.registerHooks 也无 module.register（需 Node >= 20.6），无法注册宿主解析钩子')
 }

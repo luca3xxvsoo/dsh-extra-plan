@@ -1,22 +1,30 @@
 import { spawnSync } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { isAbsolute, join, relative, resolve } from 'node:path'
+import { createPathContext, prepareWriteTarget, resolveHostPath, resolveWorkspacePath, validateReadTarget } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
+import { createMaintenanceContext, getWorkspaceRoot, parseMaintenanceArgs } from '../_shared/workspace-paths.mjs'
 
-const HERE = dirname(fileURLToPath(import.meta.url))
-const ROOT = resolve(HERE, '../..')
+const ROOT = getWorkspaceRoot()
 const CWD = ROOT
 const EXTRA_PLAN_DIR = join(ROOT, '.extra-plan')
 const OLD_EVIDENCE_DIR = '.extra-plan/证据-同步验收补齐-20261015004343'
 const REPORT_PROBE = 'pe-test/reports/_s4b_pwsh.txt'
 const TIMEOUT_MS = 120000
-const OFFICIAL_RUNTIME_BOUNDARY_PATHS = [
+// 历史来源文本仅作旧证据语义留存，绝不作为实时访问路径。
+const HISTORICAL_OFFICIAL_RUNTIME_SOURCE_TEXT = Object.freeze([
   'C:/Users/Administrator/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/cordis/src/reflect.ts',
   'C:/Users/Administrator/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/cordis/src/registry.ts',
   'C:/Users/Administrator/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/cordis/src/fiber.ts',
   'C:/Users/Administrator/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-config-editor/lib/index.js',
-]
+])
+// 实时Host文件只能由显式 DSH_INSTALL_ROOT + 包内相对项解析。
+const OFFICIAL_RUNTIME_RELATIVE_PATHS = Object.freeze([
+  'node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/cordis/src/reflect.ts',
+  'node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/cordis/src/registry.ts',
+  'node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/cordis/src/fiber.ts',
+  'node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-config-editor/lib/index.js',
+])
 const OFFICIAL_RUNTIME_BOUNDARY_POLICY = {
   scope: 'official-runtime-read-only',
   readOnly: true,
@@ -25,13 +33,146 @@ const OFFICIAL_RUNTIME_BOUNDARY_POLICY = {
   policy: 'READ-ONLY: hash and metadata observation only; no writes permitted',
 }
 
+function maintenanceArgv() {
+  const result = []
+  const argv = process.argv.slice(2)
+  for (let index = 0; index < argv.length; index += 1) {
+    const value = argv[index]
+    if (value === '--install-root') { index += 1; continue }
+    if (value === '--boundary-only') continue
+    if (value === '--relative') { index += 1; continue }
+    result.push(value)
+  }
+  return result
+}
+
+const MAINTENANCE_CONTEXT = createMaintenanceContext(parseMaintenanceArgs(maintenanceArgv()))
+const W_PATH_CONTEXT = MAINTENANCE_CONTEXT.pathContext
+
 function pad(value) { return String(value).padStart(2, '0') }
 function timestamp() {
   const now = new Date()
   return String(now.getFullYear()) + pad(now.getMonth() + 1) + pad(now.getDate()) + pad(now.getHours()) + pad(now.getMinutes()) + pad(now.getSeconds()) + String(now.getMilliseconds()).padStart(3, '0')
 }
 function relPath(value) { return relative(ROOT, value).replaceAll('\\', '/') }
-function absPath(value) { return resolve(ROOT, value) }
+function workspaceTarget(value, purpose) {
+  return resolveWorkspacePath(W_PATH_CONTEXT, String(value), { purpose })
+}
+
+function assertNoPhysicalLink(value) {
+  const lexical = resolve(String(value))
+  let physical
+  try { physical = realpathSync.native(lexical) } catch (error) {
+    if (error !== null && typeof error === 'object' && error.code === 'ENOENT') return lexical
+    throw error
+  }
+  const same = process.platform === 'win32' ? physical.toLowerCase() === lexical.toLowerCase() : physical === lexical
+  if (!same) {
+    const error = new Error('拒绝W物理链接：' + lexical + ' -> ' + physical)
+    error.code = 'LINK_REJECTED'
+    throw error
+  }
+  return physical
+}
+
+function workspaceReadTarget(value, options = {}) {
+  const purpose = options.purpose || 'g11-w-read'
+  const target = workspaceTarget(value, purpose)
+  const validationOptions = { purpose }
+  if (options.expectedType !== undefined) validationOptions.expectedType = options.expectedType
+  try {
+    const proof = validateReadTarget(W_PATH_CONTEXT, target, validationOptions)
+    assertNoPhysicalLink(target.path)
+    return { path: proof.realPath, target, proof }
+  } catch (error) {
+    if (error !== null && typeof error === 'object' && error.code === 'TARGET_MISSING' && options.allowMissing !== false) return null
+    throw error
+  }
+}
+
+function workspaceWriteTarget(value, options = {}) {
+  const purpose = options.purpose || 'g11-w-write'
+  const target = workspaceTarget(value, purpose)
+  const writeOptions = { purpose }
+  if (options.expectedType !== undefined) writeOptions.expectedType = options.expectedType
+  const proof = prepareWriteTarget(W_PATH_CONTEXT, target, writeOptions)
+  if (proof.parentPath) assertNoPhysicalLink(proof.parentPath)
+  if (proof.exists) assertNoPhysicalLink(proof.path)
+  return { path: proof.path, target, proof }
+}
+
+function workspaceAnyTarget(value, purpose = 'g11-w-read') {
+  const target = workspaceTarget(value, purpose)
+  const validate = (expectedType) => {
+    const proof = validateReadTarget(W_PATH_CONTEXT, target, { expectedType, purpose })
+    assertNoPhysicalLink(target.path)
+    return { path: proof.realPath, target, proof }
+  }
+  try {
+    return validate('file')
+  } catch (error) {
+    if (error !== null && typeof error === 'object' && error.code === 'TARGET_MISSING') return { path: target.path, target, proof: null }
+    if (error === null || typeof error !== 'object' || error.code !== 'TARGET_TYPE') throw error
+    try {
+      return validate('directory')
+    } catch (directoryError) {
+      if (directoryError !== null && typeof directoryError === 'object' && directoryError.code === 'TARGET_MISSING') return { path: target.path, target, proof: null }
+      throw directoryError
+    }
+  }
+}
+
+function absPath(value) { return workspaceAnyTarget(value).path }
+
+function installRootState() {
+  const index = process.argv.indexOf('--install-root')
+  const arg = index >= 0 ? process.argv[index + 1] : undefined
+  const env = process.env.DSH_INSTALL_ROOT
+  if (index >= 0 && (arg === undefined || arg.startsWith('--'))) return { status: 'NOT-RUN', reason: '缺少 --install-root 值' }
+  if (arg !== undefined && env !== undefined && String(arg) !== String(env)) return { status: 'NOT-RUN', reason: '--install-root 与 DSH_INSTALL_ROOT 冲突，拒绝择一' }
+  const raw = arg !== undefined ? String(arg) : env
+  if (raw === undefined || raw.trim() === '') return { status: 'NOT-RUN', reason: '缺少显式 DSH_INSTALL_ROOT；不读取默认Host根' }
+  if (raw !== raw.trim()) return { status: 'NOT-RUN', reason: '显式 DSH_INSTALL_ROOT 拒绝首尾空白' }
+  if (raw.includes(String.fromCharCode(0))) return { status: 'NOT-RUN', reason: '显式 DSH_INSTALL_ROOT 含 NUL' }
+  if (/(?:%[A-Za-z_][A-Za-z0-9_]*%)/.test(raw) || /(?:^|[\\/])\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)/.test(raw) || raw.startsWith('~')) return { status: 'NOT-RUN', reason: '显式 DSH_INSTALL_ROOT 拒绝变量或家目录缩写' }
+  if (!/^[A-Za-z]:[\\/]/.test(raw) || !isAbsolute(raw)) return { status: 'NOT-RUN', reason: '显式 DSH_INSTALL_ROOT 必须是带盘符的绝对路径' }
+  const normalized = raw
+  let root
+  try { root = realpathSync(normalized) } catch (error) { return { status: 'NOT-RUN', reason: '显式 DSH_INSTALL_ROOT 不可解析：' + (error.code || String(error)) } }
+  let stat
+  try { stat = statSync(root) } catch (error) { return { status: 'NOT-RUN', reason: '显式 DSH_INSTALL_ROOT 不可读取：' + (error.code || String(error)) } }
+  if (!stat.isDirectory()) return { status: 'NOT-RUN', reason: '显式 DSH_INSTALL_ROOT 不是目录' }
+  return { status: 'PASS', root, source: 'explicit-DSH_INSTALL_ROOT', input: raw }
+}
+
+const INSTALL_ROOT_STATE = installRootState()
+
+const HOST_READ_PURPOSE = 'no-remount-explicit-host-read'
+function hostFileRecord(relativePath) {
+  if (INSTALL_ROOT_STATE.status !== 'PASS') return { path: relativePath, relativePath, rootSource: INSTALL_ROOT_STATE.reason, exists: false, bytes: null, sha256: null }
+  let readable
+  try {
+    const context = createPathContext({ hostDataRoot: INSTALL_ROOT_STATE.root })
+    const target = resolveHostPath(context, relativePath, { purpose: HOST_READ_PURPOSE })
+    readable = validateReadTarget(context, target, { expectedType: 'file', purpose: HOST_READ_PURPOSE })
+  } catch (error) {
+    if (error !== null && typeof error === 'object' && (error.code === 'TARGET_MISSING' || error.code === 'TARGET_TYPE')) return { path: relativePath, relativePath, rootSource: INSTALL_ROOT_STATE.source, readProof: 'G1.validateReadTarget', exists: false, bytes: null, sha256: null }
+    throw error
+  }
+  const absolute = readable.realPath
+  const stat = statSync(absolute)
+  if (!stat.isFile()) return { path: absolute, relativePath, rootSource: INSTALL_ROOT_STATE.source, readProof: 'G1.validateReadTarget', exists: false, bytes: null, sha256: null }
+  return { path: absolute, relativePath, rootSource: INSTALL_ROOT_STATE.source, readProof: 'G1.validateReadTarget', exists: true, bytes: stat.size, sha256: sha256File(absolute) }
+}
+
+function officialRuntimeBoundaryInput(before) {
+  return { ...OFFICIAL_RUNTIME_BOUNDARY_POLICY, status: INSTALL_ROOT_STATE.status, rootSource: INSTALL_ROOT_STATE.source || 'none', installRoot: INSTALL_ROOT_STATE.root || null, notRunReason: INSTALL_ROOT_STATE.reason || null, historicalSourceText: HISTORICAL_OFFICIAL_RUNTIME_SOURCE_TEXT, relativePaths: OFFICIAL_RUNTIME_RELATIVE_PATHS, before }
+}
+
+function officialBoundaryMarker(boundary) {
+  return boundary?.status === 'PASS' && boundary?.allMatch === true ? 'YES' : boundary?.status === 'NOT-RUN' ? 'NOT-RUN' : 'NO'
+}
+
 function sha256Bytes(bytes) { return createHash('sha256').update(bytes).digest('hex') }
 function sha256File(value) {
   try { return sha256Bytes(readFileSync(value)) } catch { return null }
@@ -46,45 +187,101 @@ function fileRecord(value) {
   return { path: value, exists: true, bytes: stat.size, sha256: sha256File(abs) }
 }
 function officialRuntimeBoundaryPost(before) {
+  if (INSTALL_ROOT_STATE.status !== 'PASS') {
+    return { ...officialRuntimeBoundaryInput(before), files: [], allMatch: false }
+  }
   const files = before.map((item) => {
-    const after = fileRecord(item.path)
-    return { path: item.path, before: item, after, allMatch: item.exists === true && after.exists === true && sameRecord(item, after) }
+    const after = hostFileRecord(item.relativePath)
+    return { path: item.path, relativePath: item.relativePath, before: item, after, allMatch: item.exists === true && after.exists === true && sameRecord(item, after) }
   })
-  return { ...OFFICIAL_RUNTIME_BOUNDARY_POLICY, files, allMatch: files.length === OFFICIAL_RUNTIME_BOUNDARY_PATHS.length && files.every((item) => item.allMatch) }
+  const allPresent = files.length === OFFICIAL_RUNTIME_RELATIVE_PATHS.length && files.every((item) => item.before.exists === true && item.after.exists === true)
+  const allMatch = allPresent && files.every((item) => item.allMatch)
+  return { ...officialRuntimeBoundaryInput(before), status: allMatch ? 'PASS' : allPresent ? 'FAIL' : 'NOT-RUN', notRunReason: allPresent ? null : '显式安装根缺少Host源文件；不换根', files, allMatch }
 }
-function writeJson(name, value) { writeFileSync(join(EVIDENCE_DIR, name), JSON.stringify(value, null, 2) + '\n', 'utf8') }
+function writeJson(name, value) {
+  const target = workspaceWriteTarget(join(EVIDENCE_DIR, name), { expectedType: 'file', purpose: 'evidence-json-write' })
+  writeFileSync(target.path, JSON.stringify(value, null, 2) + '\n', 'utf8')
+}
 function readJson(value) {
-  try { return JSON.parse(readFileSync(absPath(value), 'utf8')) } catch { return undefined }
+  const target = workspaceReadTarget(value, { expectedType: 'file', purpose: 'maintenance-manifest-read' })
+  if (target === null) return undefined
+  let text
+  try { text = readFileSync(target.path, 'utf8') } catch (error) {
+    if (error !== null && typeof error === 'object' && error.code === 'ENOENT') return undefined
+    throw error
+  }
+  try { return JSON.parse(text) } catch { return undefined }
 }
 function collectFiles(value) {
-  const root = absPath(value)
-  if (!existsSync(root)) return []
+  const root = workspaceReadTarget(value, { expectedType: 'directory', purpose: 'evidence-subtree-read' })
+  if (root === null) return []
+  assertNoPhysicalLink(root.path)
   const output = []
   const visit = (directory) => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      const child = join(directory, entry.name)
+    const current = workspaceReadTarget(directory, { expectedType: 'directory', purpose: 'evidence-subtree-read' })
+    if (current === null) return
+    assertNoPhysicalLink(current.path)
+    for (const entry of readdirSync(current.path, { withFileTypes: true })) {
+      const child = join(current.path, entry.name)
+      if (entry.isSymbolicLink()) {
+        const error = new Error('拒绝W链接：' + child)
+        error.code = 'LINK_REJECTED'
+        throw error
+      }
+      assertNoPhysicalLink(child)
       if (entry.isDirectory()) visit(child)
-      else if (entry.isFile()) output.push(relPath(child))
+      else if (entry.isFile()) {
+        const file = workspaceReadTarget(child, { expectedType: 'file', purpose: 'evidence-file-read' })
+        if (file !== null) output.push(relPath(file.path))
+      } else {
+        const error = new Error('拒绝未知W目录项：' + child)
+        error.code = 'TARGET_TYPE'
+        throw error
+      }
     }
   }
-  visit(root)
+  visit(root.path)
   return output.sort()
 }
 
 function listExtraPlanDirectories(prefix) {
-  if (!existsSync(EXTRA_PLAN_DIR)) return []
-  return readdirSync(EXTRA_PLAN_DIR, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && entry.name.startsWith(prefix))
-    .map((entry) => '.extra-plan/' + entry.name)
-    .sort()
+  const extraPlan = workspaceReadTarget(EXTRA_PLAN_DIR, { expectedType: 'directory', purpose: 'extra-plan-prefix-read' })
+  if (extraPlan === null) return []
+  assertNoPhysicalLink(extraPlan.path)
+  const output = []
+  for (const entry of readdirSync(extraPlan.path, { withFileTypes: true })) {
+    const child = join(extraPlan.path, entry.name)
+    if (entry.isSymbolicLink()) {
+      const error = new Error('拒绝W链接：' + child)
+      error.code = 'LINK_REJECTED'
+      throw error
+    }
+    assertNoPhysicalLink(child)
+    if (!entry.isDirectory() || !entry.name.startsWith(prefix)) continue
+    const selected = workspaceReadTarget(child, { expectedType: 'directory', purpose: 'extra-plan-prefix-read' })
+    if (selected !== null) output.push(relPath(selected.path))
+  }
+  return output.sort()
 }
 function listExternalBatchDirectories(roots) {
   const output = []
   for (const root of unique(roots)) {
-    const absolute = absPath(root)
-    if (!existsSync(absolute)) continue
-    for (const entry of readdirSync(absolute, { withFileTypes: true })) {
-      if (entry.isDirectory() && /^(host-regression-|batch-)/.test(entry.name)) output.push(root + '/' + entry.name)
+    const selectedRoot = workspaceReadTarget(root, { expectedType: 'directory', purpose: 'external-batch-root-read' })
+    if (selectedRoot === null) continue
+    assertNoPhysicalLink(selectedRoot.path)
+    for (const entry of readdirSync(selectedRoot.path, { withFileTypes: true })) {
+      const child = join(selectedRoot.path, entry.name)
+      if (entry.isSymbolicLink()) {
+        const error = new Error('拒绝W链接：' + child)
+        error.code = 'LINK_REJECTED'
+        throw error
+      }
+      assertNoPhysicalLink(child)
+      if (!entry.isDirectory() || !/^(host-regression-|batch-)/.test(entry.name)) continue
+      const relativeChild = normalizeWorkspacePath(join(root, entry.name))
+      if (relativeChild === null) continue
+      const selected = workspaceReadTarget(relativeChild, { expectedType: 'directory', purpose: 'external-batch-root-read' })
+      if (selected !== null) output.push(relativeChild)
     }
   }
   return output.sort()
@@ -92,7 +289,9 @@ function listExternalBatchDirectories(roots) {
 function normalizeWorkspacePath(value) {
   const raw = String(value || '').trim()
   if (raw === '') return null
-  const candidate = relPath(resolve(ROOT, raw))
+  let target
+  try { target = workspaceTarget(raw, 'workspace-path-normalize') } catch { return null }
+  const candidate = relPath(target.path)
   if (candidate === '' || candidate === '.' || candidate === '..' || candidate.startsWith('../') || /^[A-Za-z]:/.test(candidate)) return null
   return candidate
 }
@@ -102,13 +301,15 @@ function isWithinPath(candidate, parent) {
 }
 function pathsOverlap(left, right) { return isWithinPath(left, right) || isWithinPath(right, left) }
 function directoryArtifact(path, classification) {
-  return { path, classification, exists: existsSync(absPath(path)), files: collectFiles(path).map(fileRecord) }
+  const target = workspaceReadTarget(path, { expectedType: 'directory', purpose: 'artifact-directory-read' })
+  return { path, classification, exists: target !== null, files: target === null ? [] : collectFiles(target.path).map(fileRecord) }
 }
 function parseBatchDirectoriesFromFiles(paths) {
   const output = []
   for (const path of unique(paths)) {
-    let text
-    try { text = readFileSync(absPath(path), 'utf8') } catch { continue }
+    const target = workspaceReadTarget(path, { expectedType: 'file', purpose: 'batch-log-read' })
+    if (target === null) continue
+    const text = readFileSync(target.path, 'utf8')
     for (const line of text.split(/\r?\n/)) {
       const match = line.match(/^BATCH_DIR=(.+)$/)
       if (!match) continue
@@ -123,10 +324,21 @@ function batchDirectoriesFromTrees(paths) {
   return parseBatchDirectoriesFromFiles(files)
 }
 function unique(values) { return [...new Set(values)] }
-function emptyLog(name) { writeFileSync(join(EVIDENCE_DIR, name), '', 'utf8') }
+function evidenceReadPath(name) {
+  const target = workspaceReadTarget(join(EVIDENCE_DIR, name), { expectedType: 'file', purpose: 'evidence-log-read' })
+  if (target === null) throw new Error('证据日志缺失：' + name)
+  return target.path
+}
+function evidenceFileExists(name) {
+  return workspaceReadTarget(join(EVIDENCE_DIR, name), { expectedType: 'file', purpose: 'evidence-log-check' }) !== null
+}
+function emptyLog(name) {
+  const target = workspaceWriteTarget(join(EVIDENCE_DIR, name), { expectedType: 'file', purpose: 'evidence-log-write' })
+  writeFileSync(target.path, '', 'utf8')
+}
 function logText(record) {
-  const stdout = readFileSync(join(EVIDENCE_DIR, record.stdoutFile), 'utf8')
-  const stderr = readFileSync(join(EVIDENCE_DIR, record.stderrFile), 'utf8')
+  const stdout = readFileSync(evidenceReadPath(record.stdoutFile), 'utf8')
+  const stderr = readFileSync(evidenceReadPath(record.stderrFile), 'utf8')
   return stdout + stderr
 }
 function markerCounts(text, markers) {
@@ -171,7 +383,7 @@ function classify(record, spec) {
     record.structuredSkips = record.structuredSkips.filter((item) => !(item !== null && typeof item === 'object' && item.scope === 'HOST-VERSION'))
   }
   record.blockingLines = blockingLines(text)
-  if (record.notStarted === true || record.spawnError !== null || record.timedOut === true || record.exitCode === null || !existsSync(join(EVIDENCE_DIR, record.stdoutFile)) || !existsSync(join(EVIDENCE_DIR, record.stderrFile))) return 'NOT-RUN'
+  if (record.notStarted === true || record.spawnError !== null || record.timedOut === true || record.exitCode === null || !evidenceFileExists(record.stdoutFile) || !evidenceFileExists(record.stderrFile)) return 'NOT-RUN'
   if (record.exitCode !== 0 || record.blockingLines.length > 0 || missing.length > 0) return 'FAIL'
   if (record.id === '14-one-key-step' && /部分执行/i.test(text)) {
     record.humanFindings.push({ record: record.id, scope: 'ONE-KEY-SUMMARY', reason: '一键汇总含环境 junction 部分执行；不替代必需原始命令', state: 'HUMAN' })
@@ -186,8 +398,8 @@ function notStarted(spec, phase, sequence, reason) {
   const files = commandFiles(spec.id)
   emptyLog(files.stdoutFile)
   emptyLog(files.stderrFile)
-  const emptyStdoutHash = sha256File(join(EVIDENCE_DIR, files.stdoutFile))
-  const emptyStderrHash = sha256File(join(EVIDENCE_DIR, files.stderrFile))
+  const emptyStdoutHash = sha256File(evidenceReadPath(files.stdoutFile))
+  const emptyStderrHash = sha256File(evidenceReadPath(files.stderrFile))
   const record = {
     id: spec.id,
     phase,
@@ -215,8 +427,8 @@ function notStarted(spec, phase, sequence, reason) {
 }
 function runCommand(spec, phase, sequence) {
   const files = commandFiles(spec.id)
-  const stdoutPath = join(EVIDENCE_DIR, files.stdoutFile)
-  const stderrPath = join(EVIDENCE_DIR, files.stderrFile)
+  const stdoutPath = workspaceWriteTarget(join(EVIDENCE_DIR, files.stdoutFile), { expectedType: 'file', purpose: 'command-stdout-write' }).path
+  const stderrPath = workspaceWriteTarget(join(EVIDENCE_DIR, files.stderrFile), { expectedType: 'file', purpose: 'command-stderr-write' }).path
   const stdoutFd = openSync(stdoutPath, 'w')
   const stderrFd = openSync(stderrPath, 'w')
   const startTime = new Date().toISOString()
@@ -404,11 +616,39 @@ function commandSummary(record) {
   return { id: record.id, phase: record.phase, sequence: record.sequence, command: record.command, cwd: record.cwd, status: record.status, exitCode: record.exitCode, timeout: record.timedOut, notRunReason: record.notRunReason || null, evidenceFiles: [record.stdoutFile, record.stderrFile, record.metaFile], missingMarkers: record.missingMarkers || [], markerCounts: record.markerCounts || {} }
 }
 
+// G6 round1 fixture-only boundary probe: exercises the same explicit Host child-path proof
+// without creating the no-remount evidence batch or running any regression command.
+if (process.argv.includes('--boundary-only')) {
+  const index = process.argv.indexOf('--relative')
+  const relativePath = index >= 0 ? process.argv[index + 1] : undefined
+  if (relativePath === undefined || relativePath.startsWith('--')) {
+    console.error('M46_BOUNDARY_USAGE=--boundary-only --relative <package-relative-file>')
+    process.exit(2)
+  }
+  try {
+    const record = hostFileRecord(relativePath)
+    console.log('M46_BOUNDARY_RECORD=' + JSON.stringify(record))
+    process.exit(record.exists === true ? 0 : 2)
+  } catch (error) {
+    console.error('M46_BOUNDARY_REJECT=' + (error instanceof Error ? error.message : String(error)))
+    process.exit(1)
+  }
+}
+
 const runId = timestamp() + '-' + process.pid + '-' + randomBytes(4).toString('hex')
 const evidenceName = '证据-no-remount-' + runId
-const EVIDENCE_DIR = join(EXTRA_PLAN_DIR, evidenceName)
-if (existsSync(EVIDENCE_DIR)) throw new Error('evidence directory collision: ' + EVIDENCE_DIR)
-const officialRuntimeBoundaryBefore = OFFICIAL_RUNTIME_BOUNDARY_PATHS.map(fileRecord)
+const evidenceRelativePath = '.extra-plan/' + evidenceName
+const evidenceTarget = resolveWorkspacePath(W_PATH_CONTEXT, evidenceRelativePath, { purpose: 'evidence-root-write' })
+const evidencePrepared = prepareWriteTarget(W_PATH_CONTEXT, evidenceTarget, { purpose: 'evidence-root-write' })
+if (evidencePrepared.parentPath) assertNoPhysicalLink(evidencePrepared.parentPath)
+if (evidencePrepared.exists) throw new Error('evidence directory collision: ' + evidenceRelativePath)
+mkdirSync(evidencePrepared.path, { recursive: false })
+const evidenceRead = validateReadTarget(W_PATH_CONTEXT, evidenceTarget, { expectedType: 'directory', purpose: 'evidence-root-read' })
+const EVIDENCE_DIR = evidenceRead.realPath
+const officialRuntimeBoundaryBefore = INSTALL_ROOT_STATE.status === 'PASS'
+  ? OFFICIAL_RUNTIME_RELATIVE_PATHS.map(hostFileRecord)
+  : []
+const officialRuntimeBoundarySnapshot = officialRuntimeBoundaryInput(officialRuntimeBoundaryBefore)
 const protectedEvidenceDirectories = unique([OLD_EVIDENCE_DIR, ...listExtraPlanDirectories('证据-no-remount-')])
 const contextGateDirectoriesBefore = listExtraPlanDirectories('context-gate-')
 const baselineScanDirectories = unique([...protectedEvidenceDirectories, ...contextGateDirectoriesBefore])
@@ -416,11 +656,19 @@ const externalBatchDirectoriesBefore = unique([
   ...batchDirectoriesFromTrees(baselineScanDirectories),
   ...listExternalBatchDirectories(contextGateDirectoriesBefore),
 ])
-mkdirSync(EVIDENCE_DIR, { recursive: true })
-
-const backupNames = existsSync(EXTRA_PLAN_DIR)
-  ? readdirSync(EXTRA_PLAN_DIR, { withFileTypes: true }).filter((entry) => entry.isDirectory() && (entry.name.startsWith('backup-no-remount-evidence-') || entry.name.startsWith('BACKUP-唯一settings-'))).map((entry) => entry.name).sort()
-  : []
+const extraPlanDirectory = workspaceReadTarget(EXTRA_PLAN_DIR, { expectedType: 'directory', purpose: 'backup-directory-read' })
+if (extraPlanDirectory === null) throw new Error('维护W缺少.extra-plan目录')
+const backupNames = readdirSync(extraPlanDirectory.path, { withFileTypes: true })
+  .filter((entry) => {
+    if (entry.isSymbolicLink()) {
+      const error = new Error('拒绝W链接：' + join(extraPlanDirectory.path, entry.name))
+      error.code = 'LINK_REJECTED'
+      throw error
+    }
+    return entry.isDirectory() && (entry.name.startsWith('backup-no-remount-evidence-') || entry.name.startsWith('BACKUP-唯一settings-'))
+  })
+  .map((entry) => '.extra-plan/' + entry.name)
+  .sort()
 const backupCandidates = backupNames.filter((name) => {
   const manifest = readJson('.extra-plan/' + name + '/BACKUP-MANIFEST.json')
   const sources = Array.isArray(manifest?.sources) ? manifest.sources : []
@@ -469,7 +717,7 @@ const sourceManifest = {
   preExistingGitStatus: backupManifest?.gitStatusObserved || [],
   files: sourceFiles,
   backupFiles,
-  officialRuntimeBoundary: { ...OFFICIAL_RUNTIME_BOUNDARY_POLICY, before: officialRuntimeBoundaryBefore },
+  officialRuntimeBoundary: officialRuntimeBoundarySnapshot,
 }
 writeJson('SOURCE-MANIFEST.json', sourceManifest)
 
@@ -511,11 +759,9 @@ const boundaryBaseline = {
   files: boundaryFiles.map(fileRecord),
   directories: boundaryDirectories,
   reportProbe: fileRecord(REPORT_PROBE),
-  officialRuntimeBoundary: { ...OFFICIAL_RUNTIME_BOUNDARY_POLICY, before: officialRuntimeBoundaryBefore },
+  officialRuntimeBoundary: officialRuntimeBoundarySnapshot,
 }
 writeJson('BOUNDARY-BASELINE.json', boundaryBaseline)
-const protectedCodeMapPath = 'pe-test/docs/ai-代码地图.md'
-const protectedCodeMapBytes = existsSync(absPath(protectedCodeMapPath)) ? readFileSync(absPath(protectedCodeMapPath)) : undefined
 
 const jsonCheckCode = "const fs=require('node:fs');for(const p of ['plugins/dsh-extra-plan/package.json','plugins/dsh-extra-plan-qqbot/package.json'])JSON.parse(fs.readFileSync(p,'utf8'));console.log('JSON_OK 2')"
 const noHomeCode = "const s=require('node:fs').readFileSync('plugins/dsh-extra-plan/lib/qqbot-settings-sync.js','utf8');if(/from\\s+['\"]node:os['\"]|homedir\\s*\\(|['\"]\\.dsh['\"]/.test(s))process.exit(1);console.log('NO_HOME_GUESS_OK')"
@@ -534,6 +780,10 @@ const staticChecks = [
   { id: 'STATIC-10-core-zero-awareness', command: 'node -e "' + coreCode + '"', argv: ['-e', coreCode], requiredMarkers: ['CORE_ZERO_AWARENESS_OK'] },
   { id: 'STATIC-11-preset-counts', command: 'node --input-type=module -e "' + presetCountCode + '"', argv: ['--input-type=module', '-e', presetCountCode], requiredMarkers: ['HOT=8 RESTART=2'] },
 ]
+const temporaryCodeMapTarget = workspaceWriteTarget(join(EVIDENCE_DIR, 'ai-代码地图.tmp.md'), { expectedType: 'file', purpose: 'temporary-code-map-write' })
+if (temporaryCodeMapTarget.proof.exists) throw new Error('temporary code map collision: ' + temporaryCodeMapTarget.path)
+const temporaryCodeMapPath = relPath(temporaryCodeMapTarget.path)
+
 const fixedCommands = [
   { id: '01-settings-test', command: 'node pe-test/tools/step-01-设置页配置.mjs', argv: ['pe-test/tools/step-01-设置页配置.mjs'], requiredMarkers: ['API_ADAPTER_THROW_COMPLETE_PATCH_SETTLED_BEFORE_FAILURE_OK', 'API_ADAPTER_REJECT_COMPLETE_PATCH_SETTLED_BEFORE_FAILURE_OK', 'API_ADAPTER_HANG_COMPLETE_PATCH_SETTLED_BEFORE_RESOLVE_OK', 'SETTINGS_ONLY_HTTP_SAVE_ADAPTER_REGISTER_0_DISPOSE_0', 'HOST_PROXY_MATRIX_COMPLETE_OK', 'HOST_PROXY_NORMAL_SETTLED_CTX_GET_OK', 'HOST_PROXY_NEGATIVE_BOUNDARIES_EXPLICIT_OK', 'SETTINGS_ROW_UNIQUE_OR_CONFLICT_EXPLICIT_OK', 'SAVE_RUN_ID_TERMINAL_HASH_MATCH_OK', 'PATCH_MTIME_MANAGED_HASH_COMPARE_OK', 'FULL_SNAPSHOT_10_PLUS_7_EACH_TRIGGER_OK', 'CREATIVE_PERSISTED_BEFORE_RESTART_OK', 'HOT=8 RESTART=2'] },
   { id: '02-install-sync-test', command: 'node pe-test/tools/step-01-安装同步.mjs', argv: ['pe-test/tools/step-01-安装同步.mjs'], requiredMarkers: ['SETTINGS_ONLY_NO_REMOUNT_STATIC_OK', 'SETTINGS_ONLY_ADAPTER_REGISTER_0_DISPOSE_0_OK', 'FIXTURE_ADAPTER_THROW_COMPLETE_PATCH_SETTLED_BEFORE_FAILURE_OK', 'FIXTURE_ADAPTER_REJECT_COMPLETE_PATCH_SETTLED_BEFORE_FAILURE_OK', 'FIXTURE_ADAPTER_HANG_COMPLETE_PATCH_SETTLED_BEFORE_RESOLVE_OK'] },
@@ -546,7 +796,7 @@ const fixedCommands = [
   { id: '09-step-06-08', command: 'node pe-test/tools/step-06-08-v4取证回归.mjs', argv: ['pe-test/tools/step-06-08-v4取证回归.mjs'], requiredMarkers: [] },
   { id: '10-step-06-clues', command: 'node pe-test/tools/step-06-线索落盘.mjs', argv: ['pe-test/tools/step-06-线索落盘.mjs'], requiredMarkers: [] },
   { id: '11-runtime-defaults-check', command: 'node plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs --check', argv: ['plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs', '--check'], requiredMarkers: [] },
-  { id: '12-code-map-generate', command: 'node pe-test/tools/代码地图生成.mjs', argv: ['pe-test/tools/代码地图生成.mjs'], requiredMarkers: [] },
+  { id: '12-code-map-generate', command: 'node pe-test/tools/代码地图生成.mjs --map ' + temporaryCodeMapPath, argv: ['pe-test/tools/代码地图生成.mjs', '--map', temporaryCodeMapPath], requiredMarkers: [] },
   { id: '13-code-map-check', command: 'node pe-test/tools/代码地图生成.mjs --check', argv: ['pe-test/tools/代码地图生成.mjs', '--check'], requiredMarkers: [] },
   { id: '14-one-key-step', command: 'node pe-test/tools/一键step测试.mjs', argv: ['pe-test/tools/一键step测试.mjs'], requiredMarkers: [], required: false },
 ]
@@ -572,7 +822,7 @@ for (let index = 0; index < fixedCommands.length; index += 1) {
   const record = preflightBlocked ? notStarted(spec, 'regression', index + 1, 'preflight-short-circuit') : runCommand(spec, 'regression', index + 1)
   allRecords.push(record)
 }
-if (protectedCodeMapBytes !== undefined) writeFileSync(absPath(protectedCodeMapPath), protectedCodeMapBytes)
+
 
 const officialRuntimeBoundary = officialRuntimeBoundaryPost(officialRuntimeBoundaryBefore)
 sourceManifest.officialRuntimeBoundary = officialRuntimeBoundary
@@ -603,7 +853,7 @@ const summaryLines = [
   '- cwd: ' + CWD,
   '- AUTO_REGRESSION_PASS=' + (autoPass ? 'YES' : 'NO'),
   '- SOURCE_BOUNDARY_HASH_MATCH=' + (sourceOrBoundaryFailure ? 'NO' : 'YES'),
-  '- OFFICIAL_RUNTIME_BOUNDARY_HASH_PASS=' + (officialRuntimeBoundary.allMatch ? 'YES' : 'NO'),
+  '- OFFICIAL_RUNTIME_BOUNDARY_HASH_PASS=' + officialBoundaryMarker(officialRuntimeBoundary),
   '- OFFICIAL_RUNTIME_BOUNDARY_READ_ONLY=YES (no production behavior claim)',
   '- EVIDENCE_LOG_HASH_MATCH=' + (hashCheck.allMatch ? 'YES' : 'NO'),
   '- BACKUP_SOURCES_MATCH=' + (sourceManifest.backupVerification.allMatch ? 'YES' : 'NO'),
@@ -679,7 +929,7 @@ console.log('NO_REMOUNT_EVIDENCE_RUN_ID=' + runId)
 console.log('NO_REMOUNT_EVIDENCE_DIR=' + evidenceName)
 console.log('NO_REMOUNT_STATUS_COUNTS=' + JSON.stringify(counts))
 console.log('NO_REMOUNT_SOURCE_BOUNDARY_HASH_MATCH=' + (sourceOrBoundaryFailure ? 'NO' : 'YES'))
-console.log('NO_REMOUNT_OFFICIAL_RUNTIME_BOUNDARY_HASH_PASS=' + (officialRuntimeBoundary.allMatch ? 'YES' : 'NO'))
+console.log('NO_REMOUNT_OFFICIAL_RUNTIME_BOUNDARY_HASH_PASS=' + officialBoundaryMarker(officialRuntimeBoundary))
 console.log('NO_REMOUNT_EVIDENCE_HASH_MATCH=' + (hashCheck.allMatch ? 'YES' : 'NO'))
 console.log('AUTO_REGRESSION_PASS=' + (autoPass ? 'YES' : 'NO'))
 if (counts.FAIL > 0 || counts['NOT-RUN'] > 0 || sourceOrBoundaryFailure || preflightBlocked) process.exitCode = 1

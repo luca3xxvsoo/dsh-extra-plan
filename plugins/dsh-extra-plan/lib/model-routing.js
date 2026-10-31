@@ -313,7 +313,7 @@ async function resolvePlannerEntryLegacy(agent) {
   let model
   let maxTokens
   try {
-    const targetModel = getPlannerModel()
+    const targetModel = getPlannerModel(agent)
     const parentSession = agent.session.header.parentSession
     if (typeof parentSession === 'string') {
       const agents = getAgents()
@@ -348,7 +348,9 @@ async function resolvePlannerEntryLegacy(agent) {
       if (decision.use) model = targetModel
       if (decision.diag !== null) {
         try {
-          appendFileSync(getDiagPath(), JSON.stringify({
+          const diagPath = getDiagPath(agent)
+          if (typeof diagPath !== 'string' || diagPath === '') return { provider, model, maxTokens }
+          appendFileSync(diagPath, JSON.stringify({
             ts: new Date().toISOString(),
             type: 'degrade',
             sessionId: agent.session !== undefined && agent.session !== null && agent.session.header !== undefined ? agent.session.header.id : '',
@@ -371,7 +373,7 @@ async function resolvePlannerEntryStrict(agent, parentSignal) {
   let provider
   let model
   let maxTokens
-  const targetModel = getPlannerModel()
+  const targetModel = getPlannerModel(agent)
   try {
     const parentSession = agent.session.header.parentSession
     if (typeof parentSession === 'string') {
@@ -419,7 +421,7 @@ async function resolvePlannerEntryStrict(agent, parentSignal) {
 function resolvePlannerEntry(agent, parentSignal) {
   const cached = plannerModelCache.get(agent)
   if (cached !== undefined) return cached
-  const crossProvider = getCrossProviderPlannerModel()
+  const crossProvider = getCrossProviderPlannerModel(agent)
   const pending = crossProvider
     ? resolvePlannerEntryStrict(agent, parentSignal)
     : resolvePlannerEntryLegacy(agent)
@@ -449,7 +451,7 @@ function nonPlannerFallbackEntry(sources, probe) {
 async function resolveOtherAgentEntryLegacy(agent, probe) {
   const sources = nonPlannerRouteSources(agent)
   const fallback = nonPlannerFallbackEntry(sources, probe)
-  const targetModel = getOtherAgentModel()
+  const targetModel = getOtherAgentModel(agent)
   if (fallback === null || targetModel === '' || fallback.provider === undefined) return fallback || {}
   let llm
   try { llm = getLlm() } catch (error) { llm = undefined }
@@ -470,7 +472,7 @@ async function resolveOtherAgentEntryLegacy(agent, probe) {
 async function resolveOtherAgentEntryStrict(agent, parentSignal, probe) {
   const sources = nonPlannerRouteSources(agent)
   const fallback = nonPlannerFallbackEntry(sources, probe)
-  const targetModel = getOtherAgentModel()
+  const targetModel = getOtherAgentModel(agent)
   if (fallback === null) {
     if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
     throw new Error(NON_PLANNER_BLOCKED_REASON)
@@ -498,7 +500,7 @@ async function resolveOtherAgentEntryStrict(agent, parentSignal, probe) {
 function resolveOtherAgentEntry(agent, parentSignal, probe) {
   const cached = otherAgentModelCache.get(agent)
   if (cached !== undefined) return cached
-  const crossProvider = getCrossProviderPlannerModel()
+  const crossProvider = getCrossProviderPlannerModel(agent)
   const pending = crossProvider
     ? resolveOtherAgentEntryStrict(agent, parentSignal, probe)
     : resolveOtherAgentEntryLegacy(agent, probe)

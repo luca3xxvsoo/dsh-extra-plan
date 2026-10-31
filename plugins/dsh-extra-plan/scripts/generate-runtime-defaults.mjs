@@ -4,14 +4,25 @@
 // （用 --- 分隔多文档；personaPrefix 逐字搬运，extra-plan 行 config 从主 definition 同 id 行逐字复制，
 // plugins 列表末尾固定追加恰一行 tool-presentation，config.mode 取主 definition 同 id 行的默认值）。
 
-import { constants as fsConstants, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
+import { constants as fsConstants, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createPathContext, prepareWriteTarget, resolveHostPath, resolveWorkspacePath, validateReadTarget } from '../lib/path-policy.js'
 import { SETTING_DEFINITIONS, normalizeSettingValue, parsePresetYaml, resolveTemplateSettingDefault, validateSettingValue } from '../lib/preset-settings.js'
 import { ROLE_IDS, ROLE_ORDERS } from '../lib/role-contract.js'
 import { Script } from 'node:vm'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
+function repositoryRootFromKnownLayout() {
+  const candidate = resolve(HERE, '..', '..', '..')
+  const required = [
+    join(candidate, 'pe-test'),
+    join(candidate, 'plugins'),
+    join(candidate, 'plugins', 'dsh-extra-plan', 'package.json'),
+  ]
+  return required.every((path) => existsSync(path)) ? candidate : null
+}
+const REPOSITORY_ROOT = repositoryRootFromKnownLayout()
 const PRESET_ASSET_DIR = resolve(HERE, '..', 'assets', 'presets', 'extra-plan')
 export const DEFAULT_SOURCE = resolve(PRESET_ASSET_DIR, 'agent.cordis.yml')
 export const DEFAULT_OUTPUT = resolve(HERE, '..', 'lib', 'preset-defaults.generated.js')
@@ -554,36 +565,154 @@ function publishGeneratedOutputs(entries, fsOps) {
 }
 
 
+function generatorPathContext(options) {
+  if (options.pathContext !== undefined) return options.pathContext
+  return createPathContext({
+    workspaceRoot: options.workspaceRoot === undefined ? REPOSITORY_ROOT : options.workspaceRoot,
+    hostDataRoot: options.hostDataRoot,
+    hostCapabilities: options.hostCapabilities,
+  })
+}
+
+function inputPathSpec(options, prefix) {
+  const kind = options[prefix + 'Kind'] === undefined ? 'workspace' : options[prefix + 'Kind']
+  if (kind !== 'workspace' && kind !== 'host') throw new Error('生成器 ' + prefix + 'Kind 必须为 workspace 或 host')
+  const pathOptions = {}
+  if (options[prefix + 'Capability'] !== undefined) pathOptions.capability = options[prefix + 'Capability']
+  if (options[prefix + 'Purpose'] !== undefined) pathOptions.purpose = options[prefix + 'Purpose']
+  return { kind, pathOptions }
+}
+
+function readGeneratorInput(context, value, options, prefix) {
+  const spec = inputPathSpec(options, prefix)
+  const candidate = spec.kind === 'host'
+    ? resolveHostPath(context, value, spec.pathOptions)
+    : resolveWorkspacePath(context, value, spec.pathOptions)
+  return validateReadTarget(context, candidate, { expectedType: 'file' }).path
+}
+
+function pathEntryExists(path) {
+  try {
+    lstatSync(path)
+    return true
+  } catch (error) {
+    if (error !== null && typeof error === 'object' && (error.code === 'ENOENT' || error.code === 'ENOTDIR')) return false
+    throw error
+  }
+}
+
+function ensureWorkspaceOutputParent(context, target) {
+  let cursor = dirname(target.path)
+  const missing = []
+  while (!pathEntryExists(cursor)) {
+    const parent = dirname(cursor)
+    if (parent === cursor) throw new Error('生成目标父路径不可解析：' + target.path)
+    missing.push(cursor)
+    cursor = parent
+  }
+  validateReadTarget(context, resolveWorkspacePath(context, cursor, { purpose: 'generator-output' }), { expectedType: 'directory' })
+  for (const directory of missing.reverse()) {
+    mkdirSync(directory)
+    validateReadTarget(context, resolveWorkspacePath(context, directory, { purpose: 'generator-output' }), { expectedType: 'directory' })
+  }
+}
+
+function generatorOutputTarget(context, value, options, prefix, check) {
+  const spec = inputPathSpec(options, prefix)
+  if (!check && spec.kind !== 'workspace') throw new Error('生成器非check输出必须为 workspace')
+  const pathOptions = { ...spec.pathOptions, purpose: spec.pathOptions.purpose === undefined ? 'generator-output' : spec.pathOptions.purpose }
+  const target = spec.kind === 'host'
+    ? resolveHostPath(context, value, pathOptions)
+    : resolveWorkspacePath(context, value, pathOptions)
+  return { ...target, kind: spec.kind, outputCapability: spec.pathOptions.capability === undefined ? null : spec.pathOptions.capability }
+}
+
+function outputEntryTarget(context, entry) {
+  const kind = entry.kind === undefined ? 'workspace' : entry.kind
+  const pathOptions = {
+    ...(entry.capability === undefined || entry.capability === null ? {} : { capability: entry.capability }),
+    purpose: entry.purpose === undefined ? 'generator-output' : entry.purpose,
+  }
+  const target = kind === 'host'
+    ? resolveHostPath(context, entry.path, pathOptions)
+    : resolveWorkspacePath(context, entry.path, pathOptions)
+  return { ...target, kind }
+}
+
+function authorizeOutputEntries(context, entries, check) {
+  return entries.map((entry) => {
+    const target = outputEntryTarget(context, entry)
+    if (check) {
+      validateReadTarget(context, target, { expectedType: 'file', purpose: 'generator-output' })
+    } else {
+      if (target.kind !== 'workspace') throw new Error('生成器非check输出必须为 workspace')
+      prepareWriteTarget(context, target, { expectedType: 'file', purpose: 'generator-output' })
+      ensureWorkspaceOutputParent(context, target)
+      prepareWriteTarget(context, target, { expectedType: 'file', purpose: 'generator-output' })
+    }
+    return { ...entry, path: target.path }
+  })
+}
+
+function outputMetadata(target) {
+  if (target === null) return {}
+  const capability = target.outputCapability === null || target.outputCapability === undefined ? target.capability : target.outputCapability
+  return {
+    kind: target.kind,
+    ...(capability === null || capability === undefined ? {} : { capability }),
+    purpose: target.purpose,
+  }
+}
+
 /**
  * @param options.sourcePath / outputPath 自定义夹具路径时，默认不触碰仓库 definition 资产。
+ * @param options.workspaceRoot 工作区根；缺省为本包所在维护根。所有输出及暂存/备份只能落在此根。
+ * @param options.hostDataRoot / hostCapabilities 可选的明确 Host 只读输入上下文。
+ * @param options.sourceKind / metaSourceKind / clientSourceKind 输入类别，默认 workspace；host 必须有明确 Host 根或 capability。
+ * @param options.outputKind / definitionOutputKind / roleDefinitionDirKind / clientOutputKind：仅 --check 可取 host，普通生成强制 workspace。
  * @param options.definitionOutputPath 显式 definition 路径；传 null 关闭 definition 生成。
  * @param options.roleDefinitionDir 显式角色产出目录；传 null 关闭角色生成（角色作者源即 sourcePath 的第二文档）。
  */
 export function generateRuntimeDefaults(options = {}) {
+  const pathContext = generatorPathContext(options)
   const sourcePath = options.sourcePath === undefined ? DEFAULT_SOURCE : options.sourcePath
   const outputPath = options.outputPath === undefined ? DEFAULT_OUTPUT : options.outputPath
   const metaSourcePath = options.metaSourcePath === undefined ? DEFAULT_META_SOURCE : options.metaSourcePath
   const check = options.check === true
-  const source = resolve(sourcePath)
-  const output = resolve(outputPath)
-  const metaSource = resolve(metaSourcePath)
+  const source = readGeneratorInput(pathContext, sourcePath, options, 'source')
+  const outputTarget = generatorOutputTarget(pathContext, outputPath, options, 'output', check)
+  const output = outputTarget.path
+  const metaSource = readGeneratorInput(pathContext, metaSourcePath, options, 'metaSource')
   const usesRepositoryDefaults = source === DEFAULT_SOURCE && output === DEFAULT_OUTPUT
-  const definitionOutput = options.definitionOutputPath === undefined
+  const definitionOutputValue = options.definitionOutputPath === undefined
     ? (usesRepositoryDefaults ? DEFAULT_DEFINITION_OUTPUT : null)
-    : (options.definitionOutputPath === null ? null : resolve(options.definitionOutputPath))
-  const roleDir = options.roleDefinitionDir === undefined
+    : options.definitionOutputPath
+  const definitionOutputTarget = definitionOutputValue === null
+    ? null
+    : generatorOutputTarget(pathContext, definitionOutputValue, options, 'definitionOutput', check)
+  const definitionOutput = definitionOutputTarget === null ? null : definitionOutputTarget.path
+  const roleDirValue = options.roleDefinitionDir === undefined
     ? (definitionOutput === null ? null : (usesRepositoryDefaults ? PRESET_ASSET_DIR : null))
-    : (options.roleDefinitionDir === null ? null : resolve(options.roleDefinitionDir))
+    : options.roleDefinitionDir
+  const roleDirTarget = roleDirValue === null
+    ? null
+    : generatorOutputTarget(pathContext, roleDirValue, options, 'roleDefinitionDir', check)
+  const roleDir = roleDirTarget === null ? null : roleDirTarget.path
   const clientOptionSelected = options.clientSourcePath !== undefined || options.clientOutputPath !== undefined
-  const clientOutput = options.clientOutputPath === undefined
+  const clientOutputValue = options.clientOutputPath === undefined
     ? (usesRepositoryDefaults && !clientOptionSelected ? DEFAULT_CLIENT_OUTPUT : null)
-    : (options.clientOutputPath === null ? null : resolve(options.clientOutputPath))
+    : options.clientOutputPath
+  const clientOutputTarget = clientOutputValue === null
+    ? null
+    : generatorOutputTarget(pathContext, clientOutputValue, options, 'clientOutput', check)
+  const clientOutput = clientOutputTarget === null ? null : clientOutputTarget.path
   let clientSource = null
   if (clientOutput !== null) {
-    clientSource = options.clientSourcePath === undefined
+    const clientSourcePath = options.clientSourcePath === undefined
       ? (usesRepositoryDefaults && !clientOptionSelected ? DEFAULT_CLIENT_OUTPUT : null)
-      : (options.clientSourcePath === null ? null : resolve(options.clientSourcePath))
-    if (clientSource === null) throw new Error('客户端输出已启用但未提供 clientSourcePath')
+      : options.clientSourcePath
+    if (clientSourcePath === null) throw new Error('客户端输出已启用但未提供 clientSourcePath')
+    clientSource = readGeneratorInput(pathContext, clientSourcePath, options, 'clientSource')
   }
   // 角色作者源与主预设同文件：第二文档由同一份 sourceText 切分，不再读独立文件。
   const roleSource = roleDir === null ? null : source
@@ -608,17 +737,18 @@ export function generateRuntimeDefaults(options = {}) {
     renderedClient = renderClientFields(clientText, SETTING_DEFINITIONS)
     new Script(renderedClient, { filename: clientSource })
   }
-  const roleOutputs = renderedRoles.map((role) => resolve(roleDefinitionFile(role.roleId, roleDir)))
-  const outputEntries = normalizedOutputEntries([
-    { path: output, content: rendered, label: 'generated output' },
-    ...(definitionOutput === null ? [] : [{ path: definitionOutput, content: renderedDefinition, label: 'generated preset definition' }]),
+  const roleOutputs = renderedRoles.map((role) => roleDefinitionFile(role.roleId, roleDir))
+  const outputEntries = authorizeOutputEntries(pathContext, normalizedOutputEntries([
+    { path: output, content: rendered, label: 'generated output', ...outputMetadata(outputTarget) },
+    ...(definitionOutputTarget === null ? [] : [{ path: definitionOutput, content: renderedDefinition, label: 'generated preset definition', ...outputMetadata(definitionOutputTarget) }]),
     ...renderedRoles.map((role, index) => ({
       path: roleOutputs[index],
       content: role.text,
       label: 'generated role definition ' + role.roleId,
+      ...outputMetadata(roleDirTarget),
     })),
-    ...(renderedClient === null ? [] : [{ path: clientOutput, content: renderedClient, label: 'generated client' }]),
-  ])
+    ...(clientOutputTarget === null ? [] : [{ path: clientOutput, content: renderedClient, label: 'generated client', ...outputMetadata(clientOutputTarget) }]),
+  ]), check)
   if (check) {
     for (const entry of outputEntries) checkOutput(entry.path, entry.content, entry.label)
     return { source, output, metaSource, definitionOutput, roleSource, roleOutputs, clientSource, clientOutput, rendered, renderedDefinition, renderedRoles, renderedClient, changed: false }

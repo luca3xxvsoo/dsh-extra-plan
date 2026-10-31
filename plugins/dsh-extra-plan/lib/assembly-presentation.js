@@ -1,9 +1,9 @@
 // A/C/M 与 skill catalog 的静态投影 helper：只读输入，不修改 registry/result。
 // SDK renderer 的模块级 import promise 刻意共享；宿主现场读取留在本模块。
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
-import { homedir } from 'node:os'
+import { existsSync, readFileSync } from 'node:fs'
+import { isAbsolute } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { createRequire } from 'node:module'
 
 // creativeMode=false 只改变模型可见投影；registry 绑定和 runtime 安全边界保持不变。
 // 下方显式宿主列表是静态宿主值回归的比对来源。
@@ -151,52 +151,72 @@ export function sdkSchemasForRendering(schemas) {
     }))
 }
 
-export function dshToolsEntryCandidates() {
-  const dshHome = process.env.DSH_HOME || join(homedir(), '.dsh')
-  const candidates = [
-    join(dshHome, 'profiles', 'web', 'node_modules', '@deepseek-ai', 'dsh-tools', 'lib', 'index.js'),
-  ]
-  if (process.platform === 'win32') {
-    const appData = process.env.APPDATA || join(homedir(), 'AppData', 'Roaming')
-    candidates.push(join(appData, 'npm', 'node_modules', '@deepseek-ai', 'dsh', 'node_modules', '@deepseek-ai', 'dsh-tools', 'lib', 'index.js'))
-  } else {
-    candidates.push(
-      join('/usr', 'local', 'lib', 'node_modules', '@deepseek-ai', 'dsh', 'node_modules', '@deepseek-ai', 'dsh-tools', 'lib', 'index.js'),
-      join(homedir(), '.npm-global', 'lib', 'node_modules', '@deepseek-ai', 'dsh', 'node_modules', '@deepseek-ai', 'dsh-tools', 'lib', 'index.js'),
-      join(homedir(), 'node_modules', '@deepseek-ai', 'dsh', 'node_modules', '@deepseek-ai', 'dsh-tools', 'lib', 'index.js'),
-    )
-  }
-  return [...new Set(candidates)]
+function errorWithCause(message, cause) {
+  const error = new Error(message)
+  error.cause = cause
+  return error
 }
 
-let sdkRendererModulePromise
-export function loadSdkRendererModule() {
-  if (sdkRendererModulePromise === undefined) {
-    const pending = (async () => {
-      for (const entry of dshToolsEntryCandidates()) {
-        if (existsSync(entry)) return import(pathToFileURL(entry).href)
+function assertInstallAnchor(installAnchor) {
+  if (typeof installAnchor !== 'string' || installAnchor.trim() === '' || !isAbsolute(installAnchor) || installAnchor.split(/[\\/]/).pop() !== 'package.json') {
+    throw new Error('extra-plan: installAnchor 必须是绝对 dsh 应用 package.json 文件')
+  }
+  if (!existsSync(installAnchor)) throw new Error('extra-plan: installAnchor 不存在：' + installAnchor)
+  let manifest
+  try {
+    manifest = JSON.parse(readFileSync(installAnchor, 'utf8'))
+  } catch (cause) {
+    throw errorWithCause('extra-plan: installAnchor manifest 无法读取：' + installAnchor, cause)
+  }
+  if (manifest === null || typeof manifest !== 'object' || manifest.name !== '@deepseek-ai/dsh') {
+    throw new Error('extra-plan: installAnchor 不是 @deepseek-ai/dsh 应用 package.json：' + installAnchor)
+  }
+  return installAnchor
+}
+
+export function dshToolsEntryCandidates(installAnchor) {
+  const anchor = assertInstallAnchor(installAnchor)
+  try {
+    return [createRequire(anchor).resolve('@deepseek-ai/dsh-tools')]
+  } catch (cause) {
+    throw errorWithCause('extra-plan: 无法从 installAnchor 解析 @deepseek-ai/dsh-tools：' + anchor, cause)
+  }
+}
+
+const sdkRendererModulePromises = new Map()
+export function loadSdkRendererModule(installAnchor) {
+  const anchor = assertInstallAnchor(installAnchor)
+  const cached = sdkRendererModulePromises.get(anchor)
+  if (cached !== undefined) return cached
+  const pending = (async () => {
+    let importCause
+    for (const entry of dshToolsEntryCandidates(anchor)) {
+      try {
+        return await import(pathToFileURL(entry).href)
+      } catch (cause) {
+        importCause = cause
       }
-      throw new Error('extra-plan: dsh-tools SDK renderer is unavailable')
-    })()
-    sdkRendererModulePromise = pending
-    pending.catch(() => {
-      if (sdkRendererModulePromise === pending) sdkRendererModulePromise = undefined
-    })
-  }
-  return sdkRendererModulePromise
+    }
+    throw errorWithCause('extra-plan: dsh-tools SDK renderer 不可用（installAnchor=' + anchor + '）', importCause)
+  })()
+  sdkRendererModulePromises.set(anchor, pending)
+  pending.catch(() => {
+    if (sdkRendererModulePromises.get(anchor) === pending) sdkRendererModulePromises.delete(anchor)
+  })
+  return pending
 }
 
-// 返回当前语言对应的官方 renderer 函数引用；模块 promise 仍保持模块级动态 import 缓存。
-export async function resolveToolsSdkRenderer(language = 'typescript') {
-  const rendererModule = await loadSdkRendererModule()
+// 返回当前语言对应的官方 renderer 函数引用；模块 promise 按 installAnchor 隔离缓存。
+export async function resolveToolsSdkRenderer(language = 'typescript', installAnchor) {
+  const rendererModule = await loadSdkRendererModule(installAnchor)
   const render = language === 'python' ? rendererModule.renderToolsSdkPy : rendererModule.renderToolsSdk
   if (typeof render !== 'function') throw new Error(`extra-plan: unsupported SDK renderer language ${language}`)
   return render
 }
 
 // 只接收已过滤 schema，整体调用官方 renderer 重建 tools:sdk，不从原始文本删块。
-export async function renderFilteredToolsSdk(schemas, language = 'typescript') {
-  const render = await resolveToolsSdkRenderer(language)
+export async function renderFilteredToolsSdk(schemas, language = 'typescript', installAnchor) {
+  const render = await resolveToolsSdkRenderer(language, installAnchor)
   return render(sdkSchemasForRendering(schemas))
 }
 

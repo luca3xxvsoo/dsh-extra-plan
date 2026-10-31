@@ -26,22 +26,23 @@
 ```
 node pe-test/tools/一键step测试.mjs
 ```
-→ 自动跑一键脚本 AUTO 数组中的全部自动判定项，结果保存到 `pe-test/reports/测试报告-<时间>.md`；历史批次数字不作为当前通过数。
+→ 自动跑一键脚本 AUTO 数组中的全部自动判定项（当前 14 项，以数组实际为准），按实际结果分级为通过/部分执行/未执行/失败，结果保存到 `pe-test/reports/测试报告-<时间>.md`；历史批次数字不作为当前通过数。
+→ 涉及 Host 代码依赖项时，须由调用者显式前置 `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/一键step测试.mjs`（仅授只读代码根，不授数据 H）；纯 W/只读取证工具直接 `node`；AUTO 不透传真实 Host 选择，实机/provider 项按 HUMAN/NOT-RUN 单列，不自动执行。
+→ 判读：中文「未完成」与英文 `INCOMPLETE` 均计入未完成；`NOT-RUN`/`HUMAN`/`SKIP` 正数不计 PASS；exit 0 只表示无失败，不等于全量执行。
 → 跑之前先确认：**在完整目录（pe-test 与 plugins 同级 = 仓库根）下运行**才有完整结果
 → QQBot 环境项默认只读真实 profile；缺环境或 junction 能力不足显示结构化 SKIP，不计失败，不会自动 heal/建链；报告末尾会列出「人眼项/需参数项」——那些需要你自己跑并人工判读，不是自动的；HUMAN 独立报告保留 stdout/stderr 全量原文
 
-**step-07 实机子代理取证（HUMAN，不能无参运行）**：一键体检用 `--session <顶层主会话ID>` 显式传入 `SESSION_ID`；直接运行脚本时按下方命令显式设置环境变量，并在同一部署配置快照下提供 `PLANNER_PROMPT_SUFFIX`（空串也要显式设置）：
+**step-07 实机子代理取证（HUMAN，不能无参运行）**：显式传会话参数对 `--session <顶层主会话ID>` 与 `--sessions-dir <会话根>`，并在同一部署配置快照下提供 `PLANNER_PROMPT_SUFFIX`（空串也要显式设置）；`SESSION_ID` 只作报告/输出字段，不作选择参数：
 ```powershell
-$env:SESSION_ID='<顶层主会话ID>'
 $env:PLANNER_PROMPT_SUFFIX='<同一部署快照的精确 suffix>'
-node pe-test/tools/step-07-子代理模型与引导取证.mjs
+node pe-test/tools/step-07-子代理模型与引导取证.mjs --session <顶层主会话ID> --sessions-dir <会话根> --discover-children --full
 ```
-共享 `session-finder/logPath` 按顺序兼容定位三代候选日志：`session.v4.jsonl.zstd` / `session.v3.jsonl.zstd` / `session.jsonl.zstd`；step-06/07/08 只接受 `session.v4.jsonl.zstd`。脚本分开报告 request/header（attempted route，尝试路由）和 assistant/message.data.message.source（actual provenance，实际产出），只区分 pro规划/非pro规划；完整 planner 文本、budgetNotice、宿主 guidance、header.system 与 suffix 等级照实输出（对应 C11/C12）。
+共享 `session-finder/logPath` 按顺序兼容定位三代候选日志：`session.v4.jsonl.zstd` / `session.v3.jsonl.zstd` / `session.jsonl.zstd`；step-06/07/08 只接受 `session.v4.jsonl.zstd`。脚本分开报告 request/header（attempted route，尝试路由）和 assistant/message.data.message.source（actual provenance，实际产出），只区分 pro规划/非pro规划；完整 planner 文本、budgetNotice、宿主 guidance、header.system 与 suffix 等级照实输出（对应 C11/C12）。会话在宿主数据根（H）时另加 `--host-root <H 数据根>`；无会话选择 = `NOT-RUN`（exit 0）；会话选择非法/不完整、或选择后缺 `PLANNER_PROMPT_SUFFIX` = 输入错误（exit 1）。
 
 也可以直接跑单个文件（`node pe-test/tools/step-01-预设完整性.mjs`），效果一样。
 
 
-**看结果的通用规则**：step-00 类回归脚本看退出码（exit=0 且末行含「通过」= 全过），出现 FAIL 或退出码≠0 = 有问题，记下 FAIL 行的内容；QQBot 环境脚本允许 PASS/SKIP 混合，只有 FAIL 或退出码≠0 才是问题；代码地图 --check 看退出码（exit=0 且含「地图与代码一致」= 全过，其他输出=有问题）。
+**看结果的通用规则**：step-00 类回归脚本看退出码与统计行——出现 FAIL 或退出码≠0 = 有问题，记下 FAIL 行的内容；无 FAIL 只表示无失败，是否全过按报告的通过/部分执行/未执行/失败分级判读，不等于全量执行；QQBot 环境脚本允许 PASS/SKIP 混合，只有 FAIL 或退出码≠0 才是问题；代码地图 --check 看退出码（exit=0 且含「地图与代码一致」= 全过，其他输出=有问题）。
 
 ## 每步看什么（快速索引）
 
@@ -68,7 +69,7 @@ node pe-test/tools/step-07-子代理模型与引导取证.mjs
 
 1. **`tools/readme.md` 是测试数据（不是文档）**：`step-00-全流程回归` 的检查项依赖它存在，**别删、别改名**。
 2. **运行前提**：部分文件要 `import 仓库里的插件代码`（相对路径 `../../plugins/...`）——如果运行时报「找不到模块」，说明当前目录不是完整目录；把 pe-test 挪回仓库根（或你准备挪回工作区时带齐 plugins）再跑。
-3. `step-99-用量统计.mjs` 需要参数：`node step-99-用量统计.mjs <ledger-v2.jsonl>`；显式归档用 `node step-99-用量统计.mjs --archive <ledger-v2.jsonl>`。
+3. `step-99-用量统计.mjs` 需要参数：普通相对路径 `node step-99-用量统计.mjs <ledger-v2.jsonl>` 固定按 W 短锁统计；显式归档 `node step-99-用量统计.mjs --archive <ledger-v2.jsonl>` 仅作用于明确 W 目标；显式 `--host-root <H 数据根>` 加 H 内绝对精确账本为只读稳定观察（最多两次观察、不取锁、零 Host 写；锁忙、元数据变化或两次字节不一致记 `INCOMPLETE`）。
    - 固定文件为同目录 `ledger-v2.jsonl`（active）、`ledger-v2.archive.jsonl`（archive）和 `ledger-v2.jsonl.lock`（active + `.lock`）。锁内容记录 owner 的 PID、token、创建时间；统计与 writer 共用排他锁。
    - 默认统计只在锁内读取 archive+active 字节快照，释放锁后自动合并解析，零写入、cursor 不读写；按完整九字段身份键 `schemaVersion | rootSessionId | sessionId | parentSessionId | agentPreset | delegationDepth | role | model | provider` 分组，输出四桶、`maxSeq`、`ts` 及派生总量，不输出调用计数列。writer/严格归档固定15键，`rootSessionId` 与 `agentPreset` 合法为空字符串；archive 每个完整身份仅保留一条累计行，`seq` 是身份累计水位而非调用数，active 中同身份 `seq` 不大于该水位的重放行跳过并计入 `covered`。
    - `--archive` 可在 DSH 运行中调用：全程持锁，在约 30 秒预算内聚合历史、原子发布 archive 并清空 active，cursor 不读写；AI 思考和参数准备阶段不持锁。释放后 writer 可继续向 active 追加。

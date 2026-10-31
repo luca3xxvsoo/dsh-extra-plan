@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-10-27 07:28:27（脚本自动更新时间戳行）
+> 上次同步：2026-10-30 16:00:11（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -11,6 +11,9 @@
 
 | 想找什么（含同义词/英文标识） | 文件 | 函数名 |
 |:--|:--|:--|
+| 双根路径策略／H-W 用途与 Other 拒绝／变量、drive-relative、链接与最近父级边界／只读能力和写入预检 | plugins/dsh-extra-plan/lib/path-policy.js | createPathContext、resolveWorkspacePath、resolveHostPath、assertAllowedPath、validateReadTarget、prepareWriteTarget |
+| W 工作区／fixture、证据与隔离环境（结构锚、W-only、无用户目录探测） | pe-test/_shared/workspace-paths.mjs | getWorkspaceRoot、makeFixtureDir、resolveEvidencePath、createIsolatedEnv |
+| 显式 Host 代码验证根／受控预加载／缺根拒绝（不回退 profile） | pe-test/_shared/host-preload.mjs | explicitInstallRoot |
 | 四级闸门／路由确认／目的确认／批准／流程状态（route/purpose/clarified/approved；普通与 PTC ask 分别解码后统一推进；拒绝/取消/通道故障边界不变） | index.js、plugins/dsh-extra-plan/lib/gate-decisions.js | deriveFlowState、applyAskOutcome、mainGateReason、routeDenyReason、gateAskDenyReason、validateGateAskStructure、matchPurposeLabel |
 | 探查预算／额度／剩余次数／耗尽（exploreBudget/budget；剩余 ≤3 注入的提醒消息 source 用生产者自有 kind `plugin:dsh-extra-plan`——v4 行准入禁旧包裹 `plugin`） | plugins/dsh-extra-plan/lib/planner-budget.js、index.js | toolCallCount、toolCallsSinceUser、withPlannerPromptSuffix、budgetNoticeText、budgetReminderText、budgetReminderMessage、budgetReminderSent、budgetExhaustedReason、budgetExceeded |
 | run_code 组判定／绕道拆解／调用点扫描（decompose） | plugins/dsh-extra-plan/lib/run-code-static.js、plugins/dsh-extra-plan/index.js | decomposeRunCode、collectRunCodeSites、runCodeGroupDenyReason |
@@ -20,7 +23,7 @@
 | job_output 禁 wait:true／同 job 查重／放行后记录计数器 | index.js | jobOutputGateReason、recordJobOutputCall |
 | job_kill 仅直行放行／main send_message 方向限制／job_list·list_agents 同锚点防轮询／child 控制工具硬拒 | index.js、lib/gate-decisions.js | mainGateReason、childControlGateReason、pollGuardGateReason、recordPollGuardCall |
 | 原始 child 预审／直呼与 run_code 成员控制拒绝（unknown/断链也覆盖） | index.js、plugins/dsh-extra-plan/lib/agent-session.js、plugins/dsh-extra-plan/lib/gate-decisions.js | apply、isSubagentChild、childControlGateReason、runCodeGroupDenyReason |
-| 命令文本提取／写操作判定／只读角色 shell 拒绝文案／runner 写暗示（write/拦截） | plugins/dsh-extra-plan/lib/shell-mutation.js、index.js、plugins/dsh-extra-plan/lib/run-code-static.js | commandTextOf、pwshCommandOf、bashCommandOf、mutationTextMatches、pwshMutationMatches、bashMutationMatches、shellMutationReason、runCodeTextOf、codeMutationHints |
+| 命令文本提取／写操作判定／只读角色 shell 拒绝文案／触发依据（write/拦截） | plugins/dsh-extra-plan/lib/shell-mutation.js、plugins/dsh-extra-plan/lib/gate-decisions.js、index.js、plugins/dsh-extra-plan/lib/run-code-static.js | commandTextOf、pwshCommandOf、bashCommandOf、mutationTextEvidence、pwshMutationEvidence、bashMutationEvidence、mutationTextMatches、pwshMutationMatches、bashMutationMatches、withShellEvidence、shellMutationReason、runCodeTextOf、codeMutationHints |
 | 锚定引导／F-L 首轮极简／bootstrap／HN-HB-HP／F 段 tool:read 手写文案（bootstrapReadHint） | index.js、plugins/dsh-extra-plan/lib/assembly-presentation.js | isBootstrapPhase、projectAssemblyForPresentation |
 | A/C/M 展示投影／C7 过滤／Pure PTC 手写 read（变量② bootstrapReadHint）／SDK 重建 | index.js、plugins/dsh-extra-plan/lib/assembly-presentation.js | projectAssemblyForPresentation、renderFilteredToolsSdk、resolveToolsSdkRenderer、filteredCordisSchemas、sdkSchemasForRendering、toolSdkSchemasOf |
 | P2-2 SDK 文本复用／agent-only（仅 Agent）cache／F-L 分离／三元组失效／dispose-restart／失败不缓存／并发合并／计数硬门槛 | index.js、plugins/dsh-extra-plan/lib/assembly-presentation.js、plugins/dsh-extra-plan/lib/sdk-text-cache.js | createSdkTextCache、sdkSchemasFingerprint、sdkTextCacheEntryMatches |
@@ -30,7 +33,7 @@
 | 批准前禁委派（approval deny） | index.js | approvalDenyReason |
 | 规划子代理分支闸门（planner 写禁+预算） | index.js | plannerGateReason、shellMutationReason |
 | 会话事件快照／角色常量与身份识别（ROLE_IDS/ROLE_ORDERS 只描述身份与顺序，不承载权限）／单次快照复用（execEvents）／planner descriptor 缓存／usage 血缘上下文 | lib/agent-session.js、lib/agent-runtime.js、lib/runtime-lifecycle.js、lib/role-contract.js、index.js | sessionEvents、isSubagentChild、isLiveDelegation、childPolicyNeedsFloor、createAgentRuntime、isChild、isPlannerChild、toolSchemasOf、usageContextOf、usageRootOf、childBaseline |
-| 在线 usage 共享锁／owner 诊断／stale-lock 每实例一次可见告警与显式维护／release 失败状态／默认快照与在线归档（active+archive+lock、writer 短等、释放后补记、无调用计数列） | plugins/dsh-extra-plan/lib/usage-ledger.js、pe-test/tools/step-99-用量统计.mjs | usageLedgerLockPath、acquireUsageLedgerLock、releaseUsageLedgerLock、warnStaleLock、foldUsage |
+| 在线 usage 共享锁／owner 诊断／stale-lock 每实例一次可见告警与显式维护／release 失败状态／默认快照与在线归档（active+archive+lock、writer 短等、释放后补记、无调用计数列；账本路径按 H/W 用途和 pathContext 判定） | plugins/dsh-extra-plan/lib/usage-ledger.js、pe-test/tools/step-99-用量统计.mjs | pathContextOf、resolveLedgerPath、ledgerTargetOf、authorizeLedgerWrite、ensureLedgerDirectory、usageLedgerLockPath、acquireUsageLedgerLock、releaseUsageLedgerLock、warnStaleLock、foldUsage |
 | 会话状态生命周期／disposed 收尾／末轮 V2 usage 结算／root 与自身 session 血缘（断链/循环仍以空 root 合法落账；rootSessionId/agentPreset 可空，非法 context 拒绝）／四桶字段（provider、input/cacheRead/cacheWrite/output）／账本续载（session 分桶、final fold、cursor 降级、session.seq 水位 + snapshotEvents(from,to) 区间增量、水位未变直接返回、截断回退全量） | index.js、lib/agent-runtime.js、lib/usage-ledger.js | usageContextOf、usageRootOf、foldUsage、readUsageCursorTable、warnUsageCursorDegraded、usageCursorEntryOf、noteRunCodeSubCall、childBaseline |
 
 - step-99 文件说明：V2 active/archive 统计与在线归档 CLI；默认模式锁内快照后宽松读取合并，显式 `--archive` 持锁 strict 校验、按完整身份 source-aware 水位聚合、原子发布并清空 active，cursor 不读写；writer timeout 静默返回 `delayed`、后续 fold 补记，stale-lock 由维护者核实 owner 后显式维护，release 失败显式诊断，已提交写入不伪装回滚。
@@ -45,16 +48,16 @@
 | 方案与验收落盘／save_plan 双写（逐文件操作与 M 点合同；修改前范围/唯一原文锚点→未来验收定位；真实源核实与行漂移取证；主会话侧任意路由态放行的受限规划工件，仅写 cwd/.extra-plan；工具不自动调度） | lib/save-tool-factories.js、lib/save-contract.js、index.js | defineSavePlan、registerSavePlan、saveArtifactBase |
 | 落盘单次提交／有限清理（atomic/commit） | lib/save-persistence.js、index.js | atomicCommit |
 | 线索落盘／save_probe／证据报告（probe/evidence；限制值唯一来自 `save-contract.js#PROBE_LIMITS`；step-00 PR23/PR34/PR35 回归；主会话侧放行条件保持现状——route=plan + 目的已定 + 澄清完成；extractProbeEvidenceRefs 顺序固定：整体成对剥除（循环）→ 按顿号/分号/竖线拆分 → 逐段成对剥除 + trim → 过滤空串 → 去重；拆分符与剥除集均不含空格、半角逗号、`.`、`/`，单侧一律不剥） | lib/save-contract.js、lib/save-probe-validation.js、lib/save-tool-factories.js、index.js | validateProbe、renderProbeMarkdown、extractProbeEvidenceRefs |
-| save_plan 限制值／确定性 summary／ContentBlock 渲染（SAVE_PLAN_LIMITS；formatSavePlanSummary 与 renderSavePlan 共用同一摘要口径；并保留 save_probe 合同） | lib/save-contract.js | sanitizeTaskName、timestamp、sessionTagOf、saveArtifactBase、formatSavePlanSummary、renderSavePlan、renderProbeMarkdown、renderSaveProbe、extractProbeEvidenceRefs |
+| save_plan 限制值／内部确定性 summary／双路径 ContentBlock 投影（SAVE_PLAN_LIMITS；formatSavePlanSummary 保留内部摘要口径，renderSavePlan 只把 paths 投影为唯一 text ContentBlock；并保留 save_probe 合同） | lib/save-contract.js | sanitizeTaskName、timestamp、sessionTagOf、saveArtifactBase、formatSavePlanSummary、renderSavePlan、renderProbeMarkdown、renderSaveProbe、extractProbeEvidenceRefs |
 | save_probe 校验／路径存在性与聚合拒绝 | lib/save-probe-validation.js | validateProbe、probePathOf |
-| save 工具工厂／严格校验顺序／paths-only／真实源核实 owner | lib/save-tool-factories.js | createSaveToolFactories、defineSavePlan、resolveSaveContext、verifyPlanSources、defineSaveProbe |
+| save 工具工厂／严格校验顺序／paths-only／真实源核实 owner／W pathContext | lib/save-tool-factories.js | pathContextOf、resolveWorkspaceEntry、createSaveToolFactories、defineSavePlan、resolveSaveContext、verifyPlanSources、defineSaveProbe |
 | save_plan 模式／任务块／卷首职责与块边界／逐文件与修改点解析 | plugins/dsh-extra-plan/lib/save-plan-validation.js | parseTaskDocument、validateIds、validateTaskShape |
 | save_plan 路径／资源／文件所有权与组 DAG（initialState 仅静态资格）／文件点与定位摘要 | plugins/dsh-extra-plan/lib/save-plan-validation.js | pathIssue、parseResources、validatePlanRelations、buildInternalOrder、buildSummary |
 | save_plan 检查引用／验收组／收尾全局／早拒／双文档文件点映射 | plugins/dsh-extra-plan/lib/save-plan-validation.js | parseCheckRefs、validateChecks、validateClosure、validateGlobal、validateSavePlanContract |
 | step-00／step-06 save_plan 通用合同回归覆盖（模式、任务/组 DAG、资源/检查引用、收尾/全局、摘要/早拒、paths-only 与零副作用） | pe-test/tools/step-00-全流程回归.mjs、pe-test/tools/step-06-线索落盘.mjs |  |
 | 五份文档的通用派遣／验收边界（工件自包含；执行组与人数分离；执行者自检与 reviewer 验收分离；冻结、证据复用、失败复验、生产与 HUMAN 边界） | READAI.md、pe-test/docs/ai-概览.md、pe-test/docs/ai-机制设计.md、pe-test/docs/ai-流程备查.md、pe-test/docs/ai-维护手册.md |  |
 | PTC F→L／native HN 与 ptc 聚合面实机取证 | pe-test/docs/ai-实机闸门测试流程.md |  |
-| 实机子代理模型／提供方／planner 引导取证（A42/A43、C11/C12、HUMAN；显式 SESSION_ID + PLANNER_PROMPT_SUFFIX；默认索引与 `--full` 原文/raw 分层；request/header attempted route（尝试路由） 与 assistant/message actual provenance（实际来源） 分栏；suffix 等级与 exact match；两阶段头扫描 `headerOfDir` 只解析命中直接 child） | pe-test/tools/step-07-子代理模型与引导取证.mjs |  |
+| 实机子代理模型／提供方／planner 引导取证（A42/A43、C11/C12、HUMAN；显式 `--session`+`--sessions-dir`（宿主数据根加 `--host-root`、直接 child 加 `--discover-children`）+ 显式 `PLANNER_PROMPT_SUFFIX`；默认索引与 `--full` 原文/raw 分层；request/header attempted route（尝试路由） 与 assistant/message actual provenance（实际来源） 分栏；suffix 等级与 exact match；共享定位器显式有界选择只解析命中直接 child（上限 128 候选/单日志头 262144 字节）） | pe-test/tools/step-07-子代理模型与引导取证.mjs |  |
 | 80格 A/C/M/F-L 路由与目录断言／显式 header catalog 取证 | pe-test/tools/step-04-路由与写闸门.mjs、pe-test/tools/step-04-工具清单查看.mjs |
 | MJS 三模式输出合同／有限摘要／稳定 JSON／HUMAN 双通道 raw hash | pe-test/_shared/test-output.mjs、pe-test/tools/一键step测试.mjs |  |
 | 探查者委派／禁止 planner 派探查（subagent_probe） | index.js、plugins/dsh-extra-plan/lib/model-routing.js | subagentProbeGateReason、resolveOtherAgentEntry |
@@ -66,7 +69,7 @@
 | 设置后端／唯一全局 owner／settings-only no-remount（10 项 volatile Config + profileSync settled 镜像；adapter failure 独立；8 热读/2 需重启/gateWords restart；默认对象与 UI metadata 分源） | lib/settings.js、lib/settings-contract.js、lib/preset-settings.js、lib/preset-sync.js | apply、createApiHandler、proPayload、createDefaultSettings、readUnifiedState、findSettingsRow、effectiveRowConfig、resolveUnifiedConfig、restateSettingsConfig、findPluginsRow、applyPlan、mountPresetSync、initialMount、settledSettingsUpdate、structuralHandoff、syncEditor、settledSettings、profileSyncPath、reportProfileSync |
 | Web→QQBot profile 同步／documentPath 首选／显式备用／双锚点／局部 YAML 安全写与恢复 | plugins/dsh-extra-plan/lib/qqbot-settings-sync.js；pe-test/tools/step-01-设置页配置.mjs、step-01-安装同步.mjs、step-01-qqbot-安装映射.mjs（分别覆盖路径/API、settled 生命周期、YAML 正负例） | resolveProfilesRoot、findOwnQqbotProfiles、validateSettingsSnapshot、planQqbotSettingsPatch、writeQqbotSettingsPatch、createQqbotSettingsSynchronizer |
 | 设置值定位与捕获（source/row/legacy projection locator；10 项全局行 + 旧行安全读取；PUT 兼容入口合并全局值） | lib/preset-settings.js、lib/settings.js、lib/preset-sync.js | captureSettings、captureRowSettings、hostRowDefaultsFromTemplate、readProjectedValue、resolveSetting、findTextLocatorMatches、patchYamlScalar、serializeScalar、publicField、readLegacyState |
-| 配置热读／生效标志／后端权威行更新无需重启（live-config/hot-read；增强 stamp dev/ino/size/mtimeNs/ctimeNs，兼容回退 ino/size/mtimeMs/ctimeMs） | plugins/dsh-extra-plan/lib/live-config.js、plugins/dsh-extra-plan/index.js | createLiveConfig、refresh、read、currentPath、readDiskValues、statStamp、pick |
+| 配置热读／生效标志／后端权威行更新无需重启（live-config/hot-read；增强 stamp dev/ino/size/mtimeNs/ctimeNs，兼容回退 ino/size/mtimeMs/ctimeMs；当前目标与 pathContext 分层） | plugins/dsh-extra-plan/lib/live-config.js、plugins/dsh-extra-plan/index.js | createLiveConfig、refresh、read、currentResolved、currentContext、readDiskValues、statStamp、pick |
 | 预设核对／纯 definition／首次 adapter／旧行非破坏迁移／settled-only 与 structuralHandoff 分离 | lib/preset-sync.js、lib/preset-settings.js | syncPreset、assetDefinition、definitionWithProjection、readUnifiedState、readLegacyState、resolveUnifiedConfig、restateSettingsConfig、declarationBodyMatchesAsset、stripUserWritable、carryUserWritable、assetPlugins、pluginRowIds、readDeclaredPluginsFromPatch、applyPlan、structuralFingerprint、mountPresetSync、initialMount、settledSettingsUpdate、structuralHandoff、reportSettledError |
 | 同页共享客户端表单／仅经 detail.section 渲染于 bundle 详情页行列表之后（自绘标题；字段常量只来自生成器标记区块；不注册 bundle.config/row/item/tab，本包 bundle.config 槽被任何一方注册条目时 detail.section 让位） | lib/client.js、scripts/generate-runtime-defaults.mjs | apply、SettingsCard、ExtraPlanForm、DetailSettingsSection、registerClientSurfaces |
 > client.js 设置入口定位：`DetailSettingsSection` 与 `registerClientSurfaces`；设置表单仅经 plugins.detail.section 渲染于 bundle 页行列表之后，若本包 bundle.config 槽被任何一方注册条目则让位保持唯一表单；ConfigForms.get(NS) 订阅快照并一次 mutate 十项，不注册 bundle.config/row.config/settings.plugins.tab/plugins.item。
@@ -91,154 +94,313 @@
 
 | 文件 | 行数 | 说明 |
 |:--|--:|:--|
-| pe-test/_shared/host-deps.mjs | 325 | 解析宿主依赖候选并注册隔离加载钩子 |
+| pe-test/_shared/host-deps.mjs | 412 | 解析宿主依赖候选并注册隔离加载钩子 |
+| pe-test/_shared/host-preload.mjs | 52 | （待补充） |
 | pe-test/_shared/preset-hash.mjs | 3 | （待补充） |
-| pe-test/_shared/session-finder.mjs | 127 | 按会话ID或目录扫描定位日志并兼容三代命名 |
-| pe-test/_shared/test-output.mjs | 143 | 统一compact、verbose、full输出合同与raw证据哈希 |
+| pe-test/_shared/session-finder.mjs | 280 | 按会话ID或目录扫描定位日志并兼容三代命名 |
+| pe-test/_shared/test-output.mjs | 176 | 统一compact、verbose、full输出合同与raw证据哈希 |
 | pe-test/_shared/v4-tool-result.mjs | 28 | 识别v4会话日志并提取tool result |
+| pe-test/_shared/workspace-paths.mjs | 655 | （待补充） |
 | pe-test/_shared/zstd-frames.mjs | 107 | 解析zstd帧并解码会话文本 |
-| plugins/dsh-extra-plan-qqbot/index.js | 22 | qqbot 精简版自愈插件：apply 启动时调 healQqbotCompatibility 自愈（迁移旧错误块+建链），不阻断启动 |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | 367 | 自愈纯函数模块（共享 sameRealPath 路径比较；profileNames 可缩小 profile 候选；定位/旧块迁移/建链；供 index.js/CLI/测试复用） |
-| plugins/dsh-extra-plan-qqbot/scripts/heal.mjs | 134 | CLI 入口：--install 严格安装模式（失败非零）；无参启动/手动触发走告警但 exit 0 的兜底；invokedAsMain 判定 |
-| plugins/dsh-extra-plan/index.js | 989 | 核心入口：四级闸门、预算、save 工具注册与生命周期；接线 planner/非 planner 路由、A/C/M 投影、P2-2 cache、V2 session 分桶 usage final fold、v4 MALFORMED 自愈。gateWords 只来自 YAML，apply 先校验再副作用；tools/pre-execute 先用原始 `isSubagentChild` 预审 child 控制工具，再进入角色/root 闸门，main 控制与自动最终结果保持。 |
+| plugins/dsh-extra-plan-qqbot/index.js | 33 | qqbot 精简版自愈插件：apply 启动时调 healQqbotCompatibility 自愈（迁移旧错误块+建链），不阻断启动 |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | 654 | 自愈纯函数模块（共享 sameRealPath 路径比较；profileNames 可缩小 profile 候选；定位/旧块迁移/建链；供 index.js/CLI/测试复用） |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | 461 | （待补充） |
+| plugins/dsh-extra-plan-qqbot/scripts/heal.mjs | 273 | CLI 入口：--install 严格安装模式（失败非零）；无参启动/手动触发走告警但 exit 0 的兜底；invokedAsMain 判定 |
+| plugins/dsh-extra-plan/index.js | 1189 | 核心入口：四级闸门、预算、save 工具注册与生命周期；接线 planner/非 planner 路由、A/C/M 投影、P2-2 cache、V2 session 分桶 usage final fold、v4 MALFORMED 自愈。gateWords 只来自 YAML，apply 先校验再副作用；tools/pre-execute 先用原始 `isSubagentChild` 预审 child 控制工具，再进入角色/root 闸门，main 控制与自动最终结果保持。 |
 | plugins/dsh-extra-plan/lib/agent-runtime.js | 153 | 每次 apply 的角色识别、descriptor/工具 schema 缓存、usage 血缘上下文与 role baseline、sandbox floor 工厂；不 import index.js |
 | plugins/dsh-extra-plan/lib/agent-session.js | 32 | 会话事件与子代理识别的唯一来源：sessionEvents/isSubagentChild 零依赖纯函数，被 index.js 与 lib/model-routing.js 共用（无镜像副本；不 import index.js） |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | 242 | A/C/M 与 skill catalog 模型可见投影；从 scoped tools 读 schema/模式，SDK renderer 按 language 整体重建；F/PTC 的 tool:read 由 index.js 手写，L 段回宿主原文。 |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | 262 | A/C/M 与 skill catalog 模型可见投影；从 scoped tools 读 schema/模式，SDK renderer 按 language 整体重建；F/PTC 的 tool:read 由 index.js 手写，L 段回宿主原文。 |
 | plugins/dsh-extra-plan/lib/client-carrier.js | 7 | settings 内部 Loader Group 的无副作用 Client carrier；不对应 bundle row/公开 export。 |
 | plugins/dsh-extra-plan/lib/client.js | 321 | 客户端模块加载共享样式/词条与 SettingsCard/ExtraPlanForm；设置表单仅经 detail.section 渲染于当前包详情行列表之后（自绘标题，不注册 bundle.config；若本包 bundle.config 槽出现条目则让位）；后端全局 settings API/Config/旧值迁移与 definition/adapter 由同一 owner 活动。 |
-| plugins/dsh-extra-plan/lib/gate-decisions.js | 1070 | 四级闸门与角色分流判定纯函数集 |
+| plugins/dsh-extra-plan/lib/gate-decisions.js | 1077 | 四级闸门与角色分流判定纯函数集 |
 | plugins/dsh-extra-plan/lib/gate-words.js | 114 | 闸门关键词共享契约（唯一值源是 YAML 的 config.gateWords）：字段规格 GATE_WORD_FIELDS/GATE_WORDS_GROUP_DEFINITION + 整组严格校验 validateGateWords（错误一律以 extra-plan: config.gateWords 开头）+ 运行时词表 createGateRuntime（显式入参严格校验，无默认词表）；纯模块：不含任何出厂词值、不读文件与环境变量，被 index.js（运行时）与 lib/preset-sync.js（启动自愈）共享（迁移叶 locator 已随跨版本搬迁链删除） |
-| plugins/dsh-extra-plan/lib/live-config.js | 239 | 配置热读：仅 8 项运行时 getter；2 项宿主行权威设置只读并派生到内存 definition，不暴露为 getter；构造期读盘一次，后续按增强 stamp（dev/ino/size/mtimeNs/ctimeNs，兼容 ino/size/mtimeMs/ctimeMs）重读；失败整组回退并告警，不读 DSH_HOME 旧目录 |
-| plugins/dsh-extra-plan/lib/model-routing.js | 509 | planner/非 planner 子代理模型路由：顶层纯判定函数 + createModelRouting per-apply 工厂（per-instance WeakMap、惰性 llm/agents getter；不 import index.js） |
+| plugins/dsh-extra-plan/lib/live-config.js | 288 | 配置热读：仅 8 项运行时 getter；2 项宿主行权威设置只读并派生到内存 definition，不暴露为 getter；构造期读盘一次，后续按增强 stamp（dev/ino/size/mtimeNs/ctimeNs，兼容 ino/size/mtimeMs/ctimeMs）重读；失败整组回退并告警，不读 DSH_HOME 旧目录 |
+| plugins/dsh-extra-plan/lib/model-routing.js | 511 | planner/非 planner 子代理模型路由：顶层纯判定函数 + createModelRouting per-apply 工厂（per-instance WeakMap、惰性 llm/agents getter；不 import index.js） |
+| plugins/dsh-extra-plan/lib/path-policy.js | 461 | （待补充） |
 | plugins/dsh-extra-plan/lib/planner-budget.js | 137 | planner 工具计数、消息后缀/预算提示/耗尽文案；**预算提醒消息经宿主 createUserMessage 构造，source 用生产者自有 kind `plugin:dsh-extra-plan`（v4 行准入禁旧包裹 `plugin`，违者会话当场终止）**；默认预算由生成模块提供，FREE_TOOLS 仍在根入口 |
 | plugins/dsh-extra-plan/lib/preset-defaults.generated.js | 16 | 由 YAML 模板生成的十键 `DEFAULT_SETTINGS` 与兼容别名 runtime fallback（回退）常量；generated（生成）/do not edit（勿手改） |
 | plugins/dsh-extra-plan/lib/preset-settings.js | 3 | 10 项设置描述与 YAML 定位；settings 行是权威值，声明行只投影 2 项宿主行；capture/投影读取、plugins 行整体重述与保格式标量改写。 |
-| plugins/dsh-extra-plan/lib/preset-sync.js | 966 | 读取并严格校验纯 definition；旧 preset-extra-plan/extra-plan-preset-sync 仅安全读取迁移，统一全局行补齐后派生 definition 并由同一 owner 挂载官方 AgentPreset；新写入仅经唯一全局行 configEditor.edit；mountPresetSync 以通用 settled 回调交付最终十项/gateWords。 |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | 589 | 预设 YAML 纯职责模块：解析、行与叶定位及歧义分类、权威与投影值捕获、保格式标量改写。 |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | 893 | Web documentPath 首选、显式 DSH_HOME 备用、双锚点 profile 扫描、完整 10 项/gateWords 安全快照、局部 YAML 保格式写入、排他临时/备份/恢复与串行同步队列；不读用户目录、不触碰未知根。 |
+| plugins/dsh-extra-plan/lib/preset-sync.js | 1094 | 读取并严格校验纯 definition；旧 preset-extra-plan/extra-plan-preset-sync 仅安全读取迁移，统一全局行补齐后派生 definition 并由同一 owner 挂载官方 AgentPreset；新写入仅经唯一全局行 configEditor.edit；mountPresetSync 以通用 settled 回调交付最终十项/gateWords。 |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | 577 | 预设 YAML 纯职责模块：解析、行与叶定位及歧义分类、权威与投影值捕获、保格式标量改写。 |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | 1038 | Web documentPath 首选、显式 DSH_HOME 备用、双锚点 profile 扫描、完整 10 项/gateWords 安全快照、局部 YAML 保格式写入、排他临时/备份/恢复与串行同步队列；不读用户目录、不触碰未知根。 |
 | plugins/dsh-extra-plan/lib/role-contract.js | 9 | 冻结角色 ID/order 数组并由同一数组派生 planner/prober preset ID；只提供身份与装配顺序，不承载权限、沙箱或生命周期策略。 |
 | plugins/dsh-extra-plan/lib/run-code-scanner.js | 342 | run_code 无宿主状态词法扫描器：字符串/注释遮蔽、括号配平、tools 调用点收集与动态访问判定。 |
 | plugins/dsh-extra-plan/lib/run-code-static.js | 571 | run_code 纯静态解析/理由模块：安全 JSON/JS literal 解析、动态 argsText 瀑布兜底、写模式 hint、工具组拆解、ask 返回值白名单、调用点计数与当前 PTC dispatch cap；仅显式注入普通依赖，不持有宿主状态。 |
 | plugins/dsh-extra-plan/lib/runtime-lifecycle.js | 147 | per-apply 运行时生命周期：save 工具注册、probe 名额认领与 run_code 子调用计数/拒绝记录，状态在闭包内并按会话清理 |
 | plugins/dsh-extra-plan/lib/runtime-static.js | 15 | 显式参数纯 helper：SKILL frontmatter 与 cause 链解析；不持有宿主状态 |
-| plugins/dsh-extra-plan/lib/save-contract.js | 277 | save 合同唯一真源：任务名/sessionTag/base、SAVE_PLAN_LIMITS 与确定性 summary/render、PROBE_LIMITS、ContentBlock/Markdown 渲染与证据引用清洗；无宿主状态，运行时限制只在本文件维护。 |
-| plugins/dsh-extra-plan/lib/save-persistence.js | 76 | 单次调用阶段感知提交：mkdir→临时文件逐项写入→逐项检查并顺序发布；失败保留首错/阶段，仅清理本次临时与已发布半套工件，清理失败附残留路径与原因，预存目标不覆盖；不创建/扫描/恢复跨调用 journal；末位 fs 依赖可注入。 |
+| plugins/dsh-extra-plan/lib/save-contract.js | 263 | save 合同唯一真源：任务名/sessionTag/base、SAVE_PLAN_LIMITS 与内部确定性 summary、paths-only ContentBlock 投影、PROBE_LIMITS、Markdown 渲染与证据引用清洗；无宿主状态，运行时限制只在本文件维护。 |
+| plugins/dsh-extra-plan/lib/save-persistence.js | 112 | 单次调用阶段感知提交：mkdir→临时文件逐项写入→逐项检查并顺序发布；失败保留首错/阶段，仅清理本次临时与已发布半套工件，清理失败附残留路径与原因，预存目标不覆盖；不创建/扫描/恢复跨调用 journal；末位 fs 依赖可注入。 |
 | plugins/dsh-extra-plan/lib/save-plan-validation.js | 1249 | save_plan 文本合同校验：模式/任务/路径所有权/依赖与执行组 DAG/资源/检查引用与验收组/收尾全局/摘要早拒；不启动代理或执行命令。 |
-| plugins/dsh-extra-plan/lib/save-probe-validation.js | 113 | save_probe 参数校验：数组/条目/长度/总量/path 存在性/range/evidence 聚合拒绝 |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | 388 | 显式依赖工厂：save_plan 按类型/长度→合同/摘要→context/base→证据 IO→单次 atomicCommit 严格接线；合法正文逐字保存、structured output 仅 paths、render 为 text ContentBlock；save_probe 保留既有证据诊断与落盘；不缓存 ctx/agent/会话状态。 |
+| plugins/dsh-extra-plan/lib/save-probe-validation.js | 175 | save_probe 参数校验：数组/条目/长度/总量/path 存在性/range/evidence 聚合拒绝 |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | 389 | 显式依赖工厂：save_plan 按类型/长度→合同/摘要→context/base→证据 IO→单次 atomicCommit 严格接线；合法正文逐字保存、structured output 仅 paths、render 仅将两个 paths 投影为唯一 text ContentBlock；save_probe 保留既有证据诊断与落盘；不缓存 ctx/agent/会话状态。 |
 | plugins/dsh-extra-plan/lib/sdk-text-cache.js | 161 | apply 级 agent-keyed WeakMap SDK 文本缓存：完整 renderer 输入保守指纹、language/renderer 身份比较、并发 Promise 合并、reject/过期 Promise 不回写、dispose 回收；不持有 sessionId 或 PromptAssembly |
 | plugins/dsh-extra-plan/lib/settings-contract.js | 176 | 服务端设置 descriptor 单一合同：10 项的类型/生成默认引用/校验/UI metadata 与权威-投影双定位器，并导出 `createDefaultSettings`、分组与投影遍历源 |
-| plugins/dsh-extra-plan/lib/settings.js | 574 | 10 字段 volatile Config、页面策略与 loopback GET/PUT；权威值在唯一 settings 行，PUT 先拒绝空/null/数组/原始/未知/非法混合载荷并严校验当前 gateWords，再只 edit 全局行，no-op 也重读最终快照并等待 profileSync，结构化区分 synced/not-installed/unavailable/failed/partial。 |
-| plugins/dsh-extra-plan/lib/shell-mutation.js | 182 | 跨平台命令文本解码与 pwsh/bash 写形态判定；纯函数、不持有 apply 状态 |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | 455 | per-apply V2 usage writer 与跨进程排他锁：固定15键（rootSessionId/agentPreset 可空）、owner PID/token、bounded acquire/release、锁内同步 fold、身份血缘与四桶 JSONL、cursor 续载；timeout 静默返回 `delayed`、后续 fold 补记，stale 每实例一次告警并由维护者显式处理，release 失败显式返回状态。 |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | 647 | 从 agent.cordis.yml 校验并生成 runtime 默认常量、纯主/角色 definition 与 client 标记区块（顶层结构逐字平移并保留 group/isolate/!!js）；默认仓库七输出，自定义 client 默认关闭；支持 --check 且坏源不覆盖 last-known-good（上次已知良好版本） |
+| plugins/dsh-extra-plan/lib/settings.js | 742 | 10 字段 volatile Config、页面策略与 loopback GET/PUT；权威值在唯一 settings 行，PUT 先拒绝空/null/数组/原始/未知/非法混合载荷并严校验当前 gateWords，再只 edit 全局行，no-op 也重读最终快照并等待 profileSync，结构化区分 synced/not-installed/unavailable/failed/partial。 |
+| plugins/dsh-extra-plan/lib/shell-mutation.js | 213 | 跨平台命令文本解码与 pwsh/bash 写形态判定；纯函数、不持有 apply 状态 |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | 530 | per-apply V2 usage writer 与跨进程排他锁：固定15键（rootSessionId/agentPreset 可空）、owner PID/token、bounded acquire/release、锁内同步 fold、身份血缘与四桶 JSONL、cursor 续载；timeout 静默返回 `delayed`、后续 fold 补记，stale 每实例一次告警并由维护者显式处理，release 失败显式返回状态。 |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | 777 | 从 agent.cordis.yml 校验并生成 runtime 默认常量、纯主/角色 definition 与 client 标记区块（顶层结构逐字平移并保留 group/isolate/!!js）；默认仓库七输出，自定义 client 默认关闭；支持 --check 且坏源不覆盖 last-known-good（上次已知良好版本） |
 
 ## 函数索引
 
 | 文件 | 函数 | 行号 | 功能描述 | 备注 |
 |:--|:--|:--|:--|:--|
-| pe-test/_shared/host-deps.mjs | profileNames | L30-39 | 从宿主包元数据读取候选profile名称 |  |
-| pe-test/_shared/host-deps.mjs | readFileSync0 | L41-45 | 只列宿主依赖目录名；异常由调用者处理，避免顶层再引入 readdirSync。 |  |
-| pe-test/_shared/host-deps.mjs | anchorCandidates | L50-96 | 生成宿主依赖锚点目录候选并去重 |  |
-| pe-test/_shared/host-deps.mjs | exportTarget | L98-115 | 从依赖入口导出目标包的指定绑定 |  |
-| pe-test/_shared/host-deps.mjs | entryOf | L117-134 | 解析宿主依赖导出入口并校验路径 |  |
-| pe-test/_shared/host-deps.mjs | findHostAnchor | L136-154 | 选择可用宿主包锚点并报告候选来源 |  |
-| pe-test/_shared/host-deps.mjs | scopedEntryOf | L157-165 | 解析scoped包的本地入口路径 |  |
-| pe-test/_shared/host-deps.mjs | warnShadowedHostCopies | L169-194 | 告警被工作区副本遮蔽的宿主依赖 |  |
-| pe-test/_shared/host-deps.mjs | buildAsyncHookSource | L196-257 | 构造异步import钩子源码供隔离宿主依赖 |  |
-| pe-test/_shared/host-deps.mjs | registerHostDeps | L261-325 | 注册测试所需宿主依赖并校验实际版本 |  |
-| pe-test/_shared/host-deps.mjs | resolveScoped | L274-280 | 解析scoped宿主包候选路径 |  |
-| pe-test/_shared/host-deps.mjs | resolveBare | L281-288 | 解析非scoped宿主包候选路径 |  |
-| pe-test/_shared/host-deps.mjs | resolveOne | L290-300 | 按包名统一尝试scoped与bare解析 |  |
-| pe-test/_shared/host-deps.mjs | resolve | L304-310 | 为动态加载钩子提供依赖解析入口 |  |
-| pe-test/_shared/session-finder.mjs | logPath | L17-23 | 在目录中按v4、v3、旧名顺序寻找会话日志 |  |
-| pe-test/_shared/session-finder.mjs | readMeta | L25-48 | 读取会话目录元数据并提取定位字段 |  |
-| pe-test/_shared/session-finder.mjs | scanAll | L50-69 | 扫描sessions目录并按时间整理候选 |  |
-| pe-test/_shared/session-finder.mjs | byName | L71 | 按目录名或会话ID匹配候选 |  |
-| pe-test/_shared/session-finder.mjs | findSession | L73-127 | 返回显式或自动会话定位结果及关联子会话 |  |
-| pe-test/_shared/test-output.mjs | digest | L11-13 | 计算UTF-8文本SHA-256摘要 |  |
-| pe-test/_shared/test-output.mjs | normalize | L15-31 | 递归稳定化值并处理循环引用与特殊类型 |  |
-| pe-test/_shared/test-output.mjs | stableStringify | L33-37 | 按键排序序列化断言值 |  |
-| pe-test/_shared/test-output.mjs | parseOutputMode | L39-58 | 解析compact、verbose、full模式及优先级 |  |
-| pe-test/_shared/test-output.mjs | summarizeValue | L60-71 | 将成功大对象压缩为类型、键数和预览摘要 |  |
-| pe-test/_shared/test-output.mjs | assertionLine | L73-78 | 按模式渲染断言并始终保留失败差异 |  |
-| pe-test/_shared/test-output.mjs | createOutput | L80-110 | 创建统一断言、结构化输出与统计接口 |  |
-| pe-test/_shared/test-output.mjs | emit | L84-87 | 将普通行或错误行写入对应通道 |  |
-| pe-test/_shared/test-output.mjs | assertion | L88-91 | 输出断言行并返回布尔结果 |  |
-| pe-test/_shared/test-output.mjs | structured | L92-97 | 按模式输出完整值或稳定摘要 |  |
-| pe-test/_shared/test-output.mjs | detail | L98-100 | 仅在full或强制条件下输出细节 |  |
-| pe-test/_shared/test-output.mjs | marker | L101 | 输出SKIP、HUMAN等结构化状态标记 |  |
-| pe-test/_shared/test-output.mjs | summary | L102-108 | 输出统一通过失败及扩展状态统计 |  |
-| pe-test/_shared/test-output.mjs | fileEvidence | L112-116 | 读取文件并计算bytes、lines、SHA-256 |  |
-| pe-test/_shared/test-output.mjs | requireFile | L118-120 | 以UTF-8读取证据文件 |  |
-| pe-test/_shared/test-output.mjs | writeRawEvidence | L122-139 | 保存stdout、stderr并返回合并证据统计 |  |
-| pe-test/_shared/test-output.mjs | sha256Text | L141-143 | 对文本返回SHA-256用于raw复核 |  |
+| pe-test/_shared/host-deps.mjs | samePath | L15-17 | （待补充） |  |
+| pe-test/_shared/host-deps.mjs | isWithinRoot | L19-23 | （待补充） |  |
+| pe-test/_shared/host-deps.mjs | explicitPath | L25-31 | （待补充） |  |
+| pe-test/_shared/host-deps.mjs | assertWithinRoot | L33-37 | （待补充） |  |
+| pe-test/_shared/host-deps.mjs | physicalRoot | L39-51 | （待补充） |  |
+| pe-test/_shared/host-deps.mjs | proveCandidate | L53-92 | （待补充） |  |
+| pe-test/_shared/host-deps.mjs | checkHostResolvedResult | L94-105 | （待补充） |  |
+| pe-test/_shared/host-deps.mjs | isHostSpecifier | L107-109 | （待补充） |  |
+| pe-test/_shared/host-deps.mjs | explicitInstallRoot | L111-115 | （待补充） |  |
+| pe-test/_shared/host-deps.mjs | anchorCandidates | L117-131 | 生成宿主依赖锚点目录候选并去重 |  |
+| pe-test/_shared/host-deps.mjs | exportTarget | L133-150 | 从依赖入口导出目标包的指定绑定 |  |
+| pe-test/_shared/host-deps.mjs | entryOf | L152-175 | 解析宿主依赖导出入口并校验路径 |  |
+| pe-test/_shared/host-deps.mjs | findHostAnchor | L177-198 | 选择可用宿主包锚点并报告候选来源 |  |
+| pe-test/_shared/host-deps.mjs | scopedEntryOf | L200-210 | 解析scoped包的本地入口路径 |  |
+| pe-test/_shared/host-deps.mjs | buildAsyncHookSource | L212-345 | 构造异步import钩子源码供隔离宿主依赖 |  |
+| pe-test/_shared/host-deps.mjs | registerHostDeps | L349-412 | 注册测试所需宿主依赖并校验实际版本 |  |
+| pe-test/_shared/host-deps.mjs | resolveScoped | L364-370 | 解析scoped宿主包候选路径 |  |
+| pe-test/_shared/host-deps.mjs | resolveBare | L371-377 | 解析非scoped宿主包候选路径 |  |
+| pe-test/_shared/host-deps.mjs | resolveOne | L379-391 | 按包名统一尝试scoped与bare解析 |  |
+| pe-test/_shared/host-preload.mjs | preloadError | L8-13 | （待补充） |  |
+| pe-test/_shared/host-preload.mjs | isAbsolute | L15-18 | （待补充） |  |
+| pe-test/_shared/host-preload.mjs | explicitInstallRoot | L20-47 | （待补充） |  |
+| pe-test/_shared/session-finder.mjs | errorCodeOf | L13 | （待补充） |  |
+| pe-test/_shared/session-finder.mjs | errorMessageOf | L14 | （待补充） |  |
+| pe-test/_shared/session-finder.mjs | isMissingTarget | L15 | （待补充） |  |
+| pe-test/_shared/session-finder.mjs | isAbsolute | L16 | （待补充） |  |
+| pe-test/_shared/session-finder.mjs | pathKindOf | L17-20 | （待补充） |  |
+| pe-test/_shared/session-finder.mjs | contextOf | L22-35 | （待补充） |  |
+| pe-test/_shared/session-finder.mjs | hasHostRoot | L37 | （待补充） |  |
+| pe-test/_shared/session-finder.mjs | readTarget | L38-41 | （待补充） |  |
+| pe-test/_shared/session-finder.mjs | tryReadTarget | L42-44 | （待补充） |  |
+| pe-test/_shared/session-finder.mjs | authorizedAnyPath | L45-58 | （待补充） |  |
+| pe-test/_shared/session-finder.mjs | authorizedLogPath | L59-71 | （待补充） |  |
+| pe-test/_shared/session-finder.mjs | authorizedSessionLogPath | L72-75 | （待补充） |  |
+| pe-test/_shared/session-finder.mjs | authorizedSessionReadPath | L76-84 | （待补充） |  |
+| pe-test/_shared/session-finder.mjs | logPath | L85-88 | 在目录中按v4、v3、旧名顺序寻找会话日志 |  |
+| pe-test/_shared/session-finder.mjs | incompleteError | L92 | （待补充） |  |
+| pe-test/_shared/session-finder.mjs | insideRealRoot | L93-96 | （待补充） |  |
+| pe-test/_shared/session-finder.mjs | isLinkPath | L97-106 | （待补充） |  |
+| pe-test/_shared/session-finder.mjs | normalize | L100 | （待补充） |  |
+| pe-test/_shared/session-finder.mjs | validatedView | L107-112 | （待补充） |  |
+| pe-test/_shared/session-finder.mjs | readDiscoveryHead | L113-177 | （待补充） |  |
+| pe-test/_shared/session-finder.mjs | metaOf | L125-130 | （待补充） |  |
+| pe-test/_shared/session-finder.mjs | processText | L131-153 | （待补充） |  |
+| pe-test/_shared/session-finder.mjs | idVariants | L178 | （待补充） |  |
+| pe-test/_shared/session-finder.mjs | sameId | L179 | （待补充） |  |
+| pe-test/_shared/session-finder.mjs | byName | L180 | 按目录名或会话ID匹配候选 |  |
+| pe-test/_shared/session-finder.mjs | directChildren | L181-202 | （待补充） |  |
+| pe-test/_shared/session-finder.mjs | selectedGroup | L203-208 | （待补充） |  |
+| pe-test/_shared/session-finder.mjs | explicitPathResult | L209-215 | （待补充） |  |
+| pe-test/_shared/session-finder.mjs | looksLikePath | L216-220 | （待补充） |  |
+| pe-test/_shared/session-finder.mjs | sessionRootTarget | L221-224 | （待补充） |  |
+| pe-test/_shared/session-finder.mjs | exactIdResult | L225-248 | （待补充） |  |
+| pe-test/_shared/session-finder.mjs | contextSelectionResult | L249-260 | （待补充） |  |
+| pe-test/_shared/session-finder.mjs | findSession | L261-280 | 返回显式或自动会话定位结果及关联子会话 |  |
+| pe-test/_shared/test-output.mjs | digest | L13-15 | 计算UTF-8文本SHA-256摘要 |  |
+| pe-test/_shared/test-output.mjs | normalize | L17-33 | 递归稳定化值并处理循环引用与特殊类型 |  |
+| pe-test/_shared/test-output.mjs | stableStringify | L35-39 | 按键排序序列化断言值 |  |
+| pe-test/_shared/test-output.mjs | parseOutputMode | L41-60 | 解析compact、verbose、full模式及优先级 |  |
+| pe-test/_shared/test-output.mjs | summarizeValue | L62-73 | 将成功大对象压缩为类型、键数和预览摘要 |  |
+| pe-test/_shared/test-output.mjs | assertionLine | L75-80 | 按模式渲染断言并始终保留失败差异 |  |
+| pe-test/_shared/test-output.mjs | createOutput | L82-112 | 创建统一断言、结构化输出与统计接口 |  |
+| pe-test/_shared/test-output.mjs | emit | L86-89 | 将普通行或错误行写入对应通道 |  |
+| pe-test/_shared/test-output.mjs | assertion | L90-93 | 输出断言行并返回布尔结果 |  |
+| pe-test/_shared/test-output.mjs | structured | L94-99 | 按模式输出完整值或稳定摘要 |  |
+| pe-test/_shared/test-output.mjs | detail | L100-102 | 仅在full或强制条件下输出细节 |  |
+| pe-test/_shared/test-output.mjs | marker | L103 | 输出SKIP、HUMAN等结构化状态标记 |  |
+| pe-test/_shared/test-output.mjs | summary | L104-110 | 输出统一通过失败及扩展状态统计 |  |
+| pe-test/_shared/test-output.mjs | workspaceTarget | L116-119 | （待补充） |  |
+| pe-test/_shared/test-output.mjs | workspacePathOf | L121-123 | （待补充） |  |
+| pe-test/_shared/test-output.mjs | prepareOutputDirectory | L125-133 | （待补充） |  |
+| pe-test/_shared/test-output.mjs | prepareOutputFile | L135-138 | （待补充） |  |
+| pe-test/_shared/test-output.mjs | fileEvidence | L140-150 | 读取文件并计算bytes、lines、SHA-256 |  |
+| pe-test/_shared/test-output.mjs | writeRawEvidence | L152-172 | 保存stdout、stderr并返回合并证据统计 |  |
+| pe-test/_shared/test-output.mjs | sha256Text | L174-176 | 对文本返回SHA-256用于raw复核 |  |
 | pe-test/_shared/v4-tool-result.mjs | isObject | L6 | 判定非空普通对象 |  |
 | pe-test/_shared/v4-tool-result.mjs | isToolResultType | L8-10 | 判定事件是否为tool/result类型 |  |
 | pe-test/_shared/v4-tool-result.mjs | isV4SessionFile | L12-14 | 判定路径是否为v4会话日志文件 |  |
 | pe-test/_shared/v4-tool-result.mjs | v4LogPath | L16-20 | 返回目录中的v4日志路径或空值 |  |
 | pe-test/_shared/v4-tool-result.mjs | toolResultOf | L22-28 | 从v4事件提取调用ID、错误标记和文本 |  |
+| pe-test/_shared/workspace-paths.mjs | factoryError | L11-16 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | isAbsolute | L18-22 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | lexical | L24-35 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | keyOf | L37-40 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | within | L42-48 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | requireAbsoluteRoot | L50-56 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | assertExistingChain | L58-82 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | repoRoot | L84-96 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | fixtureLabel | L98-104 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | getWorkspaceRoot | L106-108 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | makeFixtureDir | L110-149 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | cleanup | L138-141 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | resolveEvidencePath | L151-162 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | fixtureRootOf | L164-171 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | createIsolatedEnv | L173-209 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | isRecord | L222-224 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | strictMaintenancePath | L226-230 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | strictAbsoluteMaintenancePath | L232-235 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | strictMaintenanceSegment | L237-243 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | strictSessionScopePath | L245-249 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | nextMaintenanceValue | L251-257 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | markMaintenanceOption | L259-262 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | sameStringArray | L264-266 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | parseMaintenanceArgs | L268-374 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | rejectOtherCategory | L376-378 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | rejectUnknownKeys | L380-387 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | contextOptionsOf | L389-410 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | chooseContextValue | L412-417 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | normalizeSessionOptions | L419-448 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | normalizeLedgerOptions | L450-471 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | normalizeRequestTrace | L473-479 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | normalizeDomainArgv | L481-492 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | policyTargetFor | L494-503 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | targetView | L505-522 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | targetForInput | L524-543 | （待补充） |  |
+| pe-test/_shared/workspace-paths.mjs | createMaintenanceContext | L545-655 | （待补充） |  |
 | pe-test/_shared/zstd-frames.mjs | frameEndAt | L6-34 | 在已验证 magic 的帧起点解析 FCS/字典/checksum 与 raw/RLE/compressed 块，只返回当前帧结束位置；不完整或非法块边界返回 null。 | 私有边界算法由 framesOf 与严格逐帧解码复用，不扫描后续帧。 |
 | pe-test/_shared/zstd-frames.mjs | framesOf | L36-48 | 解析完整zstd帧及块边界 |  |
 | pe-test/_shared/zstd-frames.mjs | decodeText | L50-52 | 解压单帧并转为UTF-8文本 |  |
 | pe-test/_shared/zstd-frames.mjs | decompressedFrameBytes | L58-85 | 逐帧计算一次边界并解压，边界解析次数随帧数线性增长；按长度跳过 skippable 载荷，产出每帧 Buffer，截断/非法 magic/无完整帧抛出不完整错误。 | skippable 载荷内的 zstd magic 不作为真实帧。 |
 | pe-test/_shared/zstd-frames.mjs | decodedJsonlLines | L87-107 | 以 fatal UTF-8 TextDecoder 跨帧累积并按物理换行 yield { lineNo, line }，保留 CR/空行/末行无换行；帧截断、非法 UTF-8 和无完整帧由调用方归类 INCOMPLETE。 |  |
-| plugins/dsh-extra-plan-qqbot/index.js | apply | L11-22 | 插件入口：apply 启动时调 healQqbotCompatibility 自愈（迁移旧错误块+建链；try/catch 不阻断启动） |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | sameRealPath | L11-13 | 共享路径比较 helper：Windows 忽略大小写、其它平台精确比较；供 CLI 入口、目标包与最终链接校验复用。 |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | loadYamlModule | L19-29 | 仅按 package-local import.meta.url 惰性加载 js-yaml；不可用时由迁移入口保守跳过，导入零副作用。 |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | loadYamlSchema | L31-45 | 惰性构造只保留 Loader `!!js` 标量的 JSON schema，表达式只转 __jsExpr 不求值 |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | resolve | L37 | 惰性 js-yaml 类型的标量判定，仅接受字符串数据 |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | construct | L38 | 将 `!!js` 标量包装为惰性 __jsExpr 标记，绝不执行 |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | predicate | L39 | 识别惰性 __jsExpr 标记对象 |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | represent | L40 | 为 schema 重新表示惰性表达式文本 |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | timestamp | L47-51 | 时间戳 yyyyMMddHHmmssSSS（毫秒粒度备份时间戳，不作同毫秒唯一承诺） |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | pad | L49 | 数字补零（timestamp 内部闭包） |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | isObject | L77-79 | 非空普通对象判定（排除 null/数组） |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | stripBom | L81-83 | 去除行首 BOM（迁移扫描用） |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | lineIndent | L85-87 | 行首缩进宽度 |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | isIgnorableLine | L89-92 | 空行/注释行判定（块扫描跳过） |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | parseEntryBlock | L96-104 | 用 js-yaml 严格解析单个根级条目，返回 parsed/yaml-unavailable/parse-failed 状态；不做文本猜测。 |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | legacyEntryKind | L106-116 | 旧版根级完整块匹配（id+name[+config.default=standard]）→ 返回 id 或 null |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | rootSequenceIndent | L118-128 | 根级序列缩进探测（首条 - 行的缩进宽度） |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | isRootSequenceLine | L130-134 | 指定缩进处的根级序列行判定 |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | scanRootBlocks | L136-162 | 按根级缩进切分顶层条目块（返回 lines/rootIndent/blocks） |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | findLegacyRootBlocks | L164-179 | 扫描根级块并仅按解析对象匹配完整旧条目；任一解析不可用/失败返回 parseIssue，整体跳过删除。 |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | removeLegacyRootBlocks | L181-203 | 移除旧版根级块（移除后无实质内容时写顶层 []） |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | verifyMigratedPatch | L205-215 | 迁移后只用 js-yaml 校验顶层数组且无完整旧块残留，不使用行级 fallback。 |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | healPatchRows | L226-268 | 幂等迁移旧版根级 code-runtime/agent-presets 错误块（实为清旧块；静态补行由包内 cordis.patch.yml 唯一提供）；写前 .bak-* 备份、写后校验失败恢复；文件不存在跳过 |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | findOwnQqbotProfiles | L276-296 | 扫描 $DSH_HOME/profiles/* 找出锚定本插件的 qqbot profile（bundles + node_modules 双条件） |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | ensureDshExtraPlanLink | L304-334 | 建平铺 dsh-extra-plan → Web 包链接：web 缺失跳过/已正确不动/实体或非目标链接提示 pnpm 迁移/仅 ENOENT 建 junction |  |
-| plugins/dsh-extra-plan-qqbot/lib/heal.js | healQqbotCompatibility | L340-367 | 按可选 profileNames 将 findOwnQqbotProfiles 结果缩小候选后，逐 profile 执行 healPatchRows（清旧错误块）与 ensureDshExtraPlanLink（建链），汇总 results/failed；整体异常只告警并返回 error，不阻断加载。 |  |
-| plugins/dsh-extra-plan-qqbot/scripts/heal.mjs | invokedAsMain | L10-15 | 主脚本判定（node 直跑时执行自愈；本仓插件 CLI 通用写法） |  |
-| plugins/dsh-extra-plan-qqbot/scripts/heal.mjs | installFailure | L17-21 | 将严格安装失败原因与可选 detail 组装为 { error } 结构，供各失败分支统一返回。 |  |
-| plugins/dsh-extra-plan-qqbot/scripts/heal.mjs | strictInstall | L23-99 | --install 严格预检并收口：校验 Web 源、双锚点包根唯一匹配、目标实体与链；以 profileNames 限定自愈，要求 patch/link 成功态并复核最终 lstat/realpath，失败统一返回 error。 |  |
-| plugins/dsh-extra-plan-qqbot/scripts/heal.mjs | reportInstallFailure | L101-104 | 将严格安装失败结构化 JSON 写入 stderr，并设置 process.exitCode=1。 |  |
+| plugins/dsh-extra-plan-qqbot/index.js | apply | L9-33 | 插件入口：apply 启动时调 healQqbotCompatibility 自愈（迁移旧错误块+建链；try/catch 不阻断启动） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | sameRealPath | L15-17 | 共享路径比较 helper：Windows 忽略大小写、其它平台精确比较；供 CLI 入口、目标包与最终链接校验复用。 |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | loadYamlModule | L23-33 | 仅按 package-local import.meta.url 惰性加载 js-yaml；不可用时由迁移入口保守跳过，导入零副作用。 |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | loadYamlSchema | L35-49 | 惰性构造只保留 Loader `!!js` 标量的 JSON schema，表达式只转 __jsExpr 不求值 |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | resolve | L41 | 惰性 js-yaml 类型的标量判定，仅接受字符串数据 |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | construct | L42 | 将 `!!js` 标量包装为惰性 __jsExpr 标记，绝不执行 |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | predicate | L43 | 识别惰性 __jsExpr 标记对象 |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | represent | L44 | 为 schema 重新表示惰性表达式文本 |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | timestamp | L51-55 | 时间戳 yyyyMMddHHmmssSSS（毫秒粒度备份时间戳，不作同毫秒唯一承诺） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | pad | L53 | 数字补零（timestamp 内部闭包） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | errorText | L61-63 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | isMissingError | L65-67 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | ownPackageRoot | L69-71 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | isLinkEntity | L73-77 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | createHostAccess | L79-88 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | hostPath | L90-92 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | readHostJson | L94-98 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | safeProfileName | L100-105 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | profilePath | L107-110 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | ownPluginEntry | L112-131 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | contextMember | L133-142 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | resolveRootProvider | L144-147 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | profileIdentityOf | L149-164 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | resolveQqbotHostRoot | L166-199 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | isObject | L225-227 | 非空普通对象判定（排除 null/数组） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | stripBom | L229-231 | 去除行首 BOM（迁移扫描用） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | lineIndent | L233-235 | 行首缩进宽度 |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | isIgnorableLine | L237-240 | 空行/注释行判定（块扫描跳过） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | parseEntryBlock | L244-252 | 用 js-yaml 严格解析单个根级条目，返回 parsed/yaml-unavailable/parse-failed 状态；不做文本猜测。 |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | legacyEntryKind | L254-264 | 旧版根级完整块匹配（id+name[+config.default=standard]）→ 返回 id 或 null |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | rootSequenceIndent | L266-276 | 根级序列缩进探测（首条 - 行的缩进宽度） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | isRootSequenceLine | L278-282 | 指定缩进处的根级序列行判定 |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | scanRootBlocks | L284-310 | 按根级缩进切分顶层条目块（返回 lines/rootIndent/blocks） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | findLegacyRootBlocks | L312-327 | 扫描根级块并仅按解析对象匹配完整旧条目；任一解析不可用/失败返回 parseIssue，整体跳过删除。 |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | removeLegacyRootBlocks | L329-351 | 移除旧版根级块（移除后无实质内容时写顶层 []） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | verifyMigratedPatch | L353-363 | 迁移后只用 js-yaml 校验顶层数组且无完整旧块残留，不使用行级 fallback。 |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | healPatchRows | L374-444 | 幂等迁移旧版根级 code-runtime/agent-presets 错误块（实为清旧块；静态补行由包内 cordis.patch.yml 唯一提供）；写前 .bak-* 备份、写后校验失败恢复；文件不存在跳过 |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | findOwnQqbotProfiles | L452-525 | 扫描 $DSH_HOME/profiles/* 找出锚定本插件的 qqbot profile（bundles + node_modules 双条件） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | finish | L457-468 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | ensureDshExtraPlanLink | L533-590 | 建平铺 dsh-extra-plan → Web 包链接：web 缺失跳过/已正确不动/实体或非目标链接提示 pnpm 迁移/仅 ENOENT 建 junction |  |
+| plugins/dsh-extra-plan-qqbot/lib/heal.js | healQqbotCompatibility | L596-654 | 按可选 profileNames 将 findOwnQqbotProfiles 结果缩小候选后，逐 profile 执行 healPatchRows（清旧错误块）与 ensureDshExtraPlanLink（建链），汇总 results/failed；整体异常只告警并返回 error，不阻断加载。 |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | policyError | L13-18 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | isObject | L20-22 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | isOther | L24-26 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | rejectOther | L28-33 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | rejectOtherOptions | L35-40 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | isFullyQualifiedAbsolute | L42-45 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | rejectVariable | L47-57 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | lexicalPath | L59-73 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | rootPath | L75-82 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | keyOf | L84-87 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | samePath | L89-91 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | isWithin | L93-99 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | assertLexicalWithin | L101-105 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | readOnlyCapabilityForLogicalPath | L107-114 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | readOnlyCapabilityForRealPath | L116-125 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | rejectReadOnlyCapability | L127-129 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | purposeOf | L131-137 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | capabilityName | L139-145 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | normalizeCapabilities | L147-170 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | createPathContext | L172-190 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | ensureContext | L192-201 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | capabilityOf | L203-209 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | relativeInput | L211-217 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | makeTarget | L219-267 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | resolveWorkspacePath | L269-273 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | resolveHostPath | L275-279 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | targetInput | L281-305 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | assertAllowedPath | L307-314 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | isMissing | L316-318 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | sameOrChildReal | L320-322 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | physicalRoot | L324-339 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | inspectChain | L341-386 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | expectedType | L388-392 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | checkType | L394-398 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | validateReadTarget | L400-426 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/lib/path-policy.js | prepareWriteTarget | L428-461 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/scripts/heal.mjs | isLinkEntity | L12-16 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/scripts/heal.mjs | invokedAsMain | L18-23 | 主脚本判定（node 直跑时执行自愈；本仓插件 CLI 通用写法） |  |
+| plugins/dsh-extra-plan-qqbot/scripts/heal.mjs | installFailure | L25-29 | 将严格安装失败原因与可选 detail 组装为 { error } 结构，供各失败分支统一返回。 |  |
+| plugins/dsh-extra-plan-qqbot/scripts/heal.mjs | errorText | L31-33 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/scripts/heal.mjs | isMissingError | L35-37 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/scripts/heal.mjs | createInstallAccess | L39-43 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/scripts/heal.mjs | readInstallJson | L45-48 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/scripts/heal.mjs | strictInstall | L50-152 | --install 严格预检并收口：校验 Web 源、双锚点包根唯一匹配、目标实体与链；以 profileNames 限定自愈，要求 patch/link 成功态并复核最终 lstat/realpath，失败统一返回 error。 |  |
+| plugins/dsh-extra-plan-qqbot/scripts/heal.mjs | reportInstallFailure | L154-157 | 将严格安装失败结构化 JSON 写入 stderr，并设置 process.exitCode=1。 |  |
+| plugins/dsh-extra-plan-qqbot/scripts/heal.mjs | printHelp | L159-169 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/scripts/heal.mjs | parseArguments | L171-212 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/scripts/heal.mjs | setOnce | L174-178 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/scripts/heal.mjs | reportCliFailure | L214-219 | （待补充） |  |
+| plugins/dsh-extra-plan-qqbot/scripts/heal.mjs | runDryRun | L221-233 | （待补充） |  |
 | plugins/dsh-extra-plan/index.js | malformedRecovery | L206-240 | MALFORMED_RESPONSE 限次自愈：llm-retry 已给 {kind:'retry'} 原样透传（不叠加）；否则按 sessionId→Set('turn:step') 同回合只兜底 1 次（防死循环），注入 developer/message 中文提示（append 带 surfaceOp:'append'、纯文本禁带 headerSeq、source.kind 用生产者自有 plugin:dsh-extra-plan）并返回 {kind:'retry'}；**payload 须自带 ≥1 的 turn/step（宿主 append 不补坐标），坐标缺失/非正整数 → 跳过注入但仍返回 {kind:'retry'}**；aborted/无 agent/超次 → null 回退原 action 透传 |  |
-| plugins/dsh-extra-plan/index.js | recordAgentError | L254-272 | agent/error 回合错误取证：把宿主回合/步骤级错误（payload {agent,turn,step,error}）逐字落盘到插件目录 extra-plan-agent-errors.jsonl，行 = {ts, sessionId, turn, step, chain}；整体吞错 + 一次性 warn 防刷屏；模块级函数经命名导出供回归冒烟直呼 | 与 recordRequestError 同诊断模式 |
-| plugins/dsh-extra-plan/index.js | apply | L276-989 | 插件主入口：第一步 createGateRuntime(cfg.gateWords)（缺失/非法同步抛错，早于任何工具/监听器/服务副作用）→ ctx.effect 在当前 agent scope 注册恰好 7 个 extra_plan_* prompt variable（provider 返回本次 apply 捕获值）→ 配置解析（含变量② bootstrapReadHint）/服务注册/工具注册/creativeMode 模型可见投影/锚点钩子（HP 首轮 tool:read text 用变量②覆盖）；planner 与非 planner child 双模型路由；会话状态按 sessionId 分桶与 agent/disposed 同步 final flush + 单会话回收；tool-jobs 通知由 `agent/inbox/claimed` 同步主入口与 `tools/pre-execute` durable snapshot fallback 共用 `consumeToolJobsNotice`，以 notice `message.id` 建立跨锚点基线，复用 jobId 的新 incarnation 仍可解锁 |  |
-| plugins/dsh-extra-plan/index.js | resolveDocumentPath | L308-315 | 取 configEditor 服务的 documentPath 作为 profile patch 文件绝对路径，异常或非字符串时返回空串，供 live-config 决议热读路径。 |  |
-| plugins/dsh-extra-plan/index.js | plannerModel | L328 | 热读箭头 getter：pro 规划默认模型（liveConfig.plannerModel；消费点=model-routing 的 getPlannerModel） |  |
-| plugins/dsh-extra-plan/index.js | otherAgentModel | L329 | 热读箭头 getter：其他子代理默认模型（消费点=model-routing 的 getOtherAgentModel） |  |
-| plugins/dsh-extra-plan/index.js | exploreBudget | L330 | 热读箭头 getter：pro 规划探查额度/单实例子调用上限（消费点=预算文案、noteRunCodeSubCall、plannerGateReason 与组判定） |  |
-| plugins/dsh-extra-plan/index.js | plannerPromptSuffix | L331 | 热读箭头 getter：pre-step 拼接的额外引导后缀 |  |
-| plugins/dsh-extra-plan/index.js | bootstrapOn | L332 | 热读箭头 getter：anchored 首轮引导开关（消费点=shouldHideCreativeCatalog 与 anchoredFirst 装配） |  |
-| plugins/dsh-extra-plan/index.js | runcodeCatchGateOn | L333 | 热读箭头 getter：PTC try/catch 闸门开关（消费点=planner/只读 child/主会话三处组判定传参） |  |
-| plugins/dsh-extra-plan/index.js | crossProviderPlannerModelOn | L334 | 热读箭头 getter：跨提供方模型选择开关（消费点=model-routing 双 resolver 入口，新 agent 重决议） |  |
-| plugins/dsh-extra-plan/index.js | creativeModeOn | L337 | 热读箭头 getter：创造模式开关（liveConfig.creativeMode；消费点=shouldHideCreativeCatalog 与装配投影 hideCordis） |  |
-| plugins/dsh-extra-plan/index.js | getAgents | L357 | 惰性返回 ctx.get('agents') 服务；注入 createAgentRuntime，供判定子会话是否为其父代理下的活跃派发。 |  |
-| plugins/dsh-extra-plan/index.js | warn | L360 | 把告警参数原样转发到 console.warn；注入 createAgentRuntime，作为缺父代理等异常情况的告警出口。 |  |
-| plugins/dsh-extra-plan/index.js | getPlannerModel | L368 | 返回热读配置 plannerModel（planner 子代理所用模型名）；注入 createModelRouting 供 planner 模型路由决议。 |  |
-| plugins/dsh-extra-plan/index.js | getOtherAgentModel | L369 | 返回热读配置 otherAgentModel（非 planner 子代理所用模型名，空串表示不覆盖）；供非 planner 路由决议。 |  |
-| plugins/dsh-extra-plan/index.js | getCrossProviderPlannerModel | L370 | 返回热读布尔开关 crossProviderPlannerModel；决定 planner 路由走跨 provider 严格探针还是旧单 provider 路径。 |  |
-| plugins/dsh-extra-plan/index.js | getLlm | L371 | 返回 ctx.get('llm') 服务；供 model-routing 查 provider 模型目录（listModels）与真实探针调用。 |  |
-| plugins/dsh-extra-plan/index.js | getAgents | L372 | 返回 ctx.get('agents') 服务（同名第 2 处，消费方为 model-routing）；供经 agents.get 回溯父会话链的 provider/model/maxTokens。 |  |
-| plugins/dsh-extra-plan/index.js | getDiagPath | L373 | 返回诊断文件路径 diagPath（取自 cfg.diagFile，缺省为插件目录下 extra-plan-request-errors.jsonl）；供追加 planner 降级诊断行。 |  |
-| plugins/dsh-extra-plan/index.js | noteRunCodeSubCall | L400 | 单实例子调用上限（planner）：按 sessionId→rootCallId 桶读计数、未超限则 +1；返回拒绝文案或 null；空 rootCallId 与 exploreBudget 文案保持 |  |
-| plugins/dsh-extra-plan/index.js | consumeToolJobsNotice | L401-434 | 统一幂等 tool-jobs notice 消费：校验 session/message/非空 message.id/source/content 与 `/background job (\S+)/`；session 内以 message.id 判重，同 id 跨 claimed/durable 幂等，不同 id 即使复用 jobId 也算新通知；首次有效通知按 session 精确删除 jobId 对应的 job_output 键、清空 pollGuard 整表，双解锁后写 notice-id；坏输入与重复通知返回 false 且零 Map 副作用，锚点不删除 notice-id Set | `agent/inbox/claimed` 同步主入口与 `tools/pre-execute` durable user/message fallback 共用；Set 由 disposeSession 按 session 回收，不查询 job running/terminal 状态 |
-| plugins/dsh-extra-plan/index.js | shouldHideCreativeCatalog | L464-471 | HP1 判定：C=1、A=1、F、main/planner、M=ptc 时暂隐两个创造 skill |  |
-| plugins/dsh-extra-plan/index.js | isAnchoredContextGate | L475-480 | 判定当前 agent 是否满足 anchored context gate：bootstrap 开启、Session 仍处 F，且角色为 main 或 planner（非 live child） | 只读 payload.agent；角色沿现有 isPlannerChild/isChild 语义，不使用 selfAgent 或父 Session 相位 |
-| plugins/dsh-extra-plan/index.js | warnPreStepFailure | L482-486 | pre-step 可降级 C 投影/去重异常的一次性告警 helper；返回路径仍保留已经完成的 source 过滤副本，并保证 next 只调用一次 | 不得在关键 source gate/phase 失败时吞错后发送未过滤 decision |
-| plugins/dsh-extra-plan/index.js | recordRequestError | L555-577 | 记录 agent/request-error 失败诊断到插件目录 extra-plan-request-errors.jsonl（diagPath 可经 cfg.diagFile 覆盖；行含 turn/step/provider/message/code/causeChain） |  |
+| plugins/dsh-extra-plan/index.js | safeContextGet | L253-259 | （待补充） |  |
+| plugins/dsh-extra-plan/index.js | absoluteRoot | L263-270 | （待补充） |  |
+| plugins/dsh-extra-plan/index.js | profileIdentityOf | L272-283 | （待补充） |  |
+| plugins/dsh-extra-plan/index.js | rootFact | L285-289 | （待补充） |  |
+| plugins/dsh-extra-plan/index.js | sameRoot | L291-296 | （待补充） |  |
+| plugins/dsh-extra-plan/index.js | configEditorServiceOf | L298-301 | （待补充） |  |
+| plugins/dsh-extra-plan/index.js | documentFact | L303-307 | （待补充） |  |
+| plugins/dsh-extra-plan/index.js | profileFactsOf | L309-374 | （待补充） |  |
+| plugins/dsh-extra-plan/index.js | has | L311 | （待补充） |  |
+| plugins/dsh-extra-plan/index.js | installAnchorOf | L376-378 | （待补充） |  |
+| plugins/dsh-extra-plan/index.js | pathContextFor | L380-393 | （待补充） |  |
+| plugins/dsh-extra-plan/index.js | resolveDocumentTargetFor | L395-403 | （待补充） |  |
+| plugins/dsh-extra-plan/index.js | sessionCwdOf | L405-409 | （待补充） |  |
+| plugins/dsh-extra-plan/index.js | resolveAbsoluteLogTarget | L411-417 | （待补充） |  |
+| plugins/dsh-extra-plan/index.js | diagnosticTargetOf | L419-434 | （待补充） |  |
+| plugins/dsh-extra-plan/index.js | prepareDiagnosticPath | L436-452 | （待补充） |  |
+| plugins/dsh-extra-plan/index.js | appendDiagnostic | L454-459 | （待补充） |  |
+| plugins/dsh-extra-plan/index.js | recordAgentError | L461-478 | agent/error 回合错误取证：把宿主回合/步骤级错误（payload {agent,turn,step,error}）逐字落盘到插件目录 extra-plan-agent-errors.jsonl，行 = {ts, sessionId, turn, step, chain}；整体吞错 + 一次性 warn 防刷屏；模块级函数经命名导出供回归冒烟直呼 | 与 recordRequestError 同诊断模式 |
+| plugins/dsh-extra-plan/index.js | apply | L482-1189 | 插件主入口：第一步 createGateRuntime(cfg.gateWords)（缺失/非法同步抛错，早于任何工具/监听器/服务副作用）→ ctx.effect 在当前 agent scope 注册恰好 7 个 extra_plan_* prompt variable（provider 返回本次 apply 捕获值）→ 配置解析（含变量② bootstrapReadHint）/服务注册/工具注册/creativeMode 模型可见投影/锚点钩子（HP 首轮 tool:read text 用变量②覆盖）；planner 与非 planner child 双模型路由；会话状态按 sessionId 分桶与 agent/disposed 同步 final flush + 单会话回收；tool-jobs 通知由 `agent/inbox/claimed` 同步主入口与 `tools/pre-execute` durable snapshot fallback 共用 `consumeToolJobsNotice`，以 notice `message.id` 建立跨锚点基线，复用 jobId 的新 incarnation 仍可解锁 |  |
+| plugins/dsh-extra-plan/index.js | getPathContext | L505 | （待补充） |  |
+| plugins/dsh-extra-plan/index.js | resolveDocumentTarget | L515 | （待补充） |  |
+| plugins/dsh-extra-plan/index.js | getPathContext | L516 | （待补充） |  |
+| plugins/dsh-extra-plan/index.js | plannerModel | L529 | 热读箭头 getter：pro 规划默认模型（liveConfig.plannerModel；消费点=model-routing 的 getPlannerModel） |  |
+| plugins/dsh-extra-plan/index.js | otherAgentModel | L530 | 热读箭头 getter：其他子代理默认模型（消费点=model-routing 的 getOtherAgentModel） |  |
+| plugins/dsh-extra-plan/index.js | exploreBudget | L531 | 热读箭头 getter：pro 规划探查额度/单实例子调用上限（消费点=预算文案、noteRunCodeSubCall、plannerGateReason 与组判定） |  |
+| plugins/dsh-extra-plan/index.js | plannerPromptSuffix | L532 | 热读箭头 getter：pre-step 拼接的额外引导后缀 |  |
+| plugins/dsh-extra-plan/index.js | bootstrapOn | L533 | 热读箭头 getter：anchored 首轮引导开关（消费点=shouldHideCreativeCatalog 与 anchoredFirst 装配） |  |
+| plugins/dsh-extra-plan/index.js | runcodeCatchGateOn | L534 | 热读箭头 getter：PTC try/catch 闸门开关（消费点=planner/只读 child/主会话三处组判定传参） |  |
+| plugins/dsh-extra-plan/index.js | crossProviderPlannerModel | L535 | （待补充） |  |
+| plugins/dsh-extra-plan/index.js | creativeModeOn | L538 | 热读箭头 getter：创造模式开关（liveConfig.creativeMode；消费点=shouldHideCreativeCatalog 与装配投影 hideCordis） |  |
+| plugins/dsh-extra-plan/index.js | getAgents | L559 | 惰性返回 ctx.get('agents') 服务；注入 createAgentRuntime，供判定子会话是否为其父代理下的活跃派发。 |  |
+| plugins/dsh-extra-plan/index.js | warn | L562 | 把告警参数原样转发到 console.warn；注入 createAgentRuntime，作为缺父代理等异常情况的告警出口。 |  |
+| plugins/dsh-extra-plan/index.js | getPlannerModel | L570 | 返回热读配置 plannerModel（planner 子代理所用模型名）；注入 createModelRouting 供 planner 模型路由决议。 |  |
+| plugins/dsh-extra-plan/index.js | getOtherAgentModel | L571 | 返回热读配置 otherAgentModel（非 planner 子代理所用模型名，空串表示不覆盖）；供非 planner 路由决议。 |  |
+| plugins/dsh-extra-plan/index.js | getCrossProviderPlannerModel | L572 | 返回热读布尔开关 crossProviderPlannerModel；决定 planner 路由走跨 provider 严格探针还是旧单 provider 路径。 |  |
+| plugins/dsh-extra-plan/index.js | getLlm | L573 | 返回 ctx.get('llm') 服务；供 model-routing 查 provider 模型目录（listModels）与真实探针调用。 |  |
+| plugins/dsh-extra-plan/index.js | getAgents | L574 | 返回 ctx.get('agents') 服务（同名第 2 处，消费方为 model-routing）；供经 agents.get 回溯父会话链的 provider/model/maxTokens。 |  |
+| plugins/dsh-extra-plan/index.js | getDiagPath | L575 | 返回诊断文件路径 diagPath（取自 cfg.diagFile，缺省为插件目录下 extra-plan-request-errors.jsonl）；供追加 planner 降级诊断行。 |  |
+| plugins/dsh-extra-plan/index.js | noteRunCodeSubCall | L602 | 单实例子调用上限（planner）：按 sessionId→rootCallId 桶读计数、未超限则 +1；返回拒绝文案或 null；空 rootCallId 与 exploreBudget 文案保持 |  |
+| plugins/dsh-extra-plan/index.js | consumeToolJobsNotice | L603-636 | 统一幂等 tool-jobs notice 消费：校验 session/message/非空 message.id/source/content 与 `/background job (\S+)/`；session 内以 message.id 判重，同 id 跨 claimed/durable 幂等，不同 id 即使复用 jobId 也算新通知；首次有效通知按 session 精确删除 jobId 对应的 job_output 键、清空 pollGuard 整表，双解锁后写 notice-id；坏输入与重复通知返回 false 且零 Map 副作用，锚点不删除 notice-id Set | `agent/inbox/claimed` 同步主入口与 `tools/pre-execute` durable user/message fallback 共用；Set 由 disposeSession 按 session 回收，不查询 job running/terminal 状态 |
+| plugins/dsh-extra-plan/index.js | shouldHideCreativeCatalog | L666-673 | HP1 判定：C=1、A=1、F、main/planner、M=ptc 时暂隐两个创造 skill |  |
+| plugins/dsh-extra-plan/index.js | isAnchoredContextGate | L677-682 | 判定当前 agent 是否满足 anchored context gate：bootstrap 开启、Session 仍处 F，且角色为 main 或 planner（非 live child） | 只读 payload.agent；角色沿现有 isPlannerChild/isChild 语义，不使用 selfAgent 或父 Session 相位 |
+| plugins/dsh-extra-plan/index.js | warnPreStepFailure | L684-688 | pre-step 可降级 C 投影/去重异常的一次性告警 helper；返回路径仍保留已经完成的 source 过滤副本，并保证 next 只调用一次 | 不得在关键 source gate/phase 失败时吞错后发送未过滤 decision |
+| plugins/dsh-extra-plan/index.js | recordRequestError | L757-777 | 记录 agent/request-error 失败诊断到插件目录 extra-plan-request-errors.jsonl（diagPath 可经 cfg.diagFile 覆盖；行含 turn/step/provider/message/code/causeChain） |  |
 | plugins/dsh-extra-plan/lib/agent-runtime.js | isLiveDelegation | L10-21 | 按父会话 registry 存活状态判定委托是否仍有效 |  |
 | plugins/dsh-extra-plan/lib/agent-runtime.js | childPolicyNeedsFloor | L24-29 | 判定 read-only（只读） 子代理是否需要 workspace-write floor |  |
 | plugins/dsh-extra-plan/lib/agent-runtime.js | createAgentRuntime | L31-153 | 创建 per-apply 角色/缓存/usage baseline 工厂 |  |
@@ -261,14 +423,16 @@
 | plugins/dsh-extra-plan/lib/assembly-presentation.js | hasNonEmptySection | L114-116 | 判断 tools:ptc-only 是否为有效非空 section，识别 Pure PTC |  |
 | plugins/dsh-extra-plan/lib/assembly-presentation.js | projectAssemblyForPresentation | L119-143 | 创建不原地修改的模型可见 assembly：按当前 schema 交集过滤工具，替换 SDK 文本并隐藏 tool:cordis，另支持 Pure PTC 顶层单入口 | 不改变 registry/restrict/pre-execute |
 | plugins/dsh-extra-plan/lib/assembly-presentation.js | sdkSchemasForRendering | L145-152 | 从 schema 输入排除 run_code 与 Cordis，并确保 renderer 获得输出 schema | 不读取原始 tools:sdk 文本 |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | dshToolsEntryCandidates | L154-170 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | loadSdkRendererModule | L173-187 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | pending | L175-184 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | resolveToolsSdkRenderer | L190-195 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | renderFilteredToolsSdk | L198-201 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | toolRegistryOf | L203-211 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | toolSdkSchemasOf | L213-231 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/assembly-presentation.js | toolPresentationModeOf | L233-242 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | errorWithCause | L154-158 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | assertInstallAnchor | L160-175 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | dshToolsEntryCandidates | L177-184 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | loadSdkRendererModule | L187-207 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | pending | L191-205 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | resolveToolsSdkRenderer | L210-215 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | renderFilteredToolsSdk | L218-221 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | toolRegistryOf | L223-231 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | toolSdkSchemasOf | L233-251 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/assembly-presentation.js | toolPresentationModeOf | L253-262 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/client-carrier.js | apply | L5-7 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/client.js | factory | L3-320 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/client.js | apply | L112-315 | （待补充） |  |
@@ -330,44 +494,56 @@
 | plugins/dsh-extra-plan/lib/gate-decisions.js | schemasHasTool | L604-609 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/gate-decisions.js | catalogIsCollapsed | L616-621 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/gate-decisions.js | subagentProbeGateReason | L627-639 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/gate-decisions.js | shellMutationReason | L645-659 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/gate-decisions.js | childControlGateReason | L662-666 | 仅允许 main 使用 `send_message`/`interrupt_agent`；child 直呼统一返回硬拒文案，供 planner/只读 child/执行者/unknown child 与 run_code 组判定复用。 | 纯函数；mainGateReason 不经此拒绝。 |
-| plugins/dsh-extra-plan/lib/gate-decisions.js | plannerGateReason | L670-686 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/gate-decisions.js | childReadonlyGateReason | L690-700 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/gate-decisions.js | jobOutputGateReason | L705-727 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/gate-decisions.js | recordJobOutputCall | L733-745 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/gate-decisions.js | pollGuardGateReason | L751-764 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/gate-decisions.js | recordPollGuardCall | L766-777 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/gate-decisions.js | probeDisposalWarning | L785-788 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/gate-decisions.js | mainGateReason | L798-928 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/gate-decisions.js | runCodeGroupDenyReason | L940-1024 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/gate-decisions.js | visit | L958-1001 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/gate-decisions.js | aggregateRunCodeDenyReason | L1030-1042 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/gate-decisions.js | withShellEvidence | L645-649 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/gate-decisions.js | shellMutationReason | L651-667 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/gate-decisions.js | childControlGateReason | L670-674 | 仅允许 main 使用 `send_message`/`interrupt_agent`；child 直呼统一返回硬拒文案，供 planner/只读 child/执行者/unknown child 与 run_code 组判定复用。 | 纯函数；mainGateReason 不经此拒绝。 |
+| plugins/dsh-extra-plan/lib/gate-decisions.js | plannerGateReason | L678-694 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/gate-decisions.js | childReadonlyGateReason | L698-708 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/gate-decisions.js | jobOutputGateReason | L713-735 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/gate-decisions.js | recordJobOutputCall | L741-753 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/gate-decisions.js | pollGuardGateReason | L759-772 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/gate-decisions.js | recordPollGuardCall | L774-785 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/gate-decisions.js | probeDisposalWarning | L793-796 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/gate-decisions.js | mainGateReason | L806-935 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/gate-decisions.js | runCodeGroupDenyReason | L947-1031 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/gate-decisions.js | visit | L965-1008 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/gate-decisions.js | aggregateRunCodeDenyReason | L1037-1049 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/gate-words.js | fail | L31-33 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/gate-words.js | normalizeGateLabel | L36-38 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/gate-words.js | validateGateWords | L44-71 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/gate-words.js | bracketed | L73-75 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/gate-words.js | createGateRuntime | L85-114 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/live-config.js | textOf | L37-39 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/live-config.js | envConfigPath | L41-43 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/live-config.js | statStamp | L46-64 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/live-config.js | pick | L66-70 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/live-config.js | describeProblems | L73-75 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/live-config.js | normalizedFallback | L77-84 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/live-config.js | createLiveConfig | L92-239 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/live-config.js | warnOnce | L103-107 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/live-config.js | currentPath | L110-120 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/live-config.js | readDiskValues | L125-152 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/live-config.js | refresh | L178-213 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/live-config.js | read | L215-218 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/live-config.js | anchoredBootstrap | L222 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/live-config.js | creativeMode | L224 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/live-config.js | runcodeCatchGate | L226 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/live-config.js | crossProviderPlannerModel | L228 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/live-config.js | plannerModel | L230 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/live-config.js | plannerPromptSuffix | L232 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/live-config.js | exploreBudget | L234 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/live-config.js | otherAgentModel | L236 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | textOf | L33-35 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | envConfigPath | L37-39 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | errorText | L41-43 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | sameAbsolutePath | L45-49 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | exactHostCapabilities | L51-61 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | rank | L58 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | exactHostTarget | L63-67 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | resolveAbsoluteTarget | L69-78 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | contextFrom | L80-87 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | targetFromValue | L89-101 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | targetOf | L103-108 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | statStamp | L110-125 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | pick | L127-131 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | describeProblems | L133-135 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | normalizedFallback | L137-142 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | createLiveConfig | L152-288 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | warnOnce | L165-169 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | currentResolved | L171-188 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | currentContext | L190-192 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | readDiskValues | L194-216 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | refresh | L235-269 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | read | L271-274 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | get | L277 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | anchoredBootstrap | L278 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | creativeMode | L279 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | runcodeCatchGate | L280 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | crossProviderPlannerModel | L281 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | plannerModel | L282 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | plannerPromptSuffix | L283 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | exploreBudget | L284 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/live-config.js | otherAgentModel | L285 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/model-routing.js | isExplicitRoute | L11-17 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/model-routing.js | isExplicitEffort | L21-23 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/model-routing.js | requestConfigSnapshot | L33-46 | （待补充） |  |
@@ -378,7 +554,7 @@
 | plugins/dsh-extra-plan/lib/model-routing.js | comparePlannerText | L129-133 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/model-routing.js | plannerProviderRank | L135-139 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/model-routing.js | sortPlannerCandidates | L141-152 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/model-routing.js | createModelRouting | L157-509 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/model-routing.js | createModelRouting | L157-511 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/model-routing.js | plannerAbortError | L165-168 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/model-routing.js | withPlannerProbeDeadline | L172-205 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/model-routing.js | probePlannerRoute | L209-251 | （待补充） |  |
@@ -386,14 +562,50 @@
 | plugins/dsh-extra-plan/lib/model-routing.js | worker | L261-268 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/model-routing.js | uniqueProviderCandidates | L276-285 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/model-routing.js | collectStrictProbeCandidates | L288-308 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/model-routing.js | resolvePlannerEntryLegacy | L311-367 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/model-routing.js | resolvePlannerEntryStrict | L370-415 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/model-routing.js | resolvePlannerEntry | L419-428 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/model-routing.js | nonPlannerRouteSources | L432-436 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/model-routing.js | nonPlannerFallbackEntry | L438-446 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/model-routing.js | resolveOtherAgentEntryLegacy | L449-466 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/model-routing.js | resolveOtherAgentEntryStrict | L470-495 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/model-routing.js | resolveOtherAgentEntry | L498-507 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/model-routing.js | resolvePlannerEntryLegacy | L311-369 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/model-routing.js | resolvePlannerEntryStrict | L372-417 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/model-routing.js | resolvePlannerEntry | L421-430 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/model-routing.js | nonPlannerRouteSources | L434-438 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/model-routing.js | nonPlannerFallbackEntry | L440-448 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/model-routing.js | resolveOtherAgentEntryLegacy | L451-468 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/model-routing.js | resolveOtherAgentEntryStrict | L472-497 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/model-routing.js | resolveOtherAgentEntry | L500-509 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | policyError | L13-18 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | isObject | L20-22 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | isOther | L24-26 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | rejectOther | L28-33 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | rejectOtherOptions | L35-40 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | isFullyQualifiedAbsolute | L42-45 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | rejectVariable | L47-57 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | lexicalPath | L59-73 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | rootPath | L75-82 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | keyOf | L84-87 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | samePath | L89-91 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | isWithin | L93-99 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | assertLexicalWithin | L101-105 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | readOnlyCapabilityForLogicalPath | L107-114 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | readOnlyCapabilityForRealPath | L116-125 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | rejectReadOnlyCapability | L127-129 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | purposeOf | L131-137 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | capabilityName | L139-145 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | normalizeCapabilities | L147-170 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | createPathContext | L172-190 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | ensureContext | L192-201 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | capabilityOf | L203-209 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | relativeInput | L211-217 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | makeTarget | L219-267 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | resolveWorkspacePath | L269-273 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | resolveHostPath | L275-279 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | targetInput | L281-305 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | assertAllowedPath | L307-314 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | isMissing | L316-318 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | sameOrChildReal | L320-322 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | physicalRoot | L324-339 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | inspectChain | L341-386 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | expectedType | L388-392 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | checkType | L394-398 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | validateReadTarget | L400-426 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/path-policy.js | prepareWriteTarget | L428-461 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/planner-budget.js | toolCallCount | L11-40 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/planner-budget.js | toolCallsSinceUser | L43-55 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/planner-budget.js | appendSuffixBlock | L57-74 | （待补充） |  |
@@ -405,196 +617,213 @@
 | plugins/dsh-extra-plan/lib/planner-budget.js | budgetReminderSent | L109-129 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/planner-budget.js | budgetExhaustedReason | L131-133 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/planner-budget.js | budgetExceeded | L135-137 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | loadOfficialAgentPreset | L37-51 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | contentHash | L68-76 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | pluginRows | L79-91 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | visit | L81-88 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | pluginRowIds | L93-95 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | declarationCoversAsset | L97-101 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | plainObject | L103-105 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | userWritableByRow | L107-123 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | push | L109-116 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | stripUserWritable | L125-136 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | declarationBodyMatchesAsset | L138-141 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | carryUserWritable | L143-167 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | effectiveRowConfig | L169-180 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | readAuthoritySettings | L182-205 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | findRowsById | L208-223 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | visit | L211-220 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | validDefinitionValue | L225-227 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | captureLegacyValues | L229-252 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | validGateWordsOrUndefined | L254-256 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | legacyStateFromPlugins | L258-272 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | readLegacyState | L275-329 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | resolveUnifiedConfig | L332-400 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | restateSettingsConfig | L402-427 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | assertPresetDefinition | L431-445 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | parsePresetDefinition | L447-449 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | assetDefinition | L451-454 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | assertRoleDefinition | L457-469 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | roleDefinitionOf | L471-477 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | assetDefinitions | L480-482 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | roleDefinitionsWithPresentation | L490-512 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | assetPlugins | L514-516 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | readDefinitionGateWords | L518-522 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | projectHostRow | L530-537 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | cloneDefinitionWithProjection | L539-551 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | definitionWithProjection | L553-555 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | publicConfigOf | L557-560 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | directProjectionFromLegacy | L562-573 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | assertTemplateGateWords | L575-579 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | readDeclaredPluginsFromPatch | L581-594 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | visit | L586-591 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | readLegacyPresetState | L596-599 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | syncPreset | L605-658 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | findEntry | L660-663 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | applyPlan | L665-673 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | readRawPatch | L675-679 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | settingsValuesFromRows | L681-684 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | activeLegacyRow | L686-693 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | projectedAssetDefinition | L696-706 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | readPatch | L699 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | structuralValue | L708-719 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | rowStructureRecord | L721-740 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | structuralFingerprint | L743-761 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | visit | L745-758 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | mountPresetSync | L763-963 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | disposeFiber | L776-779 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | reportSettledError | L780-787 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | reportAdapterError | L788-796 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | readState | L797-810 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | snapshotOf | L811-821 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | readPatch | L814 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | enqueueSettled | L822-833 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | settledSettingsUpdate | L834-842 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | enqueueStructural | L843-851 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | mountOfficialAdapter | L856-881 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | disposeCurrentAdapter | L882-886 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | structuralHandoff | L887-907 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | readPatch | L896 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | apply | L898 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | initialMount | L908-935 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | readPatch | L917 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | apply | L919 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | settledOnlyUpdate | L936 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-sync.js | dispose | L952-960 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | loadYaml | L7-20 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | resolve | L25 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | construct | L26 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | predicate | L27 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | represent | L28 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | parsePresetYaml | L45-48 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | hasOwn | L50-52 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | pathParts | L54-56 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | readPath | L58-65 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | collectRowsById | L67-82 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | visit | L70-79 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | rowsById | L85-87 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | rowsByIdWithPath | L90-97 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | resolveLocator | L99-112 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | locatorFor | L114-119 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | aliasesFor | L121-126 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | resolveSetting | L133-146 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | resolveTemplateSettingDefault | L148-163 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | captureSettings | L169-185 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | hostRowDefaultsFromTemplate | L188-202 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | captureRowSettings | L212-228 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | migrationEntryName | L231-234 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | migrationEntryConfig | L236-242 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | migrationManagedConfig | L244-254 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | migrationComparable | L256-259 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | migrationHash | L261 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | migrationIgnorable | L262 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | migrationIndent | L263 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | migrationScalarToken | L265-270 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | migrationRowStarts | L272-278 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | migrationRowId | L280-286 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | planCanonicalSettingsMigration | L289-352 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | findPluginsRow | L354-365 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | readProjectedValue | L372-391 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | restatePluginsRow | L394-401 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | inlineCommentIndex | L403-421 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | lineIndent | L423-426 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | withoutCr | L428-430 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | parseRowId | L432-444 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | parseMapKey | L446-450 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | rowEnd | L452-460 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | findDirectKey | L462-480 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | textPathLine | L482-494 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | findTextLocatorMatches | L496-508 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | yamlString | L510-514 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | serializeScalar | L516-520 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | escapeRegex | L522-524 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | replaceLineScalar | L526-538 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | isBlockScalarLine | L540-550 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | scalarTypeFor | L552-557 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/preset-yaml.js | patchYamlScalar | L563-589 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | plainObject | L38-40 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | errorText | L42-44 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | loadYaml | L46-64 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | resolve | L53 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | construct | L54 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | predicate | L55 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | represent | L56 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | parseYaml | L66-69 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | readableDirectory | L71-80 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | unavailable | L82-84 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | documentPathValue | L86-88 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | rootFromDocumentPath | L90-101 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | environmentValue | L103-105 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | resolveProfilesRoot | L108-128 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | sortedNames | L130-132 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | scanOwnQqbotProfiles | L134-173 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | findOwnQqbotProfiles | L176-183 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | snapshotValues | L185-191 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | snapshotGateWords | L193-197 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | validateSettingsSnapshot | L200-215 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | expectedManaged | L217-220 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | canonicalSnapshot | L222-227 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | stableSnapshotHash | L230-233 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | managedSnapshotHashFromConfig | L235-241 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | patchDiagnostic | L243-271 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | strictAssociation | L273-275 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | splitText | L277-283 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | joinText | L285-288 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | indentOf | L290-292 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | ignorable | L294-297 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | rootSequenceInfo | L299-317 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | keyMatch | L319-322 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | targetKind | L324-331 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | configHolder | L333-335 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | locateConfigLine | L337-350 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | blockEndForChild | L352-358 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | directKeyLines | L360-367 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | configChildIndent | L369-379 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | scalar | L381-385 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | renderedConfig | L387-399 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | renderedRow | L402-411 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | spaces | L403 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | parsedTarget | L413-422 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | configState | L424-441 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | managedProjection | L443-447 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | equalManaged | L449-458 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | reparseAndCheck | L460-469 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | existingNameState | L471-488 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | applyExistingTarget | L490-552 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | appendTarget | L554-566 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | scalarTokenEquals | L568-571 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | duplicateTargetNameText | L573-601 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | planQqbotSettingsPatch | L604-629 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | writeExclusive | L631-639 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | nextFilePath | L641-647 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | hook | L649-651 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | writeQqbotSettingsPatch | L654-737 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | fingerprint | L739-741 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | resultForPath | L743-752 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | webDocumentPath | L755-760 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | createQqbotSettingsSynchronizer | L762-891 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | emit | L768-773 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | execute | L774-857 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | finish | L783-795 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | enqueue | L858-885 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | getState | L889 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | errorWithCause | L37-41 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | assertInstallAnchor | L43-58 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | loadOfficialAgentPreset | L60-74 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | assetReadTarget | L101-107 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readAssetBytes | L109-118 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | resourceReadTarget | L120-134 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readResourceBytes | L136-143 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | contentHash | L145-162 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | pluginRows | L165-177 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | visit | L167-174 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | pluginRowIds | L179-181 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | declarationCoversAsset | L183-187 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | plainObject | L189-191 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | userWritableByRow | L193-209 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | push | L195-202 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | stripUserWritable | L211-222 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | declarationBodyMatchesAsset | L224-227 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | carryUserWritable | L229-253 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | effectiveRowConfig | L255-266 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readAuthoritySettings | L268-291 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | findRowsById | L294-309 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | visit | L297-306 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | validDefinitionValue | L311-313 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | captureLegacyValues | L315-338 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | validGateWordsOrUndefined | L340-342 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | legacyStateFromPlugins | L344-358 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readLegacyState | L361-415 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | resolveUnifiedConfig | L418-486 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | restateSettingsConfig | L488-513 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | assertPresetDefinition | L517-531 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | parsePresetDefinition | L533-535 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | assetDefinition | L537-539 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | assertRoleDefinition | L542-554 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | roleDefinitionOf | L556-561 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | assetDefinitions | L564-566 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | roleDefinitionsWithPresentation | L574-596 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | assetPlugins | L598-600 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readDefinitionGateWords | L602-606 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | projectHostRow | L614-621 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | cloneDefinitionWithProjection | L623-635 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | definitionWithProjection | L637-639 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | publicConfigOf | L641-644 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | directProjectionFromLegacy | L646-657 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | assertTemplateGateWords | L659-663 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readDeclaredPluginsFromPatch | L665-678 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | visit | L670-675 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readLegacyPresetState | L680-683 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | syncPreset | L689-741 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | findEntry | L743-746 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | applyPlan | L748-756 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | trustedProfileContextOf | L758-765 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | withProfilePatchCapability | L767-770 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | syncPathContext | L772-782 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readRawPatch | L784-801 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | settingsValuesFromRows | L803-806 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | activeLegacyRow | L808-815 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | projectedAssetDefinition | L818-828 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readPatch | L821 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | structuralValue | L830-841 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | rowStructureRecord | L843-862 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | structuralFingerprint | L865-883 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | visit | L867-880 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | installAnchorOf | L885-888 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | mountPresetSync | L890-1091 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | disposeFiber | L904-907 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | reportSettledError | L908-915 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | reportAdapterError | L916-924 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readState | L925-938 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | snapshotOf | L939-949 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readPatch | L942 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | enqueueSettled | L950-961 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | settledSettingsUpdate | L962-970 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | enqueueStructural | L971-979 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | mountOfficialAdapter | L984-1009 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | disposeCurrentAdapter | L1010-1014 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | structuralHandoff | L1015-1035 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readPatch | L1024 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | apply | L1026 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | initialMount | L1036-1063 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | readPatch | L1045 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | apply | L1047 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | settledOnlyUpdate | L1064 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-sync.js | dispose | L1080-1088 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | loadYaml | L5-8 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | resolve | L13 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | construct | L14 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | predicate | L15 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | represent | L16 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | parsePresetYaml | L33-36 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | hasOwn | L38-40 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | pathParts | L42-44 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | readPath | L46-53 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | collectRowsById | L55-70 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | visit | L58-67 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | rowsById | L73-75 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | rowsByIdWithPath | L78-85 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | resolveLocator | L87-100 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | locatorFor | L102-107 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | aliasesFor | L109-114 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | resolveSetting | L121-134 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | resolveTemplateSettingDefault | L136-151 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | captureSettings | L157-173 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | hostRowDefaultsFromTemplate | L176-190 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | captureRowSettings | L200-216 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | migrationEntryName | L219-222 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | migrationEntryConfig | L224-230 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | migrationManagedConfig | L232-242 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | migrationComparable | L244-247 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | migrationHash | L249 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | migrationIgnorable | L250 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | migrationIndent | L251 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | migrationScalarToken | L253-258 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | migrationRowStarts | L260-266 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | migrationRowId | L268-274 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | planCanonicalSettingsMigration | L277-340 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | findPluginsRow | L342-353 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | readProjectedValue | L360-379 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | restatePluginsRow | L382-389 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | inlineCommentIndex | L391-409 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | lineIndent | L411-414 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | withoutCr | L416-418 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | parseRowId | L420-432 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | parseMapKey | L434-438 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | rowEnd | L440-448 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | findDirectKey | L450-468 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | textPathLine | L470-482 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | findTextLocatorMatches | L484-496 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | yamlString | L498-502 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | serializeScalar | L504-508 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | escapeRegex | L510-512 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | replaceLineScalar | L514-526 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | isBlockScalarLine | L528-538 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | scalarTypeFor | L540-545 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/preset-yaml.js | patchYamlScalar | L551-577 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | profileIdentityOf | L34-52 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | profileGate | L54-59 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | absoluteRoot | L61-68 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | hostTarget | L70-78 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | authorizedReadPath | L80-83 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | authorizedWritePath | L85-88 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | plainObject | L95-97 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | errorText | L99-101 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | loadYaml | L103-121 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | resolve | L110 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | construct | L111 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | predicate | L112 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | represent | L113 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | parseYaml | L123-126 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | readableDirectory | L128-136 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | unavailable | L138-140 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | documentPathValue | L142-144 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | rootFromDocumentPath | L146-157 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | environmentValue | L159-161 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | resolveProfilesRoot | L164-197 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | sortedNames | L199-201 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | scanOwnQqbotProfiles | L203-255 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | findOwnQqbotProfiles | L258-270 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | snapshotValues | L272-278 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | snapshotGateWords | L280-284 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | validateSettingsSnapshot | L287-302 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | expectedManaged | L304-307 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | canonicalSnapshot | L309-314 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | stableSnapshotHash | L317-320 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | managedSnapshotHashFromConfig | L322-328 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | patchDiagnostic | L330-362 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | strictAssociation | L364-366 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | splitText | L368-374 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | joinText | L376-379 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | indentOf | L381-383 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | ignorable | L385-388 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | rootSequenceInfo | L390-408 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | keyMatch | L410-413 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | targetKind | L415-422 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | configHolder | L424-426 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | locateConfigLine | L428-441 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | blockEndForChild | L443-449 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | directKeyLines | L451-458 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | configChildIndent | L460-470 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | scalar | L472-476 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | renderedConfig | L478-490 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | renderedRow | L493-502 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | spaces | L494 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | parsedTarget | L504-513 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | configState | L515-532 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | managedProjection | L534-538 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | equalManaged | L540-549 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | reparseAndCheck | L551-560 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | existingNameState | L562-579 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | applyExistingTarget | L581-643 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | appendTarget | L645-657 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | scalarTokenEquals | L659-662 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | duplicateTargetNameText | L664-692 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | planQqbotSettingsPatch | L695-720 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | writeExclusive | L722-730 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | nextFilePath | L732-738 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | hook | L740-742 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | writeQqbotSettingsPatch | L745-840 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | fingerprint | L842-844 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | resultForPath | L846-855 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | webDocumentPath | L858-863 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | createQqbotSettingsSynchronizer | L865-1036 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | emit | L871-876 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | profileTerminal | L877-902 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | execute | L903-998 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | finish | L914-928 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | enqueue | L999-1030 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/qqbot-settings-sync.js | getState | L1034 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/run-code-scanner.js | maskCodeLiteralsAndComments | L3-196 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/run-code-scanner.js | isIdentifierStart | L12 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/run-code-scanner.js | isIdentifierPart | L13 | （待补充） |  |
@@ -664,16 +893,20 @@
 | plugins/dsh-extra-plan/lib/save-contract.js | summaryList | L56-58 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/save-contract.js | summaryBool | L60-62 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/save-contract.js | formatSavePlanSummary | L65-120 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-contract.js | renderSavePlan | L127-144 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-contract.js | renderProbeMarkdown | L179-220 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-contract.js | trimProbeEvidenceDecor | L246-257 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-contract.js | extractProbeEvidenceRefs | L258-271 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-contract.js | renderSaveProbe | L275-277 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-persistence.js | fsOpsOf | L8-11 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-persistence.js | errorText | L13-15 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-persistence.js | cleanupCreated | L17-27 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-persistence.js | commitError | L29-35 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-persistence.js | atomicCommit | L40-76 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-contract.js | renderSavePlan | L127-130 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-contract.js | renderProbeMarkdown | L165-206 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-contract.js | trimProbeEvidenceDecor | L232-243 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-contract.js | extractProbeEvidenceRefs | L244-257 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-contract.js | renderSaveProbe | L261-263 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-persistence.js | fsOpsOf | L9-12 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-persistence.js | errorText | L14-16 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-persistence.js | errorCodeOf | L18-20 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-persistence.js | policyOf | L22-24 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-persistence.js | authorizeDirectory | L26-30 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-persistence.js | authorizeFile | L32-36 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-persistence.js | cleanupCreated | L38-49 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-persistence.js | commitError | L51-57 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-persistence.js | atomicCommit | L62-112 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/save-plan-validation.js | newFileRecord | L54-56 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/save-plan-validation.js | newTask | L58-70 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/save-plan-validation.js | newClosure | L72-83 | （待补充） |  |
@@ -735,30 +968,34 @@
 | plugins/dsh-extra-plan/lib/save-plan-validation.js | formatDiagnostic | L1196-1201 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/save-plan-validation.js | finalizeFailure | L1203-1209 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/save-plan-validation.js | validateSavePlanContract | L1211-1246 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-probe-validation.js | validateProbe | L8-107 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-probe-validation.js | probePathOf | L110-113 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | probeRefDecorationHint | L12-14 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | cwdOf | L17-21 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | resolveSaveContext | L24-34 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | canonicalRealpath | L38-43 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | sourceCacheKey | L47-50 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | pathInside | L52-55 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | lexicalExists | L57-62 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | nearestExistingParent | L64-74 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | resolveWorkspaceEntry | L76-101 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-probe-validation.js | errorCodeOf | L6-8 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-probe-validation.js | contextOf | L10-14 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-probe-validation.js | resolveAbsoluteProbeTarget | L16-41 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-probe-validation.js | resolveProbeTarget | L43-49 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-probe-validation.js | pathViolation | L51-65 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-probe-validation.js | validateProbe | L67-168 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-probe-validation.js | probePathOf | L171-175 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | probeRefDecorationHint | L15-17 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | cwdOf | L20-24 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | errorCodeOf | L26-28 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | pathContextOf | L30-36 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | resolveSaveContext | L39-51 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | sourceCacheKey | L55-58 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | resolveMissingWorkspaceIdentity | L60-75 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | resolveWorkspaceEntry | L77-101 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/save-tool-factories.js | strictTextEntry | L103-115 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/save-tool-factories.js | literalCount | L117-126 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/save-tool-factories.js | verifyModificationPoint | L128-145 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | verifyPlanSources | L147-183 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | verifyFile | L152-179 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | verifyProbeEvidenceRef | L185-198 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | createSaveToolFactories | L201-388 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | defineSavePlan | L202-272 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | render | L223-230 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | execute | L233-270 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | defineSaveProbe | L274-385 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | verifyPlanSources | L147-181 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | verifyFile | L150-177 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | verifyProbeEvidenceRef | L183-202 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | createSaveToolFactories | L205-389 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | defineSavePlan | L206-272 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | render | L227-229 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | execute | L232-270 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | defineSaveProbe | L274-386 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/save-tool-factories.js | render | L362-364 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/save-tool-factories.js | execute | L367-383 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/save-tool-factories.js | execute | L367-384 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/sdk-text-cache.js | isWeakKey | L7-9 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/sdk-text-cache.js | numberTag | L11-17 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/sdk-text-cache.js | isArrayIndexKey | L19-23 | （待补充） |  |
@@ -782,111 +1019,146 @@
 | plugins/dsh-extra-plan/lib/settings-contract.js | getSettingDefinition | L165-167 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/settings-contract.js | validateSettingValue | L169-171 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/settings-contract.js | normalizeSettingValue | L173-175 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | mountClientCarrier | L34-64 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | schemaField | L67-73 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | isLoopback | L82-85 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | json | L87-90 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | readJsonBody | L92-110 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | plainJsonObject | L112-114 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | activeSettingsRows | L120-125 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | rowConfigOf | L127-133 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | completeConfig | L135-145 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | rowSummary | L147-159 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | rawPatchInfo | L161-166 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | inspectSettingsAuthority | L169-209 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | findSettingsRow | L211-214 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | readRawPatch | L216-218 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | stableSnapshot | L221-238 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | readUnifiedState | L243-279 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | publicField | L281-295 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | profileSyncPath | L297-307 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | reportProfileSync | L309-321 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | cacheProfileSync | L323-326 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | cacheProfileSyncWithStale | L329-348 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | requestProfileSync | L350-354 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | proPayload | L356-374 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | conflictProfileSync | L376-386 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | createApiHandler | L388-464 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | responseForProfile | L389-398 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | apply | L466-572 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | onResult | L472 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | editorOf | L474-481 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | documentPathOf | L482-490 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | environmentSnapshot | L491 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | conflictResult | L492-506 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | syncEditor | L507-545 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | settledSettings | L546-550 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/settings.js | settledError | L551-563 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | safeContextGet | L31-33 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | absoluteRoot | L39-46 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | rootFact | L48-52 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | sameRoot | L54-59 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | documentFact | L61-65 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | profileIdentityOf | L67-84 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | profileFactsOf | L86-88 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | configEditorServiceOf | L90-93 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | settingsPathContext | L95-150 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | has | L97 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | exactDocumentCapabilities | L152-162 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | rank | L159 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | authorizedDocumentRead | L164-180 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | mountClientCarrier | L188-218 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | schemaField | L221-227 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | isLoopback | L236-239 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | json | L241-244 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | readJsonBody | L246-264 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | plainJsonObject | L266-268 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | activeSettingsRows | L274-279 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | rowConfigOf | L281-287 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | completeConfig | L289-299 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | rowSummary | L301-313 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | rawPatchInfo | L315-324 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | inspectSettingsAuthority | L327-368 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | findSettingsRow | L370-373 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | readRawPatch | L375-377 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | stableSnapshot | L380-397 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | readUnifiedState | L402-438 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | publicField | L440-454 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | profileSyncPath | L456-466 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | reportProfileSync | L468-480 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | cacheProfileSync | L482-485 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | cacheProfileSyncWithStale | L488-507 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | requestProfileSync | L509-513 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | proPayload | L515-533 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | conflictProfileSync | L535-545 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | createApiHandler | L547-628 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | responseForProfile | L548-561 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | apply | L630-740 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | onResult | L636 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | editorOf | L638-645 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | documentPathOf | L646-654 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | environmentSnapshot | L655 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | conflictResult | L656-670 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | syncEditor | L671-713 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | settledSettings | L714-718 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/settings.js | settledError | L719-731 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/shell-mutation.js | commandTextOf | L36-48 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/shell-mutation.js | pwshCommandOf | L50 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/shell-mutation.js | bashCommandOf | L51 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/shell-mutation.js | shellWords | L56-80 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/shell-mutation.js | isInnerShellWord | L84-87 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/shell-mutation.js | isEnvAssignment | L88-90 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/shell-mutation.js | mutationTextMatches | L97-174 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/shell-mutation.js | mutationMatches | L176-179 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/shell-mutation.js | pwshMutationMatches | L181 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/shell-mutation.js | bashMutationMatches | L182 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | lockPathOf | L10-12 | 从 active 路径派生固定的 .lock 路径。 | 锁名为 active + .lock。 |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | staleLockPathOf | L14-16 | 为释放流程生成同目录唯一临时路径，避免直接删除当前 owner 的 canonical lock。 | 仅供持 token 的 release 使用。 |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | errorCodeOf | L18-20 | 提取文件操作错误码供锁诊断与回滚分支使用。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | errorMessageOf | L22-24 | 将未知错误安全转换为诊断文本。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | validLockOwner | L26-31 | 校验锁 owner 的 PID、非空 token 与创建时间字段。 | owner JSON 合法性边界。 |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | readLockOwner | L33-40 | 读取并校验 lock JSON；失败只返回未知 owner，不改 canonical 文件。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | pidIsAlive | L42-53 | 只读诊断 owner PID 是否存活，供 stale-lock 结果判断。 | 不负责接管或删除锁。 |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | tryCreateLock | L55-126 | 以 wx 原子独占创建含 PID/token/createdAt 的锁；仅清理本次创建失败留下的自身文件。 | 已存在返回未取得，不触碰他者 lock。 |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | cleanupCreatedLock | L63-73 | 清理本次 tryCreateLock 自己成功创建但写入/关闭失败的 lock。 | 不用于 stale-lock 维护。 |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | decorateFailure | L74-90 | 把 close/清理失败和残留路径补入锁创建错误诊断。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | sleepSync | L128-130 | 以有界 Atomics.wait 实现跨进程短等，不形成无界等待。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | usageLedgerLockPath | L132-134 | 导出 active 对应的 lock 路径，供统计/归档诊断。 | public lock API。 |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | acquireUsageLedgerLock | L136-160 | 导出有界原子加锁：返回 owner/token，超时返回 timeout；检测到死 PID 返回 stale-lock，canonical lock 原样保留。 | 活 PID 不强删；stale 需确认 owner 后显式维护。 |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | releaseUsageLedgerLock | L162-188 | 核对 token 后把自己的 lock 原子移到唯一临时路径再删除，避免误释他者 lock；失败返回明确 released:false/reason。 | public release API；调用方不得静默成功。 |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | createUsageLedger | L190-455 | 按 enabled/path 建立同步 V2 fold、共享锁、cursor 与单 session 回收，返回 foldUsage 与 disposeSession。 | cursor 路径为 ledgerPath + .cursor.json；被 index.js 的 usageLedger 配置调用。 |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | readUsageCursorTable | L221-251 | 读取 cursor JSON 并返回 {ok, table}：ENOENT 按空表，其余读取/解析/形状错误降级并一次告警。 | createUsageLedger 内部闭包；降级保留原始 cursor 字节。 |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | warnUsageCursorDegraded | L254-258 | 对 cursor 读取/形状降级发出每实例一次告警。 | createUsageLedger 内部闭包。 |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | warnStaleLock | L260-268 | 对每个 writer 实例的 stale-lock 首次阻塞发出一次可见 owner(PID/token)告警；不接管、不删除 canonical lock，要求核实 owner 后显式维护。 | createUsageLedger 内部闭包。 |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | usageCursorEntryOf | L272-280 | 只接受单会话 V2 cursor 的 {seq,index} 非负整数形状；数字旧项及其它形状一律无效并回退。 | createUsageLedger 内部闭包。 |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | isUsageContext | L282-290 | 校验 session/parent/root/preset/depth/role 类型与必填边界；rootSessionId、agentPreset 可为空字符串，只有非法 context 被拒绝。 | foldUsage 内部闭包；非法 context 不落账。 |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | foldUsage | L298-452 | 在共享锁临界区按 session.seq/snapshotEvents 增量或回退全量扫描 assistant/message；只写固定15键的 schemaVersion=2 行、身份血缘、provider/model 与四桶，append 成功后推进 cursor。 | createUsageLedger 内部闭包；合法空 root/preset 落账，锁忙/timeout 静默返回 delayed 且零推进、后续 fold 补记；stale 每实例一次告警并由维护者核实 owner 后显式维护；release 失败返回 failed/release-failed 且不伪装回滚已提交写入。 |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | roleDefinitionFile | L37-39 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | runtimeDefaultsFromTemplate | L41-46 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | renderRuntimeDefaults | L48-58 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | clientFieldMetadata | L64-77 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | clientFieldLines | L79-85 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | renderClientFieldBlock | L87-98 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | markerMatches | L100-103 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | clientFieldMarkerRange | L105-113 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | renderClientFields | L115-120 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | separatorIndexOf | L125-127 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | topLevelRowsOf | L130-140 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | secondDocumentOf | L143-148 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | indentBlock | L150-153 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | indentOf | L155-159 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | shiftBlock | L161-169 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | rawBlockFrom | L175-186 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | quoteYamlSingle | L188-190 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | assertDefinition | L192-200 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | renderPresetDefinition | L202-221 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | mainExtraPlanRowBlock | L224-235 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | personaPrefixBlock | L238-264 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | roleToolsBlock | L267-278 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | findRowById | L281-292 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | mainToolPresentationMode | L298-310 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | assertRoleSource | L312-332 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | assertRoleDefinition | L334-353 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | renderRoleDefinitions | L360-406 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | assertParses | L408-416 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | checkOutput | L418-422 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | publishFsOpsOf | L427-430 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | errorText | L432-434 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | uniquePaths | L436-438 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | cleanupPublishFiles | L440-450 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | restorePublishedEntry | L452-465 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | publishFailure | L467-479 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | normalizedOutputEntries | L481-490 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | publishGeneratedOutputs | L492-554 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | generateRuntimeDefaults | L562-628 | （待补充） |  |
-| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | invokedAsMain | L630-633 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/shell-mutation.js | syntaxRuleOf | L97-101 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/shell-mutation.js | bareRuleOf | L103-107 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/shell-mutation.js | mutationTextEvidence | L109-199 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/shell-mutation.js | mutationTextMatches | L201-203 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/shell-mutation.js | mutationEvidence | L205-208 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/shell-mutation.js | pwshMutationEvidence | L210 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/shell-mutation.js | bashMutationEvidence | L211 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/shell-mutation.js | pwshMutationMatches | L212 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/shell-mutation.js | bashMutationMatches | L213 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | lockPathOf | L11-13 | 从 active 路径派生固定的 .lock 路径。 | 锁名为 active + .lock。 |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | staleLockPathOf | L15-17 | 为释放流程生成同目录唯一临时路径，避免直接删除当前 owner 的 canonical lock。 | 仅供持 token 的 release 使用。 |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | errorCodeOf | L19-21 | 提取文件操作错误码供锁诊断与回滚分支使用。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | errorMessageOf | L23-25 | 将未知错误安全转换为诊断文本。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | pathContextOf | L27-36 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | resolveLedgerTarget | L38-44 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | resolveAbsoluteLedgerPath | L46-48 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | resolveLedgerPath | L50-55 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | ledgerTargetOf | L57-60 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | authorizeLedgerWrite | L62-65 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | ensureLedgerDirectory | L67-73 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | validLockOwner | L75-80 | 校验锁 owner 的 PID、非空 token 与创建时间字段。 | owner JSON 合法性边界。 |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | readLockOwner | L82-89 | 读取并校验 lock JSON；失败只返回未知 owner，不改 canonical 文件。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | pidIsAlive | L91-102 | 只读诊断 owner PID 是否存活，供 stale-lock 结果判断。 | 不负责接管或删除锁。 |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | tryCreateLock | L104-175 | 以 wx 原子独占创建含 PID/token/createdAt 的锁；仅清理本次创建失败留下的自身文件。 | 已存在返回未取得，不触碰他者 lock。 |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | cleanupCreatedLock | L112-122 | 清理本次 tryCreateLock 自己成功创建但写入/关闭失败的 lock。 | 不用于 stale-lock 维护。 |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | decorateFailure | L123-139 | 把 close/清理失败和残留路径补入锁创建错误诊断。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | sleepSync | L177-179 | 以有界 Atomics.wait 实现跨进程短等，不形成无界等待。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | usageLedgerLockPath | L181-183 | 导出 active 对应的 lock 路径，供统计/归档诊断。 | public lock API。 |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | acquireUsageLedgerLock | L185-215 | 导出有界原子加锁：返回 owner/token，超时返回 timeout；检测到死 PID 返回 stale-lock，canonical lock 原样保留。 | 活 PID 不强删；stale 需确认 owner 后显式维护。 |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | releaseUsageLedgerLock | L217-248 | 核对 token 后把自己的 lock 原子移到唯一临时路径再删除，避免误释他者 lock；失败返回明确 released:false/reason。 | public release API；调用方不得静默成功。 |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | createUsageLedger | L250-530 | 按 enabled/path 建立同步 V2 fold、共享锁、cursor 与单 session 回收，返回 foldUsage 与 disposeSession。 | cursor 路径为 ledgerPath + .cursor.json；被 index.js 的 usageLedger 配置调用。 |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | readUsageCursorTable | L290-321 | 读取 cursor JSON 并返回 {ok, table}：ENOENT 按空表，其余读取/解析/形状错误降级并一次告警。 | createUsageLedger 内部闭包；降级保留原始 cursor 字节。 |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | warnUsageCursorDegraded | L324-328 | 对 cursor 读取/形状降级发出每实例一次告警。 | createUsageLedger 内部闭包。 |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | warnStaleLock | L330-338 | 对每个 writer 实例的 stale-lock 首次阻塞发出一次可见 owner(PID/token)告警；不接管、不删除 canonical lock，要求核实 owner 后显式维护。 | createUsageLedger 内部闭包。 |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | usageCursorEntryOf | L342-350 | 只接受单会话 V2 cursor 的 {seq,index} 非负整数形状；数字旧项及其它形状一律无效并回退。 | createUsageLedger 内部闭包。 |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | isUsageContext | L352-360 | 校验 session/parent/root/preset/depth/role 类型与必填边界；rootSessionId、agentPreset 可为空字符串，只有非法 context 被拒绝。 | foldUsage 内部闭包；非法 context 不落账。 |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | foldUsage | L368-527 | 在共享锁临界区按 session.seq/snapshotEvents 增量或回退全量扫描 assistant/message；只写固定15键的 schemaVersion=2 行、身份血缘、provider/model 与四桶，append 成功后推进 cursor。 | createUsageLedger 内部闭包；合法空 root/preset 落账，锁忙/timeout 静默返回 delayed 且零推进、后续 fold 补记；stale 每实例一次告警并由维护者核实 owner 后显式维护；release 失败返回 failed/release-failed 且不伪装回滚已提交写入。 |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | repositoryRootFromKnownLayout | L16-24 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | roleDefinitionFile | L48-50 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | runtimeDefaultsFromTemplate | L52-57 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | renderRuntimeDefaults | L59-69 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | clientFieldMetadata | L75-88 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | clientFieldLines | L90-96 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | renderClientFieldBlock | L98-109 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | markerMatches | L111-114 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | clientFieldMarkerRange | L116-124 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | renderClientFields | L126-131 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | separatorIndexOf | L136-138 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | topLevelRowsOf | L141-151 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | secondDocumentOf | L154-159 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | indentBlock | L161-164 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | indentOf | L166-170 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | shiftBlock | L172-180 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | rawBlockFrom | L186-197 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | quoteYamlSingle | L199-201 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | assertDefinition | L203-211 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | renderPresetDefinition | L213-232 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | mainExtraPlanRowBlock | L235-246 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | personaPrefixBlock | L249-275 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | roleToolsBlock | L278-289 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | findRowById | L292-303 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | mainToolPresentationMode | L309-321 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | assertRoleSource | L323-343 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | assertRoleDefinition | L345-364 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | renderRoleDefinitions | L371-417 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | assertParses | L419-427 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | checkOutput | L429-433 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | publishFsOpsOf | L438-441 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | errorText | L443-445 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | uniquePaths | L447-449 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | cleanupPublishFiles | L451-461 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | restorePublishedEntry | L463-476 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | publishFailure | L478-490 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | normalizedOutputEntries | L492-501 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | publishGeneratedOutputs | L503-565 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | generatorPathContext | L568-575 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | inputPathSpec | L577-584 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | readGeneratorInput | L586-592 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | pathEntryExists | L594-602 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | ensureWorkspaceOutputParent | L604-618 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | generatorOutputTarget | L620-628 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | outputEntryTarget | L630-640 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | authorizeOutputEntries | L642-655 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | outputMetadata | L657-665 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | generateRuntimeDefaults | L676-758 | （待补充） |  |
+| plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | invokedAsMain | L760-763 | （待补充） |  |
 
 ---
 

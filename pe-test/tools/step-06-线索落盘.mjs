@@ -3,14 +3,30 @@
 // 五种结果；18 个成功配对耗尽预算且 save_plan 不豁免。持久化覆盖
 // 单次双写/单写、失败阶段与有限清理及各 fs 依赖注入；不扫描/恢复 journal；fs 故障注入不做全局 monkeypatch；O1 只在 try/finally 临界区固定并恢复 Date。
 import { pathToFileURL, fileURLToPath } from 'node:url'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync, renameSync, unlinkSync, lstatSync, rmdirSync, realpathSync, symlinkSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync, renameSync, unlinkSync, lstatSync, rmdirSync, realpathSync, symlinkSync } from 'node:fs'
+import { makeFixtureDir } from '../_shared/workspace-paths.mjs'
+import { createPathContext } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
 import { join } from 'node:path'
 
 const PLUGIN_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/index.js', import.meta.url))
 import { registerHostDeps } from '../_shared/host-deps.mjs'
 import { createOutput } from '../_shared/test-output.mjs'
 // host-deps 先于隔离完成解析（它按候选① DSH_HOME/profiles/web 锚定宿主真包）。
+const clueFixture = makeFixtureDir({ label: 'clue' })
+const isolatedDshHome = clueFixture.home
+const CLUE_PATH_CONTEXT = createPathContext({ hostDataRoot: isolatedDshHome })
+const CLUE_INSTALL_ROOT = typeof process.env.DSH_INSTALL_ROOT === 'string' && process.env.DSH_INSTALL_ROOT.trim() !== '' ? process.env.DSH_INSTALL_ROOT.trim() : null
+const CLUE_INSTALL_ANCHOR = CLUE_INSTALL_ROOT === null ? null : join(CLUE_INSTALL_ROOT, 'node_modules', '@deepseek-ai', 'dsh', 'package.json')
+const makeWTemp = (label) => { const safe = String(label).replace(/[^A-Za-z0-9_-]+/g, '-'); const dir = join(isolatedDshHome, 'tmp', safe); mkdirSync(dir, { recursive: true }); return dir }
+const previousDshHome = process.env.DSH_HOME
+const previousConfigPath = process.env.DSH_EXTRA_PLAN_CONFIG_PATH
+const previousTemp = process.env.TEMP
+const previousTmp = process.env.TMP
+const previousTmpDir = process.env.TMPDIR
+process.env.DSH_HOME = isolatedDshHome
+process.env.TEMP = clueFixture.temp
+process.env.TMP = clueFixture.temp
+process.env.TMPDIR = clueFixture.temp
 await registerHostDeps()
 
 // ── 测试隔离（构造期配置读取）─────────────────────────
@@ -20,17 +36,19 @@ await registerHostDeps()
 // 【插件 import 之前】将 DSH_HOME 指向空临时目录并清空 DSH_EXTRA_PLAN_CONFIG_PATH，使
 // 构造期读盘失败，各实例回退到自己的 fallbackDefaults（即 apply 入参）。
 // 测试结束（包括 process.exit 与异常退出路径）由 process.on('exit') 恢复原值并删除临时目录。
-const previousDshHome = process.env.DSH_HOME
-const previousConfigPath = process.env.DSH_EXTRA_PLAN_CONFIG_PATH
-const isolatedDshHome = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-step06-home-'))
-process.env.DSH_HOME = isolatedDshHome
 delete process.env.DSH_EXTRA_PLAN_CONFIG_PATH
 function restoreIsolatedEnv() {
   if (previousDshHome === undefined) delete process.env.DSH_HOME
   else process.env.DSH_HOME = previousDshHome
   if (previousConfigPath === undefined) delete process.env.DSH_EXTRA_PLAN_CONFIG_PATH
   else process.env.DSH_EXTRA_PLAN_CONFIG_PATH = previousConfigPath
-  rmSync(isolatedDshHome, { recursive: true, force: true })
+  if (previousTemp === undefined) delete process.env.TEMP
+  else process.env.TEMP = previousTemp
+  if (previousTmp === undefined) delete process.env.TMP
+  else process.env.TMP = previousTmp
+  if (previousTmpDir === undefined) delete process.env.TMPDIR
+  else process.env.TMPDIR = previousTmpDir
+  rmSync(clueFixture.root, { recursive: true, force: true })
 }
 process.on('exit', restoreIsolatedEnv)
 
@@ -70,7 +88,9 @@ function systemPromptMock(registry) {
 
 // P0-3：持久化函数直连导入（故障注入用；与 index.js 注入给 save 工具工厂的是同一模块实例）
 const PERSISTENCE_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/save-persistence.js', import.meta.url))
-const { atomicCommit } = await import(pathToFileURL(PERSISTENCE_PATH).href)
+const { atomicCommit: atomicCommitRaw } = await import(pathToFileURL(PERSISTENCE_PATH).href)
+function pathContextForDir(dir) { return createPathContext({ workspaceRoot: dir }) }
+function atomicCommit(dir, base, files, fsOps, policyOptions = {}) { return atomicCommitRaw(dir, base, files, fsOps, { ...policyOptions, pathContext: pathContextForDir(dir), purpose: policyOptions.purpose || 'save-artifacts' }) }
 
 let pass = 0
 let fail = 0
@@ -106,7 +126,7 @@ function makeHarness(config, toolsMock) {
   const variables = []
   const ctx = {
     systemPrompt: systemPromptMock(variables),
-    get: (name) => (name === 'tools' ? toolsMock : undefined),
+    get: (name) => (name === 'tools' ? toolsMock : name === 'profileContext' ? { home: isolatedDshHome, installAnchor: CLUE_INSTALL_ANCHOR } : name === 'dshHomePath' ? (...parts) => join(isolatedDshHome, ...parts.map((part) => String(part))) : undefined),
     on: (name, fn) => {
       if (listeners[name] === undefined) listeners[name] = []
       listeners[name].push(fn)
@@ -464,14 +484,9 @@ registered.length = 0
 fireAgentCreated(harness, smokePlanner)
 const savePlanDef = registered.find((t) => t.name === 'save_plan')
 const smokePlannerPlanDef = savePlanDef
-const g3EvidenceRoot = typeof process.env.PLAN_EVIDENCE_DIR === 'string' && process.env.PLAN_EVIDENCE_DIR !== ''
-  ? join(process.env.PLAN_EVIDENCE_DIR, 'G3')
-  : null
-const g3ResumeRoot = g3EvidenceRoot === null ? null : (typeof process.env.G3_REPAIR1_DIR === 'string' && process.env.G3_REPAIR1_DIR !== '' ? process.env.G3_REPAIR1_DIR : join(g3EvidenceRoot, 'resume1'))
-if (g3ResumeRoot !== null) mkdirSync(g3ResumeRoot, { recursive: true })
-const g3TmpRoot = g3EvidenceRoot === null
-  ? mkdtempSync(join(tmpdir(), 'extra-plan-g3-fixture-'))
-  : join(g3ResumeRoot, 'fixture-step06')
+const g3EvidenceRoot = null
+const g3ResumeRoot = null
+const g3TmpRoot = makeWTemp('extra-plan-g3-fixture')
 rmSync(g3TmpRoot, { recursive: true, force: true })
 const work = join(g3TmpRoot, 'work')
 mkdirSync(join(work, 'fixtures'), { recursive: true })
@@ -497,7 +512,7 @@ writeFileSync(legalEvidenceB, '# 探查证据报告（推荐格式）\n', 'utf8'
 const legalEvidencePlan = evidenceBase.plan.replace(evidenceMarker, evidenceMarker + '【探查者已核实】·证据：evidence-old.md 与【探查者已核实】·证据来源：evidence-recommended.md')
 check('G5 旧/推荐证据关键词均被真实提取', saveContractNamespace.extractProbeEvidenceRefs(legalEvidencePlan), ['evidence-old.md', 'evidence-recommended.md'])
 const evidenceCalls = []
-const evidenceFactory = createSaveToolFactories({ savePlanDir: '.extra-plan', atomicCommit: (...args) => evidenceCalls.push(args) })
+const evidenceFactory = createSaveToolFactories({ savePlanDir: '.extra-plan', atomicCommit: (...args) => evidenceCalls.push(args), getPathContext: () => pathContextForDir(work) })
 let missingEvidenceError = ''
 try { await evidenceFactory.defineSavePlan().execute({ plan: missingEvidencePlan, checklist: evidenceBase.checklist, taskName: 'missing-evidence' }, execFake(work)) } catch (error) { missingEvidenceError = String(error.message) }
 checkTrue('G5 缺失推荐证据在提交前失败且 atomicCommit=0', missingEvidenceError.includes('证据文件不存在') && evidenceCalls.length === 0)
@@ -687,7 +702,7 @@ const opGeneratePair = g3OperationPair(g3OperationRecord('fixtures/op-generated.
 const opValidations = [opEditPair, opNewPair, opDeletePair, opGeneratePair].map((pair) => validateSavePlanContract(pair.plan, pair.checklist))
 checkTrue('G3-I 四操作纯validator合法基底全部通过', opValidations.every((result) => result.ok === true))
 const opAtomic = []
-const opFactory = createSaveToolFactories({ savePlanDir: '.extra-plan', atomicCommit: (...args) => opAtomic.push(args) })
+const opFactory = createSaveToolFactories({ savePlanDir: '.extra-plan', atomicCommit: (...args) => opAtomic.push(args), getPathContext: (cwd) => pathContextForDir(cwd || work) })
 const opDef = opFactory.defineSavePlan()
 function g3TreeSnapshot(root) {
   const entries = []
@@ -957,9 +972,9 @@ try {
           checkTrue('G3-K alias outside native realpath探针通过', false)
         } else {
           const outsideSourceRecord = { path: 'alias-outside/source.txt', role: 'main', operation: '修改', points: [{ id: 'M1', location: 'L1', anchor: 'outside source', action: '验证已有源真实路径逃逸拒绝', acceptance: '真实路径逃逸被拒且无发布副作用', expectations: ['目标真实路径越出subject workspace'] }] }
-          await assertG3SourceFailure('别名已有源真实路径逃逸', g3OperationPair(outsideSourceRecord), '目标真实路径越出工作区', subjectWorkspace)
+          await assertG3SourceFailure('别名已有源真实路径逃逸', g3OperationPair(outsideSourceRecord), '[path-policy:REALPATH_ESCAPE]', subjectWorkspace)
           const outsideNewRecord = { path: 'alias-outside/new-file.txt', role: 'main', operation: '新建', points: [g3Point('M1', 'alias-outside/new-file.txt', '新建')] }
-          await assertG3SourceFailure('别名新建父目录真实路径逃逸', g3OperationPair(outsideNewRecord), '目标最近现有父目录越出工作区', subjectWorkspace)
+          await assertG3SourceFailure('别名新建父目录真实路径逃逸', g3OperationPair(outsideNewRecord), '[path-policy:REALPATH_ESCAPE]', subjectWorkspace)
         }
       }
     }
@@ -1023,6 +1038,7 @@ const g3StubCalls = []
 const g3StubFactory = createSaveToolFactories({
   savePlanDir: '.extra-plan',
   atomicCommit: (...args) => g3StubCalls.push(['atomic', args]),
+  getPathContext: () => pathContextForDir(work),
 })
 const g3StubPlanDef = g3StubFactory.defineSavePlan()
 for (let index = 0; index < g3FixtureCases.length; index += 1) {
@@ -1044,8 +1060,12 @@ for (let index = 0; index < g3FixtureCases.length; index += 1) {
   checkTrue('G3-H ' + label + ' 返回两个路径', result !== null && Array.isArray(result.paths) && result.paths.length === 2 && result.paths.every((path) => typeof path === 'string'))
 }
 const g3RenderFixture = g3FixtureCases.find((entry) => entry[0] === 'G3-E batch收尾全局组合')[1]
-const g3ContentBlocks = savePlanDef.output.render({ plan: g3RenderFixture.plan, checklist: g3RenderFixture.checklist }, { paths: ['方案-g3-render.md', '验收-g3-render.md'] })
-checkTrue('G3-H render返回单ContentBlock且摘要/双路径可读', Array.isArray(g3ContentBlocks) && g3ContentBlocks.length === 1 && g3ContentBlocks[0].type === 'text' && g3ContentBlocks[0].text.includes('方案-g3-render.md') && g3ContentBlocks[0].text.includes('验收-g3-render.md') && g3ContentBlocks[0].text.includes('派遣摘要（'))
+const g3RenderPlan = g3RenderFixture.plan.replace('- 派遣说明：本夹具声明实际任务、文件、依赖与执行组，完成后按原文冻结并验收', '- 派遣说明：本夹具声明实际任务、文件、依赖与执行组，完成后按原文冻结并验收 PLAN_FIELD_SENTINEL')
+const g3RenderChecklist = g3RenderFixture.checklist.replace('- 验收说明：按任务和检查ID复核合同，漏项、矛盾与过期证据不得通过', '- 验收说明：按任务和检查ID复核合同，漏项、矛盾与过期证据不得通过 CHECKLIST_FIELD_SENTINEL')
+const g3ContentBlocks = savePlanDef.output.render({ plan: g3RenderPlan, checklist: g3RenderChecklist }, { paths: ['方案-g3-render.md', '验收-g3-render.md'] })
+const g3RenderText = Array.isArray(g3ContentBlocks) && g3ContentBlocks.length === 1 && g3ContentBlocks[0].type === 'text' ? g3ContentBlocks[0].text : ''
+check('G3-H render返回精确双路径', g3RenderText, '方案-g3-render.md\n验收-g3-render.md')
+checkTrue('G3-H render不回流正文sentinel/结构/摘要', !g3RenderText.includes('PLAN_FIELD_SENTINEL') && !g3RenderText.includes('CHECKLIST_FIELD_SENTINEL') && !g3RenderText.includes('派遣摘要（') && !g3RenderText.includes('[任务'))
 
 const invalidStructurePlan = g3FixtureCases[0][1].plan + '\n- 期望：方案中不允许的错位字段\n【探查者已核实】证据：pe-test/g3-fixtures/missing-evidence-report.md'
 const invalidReference = {
@@ -1072,6 +1092,7 @@ const invalidEffects = { atomic: 0 }
 const invalidFactory = createSaveToolFactories({
   savePlanDir: '.extra-plan',
   atomicCommit: () => { invalidEffects.atomic += 1 },
+  getPathContext: () => pathContextForDir(work),
 })
 const invalidPlanDef = invalidFactory.defineSavePlan()
 async function rejectG3BeforeIO(label, item) {
@@ -1127,6 +1148,7 @@ try {
   const contextFactory = createSaveToolFactories({
     savePlanDir: '.extra-plan',
     atomicCommit: (...args) => contextCalls.push(['atomic', args]),
+    getPathContext: () => pathContextForDir(work),
   })
   const contextSingleFixture = g3FixtureCases[0][1]
   const contextPlanResult = await contextFactory.defineSavePlan().execute({ plan: contextSingleFixture.plan, checklist: contextSingleFixture.checklist, taskName: 'order' }, execFake(work))
@@ -1165,6 +1187,7 @@ try {
   const invalidProbe = createSaveToolFactories({
     savePlanDir: '.extra-plan',
     atomicCommit: () => { invalidEffects.atomic += 1 },
+    getPathContext: () => pathContextForDir(work),
   }).defineSaveProbe()
   for (const badArgs of [null, undefined, {}]) {
     try { await invalidProbe.execute(badArgs, execFake(work)) } catch {}
@@ -1265,7 +1288,7 @@ function thrownBy(fn) {
   try { fn(); return null } catch (error) { return error }
 }
 function inScenario(label, body) {
-  const dir = mkdtempSync(join(tmpdir(), 'extra-plan-fault-' + label + '-'))
+  const dir = makeWTemp('extra-plan-fault-' + label)
   try {
     body(dir)
   } catch (error) {

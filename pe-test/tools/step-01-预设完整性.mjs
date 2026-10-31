@@ -1,12 +1,14 @@
 // extra-plan 预设静态校验：只读工作区模板，不访问生产 DSH_HOME。
 import { createHash } from 'node:crypto'
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
-import { tmpdir } from 'node:os'
+import { makeFixtureDir } from '../_shared/workspace-paths.mjs'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
 import { isDeepStrictEqual } from 'node:util'
 import { Script } from 'node:vm'
+import { buildAsyncHookSource } from '../_shared/host-deps.mjs'
 import {
   SETTING_DEFINITIONS,
   parsePresetYaml,
@@ -22,8 +24,8 @@ const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url))
 const DSH_INSTALL_ROOT = typeof process.env.DSH_INSTALL_ROOT === 'string' && process.env.DSH_INSTALL_ROOT.trim() !== ''
   ? process.env.DSH_INSTALL_ROOT.trim()
   : null
-// 0.2.1-rc.2 起只兼容单一宿主版本（旧版兼容已迁出本分支）：版本门读这一份声明。
-const TARGET_PEER_RANGE = '0.2.1-rc.2'
+// 四个 rc 版本是声明并集；语义门只判定真实 dsh/dsh-llm 是否落在该声明内。
+const TARGET_PEER_RANGE = '0.2.1-rc.1 || 0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4'
 const LEGACY_HOST_VERSIONS = ['0.1.7-rc.1', '0.1.7-rc.2', '0.2.0-rc.1', '0.2.0-rc.2']
 const PRESET_DIR = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'assets', 'presets', 'extra-plan')
 const file = join(PRESET_DIR, 'agent.cordis.yml')
@@ -79,7 +81,7 @@ function check(label, condition) {
 }
 
 // S-宿主真值：优先读取显式 DSH_INSTALL_ROOT 的 dsh-tool-cordis，提取 name 注册集；
-// 未设置目标根时不伪造 rc.2 宿主结论。
+// 未设置目标根时不伪造四版本宿主结论。
 const hostCordisManifestPath = targetManifestPath('dsh-tool-cordis')
 const hostCordisEntry = hostCordisManifestPath === null ? null : join(dirname(hostCordisManifestPath), 'lib', 'index.js')
 if (hostCordisEntry !== null && existsSync(hostCordisEntry)) {
@@ -244,7 +246,12 @@ const qqbotExports = qqbotPackageJson.exports !== null && typeof qqbotPackageJso
 const qqbotFiles = Array.isArray(qqbotPackageJson.files) ? qqbotPackageJson.files : []
 check('B2 package files/scripts 含生成器、generate 与 prepack', packageFiles.includes('scripts/generate-runtime-defaults.mjs') && packageJson.scripts['generate:runtime-defaults'] === 'node scripts/generate-runtime-defaults.mjs' && packageJson.scripts.prepack === 'node scripts/generate-runtime-defaults.mjs', true)
 check('M1 核心 manifest name/version/repository/client/deps/patch/private 契约', packageJson.name === 'dsh-extra-plan' && packageJson.version === '1.6.0' && packageJson.repository === 'git+https://github.com/luca3xxvsoo/dsh-extra-plan.git' && packageJson.dsh?.bundle?.patch === './cordis.patch.yml' && packageJson.dsh?.client?.platform === 'web' && Array.isArray(packageJson.dsh?.client?.inject) && packageJson.dependencies?.['js-yaml'] === '^4.2.0' && !Object.prototype.hasOwnProperty.call(packageJson, 'private') && !JSON.stringify(packageJson).includes('@local/dsh-extra-plan'))
-check('M2 核心 engines.dsh 与三项 @deepseek-ai peer 同为 0.2.1-rc.2', packageJson.engines?.dsh === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/dsh'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/dsh-llm'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/dsh-agent-preset'] === TARGET_PEER_RANGE)
+check('M2 两包 engines/peer 五字段均为四版本精确并集',
+  packageJson.engines?.dsh === TARGET_PEER_RANGE
+  && packageJson.peerDependencies?.['@deepseek-ai/dsh'] === TARGET_PEER_RANGE
+  && packageJson.peerDependencies?.['@deepseek-ai/dsh-llm'] === TARGET_PEER_RANGE
+  && packageJson.peerDependencies?.['@deepseek-ai/dsh-agent-preset'] === TARGET_PEER_RANGE
+  && qqbotPackageJson.engines?.dsh === TARGET_PEER_RANGE)
 check('M2 核心 exports/files 保持所需子路径与 peer 范围、包装层 export/实现均缺席', packageJson.exports?.['.'] === './index.js' && packageJson.exports?.['./settings'] === './lib/settings.js' && !Object.prototype.hasOwnProperty.call(packageJson.exports || {}, './executor-spawn') && !existsSync(join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'executor-spawn.js')) && packageFiles.includes('index.js') && packageFiles.includes('lib/') && packageFiles.includes('locale/') && packageFiles.includes('cordis.patch.yml') && packageJson.peerDependencies?.['@deepseek-ai/dsh'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/dsh-llm'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/dsh-agent-preset'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/schemastery'] === '~3.18.4')
 check('M3 QQBot manifest name/version/exports/files/dependency/postinstall/patch/private 契约', qqbotPackageJson.name === 'dsh-extra-plan-qqbot' && qqbotPackageJson.version === '2.0.1' && qqbotExports['.'] === './index.js' && qqbotExports['./cordis.patch.yml'] === './cordis.patch.yml' && qqbotExports['./package.json'] === './package.json' && JSON.stringify(qqbotFiles) === JSON.stringify(['index.js', 'cordis.patch.yml', 'lib/', 'scripts/']) && qqbotPackageJson.dependencies?.['js-yaml'] === '^4.2.0' && qqbotPackageJson.scripts?.postinstall === 'node scripts/heal.mjs --install' && qqbotPackageJson.dsh?.bundle?.patch === './cordis.patch.yml' && !Object.prototype.hasOwnProperty.call(qqbotPackageJson, 'private') && !JSON.stringify(qqbotPackageJson).includes('@local/dsh-qqbot-user-questions'))
 // ── T3 角色预设链：作者源第二文档 4 角色 + 4 个生成 definition（persona 逐字相等） ─────
@@ -324,10 +331,19 @@ check('T3 角色 definition 渲染与已提交 4 个生成物逐字一致（生�
 const generatedBeforeCheck = readFileSync(generatedFile)
 const definitionBeforeCheck = readFileSync(definitionGeneratedFile)
 let checkPassed = false
-try { generateRuntimeDefaults({ sourcePath: file, outputPath: generatedFile, check: true }); checkPassed = true } catch { checkPassed = false }
+try {
+  generateRuntimeDefaults({ workspaceRoot: REPO_ROOT.replace(/[\\/]+$/, ''), sourcePath: file, outputPath: generatedFile, check: true })
+  checkPassed = true
+} catch (error) {
+  const detail = error instanceof Error ? { message: error.message, stack: error.stack ?? '', root: REPO_ROOT } : { message: String(error), stack: '', root: REPO_ROOT }
+  console.error('B2 --check error ' + JSON.stringify(detail))
+  checkPassed = false
+}
 check('B2 --check 通过且不写生成物', checkPassed && readFileSync(generatedFile).equals(generatedBeforeCheck) && readFileSync(definitionGeneratedFile).equals(definitionBeforeCheck), true)
 
-const generatorFixture = mkdtempSync(join(tmpdir(), 'dsh-runtime-defaults-'))
+const generatorFixtureContext = makeFixtureDir({ label: 'runtime-defaults' })
+const generatorFixture = generatorFixtureContext.root
+const generatorDefaults = (options = {}) => generateRuntimeDefaults({ workspaceRoot: generatorFixtureContext.workspaceRoot, ...options })
 try {
   const validMini = [
     '- id: extra-plan',
@@ -352,23 +368,23 @@ try {
   const validOutput = join(generatorFixture, 'valid.generated.js')
   writeFileSync(validSource, validMini, 'utf8')
   const validRendered = renderRuntimeDefaults(validMini)
-  generateRuntimeDefaults({ sourcePath: validSource, outputPath: validOutput })
+  generatorDefaults({ sourcePath: validSource, outputPath: validOutput })
   check('B2 完整十项 source/output 可生成并逐字等于 render', readFileSync(validOutput, 'utf8') === validRendered, true)
   const richSuffix = '前缀 "引号"\\路径\n换行'
   const richMini = validMini.replace('    plannerPromptSuffix: plain-suffix\n', '    plannerPromptSuffix: ' + JSON.stringify(richSuffix) + '\n')
   const richSource = join(generatorFixture, 'rich.yml')
   const richOutput = join(generatorFixture, 'rich.generated.js')
   writeFileSync(richSource, richMini, 'utf8')
-  generateRuntimeDefaults({ sourcePath: richSource, outputPath: richOutput })
+  generatorDefaults({ sourcePath: richSource, outputPath: richOutput })
   const richModule = await import(pathToFileURL(richOutput).href + '?rich=' + String(Date.now()))
   check('B2 合法 false/空串/引号反斜线换行后缀以导入值对拍', richModule.DEFAULT_SETTINGS.anchoredBootstrap === true && richModule.DEFAULT_SETTINGS.creativeMode === false && richModule.DEFAULT_SETTINGS.otherAgentModel === '' && richModule.DEFAULT_SETTINGS.plannerPromptSuffix === richSuffix, true)
   const mismatchOutput = join(generatorFixture, 'mismatch.generated.js')
   writeFileSync(mismatchOutput, 'SENTINEL-CHECK', 'utf8')
   let mismatchFailed = false
-  try { generateRuntimeDefaults({ sourcePath: validSource, outputPath: mismatchOutput, check: true }) } catch { mismatchFailed = true }
+  try { generatorDefaults({ sourcePath: validSource, outputPath: mismatchOutput, check: true }) } catch { mismatchFailed = true }
   check('B2 --check 不一致时非 0 且不改 sentinel', mismatchFailed && readFileSync(mismatchOutput, 'utf8') === 'SENTINEL-CHECK', true)
   let missingFailed = false
-  try { generateRuntimeDefaults({ sourcePath: validSource, outputPath: join(generatorFixture, 'missing.generated.js'), check: true }) } catch { missingFailed = true }
+  try { generatorDefaults({ sourcePath: validSource, outputPath: join(generatorFixture, 'missing.generated.js'), check: true }) } catch { missingFailed = true }
   check('B2 --check 缺失生成物时非 0', missingFailed, true)
   const replaceLine = (text, from, to) => text.replace(from + '\n', to + '\n')
   const invalidTemplates = [
@@ -405,7 +421,7 @@ try {
     writeFileSync(sourcePath, sourceText, 'utf8')
     writeFileSync(outputPath, sentinel, 'utf8')
     let failed = false
-    try { generateRuntimeDefaults({ sourcePath, outputPath }) } catch { failed = true }
+    try { generatorDefaults({ sourcePath, outputPath }) } catch { failed = true }
     check('B2 非法模板 ' + label + ' 失败且不覆盖 sentinel', failed && readFileSync(outputPath, 'utf8') === sentinel, true)
   }
 } finally {
@@ -413,7 +429,7 @@ try {
 }
 
 // G3 客户端七产物夹具：显式临时 source/output 才启用 client，仓库 client 只读对拍。
-const g3ClientFixture = mkdtempSync(join(tmpdir(), 'dsh-runtime-client-g3-'))
+const g3ClientFixture = makeFixtureDir({ label: 'runtime-client-g3' }).root
 try {
   const outputDir = join(g3ClientFixture, 'outputs')
   const sourcePath = join(g3ClientFixture, 'client-source.js')
@@ -437,7 +453,7 @@ try {
     const endLine = end + '// END GENERATED SETTINGS FIELDS'.length
     return text.slice(0, begin) + '\u0000' + text.slice(endLine)
   }
-  generateRuntimeDefaults(sevenOptions)
+  generatorDefaults(sevenOptions)
   check('G3 七产物临时 client 明确启用并逐路径存在', sevenPaths.length === 7 && sevenPaths.every((path) => existsSync(path)) && readFileSync(clientOutputPath, 'utf8').includes('// BEGIN GENERATED SETTINGS FIELDS'), true)
   const generatedClientText = readFileSync(clientOutputPath, 'utf8')
   const clientBlockStart = generatedClientText.indexOf('// BEGIN GENERATED SETTINGS FIELDS')
@@ -449,24 +465,24 @@ try {
   check('G3 最终 client JS 可编译', clientCompiled, true)
   const beforeClientCheck = snapshot(sevenPaths)
   let clientCheckError = null
-  try { generateRuntimeDefaults({ ...sevenOptions, check: true }) } catch (error) { clientCheckError = error }
+  try { generatorDefaults({ ...sevenOptions, check: true }) } catch (error) { clientCheckError = error }
   check('G3 七产物 --check 零写且 bytes/mtime 不变', clientCheckError === null && JSON.stringify(beforeClientCheck) === JSON.stringify(snapshot(sevenPaths)), true)
   writeFileSync(clientOutputPath, 'STALE-CLIENT', 'utf8')
   let staleError = null
-  try { generateRuntimeDefaults({ ...sevenOptions, check: true }) } catch (error) { staleError = error }
+  try { generatorDefaults({ ...sevenOptions, check: true }) } catch (error) { staleError = error }
   check('G3 client --check 过期非零且保留 sentinel', staleError !== null && readFileSync(clientOutputPath, 'utf8') === 'STALE-CLIENT', true)
   rmSync(clientOutputPath, { force: true })
   let missingClientError = null
-  try { generateRuntimeDefaults({ ...sevenOptions, check: true }) } catch (error) { missingClientError = error }
+  try { generatorDefaults({ ...sevenOptions, check: true }) } catch (error) { missingClientError = error }
   check('G3 client --check 缺失非零且不写回', missingClientError !== null && !existsSync(clientOutputPath), true)
-  generateRuntimeDefaults(sevenOptions)
+  generatorDefaults(sevenOptions)
   const repoClientPath = join(REPO_ROOT, 'plugins/dsh-extra-plan/lib/client.js')
   const repoClientBefore = snapshot([repoClientPath])
   const customNoClientSource = join(g3ClientFixture, 'custom-source.yml')
   const customNoClientOutput = join(g3ClientFixture, 'custom-output.js')
   const customNoClientText = ['- id: extra-plan', '  config:', '    anchoredBootstrap: true', '    creativeMode: false', '    runcodeCatchGate: false', '    crossProviderPlannerModel: false', '    plannerModel: deepseek-v4-pro', "    otherAgentModel: ''", '    exploreBudget: 18', '    plannerPromptSuffix: plain-suffix', '- id: tool-web', '  config:', '    fetch: false', '- id: tool-presentation', '  config:', '    mode: native', ''].join('\n')
   writeFileSync(customNoClientSource, customNoClientText, 'utf8')
-  generateRuntimeDefaults({ sourcePath: customNoClientSource, outputPath: customNoClientOutput, definitionOutputPath: null, roleDefinitionDir: null })
+  generatorDefaults({ sourcePath: customNoClientSource, outputPath: customNoClientOutput, definitionOutputPath: null, roleDefinitionDir: null })
   check('G3 自定义 source/output 未显式 client 时不写仓库 client', JSON.stringify(repoClientBefore) === JSON.stringify(snapshot([repoClientPath])) && existsSync(customNoClientOutput), true)
   const clientVariants = [
     ['missing-begin', clientSource.replace('// BEGIN GENERATED SETTINGS FIELDS\n', '')],
@@ -481,7 +497,7 @@ try {
     writeFileSync(variantSource, variant, 'utf8')
     writeFileSync(variantOutput, 'SENTINEL-' + label, 'utf8')
     let variantError = null
-    try { generateRuntimeDefaults({ ...sevenOptions, clientSourcePath: variantSource, clientOutputPath: variantOutput }) } catch (error) { variantError = error }
+    try { generatorDefaults({ ...sevenOptions, clientSourcePath: variantSource, clientOutputPath: variantOutput }) } catch (error) { variantError = error }
     check('G3 client 标记异常 ' + label + ' 失败且不覆盖 sentinel', variantError !== null && readFileSync(variantOutput, 'utf8') === 'SENTINEL-' + label, true)
   }
   const setSentinels = (prefix) => { for (const [index, path] of sevenPaths.entries()) writeFileSync(path, prefix + '-' + String(index), 'utf8') }
@@ -491,7 +507,7 @@ try {
     setSentinels('SEVEN-STAGE')
     const before = outputSnapshot()
     let stageError = null
-    try { generateRuntimeDefaults({ ...sevenOptions, fsOps: { writeFileSync(...args) { if (String(args[0]).startsWith(target + '.tmp-')) throw new Error('stage-' + target); return writeFileSync(...args) } } }) } catch (error) { stageError = error }
+    try { generatorDefaults({ ...sevenOptions, fsOps: { writeFileSync(...args) { if (String(args[0]).startsWith(target + '.tmp-')) throw new Error('stage-' + target); return writeFileSync(...args) } } }) } catch (error) { stageError = error }
     check('G3 七产物逐路径暂存失败恢复 ' + target.split('\\').at(-1), stageError !== null && JSON.stringify(before) === JSON.stringify(outputSnapshot()) && publishAuxiliaryForTest(g3ClientFixture).length === 0, true)
   }
   // 七产物逐路径 rename 故障：目标存在时恢复旧字节。
@@ -499,21 +515,21 @@ try {
     setSentinels('SEVEN-RENAME')
     const before = outputSnapshot()
     let renameError = null
-    try { generateRuntimeDefaults({ ...sevenOptions, fsOps: { renameSync(...args) { if (resolve(args[1]) === resolve(target)) throw new Error('rename-' + target); return renameSync(...args) } } }) } catch (error) { renameError = error }
+    try { generatorDefaults({ ...sevenOptions, fsOps: { renameSync(...args) { if (resolve(args[1]) === resolve(target)) throw new Error('rename-' + target); return renameSync(...args) } } }) } catch (error) { renameError = error }
     check('G3 七产物逐路径 rename 失败恢复 ' + target.split('\\').at(-1), renameError !== null && JSON.stringify(before) === JSON.stringify(outputSnapshot()) && publishAuxiliaryForTest(g3ClientFixture).length === 0, true)
   }
   rmSync(outputDir, { recursive: true, force: true })
   let absentError = null
   const absentTarget = sevenPaths[3]
-  try { generateRuntimeDefaults({ ...sevenOptions, fsOps: { renameSync(...args) { if (resolve(args[1]) === resolve(absentTarget)) throw new Error('rename-absent-' + absentTarget); return renameSync(...args) } } }) } catch (error) { absentError = error }
+  try { generatorDefaults({ ...sevenOptions, fsOps: { renameSync(...args) { if (resolve(args[1]) === resolve(absentTarget)) throw new Error('rename-absent-' + absentTarget); return renameSync(...args) } } }) } catch (error) { absentError = error }
   check('G3 七产物目标原先缺席时失败保持全缺席', absentError !== null && sevenPaths.every((path) => !existsSync(path)) && publishAuxiliaryForTest(g3ClientFixture).length === 0, true)
   mkdirSync(outputDir, { recursive: true })
-  generateRuntimeDefaults(sevenOptions)
+  generatorDefaults(sevenOptions)
   setSentinels('SEVEN-RECOVERY')
   let recoveryError = null
   const recoveryRenameTarget = sevenPaths[2]
   const recoveryCopyTarget = sevenPaths[1]
-  try { generateRuntimeDefaults({ ...sevenOptions, fsOps: {
+  try { generatorDefaults({ ...sevenOptions, fsOps: {
     copyFileSync(...args) { if (resolve(args[1]) === resolve(recoveryCopyTarget)) throw new Error('seven-restore-copy'); return copyFileSync(...args) },
     renameSync(...args) { if (resolve(args[1]) === resolve(recoveryRenameTarget)) throw new Error('seven-rename-recovery'); return renameSync(...args) },
   } }) } catch (error) { recoveryError = error }
@@ -530,7 +546,7 @@ function publishAuxiliaryForTest(root) {
 }
 
 // G5 任务11：六产物真实暂存/发布/有限回滚夹具；所有输出只在临时 fixture，作者源与仓库生成物不写。
-const g5PublishFixture = mkdtempSync(join(tmpdir(), 'dsh-runtime-publish-g5-'))
+const g5PublishFixture = makeFixtureDir({ label: 'runtime-publish-g5' }).root
 try {
   const outputDir = join(g5PublishFixture, 'outputs')
   const outputPath = join(outputDir, 'preset-defaults.generated.js')
@@ -557,11 +573,11 @@ try {
     return out
   }
   let initialError = null
-  try { generateRuntimeDefaults(publishOptions) } catch (error) { initialError = error }
+  try { generatorDefaults(publishOptions) } catch (error) { initialError = error }
   check('G5 临时 fixture 正常生成完整六产物', initialError === null && publishPaths.every((path) => existsSync(path)), true)
   const initialPublishSnapshot = publishSnapshot(publishPaths)
   let checkError = null
-  try { generateRuntimeDefaults({ ...publishOptions, check: true }) } catch (error) { checkError = error }
+  try { generatorDefaults({ ...publishOptions, check: true }) } catch (error) { checkError = error }
   check('G5 check=true 六产物字节/mtime不变且无辅助残留', checkError === null && JSON.stringify(initialPublishSnapshot) === JSON.stringify(publishSnapshot(publishPaths)) && publishAuxiliary(g5PublishFixture).length === 0, true)
 
   // 用不同于新渲染内容的旧字节，避免遗漏恢复时仍因新旧相同而通过。
@@ -572,7 +588,7 @@ try {
   let stageError = null
   let stageWrites = 0
   try {
-    generateRuntimeDefaults({ ...publishOptions, fsOps: {
+    generatorDefaults({ ...publishOptions, fsOps: {
       writeFileSync(...args) {
         stageWrites += 1
         if (stageWrites === 2) throw new Error('stage-two')
@@ -586,7 +602,7 @@ try {
   let renameError = null
   let renameCount = 0
   try {
-    generateRuntimeDefaults({ ...publishOptions, fsOps: {
+    generatorDefaults({ ...publishOptions, fsOps: {
       renameSync(...args) {
         renameCount += 1
         if (renameCount === 3) throw new Error('rename-third')
@@ -600,7 +616,7 @@ try {
   let absentError = null
   let absentRenameCount = 0
   try {
-    generateRuntimeDefaults({ ...publishOptions, fsOps: {
+    generatorDefaults({ ...publishOptions, fsOps: {
       renameSync(...args) {
         absentRenameCount += 1
         if (absentRenameCount === 3) throw new Error('rename-third-absent')
@@ -611,12 +627,12 @@ try {
   check('G5 原先缺席目标发布失败保留缺席状态且无辅助残留', absentError !== null && absentError.message.includes('rename-third-absent') && publishPaths.every((path) => !existsSync(path)) && publishAuxiliary(g5PublishFixture).length === 0, true)
 
   rmSync(outputDir, { recursive: true, force: true })
-  generateRuntimeDefaults(publishOptions)
+  generatorDefaults(publishOptions)
   let recoveryError = null
   const recoveryRenameTarget = rolePaths[2]
   const recoveryCopyTarget = rolePaths[1]
   try {
-    generateRuntimeDefaults({ ...publishOptions, fsOps: {
+    generatorDefaults({ ...publishOptions, fsOps: {
       copyFileSync(...args) {
         if (resolve(args[1]) === resolve(recoveryCopyTarget)) throw new Error('restore-copy')
         return copyFileSync(...args)
@@ -713,13 +729,17 @@ const hostLeaks = Object.keys(pluginDeps).filter((name) => name.startsWith('@dee
 check('S2 dependencies 不含 @deepseek-ai/* 宿主包（profile 不得出现第二份宿主副本）'
   + (hostLeaks.length > 0 ? '，实际: ' + hostLeaks.join(', ') : ''),
   pluginPkg !== undefined && hostLeaks.length === 0)
-check('S2 peerDependencies dsh 与 dsh-llm 逐字同为 0.2.1-rc.2（旧版兼容已迁出）',
-  pluginPeers['@deepseek-ai/dsh'] === TARGET_PEER_RANGE && pluginPeers['@deepseek-ai/dsh-llm'] === TARGET_PEER_RANGE
-  && !LEGACY_HOST_VERSIONS.some((version) => String(pluginPeers['@deepseek-ai/dsh']).includes(version)))
+check('S2 peerDependencies 五字段均为四版本精确并集（旧版兼容未据此宣称）',
+  pluginPeers['@deepseek-ai/dsh'] === TARGET_PEER_RANGE
+  && pluginPeers['@deepseek-ai/dsh-llm'] === TARGET_PEER_RANGE
+  && pluginPeers['@deepseek-ai/dsh-agent-preset'] === TARGET_PEER_RANGE
+  && pluginPkg?.engines?.dsh === TARGET_PEER_RANGE
+  && qqbotPackageJson.engines?.dsh === TARGET_PEER_RANGE)
 check('S2 peerDependencies 不使用 caret/compatibility 豁免，且 schemastery 仍由宿主供给',
   typeof pluginPeers['@deepseek-ai/schemastery'] === 'string' && pluginPeers['@deepseek-ai/schemastery'] !== '' &&
   !String(pluginPeers['@deepseek-ai/dsh']).includes('^') && !String(pluginPeers['@deepseek-ai/dsh-llm']).includes('^'))
 
+let semanticSemver = null
 if (DSH_INSTALL_ROOT === null || targetDsh === null || targetDshLlm === null) {
   console.log('SKIP  {"scope":"HOST-VERSION","reason":"DSH_INSTALL_ROOT 未提供完整 dsh/dsh-llm manifests，未伪造宿主结论"}')
 } else {
@@ -728,6 +748,7 @@ if (DSH_INSTALL_ROOT === null || targetDsh === null || targetDshLlm === null) {
   for (const manifestPath of semverRequireCandidates) {
     try { semver = createRequire(manifestPath)('semver'); if (semver !== null) break } catch {}
   }
+  semanticSemver = semver
   // 版本门改为语义门：不再硬编码目标版本号，改由声明范围（peer for dsh/dsh-llm）判定宿主是否被支持。
   const declaredDsh = typeof pluginPeers['@deepseek-ai/dsh'] === 'string' ? pluginPeers['@deepseek-ai/dsh'] : ''
   const declaredLlm = typeof pluginPeers['@deepseek-ai/dsh-llm'] === 'string' ? pluginPeers['@deepseek-ai/dsh-llm'] : ''
@@ -735,10 +756,142 @@ if (DSH_INSTALL_ROOT === null || targetDsh === null || targetDshLlm === null) {
     semver !== null && declaredDsh !== '' && declaredLlm !== ''
     && semver.satisfies(targetDshVersion, declaredDsh, { includePrerelease: true })
     && semver.satisfies(targetDshLlmVersion, declaredLlm, { includePrerelease: true }))
-  check('S2 语义门拒绝四个旧版（0.1.7-rc.1/0.1.7-rc.2/0.2.0-rc.1/0.2.0-rc.2）',
-    semver !== null && declaredDsh !== '' && LEGACY_HOST_VERSIONS.every((version) => !semver.satisfies(version, declaredDsh, { includePrerelease: true })))
+  check('S2 语义门拒绝旧版声明范围',
+    semver !== null && declaredDsh !== '' && declaredLlm !== ''
+    && LEGACY_HOST_VERSIONS.every((version) => !semver.satisfies(version, declaredDsh, { includePrerelease: true }) && !semver.satisfies(version, declaredLlm, { includePrerelease: true })))
 }
-console.log('HUMAN  旧宿主与实机模型行为【未核实·HUMAN】：本脚本只证明单一声明范围的语义门，不证明旧版 API/自动回归/实机通过')
+if (semanticSemver === null) {
+  console.log('SKIP  {"scope":"VERSION-BOUNDARY","reason":"无可用 semver 宿主上下文，未伪造四正例/四类负例结论"}')
+} else {
+  const semanticPositives = ['0.2.1-rc.1', '0.2.1-rc.2', '0.2.1-rc.3', '0.2.1-rc.4']
+  const semanticNegatives = ['0.2.1-rc.0', '0.2.1-rc.5', '0.2.1', ...LEGACY_HOST_VERSIONS]
+  check('S2 四个 rc 正例均落在精确并集', semanticPositives.every((version) => semanticSemver.satisfies(version, TARGET_PEER_RANGE, { includePrerelease: true })))
+  check('S2 rc.0/rc.5/正式版/LEGACY_HOST_VERSIONS 均被精确并集拒绝', semanticNegatives.every((version) => !semanticSemver.satisfies(version, TARGET_PEER_RANGE, { includePrerelease: true })))
+}
+
+// H1：显式测试根只在隔离自检侧 fail-closed；正例只引用下载根的 rc.4 真包，不把它写成实机通过。
+const H1_RC4_ROOT = DSH_INSTALL_ROOT
+const H1_RC4_MANIFEST_CANDIDATES = H1_RC4_ROOT === null ? [] : [
+  join(H1_RC4_ROOT, 'node_modules', '@deepseek-ai', 'dsh-llm', 'package.json'),
+  join(H1_RC4_ROOT, 'node_modules', '@deepseek-ai', 'dsh', 'node_modules', '@deepseek-ai', 'dsh-llm', 'package.json'),
+]
+const h1Rc4ManifestPath = H1_RC4_MANIFEST_CANDIDATES.find((path) => existsSync(path)) || null
+let h1Rc4Entry = null
+let h1Rc4AdapterEntry = null
+let h1Rc4YamlEntry = null
+let h1Rc4Llm = null
+let h1Rc4Dsh = null
+if (h1Rc4ManifestPath !== null) {
+  try {
+    const h1Require = createRequire(h1Rc4ManifestPath)
+    h1Rc4Llm = JSON.parse(readFileSync(h1Rc4ManifestPath, 'utf8'))
+    h1Rc4Entry = h1Require.resolve('@deepseek-ai/dsh-llm')
+    try { h1Rc4AdapterEntry = h1Require.resolve('@deepseek-ai/dsh-llm-deepseek') } catch {}
+    try { h1Rc4YamlEntry = h1Require.resolve('js-yaml') } catch {}
+  } catch {}
+  const h1Rc4DshManifestPath = [
+    join(H1_RC4_ROOT, 'node_modules', '@deepseek-ai', 'dsh', 'package.json'),
+    join(H1_RC4_ROOT, 'node_modules', '@deepseek-ai', 'dsh', 'node_modules', '@deepseek-ai', 'dsh', 'package.json'),
+  ].find((path) => existsSync(path)) || null
+  if (h1Rc4DshManifestPath !== null) {
+    try { h1Rc4Dsh = JSON.parse(readFileSync(h1Rc4DshManifestPath, 'utf8')) } catch {}
+  }
+}
+if (h1Rc4ManifestPath === null || h1Rc4Entry === null || h1Rc4AdapterEntry === null || h1Rc4YamlEntry === null || h1Rc4Llm?.version !== '0.2.1-rc.4' || h1Rc4Dsh?.version !== '0.2.1-rc.4') {
+  console.log('NOT-RUN  {"scope":"H1-RC4","reason":"下载根缺少可核实的 rc.4 dsh/dsh-llm/adapter/js-yaml 真包入口"}')
+} else {
+  const h1Fixture = makeFixtureDir({ label: 'host-h1' }).root
+  const h1EmptyRoot = makeFixtureDir({ label: 'host-h1-empty' }).root
+  try {
+    const h1HookSource = buildAsyncHookSource({
+      target: '@deepseek-ai/dsh-llm',
+      anchor: pathToFileURL(h1Rc4Entry).href,
+      yaml: null,
+      roots: [
+        join(H1_RC4_ROOT, 'node_modules'),
+        join(H1_RC4_ROOT, 'node_modules', '@deepseek-ai', 'dsh', 'node_modules'),
+      ],
+      strictRoot: H1_RC4_ROOT,
+    })
+    const h1HookFile = join(h1Fixture, 'hook.mjs')
+    writeFileSync(h1HookFile, h1HookSource, 'utf8')
+    const fileReplay = await import(pathToFileURL(h1HookFile).href + '?replay=esm')
+    const serializedReplay = await import('data:text/javascript;base64,' + Buffer.from(h1HookSource, 'utf8').toString('base64'))
+    const h1SpecialHookSource = buildAsyncHookSource({
+      target: '@deepseek-ai/dsh-llm',
+      anchor: pathToFileURL(h1Rc4Entry).href,
+      yaml: pathToFileURL(h1Rc4YamlEntry).href,
+      roots: [
+        join(H1_RC4_ROOT, 'node_modules'),
+        join(H1_RC4_ROOT, 'node_modules', '@deepseek-ai', 'dsh', 'node_modules'),
+      ],
+      strictRoot: H1_RC4_ROOT,
+    })
+    const specialReplay = await import('data:text/javascript;base64,' + Buffer.from(h1SpecialHookSource, 'utf8').toString('base64'))
+    const insideUrl = pathToFileURL(h1Rc4Entry).href
+    const workspacePlannerUrl = pathToFileURL(join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'planner-budget.js')).href
+    const targetResult = await serializedReplay.resolve('@deepseek-ai/dsh-llm', {}, async () => ({ url: workspacePlannerUrl }))
+    const adapterResult = await serializedReplay.resolve('@deepseek-ai/dsh-llm-deepseek', {}, async () => ({ url: workspacePlannerUrl }))
+    const jsYamlSpecialResult = await specialReplay.resolve('js-yaml', {}, async () => ({ url: workspacePlannerUrl }))
+    const nativeResult = await serializedReplay.resolve('node:fs', {}, async () => ({ url: 'node:fs' }))
+    const workspaceRelativeResult = await serializedReplay.resolve('../../plugins/dsh-extra-plan/lib/planner-budget.js', {}, async () => ({ url: workspacePlannerUrl }))
+    const workspaceFileResult = await serializedReplay.resolve(workspacePlannerUrl, {}, async () => ({ url: workspacePlannerUrl }))
+    const hostNativeResult = await serializedReplay.resolve('@deepseek-ai/host-native', {}, async () => ({ url: insideUrl }))
+    const jsYamlInsideResult = await serializedReplay.resolve('js-yaml', {}, async () => ({ url: insideUrl }))
+    let hostOutsideRejected = false
+    try { await serializedReplay.resolve('@deepseek-ai/host-native', {}, async () => ({ url: workspacePlannerUrl })) } catch { hostOutsideRejected = true }
+    let jsYamlOutsideRejected = false
+    try { await serializedReplay.resolve('js-yaml', {}, async () => ({ url: workspacePlannerUrl })) } catch { jsYamlOutsideRejected = true }
+    let hostDataRejected = false
+    try { await serializedReplay.resolve('@deepseek-ai/host-data', {}, async () => ({ url: 'data:text/javascript,export default 1' })) } catch { hostDataRejected = true }
+    let hostNoUrlRejected = false
+    try { await serializedReplay.resolve('@deepseek-ai/host-no-url', {}, async () => ({})) } catch { hostNoUrlRejected = true }
+    let missingRejected = false
+    try { await serializedReplay.resolve('@deepseek-ai/not-in-root', {}, async () => ({ url: workspacePlannerUrl })) } catch { missingRejected = true }
+    check('H1 ESM/序列化回放：工作区relative/file与node:透传、根内host/adapter/js-yaml专门路径放行、根外host拒绝',
+      typeof fileReplay.resolve === 'function'
+      && targetResult.url === insideUrl
+      && adapterResult.url === pathToFileURL(h1Rc4AdapterEntry).href
+      && jsYamlSpecialResult.url === pathToFileURL(h1Rc4YamlEntry).href
+      && nativeResult.url === 'node:fs'
+      && workspaceRelativeResult.url === workspacePlannerUrl
+      && workspaceFileResult.url === workspacePlannerUrl
+      && hostNativeResult.url === insideUrl
+      && jsYamlInsideResult.url === insideUrl
+      && hostOutsideRejected
+      && jsYamlOutsideRejected
+      && hostDataRejected
+      && hostNoUrlRejected
+      && missingRejected)
+
+    const hostDepsUrl = pathToFileURL(join(REPO_ROOT, 'pe-test', '_shared', 'host-deps.mjs')).href
+    const plannerBudgetUrl = pathToFileURL(join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'planner-budget.js')).href
+    const childCode = [
+      'import { registerHostDeps } from ' + JSON.stringify(hostDepsUrl) + ';',
+      'await registerHostDeps();',
+      'await import(' + JSON.stringify(plannerBudgetUrl) + ');',
+    ].join('\n')
+    const negativeChild = spawnSync(process.execPath, ['--input-type=module', '-e', childCode], {
+      cwd: REPO_ROOT,
+      env: { ...process.env, DSH_INSTALL_ROOT: h1EmptyRoot },
+      stdio: 'inherit',
+    })
+    check('H1 显式缺根/缺包失败且不回退 profile/全局', negativeChild.error === undefined && negativeChild.status !== 0)
+
+    const positiveChild = spawnSync(process.execPath, ['--input-type=module', '-e', childCode], {
+      cwd: REPO_ROOT,
+      env: { ...process.env, DSH_INSTALL_ROOT: H1_RC4_ROOT },
+      stdio: 'inherit',
+    })
+    check('H1 rc.4 真包入口版本可被隔离钩子解析（仅静态/隔离证据）', positiveChild.error === undefined && positiveChild.status === 0)
+  } catch (error) {
+    check('H1 生成 hook ESM/序列化回放', false)
+  } finally {
+    rmSync(h1Fixture, { recursive: true, force: true })
+    rmSync(h1EmptyRoot, { recursive: true, force: true })
+  }
+}
+console.log('HUMAN  旧宿主与实机模型行为【未核实·HUMAN】：本脚本只证明四版本声明门与测试侧根隔离，不证明旧版 API/自动回归/真实 GUI/provider/模型通过')
 
 // S3：包级与全局管理行 locale 通过 exports 真实解析；旧 preset-sync 通道必须退役。
 const LOCALE_CHANNELS = [

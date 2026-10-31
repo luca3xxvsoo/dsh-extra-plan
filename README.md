@@ -4,7 +4,7 @@
 
 **作者从reasonix得到的灵感，实现权限控制+子代理角色分配的agent模板**
 
-**兼容性**：DSH = v0.2.1-rc.2、dsh-qqbot 0.5.2。旧版本兼容详见Releases
+**兼容性**：DSH = v0.2.1-rc.1 ~ v0.2.1-rc.4、dsh-qqbot 0.5.2。旧版本兼容详见Releases
 
 ## 2. 核心优势
 
@@ -110,6 +110,7 @@ dsh-extra-plan/
 │   │   │   ├── gate-words.js                                         # 闸门词契约：字段规格/整组校验/运行时派生
 │   │   │   ├── live-config.js                                        # 热修改支持模块
 │   │   │   ├── model-routing.js                                      # 子代理模型选择：planner/非 planner 路由解析
+│   │   │   ├── path-policy.js                                        # 路径安全策略闸门
 │   │   │   ├── planner-budget.js                                     # 探查预算：用量计数与提醒/耗尽文案
 │   │   │   ├── preset-defaults.generated.js                          # 构建期生成：exploreBudget 默认值
 │   │   │   ├── preset-settings.js                                    # 设置项 descriptor 与 YAML 处理 facade（供迁移复用）
@@ -142,7 +143,9 @@ dsh-extra-plan/
 │   │   ├── index.js                                                  # 四级闸门：路由/目的/澄清/批准 + apply 接线
 │   │   └── package.json              
 │   └── dsh-extra-plan-qqbot/                                
-│       ├── lib/heal.js                                               # 自愈函数
+│       ├── lib                                               
+│   │   │   ├── heal.js                                               # 探查预算：用量计数与提醒/耗尽文案
+│   │   │   └── path-policy.js                                        # 路径安全策略闸门
 │       ├── scripts/heal.mjs                                          # 自愈分发                      
 │       ├── cordis.patch.yml                                  
 │       ├── index.js                                    
@@ -150,11 +153,13 @@ dsh-extra-plan/
 ├── pe-test/                                                          # 自检/取证工具
 │   ├── README.md                                                     # 自检/取证工具介绍
 │   ├── _shared/                                                      
-│   │   ├── host-deps.mjs                
+│   │   ├── host-deps.mjs             
+│   │   ├── host-preload.mjs       
 │   │   ├── preset-hash.mjs                    
 │   │   ├── session-finder.mjs                   
 │   │   ├── test-output.mjs                
 │   │   ├── v4-tool-result.mjs              
+│   │   ├── workspace-paths.mjs              
 │   │   └── zstd-frames.mjs                
 │   ├── docs/                                                         # AI文档
 │   │   ├── ai-概览.md                
@@ -171,6 +176,7 @@ dsh-extra-plan/
 │       ├── 生成-no-remount证据.mjs
 │       ├── step-00-跨平台写拦截.mjs
 │       ├── step-00-全流程回归.mjs
+│       ├── step-00-路径边界.mjs
 │       ├── step-01-安装同步.mjs
 │       ├── step-01-设置迁移.mjs
 │       ├── step-01-设置页配置.mjs

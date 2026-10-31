@@ -27,6 +27,7 @@ await registerHostDeps()
 
 // 插件顶层静态 import '@deepseek-ai/dsh-llm' → 必须先注册宿主真包解析钩子，再动态加载插件模块。
 const { decisions } = await import('../../plugins/dsh-extra-plan/index.js')
+const { pwshMutationEvidence, bashMutationEvidence } = await import('../../plugins/dsh-extra-plan/lib/shell-mutation.js')
 
 const {
   BASH_MUTATION,
@@ -168,6 +169,23 @@ const pwshRedirectMatrix = [
 ]
 for (const [cmd, expected] of pwshRedirectMatrix) {
   for (const shape of ['object', 'string']) check(`${shape} arguments ${expected ? '拦截' : '放行'}: ${cmd}`, gateDeny(pwshExec(cmd, shape)) === expected)
+}
+
+console.log('== H3 短证据与布尔等价（纯函数，无真实 shell） ==')
+const h3EvidenceCases = [
+  ['pwsh bare object', pwshExec('New-Item secret.txt'), pwshMutationEvidence, { rule: 'PWSH_BARE_WORDS', value: 'New-Item' }],
+  ['pwsh bare JSON', pwshExec('Set-Content secret.txt x', 'string'), pwshMutationEvidence, { rule: 'PWSH_BARE_WORDS', value: 'Set-Content' }],
+  ['pwsh syntax redirect', pwshExec('Write-Output x > secret.txt'), pwshMutationEvidence, { rule: 'PWSH_MUTATION', value: '' }],
+  ['bash bare object', bashExec('rm -rf secret'), bashMutationEvidence, { rule: 'BASH_BARE_WORDS', value: 'rm' }],
+  ['bash syntax JSON', bashExec('git add .', 'string'), bashMutationEvidence, { rule: 'BASH_MUTATION', value: '' }],
+  ['pwsh stream merge', pwshExec('Write-Output x 2>&1'), pwshMutationEvidence, null],
+  ['pwsh read-only', pwshExec('Get-ChildItem'), pwshMutationEvidence, null],
+]
+for (const [label, exec, evidenceOf, expected] of h3EvidenceCases) {
+  const evidence = evidenceOf(exec)
+  check(label + ' evidence 独立固定期望', JSON.stringify(evidence) === JSON.stringify(expected))
+  check(label + ' evidence 与旧布尔入口等价', Boolean(evidence) === gateDeny(exec))
+  check(label + ' evidence 不回显命令内容', evidence === null || !JSON.stringify(evidence).includes('secret'))
 }
 
 console.log('== cmd/cmd.exe /c 包装矩阵：写命令拦截、dir/echo 只读对照 ==')

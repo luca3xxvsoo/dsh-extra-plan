@@ -5,7 +5,20 @@ import { pathToFileURL, fileURLToPath } from 'node:url'
 import { isDeepStrictEqual } from 'node:util'
 import { registerHostDeps } from '../_shared/host-deps.mjs'
 import { assertionLine, createOutput, parseOutputMode, stableStringify, sha256Text, writeRawEvidence } from '../_shared/test-output.mjs'
-// host-deps 先于隔离完成解析（它按候选① DSH_HOME/profiles/web 锚定宿主真包）。
+// host-deps 只按命令显式 DSH_INSTALL_ROOT 解析宿主真包；运行时由 node --import ../_shared/host-preload.mjs 预加载。
+const step00Fixture = makeFixtureDir({ label: 'step00' })
+const isolatedDshHome = step00Fixture.home
+const STEP00_PATH_CONTEXT = createPathContext({ workspaceRoot: isolatedDshHome, hostDataRoot: isolatedDshHome })
+const makeWTemp = (label) => { const safe = String(label).replace(/[^A-Za-z0-9_-]+/g, '-'); const dir = join(isolatedDshHome, 'tmp', safe); mkdirSync(dir, { recursive: true }); return dir }
+const previousDshHome = process.env.DSH_HOME
+const previousConfigPath = process.env.DSH_EXTRA_PLAN_CONFIG_PATH
+const previousTemp = process.env.TEMP
+const previousTmp = process.env.TMP
+const previousTmpDir = process.env.TMPDIR
+delete process.env.DSH_HOME
+process.env.TEMP = step00Fixture.temp
+process.env.TMP = step00Fixture.temp
+process.env.TMPDIR = step00Fixture.temp
 await registerHostDeps()
 const { interpolate } = await import('@deepseek-ai/cordis-plugin-loader')
 
@@ -13,20 +26,22 @@ const { interpolate } = await import('@deepseek-ai/cordis-plugin-loader')
 // live-config 构造期路径依次为显式 configPath → DSH_EXTRA_PLAN_CONFIG_PATH → configEditor.documentPath；旧预设目录不回退。
 // 本脚本的 plugin.apply 均传入 config 快照（如 anchoredBootstrap: false），但 mock 无可用 documentPath，
 // 因此清空显式环境路径后不会读到现场真值，这些按入参硬编码的期望不会被现场配置污染。
-// 【插件 import 之前】把 DSH_HOME 指向空的临时目录，并清空 DSH_EXTRA_PLAN_CONFIG_PATH：
+// 【插件 import 之前】清空 DSH_HOME 与 DSH_EXTRA_PLAN_CONFIG_PATH；W 临时文件只由 fixture 路径显式创建：
 // 构造期读盘失败 → 各实例回退到自己的 apply 快照（fallbackDefaults）。
 // 测试结束（含 process.exit 与异常退出路径）由 process.on('exit') 恢复原值并删临时目录。
-const previousDshHome = process.env.DSH_HOME
-const previousConfigPath = process.env.DSH_EXTRA_PLAN_CONFIG_PATH
-const isolatedDshHome = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-step00-home-'))
-process.env.DSH_HOME = isolatedDshHome
 delete process.env.DSH_EXTRA_PLAN_CONFIG_PATH
 function restoreIsolatedEnv() {
   if (previousDshHome === undefined) delete process.env.DSH_HOME
   else process.env.DSH_HOME = previousDshHome
   if (previousConfigPath === undefined) delete process.env.DSH_EXTRA_PLAN_CONFIG_PATH
   else process.env.DSH_EXTRA_PLAN_CONFIG_PATH = previousConfigPath
-  rmSync(isolatedDshHome, { recursive: true, force: true })
+  if (previousTemp === undefined) delete process.env.TEMP
+  else process.env.TEMP = previousTemp
+  if (previousTmp === undefined) delete process.env.TMP
+  else process.env.TMP = previousTmp
+  if (previousTmpDir === undefined) delete process.env.TMPDIR
+  else process.env.TMPDIR = previousTmpDir
+  rmSync(step00Fixture.root, { recursive: true, force: true })
 }
 process.on('exit', restoreIsolatedEnv)
 
@@ -44,8 +59,9 @@ const roleGenerator = await import('../../plugins/dsh-extra-plan/scripts/generat
 const usageStats = await import('./step-99-用量统计.mjs')
 import * as usageLedgerModule from '../../plugins/dsh-extra-plan/lib/usage-ledger.js'
 import { DEFAULT_EXPLORE_BUDGET as GENERATED_DEFAULT_EXPLORE_BUDGET, DEFAULT_PLANNER_PROMPT_SUFFIX as GENERATED_DEFAULT_PLANNER_PROMPT_SUFFIX } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
-import { existsSync, readFileSync, readdirSync, mkdtempSync, rmSync, mkdirSync, writeFileSync, renameSync, unlinkSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, readFileSync, readdirSync, rmSync, mkdirSync, writeFileSync, renameSync, unlinkSync } from 'node:fs'
+import { makeFixtureDir } from '../_shared/workspace-paths.mjs'
+import { createPathContext } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
 import { dirname, join } from 'node:path'
 import { parsePresetYaml, createDefaultSettings } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
 import { ROLE_IDS, ROLE_ORDERS, PLANNER_PRESET_ID, PROBER_PRESET_ID } from '../../plugins/dsh-extra-plan/lib/role-contract.js'
@@ -152,7 +168,7 @@ const ROUTE_CONFIRM_TEXT = gateRuntime.confirm.route
 
 // ── apply 统一入口（4 处 plugin.apply 站点同源） ────────────────────────────
 // 合并资产 YAML 的 gateWords（调用方显式传 gateWords 时以调用方为准），并补齐
-// systemPrompt/effect mock；坏配置入口不经本 helper（直接调 plugin.apply）。
+// systemPrompt/effect mock；不自动注入 profileContext/dshHomePath，需Host业务的正例由调用点传入 W 内可信事实；坏配置入口不经本 helper（直接调 plugin.apply）。
 function applyPlugin(ctx, config, registry) {
   const variables = registry !== undefined ? registry : []
   ctx.systemPrompt = { variable: (name, provider) => { variables.push({ name, provider }); return () => {} } }
@@ -233,7 +249,7 @@ const forensicArgCases = [
   ['step-04-工具清单查看.mjs', ['fixture-session', '--full']],
   ['step-05-会话解码.mjs', ['fixture-session', '--full']],
   ['step-06-真实会话查看.mjs', ['fixture-session']],
-  ['step-07-子代理模型与引导取证.mjs', ['--full']],
+  ['step-07-子代理模型与引导取证.mjs', ['--session', 'fixture-session', '--full']],
   ['step-08-方案配对查看.mjs', ['fixture-session']],
 ]
 for (const [file, expected] of forensicArgCases) check('RUNNER15 ' + file + '真实argv合同', runnerModule.forensicArgs(file, 'fixture-session'), expected)
@@ -241,7 +257,7 @@ check('RUNNER16 step-07缺显式前置为NOT-RUN', runnerModule.forensicNotRunRe
 check('RUNNER17 step-07显式前置齐全不NOT-RUN', runnerModule.forensicNotRunReason('step-07-子代理模型与引导取证.mjs', 'fixture-session', { PLANNER_PROMPT_SUFFIX: 'fixture' }), null)
 check('RUNNER18 step-08实际非零仍为HUMAN', runnerModule.classifyForensic({ status: 1, error: undefined, notRunReason: null }), 'HUMAN')
 checkTrue('RUNNER19 INCOMPLETE/NOT-RUN进入有限摘要', runnerModule.forensicKeyLines('INCOMPLETE reason\nNOT-RUN reason\n').join('\n').includes('INCOMPLETE reason') && runnerModule.forensicKeyLines('INCOMPLETE reason\nNOT-RUN reason\n').join('\n').includes('NOT-RUN reason'))
-const rawFixtureDir = mkdtempSync(join(tmpdir(), 'dsh-runner-raw-fixture-'))
+const rawFixtureDir = makeWTemp('dsh-runner-raw-fixture')
 const rawFixture = writeRawEvidence({ directory: rawFixtureDir, baseName: 'fixture', stdout: 'PASS compact\n', stderr: 'INCOMPLETE raw reason\n' })
 const rawCombined = 'PASS compact\nINCOMPLETE raw reason\n'
 checkTrue('RUNNER20 raw bytes/lines/hash可回看', rawFixture.files[0].bytes === Buffer.byteLength('PASS compact\n', 'utf8') && rawFixture.files[1].lines === 1 && rawFixture.bytes === Buffer.byteLength(rawCombined, 'utf8') && rawFixture.lines === 2 && rawFixture.sha256 === sha256Text(rawCombined))
@@ -265,6 +281,104 @@ const runnerMatrix = [
   ['RUNNER14 诊断明确列出SKIP与HUMAN', runnerModule.structuredMarkerSummary({ skipLines: [runnerSkipMarker], humanLines: [runnerHumanMarker] }) === '跳过：{"scope":"fixture","reason":"unavailable"}；HUMAN：人工核验', true],
 ]
 for (const [name, got, expected] of runnerMatrix) check(name, got, expected)
+
+// RUNNER21+ 生产链回归：共享 createOutput 实际产出 compact/verbose/full 原始输出，
+// 直接串联生产 parseAutoOutput/classifyAuto/statsSummary；不复制 parser、不仅手填 stats。
+const runnerProducerModes = ['compact', 'verbose', 'full']
+const runnerProduceText = (mode, produce) => {
+  const lines = []
+  const producer = createOutput({ mode, argv: [], write: (line) => lines.push(line), errorWrite: (line) => lines.push(line) })
+  produce(producer)
+  return lines.join('\n') + '\n'
+}
+const runnerChainScenarios = [
+  {
+    name: 'RUNNER21 统计+marker混合串联失败优先',
+    produce: (producer) => {
+      producer.marker('SKIP', { scope: 'fixture', reason: 'unavailable' })
+      producer.marker('HUMAN', '人工核验')
+      producer.marker('NOT-RUN', '环境不可用')
+      producer.marker('NOT-RUN', '真实消息未覆盖')
+      producer.assertion(true, 'fixture-pass', 1, 1)
+      producer.assertion(false, 'fixture-fail', 1, 2)
+      producer.emit('NOT-RUN 2')
+      producer.summary(5, 2, { skip: 1, human: 2, incomplete: 3 })
+    },
+    verify: (parsed, classification, summaryText) =>
+      JSON.stringify(parsed.stats) === JSON.stringify({ pass: 5, fail: 2, skip: 1, incomplete: 3 })
+      && parsed.skipLines.length === 1 && parsed.humanLines.length === 1
+      && parsed.notRunLines.length === 2 && parsed.incompleteLines.length === 0
+      && parsed.notRunCount === 2 && parsed.humanSummaryCount === 2 && parsed.incompleteCount === 3
+      && classification === '失败',
+  },
+  {
+    name: 'RUNNER22 PASS5+NOT-RUN2及两条marker只计2→部分执行',
+    produce: (producer) => {
+      producer.emit('NOT-RUN 2')
+      producer.marker('NOT-RUN', '环境不可用')
+      producer.marker('NOT-RUN', '真实消息未覆盖')
+      producer.summary(5, 0, {})
+    },
+    verify: (parsed, classification, summaryText) =>
+      JSON.stringify(parsed.stats) === JSON.stringify({ pass: 5, fail: 0, skip: 0, incomplete: 0 })
+      && parsed.notRunCount === 2 && parsed.notRunLines.length === 2
+      && classification === '部分执行' && summaryText === '通过 5, 失败 0, NOT-RUN 2',
+  },
+  {
+    name: 'RUNNER23 HUMAN0/NOT-RUN0/INCOMPLETE0零值不计→通过且摘要无后缀',
+    produce: (producer) => {
+      producer.summary(2, 0, { skip: 0, human: 0, incomplete: 0 })
+    },
+    verify: (parsed, classification, summaryText) =>
+      JSON.stringify(parsed.stats) === JSON.stringify({ pass: 2, fail: 0, skip: 0, incomplete: 0 })
+      && parsed.notRunCount === 0 && parsed.humanSummaryCount === 0 && parsed.incompleteCount === 0
+      && classification === '通过' && summaryText === '通过 2, 失败 0',
+  },
+  {
+    name: 'RUNNER24 正HUMAN/NOT-RUN无PASS→未执行',
+    produce: (producer) => {
+      producer.marker('HUMAN', '人工核验')
+      producer.marker('NOT-RUN', '环境不可用')
+      producer.summary(0, 0, { human: 1 })
+    },
+    verify: (parsed, classification, summaryText) =>
+      parsed.humanSummaryCount === 1 && parsed.notRunCount === 1
+      && classification === '未执行',
+  },
+  {
+    name: 'RUNNER25 INCOMPLETE独立行正数先于非零退出→部分执行',
+    produce: (producer) => {
+      producer.emit('INCOMPLETE 2')
+      producer.summary(1, 0, {})
+    },
+    verify: (parsed, classification, summaryText) =>
+      parsed.stats !== null && parsed.stats.incomplete === 2 && parsed.incompleteCount === 2
+      && classification === '部分执行',
+  },
+]
+for (const mode of runnerProducerModes) {
+  for (const scenario of runnerChainScenarios) {
+    const text = runnerProduceText(mode, scenario.produce)
+    const parsed = runnerModule.parseAutoOutput(text)
+    const classification = runnerModule.classifyAuto({ timedOut: false, error: undefined, status: 0, ...parsed })
+    checkTrue(scenario.name + '（' + mode + '）', scenario.verify(parsed, classification, runnerModule.statsSummary({ status: 0, ...parsed })))
+  }
+}
+checkTrue('RUNNER26 生产parseAutoOutput/parseResult导出可用', typeof runnerModule.parseAutoOutput === 'function' && typeof runnerModule.parseResult === 'function')
+const runnerParseCases = [
+  ['RUNNER27 末条主统计生效', runnerModule.parseAutoOutput('通过 1，失败 0\n通过 3，失败 1').stats, { pass: 3, fail: 1, skip: 0, incomplete: 0 }],
+  ['RUNNER28 结果三类旧格式完整行', runnerModule.parseAutoOutput('结果：3 通过，0 失败').stats, { pass: 3, fail: 0, skip: 0, incomplete: 0 }],
+  ['RUNNER29 中文说明句不误判统计', runnerModule.parseAutoOutput('本轮回归通过 3，失败 1，详见日志').stats, null],
+  ['RUNNER30 英文note嵌RESULT不误判', runnerModule.parseAutoOutput('note: RESULT: 3 PASS, 0 FAIL').stats, null],
+  ['RUNNER31 英文INCOMPLETE独立行计入', runnerModule.parseAutoOutput('RESULT: 4 PASS, 0 FAIL\nINCOMPLETE 2').stats, { pass: 4, fail: 0, skip: 0, incomplete: 2 }],
+  ['RUNNER32 中文未完成2计入', runnerModule.parseAutoOutput('通过 3, 失败 0, 未完成 2').stats, { pass: 3, fail: 0, skip: 0, incomplete: 2 }],
+]
+for (const [name, got, expected] of runnerParseCases) check(name, got, expected)
+checkTrue('RUNNER33 负数/非数值汇总不计、0不算一条未执行', (() => {
+  const parsed = runnerModule.parseAutoOutput('NOT-RUN -1\nHUMAN abc\nNOT-RUN 0\nHUMAN  0')
+  return parsed.stats === null && parsed.notRunCount === 0 && parsed.humanSummaryCount === 0 && parsed.incompleteCount === 0
+})())
+checkTrue('RUNNER34 INCOMPLETE+exit1先于非零退出、正HUMAN/NOT-RUN有PASS部分执行', runnerModule.classifyAuto({ timedOut: false, error: undefined, stats: { pass: 1, fail: 0, skip: 0, incomplete: 2 }, status: 1 }) === '部分执行' && runnerModule.classifyAuto({ timedOut: false, error: undefined, stats: { pass: 2, fail: 0, skip: 0, incomplete: 0 }, status: 0, humanLines: ['人工核验'], notRunLines: ['环境不可用'] }) === '部分执行')
 
 const scannerKeys = ['collectRunCodeSites', 'hasDynamicRunCodeAccess', 'maskCodeLiteralsAndComments', 'sliceBalancedArgs']
 checkTrue('SC1 run-code-scanner 命名空间精确四项且 facade 复用三项', JSON.stringify(Object.keys(runCodeScanner).sort()) === JSON.stringify(scannerKeys) && scannerKeys.every((name) => typeof runCodeScanner[name] === 'function') && maskCodeLiteralsAndComments === runCodeScanner.maskCodeLiteralsAndComments && sliceBalancedArgs === runCodeScanner.sliceBalancedArgs && staticRunCode.collectRunCodeSites === runCodeScanner.collectRunCodeSites)
@@ -372,7 +486,7 @@ check('CFG7 plannerPromptSuffix 使用生成默认值', configWithAssetGateWords
 checkTrue('CFG8 bootstrapReadHint 使用内置 fallback 形状', typeof configWithAssetGateWords.bootstrapReadHint === 'string' && configWithAssetGateWords.bootstrapReadHint.includes('tools.read') && configWithAssetGateWords.bootstrapReadHint.includes('file_path') && configWithAssetGateWords.bootstrapReadHint.includes('offset') && configWithAssetGateWords.bootstrapReadHint.includes('limit'))
 check('CFG9 工具数组默认值', [configWithAssetGateWords.bootstrapShellTools, configWithAssetGateWords.bootstrapCommonTools], [['bash', 'pwsh'], ['read']])
 check('CFG10 usageLedger 默认值', configWithAssetGateWords.usageLedger, { enabled: false, path: '' })
-check('CFG11 diagFile 默认落点', configWithAssetGateWords.diagFile, join(dirname(PLUGIN_PATH), 'extra-plan-request-errors.jsonl'))
+check('CFG11 diagFile 默认裸日志名（实际落点由授权H/W根解析）', configWithAssetGateWords.diagFile, 'extra-plan-request-errors.jsonl')
 const assetLoaderContext = { dshHomePath: (...segments) => join(isolatedDshHome, ...segments) }
 const assetExtraPlanLoaderConfig = interpolate(assetLoaderContext, assetExtraPlanConfig)
 let assetConfigResolved = null
@@ -981,19 +1095,19 @@ const stackHitsStep99Line = (stack, lineNumber, functionName) => lineNumber > 0 
 
 // M6-G2-1：实际 createUsageLedger 生成 main 空 preset 与深层断链空 root，逐行严格归档。
 {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-g2-generated-'))
+  const dir = makeWTemp('dsh-g2-generated')
   try {
     const active = join(dir, 'ledger-v2.jsonl')
     const makeAgent = (event) => ({ session: { seq: 1, snapshotEvents: () => [event] } })
     const usageEvent = (seq, model, provider) => ({ type: 'assistant/message', seq, data: { usage: { inputTokens: 1, cacheReadTokens: 2, cacheWriteTokens: 3, outputTokens: 4 }, message: { source: { model, provider } } } })
-    const ledger = usageLedgerModule.createUsageLedger({ enabled: true, path: active })
+    const ledger = usageLedgerModule.createUsageLedger({ enabled: true, path: active, pathContext: STEP00_PATH_CONTEXT })
     const mainResult = ledger.foldUsage(makeAgent(usageEvent(1, 'g2-main-model', 'g2-main-provider')), { sessionId: 'g2-generated-main', parentSessionId: '', rootSessionId: 'g2-generated-main', agentPreset: '', delegationDepth: 0, role: 'main' })
     const deepResult = ledger.foldUsage(makeAgent(usageEvent(1, 'g2-deep-model', 'g2-deep-provider')), { sessionId: 'g2-generated-deep', parentSessionId: 'g2-chain-8', rootSessionId: '', agentPreset: 'extra-plan-executor', delegationDepth: 9, role: 'child' })
     const rows = archiveBytesOf(active).trim().split('\n').filter((line) => line !== '').map((line) => JSON.parse(line))
     const fixedKeys = usageStats.V2_KEYS.slice().sort()
     const strictRowsOk = rows.length === 2 && rows.every((row) => JSON.stringify(Object.keys(row).sort()) === JSON.stringify(fixedKeys) && usageStats.parseLedgerText(JSON.stringify(row) + '\n', { strict: true }).rows.length === 1 && !Object.hasOwn(row, 'calls'))
     checkTrue('M6-G2-1 createUsageLedger真实main空agentPreset/深层空root：两行固定15键且strict parse成功', mainResult.status === 'written' && deepResult.status === 'written' && strictRowsOk && rows.some((row) => row.sessionId === 'g2-generated-main' && row.agentPreset === '' && row.rootSessionId === 'g2-generated-main') && rows.some((row) => row.sessionId === 'g2-generated-deep' && row.rootSessionId === '' && row.parentSessionId === 'g2-chain-8'))
-    const archiveResult = usageStats.archiveLedger(active)
+    const archiveResult = usageStats.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT })
     const archived = archiveBytesOf(usageStats.archivePathOf(active))
     checkTrue('M6-G2-1 真实生成main/断链行strict归档成功且active清空', archiveResult.rows === 2 && archiveResult.groups === 2 && archiveBytesOf(active) === '' && usageStats.parseLedgerText(archived, { strict: true }).rows.length === 2 && !existsSync(usageLedgerModule.usageLedgerLockPath(active)) && archiveResiduals(dir).length === 0)
     const strictFailureCode = (row) => {
@@ -1008,7 +1122,7 @@ const stackHitsStep99Line = (stack, lineNumber, functionName) => lineNumber > 0 
 
 // M6-G2-2：archive 水位重放矩阵、provider 隔离、cursor 字节/哈希与二次归档幂等。
 {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-g2-watermark-'))
+  const dir = makeWTemp('dsh-g2-watermark')
   try {
     const active = join(dir, 'ledger-v2.jsonl')
     const archive = usageStats.archivePathOf(active)
@@ -1040,27 +1154,27 @@ const stackHitsStep99Line = (stack, lineNumber, functionName) => lineNumber > 0 
     const cursorBefore = archiveBytesOf(cursor)
     const cursorHash = sha256Text(cursorBefore)
     const statBefore = { active: archiveBytesOf(active), archive: archiveBytesOf(archive), cursor: archiveBytesOf(cursor) }
-    const stats = usageStats.statLedger(active)
+    const stats = usageStats.statLedger(active, { pathContext: STEP00_PATH_CONTEXT })
     const statsA = stats.groups.find((group) => sameIdentity(group, expectedA))
     const statsB = stats.groups.find((group) => sameIdentity(group, expectedB))
     checkTrue('M6-G2-2 stat水位覆盖seq10/20不增Token、provider完整身份且默认stat三文件零写', stats.rows.length === 4 && stats.groups.length === 2 && stats.coveredByArchiveRows === 2 && statsA !== undefined && sameIdentity(statsA, expectedA) && statsA.inputTokens === 30 && statsA.cacheReadTokens === 300 && statsA.cacheWriteTokens === 3000 && statsA.outputTokens === 30000 && statsA.maxSeq === 20 && statsA.latestTs === '2026-10-22T00:00:20.000Z' && statsB !== undefined && sameIdentity(statsB, expectedB) && statsB.inputTokens === 7 && statsB.cacheReadTokens === 8 && statsB.cacheWriteTokens === 9 && statsB.outputTokens === 10 && statsB.maxSeq === 11 && statsB.latestTs === '2026-10-22T00:00:11.000Z' && stats.groups.every((group) => !Object.hasOwn(group, 'calls')) && !usageStats.renderStats(stats).includes('calls') && archiveBytesOf(active) === statBefore.active && archiveBytesOf(archive) === statBefore.archive && archiveBytesOf(cursor) === statBefore.cursor && sha256Text(archiveBytesOf(cursor)) === cursorHash)
-    const archiveResult = usageStats.archiveLedger(active)
+    const archiveResult = usageStats.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT })
     const archiveAfterReplay = archiveBytesOf(archive)
     const replayRows = usageStats.parseLedgerText(archiveAfterReplay, { strict: true }).rows
     const replayA = replayRows.find((row) => sameIdentity(row, expectedA))
     const replayB = replayRows.find((row) => sameIdentity(row, expectedB))
     checkTrue('M6-G2-2 archive水位重放不加Token、provider完整身份独立发布/无calls', archiveResult.rows === 4 && archiveResult.groups === 2 && archiveResult.coveredByArchiveRows === 2 && replayRows.length === 2 && replayA !== undefined && sameIdentity(replayA, expectedA) && replayA.inputTokens === 30 && replayA.cacheReadTokens === 300 && replayA.cacheWriteTokens === 3000 && replayA.outputTokens === 30000 && replayA.seq === 20 && replayB !== undefined && sameIdentity(replayB, expectedB) && replayB.inputTokens === 7 && replayB.cacheReadTokens === 8 && replayB.cacheWriteTokens === 9 && replayB.outputTokens === 10 && replayB.seq === 11 && replayRows.every((row) => !Object.hasOwn(row, 'calls')) && archiveBytesOf(active) === '' && archiveBytesOf(cursor) === cursorBefore && sha256Text(archiveBytesOf(cursor)) === cursorHash)
     archiveWriteRows(active, [seq21])
-    const stats21 = usageStats.statLedger(active)
+    const stats21 = usageStats.statLedger(active, { pathContext: STEP00_PATH_CONTEXT })
     const statsA21 = stats21.groups.find((group) => sameIdentity(group, expectedA))
     checkTrue('M6-G2-2 archive水位后seq21只增一次且maxSeq/latestTs正确', stats21.coveredByArchiveRows === 0 && statsA21 !== undefined && statsA21.inputTokens === 51 && statsA21.cacheReadTokens === 510 && statsA21.cacheWriteTokens === 5100 && statsA21.outputTokens === 51000 && statsA21.maxSeq === 21 && statsA21.latestTs === '2026-10-22T00:00:21.000Z')
-    const archiveResult21 = usageStats.archiveLedger(active)
+    const archiveResult21 = usageStats.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT })
     const archiveAfter21 = archiveBytesOf(archive)
     const finalRows = usageStats.parseLedgerText(archiveAfter21, { strict: true }).rows
     const finalA = finalRows.find((row) => sameIdentity(row, expectedA))
     const finalB = finalRows.find((row) => sameIdentity(row, expectedB))
     checkTrue('M6-G2-2 seq21 archive只提交一次且A/B完整身份、四桶/maxSeq/latestTs正确', archiveResult21.rows === 3 && archiveResult21.groups === 2 && archiveResult21.coveredByArchiveRows === 0 && finalRows.length === 2 && finalA !== undefined && sameIdentity(finalA, expectedA) && finalA.inputTokens === 51 && finalA.cacheReadTokens === 510 && finalA.cacheWriteTokens === 5100 && finalA.outputTokens === 51000 && finalA.seq === 21 && finalA.ts === '2026-10-22T00:00:21.000Z' && finalB !== undefined && sameIdentity(finalB, expectedB) && finalB.inputTokens === 7 && finalB.cacheReadTokens === 8 && finalB.cacheWriteTokens === 9 && finalB.outputTokens === 10 && finalB.seq === 11 && archiveBytesOf(active) === '' && archiveBytesOf(cursor) === cursorBefore && sha256Text(archiveBytesOf(cursor)) === cursorHash)
-    usageStats.archiveLedger(active)
+    usageStats.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT })
     checkTrue('M6-G2-2 二次archive字节稳定且无calls/lock/temp残留', archiveBytesOf(archive) === archiveAfter21 && archiveBytesOf(active) === '' && archiveBytesOf(cursor) === cursorBefore && sha256Text(archiveBytesOf(cursor)) === cursorHash && usageStats.parseLedgerText(archiveBytesOf(archive), { strict: true }).rows.every((row) => !Object.hasOwn(row, 'calls')) && !existsSync(usageLedgerModule.usageLedgerLockPath(active)) && archiveResiduals(dir).length === 0)
   } finally {
     rmSync(dir, { recursive: true, force: true })
@@ -1069,7 +1183,7 @@ const stackHitsStep99Line = (stack, lineNumber, functionName) => lineNumber > 0 
 
 // M6-G2-3：strict archive 同一完整身份的多累计行在发布前拒绝，三文件字节保持不变。
 {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-g2-duplicate-archive-'))
+  const dir = makeWTemp('dsh-g2-duplicate-archive')
   try {
     const active = join(dir, 'ledger-v2.jsonl')
     const archive = usageStats.archivePathOf(active)
@@ -1079,7 +1193,7 @@ const stackHitsStep99Line = (stack, lineNumber, functionName) => lineNumber > 0 
     writeFileSync(cursor, '{"g2-duplicate":{"seq":20,"index":2}}', 'utf8')
     const before = { active: archiveBytesOf(active), archive: archiveBytesOf(archive), cursor: archiveBytesOf(cursor) }
     let failure
-    try { usageStats.archiveLedger(active) } catch (error) { failure = error }
+    try { usageStats.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT }) } catch (error) { failure = error }
     checkTrue('M6-G2-3 strict archive同完整身份多累计行发布前duplicate-archive拒绝且三文件/lock/temp不变', failure !== undefined && failure.code === 'duplicate-archive' && archiveBytesOf(active) === before.active && archiveBytesOf(archive) === before.archive && archiveBytesOf(cursor) === before.cursor && !existsSync(usageLedgerModule.usageLedgerLockPath(active)) && archiveResiduals(dir).length === 0)
   } finally {
     rmSync(dir, { recursive: true, force: true })
@@ -1087,7 +1201,7 @@ const stackHitsStep99Line = (stack, lineNumber, functionName) => lineNumber > 0 
 }
 {
 
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-g3-archive-'))
+  const dir = makeWTemp('dsh-g3-archive')
   try {
     const active = join(dir, 'ledger-v2.jsonl')
     const archive = usageStats.archivePathOf(active)
@@ -1103,7 +1217,7 @@ const stackHitsStep99Line = (stack, lineNumber, functionName) => lineNumber > 0 
     const archiveBefore = archiveBytesOf(archive)
     const cursorBefore = archiveBytesOf(cursor)
     checkTrue('M6 AI思考/CLI前无canonical lock', !existsSync(usageLedgerModule.usageLedgerLockPath(active)))
-    const stats = usageStats.statLedger(active)
+    const stats = usageStats.statLedger(active, { pathContext: STEP00_PATH_CONTEXT })
     const statsA = stats.groups.find((group) => group.provider === 'm6-provider-a')
     const statsB = stats.groups.find((group) => group.provider === 'm6-provider-b')
     checkTrue('M6 默认archive+active统计零写且完整provider分组/四桶/maxSeq/ts/无calls',
@@ -1113,7 +1227,7 @@ const stackHitsStep99Line = (stack, lineNumber, functionName) => lineNumber > 0 
       && stats.groups.every((group) => !Object.hasOwn(group, 'calls'))
       && archiveBytesOf(active) === activeBefore && archiveBytesOf(archive) === archiveBefore && archiveBytesOf(cursor) === cursorBefore
       && !existsSync(usageLedgerModule.usageLedgerLockPath(active)) && archiveResiduals(dir).length === 0)
-    const archiveResult = usageStats.archiveLedger(active)
+    const archiveResult = usageStats.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT })
     const archiveAfter = archiveBytesOf(archive)
     const cursorAfter = archiveBytesOf(cursor)
     checkTrue('M6 成功archive清空active、cursor不变、聚合行含provider且无calls/残留',
@@ -1121,7 +1235,7 @@ const stackHitsStep99Line = (stack, lineNumber, functionName) => lineNumber > 0 
       && usageStats.parseLedgerText(archiveAfter, { strict: true }).rows.length === 2
       && usageStats.parseLedgerText(archiveAfter, { strict: true }).rows.every((row) => !Object.hasOwn(row, 'calls'))
       && !existsSync(usageLedgerModule.usageLedgerLockPath(active)) && archiveResiduals(dir).length === 0)
-    usageStats.archiveLedger(active)
+    usageStats.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT })
     checkTrue('M6 二次archive字节稳定且active仍空/cursor仍不变', archiveBytesOf(archive) === archiveAfter && archiveBytesOf(active) === '' && archiveBytesOf(cursor) === cursorBefore && archiveResiduals(dir).length === 0)
 
     const invalidCases = [
@@ -1134,13 +1248,13 @@ const stackHitsStep99Line = (stack, lineNumber, functionName) => lineNumber > 0 
       writeFileSync(active, text, 'utf8')
       const before = { active: archiveBytesOf(active), archive: archiveBytesOf(archive), cursor: archiveBytesOf(cursor) }
       let failure
-      try { usageStats.archiveLedger(active) } catch (error) { failure = error }
+      try { usageStats.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT }) } catch (error) { failure = error }
       checkTrue('M6 ' + label + '发布前零改写/无lock-temp-backup', failure !== undefined && failure.code === code && archiveBytesOf(active) === before.active && archiveBytesOf(archive) === before.archive && archiveBytesOf(cursor) === before.cursor && !existsSync(usageLedgerModule.usageLedgerLockPath(active)) && archiveResiduals(dir).length === 0)
     }
 
     // M6-B1：多行 parseLedgerText 中途预算超时；可控 clock 第10次才超时，证明不是调用前立即失败。
     {
-      const budgetDir = mkdtempSync(join(tmpdir(), 'dsh-g3-budget-parse-'))
+      const budgetDir = makeWTemp('dsh-g3-budget-parse')
       try {
         const budgetActive = join(budgetDir, 'ledger-v2.jsonl')
         const budgetArchive = usageStats.archivePathOf(budgetActive)
@@ -1155,7 +1269,7 @@ const stackHitsStep99Line = (stack, lineNumber, functionName) => lineNumber > 0 
         const parseIo = { write: 0, move: 0, remove: 0 }
         let parseFailure
         try {
-          usageStats.archiveLedger(budgetActive, {
+          usageStats.archiveLedger(budgetActive, { pathContext: STEP00_PATH_CONTEXT,
             budgetMs: 1,
             clock: () => { parseClockCalls += 1; return parseClockCalls >= 10 ? 1 : 0 },
             fsOps: {
@@ -1170,7 +1284,7 @@ const stackHitsStep99Line = (stack, lineNumber, functionName) => lineNumber > 0 
     }
     // M6-B2：多组 archiveTextOf 序列化中途预算超时；第49次 clock 才超时且发布尚未开始。
     {
-      const budgetDir = mkdtempSync(join(tmpdir(), 'dsh-g3-budget-archive-text-'))
+      const budgetDir = makeWTemp('dsh-g3-budget-archive-text')
       try {
         const budgetActive = join(budgetDir, 'ledger-v2.jsonl')
         const budgetArchive = usageStats.archivePathOf(budgetActive)
@@ -1185,7 +1299,7 @@ const stackHitsStep99Line = (stack, lineNumber, functionName) => lineNumber > 0 
         const serializeIo = { write: 0, move: 0, remove: 0 }
         let serializeFailure
         try {
-          usageStats.archiveLedger(budgetActive, {
+          usageStats.archiveLedger(budgetActive, { pathContext: STEP00_PATH_CONTEXT,
             budgetMs: 1,
             clock: () => { serializeClockCalls += 1; return serializeClockCalls >= 49 ? 1 : 0 },
             fsOps: {
@@ -1201,7 +1315,7 @@ const stackHitsStep99Line = (stack, lineNumber, functionName) => lineNumber > 0 
 
     // M6-B3：目标预算check必须命中 assertUniqueArchiveRows 的真实调用栈与动态源码行。
     {
-      const budgetDir = mkdtempSync(join(tmpdir(), 'dsh-g2-budget-unique-'))
+      const budgetDir = makeWTemp('dsh-g2-budget-unique')
       try {
         const budgetActive = join(budgetDir, 'ledger-v2.jsonl')
         const budgetArchive = usageStats.archivePathOf(budgetActive)
@@ -1220,14 +1334,14 @@ const stackHitsStep99Line = (stack, lineNumber, functionName) => lineNumber > 0 
         }
         let failure
         try {
-          usageStats.archiveLedger(budgetActive, { budgetMs: 1, clock, fsOps: { writeFileSync: (...args) => { io.write += 1; return writeFileSync(...args) }, renameSync: (...args) => { io.move += 1; return renameSync(...args) }, unlinkSync: (...args) => { io.remove += 1; return unlinkSync(...args) } } })
+          usageStats.archiveLedger(budgetActive, { pathContext: STEP00_PATH_CONTEXT, budgetMs: 1, clock, fsOps: { writeFileSync: (...args) => { io.write += 1; return writeFileSync(...args) }, renameSync: (...args) => { io.move += 1; return renameSync(...args) }, unlinkSync: (...args) => { io.remove += 1; return unlinkSync(...args) } } })
         } catch (error) { failure = error }
         checkTrue('M6-B3 唯一性目标check真实命中：stack/动态源码行证明budget-timeout且无发布IO/三文件不变/锁释放', failure !== undefined && failure.code === 'budget-timeout' && targetSeen && io.write === 0 && io.move === 0 && io.remove === 0 && archiveBytesOf(budgetActive) === before.active && archiveBytesOf(budgetArchive) === before.archive && archiveBytesOf(budgetCursor) === before.cursor && !existsSync(usageLedgerModule.usageLedgerLockPath(budgetActive)) && archiveResiduals(budgetDir).length === 0)
       } finally { rmSync(budgetDir, { recursive: true, force: true }) }
     }
     // M6-B4：archiveEntries目标预算check必须命中真实调用栈与动态源码行，禁止后续groups循环假通过。
     {
-      const budgetDir = mkdtempSync(join(tmpdir(), 'dsh-g2-budget-archive-entries-'))
+      const budgetDir = makeWTemp('dsh-g2-budget-archive-entries')
       try {
         const budgetActive = join(budgetDir, 'ledger-v2.jsonl')
         const budgetArchive = usageStats.archivePathOf(budgetActive)
@@ -1246,7 +1360,7 @@ const stackHitsStep99Line = (stack, lineNumber, functionName) => lineNumber > 0 
         }
         let failure
         try {
-          usageStats.archiveLedger(budgetActive, { budgetMs: 1, clock, fsOps: { writeFileSync: (...args) => { io.write += 1; return writeFileSync(...args) }, renameSync: (...args) => { io.move += 1; return renameSync(...args) }, unlinkSync: (...args) => { io.remove += 1; return unlinkSync(...args) } } })
+          usageStats.archiveLedger(budgetActive, { pathContext: STEP00_PATH_CONTEXT, budgetMs: 1, clock, fsOps: { writeFileSync: (...args) => { io.write += 1; return writeFileSync(...args) }, renameSync: (...args) => { io.move += 1; return renameSync(...args) }, unlinkSync: (...args) => { io.remove += 1; return unlinkSync(...args) } } })
         } catch (error) { failure = error }
         checkTrue('M6-B4 archiveEntries目标check真实命中：stack/动态源码行证明budget-timeout且无发布IO/三文件不变/锁释放', failure !== undefined && failure.code === 'budget-timeout' && targetSeen && io.write === 0 && io.move === 0 && io.remove === 0 && archiveBytesOf(budgetActive) === before.active && archiveBytesOf(budgetArchive) === before.archive && archiveBytesOf(budgetCursor) === before.cursor && !existsSync(usageLedgerModule.usageLedgerLockPath(budgetActive)) && archiveResiduals(budgetDir).length === 0)
       } finally { rmSync(budgetDir, { recursive: true, force: true }) }
@@ -1256,7 +1370,7 @@ const stackHitsStep99Line = (stack, lineNumber, functionName) => lineNumber > 0 
     archiveWriteRows(active, [archiveRow({ seq: 10, ts: '2026-10-22T00:00:10.000Z' })])
     const budgetBefore = { active: archiveBytesOf(active), archive: archiveBytesOf(archive), cursor: archiveBytesOf(cursor) }
     let budgetFailure
-    try { usageStats.archiveLedger(active, { budgetMs: 0, clock: () => 0 }) } catch (error) { budgetFailure = error }
+    try { usageStats.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT, budgetMs: 0, clock: () => 0 }) } catch (error) { budgetFailure = error }
     checkTrue('M6 archive预算超时循环在发布前拒绝且三文件字节不变', budgetFailure !== undefined && budgetFailure.code === 'budget-timeout' && archiveBytesOf(active) === budgetBefore.active && archiveBytesOf(archive) === budgetBefore.archive && archiveBytesOf(cursor) === budgetBefore.cursor && !existsSync(usageLedgerModule.usageLedgerLockPath(active)) && archiveResiduals(dir).length === 0)
 
     const publishFaultCases = [
@@ -1270,7 +1384,7 @@ const stackHitsStep99Line = (stack, lineNumber, functionName) => lineNumber > 0 
       ['archive-backup-remove', 'remove-archive-backup'],
     ]
     for (const [label, point] of publishFaultCases) {
-      const faultDir = mkdtempSync(join(tmpdir(), 'dsh-g3-publish-' + point + '-'))
+      const faultDir = makeWTemp('dsh-g3-publish-' + point)
       try {
         const faultActive = join(faultDir, 'ledger-v2.jsonl')
         const faultArchive = usageStats.archivePathOf(faultActive)
@@ -1289,7 +1403,7 @@ const stackHitsStep99Line = (stack, lineNumber, functionName) => lineNumber > 0 
         }
         let failure
         try {
-          usageStats.archiveLedger(faultActive, {
+          usageStats.archiveLedger(faultActive, { pathContext: STEP00_PATH_CONTEXT,
             fsOps: {
               writeFileSync: (target, ...args) => {
                 io.write += 1
@@ -1320,7 +1434,7 @@ const stackHitsStep99Line = (stack, lineNumber, functionName) => lineNumber > 0 
     const stalePath = usageLedgerModule.usageLedgerLockPath(active)
     const staleBytes = JSON.stringify({ pid: 2147483647, token: 'm6-stale-token', createdAt: Date.now() })
     writeFileSync(stalePath, staleBytes, 'utf8')
-    const staleResult = usageLedgerModule.acquireUsageLedgerLock(active, 0)
+    const staleResult = usageLedgerModule.acquireUsageLedgerLock(active, { waitMs: 0, pathContext: STEP00_PATH_CONTEXT, purpose: 'usage-ledger' })
     checkTrue('M6 stale-lock返回stale-lock且canonical字节不变/不自动接管', staleResult.reason === 'stale-lock' && archiveBytesOf(stalePath) === staleBytes && archiveResiduals(dir).every((name) => !name.includes('.stale-')))
     rmSync(stalePath, { force: true })
   } finally {
@@ -1328,12 +1442,20 @@ const stackHitsStep99Line = (stack, lineNumber, functionName) => lineNumber > 0 
   }
 }
 // ── RENDER 系列:save_plan 渲染契约（v0.1.3 回归：必须返回 ContentBlock[]）──
-const rendered = renderSavePlan({ paths: ['a.md', 'b.md'] })
+const rendered = renderSavePlan({
+  paths: ['a.md', 'b.md'],
+  plan: 'PLAN_FIELD_SENTINEL',
+  checklist: 'CHECKLIST_FIELD_SENTINEL',
+})
 check('RENDER1 render 返回数组', Array.isArray(rendered), true)
 check('RENDER2 单文本块且类型正确', rendered.length === 1 && rendered[0].type === 'text' && typeof rendered[0].text === 'string', true)
-check('RENDER3 文本含两个路径', rendered[0].text.includes('a.md') && rendered[0].text.includes('b.md'), true)
+check('RENDER3 文本精确为双路径且不回流正文sentinel/结构/摘要', rendered.length === 1 && rendered[0].text === 'a.md\nb.md' && !rendered[0].text.includes('PLAN_FIELD_SENTINEL') && !rendered[0].text.includes('CHECKLIST_FIELD_SENTINEL') && !rendered[0].text.includes('派遣摘要（') && !rendered[0].text.includes('[任务'), true)
 
 // ── PR 系列:validateProbe 机械校验（save_probe，v3） ──────────────────────
+const prFixtureRoot = makeWTemp('dsh-pr-probe')
+const prExistingPath = join(prFixtureRoot, 'readme.md')
+writeFileSync(prExistingPath, 'fixture readme\n', 'utf8')
+const PR_PATH_CONTEXT = createPathContext({ workspaceRoot: prFixtureRoot })
 const EXISTING = 'readme.md'
 const validProbe = () => ({
   fileMap: [{ path: EXISTING, relation: '主文档' }],
@@ -1377,7 +1499,7 @@ const PR = [
   ['PR14 四字段总量 20000 → 过', probeWithTotal(PROBE_LIMITS.maxTotalChars), 'pass'],
   ['PR15 path 不存在 → 拒并指明路径', { ...validProbe(), fileMap: [{ path: '不存在-文件-xyz.md', relation: 'r' }] }, 'reject-with', '不存在'],
   ['PR16 path 存在（相对）→ 过', validProbe(), 'pass'],
-  ['PR17 path 存在（绝对）→ 过', { ...validProbe(), fileMap: [{ path: HERE + EXISTING, relation: 'r' }] }, 'pass'],
+  ['PR17 path 存在（绝对）→ 过', { ...validProbe(), fileMap: [{ path: prExistingPath, relation: 'r' }] }, 'pass'],
   ['PR18 range L12-x → 拒并指明', { ...validProbe(), focusAreas: [{ path: EXISTING, range: 'L12-x', note: 'n' }] }, 'reject-with', 'range'],
   ['PR19 range 12 → 过', { ...validProbe(), focusAreas: [{ path: EXISTING, range: '12', note: 'n' }] }, 'pass'],
   ['PR20 range L158-162 → 过', { ...validProbe(), focusAreas: [{ path: EXISTING, range: 'L158-162', note: 'n' }] }, 'pass'],
@@ -1391,18 +1513,22 @@ const PR = [
   ['PR28 evidence 合法（path 存在 + line/value/text 之一）→ 过', { ...validProbe(), evidence: [{ path: EXISTING, line: 'L12', value: 'v', text: 't', note: 'n' }] }, 'pass'],
   ['PR29 evidence 总量超 maxEvidenceTotalChars → 拒', { ...validProbe(), evidence: Array.from({ length: Math.ceil(PROBE_LIMITS.maxEvidenceTotalChars / PROBE_LIMITS.maxEvidenceTextLen) + 1 }, () => ({ path: EXISTING, text: 't'.repeat(PROBE_LIMITS.maxEvidenceTextLen) })) }, 'reject'],
   ['PR30 evidence 未传 → 过（旧调用不变）', validProbe(), 'pass'],
-  ['PR31 多违规一次性全报（聚合）', { ...validProbe(), fileMap: [{ path: '不存在-聚合-xyz.md', relation: 'r' }], background: [{ topic: 't', detail: 'x'.repeat(PROBE_LIMITS.maxDetailLen + 1) }] }, 'reject-all', ['不存在', 'background[0].detail', '处违规']],
+  ['PR31 结构非法优先零IO（聚合）', { ...validProbe(), background: [{ topic: 't', detail: 'x'.repeat(PROBE_LIMITS.maxDetailLen + 1) }] }, 'reject-all', ['background[0].detail', '处违规']],
   ['PR32 evidence.line 区间报错含修正法', { ...validProbe(), evidence: [{ path: EXISTING, line: 'L158-162', value: 'v' }] }, 'reject-all', ['禁止区间', 'evidence.text', '单个行号']],
   ['PR33 focusAreas.range 非法报错含区间说明', { ...validProbe(), focusAreas: [{ path: EXISTING, range: 'L12-x', note: 'n' }] }, 'reject-all', ['range', '仅 focusAreas.range 允许从 1 开始的区间']],
   ['PR34 evidence[0].text 1000 字 → 过', { ...validProbe(), evidence: [{ path: EXISTING, text: 't'.repeat(PROBE_LIMITS.maxEvidenceTextLen) }] }, 'pass'],
   ['PR35 evidence[0].text 1001 字 → 拒', { ...validProbe(), evidence: [{ path: EXISTING, text: 't'.repeat(PROBE_LIMITS.maxEvidenceTextLen + 1) }] }, 'reject'],
 ]
 for (const [name, args, mode, substr] of PR) {
-  const got = validateProbe(args, HERE)
+  const got = validateProbe(args, prFixtureRoot, PR_PATH_CONTEXT)
   const okResult = mode === 'pass' ? got === null : mode === 'reject' ? typeof got === 'string' && got.length > 0 : mode === 'reject-all' ? typeof got === 'string' && Array.isArray(substr) && substr.every((s) => got.includes(s)) : typeof got === 'string' && got.includes(substr)
   if (okResult) { pass += 1 } else { fail += 1 }
   output.assertion(okResult, name, mode, got)
 }
+const pr31ZeroIoRoot = join(prFixtureRoot, 'not-created')
+const pr31ZeroIo = validateProbe({ ...validProbe(), background: [{ topic: 't', detail: 'x'.repeat(PROBE_LIMITS.maxDetailLen + 1) }] }, pr31ZeroIoRoot, createPathContext({ workspaceRoot: pr31ZeroIoRoot }))
+checkTrue('PR31 结构非法优先零IO且不探测路径', typeof pr31ZeroIo === 'string' && pr31ZeroIo.includes('background[0].detail') && !pr31ZeroIo.includes('路径'))
+rmSync(prFixtureRoot, { recursive: true, force: true })
 
 // ── SCHEMA 系列：save_probe 注册后核验实际动态描述（不复制限制常量） ────────
 const schemaRegistration = { listeners: {}, registered: [] }
@@ -1788,8 +1914,15 @@ const g2SummaryResult = validateRealSavePlanContract(g2SummaryPair.plan, g2Summa
 check('G2-F summary含完整任务/组/R组/共享检查/收尾全局', g2SummaryResult.ok && g2SummaryResult.summary.taskCount === 2 && g2SummaryResult.summary.taskFileCount === 3 && g2SummaryResult.summary.closureFileCount === 1 && g2SummaryResult.summary.fileCount === 4 && g2SummaryResult.summary.totalFileCount === 4 && g2SummaryResult.summary.groupCount === 2 && g2SummaryResult.summary.reviewGroupCount === 2 && g2SummaryResult.summary.checkCount === 2 && g2SummaryResult.summary.hasClosure && g2SummaryResult.summary.hasGlobalAcceptance && g2SummaryResult.summary.groups[1].initialState === 'waiting' && g2SummaryResult.summary.checks[1].coverage.closure && g2SummaryResult.summary.reviewGroups.length === 2, true)
 const g2SummaryText = g2SummaryResult.ok ? formatRealSavePlanSummary(g2SummaryResult.summary) : ''
 check('G2-F summary保留完整文件与职责说明且不暴露路径依赖', g2SummaryText.includes('g2-synthetic/closure-summary.md') && g2SummaryText.includes('执行组G1') && g2SummaryText.includes('验收组R2') && g2SummaryText.includes('工具只校验并在单次调用内写入/发布'), true)
-const g2RenderedSummary = g2SummaryResult.ok ? renderRealSavePlan({ paths: ['g2-synthetic/方案.md', 'g2-synthetic/验收.md'] }, g2SummaryResult.summary) : []
-check('G2-F render单一text块且保留双路径和完整范围', Array.isArray(g2RenderedSummary) && g2RenderedSummary.length === 1 && g2RenderedSummary[0].type === 'text' && g2RenderedSummary[0].text.includes('g2-synthetic/方案.md') && g2RenderedSummary[0].text.includes('g2-synthetic/验收.md') && g2RenderedSummary[0].text.includes('任务文件数：3') && g2RenderedSummary[0].text.includes('收尾文件数：1') && g2RenderedSummary[0].text.includes('验收组R2'), true)
+const g2RenderedSummary = g2SummaryResult.ok
+  ? renderRealSavePlan({
+      paths: ['g2-synthetic/方案.md', 'g2-synthetic/验收.md'],
+      plan: g2SummaryPair.plan + '\nPLAN_FIELD_SENTINEL',
+      checklist: g2SummaryPair.checklist + '\nCHECKLIST_FIELD_SENTINEL',
+    })
+  : []
+const g2RenderedSummaryText = Array.isArray(g2RenderedSummary) && g2RenderedSummary.length === 1 && g2RenderedSummary[0].type === 'text' ? g2RenderedSummary[0].text : ''
+check('G2-F render精确双路径且不回流正文sentinel/结构/摘要', g2RenderedSummaryText === 'g2-synthetic/方案.md\ng2-synthetic/验收.md' && !g2RenderedSummaryText.includes('PLAN_FIELD_SENTINEL') && !g2RenderedSummaryText.includes('CHECKLIST_FIELD_SENTINEL') && !g2RenderedSummaryText.includes('派遣摘要（') && !g2RenderedSummaryText.includes('[任务'), true)
 check('G2-F 计数使用生产限制且不把groupCount当executorCount', REAL_SAVE_PLAN_LIMITS.maxTasks === 20 && REAL_SAVE_PLAN_LIMITS.maxSummaryChars === 12000 && g2SummaryResult.summary.executorCount === undefined, true)
 const g2SummaryBaseTasks = g2Tasks(20).map((task, index) => index === 0 ? Object.assign({}, task, { title: 'A' }) : task)
 const g2SummaryBasePair = g2Pair({ mode: 'batch', tasks: g2SummaryBaseTasks })
@@ -1835,10 +1968,8 @@ function g2ContradictionStatus(reports) {
 check('G2-G 同ID矛盾结论分类为FAIL', g2ContradictionStatus([{ id: 1, status: 'PASS' }, { id: 1, status: 'FAIL' }]), 'FAIL')
 check('G2-G 源变更回报分类为需复验', g2HandoffStatus([1, 2], [1, 2], { tasks: [1, 2], checks: [1, 2] }, true), '需复验')
 
-const preserveG2Fixture = typeof process.env.PLAN_EVIDENCE_DIR === 'string' && process.env.PLAN_EVIDENCE_DIR !== ''
-const g2FactoryEvidenceRoot = preserveG2Fixture
-  ? join(process.env.PLAN_EVIDENCE_DIR, 'G3', 'resume1', 'fixture-step00')
-  : mkdtempSync(join(tmpdir(), 'dsh-g3-step00-fixture-'))
+const g2FactoryFixture = makeFixtureDir({ label: 'step00-factory' })
+const g2FactoryEvidenceRoot = g2FactoryFixture.root
 try {
   const g2FactoryCwd = join(g2FactoryEvidenceRoot, 'work')
   mkdirSync(join(g2FactoryCwd, 'g2-fixture'), { recursive: true })
@@ -1852,10 +1983,11 @@ try {
   const g2Factories = createSaveToolFactories({
     savePlanDir: '.extra-plan',
     atomicCommit: (...args) => { g2FactoryIo.atomic += 1; g2FactoryIo.committed = args },
+    getPathContext: () => createPathContext({ workspaceRoot: g2FactoryCwd }),
   })
   const g2SavePlanDefinition = g2Factories.defineSavePlan()
   let g2ShortFactoryError = null
-  try { await g2SavePlanDefinition.execute(g2MinimalPair) } catch (error) { g2ShortFactoryError = error instanceof Error ? error.message : String(error) }
+  try { await g2SavePlanDefinition.execute(g2MinimalPair, { agent: { session: { header: { cwd: g2FactoryCwd, id: 'g2-factory' } } } }) } catch (error) { g2ShortFactoryError = error instanceof Error ? error.message : String(error) }
   check('G2-H factory短single按双方至少200字符拒绝', g2ShortFactoryError !== null && g2ShortFactoryError.includes('内容过短') && g2FactoryIo.atomic === 0, true)
   const g2InvalidLongPair = {
     plan: g2Pad(g2SinglePair.plan),
@@ -1864,8 +1996,8 @@ try {
   let g2InvalidFactoryError = null
   try { await g2SavePlanDefinition.execute(g2InvalidLongPair) } catch (error) { g2InvalidFactoryError = error instanceof Error ? error.message : String(error) }
   check('G2-H 非法结构在atomic前拒绝', g2InvalidFactoryError !== null && g2InvalidFactoryError.startsWith('save_plan: 文件级任务合同校验不通过') && g2FactoryIo.atomic === 0, true)
-  const g2FactoryValidPlan = g2Pad(g2MinimalPair.plan + '\n普通方案补充：保持正文逐字保存')
-  const g2FactoryValidChecklist = g2Pad(g2MinimalPair.checklist + '\n普通验收补充：保持正文逐字保存')
+  const g2FactoryValidPlan = g2Pad(g2MinimalPair.plan + '\n普通方案补充：保持正文逐字保存\nPLAN_FIELD_SENTINEL')
+  const g2FactoryValidChecklist = g2Pad(g2MinimalPair.checklist + '\n普通验收补充：保持正文逐字保存\nCHECKLIST_FIELD_SENTINEL')
   let g2FactoryResult = null
   let g2FactoryError = null
   try {
@@ -1874,11 +2006,13 @@ try {
   check('G2-H factory合法正文双方至少200字符并返回两paths', g2FactoryError === null && g2FactoryValidPlan.length >= 200 && g2FactoryValidChecklist.length >= 200 && g2FactoryResult !== null && Array.isArray(g2FactoryResult.paths) && g2FactoryResult.paths.length === 2 && g2FactoryIo.atomic === 1, true)
   check('G2-H factory双正文逐字保留', g2FactoryIo.committed !== null && Array.isArray(g2FactoryIo.committed[2]) && g2FactoryIo.committed[2][0].content === g2FactoryValidPlan && g2FactoryIo.committed[2][1].content === g2FactoryValidChecklist, true)
   const g2FactoryRendered = g2FactoryResult === null ? [] : g2SavePlanDefinition.output.render({ plan: g2FactoryValidPlan, checklist: g2FactoryValidChecklist }, g2FactoryResult)
-  check('G2-H factory structured output只含paths且render仍为单text', JSON.stringify(Object.keys(g2SavePlanDefinition.output.schema.properties || {})) === JSON.stringify(['paths']) && JSON.stringify(g2SavePlanDefinition.output.schema.required) === JSON.stringify(['paths']) && g2SavePlanDefinition.output.schema.additionalProperties === false && Array.isArray(g2FactoryRendered) && g2FactoryRendered.length === 1 && g2FactoryRendered[0].type === 'text', true)
+  const g2FactoryRenderText = Array.isArray(g2FactoryRendered) && g2FactoryRendered.length === 1 && g2FactoryRendered[0].type === 'text' ? g2FactoryRendered[0].text : ''
+  const g2FactoryExpectedText = g2FactoryResult !== null && Array.isArray(g2FactoryResult.paths) ? g2FactoryResult.paths.map((path) => String(path)).join('\n') : ''
+  check('G2-H factory structured output只含paths且render精确双路径', JSON.stringify(Object.keys(g2SavePlanDefinition.output.schema.properties || {})) === JSON.stringify(['paths']) && JSON.stringify(g2SavePlanDefinition.output.schema.required) === JSON.stringify(['paths']) && g2SavePlanDefinition.output.schema.additionalProperties === false && g2FactoryResult !== null && Array.isArray(g2FactoryRendered) && g2FactoryRendered.length === 1 && g2FactoryRendered[0].type === 'text' && g2FactoryRenderText === g2FactoryExpectedText, true)
   const g2TokenMeasurement = 'NOT-RUN'
-  check('G2-H schema与renderer字符可测且token口径保持NOT-RUN', typeof schemaPlanDescription === 'string' && schemaPlanDescription.length > 0 && JSON.stringify(schemaPlanParameters).length > 0 && g2FactoryRendered.length === 1 && g2FactoryRendered[0].text.includes('派遣摘要（') && g2TokenMeasurement === 'NOT-RUN' && !g2FactoryRendered[0].text.includes('token'), true)
+  check('G2-H schema与renderer字符可测且token口径保持NOT-RUN', typeof schemaPlanDescription === 'string' && schemaPlanDescription.length > 0 && JSON.stringify(schemaPlanParameters).length > 0 && g2FactoryRendered.length === 1 && g2FactoryRenderText === g2FactoryExpectedText && !g2FactoryRenderText.includes('PLAN_FIELD_SENTINEL') && !g2FactoryRenderText.includes('CHECKLIST_FIELD_SENTINEL') && !g2FactoryRenderText.includes('派遣摘要（') && !g2FactoryRenderText.includes('[任务') && g2TokenMeasurement === 'NOT-RUN' && !g2FactoryRenderText.includes('token'), true)
 } finally {
-  if (!preserveG2Fixture) rmSync(g2FactoryEvidenceRoot, { recursive: true, force: true })
+  rmSync(g2FactoryEvidenceRoot, { recursive: true, force: true })
 }
 
 // ── RENDER4+ 系列:renderSaveProbe / renderProbeMarkdown 契约（v3） ────────
@@ -3170,18 +3304,14 @@ check('GWY7 persona 正文不含任何闸门值字面量', factoryValuesPattern.
 check('GWY7b lib/gate-words.js 对 7 个出厂词 0 命中（JS 侧无第二份真源）', factoryValuesPattern.test(readFileSync(GATE_WORDS_LIB_FILE, 'utf8')), false)
 
 // GWY8-GWY9：宿主严格 renderPrompt 对 prefix-only 路径完成替换
-const hostSystemPromptEntry = (() => {
-  const candidates = []
-  if (process.platform === 'win32') {
-    const appData = typeof process.env.APPDATA === 'string' && process.env.APPDATA !== '' ? process.env.APPDATA.replaceAll(String.fromCharCode(92), '/') : String(process.env.USERPROFILE || '') + '/AppData/Roaming'
-    candidates.push(appData + '/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-system-prompt/lib/index.js')
-  } else {
-    candidates.push('/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-system-prompt/lib/index.js')
-  }
-  for (const candidate of candidates) if (existsSync(candidate)) return candidate
-  return null
-})()
-const hostRenderPrompt = hostSystemPromptEntry === null ? null : (await import(pathToFileURL(hostSystemPromptEntry).href)).renderPrompt
+let hostSystemPromptUrl = null
+try { hostSystemPromptUrl = import.meta.resolve('@deepseek-ai/dsh-system-prompt') } catch {}
+const explicitRoot = typeof process.env.DSH_INSTALL_ROOT === 'string' ? process.env.DSH_INSTALL_ROOT.trim() : ''
+const hostSystemPromptEntry = hostSystemPromptUrl !== null && hostSystemPromptUrl.startsWith('file:') ? fileURLToPath(hostSystemPromptUrl) : null
+const normalizedHostRoot = explicitRoot.replace(/[\\/]+$/, '').replaceAll('/', '\\').toLowerCase()
+const normalizedHostEntry = hostSystemPromptEntry === null ? '' : hostSystemPromptEntry.replaceAll('/', '\\').toLowerCase()
+const hostSystemPromptInRoot = explicitRoot !== '' && hostSystemPromptEntry !== null && existsSync(hostSystemPromptEntry) && (normalizedHostEntry === normalizedHostRoot || normalizedHostEntry.startsWith(normalizedHostRoot + '\\'))
+const hostRenderPrompt = hostSystemPromptInRoot ? (await import(hostSystemPromptUrl)).renderPrompt : null
 const renderedPrefix = typeof hostRenderPrompt === 'function' ? hostRenderPrompt({ sections: [{ name: 'deployment:persona', text: personaText }], contexts: [], variables: gateRuntime.variables }) : ''
 checkTrue('GWY8 宿主严格 renderPrompt 对 prefix 完成全部变量替换且含 7 个当前值', typeof hostRenderPrompt === 'function' && !renderedPrefix.includes('{{') && GATE_FIELD_NAMES.every((field) => renderedPrefix.includes(assetGateWords[field])))
 checkTrue('GWY9 宿主严格 renderPrompt 走 prefix-only 路径（不依赖旧 text 键）：渲染结果非空、无残余 {{...}} 且含 7 个当前词值', typeof hostRenderPrompt === 'function' && renderedPrefix !== '' && !renderedPrefix.includes('{{') && GATE_FIELD_NAMES.every((field) => renderedPrefix.includes(assetGateWords[field])))

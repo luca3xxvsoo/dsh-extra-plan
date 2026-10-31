@@ -27,6 +27,7 @@ PTC C=0/C=1 必须各用干净 A=1 顶层会话取 F→首个 tool/call→L→�
 - 主会话探查：主会话自己只读查证。
 - 探查者探查：主会话用 `subagent_probe` 委派探查者；探查者只读、可 `save_probe` 落盘证据，回主会话只给“路径 + 2-3 行摘要”。
 - 探查者只由主会话委派；规划子代理、执行者、验收者不得递归委派探查者。规划子代理有缺口时输出“申请继续探查：<待查项> — <原因>”，交回主会话。
+- **根与冻结来源随交接携带**：每次探查、规划、执行和验收交接都记录 W、H（如有）、用途、根来源、文件身份与冻结 SHA；W 取 `session.header.cwd`，H 只接受可信 Host context/精确文件能力或显式验证根。缺根、非法/冲突根、Other 或无法证明的链接立即 BLOCKED/NOT-RUN，不默认扫用户目录、不用普通文件 `dirname` 升级授权；只读探查也只能落在声明的合法范围。`persona`、角色职责、机械选项、四版本声明和原有顺序不因双根隔离改变，隔离 fixture/静态证据不冒充实机。
 
 ## ⑥ 复杂度与推荐路由
 
@@ -87,9 +88,9 @@ PTC C=0/C=1 必须各用干净 A=1 顶层会话取 F→首个 tool/call→L→�
 
 ## ⑭ 地图维护与收口
 
-所有扫描根内代码修改（`--roots` 默认 `plugins,pe-test/_shared` 的 .js/.mjs）完成后、最终冻结前，主会话运行 `node pe-test/tools/代码地图生成.mjs`，检查 stdout 的新增/删除/行号提示；只补人工意图/描述，不手改机器路径、函数、行号和同名顺序；再运行 `--check`。地图生成与人工描述复核必须在最终冻结前完成；正式验收阶段只运行地图 `--check`，避免生成时间戳使冻结指纹漂移。纯文档或扫描根外文件改动不运行生成，验收仅 `--check`。修改来自执行者时也必须由主会话完成这一步。
+所有扫描根内代码修改（`--roots` 默认 `plugins,pe-test/_shared` 的 .js/.mjs）完成后、最终冻结前，主会话从 W 运行 `node pe-test/tools/代码地图生成.mjs`，检查 stdout 的新增/删除/行号提示；只补人工意图/描述，不手改机器路径、函数、行号和同名顺序；再运行同前缀的 `--check`。地图生成与人工描述复核必须在最终冻结前完成；正式验收阶段只运行地图 `--check`，避免生成时间戳使冻结指纹漂移。纯文档或扫描根外文件改动不运行生成，验收仅 `--check`。修改来自执行者时也必须由主会话完成这一步。
 
-固定仓库回归顺序：实际修改的 JS/MJS 逐文件 `node --check`，package JSON `JSON.parse`，生成 hookSource 展开后 ESM 解析回放 → step-01 设置页配置 → 安装同步 → QQBot 安装映射 → 预设完整性 → step-00 全流程/跨平台 → step-04 路由与 context-gate → step-06-08 → step-06 → `generate-runtime-defaults.mjs --check` →（冻结前）代码地图生成 → 人工描述复核 → 地图 `--check` → 一键 step。Markdown 不伪造 `node --check` 结果，SKIP/INCOMPLETE/HUMAN/NOT-RUN 不计 PASS。
+固定仓库回归顺序：源码自检 → 当前文档/地图生成冻结 → 正式最终回归的 13 脚本矩阵与两项 check → 一键 runner 的 AUTO 14 项；纯 W 工具直接 `node`，需要 Host 代码的测试才显式采用 `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs`，代码根不授权数据 H。Markdown 不伪造 `node --check` 结果，SKIP/INCOMPLETE/HUMAN/NOT-RUN 不计 PASS；正式矩阵、两项 check 与 runner 的实际状态以当次冻结后的独立验收工件为准；未执行、部分执行和 HUMAN 必须分层保留，不得由局部自检替代整体验收。
 
 ## P2-2 执行口径
 

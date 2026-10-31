@@ -3,9 +3,7 @@
 import { createRequire } from 'node:module'
 import { createHash, randomUUID } from 'node:crypto'
 import {
-  accessSync,
   closeSync,
-  constants,
   copyFileSync,
   existsSync,
   fsyncSync,
@@ -17,8 +15,9 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs'
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
+import { createPathContext, resolveHostPath, prepareWriteTarget, validateReadTarget } from './path-policy.js'
 import { SETTING_DEFINITIONS, SETTINGS_ROW_NAME } from './preset-settings.js'
 import { GATE_WORD_FIELDS, validateGateWords } from './gate-words.js'
 
@@ -30,6 +29,64 @@ const MANAGED_KEY_SET = new Set(MANAGED_KEYS)
 const GATE_KEYS = Object.freeze(GATE_WORD_FIELDS.map((item) => item.field))
 const PATCH_KEYS = Object.freeze([...MANAGED_KEYS, 'gateWords'])
 const localRequire = createRequire(import.meta.url)
+const MAX_PROFILE_CANDIDATES = 128
+
+function profileIdentityOf(value) {
+  const profile = value !== null && typeof value === 'object' && value.profileContext !== undefined ? value.profileContext : value
+  let name = null
+  let startedBundles = null
+  try {
+    name = profile !== undefined && profile !== null && typeof profile.name === 'string' ? profile.name.trim().toLowerCase() : null
+    startedBundles = profile !== undefined && profile !== null && Array.isArray(profile.startedBundles) && profile.startedBundles.every((item) => typeof item === 'string')
+      ? [...profile.startedBundles]
+      : null
+  } catch {
+    return { state: 'unknown', kind: 'unknown', name: null, startedBundles: null, reason: 'profile-identity-unreadable' }
+  }
+  if (name === null || startedBundles === null) return { state: 'unknown', kind: 'unknown', name, startedBundles, reason: 'profile-identity-missing' }
+  const qqbot = startedBundles.includes(QQBOT_BUNDLE)
+  if (name === 'web' && !qqbot) return { state: 'valid', kind: 'web', name, startedBundles, reason: null }
+  if (name === 'qqbot' && qqbot) return { state: 'valid', kind: 'qqbot', name, startedBundles, reason: null }
+  if (name !== 'web' && name !== 'qqbot') return { state: 'unknown', kind: 'unknown', name, startedBundles, reason: 'profile-name-unknown' }
+  return { state: 'conflict', kind: 'unknown', name, startedBundles, reason: 'profile-identity-conflict' }
+}
+
+function profileGate(value) {
+  const facts = profileIdentityOf(value)
+  if (facts.state === 'valid' && facts.kind === 'web') return { kind: 'web', facts }
+  if (facts.state === 'valid' && facts.kind === 'qqbot') return { kind: 'qqbot', facts, status: 'not-applicable', reason: 'qqbot-profile-not-applicable' }
+  return { kind: 'unknown', facts, status: 'unavailable', reason: facts.reason || 'profile-identity-unavailable' }
+}
+
+function absoluteRoot(value) {
+  if (typeof value !== 'string' || value.trim() === '') return null
+  try {
+    return createPathContext({ hostDataRoot: value }).hostDataRoot
+  } catch {
+    return null
+  }
+}
+
+function hostTarget(context, path, purpose, capability) {
+  if (context === null || context === undefined) throw new Error('Host路径缺少授权上下文')
+  let firstError
+  try { return resolveHostPath(context, path, { purpose }) } catch (error) { firstError = error }
+  if (capability !== undefined) {
+    try { return resolveHostPath(context, path, { capability, purpose }) } catch (error) { firstError = firstError || error }
+  }
+  throw firstError || new Error('Host路径不在授权根内')
+}
+
+function authorizedReadPath(context, path, purpose, expectedType = 'file', capability) {
+  if (context === null || context === undefined) return null
+  return validateReadTarget(context, hostTarget(context, path, purpose, capability), { expectedType, purpose })
+}
+
+function authorizedWritePath(context, path, purpose, expectedType = 'file', capability) {
+  if (context === null || context === undefined) return null
+  return prepareWriteTarget(context, hostTarget(context, path, purpose, capability), { expectedType, purpose })
+}
+
 let yamlModule
 let yamlSchema
 let yamlLoadError
@@ -68,11 +125,10 @@ function parseYaml(text) {
   return yaml.load(text, { schema: yamlSchema })
 }
 
-function readableDirectory(path) {
+function readableDirectory(path, pathContext) {
+  if (pathContext === undefined || pathContext === null) return false
   try {
-    if (!statSync(path).isDirectory()) return false
-    accessSync(path, constants.R_OK | constants.X_OK)
-    readdirSync(path)
+    authorizedReadPath(pathContext, path, 'qqbot-settings-sync', 'directory')
     return true
   } catch {
     return false
@@ -90,8 +146,8 @@ function documentPathValue(value) {
 function rootFromDocumentPath(value) {
   const trimmed = documentPathValue(value)
   if (trimmed === '') return { kind: 'missing' }
-  if (!isAbsolute(trimmed)) return { kind: 'invalid', reason: 'invalid-document-path' }
-  const normalized = resolve(trimmed)
+  const normalized = absoluteRoot(trimmed)
+  if (normalized === null) return { kind: 'invalid', reason: 'invalid-document-path' }
   if (basename(normalized).toLowerCase() !== 'cordis.patch.yml' ||
       basename(dirname(normalized)).toLowerCase() !== 'web' ||
       basename(dirname(dirname(normalized))).toLowerCase() !== 'profiles') {
@@ -106,49 +162,74 @@ function environmentValue(env, key) {
 
 /** Resolve the only two allowed sources of a profiles root. */
 export function resolveProfilesRoot(documentPath, env = process.env) {
+  let pathContext
+  let profileFacts
   if (documentPath !== null && typeof documentPath === 'object' && !Array.isArray(documentPath)) {
     const input = documentPath
     env = input.env === undefined ? env : input.env
+    pathContext = input.pathContext
+    profileFacts = input.profileFacts === undefined ? input.profileContext : input.profileFacts
     documentPath = input.documentPath
   }
+  const gate = profileGate(profileFacts)
+  if (gate.kind !== 'web') return unavailable(gate.reason, { pathSource: 'profile-context', profileKind: gate.facts.kind, profileIdentityState: gate.facts.state })
   const document = rootFromDocumentPath(documentPath)
   if (document.kind === 'invalid') return unavailable(document.reason, { pathSource: 'configEditor.documentPath' })
   if (document.kind === 'valid') {
-    if (!readableDirectory(document.root)) return unavailable('profiles-root-unavailable', { pathSource: 'configEditor.documentPath', profilesRoot: document.root })
-    return { status: 'available', profilesRoot: document.root, pathSource: 'configEditor.documentPath' }
+    if (pathContext === undefined || pathContext === null) return unavailable('path-context-required', { pathSource: 'configEditor.documentPath' })
+    if (!readableDirectory(document.root, pathContext)) return unavailable('profiles-root-unavailable', { pathSource: 'configEditor.documentPath', profilesRoot: document.root })
+    try {
+      authorizedReadPath(pathContext, document.path, 'config-editor', 'file', 'profilePatch')
+    } catch (error) {
+      return unavailable('document-path-unavailable', { pathSource: 'configEditor.documentPath', profilesRoot: document.root })
+    }
+    return { status: 'available', profilesRoot: document.root, pathSource: 'configEditor.documentPath', pathContext, profileFacts: gate.facts }
   }
-  const dshHome = environmentValue(env, 'DSH_HOME')
+  const dshHome = absoluteRoot(environmentValue(env, 'DSH_HOME'))
   const profile = environmentValue(env, 'DSH_PROFILE')
-  if (dshHome === '' || !isAbsolute(dshHome) || profile !== 'web') {
+  if (dshHome === null || profile !== 'web') {
     return unavailable('document-path-unavailable', { pathSource: 'explicit-DSH_HOME', fallbackReason: 'document-path-unavailable' })
   }
+  if (pathContext === undefined || pathContext === null) return unavailable('path-context-required', { pathSource: 'explicit-DSH_HOME', fallbackReason: 'document-path-unavailable' })
   const root = resolve(dshHome, 'profiles')
-  if (!readableDirectory(root)) return unavailable('profiles-root-unavailable', { pathSource: 'explicit-DSH_HOME', fallbackReason: 'document-path-unavailable', profilesRoot: root })
-  return { status: 'available', profilesRoot: root, pathSource: 'explicit-DSH_HOME', fallbackReason: 'document-path-unavailable' }
+  if (!readableDirectory(root, pathContext)) return unavailable('profiles-root-unavailable', { pathSource: 'explicit-DSH_HOME', fallbackReason: 'document-path-unavailable', profilesRoot: root })
+  return { status: 'available', profilesRoot: root, pathSource: 'explicit-DSH_HOME', fallbackReason: 'document-path-unavailable', pathContext, profileFacts: gate.facts }
 }
 
 function sortedNames(names) {
   return [...names].sort((left, right) => left < right ? -1 : left > right ? 1 : 0)
 }
 
-function scanOwnQqbotProfiles(profilesRoot) {
+function scanOwnQqbotProfiles(profilesRoot, pathContext, profileFacts) {
+  const gate = profileGate(profileFacts)
+  if (gate.kind !== 'web') return unavailable(gate.reason, { profiles: [], diagnostics: [{ reason: gate.reason }], profileKind: gate.facts.kind })
   const diagnostics = []
   let names
   try {
-    if (!statSync(profilesRoot).isDirectory()) return { status: 'unavailable', profiles: [], diagnostics: [{ reason: 'profiles-root-not-directory' }] }
+    if (!readableDirectory(profilesRoot, pathContext)) return { status: 'unavailable', profiles: [], diagnostics: [{ reason: 'profiles-root-not-directory' }] }
     names = sortedNames(readdirSync(profilesRoot))
   } catch (error) {
     return { status: 'unavailable', profiles: [], diagnostics: [{ reason: 'profiles-root-read-failed', detail: errorText(error) }] }
+  }
+  if (names.length > MAX_PROFILE_CANDIDATES) {
+    return unavailable('candidate-limit-exceeded', {
+      profiles: [],
+      candidateCount: names.length,
+      candidateLimit: MAX_PROFILE_CANDIDATES,
+      diagnostics: [{ reason: 'candidate-limit-exceeded', candidateCount: names.length, candidateLimit: MAX_PROFILE_CANDIDATES }],
+    })
   }
   const profiles = []
   for (const name of names) {
     const profileDir = join(profilesRoot, name)
     try {
+      if (pathContext !== undefined && pathContext !== null) authorizedReadPath(pathContext, profileDir, 'qqbot-settings-sync', 'directory', 'profileDir')
       if (!statSync(profileDir).isDirectory()) {
         diagnostics.push({ profile: name, reason: 'not-directory' })
         continue
       }
       const packageFile = join(profileDir, 'package.json')
+      if (pathContext !== undefined && pathContext !== null) authorizedReadPath(pathContext, packageFile, 'qqbot-settings-sync', 'file', 'profileDir')
       const packageText = readFileSync(packageFile, 'utf8')
       const pkg = JSON.parse(packageText)
       const bundles = pkg !== null && typeof pkg === 'object' && pkg.dsh !== null && typeof pkg.dsh === 'object' &&
@@ -160,6 +241,7 @@ function scanOwnQqbotProfiles(profilesRoot) {
         continue
       }
       const ownDir = join(profileDir, 'node_modules', OWN_PACKAGE)
+      if (pathContext !== undefined && pathContext !== null) authorizedReadPath(pathContext, ownDir, 'qqbot-settings-sync', 'directory', 'profileDir')
       if (!existsSync(ownDir)) {
         diagnostics.push({ profile: name, reason: 'plugin-anchor-missing' })
         continue
@@ -173,11 +255,16 @@ function scanOwnQqbotProfiles(profilesRoot) {
 }
 
 /** Return names for compatibility with the heal.js helper; diagnostics are attached, not hidden. */
-export function findOwnQqbotProfiles(profilesRoot) {
-  const result = scanOwnQqbotProfiles(profilesRoot)
+export function findOwnQqbotProfiles(profilesRoot, pathContext, profileFacts) {
+  const result = pathContext === undefined || pathContext === null
+    ? { status: 'unavailable', profiles: [], diagnostics: [{ reason: 'path-context-required' }] }
+    : scanOwnQqbotProfiles(profilesRoot, pathContext, profileFacts)
   Object.defineProperties(result.profiles, {
     diagnostics: { value: result.diagnostics, enumerable: false },
     status: { value: result.status, enumerable: false },
+    reason: { value: result.reason, enumerable: false },
+    candidateCount: { value: result.candidateCount, enumerable: false },
+    candidateLimit: { value: result.candidateLimit, enumerable: false },
   })
   return result.profiles
 }
@@ -240,7 +327,7 @@ function managedSnapshotHashFromConfig(config) {
   try { return stableSnapshotHash({ values, gateWords }) } catch { return null }
 }
 
-function patchDiagnostic(path, backupFile) {
+function patchDiagnostic(path, backupFile, pathContext) {
   const result = {
     patchPath: typeof path === 'string' ? path : null,
     patchBytes: null,
@@ -252,6 +339,7 @@ function patchDiagnostic(path, backupFile) {
   }
   if (typeof path === 'string' && path !== '') {
     try {
+      if (pathContext !== undefined && pathContext !== null) authorizedReadPath(pathContext, path, 'qqbot-settings-sync', 'file', 'profilePatch')
       const bytes = readFileSync(path)
       const stat = statSync(path)
       const text = bytes.toString('utf8')
@@ -265,7 +353,10 @@ function patchDiagnostic(path, backupFile) {
     } catch { /* missing/invalid patch is represented by null metadata */ }
   }
   if (typeof backupFile === 'string' && backupFile !== '') {
-    try { result.backupSha256 = createHash('sha256').update(readFileSync(backupFile)).digest('hex') } catch { /* backup is absent for idempotent/failed writes */ }
+    try {
+      if (pathContext !== undefined && pathContext !== null) authorizedReadPath(pathContext, backupFile, 'qqbot-settings-sync', 'file', 'profileDir')
+      result.backupSha256 = createHash('sha256').update(readFileSync(backupFile)).digest('hex')
+    } catch { /* backup is absent for idempotent/failed writes */ }
   }
   return result
 }
@@ -654,7 +745,13 @@ function hook(hooks, name, ...args) {
 export function writeQqbotSettingsPatch(profileDir, snapshot, options = {}) {
   let checked
   try { checked = validateSettingsSnapshot(snapshot) } catch (error) { return { status: 'failed', reason: errorText(error) } }
+  const pathContext = options.pathContext !== undefined && options.pathContext !== null ? options.pathContext : null
+  if (pathContext === null) return { status: 'failed', reason: 'path-context-required', profile: profileDir }
+  if (pathContext !== null) {
+    authorizedWritePath(pathContext, profileDir, 'qqbot-settings-sync', 'directory', 'profileDir')
+  }
   const patchFile = join(profileDir, 'cordis.patch.yml')
+  if (pathContext !== null) authorizedWritePath(pathContext, patchFile, 'qqbot-settings-sync', 'file', 'profileDir')
   const fsApi = options.fs !== undefined ? options.fs : {
     existsSync,
     readFileSync,
@@ -662,7 +759,7 @@ export function writeQqbotSettingsPatch(profileDir, snapshot, options = {}) {
     renameSync,
     unlinkSync,
   }
-  const before = patchDiagnostic(patchFile, undefined)
+  const before = patchDiagnostic(patchFile, undefined, pathContext)
   let original
   try {
     if (!fsApi.existsSync(patchFile)) return { ...before, status: 'failed', profile: profileDir, reason: 'patch-missing', before, after: before }
@@ -672,12 +769,13 @@ export function writeQqbotSettingsPatch(profileDir, snapshot, options = {}) {
   }
   const plan = planQqbotSettingsPatch(original, checked)
   if (plan.status === 'idempotent') {
-    const after = patchDiagnostic(patchFile, undefined)
+    const after = patchDiagnostic(patchFile, undefined, pathContext)
     return { ...after, status: 'idempotent', profile: profileDir, before, after, backup: null, backupPath: null, backupSha256: null }
   }
   if (plan.status !== 'planned') return { ...before, status: 'failed', profile: profileDir, reason: plan.reason || plan.status, before, after: before }
   const hooks = options.hooks || {}
   const tempFile = nextFilePath(patchFile, '.tmp-dsh-extra-plan-settings-', fsApi)
+  if (pathContext !== null) authorizedWritePath(pathContext, tempFile, 'qqbot-settings-sync', 'file', 'profileDir')
   let backupFile
   let backupVerified = false
   let tempCreated = false
@@ -689,18 +787,23 @@ export function writeQqbotSettingsPatch(profileDir, snapshot, options = {}) {
     if (tempText !== plan.text || reparseAndCheck(tempText, expectedManaged(checked)).ok !== true) throw new Error('temp-verify-failed')
     hook(hooks, 'beforeBackup', { patchFile, tempFile, original })
     backupFile = nextFilePath(patchFile, '.bak-dsh-extra-plan-settings-', fsApi)
+    if (pathContext !== null) authorizedWritePath(pathContext, backupFile, 'qqbot-settings-sync', 'file', 'profileDir')
     writeExclusive(backupFile, original)
     const backupText = fsApi.readFileSync(backupFile, 'utf8')
     if (backupText !== original) throw new Error('backup-verify-failed')
     backupVerified = true
     hook(hooks, 'beforeRename', { patchFile, tempFile, backupFile })
+    if (pathContext !== null) {
+      authorizedWritePath(pathContext, tempFile, 'qqbot-settings-sync', 'file', 'profileDir')
+      authorizedWritePath(pathContext, patchFile, 'qqbot-settings-sync', 'file', 'profileDir')
+    }
     fsApi.renameSync(tempFile, patchFile)
     tempCreated = false
     hook(hooks, 'beforeFinalVerify', { patchFile, backupFile })
     const landed = fsApi.readFileSync(patchFile, 'utf8')
     const verify = reparseAndCheck(landed, expectedManaged(checked))
     if (!verify.ok) throw new Error(verify.reason || 'final-verify-failed')
-    const after = patchDiagnostic(patchFile, backupFile)
+    const after = patchDiagnostic(patchFile, backupFile, pathContext)
     return { ...after, status: 'applied', profile: profileDir, backup: backupFile, backupPath: backupFile, before, after }
   } catch (error) {
     let restored = true
@@ -718,7 +821,7 @@ export function writeQqbotSettingsPatch(profileDir, snapshot, options = {}) {
     if (backupFile !== undefined && !backupVerified) {
       try { fsApi.unlinkSync(backupFile) } catch { /* cleanup best effort */ }
     }
-    const after = patchDiagnostic(patchFile, backupFile)
+    const after = patchDiagnostic(patchFile, backupFile, pathContext)
     const failureStatus = externalDrift ? 'drift-detected' : restored ? 'failed' : 'fatal'
     const driftDiagnostic = externalDrift ? {
       failureOrder: ['before-final-verify', 'external-writer-drift', 'preserve-external-value'],
@@ -771,7 +874,35 @@ export function createQqbotSettingsSynchronizer(options = {}) {
       try { onResult({ ...state }) } catch { /* diagnostics callback cannot break the write queue */ }
     }
   }
+  const profileTerminal = (input, gate) => {
+    const startedAt = new Date().toISOString()
+    const meta = {
+      saveRunId: typeof input.saveRunId === 'string' && input.saveRunId !== '' ? input.saveRunId : randomUUID(),
+      syncRevision: Number.isInteger(input.syncRevision) ? input.syncRevision : 0,
+      snapshotHash: typeof input.snapshotHash === 'string' && input.snapshotHash !== '' ? input.snapshotHash : null,
+      trigger: typeof input.trigger === 'string' && input.trigger !== '' ? input.trigger : 'direct',
+    }
+    const final = {
+      status: gate.status,
+      pathSource: gate.kind === 'qqbot' ? 'current-profile' : 'profile-context',
+      reason: gate.reason,
+      profileKind: gate.facts.kind,
+      profileIdentityState: gate.facts.state,
+      profiles: [],
+      diagnostics: [{ reason: gate.reason }],
+      ...meta,
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      pending: false,
+      terminalMatch: false,
+      request: { ...meta },
+    }
+    emit(final)
+    return final
+  }
   const execute = async (input = {}) => {
+    const gate = profileGate(input.profileFacts)
+    if (gate.kind !== 'web') return profileTerminal(input, gate)
     const startedAt = new Date().toISOString()
     const associated = strictAssociation(input)
     const meta = {
@@ -787,6 +918,8 @@ export function createQqbotSettingsSynchronizer(options = {}) {
         startedAt,
         finishedAt: new Date().toISOString(),
         pending: false,
+        profileKind: gate.facts.kind,
+        profileIdentityState: gate.facts.state,
         terminalMatch: associated && meta.snapshotHash !== null && result.status === 'synced',
         request: { ...meta },
       }
@@ -802,19 +935,27 @@ export function createQqbotSettingsSynchronizer(options = {}) {
     } catch (error) {
       return finish({ status: 'failed', reason: errorText(error) })
     }
-    const pathInfo = resolveProfilesRoot(input.documentPath, input.env === undefined ? process.env : input.env)
+    const pathInfo = resolveProfilesRoot({ documentPath: input.documentPath, env: input.env === undefined ? process.env : input.env, pathContext: input.pathContext, profileFacts: gate.facts })
     if (pathInfo.status !== 'available') {
       return finish(resultForPath(pathInfo, 'unavailable', { profiles: [], diagnostics: [] }))
     }
     let webBefore
     const webPath = associated ? webDocumentPath(input.documentPath, pathInfo) : undefined
     if (associated) {
-      webBefore = patchDiagnostic(webPath, undefined)
+      webBefore = patchDiagnostic(webPath, undefined, pathInfo.pathContext)
       if (webBefore.managedSnapshotHash !== meta.snapshotHash) return finish(resultForPath(pathInfo, 'drift-detected', { profiles: [], diagnostics: [{ reason: 'web-managed-snapshot-mismatch' }], webBefore, webAfter: webBefore, rawWebPatchFingerprint: webBefore, managedWebSnapshotHash: webBefore.managedSnapshotHash }))
     }
-    const scanned = scanOwnQqbotProfiles(pathInfo.profilesRoot)
+    const scanned = scanOwnQqbotProfiles(pathInfo.profilesRoot, pathInfo.pathContext, gate.facts)
     if (scanned.status === 'unavailable') {
-      return finish(resultForPath(pathInfo, 'unavailable', { profiles: [], diagnostics: scanned.diagnostics, ...(associated ? { webBefore, webAfter: webBefore, rawWebPatchFingerprint: webBefore, managedWebSnapshotHash: webBefore.managedSnapshotHash } : {}) }))
+      const scanFailure = {
+        profiles: [],
+        ...(scanned.reason === undefined ? {} : { reason: scanned.reason }),
+        ...(scanned.candidateCount === undefined ? {} : { candidateCount: scanned.candidateCount }),
+        ...(scanned.candidateLimit === undefined ? {} : { candidateLimit: scanned.candidateLimit }),
+        diagnostics: scanned.diagnostics,
+        ...(associated ? { webBefore, webAfter: webBefore, rawWebPatchFingerprint: webBefore, managedWebSnapshotHash: webBefore.managedSnapshotHash } : {}),
+      }
+      return finish(resultForPath(pathInfo, 'unavailable', scanFailure))
     }
     if (scanned.profiles.length === 0) {
       return finish(resultForPath(pathInfo, 'not-installed', { profiles: [], diagnostics: scanned.diagnostics, ...(associated ? { webBefore, webAfter: webBefore, rawWebPatchFingerprint: webBefore, managedWebSnapshotHash: webBefore.managedSnapshotHash } : {}) }))
@@ -822,10 +963,10 @@ export function createQqbotSettingsSynchronizer(options = {}) {
     const profiles = []
     for (const profile of scanned.profiles) {
       const profileDir = join(pathInfo.profilesRoot, profile)
-      const written = writeQqbotSettingsPatch(profileDir, snapshot, options)
+      const written = writeQqbotSettingsPatch(profileDir, snapshot, { ...options, pathContext: pathInfo.pathContext })
       profiles.push({ ...written, profile })
     }
-    const webAfter = associated ? patchDiagnostic(webPath, undefined) : undefined
+    const webAfter = associated ? patchDiagnostic(webPath, undefined, pathInfo.pathContext) : undefined
     const webDrift = associated && webAfter.patchSha256 !== webBefore.patchSha256
     const webDiagnostic = webDrift ? {
       target: 'web',
@@ -856,17 +997,21 @@ export function createQqbotSettingsSynchronizer(options = {}) {
     }))
   }
   const enqueue = (input = {}) => {
-    const rawSnapshot = input.snapshot
+    const gate = profileGate(input.profileFacts)
+    if (gate.kind !== 'web') return Promise.resolve(profileTerminal(input, gate))
+    const normalizedInput = { ...input, profileFacts: gate.facts }
+    const rawSnapshot = normalizedInput.snapshot
     let checked
     try { checked = validateSettingsSnapshot(rawSnapshot) } catch {
       checked = null
     }
-    const pathInfo = checked === null ? null : resolveProfilesRoot(input.documentPath, input.env === undefined ? process.env : input.env)
-    const association = [input.saveRunId || '', input.syncRevision === undefined ? '' : String(input.syncRevision), input.trigger || ''].join('|')
-    const key = fingerprint(pathInfo === null ? undefined : pathInfo.profilesRoot, pathInfo === null ? 'invalid' : pathInfo.pathSource, checked === null ? { values: {}, gateWords: null } : checked) + '|' + association
+    const pathInfo = checked === null ? null : resolveProfilesRoot({ documentPath: normalizedInput.documentPath, env: normalizedInput.env === undefined ? process.env : normalizedInput.env, pathContext: normalizedInput.pathContext, profileFacts: gate.facts })
+    const association = [normalizedInput.saveRunId || '', normalizedInput.syncRevision === undefined ? '' : String(normalizedInput.syncRevision), normalizedInput.trigger || ''].join('|')
+    const identityKey = JSON.stringify({ kind: gate.facts.kind, name: gate.facts.name, startedBundles: gate.facts.startedBundles })
+    const key = fingerprint(pathInfo === null ? undefined : pathInfo.profilesRoot, pathInfo === null ? 'invalid' : pathInfo.pathSource, checked === null ? { values: {}, gateWords: null } : checked) + '|' + identityKey + '|' + association
     if (pendingKey === key && pendingPromise !== null) return pendingPromise
     state = { ...state, pending: true, pathSource: pathInfo === null ? undefined : pathInfo.pathSource }
-    const run = tail.then(() => execute({ ...input, snapshot: rawSnapshot }))
+    const run = tail.then(() => execute({ ...normalizedInput, snapshot: rawSnapshot }))
     pendingKey = key
     pendingPromise = run
     run.then(() => {

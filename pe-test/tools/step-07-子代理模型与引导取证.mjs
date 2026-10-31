@@ -1,31 +1,50 @@
 // step-07-子代理模型与引导取证.mjs — 显式会话的只读实机证据查看
-// 用法：先显式设置 SESSION_ID（顶层主会话 ID）与 PLANNER_PROMPT_SUFFIX，再运行本文件。
-// 本工具只读会话日志，不自动选会话、不创建会话、不发起 Provider 请求、不写生产 DSH_HOME。
+// 用法：传入 --session <顶层主会话ID> 与 --sessions-dir，并显式提供 PLANNER_PROMPT_SUFFIX。
+// 本工具只读会话日志；无会话选择时 NOT-RUN，不创建会话、不发起 Provider 请求、不写生产 DSH_HOME。
 import fs from 'node:fs'
 import path from 'node:path'
 import { framesOf, decodeText } from '../_shared/zstd-frames.mjs'
-import { findSession } from '../_shared/session-finder.mjs'
-import { toolResultOf, v4LogPath } from '../_shared/v4-tool-result.mjs'
+import { authorizedSessionLogPath, findSession } from '../_shared/session-finder.mjs'
+import { parseMaintenanceArgs, createMaintenanceContext } from '../_shared/workspace-paths.mjs'
+import { toolResultOf } from '../_shared/v4-tool-result.mjs'
 import { createOutput, sha256Text } from '../_shared/test-output.mjs'
 
-const output = createOutput({ argv: process.argv.slice(2) })
-const hasOwn = (name) => Object.prototype.hasOwnProperty.call(process.env, name)
 const failInput = (message) => {
   console.error('输入错误：' + message)
   process.exit(1)
 }
-const sessionId = process.env.SESSION_ID
-if (typeof sessionId !== 'string' || sessionId === '') failInput('必须显式设置 SESSION_ID=<顶层主会话ID>，不允许无参自动选择会话')
+let maintenanceArgs
+let maintenanceContext
+try {
+  maintenanceArgs = parseMaintenanceArgs(process.argv.slice(2))
+  maintenanceContext = createMaintenanceContext(maintenanceArgs)
+} catch (error) {
+  failInput(error instanceof Error ? error.message : String(error))
+}
+const argv = maintenanceArgs.domainArgv
+const output = createOutput({ argv })
+const hasOwn = (name) => Object.prototype.hasOwnProperty.call(process.env, name)
+const sessionInput = maintenanceContext.session
+if (sessionInput === null || typeof sessionInput !== 'object' || sessionInput.mode === 'none') {
+  console.log('NOT-RUN：未显式选择会话；未读取会话日志')
+  process.exit(0)
+}
+if (sessionInput.mode !== 'id' || typeof sessionInput.id !== 'string' || sessionInput.id.trim() === '') failInput('--session 必须显式传入顶层主会话ID，并同时提供 --sessions-dir')
+const sessionId = sessionInput.id
 if (sessionId.includes('/') || sessionId.includes('\\')) failInput('SESSION_ID 必须是顶层会话 ID，不接受会话路径')
 if (!hasOwn('PLANNER_PROMPT_SUFFIX')) failInput('必须显式设置 PLANNER_PROMPT_SUFFIX；空串也必须显式传入')
 const plannerPromptSuffix = process.env.PLANNER_PROMPT_SUFFIX
 if (typeof plannerPromptSuffix !== 'string') failInput('PLANNER_PROMPT_SUFFIX 必须是字符串')
 
-// 使用显式 SESSION_ID 参数定位主会话；不调用 finder 的无参 auto 分支。
-const found = findSession(sessionId)
+const found = findSession(undefined, { maintenanceContext })
 if (found.kind === 'notfound') failInput('SESSION_ID 未找到：' + found.arg)
-if (found.kind !== 'explicit' || !Array.isArray(found.dirs) || found.dirs.length === 0 || typeof found.base !== 'string') {
-  failInput('SESSION_ID 未定位到显式顶层主会话')
+if (found.kind === 'incomplete') { console.error('INCOMPLETE ' + found.reason); process.exit(1) }
+if (found.kind !== 'explicit' || !Array.isArray(found.dirs) || found.dirs.length === 0 || typeof found.base !== 'string' || found.pathContext === undefined) {
+  failInput('SESSION_ID 未定位到显式顶层主会话或可信读取上下文')
+}
+function v4LogOf(dir) {
+  const log = authorizedSessionLogPath(path.join(found.base, dir), found.pathContext, { kind: found.pathKind, names: ['session.v4.jsonl.zstd'] })
+  return log === null ? null : log.realPath
 }
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -79,7 +98,7 @@ function sessionHeaderOf(event) {
 
 function parseSession(dir) {
   const directory = path.join(found.base, dir)
-  const file = v4LogPath(directory)
+  const file = v4LogOf(dir)
   if (file === null) return { dir, directory, file: null, events: [], parseFailures: 0, decodeFailures: 0, lineCount: 0, header: {} }
   const buf = fs.readFileSync(file)
   const events = []
@@ -126,56 +145,7 @@ function parseSession(dir) {
   }
 }
 
-// 两阶段扫描第一段：只读头信息——有界分块读取，定位首个 session 事件的头字段即返回，
-// 不构建 events 数组、不保留 raw 行；无 session 事件的目录返回空 header（与 parseSession 首个 session 事件语义一致）。
-function headerOfDir(dir) {
-  const directory = path.join(found.base, dir)
-  const file = v4LogPath(directory)
-  if (file === null) return null
-  const headerOfText = (text) => {
-    for (const raw of text.split(/\r?\n/)) {
-      const line = raw.trim()
-      if (line === '') continue
-      let event
-      try { event = JSON.parse(line) } catch { continue }
-      if (hasType(event, 'session')) return sessionHeaderOf(event)
-    }
-    return null
-  }
-  let reportedFrames = 0
-  const decodeChunk = (chunk) => {
-    const frames = framesOf(chunk)
-    let text = ''
-    for (let index = 0; index < frames.length; index += 1) {
-      try {
-        text += decodeText(chunk, frames[index])
-      } catch (error) {
-        if (index >= reportedFrames) console.error('L? 解码失败（' + dir + '）：' + (error instanceof Error ? error.message : String(error)))
-      }
-    }
-    reportedFrames = Math.max(reportedFrames, frames.length)
-    return text
-  }
-  const fd = fs.openSync(file, 'r')
-  try {
-    const total = fs.fstatSync(fd).size
-    let size = 65536
-    while (true) {
-      const buf = Buffer.alloc(Math.min(size, total))
-      const n = fs.readSync(fd, buf, 0, buf.length, 0)
-      const header = headerOfText(decodeChunk(buf.subarray(0, n)))
-      if (header !== null) return { dir, header }
-      if (n >= total) {
-        // 渐块读到头仍未见 session 事件：回退全文件（与旧 parseSession 相同的兜底语义）
-        const whole = headerOfText(decodeChunk(fs.readFileSync(file)))
-        return { dir, header: whole === null ? {} : whole }
-      }
-      size = Math.min(size * 2, total)
-    }
-  } finally {
-    fs.closeSync(fd)
-  }
-}
+
 
 function textBlocksOf(data) {
   return contentOf(data).map((block, index) => ({
@@ -328,13 +298,6 @@ function descriptorModeOf(session) {
   if (item === undefined) return undefined
   const nested = isObject(item.data.descriptor) ? item.data.descriptor : {}
   return firstDefined(item.data.mode, nested.mode)
-}
-function directChildOf(parent, child) {
-  const p = child.header.parentSession
-  if (typeof p !== 'string' || p === '' || child.header.origin !== 'subagent') return false
-  if (typeof child.header.delegationDepth !== 'number') return false
-  const parentIds = new Set([parent.dir, stripSessionPrefix(parent.dir), parent.header.id, stripSessionPrefix(parent.header.id)])
-  return parentIds.has(p) || parentIds.has(stripSessionPrefix(p))
 }
 function roleOf(child, parentLinks) {
   const complete = parentLinks.filter((link) => link.complete)
@@ -544,22 +507,13 @@ function printPlannerMessages(messages) {
 }
 
 const mainDir = found.dirs[0]
-if (v4LogPath(path.join(found.base, mainDir)) === null) failInput('仅支持 v4 会话日志：目标日志必须是 session.v4.jsonl.zstd')
+if (v4LogOf(mainDir) === null) failInput('仅支持 v4 会话日志：目标日志必须是 session.v4.jsonl.zstd')
 const parent = parseSession(mainDir)
 if (Object.prototype.hasOwnProperty.call(parent.header, 'parentSession') && parent.header.parentSession !== undefined && parent.header.parentSession !== null && parent.header.parentSession !== '') {
   failInput('SESSION_ID 不是顶层主会话（parentSession=' + parent.header.parentSession + '）')
 }
-const siblingDirs = fs.readdirSync(found.base)
-  .filter((dir) => dir !== mainDir && v4LogPath(path.join(found.base, dir)) !== null)
-// 两阶段扫描第二段：先只用 headerOfDir 读头信息筛出直接子会话（保持 readdirSync 顺序），
-// 再只对命中目录做 parseSession——未命中目录不再常驻 events。
-const childEntries = []
-for (const dir of siblingDirs) {
-  const h = headerOfDir(dir)
-  if (!h || !h.header) continue
-  if (directChildOf(parent, h)) childEntries.push(dir)
-}
-const children = childEntries.map(parseSession)
+// 子会话集合由共享定位器在显式 --discover-children 下有界选出；此处只解析已选目录。
+const children = found.dirs.slice(1).map(parseSession)
 const sessions = [parent, ...children]
 const parentBundle = buildParentLinks(parent, children)
 const linksByDir = new Map(children.map((child) => [child.dir, parentBundle.links.filter((link) => link.dir === child.dir)]))

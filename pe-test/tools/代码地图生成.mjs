@@ -2,14 +2,15 @@
 // 代码地图生成.mjs — 增量同步结构并保留人工描述。
 // --strict 拒绝未解决的疑似遗漏；--check 只读检查过期/新增/删除索引项和损坏导航。
 // 稳定键 = 相对路径 + 函数名 + 同名出现顺序。
-import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSync } from 'node:fs'
-import { join, resolve, relative, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { readFileSync, writeFileSync, existsSync, readdirSync, lstatSync, realpathSync, mkdirSync } from 'node:fs'
+import { join, resolve, relative, dirname, isAbsolute } from 'node:path'
+import { getWorkspaceRoot } from '../_shared/workspace-paths.mjs'
 
 // ---------- 常量与参数 ----------
 const NL = String.fromCharCode(10)
 const CR = String.fromCharCode(13)
 const BS = String.fromCharCode(92)
+const realpathNativeSync = typeof realpathSync.native === 'function' ? realpathSync.native : realpathSync
 // 正则字面量识别：/ 之前的「有效前字符」∈ 该集合，或前一个词 ∈ 关键字集合 → 视作正则起始
 const REGEX_BEFORE_CHARS = new Set(['(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}', ';', '+', '-', '*', '%', '<', '>', '^', '~'])
 const REGEX_BEFORE_WORDS = new Set(['return', 'typeof', 'case', 'in', 'of', 'do', 'else', 'yield', 'await', 'void', 'delete', 'new', 'instanceof', 'default'])
@@ -26,29 +27,102 @@ const parseArg = (name, fallback) => {
   const i = args.indexOf(name)
   return i !== -1 && i + 1 < args.length ? args[i + 1] : fallback
 }
-const ROOTS = (parseArg('--roots', 'plugins,pe-test/_shared') || 'plugins,pe-test/_shared').split(',').map((s) => s.trim()).filter(Boolean)
-const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
-const MAP_PATH = resolve(PROJECT_ROOT, parseArg('--map', 'pe-test/docs/ai-代码地图.md') || 'pe-test/docs/ai-代码地图.md')
+// W 由共享结构锚定确定，不受启动 cwd 或脚本外部目录影响。
+const PROJECT_ROOT = resolve(getWorkspaceRoot())
+
+function within(root, candidate) {
+  const child = relative(resolve(root), resolve(candidate)).split('\\').join('/')
+  return child === '' || (child !== '..' && !child.startsWith('../') && !/^[A-Za-z]:/.test(child))
+}
+
+function validateWorkspaceInput(value, label) {
+  const raw = String(value === undefined || value === null ? '' : value).trim()
+  if (raw === '') throw new Error(label + ' 不能为空')
+  if (raw.includes(String.fromCharCode(0))) throw new Error(label + ' 含 NUL')
+  if (/(?:%[A-Za-z_][A-Za-z0-9_]*%)/.test(raw) || /(?:^|[\\/])\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)/.test(raw) || raw.startsWith('~')) throw new Error(label + ' 拒绝变量或家目录缩写')
+  if (/^[A-Za-z]:[^\\/]/.test(raw)) throw new Error(label + ' 拒绝 drive-relative 路径')
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(raw) && !/^[A-Za-z]:[\\/]/.test(raw)) throw new Error(label + ' 拒绝URI/协议路径')
+  const candidate = isAbsolute(raw) ? resolve(raw) : resolve(PROJECT_ROOT, raw)
+  if (!within(PROJECT_ROOT, candidate)) throw new Error(label + ' 超出当前工作区 W')
+  assertWorkspaceChain(candidate, label)
+  return candidate
+}
+
+function samePath(left, right) {
+  const a = resolve(left)
+  const b = resolve(right)
+  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b
+}
+
+function assertWorkspaceChain(candidate, label) {
+  const root = resolve(PROJECT_ROOT)
+  let rootReal
+  try { rootReal = realpathNativeSync(root) } catch (error) { throw new Error('当前工作区 W 不可解析：' + (error.code || String(error))) }
+  let cursor = resolve(candidate)
+  while (true) {
+    let stat
+    try { stat = lstatSync(cursor) } catch (error) {
+      if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') throw new Error(label + ' 路径探查失败：' + (error.code || String(error)))
+      const parent = dirname(cursor)
+      if (parent === cursor) throw new Error(label + ' 父链未到达 W')
+      cursor = parent
+      continue
+    }
+    let real
+    try { real = realpathNativeSync(cursor) } catch (error) { throw new Error(label + ' 真实路径不可解析：' + (error.code || String(error))) }
+    if (!within(rootReal, real)) throw new Error(label + ' 真实路径越出 W')
+    if (!samePath(cursor, root) && (stat.isSymbolicLink() || !samePath(real, cursor))) throw new Error(label + ' 不跟随工作区链接')
+    if (samePath(cursor, root)) return
+    const parent = dirname(cursor)
+    if (parent === cursor) throw new Error(label + ' 未到达 W')
+    cursor = parent
+  }
+}
+
+function assertWorkspaceLayout() {
+  assertWorkspaceChain(PROJECT_ROOT, 'W')
+  for (const name of ['pe-test', 'plugins']) {
+    const marker = join(PROJECT_ROOT, name)
+    assertWorkspaceChain(marker, 'W/' + name)
+    let stat
+    try { stat = lstatSync(marker) } catch (error) { throw new Error('W/' + name + ' 不可读取：' + (error.code || String(error))) }
+    if (!stat.isDirectory()) throw new Error('W/' + name + ' 必须是目录')
+  }
+}
+
+assertWorkspaceLayout()
+const ROOTS = (parseArg('--roots', 'plugins,pe-test/_shared') || 'plugins,pe-test/_shared').split(',').map((s) => s.trim()).filter(Boolean).map((value) => validateWorkspaceInput(value, '--roots'))
+const MAP_PATH = validateWorkspaceInput(parseArg('--map', 'pe-test/docs/ai-代码地图.md') || 'pe-test/docs/ai-代码地图.md', '--map')
 
 // ---------- 源码文件收集 ----------
 const SKIP_DIRS = new Set(['node_modules', '.git', '.extra-plan'])
 function collectJsFiles(dir, out) {
-  let names = []
-  try { names = readdirSync(dir) } catch { return out }
-  for (const name of names) {
+  assertWorkspaceChain(dir, '源码根')
+  let names
+  try { names = readdirSync(dir, { withFileTypes: true }) } catch (error) { throw new Error('源码根不可读：' + dir + '；' + (error.code || String(error))) }
+  for (const entry of names) {
+    const name = entry.name
     const p = join(dir, name)
     let st
-    try { st = statSync(p) } catch { continue }
+    try { st = lstatSync(p) } catch (error) { throw new Error('源码路径不可读：' + p + '；' + (error.code || String(error))) }
+    let real
+    try { real = realpathNativeSync(p) } catch (error) { throw new Error('源码路径真实路径不可解析：' + p + '；' + (error.code || String(error))) }
+    if (st.isSymbolicLink() || !samePath(real, p)) throw new Error('源码扫描拒绝链接：' + p)
     if (st.isDirectory()) {
       if (!SKIP_DIRS.has(name) && !name.startsWith('backup-')) collectJsFiles(p, out)
-    } else if (name.endsWith('.js') || name.endsWith('.mjs')) {
+    } else if (st.isFile() && (name.endsWith('.js') || name.endsWith('.mjs'))) {
       out.push(p)
     }
   }
   return out
 }
 const srcFiles = []
-for (const r of ROOTS) collectJsFiles(resolve(PROJECT_ROOT, r), srcFiles)
+for (const r of ROOTS) {
+  let stat
+  try { stat = lstatSync(r) } catch (error) { throw new Error('源码根不存在：' + r + '；' + (error.code || String(error))) }
+  if (!stat.isDirectory()) throw new Error('源码根必须是目录：' + r)
+  collectJsFiles(r, srcFiles)
+}
 srcFiles.sort()
 
 // ---------- 括号配对（遮罩字符串与注释后） ----------

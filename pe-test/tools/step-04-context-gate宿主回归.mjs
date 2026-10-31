@@ -5,21 +5,19 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { homedir } from 'node:os'
+import { createIsolatedEnv, makeFixtureDir } from '../_shared/workspace-paths.mjs'
+import { createPathContext } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
 import { registerHostDeps } from '../_shared/host-deps.mjs'
 
-await registerHostDeps()
-const { Context } = await import('@deepseek-ai/cordis')
-const { default: Loader } = await import('@deepseek-ai/cordis-plugin-loader')
-const { LlmAdapter } = await import('@deepseek-ai/dsh-llm')
-const { parsePresetYaml } = await import('../../plugins/dsh-extra-plan/lib/preset-settings.js')
+
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '..', '..')
 const PLUGIN_PATH = join(ROOT, 'plugins', 'dsh-extra-plan', 'index.js')
 const GATE_PATH = join(ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'gate-decisions.js')
-const INSTALL_ROOT = resolve(process.env.DSH_INSTALL_ROOT || join(homedir(), 'AppData', 'Roaming', 'npm', 'node_modules', '@deepseek-ai', 'dsh'))
-const BATCH_DIR = resolve(process.env.CONTEXT_GATE_BATCH_DIR || join(ROOT, '.extra-plan', 'context-gate-00de0e4', 'host-regression-' + String(Date.now())))
+const INSTALL_ROOT_RAW = typeof process.env.DSH_INSTALL_ROOT === 'string' && process.env.DSH_INSTALL_ROOT.trim() !== '' ? process.env.DSH_INSTALL_ROOT.trim() : null
+const contextFixture = makeFixtureDir({ label: 'context-gate' })
+const BATCH_DIR = contextFixture.root
 const HOME_DIR = join(BATCH_DIR, 'home')
 const SESSION_ROOT = join(BATCH_DIR, 'sessions')
 const WORKSPACE = join(BATCH_DIR, 'workspace')
@@ -35,12 +33,20 @@ writeFileSync(join(WORKSPACE, 'AGENTS.md'), '# context-gate fixture\nfixture bas
 writeFileSync(join(SKILLS_ROOT, 'ordinary-skill', 'SKILL.md'), '---\nname: ordinary-skill\ndescription: ordinary fixture skill\n---\nordinary skill body\n', 'utf8')
 writeFileSync(join(SKILLS_ROOT, 'cordis-plugin-development', 'SKILL.md'), '---\nname: cordis-plugin-development\ndescription: creative fixture skill\n---\ncreative skill body\n', 'utf8')
 
-const previousEnv = { DSH_HOME: process.env.DSH_HOME, TEMP: process.env.TEMP, TMP: process.env.TMP, DSH_EXTRA_PLAN_CONFIG_PATH: process.env.DSH_EXTRA_PLAN_CONFIG_PATH }
-process.env.DSH_HOME = HOME_DIR
-process.env.TEMP = join(BATCH_DIR, 'temp')
-process.env.TMP = process.env.TEMP
-delete process.env.DSH_EXTRA_PLAN_CONFIG_PATH
-mkdirSync(process.env.TEMP, { recursive: true })
+const CONTEXT_ENV_KEYS = Object.freeze(['DSH_HOME', 'HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'XDG_CACHE_HOME', 'DSH_EXTRA_PLAN_CAPTURE_DIR', 'DSH_EXTRA_PLAN_REPORT_DIR', 'TEMP', 'TMP', 'TMPDIR', 'DSH_PROFILE', 'DSH_EXTRA_PLAN_CONFIG_PATH'])
+const previousEnv = Object.fromEntries(CONTEXT_ENV_KEYS.map((key) => [key, process.env[key]]))
+const contextIsolatedEnv = createIsolatedEnv({ fixture: contextFixture, extra: { DSH_PROFILE: 'context-gate', DSH_EXTRA_PLAN_CONFIG_PATH: undefined } })
+for (const key of CONTEXT_ENV_KEYS) {
+  const value = contextIsolatedEnv[key]
+  if (value === undefined) delete process.env[key]
+  else process.env[key] = value
+}
+const INSTALL_ROOT = INSTALL_ROOT_RAW === null ? null : createPathContext({ hostDataRoot: INSTALL_ROOT_RAW }).hostDataRoot
+await registerHostDeps()
+const { Context } = await import('@deepseek-ai/cordis')
+const { default: Loader } = await import('@deepseek-ai/cordis-plugin-loader')
+const { LlmAdapter } = await import('@deepseek-ai/dsh-llm')
+const { parsePresetYaml } = await import('../../plugins/dsh-extra-plan/lib/preset-settings.js')
 
 let pass = 0
 let fail = 0
@@ -83,7 +89,7 @@ function flatten(rows, out = []) {
 const assetExtraConfig = flatten(assetRows).find((row) => row.id === 'extra-plan')?.config
 const sourceHashes = { index: sourceHash(PLUGIN_PATH), gateDecisions: sourceHash(GATE_PATH) }
 console.log('BASELINE_HEAD=' + String(process.env.CONTEXT_GATE_BASELINE_HEAD || '00de0e4b05a23bb0092361805ceba481181ba371'))
-console.log('HOST_INSTALL_ROOT=' + INSTALL_ROOT)
+console.log('HOST_INSTALL_ROOT=' + String(INSTALL_ROOT))
 console.log('SOURCE_HASH=' + JSON.stringify(sourceHashes))
 console.log('BATCH_DIR=' + BATCH_DIR)
 

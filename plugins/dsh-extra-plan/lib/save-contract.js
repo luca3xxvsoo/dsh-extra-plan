@@ -124,23 +124,9 @@ export function formatSavePlanSummary(summary) {
 // 字符串——否则 DeepSeek 适配器 serializeMessages 的 flattenText 会对字符串调
 // .filter 抛 TypeError，被外层包装成 TRANSPORT、重试 3 连败（毫秒级），表现为
 // "save_plan 后子代理必死"。此函数导出供场景测试锁死契约。
-export function renderSavePlan(value, summary) {
+export function renderSavePlan(value) {
   const paths = value !== null && typeof value === 'object' && Array.isArray(value.paths) ? value.paths : []
-  const lines = ['方案已落盘（两份文件按序发布；失败由AI主动重试）：']
-  for (const path of paths) lines.push('- ' + String(path))
-  if (summary !== null && summary !== undefined
-      && Number.isInteger(summary.taskCount) && summary.taskCount >= 0
-      && Number.isInteger(summary.taskFileCount) && summary.taskFileCount >= 0
-      && Number.isInteger(summary.closureFileCount) && summary.closureFileCount >= 0
-      && Number.isInteger(summary.fileCount) && summary.fileCount >= 0
-      && Number.isInteger(summary.groupCount) && summary.groupCount >= 0) {
-    const summaryText = formatSavePlanSummary(summary)
-    lines.push('- 任务数：' + summary.taskCount + '；任务文件数：' + summary.taskFileCount + '；收尾文件数：' + summary.closureFileCount + '；文件总数：' + summary.fileCount + '；执行组数：' + summary.groupCount + '；验收组数：' + String(summary.reviewGroupCount || 0) + '；检查数：' + String(summary.checkCount || 0))
-    lines.push('- 派遣摘要（' + summaryText.length + '/' + SAVE_PLAN_LIMITS.maxSummaryChars + ' 字符）：')
-    for (const line of summaryText.split('\n')) lines.push('  ' + line)
-    lines.push('- 提示：同组任务由同一执行者领取，独立执行组按依赖/资源并行；验收组只复用同轮检查证据，工具不自动调度或执行命令')
-  }
-  return [{ type: 'text', text: lines.join('\n') }]
+  return [{ type: 'text', text: paths.map((path) => String(path)).join('\n') }]
 }
 
 // save_probe 数值限制的唯一现行来源；测试通过导出对象断言，文档只链接此符号，不复制运行时限制表。

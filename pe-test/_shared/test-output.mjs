@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto'
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { join, relative, resolve } from 'node:path'
+import { getWorkspaceRoot } from './workspace-paths.mjs'
+import { createPathContext, prepareWriteTarget, resolveWorkspacePath, validateReadTarget } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
 
 export const OUTPUT_MODES = Object.freeze({
   COMPACT: 'compact',
@@ -109,29 +111,60 @@ export function createOutput(options = {}) {
   return Object.freeze({ mode, emit, error: (line) => emit(line, true), assertion, structured, detail, marker, summary })
 }
 
+const WORKSPACE_CONTEXT = createPathContext({ workspaceRoot: resolve(getWorkspaceRoot()) })
+
+function workspaceTarget(value, label) {
+  if (typeof value !== 'string' || value.trim() === '') throw new Error('test-output: ' + label + ' must be a non-empty path')
+  return resolveWorkspacePath(WORKSPACE_CONTEXT, value, { purpose: label })
+}
+
+function workspacePathOf(value, label) {
+  return workspaceTarget(value, label).path
+}
+
+function prepareOutputDirectory(directory, label) {
+  const target = workspaceTarget(directory, label)
+  try {
+    return prepareWriteTarget(WORKSPACE_CONTEXT, target, { expectedType: 'directory' })
+  } catch (error) {
+    if (error?.code !== 'TARGET_MISSING') throw error
+    return prepareWriteTarget(WORKSPACE_CONTEXT, target, { expectedType: 'file' })
+  }
+}
+
+function prepareOutputFile(filePath, label) {
+  const target = workspaceTarget(filePath, label)
+  return prepareWriteTarget(WORKSPACE_CONTEXT, target, { expectedType: 'file' })
+}
+
 export function fileEvidence(filePath, root = undefined) {
-  const content = requireFile(filePath)
-  const pathValue = root === undefined ? filePath : relative(root, filePath).replaceAll('\\', '/')
+  const safeFilePath = workspacePathOf(filePath, 'fileEvidence path')
+  const readTarget = validateReadTarget(WORKSPACE_CONTEXT, safeFilePath, { kind: 'workspace', expectedType: 'file' })
+  const content = readFileSync(readTarget.path, 'utf8')
+  let pathValue = filePath
+  if (root !== undefined) {
+    const rootTarget = prepareWriteTarget(WORKSPACE_CONTEXT, workspaceTarget(root, 'fileEvidence root'), { expectedType: 'directory' })
+    pathValue = relative(rootTarget.path, readTarget.path).replaceAll('\\', '/')
+  }
   return { path: pathValue, bytes: Buffer.byteLength(content, 'utf8'), lines: content === '' ? 0 : content.split(/\r?\n/).length - (content.endsWith('\n') ? 1 : 0), sha256: digest(content) }
 }
 
-function requireFile(filePath) {
-  return readFileSync(filePath, 'utf8')
-}
-
 export function writeRawEvidence(options) {
-  const directory = options.directory
-  const baseName = options.baseName
-  if (typeof directory !== 'string' || typeof baseName !== 'string' || baseName === '') throw new Error('test-output: raw directory and baseName are required')
+  const directory = workspacePathOf(options?.directory, 'raw evidence directory')
+  const baseName = options?.baseName
+  if (typeof baseName !== 'string' || baseName === '') throw new Error('test-output: raw directory and baseName are required')
+  prepareOutputDirectory(directory, 'raw evidence directory')
   mkdirSync(directory, { recursive: true })
+  prepareOutputDirectory(directory, 'raw evidence directory after mkdir')
   const entries = [
     ['stdout', String(options.stdout === undefined ? '' : options.stdout)],
     ['stderr', String(options.stderr === undefined ? '' : options.stderr)],
   ]
   const files = []
   for (const [channel, content] of entries) {
-    const filePath = join(directory, baseName + '.' + channel + '.raw.log')
-    writeFileSync(filePath, content, 'utf8')
+    const filePath = workspacePathOf(join(directory, baseName + '.' + channel + '.raw.log'), 'raw evidence file')
+    const writeTarget = prepareOutputFile(filePath, 'raw evidence file')
+    writeFileSync(writeTarget.path, content, 'utf8')
     files.push({ channel, ...fileEvidence(filePath) })
   }
   const combined = entries.map((entry) => entry[1]).join('')

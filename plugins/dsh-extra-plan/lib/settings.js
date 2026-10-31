@@ -4,7 +4,8 @@
 // 两项宿主设置只从权威值派生到内存 definition，不再写独立公开投影行。
 
 import { createHash, randomUUID } from 'node:crypto'
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
+import { resolve as pathResolve } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import z from '@deepseek-ai/schemastery'
 import {
@@ -25,6 +26,159 @@ import {
 import { createQqbotSettingsSynchronizer, stableSnapshotHash } from './qqbot-settings-sync.js'
 import { parsePresetYaml, rowsByIdWithPath } from './preset-yaml.js'
 import { GATE_WORD_FIELDS, validateGateWords } from './gate-words.js'
+import { createPathContext, resolveWorkspacePath, resolveHostPath, validateReadTarget } from './path-policy.js'
+
+function safeContextGet(ctx, key) {
+  try { return ctx !== undefined && ctx !== null && typeof ctx.get === 'function' ? ctx.get(key) : undefined } catch (error) { return undefined }
+}
+
+const pathContextState = new WeakMap()
+
+const QQBOT_BUNDLE = '@tencent-connect/dsh-qqbot'
+
+function absoluteRoot(value) {
+  if (typeof value !== 'string' || value.trim() === '') return null
+  try {
+    return createPathContext({ workspaceRoot: value }).workspaceRoot
+  } catch {
+    return null
+  }
+}
+
+function rootFact(value, present) {
+  if (present !== true) return { state: 'missing', path: null }
+  const normalized = absoluteRoot(value)
+  return normalized === null ? { state: 'invalid', path: null } : { state: 'valid', path: normalized }
+}
+
+function sameRoot(left, right) {
+  if (left === null || right === null) return false
+  const a = pathResolve(left)
+  const b = pathResolve(right)
+  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b
+}
+
+function documentFact(value, present) {
+  if (present !== true || value === undefined || value === null || value === '') return { state: 'missing', path: null }
+  const normalized = absoluteRoot(value)
+  return normalized === null ? { state: 'invalid', path: null } : { state: 'valid', path: normalized }
+}
+
+function profileIdentityOf(profile) {
+  let name = null
+  let startedBundles = null
+  try {
+    name = profile !== undefined && profile !== null && typeof profile.name === 'string' ? profile.name.trim().toLowerCase() : null
+    startedBundles = profile !== undefined && profile !== null && Array.isArray(profile.startedBundles) && profile.startedBundles.every((item) => typeof item === 'string')
+      ? [...profile.startedBundles]
+      : null
+  } catch {
+    return { state: 'unknown', kind: 'unknown', name: null, startedBundles: null, reason: 'profile-identity-unreadable' }
+  }
+  if (name === null || startedBundles === null) return { state: 'unknown', kind: 'unknown', name, startedBundles, reason: 'profile-identity-missing' }
+  const qqbot = startedBundles.includes(QQBOT_BUNDLE)
+  if (name === 'web' && !qqbot) return { state: 'valid', kind: 'web', name, startedBundles, reason: null }
+  if (name === 'qqbot' && qqbot) return { state: 'valid', kind: 'qqbot', name, startedBundles, reason: null }
+  if (name !== 'web' && name !== 'qqbot') return { state: 'unknown', kind: 'unknown', name, startedBundles, reason: 'profile-name-unknown' }
+  return { state: 'conflict', kind: 'unknown', name, startedBundles, reason: 'profile-identity-conflict' }
+}
+
+function profileFactsOf(ctx) {
+  return profileIdentityOf(safeContextGet(ctx, 'profileContext'))
+}
+
+function configEditorServiceOf(ctx) {
+  const service = safeContextGet(ctx, 'configEditor')
+  return service !== undefined && service !== null && typeof service.configuration === 'function' && typeof service.edit === 'function' ? service : null
+}
+
+function settingsPathContext(ctx, editor) {
+  const profile = safeContextGet(ctx, 'profileContext')
+  const has = (key) => profile !== undefined && profile !== null && Object.prototype.hasOwnProperty.call(profile, key)
+  const profileHomeFact = rootFact(profile?.home, has('home'))
+  const profileDirFact = rootFact(profile?.dir, has('dir'))
+  const profilePatchFact = rootFact(profile?.patchPath, has('patchPath'))
+  const installAnchorFact = rootFact(profile?.installAnchor, has('installAnchor'))
+  const service = configEditorServiceOf(ctx)
+  const actualEditor = service !== null && service === editor
+  let editorDocumentFact = { state: 'missing', path: null }
+  if (actualEditor) {
+    try { editorDocumentFact = documentFact(editor.documentPath, editor.documentPath !== undefined) } catch (error) { editorDocumentFact = { state: 'invalid', path: null } }
+  }
+  let documentState = 'missing'
+  let documentPath = null
+  let documentCapability = null
+  if (profilePatchFact.state === 'invalid' || editorDocumentFact.state === 'invalid') documentState = 'invalid'
+  else if (profilePatchFact.state === 'valid' && editorDocumentFact.state === 'valid' && !sameRoot(profilePatchFact.path, editorDocumentFact.path)) documentState = 'conflict'
+  else if (editorDocumentFact.state === 'valid') {
+    documentState = 'valid'
+    documentPath = editorDocumentFact.path
+    documentCapability = profilePatchFact.state === 'valid' ? 'profilePatch' : 'editorDocument'
+  } else if (profilePatchFact.state === 'valid') {
+    documentState = 'valid'
+    documentPath = profilePatchFact.path
+    documentCapability = 'profilePatch'
+  }
+  const homeProvider = safeContextGet(ctx, 'dshHomePath')
+  let dshHomeFact = { state: 'missing', path: null }
+  if (typeof homeProvider === 'function') {
+    try { dshHomeFact = rootFact(homeProvider(), true) } catch (error) { dshHomeFact = { state: 'invalid', path: null } }
+  }
+  const envPresent = Object.prototype.hasOwnProperty.call(process.env, 'DSH_HOME')
+  const envHomeFact = rootFact(process.env.DSH_HOME, envPresent)
+  const trustedSources = [profileHomeFact, dshHomeFact]
+  const invalidTrustedSource = trustedSources.some((item) => item.state === 'invalid')
+  const validSources = trustedSources.filter((item) => item.state === 'valid')
+  const trustedConflict = validSources.some((item) => !sameRoot(item.path, validSources[0]?.path))
+  const envConflict = validSources.length > 0 && envHomeFact.state === 'valid' && !sameRoot(envHomeFact.path, validSources[0]?.path)
+  const envInvalidWithTrustedRoot = validSources.length > 0 && envHomeFact.state === 'invalid'
+  const hostConflict = trustedConflict || envConflict
+  const hostState = invalidTrustedSource || envInvalidWithTrustedRoot ? 'invalid' : hostConflict ? 'conflict' : validSources.length === 0 ? 'missing' : 'valid'
+  const hostDataRoot = hostState === 'valid' ? validSources[0].path : null
+  const capabilities = {}
+  if (profileDirFact.state === 'valid') capabilities.profileDir = { path: profileDirFact.path, type: 'directory', access: 'write', purpose: 'qqbot-settings-sync' }
+  if (profilePatchFact.state === 'valid') capabilities.profilePatch = { path: profilePatchFact.path, type: 'file', access: 'write', purpose: 'config-editor' }
+  if (documentCapability === 'editorDocument' && documentPath !== null) capabilities.editorDocument = { path: documentPath, type: 'file', access: 'read', purpose: 'config-editor' }
+  if (installAnchorFact.state === 'valid') capabilities.installAnchor = { path: installAnchorFact.path, type: 'file', access: 'read', purpose: 'install-anchor' }
+  const options = { hostCapabilities: capabilities }
+  if (hostState === 'valid' && hostDataRoot !== null) options.hostDataRoot = hostDataRoot
+  if (options.hostDataRoot === undefined && Object.keys(capabilities).length === 0) return null
+  let pathContext
+  try { pathContext = createPathContext(options) } catch (error) { return null }
+  pathContextState.set(pathContext, { documentState, documentPath, documentCapability })
+  return pathContext
+}
+
+function exactDocumentCapabilities(pathContext, documentPath) {
+  const capabilities = pathContext !== null && pathContext !== undefined && pathContext.hostCapabilities !== undefined && pathContext.hostCapabilities !== null
+    ? Object.values(pathContext.hostCapabilities)
+    : []
+  return capabilities
+    .filter((item) => item !== null && typeof item === 'object' && item.type === 'file' && item.purpose === 'config-editor' && typeof item.path === 'string' && sameRoot(item.path, documentPath))
+    .sort((left, right) => {
+      const rank = (item) => item.name === 'profilePatch' ? 0 : item.name === 'editorDocument' ? 1 : 2
+      return rank(left) - rank(right) || String(left.name).localeCompare(String(right.name))
+    })
+}
+
+function authorizedDocumentRead(editor, pathContext) {
+  const documentPath = editor !== undefined && editor !== null && typeof editor.documentPath === 'string' ? editor.documentPath.trim() : ''
+  if (documentPath === '' || pathContext === null || pathContext === undefined) return null
+  const state = pathContextState.get(pathContext)
+  if (state !== undefined) {
+    if (state.documentState === 'invalid') throw new Error('配置文档事实非法，拒绝读取')
+    if (state.documentState === 'conflict') throw new Error('配置文档事实矛盾，拒绝读取')
+    if (state.documentPath !== null && !sameRoot(state.documentPath, documentPath)) throw new Error('配置文档路径与可信事实不一致')
+  }
+  const exact = exactDocumentCapabilities(pathContext, documentPath)
+  if (exact.length > 0) {
+    const target = resolveHostPath(pathContext, documentPath, { capability: exact[0].name, purpose: 'config-editor' })
+    return validateReadTarget(pathContext, target, { expectedType: 'file', purpose: 'config-editor' })
+  }
+  const workspaceTarget = resolveWorkspacePath(pathContext, documentPath, { purpose: 'config-editor' })
+  return validateReadTarget(pathContext, workspaceTarget, { expectedType: 'file', purpose: 'config-editor' })
+}
+
 
 export const name = 'dsh-extra-plan-settings'
 export const inject = []
@@ -158,18 +312,23 @@ function rowSummary(row, pathText) {
   }
 }
 
-function rawPatchInfo(editor) {
+function rawPatchInfo(editor, pathContext) {
   const documentPath = editor !== undefined && typeof editor.documentPath === 'string' ? editor.documentPath.trim() : ''
-  if (documentPath === '' || !existsSync(documentPath)) return { documentPath: documentPath || null, text: undefined, diagnostics: ['document-path-unavailable'] }
-  try { return { documentPath, text: readFileSync(documentPath, 'utf8'), diagnostics: [] } }
-  catch (error) { return { documentPath, text: undefined, diagnostics: ['document-read-failed:' + String(error && error.message || error)] } }
+  if (documentPath === '' || pathContext === null || pathContext === undefined) return { documentPath: documentPath || null, text: undefined, diagnostics: ['document-path-unavailable'] }
+  try {
+    const readable = authorizedDocumentRead(editor, pathContext)
+    return { documentPath, text: readFileSync(readable.realPath, 'utf8'), diagnostics: [] }
+  } catch (error) {
+    return { documentPath, text: undefined, diagnostics: ['document-read-failed:' + String(error && error.message || error)] }
+  }
 }
 
 /** 机械检查 effective/raw canonical settings 行；不选择旧 duplicate。 */
-export function inspectSettingsAuthority(editor) {
+export function inspectSettingsAuthority(editor, pathContext) {
+  const trustedContext = pathContext === undefined ? settingsPathContext(undefined, editor) : pathContext
   const activeRows = activeSettingsRows(editor)
   const effectiveRows = activeRows.map((row) => rowSummary(row, null))
-  const patch = rawPatchInfo(editor)
+  const patch = rawPatchInfo(editor, trustedContext)
   let rawRows = []
   const diagnostics = [...patch.diagnostics]
   if (typeof patch.text === 'string') {
@@ -213,8 +372,8 @@ function findSettingsRow(editor) {
   return rows.length === 1 ? rows[0] : undefined
 }
 
-function readRawPatch(editor) {
-  return rawPatchInfo(editor).text
+function readRawPatch(editor, pathContext) {
+  return rawPatchInfo(editor, pathContext).text
 }
 
 /** 固定十项 values 与七键 gateWords 的规范快照；changed key 不参与单独哈希。 */
@@ -240,8 +399,8 @@ export function stableSnapshot(snapshot) {
 
 /** GET 只读统一全局状态；旧行/raw patch 只在当前全局值缺项时作为迁移来源。 */
 /** 只从唯一 canonical authority 解析；conflict 不回落旧 raw projection。 */
-function readUnifiedState(editor) {
-  const authority = inspectSettingsAuthority(editor)
+function readUnifiedState(editor, pathContext) {
+  const authority = inspectSettingsAuthority(editor, pathContext)
   if (authority.status !== 'ok') return {
     conflict: true,
     located: authority.effectiveCount > 0 || authority.rawCount > 0,
@@ -255,7 +414,7 @@ function readUnifiedState(editor) {
     settingsRow: authority,
   }
   const settingsRow = findSettingsRow(editor)
-  const rawPatch = readRawPatch(editor)
+  const rawPatch = readRawPatch(editor, pathContext)
   const resolved = resolveUnifiedConfig({ settingsValues: { ...authority.selectedConfig.values, gateWords: authority.selectedConfig.gateWords }, readPatch: () => rawPatch })
   const overridden = {}
   const sources = {}
@@ -326,7 +485,7 @@ function cacheProfileSync(profileSync) {
 }
 
 /** GET 无参缓存兜底：terminal 缓存内 Web patch 指纹与磁盘现状不一致时标记 stale；只读，不触发同步。 */
-function cacheProfileSyncWithStale(profileSync, editor) {
+function cacheProfileSyncWithStale(profileSync, editor, pathContext) {
   const base = cacheProfileSync(profileSync)
   try {
     const fingerprint = profileSync !== null && typeof profileSync === 'object' && profileSync.rawWebPatchFingerprint !== null && typeof profileSync.rawWebPatchFingerprint === 'object'
@@ -334,9 +493,9 @@ function cacheProfileSyncWithStale(profileSync, editor) {
       : undefined
     const cachedSha256 = fingerprint !== undefined && typeof fingerprint.patchSha256 === 'string' && fingerprint.patchSha256 !== '' ? fingerprint.patchSha256 : undefined
     if (cachedSha256 === undefined || editor === undefined || editor === null) return base
+    const readable = authorizedDocumentRead(editor, pathContext)
+    const bytes = readFileSync(readable.realPath)
     const documentPath = editor.documentPath
-    if (typeof documentPath !== 'string' || documentPath.trim() === '') return base
-    const bytes = readFileSync(documentPath)
     const diskSha256 = createHash('sha256').update(bytes).digest('hex')
     if (diskSha256 === cachedSha256) return base
     const cachedBytes = Number.isFinite(fingerprint.patchBytes) ? fingerprint.patchBytes : null
@@ -353,8 +512,8 @@ function requestProfileSync(profileSync, request) {
   return { ...profileSync, pending: false, cache: false, source: 'request-result', request: { ...request }, terminalMatch: same }
 }
 
-function proPayload(editor, profileSync, profileView) {
-  const state = readUnifiedState(editor)
+function proPayload(editor, profileSync, profileView, pathContext) {
+  const state = readUnifiedState(editor, pathContext)
   const fields = state.conflict === true ? [] : HOST_ROW_SETTING_DEFINITIONS.map((definition) => publicField(
     definition,
     state.values[definition.key],
@@ -386,13 +545,17 @@ function conflictProfileSync(authority) {
 }
 
 function createApiHandler(ctx, syncEditor, getProfileSync) {
-  const responseForProfile = (editor, profileSync, webApplied, request, projectionApplied = true) => {
-    const view = request === undefined ? cacheProfileSync(profileSync) : requestProfileSync(profileSync, request)
+  const responseForProfile = (editor, profileSync, webApplied, request, projectionApplied = true, pathContext) => {
+    const rawStatus = profileSync !== null && profileSync !== undefined ? profileSync.status : 'pending'
+    const notApplicable = rawStatus === 'not-applicable'
+    const view = notApplicable
+      ? { ...(profileSync || {}), pending: false, cache: false, source: 'request-result', ...(request === undefined ? {} : { request: { ...request } }), terminalMatch: false }
+      : request === undefined ? cacheProfileSync(profileSync) : requestProfileSync(profileSync, request)
     const status = view !== null && view !== undefined ? view.status : 'pending'
     const matched = view !== null && view !== undefined && view.terminalMatch === true
-    const overall = status === 'conflict' ? 'conflict' : status === 'synced' && matched ? 'synced' : status === 'not-installed' ? 'not-installed' : 'partial'
-    const httpStatus = status === 'conflict' || (request !== undefined && matched !== true) ? 409 : status === 'failed' || status === 'unavailable' || status === 'drift-detected' ? 502 : 200
-    const body = { ...proPayload(editor, profileSync, view), web: { applied: webApplied === true }, projection: { applied: projectionApplied === true, owner: projectionApplied === true ? SETTINGS_ROW_ID : undefined }, overall }
+    const overall = notApplicable ? 'not-applicable' : status === 'conflict' ? 'conflict' : status === 'synced' && matched ? 'synced' : status === 'not-installed' ? 'not-installed' : 'partial'
+    const httpStatus = notApplicable ? 200 : status === 'conflict' || (request !== undefined && matched !== true) ? 409 : status === 'failed' || status === 'unavailable' || status === 'drift-detected' ? 502 : 200
+    const body = { ...proPayload(editor, profileSync, view, pathContext), web: { applied: webApplied === true && !notApplicable }, projection: { applied: projectionApplied === true, owner: projectionApplied === true ? SETTINGS_ROW_ID : undefined }, overall }
     if (request !== undefined && profileSync !== null && profileSync !== undefined) body.request = { ...request }
     return { httpStatus, body }
   }
@@ -403,20 +566,21 @@ function createApiHandler(ctx, syncEditor, getProfileSync) {
     try {
       const editor = typeof ctx.get === 'function' ? ctx.get('configEditor') : undefined
       if (editor === undefined || editor === null || typeof editor.edit !== 'function') return json(res, 500, { error: 'configEditor service is unavailable' })
+      const pathContext = settingsPathContext(ctx, editor)
       if (req.method === 'GET' && path === '/api/dsh-extra-plan-settings/pro-config') {
-        const authority = inspectSettingsAuthority(editor)
-        if (authority.status !== 'ok') return json(res, 409, { ...proPayload(editor, getProfileSync()), error: 'settings-row conflict', settingsRow: authority, projection: { applied: false }, overall: 'conflict' })
+        const authority = inspectSettingsAuthority(editor, pathContext)
+        if (authority.status !== 'ok') return json(res, 409, { ...proPayload(editor, getProfileSync(), undefined, pathContext), error: 'settings-row conflict', settingsRow: authority, projection: { applied: false }, overall: 'conflict' })
         const requestedRunId = url.searchParams.get('saveRunId')
         const cached = getProfileSync()
         if (requestedRunId !== null && requestedRunId !== '') {
           if (cached === undefined || cached === null || cached.saveRunId !== requestedRunId) {
             const stale = { ...cacheProfileSync(cached), status: 'conflict', reason: 'terminal-saveRunId-mismatch', terminalMatch: false }
-            return json(res, 409, { ...proPayload(editor, cached, stale), error: 'terminal saveRunId mismatch', terminalMatch: false, overall: 'conflict' })
+            return json(res, 409, { ...proPayload(editor, cached, stale, pathContext), error: 'terminal saveRunId mismatch', terminalMatch: false, overall: 'conflict' })
           }
           const matched = { ...cached, pending: false, cache: false, source: 'terminal-query', terminalMatch: true, request: { saveRunId: cached.saveRunId, syncRevision: cached.syncRevision, snapshotHash: cached.snapshotHash, trigger: cached.trigger } }
-          return json(res, 200, { ...proPayload(editor, cached, matched), overall: cached.status === 'synced' ? 'synced' : 'partial' })
+          return json(res, 200, { ...proPayload(editor, cached, matched, pathContext), overall: cached.status === 'synced' ? 'synced' : 'partial' })
         }
-        return json(res, 200, { ...proPayload(editor, cached, cacheProfileSyncWithStale(cached, editor)), overall: 'cache' })
+        return json(res, 200, { ...proPayload(editor, cached, cacheProfileSyncWithStale(cached, editor, pathContext), pathContext), overall: 'cache' })
       }
       if (req.method === 'PUT' && path === '/api/dsh-extra-plan-settings/pro-config') {
         let body
@@ -431,12 +595,12 @@ function createApiHandler(ctx, syncEditor, getProfileSync) {
           const key = definition.key
           if (Object.prototype.hasOwnProperty.call(body, key) && !validateSettingValue(definition, body[key])) return json(res, 400, { error: key + ' has an invalid value' })
         }
-        const authority = inspectSettingsAuthority(editor)
-        if (authority.status !== 'ok') return json(res, 409, { ...proPayload(editor, getProfileSync()), error: 'settings-row conflict', settingsRow: authority, profileSync: conflictProfileSync(authority), projection: { applied: false }, overall: 'conflict' })
+        const authority = inspectSettingsAuthority(editor, pathContext)
+        if (authority.status !== 'ok') return json(res, 409, { ...proPayload(editor, getProfileSync(), undefined, pathContext), error: 'settings-row conflict', settingsRow: authority, profileSync: conflictProfileSync(authority), projection: { applied: false }, overall: 'conflict' })
         const row = findSettingsRow(editor)
-        if (row === undefined) return json(res, 409, { ...proPayload(editor, getProfileSync()), error: 'settings-row conflict', settingsRow: authority, profileSync: conflictProfileSync(authority), projection: { applied: false }, overall: 'conflict' })
-        const state = readUnifiedState(editor)
-        if (state.conflict === true) return json(res, 409, { ...proPayload(editor, getProfileSync()), error: 'settings-row conflict', settingsRow: state.authority, profileSync: conflictProfileSync(state.authority), projection: { applied: false }, overall: 'conflict' })
+        if (row === undefined) return json(res, 409, { ...proPayload(editor, getProfileSync(), undefined, pathContext), error: 'settings-row conflict', settingsRow: authority, profileSync: conflictProfileSync(authority), projection: { applied: false }, overall: 'conflict' })
+        const state = readUnifiedState(editor, pathContext)
+        if (state.conflict === true) return json(res, 409, { ...proPayload(editor, getProfileSync(), undefined, pathContext), error: 'settings-row conflict', settingsRow: state.authority, profileSync: conflictProfileSync(state.authority), projection: { applied: false }, overall: 'conflict' })
         const current = effectiveRowConfig(row) || {}
         const patch = {}
         for (const definition of SETTING_DEFINITIONS) {
@@ -453,7 +617,7 @@ function createApiHandler(ctx, syncEditor, getProfileSync) {
         if (!isDeepStrictEqual(nextConfig, current)) await editor.edit(row.entry, (latest, inherited) => restateSettingsConfig(latest, inherited, patch))
         const profileSync = await syncEditor(editor, { trigger: 'api-put' })
         const request = profileSync !== null && profileSync !== undefined && profileSync.request !== undefined ? profileSync.request : undefined
-        const response = responseForProfile(editor, profileSync, true, request, true)
+        const response = responseForProfile(editor, profileSync, true, request, true, pathContext)
         return json(res, response.httpStatus, response.body)
       }
       return json(res, 404, { error: 'not found' })
@@ -505,12 +669,14 @@ export function apply(ctx) {
     return result
   }
   const syncEditor = async (editor, options = {}) => {
+    const pathContext = settingsPathContext(ctx, editor)
+    const profileFacts = profileFactsOf(ctx)
     const trigger = typeof options.trigger === 'string' && options.trigger !== '' ? options.trigger : 'api-put'
     const request = { saveRunId: randomUUID(), syncRevision: ++syncRevision, snapshotHash: null, trigger }
     try {
-      const authority = inspectSettingsAuthority(editor)
+      const authority = inspectSettingsAuthority(editor, pathContext)
       if (authority.status !== 'ok') return conflictResult(authority, request)
-      const state = options.snapshot === undefined ? readUnifiedState(editor) : undefined
+      const state = options.snapshot === undefined ? readUnifiedState(editor, pathContext) : undefined
       const rawSnapshot = options.snapshot === undefined
         ? { values: { ...state.values }, gateWords: structuredClone(state.gateWords) }
         : { values: { ...options.snapshot.values }, gateWords: structuredClone(options.snapshot.gateWords) }
@@ -518,13 +684,15 @@ export function apply(ctx) {
       request.snapshotHash = checked.snapshotHash
       const result = await synchronizer.enqueue({
         documentPath: documentPathOf(editor),
+        pathContext,
+        profileFacts,
         snapshot: { values: checked.values, gateWords: checked.gateWords },
         env: environmentSnapshot(),
         saveRunId: request.saveRunId,
         syncRevision: request.syncRevision,
         snapshotHash: request.snapshotHash,
         trigger: request.trigger,
-        associated: true,
+        associated: profileFacts.kind === 'web',
       })
       return result
     } catch (error) {
@@ -568,7 +736,7 @@ export function apply(ctx) {
     path: '/api/dsh-extra-plan-settings',
     handler: createApiHandler(ctx, (editor, options) => syncEditor(editor, options), () => lastTerminalCache),
   }), 'dsh-extra-plan-settings: api route'))
-  ctx.inject(['configEditor'], (child) => child.effect(() => mountPresetSync(child, { onSettledSettings: settledSettings, onSettledError: settledError }), 'dsh-extra-plan-settings: sync and adapter lifecycle'))
+  ctx.inject(['configEditor'], (child) => child.effect(() => mountPresetSync(child, { onSettledSettings: settledSettings, onSettledError: settledError, installAnchor: absoluteRoot(safeContextGet(ctx, 'profileContext')?.installAnchor) }), 'dsh-extra-plan-settings: sync and adapter lifecycle'))
 }
 
 export { SETTINGS_ROW_ID }

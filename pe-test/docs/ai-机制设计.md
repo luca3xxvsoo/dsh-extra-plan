@@ -4,6 +4,11 @@
 
 ## 一、四级机械锚点与 gateWords
 
+- 双根合同 B1：维护 W 由可信源树布局锚定，部署/会话 W 取运行时 `session.header.cwd`；两者都不取 `process.cwd`、插件安装目录或普通文件 `dirname`。H 只来自真实 Host ctx/精确能力，或维护测试显式 `--host-root` 加精确 `--profile`/`--file`/会话目标；`DSH_HOME`/`DSH_PROFILE`/`SESSION_ID` 的存在不能授权，`DSH_INSTALL_ROOT`+host-preload 仅授只读代码根，不授数据 H。
+- 双根合同 B2：`createPathContext` 只接收已分类的 `workspaceRoot`、`hostDataRoot` 与可信 Host capability；原始根先经真实路径/链接校验，非法根、无盘符或 drive-relative、URI/变量/NUL、前缀相似 Other 与 native junction 在任何扫描或内容 IO 前拒绝。`resolveWorkspacePath`/`resolveHostPath` 只计算目标，不隐式建目录，实际 IO 仍由 `assertAllowedPath`、`validateReadTarget`、`prepareWriteTarget` 复核最近存在父级、真实身份、链接和用途；普通文件与代码只读能力不能上抬父根。
+- 双根合同 B3：相对值按用途固定基准——普通相对值、CLI、覆盖、任务源、工件/fixture/temp/home/cache/capture/report 归 W，运行时账本按用途归 H；不以 `exists` 在两根间试探，不展开 `~`/环境变量。无选择为 `NOT-RUN`/目标 IO 0；会话仅以 `--session-dir`，或 `--session`+`--sessions-dir` 精确选择，子发现必须显式 `--discover-children`，最多 128 候选、每个日志头 262144 字节，坏头/超限为 `INCOMPLETE`；通用 `pathBoundary` 默认只产唯一 W 报告，可选 W 审计最多 128 条，不依赖旧批次；H/W 合法重叠按用途分类而非一概拒绝。
+- 双根合同 B4：Host 文档/数据的维护取证只经精确能力只读，Host 代码只读；测试与生成暂存、报告、备份和回滚只写 W。Host `--archive`/清理 `--apply` 在 H IO 前拒绝且零 Host 写，W 的统计、归档、清理、备份与回滚功能保留；无根、冲突或不合法输入在对应 IO 前失败。
+
 - 状态不是四次提问，而是事件流推导的 `{ route, purpose, clarified, approved, channelBroken }`。主会话顺序固定为 `route → purpose → clarify`；ordinary（普通）探查/澄清可在路由前发生。
 - route 规划词后，第一个 purpose ask（目的提问）必须是当前 `config.gateWords` 的二选一；只有 `route=plan` 且目的已定后，澄清答复才置 `clarified=true`。`save_probe` 与 `subagent_plan` 需要目的和澄清，执行类委派只认独立的 `approved` 锚点。
 - 闸门拒绝 `kind:'denied'` 不清除阶段状态，便于按拒绝文案修正后重提；用户取消/中断清 `route/purpose/clarified/approved`；通道级故障只置 `channelBroken` 逃生位；新 user/message 切断旧事件窗。
@@ -31,7 +36,7 @@
 - planner 只使用 `plannerModel`；executor、reviewer、probe、workflow/ralph worker 等非 planner child 只使用 `otherAgentModel`。已显式指定的直接父 provider/model 优先，不被默认模型覆盖。
 - `crossProviderPlannerModel=false/缺失/非法` 走旧的单 provider advisory（建议）路径；严格开启时枚举 provider，只对精确命中的模型做真实 OK probe，所有候选完成后按发起顺序收集、排序，再返回最终路由；候选失败后必须验证顶层主会话 fallback（回退）。
 - probe 是有界并发、独立超时/AbortController 的真实调用，可能有网络、额度与计费副作用；它不是目录命中，也不是 `resolveCallConfig` 的替代。成功与失败 promise 均按 Agent 隔离缓存，不跨角色/Agent 共享。
-- 唯一详版与取证入口：[model-routing.js](../../plugins/dsh-extra-plan/lib/model-routing.js)、[流程备查](ai-流程备查.md#⑩-规划子代理)、[step-07](../tools/step-07-子代理模型与引导取证.mjs)。step-07 必须显式提供 `SESSION_ID` 和 `PLANNER_PROMPT_SUFFIX`，request/header 是 attempted（尝试路由），assistant/message source 才是 actual provenance（实际来源）。
+- 唯一详版与取证入口：[model-routing.js](../../plugins/dsh-extra-plan/lib/model-routing.js)、[流程备查](ai-流程备查.md#⑩-规划子代理)、[step-07](../tools/step-07-子代理模型与引导取证.mjs)。step-07 必须显式提供 `--session`+`--sessions-dir`（会话在宿主数据根时加 `--host-root`，取直接 child 加 `--discover-children`）和 `PLANNER_PROMPT_SUFFIX`（空串也算显式提供），`SESSION_ID` 只作报告/输出字段；request/header 是 attempted（尝试路由），assistant/message source 才是 actual provenance（实际来源）。
 
 ## 五、A/C/M 投影、P2-2 与配置默认链
 
@@ -49,10 +54,10 @@
 - `agent/disposed` 是 emit/void，宿主不等待异步 Promise；因此必须在监听器同步路径先做 final fold，再处理 pending probe，再按 sessionId 回收 Map、notice、rootCall 与 cursor。每次 `agent/pre-step` 在 await next 前捕获本次 payload.agent，预算、suffix、sessionEvents 不读取 apply 级共享 Agent。重复 disposed 幂等，其它 session 不受影响。
 - usage 增量以宿主 `session.seq` 水位配合 `snapshotEvents(from,to)` 读取新增区间；水位不变直接返回，日志截断或首次折叠才回退全量，`seq` 去重后 append 成功才推进 cursor。writer 的 cursor 读取、事件折叠、ledger append 与 cursor 写回在同一把跨进程锁内；锁等待约 1 秒超时静默返回 `delayed`，ledger、内存水位和 cursor 均不推进，后续 fold 补记。生产热路径不每趟同时跑全量和增量；全量对拍只在验收回归运行。
 - 当前成功消息账本独立写入 `ledger-v2.jsonl`，每行固定 `schemaVersion: 2`，来源仅为 `assistant/message` 的 usage；身份同时记录 `rootSessionId`、自身 `sessionId`、`parentSessionId`、`agentPreset`、`delegationDepth`、精确 `role` 与消息 `model/provider`。主会话 root 为自身；一级 child 的 root 直接取 `parentSessionId`，不依赖父 Agent 在线；更深层沿 registry 最多 8 层求 root，断链或循环仍生成合法行并将 `rootSessionId` 置空；只有非法 context 拒绝落账。`rootSessionId` 与 `agentPreset` 的空字符串是合法值，不能据此拒绝。
-- V2 只落四桶 `inputTokens`、`cacheReadTokens`、`cacheWriteTokens`、`outputTokens`，命中=cacheRead，未命中=input+cacheWrite，输出=output，总量=四桶和；`reasoningTokens` 不落盘、不统计，`attempt` 不参与统计。writer 输出固定15键；step-99 `--archive` 的 strict archive 只接受这15键且允许 `rootSessionId`/`agentPreset` 为空字符串，默认统计则宽松读取 `schemaVersion=2` 行并以空值/零兼容缺失字段。输出与归档聚合均不生成调用计数列。旧 V1 `ledger.jsonl` 与旧 cursor 只读留存，零自动迁移、改写或清空。
+- V2 只落四桶 `inputTokens`、`cacheReadTokens`、`cacheWriteTokens`、`outputTokens`，命中=cacheRead，未命中=input+cacheWrite，输出=output，总量=四桶和；`reasoningTokens` 不落盘、不统计，`attempt` 不参与统计。writer 输出固定15键；严格归档仍按完整九字段身份、累计 `seq` 水位和 `covered` 去重，生产 writer 的 active/archive/cursor 合同不变；维护 Host 数据取证只读，Host `--archive`/清理 `--apply` 提前拒绝且零写，W 模式的 archive/备份/回滚保留。输出与归档聚合均不生成调用计数列，旧 V1 `ledger.jsonl` 与旧 cursor 只读留存，零自动迁移、改写或清空。
 - cursor 文件 ENOENT 或 0 字节/纯空白按空表自愈（0 字节不可能存在任何 session 基准，一次性提示后按空表处理、下次写入重建）；损坏、解析失败或根值非对象时首次告警并保留原始字节，避免覆盖其它 session 的去重基准；cursor 项只接受 `{seq,index}`，旧数字形状视为无效。四桶全零的事件不写行；非法 context 不推进 cursor，合法空 `rootSessionId`/`agentPreset` 不属于非法；writer 锁忙或 timeout 静默返回 `delayed` 且不推进 cursor，后续 fold 补记；stale-lock 返回可见诊断，仅由维护者核实 owner 后显式维护。
 - 共享锁合同固定为 active 路径加 `.lock`，即 `ledger-v2.jsonl.lock`；锁文件 JSON 记录 owner PID、唯一 token 与创建时间。`acquireUsageLedgerLock` 只做原子独占创建和有界短等，并返回 owner 诊断；活 PID 锁绝不强删，死 PID 只返回 `stale-lock`，canonical lock 保持不变。writer 每实例对 stale-lock 最多发出一次可见告警，维护者必须先核实 owner 后显式维护，不执行接管或删除；`releaseUsageLedgerLock` 仅在 token 匹配时释放自己的锁，失败必须显式返回失败状态。
-- 默认统计在锁内取得同目录 `ledger-v2.archive.jsonl`（archive）与 `ledger-v2.jsonl`（active）快照后立即释放，锁外解析且零写，读取口径宽松；`--archive` 可在 DSH 运行中调用，持锁覆盖快照、严格校验、历史聚合、发布和清空 active，预算约 30 秒，cursor 不读写，AI 思考不持锁。严格归档先由 `assertUniqueArchiveRows` 拒绝 archive 内同一完整身份的多条累计行，再由 `summarizeSourceRows` 按含 `provider` 的完整九字段身份计算 source-aware 水位：archive 每身份 `seq=maxSeq`，active 同身份 `seq` 不大于该水位的重放行跳过并计入 `covered`。成功后 archive 保留聚合历史、active 为空；timeout、stale-lock、非法数据或发布失败在发布前/回滚后保持 canonical 一致；release 成功后 writer 才可继续追加并由 fold 补记；release 失败只报告 `failed`/`release-failed`，需按锁诊断/维护处理，已提交写入不伪装回滚。
+- 生产 writer 的默认统计与严格归档合同保持原样：active/archive 快照、完整九字段身份的 `seq` 水位、`covered`、发布和 cursor 语义只适用于其生产 writer。维护 `step-99-用量统计.mjs` 的 Host 统计必须有显式 `--host-root` 与精确目标，稳定观察最多 2 次；锁忙或内容变化记 `INCOMPLETE`，只把工作快照/临时文件落 W，不称 Host 统计锁定或原子一致。维护 Host `--archive`/清理 `--apply` 在 H 内容 IO 前拒绝且零 Host 写；W 的统计、归档、清理、备份和回滚功能保持。
 
 ## 当前安全结论索引
 
@@ -74,7 +79,7 @@
 
 ## 七、局部安全合同指针
 
-- `lib/shell-mutation.js` 的 pwsh/bash 识别是位置敏感的写边界：段首裸写词、语法级写形态、连续剥离 sudo/env/nohup/command wrapper、带值 wrapper 选项（含 sudo 的 `-p`/`--prompt`；`--prompt=value` 是单 token）与 NAME=VALUE 环境赋值、嵌套 shell 与重定向例外必须以源码纯函数为准，不能用文档替代。
+- `lib/shell-mutation.js` 的 pwsh/bash 识别是位置敏感的写边界：段首裸写词、语法级写形态、连续剥离 sudo/env/nohup/command wrapper、带值 wrapper 选项（含 sudo 的 `-p`/`--prompt`；`--prompt=value` 是单 token）与 NAME=VALUE 环境赋值、嵌套 shell 与重定向例外必须以源码纯函数为准，不能用文档替代；`mutationTextEvidence` 返回 null 或 `{rule,value}`，`pwshMutationEvidence`/`bashMutationEvidence` 与旧布尔 matcher 同源，拒因只追加规则名及白名单 bare 命中词，不回显命令、路径或秘密。
 - `lib/shell-mutation.js` 的 PWSH_MUTATION 识别裸 `>`/`>>`、`1-6` 流号和 `*>`/`*>>`，但保留 `2>&1`、`1>&2`、`*>&1` 等 stream→stream 合并例外；BASH_MUTATION 原合同不变。
 - `lib/sdk-text-cache.js` 只做 agent-keyed、非 session 的 JSON-like 指纹缓存；字段/数组顺序、getter/cycle 失败、dispose 与迟到 Promise 都是局部合同。
 - QQBot 自愈只处理拥有本插件且满足双锚点的 profile；迁移写前备份、写后 YAML 校验失败恢复，链接仅在 ENOENT 时建立，实体/异链保留，整体不阻断。当前机制由 `plugins/dsh-extra-plan-qqbot/lib/heal.js` 与对应 step-01 夹具共同锁定。
@@ -99,4 +104,4 @@
 - 独占资源是稳定的声明边界，用来标识共享输出目录、缓存或固定环境等非修改文件冲突；同资源的数字任务应归并执行组，不同验收组声明同资源应合并。资源声明不能证明隐藏共享状态、物理别名、命令无副作用或代理实际遵守范围。
 - 检查定义有唯一身份，可由多个任务、收尾或全局引用；完全相同的取证方式、工作目录和按序检查行不得另建重复 ID。公共检查只由一个领取者在同一冻结源与条件下运行，其他引用复用原始结果；执行组 G 与验收组 R 是独立命名空间，不要求对应。
 - 只读复核由 reviewer 在只读权限内完成；执行取证由已获批准的执行者或直行主会话运行，reviewer 只读原始 stdout/stderr、退出码和源文件后独立判定。取证方式是职责声明，不自动放宽 route/approved、文件写入或命令安全权限。
-- 结构、关系、交叉引用和摘要边界必须早于 context/base、证据 IO 与单次发布拒绝；合法正文逐字保存，structured output 仍只有 `paths`，render 只是摘要，不是父会话唯一事实源。失败不跨调用恢复旧事务，AI 必须根据首错/阶段主动重试。任何源文件变化都会使受影响任务、依赖消费者和共享检查的旧证据失效；无法证明无影响时按固定顺序复验。main 最后汇总任务、检查、收尾和全局覆盖，漏项、矛盾或过期证据不得宣布通过。
+- 结构、关系、交叉引用和摘要边界必须早于 context/base、证据 IO 与单次发布拒绝；合法正文逐字保存，structured output 仍只有 `paths`；`formatSavePlanSummary` 仍只生成内部确定性 summary 并受 12000 上限约束，`output.render` 不读取原始 plan/checklist、不重建 summary，只把两个返回路径经 String 转换后用单个换行符放入唯一 text ContentBlock。失败不跨调用恢复旧事务，AI 必须根据首错/阶段主动重试；事务发布、错误路径和 PASS/FAIL/SKIP/HUMAN/NOT-RUN 分类不变。任何源文件变化都会使受影响任务、依赖消费者和共享检查的旧证据失效；无法证明无影响时按固定顺序复验。main 最后汇总任务、检查、收尾和全局覆盖，漏项、矛盾或过期证据不得宣布通过。

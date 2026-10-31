@@ -5,10 +5,10 @@
 
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { join, dirname } from 'node:path'
+import { join, dirname, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
+import { createPathContext, resolveHostPath, resolveWorkspacePath, validateReadTarget } from './path-policy.js'
 import {
   HOST_ROW_IDS,
   HOST_ROW_LEAF_KEYS,
@@ -33,23 +33,45 @@ import {
 import { parsePresetYaml, resolveSetting } from './preset-settings.js'
 import { ROLE_IDS } from './role-contract.js'
 
-const localRequire = createRequire(import.meta.url)
-function loadOfficialAgentPreset() {
+const officialAgentPresetByAnchor = new Map()
+function errorWithCause(message, cause) {
+  const error = new Error(message)
+  error.cause = cause
+  return error
+}
+
+function assertInstallAnchor(installAnchor) {
+  if (typeof installAnchor !== 'string' || installAnchor.trim() === '' || !isAbsolute(installAnchor) || installAnchor.split(/[\\/]/).pop() !== 'package.json') {
+    throw new Error('extra-plan: installAnchor 必须是绝对 dsh 应用 package.json 文件')
+  }
+  if (!existsSync(installAnchor)) throw new Error('extra-plan: installAnchor 不存在：' + installAnchor)
+  let manifest
   try {
-    const loaded = localRequire('@deepseek-ai/dsh-agent-preset')
-    return loaded !== null && typeof loaded === 'object' && loaded.default !== undefined ? loaded.default : loaded
-  } catch (firstError) {
-    const home = process.env.APPDATA || join(homedir(), 'AppData', 'Roaming')
-    try {
-      const officialRequire = createRequire(join(home, 'npm', 'node_modules', '@deepseek-ai', 'dsh', 'package.json'))
-      const loaded = officialRequire('@deepseek-ai/dsh-agent-preset')
-      return loaded !== null && typeof loaded === 'object' && loaded.default !== undefined ? loaded.default : loaded
-    } catch {
-      return undefined
-    }
+    manifest = JSON.parse(readFileSync(installAnchor, 'utf8'))
+  } catch (cause) {
+    throw errorWithCause('extra-plan: installAnchor manifest 无法读取：' + installAnchor, cause)
+  }
+  if (manifest === null || typeof manifest !== 'object' || manifest.name !== '@deepseek-ai/dsh') {
+    throw new Error('extra-plan: installAnchor 不是 @deepseek-ai/dsh 应用 package.json：' + installAnchor)
+  }
+  return installAnchor
+}
+
+function loadOfficialAgentPreset(installAnchor) {
+  const cached = officialAgentPresetByAnchor.get(installAnchor)
+  if (cached !== undefined) return cached
+  try {
+    const anchor = assertInstallAnchor(installAnchor)
+    const officialRequire = createRequire(anchor)
+    const loaded = officialRequire('@deepseek-ai/dsh-agent-preset')
+    const adapter = loaded !== null && typeof loaded === 'object' && loaded.default !== undefined ? loaded.default : loaded
+    if (adapter === null || adapter === undefined) throw new Error('@deepseek-ai/dsh-agent-preset 导出为空')
+    officialAgentPresetByAnchor.set(anchor, adapter)
+    return adapter
+  } catch (cause) {
+    throw errorWithCause('extra-plan: @deepseek-ai/dsh-agent-preset 官方 adapter 不可用（installAnchor=' + String(installAnchor) + '）', cause)
   }
 }
-const OfficialAgentPreset = loadOfficialAgentPreset()
 
 const PRESET_ID = 'extra-plan'
 export const CORE_FILES = ['preset.yml', 'agent.cordis.yml']
@@ -65,12 +87,76 @@ export const ROLE_DEFINITION_FILES = Object.freeze(ROLE_IDS.map((roleId) => join
 /** 角色 definition 里固定前两行：dsh-persona 与 dsh-extra-plan。 */
 export const ROLE_DEFINITION_LEADING_ROW_IDS = Object.freeze(['persona', 'extra-plan'])
 
-export function contentHash(dir) {
+const ASSET_CAPABILITY = 'dsh-extra-plan-assets'
+const ASSET_RESOURCE_CONTEXT = createPathContext({
+  hostCapabilities: [{
+    name: ASSET_CAPABILITY,
+    path: ASSET_DIR,
+    type: 'directory',
+    access: 'read',
+    purpose: ASSET_CAPABILITY,
+  }],
+})
+
+function assetReadTarget(filePath) {
+  const candidate = resolveHostPath(ASSET_RESOURCE_CONTEXT, filePath, {
+    capability: ASSET_CAPABILITY,
+    purpose: ASSET_CAPABILITY,
+  })
+  return validateReadTarget(ASSET_RESOURCE_CONTEXT, candidate, { expectedType: 'file' }).path
+}
+
+function readAssetBytes(filePath, label) {
+  try {
+    return readFileSync(assetReadTarget(filePath))
+  } catch (error) {
+    if (error !== null && typeof error === 'object' && error.code === 'TARGET_MISSING') {
+      throw new Error(label + ' 缺失：' + filePath)
+    }
+    throw error
+  }
+}
+
+function resourceReadTarget(filePath, options = {}) {
+  const context = options.pathContext
+  if (context === undefined || context === null) throw new Error('extra-plan: 自定义资源读取缺少 pathContext')
+  const kind = options.kind
+  const pathOptions = {
+    ...(options.capability === undefined ? {} : { capability: options.capability }),
+    purpose: options.purpose === undefined ? 'preset-resource' : options.purpose,
+  }
+  const candidate = kind === 'host'
+    ? resolveHostPath(context, filePath, pathOptions)
+    : kind === 'workspace'
+      ? resolveWorkspacePath(context, filePath, pathOptions)
+      : (() => { throw new Error('extra-plan: 自定义资源 kind 必须为 workspace 或 host') })()
+  return validateReadTarget(context, candidate, { expectedType: 'file' }).path
+}
+
+function readResourceBytes(filePath, options = {}) {
+  try {
+    return readFileSync(resourceReadTarget(filePath, options))
+  } catch (error) {
+    if (error !== null && typeof error === 'object' && error.code === 'TARGET_MISSING') return null
+    throw error
+  }
+}
+
+export function contentHash(dir, options = {}) {
   const h = createHash('sha256')
   for (const file of CORE_FILES) {
     const filePath = join(dir, file)
-    if (!existsSync(filePath)) return null
-    h.update(readFileSync(filePath))
+    const bytes = dir === ASSET_DIR && options.pathContext === undefined && options.kind === undefined
+      ? (() => {
+          try { return readFileSync(assetReadTarget(filePath)) }
+          catch (error) {
+            if (error !== null && typeof error === 'object' && error.code === 'TARGET_MISSING') return null
+            throw error
+          }
+        })()
+      : readResourceBytes(filePath, options)
+    if (bytes === null) return null
+    h.update(bytes)
   }
   return h.digest('hex')
 }
@@ -449,8 +535,7 @@ export function parsePresetDefinition(text) {
 }
 
 export function assetDefinition() {
-  if (!existsSync(ASSET_DEFINITION_FILE)) throw new Error('预设 definition 缺失：' + ASSET_DEFINITION_FILE)
-  return parsePresetDefinition(readFileSync(ASSET_DEFINITION_FILE, 'utf8'))
+  return parsePresetDefinition(readAssetBytes(ASSET_DEFINITION_FILE, '预设 definition').toString('utf8'))
 }
 
 /** 角色 definition 校验：不套用主预设的 17 条/三组契约，只固定 id/name/description/order 与前两行。 */
@@ -472,8 +557,7 @@ export function roleDefinitionOf(roleId) {
   const index = ROLE_IDS.indexOf(roleId)
   if (index === -1) throw new Error('未知角色预设：' + roleId)
   const file = ROLE_DEFINITION_FILES[index]
-  if (!existsSync(file)) throw new Error('角色 definition 缺失：' + file)
-  return assertRoleDefinition(parsePresetYaml(readFileSync(file, 'utf8')), roleId, '角色 definition ' + roleId)
+  return assertRoleDefinition(parsePresetYaml(readAssetBytes(file, '角色 definition').toString('utf8')), roleId, '角色 definition ' + roleId)
 }
 
 /** 注册顺序：主 definition 在前，4 个角色 definition 按 order 101..104 在后。 */
@@ -604,8 +688,7 @@ export function readLegacyPresetState(text) {
  */
 export async function syncPreset(options = {}) {
   const templateFile = join(ASSET_DIR, 'agent.cordis.yml')
-  if (!existsSync(templateFile)) throw new Error('预设模板缺失：' + templateFile)
-  const templateText = readFileSync(templateFile, 'utf8')
+  const templateText = readAssetBytes(templateFile, '预设模板').toString('utf8')
   assertTemplateGateWords(templateText)
   const currentHash = contentHash(ASSET_DIR)
   if (currentHash === null) throw new Error('预设资产缺失：' + ASSET_DIR)
@@ -672,10 +755,49 @@ async function applyPlan(editor, rows, planned, isActive = () => true) {
   }
 }
 
-function readRawPatch(editor) {
-  const path = editor !== undefined && typeof editor.documentPath === 'string' ? editor.documentPath : ''
-  if (path === '' || !existsSync(path)) return undefined
-  try { return readFileSync(path, 'utf8') } catch { return undefined }
+function trustedProfileContextOf(ctx) {
+  const direct = ctx !== null && typeof ctx === 'object' ? ctx.profileContext : undefined
+  if (direct !== undefined) return direct
+  if (ctx !== null && typeof ctx === 'object' && typeof ctx.get === 'function') {
+    try { return ctx.get('profileContext') } catch { return undefined }
+  }
+  return undefined
+}
+
+function withProfilePatchCapability(existing, patchPath) {
+  if (Array.isArray(existing)) return [...existing, { name: 'profilePatch', path: patchPath, type: 'file', access: 'read', purpose: 'config-editor' }]
+  return { ...(existing !== null && typeof existing === 'object' ? existing : {}), profilePatch: { path: patchPath, type: 'file', access: 'read', purpose: 'config-editor' } }
+}
+
+function syncPathContext(ctx, options, patchPath) {
+  const supplied = options.pathContext
+  if (supplied !== undefined && (patchPath === undefined || supplied.hostCapabilities?.profilePatch !== undefined)) return supplied
+  const capabilities = patchPath === undefined ? options.hostCapabilities : withProfilePatchCapability(options.hostCapabilities, patchPath)
+  if (options.workspaceRoot === undefined && options.hostDataRoot === undefined && (capabilities === undefined || (Array.isArray(capabilities) ? capabilities.length === 0 : Object.keys(capabilities).length === 0))) return null
+  try {
+    return createPathContext({ workspaceRoot: options.workspaceRoot, hostDataRoot: options.hostDataRoot, hostCapabilities: capabilities })
+  } catch {
+    return null
+  }
+}
+
+function readRawPatch(editor, ctx, options = {}) {
+  const profile = trustedProfileContextOf(ctx)
+  const trustedPatchPath = profile !== null && typeof profile === 'object' && typeof profile.patchPath === 'string' ? profile.patchPath : undefined
+  const documentPath = editor !== undefined && typeof editor.documentPath === 'string' ? editor.documentPath.trim() : ''
+  const pathContext = syncPathContext(ctx, options, trustedPatchPath)
+  if (pathContext === null) return undefined
+  try {
+    if (trustedPatchPath !== undefined) {
+      const target = resolveHostPath(pathContext, trustedPatchPath, { capability: 'profilePatch', purpose: 'config-editor' })
+      return readFileSync(validateReadTarget(pathContext, target, { expectedType: 'file', purpose: 'config-editor' }).path, 'utf8')
+    }
+    if (documentPath === '') return undefined
+    const target = resolveWorkspacePath(pathContext, documentPath, { purpose: 'config-editor' })
+    return readFileSync(validateReadTarget(pathContext, target, { expectedType: 'file', purpose: 'config-editor' }).path, 'utf8')
+  } catch {
+    return undefined
+  }
 }
 
 function settingsValuesFromRows(rows) {
@@ -760,8 +882,14 @@ export function structuralFingerprint(rows) {
   return JSON.stringify({ owner: activeLegacyRow(rows) ? 'legacy' : 'official', rows: records })
 }
 
+function installAnchorOf(ctx, options) {
+  const profileContext = trustedProfileContextOf(ctx)
+  return profileContext !== undefined ? profileContext.installAnchor : options.installAnchor
+}
+
 export function mountPresetSync(ctx, options = {}) {
   const child = ctx
+  const installAnchor = installAnchorOf(child, options)
   const onSettledSettings = typeof options.onSettledSettings === 'function' ? options.onSettledSettings : undefined
   const onSettledError = typeof options.onSettledError === 'function' ? options.onSettledError : undefined
   const onAdapterError = typeof options.onAdapterError === 'function' ? options.onAdapterError : undefined
@@ -797,7 +925,7 @@ export function mountPresetSync(ctx, options = {}) {
   const readState = () => {
     const editor = child.configEditor
     const rows = typeof editor.configuration === 'function' ? editor.configuration() : []
-    const rawPatch = readRawPatch(editor)
+    const rawPatch = readRawPatch(editor, child, options)
     const legacyState = readLegacyState(rawPatch)
     return {
       editor,
@@ -854,8 +982,8 @@ export function mountPresetSync(ctx, options = {}) {
    * 并把诊断按 phase=mount:<presetId> 上报，不留下半套注册。
    */
   const mountOfficialAdapter = async (definitions) => {
-    if (OfficialAgentPreset === undefined) throw new Error('@deepseek-ai/dsh-agent-preset 官方 adapter 不可用')
     if (!active) return
+    const officialAgentPreset = loadOfficialAgentPreset(installAnchor)
     const mounted = []
     for (const definition of definitions) {
       if (!active) {
@@ -863,7 +991,7 @@ export function mountPresetSync(ctx, options = {}) {
         return
       }
       try {
-        mounted.push(await child.plugin(OfficialAgentPreset, definition))
+        mounted.push(await child.plugin(officialAgentPreset, definition))
       } catch (error) {
         // 整体回滚已挂载的 definition，再把失败冒泡给 initialMount/structuralHandoff 的
         // 既有单点诊断（phase 保持 initialMount/structuralHandoff），消息里带上失败的 preset id。

@@ -1,9 +1,12 @@
-import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs'
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { basename, dirname, join, resolve } from 'node:path'
 import { PROBE_LIMITS, SAVE_PLAN_LIMITS, RANGE_FORMAT_HINT, LINE_FORMAT_HINT, sanitizeTaskName, sessionTagOf, saveArtifactBase, renderSavePlan, renderProbeMarkdown, renderSaveProbe, extractProbeEvidenceRefs } from './save-contract.js'
-import { validateProbe, probePathOf } from './save-probe-validation.js'
+import { validateProbe, resolveProbeTarget } from './save-probe-validation.js'
+import { createPathContext, resolveWorkspacePath, assertAllowedPath, validateReadTarget } from './path-policy.js'
 import { validateSavePlanContract } from './save-plan-validation.js'
 import { TextDecoder } from 'node:util'
+
+const sourceDecoder = new TextDecoder('utf-8', { fatal: true })
 
 // 证据错误用 JSON.stringify 展示引用，必要时追加非权威的装饰提示。
 // 提示只检查下方诊断字符集的首字符；成对清洗在 save-contract.js，
@@ -20,82 +23,79 @@ function cwdOf(exec) {
   return header !== undefined && typeof header.cwd === 'string' ? header.cwd : ''
 }
 
+function errorCodeOf(error) {
+  return error !== null && typeof error === 'object' && typeof error.code === 'string' ? error.code : ''
+}
+
+function pathContextOf(cwd, getPathContext) {
+  if (typeof getPathContext === 'function') {
+    const supplied = getPathContext(cwd)
+    if (supplied !== undefined && supplied !== null) return supplied
+  }
+  return createPathContext({ workspaceRoot: cwd })
+}
+
 // 两个工具共享会话/目录/base 构造，但各自保留参数校验与提交形状；失败只由本次调用处理。
-function resolveSaveContext(args, exec, savePlanDir, knownCwd) {
+function resolveSaveContext(args, exec, savePlanDir, knownCwd, getPathContext) {
   const session = exec !== undefined && exec !== null && exec.agent !== undefined && exec.agent !== null ? exec.agent.session : undefined
   const header = session !== undefined && session !== null && session.header !== undefined && session.header !== null ? session.header : undefined
   const cwd = typeof knownCwd === 'string' ? knownCwd : cwdOf(exec)
   const sessionId = header === undefined ? undefined : header.id
   const sessionTag = sessionTagOf(sessionId)
-  const dir = resolve(join(cwd, savePlanDir))
+  const pathContext = cwd === '' ? null : pathContextOf(cwd, getPathContext)
+  const directoryTarget = pathContext === null ? null : assertAllowedPath(pathContext, resolveWorkspacePath(pathContext, savePlanDir, { purpose: 'save-artifacts' }))
+  const dir = directoryTarget === null ? '' : directoryTarget.path
   const nameSeg = sanitizeTaskName(args !== undefined && args !== null && typeof args === 'object' ? args.taskName : undefined)
   const base = saveArtifactBase(nameSeg, sessionId)
-  return { cwd, sessionTag, dir, base }
+  return { cwd, sessionTag, dir, base, pathContext, directoryTarget }
 }
 
 const SOURCE_RANGE_RE = /^L([1-9]\d*)(?:-([1-9]\d*))?$/
-
-function canonicalRealpath(value) {
-  if (typeof realpathSync.native !== 'function') {
-    throw new Error('当前运行时缺少可靠的原生真实路径解析')
-  }
-  return realpathSync.native(value)
-}
-
-const sourceDecoder = new TextDecoder('utf-8', { fatal: true })
 
 function sourceCacheKey(value) {
   const normalized = String(value).replace(/\\/g, '/')
   return process.platform === 'win32' ? normalized.toLowerCase() : normalized
 }
 
-function pathInside(root, target) {
-  const rest = relative(root, target)
-  return rest === '' || (rest !== '..' && !rest.startsWith('..' + sep) && !isAbsolute(rest))
-}
-
-function lexicalExists(path) {
-  try { lstatSync(path); return true } catch (error) {
-    if (error.code === 'ENOENT') return false
-    throw error
-  }
-}
-
-function nearestExistingParent(path) {
-  let current = dirname(path)
+function resolveMissingWorkspaceIdentity(pathContext, target) {
+  const missingSegments = []
+  let missingPath = target.path
   for (;;) {
-    if (lexicalExists(current)) {
-      try { return statSync(current).isDirectory() ? current : null } catch { return null }
+    const parentPath = dirname(missingPath)
+    missingSegments.unshift(basename(missingPath))
+    const parentTarget = resolveWorkspacePath(pathContext, parentPath, { purpose: 'save-plan-source' })
+    try {
+      const parent = validateReadTarget(pathContext, parentTarget, { expectedType: 'directory', purpose: 'save-plan-source' })
+      return resolve(parent.realPath, ...missingSegments)
+    } catch (error) {
+      if (errorCodeOf(error) !== 'TARGET_MISSING') throw error
+      missingPath = parentPath
     }
-    const parent = dirname(current)
-    if (parent === current) return null
-    current = parent
   }
 }
 
-function resolveWorkspaceEntry(root, relativePath, cache) {
-  const candidate = resolve(root, relativePath)
-  const key = sourceCacheKey(candidate)
+function resolveWorkspaceEntry(pathContext, relativePath, cache) {
+  const target = resolveWorkspacePath(pathContext, relativePath, { purpose: 'save-plan-source' })
+  const key = sourceCacheKey(target.path)
   if (cache.has(key)) return cache.get(key)
-  if (lexicalExists(candidate)) {
-    let stat
-    try { stat = statSync(candidate) } catch (error) { throw new Error('无法读取目标路径：' + relativePath + '（' + String(error.message || error) + '）') }
-    if (!stat.isFile()) throw new Error('目标路径不是普通文件：' + relativePath)
-    let real
-    try { real = canonicalRealpath(candidate) } catch (error) { throw new Error('无法解析目标真实路径：' + relativePath + '（' + String(error.message || error) + '）') }
-    if (!pathInside(root, real)) throw new Error('目标真实路径越出工作区：' + relativePath)
-    let buffer
-    try { buffer = readFileSync(real) } catch (error) { throw new Error('无法读取目标文件：' + relativePath + '（' + String(error.message || error) + '）') }
-    const entry = { exists: true, path: real, buffer, text: undefined, lines: undefined }
+  let readTarget
+  try {
+    readTarget = validateReadTarget(pathContext, target, { expectedType: 'file', purpose: 'save-plan-source' })
+  } catch (error) {
+    if (errorCodeOf(error) !== 'TARGET_MISSING') throw new Error('无法读取目标路径：' + relativePath + '（' + String(error.message || error) + '）')
+    let identityPath
+    try {
+      identityPath = resolveMissingWorkspaceIdentity(pathContext, target)
+    } catch (identityError) {
+      throw new Error('无法读取目标路径：' + relativePath + '（' + String(identityError.message || identityError) + '）')
+    }
+    const entry = { exists: false, path: identityPath, buffer: null, text: undefined, lines: undefined }
     cache.set(key, entry)
     return entry
   }
-  const parent = nearestExistingParent(candidate)
-  if (parent === null) throw new Error('目标最近现有父目录不存在：' + relativePath)
-  let realParent
-  try { realParent = canonicalRealpath(parent) } catch (error) { throw new Error('无法解析目标最近现有父目录：' + relativePath + '（' + String(error.message || error) + '）') }
-  if (!pathInside(root, realParent)) throw new Error('目标最近现有父目录越出工作区：' + relativePath)
-  const entry = { exists: false, path: resolve(realParent, relative(parent, candidate)), buffer: null, text: undefined, lines: undefined }
+  let buffer
+  try { buffer = readFileSync(readTarget.realPath) } catch (error) { throw new Error('无法读取目标文件：' + relativePath + '（' + String(error.message || error) + '）') }
+  const entry = { exists: true, path: readTarget.realPath, buffer, text: undefined, lines: undefined }
   cache.set(key, entry)
   return entry
 }
@@ -144,14 +144,12 @@ function verifyModificationPoint(entry, relativePath, point) {
   if (matches !== 1) throw new Error('定位锚点在指定范围内必须恰好匹配一次：' + relativePath + '#' + String(point.id || '') + '（实际 ' + matches + ' 次）')
 }
 
-function verifyPlanSources(summary, cwd) {
-  let root
-  try { root = canonicalRealpath(cwd) } catch (error) { throw new Error('无法解析工作区真实路径（' + String(error.message || error) + '）') }
+function verifyPlanSources(summary, pathContext) {
   const cache = new Map()
   const targetOwners = new Map()
   const verifyFile = (fileRecord) => {
     const operation = String(fileRecord.operation || '')
-    const entry = resolveWorkspaceEntry(root, fileRecord.path, cache)
+    const entry = resolveWorkspaceEntry(pathContext, fileRecord.path, cache)
     const targetKey = sourceCacheKey(entry.path)
     const firstPath = targetOwners.get(targetKey)
     if (firstPath !== undefined) throw new Error('多个文件记录指向同一真实目标：' + firstPath + ' 与 ' + fileRecord.path)
@@ -171,7 +169,7 @@ function verifyPlanSources(summary, cwd) {
     if (operation === '生成') {
       for (const point of fileRecord.points || []) {
         for (const source of point.generationSources || []) {
-          const sourceEntry = resolveWorkspaceEntry(root, source, cache)
+          const sourceEntry = resolveWorkspaceEntry(pathContext, source, cache)
           if (!sourceEntry.exists) throw new Error('生成来源文件不存在：' + source)
         }
       }
@@ -179,26 +177,32 @@ function verifyPlanSources(summary, cwd) {
   }
   for (const task of summary.tasks || []) for (const fileRecord of task.fileRecords || []) verifyFile(fileRecord)
   if (summary.closure !== null && summary.closure !== undefined) for (const fileRecord of summary.closure.fileRecords || []) verifyFile(fileRecord)
-  return { root, cache }
+  return { cache }
 }
 
-function verifyProbeEvidenceRef(cwd, reference, sourceState) {
-  const resolved = probePathOf(cwd, reference)
-  if (!existsSync(resolved)) throw new Error('save_plan: 【探查者已核实】证据文件不存在：' + JSON.stringify(reference) + probeRefDecorationHint(reference))
-  const key = sourceCacheKey(resolve(resolved))
+function verifyProbeEvidenceRef(cwd, reference, sourceState, pathContext) {
+  const target = resolveProbeTarget(cwd, reference, pathContext)
+  let readTarget
+  try {
+    readTarget = validateReadTarget(pathContext, target, { expectedType: 'file', purpose: 'probe-evidence' })
+  } catch (error) {
+    if (errorCodeOf(error) === 'TARGET_MISSING') throw new Error('save_plan: 【探查者已核实】证据文件不存在：' + JSON.stringify(reference) + probeRefDecorationHint(reference))
+    throw new Error('save_plan: 【探查者已核实】证据文件无法读取：' + JSON.stringify(reference) + '（' + String(error.message || error) + '）')
+  }
+  const key = sourceCacheKey(readTarget.realPath)
   let buffer
   const cached = sourceState.cache.get(key)
   if (cached !== undefined && cached.buffer !== null) buffer = cached.buffer
   else {
-    try { buffer = readFileSync(resolved) } catch (error) { throw new Error('save_plan: 【探查者已核实】证据文件无法读取：' + JSON.stringify(reference) + '（' + String(error.message || error) + '）') }
-    sourceState.cache.set(key, { exists: true, path: resolved, buffer, text: undefined, lines: undefined })
+    try { buffer = readFileSync(readTarget.realPath) } catch (error) { throw new Error('save_plan: 【探查者已核实】证据文件无法读取：' + JSON.stringify(reference) + '（' + String(error.message || error) + '）') }
+    sourceState.cache.set(key, { exists: true, path: readTarget.realPath, buffer, text: undefined, lines: undefined })
   }
   const head = buffer.toString('utf8').slice(0, 200)
   if (!head.includes('探查证据报告')) throw new Error('save_plan: 【探查者已核实】证据文件非探查者落盘（缺「探查证据报告」标题）：' + JSON.stringify(reference))
 }
 
 // save_plan/save_probe 工具定义只捕获显式目录与持久化依赖，不持有宿主会话状态。
-export function createSaveToolFactories({ savePlanDir, atomicCommit }) {
+export function createSaveToolFactories({ savePlanDir, atomicCommit, getPathContext }) {
   function defineSavePlan() {
     return {
       name: 'save_plan',
@@ -220,13 +224,8 @@ export function createSaveToolFactories({ savePlanDir, atomicCommit }) {
           required: ['paths'],
           additionalProperties: false,
         },
-        render(args, value) {
-          let summary
-          if (args !== null && typeof args === 'object') {
-            const checked = validateSavePlanContract(args.plan, args.checklist)
-            if (checked.ok) summary = checked.summary
-          }
-          return renderSavePlan(value, summary)
+        render(_args, value) {
+          return renderSavePlan(value)
         },
       },
       timeoutMs: 30000,
@@ -243,17 +242,18 @@ export function createSaveToolFactories({ savePlanDir, atomicCommit }) {
         // 合同通过后只读取一次 cwd；真实源核实、证据核实均在 base/目录/atomic 前完成。
         const cwd = cwdOf(exec)
         if (cwd === '') throw new Error('save_plan: 会话缺少工作区路径，无法落盘')
+        const pathContext = pathContextOf(cwd, getPathContext)
         let sourceState
         try {
-          sourceState = verifyPlanSources(contract.summary, cwd)
+          sourceState = verifyPlanSources(contract.summary, pathContext)
         } catch (error) {
           throw new Error('save_plan: 源核实失败：' + (error instanceof Error ? error.message : String(error)))
         }
         // 【探查者已核实】证据校验：方案中标注引用的证据文件必须真实存在、且为探查者
         // save_probe 落盘的证据报告（标题含「探查证据报告」），杜绝编造证据引用。
-        for (const ref of extractProbeEvidenceRefs(plan)) verifyProbeEvidenceRef(cwd, ref, sourceState)
+        for (const ref of extractProbeEvidenceRefs(plan)) verifyProbeEvidenceRef(cwd, ref, sourceState, pathContext)
         // T3：base 内嵌调用方会话标识段（主会话与规划子代理同秒落盘不再撞名）。
-        const context = resolveSaveContext(args, exec, savePlanDir, cwd)
+        const context = resolveSaveContext(args, exec, savePlanDir, cwd, getPathContext)
         const { sessionTag, dir, base } = context
         if (sessionTag === '') throw new Error('save_plan: 会话缺少有效标识，无法隔离落盘事务')
         const planFile = join(dir, `方案-${base}.md`)
@@ -262,7 +262,7 @@ export function createSaveToolFactories({ savePlanDir, atomicCommit }) {
           atomicCommit(dir, base, [
             { name: `方案-${base}.md`, content: args.plan },
             { name: `验收-${base}.md`, content: args.checklist },
-          ])
+          ], undefined, { pathContext })
         } catch (error) {
           throw new Error(`save_plan: 落盘失败：${error instanceof Error ? error.message : String(error)}`)
         }
@@ -367,15 +367,16 @@ export function createSaveToolFactories({ savePlanDir, atomicCommit }) {
       async execute(args, exec) {
         // 先仅读取 cwd 并完成全部参数/路径校验，避免非法调用消耗工件 base 序号。
         const probeCwd = cwdOf(exec)
-        const invalid = validateProbe(args, probeCwd)
+        const probePathContext = probeCwd === '' ? undefined : pathContextOf(probeCwd, getPathContext)
+        const invalid = validateProbe(args, probeCwd, probePathContext)
         if (invalid !== null) throw new Error(invalid)
-        const context = resolveSaveContext(args, exec, savePlanDir)
+        const context = resolveSaveContext(args, exec, savePlanDir, probeCwd, getPathContext)
         const { cwd, sessionTag, dir, base } = context
         if (cwd === '') throw new Error('save_probe: 会话缺少工作区路径，无法落盘')
         if (sessionTag === '') throw new Error('save_probe: 会话缺少有效标识，无法隔离落盘事务')
         const fileName = `线索-${base}.md`
         try {
-          atomicCommit(dir, base, [{ name: fileName, content: renderProbeMarkdown(args) }])
+          atomicCommit(dir, base, [{ name: fileName, content: renderProbeMarkdown(args) }], undefined, { pathContext: context.pathContext })
         } catch (error) {
           throw new Error(`save_probe: 落盘失败：${error instanceof Error ? error.message : String(error)}`)
         }

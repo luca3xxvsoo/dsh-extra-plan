@@ -1,10 +1,13 @@
 // step-99-用量统计.mjs — 在线锁保护的 V2 双文件统计与归档。
-// 用法：node step-99-用量统计.mjs <ledger-v2.jsonl>
+// 用法：node step-99-用量统计.mjs <ledger-v2.jsonl>（普通相对路径按当前 W）
 //      node step-99-用量统计.mjs --archive <ledger-v2.jsonl>
+// 运行时账本仍由业务以 H pathContext 传入；本 CLI 不按普通文件 dirname 自授 H。
+// 观察分两类：W 目标在共享锁内统计/归档；显式 Host 只读目标不取锁，只做最多两次
+// 稳定观察，不写所选 Host 资源/锁/备份/temp，必要 W 结构暂存允许且用后清理。
 // 默认模式只在共享锁内读取 archive/active 字节，释放锁后解析；--archive 全程持锁并有界发布。
-import { randomUUID } from 'node:crypto'
-import { readFileSync, writeFileSync, renameSync, unlinkSync } from 'node:fs'
-import { basename, dirname, join } from 'node:path'
+import { createHash, randomUUID } from 'node:crypto'
+import { mkdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { basename, dirname, isAbsolute, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
   acquireUsageLedgerLock,
@@ -12,6 +15,8 @@ import {
   usageLedgerLockPath,
   WRITER_LOCK_WAIT_MS,
 } from '../../plugins/dsh-extra-plan/lib/usage-ledger.js'
+import { prepareWriteTarget, resolveHostPath, resolveWorkspacePath, validateReadTarget } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
+import { createMaintenanceContext, parseMaintenanceArgs } from '../_shared/workspace-paths.mjs'
 
 export const ARCHIVE_BUDGET_MS = 30_000
 export const ARCHIVE_FILE_NAME = 'ledger-v2.archive.jsonl'
@@ -49,7 +54,141 @@ const TOKEN_KEYS = Object.freeze([
   'cacheWriteTokens',
   'outputTokens',
 ])
-const DEFAULT_FS_OPS = Object.freeze({ readFileSync, writeFileSync, renameSync, unlinkSync })
+const DEFAULT_FS_OPS = Object.freeze({ mkdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync })
+const CLI_PURPOSE = 'usage-ledger-cli'
+const LEDGER_READ_PURPOSE = 'ledger-read'
+const LEDGER_ARCHIVE_PURPOSE = 'ledger-archive'
+const LEDGER_SNAPSHOT_PURPOSE = 'ledger-snapshot'
+
+function objectOf(options) {
+  return options !== null && typeof options === 'object' ? options : {}
+}
+
+function maintenanceContextOf(options) {
+  const source = objectOf(options)
+  if (source.maintenanceContext !== null && typeof source.maintenanceContext === 'object') return source.maintenanceContext
+  if (source.context !== null && typeof source.context === 'object' && source.context.pathContext !== undefined) return source.context
+  if (source.pathContext !== undefined && source.workspaceRoot !== undefined) return source
+  return undefined
+}
+
+function pathContextOf(options) {
+  const source = objectOf(options)
+  const maintenance = maintenanceContextOf(source)
+  const context = maintenance !== undefined ? maintenance.pathContext : source.pathContext
+  if (context === null || context === undefined) throw new LedgerError('账本操作缺少明确 pathContext；不按普通文件父目录授予 H', 'path-context-required')
+  return context
+}
+
+function purposeOf(options) {
+  const source = objectOf(options)
+  const value = typeof source.purpose === 'string' && source.purpose.trim() !== '' ? source.purpose : CLI_PURPOSE
+  return value
+}
+
+function targetPathOf(target) {
+  const value = target !== null && typeof target === 'object' && target.policyTarget !== undefined ? target.policyTarget : target
+  return value !== null && typeof value === 'object' && typeof value.path === 'string' ? value.path : undefined
+}
+
+function policyTargetOf(target) {
+  return target !== null && typeof target === 'object' && target.policyTarget !== undefined ? target.policyTarget : target
+}
+
+function isHostTarget(target) {
+  const value = target !== null && typeof target === 'object' ? target : {}
+  return value.kind === 'host' || value.scope === 'host' || (value.readOnly === true && value.canWrite === false && value.access === 'read')
+}
+
+function isWorkspaceTarget(target) {
+  const value = target !== null && typeof target === 'object' ? target : {}
+  return value.kind === 'workspace' || value.scope === 'workspace'
+}
+
+function isWritableWorkspaceTarget(target) {
+  const value = target !== null && typeof target === 'object' ? target : {}
+  return isWorkspaceTarget(value) && value.readOnly !== true && (value.canWrite === true || value.access === 'write')
+}
+
+function contextTargetOf(options, filePath) {
+  const source = objectOf(options)
+  const maintenance = maintenanceContextOf(source)
+  const candidates = [
+    source.target,
+    source.ledgerTarget,
+    maintenance !== undefined && maintenance.ledger !== null && typeof maintenance.ledger === 'object' ? maintenance.ledger.target : undefined,
+    maintenance !== undefined && maintenance.ledger !== null && typeof maintenance.ledger === 'object' ? maintenance.ledger.activeTarget : undefined,
+  ]
+  return candidates.find((candidate) => candidate !== null && candidate !== undefined && targetPathOf(candidate) === filePath)
+}
+
+function targetForPath(context, filePath, purpose, options = {}) {
+  const source = objectOf(options)
+  const explicit = contextTargetOf(source, filePath)
+  if (explicit !== undefined) return explicit
+  if (source.workspaceOnly === true || purpose === LEDGER_ARCHIVE_PURPOSE || purpose === LEDGER_SNAPSHOT_PURPOSE) {
+    return resolveWorkspacePath(context, filePath, { purpose })
+  }
+  const maintenance = maintenanceContextOf(source)
+  const explicitHostRead = source.hostReadOnly === true
+    || (maintenance !== undefined && maintenance.hostAccess === 'read-only' && purpose === LEDGER_READ_PURPOSE)
+  if (typeof filePath === 'string' && isAbsolute(filePath) && !explicitHostRead) {
+    // 仅 W 内绝对路径归 W；仅 H 绝对必须有明确 Host 只读选择，否则不改贴 H，
+    // 交由 W resolver 词法先拒（ROOT_ESCAPE）；不用 exists/stat/read 在两根选根。
+    return resolveWorkspacePath(context, filePath, { purpose })
+  }
+  // 普通相对输入固定 W，双根重叠（H=W/相互包含）时仍按词法 W；
+  // 明确 Host 只读选择（ledger-read/Host 配套读取）才允许相对形态归 H。
+  return explicitHostRead
+    ? resolveHostPath(context, filePath, { purpose })
+    : resolveWorkspacePath(context, filePath, { purpose })
+}
+
+function authorizeWritePath(filePath, options) {
+  const context = pathContextOf(options)
+  const purpose = purposeOf(options)
+  const target = targetForPath(context, filePath, purpose, options)
+  if (isHostTarget(target) || target !== null && typeof target === 'object' && target.canWrite === false) {
+    throw new LedgerError('账本写入路径不是可写 W 目标：' + filePath, 'path-not-authorized')
+  }
+  try { return prepareWriteTarget(context, policyTargetOf(target), { expectedType: 'file', purpose }) }
+  catch (error) { throw new LedgerError('账本写入路径未获授权：' + errorMessageOf(error), errorCodeOf(error) || 'path-not-authorized') }
+}
+
+function authorizeOptionalReadPath(filePath, options) {
+  const context = pathContextOf(options)
+  const purpose = purposeOf(options)
+  const target = targetForPath(context, filePath, purpose, options)
+  const policyTarget = policyTargetOf(target)
+  try { return validateReadTarget(context, policyTarget, { expectedType: 'file', purpose }) }
+  catch (error) {
+    if (errorCodeOf(error) === 'TARGET_MISSING') {
+      if (isHostTarget(target) || target !== null && typeof target === 'object' && target.canWrite === false) {
+        throw new LedgerError('账本只读目标不存在：' + filePath, 'target-missing')
+      }
+      try { return prepareWriteTarget(context, policyTarget, { expectedType: 'file', purpose }) }
+      catch (writeError) { throw new LedgerError('账本可选读取路径未获授权：' + errorMessageOf(writeError), errorCodeOf(writeError) || 'path-not-authorized') }
+    }
+    throw new LedgerError('账本读取路径未获授权：' + errorMessageOf(error), errorCodeOf(error) || 'path-not-authorized')
+  }
+}
+
+function validateHostReadPath(filePath, options, purpose = LEDGER_READ_PURPOSE) {
+  const context = pathContextOf(options)
+  const target = targetForPath(context, filePath, purpose, { ...objectOf(options), hostReadOnly: true })
+  if (!isHostTarget(target) || target.canWrite === true) throw new LedgerError('账本 Host 读取目标未获只读分类：' + filePath, 'path-not-authorized')
+  try {
+    return { target, policyTarget: validateReadTarget(context, policyTargetOf(target), { expectedType: 'file', purpose }) }
+  } catch (error) {
+    if (errorCodeOf(error) === 'TARGET_MISSING') return { target, policyTarget: policyTargetOf(target), missing: true }
+    throw new LedgerError('账本 Host 读取路径未获授权：' + errorMessageOf(error), errorCodeOf(error) || 'path-not-authorized')
+  }
+}
+
+function lockOptionsOf(options, waitMs) {
+  return { pathContext: pathContextOf(options), purpose: purposeOf(options), waitMs }
+}
+
 
 export class LedgerError extends Error {
   constructor(message, code = 'ledger-error') {
@@ -135,7 +274,7 @@ function acquireLock(activePath, waitMs, options) {
   const api = lockApiOf(options)
   let lock
   try {
-    lock = api.acquire(activePath, waitMs)
+    lock = api.acquire(activePath, lockOptionsOf(options, waitMs))
   } catch (error) {
     throw new LedgerError('共享锁获取异常 ' + usageLedgerLockPath(activePath) + ': ' + errorMessageOf(error), 'lock-failed')
   }
@@ -496,19 +635,181 @@ function nowOf(clock) {
 function readSnapshots(activePath, options) {
   const fsOps = mergedFsOps(options && options.fsOps)
   const archivePath = archivePathOf(activePath)
+  authorizeOptionalReadPath(archivePath, options)
+  authorizeOptionalReadPath(activePath, options)
   const archive = optionalRead(fsOps, archivePath)
   const active = optionalRead(fsOps, activePath)
   return { fsOps, archivePath, archive, active }
 }
 
+function metadataValueOf(stat, primary, fallback) {
+  if (stat !== null && stat !== undefined && stat[primary] !== undefined && stat[primary] !== null) return String(stat[primary])
+  const value = stat !== null && stat !== undefined ? stat[fallback] : undefined
+  return value instanceof Date ? String(value.getTime()) : String(value === undefined || value === null ? '' : value)
+}
+
+function fileMetadata(fsOps, filePath) {
+  if (typeof fsOps.statSync !== 'function') throw new LedgerError('Host账本无法取得稳定stat元数据：' + filePath, 'incomplete')
+  try {
+    const stat = fsOps.statSync(filePath)
+    return {
+      exists: true,
+      dev: metadataValueOf(stat, 'dev', 'dev'),
+      ino: metadataValueOf(stat, 'ino', 'ino'),
+      size: metadataValueOf(stat, 'size', 'size'),
+      mtime: metadataValueOf(stat, 'mtimeMs', 'mtime'),
+      ctime: metadataValueOf(stat, 'ctimeMs', 'ctime'),
+    }
+  } catch (error) {
+    if (errorCodeOf(error) === 'ENOENT') return { exists: false, dev: '', ino: '', size: '', mtime: '', ctime: '' }
+    throw new LedgerError('Host账本stat失败 ' + filePath + ': ' + errorMessageOf(error), 'incomplete')
+  }
+}
+
+function sameMetadata(left, right) {
+  return left.exists === right.exists
+    && left.dev === right.dev
+    && left.ino === right.ino
+    && left.size === right.size
+    && left.mtime === right.mtime
+    && left.ctime === right.ctime
+}
+
+function sameBytes(left, right) {
+  return bytesOf(left).equals(bytesOf(right))
+}
+
+function hostObservationAttempt(fsOps, activePath, archivePath, lockPath) {
+  const before = {
+    active: fileMetadata(fsOps, activePath),
+    archive: fileMetadata(fsOps, archivePath),
+    lock: fileMetadata(fsOps, lockPath),
+  }
+  if (before.lock.exists) return { busy: true, before }
+  const archive = optionalRead(fsOps, archivePath)
+  const active = optionalRead(fsOps, activePath)
+  const after = {
+    active: fileMetadata(fsOps, activePath),
+    archive: fileMetadata(fsOps, archivePath),
+    lock: fileMetadata(fsOps, lockPath),
+  }
+  if (after.lock.exists) return { busy: true, before, after }
+  return {
+    busy: false,
+    before,
+    after,
+    archive,
+    active,
+    stable: sameMetadata(before.active, after.active) && sameMetadata(before.archive, after.archive),
+  }
+}
+
+function sha256Of(value) {
+  return createHash('sha256').update(bytesOf(value)).digest('hex')
+}
+
+function writeHostSnapshot(activePath, archivePath, observed, attempts, options) {
+  const context = pathContextOf(options)
+  const fsOps = mergedFsOps(options && options.fsOps)
+  const rawDir = '.usage-ledger-snapshot-' + randomUUID()
+  const dirTarget = targetForPath(context, rawDir, LEDGER_SNAPSHOT_PURPOSE, { ...objectOf(options), workspaceOnly: true })
+  if (!isWritableWorkspaceTarget(dirTarget)) throw new LedgerError('Host快照目录不是可写 W 目标', 'path-not-authorized')
+  const dirPath = targetPathOf(dirTarget)
+  if (dirPath === undefined) throw new LedgerError('Host快照目录缺少物理路径', 'path-not-authorized')
+  const maintenance = maintenanceContextOf(options)
+  // W 根优先取 maintenance 结构锚定值；无 maintenance 时回退 pathContext 的 workspaceRoot（同为结构锚定，仅字符串可用）。
+  const workspaceRoot = maintenance !== undefined && typeof maintenance.workspaceRoot === 'string'
+    ? maintenance.workspaceRoot
+    : (context !== null && typeof context === 'object' && typeof context.workspaceRoot === 'string' ? context.workspaceRoot : undefined)
+  if (workspaceRoot === undefined) throw new LedgerError('Host快照缺少结构锚定 W 根', 'path-context-required')
+  const parentTarget = targetForPath(context, workspaceRoot, LEDGER_SNAPSHOT_PURPOSE, { ...objectOf(options), workspaceOnly: true })
+  if (!isWritableWorkspaceTarget(parentTarget)) throw new LedgerError('Host快照父目录不是可写 W 目标', 'path-not-authorized')
+  try {
+    prepareWriteTarget(context, policyTargetOf(parentTarget), { expectedType: 'directory', purpose: LEDGER_SNAPSHOT_PURPOSE })
+    fsOps.mkdirSync(dirPath)
+    const archiveSnapshotPath = join(dirPath, 'archive.jsonl')
+    const activeSnapshotPath = join(dirPath, 'active.jsonl')
+    const archiveTarget = targetForPath(context, archiveSnapshotPath, LEDGER_SNAPSHOT_PURPOSE, { ...objectOf(options), workspaceOnly: true })
+    const activeTarget = targetForPath(context, activeSnapshotPath, LEDGER_SNAPSHOT_PURPOSE, { ...objectOf(options), workspaceOnly: true })
+    if (!isWritableWorkspaceTarget(archiveTarget) || !isWritableWorkspaceTarget(activeTarget)) {
+      throw new LedgerError('Host快照文件不是可写 W 目标', 'path-not-authorized')
+    }
+    prepareWriteTarget(context, policyTargetOf(archiveTarget), { expectedType: 'file', purpose: LEDGER_SNAPSHOT_PURPOSE })
+    prepareWriteTarget(context, policyTargetOf(activeTarget), { expectedType: 'file', purpose: LEDGER_SNAPSHOT_PURPOSE })
+    fsOps.writeFileSync(archiveSnapshotPath, observed.archive.bytes)
+    fsOps.writeFileSync(activeSnapshotPath, observed.active.bytes)
+    const archiveSnapshot = optionalRead(fsOps, archiveSnapshotPath)
+    const activeSnapshot = optionalRead(fsOps, activeSnapshotPath)
+    const summary = summarizeSnapshotTexts([
+      { path: archiveSnapshotPath, text: textOfBytes(archiveSnapshot.bytes) },
+      { path: activeSnapshotPath, text: textOfBytes(activeSnapshot.bytes) },
+    ])
+    const observation = {
+      scope: 'host',
+      level: 'stable-read-only',
+      attempts,
+      activePath,
+      archivePath,
+      lockPath: usageLedgerLockPath(activePath),
+      activeExists: observed.active.exists,
+      archiveExists: observed.archive.exists,
+      activeSha256: sha256Of(observed.active.bytes),
+      archiveSha256: sha256Of(observed.archive.bytes),
+      snapshotDir: dirPath,
+      snapshotActivePath: activeSnapshotPath,
+      snapshotArchivePath: archiveSnapshotPath,
+    }
+    return { ...summary, activePath, archivePath, observationLevel: observation.level, observation }
+  } finally {
+    fsOps.rmSync(dirPath, { recursive: true, force: true })
+  }
+}
+
+function readHostSnapshots(activePath, options) {
+  const archivePath = archivePathOf(activePath)
+  const lockPath = usageLedgerLockPath(activePath)
+  validateHostReadPath(activePath, options, LEDGER_READ_PURPOSE)
+  validateHostReadPath(archivePath, { ...objectOf(options), target: undefined }, LEDGER_READ_PURPOSE)
+  validateHostReadPath(lockPath, { ...objectOf(options), target: undefined }, 'ledger-lock-read')
+  let previous
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const observed = hostObservationAttempt(mergedFsOps(options && options.fsOps), activePath, archivePath, lockPath)
+    if (observed.busy) throw new LedgerError('Host账本存在锁或锁在观察期间出现；INCOMPLETE', 'incomplete')
+    if (!observed.stable) throw new LedgerError('Host账本active/archive元数据变化；INCOMPLETE', 'incomplete')
+    if (previous !== undefined && (!sameBytes(previous.active.bytes, observed.active.bytes) || !sameBytes(previous.archive.bytes, observed.archive.bytes))) {
+      throw new LedgerError('Host账本两次读取字节不一致；INCOMPLETE', 'incomplete')
+    }
+    if (previous !== undefined) return writeHostSnapshot(activePath, archivePath, observed, attempt, options)
+    previous = observed
+  }
+  throw new LedgerError('Host账本未形成稳定只读快照；INCOMPLETE', 'incomplete')
+}
+
 export function statLedger(activePath, options = {}) {
+  const purpose = purposeOf(options) === CLI_PURPOSE ? LEDGER_READ_PURPOSE : purposeOf(options)
+  const context = pathContextOf(options)
+  const target = targetForPath(context, activePath, purpose, { ...objectOf(options), purpose })
+  const hostRead = isHostTarget(target)
+  const scopedOptions = {
+    ...objectOf(options),
+    purpose,
+    ledgerTarget: target,
+    ...(hostRead ? { hostReadOnly: true } : {}),
+  }
+  if (hostRead) return readHostSnapshots(activePath, scopedOptions)
+  if (!isWritableWorkspaceTarget(target)) throw new LedgerError('账本统计目标不是可写 W 或只读 H 目标', 'path-not-authorized')
+  // W 分支：把 activePath 规范化为分类目标的物理绝对路径，锁/读取/返回值全程同一物理身份；
+  // 避免运行时锁合同对相对输入固定走 H 解析而缺 H 根失败。
+  const resolvedPath = targetPathOf(target)
+  if (typeof resolvedPath !== 'string' || resolvedPath.trim() === '') throw new LedgerError('W账本目标缺少物理路径', 'path-not-authorized')
+  activePath = resolvedPath
   const waitMs = options !== null && Number.isFinite(options.lockWaitMs) ? options.lockWaitMs : WRITER_LOCK_WAIT_MS
-  const acquired = acquireLock(activePath, waitMs, options)
+  const acquired = acquireLock(activePath, waitMs, scopedOptions)
   let snapshots
   let operationError
   let releaseError
   try {
-    snapshots = readSnapshots(activePath, options)
+    snapshots = readSnapshots(activePath, scopedOptions)
   } catch (error) {
     operationError = error
   } finally {
@@ -631,8 +932,12 @@ function rollbackTransaction(fsOps, tx, state, originals) {
   return [...new Set(problems)]
 }
 
-function publishTransaction({ activePath, archivePath, activeOriginal, archiveOriginal, archiveText, fsOps, checkBudget }) {
+function publishTransaction({ activePath, archivePath, activeOriginal, archiveOriginal, archiveText, fsOps, checkBudget, pathContext, purpose }) {
+  const authorization = { pathContext, purpose }
   const tx = uniqueTransactionPaths(activePath, archivePath)
+  // active、archive、临时、备份及逆序恢复全部在同一 H/W context 下预授权；
+  // 不从普通文件 dirname 推导 Host 根。
+  for (const target of [activePath, archivePath, tx.activeTemp, tx.archiveTemp, tx.activeBackup, tx.archiveBackup]) authorizeWritePath(target, authorization)
   const state = {
     activePath,
     archivePath,
@@ -690,10 +995,34 @@ function publishTransaction({ activePath, archivePath, activeOriginal, archiveOr
   }
 }
 
+function authorizeArchiveTarget(activePath, options) {
+  const context = pathContextOf(options)
+  const purpose = purposeOf(options)
+  const classified = contextTargetOf(options, activePath)
+  if (classified !== undefined && isHostTarget(classified)) throw new LedgerError('Host只读账本不能归档；归档目标必须在 W', 'path-not-authorized')
+  const maintenance = maintenanceContextOf(options)
+  if (classified === undefined && maintenance !== undefined && maintenance.hostAccess === 'read-only') {
+    const hostTarget = targetForPath(context, activePath, LEDGER_READ_PURPOSE, { ...objectOf(options), workspaceOnly: false, hostReadOnly: true })
+    if (isHostTarget(hostTarget)) throw new LedgerError('Host只读账本不能经 W 别名归档；归档目标必须在 W', 'path-not-authorized')
+  }
+  const target = targetForPath(context, activePath, purpose, { ...objectOf(options), workspaceOnly: true })
+  if (!isWritableWorkspaceTarget(target)) throw new LedgerError('归档目标不是可写 W 目标：' + activePath, 'path-not-authorized')
+  try { prepareWriteTarget(context, policyTargetOf(target), { expectedType: 'file', purpose }) }
+  catch (error) { throw new LedgerError('归档目标未获 W 写入授权：' + errorMessageOf(error), errorCodeOf(error) || 'path-not-authorized') }
+  return target
+}
+
 export function archiveLedger(activePath, options = {}) {
+  const purpose = purposeOf(options) === CLI_PURPOSE ? LEDGER_ARCHIVE_PURPOSE : purposeOf(options)
+  const scopedOptions = { ...objectOf(options), purpose, workspaceOnly: true }
+  const archiveTarget = authorizeArchiveTarget(activePath, scopedOptions)
   const waitMs = options !== null && Number.isFinite(options.lockWaitMs) ? options.lockWaitMs : WRITER_LOCK_WAIT_MS
   const budgetMs = options !== null && Number.isFinite(options.budgetMs) ? Math.max(0, options.budgetMs) : ARCHIVE_BUDGET_MS
-  const acquired = acquireLock(activePath, waitMs, options)
+  // 与 statLedger W 分支同模式：把 activePath 规范化为分类目标物理绝对路径，锁/读取/发布/返回值全程同一物理身份。
+  const resolvedPath = targetPathOf(archiveTarget)
+  if (typeof resolvedPath !== 'string' || resolvedPath.trim() === '') throw new LedgerError('W账本目标缺少物理路径', 'path-not-authorized')
+  activePath = resolvedPath
+  const acquired = acquireLock(activePath, waitMs, scopedOptions)
   const startedAt = nowOf(options && options.clock)
   const deadline = startedAt + budgetMs
   const checkBudget = () => {
@@ -704,7 +1033,7 @@ export function archiveLedger(activePath, options = {}) {
   let releaseError
   try {
     checkBudget()
-    const snapshots = readSnapshots(activePath, options)
+    const snapshots = readSnapshots(activePath, scopedOptions)
     checkBudget()
     const archiveParsed = parseLedgerText(textOfBytes(snapshots.archive.bytes), { strict: true, source: snapshots.archivePath, check: checkBudget })
     checkBudget()
@@ -722,6 +1051,8 @@ export function archiveLedger(activePath, options = {}) {
       archiveText,
       fsOps: snapshots.fsOps,
       checkBudget,
+      pathContext: pathContextOf(scopedOptions),
+      purpose,
     })
     result = {
       activePath,
@@ -749,14 +1080,59 @@ export function parseCliArgs(argv = []) {
   throw new LedgerError('用法：node step-99-用量统计.mjs <ledger-v2.jsonl>；或 node step-99-用量统计.mjs --archive <ledger-v2.jsonl>', 'usage')
 }
 
+function cliPathContext(options) {
+  const context = maintenanceContextOf(options)
+  if (context !== undefined && context.pathContext !== undefined && context.pathContext !== null) return context.pathContext
+  return pathContextOf(options)
+}
+
+function cliLedgerTarget(context, options, legacyArgs = []) {
+  const maintenance = maintenanceContextOf(options) || context
+  const ledger = maintenance !== null && typeof maintenance === 'object' && maintenance.ledger !== null && typeof maintenance.ledger === 'object'
+    ? maintenance.ledger
+    : undefined
+  const fromLedger = ledger !== undefined ? ledger.target : undefined
+  const explicit = fromLedger !== null && fromLedger !== undefined ? fromLedger : objectOf(options).target
+  if (targetPathOf(explicit) !== undefined) return explicit
+  if (Array.isArray(legacyArgs) && legacyArgs.length === 1 && typeof legacyArgs[0] === 'string' && legacyArgs[0].trim() !== '') {
+    const purpose = purposeOf(options)
+    const readHost = purpose === LEDGER_READ_PURPOSE && maintenance !== undefined && maintenance.hostAccess === 'read-only'
+    const selected = targetForPath(pathContextOf(options), legacyArgs[0], purpose, { ...objectOf(options), hostReadOnly: readHost })
+    if (targetPathOf(selected) !== undefined) return selected
+  }
+  throw new LedgerError('公共维护上下文缺少明确账本目标', 'path-not-authorized')
+}
+
 export function main(argv = process.argv.slice(2), options = {}) {
   try {
-    const parsed = parseCliArgs(argv)
-    if (parsed.mode === 'archive') {
-      const result = archiveLedger(parsed.activePath, options)
+    const parsed = parseMaintenanceArgs(argv)
+    const source = objectOf(options)
+    const suppliedContext = maintenanceContextOf(source)
+    let context = suppliedContext
+    if (context === undefined) {
+      const contextInput = { ...parsed }
+      if (contextInput.hostRoot === null && typeof source.hostRoot === 'string') contextInput.hostRoot = source.hostRoot
+      if (contextInput.profile === null && typeof source.profile === 'string') contextInput.profile = source.profile
+      context = createMaintenanceContext(contextInput)
+    }
+    const ledgerMode = context.ledger !== null && typeof context.ledger === 'object' && context.ledger.mode === 'archive' ? 'archive' : 'stats'
+    const purpose = ledgerMode === 'archive' ? LEDGER_ARCHIVE_PURPOSE : LEDGER_READ_PURPOSE
+    const contextLedgerTarget = context.ledger !== null && typeof context.ledger === 'object' ? context.ledger.target : undefined
+    const scopedOptions = {
+      ...source,
+      maintenanceContext: context,
+      pathContext: cliPathContext({ maintenanceContext: context }),
+      purpose,
+      target: contextLedgerTarget !== null && contextLedgerTarget !== undefined ? contextLedgerTarget : source.target,
+    }
+    const activeTarget = cliLedgerTarget(context, scopedOptions, parsed.domainArgv)
+    const activePath = targetPathOf(activeTarget)
+    if (activePath === undefined) throw new LedgerError('公共维护上下文缺少明确账本目标', 'path-not-authorized')
+    if (ledgerMode === 'archive') {
+      const result = archiveLedger(activePath, scopedOptions)
       console.log('归档成功：' + result.archivePath + '；聚合组=' + result.groups + '；covered=' + result.coveredByArchiveRows + '；active已清空；cursor未读取/未改写')
     } else {
-      const result = statLedger(parsed.activePath, options)
+      const result = statLedger(activePath, scopedOptions)
       console.log(renderStats(result, result))
     }
     return 0

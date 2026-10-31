@@ -1,7 +1,8 @@
 // per-apply usage 账本：cursor 表、增量 fold 与一次性告警。
 import { mkdirSync, readFileSync, appendFileSync, writeFileSync, openSync, closeSync, writeSync, renameSync, unlinkSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { dirname } from 'node:path'
+import { dirname, isAbsolute, join } from 'node:path'
+import { resolveWorkspacePath, resolveHostPath, prepareWriteTarget, validateReadTarget } from './path-policy.js'
 
 export const WRITER_LOCK_WAIT_MS = 1000
 const LOCK_POLL_MS = 25
@@ -21,6 +22,54 @@ function errorCodeOf(error) {
 
 function errorMessageOf(error) {
   return error instanceof Error ? error.message : String(error)
+}
+
+function pathContextOf(source) {
+  if (source !== null && typeof source === 'object') {
+    if (source.pathContext !== undefined && source.pathContext !== null) return source.pathContext
+    if (typeof source.getPathContext === 'function') {
+      const supplied = source.getPathContext()
+      if (supplied !== undefined && supplied !== null) return supplied
+    }
+  }
+  return null
+}
+
+function resolveLedgerTarget(context, value, purpose) {
+  let hostError
+  try { return resolveHostPath(context, value, { purpose }) } catch (error) { hostError = error }
+  let workspaceError
+  try { return resolveWorkspacePath(context, value, { purpose }) } catch (error) { workspaceError = error }
+  throw workspaceError || hostError || new Error('账本路径不在授权H/W根内')
+}
+
+function resolveAbsoluteLedgerPath(context, value) {
+  return resolveLedgerTarget(context, value, 'usage-ledger').path
+}
+
+function resolveLedgerPath(raw, context) {
+  if (context === null) throw new Error('账本缺少明确H/W根')
+  if (raw === '') return resolveHostPath(context, join('usage-ledger', 'ledger-v2.jsonl'), { purpose: 'usage-ledger' }).path
+  if (isAbsolute(raw)) return resolveAbsoluteLedgerPath(context, raw)
+  return resolveHostPath(context, raw, { purpose: 'usage-ledger' }).path
+}
+
+function ledgerTargetOf(context, path, purpose) {
+  if (isAbsolute(path)) return resolveLedgerTarget(context, path, purpose)
+  return resolveHostPath(context, path, { purpose })
+}
+
+function authorizeLedgerWrite(context, path, purpose) {
+  if (context === null) return null
+  return prepareWriteTarget(context, ledgerTargetOf(context, path, purpose), { expectedType: 'file', purpose })
+}
+
+function ensureLedgerDirectory(context, path, purpose) {
+  if (context === null) return
+  const target = ledgerTargetOf(context, path, purpose)
+  prepareWriteTarget(context, target, { expectedType: 'any', purpose })
+  mkdirSync(target.path, { recursive: true })
+  validateReadTarget(context, target, { expectedType: 'directory', purpose })
 }
 
 function validLockOwner(owner) {
@@ -136,6 +185,12 @@ export function usageLedgerLockPath(activePath) {
 export function acquireUsageLedgerLock(activePath, options = WRITER_LOCK_WAIT_MS) {
   const lockPath = lockPathOf(activePath)
   if (lockPath === '') return { acquired: false, reason: 'invalid-path', lockPath, owner: undefined }
+  const pathOptions = options !== null && typeof options === 'object' ? options : {}
+  const pathContext = pathOptions.pathContext !== undefined && pathOptions.pathContext !== null ? pathOptions.pathContext : null
+  const purpose = typeof pathOptions.purpose === 'string' && pathOptions.purpose !== '' ? pathOptions.purpose : 'usage-ledger'
+  if (pathContext === null) return { acquired: false, reason: 'path-context-required', lockPath, owner: undefined }
+  authorizeLedgerWrite(pathContext, activePath, purpose)
+  authorizeLedgerWrite(pathContext, lockPath, purpose)
   const requestedWait = typeof options === 'number' && Number.isFinite(options)
     ? options
     : options !== null && typeof options === 'object' && Number.isFinite(options.waitMs)
@@ -148,7 +203,7 @@ export function acquireUsageLedgerLock(activePath, options = WRITER_LOCK_WAIT_MS
   let owner
   while (true) {
     const acquired = tryCreateLock(lockPath)
-    if (acquired !== undefined) return acquired
+    if (acquired !== undefined) return { ...acquired, pathContext, purpose }
     owner = readLockOwner(lockPath)
     if (owner !== undefined && pidIsAlive(owner.pid) === false) {
       return { acquired: false, reason: 'stale-lock', lockPath, owner }
@@ -165,10 +220,15 @@ export function releaseUsageLedgerLock(handle) {
     || typeof handle.token !== 'string' || handle.token === '') {
     return { released: false, reason: 'not-owner' }
   }
+  const pathContext = handle.pathContext !== undefined && handle.pathContext !== null ? handle.pathContext : null
+  const purpose = typeof handle.purpose === 'string' && handle.purpose !== '' ? handle.purpose : 'usage-ledger'
+  if (pathContext === null) return { released: false, reason: 'path-context-required' }
+  authorizeLedgerWrite(pathContext, handle.lockPath, purpose)
   const current = readLockOwner(handle.lockPath)
   if (current === undefined) return { released: false, reason: 'missing-or-invalid' }
   if (current.token !== handle.token) return { released: false, reason: 'token-mismatch', owner: current }
   const stalePath = staleLockPathOf(handle.lockPath)
+  authorizeLedgerWrite(pathContext, stalePath, purpose)
   try {
     renameSync(handle.lockPath, stalePath)
   } catch (error) {
@@ -191,8 +251,17 @@ export function createUsageLedger(options = {}) {
   // usage 账本（写入带 (sessionId,seq) 去重，跨插件实例安全）
   const source = options !== null && typeof options === 'object' ? options : {}
   const ledgerOn = source.enabled === true
-  const ledgerPath = typeof source.path === 'string' ? source.path : ''
+  const pathContext = pathContextOf(source)
+  const rawLedgerPath = typeof source.path === 'string' ? source.path.trim() : ''
+  let ledgerPath = ''
+  let ledgerPathError = ''
+  try {
+    ledgerPath = resolveLedgerPath(rawLedgerPath, pathContext)
+  } catch (error) {
+    ledgerPathError = errorMessageOf(error)
+  }
   const ledgerCursorPath = ledgerPath === '' ? '' : ledgerPath + '.cursor.json'
+  const ledgerPurpose = 'usage-ledger'
   let ledgerWarned = false
   // cursor 降级告警口径：每插件实例（= 每个会话各一份）首次进入空表降级时告警一次
   // （与 ledgerWarned 同一次式风格）；同一实例内多次降级读不重复告警。
@@ -221,6 +290,7 @@ export function createUsageLedger(options = {}) {
   function readUsageCursorTable() {
     let raw
     try {
+      if (pathContext !== null) authorizeLedgerWrite(pathContext, ledgerCursorPath, ledgerPurpose)
       raw = readFileSync(ledgerCursorPath, 'utf8')
     } catch (error) {
       if (error !== null && typeof error === 'object' && error.code === 'ENOENT') return { ok: true, table: {} }
@@ -296,7 +366,8 @@ export function createUsageLedger(options = {}) {
   // session.snapshotEvents(from, to) 区间读取只物化新增区间；水位不可读 / prevIndex > 水位
   // （日志截断）/ 首次折叠（无 prev）才回退全量快照。绝不在同一趟里同时跑全量与增量再对拍。
   function foldUsage(agent, usageContext) {
-    if (!ledgerOn || ledgerPath === '') return { status: 'disabled' }
+    if (!ledgerOn) return { status: 'disabled' }
+    if (ledgerPath === '') return { status: 'unavailable', reason: ledgerPathError || 'ledger path unavailable' }
     const session = agent !== undefined && agent !== null ? agent.session : undefined
     if (session === undefined || session === null) return { status: 'ignored' }
     try {
@@ -304,9 +375,11 @@ export function createUsageLedger(options = {}) {
       if (typeof session.snapshotEvents !== 'function') return { status: 'ignored' }
       const context = usageContext
       const sid = context.sessionId
+      authorizeLedgerWrite(pathContext, ledgerPath, ledgerPurpose)
       const dir = dirname(ledgerPath)
-      if (dir !== '.') mkdirSync(dir, { recursive: true })
-      const lock = lockAcquire(ledgerPath, WRITER_LOCK_WAIT_MS)
+      ensureLedgerDirectory(pathContext, dir, ledgerPurpose)
+      const lockOptions = { waitMs: WRITER_LOCK_WAIT_MS, pathContext, purpose: ledgerPurpose }
+      const lock = lockAcquire(ledgerPath, lockOptions)
       if (lock.acquired !== true) {
         if (lock.reason === 'stale-lock') warnStaleLock(lock)
         return { status: 'delayed', reason: lock.reason, lockPath: lock.lockPath, owner: lock.owner }
@@ -384,6 +457,7 @@ export function createUsageLedger(options = {}) {
               usageCursors.set(sid, nextCursor)
               operationResult = { status: 'advanced', rows: 0, cursor: nextCursor }
             } else {
+              if (pathContext !== null) authorizeLedgerWrite(pathContext, ledgerPath, ledgerPurpose)
               appendFileSync(ledgerPath, rows.join('\n') + '\n', 'utf8')
               usageCursors.set(sid, nextCursor)
               const current = readUsageCursorTable()
@@ -400,6 +474,7 @@ export function createUsageLedger(options = {}) {
                 persisted[sid] = nextCursor
                 let cursorPersisted = true
                 try {
+                  if (pathContext !== null) authorizeLedgerWrite(pathContext, ledgerCursorPath, ledgerPurpose)
                   writeFileSync(ledgerCursorPath, JSON.stringify(persisted), 'utf8')
                 } catch (error) {
                   cursorPersisted = false

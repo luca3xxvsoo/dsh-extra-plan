@@ -3,14 +3,12 @@
 // 只保留唯一规范 settings 行（id: dsh-extra-plan-settings / name: dsh-extra-plan/settings）。
 // 纪律：先备份（打印路径/SHA-256/行数）→ 删除 → 三项复核 + gateWords 与十项取值比对；
 // 任一不满足立即用备份回滚并以非 0 退出。幂等：已无旧内容时输出「已是唯一规范行，无需清理」并退出 0。
-// 用法：node pe-test/tools/清理desktop旧settings行.mjs [--file <profile>] [--backup-root <dir>] [--dry-run]
+// 用法：node pe-test/tools/清理desktop旧settings行.mjs --file <profile> [--backup-root <工作区目录>] [--apply|--dry-run]；默认预览
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
-
-const ROOT = fileURLToPath(new URL('../..', import.meta.url))
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { parseMaintenanceArgs, createMaintenanceContext } from '../_shared/workspace-paths.mjs'
+import { prepareWriteTarget, resolveHostPath, resolveWorkspacePath, validateReadTarget } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
 const LEGACY_SERVICE_NAME = '@local/dsh-extra-plan/settings'
 const CANONICAL_SERVICE_NAME = 'dsh-extra-plan/settings'
 const SETTINGS_ROW_ID = 'dsh-extra-plan-settings'
@@ -27,23 +25,97 @@ function stamp(date = new Date()) {
   return String(date.getFullYear()) + pad(date.getMonth() + 1) + pad(date.getDate()) + pad(date.getHours()) + pad(date.getMinutes()) + pad(date.getSeconds())
 }
 
+const USAGE = '用法：node pe-test/tools/清理desktop旧settings行.mjs --file <profile> [--host-root <Host数据根>] [--backup-root <工作区目录>] [--apply|--dry-run]；默认预览，Host目标仅允许预览/干运行'
+
 function parseArgs(argv) {
-  const options = { file: undefined, backupRoot: undefined, dryRun: false }
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index]
+  const maintenance = parseMaintenanceArgs(argv)
+  const options = { file: undefined, backupRoot: undefined, dryRun: false, apply: false, maintenance }
+  const domainArgv = maintenance.domainArgv
+  for (let index = 0; index < domainArgv.length; index += 1) {
+    const arg = domainArgv[index]
     if (arg === '--dry-run') options.dryRun = true
-    else if (arg === '--file') { options.file = argv[index + 1]; index += 1 }
-    else if (arg.startsWith('--file=')) options.file = arg.slice('--file='.length)
-    else if (arg === '--backup-root') { options.backupRoot = argv[index + 1]; index += 1 }
-    else if (arg.startsWith('--backup-root=')) options.backupRoot = arg.slice('--backup-root='.length)
+    else if (arg === '--apply') options.apply = true
+    else if (arg === '--file') {
+      const value = domainArgv[index + 1]
+      if (value === undefined || value.startsWith('--')) throw new Error('--file 需要明确路径')
+      options.file = value
+      index += 1
+    } else if (arg.startsWith('--file=')) options.file = arg.slice('--file='.length)
+    else if (arg === '--backup-root') {
+      const value = domainArgv[index + 1]
+      if (value === undefined || value.startsWith('--')) throw new Error('--backup-root 需要明确路径')
+      options.backupRoot = value
+      index += 1
+    } else if (arg.startsWith('--backup-root=')) options.backupRoot = arg.slice('--backup-root='.length)
     else if (arg === '--help' || arg === '-h') {
-      console.log('用法：node pe-test/tools/清理desktop旧settings行.mjs [--file <profile>] [--backup-root <dir>] [--dry-run]')
+      console.log(USAGE)
       process.exit(0)
     } else throw new Error('未知参数：' + arg)
   }
   if (options.file !== undefined && typeof options.file !== 'string') throw new Error('--file 需要路径')
-  if (options.file === 'undefined') throw new Error('--file 需要路径')
+  if (options.file === undefined || options.file.trim() === '' || options.file === 'undefined') return { ...options, usageOnly: true }
+  if (options.apply && options.dryRun) throw new Error('--apply 与 --dry-run 不能同时使用')
   return options
+}
+
+function isWithin(root, candidate) {
+  const child = relative(resolve(root), resolve(candidate)).replaceAll('\\', '/')
+  return child === '' || (child !== '..' && !child.startsWith('../') && !/^[A-Za-z]:/.test(child))
+}
+
+function hostIdentityTarget(context, workspaceTarget) {
+  if (context.hostRoot === null) return null
+  if (isWithin(context.hostRoot, workspaceTarget.path)) {
+    return resolveHostPath(context.pathContext, workspaceTarget.path, { purpose: 'desktop-profile-read' })
+  }
+  let hostRealPath
+  let targetRealPath
+  try {
+    const nativeRealpath = typeof realpathSync.native === 'function' ? realpathSync.native : realpathSync
+    hostRealPath = nativeRealpath(context.hostRoot)
+    targetRealPath = nativeRealpath(workspaceTarget.path)
+  } catch {
+    return null
+  }
+  if (!isWithin(hostRealPath, targetRealPath)) return null
+  return resolveHostPath(context.pathContext, targetRealPath, { purpose: 'desktop-profile-read' })
+}
+
+function workspaceTarget(file, context) {
+  const workspacePolicyTarget = resolveWorkspacePath(context.pathContext, file, { purpose: 'desktop-profile-read' })
+  const hostTarget = hostIdentityTarget(context, workspacePolicyTarget)
+  if (hostTarget !== null) return { path: hostTarget.path, kind: 'H', root: hostTarget.root, policyTarget: hostTarget }
+  return { path: workspacePolicyTarget.path, kind: 'W', root: context.workspaceRoot, policyTarget: workspacePolicyTarget }
+}
+
+function authorizedTarget(file, context) {
+  const raw = String(file)
+  if (!isAbsolute(raw)) return workspaceTarget(raw, context)
+  const candidate = resolve(raw)
+  const inWorkspace = isWithin(context.workspaceRoot, candidate)
+  const inHost = context.hostRoot !== null && isWithin(context.hostRoot, candidate)
+  if (!inWorkspace && !inHost) throw new Error('--file 必须位于当前工作区 W 或显式 --host-root H 内')
+  if (inHost) {
+    const policyTarget = resolveHostPath(context.pathContext, candidate, { purpose: 'desktop-profile-read' })
+    return { path: policyTarget.path, kind: 'H', root: policyTarget.root, policyTarget }
+  }
+  return workspaceTarget(candidate, context)
+}
+
+function authorizedBackupRoot(value, context) {
+  const input = value === undefined ? '.extra-plan' : value
+  return resolveWorkspacePath(context.pathContext, input, { purpose: 'desktop-profile-backup' })
+}
+
+function prepareBackupRoot(context, backupTarget) {
+  try {
+    return prepareWriteTarget(context.pathContext, backupTarget, { expectedType: 'directory' }).path
+  } catch (error) {
+    if (error === null || error.code !== 'TARGET_MISSING') throw error
+    const parentTarget = resolveWorkspacePath(context.pathContext, dirname(backupTarget.path), { purpose: 'desktop-profile-backup-parent' })
+    prepareWriteTarget(context.pathContext, parentTarget, { expectedType: 'directory' })
+    return backupTarget.path
+  }
 }
 
 // 逐行扫描并记录每行起始偏移，删除时用偏移切片，完整保留换行风格与字节。
@@ -226,10 +298,12 @@ function sameValueSets(before, after) {
   }
 }
 
-function rollback(targetPath, backupBuffer, originalSha) {
+function rollback(context, policyTarget, backupBuffer, originalSha) {
   try {
-    writeFileSync(targetPath, backupBuffer)
-    const restoredSha = sha256(readFileSync(targetPath))
+    const rollbackProof = prepareWriteTarget(context.pathContext, policyTarget, { expectedType: 'file' })
+    writeFileSync(rollbackProof.path, backupBuffer)
+    const restoredProof = validateReadTarget(context.pathContext, policyTarget, { expectedType: 'file' })
+    const restoredSha = sha256(readFileSync(restoredProof.path))
     if (restoredSha === originalSha) {
       console.log('回滚完成：目标已恢复为原始字节（SHA-256 ' + restoredSha + '）')
       return true
@@ -238,21 +312,33 @@ function rollback(targetPath, backupBuffer, originalSha) {
     return false
   } catch (error) {
     console.error('FAIL  回滚失败：' + (error && error.message ? error.message : String(error)))
-    console.error('FAIL  请人工用备份覆盖：' + targetPath)
+    console.error('FAIL  请人工用备份覆盖：' + policyTarget.path)
     return false
   }
 }
 
 function run() {
   const options = parseArgs(process.argv.slice(2))
-  const dshHome = process.env.DSH_HOME === undefined || process.env.DSH_HOME === '' ? join(homedir(), '.dsh') : process.env.DSH_HOME
-  const targetPath = resolve(options.file === undefined ? join(dshHome, 'profiles', 'desktop', 'cordis.patch.yml') : options.file)
-  const backupRoot = resolve(options.backupRoot === undefined ? join(ROOT, '.extra-plan') : options.backupRoot)
-  console.log('目标 profile：' + targetPath)
-  if (!existsSync(targetPath)) {
-    console.error('FAIL  目标 profile 不存在：' + targetPath)
+  if (options.usageOnly === true) {
+    console.log(USAGE)
     return 1
   }
+  const context = createMaintenanceContext(options.maintenance)
+  const target = authorizedTarget(options.file, context)
+  const selectedPath = target.path
+  console.log('目标 profile：' + selectedPath + '（根=' + target.kind + '）')
+  if (options.apply && target.policyTarget.kind === 'host') {
+    console.error('FAIL  Host目标只允许预览或干运行；--apply 已拒绝，未读取/备份/写入：' + selectedPath)
+    return 1
+  }
+  let readProof
+  try {
+    readProof = validateReadTarget(context.pathContext, target.policyTarget, { expectedType: 'file', purpose: 'desktop-profile-read' })
+  } catch (error) {
+    console.error('FAIL  目标 profile 不存在或不可安全读取：' + (error && error.message ? error.message : String(error)))
+    return 1
+  }
+  const targetPath = readProof.path
   const buffer = readFileSync(targetPath)
   const originalSha = sha256(buffer)
   const text = buffer.toString('utf8')
@@ -348,16 +434,33 @@ function run() {
     return 1
   }
 
-  if (options.dryRun) {
-    console.log('[dry-run] 未创建备份、未写入目标文件、未改动磁盘')
+  if (!options.apply) {
+    console.log(options.dryRun ? '[dry-run] 未创建备份、未写入目标文件、未改动磁盘' : '[preview] 默认预览：未创建备份、未写入目标文件、未改动磁盘；使用 --apply 执行写入')
     return 0
   }
 
-  const backupDir = join(backupRoot, BACKUP_PREFIX + stamp())
-  mkdirSync(backupDir, { recursive: true })
-  const backupPath = join(backupDir, 'cordis.patch.yml')
-  writeFileSync(backupPath, buffer)
-  const backupSha = sha256(readFileSync(backupPath))
+  prepareWriteTarget(context.pathContext, target.policyTarget, { expectedType: 'file' })
+  const backupTarget = authorizedBackupRoot(options.backupRoot, context)
+  const backupRoot = prepareBackupRoot(context, backupTarget)
+  const backupRootTarget = resolveWorkspacePath(context.pathContext, backupRoot, { purpose: 'desktop-profile-backup' })
+  mkdirSync(backupRootTarget.path, { recursive: true })
+  const preparedBackupRoot = prepareWriteTarget(context.pathContext, backupRootTarget, { expectedType: 'directory' })
+  const backupDir = join(preparedBackupRoot.path, BACKUP_PREFIX + stamp())
+  const backupDirTarget = resolveWorkspacePath(context.pathContext, backupDir, { purpose: 'desktop-profile-backup' })
+  const backupParentTarget = resolveWorkspacePath(context.pathContext, dirname(backupDirTarget.path), { purpose: 'desktop-profile-backup-parent' })
+  prepareWriteTarget(context.pathContext, backupParentTarget, { expectedType: 'directory' })
+  if (existsSync(backupDirTarget.path)) {
+    console.error('FAIL  备份目录已存在，拒绝覆盖：' + backupDirTarget.path)
+    return 1
+  }
+  mkdirSync(backupDirTarget.path, { recursive: true })
+  const preparedBackupDir = prepareWriteTarget(context.pathContext, backupDirTarget, { expectedType: 'directory' })
+  const backupPathTarget = resolveWorkspacePath(context.pathContext, join(preparedBackupDir.path, 'cordis.patch.yml'), { purpose: 'desktop-profile-backup-file' })
+  const preparedBackupPath = prepareWriteTarget(context.pathContext, backupPathTarget, { expectedType: 'file' })
+  const backupPath = preparedBackupPath.path
+  writeFileSync(backupPath, buffer, { flag: 'wx' })
+  const backupReadProof = validateReadTarget(context.pathContext, preparedBackupPath, { expectedType: 'file' })
+  const backupSha = sha256(readFileSync(backupReadProof.path))
   console.log('备份路径：' + backupPath)
   console.log('备份 SHA-256：' + backupSha)
   console.log('备份行数：' + lines.length)
@@ -368,21 +471,26 @@ function run() {
   }
 
   try {
-    writeFileSync(targetPath, newText, 'utf8')
+    const writeProof = prepareWriteTarget(context.pathContext, target.policyTarget, { expectedType: 'file' })
+    writeFileSync(writeProof.path, newText, 'utf8')
   } catch (error) {
     console.error('FAIL  写入目标失败：' + (error && error.message ? error.message : String(error)))
     let currentSha = null
-    try { currentSha = sha256(readFileSync(targetPath)) } catch (readError) { currentSha = null }
+    try {
+      const currentProof = validateReadTarget(context.pathContext, target.policyTarget, { expectedType: 'file' })
+      currentSha = sha256(readFileSync(currentProof.path))
+    } catch (readError) { currentSha = null }
     if (currentSha === originalSha) {
       console.log('目标文件未被改动（SHA-256 仍为原值），无需回滚')
       return 1
     }
-    rollback(targetPath, buffer, originalSha)
+    rollback(context, target.policyTarget, buffer, originalSha)
     return 1
   }
 
-  const writtenText = readFileSync(targetPath, 'utf8')
-  const writtenSha = sha256(readFileSync(targetPath))
+  const writtenReadProof = validateReadTarget(context.pathContext, target.policyTarget, { expectedType: 'file' })
+  const writtenText = readFileSync(writtenReadProof.path, 'utf8')
+  const writtenSha = sha256(readFileSync(writtenReadProof.path))
   const written = review(writtenText)
   console.log('--- 删除后三项复核（实文件）---')
   printReview(written)
@@ -393,7 +501,7 @@ function run() {
 
   if (!written.allOk || !writtenCompare.gateWordsSame || !writtenCompare.scalarsSame) {
     console.error('FAIL  实文件复核不通过，开始用备份回滚')
-    rollback(targetPath, buffer, originalSha)
+    rollback(context, target.policyTarget, buffer, originalSha)
     return 1
   }
   console.log('清理完成：只保留唯一规范 settings 行')

@@ -4,10 +4,11 @@ import { createServer, request as httpRequest } from 'node:http'
 import { createRequire, registerHooks, syncBuiltinESMExports } from 'node:module'
 import { isDeepStrictEqual } from 'node:util'
 import fs from 'node:fs'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
-import { tmpdir } from 'node:os'
-import { fileURLToPath } from 'node:url'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import { createIsolatedEnv, makeFixtureDir } from '../_shared/workspace-paths.mjs'
+import { createPathContext } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createOutput } from '../_shared/test-output.mjs'
 import { runInNewContext } from 'node:vm'
 
@@ -52,17 +53,9 @@ const targetConfigForms = readHostText([
   ...hostCandidates('node_modules/@deepseek-ai/dsh-client-ui-settings/lib/types/client/config-form.d.ts'),
   ...hostCandidates('node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-settings/lib/types/client/config-form.d.ts'),
 ])
-const OFFICIAL_ROOT = process.env.DSH_INSTALL_ROOT || 'C:\\Users\\Administrator\\AppData\\Roaming\\npm\\node_modules\\@deepseek-ai\\dsh'
-try {
-  const anchor = createRequire(join(OFFICIAL_ROOT, 'package.json'))
-  const schemaUrl = new URL('file:///' + anchor.resolve('@deepseek-ai/schemastery').replaceAll('\\\\', '/')).href
-  const yamlUrl = new URL('file:///' + anchor.resolve('js-yaml').replaceAll('\\\\', '/')).href
-  if (typeof registerHooks === 'function') registerHooks({ resolve(specifier, context, next) {
-    if (specifier === '@deepseek-ai/schemastery') return { url: schemaUrl, shortCircuit: true }
-    if (specifier === 'js-yaml') return { url: yamlUrl, shortCircuit: true }
-    return next(specifier, context)
-  } })
-} catch { /* 静态合同仍可执行；宿主缺依赖时运行时项会明确失败 */ }
+const OFFICIAL_ROOT = TARGET_INSTALL_ROOT === undefined ? undefined : join(TARGET_INSTALL_ROOT, 'node_modules', '@deepseek-ai', 'dsh')
+const INSTALL_ANCHOR = OFFICIAL_ROOT === undefined ? undefined : join(OFFICIAL_ROOT, 'package.json')
+
 
 const patchText = readFileSync(join(REPO_ROOT, 'plugins/dsh-extra-plan/cordis.patch.yml'), 'utf8')
 const syncText = readFileSync(join(REPO_ROOT, 'plugins/dsh-extra-plan/lib/preset-sync.js'), 'utf8')
@@ -78,6 +71,26 @@ function check(label, condition) {
   output.assertion(condition, label, true, condition)
 }
 
+const settingsBootstrapFixture = makeFixtureDir({ label: 'settings-bootstrap' })
+const settingsEnvKeys = Object.freeze(['DSH_HOME', 'HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'XDG_CACHE_HOME', 'DSH_EXTRA_PLAN_CAPTURE_DIR', 'DSH_EXTRA_PLAN_REPORT_DIR', 'TEMP', 'TMP', 'TMPDIR', 'DSH_PROFILE'])
+const originalBootstrapEnv = Object.fromEntries(settingsEnvKeys.map((key) => [key, process.env[key]]))
+const originalTestEnvironment = { DSH_HOME: process.env.DSH_HOME, DSH_PROFILE: process.env.DSH_PROFILE, USERPROFILE: process.env.USERPROFILE, HOME: process.env.HOME }
+const settingsIsolatedEnv = createIsolatedEnv({ fixture: settingsBootstrapFixture, extra: { DSH_PROFILE: 'fixture' } })
+for (const key of settingsEnvKeys) {
+  const value = settingsIsolatedEnv[key]
+  if (value === undefined) delete process.env[key]
+  else process.env[key] = value
+}
+try {
+  const anchor = createRequire(INSTALL_ANCHOR)
+  const schemaUrl = pathToFileURL(anchor.resolve('@deepseek-ai/schemastery')).href
+  const yamlUrl = pathToFileURL(anchor.resolve('js-yaml')).href
+  if (typeof registerHooks === 'function') registerHooks({ resolve(specifier, context, next) {
+    if (specifier === '@deepseek-ai/schemastery') return { url: schemaUrl, shortCircuit: true }
+    if (specifier === 'js-yaml') return { url: yamlUrl, shortCircuit: true }
+    return next(specifier, context)
+  } })
+} catch { /* 静态合同仍可执行；宿主缺依赖时运行时项会明确失败 */ }
 let patch
 const presetSettings = await import('../../plugins/dsh-extra-plan/lib/preset-settings.js')
 const { parsePresetYaml, SETTING_DEFINITIONS } = presetSettings
@@ -87,6 +100,13 @@ const { createLiveConfig } = await import('../../plugins/dsh-extra-plan/lib/live
 const { createGateRuntime, GATE_WORD_FIELDS } = await import('../../plugins/dsh-extra-plan/lib/gate-words.js')
 const { createQqbotSettingsSynchronizer, stableSnapshotHash, planQqbotSettingsPatch, writeQqbotSettingsPatch } = await import('../../plugins/dsh-extra-plan/lib/qqbot-settings-sync.js')
 const { planCanonicalSettingsMigration } = await import('../../plugins/dsh-extra-plan/lib/preset-yaml.js')
+for (const key of settingsEnvKeys) {
+  const value = originalBootstrapEnv[key]
+  if (value === undefined) delete process.env[key]
+  else process.env[key] = value
+}
+// 业务夹具均有明确 profile/document 根；不让宿主环境 DSH_HOME 与该根形成矛盾来源。
+delete process.env.DSH_HOME
 const descriptorKeys = SETTING_DEFINITIONS.map((definition) => definition.key)
 const configDict = Config !== undefined && Config !== null && Config.dict !== undefined && Config.dict !== null ? Config.dict : {}
 const configKeys = Object.keys(configDict)
@@ -152,6 +172,8 @@ function makeEditor(config = initial, documentPath = '', options = {}) {
   return {
     state,
     documentPath,
+    profileContext: options.profileContext,
+    dshHomePath: options.dshHomePath,
     configuration: () => state.rows,
     edit: async (entry, change) => {
       const current = state.rows.find((item) => item.entry === entry)
@@ -292,6 +314,13 @@ async function start(editor, options = {}) {
       },
     })
   }
+  const documentPath = editor !== undefined && typeof editor.documentPath === 'string' ? editor.documentPath : ''
+  const profileContext = options.profileContext !== undefined
+    ? options.profileContext
+    : editor !== undefined && editor !== null ? editor.profileContext : undefined
+  const explicitHome = options.dshHomePath !== undefined
+    ? options.dshHomePath
+    : editor !== undefined && editor !== null ? editor.dshHomePath : undefined
   const targetCtx = {
     fiber: { uid: 'settings-test' },
     get: (name) => {
@@ -300,6 +329,12 @@ async function start(editor, options = {}) {
         trace.push('ctx.get:configEditor')
         proxy.getResult = editor === undefined ? 'undefined' : 'editor'
         return editor
+      }
+      if (name === 'profileContext') return profileContext
+      if (name === 'dshHomePath') {
+        if (typeof explicitHome === 'function') return explicitHome
+        if (typeof explicitHome === 'string') return () => explicitHome
+        return undefined
       }
       getCalls.push({ name, result: 'undefined' })
       return undefined
@@ -373,6 +408,8 @@ function restoreEnvironment(snapshot) {
     else process.env[key] = snapshot[key]
   }
 }
+function makeWRoot(label) { return makeFixtureDir({ label }).root }
+
 async function withEnvironment(changes, action) {
   const previous = captureEnvironment()
   try {
@@ -386,9 +423,9 @@ async function withEnvironment(changes, action) {
     restoreEnvironment(previous)
   }
 }
-const testEnvironment = captureEnvironment()
+const testEnvironment = originalTestEnvironment
 const initialAuthorityFixture = makeSyncFixture()
-const editor = makeEditor(initial, initialAuthorityFixture.webPatch)
+const editor = makeEditor(initial, initialAuthorityFixture.webPatch, { profileContext: initialAuthorityFixture.webProfileContext })
 const run = await start(editor)
 try {
   const before = await requestJson(run.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
@@ -399,18 +436,22 @@ try {
 
 
   const rowConfig = editor.state.rows[0].entry.options.config
+  const localReadback = syncConfigOf(readFileSync(initialAuthorityFixture.webPatch, 'utf8'))
+  const expectedLocalConfig = { ...initial, webFetch: true, toolPresentationMode: 'ptc' }
+  const localReadbackOk = isDeepStrictEqual(localReadback, expectedLocalConfig)
    const matchingGet = await requestJson(run.port, 'GET', '/api/dsh-extra-plan-settings/pro-config?saveRunId=' + encodeURIComponent(put.body.profileSync.saveRunId), {})
    const mismatchGet = await requestJson(run.port, 'GET', '/api/dsh-extra-plan-settings/pro-config?saveRunId=missing-run-id', {})
    const cacheGet = await requestJson(run.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
    const terminal = put.body.profileSync
    const profile = terminal?.profiles?.[0]
-   const associationOk = put.status === 200 && terminal?.request?.saveRunId === terminal?.saveRunId && terminal.request.syncRevision === terminal.syncRevision && terminal.request.snapshotHash === terminal.snapshotHash && terminal.terminalMatch === true && matchingGet.status === 200 && matchingGet.body.profileSync.terminalMatch === true && mismatchGet.status === 409 && mismatchGet.body.profileSync.terminalMatch === false && mismatchGet.body.profileSync.status !== 'synced' && mismatchGet.body.profileSync.source === 'last-terminal-cache' && cacheGet.body.profileSync.cache === true && cacheGet.body.profileSync.terminalMatch === false && cacheGet.body.profileSync.source === 'last-terminal-cache'
+   const associationOk = put.status === 200 && terminal?.profileKind === 'web' && terminal?.profileIdentityState === 'valid' && terminal?.request?.saveRunId === terminal?.saveRunId && terminal.request.syncRevision === terminal.syncRevision && terminal.request.snapshotHash === terminal.snapshotHash && terminal.terminalMatch === true && matchingGet.status === 200 && matchingGet.body.profileSync.terminalMatch === true && mismatchGet.status === 409 && mismatchGet.body.profileSync.terminalMatch === false && mismatchGet.body.profileSync.status !== 'synced' && mismatchGet.body.profileSync.source === 'last-terminal-cache' && cacheGet.body.profileSync.cache === true && cacheGet.body.profileSync.terminalMatch === false && cacheGet.body.profileSync.source === 'last-terminal-cache'
    const patchMetadataOk = typeof terminal.snapshotHash === 'string' && terminal.webAfter?.patchBytes > 0 && typeof terminal.webAfter.patchMtimeMs === 'number' && typeof terminal.webAfter.patchSha256 === 'string' && terminal.webAfter.managedSnapshotHash === terminal.snapshotHash && profile?.patchBytes > 0 && typeof profile.patchMtimeMs === 'number' && typeof profile.patchSha256 === 'string' && profile.managedSnapshotHash === terminal.snapshotHash && typeof profile.backupPath === 'string' && typeof profile.backupSha256 === 'string' && profile.before?.patchSha256 !== undefined && profile.after?.patchSha256 === profile.patchSha256
    if (associationOk) console.log('SAVE_RUN_ID_TERMINAL_HASH_MATCH_OK')
    if (patchMetadataOk) console.log('PATCH_MTIME_MANAGED_HASH_COMPARE_OK')
-   check('V03 合法 PUT 仅 edit 唯一全局行并保留另八项与 gateWords（终态关联）', put.status === 200 && put.body.profileSync.status === 'synced' && put.body.profileSync.terminalMatch === true && put.body.overall === 'synced' && put.body.web.applied === true && put.body.projection.owner === 'dsh-extra-plan-settings' && editor.state.edits.length === 1 && editor.state.edits[0].id === 'dsh-extra-plan-settings' && rowConfig.webFetch === true && rowConfig.toolPresentationMode === 'ptc' && rowConfig.plannerModel === initial.plannerModel && rowConfig.exploreBudget === initial.exploreBudget && JSON.stringify(rowConfig.gateWords) === JSON.stringify(gateWords))
+   check('V03 合法 PUT 仅 edit 唯一全局行并保留另八项与 gateWords（终态关联）', put.status === 200 && put.body.profileSync.status === 'synced' && put.body.profileSync.terminalMatch === true && put.body.overall === 'synced' && put.body.web.applied === true && put.body.projection.owner === 'dsh-extra-plan-settings' && editor.state.edits.length === 1 && editor.state.edits[0].id === 'dsh-extra-plan-settings' && rowConfig.webFetch === true && rowConfig.toolPresentationMode === 'ptc' && rowConfig.plannerModel === initial.plannerModel && rowConfig.exploreBudget === initial.exploreBudget && JSON.stringify(rowConfig.gateWords) === JSON.stringify(gateWords) && localReadbackOk)
   const noOp = await requestJson(run.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true, toolPresentationMode: 'ptc' })
-   check('V03 同值 PUT 深等 no-op 零新增 edit且产生新关联终态', noOp.status === 200 && noOp.body.profileSync.status === 'synced' && noOp.body.profileSync.terminalMatch === true && noOp.body.projection.applied === true && editor.state.edits.length === 1 && noOp.body.profileSync.saveRunId !== put.body.profileSync.saveRunId && noOp.body.profileSync.webAfter?.managedSnapshotHash === noOp.body.profileSync.snapshotHash)
+   check('V03 本地Web patch真实保存并读回完整十键/gateWords', localReadbackOk)
+  check('V03 同值 PUT 深等 no-op 零新增 edit且产生新关联终态', noOp.status === 200 && noOp.body.profileSync.status === 'synced' && noOp.body.profileSync.terminalMatch === true && noOp.body.projection.applied === true && editor.state.edits.length === 1 && noOp.body.profileSync.saveRunId !== put.body.profileSync.saveRunId && noOp.body.profileSync.webAfter?.managedSnapshotHash === noOp.body.profileSync.snapshotHash)
   const invalidCases = [
     ['empty', {}], ['null', null], ['array', []], ['primitive', 'raw'], ['unknown', { notAField: 'x' }],
     ['bad-type', { webFetch: 1 }], ['mixed', { webFetch: false, unknown: true }],
@@ -426,7 +467,8 @@ try {
 } finally { await new Promise((resolve) => run.server.close(resolve)); rmSync(initialAuthorityFixture.root, { recursive: true, force: true }) }
 
 function makeSyncFixture() {
-  const root = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-web-qqbot-settings-'))
+  const fixture = makeFixtureDir({ label: 'settings-sync' })
+  const root = fixture.root
   const webDir = join(root, 'profiles', 'web')
   const profileDir = join(root, 'profiles', 'qqbot-sync')
   mkdirSync(webDir, { recursive: true })
@@ -436,7 +478,29 @@ function makeSyncFixture() {
   const qqPatch = join(profileDir, 'cordis.patch.yml')
   writeFileSync(webPatch, '# web fixture\n- id: web-fixture\n  name: web\n', 'utf8')
   writeFileSync(qqPatch, '# keep this row\n- id: user-custom\n  name: custom\n  config:\n    marker: !!js "globalThis.__syncFixture = true"\n', 'utf8')
-  return { root, webPatch, profileDir, qqPatch }
+  const webProfileContext = { home: root, dir: webDir, patchPath: webPatch, name: 'web', startedBundles: [] }
+  const qqProfileContext = { home: root, dir: profileDir, patchPath: qqPatch, name: 'qqbot', startedBundles: ['@tencent-connect/dsh-qqbot'] }
+  if (INSTALL_ANCHOR !== undefined) {
+    webProfileContext.installAnchor = INSTALL_ANCHOR
+    qqProfileContext.installAnchor = INSTALL_ANCHOR
+  }
+  return {
+    root,
+    home: root,
+    dir: webDir,
+    patchPath: webPatch,
+    name: 'web',
+    startedBundles: [],
+    webDir,
+    webPatch,
+    profileDir,
+    qqPatch,
+    fixture,
+    webProfileContext,
+    qqProfileContext,
+    profileContext: webProfileContext,
+    pathContext: createPathContext({ hostDataRoot: root }),
+  }
 }
 const FS_PROBE_METHODS = Object.freeze(['accessSync', 'statSync', 'readdirSync', 'readFileSync', 'existsSync', 'openSync', 'writeFileSync', 'copyFileSync', 'renameSync', 'unlinkSync'])
 function createFsAccessProbe(entries) {
@@ -572,7 +636,7 @@ for (const [index, text] of foreignDuplicateInputs.entries()) {
   const result = planQqbotSettingsPatch(text, syncSnapshot)
   check('G5 非目标重名保留原始YAML错误 ' + index, result.status === 'invalid' && result.reason.startsWith('invalid-yaml:') && result.text === undefined)
 }
-const qbotNoWriteRoot = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-g5-qqbot-negative-'))
+const qbotNoWriteRoot = makeWRoot('settings-qqbot-negative')
 try {
   for (const [label, text, expectedReason] of [['wrong-name', qbotWrongNameText, 'settings-row-name-conflict'], ['duplicate-name', qbotDuplicateNameText, 'duplicate-name']]) {
     const dir = join(qbotNoWriteRoot, label)
@@ -580,7 +644,7 @@ try {
     const patch = join(dir, 'cordis.patch.yml')
     writeFileSync(patch, text, 'utf8')
     const before = readFileSync(patch)
-    const result = writeQqbotSettingsPatch(dir, syncSnapshot)
+    const result = writeQqbotSettingsPatch(dir, syncSnapshot, { pathContext: createPathContext({ hostDataRoot: qbotNoWriteRoot }) })
     const after = readFileSync(patch)
     const aux = readdirSync(dir).filter((name) => name.includes('.bak-dsh-extra-plan-settings-') || name.includes('.tmp-dsh-extra-plan-settings-'))
     check('G5 ' + label + '实际零写零备份', result.status === 'failed' && result.reason === expectedReason && before.equals(after) && aux.length === 0)
@@ -590,16 +654,42 @@ try {
 } finally {
   rmSync(qbotNoWriteRoot, { recursive: true, force: true })
 }
-const fatalRoot = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-g5-fatal-'))
+const fatalRoot = makeWRoot('settings-fatal')
 try {
   addAnchoredProfile(fatalRoot, 'fatal-profile', qbotSettingsRow(qbotConfigValues))
+  const fatalWebDir = join(fatalRoot, 'profiles', 'web')
+  const fatalWebPatch = join(fatalWebDir, 'cordis.patch.yml')
+  mkdirSync(fatalWebDir, { recursive: true })
+  writeFileSync(fatalWebPatch, qbotSettingsRow(qbotConfigValues), 'utf8')
+  const fatalWebProfileContext = { home: fatalRoot, dir: fatalWebDir, patchPath: fatalWebPatch, name: 'web', startedBundles: [] }
   const fatalFs = { ...fs, copyFileSync() { throw new Error('restore-fault') } }
   const fatalSync = createQqbotSettingsSynchronizer({ fs: fatalFs, hooks: { beforeFinalVerify() { throw new Error('final-fault') } } })
-  const fatalResult = await fatalSync.enqueue({ env: { DSH_HOME: fatalRoot, DSH_PROFILE: 'web' }, snapshot: syncSnapshot })
+  const fatalResult = await fatalSync.enqueue({ documentPath: fatalWebPatch, pathContext: createPathContext({ hostDataRoot: fatalRoot }), profileFacts: fatalWebProfileContext, env: {}, snapshot: syncSnapshot })
   const fatalProfile = fatalResult.profiles?.[0]
   check('G5 profile汇总保留profile名称与fatal状态', fatalResult.status === 'failed' && fatalProfile?.profile === 'fatal-profile' && fatalProfile?.status === 'fatal' && fatalProfile?.reason === 'final-fault')
 } finally {
   rmSync(fatalRoot, { recursive: true, force: true })
+}
+
+const identityFixture = makeSyncFixture()
+try {
+  const qqBefore = readFileSync(identityFixture.qqPatch)
+  const qqSynchronizer = createQqbotSettingsSynchronizer()
+  const qqNotApplicable = await qqSynchronizer.enqueue({
+    documentPath: identityFixture.qqPatch,
+    pathContext: identityFixture.pathContext,
+    profileFacts: identityFixture.qqProfileContext,
+    env: {},
+    snapshot: syncSnapshot,
+    saveRunId: 'qq-not-applicable',
+    syncRevision: 1,
+    snapshotHash: stableSnapshotHash(syncSnapshot),
+    trigger: 'api-put',
+    associated: false,
+  })
+  check('SYNC Web/QQ身份事实显式可观测且QQ profile not-applicable零写', identityFixture.webProfileContext.name === 'web' && identityFixture.webProfileContext.startedBundles.length === 0 && qqNotApplicable.status === 'not-applicable' && qqNotApplicable.profileKind === 'qqbot' && qqNotApplicable.profileIdentityState === 'valid' && qqNotApplicable.reason === 'qqbot-profile-not-applicable' && readFileSync(identityFixture.qqPatch).equals(qqBefore))
+} finally {
+  rmSync(identityFixture.root, { recursive: true, force: true })
 }
 
 function migrationRow(name, config) {
@@ -611,7 +701,7 @@ function migrationRow(name, config) {
 }
 
 const duplicateFixture = makeSyncFixture()
-const duplicateEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, creativeMode: false }, duplicateFixture.webPatch)
+const duplicateEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, creativeMode: false }, duplicateFixture.webPatch, { profileContext: duplicateFixture.webProfileContext })
 const duplicateBefore = readFileSync(duplicateFixture.qqPatch)
 const duplicateRaw = [
   '# migration comment',
@@ -649,7 +739,7 @@ try {
 
 const creativeFixture = makeSyncFixture()
 const creativeBase = { ...syncValues, gateWords: syncGateWords, creativeMode: false }
-const creativeEditor = makeEditor(creativeBase, creativeFixture.webPatch)
+const creativeEditor = makeEditor(creativeBase, creativeFixture.webPatch, { profileContext: creativeFixture.webProfileContext })
 const creativeRun = await start(creativeEditor)
 try {
   const creativePut = await requestJson(creativeRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { creativeMode: true })
@@ -663,7 +753,7 @@ try {
 } finally { await new Promise((resolve) => creativeRun.server.close(resolve)); rmSync(creativeFixture.root, { recursive: true, force: true }) }
 
 const staleFingerprintFixture = makeSyncFixture()
-const staleFingerprintEditor = makeEditor({ ...syncValues, gateWords: syncGateWords }, staleFingerprintFixture.webPatch)
+const staleFingerprintEditor = makeEditor({ ...syncValues, gateWords: syncGateWords }, staleFingerprintFixture.webPatch, { profileContext: staleFingerprintFixture.webProfileContext })
 const staleFingerprintRun = await start(staleFingerprintEditor)
 try {
   const stalePut = await requestJson(staleFingerprintRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
@@ -697,7 +787,7 @@ try {
 } finally { await new Promise((resolve) => staleFingerprintRun.server.close(resolve)); rmSync(staleFingerprintFixture.root, { recursive: true, force: true }) }
 
 const pendingDocumentFixture = makeSyncFixture()
-const pendingDocumentEditor = makeEditor({ ...syncValues, gateWords: syncGateWords }, pendingDocumentFixture.webPatch)
+const pendingDocumentEditor = makeEditor({ ...syncValues, gateWords: syncGateWords }, pendingDocumentFixture.webPatch, { profileContext: pendingDocumentFixture.webProfileContext })
 const pendingDocumentRun = await start(pendingDocumentEditor)
 try {
   const pendingGet = await requestJson(pendingDocumentRun.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
@@ -705,10 +795,10 @@ try {
 } finally { await new Promise((resolve) => pendingDocumentRun.server.close(resolve)); rmSync(pendingDocumentFixture.root, { recursive: true, force: true }) }
 
 const externalDriftFixture = makeSyncFixture()
-const externalDriftEditor = makeEditor({ ...syncValues, gateWords: syncGateWords }, externalDriftFixture.webPatch, { persistDocument: true })
+const externalDriftEditor = makeEditor({ ...syncValues, gateWords: syncGateWords }, externalDriftFixture.webPatch, { persistDocument: true, profileContext: externalDriftFixture.webProfileContext })
 const externalDriftText = '# external writer value\n- id: external-writer\n  name: external\n  config:\n    marker: !!js \"globalThis.__externalWriter = true\"\n'
 const externalDriftSynchronizer = createQqbotSettingsSynchronizer({ hooks: { beforeFinalVerify: ({ patchFile }) => writeFileSync(patchFile, externalDriftText, 'utf8') } })
-const externalDriftRun = await externalDriftSynchronizer.enqueue({ documentPath: externalDriftFixture.webPatch, env: {}, snapshot: syncSnapshot, saveRunId: 'external-drift-run', syncRevision: 1, snapshotHash: stableSnapshotHash(syncSnapshot), trigger: 'api-put', associated: true })
+const externalDriftRun = await externalDriftSynchronizer.enqueue({ documentPath: externalDriftFixture.webPatch, pathContext: externalDriftFixture.pathContext, profileFacts: externalDriftFixture.webProfileContext, env: {}, snapshot: syncSnapshot, saveRunId: 'external-drift-run', syncRevision: 1, snapshotHash: stableSnapshotHash(syncSnapshot), trigger: 'api-put', associated: true })
 const externalDriftAfter = readFileSync(externalDriftFixture.qqPatch, 'utf8')
 const externalDriftProfile = externalDriftRun.profiles?.find((item) => item.status === 'drift-detected')
 const externalDriftSha256 = createHash('sha256').update(externalDriftAfter).digest('hex')
@@ -737,7 +827,7 @@ const previousSyncEnvironment = captureEnvironment()
 try {
   const webFixture = makeSyncFixture(); syncFixtureRoots.push(webFixture.root)
   delete process.env.DSH_HOME; delete process.env.DSH_PROFILE
-  const webEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, webFixture.webPatch)
+  const webEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, webFixture.webPatch, { profileContext: webFixture.webProfileContext })
   const webRun = await start(webEditor)
   try {
     const webPut = await requestJson(webRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
@@ -752,9 +842,11 @@ try {
   const decoyBeforeStat = statSync(decoy.qqPatch)
   const decoyBeforeBackups = patchBackupCount(decoy.profileDir)
   const decoyBeforeEntries = readdirSync(decoy.profileDir).sort().join('\n')
-  const targetBeforeBackups = patchBackupCount(webFixture.profileDir)
-  process.env.DSH_HOME = decoy.root; process.env.DSH_PROFILE = 'web'
-  const priorityEditor = makeEditor({ ...syncValues, gateWords: syncGateWords }, webFixture.webPatch)
+  const targetBeforeBackups = patchBackupCount(dirname(webFixture.qqPatch))
+  const previousPriorityEnvironment = captureEnvironment()
+  try {
+  // 目标由fixture记录的显式profileContext提供；decoy仅作为未访问的Other夹具。
+  const priorityEditor = makeEditor({ ...syncValues, gateWords: syncGateWords }, webFixture.webPatch, { profileContext: webFixture.webProfileContext })
   const priorityRun = await start(priorityEditor)
   try {
     const priorityProbe = createFsAccessProbe([
@@ -766,22 +858,45 @@ try {
     const decoyAfterStat = statSync(decoy.qqPatch)
     const decoyAfterBackups = patchBackupCount(decoy.profileDir)
     const decoyAfterEntries = readdirSync(decoy.profileDir).sort().join('\n')
-    check('SYNC 有效 documentPath 真实同级目标访问>0、诱饵profiles根访问=0且仅写目标：target访问=' + priorityProbe.count('targetProfilesRoot') + ' decoyProfiles访问=' + priorityProbe.count('decoyProfilesRoot'), priorityPut.status >= 200 && priorityPut.status < 300 && priorityPut.body.profileSync.pathSource === 'configEditor.documentPath' && priorityProbe.count('targetProfilesRoot') > 0 && priorityProbe.count('decoyProfilesRoot') === 0 && decoyAfterBytes.equals(decoyBeforeBytes) && decoyAfterStat.mtimeMs === decoyBeforeStat.mtimeMs && decoyAfterBackups === decoyBeforeBackups && decoyAfterEntries === decoyBeforeEntries && patchBackupCount(webFixture.profileDir) === targetBeforeBackups + 1)
+    check('SYNC 有效 documentPath 真实同级目标访问>0、诱饵profiles根访问=0且仅写目标：target访问=' + priorityProbe.count('targetProfilesRoot') + ' decoyProfiles访问=' + priorityProbe.count('decoyProfilesRoot'), priorityPut.status >= 200 && priorityPut.status < 300 && priorityPut.body.profileSync.pathSource === 'configEditor.documentPath' && priorityProbe.count('targetProfilesRoot') > 0 && priorityProbe.count('decoyProfilesRoot') === 0 && decoyAfterBytes.equals(decoyBeforeBytes) && decoyAfterStat.mtimeMs === decoyBeforeStat.mtimeMs && decoyAfterBackups === decoyBeforeBackups && decoyAfterEntries === decoyBeforeEntries && patchBackupCount(dirname(webFixture.qqPatch)) === targetBeforeBackups + 1)
     check('SYNC 诱饵目标零变化：patch字节/mtimeMs/备份数/目录项均相等', decoyAfterBytes.equals(decoyBeforeBytes) && decoyAfterStat.mtimeMs === decoyBeforeStat.mtimeMs && decoyAfterBackups === decoyBeforeBackups && decoyAfterEntries === decoyBeforeEntries)
   } finally { await new Promise((resolve) => priorityRun.server.close(resolve)) }
+  } finally {
+    restoreEnvironment(previousPriorityEnvironment)
+  }
 
   const fallback = makeSyncFixture(); syncFixtureRoots.push(fallback.root)
-   const fallbackEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, fallback.webPatch)
-   fallbackEditor.syncDocumentPath = ''
-  process.env.DSH_HOME = fallback.root; process.env.DSH_PROFILE = 'web'
-  const fallbackRun = await start(fallbackEditor)
+   const fallbackEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, fallback.webPatch, { profileContext: fallback.webProfileContext })
+  fallbackEditor.syncDocumentPath = ''
+  const fallbackBefore = readFileSync(fallback.qqPatch)
+  const previousFallbackEnvironment = captureEnvironment()
   try {
-    const fallbackPut = await requestJson(fallbackRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
-    check('SYNC documentPath 缺失时显式 DSH_HOME+DSH_PROFILE=web 备用成功', fallbackPut.status >= 200 && fallbackPut.status < 300 && fallbackPut.body.profileSync.status === 'synced' && fallbackPut.body.profileSync.pathSource === 'explicit-DSH_HOME' && fallbackPut.body.profileSync.fallbackReason === 'document-path-unavailable')
-  } finally { await new Promise((resolve) => fallbackRun.server.close(resolve)) }
+    const fallbackRun = await start(fallbackEditor)
+    try {
+      const fallbackPut = await requestJson(fallbackRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
+      check('SYNC documentPath 缺失且无显式根拒绝、QQBot零写', fallbackPut.status >= 400 && fallbackPut.body.profileSync.status === 'unavailable' && fallbackPut.body.profileSync.reason === 'document-path-unavailable' && readFileSync(fallback.qqPatch).equals(fallbackBefore))
+    } finally { await new Promise((resolve) => fallbackRun.server.close(resolve)) }
+  } finally {
+    restoreEnvironment(previousFallbackEnvironment)
+  }
+
+  const conflictFixture = makeSyncFixture(); syncFixtureRoots.push(conflictFixture.root)
+  const conflictEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, conflictFixture.webPatch, {
+    profileContext: { ...conflictFixture.webProfileContext, home: decoy.root },
+    dshHomePath: () => conflictFixture.root,
+  })
+  const conflictBefore = readFileSync(conflictFixture.qqPatch)
+  const conflictRun = await start(conflictEditor)
+  try {
+    const conflictPut = await requestJson(conflictRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
+    check('SYNC profile home与显式dshHomePath冲突拒绝且QQBot零写', conflictPut.status >= 400 && conflictPut.body.profileSync.status === 'unavailable' && typeof conflictPut.body.profileSync.reason === 'string' && readFileSync(conflictFixture.qqPatch).equals(conflictBefore))
+  } finally {
+    await new Promise((resolve) => conflictRun.server.close(resolve))
+  }
+  rmSync(conflictFixture.root, { recursive: true, force: true })
 
   const failedFixture = makeSyncFixture(); syncFixtureRoots.push(failedFixture.root)
-  const failedEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, failedFixture.webPatch)
+  const failedEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, failedFixture.webPatch, { profileContext: failedFixture.webProfileContext })
   rmSync(failedFixture.qqPatch, { force: true })
   const failedRun = await start(failedEditor)
   try {
@@ -791,7 +906,7 @@ try {
   } finally { await new Promise((resolve) => failedRun.server.close(resolve)) }
 
   const invalidRequestFixture = makeSyncFixture(); syncFixtureRoots.push(invalidRequestFixture.root)
-  const invalidRequestEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, invalidRequestFixture.webPatch)
+  const invalidRequestEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, invalidRequestFixture.webPatch, { profileContext: invalidRequestFixture.webProfileContext })
   const invalidRequestBefore = readFileSync(invalidRequestFixture.qqPatch, 'utf8')
   const invalidRequestRun = await start(invalidRequestEditor)
   try {
@@ -802,7 +917,7 @@ try {
   const partialFixture = makeSyncFixture(); syncFixtureRoots.push(partialFixture.root)
   const partialFailed = addAnchoredProfile(partialFixture.root, 'qqbot-partial-failed')
   rmSync(partialFailed.patch, { force: true })
-  const partialEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, partialFixture.webPatch)
+  const partialEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, partialFixture.webPatch, { profileContext: partialFixture.webProfileContext })
   const partialRun = await start(partialEditor)
   try {
     const partialPut = await requestJson(partialRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
@@ -822,7 +937,7 @@ try {
   const unavailableProfilesRoot = join(unavailable.root, 'profiles')
   let unavailableProbe
   await withEnvironment({ DSH_HOME: undefined, DSH_PROFILE: undefined, USERPROFILE: unavailableUserProfile, HOME: unavailableHome }, async () => {
-     const unavailableEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, unavailable.webPatch)
+     const unavailableEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, unavailable.webPatch, { profileContext: unavailable.webProfileContext })
      unavailableEditor.syncDocumentPath = ''
     const unavailableRun = await start(unavailableEditor)
     try {
@@ -844,7 +959,7 @@ try {
     join(webFixture.root, 'other', 'web', 'cordis.patch.yml'),
   ]
   for (const invalidPath of invalidPaths) {
-     const invalidEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, webFixture.webPatch)
+     const invalidEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, webFixture.webPatch, { profileContext: webFixture.webProfileContext })
      invalidEditor.syncDocumentPath = invalidPath
     const invalidRun = await start(invalidEditor)
     try {
@@ -855,7 +970,7 @@ try {
 
   const noTarget = makeSyncFixture(); syncFixtureRoots.push(noTarget.root)
   rmSync(join(noTarget.profileDir, 'node_modules', 'dsh-extra-plan-qqbot'), { recursive: true, force: true })
-  const noTargetEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, noTarget.webPatch)
+  const noTargetEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, noTarget.webPatch, { profileContext: noTarget.webProfileContext })
   const noTargetRun = await start(noTargetEditor)
   try {
     const noTargetPut = await requestJson(noTargetRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
@@ -863,7 +978,7 @@ try {
   } finally { await new Promise((resolve) => noTargetRun.server.close(resolve)) }
 
   const drift = makeSyncFixture(); syncFixtureRoots.push(drift.root)
-  const driftEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, drift.webPatch)
+  const driftEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, drift.webPatch, { profileContext: drift.webProfileContext })
   const driftRun = await start(driftEditor)
   try {
     const first = await requestJson(driftRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
@@ -887,7 +1002,7 @@ async function runHostProxyMatrix() {
   const baseValues = { ...syncValues }
   const gate = structuredClone(syncGateWords)
   const matrixFixture = makeSyncFixture()
-  const matrixEditor = makeEditor({ ...baseValues, gateWords: gate }, matrixFixture.webPatch, { persistDocument: true })
+  const matrixEditor = makeEditor({ ...baseValues, gateWords: gate }, matrixFixture.webPatch, { persistDocument: true, profileContext: matrixFixture.webProfileContext })
   const initialSnapshot = { values: { ...baseValues }, gateWords: gate }
   writeFileSync(matrixFixture.webPatch, JSON.stringify([{ id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: { ...baseValues, gateWords: gate } }]), 'utf8')
   const normalTrace = []
@@ -997,7 +1112,7 @@ async function runHostProxyMatrix() {
 await runHostProxyMatrix()
 const adapterFixtureRoots = []
 const adapterFixture = makeSyncFixture(); adapterFixtureRoots.push(adapterFixture.root)
-const adapterEditor = makeEditor({ ...syncValues, gateWords: syncGateWords }, adapterFixture.webPatch)
+const adapterEditor = makeEditor({ ...syncValues, gateWords: syncGateWords }, adapterFixture.webPatch, { profileContext: adapterFixture.webProfileContext })
 const adapterCounts = { register: 0, dispose: 0 }
 let adapterNoRemount = false
 const adapterRun = await start(adapterEditor, {
@@ -1029,7 +1144,7 @@ async function runApiAdapterCase(label, caseName, failureEvent, changed) {
   const counts = { register: 0, dispose: 0 }
   const gate = deferred()
   const fiber = { dispose: async () => { counts.dispose += 1 } }
-  const editor = makeEditor({ ...syncValues, gateWords: syncGateWords }, fixture.webPatch, { persistDocument: true })
+  const editor = makeEditor({ ...syncValues, gateWords: syncGateWords }, fixture.webPatch, { persistDocument: true, profileContext: fixture.webProfileContext })
   const run = await start(editor, {
     mount: true,
     trace,
@@ -1093,7 +1208,8 @@ await runApiAdapterCase('API_ADAPTER_REJECT_COMPLETE_PATCH_SETTLED_BEFORE_FAILUR
 await runApiAdapterCase('API_ADAPTER_HANG_COMPLETE_PATCH_SETTLED_BEFORE_RESOLVE_OK', 'hang', 'adapter-resolved', { webFetch: false })
 
 
-const liveRoot = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-live-config-'))
+const liveRoot = makeWRoot('settings-live-config')
+const livePathContext = createPathContext({ workspaceRoot: liveRoot })
 const liveDir = join(liveRoot, 'profiles', 'web')
 mkdirSync(liveDir, { recursive: true })
 let livePath = join(liveDir, 'cordis.patch.yml')
@@ -1105,23 +1221,23 @@ const liveWarnings = []
 const liveWarn = console.warn
 console.warn = (...args) => liveWarnings.push(args.map(String).join(' '))
 try {
-  const liveConfig = createLiveConfig({ resolveDocumentPath: () => livePath, fallbackDefaults: syncValues })
+  const liveConfig = createLiveConfig({ resolveDocumentTarget: () => ({ kind: 'workspace', path: livePath }), getPathContext: () => livePathContext, fallbackDefaults: syncValues })
   let hotReadOk = true
   for (const key of hotKeys) {
     const next = { ...syncValues, [key]: hotNext[key] }
     livePath = join(liveDir, 'cordis.patch.' + key + '.yml')
     writeFileSync(livePath, JSON.stringify([{ id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: next }]), 'utf8')
-    if (!Object.is(liveConfig[hotGetters[key]], hotNext[key])) hotReadOk = false
+    if (!Object.is(liveConfig.get(hotGetters[key], { session: { header: { cwd: liveRoot } } }), hotNext[key])) hotReadOk = false
   }
   const missingLivePath = join(liveDir, 'cordis.patch.missing.yml')
   livePath = missingLivePath
-  const fallbackAfterMissing = Object.fromEntries(hotKeys.map((key) => [key, liveConfig[hotGetters[key]]]))
+  const fallbackAfterMissing = Object.fromEntries(hotKeys.map((key) => [key, liveConfig.get(hotGetters[key], { session: { header: { cwd: liveRoot } } })]))
   const fallbackOk = hotKeys.every((key) => Object.is(fallbackAfterMissing[key], syncValues[key]))
   const warningsAfterMissing = liveWarnings.length
   livePath = join(liveDir, 'cordis.patch.recovered.yml')
   const recoveredValues = { ...syncValues, ...hotNext }
   writeFileSync(livePath, JSON.stringify([{ id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: recoveredValues }]), 'utf8')
-  const recovered = Object.fromEntries(hotKeys.map((key) => [key, liveConfig[hotGetters[key]]]))
+  const recovered = Object.fromEntries(hotKeys.map((key) => [key, liveConfig.get(hotGetters[key], { session: { header: { cwd: liveRoot } } })]))
   const recoveredOk = hotKeys.every((key) => Object.is(recovered[key], hotNext[key]))
   check('G5 A可读→B缺失→B可读：8项回退/恢复且缺失最多一次告警', hotReadOk && fallbackOk && recoveredOk && warningsAfterMissing === 1 && liveWarnings.length === 1 && adapterNoRemount)
 } finally {
@@ -1679,6 +1795,12 @@ surface.unmount()
 failedSurface.unmount()
 
 restoreEnvironment(testEnvironment)
+for (const key of settingsEnvKeys) {
+  const value = originalBootstrapEnv[key]
+  if (value === undefined) delete process.env[key]
+  else process.env[key] = value
+}
 check('ENV DSH_HOME/DSH_PROFILE/USERPROFILE/HOME 精确恢复原先不存在/原值状态', TEST_ENV_KEYS.every((key) => process.env[key] === testEnvironment[key]))
+settingsBootstrapFixture.cleanup()
 output.summary(pass, fail)
 process.exit(fail === 0 ? 0 : 1)

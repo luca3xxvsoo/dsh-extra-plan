@@ -3,6 +3,8 @@
 import { readFileSync } from 'node:fs'
 import { isDeepStrictEqual } from 'node:util'
 import { join } from 'node:path'
+import { makeFixtureDir } from '../_shared/workspace-paths.mjs'
+import { createPathContext } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
 import { fileURLToPath } from 'node:url'
 import {
   SETTING_DEFINITIONS,
@@ -21,6 +23,8 @@ import { validateGateWords } from '../../plugins/dsh-extra-plan/lib/gate-words.j
 import { createOutput } from '../_shared/test-output.mjs'
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url))
+const migrationFixture = makeFixtureDir({ label: 'settings-migration' })
+const MIGRATION_PATH_CONTEXT = createPathContext({ hostDataRoot: migrationFixture.root })
 const ASSET = join(ROOT, 'plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml')
 function findTemplateGateWords(value) {
   if (Array.isArray(value)) {
@@ -233,7 +237,7 @@ async function runPersistentSync(settingsValues, patch, legacyVisible) {
   const legacyBefore = structuredClone(editor.state.store.legacyRows)
   let applyCount = 0
   let appliedPlan = null
-  const result = await syncPreset({
+  const result = await syncPreset({ pathContext: MIGRATION_PATH_CONTEXT,
     settingsValues,
     readPatch: editor.readPatch,
     apply: async (plan) => {
@@ -262,7 +266,7 @@ async function applyPlanToEditor(plan, editor) {
 async function runSync(settingsValues, patch) {
   const editor = makeEditor(settingsValues)
   let appliedPlan = null
-  const result = await syncPreset({
+  const result = await syncPreset({ pathContext: MIGRATION_PATH_CONTEXT,
     settingsValues,
     readPatch: () => patch,
     apply: async (plan) => { appliedPlan = plan; await applyPlanToEditor(plan, editor) },
@@ -360,7 +364,7 @@ for (const [kind, words] of invalidCurrentGateCases) {
   let syncFailed = false
   let syncError = ''
   try {
-    await syncPreset({
+    await syncPreset({ pathContext: MIGRATION_PATH_CONTEXT,
       settingsValues: invalidSettingsConfig,
       readPatch: () => legacyBoth,
       apply: async (plan) => {
@@ -385,18 +389,18 @@ findPluginRow(declaredOnlyPlugins, 'tool-web').config.fetch = true
 findPluginRow(declaredOnlyPlugins, 'tool-presentation').config.mode = 'ptc'
 findPluginRow(declaredOnlyPlugins, 'extra-plan').config.gateWords = structuredClone(declaredOnlyGate)
 const declaredOnlyBefore = structuredClone(declaredOnlyPlugins)
-const declaredOnlyRun = await syncPreset({ declaredPlugins: declaredOnlyPlugins })
+const declaredOnlyRun = await syncPreset({ pathContext: MIGRATION_PATH_CONTEXT, declaredPlugins: declaredOnlyPlugins })
 const declaredOnlyExpected = { webFetch: true, toolPresentationMode: 'ptc', gateWords: declaredOnlyGate }
 check('F03 syncPreset 仅 declaredPlugins 保留旧 web/mode/自定义七词', declaredOnlyRun.action === 'written' && isDeepStrictEqual(projectionOf(declaredOnlyRun), declaredOnlyExpected))
 check('F03 declaredPlugins 回归输入不变', isDeepStrictEqual(declaredOnlyPlugins, declaredOnlyBefore))
-const explicitGlobalRun = await syncPreset({
+const explicitGlobalRun = await syncPreset({ pathContext: MIGRATION_PATH_CONTEXT,
   declaredPlugins: declaredOnlyPlugins,
   settingsValues: { webFetch: false, toolPresentationMode: 'native', gateWords: gate },
 })
 const explicitGlobalExpected = { webFetch: false, toolPresentationMode: 'native', gateWords: gate }
 check('F03 显式全局值优先于 declaredPlugins 旧投影/词表', explicitGlobalRun.action === 'written' && isDeepStrictEqual(projectionOf(explicitGlobalRun), explicitGlobalExpected))
 let readPatchCalls = 0
-const readPatchRun = await syncPreset({ readPatch: () => { readPatchCalls += 1; return bodyOnly } })
+const readPatchRun = await syncPreset({ pathContext: MIGRATION_PATH_CONTEXT, readPatch: () => { readPatchCalls += 1; return bodyOnly } })
 const readPatchExpected = { webFetch: true, toolPresentationMode: 'ptc', gateWords: gate }
 check('F03 readPatch 分支保留旧 body 解析且只读取一次原始输入', readPatchRun.action === 'written' && readPatchCalls === 1 && isDeepStrictEqual(projectionOf(readPatchRun), readPatchExpected))
 const explicitLegacyGate = { routeDirect: '显直', routePlan: '显规', routeDisagree: '显异', approvalApprove: '显同', approvalReplan: '显转', purposeRefine: '显完', purposeRedo: '显重' }
@@ -409,7 +413,7 @@ const explicitLegacyState = {
   diagnostics: ['explicit legacyState marker'],
   legacyPlugins: declaredOnlyPlugins,
 }
-const explicitLegacyRun = await syncPreset({ declaredPlugins: declaredOnlyPlugins, readPatch: () => bodyOnly, legacyState: explicitLegacyState })
+const explicitLegacyRun = await syncPreset({ pathContext: MIGRATION_PATH_CONTEXT, declaredPlugins: declaredOnlyPlugins, readPatch: () => bodyOnly, legacyState: explicitLegacyState })
 const explicitLegacyExpected = { webFetch: false, toolPresentationMode: 'native', gateWords: explicitLegacyGate }
 check('F03 显式 legacyState 优先于 readPatch 与 declaredPlugins', explicitLegacyRun.action === 'written' && isDeepStrictEqual(projectionOf(explicitLegacyRun), explicitLegacyExpected) && explicitLegacyRun.plan.diagnostics.includes('explicit legacyState marker'))
 
@@ -543,5 +547,6 @@ for (const legacyId of ['extra-plan-preset-sync', 'preset-extra-plan']) {
 const captured = captureRowSettings('- id: dsh-extra-plan-settings\n  name: dsh-extra-plan/settings\n  config:\n    plannerModel: x\n', SETTING_DEFINITIONS)
 check('V04 当前唯一行缺项可识别 rowPresent=true，不能猜旧行', captured.rowPresent === true && captured.states.plannerModel === 'captured' && captured.states.webFetch === 'missing')
 
+migrationFixture.cleanup()
 output.summary(pass, fail)
 process.exit(fail === 0 ? 0 : 1)

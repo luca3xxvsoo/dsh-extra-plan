@@ -8,7 +8,7 @@ import { dirname, join, relative, resolve, basename, delimiter, isAbsolute, sep 
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { isDeepStrictEqual } from 'node:util'
 
-const EXPECTED_DSH_VERSION = '0.2.1-rc.2'
+const EXPECTED_DSH_VERSION = '0.2.1-rc.4'
 const TARGET_PACKAGE = 'dsh-extra-plan-qqbot'
 const CORE_PACKAGE = 'dsh-extra-plan'
 const TARGET_VERSION = '2.0.1'

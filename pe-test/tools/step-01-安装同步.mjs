@@ -1,9 +1,11 @@
 // 安装/启动同步专项：初始官方 adapter、settled-only 保存与结构 handoff 分离。
 // 不触碰真实 DSH_HOME/profile；真实 Loader/生产消息链保留 HUMAN 边界。
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire, registerHooks } from 'node:module'
+import { pathToFileURL } from 'node:url'
 import { join } from 'node:path'
-import { homedir, tmpdir } from 'node:os'
+import { makeFixtureDir } from '../_shared/workspace-paths.mjs'
+import { createPathContext } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
 import { isDeepStrictEqual } from 'node:util'
 import { parsePresetYaml } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
 import {
@@ -19,30 +21,19 @@ import { createOutput } from '../_shared/test-output.mjs'
 import { createQqbotSettingsSynchronizer } from '../../plugins/dsh-extra-plan/lib/qqbot-settings-sync.js'
 
 const ROOT = new URL('../..', import.meta.url)
-// 0.2.1：安装根优先取显式 DSH_INSTALL_ROOT（<root>/node_modules/@deepseek-ai/dsh）；
-// 缺省时从已安装的 dsh-llm 反推同一作用域根，再回退到该根下的 dsh 包目录。
+// 只读宿主验证根必须由命令显式提供；根本身不是安装锚文件。
 function resolveOfficialRoot() {
   const explicit = typeof process.env.DSH_INSTALL_ROOT === 'string' ? process.env.DSH_INSTALL_ROOT.trim() : ''
-  const scopes = []
-  if (explicit !== '') scopes.push(join(explicit, 'node_modules'))
-  if (process.env.APPDATA) scopes.push(join(process.env.APPDATA, 'npm', 'node_modules'))
-  scopes.push(join(homedir(), 'AppData', 'Roaming', 'npm', 'node_modules'))
-  scopes.push(join(homedir(), '.npm-global', 'lib', 'node_modules'))
-  scopes.push(join('/usr', 'local', 'lib', 'node_modules'))
-  for (const scope of scopes) {
-    const llmManifest = join(scope, '@deepseek-ai', 'dsh-llm', 'package.json')
-    const dshDir = join(scope, '@deepseek-ai', 'dsh')
-    if (!existsSync(llmManifest)) continue
-    // 反推成功：dsh 与 dsh-llm 同作用域并列；dsh 缺失时退到 dsh 包内嵌 node_modules
-    if (existsSync(join(dshDir, 'package.json'))) return dshDir
-    return join(dshDir, 'node_modules', '@deepseek-ai', 'dsh')
-  }
-  return join(homedir(), 'AppData', 'Roaming', 'npm', 'node_modules', '@deepseek-ai', 'dsh')
+  if (explicit === '') throw new Error('step-01-install-sync: 缺少显式 DSH_INSTALL_ROOT')
+  const dshRoot = join(explicit, 'node_modules', '@deepseek-ai', 'dsh')
+  if (!existsSync(join(dshRoot, 'package.json'))) throw new Error('step-01-install-sync: 显式根缺少 @deepseek-ai/dsh/package.json')
+  return dshRoot
 }
 const OFFICIAL_ROOT = resolveOfficialRoot()
+const INSTALL_ANCHOR = join(OFFICIAL_ROOT, 'package.json')
 try {
-  const anchor = createRequire(join(OFFICIAL_ROOT, 'package.json'))
-  const yamlUrl = new URL('file:///' + anchor.resolve('js-yaml').replaceAll('\\\\', '/')).href
+  const anchor = createRequire(INSTALL_ANCHOR)
+  const yamlUrl = pathToFileURL(anchor.resolve('js-yaml')).href
   if (typeof registerHooks === 'function') registerHooks({ resolve(specifier, context, next) {
     if (specifier === 'js-yaml') return { url: yamlUrl, shortCircuit: true }
     return next(specifier, context)
@@ -169,7 +160,8 @@ function completeSyncConfig(text, snapshot) {
   try { return isDeepStrictEqual(targetConfigOf(text), { ...snapshot.values, gateWords: snapshot.gateWords }) } catch { return false }
 }
 function makeProfileFixture() {
-  const root = mkdtempSync(join(tmpdir(), 'dsh-extra-plan-install-adapter-'))
+  const fixture = makeFixtureDir({ label: 'install-adapter' })
+  const root = fixture.root
   const webDir = join(root, 'profiles', 'web')
   const qqDir = join(root, 'profiles', 'qqbot-sync')
   mkdirSync(webDir, { recursive: true })
@@ -180,7 +172,7 @@ function makeProfileFixture() {
   const qqPatch = join(qqDir, 'cordis.patch.yml')
   writeFileSync(webPatch, '[]', 'utf8')
   writeFileSync(qqPatch, '- id: user-custom\n  name: custom\n', 'utf8')
-  return { root, webPatch, qqPatch }
+  return { root, webPatch, qqPatch, fixture, pathContext: createPathContext({ hostDataRoot: root }), profileContext: { home: root, dir: webDir, patchPath: webPatch, name: 'web', startedBundles: [] } }
 }
 function createProfileSync(fixture, trace) {
   const terminal = []
@@ -189,7 +181,7 @@ function createProfileSync(fixture, trace) {
     trace.push('settled-snapshot')
     writeFileSync(fixture.webPatch, JSON.stringify([{ id: SETTINGS_ROW_ID, config: { ...snapshot.values, gateWords: snapshot.gateWords } }]), 'utf8')
     trace.push('web-patch-written')
-    return await synchronizer.enqueue({ documentPath: fixture.webPatch, snapshot, env: { DSH_HOME: undefined, DSH_PROFILE: undefined } })
+    return await synchronizer.enqueue({ documentPath: fixture.webPatch, pathContext: fixture.pathContext, profileFacts: fixture.profileContext, snapshot, env: { DSH_HOME: undefined, DSH_PROFILE: undefined } })
   }
   return { settle, terminal }
 }
@@ -210,7 +202,7 @@ const hostProxyOuterError = hostProxyNormal.outerDirectError === 'cannot get pro
 const hostProxyMissingTrace = []
 const hostProxyMissing = makeContext(hostProxyEditor, async () => ({ dispose: async () => {} }), hostProxyMissingTrace, 'adapter-rejected', { mode: 'child-missing-configEditor' })
 const hostProxyMissingDiagnostics = []
-const hostProxyMissingDispose = mountPresetSync(hostProxyMissing.ctx, { onAdapterError: (diagnostic) => hostProxyMissingDiagnostics.push(diagnostic) })
+const hostProxyMissingDispose = mountPresetSync(hostProxyMissing.ctx, { installAnchor: INSTALL_ANCHOR, onAdapterError: (diagnostic) => hostProxyMissingDiagnostics.push(diagnostic) })
 await flush(8)
 const hostProxyThrowsTrace = []
 const hostProxyThrows = makeContext(hostProxyEditor, async () => ({ dispose: async () => {} }), hostProxyThrowsTrace, 'adapter-rejected', { mode: 'inject-throws' })
@@ -264,8 +256,10 @@ const settledSource = settledStart >= 0 && settledEnd > settledStart ? mountSour
 const updateSource = sourceBlock(mountSource, "const offUpdate = typeof child.on === 'function' ? child.on('internal/update'")
 const structuralStop = updateSource.indexOf('if (!structural) return')
 const settingsOnlySource = structuralStop >= 0 ? updateSource.slice(0, structuralStop + 'if (!structural) return'.length) : ''
+const officialAdapterCallOk =
+  /\b[\w$]+\.plugin\(\s*[\w$]*official[\w$]*agent[\w$]*preset\b/i.test(mountSource)
+check('OFFICIAL_ADAPTER_CALL_SEMANTIC_OK', officialAdapterCallOk)
 const noRemountStaticOk =
-  mountSource.includes('child.plugin(OfficialAgentPreset') &&
   mountSource.includes('activeLegacyRow(') &&
   mountSource.includes('structuralFingerprint') &&
   mountSource.includes('structuralHandoff') &&
@@ -284,7 +278,7 @@ else { output.error('FAIL SETTINGS_ONLY_NO_REMOUNT_STATIC_OK'); fail += 1 }
 const settledEvents = []
 const initialEditor = makeEditor(completeSettings)
 const initialStats = makeContext(initialEditor, async () => ({ dispose: async () => {} }))
-const initialDispose = mountPresetSync(initialStats.ctx, { onSettledSettings: async (snapshot) => { settledEvents.push(snapshot) } })
+const initialDispose = mountPresetSync(initialStats.ctx, { installAnchor: INSTALL_ANCHOR, onSettledSettings: async (snapshot) => { settledEvents.push(snapshot) } })
 await flush()
 // 0.2.1 预设链：一次 initialMount 顺序挂载 5 个 definition（主 17 条在前，4 个角色在后）。
 check('INITIAL_OFFICIAL_ADAPTER_REGISTER_1_17_DEFINITION_OK', initialStats.pluginCalls === 5 && initialStats.received.length === 5 && initialStats.received[0].plugins.length === 17
@@ -322,6 +316,7 @@ async function runFixtureFailureCase(label, pluginImpl, failureEvent, plannerMod
   const editor = makeEditor(completeSettings)
   const stats = makeContext(editor, pluginImpl, trace, failureEvent)
   const dispose = mountPresetSync(stats.ctx, {
+    installAnchor: INSTALL_ANCHOR,
     onSettledSettings: profileSync.settle,
     onAdapterError: (diagnostic) => { diagnostics.push(diagnostic); trace.push('adapter-diagnostic') },
   })
@@ -354,6 +349,7 @@ const hangingProfileSync = createProfileSync(hangingFixture, hangingTrace)
 const hangingEditor = makeEditor(completeSettings)
 const hangingStats = makeContext(hangingEditor, async () => adapterGate.promise.then((fiber) => { hangingResolved = true; return fiber }), hangingTrace)
 const hangingDispose = mountPresetSync(hangingStats.ctx, {
+  installAnchor: INSTALL_ANCHOR,
   onSettledSettings: hangingProfileSync.settle,
   onAdapterError: (diagnostic) => { hangingDiagnostics.push(diagnostic); hangingTrace.push('adapter-diagnostic') },
 })
@@ -381,7 +377,7 @@ rmSync(hangingFixture.root, { recursive: true, force: true })
 const structuralEditor = makeEditor(completeSettings)
 const structuralStats = makeContext(structuralEditor, async () => ({ dispose: async () => {} }))
 const structuralEvents = []
-const structuralDispose = mountPresetSync(structuralStats.ctx, { onSettledSettings: async (snapshot) => { structuralEvents.push(snapshot) } })
+const structuralDispose = mountPresetSync(structuralStats.ctx, { installAnchor: INSTALL_ANCHOR, onSettledSettings: async (snapshot) => { structuralEvents.push(snapshot) } })
 await flush()
 const beforeStructural = structuralStats.pluginCalls
 structuralEditor.state.rows.push({ entry: { options: { id: 'non-settings-declaration', name: 'declaration', config: { enabled: true } } }, disabled: false })
@@ -410,7 +406,7 @@ const disposeGate = deferred()
 let disposeSettledStarted = 0
 const disposeEditor = makeEditor(completeSettings)
 const disposeStats = makeContext(disposeEditor, async () => ({ dispose: async () => {} }))
-const disposeOwner = mountPresetSync(disposeStats.ctx, { onSettledSettings: async () => { disposeSettledStarted += 1; await disposeGate.promise } })
+const disposeOwner = mountPresetSync(disposeStats.ctx, { installAnchor: INSTALL_ANCHOR, onSettledSettings: async () => { disposeSettledStarted += 1; await disposeGate.promise } })
 await flush()
 const closing = disposeOwner()
 await flush()

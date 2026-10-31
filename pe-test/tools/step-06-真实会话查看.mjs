@@ -1,22 +1,28 @@
-// step-06-真实会话查看.mjs — 只读 extra-plan 会话冒烟取证。
-// 用法: node step-06-真实会话查看.mjs [sessions-dir|会话目录名|路径]
+// step-06-真实会话查看.mjs — 只读显式选择的 extra-plan 会话冒烟取证。
+// 用法: node step-06-真实会话查看.mjs [<会话目录名或路径>] [--session <ID> --sessions-dir <根>]；无选择=NOT-RUN，不扫描会话目录。
 // 输出: 每个会话的 request/header（model/effort/tools 数）、pwsh 调用命令与拒绝、
 //       subagent_plan/ask 调用与结果摘要、error/retry 相关事件。
 import fs from 'node:fs'
 import path from 'node:path'
 import { decodedJsonlLines } from '../_shared/zstd-frames.mjs'
-import { findSession } from '../_shared/session-finder.mjs'
-import { toolResultOf, v4LogPath } from '../_shared/v4-tool-result.mjs'
+import { authorizedSessionLogPath, findSession } from '../_shared/session-finder.mjs'
+import { parseMaintenanceArgs, createMaintenanceContext } from '../_shared/workspace-paths.mjs'
+import { toolResultOf } from '../_shared/v4-tool-result.mjs'
 
-const found = findSession(process.argv[2])
+const maintenanceArgs = parseMaintenanceArgs(process.argv.slice(2))
+const maintenanceContext = createMaintenanceContext(maintenanceArgs)
+const explicit = maintenanceArgs.domainArgv.find((value) => !String(value).startsWith('--'))
+const found = findSession(explicit, { maintenanceContext })
+if (found.kind === 'none') { console.log('NOT-RUN：未显式选择会话；未读取会话日志'); process.exit(0) }
+if (found.kind === 'unavailable') { console.log('NOT-RUN：会话 Host 根不可用；' + found.reason); process.exit(0) }
+if (found.kind === 'incomplete') { console.error('INCOMPLETE ' + found.reason); process.exit(1) }
 if (found.kind === 'notfound') { console.error('未找到目录：', found.arg); process.exit(1) }
-if (found.kind === 'none') { console.error('未发现使用过按需规划模式的会话'); process.exit(1) }
 
 let invalidLog = false
 for (const dir of found.dirs) {
   console.log(`\n===== 会话 ${dir} =====`)
-  const lp = v4LogPath(path.join(found.base, dir)); if (!lp) { invalidLog = true; console.error('仅支持 v4 会话日志：目标日志必须是 session.v4.jsonl.zstd：', path.join(found.base, dir)); continue }
-  const buf = fs.readFileSync(lp)
+  const lp = authorizedSessionLogPath(path.join(found.base, dir), found.pathContext, { kind: found.pathKind, names: ['session.v4.jsonl.zstd'] }); if (lp === null) { invalidLog = true; console.error('仅支持 v4 会话日志：目标日志必须是 session.v4.jsonl.zstd：', path.join(found.base, dir)); continue }
+  const buf = fs.readFileSync(lp.realPath)
   let recordCount = 0
   try {
     for (const { lineNo, line: raw } of decodedJsonlLines(buf)) {

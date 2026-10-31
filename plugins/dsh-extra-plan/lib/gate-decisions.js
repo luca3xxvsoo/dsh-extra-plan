@@ -2,7 +2,7 @@
 import { sessionEvents } from './agent-session.js'
 import { budgetExceeded, budgetExhaustedReason, toolCallsSinceUser, DEFAULT_EXPLORE_BUDGET } from './planner-budget.js'
 import { runCodeTextOf, createRunCodeStatic } from './run-code-static.js'
-import { pwshMutationMatches, bashMutationMatches } from './shell-mutation.js'
+import { pwshMutationEvidence, bashMutationEvidence } from './shell-mutation.js'
 import { normalizeGateLabel } from './gate-words.js'
 
 const ASK_TOOL = 'ask_user_question'
@@ -639,9 +639,15 @@ function subagentProbeGateReason(exec, role) {
 }
 
 // shell 写命令的只读角色拒绝文案（B3 收敛：唯一实现，planner/探查者/验收复核者 × pwsh/bash 共六格；
-// 六格文案与重构前逐字一致）。只处理 pwsh/bash 且确实命中既有 mutation 判定的调用；role 只接受
+// 六格基础拒句与重构前逐字一致，固定依据后缀由 withShellEvidence 统一追加。只处理 pwsh/bash 且确实命中既有 mutation 判定的调用；role 只接受
 // planner/probe/reviewer，其余（含未知角色、非 shell 工具、只读命令）一律返回 null。
 // write/edit 分支与本函数无关，各自 GateReason 内逐字保留。
+function withShellEvidence(reason, name, evidence) {
+  if (evidence === null) return reason
+  const hit = evidence.value === '' ? '' : ' 命中 ' + evidence.value
+  return reason + '；触发依据：' + name + ' ' + evidence.rule + hit
+}
+
 function shellMutationReason(role, exec) {
   let label = null
   if (role === 'planner') label = '规划子代理'
@@ -650,10 +656,12 @@ function shellMutationReason(role, exec) {
   if (label === null) return null
   if (exec === undefined || exec === null) return null
   if (exec.name === 'pwsh') {
-    return pwshMutationMatches(exec) ? `${label}只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件` : null
+    const evidence = pwshMutationEvidence(exec)
+    return evidence === null ? null : withShellEvidence(label + '只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件', 'pwsh', evidence)
   }
   if (exec.name === 'bash') {
-    return bashMutationMatches(exec) ? `${label}只读：bash 仅限只读探查命令，禁止创建/修改/删除文件` : null
+    const evidence = bashMutationEvidence(exec)
+    return evidence === null ? null : withShellEvidence(label + '只读：bash 仅限只读探查命令，禁止创建/修改/删除文件', 'bash', evidence)
   }
   return null
 }
@@ -853,19 +861,18 @@ function mainGateReason(state, exec, gateCtx) {
   if (name === 'cordis_inspect_list' || name === 'cordis_inspect_query') {
     return null
   }
-  const isPwshMutation = name === 'pwsh' && pwshMutationMatches(exec)
-  const isBashMutation = name === 'bash' && bashMutationMatches(exec)
-  if (isPwshMutation || isBashMutation) {
-    const shellLabel = isBashMutation ? 'bash' : 'pwsh'
+  const shellEvidence = name === 'pwsh' ? pwshMutationEvidence(exec) : name === 'bash' ? bashMutationEvidence(exec) : null
+  if (shellEvidence !== null) {
+    const shellLabel = name
     if (!escape && state.route !== 'direct' && state.approved !== true) {
-      return routeDenyReason(shellLabel, state, gateRuntime)
+      return withShellEvidence(routeDenyReason(shellLabel, state, gateRuntime), shellLabel, shellEvidence)
     }
     // 新增：approved 态下，shell 写命令需区分工作区内/越界（pwsh 与 bash 同口径）
     if (!escape && state.approved === true && state.route !== 'direct') {
       const args = exec.arguments
       const hasEscalation = args !== undefined && args !== null && typeof args === 'object' && typeof args.sandbox_permissions === 'string'
       if (!hasEscalation) {
-        return '方案已批准，工作区内写入请走 subagent 委派执行者。越界操作（工作区外写入）请带 sandbox_permissions 参数（如 sandbox_permissions: "workspace-write"）与 justification 重试'
+        return withShellEvidence('方案已批准，工作区内写入请走 subagent 委派执行者。越界操作（工作区外写入）请带 sandbox_permissions 参数（如 sandbox_permissions: "workspace-write"）与 justification 重试', shellLabel, shellEvidence)
       }
     }
     return null

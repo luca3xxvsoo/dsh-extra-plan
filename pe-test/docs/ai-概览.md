@@ -4,7 +4,9 @@
 
 ## 项目身份与支持范围
 
-`dsh-extra-plan` 是 dsh 的按需规划预设：AI 先只读理解，经路由、目的、澄清、批准四级机械锚点后执行；`save_plan` 是受限的方案/验收双文件写例外。当前仅支持 dsh `0.2.1-rc.2`；旧版兼容见旧版分支。当前版本的实测状态、证据等级与待核实项统一见[ai-宿主耦合台账](ai-宿主耦合台账.md)。QQBot、生产及真实交互仍单独标记 HUMAN。
+`dsh-extra-plan` 是 dsh 的按需规划预设：AI 先只读理解，经路由、目的、澄清、批准四级机械锚点后执行；`save_plan` 是受限的方案/验收双文件写例外。当前声明支持范围为 dsh `0.2.1-rc.1 || 0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4` 四版本精确并集；旧版兼容见旧版分支。逐版本实测状态、证据等级与待核实项统一见[ai-宿主耦合台账](ai-宿主耦合台账.md)。QQBot、生产及真实交互仍单独标记 HUMAN。
+
+根与角色口径：维护 W 取可信源树布局，不取 `process.cwd`、插件安装根或普通文件 `dirname`；部署/会话 W 取保存方案的 `session.header.cwd`，部署脚本仍把工件、fixture、报告等写在 W，不是只能访问 H。H 仅由真实 Host context/精确能力或测试显式 `--host-root` 与精确目标授权；`DSH_HOME`/`DSH_PROFILE`/`SESSION_ID` 的存在不授根，`DSH_INSTALL_ROOT`+host-preload 只授只读代码根，扩展名也不代表授权。标准 Web/QQ 由可信 `profileContext.name`/`startedBundles` 识别，Web→QQ 镜像保留，QQ 不适用返回 `not-applicable`，不误启动跨 profile；缺根、Other、非法/冲突来源均在 IO 前拒绝，H/W 重叠按用途分类，隔离 fixture 不等于实机。
 
 高层闭环：用户需求 → 主会话只读探查 → 探查方式二选一 → 路由确认 →（需要时）目的确认/澄清 → 线索与方案/验收落盘 → 用户批准 → 执行者 → 验收者 → 用户部署与实测。路由、批准、生产部署的边界不能用 AI 自觉替代。
 
@@ -17,6 +19,8 @@
 | 规划子代理 | 读取线索、补充只读核对、`save_plan` 双文件 | 不得委派探查者；预算耗尽走继续探查往返 |
 | 执行者 | 按方案与验收文件改工作区 | 不重新规划；逐项自验证；禁止越界写入 |
 | 验收者 | 只读验收文件逐条复核（每个执行者返回后按组派遣，主会话汇总） | 输出逐项通过/不通过与证据；不改文件 |
+
+W/H 只决定路径归属，不改变上述五角色职责；隔离夹具、受控自动结果和静态 PASS 仍不等于实机部署或真实会话通过。
 
 main 保留 `send_message`、`interrupt_agent`、`list_agents`；四角色 definition 均不挂 control binding，运行时按 `isSubagentChild` 对 `send_message`/`interrupt_agent` 的直呼与 `run_code` 成员硬拒，覆盖 planner、只读 child、executor 及 unknown/断链 child。自动最终结果不受影响；child 遇阻塞疑问以最终回复返回，main 可向 idle child 续轮。四角色仍按各自 definition 保留只读 `cordis_inspect_list`/`cordis_inspect_query`；main 的 send 仅直属父子、interrupt 仅调用者获任务/用户授权的后代，真实消息/中断仍留部署后 HUMAN。
 
@@ -50,9 +54,9 @@ main 保留 `send_message`、`interrupt_agent`、`list_agents`；四角色 defin
 
 ## 维护与回归入口
 
-- 地图：先 grep [ai-代码地图](ai-代码地图.md) 的意图速查，再按真实函数名取机器行号；扫描根内代码改动时冻结前运行普通生成，正式检查阶段只运行 `node pe-test/tools/代码地图生成.mjs --check`。
+- 地图：先 grep [ai-代码地图](ai-代码地图.md) 的意图速查，再按真实函数名取机器行号；扫描根内代码改动时冻结前运行普通生成，正式检查阶段只运行 `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/代码地图生成.mjs --check`。
 - 自动回归：按 [ai-维护手册](ai-维护手册.md) 的固定顺序执行领域、生成器、地图及一键命令；AUTO 数量以 `pe-test/tools/一键step测试.mjs` 的数组为准，ETIMEDOUT、SKIP、INCOMPLETE、HUMAN、NOT-RUN 不由退出码0改写为 PASS。
-- 生成链与证据：先生成新导出再切换消费者；客户端标记区块禁手改，默认仓库产物为七输出，自定义 source/output 默认不写仓库 client。领域测试的正反夹具只证明隔离行为/受控宿主边界；step-07 必须显式 `SESSION_ID` 与 `PLANNER_PROMPT_SUFFIX`，静态/Mock 结果不能冒充生产实机。AI 在仓库验收通过前不触碰生产环境。
+- 生成链与证据：先生成新导出再切换消费者；客户端标记区块禁手改，默认仓库产物为七输出，自定义 source/output 默认不写仓库 client。领域测试的正反夹具只证明隔离行为/受控宿主边界；step-07 必须显式 `--session`+`--sessions-dir`（会话在宿主数据根时加 `--host-root`，取直接 child 加 `--discover-children`）与 `PLANNER_PROMPT_SUFFIX`（空串也算显式存在），`SESSION_ID` 只作报告/输出字段，静态/Mock 结果不能冒充生产实机。AI 在仓库验收通过前不触碰生产环境。
 
 ## 历史入口
 
