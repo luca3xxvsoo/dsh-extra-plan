@@ -90,7 +90,7 @@ PTC C=0/C=1 必须各用干净 A=1 顶层会话取 F→首个 tool/call→L→�
 
 所有扫描根内代码修改（`--roots` 默认 `plugins,pe-test/_shared` 的 .js/.mjs）完成后、最终冻结前，主会话从 W 运行 `node pe-test/tools/代码地图生成.mjs`，检查 stdout 的新增/删除/行号提示；只补人工意图/描述，不手改机器路径、函数、行号和同名顺序；再运行同前缀的 `--check`。地图生成与人工描述复核必须在最终冻结前完成；正式验收阶段只运行地图 `--check`，避免生成时间戳使冻结指纹漂移。纯文档或扫描根外文件改动不运行生成，验收仅 `--check`。修改来自执行者时也必须由主会话完成这一步。
 
-固定仓库回归顺序：源码自检 → 当前文档/地图生成冻结 → 正式最终回归的 13 脚本矩阵与两项 check → 一键 runner 的 AUTO 14 项；纯 W 工具直接 `node`，需要 Host 代码的测试才显式采用 `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs`，代码根不授权数据 H。Markdown 不伪造 `node --check` 结果，SKIP/INCOMPLETE/HUMAN/NOT-RUN 不计 PASS；正式矩阵、两项 check 与 runner 的实际状态以当次冻结后的独立验收工件为准；未执行、部分执行和 HUMAN 必须分层保留，不得由局部自检替代整体验收。
+固定仓库回归顺序：源码自检 → 当前文档/地图生成冻结 → 正式最终回归的 13 脚本矩阵与两项 check → 一键 runner 的 AUTO 项数以 runner 的 AUTO 数组实际项为准；纯 W 工具直接 `node`，需要 Host 代码的测试才显式采用 `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs`，代码根不授权数据 H。Markdown 不伪造 `node --check` 结果，SKIP/INCOMPLETE/HUMAN/NOT-RUN 不计 PASS；正式矩阵、两项 check 与 runner 的实际状态以当次冻结后的独立验收工件为准；未执行、部分执行和 HUMAN 必须分层保留，不得由局部自检替代整体验收。
 
 ## P2-2 执行口径
 

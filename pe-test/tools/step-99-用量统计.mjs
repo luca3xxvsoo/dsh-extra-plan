@@ -318,7 +318,7 @@ function validationIssue(row, lineNumber) {
   if (!isPlainObject(row)) return '根值不是对象'
   const actual = Object.keys(row).sort()
   const expected = [...V2_KEYS].sort()
-  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) return '必须严格包含固定15个键'
+  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) return '必须严格包含固定' + V2_KEYS.length + '个键'
   if (row.schemaVersion !== 2) return 'schemaVersion必须为2'
   if (typeof row.ts !== 'string' || row.ts.trim() === '' || !Number.isFinite(Date.parse(row.ts))) return 'ts必须是有效时间字符串'
   for (const key of ['sessionId', 'role']) {

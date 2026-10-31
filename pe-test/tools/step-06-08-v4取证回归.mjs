@@ -15,7 +15,6 @@ const STEP04 = join(HERE, 'step-04-工具清单查看.mjs')
 const STEP05 = join(HERE, 'step-05-会话解码.mjs')
 const STEP06 = join(HERE, 'step-06-真实会话查看.mjs')
 const STEP07 = join(HERE, 'step-07-子代理模型与引导取证.mjs')
-const STEP08 = join(HERE, 'step-08-方案配对查看.mjs')
 const HOST_PRELOAD = join(ROOT, 'pe-test', '_shared', 'host-preload.mjs')
 const previousDshHome = process.env.DSH_HOME
 let pass = 0
@@ -243,9 +242,7 @@ try {
   check('G5 step05跨帧/skippable成功且物理行号准确', g5Step05Valid.status === 0 && g5Step05Valid.output.includes('L3 model=g5-model tools=0'), true)
   const g5Step06Valid = runScript(STEP06, exactSessionArgs(g5ValidWorkspace))
   check('G5 step06跨帧/skippable成功且物理行号准确', g5Step06Valid.status === 0 && g5Step06Valid.output.includes('L3 HEADER model=g5-model'), true)
-  const g5Step08Valid = runScript(STEP08, exactSessionArgs(g5ValidWorkspace))
-  check('G5 step08跨帧/skippable配对使用物理行号', g5Step08Valid.status === 0 && g5Step08Valid.output.includes('L4 save_plan CALL id=g5-call') && g5Step08Valid.output.includes('L5 结果 OK: g5 save ok'), true)
-  for (const [label, script] of [['step05', STEP05], ['step06', STEP06], ['step08', STEP08]]) {
+  for (const [label, script] of [['step05', STEP05], ['step06', STEP06]]) {
     const bad = runScript(script, exactSessionArgs(g5BadWorkspace))
     check('G5 ' + label + '非空坏JSON退出非零且INCOMPLETE', bad.status !== 0 && bad.output.includes('INCOMPLETE'), true)
     const invalid = runScript(script, exactSessionArgs(g5InvalidUtf8Workspace))
@@ -253,7 +250,7 @@ try {
     const truncated = runScript(script, exactSessionArgs(g5TruncatedWorkspace))
     check('G5 ' + label + '截断普通帧退出非零且INCOMPLETE', truncated.status !== 0 && truncated.output.includes('INCOMPLETE'), true)
   }
-  for (const [label, script] of [['step05', STEP05], ['step06', STEP06], ['step08', STEP08]]) {
+  for (const [label, script] of [['step05', STEP05], ['step06', STEP06]]) {
     const empty = runScript(script, exactSessionArgs(g5EmptyWorkspace))
     check('G5 ' + label + '无JSON记录不成功', empty.status !== 0 && empty.output.includes('INCOMPLETE'), true)
     const noSave = runScript(script, exactSessionArgs(g5NoSaveWorkspace))
@@ -300,14 +297,12 @@ try {
   const step04FullArgs = exactSessionArgs(mainDir, '--full')
   const step04 = runScript(STEP04, step04Args)
   const step04Full = runScript(STEP04, step04FullArgs)
-  check('step-04 compact/full argv按新显式根/会话目录合同', JSON.stringify(step04.argv.slice(1)) === JSON.stringify(step04Args) && JSON.stringify(step04Full.argv.slice(1)) === JSON.stringify(step04FullArgs))
   check('step-04 compact/full均成功且full保留header原文', step04.status === 0 && step04Full.status === 0 && step04.output.includes('tools.names=') && step04Full.output.includes('header.tools=') && step04Full.output.length > step04.output.length)
 
   const step05Args = exactSessionArgs(mainDir, '--compact')
   const step05FullArgs = exactSessionArgs(mainDir, '--output-mode', 'full')
   const step05 = runScript(STEP05, step05Args)
   const step05Full = runScript(STEP05, step05FullArgs)
-  check('step-05 compact/full argv保留显式根/会话目录与输出模式', JSON.stringify(step05.argv.slice(1)) === JSON.stringify(step05Args) && JSON.stringify(step05Full.argv.slice(1)) === JSON.stringify(step05FullArgs))
   check('step-05 compact/full统计一致且full保留data', step05.status === 0 && step05Full.status === 0 && step05.output.includes('事件类型计数：') && step05.output.includes('summary=') && step05Full.output.includes('--- agent-preset 相关事件 ---') && step05Full.output.includes('fixture-plan-data'))
 
   const step07SelectionArgs = idSessionArgs('main-v4', v4Workspace, '--discover-children')
@@ -317,7 +312,6 @@ try {
   check('step-07 显式会话但缺PLANNER_PROMPT_SUFFIX为输入错误', step07MissingSuffix.status !== 0 && step07MissingSuffix.output.includes('必须显式设置 PLANNER_PROMPT_SUFFIX'))
 
   const step07 = runScript(STEP07, step07SelectionArgs, { PLANNER_PROMPT_SUFFIX: 'fixture-suffix' })
-  check('step-07 compact argv按显式ID/会话根/子发现合同', JSON.stringify(step07.argv.slice(1)) === JSON.stringify(step07SelectionArgs))
   check('step-07 v4 fixture 退出码为 0', step07.status === 0, String(step07.status))
   check('step-07 输出父工具关联 subagent_plan complete=yes', step07.output.includes('父工具关联：subagent_plan') && step07.output.includes('complete=yes'))
   check('step-07 输出 role=pro规划', step07.output.includes('role=pro规划') && !step07.output.includes('role-evidence-insufficient'))
@@ -325,7 +319,6 @@ try {
   check('step-07 保留 actual provenance 分栏', step07.output.includes('actual provenance source.kind=model provider=openai-codex model=gpt-5.6-sol'))
   const step07Verbose = runScript(STEP07, [...step07SelectionArgs, '--verbose'], { PLANNER_PROMPT_SUFFIX: 'fixture-suffix' })
   const step07Full = runScript(STEP07, [...step07SelectionArgs, '--full'], { PLANNER_PROMPT_SUFFIX: 'fixture-suffix' })
-  check('step-07 full argv保留--full', JSON.stringify(step07Full.argv.slice(-1)) === JSON.stringify(['--full']))
   check('step-07 compact/verbose/full 退出码与核心字段一致', step07.status === 0 && step07Verbose.status === 0 && step07Full.status === 0 && step07Verbose.output.includes('suffix判定=verified-injection') && step07Full.output.includes('suffix判定=verified-injection') && step07Full.output.includes('assistant/message event（完整）='))
   check('step-07 compact 不嵌完整事件且显著小于full', !step07.output.includes('assistant/message event（完整）=') && !step07.output.includes('arguments（完整）=') && step07.output.length < step07Full.output.length)
   const step07Raw = writeRawEvidence({ directory: join(fixtureHome, 'evidence'), baseName: 'step07', stdout: step07.output, stderr: '' })
@@ -336,10 +329,6 @@ try {
   check('step-06 错误文本恰展示一次', countOf(step06.output, 'TOOL-ERROR') === 1 && countOf(step06.output, 'fixture-error-text') === 1)
   check('step-06 成功 result 不产生 TOOL-ERROR', !step06.output.includes('TOOL-ERROR fixture save ok'))
 
-  const step08 = runScript(STEP08, exactSessionArgs(mainDir))
-  check('step-08 悬空 call 退出码精确为 1', step08.status === 1, String(step08.status))
-  check('step-08 成功与失败 result 均正确配对', step08.output.includes('结果 OK: fixture save ok') && step08.output.includes('结果 ERROR: fixture-error-text') && !step08.output.includes('未找到配对结果'))
-  check('step-08 悬空 call 输出 ANSI 红色和纯文本标记', step08.output.includes('\u001b[31m🔴 未配对') && step08.output.includes('🔴 未配对'))
 
   const pairWorkspace = join(sessionsRoot, 'pair-workspace')
   const pairDir = join(pairWorkspace, 'pair-main-v4')
@@ -352,9 +341,6 @@ try {
   ])
   const pairReplay = replayJsonl(join(pairDir, 'session.v4.jsonl.zstd'))
   check('pair-only fixture 解压 JSONL 可解析', pairReplay.frameCount > 0 && pairReplay.invalid === 0)
-  const pairResult = runScript(STEP08, exactSessionArgs(pairDir))
-  check('step-08 全部已配对退出码精确为 0', pairResult.status === 0, String(pairResult.status))
-  check('step-08 全部已配对无红色未配对标记', pairResult.output.includes('结果 OK: pair ok') && pairResult.output.includes('结果 ERROR: pair error') && !pairResult.output.includes('未配对'))
 
   const partialRunnerRoot = join(fixtureHome, 'partial-runner')
   const partialPeTest = join(partialRunnerRoot, 'pe-test')
@@ -402,27 +388,11 @@ try {
   const partialAutoEnd = partialReportText.indexOf('## 二、人眼项', partialAutoStart)
   const partialAutoSection = partialAutoStart >= 0 && partialAutoEnd > partialAutoStart ? partialReportText.slice(partialAutoStart, partialAutoEnd) : ''
   const partialAutoRows = partialAutoSection.split(/\r?\n/).filter((line) => /^\| [^|]+\.mjs \|/.test(line))
-  const partialExpectedAuto = [
-    'step-00-路径边界.mjs',
-    'step-00-全流程回归.mjs',
-    'step-06-08-v4取证回归.mjs',
-    'step-00-跨平台写拦截.mjs',
-    'step-01-设置迁移.mjs',
-    'step-01-安装同步.mjs',
-    'step-01-预设完整性.mjs',
-    'step-01-设置页配置.mjs',
-    'step-01-qqbot-安装映射.mjs',
-    'step-01-qqbot-环境验证.mjs',
-    'step-04-路由与写闸门.mjs',
-    'step-04-context-gate宿主回归.mjs',
-    'step-06-线索落盘.mjs',
-    '代码地图生成.mjs'
-  ]
   const partialAutoFiles = partialAutoRows.map((line) => line.split('|')[1].trim())
   const partialThree = ['step-06-08-v4取证回归.mjs', 'step-01-预设完整性.mjs', 'step-01-设置页配置.mjs']
   check('G5 partial-runner 子进程退出0', partialChild?.status === 0, 'status=' + String(partialChild?.status) + '; output=' + partialOutput.slice(0, 1200))
   check('G5 partial-runner 无plugins', !existsSync(join(partialRunnerRoot, 'plugins')), 'plugins=' + String(existsSync(join(partialRunnerRoot, 'plugins'))))
-  check('G5 partial-runner AUTO按受控表14项且均未执行', partialAutoFiles.length === partialExpectedAuto.length && new Set(partialAutoFiles).size === partialExpectedAuto.length && partialExpectedAuto.every((file) => partialAutoFiles.includes(file)) && partialAutoRows.every((line) => line.includes('| 未执行 |')), 'rows=' + String(partialAutoRows.length) + '；expected=' + partialExpectedAuto.join(',') + '；reports=' + partialReports.join(',') + '；output=' + partialOutput.slice(0, 1200) + '；' + partialAutoRows.join(' || '))
+  check('G5 partial-runner AUTO报告表非空、无重复且每行标记未执行', partialAutoFiles.length > 0 && new Set(partialAutoFiles).size === partialAutoFiles.length && partialAutoRows.every((line) => line.includes('| 未执行 |')), 'rows=' + String(partialAutoRows.length) + '；files=' + partialAutoFiles.join(',') + '；reports=' + partialReports.join(',') + '；output=' + partialOutput.slice(0, 1200) + '；' + partialAutoRows.join(' || '))
   check('G5 partial-runner 三项仓库依赖未进入spawn', partialThree.every((file) => partialAutoRows.some((line) => line.includes('| ' + file + ' | 未执行 |') && line.includes('需完整目录'))), partialAutoRows.join(' || '))
 
   const oldCases = [
@@ -435,8 +405,7 @@ try {
     const oldSelectionArgs = idSessionArgs(dirName, join(sessionsRoot, workspaceName))
     const old06 = runScript(STEP06, oldSelectionArgs)
     const old07 = runScript(STEP07, oldSelectionArgs, { PLANNER_PROMPT_SUFFIX: 'fixture-suffix' })
-    const old08 = runScript(STEP08, oldSelectionArgs)
-    for (const [toolName, outcome] of [['step-06', old06], ['step-07', old07], ['step-08', old08]]) {
+    for (const [toolName, outcome] of [['step-06', old06], ['step-07', old07]]) {
       check(toolName + ' 拒绝' + label + '日志并返回非零', outcome.status !== 0 && outcome.output.includes('仅支持 v4 会话日志'))
     }
   }

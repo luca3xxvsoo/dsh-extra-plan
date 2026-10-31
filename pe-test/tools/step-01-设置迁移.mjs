@@ -295,7 +295,15 @@ function projectionOf(result) {
 }
 const expectedKeys = 'anchoredBootstrap|creativeMode|webFetch|toolPresentationMode|runcodeCatchGate|crossProviderPlannerModel|plannerModel|plannerPromptSuffix|exploreBudget|otherAgentModel'
 check('V04 descriptor 十键顺序与稳定 settings locator', SETTING_DEFINITIONS.length === 10 && SETTING_DEFINITIONS.map((item) => item.key).join('|') === expectedKeys && SETTING_DEFINITIONS.every((item) => item.rowLocator.rowId === SETTINGS_ROW_ID))
-check('V07 asset definition 17 行与 raw marker 保留（仅证明 marker 保留）', definition.plugins.length === 17 && JSON.stringify(definition).includes('__jsExpr') && readFileSync(ASSET, 'utf8').includes('!!js'))
+const jsExpressionMarkers = []
+const collectJsExpressionMarkers = (node) => {
+  if (node === null || typeof node !== 'object') return
+  if (Array.isArray(node)) { for (const item of node) collectJsExpressionMarkers(item); return }
+  if (typeof node.__jsExpr === 'string') jsExpressionMarkers.push(node.__jsExpr)
+  for (const value of Object.values(node)) collectJsExpressionMarkers(value)
+}
+collectJsExpressionMarkers(definition)
+check('V07 asset definition raw marker 结构化保留（仅证明 marker 保留）', jsExpressionMarkers.length > 0 && jsExpressionMarkers.every((expression) => expression.trim() !== ''))
 check('V04 合法 gateWords 恰七键且输入不可变', (() => { const before = structuredClone(gate); const after = validateGateWords(gate); return Object.keys(after).length === 7 && JSON.stringify(gate) === JSON.stringify(before) })())
 
 const legacyBoth = patchOf({ sync: true, body: true })
@@ -419,7 +427,6 @@ check('F03 显式 legacyState 优先于 readPatch 与 declaredPlugins', explicit
 
 const invalidCurrent = { ...complete, gateWords: invalidGate }
 const invalidEditor = makeEditor(invalidCurrent)
-check('V02 缺键样例保留显式非法值，合法矩阵已单独覆盖', isDeepStrictEqual(invalidCurrent.gateWords, invalidGate))
 const repaired = restateSettingsConfig(invalidCurrent, {}, { gateWords: gate })
 check('V02 合法显式整组修复允许且不改输入', JSON.stringify(repaired.gateWords) === JSON.stringify(gate) && JSON.stringify(invalidCurrent.gateWords) === JSON.stringify(invalidGate))
 const validNoGatePatch = restateSettingsConfig(complete, {}, { webFetch: true })

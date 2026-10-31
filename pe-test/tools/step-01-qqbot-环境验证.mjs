@@ -20,20 +20,11 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = join(HERE, '..', '..')
 const SOURCE_PACKAGE = join(REPO_ROOT, 'plugins', 'dsh-extra-plan-qqbot')
 const SOURCE_PACKAGE_MANIFEST = join(SOURCE_PACKAGE, 'package.json')
-const SOURCE_HEAL_TEXT = readFileSync(join(SOURCE_PACKAGE, 'lib', 'heal.js'), 'utf8')
 const LINK_TYPE = process.platform === 'win32' ? 'junction' : 'dir'
 const ENV_FIXTURE = makeFixtureDir({ label: 'qqbot-env' })
 const QQBOT_BUNDLE = '@tencent-connect/dsh-qqbot'
 const QQBOT_PACKAGE = 'dsh-extra-plan-qqbot'
 const WEB_PACKAGE = 'dsh-extra-plan'
-const SOURCE_HEAL_FLAT_LAYOUT =
-  SOURCE_HEAL_TEXT.includes("const OWN_PACKAGE_NAME = 'dsh-extra-plan-qqbot'") &&
-  SOURCE_HEAL_TEXT.includes("const WEB_PACKAGE_NAME = 'dsh-extra-plan'") &&
-  SOURCE_HEAL_TEXT.includes("join('node_modules', OWN_PACKAGE_NAME)") &&
-  SOURCE_HEAL_TEXT.includes("join('profiles', 'web', 'node_modules', WEB_PACKAGE_NAME)") &&
-  SOURCE_HEAL_TEXT.includes("join(profile.path, 'node_modules', WEB_PACKAGE_NAME)") &&
-  !SOURCE_HEAL_TEXT.includes('node_modules/@local') &&
-  !SOURCE_HEAL_TEXT.includes("'@local'")
 
 let pass = 0
 let fail = 0
@@ -63,10 +54,7 @@ let sourcePackageJson = null
 try { sourcePackageJson = JSON.parse(readFileSync(SOURCE_PACKAGE_MANIFEST, 'utf8')) } catch { sourcePackageJson = null }
 check('QB5 健壮性改进：QQBot package-local 声明 js-yaml ^4.2.0',
   sourcePackageJson !== null && sourcePackageJson.dependencies !== null && typeof sourcePackageJson.dependencies === 'object' && sourcePackageJson.dependencies['js-yaml'] === '^4.2.0')
-check('QB5 健壮性改进：heal.js 移除 APPDATA/固定宿主后备并保留包自身解析',
-  SOURCE_HEAL_TEXT.includes("createRequire(import.meta.url)('js-yaml')") && !SOURCE_HEAL_TEXT.includes('APPDATA') &&
-  !SOURCE_HEAL_TEXT.includes("from 'node:os'") && !SOURCE_HEAL_TEXT.includes('@deepseek-ai/dsh/package.json'))
-check('QB6 环境验证常量与 heal 实现均使用 dsh-extra-plan-qqbot/dsh-extra-plan 平铺路径', QQBOT_PACKAGE === 'dsh-extra-plan-qqbot' && WEB_PACKAGE === 'dsh-extra-plan' && SOURCE_HEAL_FLAT_LAYOUT)
+check('QB6 环境验证夹具常量使用 dsh-extra-plan-qqbot/dsh-extra-plan 平铺包名', QQBOT_PACKAGE === 'dsh-extra-plan-qqbot' && WEB_PACKAGE === 'dsh-extra-plan')
 
 function errorCode(error) {
   if (error && typeof error.code === 'string') return error.code
@@ -474,9 +462,6 @@ function runLiveReadonly(preflight) {
 
   const parsedPatch = parseYaml(patchText, preflight)
   check('真实 cordis.patch.yml 为顶层数组', parsedPatch.ok && Array.isArray(parsedPatch.value), parsedPatch.error || '')
-  const imQqbot = parsedPatch.ok && Array.isArray(parsedPatch.value)
-    ? parsedPatch.value.find((row) => isObject(row) && row.id === 'im-qqbot')
-    : undefined
 
   const mappingBefore = inspectMapping(context, targets.mapping, targets.webCore)
   let patchAfter = null

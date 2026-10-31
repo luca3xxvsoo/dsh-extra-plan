@@ -155,7 +155,6 @@ dsh-extra-plan/
 │   ├── _shared/                                                      
 │   │   ├── host-deps.mjs             
 │   │   ├── host-preload.mjs       
-│   │   ├── preset-hash.mjs                    
 │   │   ├── session-finder.mjs                   
 │   │   ├── test-output.mjs                
 │   │   ├── v4-tool-result.mjs              
@@ -173,11 +172,8 @@ dsh-extra-plan/
 │   │   └── ai-代码地图.md                       
 │   └── tools/                                                        # 测试工具
 │       ├── 一键step测试.mjs                                           # 可以通过输入真实session_id进行测试
-│       ├── 生成-no-remount证据.mjs
 │       ├── step-00-跨平台写拦截.mjs
 │       ├── step-00-全流程回归.mjs
-│       ├── step-00-路径边界.mjs
-│       ├── step-01-安装同步.mjs
 │       ├── step-01-设置迁移.mjs
 │       ├── step-01-设置页配置.mjs
 │       ├── step-01-预设完整性.mjs
@@ -193,11 +189,8 @@ dsh-extra-plan/
 │       ├── step-06-线索落盘.mjs
 │       ├── step-06-真实会话查看.mjs
 │       ├── step-07-子代理模型与引导取证.mjs
-│       ├── step-08-方案配对查看.mjs
 │       ├── step-99-用量统计.mjs
-│       ├── 代码地图生成.mjs    
-│       ├── 清理desktop旧settings行.mjs                       
-│       └── readme.md
+│       └── 代码地图生成.mjs    
 ├── README.md                                                          # 本文档
 ├── READAI.md                                                          # AI 入口导航（分层）
 └── LICENSE                                                            # MIT 许可

@@ -1174,6 +1174,8 @@ async function runCompose(run, dshInfo) {
     if (previousAppData === undefined) delete process.env.APPDATA
     else process.env.APPDATA = previousAppData
   }
+  const settingsContract = await import(pathToFileURL(join(coreRoot, 'lib', 'settings-contract.js')).href)
+  const gateWordFields = await import(pathToFileURL(join(coreRoot, 'lib', 'gate-words.js')).href)
   const corePatch = yaml.parse(readFileSync(join(coreSource, 'cordis.patch.yml'), 'utf8'))
   const compatPatch = yaml.parse(readFileSync(join(WORKSPACE, 'plugins', 'dsh-extra-plan-qqbot', 'cordis.patch.yml'), 'utf8'))
   const nativeLayer = [{ insert: [{ id: 'qqbot-native-marker', name: '@tencent-connect/dsh-qqbot' }] }]
@@ -1256,7 +1258,7 @@ async function runCompose(run, dshInfo) {
         ownerApplyOnceAfterSettle: probeState.settings === 1 && probeState.events.length === 1,
         authorityOk: authority.status === 'ok',
         authorityRawOne: authority.rawCount === 1 && authority.canonicalNameCount === 1,
-        fullTenAndSeven: authority.selectedConfig?.values !== undefined && Object.keys(authority.selectedConfig.values).length === 10 && Object.keys(authority.selectedConfig.gateWords || {}).length === 7,
+        fullTenAndSeven: authority.selectedConfig?.values !== undefined && Object.keys(authority.selectedConfig.values).length === settingsContract.SETTING_DEFINITIONS.length && Object.keys(authority.selectedConfig.gateWords || {}).length === gateWordFields.GATE_WORD_FIELDS.length,
         fullConfigDeepEqual: isDeepStrictEqual(authority.selectedConfig, expectedAuthority),
         userBundlesPreserved,
       }

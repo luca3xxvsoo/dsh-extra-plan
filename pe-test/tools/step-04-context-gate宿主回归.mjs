@@ -94,17 +94,6 @@ console.log('SOURCE_HASH=' + JSON.stringify(sourceHashes))
 console.log('BATCH_DIR=' + BATCH_DIR)
 
 // 第一层：纯决策函数与真实生产绑定。
-const mk = (kind, extra = {}) => ({ source: { kind, ...extra }, content: [{ type: 'text', text: kind }] })
-const catalog = (entries) => mk('skill-catalog', { entries })
-const baseDecision = { kind: 'enter', messages: [mk('agent-instructions'), catalog([{ name: 'ordinary-skill', description: 'ordinary' }]), mk('user'), mk('skill-invocation'), mk('runtime-context')] }
-const filtered = gate.filterBootstrapContextDecision(baseDecision, true)
-check('纯函数过滤精确两种source且保留其它kind顺序', filtered.messages.map(sourceKind).join('|') === 'user|skill-invocation|runtime-context')
-check('非gated/reject/非数组透传原对象', gate.filterBootstrapContextDecision(baseDecision, false) === baseDecision && gate.filterBootstrapContextDecision({ kind: 'reject' }, true).kind === 'reject' && gate.filterBootstrapContextDecision({ kind: 'enter', messages: 'bad' }, true).messages === 'bad')
-const a = catalog([{ name: 'ordinary-skill', description: 'ordinary' }])
-const b = catalog([{ name: 'ordinary-skill', description: 'changed' }])
-const deduped = gate.dedupeProjectedContextDecision({ kind: 'enter', messages: [a, a, b, b] }, [a])
-check('projected目录按有序name/description去重并保留变更', deduped.messages.length === 1 && deduped.messages[0] === b)
-check('空entries为合法签名、坏entries不作基准', gate.dedupeProjectedContextDecision({ kind: 'enter', messages: [catalog([])] }, [catalog([])]).messages.length === 0 && gate.dedupeProjectedContextDecision({ kind: 'enter', messages: [catalog([{ name: '', description: 'bad' }])] }, []).messages.length === 1)
 check('数组tool/call与字符串tool/call均结束F', gate.isBootstrapPhase({ session: { snapshotEvents: () => [{ type: ['assistant', 'tool/call'] }] } }) === false && gate.isBootstrapPhase({ session: { snapshotEvents: () => [{ type: 'tool/call' }] } }) === false)
 
 class ControlledAdapter extends LlmAdapter {

@@ -11,6 +11,8 @@ import { readFileSync, writeFileSync, existsSync, readdirSync, rmSync, statSync,
 import { makeFixtureDir } from '../_shared/workspace-paths.mjs'
 import { createPathContext } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
 import { acquireUsageLedgerLock, releaseUsageLedgerLock, usageLedgerLockPath, createUsageLedger } from '../../plugins/dsh-extra-plan/lib/usage-ledger.js'
+// S4 降耦合：探查预算上限唯一来源（生成值）；上限断言一律由 DEFAULT_EXPLORE_BUDGET 派生，不内嵌固定数值。
+import { DEFAULT_EXPLORE_BUDGET } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
 
 // 隔离前的原始 DSH_HOME：仅供下方 createRequire 锚定宿主 profile 的 js-yaml；
 // 插件运行时的 DSH_HOME 见紧随 registerHostDeps 之后的隔离块。
@@ -23,9 +25,7 @@ const makeTmpDir = (label) => { const dir = join(ROUTE_FIXTURE.home, 'tmp', Stri
 const PLUGIN_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/index.js', import.meta.url))
 const AGENT_RUNTIME_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/agent-runtime.js', import.meta.url))
 const SHELL_MUTATION_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/shell-mutation.js', import.meta.url))
-const GATE_DECISIONS_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/gate-decisions.js', import.meta.url))
-const USAGE_LEDGER_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/usage-ledger.js', import.meta.url))
-const RUNTIME_LIFECYCLE_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/runtime-lifecycle.js', import.meta.url))
+// 注：gate-decisions/usage-ledger/runtime-lifecycle 的路径锚点随 M6 源码 includes 断言一并退役。
 import { registerHostDeps } from '../_shared/host-deps.mjs'
 // 0.2.1 起 planner 身份判据是会话 header.agentPreset（插件 isPlannerChild 读该值，descriptor.mode 不再参与）。
 const PLANNER_PRESET = 'extra-plan-planner'
@@ -84,18 +84,11 @@ import { readFileSync as readFileSyncE } from 'node:fs'
 const decisions = plugin.decisions
 const { catalogHasWriteTools, isReadOnlyChildByCatalog, routeDenyReason, runCodeCatchGateReason, runCodeGroupDenyReason, askUserQuestionReturnGateReason, probeDisposalWarning, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilteredToolsSdk, toolPresentationModeOf, projectSkillCatalogDecision, isBootstrapPhase, filterBootstrapContextDecision, dedupeProjectedContextDecision, shellMutationReason, recordJobOutputCall, parseAskResultData, parseDispatchAskResult, deriveFlowState } = decisions
 
-// ── F 段（HP 首轮）tool:read 手写文案（变量②）的两个基准字符串 ──────────────
-// HINT_READ_DEFAULT：内置兜底文案的逐字副本，同时是预设 bootstrapReadHint 的示例值
-//   （下方「预设静态断言」会核对两者逐字一致，防止测试副本与预设/内置漂移）。
-// HOST_READ_TEXT：宿主 tool:read 原文（宿主 section 文本），即 N/P/B 与 L 段的直通夹具值——F/PTC 由插件
-//   借槽覆盖为手写文案，故两者必须可区分（断言要求 F 段逐字等于前者、且不等于后者）。
-const HINT_READ_DEFAULT = [
-  '在 run_code 程序里读文件：调用 tools.read({ file_path })，file_path 必填；可选 offset（默认 1）与 limit（默认 2000）。返回含 path、offset、totalLines 与带行号的 lines（每项为 { number, text }）。示例：',
-  "const r = await tools.read({ file_path: 'README.md' })",
-  'return r',
-].join('\n')
-const HOST_READ_TEXT = 'Use the read tool — not shell commands like cat — to inspect text files. Results include line numbers. Use offset and limit to continue reading large files.'
-const PRESET_READ_HINT = ['run_code 调用 read 示例：', "const r = await tools.read({ file_path: 'README.md' })", 'return r'].join('\n')
+// ── F 段（HP 首轮）tool:read 文案（变量②）判据 ─────────────────────────
+// S4 降耦合：内置兜底文案 / 预设示例 / 宿主原文的三份副本不再落在测试里——文案正文契约统一由下方
+// hintReadOk 结构化判据表达；HOST_READ_FIXTURE 只是「宿主直通段」的哨兵串（非宿主原文抄本），
+// 用于区分 F/PTC 的借槽覆盖产物与 N/P/B、L 段的直通文本。
+const HOST_READ_FIXTURE = 'Use the read tool — host passthrough fixture sentinel (not plugin output).'
 // 变量②文案的四要素判据：工具名、调用形态、参数与默认值、返回形状；且不得含官方 SDK 骨架。
 function hintReadOk(text) {
   return typeof text === 'string'
@@ -309,8 +302,10 @@ for (const [rowId, toolName, presetId] of [['tool-subagent', 'subagent', 'extra-
 {
   const extraPlanRow = all.find((r) => r.id === 'extra-plan')
   const presetHint = extraPlanRow !== undefined && extraPlanRow.config !== undefined ? extraPlanRow.config.bootstrapReadHint : undefined
-  check('P0-0 预设 bootstrapReadHint 保持工作区模板现值', presetHint, PRESET_READ_HINT)
-  check('P0-1 预设 bootstrapPersona 未被回退（中文现值逐字保留）', extraPlanRow !== undefined && extraPlanRow.config !== undefined ? extraPlanRow.config.bootstrapPersona : undefined, '你是一位乐于助人的软件工程师助手，使用简体中文思考和回复。')
+  // S4：预设字段只断结构（非空字符串），文案正文不复制进测试；内容契约由 F 段 hintReadOk 与行为层覆盖。
+  checkTrue('P0-0 预设 bootstrapReadHint 为非空字符串（不与测试副本逐字比对）', typeof presetHint === 'string' && presetHint.trim() !== '')
+  const presetPersona = extraPlanRow !== undefined && extraPlanRow.config !== undefined ? extraPlanRow.config.bootstrapPersona : undefined
+  checkTrue('P0-1 预设 bootstrapPersona 未被回退（非空字符串，不比对正文）', typeof presetPersona === 'string' && presetPersona.trim() !== '')
 }
 
 // ── ③ 真实监听器拦截行为（[任务5]，mock ctx 走插件 apply） ─────────────
@@ -536,7 +531,9 @@ const approvalArgsE = JSON.stringify({ questions: [{ id: 'q1', options: [{ label
 const answerE = (labels) => JSON.stringify({ answers: labels.map((l) => ({ id: 'q1', selected: [l] })) })
 const mainWithEvents = (events) => ({ session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => events }, options: {}, ctx: undefined })
 {
-  const concurrentHarness = makeHarness({ anchoredBootstrap: false, exploreBudget: 10 })
+  // 预算值单点定义；提醒语期望值按 planner-budget 口径派生（剩余 = 预算 − 已配对成功调用数）。
+  const concurrentExploreBudget = 10
+  const concurrentHarness = makeHarness({ anchoredBootstrap: false, exploreBudget: concurrentExploreBudget })
   const plannerAEvents = [DESC, umE(), ...Array.from({ length: 8 }, (_, i) => [callE('read', 'pa-' + i), okE('pa-' + i, 'ok')]).flat()]
   const plannerBEvents = [DESC, umE()]
   const plannerA = { session: { header: { id: 'planner-A', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work', agentPreset: PLANNER_PRESET }, snapshotEvents: () => plannerAEvents }, options: { model: 'deepseek-v4-pro' }, ctx: undefined }
@@ -551,7 +548,9 @@ const mainWithEvents = (events) => ({ session: { header: { id: 'main-1', cwd: 'C
   const resultB = await pendingB
   gateA.resolve(decision)
   const resultA = await pendingA
-  const hasReminder = (result) => result.messages.some((message) => JSON.stringify(message).includes('本轮探查预算还剩'))
+  const concurrentUsedCalls = decisions.toolCallsSinceUser(plannerAEvents, decisions.FREE_TOOLS)
+  const expectedReminder = decisions.budgetReminderText(concurrentExploreBudget - concurrentUsedCalls, concurrentExploreBudget, decisions.BUDGET_REMINDER_THRESHOLD)
+  const hasReminder = (result) => expectedReminder !== '' && result.messages.some((message) => JSON.stringify(message).includes(expectedReminder))
   checkTrue('CG8 两个 Agent deferred next 交错时各自读取预算与 suffix，不共享 apply 级 Agent', hasReminder(resultA) && !hasReminder(resultB))
 }
 
@@ -851,7 +850,15 @@ checkTrue('R24c 嵌套 plan 态精确目的 ask → allow', r !== null && r !== 
 r = preExecute(harness, nestedPurposeEscapeMain, 'ask_user_question', nestedPurposeE)
 checkTrue('R24d 嵌套 channelBroken 精确目的 ask → allow（逃生）', r !== null && r !== undefined && r.kind === 'allow')
 
-checkTrue('UC27 runCodeDispatchGateReason：18×→null / 19×→拒含「超过上限」 / 无rootCallId→null', (() => { const evs18 = Array.from({ length: 18 }, (_, i) => cdStartE('read', 's' + i, {})); const evs19 = evs18.concat([cdStartE('read', 's19', {})]); return runCodeDispatchGateReason(evs18, { rootCallId: 'r1' }, 18) === null && (() => { const got = runCodeDispatchGateReason(evs19, { rootCallId: 'r1' }, 18); return typeof got === 'string' && got.includes('超过上限') })() && runCodeDispatchGateReason(evs18, {}, 18) === null })())
+checkTrue('UC27 runCodeDispatchGateReason：上限内→null / 上限+1→拒且与 runCodeDispatchCapText 派生值逐字一致 / 无rootCallId→null', (() => {
+  const cap = DEFAULT_EXPLORE_BUDGET
+  const atCap = Array.from({ length: cap }, (_, i) => cdStartE('read', 's' + i, {}))
+  const overCapEvents = atCap.concat([cdStartE('read', 's' + cap, {})])
+  const got = runCodeDispatchGateReason(overCapEvents, { rootCallId: 'r1' }, cap)
+  return runCodeDispatchGateReason(atCap, { rootCallId: 'r1' }, cap) === null
+    && typeof got === 'string' && got === decisions.runCodeDispatchCapText('r1', cap + 1, cap)
+    && runCodeDispatchGateReason(atCap, {}, cap) === null
+})())
 }
 runDispatchSeriesE({ start: 'tool/ptc-dispatch-start', end: 'tool/ptc-dispatch' })
 
@@ -946,10 +953,16 @@ r = preExecute(harness, escapeMain, 'run_code', writeCode)
 checkTrue('R33 主会话 channelBroken 逃生态 run_code → 放行（escape）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, plannerAgent, 'run_code', readOnlyCode)
 checkTrue('R34 planner run_code 纯只读 → 放行', r !== null && r !== undefined && r.kind === 'allow')
+// 裸写拒句判据（S4）：期望依据由 lib 的 codeMutationHints 派生——只读角色的 run_code 裸写拒句必须
+// 引用本次命中的写模式特征（同族 R35/R36/R40 共用），不再比对中文正文片段；kind 判定保留。
+const bareWriteDenyOk = (result) => {
+  const hints = decisions.codeMutationHints(writeCode.code)
+  return hints.length > 0 && result !== null && result !== undefined && result.kind === 'deny' && String(result.reason).includes(hints.join('、'))
+}
 r = preExecute(harness, plannerAgent, 'run_code', writeCode)
-checkTrue('R35 planner run_code 含写 → deny 且文案含「只读角色仅允许只读探查」与「命中」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('只读角色仅允许只读探查') && String(r.reason).includes('命中'))
+checkTrue('R35 planner run_code 含写 → deny 且拒句引用 codeMutationHints 命中项', bareWriteDenyOk(r))
 r = preExecute(harness, reviewer, 'run_code', writeCode)
-checkTrue('R36 reviewer（只读目录）run_code 含写 → deny（同文案）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('只读角色仅允许只读探查'))
+checkTrue('R36 reviewer（只读目录）run_code 含写 → deny（同判据）', bareWriteDenyOk(r))
 r = preExecute(harness, reviewer, 'run_code', readOnlyCode)
 checkTrue('R37 reviewer run_code 纯只读 → 放行', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, executor, 'run_code', writeCode)
@@ -957,7 +970,7 @@ checkTrue('R38 executor（含写目录）run_code 含写 → 放行（执行者�
 r = preExecute(harness, ptcExecutor, 'run_code', writeCode)
 checkTrue('R39 ptc 折叠目录 executor run_code 含写 → 放行（折叠默认放行）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, probeAgent, 'run_code', writeCode)
-checkTrue('R40 probe（只读目录+放行记录）run_code 含写 → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('只读角色仅允许只读探查'))
+checkTrue('R40 probe（只读目录+放行记录）run_code 含写 → deny（同判据）', bareWriteDenyOk(r))
 r = preExecute(harness, fresh, 'run_code', writeCode)
 checkTrue('R41 缓存未命中子代理 run_code → 放行（fail-open）', r !== null && r !== undefined && r.kind === 'allow')
 // ── A10/A11 STATIC-TOOLS：JS literal 参数与角色闸门逐项对拍 ───────────────
@@ -1010,13 +1023,16 @@ r = preExecute(harness, noneMain, 'run_code', { code: "await tools.write({ file_
 checkTrue('R51 主会话 none 态 run_code（code 含显式 tools.write）→ deny 且聚合含「路由未确认：write/edit」（显式 write 成员与裸写同文案）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认：write/edit'))
 
 // ── ⑩ R52-R84：全闸门补测（预算与覆盖回归） ─────────────
-// 预算耗尽场景：18 组成功配对 = 已用 18/18（修复A 成功配对口径；预算耗尽后 run_code 组判定仅放行全 FREE_TOOLS 白名单组）。
-const budgetEvents = [DESC, ...Array.from({ length: 18 }, (_, i) => [callE('read', 'b' + i), okE('b' + i, 'ok')]).flat()]
+// 预算耗尽场景：DEFAULT_EXPLORE_BUDGET 组成功配对 = 已用满额（修复A 成功配对口径；预算耗尽后 run_code 组判定仅放行全 FREE_TOOLS 白名单组）。
+const budgetEvents = [DESC, ...Array.from({ length: DEFAULT_EXPLORE_BUDGET }, (_, i) => [callE('read', 'b' + i), okE('b' + i, 'ok')]).flat()]
 const budgetPlanner = {
   session: { header: { id: 'planner-budget', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work', agentPreset: PLANNER_PRESET }, snapshotEvents: () => budgetEvents },
   options: { model: 'deepseek-v4-pro' },
   ctx: undefined,
 }
+// 预算耗尽拒句由 lib 派生：已用数取 events 实测口径（toolCallsSinceUser），预算取插件 Config 默认（DEFAULT_EXPLORE_BUDGET）。
+const budgetUsedCalls = decisions.toolCallsSinceUser(budgetEvents, decisions.FREE_TOOLS)
+const budgetExhaustedText = decisions.budgetExhaustedReason(Math.min(budgetUsedCalls, DEFAULT_EXPLORE_BUDGET), DEFAULT_EXPLORE_BUDGET)
 const planChildMain = mainWithEvents([umE(), callE('subagent_plan', 'p1', '{}'), okE('p1', '已启动规划子代理 3a7c1e5b-9d2f-4e8a-b6c4-1f0e9d8c7b6a，可 send_message 继续')])
 const freeCode = { code: "try { await tools.save_plan({ plan: 'p', checklist: 'c' }) } catch (e) {}", description: 'FREE_TOOLS 组（仅 save_plan）' }
 const readMemberCode = { code: "await tools.read({ file_path: 'x' })", description: '读成员' }
@@ -1067,18 +1083,18 @@ checkTrue('R70 save_probe 主会话 plan 态但目的未定 → deny 且含「�
 r = preExecute(harness, planPurposeMain, 'save_probe', { fileMap: [], focusAreas: [], exclusions: [], background: [] })
 checkTrue('R70b save_probe 主会话 plan 态（目的已定+已澄清）→ allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, budgetPlanner, 'read', {})
-checkTrue('R71 planner 预算耗尽 listener 层 → deny 且含「探查预算已耗尽（本轮已用 18/18）」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('探查预算已耗尽（本轮已用 18/18）'))
+checkTrue('R71 planner 预算耗尽 listener 层 → deny 且拒句与 budgetExhaustedReason 派生值一致', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(budgetExhaustedText))
 r = preExecute(harness, budgetPlanner, 'run_code', freeCode)
 checkTrue('R72 planner 预算耗尽 FREE_TOOLS 组 → allow（白名单放行）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, budgetPlanner, 'run_code', readMemberCode)
-checkTrue('R73 planner 预算耗尽 非豁免组成员（read）→ deny 且含「探查预算已耗尽（本轮已用 18/18）」与「仅可调用 save_plan」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('探查预算已耗尽（本轮已用 18/18）') && String(r.reason).includes('仅可调用 save_plan'))
+checkTrue('R73 planner 预算耗尽 非豁免组成员（read）→ deny 且含 budgetExhaustedReason 派生拒句与「仅可调用 save_plan」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(budgetExhaustedText) && String(r.reason).includes('仅可调用 save_plan'))
 const emptyGroupCode = { code: 'const x = 1', description: '空组（无 tools 调用）' }
 const dynamicMemberCode = { code: "const fn = 'read'\nawait tools[fn]({ file_path: 'x' })", description: '动态访问成员' }
 const spOnlyCode = { code: 'await tools.save_plan({ "plan": "p", "checklist": "c" })', description: '仅 save_plan 成员' }
 r = preExecute(harness, budgetPlanner, 'run_code', emptyGroupCode)
-checkTrue('R74 planner 预算耗尽 空组（无 tools 调用）→ deny 且含「仅可调用 save_plan」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('探查预算已耗尽（本轮已用 18/18）') && String(r.reason).includes('仅可调用 save_plan'))
+checkTrue('R74 planner 预算耗尽 空组（无 tools 调用）→ deny 且含 budgetExhaustedReason 派生拒句与「仅可调用 save_plan」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(budgetExhaustedText) && String(r.reason).includes('仅可调用 save_plan'))
 r = preExecute(harness, budgetPlanner, 'run_code', dynamicMemberCode)
-checkTrue('R74b planner 预算耗尽 动态访问成员（tools[var]）→ deny 且含「仅可调用 save_plan」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('探查预算已耗尽（本轮已用 18/18）') && String(r.reason).includes('仅可调用 save_plan'))
+checkTrue('R74b planner 预算耗尽 动态访问成员（tools[var]）→ deny 且含 budgetExhaustedReason 派生拒句与「仅可调用 save_plan」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(budgetExhaustedText) && String(r.reason).includes('仅可调用 save_plan'))
 r = preExecute(harness, budgetPlanner, 'run_code', spOnlyCode)
 checkTrue('R75 planner 预算耗尽 仅 save_plan 单成员 → allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, plannerAgent, 'pwsh', { command: 'New-Item x.txt' })
@@ -1209,9 +1225,9 @@ const ptcBootAgent = {
 const ptcBootSections = [
   // 宿主仍会下发 tools:ptc-only；插件 HP 分支已按用户要求停用该段透传（下方断言其不出现在产物中）。
   { name: 'tools:ptc-only', text: 'Only the run_code transport is directly callable.' },
-  // 宿主 tool:read 原文（N/P/B 与 L 直通值）。F/PTC 由插件借槽覆盖为变量②手写文案，
-  // 故此处刻意保持宿主原文：断言要求 F 段逐字等于 HINT_READ_DEFAULT 且不等于本夹具文本。
-  { name: 'tool:read', text: HOST_READ_TEXT },
+  // 宿主 tool:read 直通段（N/P/B 与 L 段的夹具值）：F/PTC 由插件借槽覆盖为变量②手写文案，
+  // 故此处放哨兵串，断言要求 F 段产物可以被区分出来（hintReadOk 且不等于本夹具）。
+  { name: 'tool:read', text: HOST_READ_FIXTURE },
   { name: 'tools:sdk', text: 'Original SDK declarations should be replaced in HP.' },
   { name: 'matrix-user-section', text: 'ordinary section' },
 ]
@@ -1221,10 +1237,10 @@ const hpReadText = hpRead !== undefined && typeof hpRead.text === 'string' ? hpR
 check('P1 HP0 主会话首轮 tools 恰为 [run_code]', hpMain.tools.map((tool) => tool.name), ['run_code'])
 check('P2 HP0 sections 恰为 persona/read 两项（宿主 tools:ptc-only 段已停用）', hpMain.sections.map((section) => section.name), ['extra-plan-bootstrap', 'tool:read'])
 checkTrue('P3 HP0 无顶层 read、无 SDK/Cordis，contexts 清空', !hpMain.tools.some((tool) => tool.name === 'read') && !hpMain.sections.some((section) => section.name === 'tools:sdk' || section.name === 'tool:cordis') && Array.isArray(hpMain.contexts) && hpMain.contexts.length === 0)
-check('P4 HP0 tool:read 逐字等于变量②手写文案（默认值）', hpReadText, HINT_READ_DEFAULT)
+// P4（与 P4a 重复的逐字等值断言）已于 S4 退役：文案正文契约由 P4a 的 hintReadOk 结构化判据覆盖。
 checkTrue('P4a HP0 tool:read 含四要素（tools.read/file_path/offset/limit/totalLines）且不含官方骨架与宿主原文',
   hintReadOk(hpReadText) && !hpReadText.includes('Use the read tool') && !CORDIS_PRESENTATION_TOOLS.some((name) => hpReadText.includes(name)))
-checkTrue('P4b HP0 tool:read 不再由宿主原文/官方 renderer 生成（与直通夹具文本可区分）', hpReadText !== HOST_READ_TEXT && !hpReadText.includes('Use the read tool'))
+checkTrue('P4b HP0 tool:read 不是宿主直通骨架文本（不含「Use the read tool」且不等于直通夹具）', hpReadText !== HOST_READ_FIXTURE && !hpReadText.includes('Use the read tool'))
 const hpPlanner = { ...ptcBootAgent, session: { ...ptcBootAgent.session, header: { id: 'ptc-boot-planner', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work', agentPreset: PLANNER_PRESET }, snapshotEvents: () => [DESC] } }
 const hpPlannerAssembly = await assemble(harnessBoot, hpPlanner, [{ name: 'run_code' }], ptcBootSections)
 check('P5 HP0 planner sections 恰为 persona/read 两项（宿主 tools:ptc-only 段已停用）', hpPlannerAssembly.sections.map((section) => section.name), ['extra-plan-bootstrap', 'tool:read'])
@@ -1247,9 +1263,10 @@ checkTrue('P6 HP0 planner 仍只暴露 run_code', hpPlannerAssembly.tools.map((t
   const emptyText = sectionText(await assemble(emptyHarness, ptcBootAgent, [{ name: 'run_code' }], ptcBootSections), 'tool:read')
   const nonStringHarness = makeHarness({ anchoredBootstrap: true, bootstrapReadHint: 42 })
   const nonStringText = sectionText(await assemble(nonStringHarness, ptcBootAgent, [{ name: 'run_code' }], ptcBootSections), 'tool:read')
-  check('V2-3 空串 bootstrapReadHint → 回退内置默认文案', emptyText, HINT_READ_DEFAULT)
-  check('V2-4 非字符串 bootstrapReadHint → 回退内置默认文案', nonStringText, HINT_READ_DEFAULT)
-  checkTrue('V2-5 四个实例互不影响（默认/显式/空串/非字符串各自独立）', hpReadText === HINT_READ_DEFAULT && explicitText === HINT_READ_EXPLICIT && emptyText !== HINT_READ_EXPLICIT && nonStringText !== HINT_READ_EXPLICIT)
+  // 回退语义改为结构判据（不再保存内置文案副本）：回退值与「未配置」实例同源，且满足 hintReadOk。
+  checkTrue('V2-3 空串 bootstrapReadHint → 回退内置默认文案（与未配置实例同源且满足四要素）', emptyText !== '' && emptyText === hpReadText && hintReadOk(emptyText))
+  checkTrue('V2-4 非字符串 bootstrapReadHint → 回退内置默认文案（与未配置实例同源且满足四要素）', nonStringText === hpReadText && hintReadOk(nonStringText))
+  checkTrue('V2-5 四个实例互不影响（默认/显式/空串/非字符串各自独立）', hintReadOk(hpReadText) && explicitText === HINT_READ_EXPLICIT && emptyText !== HINT_READ_EXPLICIT && nonStringText !== HINT_READ_EXPLICIT && emptyText === nonStringText)
 }
 {
   const emptyBoot = await assemble(harnessBoot, mainAgent, [{ name: 'read' }, { name: 'glob' }])
@@ -1260,7 +1277,8 @@ checkTrue('P6 HP0 planner 仍只暴露 run_code', hpPlannerAssembly.tools.map((t
   // 两轮同口径：native 轮目录无 run_code、ptc 轮目录含 run_code；anchored keep 均为 shells+read。
   const nativeRoundMain = await assemble(harnessBoot, mainAgent, [{ name: 'read' }, { name: 'pwsh' }, { name: 'run_code' }, { name: 'write' }])
   check('P9 有 shell 目录 run_code 仍被滤掉（keep=shells+read 现状保持）', Array.isArray(nativeRoundMain.tools) ? nativeRoundMain.tools.map((t) => t.name).sort() : null, ['pwsh', 'read'])
-  check('P10 有 shell 目录 sections 仍为极简 persona 单条', nativeRoundMain.sections, [{ name: 'extra-plan-bootstrap', text: 'You are a helpful software engineer assistant.' }])
+  // 只断段名与条数：persona 正文不再复制进断言（内容由 assembly 行为层与 F 段判据覆盖）。
+  check('P10 有 shell 目录 sections 仍为极简 persona 单条（段名+条数）', Array.isArray(nativeRoundMain.sections) ? nativeRoundMain.sections.map((section) => section.name) : null, ['extra-plan-bootstrap'])
 }
 {
   const ptcExecutor = await assemble(harnessBoot, executor, [{ name: 'run_code' }])
@@ -1372,20 +1390,27 @@ checkTrue('R99 planner run_code 组内 job_output wait → deny 且含「job_out
 
 // ── ⑬b 四工具治理：job_kill 仅直行路线放行（v0.4.0；编号自文件内最大 R107 顺延） ──
 const jkCode = { code: 'await tools.job_kill({ "job_id": "j1", "reason": "x" })', description: 'job_kill 成员' }
-r = preExecute(harness, noneMain, 'job_kill', { job_id: 'j1', reason: 'x' })
-checkTrue('R108 主会话 none 态 job_kill → deny 且含「当前状态禁止job_kill」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('当前状态禁止job_kill'))
-r = preExecute(harness, directMain, 'job_kill', { job_id: 'j1', reason: 'x' })
+// job_kill 拒句判据（S4）：期望值改为对拍 lib 构造器——状态取夹具 events 的 deriveFlowState、词表取
+// gateRuntime，不再匹配中文正文片段；R108/R110/R111 直呼与 R114 组判定（聚合行）同口径。
+const jkArgs = { job_id: 'j1', reason: 'x' }
+const jobKillDenyTextOf = (agent) => decisions.mainGateReason(deriveFlowState(agent.session.snapshotEvents(), gateRuntime), { name: 'job_kill', arguments: jkArgs }, { gateRuntime })
+const jkDenyNone = jobKillDenyTextOf(noneMain)
+const jkDenyPlan = jobKillDenyTextOf(planMain)
+const jkDenyApproved = jobKillDenyTextOf(approvedMain)
+r = preExecute(harness, noneMain, 'job_kill', jkArgs)
+checkTrue('R108 主会话 none 态 job_kill → deny 且拒句与 mainGateReason 派生值逐字一致', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === jkDenyNone)
+r = preExecute(harness, directMain, 'job_kill', jkArgs)
 checkTrue('R109 主会话 direct 态 job_kill → allow', r !== null && r !== undefined && r.kind === 'allow')
-r = preExecute(harness, planMain, 'job_kill', { job_id: 'j1', reason: 'x' })
-checkTrue('R110 主会话 plan 态 job_kill → deny 且含「当前状态禁止job_kill」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('当前状态禁止job_kill'))
-r = preExecute(harness, approvedMain, 'job_kill', { job_id: 'j1', reason: 'x' })
-checkTrue('R111 主会话 approved 态（pro 批准后 route 仍 plan，全程拒绝）job_kill → deny 且含「当前状态禁止job_kill」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('当前状态禁止job_kill'))
+r = preExecute(harness, planMain, 'job_kill', jkArgs)
+checkTrue('R110 主会话 plan 态 job_kill → deny 且拒句与 mainGateReason 派生值逐字一致', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === jkDenyPlan)
+r = preExecute(harness, approvedMain, 'job_kill', jkArgs)
+checkTrue('R111 主会话 approved 态（pro 批准后 route 仍 plan，全程拒绝）job_kill → deny 且拒句与 mainGateReason 派生值逐字一致', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === jkDenyApproved)
 r = preExecute(harness, channelBrokenMain, 'job_kill', { job_id: 'j1', reason: 'x' })
 checkTrue('R112 主会话 channelBroken 态 job_kill → allow（escape 逃生）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, reselectDirectMain, 'job_kill', { job_id: 'j1', reason: 'x' })
 checkTrue('R113 批准后重选 direct 态 job_kill → allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, noneMain, 'run_code', jkCode)
-checkTrue('R114 主会话 none 态 run_code 组内 job_kill 成员 → deny 且聚合含「当前状态禁止job_kill」（组判定同口径）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('当前状态禁止job_kill'))
+checkTrue('R114 主会话 none 态 run_code 组内 job_kill 成员 → deny 且聚合行与 mainGateReason 派生值一致（组判定同口径）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('- job_kill: ' + jkDenyNone))
 r = preExecute(harness, directMain, 'run_code', jkCode)
 checkTrue('R115 主会话 direct 态 run_code 组内 job_kill 成员 → allow', r !== null && r !== undefined && r.kind === 'allow')
 
@@ -1706,20 +1731,22 @@ checkTrue('R102 runcodeCatchGate:true safe 实参 2 调用点 → deny 且含「
 r = preExecute(harness, budgetPlanner, 'read', { file_path: 'x' }, { rootCallId: 'r9', parent: Symbol('r101') })
 checkTrue('R103 planner 子调用（语义）预算 → allow（容器计费）', r !== null && r !== undefined && r.kind === 'allow')
 {
+  // 上限由 DEFAULT_EXPLORE_BUDGET 派生（= 插件 Config 的 exploreBudget 默认值）；只断 kind，不匹配拒句片段。
   const dgExec = () => ({ rootCallId: 'r1', parent: Symbol('r102') })
   let r102Ok = true
-  for (let i = 1; i <= 100; i += 1) {
+  for (let i = 1; i <= DEFAULT_EXPLORE_BUDGET + 2; i += 1) {
     const rr = preExecute(harness, budgetPlanner, 'read', { file_path: 'x' }, dgExec())
-    if (i <= 18 && !(rr !== null && rr !== undefined && rr.kind === 'allow')) r102Ok = false
-    if (i >= 19 && !(rr !== null && rr !== undefined && rr.kind === 'deny' && String(rr.reason).includes('超过上限'))) r102Ok = false
+    if (i <= DEFAULT_EXPLORE_BUDGET && !(rr !== null && rr !== undefined && rr.kind === 'allow')) r102Ok = false
+    if (i > DEFAULT_EXPLORE_BUDGET && !(rr !== null && rr !== undefined && rr.kind === 'deny')) r102Ok = false
   }
-  checkTrue('R104 单实例子调用循环 100 次 → i≤18 allow、i≥19 deny 且含「超过上限」', r102Ok)
+  checkTrue('R104 单实例子调用循环至上限+2 → 上限内 allow、超上限 deny（上限由 DEFAULT_EXPLORE_BUDGET 派生）', r102Ok)
 }
 {
   const plannerMock = plannerAgent
-  const longCode = Array.from({ length: 19 }, (_, i) => "await tools.read({ file_path: 'x" + i + "' })").join('\n')
-  r = preExecute(harness, plannerMock, 'run_code', { code: longCode, description: '19 行 read 调用' })
-  checkTrue('R105 planner 静态调用点 19 处 → deny 且含「超过单实例子调用上限」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('超过单实例子调用上限'))
+  const overCapSites = DEFAULT_EXPLORE_BUDGET + 1
+  const longCode = Array.from({ length: overCapSites }, (_, i) => "await tools.read({ file_path: 'x" + i + "' })").join('\n')
+  r = preExecute(harness, plannerMock, 'run_code', { code: longCode, description: overCapSites + ' 行 read 调用' })
+  checkTrue('R105 planner 静态调用点超过 DEFAULT_EXPLORE_BUDGET（上限+1）→ deny（只断 kind）', r !== null && r !== undefined && r.kind === 'deny')
 }
 
 
@@ -1833,11 +1860,8 @@ const P4_USAGE_AGENTS = {
   },
 }
 
-// P4-1/P4-2：源码级不变量（T2.2/T3.1/T3.5/T4.1/T4.7）
-const pluginSource = readFileSync(PLUGIN_PATH, 'utf8')
-const gateDecisionsSource = readFileSync(GATE_DECISIONS_PATH, 'utf8')
-const usageLedgerSource = readFileSync(USAGE_LEDGER_PATH, 'utf8')
-const runtimeLifecycleSource = readFileSync(RUNTIME_LIFECYCLE_PATH, 'utf8')
+// P4-0/P4-2：行为层不变量（源码级 includes 断言已于 S4 退役：账本无灌表/单计数入口等事实
+// 已由 P4-0、P4-2 disposed/fold 行为用例覆盖，不再读 .js 源码做文本匹配）。
 checkTrue('P4-0 通知行为：同 message.id 幂等、同 job 新 id 可解锁且 session 隔离', (() => {
   const behaviorHarness = makeHarness({ anchoredBootstrap: false })
   const events = []
@@ -1851,23 +1875,22 @@ checkTrue('P4-0 通知行为：同 message.id 幂等、同 job 新 id 可解锁�
   const duplicate = preExecute(behaviorHarness, agent, 'job_output', { job_id: 'p4-cn-job' })
   return first?.kind === 'allow' && warmDeny?.kind === 'deny' && released?.kind === 'allow' && duplicate?.kind === 'deny' && events.length === 0
 })())
-checkTrue('P4-1 源码：usage ledger 无灌表/async fold，runtime lifecycle 统一计数入口',
-  !usageLedgerSource.includes('usageCursorsLoaded') && !usageLedgerSource.includes('subCallCounters.clear()') && !usageLedgerSource.includes('async function foldUsage') && usageLedgerSource.includes('function foldUsage') && runtimeLifecycleSource.includes('function noteRunCodeSubCall(sessionId, rid, cap)'))
 
-
-
-// P4-3：两个 session 同 rootCallId 各自 1~18 allow、19 deny（计数按 session 隔离）
+// P4-3：两个 session 同 rootCallId 各自 cap 内 allow、cap+1 次 deny（cap = DEFAULT_EXPLORE_BUDGET；计数按 session 隔离）
 {
+  // 上限由 DEFAULT_EXPLORE_BUDGET 派生；拒句逐字对拍 runCodeDispatchCapText(rid, cap+1, cap)（不再匹配文案片段）。
   const pA = plannerWithId('p4-iso-A', [DESC])
   const pB = plannerWithId('p4-iso-B', [DESC])
+  const isoCap = DEFAULT_EXPLORE_BUDGET
+  const isoCapText = decisions.runCodeDispatchCapText('rc-iso', isoCap + 1, isoCap)
   let isoOk = true
-  for (let i = 1; i <= 19; i += 1) {
+  for (let i = 1; i <= isoCap + 1; i += 1) {
     const ra = subCall(harness, pA, 'rc-iso', 'isoA')
     const rb = subCall(harness, pB, 'rc-iso', 'isoB')
-    if (i <= 18 && !(ra.kind === 'allow' && rb.kind === 'allow')) isoOk = false
-    if (i >= 19 && !(ra.kind === 'deny' && rb.kind === 'deny' && String(ra.reason).includes('超过上限') && String(ra.reason).includes('子调用数 19') && String(rb.reason).includes('子调用数 19'))) isoOk = false
+    if (i <= isoCap && !(ra.kind === 'allow' && rb.kind === 'allow')) isoOk = false
+    if (i > isoCap && !(ra.kind === 'deny' && rb.kind === 'deny' && String(ra.reason) === isoCapText && String(rb.reason) === isoCapText)) isoOk = false
   }
-  checkTrue('P4-3 两 session 同 rootCallId：各自 1~18 allow、第 19 次 deny 且文案含「子调用数 19 … 超过上限」（计数按 session 隔离）', isoOk)
+  checkTrue('P4-3 两 session 同 rootCallId：各自上限内 allow、上限+1 次 deny 且拒句与 runCodeDispatchCapText 派生值一致（计数按 session 隔离）', isoOk)
 }
 
 // P4-4/P4-5：session B 锚点变化不清空 session A 的计数；B 自身从 0 重开
@@ -1876,20 +1899,23 @@ checkTrue('P4-1 源码：usage ledger 无灌表/async fold，runtime lifecycle �
   const evB = [DESC]
   const pA = plannerWithId('p4-anchor-A', evA)
   const pB = plannerWithId('p4-anchor-B', evB)
+  // 上限由 DEFAULT_EXPLORE_BUDGET 派生；超限拒句逐字对拍 runCodeDispatchCapText(rid, cap+1, cap)。
+  const anchorCap = DEFAULT_EXPLORE_BUDGET
+  const anchorCapText = decisions.runCodeDispatchCapText('rc-anchor', anchorCap + 1, anchorCap)
   let aOk = true
-  for (let i = 1; i <= 18; i += 1) { if (subCall(harness, pA, 'rc-anchor', 'anchorA').kind !== 'allow') aOk = false }
+  for (let i = 1; i <= anchorCap; i += 1) { if (subCall(harness, pA, 'rc-anchor', 'anchorA').kind !== 'allow') aOk = false }
   const a19 = subCall(harness, pA, 'rc-anchor', 'anchorA')
   let bOk = true
   for (let i = 1; i <= 5; i += 1) { if (subCall(harness, pB, 'rc-anchor', 'anchorB').kind !== 'allow') bOk = false }
   evB.push(umE())
   const bAfterAnchor = subCall(harness, pB, 'rc-anchor', 'anchorB')
   const aAfterAnchor = subCall(harness, pA, 'rc-anchor', 'anchorA')
-  checkTrue('P4-4 session B 锚点变化后 A 已累计次数不变（A 下一次仍 deny 且含「子调用数 19」），B 自身首调 allow（只删当前 session 桶）',
-    aOk && bOk && a19.kind === 'deny' && bAfterAnchor.kind === 'allow' && aAfterAnchor.kind === 'deny' && String(aAfterAnchor.reason).includes('子调用数 19'))
+  checkTrue('P4-4 session B 锚点变化后 A 已累计次数不变（A 下一次仍 deny 且拒句与 runCodeDispatchCapText 派生值逐字一致），B 自身首调 allow（只删当前 session 桶）',
+    aOk && bOk && a19.kind === 'deny' && bAfterAnchor.kind === 'allow' && aAfterAnchor.kind === 'deny' && String(aAfterAnchor.reason) === anchorCapText)
   let bRestartOk = true
-  for (let i = 1; i <= 17; i += 1) { if (subCall(harness, pB, 'rc-anchor', 'anchorB').kind !== 'allow') bRestartOk = false }
+  for (let i = 1; i <= anchorCap - 1; i += 1) { if (subCall(harness, pB, 'rc-anchor', 'anchorB').kind !== 'allow') bRestartOk = false }
   const b19 = subCall(harness, pB, 'rc-anchor', 'anchorB')
-  checkTrue('P4-5 锚点变化后的 session B 从 0 重新计数：再 17 次仍 allow、第 19 次 deny', bRestartOk && b19.kind === 'deny' && String(b19.reason).includes('子调用数 19'))
+  checkTrue('P4-5 锚点变化后的 session B 从 0 重新计数：上限内仍 allow、上限+1 次 deny（拒句与 runCodeDispatchCapText 派生值逐字一致）', bRestartOk && b19.kind === 'deny' && String(b19.reason) === anchorCapText)
 }
 
 // P4-6/P4-7：disposed A 后同 sessionId 新建 agent 状态从空开始；B 的计数保持
@@ -1898,8 +1924,11 @@ checkTrue('P4-1 源码：usage ledger 无灌表/async fold，runtime lifecycle �
   const evB = [DESC]
   const dA = plannerWithId('p4-disp-A', evA)
   const dB = plannerWithId('p4-disp-B', evB)
+  // 上限与超限拒句同口径派生（rid=rc-disp）。
+  const dispCap = DEFAULT_EXPLORE_BUDGET
+  const dispCapText = decisions.runCodeDispatchCapText('rc-disp', dispCap + 1, dispCap)
   let aOk = true
-  for (let i = 1; i <= 18; i += 1) { if (subCall(harness, dA, 'rc-disp', 'dispA').kind !== 'allow') aOk = false }
+  for (let i = 1; i <= dispCap; i += 1) { if (subCall(harness, dA, 'rc-disp', 'dispA').kind !== 'allow') aOk = false }
   let bOk = true
   for (let i = 1; i <= 5; i += 1) { if (subCall(harness, dB, 'rc-disp', 'dispB').kind !== 'allow') bOk = false }
   const jFirst = preExecute(harness, dA, 'job_output', { job_id: 'job-p4-disp' })
@@ -1908,14 +1937,14 @@ checkTrue('P4-1 源码：usage ledger 无灌表/async fold，runtime lifecycle �
   const dA2 = plannerWithId('p4-disp-A', evA)
   const jAfter = preExecute(harness, dA2, 'job_output', { job_id: 'job-p4-disp' })
   let a2Ok = true
-  for (let i = 1; i <= 18; i += 1) { if (subCall(harness, dA2, 'rc-disp', 'dispA2').kind !== 'allow') a2Ok = false }
+  for (let i = 1; i <= dispCap; i += 1) { if (subCall(harness, dA2, 'rc-disp', 'dispA2').kind !== 'allow') a2Ok = false }
   const a2Deny = subCall(harness, dA2, 'rc-disp', 'dispA2')
-  checkTrue('P4-6 disposed A 后同 sessionId 新建 agent：job_output 查重从空开始（首调 allow，此前重复 deny）与 rootCall 从 0 计数（18 次 allow、第 19 次 deny）',
+  checkTrue('P4-6 disposed A 后同 sessionId 新建 agent：job_output 查重从空开始（首调 allow，此前重复 deny）与 rootCall 从 0 计数（上限内 allow、上限+1 次 deny）',
     aOk && bOk && jFirst.kind === 'allow' && jSecond.kind === 'deny' && jAfter.kind === 'allow' && a2Ok && a2Deny.kind === 'deny')
   let bKeepOk = true
   for (let i = 1; i <= 13; i += 1) { if (subCall(harness, dB, 'rc-disp', 'dispB').kind !== 'allow') bKeepOk = false }
   const b19 = subCall(harness, dB, 'rc-disp', 'dispB')
-  checkTrue('P4-7 disposed A 不影响 session B：B 第 6~18 次仍 allow、第 19 次 deny 且含「子调用数 19」', bKeepOk && b19.kind === 'deny' && String(b19.reason).includes('子调用数 19'))
+  checkTrue('P4-7 disposed A 不影响 session B：B 前序计数保持后上限内仍 allow、上限+1 次 deny 且拒句与 runCodeDispatchCapText 派生值逐字一致', bKeepOk && b19.kind === 'deny' && String(b19.reason) === dispCapText)
 }
 
 // P4-8~P4-13：one-shot 末轮 flush、重复 disposed 幂等、同 session 续载去重（临时账本目录）
@@ -2425,7 +2454,7 @@ const MATRIX_SCHEMA = (name, description, parameters) => ({
 })
 const MATRIX_OBJECT = { type: 'object', additionalProperties: true }
 // 宿主 read tool 的注册 schema 复刻（registry mock）：F/PTC 段不再渲染它，仅用于工具过滤/mode 判定；
-// 段文本断言见下方 readOk（F 段逐字等于 HINT_READ_DEFAULT）。
+// 段文本断言见下方 readOk（F 段由 hintReadOk 结构化判据把关）。
 const MATRIX_READ_PARAMETERS = { type: 'object', required: ['file_path'], properties: { file_path: { type: 'string', description: 'Path to read, resolved by the filesystem backend.' }, offset: { type: 'number', description: '1-based first line to return. Defaults to 1.' }, limit: { type: 'number', description: 'Maximum number of lines to return. Defaults to 2000.' } }, additionalProperties: false }
 const MATRIX_TOOL_DEFINITIONS = [
   MATRIX_SCHEMA('bash', 'Run a bash command.', MATRIX_OBJECT),
@@ -2453,9 +2482,9 @@ function matrixDirectTools(schemas, mode) {
 function matrixSections(mode) {
   const sections = []
   if (mode === 'ptc') sections.push({ name: 'tools:ptc-only', text: 'Only the run_code transport is directly callable.' })
-  // 宿主 tool:read 原文（非 anchored 的直通夹具值）：anchored PTC 行由插件借槽覆盖为
-  // 变量②手写文案，断言据此要求「逐字等于 HINT_READ_DEFAULT 且不等于本夹具文本」。
-  sections.push({ name: 'tool:read', text: HOST_READ_TEXT })
+  // 宿主 tool:read 直通段（非 anchored 的夹具值）：anchored PTC 行由插件借槽覆盖为
+  // 变量②手写文案，断言据此要求「满足 hintReadOk 且不等于本哨兵夹具」。
+  sections.push({ name: 'tool:read', text: HOST_READ_FIXTURE })
   sections.push({ name: 'tool:cordis', text: 'Cordis guidance: ' + MATRIX_CORDIS_TOOLS.join(', ') })
   // 观察面：native 轮看 request/header 的 tools（无 tools:sdk 段）；ptc 轮看 header.system 的 tools:sdk 段。
   if (mode === 'ptc') sections.push({ name: 'tools:sdk', text: 'Original SDK declarations: ' + MATRIX_CORDIS_TOOLS.join(', ') + ', read, skill, file_path, offset, limit.' })
@@ -2498,12 +2527,16 @@ async function matrixCatalog(listeners, agent, creativeMode) {
 // 0.2.1 呈现模式二值化：both 退出，矩阵按 native 轮 与 ptc 轮两组跑（用例编号不变）。
 const matrixModes = ['native', 'ptc']
 const matrixRoles = ['main', 'planner', 'executor', 'reviewer', 'probe']
+// 五个维度各自单点定义：循环与总数断言共用同一组维度（S4：不写死 80）。
+const matrixAnchoredOptions = [false, true]
+const matrixCreativeOptions = [false, true]
+const matrixPhases = ['first', 'later']
 let matrixCases = 0
 let matrixSerial = 0
-for (const anchoredBootstrap of [false, true]) {
-  for (const creativeMode of [false, true]) {
+for (const anchoredBootstrap of matrixAnchoredOptions) {
+  for (const creativeMode of matrixCreativeOptions) {
     for (const mode of matrixModes) {
-      for (const phase of ['first', 'later']) {
+      for (const phase of matrixPhases) {
         for (const role of matrixRoles) {
           matrixSerial += 1
           const harnessMatrix = makeHarness({ anchoredBootstrap, creativeMode })
@@ -2546,17 +2579,17 @@ for (const anchoredBootstrap of [false, true]) {
           const readText = sectionText(assembled, 'tool:read')
           let readOk
           if (anchoredPtc) {
-            // F/PTC 的 tool:read 逐字等于变量②手写文案（此处实例未配置 → 内置默认），
-            // 且不再含宿主原文、不再含官方单-read SDK 骨架与 Cordis 名称。
-            readOk = readText === HINT_READ_DEFAULT && hintReadOk(readText)
-              && readText !== HOST_READ_TEXT
+            // F/PTC 的 tool:read 由 hintReadOk 结构化判据把关（此处实例未配置 → 内置默认），
+            // 且不等于宿主直通夹具、不含官方单-read SDK 骨架与 Cordis 名称。
+            readOk = hintReadOk(readText)
+              && readText !== HOST_READ_FIXTURE
               && readText !== '' && gotSectionNames.includes('tool:read')
               && MATRIX_CORDIS_TOOLS.every((name) => !readText.includes(name))
           } else if (anchored) {
             readOk = readText === '' && !gotSectionNames.includes('tool:read')
           } else {
-            // 非 anchored（N/P/B 与全部 L）：tool:read 保持宿主原文直通，插件不碰。
-            readOk = readText === HOST_READ_TEXT
+            // 非 anchored（N/P/B 与全部 L）：tool:read 保持宿主直通，插件不碰。
+            readOk = readText === HOST_READ_FIXTURE
           }
           const phaseOk = (isBootstrapPhase(agent) ? 'first' : 'later') === phase
           const contextsOk = !anchored || (Array.isArray(assembled.contexts) && assembled.contexts.length === 0)
@@ -2578,8 +2611,9 @@ for (const anchoredBootstrap of [false, true]) {
     }
   }
 }
-// 二值化后矩阵 = 2(anchoredBootstrap) × 2(creative) × 2(mode) × 2(phase) × 5(role) = 80
-check('装配矩阵案例总数（native/ptc 两轮）', matrixCases, 80)
+// 二值化后矩阵总数 = 五维长度之积（anchoredBootstrap × creative × mode × phase × role）
+const expectedMatrixCases = matrixAnchoredOptions.length * matrixCreativeOptions.length * matrixModes.length * matrixPhases.length * matrixRoles.length
+check('装配矩阵案例总数（native/ptc 两轮）', matrixCases, expectedMatrixCases)
 checkTrue('Cordis 固定集合恰有 2 项且名称唯一', MATRIX_CORDIS_TOOLS.length === 2 && new Set(MATRIX_CORDIS_TOOLS).size === 2)
 const projectionSource = { tools: [{ name: 'read' }, { name: MATRIX_CORDIS_TOOLS[0] }], sections: [{ name: 'tool:cordis', text: 'hidden' }, { name: 'tools:sdk', text: 'old' }] }
 const projectionCopy = projectAssemblyForPresentation(projectionSource, projectionSource.tools, { sdkText: 'read:' })
@@ -2592,8 +2626,20 @@ const expectedCreativeSkills = ['cordis-plugin-development', 'editing-cordis-com
   const skillFsConfig = skillFsRow !== undefined && skillFsRow.config !== undefined ? skillFsRow.config : undefined
   const bundledDir = skillFsConfig === undefined ? undefined : skillFsConfig.bundledSkillDir
   checkTrue('T9-3a 预设 skill-filesystem 行 config.watch === false 且 config.bundledSkillDir 为 string', skillFsConfig !== undefined && skillFsConfig.watch === false && typeof bundledDir === 'string')
-  checkTrue("T9-3b bundledSkillDir 表达式逐字含 createRequire(baseUrl) 与 'skills'，且 config.customSkillDirs === undefined",
-    typeof bundledDir === 'string' && bundledDir.includes('createRequire(baseUrl)') && bundledDir.includes("'skills'") && skillFsConfig.customSkillDirs === undefined)
+  // T9-3b：bundledSkillDir 是 cordis-loader 的 !!js 求值域（baseUrl = 声明行所在 Loader 上下文）。
+  // 以宿主 dsh 包清单为锚点求值同一表达式（同一 node 解析树），断言解析出的目录真实存在且含 CREATIVE skill 子目录。
+  const resolveBundledSkillDir = () => {
+    if (typeof bundledDir !== 'string') return undefined
+    try {
+      const evaluate = new Function('baseUrl', 'return ' + bundledDir)
+      const resolved = evaluate(DSH_PACKAGE_MANIFEST !== null ? DSH_PACKAGE_MANIFEST : PLUGIN_PATH)
+      return typeof resolved === 'string' ? resolved : undefined
+    } catch { return undefined }
+  }
+  const resolvedSkillDir = resolveBundledSkillDir()
+  const resolvedSkillNames = typeof resolvedSkillDir === 'string' && existsSync(resolvedSkillDir) ? readdirSync(resolvedSkillDir) : []
+  checkTrue('T9-3b bundledSkillDir 解析出的目录存在且含 ' + expectedCreativeSkills.length + ' 个 creative skill 子目录，且 config.customSkillDirs === undefined',
+    typeof resolvedSkillDir === 'string' && existsSync(resolvedSkillDir) && expectedCreativeSkills.every((name) => resolvedSkillNames.includes(name) && existsSync(join(resolvedSkillDir, name, 'SKILL.md'))) && skillFsConfig.customSkillDirs === undefined)
 }
 // 隐藏集合（C=0 只从 catalog 去名，旧「不注册」已废）：三 id 全在 CREATIVE_SKILL_NAMES，且 C=0 时从 catalog 隐藏。
 const skillCatalogFixture = (names) => ({

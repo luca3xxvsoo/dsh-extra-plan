@@ -264,12 +264,6 @@ const EXPECTED_ROLE_NAMES = {
   'extra-plan-reviewer': '按需规划模式-验收者',
   'extra-plan-prober': '按需规划模式-探查者',
 }
-const EXPECTED_ROLE_RECORDS = [
-  { id: 'extra-plan-executor', order: 101, name: '按需规划模式-执行者' },
-  { id: 'extra-plan-planner', order: 102, name: '按需规划模式-规划者' },
-  { id: 'extra-plan-reviewer', order: 103, name: '按需规划模式-验收者' },
-  { id: 'extra-plan-prober', order: 104, name: '按需规划模式-探查者' },
-]
 check('T3 角色作者源 4 项且 id/order 唯一（101..104）',
   roleRow.length === 4 && JSON.stringify(roleRow.map((role) => role.id)) === JSON.stringify([...ROLE_IDS])
   && JSON.stringify(roleRow.map((role) => role.order)) === JSON.stringify([101, 102, 103, 104]))

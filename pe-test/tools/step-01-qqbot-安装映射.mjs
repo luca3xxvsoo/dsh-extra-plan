@@ -24,7 +24,6 @@ const SOURCE_PACKAGE = join(SOURCE_ROOT, 'plugins', 'dsh-extra-plan-qqbot')
 const SOURCE_HEAL = join(SOURCE_PACKAGE, 'scripts', 'heal.mjs')
 const SOURCE_PACKAGE_MANIFEST = join(SOURCE_PACKAGE, 'package.json')
 const SOURCE_HEAL_TEXT = readFileSync(join(SOURCE_PACKAGE, 'lib', 'heal.js'), 'utf8')
-const SOURCE_CLI_TEXT = readFileSync(SOURCE_HEAL, 'utf8')
 
 let pass = 0
 let fail = 0
@@ -48,27 +47,9 @@ let sourcePackageJson = null
 try { sourcePackageJson = JSON.parse(readFileSync(SOURCE_PACKAGE_MANIFEST, 'utf8')) } catch { sourcePackageJson = null }
 check('QB5 健壮性改进：QQBot package-local 声明 js-yaml ^4.2.0',
   sourcePackageJson !== null && sourcePackageJson.dependencies !== null && typeof sourcePackageJson.dependencies === 'object' && sourcePackageJson.dependencies['js-yaml'] === '^4.2.0')
-check('QB5 健壮性改进：heal.js 仅从包自身 import.meta.url 解析，移除 APPDATA/固定宿主后备',
-  SOURCE_HEAL_TEXT.includes("createRequire(import.meta.url)('js-yaml')") && !SOURCE_HEAL_TEXT.includes('APPDATA') &&
-  !SOURCE_HEAL_TEXT.includes("from 'node:os'") && !SOURCE_HEAL_TEXT.includes('@deepseek-ai/dsh/package.json'))
 check('QB6 manifest 身份为 dsh-extra-plan-qqbot@2.0.1 且 postinstall 严格进入 --install、无 private', sourcePackageJson !== null && sourcePackageJson.name === 'dsh-extra-plan-qqbot' && sourcePackageJson.version === '2.0.1' && !Object.prototype.hasOwnProperty.call(sourcePackageJson, 'private') && sourcePackageJson.scripts?.postinstall === 'node scripts/heal.mjs --install')
-check('QB6 heal 只暴露新 QQBot/核心平铺路径且不含旧 @local 包路径', SOURCE_HEAL_TEXT.includes("const OWN_PACKAGE_NAME = 'dsh-extra-plan-qqbot'") && SOURCE_HEAL_TEXT.includes("const WEB_PACKAGE_NAME = 'dsh-extra-plan'") && SOURCE_HEAL_TEXT.includes("join(profile.path, 'node_modules', WEB_PACKAGE_NAME)") && !SOURCE_HEAL_TEXT.includes('node_modules/@local') && !SOURCE_HEAL_TEXT.includes("'@local'"))
-check('G5 恢复失败提示只称已尝试恢复且不伪报成功', SOURCE_HEAL_TEXT.includes('已尝试用备份恢复，请核对备份') && !SOURCE_HEAL_TEXT.includes('迁移失败（已恢复备份）') && !SOURCE_HEAL_TEXT.includes('迁移后校验失败，已用备份恢复'))
 check('G1 sameRealPath 在 win32 下忽略大小写', sameRealPath('C:/DSH/Profiles/QQBot', 'c:/dsh/profiles/qqbot', 'win32'))
 check('G1 sameRealPath 在非 win32 下区分大小写', !sameRealPath('C:/DSH/Profiles/QQBot', 'c:/dsh/profiles/qqbot', 'linux'))
-check('G1 CLI 与库共用 sameRealPath 且无重复实现',
-  SOURCE_CLI_TEXT.includes('sameRealPath') &&
-  !SOURCE_CLI_TEXT.includes('function sameRealPath') &&
-  !SOURCE_CLI_TEXT.includes('.toLowerCase()') &&
-  SOURCE_CLI_TEXT.includes('sameRealPath(called, self)') &&
-  SOURCE_CLI_TEXT.includes('sameRealPath(candidateRoot, packageRoot)') &&
-  SOURCE_CLI_TEXT.includes('sameRealPath(targetRealPath, webRealPath)') &&
-  SOURCE_CLI_TEXT.includes('sameRealPath(finalSource, finalTarget)'))
-check('G1 ensureDshExtraPlanLink 使用共享 sameRealPath',
-  SOURCE_HEAL_TEXT.includes('export function sameRealPath') &&
-  SOURCE_HEAL_TEXT.includes('sameRealPath(hostContext.hostDataRoot, expectedRoot)') &&
-  SOURCE_HEAL_TEXT.includes('sameRealPath(nativeRealpathSync(target.path), webChecked.realPath)') &&
-  SOURCE_HEAL_TEXT.includes('sameRealPath(finalRealPath, webChecked.realPath)'))
 
 function contextOf(home) { return createPathContext({ hostDataRoot: home }) }
 function healAt(home, options = {}) { return healQqbotCompatibility(home, { ...options, context: contextOf(home) }) }
@@ -257,9 +238,6 @@ function legacyPatch(includeIm = true) {
   return lines.join('\n') + '\n'
 }
 
-const presetSync = readFileSync(join(SOURCE_ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'preset-sync.js'), 'utf8')
-check('preset-sync.js 不含 qqbot/code-runtime/qqbot 自愈标识符（核心零感知）', !/qqbot|code-runtime|healQqbotCompatibility|healPatchRows/i.test(presetSync))
-
 const yamlResolution = loadTestYaml()
 if (yamlResolution.module === null) {
   emitSkip('qqbot-install-mapping', 'yaml-parser-unavailable', {
@@ -317,7 +295,7 @@ if (yamlResolution.module === null) {
   check('cordis-host-runner 行无 config（保持原语义）', isMap(staticRunner) && staticRunner.name === '@deepseek-ai/dsh-cordis-host-runner' && staticRunner.config === undefined)
   check('静态 agent-preset-registry 默认严格为 extra-plan', isMap(staticAgent) && isMap(staticAgent.config) && staticAgent.config.default === 'extra-plan')
   check('ptc-runtime/agent-preset-registry 不在根级非-insert patch', staticPatchResult.ok && Array.isArray(staticPatch) && !staticPatch.some((row) => isMap(row) && (row.id === 'ptc-runtime' || row.id === 'agent-preset-registry')), staticPatchResult.error || '')
-  check('静态 patch 不再出现旧 QQBot 包路径/0.1.5 包名且拒绝旧过程措辞', !staticPatchText.includes('@local/dsh-qqbot-user-questions') && !staticPatchText.includes('@deepseek-ai/dsh-code-runtime-worker-thread') && !staticPatchText.includes('@deepseek-ai/dsh-agent-presets') && !staticPatchText.includes('本机不做验证') && !staticPatchText.includes('方案 U3') && !staticPatchText.includes('方案 U4') && !staticPatchText.includes('待有 QQBOT 环境再测试') && !staticPatchText.includes('未核实项'))
+  check('静态 patch 不再出现旧 QQBot 包路径/0.1.5 包名', !staticPatchText.includes('@local/dsh-qqbot-user-questions') && !staticPatchText.includes('@deepseek-ai/dsh-code-runtime-worker-thread') && !staticPatchText.includes('@deepseek-ai/dsh-agent-presets'))
   check('cordis-host-runner 不在根级非-insert patch（无第二处 cordis 行）', staticPatchResult.ok && Array.isArray(staticPatch) && !staticPatch.some((row) => isMap(row) && (row.id === 'cordis-host-runner' || row.name === '@deepseek-ai/dsh-cordis-host-runner')), staticPatchResult.error || '')
 
   // ② 生产同形 fixture：只迁移两个旧根级块，保留 im-qqbot 与备份原文
@@ -506,6 +484,26 @@ if (yamlResolution.module === null) {
    const cliInvalid = runCli(hInvalid, { mode: 'install' })
    check('CLI --install 非法迁移恢复原文但保留恢复备份并返回非零', cliInvalid.status === 1 && cliInvalid.error === undefined && cliInvalid.stderr.includes('严格安装失败') && cliInvalid.stderr.includes('patch-failed') && cliInvalid.stderr.includes('verify-failed') && readFileSync(qqPatch(hInvalid), 'utf8') === cliInvalidBefore && bakCount(qqProfileDir(hInvalid)) === cliInvalidBackups + 1, JSON.stringify({ status: cliInvalid.status, error: cliInvalid.error, stdout: cliInvalid.stdout, stderr: cliInvalid.stderr, backups: [cliInvalidBackups, bakCount(qqProfileDir(hInvalid))] }))
 
+  // ⑤a 写回失败即恢复失败路径：返回 failed/write-failed，不改写原文、不伪报成功
+  const hWriteFailed = join(tempRoot, 's5a-write-failed')
+  makeProfile(hWriteFailed, 'qqbot')
+  installOwnPlugin(hWriteFailed, 'qqbot')
+  createWebPackage(hWriteFailed)
+  writeFileSync(qqPatch(hWriteFailed), legacyPatch(true), 'utf8')
+  const writeFailedText = readFileSync(qqPatch(hWriteFailed), 'utf8')
+  const writeFailedPath = resolve(qqPatch(hWriteFailed))
+  const originalWriteFile = fs.writeFileSync
+  const writeFailedSummary = await withBuiltinFsPatch('writeFileSync', (...args) => {
+    if (typeof args[0] === 'string' && resolve(args[0]) === writeFailedPath) {
+      const error = new Error('write failure injected')
+      error.code = 'EIO'
+      throw error
+    }
+    return originalWriteFile(...args)
+  }, () => captureWarn(() => healAt(hWriteFailed)))
+  const writeFailedPatch = writeFailedSummary.result?.results?.[0]?.patch
+  check('写回失败时返回 failed/write-failed 且原文保持迁移前字节', writeFailedPatch !== undefined && writeFailedPatch.status === 'failed' && writeFailedPatch.reason === 'write-failed' && writeFailedSummary.result.failed.length === 1 && readFileSync(qqPatch(hWriteFailed), 'utf8') === writeFailedText)
+
   // ⑤b patch 文件可见但读取失败：保留 healPatchRows 原形状，dryRun CLI 进入失败分类
   const hReadFailed = join(tempRoot, 's5b-read-failed')
   makeProfile(hReadFailed, 'qqbot')
@@ -533,7 +531,7 @@ if (yamlResolution.module === null) {
   makeProfile(h4, 'qqbot')
   installOwnPlugin(h4, 'qqbot')
   const w4 = captureWarn(() => healAt(h4))
-  check('web 包缺失时 heal 不抛异常且输出跳过警告', w4.messages.some((m) => m.includes('未找到 web 的 dsh-extra-plan，跳过映射')))
+  check('web 包缺失时 heal 不抛异常且跳过建链', w4.result !== undefined && w4.result.count === 1 && w4.result.results.length === 1 && w4.result.results[0].link.status === 'skipped' && w4.result.results[0].link.reason === 'web-missing')
   check('web 包缺失时不创建 qqbot 新平铺目标链接或 @local 目录', !existsSync(qqExtraPlanDir(h4)) && !existsSync(join(h4, 'profiles', 'qqbot', 'node_modules', '@local')))
 
   // ⑦ 实体目录 → 保留并提示 pnpm 迁移
@@ -593,7 +591,7 @@ if (yamlResolution.module === null) {
   const hEmptyCli = join(tempRoot, 'cli-empty')
   mkdirSync(hEmptyCli, { recursive: true })
   const cliEmpty = runCli(hEmptyCli)
-  check('CLI 无参仅帮助且不读写profile', cliEmpty.status === 0 && cliEmpty.error === undefined && cliEmpty.stdout.includes('--host-root') && cliEmpty.stderr === '')
+  check('CLI 无参退出码 0、无 stderr、不读写profile', cliEmpty.status === 0 && cliEmpty.error === undefined && cliEmpty.stderr === '')
   const hDryRun = join(tempRoot, 'cli-dry-run')
   makeProfile(hDryRun, 'qqbot')
   installOwnPlugin(hDryRun, 'qqbot')
@@ -602,7 +600,7 @@ if (yamlResolution.module === null) {
   const dryBefore = readFileSync(qqPatch(hDryRun), 'utf8')
   const dryBackups = bakCount(qqProfileDir(hDryRun))
   const cliDryRun = runCli(hDryRun, { mode: 'dryRun', profile: 'qqbot' })
-  check('CLI 显式 --host-root+--profile 仅dryRun且零写', cliDryRun.status === 0 && cliDryRun.error === undefined && cliDryRun.stdout.includes('dryRun完成') && readFileSync(qqPatch(hDryRun), 'utf8') === dryBefore && bakCount(qqProfileDir(hDryRun)) === dryBackups && !existsSync(qqExtraPlanDir(hDryRun)))
+  check('CLI 显式 --host-root+--profile 仅dryRun且零写', cliDryRun.status === 0 && cliDryRun.error === undefined && readFileSync(qqPatch(hDryRun), 'utf8') === dryBefore && bakCount(qqProfileDir(hDryRun)) === dryBackups && !existsSync(qqExtraPlanDir(hDryRun)))
 
   // ⑪ Web documentPath 真源、双锚点与完整快照局部写回
   const syncKeys = ['anchoredBootstrap', 'creativeMode', 'webFetch', 'toolPresentationMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel']

@@ -166,14 +166,15 @@ function parseCallArguments(raw) {
   }
 }
 
-const CHILD_TOOL_NAMES = new Set([
-  'subagent_plan', 'subagent', 'subagent_probe', 'subagent_review', 'subagent_fork',
-  'workflow', 'ralph', 'subagent_run',
-])
+// 子代理调用判据（结构化，不再维护工具名清单）：工具名命中 subagent 前缀（subagent / subagent_*）即候选；
+// 是否真的落在子会话上，另由 buildParentLinks 按「调用/结果文本命中已发现的 child 目录」判定。
+function isSubagentToolNameOf(value) {
+  return typeof value === 'string' && (value === 'subagent' || value.startsWith('subagent_'))
+}
 function ptcDispatchCallOf(item) {
   if (!hasType(item.event, 'tool/ptc-dispatch-start')) return null
   const data = dataOf(item.event)
-  if (typeof data.name !== 'string' || !CHILD_TOOL_NAMES.has(data.name)) return null
+  if (typeof data.name !== 'string' || !isSubagentToolNameOf(data.name)) return null
   return {
     line: item.line,
     name: data.name,
@@ -186,7 +187,7 @@ function ptcDispatchCallOf(item) {
 function toolCallOf(item) {
   if (!hasType(item.event, 'tool/call')) return null
   const data = dataOf(item.event)
-  if (typeof data.name !== 'string' || !CHILD_TOOL_NAMES.has(data.name)) return null
+  if (typeof data.name !== 'string' || !isSubagentToolNameOf(data.name)) return null
   const args = parseCallArguments(data.arguments)
   return {
     line: item.line,
@@ -245,7 +246,7 @@ function buildParentLinks(parent, children) {
     if (!hasType(item.event, 'tool/ptc-dispatch')) return null
     const data = dataOf(item.event)
     if (typeof data.subCallId !== 'string' || data.subCallId === '') return null
-    if (typeof data.name !== 'string' || !CHILD_TOOL_NAMES.has(data.name)) return null
+    if (typeof data.name !== 'string' || !isSubagentToolNameOf(data.name)) return null
     const text = (Array.isArray(data.content) ? data.content : []).map((block) => isObject(block) && block !== null && typeof block.text === 'string' ? block.text : '').join('')
     return { line: item.line, callId: data.subCallId, isError: data.isError === true, text, event: item.event }
   }).filter((result) => result !== null)

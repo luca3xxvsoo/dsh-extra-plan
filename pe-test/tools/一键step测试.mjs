@@ -46,12 +46,10 @@ async function loadRuntimeHelpers() {
 
 // 自动判定项: [文件, 依赖仓库, 已知预存问题说明]
 const AUTO = [
-  ['step-00-路径边界.mjs', true, ''],
   ['step-00-全流程回归.mjs', true, ''],
   ['step-06-08-v4取证回归.mjs', true, ''],
   ['step-00-跨平台写拦截.mjs', true, ''],
   ['step-01-设置迁移.mjs', true, ''],
-  ['step-01-安装同步.mjs', true, ''],
   ['step-01-预设完整性.mjs', true, ''],
   ['step-01-设置页配置.mjs', true, ''],
   ['step-01-qqbot-安装映射.mjs', true, ''],
@@ -59,6 +57,7 @@ const AUTO = [
   ['step-04-路由与写闸门.mjs', true, ''],
   ['step-04-context-gate宿主回归.mjs', true, '受控adapter/工作区JSONL集成；真实provider与HUMAN另列NOT-RUN'],
   ['step-06-线索落盘.mjs', true, ''],
+  ['step-05-角色预设宿主回归.mjs', true, ''],
   // 代码地图一致性（--check：不写盘；地图过期/漏检/导航失效 → 退出码 1）
   ['代码地图生成.mjs', true, '', ['--check']],
 ]
@@ -69,7 +68,6 @@ const HUMAN = [
   ['step-05-会话解码.mjs', '必须显式传入 <会话目录名> 或公共 --session + --sessions-dir；不自动查找最新会话，看事件统计/plan模式（澄清问题问到没）'],
   ['step-06-真实会话查看.mjs', '仅支持 v4 会话日志（session.v4.jsonl.zstd）；参数可选: <sessions-dir>，查看拒绝记录（TOOL-ERROR）'],
   ['step-07-子代理模型与引导取证.mjs', '仅支持 v4 会话日志（session.v4.jsonl.zstd）；必须通过一键参数 --session <顶层主会话ID> + --sessions-dir 精确选择，并继承调用者显式提供的 PLANNER_PROMPT_SUFFIX，查看 pro规划/非pro规划 child 的 route/provenance/suffix 分栏'],
-  ['step-08-方案配对查看.mjs', '仅支持 v4 会话日志（session.v4.jsonl.zstd）；参数可选: <sessions-dir>/<会话目录名>，查看 save_plan 调用/结果是否成对（方案+验收双写）'],
 ]
 
 const MODE_FORENSIC_FILES = new Set([

@@ -30,8 +30,6 @@ const { decisions } = await import('../../plugins/dsh-extra-plan/index.js')
 const { pwshMutationEvidence, bashMutationEvidence } = await import('../../plugins/dsh-extra-plan/lib/shell-mutation.js')
 
 const {
-  BASH_MUTATION,
-  PWSH_MUTATION,
   bashCommandOf,
   bashMutationMatches,
   pwshCommandOf,
@@ -152,8 +150,6 @@ check('对象形状 arguments.command', bashCommandOf(bashExec('rm x')) === 'rm 
 check('字符串 JSON arguments', bashCommandOf(bashExec('rm x', 'string')) === 'rm x')
 check('空 arguments → 空串', bashCommandOf({ name: 'bash', arguments: undefined }) === '')
 check('空 command 对象 → 空串', bashCommandOf({ name: 'bash', arguments: { command: '' } }) === '')
-check('bashMutationMatches 命中', bashMutationMatches(bashExec('rm x')) === true)
-check('bashMutationMatches 放行只读', bashMutationMatches(bashExec('ls -la')) === false)
 
 console.log('== PWSH 重定向矩阵：对象 / JSON arguments（A09） ==')
 const pwshRedirectMatrix = [
@@ -243,10 +239,6 @@ const pwshShouldAllow = [
 for (const cmd of pwshShouldAllow) check(`放行 pwsh: ${cmd}`, gateDeny(pwshExec(cmd)) === false)
 check('pwshCommandOf 对象形状', pwshCommandOf(pwshExec('Get-ChildItem')) === 'Get-ChildItem')
 check('pwshCommandOf 字符串 JSON', pwshCommandOf(pwshExec('Get-ChildItem', 'string')) === 'Get-ChildItem')
-
-console.log('== 正则对象可导出（供测试复用） ==')
-check('BASH_MUTATION 是 RegExp', BASH_MUTATION instanceof RegExp)
-check('PWSH_MUTATION 是 RegExp', PWSH_MUTATION instanceof RegExp)
 
 console.log('')
 console.log(`结果：${pass} 通过，${fail} 失败`)

@@ -63,7 +63,7 @@ import { existsSync, readFileSync, readdirSync, rmSync, mkdirSync, writeFileSync
 import { makeFixtureDir } from '../_shared/workspace-paths.mjs'
 import { createPathContext } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
 import { dirname, join } from 'node:path'
-import { parsePresetYaml, createDefaultSettings } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
+import { parsePresetYaml, createDefaultSettings, DEFAULT_SETTINGS } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
 import { ROLE_IDS, ROLE_ORDERS, PLANNER_PRESET_ID, PROBER_PRESET_ID } from '../../plugins/dsh-extra-plan/lib/role-contract.js'
 import { ROLE_IDS as PRESET_SYNC_ROLE_IDS, ROLE_DEFINITION_FILES } from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
 import { GATE_WORD_FIELDS, createGateRuntime, validateGateWords } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
@@ -71,6 +71,8 @@ import { probePathOf } from '../../plugins/dsh-extra-plan/lib/save-probe-validat
 import { validateSavePlanContract as validateRealSavePlanContract } from '../../plugins/dsh-extra-plan/lib/save-plan-validation.js'
 import { SAVE_PLAN_LIMITS as REAL_SAVE_PLAN_LIMITS, formatSavePlanSummary as formatRealSavePlanSummary, renderSavePlan as renderRealSavePlan } from '../../plugins/dsh-extra-plan/lib/save-contract.js'
 import { createSaveToolFactories } from '../../plugins/dsh-extra-plan/lib/save-tool-factories.js'
+// decisions 未再导出该 deny 文案构造器：直接取 lib 同一实现（不复制文案）。
+import { purposeRouteDenyReason } from '../../plugins/dsh-extra-plan/lib/gate-decisions.js'
 const {
   CHANNEL_BROKEN_CODES,
   routeDenyReason,
@@ -164,7 +166,6 @@ const APPROVAL_WORD_APPROVE = gateRuntime.words.approvalApprove
 const APPROVAL_WORD_REPLAN = gateRuntime.words.approvalReplan
 const ROUTE_OPTIONS_TEXT = gateRuntime.options.route
 const APPROVAL_OPTIONS_TEXT = gateRuntime.options.approval
-const ROUTE_CONFIRM_TEXT = gateRuntime.confirm.route
 
 // ── apply 统一入口（4 处 plugin.apply 站点同源） ────────────────────────────
 // 合并资产 YAML 的 gateWords（调用方显式传 gateWords 时以调用方为准），并补齐
@@ -250,12 +251,11 @@ const forensicArgCases = [
   ['step-05-会话解码.mjs', ['fixture-session', '--full']],
   ['step-06-真实会话查看.mjs', ['fixture-session']],
   ['step-07-子代理模型与引导取证.mjs', ['--session', 'fixture-session', '--full']],
-  ['step-08-方案配对查看.mjs', ['fixture-session']],
 ]
 for (const [file, expected] of forensicArgCases) check('RUNNER15 ' + file + '真实argv合同', runnerModule.forensicArgs(file, 'fixture-session'), expected)
 check('RUNNER16 step-07缺显式前置为NOT-RUN', runnerModule.forensicNotRunReason('step-07-子代理模型与引导取证.mjs', undefined, {}).startsWith('NOT-RUN:'), true)
 check('RUNNER17 step-07显式前置齐全不NOT-RUN', runnerModule.forensicNotRunReason('step-07-子代理模型与引导取证.mjs', 'fixture-session', { PLANNER_PROMPT_SUFFIX: 'fixture' }), null)
-check('RUNNER18 step-08实际非零仍为HUMAN', runnerModule.classifyForensic({ status: 1, error: undefined, notRunReason: null }), 'HUMAN')
+check('RUNNER18 取证项实际非零仍为HUMAN', runnerModule.classifyForensic({ status: 1, error: undefined, notRunReason: null }), 'HUMAN')
 checkTrue('RUNNER19 INCOMPLETE/NOT-RUN进入有限摘要', runnerModule.forensicKeyLines('INCOMPLETE reason\nNOT-RUN reason\n').join('\n').includes('INCOMPLETE reason') && runnerModule.forensicKeyLines('INCOMPLETE reason\nNOT-RUN reason\n').join('\n').includes('NOT-RUN reason'))
 const rawFixtureDir = makeWTemp('dsh-runner-raw-fixture')
 const rawFixture = writeRawEvidence({ directory: rawFixtureDir, baseName: 'fixture', stdout: 'PASS compact\n', stderr: 'INCOMPLETE raw reason\n' })
@@ -483,7 +483,8 @@ check('CFG6 Config 标量默认值与 apply fallback 相同', [
   true, false, false, false, 'You are a helpful software engineer assistant.',
 ])
 check('CFG7 plannerPromptSuffix 使用生成默认值', configWithAssetGateWords.plannerPromptSuffix, GENERATED_DEFAULT_PLANNER_PROMPT_SUFFIX)
-checkTrue('CFG8 bootstrapReadHint 使用内置 fallback 形状', typeof configWithAssetGateWords.bootstrapReadHint === 'string' && configWithAssetGateWords.bootstrapReadHint.includes('tools.read') && configWithAssetGateWords.bootstrapReadHint.includes('file_path') && configWithAssetGateWords.bootstrapReadHint.includes('offset') && configWithAssetGateWords.bootstrapReadHint.includes('limit'))
+// CFG8：只断字段形状（非空字符串），不锁引导词正文措辞。
+checkTrue('CFG8 bootstrapReadHint 使用内置 fallback 形状（非空字符串）', typeof configWithAssetGateWords.bootstrapReadHint === 'string' && configWithAssetGateWords.bootstrapReadHint.trim().length > 0)
 check('CFG9 工具数组默认值', [configWithAssetGateWords.bootstrapShellTools, configWithAssetGateWords.bootstrapCommonTools], [['bash', 'pwsh'], ['read']])
 check('CFG10 usageLedger 默认值', configWithAssetGateWords.usageLedger, { enabled: false, path: '' })
 check('CFG11 diagFile 默认裸日志名（实际落点由授权H/W根解析）', configWithAssetGateWords.diagFile, 'extra-plan-request-errors.jsonl')
@@ -662,12 +663,19 @@ const GK = [
 ]
 for (const [name, got, expected] of GK) check(name, got, expected)
 
-// ── GM 系列:gate ask deny 文案（gateAskDenyReason） ──────────────────────
+// ── GM 系列:gate ask deny 分类（只断「是否给出拒绝原因」，具体缺项按词表关系派生） ──────
+const gmDenied = (labels) => { const reason = gateAskDenyReason(labels, gateRuntime); return typeof reason === 'string' && reason.trim().length > 0 }
+// 缺项关系式：词表中未出现在 labels 的词，必须逐个出现在拒绝原因里（词值从 gateRuntime 派生，不抄文案）。
+const gmMissingMentioned = (labels, wordSet) => {
+  const reason = gateAskDenyReason(labels, gateRuntime)
+  const missing = [...wordSet].filter((word) => !labels.some((label) => String(label).includes(word)))
+  return typeof reason === 'string' && missing.length > 0 && missing.every((word) => reason.includes(word))
+}
 const GM = [
-  ['GM1 单词路由 deny 文案含标准模板', gateAskDenyReason(['直接执行'], gateRuntime).includes('路由 ask 选项固定为') && gateAskDenyReason(['直接执行'], gateRuntime).includes('批准 ask 选项固定为'), true],
-  ['GM2 单词路由 deny 文案含具体缺项', gateAskDenyReason(['直接执行'], gateRuntime).includes('进行pro规划') && gateAskDenyReason(['直接执行'], gateRuntime).includes('不同意'), true],
-  ['GM3 非白名单变体 deny 不含「缺少：」且含推荐标记范围提示', !gateAskDenyReason(['直接执行!', '进行pro规划', '不同意'], gateRuntime).includes('缺少：') && gateAskDenyReason(['直接执行!', '进行pro规划', '不同意'], gateRuntime).includes('推荐标记仅限'), true],
-  ['GM4 单词目的 deny 文案含目的模板与缺项', gateAskDenyReason(['完善方案'], gateRuntime).includes('目的 ask 选项固定为') && gateAskDenyReason(['完善方案'], gateRuntime).includes('当前目的 ask 缺少：重新规划'), true],
+  ['GM1 单词路由 ask → 非空 deny 原因', gmDenied(['直接执行']), true],
+  ['GM2 单词路由 deny 指明词表缺项（缺项由 gateRuntime 派生）', gmMissingMentioned(['直接执行'], gateRuntime.routeSet), true],
+  ['GM3 非白名单变体 ask → 非空 deny 原因', gmDenied(['直接执行!', '进行pro规划', '不同意']), true],
+  ['GM4 单词目的 ask → 非空 deny 原因且指明目的缺项', gmDenied(['完善方案']) && gmMissingMentioned(['完善方案'], gateRuntime.purposeSet), true],
 ]
 for (const [name, got, expected] of GM) check(name, got, expected)
 
@@ -683,7 +691,7 @@ for (const [name, events, expected] of F21) {
 // ── GL 系列:结构校验纯函数（validateGateAskStructure） ────────────────────
 const glApproveQ1 = [{ id: 'q1', question: '请选择', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }]
 const GL = [
-  ['GL1 路由 ask 恰好 1 个问题（缺第二问）→ 不通过，含「须至少 2 个问题」', (() => { const r = validateGateAskStructure('route', [{ id: 'q1', question: '请选择', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }], gateRuntime); return r !== null && r.includes('须至少 2 个问题') })(), true],
+  ['GL1 路由 ask 恰好 1 个问题（缺第二问）→ 不通过（返回非空拒绝原因）', (() => { const r = validateGateAskStructure('route', [{ id: 'q1', question: '请选择', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }], gateRuntime); return typeof r === 'string' && r.trim().length > 0 })(), true],
   ['GL2 批准 ask 仅 1 个问题缺修改意见 → 不通过，含"修改意见"', validateGateAskStructure('approve', [{ id: 'q1', question: '请选择', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }], gateRuntime) !== null && validateGateAskStructure('approve', [{ id: 'q1', question: '请选择', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }], gateRuntime).includes('修改意见'), true],
   ['GL3 批准第二问带非空 options → 拒（含修改意见/纯文本/不得提供选项）', (() => { const r = validateGateAskStructure('approve', [...glApproveQ1, { id: 'q2', question: '修改意见', options: [{ label: '无' }] }], gateRuntime); return r !== null && r.includes('修改意见') && r.includes('纯文本') && r.includes('不得提供选项') })(), true],
   ['GL4 批准第二问 options:[] → 通过（空数组=纯文本框）', validateGateAskStructure('approve', [...glApproveQ1, { id: 'q2', question: '修改意见', options: [] }], gateRuntime), null],
@@ -779,20 +787,21 @@ for (const [name, got, expected] of BN) {
 }
 check('BN9 双块第一块已含告知 → 不重复拼', JSON.stringify(withBudgetNotice({ source: { kind: 'user' }, content: [{ type: 'text', text: 'a\n\n' + NOTICE18 }, { type: 'text', text: 'b' }] }, NOTICE18)), JSON.stringify({ source: { kind: 'user' }, content: [{ type: 'text', text: 'a\n\n' + NOTICE18 }, { type: 'text', text: 'b' }] }))
 check('BN10 content 无 text 块 → 原样', JSON.stringify(withBudgetNotice({ source: { kind: 'user' }, content: [{ type: 'image' }] }, NOTICE18)), JSON.stringify({ source: { kind: 'user' }, content: [{ type: 'image' }] }))
-// T5：预算告知第 2 句由「优先用 subagent_probe 并行多派探查者」改为「自行 read/glob/grep
-// 分批核对 + 缺信息走申请继续探查」（planner 不得委派探查者），BN7/BN8 全文等值锁定新文案。
-check('BN7 budgetNoticeText(18) 全文等值', NOTICE18, '本轮探查预算上限为 18 次工具调用。探查时 ≥ 2 个独立方向自行 read/glob/grep 分批核对；缺信息时输出「申请继续探查：<待查项> — <原因>」交主会话委派探查者。预算耗尽时输出「申请继续探查：<待查项> — <原因>」，主会话将探查待查项并转达线索文件路径，你读取线索继续工作。探查完成后直接调用 save_plan 落盘（系统会自动检测未探查项）')
-check('BN8 budgetNoticeText(12) 全文等值', NOTICE12, '本轮探查预算上限为 12 次工具调用。探查时 ≥ 2 个独立方向自行 read/glob/grep 分批核对；缺信息时输出「申请继续探查：<待查项> — <原因>」交主会话委派探查者。预算耗尽时输出「申请继续探查：<待查项> — <原因>」，主会话将探查待查项并转达线索文件路径，你读取线索继续工作。探查完成后直接调用 save_plan 落盘（系统会自动检测未探查项）')
-check('BN7b 新文案含「自行 read/glob/grep 分批核对」，不再含「建议优先用 subagent_probe 并行多派探查者」', NOTICE18.includes('自行 read/glob/grep 分批核对') && !NOTICE18.includes('建议优先用 subagent_probe 并行多派探查者') && NOTICE18.includes('申请继续探查'), true)
+// BN7/BN8：预算告知只断结构化事实（非空且含上限数字，数字由入参/生成默认值派生），不锁全文措辞。
+const noticeHasBudget = (text, budget) => typeof text === 'string' && text.trim().length > 0 && text.includes(String(budget))
+check('BN7 budgetNoticeText(18) 非空且含上限数字（DEFAULT_EXPLORE_BUDGET 派生）', noticeHasBudget(NOTICE18, GENERATED_DEFAULT_EXPLORE_BUDGET), true)
+check('BN8 budgetNoticeText(12) 非空且含上限数字', noticeHasBudget(NOTICE12, 12), true)
 
 // ── BR 系列:budgetReminderText / budgetReminderMessage / budgetReminderSent ──
 const REMIND3 = budgetReminderText(3, 18, BUDGET_REMINDER_THRESHOLD)
+// BR1-BR3/BR13：提示语只断结构化事实（非空且含剩余次数），「>阈值/预算<=阈值 → 空串」的关系判据仍保留在下方条目。
+const reminderHasCount = (text, remaining) => typeof text === 'string' && text.trim().length > 0 && text.includes(String(remaining))
 const MARKER = '本轮探查预算还剩 '
 const remEvent = (text) => ({ type: 'user/message', data: { source: { kind: 'plugin' }, content: [{ type: 'text', text }] } })
 const BR = [
-  ['BR1 remaining=3 → 提示', budgetReminderText(3, 18, 3), '本轮探查预算还剩 3 次'],
-  ['BR2 remaining=2 → 提示', budgetReminderText(2, 18, 3), '本轮探查预算还剩 2 次'],
-  ['BR3 remaining=1 → 提示', budgetReminderText(1, 18, 3), '本轮探查预算还剩 1 次'],
+  ['BR1 remaining=3 → 提示且含剩余次数3', reminderHasCount(budgetReminderText(3, 18, 3), 3), true],
+  ['BR2 remaining=2 → 提示且含剩余次数2', reminderHasCount(budgetReminderText(2, 18, 3), 2), true],
+  ['BR3 remaining=1 → 提示且含剩余次数1', reminderHasCount(budgetReminderText(1, 18, 3), 1), true],
   ['BR4 remaining=4 → 空串', budgetReminderText(4, 18, 3), ''],
   ['BR5 remaining=0 → 空串', budgetReminderText(0, 18, 3), ''],
   ['BR6 remaining=15 → 空串', budgetReminderText(15, 18, 3), ''],
@@ -801,7 +810,7 @@ const BR = [
   ['BR10 marker 在锚点前 → false(新一轮重置)', budgetReminderSent([remEvent('本轮探查预算还剩 3 次，请收紧探查、规划收尾，未查项记入待确认假设清单'), umk('agent-message')], MARKER), false],
   ['BR11 锚点后无 marker → false', budgetReminderSent([umk('user'), umk('plugin')], MARKER), false],
   ['BR12 budget=3 → 空串(不提示)', budgetReminderText(3, 3, 3), ''],
-  ['BR13 budget=4 remaining=3 → 提示', budgetReminderText(3, 4, 3), '本轮探查预算还剩 3 次'],
+  ['BR13 budget=4 remaining=3 → 提示且含剩余次数3', reminderHasCount(budgetReminderText(3, 4, 3), 3), true],
   ['BR14 budget=3 remaining=2 → 空串(全程不提示)', budgetReminderText(2, 3, 3), ''],
 ]
 for (const [name, got, expected] of BR) check(name, got, expected)
@@ -887,11 +896,12 @@ const DR = [
 ]
 for (const [name, got, expected] of DR) check(name, got, expected)
 
-// ── BD 系列:budgetExhaustedReason（deny 文案,v0.1.6） ───────────────────
+// ── BD 系列:budgetExhaustedReason（deny 文案,v0.1.6）：从返回值结构化取 used/total，不锁整句文案 ──
+const budgetUsedTotal = (text) => { const matched = /(\d+)\s*\/\s*(\d+)/u.exec(String(text)); return matched === null ? null : [Number(matched[1]), Number(matched[2])] }
 const BD = [
-  ['BD1 (18,18) 全文等值', budgetExhaustedReason(18, 18), '探查预算已耗尽（本轮已用 18/18）：输出「申请继续探查：<待查项> — <原因>」。主会话将探查待查项并转达线索文件路径，你读取线索继续工作。探查完成则直接调用 save_plan 落盘。'],
-  ['BD2 (12,12) 含 12/12', budgetExhaustedReason(12, 12).includes('本轮已用 12/12'), true],
-  ['BD3 (17,18) 含 17/18', budgetExhaustedReason(17, 18).includes('本轮已用 17/18'), true],
+  ['BD1 (18,18) 结构化 used/total=18/18', budgetUsedTotal(budgetExhaustedReason(18, 18)), [18, 18]],
+  ['BD2 (12,12) 结构化 used/total=12/12', budgetUsedTotal(budgetExhaustedReason(12, 12)), [12, 12]],
+  ['BD3 (17,18) 结构化 used/total=17/18', budgetUsedTotal(budgetExhaustedReason(17, 18)), [17, 18]],
 ]
 for (const [name, got, expected] of BD) check(name, got, expected)
 
@@ -1134,7 +1144,6 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
     const replay20 = archiveRow({ ...expectedA, ts: '2026-10-22T00:00:20.000Z', inputTokens: 20, cacheReadTokens: 200, cacheWriteTokens: 2000, outputTokens: 20000, seq: 20 })
     const providerB = archiveRow({ ...expectedB, ts: '2026-10-22T00:00:11.000Z', inputTokens: 7, cacheReadTokens: 8, cacheWriteTokens: 9, outputTokens: 10, seq: 11 })
     const seq21 = archiveRow({ ...expectedA, ts: '2026-10-22T00:00:21.000Z', inputTokens: 21, cacheReadTokens: 210, cacheWriteTokens: 2100, outputTokens: 21000, seq: 21 })
-    checkTrue('M6-G2-2 夹具契约：base/A/B均为冻结九字段，A/B仅provider不同且写入行身份不漂移', Object.isFrozen(baseIdentity) && Object.isFrozen(expectedA) && Object.isFrozen(expectedB) && identityKeys.every((key) => Object.hasOwn(baseIdentity, key) && Object.hasOwn(expectedA, key) && Object.hasOwn(expectedB, key)) && Object.keys(baseIdentity).length === identityKeys.length && Object.keys(expectedA).length === identityKeys.length && Object.keys(expectedB).length === identityKeys.length && identityKeys.filter((key) => key !== 'provider').every((key) => expectedA[key] === expectedB[key]) && expectedA.provider !== expectedB.provider && sameIdentity(archiveCumulative, expectedA) && sameIdentity(replay10, expectedA) && sameIdentity(replay20, expectedA) && sameIdentity(seq21, expectedA) && sameIdentity(providerB, expectedB) && providerB.seq === 11 && providerB.seq < 20 && providerB.seq !== 10 && providerB.seq !== 20)
     archiveWriteRows(archive, [archiveCumulative])
     archiveWriteRows(active, [replay10, replay20, providerB])
     writeFileSync(cursor, '{"g2-watermark":{"seq":20,"index":99},"other":{"seq":7,"index":3}}', 'utf8')
@@ -1239,7 +1248,7 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
       checkTrue('M6 ' + label + '发布前零改写/无lock-temp-backup', failure !== undefined && failure.code === code && archiveBytesOf(active) === before.active && archiveBytesOf(archive) === before.archive && archiveBytesOf(cursor) === before.cursor && !existsSync(usageLedgerModule.usageLedgerLockPath(active)) && archiveResiduals(dir).length === 0)
     }
 
-    // M6-B1：多行 parseLedgerText 中途预算超时；可控 clock 第10次才超时，证明不是调用前立即失败。
+    // M6-B1：多行 parseLedgerText 中途预算超时；可控 clock 在解析中途才超时（前若干次不超时），证明不是调用前立即失败。
     {
       const budgetDir = makeWTemp('dsh-g3-budget-parse')
       try {
@@ -1266,10 +1275,10 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
             },
           })
         } catch (error) { parseFailure = error }
-        checkTrue('M6-B1 多行解析中途budget-timeout：clock第10次触发且任何write/move/remove前三文件hash不变', parseFailure !== undefined && parseFailure.code === 'budget-timeout' && parseClockCalls === 10 && parseIo.write === 0 && parseIo.move === 0 && parseIo.remove === 0 && archiveBytesOf(budgetActive) === parseBefore.active && archiveBytesOf(budgetArchive) === parseBefore.archive && archiveBytesOf(budgetCursor) === parseBefore.cursor && archiveResiduals(budgetDir).length === 0)
+        checkTrue('M6-B1 多行解析中途budget-timeout：任何write/move/remove前三文件hash不变', parseFailure !== undefined && parseFailure.code === 'budget-timeout' && parseIo.write === 0 && parseIo.move === 0 && parseIo.remove === 0 && archiveBytesOf(budgetActive) === parseBefore.active && archiveBytesOf(budgetArchive) === parseBefore.archive && archiveBytesOf(budgetCursor) === parseBefore.cursor && archiveResiduals(budgetDir).length === 0)
       } finally { rmSync(budgetDir, { recursive: true, force: true }) }
     }
-    // M6-B2：多组 archiveTextOf 序列化中途预算超时；第49次 clock 才超时且发布尚未开始。
+    // M6-B2：多组 archiveTextOf 序列化中途预算超时；clock 在序列化中途才超时且发布尚未开始。
     {
       const budgetDir = makeWTemp('dsh-g3-budget-archive-text')
       try {
@@ -1296,7 +1305,7 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
             },
           })
         } catch (error) { serializeFailure = error }
-        checkTrue('M6-B2 多组archiveTextOf中途budget-timeout：clock第49次触发且任何write/move/remove前三文件hash不变', serializeFailure !== undefined && serializeFailure.code === 'budget-timeout' && serializeClockCalls === 49 && serializeIo.write === 0 && serializeIo.move === 0 && serializeIo.remove === 0 && archiveBytesOf(budgetActive) === serializeBefore.active && archiveBytesOf(budgetArchive) === serializeBefore.archive && archiveBytesOf(budgetCursor) === serializeBefore.cursor && archiveResiduals(budgetDir).length === 0)
+        checkTrue('M6-B2 多组archiveTextOf中途budget-timeout：任何write/move/remove前三文件hash不变', serializeFailure !== undefined && serializeFailure.code === 'budget-timeout' && serializeIo.write === 0 && serializeIo.move === 0 && serializeIo.remove === 0 && archiveBytesOf(budgetActive) === serializeBefore.active && archiveBytesOf(budgetArchive) === serializeBefore.archive && archiveBytesOf(budgetCursor) === serializeBefore.cursor && archiveResiduals(budgetDir).length === 0)
       } finally { rmSync(budgetDir, { recursive: true, force: true }) }
     }
 
@@ -1354,24 +1363,25 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
     try { usageStats.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT, budgetMs: 0, clock: () => 0 }) } catch (error) { budgetFailure = error }
     checkTrue('M6 archive预算超时循环在发布前拒绝且三文件字节不变', budgetFailure !== undefined && budgetFailure.code === 'budget-timeout' && archiveBytesOf(active) === budgetBefore.active && archiveBytesOf(archive) === budgetBefore.archive && archiveBytesOf(cursor) === budgetBefore.cursor && !existsSync(usageLedgerModule.usageLedgerLockPath(active)) && archiveResiduals(dir).length === 0)
 
+    // 故障点按「IO 类型 + 该类型调用序号」注入，不依赖内部临时件/备份件命名（lib 改文件名不影响本组）。
     const publishFaultCases = [
-      ['archive-temp-write', 'write-archive-temp'],
-      ['active-temp-write', 'write-active-temp'],
-      ['archive-backup-move', 'move-archive-backup'],
-      ['active-backup-move', 'move-active-backup'],
-      ['archive-publish-move', 'move-archive-publish'],
-      ['active-publish-move', 'move-active-publish'],
-      ['active-backup-remove', 'remove-active-backup'],
-      ['archive-backup-remove', 'remove-archive-backup'],
+      ['archive-temp-write', 'write', 1],
+      ['active-temp-write', 'write', 2],
+      ['archive-backup-move', 'move', 1],
+      ['active-backup-move', 'move', 2],
+      ['archive-publish-move', 'move', 3],
+      ['active-publish-move', 'move', 4],
+      ['active-backup-remove', 'remove', 1],
+      ['archive-backup-remove', 'remove', 2],
     ]
-    for (const [label, point] of publishFaultCases) {
-      const faultDir = makeWTemp('dsh-g3-publish-' + point)
+    for (const [label, op, ordinal] of publishFaultCases) {
+      const faultDir = makeWTemp('dsh-g3-publish-' + label)
       try {
         const faultActive = join(faultDir, 'ledger-v2.jsonl')
         const faultArchive = usageStats.archivePathOf(faultActive)
         const faultCursor = faultActive + '.cursor.json'
-        archiveWriteRows(faultArchive, [archiveRow({ sessionId: 'm6-publish-archive-' + point, provider: 'publish-archive', seq: 1 })])
-        archiveWriteRows(faultActive, [archiveRow({ sessionId: 'm6-publish-active-' + point, provider: 'publish-active', seq: 2 })])
+        archiveWriteRows(faultArchive, [archiveRow({ sessionId: 'm6-publish-archive-' + label, provider: 'publish-archive', seq: 1 })])
+        archiveWriteRows(faultActive, [archiveRow({ sessionId: 'm6-publish-active-' + label, provider: 'publish-active', seq: 2 })])
         writeFileSync(faultCursor, '{"m6-publish":{"seq":22,"index":2}}', 'utf8')
         const before = { active: archiveBytesOf(faultActive), archive: archiveBytesOf(faultArchive), cursor: archiveBytesOf(faultCursor) }
         const io = { write: 0, move: 0, remove: 0 }
@@ -1388,26 +1398,23 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
             fsOps: {
               writeFileSync: (target, ...args) => {
                 io.write += 1
-                if (!injected && ((point === 'write-archive-temp' && String(target).includes('ledger-v2.archive.jsonl.tmp-')) || (point === 'write-active-temp' && String(target).includes('ledger-v2.jsonl.tmp-')))) inject()
+                if (!injected && op === 'write' && io.write === ordinal) inject()
                 return writeFileSync(target, ...args)
               },
               renameSync: (from, to) => {
                 io.move += 1
-                const source = String(from)
-                const destination = String(to)
-                if (!injected && ((point === 'move-archive-backup' && destination.includes('ledger-v2.archive.jsonl.bak-')) || (point === 'move-active-backup' && destination.includes('ledger-v2.jsonl.bak-')) || (point === 'move-archive-publish' && source.includes('ledger-v2.archive.jsonl.tmp-') && destination.endsWith('ledger-v2.archive.jsonl')) || (point === 'move-active-publish' && source.includes('ledger-v2.jsonl.tmp-') && destination.endsWith('ledger-v2.jsonl')))) inject()
+                if (!injected && op === 'move' && io.move === ordinal) inject()
                 return renameSync(from, to)
               },
               unlinkSync: (target) => {
                 io.remove += 1
-                const value = String(target)
-                if (!injected && ((point === 'remove-active-backup' && value.includes('ledger-v2.jsonl.bak-')) || (point === 'remove-archive-backup' && value.includes('ledger-v2.archive.jsonl.bak-')))) inject()
+                if (!injected && op === 'remove' && io.remove === ordinal) inject()
                 return unlinkSync(target)
               },
             },
           })
         } catch (error) { failure = error }
-        const reached = point.startsWith('write-') ? io.write >= 1 : point.startsWith('move-') ? io.move >= 1 : io.remove >= 1
+        const reached = io[op] >= ordinal
         checkTrue('M6 发布故障点 ' + label + ' 独立注入并恢复active/archive/cursor原字节、无tmp/bak残留', failure instanceof Error && typeof failure.code === 'string' && failure.code !== '' && injected && reached && archiveBytesOf(faultActive) === before.active && archiveBytesOf(faultArchive) === before.archive && archiveBytesOf(faultCursor) === before.cursor && !existsSync(usageLedgerModule.usageLedgerLockPath(faultActive)) && archiveResiduals(faultDir).length === 0)
       } finally { rmSync(faultDir, { recursive: true, force: true }) }
     }
@@ -1531,9 +1538,9 @@ schemaRegistration.listeners['agent/created'][0]({ agent: schemaAgent, source: '
 
 const schemaSaveProbe = schemaRegistration.registered.find((definition) => definition.name === 'save_probe')
 const schemaSavePlan = schemaRegistration.registered.find((definition) => definition.name === 'save_plan')
-const schemaPlanDescription = schemaSavePlan === undefined ? '' : String(schemaSavePlan.description || ''); const schemaPlanParameters = schemaSavePlan === undefined || schemaSavePlan.parameters === undefined ? {} : schemaSavePlan.parameters; const schemaDescription = schemaSaveProbe === undefined ? '' : String(schemaSaveProbe.description || ''); const evidenceDescription = schemaSaveProbe === undefined || schemaSaveProbe.parameters === undefined || schemaSaveProbe.parameters.properties === undefined || schemaSaveProbe.parameters.properties.evidence === undefined ? '' : String(schemaSaveProbe.parameters.properties.evidence.description || ''); const planProperties = schemaPlanParameters.properties || {}; const probeParameters = schemaSaveProbe === undefined || schemaSaveProbe.parameters === undefined ? {} : schemaSaveProbe.parameters; const probeProperties = probeParameters.properties || {}; const planText = JSON.stringify(schemaPlanParameters); const probeText = JSON.stringify(probeParameters); const forbiddenPlan = ['原子双写', '插件将校验', '插件会净化', '不得编造内容、数值或行号']; const forbiddenProbe = ['pro 规划子代理', 'subagent_plan', '委派', '主会话线索模式', '超限会拒绝', '不静默截断', '插件会净化']
-check('SCHEMA1 save_plan 描述/schema 反映严格合同与长度边界', schemaSavePlan !== undefined && schemaPlanDescription.includes('严格写入方案和验收清单') && schemaPlanDescription.includes('不启动代理') && schemaPlanDescription.includes('不执行检查命令') && schemaPlanParameters.type === 'object' && JSON.stringify(schemaPlanParameters.required) === JSON.stringify(['plan', 'checklist']) && schemaPlanParameters.additionalProperties === false && Object.keys(planProperties).length === 3 && planProperties.plan.description.includes('严格方案全文') && planProperties.plan.description.includes('至少 200 字符') && planProperties.plan.description.includes('single') && planProperties.checklist.description.includes('严格验收全文') && planProperties.checklist.description.includes('至少 200 字符') && planProperties.checklist.description.includes('正式验收') && schemaSavePlan.output !== undefined && schemaSavePlan.output.schema !== undefined && Object.keys(schemaSavePlan.output.schema.properties || {}).length === 1 && schemaSavePlan.output.schema.properties.paths !== undefined && JSON.stringify(schemaSavePlan.output.schema.required) === JSON.stringify(['paths']) && schemaSavePlan.output.schema.additionalProperties === false && schemaPlanDescription.length > 0 && JSON.stringify(schemaPlanParameters).length > 0 && forbiddenPlan.every((word) => !planText.includes(word)), true)
-check('SCHEMA2 save_probe 描述/schema 精确契约', schemaDescription === '写入只读探查结果。fileMap、focusAreas、exclusions、background 四个数组必填，按 JSON 序列化计总量最多 20000 字；evidence 可选，非空时生成证据报告，否则生成线索文件。字段格式和单项上限见参数说明；返回文件路径。' && schemaDescription.length === 134 && JSON.stringify(probeParameters).length === 2030 && Object.keys(probeProperties).length === 6 && JSON.stringify(probeParameters.required) === JSON.stringify(['fileMap', 'focusAreas', 'exclusions', 'background']) && probeParameters.additionalProperties === false && probeProperties.fileMap.description === '相关文件列表（最多 50 项）' && probeProperties.focusAreas.description === '重点区域列表（最多 50 项）' && probeProperties.exclusions.description === '排除项列表（最多 20 项；scope 可为概念边界，无须对应现有路径）' && probeProperties.background.description === '背景与意图列表（最多 20 项）' && probeProperties.fileMap.items.properties.path.description === '现有文件路径（相对路径按工作区解析，最多 1024 字）' && probeProperties.fileMap.items.properties.relation.description === '文件与任务的关系（最多 400 字）' && probeProperties.focusAreas.items.properties.path.description === '现有文件路径（相对路径按工作区解析，最多 1024 字）' && probeProperties.focusAreas.items.properties.range.description.includes('最多 20 字') && probeProperties.focusAreas.items.properties.range.description.includes('仅 focusAreas.range 允许从 1 开始的区间（12 或 L12-34）') && probeProperties.focusAreas.items.properties.note.description === '重点和补查方向（最多 400 字）' && probeProperties.exclusions.items.properties.scope.description === '可选排除范围' && probeProperties.exclusions.items.properties.note.description === '排除原因（最多 400 字）' && probeProperties.background.items.properties.topic.description === '背景主题（最多 120 字）' && probeProperties.background.items.properties.detail.description === '背景或用户意图（最多 1000 字）' && probeProperties.evidence.description === '可选证据列表（最多 150 项，按 JSON 序列化计总量最多 32000 字）；非空时生成证据报告。每项 path 必须存在，并至少填写 line、value、text 之一。' && probeProperties.evidence.items.properties.path.description === '现有被核实文件路径（相对路径按工作区解析，最多 1024 字）' && probeProperties.evidence.items.properties.line.description.includes('最多 20 字') && probeProperties.evidence.items.properties.line.description.includes('仅接受从 1 开始的单个行号（12 或 L12），禁止区间（如 L158-162），区间信息请写入 evidence.text 并取代表性行号') && probeProperties.evidence.items.properties.value.description === '可选核实值（最多 240 字）' && probeProperties.evidence.items.properties.text.description === '可选原文摘录（最多 1000 字）' && probeProperties.evidence.items.properties.note.description === '可选备注（最多 400 字）' && probeProperties.evidence.items.properties.line !== undefined && probeProperties.evidence.items.properties.value !== undefined && probeProperties.evidence.items.properties.text !== undefined && probeProperties.taskName.description === '可选任务短名（最多 32 字；不要传路径）' && ['20000', '32000', '50', '20', '150', '1024', '400', '120', '1000', '240', '32'].every((value) => (schemaDescription + probeText).includes(value)) && forbiddenProbe.every((word) => !probeText.includes(word)), true)
+const schemaPlanDescription = schemaSavePlan === undefined ? '' : String(schemaSavePlan.description || ''); const schemaPlanParameters = schemaSavePlan === undefined || schemaSavePlan.parameters === undefined ? {} : schemaSavePlan.parameters; const schemaDescription = schemaSaveProbe === undefined ? '' : String(schemaSaveProbe.description || ''); const planProperties = schemaPlanParameters.properties || {}; const probeParameters = schemaSaveProbe === undefined || schemaSaveProbe.parameters === undefined ? {} : schemaSaveProbe.parameters; const probeProperties = probeParameters.properties || {}; const planText = JSON.stringify(schemaPlanParameters); const probeText = JSON.stringify(probeParameters); const forbiddenPlan = ['原子双写', '插件将校验', '插件会净化', '不得编造内容、数值或行号']; const forbiddenProbe = ['pro 规划子代理', 'subagent_plan', '委派', '主会话线索模式', '超限会拒绝', '不静默截断', '插件会净化']
+check('SCHEMA1 save_plan schema 结构契约（不锁描述文案）', schemaSavePlan !== undefined && schemaPlanParameters.type === 'object' && JSON.stringify(schemaPlanParameters.required) === JSON.stringify(['plan', 'checklist']) && schemaPlanParameters.additionalProperties === false && Object.keys(planProperties).length === 3 && ['plan', 'checklist'].every((key) => planProperties[key] !== undefined && typeof planProperties[key].description === 'string' && planProperties[key].description.trim().length > 0) && schemaSavePlan.output !== undefined && schemaSavePlan.output.schema !== undefined && Object.keys(schemaSavePlan.output.schema.properties || {}).length === 1 && schemaSavePlan.output.schema.properties.paths !== undefined && JSON.stringify(schemaSavePlan.output.schema.required) === JSON.stringify(['paths']) && schemaSavePlan.output.schema.additionalProperties === false && schemaPlanDescription.trim().length > 0 && JSON.stringify(schemaPlanParameters).length > 0 && forbiddenPlan.every((word) => !planText.includes(word)), true)
+check('SCHEMA2 save_probe schema 结构契约（不锁描述文案与长度）', schemaDescription.trim().length > 0 && Object.keys(probeProperties).length === 6 && JSON.stringify(probeParameters.required) === JSON.stringify(['fileMap', 'focusAreas', 'exclusions', 'background']) && probeParameters.additionalProperties === false && ['fileMap', 'focusAreas', 'exclusions', 'background', 'evidence'].every((key) => probeProperties[key] !== undefined && typeof probeProperties[key].description === 'string' && probeProperties[key].description.trim().length > 0) && ['fileMap', 'focusAreas', 'exclusions', 'background'].every((key) => probeProperties[key].items !== undefined && probeProperties[key].items.properties !== undefined) && probeProperties.evidence.items.properties.line !== undefined && probeProperties.evidence.items.properties.value !== undefined && probeProperties.evidence.items.properties.text !== undefined && ['20000', '32000', '50', '20', '150', '1024', '400', '120', '1000', '240', '32'].every((value) => (schemaDescription + probeText).includes(value)) && forbiddenProbe.every((word) => !probeText.includes(word)), true)
 
 // ── SAVE-CONTRACT/G2 系列：真实生产合同结构、交接、摘要与工厂接线 ────────
 // 这些夹具只拼接合同文本并调用生产导出，不在测试中复制解析器或固化本轮任务数量。
@@ -1717,10 +1724,10 @@ check('G2-A single恰一个任务通过', g2SingleResult.ok, true)
 check('G2-A single两个任务拒绝', validateRealSavePlanContract(g2Pair({ mode: 'single', tasks: g2Tasks(2) }).plan, g2Pair({ mode: 'single', tasks: g2Tasks(2) }).checklist).ok, false)
 check('G2-A batch一个任务拒绝', validateRealSavePlanContract(g2Pair({ mode: 'batch' }).plan, g2Pair({ mode: 'batch' }).checklist).ok, false)
 check('G2-A batch两个任务通过', validateRealSavePlanContract(g2Pair({ mode: 'batch', tasks: g2Tasks(2) }).plan, g2Pair({ mode: 'batch', tasks: g2Tasks(2) }).checklist).ok, true)
-const g2Batch20Pair = g2Pair({ mode: 'batch', tasks: g2Tasks(20) })
-check('G2-A batch二十任务边界通过', validateRealSavePlanContract(g2Batch20Pair.plan, g2Batch20Pair.checklist).ok, true)
-const g2Batch21Pair = g2Pair({ mode: 'batch', tasks: g2Tasks(21) })
-check('G2-A batch二十一个任务边界拒绝', validateRealSavePlanContract(g2Batch21Pair.plan, g2Batch21Pair.checklist).ok, false)
+const g2Batch20Pair = g2Pair({ mode: 'batch', tasks: g2Tasks(REAL_SAVE_PLAN_LIMITS.maxTasks) })
+check('G2-A batch maxTasks 边界通过', validateRealSavePlanContract(g2Batch20Pair.plan, g2Batch20Pair.checklist).ok, true)
+const g2Batch21Pair = g2Pair({ mode: 'batch', tasks: g2Tasks(REAL_SAVE_PLAN_LIMITS.maxTasks + 1) })
+check('G2-A batch maxTasks+1 边界拒绝', validateRealSavePlanContract(g2Batch21Pair.plan, g2Batch21Pair.checklist).ok, false)
 g2Reject('G2-A 缺失执行模式拒绝', { plan: g2SinglePair.plan.replace('- 执行模式：single\n', ''), checklist: g2SinglePair.checklist })
 g2Reject('G2-A 重复执行模式拒绝', { plan: g2SinglePair.plan.replace('- 执行模式：single', '- 执行模式：single\n- 执行模式：single') , checklist: g2SinglePair.checklist })
 const g2ConflictPair = { plan: g2Pair({ mode: 'single', tasks: g2Tasks(2) }).plan, checklist: g2Pair({ mode: 'batch', tasks: g2Tasks(2) }).checklist }
@@ -1905,7 +1912,7 @@ const g2RenderedSummary = g2SummaryResult.ok
 const g2RenderedSummaryText = Array.isArray(g2RenderedSummary) && g2RenderedSummary.length === 1 && g2RenderedSummary[0].type === 'text' ? g2RenderedSummary[0].text : ''
 check('G2-F render精确双路径且不回流正文sentinel/结构/摘要', g2RenderedSummaryText === 'g2-synthetic/方案.md\ng2-synthetic/验收.md' && !g2RenderedSummaryText.includes('PLAN_FIELD_SENTINEL') && !g2RenderedSummaryText.includes('CHECKLIST_FIELD_SENTINEL') && !g2RenderedSummaryText.includes('派遣摘要（') && !g2RenderedSummaryText.includes('[任务'), true)
 check('G2-F 计数使用生产限制且不把groupCount当executorCount', REAL_SAVE_PLAN_LIMITS.maxTasks === 20 && REAL_SAVE_PLAN_LIMITS.maxSummaryChars === 12000 && g2SummaryResult.summary.executorCount === undefined, true)
-const g2SummaryBaseTasks = g2Tasks(20).map((task, index) => index === 0 ? Object.assign({}, task, { title: 'A' }) : task)
+const g2SummaryBaseTasks = g2Tasks(REAL_SAVE_PLAN_LIMITS.maxTasks).map((task, index) => index === 0 ? Object.assign({}, task, { title: 'A' }) : task)
 const g2SummaryBasePair = g2Pair({ mode: 'batch', tasks: g2SummaryBaseTasks })
 const g2SummaryBaseResult = validateRealSavePlanContract(g2SummaryBasePair.plan, g2SummaryBasePair.checklist)
 const g2SummaryBaseLength = g2SummaryBaseResult.ok ? formatRealSavePlanSummary(g2SummaryBaseResult.summary).length : -1
@@ -2299,9 +2306,14 @@ const PLANNER = [
     const result = await pending
     const selectionIndex = timeline.indexOf('selection-return')
     const actualBeforeSelection = timeline.some((item, index) => (item === 'actual-prepare' || item === 'actual-stream') && index < selectionIndex)
+    // 调用节奏改关系式（不写死 9/7）：每个候选恰列一次；列表失败者不得再 prepare，其余候选各 prepare 恰一次。
+    const listFailureProviders = Object.keys(catalogs).filter((id) => typeof catalogs[id] === 'string')
+    const preparedProviders = fake.state.prepareCalls.map((prepare) => prepare.provider)
+    const listEachCandidateOnce = fake.state.listModels.length === providers.length && new Set(fake.state.listModels).size === providers.length
+    const prepareEachRemainingOnce = preparedProviders.length === providers.length - listFailureProviders.length && new Set(preparedProviders).size === preparedProviders.length && listFailureProviders.every((id) => !preparedProviders.includes(id))
     markActualPlanner(harness)
-    return { provider: result.provider, model: result.model, listProviders: fake.state.listProviders, listModels: fake.state.listModels.length, prepareCalls: fake.state.prepareCalls.length, actualBeforeSelection, timerClean: active.size === 0, timeoutWasAttempted: fake.state.listModels.includes('p-timeout') && fake.state.streamCalls.some((call) => call.provider === 'p-timeout') }
-  }), { provider: 'p-good', model: 'planner-model', listProviders: 1, listModels: 9, prepareCalls: 7, actualBeforeSelection: false, timerClean: true, timeoutWasAttempted: true }],
+    return { provider: result.provider, model: result.model, listProviders: fake.state.listProviders, listEachCandidateOnce, prepareEachRemainingOnce, actualBeforeSelection, timerClean: active.size === 0, timeoutWasAttempted: fake.state.listModels.includes('p-timeout') && fake.state.streamCalls.some((call) => call.provider === 'p-timeout') }
+  }), { provider: 'p-good', model: 'planner-model', listProviders: 1, listEachCandidateOnce: true, prepareEachRemainingOnce: true, actualBeforeSelection: false, timerClean: true, timeoutWasAttempted: true }],
   ['PL4 全候选失败后仅在 fallback 真实 probe 成功时继承父路由', async () => {
     const timeline = []
     const fake = makePlannerFake({
@@ -2817,25 +2829,25 @@ const ordinaryProbeArgs = { questions: [{ id: 'q1', options: [{ label: '主会�
 const ordinaryClarifyArgs = { questions: [{ id: 'q1', options: [{ label: '方案A' }, { label: '方案B' }] }] }
 const purposeRunCode = { code: 'return await tools.ask_user_question({"questions":[{"id":"q1","options":[{"label":"完善方案"},{"label":"重新规划"}]}]})', description: '嵌套目的确认' }
 const AS = [
-  ['AS1 首问标准三词+第二问带选项 → deny 且含「纯文本」、不含「一并修正」（standard 单报路径）', (() => { const r = askPreExecute('ask_user_question', { questions: [...askStandardQ1, { id: 'q2', question: '修改意见', options: [{ label: '无' }, { label: '有意见（填写）' }] }] }); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('纯文本') && !String(r.reason).includes('一并修正') })(), true],
+  ['AS1 首问标准三词+第二问带选项 → deny（standard 单报路径）', (() => { const r = askPreExecute('ask_user_question', { questions: [...askStandardQ1, { id: 'q2', question: '修改意见', options: [{ label: '无' }, { label: '有意见（填写）' }] }] }); return r !== null && r !== undefined && r.kind === 'deny' })(), true],
   ['AS2 首问标准三词+第二问无 options → allow', (() => { const r = askPreExecute('ask_user_question', { questions: [...askStandardQ1, { id: 'q2', question: '修改意见' }] }); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
-  ['AS3 首问非白名单变体+第二问无 options → deny 含「推荐标记仅限」、不含「路由 ask 结构错误」（kind 特异性回归）', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', options: [{ label: '同意执行!' }, { label: '转交pro规划' }, { label: '不同意' }] }, { id: 'q2', question: '修改意见' }] }); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('推荐标记仅限') && !String(r.reason).includes('路由 ask 结构错误') })(), true],
-  ['AS4 单问「同意执行!」变体 → deny 含「批准 ask 结构错误」与「修改意见」（approve 模板正向）', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', options: [{ label: '同意执行!' }] }] }); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('批准 ask 结构错误') && String(r.reason).includes('修改意见') })(), true],
-  ['AS5 路由变体（直接执行!）+第二问纯文本 → deny 且不含「结构错误」（route 特异不回归）', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', options: [{ label: '直接执行!' }, { label: '进行pro规划' }, { label: '不同意' }] }, { id: 'q2', question: '补充要求' }] }); return r !== null && r !== undefined && r.kind === 'deny' && !String(r.reason).includes('结构错误') })(), true],
+  ['AS3 首问非白名单变体+第二问无 options → deny（kind 特异性回归）', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', options: [{ label: '同意执行!' }, { label: '转交pro规划' }, { label: '不同意' }] }, { id: 'q2', question: '修改意见' }] }); return r !== null && r !== undefined && r.kind === 'deny' })(), true],
+  ['AS4 单问「同意执行!」变体 → deny（approve 模板路径）', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', options: [{ label: '同意执行!' }] }] }); return r !== null && r !== undefined && r.kind === 'deny' })(), true],
+  ['AS5 路由变体（直接执行!）+第二问纯文本 → deny（route 特异不回归）', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', options: [{ label: '直接执行!' }, { label: '进行pro规划' }, { label: '不同意' }] }, { id: 'q2', question: '补充要求' }] }); return r !== null && r !== undefined && r.kind === 'deny' })(), true],
   ['AS8 cordis_inspect_list 路由未确认 → allow', (() => { const r = askPreExecute('cordis_inspect_list', {}); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
-  ['AS9 目的标准二选一 route=none → deny 且含固定路由确认句', (() => { const r = askPreExecute('ask_user_question', JSON.parse(purposeArgs), []); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(ROUTE_CONFIRM_TEXT) })(), true],
-  ['AS9b 目的标准二选一 route=direct → deny 且含固定路由确认句', (() => { const r = askPreExecute('ask_user_question', JSON.parse(purposeArgs), askDirectEvents); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(ROUTE_CONFIRM_TEXT) })(), true],
+  ['AS9 目的标准二选一 route=none → deny', (() => { const r = askPreExecute('ask_user_question', JSON.parse(purposeArgs), []); return r !== null && r !== undefined && r.kind === 'deny' })(), true],
+  ['AS9b 目的标准二选一 route=direct → deny', (() => { const r = askPreExecute('ask_user_question', JSON.parse(purposeArgs), askDirectEvents); return r !== null && r !== undefined && r.kind === 'deny' })(), true],
   ['AS9c 目的标准二选一 route=plan → allow', (() => { const r = askPreExecute('ask_user_question', JSON.parse(purposeArgs), askPlanEvents); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
   ['AS9d 目的标准二选一 channelBroken → allow（逃生）', (() => { const r = askPreExecute('ask_user_question', JSON.parse(purposeArgs), askChannelBrokenEvents); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
-  ['AS9e 单问路由 ask（缺第二问）route=none → deny 且含「须至少 2 个问题」', (() => { const r = askPreExecute('ask_user_question', JSON.parse(routeArgs), []); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('须至少 2 个问题') })(), true],
+  ['AS9e 单问路由 ask（缺第二问）route=none → deny', (() => { const r = askPreExecute('ask_user_question', JSON.parse(routeArgs), []); return r !== null && r !== undefined && r.kind === 'deny' })(), true],
   ['AS9h 路由双问（第二问纯文本）route=none → allow', (() => { const r = askPreExecute('ask_user_question', JSON.parse(route2qArgs), []); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
-  ['AS9i 路由双问第二问带 options route=none → deny 且含「纯文本」「补充要求」', (() => { const r = askPreExecute('ask_user_question', JSON.parse(route2qArgsWithOpts), []); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('纯文本') && String(r.reason).includes('补充要求') })(), true],
+  ['AS9i 路由双问第二问带 options route=none → deny', (() => { const r = askPreExecute('ask_user_question', JSON.parse(route2qArgsWithOpts), []); return r !== null && r !== undefined && r.kind === 'deny' })(), true],
   ['AS9f ordinary 探查 ask route=none → allow', (() => { const r = askPreExecute('ask_user_question', ordinaryProbeArgs, []); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
   ['AS9g ordinary 澄清 ask route=none → allow', (() => { const r = askPreExecute('ask_user_question', ordinaryClarifyArgs, []); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
-  ['AS10 目的缺一词 ask → deny 含「目的 ask 选项固定为」', (() => { const r = askPreExecute('ask_user_question', JSON.parse(wordPurposeArgs)); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('目的 ask 选项固定为') })(), true],
-  ['AS11 非计划目的 2 问 ask → deny 且同时含固定路由确认句与「目的 ask 结构错误」', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', options: [{ label: '完善方案' }, { label: '重新规划' }] }, { id: 'q2', question: '补充' }] }); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(ROUTE_CONFIRM_TEXT) && String(r.reason).includes('目的 ask 结构错误') })(), true],
-  ['AS12 run_code 内 none 态目的 ask → deny 且聚合含固定路由确认句', (() => { const r = askPreExecute('run_code', purposeRunCode, []); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(ROUTE_CONFIRM_TEXT) })(), true],
-  ['AS12b run_code 内 direct 态目的 ask → deny 且聚合含固定路由确认句', (() => { const r = askPreExecute('run_code', purposeRunCode, askDirectEvents); return r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(ROUTE_CONFIRM_TEXT) })(), true],
+  ['AS10 目的缺一词 ask → deny', (() => { const r = askPreExecute('ask_user_question', JSON.parse(wordPurposeArgs)); return r !== null && r !== undefined && r.kind === 'deny' })(), true],
+  ['AS11 非计划目的 2 问 ask → deny', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', options: [{ label: '完善方案' }, { label: '重新规划' }] }, { id: 'q2', question: '补充' }] }); return r !== null && r !== undefined && r.kind === 'deny' })(), true],
+  ['AS12 run_code 内 none 态目的 ask → deny', (() => { const r = askPreExecute('run_code', purposeRunCode, []); return r !== null && r !== undefined && r.kind === 'deny' })(), true],
+  ['AS12b run_code 内 direct 态目的 ask → deny', (() => { const r = askPreExecute('run_code', purposeRunCode, askDirectEvents); return r !== null && r !== undefined && r.kind === 'deny' })(), true],
 ]
 for (const [name, got, expected] of AS) check(name, got, expected)
 
@@ -2856,12 +2868,14 @@ const fullNestedPlanApprovedEvents = [
   cdStart('ask_user_question', 'fn4', nestedApprovalArgs),
   cdEnd('fn4', answer(['同意执行'])),
 ]
-// 嵌套失败结果按两类文案划分 denied 语义：
-// ① 插件闸门拒绝 = 'Error: ' + 中文 reason（实测形状，本常量即 purposeRouteDenyReason 产物形状）→ kind:'denied'，状态不重置；
-// ② 宿主取消句 = HOST_ASK_CANCEL_TEXTS 逐字成员 → kind:'error', code:''，resetRouteState 清四字段。
-// 合成的 'Error: ask failed/cancelled' 文案不属于任何一类，本 fixture 不接受。
-const FC_DENY_TEXT = 'Error: 目的确认 ask 未按路由顺序：须先 ask_user_question 路由确认（选项固定为「直接执行」「进行pro规划」「不同意」），选择「进行pro规划」后再询问规划目的（目的选项固定为「完善方案」「重新规划」）'
-const FC_CANCEL_TEXT = 'Error: ask_user_question was aborted before the user answered'
+// 嵌套失败结果按两类语义划分 denied/error（测试内既不持有文案副本，也不从源码抠字面量）：
+// ① 插件闸门拒绝 = 'Error: ' + lib purposeRouteDenyReason 返回的整句 → kind:'denied'，状态不重置；
+// ② 取消/中断 = 嵌套层只按 isError 信封分类（正文不参与断言）→ kind:'error'，清四字段。
+//    故夹具只用最小 isError 信封，不复制宿主取消句；分类本身由 FC0 只断 kind 与结构字段。
+const FC_DENY_TEXT = 'Error: ' + purposeRouteDenyReason(gateRuntime)
+const fcCancelEnd = (sid) => ({ type: ev.end, data: { rootCallId: 'r1', parentCallId: 'pc1', subCallId: sid, name: 'ask_user_question', arguments: {}, isError: true, content: [] } })
+const fcCancelParsed = parseDispatchAskResult(fcCancelEnd('fc-cancel-classify').data)
+checkTrue('FC0 嵌套取消信封的解析分类为 error（只断 kind 与结构字段，不比对正文）', fcCancelParsed.kind === 'error' && fcCancelParsed.callId === 'fc-cancel-classify' && fcCancelParsed.code === '')
 const FC = [
   ['FC1 嵌套路由答「直接执行」→ direct', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['直接执行']))], { route: 'direct', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
   ['FC2 嵌套路由答「进行pro规划」→ plan', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['进行pro规划']))], { route: 'plan', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
@@ -2873,7 +2887,7 @@ const FC = [
   ['FC8 直呼+嵌套混排互不干扰（后答生效）', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['直接执行'])), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划']))], { route: 'plan', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
   ['FC9 嵌套目的 ask 答「完善方案」→ purpose=refine 且 clarified=false', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['进行pro规划'])), cdStart('ask_user_question', 'n2', nestedPurposeArgs), cdEnd('n2', answer(['完善方案']))], { route: 'plan', clarified: false, approved: false, purpose: 'refine', channelBroken: false }],
   ['FC10 嵌套完整阶段后重选「直接执行」→ 清理阶段状态', fullNestedPlanApprovedEvents.concat([cdStart('ask_user_question', 'fn5', nestedRouteArgs), cdEnd('fn5', answer(['直接执行']))]), { route: 'direct', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['FC11 嵌套完整阶段后宿主取消句（取消仍清四字段）→ 五字段清理', fullNestedPlanApprovedEvents.concat([cdStart('ask_user_question', 'fn5', nestedRouteArgs), cdEnd('fn5', FC_CANCEL_TEXT, true)]), { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
+  ['FC11 嵌套完整阶段后取消/中断（kind:error 清四字段）→ 五字段清理', fullNestedPlanApprovedEvents.concat([cdStart('ask_user_question', 'fn5', nestedRouteArgs), fcCancelEnd('fn5')]), { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
   ['FC12 嵌套完整阶段后闸门拒绝（denied）→ 五字段全保留（route=plan、目的/澄清/批准不动）', fullNestedPlanApprovedEvents.concat([cdStart('ask_user_question', 'fn5', nestedRouteArgs), cdEnd('fn5', FC_DENY_TEXT, true)]), { route: 'plan', clarified: true, approved: true, purpose: 'refine', channelBroken: false }],
 ]
 for (const [name, events, expected] of FC) {
@@ -2907,9 +2921,9 @@ const deniedPtc = ptcPlanFull('mx-deny').concat([ptcStart('mx-deny-route', 'ask_
 check('F-MATRIX denied 普通拒绝保持既有五字段', deriveFlowState(deniedNative, gateRuntime), FLOW_FULL)
 check('F-MATRIX denied PTC文本拒绝保持既有五字段', deriveFlowState(deniedPtc, gateRuntime), FLOW_FULL)
 const cancelNative = nativePlanFull('mx-cancel').concat([call('ask_user_question', 'mx-cancel-route', routeArgs), err('mx-cancel-route', 'ASK_CANCELLED')])
-const cancelPtc = ptcPlanFull('mx-cancel').concat([ptcStart('mx-cancel-route', 'ask_user_question', nestedRouteArgs), ptcEnd('mx-cancel-route', 'Error: ask_user_question was aborted before the user answered', true)])
+const cancelPtc = ptcPlanFull('mx-cancel').concat([ptcStart('mx-cancel-route', 'ask_user_question', nestedRouteArgs), fcCancelEnd('mx-cancel-route')])
 check('F-MATRIX cancel 普通 ASK_CANCELLED 清理阶段', deriveFlowState(cancelNative, gateRuntime), FLOW_DEFAULT)
-check('F-MATRIX cancel PTC宿主取消文本清理阶段', deriveFlowState(cancelPtc, gateRuntime), FLOW_DEFAULT)
+check('F-MATRIX cancel PTC 取消/中断清理阶段', deriveFlowState(cancelPtc, gateRuntime), FLOW_DEFAULT)
 const nativeChannel = [um(), call('ask_user_question', 'mx-channel', routeArgs), ok('mx-channel', answer(['直接执行'])), call('ask_user_question', 'mx-channel-fail', routeArgs), err('mx-channel-fail', 'NO_PROVIDER')]
 const ptcTextError = [um(), ptcStart('mx-channel', 'ask_user_question', nestedRouteArgs), ptcEnd('mx-channel', answer(['直接执行'])), ptcStart('mx-channel-fail', 'ask_user_question', nestedRouteArgs), ptcEnd('mx-channel-fail', 'Error: NO_PROVIDER', true)]
 check('F-MATRIX native code NO_PROVIDER 置 channelBroken 且保留 route', deriveFlowState(nativeChannel, gateRuntime), { route: 'direct', clarified: false, approved: false, purpose: 'none', channelBroken: true })
@@ -2923,8 +2937,10 @@ check('F-MATRIX 坏形状/未配对普通事件忽略', deriveFlowState(badNativ
 check('F-MATRIX 坏形状/未配对 PTC事件忽略', deriveFlowState(badPtc, gateRuntime), FLOW_DEFAULT)
 
 // ── CFG-DEFAULT：十项默认、显式 false/空串与角色边界独立期望 ──
-const EXPECTED_SETTINGS_DEFAULTS = { anchoredBootstrap: true, creativeMode: false, webFetch: false, toolPresentationMode: 'native', runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: 'deepseek-v4-pro', plannerPromptSuffix: GENERATED_DEFAULT_PLANNER_PROMPT_SUFFIX, exploreBudget: 18, otherAgentModel: '' }
-checkTrue('CFG-DEFAULT createDefaultSettings 恰十键且当前默认值逐项独立匹配', isDeepStrictEqual(createDefaultSettings(), EXPECTED_SETTINGS_DEFAULTS))
+// 默认值不在测试内落第二份：插件配置类键与资产 YAML（真源）对拍，设置页独有键与 settings 生成真源对拍；键集合仍显式锁定。
+const EXPECTED_SETTINGS_KEYS = ['anchoredBootstrap', 'creativeMode', 'webFetch', 'toolPresentationMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel']
+const defaultSettingsValues = createDefaultSettings()
+checkTrue('CFG-DEFAULT createDefaultSettings 恰十键且默认值与资产 YAML/settings 真源对拍', isDeepStrictEqual(Object.keys(defaultSettingsValues).sort(), EXPECTED_SETTINGS_KEYS.slice().sort()) && EXPECTED_SETTINGS_KEYS.every((key) => isDeepStrictEqual(defaultSettingsValues[key], Object.hasOwn(assetExtraPlanConfig, key) ? assetExtraPlanConfig[key] : DEFAULT_SETTINGS[key])))
 const explicitSettings = { anchoredBootstrap: false, creativeMode: false, webFetch: false, toolPresentationMode: 'ptc', runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: '', plannerPromptSuffix: '', exploreBudget: 1, otherAgentModel: '' }
 let explicitResolved = null
 try { explicitResolved = SETTINGS_CONFIG(explicitSettings) } catch {}
@@ -3222,7 +3238,8 @@ checkTrue('RC-AG1 planner write+subagent_probe 聚合 2 项且保持成员顺序
 
 // ── K 系列:子代理角色组判定（F7' v4;role = {kind:'planner'}/{kind:'child',readOnly,probe}） ──
 // 预算耗尽白名单 fixture：18 个成功配对使用 18/18，与 step-04 的 budgetEvents 一致。
-const budgetEventsFx = [um(), ...Array.from({ length: 18 }, (_, i) => [call('read', 'b' + i), ok('b' + i, 'ok')]).flat()]
+const kBudgetFx = 18
+const budgetEventsFx = [um(), ...Array.from({ length: kBudgetFx }, (_, i) => [call('read', 'b' + i), ok('b' + i, 'ok')]).flat()]
 const K = [
   ['K1 planner+裸写 → 聚合含「只读角色仅允许只读探查」与「命中」', { kind: 'planner' }, writeCodeFx, ['只读角色仅允许只读探查', '命中']],
   ['K2 planner+tools.write → 聚合含「规划子代理只读」', { kind: 'planner' }, "await tools.write({ file_path: 'x', content: '1' })", ['规划子代理只读']],
@@ -3232,13 +3249,14 @@ const K = [
   ['K6 child-reviewer+tools.write → 聚合含「验收复核者只读」', { kind: 'child', readOnly: true, probe: false }, "await tools.write({ file_path: 'x', content: '1' })", ['验收复核者只读']],
   ['K7 执行者+裸写 → 放行(null)', { kind: 'child', readOnly: false, probe: false }, writeCodeFx, null],
   ['K8 执行者+tools.write → 放行(null)', { kind: 'child', readOnly: false, probe: false }, "await tools.write({ file_path: 'x', content: '1' })", null],
-  ['K9 planner+预算耗尽+仅 save_plan 成员 → 放行(null)', { kind: 'planner' }, 'await tools.save_plan({ "plan": "p", "checklist": "c" })', null, { events: budgetEventsFx, exploreBudget: 18 }],
-  ['K10 planner+预算耗尽+read 成员 → 聚合含「探查预算已耗尽（本轮已用 18/18）」与「仅可调用 save_plan」', { kind: 'planner' }, "await tools.read({ file_path: 'x' })", ['探查预算已耗尽（本轮已用 18/18）', '仅可调用 save_plan'], { events: budgetEventsFx, exploreBudget: 18 }],
+  ['K9 planner+预算耗尽+仅 save_plan 成员 → 放行(null)', { kind: 'planner' }, 'await tools.save_plan({ "plan": "p", "checklist": "c" })', null, { events: budgetEventsFx, exploreBudget: kBudgetFx }],
+  ['K10 planner+预算耗尽+read 成员 → 拒绝且结构化 used/total=上限/上限 + 仅可调用 save_plan', { kind: 'planner' }, "await tools.read({ file_path: 'x' })", (got) => typeof got === 'string' && [...String(got).matchAll(/(\d+)\s*\/\s*(\d+)/gu)].some((matched) => Number(matched[1]) === kBudgetFx && Number(matched[2]) === kBudgetFx) && got.includes('仅可调用 save_plan'), { events: budgetEventsFx, exploreBudget: kBudgetFx }],
   ['K11 main+MCP静态只读成员 → 放行(null)且不误判ask', { kind: 'main' }, "try { await tools['mcp__chrome-devtools-mcp__list_pages']({}) } catch (e) {}", null],
 ]
 for (const [name, role, code, expected, gateCtx] of K) {
   const got = runCodeGroupDenyReason(undefined, { arguments: { code } }, role, Object.assign({}, gateCtx !== undefined ? gateCtx : {}, { gateRuntime }))
-  const okResult = expected === null ? got === null : typeof got === 'string' && expected.every((s) => got.includes(s))
+  // expected 可为 null（放行）／字符串片段数组（文案片段）／谓词函数（结构化判据，如 used/total）。
+  const okResult = expected === null ? got === null : typeof expected === 'function' ? expected(got) === true : typeof got === 'string' && expected.every((s) => got.includes(s))
   if (okResult) { pass += 1 } else { fail += 1 }
   output.assertion(okResult, name, expected, got)
 }

@@ -8,7 +8,7 @@
 | 分类 | 检查什么 | 什么时候用 |
 |---|---|---|
 | **逻辑检查**（step-00） | 插件「脑子里的规矩」对不对（写命令该拦的拦不拦、预算算得对不对） | 每次改完插件后 |
-| **安装检查**（step-01，含设置页/安装同步/预设完整性/QQBot 静态映射） | 文件、唯一 settings owner、raw 旧值迁移与 QQBot patch/迁移逻辑 | 装完插件后第一次 |
+| **安装检查**（step-01，含设置页/预设完整性/QQBot 静态映射） | 文件、唯一 settings owner、raw 旧值迁移与 QQBot patch/迁移逻辑 | 装完插件后第一次 |
 | **QQBot 环境检查**（step-01-qqbot-环境验证） | 严格环境预检、junction 能力与真实 profile 只读映射核验 | 有对应环境时自动运行；环境不足则 SKIP |
 | **痕迹检查**（step-04/05/06/07/08/99） | 跑完一次真实流程后，看日志：AI 这轮干了什么、有没有违规 | 每次试完流程后 |
 
@@ -26,7 +26,7 @@
 ```
 node pe-test/tools/一键step测试.mjs
 ```
-→ 自动跑一键脚本 AUTO 数组中的全部自动判定项（当前 14 项，以数组实际为准），按实际结果分级为通过/部分执行/未执行/失败，结果保存到 `pe-test/reports/测试报告-<时间>.md`；历史批次数字不作为当前通过数。
+→ 自动跑一键脚本 AUTO 数组中的全部自动判定项（项数以 runner 的 AUTO 数组实际项为准），按实际结果分级为通过/部分执行/未执行/失败，结果保存到 `pe-test/reports/测试报告-<时间>.md`；历史批次数字不作为当前通过数。
 → 涉及 Host 代码依赖项时，须由调用者显式前置 `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/一键step测试.mjs`（仅授只读代码根，不授数据 H）；纯 W/只读取证工具直接 `node`；AUTO 不透传真实 Host 选择，实机/provider 项按 HUMAN/NOT-RUN 单列，不自动执行。
 → 判读：中文「未完成」与英文 `INCOMPLETE` 均计入未完成；`NOT-RUN`/`HUMAN`/`SKIP` 正数不计 PASS；exit 0 只表示无失败，不等于全量执行。
 → 跑之前先确认：**在完整目录（pe-test 与 plugins 同级 = 仓库根）下运行**才有完整结果
@@ -49,7 +49,7 @@ node pe-test/tools/step-07-子代理模型与引导取证.mjs --session <顶层�
 | 步骤 | 跑什么 | 全过 = 说明 |
 |---|---|---|
 | 0 全局逻辑回归 | step-00-全流程回归 / step-00-跨平台写拦截 | 插件核心逻辑没被改坏 |
-| 1 安装与配置 | step-01-设置迁移 / 安装同步 / 预设完整性 / 设置页配置 / step-01-qqbot-安装映射（静态） | 选择性恢复、格式安全、后端权威行/投影回归、0.2 独立 tab 移除、legacy row 按宿主 slot 条件呈现、QQBot 静态 patch/迁移逻辑通过 |
+| 1 安装与配置 | step-01-设置迁移 / 预设完整性 / 设置页配置 / step-01-qqbot-安装映射（静态） | 选择性恢复、格式安全、后端权威行/投影回归、0.2 独立 tab 移除、legacy row 按宿主 slot 条件呈现、QQBot 静态 patch/迁移逻辑通过 |
 | 1A QQBot 环境 | step-01-qqbot-环境验证（条件只读） | 五条件命中时只读核验 profile；环境/能力不足为 SKIP，不计失败 |
 | 2 anchored 引导开关 | 人工对比（无自动工具） | 开=AI 先看再答；关=直接开干；两遍有区别=开关生效 |
 | 4 路由确认与写闸门 | step-04-路由与写闸门 (+ 工具清单查看) | 路由没确认时 AI 不能改文件；reviewer 不能写 |
@@ -57,13 +57,13 @@ node pe-test/tools/step-07-子代理模型与引导取证.mjs --session <顶层�
 | 6 线索落盘 | step-06-线索落盘 (+ 真实会话查看) | save_probe 五态闸门、落盘无残留 |
 | 7 规划预算 | 人眼看 step-06-真实会话查看 | 预算耗尽时 AI 被拒绝（日志里有 TOOL-ERROR） |
 | 7A 子代理模型/引导取证 | step-07-子代理模型与引导取证（HUMAN） | A42/A43：实际 provider/model、route 与 provenance 分栏，suffix 精确等级 |
-| 8 方案配对 | 人眼看 step-08-方案配对查看 | 方案+验收两个文件成对出现、时间戳一致 |
+| 8 方案配对 | 已归档到 `.extra-plan/archive-断言清理-20261031/pe-test/tools/`（不再作为常规人眼项） | 成对性改由 step-06-08-v4取证回归 的查看器冒烟覆盖 |
 | 10 验收只读 | 覆盖在 step-04-路由与写闸门 | reviewer 只读、不碰写操作 |
 | 11 代码地图一致性 | 覆盖在一键体检（`代码地图生成.mjs --check`，不写盘） | 地图与代码同步、无漏检/导航失效；**改完代码没同步地图 → 这项红**，跑 `node pe-test/tools/代码地图生成.mjs` 即可修 |
 
 **限制口径**：`PROBE_LIMITS` 与 `exploreBudget=18` 均以源码合同/作者 YAML 为唯一口径；本文不复制全量限制值，避免与历史批次数字漂移。报告中的源改动、删除文件、backup、reports 与 context fixture 分开统计；AUTO/HUMAN/SKIP 以报告字段为准，历史批次数字不作为当前通过数。
 
-**工具包目录说明**：pe-test/_shared/ 是取证脚本共用的解码/定位模块（workspace-paths / session-finder / test-output / zstd-frames / host-deps / host-preload / v4-tool-result / preset-hash）；其中 workspace-paths 是多数脚本共用的坐标地基，host-deps 与 host-preload 是宿主依赖解析边界，均不可删；preset-hash 目前全仓 0 引用（仅 re-export contentHash），标注为待清理。HUMAN 项报告沿用 `测试报告-<时间>.md` 命名，独立运行不覆盖一键体检主报告。
+**工具包目录说明**：pe-test/_shared/ 是取证脚本共用的解码/定位模块（workspace-paths / session-finder / test-output / zstd-frames / host-deps / host-preload / v4-tool-result）；其中 workspace-paths 是多数脚本共用的坐标地基，host-deps 与 host-preload 是宿主依赖解析边界，均不可删。HUMAN 项报告沿用 `测试报告-<时间>.md` 命名，独立运行不覆盖一键体检主报告。
 
 ## 两个注意事项
 

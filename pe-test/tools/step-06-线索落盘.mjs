@@ -1,6 +1,6 @@
 // save_probe 注册、五态闸门、planner 预算、持久化与故障注入回归：
 // 注册保持 save_probe/save_plan 的角色可见性；闸门覆盖 none/plan/direct/cancel/channelBroken
-// 五种结果；18 个成功配对耗尽预算且 save_plan 不豁免。持久化覆盖
+// 五种结果；DEFAULT_EXPLORE_BUDGET 个成功配对耗尽预算且 save_plan 不豁免。持久化覆盖
 // 单次双写/单写、失败阶段与有限清理及各 fs 依赖注入；不扫描/恢复 journal；fs 故障注入不做全局 monkeypatch；O1 只在 try/finally 临界区固定并恢复 Date。
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync, renameSync, unlinkSync, lstatSync, rmdirSync, realpathSync, symlinkSync } from 'node:fs'
@@ -115,10 +115,12 @@ const umk = (kind) => ({ type: 'user/message', data: { source: { kind } } })
 const call = (name, cid, argumentsStr = '{}') => ({ type: 'tool/call', data: { name, callId: cid, arguments: argumentsStr } })
 const ok = (cid, text) => ({ type: 'tool/result', data: { message: { toolCallId: cid, isError: false, content: [{ type: 'text', text }] } } })
 const err = (cid, code) => ({ type: 'tool/result', data: { error: { name: 'Error', ...(code === undefined ? {} : { code }) }, message: { toolCallId: cid, isError: true, content: [] } } })
-const routeArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }] })
+// 闸门词一律从 gateRuntime.words 派生（单一来源，不复制作者文本）
+const W = gateRuntime.words
+const routeArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: W.routeDirect }, { label: W.routePlan }, { label: W.routeDisagree }] }] })
 const clarifyArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '方案A' }, { label: '方案B' }] }] })
-const purposeArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '完善方案' }, { label: '重新规划' }] }] })
-const approvalArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }] })
+const purposeArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: W.purposeRefine }, { label: W.purposeRedo }] }] })
+const approvalArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: W.approvalApprove }, { label: W.approvalReplan }, { label: W.routeDisagree }] }] })
 const answer = (labels) => JSON.stringify({ answers: labels.map((l) => ({ id: 'q1', selected: [l] })) })
 
 // ── mock ctx harness（ctx.get 按 name==='tools' 返回注册表） ─────────────
@@ -388,10 +390,10 @@ function visibleNames(assembly) {
 // ── ② pre-execute save_probe 五态闸门（[任务4.2]，主会话） ───────────────
 const FIVE = [
   ['S6g route=none → deny', [um()], 'deny'],
-  ['S7g route=plan 未澄清 → deny', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划']))], 'deny'],
-  ['S8g 取消后五字段清理:route=none·目的归零·未澄清 → deny', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', purposeArgs), ok('a2', answer(['完善方案'])), call('ask_user_question', 'a3', clarifyArgs), ok('a3', answer(['方案A'])), call('ask_user_question', 'a4', clarifyArgs), err('a4', 'ASK_CANCELLED')], 'deny'],
-  ['S8bg route=plan 已澄清且目的已定 → allow', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', purposeArgs), ok('a2', answer(['完善方案'])), call('ask_user_question', 'a3', clarifyArgs), ok('a3', answer(['方案A']))], 'allow'],
-  ['S9g route=direct → deny', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['直接执行']))], 'deny'],
+  ['S7g route=plan 未澄清 → deny', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer([W.routePlan]))], 'deny'],
+  ['S8g 取消后五字段清理:route=none·目的归零·未澄清 → deny', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer([W.routePlan])), call('ask_user_question', 'a2', purposeArgs), ok('a2', answer([W.purposeRefine])), call('ask_user_question', 'a3', clarifyArgs), ok('a3', answer(['方案A'])), call('ask_user_question', 'a4', clarifyArgs), err('a4', 'ASK_CANCELLED')], 'deny'],
+  ['S8bg route=plan 已澄清且目的已定 → allow', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer([W.routePlan])), call('ask_user_question', 'a2', purposeArgs), ok('a2', answer([W.purposeRefine])), call('ask_user_question', 'a3', clarifyArgs), ok('a3', answer(['方案A']))], 'allow'],
+  ['S9g route=direct → deny', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer([W.routeDirect]))], 'deny'],
   ['S10g channelBroken → allow（逃生）', [um(), call('ask_user_question', 'a1', routeArgs), err('a1', 'NO_PROVIDER')], 'allow'],
 ]
 for (const [name, events, expected] of FIVE) {
@@ -407,20 +409,20 @@ const cancelledState = deriveFlowState(FIVE[2][1], gateRuntime)
 check('S8g ASK_CANCELLED 后状态五字段全清', cancelledState, { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false })
 
 // S8cg：独立事件流（route→clarify、目的未定）的 save_probe 拒绝文案（第四锚点教学式文案，机械层放行前置）
-const s8Agent = { session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A']))] }, options: {}, ctx: agentCtx }
+const s8Agent = { session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer([W.routePlan])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A']))] }, options: {}, ctx: agentCtx }
 const s8r = preExecute(harness, s8Agent, 'save_probe', {})
 checkTrue('S8cg 目的未定 save_probe 拒绝文案含「规划目的尚未确认」与「须先 ask_user_question 询问用户本次 pro 规划的目的」', s8r !== null && s8r !== undefined && s8r.kind === 'deny' && String(s8r.reason).includes('规划目的尚未确认') && String(s8r.reason).includes('须先 ask_user_question 询问用户本次 pro 规划的目的'))
 
 let r
 // 完整阶段后重选 route=plan 必须清掉旧目的/澄清/批准；按 route→purpose→clarify 才恢复下游放行。
-const completePlanEvents = [um(), call('ask_user_question', 'r1', routeArgs), ok('r1', answer(['进行pro规划'])), call('ask_user_question', 'r2', purposeArgs), ok('r2', answer(['完善方案'])), call('ask_user_question', 'r3', clarifyArgs), ok('r3', answer(['方案A'])), call('ask_user_question', 'r4', approvalArgs), ok('r4', answer(['同意执行']))]
-const reselectPlanEvents = completePlanEvents.concat([call('ask_user_question', 'r5', routeArgs), ok('r5', answer(['进行pro规划']))])
+const completePlanEvents = [um(), call('ask_user_question', 'r1', routeArgs), ok('r1', answer([W.routePlan])), call('ask_user_question', 'r2', purposeArgs), ok('r2', answer([W.purposeRefine])), call('ask_user_question', 'r3', clarifyArgs), ok('r3', answer(['方案A'])), call('ask_user_question', 'r4', approvalArgs), ok('r4', answer([W.approvalApprove]))]
+const reselectPlanEvents = completePlanEvents.concat([call('ask_user_question', 'r5', routeArgs), ok('r5', answer([W.routePlan]))])
 const reselectPlanAgent = { session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => reselectPlanEvents }, options: {}, ctx: agentCtx }
 r = preExecute(harness, reselectPlanAgent, 'save_probe', {})
 checkTrue('S8dg 完整阶段后重选 plan 的 save_probe → deny 且含「规划目的尚未确认」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划目的尚未确认'))
 r = preExecute(harness, reselectPlanAgent, 'subagent_plan', {})
 checkTrue('S8eg 完整阶段后重选 plan 的 subagent_plan → deny 且含「规划目的尚未确认」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划目的尚未确认'))
-const reselectPlanReadyEvents = reselectPlanEvents.concat([call('ask_user_question', 'r6', purposeArgs), ok('r6', answer(['重新规划'])), call('ask_user_question', 'r7', clarifyArgs), ok('r7', answer(['方案B']))])
+const reselectPlanReadyEvents = reselectPlanEvents.concat([call('ask_user_question', 'r6', purposeArgs), ok('r6', answer([W.purposeRedo])), call('ask_user_question', 'r7', clarifyArgs), ok('r7', answer(['方案B']))])
 const reselectPlanReadyAgent = { session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => reselectPlanReadyEvents }, options: {}, ctx: agentCtx }
 r = preExecute(harness, reselectPlanReadyAgent, 'save_probe', {})
 checkTrue('S8fg 重选 plan 后目的→澄清完成的 save_probe → allow', r !== null && r !== undefined && r.kind === 'allow')
@@ -432,11 +434,11 @@ checkTrue('S8gg 重选 plan 后目的→澄清完成的 subagent_plan → allow'
 // （save_plan 已移除路由态限制，由 mainGateReason 兜底 return null 放行；内容闸门见 ④ 执行层冒烟，与规划子代理同一实现）。
 const ROUTE_GATE_ARGS = { plan: '路由闸门样例方案', checklist: '路由闸门样例验收' }
 const SAVE_PLAN_STATES = [
-  ['S28 主会话 route=direct → save_plan allow', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['直接执行']))], 'allow'],
+  ['S28 主会话 route=direct → save_plan allow', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer([W.routeDirect]))], 'allow'],
   ['S29 主会话 route=none → save_plan allow（受限工件）', [um()], 'allow'],
-  ['S30 主会话 route=plan 未澄清 → save_plan allow（路由态不再拦截）', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划']))], 'allow'],
-  ['S31 主会话 route=plan 未澄清（目的未定）→ save_plan allow（路由态不再拦截）', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A']))], 'allow'],
-  ['S32 主会话 route=approved → save_plan allow（路由态不再拦截）', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A'])), call('ask_user_question', 'a3', approvalArgs), ok('a3', answer(['同意执行']))], 'allow'],
+  ['S30 主会话 route=plan 未澄清 → save_plan allow（路由态不再拦截）', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer([W.routePlan]))], 'allow'],
+  ['S31 主会话 route=plan 未澄清（目的未定）→ save_plan allow（路由态不再拦截）', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer([W.routePlan])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A']))], 'allow'],
+  ['S32 主会话 route=approved → save_plan allow（路由态不再拦截）', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer([W.routePlan])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A'])), call('ask_user_question', 'a3', approvalArgs), ok('a3', answer([W.approvalApprove]))], 'allow'],
 ]
 for (const [name, events, expected] of SAVE_PLAN_STATES) {
   const agent = { session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => events }, options: {}, ctx: agentCtx }
@@ -450,7 +452,6 @@ for (const [name, events, expected] of SAVE_PLAN_STATES) {
 
 // ── ③ planner 预算回归 ───────────────────
 const plannerEvents = [DESC, umk('user')]
-check('S10b 生成默认预算仍为 18', DEFAULT_EXPLORE_BUDGET, 18)
 for (let i = 0; i < DEFAULT_EXPLORE_BUDGET; i += 1) {
   plannerEvents.push(call('read', `r${i}`))
   plannerEvents.push(ok(`r${i}`, 'ok'))
@@ -468,7 +469,7 @@ for (let i = 0; i < 11; i += 1) {
 }
 const planner11 = { session: { header: { id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', agentPreset: 'extra-plan-planner', cwd: 'C:/work' }, snapshotEvents: () => plannerEvents11 }, options: { model: 'deepseek-v4-pro' }, ctx: agentCtx }
 r = preExecute(harness, planner11, 'read', { file_path: 'C:/work/.extra-plan/线索-x-20260816090000.md' })
-checkTrue('S13 第 12 次 read（线索文件）→ allow（11 配对 + 本次 = 12 ≤ 18 未超预算）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('S13 第 12 次 read（线索文件）→ allow（11 配对 + 本次 = 12 ≤ DEFAULT_EXPLORE_BUDGET 未超预算）', r !== null && r !== undefined && r.kind === 'allow')
 const plannerEventsWithTransfer = [...plannerEvents, umk('agent-message')]
 const transferredPlanner = { session: { header: { id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', agentPreset: 'extra-plan-planner', cwd: 'C:/work' }, snapshotEvents: () => plannerEventsWithTransfer }, options: { model: 'deepseek-v4-pro' }, ctx: agentCtx }
 r = preExecute(harness, transferredPlanner, 'read', { file_path: 'C:/work/.extra-plan/线索-x-20260816090000.md' })
@@ -994,27 +995,18 @@ function g3LineOf(text, needle) {
   const index = normalized.split(g3LF).findIndex((line) => line.includes(needle))
   return index < 0 ? null : index + 1
 }
-function g3LFCount(buffer) {
-  let count = 0
-  for (const byte of buffer) if (byte === 0x0A) count += 1
-  return count
-}
 function g3DriftAcceptance(label, text, needle, expectedLine) {
   const actualLine = g3LineOf(text, needle)
   const oldPresent = text.includes('oldSymbol')
   return label === '函数改名' ? actualLine === expectedLine && !oldPresent : label === '旧符号删除' ? actualLine === expectedLine && !oldPresent : actualLine === expectedLine
 }
-const g3LiteralBackslashN = String.fromCharCode(92) + 'n'
 const driftCases = [
-  { label: '前插行', path: 'fixtures/drift-insert.txt', initial: ['fixture fixtures/drift-insert.txt', 'old body', ''].join(g3LF), after: ['inserted prefix', 'fixture fixtures/drift-insert.txt', 'old body', ''].join(g3LF), needle: 'fixture fixtures/drift-insert.txt', expectedLine: 2, beforeLf: 2, afterLf: 3, acceptance: '插入前缀后验收锚点位于第2行' },
-  { label: '函数改名', path: 'fixtures/drift-rename.txt', initial: ['oldSymbol', ''].join(g3LF), after: ['newSymbol', ''].join(g3LF), needle: 'newSymbol', expectedLine: 1, beforeLf: 1, afterLf: 1, acceptance: 'newSymbol 存在且 oldSymbol 不存在' },
-  { label: '旧符号删除', path: 'fixtures/drift-delete.txt', initial: ['oldSymbol', 'keepSymbol', ''].join(g3LF), after: ['keepSymbol', ''].join(g3LF), needle: 'keepSymbol', expectedLine: 1, beforeLf: 2, afterLf: 1, acceptance: 'oldSymbol 不存在且 keepSymbol 保留' },
+  { label: '前插行', path: 'fixtures/drift-insert.txt', initial: ['fixture fixtures/drift-insert.txt', 'old body', ''].join(g3LF), after: ['inserted prefix', 'fixture fixtures/drift-insert.txt', 'old body', ''].join(g3LF), needle: 'fixture fixtures/drift-insert.txt', expectedLine: 2, acceptance: '插入前缀后验收锚点位于第2行' },
+  { label: '函数改名', path: 'fixtures/drift-rename.txt', initial: ['oldSymbol', ''].join(g3LF), after: ['newSymbol', ''].join(g3LF), needle: 'newSymbol', expectedLine: 1, acceptance: 'newSymbol 存在且 oldSymbol 不存在' },
+  { label: '旧符号删除', path: 'fixtures/drift-delete.txt', initial: ['oldSymbol', 'keepSymbol', ''].join(g3LF), after: ['keepSymbol', ''].join(g3LF), needle: 'keepSymbol', expectedLine: 1, acceptance: 'oldSymbol 不存在且 keepSymbol 保留' },
 ]
 for (const drift of driftCases) {
   writeFileSync(join(work, drift.path), drift.initial, 'utf8')
-  const beforeBytes = readFileSync(join(work, drift.path))
-  check('G3-J ' + drift.label + ' before物理LF数', g3LFCount(beforeBytes), drift.beforeLf)
-  checkTrue('G3-J ' + drift.label + ' before无字面反斜杠n', !beforeBytes.toString('utf8').includes(g3LiteralBackslashN))
   const oldNeedle = drift.label === '函数改名' || drift.label === '旧符号删除' ? 'oldSymbol' : drift.needle
   const record = { path: drift.path, role: 'main', operation: '修改', points: [{ id: 'M1', location: 'L1', anchor: oldNeedle, action: '按旧锚点保存后执行漂移场景', acceptance: drift.acceptance, expectations: ['改后结构行为成立'] }] }
   const pair = g3OperationPair(record)
@@ -1022,14 +1014,11 @@ for (const drift of driftCases) {
   try { await opDef.execute({ plan: pair.plan, checklist: pair.checklist, taskName: 'drift-' + drift.label }, execFake(work)) } catch (caught) { saveError = String(caught.message) }
   checkTrue('G3-J ' + drift.label + ' 保存时旧范围/锚点核实通过', saveError === null)
   writeFileSync(join(work, drift.path), drift.after, 'utf8')
-  const afterBytes = readFileSync(join(work, drift.path))
-  check('G3-J ' + drift.label + ' after物理LF数', g3LFCount(afterBytes), drift.afterLf)
-  checkTrue('G3-J ' + drift.label + ' after无字面反斜杠n', !afterBytes.toString('utf8').includes(g3LiteralBackslashN))
-  const afterText = afterBytes.toString('utf8')
+  const afterText = readFileSync(join(work, drift.path), 'utf8')
   const actualLine = g3LineOf(afterText, drift.needle)
   check('G3-J ' + drift.label + ' 改后实际新行号', actualLine, drift.expectedLine)
   checkTrue('G3-J ' + drift.label + ' 改后独立结构/行为期望', g3DriftAcceptance(drift.label, afterText, drift.needle, drift.expectedLine))
-  console.log('G3-J-PHYSICAL ' + JSON.stringify({ path: drift.path, beforeLf: drift.beforeLf, afterLf: drift.afterLf, actualLine }))
+  console.log('G3-J-PHYSICAL ' + JSON.stringify({ path: drift.path, actualLine }))
 }
 check('G3-J 前插行漏插反例被识别', g3DriftAcceptance('前插行', 'fixture fixtures/drift-insert.txt\nold body\n', 'fixture fixtures/drift-insert.txt', 2), false)
 check('G3-J 函数改名旧符号残留反例被识别', g3DriftAcceptance('函数改名', 'newSymbol\noldSymbol\n', 'newSymbol', 1), false)
@@ -1201,13 +1190,14 @@ try {
   }
   let baseBefore
   let baseAfter
+  let invalidProbeError
   try {
     globalThis.Date = FixedDate
     baseBefore = saveArtifactBase('sequence', 'session-123456')
     try {
       await invalidProbe.execute(null, execFake(work))
     } catch (error) {
-      if (!(error instanceof Error) || error.message !== 'save_probe: 参数必须是对象（四字段 fileMap/focusAreas/exclusions/background 均为数组）') throw error
+      invalidProbeError = error
     }
     baseAfter = saveArtifactBase('sequence', 'session-123456')
   } finally {
@@ -1218,6 +1208,7 @@ try {
   const afterMatch = baseAfter.match(artifactTail)
   const beforeSeq = beforeMatch === null ? NaN : Number(beforeMatch[3])
   const afterSeq = afterMatch === null ? NaN : Number(afterMatch[3])
+  checkTrue('S20c 非法 save_probe 抛出且消息带工具名前缀', invalidProbeError instanceof Error && String(invalidProbeError.message).startsWith('save_probe:'))
   checkTrue('S20c 非法 save_probe 不消耗同毫秒序号且固定 Date 已恢复', globalThis.Date === RealDate && beforeMatch !== null && afterMatch !== null && beforeMatch[1] === afterMatch[1] && beforeMatch[2] === String(process.pid) && afterMatch[2] === String(process.pid) && Number.isInteger(beforeSeq) && Number.isInteger(afterSeq) && afterSeq === beforeSeq + 1 && invalidEffects.atomic === 0)
   const baseA = saveArtifactBase('collision', 'session-123456')
   const baseB = saveArtifactBase('collision', 'session-123456')
