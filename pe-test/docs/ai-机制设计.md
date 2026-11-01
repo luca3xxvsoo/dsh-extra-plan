@@ -84,7 +84,7 @@
 ## 七、局部安全合同指针
 
 - `lib/shell-mutation.js` 的 pwsh/bash 识别是位置敏感的写边界：段首裸写词、语法级写形态、连续剥离 sudo/env/nohup/command wrapper、带值 wrapper 选项（含 sudo 的 `-p`/`--prompt`；`--prompt=value` 是单 token）与 NAME=VALUE 环境赋值、嵌套 shell 与重定向例外必须以源码纯函数为准，不能用文档替代；`mutationTextEvidence` 返回 null 或 `{rule,value}`，`pwshMutationEvidence`/`bashMutationEvidence` 与旧布尔 matcher 同源，拒因只追加规则名及白名单 bare 命中词，不回显命令、路径或秘密。PowerShell 侧赋值右值（$var =、[type]$var =、粘连 $var=）之后、return 之后、$()/@(/( 子表达式入口与块头关键字带括号粘连（foreach($i in …)）的块体均为命令位，裸写动词仍只在命令位命中。
-- `lib/shell-mutation.js` 的 PWSH_MUTATION 识别 `1-6` 流号与 `*>`/`*>>` 重定向，保留 `2>&1`、`1>&2`、`*>&1` 等 stream→stream 合并例外；裸 `>`/`>>` 改为左邻语境判定：引号内文本不判写；左邻 `=<>!-` 复合运算符（`=>`、`>=`、`<=`、`!=`、`->`）不判写；右邻 `&` 流合并目标不判写；右邻纯数字视为比较运算不判写（覆盖 `if ($i > 4)`、`$i > 4`、`for ($i = 0; $i > 0; $i--)`）；其余形态一律判写，圆括号深度不参与——`$(Get-Date > f.txt)`、`@(Get-Item a > b)` 等子表达式内重定向仍判写。已知边界：比较右操作数为变量/表达式（如 `if ($i > $j)`）与纯数字文件名目标（如 `x > 5`）不判写。BASH_MUTATION 原合同不变。
+- `lib/shell-mutation.js` 的 PWSH_MUTATION 识别 `1-6` 流号与 `*>`/`*>>` 重定向，保留 `2>&1`、`1>&2`、`*>&1` 等 stream→stream 合并例外；裸 >/>> 按左邻语境判定：引号内文本不判写；左邻 =- 复合序列（=>、->）不判写——豁免集由 =<>!- 收窄为 =- 是为语义准确（< 与 ! 不是重定向运算符），不改变 >= 的既有判写行为；右邻 & 流合并目标不判写；其余形态一律判写——PowerShell 中裸 >/>> 无条件为重定向运算符（比较须用 -gt/-ge），> 右邻纯数字如 if ($i > 4)、$i > 4、for ($i = 0; $i > 0; $i--) 都会把输出写为文件名 4/0；`>=` 序列词法上即为重定向、本实现一直判写（本次补回归样本锁定）；$a <= 5 与 $a != 5 不含 > 字符、不进入重定向判定，且是语法错误不落盘，保持放行；圆括号深度不参与——`$(Get-Date > f.txt)`、`@(Get-Item a > b)` 等子表达式内重定向仍判写。已知边界：引号内、=>/-> 序列与流合并豁免之外不存在只读的裸 > 用法。BASH_MUTATION 原合同不变。
 - `lib/sdk-text-cache.js` 只做 agent-keyed、非 session 的 JSON-like 指纹缓存；字段/数组顺序、getter/cycle 失败、dispose 与迟到 Promise 都是局部合同。
 - QQBot 自愈只处理拥有本插件且满足双锚点的 profile；迁移写前备份、写后 YAML 校验失败恢复，链接仅在 ENOENT 时建立，实体/异链保留，整体不阻断。当前机制由 `plugins/dsh-extra-plan-qqbot/lib/heal.js` 与对应 step-01 夹具共同锁定。
 

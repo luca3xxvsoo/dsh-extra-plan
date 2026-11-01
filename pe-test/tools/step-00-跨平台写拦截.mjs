@@ -165,8 +165,12 @@ const pwshRedirectMatrix = [
   ['if ($x) { Get-Content a > b }', true],
   ['$(Get-Date > f.txt)', true],
   ['@(Get-Item a > b)', true],
-  ["if ($i > 4) { 'a' }", false],
-  ['$i > 4', false],
+  // 裸 > 一律重定向：if 条件与语句级的 > 数字会写文件 4/0（比较须用 -gt）；>= 现状已判写、此处为回归锁定
+  ["if ($i > 4) { 'a' }", true],
+  ['$i > 4', true],
+  ['$a >= 5', true],
+  ["if ($a >= 5) { 'x' }", true],
+  ["if ($a -ge 5) { 'x' }", false],
   ["Write-Host 'a => b'", false],
   ["Write-Output 'a > b'", false],
   ['$m = @{ k = 1 } => 2', false],
@@ -188,8 +192,12 @@ const h3EvidenceCases = [
   ['pwsh foreach paren', pwshExec('foreach(){New-Item x.txt}'), pwshMutationEvidence, { rule: 'PWSH_BARE_WORDS', value: 'New-Item' }],
   ['pwsh subexpr redirect', pwshExec('$(Get-Date > f.txt)'), pwshMutationEvidence, { rule: 'PWSH_MUTATION', value: '' }],
   ['pwsh array redirect', pwshExec('@(Get-Item a > b)'), pwshMutationEvidence, { rule: 'PWSH_MUTATION', value: '' }],
-  ['pwsh compare allow', pwshExec("if ($i > 4) { 'a' }"), pwshMutationEvidence, null],
-  ['pwsh bare gt allow', pwshExec('$i > 4'), pwshMutationEvidence, null],
+  ['pwsh if gt redirect', pwshExec("if ($i > 4) { 'a' }"), pwshMutationEvidence, { rule: 'PWSH_MUTATION', value: '' }],
+  ['pwsh bare gt redirect', pwshExec('$i > 4'), pwshMutationEvidence, { rule: 'PWSH_MUTATION', value: '' }],
+  ['pwsh for gt redirect', pwshExec("for ($i = 0; $i > 0; $i--) { 'x' }"), pwshMutationEvidence, { rule: 'PWSH_MUTATION', value: '' }],
+  ['pwsh ge redirect', pwshExec('$a >= 5'), pwshMutationEvidence, { rule: 'PWSH_MUTATION', value: '' }],
+  ['pwsh if ge redirect', pwshExec("if ($a >= 5) { 'x' }"), pwshMutationEvidence, { rule: 'PWSH_MUTATION', value: '' }],
+  ['pwsh minusge allow', pwshExec("if ($a -ge 5) { 'x' }"), pwshMutationEvidence, null],
   ['pwsh arrow allow', pwshExec("Write-Host 'a => b'"), pwshMutationEvidence, null],
   ['pwsh arrow hash allow', pwshExec('$m = @{ k = 1 } => 2'), pwshMutationEvidence, null],
   ['bash bare object', bashExec('rm -rf secret'), bashMutationEvidence, { rule: 'BASH_BARE_WORDS', value: 'rm' }],
@@ -230,8 +238,10 @@ const pwshBlockMatrix = [
   ['foreach($i in 1..3){New-Item f.txt}', true],
   ['foreach(){New-Item f.txt}', true],
   ['if ($x) { Get-Content a > b }', true],
-  ["if ($i > 4) { 'a' }", false],
-  ['$i > 4', false],
+  ["if ($i > 4) { 'a' }", true],
+  ['$i > 4', true],
+  ["if ($a >= 5) { 'x' }", true],
+  ["if ($a -ge 5) { 'x' }", false],
   ['switch ($x) { Out-File f.txt }', true],
   // 放行侧：参数位整词、空块与脚本块花括号不参与命令位判定
   ['echo if then rm', false],
@@ -259,6 +269,11 @@ const pwshShouldDeny = [
   'foreach(){New-Item f.txt}',
   '$(Get-Date > f.txt)',
   '@(Get-Item a > b)',
+  "$i > 4",
+  "if ($i > 4) { 'a' }",
+  "for ($i = 0; $i > 0; $i--) { 'x' }",
+  '$a >= 5',
+  "if ($a >= 5) { 'x' }",
 ]
 for (const cmd of pwshShouldDeny) check(`应拦截 pwsh: ${cmd}`, gateDeny(pwshExec(cmd)) === true)
 const pwshShouldAllow = [
@@ -267,11 +282,9 @@ const pwshShouldAllow = [
   'git status',
   'Select-String "pattern" f.txt',
   'Get-Item x',
-  "if ($i > 4) { 'a' }",
-  '$i > 4',
   "Write-Host 'a => b'",
   '$m = @{ k = 1 } => 2',
-  "for ($i = 0; $i > 0; $i--) { 'x' }",
+  "if ($a -ge 5) { 'x' }",
 ]
 for (const cmd of pwshShouldAllow) check(`放行 pwsh: ${cmd}`, gateDeny(pwshExec(cmd)) === false)
 check('pwshCommandOf 对象形状', pwshCommandOf(pwshExec('Get-ChildItem')) === 'Get-ChildItem')

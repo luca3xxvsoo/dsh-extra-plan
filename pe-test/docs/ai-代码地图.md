@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-11-01 20:36:57（脚本自动更新时间戳行）
+> 上次同步：2026-11-01 21:55:01（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -136,7 +136,7 @@
 | plugins/dsh-extra-plan/lib/sdk-text-cache.js | 161 | apply 级 agent-keyed WeakMap SDK 文本缓存：完整 renderer 输入保守指纹、language/renderer 身份比较、并发 Promise 合并、reject/过期 Promise 不回写、dispose 回收；不持有 sessionId 或 PromptAssembly |
 | plugins/dsh-extra-plan/lib/settings-contract.js | 181 | 服务端设置 descriptor 单一合同：11 项的类型/生成默认引用/校验/UI metadata 与权威-投影双定位器，并导出 `createDefaultSettings`、分组与投影遍历源 |
 | plugins/dsh-extra-plan/lib/settings.js | 758 | 10 字段 volatile Config、页面策略与 loopback GET/PUT；权威值在唯一 settings 行，PUT 先拒绝空/null/数组/原始/未知/非法混合载荷并严校验当前 gateWords，再只 edit 全局行，no-op 也重读最终快照并等待 profileSync，结构化区分 synced/not-installed/unavailable/failed/partial。 |
-| plugins/dsh-extra-plan/lib/shell-mutation.js | 277 | 跨平台命令文本解码与 pwsh/bash 写形态判定；纯函数、不持有 apply 状态 |
+| plugins/dsh-extra-plan/lib/shell-mutation.js | 274 | 跨平台命令文本解码与 pwsh/bash 写形态判定；纯函数、不持有 apply 状态 |
 | plugins/dsh-extra-plan/lib/usage-archive.js | 688 | 启动归档唯一实现（H 根 usage-ledger/ledger-v2.jsonl）：按九字段身份聚合、四桶累加、seq 取 max、跨批次并成一条，发布后清空 active；预算常量 STARTUP_ARCHIVE_BUDGET_MS=3000ms 自取锁成功后起算（锁等待不计），失败逆序回滚并写 usage-ledger/archive-failed.log，全程同步且绝不阻断启动；自定义 usageLedger.path 的账本不在作用范围 |
 | plugins/dsh-extra-plan/lib/usage-ledger.js | 601 | per-apply V2 usage writer 与跨进程排他锁：固定15键（rootSessionId/agentPreset 可空）、owner PID/token、bounded acquire/release、锁内同步 fold、身份血缘与四桶 JSONL、cursor 续载；timeout 静默返回 `delayed`、后续 fold 补记，stale 由下一次取锁原子接管、接管失败后才告警并需维护者显式处理，release 失败显式返回状态。 |
 | plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | 777 | 从 agent.cordis.yml 校验并生成 runtime 默认常量、纯主/角色 definition 与 client 标记区块（顶层结构逐字平移并保留 group/isolate/!!js）；默认仓库七输出，自定义 client 默认关闭；支持 --check 且坏源不覆盖 last-known-good（上次已知良好版本） |
@@ -1079,16 +1079,16 @@
 | plugins/dsh-extra-plan/lib/shell-mutation.js | shellWords | L59-83 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/shell-mutation.js | isInnerShellWord | L87-90 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/shell-mutation.js | isEnvAssignment | L91-93 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/shell-mutation.js | redirectEvidence | L101-121 | 引号内跳过；裸 > 与 >> 在排除左邻复合运算符 =<>!-、右邻 & 流合并目标与右邻纯数字比较形态后判为写重定向（PWSH_MUTATION）；圆括号深度不参与判定。 |  |
-| plugins/dsh-extra-plan/lib/shell-mutation.js | syntaxRuleOf | L128-132 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/shell-mutation.js | bareRuleOf | L134-138 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/shell-mutation.js | mutationTextEvidence | L140-263 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/shell-mutation.js | mutationTextMatches | L265-267 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/shell-mutation.js | mutationEvidence | L269-272 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/shell-mutation.js | pwshMutationEvidence | L274 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/shell-mutation.js | bashMutationEvidence | L275 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/shell-mutation.js | pwshMutationMatches | L276 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/shell-mutation.js | bashMutationMatches | L277 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/shell-mutation.js | redirectEvidence | L101-118 | 引号内跳过；裸 > 与 >> 在排除左邻 =- 复合序列（=>、->）与右邻 & 流合并目标后判为写重定向（PWSH_MUTATION）；PowerShell 中裸 > 无条件为重定向、比较须用 -gt/-ge，>= 词法上即为重定向且本实现一直判写；<= 与 != 不含 > 字符、语法错误不落盘、保持放行；圆括号深度不参与判定。 |  |
+| plugins/dsh-extra-plan/lib/shell-mutation.js | syntaxRuleOf | L125-129 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/shell-mutation.js | bareRuleOf | L131-135 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/shell-mutation.js | mutationTextEvidence | L137-260 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/shell-mutation.js | mutationTextMatches | L262-264 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/shell-mutation.js | mutationEvidence | L266-269 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/shell-mutation.js | pwshMutationEvidence | L271 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/shell-mutation.js | bashMutationEvidence | L272 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/shell-mutation.js | pwshMutationMatches | L273 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/shell-mutation.js | bashMutationMatches | L274 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/usage-archive.js | errorCodeOf | L68-70 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/usage-archive.js | errorMessageOf | L72-74 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/usage-archive.js | archiveError | L76-80 | （待补充） |  |

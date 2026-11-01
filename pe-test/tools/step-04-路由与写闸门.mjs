@@ -465,8 +465,12 @@ const H3_EVIDENCE_CASES = [
   ['pwsh glued foreach', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: 'foreach($i in 1..3){New-Item x.txt}' } }), { rule: 'PWSH_BARE_WORDS', value: 'New-Item' }],
   ['pwsh subexpr redirect', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: '$(Get-Date > f.txt)' } }), { rule: 'PWSH_MUTATION', value: '' }],
   ['pwsh array redirect', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: '@(Get-Item a > b)' } }), { rule: 'PWSH_MUTATION', value: '' }],
-  ['pwsh compare allow', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: "if ($i > 4) { 'a' }" } }), null],
-  ['pwsh bare gt allow', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: '$i > 4' } }), null],
+  ['pwsh if gt redirect', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: "if ($i > 4) { 'a' }" } }), { rule: 'PWSH_MUTATION', value: '' }],
+  ['pwsh bare gt redirect', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: '$i > 4' } }), { rule: 'PWSH_MUTATION', value: '' }],
+  ['pwsh for gt redirect', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: "for ($i = 0; $i > 0; $i--) { 'x' }" } }), { rule: 'PWSH_MUTATION', value: '' }],
+  ['pwsh ge redirect', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: '$a >= 5' } }), { rule: 'PWSH_MUTATION', value: '' }],
+  ['pwsh if ge redirect', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: "if ($a >= 5) { 'x' }" } }), { rule: 'PWSH_MUTATION', value: '' }],
+  ['pwsh minusge allow', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: "if ($a -ge 5) { 'x' }" } }), null],
   ['pwsh arrow allow', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: "Write-Host 'a => b'" } }), null],
   ['pwsh arrow hash allow', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: '$m = @{ k = 1 } => 2' } }), null],
   ['quoted semicolon existing boundary', () => shellMutationModule.bashMutationEvidence({ arguments: { command: 'echo "x; then rm"' } }), { rule: 'BASH_BARE_WORDS', value: 'rm' }],
@@ -488,6 +492,10 @@ r = preExecute(harness, reviewer, 'pwsh', { command: 'cmd.exe /C "dir"' })
 checkTrue('R3c reviewer pwsh cmd.exe /C dir 只读 → allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, reviewer, 'pwsh', { command: 'Get-ChildItem' })
 checkTrue('R4 reviewer pwsh Get-ChildItem → 放行', r !== null && r !== undefined && r.kind === 'allow')
+r = preExecute(harness, reviewer, 'pwsh', { command: '$i > 4' })
+checkTrue('R4a reviewer pwsh 裸 > 数字重定向 → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === shellMutationReason('reviewer', { name: 'pwsh', arguments: { command: '$i > 4' } }))
+r = preExecute(harness, reviewer, 'pwsh', { command: '$a >= 5' })
+checkTrue('R4b reviewer pwsh >= 重定向 → deny + H3 完整依据（回归锁定）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === shellMutationReason('reviewer', { name: 'pwsh', arguments: { command: '$a >= 5' } }))
 r = preExecute(harness, reviewer, 'write', {})
 checkTrue('R5 reviewer write → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('验收复核者只读'))
 r = preExecute(harness, reviewer, 'edit', {})
