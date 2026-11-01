@@ -7,3 +7,5 @@ export const ROLE_ORDERS = Object.freeze(ROLE_ORDER_VALUES)
 export const USAGE_ROLE_BY_PRESET = Object.freeze(Object.fromEntries(ROLE_IDS.map((presetId, index) => [presetId, USAGE_ROLE_VALUES[index]])))
 export const PLANNER_PRESET_ID = ROLE_IDS[1]
 export const PROBER_PRESET_ID = ROLE_IDS[3]
+// 与 ROLE_IDS 顺序绑定（下标 2），对应 extra-plan-reviewer；ROLE_IDS 顺序调整须同步本行。
+export const REVIEWER_PRESET_ID = ROLE_IDS[2]

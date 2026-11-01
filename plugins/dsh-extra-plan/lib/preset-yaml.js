@@ -151,7 +151,7 @@ export function resolveTemplateSettingDefault(defaultText, key) {
 }
 
 /**
- * 源模板（资产）捕获（10 项）：逐项按 sourceLocator 解析 → {document, values, states}。
+ * 源模板（资产）捕获（11 项）：逐项按 sourceLocator 解析 → {document, values, states}。
  * states 四态（captured/missing/ambiguous/invalid），仅 captured 进 values。
  */
 export function captureSettings(text, definitions) {

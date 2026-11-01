@@ -169,9 +169,9 @@ const locatorChecks = SETTING_DEFINITIONS.map((definition) => {
   const textMatches = findTextLocatorMatches(mainPresetText, definition.sourceLocator)
   return { definition, parsed, textMatches }
 })
-if (SETTING_DEFINITIONS.length === 10 && locatorChecks.every((item) => item.parsed.kind === 'ok' && item.textMatches.length === 1)) {
+if (SETTING_DEFINITIONS.length === 11 && locatorChecks.every((item) => item.parsed.kind === 'ok' && item.textMatches.length === 1)) {
   pass += 1
-  console.log('PASS  设置白名单恰有 10 个唯一 sourceLocator（第一文档权威声明内各命中 1 次）')
+  console.log('PASS  设置白名单恰有 11 个唯一 sourceLocator（第一文档权威声明内各命中 1 次）')
 } else {
   fail += 1
   console.log('FAIL  设置白名单 locator 不完整或有歧义')
@@ -201,9 +201,9 @@ if (otherDefinition !== undefined && otherDefinition.sourceLocator.rowId === 'ex
   fail += 1
   console.log('FAIL  otherAgentModel descriptor 不符合契约')
 }
-if (defaults.plannerModel === 'deepseek-v4-pro' && defaults.crossProviderPlannerModel === false && defaults.creativeMode === false && defaults.exploreBudget === 18 && defaults.otherAgentModel === '' && defaults.anchoredBootstrap === true && defaults.runcodeCatchGate === false && defaults.webFetch === false && defaults.toolPresentationMode === 'native' && defaults.plannerPromptSuffix === '你的深度思考部分需要以"好了，现在我以全局视角来看待这个问题"开头') {
+if (defaults.plannerModel === 'deepseek-v4-pro' && defaults.crossProviderPlannerModel === false && defaults.creativeMode === false && defaults.exploreBudget === 18 && defaults.otherAgentModel === '' && defaults.anchoredBootstrap === true && defaults.runcodeCatchGate === false && defaults.webFetch === false && defaults.toolPresentationMode === 'native' && defaults.reviewerUsesPlannerModel === false && defaults.plannerPromptSuffix === '你的深度思考部分需要以"好了，现在我以全局视角来看待这个问题"开头') {
   pass += 1
-  console.log('PASS  新版模板 10 项默认值来自实际叶值（creativeMode=false，跨提供商=false，otherAgentModel=空串）')
+  console.log('PASS  新版模板 11 项默认值来自实际叶值（creativeMode=false，跨提供商=false，otherAgentModel=空串，验收者pro=false）')
 } else {
   fail += 1
   console.log('FAIL  新版模板默认值不符合验收锚点')
@@ -236,8 +236,8 @@ check('T1 作者源保留官方 preset registry 说明且无包装层恢复配�
 const packageJson = JSON.parse(readFileSync(coreManifestFile, 'utf8'))
 const qqbotPackageJson = JSON.parse(readFileSync(qqbotManifestFile, 'utf8'))
 const generatedText = readFileSync(generatedFile, 'utf8')
-const EXPECTED_DEFAULT_SETTINGS = { anchoredBootstrap: true, creativeMode: false, webFetch: false, toolPresentationMode: 'native', runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: 'deepseek-v4-pro', plannerPromptSuffix: '你的深度思考部分需要以"好了，现在我以全局视角来看待这个问题"开头', exploreBudget: 18, otherAgentModel: '' }
-check('B2 导入生成物 DEFAULT_SETTINGS 恰十键/值/冻结且旧别名同值', Object.isFrozen(DEFAULT_SETTINGS) && isDeepStrictEqual(DEFAULT_SETTINGS, EXPECTED_DEFAULT_SETTINGS) && DEFAULT_EXPLORE_BUDGET === DEFAULT_SETTINGS.exploreBudget && DEFAULT_PLANNER_PROMPT_SUFFIX === DEFAULT_SETTINGS.plannerPromptSuffix && resolveTemplateSettingDefault(agentText, 'exploreBudget') === DEFAULT_SETTINGS.exploreBudget && resolveTemplateSettingDefault(agentText, 'plannerPromptSuffix') === DEFAULT_SETTINGS.plannerPromptSuffix, true)
+const EXPECTED_DEFAULT_SETTINGS = { anchoredBootstrap: true, creativeMode: false, webFetch: false, toolPresentationMode: 'native', runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: 'deepseek-v4-pro', plannerPromptSuffix: '你的深度思考部分需要以"好了，现在我以全局视角来看待这个问题"开头', exploreBudget: 18, otherAgentModel: '', reviewerUsesPlannerModel: false }
+check('B2 导入生成物 DEFAULT_SETTINGS 恰十一键/值/冻结且旧别名同值', Object.isFrozen(DEFAULT_SETTINGS) && isDeepStrictEqual(DEFAULT_SETTINGS, EXPECTED_DEFAULT_SETTINGS) && DEFAULT_EXPLORE_BUDGET === DEFAULT_SETTINGS.exploreBudget && DEFAULT_PLANNER_PROMPT_SUFFIX === DEFAULT_SETTINGS.plannerPromptSuffix && resolveTemplateSettingDefault(agentText, 'exploreBudget') === DEFAULT_SETTINGS.exploreBudget && resolveTemplateSettingDefault(agentText, 'plannerPromptSuffix') === DEFAULT_SETTINGS.plannerPromptSuffix, true)
 
 check('B2 render 文本与已提交生成模块逐字一致', renderRuntimeDefaults(agentText) === generatedText, true)
 check('B2 definition render 与提交资产逐字一致且 package 仅装载 cordis.patch.yml', renderPresetDefinition(agentText, readFileSync(presetFile, 'utf8')) === definitionGeneratedText && JSON.parse(readFileSync(join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'package.json'), 'utf8')).dsh.bundle.patch === './cordis.patch.yml', true)
@@ -344,6 +344,7 @@ try {
     "    otherAgentModel: ''",
     '    exploreBudget: 18',
     '    plannerPromptSuffix: plain-suffix',
+    '    reviewerUsesPlannerModel: false',
     '- id: tool-web',
     '  config:',
     '    fetch: false',
@@ -357,7 +358,7 @@ try {
   writeFileSync(validSource, validMini, 'utf8')
   const validRendered = renderRuntimeDefaults(validMini)
   generatorDefaults({ sourcePath: validSource, outputPath: validOutput })
-  check('B2 完整十项 source/output 可生成并逐字等于 render', readFileSync(validOutput, 'utf8') === validRendered, true)
+  check('B2 完整十一项 source/output 可生成并逐字等于 render', readFileSync(validOutput, 'utf8') === validRendered, true)
   const richSuffix = '前缀 "引号"\\路径\n换行'
   const richMini = validMini.replace('    plannerPromptSuffix: plain-suffix\n', '    plannerPromptSuffix: ' + JSON.stringify(richSuffix) + '\n')
   const richSource = join(generatorFixture, 'rich.yml')
@@ -447,7 +448,7 @@ try {
   const clientBlockStart = generatedClientText.indexOf('// BEGIN GENERATED SETTINGS FIELDS')
   const clientBlockEnd = generatedClientText.indexOf('// END GENERATED SETTINGS FIELDS')
   const clientBlock = clientBlockStart >= 0 && clientBlockEnd > clientBlockStart ? generatedClientText.slice(clientBlockStart, clientBlockEnd) : ''
-  check('G3 client 只替换标记区块且区块外字节不变/metadata 无默认值与函数', outsideClientBlock(generatedClientText) === outsideClientBlock(clientSource) && ['anchoredBootstrap','creativeMode','webFetch','toolPresentationMode','runcodeCatchGate','crossProviderPlannerModel','plannerModel','plannerPromptSuffix','exploreBudget','otherAgentModel'].every((key) => clientBlock.includes('\"key\":\"' + key + '\"')) && !clientBlock.includes('defaultValue') && !clientBlock.includes('validator') && !clientBlock.includes('function '), true)
+  check('G3 client 只替换标记区块且区块外字节不变/metadata 无默认值与函数', outsideClientBlock(generatedClientText) === outsideClientBlock(clientSource) && ['anchoredBootstrap','creativeMode','webFetch','toolPresentationMode','runcodeCatchGate','crossProviderPlannerModel','plannerModel','plannerPromptSuffix','exploreBudget','otherAgentModel','reviewerUsesPlannerModel'].every((key) => clientBlock.includes('\"key\":\"' + key + '\"')) && !clientBlock.includes('defaultValue') && !clientBlock.includes('validator') && !clientBlock.includes('function '), true)
   let clientCompiled = true
   try { new Script(generatedClientText, { filename: clientOutputPath }) } catch { clientCompiled = false }
   check('G3 最终 client JS 可编译', clientCompiled, true)
@@ -468,7 +469,7 @@ try {
   const repoClientBefore = snapshot([repoClientPath])
   const customNoClientSource = join(g3ClientFixture, 'custom-source.yml')
   const customNoClientOutput = join(g3ClientFixture, 'custom-output.js')
-  const customNoClientText = ['- id: extra-plan', '  config:', '    anchoredBootstrap: true', '    creativeMode: false', '    runcodeCatchGate: false', '    crossProviderPlannerModel: false', '    plannerModel: deepseek-v4-pro', "    otherAgentModel: ''", '    exploreBudget: 18', '    plannerPromptSuffix: plain-suffix', '- id: tool-web', '  config:', '    fetch: false', '- id: tool-presentation', '  config:', '    mode: native', ''].join('\n')
+  const customNoClientText = ['- id: extra-plan', '  config:', '    anchoredBootstrap: true', '    creativeMode: false', '    runcodeCatchGate: false', '    crossProviderPlannerModel: false', '    plannerModel: deepseek-v4-pro', "    otherAgentModel: ''", '    exploreBudget: 18', '    plannerPromptSuffix: plain-suffix', '    reviewerUsesPlannerModel: false', '- id: tool-web', '  config:', '    fetch: false', '- id: tool-presentation', '  config:', '    mode: native', ''].join('\n')
   writeFileSync(customNoClientSource, customNoClientText, 'utf8')
   generatorDefaults({ sourcePath: customNoClientSource, outputPath: customNoClientOutput, definitionOutputPath: null, roleDefinitionDir: null })
   check('G3 自定义 source/output 未显式 client 时不写仓库 client', JSON.stringify(repoClientBefore) === JSON.stringify(snapshot([repoClientPath])) && existsSync(customNoClientOutput), true)

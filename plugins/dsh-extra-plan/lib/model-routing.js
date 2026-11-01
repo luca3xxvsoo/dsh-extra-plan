@@ -394,6 +394,13 @@ async function resolvePlannerEntryStrict(agent, parentSignal) {
   } catch (error) {
     // 缺失/损坏的父配置在候选全失败时由固定 strict block 统一处理。
   }
+  // 空串等于继承主会话：父 provider/model 即最终路由，直接短路，不做 provider 枚举
+  // 与真实探针。父值不可用时保持原逻辑（不提前返回，PLANNER_BLOCKED_REASON 条件不变）。
+  // 空串短路同样先响应中断，与 resolveOtherAgentEntryStrict 的空串短路保持一致。
+  if (targetModel === '' && typeof provider === 'string' && provider !== '' && typeof model === 'string' && model !== '') {
+    if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
+    return { provider, model, maxTokens }
+  }
   let llm
   try {
     llm = getLlm()
@@ -477,6 +484,11 @@ async function resolveOtherAgentEntryStrict(agent, parentSignal, probe) {
     if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
     throw new Error(NON_PLANNER_BLOCKED_REASON)
   }
+  // 空串等于继承主会话：父 fallback 即最终路由，零网络零探针（与 Legacy 空串语义对齐）。
+  if (targetModel === '' && fallback.provider !== undefined) {
+    if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
+    return fallback
+  }
   if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
   let llm
   try { llm = getLlm() } catch (error) { llm = undefined }
@@ -507,5 +519,35 @@ function resolveOtherAgentEntry(agent, parentSignal, probe) {
   otherAgentModelCache.set(agent, pending)
   return pending
 }
-  return { resolvePlannerEntry, resolveOtherAgentEntry }
+
+// 验收者模型入口：plannerModel 作为验收者的 pro 模型来源，空串等于继承主会话（直接回退父
+// fallback，不取 llm）。reviewerRouteCache 是 per-apply 实例（不得提升为模块全局），按
+// plannerModel、crossProviderPlannerModel 真假、顶层主会话 provider 三段拼键，复用同一
+// in-flight promise；条目超过 32 条时整表清空。
+const reviewerRouteCache = new Map()
+
+async function resolveReviewerEntry(agent, parentSignal) {
+  const sources = nonPlannerRouteSources(agent)
+  const fallback = nonPlannerFallbackEntry(sources, false)
+  const targetModel = getPlannerModel(agent)
+  if (targetModel === '') return fallback || {}
+  const crossProvider = getCrossProviderPlannerModel(agent)
+  const parentProvider = fallback !== null && fallback.provider !== undefined ? fallback.provider : ''
+  const cacheKey = targetModel + '|' + (crossProvider ? 'cross' : 'direct') + '|' + parentProvider
+  const cached = reviewerRouteCache.get(cacheKey)
+  if (cached !== undefined) return cached
+  // 解析失败不得把 rejection 抛给调用方：统一兜底为父 fallback。
+  const pending = (crossProvider
+    ? resolvePlannerEntryStrict(agent, parentSignal)
+    : resolvePlannerEntryLegacy(agent)
+  ).then((entry) => ({
+    provider: entry.provider,
+    model: entry.model,
+    maxTokens: fallback !== null ? fallback.maxTokens : entry.maxTokens,
+  })).catch(() => fallback || {})
+  if (reviewerRouteCache.size > 32) reviewerRouteCache.clear()
+  reviewerRouteCache.set(cacheKey, pending)
+  return pending
+}
+  return { resolvePlannerEntry, resolveOtherAgentEntry, resolveReviewerEntry }
 }

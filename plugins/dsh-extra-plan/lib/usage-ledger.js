@@ -349,6 +349,35 @@ export function createUsageLedger(options = {}) {
     return undefined
   }
 
+  // ledger 扫描（cursor JSON 降级时的 seq 去重基线恢复）：seq 可以从 ledger 重建，index 不能也不需要——
+  // index 取 -1 即让 foldUsage 走全量快照，全量快照后 index 自然回到会话日志长度（宿主 session.seq）。
+  // 纯读：授权口径同 readUsageCursorTable；文件缺失、授权失败或任何异常一律返回 0（视作无可恢复基线），绝不抛错。
+  // 单行 JSON 解析失败只跳过该行，不中断整次扫描。
+  function scanLedgerMaxSeq(sessionId) {
+    try {
+      if (pathContext !== null) authorizeLedgerWrite(pathContext, ledgerPath, ledgerPurpose)
+      const raw = readFileSync(ledgerPath, 'utf8')
+      let maxSeq = 0
+      const lines = raw.split('\n')
+      for (let idx = 0; idx < lines.length; idx += 1) {
+        const line = lines[idx]
+        if (line.trim() === '') continue
+        let row
+        try {
+          row = JSON.parse(line)
+        } catch (error) {
+          continue
+        }
+        if (row === null || typeof row !== 'object' || row.sessionId !== sessionId) continue
+        if (!Number.isInteger(row.seq) || row.seq <= maxSeq) continue
+        maxSeq = row.seq
+      }
+      return maxSeq
+    } catch (error) {
+      return 0
+    }
+  }
+
   function isUsageContext(value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value)
       && typeof value.sessionId === 'string' && value.sessionId.trim() !== ''
@@ -392,8 +421,20 @@ export function createUsageLedger(options = {}) {
         // ① 共享锁覆盖 cursor 读取、事件折叠、ledger append 与 cursor 写回。
         const logLen = session.seq
         const hasWatermark = typeof logLen === 'number' && Number.isFinite(logLen) && logLen >= 0
+        // 水位两段式：内存 → cursor JSON，任一命中即不再扫描 ledger。cursor 表非空说明 cursor 文件完好、
+        // 该会话只是首次出现，不必扫描（ledger 中本就没有它的历史行）；仅当表整体为空（被删除或清空）或
+        // 读取降级（损坏）时，才可能是基线真丢了，值得从 ledger 重建该会话的 seq 去重基线：index 取 -1 不满足
+        // 「prevIndex 大于等于 0」的增量分支，因而走全量快照，但 seq 去重（seq <= cursor 跳过）仍然生效，
+        // 不会把该会话历史用量重复追加进 ledger。
         let prev = usageCursors.get(sid)
-        if (prev === undefined) prev = usageCursorEntryOf(readUsageCursorTable().table, sid)
+        if (prev === undefined) {
+          const cursorTable = readUsageCursorTable()
+          prev = usageCursorEntryOf(cursorTable.table, sid)
+          if (prev === undefined && (cursorTable.ok === false || Object.keys(cursorTable.table).length === 0)) {
+            const ledgerMaxSeq = scanLedgerMaxSeq(sid)
+            if (ledgerMaxSeq > 0) prev = { seq: ledgerMaxSeq, index: -1 }
+          }
+        }
         let cursor = 0
         let prevIndex = -1
         if (prev !== undefined && prev !== null) {

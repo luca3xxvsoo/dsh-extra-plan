@@ -459,13 +459,13 @@ const CONFIG_KEYS = [
   'gateWords', 'planTool', 'savePlanDir', 'plannerModel', 'otherAgentModel', 'exploreBudget',
   'plannerPromptSuffix', 'anchoredBootstrap', 'creativeMode', 'runcodeCatchGate',
   'crossProviderPlannerModel', 'bootstrapPersona', 'bootstrapReadHint', 'bootstrapShellTools',
-  'bootstrapCommonTools', 'usageLedger', 'diagFile',
+  'bootstrapCommonTools', 'usageLedger', 'diagFile', 'reviewerUsesPlannerModel',
 ]
 const configWithAssetGateWords = plugin.Config({ gateWords: assetGateWords })
 check('CFG1 主插件 name 保持 extra-plan', plugin.name, 'extra-plan')
 check('CFG2 主插件 inject 恰为 systemPrompt', plugin.inject, ['systemPrompt'])
 checkTrue('CFG3 主插件 apply 与 Config 均为函数', typeof plugin.apply === 'function' && typeof plugin.Config === 'function')
-check('CFG4 Config 顶层键恰为 17 个', Object.keys(configWithAssetGateWords).sort(), CONFIG_KEYS.slice().sort())
+check('CFG4 Config 顶层键恰为 18 个', Object.keys(configWithAssetGateWords).sort(), CONFIG_KEYS.slice().sort())
 check('CFG5 资产 gateWords 经 Config 保持原值', configWithAssetGateWords.gateWords, assetGateWords)
 check('CFG6 Config 标量默认值与 apply fallback 相同', [
   configWithAssetGateWords.planTool,
@@ -1908,7 +1908,7 @@ const g2RenderedSummary = g2SummaryResult.ok
   : []
 const g2RenderedSummaryText = Array.isArray(g2RenderedSummary) && g2RenderedSummary.length === 1 && g2RenderedSummary[0].type === 'text' ? g2RenderedSummary[0].text : ''
 check('G2-F render精确双路径且不回流正文sentinel/结构/摘要', g2RenderedSummaryText === 'g2-synthetic/方案.md\ng2-synthetic/验收.md' && !g2RenderedSummaryText.includes('PLAN_FIELD_SENTINEL') && !g2RenderedSummaryText.includes('CHECKLIST_FIELD_SENTINEL') && !g2RenderedSummaryText.includes('派遣摘要（') && !g2RenderedSummaryText.includes('[任务'), true)
-check('G2-F 计数使用生产限制且不把groupCount当executorCount', REAL_SAVE_PLAN_LIMITS.maxTasks === 20 && REAL_SAVE_PLAN_LIMITS.maxSummaryChars === 12000 && g2SummaryResult.summary.executorCount === undefined, true)
+check('G2-F 计数使用生产限制且不把groupCount当executorCount', REAL_SAVE_PLAN_LIMITS.maxTasks === 20 && REAL_SAVE_PLAN_LIMITS.maxSummaryChars === 24000 && g2SummaryResult.summary.executorCount === undefined, true)
 const g2SummaryBaseTasks = g2Tasks(REAL_SAVE_PLAN_LIMITS.maxTasks).map((task, index) => index === 0 ? Object.assign({}, task, { title: 'A' }) : task)
 const g2SummaryBasePair = g2Pair({ tasks: g2SummaryBaseTasks })
 const g2SummaryBaseResult = validateRealSavePlanContract(g2SummaryBasePair.plan, g2SummaryBasePair.checklist)
@@ -1920,8 +1920,8 @@ const g2SummaryExactResult = validateRealSavePlanContract(g2SummaryExactPair.pla
 const g2SummaryOverTasks = g2SummaryBaseTasks.map((task, index) => index === 0 ? Object.assign({}, task, { title: 'A' + 'x'.repeat(g2SummaryExactExtra + 1) }) : task)
 const g2SummaryOverPair = g2Pair({ tasks: g2SummaryOverTasks })
 const g2SummaryOverResult = validateRealSavePlanContract(g2SummaryOverPair.plan, g2SummaryOverPair.checklist)
-check('G2-F 摘要恰12000字符通过', g2SummaryExactResult.ok && formatRealSavePlanSummary(g2SummaryExactResult.summary).length === REAL_SAVE_PLAN_LIMITS.maxSummaryChars, true)
-check('G2-F 摘要12001字符拒绝', !g2SummaryOverResult.ok && g2SummaryOverResult.error.includes('派遣摘要'), true)
+check('G2-F 摘要恰上限24000字符通过', g2SummaryExactResult.ok && formatRealSavePlanSummary(g2SummaryExactResult.summary).length === REAL_SAVE_PLAN_LIMITS.maxSummaryChars, true)
+check('G2-F 摘要上限加1字符拒绝', !g2SummaryOverResult.ok && g2SummaryOverResult.error.includes('派遣摘要'), true)
 
 const g2Recovered = validateRealSavePlanContract(g2SummaryPair.plan, g2SummaryPair.checklist)
 const g2RecoveredScope = g2Recovered.ok ? {
@@ -2354,7 +2354,7 @@ const PLANNER = [
     const noLlm = await run({ withoutLlm: true, parentConfig: { provider: 'p-parent', model: 'parent-model' } })
     return { fallbackFail: { message: fallbackFail.message, actual: fallbackFail.actual }, noParent: { message: noParent.message, actual: noParent.actual }, noLlm: { message: noLlm.message, actual: noLlm.actual } }
   }, { fallbackFail: { message: PLANNER_BLOCKED_REASON, actual: 0 }, noParent: { message: PLANNER_BLOCKED_REASON, actual: 0 }, noLlm: { message: PLANNER_BLOCKED_REASON, actual: 0 } }],
-  ['PL7 True 空 plannerModel 只 probe 父 fallback，成功继承且失败前置阻断', async () => {
+  ['PL7 True 空 plannerModel 零探针短路直接继承父 provider/model（成功桩与失败桩均不触发）', async () => {
     const run = async (finish) => {
       const timeline = []
       const fake = makePlannerFake({ behaviors: { 'p-parent/parent-model': { finish } } }, timeline)
@@ -2365,7 +2365,7 @@ const PLANNER = [
       return { result: result === null ? null : { provider: result.provider, model: result.model }, message, listProviders: fake.state.listProviders, listModels: fake.state.listModels.length, prepareCalls: fake.state.prepareCalls.length, streamCalls: fake.state.streamCalls.length }
     }
     return { success: await run('stop'), failure: await run('error') }
-  }, { success: { result: { provider: 'p-parent', model: 'parent-model' }, message: '', listProviders: 0, listModels: 0, prepareCalls: 1, streamCalls: 1 }, failure: { result: null, message: PLANNER_BLOCKED_REASON, listProviders: 0, listModels: 0, prepareCalls: 1, streamCalls: 1 } }],
+  }, { success: { result: { provider: 'p-parent', model: 'parent-model' }, message: '', listProviders: 0, listModels: 0, prepareCalls: 0, streamCalls: 0 }, failure: { result: { provider: 'p-parent', model: 'parent-model' }, message: '', listProviders: 0, listModels: 0, prepareCalls: 0, streamCalls: 0 } }],
   ['PL8 False/缺失/非法开关严格走旧单 provider 且空模型零 probe', async () => {
     const modes = [
       { label: 'missing', set: false },
@@ -2746,7 +2746,7 @@ const NON_PLANNER = [
     const failureResults = await Promise.all(['fail-a', 'fail-b'].map((id) => invokeNonPlanner(failureHarness, id).then(() => 'resolved', (error) => String(error && error.message || error))))
     return { success: { routes: successPair.map(routeView), providers: successFake.state.listProviders, models: successFake.state.listModels.length, prepares: successFake.state.prepareCalls.length, streams: successFake.state.streamCalls.length }, failure: { results: failureResults, providers: failureFake.state.listProviders, models: failureFake.state.listModels.length, prepares: failureFake.state.prepareCalls.length, streams: failureFake.state.streamCalls.length } }
   }, { success: { routes: [{ provider: 'p-a', model: OTHER_MODEL, maxTokens: 512, reasoningEffort: 'low' }, { provider: 'p-a', model: OTHER_MODEL, maxTokens: 512, reasoningEffort: 'low' }], providers: 2, models: 2, prepares: 2, streams: 2 }, failure: { results: [NON_PLANNER_BLOCKED_REASON, NON_PLANNER_BLOCKED_REASON], providers: 2, models: 2, prepares: 4, streams: 4 } }],
-  ['NP10 cross=true 空 otherAgentModel 仅验证主会话 fallback，成功/失败均不枚举 provider', async () => {
+  ['NP10 cross=true 空 otherAgentModel 零探针短路仅取主会话 fallback，成功桩与失败桩均不枚举 provider', async () => {
     const run = async (finish) => {
       const timeline = []
       const fake = makePlannerFake({ providers: [{ id: 'p-a', name: 'A' }], catalogs: {}, behaviors: { 'p-main/main-model': { finish } } }, timeline)
@@ -2757,7 +2757,7 @@ const NON_PLANNER = [
       return { route: routeView(result), message, listProviders: fake.state.listProviders, listModels: fake.state.listModels.length, prepareCalls: fake.state.prepareCalls.length, streamCalls: fake.state.streamCalls.length }
     }
     return { success: await run('stop'), failure: await run('error') }
-  }, { success: { route: { provider: 'p-main', model: 'main-model', maxTokens: 512, reasoningEffort: 'low' }, message: '', listProviders: 0, listModels: 0, prepareCalls: 1, streamCalls: 1 }, failure: { route: null, message: NON_PLANNER_BLOCKED_REASON, listProviders: 0, listModels: 0, prepareCalls: 1, streamCalls: 1 } }],
+  }, { success: { route: { provider: 'p-main', model: 'main-model', maxTokens: 512, reasoningEffort: 'low' }, message: '', listProviders: 0, listModels: 0, prepareCalls: 0, streamCalls: 0 }, failure: { route: { provider: 'p-main', model: 'main-model', maxTokens: 512, reasoningEffort: 'low' }, message: '', listProviders: 0, listModels: 0, prepareCalls: 0, streamCalls: 0 } }],
   ['NP11 非 planner 外部 turn abort 原样传播且不触发 provider/listModels', async () => {
     const timeline = []
     const fake = makePlannerFake({ providers: [{ id: 'p-a', name: 'A' }], catalogs: { 'p-a': [{ id: OTHER_MODEL }] } }, timeline)
@@ -2933,12 +2933,12 @@ const badPtc = [um(), ptcStart('mx-bad', 'ask_user_question', { bad: true }), { 
 check('F-MATRIX 坏形状/未配对普通事件忽略', deriveFlowState(badNative, gateRuntime), FLOW_DEFAULT)
 check('F-MATRIX 坏形状/未配对 PTC事件忽略', deriveFlowState(badPtc, gateRuntime), FLOW_DEFAULT)
 
-// ── CFG-DEFAULT：十项默认、显式 false/空串与角色边界独立期望 ──
+// ── CFG-DEFAULT：十一项默认、显式 false/空串与角色边界独立期望 ──
 // 默认值不在测试内落第二份：插件配置类键与资产 YAML（真源）对拍，设置页独有键与 settings 生成真源对拍；键集合仍显式锁定。
-const EXPECTED_SETTINGS_KEYS = ['anchoredBootstrap', 'creativeMode', 'webFetch', 'toolPresentationMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel']
+const EXPECTED_SETTINGS_KEYS = ['anchoredBootstrap', 'creativeMode', 'webFetch', 'toolPresentationMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel', 'reviewerUsesPlannerModel']
 const defaultSettingsValues = createDefaultSettings()
-checkTrue('CFG-DEFAULT createDefaultSettings 恰十键且默认值与资产 YAML/settings 真源对拍', isDeepStrictEqual(Object.keys(defaultSettingsValues).sort(), EXPECTED_SETTINGS_KEYS.slice().sort()) && EXPECTED_SETTINGS_KEYS.every((key) => isDeepStrictEqual(defaultSettingsValues[key], Object.hasOwn(assetExtraPlanConfig, key) ? assetExtraPlanConfig[key] : DEFAULT_SETTINGS[key])))
-const explicitSettings = { anchoredBootstrap: false, creativeMode: false, webFetch: false, toolPresentationMode: 'ptc', runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: '', plannerPromptSuffix: '', exploreBudget: 1, otherAgentModel: '' }
+checkTrue('CFG-DEFAULT createDefaultSettings 恰十一键且默认值与资产 YAML/settings 真源对拍', isDeepStrictEqual(Object.keys(defaultSettingsValues).sort(), EXPECTED_SETTINGS_KEYS.slice().sort()) && EXPECTED_SETTINGS_KEYS.every((key) => isDeepStrictEqual(defaultSettingsValues[key], Object.hasOwn(assetExtraPlanConfig, key) ? assetExtraPlanConfig[key] : DEFAULT_SETTINGS[key])))
+const explicitSettings = { anchoredBootstrap: false, creativeMode: false, webFetch: false, toolPresentationMode: 'ptc', runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: '', plannerPromptSuffix: '', exploreBudget: 1, otherAgentModel: '', reviewerUsesPlannerModel: false }
 let explicitResolved = null
 try { explicitResolved = SETTINGS_CONFIG(explicitSettings) } catch {}
 const explicitResolvedValues = explicitResolved === null ? null : Object.fromEntries(Object.entries(explicitResolved).map(([key, reference]) => [key, typeof reference?.get === 'function' ? reference.get() : reference]))

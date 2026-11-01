@@ -2122,6 +2122,30 @@ checkTrue('P4-0 通知行为：同 message.id 幂等、同 job 新 id 可解锁�
   } finally { rmSync(dir, { recursive: true, force: true }) }
 }
 
+// P4-33/P4-34：cursor JSON 丢失 → 以 ledger 扫描出的最大 seq 作去重基线（[任务5] M2）
+{
+  const dir = makeTmpDir('p4-cursor-baseline')
+  try {
+    const ledger = join(dir, 'usage-ledger-v2.jsonl')
+    const cursorPath = ledger + '.cursor.json'
+    // 预置该会话两条历史行 + 一份合法 cursor，再删除 cursor 模拟「cursor JSON 丢失」。
+    writeFileSync(ledger, JSON.stringify({ schemaVersion: 2, sessionId: 'p4-restore', seq: 3 }) + '\n' + JSON.stringify({ schemaVersion: 2, sessionId: 'p4-restore', seq: 5 }) + '\n', 'utf8')
+    writeFileSync(cursorPath, JSON.stringify({ 'p4-restore': { seq: 5, index: 2 } }), 'utf8')
+    rmSync(cursorPath, { force: true })
+    const restoreEvents = [usageRowE(3, 1, 1, 1, 'restore-a', {}), usageRowE(5, 2, 2, 2, 'restore-b', {})]
+    const h = makeHarness({ anchoredBootstrap: false, agents: P4_USAGE_AGENTS, usageLedger: { enabled: true, path: ledger } })
+    const restoreAgent = childWithId('p4-restore', restoreEvents)
+    agentCreatedListener(h, restoreAgent)
+    checkTrue('P4-33 cursor JSON 丢失后同 sessionId fold：ledger 扫描恢复 seq 基线、历史行零重复追加且无新事件不写 cursor 文件',
+      readLedgerRows(ledger).length === 2 && !existsSync(cursorPath))
+    restoreEvents.push(usageRowE(6, 3, 3, 3, 'restore-c', {}))
+    disposedListener(h, restoreAgent)
+    const table = JSON.parse(readFileSync(cursorPath, 'utf8'))
+    checkTrue('P4-34 恢复基线后仅追加新事件一行且 cursor 写回新事件 seq',
+      readLedgerRows(ledger).length === 3 && table['p4-restore'] !== undefined && table['p4-restore'].seq === 6)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+}
+
 // P4-32：0 字节 cursor → 空表自愈（一次性提示）+ 本次 fold 重建 cursor JSON
 {
   const dir = makeTmpDir()
@@ -3102,7 +3126,7 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
   // 夹具 = profile patch 内的 settings 行（当前载体：captureRowSettings 按
   // id='dsh-extra-plan-settings' + config.<key> 定位），exploreBudget 取与内置默认 18
   // 不同的值，确保「读到文件」与「回退 fallback」可区分。
-  const lcFixture = (anchored, budget) => '- id: dsh-extra-plan-settings\n  name: dsh-extra-plan/settings\n  config:\n    anchoredBootstrap: ' + anchored + '\n    creativeMode: false\n    runcodeCatchGate: true\n    crossProviderPlannerModel: false\n    plannerModel: deepseek-v4-pro\n    plannerPromptSuffix: probe\n    exploreBudget: ' + budget + '\n    otherAgentModel: ""\n'
+  const lcFixture = (anchored, budget) => '- id: dsh-extra-plan-settings\n  name: dsh-extra-plan/settings\n  config:\n    anchoredBootstrap: ' + anchored + '\n    creativeMode: false\n    runcodeCatchGate: true\n    crossProviderPlannerModel: false\n    plannerModel: deepseek-v4-pro\n    plannerPromptSuffix: probe\n    exploreBudget: ' + budget + '\n    otherAgentModel: ""\n    reviewerUsesPlannerModel: false\n'
   const lcOffFile = join(lcDir, 'agent-off.cordis.yml')
   const lcOnFile = join(lcDir, 'agent-on.cordis.yml')
   writeFileSync(lcOffFile, lcFixture(false, 7), 'utf8')
@@ -3144,8 +3168,8 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
   // ⑤ 读盘失败（文件不存在）→ 构造期回退 fallbackDefaults 且不抛（自带一次 console.warn 防抖）
   const lcMissing = createLiveConfig({ configPath: join(lcDir, 'missing.cordis.yml'), getPathContext: () => lcPathContext, fallbackDefaults: { exploreBudget: 18 } })
   check('LC5 文件不存在 → 构造期回退 fallback exploreBudget=18（不抛）', lcMissing.exploreBudget, 18)
-   const liveGetterNames = ['anchoredBootstrap', 'creativeMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel']
-   checkTrue('LC6 live-config 仅暴露八项热读 getter，webFetch/toolPresentationMode 不再作为运行时 getter', liveGetterNames.every((key) => key in lcExplicit) && !('webFetch' in lcExplicit) && !('toolPresentationMode' in lcExplicit))
+   const liveGetterNames = ['anchoredBootstrap', 'creativeMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel', 'reviewerUsesPlannerModel']
+   checkTrue('LC6 live-config 仅暴露九项热读 getter，webFetch/toolPresentationMode 不再作为运行时 getter', liveGetterNames.every((key) => key in lcExplicit) && !('webFetch' in lcExplicit) && !('toolPresentationMode' in lcExplicit))
 
   rmSync(lcDir, { recursive: true, force: true })
 }
@@ -3254,24 +3278,83 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
   const configBody = settingsCodeOnly.slice(settingsCodeOnly.indexOf('export const Config = z.object('), settingsCodeOnly.indexOf('})', settingsCodeOnly.indexOf('export const Config = z.object(')))
   const extraDefinitions = SETTING_DEFINITIONS_E.filter((item) => item.group === SETTING_GROUPS_E.EXTRA_PLAN)
   const exploreDefinition = SETTING_DEFINITIONS_E.find((item) => item.key === 'exploreBudget')
-  checkTrue('T9-3l settings 行 Config 由 10 项 descriptor 映射构造，extra-plan 8 项均经 schemaField volatile',
-    extraDefinitions.length === 8 && settingsCodeOnly.includes('function schemaField(definition)') && settingsCodeOnly.includes('SETTING_DEFINITIONS.map') && settingsCodeOnly.includes('return field.default(definition.defaultValue).volatile()'))
+  checkTrue('T9-3l settings 行 Config 由 11 项 descriptor 映射构造，extra-plan 9 项均经 schemaField volatile',
+    extraDefinitions.length === 9 && settingsCodeOnly.includes('function schemaField(definition)') && settingsCodeOnly.includes('SETTING_DEFINITIONS.map') && settingsCodeOnly.includes('return field.default(definition.defaultValue).volatile()'))
   checkTrue('T9-3m exploreBudget descriptor 为整数字段默认 18，settings schema 统一使用 z.number().step(1).min(1)',
     exploreDefinition !== undefined && exploreDefinition.scalarType === 'integer' && exploreDefinition.defaultValue === 18 && exploreDefinition.ui.min === 1 && exploreDefinition.ui.step === 1 && settingsCodeOnly.includes('field = z.number().step(1).min(1)'))
   const settingsCode = settingsCodeOnly
   checkTrue('T9-3n settings.js 代码段无 settings.register / ExtraPlanSettingsSchema / 旧预设目录写入',
     !settingsCode.includes('settings.register') && !settingsCode.includes('ExtraPlanSettingsSchema') &&
     !settingsCode.includes('.agent-presets') && settingsCode.includes("child.settings.configure({ auto: false }, ctx.fiber)"))
-  check('T9-3o descriptor 分组：extra-plan 恰 8 项、host-rows 恰 2 项', EXTRA_PLAN_SETTING_DEFINITIONS_E.length + '|' + SETTING_DEFINITIONS_E.filter((item) => item.group === SETTING_GROUPS_E.HOST_ROWS).length, '8|2')
+  check('T9-3o descriptor 分组：extra-plan 恰 9 项、host-rows 恰 2 项', EXTRA_PLAN_SETTING_DEFINITIONS_E.length + '|' + SETTING_DEFINITIONS_E.filter((item) => item.group === SETTING_GROUPS_E.HOST_ROWS).length, '9|2')
   checkTrue('T9-3p 新载体行 id 常量与声明行一致', SETTINGS_ROW_ID_E === 'dsh-extra-plan-settings' && PRESET_ROW_ID_E === 'extra-plan-preset-sync')
    // ④ 当前写链只经 settings row；旧 preset-sync helper/公开写入入口已退役。
    const presetSyncSource = readFileSyncE(fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/preset-sync.js', import.meta.url)), 'utf8')
    const retiredPresetSyncExports = [['restate', 'Preset', 'Plugins'], ['restate', 'Preset', 'SyncConfig'], ['active', 'Preset', 'SyncRow'], ['public', 'Config', 'FromRows']].map((parts) => parts.join(''))
    checkTrue('T9-3q preset-sync 仅保留 raw legacy 读取与 mountPresetSync，旧 helper/export 均移除', presetSyncSource.includes('export function readLegacyState') && presetSyncSource.includes('export function mountPresetSync') && !presetSyncSource.includes('export function apply') && retiredPresetSyncExports.every((name) => !presetSyncSource.includes(name)))
+  // ── ①c 空串零探针短路与验收者 pro 入口（[任务5] M1）──────────────────────
+  {
+    const mrRouting = (options) => createModelRouting({
+      getPlannerModel: () => options.plannerModel,
+      getOtherAgentModel: () => options.otherAgentModel,
+      getCrossProviderPlannerModel: () => options.cross,
+      getLlm: () => options.llm,
+      getAgents: () => options.agents,
+      getDiagPath: () => makeTmpDir('mr5-diag.jsonl'),
+    })
+    const mrParent = { session: { header: { id: 'mr5-parent' }, requestHeader: () => ({ config: { provider: 'mr5-provider', model: 'mr5-parent-model', maxTokens: 4096 } }) } }
+    const mrAgents = { get: (id) => id === 'mr5-parent' ? mrParent : undefined }
+    const mrChildAgent = (id, preset) => ({ session: { header: { id, origin: 'subagent', delegationDepth: 1, parentSession: 'mr5-parent', agentPreset: preset } } })
+    const mrCountingLlm = (counts) => ({
+      listProviders: () => { counts.listProviders += 1; return Promise.resolve([]) },
+      listModels: () => { counts.listModels += 1; return Promise.resolve([]) },
+      prepareCall: async () => { counts.prepareCall += 1; return { config: {}, stream: async function* () { yield { type: 'finish', reason: { kind: 'stop' } } } } },
+    })
+    const mrMessageOf = (error) => String(error !== null && error !== undefined && error.message !== undefined ? error.message : error)
+    // plannerModel 空串 + cross 为真：父 provider/model 即最终路由，零 provider 枚举/零探针。
+    const mrPlanCounts = { listProviders: 0, listModels: 0, prepareCall: 0 }
+    const mrPlanRouting = mrRouting({ plannerModel: '', otherAgentModel: '', cross: true, llm: mrCountingLlm(mrPlanCounts), agents: mrAgents })
+    let mrPlanEntry = null
+    let mrPlanError = ''
+    try { mrPlanEntry = await mrPlanRouting.resolvePlannerEntry(mrChildAgent('mr5-planner', PLANNER_PRESET)) } catch (error) { mrPlanError = mrMessageOf(error) }
+    checkTrue('MR6 plannerModel 空串且 cross 为真：零 llm 调用（listProviders/listModels/prepareCall 均 0）直接返回父 provider/model 且不抛',
+      mrPlanError === '' && mrPlanEntry !== null && mrPlanEntry.provider === 'mr5-provider' && mrPlanEntry.model === 'mr5-parent-model' && mrPlanCounts.listProviders === 0 && mrPlanCounts.listModels === 0 && mrPlanCounts.prepareCall === 0)
+    // otherAgentModel 空串 + cross 为真：同样零 llm 调用，父 fallback 即最终路由，不抛 NON_PLANNER_BLOCKED_REASON。
+    const mrOtherCounts = { listProviders: 0, listModels: 0, prepareCall: 0 }
+    const mrOtherRouting = mrRouting({ plannerModel: '', otherAgentModel: '', cross: true, llm: mrCountingLlm(mrOtherCounts), agents: mrAgents })
+    let mrOtherEntry = null
+    let mrOtherError = ''
+    try { mrOtherEntry = await mrOtherRouting.resolveOtherAgentEntry(mrChildAgent('mr5-other', 'extra-plan-executor'), undefined, false) } catch (error) { mrOtherError = mrMessageOf(error) }
+    checkTrue('MR7 otherAgentModel 空串且 cross 为真：零 llm 调用返回父 fallback 且不抛 NON_PLANNER_BLOCKED_REASON',
+      mrOtherError !== NON_PLANNER_BLOCKED_REASON && mrOtherEntry !== null && mrOtherEntry.provider === 'mr5-provider' && mrOtherEntry.model === 'mr5-parent-model' && mrOtherCounts.listProviders === 0 && mrOtherCounts.listModels === 0 && mrOtherCounts.prepareCall === 0)
+    // 验收者开关为真：复用 plannerModel 与跨提供方解析结果（maxTokens 仍取父 fallback）。
+    const mrReviewerRouting = mrRouting({ plannerModel: 'mr5-planner-pro', otherAgentModel: '', cross: true, agents: mrAgents, llm: {
+      listProviders: () => Promise.resolve([{ id: 'mr5-pro-provider', name: 'pro' }]),
+      listModels: () => Promise.resolve([{ id: 'mr5-planner-pro' }]),
+      prepareCall: async (config) => ({ config, stream: async function* () { yield { type: 'finish', reason: { kind: 'stop' } } } }),
+    } })
+    let mrReviewerEntry = null
+    let mrReviewerError = ''
+    try { mrReviewerEntry = await mrReviewerRouting.resolveReviewerEntry(mrChildAgent('mr5-reviewer', 'extra-plan-reviewer'), undefined) } catch (error) { mrReviewerError = mrMessageOf(error) }
+    checkTrue('MR8 reviewerUsesPlannerModel 为真：resolveReviewerEntry 返回 planner 侧模型与已完成探针的 provider',
+      mrReviewerError === '' && mrReviewerEntry !== null && mrReviewerEntry.model === 'mr5-planner-pro' && mrReviewerEntry.provider === 'mr5-pro-provider')
+    // 解析桩 rejection：不得把 rejection 抛给调用方，统一兜底父 fallback。
+    const mrReviewerFailRouting = mrRouting({ plannerModel: 'mr5-planner-pro-fail', otherAgentModel: '', cross: true, agents: mrAgents, llm: {
+      listProviders: () => Promise.resolve([{ id: 'mr5-pro-provider', name: 'pro' }]),
+      listModels: () => Promise.resolve([{ id: 'mr5-planner-pro-fail' }]),
+      prepareCall: async () => { throw new Error('mr5 probe boom') },
+    } })
+    let mrReviewerFailEntry = null
+    let mrReviewerFailError = ''
+    try { mrReviewerFailEntry = await mrReviewerFailRouting.resolveReviewerEntry(mrChildAgent('mr5-reviewer-fail', 'extra-plan-reviewer'), undefined) } catch (error) { mrReviewerFailError = mrMessageOf(error) }
+    checkTrue('MR9 解析桩 rejection 时 resolveReviewerEntry 兜底父 fallback 且不抛出',
+      mrReviewerFailError === '' && mrReviewerFailEntry !== null && mrReviewerFailEntry.provider === 'mr5-provider' && mrReviewerFailEntry.model === 'mr5-parent-model')
+  }
+
   const settingsModuleForT9 = await import('../../plugins/dsh-extra-plan/lib/settings.js')
-  const T9_SETTING_KEYS = ['anchoredBootstrap', 'creativeMode', 'webFetch', 'toolPresentationMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel']
-  const t9Target = { anchoredBootstrap: false, creativeMode: true, webFetch: true, toolPresentationMode: 'ptc', runcodeCatchGate: true, crossProviderPlannerModel: true, plannerModel: 't9-planner', plannerPromptSuffix: 't9-suffix', exploreBudget: 9, otherAgentModel: 't9-other' }
-  const t9Initial = { anchoredBootstrap: true, creativeMode: false, webFetch: false, toolPresentationMode: 'native', runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: 'initial-planner', plannerPromptSuffix: 'initial-suffix', exploreBudget: 8, otherAgentModel: 'initial-other' }
+  const T9_SETTING_KEYS = ['anchoredBootstrap', 'creativeMode', 'webFetch', 'toolPresentationMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel', 'reviewerUsesPlannerModel']
+  const t9Target = { anchoredBootstrap: false, creativeMode: true, webFetch: true, toolPresentationMode: 'ptc', runcodeCatchGate: true, crossProviderPlannerModel: true, plannerModel: 't9-planner', plannerPromptSuffix: 't9-suffix', exploreBudget: 9, otherAgentModel: 't9-other', reviewerUsesPlannerModel: true }
+  const t9Initial = { anchoredBootstrap: true, creativeMode: false, webFetch: false, toolPresentationMode: 'native', runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: 'initial-planner', plannerPromptSuffix: 'initial-suffix', exploreBudget: 8, otherAgentModel: 'initial-other', reviewerUsesPlannerModel: false }
   const t9Dir = makeTmpDir('dsh-g3-t9-settings')
   try {
     const t9DocumentPath = join(t9Dir, 'cordis.patch.yml')
@@ -3354,7 +3437,7 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
     const t9AfterValues = t9Edit === undefined ? undefined : Object.fromEntries(T9_SETTING_KEYS.map((key) => [key, t9Edit.after[key]]))
     const t9Observation = { routePath: t9Route?.path, injects: t9Injects, policyCount: t9Policies.length, editCount: t9Editor.state.edits.length, entryMatch: t9Edit?.entry === t9Row.entry, changeType: typeof t9Edit?.change, targetKeys: Object.keys(t9Target).sort(), expectedKeys: T9_SETTING_KEYS.slice().sort(), after: t9AfterValues, putStatus: t9Put?.status, putValues: t9Put?.body?.values, putBody: t9Put?.body, getStatus: t9Get?.status, getValues: t9Get?.body?.values, getBody: t9Get?.body, rowConfig: t9Row.entry.options.config }
     console.log('T9-3r_BEHAVIOR ' + JSON.stringify(t9Observation))
-    checkTrue('T9-3r settings API 行为：唯一 row.entry edit、完整十键参数与写链结果', t9Route !== undefined && t9Route.path === '/api/dsh-extra-plan-settings' && t9Injects.includes('webServer') && t9Policies.length === 1 && t9Editor.state.edits.length === 1 && t9Edit.entry === t9Row.entry && typeof t9Edit.change === 'function' && JSON.stringify(Object.keys(t9Target).sort()) === JSON.stringify(T9_SETTING_KEYS.slice().sort()) && isDeepStrictEqual(t9AfterValues, t9Target) && t9Put.body !== null && isDeepStrictEqual(t9Put.body.values, t9Target) && t9Get.body !== null && isDeepStrictEqual(t9Get.body.values, t9Target))
+    checkTrue('T9-3r settings API 行为：唯一 row.entry edit、完整十一键参数与写链结果', t9Route !== undefined && t9Route.path === '/api/dsh-extra-plan-settings' && t9Injects.includes('webServer') && t9Policies.length === 1 && t9Editor.state.edits.length === 1 && t9Edit.entry === t9Row.entry && typeof t9Edit.change === 'function' && JSON.stringify(Object.keys(t9Target).sort()) === JSON.stringify(T9_SETTING_KEYS.slice().sort()) && isDeepStrictEqual(t9AfterValues, t9Target) && t9Put.body !== null && isDeepStrictEqual(t9Put.body.values, t9Target) && t9Get.body !== null && isDeepStrictEqual(t9Get.body.values, t9Target))
   } finally {
     rmSync(t9Dir, { recursive: true, force: true })
   }

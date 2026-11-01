@@ -75,6 +75,7 @@ const complete = {
   plannerPromptSuffix: 'authority-suffix',
   exploreBudget: 31,
   otherAgentModel: 'authority-other',
+  reviewerUsesPlannerModel: false,
   gateWords: gate,
 }
 
@@ -293,8 +294,8 @@ function projectionOf(result) {
     gateWords: structuredClone(findPluginRow(plugins, 'extra-plan').config.gateWords),
   }
 }
-const expectedKeys = 'anchoredBootstrap|creativeMode|webFetch|toolPresentationMode|runcodeCatchGate|crossProviderPlannerModel|plannerModel|plannerPromptSuffix|exploreBudget|otherAgentModel'
-check('V04 descriptor 十键顺序与稳定 settings locator', SETTING_DEFINITIONS.length === 10 && SETTING_DEFINITIONS.map((item) => item.key).join('|') === expectedKeys && SETTING_DEFINITIONS.every((item) => item.rowLocator.rowId === SETTINGS_ROW_ID))
+const expectedKeys = 'anchoredBootstrap|creativeMode|webFetch|toolPresentationMode|runcodeCatchGate|crossProviderPlannerModel|plannerModel|plannerPromptSuffix|exploreBudget|otherAgentModel|reviewerUsesPlannerModel'
+check('V04 descriptor 十一键顺序与稳定 settings locator', SETTING_DEFINITIONS.length === 11 && SETTING_DEFINITIONS.map((item) => item.key).join('|') === expectedKeys && SETTING_DEFINITIONS.every((item) => item.rowLocator.rowId === SETTINGS_ROW_ID))
 const jsExpressionMarkers = []
 const collectJsExpressionMarkers = (node) => {
   if (node === null || typeof node !== 'object') return
@@ -310,7 +311,7 @@ const legacyBoth = patchOf({ sync: true, body: true })
 const legacyState = readLegacyState(legacyBoth)
 check('V04 旧公开行优先：投影/词表/旧 body 可解析且来源准确', legacyState.projection.webFetch === true && legacyState.projectionSources.webFetch === 'legacy-projection' && legacyState.gateWordsSource === 'legacy-projection' && legacyState.legacyPlugins !== undefined)
 const authority = resolveUnifiedConfig({ settingsValues: complete, readPatch: () => legacyBoth })
-check('V04 完整当前值优先于旧冲突，十键与词表均保留', authority.values.plannerModel === complete.plannerModel && authority.values.exploreBudget === complete.exploreBudget && authority.values.webFetch === false && authority.values.toolPresentationMode === 'native' && authority.sources.webFetch === 'settings-row' && authority.sources.gateWords === 'settings-row')
+check('V04 完整当前值优先于旧冲突，十一键与词表均保留', authority.values.plannerModel === complete.plannerModel && authority.values.exploreBudget === complete.exploreBudget && authority.values.webFetch === false && authority.values.toolPresentationMode === 'native' && authority.sources.webFetch === 'settings-row' && authority.sources.gateWords === 'settings-row')
 
 const partial = resolveUnifiedConfig({ settingsValues: { plannerModel: complete.plannerModel }, readPatch: () => legacyBoth })
 check('V04 部分当前值回退旧投影再到旧 body/默认，来源不混淆', partial.values.plannerModel === complete.plannerModel && partial.values.webFetch === true && partial.values.toolPresentationMode === 'ptc' && partial.values.exploreBudget === 7 && partial.sources.webFetch === 'legacy-projection' && partial.sources.exploreBudget === 'legacy-preset')
@@ -336,7 +337,7 @@ check('V04 非法旧 gateWords 仅诊断/skip，不求值且回资产默认', in
 const completeRun = await runSync(complete, '')
 check('V04 完整合法当前值同步 idle，真实 editor 零 edit', completeRun.result.action === 'idle' && completeRun.editor.state.edits.length === 0)
 const partialRun = await runSync({ plannerModel: complete.plannerModel }, legacyBoth)
-check('V04 旧值迁移真实 apply 只 edit 唯一 settings entry 且保留完整十键', partialRun.result.action === 'written' && partialRun.editor.state.edits.length === 1 && partialRun.editor.state.edits[0].id === SETTINGS_ROW_ID && Object.keys(partialRun.editor.state.edits[0].config).filter((key) => key !== 'gateWords').length === 10 && partialRun.editor.state.edits[0].config.gateWords !== undefined)
+check('V04 旧值迁移真实 apply 只 edit 唯一 settings entry 且保留完整十一键', partialRun.result.action === 'written' && partialRun.editor.state.edits.length === 1 && partialRun.editor.state.edits[0].id === SETTINGS_ROW_ID && Object.keys(partialRun.editor.state.edits[0].config).filter((key) => key !== 'gateWords').length === 11 && partialRun.editor.state.edits[0].config.gateWords !== undefined)
 const projectionRun = await runSync({}, projectionOnly)
 check('V04 仅旧投影实际 apply 目标为唯一 settings 行，旧文本未变', projectionRun.result.action === 'written' && projectionRun.editor.state.edits.length === 1 && projectionRun.editor.state.edits[0].id === SETTINGS_ROW_ID && projectionOnly === patchOf({ sync: true }))
 const bodyRun = await runSync({}, bodyOnly)
@@ -527,7 +528,7 @@ for (const { caseName, settingsValues, patch, expectedEditCount, expectedGlobalA
       ? run.editor.state.rows.slice(1).map((row) => row.entry.options.id).join('|') === oldIds.join('|')
       : run.editor.state.rows.length === 1 && run.editor.state.rows[0].entry.options.id === SETTINGS_ROW_ID
     output.structured('K03', { case: caseName, mode, expectedGlobalAfter, actualGlobalAfter, differingKeys, editCount: run.editor.state.edits.length, expectedEditCount, editedIds, legacyStoreDeepEqual, deepEqual: globalDeepEqual }, { case: caseName, mode, editCount: run.editor.state.edits.length, expectedEditCount, differingKeys, editedIds, deepEqual: globalDeepEqual, status: globalDeepEqual ? 'PASS' : 'FAIL' }, { failure: !globalDeepEqual })
-    check('V04 Q03 ' + caseName + ' ' + mode + ' 完整十项+gateWords实际全局与独立期望deep-equal', globalDeepEqual)
+    check('V04 Q03 ' + caseName + ' ' + mode + ' 完整十一项+gateWords实际全局与独立期望deep-equal', globalDeepEqual)
     check('V04 Q03 ' + caseName + ' ' + mode + ' 实际全局键集合与独立期望一致', globalKeySetEqual)
     check('V04 Q03 ' + caseName + ' ' + mode + ' 旧store含id/name/config/gateWords/plugins且before/after deep-equal', shapeOk && legacyStoreDeepEqual && run.legacyBefore.length === legacyRows.length)
     check('V04 Q03 ' + caseName + ' ' + mode + ' configuration树与撤出状态准确，编辑仅全局ID', configTreeOk && run.editor.state.edits.length === expectedEditCount && editedIds.every((id) => id === SETTINGS_ROW_ID) && run.editor.state.rejectedEdits.length === 0)

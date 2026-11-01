@@ -603,8 +603,8 @@ if (yamlResolution.module === null) {
   check('CLI 显式 --host-root+--profile 仅dryRun且零写', cliDryRun.status === 0 && cliDryRun.error === undefined && readFileSync(qqPatch(hDryRun), 'utf8') === dryBefore && bakCount(qqProfileDir(hDryRun)) === dryBackups && !existsSync(qqExtraPlanDir(hDryRun)))
 
   // ⑪ Web documentPath 真源、双锚点与完整快照局部写回
-  const syncKeys = ['anchoredBootstrap', 'creativeMode', 'webFetch', 'toolPresentationMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel']
-  const syncValues = { anchoredBootstrap: false, creativeMode: true, webFetch: true, toolPresentationMode: 'ptc', runcodeCatchGate: true, crossProviderPlannerModel: true, plannerModel: 'planner-sync-test', plannerPromptSuffix: 'sync-suffix-test', exploreBudget: 37, otherAgentModel: 'other-sync-test' }
+  const syncKeys = ['anchoredBootstrap', 'creativeMode', 'webFetch', 'toolPresentationMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel', 'reviewerUsesPlannerModel']
+  const syncValues = { anchoredBootstrap: false, creativeMode: true, webFetch: true, toolPresentationMode: 'ptc', runcodeCatchGate: true, crossProviderPlannerModel: true, plannerModel: 'planner-sync-test', plannerPromptSuffix: 'sync-suffix-test', exploreBudget: 37, otherAgentModel: 'other-sync-test', reviewerUsesPlannerModel: true }
   const syncGateWords = { routeDirect: '甲', routePlan: '乙', routeDisagree: '丙', approvalApprove: '丁', approvalReplan: '戊', purposeRefine: '己', purposeRedo: '庚' }
   const syncSnapshot = { values: syncValues, gateWords: syncGateWords }
   function makeSyncDocument(home) {
@@ -644,7 +644,7 @@ if (yamlResolution.module === null) {
   const firstSync = qqbotSync.writeQqbotSettingsPatch(syncTarget, syncSnapshot, { pathContext: contextOf(syncHome) })
   const firstText = readFileSync(join(syncTarget, 'cordis.patch.yml'), 'utf8')
   const firstConfig = syncConfigOf(firstText)
-  check('SYNC 缺 settings 行时末尾追加 id 行（0.2.1：不写 override）且完整十项/gateWords 深等', firstSync.status === 'applied' && isDeepStrictEqual(syncProjection(firstConfig), { ...syncValues, gateWords: syncGateWords }) && firstText.includes('globalThis.__sync = true') && firstText.includes('user-row'))
+  check('SYNC 缺 settings 行时末尾追加 id 行（0.2.1：不写 override）且完整十一项/gateWords 深等', firstSync.status === 'applied' && isDeepStrictEqual(syncProjection(firstConfig), { ...syncValues, gateWords: syncGateWords }) && firstText.includes('globalThis.__sync = true') && firstText.includes('user-row'))
   const firstBackupCount = syncBackupCount(syncTarget)
   const repeatSync = qqbotSync.writeQqbotSettingsPatch(syncTarget, syncSnapshot, { pathContext: contextOf(syncHome) })
   check('SYNC 同字节重复写返回 idempotent 且备份数不增加', repeatSync.status === 'idempotent' && readFileSync(join(syncTarget, 'cordis.patch.yml'), 'utf8') === firstText && syncBackupCount(syncTarget) === firstBackupCount)

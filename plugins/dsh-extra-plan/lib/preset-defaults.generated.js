@@ -10,7 +10,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   "plannerModel": "deepseek-v4-pro",
   "plannerPromptSuffix": "你的深度思考部分需要以\"好了，现在我以全局视角来看待这个问题\"开头",
   "exploreBudget": 18,
-  "otherAgentModel": ""
+  "otherAgentModel": "",
+  "reviewerUsesPlannerModel": false
 })
 export const DEFAULT_EXPLORE_BUDGET = DEFAULT_SETTINGS.exploreBudget
 export const DEFAULT_PLANNER_PROMPT_SUFFIX = DEFAULT_SETTINGS.plannerPromptSuffix

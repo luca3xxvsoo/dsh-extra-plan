@@ -1,5 +1,5 @@
 // dsh-extra-plan-settings 的唯一全局管理入口。
-// settings 行 config 是全部 10 个权威值的载体；gateWords 作为兼容数据同样由该 owner 严格保留。
+// settings 行 config 是全部 11 个权威值的载体；gateWords 作为兼容数据同样由该 owner 严格保留。
 // 本入口统一拥有 settings/API/carrier、旧值迁移与 profileSync；AgentPreset 仅由 preset-sync 初始/结构路径管理。
 // 两项宿主设置只从权威值派生到内存 definition，不再写独立公开投影行。
 
@@ -226,7 +226,7 @@ function schemaField(definition) {
   return field.default(definition.defaultValue).volatile()
 }
 
-/** 10 项 settings 全局行 Config；volatile 字段由官方 ConfigForms 投影。 */
+/** 11 项 settings 全局行 Config；volatile 字段由官方 ConfigForms 投影。 */
 export const Config = z.object(Object.fromEntries(
   SETTING_DEFINITIONS.map((definition) => [definition.key, schemaField(definition)]),
 ))
@@ -376,7 +376,7 @@ function readRawPatch(editor, pathContext) {
   return rawPatchInfo(editor, pathContext).text
 }
 
-/** 固定十项 values 与七键 gateWords 的规范快照；changed key 不参与单独哈希。 */
+/** 固定十一项 values 与七键 gateWords 的规范快照；changed key 不参与单独哈希。 */
 export function stableSnapshot(snapshot) {
   if (snapshot === null || typeof snapshot !== 'object' || Array.isArray(snapshot)) throw new Error('invalid-snapshot')
   const sourceValues = snapshot.values !== undefined ? snapshot.values : snapshot

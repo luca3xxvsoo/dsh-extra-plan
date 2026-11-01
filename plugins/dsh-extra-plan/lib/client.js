@@ -20,6 +20,7 @@ window.__ModuleLoader__.load({
       plannerPromptSuffix: "pro规划 | 额外引导",
       exploreBudget: "pro规划 | 探查额度",
       otherAgentModel: "其他子代理 | 使用模型",
+      reviewerUsesPlannerModel: "验收者 | 使用pro模型",
       anchoredBootstrap: "首轮引导开关",
       creativeMode: "创造模式开关",
       runcodeCatchGate: "run_code 容错检查",
@@ -48,6 +49,7 @@ window.__ModuleLoader__.load({
       plannerPromptSuffix: "Pro Planner | Extra Prompt Suffix",
       exploreBudget: "Pro Planner | Explore Budget",
       otherAgentModel: "Other Agents | Model",
+      reviewerUsesPlannerModel: "Reviewer | Use Pro Model",
       anchoredBootstrap: "Anchored Bootstrap",
       creativeMode: "Creative Mode",
       runcodeCatchGate: "RunCode Catch Guard",
@@ -77,6 +79,7 @@ window.__ModuleLoader__.load({
       {"key":"plannerPromptSuffix","control":"textarea","locale":"plannerPromptSuffix","section":"pro","hint":"在主会话发送给pro规划的任务结尾，拼接上的内容。可能能增加pro规划的智商（未验证）。可置空 ｜ 立即生效"},
       {"key":"exploreBudget","control":"number","locale":"exploreBudget","section":"pro","min":1,"step":1,"hint":"允许pro规划调用工具的次数，避免后台无限制调用。同时限制一次runcode内可调用的工具上限数 ｜ 立即生效"},
       {"key":"otherAgentModel","control":"text","locale":"otherAgentModel","section":"pro","hint":"其他子代理默认使用模型。未匹配/置空时：使用主会话模型 ｜ 新会话/新子代理生效"},
+      {"key":"reviewerUsesPlannerModel","control":"select","options":[true,false],"locale":"reviewerUsesPlannerModel","section":"pro","hint":"验收者是否改用pro规划的模型。默认关闭 ｜ 新子代理生效"},
     ]);
 
     const HOST_ROW_FIELDS = Object.freeze([

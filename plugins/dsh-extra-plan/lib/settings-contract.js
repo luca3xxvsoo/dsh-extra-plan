@@ -22,7 +22,7 @@ export const LEGACY_PRESET_ROW_ID = 'preset-extra-plan'
 export const HOST_ROW_IDS = Object.freeze({ webFetch: 'tool-web', toolPresentationMode: 'tool-presentation' })
 /** 投影落点的叶键（宿主行 config 内键名）：源模板与投影共用同一份 leaf 名，不新增第二份键名清单。 */
 export const HOST_ROW_LEAF_KEYS = Object.freeze({ webFetch: 'fetch', toolPresentationMode: 'mode' })
-/** descriptor 分组（消费方）：10 项统一落 settings 全局行；2 项另派生到内存 definition。 */
+/** descriptor 分组（消费方）：11 项统一落 settings 全局行；2 项另派生到内存 definition。 */
 export const SETTING_GROUPS = Object.freeze({ EXTRA_PLAN: 'extra-plan', HOST_ROWS: 'host-rows' })
 
 const setting = (definition) => Object.freeze({
@@ -50,7 +50,7 @@ const setting = (definition) => Object.freeze({
 })
 
 /**
- * 权威值落点：settings 行（10 项统一）config.<key>，rowName 精确过滤规范名
+ * 权威值落点：settings 行（11 项统一）config.<key>，rowName 精确过滤规范名
  * （旧 @local/dsh-extra-plan/settings 别名行不参与候选；descriptor 的 locatorAliases 均为空）。
  */
 export const settingsRowLocator = (key, path) => ({
@@ -142,12 +142,17 @@ export const SETTING_DEFINITIONS = Object.freeze([
     validator: isString, normalize: (value) => value.trim(),
     ui: { control: 'text', locale: 'otherAgentModel', section: 'pro', hint: '其他子代理默认使用模型。未匹配/置空时：使用主会话模型 ｜ 新会话/新子代理生效' }, locatorAliases: [],
   }),
+  setting({
+    key: 'reviewerUsesPlannerModel', group: SETTING_GROUPS.EXTRA_PLAN, scalarType: 'boolean', defaultValue: DEFAULT_SETTINGS.reviewerUsesPlannerModel,
+    sourceLocator: sourceLocator('reviewerUsesPlannerModel'), rowLocator: settingsRowLocator('reviewerUsesPlannerModel'),
+    validator: isBoolean, ui: { control: 'select', options: [true, false], locale: 'reviewerUsesPlannerModel', section: 'pro', hint: '验收者是否改用pro规划的模型。默认关闭 ｜ 新子代理生效' }, locatorAliases: [],
+  }),
 ])
 
 export function createDefaultSettings() {
   return Object.fromEntries(SETTING_DEFINITIONS.map((definition) => [definition.key, DEFAULT_SETTINGS[definition.key]]))
 }
-/** 8 项 UI 设置（权威值落 settings 行；= live-config 热读键集合）。 */
+/** 9 项 UI 设置（权威值落 settings 行；= live-config 热读键集合）。 */
 export const EXTRA_PLAN_SETTING_DEFINITIONS = Object.freeze(
   SETTING_DEFINITIONS.filter((item) => item.group === SETTING_GROUPS.EXTRA_PLAN),
 )

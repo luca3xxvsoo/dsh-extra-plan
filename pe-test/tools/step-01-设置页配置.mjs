@@ -59,7 +59,7 @@ const INSTALL_ANCHOR = OFFICIAL_ROOT === undefined ? undefined : join(OFFICIAL_R
 
 const patchText = readFileSync(join(REPO_ROOT, 'plugins/dsh-extra-plan/cordis.patch.yml'), 'utf8')
 const clientText = readFileSync(join(REPO_ROOT, 'plugins/dsh-extra-plan/lib/client.js'), 'utf8')
-const keys = ['anchoredBootstrap', 'creativeMode', 'webFetch', 'toolPresentationMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel']
+const keys = ['anchoredBootstrap', 'creativeMode', 'webFetch', 'toolPresentationMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel', 'reviewerUsesPlannerModel']
 
 let pass = 0
 let fail = 0
@@ -113,7 +113,7 @@ const configKeySetMatches = JSON.stringify([...configKeys].sort()) === JSON.stri
 check('V03 patch 顶层公开 insert 恰一行且稳定 id=dsh-extra-plan-settings', Array.isArray(patch) && patch.length === 1 && Array.isArray(patch[0].insert) && patch[0].insert.length === 1 && patch[0].insert[0].id === 'dsh-extra-plan-settings')
 
 
-check('V03 descriptor 与 Config 实际字段集合均恰10项且包含两项宿主值', descriptorKeys.length === 10 && configKeys.length === 10 && configKeySetMatches && JSON.stringify([...configKeys].sort()) === JSON.stringify(keys.slice().sort()) && descriptorKeys.includes('webFetch') && descriptorKeys.includes('toolPresentationMode'))
+check('V03 descriptor 与 Config 实际字段集合均恰11项且包含两项宿主值', descriptorKeys.length === 11 && configKeys.length === 11 && configKeySetMatches && JSON.stringify([...configKeys].sort()) === JSON.stringify(keys.slice().sort()) && descriptorKeys.includes('webFetch') && descriptorKeys.includes('toolPresentationMode'))
 
 
 
@@ -161,7 +161,7 @@ if (TARGET_INSTALL_ROOT === undefined) {
 }
 
 const gateWords = { routeDirect: '甲', routePlan: '乙', routeDisagree: '丙', approvalApprove: '丁', approvalReplan: '戊', purposeRefine: '己', purposeRedo: '庚' }
-const initial = { anchoredBootstrap: true, creativeMode: false, webFetch: false, toolPresentationMode: 'native', runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: 'stable-model', plannerPromptSuffix: 'suffix', exploreBudget: 19, otherAgentModel: '', gateWords }
+const initial = { anchoredBootstrap: true, creativeMode: false, webFetch: false, toolPresentationMode: 'native', runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: 'stable-model', plannerPromptSuffix: 'suffix', exploreBudget: 19, otherAgentModel: '', reviewerUsesPlannerModel: false, gateWords }
 function makeEditor(config = initial, documentPath = '', options = {}) {
   const row = { entry: { options: { id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: structuredClone(config) }, fiber: {} }, inherited: {}, override: {} }
   const state = { rows: [row], edits: [] }
@@ -446,7 +446,7 @@ try {
    const patchMetadataOk = typeof terminal.snapshotHash === 'string' && terminal.webAfter?.patchBytes > 0 && typeof terminal.webAfter.patchMtimeMs === 'number' && typeof terminal.webAfter.patchSha256 === 'string' && terminal.webAfter.managedSnapshotHash === terminal.snapshotHash && profile?.patchBytes > 0 && typeof profile.patchMtimeMs === 'number' && typeof profile.patchSha256 === 'string' && profile.managedSnapshotHash === terminal.snapshotHash && typeof profile.backupPath === 'string' && typeof profile.backupSha256 === 'string' && profile.before?.patchSha256 !== undefined && profile.after?.patchSha256 === profile.patchSha256
    if (associationOk) console.log('SAVE_RUN_ID_TERMINAL_HASH_MATCH_OK')
    if (patchMetadataOk) console.log('PATCH_MTIME_MANAGED_HASH_COMPARE_OK')
-   check('V03 合法 PUT 仅 edit 唯一全局行并保留另八项与 gateWords（终态关联）', put.status === 200 && put.body.profileSync.status === 'synced' && put.body.profileSync.terminalMatch === true && put.body.overall === 'synced' && put.body.web.applied === true && put.body.projection.owner === 'dsh-extra-plan-settings' && editor.state.edits.length === 1 && editor.state.edits[0].id === 'dsh-extra-plan-settings' && rowConfig.webFetch === true && rowConfig.toolPresentationMode === 'ptc' && rowConfig.plannerModel === initial.plannerModel && rowConfig.exploreBudget === initial.exploreBudget && JSON.stringify(rowConfig.gateWords) === JSON.stringify(gateWords) && localReadbackOk)
+   check('V03 合法 PUT 仅 edit 唯一全局行并保留另九项与 gateWords（终态关联）', put.status === 200 && put.body.profileSync.status === 'synced' && put.body.profileSync.terminalMatch === true && put.body.overall === 'synced' && put.body.web.applied === true && put.body.projection.owner === 'dsh-extra-plan-settings' && editor.state.edits.length === 1 && editor.state.edits[0].id === 'dsh-extra-plan-settings' && rowConfig.webFetch === true && rowConfig.toolPresentationMode === 'ptc' && rowConfig.plannerModel === initial.plannerModel && rowConfig.exploreBudget === initial.exploreBudget && JSON.stringify(rowConfig.gateWords) === JSON.stringify(gateWords) && localReadbackOk)
   const noOp = await requestJson(run.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true, toolPresentationMode: 'ptc' })
   check('V03 同值 PUT 深等 no-op 零新增 edit且产生新关联终态', noOp.status === 200 && noOp.body.profileSync.status === 'synced' && noOp.body.profileSync.terminalMatch === true && noOp.body.projection.applied === true && editor.state.edits.length === 1 && noOp.body.profileSync.saveRunId !== put.body.profileSync.saveRunId && noOp.body.profileSync.webAfter?.managedSnapshotHash === noOp.body.profileSync.snapshotHash)
   const invalidCases = [
@@ -589,7 +589,7 @@ function apiPatchOk(fixture, snapshot) {
 function apiSnapshotBodyOk(response, snapshot) {
   return response?.body?.values !== undefined && isDeepStrictEqual(response.body.values, snapshot.values)
 }
-const syncValues = { anchoredBootstrap: false, creativeMode: true, webFetch: true, toolPresentationMode: 'ptc', runcodeCatchGate: true, crossProviderPlannerModel: true, plannerModel: 'planner-sync-test', plannerPromptSuffix: 'sync-suffix-test', exploreBudget: 37, otherAgentModel: 'other-sync-test' }
+const syncValues = { anchoredBootstrap: false, creativeMode: true, webFetch: true, toolPresentationMode: 'ptc', runcodeCatchGate: true, crossProviderPlannerModel: true, plannerModel: 'planner-sync-test', plannerPromptSuffix: 'sync-suffix-test', exploreBudget: 37, otherAgentModel: 'other-sync-test', reviewerUsesPlannerModel: true }
 const syncGateWords = { routeDirect: '甲', routePlan: '乙', routeDisagree: '丙', approvalApprove: '丁', approvalReplan: '戊', purposeRefine: '己', purposeRedo: '庚' }
 const syncSnapshot = { values: syncValues, gateWords: syncGateWords }
 
@@ -615,7 +615,7 @@ function qbotManagedCaptured(text) {
 }
 const qbotEmptyPlan = planQqbotSettingsPatch('[]', syncSnapshot)
 const qbotEmptyCaptured = qbotManagedCaptured(qbotEmptyPlan.text || '')
-check('G5 QQBot空patch新增规范name与完整10+7快照', qbotEmptyPlan.status === 'planned' && qbotEmptyPlan.text.includes('name: dsh-extra-plan/settings') && qbotEmptyCaptured.ok && qbotEmptyCaptured.captured.values.plannerModel === syncValues.plannerModel)
+check('G5 QQBot空patch新增规范name与完整11+7快照', qbotEmptyPlan.status === 'planned' && qbotEmptyPlan.text.includes('name: dsh-extra-plan/settings') && qbotEmptyCaptured.ok && qbotEmptyCaptured.captured.values.plannerModel === syncValues.plannerModel)
 const qbotDirectIdOnly = '# outside comment\r\n' + qbotSettingsRow(qbotConfigValues, { metadata: true, extra: true, eol: '\r\n' }) + '\r\n# trailing comment'
 const qbotDirectPlan = planQqbotSettingsPatch(qbotDirectIdOnly, syncSnapshot)
 const qbotDirectAgain = qbotDirectPlan.text === undefined ? null : planQqbotSettingsPatch(qbotDirectPlan.text, syncSnapshot)
@@ -831,7 +831,7 @@ try {
   try {
     const webPut = await requestJson(webRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
     const qqConfig = syncConfigOf(readFileSync(webFixture.qqPatch, 'utf8'))
-    check('SYNC documentPath 首选且无 DSH_HOME 仍双端 synced、完整十项/gateWords 深等', webPut.status >= 200 && webPut.status < 300 && webPut.body.profileSync.status === 'synced' && webPut.body.profileSync.pathSource === 'configEditor.documentPath' && webPut.body.web.applied === true && isDeepStrictEqual(webEditor.state.rows[0].entry.options.config, { ...syncValues, gateWords: syncGateWords }) && isDeepStrictEqual(qqConfig, { ...syncValues, gateWords: syncGateWords }))
+    check('SYNC documentPath 首选且无 DSH_HOME 仍双端 synced、完整十一项/gateWords 深等', webPut.status >= 200 && webPut.status < 300 && webPut.body.profileSync.status === 'synced' && webPut.body.profileSync.pathSource === 'configEditor.documentPath' && webPut.body.web.applied === true && isDeepStrictEqual(webEditor.state.rows[0].entry.options.config, { ...syncValues, gateWords: syncGateWords }) && isDeepStrictEqual(qqConfig, { ...syncValues, gateWords: syncGateWords }))
     check('SYNC Web documentPath 目标使用 override 且保留目标外 !!js/用户行', readFileSync(webFixture.qqPatch, 'utf8').includes('globalThis.__syncFixture = true') && readFileSync(webFixture.qqPatch, 'utf8').includes('user-custom'))
   } finally { await new Promise((resolve) => webRun.server.close(resolve)) }
 
@@ -1569,7 +1569,7 @@ function makeClientHarness(snapshot, outcome = true, failDetail = false, savingI
   Object.defineProperty(result, 'recoveryReadAttempts', { get: () => recoveryReadAttempts })
   return result
 }
-const values = { anchoredBootstrap: true, creativeMode: false, webFetch: false, toolPresentationMode: 'native', runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: 'm', plannerPromptSuffix: 's', exploreBudget: 18, otherAgentModel: '' }
+const values = { anchoredBootstrap: true, creativeMode: false, webFetch: false, toolPresentationMode: 'native', runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: 'm', plannerPromptSuffix: 's', exploreBudget: 18, otherAgentModel: '', reviewerUsesPlannerModel: false }
 function walkTree(node, output = []) {
   if (node === null || node === undefined) return output
   if (Array.isArray(node)) { for (const child of node) walkTree(child, output); return output }
@@ -1584,8 +1584,9 @@ function fieldRowsOf(view) {
     hint: label.children[2]?.children?.[0],
   }))
 }
-const UI_FIELD_ORDER = ['anchoredBootstrap', 'creativeMode', 'webFetch', 'toolPresentationMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel']
-const HINT_SCOPE_SUFFIXES = ['立即生效', '重启生效', '新会话/新子代理生效']
+const UI_FIELD_ORDER = ['anchoredBootstrap', 'creativeMode', 'webFetch', 'toolPresentationMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel', 'reviewerUsesPlannerModel']
+// 验收者开关的 descriptor hint 只写「新子代理生效」（不夹带「新会话/」前缀），故后缀表同时收录两种口径。
+const HINT_SCOPE_SUFFIXES = ['立即生效', '重启生效', '新会话/新子代理生效', '新子代理生效']
 const RESTART_SCOPE_KEYS = ['toolPresentationMode', 'webFetch']
 function hintScopeOf(hint) {
   if (typeof hint !== 'string') return ''
@@ -1593,7 +1594,7 @@ function hintScopeOf(hint) {
 }
 function uiFieldContractOk(rows) {
   if (rows.length !== UI_FIELD_ORDER.length || JSON.stringify(rows.map((row) => row.key)) !== JSON.stringify(UI_FIELD_ORDER)) return false
-  const booleanKeys = new Set(['anchoredBootstrap', 'creativeMode', 'webFetch', 'runcodeCatchGate', 'crossProviderPlannerModel'])
+  const booleanKeys = new Set(['anchoredBootstrap', 'creativeMode', 'webFetch', 'runcodeCatchGate', 'crossProviderPlannerModel', 'reviewerUsesPlannerModel'])
   const restartScopeKeys = []
   for (const row of rows) {
     const hintScope = hintScopeOf(row.hint)
@@ -1616,7 +1617,7 @@ async function exerciseInteractiveControls(snapshot, options = {}) {
   const harness = makeClientHarness(snapshot, true, false, false, options)
   const firstView = harness.renderDetail()
   const rows = fieldRowsOf(firstView)
-  const target = options.target === undefined ? { anchoredBootstrap: false, creativeMode: true, webFetch: true, toolPresentationMode: 'ptc', runcodeCatchGate: true, crossProviderPlannerModel: true, plannerModel: 'interactive-model', plannerPromptSuffix: 'changed\n"suffix\\path', exploreBudget: 27, otherAgentModel: 'child-model' } : options.target
+  const target = options.target === undefined ? { anchoredBootstrap: false, creativeMode: true, webFetch: true, toolPresentationMode: 'ptc', runcodeCatchGate: true, crossProviderPlannerModel: true, plannerModel: 'interactive-model', plannerPromptSuffix: 'changed\n"suffix\\path', exploreBudget: 27, otherAgentModel: 'child-model', reviewerUsesPlannerModel: true } : options.target
   for (const row of rows) if (Object.prototype.hasOwnProperty.call(target, row.key)) row.control.props.onChange({ target: { value: String(target[row.key]) } })
   const changedView = harness.renderDetail()
   const button = changedView?.button
@@ -1638,14 +1639,14 @@ const readySnapshot = { status: 'ready', writable: true, revision: 42, value: va
 const interactive = await exerciseInteractiveControls(readySnapshot)
 const interactiveOps = interactive.call === undefined ? [] : interactive.call.ops
 const interactiveValues = Object.fromEntries(interactiveOps.map((op) => [op.path[0], op.value]))
-check('V05 实际渲染十控件顺序/控件类型/选项/min-step/hint', uiFieldContractOk(interactive.rows))
-check('V05 点选十控件后一次 mutate 带全十键、revision42 与正确类型', interactive.call !== undefined && interactive.call.revision === 42 && interactiveOps.length === 10 && new Set(interactiveOps.map((op) => op.path[0])).size === 10 && isDeepStrictEqual(interactiveValues, interactive.target) && typeof interactiveValues.anchoredBootstrap === 'boolean' && typeof interactiveValues.creativeMode === 'boolean' && typeof interactiveValues.webFetch === 'boolean' && typeof interactiveValues.toolPresentationMode === 'string' && typeof interactiveValues.runcodeCatchGate === 'boolean' && typeof interactiveValues.crossProviderPlannerModel === 'boolean' && typeof interactiveValues.plannerModel === 'string' && typeof interactiveValues.plannerPromptSuffix === 'string' && typeof interactiveValues.exploreBudget === 'number' && typeof interactiveValues.otherAgentModel === 'string')
+check('V05 实际渲染十一控件顺序/控件类型/选项/min-step/hint', uiFieldContractOk(interactive.rows))
+check('V05 点选十一控件后一次 mutate 带全十一键、revision42 与正确类型', interactive.call !== undefined && interactive.call.revision === 42 && interactiveOps.length === 11 && new Set(interactiveOps.map((op) => op.path[0])).size === 11 && isDeepStrictEqual(interactiveValues, interactive.target) && typeof interactiveValues.anchoredBootstrap === 'boolean' && typeof interactiveValues.creativeMode === 'boolean' && typeof interactiveValues.webFetch === 'boolean' && typeof interactiveValues.toolPresentationMode === 'string' && typeof interactiveValues.runcodeCatchGate === 'boolean' && typeof interactiveValues.crossProviderPlannerModel === 'boolean' && typeof interactiveValues.plannerModel === 'string' && typeof interactiveValues.plannerPromptSuffix === 'string' && typeof interactiveValues.exploreBudget === 'number' && typeof interactiveValues.otherAgentModel === 'string')
 
 const ptcRow = interactive.rows.find((row) => row.key === 'toolPresentationMode')
 const ptcOptions = (ptcRow?.control?.children || []).flatMap((child) => Array.isArray(child) ? child : [child]).map((option) => option?.props?.value)
 check('V05 工具呈现控件结构化事实：类型 select 且选项集合恰为 native/ptc', ptcRow !== undefined && ptcRow.control?.type === 'select' && JSON.stringify([...ptcOptions].sort()) === JSON.stringify(['native', 'ptc']))
 const successClient = await exerciseClient(readySnapshot, true, 'ok', 'V05 实际 lazy client 成功保存')
-check('V05 成功保存恰一次十项 mutate、revision正确、每键一条 set op', successClient.calls.length === 1 && successClient.calls[0].revision === 42 && successClient.calls[0].ops.length === 10 && new Set(successClient.calls[0].ops.map((op) => op.path[0])).size === 10 && successClient.calls[0].ops.every((op) => op.op === 'set'))
+check('V05 成功保存恰一次十一项 mutate、revision正确、每键一条 set op', successClient.calls.length === 1 && successClient.calls[0].revision === 42 && successClient.calls[0].ops.length === 11 && new Set(successClient.calls[0].ops.map((op) => op.path[0])).size === 11 && successClient.calls[0].ops.every((op) => op.op === 'set'))
 await exerciseClient(readySnapshot, false, 'error', 'V05 mutate=false 不显示保存成功')
 await exerciseClient(readySnapshot, 'throw', 'error', 'V05 mutate抛错不显示保存成功')
 const clientPutAccepted = makeClientHarness(readySnapshot, true, false, false, { fetchBehavior: 'synced' })
@@ -1654,8 +1655,8 @@ if (acceptedPutView === undefined || acceptedPutView.button === undefined) {
   check('UI双步保存 accepted 渲染保存按钮', false)
 } else {
   await acceptedPutView.button.props.onClick()
-  check('UI双步保存第二步恰一次同源 PUT /api/dsh-extra-plan-settings/pro-config 且 body 为十项 draft 值', clientPutAccepted.fetchCalls.length === 1 && clientPutAccepted.fetchCalls[0].method === 'PUT' && clientPutAccepted.fetchCalls[0].url.includes('/api/dsh-extra-plan-settings/pro-config') && clientPutAccepted.fetchCalls[0].body !== undefined && JSON.stringify(Object.keys(clientPutAccepted.fetchCalls[0].body).sort()) === JSON.stringify([...keys].sort()) && isDeepStrictEqual(clientPutAccepted.fetchCalls[0].body, values))
-  check('UI双步保存 mutate 仍恰一次十项且失败路径不变', clientPutAccepted.calls.length === 1 && clientPutAccepted.calls[0].ops.length === 10)
+  check('UI双步保存第二步恰一次同源 PUT /api/dsh-extra-plan-settings/pro-config 且 body 为十一项 draft 值', clientPutAccepted.fetchCalls.length === 1 && clientPutAccepted.fetchCalls[0].method === 'PUT' && clientPutAccepted.fetchCalls[0].url.includes('/api/dsh-extra-plan-settings/pro-config') && clientPutAccepted.fetchCalls[0].body !== undefined && JSON.stringify(Object.keys(clientPutAccepted.fetchCalls[0].body).sort()) === JSON.stringify([...keys].sort()) && isDeepStrictEqual(clientPutAccepted.fetchCalls[0].body, values))
+  check('UI双步保存 mutate 仍恰一次十一项且失败路径不变', clientPutAccepted.calls.length === 1 && clientPutAccepted.calls[0].ops.length === 11)
   check('UI双步保存 mutate accepted → PUT 被调用（fetch mock 断言）且提示 saved', clientPutAccepted.fetchCalls.length === 1 && messageKind(clientPutAccepted) === 'ok' && messageText(clientPutAccepted) === 'saved')
 }
 const clientPutRejected = makeClientHarness(readySnapshot, false)
@@ -1702,7 +1703,7 @@ const stable43View = latestClient.renderDetail()
 if (stable43View !== undefined && stable43View.button !== undefined) await stable43View.button.props.onClick()
 latestClient.renderDetail()
 const latestCall = latestClient.calls.at(-1)
-check('V05 Q04 初次draft=null先effect后重render，通知后读取rev43新十键', firstPass !== undefined && firstPass.button === undefined && stable42View !== undefined && stable42View.button !== undefined && stable43View !== undefined && stable43View.button !== undefined && latestClient.subscribeCount === 1 && latestClient.notificationCount === 1 && latestClient.activeListeners === 1 && latestClient.renderStats.formRenders >= 3 && latestClient.renderStats.effectRuns >= 3 && latestCall !== undefined && latestCall.revision === 43 && latestCall.ops.length === 10 && isDeepStrictEqual(opValues(latestCall), updatedValues))
+check('V05 Q04 初次draft=null先effect后重render，通知后读取rev43新十一键', firstPass !== undefined && firstPass.button === undefined && stable42View !== undefined && stable42View.button !== undefined && stable43View !== undefined && stable43View.button !== undefined && latestClient.subscribeCount === 1 && latestClient.notificationCount === 1 && latestClient.activeListeners === 1 && latestClient.renderStats.formRenders >= 3 && latestClient.renderStats.effectRuns >= 3 && latestCall !== undefined && latestCall.revision === 43 && latestCall.ops.length === 11 && isDeepStrictEqual(opValues(latestCall), updatedValues))
 
 const staleClient = makeClientHarness(readySnapshot, true)
 const stale42View = staleClient.renderDetail()
@@ -1718,7 +1719,7 @@ const fresh43View = staleClient.renderDetail()
 await fresh43View.button.props.onClick()
 staleClient.renderDetail()
 const accepted43 = staleClient.calls.at(-1)
-check('V05 Q04 恢复后新回调用rev43成功且仍仅一条十键mutate', staleClient.calls.length === 2 && accepted43.revision === 43 && accepted43.ops.length === 10 && isDeepStrictEqual(opValues(accepted43), updatedValues) && messageKind(staleClient) === 'ok')
+check('V05 Q04 恢复后新回调用rev43成功且仍仅一条十一键mutate', staleClient.calls.length === 2 && accepted43.revision === 43 && accepted43.ops.length === 11 && isDeepStrictEqual(opValues(accepted43), updatedValues) && messageKind(staleClient) === 'ok')
 
 const recoveryFailureClient = makeClientHarness(readySnapshot, true, false, false, { recoveryFailure: true })
 const recoveryOldButton = recoveryFailureClient.renderDetail().button

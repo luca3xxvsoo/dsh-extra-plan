@@ -1,7 +1,7 @@
 // 每次 apply 独立创建 agent runtime factory；role 与 cache 状态不会跨 createAgentRuntime 调用共享。
 
 import { isSubagentChild } from './agent-session.js'
-import { PLANNER_PRESET_ID, USAGE_ROLE_BY_PRESET } from './role-contract.js'
+import { PLANNER_PRESET_ID, REVIEWER_PRESET_ID, USAGE_ROLE_BY_PRESET } from './role-contract.js'
 
 // 规划子代理的会话角色预设 id（与 assets/presets/extra-plan/agent.cordis.yml 第二文档一致）。
 export { PLANNER_PRESET_ID } from './role-contract.js'
@@ -56,6 +56,18 @@ export function createAgentRuntime({ getAgents, sandboxPolicy, foldUsage, warn }
     if (header === undefined || header === null) return false
     const preset = typeof header.agentPreset === 'string' ? header.agentPreset : ''
     return preset === PLANNER_PRESET_ID && isSubagentChild(agent, events)
+  }
+
+  // 验收者子代理：子会话且 session.header.agentPreset === 'extra-plan-reviewer'。
+  // 判据与 isPlannerChild 同构，只换比对常量；其余值与缺失一律非验收者。
+  function isReviewerChild(agent, events) {
+    if (agent === undefined || agent === null) return false
+    const session = agent.session
+    if (session === undefined || session === null) return false
+    const header = session.header
+    if (header === undefined || header === null) return false
+    const preset = typeof header.agentPreset === 'string' ? header.agentPreset : ''
+    return preset === REVIEWER_PRESET_ID && isSubagentChild(agent, events)
   }
 
   function usageRootOf(sessionId, parentSessionId, delegationDepth) {
@@ -149,5 +161,5 @@ export function createAgentRuntime({ getAgents, sandboxPolicy, foldUsage, warn }
     return child
   }
 
-  return { isChild, isPlannerChild, toolSchemasOf, usageContextOf, childBaseline }
+  return { isChild, isPlannerChild, isReviewerChild, toolSchemasOf, usageContextOf, childBaseline }
 }

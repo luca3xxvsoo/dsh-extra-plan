@@ -3,12 +3,12 @@
 // settings 行是权威值，旧预设目录不作回退。
 // stamp 由路径和 stat 元数据组成；未变则跳过读盘和 YAML 解析。
 // 构造期先读一次源文件建立初始基线，避免宿主 cfg 快照过期。
-// 构造期同时做装载期严格校验：settings 行在（按行 id）但 8 个热读键出现 missing /
+// 构造期同时做装载期严格校验：settings 行在（按行 id）但 9 个热读键出现 missing /
 // ambiguous / invalid → 直接抛错、插件不装载；整行缺席（出厂形态）仍静默按 cfg 快照启动。
 // 运行期（refresh 触发的读盘）保持 fail-safe：路径、文件、stat、YAML 或值失败时按键回退
 // 并只告警一次，其中 ambiguous / invalid 显性告警、missing 静默。
 // 回退顺序为 settings 行覆盖 → apply cfg → BUILTIN_DEFAULTS；每个 agent 的缓存键保持隔离。
-// 10 项共享同一 row locator：8 项在此热读，2 项由宿主装载期快照消费，投影改变后需重启宿主。
+// 11 项共享同一 row locator：9 项在此热读，2 项由宿主装载期快照消费，投影改变后需重启宿主。
 
 import { statSync, readFileSync } from 'node:fs'
 import { isAbsolute, resolve as pathResolve } from 'node:path'
@@ -283,6 +283,7 @@ export function createLiveConfig(options) {
     get plannerPromptSuffix() { return read('plannerPromptSuffix') },
     get exploreBudget() { return read('exploreBudget') },
     get otherAgentModel() { return read('otherAgentModel') },
+    get reviewerUsesPlannerModel() { return read('reviewerUsesPlannerModel') },
   }
   return Object.freeze(live)
 }

@@ -40,7 +40,7 @@
 - 本项目文档规则只适用于 dsh-extra-plan 项目维护；其他项目或非本项目工作可忽略本条，但不能忽略其它安全边界。正式非归档文档只保留当前有效规则、当前状态和当前待验证项；任务批次、增量口径、完成过程、旧新对比如需保留，只进入现有两份历史归档，不在当前正文重复。
 - 每次派遣本项目执行者或验收者时，prompt、方案/验收工件都必须显式携带上述适用范围、历史归档与当前态约束；不得仅假定对方读过 READAI。
 - 工作区普通文件仅按用户真实需求和已批准方案修改；根 `README.md`、官方 dsh/官方预设、生产环境、profile、`$DSH_HOME` 与真实会话仍是禁改面。所有引导词与 persona 原文冻结；作者源非引导词仅在用户明确授权且批准方案列明时有限修改，单次授权不延续。
-- bundle 详情公开 insert 恰为 `dsh-extra-plan-settings` 一行；该全局 owner 统一拥有 10 项 Config、API、carrier、旧值迁移、同步核对与官方 AgentPreset adapter。旧 `extra-plan-preset-sync` / `preset-extra-plan` 只作 raw patch 安全读取来源，不是新写入目标；`./preset-sync` 及其 locale exports 已退役。当前显式非法 `gateWords` 严格失败且零写，旧非法值仅诊断跳过。配置仅经 `plugins.detail.section` 渲染于 bundle 详情页行列表之后（自绘标题），不注册 `plugins.bundle.config`、`plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`。九个既有入口和根 README/地图职责保持不变，不新增正式文档。
+- bundle 详情公开 insert 恰为 `dsh-extra-plan-settings` 一行；该全局 owner 统一拥有 11 项 Config、API、carrier、旧值迁移、同步核对与官方 AgentPreset adapter。旧 `extra-plan-preset-sync` / `preset-extra-plan` 只作 raw patch 安全读取来源，不是新写入目标；`./preset-sync` 及其 locale exports 已退役。当前显式非法 `gateWords` 严格失败且零写，旧非法值仅诊断跳过。配置仅经 `plugins.detail.section` 渲染于 bundle 详情页行列表之后（自绘标题），不注册 `plugins.bundle.config`、`plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`。九个既有入口和根 README/地图职责保持不变，不新增正式文档。
 - 维护任务按实际目标文件建立唯一 `.extra-plan/backup-dsh-extra-plan-<任务名>-<YYYYMMDDHHMMSS>/` 备份；同一任务续跑沿用对应目录，不覆盖已有镜像。JS/MJS、JSON、生成代码和领域回归按实际改动域选择，具体任务命令留在方案与验收工件中。
 - `pe-test/reports/` 只接收临时测试产物，不纳入源改动；不调用 `git reset`、`git checkout`、`git clean`。
 - 界面文案只给结论级信息；技术细节仅放硬闸门给 AI 的文案、诊断/日志和本组 AI 文档。

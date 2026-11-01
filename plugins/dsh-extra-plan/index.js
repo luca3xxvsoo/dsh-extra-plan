@@ -149,13 +149,14 @@ import z from '@deepseek-ai/schemastery'
 const DEFAULT_DIAG_FILE = 'extra-plan-request-errors.jsonl'
 
 // 主插件 Config 对应 id=extra-plan；lib/settings.js 的 Config 对应 id=dsh-extra-plan-settings。
-// 二者不复用、不互相导入；settings Config 仍独立维护 10 个 volatile 字段。
+// 二者不复用、不互相导入；settings Config 仍独立维护 11 个 volatile 字段。
 export const Config = z.object({
   gateWords: z.dict(z.string()).required(),
   planTool: z.string().default('subagent_plan'),
   savePlanDir: z.string().default('.extra-plan'),
   plannerModel: z.string().default(DEFAULT_SETTINGS.plannerModel),
   otherAgentModel: z.string().default(DEFAULT_SETTINGS.otherAgentModel),
+  reviewerUsesPlannerModel: z.boolean().default(DEFAULT_SETTINGS.reviewerUsesPlannerModel),
   exploreBudget: z.number().step(1).min(1).default(DEFAULT_SETTINGS.exploreBudget),
   plannerPromptSuffix: z.string().default(DEFAULT_SETTINGS.plannerPromptSuffix),
   anchoredBootstrap: z.boolean().default(DEFAULT_SETTINGS.anchoredBootstrap),
@@ -504,7 +505,7 @@ export function apply(ctx, config) {
     atomicCommit,
     getPathContext: (cwd) => pathContextFor(ctx, cwd),
   })
-  // ── 配置热读：8 项设置从「apply 期一次性常量」改为「消费点现场取值」 ──────
+  // ── 配置热读：9 项设置从「apply 期一次性常量」改为「消费点现场取值」 ──────
   // 设置页改 YAML 后同会话即时生效（无需重启）；取值经 mtime+size 变更检测缓存，
   // 文件未变时零读盘零解析，详见 lib/live-config.js。fallbackDefaults = apply 期
   // cfg 快照：既是磁盘不可用/解析失败时的兜底，也是本实例初始值（生产上与该
@@ -517,6 +518,7 @@ export function apply(ctx, config) {
     fallbackDefaults: {
       plannerModel: typeof cfg.plannerModel === 'string' ? cfg.plannerModel : DEFAULT_SETTINGS.plannerModel,
       otherAgentModel: typeof cfg.otherAgentModel === 'string' ? cfg.otherAgentModel.trim() : DEFAULT_SETTINGS.otherAgentModel,
+      reviewerUsesPlannerModel: typeof cfg.reviewerUsesPlannerModel === 'boolean' ? cfg.reviewerUsesPlannerModel : DEFAULT_SETTINGS.reviewerUsesPlannerModel,
       exploreBudget: Number.isInteger(cfg.exploreBudget) && cfg.exploreBudget > 0 ? cfg.exploreBudget : DEFAULT_SETTINGS.exploreBudget,
       plannerPromptSuffix: typeof cfg.plannerPromptSuffix === 'string' ? cfg.plannerPromptSuffix : DEFAULT_SETTINGS.plannerPromptSuffix,
       anchoredBootstrap: typeof cfg.anchoredBootstrap === 'boolean' ? cfg.anchoredBootstrap : DEFAULT_SETTINGS.anchoredBootstrap,
@@ -525,9 +527,10 @@ export function apply(ctx, config) {
       crossProviderPlannerModel: typeof cfg.crossProviderPlannerModel === 'boolean' ? cfg.crossProviderPlannerModel : DEFAULT_SETTINGS.crossProviderPlannerModel,
     },
   })
-  // ── 8 项热读：消费点现场取值（全部加括号调用） ──
+  // ── 9 项热读：消费点现场取值（全部加括号调用） ──
   const plannerModel = (agent) => liveConfig.get('plannerModel', agent)
   const otherAgentModel = (agent) => liveConfig.get('otherAgentModel', agent)
+  const reviewerUsesPlannerModel = (agent) => liveConfig.get('reviewerUsesPlannerModel', agent)
   const exploreBudget = (agent) => liveConfig.get('exploreBudget', agent)
   const plannerPromptSuffix = (agent) => liveConfig.get('plannerPromptSuffix', agent)
   const bootstrapOn = (agent) => liveConfig.get('anchoredBootstrap', agent)
@@ -555,7 +558,7 @@ export function apply(ctx, config) {
   const { foldUsage } = usageLedger
 
   const sandboxPolicy = ctx.get('sandboxPolicy')
-  const { isChild, isPlannerChild, toolSchemasOf, usageContextOf, childBaseline } = createAgentRuntime({
+  const { isChild, isPlannerChild, isReviewerChild, toolSchemasOf, usageContextOf, childBaseline } = createAgentRuntime({
     getAgents: () => ctx.get('agents'),
     sandboxPolicy,
     foldUsage,
@@ -566,7 +569,7 @@ export function apply(ctx, config) {
   // ── planner / 非 planner 模型单点解析（工厂实例；缓存 per-apply） ──
   // 见 lib/model-routing.js：plannerModelCache / otherAgentModelCache 每次 apply 各新建一份
   // WeakMap（绝不提升为模块全局）；llm/agents/诊断路径按惰性 getter 取用。
-  const { resolvePlannerEntry, resolveOtherAgentEntry } = createModelRouting({
+  const { resolvePlannerEntry, resolveOtherAgentEntry, resolveReviewerEntry } = createModelRouting({
     getPlannerModel: (agent) => plannerModel(agent),
     getOtherAgentModel: (agent) => otherAgentModel(agent),
     getCrossProviderPlannerModel: (agent) => crossProviderPlannerModel(agent),
@@ -1005,7 +1008,14 @@ export function apply(ctx, config) {
     // 显式 agentOptions/provider/model 相对直接父路由优先：短路 resolver、目录与真实探针。
     if (!routeExplicit) {
       // 非 planner resolver 内部把 provider/model fallback 固定取顶层主会话；probe 同样不绕过该入口。
-      const entry = await resolveOtherAgentEntry(payload.agent, payload.signal, probe)
+      // 验收者开关只在「非显式路由」这一分支生效：开启且命中验收者时改走 resolveReviewerEntry
+      // （复用 pro 规划的模型与跨提供方解析）；力度仍由下方尾部继承主会话（不走 planner 早退分支）。
+      let entry
+      if (reviewerUsesPlannerModel(payload.agent) && isReviewerChild(payload.agent)) {
+        entry = await resolveReviewerEntry(payload.agent, payload.signal)
+      } else {
+        entry = await resolveOtherAgentEntry(payload.agent, payload.signal, probe)
+      }
       if (entry !== null && entry.model !== undefined) nextConfig.model = entry.model
       if (entry !== null && entry.provider !== undefined) nextConfig.provider = entry.provider
       if (entry !== null && entry.maxTokens !== undefined) nextConfig.maxTokens = entry.maxTokens

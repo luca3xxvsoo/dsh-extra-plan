@@ -50,7 +50,7 @@ export function saveArtifactBase(nameSeg, sessionId) {
 
 export const SAVE_PLAN_LIMITS = Object.freeze({
   maxTasks: 20,
-  maxSummaryChars: 12000
+  maxSummaryChars: 24000
 })
 
 function summaryList(value) {

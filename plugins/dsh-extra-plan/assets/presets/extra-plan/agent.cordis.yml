@@ -194,6 +194,9 @@
         exploreBudget: 18
         otherAgentModel: ''
         # 非 planner child（executor/reviewer/probe/workflow/ralph worker）优先使用该模型；空/未匹配/真实探针失败回退主会话。
+        # 验收者模型开关：开启时验收者复用 pro 规划模型与跨提供方解析（优先 plannerModel）；
+        # 关闭时沿用其他子代理模型（otherAgentModel）。该叶值被逐字复制进四个角色 definition，故只写在此处。
+        reviewerUsesPlannerModel: false
         savePlanDir: '.extra-plan'
         plannerPromptSuffix: '你的深度思考部分需要以"好了，现在我以全局视角来看待这个问题"开头'
         usageLedger:

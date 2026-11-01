@@ -1,5 +1,5 @@
 # 宿主平面 bundle patch：按需规划模式只公开一个全局管理组件。
-# settings 行同时拥有 10 项配置、API、内部 carrier、旧值迁移、同步核对与官方 adapter。
+# settings 行同时拥有 11 项配置、API、内部 carrier、旧值迁移、同步核对与官方 adapter。
 # 旧 extra-plan-preset-sync / preset-extra-plan 仅在 settings 内安全读取，不再作为新公开入口或写入目标。
 # 两项宿主设置由 settings 权威值派生到内存 definition；官方启停机制与额外声明不由插件删除。
 - insert:

@@ -99,7 +99,7 @@ export function renderClientFieldBlock(definitions = SETTING_DEFINITIONS) {
   const list = Array.isArray(definitions) ? definitions : SETTING_DEFINITIONS
   const extra = list.filter((definition) => definition.group === 'extra-plan')
   const host = list.filter((definition) => definition.group === 'host-rows')
-  if (extra.length !== 8 || host.length !== 2) throw new Error('客户端字段分组必须为 8 项 extra-plan + 2 项 host-rows')
+  if (extra.length !== 9 || host.length !== 2) throw new Error('客户端字段分组必须为 9 项 extra-plan + 2 项 host-rows')
   return [
     ...clientFieldLines('EXTRA_FIELDS', extra),
     '',

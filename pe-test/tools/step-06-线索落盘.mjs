@@ -1077,7 +1077,7 @@ const invalidCases = [
   ['G3-H 非法检查引用', { plan: invalidReference.plan, checklist: invalidReference.checklist, needle: '正式验收引用的检查 ID 不存在' }],
   ['G3-H 跨执行组资源冲突', { plan: invalidResource.plan, checklist: invalidResource.checklist, needle: '独占资源' }],
   ['G3-E 收尾双文档不一致', { plan: invalidClosure.plan, checklist: invalidClosure.checklist, needle: '收尾' }],
-  ['G3-F 摘要超过12000字符', { plan: oversizedSummary.plan, checklist: oversizedSummary.checklist, needle: '派遣摘要' }],
+  ['G3-F 摘要超过上限' + saveContractNamespace.SAVE_PLAN_LIMITS.maxSummaryChars + '字符', { plan: oversizedSummary.plan, checklist: oversizedSummary.checklist, needle: '派遣摘要' }],
 ]
 const invalidEffects = { atomic: 0 }
 const invalidFactory = createSaveToolFactories({

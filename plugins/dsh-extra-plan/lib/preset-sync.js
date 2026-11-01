@@ -861,7 +861,7 @@ function rowStructureRecord(row) {
   }
 }
 
-/** 非 settings 结构指纹：settings 行及其十项/gateWords 永不参与 adapter handoff 判定。 */
+/** 非 settings 结构指纹：settings 行及其十一项/gateWords 永不参与 adapter handoff 判定。 */
 export function structuralFingerprint(rows) {
   const records = []
   const visit = (items) => {

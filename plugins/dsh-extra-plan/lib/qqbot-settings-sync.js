@@ -313,7 +313,7 @@ function canonicalSnapshot(checked) {
   }
 }
 
-/** 固定 10 项 values + 7 项 gateWords 的规范快照哈希。 */
+/** 固定 11 项 values + 7 项 gateWords 的规范快照哈希。 */
 export function stableSnapshotHash(snapshot) {
   const checked = validateSettingsSnapshot(snapshot)
   return createHash('sha256').update(JSON.stringify(canonicalSnapshot(checked))).digest('hex')
