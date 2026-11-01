@@ -81,6 +81,16 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
 - 遗留隐患：生成器复跑地图时可能把既有文件说明重置为「（待补充）」，而 `--check` 只比结构查不出来；僵尸锁接管成功静默，频繁强杀不会在日志留痕。
 - 结局：2605 通过 / 0 失败，三批均经独立验收 PASS。
 
+### 2026-11-02：手工归档移除与账本说明行落地
+
+动机：手工归档与插件启动归档长期是两份实现，口径只能靠对拍维持；本批把手工归档收敛到单一入口，并给账本加首行人读说明。
+
+- ① step-99 的 `--archive` 删除并改报 `usage-removed`：检查位于 `parseMaintenanceArgs` 之后、构造维护上下文之前，避免 W 外目标先被 `ROOT_ESCAPE` 抢报；统计路径与持锁语义不变。
+- ② 归档收敛到 `lib/usage-archive.js` 的 `archiveLedger`（启动归档与直调共用同一入口），新增 `options.onCheck` 阶段探针，阶段依次为 start／parse-archive／parse-active／unique／summarize／serialize／publish；step-00 的 B1/B2 断言改由阶段探针锚定并删除 clock 序号标定，另加「onCheck 恒 false 且预算 60000 不自然超时」的反证。
+- ③ 归档首行新增中文说明行：`kind` 为 `账本说明`，`键` 列 15 键名；无说明版的旧归档在下次归档时自动升级（补写首行），空 groups 仍写空文件。
+- ④ step-00 的语义类断言迁到 `usageArchiveModule`（直接 import lib 模块），回归 844 通过 / 0 失败。
+- ⑤ 环境事实：跑 step-00 必须同时设置 `DSH_INSTALL_ROOT` 且用 `node --import ./pe-test/_shared/host-preload.mjs --full`，否则 preload 直接以 `ROOT_REQUIRED` 失败。
+
 ### 2026-11-01：未提交改动全量审查与八项修复
 
 动机：三批改动（验收者 pro 开关、F1/F2、启动归档）提交前做一次全量审查，查死代码、冗余代码、错误逻辑与文档未更新，避免把缺陷带进提交。

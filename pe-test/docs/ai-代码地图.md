@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-11-01 21:55:01（脚本自动更新时间戳行）
+> 上次同步：2026-11-02 07:25:27（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -35,17 +35,17 @@
 | 会话事件快照／角色常量与身份识别（ROLE_IDS/ROLE_ORDERS 只描述身份与顺序，不承载权限）／单次快照复用（execEvents）／planner descriptor 缓存／usage 血缘上下文 | lib/agent-session.js、lib/agent-runtime.js、lib/runtime-lifecycle.js、lib/role-contract.js、index.js | sessionEvents、isSubagentChild、isLiveDelegation、childPolicyNeedsFloor、createAgentRuntime、isChild、isPlannerChild、toolSchemasOf、usageContextOf、usageRootOf、childBaseline |
 | 在线 usage 共享锁／owner 诊断／死 PID stale-lock 由下一次取锁原子接管（rename + token 校验，不匹配还原），接管失败才告警一次并 delayed／release 失败状态／默认快照与在线归档（active+archive+lock、writer 短等、释放后补记、无调用计数列；账本路径按 H/W 用途和 pathContext 判定） | plugins/dsh-extra-plan/lib/usage-ledger.js、pe-test/tools/step-99-用量统计.mjs | pathContextOf、resolveLedgerPath、ledgerTargetOf、authorizeLedgerWrite、ensureLedgerDirectory、usageLedgerLockPath、acquireUsageLedgerLock、releaseUsageLedgerLock、warnStaleLock、foldUsage |
 | 会话状态生命周期／disposed 收尾／末轮 V2 usage 结算／root 与自身 session 血缘（断链/循环仍以空 root 合法落账；rootSessionId/agentPreset 可空，非法 context 拒绝）／四桶字段（provider、input/cacheRead/cacheWrite/output）／账本续载（session 分桶、final fold、cursor 降级、session.seq 水位 + snapshotEvents(from,to) 区间增量、水位未变直接返回、截断回退全量） | index.js、lib/agent-runtime.js、lib/usage-ledger.js | usageContextOf、usageRootOf、foldUsage、readUsageCursorTable、warnUsageCursorDegraded、usageCursorEntryOf、noteRunCodeSubCall、childBaseline |
-| 启动归档／插件内置自动归档／H 默认账本合并归档（settings 行 apply 期执行一次；九字段身份聚合、四桶累加、seq 取 max、成功清空 active、预算 STARTUP_ARCHIVE_BUDGET_MS=3000ms 自取锁起算、失败逆序回滚、archive-failed.log 留痕、锁忙跳过、绝不阻断启动；自定义 usageLedger.path 不在范围） | plugins/dsh-extra-plan/lib/usage-archive.js | startupArchive、startupArchiveUnsafe、publishTransaction、rollbackTransaction、reportFailure、recordDiagnostic |
+| 启动归档／插件内置自动归档／H 默认账本合并归档（settings 行 apply 期执行一次；九字段身份聚合、四桶累加、seq 取 max、成功清空 active、预算 STARTUP_ARCHIVE_BUDGET_MS=3000ms 自取锁起算、失败逆序回滚、archive-failed.log 留痕、锁忙跳过、绝不阻断启动；自定义 usageLedger.path 不在范围；可复用归档入口 archiveLedger（options.onCheck 阶段探针仅测试用）；归档首行带中文说明行，kind 为 账本说明、键列 15 键名） | plugins/dsh-extra-plan/lib/usage-archive.js | archiveLedger、startupArchive、startupArchiveUnsafe、publishTransaction、rollbackTransaction、reportFailure、recordDiagnostic |
 
-- step-99 文件说明：V2 active/archive 统计与在线归档 CLI；默认模式锁内快照后宽松读取合并，显式 `--archive` 持锁 strict 校验、按完整身份 source-aware 水位聚合、原子发布并清空 active，cursor 不读写；writer timeout 静默返回 `delayed`、后续 fold 补记，死 PID stale-lock 由下一次取锁原子接管（rename + token 校验，不匹配还原），接管失败才告警一次并 delayed，release 失败显式诊断，已提交写入不伪装回滚。
+- step-99 文件说明：V2 active/archive 统计 CLI（手工归档已移除，`--archive` 报 `usage-removed`）；默认模式锁内读取 archive+active 字节快照、释放锁后宽松合并解析，零写入、cursor 不读写；writer timeout 静默返回 `delayed`、后续 fold 补记，死 PID stale-lock 由下一次取锁原子接管（rename + token 校验，不匹配还原），接管失败才告警一次并 delayed，release 失败显式诊断。
 - step-99 关键符号（该测试工具不在生成根内，行号不在此维护；按函数名到源码定位）：
-  - 导出/内部常量与错误类型：`ARCHIVE_BUDGET_MS`、`ARCHIVE_FILE_NAME`、`V2_KEYS`、内部 `IDENTITY_KEYS`、内部 `TOKEN_KEYS`、导出 `LedgerError`。
+  - 导出/内部常量与错误类型：`ARCHIVE_FILE_NAME`、`V2_KEYS`、内部 `IDENTITY_KEYS`、内部 `TOKEN_KEYS`、导出 `LedgerError`。
   - 内部锁与释放：`lockFailure`、`acquireLock`、`releaseLock`（释放失败抛出/报告 `code=release-failed`）。
-  - strict/宽松解析（内部/导出）：内部 `validationIssue`（固定15键；`rootSessionId`/`agentPreset` 可为空字符串）、导出 `parseLedgerText`（`strict=true` 归档拒绝非法行，默认统计宽松读取）。
-  - 身份与聚合（导出/内部）：内部 `identityOf`、`identityKeyOf`，导出 `summarizeRows`，内部 `summarizeSourceRows`（archive `seq` 累计水位、active 低水位重放跳过并计 `covered`）与 `assertUniqueArchiveRows`（完整身份唯一）。
+  - strict/宽松解析（内部/导出）：内部 `validationIssue`（固定15键；`rootSessionId`/`agentPreset` 可为空字符串）、导出 `parseLedgerText`（`strict=true` 拒绝非法行与错位说明行，默认统计宽松读取；返回 `noticeLines` 记首行说明行数，说明行一律跳过、不计入 V1/非V2）。
+  - 身份与聚合（导出/内部）：内部 `identityOf`、`identityKeyOf`，导出 `summarizeRows`，内部 `summarizeSourceRows`（archive `seq` 累计水位、active 低水位重放跳过并计 `covered`）。
   - 导出输出与默认统计：`summarizeSnapshotTexts`、`renderStats`、`statLedger`（释放失败抛出/报告 `code=release-failed`）。
-  - 归档发布（内部/导出）：内部 `archiveRowOf`、`archiveTextOf`、`publishTransaction`；导出 `archiveLedger`（已提交写入不伪装回滚，失败状态保留诊断）。
-  - CLI：`parseCliArgs`、`main`。
+  - 统计说明行兼容：从 lib/usage-archive.js 导入 `isSchemaDocRow` 与 `SCHEMA_DOC_KIND`；说明行按三字段全形匹配（`kind`/`说明`/`键`），契约上仅首行一条，strict 下错位或重复即拒绝，统计只计数不落行。
+  - CLI：`parseCliArgs`（仅接受统计用法）、`main`（`--archive` 报 `usage-removed`）。
 | 方案与验收落盘／save_plan 双写（逐文件操作与 M 点合同；修改前范围/唯一原文锚点→未来验收定位；真实源核实与行漂移取证；主会话侧任意路由态放行的受限规划工件，仅写 cwd/.extra-plan；工具不自动调度） | lib/save-tool-factories.js、lib/save-contract.js、index.js | defineSavePlan、registerSavePlan、saveArtifactBase |
 | 落盘单次提交／有限清理（atomic/commit） | lib/save-persistence.js、index.js | atomicCommit |
 | 线索落盘／save_probe／证据报告（probe/evidence；限制值唯一来自 `save-contract.js#PROBE_LIMITS`；step-00 PR23/PR34/PR35 回归；主会话侧放行条件保持现状——route=plan + 目的已定 + 澄清完成；extractProbeEvidenceRefs 顺序固定：整体成对剥除（循环）→ 按顿号/分号/竖线拆分 → 逐段成对剥除 + trim → 过滤空串 → 去重；拆分符与剥除集均不含空格、半角逗号、`.`、`/`，单侧一律不剥） | lib/save-contract.js、lib/save-probe-validation.js、lib/save-tool-factories.js、index.js | validateProbe、renderProbeMarkdown、extractProbeEvidenceRefs |
@@ -137,7 +137,7 @@
 | plugins/dsh-extra-plan/lib/settings-contract.js | 181 | 服务端设置 descriptor 单一合同：11 项的类型/生成默认引用/校验/UI metadata 与权威-投影双定位器，并导出 `createDefaultSettings`、分组与投影遍历源 |
 | plugins/dsh-extra-plan/lib/settings.js | 758 | 10 字段 volatile Config、页面策略与 loopback GET/PUT；权威值在唯一 settings 行，PUT 先拒绝空/null/数组/原始/未知/非法混合载荷并严校验当前 gateWords，再只 edit 全局行，no-op 也重读最终快照并等待 profileSync，结构化区分 synced/not-installed/unavailable/failed/partial。 |
 | plugins/dsh-extra-plan/lib/shell-mutation.js | 274 | 跨平台命令文本解码与 pwsh/bash 写形态判定；纯函数、不持有 apply 状态 |
-| plugins/dsh-extra-plan/lib/usage-archive.js | 688 | 启动归档唯一实现（H 根 usage-ledger/ledger-v2.jsonl）：按九字段身份聚合、四桶累加、seq 取 max、跨批次并成一条，发布后清空 active；预算常量 STARTUP_ARCHIVE_BUDGET_MS=3000ms 自取锁成功后起算（锁等待不计），失败逆序回滚并写 usage-ledger/archive-failed.log，全程同步且绝不阻断启动；自定义 usageLedger.path 的账本不在作用范围 |
+| plugins/dsh-extra-plan/lib/usage-archive.js | 760 | 启动归档唯一实现（H 根 usage-ledger/ledger-v2.jsonl）：按九字段身份聚合、四桶累加、seq 取 max、跨批次并成一条，发布后清空 active；预算常量 STARTUP_ARCHIVE_BUDGET_MS=3000ms 自取锁成功后起算（锁等待不计），失败逆序回滚并写 usage-ledger/archive-failed.log，全程同步且绝不阻断启动；自定义 usageLedger.path 的账本不在作用范围 |
 | plugins/dsh-extra-plan/lib/usage-ledger.js | 601 | per-apply V2 usage writer 与跨进程排他锁：固定15键（rootSessionId/agentPreset 可空）、owner PID/token、bounded acquire/release、锁内同步 fold、身份血缘与四桶 JSONL、cursor 续载；timeout 静默返回 `delayed`、后续 fold 补记，stale 由下一次取锁原子接管、接管失败后才告警并需维护者显式处理，release 失败显式返回状态。 |
 | plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | 777 | 从 agent.cordis.yml 校验并生成 runtime 默认常量、纯主/角色 definition 与 client 标记区块（顶层结构逐字平移并保留 group/isolate/!!js）；默认仓库七输出，自定义 client 默认关闭；支持 --check 且坏源不覆盖 last-known-good（上次已知良好版本） |
 
@@ -1089,49 +1089,52 @@
 | plugins/dsh-extra-plan/lib/shell-mutation.js | bashMutationEvidence | L272 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/shell-mutation.js | pwshMutationMatches | L273 | （待补充） |  |
 | plugins/dsh-extra-plan/lib/shell-mutation.js | bashMutationMatches | L274 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | errorCodeOf | L68-70 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | errorMessageOf | L72-74 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | archiveError | L76-80 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | isPlainObject | L82-84 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | bytesOf | L86-90 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | textOfBytes | L92-94 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | mergedFsOps | L96-98 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | nowOf | L100-110 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | hostRootOf | L112-118 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | compareValues | L120-124 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | tokenNumber | L126-128 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | identityValue | L130-134 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | groupSort | L136-142 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | validDedupeKey | L144-150 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | dedupeKeyOf | L152-154 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | validationIssue | L156-175 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | parseStrictLedgerText | L178-202 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | identityOf | L204-208 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | identityKeyOf | L210-213 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | emptyGroupOf | L215-227 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | addRowToGroup | L229-241 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | groupFromArchiveRow | L243-253 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | finalizedGroups | L255-265 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | shouldReplaceArchiveRow | L267-274 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | summarizeSourceRows | L276-322 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | assertUniqueArchiveRows | L324-332 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | archiveRowOf | L334-352 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | archiveTextOf | L354-363 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | uniqueTransactionPaths | L365-374 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | unlinkIfPresent | L376-382 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | pathExists | L384-392 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | restoreOriginal | L394-416 | 单文件还原：优先 rename 备份回原位，失败则按原字节写回或删除新文件，还原失败记入 problems |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | rollbackTransaction | L418-436 | 逆序回滚：先撤 active 再撤 archive，清理临时与备份并按原状态核对残留，返回去重后的 problem 列表 |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | publishTransaction | L438-499 | 发布事务：同一 H context 预授权 active/archive/临时/备份，写临时文件后 rename 备份→发布合并 archive→发布空 active（清空），任一步失败即逆序回滚 |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | ensureLedgerDirectory | L501-506 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | authorizeWriteTarget | L508-510 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | authorizeReadIfPresent | L512-518 | （待补充） |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | optionalRead | L520-528 | 可选读取：ENOENT 记为不存在（空 Buffer），其它错误转 archiveError |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | recordDiagnostic | L530-542 | 诊断留痕：向 usage-ledger/archive-failed.log 追加一行 ISO 时间 + reason + message；留痕自身失败仅忽略 |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | reportFailure | L544-554 | 启动归档失败处理：console.warn 一行 + 追加 archive-failed.log，返回 {status:'failed', reason, error}，绝不阻断启动 |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | startupArchiveUnsafe | L556-669 | 启动归档主流程：无 H 根或无 active 账本跳过；双根授权后取 writer 锁（锁忙跳过、stale-lock 接管失败记失败），按预算严格解析 archive+active 后合并发布；异常吞入 reportFailure |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | checkBudget | L610-614 | 启动归档预算闭包：超过 STARTUP_ARCHIVE_BUDGET_MS 即抛 budget-timeout，保证超时发生在发布前、未改写账本 |  |
-| plugins/dsh-extra-plan/lib/usage-archive.js | startupArchive | L673-688 | 启动归档唯一入口（同步、不返回 Promise）：包裹 startupArchiveUnsafe 并内部消化全部异常，恒返回 {status, reason?, ...} 供 settings apply 期留痕 |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | isSchemaDocRow | L71-73 | 判定账本说明行：对象且 kind 等于 账本说明、说明 与 键 均为字符串（三字段全形匹配，避免宽松统计把仅含 kind 的垃圾行当说明行跳过） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | archivePathOf | L76-78 | 由 active 账本路径推导同目录归档文件路径（ledger-v2.archive.jsonl） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | errorCodeOf | L90-92 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | errorMessageOf | L94-96 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | archiveError | L98-102 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | isPlainObject | L104-106 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | bytesOf | L108-112 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | textOfBytes | L114-116 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | mergedFsOps | L118-120 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | nowOf | L122-132 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | hostRootOf | L134-140 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | compareValues | L142-146 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | tokenNumber | L148-150 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | identityValue | L152-156 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | groupSort | L158-164 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | validDedupeKey | L166-172 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | dedupeKeyOf | L174-176 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | validationIssue | L178-197 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | parseStrictLedgerText | L200-234 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | identityOf | L236-240 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | identityKeyOf | L242-245 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | emptyGroupOf | L247-259 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | addRowToGroup | L261-273 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | groupFromArchiveRow | L275-285 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | finalizedGroups | L287-297 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | shouldReplaceArchiveRow | L299-306 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | summarizeSourceRows | L308-362 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | assertUniqueArchiveRows | L364-372 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | archiveRowOf | L374-392 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | archiveTextOf | L394-403 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | uniqueTransactionPaths | L405-414 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | unlinkIfPresent | L416-422 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | pathExists | L424-432 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | restoreOriginal | L434-456 | 单文件还原：优先 rename 备份回原位，失败则按原字节写回或删除新文件，还原失败记入 problems |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | rollbackTransaction | L458-476 | 逆序回滚：先撤 active 再撤 archive，清理临时与备份并按原状态核对残留，返回去重后的 problem 列表 |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | publishTransaction | L478-539 | 发布事务：同一 H context 预授权 active/archive/临时/备份，写临时文件后 rename 备份→发布合并 archive→发布空 active（清空），任一步失败即逆序回滚 |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | ensureLedgerDirectory | L541-546 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | authorizeWriteTarget | L548-550 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | authorizeReadIfPresent | L552-558 | （待补充） |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | optionalRead | L560-568 | 可选读取：ENOENT 记为不存在（空 Buffer），其它错误转 archiveError |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | recordDiagnostic | L570-582 | 诊断留痕：向 usage-ledger/archive-failed.log 追加一行 ISO 时间 + reason + message；留痕自身失败仅忽略 |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | reportFailure | L584-594 | 启动归档失败处理：console.warn 一行 + 追加 archive-failed.log，返回 {status:'failed', reason, error}，绝不阻断启动 |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | archiveLedger | L598-702 | 可复用归档入口：目录与双根授权、加锁、预算、严格解析、唯一性断言、汇总、文本生成、发布与锁释放；options.onCheck 阶段探针仅供测试（阶段 start/parse-archive/parse-active/unique/summarize/serialize/publish）；抛错保留 duplicate-archive、budget-timeout、non-v2、bad-json、invalid-v2、publish-failed、release-failed、lock-busy |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | checkBudget | L630-638 | 启动归档预算闭包：超过 STARTUP_ARCHIVE_BUDGET_MS 即抛 budget-timeout，保证超时发生在发布前、未改写账本 |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | startupArchiveUnsafe | L706-741 | 启动归档主流程：无 H 根或无 active 账本跳过；双根授权后取 writer 锁（锁忙跳过、stale-lock 接管失败记失败），按预算严格解析 archive+active 后合并发布；异常吞入 reportFailure |  |
+| plugins/dsh-extra-plan/lib/usage-archive.js | startupArchive | L745-760 | 启动归档唯一入口（同步、不返回 Promise）：包裹 startupArchiveUnsafe 并内部消化全部异常，恒返回 {status, reason?, ...} 供 settings apply 期留痕 |  |
 | plugins/dsh-extra-plan/lib/usage-ledger.js | lockPathOf | L11-13 | 从 active 路径派生固定的 .lock 路径。 | 锁名为 active + .lock。 |
 | plugins/dsh-extra-plan/lib/usage-ledger.js | staleLockPathOf | L15-17 | 为释放与接管生成同目录唯一临时路径（active + `.stale-<pid>-<uuid>`），避免直接删除当前 owner 的 canonical lock。 | release 与 takeoverStaleLock 共用：先 rename 独占搬走，再复核 token。 |
 | plugins/dsh-extra-plan/lib/usage-ledger.js | takeoverStaleLock | L22-39 | 死 PID 判定后的僵尸锁原子接管：rename 到 .stale- 随机名独占搬走 → 复核搬走后读到的 token 仍与判死时 owner 一致 → 不匹配立即 rename 还原并放弃 → 匹配才 unlink 删除；搬走/删除失败按原样抛出，绝不无校验直删他人锁 | 供 acquireUsageLedgerLock 在死 PID 判定成立后调用，接管成功静默继续取锁。 |

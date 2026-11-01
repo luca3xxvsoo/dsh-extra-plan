@@ -1068,7 +1068,7 @@ arGateRuntime.childBaseline(arGateMain, [])
 checkTrue('AR-gate main 同步fold且不抬升floor', arGateFold.at(-1).role === 'main' && arGateFloor.length === 1)
 
 // ── M6 系列：step-99 导入、临时双文件统计/归档、严格拒绝与事务回滚 ───────
-checkTrue('M6 step-99 导入仅暴露函数且不触发CLI副作用', typeof usageStats.main === 'function' && typeof usageStats.statLedger === 'function' && typeof usageStats.archiveLedger === 'function' && process.exitCode === undefined)
+checkTrue('M6 step-99 导入仅暴露函数且不触发CLI副作用（归档入口已迁至 usage-archive.js）', typeof usageStats.main === 'function' && typeof usageStats.statLedger === 'function' && typeof usageArchiveModule.archiveLedger === 'function' && process.exitCode === undefined)
 const archiveRow = (patch = {}) => ({
   schemaVersion: 2,
   ts: '2026-10-22T00:00:00.000Z',
@@ -1105,14 +1105,50 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
     const fixedKeys = usageStats.V2_KEYS.slice().sort()
     const strictRowsOk = rows.length === 2 && rows.every((row) => JSON.stringify(Object.keys(row).sort()) === JSON.stringify(fixedKeys) && usageStats.parseLedgerText(JSON.stringify(row) + '\n', { strict: true }).rows.length === 1 && !Object.hasOwn(row, 'calls'))
     checkTrue('M6-G2-1 createUsageLedger真实main空agentPreset/深层空root：两行固定15键且strict parse成功', mainResult.status === 'written' && deepResult.status === 'written' && strictRowsOk && rows.some((row) => row.sessionId === 'g2-generated-main' && row.agentPreset === '' && row.rootSessionId === 'g2-generated-main') && rows.some((row) => row.sessionId === 'g2-generated-deep' && row.rootSessionId === '' && row.parentSessionId === 'g2-chain-8'))
-    const archiveResult = usageStats.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT })
-    const archived = archiveBytesOf(usageStats.archivePathOf(active))
+    const archiveResult = usageArchiveModule.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT })
+    const archived = archiveBytesOf(usageArchiveModule.archivePathOf(active))
     checkTrue('M6-G2-1 真实生成main/断链行strict归档成功且active清空', archiveResult.rows === 2 && archiveResult.groups === 2 && archiveBytesOf(active) === '' && usageStats.parseLedgerText(archived, { strict: true }).rows.length === 2 && !existsSync(usageLedgerModule.usageLedgerLockPath(active)) && archiveResiduals(dir).length === 0)
+
+    // 归档首行说明行：三字段判定、统计跳过、严格解析计数、错位拒绝与历史无说明版自动升级。
+    const archivedLines = archived.trim().split('\n')
+    const archivedDoc = JSON.parse(archivedLines[0])
+    checkTrue('M6-G2-1 归档首行说明行kind为账本说明且键含15键名', archivedDoc.kind === usageArchiveModule.SCHEMA_DOC_KIND && archivedDoc.kind === '账本说明' && usageStats.V2_KEYS.length === 15 && usageStats.V2_KEYS.every((key) => String(archivedDoc['键']).split(',').includes(key)))
+    const archivedSummary = usageStats.summarizeSnapshotTexts([{ text: archived, path: 'archive' }])
+    checkTrue('M6-G2-1 统计口径说明行计数为1且不计入V1/非V2与坏JSON', archivedSummary.noticeLines === 1 && archivedSummary.rows.length === 2 && archivedSummary.skippedNonV2Objects === 0 && archivedSummary.badJsonLines === 0 && usageStats.renderStats(archivedSummary).includes('账本说明行（首行说明，已跳过，未计入V1/非V2）: 1'))
+    const archivedStrict = usageStats.parseLedgerText(archived, { strict: true })
+    checkTrue('M6-G2-1 归档严格解析跳过说明行：rows为2且noticeLines为1', archivedStrict.rows.length === 2 && archivedStrict.noticeLines === 1)
+    const misplacedDocCode = (text) => {
+      try { usageStats.parseLedgerText(text, { strict: true }) } catch (error) { return error.code }
+      return ''
+    }
+    checkTrue('M6-G2-1 说明行错位（非首行/重复）抛schema-doc-misplaced', misplacedDocCode(JSON.stringify(archiveRow({ seq: 3 })) + '\n' + usageArchiveModule.SCHEMA_DOC_LINE + '\n') === 'schema-doc-misplaced' && misplacedDocCode(usageArchiveModule.SCHEMA_DOC_LINE + '\n' + usageArchiveModule.SCHEMA_DOC_LINE + '\n') === 'schema-doc-misplaced')
+    archiveWriteRows(usageArchiveModule.archivePathOf(active), archivedStrict.rows)
+    const upgradeResult = usageArchiveModule.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT })
+    const upgradedArchive = archiveBytesOf(usageArchiveModule.archivePathOf(active))
+    const upgradedStrict = usageStats.parseLedgerText(upgradedArchive, { strict: true })
+    checkTrue('M6-G2-1 无说明行历史归档自动升级：再次归档后首行恢复说明行且数据行不变', upgradeResult.rows === 2 && upgradeResult.groups === 2 && upgradedArchive.trim().split('\n')[0] === usageArchiveModule.SCHEMA_DOC_LINE && upgradedStrict.rows.length === 2 && upgradedStrict.noticeLines === 1 && archiveResiduals(dir).length === 0)
+    checkTrue('M6-G2-1 SCHEMA_DOC_LINE与归档首行逐字相等', archivedLines[0] === usageArchiveModule.SCHEMA_DOC_LINE && upgradedArchive.trim().split('\n')[0] === usageArchiveModule.SCHEMA_DOC_LINE)
     const strictFailureCode = (row) => {
       try { usageStats.parseLedgerText(JSON.stringify(row) + '\n', { strict: true }) } catch (error) { return error.code }
       return ''
     }
     checkTrue('M6-G2-1 sessionId/role空值仍被strict拒绝', strictFailureCode({ ...rows[0], sessionId: '' }) === 'invalid-v2' && strictFailureCode({ ...rows[0], role: '' }) === 'invalid-v2')
+
+    // M6 说明行并存：active 自身只带说明行（无数据行）时归档，说明行被跳过、归档内既有数据行不被清空。
+    // 口径说明：archiveLedger 的 rows 是「归档去重行 + active 接收行」总数（与 G2-2 用例 rows===4 同口径），
+    // 故本用例恒为归档既有 2 行；「active 无可计数据行」由 coveredByArchiveRows===0 与 rows 等于归档行数共同表达。
+    const docDir = makeWTemp('dsh-m6-doc-coexist')
+    try {
+      const docActive = join(docDir, 'ledger-v2.jsonl')
+      const docArchive = usageArchiveModule.archivePathOf(docActive)
+      archiveWriteRows(docArchive, [archiveRow({ sessionId: 'm6-doc-archive-a', provider: 'm6-doc-archive-provider-a', seq: 1 }), archiveRow({ sessionId: 'm6-doc-archive-b', provider: 'm6-doc-archive-provider-b', seq: 2 })])
+      writeFileSync(docActive, usageArchiveModule.SCHEMA_DOC_LINE + '\n', 'utf8')
+      const docResult = usageArchiveModule.archiveLedger(docActive, { pathContext: STEP00_PATH_CONTEXT })
+      const docParsed = usageStats.parseLedgerText(archiveBytesOf(docArchive), { strict: true })
+      checkTrue('M6 说明行并存 active仅说明行归档：说明行被跳过且不清空归档、active清空、归档严格解析rows2/noticeLines1', docResult.rows === 2 && docResult.groups === 2 && docResult.coveredByArchiveRows === 0 && archiveBytesOf(docActive) === '' && docParsed.rows.length === 2 && docParsed.noticeLines === 1 && archiveResiduals(docDir).length === 0)
+    } finally {
+      rmSync(docDir, { recursive: true, force: true })
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -1123,7 +1159,7 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
   const dir = makeWTemp('dsh-g2-watermark')
   try {
     const active = join(dir, 'ledger-v2.jsonl')
-    const archive = usageStats.archivePathOf(active)
+    const archive = usageArchiveModule.archivePathOf(active)
     const cursor = active + '.cursor.json'
     const identityKeys = ['schemaVersion', 'rootSessionId', 'sessionId', 'parentSessionId', 'agentPreset', 'delegationDepth', 'role', 'model', 'provider']
     const baseIdentity = Object.freeze({
@@ -1155,7 +1191,7 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
     const statsA = stats.groups.find((group) => sameIdentity(group, expectedA))
     const statsB = stats.groups.find((group) => sameIdentity(group, expectedB))
     checkTrue('M6-G2-2 stat水位覆盖seq10/20不增Token、provider完整身份且默认stat三文件零写', stats.rows.length === 4 && stats.groups.length === 2 && stats.coveredByArchiveRows === 2 && statsA !== undefined && sameIdentity(statsA, expectedA) && statsA.inputTokens === 30 && statsA.cacheReadTokens === 300 && statsA.cacheWriteTokens === 3000 && statsA.outputTokens === 30000 && statsA.maxSeq === 20 && statsA.latestTs === '2026-10-22T00:00:20.000Z' && statsB !== undefined && sameIdentity(statsB, expectedB) && statsB.inputTokens === 7 && statsB.cacheReadTokens === 8 && statsB.cacheWriteTokens === 9 && statsB.outputTokens === 10 && statsB.maxSeq === 11 && statsB.latestTs === '2026-10-22T00:00:11.000Z' && stats.groups.every((group) => !Object.hasOwn(group, 'calls')) && !usageStats.renderStats(stats).includes('calls') && archiveBytesOf(active) === statBefore.active && archiveBytesOf(archive) === statBefore.archive && archiveBytesOf(cursor) === statBefore.cursor && sha256Text(archiveBytesOf(cursor)) === cursorHash)
-    const archiveResult = usageStats.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT })
+    const archiveResult = usageArchiveModule.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT })
     const archiveAfterReplay = archiveBytesOf(archive)
     const replayRows = usageStats.parseLedgerText(archiveAfterReplay, { strict: true }).rows
     const replayA = replayRows.find((row) => sameIdentity(row, expectedA))
@@ -1165,13 +1201,13 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
     const stats21 = usageStats.statLedger(active, { pathContext: STEP00_PATH_CONTEXT })
     const statsA21 = stats21.groups.find((group) => sameIdentity(group, expectedA))
     checkTrue('M6-G2-2 archive水位后seq21只增一次且maxSeq/latestTs正确', stats21.coveredByArchiveRows === 0 && statsA21 !== undefined && statsA21.inputTokens === 51 && statsA21.cacheReadTokens === 510 && statsA21.cacheWriteTokens === 5100 && statsA21.outputTokens === 51000 && statsA21.maxSeq === 21 && statsA21.latestTs === '2026-10-22T00:00:21.000Z')
-    const archiveResult21 = usageStats.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT })
+    const archiveResult21 = usageArchiveModule.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT })
     const archiveAfter21 = archiveBytesOf(archive)
     const finalRows = usageStats.parseLedgerText(archiveAfter21, { strict: true }).rows
     const finalA = finalRows.find((row) => sameIdentity(row, expectedA))
     const finalB = finalRows.find((row) => sameIdentity(row, expectedB))
     checkTrue('M6-G2-2 seq21 archive只提交一次且A/B完整身份、四桶/maxSeq/latestTs正确', archiveResult21.rows === 3 && archiveResult21.groups === 2 && archiveResult21.coveredByArchiveRows === 0 && finalRows.length === 2 && finalA !== undefined && sameIdentity(finalA, expectedA) && finalA.inputTokens === 51 && finalA.cacheReadTokens === 510 && finalA.cacheWriteTokens === 5100 && finalA.outputTokens === 51000 && finalA.seq === 21 && finalA.ts === '2026-10-22T00:00:21.000Z' && finalB !== undefined && sameIdentity(finalB, expectedB) && finalB.inputTokens === 7 && finalB.cacheReadTokens === 8 && finalB.cacheWriteTokens === 9 && finalB.outputTokens === 10 && finalB.seq === 11 && archiveBytesOf(active) === '' && archiveBytesOf(cursor) === cursorBefore && sha256Text(archiveBytesOf(cursor)) === cursorHash)
-    usageStats.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT })
+    usageArchiveModule.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT })
     checkTrue('M6-G2-2 二次archive字节稳定且无calls/lock/temp残留', archiveBytesOf(archive) === archiveAfter21 && archiveBytesOf(active) === '' && archiveBytesOf(cursor) === cursorBefore && sha256Text(archiveBytesOf(cursor)) === cursorHash && usageStats.parseLedgerText(archiveBytesOf(archive), { strict: true }).rows.every((row) => !Object.hasOwn(row, 'calls')) && !existsSync(usageLedgerModule.usageLedgerLockPath(active)) && archiveResiduals(dir).length === 0)
   } finally {
     rmSync(dir, { recursive: true, force: true })
@@ -1183,14 +1219,14 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
   const dir = makeWTemp('dsh-g2-duplicate-archive')
   try {
     const active = join(dir, 'ledger-v2.jsonl')
-    const archive = usageStats.archivePathOf(active)
+    const archive = usageArchiveModule.archivePathOf(active)
     const cursor = active + '.cursor.json'
     archiveWriteRows(archive, [archiveRow({ sessionId: 'g2-duplicate', provider: 'g2-duplicate-provider', inputTokens: 10, seq: 10 }), archiveRow({ sessionId: 'g2-duplicate', provider: 'g2-duplicate-provider', inputTokens: 30, seq: 20 })])
     archiveWriteRows(active, [])
     writeFileSync(cursor, '{"g2-duplicate":{"seq":20,"index":2}}', 'utf8')
     const before = { active: archiveBytesOf(active), archive: archiveBytesOf(archive), cursor: archiveBytesOf(cursor) }
     let failure
-    try { usageStats.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT }) } catch (error) { failure = error }
+    try { usageArchiveModule.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT }) } catch (error) { failure = error }
     checkTrue('M6-G2-3 strict archive同完整身份多累计行发布前duplicate-archive拒绝且三文件/lock/temp不变', failure !== undefined && failure.code === 'duplicate-archive' && archiveBytesOf(active) === before.active && archiveBytesOf(archive) === before.archive && archiveBytesOf(cursor) === before.cursor && !existsSync(usageLedgerModule.usageLedgerLockPath(active)) && archiveResiduals(dir).length === 0)
   } finally {
     rmSync(dir, { recursive: true, force: true })
@@ -1201,7 +1237,7 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
   const dir = makeWTemp('dsh-g3-archive')
   try {
     const active = join(dir, 'ledger-v2.jsonl')
-    const archive = usageStats.archivePathOf(active)
+    const archive = usageArchiveModule.archivePathOf(active)
     const cursor = active + '.cursor.json'
     const archiveRow1 = archiveRow({ ts: '2026-10-22T00:00:01.000Z', inputTokens: 10, cacheReadTokens: 20, cacheWriteTokens: 30, outputTokens: 40, seq: 1 })
     const activeRow2 = archiveRow({ ts: '2026-10-22T00:00:02.000Z', inputTokens: 1, cacheReadTokens: 2, cacheWriteTokens: 3, outputTokens: 4, seq: 2 })
@@ -1224,7 +1260,7 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
       && stats.groups.every((group) => !Object.hasOwn(group, 'calls'))
       && archiveBytesOf(active) === activeBefore && archiveBytesOf(archive) === archiveBefore && archiveBytesOf(cursor) === cursorBefore
       && !existsSync(usageLedgerModule.usageLedgerLockPath(active)) && archiveResiduals(dir).length === 0)
-    const archiveResult = usageStats.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT })
+    const archiveResult = usageArchiveModule.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT })
     const archiveAfter = archiveBytesOf(archive)
     const cursorAfter = archiveBytesOf(cursor)
     checkTrue('M6 成功archive清空active、cursor不变、聚合行含provider且无calls/残留',
@@ -1232,7 +1268,7 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
       && usageStats.parseLedgerText(archiveAfter, { strict: true }).rows.length === 2
       && usageStats.parseLedgerText(archiveAfter, { strict: true }).rows.every((row) => !Object.hasOwn(row, 'calls'))
       && !existsSync(usageLedgerModule.usageLedgerLockPath(active)) && archiveResiduals(dir).length === 0)
-    usageStats.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT })
+    usageArchiveModule.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT })
     checkTrue('M6 二次archive字节稳定且active仍空/cursor仍不变', archiveBytesOf(archive) === archiveAfter && archiveBytesOf(active) === '' && archiveBytesOf(cursor) === cursorBefore && archiveResiduals(dir).length === 0)
 
     const invalidCases = [
@@ -1245,16 +1281,17 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
       writeFileSync(active, text, 'utf8')
       const before = { active: archiveBytesOf(active), archive: archiveBytesOf(archive), cursor: archiveBytesOf(cursor) }
       let failure
-      try { usageStats.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT }) } catch (error) { failure = error }
+      try { usageArchiveModule.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT }) } catch (error) { failure = error }
       checkTrue('M6 ' + label + '发布前零改写/无lock-temp-backup', failure !== undefined && failure.code === code && archiveBytesOf(active) === before.active && archiveBytesOf(archive) === before.archive && archiveBytesOf(cursor) === before.cursor && !existsSync(usageLedgerModule.usageLedgerLockPath(active)) && archiveResiduals(dir).length === 0)
     }
 
-    // M6-B1：多行 parseLedgerText 中途预算超时；可控 clock 在解析中途才超时（前若干次不超时），证明不是调用前立即失败。
+    // M6-B1：多行 parseLedgerText 解析中途预算超时；onCheck 阶段探针锚定 parse-active——只有解析 active 阶段才判超时，证明不是调用前立即失败。
+    // 预算阈值刻意放宽（60000ms），超时唯一来源是 onCheck 阶段探针，不依赖真实时钟与机器速度。
     {
       const budgetDir = makeWTemp('dsh-g3-budget-parse')
       try {
         const budgetActive = join(budgetDir, 'ledger-v2.jsonl')
-        const budgetArchive = usageStats.archivePathOf(budgetActive)
+        const budgetArchive = usageArchiveModule.archivePathOf(budgetActive)
         const budgetCursor = budgetActive + '.cursor.json'
         const parseArchiveRows = Array.from({ length: 4 }, (_, index) => archiveRow({ sessionId: 'm6-parse-archive-' + index, provider: 'parse-archive-' + index, seq: index + 1 }))
         const parseActiveRows = Array.from({ length: 4 }, (_, index) => archiveRow({ sessionId: 'm6-parse-active-' + index, provider: 'parse-active-' + index, seq: index + 5 }))
@@ -1262,13 +1299,12 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
         archiveWriteRows(budgetActive, parseActiveRows)
         writeFileSync(budgetCursor, '{"m6-parse":{"seq":12,"index":8}}', 'utf8')
         const parseBefore = { active: archiveBytesOf(budgetActive), archive: archiveBytesOf(budgetArchive), cursor: archiveBytesOf(budgetCursor) }
-        let parseClockCalls = 0
         const parseIo = { write: 0, move: 0, remove: 0 }
         let parseFailure
         try {
-          usageStats.archiveLedger(budgetActive, { pathContext: STEP00_PATH_CONTEXT,
-            budgetMs: 1,
-            clock: () => { parseClockCalls += 1; return parseClockCalls >= 10 ? 1 : 0 },
+          usageArchiveModule.archiveLedger(budgetActive, { pathContext: STEP00_PATH_CONTEXT,
+            budgetMs: 60000,
+            onCheck: (phase) => phase === 'parse-active',
             fsOps: {
               writeFileSync: (...args) => { parseIo.write += 1; return writeFileSync(...args) },
               renameSync: (...args) => { parseIo.move += 1; return renameSync(...args) },
@@ -1279,12 +1315,13 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
         checkTrue('M6-B1 多行解析中途budget-timeout：任何write/move/remove前三文件hash不变', parseFailure !== undefined && parseFailure.code === 'budget-timeout' && parseIo.write === 0 && parseIo.move === 0 && parseIo.remove === 0 && archiveBytesOf(budgetActive) === parseBefore.active && archiveBytesOf(budgetArchive) === parseBefore.archive && archiveBytesOf(budgetCursor) === parseBefore.cursor && archiveResiduals(budgetDir).length === 0)
       } finally { rmSync(budgetDir, { recursive: true, force: true }) }
     }
-    // M6-B2：多组 archiveTextOf 序列化中途预算超时；clock 在序列化中途才超时且发布尚未开始。
+    // M6-B2：多组 archiveTextOf 序列化中途预算超时；onCheck 阶段探针锚定 serialize——只有序列化阶段才判超时且发布尚未开始。
+    // 预算阈值刻意放宽（60000ms），超时唯一来源是 onCheck 阶段探针，不依赖真实时钟与机器速度。
     {
       const budgetDir = makeWTemp('dsh-g3-budget-archive-text')
       try {
         const budgetActive = join(budgetDir, 'ledger-v2.jsonl')
-        const budgetArchive = usageStats.archivePathOf(budgetActive)
+        const budgetArchive = usageArchiveModule.archivePathOf(budgetActive)
         const budgetCursor = budgetActive + '.cursor.json'
         const serializeArchiveRows = Array.from({ length: 4 }, (_, index) => archiveRow({ sessionId: 'm6-serialize-archive-' + index, provider: 'serialize-archive-' + index, seq: index + 1 }))
         const serializeActiveRows = Array.from({ length: 4 }, (_, index) => archiveRow({ sessionId: 'm6-serialize-active-' + index, provider: 'serialize-active-' + index, seq: index + 5 }))
@@ -1292,13 +1329,12 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
         archiveWriteRows(budgetActive, serializeActiveRows)
         writeFileSync(budgetCursor, '{"m6-serialize":{"seq":12,"index":8}}', 'utf8')
         const serializeBefore = { active: archiveBytesOf(budgetActive), archive: archiveBytesOf(budgetArchive), cursor: archiveBytesOf(budgetCursor) }
-        let serializeClockCalls = 0
         const serializeIo = { write: 0, move: 0, remove: 0 }
         let serializeFailure
         try {
-          usageStats.archiveLedger(budgetActive, { pathContext: STEP00_PATH_CONTEXT,
-            budgetMs: 1,
-            clock: () => { serializeClockCalls += 1; return serializeClockCalls >= 49 ? 1 : 0 },
+          usageArchiveModule.archiveLedger(budgetActive, { pathContext: STEP00_PATH_CONTEXT,
+            budgetMs: 60000,
+            onCheck: (phase) => phase === 'serialize',
             fsOps: {
               writeFileSync: (...args) => { serializeIo.write += 1; return writeFileSync(...args) },
               renameSync: (...args) => { serializeIo.move += 1; return renameSync(...args) },
@@ -1310,12 +1346,30 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
       } finally { rmSync(budgetDir, { recursive: true, force: true }) }
     }
 
+    // M6 探针反证：与 B2 完全相同的 fixture 与 budgetMs 60000，但 onCheck 恒返回 false——归档必须正常成功，
+    // 证明放宽预算后真实时钟在测试期内不会自然超时，B1/B2 的超时唯一来源是 onCheck 阶段探针。
+    {
+      const probeDir = makeWTemp('dsh-m6-probe-control')
+      try {
+        const probeActive = join(probeDir, 'ledger-v2.jsonl')
+        const probeArchive = usageArchiveModule.archivePathOf(probeActive)
+        const probeCursor = probeActive + '.cursor.json'
+        const probeArchiveRows = Array.from({ length: 4 }, (_, index) => archiveRow({ sessionId: 'm6-serialize-archive-' + index, provider: 'serialize-archive-' + index, seq: index + 1 }))
+        const probeActiveRows = Array.from({ length: 4 }, (_, index) => archiveRow({ sessionId: 'm6-serialize-active-' + index, provider: 'serialize-active-' + index, seq: index + 5 }))
+        archiveWriteRows(probeArchive, probeArchiveRows)
+        archiveWriteRows(probeActive, probeActiveRows)
+        writeFileSync(probeCursor, '{"m6-serialize":{"seq":12,"index":8}}', 'utf8')
+        const probeResult = usageArchiveModule.archiveLedger(probeActive, { pathContext: STEP00_PATH_CONTEXT, budgetMs: 60000, onCheck: () => false })
+        checkTrue('M6 探针反证 onCheck恒false且budgetMs60000：归档archived且active清空，预算不自然超时', probeResult.status === 'archived' && probeResult.rows === 8 && probeResult.groups === 8 && archiveBytesOf(probeActive) === '' && usageStats.parseLedgerText(archiveBytesOf(probeArchive), { strict: true }).rows.length === 8 && archiveResiduals(probeDir).length === 0)
+      } finally { rmSync(probeDir, { recursive: true, force: true }) }
+    }
+
     // M6-B3：archive 唯一性数据集下预算检查超时必须在发布前拒绝（零发布 IO、三文件不变、锁释放）。
     {
       const budgetDir = makeWTemp('dsh-g2-budget-unique')
       try {
         const budgetActive = join(budgetDir, 'ledger-v2.jsonl')
-        const budgetArchive = usageStats.archivePathOf(budgetActive)
+        const budgetArchive = usageArchiveModule.archivePathOf(budgetActive)
         const budgetCursor = budgetActive + '.cursor.json'
         const uniqueRows = Array.from({ length: 5 }, (_, index) => archiveRow({ sessionId: 'g2-unique-' + index, provider: 'g2-unique-provider-' + index, seq: index + 1 }))
         archiveWriteRows(budgetArchive, uniqueRows)
@@ -1328,7 +1382,7 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
         const clock = () => { clockCalls += 1; return clockCalls > 1 ? 1 : 0 }
         let failure
         try {
-          usageStats.archiveLedger(budgetActive, { pathContext: STEP00_PATH_CONTEXT, budgetMs: 1, clock, fsOps: { writeFileSync: (...args) => { io.write += 1; return writeFileSync(...args) }, renameSync: (...args) => { io.move += 1; return renameSync(...args) }, unlinkSync: (...args) => { io.remove += 1; return unlinkSync(...args) } } })
+          usageArchiveModule.archiveLedger(budgetActive, { pathContext: STEP00_PATH_CONTEXT, budgetMs: 1, clock, fsOps: { writeFileSync: (...args) => { io.write += 1; return writeFileSync(...args) }, renameSync: (...args) => { io.move += 1; return renameSync(...args) }, unlinkSync: (...args) => { io.remove += 1; return unlinkSync(...args) } } })
         } catch (error) { failure = error }
         checkTrue('M6-B3 唯一性数据集预算超时：budget-timeout且无发布IO/三文件不变/锁释放', failure !== undefined && failure.code === 'budget-timeout' && io.write === 0 && io.move === 0 && io.remove === 0 && archiveBytesOf(budgetActive) === before.active && archiveBytesOf(budgetArchive) === before.archive && archiveBytesOf(budgetCursor) === before.cursor && !existsSync(usageLedgerModule.usageLedgerLockPath(budgetActive)) && archiveResiduals(budgetDir).length === 0)
       } finally { rmSync(budgetDir, { recursive: true, force: true }) }
@@ -1338,7 +1392,7 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
       const budgetDir = makeWTemp('dsh-g2-budget-archive-entries')
       try {
         const budgetActive = join(budgetDir, 'ledger-v2.jsonl')
-        const budgetArchive = usageStats.archivePathOf(budgetActive)
+        const budgetArchive = usageArchiveModule.archivePathOf(budgetActive)
         const budgetCursor = budgetActive + '.cursor.json'
         const archiveEntryRows = Array.from({ length: 5 }, (_, index) => archiveRow({ sessionId: 'g2-archive-entry-' + index, provider: 'g2-archive-entry-provider-' + index, seq: index + 1 }))
         archiveWriteRows(budgetArchive, archiveEntryRows)
@@ -1351,7 +1405,7 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
         const clock = () => { clockCalls += 1; return clockCalls > 1 ? 1 : 0 }
         let failure
         try {
-          usageStats.archiveLedger(budgetActive, { pathContext: STEP00_PATH_CONTEXT, budgetMs: 1, clock, fsOps: { writeFileSync: (...args) => { io.write += 1; return writeFileSync(...args) }, renameSync: (...args) => { io.move += 1; return renameSync(...args) }, unlinkSync: (...args) => { io.remove += 1; return unlinkSync(...args) } } })
+          usageArchiveModule.archiveLedger(budgetActive, { pathContext: STEP00_PATH_CONTEXT, budgetMs: 1, clock, fsOps: { writeFileSync: (...args) => { io.write += 1; return writeFileSync(...args) }, renameSync: (...args) => { io.move += 1; return renameSync(...args) }, unlinkSync: (...args) => { io.remove += 1; return unlinkSync(...args) } } })
         } catch (error) { failure = error }
         checkTrue('M6-B4 archiveEntries 数据集预算超时：budget-timeout且无发布IO/三文件不变/锁释放', failure !== undefined && failure.code === 'budget-timeout' && io.write === 0 && io.move === 0 && io.remove === 0 && archiveBytesOf(budgetActive) === before.active && archiveBytesOf(budgetArchive) === before.archive && archiveBytesOf(budgetCursor) === before.cursor && !existsSync(usageLedgerModule.usageLedgerLockPath(budgetActive)) && archiveResiduals(budgetDir).length === 0)
       } finally { rmSync(budgetDir, { recursive: true, force: true }) }
@@ -1361,7 +1415,7 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
     archiveWriteRows(active, [archiveRow({ seq: 10, ts: '2026-10-22T00:00:10.000Z' })])
     const budgetBefore = { active: archiveBytesOf(active), archive: archiveBytesOf(archive), cursor: archiveBytesOf(cursor) }
     let budgetFailure
-    try { usageStats.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT, budgetMs: 0, clock: () => 0 }) } catch (error) { budgetFailure = error }
+    try { usageArchiveModule.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT, budgetMs: 0, clock: () => 0 }) } catch (error) { budgetFailure = error }
     checkTrue('M6 archive预算超时循环在发布前拒绝且三文件字节不变', budgetFailure !== undefined && budgetFailure.code === 'budget-timeout' && archiveBytesOf(active) === budgetBefore.active && archiveBytesOf(archive) === budgetBefore.archive && archiveBytesOf(cursor) === budgetBefore.cursor && !existsSync(usageLedgerModule.usageLedgerLockPath(active)) && archiveResiduals(dir).length === 0)
 
     // 故障点按「IO 类型 + 该类型调用序号」注入，不依赖内部临时件/备份件命名（lib 改文件名不影响本组）。
@@ -1379,7 +1433,7 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
       const faultDir = makeWTemp('dsh-g3-publish-' + label)
       try {
         const faultActive = join(faultDir, 'ledger-v2.jsonl')
-        const faultArchive = usageStats.archivePathOf(faultActive)
+        const faultArchive = usageArchiveModule.archivePathOf(faultActive)
         const faultCursor = faultActive + '.cursor.json'
         archiveWriteRows(faultArchive, [archiveRow({ sessionId: 'm6-publish-archive-' + label, provider: 'publish-archive', seq: 1 })])
         archiveWriteRows(faultActive, [archiveRow({ sessionId: 'm6-publish-active-' + label, provider: 'publish-active', seq: 2 })])
@@ -1395,7 +1449,7 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
         }
         let failure
         try {
-          usageStats.archiveLedger(faultActive, { pathContext: STEP00_PATH_CONTEXT,
+          usageArchiveModule.archiveLedger(faultActive, { pathContext: STEP00_PATH_CONTEXT,
             fsOps: {
               writeFileSync: (target, ...args) => {
                 io.write += 1
@@ -1474,7 +1528,7 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
     const failed = usageArchiveModule.startupArchive(context, { budgetMs: 5000 })
     checkTrue('M6-T2 坏JSON失败留痕：failed、archive字节不变、诊断文件存在且一行', failed.status === 'failed' && archiveBytesOf(archive) === beforeFail && existsSync(join(home, 'usage-ledger', 'archive-failed.log')) && archiveBytesOf(join(home, 'usage-ledger', 'archive-failed.log')).trim().split('\n').filter((line) => line !== '').length === 1)
     // 对拍：同一身份跨 archive/active 两批次必须并成一条（九字段身份聚合 + 四桶累加 + seq 取 max + ts 取最大 seq）。
-    // 只引用 startupArchive 与 step-99 的 parseLedgerText/archiveRow 夹具，不引用 usageStats.archiveLedger（验收禁止项）。
+    // 对拍口径：step-99 的手工归档入口已删除，本节只做启动归档（startupArchive）的合并语义回归，不再引用任何手工 archiveLedger 入口。
     const parityHome = join(dir, 'home-parity')
     const parityContext = createPathContext({ workspaceRoot: dir, hostDataRoot: parityHome })
     const parityActive = join(parityHome, 'usage-ledger', 'ledger-v2.jsonl')

@@ -1,12 +1,12 @@
-// step-99-用量统计.mjs — 在线锁保护的 V2 双文件统计与归档。
+// step-99-用量统计.mjs — 在线锁保护的 V2 双文件统计（手工归档已移除）。
 // 用法：node step-99-用量统计.mjs <ledger-v2.jsonl>（普通相对路径按当前 W）
-//      node step-99-用量统计.mjs --archive <ledger-v2.jsonl>
 // 运行时账本仍由业务以 H pathContext 传入；本 CLI 不按普通文件 dirname 自授 H。
-// 观察分两类：W 目标在共享锁内统计/归档；显式 Host 只读目标不取锁，只做最多两次
+// 观察分两类：W 目标在共享锁内统计；显式 Host 只读目标不取锁，只做最多两次
 // 稳定观察，不写所选 Host 资源/锁/备份/temp，必要 W 结构暂存允许且用后清理。
-// 默认模式只在共享锁内读取 archive/active 字节，释放锁后解析；--archive 全程持锁并有界发布。
+// 默认模式只在共享锁内读取 archive/active 字节，释放锁后解析；--archive 报 usage-removed，
+// 归档由插件启动归档与 lib/usage-archive.js 的 archiveLedger 承担。
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
@@ -15,10 +15,10 @@ import {
   usageLedgerLockPath,
   WRITER_LOCK_WAIT_MS,
 } from '../../plugins/dsh-extra-plan/lib/usage-ledger.js'
+import { isSchemaDocRow, SCHEMA_DOC_KIND } from '../../plugins/dsh-extra-plan/lib/usage-archive.js'
 import { prepareWriteTarget, resolveHostPath, resolveWorkspacePath, validateReadTarget } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
 import { createMaintenanceContext, parseMaintenanceArgs } from '../_shared/workspace-paths.mjs'
 
-export const ARCHIVE_BUDGET_MS = 30_000
 export const ARCHIVE_FILE_NAME = 'ledger-v2.archive.jsonl'
 export const V2_KEYS = Object.freeze([
   'schemaVersion',
@@ -54,7 +54,7 @@ const TOKEN_KEYS = Object.freeze([
   'cacheWriteTokens',
   'outputTokens',
 ])
-const DEFAULT_FS_OPS = Object.freeze({ mkdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync })
+const DEFAULT_FS_OPS = Object.freeze({ mkdirSync, readFileSync, rmSync, statSync, writeFileSync })
 const CLI_PURPOSE = 'usage-ledger-cli'
 const LEDGER_READ_PURPOSE = 'ledger-read'
 const LEDGER_ARCHIVE_PURPOSE = 'ledger-archive'
@@ -142,17 +142,6 @@ function targetForPath(context, filePath, purpose, options = {}) {
   return explicitHostRead
     ? resolveHostPath(context, filePath, { purpose })
     : resolveWorkspacePath(context, filePath, { purpose })
-}
-
-function authorizeWritePath(filePath, options) {
-  const context = pathContextOf(options)
-  const purpose = purposeOf(options)
-  const target = targetForPath(context, filePath, purpose, options)
-  if (isHostTarget(target) || target !== null && typeof target === 'object' && target.canWrite === false) {
-    throw new LedgerError('账本写入路径不是可写 W 目标：' + filePath, 'path-not-authorized')
-  }
-  try { return prepareWriteTarget(context, policyTargetOf(target), { expectedType: 'file', purpose }) }
-  catch (error) { throw new LedgerError('账本写入路径未获授权：' + errorMessageOf(error), errorCodeOf(error) || 'path-not-authorized') }
 }
 
 function authorizeOptionalReadPath(filePath, options) {
@@ -342,6 +331,7 @@ export function parseLedgerText(text, options = {}) {
   const rows = []
   let skippedNonV2Objects = 0
   let badJsonLines = 0
+  let noticeLines = 0
   let lineNumber = 0
   for (const line of String(text === undefined || text === null ? '' : text).split(/\r?\n/)) {
     if (line.trim() === '') continue
@@ -357,6 +347,14 @@ export function parseLedgerText(text, options = {}) {
       continue
     }
     if (check !== undefined) check()
+    if (isSchemaDocRow(row)) {
+      noticeLines += 1
+      if (strict && (lineNumber !== 1 || noticeLines > 1)) {
+        throw new LedgerError(source + ' 第' + lineNumber + '行' + SCHEMA_DOC_KIND + '说明行错位；说明行只能是首行且最多一次，发布前未改写', 'schema-doc-misplaced')
+      }
+      if (check !== undefined) check()
+      continue
+    }
     if (!isPlainObject(row) || row.schemaVersion !== 2) {
       if (strict) {
         const kind = isPlainObject(row) ? 'V1/非V2对象' : 'V1/非V2值'
@@ -373,7 +371,7 @@ export function parseLedgerText(text, options = {}) {
     rows.push(row)
     if (check !== undefined) check()
   }
-  return { rows, skippedNonV2Objects, badJsonLines, lineCount: lineNumber }
+  return { rows, skippedNonV2Objects, badJsonLines, noticeLines, lineCount: lineNumber }
 }
 
 function compareValues(left, right) {
@@ -564,35 +562,28 @@ function summarizeSourceRows(archiveRows, activeRows, options = {}) {
   }
 }
 
-function assertUniqueArchiveRows(rows, source, check) {
-  const seen = new Set()
-  for (const row of Array.isArray(rows) ? rows : []) {
-    if (check !== undefined) check()
-    const key = identityKeyOf(row)
-    if (seen.has(key)) throw new LedgerError(source + ' 同一完整身份出现多个累计行；发布前未改写', 'duplicate-archive')
-    seen.add(key)
-  }
-}
-
 export function summarizeSnapshotTexts(sources, options = {}) {
   let skippedNonV2Objects = 0
   let badJsonLines = 0
+  let noticeLines = 0
   const input = Array.isArray(sources) ? sources : []
   const archiveSource = input[0]
   const activeSources = input.slice(1)
   const parseSource = (source) => parseLedgerText(source && source.text !== undefined ? source.text : source, { strict: false, source: source && source.path ? source.path : 'ledger' })
-  const archiveParsed = archiveSource === undefined ? { rows: [], skippedNonV2Objects: 0, badJsonLines: 0 } : parseSource(archiveSource)
+  const archiveParsed = archiveSource === undefined ? { rows: [], skippedNonV2Objects: 0, badJsonLines: 0, noticeLines: 0 } : parseSource(archiveSource)
   const activeRows = []
   skippedNonV2Objects += archiveParsed.skippedNonV2Objects
   badJsonLines += archiveParsed.badJsonLines
+  noticeLines += archiveParsed.noticeLines
   for (const source of activeSources) {
     const parsed = parseSource(source)
     activeRows.push(...parsed.rows)
     skippedNonV2Objects += parsed.skippedNonV2Objects
     badJsonLines += parsed.badJsonLines
+    noticeLines += parsed.noticeLines
   }
   const summary = summarizeSourceRows(archiveParsed.rows, activeRows, options)
-  return { ...summary, skippedNonV2Objects, badJsonLines }
+  return { ...summary, skippedNonV2Objects, badJsonLines, noticeLines }
 }
 
 function shown(value) {
@@ -613,23 +604,12 @@ export function renderStats(summary, paths = {}) {
   }
   lines.push('V2 记录（去重后）: ' + summary.rows.length)
   lines.push('V1/非V2对象（已跳过，输入未改写）: ' + summary.skippedNonV2Objects)
+  lines.push('账本说明行（首行说明，已跳过，未计入V1/非V2）: ' + (Number.isFinite(summary.noticeLines) ? summary.noticeLines : 0))
   lines.push('坏JSON行（已跳过，未计入V1/非V2）: ' + summary.badJsonLines)
   if (summary.duplicateV2Rows > 0) lines.push('重复V2记录（按非空sessionId+非负整数seq去重）: ' + summary.duplicateV2Rows + '（已跳过）')
   lines.push('coveredByArchiveRows（archive水位覆盖的active重放）: ' + (summary.coveredByArchiveRows || 0))
   if (paths.archivePath !== undefined) lines.push('统计来源：' + paths.archivePath + ' + ' + paths.activePath)
   return lines.join('\n')
-}
-
-function nowOf(clock) {
-  if (typeof clock === 'function') {
-    const value = Number(clock())
-    return Number.isFinite(value) ? value : Date.now()
-  }
-  if (clock !== null && typeof clock === 'object' && typeof clock.now === 'function') {
-    const value = Number(clock.now())
-    return Number.isFinite(value) ? value : Date.now()
-  }
-  return Date.now()
 }
 
 function readSnapshots(activePath, options) {
@@ -824,260 +804,10 @@ export function statLedger(activePath, options = {}) {
   return { ...summary, activePath, archivePath: snapshots.archivePath }
 }
 
-function archiveRowOf(group) {
-  return {
-    schemaVersion: 2,
-    ts: group.latestTs,
-    sessionId: group.sessionId,
-    parentSessionId: group.parentSessionId,
-    rootSessionId: group.rootSessionId,
-    agentPreset: group.agentPreset,
-    delegationDepth: group.delegationDepth,
-    role: group.role,
-    model: group.model,
-    provider: group.provider,
-    inputTokens: group.inputTokens,
-    cacheReadTokens: group.cacheReadTokens,
-    cacheWriteTokens: group.cacheWriteTokens,
-    outputTokens: group.outputTokens,
-    seq: group.maxSeq,
-  }
-}
-
-function archiveTextOf(groups, check) {
-  if (!Array.isArray(groups) || groups.length === 0) return ''
-  const lines = []
-  for (const group of groups) {
-    if (typeof check === 'function') check()
-    lines.push(JSON.stringify(archiveRowOf(group)))
-    if (typeof check === 'function') check()
-  }
-  return lines.join('\n') + '\n'
-}
-
-function uniqueTransactionPaths(activePath, archivePath) {
-  const id = process.pid + '-' + Date.now() + '-' + randomUUID()
-  const dir = dirname(activePath)
-  return {
-    archiveTemp: join(dir, basename(archivePath) + '.tmp-' + id),
-    activeTemp: join(dir, basename(activePath) + '.tmp-' + id),
-    archiveBackup: join(dir, basename(archivePath) + '.bak-' + id),
-    activeBackup: join(dir, basename(activePath) + '.bak-' + id),
-  }
-}
-
-function unlinkIfPresent(fsOps, path, problems) {
-  try {
-    fsOps.unlinkSync(path)
-  } catch (error) {
-    if (errorCodeOf(error) !== 'ENOENT') problems.push(path + ': ' + errorMessageOf(error))
-  }
-}
-
-function renameChecked(fsOps, from, to) {
-  fsOps.renameSync(from, to)
-}
-
-function pathExists(fsOps, path) {
-  try {
-    fsOps.readFileSync(path)
-    return true
-  } catch (error) {
-    if (errorCodeOf(error) === 'ENOENT') return false
-    return true
-  }
-}
-
-function restoreOriginal(fsOps, target, backup, original, backedUp, changed, problems) {
-  if (!changed) return
-  let restored = false
-  if (backedUp) {
-    try {
-      renameChecked(fsOps, backup, target)
-      restored = true
-    } catch (error) {
-      problems.push(backup + ' -> ' + target + ': ' + errorMessageOf(error))
-    }
-  }
-  if (!restored) {
-    try {
-      if (original.exists) fsOps.writeFileSync(target, original.bytes, 'utf8')
-      else unlinkIfPresent(fsOps, target, problems)
-      restored = original.exists ? pathExists(fsOps, target) : !pathExists(fsOps, target)
-    } catch (error) {
-      problems.push(target + ': ' + errorMessageOf(error))
-    }
-  }
-  if (restored && pathExists(fsOps, backup)) unlinkIfPresent(fsOps, backup, problems)
-  if (!restored) problems.push(target)
-}
-
-function rollbackTransaction(fsOps, tx, state, originals) {
-  const problems = []
-  // 逆序：先恢复active，再恢复archive。
-  if (state.activePublished) unlinkIfPresent(fsOps, state.activePath, problems)
-  restoreOriginal(fsOps, state.activePath, tx.activeBackup, originals.active, state.activeBackedUp, state.activeChanged, problems)
-  if (state.archivePublished) unlinkIfPresent(fsOps, state.archivePath, problems)
-  restoreOriginal(fsOps, state.archivePath, tx.archiveBackup, originals.archive, state.archiveBackedUp, state.archiveChanged, problems)
-  unlinkIfPresent(fsOps, tx.activeTemp, problems)
-  unlinkIfPresent(fsOps, tx.archiveTemp, problems)
-  if (pathExists(fsOps, tx.activeBackup)) problems.push(tx.activeBackup)
-  if (pathExists(fsOps, tx.archiveBackup)) problems.push(tx.archiveBackup)
-  if (pathExists(fsOps, tx.activeTemp)) problems.push(tx.activeTemp)
-  if (pathExists(fsOps, tx.archiveTemp)) problems.push(tx.archiveTemp)
-  if (originals.active.exists && state.activeChanged && !pathExists(fsOps, state.activePath)) problems.push(state.activePath)
-  if (originals.archive.exists && state.archiveChanged && !pathExists(fsOps, state.archivePath)) problems.push(state.archivePath)
-  if (!originals.active.exists && state.activeChanged && pathExists(fsOps, state.activePath)) problems.push(state.activePath)
-  if (!originals.archive.exists && state.archiveChanged && pathExists(fsOps, state.archivePath)) problems.push(state.archivePath)
-  return [...new Set(problems)]
-}
-
-function publishTransaction({ activePath, archivePath, activeOriginal, archiveOriginal, archiveText, fsOps, checkBudget, pathContext, purpose }) {
-  const authorization = { pathContext, purpose }
-  const tx = uniqueTransactionPaths(activePath, archivePath)
-  // active、archive、临时、备份及逆序恢复全部在同一 H/W context 下预授权；
-  // 不从普通文件 dirname 推导 Host 根。
-  for (const target of [activePath, archivePath, tx.activeTemp, tx.archiveTemp, tx.activeBackup, tx.archiveBackup]) authorizeWritePath(target, authorization)
-  const state = {
-    activePath,
-    archivePath,
-    activeBackedUp: false,
-    archiveBackedUp: false,
-    activePublished: false,
-    archivePublished: false,
-    activeChanged: false,
-    archiveChanged: false,
-  }
-  try {
-    fsOps.writeFileSync(tx.archiveTemp, archiveText, 'utf8')
-    fsOps.writeFileSync(tx.activeTemp, '', 'utf8')
-    checkBudget()
-    if (archiveOriginal.exists) {
-      renameChecked(fsOps, archivePath, tx.archiveBackup)
-      state.archiveBackedUp = true
-      state.archiveChanged = true
-    }
-    checkBudget()
-    if (activeOriginal.exists) {
-      renameChecked(fsOps, activePath, tx.activeBackup)
-      state.activeBackedUp = true
-      state.activeChanged = true
-    }
-    checkBudget()
-    renameChecked(fsOps, tx.archiveTemp, archivePath)
-    state.archivePublished = true
-    state.archiveChanged = true
-    checkBudget()
-    renameChecked(fsOps, tx.activeTemp, activePath)
-    state.activePublished = true
-    state.activeChanged = true
-    checkBudget()
-    const cleanupProblems = []
-    if (state.activeBackedUp) {
-      unlinkIfPresent(fsOps, tx.activeBackup, cleanupProblems)
-      if (pathExists(fsOps, tx.activeBackup)) cleanupProblems.push(tx.activeBackup)
-      else state.activeBackedUp = false
-    }
-    if (state.archiveBackedUp) {
-      unlinkIfPresent(fsOps, tx.archiveBackup, cleanupProblems)
-      if (pathExists(fsOps, tx.archiveBackup)) cleanupProblems.push(tx.archiveBackup)
-      else state.archiveBackedUp = false
-    }
-    const residual = [...new Set(cleanupProblems)]
-    if (residual.length > 0) throw new LedgerError('发布后残留不可清理：' + residual.join(', '), 'residual')
-    return { tx, state }
-  } catch (error) {
-    const residual = rollbackTransaction(fsOps, tx, state, { active: activeOriginal, archive: archiveOriginal })
-    const message = residual.length > 0
-      ? errorMessageOf(error) + '；不可清理残留：' + residual.join(', ')
-      : errorMessageOf(error) + '；已逆序回滚且清理临时残留'
-    throw new LedgerError(message, error.code || 'publish-failed')
-  }
-}
-
-function authorizeArchiveTarget(activePath, options) {
-  const context = pathContextOf(options)
-  const purpose = purposeOf(options)
-  const classified = contextTargetOf(options, activePath)
-  if (classified !== undefined && isHostTarget(classified)) throw new LedgerError('Host只读账本不能归档；归档目标必须在 W', 'path-not-authorized')
-  const maintenance = maintenanceContextOf(options)
-  if (classified === undefined && maintenance !== undefined && maintenance.hostAccess === 'read-only') {
-    const hostTarget = targetForPath(context, activePath, LEDGER_READ_PURPOSE, { ...objectOf(options), workspaceOnly: false, hostReadOnly: true })
-    if (isHostTarget(hostTarget)) throw new LedgerError('Host只读账本不能经 W 别名归档；归档目标必须在 W', 'path-not-authorized')
-  }
-  const target = targetForPath(context, activePath, purpose, { ...objectOf(options), workspaceOnly: true })
-  if (!isWritableWorkspaceTarget(target)) throw new LedgerError('归档目标不是可写 W 目标：' + activePath, 'path-not-authorized')
-  try { prepareWriteTarget(context, policyTargetOf(target), { expectedType: 'file', purpose }) }
-  catch (error) { throw new LedgerError('归档目标未获 W 写入授权：' + errorMessageOf(error), errorCodeOf(error) || 'path-not-authorized') }
-  return target
-}
-
-export function archiveLedger(activePath, options = {}) {
-  const purpose = purposeOf(options) === CLI_PURPOSE ? LEDGER_ARCHIVE_PURPOSE : purposeOf(options)
-  const scopedOptions = { ...objectOf(options), purpose, workspaceOnly: true }
-  const archiveTarget = authorizeArchiveTarget(activePath, scopedOptions)
-  const waitMs = options !== null && Number.isFinite(options.lockWaitMs) ? options.lockWaitMs : WRITER_LOCK_WAIT_MS
-  const budgetMs = options !== null && Number.isFinite(options.budgetMs) ? Math.max(0, options.budgetMs) : ARCHIVE_BUDGET_MS
-  // 与 statLedger W 分支同模式：把 activePath 规范化为分类目标物理绝对路径，锁/读取/发布/返回值全程同一物理身份。
-  const resolvedPath = targetPathOf(archiveTarget)
-  if (typeof resolvedPath !== 'string' || resolvedPath.trim() === '') throw new LedgerError('W账本目标缺少物理路径', 'path-not-authorized')
-  activePath = resolvedPath
-  const acquired = acquireLock(activePath, waitMs, scopedOptions)
-  const startedAt = nowOf(options && options.clock)
-  const deadline = startedAt + budgetMs
-  const checkBudget = () => {
-    if (nowOf(options && options.clock) >= deadline) throw new LedgerError('archive预算超时（约' + budgetMs + 'ms），发布前未改写', 'budget-timeout')
-  }
-  let result
-  let operationError
-  let releaseError
-  try {
-    checkBudget()
-    const snapshots = readSnapshots(activePath, scopedOptions)
-    checkBudget()
-    const archiveParsed = parseLedgerText(textOfBytes(snapshots.archive.bytes), { strict: true, source: snapshots.archivePath, check: checkBudget })
-    checkBudget()
-    const activeParsed = parseLedgerText(textOfBytes(snapshots.active.bytes), { strict: true, source: activePath, check: checkBudget })
-    checkBudget()
-    assertUniqueArchiveRows(archiveParsed.rows, snapshots.archivePath, checkBudget)
-    const aggregate = summarizeSourceRows(archiveParsed.rows, activeParsed.rows, { check: checkBudget })
-    checkBudget()
-    const archiveText = archiveTextOf(aggregate.groups, checkBudget)
-    publishTransaction({
-      activePath,
-      archivePath: snapshots.archivePath,
-      activeOriginal: snapshots.active,
-      archiveOriginal: snapshots.archive,
-      archiveText,
-      fsOps: snapshots.fsOps,
-      checkBudget,
-      pathContext: pathContextOf(scopedOptions),
-      purpose,
-    })
-    result = {
-      activePath,
-      archivePath: snapshots.archivePath,
-      rows: aggregate.rows.length,
-      groups: aggregate.groups.length,
-      coveredByArchiveRows: aggregate.coveredByArchiveRows,
-      covered: aggregate.coveredByArchiveRows,
-      archiveBytes: Buffer.byteLength(archiveText, 'utf8'),
-    }
-  } catch (error) {
-    operationError = error
-  } finally {
-    try { releaseLock(acquired.release, acquired.lock, activePath) } catch (error) { releaseError = error }
-  }
-  const failure = combineErrors(operationError, releaseError)
-  if (failure !== undefined) throw failure
-  return result
-}
-
 export function parseCliArgs(argv = []) {
   const args = Array.isArray(argv) ? argv : []
   if (args.length === 1 && args[0] !== '--archive') return { mode: 'stats', activePath: String(args[0]) }
-  if (args.length === 2 && args[0] === '--archive' && String(args[1]).trim() !== '') return { mode: 'archive', activePath: String(args[1]) }
-  throw new LedgerError('用法：node step-99-用量统计.mjs <ledger-v2.jsonl>；或 node step-99-用量统计.mjs --archive <ledger-v2.jsonl>', 'usage')
+  throw new LedgerError('用法：node step-99-用量统计.mjs <ledger-v2.jsonl>；--archive 已移除，归档由插件启动归档承担', 'usage')
 }
 
 function cliPathContext(options) {
@@ -1103,9 +833,17 @@ function cliLedgerTarget(context, options, legacyArgs = []) {
   throw new LedgerError('公共维护上下文缺少明确账本目标', 'path-not-authorized')
 }
 
+const USAGE_REMOVED_MESSAGE = '手工归档已移除：--archive 不再提供；统计请直接传 ledger-v2.jsonl 位置参数，归档由插件启动归档与 lib/usage-archive.js 的 archiveLedger 承担'
+
+function usageRemovedError() {
+  return new LedgerError(USAGE_REMOVED_MESSAGE, 'usage-removed')
+}
+
 export function main(argv = process.argv.slice(2), options = {}) {
   try {
     const parsed = parseMaintenanceArgs(argv)
+    // 前置：--archive 已移除。必须在构造维护上下文之前判定，否则 W 外目标会先被 ROOT_ESCAPE 抢报。
+    if (parsed.ledger !== null && typeof parsed.ledger === 'object' && parsed.ledger.mode === 'archive') throw usageRemovedError()
     const source = objectOf(options)
     const suppliedContext = maintenanceContextOf(source)
     let context = suppliedContext
@@ -1116,7 +854,9 @@ export function main(argv = process.argv.slice(2), options = {}) {
       context = createMaintenanceContext(contextInput)
     }
     const ledgerMode = context.ledger !== null && typeof context.ledger === 'object' && context.ledger.mode === 'archive' ? 'archive' : 'stats'
-    const purpose = ledgerMode === 'archive' ? LEDGER_ARCHIVE_PURPOSE : LEDGER_READ_PURPOSE
+    // 第二道检查：覆盖调用方显式传入 maintenanceContext（raw argv 无 --archive）的情形。
+    if (ledgerMode === 'archive') throw usageRemovedError()
+    const purpose = LEDGER_READ_PURPOSE
     const contextLedgerTarget = context.ledger !== null && typeof context.ledger === 'object' ? context.ledger.target : undefined
     const scopedOptions = {
       ...source,
@@ -1128,13 +868,8 @@ export function main(argv = process.argv.slice(2), options = {}) {
     const activeTarget = cliLedgerTarget(context, scopedOptions, parsed.domainArgv)
     const activePath = targetPathOf(activeTarget)
     if (activePath === undefined) throw new LedgerError('公共维护上下文缺少明确账本目标', 'path-not-authorized')
-    if (ledgerMode === 'archive') {
-      const result = archiveLedger(activePath, scopedOptions)
-      console.log('归档成功：' + result.archivePath + '；聚合组=' + result.groups + '；covered=' + result.coveredByArchiveRows + '；active已清空；cursor未读取/未改写')
-    } else {
-      const result = statLedger(activePath, scopedOptions)
-      console.log(renderStats(result, result))
-    }
+    const result = statLedger(activePath, scopedOptions)
+    console.log(renderStats(result, result))
     return 0
   } catch (error) {
     console.error('失败：' + errorMessageOf(error))

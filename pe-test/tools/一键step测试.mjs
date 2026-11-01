@@ -142,7 +142,7 @@ export function forensicCommand(file, args = []) {
 
 // 需参数项
 const NEED_ARG = [
-  ['step-99-用量统计.mjs', '参数: <ledger-v2.jsonl>；普通相对输入固定为W目标，只读合并同目录 ledger-v2.archive.jsonl+ledger-v2.jsonl，在线短锁约1秒统计；显式H绝对路径仅为Host只读稳定观察（最多两次观察，不取锁、不写Host资源/锁/备份/temp）；W归档走显式 --archive <active> 约30秒锁预算，失败回滚；writer约1秒超时静默返回delayed、不推进cursor，后续fold补记；仅stale-lock需核实owner后显式维护，不自动接管或删锁；V1/坏JSON不迁移'],
+  ['step-99-用量统计.mjs', '参数: <ledger-v2.jsonl>；普通相对输入固定为W目标；只读合并同目录 ledger-v2.archive.jsonl 与 ledger-v2.jsonl；在线短锁约1秒统计；显式H绝对路径仅为Host只读稳定观察（最多两次观察，不取锁、不写Host资源/锁/备份/temp）；手工归档已移除（--archive 报 usage-removed），归档由插件启动归档与 lib/usage-archive.js 的 archiveLedger 承担；writer约1秒超时静默返回delayed、不推进cursor，后续fold补记；仅stale-lock需核实owner后显式维护，不自动接管或删锁；V1与坏JSON不迁移'],
 ]
 
 function reportIncompleteDirectory() {

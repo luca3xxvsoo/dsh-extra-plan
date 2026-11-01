@@ -68,9 +68,9 @@ node pe-test/tools/step-07-子代理模型与引导取证.mjs --session <顶层�
 ## 两个注意事项
 
 1. **运行前提**：部分文件要 `import 仓库里的插件代码`（相对路径 `../../plugins/...`）——如果运行时报「找不到模块」，说明当前目录不是完整目录；把 pe-test 挪回仓库根（或你准备挪回工作区时带齐 plugins）再跑。
-2. `step-99-用量统计.mjs` 需要参数：普通相对路径 `node step-99-用量统计.mjs <ledger-v2.jsonl>` 固定按 W 短锁统计；显式归档 `node step-99-用量统计.mjs --archive <ledger-v2.jsonl>` 仅作用于明确 W 目标；显式 `--host-root <H 数据根>` 加 H 内绝对精确账本为只读稳定观察（最多两次观察、不取锁、零 Host 写；锁忙、元数据变化或两次字节不一致记 `INCOMPLETE`）。
+2. `step-99-用量统计.mjs` 需要参数：普通相对路径 `node step-99-用量统计.mjs <ledger-v2.jsonl>` 固定按 W 短锁统计；手工归档已移除（`--archive` 报 `usage-removed`），归档统一由插件启动归档与 lib/usage-archive.js 的 `archiveLedger` 执行；显式 `--host-root <H 数据根>` 加 H 内绝对精确账本为只读稳定观察（最多两次观察、不取锁、零 Host 写；锁忙、元数据变化或两次字节不一致记 `INCOMPLETE`）。
    - 固定文件为同目录 `ledger-v2.jsonl`（active）、`ledger-v2.archive.jsonl`（archive）和 `ledger-v2.jsonl.lock`（active + `.lock`）。锁内容记录 owner 的 PID、token、创建时间；统计与 writer 共用排他锁。
    - 默认统计只在锁内读取 archive+active 字节快照，释放锁后自动合并解析，零写入、cursor 不读写；按完整九字段身份键 `schemaVersion | rootSessionId | sessionId | parentSessionId | agentPreset | delegationDepth | role | model | provider` 分组，输出四桶、`maxSeq`、`ts` 及派生总量，不输出调用计数列。writer/严格归档固定15键，`rootSessionId` 与 `agentPreset` 合法为空字符串；archive 每个完整身份仅保留一条累计行，`seq` 是身份累计水位而非调用数，active 中同身份 `seq` 不大于该水位的重放行跳过并计入 `covered`。
-   - `--archive` 可在 DSH 运行中调用：全程持锁，在约 30 秒预算内聚合历史、原子发布 archive 并清空 active，cursor 不读写；AI 思考和参数准备阶段不持锁。释放后 writer 可继续向 active 追加。
-   - writer 最多短等约 1 秒；timeout 静默返回 `delayed`，不推进 ledger/cursor，后续 fold 补记。stale-lock 由下一次取锁原子接管（死 PID 判死后 rename + token 校验，不匹配还原）；接管失败才告警一次并 delayed，后续 fold 重试；非法输入拒绝。`--archive` 的发布失败在发布前或回滚后保持 canonical 一致；release 失败返回明确的 `failed`/`release-failed`，已提交写入不伪装回滚。V1 不迁移。
-   - 插件内置启动归档：DSH 服务进程启动时对默认 H 账本 usage-ledger/ledger-v2.jsonl 执行一次合并归档（3 秒预算、失败回滚并追加写 usage-ledger/archive-failed.log 一行时间+原因、锁忙跳过、绝不阻断启动）；step-99 CLI 的 --archive 30 秒预算与 W-only 语义保持不变。
+   - 手工归档已移除：`--archive` 报 `usage-removed`（在任何 IO 前拒绝），归档统一由插件启动归档与 lib/usage-archive.js 的 `archiveLedger` 执行；统计可在 DSH 运行中调用（共享锁内只读 archive+active 字节快照，释放锁后合并解析，零写入、cursor 不读写）。
+   - writer 最多短等约 1 秒；timeout 静默返回 `delayed`，不推进 ledger/cursor，后续 fold 补记。stale-lock 由下一次取锁原子接管（死 PID 判死后 rename + token 校验，不匹配还原）；接管失败才告警一次并 delayed，后续 fold 重试；非法输入拒绝。release 失败返回明确的 `failed`/`release-failed`，已提交写入不伪装回滚。V1 不迁移。
+   - 插件内置启动归档：DSH 服务进程启动时对默认 H 账本 usage-ledger/ledger-v2.jsonl 执行一次合并归档（3 秒预算、失败回滚并追加写 usage-ledger/archive-failed.log 一行时间+原因、锁忙跳过、绝不阻断启动）；step-99 CLI 仅做统计，不再提供手工归档。

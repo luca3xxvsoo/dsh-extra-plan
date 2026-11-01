@@ -55,6 +55,28 @@ const TOKEN_KEYS = Object.freeze([
   'outputTokens',
 ])
 
+// 归档首行说明行：kind 固定为「账本说明」，说明 给人类读口径，键 是数据行 15 个键的逗号展开。
+// 说明行只允许唯一一条出现在首行，统计与归档一律跳过；判定必须三字段全形，避免把只有 kind 的垃圾行当说明行静默吞掉。
+export const SCHEMA_DOC_KIND = '账本说明'
+export const SCHEMA_DOC_ROW = Object.freeze({
+  kind: SCHEMA_DOC_KIND,
+  说明: '一行等于一个完整身份累计行；总消耗为四桶相加；inputTokens 是未命中缓存输入，cacheReadTokens 是命中输入，'
+    + 'cacheWriteTokens 恒 0（供应商不上报），outputTokens 为输出；seq 是会话内事件水位，不可当主键；'
+    + 'ts 是该身份最后一次写入时刻；delegationDepth 0 主会话、1 一级委派；parentSessionId 空串为主会话；'
+    + 'role 取值 main 或 subagent；agentPreset 是预设名；model 与 provider 分别为模型名与供应商名。',
+  键: V2_KEYS.join(','),
+})
+export const SCHEMA_DOC_LINE = JSON.stringify(SCHEMA_DOC_ROW)
+
+export function isSchemaDocRow(row) {
+  return isPlainObject(row) && row.kind === SCHEMA_DOC_KIND && typeof row.说明 === 'string' && typeof row.键 === 'string'
+}
+
+// 归档文件与 active 账本同目录固定文件名：启动归档与直调入口共用同一路径推导。
+export function archivePathOf(activePath) {
+  return join(dirname(activePath), ARCHIVE_FILE_NAME)
+}
+
 const DEFAULT_FS_OPS = Object.freeze({
   mkdirSync,
   readFileSync,
@@ -178,6 +200,7 @@ function validationIssue(row) {
 function parseStrictLedgerText(text, source, check) {
   const rows = []
   let lineNumber = 0
+  let schemaDocCount = 0
   for (const line of String(text === undefined || text === null ? '' : text).split(/\r?\n/)) {
     if (line.trim() === '') continue
     if (typeof check === 'function') check()
@@ -189,6 +212,15 @@ function parseStrictLedgerText(text, source, check) {
       throw archiveError('bad-json', source + ' 第' + lineNumber + '行坏JSON；发布前未改写')
     }
     if (typeof check === 'function') check()
+    // 说明行只允许唯一一条且必须在首行：重复或错位一律判失败，避免说明行混进数据行改变统计口径。
+    if (isSchemaDocRow(row)) {
+      schemaDocCount += 1
+      if (schemaDocCount > 1 || rows.length !== 0) {
+        throw archiveError('schema-doc-misplaced', source + ' 第' + lineNumber + '行说明行位置非法（说明行只能唯一一条出现在首行）；发布前未改写')
+      }
+      if (typeof check === 'function') check()
+      continue
+    }
     if (!isPlainObject(row) || row.schemaVersion !== 2) {
       const kind = isPlainObject(row) ? 'V1/非V2对象' : 'V1/非V2值'
       throw archiveError('non-v2', source + ' 第' + lineNumber + '行' + kind + '；发布前未改写')
@@ -281,11 +313,13 @@ function summarizeSourceRows(archiveRows, activeRows, options = {}) {
   const acceptedActiveRows = []
   for (const row of archiveInput) {
     if (check !== undefined) check()
+    if (isSchemaDocRow(row)) continue
     if (isPlainObject(row) && row.schemaVersion === 2) acceptedArchiveRows.push(row)
   }
   const activeSeen = new Set()
   for (const row of activeInput) {
     if (check !== undefined) check()
+    if (isSchemaDocRow(row)) continue
     if (!isPlainObject(row) || row.schemaVersion !== 2) continue
     if (validDedupeKey(row)) {
       const key = dedupeKeyOf(row)
@@ -308,16 +342,22 @@ function summarizeSourceRows(archiveRows, activeRows, options = {}) {
     groups.set(key, groupFromArchiveRow(row))
     if (validDedupeKey(row)) archivedMaxSeq.set(key, row.seq)
   }
+  let coveredByArchiveRows = 0
   for (const row of acceptedActiveRows) {
     if (check !== undefined) check()
     const key = identityKeyOf(row)
     const archivedSeq = archivedMaxSeq.get(key)
-    if (archivedSeq !== undefined && validDedupeKey(row) && row.seq <= archivedSeq) continue
+    if (archivedSeq !== undefined && validDedupeKey(row) && row.seq <= archivedSeq) {
+      coveredByArchiveRows += 1
+      continue
+    }
     addRowToGroup(groups, row)
   }
   return {
     rows: [...acceptedArchiveRows, ...acceptedActiveRows],
     groups: finalizedGroups(groups),
+    coveredByArchiveRows,
+    covered: coveredByArchiveRows,
   }
 }
 
@@ -353,7 +393,7 @@ function archiveRowOf(group) {
 
 function archiveTextOf(groups, check) {
   if (!Array.isArray(groups) || groups.length === 0) return ''
-  const lines = []
+  const lines = [SCHEMA_DOC_LINE]
   for (const group of groups) {
     if (typeof check === 'function') check()
     lines.push(JSON.stringify(archiveRowOf(group)))
@@ -553,29 +593,14 @@ function reportFailure(pathContext, fsOps, error, purpose) {
   return { status: 'failed', reason, error }
 }
 
-function startupArchiveUnsafe(pathContext, options) {
-  const fsOps = mergedFsOps(options.fsOps)
-  const purpose = LEDGER_PURPOSE
-  if (hostRootOf(pathContext) === '') {
-    try {
-      console.warn('[dsh-extra-plan] startup archive skipped: no-host-root')
-    } catch (warnError) {
-      // warning 通道不可用时忽略。
-    }
-    return { status: 'skipped', reason: 'no-host-root' }
-  }
-  const activePath = resolveHostPath(pathContext, join(LEDGER_DIRECTORY, LEDGER_FILE_NAME), { purpose }).path
-  const archivePath = join(dirname(activePath), ARCHIVE_FILE_NAME)
-  let activeExists = false
-  try {
-    fsOps.statSync(activePath)
-    activeExists = true
-  } catch (error) {
-    if (errorCodeOf(error) !== 'ENOENT') {
-      return reportFailure(pathContext, fsOps, archiveError(errorCodeOf(error) || 'stat-failed', '检查账本失败 ' + activePath + ': ' + errorMessageOf(error)), purpose)
-    }
-  }
-  if (!activeExists) return { status: 'skipped', reason: 'no-active-ledger' }
+// 可复用归档入口：与启动归档同一套授权、加锁、预算、严格解析、唯一性、汇总与事务发布语义；
+// 直调入口也先过 H/W 双根授权（ensureLedgerDirectory 与写两次与读两次，其中读走 validateReadTarget），失败抛错由调用方留痕。
+export function archiveLedger(activePath, options = {}) {
+  const settings = isPlainObject(options) ? options : {}
+  const fsOps = mergedFsOps(settings.fsOps)
+  const purpose = typeof settings.purpose === 'string' && settings.purpose !== '' ? settings.purpose : LEDGER_PURPOSE
+  const pathContext = settings.pathContext !== undefined && settings.pathContext !== null ? settings.pathContext : {}
+  const archivePath = archivePathOf(activePath)
   try {
     ensureLedgerDirectory(pathContext, purpose)
     authorizeWriteTarget(pathContext, activePath, purpose)
@@ -583,32 +608,31 @@ function startupArchiveUnsafe(pathContext, options) {
     authorizeReadIfPresent(pathContext, activePath, purpose)
     authorizeReadIfPresent(pathContext, archivePath, purpose)
   } catch (error) {
-    return reportFailure(pathContext, fsOps, archiveError(errorCodeOf(error) || 'path-not-authorized', '启动归档目标未获 H/W 双根授权：' + errorMessageOf(error)), purpose)
+    throw archiveError(errorCodeOf(error) || 'path-not-authorized', '启动归档目标未获 H/W 双根授权：' + errorMessageOf(error))
   }
 
   const lock = acquireUsageLedgerLock(activePath, { waitMs: WRITER_LOCK_WAIT_MS, pathContext, purpose })
   if (lock === null || typeof lock !== 'object' || lock.acquired !== true) {
     const reason = lock !== null && typeof lock === 'object' && typeof lock.reason === 'string' ? lock.reason : 'lock-failed'
-    if (reason === 'timeout') {
-      try {
-        console.warn('[dsh-extra-plan] startup archive skipped: lock-busy; 另一实例正在写账本，本次启动归档放弃')
-      } catch (warnError) {
-        // warning 通道不可用时忽略。
-      }
-      return { status: 'skipped', reason: 'lock-busy' }
-    }
+    if (reason === 'timeout') throw archiveError('lock-busy', '账本锁忙（另一实例正在写账本）：' + reason)
     const code = reason === 'stale-lock' ? 'stale-lock' : reason !== '' ? reason : 'lock-failed'
-    return reportFailure(pathContext, fsOps, archiveError(code, reason === 'stale-lock'
+    throw archiveError(code, reason === 'stale-lock'
       ? '账本锁为僵尸锁且接管失败：' + String(lock !== null && typeof lock === 'object' && lock.takeoverError !== undefined ? lock.takeoverError : reason)
-      : '账本锁获取失败：' + reason), purpose)
+      : '账本锁获取失败：' + reason)
   }
 
-  const budgetMs = Number.isFinite(options.budgetMs) && options.budgetMs >= 0 ? options.budgetMs : STARTUP_ARCHIVE_BUDGET_MS
+  const budgetMs = Number.isFinite(settings.budgetMs) && settings.budgetMs >= 0 ? settings.budgetMs : STARTUP_ARCHIVE_BUDGET_MS
   // 预算从取锁成功后起算；锁等待（WRITER_LOCK_WAIT_MS）不计入预算，与 step-99 语义一致。
-  const startedAt = nowOf(options.clock)
+  const startedAt = nowOf(settings.clock)
   const deadline = startedAt + budgetMs
+  const onCheck = typeof settings.onCheck === 'function' ? settings.onCheck : undefined
+  let currentPhase = 'start'
   const checkBudget = () => {
-    if (nowOf(options.clock) >= deadline) {
+    // onCheck 是测试探针：返回真即按预算超时处理，生产不传时行为与现状逐字一致。
+    if (onCheck !== undefined && onCheck(currentPhase) === true) {
+      throw archiveError('budget-timeout', '启动归档预算超时（阶段' + currentPhase + '，约' + budgetMs + 'ms），发布前未改写')
+    }
+    if (nowOf(settings.clock) >= deadline) {
       throw archiveError('budget-timeout', '启动归档预算超时（约' + budgetMs + 'ms），发布前未改写')
     }
   }
@@ -617,17 +641,24 @@ function startupArchiveUnsafe(pathContext, options) {
   let failure
   let releaseFailure
   try {
+    currentPhase = 'start'
     checkBudget()
     const archiveRead = optionalRead(fsOps, archivePath)
     const activeRead = optionalRead(fsOps, activePath)
+    currentPhase = 'parse-archive'
     checkBudget()
     const archiveRows = parseStrictLedgerText(textOfBytes(archiveRead.bytes), archivePath, checkBudget)
+    currentPhase = 'parse-active'
     const activeRows = parseStrictLedgerText(textOfBytes(activeRead.bytes), activePath, checkBudget)
+    currentPhase = 'unique'
     checkBudget()
     assertUniqueArchiveRows(archiveRows, archivePath, checkBudget)
+    currentPhase = 'summarize'
     const aggregate = summarizeSourceRows(archiveRows, activeRows, { check: checkBudget })
+    currentPhase = 'serialize'
     checkBudget()
     const archiveText = archiveTextOf(aggregate.groups, checkBudget)
+    currentPhase = 'publish'
     publishTransaction({
       activePath,
       archivePath,
@@ -645,6 +676,8 @@ function startupArchiveUnsafe(pathContext, options) {
       archivePath,
       rows: aggregate.rows.length,
       groups: aggregate.groups.length,
+      coveredByArchiveRows: aggregate.coveredByArchiveRows,
+      covered: aggregate.coveredByArchiveRows,
       archiveBytes: Buffer.byteLength(archiveText, 'utf8'),
     }
   } catch (error) {
@@ -661,11 +694,50 @@ function startupArchiveUnsafe(pathContext, options) {
     }
   }
   if (failure !== undefined && releaseFailure !== undefined) {
-    return reportFailure(pathContext, fsOps, archiveError(errorCodeOf(failure) || 'archive-failed', errorMessageOf(failure) + '；同时 ' + errorMessageOf(releaseFailure)), purpose)
+    throw archiveError(errorCodeOf(failure) || 'archive-failed', errorMessageOf(failure) + '；同时 ' + errorMessageOf(releaseFailure))
   }
-  if (failure !== undefined) return reportFailure(pathContext, fsOps, failure, purpose)
-  if (releaseFailure !== undefined) return reportFailure(pathContext, fsOps, releaseFailure, purpose)
+  if (failure !== undefined) throw failure
+  if (releaseFailure !== undefined) throw releaseFailure
   return result
+}
+
+// 启动归档：入口只做 host 根与 active 存在性判定，目录授权与归档主体全部交给 archiveLedger；
+// 锁忙映射成 skipped/lock-busy，其余失败一律留痕返回，绝不抛给宿主启动路径。
+function startupArchiveUnsafe(pathContext, options) {
+  const fsOps = mergedFsOps(options.fsOps)
+  const purpose = LEDGER_PURPOSE
+  if (hostRootOf(pathContext) === '') {
+    try {
+      console.warn('[dsh-extra-plan] startup archive skipped: no-host-root')
+    } catch (warnError) {
+      // warning 通道不可用时忽略。
+    }
+    return { status: 'skipped', reason: 'no-host-root' }
+  }
+  const activePath = resolveHostPath(pathContext, join(LEDGER_DIRECTORY, LEDGER_FILE_NAME), { purpose }).path
+  let activeExists = false
+  try {
+    fsOps.statSync(activePath)
+    activeExists = true
+  } catch (error) {
+    if (errorCodeOf(error) !== 'ENOENT') {
+      return reportFailure(pathContext, fsOps, archiveError(errorCodeOf(error) || 'stat-failed', '检查账本失败 ' + activePath + ': ' + errorMessageOf(error)), purpose)
+    }
+  }
+  if (!activeExists) return { status: 'skipped', reason: 'no-active-ledger' }
+  try {
+    return archiveLedger(activePath, { ...options, pathContext, purpose })
+  } catch (error) {
+    if (errorCodeOf(error) === 'lock-busy') {
+      try {
+        console.warn('[dsh-extra-plan] startup archive skipped: lock-busy; 另一实例正在写账本，本次启动归档放弃')
+      } catch (warnError) {
+        // warning 通道不可用时忽略。
+      }
+      return { status: 'skipped', reason: 'lock-busy' }
+    }
+    return reportFailure(pathContext, fsOps, error, purpose)
+  }
 }
 
 // 启动归档唯一入口：全程同步（宿主启动路径不能等 Promise），返回带 status 的结构化结果供调用方留痕；
