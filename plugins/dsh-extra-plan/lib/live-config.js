@@ -3,8 +3,9 @@
 // settings 行是权威值，旧预设目录不作回退。
 // stamp 由路径和 stat 元数据组成；未变则跳过读盘和 YAML 解析。
 // 构造期先读一次源文件建立初始基线，避免宿主 cfg 快照过期。
-// 构造期同时做装载期严格校验：settings 行在（按行 id）但 9 个热读键出现 missing /
-// ambiguous / invalid → 直接抛错、插件不装载；整行缺席（出厂形态）仍静默按 cfg 快照启动。
+// 构造期同时做装载期严格校验：settings 行在（按行 id）时 9 个热读键出现 ambiguous /
+// invalid → 直接抛错、插件不装载；missing（老版本升级缺新键）→ 告警一次并按 apply 快照/
+// 内置默认回填；整行缺席（出厂形态）仍静默按 cfg 快照启动。
 // 运行期（refresh 触发的读盘）保持 fail-safe：路径、文件、stat、YAML 或值失败时按键回退
 // 并只告警一次，其中 ambiguous / invalid 显性告警、missing 静默。
 // 回退顺序为 settings 行覆盖 → apply cfg → BUILTIN_DEFAULTS；每个 agent 的缓存键保持隔离。
@@ -226,8 +227,12 @@ export function createLiveConfig(options) {
     else {
       stamp = initial.stamp
       const parsed = readDiskValues(target, undefined)
-      if (Array.isArray(parsed.problems)) throw new Error('extra-plan: settings 行校验失败：' + parsed.reason + '（期望在 ' + SETTINGS_ROW_ID + ' 行、name 为 ' + SETTINGS_ROW_NAME + ' 的 config 内取得合法值）')
-      if (parsed.ok) values = parsed.values
+      if (Array.isArray(parsed.problems)) {
+        const hard = parsed.problems.filter((item) => item.state === 'ambiguous' || item.state === 'invalid')
+        if (hard.length > 0) throw new Error('extra-plan: settings 行校验失败：' + describeProblems(hard) + '（期望在 ' + SETTINGS_ROW_ID + ' 行、name 为 ' + SETTINGS_ROW_NAME + ' 的 config 内取得合法值）')
+        warnOnce('settings 行缺键回填（' + parsed.reason + '），按 apply 快照/内置默认补齐')
+        values = { ...parsed.values }
+      } else if (parsed.ok) values = parsed.values
       else if (parsed.silent !== true) warnOnce(parsed.reason)
     }
   }

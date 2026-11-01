@@ -27,6 +27,7 @@ import { createQqbotSettingsSynchronizer, stableSnapshotHash } from './qqbot-set
 import { parsePresetYaml, rowsByIdWithPath } from './preset-yaml.js'
 import { GATE_WORD_FIELDS, validateGateWords } from './gate-words.js'
 import { createPathContext, resolveWorkspacePath, resolveHostPath, validateReadTarget } from './path-policy.js'
+import { startupArchive } from './usage-archive.js'
 
 function safeContextGet(ctx, key) {
   try { return ctx !== undefined && ctx !== null && typeof ctx.get === 'function' ? ctx.get(key) : undefined } catch (error) { return undefined }
@@ -627,7 +628,22 @@ function createApiHandler(ctx, syncEditor, getProfileSync) {
   }
 }
 
+function startupArchiveForApply(ctx) {
+  try {
+    const startupContext = settingsPathContext(ctx, undefined)
+    if (startupContext === null) {
+      console.warn('[dsh-extra-plan] startup archive skipped: no-host-root')
+    } else {
+      const result = startupArchive(startupContext)
+      if (result.status !== 'archived') console.warn('[dsh-extra-plan] startup archive ' + result.status + ': ' + result.reason)
+    }
+  } catch (error) {
+    console.warn('[dsh-extra-plan] startup archive failed（不阻断启动）: ' + (error instanceof Error ? error.message : String(error)))
+  }
+}
+
 export function apply(ctx) {
+  startupArchiveForApply(ctx)
   // Client carrier、settings API、旧值迁移与 profileSync 由这一行 owner 持有；adapter 生命周期独立。
   let lastTerminalCache
   let syncRevision = 0

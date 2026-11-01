@@ -85,6 +85,7 @@ DSH web界面 -> 插件 -> 按需规划模式配置
   - pro规划 | 额外引导：在主会话发送给pro规划的任务结尾，拼接上的内容。可能能增加pro规划的智商（未验证）。可置空
   - pro规划 | 探查额度：允许pro规划调用工具的次数，避免后台无限制调用。同时限制一次runcode内可调用的工具上限数
   - 其他子代理 | 使用模型：其他子代理默认使用模型。未匹配/置空时：使用主会话模型
+  - 验收者 | 使用pro模型：验收者是否改用pro规划的模型
 
 ## 5. 仓库结构
 
@@ -131,6 +132,7 @@ dsh-extra-plan/
 │   │   │   ├── settings-contract.js                                  # 设置项单一合同：键、默认值、校验与元数据
 │   │   │   ├── settings.js                                           # 设置页宿主端
 │   │   │   ├── shell-mutation.js                                     # 写操作判定：跨平台命令解码与写形态
+│   │   │   ├── usage-archive.js                                      # usage 账本归档
 │   │   │   └── usage-ledger.js                                       # usage 账本与 cursor 增量折叠
 │   │   ├── locale/                                     
 │   │   │   ├── settings/  

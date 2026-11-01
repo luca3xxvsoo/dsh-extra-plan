@@ -50,6 +50,50 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
 - v0.4.0 增补 A51-A56：job_kill 仅直行放行、send_message 对 running 目标拒绝、job_list/list_agents 同锚点防轮询；六项均为实机直测项，A55/A56 要求同轮内第二次调用。来源为既有实机流程表注与 step-04 断言，旧编号及文案不在当前归档外重写。
 - 该批次保留实机可测项统计由 44→52、第一轮 43→51 的演进值；统计只属于当时表口径，不替代当前脚本真实计数。
 
+### 2026-10-31：验收者模型复用开关、空串零探针与游标降级基线
+
+第 11 项设置 `reviewerUsesPlannerModel` 落地：验收者复用 `plannerModel` 解析，默认关闭、仅影响验收者，推理力度仍随主会话继承。
+同批处理两个边界：`plannerModel` 与 `otherAgentModel` 同为空串且跨 provider 开关为真时不再探针，零网络直接回退父会话；usage 账本 cursor 降级改由 ledger 扫描最大 seq 重建去重基线，避免重复追加历史行。
+
+- 关键故障：`resolveReviewerEntry` 是 `createModelRouting` 的闭包返回值，却被写进 `index.js` 模块级 import，ESM 链接失败、插件完全无法加载；该缺陷被「16 个判据点全部通过」的假阳性掩盖一轮，直到执行者跑真实脚本在 import 阶段崩溃才暴露。
+- 方案缺陷：检查 2 的验收期望自相矛盾（「行数不变」与「写回 seq 等于历史最大 seq」互斥）；`lib/settings.js` 未被任何任务覆盖；三处计数注释漏列；全局检查被塞进任务级判定，导致中间阶段必然红；35 处现行文档旧口径未覆盖。
+- 教训：静态检查加局部导入代替不了完整模块加载；判据点全过只是必要条件，必须由真实脚本执行兜底。
+- 结局：AUTO 矩阵 12 个脚本 2595 通过 / 0 失败 / 1 既有 SKIP，批次经独立验收 PASS。
+
+### 2026-11-01：pro 验收者对照与 F1 升级装载、F2 缓存串味
+
+插件部署后开启 `reviewerUsesPlannerModel`，派一名跑在 `deepseek-v4-pro` 上的验收者做端到端复核。同一角色的验收者此前用 `deepseek-flash` 对同一份代码给出「判据点全过」，并漏掉了会让插件无法加载的 import 错配。
+这是「便宜模型验收看不出问题」的首个直接对照证据；本轮复核随后挖出两条独立缺陷。
+
+- F1（高·升级阻断）：`readDiskValues` 把 `state=missing` 也 push 进 problems，boot 期对非空 problems 一律 throw，导致 settings 行已存在但缺新键的老用户升级时插件整体不装载（首装因行不存在走 silent 分支所以安全）。修法：boot 期只把 ambiguous/invalid 视为 hard problem 抛出，missing 改为告警一次并按 fallback 回填内存值、不写盘。
+- F2（中·缓存串味）：`reviewerRouteCache` 的 key 只有 plannerModel、cross 真假、顶层 provider 三段，缓存值却携带 model 与 maxTokens，于是 ① 会话内主会话改 maxTokens 后新验收者仍复用旧值；② 首次解析失败被 catch 兜底成父 fallback 后当作 settled 永久缓存，主会话换 model 后新验收者仍拿旧 fallback。修法：key 扩为五段，并入 parentModel 与 parentMaxTokens。
+- 教训：缓存 key 必须覆盖缓存值的全部输入；「行存在但缺新键」与「首次安装」不可共用同一判定分支。
+- 结局：新增 G6 与 MR10/MR11 三条用例（均验证「修复前必红」），2598 通过 / 0 失败，批次经独立验收 PASS。
+
+### 2026-11-01：账本启动自动归档与 stale-lock 原子接管
+
+动机：插件默认开启账本写入，而唯一归档工具 `step-99-用量统计.mjs` 位于 `pe-test/`，不在 package.json 的 files 发布清单里，从 npm 安装的用户机器上没有归档工具，账本只增不减、无限上涨。
+实现：新建 `lib/usage-archive.js`（约 700 行）内置启动归档，由宿主平面插件 `dsh-extra-plan-settings` 的 apply 在服务进程启动时调用一次，预算 3000ms，失败一律回滚并追加写 `usage-ledger/archive-failed.log`，绝不阻断 DSH 启动；仅覆盖 H 根默认账本，自定义 `usageLedger.path` 不在范围内。
+
+- 设计取舍：不搬迁 step-99 而在 lib 新建独立实现，因为 step-00 的 M6 用「第 N 次 clock 调用」定点超时加 8 个 IO 序号故障点，搬迁必然破坏该脆弱测试面。代价是存在两份归档实现，用新增 M6-T2 对拍用例锁语义一致，验收确认达「语义期望对拍」级（九字段身份逐键相等、四桶累加、seq 取 max、跨批次并一条），但受验收禁止项限制不能调 archiveLedger 做字节级差分。
+- stale-lock 改造：原先死 PID 锁只返回 stale-lock 失败，`foldUsage` 因此静默 delayed，一次进程被强杀后账本写入即永久停止（每条消息用量丢失且界面无提示）。改为原子接管：rename 到 `.stale-` 随机名独占搬走 → 复核 token → 不匹配立即还原 → 匹配才删除 → 成功则继续取锁；写入端与归档端同时受益，接管成功保持静默。
+- 契约与方案缺陷：双根合同 B4 为启动归档开例外，原禁令精确限定到维护 CLI step-99，并新增条款列明例外四要素（仅 usage-archive.js、仅服务进程启动、仅 usage-ledger 用途、仅 H 默认账本）；任务 4 只覆盖 step-00，漏了 step-04 的 P4-31 与 P4-G2-2 两处 stale-lock 断言；预期条数估算错误（831 vs 实际 836）；为堵「理论上的无界循环」加的 deadline 检查曾引入 waitMs=0 时「接管成功却返回 timeout」的语义副作用，本批审查已修复：接管成功直接 continue，deadline 只约束活锁轮询分支。
+- 遗留隐患：生成器复跑地图时可能把既有文件说明重置为「（待补充）」，而 `--check` 只比结构查不出来；僵尸锁接管成功静默，频繁强杀不会在日志留痕。
+- 结局：2605 通过 / 0 失败，三批均经独立验收 PASS。
+
+### 2026-11-01：未提交改动全量审查与八项修复
+
+动机：三批改动（验收者 pro 开关、F1/F2、启动归档）提交前做一次全量审查，查死代码、冗余代码、错误逻辑与文档未更新，避免把缺陷带进提交。
+
+- 错误逻辑（1 项，真缺陷）：`acquireUsageLedgerLock` 接管成功后仍检查 `Date.now() >= deadline`，`waitMs=0` 时锁已被删除却返回 `timeout`。两处测试注释把它当规范绕开（「waitMs 必须 > 0」），该边界因此零覆盖。修复为接管成功直接 `continue`（下一轮 `tryCreateLock` 必然成功），deadline 只约束活锁轮询分支；两处测试恢复 `waitMs: 0`，M6 与 P4-31 重新覆盖该边界。
+- 死代码（4 项，均在 `lib/usage-archive.js`）：`rmSync` 导入并登记进 `DEFAULT_FS_OPS` 但全文零调用；`duplicateV2Rows`／`coveredByArchiveRows` 两个计数器在 return 键删除后声明即永不被读取；return 的 `covered` 与 `coveredByArchiveRows` 同值重复且生产与测试均无消费点；`STARTUP_ARCHIVE_BUDGET_MS` 导出无人 import。全部清除后语义等价——两种跳过分支退化为单行 `continue`，仅不再计数。
+- 冗余（1 项）：`settings.js` 的 `apply()` 首行曾把启动归档整体塞进约 500 字符单行 try/catch，抽成模块级 `startupArchiveForApply(ctx)`，三处 warn 文案逐字保留、调用时序不变。
+- 文档未更新（3 项）：`ai-概览.md` 仍写「stale-lock 仅在核实 owner 后显式维护」（该文件不在本批 git 改动内，属更早提交）；本归档上一条把 waitMs=0 副作用记为缺陷却未修，已同步改为「已修复」口径；两处测试注释把实现缺陷写成规范。
+- 审查方法：由 pro 规划子代理逐行读完全部改动并写最小复现，锚点与行号由主会话逐项复核。复核发现方案自身一处缺陷——任务 2 原只删 return 三键而保留四个计数器，会留下「声明后永不读取」的死变量，且使验收 grep 口径必然失败；退回规划子代理后由一处拆成八个 M 点。
+- 实测：step-00 836、step-04 639、step-01-设置页配置 132，均 0 失败；代码地图 `--check` exit 0。`waitMs` 改回 0 后 M6 仍通过，反证接管语义自洽。
+- 代码地图人工节清理：`## 意图速查` 是人工维护节，生成器 `extractKeepSection` 整节原样保留，其中 step-99 关键符号段的 24 个行号全部过时（该 CLI 已从 767 行涨到 1148 行，且生成根默认不含 `pe-test/tools`）。因该节设计上只放「意图词 → 函数名」（标题即写明行号去函数索引取），改为纯符号名清单并补漏掉的 `TOKEN_KEYS`，不再维护行号。
+- 环境记录：跑回归必须用 `node --import ./pe-test/_shared/host-preload.mjs`；`NODE_PATH` 对 ESM 无效，不能用来解析 `@deepseek-ai/dsh-llm`。本机 Node 已为 v26.13.0。
+
 ## 历史批次与标签
 
 - P0-2/P0-3：注册失败分类、journal 阶段语义、当前 entries 形状与恢复边界。

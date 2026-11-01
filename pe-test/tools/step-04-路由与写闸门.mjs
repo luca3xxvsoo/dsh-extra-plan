@@ -2345,7 +2345,7 @@ const fullCalls = (calls) => calls.filter((pair) => pair[0] === undefined)
   } finally { rmSync(dirA, { recursive: true, force: true }); rmSync(dirB, { recursive: true, force: true }) }
 }
 
-// P4-28~P4-31：真实共享锁临界区——活锁约1秒delayed零推进、释放后只补写一次、stale锁不接管。
+// P4-28~P4-31：真实共享锁临界区——活锁约1秒delayed零推进、释放后只补写一次、死PID stale锁被原子接管。
 {
   const dir = makeTmpDir()
   try {
@@ -2385,7 +2385,8 @@ const fullCalls = (calls) => calls.filter((pair) => pair[0] === undefined)
     const staleBytes = JSON.stringify({ pid: 2147483647, token: 'p4-stale-token', createdAt: Date.now() })
     writeFileSync(stalePath, staleBytes, 'utf8')
     const stale = acquireUsageLedgerLock(ledger, { waitMs: 0, pathContext: ROUTE_PATH_CONTEXT, purpose: 'usage-ledger' })
-    checkTrue('P4-31 stale-lock仅诊断死PID：canonical字节不变/不自动接管/无stale残留', stale.acquired === false && stale.reason === 'stale-lock' && readFileSync(stalePath, 'utf8') === staleBytes && readdirSync(dir).every((name) => !name.includes('.stale-')))
+    const staleOwnerAfter = JSON.parse(readFileSync(stalePath, 'utf8'))
+    checkTrue('P4-31 死PID stale锁被原子接管：acquired且lock归当前进程/旧字节不残留/无stale残留', stale.acquired === true && staleOwnerAfter.pid === process.pid && staleOwnerAfter.token === stale.token && readFileSync(stalePath, 'utf8') !== staleBytes && readdirSync(dir).every((name) => !name.includes('.stale-')))
     rmSync(stalePath, { force: true })
 
     const blocked = join(dir, 'blocked')
@@ -2398,7 +2399,7 @@ const fullCalls = (calls) => calls.filter((pair) => pair[0] === undefined)
   } finally { rmSync(dir, { recursive: true, force: true }) }
 }
 
-// P4-G2-2：同一实例连续死PID fold 只告警一次；不接管 canonical lock、不推进快照/cursor/内存水位。
+// P4-G2-2：同一实例死PID canonical锁首次fold即原子接管并落盘；后续fold unchanged、零告警、不重复推进快照/cursor。
 {
   const dir = makeTmpDir()
   try {
@@ -2414,15 +2415,17 @@ const fullCalls = (calls) => calls.filter((pair) => pair[0] === undefined)
     let first
     let second
     const warnings1 = captureWarnings(() => { first = writer.foldUsage(agent, context) })
-    const stableAfterFirst = readFileSync(lockPath, 'utf8')
+    const rowsAfterFirst = readLedgerRows(ledgerPath)
+    const cursorAfterFirst = readFileSync(ledgerPath + '.cursor.json', 'utf8')
     const warnings2 = captureWarnings(() => { second = writer.foldUsage(agent, context) })
-    const stableAfterSecond = readFileSync(lockPath, 'utf8')
-    checkTrue('P4-G2-2 死PID canonical锁连续两次均delayed/stale：第一次恰1条目标告警、第二次零告警且含owner诊断', first.status === 'delayed' && first.reason === 'stale-lock' && second.status === 'delayed' && second.reason === 'stale-lock' && warnings1.length === 1 && warnings1[0].includes('stale-lock') && warnings1[0].includes(lockPath) && warnings1[0].includes('2147483647') && warnings1[0].includes('p4-g2-stale-token') && warnings1[0].includes('核实owner后显式维护') && warnings2.length === 0)
-    checkTrue('P4-G2-2 stale两次零snapshot/ledger/cursor/内存推进：canonical字节不变且无自动stale残留', snapshotCalls === 0 && stableAfterFirst === staleBytes && stableAfterSecond === staleBytes && !existsSync(ledgerPath) && !existsSync(ledgerPath + '.cursor.json') && readdirSync(dir).every((name) => !name.includes('.stale-')))
+    const rowsAfterSecond = readLedgerRows(ledgerPath)
+    const cursorAfterSecond = readFileSync(ledgerPath + '.cursor.json', 'utf8')
+    checkTrue('P4-G2-2 死PID canonical锁首次fold即原子接管并written：零stale告警、账本恰一行、无lock/stale残留', first.status === 'written' && first.rows === 1 && warnings1.length === 0 && rowsAfterFirst.length === 1 && rowsAfterFirst[0].seq === 1 && !existsSync(lockPath) && readdirSync(dir).every((name) => !name.includes('.stale-')))
+    checkTrue('P4-G2-2 接管后第二次fold unchanged：零告警、快照/账本/cursor均不重复推进、无lock/stale残留', second.status === 'unchanged' && warnings2.length === 0 && snapshotCalls === 1 && rowsAfterSecond.length === 1 && cursorAfterSecond === cursorAfterFirst && !existsSync(lockPath) && readdirSync(dir).every((name) => !name.includes('.stale-')))
     rmSync(lockPath, { force: true })
     const afterRelease = writer.foldUsage(agent, context)
     const rows = readLedgerRows(ledgerPath)
-    checkTrue('P4-G2-2 显式删除夹具锁后下一fold恰补写一次并推进一次', afterRelease.status === 'written' && rows.length === 1 && rows[0].seq === 1 && snapshotCalls === 1 && JSON.parse(readFileSync(ledgerPath + '.cursor.json', 'utf8'))['p4-g2-stale'].seq === 1 && !existsSync(lockPath))
+    checkTrue('P4-G2-2 接管落盘后再fold仍unchanged：账本仍一行/cursor零推进/无lock残留', afterRelease.status === 'unchanged' && rows.length === 1 && rows[0].seq === 1 && snapshotCalls === 1 && JSON.parse(readFileSync(ledgerPath + '.cursor.json', 'utf8'))['p4-g2-stale'].seq === 1 && !existsSync(lockPath))
   } finally { rmSync(dir, { recursive: true, force: true }) }
 }
 
@@ -3349,6 +3352,31 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
     try { mrReviewerFailEntry = await mrReviewerFailRouting.resolveReviewerEntry(mrChildAgent('mr5-reviewer-fail', 'extra-plan-reviewer'), undefined) } catch (error) { mrReviewerFailError = mrMessageOf(error) }
     checkTrue('MR9 解析桩 rejection 时 resolveReviewerEntry 兜底父 fallback 且不抛出',
       mrReviewerFailError === '' && mrReviewerFailEntry !== null && mrReviewerFailEntry.provider === 'mr5-provider' && mrReviewerFailEntry.model === 'mr5-parent-model')
+    // MR10/MR11：同 plannerModel/cross/顶层 provider 但主会话 model/maxTokens 不同时，
+    // 新验收者不得复用旧缓存值（成功路径与失败兜底路径都验）。
+    const mrParentA = { session: { header: { id: 'mr10-parent-a' }, requestHeader: () => ({ config: { provider: 'mr10-provider', model: 'mr10-model-a', maxTokens: 4096 } }) } }
+    const mrParentB = { session: { header: { id: 'mr10-parent-b' }, requestHeader: () => ({ config: { provider: 'mr10-provider', model: 'mr10-model-b', maxTokens: 8192 } }) } }
+    const mr10Agents = { get: (id) => id === 'mr10-parent-a' ? mrParentA : id === 'mr10-parent-b' ? mrParentB : undefined }
+    const mr10Child = (id, parentSession) => ({ session: { header: { id, origin: 'subagent', delegationDepth: 1, parentSession, agentPreset: 'extra-plan-reviewer' } } })
+    const mr10Routing = mrRouting({ plannerModel: 'mr10-pro', otherAgentModel: '', cross: true, agents: mr10Agents, llm: {
+      listProviders: () => Promise.resolve([{ id: 'mr10-pro-provider', name: 'pro' }]),
+      listModels: () => Promise.resolve([{ id: 'mr10-pro' }]),
+      prepareCall: async (config) => ({ config, stream: async function* () { yield { type: 'finish', reason: { kind: 'stop' } } } }),
+    } })
+    const mr10EntryA = await mr10Routing.resolveReviewerEntry(mr10Child('mr10-reviewer-a', 'mr10-parent-a'), undefined)
+    const mr10EntryB = await mr10Routing.resolveReviewerEntry(mr10Child('mr10-reviewer-b', 'mr10-parent-b'), undefined)
+    checkTrue('MR10 同 plannerModel/cross/provider 但主会话 model/maxTokens 不同：新验收者不复用旧缓存值',
+      mr10EntryA !== null && mr10EntryB !== null && mr10EntryA.provider === 'mr10-pro-provider' && mr10EntryB.provider === 'mr10-pro-provider' && mr10EntryA.model === 'mr10-pro' && mr10EntryB.model === 'mr10-pro' && mr10EntryA.maxTokens === 4096 && mr10EntryB.maxTokens === 8192)
+    // 失败兜底结果也不得跨主会话 model 串味：父 A 兜底后换父 B，新验收者拿父 B 的 model。
+    const mr10FailRouting = mrRouting({ plannerModel: 'mr10-pro-fail', otherAgentModel: '', cross: true, agents: mr10Agents, llm: {
+      listProviders: () => Promise.resolve([{ id: 'mr10-pro-provider', name: 'pro' }]),
+      listModels: () => Promise.resolve([{ id: 'mr10-pro-fail' }]),
+      prepareCall: async () => { throw new Error('mr10 probe boom') },
+    } })
+    const mr10FailA = await mr10FailRouting.resolveReviewerEntry(mr10Child('mr10-fail-a', 'mr10-parent-a'), undefined)
+    const mr10FailB = await mr10FailRouting.resolveReviewerEntry(mr10Child('mr10-fail-b', 'mr10-parent-b'), undefined)
+    checkTrue('MR11 失败兜底缓存后主会话换 model：新验收者拿新父 model 而非旧兜底',
+      mr10FailA !== null && mr10FailB !== null && mr10FailA.provider === 'mr10-provider' && mr10FailA.model === 'mr10-model-a' && mr10FailB.provider === 'mr10-provider' && mr10FailB.model === 'mr10-model-b')
   }
 
   const settingsModuleForT9 = await import('../../plugins/dsh-extra-plan/lib/settings.js')

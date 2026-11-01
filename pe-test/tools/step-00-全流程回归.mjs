@@ -58,6 +58,7 @@ import * as agentRuntime from '../../plugins/dsh-extra-plan/lib/agent-runtime.js
 const roleGenerator = await import('../../plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs')
 const usageStats = await import('./step-99-用量统计.mjs')
 import * as usageLedgerModule from '../../plugins/dsh-extra-plan/lib/usage-ledger.js'
+import * as usageArchiveModule from '../../plugins/dsh-extra-plan/lib/usage-archive.js'
 import { DEFAULT_EXPLORE_BUDGET as GENERATED_DEFAULT_EXPLORE_BUDGET, DEFAULT_PLANNER_PROMPT_SUFFIX as GENERATED_DEFAULT_PLANNER_PROMPT_SUFFIX } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
 import { existsSync, readFileSync, readdirSync, rmSync, mkdirSync, writeFileSync, renameSync, unlinkSync } from 'node:fs'
 import { makeFixtureDir } from '../_shared/workspace-paths.mjs'
@@ -1423,12 +1424,76 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
     const staleBytes = JSON.stringify({ pid: 2147483647, token: 'm6-stale-token', createdAt: Date.now() })
     writeFileSync(stalePath, staleBytes, 'utf8')
     const staleResult = usageLedgerModule.acquireUsageLedgerLock(active, { waitMs: 0, pathContext: STEP00_PATH_CONTEXT, purpose: 'usage-ledger' })
-    checkTrue('M6 stale-lock返回stale-lock且canonical字节不变/不自动接管', staleResult.reason === 'stale-lock' && archiveBytesOf(stalePath) === staleBytes && archiveResiduals(dir).every((name) => !name.includes('.stale-')))
-    rmSync(stalePath, { force: true })
+    const staleOwnerAfter = JSON.parse(archiveBytesOf(stalePath))
+    checkTrue('M6 stale-lock接管：死PID锁被接管并重新获取，lock归当前进程且无.stale-残留', staleResult.acquired === true && staleOwnerAfter.pid === process.pid && staleOwnerAfter.token === staleResult.token && readdirSync(dir).every((name) => !name.includes('.stale-')))
+    const staleRelease = usageLedgerModule.releaseUsageLedgerLock(staleResult)
+    checkTrue('M6 stale-lock接管后释放成功且目录无.stale-残留', staleRelease.released === true && readdirSync(dir).every((name) => !name.includes('.stale-')))
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
 }
+// M6-T1：写入端僵尸锁接管自愈（死 PID 锁 → 接管 → 首次/二次 fold 均 written）
+{
+  const dir = makeWTemp('dsh-takeover-writer')
+  try {
+    const active = join(dir, 'ledger-v2.jsonl')
+    const makeAgent = (logLen, event) => ({ session: { seq: logLen, snapshotEvents: () => [event] } })
+    const usageEvent = (seq, model, provider) => ({ type: 'assistant/message', seq, data: { usage: { inputTokens: 1, cacheReadTokens: 2, cacheWriteTokens: 3, outputTokens: 4 }, message: { source: { model, provider } } } })
+    const ledger = usageLedgerModule.createUsageLedger({ enabled: true, path: active, pathContext: STEP00_PATH_CONTEXT })
+    writeFileSync(usageLedgerModule.usageLedgerLockPath(active), JSON.stringify({ pid: 2147483647, token: 'm6-takeover-token', createdAt: Date.now() }), 'utf8')
+    const context = { sessionId: 'm6-takeover-session', parentSessionId: '', rootSessionId: 'm6-takeover-session', agentPreset: 'extra-plan-executor', delegationDepth: 1, role: 'child' }
+    const first = ledger.foldUsage(makeAgent(1, usageEvent(2, 'm6-takeover-model', 'm6-takeover-provider')), context)
+    const rowsAfterFirst = archiveBytesOf(active).trim().split('\n').filter((line) => line !== '').map((line) => JSON.parse(line))
+    checkTrue('M6-T1 僵尸锁接管后首次fold written且账本记一行、锁已释放、无.stale-残留', first.status === 'written' && rowsAfterFirst.length === 1 && rowsAfterFirst[0].sessionId === 'm6-takeover-session' && !existsSync(usageLedgerModule.usageLedgerLockPath(active)) && readdirSync(dir).every((name) => !name.includes('.stale-')))
+    const second = ledger.foldUsage(makeAgent(2, usageEvent(3, 'm6-takeover-model', 'm6-takeover-provider')), context)
+    const rowsAfterSecond = archiveBytesOf(active).trim().split('\n').filter((line) => line !== '').map((line) => JSON.parse(line))
+    checkTrue('M6-T1 接管后第二次fold继续written且累计两行', second.status === 'written' && rowsAfterSecond.length === 2)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+// M6-T2：启动归档主路径（usage-archive.js 与 step-99 合并语义对拍）
+{
+  const dir = makeWTemp('dsh-startup-archive')
+  try {
+    const home = join(dir, 'home')
+    const context = createPathContext({ workspaceRoot: dir, hostDataRoot: home })
+    const active = join(home, 'usage-ledger', 'ledger-v2.jsonl')
+    const archive = join(home, 'usage-ledger', 'ledger-v2.archive.jsonl')
+    mkdirSync(dirname(active), { recursive: true })
+    archiveWriteRows(archive, [archiveRow({ sessionId: 'm6-startup-archive', provider: 'startup-provider', inputTokens: 10, cacheReadTokens: 20, cacheWriteTokens: 30, outputTokens: 40, seq: 3 })])
+    archiveWriteRows(active, [archiveRow({ sessionId: 'm6-startup-active', provider: 'startup-provider', inputTokens: 1, cacheReadTokens: 2, cacheWriteTokens: 3, outputTokens: 4, seq: 5 })])
+    const result = usageArchiveModule.startupArchive(context, { budgetMs: 5000 })
+    const archivedRows = usageStats.parseLedgerText(archiveBytesOf(archive), { strict: true }).rows
+    checkTrue('M6-T2 启动归档合并H账本并清空active：archived、两组、无lock/tmp/bak残留、无诊断文件', result.status === 'archived' && archivedRows.length === 2 && archiveBytesOf(active) === '' && !existsSync(usageLedgerModule.usageLedgerLockPath(active)) && archiveResiduals(join(home, 'usage-ledger')).length === 0 && !existsSync(join(home, 'usage-ledger', 'archive-failed.log')))
+    const archiveAfterFirst = archiveBytesOf(archive)
+    const again = usageArchiveModule.startupArchive(context, { budgetMs: 5000 })
+    checkTrue('M6-T2 二次启动归档幂等：archive字节不变、active仍空', again.status === 'archived' && archiveBytesOf(archive) === archiveAfterFirst && archiveBytesOf(active) === '')
+    writeFileSync(active, '{"schemaVersion":2\n', 'utf8')
+    const beforeFail = archiveBytesOf(archive)
+    const failed = usageArchiveModule.startupArchive(context, { budgetMs: 5000 })
+    checkTrue('M6-T2 坏JSON失败留痕：failed、archive字节不变、诊断文件存在且一行', failed.status === 'failed' && archiveBytesOf(archive) === beforeFail && existsSync(join(home, 'usage-ledger', 'archive-failed.log')) && archiveBytesOf(join(home, 'usage-ledger', 'archive-failed.log')).trim().split('\n').filter((line) => line !== '').length === 1)
+    // 对拍：同一身份跨 archive/active 两批次必须并成一条（九字段身份聚合 + 四桶累加 + seq 取 max + ts 取最大 seq）。
+    // 只引用 startupArchive 与 step-99 的 parseLedgerText/archiveRow 夹具，不引用 usageStats.archiveLedger（验收禁止项）。
+    const parityHome = join(dir, 'home-parity')
+    const parityContext = createPathContext({ workspaceRoot: dir, hostDataRoot: parityHome })
+    const parityActive = join(parityHome, 'usage-ledger', 'ledger-v2.jsonl')
+    const parityArchive = join(parityHome, 'usage-ledger', 'ledger-v2.archive.jsonl')
+    const parityIdentity = { schemaVersion: 2, rootSessionId: 'm6-parity-root', sessionId: 'm6-parity-session', parentSessionId: 'm6-parity-parent', agentPreset: 'extra-plan-executor', delegationDepth: 1, role: 'executor', model: 'm6-parity-model', provider: 'm6-parity-provider' }
+    const parityIdentityB = { ...parityIdentity, sessionId: 'm6-parity-session-b', provider: 'm6-parity-provider-b' }
+    mkdirSync(dirname(parityActive), { recursive: true })
+    archiveWriteRows(parityArchive, [archiveRow({ ...parityIdentity, ts: '2026-10-22T00:00:03.000Z', inputTokens: 10, cacheReadTokens: 20, cacheWriteTokens: 30, outputTokens: 40, seq: 3 })])
+    archiveWriteRows(parityActive, [archiveRow({ ...parityIdentity, ts: '2026-10-22T00:00:05.000Z', inputTokens: 1, cacheReadTokens: 2, cacheWriteTokens: 3, outputTokens: 4, seq: 5 }), archiveRow({ ...parityIdentityB, ts: '2026-10-22T00:00:06.000Z', inputTokens: 5, cacheReadTokens: 6, cacheWriteTokens: 7, outputTokens: 8, seq: 6 })])
+    const parityResult = usageArchiveModule.startupArchive(parityContext, { budgetMs: 5000 })
+    const parityRows = usageStats.parseLedgerText(archiveBytesOf(parityArchive), { strict: true }).rows
+    const mergedParityRows = parityRows.filter((row) => row.sessionId === 'm6-parity-session')
+    const parityIdentityKeys = ['schemaVersion', 'rootSessionId', 'sessionId', 'parentSessionId', 'agentPreset', 'delegationDepth', 'role', 'model', 'provider']
+    checkTrue('M6-T2 对拍step-99合并语义：同身份跨批次并一条、四桶累加、seq取max、身份字段不变', parityResult.status === 'archived' && parityRows.length === 2 && mergedParityRows.length === 1 && parityIdentityKeys.every((key) => mergedParityRows[0][key] === parityIdentity[key]) && mergedParityRows[0].inputTokens === 11 && mergedParityRows[0].cacheReadTokens === 22 && mergedParityRows[0].cacheWriteTokens === 33 && mergedParityRows[0].outputTokens === 44 && mergedParityRows[0].seq === 5 && mergedParityRows[0].ts === '2026-10-22T00:00:05.000Z' && parityRows.some((row) => row.sessionId === 'm6-parity-session-b') && archiveBytesOf(parityActive) === '' && archiveResiduals(join(parityHome, 'usage-ledger')).length === 0 && !existsSync(join(parityHome, 'usage-ledger', 'archive-failed.log')))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
 // ── RENDER 系列:save_plan 渲染契约（v0.1.3 回归：必须返回 ContentBlock[]）──
 const rendered = renderSavePlan({
   paths: ['a.md', 'b.md'],

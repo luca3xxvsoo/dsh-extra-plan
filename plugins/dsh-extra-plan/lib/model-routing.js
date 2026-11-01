@@ -522,8 +522,8 @@ function resolveOtherAgentEntry(agent, parentSignal, probe) {
 
 // 验收者模型入口：plannerModel 作为验收者的 pro 模型来源，空串等于继承主会话（直接回退父
 // fallback，不取 llm）。reviewerRouteCache 是 per-apply 实例（不得提升为模块全局），按
-// plannerModel、crossProviderPlannerModel 真假、顶层主会话 provider 三段拼键，复用同一
-// in-flight promise；条目超过 32 条时整表清空。
+// plannerModel、crossProviderPlannerModel 真假、顶层主会话 provider/model/maxTokens 五段拼键，
+// 同键复用 in-flight 与已 settled 结果（成功 entry 与失败兜底均固定缓存）；条目超过 32 条时整表清空。
 const reviewerRouteCache = new Map()
 
 async function resolveReviewerEntry(agent, parentSignal) {
@@ -533,7 +533,9 @@ async function resolveReviewerEntry(agent, parentSignal) {
   if (targetModel === '') return fallback || {}
   const crossProvider = getCrossProviderPlannerModel(agent)
   const parentProvider = fallback !== null && fallback.provider !== undefined ? fallback.provider : ''
-  const cacheKey = targetModel + '|' + (crossProvider ? 'cross' : 'direct') + '|' + parentProvider
+  const parentModel = fallback !== null && fallback.model !== undefined ? fallback.model : ''
+  const parentMaxTokens = fallback !== null && fallback.maxTokens !== undefined ? String(fallback.maxTokens) : ''
+  const cacheKey = targetModel + '|' + (crossProvider ? 'cross' : 'direct') + '|' + parentProvider + '|' + parentModel + '|' + parentMaxTokens
   const cached = reviewerRouteCache.get(cacheKey)
   if (cached !== undefined) return cached
   // 解析失败不得把 rejection 抛给调用方：统一兜底为父 fallback。

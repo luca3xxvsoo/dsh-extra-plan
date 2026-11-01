@@ -1241,6 +1241,39 @@ try {
 } finally {
   console.warn = liveWarn
 }
+// G6 boot 装载：settings 行存在但缺新键（reviewerUsesPlannerModel）→ 不抛错、告警一次并按
+// apply 快照回填；非法键值（plannerModel: 12345）→ 仍按装载期严格校验抛错。
+const g6Root = makeWRoot('settings-boot-missing-key')
+const g6PathContext = createPathContext({ workspaceRoot: g6Root })
+const g6Dir = join(g6Root, 'profiles', 'web')
+mkdirSync(g6Dir, { recursive: true })
+const g6MissingPath = join(g6Dir, 'cordis.patch.yml')
+const g6Config = { ...syncValues }
+delete g6Config.reviewerUsesPlannerModel
+writeFileSync(g6MissingPath, JSON.stringify([{ id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: g6Config }]), 'utf8')
+const g6Warnings = []
+const g6Warn = console.warn
+console.warn = (...args) => g6Warnings.push(args.map(String).join(' '))
+let g6BootError = ''
+let g6Reviewer = undefined
+try {
+  const g6Live = createLiveConfig({ resolveDocumentTarget: () => ({ kind: 'workspace', path: g6MissingPath }), getPathContext: () => g6PathContext, fallbackDefaults: syncValues })
+  g6Reviewer = g6Live.reviewerUsesPlannerModel
+} catch (error) {
+  g6BootError = String(error !== null && error !== undefined && error.message !== undefined ? error.message : error)
+}
+const g6WarnCountAfterBoot = g6Warnings.length
+let g6InvalidError = ''
+try {
+  const g6InvalidPath = join(g6Dir, 'cordis.patch.invalid.yml')
+  writeFileSync(g6InvalidPath, JSON.stringify([{ id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: { ...syncValues, plannerModel: 12345 } }]), 'utf8')
+  createLiveConfig({ resolveDocumentTarget: () => ({ kind: 'workspace', path: g6InvalidPath }), getPathContext: () => g6PathContext, fallbackDefaults: syncValues })
+} catch (error) {
+  g6InvalidError = String(error !== null && error !== undefined && error.message !== undefined ? error.message : error)
+}
+console.warn = g6Warn
+check('G6 settings 行缺新键仍能装载并回填、非法键值仍抛错', g6BootError === '' && g6Reviewer === true && g6WarnCountAfterBoot === 1 && g6InvalidError.includes('settings 行校验失败'))
+rmSync(g6Root, { recursive: true, force: true })
 const generatedDefinition = parsePresetYaml(readFileSync(join(REPO_ROOT, 'plugins/dsh-extra-plan/assets/presets/extra-plan/preset-definition.generated.yml'), 'utf8'))
 const restartRows = generatedDefinition.plugins || []
 const restartWeb = restartRows.find((row) => row && row.id === 'tool-web')

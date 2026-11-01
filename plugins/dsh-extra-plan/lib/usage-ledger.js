@@ -16,6 +16,28 @@ function staleLockPathOf(lockPath) {
   return lockPath + '.stale-' + process.pid + '-' + randomUUID()
 }
 
+// 接管僵尸锁：复用 releaseUsageLedgerLock 已验证的 rename 独占搬走 → token 复核 → 不匹配还原模式；
+// 只有搬走后读到的 token 仍与判死时的 owner 一致才删除，绝不无校验直删他人锁。
+// 搬走失败（ENOENT/EEXIST 等）按原样抛出，由调用方记为 takeover-failed。
+function takeoverStaleLock(lockPath, expectedOwner) {
+  const stalePath = staleLockPathOf(lockPath)
+  renameSync(lockPath, stalePath)
+  const moved = readLockOwner(stalePath)
+  if (moved === undefined || moved.token !== expectedOwner.token) {
+    try { renameSync(stalePath, lockPath) } catch (restoreError) { /* do not delete another owner's lock */ }
+    return { taken: false, reason: 'token-mismatch' }
+  }
+  try {
+    unlinkSync(stalePath)
+  } catch (error) {
+    if (errorCodeOf(error) !== 'ENOENT') {
+      try { renameSync(stalePath, lockPath) } catch (restoreError) { /* keep the moved lock rather than lose it */ }
+      return { taken: false, reason: 'delete-failed' }
+    }
+  }
+  return { taken: true }
+}
+
 function errorCodeOf(error) {
   return error !== null && typeof error === 'object' && typeof error.code === 'string' ? error.code : ''
 }
@@ -206,7 +228,15 @@ export function acquireUsageLedgerLock(activePath, options = WRITER_LOCK_WAIT_MS
     if (acquired !== undefined) return { ...acquired, pathContext, purpose }
     owner = readLockOwner(lockPath)
     if (owner !== undefined && pidIsAlive(owner.pid) === false) {
-      return { acquired: false, reason: 'stale-lock', lockPath, owner }
+      let takeover
+      try {
+        takeover = takeoverStaleLock(lockPath, owner)
+      } catch (error) {
+        takeover = { taken: false, reason: 'takeover-failed', error }
+      }
+      // 接管成功直接继续取锁：下一轮 tryCreateLock 会立即成功；无界循环仍由活锁轮询分支的 deadline 检查兜底。
+      if (takeover.taken === true) continue
+      return { acquired: false, reason: 'stale-lock', lockPath, owner, takeoverError: takeover.error !== undefined ? errorMessageOf(takeover.error) : takeover.reason }
     }
     const remaining = deadline - Date.now()
     if (remaining <= 0) return { acquired: false, reason: 'timeout', lockPath, owner }
@@ -334,7 +364,7 @@ export function createUsageLedger(options = {}) {
     const owner = lock !== null && typeof lock === 'object' && lock.owner !== null && typeof lock.owner === 'object' ? lock.owner : {}
     const pid = owner.pid === undefined ? 'unknown' : String(owner.pid)
     const token = owner.token === undefined ? 'unknown' : String(owner.token)
-    console.warn('extra-plan: usage ledger stale-lock blocked; lockPath=' + lockPath + '; owner pid=' + pid + ' token=' + token + '；不会自动接管或删除，请核实owner后显式维护')
+    console.warn('extra-plan: usage ledger stale-lock takeover failed; lockPath=' + lockPath + '; owner pid=' + pid + ' token=' + token + '；本次账本写入延迟，后续 fold 会重试接管')
   }
 
   // cursor 单项归一：只接受 V2 的 { seq, index } 形状；其它形状均视为无效。
