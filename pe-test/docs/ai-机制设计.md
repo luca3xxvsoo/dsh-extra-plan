@@ -6,7 +6,7 @@
 
 - 双根合同 B1：维护 W 由可信源树布局锚定，部署/会话 W 取运行时 `session.header.cwd`；两者都不取 `process.cwd`、插件安装目录或普通文件 `dirname`。H 只来自真实 Host ctx/精确能力，或维护测试显式 `--host-root` 加精确 `--profile`/`--file`/会话目标；`DSH_HOME`/`DSH_PROFILE`/`SESSION_ID` 的存在不能授权，`DSH_INSTALL_ROOT`+host-preload 仅授只读代码根，不授数据 H。
 - 双根合同 B2：`createPathContext` 只接收已分类的 `workspaceRoot`、`hostDataRoot` 与可信 Host capability；原始根先经真实路径/链接校验，非法根、无盘符或 drive-relative、URI/变量/NUL、前缀相似 Other 与 native junction 在任何扫描或内容 IO 前拒绝。`resolveWorkspacePath`/`resolveHostPath` 只计算目标，不隐式建目录，实际 IO 仍由 `assertAllowedPath`、`validateReadTarget`、`prepareWriteTarget` 复核最近存在父级、真实身份、链接和用途；普通文件与代码只读能力不能上抬父根。
-- 双根合同 B3：相对值按用途固定基准——普通相对值、CLI、覆盖、任务源、工件/fixture/temp/home/cache/capture/report 归 W，运行时账本按用途归 H；不以 `exists` 在两根间试探，不展开 `~`/环境变量。无选择为 `NOT-RUN`/目标 IO 0；会话仅以 `--session-dir`，或 `--session`+`--sessions-dir` 精确选择，子发现必须显式 `--discover-children`，最多 128 候选、每个日志头 262144 字节，坏头/超限为 `INCOMPLETE`；通用 `pathBoundary` 默认只产唯一 W 报告，可选 W 审计最多 128 条，不依赖旧批次；H/W 合法重叠按用途分类而非一概拒绝。
+- 双根合同 B3：相对值按用途固定基准——普通相对值、CLI、覆盖、任务源、工件/fixture/temp/home/cache/capture/report 归 W，运行时账本按用途归 H；不以 `exists` 在两根间试探，不展开 `~`/环境变量。无选择为 `NOT-RUN`/目标 IO 0；会话仅以 `--session-dir`，或 `--session`+`--sessions-dir` 精确选择，子发现必须显式 `--discover-children`，最多 512 候选、每个日志头 262144 字节，坏头/超限为 `INCOMPLETE`；通用 `pathBoundary` 默认只产唯一 W 报告，可选 W 审计最多 128 条，不依赖旧批次；H/W 合法重叠按用途分类而非一概拒绝。
 - 双根合同 B4：Host 文档/数据的维护取证只经精确能力只读，Host 代码只读；测试与生成暂存、报告、备份和回滚只写 W。维护 CLI step-99 的 Host `--archive`/清理 `--apply` 在 H IO 前拒绝且零 Host 写，W 的统计、归档、清理、备份与回滚功能保留；无根、冲突或不合法输入在对应 IO 前失败。插件内置启动归档（lib/usage-archive.js）例外：DSH 服务进程启动时按用途 usage-ledger 对 H 默认账本执行一次合并归档并写诊断日志，失败回滚且不阻断启动。
 
 - 状态不是四次提问，而是事件流推导的 `{ route, purpose, clarified, approved, channelBroken }`。主会话顺序固定为 `route → purpose → clarify`；ordinary（普通）探查/澄清可在路由前发生。入口判定只决定引导词顺序，不改变 `route`、`purpose`、`clarified`、`approved` 四个机械锚点。
@@ -83,8 +83,8 @@
 
 ## 七、局部安全合同指针
 
-- `lib/shell-mutation.js` 的 pwsh/bash 识别是位置敏感的写边界：段首裸写词、语法级写形态、连续剥离 sudo/env/nohup/command wrapper、带值 wrapper 选项（含 sudo 的 `-p`/`--prompt`；`--prompt=value` 是单 token）与 NAME=VALUE 环境赋值、嵌套 shell 与重定向例外必须以源码纯函数为准，不能用文档替代；`mutationTextEvidence` 返回 null 或 `{rule,value}`，`pwshMutationEvidence`/`bashMutationEvidence` 与旧布尔 matcher 同源，拒因只追加规则名及白名单 bare 命中词，不回显命令、路径或秘密。
-- `lib/shell-mutation.js` 的 PWSH_MUTATION 识别裸 `>`/`>>`、`1-6` 流号和 `*>`/`*>>`，但保留 `2>&1`、`1>&2`、`*>&1` 等 stream→stream 合并例外；BASH_MUTATION 原合同不变。
+- `lib/shell-mutation.js` 的 pwsh/bash 识别是位置敏感的写边界：段首裸写词、语法级写形态、连续剥离 sudo/env/nohup/command wrapper、带值 wrapper 选项（含 sudo 的 `-p`/`--prompt`；`--prompt=value` 是单 token）与 NAME=VALUE 环境赋值、嵌套 shell 与重定向例外必须以源码纯函数为准，不能用文档替代；`mutationTextEvidence` 返回 null 或 `{rule,value}`，`pwshMutationEvidence`/`bashMutationEvidence` 与旧布尔 matcher 同源，拒因只追加规则名及白名单 bare 命中词，不回显命令、路径或秘密。PowerShell 侧赋值右值（$var =、[type]$var =、粘连 $var=）之后、return 之后、$()/@(/( 子表达式入口与块头关键字带括号粘连（foreach($i in …)）的块体均为命令位，裸写动词仍只在命令位命中。
+- `lib/shell-mutation.js` 的 PWSH_MUTATION 识别 `1-6` 流号与 `*>`/`*>>` 重定向，保留 `2>&1`、`1>&2`、`*>&1` 等 stream→stream 合并例外；裸 `>`/`>>` 改为左邻语境判定：引号内文本不判写；左邻 `=<>!-` 复合运算符（`=>`、`>=`、`<=`、`!=`、`->`）不判写；右邻 `&` 流合并目标不判写；右邻纯数字视为比较运算不判写（覆盖 `if ($i > 4)`、`$i > 4`、`for ($i = 0; $i > 0; $i--)`）；其余形态一律判写，圆括号深度不参与——`$(Get-Date > f.txt)`、`@(Get-Item a > b)` 等子表达式内重定向仍判写。已知边界：比较右操作数为变量/表达式（如 `if ($i > $j)`）与纯数字文件名目标（如 `x > 5`）不判写。BASH_MUTATION 原合同不变。
 - `lib/sdk-text-cache.js` 只做 agent-keyed、非 session 的 JSON-like 指纹缓存；字段/数组顺序、getter/cycle 失败、dispose 与迟到 Promise 都是局部合同。
 - QQBot 自愈只处理拥有本插件且满足双锚点的 profile；迁移写前备份、写后 YAML 校验失败恢复，链接仅在 ENOENT 时建立，实体/异链保留，整体不阻断。当前机制由 `plugins/dsh-extra-plan-qqbot/lib/heal.js` 与对应 step-01 夹具共同锁定。
 

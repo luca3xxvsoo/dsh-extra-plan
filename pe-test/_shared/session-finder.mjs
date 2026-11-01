@@ -87,7 +87,7 @@ export function logPath(dir, pathContext, options = {}) {
   return found === null ? null : found.realPath
 }
 
-const MAX_DISCOVERY_CANDIDATES = 128
+const MAX_DISCOVERY_CANDIDATES = 512
 const MAX_DISCOVERY_BYTES = 262144
 function incompleteError(message) { const error = new Error(message); error.code = 'INCOMPLETE'; return error }
 function insideRealRoot(root, value) {

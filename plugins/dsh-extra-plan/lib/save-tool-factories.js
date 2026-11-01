@@ -234,8 +234,8 @@ export function createSaveToolFactories({ savePlanDir, atomicCommit, getPathCont
           throw new Error('save_plan: plan/checklist 参数缺失或内容过短（未收到合法参数；调用参数须为合法 JSON，请检查后重试）')
         }
         const plan = args.plan
-        if (/【未探查·待确认】/.test(plan) || /待确认假设清单/.test(plan)) {
-          throw new Error('save_plan: 方案中包含【未探查·待确认】步骤或「待确认假设清单」。请先申请追加预算继续探查，确认所有项均已探查核实后再调用 save_plan')
+        if (/【[^】]*(?:未探查|待确认)[^】]*】/.test(plan)) {
+          throw new Error('save_plan: 方案中包含方括号包裹的未探查/待确认标记。请先申请追加预算继续探查，确认所有项均已探查核实后再调用 save_plan')
         }
         const contract = validateSavePlanContract(plan, args.checklist)
         if (!contract.ok) throw new Error(contract.error)
@@ -274,7 +274,7 @@ export function createSaveToolFactories({ savePlanDir, atomicCommit, getPathCont
   function defineSaveProbe() {
     return {
       name: 'save_probe',
-       description: '写入只读探查结果。fileMap、focusAreas、exclusions、background 四个数组必填，按 JSON 序列化计总量最多 20000 字；evidence 可选，非空时生成证据报告，否则生成线索文件。字段格式和单项上限见参数说明；返回文件路径。',
+       description: '写入只读探查结果。fileMap、focusAreas、exclusions、background 四个数组必填，按 JSON 序列化计总量最多 20000 字；evidence 可选，非空时正文按证据报告形态渲染（标题『探查证据报告』＋证据节），否则渲染线索形态；落盘文件名统一为『线索-』前缀。字段格式和单项上限见参数说明；返回文件路径。',
       parameters: {
         type: 'object',
         properties: {
@@ -333,7 +333,7 @@ export function createSaveToolFactories({ savePlanDir, atomicCommit, getPathCont
           },
           evidence: {
             type: 'array',
-             description: `可选证据列表（最多 ${PROBE_LIMITS.maxEvidenceEntries} 项，按 JSON 序列化计总量最多 ${PROBE_LIMITS.maxEvidenceTotalChars} 字）；非空时生成证据报告。每项 path 必须存在，并至少填写 line、value、text 之一。`,
+             description: `可选证据列表（最多 ${PROBE_LIMITS.maxEvidenceEntries} 项，按 JSON 序列化计总量最多 ${PROBE_LIMITS.maxEvidenceTotalChars} 字）；非空时正文按证据报告形态渲染；落盘文件名仍为『线索-』前缀。每项 path 必须存在，并至少填写 line、value、text 之一。`,
             items: {
               type: 'object',
               properties: {

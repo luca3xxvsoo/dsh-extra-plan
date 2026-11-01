@@ -25,7 +25,7 @@
 - 只读复核、执行取证、静态检查和用户实机分别记录 PASS/FAIL/INCOMPLETE/NOT-RUN/SKIP/HUMAN；命令退出 0 不替代期望/禁止核对。字符测量使用 `String.length`，token 只有真实同口径数据才记录，否则 `NOT-RUN`。
 - 固定回归顺序仍按本手册“QQBot CLI 与维护所有权”部分逐项执行；一键 runner 内部重跑既有收口命令必须如实注明，不能声称共享检查从不复跑。简单未来方案可按实际改动域取对应检查，不因任务规模强制完整矩阵。
 
-- **双根维护与命令/参数前缀**：维护 W 取可信源树布局，不能以 `process.cwd`、插件安装目录或普通文件 `dirname` 授根；部署/会话 W 取 `session.header.cwd`。维护数据 H 仅由本次显式 `--host-root` 加精确 `--profile`/`--file`/会话目标授权；`DSH_HOME`、`DSH_PROFILE`、`SESSION_ID` 的存在不授根，非法原始根在任何扫描前拒绝，H/W 重叠按用途分类且 Host 资源只读。会话选择只能是 `--session-dir`，或 `--session`+`--sessions-dir`；默认不读兄弟，`--discover-children` 必须显式绑定会话，最多 128 候选、每个日志头最多 262144 字节，坏头/超限为 `INCOMPLETE`；必填 suffix 必须显式提供，空串合法。纯 W 工具直接 `node`；需要 Host 代码的测试才用 `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs`，该代码根不授权数据 H。fixtures、temp、capture、home、cache、report、测试输出、生成暂存与 W 快照均在 W；Host archive/清理 `--apply` 提前拒绝且零写，W 功能/备份/回滚保留。
+- **双根维护与命令/参数前缀**：维护 W 取可信源树布局，不能以 `process.cwd`、插件安装目录或普通文件 `dirname` 授根；部署/会话 W 取 `session.header.cwd`。维护数据 H 仅由本次显式 `--host-root` 加精确 `--profile`/`--file`/会话目标授权；`DSH_HOME`、`DSH_PROFILE`、`SESSION_ID` 的存在不授根，非法原始根在任何扫描前拒绝，H/W 重叠按用途分类且 Host 资源只读。会话选择只能是 `--session-dir`，或 `--session`+`--sessions-dir`；默认不读兄弟，`--discover-children` 必须显式绑定会话，最多 512 候选、每个日志头最多 262144 字节，坏头/超限为 `INCOMPLETE`；必填 suffix 必须显式提供，空串合法。纯 W 工具直接 `node`；需要 Host 代码的测试才用 `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs`，该代码根不授权数据 H。fixtures、temp、capture、home、cache、report、测试输出、生成暂存与 W 快照均在 W；Host archive/清理 `--apply` 提前拒绝且零写，W 功能/备份/回滚保留。
 
 ## MJS 测试输出合同与 HUMAN 取证分层
 
@@ -104,7 +104,7 @@
    - `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-04-context-gate宿主回归.mjs`
    - `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-05-角色预设宿主回归.mjs`（角色预设机械契约：roster/assertProvider/header.agentPreset/工具面/persona 渲染/旧值回落）
    - `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-06-08-v4取证回归.mjs`
-   - `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-06-线索落盘.mjs`
+   - `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-06-线索落盘.mjs --full`（必须加 `--full` 或把输出重定向到文件：compact 模式下脚本末尾 `process.exit` 会截断管道 stdout，退出码 0 但看不到「通过 N, 失败 0」汇总行，易被误判为未执行）
    - `node plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs --check`
    - 扫描根内代码改动时冻结前完成代码地图生成与人工描述复核；本组纯文档改动不生成正式地图，正式阶段只运行 `node pe-test/tools/代码地图生成.mjs --check`，避免普通生成改时间戳，再执行最后一键 step。
 3. 自动测试不得执行真实 PowerShell 重定向写；测试前后 `pe-test/reports/_s4b_pwsh.txt` 必须不存在。常规回归命令退出码必须为 0，输出不得有 FAIL、SyntaxError、UnhandledPromiseRejection；runner 的 ETIMEDOUT 明确归失败而非环境未执行，普通说明含 FAIL/Error/导航失效不单独判失败，必须以退出码/结构化统计为准；context-gate 独立脚本若有 INCOMPLETE 必须非零，一键结果结构化标为部分执行而不计 PASS。SKIP/INCOMPLETE/HUMAN/NOT-RUN 单列且不计 AUTO PASS。

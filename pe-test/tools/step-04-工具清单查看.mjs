@@ -47,7 +47,7 @@ function systemTextHits(systemText) {
   return {
     ptcInstruction: systemText.includes('Writing code for run_code') || systemText.includes('Only the run_code transport is directly callable') || systemText.includes('tools:ptc-only') || systemText.includes('PTC'),
     readHostText: systemText.includes('Use the read tool') && systemText.includes('not shell commands like cat'),
-    readHint: systemText.includes('在 run_code 程序里读文件') && systemText.includes('tools.read') && systemText.includes('file_path') && systemText.includes('offset') && systemText.includes('limit'),
+    readHint: systemText.includes('run_code 调用 read 示例') && systemText.includes('tools.read') && systemText.includes('file_path') && systemText.includes('offset') && systemText.includes('limit'),
     minimalRead: (systemText.includes('read:') || systemText.includes('tools.read')) && systemText.includes('file_path') && systemText.includes('offset') && systemText.includes('limit'),
     sdkRenderer: systemText.includes('interface ToolArgsMap') && systemText.includes('declare const tools'),
     c7,

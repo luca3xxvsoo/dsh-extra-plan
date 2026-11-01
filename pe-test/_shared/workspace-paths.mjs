@@ -583,7 +583,7 @@ export function createMaintenanceContext(options = {}) {
     scope: sessionTarget === null ? null : sessionTarget.scope,
     readOnly: sessionTarget !== null,
     writeAuthorized: false,
-    maxCandidates: sessionInput.discoverChildren ? 128 : null,
+    maxCandidates: sessionInput.discoverChildren ? 512 : null,
     maxCompressedBytesPerLog: sessionInput.discoverChildren ? 262144 : null,
   })
 

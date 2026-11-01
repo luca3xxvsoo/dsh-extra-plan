@@ -2,9 +2,12 @@
 // 纯命令解码与跨平台写入形态匹配；不持有 host 或 apply 状态。
 
 // PWSH 写动词判定（P2 位置判定）：语法级写形态全文本匹配（git 写子命令/.NET 静态/COM FSO/
-// Export-Csv/Export-Clixml/Tee-Object/Start-Transcript）；裸写动词按命令位判定——段首、块关键字
-// 之后、块体左花括号之后均为命令位，参数位整词一律放行（不再只看段首单点）。
-export const PWSH_MUTATION = /\bgit\s+(add|commit|checkout|switch|restore|clean|rm|mv|reset)\b|\b(Export-Csv|Export-Clixml|Tee-Object|Start-Transcript)\b|\[System\.IO\.File\]::(WriteAllText|WriteAllBytes|AppendAllText|Delete|Move|Copy|Replace|Encrypt|Decrypt)|\[IO\.File\]::(WriteAllText|WriteAllBytes|AppendAllText|Delete|Move|Copy|Replace|Encrypt|Decrypt)|\[System\.IO\.(FileStream|StreamWriter|BinaryWriter)\]::new|\[System\.IO\.Compression\.ZipFile\]::(CreateFromDirectory|ExtractToDirectory)|\[System\.IO\.Directory\]::(Delete|Move|CreateDirectory)|New-Object\s+-ComObject\s+Scripting\.FileSystemObject|(?:(?:[1-6]|\*)?)>>?(?!&(?:[1-6]|\*))/i
+// Export-Csv/Export-Clixml/Tee-Object/Start-Transcript；1-6 流号与 *>/*>> 重定向，保留
+// 2>&1/1>&2/*>&1 等 stream→stream 合并例外）；裸写动词按命令位判定——段首、块关键字之后、
+// 块体左花括号之后、PowerShell 赋值右值（$var =、[type]$var =、粘连 $var=）、return 之后
+// 与 $()/@(/( 子表达式入口均为命令位，参数位整词一律放行；裸 > / >> 由 redirectEvidence
+// 按引号/左邻复合运算符/右邻纯数字比较形态判定（圆括号深度不参与，子表达式内重定向仍判写）。
+export const PWSH_MUTATION = /\bgit\s+(add|commit|checkout|switch|restore|clean|rm|mv|reset)\b|\b(Export-Csv|Export-Clixml|Tee-Object|Start-Transcript)\b|\[System\.IO\.File\]::(WriteAllText|WriteAllBytes|AppendAllText|Delete|Move|Copy|Replace|Encrypt|Decrypt)|\[IO\.File\]::(WriteAllText|WriteAllBytes|AppendAllText|Delete|Move|Copy|Replace|Encrypt|Decrypt)|\[System\.IO\.(FileStream|StreamWriter|BinaryWriter)\]::new|\[System\.IO\.Compression\.ZipFile\]::(CreateFromDirectory|ExtractToDirectory)|\[System\.IO\.Directory\]::(Delete|Move|CreateDirectory)|New-Object\s+-ComObject\s+Scripting\.FileSystemObject|(?:[1-6]|\*)>>?(?!&(?:[1-6]|\*))/i
 export const PWSH_BARE_WORDS = /\b(New-Item|Remove-Item|Rename-Item|Move-Item|Copy-Item|Set-Content|Add-Content|Clear-Content|Out-File|Set-Item|New-ItemProperty|Set-ItemProperty|Remove-ItemProperty|mkdir|rmdir|rd|del|erase|copy|move|ren|rename|xcopy|robocopy)\b/i
 
 // bash 写命令（与 PWSH_MUTATION 严格对等，识别创建/修改/删除文件的操作；P2 起为位置判定）：
@@ -89,6 +92,34 @@ function isEnvAssignment(word) {
   return /^[A-Za-z_][A-Za-z0-9_]*=/.test(word)
 }
 
+  const PS_ASSIGN_LHS = /^\$[\w:]+$|^\[[\w.]+\]\$?\w+$/
+  const PS_ASSIGN_GLUED = /^(?:\$[\w:]+|\[[\w.]+\]\$?\w+)\s*=(.*)$/
+  const PS_BLOCK_HEAD_GLUED = /^(?:try|catch|finally|if|elseif|else|foreach|for|while|do|switch)\s*\(/i
+  const PS_SUBEXPR = /^(\$\s*\(|@\s*\(|\()(.+)$/
+  // redirectEvidence：引号外、左邻非 =<>!- 复合运算符、右邻非 & 流合并目标且非纯数字比较形态才判写；
+  // 圆括号深度不参与判定——$(Get-Date > f.txt) 等子表达式内重定向仍判写。
+  function redirectEvidence(text) {
+    let quote = ''
+    for (let i = 0; i < text.length; i += 1) {
+      const ch = text[i]
+      if (quote !== '') { if ((ch === '\\' || ch === '`') && i + 1 < text.length) i += 1; else if (ch === quote) quote = ''; continue }
+      if (ch === '"' || ch === "'") { quote = ch; continue }
+      if (ch !== '>') continue
+      let left = i - 1
+      while (left >= 0 && /\s/.test(text[left])) left -= 1
+      if (left >= 0 && '=<>!-'.indexOf(text[left]) !== -1) continue
+      let j = i + (text[i + 1] === '>' ? 1 : 0)
+      let right = j + 1
+      while (right < text.length && /\s/.test(text[right])) right += 1
+      if (right >= text.length || text[right] === '&') continue
+      let k = right
+      while (k < text.length && /[0-9]/.test(text[k])) k += 1
+      if (k > right && !/[A-Za-z0-9_.$]/.test(k < text.length ? text[k] : '')) continue
+      return { rule: 'PWSH_MUTATION', value: '' }
+    }
+    return null
+  }
+
 // 块头关键字按 shell 语法比较：PowerShell 不区分大小写，bash 保留区分大小写；其后应跟块体左花括号。
 const SHELL_BLOCK_HEAD_WORDS = new Set(['try', 'catch', 'finally', 'if', 'elseif', 'else', 'foreach', 'for', 'while', 'do', 'switch'])
 // 段首块关键字（整词等值比较）：以段首形式出现、其后不跟花括号，其后仍是命令位。
@@ -113,6 +144,10 @@ export function mutationTextEvidence(text, syntaxRe, bareRe, depth) {
     const rule = syntaxRuleOf(syntaxRe)
     return rule === null ? null : { rule, value: '' }
   }
+  if (isPowerShell) {
+    const redirect = redirectEvidence(text)
+    if (redirect !== null) return redirect
+  }
   const segs = text.split(/[;\r\n]|\s*&&\s*|\s*\|\|\s*|\s*\|\s*|\s*&\s*/)
   for (const seg of segs) {
     const words = shellWords(seg)
@@ -126,7 +161,13 @@ export function mutationTextEvidence(text, syntaxRe, bareRe, depth) {
       const word = words[index]
       // 步骤A：块头关键字之后等待块体左花括号；非花括号词一律跳过，不参与裸写动词判定
       if (blockPending) {
-        if (word === '{') { blockPending = false; blockDepth += 1; expectCommand = true }
+        const braceAt = word.indexOf('{')
+        if (braceAt !== -1) {
+          blockPending = false
+          blockDepth += 1
+          expectCommand = true
+          if (braceAt + 1 < word.length) { words[index] = word.slice(braceAt + 1); continue }
+        }
         index += 1
         continue
       }
@@ -141,13 +182,28 @@ export function mutationTextEvidence(text, syntaxRe, bareRe, depth) {
       // 步骤C：块体左花括号之后恢复命令位（switch/case 内嵌块、无关键字块等）；
       // 只有「块体」左花括号算数——已在块内或正处于命令位时的 { 才开块，
       // 参数位的花括号（如 echo { rm }）按普通参数放行，不恢复命令位。
-      if (word === '{') {
-        if (blockDepth > 0 || expectCommand) { blockDepth += 1; expectCommand = true }
+      if (word.startsWith('{')) {
+        if (blockDepth > 0 || expectCommand) {
+          blockDepth += 1
+          expectCommand = true
+          if (word.length > 1) { words[index] = word.slice(1); continue }
+        }
         index += 1
         continue
       }
       // 步骤D：只有命令位才参与裸写动词判定
       if (expectCommand) {
+        if (isPowerShell) {
+          if (PS_ASSIGN_LHS.test(word) && index + 1 < words.length && words[index + 1] === '=') { index += 2; continue }
+          const gluedAssign = PS_ASSIGN_GLUED.exec(word)
+          if (gluedAssign !== null) {
+            if (gluedAssign[1] !== '') { words[index] = gluedAssign[1]; continue }
+            index += 1
+            continue
+          }
+          const subExpr = PS_SUBEXPR.exec(word)
+          if (subExpr !== null && subExpr[2] !== '') { words[index] = subExpr[2]; continue }
+        }
         if (isEnvAssignment(word)) { index += 1; continue }
         if (SHELL_PREFIX_WORDS.has(word)) {
           index += 1
@@ -181,6 +237,14 @@ export function mutationTextEvidence(text, syntaxRe, bareRe, depth) {
         const blockWord = isPowerShell ? word.toLowerCase() : word
         if (SHELL_BLOCK_SEGMENT_WORDS.has(blockWord)) { index += 1; continue }
         if (SHELL_BLOCK_HEAD_WORDS.has(blockWord)) { blockPending = true; index += 1; continue }
+        if (isPowerShell && PS_BLOCK_HEAD_GLUED.test(word)) {
+          const braceAt = word.indexOf('{')
+          if (braceAt !== -1) { blockDepth += 1; expectCommand = true; if (braceAt + 1 < word.length) { words[index] = word.slice(braceAt + 1); continue } }
+          else { blockPending = true }
+          index += 1
+          continue
+        }
+        if (isPowerShell && word.toLowerCase() === 'return') { index += 1; continue }
         const bareMatch = bareRe.exec(word)
         if (bareMatch !== null) {
           const rule = bareRuleOf(bareRe)

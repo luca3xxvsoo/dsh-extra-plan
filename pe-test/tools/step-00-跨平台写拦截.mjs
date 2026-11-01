@@ -162,6 +162,14 @@ const pwshRedirectMatrix = [
   ['Write-Output x 6> out.txt', true], ['Write-Output x 6>> out.txt', true],
   ['Write-Output x *> out.txt', true], ['Write-Output x *>> out.txt', true],
   ['Write-Output x 2>&1', false], ['Write-Output x 1>&2', false], ['Write-Output x *>&1', false],
+  ['if ($x) { Get-Content a > b }', true],
+  ['$(Get-Date > f.txt)', true],
+  ['@(Get-Item a > b)', true],
+  ["if ($i > 4) { 'a' }", false],
+  ['$i > 4', false],
+  ["Write-Host 'a => b'", false],
+  ["Write-Output 'a > b'", false],
+  ['$m = @{ k = 1 } => 2', false],
 ]
 for (const [cmd, expected] of pwshRedirectMatrix) {
   for (const shape of ['object', 'string']) check(`${shape} arguments ${expected ? '拦截' : '放行'}: ${cmd}`, gateDeny(pwshExec(cmd, shape)) === expected)
@@ -172,6 +180,18 @@ const h3EvidenceCases = [
   ['pwsh bare object', pwshExec('New-Item secret.txt'), pwshMutationEvidence, { rule: 'PWSH_BARE_WORDS', value: 'New-Item' }],
   ['pwsh bare JSON', pwshExec('Set-Content secret.txt x', 'string'), pwshMutationEvidence, { rule: 'PWSH_BARE_WORDS', value: 'Set-Content' }],
   ['pwsh syntax redirect', pwshExec('Write-Output x > secret.txt'), pwshMutationEvidence, { rule: 'PWSH_MUTATION', value: '' }],
+  ['pwsh assignment bare', pwshExec('$r = New-Item x.txt'), pwshMutationEvidence, { rule: 'PWSH_BARE_WORDS', value: 'New-Item' }],
+  ['pwsh assignment add', pwshExec('$out = Add-Content x.txt y'), pwshMutationEvidence, { rule: 'PWSH_BARE_WORDS', value: 'Add-Content' }],
+  ['pwsh return bare', pwshExec('return New-Item x.txt'), pwshMutationEvidence, { rule: 'PWSH_BARE_WORDS', value: 'New-Item' }],
+  ['pwsh subexpr assign', pwshExec('$x = $(New-Item x.txt)'), pwshMutationEvidence, { rule: 'PWSH_BARE_WORDS', value: 'New-Item' }],
+  ['pwsh glued foreach', pwshExec('foreach($i in 1..3){New-Item x.txt}'), pwshMutationEvidence, { rule: 'PWSH_BARE_WORDS', value: 'New-Item' }],
+  ['pwsh foreach paren', pwshExec('foreach(){New-Item x.txt}'), pwshMutationEvidence, { rule: 'PWSH_BARE_WORDS', value: 'New-Item' }],
+  ['pwsh subexpr redirect', pwshExec('$(Get-Date > f.txt)'), pwshMutationEvidence, { rule: 'PWSH_MUTATION', value: '' }],
+  ['pwsh array redirect', pwshExec('@(Get-Item a > b)'), pwshMutationEvidence, { rule: 'PWSH_MUTATION', value: '' }],
+  ['pwsh compare allow', pwshExec("if ($i > 4) { 'a' }"), pwshMutationEvidence, null],
+  ['pwsh bare gt allow', pwshExec('$i > 4'), pwshMutationEvidence, null],
+  ['pwsh arrow allow', pwshExec("Write-Host 'a => b'"), pwshMutationEvidence, null],
+  ['pwsh arrow hash allow', pwshExec('$m = @{ k = 1 } => 2'), pwshMutationEvidence, null],
   ['bash bare object', bashExec('rm -rf secret'), bashMutationEvidence, { rule: 'BASH_BARE_WORDS', value: 'rm' }],
   ['bash syntax JSON', bashExec('git add .', 'string'), bashMutationEvidence, { rule: 'BASH_MUTATION', value: '' }],
   ['pwsh stream merge', pwshExec('Write-Output x 2>&1'), pwshMutationEvidence, null],
@@ -207,6 +227,11 @@ const pwshBlockMatrix = [
   ['if ($true) { Set-Content f.txt "x" }', true],
   ['foreach ($f in $files) { Remove-Item $f }', true],
   ['while ($true) { New-Item -ItemType File f.txt }', true],
+  ['foreach($i in 1..3){New-Item f.txt}', true],
+  ['foreach(){New-Item f.txt}', true],
+  ['if ($x) { Get-Content a > b }', true],
+  ["if ($i > 4) { 'a' }", false],
+  ['$i > 4', false],
   ['switch ($x) { Out-File f.txt }', true],
   // 放行侧：参数位整词、空块与脚本块花括号不参与命令位判定
   ['echo if then rm', false],
@@ -227,6 +252,13 @@ const pwshShouldDeny = [
   'git add .',
   'New-Item -ItemType File f.txt',
   'Out-File f.txt',
+  '$r = New-Item -ItemType File f.txt',
+  '$out = Add-Content f.txt y',
+  'return New-Item f.txt',
+  '$x = $(New-Item f.txt)',
+  'foreach(){New-Item f.txt}',
+  '$(Get-Date > f.txt)',
+  '@(Get-Item a > b)',
 ]
 for (const cmd of pwshShouldDeny) check(`应拦截 pwsh: ${cmd}`, gateDeny(pwshExec(cmd)) === true)
 const pwshShouldAllow = [
@@ -235,6 +267,11 @@ const pwshShouldAllow = [
   'git status',
   'Select-String "pattern" f.txt',
   'Get-Item x',
+  "if ($i > 4) { 'a' }",
+  '$i > 4',
+  "Write-Host 'a => b'",
+  '$m = @{ k = 1 } => 2',
+  "for ($i = 0; $i > 0; $i--) { 'x' }",
 ]
 for (const cmd of pwshShouldAllow) check(`放行 pwsh: ${cmd}`, gateDeny(pwshExec(cmd)) === false)
 check('pwshCommandOf 对象形状', pwshCommandOf(pwshExec('Get-ChildItem')) === 'Get-ChildItem')
