@@ -7,7 +7,7 @@
 // 归档由插件启动归档与 lib/usage-archive.js 的 archiveLedger 承担。
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { basename, dirname, isAbsolute, join } from 'node:path'
+import { basename, isAbsolute, join, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
   acquireUsageLedgerLock,
@@ -15,28 +15,11 @@ import {
   usageLedgerLockPath,
   WRITER_LOCK_WAIT_MS,
 } from '../../plugins/dsh-extra-plan/lib/usage-ledger.js'
-import { isSchemaDocRow, SCHEMA_DOC_KIND } from '../../plugins/dsh-extra-plan/lib/usage-archive.js'
+import { archivePathOf as archivePathOfLedger, isSchemaDocRow } from '../../plugins/dsh-extra-plan/lib/usage-archive.js'
 import { prepareWriteTarget, resolveHostPath, resolveWorkspacePath, validateReadTarget } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
 import { createMaintenanceContext, parseMaintenanceArgs } from '../_shared/workspace-paths.mjs'
 
 export const ARCHIVE_FILE_NAME = 'ledger-v2.archive.jsonl'
-export const V2_KEYS = Object.freeze([
-  'schemaVersion',
-  'ts',
-  'sessionId',
-  'parentSessionId',
-  'rootSessionId',
-  'agentPreset',
-  'delegationDepth',
-  'role',
-  'model',
-  'provider',
-  'inputTokens',
-  'cacheReadTokens',
-  'cacheWriteTokens',
-  'outputTokens',
-  'seq',
-])
 const IDENTITY_KEYS = Object.freeze([
   'schemaVersion',
   'rootSessionId',
@@ -129,19 +112,23 @@ function targetForPath(context, filePath, purpose, options = {}) {
   if (source.workspaceOnly === true || purpose === LEDGER_ARCHIVE_PURPOSE || purpose === LEDGER_SNAPSHOT_PURPOSE) {
     return resolveWorkspacePath(context, filePath, { purpose })
   }
+  // 相对输入始终按维护 W 解析，不因 Host 根存在或只读用途改贴 H。
+  if (typeof filePath !== 'string' || !isAbsolute(filePath)) return resolveWorkspacePath(context, filePath, { purpose })
+  const absolutePath = resolve(filePath)
+  const rootContains = (root) => {
+    if (typeof root !== 'string' || root.trim() === '') return false
+    const fromRoot = relative(resolve(root), absolutePath)
+    return fromRoot === ''
+      || (!isAbsolute(fromRoot) && fromRoot !== '..' && !fromRoot.startsWith('../') && !fromRoot.startsWith('..\\'))
+  }
+  const inWorkspace = rootContains(context.workspaceRoot)
+  const inHost = rootContains(context.hostDataRoot)
   const maintenance = maintenanceContextOf(source)
   const explicitHostRead = source.hostReadOnly === true
     || (maintenance !== undefined && maintenance.hostAccess === 'read-only' && purpose === LEDGER_READ_PURPOSE)
-  if (typeof filePath === 'string' && isAbsolute(filePath) && !explicitHostRead) {
-    // 仅 W 内绝对路径归 W；仅 H 绝对必须有明确 Host 只读选择，否则不改贴 H，
-    // 交由 W resolver 词法先拒（ROOT_ESCAPE）；不用 exists/stat/read 在两根选根。
-    return resolveWorkspacePath(context, filePath, { purpose })
-  }
-  // 普通相对输入固定 W，双根重叠（H=W/相互包含）时仍按词法 W；
-  // 明确 Host 只读选择（ledger-read/Host 配套读取）才允许相对形态归 H。
-  return explicitHostRead
-    ? resolveHostPath(context, filePath, { purpose })
-    : resolveWorkspacePath(context, filePath, { purpose })
+  // W/H 重叠时只有明确 Host 只读用途选 H；其余绝对值按根归属，Other 交由 W resolver 拒绝。
+  if (inHost && (!inWorkspace || explicitHostRead)) return resolveHostPath(context, filePath, { purpose })
+  return resolveWorkspacePath(context, filePath, { purpose })
 }
 
 function authorizeOptionalReadPath(filePath, options) {
@@ -227,7 +214,7 @@ function mergedFsOps(fsOps) {
 export function archivePathOf(activePath) {
   if (typeof activePath !== 'string' || activePath.trim() === '') throw new LedgerError('active路径不能为空', 'invalid-path')
   if (basename(activePath) === ARCHIVE_FILE_NAME) throw new LedgerError('active路径不能指向归档文件', 'invalid-path')
-  return join(dirname(activePath), ARCHIVE_FILE_NAME)
+  return archivePathOfLedger(activePath)
 }
 
 function lockApiOf(options) {
@@ -303,30 +290,10 @@ function dedupeKeyOf(row) {
   return row.sessionId + '\u0000' + String(row.seq)
 }
 
-function validationIssue(row, lineNumber) {
-  if (!isPlainObject(row)) return '根值不是对象'
-  const actual = Object.keys(row).sort()
-  const expected = [...V2_KEYS].sort()
-  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) return '必须严格包含固定' + V2_KEYS.length + '个键'
-  if (row.schemaVersion !== 2) return 'schemaVersion必须为2'
-  if (typeof row.ts !== 'string' || row.ts.trim() === '' || !Number.isFinite(Date.parse(row.ts))) return 'ts必须是有效时间字符串'
-  for (const key of ['sessionId', 'role']) {
-    if (typeof row[key] !== 'string' || row[key].trim() === '') return key + '必须是非空字符串'
-  }
-  for (const key of ['rootSessionId', 'agentPreset', 'parentSessionId', 'model', 'provider']) {
-    if (typeof row[key] !== 'string') return key + '必须是字符串'
-  }
-  if (!Number.isInteger(row.delegationDepth) || row.delegationDepth < 0) return 'delegationDepth必须是非负整数'
-  for (const key of TOKEN_KEYS) {
-    if (typeof row[key] !== 'number' || !Number.isFinite(row[key]) || row[key] < 0) return key + '必须是非负有限数'
-  }
-  if (!Number.isInteger(row.seq) || row.seq < 0) return 'seq必须是非负整数'
-  return ''
-}
-
 export function parseLedgerText(text, options = {}) {
-  const strict = options !== null && options.strict === true
-  const source = options !== null && typeof options.source === 'string' ? options.source : 'ledger'
+  if (options !== null && options.strict === true) {
+    throw new LedgerError('strict解析已移除：请调用 lib/usage-archive.js 的 archiveLedger', 'strict-parser-removed')
+  }
   const check = options !== null && typeof options.check === 'function' ? options.check : undefined
   const rows = []
   let skippedNonV2Objects = 0
@@ -340,8 +307,7 @@ export function parseLedgerText(text, options = {}) {
     let row
     try {
       row = JSON.parse(line)
-    } catch (error) {
-      if (strict) throw new LedgerError(source + ' 第' + lineNumber + '行坏JSON；发布前未改写', 'bad-json')
+    } catch {
       badJsonLines += 1
       if (check !== undefined) check()
       continue
@@ -349,24 +315,13 @@ export function parseLedgerText(text, options = {}) {
     if (check !== undefined) check()
     if (isSchemaDocRow(row)) {
       noticeLines += 1
-      if (strict && (lineNumber !== 1 || noticeLines > 1)) {
-        throw new LedgerError(source + ' 第' + lineNumber + '行' + SCHEMA_DOC_KIND + '说明行错位；说明行只能是首行且最多一次，发布前未改写', 'schema-doc-misplaced')
-      }
       if (check !== undefined) check()
       continue
     }
     if (!isPlainObject(row) || row.schemaVersion !== 2) {
-      if (strict) {
-        const kind = isPlainObject(row) ? 'V1/非V2对象' : 'V1/非V2值'
-        throw new LedgerError(source + ' 第' + lineNumber + '行' + kind + '；发布前未改写', 'non-v2')
-      }
       skippedNonV2Objects += 1
       if (check !== undefined) check()
       continue
-    }
-    if (strict) {
-      const issue = validationIssue(row, lineNumber)
-      if (issue !== '') throw new LedgerError(source + ' 第' + lineNumber + '行非法V2：' + issue + '；发布前未改写', 'invalid-v2')
     }
     rows.push(row)
     if (check !== undefined) check()
@@ -569,7 +524,7 @@ export function summarizeSnapshotTexts(sources, options = {}) {
   const input = Array.isArray(sources) ? sources : []
   const archiveSource = input[0]
   const activeSources = input.slice(1)
-  const parseSource = (source) => parseLedgerText(source && source.text !== undefined ? source.text : source, { strict: false, source: source && source.path ? source.path : 'ledger' })
+  const parseSource = (source) => parseLedgerText(source && source.text !== undefined ? source.text : source)
   const archiveParsed = archiveSource === undefined ? { rows: [], skippedNonV2Objects: 0, badJsonLines: 0, noticeLines: 0 } : parseSource(archiveSource)
   const activeRows = []
   skippedNonV2Objects += archiveParsed.skippedNonV2Objects

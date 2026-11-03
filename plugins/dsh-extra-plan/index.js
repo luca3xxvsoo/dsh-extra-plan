@@ -23,6 +23,7 @@ const BOOTSTRAP_READ_HINT_FALLBACK = [
 // 供场景测试直接复用（消除"复制品"漂移）。模块顶层无副作用，纯 Node 可 import。
 export const decisions = {
   CHANNEL_BROKEN_CODES,
+  FREE_TOOLS,
   PWSH_MUTATION,
   BASH_MUTATION,
   PWSH_BARE_WORDS,

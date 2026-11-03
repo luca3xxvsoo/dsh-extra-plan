@@ -92,6 +92,18 @@ function maintenanceForwardArgsOf(args = []) {
   }
   return forwarded
 }
+function selectedPositionValueOf(args = []) {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = String(args[index])
+    if (arg === '--compact' || arg === '--verbose' || arg === '--full') continue
+    if (arg === '--output-mode') { index += 1; continue }
+    if (arg.startsWith('--output-mode=')) continue
+    if (arg.startsWith('--')) continue
+    return arg
+  }
+  return undefined
+}
+
 function selectedSessionValueOf() {
   const session = maintenanceContext === undefined || maintenanceContext === null ? null : maintenanceContext.session
   if (session !== null && typeof session === 'object') {
@@ -99,7 +111,7 @@ function selectedSessionValueOf() {
     if (session.mode === 'dir' && typeof (session.dir || session.sessionDir) === 'string') return session.dir || session.sessionDir
   }
   const domainArgv = maintenanceArgs === undefined || maintenanceArgs === null ? [] : maintenanceArgs.domainArgv
-  return domainArgv.find((value) => !String(value).startsWith('--'))
+  return selectedPositionValueOf(domainArgv)
 }
 function commonArgsFor(file) {
   const args = []

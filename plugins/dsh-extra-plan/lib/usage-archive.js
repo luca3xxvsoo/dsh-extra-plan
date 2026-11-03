@@ -61,9 +61,9 @@ export const SCHEMA_DOC_KIND = '账本说明'
 export const SCHEMA_DOC_ROW = Object.freeze({
   kind: SCHEMA_DOC_KIND,
   说明: '一行等于一个完整身份累计行；总消耗为四桶相加；inputTokens 是未命中缓存输入，cacheReadTokens 是命中输入，'
-    + 'cacheWriteTokens 恒 0（供应商不上报），outputTokens 为输出；seq 是会话内事件水位，不可当主键；'
+    + 'cacheWriteTokens 可为非零，outputTokens 为输出；seq 是会话内事件水位，不可当主键；'
     + 'ts 是该身份最后一次写入时刻；delegationDepth 0 主会话、1 一级委派；parentSessionId 空串为主会话；'
-    + 'role 取值 main 或 subagent；agentPreset 是预设名；model 与 provider 分别为模型名与供应商名。',
+    + 'role 取值含 main、child 及 executor/planner/reviewer/prober 四角色；agentPreset 是预设名；model 与 provider 分别为模型名与供应商名。',
   键: V2_KEYS.join(','),
 })
 export const SCHEMA_DOC_LINE = JSON.stringify(SCHEMA_DOC_ROW)

@@ -656,6 +656,39 @@ if (yamlResolution.module === null) {
   const directAfter = readFileSync(join(syncTarget, 'cordis.patch.yml'), 'utf8')
   check('SYNC 已有 direct settings 行更新并修复非法托管值，未知 config/注释/嵌套 insert 保留', directSync.status === 'applied' && directAfter.includes('customKey: !!js "globalThis.__unknown = true"') && directAfter.includes('nested-user-row') && directAfter.includes('# outside comment') && isDeepStrictEqual(syncProjection(syncConfigOf(directAfter)), { ...syncValues, gateWords: syncGateWords }) && directBefore !== directAfter)
 
+  // M11：W夹具锁定裸apostrophe/引号#、gateWords注释、CRLF无尾换行与重复同步幂等。
+  const wCommentText = [
+    '# W root comment',
+    '- id: dsh-extra-plan-settings',
+    '  name: dsh-extra-plan/settings',
+    '  config:',
+    '    plannerPromptSuffix: don' + String.fromCharCode(39) + 't # keep',
+    '    customKey: ' + String.fromCharCode(34) + 'quoted # keep' + String.fromCharCode(34),
+    '    plannerModel: old-model',
+    '    gateWords:',
+    '      # gateWords comment',
+    '      routeDirect: old-direct # direct comment',
+    '      routePlan: old-plan',
+    '      routeDisagree: old-disagree',
+    '      approvalApprove: old-approve',
+    '      approvalReplan: old-replan',
+    '      purposeRefine: old-refine',
+    '      purposeRedo: old-redo',
+    '# W tail comment',
+  ].join('\r\n')
+  const wProfile = makeSyncProfile(syncHome, 'w-comment-crlf-noeol', wCommentText)
+  const wPath = join(wProfile, 'cordis.patch.yml')
+  const wFirst = qqbotSync.writeQqbotSettingsPatch(wProfile, syncSnapshot, { pathContext: contextOf(syncHome) })
+  const wAfter = readFileSync(wPath, 'utf8')
+  const wFirstStat = statSync(wPath)
+  const wFirstBackups = syncBackupCount(wProfile)
+  const wProjection = syncProjection(syncConfigOf(wAfter))
+  check('M11 W裸apostrophe不吞# keep、引号#/gateWords注释保留且11+7快照正确', wFirst.status === 'applied' && wAfter.includes('plannerPromptSuffix: ' + String.fromCharCode(34) + 'sync-suffix-test' + String.fromCharCode(34) + ' # keep') && wAfter.includes('customKey: ' + String.fromCharCode(34) + 'quoted # keep' + String.fromCharCode(34)) && wAfter.includes('# gateWords comment') && wAfter.includes('# direct comment') && wAfter.includes('# W root comment') && wAfter.includes('# W tail comment') && wAfter.includes('\r\n') && !wAfter.replace(/\r\n/g, '').includes('\n') && !wAfter.endsWith('\n') && isDeepStrictEqual(wProjection, { ...syncValues, gateWords: syncGateWords }))
+  const wRepeat = qqbotSync.writeQqbotSettingsPatch(wProfile, syncSnapshot, { pathContext: contextOf(syncHome) })
+  const wAfterRepeat = readFileSync(wPath, 'utf8')
+  const wRepeatStat = statSync(wPath)
+  check('M11 W重复同步字节/mtime/备份数均不增且返回idempotent', wRepeat.status === 'idempotent' && wAfterRepeat === wAfter && wRepeatStat.mtimeMs === wFirstStat.mtimeMs && syncBackupCount(wProfile) === wFirstBackups)
+
   const missingConfig = makeSyncProfile(syncHome, 'missing-config', '- override:\n    id: dsh-extra-plan-settings\n    metadata: keep\n')
   const missingConfigResult = qqbotSync.writeQqbotSettingsPatch(missingConfig, syncSnapshot, { pathContext: contextOf(syncHome) })
   check('SYNC 已有唯一 override 但缺 config 时补 map', missingConfigResult.status === 'applied' && isDeepStrictEqual(syncProjection(syncConfigOf(readFileSync(join(missingConfig, 'cordis.patch.yml'), 'utf8'))), { ...syncValues, gateWords: syncGateWords }))

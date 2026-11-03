@@ -473,12 +473,55 @@ const H3_EVIDENCE_CASES = [
   ['pwsh minusge allow', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: "if ($a -ge 5) { 'x' }" } }), null],
   ['pwsh arrow allow', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: "Write-Host 'a => b'" } }), null],
   ['pwsh arrow hash allow', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: '$m = @{ k = 1 } => 2' } }), null],
-  ['quoted semicolon existing boundary', () => shellMutationModule.bashMutationEvidence({ arguments: { command: 'echo "x; then rm"' } }), { rule: 'BASH_BARE_WORDS', value: 'rm' }],
+  ['bash quoted semicolon literal', () => shellMutationModule.bashMutationEvidence({ arguments: { command: 'echo "x; then rm"' } }), null],
   ['depth boundary', () => shellMutationModule.mutationTextEvidence('New-Item x', shellMutationModule.PWSH_MUTATION, shellMutationModule.PWSH_BARE_WORDS, 4), null],
   ['nested depth boundary', () => shellMutationModule.mutationTextEvidence('pwsh -Command "New-Item x"', shellMutationModule.PWSH_MUTATION, shellMutationModule.PWSH_BARE_WORDS, 3), null],
   ['nested depth allowed', () => shellMutationModule.mutationTextEvidence('pwsh -Command "New-Item x"', shellMutationModule.PWSH_MUTATION, shellMutationModule.PWSH_BARE_WORDS, 2), { rule: 'PWSH_BARE_WORDS', value: 'New-Item' }],
 ]
 for (const [label, getEvidence, expected] of H3_EVIDENCE_CASES) check('H3 ' + label + ' evidence 独立完整期望', getEvidence(), expected)
+
+// ── H3Q：bash引号、命令分隔、内层shell、$()与重定向双形状矩阵 ─────────
+const H3Q_COMMAND_CASES = [
+  ['Q01', 'echo "x; then rm"', null],
+  ['Q02', "echo 'rm'", null],
+  ['Q03', 'echo "a && rm"', null],
+  ['Q04', "echo \"$(printf '%s' rm)\"", null],
+  ['Q05', 'rm x', { rule: 'BASH_BARE_WORDS', value: 'rm' }],
+  ['Q06', 'echo ok; rm x', { rule: 'BASH_BARE_WORDS', value: 'rm' }],
+  ['Q07', "bash -c 'rm x'", { rule: 'BASH_BARE_WORDS', value: 'rm' }],
+  ['Q08', 'echo "$(rm x)"', { rule: 'BASH_BARE_WORDS', value: 'rm' }],
+  ['Q09', 'printf ok && rm x', { rule: 'BASH_BARE_WORDS', value: 'rm' }],
+  ['Q10', 'echo ok > out.txt', { rule: 'BASH_MUTATION', value: '' }],
+]
+const h3qHarness = makeHarness({ anchoredBootstrap: false })
+const h3qAgent = {
+  session: {
+    header: { id: 'h3q-reviewer-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: ROUTE_FIXTURE.home, agentPreset: 'extra-plan-reviewer' },
+    snapshotEvents: () => [],
+    append: () => {},
+  },
+  options: {},
+  ctx: undefined,
+}
+await assemble(h3qHarness, h3qAgent, [{ name: 'read' }, { name: 'bash' }])
+let h3qVariants = 0
+for (const [label, command, expected] of H3Q_COMMAND_CASES) {
+  const shapes = [['object', { command }], ['JSON', JSON.stringify({ command })]]
+  for (const [shape, argumentsObj] of shapes) {
+    h3qVariants += 1
+    const exec = { arguments: argumentsObj }
+    check('H3Q ' + label + '/' + shape + ' bashMutationEvidence', shellMutationModule.bashMutationEvidence(exec), expected)
+    check('H3Q ' + label + '/' + shape + ' bashMutationMatches', shellMutationModule.bashMutationMatches(exec), expected !== null)
+    let h3qNextCalls = 0
+    const nextSpy = () => { h3qNextCalls += 1 }
+    const result = preExecute(h3qHarness, h3qAgent, 'bash', argumentsObj, undefined, nextSpy)
+    const reason = result === null || result === undefined ? '' : String(result.reason)
+    checkTrue('H3Q ' + label + '/' + shape + ' isolated preExecute', expected === null
+      ? result !== null && result !== undefined && result.kind === 'allow' && h3qNextCalls === 1
+      : result !== null && result !== undefined && result.kind === 'deny' && h3qNextCalls === 0 && reason.includes(expected.rule) && reason.includes(expected.value))
+  }
+}
+checkTrue('H3Q variants===20', h3qVariants === 20)
 let r = preExecute(harness, reviewer, 'pwsh', { command: 'New-Item x.txt' })
 checkTrue('R1 reviewer pwsh New-Item → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === H3_REASONS.reviewerPwshNewItem)
 checkTrue('R2 reviewer pwsh deny 文案含只读限定', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('pwsh 仅限只读探查命令，禁止创建/修改/删除文件'))
@@ -3490,6 +3533,117 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
   }
   const officialPresetAwait = /\bawait\s+[\w$]+\.plugin\(\s*[\w$]*official[\w$]*agent[\w$]*preset\b/i.test(presetSyncSource)
   checkTrue('T9-3t preset-sync 通过 mountPresetSync/官方 adapter await 挂载，不实现 registry', presetSyncSource.includes('export function mountPresetSync') && officialPresetAwait && presetSyncSource.includes('@deepseek-ai/dsh-agent-preset') && !presetSyncSource.includes('agentPresets.register('))
+}
+
+// ── M9：验收者取消/重试/双signal/迟到及生产预审接线补证 ───────────────
+{
+  const m9Parent = { session: { header: { id: 'm9-parent' }, requestHeader: () => ({ config: { provider: 'm9-parent-provider', model: 'm9-parent-model', maxTokens: 4096 } }) } }
+  const m9Child = (id) => ({ session: { header: { id, origin: 'subagent', delegationDepth: 1, parentSession: 'm9-parent', agentPreset: 'extra-plan-reviewer' } } })
+  const m9Agents = { get: (id) => id === 'm9-parent' ? m9Parent : undefined }
+  const m9Routing = (plannerModel, llm) => createModelRouting({
+    getPlannerModel: () => plannerModel,
+    getOtherAgentModel: () => '',
+    getCrossProviderPlannerModel: () => true,
+    getLlm: () => llm,
+    getAgents: () => m9Agents,
+    getDiagPath: () => makeTmpDir('m9-reviewer-diag'),
+  })
+  let m9CancelRelease
+  let m9CancelModelCalls = 0
+  const m9CancelRouting = m9Routing('m9-cancel-target', {
+    listProviders: () => Promise.resolve([{ id: 'm9-cancel-provider', name: 'cancel' }]),
+    listModels: () => {
+      m9CancelModelCalls += 1
+      if (m9CancelModelCalls === 1) return new Promise((resolve) => { m9CancelRelease = () => resolve([{ id: 'm9-cancel-target' }]) })
+      return Promise.resolve([{ id: 'm9-cancel-target' }])
+    },
+    prepareCall: async (config) => ({ config, stream: async function* () { yield { type: 'finish', reason: { kind: 'stop' } } } }),
+  })
+  const m9CancelController = new AbortController()
+  const m9CancelPending = m9CancelRouting.resolveReviewerEntry(m9Child('m9-reviewer-cancel'), m9CancelController.signal)
+  await new Promise((resolve) => setImmediate(resolve))
+  const m9CancelReason = new Error('m9 reviewer cancel')
+  m9CancelController.abort(m9CancelReason)
+  if (typeof m9CancelRelease === 'function') m9CancelRelease()
+  let m9CancelError = ''
+  let m9CancelObserved
+  try { await m9CancelPending } catch (error) { m9CancelObserved = error; m9CancelError = String(error && error.message || error) }
+  const m9RetryEntry = await m9CancelRouting.resolveReviewerEntry(m9Child('m9-reviewer-retry'), undefined)
+  checkTrue('M9 reviewer 取消原样传播、取消条目可重试且不复用半成品', m9CancelObserved === m9CancelReason && m9CancelError.includes('m9 reviewer cancel') && m9RetryEntry.provider === 'm9-cancel-provider' && m9RetryEntry.model === 'm9-cancel-target' && m9RetryEntry.maxTokens === 4096 && m9CancelModelCalls === 2)
+  const m9PreCancelCounts = { providers: 0, models: 0, prepare: 0 }
+  const m9PreCancelRouting = m9Routing('m9-pre-cancel-target', {
+    listProviders: () => { m9PreCancelCounts.providers += 1; return Promise.resolve([{ id: 'm9-pre-cancel-provider', name: 'pre-cancel' }]) },
+    listModels: () => { m9PreCancelCounts.models += 1; return Promise.resolve([{ id: 'm9-pre-cancel-target' }]) },
+    prepareCall: async (config) => { m9PreCancelCounts.prepare += 1; return { config, stream: async function* () { yield { type: 'finish', reason: { kind: 'stop' } } } } },
+  })
+  const m9PreCancelMissController = new AbortController()
+  const m9PreCancelMissReason = new Error('m9 pre-cancel miss')
+  m9PreCancelMissController.abort(m9PreCancelMissReason)
+  let m9PreCancelMissObserved
+  try { await m9PreCancelRouting.resolveReviewerEntry(m9Child('m9-reviewer-pre-cancel-miss'), m9PreCancelMissController.signal) } catch (error) { m9PreCancelMissObserved = error }
+  const m9PreCancelMissZero = m9PreCancelCounts.providers === 0 && m9PreCancelCounts.models === 0 && m9PreCancelCounts.prepare === 0
+  const m9PreCancelWarm = await m9PreCancelRouting.resolveReviewerEntry(m9Child('m9-reviewer-pre-cancel-warm'), undefined)
+  const m9PreCancelHitCounts = { ...m9PreCancelCounts }
+  const m9PreCancelHitController = new AbortController()
+  const m9PreCancelHitReason = new Error('m9 pre-cancel hit')
+  m9PreCancelHitController.abort(m9PreCancelHitReason)
+  let m9PreCancelHitObserved
+  try { await m9PreCancelRouting.resolveReviewerEntry(m9Child('m9-reviewer-pre-cancel-hit'), m9PreCancelHitController.signal) } catch (error) { m9PreCancelHitObserved = error }
+  checkTrue('M9 reviewer cache miss/hit 预取消：Error原对象传播且零枚举/prepare', m9PreCancelMissObserved === m9PreCancelMissReason && m9PreCancelMissZero && m9PreCancelWarm.provider === 'm9-pre-cancel-provider' && m9PreCancelHitObserved === m9PreCancelHitReason && m9PreCancelCounts.providers === m9PreCancelHitCounts.providers && m9PreCancelCounts.models === m9PreCancelHitCounts.models && m9PreCancelCounts.prepare === m9PreCancelHitCounts.prepare)
+  const m9DoubleCounts = { providers: 0, models: 0, prepare: 0 }
+  const m9DoubleRouting = m9Routing('m9-double-target', {
+    listProviders: () => { m9DoubleCounts.providers += 1; return Promise.resolve([{ id: 'm9-double-provider', name: 'double' }]) },
+    listModels: () => { m9DoubleCounts.models += 1; return Promise.resolve([{ id: 'm9-double-target' }]) },
+    prepareCall: async (config) => { m9DoubleCounts.prepare += 1; return { config, stream: async function* () { yield { type: 'finish', reason: { kind: 'stop' } } } } },
+  })
+  const m9DoubleSignal = new AbortController().signal
+  const [m9DoubleA, m9DoubleB] = await Promise.all([m9DoubleRouting.resolveReviewerEntry(m9Child('m9-reviewer-double-a'), m9DoubleSignal), m9DoubleRouting.resolveReviewerEntry(m9Child('m9-reviewer-double-b'), m9DoubleSignal)])
+  checkTrue('M9 reviewer 同signal合并in-flight：双调用共享一次生产预审且结果一致', m9DoubleA.provider === 'm9-double-provider' && m9DoubleB.provider === 'm9-double-provider' && m9DoubleA.model === m9DoubleB.model && m9DoubleCounts.providers === 1 && m9DoubleCounts.models === 1 && m9DoubleCounts.prepare === 1)
+  const m9LateReleases = new Map()
+  let m9LateProviderCalls = 0
+  let m9LatePrepareCalls = 0
+  const m9LateRouting = m9Routing('m9-late-target', {
+    listProviders: () => { m9LateProviderCalls += 1; const id = m9LateProviderCalls === 1 ? 'm9-late-a' : 'm9-late-b'; return Promise.resolve([{ id, name: id }]) },
+    listModels: () => Promise.resolve([{ id: 'm9-late-target' }]),
+    prepareCall: async (config) => {
+      m9LatePrepareCalls += 1
+      return { config, stream: async function* () { await new Promise((resolve) => { m9LateReleases.set(config.provider, resolve) }); yield { type: 'finish', reason: { kind: 'stop' } } } }
+    },
+  })
+  const m9LateControllerA = new AbortController()
+  const m9LateControllerB = new AbortController()
+  const m9LatePendingA = m9LateRouting.resolveReviewerEntry(m9Child('m9-reviewer-late-a'), m9LateControllerA.signal)
+  const m9LatePendingB = m9LateRouting.resolveReviewerEntry(m9Child('m9-reviewer-late-b'), m9LateControllerB.signal)
+  let m9LateError = ''
+  let m9LateObservedError
+  let m9LateBEntry = null
+  let m9LateBError
+  let m9LateBSettled = false
+  const m9LateObservedA = m9LatePendingA.catch((error) => { m9LateObservedError = error; m9LateError = String(error && error.message || error); return null })
+  const m9LateObservedB = m9LatePendingB.then((entry) => { m9LateBSettled = true; m9LateBEntry = entry; return entry }, (error) => { m9LateBSettled = true; m9LateBError = error; return null })
+  for (let i = 0; i < 3; i += 1) await new Promise((resolve) => setImmediate(resolve))
+  const m9LateReason = new Error('m9 late cancelled')
+  m9LateControllerA.abort(m9LateReason)
+  for (let i = 0; i < 3; i += 1) await new Promise((resolve) => setImmediate(resolve))
+  const m9LateBStillPending = !m9LateBSettled
+  if (typeof m9LateReleases.get('m9-late-b') === 'function') m9LateReleases.get('m9-late-b')()
+  await m9LateObservedB
+  const m9LateEntryB = m9LateBEntry
+  if (typeof m9LateReleases.get('m9-late-a') === 'function') m9LateReleases.get('m9-late-a')()
+  await m9LateObservedA
+  let m9LateCached = null
+  if (m9LateEntryB !== null) m9LateCached = await m9LateRouting.resolveReviewerEntry(m9Child('m9-reviewer-late-c'), undefined)
+  checkTrue('M9 reviewer 迟到结果不覆盖新entry：A/B同时pending，取消A不影响B且缓存仍为B', m9LateObservedError === m9LateReason && m9LateControllerA.signal !== m9LateControllerB.signal && !m9LateControllerB.signal.aborted && m9LateBStillPending && m9LateBError === undefined && m9LateError.includes('m9 late cancelled') && m9LateEntryB !== null && m9LateEntryB.provider === 'm9-late-b' && m9LateCached !== null && m9LateCached.provider === 'm9-late-b' && m9LateProviderCalls === 2 && m9LatePrepareCalls === 2)
+  let m9GateNextCalls = 0
+  const m9GateNext = () => { m9GateNextCalls += 1 }
+  const m9FreeResult = preExecute(harness, plannerAgent, 'run_code', { code: "await tools.save_plan({ plan: 'm9', checklist: 'm9' })", description: 'M9 FREE_TOOLS 实际放行' }, undefined, m9GateNext)
+  const m9NonFreeResult = preExecute(harness, plannerAgent, 'run_code', { code: 'await tools.write({})', description: 'M9 非 FREE_TOOLS 实际拒绝' }, undefined, m9GateNext)
+  checkTrue('M9 生产pre-execute实际复用FREE_TOOLS组预审：可执行放行/拒绝且next仅一次', m9FreeResult !== null && m9FreeResult !== undefined && m9FreeResult.kind === 'allow' && m9NonFreeResult !== null && m9NonFreeResult !== undefined && m9NonFreeResult.kind === 'deny' && m9GateNextCalls === 1)
+  const m9PureDecision = { kind: 'enter', messages: [gateInstructions('m9-new-decision'), gateCatalog([{ name: 'm9-skill', description: 'new' }]), gateMessage('user-message')] }
+  const m9PureFiltered = filterBootstrapContextDecision(m9PureDecision, true)
+  checkTrue('M9 CG 纯例只接收新增decision并过滤两类来源，不传完整历史request', m9PureFiltered !== m9PureDecision && m9PureFiltered.messages.length === 1 && m9PureFiltered.messages[0].source.kind === 'user-message')
+  const m9PluginSource = readFileSync(PLUGIN_PATH, 'utf8')
+  checkTrue('M9 FREE_TOOLS与生产pre-execute接线仍指向共享组预审、无私有复制', decisions.FREE_TOOLS instanceof Set && [...decisions.FREE_TOOLS].join('|') === 'save_plan' && m9PluginSource.includes('runCodeGroupDenyReason') && m9PluginSource.includes('FREE_TOOLS') && !/function\s+runCodeGroupDenyReason/.test(m9PluginSource))
 }
 
 output.summary(pass, fail)

@@ -521,35 +521,125 @@ function resolveOtherAgentEntry(agent, parentSignal, probe) {
 }
 
 // 验收者模型入口：plannerModel 作为验收者的 pro 模型来源，空串等于继承主会话（直接回退父
-// fallback，不取 llm）。reviewerRouteCache 是 per-apply 实例（不得提升为模块全局），按
-// plannerModel、crossProviderPlannerModel 真假、顶层主会话 provider/model/maxTokens 五段拼键，
-// 同键复用 in-flight 与已 settled 结果（成功 entry 与失败兜底均固定缓存）；条目超过 32 条时整表清空。
-const reviewerRouteCache = new Map()
+// fallback，不取 llm）。reviewerRoutePendingCache/reviewerRouteSettledCache 是 per-apply 实例
+// （不得提升为模块全局），按 plannerModel、crossProviderPlannerModel 真假、顶层主会话
+// provider/model/maxTokens 五段拼键；pending 与 settled 隔离，条目超过 32 条时整表清空。
+const reviewerRoutePendingCache = new Map()
+const reviewerRouteSettledCache = new Map()
+
+function throwIfReviewerAborted(parentSignal) {
+  if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
+}
+
+function awaitReviewerPending(pending, parentSignal, removePending) {
+  if (parentSignal === undefined || parentSignal === null || typeof parentSignal.addEventListener !== 'function') return pending
+  if (parentSignal.aborted) {
+    if (typeof removePending === 'function') removePending()
+    throw plannerAbortError(parentSignal)
+  }
+  return new Promise((resolve, reject) => {
+    let done = false
+    const cleanup = () => {
+      if (typeof parentSignal.removeEventListener === 'function') parentSignal.removeEventListener('abort', onAbort)
+    }
+    const onAbort = () => {
+      if (done) return
+      done = true
+      cleanup()
+      if (typeof removePending === 'function') removePending()
+      reject(plannerAbortError(parentSignal))
+    }
+    parentSignal.addEventListener('abort', onAbort, { once: true })
+    pending.then((entry) => {
+      if (done) return
+      done = true
+      cleanup()
+      resolve(entry)
+    }, (error) => {
+      if (done) return
+      done = true
+      cleanup()
+      reject(error)
+    })
+    if (parentSignal.aborted) onAbort()
+  })
+}
+
+function removeReviewerPending(cacheKey, ownerSignal, pending) {
+  const bucket = reviewerRoutePendingCache.get(cacheKey)
+  if (bucket === undefined || bucket.get(ownerSignal) !== pending) return
+  bucket.delete(ownerSignal)
+  if (bucket.size === 0) reviewerRoutePendingCache.delete(cacheKey)
+}
+
+function reviewerPendingEntryCount() {
+  let count = 0
+  for (const bucket of reviewerRoutePendingCache.values()) count += bucket.size
+  return count
+}
 
 async function resolveReviewerEntry(agent, parentSignal) {
+  throwIfReviewerAborted(parentSignal)
   const sources = nonPlannerRouteSources(agent)
   const fallback = nonPlannerFallbackEntry(sources, false)
   const targetModel = getPlannerModel(agent)
-  if (targetModel === '') return fallback || {}
+  if (targetModel === '') {
+    throwIfReviewerAborted(parentSignal)
+    return fallback || {}
+  }
   const crossProvider = getCrossProviderPlannerModel(agent)
   const parentProvider = fallback !== null && fallback.provider !== undefined ? fallback.provider : ''
   const parentModel = fallback !== null && fallback.model !== undefined ? fallback.model : ''
   const parentMaxTokens = fallback !== null && fallback.maxTokens !== undefined ? String(fallback.maxTokens) : ''
   const cacheKey = targetModel + '|' + (crossProvider ? 'cross' : 'direct') + '|' + parentProvider + '|' + parentModel + '|' + parentMaxTokens
-  const cached = reviewerRouteCache.get(cacheKey)
-  if (cached !== undefined) return cached
-  // 解析失败不得把 rejection 抛给调用方：统一兜底为父 fallback。
+  const ownerSignal = parentSignal !== undefined && parentSignal !== null ? parentSignal : undefined
+  throwIfReviewerAborted(ownerSignal)
+  const settled = reviewerRouteSettledCache.get(cacheKey)
+  if (settled !== undefined) return settled
+  const pendingBucket = reviewerRoutePendingCache.get(cacheKey)
+  const cached = pendingBucket !== undefined ? pendingBucket.get(ownerSignal) : undefined
+  if (cached !== undefined) {
+    return awaitReviewerPending(cached, parentSignal, () => removeReviewerPending(cacheKey, ownerSignal, cached))
+  }
+  throwIfReviewerAborted(ownerSignal)
+  // 解析失败不得把 rejection 抛给调用方：普通失败统一兜底为父 fallback，取消原样传播。
+  // 同一 ownerSignal 合并 in-flight；不同 signal 旁路独立解析，迟到结果不得回写新条目。
   const pending = (crossProvider
-    ? resolvePlannerEntryStrict(agent, parentSignal)
+    ? resolvePlannerEntryStrict(agent, ownerSignal)
     : resolvePlannerEntryLegacy(agent)
-  ).then((entry) => ({
-    provider: entry.provider,
-    model: entry.model,
-    maxTokens: fallback !== null ? fallback.maxTokens : entry.maxTokens,
-  })).catch(() => fallback || {})
-  if (reviewerRouteCache.size > 32) reviewerRouteCache.clear()
-  reviewerRouteCache.set(cacheKey, pending)
-  return pending
+  ).then((entry) => {
+    throwIfReviewerAborted(ownerSignal)
+    return {
+      provider: entry.provider,
+      model: entry.model,
+      maxTokens: fallback !== null ? fallback.maxTokens : entry.maxTokens,
+    }
+  }).catch(() => {
+    throwIfReviewerAborted(ownerSignal)
+    return fallback || {}
+  })
+  if (reviewerPendingEntryCount() + reviewerRouteSettledCache.size > 32) {
+    reviewerRoutePendingCache.clear()
+    reviewerRouteSettledCache.clear()
+  }
+  let ownPendingBucket = reviewerRoutePendingCache.get(cacheKey)
+  if (ownPendingBucket === undefined) {
+    ownPendingBucket = new Map()
+    reviewerRoutePendingCache.set(cacheKey, ownPendingBucket)
+  }
+  ownPendingBucket.set(ownerSignal, pending)
+  pending.then((entry) => {
+    const bucket = reviewerRoutePendingCache.get(cacheKey)
+    if (bucket === undefined || bucket.get(ownerSignal) !== pending) return
+    bucket.delete(ownerSignal)
+    if (bucket.size === 0) reviewerRoutePendingCache.delete(cacheKey)
+    if (ownerSignal !== undefined && ownerSignal.aborted) return
+    if (reviewerRouteSettledCache.has(cacheKey)) return
+    reviewerRouteSettledCache.set(cacheKey, entry)
+  }, () => {
+    removeReviewerPending(cacheKey, ownerSignal, pending)
+  })
+  return awaitReviewerPending(pending, parentSignal, () => removeReviewerPending(cacheKey, ownerSignal, pending))
 }
   return { resolvePlannerEntry, resolveOtherAgentEntry, resolveReviewerEntry }
 }

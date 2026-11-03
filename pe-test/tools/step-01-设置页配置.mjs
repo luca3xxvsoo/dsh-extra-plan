@@ -1207,38 +1207,97 @@ await runApiAdapterCase('API_ADAPTER_HANG_COMPLETE_PATCH_SETTLED_BEFORE_RESOLVE_
 
 
 const liveRoot = makeWRoot('settings-live-config')
-const livePathContext = createPathContext({ workspaceRoot: liveRoot })
 const liveDir = join(liveRoot, 'profiles', 'web')
 mkdirSync(liveDir, { recursive: true })
-let livePath = join(liveDir, 'cordis.patch.yml')
-const hotKeys = ['anchoredBootstrap', 'creativeMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel']
-const hotGetters = { anchoredBootstrap: 'anchoredBootstrap', creativeMode: 'creativeMode', runcodeCatchGate: 'runcodeCatchGate', crossProviderPlannerModel: 'crossProviderPlannerModel', plannerModel: 'plannerModel', plannerPromptSuffix: 'plannerPromptSuffix', exploreBudget: 'exploreBudget', otherAgentModel: 'otherAgentModel' }
-const hotNext = { anchoredBootstrap: true, creativeMode: false, runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: 'hot-model', plannerPromptSuffix: 'hot-suffix', exploreBudget: 47, otherAgentModel: 'hot-other' }
-writeFileSync(livePath, JSON.stringify([{ id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: { ...syncValues } }]), 'utf8')
+const livePath = join(liveDir, 'cordis.patch.yml')
+const liveCapability = (name) => ({ name, path: livePath, type: 'file', purpose: 'config-editor', access: 'read' })
+const hotKeys = ['anchoredBootstrap', 'creativeMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel', 'reviewerUsesPlannerModel']
+const hotGetters = { anchoredBootstrap: 'anchoredBootstrap', creativeMode: 'creativeMode', runcodeCatchGate: 'runcodeCatchGate', crossProviderPlannerModel: 'crossProviderPlannerModel', plannerModel: 'plannerModel', plannerPromptSuffix: 'plannerPromptSuffix', exploreBudget: 'exploreBudget', otherAgentModel: 'otherAgentModel', reviewerUsesPlannerModel: 'reviewerUsesPlannerModel' }
+const hotNext = { anchoredBootstrap: true, creativeMode: false, runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: 'hot-model', plannerPromptSuffix: 'hot-suffix', exploreBudget: 47, otherAgentModel: 'hot-other', reviewerUsesPlannerModel: false }
+const liveMatrixRoot = makeWRoot('settings-live-config-matrix')
+const liveMatrixDir = join(liveMatrixRoot, 'profiles', 'web')
+mkdirSync(liveMatrixDir, { recursive: true })
+let liveMatrixPath = join(liveMatrixDir, 'cordis.patch.yml')
+const liveMatrixPathContext = createPathContext({ workspaceRoot: liveMatrixRoot })
+writeFileSync(liveMatrixPath, JSON.stringify([{ id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: { ...syncValues } }]), 'utf8')
+const liveMatrixWarnings = []
+const liveMatrixWarn = console.warn
+console.warn = (...args) => liveMatrixWarnings.push(args.map(String).join(' '))
+try {
+  const liveMatrixConfig = createLiveConfig({ resolveDocumentTarget: () => ({ kind: 'workspace', path: liveMatrixPath }), getPathContext: () => liveMatrixPathContext, fallbackDefaults: syncValues })
+  let matrixHotReadOk = true
+  for (const key of hotKeys) {
+    const next = { ...syncValues, [key]: hotNext[key] }
+    liveMatrixPath = join(liveMatrixDir, 'cordis.patch.' + key + '.yml')
+    writeFileSync(liveMatrixPath, JSON.stringify([{ id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: next }]), 'utf8')
+    if (!Object.is(liveMatrixConfig.get(hotGetters[key], { session: { header: { cwd: liveMatrixRoot } } }), hotNext[key])) matrixHotReadOk = false
+  }
+  liveMatrixPath = join(liveMatrixDir, 'cordis.patch.missing.yml')
+  const matrixFallback = Object.fromEntries(hotKeys.map((key) => [key, liveMatrixConfig.get(hotGetters[key], { session: { header: { cwd: liveMatrixRoot } } })]))
+  const matrixFallbackOk = hotKeys.every((key) => Object.is(matrixFallback[key], syncValues[key]))
+  const matrixWarningsAfterMissing = liveMatrixWarnings.length
+  liveMatrixPath = join(liveMatrixDir, 'cordis.patch.recovered.yml')
+  writeFileSync(liveMatrixPath, JSON.stringify([{ id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: { ...syncValues, ...hotNext } }]), 'utf8')
+  const matrixRecovered = Object.fromEntries(hotKeys.map((key) => [key, liveMatrixConfig.get(hotGetters[key], { session: { header: { cwd: liveMatrixRoot } } })]))
+  const matrixRecoveredOk = hotKeys.every((key) => Object.is(matrixRecovered[key], hotNext[key]))
+  check('G5 A可读→B缺失→B可读：9项回退/恢复且缺失最多一次告警', matrixHotReadOk && matrixFallbackOk && matrixRecoveredOk && matrixWarningsAfterMissing === 1 && liveMatrixWarnings.length === 1 && adapterNoRemount)
+} finally {
+  console.warn = liveMatrixWarn
+}
+const liveValues = { ...syncValues, ...hotNext }
+writeFileSync(livePath, JSON.stringify([{ id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: liveValues }]), 'utf8')
+const liveBytes = readFileSync(livePath)
+const liveStamp = () => {
+  const info = statSync(livePath, { bigint: true })
+  return { dev: String(info.dev), ino: String(info.ino), size: String(info.size), mtime: String(info.mtimeNs), ctime: String(info.ctimeNs) }
+}
+const liveOriginalStamp = liveStamp()
+const liveBytesSha256 = createHash('sha256').update(liveBytes).digest('hex')
+const liveResolvedPath = resolve(livePath)
+const liveOriginalReadFileSync = fs.readFileSync
+let liveReadCount = 0
+fs.readFileSync = (...args) => {
+  if (typeof args[0] === 'string' && resolve(args[0]) === liveResolvedPath) liveReadCount += 1
+  return liveOriginalReadFileSync(...args)
+}
+syncBuiltinESMExports()
 const liveWarnings = []
 const liveWarn = console.warn
 console.warn = (...args) => liveWarnings.push(args.map(String).join(' '))
+let liveCapabilityName = 'profilePatch'
+let livePathContext = createPathContext({ hostCapabilities: [liveCapability('profilePatch'), liveCapability('editorDocument')] })
+const readHotValues = (liveConfig) => Object.fromEntries(hotKeys.map((key) => [key, liveConfig.get(hotGetters[key], { session: { header: { cwd: liveRoot } } })]))
+const hotValuesEqual = (values, expected) => hotKeys.every((key) => Object.is(values[key], expected[key]))
 try {
-  const liveConfig = createLiveConfig({ resolveDocumentTarget: () => ({ kind: 'workspace', path: livePath }), getPathContext: () => livePathContext, fallbackDefaults: syncValues })
-  let hotReadOk = true
-  for (const key of hotKeys) {
-    const next = { ...syncValues, [key]: hotNext[key] }
-    livePath = join(liveDir, 'cordis.patch.' + key + '.yml')
-    writeFileSync(livePath, JSON.stringify([{ id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: next }]), 'utf8')
-    if (!Object.is(liveConfig.get(hotGetters[key], { session: { header: { cwd: liveRoot } } }), hotNext[key])) hotReadOk = false
-  }
-  const missingLivePath = join(liveDir, 'cordis.patch.missing.yml')
-  livePath = missingLivePath
-  const fallbackAfterMissing = Object.fromEntries(hotKeys.map((key) => [key, liveConfig.get(hotGetters[key], { session: { header: { cwd: liveRoot } } })]))
-  const fallbackOk = hotKeys.every((key) => Object.is(fallbackAfterMissing[key], syncValues[key]))
-  const warningsAfterMissing = liveWarnings.length
-  livePath = join(liveDir, 'cordis.patch.recovered.yml')
-  const recoveredValues = { ...syncValues, ...hotNext }
-  writeFileSync(livePath, JSON.stringify([{ id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: recoveredValues }]), 'utf8')
-  const recovered = Object.fromEntries(hotKeys.map((key) => [key, liveConfig.get(hotGetters[key], { session: { header: { cwd: liveRoot } } })]))
-  const recoveredOk = hotKeys.every((key) => Object.is(recovered[key], hotNext[key]))
-  check('G5 A可读→B缺失→B可读：8项回退/恢复且缺失最多一次告警', hotReadOk && fallbackOk && recoveredOk && warningsAfterMissing === 1 && liveWarnings.length === 1 && adapterNoRemount)
+  const liveConfig = createLiveConfig({ resolveDocumentTarget: () => ({ kind: 'host', path: livePath, capability: liveCapabilityName }), getPathContext: () => livePathContext, fallbackDefaults: syncValues })
+  const initialValues = readHotValues(liveConfig)
+  const readsAfterInitial = liveReadCount
+  const sameIdentityValues = readHotValues(liveConfig)
+  const readsAfterSameIdentity = liveReadCount
+  liveCapabilityName = 'editorDocument'
+  const capabilityChangedValues = readHotValues(liveConfig)
+  const readsAfterCapabilityChange = liveReadCount
+  const sameCapabilityValues = readHotValues(liveConfig)
+  const readsAfterSameCapability = liveReadCount
+  livePathContext = createPathContext({ workspaceRoot: liveRoot })
+  const revokedValues = readHotValues(liveConfig)
+  const readsAfterRevoke = liveReadCount
+  livePathContext = createPathContext({ hostCapabilities: [liveCapability('editorDocument')] })
+  const restoredValues = readHotValues(liveConfig)
+  const readsAfterRestore = liveReadCount
+  const readCountsOk = readsAfterInitial === 1 && readsAfterSameIdentity === 1 && readsAfterCapabilityChange === 2 && readsAfterSameCapability === 2 && readsAfterRevoke === 2 && readsAfterRestore === 3
+  const bytesUnchanged = liveOriginalReadFileSync(livePath).equals(liveBytes)
+  const stampUnchanged = isDeepStrictEqual(liveOriginalStamp, liveStamp())
+  const sameIdentityOk = hotValuesEqual(initialValues, hotNext) && hotValuesEqual(sameIdentityValues, hotNext) && sameIdentityValues.reviewerUsesPlannerModel === initialValues.reviewerUsesPlannerModel
+  const capabilityChangedOk = hotValuesEqual(capabilityChangedValues, hotNext) && hotValuesEqual(sameCapabilityValues, hotNext)
+  const revokedOk = hotValuesEqual(revokedValues, syncValues) && hotKeys.some((key) => !Object.is(revokedValues[key], hotNext[key]))
+  const restoredOk = hotValuesEqual(restoredValues, hotNext)
+  const evidence = { path: livePath, bytesSha256: liveBytesSha256, bytes: liveBytes.length, stamp: liveOriginalStamp, reads: { initial: readsAfterInitial, sameIdentity: readsAfterSameIdentity, capabilityChange: readsAfterCapabilityChange, sameCapability: readsAfterSameCapability, revoke: readsAfterRevoke, restore: readsAfterRestore }, warnings: liveWarnings.length, values: { initial: initialValues, capabilityChanged: capabilityChangedValues, revoked: revokedValues, restored: restoredValues } }
+  output.structured('G5_LIVE_CONFIG_EVIDENCE', evidence, { path: livePath, bytes: liveBytes.length, stamp: liveOriginalStamp, reads: evidence.reads, warningCount: liveWarnings.length }, { failure: !(readCountsOk && bytesUnchanged && stampUnchanged && sameIdentityOk && capabilityChangedOk && revokedOk && restoredOk) })
+  check('G5 9热读键同路径同stamp能力切换/撤权/恢复、真实read计数且字节stamp不变', readCountsOk && bytesUnchanged && stampUnchanged && sameIdentityOk && capabilityChangedOk && revokedOk && restoredOk && liveWarnings.length === 1 && adapterNoRemount)
 } finally {
+  fs.readFileSync = liveOriginalReadFileSync
+  syncBuiltinESMExports()
   console.warn = liveWarn
 }
 // G6 boot 装载：settings 行存在但缺新键（reviewerUsesPlannerModel）→ 不抛错、告警一次并按
@@ -1801,6 +1860,98 @@ check('V05 Q05 卸载精确释放registration=1/style=1/listener=0且旧通知�
 check('V05 Q05 重复dispose不增加任何释放计数', lifecycle.registrationDisposals === lifecycleCounts.disposals && lifecycle.styleRemoves === lifecycleCounts.styleRemoves && lifecycle.unsubscribeCount === lifecycleCounts.unsubscribes)
 surface.unmount()
 failedSurface.unmount()
+
+// ── M10：settings API/settled 同路径 capability 切换、撤权恢复与非空profiles诊断 ──
+{
+  const m10Fixture = makeSyncFixture()
+  const m10ProfileContext = { ...m10Fixture.webProfileContext }
+  const m10Editor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, m10Fixture.webPatch, { persistDocument: true, profileContext: m10ProfileContext })
+  const m10Run = await start(m10Editor)
+  const m10DocumentPath = m10Editor.documentPath
+  try {
+    const m10Initial = await requestJson(m10Run.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
+    const m10Baseline = await requestJson(m10Run.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
+    delete m10ProfileContext.patchPath
+    const m10Switched = await requestJson(m10Run.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { creativeMode: true })
+    const m10SwitchedGet = await requestJson(m10Run.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
+    check('M10 同路径 capability fallback GET 仍读最近合法stamp真值且不伪装synced', m10SwitchedGet.status === 200 && m10SwitchedGet.body?.values?.creativeMode === true && m10SwitchedGet.body?.values?.webFetch === true && m10SwitchedGet.body?.profileSync?.cache === true && m10SwitchedGet.body?.profileSync?.source === 'last-terminal-cache' && m10SwitchedGet.body?.profileSync?.status === 'synced')
+    check('M10 同路径 capability 从 profilePatch 切至 editorDocument 仍经API/QQ同步且无ReferenceError', m10Initial.status === 200 && m10Baseline.status === 200 && m10Baseline.body?.values?.webFetch === true && m10Baseline.body?.profileSync?.status === 'synced' && m10Baseline.body?.profileSync?.terminalMatch === true && m10Baseline.body?.profileSync?.request?.snapshotHash === m10Baseline.body?.profileSync?.snapshotHash && m10Switched.status === 200 && m10Switched.body?.values?.creativeMode === true && m10Switched.body?.values?.webFetch === true && m10Switched.body?.profileSync?.status === 'synced' && m10Switched.body?.profileSync?.terminalMatch === true && m10Switched.body?.profileSync?.pathSource === 'configEditor.documentPath' && !String(m10Switched.body?.error || '').includes('ReferenceError'))
+    m10Editor.documentPath = undefined
+    const m10Revoked = await withEnvironment({ DSH_HOME: undefined, DSH_PROFILE: undefined }, () => requestJson(m10Run.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: false }))
+    const m10RevokedGet = await withEnvironment({ DSH_HOME: undefined, DSH_PROFILE: undefined }, () => requestJson(m10Run.port, 'GET', '/api/dsh-extra-plan-settings/pro-config?saveRunId=m10-revoked-mismatch', {}))
+    check('M10 撤权后GET fallback不返回synced且保留原reason诊断', m10RevokedGet.status >= 400 && m10RevokedGet.body?.overall === 'conflict' && m10RevokedGet.body?.profileSync?.terminalMatch === false && m10RevokedGet.body?.profileSync?.source === 'last-terminal-cache' && m10RevokedGet.body?.settingsRow?.diagnostics?.includes('document-path-unavailable'))
+    check('M10 同路径 capability 撤权后失败诊断保留原reason、非空写链零伪装', m10Revoked.status >= 400 && ((m10Revoked.body?.profileSync?.status === 'unavailable' && ['document-path-unavailable', 'path-context-required', 'invalid-document-path'].includes(m10Revoked.body?.profileSync?.reason)) || (m10Revoked.body?.profileSync?.status === 'conflict' && m10Revoked.body?.profileSync?.reason === 'duplicate-settings-row' && m10Revoked.body?.settingsRow?.diagnostics?.includes('document-path-unavailable'))) && !String(m10Revoked.body?.error || '').includes('ReferenceError'))
+    m10ProfileContext.patchPath = m10Fixture.webPatch
+    m10Editor.documentPath = m10DocumentPath
+    const m10Restored = await requestJson(m10Run.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
+    check('M10 撤权后恢复同一路径 capability 可再次同步且terminalMatch成立', m10Restored.status === 200 && m10Restored.body?.values?.webFetch === true && m10Restored.body?.values?.creativeMode === true && m10Restored.body?.profileSync?.status === 'synced' && m10Restored.body?.profileSync?.terminalMatch === true && m10Restored.body?.profileSync?.request?.snapshotHash === m10Restored.body?.profileSync?.snapshotHash && m10Restored.body?.profileSync?.pathSource === 'configEditor.documentPath' && !String(m10Restored.body?.error || '').includes('ReferenceError'))
+  } finally {
+    if (typeof m10Run.lifecycle?.cleanup === 'function') await m10Run.lifecycle.cleanup()
+    await new Promise((resolve) => m10Run.server.close(resolve))
+    rmSync(m10Fixture.root, { recursive: true, force: true })
+  }
+  const m10FailureFixture = makeSyncFixture()
+  rmSync(m10FailureFixture.qqPatch, { force: true })
+  const m10FailureEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, m10FailureFixture.webPatch, { profileContext: m10FailureFixture.webProfileContext })
+  const m10FailureRun = await start(m10FailureEditor)
+  const m10FailureErrors = []
+  const m10FailureError = console.error
+  console.error = (...args) => {
+    m10FailureErrors.push(args.map(String).join(' '))
+    m10FailureError(...args)
+  }
+  try {
+    const m10FailurePut = await requestJson(m10FailureRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
+    const m10FailureProfiles = m10FailurePut.body?.profileSync?.profiles || []
+    const m10FailureProfile = m10FailureProfiles.find((item) => item.reason === 'patch-missing')
+    const m10FailureLogOk = m10FailureErrors.some((line) => line.includes('status=failed') && line.includes('profile=' + String(m10FailureProfile?.profile)) && line.includes('path=' + m10FailureFixture.profileDir) && line.includes('reason=' + String(m10FailureProfile?.reason)) && !line.includes('ReferenceError'))
+    const m10FailureProfilesOk = m10FailureProfiles.length > 0 && m10FailureProfiles.every((item) => item.status === 'failed' && item.reason === 'patch-missing' && typeof item.profile === 'string' && !String(item.reason).includes('ReferenceError'))
+    check('M10 非空profiles失败保留逐profile reason且不伪装synced', m10FailurePut.status >= 400 && m10FailurePut.body?.profileSync?.status === 'failed' && m10FailureProfilesOk && m10FailureProfile !== undefined && m10FailurePut.body?.profileSync?.status !== 'synced' && m10FailureLogOk)
+  } finally {
+    console.error = m10FailureError
+    if (typeof m10FailureRun.lifecycle?.cleanup === 'function') await m10FailureRun.lifecycle.cleanup()
+    await new Promise((resolve) => m10FailureRun.server.close(resolve))
+    rmSync(m10FailureFixture.root, { recursive: true, force: true })
+  }
+  const m17DriftFixture = makeSyncFixture()
+  const m17DriftEditor = makeEditor({ ...syncValues, gateWords: syncGateWords }, m17DriftFixture.webPatch, { persistDocument: true, profileContext: m17DriftFixture.webProfileContext })
+  const m17DriftRun = await start(m17DriftEditor)
+  const m17DriftWarnings = []
+  const m17DriftWarn = console.warn
+  const m17DriftRename = fs.renameSync
+  let m17DriftRenameCount = 0
+  try {
+    console.warn = (...args) => {
+      m17DriftWarnings.push(args.map(String).join(' '))
+      m17DriftWarn(...args)
+    }
+    fs.renameSync = (...args) => {
+      const result = m17DriftRename(...args)
+      const destination = typeof args[1] === 'string' ? resolve(args[1]) : ''
+      if (destination === resolve(m17DriftFixture.qqPatch)) {
+        m17DriftRenameCount += 1
+        writeFileSync(m17DriftFixture.qqPatch, externalDriftText, 'utf8')
+      }
+      return result
+    }
+    syncBuiltinESMExports()
+    const m17DriftPut = await requestJson(m17DriftRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { plannerModel: 'api-drift-model' })
+    const m17DriftProfiles = m17DriftPut.body?.profileSync?.profiles || []
+    const m17DriftProfile = m17DriftProfiles.find((item) => item.status === 'drift-detected')
+    const m17DriftAfter = readFileSync(m17DriftFixture.qqPatch, 'utf8')
+    const m17DriftLogOk = m17DriftWarnings.some((line) => line.includes('status=' + String(m17DriftProfile?.status)) && line.includes('profile=' + String(m17DriftProfile?.profile)) && line.includes('path=' + m17DriftFixture.profileDir) && line.includes('reason=' + String(m17DriftProfile?.reason)) && !line.includes('ReferenceError') && !line.includes('status=synced'))
+    const m17DriftProfilesOk = m17DriftProfiles.length > 0 && m17DriftProfiles.every((item) => item.status === 'drift-detected' && item.reason === 'external-writer-drift' && typeof item.profile === 'string' && !String(item.reason).includes('ReferenceError'))
+    const m17DriftBytesOk = m17DriftAfter === externalDriftText && m17DriftAfter.includes('external-writer') && !m17DriftAfter.includes('dsh-extra-plan-settings')
+    check('M17 非空profiles drift-detected真实warning保留reason/status且不覆盖外部字节', m17DriftPut.status >= 400 && m17DriftPut.body?.profileSync?.status === 'drift-detected' && m17DriftProfile !== undefined && m17DriftProfilesOk && m17DriftLogOk && m17DriftRenameCount === 1 && m17DriftBytesOk)
+  } finally {
+    fs.renameSync = m17DriftRename
+    syncBuiltinESMExports()
+    console.warn = m17DriftWarn
+    if (typeof m17DriftRun.lifecycle?.cleanup === 'function') await m17DriftRun.lifecycle.cleanup()
+    await new Promise((resolve) => m17DriftRun.server.close(resolve))
+    rmSync(m17DriftFixture.root, { recursive: true, force: true })
+  }
+}
 
 restoreEnvironment(testEnvironment)
 for (const key of settingsEnvKeys) {

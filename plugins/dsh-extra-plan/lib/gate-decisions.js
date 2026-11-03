@@ -318,6 +318,9 @@ function askKindOf(labels, gateRuntime) {
 // （routeDirect/routePlan）→ route；批准特有词（approvalApprove/approvalReplan）→ approve；
 // 仅有 routeDisagree → route。
 function askKindOfRelaxed(labels, gateRuntime) {
+  if (isExactGateSet(labels, gateRuntime.routeSet)) return 'route'
+  if (isExactGateSet(labels, gateRuntime.approvalSet)) return 'approve'
+  if (isExactGateSet(labels, gateRuntime.purposeSet)) return 'purpose'
   let hasRouteSpecific = false
   let hasApproveSpecific = false
   let hasDisagree = false

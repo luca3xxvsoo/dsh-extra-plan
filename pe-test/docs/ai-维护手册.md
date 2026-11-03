@@ -46,7 +46,7 @@
 | profile | 当前职责 | 本仓库 AI 边界 |
 |:--|:--|:--|
 | web | 直接安装核心包；由 `dsh-extra-plan-settings` 唯一全局 owner 启动内部同步、承载 11 项配置与官方 adapter | 不删除核心包/预设，不写生产 profile |
-| qqbot | 标准包 `dsh-extra-plan-qqbot` 的严格 `--install`：以双锚点包根 realpath 唯一匹配目标，预检 Web 核心后校验 patch、建链及最终 realpath；兼容 bundle 以 canonical 行 `id: dsh-extra-plan-settings` / `name: dsh-extra-plan/settings` 激活，普通启动由 `index.js#apply` 兜底；自愈只处理当前明确 profile，必要的一层候选发现最多 128 个，超限只出诊断，不跨 profile 启动 | 核心包独立安装；不分发核心预设；真实消息、`/preset`、question/approval（提问/批准）、allow-build/postinstall（安装后脚本）与用户部署/重启后的效果为 HUMAN；严格失败非零，无参启动告警/exit 0 |
+| qqbot | 标准包 `dsh-extra-plan-qqbot` 的严格 `--install`：以双锚点包根 realpath 唯一匹配目标，预检 Web 核心后校验 patch、建链及最终 realpath；兼容 bundle 以 canonical 行 `id: dsh-extra-plan-settings` / `name: dsh-extra-plan/settings` 激活，宿主启动由 `index.js#apply` 兜底；CLI 无参仅显示帮助并 exit 0，不触发自愈且不能替代 apply；自愈只处理当前明确 profile，必要的一层候选发现最多 128 个，超限只出诊断，不跨 profile 启动 | 核心包独立安装；不分发核心预设；真实消息、`/preset`、question/approval（提问/批准）、allow-build/postinstall（安装后脚本）与用户部署/重启后的效果为 HUMAN；严格失败非零，无参启动告警/exit 0 |
 
 ### Web→QQBot 配置同步契约
 
@@ -86,7 +86,7 @@
 
 ## QQBot CLI 与维护所有权
 
-`dsh-extra-plan-qqbot@2.0.1` 的标准包安装只在授权命令 `dsh plugin --profile qqbot add dsh-extra-plan-qqbot --allow-build=dsh-extra-plan-qqbot` 中启用；参数是 `--allow-build`（不是 `--allow-scripts`），它只表示允许构建/生命周期脚本，不保证命中缓存时强制重跑。`postinstall` 进入 `scripts/heal.mjs --install` 严格模式：双锚点包根 realpath 必须唯一匹配，Web 核心名称/源、目标实体或异链及最终 lstat/realpath 必须通过；成功只接受 patch `idempotent`/`migrated` 或 `skipped/no-file` 与 link `linked`/`up-to-date`，否则 exit 1。普通无参启动/CLI 兜底仍告警但 exit 0，模块导入无副作用。
+`dsh-extra-plan-qqbot@2.0.1` 的标准包安装只在授权命令 `dsh plugin --profile qqbot add dsh-extra-plan-qqbot --allow-build=dsh-extra-plan-qqbot` 中启用；参数是 `--allow-build`（不是 `--allow-scripts`），它只表示允许构建/生命周期脚本，不保证命中缓存时强制重跑。`postinstall` 进入 `scripts/heal.mjs --install` 严格模式：双锚点包根 realpath 必须唯一匹配，Web 核心名称/源、目标实体或异链及最终 lstat/realpath 必须通过；成功只接受 patch `idempotent`/`migrated` 或 `skipped/no-file` 与 link `linked`/`up-to-date`，否则 exit 1。`index.js#apply` 宿主启动兜底与 CLI 帮助/--install 分离；无参 CLI 仅显示帮助并 exit 0，不作为 apply 自愈证据；模块导入无副作用。
 
 隔离验证入口仅为 `pe-test/tools/step-01-qqbot-单命令安装.mjs --dsh-root <真实 DSH 根> --case=install|compose|cache`：`install`、`compose`、`cache` 分别独立判定；缺条件为 `INCOMPLETE`，不把受控 compose 当作真实 QQBot。共用 store 的缓存复用若跳过钩子并缺链，整体只能记为 `PARTIAL/BLOCKED`；`--allow-build` 不授权追加 rebuild、清缓存或关闭安全策略。
 
@@ -104,10 +104,10 @@
    - `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-04-context-gate宿主回归.mjs`
    - `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-05-角色预设宿主回归.mjs`（角色预设机械契约：roster/assertProvider/header.agentPreset/工具面/persona 渲染/旧值回落）
    - `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-06-08-v4取证回归.mjs`
-   - `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-06-线索落盘.mjs --full`（必须加 `--full` 或把输出重定向到文件：compact 模式下脚本末尾 `process.exit` 会截断管道 stdout，退出码 0 但看不到「通过 N, 失败 0」汇总行，易被误判为未执行）
+   - `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-06-线索落盘.mjs --full`（完整 P 取证仅由批准窗口执行；需保留完整 stdout/stderr 时使用 `--full` 或分别捕获到文件；compact 模式下脚本末尾 `process.exit` 可能截断管道 stdout，退出码0不等于完整结果；输出模式不补依赖、不改变断言）
    - `node plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs --check`
-   - 扫描根内代码改动时冻结前完成代码地图生成与人工描述复核；本组纯文档改动不生成正式地图，正式阶段只运行 `node pe-test/tools/代码地图生成.mjs --check`，避免普通生成改时间戳，再执行最后一键 step。
-3. 自动测试不得执行真实 PowerShell 重定向写；测试前后 `pe-test/reports/_s4b_pwsh.txt` 必须不存在。常规回归命令退出码必须为 0，输出不得有 FAIL、SyntaxError、UnhandledPromiseRejection；runner 的 ETIMEDOUT 明确归失败而非环境未执行，普通说明含 FAIL/Error/导航失效不单独判失败，必须以退出码/结构化统计为准；context-gate 独立脚本若有 INCOMPLETE 必须非零，一键结果结构化标为部分执行而不计 PASS。SKIP/INCOMPLETE/HUMAN/NOT-RUN 单列且不计 AUTO PASS。
+   - 扫描根内代码改动时冻结前完成代码地图生成与人工描述复核；纯文档改动不生成正式地图，正式阶段只运行 `node pe-test/tools/代码地图生成.mjs --check`，避免普通生成改时间戳，再执行最后一键 step。
+3. 自动测试不得执行真实 PowerShell 重定向写；测试前后 `pe-test/reports/_s4b_pwsh.txt` 必须不存在。常规回归命令退出码必须为 0，输出不得有 FAIL、SyntaxError、UnhandledPromiseRejection；runner 的 ETIMEDOUT 明确归失败而非环境未执行，普通说明含 FAIL/Error/导航失效不单独判失败，必须以退出码/结构化统计为准；context-gate 独立脚本若有 INCOMPLETE 必须非零，一键结果结构化标为部分执行而不计 PASS。缺少 js-yaml、dsh-llm 或其它模块导致 `MODULE_NOT_FOUND` 只记 `INCOMPLETE`；真实断言失败、`TypeError`、超时仍按 `FAIL`，不因 `--full`、文件捕获或 exit 0 改写。SKIP/INCOMPLETE/HUMAN/NOT-RUN 单列且不计 AUTO PASS。
 4. 当前声明范围为 dsh `0.2.1-rc.1 || 0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4 || 0.2.1-rc.5` 五版本精确并集；rc.1/rc.3 无样本记 `NOT-RUN`，rc.5 仅有只读静态核对、同样为 `NOT-RUN`，rc.2 保留既有证据来源且证据等级不提升，rc.4 仅在显式 `DSH_INSTALL_ROOT=<本次真实代码根>` 的只读代码样本与隔离自动结果中核实。生产部署及真实 provider、GUI、QQBot 消息、重启和六项 HUMAN 由用户另行复测；静态/隔离 PASS 不替代 HUMAN。
 ## 改动域 → 唯一检查入口
 
@@ -117,7 +117,7 @@
 | save_plan/save_probe、单次失败清理、证据合同 | `step-00-全流程回归.mjs`、`step-06-线索落盘.mjs`；save_plan 按逐文件操作/M点和真实源核实合同执行，验收按新定位取证；限制以 `lib/save-contract.js` 为准；失败保留首错/阶段并由 AI 主动重试，不扫描旧 journal |
 | 预设默认、settings、profile patch 自愈 | 对应 step-01 脚本；生成器与产物 `--check` 只读验证 |
 | 模型路由、usage、会话形状 | step-00、step-04 P4、step-07 HUMAN 取证；静态结果不替代实机 |
-| 代码地图 | W 内运行 `node pe-test/tools/代码地图生成.mjs` → 人工描述复核 → `node pe-test/tools/代码地图生成.mjs --check`；本组不生成正式地图，一键测试也内置 `--check` |
+| 代码地图 | W 内运行 `node pe-test/tools/代码地图生成.mjs` → 人工描述复核 → `node pe-test/tools/代码地图生成.mjs --check`；纯文档改动不生成正式地图，一键测试也内置 `--check` |
 | 宿主升级/QQBot | [ai-宿主耦合台账](ai-宿主耦合台账.md) 的当前 checklist（核对清单）；`scripts/heal.mjs` 只作用户侧 CLI；SKIP 不销账，HUMAN 不伪造通过 |
 | 实机闸门 | [ai-实机闸门测试流程](ai-实机闸门测试流程.md)；保持单文件顺序，不拆表/改编号 |
 

@@ -37,13 +37,13 @@ main 保留 `send_message`、`interrupt_agent`、`list_agents`；四角色 defin
 | 功能域 | 负责人（owner）/ 入口 | 当前摘要与唯一详版 |
 |:--|:--|:--|
 | 四级闸门与状态 | `plugins/dsh-extra-plan/index.js` + `plugins/dsh-extra-plan/lib/gate-decisions.js` | `index.js` 负责宿主接线与公开转出；两种 ask 结果分别由 `parseAskResultData`/`parseDispatchAskResult` 解码，匹配后统一进入 `applyAskOutcome`，由 `deriveFlowState` 推导 `route→purpose→clarified→approved`。拒绝不清状态、取消清阶段状态；job_kill 仅直行放行、send_message 主会话方向限制、job_list/list_agents 同锚点防轮询。详见 [机制设计](ai-机制设计.md#一四级机械锚点与-gatewords)。 |
-| 角色标识与顺序 | `plugins/dsh-extra-plan/lib/role-contract.js`、`lib/agent-runtime.js`、`lib/runtime-lifecycle.js`、`lib/preset-sync.js` | `ROLE_IDS`/`ROLE_ORDERS` 是冻结身份与顺序合同，`PLANNER_PRESET_ID`/`PROBER_PRESET_ID` 从同一数组派生；只描述身份与装配顺序，不承载权限策略。 |
+| 角色标识与顺序 | `plugins/dsh-extra-plan/lib/role-contract.js`、`lib/agent-runtime.js`、`lib/runtime-lifecycle.js`、`lib/preset-sync.js` | `ROLE_IDS`/`ROLE_ORDERS` 是冻结身份与顺序合同，`PLANNER_PRESET_ID`/`REVIEWER_PRESET_ID`/`PROBER_PRESET_ID` 从同一数组派生；只描述身份与装配顺序，不承载权限策略。 |
 | gateWords | `assets/presets/extra-plan/agent.cordis.yml` + `lib/gate-words.js` | YAML 七键是唯一值源，apply 先整组校验，再注册七个变量；旧词不推进状态。详见 [机制设计](ai-机制设计.md#一四级机械锚点与-gatewords)。 |
 | run_code 组判定 | `lib/run-code-static.js` + 根入口 | 成员逐点判定、组拒零副作用；安全静态 literal 子集覆盖对象/数组/尾逗号，动态参数保留 argsText 走运行时瀑布；多调用需独立容错，planner 单实例受预算上限。 |
 | save_plan/save_probe | `lib/save-contract.js`、`lib/save-probe-validation.js`、`lib/save-persistence.js`、`lib/save-tool-factories.js` | 合同、校验、单次临时写入/顺序发布与有限清理、工具工厂分层；失败明确报错，由 AI 主动重试，不跨调用恢复旧事务。限制值以源码为准，详见机制设计与 step-06。 |
 | planner 预算 | `lib/planner-budget.js` | 按锚点计数，提醒/耗尽后申请继续探查；`exploreBudget` 不等于历史 evidence 数。 |
 | 模型路由 | `lib/model-routing.js` | planner 与非 planner 分离；legacy（兼容）/strict（严格）由开关分流，strict 必须完成真实 probe 或已验证父 fallback（回退）。唯一流程细节见 [流程备查](ai-流程备查.md#⑩-规划子代理)。 |
-| A/C/M 投影 | `lib/assembly-presentation.js` + 根入口 | 只改模型可见 assembly/schema/catalog，不替代 runtime deny；PTC 首轮手写 `tool:read`，L 段回宿主原文。 |
+| A/C/M 投影 | `lib/assembly-presentation.js` + 根入口 | 只改模型可见 assembly/schema/catalog，不替代 runtime deny；PTC 首轮手写 `tool:read`，L 段回宿主原文。A 验收保留合法 raw/history，只抑制新增发布重复，不以清历史达标。 |
 | P2-2 SDK 文本 | `lib/sdk-text-cache.js` | apply 内 agent-keyed WeakMap；完整 schema/language/renderer 变化失效，同 key 并发合并，失败不缓存；调用计数 1 是硬门槛。详见 [机制设计](ai-机制设计.md#五acm-投影p2-2-与配置默认链)。 |
 | 设置后端与同页全局管理 | `lib/settings.js`、`lib/settings-contract.js`、`lib/live-config.js`、`lib/preset-settings.js`、`lib/preset-sync.js`、`lib/client.js` | 11 项 volatile Config 统一由 `dsh-extra-plan-settings` 承载；`SETTING_DEFINITIONS` 消费生成的 `DEFAULT_SETTINGS`，校验规则与 UI metadata 仍由合同手工维护，`createDefaultSettings()` 每次返回新对象。live-config 只暴露 9 项热读，2 项宿主值只派生到内存 definition。`client.js` 的字段常量只在生成标记区块内更新，表单仍仅经 detail.section 渲染于 bundle 详情页行列表之后；PUT 只 edit 唯一全局行，旧公开行/旧 body 仅 raw 读取迁移；非法当前 gateWords 严格失败、零写，旧非法 skip。 |
 | P2-4 默认/definition/client 生成链 | `agent.cordis.yml` → `generate-runtime-defaults.mjs` → `preset-defaults.generated.js`、纯 definition 与 `client.js` 标记区块 | YAML 叶值按 sourceLocator 校验并生成完整默认对象；运行时只消费生成物，不解析作者 YAML。默认仓库路径发布 7 个输出（运行时常量、主 definition、4 个角色 definition、client），自定义 source/output 默认关闭 client，只有显式 client 路径才生成；坏模板保留 last-known-good。详见 [维护手册](ai-维护手册.md#p2-4-生成链)。 |
@@ -54,7 +54,7 @@ main 保留 `send_message`、`interrupt_agent`、`list_agents`；四角色 defin
 
 ## 维护与回归入口
 
-- 地图：先 grep [ai-代码地图](ai-代码地图.md) 的意图速查，再按真实函数名取机器行号；扫描根内代码改动时冻结前运行普通生成，正式检查阶段只运行 `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/代码地图生成.mjs --check`。
+- 地图：先 grep [ai-代码地图](ai-代码地图.md) 的意图速查，再按真实函数名取机器行号；扫描根内代码改动时冻结前运行普通生成，正式检查阶段只运行 `node pe-test/tools/代码地图生成.mjs --check`。
 - 自动回归：按 [ai-维护手册](ai-维护手册.md) 的固定顺序执行领域、生成器、地图及一键命令；AUTO 数量以 `pe-test/tools/一键step测试.mjs` 的数组为准，ETIMEDOUT、SKIP、INCOMPLETE、HUMAN、NOT-RUN 不由退出码0改写为 PASS。
 - 生成链与证据：先生成新导出再切换消费者；客户端标记区块禁手改，默认仓库产物为七输出，自定义 source/output 默认不写仓库 client。领域测试的正反夹具只证明隔离行为/受控宿主边界；step-07 必须显式 `--session`+`--sessions-dir`（会话在宿主数据根时加 `--host-root`，取直接 child 加 `--discover-children`）与 `PLANNER_PROMPT_SUFFIX`（空串也算显式存在），`SESSION_ID` 只作报告/输出字段，静态/Mock 结果不能冒充生产实机。AI 在仓库验收通过前不触碰生产环境。
 

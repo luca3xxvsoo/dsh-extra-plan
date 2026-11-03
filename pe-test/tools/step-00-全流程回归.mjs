@@ -60,7 +60,7 @@ const usageStats = await import('./step-99-用量统计.mjs')
 import * as usageLedgerModule from '../../plugins/dsh-extra-plan/lib/usage-ledger.js'
 import * as usageArchiveModule from '../../plugins/dsh-extra-plan/lib/usage-archive.js'
 import { DEFAULT_EXPLORE_BUDGET as GENERATED_DEFAULT_EXPLORE_BUDGET, DEFAULT_PLANNER_PROMPT_SUFFIX as GENERATED_DEFAULT_PLANNER_PROMPT_SUFFIX } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
-import { existsSync, readFileSync, readdirSync, rmSync, mkdirSync, writeFileSync, renameSync, unlinkSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, rmSync, mkdirSync, writeFileSync, renameSync, unlinkSync, statSync } from 'node:fs'
 import { makeFixtureDir } from '../_shared/workspace-paths.mjs'
 import { createPathContext } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
 import { dirname, join } from 'node:path'
@@ -1067,8 +1067,26 @@ checkTrue('AR-gate 断链 child 同步fold但不抬升floor', arGateRuntime.isCh
 arGateRuntime.childBaseline(arGateMain, [])
 checkTrue('AR-gate main 同步fold且不抬升floor', arGateFold.at(-1).role === 'main' && arGateFloor.length === 1)
 
-// ── M6 系列：step-99 导入、临时双文件统计/归档、严格拒绝与事务回滚 ───────
-checkTrue('M6 step-99 导入仅暴露函数且不触发CLI副作用（归档入口已迁至 usage-archive.js）', typeof usageStats.main === 'function' && typeof usageStats.statLedger === 'function' && typeof usageArchiveModule.archiveLedger === 'function' && process.exitCode === undefined)
+// ── M6 系列：step-99 导入、临时双文件统计/真实归档拒绝与事务回滚 ───────
+checkTrue('M6 step-99 导入仅暴露函数且不触发CLI副作用（归档入口已迁至 usage-archive.js）', typeof usageStats.main === 'function' && typeof usageStats.statLedger === 'function' && typeof usageArchiveModule.archiveLedger === 'function' && !Object.hasOwn(usageStats, 'V2_KEYS') && !Object.hasOwn(usageStats, 'archiveLedger') && process.exitCode === undefined)
+const EXPECTED_V2_KEYS = Object.freeze([
+  'schemaVersion',
+  'ts',
+  'sessionId',
+  'parentSessionId',
+  'rootSessionId',
+  'agentPreset',
+  'delegationDepth',
+  'role',
+  'model',
+  'provider',
+  'inputTokens',
+  'cacheReadTokens',
+  'cacheWriteTokens',
+  'outputTokens',
+  'seq',
+])
+const EXPECTED_V2_KEYS_SORTED = Object.freeze([...EXPECTED_V2_KEYS].sort())
 const archiveRow = (patch = {}) => ({
   schemaVersion: 2,
   ts: '2026-10-22T00:00:00.000Z',
@@ -1090,6 +1108,87 @@ const archiveRow = (patch = {}) => ({
 const archiveBytesOf = (path) => existsSync(path) ? readFileSync(path, 'utf8') : ''
 const archiveResiduals = (directory) => readdirSync(directory).filter((name) => name.includes('.tmp-') || name.includes('.bak-') || name.includes('.lock'))
 const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => JSON.stringify(row)).join('\n') + (rows.length > 0 ? '\n' : ''), 'utf8')
+const decodeArchiveProduct = (text) => {
+  const objects = String(text === undefined || text === null ? '' : text).split(/\r?\n/).filter((line) => line.trim() !== '').map((line) => JSON.parse(line))
+  const rows = objects.filter((row) => !usageArchiveModule.isSchemaDocRow(row))
+  const noticeLines = objects.filter((row) => usageArchiveModule.isSchemaDocRow(row)).length
+  return { objects, rows, noticeLines }
+}
+
+const decodedCompleteDoc = decodeArchiveProduct(usageArchiveModule.SCHEMA_DOC_LINE + '\n')
+checkTrue('M6-G2-1 解码完整SCHEMA_DOC_ROW单行只计说明行', decodedCompleteDoc.objects.length === 1 && decodedCompleteDoc.rows.length === 0 && decodedCompleteDoc.noticeLines === 1)
+const decodedKindOnly = decodeArchiveProduct(JSON.stringify({ kind: usageArchiveModule.SCHEMA_DOC_KIND }) + '\n')
+checkTrue('M6-G2-1 解码仅kind对象保留数据行', decodedKindOnly.objects.length === 1 && decodedKindOnly.rows.length === 1 && decodedKindOnly.noticeLines === 0)
+const decodedIncompleteDoc = decodeArchiveProduct(JSON.stringify({ kind: usageArchiveModule.SCHEMA_DOC_KIND, 说明: usageArchiveModule.SCHEMA_DOC_ROW.说明 }) + '\n')
+checkTrue('M6-G2-1 解码kind加说明但缺键对象保留数据行', decodedIncompleteDoc.objects.length === 1 && decodedIncompleteDoc.rows.length === 1 && decodedIncompleteDoc.noticeLines === 0)
+const decodeArchiveProbeRow = archiveRow({ sessionId: 'm6-decode-probe', provider: 'm6-decode-provider', seq: 42 })
+const decodedDocWithData = decodeArchiveProduct(usageArchiveModule.SCHEMA_DOC_LINE + '\n' + JSON.stringify(decodeArchiveProbeRow) + '\n')
+const decodedDataRow = decodedDocWithData.rows[0]
+checkTrue('M6-G2-1 解码完整说明加archiveRow数据逐值保留', decodedDocWithData.objects.length === 2 && decodedDocWithData.rows.length === 1 && decodedDocWithData.noticeLines === 1 && Object.keys(decodedDataRow || {}).length === Object.keys(decodeArchiveProbeRow).length && Object.entries(decodeArchiveProbeRow).every(([key, value]) => decodedDataRow[key] === value))
+const archiveFileSnapshot = (files) => Object.fromEntries(Object.entries(files).map(([name, path]) => {
+  const bytes = archiveBytesOf(path)
+  return [name, { bytes, hash: sha256Text(bytes) }]
+}))
+const sameArchiveFileSnapshot = (before, after) => Object.keys(before).every((name) => before[name].bytes === after[name].bytes && before[name].hash === after[name].hash)
+const archiveReject = (text, label = 'dsh-archive-reject') => {
+  const fixture = makeFixtureDir({ label })
+  try {
+    const pathContext = createPathContext({ workspaceRoot: fixture.root, hostDataRoot: fixture.home })
+    const active = join(fixture.home, 'usage-ledger', 'ledger-v2.jsonl')
+    const archive = usageArchiveModule.archivePathOf(active)
+    const cursor = active + '.cursor.json'
+    const directory = dirname(active)
+    mkdirSync(directory, { recursive: true })
+    archiveWriteRows(archive, [archiveRow({ sessionId: 'reject-archive', provider: 'reject-archive-provider', seq: 8 })])
+    writeFileSync(cursor, '{}\n', 'utf8')
+    writeFileSync(active, text, 'utf8')
+    const files = { active, archive, cursor }
+    const lockPath = usageLedgerModule.usageLedgerLockPath(active)
+    const residualsBefore = archiveResiduals(directory)
+    const lockBefore = existsSync(lockPath)
+    const before = archiveFileSnapshot(files)
+    let failure
+    try { usageArchiveModule.archiveLedger(active, { pathContext }) } catch (error) { failure = error }
+    const after = archiveFileSnapshot(files)
+    const residualsAfter = archiveResiduals(directory)
+    const lockAfter = existsSync(lockPath)
+    return {
+      code: failure === undefined ? '' : failure.code,
+      before,
+      after,
+      unchanged: sameArchiveFileSnapshot(before, after),
+      residualsBefore,
+      residualsAfter,
+      lockBefore,
+      lockAfter,
+      residuals: residualsAfter,
+      lock: lockAfter,
+    }
+  } finally {
+    fixture.cleanup()
+  }
+}
+const assertArchiveRejected = (testLabel, text, code, fixtureLabel) => {
+  const rejection = archiveReject(text, fixtureLabel)
+  checkTrue(testLabel + ' 原错误code', rejection.code === code)
+  for (const name of ['active', 'archive', 'cursor']) {
+    checkTrue(testLabel + ' ' + name + ' bytes不变', rejection.before[name].bytes === rejection.after[name].bytes)
+    checkTrue(testLabel + ' ' + name + ' hash不变', rejection.before[name].hash === rejection.after[name].hash)
+  }
+  checkTrue(testLabel + ' 发布前无tmp/bak/stale残留', rejection.residualsBefore.length === 0)
+  checkTrue(testLabel + ' 发布后无tmp/bak/stale残留', rejection.residualsAfter.length === 0)
+  checkTrue(testLabel + ' 发布前无lock', rejection.lockBefore === false)
+  checkTrue(testLabel + ' 发布后锁已释放', rejection.lockAfter === false)
+  return rejection
+}
+let strictParserCheckCalls = 0
+let strictParserCode = ''
+try {
+  usageStats.parseLedgerText(JSON.stringify(archiveRow()) + '\n', { strict: true, check: () => { strictParserCheckCalls += 1 } })
+} catch (error) {
+  strictParserCode = error.code
+}
+checkTrue('M6 step-99 旧strict模式拒绝：有效V2输入前置返回strict-parser-removed且check计数为0', strictParserCode === 'strict-parser-removed' && strictParserCheckCalls === 0)
 
 // M6-G2-1：实际 createUsageLedger 生成 main 空 preset 与深层断链空 root，逐行严格归档。
 {
@@ -1102,37 +1201,30 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
     const mainResult = ledger.foldUsage(makeAgent(usageEvent(1, 'g2-main-model', 'g2-main-provider')), { sessionId: 'g2-generated-main', parentSessionId: '', rootSessionId: 'g2-generated-main', agentPreset: '', delegationDepth: 0, role: 'main' })
     const deepResult = ledger.foldUsage(makeAgent(usageEvent(1, 'g2-deep-model', 'g2-deep-provider')), { sessionId: 'g2-generated-deep', parentSessionId: 'g2-chain-8', rootSessionId: '', agentPreset: 'extra-plan-executor', delegationDepth: 9, role: 'child' })
     const rows = archiveBytesOf(active).trim().split('\n').filter((line) => line !== '').map((line) => JSON.parse(line))
-    const fixedKeys = usageStats.V2_KEYS.slice().sort()
-    const strictRowsOk = rows.length === 2 && rows.every((row) => JSON.stringify(Object.keys(row).sort()) === JSON.stringify(fixedKeys) && usageStats.parseLedgerText(JSON.stringify(row) + '\n', { strict: true }).rows.length === 1 && !Object.hasOwn(row, 'calls'))
-    checkTrue('M6-G2-1 createUsageLedger真实main空agentPreset/深层空root：两行固定15键且strict parse成功', mainResult.status === 'written' && deepResult.status === 'written' && strictRowsOk && rows.some((row) => row.sessionId === 'g2-generated-main' && row.agentPreset === '' && row.rootSessionId === 'g2-generated-main') && rows.some((row) => row.sessionId === 'g2-generated-deep' && row.rootSessionId === '' && row.parentSessionId === 'g2-chain-8'))
+    const generatedRowsOk = EXPECTED_V2_KEYS.length === 15 && rows.length === 2 && rows.every((row) => JSON.stringify(Object.keys(row).sort()) === JSON.stringify(EXPECTED_V2_KEYS_SORTED) && !Object.hasOwn(row, 'calls'))
+    checkTrue('M6-G2-1 createUsageLedger真实main空agentPreset/深层空root：两行固定15键且无calls', mainResult.status === 'written' && deepResult.status === 'written' && generatedRowsOk && rows.some((row) => row.sessionId === 'g2-generated-main' && row.agentPreset === '' && row.rootSessionId === 'g2-generated-main') && rows.some((row) => row.sessionId === 'g2-generated-deep' && row.rootSessionId === '' && row.parentSessionId === 'g2-chain-8'))
     const archiveResult = usageArchiveModule.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT })
     const archived = archiveBytesOf(usageArchiveModule.archivePathOf(active))
-    checkTrue('M6-G2-1 真实生成main/断链行strict归档成功且active清空', archiveResult.rows === 2 && archiveResult.groups === 2 && archiveBytesOf(active) === '' && usageStats.parseLedgerText(archived, { strict: true }).rows.length === 2 && !existsSync(usageLedgerModule.usageLedgerLockPath(active)) && archiveResiduals(dir).length === 0)
+    const archivedProduct = decodeArchiveProduct(archived)
+    checkTrue('M6-G2-1 真实生成main/断链行归档成功且active清空', archiveResult.rows === 2 && archiveResult.groups === 2 && archiveBytesOf(active) === '' && archivedProduct.rows.length === 2 && !existsSync(usageLedgerModule.usageLedgerLockPath(active)) && archiveResiduals(dir).length === 0)
 
-    // 归档首行说明行：三字段判定、统计跳过、严格解析计数、错位拒绝与历史无说明版自动升级。
+    // 归档首行说明行：三字段判定、统计跳过、产物解码计数、错位拒绝与历史无说明版自动升级。
     const archivedLines = archived.trim().split('\n')
     const archivedDoc = JSON.parse(archivedLines[0])
-    checkTrue('M6-G2-1 归档首行说明行kind为账本说明且键含15键名', archivedDoc.kind === usageArchiveModule.SCHEMA_DOC_KIND && archivedDoc.kind === '账本说明' && usageStats.V2_KEYS.length === 15 && usageStats.V2_KEYS.every((key) => String(archivedDoc['键']).split(',').includes(key)))
+    checkTrue('M6-G2-1 归档首行说明行kind为账本说明且键含15键名', archivedDoc.kind === usageArchiveModule.SCHEMA_DOC_KIND && archivedDoc.kind === '账本说明' && EXPECTED_V2_KEYS.length === 15 && EXPECTED_V2_KEYS.every((key) => String(archivedDoc['键']).split(',').includes(key)))
     const archivedSummary = usageStats.summarizeSnapshotTexts([{ text: archived, path: 'archive' }])
     checkTrue('M6-G2-1 统计口径说明行计数为1且不计入V1/非V2与坏JSON', archivedSummary.noticeLines === 1 && archivedSummary.rows.length === 2 && archivedSummary.skippedNonV2Objects === 0 && archivedSummary.badJsonLines === 0 && usageStats.renderStats(archivedSummary).includes('账本说明行（首行说明，已跳过，未计入V1/非V2）: 1'))
-    const archivedStrict = usageStats.parseLedgerText(archived, { strict: true })
-    checkTrue('M6-G2-1 归档严格解析跳过说明行：rows为2且noticeLines为1', archivedStrict.rows.length === 2 && archivedStrict.noticeLines === 1)
-    const misplacedDocCode = (text) => {
-      try { usageStats.parseLedgerText(text, { strict: true }) } catch (error) { return error.code }
-      return ''
-    }
-    checkTrue('M6-G2-1 说明行错位（非首行/重复）抛schema-doc-misplaced', misplacedDocCode(JSON.stringify(archiveRow({ seq: 3 })) + '\n' + usageArchiveModule.SCHEMA_DOC_LINE + '\n') === 'schema-doc-misplaced' && misplacedDocCode(usageArchiveModule.SCHEMA_DOC_LINE + '\n' + usageArchiveModule.SCHEMA_DOC_LINE + '\n') === 'schema-doc-misplaced')
-    archiveWriteRows(usageArchiveModule.archivePathOf(active), archivedStrict.rows)
+    checkTrue('M6-G2-1 归档JSON解码跳过说明行：rows为2且noticeLines为1', archivedProduct.rows.length === 2 && archivedProduct.noticeLines === 1)
+    assertArchiveRejected('M6-G2-1 说明行非首行真实archiveLedger拒绝', JSON.stringify(archiveRow({ seq: 3 })) + '\n' + usageArchiveModule.SCHEMA_DOC_LINE + '\n', 'schema-doc-misplaced', 'dsh-m6-schema-doc-misplaced')
+    assertArchiveRejected('M6-G2-1 说明行重复真实archiveLedger拒绝', usageArchiveModule.SCHEMA_DOC_LINE + '\n' + usageArchiveModule.SCHEMA_DOC_LINE + '\n', 'schema-doc-misplaced', 'dsh-m6-schema-doc-duplicate')
+    archiveWriteRows(usageArchiveModule.archivePathOf(active), archivedProduct.rows)
     const upgradeResult = usageArchiveModule.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT })
     const upgradedArchive = archiveBytesOf(usageArchiveModule.archivePathOf(active))
-    const upgradedStrict = usageStats.parseLedgerText(upgradedArchive, { strict: true })
-    checkTrue('M6-G2-1 无说明行历史归档自动升级：再次归档后首行恢复说明行且数据行不变', upgradeResult.rows === 2 && upgradeResult.groups === 2 && upgradedArchive.trim().split('\n')[0] === usageArchiveModule.SCHEMA_DOC_LINE && upgradedStrict.rows.length === 2 && upgradedStrict.noticeLines === 1 && archiveResiduals(dir).length === 0)
+    const upgradedProduct = decodeArchiveProduct(upgradedArchive)
+    checkTrue('M6-G2-1 无说明行历史归档自动升级：再次归档后首行恢复说明行且数据行不变', upgradeResult.rows === 2 && upgradeResult.groups === 2 && upgradedArchive.trim().split('\n')[0] === usageArchiveModule.SCHEMA_DOC_LINE && upgradedProduct.rows.length === 2 && upgradedProduct.noticeLines === 1 && archiveResiduals(dir).length === 0)
     checkTrue('M6-G2-1 SCHEMA_DOC_LINE与归档首行逐字相等', archivedLines[0] === usageArchiveModule.SCHEMA_DOC_LINE && upgradedArchive.trim().split('\n')[0] === usageArchiveModule.SCHEMA_DOC_LINE)
-    const strictFailureCode = (row) => {
-      try { usageStats.parseLedgerText(JSON.stringify(row) + '\n', { strict: true }) } catch (error) { return error.code }
-      return ''
-    }
-    checkTrue('M6-G2-1 sessionId/role空值仍被strict拒绝', strictFailureCode({ ...rows[0], sessionId: '' }) === 'invalid-v2' && strictFailureCode({ ...rows[0], role: '' }) === 'invalid-v2')
+    assertArchiveRejected('M6-G2-1 sessionId空值真实archiveLedger拒绝', JSON.stringify({ ...rows[0], sessionId: '' }) + '\n', 'invalid-v2', 'dsh-m6-session-empty')
+    assertArchiveRejected('M6-G2-1 role空值真实archiveLedger拒绝', JSON.stringify({ ...rows[0], role: '' }) + '\n', 'invalid-v2', 'dsh-m6-role-empty')
 
     // M6 说明行并存：active 自身只带说明行（无数据行）时归档，说明行被跳过、归档内既有数据行不被清空。
     // 口径说明：archiveLedger 的 rows 是「归档去重行 + active 接收行」总数（与 G2-2 用例 rows===4 同口径），
@@ -1144,8 +1236,8 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
       archiveWriteRows(docArchive, [archiveRow({ sessionId: 'm6-doc-archive-a', provider: 'm6-doc-archive-provider-a', seq: 1 }), archiveRow({ sessionId: 'm6-doc-archive-b', provider: 'm6-doc-archive-provider-b', seq: 2 })])
       writeFileSync(docActive, usageArchiveModule.SCHEMA_DOC_LINE + '\n', 'utf8')
       const docResult = usageArchiveModule.archiveLedger(docActive, { pathContext: STEP00_PATH_CONTEXT })
-      const docParsed = usageStats.parseLedgerText(archiveBytesOf(docArchive), { strict: true })
-      checkTrue('M6 说明行并存 active仅说明行归档：说明行被跳过且不清空归档、active清空、归档严格解析rows2/noticeLines1', docResult.rows === 2 && docResult.groups === 2 && docResult.coveredByArchiveRows === 0 && archiveBytesOf(docActive) === '' && docParsed.rows.length === 2 && docParsed.noticeLines === 1 && archiveResiduals(docDir).length === 0)
+      const docParsed = decodeArchiveProduct(archiveBytesOf(docArchive))
+      checkTrue('M6 说明行并存 active仅说明行归档：说明行被跳过且不清空归档、active清空、归档JSON解码rows2/noticeLines1', docResult.rows === 2 && docResult.groups === 2 && docResult.coveredByArchiveRows === 0 && archiveBytesOf(docActive) === '' && docParsed.rows.length === 2 && docParsed.noticeLines === 1 && archiveResiduals(docDir).length === 0)
     } finally {
       rmSync(docDir, { recursive: true, force: true })
     }
@@ -1193,7 +1285,7 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
     checkTrue('M6-G2-2 stat水位覆盖seq10/20不增Token、provider完整身份且默认stat三文件零写', stats.rows.length === 4 && stats.groups.length === 2 && stats.coveredByArchiveRows === 2 && statsA !== undefined && sameIdentity(statsA, expectedA) && statsA.inputTokens === 30 && statsA.cacheReadTokens === 300 && statsA.cacheWriteTokens === 3000 && statsA.outputTokens === 30000 && statsA.maxSeq === 20 && statsA.latestTs === '2026-10-22T00:00:20.000Z' && statsB !== undefined && sameIdentity(statsB, expectedB) && statsB.inputTokens === 7 && statsB.cacheReadTokens === 8 && statsB.cacheWriteTokens === 9 && statsB.outputTokens === 10 && statsB.maxSeq === 11 && statsB.latestTs === '2026-10-22T00:00:11.000Z' && stats.groups.every((group) => !Object.hasOwn(group, 'calls')) && !usageStats.renderStats(stats).includes('calls') && archiveBytesOf(active) === statBefore.active && archiveBytesOf(archive) === statBefore.archive && archiveBytesOf(cursor) === statBefore.cursor && sha256Text(archiveBytesOf(cursor)) === cursorHash)
     const archiveResult = usageArchiveModule.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT })
     const archiveAfterReplay = archiveBytesOf(archive)
-    const replayRows = usageStats.parseLedgerText(archiveAfterReplay, { strict: true }).rows
+    const replayRows = decodeArchiveProduct(archiveAfterReplay).rows
     const replayA = replayRows.find((row) => sameIdentity(row, expectedA))
     const replayB = replayRows.find((row) => sameIdentity(row, expectedB))
     checkTrue('M6-G2-2 archive水位重放不加Token、provider完整身份独立发布/无calls', archiveResult.rows === 4 && archiveResult.groups === 2 && archiveResult.coveredByArchiveRows === 2 && replayRows.length === 2 && replayA !== undefined && sameIdentity(replayA, expectedA) && replayA.inputTokens === 30 && replayA.cacheReadTokens === 300 && replayA.cacheWriteTokens === 3000 && replayA.outputTokens === 30000 && replayA.seq === 20 && replayB !== undefined && sameIdentity(replayB, expectedB) && replayB.inputTokens === 7 && replayB.cacheReadTokens === 8 && replayB.cacheWriteTokens === 9 && replayB.outputTokens === 10 && replayB.seq === 11 && replayRows.every((row) => !Object.hasOwn(row, 'calls')) && archiveBytesOf(active) === '' && archiveBytesOf(cursor) === cursorBefore && sha256Text(archiveBytesOf(cursor)) === cursorHash)
@@ -1203,12 +1295,12 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
     checkTrue('M6-G2-2 archive水位后seq21只增一次且maxSeq/latestTs正确', stats21.coveredByArchiveRows === 0 && statsA21 !== undefined && statsA21.inputTokens === 51 && statsA21.cacheReadTokens === 510 && statsA21.cacheWriteTokens === 5100 && statsA21.outputTokens === 51000 && statsA21.maxSeq === 21 && statsA21.latestTs === '2026-10-22T00:00:21.000Z')
     const archiveResult21 = usageArchiveModule.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT })
     const archiveAfter21 = archiveBytesOf(archive)
-    const finalRows = usageStats.parseLedgerText(archiveAfter21, { strict: true }).rows
+    const finalRows = decodeArchiveProduct(archiveAfter21).rows
     const finalA = finalRows.find((row) => sameIdentity(row, expectedA))
     const finalB = finalRows.find((row) => sameIdentity(row, expectedB))
     checkTrue('M6-G2-2 seq21 archive只提交一次且A/B完整身份、四桶/maxSeq/latestTs正确', archiveResult21.rows === 3 && archiveResult21.groups === 2 && archiveResult21.coveredByArchiveRows === 0 && finalRows.length === 2 && finalA !== undefined && sameIdentity(finalA, expectedA) && finalA.inputTokens === 51 && finalA.cacheReadTokens === 510 && finalA.cacheWriteTokens === 5100 && finalA.outputTokens === 51000 && finalA.seq === 21 && finalA.ts === '2026-10-22T00:00:21.000Z' && finalB !== undefined && sameIdentity(finalB, expectedB) && finalB.inputTokens === 7 && finalB.cacheReadTokens === 8 && finalB.cacheWriteTokens === 9 && finalB.outputTokens === 10 && finalB.seq === 11 && archiveBytesOf(active) === '' && archiveBytesOf(cursor) === cursorBefore && sha256Text(archiveBytesOf(cursor)) === cursorHash)
     usageArchiveModule.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT })
-    checkTrue('M6-G2-2 二次archive字节稳定且无calls/lock/temp残留', archiveBytesOf(archive) === archiveAfter21 && archiveBytesOf(active) === '' && archiveBytesOf(cursor) === cursorBefore && sha256Text(archiveBytesOf(cursor)) === cursorHash && usageStats.parseLedgerText(archiveBytesOf(archive), { strict: true }).rows.every((row) => !Object.hasOwn(row, 'calls')) && !existsSync(usageLedgerModule.usageLedgerLockPath(active)) && archiveResiduals(dir).length === 0)
+    checkTrue('M6-G2-2 二次archive字节稳定且无calls/lock/temp残留', archiveBytesOf(archive) === archiveAfter21 && archiveBytesOf(active) === '' && archiveBytesOf(cursor) === cursorBefore && sha256Text(archiveBytesOf(cursor)) === cursorHash && finalRows.every((row) => !Object.hasOwn(row, 'calls')) && !existsSync(usageLedgerModule.usageLedgerLockPath(active)) && archiveResiduals(dir).length === 0)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -1263,29 +1355,25 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
     const archiveResult = usageArchiveModule.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT })
     const archiveAfter = archiveBytesOf(archive)
     const cursorAfter = archiveBytesOf(cursor)
+    const archiveProduct = decodeArchiveProduct(archiveAfter)
     checkTrue('M6 成功archive清空active、cursor不变、聚合行含provider且无calls/残留',
       archiveResult.rows === 3 && archiveBytesOf(active) === '' && cursorAfter === cursorBefore
-      && usageStats.parseLedgerText(archiveAfter, { strict: true }).rows.length === 2
-      && usageStats.parseLedgerText(archiveAfter, { strict: true }).rows.every((row) => !Object.hasOwn(row, 'calls'))
+      && archiveProduct.rows.length === 2
+      && archiveProduct.rows.every((row) => !Object.hasOwn(row, 'calls'))
       && !existsSync(usageLedgerModule.usageLedgerLockPath(active)) && archiveResiduals(dir).length === 0)
     usageArchiveModule.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT })
     checkTrue('M6 二次archive字节稳定且active仍空/cursor仍不变', archiveBytesOf(archive) === archiveAfter && archiveBytesOf(active) === '' && archiveBytesOf(cursor) === cursorBefore && archiveResiduals(dir).length === 0)
 
     const invalidCases = [
-      ['V1严格拒绝', JSON.stringify({ schemaVersion: 1, sessionId: 'v1' }) + '\n', 'non-v2'],
-      ['坏JSON严格拒绝', '{"schemaVersion":2\n', 'bad-json'],
-      ['额外键严格拒绝', JSON.stringify({ ...archiveRow(), calls: [] }) + '\n', 'invalid-v2'],
+      ['V1拒绝', JSON.stringify({ schemaVersion: 1, sessionId: 'v1' }) + '\n', 'non-v2'],
+      ['坏JSON拒绝', '{"schemaVersion":2\n', 'bad-json'],
+      ['额外键拒绝', JSON.stringify({ ...archiveRow(), calls: [] }) + '\n', 'invalid-v2'],
     ]
-    for (const [label, text, code] of invalidCases) {
-      archiveWriteRows(archive, [archiveRow({ seq: 8, ts: '2026-10-22T00:00:08.000Z' })])
-      writeFileSync(active, text, 'utf8')
-      const before = { active: archiveBytesOf(active), archive: archiveBytesOf(archive), cursor: archiveBytesOf(cursor) }
-      let failure
-      try { usageArchiveModule.archiveLedger(active, { pathContext: STEP00_PATH_CONTEXT }) } catch (error) { failure = error }
-      checkTrue('M6 ' + label + '发布前零改写/无lock-temp-backup', failure !== undefined && failure.code === code && archiveBytesOf(active) === before.active && archiveBytesOf(archive) === before.archive && archiveBytesOf(cursor) === before.cursor && !existsSync(usageLedgerModule.usageLedgerLockPath(active)) && archiveResiduals(dir).length === 0)
+    for (const [index, [label, text, code]] of invalidCases.entries()) {
+      assertArchiveRejected('M6 ' + label + '真实archiveLedger拒绝', text, code, 'dsh-m6-' + index + '-invalid-v2')
     }
 
-    // M6-B1：多行 parseLedgerText 解析中途预算超时；onCheck 阶段探针锚定 parse-active——只有解析 active 阶段才判超时，证明不是调用前立即失败。
+    // M6-B1：多行归档模块严格解析中途预算超时；onCheck 阶段探针锚定 parse-active——只有解析 active 阶段才判超时，证明不是调用前立即失败。
     // 预算阈值刻意放宽（60000ms），超时唯一来源是 onCheck 阶段探针，不依赖真实时钟与机器速度。
     {
       const budgetDir = makeWTemp('dsh-g3-budget-parse')
@@ -1360,7 +1448,8 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
         archiveWriteRows(probeActive, probeActiveRows)
         writeFileSync(probeCursor, '{"m6-serialize":{"seq":12,"index":8}}', 'utf8')
         const probeResult = usageArchiveModule.archiveLedger(probeActive, { pathContext: STEP00_PATH_CONTEXT, budgetMs: 60000, onCheck: () => false })
-        checkTrue('M6 探针反证 onCheck恒false且budgetMs60000：归档archived且active清空，预算不自然超时', probeResult.status === 'archived' && probeResult.rows === 8 && probeResult.groups === 8 && archiveBytesOf(probeActive) === '' && usageStats.parseLedgerText(archiveBytesOf(probeArchive), { strict: true }).rows.length === 8 && archiveResiduals(probeDir).length === 0)
+        const probeProduct = decodeArchiveProduct(archiveBytesOf(probeArchive))
+        checkTrue('M6 探针反证 onCheck恒false且budgetMs60000：归档archived且active清空，预算不自然超时', probeResult.status === 'archived' && probeResult.rows === 8 && probeResult.groups === 8 && archiveBytesOf(probeActive) === '' && probeProduct.rows.length === 8 && archiveResiduals(probeDir).length === 0)
       } finally { rmSync(probeDir, { recursive: true, force: true }) }
     }
 
@@ -1506,7 +1595,7 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
     rmSync(dir, { recursive: true, force: true })
   }
 }
-// M6-T2：启动归档主路径（usage-archive.js 与 step-99 合并语义对拍）
+// M6-T2：启动归档主路径（usage-archive.js 默认路径与直调 archiveLedger 合并语义对拍）
 {
   const dir = makeWTemp('dsh-startup-archive')
   try {
@@ -1518,7 +1607,7 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
     archiveWriteRows(archive, [archiveRow({ sessionId: 'm6-startup-archive', provider: 'startup-provider', inputTokens: 10, cacheReadTokens: 20, cacheWriteTokens: 30, outputTokens: 40, seq: 3 })])
     archiveWriteRows(active, [archiveRow({ sessionId: 'm6-startup-active', provider: 'startup-provider', inputTokens: 1, cacheReadTokens: 2, cacheWriteTokens: 3, outputTokens: 4, seq: 5 })])
     const result = usageArchiveModule.startupArchive(context, { budgetMs: 5000 })
-    const archivedRows = usageStats.parseLedgerText(archiveBytesOf(archive), { strict: true }).rows
+    const archivedRows = decodeArchiveProduct(archiveBytesOf(archive)).rows
     checkTrue('M6-T2 启动归档合并H账本并清空active：archived、两组、无lock/tmp/bak残留、无诊断文件', result.status === 'archived' && archivedRows.length === 2 && archiveBytesOf(active) === '' && !existsSync(usageLedgerModule.usageLedgerLockPath(active)) && archiveResiduals(join(home, 'usage-ledger')).length === 0 && !existsSync(join(home, 'usage-ledger', 'archive-failed.log')))
     const archiveAfterFirst = archiveBytesOf(archive)
     const again = usageArchiveModule.startupArchive(context, { budgetMs: 5000 })
@@ -1528,21 +1617,44 @@ const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => J
     const failed = usageArchiveModule.startupArchive(context, { budgetMs: 5000 })
     checkTrue('M6-T2 坏JSON失败留痕：failed、archive字节不变、诊断文件存在且一行', failed.status === 'failed' && archiveBytesOf(archive) === beforeFail && existsSync(join(home, 'usage-ledger', 'archive-failed.log')) && archiveBytesOf(join(home, 'usage-ledger', 'archive-failed.log')).trim().split('\n').filter((line) => line !== '').length === 1)
     // 对拍：同一身份跨 archive/active 两批次必须并成一条（九字段身份聚合 + 四桶累加 + seq 取 max + ts 取最大 seq）。
-    // 对拍口径：step-99 的手工归档入口已删除，本节只做启动归档（startupArchive）的合并语义回归，不再引用任何手工 archiveLedger 入口。
+    // 对拍口径：startupArchive 与 archiveLedger 各在独立 W/假 H 夹具执行，直接比较相同输入的合并语义。
     const parityHome = join(dir, 'home-parity')
     const parityContext = createPathContext({ workspaceRoot: dir, hostDataRoot: parityHome })
     const parityActive = join(parityHome, 'usage-ledger', 'ledger-v2.jsonl')
     const parityArchive = join(parityHome, 'usage-ledger', 'ledger-v2.archive.jsonl')
+    const parityCursor = parityActive + '.cursor.json'
+    const parityCursorBefore = '{"m6-parity":{"seq":77,"index":9}}\n'
     const parityIdentity = { schemaVersion: 2, rootSessionId: 'm6-parity-root', sessionId: 'm6-parity-session', parentSessionId: 'm6-parity-parent', agentPreset: 'extra-plan-executor', delegationDepth: 1, role: 'executor', model: 'm6-parity-model', provider: 'm6-parity-provider' }
     const parityIdentityB = { ...parityIdentity, sessionId: 'm6-parity-session-b', provider: 'm6-parity-provider-b' }
+    const parityArchiveRows = [archiveRow({ ...parityIdentity, ts: '2026-10-22T00:00:03.000Z', inputTokens: 10, cacheReadTokens: 20, cacheWriteTokens: 30, outputTokens: 40, seq: 3 })]
+    const parityActiveRows = [archiveRow({ ...parityIdentity, ts: '2026-10-22T00:00:05.000Z', inputTokens: 1, cacheReadTokens: 2, cacheWriteTokens: 3, outputTokens: 4, seq: 5 }), archiveRow({ ...parityIdentityB, ts: '2026-10-22T00:00:06.000Z', inputTokens: 5, cacheReadTokens: 6, cacheWriteTokens: 7, outputTokens: 8, seq: 6 })]
     mkdirSync(dirname(parityActive), { recursive: true })
-    archiveWriteRows(parityArchive, [archiveRow({ ...parityIdentity, ts: '2026-10-22T00:00:03.000Z', inputTokens: 10, cacheReadTokens: 20, cacheWriteTokens: 30, outputTokens: 40, seq: 3 })])
-    archiveWriteRows(parityActive, [archiveRow({ ...parityIdentity, ts: '2026-10-22T00:00:05.000Z', inputTokens: 1, cacheReadTokens: 2, cacheWriteTokens: 3, outputTokens: 4, seq: 5 }), archiveRow({ ...parityIdentityB, ts: '2026-10-22T00:00:06.000Z', inputTokens: 5, cacheReadTokens: 6, cacheWriteTokens: 7, outputTokens: 8, seq: 6 })])
+    archiveWriteRows(parityArchive, parityArchiveRows)
+    archiveWriteRows(parityActive, parityActiveRows)
+    writeFileSync(parityCursor, parityCursorBefore, 'utf8')
     const parityResult = usageArchiveModule.startupArchive(parityContext, { budgetMs: 5000 })
-    const parityRows = usageStats.parseLedgerText(archiveBytesOf(parityArchive), { strict: true }).rows
+    const parityProduct = decodeArchiveProduct(archiveBytesOf(parityArchive))
+    const parityRows = parityProduct.rows
     const mergedParityRows = parityRows.filter((row) => row.sessionId === 'm6-parity-session')
     const parityIdentityKeys = ['schemaVersion', 'rootSessionId', 'sessionId', 'parentSessionId', 'agentPreset', 'delegationDepth', 'role', 'model', 'provider']
-    checkTrue('M6-T2 对拍step-99合并语义：同身份跨批次并一条、四桶累加、seq取max、身份字段不变', parityResult.status === 'archived' && parityRows.length === 2 && mergedParityRows.length === 1 && parityIdentityKeys.every((key) => mergedParityRows[0][key] === parityIdentity[key]) && mergedParityRows[0].inputTokens === 11 && mergedParityRows[0].cacheReadTokens === 22 && mergedParityRows[0].cacheWriteTokens === 33 && mergedParityRows[0].outputTokens === 44 && mergedParityRows[0].seq === 5 && mergedParityRows[0].ts === '2026-10-22T00:00:05.000Z' && parityRows.some((row) => row.sessionId === 'm6-parity-session-b') && archiveBytesOf(parityActive) === '' && archiveResiduals(join(parityHome, 'usage-ledger')).length === 0 && !existsSync(join(parityHome, 'usage-ledger', 'archive-failed.log')))
+    const directFixture = makeFixtureDir({ label: 'dsh-m6-direct-archive-parity' })
+    try {
+      const directContext = createPathContext({ workspaceRoot: directFixture.root, hostDataRoot: directFixture.home })
+      const directActive = join(directFixture.home, 'usage-ledger', 'ledger-v2.jsonl')
+      const directArchive = usageArchiveModule.archivePathOf(directActive)
+      const directCursor = directActive + '.cursor.json'
+      const directCursorBefore = parityCursorBefore
+      mkdirSync(dirname(directActive), { recursive: true })
+      archiveWriteRows(directArchive, parityArchiveRows)
+      archiveWriteRows(directActive, parityActiveRows)
+      writeFileSync(directCursor, directCursorBefore, 'utf8')
+      const directResult = usageArchiveModule.archiveLedger(directActive, { pathContext: directContext, budgetMs: 5000 })
+      const directProduct = decodeArchiveProduct(archiveBytesOf(directArchive))
+      checkTrue('M6-T2 startupArchive与直调archiveLedger独立W/假H同输入逐字节且status/groups/covered一致', directResult.status === parityResult.status && directResult.groups === parityResult.groups && directResult.covered === parityResult.covered && directResult.coveredByArchiveRows === parityResult.coveredByArchiveRows && archiveBytesOf(directArchive) === archiveBytesOf(parityArchive) && directProduct.rows.length === parityProduct.rows.length && archiveBytesOf(directActive) === '' && archiveBytesOf(directCursor) === directCursorBefore && archiveBytesOf(parityCursor) === parityCursorBefore && !existsSync(usageLedgerModule.usageLedgerLockPath(directActive)) && !existsSync(usageLedgerModule.usageLedgerLockPath(parityActive)) && archiveResiduals(dirname(directActive)).length === 0 && archiveResiduals(dirname(parityActive)).length === 0)
+    } finally {
+      directFixture.cleanup()
+    }
+    checkTrue('M6-T2 对拍启动/直调合并语义：同身份跨批次并一条、四桶累加、seq取max、身份字段不变', parityResult.status === 'archived' && parityRows.length === 2 && mergedParityRows.length === 1 && parityIdentityKeys.every((key) => mergedParityRows[0][key] === parityIdentity[key]) && mergedParityRows[0].inputTokens === 11 && mergedParityRows[0].cacheReadTokens === 22 && mergedParityRows[0].cacheWriteTokens === 33 && mergedParityRows[0].outputTokens === 44 && mergedParityRows[0].seq === 5 && mergedParityRows[0].ts === '2026-10-22T00:00:05.000Z' && parityRows.some((row) => row.sessionId === 'm6-parity-session-b') && archiveBytesOf(parityActive) === '' && archiveBytesOf(parityCursor) === parityCursorBefore && archiveResiduals(join(parityHome, 'usage-ledger')).length === 0 && !existsSync(join(parityHome, 'usage-ledger', 'archive-failed.log')))
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -3486,6 +3598,262 @@ check('GWC10 定制词 deriveFlowState 全链 → plan/redo/clarified/approved',
 check('GWC11 定制 runtime 下提交旧出厂词 → 全部未确认', deriveFlowState([um(), call('ask_user_question', 'go1', routeArgs), ok('go1', answer([assetGateWords.routeDirect])), call('ask_user_question', 'go2', purposeArgs), ok('go2', answer([assetGateWords.purposeRefine])), call('ask_user_question', 'go3', approvalArgs), ok('go3', answer([assetGateWords.approvalApprove]))], customRuntime), { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false })
 check('GWC12 定制 runtime 下旧词 + 推荐后缀仍不推进', deriveFlowState([um(), call('ask_user_question', 'go4', routeArgs), ok('go4', answer([assetGateWords.routeDirect + '（推荐）']))], customRuntime).route, 'none')
 check('GWC13 默认 runtime 下定制词不误推进（双向隔离）', deriveFlowState([um(), call('ask_user_question', 'gm1', customRouteArgs), ok('gm1', answer([CUSTOM_WORDS.routeDirect]))], gateRuntime).route, 'none')
+
+// ── M8：直接消费者补证（真实换行/嵌参写/定制词包含/W-H公共统计） ─────────
+{
+  const m8StaticEols = [['LF', '\n'], ['CRLF', '\r\n']]
+  for (const [label, eol] of m8StaticEols) {
+    const m8Code = [
+      'const literal = "tools.write({})"',
+      '// tools.edit({})',
+      '/* tools.write({}) */',
+      'await tools.read({ file_path: "x" })',
+    ].join(eol)
+    const m8Masked = maskCodeLiteralsAndComments(m8Code)
+    const m8Sites = runCodeScanner.collectRunCodeSites(m8Code, m8Masked)
+    checkTrue('M8 ' + label + ' 真实换行/注释遮蔽保真且只留真实read站点', m8Masked.length === m8Code.length && m8Masked.includes(eol) && m8Sites.map((site) => site.name).join('|') === 'read')
+  }
+  const m8StaticKeyEols = [['LF', String.fromCharCode(10)], ['CRLF', String.fromCharCode(13, 10)]]
+  const m8StaticKeyNames = ['read', 'mcp__chrome-devtools-mcp__list_pages']
+  const m8StaticKeyQuotes = [["single", "'"], ["double", '"']]
+  const m8StaticKeyPositions = ['before', 'after']
+  for (const [eolLabel, eol] of m8StaticKeyEols) {
+    for (const [quoteLabel, quote] of m8StaticKeyQuotes) {
+      for (const position of m8StaticKeyPositions) {
+        for (const toolName of m8StaticKeyNames) {
+          const key = quote + toolName + quote
+          const m8KeyCode = position === 'before'
+            ? 'tools[// key-before' + eol + key + ']({})'
+            : 'tools[' + key + '// key-after' + eol + ']({})'
+          const m8KeyMasked = maskCodeLiteralsAndComments(m8KeyCode)
+          const m8KeySites = runCodeScanner.collectRunCodeSites(m8KeyCode, m8KeyMasked)
+          const m8KeyDynamic = runCodeScanner.hasDynamicRunCodeAccess(m8KeyCode, m8KeyMasked, m8KeySites)
+          const m8KeyDecomposed = decomposeRunCode(m8KeyCode)
+          const m8KeySite = m8KeySites[0]
+          const m8KeyMember = m8KeyDecomposed.members[0]
+          checkTrue('M8 M13 ' + eolLabel + '/' + position + '/' + quoteLabel + '/' + toolName + '真实静态键边界与同源拆解', m8KeyMasked.length === m8KeyCode.length && m8KeyMasked.includes(eol) && m8KeySites.length === 1 && m8KeySite !== undefined && m8KeySite.name === toolName && m8KeySite.calleeEnd === m8KeyCode.indexOf('(') && m8KeySite.end === m8KeyCode.lastIndexOf(')') && m8KeyDynamic === false && m8KeyDecomposed.dynamic === false && m8KeyMember !== undefined && m8KeyMember.name === toolName)
+        }
+      }
+    }
+  }
+  const m8MixedCommentsCode = [
+    'tools[/* before block */"read"/* after block */] /* between callee and paren */({}) /* after right paren */',
+    "tools[/* before block */'mcp__chrome-devtools-mcp__list_pages']({}) /* after right paren */",
+  ].join(String.fromCharCode(13, 10))
+  const m8MixedCommentsMasked = maskCodeLiteralsAndComments(m8MixedCommentsCode)
+  const m8MixedCommentsSites = runCodeScanner.collectRunCodeSites(m8MixedCommentsCode, m8MixedCommentsMasked)
+  const m8MixedCommentsDynamic = runCodeScanner.hasDynamicRunCodeAccess(m8MixedCommentsCode, m8MixedCommentsMasked, m8MixedCommentsSites)
+  const m8MixedCommentsDecomposed = decomposeRunCode(m8MixedCommentsCode)
+  checkTrue('M8 M13 混合块注释/右括号后注释仍保留两个真实静态站点与区间', m8MixedCommentsMasked.length === m8MixedCommentsCode.length && m8MixedCommentsMasked.includes(String.fromCharCode(13, 10)) && m8MixedCommentsSites.map((site) => site.name).join('|') === 'read|mcp__chrome-devtools-mcp__list_pages' && m8MixedCommentsSites.every((site) => site.calleeEnd === m8MixedCommentsCode.indexOf('(', site.start) && site.end === m8MixedCommentsCode.indexOf(')', site.calleeEnd)) && m8MixedCommentsDynamic === false && m8MixedCommentsDecomposed.dynamic === false && m8MixedCommentsDecomposed.members.map((member) => member.name).join('|') === 'read|mcp__chrome-devtools-mcp__list_pages')
+  const m8ConservativeCases = [
+    ['反斜杠+n文字', "tools[// literal" + String.fromCharCode(92) + "n'read']({})", true],
+    ['EOF未换行', "tools[// eof 'read']({})", true],
+    ['拼接键', "tools['re' + 'ad']({})", true],
+    ['转义键', "tools['rea" + String.fromCharCode(92) + "d']({})", true],
+    ['动态键', "const key = 'read'; tools[key]({})", true],
+    ['非宿主obj.tools', "obj.tools.read({})", false],
+  ]
+  for (const [label, code, expectedDynamic] of m8ConservativeCases) {
+    const masked = maskCodeLiteralsAndComments(code)
+    const sites = runCodeScanner.collectRunCodeSites(code, masked)
+    const dynamic = runCodeScanner.hasDynamicRunCodeAccess(code, masked, sites)
+    const decomposed = decomposeRunCode(code)
+    checkTrue('M8 M13 保守反例 ' + label + ' 不伪造静态成员', sites.every((site) => site.name === undefined) && dynamic === expectedDynamic && decomposed.dynamic === expectedDynamic && decomposed.members.length === 0)
+  }
+  const m8NestedCode = "await tools.read({ file_path: 'x', offset: tools.write({ file_path: 'y', content: 'z' }) })"
+  const m8Nested = decomposeRunCode(m8NestedCode)
+  const m8NestedReason = runCodeGroupDenyReason(noneStateFx, { name: 'run_code', arguments: { code: m8NestedCode } }, { kind: 'main' }, { gateRuntime })
+  checkTrue('M8 嵌参写由同一静态入口保留内外站点且生产预审拒绝写成员', m8Nested.members.map((member) => member.name).join('|') === 'read|write' && typeof m8NestedReason === 'string' && m8NestedReason.includes('- write'))
+  const m8PreExecute = askHarness['tools/pre-execute'][0]
+  let m8NestedNextCalls = 0
+  let m8NestedMemberCalls = 0
+  const m8NestedNextSpy = () => {
+    m8NestedNextCalls += 1
+    m8NestedMemberCalls += m8Nested.members.length
+    return { kind: 'allow' }
+  }
+  const m8NestedDeniedDirect = m8PreExecute({ agent: askMainAgent, name: 'run_code', arguments: { code: m8NestedCode } }, m8NestedNextSpy)
+  checkTrue('M8 嵌参写真实预审拒绝且next/member执行计数为0', m8NestedDeniedDirect !== null && m8NestedDeniedDirect.kind === 'deny' && m8NestedNextCalls === 0 && m8NestedMemberCalls === 0)
+  const m8BareCode = "await writeFileSync('x', '1')"
+  const m8Bare = decomposeRunCode(m8BareCode)
+  const m8BareReason = runCodeGroupDenyReason(noneStateFx, { name: 'run_code', arguments: { code: m8BareCode } }, { kind: 'main' }, { gateRuntime })
+  let m8NextCalls = 0
+  let m8BareMemberCalls = 0
+  const m8NextSpy = () => {
+    m8NextCalls += 1
+    m8BareMemberCalls += m8Bare.members.length
+    return { kind: 'allow' }
+  }
+  const m8DeniedDirect = m8PreExecute({ agent: askMainAgent, name: 'run_code', arguments: { code: m8BareCode } }, m8NextSpy)
+  checkTrue('M8 裸写实际预审拒绝且next/member执行计数为0', m8Bare.members.length === 1 && m8Bare.members[0].kind === 'bare-write' && typeof m8BareReason === 'string' && m8BareReason.includes('- write') && m8DeniedDirect !== null && m8DeniedDirect.kind === 'deny' && m8NextCalls === 0 && m8BareMemberCalls === 0)
+  const m8ContainingWords = { routeDirect: '甲', routePlan: '甲规划', routeDisagree: '丙', approvalApprove: '丁批准', approvalReplan: '戊转规划', purposeRefine: '己完整', purposeRedo: '庚重做' }
+  const m8ContainingRuntime = createGateRuntime(m8ContainingWords)
+  check('M8 定制词存在包含关系仍按精确 route match', [matchRouteLabel([m8ContainingWords.routeDirect], m8ContainingRuntime), matchRouteLabel([m8ContainingWords.routePlan], m8ContainingRuntime)], ['direct', 'plan'])
+  check('M8 定制词存在包含关系时标准三词仍只认当前词表', categorizeGateAsk([m8ContainingWords.routeDirect, m8ContainingWords.routePlan, m8ContainingWords.routeDisagree], m8ContainingRuntime), 'standard')
+  const { resolveWorkspacePath, resolveHostPath } = await import('../../plugins/dsh-extra-plan/lib/path-policy.js')
+  const m8WorkspaceRoot = makeWTemp('dsh-m8-workspace-root')
+  const m8HostRoot = makeWTemp('dsh-m8-host-root')
+  const m8Relative = join('ledger-input', 'ledger-v2.jsonl')
+  const m8Active = join(m8WorkspaceRoot, m8Relative)
+  mkdirSync(dirname(m8Active), { recursive: true })
+  writeFileSync(m8Active, JSON.stringify(archiveRow({ sessionId: 'm8-public-w', role: 'main', agentPreset: '', delegationDepth: 0, rootSessionId: 'm8-public-w' })) + '\n', 'utf8')
+  const m8NoHostContext = createPathContext({ workspaceRoot: m8WorkspaceRoot })
+  const m8WithHostContext = createPathContext({ workspaceRoot: m8WorkspaceRoot, hostDataRoot: m8HostRoot })
+  const m8NoHostStats = usageStats.statLedger(m8Relative, { pathContext: m8NoHostContext })
+  const m8WithHostStats = usageStats.statLedger(m8Relative, { pathContext: m8WithHostContext })
+  checkTrue('M8 M14 relative 无Host根/有独立Host根均精确返回W物理目标且不进入H观察', m8NoHostStats.activePath === m8Active && m8NoHostStats.archivePath === usageArchiveModule.archivePathOf(m8Active) && m8WithHostStats.activePath === m8Active && m8WithHostStats.archivePath === usageArchiveModule.archivePathOf(m8Active) && m8NoHostStats.groups.length === 1 && m8WithHostStats.groups.length === 1 && m8NoHostStats.observation === undefined && m8WithHostStats.observation === undefined)
+  const m8WTarget = resolveWorkspacePath(m8WithHostContext, m8Active, { purpose: 'ledger-read' })
+  const m8WAbsolute = join(m8WorkspaceRoot, 'absolute-input', 'ledger-v2.jsonl')
+  mkdirSync(dirname(m8WAbsolute), { recursive: true })
+  writeFileSync(m8WAbsolute, JSON.stringify(archiveRow({ sessionId: 'm8-public-w-absolute', role: 'main', agentPreset: '', delegationDepth: 0, rootSessionId: 'm8-public-w-absolute' })) + '\n', 'utf8')
+  const m8WAbsoluteTarget = resolveWorkspacePath(m8WithHostContext, m8WAbsolute, { purpose: 'ledger-read' })
+  const m8WAbsoluteStats = usageStats.statLedger(m8WAbsolute, { pathContext: m8WithHostContext, target: m8WAbsoluteTarget })
+  checkTrue('M8 M14 纯W absolute经公开resolver进入W且物理路径精确', m8WAbsoluteStats.activePath === m8WAbsolute && m8WAbsoluteStats.archivePath === usageArchiveModule.archivePathOf(m8WAbsolute) && m8WAbsoluteStats.groups.length === 1 && m8WAbsoluteStats.observation === undefined && m8WAbsoluteTarget.kind === 'workspace')
+  const m8HostActive = join(m8HostRoot, 'ledger-v2.jsonl')
+  const m8HostArchive = usageArchiveModule.archivePathOf(m8HostActive)
+  writeFileSync(m8HostActive, JSON.stringify(archiveRow({ sessionId: 'm8-public-h', role: 'main', agentPreset: '', delegationDepth: 0, rootSessionId: 'm8-public-h' })) + '\n', 'utf8')
+  writeFileSync(m8HostArchive, '', 'utf8')
+  const m8HostTarget = resolveHostPath(m8WithHostContext, m8HostActive, { purpose: 'ledger-read' })
+  const m8HostMaintenance = { workspaceRoot: m8WorkspaceRoot, pathContext: m8WithHostContext, hostAccess: 'read-only', ledger: { mode: 'stats', target: m8HostTarget } }
+  const m8OtherRoot = makeWTemp('dsh-m8-other-root')
+  const m8Other = join(m8OtherRoot, 'ledger-v2.jsonl')
+  const m8HostIo = { writes: [], reads: [], stats: [] }
+  const m8OverlapRoot = join(m8WorkspaceRoot, 'overlap-host-root')
+  mkdirSync(m8OverlapRoot, { recursive: true })
+  const m8TrackedRoots = [m8HostRoot, m8OverlapRoot, m8OtherRoot]
+  const m8IsTrackedPath = (value) => {
+    const text = String(value)
+    return m8TrackedRoots.some((root) => text === root || text.startsWith(root + String.fromCharCode(92)) || text.startsWith(root + '/'))
+  }
+  const m8IoCounts = () => ({ read: m8HostIo.reads.length, stat: m8HostIo.stats.length, write: m8HostIo.writes.length })
+  const m8IoDelta = (before) => ({ read: m8HostIo.reads.length - before.read, stat: m8HostIo.stats.length - before.stat, write: m8HostIo.writes.length - before.write })
+  const m8HostFsOps = {
+    readFileSync: (...args) => { if (m8IsTrackedPath(args[0])) m8HostIo.reads.push(String(args[0])); return readFileSync(...args) },
+    statSync: (...args) => { if (m8IsTrackedPath(args[0])) m8HostIo.stats.push(String(args[0])); return statSync(...args) },
+    mkdirSync: (...args) => { if (m8IsTrackedPath(args[0])) m8HostIo.writes.push('mkdir:' + String(args[0])); return mkdirSync(...args) },
+    writeFileSync: (...args) => { if (m8IsTrackedPath(args[0])) m8HostIo.writes.push('write:' + String(args[0])); return writeFileSync(...args) },
+    rmSync: (...args) => { if (m8IsTrackedPath(args[0])) m8HostIo.writes.push('remove:' + String(args[0])); return rmSync(...args) },
+    renameSync: (...args) => { if (m8IsTrackedPath(args[0]) || m8IsTrackedPath(args[1])) m8HostIo.writes.push('rename:' + String(args[0]) + '->' + String(args[1])); return renameSync(...args) },
+    unlinkSync: (...args) => { if (m8IsTrackedPath(args[0])) m8HostIo.writes.push('unlink:' + String(args[0])); return unlinkSync(...args) },
+  }
+  const m8HostBefore = readFileSync(m8HostActive, 'utf8')
+  const m8HostBeforeArchive = readFileSync(m8HostArchive, 'utf8')
+  const m8HostBeforeStat = statSync(m8HostActive)
+  const m8HostBeforeArchiveStat = statSync(m8HostArchive)
+  const m8HostBeforeEntries = readdirSync(m8HostRoot).sort().join('\n')
+  const m8HostStats = usageStats.statLedger(m8HostActive, { pathContext: m8WithHostContext, target: m8HostTarget, maintenanceContext: m8HostMaintenance, fsOps: m8HostFsOps })
+  const m8HostAfterEntries = readdirSync(m8HostRoot).sort().join('\n')
+  checkTrue('M8 M14 授权H absolute只读：输出/观察物理路径精确、最多两次稳定观察且H零写', m8HostStats.groups.length === 1 && m8HostStats.activePath === m8HostActive && m8HostStats.archivePath === m8HostArchive && m8HostStats.observation !== undefined && m8HostStats.observation.scope === 'host' && m8HostStats.observation.level === 'stable-read-only' && m8HostStats.observation.attempts <= 2 && m8HostStats.observation.activePath === m8HostActive && m8HostStats.observation.archivePath === m8HostArchive && typeof m8HostStats.observation.lockPath === 'string' && m8HostStats.observation.snapshotDir.startsWith(m8WorkspaceRoot) && !m8IsTrackedPath(m8HostStats.observation.snapshotDir) && m8HostIo.reads.length > 0 && m8HostIo.writes.length === 0 && readFileSync(m8HostActive, 'utf8') === m8HostBefore && readFileSync(m8HostArchive, 'utf8') === m8HostBeforeArchive && statSync(m8HostActive).mtimeMs === m8HostBeforeStat.mtimeMs && statSync(m8HostArchive).mtimeMs === m8HostBeforeArchiveStat.mtimeMs && m8HostAfterEntries === m8HostBeforeEntries && !existsSync(usageLedgerModule.usageLedgerLockPath(m8HostActive)))
+  const m8OverlapContext = createPathContext({ workspaceRoot: m8WorkspaceRoot, hostDataRoot: m8OverlapRoot })
+  const m8OverlapRelative = join('overlap-host-root', 'ledger-v2.jsonl')
+  const m8OverlapActive = join(m8OverlapRoot, 'ledger-v2.jsonl')
+  const m8OverlapArchive = usageArchiveModule.archivePathOf(m8OverlapActive)
+  writeFileSync(m8OverlapActive, JSON.stringify(archiveRow({ sessionId: 'm8-public-overlap', role: 'main', agentPreset: '', delegationDepth: 0, rootSessionId: 'm8-public-overlap' })) + '\n', 'utf8')
+  writeFileSync(m8OverlapArchive, '', 'utf8')
+  const m8OverlapDefaultBefore = readFileSync(m8OverlapActive, 'utf8')
+  const m8OverlapDefaultBeforeArchive = readFileSync(m8OverlapArchive, 'utf8')
+  const m8OverlapDefaultBeforeStat = statSync(m8OverlapActive)
+  const m8OverlapDefaultBeforeArchiveStat = statSync(m8OverlapArchive)
+  const m8OverlapDefaultBeforeEntries = readdirSync(m8OverlapRoot).sort().join('\n')
+  const m8OverlapDefaultIoBefore = m8IoCounts()
+  const m8OverlapDefaultStats = usageStats.statLedger(m8OverlapRelative, { pathContext: m8OverlapContext, fsOps: m8HostFsOps })
+  const m8OverlapDefaultIo = m8IoDelta(m8OverlapDefaultIoBefore)
+  const m8OverlapDefaultReads = m8HostIo.reads.slice(m8OverlapDefaultIoBefore.read)
+  const m8OverlapDefaultAfterEntries = readdirSync(m8OverlapRoot).sort().join('\n')
+  checkTrue('M8 M14 W/H重叠relative默认W：fsOps仅触及W active/archive，Host根零stat/write且字节/mtime/目录/lock不变', m8OverlapDefaultStats.activePath === m8OverlapActive && m8OverlapDefaultStats.archivePath === m8OverlapArchive && m8OverlapDefaultStats.groups.length === 1 && m8OverlapDefaultStats.observation === undefined && m8OverlapDefaultIo.read > 0 && m8OverlapDefaultIo.stat === 0 && m8OverlapDefaultIo.write === 0 && m8OverlapDefaultReads.every((path) => path === m8OverlapActive || path === m8OverlapArchive) && readFileSync(m8OverlapActive, 'utf8') === m8OverlapDefaultBefore && readFileSync(m8OverlapArchive, 'utf8') === m8OverlapDefaultBeforeArchive && statSync(m8OverlapActive).mtimeMs === m8OverlapDefaultBeforeStat.mtimeMs && statSync(m8OverlapArchive).mtimeMs === m8OverlapDefaultBeforeArchiveStat.mtimeMs && m8OverlapDefaultAfterEntries === m8OverlapDefaultBeforeEntries && !existsSync(usageLedgerModule.usageLedgerLockPath(m8OverlapActive)))
+  const m8OverlapHostTarget = resolveHostPath(m8OverlapContext, m8OverlapActive, { purpose: 'ledger-read' })
+  const m8OverlapHostMaintenance = { workspaceRoot: m8WorkspaceRoot, pathContext: m8OverlapContext, hostAccess: 'read-only', ledger: { mode: 'stats', target: m8OverlapHostTarget } }
+  const m8OverlapBefore = readFileSync(m8OverlapActive, 'utf8')
+  const m8OverlapBeforeArchive = readFileSync(m8OverlapArchive, 'utf8')
+  const m8OverlapBeforeStat = statSync(m8OverlapActive)
+  const m8OverlapBeforeArchiveStat = statSync(m8OverlapArchive)
+  const m8OverlapBeforeEntries = readdirSync(m8OverlapRoot).sort().join('\n')
+  const m8OverlapHostStats = usageStats.statLedger(m8OverlapActive, { pathContext: m8OverlapContext, target: m8OverlapHostTarget, maintenanceContext: m8OverlapHostMaintenance, fsOps: m8HostFsOps })
+  const m8OverlapAfterEntries = readdirSync(m8OverlapRoot).sort().join('\n')
+  checkTrue('M8 M14 W/H重叠：relative默认W而明确Host只读target优先H', m8OverlapDefaultStats.activePath === m8OverlapActive && m8OverlapDefaultStats.archivePath === m8OverlapArchive && m8OverlapDefaultStats.groups.length === 1 && m8OverlapDefaultStats.observation === undefined && m8OverlapHostTarget.kind === 'host' && m8OverlapHostStats.activePath === m8OverlapActive && m8OverlapHostStats.archivePath === m8OverlapArchive && m8OverlapHostStats.observation !== undefined && m8OverlapHostStats.observation.scope === 'host' && m8OverlapHostStats.observation.attempts <= 2 && m8HostIo.writes.length === 0 && readFileSync(m8OverlapActive, 'utf8') === m8OverlapBefore && readFileSync(m8OverlapArchive, 'utf8') === m8OverlapBeforeArchive && statSync(m8OverlapActive).mtimeMs === m8OverlapBeforeStat.mtimeMs && statSync(m8OverlapArchive).mtimeMs === m8OverlapBeforeArchiveStat.mtimeMs && m8OverlapAfterEntries === m8OverlapBeforeEntries && !existsSync(usageLedgerModule.usageLedgerLockPath(m8OverlapActive)))
+  const m8UnauthorizedHostBefore = readFileSync(m8HostActive, 'utf8')
+  const m8UnauthorizedHostBeforeStat = statSync(m8HostActive)
+  const m8UnauthorizedHostBeforeEntries = readdirSync(m8HostRoot).sort().join('\n')
+  const m8UnauthorizedHostIoBefore = m8IoCounts()
+  let m8UnauthorizedHostError = null
+  try { usageStats.statLedger(m8HostActive, { pathContext: m8NoHostContext, fsOps: m8HostFsOps }) } catch (error) { m8UnauthorizedHostError = error }
+  const m8UnauthorizedHostIo = m8IoDelta(m8UnauthorizedHostIoBefore)
+  checkTrue('M8 M14 未授权H absolute拒绝且目标/目录/lock/mtime零read/stat/write', m8UnauthorizedHostError !== null && typeof m8UnauthorizedHostError.code === 'string' && m8UnauthorizedHostIo.read === 0 && m8UnauthorizedHostIo.stat === 0 && m8UnauthorizedHostIo.write === 0 && readFileSync(m8HostActive, 'utf8') === m8UnauthorizedHostBefore && statSync(m8HostActive).mtimeMs === m8UnauthorizedHostBeforeStat.mtimeMs && readdirSync(m8HostRoot).sort().join('\n') === m8UnauthorizedHostBeforeEntries && !existsSync(usageLedgerModule.usageLedgerLockPath(m8HostActive)))
+  const m8OtherBeforeEntries = readdirSync(m8OtherRoot).sort().join('\n')
+  const m8OtherIoBefore = m8IoCounts()
+  let m8OtherError = null
+  try { usageStats.statLedger(m8Other, { pathContext: m8WithHostContext, fsOps: m8HostFsOps }) } catch (error) { m8OtherError = error }
+  const m8OtherIo = m8IoDelta(m8OtherIoBefore)
+  checkTrue('M8 M14 Other绝对目标拒绝且目录/目标/lock零read/stat/write', m8OtherError !== null && typeof m8OtherError.code === 'string' && m8OtherIo.read === 0 && m8OtherIo.stat === 0 && m8OtherIo.write === 0 && !existsSync(m8Other) && readdirSync(m8OtherRoot).sort().join('\n') === m8OtherBeforeEntries && !existsSync(usageLedgerModule.usageLedgerLockPath(m8Other)))
+  const m8CaptureMain = (argv, options) => {
+    const lines = []
+    const oldLog = console.log
+    const oldError = console.error
+    let exit
+    try {
+      console.log = (...args) => lines.push(args.map(String).join(' '))
+      console.error = (...args) => lines.push(args.map(String).join(' '))
+      exit = usageStats.main(argv, options)
+    } finally {
+      console.log = oldLog
+      console.error = oldError
+    }
+    return { exit, lines }
+  }
+  const m8WMaintenance = { workspaceRoot: m8WorkspaceRoot, pathContext: m8WithHostContext, hostAccess: 'read-only', ledger: { mode: 'stats', target: m8WTarget } }
+  const m8WMain = m8CaptureMain([m8Active], { maintenanceContext: m8WMaintenance, pathContext: m8WithHostContext, target: m8WTarget, fsOps: m8HostFsOps })
+  checkTrue('M8 M14 公共main W入口使用明确maintenanceContext并返回精确W路径', m8WMain.exit === 0 && m8WMain.lines.some((line) => line.includes(m8Active) && line.includes(m8WTarget.path)))
+  const m8UnauthorizedHostMaintenance = { workspaceRoot: m8WorkspaceRoot, pathContext: m8NoHostContext, hostAccess: 'none', ledger: { mode: 'stats' } }
+  const m8UnauthorizedHostMainIoBefore = m8IoCounts()
+  const m8UnauthorizedHostMain = m8CaptureMain([m8HostActive], { maintenanceContext: m8UnauthorizedHostMaintenance, pathContext: m8NoHostContext, fsOps: m8HostFsOps })
+  const m8UnauthorizedHostMainIo = m8IoDelta(m8UnauthorizedHostMainIoBefore)
+  checkTrue('M8 M14 公共main 未授权H absolute拒绝且目标/目录/lock/mtime零read/stat/write', m8UnauthorizedHostMain.exit === 1 && m8UnauthorizedHostMain.lines.some((line) => line.includes('失败')) && m8UnauthorizedHostMainIo.read === 0 && m8UnauthorizedHostMainIo.stat === 0 && m8UnauthorizedHostMainIo.write === 0 && readFileSync(m8HostActive, 'utf8') === m8UnauthorizedHostBefore && statSync(m8HostActive).mtimeMs === m8UnauthorizedHostBeforeStat.mtimeMs && readdirSync(m8HostRoot).sort().join('\n') === m8UnauthorizedHostBeforeEntries && !existsSync(usageLedgerModule.usageLedgerLockPath(m8HostActive)))
+  const m8OverlapWTarget = resolveWorkspacePath(m8OverlapContext, m8OverlapActive, { purpose: 'ledger-read' })
+  const m8OverlapWMaintenance = { workspaceRoot: m8WorkspaceRoot, pathContext: m8OverlapContext, hostAccess: 'read-only', ledger: { mode: 'stats', target: m8OverlapWTarget } }
+  const m8OverlapMainWBefore = readFileSync(m8OverlapActive, 'utf8')
+  const m8OverlapMainWBeforeArchive = readFileSync(m8OverlapArchive, 'utf8')
+  const m8OverlapMainWBeforeStat = statSync(m8OverlapActive)
+  const m8OverlapMainWBeforeArchiveStat = statSync(m8OverlapArchive)
+  const m8OverlapMainWBeforeEntries = readdirSync(m8OverlapRoot).sort().join('\n')
+  const m8OverlapMainWIoBefore = m8IoCounts()
+  const m8OverlapMainW = m8CaptureMain([m8OverlapRelative], { maintenanceContext: m8OverlapWMaintenance, pathContext: m8OverlapContext, target: m8OverlapWTarget, fsOps: m8HostFsOps })
+  const m8OverlapMainWIo = m8IoDelta(m8OverlapMainWIoBefore)
+  const m8OverlapMainWReads = m8HostIo.reads.slice(m8OverlapMainWIoBefore.read)
+  checkTrue('M8 M14 公共main W/H重叠relative默认W且Host根零stat/write', m8OverlapMainW.exit === 0 && m8OverlapMainW.lines.some((line) => line.includes(m8OverlapActive) && line.includes(m8OverlapArchive)) && m8OverlapMainWIo.read > 0 && m8OverlapMainWIo.stat === 0 && m8OverlapMainWIo.write === 0 && m8OverlapMainWReads.every((path) => path === m8OverlapActive || path === m8OverlapArchive) && readFileSync(m8OverlapActive, 'utf8') === m8OverlapMainWBefore && readFileSync(m8OverlapArchive, 'utf8') === m8OverlapMainWBeforeArchive && statSync(m8OverlapActive).mtimeMs === m8OverlapMainWBeforeStat.mtimeMs && statSync(m8OverlapArchive).mtimeMs === m8OverlapMainWBeforeArchiveStat.mtimeMs && readdirSync(m8OverlapRoot).sort().join('\n') === m8OverlapMainWBeforeEntries && !existsSync(usageLedgerModule.usageLedgerLockPath(m8OverlapActive)))
+  const m8OverlapMainHBefore = readFileSync(m8OverlapActive, 'utf8')
+  const m8OverlapMainHBeforeArchive = readFileSync(m8OverlapArchive, 'utf8')
+  const m8OverlapMainHBeforeStat = statSync(m8OverlapActive)
+  const m8OverlapMainHBeforeArchiveStat = statSync(m8OverlapArchive)
+  const m8OverlapMainHBeforeEntries = readdirSync(m8OverlapRoot).sort().join('\n')
+  const m8OverlapMainHIoBefore = m8IoCounts()
+  const m8OverlapMainH = m8CaptureMain([m8OverlapActive], { maintenanceContext: m8OverlapHostMaintenance, pathContext: m8OverlapContext, target: m8OverlapHostTarget, fsOps: m8HostFsOps })
+  const m8OverlapMainHIo = m8IoDelta(m8OverlapMainHIoBefore)
+  checkTrue('M8 M14 公共main W/H重叠明确Host target优先H且只读无写', m8OverlapMainH.exit === 0 && m8OverlapMainH.lines.some((line) => line.includes(m8OverlapActive) && line.includes(m8OverlapArchive)) && m8OverlapMainHIo.read > 0 && m8OverlapMainHIo.stat > 0 && m8OverlapMainHIo.write === 0 && readFileSync(m8OverlapActive, 'utf8') === m8OverlapMainHBefore && readFileSync(m8OverlapArchive, 'utf8') === m8OverlapMainHBeforeArchive && statSync(m8OverlapActive).mtimeMs === m8OverlapMainHBeforeStat.mtimeMs && statSync(m8OverlapArchive).mtimeMs === m8OverlapMainHBeforeArchiveStat.mtimeMs && readdirSync(m8OverlapRoot).sort().join('\n') === m8OverlapMainHBeforeEntries && !existsSync(usageLedgerModule.usageLedgerLockPath(m8OverlapActive)))
+  const m8HostMain = m8CaptureMain([m8HostActive], { maintenanceContext: m8HostMaintenance, pathContext: m8WithHostContext, target: m8HostTarget, fsOps: m8HostFsOps })
+  const m8HostAfterMainEntries = readdirSync(m8HostRoot).sort().join('\n')
+  checkTrue('M8 M14 公共main H入口只读返回、物理路径准确且H零写', m8HostMain.exit === 0 && m8HostMain.lines.some((line) => line.includes(m8HostActive) && line.includes(m8HostArchive)) && m8HostIo.writes.length === 0 && readFileSync(m8HostActive, 'utf8') === m8HostBefore && readFileSync(m8HostArchive, 'utf8') === m8HostBeforeArchive && statSync(m8HostActive).mtimeMs === m8HostBeforeStat.mtimeMs && statSync(m8HostArchive).mtimeMs === m8HostBeforeArchiveStat.mtimeMs && m8HostAfterMainEntries === m8HostBeforeEntries && !existsSync(usageLedgerModule.usageLedgerLockPath(m8HostActive)))
+  const m8OtherMaintenance = { workspaceRoot: m8WorkspaceRoot, pathContext: m8WithHostContext, hostAccess: 'read-only', ledger: { mode: 'stats' } }
+  const m8OtherMainBeforeEntries = readdirSync(m8OtherRoot).sort().join('\n')
+  const m8OtherMainIoBefore = m8IoCounts()
+  const m8OtherMain = m8CaptureMain([m8Other], { maintenanceContext: m8OtherMaintenance, pathContext: m8WithHostContext, fsOps: m8HostFsOps })
+  const m8OtherMainIo = m8IoDelta(m8OtherMainIoBefore)
+  checkTrue('M8 M14 公共main Other入口拒绝且无目标read/stat/write', m8OtherMain.exit === 1 && m8OtherMain.lines.some((line) => line.includes('失败')) && m8OtherMainIo.read === 0 && m8OtherMainIo.stat === 0 && m8OtherMainIo.write === 0 && !existsSync(m8Other) && readdirSync(m8OtherRoot).sort().join('\n') === m8OtherMainBeforeEntries && !existsSync(usageLedgerModule.usageLedgerLockPath(m8Other)))
+  const m8ArchiveIo = []
+  const m8ArchiveFsOps = {
+    readFileSync: (...args) => { m8ArchiveIo.push('read'); return readFileSync(...args) },
+    statSync: (...args) => { m8ArchiveIo.push('stat'); return statSync(...args) },
+    mkdirSync: (...args) => { m8ArchiveIo.push('mkdir'); return mkdirSync(...args) },
+    writeFileSync: (...args) => { m8ArchiveIo.push('write'); return writeFileSync(...args) },
+    rmSync: (...args) => { m8ArchiveIo.push('remove'); return rmSync(...args) },
+    renameSync: (...args) => { m8ArchiveIo.push('rename'); return renameSync(...args) },
+    unlinkSync: (...args) => { m8ArchiveIo.push('unlink'); return unlinkSync(...args) },
+  }
+  const m8ArchiveBefore = readFileSync(m8Active, 'utf8')
+  const m8ArchiveBeforeStat = statSync(m8Active)
+  const m8ArchiveBeforeEntries = readdirSync(m8WorkspaceRoot).sort().join('\n')
+  const m8ArchiveMain = m8CaptureMain(['--archive'], { maintenanceContext: m8WMaintenance, pathContext: m8WithHostContext, target: m8WTarget, fsOps: m8ArchiveFsOps })
+  checkTrue('M8 M14 main --archive提前usage-removed且目标IO=0', m8ArchiveMain.exit === 1 && m8ArchiveMain.lines.some((line) => line.includes('--archive') || line.includes('手工归档已移除')) && m8ArchiveIo.length === 0 && readFileSync(m8Active, 'utf8') === m8ArchiveBefore && statSync(m8Active).mtimeMs === m8ArchiveBeforeStat.mtimeMs && readdirSync(m8WorkspaceRoot).sort().join('\n') === m8ArchiveBeforeEntries && !existsSync(usageLedgerModule.usageLedgerLockPath(m8Active)))
+}
 
 output.summary(pass, fail)
 process.exit(fail === 0 ? 0 : 1)

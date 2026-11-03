@@ -413,7 +413,7 @@ export function validateReadTarget(context, candidate, options = {}) {
     throw policyError('TARGET_UNREADABLE', 'read 目标不可读取', { path: target.path, cause: error.code || String(error) })
   }
   checkType(actualStat, expected, 'read', target.path)
-  return Object.freeze({
+  const readTarget = Object.freeze({
     ...target,
     operation: 'read',
     rootRealPath,
@@ -423,6 +423,9 @@ export function validateReadTarget(context, candidate, options = {}) {
     isFile: actualStat.isFile(),
     isDirectory: actualStat.isDirectory(),
   })
+  const metadata = targetMetadata.get(target)
+  if (metadata !== undefined) targetMetadata.set(readTarget, metadata)
+  return readTarget
 }
 
 export function prepareWriteTarget(context, candidate, options = {}) {

@@ -12,7 +12,7 @@
 | **QQBot 环境检查**（step-01-qqbot-环境验证） | 严格环境预检、junction 能力与真实 profile 只读映射核验 | 有对应环境时自动运行；环境不足则 SKIP |
 | **痕迹检查**（step-04/05/06/07/08/99） | 跑完一次真实流程后，看日志：AI 这轮干了什么、有没有违规 | 每次试完流程后 |
 
-## 设置管理路径（0.2.1-rc.2）
+## 设置管理路径
 设置表单仅经 `plugins.detail.section` 渲染于当前 bundle 详情页行列表之后（自绘标题）；本包不注册 `plugins.bundle.config`、`plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`。若 bundle.config 槽出现本包条目，detail.section 让位，避免重复表单。ConfigForms 使用稳定 namespace，一次提交十一项字段与 revision。
 唯一公开管理组件是 `dsh-extra-plan/settings`；其 PUT 只 edit `dsh-extra-plan-settings` 唯一全局行，保留其它字段与 gateWords。`./preset-sync` 及其 locale exports 已退役；`lib/preset-sync.js` 仍由 settings owner 内部相对调用，raw patch 中旧 `extra-plan-preset-sync`/`preset-extra-plan` 值只作迁移来源。预设本体来自纯 `preset-definition.generated.yml`，由内部同步交给官方 AgentPreset adapter；`toolPresentationMode` 为装载期值，`runcodeCatchGate` 由 live-config 热读。
 
@@ -32,14 +32,15 @@ node pe-test/tools/一键step测试.mjs
 → 跑之前先确认：**在完整目录（pe-test 与 plugins 同级 = 仓库根）下运行**才有完整结果
 → QQBot 环境项默认只读真实 profile；缺环境或 junction 能力不足显示结构化 SKIP，不计失败，不会自动 heal/建链；报告末尾会列出「人眼项/需参数项」——那些需要你自己跑并人工判读，不是自动的；HUMAN 独立报告保留 stdout/stderr 全量原文
 
-**step-07 实机子代理取证（HUMAN，不能无参运行）**：显式传会话参数对 `--session <顶层主会话ID>` 与 `--sessions-dir <会话根>`，并在同一部署配置快照下提供 `PLANNER_PROMPT_SUFFIX`（空串也要显式设置）；`SESSION_ID` 只作报告/输出字段，不作选择参数：
+**step-07 实机子代理取证（HUMAN，不能无参运行）**：显式传会话参数对 `--session <顶层主会话ID>` 与 `--sessions-dir <会话根>`，并在同一部署配置快照下提供 `PLANNER_PROMPT_SUFFIX`（空串也要显式设置）；`SESSION_ID` 只作报告/输出字段，不作选择参数；纯 W 工具可直接 `node`，需要 Host 代码的完整 P 取证必须带 `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs`，裸 node 不等同完整 P：
 ```powershell
 $env:PLANNER_PROMPT_SUFFIX='<同一部署快照的精确 suffix>'
-node pe-test/tools/step-07-子代理模型与引导取证.mjs --session <顶层主会话ID> --sessions-dir <会话根> --discover-children --full
+$env:DSH_INSTALL_ROOT='<本次真实代码根>'
+node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-07-子代理模型与引导取证.mjs --session <顶层主会话ID> --sessions-dir <会话根> --discover-children --full
 ```
 共享 `session-finder/logPath` 按顺序兼容定位三代候选日志：`session.v4.jsonl.zstd` / `session.v3.jsonl.zstd` / `session.jsonl.zstd`；step-06/07/08 只接受 `session.v4.jsonl.zstd`。脚本分开报告 request/header（attempted route，尝试路由）和 assistant/message.data.message.source（actual provenance，实际产出），只区分 pro规划/非pro规划；完整 planner 文本、budgetNotice、宿主 guidance、header.system 与 suffix 等级照实输出（对应 C11/C12）。会话在宿主数据根（H）时另加 `--host-root <H 数据根>`；无会话选择 = `NOT-RUN`（exit 0）；会话选择非法/不完整、或选择后缺 `PLANNER_PROMPT_SUFFIX` = 输入错误（exit 1）。
 
-也可以直接跑单个文件（`node pe-test/tools/step-01-预设完整性.mjs`），效果一样。
+单文件涉及 Host 代码或 Host 版本核验时，也须先显式设置 `DSH_INSTALL_ROOT=<本次真实代码根>`，并用 `node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-01-预设完整性.mjs` 运行；完整原文应使用 `--full` 或分流文件捕获，这些输出方式不能解决 `MODULE_NOT_FOUND`。纯 W 工具仍可直接 `node`，保留该既有边界。
 
 
 **看结果的通用规则**：step-00 类回归脚本看退出码与统计行——出现 FAIL 或退出码≠0 = 有问题，记下 FAIL 行的内容；无 FAIL 只表示无失败，是否全过按报告的通过/部分执行/未执行/失败分级判读，不等于全量执行；QQBot 环境脚本允许 PASS/SKIP 混合，只有 FAIL 或退出码≠0 才是问题；代码地图 --check 看退出码（exit=0 且含「地图与代码一致」= 全过，其他输出=有问题）。
@@ -57,7 +58,7 @@ node pe-test/tools/step-07-子代理模型与引导取证.mjs --session <顶层�
 | 6 线索落盘 | step-06-线索落盘 (+ 真实会话查看) | save_probe 五态闸门、落盘无残留 |
 | 7 规划预算 | 人眼看 step-06-真实会话查看 | 预算耗尽时 AI 被拒绝（日志里有 TOOL-ERROR） |
 | 7A 子代理模型/引导取证 | step-07-子代理模型与引导取证（HUMAN） | A42/A43：实际 provider/model、route 与 provenance 分栏，suffix 精确等级 |
-| 8 方案配对 | 已归档到 `.extra-plan/archive-断言清理-20261031/pe-test/tools/`（不再作为常规人眼项） | 成对性改由 step-06-08-v4取证回归 的查看器冒烟覆盖 |
+| 8 方案配对 | 当前配对、失效配对与 alias 反例均由 `step-06-08-v4取证回归.mjs` 的实际 V4 查看器回归覆盖 | 只读实际 V4 查看器输出，不引用已归档旧路径或旧 summary |
 | 10 验收只读 | 覆盖在 step-04-路由与写闸门 | reviewer 只读、不碰写操作 |
 | 11 代码地图一致性 | 覆盖在一键体检（`代码地图生成.mjs --check`，不写盘） | 地图与代码同步、无漏检/导航失效；**改完代码没同步地图 → 这项红**，跑 `node pe-test/tools/代码地图生成.mjs` 即可修 |
 

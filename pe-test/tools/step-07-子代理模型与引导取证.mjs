@@ -3,7 +3,7 @@
 // 本工具只读会话日志；无会话选择时 NOT-RUN，不创建会话、不发起 Provider 请求、不写生产 DSH_HOME。
 import fs from 'node:fs'
 import path from 'node:path'
-import { framesOf, decodeText } from '../_shared/zstd-frames.mjs'
+import { decodedJsonlLines } from '../_shared/zstd-frames.mjs'
 import { authorizedSessionLogPath, findSession } from '../_shared/session-finder.mjs'
 import { parseMaintenanceArgs, createMaintenanceContext } from '../_shared/workspace-paths.mjs'
 import { toolResultOf } from '../_shared/v4-tool-result.mjs'
@@ -105,31 +105,23 @@ function parseSession(dir) {
   let lineCount = 0
   let parseFailures = 0
   let decodeFailures = 0
-  let pending = ''
-  const consumeRaw = (raw) => {
-    lineCount += 1
+  const consumeLine = ({ lineNo, line: raw }) => {
+    lineCount = lineNo
     const line = raw.trim()
     if (line === '') return
     try {
-      events.push({ line: lineCount, event: JSON.parse(line) })
-    } catch {
-      parseFailures += 1
-    }
-  }
-  for (const frame of framesOf(buf)) {
-    let text
-    try {
-      text = decodeText(buf, frame)
+      events.push({ line: lineNo, event: JSON.parse(line) })
     } catch (error) {
-      decodeFailures += 1
-      console.error('L? 解码失败（' + dir + '）：' + (error instanceof Error ? error.message : String(error)))
-      continue
+      parseFailures += 1
+      console.error('L' + lineNo + ' JSON解析失败（' + dir + '）：' + (error instanceof Error ? error.message : String(error)))
     }
-    const parts = (pending + text).split(/\r?\n/)
-    pending = parts.pop() || ''
-    for (const raw of parts) consumeRaw(raw)
   }
-  if (pending !== '') consumeRaw(pending)
+  try {
+    for (const row of decodedJsonlLines(buf)) consumeLine(row)
+  } catch (error) {
+    decodeFailures += 1
+    console.error('L' + String(lineCount + 1) + ' 解码失败（' + dir + '）：' + (error instanceof Error ? error.message : String(error)))
+  }
   const first = events.find((item) => hasType(item.event, 'session'))
   return {
     dir,
@@ -231,17 +223,38 @@ function aliasMapOf(children) {
 function childDirsMentioned(value, aliases) {
   const haystack = typeof value === 'string' ? value : jsonText(value)
   const dirs = new Set()
+  const matches = []
   for (const [alias, candidates] of aliases) {
-    if (haystack.includes(alias)) for (const dir of candidates) dirs.add(dir)
+    const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const boundary = new RegExp('(^|[^A-Za-z0-9_-])' + escaped + '(?=$|[^A-Za-z0-9_-])')
+    if (!boundary.test(haystack)) continue
+    const matchedCandidates = [...candidates].sort()
+    matches.push({ alias, candidates: matchedCandidates })
+    for (const dir of matchedCandidates) dirs.add(dir)
   }
-  return [...dirs]
+  return { dirs: [...dirs].sort(), matches }
+}
+
+function mergeChildMentions(mentions) {
+  const matches = mentions.flatMap((mention) => mention.matches)
+  const dirs = [...new Set(mentions.flatMap((mention) => mention.dirs))].sort()
+  const aliasAmbiguous = matches.some((match) => match.candidates.length > 1)
+  if (!aliasAmbiguous && dirs.length <= 1) return { dirs, ambiguity: null }
+  return {
+    dirs,
+    ambiguity: {
+      reason: aliasAmbiguous ? 'alias-multiple-candidates' : 'multiple-child-targets',
+      aliases: [...new Set(matches.map((match) => match.alias))].sort(),
+      candidates: dirs,
+    },
+  }
 }
 
 function buildParentLinks(parent, children) {
   const aliases = aliasMapOf(children)
   const calls = parent.events.map(toolCallOf).filter((call) => call !== null)
-  const results = resultRecordsOf(parent)
   const dispatchCalls = parent.events.map(ptcDispatchCallOf).filter((call) => call !== null)
+  const results = resultRecordsOf(parent)
   const dispatchResults = parent.events.map((item) => {
     if (!hasType(item.event, 'tool/ptc-dispatch')) return null
     const data = dataOf(item.event)
@@ -250,38 +263,70 @@ function buildParentLinks(parent, children) {
     const text = (Array.isArray(data.content) ? data.content : []).map((block) => isObject(block) && block !== null && typeof block.text === 'string' ? block.text : '').join('')
     return { line: item.line, callId: data.subCallId, isError: data.isError === true, text, event: item.event }
   }).filter((result) => result !== null)
-  const seenCallIds = new Set(calls.map((call) => call.callId).filter((id) => id !== undefined))
-  for (const call of dispatchCalls) {
-    if (call.callId === undefined || seenCallIds.has(call.callId)) continue
-    seenCallIds.add(call.callId)
-    calls.push(call)
-    const result = dispatchResults.find((record) => record.callId === call.callId)
-    if (result !== undefined) results.push(result)
-  }
-  const links = []
-  for (const result of results) {
-    const matchedCalls = calls.filter((call) => result.callId !== undefined && call.callId === result.callId)
-    const dirs = childDirsMentioned(result.event, aliases)
-    for (const dir of dirs) {
-      const call = matchedCalls[0]
-      links.push({
-        dir,
-        name: call === undefined ? '<未配对工具结果>' : call.name,
-        call,
-        result,
-        complete: call !== undefined && result.isError !== true,
-      })
+  calls.push(...dispatchCalls)
+  results.push(...dispatchResults)
+  const recordsByCallId = (records) => {
+    const byId = new Map()
+    for (const record of records) {
+      if (typeof record.callId !== 'string' || record.callId === '') continue
+      const list = byId.get(record.callId) || []
+      list.push(record)
+      byId.set(record.callId, list)
     }
+    return byId
+  }
+  const callsById = recordsByCallId(calls)
+  const resultsById = recordsByCallId(results)
+  const links = []
+  const ambiguities = []
+  const recordAmbiguity = (call, result, match) => {
+    if (match.ambiguity === null) return
+    ambiguities.push({
+      ...match.ambiguity,
+      name: call.name,
+      callId: call.callId,
+      parentLine: call.line,
+      callLine: call.line,
+      resultLine: result === null ? null : result.line,
+    })
+  }
+  for (const result of results) {
+    const matchedCalls = callsById.get(result.callId) || []
+    const matchedResults = resultsById.get(result.callId) || []
+    if (matchedCalls.length !== 1 || matchedResults.length !== 1) continue
+    const call = matchedCalls[0]
+    if (!isSubagentToolNameOf(call.name)) continue
+    const match = mergeChildMentions([
+      childDirsMentioned(call.arguments !== null ? call.arguments : call.rawArguments, aliases),
+      childDirsMentioned(dataOf(result.event), aliases),
+    ])
+    if (match.ambiguity !== null) {
+      recordAmbiguity(call, result, match)
+      continue
+    }
+    for (const dir of match.dirs) links.push({
+      dir,
+      name: call.name,
+      call,
+      result,
+      complete: result.isError !== true,
+    })
   }
   for (const call of calls) {
-    const callDirs = childDirsMentioned(call.arguments !== null ? call.arguments : call.rawArguments, aliases)
-    if (callDirs.length === 0) continue
-    const hasMatchedResult = links.some((link) => link.call === call)
-    if (!hasMatchedResult) {
-      for (const dir of callDirs) links.push({ dir, name: call.name, call, result: null, complete: false })
+    if (!isSubagentToolNameOf(call.name) || typeof call.callId !== 'string') continue
+    const matchedCalls = callsById.get(call.callId) || []
+    const matchedResults = resultsById.get(call.callId) || []
+    if (matchedCalls.length !== 1 || matchedResults.length !== 0) continue
+    const match = mergeChildMentions([
+      childDirsMentioned(call.arguments !== null ? call.arguments : call.rawArguments, aliases),
+    ])
+    if (match.ambiguity !== null) {
+      recordAmbiguity(call, null, match)
+      continue
     }
+    for (const dir of match.dirs) links.push({ dir, name: call.name, call, result: null, complete: false })
   }
-  return { calls, results, links }
+  return { calls, results, links, ambiguities }
 }
 
 function descriptorRecordsOf(session) {
@@ -338,14 +383,30 @@ function provenanceRecordsOf(session) {
   }).filter((record) => record.source.kind === 'model')
 }
 function plannerMessagesOf(session) {
-  return session.events.map((item) => {
+  const messages = []
+  const budgetMessages = []
+  for (const item of session.events) {
     const data = dataOf(item.event)
     const source = sourceOf(data)
-    if (source.kind !== 'user' && source.kind !== 'agent-message') return null
     const blocks = textBlocksOf(data)
-    if (blocks.length === 0) return null
-    return { line: item.line, kind: source.kind, blocks, event: item.event }
-  }).filter((record) => record !== null)
+    if (blocks.length === 0) continue
+    const budgetBlocks = blocks.map((block) => ({ index: block.index, fragments: budgetFragmentsOf(block.text) })).filter((block) => block.fragments.length > 0)
+    const pluginSource = typeof source.kind === 'string' && source.kind.startsWith('plugin')
+    if (pluginSource) {
+      if (budgetBlocks.length > 0) budgetMessages.push({ line: item.line, kind: source.kind, blocks: budgetBlocks, event: item.event })
+      continue
+    }
+    if (source.kind !== 'user' && source.kind !== 'agent-message') continue
+    if (budgetBlocks.length > 0) budgetMessages.push({ line: item.line, kind: source.kind, blocks: budgetBlocks, event: item.event })
+    const eligibleBlocks = blocks.filter((block) => {
+      const text = budgetFragmentsOf(block.text).reduce((value, fragment) => value.replaceAll(fragment, ''), block.text)
+      return text.trim() !== ''
+    })
+    if (eligibleBlocks.length === 0) continue
+    messages.push({ line: item.line, kind: source.kind, blocks: eligibleBlocks, event: item.event })
+  }
+  messages.budgetMessages = budgetMessages
+  return messages
 }
 
 const budgetPatterns = [
@@ -365,9 +426,14 @@ function isHostGuidance(text) {
   return text.includes('Your parent agent id is ')
 }
 function firstTextForSuffix(messages) {
-  if (messages.length === 0) return null
-  const first = messages[0]
-  return first.blocks.length === 0 ? null : first.blocks[0]
+  for (const message of messages) {
+    for (const block of message.blocks) {
+      const textExcludingBudget = budgetFragmentsOf(block.text).reduce((value, fragment) => value.replaceAll(fragment, ''), block.text)
+      if (textExcludingBudget.trim() === '' || isHostGuidance(block.text)) continue
+      return { ...block, message }
+    }
+  }
+  return null
 }
 function linkedPlanLinks(parentLinks) {
   return parentLinks.filter((link) => link.name === 'subagent_plan' && link.complete)
@@ -473,11 +539,14 @@ function printProvenanceEvidence(provenance) {
   }
 }
 function printPlannerMessages(messages) {
+  const budgetMessages = Array.isArray(messages.budgetMessages) ? messages.budgetMessages : []
   if (output.mode !== 'full') {
     console.log('A43 planner message index count=' + messages.length)
+    console.log('A43 budgetNotice index count=' + budgetMessages.length)
+    for (const budgetMessage of budgetMessages) console.log('L' + budgetMessage.line + ' BUDGET-NOTICE kind=' + budgetMessage.kind + ' blocks=' + budgetMessage.blocks.map((block) => '[' + block.index + ']').join(','))
     const first = firstTextForSuffix(messages)
     if (first !== null) {
-      const firstMessage = messages[0]
+      const firstMessage = first.message
       const textExcludingBudget = budgetFragmentsOf(first.text).reduce((t, f) => t.replaceAll(f, ''), first.text)
       const exact = plannerPromptSuffix !== '' && !isHostGuidance(first.text) && textExcludingBudget.includes(plannerPromptSuffix)
       console.log('L' + firstMessage.line + ' first planner text block kind=' + firstMessage.kind + ' block[' + first.index + '] length=' + first.text.length + ' sha256=' + sha256Text(first.text))
@@ -485,8 +554,17 @@ function printPlannerMessages(messages) {
     }
     return
   }
-  console.log('--- planner user/agent-message（逐块完整；仅首个 text block参与 suffix 判定） ---')
+  console.log('--- budgetNotice（索引与完整文本；not suffix） ---')
+  if (budgetMessages.length === 0) console.log('(无 budgetNotice)')
+  for (const budgetMessage of budgetMessages) {
+    for (const block of budgetMessage.blocks) {
+      console.log('L' + budgetMessage.line + ' BUDGET-NOTICE kind=' + budgetMessage.kind + ' block[' + block.index + ']')
+      for (const fragment of block.fragments) printFullText('budgetNotice fragment（完整；not suffix）', fragment)
+    }
+  }
+  console.log('--- planner user/agent-message（逐块完整；仅首个合格 text block参与 suffix 判定） ---')
   if (messages.length === 0) console.log('(无 source.kind=user/agent-message 的可读 text block)')
+  const suffixFirst = firstTextForSuffix(messages)
   for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
     const message = messages[messageIndex]
     for (const block of message.blocks) {
@@ -494,7 +572,7 @@ function printPlannerMessages(messages) {
       const category = []
       if (budget.length > 0) category.push('budgetNotice')
       if (isHostGuidance(block.text)) category.push('host guidance')
-      const suffixCandidate = messageIndex === 0 && block.index === message.blocks[0].index
+      const suffixCandidate = suffixFirst !== null && suffixFirst.message === message && suffixFirst.index === block.index
       console.log('L' + message.line + ' PLANNER-MESSAGE kind=' + message.kind + ' block[' + block.index + '] ' + (suffixCandidate ? 'suffix-candidate=initial-first-text' : 'suffix-candidate=no') + ' category=' + (category.length === 0 ? 'content' : category.join('+')))
       printFullText('text（完整）', block.text)
       for (const fragment of budget) printFullText('budgetNotice fragment（完整；not suffix）', fragment)
@@ -525,6 +603,11 @@ if (output.mode === 'full') printFullText('suffix baseline（完整）', planner
 else console.log('suffix baseline index length=' + plannerPromptSuffix.length + ' sha256=' + sha256Text(plannerPromptSuffix))
 console.log('定位结果：' + found.kind + '；主会话=' + parent.dir + '；直接 child=' + children.length)
 printParentEvidence(parentBundle, parent)
+console.log('A44 parent association ambiguity count=' + parentBundle.ambiguities.length)
+for (const ambiguity of parentBundle.ambiguities) {
+  console.log('A44 parent association ambiguity reason=' + ambiguity.reason + ' callId=' + valueText(ambiguity.callId) + ' parentLine=L' + valueText(ambiguity.parentLine) + ' resultLine=' + (ambiguity.resultLine === null ? '?' : 'L' + ambiguity.resultLine) + ' aliases=' + jsonText(ambiguity.aliases) + ' candidates=' + jsonText(ambiguity.candidates))
+  if (output.mode === 'full') console.log('A44 parent association ambiguity full=' + jsonText(ambiguity))
+}
 
 for (const session of sessions) {
   console.log('\n===== 会话 ' + session.dir + ' =====')
@@ -569,5 +652,6 @@ for (const session of sessions) {
   }
 }
 
-const missingLog = sessions.some((session) => session.file === null)
-process.exitCode = missingLog ? 1 : 0
+const incompleteLog = sessions.some((session) => session.file === null || session.parseFailures > 0 || session.decodeFailures > 0)
+if (incompleteLog) console.error('INCOMPLETE 会话日志存在缺失或解析/解码失败')
+process.exitCode = incompleteLog ? 1 : 0

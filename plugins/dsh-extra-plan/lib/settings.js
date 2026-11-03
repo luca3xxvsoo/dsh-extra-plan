@@ -5,7 +5,7 @@
 
 import { createHash, randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { resolve as pathResolve } from 'node:path'
+import { join, resolve as pathResolve } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import z from '@deepseek-ai/schemastery'
 import {

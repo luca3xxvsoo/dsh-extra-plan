@@ -217,7 +217,7 @@ export function createRunCodeStatic({ askTool, isDispatchStart }) {
       const argsParsed = parsed.ok
       const args = argsParsed ? parsed.value : null
       addMember({ kind: 'tool', name: site.name, argsParsed, args, argsText })
-      markRange(site.start, site.end)
+      markRange(site.start, site.calleeEnd)
     }
     // 裸写扫描只看已识别调用点占用区间之外的 masked 文本。
     const restChars = masked.split('')

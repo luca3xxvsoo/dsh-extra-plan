@@ -22,7 +22,15 @@ export function v4LogPath(directory) {
 export function toolResultOf(event) {
   if (!isObject(event) || !isToolResultType(event.type) || !isObject(event.data)) return null
   const message = event.data.message
-  if (!isObject(message) || typeof message.toolCallId !== 'string' || typeof message.isError !== 'boolean' || !Array.isArray(message.content)) return null
+  const source = isObject(message) ? message.source : null
+  if (
+    !isObject(message) ||
+    typeof message.id !== 'string' || message.id === '' ||
+    message.role !== 'tool' ||
+    !isObject(source) || source.kind !== 'tool' || typeof source.callId !== 'string' || source.callId === '' ||
+    typeof message.toolCallId !== 'string' || message.toolCallId === '' || source.callId !== message.toolCallId ||
+    !Array.isArray(message.content)
+  ) return null
   const text = message.content.map((block) => isObject(block) && block.type === 'text' && typeof block.text === 'string' ? block.text : '').join('')
-  return { callId: message.toolCallId, isError: message.isError, text }
+  return { callId: message.toolCallId, isError: message.isError === true, text }
 }

@@ -244,6 +244,14 @@ check('B2 definition render 与提交资产逐字一致且 package 仅装载 cor
 const packageFiles = Array.isArray(packageJson.files) ? packageJson.files : []
 const qqbotExports = qqbotPackageJson.exports !== null && typeof qqbotPackageJson.exports === 'object' ? qqbotPackageJson.exports : {}
 const qqbotFiles = Array.isArray(qqbotPackageJson.files) ? qqbotPackageJson.files : []
+const rootLicenseFile = join(REPO_ROOT, 'LICENSE')
+const packageLicenseFile = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'LICENSE')
+const qqbotLicenseFile = join(REPO_ROOT, 'plugins', 'dsh-extra-plan-qqbot', 'LICENSE')
+const rootLicenseBytes = existsSync(rootLicenseFile) ? readFileSync(rootLicenseFile) : null
+const packageLicenseBytes = existsSync(packageLicenseFile) ? readFileSync(packageLicenseFile) : null
+const qqbotLicenseBytes = existsSync(qqbotLicenseFile) ? readFileSync(qqbotLicenseFile) : null
+check('M4 两个子包 LICENSE 存在且与根 LICENSE 字节全同', rootLicenseBytes !== null && packageLicenseBytes !== null && qqbotLicenseBytes !== null && packageLicenseBytes.equals(rootLicenseBytes) && qqbotLicenseBytes.equals(rootLicenseBytes))
+check('M4 两包 package.json license=MIT', packageJson.license === 'MIT' && qqbotPackageJson.license === 'MIT')
 check('B2 package files/scripts 含生成器、generate 与 prepack', packageFiles.includes('scripts/generate-runtime-defaults.mjs') && packageJson.scripts['generate:runtime-defaults'] === 'node scripts/generate-runtime-defaults.mjs' && packageJson.scripts.prepack === 'node scripts/generate-runtime-defaults.mjs', true)
 check('M1 核心 manifest name/version/repository/client/deps/patch/private 契约', packageJson.name === 'dsh-extra-plan' && packageJson.repository === 'git+https://github.com/luca3xxvsoo/dsh-extra-plan.git' && packageJson.dsh?.bundle?.patch === './cordis.patch.yml' && packageJson.dsh?.client?.platform === 'web' && Array.isArray(packageJson.dsh?.client?.inject) && packageJson.dependencies?.['js-yaml'] === '^4.2.0' && !Object.prototype.hasOwnProperty.call(packageJson, 'private') && !JSON.stringify(packageJson).includes('@local/dsh-extra-plan'))
 check('M2 两包 engines/peer 五字段均为五版本精确并集',

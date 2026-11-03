@@ -23,8 +23,8 @@ export const PWSH_BARE_WORDS = /\b(New-Item|Remove-Item|Rename-Item|Move-Item|Co
 //     本改动修复）；首词即 install/rsync/truncate/fallocate/shred/zip 仍拦。
 //   - 已知边界（新增①）：块内嵌套 shell（如 bash -c '…'、pwsh -Command '…'）的递归判定受
 //     depth 上限约束（depth >= 4 直接返回 false），超深嵌套中的写形态可能漏拦。
-//   - 已知边界（新增②）：引号内出现「分号 + 块关键字」组合时分段不识别引号（既有边界），
-//     可能在引号内部切段并按命令位判定，属已知误判面。
+//   - 当前行为：splitShellSegments不以引号内静态分隔符切段，echo "x; then rm"不形成rm命令；
+//     可执行$()与bash -c内层仍递归判定，不承诺完整shell语法或“带引号都只读”。
 //   - git 写子命令：add/commit/checkout/switch/restore/clean/rm/mv/reset
 //   - sed 原地修改：sed -i / sed -i.bak / sed --in-place（sed\s+(?:--in-place\b|(?:-[A-Za-z]*\s+)*-i\b)：
 //     覆盖 -i 前带其他短选项（如 sed -n -i），且不误拦 sed 脚本内容里的 -i 字符串
@@ -62,24 +62,120 @@ function shellWords(segment) {
   while (index < segment.length) {
     while (index < segment.length && /\s/.test(segment[index])) index += 1
     if (index >= segment.length) break
-    const quote = segment[index] === "'" || segment[index] === '"' ? segment[index] : ''
-    if (quote !== '') {
-      index += 1
-      let value = ''
-      while (index < segment.length) {
-        if (segment[index] === '\\' && index + 1 < segment.length) { value += segment[index + 1]; index += 2; continue }
-        if (segment[index] === quote) { index += 1; break }
-        value += segment[index]
+    let value = ''
+    let quoted = false
+    let quote = ''
+    while (index < segment.length) {
+      const ch = segment[index]
+      if (quote !== '') {
+        if ((ch === '\\' || ch === String.fromCharCode(96)) && index + 1 < segment.length) { value += segment[index + 1]; index += 2; continue }
+        if (ch === quote) { quote = ''; index += 1; continue }
+        value += ch
         index += 1
+        continue
       }
-      words.push(value)
-      continue
+      if (/\s/.test(ch)) break
+      if (ch === "'" || ch === '"') { quote = ch; quoted = true; index += 1; continue }
+      if ((ch === '\\' || ch === String.fromCharCode(96)) && index + 1 < segment.length) { value += segment[index + 1]; index += 2; continue }
+      value += ch
+      index += 1
     }
-    const start = index
-    while (index < segment.length && !/\s/.test(segment[index])) index += 1
-    words.push(segment.slice(start, index))
+    words.push({ value, quoted })
   }
   return words
+}
+
+function splitShellSegments(text) {
+  const segments = []
+  let start = 0
+  let quote = ''
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i]
+    if (quote !== '') {
+      if ((ch === '\\' || ch === String.fromCharCode(96)) && i + 1 < text.length) { i += 1; continue }
+      if (ch === quote) quote = ''
+      continue
+    }
+    if (ch === "'" || ch === '"') { quote = ch; continue }
+    if ((ch === '\\' || ch === String.fromCharCode(96)) && i + 1 < text.length) { i += 1; continue }
+    if (ch === ';' || ch === '\n' || ch === '\r') {
+      segments.push(text.slice(start, i))
+      start = i + 1
+      continue
+    }
+    if (ch === '&' || ch === '|') {
+      segments.push(text.slice(start, i))
+      if (text[i + 1] === ch) i += 1
+      start = i + 1
+    }
+  }
+  segments.push(text.slice(start))
+  return segments
+}
+
+function shellParenEnd(text, open) {
+  let depth = 0
+  let quote = ''
+  for (let i = open; i < text.length; i += 1) {
+    const ch = text[i]
+    if (quote !== '') {
+      if ((ch === '\\' || ch === String.fromCharCode(96)) && i + 1 < text.length) { i += 1; continue }
+      if (ch === quote) quote = ''
+      continue
+    }
+    if (ch === "'" || ch === '"') { quote = ch; continue }
+    if ((ch === '\\' || ch === String.fromCharCode(96)) && i + 1 < text.length) { i += 1; continue }
+    if (ch === '(') depth += 1
+    else if (ch === ')') {
+      depth -= 1
+      if (depth === 0) return i
+    }
+  }
+  return text.length
+}
+
+function executableShellSubexpressions(text, isPowerShell) {
+  const inners = []
+  let quote = ''
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i]
+    if (quote === "'") {
+      if (ch === quote) quote = ''
+      continue
+    }
+    if (quote === '"') {
+      if ((ch === '\\' || ch === String.fromCharCode(96)) && i + 1 < text.length) { i += 1; continue }
+      if (ch === quote) { quote = ''; continue }
+    } else {
+      if (ch === "'" || ch === '"') { quote = ch; continue }
+      if ((ch === '\\' || ch === String.fromCharCode(96)) && i + 1 < text.length) { i += 1; continue }
+    }
+    if (ch !== '$' && !(isPowerShell && ch === '@')) continue
+    let open = i + 1
+    while (open < text.length && /\s/.test(text[open])) open += 1
+    if (text[open] !== '(') continue
+    const close = shellParenEnd(text, open)
+    if (close > open && close <= text.length) inners.push(text.slice(open + 1, close < text.length ? close : text.length))
+    if (close < text.length) i = close
+  }
+  return inners
+}
+
+function shellSyntaxText(text) {
+  const chars = text.split('')
+  let quote = ''
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i]
+    if (quote !== '') {
+      chars[i] = ' '
+      if ((ch === '\\' || ch === String.fromCharCode(96)) && i + 1 < text.length) { chars[i + 1] = ' '; i += 1; continue }
+      if (ch === quote) quote = ''
+      continue
+    }
+    if (ch === "'" || ch === '"') { quote = ch; chars[i] = ' '; continue }
+    if ((ch === '\\' || ch === String.fromCharCode(96)) && i + 1 < text.length) { chars[i] = ' '; chars[i + 1] = ' '; i += 1 }
+  }
+  return chars.join('')
 }
 
 const WRAPPER_OPTION_WITH_VALUE = new Set(['-u', '-g', '-h', '-C', '-p', '--user', '--group', '--chdir', '--host', '--unset', '--prompt'])
@@ -137,7 +233,7 @@ function bareRuleOf(bareRe) {
 export function mutationTextEvidence(text, syntaxRe, bareRe, depth) {
   if (text === '' || depth >= 4) return null
   const isPowerShell = syntaxRe === PWSH_MUTATION || bareRe === PWSH_BARE_WORDS
-  if (syntaxRe.test(text)) {
+  if (syntaxRe.test(shellSyntaxText(text))) {
     const rule = syntaxRuleOf(syntaxRe)
     return rule === null ? null : { rule, value: '' }
   }
@@ -145,7 +241,24 @@ export function mutationTextEvidence(text, syntaxRe, bareRe, depth) {
     const redirect = redirectEvidence(text)
     if (redirect !== null) return redirect
   }
-  const segs = text.split(/[;\r\n]|\s*&&\s*|\s*\|\|\s*|\s*\|\s*|\s*&\s*/)
+  const nestedEvidenceOf = (inner) => {
+    const nestedEvidence = mutationTextEvidence(inner, syntaxRe, bareRe, depth + 1)
+    if (nestedEvidence !== null) return nestedEvidence
+    if (syntaxRe !== PWSH_MUTATION || bareRe !== PWSH_BARE_WORDS) {
+      const pwshEvidence = mutationTextEvidence(inner, PWSH_MUTATION, PWSH_BARE_WORDS, depth + 1)
+      if (pwshEvidence !== null) return pwshEvidence
+    }
+    if (syntaxRe !== BASH_MUTATION || bareRe !== BASH_BARE_WORDS) {
+      const bashEvidence = mutationTextEvidence(inner, BASH_MUTATION, BASH_BARE_WORDS, depth + 1)
+      if (bashEvidence !== null) return bashEvidence
+    }
+    return null
+  }
+  for (const inner of executableShellSubexpressions(text, isPowerShell)) {
+    const nestedEvidence = nestedEvidenceOf(inner)
+    if (nestedEvidence !== null) return nestedEvidence
+  }
+  const segs = splitShellSegments(text)
   for (const seg of segs) {
     const words = shellWords(seg)
     let index = 0
@@ -153,17 +266,33 @@ export function mutationTextEvidence(text, syntaxRe, bareRe, depth) {
     let expectCommand = true
     let blockPending = false
     let blockDepth = 0
+    let functionPending = false
     while (index < words.length && steps < 32) {
       steps += 1
-      const word = words[index]
+      const token = words[index]
+      const word = token.value
+      // 函数定义的函数名/参数位不参与裸写判定，函数体左花括号后恢复命令位。
+      if (functionPending) {
+        if (!token.quoted) {
+          const braceAt = word.indexOf('{')
+          if (braceAt !== -1) {
+            functionPending = false
+            blockDepth += 1
+            expectCommand = true
+            if (braceAt + 1 < word.length) { token.value = word.slice(braceAt + 1); continue }
+          }
+        }
+        index += 1
+        continue
+      }
       // 步骤A：块头关键字之后等待块体左花括号；非花括号词一律跳过，不参与裸写动词判定
       if (blockPending) {
-        const braceAt = word.indexOf('{')
+        const braceAt = token.quoted ? -1 : word.indexOf('{')
         if (braceAt !== -1) {
           blockPending = false
           blockDepth += 1
           expectCommand = true
-          if (braceAt + 1 < word.length) { words[index] = word.slice(braceAt + 1); continue }
+          if (braceAt + 1 < word.length) { token.value = word.slice(braceAt + 1); continue }
         }
         index += 1
         continue
@@ -179,33 +308,57 @@ export function mutationTextEvidence(text, syntaxRe, bareRe, depth) {
       // 步骤C：块体左花括号之后恢复命令位（switch/case 内嵌块、无关键字块等）；
       // 只有「块体」左花括号算数——已在块内或正处于命令位时的 { 才开块，
       // 参数位的花括号（如 echo { rm }）按普通参数放行，不恢复命令位。
-      if (word.startsWith('{')) {
+      if (!token.quoted && word.startsWith('{')) {
         if (blockDepth > 0 || expectCommand) {
           blockDepth += 1
           expectCommand = true
-          if (word.length > 1) { words[index] = word.slice(1); continue }
+          if (word.length > 1) { token.value = word.slice(1); continue }
         }
         index += 1
         continue
       }
       // 步骤D：只有命令位才参与裸写动词判定
       if (expectCommand) {
+        if (!token.quoted && word.toLowerCase() === 'function') {
+          functionPending = true
+          expectCommand = false
+          index += 1
+          continue
+        }
+        if (!isPowerShell && !token.quoted) {
+          const joinedFunction = /^[A-Za-z_][A-Za-z0-9_]*\(\)(?:\{.*)?$/.test(word)
+          const splitFunction = /^[A-Za-z_][A-Za-z0-9_]*$/.test(word) && words[index + 1]?.value === '()' && words[index + 2]?.value?.startsWith('{')
+          if (joinedFunction || splitFunction) {
+            const braceAt = word.indexOf('{')
+            if (braceAt !== -1) {
+              blockDepth += 1
+              expectCommand = true
+              if (braceAt + 1 < word.length) { token.value = word.slice(braceAt + 1); continue }
+            } else {
+              functionPending = true
+              expectCommand = false
+              index += splitFunction ? 2 : 1
+              continue
+            }
+          }
+        }
         if (isPowerShell) {
-          if (PS_ASSIGN_LHS.test(word) && index + 1 < words.length && words[index + 1] === '=') { index += 2; continue }
+          if (PS_ASSIGN_LHS.test(word) && index + 1 < words.length && words[index + 1].value === '=') { index += 2; continue }
           const gluedAssign = PS_ASSIGN_GLUED.exec(word)
           if (gluedAssign !== null) {
-            if (gluedAssign[1] !== '') { words[index] = gluedAssign[1]; continue }
+            if (gluedAssign[1] !== '') { token.value = gluedAssign[1]; continue }
             index += 1
             continue
           }
-          const subExpr = PS_SUBEXPR.exec(word)
-          if (subExpr !== null && subExpr[2] !== '') { words[index] = subExpr[2]; continue }
+          const subExpr = token.quoted ? null : PS_SUBEXPR.exec(word)
+          if (subExpr !== null && subExpr[2] !== '') { token.value = subExpr[2]; continue }
         }
         if (isEnvAssignment(word)) { index += 1; continue }
         if (SHELL_PREFIX_WORDS.has(word)) {
           index += 1
           while (index < words.length) {
-            const option = words[index]
+            const optionToken = words[index]
+            const option = optionToken.value
             if (isEnvAssignment(option)) { index += 1; continue }
             if (option === '--') { index += 1; break }
             if (!option.startsWith('-')) break
@@ -216,9 +369,9 @@ export function mutationTextEvidence(text, syntaxRe, bareRe, depth) {
         }
         if (isInnerShellWord(word)) {
           let commandIndex = index + 1
-          while (commandIndex < words.length && !/^(?:-Command|-c|\/c)$/i.test(words[commandIndex])) commandIndex += 1
+          while (commandIndex < words.length && !/^(?:-Command|-c|\/c)$/i.test(words[commandIndex].value)) commandIndex += 1
           if (commandIndex + 1 < words.length) {
-            const inner = words[commandIndex + 1]
+            const inner = words[commandIndex + 1].value
             const nestedEvidence = mutationTextEvidence(inner, syntaxRe, bareRe, depth + 1)
             if (nestedEvidence !== null) return nestedEvidence
             const pwshEvidence = mutationTextEvidence(inner, PWSH_MUTATION, PWSH_BARE_WORDS, depth + 1)
@@ -234,14 +387,15 @@ export function mutationTextEvidence(text, syntaxRe, bareRe, depth) {
         const blockWord = isPowerShell ? word.toLowerCase() : word
         if (SHELL_BLOCK_SEGMENT_WORDS.has(blockWord)) { index += 1; continue }
         if (SHELL_BLOCK_HEAD_WORDS.has(blockWord)) { blockPending = true; index += 1; continue }
-        if (isPowerShell && PS_BLOCK_HEAD_GLUED.test(word)) {
-          const braceAt = word.indexOf('{')
-          if (braceAt !== -1) { blockDepth += 1; expectCommand = true; if (braceAt + 1 < word.length) { words[index] = word.slice(braceAt + 1); continue } }
+        if (isPowerShell && !token.quoted && PS_BLOCK_HEAD_GLUED.test(word)) {
+          const braceAt = token.quoted ? -1 : word.indexOf('{')
+          if (braceAt !== -1) { blockDepth += 1; expectCommand = true; if (braceAt + 1 < word.length) { token.value = word.slice(braceAt + 1); continue } }
           else { blockPending = true }
           index += 1
           continue
         }
         if (isPowerShell && word.toLowerCase() === 'return') { index += 1; continue }
+        if (token.quoted) { index += 1; continue }
         const bareMatch = bareRe.exec(word)
         if (bareMatch !== null) {
           const rule = bareRuleOf(bareRe)

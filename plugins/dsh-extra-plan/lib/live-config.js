@@ -239,9 +239,13 @@ export function createLiveConfig(options) {
 
   function refresh(agent) {
     const next = currentResolved(agent)
-    if (next.path !== path) {
-      path = next.path
-      target = next.target
+    const pathChanged = next.path !== path
+    const targetChanged = target === null || next.target === null
+      ? target !== next.target
+      : ['kind', 'path', 'root', 'capability', 'exactPath', 'access', 'purpose'].some((key) => target[key] !== next.target[key])
+    path = next.path
+    target = next.target
+    if (pathChanged || targetChanged) {
       stamp = null
       if (path === '') {
         values = { ...fallbackValues }

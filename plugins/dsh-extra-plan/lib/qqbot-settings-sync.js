@@ -608,16 +608,69 @@ function applyExistingTarget(parts, block, hit, snapshot, rootIndent) {
     insert.push(...renderedConfig(snapshot, configIndent))
     edits.push({ start: blockLines.length, end: blockLines.length, lines: insert })
   } else {
+    const pending = []
+    const inlineCommentSuffix = (rest) => {
+      let quote = null
+      let scalarStarted = false
+      for (let i = 0; i < rest.length; i += 1) {
+        const char = rest[i]
+        if (quote === "'") {
+          if (char === "'" && rest[i + 1] === "'") { i += 1; continue }
+          if (char === "'") quote = null
+          continue
+        }
+        if (quote === '"') {
+          if (char === '\\') { i += 1; continue }
+          if (char === '"') quote = null
+          continue
+        }
+        if (!scalarStarted && char.trim() === '') continue
+        if (!scalarStarted && (char === "'" || char === '"')) { quote = char; scalarStarted = true; continue }
+        if (char === '#' && (i === 0 || /\s/.test(rest[i - 1]))) {
+          const before = rest.slice(0, i)
+          return (before.match(/\s*$/) || [''])[0] + rest.slice(i)
+        }
+        scalarStarted = true
+      }
+      return ''
+    }
+    const valueLine = (line, parsed, key, value) => {
+      const prefix = (line.match(/^[ \t]*/) || [''])[0]
+      return prefix + key + ': ' + scalar(value) + inlineCommentSuffix(parsed.rest)
+    }
     for (const key of PATCH_KEYS) {
       const matches = directKeyLines(blockLines, state.line.index + 1, state.end, state.childIndent, key)
       if (matches.length > 1) return { status: 'conflict', reason: 'duplicate-config-key:' + key }
       if (matches.length === 1) {
         const match = matches[0]
-        edits.push({ start: match.index, end: blockEndForChild(blockLines, match.index + 1, state.end, state.childIndent), lines: key === 'gateWords' ? (() => {
-          const out = [' '.repeat(state.childIndent) + 'gateWords:']
-          for (const gateKey of GATE_KEYS) out.push(' '.repeat(state.childIndent + 2) + gateKey + ': ' + scalar(snapshot.gateWords[gateKey]))
-          return out
-        })() : [' '.repeat(state.childIndent) + key + ': ' + scalar(snapshot.values[key])] })
+        if (key === 'gateWords') {
+          const parent = blockLines[match.index]
+          const parentPrefix = (parent.match(/^[ \t]*/) || [''])[0]
+          edits.push({ start: match.index, end: match.index + 1, lines: [parentPrefix + 'gateWords:' + inlineCommentSuffix(match.rest)] })
+          const gateEnd = blockEndForChild(blockLines, match.index + 1, state.end, state.childIndent)
+          const gateIndent = configChildIndent(blockLines, match.index + 1, gateEnd, state.childIndent)
+          const gateMissing = []
+          let gatePrefix = null
+          for (const gateKey of GATE_KEYS) {
+            const gateMatches = directKeyLines(blockLines, match.index + 1, gateEnd, gateIndent, gateKey)
+            if (gateMatches.length > 1) return { status: 'conflict', reason: 'duplicate-gateWords-key:' + gateKey }
+            if (gateMatches.length === 1) {
+              const gateMatch = gateMatches[0]
+              if (gatePrefix === null) gatePrefix = (blockLines[gateMatch.index].match(/^[ \t]*/) || [''])[0]
+              const gateChildEnd = blockEndForChild(blockLines, gateMatch.index + 1, gateEnd, gateIndent)
+              const kept = blockLines.slice(gateMatch.index + 1, gateChildEnd).filter((line) => ignorable(line))
+              edits.push({ start: gateMatch.index, end: gateChildEnd, lines: [valueLine(blockLines[gateMatch.index], gateMatch, gateKey, snapshot.gateWords[gateKey]), ...kept] })
+            } else gateMissing.push(gateKey)
+          }
+          if (gateMissing.length > 0) {
+            const prefix = gatePrefix === null ? ' '.repeat(gateIndent) : gatePrefix
+            pending.push({ start: gateEnd, end: gateEnd, lines: gateMissing.map((gateKey) => prefix + gateKey + ': ' + scalar(snapshot.gateWords[gateKey])) })
+          }
+        } else {
+          const end = blockEndForChild(blockLines, match.index + 1, state.end, state.childIndent)
+          const kept = blockLines.slice(match.index + 1, end).filter((line) => ignorable(line))
+          edits.push({ start: match.index, end, lines: [valueLine(blockLines[match.index], match, key, snapshot.values[key]), ...kept] })
+        }
       }
     }
     const missing = PATCH_KEYS.filter((key) => directKeyLines(blockLines, state.line.index + 1, state.end, state.childIndent, key).length === 0)
@@ -631,6 +684,7 @@ function applyExistingTarget(parts, block, hit, snapshot, rootIndent) {
       }
       edits.push({ start: state.end, end: state.end, lines: add })
     }
+    edits.push(...pending)
   }
   edits.sort((left, right) => right.start - left.start)
   const nextBlock = [...blockLines]

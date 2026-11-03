@@ -143,14 +143,16 @@ dsh-extra-plan/
 │   │   ├── scripts/generate-runtime-defaults.mjs                     # 构建期生成器：exploreBudget 叶值 → preset-defaults.generated.js
 │   │   ├── cordis.patch.yml                                                    
 │   │   ├── index.js                                                  # 四级闸门：路由/目的/澄清/批准 + apply 接线
+│   │   ├── LICENSE                                                 
 │   │   └── package.json              
 │   └── dsh-extra-plan-qqbot/                                
 │       ├── lib                                               
-│   │   │   ├── heal.js                                               # 探查预算：用量计数与提醒/耗尽文案
-│   │   │   └── path-policy.js                                        # 路径安全策略闸门
+│       │   ├── heal.js                                               # 探查预算：用量计数与提醒/耗尽文案
+│       │   └── path-policy.js                                        # 路径安全策略闸门
 │       ├── scripts/heal.mjs                                          # 自愈分发                      
 │       ├── cordis.patch.yml                                  
 │       ├── index.js                                    
+│       ├── LICENSE                                                 
 │       └── package.json                      
 ├── pe-test/                                                          # 自检/取证工具
 │   ├── README.md                                                     # 自检/取证工具介绍

@@ -217,6 +217,44 @@ export function sliceBalancedArgs(maskedText, text, parenIdx) {
   return { closeIdx, innerText }
 }
 
+function staticBracketKeyOf(text, masked, bracketStart, close) {
+  const q = skipStaticKeyTrivia(text, bracketStart + 1)
+  if (text[q] !== "'" && text[q] !== '"') return null
+  const quote = text[q]
+  let endQuote = q + 1
+  while (endQuote < text.length) {
+    if (text[endQuote] === '\\') { endQuote += 2; continue }
+    if (text[endQuote] === quote) break
+    endQuote += 1
+  }
+  if (endQuote >= text.length) return null
+  const literal = text.slice(q + 1, endQuote)
+  const afterQuote = skipStaticKeyTrivia(text, endQuote + 1)
+  if (afterQuote !== close || !/^[A-Za-z_$][A-Za-z0-9_$-]*$/.test(literal)) return null
+  return literal
+}
+
+function skipStaticKeyTrivia(value, start) {
+  let i = start
+  while (i < value.length) {
+    while (i < value.length && /\s/.test(value[i])) i += 1
+    if (value.startsWith('/*', i)) {
+      const end = value.indexOf('*/', i + 2)
+      if (end === -1) return value.length
+      i = end + 2
+      continue
+    }
+    if (value.startsWith('//', i)) {
+      const end = value.indexOf(String.fromCharCode(10), i + 2)
+      if (end === -1) return value.length
+      i = end + 1
+      continue
+    }
+    break
+  }
+  return i
+}
+
 // 判断是否存在无法静态解析的 tools[...] 访问；调用点区间由 collectRunCodeSites 提供。
 // 静态调用参数仍继续扫描，避免漏掉其中的动态 tools[...] 访问。
 export function hasDynamicRunCodeAccess(txt, msk, sites = []) {
@@ -242,29 +280,16 @@ export function hasDynamicRunCodeAccess(txt, msk, sites = []) {
   let i = 0
   while (i < text.length) {
     if (!masked.startsWith('tools', i) || (i > 0 && isIdentifierPart(masked[i - 1]))) { i += 1; continue }
+    let owner = i - 1
+    while (owner >= 0 && /\s/.test(masked[owner])) owner -= 1
+    if (owner >= 0 && masked[owner] === '.') { i += 5; continue }
     const accessStart = skipWhitespace(masked, i + 5)
     if (masked[accessStart] !== '[') { i += 1; continue }
     const close = bracketEndOf(accessStart)
     if (close === -1) return true
-    const q = skipWhitespace(text, accessStart + 1)
-    let staticCall = false
-    if (text[q] === "'" || text[q] === '"') {
-      const quote = text[q]
-      let endQuote = q + 1
-      while (endQuote < text.length) {
-        if (text[endQuote] === '\\') { endQuote += 2; continue }
-        if (text[endQuote] === quote) break
-        endQuote += 1
-      }
-      const literal = text.slice(q + 1, endQuote)
-      if (/^[A-Za-z_$][A-Za-z0-9_$-]*$/.test(literal) && endQuote < text.length) {
-        const afterQuote = skipWhitespace(text, endQuote + 1)
-        if (afterQuote === close) {
-          const afterBracket = skipWhitespace(masked, close + 1)
-          staticCall = text[afterBracket] === '('
-        }
-      }
-    }
+    const literal = staticBracketKeyOf(text, masked, accessStart, close)
+    const afterBracket = skipWhitespace(masked, close + 1)
+    const staticCall = literal !== null && text[afterBracket] === '('
     if (!staticCall) return true
     i = close + 1
   }
@@ -296,6 +321,9 @@ export function collectRunCodeSites(txt, msk) {
   let i = 0
   while (i < text.length) {
     if (!masked.startsWith('tools', i) || (i > 0 && isIdentifierPart(masked[i - 1]))) { i += 1; continue }
+    let owner = i - 1
+    while (owner >= 0 && /\s/.test(masked[owner])) owner -= 1
+    if (owner >= 0 && masked[owner] === '.') { i += 5; continue }
     let j = skipWhitespace(masked, i + 5)
     let name
     let parenIdx = -1
@@ -313,25 +341,15 @@ export function collectRunCodeSites(txt, msk) {
       if (close !== -1) {
         const k = skipWhitespace(masked, close + 1)
         if (masked[k] === '(') {
-          const q = skipWhitespace(text, j + 1)
-          if (text[q] === "'" || text[q] === '"') {
-            const quote = text[q]
-            let endQuote = q + 1
-            while (endQuote < text.length) {
-              if (text[endQuote] === '\\') { endQuote += 2; continue }
-              if (text[endQuote] === quote) break
-              endQuote += 1
-            }
-            const literal = text.slice(q + 1, endQuote)
-            if (/^[A-Za-z_$][A-Za-z0-9_$-]*$/.test(literal) && endQuote < text.length && skipWhitespace(text, endQuote + 1) === close) name = literal
-          }
+          const literal = staticBracketKeyOf(text, masked, j, close)
+          if (literal !== null) name = literal
           parenIdx = k
         }
       }
     }
     if (parenIdx !== -1) {
       const balanced = sliceBalancedArgs(masked, text, parenIdx)
-      sites.push({ start: i, end: balanced.closeIdx, innerText: balanced.innerText.trim(), name })
+      sites.push({ start: i, calleeEnd: parenIdx, end: balanced.closeIdx, innerText: balanced.innerText.trim(), name })
       i += 5
       continue
     }
