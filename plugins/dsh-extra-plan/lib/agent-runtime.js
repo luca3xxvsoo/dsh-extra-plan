@@ -1,7 +1,14 @@
 // 每次 apply 独立创建 agent runtime factory；role 与 cache 状态不会跨 createAgentRuntime 调用共享。
 
 import { isSubagentChild } from './agent-session.js'
-import { PLANNER_PRESET_ID, REVIEWER_PRESET_ID, USAGE_ROLE_BY_PRESET } from './role-contract.js'
+import { ROLE_IDS, PLANNER_PRESET_ID, PROBER_PRESET_ID, REVIEWER_PRESET_ID, USAGE_ROLE_BY_PRESET } from './role-contract.js'
+
+const CHILD_HOST_MODE_BY_PRESET = Object.freeze(Object.assign(Object.create(null), {
+  [ROLE_IDS[0]]: 'workspace-write',
+  [PLANNER_PRESET_ID]: 'read-only',
+  [REVIEWER_PRESET_ID]: 'workspace-write',
+  [PROBER_PRESET_ID]: 'read-only',
+}))
 
 // 规划子代理的会话角色预设 id（与 assets/presets/extra-plan/agent.cordis.yml 第二文档一致）。
 export { PLANNER_PRESET_ID } from './role-contract.js'
@@ -18,14 +25,6 @@ export function isLiveDelegation(agent, agents) {
   } catch (error) {
     return true
   }
-}
-
-// 子代理沙箱下限判定：会话级 read-only override 或部署默认 read-only 时抬升。
-export function childPolicyNeedsFloor(session, sandboxPolicy) {
-  if (sandboxPolicy === undefined) return false
-  const override = sandboxPolicy.overrideOf(session)
-  const effective = override !== undefined ? override : sandboxPolicy.defaultMode
-  return effective === 'read-only'
 }
 
 export function createAgentRuntime({ getAgents, sandboxPolicy, foldUsage, warn }) {
@@ -146,10 +145,17 @@ export function createAgentRuntime({ getAgents, sandboxPolicy, foldUsage, warn }
     }
   }
 
-  function floorChildPolicy(agent) {
-    if (childPolicyNeedsFloor(agent.session, sandboxPolicy)) {
-      agent.session.append('sandbox/mode', { mode: 'workspace-write', source: 'delegation' })
-    }
+  function applyChildPolicy(agent) {
+    const session = agent.session
+    const header = session !== undefined && session !== null ? session.header : undefined
+    const preset = header !== undefined && header !== null ? header.agentPreset : undefined
+    if (typeof preset !== 'string' || !Object.prototype.hasOwnProperty.call(CHILD_HOST_MODE_BY_PRESET, preset)) return
+    const mode = CHILD_HOST_MODE_BY_PRESET[preset]
+    const override = sandboxPolicy !== undefined && sandboxPolicy !== null && typeof sandboxPolicy.overrideOf === 'function'
+      ? sandboxPolicy.overrideOf(session)
+      : undefined
+    if (override === mode) return
+    session.append('sandbox/mode', { mode, source: 'delegation' })
   }
 
 
@@ -157,7 +163,7 @@ export function createAgentRuntime({ getAgents, sandboxPolicy, foldUsage, warn }
     const child = isChild(agent, events)
     const context = usageContextOf(agent, events)
     foldUsage(agent, context)
-    if (child) floorChildPolicy(agent)
+    if (child) applyChildPolicy(agent)
     return child
   }
 

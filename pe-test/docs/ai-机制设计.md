@@ -16,6 +16,12 @@
 - 所有 match、deny 文案和状态推导都消费同一 `gateRuntime`；推荐后缀只做白名单归一，推进状态必须与当前词精确相等，旧词不会复活旧事件。
 - 两种 ask 结果先分别由 `parseAskResultData`（普通 result）与 `parseDispatchAskResult`（PTC dispatch）解码，匹配后的规范化结果只进入 `applyAskOutcome` 这一处，再由 `deriveFlowState` 推进状态；保留普通错误码与 PTC 文本错误的原有差异。
 - `ROLE_IDS`、`ROLE_ORDERS`、`PLANNER_PRESET_ID`、`PROBER_PRESET_ID` 只提供冻结身份/装配顺序；角色标识不承载工具权限、沙箱或生命周期策略。
+- 宿主运行时只按当前 Session 的精确 `agentPreset`/角色 ID 分配 child 的 Host `mode`；四个固定目标为 `extra-plan-executor → workspace-write`、`extra-plan-planner → read-only`、`extra-plan-reviewer → workspace-write`、`extra-plan-prober → read-only`。这只是宿主 Session mode 的唯一功能变化，不改变身份、工具面、提示词或模型路由。
+- `childBaseline` 是三个入口 `agent/created`、`agent/pre-step`、`tools/pre-execute` 的共用路径；每次 apply 的 runtime factory 独立，模式事件只追加到当前 `agent.session`，同一 mode 已由当前 override 提供时幂等不重复。main 不按角色目标追加 mode；其它 live child 缺少/不匹配四个精确 ID 时也不获默认目标，父 Session、默认目标和其它 Session 不参与选定或串改。
+- unknown 或断链 child 的边界与原判据不变：宿主 role-mode 映射只在现有 child 判定允许时生效；即使原始子代理判据仍识别为 child，`control`/`run_code` 等模型层硬拒仍照常生效。若原闸门拒绝，立即停止并记为 `NOT-RUN`/`INCOMPLETE`，不得改 gate、加许可/白名单/包装，或借 scanner 未识别绕行。
+- `workspace-write` 仅是宿主沙箱/工作区写入下限，不是模型的 `write/edit`、shell mutation、control、`run_code` 或写型 MJS 授权；reviewer 即使取该 Host mode，仍受原工具面与插件硬拒，executor 也不能绕过自身既有 control/run_code、route/approved、预算及其它门禁。不得承诺验收者能运行写型 MJS。
+- save 的受控写入例外仍是可信 Host 的 `atomicCommit`（含既有 `save_plan`/`save_probe` 资格与保存路径），原 save schema/合同、预算、会话 cwd、路径/链接校验和本次有限清理均不变；Host 代提交不等同模型直接写盘，也不因 workspace mode 新增 save 权限。
+- 正式验收只读核宿主 mode 事件、Session 状态隔离、既有 deny/`next=0`/原 reason 与 save 例外；mock、普通 Node 落盘和 Host 装配分层记录，不能冒充真实 OS/生产证明。未执行的真实 owner、工具隔离、provider/GUI/生产会话标为 `NOT-RUN` 或 `HUMAN`，不把未执行项计为 PASS；纯读 `--check`/viewer 只证明自身范围。
 
 ## 二、run_code 组判定与 planner 预算
 

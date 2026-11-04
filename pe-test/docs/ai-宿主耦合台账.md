@@ -120,7 +120,7 @@
 | HK17 | 四行 tool-subagent | 合法键仅 `provider`/`toolName`/`modelSelectionSettings`/`agentOptions`/`agentPreset`/`allowedAgentPresets`/`maxDepth`；本预设四行各留三键（provider/toolName/agentPreset）并指向 4 个角色 id；persona/toolFilter 会被宿主抛错、backgroundMode 已无此键 | 【已核实·静态】 |
 | HK28 | 委派工具参数表（0.2.1） | 已无后台标志：subagent/subagent_plan/subagent_review/subagent_probe 恒为立即返回 subagentId 加完成通知；本仓闸门不再判定该参数（后台约束上移宿主层） | 【已核实·静态+两轮矩阵】 |
 | HK19 | tool-subagent-control 子路径 | 宿主 exports 子路径与行名 | 【已核实·静态】 |
-| HK20 | child 识别与 sandbox floor | `parentSession/origin/delegationDepth` 仍是 child 判据；planner 判据改为 `session.header.agentPreset === 'extra-plan-planner'`（descriptor.mode 恒 continuable，不再参与） | 【已核实·静态+宿主回归】 |
+| HK20 | child 识别与四角色宿主 mode | `parentSession/origin/delegationDepth` 仍是 child 判据；角色仅按当前 Session 的精确 `session.header.agentPreset` 固定宿主 mode：`extra-plan-planner`/`extra-plan-prober`=`read-only`，`extra-plan-reviewer`/`extra-plan-executor`=`workspace-write`；`descriptor.mode` 恒 `continuable`，不参与角色判定；main、其它 child、unknown、断链不选角色 mode。 | 【已核实·静态/单元/装配；真实工具OS/owner/HUMAN NOT-RUN】 |
 | HK21 | run-code 子调用识别 | `exec.parent` 是宿主面；`exec.sub` 是本仓合成标记 | 【已核实·静态】 |
 | HK22 | shell mutation | 已解析 `ToolExecution.arguments.command` 与 pwsh/bash 写判定 | 【已核实·静态】 |
 | HK24 | client bridge/package | 相对路径行须满足 pathLike 扫描规则 | 【已核实·静态】 |
@@ -145,7 +145,7 @@ HK23 当前无定义，不补造编号；历史/旧钩子见归档。
 | SD8 | subagent/descriptor.mode（历史形状） | 0.2.1 起 mode 恒为 continuable（宿主 manager 固定值），角色分离改判 `session.header.agentPreset`；descriptor 仅作「确属子代理会话」的日志形状 |
 | SD10 | `session.seq` + `snapshotEvents(from,to)` | cursor 增量、水位未变与截断回退 |
 | SD11 | `Session.requestHeader().config` | 顶层 provider/model 与 fallback（回退）来源 |
-| SD12 | sandbox/mode append | read-only（只读） child workspace-write floor（工作区写入下限） |
+| SD12 | sandbox/mode append | 旧 child floor 已删除；仅按当前 Session 的精确 `session.header.agentPreset` 固定四目标：`extra-plan-planner`/`extra-plan-prober`=`read-only`，`extra-plan-reviewer`/`extra-plan-executor`=`workspace-write`。三入口 `created`/`pre-step`/`pre-execute` 均先绑定后 `next`；Session隔离：本 child 的 mode 事件仅向当前 Session 追加 `mode=目标`、`source=delegation`，不读 parent/default、不共享 mode，显式 override 仅本 Session，已匹配幂等、漂移修复后 append；无 policy 仍追加，不以缺 service 跳过绑定。宿主 `workspace-write` 仅是宿主 mode，不授模型 write/edit、shell mutation、control/run_code 或 MJS 权；reviewer 仍受原 write/edit、shell mutation、control、run_code 硬拒，executor 仍受自身 control、run_code、路由批准门禁。mode 不授新 save 权；save例外保留为可信 Host atomicCommit 受控例外：planner 仅 `save_plan`、已认领 prober 仅 `save_probe`，executor/reviewer 无 save，原资格/合同/预算/cwd/链接/有限清理不变。证据按静态/单元/装配与普通Node落盘分层，真实工具OS/owner、真实Session工具隔离、真实只读保存及HUMAN均 `NOT-RUN`。
 | SD14 | agents.get(parentSession) | 父链与主会话 fallback（回退） |
 | SD15 | llm.listModels | legacy（兼容） advisory（建议）/strict（严格）候选 |
 | SD16 | skill-filesystem/bundledSkillDir（换通道：trustedHost=true → node:fs；watch:false；旧 customSkillDirs 因 ctx.fs 扫 asar 抛非 absent 错被 registry 整体跳过） | 当前 skill 载体；旧 customSkillDirs 静态注册与更旧 resolve/register 仅历史 |

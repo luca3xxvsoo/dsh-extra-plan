@@ -34,7 +34,6 @@ export const decisions = {
   isExplicitRoute,
   isExplicitEffort,
   isLiveDelegation,
-  childPolicyNeedsFloor,
   isBootstrapPhase,
   filterBootstrapContextDecision,
   dedupeProjectedContextDecision,
@@ -134,7 +133,7 @@ import { PWSH_MUTATION, BASH_MUTATION, PWSH_BARE_WORDS, BASH_BARE_WORDS, pwshCom
 import { DEFAULT_SETTINGS } from './lib/preset-defaults.generated.js'
 import { toolCallCount, toolCallsSinceUser, withPlannerPromptSuffix, BUDGET_REMINDER_THRESHOLD, budgetNoticeText, withBudgetNotice, budgetReminderText, budgetReminderMessage, budgetReminderSent, budgetExhaustedReason, budgetExceeded } from './lib/planner-budget.js'
 import { causeChainOf } from './lib/runtime-static.js'
-import { createAgentRuntime, isLiveDelegation, childPolicyNeedsFloor } from './lib/agent-runtime.js'
+import { createAgentRuntime, isLiveDelegation } from './lib/agent-runtime.js'
 import { sessionEvents, isSubagentChild } from './lib/agent-session.js'
 import { createModelRouting, isExplicitRoute, isExplicitEffort, resolveAgentRouteSources, decidePlannerModelUse, PLANNER_PROBE_TIMEOUT_MS, PLANNER_BLOCKED_REASON, NON_PLANNER_BLOCKED_REASON, sortPlannerCandidates } from './lib/model-routing.js'
 import { CHANNEL_BROKEN_CODES, FREE_TOOLS, routeDenyReason, planDenyReason, approvalDenyReason, isBootstrapPhase, labelsOfCallData, askKindOf, askKindOfRelaxed, isExactGateSet, isPartialGateSet, categorizeGateAsk, gateAskDenyReason, validateGateAskStructure, matchRouteLabel, matchApprovalLabel, matchPurposeLabel, parseAskResultData, parseDispatchAskResult, deriveFlowState, filterBootstrapContextDecision, dedupeProjectedContextDecision, catalogHasWriteTools, isReadOnlyChildByCatalog, schemasHasWriteTools, schemasHasTool, catalogIsCollapsed, subagentProbeGateReason, shellMutationReason, childControlGateReason, plannerGateReason, childReadonlyGateReason, jobOutputGateReason, recordJobOutputCall, pollGuardGateReason, recordPollGuardCall, probeDisposalWarning, mainGateReason, runCodeGroupDenyReason, aggregateRunCodeDenyReason, decomposeRunCode, runCodeCatchGateReason, collectRunCodeSites, askUserQuestionReturnGateReason, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, runCodeDispatchCapText } from './lib/gate-decisions.js'
@@ -590,7 +589,7 @@ export function apply(ctx, config) {
   // creativeMode=false 不再靠「不注册」，而由 assembly-presentation 的 CREATIVE_SKILL_NAMES 在
   // catalog 投影里隐藏（只去掉名字可见性：skill 仍注册，按名调用依旧可加载，不等于真隔离）。
 
-  // childBaseline/usageContextOf 与 sandbox floor 由每次 apply 独立创建的 agent runtime 工厂提供。
+  // childBaseline/usageContextOf 与角色固定宿主模式由每次 apply 独立创建的 agent runtime 工厂提供；sandboxPolicy 仅复核当前 child 显式 override 的幂等性。
 
   // save_plan/save_probe 的合同、校验、渲染与单次落盘由 lib 工厂提供；此处仅保留注册与生命周期接线。
   const runtimeLifecycle = createRuntimeLifecycle({
@@ -641,7 +640,7 @@ export function apply(ctx, config) {
   ctx.on('agent/inbox/claimed', (payload) => {
     consumeToolJobsNotice(payload?.agent, payload?.message)
   })
-  // 1) 会话启动：子代理基线（账本 + 沙箱下限）；规划子代理与主会话注册 save_plan
+  // 1) 会话启动：子代理基线（账本 + 角色固定宿主模式）；规划子代理与主会话注册 save_plan
   //    （主会话侧任意路由态放行：受限规划工件，判定在 mainGateReason 兜底）；主会话与探查子代理
   //    注册 save_probe（scoped；recompose 不重发 session-start，pre-step 兜底）。
   // HK1（事件与状态模型换代）：agent/session-start 已删除；agent/created 升为 serial——

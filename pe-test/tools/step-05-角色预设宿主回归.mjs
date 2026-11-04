@@ -110,21 +110,22 @@ console.log('HOST_INSTALL_ROOT=' + INSTALL_ROOT)
 console.log('BATCH_DIR=' + BATCH_DIR)
 console.log('MAIN_PERSONA_SENTINEL=' + JSON.stringify(MAIN_PERSONA_SENTINEL))
 
-async function runMode(mode) {
+async function runMode(mode, defaultSandboxMode) {
   let root
   const handles = []
   const adapters = []
   const entries = new Map()
-  const modeHome = join(HOME_DIR, mode)
-  const modeSessionRoot = join(SESSION_ROOT, mode)
-  const modeWorkspace = join(WORKSPACE, mode)
-  const modeTemp = join(BATCH_DIR, 'temp', mode)
+  const scenarioKey = mode + '-' + defaultSandboxMode
+  const modeHome = join(HOME_DIR, scenarioKey)
+  const modeSessionRoot = join(SESSION_ROOT, scenarioKey)
+  const modeWorkspace = join(WORKSPACE, scenarioKey)
+  const modeTemp = join(BATCH_DIR, 'temp', scenarioKey)
   for (const dir of [modeHome, modeSessionRoot, modeWorkspace, modeTemp, join(modeHome, 'skills')]) mkdirSync(dir, { recursive: true })
   writeFileSync(join(modeWorkspace, 'AGENTS.md'), '# role preset fixture\nfixture baseline instructions\n', 'utf8')
   try {
     root = new Context()
     // AgentPresetRegistry stores the declaring Loader context.baseUrl in its public definition record.
-    const loaderRoot = join(BATCH_DIR, 'loader-root-' + mode)
+    const loaderRoot = join(BATCH_DIR, 'loader-root-' + scenarioKey)
     const resolutionBase = pathToFileURL(join(loaderRoot, 'fixture-entry.mjs')).href
     root.baseUrl = resolutionBase
     root.provide('dshHomePath', (...parts) => join(modeHome, ...parts.map((part) => String(part))))
@@ -138,7 +139,7 @@ async function runMode(mode) {
       { id: 'session-persistence-jsonl', name: '@deepseek-ai/dsh-session-persistence-jsonl', config: { root: modeSessionRoot, compression: 'zstd' } },
       { id: 'llm', name: '@deepseek-ai/dsh-llm' },
       { id: 'subprocess', name: '@deepseek-ai/dsh-subprocess-local' },
-      { id: 'sandbox-policy', name: '@deepseek-ai/dsh-sandbox-policy', config: { mode: 'workspace-write', workspaceRoot: modeWorkspace } },
+      { id: 'sandbox-policy', name: '@deepseek-ai/dsh-sandbox-policy', config: { mode: defaultSandboxMode, workspaceRoot: modeWorkspace } },
       { id: 'fs-sandbox', name: '@deepseek-ai/dsh-fs-sandbox', config: { cwd: modeWorkspace } },
       { id: 'fs-observation-policy', name: '@deepseek-ai/dsh-fs-observation-policy' },
       { id: 'sandbox', name: '@deepseek-ai/dsh-sandbox' },
@@ -205,8 +206,18 @@ async function runMode(mode) {
     await root.loader.await()
     check('组2 ' + mode + ' 摘除夹具根级委派行后子作用域不再继承 subagent 工具', !namesOf(root.tools.schemas(root)).includes('subagent'))
 
+    const expectedModeByPreset = Object.freeze({
+      'extra-plan-executor': 'workspace-write',
+      'extra-plan-planner': 'read-only',
+      'extra-plan-reviewer': 'workspace-write',
+      'extra-plan-prober': 'read-only',
+    })
+    const sandboxPolicy = typeof root.get === 'function' ? root.get('sandboxPolicy') : undefined
+    if (sandboxPolicy === undefined || sandboxPolicy === null || typeof sandboxPolicy.overrideOf !== 'function' || typeof sandboxPolicy.defaultMode !== 'string') throw new Error('sandboxPolicy service unavailable')
+    const roleObservations = new Map()
+
     async function createChild(presetId, index) {
-      const sessionId = 'role-preset-' + mode + '-' + presetId + '-' + String(index)
+      const sessionId = 'role-preset-' + scenarioKey + '-' + presetId + '-' + String(index)
       const handle = await root.agents.create({
         sessionId,
         meta: { cwd: modeWorkspace, agentPreset: presetId, origin: 'subagent', delegationDepth: 1, isSeeded: false },
@@ -220,11 +231,37 @@ async function runMode(mode) {
           await presets.mount(agentCtx, presetId)
         },
       })
+      const agent = handle.agent
+      const session = agent === undefined || agent === null ? undefined : agent.session
+      if (session === undefined || session === null || typeof session.snapshotEvents !== 'function') throw new Error('role-preset session snapshot unavailable')
+      const snapshot = session.snapshotEvents()
+      if (!Array.isArray(snapshot)) throw new Error('role-preset session snapshot is not an array')
+      const modeEvents = snapshot.filter((event) => event !== null && typeof event === 'object' && event.type === 'sandbox/mode')
+      const expectedMode = expectedModeByPreset[presetId]
+      if (typeof expectedMode !== 'string') throw new Error('role-preset expected mode unavailable for ' + presetId)
+      const override = sandboxPolicy.overrideOf(session)
+      const effectiveMode = override === undefined ? sandboxPolicy.defaultMode : override
+      roleObservations.set(sessionId, { presetId, sessionId, snapshotSignature: JSON.stringify(snapshot), modeEvents, override, expectedMode, effectiveMode })
       handles.push(handle)
-      return handle.agent
+      return agent
     }
     const { createAgentRuntime } = await import('../../plugins/dsh-extra-plan/lib/agent-runtime.js')
-    const runtime = createAgentRuntime({ getAgents: () => root.agents, sandboxPolicy: undefined, foldUsage: () => {}, warn: () => {} })
+    const runtime = createAgentRuntime({ getAgents: () => root.agents, sandboxPolicy, foldUsage: () => {}, warn: () => {} })
+    const mainSessionId = 'role-preset-' + scenarioKey + '-main'
+    const mainHandle = await root.agents.create({
+      sessionId: mainSessionId,
+      meta: { cwd: modeWorkspace, isSeeded: false },
+    })
+    handles.push(mainHandle)
+    const mainAgent = mainHandle.agent
+    const mainSession = mainAgent === undefined || mainAgent === null ? undefined : mainAgent.session
+    if (mainSession === undefined || mainSession === null || typeof mainSession.snapshotEvents !== 'function') throw new Error('role-preset main session snapshot unavailable')
+    const mainInitialSnapshot = mainSession.snapshotEvents()
+    if (!Array.isArray(mainInitialSnapshot)) throw new Error('role-preset main session snapshot is not an array')
+    const mainInitialSnapshotSignature = JSON.stringify(mainInitialSnapshot)
+    const mainInitialModeEvents = mainInitialSnapshot.filter((event) => event !== null && typeof event === 'object' && event.type === 'sandbox/mode')
+    const mainIsRootLike = mainSession.header !== undefined && mainSession.header !== null && mainSession.header.origin !== 'subagent' && mainSession.header.delegationDepth === undefined && runtime.isChild(mainAgent) === false
+    check('组3 ' + scenarioKey + ' 真实主会话创建为非child root-like', mainIsRootLike, JSON.stringify({ id: mainSession.header?.id, origin: mainSession.header?.origin, delegationDepth: mainSession.header?.delegationDepth }))
     const plannerAgent = await createChild('extra-plan-planner', 1)
     check('组3 ' + mode + ' planner 子会话 header.agentPreset === extra-plan-planner', plannerAgent.session.header.agentPreset === 'extra-plan-planner', String(plannerAgent.session.header.agentPreset))
     check('组3 ' + mode + ' isPlannerChild(planner 子会话) === true', runtime.isPlannerChild(plannerAgent) === true)
@@ -238,6 +275,25 @@ async function runMode(mode) {
     console.log('EXECUTOR_TOOLS=' + JSON.stringify({ mode, tools: executorTools }))
     const reviewerAgent = await createChild('extra-plan-reviewer', 3)
     const proberAgent = await createChild('extra-plan-prober', 4)
+    const childSessionCases = [['executor', executorAgent], ['planner', plannerAgent], ['reviewer', reviewerAgent], ['prober', proberAgent]]
+    for (const [roleName, agent] of childSessionCases) {
+      const session = agent.session
+      const observation = roleObservations.get(session.header.id)
+      const currentSnapshot = typeof session.snapshotEvents === 'function' ? session.snapshotEvents() : null
+      const currentSnapshotSignature = Array.isArray(currentSnapshot) ? JSON.stringify(currentSnapshot) : null
+      const currentModeEvents = Array.isArray(currentSnapshot) ? currentSnapshot.filter((event) => event !== null && typeof event === 'object' && event.type === 'sandbox/mode') : []
+      const snapshotUnchanged = observation !== undefined && currentSnapshotSignature === observation.snapshotSignature
+      const modeEventsUnchanged = observation !== undefined && JSON.stringify(currentModeEvents) === JSON.stringify(observation.modeEvents)
+      check('组3 ' + scenarioKey + ' ' + roleName + ' 所有child创建后snapshot未串改', snapshotUnchanged && modeEventsUnchanged, JSON.stringify({ id: session.header.id, snapshotUnchanged, modeEventsUnchanged, initialSnapshotSignature: observation?.snapshotSignature ?? null, finalSnapshotSignature: currentSnapshotSignature }))
+      console.log('CHILD_SESSION_STATE=' + JSON.stringify({ scenario: scenarioKey, role: roleName, preset: session.header.agentPreset, id: session.header.id, snapshotUnchanged, modeEventsUnchanged, initialModeEvents: observation?.modeEvents ?? [], finalModeEvents: currentModeEvents }))
+    }
+    const mainCurrentSnapshot = mainSession.snapshotEvents()
+    const mainCurrentSnapshotSignature = Array.isArray(mainCurrentSnapshot) ? JSON.stringify(mainCurrentSnapshot) : null
+    const mainCurrentModeEvents = Array.isArray(mainCurrentSnapshot) ? mainCurrentSnapshot.filter((event) => event !== null && typeof event === 'object' && event.type === 'sandbox/mode') : []
+    const mainSnapshotUnchanged = mainCurrentSnapshotSignature === mainInitialSnapshotSignature
+    const mainModeEventsUnchanged = JSON.stringify(mainCurrentModeEvents) === JSON.stringify(mainInitialModeEvents)
+    check('组3 ' + scenarioKey + ' 真实主会话在所有child创建后无状态串改或sandbox/mode append', mainIsRootLike && mainSnapshotUnchanged && mainModeEventsUnchanged, JSON.stringify({ id: mainSession.header?.id, mainSnapshotUnchanged, mainModeEventsUnchanged, initialSnapshotSignature: mainInitialSnapshotSignature, finalSnapshotSignature: mainCurrentSnapshotSignature }))
+    console.log('ROOT_SESSION_STATE=' + JSON.stringify({ scenario: scenarioKey, role: 'root', id: mainSession.header?.id, rootLike: mainIsRootLike, snapshotUnchanged: mainSnapshotUnchanged, modeEventsUnchanged: mainModeEventsUnchanged, initialModeEvents: mainInitialModeEvents, finalModeEvents: mainCurrentModeEvents }))
     const plannerTools = namesOf(root.tools.schemas(plannerAgent))
     check('组5 ' + mode + ' planner 工具面不含 write/edit 且含只读 shell pwsh', !plannerTools.includes('write') && !plannerTools.includes('edit') && plannerTools.includes('pwsh'), JSON.stringify({ write: plannerTools.includes('write'), edit: plannerTools.includes('edit'), pwsh: plannerTools.includes('pwsh') }))
     check('组5 ' + mode + ' planner 工具面含 web/coredis 只读工具且 web_fetch 按 fetch=false 不注册', plannerTools.includes('web_search') && plannerTools.includes('cordis_inspect_list') && !plannerTools.includes('web_fetch'), JSON.stringify(plannerTools.filter((name) => name.startsWith('web_') || name.startsWith('cordis_'))))
@@ -247,8 +303,18 @@ async function runMode(mode) {
     const CORDIS_BINDING_NAMES = ['cordis_inspect_list', 'cordis_inspect_query']
     const roleCases = [['executor', executorAgent], ['planner', plannerAgent], ['reviewer', reviewerAgent], ['prober', proberAgent]]
     for (const [roleName, agent] of roleCases) {
+      const observation = roleObservations.get(agent.session.header.id)
+      const expectedMode = expectedModeByPreset[agent.session.header.agentPreset]
+      const expectedOverride = expectedMode
+      const lastModeEvent = observation === undefined || observation.modeEvents.length === 0 ? null : observation.modeEvents.at(-1)
+      const lastEventMode = lastModeEvent === null ? undefined : lastModeEvent?.data?.mode
+      const modeEventCount = 1
+      const modeOk = observation !== undefined && observation.override === expectedOverride && observation.effectiveMode === expectedMode && observation.modeEvents.length === modeEventCount && (lastModeEvent === null ? modeEventCount === 0 : lastEventMode === expectedMode)
+      check('组3 ' + scenarioKey + ' ' + roleName + ' 创建后固定mode/override', modeOk, JSON.stringify({ expectedMode, expectedOverride: expectedOverride ?? null, override: observation?.override ?? null, effectiveMode: observation?.effectiveMode ?? null, modeEvents: observation?.modeEvents ?? [] }))
+      console.log('ROLE_SESSION=' + JSON.stringify({ scenario: scenarioKey, mode, defaultSandboxMode, role: roleName, preset: agent.session.header.agentPreset, id: agent.session.header.id, override: observation?.override ?? null, lastMode: observation?.effectiveMode ?? null, lastModeEvent, childModeEvents: observation?.modeEvents ?? [] }))
       const schemas = root.tools.schemas(agent)
       const schemaNames = namesOf(schemas)
+      if (roleName === 'reviewer') check('组4 ' + mode + ' reviewer 工具面不含 write/edit', !schemaNames.includes('write') && !schemaNames.includes('edit'), JSON.stringify(schemaNames))
       const bindingDefinitions = CONTROL_BINDING_NAMES.map((name) => root.tools.get(name, agent))
       const bindingNames = bindingDefinitions.map((definition) => definition === undefined || definition === null ? undefined : definition.name)
       const cordisDefinitions = CORDIS_BINDING_NAMES.map((name) => root.tools.get(name, agent))
@@ -320,8 +386,11 @@ async function runMode(mode) {
   }
 }
 
-await runMode('native')
-await runMode('ptc')
+for (const mode of ['native', 'ptc']) {
+  for (const defaultSandboxMode of ['read-only', 'workspace-write']) {
+    await runMode(mode, defaultSandboxMode)
+  }
+}
 console.log('CONTROL_BINDINGS=四角色 schemas/get/native/PTC SDK 均无 send_message/interrupt_agent；Cordis 两工具 schemas/get 真实存在；真实投递/中断=HUMAN/NOT-RUN；createChild 非 managedActivation')
 console.log('HUMAN 真实 provider/模型行为/GUI/生产 profile/消息投递/中断生命周期: 未核实，不计 PASS；native/PTC SDK 仅完成静态呈现核对')
 console.log('首失败=' + (firstFailure === null ? '无' : firstFailure.label + ' @line ' + String(firstFailure.line)))

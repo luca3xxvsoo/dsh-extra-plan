@@ -124,12 +124,44 @@ const approvalArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label:
 const answer = (labels) => JSON.stringify({ answers: labels.map((l) => ({ id: 'q1', selected: [l] })) })
 
 // ── mock ctx harness（ctx.get 按 name==='tools' 返回注册表） ─────────────
+function makeSession(header, initialEvents = []) {
+  const events = Array.isArray(initialEvents) ? initialEvents.slice() : []
+  const session = {
+    header,
+    mode: undefined,
+    snapshotEvents: () => events,
+    append: (type, data) => {
+      events.push({ type, data })
+      if (type === 'sandbox/mode' && data !== null && typeof data === 'object') session.mode = data.mode
+    },
+  }
+  return session
+}
+function makeToolsRegistry(baseNames) {
+  const definitions = []
+  const names = Array.isArray(baseNames) ? baseNames.slice() : []
+  return {
+    definitions,
+    register: (definition) => definitions.push(definition),
+    schemas: () => names.map((name) => ({ name })).concat(definitions.map((definition) => ({ name: definition.name }))),
+  }
+}
+function makeAgentContext(toolsRegistry) {
+  return { get: (name) => (name === 'tools' ? toolsRegistry : undefined) }
+}
+function makeAgent(header, events, toolsRegistry, options = {}) {
+  return { session: makeSession(header, events), options, ctx: makeAgentContext(toolsRegistry) }
+}
+function modeOf(session) {
+  return session !== null && typeof session === 'object' ? session.mode : undefined
+}
 function makeHarness(config, toolsMock) {
   const listeners = {}
   const variables = []
+  const sandboxPolicy = { defaultMode: 'workspace-write', overrideOf: (session) => modeOf(session) }
   const ctx = {
     systemPrompt: systemPromptMock(variables),
-    get: (name) => (name === 'tools' ? toolsMock : name === 'profileContext' ? { home: isolatedDshHome, installAnchor: CLUE_INSTALL_ANCHOR } : name === 'dshHomePath' ? (...parts) => join(isolatedDshHome, ...parts.map((part) => String(part))) : undefined),
+    get: (name) => (name === 'tools' ? toolsMock : name === 'sandboxPolicy' ? sandboxPolicy : name === 'profileContext' ? { home: isolatedDshHome, installAnchor: CLUE_INSTALL_ANCHOR } : name === 'dshHomePath' ? (...parts) => join(isolatedDshHome, ...parts.map((part) => String(part))) : undefined),
     on: (name, fn) => {
       if (listeners[name] === undefined) listeners[name] = []
       listeners[name].push(fn)
@@ -143,14 +175,25 @@ function makeHarness(config, toolsMock) {
   listeners.variables = variables
   return listeners
 }
-const registered = []
-const toolsMock = { register: (t) => registered.push(t) }
-const agentCtx = { get: (name) => (name === 'tools' ? toolsMock : undefined) }
+const mainRegistry = makeToolsRegistry(['read', 'glob', 'grep', 'write', 'edit'])
+const plannerRegistry = makeToolsRegistry(['read', 'glob', 'grep'])
+const proberRegistry = makeToolsRegistry(['read', 'glob', 'grep'])
+const executorRegistry = makeToolsRegistry(['read', 'glob', 'grep', 'write', 'edit'])
+const reviewerRegistry = makeToolsRegistry(['read', 'glob', 'grep'])
+const registered = mainRegistry.definitions
+const toolsMock = mainRegistry
+const agentCtx = makeAgentContext(mainRegistry)
+const plannerCtx = makeAgentContext(plannerRegistry)
+const proberCtx = makeAgentContext(proberRegistry)
+const executorCtx = makeAgentContext(executorRegistry)
+const reviewerCtx = makeAgentContext(reviewerRegistry)
 const harness = makeHarness({ anchoredBootstrap: false }, toolsMock)
 
-const mainAgent = { session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => [] }, options: {}, ctx: agentCtx }
-const plannerAgent = { session: { header: { id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', agentPreset: 'extra-plan-planner', cwd: 'C:/work' }, snapshotEvents: () => [DESC] }, options: { model: 'deepseek-v4-pro' }, ctx: agentCtx }
-const executorAgent = { session: { header: { id: 'exec-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work' }, snapshotEvents: () => [] }, options: {}, ctx: agentCtx }
+const mainAgent = makeAgent({ id: 'main-1', cwd: 'C:/work' }, [], mainRegistry)
+const plannerAgent = makeAgent({ id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', agentPreset: 'extra-plan-planner', cwd: 'C:/work' }, [DESC], plannerRegistry, { model: 'deepseek-v4-pro' })
+const proberAgent = makeAgent({ id: 'prober-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', agentPreset: 'extra-plan-prober', cwd: 'C:/work' }, [DESC], proberRegistry)
+const executorAgent = makeAgent({ id: 'exec-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', agentPreset: 'extra-plan-executor', cwd: 'C:/work' }, [DESC], executorRegistry)
+const reviewerAgent = makeAgent({ id: 'reviewer-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', agentPreset: 'extra-plan-reviewer', cwd: 'C:/work' }, [DESC], reviewerRegistry)
 
 // 当前宿主注册钩子是 agent/created（serial，载荷 { agent, source }）；
 // 它负责 session-start 阶段的 save_plan/save_probe 注册。
@@ -178,22 +221,45 @@ function preExecute(listeners, agent, name, argumentsObj) {
 }
 
 // ── ① 注册层断言（[任务3]） ─────────────────────────────────────────────
-registered.length = 0
+mainRegistry.definitions.length = 0
 fireAgentCreated(harness, mainAgent)
 await firePreStep(harness, mainAgent)
 await firePreStep(harness, mainAgent) // 幂等：重复触发不重复注册
-check('S1 主会话注册恰一条 save_probe（幂等）', registered.filter((t) => t.name === 'save_probe').length, 1)
-check('S2 主会话注册 save_plan（受限规划工件：与 save_probe 同构的工厂；放行不再按路由判定）', registered.filter((t) => t.name === 'save_plan').length, 1)
+check('S1 主会话注册恰一条 save_probe（幂等）', mainRegistry.definitions.filter((t) => t.name === 'save_probe').length, 1)
+check('S2 主会话注册恰一条 save_plan（受限规划工件；放行不再按路由判定）', mainRegistry.definitions.filter((t) => t.name === 'save_plan').length, 1)
+checkTrue('S1 主会话无角色 sandbox mode', modeOf(mainAgent.session) === undefined)
 
-registered.length = 0
+plannerRegistry.definitions.length = 0
 fireAgentCreated(harness, plannerAgent)
-check('S3 planner 注册恰一条 save_plan', registered.filter((t) => t.name === 'save_plan').length, 1)
-check('S4 planner 不注册 save_probe', registered.filter((t) => t.name === 'save_probe').length, 0)
+await firePreStep(harness, plannerAgent)
+await firePreStep(harness, plannerAgent) // 幂等：重复触发不重复注册
+check('S3 planner 仅注册恰一条 save_plan', plannerRegistry.definitions.filter((t) => t.name === 'save_plan').length, 1)
+check('S4 planner 不注册 save_probe', plannerRegistry.definitions.filter((t) => t.name === 'save_probe').length, 0)
+check('S4 planner 固定宿主 mode', modeOf(plannerAgent.session), 'read-only')
 
-registered.length = 0
+proberRegistry.definitions.length = 0
+fireAgentCreated(harness, proberAgent)
+await firePreStep(harness, proberAgent)
+await firePreStep(harness, proberAgent) // 幂等：重复触发不重复注册
+check('S5 认领 prober 仅注册恰一条 save_probe', proberRegistry.definitions.filter((t) => t.name === 'save_probe').length, 1)
+check('S5 认领 prober 不注册 save_plan', proberRegistry.definitions.filter((t) => t.name === 'save_plan').length, 0)
+check('S5 prober 固定宿主 mode', modeOf(proberAgent.session), 'read-only')
+check('S5 prober 只读 schemas', proberRegistry.schemas().map((tool) => tool.name), ['read', 'glob', 'grep', 'save_probe'])
+
+executorRegistry.definitions.length = 0
 fireAgentCreated(harness, executorAgent)
 await firePreStep(harness, executorAgent)
-check('S5 executor 均不注册（空）', registered.length, 0)
+await firePreStep(harness, executorAgent) // 幂等：重复触发不重复注册
+check('S6 executor 不注册 save 工具', executorRegistry.definitions.length, 0)
+check('S6 executor 固定宿主 mode', modeOf(executorAgent.session), 'workspace-write')
+
+reviewerRegistry.definitions.length = 0
+fireAgentCreated(harness, reviewerAgent)
+await firePreStep(harness, reviewerAgent)
+await firePreStep(harness, reviewerAgent) // 幂等：重复触发不重复注册
+check('S7 reviewer 不注册 save 工具', reviewerRegistry.definitions.length, 0)
+check('S7 reviewer 固定宿主 mode', modeOf(reviewerAgent.session), 'workspace-write')
+checkTrue('S7 各角色 registry 独立', new Set([mainRegistry.definitions, plannerRegistry.definitions, proberRegistry.definitions, executorRegistry.definitions, reviewerRegistry.definitions]).size === 5)
 
 
 // ── ①b 注册失败路径与重试（P0-2/D1：失败不写标记、下一步重试；A/B 记终态） ──
@@ -456,7 +522,7 @@ for (let i = 0; i < DEFAULT_EXPLORE_BUDGET; i += 1) {
   plannerEvents.push(call('read', `r${i}`))
   plannerEvents.push(ok(`r${i}`, 'ok'))
 }
-const exhaustedPlanner = { session: { header: { id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', agentPreset: 'extra-plan-planner', cwd: 'C:/work' }, snapshotEvents: () => plannerEvents }, options: { model: 'deepseek-v4-pro' }, ctx: agentCtx }
+const exhaustedPlanner = { session: makeSession({ id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', agentPreset: 'extra-plan-planner', cwd: 'C:/work' }, plannerEvents), options: { model: 'deepseek-v4-pro' }, ctx: plannerCtx }
 r = preExecute(harness, exhaustedPlanner, 'read', { file_path: 'C:/work/.extra-plan/线索-x-20260816090000.md' })
 checkTrue('S11 预算耗尽后 read 线索文件 → deny（read 线索计入预算，v1 口径）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('探查预算已耗尽'))
 r = preExecute(harness, exhaustedPlanner, 'save_plan', ROUTE_GATE_ARGS)
@@ -467,24 +533,27 @@ for (let i = 0; i < 11; i += 1) {
   plannerEvents11.push(call('read', `q${i}`))
   plannerEvents11.push(ok(`q${i}`, 'ok'))
 }
-const planner11 = { session: { header: { id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', agentPreset: 'extra-plan-planner', cwd: 'C:/work' }, snapshotEvents: () => plannerEvents11 }, options: { model: 'deepseek-v4-pro' }, ctx: agentCtx }
+const planner11 = { session: makeSession({ id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', agentPreset: 'extra-plan-planner', cwd: 'C:/work' }, plannerEvents11), options: { model: 'deepseek-v4-pro' }, ctx: plannerCtx }
 r = preExecute(harness, planner11, 'read', { file_path: 'C:/work/.extra-plan/线索-x-20260816090000.md' })
 checkTrue('S13 第 12 次 read（线索文件）→ allow（11 配对 + 本次 = 12 ≤ DEFAULT_EXPLORE_BUDGET 未超预算）', r !== null && r !== undefined && r.kind === 'allow')
 const plannerEventsWithTransfer = [...plannerEvents, umk('agent-message')]
-const transferredPlanner = { session: { header: { id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', agentPreset: 'extra-plan-planner', cwd: 'C:/work' }, snapshotEvents: () => plannerEventsWithTransfer }, options: { model: 'deepseek-v4-pro' }, ctx: agentCtx }
+const transferredPlanner = { session: makeSession({ id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', agentPreset: 'extra-plan-planner', cwd: 'C:/work' }, plannerEventsWithTransfer), options: { model: 'deepseek-v4-pro' }, ctx: plannerCtx }
 r = preExecute(harness, transferredPlanner, 'read', { file_path: 'C:/work/.extra-plan/线索-x-20260816090000.md' })
 checkTrue('S14 预算耗尽后收到 agent-message 转达 → 预算重置 read allow', r !== null && r !== undefined && r.kind === 'allow')
 
 // ── ④ 执行层冒烟（真实落盘：单次双写/单写 + 失败主动重试，[任务1]） ──
-const smokeMain = { session: { header: { id: 'smoke-main', cwd: 'C:/work' }, snapshotEvents: () => [] }, options: {}, ctx: agentCtx }
-const smokePlanner = { session: { header: { id: 'smoke-planner', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', agentPreset: 'extra-plan-planner', cwd: 'C:/work' }, snapshotEvents: () => [DESC] }, options: { model: 'deepseek-v4-pro' }, ctx: agentCtx }
+const smokeMain = makeAgent({ id: 'smoke-main', cwd: 'C:/work' }, [], mainRegistry)
+const smokePlanner = makeAgent({ id: 'smoke-planner', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', agentPreset: 'extra-plan-planner', cwd: 'C:/work' }, [DESC], plannerRegistry, { model: 'deepseek-v4-pro' })
+const smokeProber = makeAgent({ id: 'smoke-prober', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', agentPreset: 'extra-plan-prober', cwd: 'C:/work' }, [DESC], proberRegistry)
 registered.length = 0
 fireAgentCreated(harness, smokeMain)
-const saveProbeDef = registered.find((t) => t.name === 'save_probe')
 const smokeMainPlanDef = registered.find((t) => t.name === 'save_plan')
-registered.length = 0
+proberRegistry.definitions.length = 0
+fireAgentCreated(harness, smokeProber)
+const saveProbeDef = proberRegistry.definitions.find((t) => t.name === 'save_probe')
+plannerRegistry.definitions.length = 0
 fireAgentCreated(harness, smokePlanner)
-const savePlanDef = registered.find((t) => t.name === 'save_plan')
+const savePlanDef = plannerRegistry.definitions.find((t) => t.name === 'save_plan')
 const smokePlannerPlanDef = savePlanDef
 const g3EvidenceRoot = null
 const g3ResumeRoot = null
@@ -1119,7 +1188,27 @@ try {
   const work = join(tmpRoot, 'work')
   mkdirSync(work, { recursive: true })
   writeFileSync(join(work, 'a.txt'), 'hello', 'utf8')
-  const execFake = (cwd) => ({ agent: { session: { header: { cwd, id: 'smoke-exec-1' } } } })
+  const fakeRole = Object.freeze({
+    executor: { id: 'smoke-exec-1', preset: 'extra-plan-executor', mode: 'workspace-write', schemas: ['read', 'glob', 'grep', 'write', 'edit'] },
+    planner: { id: 'smoke-planner-1', preset: 'extra-plan-planner', mode: 'read-only', schemas: ['read', 'glob', 'grep'] },
+    prober: { id: 'smoke-prober-1', preset: 'extra-plan-prober', mode: 'read-only', schemas: ['read', 'glob', 'grep'] },
+    reviewer: { id: 'smoke-reviewer-1', preset: 'extra-plan-reviewer', mode: 'workspace-write', schemas: ['read', 'glob', 'grep'] },
+  })
+  function runtimeBaseline(session, mode) {
+    if (modeOf(session) === mode) return
+    session.append('sandbox/mode', { mode, source: 'delegation' })
+  }
+  const execFake = (cwd, role = 'executor') => {
+    const selected = fakeRole[role] === undefined ? fakeRole.executor : fakeRole[role]
+    const registry = makeToolsRegistry(selected.schemas)
+    const agent = {
+      session: makeSession({ cwd, id: selected.id, origin: 'subagent', delegationDepth: 1, parentSession: 'main-1', agentPreset: selected.preset }, []),
+      options: {},
+      ctx: makeAgentContext(registry),
+    }
+    runtimeBaseline(agent.session, selected.mode)
+    return { agent }
+  }
   const contextProbeArgs = {
     taskName: 'context',
     fileMap: [{ path: join(work, 'a.txt'), relation: '相关文件' }],
@@ -1156,7 +1245,7 @@ try {
     exclusions: [{ note: '排除说明' }],
     background: [{ topic: '背景', detail: '细节' }],
   }
-  const probeResult = await saveProbeDef.execute(probeRenderArgs, execFake(work))
+  const probeResult = await saveProbeDef.execute(probeRenderArgs, execFake(work, 'prober'))
   checkTrue('S16 save_probe 返回 {path}', probeResult !== null && typeof probeResult === 'object' && typeof probeResult.path === 'string')
   const probeFile = probeResult.path
   checkTrue('S17 线索文件位于 .extra-plan 且命名含 sessionTag/毫秒/pid/序号', typeof probeFile === 'string' && probeFile.includes(join(work, '.extra-plan')) && /线索-smoke-[A-Za-z0-9]+-\d{17}-\d+-\d+\.md$/.test(probeFile))
@@ -1164,7 +1253,7 @@ try {
   checkTrue('S19 落盘后无残留 .tmp/.journal', readdirSync(join(work, '.extra-plan')).every((n) => !n.startsWith('.tmp-') && !n.startsWith('.journal-')))
   const rejectResult = await (async () => {
     try {
-      await saveProbeDef.execute({ taskName: 'bad', fileMap: [{ path: '不存在.md', relation: 'r' }], focusAreas: [], exclusions: [], background: [] }, execFake(work))
+      await saveProbeDef.execute({ taskName: 'bad', fileMap: [{ path: '不存在.md', relation: 'r' }], focusAreas: [], exclusions: [], background: [] }, execFake(work, 'prober'))
       return false
     } catch (error) {
       return String(error.message).includes('不存在')
@@ -1179,7 +1268,7 @@ try {
     getPathContext: () => pathContextForDir(work),
   }).defineSaveProbe()
   for (const badArgs of [null, undefined, {}]) {
-    try { await invalidProbe.execute(badArgs, execFake(work)) } catch {}
+    try { await invalidProbe.execute(badArgs, execFake(work, 'prober')) } catch {}
   }
   checkTrue('S20a 非法 args 先校验且零副作用（atomic/rename/unlink 均为 0）', invalidEffects.atomic === 0)
   const RealDate = globalThis.Date
@@ -1196,7 +1285,7 @@ try {
     globalThis.Date = FixedDate
     baseBefore = saveArtifactBase('sequence', 'session-123456')
     try {
-      await invalidProbe.execute(null, execFake(work))
+      await invalidProbe.execute(null, execFake(work, 'prober'))
     } catch (error) {
       invalidProbeError = error
     }
@@ -1227,7 +1316,7 @@ try {
   writeFileSync(stalePlanTmp, '旧残留-方案')
   writeFileSync(staleCheckTmp, '旧残留-验收')
   const productionFixture = g3FixtureCases.find((entry) => entry[0] === 'G3-E 双任务收尾全局组合')[1]
-  const planResult = await savePlanDef.execute({ plan: productionFixture.plan, checklist: productionFixture.checklist, taskName: 'smoke2' }, execFake(work))
+  const planResult = await savePlanDef.execute({ plan: productionFixture.plan, checklist: productionFixture.checklist, taskName: 'smoke2' }, execFake(work, 'planner'))
   const tsMatch = (p) => (String(p).match(/-[A-Za-z0-9]+-(\d{17})-\d+-\d+\.md$/) || [])[1]
   checkTrue('S21 save_plan 双文件落盘成功（同毫秒 artifact base）', Array.isArray(planResult.paths) && planResult.paths.length === 2 && existsSync(planResult.paths[0]) && existsSync(planResult.paths[1]) && tsMatch(planResult.paths[0]) === tsMatch(planResult.paths[1]))
   check('S21a 合法双任务正文逐字双写', planResult.paths.map((path) => readFileSync(path, 'utf8')), [productionFixture.plan, productionFixture.checklist])
@@ -1398,5 +1487,6 @@ inScenario('f8-retry-new-args', (dir) => {
   check('F8/F9 正常调用无新 journal/tmp', [leftovers(dir), readdirSync(dir).filter((name) => name.startsWith('.journal-'))], [[], ['.journal-old-sentinel.json']])
 })
 
+output.detail('证据范围：mock 注册与普通 Node atomicCommit 仅为本脚本夹具；真实 Host read-only save 及 OS shell/node 阻断均为 NOT-RUN，不计入 PASS。', { always: true })
 output.summary(pass, fail)
 process.exit(fail === 0 ? 0 : 1)

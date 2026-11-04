@@ -316,10 +316,26 @@ function makeHarness(config = {}) {
   const listeners = {}
   const variables = []
   const systemPrompt = { variable: (name, provider) => { variables.push({ name, provider }); return () => {} } }
+  const sandboxPolicy = {
+    overrideOf: (session) => {
+      if (session === undefined || session === null || typeof session.snapshotEvents !== 'function') return undefined
+      let events
+      try { events = session.snapshotEvents() } catch (error) { return undefined }
+      if (!Array.isArray(events)) return undefined
+      for (let i = events.length - 1; i >= 0; i -= 1) {
+        const event = events[i]
+        if (event === null || typeof event !== 'object' || event.type !== 'sandbox/mode') continue
+        const data = event.data
+        if (data !== null && typeof data === 'object' && typeof data.mode === 'string') return data.mode
+      }
+      return undefined
+    },
+  }
   const ctx = {
     systemPrompt,
     get: (name) => {
       if (name === 'systemPrompt') return systemPrompt
+      if (name === 'sandboxPolicy') return sandboxPolicy
       // 服务名换代：codeRuntime → ptcRuntime（SDK renderer 语言来源）。
       if (name === 'ptcRuntime') return { language: typeof config.language === 'string' ? config.language : 'typescript' }
       // 四工具治理（v0.4.0）：agents 服务 mock——缺省不注入（undefined，保持
@@ -351,17 +367,35 @@ const harnessCatchOn = makeHarness({ runcodeCatchGate: true })
 const harnessAgents = makeHarness({ anchoredBootstrap: false, agents: { get: (id) => (id === '3a7c1e5b-9d2f-4e8a-b6c4-1f0e9d8c7b6a' || id === 'session-x') ? { status: 'running' } : undefined } })
 const harnessAgentsIdle = makeHarness({ anchoredBootstrap: false, agents: { get: () => ({ status: 'idle' }) } })
 
-const childAgent = (id) => ({
-  session: {
-    header: { id, origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work', agentPreset: 'extra-plan-executor' },
-    snapshotEvents: () => [],
-    append: () => {},
-  },
+const makeRouteSession = (header, events = []) => {
+  const sourceEvents = typeof events === 'function' ? events : () => (Array.isArray(events) ? events : [])
+  const appendedEvents = []
+  return {
+    header,
+    snapshotEvents: () => {
+      const original = sourceEvents()
+      return (Array.isArray(original) ? original : []).concat(appendedEvents)
+    },
+    append: (type, data) => {
+      appendedEvents.push({ type, data })
+    },
+  }
+}
+const childAgent = (id, preset = 'extra-plan-executor', events = [], headerOverrides = {}) => ({
+  session: makeRouteSession({
+    id,
+    origin: 'subagent',
+    delegationDepth: 1,
+    parentSession: 'parent-1',
+    cwd: 'C:/work',
+    agentPreset: preset,
+    ...headerOverrides,
+  }, events),
   options: {},
   ctx: undefined,
 })
 const mainAgent = {
-  session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => [] },
+  session: makeRouteSession({ id: 'main-1', cwd: 'C:/work' }),
   options: {},
   ctx: undefined,
 }
@@ -374,9 +408,8 @@ const mainAgent = {
 const DESC = { type: 'subagent/descriptor', data: { mode: 'continuable' } }
 
 const plannerAgent = {
-  session: { header: { id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work', agentPreset: PLANNER_PRESET }, snapshotEvents: () => [DESC] },
+  ...childAgent('planner-1', PLANNER_PRESET, () => [DESC]),
   options: { model: 'deepseek-v4-pro' },
-  ctx: undefined,
 }
 
 async function runWaterfall(listeners, name, payload, terminal) {
@@ -418,7 +451,7 @@ function emitClaimed(listeners, agent, message) {
 }
 
 // 只读目录（reviewer 类）：pwsh 写 → deny；pwsh 只读 → 放行；write/edit → deny
-const reviewer = childAgent('reviewer-1')
+const reviewer = childAgent('reviewer-1', 'extra-plan-reviewer')
 await assemble(harness, reviewer, [{ name: 'read' }, { name: 'glob' }, { name: 'grep' }, { name: 'pwsh' }])
 // 拒句不复制文案：14 个只读角色格按各断言点的实际入参由 shellMutationReason 派生；
 // 5 个主会话格按 none/plan/approved 三态由 mainGateReason 派生（shell 分支与 shellMutationReason 共用 withShellEvidence）。
@@ -598,8 +631,8 @@ const mainWithEvents = (events) => ({ session: { header: { id: 'main-1', cwd: 'C
   const concurrentHarness = makeHarness({ anchoredBootstrap: false, exploreBudget: concurrentExploreBudget })
   const plannerAEvents = [DESC, umE(), ...Array.from({ length: 8 }, (_, i) => [callE('read', 'pa-' + i), okE('pa-' + i, 'ok')]).flat()]
   const plannerBEvents = [DESC, umE()]
-  const plannerA = { session: { header: { id: 'planner-A', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work', agentPreset: PLANNER_PRESET }, snapshotEvents: () => plannerAEvents }, options: { model: 'deepseek-v4-pro' }, ctx: undefined }
-  const plannerB = { session: { header: { id: 'planner-B', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work', agentPreset: PLANNER_PRESET }, snapshotEvents: () => plannerBEvents }, options: { model: 'deepseek-v4-pro' }, ctx: undefined }
+  const plannerA = { ...childAgent('planner-A', PLANNER_PRESET, () => plannerAEvents), options: { model: 'deepseek-v4-pro' } }
+  const plannerB = { ...childAgent('planner-B', PLANNER_PRESET, () => plannerBEvents), options: { model: 'deepseek-v4-pro' } }
   const makeDeferred = () => { let resolve; const promise = new Promise((done) => { resolve = done }); return { promise, resolve } }
   const gateA = makeDeferred()
   const gateB = makeDeferred()
@@ -657,11 +690,8 @@ checkTrue('R21 主会话 plan+clarified 态 subagent_probe(run_in_background: tr
 
 // probe 子会话（parentSession=main-1，真实工具集含 save_probe）：write → probe 文案 deny；
 // pwsh 只读 → 放行；save_probe → 放行（child 分支不拦）
-const probeAgent = {
-  session: { header: { id: 'probe-1', origin: 'subagent', delegationDepth: 1, parentSession: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => [] },
-  options: {},
-  ctx: { get: (n) => (n === 'tools' ? { schemas: () => [{ name: 'read' }, { name: 'glob' }, { name: 'grep' }, { name: 'pwsh' }, { name: 'save_probe' }] } : undefined) },
-}
+const probeAgent = childAgent('probe-1', 'extra-plan-prober', [], { parentSession: 'main-1' })
+probeAgent.ctx = { get: (n) => (n === 'tools' ? { schemas: () => [{ name: 'read' }, { name: 'glob' }, { name: 'grep' }, { name: 'pwsh' }, { name: 'save_probe' }] } : undefined) }
 await assemble(harness, probeAgent, [{ name: 'read' }, { name: 'glob' }, { name: 'grep' }, { name: 'pwsh' }, { name: 'save_probe' }])
 r = preExecute(harness, probeAgent, 'write', {})
 checkTrue('R15 probe 会话 write → deny 且文案含「探查者只读」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('探查者只读'))
@@ -671,6 +701,95 @@ r = preExecute(harness, probeAgent, 'pwsh', { command: 'cmd.exe /C "del x.txt"' 
 checkTrue('R16a probe 会话 pwsh cmd.exe /C 写 → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('探查者只读'))
 r = preExecute(harness, probeAgent, 'save_probe', { fileMap: [], focusAreas: [], exclusions: [], background: [] })
 checkTrue('R17 probe 会话 save_probe → 放行', r !== null && r !== undefined && r.kind === 'allow')
+
+const g3RunCreated = async (listeners, agent) => {
+  const entry = listeners['agent/created']
+  if (entry === undefined || entry.length === 0) throw new Error('agent/created 监听器未注册')
+  for (const listener of entry) await listener({ agent, source: 'startup' })
+}
+const g3RoleCases = [
+  ['executor', 'extra-plan-executor', 'workspace-write'],
+  ['planner', 'extra-plan-planner', 'read-only'],
+  ['reviewer', 'extra-plan-reviewer', 'workspace-write'],
+  ['prober', 'extra-plan-prober', 'read-only'],
+]
+const g3RoleHarness = makeHarness({ anchoredBootstrap: false })
+const g3MainSnapshot = mainAgent.session.snapshotEvents()
+const g3OtherChild = childAgent('g3-other-child')
+const g3OtherChildSnapshot = g3OtherChild.session.snapshotEvents()
+for (const [roleName, preset, expectedMode] of g3RoleCases) {
+  const firstPreStepAgent = childAgent('g3-first-pre-step-' + roleName, preset)
+  const firstPreStepBefore = firstPreStepAgent.session.snapshotEvents()
+  let firstPreStepNextCalls = 0
+  let firstPreStepNextSnapshot = null
+  const firstPreStepResult = await runWaterfall(g3RoleHarness, 'agent/pre-step', { agent: firstPreStepAgent }, async () => {
+    firstPreStepNextCalls += 1
+    firstPreStepNextSnapshot = firstPreStepAgent.session.snapshotEvents()
+    return { kind: 'enter', messages: [] }
+  })
+  const firstPreStepModes = firstPreStepAgent.session.snapshotEvents().filter((event) => event !== null && typeof event === 'object' && event.type === 'sandbox/mode')
+  checkTrue('M10 ' + roleName + ' 未created首次pre-step直接绑定mode=' + expectedMode + '且next=1', firstPreStepBefore.length === 0 && firstPreStepResult !== null && firstPreStepResult.kind === 'enter' && firstPreStepNextCalls === 1 && firstPreStepNextSnapshot !== null && firstPreStepNextSnapshot.some((event) => event !== null && typeof event === 'object' && event.type === 'sandbox/mode' && event.data.mode === expectedMode && event.data.source === 'delegation') && firstPreStepModes.length === 1 && firstPreStepModes[0].data.mode === expectedMode && firstPreStepModes[0].data.source === 'delegation')
+
+  const firstPreExecuteAgent = childAgent('g3-first-pre-execute-' + roleName, preset)
+  const firstPreExecuteBefore = firstPreExecuteAgent.session.snapshotEvents()
+  let firstPreExecuteNextCalls = 0
+  let firstPreExecuteNextSnapshot = null
+  const firstPreExecuteResult = preExecute(g3RoleHarness, firstPreExecuteAgent, 'read', {}, undefined, () => { firstPreExecuteNextCalls += 1; firstPreExecuteNextSnapshot = firstPreExecuteAgent.session.snapshotEvents(); return { kind: 'allow' } })
+  const firstPreExecuteModes = firstPreExecuteAgent.session.snapshotEvents().filter((event) => event !== null && typeof event === 'object' && event.type === 'sandbox/mode')
+  checkTrue('M10 ' + roleName + ' 未created/pre-step首次pre-execute直接绑定mode=' + expectedMode + '且原read gate/next保持', firstPreExecuteBefore.length === 0 && firstPreExecuteResult !== null && firstPreExecuteResult.kind === 'allow' && firstPreExecuteNextCalls === 1 && firstPreExecuteNextSnapshot !== null && firstPreExecuteNextSnapshot.some((event) => event !== null && typeof event === 'object' && event.type === 'sandbox/mode' && event.data.mode === expectedMode && event.data.source === 'delegation') && firstPreExecuteModes.length === 1 && firstPreExecuteModes[0].data.mode === expectedMode && firstPreExecuteModes[0].data.source === 'delegation')
+
+  const agent = childAgent('g3-mode-' + roleName, preset)
+  const before = agent.session.snapshotEvents()
+  await g3RunCreated(g3RoleHarness, agent)
+  const afterCreated = agent.session.snapshotEvents()
+  const createdModes = afterCreated.filter((event) => event !== null && typeof event === 'object' && event.type === 'sandbox/mode')
+  let nextCalls = 0
+  let nextSnapshot = null
+  await runWaterfall(g3RoleHarness, 'agent/pre-step', { agent }, async () => {
+    nextCalls += 1
+    nextSnapshot = agent.session.snapshotEvents()
+    return { kind: 'enter', messages: [] }
+  })
+  const afterStep = agent.session.snapshotEvents()
+  const stepModeCount = afterStep.filter((event) => event !== null && typeof event === 'object' && event.type === 'sandbox/mode').length
+  let repeatNextCalls = 0
+  await runWaterfall(g3RoleHarness, 'agent/pre-step', { agent }, async () => { repeatNextCalls += 1; return { kind: 'enter', messages: [] } })
+  const afterRepeat = agent.session.snapshotEvents()
+  const repeatModeCount = afterRepeat.filter((event) => event !== null && typeof event === 'object' && event.type === 'sandbox/mode').length
+  let executeNextCalls = 0
+  const executeResult = preExecute(g3RoleHarness, agent, 'read', {}, undefined, () => { executeNextCalls += 1; return { kind: 'allow' } })
+  const afterExecute = agent.session.snapshotEvents()
+  const executeModes = afterExecute.filter((event) => event !== null && typeof event === 'object' && event.type === 'sandbox/mode')
+  checkTrue('M10 ' + roleName + ' created→pre-step 前 mode=' + expectedMode + ' 且next前已绑定', before.length === 0 && createdModes.length === 1 && createdModes[0].data.mode === expectedMode && createdModes[0].data.source === 'delegation' && nextSnapshot !== null && nextSnapshot.some((event) => event !== null && typeof event === 'object' && event.type === 'sandbox/mode' && event.data.mode === expectedMode) && nextCalls === 1 && stepModeCount === 1)
+  checkTrue('M10 ' + roleName + ' 重复pre-step/pre-execute幂等且本session append仅一次', repeatNextCalls === 1 && repeatModeCount === 1 && executeResult !== null && executeResult.kind === 'allow' && executeNextCalls === 1 && executeModes.length === 1 && executeModes[0].data.mode === expectedMode)
+  checkTrue('M10 ' + roleName + ' 非目标主/另一child快照不变', isDeepStrictEqual(mainAgent.session.snapshotEvents(), g3MainSnapshot) && isDeepStrictEqual(g3OtherChild.session.snapshotEvents(), g3OtherChildSnapshot))
+}
+
+const g3ReviewerSchemas = [{ name: 'read' }, { name: 'glob' }, { name: 'grep' }, { name: 'pwsh' }]
+const g3ReviewerBaseline = childAgent('g3-reviewer-baseline', 'extra-plan-unknown')
+await assemble(g3RoleHarness, g3ReviewerBaseline, g3ReviewerSchemas)
+const g3ReviewerMode = childAgent('g3-reviewer-workspace', 'extra-plan-reviewer')
+await assemble(g3RoleHarness, g3ReviewerMode, g3ReviewerSchemas)
+await g3RunCreated(g3RoleHarness, g3ReviewerMode)
+const g3ReviewerModeEvents = g3ReviewerMode.session.snapshotEvents().filter((event) => event !== null && typeof event === 'object' && event.type === 'sandbox/mode')
+const g3ReviewerGateCases = [
+  ['write', {}, '模型write'],
+  ['edit', {}, '模型edit'],
+  ['pwsh', { command: 'New-Item g3-reviewer.txt' }, 'shell mutation'],
+  ['send_message', { agent_id: 'parent', message: 'hi' }, 'control'],
+  ['run_code', { code: "await tools.send_message({ agent_id: 'parent', message: 'hi' })", description: 'reviewer control member' }, 'run_code member'],
+]
+const g3RunGateCase = (agent, name, argumentsObj) => {
+  let nextCount = 0
+  const result = preExecute(g3RoleHarness, agent, name, argumentsObj, undefined, () => { nextCount += 1; return { kind: 'allow' } })
+  return { result, nextCount }
+}
+for (const [name, argumentsObj, label] of g3ReviewerGateCases) {
+  const baseline = g3RunGateCase(g3ReviewerBaseline, name, argumentsObj)
+  const reviewerResult = g3RunGateCase(g3ReviewerMode, name, argumentsObj)
+  checkTrue('M10 reviewer mode=workspace-write 仍拒绝' + label + '、next=0且原reason不变', baseline.result !== null && baseline.result.kind === 'deny' && reviewerResult.result !== null && reviewerResult.result.kind === 'deny' && baseline.nextCount === 0 && reviewerResult.nextCount === 0 && String(reviewerResult.result.reason) === String(baseline.result.reason))
+}
+checkTrue('M10 reviewer workspace-write mode事件来自独立session且仅一次', g3ReviewerModeEvents.length === 1 && g3ReviewerModeEvents[0].data.mode === 'workspace-write' && g3ReviewerModeEvents[0].data.source === 'delegation')
 
 // ── ⑤b 真实工具集判定（方案B：ptc 折叠误判修复；T1-T8） ──────────────────
 // 子代理夹具工厂：目录与真实工具集（tools.schemas）双信号；schemas 不可得时回落目录判定。
@@ -1088,9 +1207,8 @@ checkTrue('R51 主会话 none 态 run_code（code 含显式 tools.write）→ de
 // 预算耗尽场景：DEFAULT_EXPLORE_BUDGET 组成功配对 = 已用满额（修复A 成功配对口径；预算耗尽后 run_code 组判定仅放行全 FREE_TOOLS 白名单组）。
 const budgetEvents = [DESC, ...Array.from({ length: DEFAULT_EXPLORE_BUDGET }, (_, i) => [callE('read', 'b' + i), okE('b' + i, 'ok')]).flat()]
 const budgetPlanner = {
-  session: { header: { id: 'planner-budget', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work', agentPreset: PLANNER_PRESET }, snapshotEvents: () => budgetEvents },
+  ...childAgent('planner-budget', PLANNER_PRESET, () => budgetEvents),
   options: { model: 'deepseek-v4-pro' },
-  ctx: undefined,
 }
 // 预算耗尽拒句由 lib 派生：已用数取 events 实测口径（toolCallsSinceUser），预算取插件 Config 默认（DEFAULT_EXPLORE_BUDGET）。
 const budgetUsedCalls = decisions.toolCallsSinceUser(budgetEvents, decisions.FREE_TOOLS)
@@ -1240,9 +1358,8 @@ checkTrue('T3-5 主会话 approved 态 save_plan → allow', r !== null && r !==
 // planner 身份由 header.agentPreset 精确判定，descriptor.mode 不再承担角色判据；
 // 三态各锁一次，确认在隔离夹具中拒绝不依赖 route（闸门只看 isPlanner）。
 const plannerWithEvents = (events) => ({
-  session: { header: { id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work', agentPreset: PLANNER_PRESET }, snapshotEvents: () => [DESC, ...events] },
+  ...childAgent('planner-1', PLANNER_PRESET, () => [DESC, ...events]),
   options: { model: 'deepseek-v4-pro' },
-  ctx: undefined,
 })
 const plannerProbeStates = [
   ['T5-1 planner none 态', plannerWithEvents([])],
@@ -1260,7 +1377,7 @@ r = preExecute(harness, plannerAgent, 'run_code', nestedProbeGroupCode)
 checkTrue('T5-5 planner 经 run_code 组内调用 subagent_probe 成员 → 聚合拒绝（含「仅主会话可用」与「申请继续探查」）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('run_code 拆解预审未通过') && String(r.reason).includes('仅主会话可用') && String(r.reason).includes('申请继续探查'))
 r = preExecute(harness, noneMain, 'run_code', nestedProbeGroupCode)
 checkTrue('T5-6 主会话 none 态 run_code 组内 subagent_probe → 仍放行（禁令只针对 planner）', r !== null && r !== undefined && r.kind === 'allow')
-const childProbeGate = childAgent('child-probe-gate')
+const childProbeGate = childAgent('child-probe-gate', 'extra-plan-prober')
 await assemble(harness, childProbeGate, [{ name: 'read' }, { name: 'glob' }, { name: 'save_probe' }])
 r = preExecute(harness, childProbeGate, 'subagent_probe', { run_in_background: true })
 checkTrue('T5-7 非 planner child 直呼 subagent_probe → 第二道防线拒绝且保持只读角色文案', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('只读子代理不得委派探查者'))

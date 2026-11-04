@@ -81,7 +81,6 @@ const {
   approvalDenyReason,
   isSubagentChild,
   isLiveDelegation,
-  childPolicyNeedsFloor,
   isBootstrapPhase,
   pwshCommandOf,
   pwshMutationMatches,
@@ -452,7 +451,8 @@ check('planner budgetNoticeText 与 decisions 严格同一绑定', plugin.decisi
 check('planner DEFAULT_EXPLORE_BUDGET 来自生成模块且为 18', plannerBudget.DEFAULT_EXPLORE_BUDGET === GENERATED_DEFAULT_EXPLORE_BUDGET, true)
 check('生成默认值当前为 18', GENERATED_DEFAULT_EXPLORE_BUDGET, 18)
 check('agent runtime isLiveDelegation 与 decisions 严格同一绑定', plugin.decisions.isLiveDelegation === agentRuntime.isLiveDelegation, true)
-check('agent runtime childPolicyNeedsFloor 与 decisions 严格同一绑定', plugin.decisions.childPolicyNeedsFloor === agentRuntime.childPolicyNeedsFloor, true)
+checkTrue('agent runtime 不再导出 childPolicyNeedsFloor', !Object.hasOwn(agentRuntime, 'childPolicyNeedsFloor'))
+checkTrue('decisions 不再导出 childPolicyNeedsFloor', !Object.hasOwn(plugin.decisions, 'childPolicyNeedsFloor'))
 check('runtime-static causeChainOf 按显式 depth 截断', runtimeStatic.causeChainOf({ name: 'A', message: 'a', cause: { name: 'B', message: 'b' } }, 1).length, 1)
 
 // ── CFG 系列：主插件 loader Config 真实导入、默认值与边界 ────────────────
@@ -961,11 +961,6 @@ for (const [name, agent, agents, expected] of D) {
   check(name, isSubagentChild(agent) && isLiveDelegation(agent, agents), expected)
 }
 
-// ── 沙箱下限 ───────────────────────────────────────────────────────────
-const sp = (override, defaultMode) => ({ overrideOf: () => override, defaultMode })
-check('FLOOR1 会话级 read-only → 抬升', childPolicyNeedsFloor({}, sp('read-only', 'workspace-write')), true)
-check('FLOOR2 部署默认 read-only → 抬升', childPolicyNeedsFloor({}, sp(undefined, 'read-only')), true)
-check('FLOOR3 workspace-write → 不动', childPolicyNeedsFloor({}, sp(undefined, 'workspace-write')), false)
 
 // ── AR 系列:createAgentRuntime usage context 矩阵、缓存、快照与同步 fold ─────
 // 口径：main 与五类 child 分开记录精确 preset/role；root 只沿 live registry 追溯，最多 8 层并拒绝断链、循环与自指。
@@ -1044,28 +1039,327 @@ checkTrue('AR-chain 断链：自身/父保留，root 为空', arBrokenContext.se
 checkTrue('AR-chain 自身父链：不把自身伪造为root', arSelfContext.sessionId === 'ar-self' && arSelfContext.parentSessionId === 'ar-self' && arSelfContext.rootSessionId === '')
 checkTrue('AR-chain 循环父链：不把循环节点伪造为root', arCycleContext.sessionId === 'ar-cycle-a' && arCycleContext.parentSessionId === 'ar-cycle-b' && arCycleContext.rootSessionId === '')
 
-// 既有 gate/floor 不变量：live child 才抬升 floor；断链 child 仍可折叠上下文但不抬升；main 永不抬升。
-const arGateMain = arAgent({ id: 'ar-gate-main', preset: '' })
-const arGateChild = arAgent({ id: 'ar-gate-child', child: true, parentSession: 'ar-gate-main', preset: 'extra-plan-executor', depth: 1 })
-const arGateBroken = arAgent({ id: 'ar-gate-broken', child: true, parentSession: 'ar-gate-missing', preset: 'extra-plan-executor', depth: 1 })
-const arGateRegistry = new Map([['ar-gate-main', arGateMain]])
-const arGateFold = []
-const arGateFloor = []
-const arGateWarnings = []
-const arGateRuntime = agentRuntime.createAgentRuntime({
-  getAgents: () => ({ get: (id) => arGateRegistry.get(id) }),
-  sandboxPolicy: { overrideOf: () => 'read-only', defaultMode: 'workspace-write' },
-  foldUsage: (_agent, context) => arGateFold.push(context),
-  warn: (message) => arGateWarnings.push(message),
+// ── 宿主 mode：独立四角色 oracle 与本 Session 48 格矩阵（mock） ─────────
+const CHILD_MODE_ORACLE = Object.freeze([
+  Object.freeze({ role: 'planner', preset: 'extra-plan-planner', mode: 'read-only' }),
+  Object.freeze({ role: 'prober', preset: 'extra-plan-prober', mode: 'read-only' }),
+  Object.freeze({ role: 'executor', preset: 'extra-plan-executor', mode: 'workspace-write' }),
+  Object.freeze({ role: 'reviewer', preset: 'extra-plan-reviewer', mode: 'workspace-write' }),
+])
+const MODE_PARENT_MODES = Object.freeze(['read-only', 'workspace-write'])
+const MODE_DEFAULT_MODES = Object.freeze(['read-only', 'workspace-write'])
+const MODE_CHILD_OVERRIDES = Object.freeze([
+  Object.freeze({ label: 'missing', value: undefined }),
+  Object.freeze({ label: 'read-only', value: 'read-only' }),
+  Object.freeze({ label: 'workspace-write', value: 'workspace-write' }),
+])
+const setModeSpy = (session, snapshot) => {
+  session.append = (channel, payload) => {
+    snapshot.push([channel, payload])
+    session.currentMode = payload !== null && typeof payload === 'object' ? payload.mode : undefined
+  }
+}
+const modeMatrixEvidence = []
+for (const role of CHILD_MODE_ORACLE) {
+  for (const parentMode of MODE_PARENT_MODES) {
+    for (const defaultMode of MODE_DEFAULT_MODES) {
+      for (const overrideSpec of MODE_CHILD_OVERRIDES) {
+        const index = modeMatrixEvidence.length + 1
+        const parent = arAgent({ id: 'mode-parent-' + String(index), preset: '' })
+        parent.session.currentMode = parentMode
+        const child = arAgent({
+          id: 'mode-child-' + String(index),
+          child: true,
+          parentSession: parent.session.header.id,
+          preset: role.preset,
+          depth: 1,
+        })
+        const childSession = child.session
+        childSession.currentMode = overrideSpec.value
+        const snapshot = []
+        setModeSpy(childSession, snapshot)
+        let overrideCalls = 0
+        const modeAgents = new Map([
+          [parent.session.header.id, parent],
+          [childSession.header.id, child],
+        ])
+        const runtime = agentRuntime.createAgentRuntime({
+          getAgents: () => ({ get: (id) => modeAgents.get(id) }),
+          sandboxPolicy: {
+            parentMode,
+            defaultMode,
+            overrideOf: (session) => {
+              overrideCalls += 1
+              return session.currentMode
+            },
+          },
+          foldUsage: () => {},
+          warn: () => {},
+        })
+        const runBaseline = () => runtime.childBaseline(child, [])
+        const firstBefore = snapshot.length
+        const firstChild = runBaseline()
+        const firstCount = snapshot.length - firstBefore
+        const repeatBefore = snapshot.length
+        const repeatChild = runBaseline()
+        const repeatCount = snapshot.length - repeatBefore
+        const driftMode = role.mode === 'read-only' ? 'workspace-write' : 'read-only'
+        childSession.currentMode = driftMode
+        const driftBefore = snapshot.length
+        const driftChild = runBaseline()
+        const driftRepairCount = snapshot.length - driftBefore
+        const afterRepairBefore = snapshot.length
+        const afterRepairChild = runBaseline()
+        const afterRepairCount = snapshot.length - afterRepairBefore
+        const expectedFirstCount = overrideSpec.value === role.mode ? 0 : 1
+        const expectedSnapshot = Array.from({ length: expectedFirstCount + 1 }, () => ['sandbox/mode', { mode: role.mode, source: 'delegation' }])
+        const evidence = {
+          input: {
+            role: role.role,
+            preset: role.preset,
+            parentMode,
+            defaultMode,
+            childOverride: overrideSpec.label,
+            initialSessionMode: overrideSpec.value === undefined ? null : overrideSpec.value,
+          },
+          target: role.mode,
+          counts: {
+            first: firstCount,
+            repeat: repeatCount,
+            driftRepair: driftRepairCount,
+            afterRepair: afterRepairCount,
+            overrideCalls,
+          },
+          snapshot,
+        }
+        modeMatrixEvidence.push(evidence)
+        console.log('MOCK AR-mode grid ' + JSON.stringify(evidence))
+        checkTrue(
+          'AR-mode 48格 #' + String(index) + ' 本Session目标/幂等/漂移/source正确',
+          firstChild === true &&
+            repeatChild === true &&
+            driftChild === true &&
+            afterRepairChild === true &&
+            firstCount === expectedFirstCount &&
+            repeatCount === 0 &&
+            driftRepairCount === 1 &&
+            afterRepairCount === 0 &&
+            overrideCalls === 4 &&
+            childSession.currentMode === role.mode &&
+            isDeepStrictEqual(snapshot, expectedSnapshot),
+        )
+      }
+    }
+  }
+}
+check('AR-mode 48格全部到达', modeMatrixEvidence.length, 48)
+checkTrue(
+  'AR-mode 目标只随独立四角色oracle变化，不随父/default变化',
+  modeMatrixEvidence.every((evidence) => {
+    const role = CHILD_MODE_ORACLE.find((item) => item.role === evidence.input.role)
+    return role !== undefined && evidence.target === role.mode
+  }),
+)
+
+const noServiceEvidence = []
+for (const role of CHILD_MODE_ORACLE) {
+  const parent = arAgent({ id: 'mode-noservice-parent-' + role.role, preset: '' })
+  const child = arAgent({ id: 'mode-noservice-' + role.role, child: true, parentSession: parent.session.header.id, preset: role.preset, depth: 1 })
+  const snapshot = []
+  setModeSpy(child.session, snapshot)
+  const folds = []
+  const registry = new Map([[parent.session.header.id, parent], [child.session.header.id, child]])
+  const runtime = agentRuntime.createAgentRuntime({
+    getAgents: () => ({ get: (id) => registry.get(id) }),
+    foldUsage: (_agent, context) => folds.push(context),
+    warn: () => {},
+  })
+  const childResult = runtime.childBaseline(child, [])
+  const evidence = {
+    input: { role: role.role, service: 'missing' },
+    target: role.mode,
+    counts: { append: snapshot.length, fold: folds.length },
+    snapshot,
+  }
+  noServiceEvidence.push(evidence)
+  console.log('MOCK AR-mode no-service ' + JSON.stringify(evidence))
+  checkTrue(
+    'AR-mode 无service仍绑定 ' + role.role,
+    childResult === true &&
+      folds.length === 1 &&
+      folds[0].role === role.role &&
+      isDeepStrictEqual(snapshot, [['sandbox/mode', { mode: role.mode, source: 'delegation' }]]),
+  )
+}
+
+const runModeRejectCase = (label, agent, registry, expectedChild, expectedRole, expectedWarnings) => {
+  const snapshot = []
+  setModeSpy(agent.session, snapshot)
+  const folds = []
+  const warnings = []
+  let overrideCalls = 0
+  const runtime = agentRuntime.createAgentRuntime({
+    getAgents: () => ({ get: (id) => registry.get(id) }),
+    sandboxPolicy: {
+      defaultMode: 'workspace-write',
+      overrideOf: (session) => {
+        overrideCalls += 1
+        return session.currentMode
+      },
+    },
+    foldUsage: (_agent, context) => folds.push(context),
+    warn: (message) => warnings.push(message),
+  })
+  const first = runtime.childBaseline(agent, [])
+  const second = runtime.childBaseline(agent, [])
+  const headerPreset = agent.session.header.agentPreset
+  const evidence = {
+    input: { case: label, preset: headerPreset === undefined ? null : headerPreset },
+    target: null,
+    counts: { firstChild: first, secondChild: second, overrideCalls, fold: folds.length, warnings: warnings.length },
+    snapshot,
+  }
+  console.log('MOCK AR-mode reject ' + JSON.stringify(evidence))
+  checkTrue(
+    'AR-mode ' + label + ' 不写入且次数/child/fold/warn保持',
+    first === expectedChild &&
+      second === expectedChild &&
+      overrideCalls === 0 &&
+      snapshot.length === 0 &&
+      folds.length === 2 &&
+      folds.every((context) => context.role === expectedRole) &&
+      warnings.length === expectedWarnings,
+  )
+}
+
+const modeMain = arAgent({ id: 'mode-reject-main', preset: 'extra-plan-executor' })
+runModeRejectCase('main', modeMain, new Map([[modeMain.session.header.id, modeMain]]), false, 'main', 0)
+const modeBroken = arAgent({ id: 'mode-reject-broken', child: true, parentSession: 'mode-reject-missing-parent', preset: 'extra-plan-executor', depth: 1 })
+runModeRejectCase('broken-chain', modeBroken, new Map(), false, 'executor', 1)
+const modeUnknownParent = arAgent({ id: 'mode-reject-unknown-parent', preset: '' })
+const modeUnknown = arAgent({ id: 'mode-reject-unknown', child: true, parentSession: modeUnknownParent.session.header.id, preset: 'extra-plan-unknown', depth: 1 })
+runModeRejectCase('unknown', modeUnknown, new Map([[modeUnknownParent.session.header.id, modeUnknownParent], [modeUnknown.session.header.id, modeUnknown]]), true, 'child', 0)
+const modeMissingParent = arAgent({ id: 'mode-reject-missing-preset-parent', preset: '' })
+const modeMissing = arAgent({ id: 'mode-reject-missing-preset', child: true, parentSession: modeMissingParent.session.header.id, preset: '', depth: 1 })
+delete modeMissing.session.header.agentPreset
+runModeRejectCase('missing-preset', modeMissing, new Map([[modeMissingParent.session.header.id, modeMissingParent], [modeMissing.session.header.id, modeMissing]]), true, 'child', 0)
+const modeNonStringParent = arAgent({ id: 'mode-reject-non-string-parent', preset: '' })
+const modeNonString = arAgent({ id: 'mode-reject-non-string', child: true, parentSession: modeNonStringParent.session.header.id, preset: '', depth: 1 })
+modeNonString.session.header.agentPreset = 42
+runModeRejectCase('non-string-preset', modeNonString, new Map([[modeNonStringParent.session.header.id, modeNonStringParent], [modeNonString.session.header.id, modeNonString]]), true, 'child', 0)
+const modePrototypeParent = arAgent({ id: 'mode-reject-prototype-parent', preset: '' })
+const modePrototype = arAgent({ id: 'mode-reject-prototype', child: true, parentSession: modePrototypeParent.session.header.id, preset: '', depth: 1 })
+modePrototype.session.header.agentPreset = 'toString'
+runModeRejectCase('prototype-preset', modePrototype, new Map([[modePrototypeParent.session.header.id, modePrototypeParent], [modePrototype.session.header.id, modePrototype]]), true, 'child', 0)
+
+const modeIsolationMain = arAgent({ id: 'mode-isolation-main', preset: '' })
+const modeIsolationExecutor = arAgent({ id: 'mode-isolation-executor', child: true, parentSession: modeIsolationMain.session.header.id, preset: 'extra-plan-executor', depth: 1 })
+const modeIsolationPlanner = arAgent({ id: 'mode-isolation-planner', child: true, parentSession: modeIsolationMain.session.header.id, preset: 'extra-plan-planner', depth: 1 })
+modeIsolationMain.session.currentMode = 'read-only'
+modeIsolationExecutor.session.currentMode = 'read-only'
+modeIsolationPlanner.session.currentMode = 'workspace-write'
+const modeIsolationMainSnapshot = []
+const modeIsolationExecutorSnapshot = []
+const modeIsolationPlannerSnapshot = []
+setModeSpy(modeIsolationMain.session, modeIsolationMainSnapshot)
+setModeSpy(modeIsolationExecutor.session, modeIsolationExecutorSnapshot)
+setModeSpy(modeIsolationPlanner.session, modeIsolationPlannerSnapshot)
+const modeIsolationRegistry = new Map([
+  [modeIsolationMain.session.header.id, modeIsolationMain],
+  [modeIsolationExecutor.session.header.id, modeIsolationExecutor],
+  [modeIsolationPlanner.session.header.id, modeIsolationPlanner],
+])
+const modeIsolationFoldA = []
+const modeIsolationFoldB = []
+const modeIsolationWarningsA = []
+const modeIsolationWarningsB = []
+let modeIsolationOverrideCallsA = 0
+let modeIsolationOverrideCallsB = 0
+const modeRuntimeA = agentRuntime.createAgentRuntime({
+  getAgents: () => ({ get: (id) => modeIsolationRegistry.get(id) }),
+  sandboxPolicy: {
+    defaultMode: 'read-only',
+    overrideOf: (session) => {
+      modeIsolationOverrideCallsA += 1
+      return session.currentMode
+    },
+  },
+  foldUsage: (_agent, context) => modeIsolationFoldA.push(context),
+  warn: (message) => modeIsolationWarningsA.push(message),
 })
-checkTrue('AR-gate live child 仍为执行者且可过live delegation', arGateRuntime.isChild(arGateChild, []) === true)
-checkTrue('AR-floor live child 同步fold且不改变既有gate结果', arGateRuntime.childBaseline(arGateChild, []) === true && arGateFold.at(-1).role === 'executor')
-const arFloorChild = arAgent({ id: 'ar-floor-child', child: true, parentSession: 'ar-gate-main', preset: 'extra-plan-executor', depth: 1 })
-arFloorChild.session.append = (...args) => arGateFloor.push(args)
-checkTrue('AR-floor live child 写入一次 workspace-write floor', arGateRuntime.childBaseline(arFloorChild, []) === true && arGateFloor.length === 1 && arGateFloor[0][0] === 'sandbox/mode' && arGateFloor[0][1].mode === 'workspace-write')
-checkTrue('AR-gate 断链 child 同步fold但不抬升floor', arGateRuntime.isChild(arGateBroken, []) === false && arGateRuntime.childBaseline(arGateBroken, []) === false && arGateFold.at(-1).role === 'executor' && arGateFloor.length === 1 && arGateWarnings.length === 1)
-arGateRuntime.childBaseline(arGateMain, [])
-checkTrue('AR-gate main 同步fold且不抬升floor', arGateFold.at(-1).role === 'main' && arGateFloor.length === 1)
+const modeRuntimeB = agentRuntime.createAgentRuntime({
+  getAgents: () => ({ get: (id) => modeIsolationRegistry.get(id) }),
+  sandboxPolicy: {
+    defaultMode: 'workspace-write',
+    overrideOf: (session) => {
+      modeIsolationOverrideCallsB += 1
+      return session.currentMode
+    },
+  },
+  foldUsage: (_agent, context) => modeIsolationFoldB.push(context),
+  warn: (message) => modeIsolationWarningsB.push(message),
+})
+const isolationExecutorFirst = modeRuntimeA.childBaseline(modeIsolationExecutor, [])
+modeIsolationMain.session.currentMode = 'workspace-write'
+const isolationPlannerFirst = modeRuntimeB.childBaseline(modeIsolationPlanner, [])
+modeIsolationMain.session.currentMode = 'read-only'
+const isolationExecutorRepeat = modeRuntimeA.childBaseline(modeIsolationExecutor, [])
+const isolationPlannerRepeat = modeRuntimeB.childBaseline(modeIsolationPlanner, [])
+const isolationMainA = modeRuntimeA.childBaseline(modeIsolationMain, [])
+const isolationMainB = modeRuntimeB.childBaseline(modeIsolationMain, [])
+const isolationExecutorContextA = modeRuntimeA.usageContextOf(modeIsolationExecutor, [])
+const isolationExecutorContextB = modeRuntimeB.usageContextOf(modeIsolationExecutor, [])
+const modeIsolationEvidence = {
+  input: {
+    firstParentMode: 'read-only',
+    changedParentMode: 'workspace-write',
+    finalParentMode: modeIsolationMain.session.currentMode,
+    siblings: ['executor', 'planner'],
+  },
+  target: { executor: 'workspace-write', planner: 'read-only' },
+  counts: {
+    executorFirst: isolationExecutorFirst,
+    plannerFirst: isolationPlannerFirst,
+    executorRepeat: isolationExecutorRepeat,
+    plannerRepeat: isolationPlannerRepeat,
+    runtimeAOverrideCalls: modeIsolationOverrideCallsA,
+    runtimeBOverrideCalls: modeIsolationOverrideCallsB,
+  },
+  snapshot: {
+    main: modeIsolationMainSnapshot,
+    executor: modeIsolationExecutorSnapshot,
+    planner: modeIsolationPlannerSnapshot,
+  },
+}
+console.log('MOCK AR-mode isolation ' + JSON.stringify(modeIsolationEvidence))
+checkTrue(
+  'AR-mode 主/兄弟完整状态事件且父mode变化不选目标',
+  isolationExecutorFirst === true &&
+    isolationPlannerFirst === true &&
+    isolationExecutorRepeat === true &&
+    isolationPlannerRepeat === true &&
+    isolationMainA === false &&
+    isolationMainB === false &&
+    modeIsolationOverrideCallsA === 2 &&
+    modeIsolationOverrideCallsB === 2 &&
+    modeIsolationMain.session.currentMode === 'read-only' &&
+    modeIsolationExecutor.session.currentMode === 'workspace-write' &&
+    modeIsolationPlanner.session.currentMode === 'read-only' &&
+    isDeepStrictEqual(modeIsolationMainSnapshot, []) &&
+    isDeepStrictEqual(modeIsolationExecutorSnapshot, [['sandbox/mode', { mode: 'workspace-write', source: 'delegation' }]]) &&
+    isDeepStrictEqual(modeIsolationPlannerSnapshot, [['sandbox/mode', { mode: 'read-only', source: 'delegation' }]]) &&
+    isDeepStrictEqual(modeIsolationFoldA.map((context) => context.role), ['executor', 'executor', 'main']) &&
+    isDeepStrictEqual(modeIsolationFoldB.map((context) => context.role), ['planner', 'planner', 'main']) &&
+    modeIsolationWarningsA.length === 0 &&
+    modeIsolationWarningsB.length === 0,
+)
+checkTrue(
+  'AR-mode 两runtime实例缓存/事件/状态互不影响',
+  modeRuntimeA !== modeRuntimeB &&
+    isolationExecutorContextA !== isolationExecutorContextB &&
+    modeIsolationExecutorSnapshot !== modeIsolationPlannerSnapshot &&
+    modeIsolationMainSnapshot.length === 0,
+)
 
 // ── M6 系列：step-99 导入、临时双文件统计/真实归档拒绝与事务回滚 ───────
 checkTrue('M6 step-99 导入仅暴露函数且不触发CLI副作用（归档入口已迁至 usage-archive.js）', typeof usageStats.main === 'function' && typeof usageStats.statLedger === 'function' && typeof usageArchiveModule.archiveLedger === 'function' && !Object.hasOwn(usageStats, 'V2_KEYS') && !Object.hasOwn(usageStats, 'archiveLedger') && process.exitCode === undefined)

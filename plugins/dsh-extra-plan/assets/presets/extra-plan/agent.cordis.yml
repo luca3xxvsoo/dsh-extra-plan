@@ -140,7 +140,7 @@
 #  以四级机械锚点实现（路由/目的/澄清/批准，状态机 + 选项验词）、主会话与规划子代理 anchored
 # 引导、规划子代理探查硬上限与只读备份防线、save_plan 注册（主会话层与规划子代理层；
 # 执行者与验收者不可见）、
-# 力度继承（子代理 reasoningEffort = 父会话配置）、子代理沙箱下限、usage 账本。
+# 力度继承（子代理 reasoningEffort = 父会话配置）、按角色固定宿主模式（探查/规划read-only，执行/验收workspace-write）、usage 账本。
 - id: extra-plan-group
   name: cordis:group
   group: true

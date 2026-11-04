@@ -32,19 +32,11 @@
 1. 安装
 ```powershell 7+ 在线
 dsh plugin --profile qqbot add 'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan-qqbot' --allow-build='dsh-extra-plan-qqbot@git+https://github.com/luca3xxvsoo/dsh-extra-plan.git'
-
-if ($LASTEXITCODE -eq 0) {
-    dsh plugin --profile qqbot rebuild dsh-extra-plan-qqbot
-}
 ```
 ```powershell 7+ 离线
 $pkg = (Resolve-Path '[解压路径]\dsh-extra-plan-main\plugins\dsh-extra-plan-qqbot').Path -replace '\\', '/'
 
 dsh plugin --profile qqbot add "file:///$pkg" --preserve-absolute-paths --allow-build="dsh-extra-plan-qqbot@file:$pkg"
-
-if ($LASTEXITCODE -eq 0) {
-    dsh plugin --profile qqbot rebuild dsh-extra-plan-qqbot
-}
 ```
 2. **重启 DSH 进程**使插件生效
 3. qqbot下使用 /preset 切换预设
