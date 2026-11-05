@@ -6,7 +6,7 @@
 
 | 项 | 当前值/口径 | 状态 |
 |:--|:--|:--|
-| DSH | `0.2.1-rc.1` \|\| `0.2.1-rc.2` \|\| `0.2.1-rc.3` \|\| `0.2.1-rc.4` \|\| `0.2.1-rc.5` | 五版本精确声明范围（`engines.dsh` 与三项 @deepseek-ai peer 同值）；旧版兼容见旧版分支，不据声明推导实机通过 |
+| DSH | `0.2.1-rc.1` \|\| `0.2.1-rc.2` \|\| `0.2.1-rc.3` \|\| `0.2.1-rc.4` \|\| `0.2.1-rc.5` | 五版本精确声明范围（`engines.dsh` 与四项 @deepseek-ai peer 同值：`dsh`、`dsh-llm`、`dsh-agent-preset` 三项同五版本并集，`schemastery` 为 `~3.18.4` 另一口径且不参与宿主 engines/peer 门控）；旧版兼容见旧版分支，不据声明推导实机通过 |
 | QQBot 目标 | `0.5.0` | 静态目标，不等于集成通过 |
 | 核心插件 | `dsh-extra-plan` `1.6.0` | 当前包契约；仓库子目录安装路径不变 |
 | QQBot 精简插件 | `dsh-extra-plan-qqbot` `2.0.1` | 源码合同为 `2.0.1`，仓库子目录为 plugins/dsh-extra-plan-qqbot；标准包 `postinstall` 的 `--install` 受 `--allow-build=dsh-extra-plan-qqbot` 授权后执行严格单目标校验，普通启动保留非阻断兜底；核心/宿主范围不变，公共发布、真实安装/运行及 allow-build 放行仍未核实（HUMAN） |
@@ -38,17 +38,17 @@
 
 | 层 | 当前活动范围 | 复核入口 |
 |:--|:--|:--|
-| HS 服务/注册 | HS1-HS6、HS12-HS26、HS28-HS31 | 下面“当前 HS” |
-| HK 钩子/组合 | HK1-HK17（含6a/6b）、HK19-HK22、HK24-HK28 | 下面“当前 HK” |
-| SD 数据/布局 | SD1-SD8、SD10-SD33、SD35-SD40；SD9 保留缺号说明 | 下面“当前 SD” |
-| CF 安装配置 | CF3-CF12；CF1/CF2 已删除历史 | 下面“当前 CF” |
-| QB 兼容包 | QB1-QB3、QB5-QB21、QB25-QB26；QB27-QB31 为测试/条件环境面 | 下面“当前 QB” |
+| HS 服务/注册 | HS1-HS6、HS12-HS26、HS28-HS38 | 下面“当前 HS” |
+| HK 钩子/组合 | HK1-HK17（含6a/6b）、HK19-HK22、HK24-HK32 | 下面“当前 HK” |
+| SD 数据/布局 | SD1-SD7、SD10-SD33（含 SD19b）、SD35、SD37、SD37b、SD38-SD42；SD8/SD36 已退役移入历史归档；SD9/SD34 保留缺号说明 | 下面“当前 SD” |
+| CF 安装配置 | CF3-CF13；CF1/CF2 已删除历史 | 下面“当前 CF” |
+| QB 兼容包 | QB1-QB3、QB5、QB8-QB21、QB25-QB26、QB32；QB27-QB31 为测试/条件环境面 | 下面“当前 QB” |
 
 ## ② 当前 HS：宿主服务与注册面
 
 | 编号 | 本仓位置 | 当前契约/升级敏感点 | 状态 |
 |:--|:--|:--|:--|
-| HS1 | `lib/settings.js` Config + `settings.configure` | 11 项（9 项热读 + 2 项宿主值）`.volatile()`；全局 owner 由 ConfigForms 管理 describe/update/replace/mutate，并统一拥有同步与 adapter | 【已核实·静态】 |
+| HS1 | `lib/settings.js` Config + `settings.configure` | 11 项（9 项热读 + 2 项宿主值）`.volatile()`；全局 owner 由 ConfigForms 管理 describe/update/replace/mutate，并统一拥有同步与 adapter；`settings.configure({ auto: false }, ctx.fiber)` 以宿主 fiber 为第二参绑定生命周期，`auto:false` 表示不参与自动表单投影；此第二参与 fiber 语义属升级敏感面 | 【已核实·静态】 |
 | HS2 | settings 行 `dsh-extra-plan-settings` | 行 id 同时是命名空间、configForms key、插件行详情 key | 【已核实·静态】 |
 | HS3 | `lib/settings.js` webServer prefix | `/api/dsh-extra-plan-settings` prefix 路由 | 【已核实·静态】 |
 | HS4 | `live-config.js` 路径决议 | `configPath → DSH_EXTRA_PLAN_CONFIG_PATH → configEditor.documentPath`；不读旧预设目录 | 【已核实·静态】 |
@@ -70,16 +70,23 @@
 | HS25 | `index.js` plugin contract | `name/inject/apply` 与 agent 预设组合 | 【已核实·静态】 |
 | HS26 | HP 首轮 `tool:read` | section、参数默认值、输出字段与手写 F 文案必须同步核对；执行者角色 `tool-fs` 已配置 `readLimit=200`，需与宿主 `read` 默认值与上限契约同步核对 | 【已核实·静态；行为待实机】 |
 | HS28 | context-gate 宿主回归 | 当前安装根版本、生产源码 hash、公共 AgentLoop/受控 adapter；完整 raw request trace、消息 ID 新增、durable user/message 发布与 flush 落盘证据分栏记录；受控 adapter 不冒称真实 provider | 【已核实·集成；真实provider/HUMAN NOT-RUN】 |
+| HS29 | `pe-test/_shared/host-deps.mjs` | scoped package exports 按完整 `./subpath` 解析；根入口与 `/list-agents` 分离；根包无可用 exports/main 时回退 `index.js`，显式未知子路径透传；同步/异步 hook 共用语义，生成 data URL hookSource 需 ESM 回放 | 【已核实·step-01 安装同步；真实宿主/HUMAN NOT-RUN】 |
 | HS30 | 角色预设 definition（`agent.cordis.yml` 第二文档 → `preset-definition-<role>.generated.yml`） | 4 角色的 id/order 由 `ROLE_IDS`/`ROLE_ORDERS` 统一校验（身份常量不承载权限）；personaPrefix 由作者源逐字搬运、extra-plan 行 config 由主预设同 id 行逐字复制（含 gateWords）；各角色均挂 `tool-web`（fetch:false、searchTimeoutMs:60000）与只读 `tool-cordis`，四角色 definition 均不挂 `tool-subagent-control`/`send_message`/`interrupt_agent`；main definition 保留 `tool-subagent-control` 与 `list-agents`。运行时按原始 `isSubagentChild` 对 child 的两控制工具直呼与 `run_code` 成员硬拒，覆盖 unknown/断链 child；main 的 send 直属父子、interrupt 仅调用者获授权后代、running 子原禁扰与自动最终结果保持。planner/reviewer/prober 的 `dsh-tool-fs` 置 write/edit=false，executor 保留 write/edit 与既有两行 shell；四个角色 definition 的派生范围跟随同一 `toolPresentationMode`（各恰一行 `tool-presentation`，派生异常保留生成物默认值且不抛错）；生成物不得手改；native/PTC 双模式由宿主回归实际 mount、schemas/get、sdkSchemas 与 SDK 文本解析取证 | 【已核实·静态+宿主回归；真实消息/中断 HUMAN】 |
 | HS31 | `pe-test/tools/step-05-角色预设宿主回归.mjs` | 两个串行独立 Context 注册原始五 ID；各模式真实 agents.create + preset mount，planner 两模式均以原 ID 与 `isPlannerChild` 核实；每角色/每模式以 `tools.schemas`/`tools.get` 同时核实 `send_message`/`interrupt_agent` 缺席和 Cordis 两工具存在；PTC F 顶层仅 `run_code` 且 `tools:sdk` 无 control 文本；Cordis schemas/get 仍在；保留 roster、三键 tool-subagent、只读/可写、persona、both 回落与禁委派/list_agents；不证明真实父子投递/中断 | 【已核实·集成；真实 provider/模型/GUI/消息/中断 HUMAN】 |
-| HS29 | `pe-test/_shared/host-deps.mjs` | scoped package exports 按完整 `./subpath` 解析；根入口与 `/list-agents` 分离；根包无可用 exports/main 时回退 `index.js`，显式未知子路径透传；同步/异步 hook 共用语义，生成 data URL hookSource 需 ESM 回放 | 【已核实·step-01 安装同步；真实宿主/HUMAN NOT-RUN】 |
+| HS32 | `ctx.get(sandboxPolicy)` 与 `overrideOf(session)` | 决定同一 child 的 `sandbox/mode` 是否重复 append，并作为 SD12 幂等判定来源 | 【已核实·静态】 |
+| HS33 | `inject:[systemPrompt]` 与 `ctx.systemPrompt.variable(name, provider)` | apply 期注册 gateWords 七变量；宿主严格渲染失败（缺变量或非法 provider）属升级敏感面 | 【已核实·静态】 |
+| HS34 | `ctx.get(ptcRuntime).language` | run_code 渲染语言来源；服务或字段缺失时默认 `typescript` | 【已核实·静态】 |
+| HS35 | `@deepseek-ai/schemastery` | Config 元数据 `.default/.volatile/.step/.union/.describe` 语义；不参与宿主 engines/peer 门控 | 【已核实·静态】 |
+| HS36 | `@deepseek-ai/dsh-llm` 具名导出 `createUserMessage`/`createDeveloperMessage` | v4 producer kind 消息构造符号契约；导出符号名变更属升级敏感面 | 【已核实·静态】 |
+| HS37 | `ctx.get(tools)` 方法面 `register/get/schemas/sdkSchemas/modeFor` | 方法名级契约（形状归 SD18 与 SD19）；任一方法缺失走降级分支 | 【已核实·静态】 |
+| HS38 | `@deepseek-ai/dsh-agent-preset` 包解析与 `default` export | 以 `installAnchor` 的 `createRequire` 解析后交 `child.plugin` 挂载 | 【已核实·静态】 |
 
 ## ②-A Web→QQBot 镜像路径契约（独立于 HS4）
 
 | 项 | 当前合同 | 状态 |
 |:--|:--|:--|
-| Web→QQBot 真源 | Web `configEditor.documentPath` 首选；由 `profiles/web/cordis.patch.yml` 反推同级 `profiles`，不从当前进程 cwd 或用户目录猜测 | 【已核实·专项】 |
-| 显式授权边界 | 真实运行时只接受可信 `profileContext.name`/`startedBundles` 与精确能力；维护数据须显式 `--host-root` 加精确 `--profile`/`--file`/会话目标。`DSH_HOME`/`DSH_PROFILE`/`SESSION_ID`、homedir、USERPROFILE/HOME 与 `home/.dsh` 均不授根；`DSH_INSTALL_ROOT`+host-preload 只授只读代码根 | 【已核实·专项】 |
+| Web→QQBot 真源 | Web `configEditor.syncDocumentPath` 首选、`configEditor.documentPath` 次选；由 `profiles/web/cordis.patch.yml` 反推同级 `profiles`，不从当前进程 cwd 或用户目录猜测 | 【已核实·专项】 |
+| 显式授权边界 | 真实运行时只接受可信 `profileContext.name`/`startedBundles` 与精确能力；维护数据须显式 `--host-root` 加精确 `--profile`/`--file`/会话目标。`DSH_HOME`/`DSH_PROFILE`/`SESSION_ID`、homedir、USERPROFILE/HOME 与 `home/.dsh` 均不授根；`DSH_INSTALL_ROOT`+host-preload 只授只读代码根；`DSH_HOME` 加 `DSH_PROFILE=web` 构成 explicit-DSH-HOME 第二合规来源，仍必须通过 pathContext 读权限校验，不做目录猜测 | 【已核实·专项】 |
 | 标准 Web/QQ 身份与双锚点 | 仅 `profileContext.name='web'` 且 `startedBundles`/直接同级 profile 的 `package.json` 与 `node_modules/dsh-extra-plan-qqbot` 双锚点一致时做 Web→QQ 镜像；QQ 当前 profile 返回 `not-applicable`，不误启动跨 profile | 【已核实·专项】 |
 | 持久化范围 | 同步完整 11 项与完整 `gateWords`；局部 YAML 安全改写保留未知行、注释、`!!js` 与嵌套 insert，写前临时文件/备份/落盘后终验并支持恢复 | 【已核实·专项】 |
 | 状态与生效 | `synced` 仅代表标准 Web→QQ 镜像；QQ owner 不适用为 `not-applicable`，另区分 `not-installed`/`unavailable`/`failed`/`partial`；9 项沿既有热读，`webFetch` 与 `toolPresentationMode` 为 2 项宿主重启生效，不发送跨进程 reload | 【已核实·专项】 |
@@ -112,13 +119,12 @@
 | HK9 | tool-jobs 通知 | `source.kind='tool-jobs'` 且 `form='notice'`；旧三元组已废；v0.4.0 起新增 job_list/list_agents 轮询守卫清整表消费方（consumed 标记与 job_output 跟踪命中解耦） | 【已核实·静态】 |
 | HK10 | step-06 事件夹具 | 事件负载必须与真实 subagent/ask/tool 形状一致 | 【已核实·静态】 |
 | HK11 | `cordis.patch.yml` 单条 insert | 仅 `dsh-extra-plan-settings` 全局行公开；carrier、同步、迁移与官方 adapter 均归同一 owner 内部 | 【已核实·静态】 |
-| HK12 | package `dsh.bundle.patch` | 依次装载 cordis.patch 与生成的 preset patch | 【已核实·静态】 |
+| HK12 | package `dsh.bundle.patch` | 只指向单一 `./cordis.patch.yml`（核心与 QQBot 两包同构）；不存在额外的 preset patch 文件，definition 由 settings owner 读取生成资产后交官方 adapter | 【已核实·静态】 |
 | HK13 | package exports | 根包、settings/client、根 locale/settings locale 当前子路径必须可解析；`./preset-sync` 根与 locale 子路径必须解析失败 | 【已核实·静态】 |
 | HK14 | package `dsh.client` | platform=web、inject 顺序与 `./client` export | 【已核实·静态】 |
 | HK15 | 预设 isolate | mountPreset 审计；必要/保险服务名均 `isolate: true` | 【已核实·静态】 |
 | HK16 | `!!js dshHomePath` | 宿主提供 dshHomePath 与标签 schema | 【已核实·静态】 |
 | HK17 | 四行 tool-subagent | 合法键仅 `provider`/`toolName`/`modelSelectionSettings`/`agentOptions`/`agentPreset`/`allowedAgentPresets`/`maxDepth`；本预设四行各留三键（provider/toolName/agentPreset）并指向 4 个角色 id；persona/toolFilter 会被宿主抛错、backgroundMode 已无此键 | 【已核实·静态】 |
-| HK28 | 委派工具参数表（0.2.1） | 已无后台标志：subagent/subagent_plan/subagent_review/subagent_probe 恒为立即返回 subagentId 加完成通知；本仓闸门不再判定该参数（后台约束上移宿主层） | 【已核实·静态+两轮矩阵】 |
 | HK19 | tool-subagent-control 子路径 | 宿主 exports 子路径与行名 | 【已核实·静态】 |
 | HK20 | child 识别与四角色宿主 mode | `parentSession/origin/delegationDepth` 仍是 child 判据；角色仅按当前 Session 的精确 `session.header.agentPreset` 固定宿主 mode：`extra-plan-planner`/`extra-plan-prober`=`read-only`，`extra-plan-reviewer`/`extra-plan-executor`=`workspace-write`；`descriptor.mode` 恒 `continuable`，不参与角色判定；main、其它 child、unknown、断链不选角色 mode。 | 【已核实·静态/单元/装配；2026-11-04 `0.2.1-rc.2` 部署实况旁读四子会话：`agent-preset/selected` 与 `sandbox/mode` 序列符合角色目标、纠正早于首个 `turn/start` 与 `tool/call`；N 组正式用例与第二轮 PTC 未跑 → 真实工具OS/owner、父会话 read-only 抬升、HUMAN 仍 `NOT-RUN`（判据见 [ai-实机闸门测试流程](ai-实机闸门测试流程.md) 1.5(h)/C14）】 |
 | HK21 | run-code 子调用识别 | `exec.parent` 是宿主面；`exec.sub` 是本仓合成标记 | 【已核实·静态】 |
@@ -127,8 +133,13 @@
 | HK25 | `tools/post-execute` | 仅替换失败结果 content；PostToolDecision 静态契约可核；真实 PTC 改写仍待部署 | 【已核实·静态；行为待实机】 |
 | HK26 | `developer/message` append | `surfaceOp:'append'`、正整数 turn/step、自有 source.kind；坐标非法仍 retry | 【已核实·静态】 |
 | HK27 | `agent/error` | 同步逐字错误链落盘；静态接线不等于宿主现场运行通过 | 【已核实·静态】 |
+| HK28 | 委派工具参数表（0.2.1） | 已无后台标志：subagent/subagent_plan/subagent_review/subagent_probe 恒为立即返回 subagentId 加完成通知；本仓闸门不再判定该参数（后台约束上移宿主层） | 【已核实·静态+两轮矩阵】 |
+| HK29 | `agent/inbox/claimed` | `payload.agent` 与 `payload.message` 形状；与 `tools/pre-execute` 的 durable snapshot fallback 共用 `consumeToolJobsNotice` | 【已核实·静态】 |
+| HK30 | `child.plugin(adapter, definition)` | 五点顺序挂载（主在前、角色 order 101 至 104 在后），任一失败整体回滚；依赖宿主 `ctx.plugin(plugin, config)` 返回 fiber | 【已核实·静态】 |
+| HK31 | `name: cordis:group` 与 `group: true` 与 `isolate` 行形状 | `disabled: !!js process.platform` 平台条件行；行形状变更属升级敏感面 | 【已核实·静态】 |
+| HK32 | `!!js` 求值域 | 表达式在 `with(ctx){eval}` 作用域内可访问 `baseUrl`、`process`、`process.getBuiltinModule` 与 `createRequire`；`dshHomePath` 由宿主注入 | 【已核实·静态】 |
 
-HK23 当前无定义，不补造编号；历史/旧钩子见归档。
+HK23 当前无定义，不补造编号；HS7-HS11、HS27 与 HK18 均为已退役编号，定义与退役理由见历史归档；历史/旧钩子见归档。
 
 ## ④ 当前 SD：事件、Session 与布局形状
 
@@ -142,7 +153,6 @@ HK23 当前无定义，不补造编号；历史/旧钩子见归档。
 | SD6 | assistant/message usage/source provider/model | usage ledger 字段来源 |
 | SD7 | PTC dispatch start/dispatch | root/parent/sub call 与 content/isError |
 | SD13 | v4 request/header 不落 system 字段；system 段以独立 system/message 事件落盘（source.kind=system-prompt） | F 段=bootstrap persona 与手写 tool:read 文案、L 段=宿主原文（含 run_code SDK 指引）；tools:sdk 判据观察面以 system/message 为准（2026-10-23 实机复现） |
-| SD8 | subagent/descriptor.mode（历史形状） | 0.2.1 起 mode 恒为 continuable（宿主 manager 固定值），角色分离改判 `session.header.agentPreset`；descriptor 仅作「确属子代理会话」的日志形状 |
 | SD10 | `session.seq` + `snapshotEvents(from,to)` | cursor 增量、水位未变与截断回退 |
 | SD11 | `Session.requestHeader().config` | 顶层 provider/model 与 fallback（回退）来源 |
 | SD12 | sandbox/mode append | 旧 child floor 已删除；仅按当前 Session 的精确 `session.header.agentPreset` 固定四目标：`extra-plan-planner`/`extra-plan-prober`=`read-only`，`extra-plan-reviewer`/`extra-plan-executor`=`workspace-write`。三入口 `created`/`pre-step`/`pre-execute` 均先绑定后 `next`；Session隔离：本 child 的 mode 事件仅向当前 Session 追加 `mode=目标`、`source=delegation`，不读 parent/default、不共享 mode，显式 override 仅本 Session，已匹配幂等、漂移修复后 append（同一 child 通常先后出现两条 `sandbox/mode`：首条为宿主继承值、实测常为 `workspace-write`，第二条才是按角色纠正的目标值；判定须比对纠正事件 `seq` 早于首个 `tool/call`）；无 policy 仍追加，不以缺 service 跳过绑定。宿主 `workspace-write` 仅是宿主 mode，不授模型 write/edit、shell mutation、control/run_code 或 MJS 权；reviewer 仍受原 write/edit、shell mutation、control、run_code 硬拒，executor 仍受自身 control、run_code、路由批准门禁。mode 不授新 save 权；save例外保留为可信 Host atomicCommit 受控例外：planner 仅 `save_plan`、已认领 prober 仅 `save_probe`，executor/reviewer 无 save，原资格/合同/预算/cwd/链接/有限清理不变。证据按静态/单元/装配与普通Node落盘分层，真实工具OS/owner、真实Session工具隔离、真实只读保存及HUMAN均 `NOT-RUN`。
@@ -153,7 +163,8 @@ HK23 当前无定义，不补造编号；历史/旧钩子见归档。
 | SD18 | tools.schemas(scope) | 当前工具可见面与引导收窄 |
 | SD19 | ToolRuntime.register/definition | save 工具 schema/render/execute |
 | SD19b | register 抛错分类 | A 重名、B 永久定义错误、C 可重试错误 |
-| SD20/SD21 | SessionHeader.cwd | save_plan/save_probe 落盘基准 |
+| SD20 | SessionHeader.cwd | save_plan 落盘基准 |
+| SD21 | SessionHeader.cwd | save_probe 落盘基准 |
 | SD22 | PromptAssembly | sections/contexts/tools/variables 投影 |
 | SD23 | PreStepDecision | enter/reject/messages/waterfall（瀑布式处理）；F gate 精确过滤 agent-instructions/skill-catalog，L 由宿主自然重组 |
 | SD24 | PreToolDecision/PostToolDecision | deny/allow 与失败 content 改写 |
@@ -166,15 +177,16 @@ HK23 当前无定义，不补造编号；历史/旧钩子见归档。
 | SD31 | AssembleContext | context.agent/scope |
 | SD32 | ask 错误码 | channelBroken 白名单 |
 | SD33 | profile node_modules/宿主安装锚点 | step-04/step-01 依赖解析；静态入口不等于实机通过 |
-| SD35 | 宿主工具名清单 | deny 必须与宿主真值对拍 |
-| SD36 | backgroundMode→descriptor.mode（已退役） | 两个键都不再参与角色判定：0.2.1 委派恒为立即返回加通知（工具参数表已无后台标志），角色由 `agentPreset` 区分；本仓已在闸门与测试侧清零 |
+| SD35 | 宿主工具名清单 | deny 必须与宿主真值对拍；deny 名含已退役的 `workflow`/`ralph` 等工具名，当前宿主工具面已无对应工具，保留为防御性 deny，升级核对仍以宿主真实工具名为准。 |
 | SD37 | Session.deriveMessages() | context 去重按 kind 只读取当前 Session 可见 durable message surface；catalog 比较有序 [name,description]，agent-instructions 比较非空 content JSON 形状；缺能力的 mock 不推断已发布 |
-| SD37 | createUserMessage/source.kind | v4 自有 producer kind 与 id/role |
+| SD37b | createUserMessage/source.kind | v4 自有 producer kind 与 id/role |
 | SD38 | step-07 输出 | attempted（尝试路由）/actual provenance（实际来源）、suffix、父子行号 |
 | SD39 | agents.get(id).status | AgentRegistry.get(id)（dsh-agent）返回驻留 Agent，.status getter 真源 dsh-agent-loop：phase idle/maintenance（空闲/维护）→ 'idle'，否则 'running'（运行中）；插件经 ctx.get('agents') 查询 main `send_message` 目标运行状态，child 不进入该放行路径 |
 | SD40 | ToolExecution.agent / arguments.agent_id | main `send_message` 方向判定契约：agent=调用者、arguments.agent_id=目标；child 控制工具由 `isSubagentChild` 硬拒；SD25 字段清单未列 agent 字段，此处补记 |
+| SD41 | `configEditor.syncDocumentPath` 与 `configuration()` | 同步文档路径首选源（`configEditor.documentPath` 为次选）与插件行读取入口；Web 到 QQBot 镜像以其为准 |
+| SD42 | 宿主行 config 键真值表 | `maxBytes`、`sampleOverCapGlobResults`、`thresholdChars/headChars/tailChars`、`allowParallelInProgress`（宿主侧 `z.boolean().required()`）、`fetch/searchTimeoutMs`、`watch`、`bundledSkillDir` |
 
-SD9 是历史缺定义编号、保留不补；SD34 是本插件不调用 `sessionProjections.stateOf` 的反向记录；SD13 已由 2026-10-23 实机核证定义为 system 段落盘形态合同。
+SD8 与 SD36 已退役并移入历史归档、不补造定义；SD9 是历史缺定义编号、保留不补；SD34 是本插件不调用 `sessionProjections.stateOf` 的反向记录；SD13 已由 2026-10-23 实机核证定义为 system 段落盘形态合同。
 
 ## ⑤ 当前 CF：安装配置面
 
@@ -189,7 +201,8 @@ SD9 是历史缺定义编号、保留不补；SD34 是本插件不调用 `sessio
 | CF9 | 临时 DSH_HOME/profile 夹具形状 | 【已核实·静态】 |
 | CF10 | preset.yml 元数据与纯 definition Config | id/name/description/order/plugins 与作者源同源，definition 不含 Loader insert wrapper | 【已核实·静态】 |
 | CF11 | QQBot 映射测试的 profile/依赖夹具 | 【已核实·静态】 |
-| CF12 | `@deepseek-ai/*` 不进 dependencies；dsh/dsh-llm peer 与 `engines.dsh` 精确钉五版本并集 `0.2.1-rc.1 || 0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4 || 0.2.1-rc.5`；bundle 不兼容时 skipped/disabled | 【已核实·静态；rc.2 门控核对沿用既有来源，rc.1/rc.3 无样本 NOT-RUN，rc.4 为只读代码样本/隔离自动；profile 清理与 422 消失待 HUMAN】 |
+| CF12 | `@deepseek-ai/*` 不进 dependencies；dsh/dsh-llm peer 与 `engines.dsh` 精确钉五版本并集 `0.2.1-rc.1 || 0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4 || 0.2.1-rc.5`；bundle 不兼容时整个 bundle 层被 skipped，而非行级 disabled；peer 实为四项（`dsh`、`dsh-llm`、`dsh-agent-preset` 同五版本并集加 `schemastery ~3.18.4`）；manifest 声明 `engines.dsh` 时独占判定、peer 全忽略 | 【已核实·静态；rc.2 门控核对沿用既有来源，rc.1/rc.3 无样本 NOT-RUN，rc.4 为只读代码样本/隔离自动；profile 清理与 422 消失待 HUMAN】 |
+| CF13 | 客户端注册面 `exports.inject=["slots","locale","configForms"]` | 涉及 `ctx.slots.inject/entries`、`ctx.configForms.whileServed` 与 `plugins.detail.section` 让位判定 | 【已核实·静态】 |
 
 CF1/CF2（extra-plan postinstall/distribute-preset）已删除，作为历史归档，不列当前安装合同。
 
@@ -209,15 +222,16 @@ CF1/CF2（extra-plan postinstall/distribute-preset）已删除，作为历史归
 | QB25-QB26 | 静态服务/config.default 断言与间接消费 extra-plan | 【已核实·静态】 |
 | QB27/QB31 | 一键 AUTO/四态汇总仅引用对应原始证据；install、compose、cache 分开判定，install/cache 的 INCOMPLETE/NOT-RUN 不改写为 AUTO PASS；只有实际证实跳钩子且缺链才记 CACHE-BLOCKED，受限 child-spawn EPERM 保持 INCOMPLETE；六项 HUMAN 单列且不销账 | 【已核实·证据边界】 |
 | QB28-QB30 | 五条件预检、junction 能力、真实 profile 只读映射；缺环境/权限为 SKIP | 【已核实·静态；SKIP 不销账】 |
+| QB32 | `@tencent-connect/dsh-qqbot` bundle 名是 profile 身份双锚点（bundles 声明与 `node_modules/dsh-extra-plan-qqbot`）的包名真值，核心 `index.js`、`lib/qqbot-settings-sync.js`、QQBot `lib/heal.js` 三处同源 | 【已核实·静态】 |
 
-QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；QB4、QB23、QB24 继续列为未核实，不改成通过。
+QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；QB4、QB23、QB24 继续列为未核实；QB6/QB7 不计入当前活动区间（当前活动区间为 QB1-QB3、QB5、QB8-QB21、QB25-QB26、QB32），不改成通过。
 
 ## ⑦ 五版本声明下的风险与开放验证
 
 1. isolate 审计：`mountPreset/leakedServices` 对未隔离 root service 抛错；必要/保险名单必须保持 `isolate: true`。
 2. settings 换代：设置表单仅经 `plugins.detail.section` 渲染于当前插件包详情行列表之后（自绘标题），不注册 `plugins.bundle.config`、`plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`，若本包 bundle.config 槽被任何一方注册条目则 detail.section 让位保持唯一表单；ConfigForms 通过稳定 namespace 订阅快照并一次 mutate 十一项。settings 行 11 项 Config、API、旧值迁移、内存 definition/adapter 仍是活动后端合同；截至 2026-10-01，0.2.1-rc.2 同页 UI/A09/A10/A11 仍为 HUMAN 待复测。
 3. profile patch 载体：旧 `.agent-presets` 无读取方；`compatibility.json`/peer 门控可能使 bundle skipped、loader disabled；QQBot 仍有 allow-build/postinstall 欠账。
-4. 包/服务换代：workflow-ptc/tool-workflow/tool-ralph 三段在作者源里整段删除、当前未挂载；`ptcRuntime` 服务名、tool:cordis 只注册两项只读工具、Client 查询有界等待（默认 10000ms 为配置口径、非实测）、`bundledSkillDir`（配 `watch:false`；旧 `customSkillDirs` 已删）必须按当前真值核对。MCP `publicToolName` 只允许 `[A-Za-z0-9_-]`（当前前缀形如 `mcp__chrome-devtools-mcp__...`），不支持点或 Unicode；静态扫描器仅同步连字符与注释遮蔽合同。descriptor 属 child、catalog 属 parent；保留 header-first+descriptor，不新增运行时兼容分支。
+4. 包/服务换代：workflow-ptc/tool-workflow/tool-ralph 三段在作者源里整段删除、当前未挂载；`ptcRuntime` 服务名、tool:cordis 只注册两项只读工具、`bundledSkillDir`（配 `watch:false`；旧 `customSkillDirs` 已删）必须按当前真值核对。MCP `publicToolName` 只允许 `[A-Za-z0-9_-]`（当前前缀形如 `mcp__chrome-devtools-mcp__...`），不支持点或 Unicode；静态扫描器仅同步连字符与注释遮蔽合同。descriptor 属 child、catalog 属 parent；保留 header-first+descriptor，不新增运行时兼容分支。
 5. 五版本声明不等于五版本实机通过：rc.1/rc.3 无实机样本为 `NOT-RUN`，rc.5 原工件缺失、归档只作历史导航、同样为 `NOT-RUN`，rc.2 仅保留既有证据来源，rc.4 仅有只读代码样本与隔离自动结果；任何一版均不得据此推出未取证的跨代实机结论。
 6. session v4：`session.v4.jsonl.zstd`、自有 source.kind、developer/message 坐标和 step-07 三代候选必须保留。
 7. CF12 422 开放 incident：profile 中宿主运行时副本曾导致 `tool_removal` 422；清理 profile node_modules/lock、污染会话续聊、native↔PTC 切换三项均待用户验证。当前单一全局行、内部 carrier、内存 definition/adapter 仍需用户部署后 HUMAN 验证。native↔PTC 切换的会话边界与规避见 ⑭。

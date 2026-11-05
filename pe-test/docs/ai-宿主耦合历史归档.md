@@ -36,6 +36,13 @@
 3. `HS7`：旧 `cleanupLegacyFlashGuidePatches`/flash-guide 清理链；恒空转并直写 patch，因违反 configEditor 写链纪律删除。
 4. `SD34`：本插件曾被拿来对照 `sessionProjections.stateOf`，最终全仓 0 次调用；当前沙箱走 `sandboxPolicy.overrideOf`。这是反向历史记录，不是活动耦合。
 
+#### 当前正文迁出的过期条目（2026-11-05）
+
+- `HK12`（原表述失效）：原「依次装载 cordis.patch 与生成的 preset patch」已不成立——两包 `dsh.bundle.patch` 均为单一的 `./cordis.patch.yml`，assets 下无任何 `*.patch.yml` 生成物；definition 由 settings owner 读取生成资产后交官方 adapter，且该原表述与当前 HK11／CF4 自相矛盾。
+- `SD8`（历史形状）：`subagent/descriptor.mode` 只是历史形状——代码按事件类型扫描 descriptor、不读 `mode`，角色判据是 `session.header.agentPreset`，该行不再是活动耦合。
+- `SD36`（已退役）：`backgroundMode` → `descriptor.mode` 的改写已退役，`plugins/` 下已无 `backgroundMode` 配置键（仅退役注释提及该键）。
+- 台账第七节第 4 条原核对项「Client 查询有界等待（默认 10000ms）」在本仓无可核对对象：`tool-cordis` 行无 `config`，仓内亦无 `clientInspectTimeoutMs` 配置键，只有注释说明 10000ms 是宿主配置默认值而非现场时延实测。
+
 ### QQBot 旧四处越权耦合
 
 1. 旧 `inject = ['qqbot.bot', 'qqbot.sessionManager', 'userQuestions']`，直接依赖 qqbot 内部服务并 monkey-patch manager；当前精简包 `inject=[]`。
