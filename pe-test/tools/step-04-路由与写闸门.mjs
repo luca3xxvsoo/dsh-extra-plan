@@ -1601,6 +1601,16 @@ checkTrue('回退链：tools 服务缺失/退化/抛错三用例均返回 undefi
   check('P8 无 shell 无 run_code → sections 原样（未注入 persona）', emptyBoot.sections, [])
 }
 {
+  // v6 P19：tools 缺失（真实宿主形态：宿主 waterfall 输入 assembly 不含 tools）→ 只跳过 tools 过滤、仍投影 native sections。
+  const noToolsPersona = 'You are a helpful software engineer assistant.'
+  const noToolsAssembly = await harnessBoot['system-prompt/assemble'][0](null, { agent: mainAgent }, async () => ({ sections: [], contexts: [] }))
+  check('P19 tools 缺失（真实宿主形态）→ native sections 恰 [extra-plan-bootstrap]', Array.isArray(noToolsAssembly.sections) ? noToolsAssembly.sections.map((section) => section.name) : null, ['extra-plan-bootstrap'])
+  check('P19b tools 缺失形态唯一段文本恰为 bootstrapPersona', Array.isArray(noToolsAssembly.sections) && noToolsAssembly.sections.length === 1 ? noToolsAssembly.sections[0].text : null, noToolsPersona)
+  check('P19c tools 缺失形态 contexts 为空', Array.isArray(noToolsAssembly.contexts) ? noToolsAssembly.contexts : null, [])
+  const noToolsText = Array.isArray(noToolsAssembly.sections) ? noToolsAssembly.sections.map((section) => (section !== null && typeof section === 'object' && typeof section.text === 'string' ? section.text : '')).join('\n') : ''
+  checkTrue('P19d tools 缺失形态 sections 全文不含完整 persona 等禁止串（防回潮）', ['You are an AI agent powered by DeepSeek Harness', '按需规划模式', 'E1 探查链', 'mcp__chrome-devtools-mcp', 'tools:sdk', 'run_code 调用 read 示例'].every((word) => !noToolsText.includes(word)))
+}
+{
   // 两轮同口径：native 轮目录无 run_code、ptc 轮目录含 run_code；anchored keep 均为 shells+read。
   const nativeRoundMain = await assemble(harnessBoot, mainAgent, [{ name: 'read' }, { name: 'pwsh' }, { name: 'run_code' }, { name: 'write' }])
   check('P9 有 shell 目录 run_code 仍被滤掉（keep=shells+read 现状保持）', Array.isArray(nativeRoundMain.tools) ? nativeRoundMain.tools.map((t) => t.name).sort() : null, ['pwsh', 'read'])

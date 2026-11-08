@@ -1190,6 +1190,31 @@ export function apply(ctx, config) {
 
     // v4 assemble-diag：投影完成后、anchoredFirst 提前返回之前落盘——anchoredFirst=false 或工具为空等任何路径都有证据。
     // phaseSync=决策用同步判据；phaseLease=租约只读求值（仅取证对比，不参与 anchoredFirst 决策）；phaseSource=决策来源。
+
+    const hasTools = Array.isArray(presented.tools) && presented.tools.length > 0
+    let narrowed = null
+    if (anchoredFirst && hasTools) {
+      const shells = presented.tools.filter((tool) => tool !== null && typeof tool === 'object' && bootstrapShellTools.has(tool.name))
+      const runCodes = presented.tools.filter((tool) => tool !== null && typeof tool === 'object' && tool.name === 'run_code')
+      if (shells.length === 0 && runCodes.length === 0) {
+        if (!bootstrapShellMissingWarned) {
+          bootstrapShellMissingWarned = true
+          console.warn('extra-plan: anchoredBootstrap enabled but neither a bootstrap shell nor run_code is present in the catalog — bootstrap skipped for this assembly')
+        }
+      } else {
+        const keep = new Set([...shells.map((tool) => tool.name), ...(shells.length === 0 ? runCodes.map((tool) => tool.name) : []), ...bootstrapCommonTools])
+        const bootstrapped = presented.tools.filter((tool) => tool !== null && typeof tool === 'object' && keep.has(tool.name))
+        if (anchoredPtc) {
+          const readSection = sectionOf(presented.sections, READ_SECTION_NAME)
+          narrowed = { sections: [{ name: 'extra-plan-bootstrap', text: bootstrapPersona }, ...(readSection === undefined ? [{ name: READ_SECTION_NAME, text: bootstrapReadHint }] : [{ ...readSection, text: bootstrapReadHint }])], contexts: [], tools: bootstrapped }
+        } else {
+          narrowed = { sections: [{ name: 'extra-plan-bootstrap', text: bootstrapPersona }], contexts: [], tools: bootstrapped }
+        }
+      }
+    } else if (anchoredFirst && !hasTools && !anchoredPtc) {
+      narrowed = { sections: [{ name: 'extra-plan-bootstrap', text: bootstrapPersona }], contexts: [] }
+    }
+    // anchoredPtc 且 tools 缺失：narrowed 保持 null → 维持现状原样返回（已知缺口，留到 ptc 轮）
     try {
       appendDiagnostic(ctx, agent, 'extra-plan-anchored.jsonl', {
         ts: new Date().toISOString(),
@@ -1205,46 +1230,16 @@ export function apply(ctx, config) {
         role,
         toolsIn: Array.isArray(result.tools) ? result.tools.length : null,
         toolsOut: Array.isArray(presented.tools) ? presented.tools.length : null,
+        toolsPresent: hasTools,
         sectionsIn: Array.isArray(result.sections) ? result.sections.map((section) => (section !== null && typeof section === 'object' ? section.name : null)) : null,
-        sectionsOut: Array.isArray(presented.sections) ? presented.sections.map((section) => (section !== null && typeof section === 'object' ? section.name : null)) : null,
+        sectionsOut: narrowed === null ? (Array.isArray(presented.sections) ? presented.sections.map((section) => (section !== null && typeof section === 'object' ? section.name : null)) : null) : narrowed.sections.map((section) => section.name),
       })
     } catch (error) {
     }
 
     if (!anchoredFirst) return presented
-    if (!Array.isArray(presented.tools) || presented.tools.length === 0) return presented
-    const shells = presented.tools.filter((tool) => tool !== null && typeof tool === 'object' && bootstrapShellTools.has(tool.name))
-    const runCodes = presented.tools.filter((tool) => tool !== null && typeof tool === 'object' && tool.name === 'run_code')
-    if (shells.length === 0 && runCodes.length === 0) {
-      if (!bootstrapShellMissingWarned) {
-        bootstrapShellMissingWarned = true
-        console.warn('extra-plan: anchoredBootstrap enabled but neither a bootstrap shell nor run_code is present in the catalog — bootstrap skipped for this assembly')
-      }
-      return presented
-    }
-    const keep = new Set([...shells.map((tool) => tool.name), ...(shells.length === 0 ? runCodes.map((tool) => tool.name) : []), ...bootstrapCommonTools])
-    const bootstrapped = presented.tools.filter((tool) => tool !== null && typeof tool === 'object' && keep.has(tool.name))
-    if (anchoredPtc) {
-      // 借宿主段名覆盖文本：只改「模型可见副本」的 tool:read text（= 变量②手写文案），
-      // 不动宿主注册表；L 段（首个 tool/call 之后）不再进入本分支，自动回到宿主原文。
-      const readSection = sectionOf(presented.sections, READ_SECTION_NAME)
-      const sections = [
-        { name: 'extra-plan-bootstrap', text: bootstrapPersona },
-        ...(readSection === undefined ? [{ name: READ_SECTION_NAME, text: bootstrapReadHint }] : [{ ...readSection, text: bootstrapReadHint }]),
-      ]
-      return {
-        ...presented,
-        sections,
-        contexts: [],
-        tools: bootstrapped,
-      }
-    }
-    return {
-      ...presented,
-      sections: [{ name: 'extra-plan-bootstrap', text: bootstrapPersona }],
-      contexts: [],
-      tools: bootstrapped,
-    }
+    if (narrowed === null) return presented
+    return { ...presented, ...narrowed }
   })
 
   // 4) 模型与力度继承：子代理 agent/request 解析后，把 provider/model/maxTokens
