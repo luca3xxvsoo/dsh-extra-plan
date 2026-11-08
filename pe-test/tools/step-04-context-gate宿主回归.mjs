@@ -661,6 +661,18 @@ try {
   ]
   for (const row of rows) await root.loader.create(row)
   await root.loader.await()
+  // 展示工具夹具 provider：真实 dsh-tool-cordis 不在本夹具行内，注册同名全局工具，
+  // 使 C=0 的 agent 作用域 restrict({ deny }) 与 C=1 的保留两面都能在 request.tools 上取到非空证据。
+  // 必须经根 ctx 注册：插件 fork ctx 的注册是 scope-local，既不可收窄也不进 agent 视野。
+  const CORDIS_FIXTURE_TOOL_NAMES = ['cordis_inspect_list', 'cordis_inspect_query']
+  for (const name of CORDIS_FIXTURE_TOOL_NAMES) {
+    root.tools.register({
+      name,
+      description: 'Cordis presentation fixture tool ' + name + '.',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+      output: { schema: { type: 'object', additionalProperties: true }, render: () => [] },
+    })
+  }
   check('原装宿主核心插件加载完成（Session/agent-instructions/tool-skill）', root.agents !== undefined && root.llm !== undefined && root.skills !== undefined)
   controlled = new ControlledAdapter()
   registration = root.llm.registerAdapter(['context-gate-controlled'], controlled)
@@ -817,6 +829,44 @@ try {
   const catalogMessage = durableMessages.find((message) => sourceKind(message) === 'skill-catalog')
   const entries = catalogMessage?.source?.entries || []
   check('C=0真实目录投影保留普通skill且隐藏creative skill', entries.some((entry) => entry.name === 'ordinary-skill') && !entries.some((entry) => entry.name === 'cordis-plugin-development'))
+  // request.tools 集合断言（C=0）：L 请求工具面不含两个 cordis 展示工具，且两名仍在 restrict 前可收窄名内
+  // （证明缺席来自 agent 作用域 restrict({ deny })，不是工具未注册的空通过；投影副本不作判据）。
+  const requestToolNamesOf = (request) => Array.isArray(request?.tools) ? request.tools.map((tool) => tool?.name).filter((name) => typeof name === 'string') : []
+  const c0TraceLength = trace.length
+  const c0LastToolNames = requestToolNamesOf(trace[c0TraceLength - 1])
+  const c0Restrictable = root.tools.view(handle.agent).restrictableNames
+  check('C=0真实request.tools不含两个cordis展示工具且两名仍可收窄（restrict deny 生效）',
+    c0LastToolNames.length > 0
+      && CORDIS_FIXTURE_TOOL_NAMES.every((name) => !c0LastToolNames.includes(name))
+      && CORDIS_FIXTURE_TOOL_NAMES.every((name) => c0Restrictable.has(name)))
+  // request.tools 集合断言（C=1）：同夹具把 settings 行热读为 creativeMode=true 后不再 arm deny，
+  // 两名展示工具须重新出现在 L 请求工具面（与 C=0 互为反证）；本段请求不进入最终证据序列。
+  {
+    const c1SettingsPath = join(WORKSPACE, 'cordis.patch.yml')
+    writeFileSync(c1SettingsPath, ['- id: dsh-extra-plan-settings', '  name: dsh-extra-plan/settings', '  config:', '    creativeMode: true', ''].join('\n'), 'utf8')
+    process.env.DSH_EXTRA_PLAN_CONFIG_PATH = c1SettingsPath
+    const c1Adapter = new ControlledAdapter()
+    const c1Registration = root.llm.registerAdapter(['context-gate-c1'], c1Adapter)
+    try {
+      const c1Handle = await root.agents.create({ sessionId: 'context-gate-c1-' + String(Date.now()), meta: { cwd: WORKSPACE }, agentOptions: { provider: 'context-gate-c1', model: 'context-gate-model' } })
+      const c1Prompt = (index) => ({ id: 'context-gate-c1-user-' + String(index), role: 'user', content: [{ type: 'text', text: 'C=1 fixture prompt ' + String(index) }], source: { kind: 'user' } })
+      for (let index = 0; index < 3; index += 1) {
+        c1Handle.agent.followup(c1Prompt(index))
+        await c1Handle.agent.whenIdle()
+      }
+      const c1ToolNames = trace.slice(c0TraceLength).map(requestToolNamesOf)
+      const c1LastNames = c1ToolNames.length > 0 ? c1ToolNames[c1ToolNames.length - 1] : []
+      check('C=1真实request.tools保留两个cordis展示工具（不 arm restrict deny，与C=0互证）',
+        c1ToolNames.length >= 2
+          && c1LastNames.length > CORDIS_FIXTURE_TOOL_NAMES.length
+          && CORDIS_FIXTURE_TOOL_NAMES.every((name) => c1LastNames.includes(name)))
+      await c1Handle.dispose()
+    } finally {
+      c1Registration()
+      trace.length = c0TraceLength
+      delete process.env.DSH_EXTRA_PLAN_CONFIG_PATH
+    }
+  }
   const skillSnapshot = await root.skills.snapshot({ cwd: WORKSPACE, scope: handle.agent })
   const loadedSkill = await root.skills.get('ordinary-skill', { cwd: WORKSPACE, scope: handle.agent })
   check('skill schema/registry与按名加载真实可用', skillSnapshot.complete === true && skillSnapshot.skills.some((skill) => skill.name === 'ordinary-skill') && loadedSkill?.name === 'ordinary-skill' && String(loadedSkill.content).includes('ordinary skill body'))

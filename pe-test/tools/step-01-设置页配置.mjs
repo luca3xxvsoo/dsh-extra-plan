@@ -1677,7 +1677,7 @@ function fieldRowsOf(view) {
   }))
 }
 const UI_FIELD_ORDER = ['anchoredBootstrap', 'creativeMode', 'webFetch', 'toolPresentationMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel', 'reviewerUsesPlannerModel']
-// 验收者开关的 descriptor hint 只写「新子代理生效」（不夹带「新会话/」前缀），故后缀表同时收录两种口径。
+// 六个 pro/通用开关的 descriptor hint 统一写「新会话/新子代理生效」；HINT_SCOPE_SUFFIXES 保留旧口径仅为兼容历史 descriptor。
 const HINT_SCOPE_SUFFIXES = ['立即生效', '重启生效', '新会话/新子代理生效', '新子代理生效']
 const RESTART_SCOPE_KEYS = ['toolPresentationMode', 'webFetch']
 function hintScopeOf(hint) {

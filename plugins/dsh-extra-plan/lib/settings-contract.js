@@ -174,7 +174,7 @@ export const SETTING_DEFINITIONS = Object.freeze([
   setting({
     key: 'reviewerUsesPlannerModel', group: SETTING_GROUPS.EXTRA_PLAN, scalarType: 'boolean', defaultValue: DEFAULT_SETTINGS.reviewerUsesPlannerModel,
     sourceLocator: sourceLocator('reviewerUsesPlannerModel'), rowLocator: settingsRowLocator('reviewerUsesPlannerModel'),
-    validator: isBoolean, ui: { control: 'select', options: [true, false], locale: 'reviewerUsesPlannerModel', section: 'pro', hint: '验收者是否改用pro规划的模型。默认关闭 ｜ 新子代理生效' }, locatorAliases: [],
+    validator: isBoolean, ui: { control: 'select', options: [true, false], locale: 'reviewerUsesPlannerModel', section: 'pro', hint: '验收者是否改用pro规划的模型。默认关闭 ｜ 新会话/新子代理生效' }, locatorAliases: [],
   }),
 ])
 

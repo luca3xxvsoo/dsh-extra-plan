@@ -155,6 +155,9 @@ async function runMode(mode, defaultSandboxMode) {
       { id: 'web', name: '@deepseek-ai/dsh-web' },
       { id: 'cordis-host-runner', name: '@deepseek-ai/dsh-cordis-host-runner' },
       { id: 'tools', name: '@deepseek-ai/dsh-tools' },
+      // 真实预设主/四角色均挂载 dsh-tool-cordis（agent.cordis.yml L322）；夹具此前漏挂，
+      // 导致两名 cordis 展示工具从未注册、组8「schemas/get 保留」断言无对象可判。补齐同一行。
+      { id: 'tool-cordis', name: '@deepseek-ai/dsh-tool-cordis' },
       { id: mode === 'native' ? 'tool-executor-native' : 'tool-executor-ptc', name: mode === 'native' ? '@deepseek-ai/dsh-tool-executor-native' : '@deepseek-ai/dsh-tool-executor-ptc' },
       { id: 'system-prompt', name: '@deepseek-ai/dsh-system-prompt', config: { personaPrefix: '' } },
       { id: 'agent', name: '@deepseek-ai/dsh-agent' },
@@ -300,11 +303,37 @@ async function runMode(mode, defaultSandboxMode) {
     console.log('ROOT_SESSION_STATE=' + JSON.stringify({ scenario: scenarioKey, role: 'root', id: mainSession.header?.id, rootLike: mainIsRootLike, snapshotUnchanged: mainSnapshotUnchanged, modeEventsUnchanged: mainModeEventsUnchanged, initialModeEvents: mainInitialModeEvents, finalModeEvents: mainCurrentModeEvents }))
     const plannerTools = namesOf(root.tools.schemas(plannerAgent))
     check('组5 ' + mode + ' planner 工具面不含 write/edit 且含只读 shell pwsh', !plannerTools.includes('write') && !plannerTools.includes('edit') && plannerTools.includes('pwsh'), JSON.stringify({ write: plannerTools.includes('write'), edit: plannerTools.includes('edit'), pwsh: plannerTools.includes('pwsh') }))
-    check('组5 ' + mode + ' planner 工具面含 web/coredis 只读工具且 web_fetch 按 fetch=false 不注册', plannerTools.includes('web_search') && plannerTools.includes('cordis_inspect_list') && !plannerTools.includes('web_fetch'), JSON.stringify(plannerTools.filter((name) => name.startsWith('web_') || name.startsWith('cordis_'))))
+    // M1（组5）真实收窄口径：宿主 tools.schemas(agent) 是 registry 视图（不含 `when` 判据、scope 自有注册豁免 restrict），
+    // 模型可见面必须取「本步 admission」（tools.resolve 的 toolSet）口径，才与真实会话 F 面 toolNames 同源。
+    // 相位先显式判定：会话未落盘任何 tool/call 事件即 F 相位；F 相位必须恰为 pwsh+read（win32 无 bash），
+    // 不含 web_search/cordis 两名（引导期 allow = bootstrapShellTools ∪ bootstrapCommonTools 与角色无关）与 save_plan（saveBootstrapWhen 在 F 不注册）。
+    const plannerSnapshotEvents = typeof plannerAgent.session.snapshotEvents === 'function' ? plannerAgent.session.snapshotEvents() : []
+    const plannerSawToolCall = Array.isArray(plannerSnapshotEvents) && plannerSnapshotEvents.some((event) => event !== null && typeof event === 'object' && (event.type === 'tool/call' || (Array.isArray(event.type) && event.type.includes('tool/call'))))
+    const plannerPhase = plannerSawToolCall ? 'L' : 'F'
+    check('组5 ' + mode + ' 夹具相位判定为 F（planner 未落盘 tool/call 事件）', plannerPhase === 'F', JSON.stringify({ phase: plannerPhase, toolCallSeen: plannerSawToolCall, events: plannerSnapshotEvents.length }))
+    const plannerStep = await root.tools.resolve({ agent: plannerAgent, signal: new AbortController().signal })
+    let plannerStepNames = []
+    try { plannerStepNames = namesOf(root.tools.schemas(plannerAgent, plannerStep)) } finally { plannerStep.dispose() }
+    const plannerStepSorted = [...plannerStepNames].sort()
+    const PLANNER_F_FORBIDDEN = ['web_search', 'cordis_inspect_list', 'cordis_inspect_query', 'save_plan', 'bash']
+    check('组5 ' + mode + ' F 相位 planner 本步可见面恰为 pwsh+read（win32 无 bash）且不含 web_search/cordis/save_plan', plannerPhase === 'F' && JSON.stringify(plannerStepSorted) === JSON.stringify(['pwsh', 'read']) && PLANNER_F_FORBIDDEN.every((name) => !plannerStepNames.includes(name)), JSON.stringify({ phase: plannerPhase, admitted: plannerStepNames, registryFace: plannerTools, forbiddenPresent: PLANNER_F_FORBIDDEN.filter((name) => plannerStepNames.includes(name)) }))
     console.log('PLANNER_TOOLS=' + JSON.stringify({ mode, tools: plannerTools }))
 
     const CONTROL_BINDING_NAMES = ['send_message', 'interrupt_agent']
     const CORDIS_BINDING_NAMES = ['cordis_inspect_list', 'cordis_inspect_query']
+    // creativeMode 取值：夹具装载 definition 的 extra-plan 插件行 config（主 definition 走 group 行内嵌、角色行直挂）。
+    // 组8 可见面断言按它分支：C=0 两名被 agent 作用域 restrict deny 过滤、C=1 两名完整可见；registry 注册恒定。
+    const extraPlanRowConfigOf = (definition) => {
+      const pluginRows = definition !== null && definition !== undefined && Array.isArray(definition.plugins) ? definition.plugins : []
+      const direct = pluginRows.find((row) => row !== null && typeof row === 'object' && row.id === 'extra-plan')
+      if (direct !== undefined) return direct.config !== null && typeof direct.config === 'object' ? direct.config : undefined
+      const group = pluginRows.find((row) => row !== null && typeof row === 'object' && row.id === 'extra-plan-group')
+      const nested = group !== undefined && Array.isArray(group.config) ? group.config.find((row) => row !== null && typeof row === 'object' && row.id === 'extra-plan') : undefined
+      return nested !== undefined && nested.config !== null && typeof nested.config === 'object' ? nested.config : undefined
+    }
+    const declaredCreativeModes = definitions.map((definition) => extraPlanRowConfigOf(definition)?.creativeMode)
+    const creativeMode = declaredCreativeModes.length > 0 && declaredCreativeModes.every((value) => value === true)
+    check('组8 ' + mode + ' 夹具 creativeMode 声明一致且可判定可见面分支', declaredCreativeModes.every((value) => typeof value === 'boolean') && new Set(declaredCreativeModes).size === 1, JSON.stringify({ declared: declaredCreativeModes, creativeMode }))
     const roleCases = [['executor', executorAgent], ['planner', plannerAgent], ['reviewer', reviewerAgent], ['prober', proberAgent]]
     for (const [roleName, agent] of roleCases) {
       const observation = roleObservations.get(agent.session.header.id)
@@ -321,11 +350,18 @@ async function runMode(mode, defaultSandboxMode) {
       if (roleName === 'reviewer') check('组4 ' + mode + ' reviewer 工具面不含 write/edit', !schemaNames.includes('write') && !schemaNames.includes('edit'), JSON.stringify(schemaNames))
       const bindingDefinitions = CONTROL_BINDING_NAMES.map((name) => root.tools.get(name, agent))
       const bindingNames = bindingDefinitions.map((definition) => definition === undefined || definition === null ? undefined : definition.name)
+      // 口径 B：registry 层（不带 agent 作用域）两名必须仍是真实定义——C=0 只走 agent 作用域 restrict deny，不改注册表。
+      const cordisRegistryDefinitions = CORDIS_BINDING_NAMES.map((name) => root.tools.get(name))
+      const cordisRegistryNames = cordisRegistryDefinitions.map((definition) => definition === undefined || definition === null ? undefined : definition.name)
       const cordisDefinitions = CORDIS_BINDING_NAMES.map((name) => root.tools.get(name, agent))
       const cordisNames = cordisDefinitions.map((definition) => definition === undefined || definition === null ? undefined : definition.name)
       const controlAbsent = CONTROL_BINDING_NAMES.every((name, index) => !schemaNames.includes(name) && bindingNames[index] === undefined)
-      const cordisOk = CORDIS_BINDING_NAMES.every((name, index) => schemaNames.includes(name) && cordisNames[index] === name)
-      check('组8 ' + mode + ' ' + roleName + ' schemas/get 无 send/interrupt 且 Cordis 两工具为真实定义', controlAbsent && cordisOk, JSON.stringify({ names: schemaNames, control: bindingNames, cordis: cordisNames }))
+      const cordisRegistryOk = CORDIS_BINDING_NAMES.every((name, index) => cordisRegistryNames[index] === name)
+      const cordisAgentVisible = CORDIS_BINDING_NAMES.map((name, index) => schemaNames.includes(name) && cordisNames[index] === name)
+      // 可见面按 creativeMode 分支：C=0 两名都必须被过滤（schema 与 get(agent) 同时缺席）；C=1 两名都必须可见且为真实定义。
+      const cordisVisibleOk = creativeMode ? cordisAgentVisible.every((visible) => visible) : cordisAgentVisible.every((visible) => visible === false)
+      const cordisOk = cordisRegistryOk && cordisVisibleOk
+      check('组8 ' + mode + ' ' + roleName + ' schemas/get 无 send/interrupt 且 Cordis 两工具为真实定义', controlAbsent && cordisOk, JSON.stringify({ creativeMode, names: schemaNames, control: bindingNames, cordisRegistry: cordisRegistryNames, cordis: cordisNames, visible: cordisAgentVisible }))
       if (mode === 'ptc') {
         let assembly = null
         let assemblyError = ''

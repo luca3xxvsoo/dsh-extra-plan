@@ -79,7 +79,8 @@
 - **settings-only** 保存是 **no-remount**：只读取最终完整 11 项与 `gateWords`，立即进入 settled/profileSync 并同步 QQBot；绝不调用、等待、dispose 或重建 AgentPreset。唯一允许 adapter register/dispose 的增量为 0/0。
 - 非 settings 声明结构变化，或旧 owner ↔ 官方 owner transition，才进入 `structuralHandoff`；settled-only 与 adapter/structural 队列独立，adapter failure、reject 或 hang 不得阻断 profileSync。
 - `profileSync` 初始为 `status=pending,pending=true`；任何同步终态（`synced`、`not-applicable`、`not-installed`、`unavailable`、`failed`、`partial`）后才 `pending=false`，禁止把 QQ 的 `not-applicable` 或其它未适用状态伪造为 `synced`。
-- 9 项（`anchoredBootstrap`、`creativeMode`、`runcodeCatchGate`、`crossProviderPlannerModel`、`plannerModel`、`plannerPromptSuffix`、`exploreBudget`、`otherAgentModel`、`reviewerUsesPlannerModel`）保持同进程热读；`webFetch` 与 `toolPresentationMode` 是 2 项需重启的装载期投影；toolPresentationMode 切换后必须新开会话，原会话不可继续（见台账 ⑭）。完整 7 键 `gateWords` 立即持久化，但当前 apply 词表不原地替换，需重启后由 HUMAN 验证新词/旧词拒绝/非法词无 fallback。
+- 9 项（`anchoredBootstrap`、`creativeMode`、`runcodeCatchGate`、`crossProviderPlannerModel`、`plannerModel`、`plannerPromptSuffix`、`exploreBudget`、`otherAgentModel`、`reviewerUsesPlannerModel`）保持同进程热读；`webFetch` 与 `toolPresentationMode` 是 2 项需重启的装载期投影；toolPresentationMode 切换后必须新开会话，原会话不可继续（见台账 ⑭）。完整 7 键 `gateWords` 立即持久化，但当前 apply 词表不原地替换，需重启后由 HUMAN 验证新词/旧词拒绝/非法词无 fallback。配置本身同进程热读，但模型/路由类开关对已存在的子代理不重算，故 UI 标注「新会话/新子代理生效」。生成器按 L121 的 `DSH_INSTALL_ROOT`+`host-preload` 前缀运行（缺 js-yaml 即表示未带代码根前置）；仅在无法使用 host-preload 前缀时，才用 `NODE_PATH` 指向 profile 的 `node_modules` 兜底。
+- **同源检查项**：改动 `anchoredBootstrap` 或 `creativeMode` 任一路的可见面裁剪逻辑，必须同步核对另一路，并跑 step-04 的同源结构断言（`restrict(` 仅 1 处且位于 `armToolRestriction` 内、两个开关的 arm 均调用它）。
 - 自动结果必须分别记录 PASS/FAIL/SKIP/INCOMPLETE/HUMAN/NOT-RUN；SKIP、HUMAN 不销账，真实 Harness/QQBot 重启、消息链、生产 profile 与 adapter 完整工具图保持 HUMAN。
 
 ### 生产注入与证据范围
@@ -126,7 +127,7 @@
    - **版本不一致时用新版本环境测**：当新版本代码环境与实际生产环境版本不一致（典型：仓库已收口到新版本、生产仍跑旧版本）时，必须先在**新版本代码环境**显式设置 `DSH_INSTALL_ROOT=<新版本真实安装根>`（从该 `dsh` 命令或其安装 `package.json` 只读取得）跑通全套；不得改在旧版本生产环境里跑，否则版本门控直接拒绝，且无法暴露新版本的 API 漂移。该场景下旧版本生产环境的结果不能作为新版本代码的验收依据。
    - **升级后重跑**：生产升级完成后，必须用**升级后的真实安装根**再跑一次同一套预检；两次均退出 0 且无 FAIL 才具备部署条件。
    - **失败即停止**：任一项失败、或 `engines.dsh` 与目标宿主版本不匹配，一律停止部署，不得降级记为 HUMAN/NOT-RUN 后继续。
-   - **边界不变**：`DSH_INSTALL_ROOT` 只是只读**代码**根（须能解析 `node_modules/@deepseek-ai/*`），不是数据根 `DSH_HOME`；数据侧验证另需显式 `--host-root` 加精确 `--profile`/会话目标。该预检不写生产目录、不代替用户部署。
+   - **边界不变**：`DSH_INSTALL_ROOT` 只是只读**代码**根（须能解析 `node_modules/@deepseek-ai/*`），不是数据根 `DSH_HOME`；数据侧验证另需显式 `--host-root` 加精确 `--profile`/会话目标。该预检不写生产目录、不代替用户部署。示例：代码根取「npm prefix」那一层（其下有 `node_modules/@deepseek-ai/dsh`，Windows 常见 `%APPDATA%\npm`）；反例：指向 `…\@deepseek-ai\dsh` 本身会让 installAnchor 拼成 `…\dsh\node_modules\@deepseek-ai\dsh\package.json` 而解析失败（实测 step-01 出现 10 条 adapter 失败、step-04 出现 P2-18b/P2-20 与 18 个 PTC+C=0 格失败）。
    - **预检范围**：本条预检只覆盖代码根上的自动回归（本节第 1 至 3 步，全部命令仅需 `DSH_INSTALL_ROOT`）；`--host-root` 数据侧项、`step-99` 实账统计与 HUMAN 人眼项不属本预检范围，按本节第 4 条与[实机闸门测试流程](ai-实机闸门测试流程.md)单列执行，不得因未执行而判为预检失败。
 
 ## 改动域 → 唯一检查入口

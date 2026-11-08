@@ -8,7 +8,7 @@
 
 ## ② 展示时序
 
-A=anchoredBootstrap、C=creativeMode、M=`native|ptc`；F 是会话尚无 `tool/call`，首个工具调用后为 L。A=1/F/main-planner 的 PTC 形态顶层只保留 `run_code` 与两段引导/read 文案，native 为 HN、ptc 为 HP；C=0 只改变模型可见面，不改变 runtime binding、deny 或 `tools/pre-execute`。
+A=anchoredBootstrap、C=creativeMode、M=`native|ptc`；F 是会话尚无 `tool/call`，首个工具调用后为 L。A=1/F/main-planner 的 PTC 形态顶层只保留 `run_code` 与两段引导/read 文案，native 为 HN、ptc 为 HP；C=0 经 `restrict({deny})` 改变模型可见工具面、与 A=1 同源同通路（共用 `armToolRestriction`）；不改变 runtime binding 与 `tools/pre-execute` 边界。
 
 PTC C=0/C=1 必须各用干净 A=1 顶层会话取 F→首个 tool/call→L→第二调用；native HN 与 ptc HP 分别取证。历史会话只能提供 L，不能证明 F。
 

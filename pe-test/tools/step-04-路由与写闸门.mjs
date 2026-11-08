@@ -2345,6 +2345,30 @@ const matrixCreativeOptions = [false, true]
 const matrixPhases = ['first', 'later']
 let matrixCases = 0
 let matrixSerial = 0
+// ── S1-S3：两条可见面裁剪通路的同源结构断言（静态读插件源码，单点执行、先于矩阵 80 格 deny 行为断言）──
+// 改坏任一路（开关各自再调 restrict、或不再走通用 arm、或重新引入第二套存储）即红，阻断再次分叉。
+function functionBodyOfSource(source, signature) {
+  const start = source.indexOf(signature)
+  if (start < 0) return ''
+  // 取「签名行 → 下一个同级（2 空格缩进）function/ctx.on 声明」之间的文本：
+  // 不按花括号配对切，避免参数表里的对象解构与字面量花括号干扰。
+  const rest = source.slice(start)
+  const boundary = rest.search(/\n  (?:function |ctx\.on\()/)
+  return boundary < 0 ? rest : rest.slice(0, boundary)
+}
+{
+  const indexSource = readFileSync(PLUGIN_PATH, 'utf8')
+  const restrictCallSites = indexSource.match(/restrict\(/g) ?? []
+  const armBody = functionBodyOfSource(indexSource, 'function armToolRestriction(')
+  const bootstrapArmBody = functionBodyOfSource(indexSource, 'function armAnchoredToolRestriction(')
+  const cordisArmBody = functionBodyOfSource(indexSource, 'function armCordisPresentationRestriction(')
+  checkTrue('S1 index.js 的 restrict 调用点恰 1 处且只位于 armToolRestriction 内',
+    restrictCallSites.length === 1 && armBody.includes('restrict(') && !bootstrapArmBody.includes('restrict(') && !cordisArmBody.includes('restrict('))
+  checkTrue('S2 两个开关的 arm 适配函数都调用 armToolRestriction（可见面裁剪同源不分支）',
+    bootstrapArmBody.includes('armToolRestriction(') && cordisArmBody.includes('armToolRestriction('))
+  checkTrue('S3 裁剪存储与释放单一来源（单一 toolRestrictions WeakMap，无第二套 cordis/anchored 存储）',
+    indexSource.includes('const toolRestrictions = new WeakMap()') && !indexSource.includes('cordisRestrictions') && !indexSource.includes('anchoredRestrictions'))
+}
 for (const anchoredBootstrap of matrixAnchoredOptions) {
   for (const creativeMode of matrixCreativeOptions) {
     for (const mode of matrixModes) {
@@ -2355,10 +2379,27 @@ for (const anchoredBootstrap of matrixAnchoredOptions) {
           const agent = matrixAgent(role, phase, matrixSerial)
           const schemas = matrixSchemasFor(role)
           const rawTools = matrixDirectTools(schemas, mode)
+          // 夹具 tools 服务补 view/restrict：C=0 的 cordis 裁剪只由插件 agent 作用域 restrict({ deny }) 承担，
+          // 无该服务就观测不到 deny 实参（view.restrictableNames 是 restrict 前可收窄名，与宿主 view 同语义）。
+          const matrixDenyCalls = []
+          const matrixRestrictable = new Set(schemas.map((schema) => schema.name))
+          const matrixToolsStub = {
+            schemas: () => schemas,
+            definitions: () => schemas.map((schema) => ({ name: schema.name, description: schema.description, parameters: schema.parameters })),
+            view: () => ({ restrictableNames: matrixRestrictable }),
+            restrict: (filter) => { matrixDenyCalls.push(filter); return () => {} },
+          }
+          agent.ctx = { get: (name) => (name === 'tools' ? matrixToolsStub : undefined) }
+          // 先 arm 再算期望：期望工具面只表达 restrict deny 求值后的结果，不按 creativeMode 预先剔除。
+          const cordisArmAgent = { session: { header: { id: 'matrix-cordis-' + matrixSerial, cwd: 'C:/work' }, snapshotEvents: () => [] }, options: {}, ctx: agent.ctx }
+          for (const listener of Array.isArray(harnessMatrix['agent/created']) ? harnessMatrix['agent/created'] : []) await listener({ agent: cordisArmAgent, source: 'matrix' })
+          const denyNames = matrixDenyCalls.length === 1 && Array.isArray(matrixDenyCalls[0].deny) ? matrixDenyCalls[0].deny : []
           const assembled = await assemble(harnessMatrix, agent, rawTools, matrixSections(mode))
           const anchored = anchoredBootstrap && phase === 'first' && (role === 'main' || role === 'planner')
           const anchoredPtc = anchored && mode === 'ptc'
-          const visibleRawTools = creativeMode ? rawTools : rawTools.filter((tool) => !MATRIX_CORDIS_TOOLS.includes(tool.name))
+          // 装配投影层不承担 cordis 裁剪（宿主以 provider 并集覆盖 waterfall 返回的 tools），
+          // 期望值只表达 restrict deny 求值后的工具面。
+          const visibleRawTools = rawTools.filter((tool) => !denyNames.includes(tool.name))
           const expectedNames = anchoredPtc
             ? ['run_code']
             : anchored
@@ -2388,6 +2429,16 @@ for (const anchoredBootstrap of matrixAnchoredOptions) {
           const cordisOk = c7Expected === MATRIX_CORDIS_TOOLS.length
             ? cordisSectionHits.length === 0 && (mode === 'ptc' ? topCordisHits.length === 0 : topCordisHits.length === MATRIX_CORDIS_TOOLS.length)
             : cordisSectionHits.length === 0 && topCordisHits.length === 0
+          // deny 通路断言（投影副本不作判据）：C=0 时 restrict({ deny }) 名单恰两名且 restrictableNames 仍含两名
+          // （宿主 view 的 restrictableNames 为 restrict 前集合，allow 收窄后仍可 deny）；C=1 时 deny 名单为空。
+          const denyList = matrixDenyCalls.length === 1 && Array.isArray(matrixDenyCalls[0].deny) ? matrixDenyCalls[0].deny : []
+          const cordisDenyOk = creativeMode
+            ? matrixDenyCalls.length === 0
+            : matrixDenyCalls.length === 1
+              && denyList.length === MATRIX_CORDIS_TOOLS.length
+              && MATRIX_CORDIS_TOOLS.every((name) => denyList.includes(name))
+              && MATRIX_CORDIS_TOOLS.every((name) => matrixRestrictable.has(name))
+          checkTrue('M' + matrixSerial + ' A=' + (anchoredBootstrap ? '1' : '0') + ' C=' + (creativeMode ? '1' : '0') + ' M=' + mode + ' phase=' + phase + ' role=' + role + ' cordis restrict deny（C=0 恰两名且可收窄名保留，C=1 空）', cordisDenyOk)
           const readText = sectionText(assembled, 'tool:read')
           let readOk
           if (anchoredPtc) {
