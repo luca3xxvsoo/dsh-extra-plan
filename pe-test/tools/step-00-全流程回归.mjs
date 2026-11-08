@@ -1833,6 +1833,34 @@ for (const [name, args, mode, substr] of PR) {
 const pr31ZeroIoRoot = join(prFixtureRoot, 'not-created')
 const pr31ZeroIo = validateProbe({ ...validProbe(), background: [{ topic: 't', detail: 'x'.repeat(PROBE_LIMITS.maxDetailLen + 1) }] }, pr31ZeroIoRoot, createPathContext({ workspaceRoot: pr31ZeroIoRoot }))
 checkTrue('PR31 结构非法优先零IO且不探测路径', typeof pr31ZeroIo === 'string' && pr31ZeroIo.includes('background[0].detail') && !pr31ZeroIo.includes('路径'))
+// ── PR36-PR39：宿主只读代码根（installRoot）授权与边界回归（0.2.2-rc.1 BUG-3） ──
+const { prepareWriteTarget, resolveHostPath } = await import('../../plugins/dsh-extra-plan/lib/path-policy.js')
+const prInstallRoot = join(prFixtureRoot, 'install-root')
+mkdirSync(prInstallRoot, { recursive: true })
+const prInstallFile = join(prInstallRoot, 'peer-package.json')
+writeFileSync(prInstallFile, '{}\n')
+const PR_INSTALL_CONTEXT = createPathContext({
+  workspaceRoot: prFixtureRoot,
+  hostCapabilities: { installRoot: { path: prInstallRoot, type: 'directory', access: 'read', purpose: 'probe-reference' } },
+})
+const pr36 = validateProbe({ ...validProbe(), fileMap: [{ path: prInstallFile, relation: 'r' }] }, prFixtureRoot, PR_INSTALL_CONTEXT)
+checkTrue('PR36 installRoot 下既有文件（绝对路径）→ 过', pr36 === null)
+const pr37 = validateProbe({ ...validProbe(), fileMap: [{ path: join(prInstallRoot, 'missing.json'), relation: 'r' }] }, prFixtureRoot, PR_INSTALL_CONTEXT)
+checkTrue('PR37 installRoot 下不存在路径 → 拒并指明路径不存在', typeof pr37 === 'string' && pr37.includes('路径不存在'))
+let pr38Text = ''
+try {
+  prepareWriteTarget(PR_INSTALL_CONTEXT, prInstallFile, { kind: 'host', capability: 'installRoot', purpose: 'probe-reference' })
+} catch (error) {
+  pr38Text = String(error && error.code ? error.code : error)
+}
+checkTrue('PR38 installRoot 只读，写入被拒并返回 HOST_RESOURCE_READONLY', pr38Text.includes('HOST_RESOURCE_READONLY'))
+let pr39Text = ''
+try {
+  resolveHostPath(PR_INSTALL_CONTEXT, prInstallFile, { capability: 'installRoot', purpose: 'config-editor' })
+} catch (error) {
+  pr39Text = String(error && error.message ? error.message : error)
+}
+checkTrue('PR39 installRoot 用于其它 purpose → PURPOSE_MISMATCH', pr39Text.includes('用途') || pr39Text.includes('PURPOSE'))
 rmSync(prFixtureRoot, { recursive: true, force: true })
 
 // ── SCHEMA 系列：save_probe 注册后核验实际动态描述（不复制限制常量） ────────
@@ -2481,11 +2509,18 @@ function makePlannerHarness(options = {}) {
     ? { provider: 'p-parent', model: 'parent-model', maxTokens: 512, reasoningEffort: 'low' }
     : options.parentConfig
   const parent = { session: { header: { id: 'parent-id' }, requestHeader: () => ({ config: parentConfig }) } }
+  // 0.2.2-rc.1 契约：模型选择改为创建期 agent.model.select，request 期只读 selection。
+  const selectionState = { value: undefined }
   const agent = {
     session: {
       // planner 身份判据为 header.agentPreset（descriptor.mode 恒 continuable，不再作判据）。
       header: { id: 'planner-id', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-id', agentPreset: 'extra-plan-planner' },
       snapshotEvents: () => [{ type: 'subagent/descriptor', data: { mode: 'continuable' } }],
+      append: () => {},
+    },
+    model: {
+      select(selection) { selectionState.value = { ...selection } },
+      current() { return selectionState.value },
     },
   }
   const listeners = {}
@@ -2507,15 +2542,25 @@ function makePlannerHarness(options = {}) {
   }
   if (Object.prototype.hasOwnProperty.call(options, 'crossProviderPlannerModel')) config.crossProviderPlannerModel = options.crossProviderPlannerModel
   applyPlugin(ctx, config)
-  return { agent, parent, listeners, timeline }
+  return { agent, parent, listeners, timeline, selectionState }
+}
+
+async function fireAgentCreated(harness, agent, signal) {
+  const created = harness.listeners['agent/created']
+  if (!Array.isArray(created)) return
+  for (const listener of created) await listener({ agent, source: 'delegation', signal })
 }
 
 async function invokePlanner(harness, signal) {
+  await fireAgentCreated(harness, harness.agent, signal)
   const listener = harness.listeners['agent/request']
   if (!Array.isArray(listener) || listener.length === 0) throw new Error('agent/request 监听器未注册')
+  const selected = harness.selectionState === undefined ? undefined : harness.selectionState.value
   return listener[0]({ agent: harness.agent, turn: 1, step: 1, signal }, async () => {
     harness.timeline.push('agent/request-next')
-    return { provider: 'upstream', model: 'upstream-model', maxTokens: 99 }
+    const base = { provider: 'upstream', model: 'upstream-model', maxTokens: 99 }
+    if (selected === undefined) return base
+    return { ...base, provider: selected.provider, model: selected.model, ...(selected.reasoningEffort !== undefined ? { reasoningEffort: selected.reasoningEffort } : {}) }
   })
 }
 
@@ -2830,18 +2875,26 @@ function makeNonPlannerHarness(options = {}) {
     const schemas = spec.schemas !== undefined
       ? spec.schemas
       : role === 'probe' ? [{ name: 'save_probe' }] : role === 'reviewer' ? [{ name: 'read' }] : [{ name: 'write' }]
+    const selectionState = { value: undefined }
     const agent = {
       session: {
         header: { id: spec.id, origin: 'subagent', delegationDepth: 2, parentSession: spec.parentSession || 'main-id' },
         snapshotEvents: () => [],
+        append: () => {},
+      },
+      model: {
+        select(selection) { selectionState.value = { ...selection } },
+        current() { return selectionState.value },
       },
       ctx: {
         get(name) {
-          if (name === 'tools') return { schemas: () => schemas }
+          if (name === 'tools') return { schemas: () => schemas, register: () => {} }
           return undefined
         },
       },
+      selectionState,
     }
+    if (spec.explicitOptions !== undefined) agent.options = spec.explicitOptions
     agents.set(spec.id, agent)
     registry.set(spec.id, agent)
   }
@@ -2883,13 +2936,23 @@ function directRouteFor(harness, agent) {
 
 async function invokeNonPlanner(harness, agentOrId, resolved, signal) {
   const agent = typeof agentOrId === 'string' ? harness.agents.get(agentOrId) : (agentOrId || harness.agent)
+  const requestSignal = signal === undefined ? new AbortController().signal : signal
+  // 显式 agentOptions 的等价桩：调度期已给定 provider/model 时，创建期选择应整体跳过
+  // （跳目录与真实探针），与宿主「显式路由优先」语义一致。
+  if (resolved !== undefined && resolved !== null && agent.options === undefined && typeof resolved.provider === 'string' && typeof resolved.model === 'string') {
+    agent.options = { provider: resolved.provider, model: resolved.model }
+  }
+  await fireAgentCreated(harness, agent, requestSignal)
   const listener = harness.listeners['agent/request']
   if (!Array.isArray(listener) || listener.length === 0) throw new Error('agent/request 非 planner listener 未注册')
   const base = resolved === undefined ? directRouteFor(harness, agent) : resolved
-  const requestSignal = signal === undefined ? new AbortController().signal : signal
+  const selected = agent.selectionState === undefined ? undefined : agent.selectionState.value
+  const routeBase = selected === undefined
+    ? base
+    : { ...base, provider: selected.provider, model: selected.model, ...(selected.reasoningEffort !== undefined ? { reasoningEffort: selected.reasoningEffort } : {}) }
   return listener[0]({ agent, turn: 1, step: 1, signal: requestSignal }, async () => {
     harness.timeline.push('agent/request-next')
-    return base
+    return routeBase
   })
 }
 

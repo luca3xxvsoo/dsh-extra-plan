@@ -337,7 +337,8 @@ function makeHarness(config = {}) {
       if (name === 'systemPrompt') return systemPrompt
       if (name === 'sandboxPolicy') return sandboxPolicy
       // 服务名换代：codeRuntime → ptcRuntime（SDK renderer 语言来源）。
-      if (name === 'ptcRuntime') return { language: typeof config.language === 'string' ? config.language : 'typescript' }
+      // config.ptcRuntime === null 时显式缺席（模拟 native 部署：无 ptcRuntime 服务）。
+      if (name === 'ptcRuntime') return config.ptcRuntime === null ? undefined : { language: typeof config.language === 'string' ? config.language : 'typescript' }
       // 四工具治理（v0.4.0）：agents 服务 mock——缺省不注入（undefined，保持
       // createAgentRuntime/isLiveDelegation 的 agents 缺席豁免路径不破坏 child 判定）；
       // 用例经 config.agents 显式注入 registry（如 { get: (id) => ({ status: 'running' }) }）。
@@ -610,6 +611,66 @@ const bootPlanner = await assemble(harnessBoot, plannerAgent, [{ name: 'read' },
 check('R13 bootstrapOn=true planner 首轮收窄为 shell+read', Array.isArray(bootPlanner.tools) ? bootPlanner.tools.map((t) => t.name).sort() : null, ['pwsh', 'read'])
 const bootExecutor = await assemble(harnessBoot, executor, [{ name: 'read' }, { name: 'pwsh' }, { name: 'write' }])
 check('R14 bootstrapOn=true executor 不引导（目录原样）', Array.isArray(bootExecutor.tools) ? bootExecutor.tools.map((t) => t.name).sort() : null, ['pwsh', 'read', 'write'])
+
+// ── R15-R18：引导期收窄改走 ctx.tools.restrict 的行为断言（0.2.2-rc.1 BUG-1 v2 补齐） ──
+// 真实宿主 Session 具备 append；路线 A：无 append 的静态契约/工具面夹具不 arm。
+async function fireAgentCreatedForArm(listeners, agent) {
+  const created = listeners['agent/created']
+  if (!Array.isArray(created) || created.length === 0) throw new Error('agent/created 监听器未注册')
+  for (const listener of created) await listener({ agent, source: 'delegation' })
+}
+function makeArmRecorder(schemas) {
+  const calls = { restrict: [], released: 0 }
+  const tools = {
+    restrict(filter) {
+      calls.restrict.push(filter)
+      return () => { calls.released += 1 }
+    },
+    schemas: () => schemas,
+    register: () => {},
+  }
+  return { calls, tools }
+}
+function makeArmAgent(id, toolsStub, withAppend) {
+  const session = withAppend
+    ? makeRouteSession({ id, origin: 'main', cwd: 'C:/work' })
+    : { header: { id, origin: 'main', cwd: 'C:/work' }, snapshotEvents: () => [] }
+  return {
+    session,
+    ctx: { get: (name) => (name === 'tools' ? toolsStub : undefined) },
+    options: {},
+    model: { select: () => {}, current: () => undefined },
+  }
+}
+{
+  const armSchemas = [{ name: 'read' }, { name: 'pwsh' }, { name: 'write' }, { name: 'edit' }]
+  const armRecorder = makeArmRecorder(armSchemas)
+  const armAgent = makeArmAgent('boot-restrict-main', armRecorder.tools, true)
+  const harnessArmNative = makeHarness({ anchoredBootstrap: true, ptcRuntime: null })
+  await fireAgentCreatedForArm(harnessArmNative, armAgent)
+  const armAllow = armRecorder.calls.restrict.length === 1 && Array.isArray(armRecorder.calls.restrict[0].allow)
+    ? armRecorder.calls.restrict[0].allow.join('|')
+    : null
+  checkTrue('R15 真实 Session 引导期 arm：restrict allow 为配置集与 schema 交集（pwsh|read）', armAllow === 'pwsh|read')
+  preExecute(harnessArmNative, armAgent, 'read', { file_path: 'README.md' })
+  checkTrue('R17 引导期结束后 release：restrict disposer 被调用恰一次', armRecorder.calls.released === 1)
+}
+{
+  const armSchemas = [{ name: 'read' }, { name: 'pwsh' }]
+  const ptcRecorder = makeArmRecorder(armSchemas)
+  const ptcAgent = makeArmAgent('boot-restrict-ptc', ptcRecorder.tools, true)
+  const harnessArmPtc = makeHarness({ anchoredBootstrap: true })
+  await fireAgentCreatedForArm(harnessArmPtc, ptcAgent)
+  checkTrue('R16 PTC 部署（ptcRuntime 存在）跳过收窄：restrict 未被调用', ptcRecorder.calls.restrict.length === 0)
+}
+{
+  const armSchemas = [{ name: 'read' }, { name: 'pwsh' }]
+  const noAppendRecorder = makeArmRecorder(armSchemas)
+  const noAppendAgent = makeArmAgent('boot-restrict-noappend', noAppendRecorder.tools, false)
+  const harnessArmNoAppend = makeHarness({ anchoredBootstrap: true, ptcRuntime: null })
+  await fireAgentCreatedForArm(harnessArmNoAppend, noAppendAgent)
+  checkTrue('R18 无 session.append 的夹具不 arm（路线 A）', noAppendRecorder.calls.restrict.length === 0)
+}
 
 // ── ⑤ 探查子代理（subagent_probe）行为断言：工具面拒/放行（write、pwsh 只读、pwsh 包裹写、save_probe）
 // ── + 主会话 ask 路由判定（none/direct/plan/channelBroken、双问与澄清）+ 无参 subagent_probe 放行与等价补记

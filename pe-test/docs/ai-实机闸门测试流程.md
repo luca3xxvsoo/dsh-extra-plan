@@ -705,6 +705,11 @@ node --input-type=module -e $js $dir
 ⑬ **后台 job 完成通知会复位该锚点**：被测 job 自然完成后宿主投递的完成通知落盘即复位同轮锚点，通知后各工具的首次调用恢复放行（`job_output` 返回 terminal 结果、`job_list`/`list_agents` 正常返回），再调第二次才重新命中 A17/A55/A56 原文案；判据见 HUMAN 专项 H-JOB-NOTICE-01（通知前 `1 allow + 2 deny`、通知后 `1 allow + 1 deny`）。
 ⑭ **宿主放行侧的实际返回形态不是闸门拒绝文案**：目标不可用时 `send_message` 返回 `subagent "<agent_id>" is unavailable`（A54 放行侧）；job 不存在时 `job_kill` 返回 `unknown job "<job_id>"`（A52 放行侧）。两者都是宿主工具自身的业务返回、不是插件闸门文案，判 A52/A54 时不得记成拒绝文案（只记「无闸门拒绝文案 ＋ 宿主侧返回摘要」）。
 
+> **0.2.2-rc.1 首测确认缺陷与判据修正（2026-11）**：
+> ① A37 的路径分支已取得实机证据——`路径不存在：<value>`（探针传不存在文件）与 `路径未授权：<value>（host path 超出授权根）`（探查者引用宿主源码时触发）两类文案均命中；后者对应的授权缺口已由 `installRoot` 只读代码根修复（`probe-reference`、与 W/H 重叠时跳过注册），重启部署后应按 PR36-PR39 复核。
+> ② A39 的 tools 收窄判据改为按 `agent.ctx.tools.restrict` 实现口径核对：宿主装配期以 provider 并集覆盖 waterfall 返回的 tools，故「waterfall 内改 tools」不构成任何可见效果；引导分支是否真正进入改看插件一次性诊断日志（字段 `phase`、`role`、`mode`、`bootstrapOn`、`anchoredFirst`）。
+> ③ 新增陷阱：`tools/pre-execute` 使用同步事件快照，ask 答复后**立即**发起的闸门断言可能读到尚未刷新的状态（实测 U2 首次「直接执行」后紧接的 `subagent_plan` 仍返回 route=none 文案，重试一次即恢复）——编排上应在 ask 答复后先发一次工具调用再断言。
+
 ### 7.3 用户配合协议
 - AI 逐条给出精确操作脚本（点哪个选项、空白回车、连续调某个工具 N 次、带哪个参数）；用户照做；AI **当场**照录工具卡片文案并判定「通过（文案与期望关键句一致）/ 不通过（给出实际文案）」。
 - 每完成一域由用户在清单勾选；支持「发版前跑全量、改闸门后按域增量」。

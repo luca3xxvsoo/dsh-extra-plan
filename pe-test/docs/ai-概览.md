@@ -8,6 +8,8 @@
 
 根与角色口径：维护 W 取可信源树布局，不取 `process.cwd`、插件安装根或普通文件 `dirname`；部署/会话 W 取保存方案的 `session.header.cwd`，部署脚本仍把工件、fixture、报告等写在 W，不是只能访问 H。H 仅由真实 Host context/精确能力或测试显式 `--host-root` 与精确目标授权；`DSH_HOME`/`DSH_PROFILE`/`SESSION_ID` 的存在不授根，`DSH_INSTALL_ROOT`+host-preload 只授只读代码根，扩展名也不代表授权。标准 Web/QQ 由可信 `profileContext.name`/`startedBundles` 识别，Web→QQ 镜像保留，QQ 不适用返回 `not-applicable`，不误启动跨 profile；缺根、Other、非法/冲突来源均在 IO 前拒绝，H/W 重叠按用途分类，隔离 fixture 不等于实机。
 
+- `save_probe` 的宿主证据可引用只读代码根 `installRoot`（由可信 `profileContext.installAnchor` 派生、`directory`+`read`+`probe-reference`、与 W/H 任一方向重叠时跳过注册）；它与既有「`DSH_INSTALL_ROOT`+host-preload 只授只读代码根、不是数据 H」同口径，不授写权限。
+
 高层闭环：用户需求 → 主会话只读探查 → 探查方式二选一 → 路由确认 →（需要时）目的确认/澄清 → 线索与方案/验收落盘 → 用户批准 → 执行者 → 验收者 → 用户部署与实测。入口判定：已给出现成方案（含文件、动作、期望）时直接进批准链，不经过探查与路由。路由、批准、生产部署的边界不能用 AI 自觉替代。
 
 ## 五角色

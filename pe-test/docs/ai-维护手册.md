@@ -27,6 +27,8 @@
 
 - **双根维护与命令/参数前缀**：维护 W 取可信源树布局，不能以 `process.cwd`、插件安装目录或普通文件 `dirname` 授根；部署/会话 W 取 `session.header.cwd`。维护数据 H 仅由本次显式 `--host-root` 加精确 `--profile`/`--file`/会话目标授权；`DSH_HOME`、`DSH_PROFILE`、`SESSION_ID` 的存在不授根，非法原始根在任何扫描前拒绝，H/W 重叠按用途分类且 Host 资源只读。会话选择只能是 `--session-dir`，或 `--session`+`--sessions-dir`；默认不读兄弟，`--discover-children` 必须显式绑定会话，最多 512 候选、每个日志头最多 262144 字节，坏头/超限为 `INCOMPLETE`；必填 suffix 必须显式提供，空串合法。纯 W 工具直接 `node`；需要 Host 代码的测试才用 `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs`，该代码根不授权数据 H。fixtures、temp、capture、home、cache、report、测试输出、生成暂存与 W 快照均在 W；Host archive/清理 `--apply` 提前拒绝且零写，W 功能/备份/回滚保留。
 
+- **installRoot 只读代码根与引导收窄回归**：运行时 `pathContextFor` 在可信 `installAnchor` 非空时注册 `installRoot`（directory/read/probe-reference，与 W 或 H 重叠时跳过），供 `save_probe` 引用宿主源码；回归入口为 `step-00` 的 PR36 至 PR39 与 `step-04` 的 R15 至 R18。引导期工具面收窄（`ctx.tools.restrict`）只在真实宿主 Session（具备 `session.append`）上 arm，角色工具面夹具不 arm（路线 A）——不得因此改写 `step-05` 的角色工具面期望。
+
 ## MJS 测试输出合同与 HUMAN 取证分层
 
 - 统一实现位为 `pe-test/_shared/test-output.mjs`：默认 `compact`，`--verbose` 只增加成功断言名称，`--full` 优先于 `--verbose` 并恢复成功 `expected/actual` 与查看器原始事件；三种模式不得改变断言集合、状态分类、计数、退出码或执行顺序。

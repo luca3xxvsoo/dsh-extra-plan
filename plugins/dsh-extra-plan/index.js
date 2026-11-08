@@ -140,6 +140,7 @@ import { CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilter
 import { createSdkTextCache } from './lib/sdk-text-cache.js'
 import { createRuntimeLifecycle } from './lib/runtime-lifecycle.js'
 import { GATE_WORD_FIELDS, createGateRuntime } from './lib/gate-words.js'
+import { PROBER_PRESET_ID } from './lib/role-contract.js'
 import { createLiveConfig } from './lib/live-config.js'
 import { createDeveloperMessage } from '@deepseek-ai/dsh-llm'
 import z from '@deepseek-ai/schemastery'
@@ -377,6 +378,18 @@ function installAnchorOf(ctx) {
   return profileFactsOf(ctx).installAnchor
 }
 
+// 0.2.2-rc.1 修复（BUG-3）：授权根重叠判定（大小写不敏感、双向包含）。
+// 只读代码根与 W/H 任一方向重叠时必须跳过注册，否则只读能力会把工作区或数据根变成全域禁写。
+function pathRootsOverlap(left, right) {
+  if (typeof left !== 'string' || typeof right !== 'string') return false
+  if (left === '' || right === '') return false
+  const sep = left.includes('\\') || right.includes('\\') ? '\\' : '/'
+  const a = left.replace(/[\\/]+$/, '').toLowerCase()
+  const b = right.replace(/[\\/]+$/, '').toLowerCase()
+  if (a === '' || b === '') return false
+  return a === b || a.startsWith(b + sep) || b.startsWith(a + sep)
+}
+
 function pathContextFor(ctx, cwd) {
   const facts = profileFactsOf(ctx)
   const workspaceRoot = absoluteRoot(cwd)
@@ -385,6 +398,15 @@ function pathContextFor(ctx, cwd) {
   if (facts.profilePatch !== null) capabilities.profilePatch = { path: facts.profilePatch, type: 'file', access: 'write', purpose: 'config-editor' }
   if (facts.documentCapability === 'editorDocument' && facts.documentPath !== null) capabilities.editorDocument = { path: facts.documentPath, type: 'file', access: 'read', purpose: 'config-editor' }
   if (facts.installAnchor !== null) capabilities.installAnchor = { path: facts.installAnchor, type: 'file', access: 'read', purpose: 'install-anchor' }
+  // 0.2.2-rc.1 修复（BUG-3）：宿主只读代码根（installAnchor 所在安装目录）作为 probe-reference
+  // 证据根，供探查者引用宿主源码取证。只读；与 workspaceRoot / hostDataRoot 重叠时跳过注册。
+  if (facts.installAnchor !== null) {
+    const installRootPath = dirname(facts.installAnchor)
+    const hostDataRootPath = facts.hostState === 'valid' && facts.hostDataRoot !== null ? facts.hostDataRoot : null
+    if (!pathRootsOverlap(installRootPath, workspaceRoot) && !pathRootsOverlap(installRootPath, hostDataRootPath)) {
+      capabilities.installRoot = { path: installRootPath, type: 'directory', access: 'read', purpose: 'probe-reference' }
+    }
+  }
   const options = { hostCapabilities: capabilities }
   if (workspaceRoot !== null) options.workspaceRoot = workspaceRoot
   if (facts.hostState === 'valid' && facts.hostDataRoot !== null) options.hostDataRoot = facts.hostDataRoot
@@ -640,16 +662,145 @@ export function apply(ctx, config) {
   // HK1（事件与状态模型换代）：agent/session-start 已删除；agent/created 升为 serial——
   // 监听器被宿主 await，任何抛出都会让会话创建失败。故整块必须吞错：内部异常只
   // console.warn 留痕，绝不放任传播（gateRuntime 已在 apply 期求值，此处不再抛）。
-  ctx.on('agent/created', (payload) => {
+  // 0.2.2-rc.1 修复（BUG-2）：宿主已禁止在 agent/request 改 provider/model/reasoningEffort，
+  // 改在创建期用 agent.model.select 完成（agent/created 为 serial 且被宿主 await，
+  // 早于首个 step 的 selection 捕获）。解析失败只留痕、不阻断会话创建。
+  async function selectChildModelOnCreate(agent, signal) {
     try {
-      const agent = payload.agent
-      if (agent === undefined) return
+      if (!isSubagentChild(agent)) return
+      const planner = isPlannerChild(agent)
+      const reviewerRoute = isReviewerChild(agent) && reviewerUsesPlannerModel(agent)
+      // 父会话当前路由与力度：显式判定与 effort 来源都取它（宿主 resolveChildAgentOptions
+      // 已把父 provider/model/effort 合成进 agent.options）。
+      let parentConfig = null
+      try {
+        const parentId = agent.session !== undefined && agent.session !== null && agent.session.header !== undefined && agent.session.header !== null
+          ? agent.session.header.parentSession
+          : undefined
+        const agentsService = typeof ctx.get === 'function' ? ctx.get('agents') : undefined
+        const parent = parentId !== undefined && agentsService !== undefined && agentsService !== null ? agentsService.get(parentId) : undefined
+        const header = parent !== undefined && parent.session !== undefined && typeof parent.session.requestHeader === 'function' ? parent.session.requestHeader() : undefined
+        const pcfg = header !== undefined && header !== null && header.config !== undefined && header.config !== null ? header.config : null
+        if (pcfg !== null) parentConfig = pcfg
+      } catch (error) {
+        parentConfig = null
+      }
+      // 显式路由优先：复刻 agent/request 旧口径的 isExplicitRoute（options 与父路由不同即显式），
+      // 显式时不 select、不探目录，保持「显式选择不被覆盖」。
+      if (!planner && parentConfig !== null) {
+        const optProvider = agent.options !== undefined && agent.options !== null && typeof agent.options.provider === 'string' ? agent.options.provider : ''
+        const optModel = agent.options !== undefined && agent.options !== null && typeof agent.options.model === 'string' ? agent.options.model : ''
+        if (isExplicitRoute(optProvider, optModel, parentConfig.provider, parentConfig.model)) return
+      }
+      // probe 判定改用角色预设身份：创建期 toolSchemasOf 可能尚未就绪。
+      const presetOfAgent = agent.session !== undefined && agent.session !== null && agent.session.header !== undefined && agent.session.header !== null
+        ? agent.session.header.agentPreset
+        : undefined
+      const probe = presetOfAgent === PROBER_PRESET_ID
+      let entry
+      if (planner) entry = await resolvePlannerEntry(agent, signal)
+      else if (reviewerRoute) entry = await resolveReviewerEntry(agent, signal)
+      else entry = await resolveOtherAgentEntry(agent, signal, probe)
+      if (entry === null || entry === undefined) return
+      const provider = typeof entry.provider === 'string' ? entry.provider : ''
+      const model = typeof entry.model === 'string' ? entry.model : ''
+      if (provider === '' || model === '') return
+      const selection = { provider, model }
+      // 力度继承主会话（既有「力度完全继承主会话」语义）：select 一并带上，使宿主 preStep
+      // 捕获的 selection 与 agent/request 的提议一致（0.2.2-rc.1 硬校验）。
+      const optionEffort = agent.options !== undefined && agent.options !== null && typeof agent.options.reasoningEffort === 'string' ? agent.options.reasoningEffort : ''
+      const parentEffort = parentConfig !== null && typeof parentConfig.reasoningEffort === 'string' ? parentConfig.reasoningEffort : ''
+      const selectedEffort = optionEffort !== '' ? optionEffort : parentEffort
+      if (selectedEffort !== '') selection.reasoningEffort = selectedEffort
+      agent.model.select(selection)
+    } catch (error) {
+      console.warn('extra-plan: agent/created 模型选择失败（不阻断会话创建）：' + (error instanceof Error ? error.message : String(error)))
+    }
+  }
+
+  // 0.2.2-rc.1 修复（BUG-1）：宿主装配期以 provider 并集覆盖 waterfall 返回的 tools，
+  // 引导期工具面收窄改走 ctx.tools.restrict（返回 disposer，首个 tool/call 后释放）。
+  // PTC（catalog 含 run_code）与只读 child 一律不 arm，避免砍掉嵌套绑定或污染只读分类。
+  const anchoredRestrictions = new WeakMap()
+  function toolsServiceOf(agent) {
+    try {
+      const scoped = agent !== undefined && agent !== null ? agent.ctx : undefined
+      if (scoped === undefined || scoped === null) return undefined
+      if (scoped.tools !== undefined && scoped.tools !== null) return scoped.tools
+      if (typeof scoped.get === 'function') {
+        const tools = scoped.get('tools')
+        if (tools !== undefined && tools !== null) return tools
+      }
+      return undefined
+    } catch (error) {
+      return undefined
+    }
+  }
+  // 引导期 allow 名单 = 配置的 shell/common 工具集 ∩ 当前 agent 实际 schema 名。
+  // 取不到 schema 时按配置集原样使用；交集为空则不 arm（避免 restrict 空集合整体禁工具）。
+  function anchoredAllowNamesOf(agent) {
+    const schemas = toolSchemasOf(agent)
+    const names = new Set()
+    if (Array.isArray(schemas)) {
+      for (const schema of schemas) {
+        if (schema !== null && typeof schema === 'object' && typeof schema.name === 'string') names.add(schema.name)
+      }
+    }
+    const allow = []
+    for (const name of [...bootstrapShellTools, ...bootstrapCommonTools]) {
+      if (names.size > 0 && !names.has(name)) continue
+      if (!allow.includes(name)) allow.push(name)
+    }
+    return allow
+  }
+  function armAnchoredToolRestriction(agent) {
+    try {
+      if (!bootstrapOn(agent)) return
+      // 只在仍处引导期时 arm：resume 后已过首个 tool/call 的会话不再收窄。
+      if (!isBootstrapPhase(agent)) return
+      if (isChild(agent) && !isPlannerChild(agent)) return
+      // 只在真实宿主 Session 上 arm：真实 Session 提供 append（事件落盘能力），
+      // 静态契约/工具面夹具不提供该能力，因此不会被运行期收窄污染（路线 A）。
+      const session = agent.session
+      if (session === undefined || session === null || typeof session.append !== 'function') return
+      // PTC 部署（宿主挂 ptcRuntime）跳过：顶层只有 run_code，收窄会砍掉嵌套绑定。
+      try {
+        const ptcRuntime = typeof ctx.get === 'function' ? ctx.get('ptcRuntime') : undefined
+        if (ptcRuntime !== undefined && ptcRuntime !== null) return
+      } catch (error) {
+        // 取不到按 native 处理
+      }
+      if (anchoredRestrictions.has(agent)) return
+      const tools = toolsServiceOf(agent)
+      if (tools === undefined || typeof tools.restrict !== 'function') return
+      const allow = anchoredAllowNamesOf(agent)
+      if (allow.length === 0) return
+      const disposer = tools.restrict({ allow })
+      if (typeof disposer === 'function') anchoredRestrictions.set(agent, disposer)
+    } catch (error) {
+      console.warn('extra-plan: 引导期工具面收窄失败（不影响会话创建）：' + (error instanceof Error ? error.message : String(error)))
+    }
+  }
+  function releaseAnchoredToolRestriction(agent) {
+    const disposer = anchoredRestrictions.get(agent)
+    if (disposer === undefined) return
+    anchoredRestrictions.delete(agent)
+    try { disposer() } catch (error) { console.warn('extra-plan: 引导期工具面收窄释放失败：' + (error instanceof Error ? error.message : String(error))) }
+  }
+
+  ctx.on('agent/created', async (payload) => {
+    const agent = payload !== undefined && payload !== null ? payload.agent : undefined
+    if (agent === undefined) return
+    try {
       childBaseline(agent)
       if (isPlannerChild(agent) || !isSubagentChild(agent)) registerSavePlan(agent)
       if (!isSubagentChild(agent) || probeClaimFor(agent)) { registerSaveProbe(agent) }
     } catch (error) {
       console.warn('extra-plan: agent/created 初始化失败（不阻断会话创建）：' + (error instanceof Error ? error.message : String(error)))
     }
+    // 模型选择与引导期工具面收窄各自独立吞错：注册/基线失败不得连坐这两步。
+    await selectChildModelOnCreate(agent, payload.signal)
+    armAnchoredToolRestriction(agent)
   })
 
   // 2) pre-step：账本补记（会话最终消息的行延迟到此）；规划子代理初始任务与
@@ -721,12 +872,28 @@ export function apply(ctx, config) {
         // 会漏注册；registerTool 的 WeakSet 保证不重复注册）。
         if (isPlannerChild(agent) || !isSubagentChild(agent)) registerSavePlan(agent)
         if (!isSubagentChild(agent) || probeClaimFor(agent)) { registerSaveProbe(agent) }
+        // 引导期收窄兜底：recompose 不重发 agent/created 的会话（Web 首启）在这里补 arm。
+        armAnchoredToolRestriction(agent)
       } catch (error) {
         initializationFailed = true
         warnPreStepFailure(error)
       }
     }
     const decision = await next()
+    // 引导期兜底释放：本步已进入 L 段（会话已有 tool/call）时解除收窄，使下一步装配回到完整工具面。
+    // 宿主 assemble 早于 pre-step，故此处释放只影响下一步；初始化失败分支同样执行，不得跳过。
+    if (agent !== undefined) {
+      try {
+        const releaseLease = await observeSessionLeaseOf(agent)
+        try {
+          if (!isBootstrapPhase(agent, releaseLease?.events)) releaseAnchoredToolRestriction(agent)
+        } finally {
+          if (releaseLease !== undefined && typeof releaseLease[Symbol.dispose] === 'function') releaseLease[Symbol.dispose]()
+        }
+      } catch (error) {
+        warnPreStepFailure(error)
+      }
+    }
     if (initializationFailed) return decision
     try {
       if (decision.kind !== 'enter') return decision
@@ -840,6 +1007,9 @@ export function apply(ctx, config) {
   //    另负责按装配目录机械识别只读子代理（reviewer）写入 per-agent 缓存，供
   //    pre-execute 拦截复用；bootstrapOn=false 时仅记录目录、不改装配产物。
   const readOnlyChildren = new WeakSet()
+  // 0.2.2-rc.1 修复（BUG-1）诊断：每个 agent 只记录一次 anchored 分支的实际判定，
+  // 用于区分「工具面被宿主并集覆盖」与「引导分支根本没进入」这两种同源症状。
+  const anchoredDiagOnce = new WeakSet()
   ctx.on('system-prompt/assemble', async (assembly, context, next) => {
     const result = await next()
     const agent = context.agent
@@ -875,6 +1045,10 @@ export function apply(ctx, config) {
     // 呈现模式二值化：唯一来源是宿主装配结果里的 tools:ptc-only 段，由实际挂载的 ptc 执行器注入，其余 native。
     const mode = hasNonEmptySection(result.sections, PTC_SECTION_NAME) ? 'ptc' : 'native'
     const anchoredFirst = bootstrapOn(agent) && phase === 'first' && (role === 'main' || role === 'planner')
+    if (!anchoredDiagOnce.has(agent)) {
+      anchoredDiagOnce.add(agent)
+      console.warn('extra-plan: anchored 诊断 phase=' + phase + ' role=' + role + ' mode=' + mode + ' bootstrapOn=' + String(bootstrapOn(agent)) + ' anchoredFirst=' + String(anchoredFirst))
+    }
     const anchoredPtc = anchoredFirst && mode === 'ptc'
     let presented = result
     if (anchoredPtc) {
@@ -976,28 +1150,7 @@ export function apply(ctx, config) {
     if (isPlannerChild(payload.agent)) {
       const entry = await resolvePlannerEntry(payload.agent, payload.signal)
       const nextConfig = { ...resolved }
-      if (entry.model !== undefined) nextConfig.model = entry.model
-      if (entry.provider !== undefined) nextConfig.provider = entry.provider
       if (entry.maxTokens !== undefined) nextConfig.maxTokens = entry.maxTokens
-      // effort 继承（验收补遗）：保持「力度完全继承主会话」（agent.cordis.yml 设计）；
-      // 原钩子尾部的 effort 继承对 planner 已不可达（前置早退）。
-      try {
-        const agents = ctx.get('agents')
-        let parent
-        try {
-          parent = agents !== undefined ? agents.get(payload.agent.session.header.parentSession) : undefined
-        } catch (error) {
-          parent = undefined
-        }
-        if (parent !== undefined) {
-          const header = typeof parent.session.requestHeader === 'function' ? parent.session.requestHeader() : undefined
-          const pcfg = header !== undefined && header.config !== undefined && header.config !== null ? header.config : null
-          const parentEffort = pcfg !== null && typeof pcfg.reasoningEffort === 'string' ? pcfg.reasoningEffort : ''
-          if (parentEffort !== '') nextConfig.reasoningEffort = parentEffort
-        }
-      } catch (error) {
-        // effort 取不到则不注入（与尾部继承的宽松语义一致）
-      }
       return nextConfig
     }
     let agents
@@ -1027,15 +1180,11 @@ export function apply(ctx, config) {
       } else {
         entry = await resolveOtherAgentEntry(payload.agent, payload.signal, probe)
       }
-      if (entry !== null && entry.model !== undefined) nextConfig.model = entry.model
-      if (entry !== null && entry.provider !== undefined) nextConfig.provider = entry.provider
       if (entry !== null && entry.maxTokens !== undefined) nextConfig.maxTokens = entry.maxTokens
     } else if (tokenSource.maxTokens !== undefined) {
       // 显式 route 仍保持原 maxTokens 继承语义；probe 沿用顶层来源。
       nextConfig.maxTokens = tokenSource.maxTokens
     }
-    const suppressEffort = effortExplicit || (routeExplicit && resolvedEffort === '')
-    if (parentEffort !== '' && !suppressEffort) nextConfig.reasoningEffort = parentEffort
     return nextConfig
   })
 
@@ -1044,6 +1193,13 @@ export function apply(ctx, config) {
   ctx.on('tools/pre-execute', (exec, next) => {
     if (exec.agent === undefined) return next()
     const agent = exec.agent
+    // 0.2.2-rc.1 修复（BUG-1）：引导期工具面收窄在首个工具调用前释放，使下一步装配
+    // （宿主 assemble 早于 agent/pre-step）即为 L 段完整工具面。
+    const releaseAnchored = anchoredRestrictions.get(agent)
+    if (releaseAnchored !== undefined) {
+      anchoredRestrictions.delete(agent)
+      try { releaseAnchored() } catch (error) { console.warn('extra-plan: 引导期工具面收窄释放失败：' + (error instanceof Error ? error.message : String(error))) }
+    }
     // 单次会话事件快照（P1-4）：本钩子内全部消费点（锚点扫描、tool-jobs 通知扫描、角色判定、
     // planner 闸门、main 闸门与状态推导）复用同一份快照引用，只取一次。宿主无参快照返回缓存全量
     // 视图（无新事件即同一引用），故此处只做快照来源收敛与可读性整理——本批**不减少**各消费点
