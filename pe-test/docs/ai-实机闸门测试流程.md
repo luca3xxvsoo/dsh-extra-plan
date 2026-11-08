@@ -1,6 +1,6 @@
 # 实机闸门测试流程（AI 给脚本 · 用户照做 · 当场取证判定）
 
-> 适用对象：`dsh-extra-plan`（仓库内根入口 `plugins/dsh-extra-plan/index.js`，save 合同/校验/持久化/工具工厂分别位于 `plugins/dsh-extra-plan/lib/save-contract.js`、`lib/save-probe-validation.js`、`lib/save-persistence.js`、`lib/save-tool-factories.js`；当前插件包契约 1.6.0，当前宿主版本见宿主耦合台账）。**宿主 DSH 声明支持范围为 0.2.2-rc.1（单版本）**（会话日志 `session.v4.jsonl.zstd`，SESSION_FORMAT_VERSION=4；取证工具三代候选名并存：v4 / `session.v3.jsonl.zstd`（0.1.5-rc.2 旧日志回放）/ `session.jsonl.zstd`（0.1.2-rc.1 及更早））；版本、日期、证据等级与 HUMAN/NOT-RUN 状态以[宿主耦合台账](ai-宿主耦合台账.md)的当前验证状态与开放项为准，缺失的 OS、profile/mode、SESSION_ID、部署 commit 与原始报告路径继续如实标记。**真机取证由用户部署后自测（AI 不执行部署）**。
+> 适用对象：`dsh-extra-plan`（仓库内根入口 `plugins/dsh-extra-plan/index.js`，save 合同/校验/持久化/工具工厂分别位于 `plugins/dsh-extra-plan/lib/save-contract.js`、`lib/save-probe-validation.js`、`lib/save-persistence.js`、`lib/save-tool-factories.js`；当前插件包契约 1.7.0，当前宿主版本见宿主耦合台账）。**宿主 DSH 声明支持范围为 0.2.2-rc.1（单版本）**（会话日志 `session.v4.jsonl.zstd`，SESSION_FORMAT_VERSION=4；取证工具三代候选名并存：v4 / `session.v3.jsonl.zstd`（0.1.5-rc.2 旧日志回放）/ `session.jsonl.zstd`（0.1.2-rc.1 及更早））；版本、日期、证据等级与 HUMAN/NOT-RUN 状态以[宿主耦合台账](ai-宿主耦合台账.md)的当前验证状态与开放项为准，缺失的 OS、profile/mode、SESSION_ID、部署 commit 与原始报告路径继续如实标记。**真机取证由用户部署后自测（AI 不执行部署）**。
 > 用途：**发版前跑全量**；**改闸门后按域增量跑**（域分组 D1-D10 见第七部分，按域映射到 U 序号）。
 > 被测时序：按 A/C/M 分层；**呈现模式二值化为 native 与 ptc，故机械闸门按 native 轮与 ptc 轮两轮执行**——native 轮的观察面是 request/header 的 `tools`（直呼面，无 run_code），ptc 轮的观察面是 `system/message` 事件（`source.kind=system-prompt`）的文本与 run_code 聚合面。PTC 专项分别用 C=0/C=1 的干净 A=1 顶层会话取 F→首个 tool/call→L→第二调用，native 做独立 HN 回归。**动手前先做第 0 节前置检查**。
 > 行号纪律：本文不写行号。排查缺陷需要行号时查 pe-test/docs/ai-代码地图.md：先看头部「意图速查」按意图词找函数名，再到「函数索引」取行号区间。
@@ -66,7 +66,7 @@
 ### 1.3 用户操作计数规则
 - **用户操作定义**：用户必须亲手、AI 不可代做的动作，仅四类 —— ①选选项（点选 ask 弹窗中的某一项）；②跳过或取消（跳过按钮 / 关闭卡片中断）；③更新后端权威行配置；④必要时重启进程（重启 Harness）。
 - **AI 的一切工具调用不计入**：含委派子代理、子代理会话内连调、一次 run_code 的组判定与聚合取证。
-- **常数项 U0**：一次重启（装载期快照生效）＋ 一条新的用户消息（使 route 锚点前移、回到 `route=none` 默认态）。普通闸门两轮可用既有会话（含重启后恢复的同一会话）；PTC 专项的 F 证据必须每个 C 值各用干净 A=1 顶层会话，已有会话只能作 L 证据。不计入变量操作、不单独占用户操作清单行。
+- **常数项 U0**：一次重启（装载期快照生效）＋ 一条新的用户消息（使 route 锚点前移、回到 `route=none` 默认态）。普通闸门两轮可用既有会话（含重启后恢复的同一会话）；PTC 专项的 F 证据必须每个 C 值各用干净 A=1 顶层会话，已有会话只能作 L 证据。不计入变量操作、不单独占用户操作清单行。creativeMode 与 runcodeCatchGate 属插件侧热读，改值立即生效、不需重启亦不需新开会话；F/L 专项之所以要求新开会话，唯一原因是 F 段只存在于会话首帧（观测要求，不是生效要求）。
 - **后端权威行配置更新与随后的重启/新开会话合并计 1 次用户操作**（同属「后端配置前置档」：`toolPresentationMode` 仍是装载期快照、改值必须重新装载才生效（必须重启 Harness 并**新开会话**；原会话在切 mode 后不可继续）；`runcodeCatchGate`（2026-09-23 修订）已改为插件侧配置热读，后端权威行配置更新后**立即生效**、无需重启进程或新开会话，不触发「必须重启」的记账，见 1.5(b) 与 7.1）。配置入口直接使用当前包详情的 detail.section 表单（行列表之后，自绘标题）；仅该槽缺失时才使用用户侧 configEditor。所有路径都维护 `dsh-extra-plan-settings` 权威行，不能用只写旧投影的自定义 PUT 代替；空/null/数组/原始/未知/混合非法 PUT 均应 400 且零 edit，当前非法 gateWords 不可被自动 fallback。
 - **两轮状态推进同计（不重复膨胀）**：第二轮 2A 段按 3.4.1-3.4.6 重走 U1 到 U6（编号 U1b-U6b），与第一轮**同计 6 次**状态推进，两轮合计 **12 次**（6 加 6）；`U9` 只是 `runcodeCatchGate` 的**热读切换**（权威行更新即生效），**不触发重启记账**、不重启、不新开会话，因此不计入状态推进、也不占任何状态操作行。两轮**后端权威行更新合计 2 次**（U8 切 mode 到 ptc ＋ U9 切 catchGate 为 false），起步 mode/catchGate 不合规时为 **3 次**（U7 ＋ U8 ＋ U9）；**报告落盘窗口单列、不计行**（见第八部分）。
 - **跳过与取消**：视为两种不同响应形态。跳过=answersLen:0，仅不置位对应状态位；取消=宿主 error 重置五字段（route/purpose/clarified/approved 与 channelBroken 口径见 7.2 陷阱⑦）。「必测」取**跳过**（U1，点弹窗跳过按钮）；「取消」（关闭卡片中断）列为可选加测（差异见 7.2 陷阱⑦）。

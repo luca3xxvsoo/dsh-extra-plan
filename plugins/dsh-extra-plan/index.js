@@ -1298,10 +1298,12 @@ export function apply(ctx, config) {
           narrowed = { sections: [{ name: 'extra-plan-bootstrap', text: bootstrapPersona }], contexts: [], tools: bootstrapped }
         }
       }
-    } else if (anchoredFirst && !hasTools && !anchoredPtc) {
+    } else if (anchoredFirst && !hasTools && anchoredPtc) {
+      narrowed = { sections: [{ name: 'extra-plan-bootstrap', text: bootstrapPersona }, { name: READ_SECTION_NAME, text: bootstrapReadHint }], contexts: [] }
+    } else if (anchoredFirst && !hasTools) {
       narrowed = { sections: [{ name: 'extra-plan-bootstrap', text: bootstrapPersona }], contexts: [] }
     }
-    // anchoredPtc 且 tools 缺失：narrowed 保持 null → 维持现状原样返回（已知缺口，留到 ptc 轮）
+    // anchoredPtc 且 tools 缺失：仍按 persona 与手写 read 文案投影，tools 维持宿主原样
     try {
       appendDiagnostic(ctx, agent, 'extra-plan-anchored.jsonl', {
         ts: new Date().toISOString(),
