@@ -19,7 +19,7 @@
 - 以下原记录依据唯一备份逐字保存：
 
 ```text
-| HS8 | `executor-spawn.js` `subagents.registerProvider` | 薄委托层保留可执行（lib 与 `./executor-spawn` export 均在），但 0.2.1 起旧 worker deny 注入已退役；provider 引用计数幂等与稳定槽键语义不变 | 【已核实·静态；失效面已记录】 |
+| HS8 | `executor-spawn.js` `subagents.registerProvider` | 薄委托层与 `./executor-spawn` 导出均已删除（0.2.2 收口），本行仅作历史记录；0.2.1 起旧 worker deny 注入已退役；provider 引用计数幂等与稳定槽键语义不变 | 【已核实·静态；失效面已记录】 |
 | HS9 | executor `delegate/getProvider` | 默认 delegate 与 providerName 解析仍可装载；当前无 worker 行引用（workflow-ptc/tool-ralph 段已注释） | 【已核实·静态】 |
 | HS10 | executor `toolFilter.deny`（历史面） | 0.2.1 起 worker 不再接收 deny 注入；角色的「不可见」改由角色预设不挂对应工具实现（`agent.cordis.yml` 第二文档），executor-spawn 行仅留历史 11 项清单 | 【已核实·静态】 |
 | HS11 | `prepareContinuable` | 能力存在时才透传 continuable；0.2.1 宿主把 descriptor.mode 固定为 continuable，该能力不再是角色判据 | 【已核实·静态】 |

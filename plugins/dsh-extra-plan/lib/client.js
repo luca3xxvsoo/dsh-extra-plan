@@ -25,7 +25,7 @@ window.__ModuleLoader__.load({
       creativeMode: "创造模式开关",
       runcodeCatchGate: "run_code 容错检查",
       webFetch: "web_fetch开关",
-      toolPresentationMode: "工具呈现模式",
+      toolPresentationMode: "工具执行器",
       toolPresentationModeNative: "默认",
       toolPresentationModePtc: "PTC模式",
       save: "保存",
@@ -54,9 +54,9 @@ window.__ModuleLoader__.load({
       creativeMode: "Creative Mode",
       runcodeCatchGate: "RunCode Catch Guard",
       webFetch: "Web Fetch",
-      toolPresentationMode: "Tool Presentation Mode",
+      toolPresentationMode: "Tool Executor",
       toolPresentationModeNative: "Native",
-          toolPresentationModePtc: "Pure PTC",
+      toolPresentationModePtc: "Pure PTC",
       save: "Save",
       saving: "Saving…",
       saved: "Saved.",
@@ -84,7 +84,7 @@ window.__ModuleLoader__.load({
 
     const HOST_ROW_FIELDS = Object.freeze([
       {"key":"webFetch","control":"select","options":[true,false],"locale":"webFetch","section":"general","hint":"是否开启web_fetch ｜ 重启生效"},
-      {"key":"toolPresentationMode","control":"select","options":["native","ptc"],"optionLocale":{"native":"toolPresentationModeNative","ptc":"toolPresentationModePtc"},"locale":"toolPresentationMode","section":"general","hint":"工具呈现方式切换（默认/PTC模式），无法进行会话内切换 ｜ 重启生效"},
+      {"key":"toolPresentationMode","control":"select","options":["native","ptc"],"optionLocale":{"native":"toolPresentationModeNative","ptc":"toolPresentationModePtc"},"locale":"toolPresentationMode","section":"general","hint":"工具执行器切换（默认/PTC模式），无法进行会话内切换 ｜ 重启生效"},
     ]);
     const ALL_FIELDS = Object.freeze(EXTRA_FIELDS.concat(HOST_ROW_FIELDS));
     // END GENERATED SETTINGS FIELDS

@@ -187,8 +187,8 @@ plugins:
           plannerPromptSuffix: '你的深度思考部分需要以"好了，现在我以全局视角来看待这个问题"开头'
           usageLedger:
             enabled: true
-            # V1 ledger.jsonl 与旧 cursor 只读留存，不自动迁移/清空。
-            path: !!js dshHomePath('usage-ledger', 'ledger-v2.jsonl')
+            # 唯一账本为 ledger-v2.archive.jsonl（仅由启动扫描覆盖式维护）；ledger-v2.jsonl（active）与 .cursor.json 已废弃、不再读写。
+            path: !!js dshHomePath('usage-ledger', 'ledger-v2.archive.jsonl')
 
       # 注：宿主平面组件（extra-plan-settings 设置页 API + settings 命名空间注册、
       # extra-plan-preset-sync 预设自愈核对）不在 agent 预设挂载——settings 命名空间
@@ -236,12 +236,9 @@ plugins:
       - id: tool-subagent-control
         name: '@deepseek-ai/dsh-tool-subagent-control'
 
-      - id: tool-subagent-list-agents
-        name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
-
       # 执行者（非 planner child）：优先使用 otherAgentModel，空/未匹配/真实探针失败回退主会话；批准后经 subagent 委派。
-      # 0.2.1 起宿主只认 provider/toolName/modelSelectionSettings/agentOptions/agentPreset/
-      # allowedAgentPresets/maxDepth（persona 与 toolFilter 会抛错，backgroundMode 已无此键），
+      # 0.2.2 起宿主只认 provider/toolName/modelSelection/modelDiscovery/agentOptions/agentPreset/
+      # allowedAgentPresets/maxDepth（modelSelectionSettings 已删，persona 与 toolFilter 仍会抛错，backgroundMode 无此键），
       # 故本行只留 provider/toolName 并由 agentPreset 指向角色预设；人设、deny 与只读面在角色预设里。
       - id: tool-subagent
         name: '@deepseek-ai/dsh-tool-subagent'
@@ -298,11 +295,9 @@ plugins:
       fetch: false
       searchTimeoutMs: 60000
 
-  # ['native','ptc']
-  - id: tool-presentation
-    name: '@deepseek-ai/dsh-agent-tool-presentation'
-    config:
-      mode: native
+  # 执行器行按 toolPresentationMode 派生（native→tool-executor-native / ptc→tool-executor-ptc），同 scope 只允许一行
+  - id: tool-executor-native
+    name: '@deepseek-ai/dsh-tool-executor-native'
 
   # ── cordis（官方创造模式工具集，只读引用官方包） ──────────────────────────
 

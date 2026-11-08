@@ -7,10 +7,9 @@ import { pathToFileURL, fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
 import { isDeepStrictEqual } from 'node:util'
-import { readFileSync, writeFileSync, existsSync, readdirSync, rmSync, statSync, mkdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, readdirSync, rmSync, mkdirSync } from 'node:fs'
 import { makeFixtureDir } from '../_shared/workspace-paths.mjs'
 import { createPathContext } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
-import { acquireUsageLedgerLock, releaseUsageLedgerLock, usageLedgerLockPath, createUsageLedger } from '../../plugins/dsh-extra-plan/lib/usage-ledger.js'
 // S4 降耦合：探查预算上限唯一来源（生成值）；上限断言一律由 DEFAULT_EXPLORE_BUDGET 派生，不内嵌固定数值。
 import { DEFAULT_EXPLORE_BUDGET } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
 
@@ -27,7 +26,7 @@ const AGENT_RUNTIME_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/l
 const SHELL_MUTATION_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/shell-mutation.js', import.meta.url))
 // 注：gate-decisions/usage-ledger/runtime-lifecycle 的路径锚点随 M6 源码 includes 断言一并退役。
 import { registerHostDeps } from '../_shared/host-deps.mjs'
-// 0.2.1 起 planner 身份判据是会话 header.agentPreset（插件 isPlannerChild 读该值，descriptor.mode 不再参与）。
+// 宿主契约：planner 身份判据是会话 header.agentPreset（插件 isPlannerChild 读该值，descriptor.mode 不再参与）。
 const PLANNER_PRESET = 'extra-plan-planner'
 import { createOutput } from '../_shared/test-output.mjs'
 // host-deps 必须在隔离前完成解析：它按候选① DSH_HOME/profiles/web 锚定宿主真包，
@@ -71,6 +70,7 @@ const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
 const agentRuntimeModule = await import(pathToFileURL(AGENT_RUNTIME_PATH).href)
 const shellMutationModule = await import(pathToFileURL(SHELL_MUTATION_PATH).href)
 import { createSdkTextCache, sdkSchemasFingerprint, sdkTextCacheEntryMatches } from '../../plugins/dsh-extra-plan/lib/sdk-text-cache.js'
+import { toolSdkSchemasOf } from '../../plugins/dsh-extra-plan/lib/assembly-presentation.js'
 import { createGateRuntime } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
 import { createLiveConfig } from '../../plugins/dsh-extra-plan/lib/live-config.js'
 import { CREATIVE_SKILL_NAMES as CREATIVE_SKILL_NAMES_FOR_TEST } from '../../plugins/dsh-extra-plan/lib/assembly-presentation.js'
@@ -82,7 +82,7 @@ import { ASSET_DEFINITION_FILE as ASSET_DEFINITION_FILE_E, roleDefinitionOf } fr
 // 故 Config 的 volatile/默认值契约改用源码文本静态核对（机械可核对），不依赖本机 schemastery 版本。
 import { readFileSync as readFileSyncE } from 'node:fs'
 const decisions = plugin.decisions
-const { catalogHasWriteTools, isReadOnlyChildByCatalog, routeDenyReason, runCodeCatchGateReason, runCodeGroupDenyReason, askUserQuestionReturnGateReason, probeDisposalWarning, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilteredToolsSdk, toolPresentationModeOf, projectSkillCatalogDecision, isBootstrapPhase, filterBootstrapContextDecision, dedupeProjectedContextDecision, shellMutationReason, recordJobOutputCall, parseAskResultData, parseDispatchAskResult, deriveFlowState } = decisions
+const { catalogHasWriteTools, isReadOnlyChildByCatalog, routeDenyReason, runCodeCatchGateReason, runCodeGroupDenyReason, askUserQuestionReturnGateReason, probeDisposalWarning, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilteredToolsSdk, projectSkillCatalogDecision, isBootstrapPhase, filterBootstrapContextDecision, dedupeProjectedContextDecision, shellMutationReason, recordJobOutputCall, parseAskResultData, parseDispatchAskResult, deriveFlowState } = decisions
 
 // ── F 段（HP 首轮）tool:read 文案（变量②）判据 ─────────────────────────
 // S4 降耦合：内置兜底文案 / 预设示例 / 宿主原文的三份副本不再落在测试里——文案正文契约统一由下方
@@ -117,8 +117,8 @@ function checkTrue(name, got) {
 const roleAgent = (id, child) => ({ session: { header: { id, agentPreset: PLANNER_PRESET, ...(child ? { origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1' } : {}) }, snapshotEvents: () => [] } })
 const roleRoot = roleAgent('g5-root', false)
 const roleChild = roleAgent('g5-child', true)
-const roleRuntimeRootFirst = agentRuntimeModule.createAgentRuntime({ foldUsage: () => {}, warn: () => {} })
-const roleRuntimeChildFirst = agentRuntimeModule.createAgentRuntime({ foldUsage: () => {}, warn: () => {} })
+const roleRuntimeRootFirst = agentRuntimeModule.createAgentRuntime({ warn: () => {} })
+const roleRuntimeChildFirst = agentRuntimeModule.createAgentRuntime({ warn: () => {} })
 check('G5 角色缓存 root→child 同实例分别为 false/true', [roleRuntimeRootFirst.isPlannerChild(roleRoot, []), roleRuntimeRootFirst.isPlannerChild(roleChild, [])], [false, true])
 check('G5 角色缓存 child→root 同实例分别为 true/false', [roleRuntimeChildFirst.isPlannerChild(roleChild, []), roleRuntimeChildFirst.isPlannerChild(roleRoot, [])], [true, false])
 const g5ShellExec = (command) => ({ arguments: { command } })
@@ -263,7 +263,7 @@ const assetGateWords = assetExtraPlanConfig.gateWords
 const gateRuntime = createGateRuntime(assetGateWords)
 const ROUTE_CONFIRM_TEXT = gateRuntime.confirm.route
 function withGateWords(config) { return { gateWords: assetGateWords, ...config } }
-// 0.2.1：tool-subagent 不再接受 persona/toolFilter（宿主 apply 直接抛错），原 deny 清单改由
+// tool-subagent 不再接受 persona/toolFilter（宿主 apply 直接抛错），原 deny 清单改由
 // 角色预设的工具面承载——「不可见」等价于「角色 definition 里不挂该工具」。断言编号保留。
 function checkRoleTools(roleId, mustInclude, mustExclude, label) {
   let definition
@@ -278,14 +278,14 @@ function checkRoleTools(roleId, mustInclude, mustExclude, label) {
   else fail += 1
   output.assertion(okResult, label, { mustInclude, mustExclude }, names)
 }
-// 工具面回填 5f3cc68 实际可见面（0.2.1 角色预设显式 tools 列表）：四角色均挂只读 fs 家族 +
+// 工具面回填 5f3cc68 实际可见面（角色预设显式 tools 列表）：四角色均挂只读 fs 家族 +
 // 只读 shell（pwsh/bash 按平台条件 disabled）+ tool-web（fetch:false）+ 只读 tool-cordis；
 // 控制包仅保留在主预设，角色 definition 不挂；运行时 isSubagentChild 硬闸拒绝两控制工具。
 const TOOL_PWSH = '@deepseek-ai/dsh-tool-pwsh'
 const TOOL_BASH = '@deepseek-ai/dsh-tool-bash'
 const TOOL_WEB = '@deepseek-ai/dsh-tool-web'
 const TOOL_CORDIS = '@deepseek-ai/dsh-tool-cordis'
-// 公共禁用（四角色一律不挂）：控制/委派/工作流/交互类工具，以及 tool-subagent-control 的 list-agents 子行。
+// 四角色一律不挂：控制/委派/工作流/交互类工具；list-agents 子行在 0.2.2 已并入控制包根入口，此处保留该 specifier 作为「不得出现」的防护。
 const FORBIDDEN_ROLE_TOOLS_SHARED = ['@deepseek-ai/dsh-tool-subagent-control', '@deepseek-ai/dsh-tool-subagent', '@deepseek-ai/dsh-tool-subagent-control/list-agents', '@deepseek-ai/dsh-tool-workflow', '@deepseek-ai/dsh-tool-ralph', '@deepseek-ai/dsh-tool-ask-user', '@deepseek-ai/dsh-tool-todo']
 const FORBIDDEN_ROLE_TOOLS = FORBIDDEN_ROLE_TOOLS_SHARED
 checkRoleTools('extra-plan-reviewer', ['@deepseek-ai/dsh-tool-fs', '@deepseek-ai/dsh-persona', 'dsh-extra-plan', TOOL_PWSH, TOOL_BASH, TOOL_WEB, TOOL_CORDIS], FORBIDDEN_ROLE_TOOLS, 'reviewer 角色工具面：只读 fs + 只读 shell/web/cordis，无控制绑定')
@@ -402,7 +402,7 @@ const mainAgent = {
 // 修复（mock 数据补齐）：插件判定 planner 身份要求会话 events 含
 // subagent/descriptor 事件且 data.mode === 'continuable'（与 step-06-线索落盘同款 DESC）。
 // 缺此事件时 planner 被误判为普通执行者，R11（planner write 应 deny）与 R13（收窄）走错分支。
-// 0.2.1 起 subagent descriptor 的 mode 恒为 continuable，planner 身份改由会话 header.agentPreset
+// subagent descriptor 的 mode 恒为 continuable，planner 身份改由会话 header.agentPreset
 // 判定（插件 isPlannerChild 读 session.header.agentPreset === 'extra-plan-planner'）；
 // DESC 仅保留为「确属子代理会话」的日志形状，不再承担 planner 判据。
 const DESC = { type: 'subagent/descriptor', data: { mode: 'continuable' } }
@@ -611,7 +611,9 @@ check('R13 bootstrapOn=true planner 首轮收窄为 shell+read', Array.isArray(b
 const bootExecutor = await assemble(harnessBoot, executor, [{ name: 'read' }, { name: 'pwsh' }, { name: 'write' }])
 check('R14 bootstrapOn=true executor 不引导（目录原样）', Array.isArray(bootExecutor.tools) ? bootExecutor.tools.map((t) => t.name).sort() : null, ['pwsh', 'read', 'write'])
 
-// ── ⑤ 探查子代理（subagent_probe）行为断言（R15-R21，任意路由状态放行） ──
+// ── ⑤ 探查子代理（subagent_probe）行为断言：工具面拒/放行（write、pwsh 只读、pwsh 包裹写、save_probe）
+// ── + 主会话 ask 路由判定（none/direct/plan/channelBroken、双问与澄清）+ 无参 subagent_probe 放行与等价补记
+// ── + 待认领计数（C1 起认领）。后台参数放行的旧用例已删除，故本段不再主张「任意路由状态放行」。 ──
 // 事件构造辅助（同 step-00 F 系列形状：user/message + ask_user_question call/result）
 const umE = () => ({ type: 'user/message', data: { source: { kind: 'user' } } })
 const callE = (name, cid, argumentsStr = '{}') => ({ type: 'tool/call', data: { name, callId: cid, arguments: argumentsStr } })
@@ -631,8 +633,15 @@ const mainWithEvents = (events) => ({ session: { header: { id: 'main-1', cwd: 'C
   const concurrentHarness = makeHarness({ anchoredBootstrap: false, exploreBudget: concurrentExploreBudget })
   const plannerAEvents = [DESC, umE(), ...Array.from({ length: 8 }, (_, i) => [callE('read', 'pa-' + i), okE('pa-' + i, 'ok')]).flat()]
   const plannerBEvents = [DESC, umE()]
-  const plannerA = { ...childAgent('planner-A', PLANNER_PRESET, () => plannerAEvents), options: { model: 'deepseek-v4-pro' } }
-  const plannerB = { ...childAgent('planner-B', PLANNER_PRESET, () => plannerBEvents), options: { model: 'deepseek-v4-pro' } }
+  // 改造8 起 pre-step 预算提醒走 sessionQuery 租约（lib/agent-session.js observeSessionLeaseOf）：
+  // mock agent 补一个最小租约服务，租约契约 = { events, [Symbol.dispose]() }（宿主 SessionObservation 同形）。
+  const sessionQueryCtx = (events) => ({
+    get: (name) => (name === 'sessionQuery'
+      ? { observeSession: () => ({ events, [Symbol.dispose]() {} }) }
+      : undefined),
+  })
+  const plannerA = { ...childAgent('planner-A', PLANNER_PRESET, () => plannerAEvents), options: { model: 'deepseek-v4-pro' }, ctx: sessionQueryCtx(plannerAEvents) }
+  const plannerB = { ...childAgent('planner-B', PLANNER_PRESET, () => plannerBEvents), options: { model: 'deepseek-v4-pro' }, ctx: sessionQueryCtx(plannerBEvents) }
   const makeDeferred = () => { let resolve; const promise = new Promise((done) => { resolve = done }); return { promise, resolve } }
   const gateA = makeDeferred()
   const gateB = makeDeferred()
@@ -676,17 +685,12 @@ checkTrue('R18f 主会话 none 态 ordinary 探查 ask → allow', r !== null &&
 r = preExecute(harness, noneMain, 'ask_user_question', ordinaryClarifyArgsE)
 checkTrue('R18g 主会话 none 态 ordinary 澄清 ask → allow', r !== null && r !== undefined && r.kind === 'allow')
 
-// R18：direct 态派探查者（run_in_background: true）→ 放行（同时把 main-1 挂「待认领计数」，
-// 供 C1/C2/C2b 认领用例经 parentSession=main-1 消费验证；R15-R17 判读走真实工具集，不依赖认领）
-r = preExecute(harness, directMain, 'subagent_probe', { run_in_background: true })
-checkTrue('R18 主会话 direct 态 subagent_probe(run_in_background: true) → 放行', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, directMain, 'subagent_probe', {})
-// 0.2.1：委派工具参数表已无后台标志，原「缺后台即拒」断言退役 → 缺省参数同样放行（后台约束在宿主层）。
+// 委派工具参数表已无后台标志，原「缺后台即拒」断言退役 → 缺省参数同样放行（后台约束在宿主层）。
 checkTrue('R19 主会话 direct 态 subagent_probe(无后台参数) → 放行（后台闸门已上移宿主层）', r !== null && r !== undefined && r.kind === 'allow')
-r = preExecute(harness, noneMain, 'subagent_probe', { run_in_background: true })
-checkTrue('R20 主会话无路由确认态 subagent_probe(run_in_background: true) → 放行（任意状态放行）', r !== null && r !== undefined && r.kind === 'allow')
-r = preExecute(harness, planMain, 'subagent_probe', { run_in_background: true })
-checkTrue('R21 主会话 plan+clarified 态 subagent_probe(run_in_background: true) → 放行', r !== null && r !== undefined && r.kind === 'allow')
+// 待认领计数等价补记：原 R18/R20/R21 三次后台参数放行各挂 1 个待认领计数（供 C1/C2/C2b 认领，见 C1 区注释），随旧参数删除；此处补两次与 R19 同形的无参放行，维持 main-1 待认领计数=3（C1 消费 1、C2 不消费、C2b 仍可认领）。这两次调用的返回值不被读取，作用是维持 main-1 待认领计数为 3，供 C1、C2、C2b 消费。
+r = preExecute(harness, directMain, 'subagent_probe', {})
+r = preExecute(harness, directMain, 'subagent_probe', {})
 
 // probe 子会话（parentSession=main-1，真实工具集含 save_probe）：write → probe 文案 deny；
 // pwsh 只读 → 放行；save_probe → 放行（child 分支不拦）
@@ -880,7 +884,7 @@ const agentCreated = (listeners, agent) => {
   if (entry === undefined || entry.length === 0) throw new Error('agent/created 监听器未注册')
   for (const fn of entry) fn({ agent, source: 'startup' })
 }
-// C1 probe 子会话（parent=main-1 已有 R18/R20/R21 放行累计的待认领计数、schemas 无写）→ 注册 save_probe
+// C1 probe 子会话（parent=main-1 已有 R19 与等价补记放行累计的待认领计数、schemas 无写）→ 注册 save_probe
 {
   const c1Registered = []
   const c1Probe = claimChild('probe-c1', 'main-1', claimTools(c1Registered, [{ name: 'read' }, { name: 'save_probe' }]))
@@ -919,7 +923,7 @@ const failTools = (record, schemas, failFn) => ({
 })
 const stepProbe = (listeners, agent) => runWaterfall(listeners, 'agent/pre-step', { agent }, async () => ({ kind: 'enter', messages: [] }))
 const probeSchemas = [{ name: 'read' }, { name: 'glob' }, { name: 'save_probe' }]
-// 认领前置：每次放行 subagent_probe 给 main-1 挂 1 个待认领计数（同 R18 口径）。
+// 认领前置：每次放行 subagent_probe 给 main-1 挂 1 个待认领计数（同 R19 与等价补记的无参放行口径）。
 const grantClaim = () => {
   preExecute(harness, directMain, 'subagent_probe', { run_in_background: true })
 }
@@ -1158,7 +1162,7 @@ checkTrue('R41 缓存未命中子代理 run_code → 放行（fail-open）', r !
 const staticToolGroups = [
   ['write', "await tools.write({ file_path: 'x', content: '1', })", noneMain, '路由未确认', false],
   ['edit', "await tools.edit({ file_path: 'x', old_string: 'a', new_string: 'b', })", noneMain, '路由未确认', false],
-  // 0.2.1：两条后台标志判定已删除（委派恒立即返回），故 literal 参数用例改为放行侧。
+  // 两条后台标志判定已删除（委派恒立即返回），故 literal 参数用例改为放行侧。
   ['subagent', "await tools.subagent({ task: '执行', })", approvedMain, '', true],
   ['subagent_plan', "await tools.subagent_plan({ task: '规划', })", reselectPlanReadyMain, '', true],
   ['save_probe', "await tools.save_probe({ fileMap: [], focusAreas: [], exclusions: [], background: [], })", reselectPlanReadyMain, '', true],
@@ -1170,7 +1174,7 @@ for (const [name, code, agent, expectedText, expectedAllow] of staticToolGroups)
   checkTrue('A10/A11 ' + name + ' JS literal 参数 ' + (expectedAllow ? 'allow' : 'deny'), expectedAllow ? (r !== null && r !== undefined && r.kind === 'allow') : (r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(expectedText)))
 }
 r = preExecute(harness, approvedMain, 'subagent', { task: '执行' })
-checkTrue('A11 subagent 真实对象（无后台参数）→ 放行（0.2.1 后台约束在宿主层）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('A11 subagent 真实对象（无后台参数）→ 放行（后台约束在宿主层）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, reselectPlanReadyMain, 'subagent_plan', { task: '规划' })
 checkTrue('A10 subagent_plan 真实对象（无后台参数）→ 放行（continuable 由宿主管理）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, approvedMain, 'run_code', { code: "const task = '执行'; await tools.subagent({ task, run_in_background: true })", description: '动态参数运行时兜底' })
@@ -1331,7 +1335,7 @@ checkTrue('R83 组内 send_message 成员 → allow（白名单已删除，组�
 r = preExecute(harnessAgents, noneMain, 'run_code', smCode)
 checkTrue('R83b harnessAgents 组内 send_message 成员目标 running → deny 且聚合含「子代理running中，禁止打扰」（组判定同口径，gateCtx 透传 getAgents）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('子代理running中，禁止打扰'))
 r = preExecute(harness, approvedMain, 'run_code', revCode)
-checkTrue('R84 组内 subagent_review 成员（批准+后台）→ allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R84 组内 subagent_review 成员（批准态）→ allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, noneMain, 'run_code', joCode)
 checkTrue('R85 组内 job_output wait 成员 → deny 且含「job_output 禁止带 wait: true」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止带 wait: true'))
 r = preExecute(harness, noneMain, 'run_code', revCode)
@@ -1399,7 +1403,7 @@ const PTC_BOOT_SCHEMAS = [PTC_READ_SCHEMA, { name: 'run_code', description: 'Run
 const ptcBootAgent = {
   session: { header: { id: 'ptc-boot-main', cwd: 'C:/work' }, snapshotEvents: () => [] },
   options: {},
-  ctx: { get: (name) => name === 'tools' ? { schemas: () => PTC_BOOT_SCHEMAS, sdkSchemas: () => [PTC_READ_SCHEMA], modeFor: () => 'ptc' } : undefined },
+  ctx: { get: (name) => name === 'tools' ? { schemas: () => PTC_BOOT_SCHEMAS } : undefined },
 }
 const ptcBootSections = [
   // 宿主仍会下发 tools:ptc-only；插件 HP 分支已按用户要求停用该段透传（下方断言其不出现在产物中）。
@@ -1424,6 +1428,23 @@ const hpPlanner = { ...ptcBootAgent, session: { ...ptcBootAgent.session, header:
 const hpPlannerAssembly = await assemble(harnessBoot, hpPlanner, [{ name: 'run_code' }], ptcBootSections)
 check('P5 HP0 planner sections 恰为 persona/read 两项（宿主 tools:ptc-only 段已停用）', hpPlannerAssembly.sections.map((section) => section.name), ['extra-plan-bootstrap', 'tool:read'])
 checkTrue('P6 HP0 planner 仍只暴露 run_code', hpPlannerAssembly.tools.map((tool) => tool.name).join('|') === 'run_code')
+// 0.2.2 已删 tools.modeFor 与 sdkSchemas：ptc 轮判据由宿主 tools:ptc-only 段驱动；宿主 tools 服务缺失或退化时 toolSdkSchemasOf 必须返回 undefined 且不抛错。
+checkTrue('HP0 夹具不再提供 modeFor 时 ptc 轮仍判 ptc（tools:ptc-only 段驱动）', hpMain.tools.map((tool) => tool.name).join('|') === 'run_code' && sectionNames(hpMain).join('|') === 'extra-plan-bootstrap|tool:read' && sectionNames(hpPlannerAssembly).join('|') === 'extra-plan-bootstrap|tool:read')
+const noToolsCases = [
+  { id: 'no-tools-service', get: () => undefined },
+  { id: 'stripped-tools', get: (name) => (name === 'tools' ? {} : undefined) },
+  { id: 'throwing-tools', get: (name) => { if (name === 'tools') throw new Error('tools service down'); return undefined } },
+].map((c) => ({ session: { header: { id: c.id } }, options: {}, ctx: { get: c.get } }))
+// 三用例逐个记录结果（undefined / unexpected / threw），全为 undefined 才算通过：抛错的用例不再靠 slice(0,2) 漏检。
+const noToolsOutcomes = noToolsCases.map((agent) => {
+  try {
+    const schemas = toolSdkSchemasOf(agent)
+    return schemas === undefined ? 'undefined' : 'unexpected:' + JSON.stringify(schemas)
+  } catch (error) {
+    return 'threw:' + String(error !== null && error !== undefined && error.message !== undefined ? error.message : error)
+  }
+})
+checkTrue('回退链：tools 服务缺失/退化/抛错三用例均返回 undefined 且不抛错 [' + noToolsOutcomes.join(' | ') + ']', noToolsOutcomes.every((outcome) => outcome === 'undefined'))
 
 // ── ⑨b 变量② bootstrapReadHint：显式覆盖生效 / 空串与非字符串回退内置默认 ──
 // 覆盖语义 = 只改模型可见副本的 tool:read text，宿主注册表与段名/透传均不动。
@@ -1937,8 +1958,8 @@ r = preExecute(harness, noneMain, 'run_code', { code: 'await tools.save_plan({})
 const rc107Reason = r !== null && r !== undefined && r.kind === 'deny' ? String(r.reason) : ''
 checkTrue('R107 noneMain run_code save_plan+write → 组内 save_plan 放行、write 仍拒 → 聚合 deny（2 项 1 项触发，不含 save_plan 行）', r !== null && r !== undefined && r.kind === 'deny' && rc107Reason.includes('工具组共 2 项（去重后），1 项触发闸门') && rc107Reason.includes(routeDenyReason('write/edit', { route: 'none' }, gateRuntime)) && rc107Reason.includes('- write:') && rc107Reason.includes('save_plan') === false)
 
-// ── ⑭e P0-4：会话状态生命周期 + 末轮 usage final flush ──
-// 口径：账本用例显式传 config.usageLedger.enabled=true + 临时 config.usageLedger.path；
+// ── ⑭e P0-4：会话状态生命周期（通知/job 计数/rootCall 桶）──
+// 口径：账本用例块已删除（账本改由启动扫描维护，见 lib/usage-ledger.js）；
 // disposed 断言在监听器同步返回后立即读盘（宿主 agent/disposed 是 emit/void、不等待 Promise）；
 // console.warn 局部捕获（临时替换 + finally 还原）；全部临时文件在 finally 删除。
 const plannerWithId = (id, events) => ({
@@ -1946,67 +1967,12 @@ const plannerWithId = (id, events) => ({
   options: { model: 'deepseek-v4-pro' },
   ctx: undefined,
 })
-const childWithId = (id, events) => ({
-  session: { header: { id, origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work', agentPreset: 'extra-plan-executor' }, snapshotEvents: () => events, append: () => {} },
-  options: {},
-  ctx: undefined,
-})
-const usageContextAgentWithId = (id, preset, events) => ({
-  session: { header: { id, origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work', agentPreset: preset }, snapshotEvents: () => events, append: () => {} },
-  options: {},
-  ctx: undefined,
-})
-const mainUsageAgentWithId = (id, events) => ({
-  session: { header: { id, cwd: 'C:/work' }, snapshotEvents: () => events, append: () => {} },
-  options: {},
-  ctx: undefined,
-})
-const proberWithId = (id, events) => usageContextAgentWithId(id, 'extra-plan-prober', events)
-const reviewerWithId = (id, events) => usageContextAgentWithId(id, 'extra-plan-reviewer', events)
-const unknownWithId = (id, events) => usageContextAgentWithId(id, 'extra-plan-unknown', events)
-const agentCreatedListener = (listeners, agent) => {
-  const entry = listeners['agent/created']
-  if (entry === undefined || entry.length === 0) throw new Error('agent/created 监听器未注册')
-  return entry[0]({ agent, source: 'startup' })
-}
 const disposedListener = (listeners, agent) => {
   const entry = listeners['agent/disposed']
   if (entry === undefined || entry.length === 0) throw new Error('agent/disposed 监听器未注册')
   return entry[0]({ agent })
 }
 const subCall = (listeners, agent, rid, tag) => preExecute(listeners, agent, 'read', { file_path: 'x' }, { rootCallId: rid, parent: Symbol(tag) })
-// opts = 第 6 参数（可含 provider / cacheWriteTokens）：只写显式提供的键；缺失字段按 V2 四桶默认 0/空串。
-const usageRowE = (seq, input, cacheRead, output, model, opts) => {
-  const o = opts === undefined || opts === null ? {} : opts
-  const usage = { inputTokens: input, cacheReadTokens: cacheRead, outputTokens: output }
-  if (o.cacheWriteTokens !== undefined) usage.cacheWriteTokens = o.cacheWriteTokens
-  const source = { model }
-  if (o.provider !== undefined) source.provider = o.provider
-  return { type: 'assistant/message', seq, data: { usage, message: { source } } }
-}
-const attemptRowE = (seq, input = 99) => ({
-  type: 'assistant/attempt',
-  seq,
-  data: { usage: { inputTokens: input, cacheReadTokens: input, cacheWriteTokens: input, outputTokens: input }, message: { source: { model: 'attempt-model', provider: 'attempt-provider' } } },
-})
-const readLedgerRows = (path) => existsSync(path) ? readFileSync(path, 'utf8').split(String.fromCharCode(10)).filter((line) => line.trim() !== '').map((line) => JSON.parse(line)) : []
-const V2_LEDGER_KEYS = ['schemaVersion', 'ts', 'sessionId', 'parentSessionId', 'rootSessionId', 'agentPreset', 'delegationDepth', 'role', 'model', 'provider', 'inputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'outputTokens', 'seq']
-const expectV2Row = (row, expected) => row !== null && typeof row === 'object'
-  && JSON.stringify(Object.keys(row).sort()) === JSON.stringify(V2_LEDGER_KEYS.slice().sort())
-  && row.schemaVersion === 2
-  && row.sessionId === expected.sessionId
-  && row.parentSessionId === expected.parentSessionId
-  && row.rootSessionId === expected.rootSessionId
-  && row.agentPreset === expected.agentPreset
-  && row.delegationDepth === expected.delegationDepth
-  && row.role === expected.role
-  && row.seq === expected.seq
-  && row.model === expected.model
-  && row.provider === (expected.provider === undefined ? '' : expected.provider)
-  && row.inputTokens === expected.inputTokens
-  && row.cacheReadTokens === expected.cacheReadTokens
-  && row.cacheWriteTokens === expected.cacheWriteTokens
-  && row.outputTokens === expected.outputTokens
 const captureWarnings = (fn) => {
   const original = console.warn
   const messages = []
@@ -2028,15 +1994,6 @@ const captureFilteredSdkWarnings = async (fn) => {
     console.warn = original
   }
   return messages
-}
-const cursorWarnings = (messages) => messages.filter((message) => message.includes('usage cursor JSON'))
-// P4 fixture directories use the shared W-only makeTmpDir factory.
-const P4_USAGE_AGENTS = {
-  get: (id) => {
-    if (id === 'parent-1') return { session: { header: { id: 'parent-1', parentSession: 'p4-root' } } }
-    if (id === 'p4-root') return { session: { header: { id: 'p4-root' } } }
-    return undefined
-  },
 }
 
 // P4-0/P4-2：行为层不变量（源码级 includes 断言已于 S4 退役：账本无灌表/单计数入口等事实
@@ -2126,250 +2083,6 @@ checkTrue('P4-0 通知行为：同 message.id 幂等、同 job 新 id 可解锁�
   checkTrue('P4-7 disposed A 不影响 session B：B 前序计数保持后上限内仍 allow、上限+1 次 deny 且拒句与 runCodeDispatchCapText 派生值逐字一致', bKeepOk && b19.kind === 'deny' && String(b19.reason) === dispCapText)
 }
 
-// P4-8~P4-13：one-shot 末轮 flush、重复 disposed 幂等、同 session 续载去重（临时账本目录）
-{
-  const dir = makeTmpDir()
-  try {
-    const ledger = join(dir, 'usage-ledger-v2.jsonl')
-    const h = makeHarness({ anchoredBootstrap: false, agents: P4_USAGE_AGENTS, usageLedger: { enabled: true, path: ledger } })
-    const events = []
-    const child = childWithId('p4-oneshot', events)
-    agentCreatedListener(h, child)
-    checkTrue('P4-8 session-start 无 usage → 不写 ledger 行（cursor 亦不落盘）', !existsSync(ledger) && !existsSync(ledger + '.cursor.json'))
-    events.push(usageRowE(42, 10, 20, 30, 'deepseek-v4-pro', {}))
-    const listenerReturn = disposedListener(h, child)
-    const rows = readLedgerRows(ledger)
-    checkTrue('P4-9 disposed 同步返回后立即读到V2末轮行：schemaVersion=2、精确executor血缘、四桶为 input=10/cacheRead=20/cacheWrite=0/output=30，监听器返回非 Promise',
-      rows.length === 1 && expectV2Row(rows[0], { sessionId: 'p4-oneshot', parentSessionId: 'parent-1', rootSessionId: 'parent-1', delegationDepth: 1, role: 'executor', agentPreset: 'extra-plan-executor', seq: 42, model: 'deepseek-v4-pro', inputTokens: 10, cacheReadTokens: 20, cacheWriteTokens: 0, outputTokens: 30 }) && !(listenerReturn instanceof Promise))
-    disposedListener(h, child)
-    checkTrue('P4-10 重复 disposed 不重复追加 final usage（仍 1 行，靠持久 cursor 去重）', readLedgerRows(ledger).length === 1)
-    events.push(usageRowE(50, 1, 2, 3, 'deepseek-v4-reasoner', {}))
-    const revived = childWithId('p4-oneshot', events)
-    agentCreatedListener(h, revived)
-    const rows2 = readLedgerRows(ledger)
-    checkTrue('P4-11 同 sessionId 续载幂等：旧 seq 42 不重写、新 seq 50 恰写一次且V2 executor血缘/四桶完整',
-      rows2.length === 2 && expectV2Row(rows2[0], { sessionId: 'p4-oneshot', parentSessionId: 'parent-1', rootSessionId: 'parent-1', delegationDepth: 1, role: 'executor', agentPreset: 'extra-plan-executor', seq: 42, model: 'deepseek-v4-pro', inputTokens: 10, cacheReadTokens: 20, cacheWriteTokens: 0, outputTokens: 30 }) && expectV2Row(rows2[1], { sessionId: 'p4-oneshot', parentSessionId: 'parent-1', rootSessionId: 'parent-1', delegationDepth: 1, role: 'executor', agentPreset: 'extra-plan-executor', seq: 50, model: 'deepseek-v4-reasoner', inputTokens: 1, cacheReadTokens: 2, cacheWriteTokens: 0, outputTokens: 3 }))
-    disposedListener(h, revived)
-    checkTrue('P4-12 续载后再次 disposed 仍幂等（ledger 仍 2 行）', readLedgerRows(ledger).length === 2)
-    const table = JSON.parse(readFileSync(ledger + '.cursor.json', 'utf8'))
-    checkTrue('P4-13 持久 cursor 保留去重基准（本 session seq=50）而内存活跃项已随 disposed 回收', table['p4-oneshot'] !== undefined && table['p4-oneshot'].seq === 50 && table['p4-oneshot'].index === 2)
-  } finally { rmSync(dir, { recursive: true, force: true }) }
-}
-
-// P4-14/P4-15：final fold 的 role 取缓存 WeakMap；无缓存时走稳定兜底
-{
-  const dir = makeTmpDir()
-  try {
-    const ledger = join(dir, 'usage-ledger-v2.jsonl')
-    const h = makeHarness({ anchoredBootstrap: false, agents: P4_USAGE_AGENTS, usageLedger: { enabled: true, path: ledger } })
-    const plannerEvents = [DESC]
-    const planner = plannerWithId('p4-planner-role', plannerEvents)
-    agentCreatedListener(h, planner)
-    plannerEvents.push(usageRowE(8, 1, 1, 1, 'deepseek-v4-pro', {}))
-    disposedListener(h, planner)
-    const rows = readLedgerRows(ledger)
-    checkTrue('P4-14 规划子代理 disposed final fold 复用缓存：V2 schema/精确planner血缘与四桶完整', rows.length === 1 && expectV2Row(rows[0], { sessionId: 'p4-planner-role', parentSessionId: 'parent-1', rootSessionId: 'parent-1', delegationDepth: 1, role: 'planner', agentPreset: 'extra-plan-planner', seq: 8, model: 'deepseek-v4-pro', inputTokens: 1, cacheReadTokens: 1, cacheWriteTokens: 0, outputTokens: 1 }))
-    const orphanEvents = [usageRowE(3, 2, 2, 2, 'deepseek-v4-pro', {})]
-    const orphan = childWithId('p4-orphan-child', orphanEvents)
-    disposedListener(h, orphan)
-    const rows2 = readLedgerRows(ledger)
-    checkTrue('P4-15 无 childBaseline 缓存的 disposed 走稳定executor兜底：V2 schema/精确血缘与四桶完整', rows2.length === 2 && expectV2Row(rows2[1], { sessionId: 'p4-orphan-child', parentSessionId: 'parent-1', rootSessionId: 'parent-1', delegationDepth: 1, role: 'executor', agentPreset: 'extra-plan-executor', seq: 3, model: 'deepseek-v4-pro', inputTokens: 2, cacheReadTokens: 2, cacheWriteTokens: 0, outputTokens: 2 }))
-    checkTrue('P4-2 disposed final fold 行为：监听器同步返回后已写末轮、planner usage context 缓存与 orphan executor 兜底均成立', rows.length === 1 && rows[0].role === 'planner' && rows[0].seq === 8 && rows2.length === 2 && rows2[1].role === 'executor' && readLedgerRows(ledger).length === 2)
-  } finally { rmSync(dir, { recursive: true, force: true }) }
-}
-
-// P4-15b：main/prober/reviewer/unknown-child 真实 JSONL 序列化 + 非法 context 不落脏行。
-{
-  const dir = makeTmpDir()
-  try {
-    const ledger = join(dir, 'usage-ledger-v2.jsonl')
-    const h = makeHarness({ anchoredBootstrap: false, agents: P4_USAGE_AGENTS, usageLedger: { enabled: true, path: ledger } })
-    const mainEvents = []
-    const proberEvents = []
-    const reviewerEvents = []
-    const unknownEvents = []
-    const main = mainUsageAgentWithId('p4-main-jsonl', mainEvents)
-    const prober = proberWithId('p4-prober-jsonl', proberEvents)
-    const reviewer = reviewerWithId('p4-reviewer-jsonl', reviewerEvents)
-    const unknown = unknownWithId('p4-unknown-jsonl', unknownEvents)
-    agentCreatedListener(h, main)
-    mainEvents.push(usageRowE(1, 1, 2, 3, 'main-model', { provider: 'main-provider' }))
-    disposedListener(h, main)
-    agentCreatedListener(h, prober)
-    proberEvents.push(usageRowE(2, 2, 3, 4, 'prober-model', { provider: 'prober-provider' }))
-    disposedListener(h, prober)
-    agentCreatedListener(h, reviewer)
-    reviewerEvents.push(usageRowE(3, 3, 4, 5, 'reviewer-model', { provider: 'reviewer-provider' }))
-    disposedListener(h, reviewer)
-    agentCreatedListener(h, unknown)
-    unknownEvents.push(usageRowE(4, 4, 5, 6, 'unknown-model', { provider: 'unknown-provider' }))
-    disposedListener(h, unknown)
-    const rows = readLedgerRows(ledger)
-    checkTrue('P4-15b main/prober/reviewer/unknown 真实JSONL血缘角色不串且无calls',
-      rows.length === 4
-      && expectV2Row(rows[0], { sessionId: 'p4-main-jsonl', parentSessionId: '', rootSessionId: 'p4-main-jsonl', delegationDepth: 0, role: 'main', agentPreset: '', seq: 1, model: 'main-model', provider: 'main-provider', inputTokens: 1, cacheReadTokens: 2, cacheWriteTokens: 0, outputTokens: 3 })
-      && expectV2Row(rows[1], { sessionId: 'p4-prober-jsonl', parentSessionId: 'parent-1', rootSessionId: 'parent-1', delegationDepth: 1, role: 'prober', agentPreset: 'extra-plan-prober', seq: 2, model: 'prober-model', provider: 'prober-provider', inputTokens: 2, cacheReadTokens: 3, cacheWriteTokens: 0, outputTokens: 4 })
-      && expectV2Row(rows[2], { sessionId: 'p4-reviewer-jsonl', parentSessionId: 'parent-1', rootSessionId: 'parent-1', delegationDepth: 1, role: 'reviewer', agentPreset: 'extra-plan-reviewer', seq: 3, model: 'reviewer-model', provider: 'reviewer-provider', inputTokens: 3, cacheReadTokens: 4, cacheWriteTokens: 0, outputTokens: 5 })
-      && expectV2Row(rows[3], { sessionId: 'p4-unknown-jsonl', parentSessionId: 'parent-1', rootSessionId: 'parent-1', delegationDepth: 1, role: 'child', agentPreset: 'extra-plan-unknown', seq: 4, model: 'unknown-model', provider: 'unknown-provider', inputTokens: 4, cacheReadTokens: 5, cacheWriteTokens: 0, outputTokens: 6 })
-      && rows.every((row) => !Object.hasOwn(row, 'calls')))
-    const invalidLedgerPath = join(dir, 'invalid-context.jsonl')
-    const invalidLedger = createUsageLedger({ enabled: true, path: invalidLedgerPath, pathContext: ROUTE_PATH_CONTEXT })
-    const invalidAgent = { session: { seq: 1, snapshotEvents: () => [usageRowE(1, 1, 1, 1, 'invalid-model')] } }
-    let invalidResult
-    const invalidWarnings = captureWarnings(() => { invalidResult = invalidLedger.foldUsage(invalidAgent, { sessionId: '' }) })
-    checkTrue('P4-15c 非法context只告警无行/无cursor/无lock', invalidResult !== undefined && invalidResult.status === 'failed' && invalidWarnings.filter((message) => message.includes('usage ledger fold failed')).length === 1 && !existsSync(invalidLedgerPath) && !existsSync(invalidLedgerPath + '.cursor.json') && !existsSync(usageLedgerLockPath(invalidLedgerPath)))
-  } finally { rmSync(dir, { recursive: true, force: true }) }
-}
-
-// P4-G2-1：实际 createUsageLedger 深层断链落盘对拍，rootSessionId 可为空且其它 context 有效。
-{
-  const dir = makeTmpDir()
-  try {
-    const ledgerPath = join(dir, 'deep-chain.jsonl')
-    const events = [usageRowE(9, 2, 3, 4, 'deep-chain-model', { provider: 'deep-chain-provider' })]
-    const agent = { session: { seq: 1, snapshotEvents: () => events } }
-    const writer = createUsageLedger({ enabled: true, path: ledgerPath, pathContext: ROUTE_PATH_CONTEXT })
-    const result = writer.foldUsage(agent, { sessionId: 'p4-deep-chain', parentSessionId: 'p4-chain-8', rootSessionId: '', agentPreset: 'extra-plan-executor', delegationDepth: 9, role: 'child' })
-    const rows = readLedgerRows(ledgerPath)
-    checkTrue('P4-G2-1 createUsageLedger真实深层断链root为空落盘：固定15键/其它context有效', result.status === 'written' && rows.length === 1 && expectV2Row(rows[0], { sessionId: 'p4-deep-chain', parentSessionId: 'p4-chain-8', rootSessionId: '', delegationDepth: 9, role: 'child', agentPreset: 'extra-plan-executor', seq: 9, model: 'deep-chain-model', provider: 'deep-chain-provider', inputTokens: 2, cacheReadTokens: 3, cacheWriteTokens: 0, outputTokens: 4 }) && statSync(ledgerPath).isFile())
-  } finally { rmSync(dir, { recursive: true, force: true }) }
-}
-
-// P4-16：cursor JSON 可解析 → 读改写保留其它合法 session，数字项跳过
-{
-  const dir = makeTmpDir()
-  try {
-    const ledger = join(dir, 'usage-ledger-v2.jsonl')
-    const cursorPath = ledger + '.cursor.json'
-    writeFileSync(cursorPath, JSON.stringify({ 'other-session': { seq: 7, index: 3 }, 'invalid-numeric-session': 5 }), 'utf8')
-    const h = makeHarness({ anchoredBootstrap: false, agents: P4_USAGE_AGENTS, usageLedger: { enabled: true, path: ledger } })
-    const warnings = captureWarnings(() => { agentCreatedListener(h, childWithId('p4-keep', [usageRowE(11, 1, 1, 1, 'm', {})])) })
-    const table = JSON.parse(readFileSync(cursorPath, 'utf8'))
-    checkTrue('P4-16 可解析cursor读改写：0 warning、保留合法session、跳过数字cursor项并写回本 session',
-      cursorWarnings(warnings).length === 0 && table['other-session'] !== undefined && table['other-session'].seq === 7 && table['other-session'].index === 3 && table['invalid-numeric-session'] === undefined && table['p4-keep'] !== undefined && table['p4-keep'].seq === 11 && table['p4-keep'].index === 1 && readLedgerRows(ledger).length === 1)
-  } finally { rmSync(dir, { recursive: true, force: true }) }
-}
-
-// P4-17：ENOENT 静默按空表
-{
-  const dir = makeTmpDir()
-  try {
-    const ledger = join(dir, 'usage-ledger-v2.jsonl')
-    const h = makeHarness({ anchoredBootstrap: false, agents: P4_USAGE_AGENTS, usageLedger: { enabled: true, path: ledger } })
-    const enoentAgent = childWithId('p4-enoent', [usageRowE(1, 1, 1, 1, 'm', {})])
-    const warnings = captureWarnings(() => { agentCreatedListener(h, enoentAgent); disposedListener(h, enoentAgent) })
-    checkTrue('P4-17 ENOENT（首次运行无 cursor 文件）静默按空表：0 条降级 warning，ledger 与 cursor 正常落盘',
-      cursorWarnings(warnings).length === 0 && readLedgerRows(ledger).length === 1 && JSON.parse(readFileSync(ledger + '.cursor.json', 'utf8'))['p4-enoent'].seq === 1)
-  } finally { rmSync(dir, { recursive: true, force: true }) }
-}
-
-// P4-18/P4-19：损坏 cursor → 1 条 warning + 原始字节保留；同实例再次降级不重复告警
-{
-  const dir = makeTmpDir()
-  try {
-    const ledger = join(dir, 'usage-ledger-v2.jsonl')
-    const cursorPath = ledger + '.cursor.json'
-    const corruptBytes = '{"other-session": {'
-    writeFileSync(cursorPath, corruptBytes, 'utf8')
-    const h = makeHarness({ anchoredBootstrap: false, agents: P4_USAGE_AGENTS, usageLedger: { enabled: true, path: ledger } })
-    const events = [usageRowE(5, 2, 3, 4, 'm', {})]
-    const agent = childWithId('p4-corrupt', events)
-    const warnings = captureWarnings(() => { agentCreatedListener(h, agent) })
-    checkTrue('P4-18 损坏 cursor JSON：恰 1 条降级 warning + 原始字节保留（不覆盖 other-session 现场）',
-      cursorWarnings(warnings).length === 1 && readFileSync(cursorPath, 'utf8') === corruptBytes && readLedgerRows(ledger).length === 1)
-    const invalidBytes = 'not-json-at-all'
-    writeFileSync(cursorPath, invalidBytes, 'utf8')
-    events.push(usageRowE(9, 1, 1, 1, 'm', {}))
-    const warnings2 = captureWarnings(() => { disposedListener(h, agent) })
-    checkTrue('P4-19 同一实例再次降级读不重复告警且仍保留原始字节',
-      cursorWarnings(warnings2).length === 0 && readLedgerRows(ledger).length === 2 && readFileSync(cursorPath, 'utf8') === invalidBytes)
-  } finally { rmSync(dir, { recursive: true, force: true }) }
-}
-
-// P4-20：cursor 根值为非对象（数组）→ warning + 原始字节保留
-{
-  const dir = makeTmpDir()
-  try {
-    const ledger = join(dir, 'usage-ledger-v2.jsonl')
-    const cursorPath = ledger + '.cursor.json'
-    const arrayBytes = '[1,2,3]'
-    writeFileSync(cursorPath, arrayBytes, 'utf8')
-    const h = makeHarness({ anchoredBootstrap: false, agents: P4_USAGE_AGENTS, usageLedger: { enabled: true, path: ledger } })
-    const warnings = captureWarnings(() => { agentCreatedListener(h, childWithId('p4-nonobj', [usageRowE(2, 1, 1, 1, 'm', {})])) })
-    checkTrue('P4-20 cursor 根值为非对象（数组）：1 条降级 warning 且原始字节保留',
-      cursorWarnings(warnings).length === 1 && readFileSync(cursorPath, 'utf8') === arrayBytes && readLedgerRows(ledger).length === 1)
-  } finally { rmSync(dir, { recursive: true, force: true }) }
-}
-
-// P4-33/P4-34：cursor JSON 丢失 → 以 ledger 扫描出的最大 seq 作去重基线（[任务5] M2）
-{
-  const dir = makeTmpDir('p4-cursor-baseline')
-  try {
-    const ledger = join(dir, 'usage-ledger-v2.jsonl')
-    const cursorPath = ledger + '.cursor.json'
-    // 预置该会话两条历史行 + 一份合法 cursor，再删除 cursor 模拟「cursor JSON 丢失」。
-    writeFileSync(ledger, JSON.stringify({ schemaVersion: 2, sessionId: 'p4-restore', seq: 3 }) + '\n' + JSON.stringify({ schemaVersion: 2, sessionId: 'p4-restore', seq: 5 }) + '\n', 'utf8')
-    writeFileSync(cursorPath, JSON.stringify({ 'p4-restore': { seq: 5, index: 2 } }), 'utf8')
-    rmSync(cursorPath, { force: true })
-    const restoreEvents = [usageRowE(3, 1, 1, 1, 'restore-a', {}), usageRowE(5, 2, 2, 2, 'restore-b', {})]
-    const h = makeHarness({ anchoredBootstrap: false, agents: P4_USAGE_AGENTS, usageLedger: { enabled: true, path: ledger } })
-    const restoreAgent = childWithId('p4-restore', restoreEvents)
-    agentCreatedListener(h, restoreAgent)
-    checkTrue('P4-33 cursor JSON 丢失后同 sessionId fold：ledger 扫描恢复 seq 基线、历史行零重复追加且无新事件不写 cursor 文件',
-      readLedgerRows(ledger).length === 2 && !existsSync(cursorPath))
-    restoreEvents.push(usageRowE(6, 3, 3, 3, 'restore-c', {}))
-    disposedListener(h, restoreAgent)
-    const table = JSON.parse(readFileSync(cursorPath, 'utf8'))
-    checkTrue('P4-34 恢复基线后仅追加新事件一行且 cursor 写回新事件 seq',
-      readLedgerRows(ledger).length === 3 && table['p4-restore'] !== undefined && table['p4-restore'].seq === 6)
-  } finally { rmSync(dir, { recursive: true, force: true }) }
-}
-
-// P4-32：0 字节 cursor → 空表自愈（一次性提示）+ 本次 fold 重建 cursor JSON
-{
-  const dir = makeTmpDir()
-  try {
-    const ledger = join(dir, 'usage-ledger-v2.jsonl')
-    const cursorPath = ledger + '.cursor.json'
-    writeFileSync(cursorPath, '', 'utf8')
-    const h = makeHarness({ anchoredBootstrap: false, agents: P4_USAGE_AGENTS, usageLedger: { enabled: true, path: ledger } })
-    const emptyAgent = childWithId('p4-empty', [usageRowE(3, 1, 1, 1, 'm', {})])
-    const warnings = captureWarnings(() => { agentCreatedListener(h, emptyAgent) })
-    const table = JSON.parse(readFileSync(cursorPath, 'utf8'))
-    checkTrue('P4-32 0字节cursor按空表自愈：恰1条empty提示、cursor重建、本session基准写回',
-      cursorWarnings(warnings).length === 1 && cursorWarnings(warnings)[0].includes('empty') && readLedgerRows(ledger).length === 1 && table['p4-empty'] !== undefined && table['p4-empty'].seq === 3)
-  } finally { rmSync(dir, { recursive: true, force: true }) }
-}
-
-// P4-21：final fold 写入失败 → 既有单次 warning、不抛出、不阻断单会话状态清理
-{
-  const dir = makeTmpDir()
-  try {
-    const blocked = join(dir, 'blocked')
-    writeFileSync(blocked, 'not-a-dir', 'utf8')
-    const ledger = join(blocked, 'usage-ledger-v2.jsonl')
-    const h = makeHarness({ anchoredBootstrap: false, agents: P4_USAGE_AGENTS, usageLedger: { enabled: true, path: ledger } })
-    const events = [DESC]
-    const agent = plannerWithId('p4-foldfail', events)
-    events.push(usageRowE(7, 1, 1, 1, 'm', {}))
-    // 写入目标父路径是文件 → mkdirSync 抛 EEXIST，foldUsage 走既有 catch（ledgerWarned 只发一次）。
-    // 首次 fold 由 preExecute→childBaseline 触发，故捕获窗口覆盖整个序列（首次 + 两次 disposed）。
-    let first = null
-    let thrown = null
-    const warnings = captureWarnings(() => {
-      try {
-        first = preExecute(h, agent, 'job_output', { job_id: 'job-p4-foldfail' })
-        disposedListener(h, agent)
-        disposedListener(h, agent)
-      } catch (error) { thrown = error }
-    })
-    const revived = plannerWithId('p4-foldfail', events)
-    const after = preExecute(h, revived, 'job_output', { job_id: 'job-p4-foldfail' })
-    checkTrue('P4-21 final fold 写入失败：既有单次 ledger warning（三次折叠尝试仍只 1 条）、不抛出，且不阻断清理（同 session 新 agent 的 job_output 查重已重置为 allow）',
-      thrown === null && first.kind === 'allow' && warnings.filter((message) => message.includes('usage ledger fold failed')).length === 1 && after.kind === 'allow' && !existsSync(ledger))
-  } finally { rmSync(dir, { recursive: true, force: true }) }
-}
-
 // P4-22/P4-23：disposed 仍按既有条件发 pending 探查者委派告警（在删除该 session 待认领计数之前），且重复 disposed 幂等
 {
   const p4PendingEvents = [umE(), callE('ask_user_question', 'pa1', routeArgsE), okE('pa1', answerE(['直接执行']))]
@@ -2382,270 +2095,6 @@ checkTrue('P4-0 通知行为：同 message.id 幂等、同 job 新 id 可解锁�
     grantA.kind === 'allow' && grantB.kind === 'allow' && pendingWarns.length === 1 && pendingWarns[0].includes('2 个未认领探查者委派') && pendingWarns[0].includes('委派方会话销毁时'))
   const warnings2 = captureWarnings(() => { disposedListener(harness, p4PendingMain) })
   checkTrue('P4-23 重复 disposed 幂等：待认领计数已删除 → 不再告警', warnings2.filter((message) => message.includes('个未认领探查者委派')).length === 0)
-}
-
-// ── P4-24：V2角色血缘与四桶落盘（assistant/attempt、零行跳过与缺省字段） ──
-{
-  const dir = makeTmpDir()
-  try {
-    const ledger = join(dir, 'usage-ledger-v2.jsonl')
-    const h = makeHarness({ anchoredBootstrap: false, agents: P4_USAGE_AGENTS, usageLedger: { enabled: true, path: ledger } })
-    // 首行：四桶前三项全零而 cacheWriteTokens 非零 → 仍须落盘；attempt 事件携带非零 usage 也不得落账。
-    // 次行：未提供 cacheWriteTokens → 按 V2 四桶缺省为 0，且 provider 缺省为空串。
-    const events = [attemptRowE(60), usageRowE(61, 0, 0, 0, 'deepseek-v4-pro', { provider: 'deepseek', cacheWriteTokens: 7 })]
-    const child = childWithId('p4-usage-fields', events)
-    agentCreatedListener(h, child)
-    events.push(usageRowE(62, 1, 2, 3, 'deepseek-v4-pro', {}))
-    disposedListener(h, child)
-    const rows = readLedgerRows(ledger)
-    checkTrue('P4-24 V2四桶与血缘落盘：assistant/attempt不落账、schemaVersion=2、cacheWrite非零零行不跳过、缺省字段归零',
-      rows.length === 2
-      && expectV2Row(rows[0], { sessionId: 'p4-usage-fields', parentSessionId: 'parent-1', rootSessionId: 'parent-1', delegationDepth: 1, role: 'executor', agentPreset: 'extra-plan-executor', seq: 61, model: 'deepseek-v4-pro', provider: 'deepseek', inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 7, outputTokens: 0 })
-      && expectV2Row(rows[1], { sessionId: 'p4-usage-fields', parentSessionId: 'parent-1', rootSessionId: 'parent-1', delegationDepth: 1, role: 'executor', agentPreset: 'extra-plan-executor', seq: 62, model: 'deepseek-v4-pro', inputTokens: 1, cacheReadTokens: 2, cacheWriteTokens: 0, outputTokens: 3 })
-      && !rows.some((row) => row.model === 'attempt-model'))
-  } finally { rmSync(dir, { recursive: true, force: true }) }
-}
-
-// ── P4-25~P4-27（P1-4-4 对拍）：per-session 游标增量（session.seq 水位 + snapshotEvents(from,to)）──
-// 口径：mock session 严格实现宿主契约「seq === log 索引、append-only 日志」；foldUsage 保持同步函数。
-// 全量对拍只在验收期跑这一处（生产热路径只跑增量，不存在同一趟双跑）：全量参考 = 同一 sessionId、
-// 但游标为空的独立实例首次折叠（prev 缺失 → 必走无参全量分支），故两路结果可逐行（除 ts）比较。
-const watermarkSession = (id, log) => {
-  const calls = []
-  const session = {
-    header: { id, origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work', agentPreset: 'extra-plan-executor' },
-    log,
-    calls,
-    append: () => {},
-    eventAt: (seq) => log[seq],
-    get seq() { return log.length },
-    snapshotEvents: (from, to) => {
-      calls.push([from, to])
-      if (typeof from === 'number' && typeof to === 'number') return Object.freeze(log.slice(from, to))
-      return Object.freeze(log.slice())
-    },
-  }
-  return { session, calls, agent: { session, options: {}, ctx: undefined } }
-}
-const stripTs = (rows) => rows.map(({ ts, ...rest }) => rest)
-const expectSimpleV2Rows = (rows, sessionId) => rows.every((row) => expectV2Row(row, { sessionId, parentSessionId: 'parent-1', rootSessionId: 'parent-1', delegationDepth: 1, role: 'executor', agentPreset: 'extra-plan-executor', seq: row.seq, model: row.model, inputTokens: row.seq, cacheReadTokens: row.seq, cacheWriteTokens: 0, outputTokens: row.seq }))
-const rangeCalls = (calls) => calls.filter((pair) => typeof pair[0] === 'number' && typeof pair[1] === 'number')
-const fullCalls = (calls) => calls.filter((pair) => pair[0] === undefined)
-
-// P4-25：水位未变 → 直接返回（不物化数组、不写文件）。用 executor 子代理（日志含 descriptor）
-// 使 isPlannerChild 在第一趟后命中 descriptor 缓存，第二趟除 foldUsage 外无其它快照消费者，
-// 因此「第二趟零次 snapshotEvents 调用」可同时证明早返回未物化任何数组。
-{
-  const dir = makeTmpDir()
-  try {
-    const ledger = join(dir, 'usage-ledger-v2.jsonl')
-    const h = makeHarness({ anchoredBootstrap: false, agents: P4_USAGE_AGENTS, usageLedger: { enabled: true, path: ledger } })
-    const log = [DESC, usageRowE(1, 1, 2, 3, 'deepseek-v4-pro', {}), usageRowE(2, 4, 5, 6, 'deepseek-v4-pro', {})]
-    const w = watermarkSession('p4-cursor-nochange', log)
-    agentCreatedListener(h, w.agent)
-    const ledgerA = existsSync(ledger) ? readFileSync(ledger, 'utf8') : ''
-    const cursorA = existsSync(ledger + '.cursor.json') ? readFileSync(ledger + '.cursor.json', 'utf8') : ''
-    w.calls.length = 0
-    agentCreatedListener(h, w.agent)
-    const ledgerB = existsSync(ledger) ? readFileSync(ledger, 'utf8') : ''
-    const cursorB = existsSync(ledger + '.cursor.json') ? readFileSync(ledger + '.cursor.json', 'utf8') : ''
-    const rows25 = readLedgerRows(ledger)
-    checkTrue('P4-25 水位未变（prevIndex === session.seq === 3）→ 直接返回：V2行不变、ledger/cursor字节不变，且本次零次snapshotEvents调用',
-      ledgerA !== '' && cursorA !== '' && rows25.length === 2
-      && expectV2Row(rows25[0], { sessionId: 'p4-cursor-nochange', parentSessionId: 'parent-1', rootSessionId: 'parent-1', delegationDepth: 1, role: 'executor', agentPreset: 'extra-plan-executor', seq: 1, model: 'deepseek-v4-pro', inputTokens: 1, cacheReadTokens: 2, cacheWriteTokens: 0, outputTokens: 3 })
-      && expectV2Row(rows25[1], { sessionId: 'p4-cursor-nochange', parentSessionId: 'parent-1', rootSessionId: 'parent-1', delegationDepth: 1, role: 'executor', agentPreset: 'extra-plan-executor', seq: 2, model: 'deepseek-v4-pro', inputTokens: 4, cacheReadTokens: 5, cacheWriteTokens: 0, outputTokens: 6 })
-      && ledgerA === ledgerB && cursorA === cursorB && w.calls.length === 0)
-  } finally { rmSync(dir, { recursive: true, force: true }) }
-}
-// P4-26：增量续扫等价——追加事件后只物化 [prevIndex, logLen) 区间，仅新事件被折叠；
-// 全量参考（同 sessionId、游标为空的独立实例首折走无参全量）逐行（除 ts）一致。
-{
-  const dirA = makeTmpDir()
-  const dirB = makeTmpDir()
-  try {
-    const sid = 'p4-cursor-incr'
-    const ledgerA = join(dirA, 'usage-ledger-v2.jsonl')
-    const ledgerB = join(dirB, 'usage-ledger-v2.jsonl')
-    const hA = makeHarness({ anchoredBootstrap: false, agents: P4_USAGE_AGENTS, usageLedger: { enabled: true, path: ledgerA } })
-    const hB = makeHarness({ anchoredBootstrap: false, agents: P4_USAGE_AGENTS, usageLedger: { enabled: true, path: ledgerB } })
-    // seq 从 1 起（seq 0 落在「seq <= cursor」的初始去重窗口内，与 P4-8~P4-13 既有口径一致）。
-    const log = [usageRowE(1, 1, 1, 1, 'deepseek-v4-pro', {}), usageRowE(2, 2, 2, 2, 'deepseek-v4-pro', {})]
-    const wInc = watermarkSession(sid, log)
-    agentCreatedListener(hA, wInc.agent)
-    const first = readLedgerRows(ledgerA)
-    wInc.calls.length = 0
-    log.push(usageRowE(3, 3, 3, 3, 'deepseek-v4-reasoner', {}), usageRowE(4, 4, 4, 4, 'deepseek-v4-reasoner', {}))
-    agentCreatedListener(hA, wInc.agent)
-    const incr = readLedgerRows(ledgerA)
-    const wFull = watermarkSession(sid, log.slice())
-    agentCreatedListener(hB, wFull.agent)
-    const full = readLedgerRows(ledgerB)
-    const rc = rangeCalls(wInc.calls)
-    checkTrue('P4-26 增量续扫等价：区间读恰为 (2,4) 一次（只物化新增区间）、恰追加 2 行、seq 序列 1..4 无重复；与同 sessionId 的全量参考逐行（除 ts）一致',
-      first.length === 2 && incr.length === 4 && incr.map((row) => row.seq).join(',') === '1,2,3,4'
-      && expectSimpleV2Rows(first, sid) && expectSimpleV2Rows(incr, sid) && expectSimpleV2Rows(full, sid)
-      && rc.length === 1 && rc[0][0] === 2 && rc[0][1] === 4
-      && full.length === 4 && JSON.stringify(stripTs(incr)) === JSON.stringify(stripTs(full)))
-  } finally { rmSync(dirA, { recursive: true, force: true }); rmSync(dirB, { recursive: true, force: true }) }
-}
-// P4-27：水位前提不成立（cursor.index > session.seq，日志截断）→ 回退无参全量快照；
-// seq 去重（seq <= cursor.seq → skip）保证不重写已折叠行；结果与增量路径对同一输入一致。
-{
-  const dirA = makeTmpDir('p4-cursor-trunc-a')
-  const dirB = makeTmpDir('p4-cursor-trunc-b')
-  try {
-    const sid = 'p4-cursor-trunc'
-    const ledgerA = join(dirA, 'usage-ledger-v2.jsonl')
-    const ledgerB = join(dirB, 'usage-ledger-v2.jsonl')
-    // 预置游标：index=99 远超水位 4（截断模拟）；另含数字 cursor 项（V2 归一时应跳过）。
-    writeFileSync(ledgerA + '.cursor.json', JSON.stringify({ [sid]: { seq: 2, index: 99 }, 'other-session': 7 }), 'utf8')
-    const hA = makeHarness({ anchoredBootstrap: false, agents: P4_USAGE_AGENTS, usageLedger: { enabled: true, path: ledgerA, pathContext: ROUTE_PATH_CONTEXT } })
-    const hB = makeHarness({ anchoredBootstrap: false, agents: P4_USAGE_AGENTS, usageLedger: { enabled: true, path: ledgerB, pathContext: ROUTE_PATH_CONTEXT } })
-    // seq 1..4（同 P4-26：seq 0 落在初始去重窗口内）；预置游标 seq=2 表示「前两行已折叠」。
-    const log = [usageRowE(1, 1, 1, 1, 'deepseek-v4-pro', {}), usageRowE(2, 2, 2, 2, 'deepseek-v4-pro', {}), usageRowE(3, 3, 3, 3, 'deepseek-v4-reasoner', {}), usageRowE(4, 4, 4, 4, 'deepseek-v4-reasoner', {})]
-    const wTrunc = watermarkSession(sid, log)
-    agentCreatedListener(hA, wTrunc.agent)
-    const truncated = readLedgerRows(ledgerA)
-    const tableA = JSON.parse(readFileSync(ledgerA + '.cursor.json', 'utf8'))
-    // 增量参考：同 sid 分两步折叠（首折全量 + 追加后区间）→ 其增量段即回退路径应当得到的行。
-    const wRefFirst = watermarkSession(sid, log.slice(0, 2))
-    agentCreatedListener(hB, wRefFirst.agent)
-    const wRefSecond = watermarkSession(sid, log.slice())
-    agentCreatedListener(hB, wRefSecond.agent)
-    const refRows = readLedgerRows(ledgerB)
-    const rc = rangeCalls(wTrunc.calls)
-    checkTrue('P4-27 回退全量：index(99) > session.seq(4) → 无参全量快照、V2 seq去重仅保留3/4且血缘完整；数字cursor项跳过',
-      truncated.length === 2 && truncated.map((row) => row.seq).join(',') === '3,4'
-      && expectSimpleV2Rows(truncated, sid)
-      && rc.length === 0 && fullCalls(wTrunc.calls).length >= 1
-      && refRows.length === 4 && JSON.stringify(stripTs(truncated)) === JSON.stringify(stripTs(refRows.slice(2)))
-      && tableA[sid] !== undefined && tableA[sid].seq === 4 && tableA[sid].index === 4
-      && tableA['other-session'] === undefined)
-  } finally { rmSync(dirA, { recursive: true, force: true }); rmSync(dirB, { recursive: true, force: true }) }
-}
-
-// P4-28~P4-31：真实共享锁临界区——活锁约1秒delayed零推进、释放后只补写一次、死PID stale锁被原子接管。
-{
-  const dir = makeTmpDir()
-  try {
-    const ledger = join(dir, 'usage-ledger-v2.jsonl')
-    const events = [usageRowE(1, 1, 2, 3, 'lock-model', { provider: 'lock-provider' })]
-    let snapshotCalls = 0
-    const lockAgent = {
-      session: { header: { id: 'p4-lock-child', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work', agentPreset: 'extra-plan-executor' }, get seq() { return events.length }, snapshotEvents: () => { snapshotCalls += 1; return events }, append: () => {} },
-      options: {},
-      ctx: undefined,
-    }
-    const h = makeHarness({ anchoredBootstrap: false, agents: P4_USAGE_AGENTS, usageLedger: { enabled: true, path: ledger } })
-    const held = acquireUsageLedgerLock(ledger, { waitMs: 0, pathContext: ROUTE_PATH_CONTEXT, purpose: 'usage-ledger' })
-    const ledgerBefore = existsSync(ledger) ? readFileSync(ledger, 'utf8') : ''
-    const cursorBefore = existsSync(ledger + '.cursor.json') ? readFileSync(ledger + '.cursor.json', 'utf8') : ''
-    const startedAt = Date.now()
-    const delayedWarnings = captureWarnings(() => { agentCreatedListener(h, lockAgent) })
-    const elapsed = Date.now() - startedAt
-    const ledgerBusy = existsSync(ledger) ? readFileSync(ledger, 'utf8') : ''
-    const cursorBusy = existsSync(ledger + '.cursor.json') ? readFileSync(ledger + '.cursor.json', 'utf8') : ''
-    const directDelayed = createUsageLedger({ enabled: true, path: ledger, pathContext: ROUTE_PATH_CONTEXT }).foldUsage(lockAgent, { sessionId: 'p4-lock-child', parentSessionId: 'parent-1', rootSessionId: 'parent-1', agentPreset: 'extra-plan-executor', delegationDepth: 1, role: 'executor' })
-    checkTrue('P4-28 活PID锁约1秒delayed且静默：snapshot/ledger/cursor/内存水位均不推进且canonical保留', directDelayed.status === 'delayed' && held.acquired === true && elapsed >= 900 && elapsed < 2500 && delayedWarnings.length === 0 && snapshotCalls === 0 && ledgerBusy === ledgerBefore && cursorBusy === cursorBefore && existsSync(usageLedgerLockPath(ledger)) && !readdirSync(dir).some((name) => name.includes('.stale-')))
-    const released = releaseUsageLedgerLock(held)
-    agentCreatedListener(h, lockAgent)
-    const rowsAfterRelease = readLedgerRows(ledger)
-    const cursorAfterRelease = JSON.parse(readFileSync(ledger + '.cursor.json', 'utf8'))
-    agentCreatedListener(h, lockAgent)
-    checkTrue('P4-29 释放后下一fold只补写一次且cursor推进/无lock残留', released.released === true && rowsAfterRelease.length === 1 && rowsAfterRelease[0].seq === 1 && snapshotCalls === 1 && cursorAfterRelease['p4-lock-child'] !== undefined && cursorAfterRelease['p4-lock-child'].seq === 1 && !existsSync(usageLedgerLockPath(ledger)))
-
-    const heldAgain = acquireUsageLedgerLock(ledger, { waitMs: 0, pathContext: ROUTE_PATH_CONTEXT, purpose: 'usage-ledger' })
-    const mismatch = releaseUsageLedgerLock({ ...heldAgain, token: 'wrong-token' })
-    const lockAfterMismatch = existsSync(usageLedgerLockPath(ledger))
-    const releasedAgain = releaseUsageLedgerLock(heldAgain)
-    checkTrue('P4-30 release token异常不删他人锁，随后正常release无残留', heldAgain.acquired === true && mismatch.released === false && mismatch.reason === 'token-mismatch' && lockAfterMismatch && releasedAgain.released === true && !existsSync(usageLedgerLockPath(ledger)))
-
-    const stalePath = usageLedgerLockPath(ledger)
-    const staleBytes = JSON.stringify({ pid: 2147483647, token: 'p4-stale-token', createdAt: Date.now() })
-    writeFileSync(stalePath, staleBytes, 'utf8')
-    const stale = acquireUsageLedgerLock(ledger, { waitMs: 0, pathContext: ROUTE_PATH_CONTEXT, purpose: 'usage-ledger' })
-    const staleOwnerAfter = JSON.parse(readFileSync(stalePath, 'utf8'))
-    checkTrue('P4-31 死PID stale锁被原子接管：acquired且lock归当前进程/旧字节不残留/无stale残留', stale.acquired === true && staleOwnerAfter.pid === process.pid && staleOwnerAfter.token === stale.token && readFileSync(stalePath, 'utf8') !== staleBytes && readdirSync(dir).every((name) => !name.includes('.stale-')))
-    rmSync(stalePath, { force: true })
-
-    const blocked = join(dir, 'blocked')
-    writeFileSync(blocked, 'not-a-dir', 'utf8')
-    const badLedger = join(blocked, 'usage-ledger-v2.jsonl')
-    const badHarness = makeHarness({ anchoredBootstrap: false, agents: P4_USAGE_AGENTS, usageLedger: { enabled: true, path: badLedger } })
-    const badAgent = childWithId('p4-lock-fold-fail', [usageRowE(2, 1, 1, 1, 'bad-model')])
-    const badWarnings = captureWarnings(() => { agentCreatedListener(badHarness, badAgent) })
-    checkTrue('P4-32 fold异常只告警且无canonical lock/stale残留', badWarnings.some((message) => message.includes('usage ledger fold failed')) && !existsSync(badLedger) && !existsSync(usageLedgerLockPath(badLedger)) && !readdirSync(dir).some((name) => name.includes('.stale-')))
-  } finally { rmSync(dir, { recursive: true, force: true }) }
-}
-
-// P4-G2-2：同一实例死PID canonical锁首次fold即原子接管并落盘；后续fold unchanged、零告警、不重复推进快照/cursor。
-{
-  const dir = makeTmpDir()
-  try {
-    const ledgerPath = join(dir, 'stale-writer.jsonl')
-    const lockPath = usageLedgerLockPath(ledgerPath)
-    const staleBytes = JSON.stringify({ pid: 2147483647, token: 'p4-g2-stale-token', createdAt: Date.now() })
-    writeFileSync(lockPath, staleBytes, 'utf8')
-    const events = [usageRowE(1, 2, 3, 4, 'stale-model', { provider: 'stale-provider' })]
-    let snapshotCalls = 0
-    const agent = { session: { header: { id: 'p4-g2-stale', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work', agentPreset: 'extra-plan-executor' }, get seq() { return events.length }, snapshotEvents: () => { snapshotCalls += 1; return events }, append: () => {} }, options: {}, ctx: undefined }
-    const context = { sessionId: 'p4-g2-stale', parentSessionId: 'parent-1', rootSessionId: 'parent-1', agentPreset: 'extra-plan-executor', delegationDepth: 1, role: 'executor' }
-    const writer = createUsageLedger({ enabled: true, path: ledgerPath, pathContext: ROUTE_PATH_CONTEXT })
-    let first
-    let second
-    const warnings1 = captureWarnings(() => { first = writer.foldUsage(agent, context) })
-    const rowsAfterFirst = readLedgerRows(ledgerPath)
-    const cursorAfterFirst = readFileSync(ledgerPath + '.cursor.json', 'utf8')
-    const warnings2 = captureWarnings(() => { second = writer.foldUsage(agent, context) })
-    const rowsAfterSecond = readLedgerRows(ledgerPath)
-    const cursorAfterSecond = readFileSync(ledgerPath + '.cursor.json', 'utf8')
-    checkTrue('P4-G2-2 死PID canonical锁首次fold即原子接管并written：零stale告警、账本恰一行、无lock/stale残留', first.status === 'written' && first.rows === 1 && warnings1.length === 0 && rowsAfterFirst.length === 1 && rowsAfterFirst[0].seq === 1 && !existsSync(lockPath) && readdirSync(dir).every((name) => !name.includes('.stale-')))
-    checkTrue('P4-G2-2 接管后第二次fold unchanged：零告警、快照/账本/cursor均不重复推进、无lock/stale残留', second.status === 'unchanged' && warnings2.length === 0 && snapshotCalls === 1 && rowsAfterSecond.length === 1 && cursorAfterSecond === cursorAfterFirst && !existsSync(lockPath) && readdirSync(dir).every((name) => !name.includes('.stale-')))
-    rmSync(lockPath, { force: true })
-    const afterRelease = writer.foldUsage(agent, context)
-    const rows = readLedgerRows(ledgerPath)
-    checkTrue('P4-G2-2 接管落盘后再fold仍unchanged：账本仍一行/cursor零推进/无lock残留', afterRelease.status === 'unchanged' && rows.length === 1 && rows[0].seq === 1 && snapshotCalls === 1 && JSON.parse(readFileSync(ledgerPath + '.cursor.json', 'utf8'))['p4-g2-stale'].seq === 1 && !existsSync(lockPath))
-  } finally { rmSync(dir, { recursive: true, force: true }) }
-}
-
-// P4-G2-3：最小 lockApi 注入覆盖 release 返回失败/抛异常；写入已提交时报告 operationStatus/operationResult，不伪装回滚。
-const runReleaseFailureCase = (label, release) => {
-  const dir = makeTmpDir()
-  try {
-    const ledgerPath = join(dir, 'release-' + label + '.jsonl')
-    const events = [usageRowE(1, 3, 4, 5, 'release-model', { provider: 'release-provider' })]
-    const agent = { session: { header: { id: 'p4-g2-release-' + label, origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work', agentPreset: 'extra-plan-executor' }, get seq() { return events.length }, snapshotEvents: () => events }, options: {}, ctx: undefined }
-    const context = { sessionId: 'p4-g2-release-' + label, parentSessionId: 'parent-1', rootSessionId: 'parent-1', agentPreset: 'extra-plan-executor', delegationDepth: 1, role: 'executor' }
-    const writer = createUsageLedger({ enabled: true, path: ledgerPath, pathContext: ROUTE_PATH_CONTEXT, lockApi: { acquire: () => ({ acquired: true, lockPath: ledgerPath + '.lock', token: 'p4-g2-release-token-' + label }), release } })
-    let first
-    let second
-    const warnings = captureWarnings(() => { first = writer.foldUsage(agent, context); second = writer.foldUsage(agent, context) })
-    const failed = (result) => result !== undefined && result.status === 'failed' && result.reason === 'release-failed' && result.releaseFailed === true && !['written', 'advanced', 'unchanged'].includes(result.status)
-    checkTrue('P4-G2-3 ' + label + ' release失败顶层failed/reason/releaseFailed且不伪装成功', failed(first))
-    checkTrue('P4-G2-3 ' + label + ' 底层提交状态明确、重复失败仅诊断一次且ledger/cursor保留', failed(second) && first.operationStatus === 'written' && first.operationResult !== undefined && first.operationResult.status === 'written' && second.operationStatus === 'unchanged' && second.operationResult !== undefined && second.operationResult.status === 'unchanged' && warnings.filter((message) => message.includes('usage ledger release failed')).length === 1 && readLedgerRows(ledgerPath).length === 1 && JSON.parse(readFileSync(ledgerPath + '.cursor.json', 'utf8'))[context.sessionId].seq === 1 && !existsSync(usageLedgerLockPath(ledgerPath)))
-  } finally { rmSync(dir, { recursive: true, force: true }) }
-}
-runReleaseFailureCase('return-false', () => ({ released: false, reason: 'injected-release-false' }))
-runReleaseFailureCase('throw-error', () => { throw new Error('injected-release-throw') })
-
-// P4-G2-4：裸相对 path 按 runtime H 数据根解析，不借 chdir 取得写权限，且夹具彻底恢复清理。
-{
-  const dir = makeTmpDir('dsh-g2-relative')
-  let targetIsFile = false
-  let childDirectories = []
-  let result
-  try {
-    const relativePath = join('tmp', 'dsh-g2-relative', 'relative-ledger.jsonl')
-    const writer = createUsageLedger({ enabled: true, path: relativePath, pathContext: ROUTE_PATH_CONTEXT })
-    const agent = { session: { seq: 1, snapshotEvents: () => [usageRowE(1, 1, 1, 1, 'relative-model', {})] } }
-    result = writer.foldUsage(agent, { sessionId: 'p4-g2-relative', parentSessionId: '', rootSessionId: 'p4-g2-relative', agentPreset: '', delegationDepth: 0, role: 'main' })
-    const target = join(ROUTE_FIXTURE.home, relativePath)
-    targetIsFile = existsSync(target) && statSync(target).isFile()
-    childDirectories = readdirSync(dir).filter((name) => statSync(join(dir, name)).isDirectory())
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
-  checkTrue('P4-G2-4 裸相对path按runtime H数据根fold写目标文件且无截断文件名目录', result !== undefined && result.status === 'written' && targetIsFile && childDirectories.length === 0)
 }
 
 // ── ⑮ 创造模式装配投影矩阵：2 × 2 × 2 × 2 × 5 = 80 ───────────────────────
@@ -2697,9 +2146,11 @@ function matrixSections(mode) {
   sections.push({ name: 'matrix-user-section', text: 'ordinary user skill and prompt section' })
   return sections
 }
-function matrixAgent(role, phase, serial, mode, sdkSchemasOverride) {
+function matrixAgent(role, phase, serial) {
   const schemas = matrixSchemasFor(role)
-  const sdkSchemas = sdkSchemasOverride === undefined ? schemas.filter((schema) => schema.name !== 'run_code') : sdkSchemasOverride
+  // 0.2.2 真实 registry 形状：definitions(agent) 与 schemas(agent) 同源，均由 matrixSchemasFor(role)
+  // （= MATRIX_TOOL_DEFINITIONS 及其 no-write 子集）经 map 派生，name/description/parameters 三项原样取，不另造名单。
+  const definitions = schemas.map((schema) => ({ name: schema.name, description: schema.description, parameters: schema.parameters }))
   const events = phase === 'first' ? [] : [{ type: 'tool/call', data: {} }]
   if (role === 'planner') events.unshift(DESC)
   const header = role === 'main'
@@ -2708,7 +2159,7 @@ function matrixAgent(role, phase, serial, mode, sdkSchemasOverride) {
   return {
     session: { header, snapshotEvents: () => events },
     options: {},
-    ctx: { get: (name) => name === 'tools' ? { schemas: () => schemas, sdkSchemas: () => sdkSchemas, modeFor: () => mode } : undefined },
+    ctx: { get: (name) => name === 'tools' ? { schemas: () => schemas, definitions: () => definitions } : undefined },
   }
 }
 function sectionNames(assembly) {
@@ -2730,7 +2181,7 @@ async function matrixCatalog(listeners, agent, creativeMode) {
   const decision = matrixCatalogDecision(creativeMode)
   return await runWaterfall(listeners, 'agent/pre-step', { agent }, async () => decision)
 }
-// 0.2.1 呈现模式二值化：both 退出，矩阵按 native 轮 与 ptc 轮两组跑（用例编号不变）。
+// 呈现模式二值化：both 退出，矩阵按 native 轮 与 ptc 轮两组跑（用例编号不变）。
 const matrixModes = ['native', 'ptc']
 const matrixRoles = ['main', 'planner', 'executor', 'reviewer', 'probe']
 // 五个维度各自单点定义：循环与总数断言共用同一组维度（S4：不写死 80）。
@@ -2746,7 +2197,7 @@ for (const anchoredBootstrap of matrixAnchoredOptions) {
         for (const role of matrixRoles) {
           matrixSerial += 1
           const harnessMatrix = makeHarness({ anchoredBootstrap, creativeMode })
-          const agent = matrixAgent(role, phase, matrixSerial, mode)
+          const agent = matrixAgent(role, phase, matrixSerial)
           const schemas = matrixSchemasFor(role)
           const rawTools = matrixDirectTools(schemas, mode)
           const assembled = await assemble(harnessMatrix, agent, rawTools, matrixSections(mode))
@@ -3017,21 +2468,14 @@ if (routeSdkAnchor !== null) {
 }
 const p2PresentationHarness = makeHarness({ anchoredBootstrap: true, creativeMode: false })
 const p2FTrapHarness = makeHarness({ anchoredBootstrap: true, creativeMode: false, language: '__p2-unsupported-renderer-sentinel__' })
-let p2FullSdkRendererPathAttempts = 0
-const p2RendererTrapSchema = {}
-Object.defineProperty(p2RendererTrapSchema, 'name', {
-  enumerable: true,
-  get() {
-    p2FullSdkRendererPathAttempts += 1
-    throw new Error('p2 full SDK renderer trap')
-  },
-})
-const p2OriginalWarn = console.warn
+// P2-19 第二条的两个真条件各有独立证据：①captureFilteredSdkWarnings 在渲染期间换装 console.warn 并收集警告，
+// 列表为空即「未走完整 SDK renderer 的告警路径」；②调用结束后 console.warn 必须仍等于调用前基线引用（已恢复）。
+const p2WarnBaseline = console.warn
 let p2FNative
 let p2FPtc
 const p2RendererWarnings = await captureFilteredSdkWarnings(async () => {
-  const p2FNativeAgent = matrixAgent('main', 'first', 1001, 'native', [p2RendererTrapSchema])
-  const p2FPtcAgent = matrixAgent('main', 'first', 1002, 'ptc', [p2RendererTrapSchema])
+  const p2FNativeAgent = matrixAgent('main', 'first', 1001)
+  const p2FPtcAgent = matrixAgent('main', 'first', 1002)
   p2FNative = await assemble(p2FTrapHarness, p2FNativeAgent, matrixDirectTools(matrixSchemasFor('main'), 'native'), matrixSections('native'))
   p2FPtc = await assemble(p2FTrapHarness, p2FPtcAgent, matrixDirectTools(matrixSchemasFor('main'), 'ptc'), matrixSections('ptc'))
 })
@@ -3039,11 +2483,11 @@ checkTrue('P2-19 F/native 与 F/ptc 模型可见面不含完整 tools:sdk',
   !sectionNames(p2FNative).includes('tools:sdk') && !sectionNames(p2FPtc).includes('tools:sdk')
   && sectionNames(p2FNative).join('|') === 'extra-plan-bootstrap'
   && sectionNames(p2FPtc).join('|') === 'extra-plan-bootstrap|tool:read')
-checkTrue('P2-19 F/native 与 F/ptc 不进入完整 SDK renderer（sentinel trap 无 warning/入径，console.warn 已恢复）',
-  p2RendererWarnings.length === 0 && p2FullSdkRendererPathAttempts === 0 && console.warn === p2OriginalWarn)
-const p2LLaterAgent = matrixAgent('main', 'later', 1003, 'native')
+checkTrue('P2-19 F/native 与 F/ptc 不进入完整 SDK renderer（sentinel 语言下渲染期零警告，且 console.warn 已恢复为调用前基线）',
+  p2RendererWarnings.length === 0 && console.warn === p2WarnBaseline)
+const p2LLaterAgent = matrixAgent('main', 'later', 1003)
 const p2LLater = await assemble(p2PresentationHarness, p2LLaterAgent, matrixDirectTools(matrixSchemasFor('main'), 'native'), matrixSections('native'))
-const p2LPtcAgent = matrixAgent('main', 'later', 1004, 'ptc')
+const p2LPtcAgent = matrixAgent('main', 'later', 1004)
 const p2LPtc = await assemble(p2PresentationHarness, p2LPtcAgent, matrixDirectTools(matrixSchemasFor('main'), 'ptc'), matrixSections('ptc'))
 checkTrue('P2-20 native 轮 C=0 L 对拍：Cordis 隐藏、无 tools:sdk 段、目录不塌缩',
   !p2LLater.tools.some((tool) => MATRIX_CORDIS_TOOLS.includes(tool.name))

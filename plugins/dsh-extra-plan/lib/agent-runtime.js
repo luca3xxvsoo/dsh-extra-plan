@@ -27,7 +27,7 @@ export function isLiveDelegation(agent, agents) {
   }
 }
 
-export function createAgentRuntime({ getAgents, sandboxPolicy, foldUsage, warn }) {
+export function createAgentRuntime({ getAgents, sandboxPolicy, warn }) {
   const getAgentsOf = typeof getAgents === 'function' ? getAgents : () => undefined
   const warnOf = typeof warn === 'function' ? warn : (...args) => console.warn(...args)
   const subagentAsPlannerWarned = new WeakSet()
@@ -45,7 +45,7 @@ export function createAgentRuntime({ getAgents, sandboxPolicy, foldUsage, warn }
   }
 
   // 规划子代理：子会话且 session.header.agentPreset === 'extra-plan-planner'。
-  // dsh 0.2.1-rc.2 起 subagent descriptor 的 mode 恒为 continuable（宿主 manager 固定值），
+  // 宿主 subagent descriptor 的 mode 恒为 continuable（manager 固定值），
   // 不能再作判据；判据改为会话 header 的角色预设 id，其余值与缺失一律非 planner。
   function isPlannerChild(agent, events) {
     if (agent === undefined || agent === null) return false
@@ -102,6 +102,9 @@ export function createAgentRuntime({ getAgents, sandboxPolicy, foldUsage, warn }
     return ''
   }
 
+  // 用量身份上下文：改造8 后仅用于角色判定与诊断上下文（不再喂给任何实时账本写入，
+  // 账本改由启动扫描按会话日志重建），字段口径仍是九身份键所需的那几项。
+  // 生产面无消费者，仅保留给回归取证（step-00 的 AR-* 用例直呼本函数）。
   function usageContextOf(agent, events) {
     const cached = usageContexts.get(agent)
     if (cached !== undefined) return cached
@@ -118,7 +121,8 @@ export function createAgentRuntime({ getAgents, sandboxPolicy, foldUsage, warn }
       rootSessionId: child ? (parentSessionId === '' ? '' : usageRootOf(sessionId, parentSessionId, delegationDepth)) : sessionId,
       agentPreset,
       delegationDepth,
-      role: child ? (USAGE_ROLE_BY_PRESET[agentPreset] ?? 'child') : 'main',
+      // 自有属性守卫：agentPreset 若命中 Object.prototype 属性名（toString/__proto__/constructor 等）不得取到函数值；回落 'child'，与 applyChildPolicy 的函数级判定同口径（按函数名引用，不记行号）。
+      role: child ? (Object.prototype.hasOwnProperty.call(USAGE_ROLE_BY_PRESET, agentPreset) ? USAGE_ROLE_BY_PRESET[agentPreset] : 'child') : 'main',
     })
     usageContexts.set(agent, context)
     return context
@@ -159,10 +163,10 @@ export function createAgentRuntime({ getAgents, sandboxPolicy, foldUsage, warn }
   }
 
 
+  // 子会话基线：只做角色识别与宿主模式落定。改造8 起用量账本由插件启动扫描会话日志维护，
+  // 这里不再有账本折叠调用（子会话用量不再在 disposed/创建时折叠落账）。
   function childBaseline(agent, events) {
     const child = isChild(agent, events)
-    const context = usageContextOf(agent, events)
-    foldUsage(agent, context)
     if (child) applyChildPolicy(agent)
     return child
   }

@@ -27,7 +27,7 @@ PTC C=0/C=1 必须各用干净 A=1 顶层会话取 F→首个 tool/call→L→�
 - 主会话探查：主会话自己只读查证。
 - 探查者探查：主会话用 `subagent_probe` 委派探查者；探查者只读、可 `save_probe` 落盘证据，回主会话只给“路径 + 2-3 行摘要”。
 - 探查者只由主会话委派；规划子代理、执行者、验收者不得递归委派探查者。规划子代理有缺口时输出“申请继续探查：<待查项> — <原因>”，交回主会话。
-- **根与冻结来源随交接携带**：每次探查、规划、执行和验收交接都记录 W、H（如有）、用途、根来源、文件身份与冻结 SHA；W 取 `session.header.cwd`，H 只接受可信 Host context/精确文件能力或显式验证根。缺根、非法/冲突根、Other 或无法证明的链接立即 BLOCKED/NOT-RUN，不默认扫用户目录、不用普通文件 `dirname` 升级授权；只读探查也只能落在声明的合法范围。`persona`、角色职责、机械选项、五版本声明和原有顺序不因双根隔离改变，隔离 fixture/静态证据不冒充实机。
+- **根与冻结来源随交接携带**：每次探查、规划、执行和验收交接都记录 W、H（如有）、用途、根来源、文件身份与冻结 SHA；W 取 `session.header.cwd`，H 只接受可信 Host context/精确文件能力或显式验证根。缺根、非法/冲突根、Other 或无法证明的链接立即 BLOCKED/NOT-RUN，不默认扫用户目录、不用普通文件 `dirname` 升级授权；只读探查也只能落在声明的合法范围。`persona`、角色职责、机械选项、单版本声明和原有顺序不因双根隔离改变，隔离 fixture/静态证据不冒充实机。
 
 ## ⑥ 复杂度与推荐路由
 
@@ -98,4 +98,4 @@ PTC C=0/C=1 必须各用干净 A=1 顶层会话取 F→首个 tool/call→L→�
 
 ## 设置与默认链交接
 
-9 项 UI 设置与 2 项宿主行设置的权威值都走 `dsh-extra-plan-settings` 唯一 settings 行；PUT 只 edit 该行并保留其它字段，不再写旧公开 preset-sync 行。`./preset-sync` 与 locale exports 已退役，但 `lib/preset-sync.js` 仍由 settings owner 内部相对调用，raw patch 旧值继续迁移。`toolPresentationMode` 为装载期值，`runcodeCatchGate` 按配置热读。默认作者值来自 `agent.cordis.yml`，生成器产物不可手改；坏模板保持 last-known-good。
+9 项 UI 设置与 2 项宿主行设置的权威值都走 `dsh-extra-plan-settings` 唯一 settings 行；PUT 只 edit 该行并保留其它字段，不再写旧公开 preset-sync 行。`./preset-sync` 已退役，locale exports 并未退役（package.json 仍导出 `./locale/*.json` 与 `./settings/locale/*`），但 `lib/preset-sync.js` 仍由 settings owner 内部相对调用，raw patch 旧值继续迁移。`toolPresentationMode` 为装载期值，`runcodeCatchGate` 按配置热读。默认作者值来自 `agent.cordis.yml`，生成器产物不可手改；坏模板保持 last-known-good。

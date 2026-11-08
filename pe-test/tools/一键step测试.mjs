@@ -62,9 +62,10 @@ const AUTO = [
   ['代码地图生成.mjs', true, '', ['--check']],
 ]
 
-// 人眼项: [文件, 参数说明] — 无断言，需人工判读输出
+// 人眼项: [文件, 参数说明] — 本表只保留参数说明与逐项取证摘要，不再承担断言口径：
+// step-04/05/06/07 的断言已由 AUTO 项 step-06-08-v4取证回归.mjs 的 S04~S07 断言块机械覆盖。
 const HUMAN = [
-  ['step-04-工具清单查看.mjs', '完整模式必须显式传入单会话目录，并可附 --messages 与 --request-trace <工作区trace>；旧摘要模式仍可选'],
+  ['step-04-工具清单查看.mjs', '完整模式必须显式传入单会话目录，并可附 --messages 与 --request-trace <工作区trace>'],
   ['step-05-会话解码.mjs', '必须显式传入 <会话目录名> 或公共 --session + --sessions-dir；不自动查找最新会话，看事件统计/plan模式（澄清问题问到没）'],
   ['step-06-真实会话查看.mjs', '仅支持 v4 会话日志（session.v4.jsonl.zstd）；参数可选: <sessions-dir>，查看拒绝记录（TOOL-ERROR）'],
   ['step-07-子代理模型与引导取证.mjs', '仅支持 v4 会话日志（session.v4.jsonl.zstd）；必须通过一键参数 --session <顶层主会话ID> + --sessions-dir 精确选择，并继承调用者显式提供的 PLANNER_PROMPT_SUFFIX，查看 pro规划/非pro规划 child 的 route/provenance/suffix 分栏'],
@@ -154,7 +155,7 @@ export function forensicCommand(file, args = []) {
 
 // 需参数项
 const NEED_ARG = [
-  ['step-99-用量统计.mjs', '参数: <ledger-v2.jsonl>；普通相对输入固定为W目标；只读合并同目录 ledger-v2.archive.jsonl 与 ledger-v2.jsonl；在线短锁约1秒统计；显式H绝对路径仅为Host只读稳定观察（最多两次观察，不取锁、不写Host资源/锁/备份/temp）；手工归档已移除（--archive 报 usage-removed），归档由插件启动归档与 lib/usage-archive.js 的 archiveLedger 承担；writer约1秒超时静默返回delayed、不推进cursor，后续fold补记；仅stale-lock需核实owner后显式维护，不自动接管或删锁；V1与坏JSON不迁移'],
+  ['step-99-用量统计.mjs', '参数: <ledger-v2.archive.jsonl>；普通相对输入固定为W目标（只读统计）；只读统计单一账本 ledger-v2.archive.jsonl（该文件由插件启动时扫描 %DSH_HOME%/sessions 下 v4 会话日志后覆盖式更新，本工具不写账本字节、不建目录、不写临时文件）；账本唯一实现为 lib/usage-ledger.js（扫描聚合 + 覆盖式更新 + 启动入口），写入互斥是 26 行 O_EXCL 简易互斥（拿不到即跳过、不接管不删他人锁）；只读统计无锁；显式H绝对路径仅为Host只读稳定观察（最多两次观察，不取锁、不写Host资源/锁/备份/temp）；--compare 对拍现场扫描：额外用 lib/usage-ledger.js 的 scanUsageRows 扫两次日志，按 role→model 输出扫描侧/账本侧/差异/身份集合差四张表与三条自检结论，只读取、不取锁、零写盘；--archive 报 usage-removed；V1与坏JSON仅计数跳过'],
 ]
 
 function reportIncompleteDirectory() {
@@ -307,6 +308,12 @@ function nodeArgsForChild(scriptPath, args, env) {
   return preloadArgs.concat([scriptPath], Array.isArray(args) ? args : [])
 }
 
+// spawnSync 结果的超时判定：AUTO 项与 HUMAN 取证项共用同一表达式，避免两条分类路径再次漂移。
+function timedOutOf(result) {
+  const error = result === undefined || result === null ? undefined : result.error
+  return error !== undefined && error !== null && String(error.code || '') === 'ETIMEDOUT'
+}
+
 function runOne(file, extraArgs) {
   // Windows 沙箱禁止子进程 stdout/stderr 管道；用 W fixture 文件保留原有取证语义。
   const captureDir = captureDirOf('auto-')
@@ -330,7 +337,7 @@ function runOne(file, extraArgs) {
   const out = readFileSync(stdoutPath, 'utf8') + readFileSync(stderrPath, 'utf8')
   rmSync(captureDir, { recursive: true, force: true })
   const parsed = parseAutoOutput(out)
-  const timedOut = r.error !== undefined && String(r.error.code || '') === 'ETIMEDOUT'
+  const timedOut = timedOutOf(r)
   const failLines = String(out).split('\n').filter((l) => l.includes('FAIL') || l.includes('Error:') || l.includes('地图与代码不一致') || l.includes('疑似漏检') || l.includes('导航失效')).slice(0, 8)
   return {
     status: r.status,
@@ -443,7 +450,7 @@ function runForensic(file, sessionArg) {
   const argv = forensicArgs(file, sessionArg, commonArgsFor(file))
   const notRunReason = forensicNotRunReason(file, sessionArg)
   if (notRunReason !== null) {
-    return { status: null, out: notRunReason + '\n', stdout: '', stderr: notRunReason + '\n', error: undefined, argv, notRunReason }
+    return { status: null, out: notRunReason + '\n', stdout: '', stderr: notRunReason + '\n', error: undefined, argv, notRunReason, timedOut: false, signal: null }
   }
   const env = childEnv({}, false)
   // 与自动项相同，使用 W fixture 文件描述符避免受限 Windows 环境下 stdout/stderr 管道 EPERM；
@@ -468,7 +475,7 @@ function runForensic(file, sessionArg) {
   const stderr = readFileSync(stderrPath, 'utf8')
   const out = stdout + stderr
   rmSync(captureDir, { recursive: true, force: true })
-  return { status: r.status, out, stdout, stderr, error: r.error, argv, notRunReason: null }
+  return { status: r.status, out, stdout, stderr, error: r.error, argv, notRunReason: null, timedOut: timedOutOf(r), signal: r.signal }
 }
 
 function ts() {
@@ -483,7 +490,7 @@ function modeArg(mode) {
 
 export function forensicKeyLines(text) {
   const lines = String(text).split(/\r?\n/)
-  const include = /^(SESSION_ID|PLANNER_PROMPT_SUFFIX|定位结果|A42|A43|child谱系|父工具关联：|suffix判定=|模型证据等级=|事件类型计数：|INCOMPLETE|NOT-RUN|输入错误|未找到|未发现|仅支持 v4|L\d+ (REQUEST|CONTEXT|MODEL|ASSISTANT|first planner|PLANNER-MESSAGE)|REQUEST_EXACT=|HEADER line=)/
+  const include = /^(SESSION_ID|PLANNER_PROMPT_SUFFIX|定位结果|A42|A43|child谱系|父工具关联：|suffix判定=|模型证据等级=|事件类型计数：|INCOMPLETE|NOT-RUN|输入错误|未找到|未发现|仅支持 v4|L\d+ (REQUEST|CONTEXT|MODEL|ASSISTANT|first planner|PLANNER-MESSAGE)|REQUEST_EXACT=|HEADER line=|S07-3)/
   return lines.filter((line) => {
     if (!include.test(line)) return false
     if (line.includes('（完整') || line.includes('event（完整）') || line.includes('arguments.prompt') || line.includes('arguments（完整）')) return false
@@ -493,7 +500,15 @@ export function forensicKeyLines(text) {
 
 export function classifyForensic(result) {
   if (result.notRunReason !== null && result.notRunReason !== undefined) return 'NOT-RUN'
+  // 超时与 AUTO 项同口径：spawnSync 因 timeout 杀掉子进程时 error.code 为 ETIMEDOUT，必须判失败；
+  // 留在下面的 error 分支会把它误记为 NOT-RUN（环境受限），掩盖真实失败。
+  if (result.timedOut === true) return '失败'
   if (result.error !== undefined) return 'NOT-RUN'
+  // 人眼项的脚本自身失败必须可见：取证子进程以非零退出码收场（例如 step-07 打出 S07-3 FAIL）时判为失败。
+  // 该状态只影响人眼项摘要的状态栏与第五节索引行，不改变人眼项不计 AUTO PASS 的既有口径。
+  // signal kill（status 为 null、无 error、未超时）落 HUMAN 是既有行为：被外部信号终止的取证子进程没有
+  // 可判定的失败证据（fail 统计行为空），保留人工判读，不在此处改判失败；超时则由上面的 timedOut 分支拦下。
+  if (result.status !== 0 && result.status !== null) return '失败'
   return 'HUMAN'
 }
 

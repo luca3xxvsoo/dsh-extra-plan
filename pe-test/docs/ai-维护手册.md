@@ -32,8 +32,18 @@
 - 统一实现位为 `pe-test/_shared/test-output.mjs`：默认 `compact`，`--verbose` 只增加成功断言名称，`--full` 优先于 `--verbose` 并恢复成功 `expected/actual` 与查看器原始事件；三种模式不得改变断言集合、状态分类、计数、退出码或执行顺序。
 - compact 成功断言不逐条输出，只保留最终统计和必要结构化索引；失败、validator 原文、deny reason、首错/阶段/cause、清理残留永不压缩。设置矩阵成功行只保留 case/status/计数/索引/差异摘要；失败或 `--full` 才展示完整配置/trace。
 - `step-07-子代理模型与引导取证.mjs` 默认输出 A42/A43 索引：SESSION_ID、父 `subagent_plan` 关联、父子行号、attempted route、actual provenance、首个 planner 文本块摘要、suffix 等级与 exact match；`--full` 才输出 prompt/event/text 原文。`step-04-工具清单查看.mjs` 默认保留精确工具名、消息 ID/角色/source/行号和 `REQUEST_EXACT`，INBOX_ONLY 只引用已输出 MESSAGE；`step-05-会话解码.mjs` 默认保留 plan/mode 行号与计数摘要。
-- `一键step测试.mjs` 主报告只做索引；人眼工具按能力传参：step-04/05/07 追加 `--full`，step-06/08 保持原参数合同。完整 stdout/stderr 写入独立 raw 文件，摘要登记相对路径、bytes、lines、SHA-256 与有限结构化行；step-07 完整前置为显式 `--session`+`--sessions-dir`（会话在宿主数据根加 `--host-root`，取直接 child 加 `--discover-children`）与显式存在的 `PLANNER_PROMPT_SUFFIX`（空串也算）；无会话选择记 `NOT-RUN`（exit 0），选择非法/不完整或选择后缺 suffix 记输入错误（exit 1），均保留 raw 原因；`SESSION_ID` 只作报告/输出字段。`pe-test/reports/` 的 raw/Markdown 是临时证据，不纳入源改动；报告中的 HUMAN、SKIP、NOT-RUN、INCOMPLETE 均不计 AUTO PASS。
+- `一键step测试.mjs` 主报告只做索引；人眼工具按能力传参：step-04/05/07 追加 `--full`，`step-06-08-v4取证回归` 保持原参数合同（`pe-test/tools` 下已无独立 step-08 脚本，该脚本已列入 AUTO、不再属人眼项；人眼项脚本自身非零退出码会判为失败并反映到摘要状态栏与第五节索引行）。完整 stdout/stderr 写入独立 raw 文件，摘要登记相对路径、bytes、lines、SHA-256 与有限结构化行；step-07 完整前置为显式 `--session`+`--sessions-dir`（会话在宿主数据根加 `--host-root`，取直接 child 加 `--discover-children`）与显式存在的 `PLANNER_PROMPT_SUFFIX`（空串也算）；无会话选择记 `NOT-RUN`（exit 0），选择非法/不完整或选择后缺 suffix 记输入错误（exit 1），均保留 raw 原因；`SESSION_ID` 只作报告/输出字段。`pe-test/reports/` 的 raw/Markdown 是临时证据，不纳入源改动；报告中的 HUMAN、SKIP、NOT-RUN、INCOMPLETE 均不计 AUTO PASS。
 - 回看 raw 时按摘要中的相对路径逐字读取，并用 SHA-256、字节数、行数三项核对；摘要或 hash 不能替代原文，也不能把真实宿主、GUI、QQBot、生产 profile 或会话结论改写为 PASS。
+
+### G3 夹具边界的真实 provider 待办
+
+以下三项不在合成夹具可机械化范围，只能由真实 provider / 真实宿主产生；不写成 AUTO 断言，也不得改写为 PASS：
+
+- **S05-2 宿主 sandbox/mode**：需在直接 child 会话逐帧只读取证。取证前提是当前 `step-06-真实会话查看.mjs` 不打印 sandbox/mode 的 data 与 seq，须先扩查看器，或按 [ai-实机闸门测试流程](ai-实机闸门测试流程.md) 的 C14 四栏口径逐帧解码；判据是纠正事件 mode 等于角色目标（planner/prober→read-only、reviewer/executor→workspace-write）且其 seq 小于首个 tool/call 的 seq。`step-05-会话解码.mjs` 默认只统计事件类型，不能用其计数代替 mode 值与 seq。
+- **S06-6 usage**：需真实 assistant/message 且 data.usage 四桶有限非负、不全零，source.kind=model。过滤与四桶取值以宿主 usage-ledger 的 assistant/message 段为真源（按包名+包内相对路径+符号名定位，不记固定行号），source.kind=model 判定同 S07-4 的 actual provenance。
+- **S07-5 模型路由**：需真实 provider/model 快照比对，pro规划 child 的 provenance.model 等于 plannerModel 快照、非 pro规划 child 等于 otherAgentModel 快照（空串时等于主会话 provenance model）。
+
+三项均计入 HUMAN，SKIP/INCOMPLETE/HUMAN/NOT-RUN 单列且不计 PASS。HUMAN 总数以 [ai-宿主耦合台账](ai-宿主耦合台账.md) 的清单为唯一计数来源，本文新增项已计入该清单，不在本文另写数字。
 
 ## G3 行为回归与夹具边界
 
@@ -90,7 +100,7 @@
 
 隔离验证入口仅为 `pe-test/tools/step-01-qqbot-单命令安装.mjs --dsh-root <真实 DSH 根> --case=install|compose|cache`：`install`、`compose`、`cache` 分别独立判定；缺条件为 `INCOMPLETE`，不把受控 compose 当作真实 QQBot。共用 store 的缓存复用若跳过钩子并缺链，整体只能记为 `PARTIAL/BLOCKED`；`--allow-build` 不授权追加 rebuild、清缓存或关闭安全策略。
 
-源码合同版本为 `2.0.1`，本仓库尚未据此断言已发布/已部署；标准包消费者无需本地 tgz，公共 registry 名称、可达性与版本可用性须发布前由用户确认，私有 registry 打包仅用于测试。当前已有证据可支撑源码静态检查和受控 Loader compose；真实生命周期安装与 cache case 尚无完整通过证据，受限环境的 child-spawn `EPERM` 不等同已证实 `CACHE-BLOCKED`，仍须授权环境复测。六项 HUMAN（包括用户部署/重启后的真实消息、`/preset`、question/approval 等）继续单列，不以静态或受控结果销账。
+源码合同版本为 `2.0.1`，本仓库尚未据此断言已发布/已部署；标准包消费者无需本地 tgz，公共 registry 名称、可达性与版本可用性须发布前由用户确认，私有 registry 打包仅用于测试。当前已有证据可支撑源码静态检查和受控 Loader compose；真实生命周期安装与 cache case 尚无完整通过证据，受限环境的 child-spawn `EPERM` 不等同已证实 `CACHE-BLOCKED`，仍须授权环境复测。HUMAN 待办项（包括用户部署/重启后的真实消息、`/preset`、question/approval 等，清单见 [ai-宿主耦合台账](ai-宿主耦合台账.md)）继续单列，不以静态或受控结果销账。
 
 1. 逐文件对实际修改的全部 JS/MJS 执行 `node --check`；`package.json` 执行 `JSON.parse`。嵌套生成的 host-deps hookSource 必须展开成 data URL 后做 ESM 解析回放，不能只检查外层；涉及宿主样本时从 W 显式设置 `DSH_INSTALL_ROOT=<本次真实代码根>`，并使用 `node --import ./pe-test/_shared/host-preload.mjs`，只读核对声明根内的 manifest/adapter，禁止借用 profile/全局宿主。
 2. 严格按验收顺序运行（纯 W 工具直接 `node`，需要 Host 代码的测试才显式设置代码根与 host-preload）：
@@ -103,12 +113,20 @@
    - `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-04-路由与写闸门.mjs`
    - `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-04-context-gate宿主回归.mjs`
    - `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-05-角色预设宿主回归.mjs`（角色预设机械契约：roster/assertProvider/header.agentPreset/工具面/persona 渲染/旧值回落）
-   - `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-06-08-v4取证回归.mjs`
+   - `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-06-08-v4取证回归.mjs`（顶层 import 插件模块经 gate-decisions 连带 @deepseek-ai/dsh-llm 等 peer 依赖，必须带代码根与 host-preload；缺 js-yaml 或 dsh-llm 即表示未带代码根前置）
    - `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-06-线索落盘.mjs --full`（完整 P 取证仅由批准窗口执行；需保留完整 stdout/stderr 时使用 `--full` 或分别捕获到文件；compact 模式下脚本末尾 `process.exit` 可能截断管道 stdout，退出码0不等于完整结果；输出模式不补依赖、不改变断言）
-   - `node plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs --check`
+   - `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs --check`（生成器经 preset-settings 静态 import preset-yaml 顶层加载 js-yaml，本仓及祖先目录无 node_modules，裸 node 必 MODULE_NOT_FOUND；缺 js-yaml 即表示未带代码根前置；实测带前缀后 7 个生成物逐个 [check] 通过）
    - 扫描根内代码改动时冻结前完成代码地图生成与人工描述复核；纯文档改动不生成正式地图，正式阶段只运行 `node pe-test/tools/代码地图生成.mjs --check`，避免普通生成改时间戳，再执行最后一键 step。
 3. 自动测试不得执行真实 PowerShell 重定向写；测试前后 `pe-test/reports/_s4b_pwsh.txt` 必须不存在。常规回归命令退出码必须为 0，输出不得有 FAIL、SyntaxError、UnhandledPromiseRejection；runner 的 ETIMEDOUT 明确归失败而非环境未执行，普通说明含 FAIL/Error/导航失效不单独判失败，必须以退出码/结构化统计为准；context-gate 独立脚本若有 INCOMPLETE 必须非零，一键结果结构化标为部分执行而不计 PASS。缺少 js-yaml、dsh-llm 或其它模块导致 `MODULE_NOT_FOUND` 只记 `INCOMPLETE`；真实断言失败、`TypeError`、超时仍按 `FAIL`，不因 `--full`、文件捕获或 exit 0 改写。SKIP/INCOMPLETE/HUMAN/NOT-RUN 单列且不计 AUTO PASS。
-4. 当前声明范围为 dsh `0.2.1-rc.1 || 0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4 || 0.2.1-rc.5` 五版本精确并集；rc.1/rc.3 无样本记 `NOT-RUN`，rc.5 仅有只读静态核对、同样为 `NOT-RUN`，rc.2 保留既有证据来源且证据等级不提升，rc.4 仅在显式 `DSH_INSTALL_ROOT=<本次真实代码根>` 的只读代码样本与隔离自动结果中核实。生产部署及真实 provider、GUI、QQBot 消息、重启和六项 HUMAN 由用户另行复测；静态/隔离 PASS 不替代 HUMAN。
+4. 当前声明范围为 dsh `0.2.2-rc.1` 单版本（`engines.dsh` 与三项 @deepseek-ai peer 同值，`schemastery` peer `~3.19.0`）；0.2.2-rc.1 仅在显式 `DSH_INSTALL_ROOT=<本次真实代码根>` 的只读代码样本与隔离自动结果中核实，0.2.1 系列仅存于远端分支 dsh-v0.2.1rc-qqbot-v0.5.2-only，当前 main 不承载。生产部署及真实 provider、GUI、QQBot 消息、重启和台账所列 HUMAN 待办项由用户另行复测；静态/隔离 PASS 不替代 HUMAN。
+5. **部署前预检与版本迁移测试要求**（不等于部署许可）：
+   - **何时必做**：任何插件代码改动的交付前，以及宿主版本升级（含 `engines.dsh` 与三项 @deepseek-ai peer 收口到新版本）时，必须完整重跑本节 1 至 3 步，不得以「仓库验收已完成」代替。
+   - **版本不一致时用新版本环境测**：当新版本代码环境与实际生产环境版本不一致（典型：仓库已收口到新版本、生产仍跑旧版本）时，必须先在**新版本代码环境**显式设置 `DSH_INSTALL_ROOT=<新版本真实安装根>`（从该 `dsh` 命令或其安装 `package.json` 只读取得）跑通全套；不得改在旧版本生产环境里跑，否则版本门控直接拒绝，且无法暴露新版本的 API 漂移。该场景下旧版本生产环境的结果不能作为新版本代码的验收依据。
+   - **升级后重跑**：生产升级完成后，必须用**升级后的真实安装根**再跑一次同一套预检；两次均退出 0 且无 FAIL 才具备部署条件。
+   - **失败即停止**：任一项失败、或 `engines.dsh` 与目标宿主版本不匹配，一律停止部署，不得降级记为 HUMAN/NOT-RUN 后继续。
+   - **边界不变**：`DSH_INSTALL_ROOT` 只是只读**代码**根（须能解析 `node_modules/@deepseek-ai/*`），不是数据根 `DSH_HOME`；数据侧验证另需显式 `--host-root` 加精确 `--profile`/会话目标。该预检不写生产目录、不代替用户部署。
+   - **预检范围**：本条预检只覆盖代码根上的自动回归（本节第 1 至 3 步，全部命令仅需 `DSH_INSTALL_ROOT`）；`--host-root` 数据侧项、`step-99` 实账统计与 HUMAN 人眼项不属本预检范围，按本节第 4 条与[实机闸门测试流程](ai-实机闸门测试流程.md)单列执行，不得因未执行而判为预检失败。
+
 ## 改动域 → 唯一检查入口
 
 | 改动域 | 主要检查 |
@@ -121,12 +139,16 @@
 | 宿主升级/QQBot | [ai-宿主耦合台账](ai-宿主耦合台账.md) 的当前 checklist（核对清单）；`scripts/heal.mjs` 只作用户侧 CLI；SKIP 不销账，HUMAN 不伪造通过 |
 | 实机闸门 | [ai-实机闸门测试流程](ai-实机闸门测试流程.md)；保持单文件顺序，不拆表/改编号 |
 
+**诊断落盘契约**：`agent/error` 与 `agent/request-error` 各自向诊断目录追加一份 jsonl 诊断（裸文件名时写 host 侧 logs/dsh-extra-plan/，H 缺失时改用工作区 .extra-plan/logs/），写入整体吞错；记录存在不等于宿主重试已通过——诊断只用于定位根因，不是 retry 或恢复的证据。
+- `agent/error` 侧写 `extra-plan-agent-errors.jsonl`，行字段为 `ts`、`sessionId`、`turn`、`step`、`chain`（无 `role`）；写入失败由模块级标志保证每进程只告警一次。
+- `agent/request-error` 侧写 `extra-plan-request-errors.jsonl`（路径可经 `cfg.diagFile` 覆盖），行字段为 `ts`、`sessionId`、`role`、`turn`、`step`、`provider`、`message`、`code`（仅 `failure.code` 存在时带）、`causeChain`；写入失败由实例内标志保证每实例只告警一次。
+
 ## 代码地图维护规则
 
 - `## 意图速查`、`## 文件总览`、`## 函数索引` 和原表头必须保留。先 grep 意图词得到函数名，再按函数名读机器行号。
 - 运行地图生成器负责路径、函数名、行号区间、增删和漏检；人工只改意图、文件说明、功能描述与备注。机器生成的行数/行号不能手填冻结。
 - 稳定匹配键是“相对路径 + 函数名 + 同名出现顺序”。维护时必须保持 `routeKey` 1 条、`visit` 4 条、`isIdChar` 1 条的顺序；`--check` 不覆盖人工描述/固定尾部的全文比较，所以需另做结构键对拍。
-- 描述必须保留当前行为关键词：证据引用成对剥除与单侧不剥、`atomicCommit` 阶段语义、`syncPreset` 三条件 idle（空闲稳态）、`createApiHandler` PUT 仅投影、P2-2 agent-only（仅 Agent）cache、usage 同步 final fold（最终折叠） 等。
+- 描述必须保留当前行为关键词：证据引用成对剥除与单侧不剥、`atomicCommit` 阶段语义、`syncPreset` 三条件 idle（空闲稳态）、`createApiHandler` PUT 仅投影、P2-2 agent-only（仅 Agent）cache、usage 启动扫描与覆盖式更新（幂等）、单调性保护 等。
 - 地图生成器是源码/测试索引，不是历史归档；无函数文件或纯描述变化不能只靠 `--check` 判定。
 - 扫描根 = `代码地图生成.mjs` 的 `--roots` 默认 `plugins,pe-test/_shared`（不含 pe-test/tools）。仅扫描根内 .js/.mjs 增删或行号漂移、或地图人工描述需维护时运行普通生成；纯文档、pe-test/docs、pe-test/tools、pe-test/reports 改动不触发地图更新，收尾与验收只运行 `--check`。
 
@@ -151,3 +173,36 @@
 ## 单一来源提醒
 
 `gateWords` 只改 YAML；`SAVE_PLAN_LIMITS` 与 save_plan 限制数值只读 [lib/save-contract.js](../../plugins/dsh-extra-plan/lib/save-contract.js)，正文格式与字段关系以 [lib/save-plan-validation.js](../../plugins/dsh-extra-plan/lib/save-plan-validation.js) 为真源，真实源核实以 [lib/save-tool-factories.js](../../plugins/dsh-extra-plan/lib/save-tool-factories.js) 为准；`PROBE_LIMITS` 同样只读 save-contract 源码，文档不维护第二份运行时限值表。模型/usage/投影细节分别以对应 lib 与 step 脚本为准；历史故障、旧宿主面、77/217/209 等历史统计读[归档](ai-宿主耦合历史归档.md)，不作为当前值。
+
+## 已知限制与遗留项
+
+本清单分四组登记「已修的无效断言 / 有意保留的未修项 / 方案级缺口 / 审计工具已知口径」，每条都写清**是什么**、**为什么不修**、**如何判断它不是新 bug**；本章只登记当前状态与判定口径，不改变任何既有结论与数值。
+
+### 一、已知无效断言（本批已修，防重复发现）
+
+- **step-07 的 S07-3 两条**：是什么——两条 `S07-3 …成立=PASS/FAIL` 曾只按三元表达式拼文案，恒 PASS 且不进入退出码。为什么不修——已修复：违例逐条收集进 `s07Failures` 并由 `process.exitCode` 收口；两条结论行仍按原样式打印。如何判断不是新 bug——看 `s07Failures` 是否参与退出码；只看文案 PASS 不足以判定通过。
+- **一键step测试 的 `classifyForensic`**：是什么——该分类函数曾恒返回 `HUMAN`，把可判定的结论压成单一状态。为什么不修——已修复并有回归锁。如何判断不是新 bug——`HUMAN` 只应出现在取证不完整处；若某条本可判定却仍为 `HUMAN`，先查 `classifyForensic` 分支，不要当成新故障。
+- **step-04 的 `p2RendererTrapSchema`**：是什么——曾是死变量（赋值后无人消费），对应断言实际不检测任何东西。为什么不修——已修复（变量被真实消费或清理）。如何判断不是新 bug——检索到该名字只剩注释或文档引用，属已清理残留，不是回归。
+- **step-06-08 的 5 条自证断言**：是什么——5 条断言用被测实现自身产物反证同一实现（自证），条件实际恒真。为什么不修——已修复并有回归锁。如何判断不是新 bug——自证形态会在模式 B（`|| true`、长度 `>= 0` 等恒真形态）复现为命中；命中不等于新 bug，先核对是否已换成独立真值来源。
+- **step-01 的「三处同源」**：是什么——该跨处守护曾由生成器字面构造出「同源」结论，无法发现漂移。为什么不修——已修复：现取资产行、`HOST_ROW_IDS` 声明常量、`MODE_BY_ROW_ID` 派生映射三方实际取值比对，并计入 `pass` / `fail`。如何判断不是新 bug——同源类断言必须能指出三个独立取数来源；只剩一处来源时按「自证」复核。
+- **step-01-预设完整性 的装饰性输出**：是什么——`preset.yml` 有效性那一行曾只有 `console.log('PASS …')`，没有失败路径、也不进计数。为什么不修——本批已修复：改成「成立则 `pass += 1`、不成立则 `fail += 1` 并打印实际类型（数组 / null / typeof）」的双分支真断言。如何判断不是新 bug——同类形态由模式 A 的条件式打印判据报出；若该分支确实带 `pass` / `fail` 计数，按既有计数排除规则不会报出（真断言不误报）。
+
+### 二、已知未修项（有意保留，不视为缺陷）
+
+- **`toolSdkSchemasOf` 与 `sdkSchemasForRendering` 双重投影**：是什么——同一份 schema 存在两条投影路径。为什么不修——合并会改取数口语义，风险高于收益。如何判断不是新 bug——两条投影的输出结构一致即正常；某一侧字段缺失或结构不同才是新 bug。
+- **agent-session 未传 `projectionMode` 选项**：是什么——会话侧未显式传投影模式，走默认路径。为什么不修——需真实宿主验证 events 完整性，静态改可能把性能问题换成功能问题。如何判断不是新 bug——只有真实宿主观察到 events 缺失或重复才算新 bug，静态审计命中不算。
+- **`index.js` 个别注释内嵌宿主固定行号**：是什么——注释里写了宿主固定行号。为什么不修——宿主升级后行号会漂移，这些注释只作定位提示、不参与判定。如何判断不是新 bug——行号对不上属已知漂移；若代码用行号驱动行为才是新 bug。
+- **step-04 的 `matrixAgent` 保留未使用的 `mode` 形参**：是什么——该形参未被使用。为什么不修——保留签名兼容，删除属无收益改动。如何判断不是新 bug——形参未使用不是缺陷；调用方依赖该形参语义却拿不到值才是新 bug。
+- **step-06-08 若干标签覆盖面不足与硬编码数量**：是什么——部分标签只覆盖部分分支，断言数量与夹具硬绑定。为什么不修——补全覆盖需新增独立真值来源，硬编码数量与当前夹具绑定，改动风险高于收益。如何判断不是新 bug——夹具变更导致数量不符属已知耦合；出现假 PASS 才是新 bug。
+- **step-05 在 tools 服务缺失时抛错并导致后续组覆盖塌陷**：是什么——缺依赖时直接抛错，后续组覆盖跟着塌。为什么不修——需要有宿主环境才跑得通，改成降级会把「缺依赖」伪装成「通过」。如何判断不是新 bug——无宿主时该组报错或覆盖塌陷是预期；此时反而出现 PASS 才要查。
+- **`host-deps` 的 `DSH_HOST_DEPS_QUIET` 未在其他文档登记**：是什么——该静默开关只写在 host-deps 源码里。为什么不修——开关口径唯一写在源码，重复登记会制造第二真源。如何判断不是新 bug——文档未提不是回归；开关行为与源码不一致才是新 bug。
+- **ai-流程备查 中 locale 退役口径与新口径不一致**：是什么——历史备查文档仍按旧退役口径描述 locale 通道。为什么不修——属历史文档口径，改动需连带核对退役路径真值，风险高于收益。如何判断不是新 bug——以当前 locale 合同（两组字典只有 `meta`、退役 preset-sync 路径不可解析）为准，历史口径差按已知差异处理。
+
+### 三、方案级已知缺口
+
+- **代码地图生成器只索引函数形态绑定**：是什么——`Object.freeze` 常量对象（如 `MODE_BY_ROW_ID`）不会出现在地图函数索引中。为什么不修——这是生成器的设计选择而非遗漏；若需入图必须独立扩展生成器索引能力，属独立方案级工作。如何判断不是新 bug——地图里找不到某个常量名属已知缺口；某个真实函数缺席才是新 bug。
+
+### 四、审计工具已知口径
+
+- **模式 C 的「赋布尔标志后由 check 消费」误报簇**：是什么——`catch` 内赋布尔标志、随后由 `check` 消费的写法，在静态层面与静默吞错同构，会被归成一个簇（约 17 条）。为什么不修——工具只看 catch 块体，不推断后续消费链。如何判断不是新 bug——报出后若该 `catch` 之后确有 `check` 或失败登记消费，即属已知误报，剔除后再人工裁定。
+- **模式 A 的条件式打印覆盖依赖本批新增判据**：是什么——新增的 `A_CONDITIONAL_PRINT` 判据识别「`if` / `else if` 开头、同一行内含 `console.log` / `console.error` 且含独立单词 `PASS` / `FAIL`」的装饰性输出；行首不是 `console` 前缀的旧形态此前会整条漏过。为什么不修——判据刻意只覆盖同行的 `if (条件) console.log('PASS …')` 形态，把 `if` 与打印拆到两行仍属已知盲区，扩展需另行评估。如何判断不是新 bug——同一行内的形态已被覆盖；跨行拆分的漏报属已知盲区，不算回归。

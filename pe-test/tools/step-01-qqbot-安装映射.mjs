@@ -644,7 +644,7 @@ if (yamlResolution.module === null) {
   const firstSync = qqbotSync.writeQqbotSettingsPatch(syncTarget, syncSnapshot, { pathContext: contextOf(syncHome) })
   const firstText = readFileSync(join(syncTarget, 'cordis.patch.yml'), 'utf8')
   const firstConfig = syncConfigOf(firstText)
-  check('SYNC 缺 settings 行时末尾追加 id 行（0.2.1：不写 override）且完整十一项/gateWords 深等', firstSync.status === 'applied' && isDeepStrictEqual(syncProjection(firstConfig), { ...syncValues, gateWords: syncGateWords }) && firstText.includes('globalThis.__sync = true') && firstText.includes('user-row'))
+  check('SYNC 缺 settings 行时末尾追加 id 行（单版本：不写 override）且完整十一项/gateWords 深等', firstSync.status === 'applied' && isDeepStrictEqual(syncProjection(firstConfig), { ...syncValues, gateWords: syncGateWords }) && firstText.includes('globalThis.__sync = true') && firstText.includes('user-row'))
   const firstBackupCount = syncBackupCount(syncTarget)
   const repeatSync = qqbotSync.writeQqbotSettingsPatch(syncTarget, syncSnapshot, { pathContext: contextOf(syncHome) })
   check('SYNC 同字节重复写返回 idempotent 且备份数不增加', repeatSync.status === 'idempotent' && readFileSync(join(syncTarget, 'cordis.patch.yml'), 'utf8') === firstText && syncBackupCount(syncTarget) === firstBackupCount)

@@ -144,13 +144,16 @@ function dedupeProjectedContextDecision(decision, visibleMessages) {
   }
   return changed ? { ...decision, messages } : decision
 }
-function isBootstrapPhase(agent) {
+// 首轮相位判定：会话尚未落盘任何 tool/call 事件即「引导期」。
+// 改造8（账本与弃用迁移）后签名带 events：异步钩子必须传自己已预取的 lease.events
+// （observeSession 的不可变快照），走 events 通道、不再经宿主的同步快照通道；
+// events 未传或非法（既有夹具、仍走同步快照的调用方）才在 sessionEvents 内部回落到同步快照兜底。
+function isBootstrapPhase(agent, events) {
   if (agent === undefined || agent === null) return false
   const session = agent.session
   if (session === undefined || session === null) return false
-  const events = sessionEvents(session)
-  if (!Array.isArray(events)) return false
-  return !events.some((event) => {
+  const source = sessionEvents(session, events)
+  return !source.some((event) => {
     if (event === null || typeof event !== 'object') return false
     return event.type === 'tool/call' || (Array.isArray(event.type) && event.type.includes('tool/call'))
   })
@@ -611,10 +614,12 @@ function schemasHasTool(schemas, toolName) {
     (tool !== null && typeof tool === 'object' && tool.name === toolName))
 }
 
-// ptc 折叠目录判定：ptc 模式 wireSchemas 塌缩为仅 [run_code]（dsh-tools types/index.js L410-414），
-// 此时目录无 write/edit 不代表只读角色（executor/reviewer/probe 目录同为 [run_code]）；both=全部+run_code、
-// native=无 run_code 均不折叠。折叠时目录信号不可用 → 只读判定改用真实工具集
-// （schemas(agent) 不受折叠影响）：含 write/edit=可写（executor），无 write/edit=只读（probe/reviewer），
+// ptc 折叠目录判定：ptc 模式下 wireSchemas 塌缩为仅 [run_code]——折叠点在被装配的
+// @deepseek-ai/dsh-tool-executor-ptc 包的 schemas 声明（本仓只按包名描述，不记宿主固定行号）。
+// 判定口径与 catalogIsCollapsed 逐条对应：工具集非数组或长度不为 1 → 不折叠；唯一元素是 run_code
+// （字符串或对象 {name:'run_code'}）即视为折叠，即「仅剩 run_code 即视为折叠」。折叠时目录信号不可用
+// （executor/reviewer/probe 目录同为 [run_code]，目录无 write/edit 不代表只读角色）→ 只读判定改用真实
+// 工具集（schemas(agent) 不受折叠影响）：含 write/edit=可写（executor），无 write/edit=只读（probe/reviewer），
 // reviewer 的 write/edit 由目录层 deny 兜底。
 function catalogIsCollapsed(tools) {
   if (!Array.isArray(tools) || tools.length !== 1) return false
@@ -635,7 +640,7 @@ function subagentProbeGateReason(exec, role) {
   if (roleKind !== 'main') {
     return '只读子代理不得委派探查者：subagent_probe 仅主会话可用；请保持当前角色的只读边界'
   }
-  // 0.2.1 起委派工具参数表里已无后台标志（dsh-tool-subagent 只暴露 cwd/description/prompt 与
+  // 委派工具参数表里已无后台标志（dsh-tool-subagent 只暴露 cwd/description/prompt 与
   // 可选模型项）：委派恒为立即返回 subagentId 加完成通知，原「必须后台」断言不再成立，
   // 后台约束上移到宿主层，本闸门只保留名称级放行。
   return null
@@ -884,7 +889,7 @@ function mainGateReason(state, exec, gateCtx) {
     if (!escape && (state.route !== 'plan' || state.clarified !== true || (state.purpose !== 'refine' && state.purpose !== 'redo'))) {
       return planDenyReason(planToolName, state, gateRuntime)
     }
-    // 0.2.1 起委派工具参数表里已无后台标志：规划子代理的续轮由宿主 continuable 后端固定为
+    // 委派工具参数表里已无后台标志：规划子代理的续轮由宿主 continuable 后端固定为
     // 立即返回加通知，前台等待不存在，故只保留路由态判定。
     return null
   }
@@ -898,7 +903,7 @@ function mainGateReason(state, exec, gateCtx) {
     if (!escape && state.approved !== true) {
       return approvalDenyReason(name, state, gateRuntime)
     }
-    // 0.2.1 起委派工具参数表里已无后台标志：subagent/subagent_review 恒为立即返回 subagentId
+    // 委派工具参数表里已无后台标志：subagent/subagent_review 恒为立即返回 subagentId
     // 加完成通知，后台约束在宿主层，本处只保留批准态判定。
     return null
   }

@@ -640,7 +640,7 @@ try {
     { id: 'llm', name: '@deepseek-ai/dsh-llm' },
     { id: 'session', name: '@deepseek-ai/dsh-session' },
     { id: 'session-persistence-jsonl', name: '@deepseek-ai/dsh-session-persistence-jsonl', config: { root: SESSION_ROOT, compression: 'zstd' } },
-    // 0.2.1 投影前提：dsh-agent-instructions / 两类 source 的输出依赖 workingDirectory 服务（真实宿主
+    // 投影前提：dsh-agent-instructions / 两类 source 的输出依赖 workingDirectory 服务（真实宿主
     // 由 dsh-working-directory 提供）。缺该行时 tool-fs/agent-instructions 的 source 恒 0，夹具会假红。
     { id: 'working-directory', name: '@deepseek-ai/dsh-working-directory', config: { defaultDirectory: WORKSPACE } },
     { id: 'session-projection', name: '@deepseek-ai/dsh-session-projection' },
@@ -648,6 +648,7 @@ try {
     { id: 'system-prompt', name: '@deepseek-ai/dsh-system-prompt', config: { personaPrefix: '' } },
     { id: 'extra-plan', name: pathToFileURL(PLUGIN_PATH).href, config: { ...assetExtraConfig, anchoredBootstrap: true, creativeMode: false, usageLedger: { enabled: false, path: '' }, diagFile: join(BATCH_DIR, 'extra-plan-errors.jsonl') } },
     { id: 'tools', name: '@deepseek-ai/dsh-tools' },
+    { id: 'tool-executor-native', name: '@deepseek-ai/dsh-tool-executor-native' },
     { id: 'sandbox-policy', name: '@deepseek-ai/dsh-sandbox-policy', config: { mode: 'workspace-write', workspaceRoot: WORKSPACE } },
     { id: 'fs-sandbox', name: '@deepseek-ai/dsh-fs-sandbox', config: { cwd: WORKSPACE } },
     { id: 'fs-observation-policy', name: '@deepseek-ai/dsh-fs-observation-policy' },

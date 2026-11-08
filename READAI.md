@@ -20,9 +20,9 @@
 
 ## 当前兼容与安全边界
 
-- 当前声明范围为 dsh `0.2.1-rc.1 || 0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4 || 0.2.1-rc.5` 五版本精确并集（`engines.dsh` 与三项 @deepseek-ai peer 同值，插件 package.json 是版本真源）；旧版兼容见旧版分支。逐版本证据等级、NOT-RUN/HUMAN 状态与待复测项统一见[ai-宿主耦合台账](pe-test/docs/ai-宿主耦合台账.md)的当前验证状态；QQBot、生产、真实消息、`/preset`、question/approval、GUI 与模型行为仍需部署后 HUMAN 复测。
+- 当前声明范围为 dsh `0.2.2-rc.1` 单版本（`engines.dsh` 与三项 @deepseek-ai peer 同值，`schemastery` peer 为 `~3.19.0`；插件 package.json 是版本真源）；0.2.1 起的历史版本仅存于远端分支 dsh-v0.2.1rc-qqbot-v0.5.2-only，当前 main 不承载。逐版本证据等级、NOT-RUN/HUMAN 状态与待复测项统一见[ai-宿主耦合台账](pe-test/docs/ai-宿主耦合台账.md)的当前验证状态；QQBot、生产、真实消息、`/preset`、question/approval、GUI 与模型行为仍需部署后 HUMAN 复测。
 - 五角色顺序：主会话 → 探查者 → 规划子代理 → 执行者 → 验收者。main 保留官方 `send_message`/`interrupt_agent`/`list_agents`；四角色 definition 不挂 control 包，运行时按原始 `isSubagentChild` 对 `send_message`/`interrupt_agent` 直呼与 `run_code` 成员硬拒（含 unknown/断链 child）。自动最终结果仍返回；child 的阻塞疑问以最终回复返回，main 可向 idle child 续轮。只读 Cordis 两工具仍按角色预设保留；main 的目标纪律是 send 直属父子、interrupt 仅调用者获授权的后代，主向 running 子发送仍保留原禁扰；`FREE_TOOLS` 仅 `save_plan`。路由/目的/澄清/批准是机械锚点，其他工作区写入按批准后的执行者流程进行。
-- A/C/M 是模型可见投影维度：A=anchoredBootstrap，C=creativeMode，M=`native|ptc`（`both` 随 0.2.1 二值化退出，旧值归一化回落 native）；F/L 以首个 `tool/call` 为界。MCP public tool 名遵循 `[A-Za-z0-9_-]`，静态 `tools['mcp__...-...'](...)` 可被预审识别，真正动态/拼接/转义访问与 ask 返回链约束不变。展示隐藏不等于运行时 binding 安全隔离，真实取证见实机流程。
+- A/C/M 是模型可见投影维度：A=anchoredBootstrap，C=creativeMode，M=`native|ptc`（`both` 随二值化退出；插件无专门归一化分支，读到非法旧值经校验失败回落默认 native）；F/L 以首个 `tool/call` 为界。MCP public tool 名遵循 `[A-Za-z0-9_-]`，静态 `tools['mcp__...-...'](...)` 可被预审识别，真正动态/拼接/转义访问与 ask 返回链约束不变。展示隐藏不等于运行时 binding 安全隔离，真实取证见实机流程。
 - 当前路径采用两种 W 口径：维护 W 取可信源树布局（按已知 `pe-test/plugins` 结构锚定，绝不取 `process.cwd`、插件安装目录或普通文件 `dirname`）；部署/会话 W 取保存方案的运行时 `session.header.cwd`。维护数据 H 仅由真实 Host context/精确能力，或测试显式 `--host-root` 加精确 `--profile`/`--file`/会话目标授权；环境变量存在不授根，`DSH_INSTALL_ROOT`+host-preload 只是独立的只读代码根许可，不是数据 H。原始根、Other、非法链接在授权前拒绝；H/W 重叠按用途分类，Host 资源保持真实身份只读。Web/QQ 只按可信 `profileContext.name`/`startedBundles` 识别：Web→QQ 镜像保留，QQ 非适用返回 `not-applicable`，不跨 profile 启动；维护/测试默认零 Host 写。详见 [ai-机制设计](pe-test/docs/ai-机制设计.md) 与 [ai-宿主耦合台账](pe-test/docs/ai-宿主耦合台账.md)。
 - AI 不执行生产部署；仓库验收通过后由用户操作部署与实测。工作区外写入被委派边界拒绝时，不逐条尝试，不设置 `sandbox_permissions`，只在汇报中列越界清单。
 
@@ -40,7 +40,7 @@
 - 本项目文档规则只适用于 dsh-extra-plan 项目维护；其他项目或非本项目工作可忽略本条，但不能忽略其它安全边界。正式非归档文档只保留当前有效规则、当前状态和当前待验证项；任务批次、增量口径、完成过程、旧新对比如需保留，只进入现有两份历史归档，不在当前正文重复。
 - 每次派遣本项目执行者或验收者时，prompt、方案/验收工件都必须显式携带上述适用范围、历史归档与当前态约束；不得仅假定对方读过 READAI。
 - 工作区普通文件仅按用户真实需求和已批准方案修改；根 `README.md`、官方 dsh/官方预设、生产环境、profile、`$DSH_HOME` 与真实会话仍是禁改面。所有引导词与 persona 原文冻结；作者源非引导词仅在用户明确授权且批准方案列明时有限修改，单次授权不延续。
-- bundle 详情公开 insert 恰为 `dsh-extra-plan-settings` 一行；该全局 owner 统一拥有 11 项 Config、API、carrier、旧值迁移、同步核对与官方 AgentPreset adapter。旧 `extra-plan-preset-sync` / `preset-extra-plan` 只作 raw patch 安全读取来源，不是新写入目标；`./preset-sync` 及其 locale exports 已退役。当前显式非法 `gateWords` 严格失败且零写，旧非法值仅诊断跳过。配置仅经 `plugins.detail.section` 渲染于 bundle 详情页行列表之后（自绘标题），不注册 `plugins.bundle.config`、`plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`。九个既有入口和根 README/地图职责保持不变，不新增正式文档。
+- bundle 详情公开 insert 恰为 `dsh-extra-plan-settings` 一行；该全局 owner 统一拥有 11 项 Config、API、carrier、旧值迁移、同步核对与官方 AgentPreset adapter。旧 `extra-plan-preset-sync` / `preset-extra-plan` 只作 raw patch 安全读取来源，不是新写入目标；`./preset-sync` 已退役；locale exports 仍保留（`./locale/*.json` 与 `./settings/locale/*`）。当前显式非法 `gateWords` 严格失败且零写，旧非法值仅诊断跳过。配置仅经 `plugins.detail.section` 渲染于 bundle 详情页行列表之后（自绘标题），不注册 `plugins.bundle.config`、`plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`。九个既有入口和根 README/地图职责保持不变，不新增正式文档。
 - 维护任务按实际目标文件建立唯一 `.extra-plan/backup-dsh-extra-plan-<任务名>-<YYYYMMDDHHMMSS>/` 备份；同一任务续跑沿用对应目录，不覆盖已有镜像。JS/MJS、JSON、生成代码和领域回归按实际改动域选择，具体任务命令留在方案与验收工件中。
 - `pe-test/reports/` 只接收临时测试产物，不纳入源改动；不调用 `git reset`、`git checkout`、`git clean`。
 - 界面文案只给结论级信息；技术细节仅放硬闸门给 AI 的文案、诊断/日志和本组 AI 文档。

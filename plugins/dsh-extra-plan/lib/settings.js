@@ -27,7 +27,7 @@ import { createQqbotSettingsSynchronizer, stableSnapshotHash } from './qqbot-set
 import { parsePresetYaml, rowsByIdWithPath } from './preset-yaml.js'
 import { GATE_WORD_FIELDS, validateGateWords } from './gate-words.js'
 import { createPathContext, resolveWorkspacePath, resolveHostPath, validateReadTarget } from './path-policy.js'
-import { startupArchive } from './usage-archive.js'
+import { startupArchive } from './usage-ledger.js'
 
 function safeContextGet(ctx, key) {
   try { return ctx !== undefined && ctx !== null && typeof ctx.get === 'function' ? ctx.get(key) : undefined } catch (error) { return undefined }

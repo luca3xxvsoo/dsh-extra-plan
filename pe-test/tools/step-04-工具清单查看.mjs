@@ -1,5 +1,5 @@
 // step-04-工具清单查看.mjs — 读取显式选择 session 的逻辑 JSONL，报告模型可见工具。
-// 旧摘要模式：node step-04-工具清单查看.mjs <显式会话目录名或路径>
+// 默认摘要模式：node step-04-工具清单查看.mjs <显式会话目录名或路径>
 // 严格模式：node step-04-工具清单查看.mjs <单会话目录> --messages [--request-trace <工作区trace>]
 // 无显式位置目标或公共会话选项时 NOT-RUN，不探测会话目录。
 import fs from 'node:fs'
@@ -233,7 +233,7 @@ function printTrace(traceTarget, sessionId, pathContext) {
     else console.log('REQUEST ' + JSON.stringify({ sessionId: request.sessionId, requestIndex: request.requestIndex, tool: request.tool || request.name, status: request.status, keys: Object.keys(request).sort() }))
   }
 }
-function legacySummary(args, context) {
+function defaultSummary(args, context) {
   const found = findSession(args[0], { maintenanceContext: context })
   if (found.kind === 'none') { console.log('NOT-RUN：未显式选择会话；未读取会话日志'); return }
   if (found.kind === 'unavailable') { console.log('NOT-RUN：会话 Host 根不可用；' + found.reason); return }
@@ -289,7 +289,7 @@ function positionalArgsOf(args = []) {
 }
 const messagesMode = argv.includes('--messages')
 if (!messagesMode) {
-  legacySummary(positionalArgsOf(argv), maintenanceContext)
+  defaultSummary(positionalArgsOf(argv), maintenanceContext)
 } else {
   try {
     const positional = positionalArgsOf(argv)

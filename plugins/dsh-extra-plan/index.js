@@ -114,7 +114,6 @@ export const decisions = {
   renderFilteredToolsSdk,
   resolveToolsSdkRenderer,
   sdkSchemasForRendering,
-  toolPresentationModeOf,
   projectSkillCatalogDecision,
 }
 
@@ -134,12 +133,11 @@ import { DEFAULT_SETTINGS } from './lib/preset-defaults.generated.js'
 import { toolCallCount, toolCallsSinceUser, withPlannerPromptSuffix, BUDGET_REMINDER_THRESHOLD, budgetNoticeText, withBudgetNotice, budgetReminderText, budgetReminderMessage, budgetReminderSent, budgetExhaustedReason, budgetExceeded } from './lib/planner-budget.js'
 import { causeChainOf } from './lib/runtime-static.js'
 import { createAgentRuntime, isLiveDelegation } from './lib/agent-runtime.js'
-import { sessionEvents, isSubagentChild } from './lib/agent-session.js'
+import { sessionEvents, isSubagentChild, observeSessionLeaseOf } from './lib/agent-session.js'
 import { createModelRouting, isExplicitRoute, isExplicitEffort, resolveAgentRouteSources, decidePlannerModelUse, PLANNER_PROBE_TIMEOUT_MS, PLANNER_BLOCKED_REASON, NON_PLANNER_BLOCKED_REASON, sortPlannerCandidates } from './lib/model-routing.js'
 import { CHANNEL_BROKEN_CODES, FREE_TOOLS, routeDenyReason, planDenyReason, approvalDenyReason, isBootstrapPhase, labelsOfCallData, askKindOf, askKindOfRelaxed, isExactGateSet, isPartialGateSet, categorizeGateAsk, gateAskDenyReason, validateGateAskStructure, matchRouteLabel, matchApprovalLabel, matchPurposeLabel, parseAskResultData, parseDispatchAskResult, deriveFlowState, filterBootstrapContextDecision, dedupeProjectedContextDecision, catalogHasWriteTools, isReadOnlyChildByCatalog, schemasHasWriteTools, schemasHasTool, catalogIsCollapsed, subagentProbeGateReason, shellMutationReason, childControlGateReason, plannerGateReason, childReadonlyGateReason, jobOutputGateReason, recordJobOutputCall, pollGuardGateReason, recordPollGuardCall, probeDisposalWarning, mainGateReason, runCodeGroupDenyReason, aggregateRunCodeDenyReason, decomposeRunCode, runCodeCatchGateReason, collectRunCodeSites, askUserQuestionReturnGateReason, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, runCodeDispatchCapText } from './lib/gate-decisions.js'
-import { CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilteredToolsSdk, resolveToolsSdkRenderer, sdkSchemasForRendering, toolPresentationModeOf, toolSdkSchemasOf, projectSkillCatalogDecision, PTC_SECTION_NAME, READ_SECTION_NAME, SDK_SECTION_NAME, sectionOf, hasSection, hasNonEmptySection } from './lib/assembly-presentation.js'
+import { CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilteredToolsSdk, resolveToolsSdkRenderer, sdkSchemasForRendering, toolSdkSchemasOf, projectSkillCatalogDecision, PTC_SECTION_NAME, READ_SECTION_NAME, SDK_SECTION_NAME, sectionOf, hasSection, hasNonEmptySection } from './lib/assembly-presentation.js'
 import { createSdkTextCache } from './lib/sdk-text-cache.js'
-import { createUsageLedger } from './lib/usage-ledger.js'
 import { createRuntimeLifecycle } from './lib/runtime-lifecycle.js'
 import { GATE_WORD_FIELDS, createGateRuntime } from './lib/gate-words.js'
 import { createLiveConfig } from './lib/live-config.js'
@@ -167,6 +165,7 @@ export const Config = z.object({
   bootstrapReadHint: z.string().default(BOOTSTRAP_READ_HINT_FALLBACK),
   bootstrapShellTools: z.array(z.string()).default(['bash', 'pwsh']),
   bootstrapCommonTools: z.array(z.string()).default(['read']),
+  // 已退役：无运行期消费者，仅作旧配置兼容（保留字段与默认值，旧配置文件带该键时不改变行为）。
   usageLedger: z.object({
     enabled: z.boolean().default(false),
     path: z.string().default(''),
@@ -549,19 +548,14 @@ export function apply(ctx, config) {
   let bootstrapShellMissingWarned = false
   const sdkTextCache = createSdkTextCache()
 
-  const ledgerConfig = cfg.usageLedger !== null && typeof cfg.usageLedger === 'object' ? cfg.usageLedger : null
-  const usageLedger = createUsageLedger({
-    enabled: ledgerConfig !== null && ledgerConfig.enabled === true,
-    path: ledgerConfig !== null && typeof ledgerConfig.path === 'string' ? ledgerConfig.path : '',
-    pathContext: pathContextFor(ctx, ''),
-  })
-  const { foldUsage } = usageLedger
-
+  // 改造11：createUsageLedger 工厂已删除（它只返回 {enabled,path,pathError}，且此处无消费者）。
+  // 账本默认路径为固定拼接（不经任何路径解析函数）：apply 期 startupArchiveForApply → startupArchive 用
+  // lib/usage-ledger.js 的 LEDGER_DIRECTORY（'usage-ledger'）与 ARCHIVE_FILE_NAME
+  // （'ledger-v2.archive.jsonl'）拼出 <host 根>/usage-ledger/ledger-v2.archive.jsonl。
   const sandboxPolicy = ctx.get('sandboxPolicy')
-  const { isChild, isPlannerChild, isReviewerChild, toolSchemasOf, usageContextOf, childBaseline } = createAgentRuntime({
+  const { isChild, isPlannerChild, isReviewerChild, toolSchemasOf, childBaseline } = createAgentRuntime({
     getAgents: () => ctx.get('agents'),
     sandboxPolicy,
-    foldUsage,
     warn: (...args) => console.warn(...args),
   })
 
@@ -665,23 +659,18 @@ export function apply(ctx, config) {
   // C=0：三个官方 cordis skill 由 skill-filesystem 的 bundledSkillDir 静态注册进本预设组合
   // （换通道后旧 customSkillDirs 走 ctx.fs 扫 asar 会抛错；不再靠「不注册」），
   // 一律从模型可见 catalog 隐藏——只影响名字可见性，skill 仍注册、按名调用仍可加载。
-  // C=1：保留原 HP1 首轮暂隐逻辑（仅 A=1、F、main/planner、M=ptc 的极简首轮）。
+  // C=1：首轮暂隐已由 filterBootstrapContextDecision 在 gated 为 true 时整条剔除 skill-catalog 消息承担；本函数只保留 C=0 全量隐藏分支。
   function shouldHideCreativeCatalog(agent) {
-    if (!creativeModeOn(agent)) return true
-    if (!bootstrapOn(agent) || !isBootstrapPhase(agent)) return false
-    const planner = isPlannerChild(agent)
-    const child = isChild(agent)
-    if (!planner && child) return false
-    return toolPresentationModeOf(agent) === 'ptc'
+    return !creativeModeOn(agent)
   }
 
   // agent/pre-step 消息投影：prepend 让本处理在 tool-skill/agent-instructions 等内层完成后
   // 收到最终 decision；F 只过滤当前副本，L 仍由宿主自然重组。
-  function isAnchoredContextGate(agent) {
+  function isAnchoredContextGate(agent, events) {
     if (agent === undefined || agent === null) return false
     const planner = isPlannerChild(agent)
     const child = isChild(agent)
-    return bootstrapOn(agent) && isBootstrapPhase(agent) && (planner || !child)
+    return bootstrapOn(agent) && isBootstrapPhase(agent, events) && (planner || !child)
   }
   let preStepWarned = false
   function warnPreStepFailure(error) {
@@ -691,12 +680,23 @@ export function apply(ctx, config) {
   }
   ctx.on('agent/pre-step', async (payload, next) => {
     const decision = await next()
-    const gated = isAnchoredContextGate(payload.agent)
+    // 首轮相位判定改用 observeSession 租约快照（改造8：异步钩子不再经 deprecated 同步通道）；
+    // 租约拿不到时退化为未传 events，由 isBootstrapPhase 内部兜底，判定逻辑不变。
+    let lease
+    let gated
+    let hideCreativeCatalog
+    try {
+      lease = await observeSessionLeaseOf(payload.agent)
+      gated = isAnchoredContextGate(payload.agent, lease?.events)
+      hideCreativeCatalog = shouldHideCreativeCatalog(payload.agent)
+    } finally {
+      if (lease !== undefined && typeof lease[Symbol.dispose] === 'function') lease[Symbol.dispose]()
+    }
     // source gate 是关键边界：放在可降级的 creative/去重处理之外，失败不得发送未过滤 decision。
     const filtered = filterBootstrapContextDecision(decision, gated)
     let projected = filtered
     try {
-      projected = shouldHideCreativeCatalog(payload.agent) ? projectSkillCatalogDecision(projected) : projected
+      projected = hideCreativeCatalog ? projectSkillCatalogDecision(projected) : projected
       const session = payload.agent.session
       const visibleMessages = session !== undefined && session !== null && typeof session.deriveMessages === 'function'
         ? session.deriveMessages()
@@ -732,15 +732,24 @@ export function apply(ctx, config) {
       if (decision.kind !== 'enter') return decision
       if (agent === undefined || !isPlannerChild(agent)) return decision
       if (!Array.isArray(decision.messages)) return decision
-      // 预算告知（先于 suffix 拼接，suffix 为空也生效）+ 阈值提示（剩余 ≤3 且未注入过时追加一条）。
-      const budgetNotice = budgetNoticeText(exploreBudget(agent))
-      const used = toolCallsSinceUser(sessionEvents(agent.session), FREE_TOOLS)
-      const reminder = budgetReminderText(exploreBudget(agent) - used, exploreBudget(agent), BUDGET_REMINDER_THRESHOLD)
-      let messages = decision.messages.map((message) => withPlannerPromptSuffix(withBudgetNotice(message, budgetNotice), plannerPromptSuffix(agent)))
-      if (reminder !== '' && !budgetReminderSent(sessionEvents(agent.session), '本轮探查预算还剩 ')) {
-        messages = [...messages, budgetReminderMessage(reminder)]
+      let lease = await observeSessionLeaseOf(agent)
+      try {
+        // 预算告知（先于 suffix 拼接，suffix 为空也生效）+ 阈值提示（剩余 ≤3 且未注入过时追加一条）。
+        const budgetNotice = budgetNoticeText(exploreBudget(agent))
+        let messages = decision.messages.map((message) => withPlannerPromptSuffix(withBudgetNotice(message, budgetNotice), plannerPromptSuffix(agent)))
+        // 改造8：本钩子是 async 钩子且已持有 observeSession 租约，事件一律取租约快照；
+        // 租约不可用时记账相关逻辑（工具计数与阈值提示）显式跳过，不再回落 deprecated 同步快照通道。
+        const leaseEvents = lease === undefined ? undefined : lease.events
+        if (!Array.isArray(leaseEvents)) return { ...decision, messages }
+        const used = toolCallsSinceUser(leaseEvents, FREE_TOOLS)
+        const reminder = budgetReminderText(exploreBudget(agent) - used, exploreBudget(agent), BUDGET_REMINDER_THRESHOLD)
+        if (reminder !== '' && !budgetReminderSent(leaseEvents, '本轮探查预算还剩 ')) {
+          messages = [...messages, budgetReminderMessage(reminder)]
+        }
+        return { ...decision, messages }
+      } finally {
+        if (lease !== undefined && typeof lease[Symbol.dispose] === 'function') lease[Symbol.dispose]()
       }
-      return { ...decision, messages }
     } catch (error) {
       warnPreStepFailure(error)
       return decision
@@ -796,17 +805,15 @@ export function apply(ctx, config) {
   // 写失败仅一次性告警，监听器绝不放大故障。
   ctx.on('agent/error', (payload) => recordAgentError(payload, { ctx }))
 
-  // 4) 会话销毁：同步 final flush + 单会话状态回收。必须保持同步回调——agent/disposed 是
-  //    emit/void，宿主调用监听器后只对返回的 Promise 挂 catch、不等待完成；此处 driver 已静止、
-  //    session 尚未解绑，同步路径内才能读到最终 snapshot 并结算末轮 usage。
-  //    顺序不可换：① 先按缓存 usage context 同步 foldUsage（在任何 Map 删除之前）；② 保留
-  //    pendingProbeClaims 的剩余数量告警语义，再删除该 session 的待认领计数（含
-  //    runCodeDenyRecords 的 PTC 拒绝记录桶）；③ 最后按
+  // 4) 会话销毁：同步状态回收 + 单会话状态回收。必须保持同步回调——agent/disposed 是
+  //    emit/void，宿主调用监听器后只对返回的 Promise 挂 catch、不等待完成。
+  //    改造8 起没有 final usage fold：用量账本由插件启动时扫描会话日志维护（改造11 起收敛到
+  //    lib/usage-ledger.js 单文件），本监听器不读事件、不写账本，也不再持有任何 usage cursor。
+  //    顺序不可换：① 先释放 sdkTextCache；② 保留 pendingProbeClaims 的剩余数量告警语义，再删除
+  //    该 session 的待认领计数（含 runCodeDenyRecords 的 PTC 拒绝记录桶）；③ 最后按
   //    sessionId 依次回收 jobOutputCallCounters、jobOutputLastAnchors、toolJobsNoticesConsumed、
-  //    subCallCounters、usageCursors 与 malformedRetried（MALFORMED 自愈限次账本）。
-  //    重复 disposed 幂等；其它 session 的同名 rootCallId、
-  //    计数与 cursor 均不受影响（本 session 的去重基准留在 cursor JSON，靠单项续载恢复）。
-  //    final fold 写入失败仍走既有单次 ledger warning 且不抛出，不阻断后续清理。
+  //    subCallCounters 与 malformedRetried（MALFORMED 自愈限次账本）。
+  //    重复 disposed 幂等；其它 session 的同名 rootCallId 与计数均不受影响。
   ctx.on('agent/disposed', (payload) => {
     const agent = payload.agent
     const sessionId = agent?.session?.header?.id
@@ -816,20 +823,13 @@ export function apply(ctx, config) {
     } catch (error) {
       console.warn('extra-plan: agent/disposed text cache cleanup failed: ' + (error instanceof Error ? error.message : String(error)))
     }
-    try {
-      foldUsage(agent, usageContextOf(agent))
-    } catch (error) {
-      console.warn('extra-plan: agent/disposed final usage fold failed: ' + (error instanceof Error ? error.message : String(error)))
-    } finally {
-      const pending = runtimeLifecycle.pendingProbeCount(sessionId)
-      if (Number.isInteger(pending) && pending > 0) {
-        const warning = probeDisposalWarning(pending)
-        if (warning !== null) console.warn(warning)
-      }
-      runtimeLifecycle.disposeSession(sessionId)
-      malformedRetried.delete(sessionId)
-      usageLedger.disposeSession(sessionId)
+    const pending = runtimeLifecycle.pendingProbeCount(sessionId)
+    if (Number.isInteger(pending) && pending > 0) {
+      const warning = probeDisposalWarning(pending)
+      if (warning !== null) console.warn(warning)
     }
+    runtimeLifecycle.disposeSession(sessionId)
+    malformedRetried.delete(sessionId)
   })
 
   // 3) anchored 引导（默认开）：主会话与规划子代理首轮极简；执行者/reviewer 不引导。
@@ -862,9 +862,17 @@ export function apply(ctx, config) {
     }
 
     // 展示决策按 phase → creative → mode 分层；所有分支只返回模型可见副本。
-    const phase = isBootstrapPhase(agent) ? 'first' : 'later'
+    // 改造8：本钩子是 async 钩子，phase 判定改取 observeSession 租约快照，租约在 finally 释放。
+    let phase = 'later'
+    let phaseLease
+    try {
+      phaseLease = await observeSessionLeaseOf(agent)
+      phase = isBootstrapPhase(agent, phaseLease?.events) ? 'first' : 'later'
+    } finally {
+      if (phaseLease !== undefined && typeof phaseLease[Symbol.dispose] === 'function') phaseLease[Symbol.dispose]()
+    }
     const role = planner ? 'planner' : child ? 'executor' : 'main'
-    // 呈现模式二值化（0.2.1）：有非空 PTC 段即 ptc，其余（含宿主 SDK 段）一律 native。
+    // 呈现模式二值化：唯一来源是宿主装配结果里的 tools:ptc-only 段，由实际挂载的 ptc 执行器注入，其余 native。
     const mode = hasNonEmptySection(result.sections, PTC_SECTION_NAME) ? 'ptc' : 'native'
     const anchoredFirst = bootstrapOn(agent) && phase === 'first' && (role === 'main' || role === 'planner')
     const anchoredPtc = anchoredFirst && mode === 'ptc'
@@ -882,7 +890,7 @@ export function apply(ctx, config) {
       if (!anchoredFirst && hasSection(result.sections, SDK_SECTION_NAME)) {
         let language = 'typescript'
         try {
-          // 服务名换代：codeRuntime → ptcRuntime（dsh-tools 的 PTC 运行服务）。
+          // ptcRuntime 服务由 @deepseek-ai/dsh-ptc-runtime-node 提供（宿主 patch 行 id: ptc-runtime）。
           const runtime = typeof ctx.get === 'function' ? ctx.get('ptcRuntime') : undefined
           if (runtime !== undefined && runtime !== null && typeof runtime.language === 'string') language = runtime.language
         } catch (error) { /* 缺少 ptcRuntime 时按测试/兼容默认使用 TypeScript renderer */ }
@@ -893,6 +901,7 @@ export function apply(ctx, config) {
           sdkText = await sdkTextCache.getOrCreate(agent, rendererInput, language, renderer)
         } catch (error) {
           console.warn('extra-plan: filtered tools:sdk render failed (' + (error instanceof Error ? error.message : String(error)) + ')')
+          // 渲染失败时清空 SDK 段：assembly-presentation.js 仅在 typeof sdkText === 'string' 时替换 tools:sdk 文本，不清空会保留宿主未过滤原文（含 cordis_inspect_list/query 声明）
           sdkText = ''
         }
       }
@@ -958,7 +967,9 @@ export function apply(ctx, config) {
   //    不注入（对齐官方 routeChanged 清 effort）；其余维持父 effort 继承（现状）。
   ctx.on('agent/request', async (payload, next) => {
     const resolved = await next()
-    if (payload.agent === undefined || !isSubagentChild(payload.agent)) return resolved
+    if (payload.agent === undefined) return resolved
+    if (!isSubagentChild(payload.agent)) return resolved
+    // 本钩子只用一次判定：lease 二次判定已移除（与上一行判定同源，正常时序恒等价）。
     // planner 模型注入（修复 v2）：在父会话 header 处理之前生效——planner 使用
     // 设置页 plannerModel（resolvePlannerEntry 现场解析/缓存）；不再依赖父 header
     // 非空与 WeakMap 缓存命中（断点①pcfg-null 早退 ②缓存 miss 回退父值 均已消除）。
@@ -1034,9 +1045,13 @@ export function apply(ctx, config) {
     if (exec.agent === undefined) return next()
     const agent = exec.agent
     // 单次会话事件快照（P1-4）：本钩子内全部消费点（锚点扫描、tool-jobs 通知扫描、角色判定、
-    // planner 闸门、main 闸门与状态推导）复用同一份快照引用，只取一次。宿主 snapshotEvents()
-    // 无参时返回缓存全量快照（无新事件即同一引用），故此处只做快照来源收敛与可读性整理——
-    // 本批**不减少**各消费点各自的 O(n) 扫描次数（6 个独立循环各自保持 O(n)）。
+    // planner 闸门、main 闸门与状态推导）复用同一份快照引用，只取一次。宿主无参快照返回缓存全量
+    // 视图（无新事件即同一引用），故此处只做快照来源收敛与可读性整理——本批**不减少**各消费点
+    // 各自的 O(n) 扫描次数（6 个独立循环各自保持 O(n)）。
+    // 改造8：tools/pre-execute 是同步钩子、无法 await observeSession，且宿主 live 读内部本身即全量
+    // 物化，改走 observeSession 无收益——因此本钩子仍用 deprecated 同步快照，是本次改造后保留的
+    // 唯一同步读取点；其余异步钩子（agent/pre-step、agent/request、system-prompt/assemble）已全部
+    // 走 events 通道。
     const execEvents = sessionEvents(agent.session)
     // job_output 计数器锚点重置：新用户消息或 send_message 续轮转达时清空该 session 的计数器
     {
@@ -1088,7 +1103,7 @@ export function apply(ctx, config) {
       }
     }
     // 探查者委派属只读探查能力（与 read/glob/grep 同级）：主会话在任意路由状态放行，
-    // 0.2.1 起委派工具已无后台参数，固定后台语义上移宿主；本处只保留角色判定。
+    // 委派工具已无后台参数，固定后台语义上移宿主；本处只保留角色判定。
     // 置于 planner/child 判定之前，但闸门函数内首先按角色拒绝 planner（T5）：
     // subagent_probe 仅主会话可委派；放行时挂「待认领计数」供 probe 子会话
     // session-start 认领（否则 probe 子会话经 parentSession 无放行痕迹）。

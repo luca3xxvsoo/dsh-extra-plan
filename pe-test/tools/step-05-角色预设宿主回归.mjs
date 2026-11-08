@@ -1,5 +1,5 @@
 // step-05-角色预设宿主回归.mjs
-// 0.2.1 角色预设宿主契约：真实安装宿主包 + 内嵌 Loader 夹具（照 step-04-context-gate宿主回归 手法）。
+// 角色预设宿主契约：真实安装宿主包 + 内嵌 Loader 夹具（照 step-04-context-gate宿主回归 手法）。
 // 只验证机械契约（roster / assertProvider / header.agentPreset / 工具面 / persona 渲染 / 旧值回落）；
 // 真实 provider、模型行为、GUI 显示与生产 profile 一律 HUMAN/NOT-RUN，不由本脚本证明。
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -154,7 +154,8 @@ async function runMode(mode, defaultSandboxMode) {
       { id: 'skills-filesystem', name: '@deepseek-ai/dsh-skill-filesystem' },
       { id: 'web', name: '@deepseek-ai/dsh-web' },
       { id: 'cordis-host-runner', name: '@deepseek-ai/dsh-cordis-host-runner' },
-      { id: 'tools', name: '@deepseek-ai/dsh-tools', config: { mode: 'native' } },
+      { id: 'tools', name: '@deepseek-ai/dsh-tools' },
+      { id: mode === 'native' ? 'tool-executor-native' : 'tool-executor-ptc', name: mode === 'native' ? '@deepseek-ai/dsh-tool-executor-native' : '@deepseek-ai/dsh-tool-executor-ptc' },
       { id: 'system-prompt', name: '@deepseek-ai/dsh-system-prompt', config: { personaPrefix: '' } },
       { id: 'agent', name: '@deepseek-ai/dsh-agent' },
       { id: 'agent-loop', name: '@deepseek-ai/dsh-agent-loop', config: { agents: [] } },
@@ -175,7 +176,7 @@ async function runMode(mode, defaultSandboxMode) {
     check('组1 ' + mode + ' source definition 的主名/四角色 ID-order 保持冻结', JSON.stringify(sourceDefinitions.map((item) => ({ id: item.id, order: item.order, name: item.name }))) === JSON.stringify(EXPECTED_ROSTER_RECORDS))
     check('组1 ' + mode + ' 内存投影不改主/角色 ID-name-order', JSON.stringify(projectedRecords) === JSON.stringify(EXPECTED_ROSTER_RECORDS), JSON.stringify(projectedRecords))
     check('组1 ' + mode + ' 主 definition 顶层 17 条、角色首两行为 persona/extra-plan', definitions[0].plugins.length === 17 && definitions.slice(1).every((item) => JSON.stringify(item.plugins.slice(0, 2).map((row) => row.id)) === JSON.stringify(['persona', 'extra-plan'])))
-    check('组1 ' + mode + ' 仅内存切换全部 tool-presentation.mode', definitions.every((item) => item.plugins.filter((row) => row.id === 'tool-presentation').length === 1 && item.plugins.find((row) => row.id === 'tool-presentation').config.mode === mode))
+    check('组1 ' + mode + ' 仅内存切换全部 executor 行 id 且无 config', definitions.every((item) => { const ids = item.plugins.filter((row) => row.id === 'tool-executor-native' || row.id === 'tool-executor-ptc'); return ids.length === 1 && ids[0].id === (mode === 'native' ? 'tool-executor-native' : 'tool-executor-ptc') && ids[0].config === undefined }))
 
     for (const definition of definitions) adapters.push(await root.plugin(AgentPresetAdapter, definition))
     const roster = await root.agentPresets.list()
@@ -200,6 +201,7 @@ async function runMode(mode, defaultSandboxMode) {
     check('组2 ' + mode + ' executor-spawn provider 缺席', root.subagents.getProvider('executor-spawn') === undefined)
     const spawner = root.subagents.getProvider('spawn')
     check('组2 ' + mode + ' spawn 提供者声明 agentPreset 能力且不继承父上下文', spawner !== undefined && spawner.capabilities !== undefined && spawner.capabilities.agentPreset === true && spawner.inheritsParentContext !== true, spawner === undefined ? 'provider missing' : JSON.stringify({ agentPreset: spawner.capabilities?.agentPreset, inherits: spawner.inheritsParentContext }))
+    if (root.tools === undefined || root.tools === null || typeof root.tools.schemas !== 'function') throw new Error('root.tools service unavailable（0.2.2 tools 行不得带 config.mode，需挂载 executor 行）')
     const rootSchemas = namesOf(root.tools.schemas(root))
     check('组2 ' + mode + ' 委派工具 subagent 已注册到根工具面', rootSchemas.includes('subagent'), JSON.stringify(rootSchemas.slice(0, 12)))
     root.loader.root.remove('tool-subagent')
@@ -246,7 +248,9 @@ async function runMode(mode, defaultSandboxMode) {
       return agent
     }
     const { createAgentRuntime } = await import('../../plugins/dsh-extra-plan/lib/agent-runtime.js')
-    const runtime = createAgentRuntime({ getAgents: () => root.agents, sandboxPolicy, foldUsage: () => {}, warn: () => {} })
+    // createAgentRuntime({ getAgents, sandboxPolicy, warn }) 已不接受账本折叠回调（运行时同步折叠随改造11删除），
+    // 此处不再传该残壳实参；工厂签名收敛属方案3 范围。
+    const runtime = createAgentRuntime({ getAgents: () => root.agents, sandboxPolicy, warn: () => {} })
     const mainSessionId = 'role-preset-' + scenarioKey + '-main'
     const mainHandle = await root.agents.create({
       sessionId: mainSessionId,
@@ -364,15 +368,15 @@ async function runMode(mode, defaultSandboxMode) {
     let fallbackDetail = ''
     try {
       const projected = definitionWithProjection({ toolPresentationMode: 'both' })
-      const row = projected.plugins.find((item) => item.id === 'tool-presentation')
-      fallbackOk = row !== undefined && row.config !== undefined && row.config.mode === 'native'
-      fallbackDetail = row === undefined ? 'row missing' : JSON.stringify(row.config)
+      const executorRows = projected.plugins.filter((item) => item.id === 'tool-executor-native' || item.id === 'tool-executor-ptc')
+      fallbackOk = executorRows.length === 1 && executorRows[0].id === 'tool-executor-native' && executorRows[0].config === undefined
+      fallbackDetail = executorRows.length === 0 ? 'row missing' : JSON.stringify(executorRows)
     } catch (error) {
       fallbackDetail = error instanceof Error ? error.message : String(error)
     }
     check('组7 ' + mode + ' 旧值 both 回落 native 且不抛错', fallbackOk, fallbackDetail)
     const nativeProjected = definitionWithProjection({ toolPresentationMode: 'ptc' })
-    check('组7 ' + mode + ' 合法值 ptc 原样投影（回落只作用于旧值）', nativeProjected.plugins.find((item) => item.id === 'tool-presentation').config.mode === 'ptc')
+    check('组7 ' + mode + ' 合法值 ptc 原样投影为 ptc executor 行（回落只作用于旧值）', nativeProjected.plugins.find((item) => item.id === 'tool-executor-ptc') !== undefined && nativeProjected.plugins.find((item) => item.id === 'tool-executor-ptc').config === undefined)
   } catch (error) {
     incompleteCheck('角色预设宿主回归集成层[' + mode + ']', error instanceof Error ? error.stack || error.message : String(error))
   } finally {

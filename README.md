@@ -4,7 +4,7 @@
 
 **作者从reasonix得到的灵感，实现权限控制+子代理角色分配的agent模板**
 
-**兼容性**：DSH = v0.2.1-rc.1 ~ v0.2.1-rc.5、dsh-qqbot 0.5.2。旧版本兼容详见Releases
+**兼容性**：DSH = v0.2.2-rc.1（未确认）、dsh-qqbot 0.5.2（未确认）。旧版本兼容详见Releases
 
 ## 2. 核心优势
 
@@ -68,7 +68,7 @@ DSH web界面 -> 插件 -> 按需规划模式配置
   - 首轮引导开关：首轮极简工具 + 提示词
   - 创造模式开关：是否开启dsh官方创造模式
   - web_fetch开关：是否开启web_fetch
-  - 工具呈现模式：工具呈现方式切换（默认/PTC模式），无法进行会话内切换
+  - 工具执行器：默认 / PTC 模式切换，无法进行会话内切换
   - run_code 容错检查：PTC模式下，增加每个工具调用需要try catch的闸门。通过限制+建议的模式保障仅单个调用报错
 
 **pro规划**：
@@ -105,7 +105,7 @@ dsh-extra-plan/
 │   │   │   ├── model-routing.js                                      # 子代理模型选择：planner/非 planner 路由解析
 │   │   │   ├── path-policy.js                                        # 路径安全策略闸门
 │   │   │   ├── planner-budget.js                                     # 探查预算：用量计数与提醒/耗尽文案
-│   │   │   ├── preset-defaults.generated.js                          # 构建期生成：exploreBudget 默认值
+│   │   │   ├── preset-defaults.generated.js                          # 构建期生成：11 项 DEFAULT_SETTINGS 默认值（含 exploreBudget）
 │   │   │   ├── preset-settings.js                                    # 设置项 descriptor 与 YAML 处理 facade（供迁移复用）
 │   │   │   ├── preset-sync.js                                        # settings owner 内部同步/adapter 与 raw 旧值迁移
 │   │   │   ├── preset-yaml.js                                        # 预设 YAML 解析、定位与保格式改写纯模块
@@ -124,22 +124,21 @@ dsh-extra-plan/
 │   │   │   ├── settings-contract.js                                  # 设置项单一合同：键、默认值、校验与元数据
 │   │   │   ├── settings.js                                           # 设置页宿主端
 │   │   │   ├── shell-mutation.js                                     # 写操作判定：跨平台命令解码与写形态
-│   │   │   ├── usage-archive.js                                      # usage 账本归档
-│   │   │   └── usage-ledger.js                                       # usage 账本与 cursor 增量折叠
+│   │   │   └── usage-ledger.js                                       # usage 账本
 │   │   ├── locale/                                     
 │   │   │   ├── settings/  
 │   │   │   │   ├── en.json                     
 │   │   │   │   └── zh.json                                  
 │   │   │   ├── en.json                      
 │   │   │   └── zh.json                        
-│   │   ├── scripts/generate-runtime-defaults.mjs                     # 构建期生成器：exploreBudget 叶值 → preset-defaults.generated.js
+│   │   ├── scripts/generate-runtime-defaults.mjs                     # 构建期生成器：11 项设置默认值 → runtime js、主 definition、4 个角色 definition、client 字段（共 7 个产物）
 │   │   ├── cordis.patch.yml                                                    
 │   │   ├── index.js                                                  # 四级闸门：路由/目的/澄清/批准 + apply 接线
 │   │   ├── LICENSE                                                 
 │   │   └── package.json              
 │   └── dsh-extra-plan-qqbot/                                
 │       ├── lib                                               
-│       │   ├── heal.js                                               # 探查预算：用量计数与提醒/耗尽文案
+│       │   ├── heal.js                                               # QQBot 兼容自愈：定位自有 profile、清理完整旧块、确保 web 包链接
 │       │   └── path-policy.js                                        # 路径安全策略闸门
 │       ├── scripts/heal.mjs                                          # 自愈分发                      
 │       ├── cordis.patch.yml                                  
@@ -151,7 +150,8 @@ dsh-extra-plan/
 │   ├── _shared/                                                      
 │   │   ├── host-deps.mjs             
 │   │   ├── host-preload.mjs       
-│   │   ├── session-finder.mjs                   
+│   │   ├── session-finder.mjs          
+│   │   ├── session-fixture.mjs                  
 │   │   ├── test-output.mjs                
 │   │   ├── v4-tool-result.mjs              
 │   │   ├── workspace-paths.mjs              

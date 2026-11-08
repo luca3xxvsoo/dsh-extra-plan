@@ -1,4 +1,4 @@
-// YAML 解析、行定位、捕获和保格式文本 patch 纯职责。
+// YAML 解析、行定位与设置值捕获纯职责。
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 
@@ -17,9 +17,7 @@ const JsExpr = new yaml.Type('tag:yaml.org,2002:js', {
 })
 export const YAML_SCHEMA = yaml.JSON_SCHEMA.extend(JsExpr)
 import {
-  DEFAULT_SETTINGS,
   EXTRA_PLAN_SETTING_DEFINITIONS,
-  PROJECTION_SETTING_DEFINITIONS,
   SETTING_DEFINITIONS,
   SETTINGS_ROW_ID,
   getSettingDefinition,
@@ -85,6 +83,20 @@ export function rowsByIdWithPath(document, rowId) {
 }
 
 function resolveLocator(document, locator) {
+  // rowIds 分支（行身份模型）：逐行 id 各自收集候选后合计——0 条 missing、>1 条 ambiguous、
+  // 恰 1 条时值 = modeByRowId[命中行 id]；该行 id 在 modeByRowId 无键即「值缺失」，返回 missing
+  // （与 preset-sync 的 legacy 捕获同口径），只有取到值时才判 ok。
+  if (Array.isArray(locator.rowIds)) {
+    const hits = []
+    for (const rowId of locator.rowIds) {
+      for (const row of rowsById(document, rowId)) hits.push({ rowId, row })
+    }
+    if (hits.length === 0) return { kind: 'missing', locator }
+    if (hits.length > 1) return { kind: 'ambiguous', locator, matches: hits.length }
+    const modeByRowId = locator.modeByRowId !== null && typeof locator.modeByRowId === 'object' ? locator.modeByRowId : {}
+    if (!Object.prototype.hasOwnProperty.call(modeByRowId, hits[0].rowId)) return { kind: 'missing', locator }
+    return { kind: 'ok', locator, row: hits[0].row, value: modeByRowId[hits[0].rowId] }
+  }
   let rows = rowsById(document, locator.rowId)
   // 可选 rowName 精确过滤：settings 行落点从「id」收紧为「id + 规范 name」双条件，
   // 同 id 的旧行（如 name 为 @local/dsh-extra-plan/settings 的历史行）不再参与候选；
@@ -115,6 +127,8 @@ function aliasesFor(definitionOrLocator) {
 
 /**
  * 行定位解析：接受 descriptor（用其 sourceLocator）或裸 locator { rowId, rowName?, path }。
+ * 另支持「行身份型」形状 { rowIds: [...], modeByRowId: { rowId: 值 } }：该形状下值由命中的行 id 映射而来，
+ * 没有叶键（path 不参与匹配）；多个行 id 合计恰 1 命中才算 ok，由调用方按 modeByRowId 反推 mode。
  * rowName 为字符串时先按 id 收集、再按 name 精确过滤（settings 行 = id + 规范 name）。
  * 多命中/别名歧义 → ambiguous；缺行或缺叶 → missing；否则 ok。
  */
@@ -151,47 +165,9 @@ export function resolveTemplateSettingDefault(defaultText, key) {
 }
 
 /**
- * 源模板（资产）捕获（11 项）：逐项按 sourceLocator 解析 → {document, values, states}。
- * states 四态（captured/missing/ambiguous/invalid），仅 captured 进 values。
- */
-export function captureSettings(text, definitions) {
-  const document = parsePresetYaml(text)
-  const list = definitions === undefined ? SETTING_DEFINITIONS : definitions
-  const values = {}
-  const states = {}
-  for (const definition of list) {
-    const result = resolveSetting(document, definition)
-    if (result.kind === 'missing') states[definition.key] = 'missing'
-    else if (result.kind === 'ambiguous') states[definition.key] = 'ambiguous'
-    else if (!validateSettingValue(definition, result.value)) states[definition.key] = 'invalid'
-    else {
-      values[definition.key] = normalizeSettingValue(definition, result.value)
-      states[definition.key] = 'captured'
-    }
-  }
-  return { document, values, states }
-}
-
-/** 出厂默认（2 项宿主行）：读模板 sourceLocator，缺项/解析失败回落内置。 */
-export function hostRowDefaultsFromTemplate(templateText) {
-  const fallback = { webFetch: DEFAULT_SETTINGS.webFetch, toolPresentationMode: DEFAULT_SETTINGS.toolPresentationMode }
-  try {
-    const captured = captureSettings(templateText)
-    const out = {}
-    for (const definition of PROJECTION_SETTING_DEFINITIONS) {
-      const key = definition.key
-      const hit = captured.states[key] === 'captured' && Object.prototype.hasOwnProperty.call(captured.values, key)
-      out[key] = hit ? captured.values[key] : fallback[key]
-    }
-    return out
-  } catch {
-    return fallback
-  }
-}
-
-/**
  * 权威值捕获（settings 行）：逐项按 rowLocator（行 id SETTINGS_ROW_ID + 规范 name
- * SETTINGS_ROW_NAME + config.<key>）解析，形状与 captureSettings 同构。
+ * SETTINGS_ROW_NAME + config.<key>）解析，逐项落四态（captured/missing/ambiguous/invalid），
+ * 只有 captured 进 values。
  * 只有旧别名行（name 非规范值）时行候选为空 → 一律 missing，不再读旧行的值。
  * 行缺失/多命中/叶缺失一律 missing/ambiguous → 消费端回退。
  * rowPresent（按行 id 计数，不判 name）区分「settings 行缺席（不可判定，保守不改写现场）」
@@ -483,95 +459,18 @@ function textPathLine(lines, rowStart, rowEndIndex, rowIndent, path) {
 
 export function findTextLocatorMatches(text, definitionOrLocator) {
   const locator = locatorFor(definitionOrLocator)
+  // rowIds（行身份模型）：逐行 id 各自匹配、合并返回，两个 executor 行 id 合计恰 1 才算 1 命中；
+  // 行 id 本身即取值载体（无 config 叶键），命中项 line 取行 id 所在行。
+  const rowIdList = Array.isArray(locator.rowIds) ? locator.rowIds : [locator.rowId]
   const lines = String(text).split('\n')
   const matches = []
   for (let i = 0; i < lines.length; i += 1) {
-    if (parseRowId(lines[i]) !== locator.rowId) continue
+    if (!rowIdList.includes(parseRowId(lines[i]))) continue
     const indent = lineIndent(withoutCr(lines[i]))
     const end = rowEnd(lines, i, indent)
-    const line = textPathLine(lines, i, end, indent, locator.path)
+    // rowIds 定位器没有叶键：line 取「- id:」所在行下标，不是叶键行下标（勿按函数名误判）。
+    const line = Array.isArray(locator.rowIds) ? i : textPathLine(lines, i, end, indent, locator.path)
     if (line !== null) matches.push({ rowStart: i, rowEnd: end, line })
   }
   return matches
-}
-
-function yamlString(value) {
-  const text = String(value)
-  if (text.includes('\n') || text.includes('\r')) return JSON.stringify(text)
-  return "'" + text.replace(/'/g, "''") + "'"
-}
-
-export function serializeScalar(value, scalarType) {
-  if (scalarType === 'boolean') return value ? 'true' : 'false'
-  if (scalarType === 'integer') return String(value)
-  return yamlString(value)
-}
-
-function escapeRegex(value) {
-  return String(value).split('').map((char) => '\\^$*+?.()|{}[]'.includes(char) ? '\\' + char : char).join('')
-}
-
-function replaceLineScalar(line, key, serialized) {
-  const body = withoutCr(line)
-  const eol = line.endsWith('\r') ? '\r' : ''
-  const keyMatch = body.match(new RegExp('^( *)(?!-)' + escapeRegex(key) + '\\s*:(.*)$'))
-  if (keyMatch === null) return null
-  const rest = keyMatch[2]
-  const commentIndex = inlineCommentIndex(rest)
-  const beforeComment = commentIndex === -1 ? rest : rest.slice(0, commentIndex)
-  const comment = commentIndex === -1 ? '' : rest.slice(commentIndex)
-  const leading = (beforeComment.match(/^\s*/) || [''])[0]
-  const trailing = (beforeComment.match(/\s*$/) || [''])[0]
-  return body.slice(0, body.length - rest.length) + leading + serialized + trailing + comment + eol
-}
-
-function isBlockScalarLine(line, key) {
-  const body = withoutCr(line)
-  const parsed = parseMapKey(body)
-  if (parsed === null || parsed.key !== key) return false
-  const colon = body.indexOf(':', parsed.indent + key.length)
-  if (colon < 0) return false
-  const rest = body.slice(colon + 1)
-  const commentIndex = inlineCommentIndex(rest)
-  const token = (commentIndex === -1 ? rest : rest.slice(0, commentIndex)).trim()
-  return /^[|>]/.test(token)
-}
-
-function scalarTypeFor(definitionOrLocator) {
-  if (definitionOrLocator !== null && definitionOrLocator !== undefined && definitionOrLocator.scalarType !== undefined) {
-    return definitionOrLocator.scalarType
-  }
-  return 'string'
-}
-
-/**
- * 保格式定点改写 YAML 标量（按 sourceLocator 定位）。仅用于迁移期文本改写，
- * 纯字符串处理、不写文件；宿主写链一律走 configEditor.edit。
- */
-export function patchYamlScalar(text, definitionOrLocator, value, options = {}) {
-  const locator = locatorFor(definitionOrLocator)
-  const scalarType = scalarTypeFor(definitionOrLocator)
-  const matches = findTextLocatorMatches(text, locator)
-  if (matches.length === 0) return { ok: false, reason: 'missing' }
-  if (matches.length > 1 && options.first !== true) return { ok: false, reason: 'ambiguous', matches: matches.length }
-  const selected = matches[0]
-  const lines = String(text).split('\n')
-  const parts = pathParts(locator.path)
-  const key = parts[parts.length - 1]
-  const targetIndent = lineIndent(withoutCr(lines[selected.line]))
-  const blockScalar = isBlockScalarLine(lines[selected.line], key)
-  const nextLine = replaceLineScalar(lines[selected.line], key, serializeScalar(value, scalarType))
-  if (nextLine === null) return { ok: false, reason: 'missing' }
-  lines[selected.line] = nextLine
-  if (blockScalar) {
-    let end = selected.line + 1
-    while (end < lines.length) {
-      const body = withoutCr(lines[end])
-      const trimmed = body.trim()
-      if (trimmed === '' || trimmed.startsWith('#') || lineIndent(body) > targetIndent) end += 1
-      else break
-    }
-    lines.splice(selected.line + 1, end - selected.line - 1)
-  }
-  return { ok: true, text: lines.join('\n'), line: selected.line }
 }

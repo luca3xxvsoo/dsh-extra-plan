@@ -37,7 +37,7 @@ function hostCandidates(relativePath) {
     join(TARGET_INSTALL_ROOT, 'node_modules', '@deepseek-ai', 'dsh', relativePath),
   ]
 }
-// 0.2.1：优先读安装根 node_modules 下的 dsh 清单（真实宿主安装形态），根 package.json 只作后备。
+// 优先读安装根 node_modules 下的 dsh 清单（真实宿主安装形态），根 package.json 只作后备。
 const targetDsh = TARGET_INSTALL_ROOT === undefined
   ? undefined
   : readHostJson([join(TARGET_INSTALL_ROOT, 'node_modules', '@deepseek-ai', 'dsh', 'package.json'), join(TARGET_INSTALL_ROOT, 'package.json')])
@@ -1043,7 +1043,7 @@ async function runHostProxyMatrix() {
   output.structured('HOST_PROXY_MATRIX_CASE', normalCase, { case: normalCase.case, status: normalCase.classification, getCalls: normalCase.getCalls.length, injectRequests: normalCase.injectRequests.length, injectCallback: normalCase.injectCallback, initialRegister: normalCase.initialRegister, settingsRegisterDelta: normalCase.settingsRegisterDelta, disposeDelta: normalCase.disposeDelta, profileSyncTerminal: normalCase.profileSyncTerminal, failureOrder: normalCase.failureOrder })
   const normalBoundaryOk = normalProxy.outerDirectError === 'cannot get property "configEditor" without inject' &&
     normalProxy.getResult === 'editor' && normalCase.injectCallback === 1 && normalProxy.childServiceIdentity === 'same-editor' &&
-    // 0.2.1 预设链注册 5 个 definition（主 + 4 角色）：初始化注册数 = 5，settings-only 增量仍为 0。
+    // 预设链注册 5 个 definition（主 + 4 角色）：初始化注册数 = 5，settings-only 增量仍为 0。
     initialRegister === 5 && normalCase.settingsRegisterDelta === 0 && normalCase.disposeDelta === 0 &&
      normalCase.profileSyncTerminal.status === 'synced' && normalCase.profileSyncTerminal.pending === false && typeof normalCase.profileSyncTerminal.saveRunId === 'string' && normalCase.profileSyncTerminal.saveRunId !== '' && Number.isInteger(normalCase.profileSyncTerminal.syncRevision) && normalCase.profileSyncTerminal.syncRevision > 0 && typeof normalCase.profileSyncTerminal.snapshotHash === 'string' && normalCase.profileSyncTerminal.trigger === 'settled-update' && normalOk
   if (normalBoundaryOk) console.log('HOST_PROXY_NORMAL_SETTLED_CTX_GET_OK')
@@ -1127,7 +1127,7 @@ try {
   await flush(8)
   const adapterAfter = await waitForTerminal(adapterRun.port)
   await waitForAdapterRegister(adapterCounts)
-  // no-remount 合同（0.2.1）：初次挂载登记 5 个 definition（主 + 4 角色），settings-only 保存不新增 register、dispose 恒 0。
+  // no-remount 合同：初次挂载登记 5 个 definition（主 + 4 角色），settings-only 保存不新增 register、dispose 恒 0。
   adapterNoRemount = adapterInitial.body.profileSync.status === 'synced' && adapterAfter.body.profileSync.status === 'synced' && adapterCounts.register === 5 && adapterCounts.dispose === 0
   check('SETTINGS_ONLY_HTTP_SAVE_ADAPTER_REGISTER_0_DISPOSE_0', adapterNoRemount)
   check('SETTINGS_ONLY_HTTP_SAVE_ADAPTER_MOUNT_COUNT_5', adapterCounts.register === 5)
@@ -1336,8 +1336,8 @@ rmSync(g6Root, { recursive: true, force: true })
 const generatedDefinition = parsePresetYaml(readFileSync(join(REPO_ROOT, 'plugins/dsh-extra-plan/assets/presets/extra-plan/preset-definition.generated.yml'), 'utf8'))
 const restartRows = generatedDefinition.plugins || []
 const restartWeb = restartRows.find((row) => row && row.id === 'tool-web')
-const restartPresentation = restartRows.find((row) => row && row.id === 'tool-presentation')
-const restartOk = restartWeb !== undefined && restartPresentation !== undefined && restartWeb.config !== undefined && restartPresentation.config !== undefined &&
+const restartPresentation = restartRows.find((row) => row && (row.id === 'tool-executor-native' || row.id === 'tool-executor-ptc'))
+const restartOk = restartWeb !== undefined && restartWeb.config !== undefined && restartPresentation !== undefined && restartPresentation.config === undefined &&
   !hotKeys.includes('webFetch') && !hotKeys.includes('toolPresentationMode')
 check('RESTART_2_DEFINITION_PROJECTIONS_REMAIN_LOAD_TIME', restartOk)
 const oldRuntime = createGateRuntime(syncGateWords)
@@ -1736,7 +1736,7 @@ check('V05 点选十一控件后一次 mutate 带全十一键、revision42 与�
 
 const ptcRow = interactive.rows.find((row) => row.key === 'toolPresentationMode')
 const ptcOptions = (ptcRow?.control?.children || []).flatMap((child) => Array.isArray(child) ? child : [child]).map((option) => option?.props?.value)
-check('V05 工具呈现控件结构化事实：类型 select 且选项集合恰为 native/ptc', ptcRow !== undefined && ptcRow.control?.type === 'select' && JSON.stringify([...ptcOptions].sort()) === JSON.stringify(['native', 'ptc']))
+check('V05 工具执行器控件结构化事实：类型 select 且选项集合恰为 native/ptc', ptcRow !== undefined && ptcRow.control?.type === 'select' && JSON.stringify([...ptcOptions].sort()) === JSON.stringify(['native', 'ptc']))
 const successClient = await exerciseClient(readySnapshot, true, 'ok', 'V05 实际 lazy client 成功保存')
 check('V05 成功保存恰一次十一项 mutate、revision正确、每键一条 set op', successClient.calls.length === 1 && successClient.calls[0].revision === 42 && successClient.calls[0].ops.length === 11 && new Set(successClient.calls[0].ops.map((op) => op.path[0])).size === 11 && successClient.calls[0].ops.every((op) => op.op === 'set'))
 await exerciseClient(readySnapshot, false, 'error', 'V05 mutate=false 不显示保存成功')

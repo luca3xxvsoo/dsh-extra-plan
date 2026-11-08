@@ -8,6 +8,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { zstdCompressSync, zstdDecompressSync } from 'node:zlib'
 import { decodeText, decodedJsonlLines, framesOf } from '../_shared/zstd-frames.mjs'
 import { createOutput, sha256Text, writeRawEvidence } from '../_shared/test-output.mjs'
+import { badIdentityResult, call, descriptor, g5MultiFrame, inboxResult, replayJsonl, result, session, skippable, syntheticFrame, writeSession } from '../_shared/session-fixture.mjs'
+import { shellMutationReason, childReadonlyGateReason } from '../../plugins/dsh-extra-plan/lib/gate-decisions.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(HERE, '..', '..')
@@ -16,12 +18,18 @@ const STEP05 = join(HERE, 'step-05-会话解码.mjs')
 const STEP06 = join(HERE, 'step-06-真实会话查看.mjs')
 const STEP07 = join(HERE, 'step-07-子代理模型与引导取证.mjs')
 const HOST_PRELOAD = join(ROOT, 'pe-test', '_shared', 'host-preload.mjs')
+// v4 会话日志文件名唯一常量：夹具写盘与回放读取共用，避免同一文件名在文件内重复硬编码。
+const SESSION_LOG_NAME = 'session.v4.jsonl.zstd'
 const previousDshHome = process.env.DSH_HOME
 let pass = 0
 let fail = 0
+let fidelity = 0
+let lastAssertionLabel = ''
+let incompleteAssertions = 0
 const output = createOutput({ argv: process.argv.slice(2) })
 
 function check(label, condition, detail = '') {
+  lastAssertionLabel = label
   const actual = typeof detail === 'string' && detail !== '' ? detail : condition
   if (condition) {
     pass += 1
@@ -32,50 +40,26 @@ function check(label, condition, detail = '') {
   }
 }
 
-const session = (id, fields = {}) => ({ type: 'session', data: { id, ...fields } })
-const descriptor = () => ({ type: 'subagent/descriptor', data: { mode: 'continuable' } })
-const call = (name, callId, argumentsValue = {}) => ({ type: 'tool/call', data: { name, callId, arguments: JSON.stringify(argumentsValue) } })
-const canonicalResultMessage = (callId, isError, text) => ({
-  id: 'result-' + callId,
-  role: 'tool',
-  source: { kind: 'tool', callId },
-  toolCallId: callId,
-  ...(isError === undefined ? {} : { isError }),
-  content: [{ type: 'text', text }],
-})
-const result = (callId, isError, text) => ({ type: 'tool/result', data: { message: canonicalResultMessage(callId, isError, text) } })
-const inboxResult = (callId, text) => ({ type: 'agent/inbox/spliced', data: { message: canonicalResultMessage(callId, true, text) } })
-const badIdentityResult = (callId, text) => ({ type: 'tool/result', data: { message: { ...canonicalResultMessage(callId, true, text), source: { kind: 'tool', callId: 'other-' + callId } } } })
-
-function writeSession(directory, fileName, events) {
-  mkdirSync(directory, { recursive: true })
-  const jsonl = events.map((event) => JSON.stringify(event)).join('\n') + '\n'
-  writeFileSync(join(directory, fileName), zstdCompressSync(Buffer.from(jsonl, 'utf8')))
+// 保真断言：只验证取证工具对畸形或异常输入能如实呈现且不崩，不构成插件规则通过，
+// 因此成功不计入通过数（只计入 fidelity 独立赛道），但失败仍计 fail，
+// 以便查看器崩掉或不再如实呈现时本脚本照样变红。
+function checkFidelity(label, condition, detail = '') {
+  lastAssertionLabel = label
+  const actual = typeof detail === 'string' && detail !== '' ? detail : condition
+  if (condition) {
+    fidelity += 1
+    output.assertion(true, label, true, true)
+  } else {
+    fail += 1
+    output.assertion(false, label, true, actual)
+  }
 }
 
-function replayJsonl(file) {
-  const compressed = readFileSync(file)
-  const frames = framesOf(compressed)
-  let text = ''
-  for (const frame of frames) text += decodeText(compressed, frame)
-  const rows = text.split(/\r?\n/).filter((row) => row.trim() !== '')
-  let invalid = 0
-  for (const row of rows) {
-    try { JSON.parse(row) } catch { invalid += 1 }
-  }
-  return { frameCount: frames.length, rowCount: rows.length, invalid }
-}
-
-function syntheticFrame(blocks, contentSize) {
-  const header = Buffer.from([0x28, 0xb5, 0x2f, 0xfd, 0x20, contentSize])
-  const parts = [header]
-  for (const block of blocks) {
-    const blockHeader = Buffer.alloc(3)
-    const value = (block.size << 3) | (block.type << 1) | (block.last ? 1 : 0)
-    blockHeader.writeUIntLE(value, 0, 3)
-    parts.push(blockHeader, block.payload)
-  }
-  return Buffer.concat(parts)
+// 异常中断时用于估计「未执行断言」规模：按本文件源码里 check/checkFidelity 的调用点数计
+// （循环展开与辅助函数内展开不计），只作未执行区间的上界估计，不参与任何规则判定。
+function declaredAssertionSites() {
+  const source = readFileSync(fileURLToPath(import.meta.url), 'utf8')
+  return (source.match(/^\s*(?:check|checkFidelity)\(/gm) || []).length
 }
 
 function checkSyntheticFrame(label, buf, expected) {
@@ -109,23 +93,6 @@ const truncatedRle = rleFrame.subarray(0, rleFrame.length - 1)
 check('截断RLE不伪造完整帧', framesOf(truncatedRle).length === 0)
 
 // G5 任务11：直接调用修复后的 decodedJsonlLines，并把同一批真实 fixture 交给三只查看器。
-function g5MultiFrame(raw, cuts) {
-  const frames = []
-  let start = 0
-  for (const end of cuts) {
-    if (end > start) frames.push(zstdCompressSync(raw.subarray(start, end)))
-    start = end
-  }
-  if (start < raw.length) frames.push(zstdCompressSync(raw.subarray(start)))
-  return Buffer.concat(frames)
-}
-function skippable(payload) {
-  const frame = Buffer.alloc(8 + payload.length)
-  frame.writeUInt32LE(0x184d2a50, 0)
-  frame.writeUInt32LE(payload.length, 4)
-  payload.copy(frame, 8)
-  return frame
-}
 function expectDecodedThrow(label, bytes) {
   let threw = false
   try { Array.from(decodedJsonlLines(bytes)) } catch { threw = true }
@@ -291,7 +258,7 @@ try {
     const workspace = join(sessionsRoot, 'g5-' + label + '-workspace')
     const sessionDir = join(workspace, 'g5-' + label + '-main')
     mkdirSync(sessionDir, { recursive: true })
-    writeFileSync(join(sessionDir, 'session.v4.jsonl.zstd'), bytes)
+    writeFileSync(join(sessionDir, SESSION_LOG_NAME), bytes)
     return sessionDir
   }
   const g5ValidWorkspace = writeG5Workspace('valid-skippable', g5SkippableCompressed)
@@ -346,10 +313,10 @@ try {
     { type: 'assistant/message', data: { message: { source: { kind: 'model', provider: 'openai-codex', model: 'gpt-5.6-sol' }, content: [{ type: 'text', text: 'fixture model output' }] } } },
     { type: 'user/message', data: { message: { source: { kind: 'user' }, content: [{ type: 'text', text: 'child prompt fixture-suffix' }] } } },
   ]
-  writeSession(mainDir, 'session.v4.jsonl.zstd', mainEvents)
-  writeSession(childDir, 'session.v4.jsonl.zstd', childEvents)
+  writeSession(mainDir, SESSION_LOG_NAME, mainEvents)
+  writeSession(childDir, SESSION_LOG_NAME, childEvents)
 
-  for (const file of [join(mainDir, 'session.v4.jsonl.zstd'), join(childDir, 'session.v4.jsonl.zstd')]) {
+  for (const file of [join(mainDir, SESSION_LOG_NAME), join(childDir, SESSION_LOG_NAME)]) {
     const replay = replayJsonl(file)
     check('fixture 解压后 JSONL 全部可解析：' + file.split(/[\\/]/).slice(-2).join('/'), replay.frameCount > 0 && replay.rowCount > 0 && replay.invalid === 0)
   }
@@ -361,12 +328,100 @@ try {
   const step04 = runScript(STEP04, step04Args)
   const step04Full = runScript(STEP04, step04FullArgs)
   check('step-04 compact/full均成功且full保留header原文', step04.status === 0 && step04Full.status === 0 && step04.output.includes('tools.names=') && step04Full.output.includes('header.tools=') && step04Full.output.length > step04.output.length)
+  // S04 断言块（合成夹具）：并非整块都在 --messages 严格模式下跑——s04-main 用 --messages 验会话打印
+  // （SESSION_META/HEADER/MESSAGE/INBOX_ONLY）与 seq 断档 INCOMPLETE，s04-catalog 走默认参数验 skill-catalog 归类，
+  // writeS04HeaderCase 各案用 --messages 验工具面 S04-1/S04-2/S04-3/S04-4 与 request trace S04-5；其中 S04-1/2/3 的反例为保真断言。
+  const s04Workspace = join(sessionsRoot, 's04-workspace')
+  const s04StrictDir = join(s04Workspace, 's04-main')
+  writeSession(s04StrictDir, SESSION_LOG_NAME, [
+    { type: 'session', data: { id: 's04-main', version: 3, cwd: 'C:/fixture-cwd' }, seq: 1 },
+    { type: 'request/header', data: { header: { config: { model: 's04-model' }, tools: ['read', 'pwsh'], system: 'fixture system' } }, seq: 2 },
+    { type: 'system/message', data: { message: { id: 's04-sys', role: 'system', source: { kind: 'system-prompt' }, content: [{ type: 'text', text: 'Writing code for run_code fixture system prompt' }] } }, seq: 3 },
+    { type: 'user/message', data: { message: { id: 's04-user', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 's04 user request' }] } }, seq: 4 },
+    { type: ['user/message', 'agent/inbox/spliced'], data: { message: { id: 's04-inbox', role: 'tool', source: { kind: 'tool', callId: 's04-call' }, toolCallId: 's04-call', content: [{ type: 'text', text: 'inbox text' }] } }, seq: 5 },
+  ])
+  const s04Strict = runScript(STEP04, exactSessionArgs(s04StrictDir, '--messages'))
+  check('S04 严格模式合规会话 exit0 且 SESSION_META/HEADER 字段齐全', s04Strict.status === 0 && s04Strict.output.includes('SESSION_META {"id":"s04-main","version":3,"cwd":"C:/fixture-cwd"}') && s04Strict.output.includes('HEADER line=2 seq=2 sessionId=s04-main version=3 cwd=C:/fixture-cwd toolNames=["read","pwsh"] toolCount=2'))
+  check('S04 严格模式 MESSAGE 与 INBOX_ONLY 行齐全', s04Strict.output.includes('MESSAGE {') && s04Strict.output.includes('INBOX_ONLY {') && s04Strict.output.includes('"role":"system"') && s04Strict.output.includes('"inboxOnly":true'))
+  const s04CatalogDir = join(s04Workspace, 's04-catalog')
+  writeSession(s04CatalogDir, SESSION_LOG_NAME, [
+    { type: 'session', data: { id: 's04-catalog', version: 1, cwd: 'C:/fixture-cwd' }, seq: 1 },
+    { type: 'request/header', data: { header: { config: { model: 's04-model' }, tools: ['read'] } }, seq: 2 },
+    { type: 'user/message', data: { message: { id: 's04-cat', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'catalog carrier', skillCatalog: { kind: 'skill-catalog', entries: [{ name: 'cordis-plugin-development' }, { name: 'office' }] } }] } }, seq: 3 },
+  ])
+  const s04Catalog = runScript(STEP04, exactSessionArgs(s04CatalogDir))
+  check('S04 skill-catalog 行与 creative 归类可见', s04Catalog.status === 0 && s04Catalog.output.includes('source.kind=skill-catalog entries=["cordis-plugin-development","office"]') && s04Catalog.output.includes('creativeSkills=["cordis-plugin-development"]') && s04Catalog.output.includes('creativeCount=1'))
+  const s04SeqBadDir = join(s04Workspace, 's04-seq-bad')
+  writeSession(s04SeqBadDir, SESSION_LOG_NAME, [
+    { type: 'session', data: { id: 's04-seq-bad', version: 1, cwd: 'C:/fixture-cwd' }, seq: 1 },
+    { type: 'request/header', data: { header: { config: { model: 's04-model' }, tools: ['read'] } }, seq: 3 },
+  ])
+  const s04SeqBad = runScript(STEP04, exactSessionArgs(s04SeqBadDir, '--messages'))
+  check('S04 seq 断档被查获为 INCOMPLETE 且退出非零', s04SeqBad.status !== 0 && s04SeqBad.output.includes('INCOMPLETE') && s04SeqBad.output.includes('seq不连续'))
+  const writeS04HeaderCase = (label, tools) => {
+    const dir = join(s04Workspace, label)
+    writeSession(dir, SESSION_LOG_NAME, [
+      { type: 'session', data: { id: label, version: 1, cwd: 'C:/fixture-cwd' }, seq: 1 },
+      { type: 'agent-preset/selected', data: { agentPreset: 'extra-plan-planner' }, seq: 2 },
+      { type: 'request/header', data: { header: { config: { model: 's04-model' }, tools } }, seq: 3 },
+    ])
+    return runScript(STEP04, exactSessionArgs(dir, '--messages'))
+  }
+  const s04NoDup = writeS04HeaderCase('s04-nodup', ['read', 'pwsh'])
+  const s04NoDupNamesMatch = s04NoDup.output.match(/toolNames=\[([^\]]*)\]/)
+  const s04NoDupNames = s04NoDupNamesMatch === null ? [] : s04NoDupNamesMatch[1].split(',').map((s) => s.replace(/"/g, ''))
+  check('S04-1 正例工具面非空且无重名', s04NoDup.status === 0 && s04NoDup.output.includes('toolNames=["read","pwsh"] toolCount=2') && new Set(s04NoDupNames).size === s04NoDupNames.length && s04NoDupNames.length === 2, String(s04NoDup.output).slice(0, 200))
+  const s04Dup = writeS04HeaderCase('s04-dup', ['read', 'read'])
+  checkFidelity('S04-1 反例重复工具名被如实呈现（保真断言，违规被如实打印，不构成规则通过）', s04Dup.status === 0 && s04Dup.output.includes('toolNames=["read","read"]') && s04Dup.output.includes('toolCount=2'), String(s04Dup.output).slice(0, 200))
+  const s04PtcOk = writeS04HeaderCase('s04-ptc-ok', ['run_code'])
+  check('S04-2 正例 PTC 载体面恰为 run_code', s04PtcOk.status === 0 && s04PtcOk.output.includes('toolNames=["run_code"] toolCount=1'))
+  const s04PtcLeak = writeS04HeaderCase('s04-ptc-leak', ['run_code', 'pwsh'])
+  checkFidelity('S04-2 反例 PTC 面泄漏 pwsh 被如实呈现（保真断言，违规被如实打印，不构成规则通过）', s04PtcLeak.status === 0 && s04PtcLeak.output.includes('toolNames=["run_code","pwsh"]'))
+  const s04ReadonlyOk = writeS04HeaderCase('s04-readonly-ok', ['read'])
+  check('S04-3 正例 planner 只读面不含写/控制工具', s04ReadonlyOk.status === 0 && s04ReadonlyOk.output.includes('toolNames=["read"]') && !s04ReadonlyOk.output.includes('"write"') && !s04ReadonlyOk.output.includes('"edit"') && !s04ReadonlyOk.output.includes('"send_message"') && !s04ReadonlyOk.output.includes('"subagent_plan"'))
+  const s04ReadonlyWrite = writeS04HeaderCase('s04-readonly-write', ['read', 'write'])
+  checkFidelity('S04-3 反例 planner 面含 write 被如实呈现（保真断言，违规被如实打印，不构成规则通过）', s04ReadonlyWrite.status === 0 && s04ReadonlyWrite.output.includes('toolNames=["read","write"]'))
+  check('S04-4 正例 strict 会话工具面如实呈现且不越界', s04Strict.output.includes('toolNames=["read","pwsh"]') && !s04Strict.output.includes('"write"') && !s04Strict.output.includes('"glob"') && !s04Strict.output.includes('"web_search"'))
+  mkdirSync(join(fixtureHome, 'traces'), { recursive: true })
+  const s04TracePath = join(fixtureHome, 'traces', 's04-trace.json')
+  writeFileSync(s04TracePath, JSON.stringify({ sessionId: 's04-main', requests: [{ sessionId: 's04-main', requestIndex: 0, tool: 'read', status: 'ok' }] }))
+  const s04Trace = runScript(STEP04, exactSessionArgs(s04StrictDir, '--messages', '--request-trace', s04TracePath))
+  check('S04-5 正例 request trace 全量归属 REQUEST_EXACT=true', s04Trace.status === 0 && s04Trace.output.includes('REQUEST_EXACT=true') && s04Trace.output.includes('"sessionId":"s04-main"') && s04Trace.output.includes('"requestIndex":0'))
+  const s04TraceBadPath = join(fixtureHome, 'traces', 's04-trace-bad.json')
+  writeFileSync(s04TraceBadPath, JSON.stringify({ sessionId: 's04-main', requests: [{ sessionId: 's04-main', requestIndex: 0 }, { sessionId: 'other-session', requestIndex: 1 }] }))
+  const s04TraceBad = runScript(STEP04, exactSessionArgs(s04StrictDir, '--messages', '--request-trace', s04TraceBadPath))
+  check('S04-5 反例 trace 错 SessionId 被拒为 INCOMPLETE 且退出非零', s04TraceBad.status !== 0 && s04TraceBad.output.includes('INCOMPLETE') && s04TraceBad.output.includes('trace存在错SessionId request'))
 
   const step05Args = exactSessionArgs(mainDir, '--compact')
   const step05FullArgs = exactSessionArgs(mainDir, '--output-mode', 'full')
   const step05 = runScript(STEP05, step05Args)
   const step05Full = runScript(STEP05, step05FullArgs)
   check('step-05 compact/full统计一致且full保留data', step05.status === 0 && step05Full.status === 0 && step05.output.includes('事件类型计数：') && step05.output.includes('summary=') && step05Full.output.includes('--- agent-preset 相关事件 ---') && step05Full.output.includes('fixture-plan-data'))
+  // S05 断言块（合成夹具）：S05-1/3/4/5。
+  const s05Workspace = join(sessionsRoot, 's05-workspace')
+  const s05MainDir = join(s05Workspace, 's05-main')
+  writeSession(s05MainDir, SESSION_LOG_NAME, [
+    session('s05-main'),
+    { type: 'request/header', data: { header: { config: { model: 'fixture-model' }, tools: ['read', 'pwsh'] } } },
+    { type: 'agent-preset/selected', data: { agentPreset: 'extra-plan-planner' } },
+    { type: 'plan/mode', data: { mode: 'continuable', plan: 's05-plan-data' } },
+  ])
+  const s05 = runScript(STEP05, exactSessionArgs(s05MainDir, '--compact'))
+  const s05Full = runScript(STEP05, exactSessionArgs(s05MainDir, '--output-mode', 'full'))
+  check('S05-1/S05-5 合规会话 exit0 无 INCOMPLETE 且事件计数齐全', s05.status === 0 && !s05.output.includes('INCOMPLETE') && s05.output.includes('"request/header":1') && s05.output.includes('"agent-preset/selected":1') && s05.output.includes('"plan/mode":1'))
+  check('S05-3 正例 header model 非空且工具数大于 0', s05.output.includes('L2 model=fixture-model tools=2'))
+  check('S05-4 正例 preset 值合法且主会话恰一条 selected', s05.output.includes('--- agent-preset 相关事件 count=1 ---') && s05Full.output.includes('"agentPreset":"extra-plan-planner"'))
+  check('S05 补充 plan/mode 计数与 summary 可见', s05.output.includes('--- plan/mode 事件 count=1 ---') && s05.output.includes('summary='))
+  const s05BadDir = join(s05Workspace, 's05-bad')
+  writeSession(s05BadDir, SESSION_LOG_NAME, [
+    session('s05-bad'),
+    { type: 'request/header', data: { header: { tools: ['read'] } } },
+    { type: 'agent-preset/selected', data: { agentPreset: 'extra-plan-planner-evil' } },
+  ])
+  const s05Bad = runScript(STEP05, exactSessionArgs(s05BadDir, '--compact'))
+  const s05BadFull = runScript(STEP05, exactSessionArgs(s05BadDir, '--output-mode', 'full'))
+  checkFidelity('S05-3 反例 model 缺失如实呈现 model=undefined（保真断言，如实呈现，不构成规则通过）', s05Bad.status === 0 && s05Bad.output.includes('L2 model=undefined tools=1'))
+  checkFidelity('S05-4 反例未知 preset id 被如实呈现（保真断言，违规被如实打印，不构成规则通过）', s05BadFull.status === 0 && s05BadFull.output.includes('"agentPreset":"extra-plan-planner-evil"'))
 
   const step07SelectionArgs = idSessionArgs('main-v4', v4Workspace, '--discover-children')
   const step07MissingSession = runScript(STEP07, ['--full'], { PLANNER_PROMPT_SUFFIX: 'fixture-suffix' })
@@ -392,13 +447,97 @@ try {
   check('step-06 v4 fixture 退出码为 0', step06.status === 0, String(step06.status))
   check('step-06 错误文本恰展示一次', countOf(step06.output, 'TOOL-ERROR') === 1 && countOf(step06.output, 'fixture-error-text') === 1)
   check('step-06 成功 result 不产生 TOOL-ERROR', !step06.output.includes('TOOL-ERROR fixture save ok'))
+  // S06 断言块（合成夹具）：S06-1/2/3 + pwsh 与 retry/error/failed 分支覆盖。
+  const s06Workspace = join(sessionsRoot, 's06-workspace')
+  // 夹具拒因改为手写常量：S06-2/S06-3 的期望值来源与被测实现（lib/gate-decisions.js）互相独立，
+  // 生产侧改词不会再带着期望值一起漂移。实况与手写常量的差异由下方规约锁断言暴露为失败。
+  const pwshRejectText = '规划子代理只读：pwsh 仅限只读探查命令，禁止创建/修改/删除文件；触发依据：pwsh PWSH_MUTATION'
+  const reviewerRejectText = '验收复核者只读：验收复核不修改任何文件，write/edit 一律禁止（工具目录判定）'
+  const pwshRejectActual = shellMutationReason('planner', { name: 'pwsh', arguments: { command: 'git add fixture.txt' } })
+  const reviewerRejectActual = childReadonlyGateReason({ name: 'write', arguments: { file: 'a.txt', text: 'x' } }, false)
+  check('S06 规约锁：手写拒因常量与 gate-decisions 实际输出逐字一致（期望值不由被测实现生成）', pwshRejectActual === pwshRejectText && reviewerRejectActual === reviewerRejectText, JSON.stringify({ pwshActual: pwshRejectActual, pwshExpected: pwshRejectText, reviewerActual: reviewerRejectActual, reviewerExpected: reviewerRejectText }))
+  const s06PlannerDir = join(s06Workspace, 's06-planner')
+  writeSession(s06PlannerDir, SESSION_LOG_NAME, [
+    session('s06-planner'),
+    call('pwsh', 's06-pwsh-1', { command: 'git add fixture.txt' }),
+    result('s06-pwsh-1', true, pwshRejectText),
+    call('save_plan', 's06-save-1', { plan: 'ok' }),
+    result('s06-save-1', true, 'fixture-ordinary-error'),
+    { type: 'agent/retry', data: { note: 'fixture retry event' } },
+  ])
+  const s06Planner = runScript(STEP06, exactSessionArgs(s06PlannerDir))
+  check('S06 pwsh 分支 PWSH-CALL 打印命令原文', s06Planner.status === 0 && s06Planner.output.includes('PWSH-CALL git add fixture.txt'))
+  check('S06 retry/error/failed 分支 EVENT 行打印', s06Planner.output.includes('EVENT[agent/retry]'))
+  check('S06-1 门禁族与普通工具错各一条 TOOL-ERROR 且文本可见', countOf(s06Planner.output, 'TOOL-ERROR') === 2 && s06Planner.output.includes(pwshRejectText) && s06Planner.output.includes('fixture-ordinary-error'), String(s06Planner.output).slice(0, 200))
+  check('S06-2 正例只读角色 shell 写命令必被拒', s06Planner.output.includes(pwshRejectText) && s06Planner.output.includes('PWSH-CALL git add fixture.txt'), String(s06Planner.output).slice(0, 200))
+  const s06LeakDir = join(s06Workspace, 's06-leak')
+  writeSession(s06LeakDir, SESSION_LOG_NAME, [
+    session('s06-leak'),
+    { type: 'agent-preset/selected', data: { agentPreset: 'extra-plan-planner' } },
+    call('pwsh', 's06-leak-1', { command: 'git commit -m leak' }),
+    result('s06-leak-1', false, 'command ok'),
+  ])
+  const s06Leak = runScript(STEP06, exactSessionArgs(s06LeakDir))
+  checkFidelity('S06-2 反例越权写成功如实呈现且不产生拒句（保真断言，违规被如实打印，不构成规则通过）', s06Leak.status === 0 && s06Leak.output.includes('PWSH-CALL git commit -m leak') && countOf(s06Leak.output, 'TOOL-ERROR') === 0)
+  const s06ReviewerDir = join(s06Workspace, 's06-reviewer')
+  writeSession(s06ReviewerDir, SESSION_LOG_NAME, [
+    session('s06-reviewer'),
+    { type: 'agent-preset/selected', data: { agentPreset: 'extra-plan-reviewer' } },
+    call('write', 's06-write-1', { file: 'a.txt', text: 'x' }),
+    result('s06-write-1', true, reviewerRejectText),
+  ])
+  const s06Reviewer = runScript(STEP06, exactSessionArgs(s06ReviewerDir))
+  check('S06-3 正例 reviewer write 必被拒', s06Reviewer.output.includes(reviewerRejectText) && countOf(s06Reviewer.output, 'TOOL-ERROR') === 1, String(s06Reviewer.output).slice(0, 200))
+  const s06WriteOkDir = join(s06Workspace, 's06-write-ok')
+  writeSession(s06WriteOkDir, SESSION_LOG_NAME, [
+    session('s06-write-ok'),
+    { type: 'agent-preset/selected', data: { agentPreset: 'extra-plan-reviewer' } },
+    call('write', 's06-write-ok-1', { file: 'a.txt', text: 'x' }),
+    result('s06-write-ok-1', false, 'file written'),
+  ])
+  const s06WriteOk = runScript(STEP06, exactSessionArgs(s06WriteOkDir))
+  const s06WriteOkBody = s06WriteOk.output.split('\n').filter((line) => !/^===== 会话 .+ =====$/.test(line.trim()) && !line.trim().startsWith('[host-deps]')).join('\n')
+  checkFidelity('S06-3 反例 reviewer write 成功在本查看器不可观测（保真断言，剔查看器会话标题行与 host-deps 横幅后输出 trim 为空）', s06WriteOk.status === 0 && s06WriteOkBody.trim() === '', String(s06WriteOk.output).slice(0, 200))
+  // S06-5：PTC 会话直呼非 run_code 工具；宿主 pre-execute 早退文案由夹具逐字提供。
+  // 该文案取自 pe-test/docs/ai-实机闸门测试流程.md 的 C10 陷阱条目完整模板
+  // （unknown tool "<name>": only run_code is callable directly — call <name> from inside a run_code program instead）
+  // 并按 name=web_search 实例化；文档同时明令该文案不算闸门证据，故本段只作查看器回显保真断言（checkFidelity），不计入规则通过。
+  const s06PtcDir = join(s06Workspace, 's06-ptc-unknown')
+  const s06PtcUnknownText = 'unknown tool "web_search": only run_code is callable directly — call web_search from inside a run_code program instead'
+  writeSession(s06PtcDir, SESSION_LOG_NAME, [
+    session('s06-ptc-unknown'),
+    { type: 'agent-preset/selected', data: { agentPreset: 'extra-plan-planner' } },
+    call('web_search', 's06-ptc-1', { query: 's06 fixture ptc direct call' }),
+    result('s06-ptc-1', true, s06PtcUnknownText),
+  ])
+  const s06Ptc = runScript(STEP06, exactSessionArgs(s06PtcDir))
+  const s06PtcToolErrorLines = s06Ptc.output.split('\n').map((line) => line.trim()).filter((line) => line.includes('TOOL-ERROR'))
+  const s06PtcReason = s06PtcToolErrorLines.length === 1 ? s06PtcToolErrorLines[0].slice(s06PtcToolErrorLines[0].indexOf('TOOL-ERROR') + 'TOOL-ERROR'.length).trim() : ''
+  checkFidelity('S06-5 PTC 直呼非 run_code 工具的回显保真（保真断言：仅验证查看器逐字回显 C10 早退文案，按文档 C10 该文案不计入闸门证据）', s06Ptc.status === 0 && s06PtcToolErrorLines.length === 1 && s06PtcReason === s06PtcUnknownText, JSON.stringify({ lines: s06PtcToolErrorLines.length, reason: s06PtcReason }))
 
+
+  // S06-4：四级 ask 锚点（route→purpose→clarify→approve）各一条 ask 调用与结果；查看器按日志顺序逐行打印
+  // CALL ask_user_question，故用四个锚点在输出行上的下标做严格递增比较（不做宽松 includes）。
+  const s06AskOrderDir = join(s06Workspace, 's06-ask-order')
+  const s06AskAnchors = ['route', 'purpose', 'clarify', 'approve']
+  writeSession(s06AskOrderDir, SESSION_LOG_NAME, [
+    session('s06-ask-order'),
+    { type: 'agent-preset/selected', data: { agentPreset: 'extra-plan-planner' } },
+    ...s06AskAnchors.flatMap((anchor, index) => [
+      call('ask_user_question', 's06-ask-' + index, { question: 's06-ask-anchor-' + anchor }),
+      result('s06-ask-' + index, false, 's06-ask-answer-' + anchor),
+    ]),
+  ])
+  const s06AskOrder = runScript(STEP06, exactSessionArgs(s06AskOrderDir))
+  const s06AskOrderLines = s06AskOrder.output.split('\n')
+  const s06AskOrderIndexes = s06AskAnchors.map((askAnchor) => s06AskOrderLines.findIndex((line) => line.includes('CALL ask_user_question') && line.includes('s06-ask-anchor-' + askAnchor)))
+  check('S06-4 四级锚点 ask 顺序在查看器输出中保持', s06AskOrder.status === 0 && s06AskOrderIndexes.every((index) => index >= 0) && s06AskOrderIndexes.every((index, position) => position === 0 || index > s06AskOrderIndexes[position - 1]), JSON.stringify(s06AskOrderIndexes))
 
   const pairWorkspace = join(sessionsRoot, 'pair-workspace')
   const pairDir = join(pairWorkspace, 'pair-main-v4')
   const pairChildDir = join(pairWorkspace, 'pair-child-v4')
   const pairBudgetOnlyDir = join(pairWorkspace, 'pair-budget-only-v4')
-  writeSession(pairDir, 'session.v4.jsonl.zstd', [
+  writeSession(pairDir, SESSION_LOG_NAME, [
     session('pair-main-v4'),
     call('save_plan', 'pair-ordinary-1', { plan: 'pair-child-v4' }),
     result('pair-ordinary-1', undefined, 'ordinary pair-child-v4'),
@@ -413,7 +552,7 @@ try {
     badIdentityResult('pair-bad-1', 'pair-bad-identity'),
     result('pair-orphan-1', false, 'pair-child-v4'),
   ])
-  writeSession(pairChildDir, 'session.v4.jsonl.zstd', [
+  writeSession(pairChildDir, SESSION_LOG_NAME, [
     session('pair-child-v4', { parentSession: 'pair-main-v4', origin: 'subagent', delegationDepth: 1 }),
     { type: 'plan/mode', data: { mode: 'continuable', plan: 'pair-child-plan' } },
     descriptor(),
@@ -421,12 +560,12 @@ try {
     { type: 'user/message', data: { message: { id: 'pair-user', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'pair child content' }] } } },
     { type: 'user/message', data: { message: { id: 'pair-budget', role: 'user', source: { kind: 'plugin:dsh-extra-plan' }, content: [{ type: 'text', text: '本轮探查预算还剩 2 次，未查项记入待确认假设清单' }] } } },
   ])
-  writeSession(pairBudgetOnlyDir, 'session.v4.jsonl.zstd', [
+  writeSession(pairBudgetOnlyDir, SESSION_LOG_NAME, [
     session('pair-budget-only-v4', { parentSession: 'pair-main-v4', origin: 'subagent', delegationDepth: 1 }),
     descriptor(),
     { type: 'user/message', data: { message: { id: 'pair-budget-only', role: 'user', source: { kind: 'plugin:dsh-extra-plan' }, content: [{ type: 'text', text: '本轮探查预算还剩 1 次，未查项记入待确认假设清单' }] } } },
   ])
-  const pairReplay = replayJsonl(join(pairDir, 'session.v4.jsonl.zstd'))
+  const pairReplay = replayJsonl(join(pairDir, SESSION_LOG_NAME))
   check('pair-only fixture 解压 JSONL 可解析', pairReplay.frameCount > 0 && pairReplay.invalid === 0)
   const pairStep06 = runScript(STEP06, exactSessionArgs(pairDir))
   check('pair-only canonical结果仅true产生错误诊断', pairStep06.status === 0 && countOf(pairStep06.output, 'TOOL-ERROR') === 1 && pairStep06.output.includes('pair-error') && !pairStep06.output.includes('pair-inbox-error') && !pairStep06.output.includes('pair-bad-identity'))
@@ -457,7 +596,7 @@ try {
       descriptor(),
     ]
     if (text !== '') events.push({ type: 'user/message', data: { message: { id: id + '-user', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] } } })
-    writeSession(join(wWorkspace, directoryName), 'session.v4.jsonl.zstd', events)
+    writeSession(join(wWorkspace, directoryName), SESSION_LOG_NAME, events)
   }
   writeWChild('session-w-shared', 'session-w-shared')
   writeWChild('w-shared', 'w-shared', 'w shared child w-suffix')
@@ -470,7 +609,7 @@ try {
   writeWChild('w-native-ok', 'w-native-ok')
   writeWChild('w-ptc-ok', 'w-ptc-ok')
   writeWChild('w-call-only-ok', 'w-call-only-ok')
-  writeSession(wMainDir, 'session.v4.jsonl.zstd', [
+  writeSession(wMainDir, SESSION_LOG_NAME, [
     session('w-main-v4'),
     call('subagent_plan', 'w-shared-1', { prompt: 'session-w-shared' }),
     result('w-shared-1', false, 'session-w-shared'),
@@ -491,7 +630,7 @@ try {
     const parentDir = join(workspace, parentId)
     const callId = 'w-ambiguity-' + label + '-call'
     for (const child of children) {
-      writeSession(join(workspace, child.directory), 'session.v4.jsonl.zstd', [
+      writeSession(join(workspace, child.directory), SESSION_LOG_NAME, [
         session(child.id, { parentSession: parentId, origin: 'subagent', delegationDepth: 1 }),
         { type: 'plan/mode', data: { mode: 'continuable', plan: child.id + '-plan' } },
         descriptor(),
@@ -510,8 +649,8 @@ try {
     } else {
       throw new Error('unknown ambiguity carrier: ' + carrier)
     }
-    writeSession(parentDir, 'session.v4.jsonl.zstd', parentEvents)
-    const replay = replayJsonl(join(parentDir, 'session.v4.jsonl.zstd'))
+    writeSession(parentDir, SESSION_LOG_NAME, parentEvents)
+    const replay = replayJsonl(join(parentDir, SESSION_LOG_NAME))
     check('W独立歧义fixture ' + label + ' 解压JSONL可解析', replay.frameCount > 0 && replay.rowCount > 0 && replay.invalid === 0)
     const outcome = runScript(STEP07, idSessionArgs(parentId, workspace, '--discover-children'), { PLANNER_PROMPT_SUFFIX: 'w-suffix' })
     const fullOutcome = runScript(STEP07, [...idSessionArgs(parentId, workspace, '--discover-children'), '--full'], { PLANNER_PROMPT_SUFFIX: 'w-suffix' })
@@ -542,7 +681,7 @@ try {
     { label: 'call-only-mixed-alias', carrier: 'call-only', kind: 'mixed', mention: 'mixed-unique same-alias', children: [{ directory: 'mixed-unique', id: 'mixed-unique-header' }, { directory: 'same-alias', id: 'same-alias-header-a' }, { directory: 'session-same-alias', id: 'same-alias-header-b' }] },
   ]
   for (const ambiguityCase of wAmbiguityCases) writeWAmbiguityCase(ambiguityCase)
-  const wSessionFiles = [wMainDir, ...wChildNames.map((name) => join(wWorkspace, name))].map((directory) => join(directory, 'session.v4.jsonl.zstd'))
+  const wSessionFiles = [wMainDir, ...wChildNames.map((name) => join(wWorkspace, name))].map((directory) => join(directory, SESSION_LOG_NAME))
   const wReplays = wSessionFiles.map((file) => replayJsonl(file))
   check('W独立fixture解压 JSONL全部可解析', wReplays.every((replay) => replay.frameCount > 0 && replay.rowCount > 0 && replay.invalid === 0))
   const wStep07Args = idSessionArgs('w-main-v4', wWorkspace, '--discover-children')
@@ -563,6 +702,79 @@ try {
   const wStep07Raw = writeRawEvidence({ directory: v4EvidenceRoot, baseName: 'w-step07', stdout: wStep07.stdout, stderr: wStep07.stderr })
   checkRawEvidence('W step-07 raw', wStep07Raw, wStep07.stdout, wStep07.stderr)
   check('W step-07 raw保留status/error/argv关联', wStep07.status === 0 && wStep07.signal === null && wStep07.error === undefined && Array.isArray(wStep07.argv) && wStep07.argv.includes(STEP07))
+  // S07 断言块（合成夹具）：S07-1/2/6 + request/context、model/selection、attempted-only/content-only/no-log、one-shot 覆盖缺口。
+  const s07Workspace = join(sessionsRoot, 's07-workspace')
+  const s07MainDir = join(s07Workspace, 's07-main')
+  writeSession(s07MainDir, SESSION_LOG_NAME, [
+    session('s07-main'),
+    call('subagent_plan', 's07-plan-ok-1', { prompt: 's07-child-ok' }),
+    result('s07-plan-ok-1', false, 's07-child-ok'),
+    call('subagent_plan', 's07-plan-content-1', { prompt: '父 prompt 含 s07-suffix' }),
+    result('s07-plan-content-1', false, 's07-child-content'),
+    call('subagent_review', 's07-review-1', { prompt: 's07-child-oneshot' }),
+    result('s07-review-1', false, 's07-child-oneshot'),
+    call('subagent_plan', 's07-dangling-1', { prompt: 's07-child-dangling' }),
+  ])
+  const writeS07Child = (name, events) => writeSession(join(s07Workspace, name), SESSION_LOG_NAME, events)
+  writeS07Child('s07-child-ok', [
+    session('s07-child-ok', { parentSession: 's07-main', origin: 'subagent', delegationDepth: 1 }),
+    { type: 'plan/mode', data: { mode: 'continuable', plan: 's07-child-ok-plan' } },
+    descriptor(),
+    { type: 'request/header', data: { header: { config: { provider: 's07-provider', model: 's07-model' } } } },
+    { type: 'request/context', data: { context: { provider: 's07-provider', model: 's07-model', contextWindow: 64000 } } },
+    { type: 'model/selection', data: { provider: 's07-provider', model: 's07-model', reason: 'fixture' } },
+    { type: 'assistant/message', data: { message: { id: 's07-a1', role: 'assistant', source: { kind: 'model', provider: 's07-provider', model: 's07-model' }, content: [{ type: 'text', text: 's07 model output' }] } } },
+    { type: 'user/message', data: { message: { id: 's07-u1', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'child prompt with s07-suffix' }] } } },
+  ])
+  writeS07Child('s07-child-content', [
+    session('s07-child-content', { parentSession: 's07-main', origin: 'subagent', delegationDepth: 1 }),
+    { type: 'plan/mode', data: { mode: 'continuable', plan: 's07-child-content-plan' } },
+    descriptor(),
+    { type: 'user/message', data: { message: { id: 's07-c1', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'has s07-suffix content' }] } } },
+  ])
+  writeS07Child('s07-child-attempted', [
+    session('s07-child-attempted', { parentSession: 's07-main', origin: 'subagent', delegationDepth: 1 }),
+    { type: 'plan/mode', data: { mode: 'continuable', plan: 's07-child-attempted-plan' } },
+    descriptor(),
+    { type: 'request/header', data: { header: { config: { provider: 's07-provider', model: 's07-model' } } } },
+  ])
+  writeS07Child('s07-child-nolog', [
+    session('s07-child-nolog', { parentSession: 's07-main', origin: 'subagent', delegationDepth: 1 }),
+    { type: 'plan/mode', data: { mode: 'continuable', plan: 's07-child-nolog-plan' } },
+    descriptor(),
+  ])
+  writeS07Child('s07-child-oneshot', [
+    session('s07-child-oneshot', { parentSession: 's07-main', origin: 'subagent', delegationDepth: 1 }),
+    { type: 'subagent/descriptor', data: { mode: 'one-shot' } },
+  ])
+  writeS07Child('s07-child-orphan', [
+    session('s07-child-orphan', { parentSession: 's07-main', origin: 'subagent', delegationDepth: 1 }),
+    { type: 'plan/mode', data: { mode: 'continuable', plan: 's07-child-orphan-plan' } },
+    descriptor(),
+  ])
+  writeS07Child('s07-child-dangling', [
+    session('s07-child-dangling', { parentSession: 's07-main', origin: 'subagent', delegationDepth: 1 }),
+    { type: 'plan/mode', data: { mode: 'continuable', plan: 's07-child-dangling-plan' } },
+    descriptor(),
+  ])
+  writeS07Child('s07-child-misparent', [
+    session('s07-child-misparent', { parentSession: 'other-main', origin: 'subagent', delegationDepth: 1 }),
+    { type: 'plan/mode', data: { mode: 'continuable', plan: 's07-child-misparent-plan' } },
+    descriptor(),
+  ])
+  const s07Args = idSessionArgs('s07-main', s07Workspace, '--discover-children')
+  const s07 = runScript(STEP07, s07Args, { PLANNER_PROMPT_SUFFIX: 's07-suffix' })
+  check('S07 新夹具 attempted route 三栏与 REQUEST/CONTEXT、MODEL/SELECTION 行齐全', s07.status === 0 && s07.output.includes('A42 attempted route index headers=1 contexts=1 selections=1') && s07.output.includes('REQUEST/CONTEXT attempted route provider=s07-provider model=s07-model contextWindow=64000') && s07.output.includes('MODEL/SELECTION attempted route fields=["model","provider","reason"]'))
+  check('S07 新夹具 child-ok verified-injection 且 actual provenance 分栏保留（覆盖原待办 S07-4；attempted-only 半条由下一行断言覆盖）', s07.output.includes('suffix判定=verified-injection') && s07.output.includes('ASSISTANT/MESSAGE actual provenance source.kind=model provider=s07-provider model=s07-model') && s07.output.includes('模型证据等级=actual-provenance'))
+  // 实测分级分布（7 child compact）：attempted-only=2（child-attempted + child-dangling，后者无 complete link 也仅记 attempted）、no-log=2（child-nolog + child-orphan）、content-only=1（child-content）；无 link 降级句=3（attempted/nolog/orphan）。
+  check('S07 缺口 attempted-only 等级如实呈现', countOf(s07.output, 'suffix判定=attempted-only') === 2 && s07.output.includes('模型证据等级=attempted-only'))
+  check('S07 缺口 no-log 等级如实呈现', countOf(s07.output, 'suffix判定=no-log') === 2 && s07.output.includes('模型证据等级=no-log'))
+  check('S07 缺口 content-only（父 prompt 含 suffix）不升级', countOf(s07.output, 'suffix判定=content-only') === 1)
+  check('S07 缺口 one-shot role=非pro规划 且 suffix判定=not-applicable', s07.output.includes('descriptor.mode=one-shot role=非pro规划') && s07.output.includes('父工具关联：subagent_review') && s07.output.includes('complete=yes') && s07.output.includes('suffix判定=not-applicable'))
+  check('S07-1 正例 child 父归属自述一致', s07.output.includes('child谱系：parentSession=s07-main origin=subagent delegationDepth=1 descriptor.mode=continuable role=pro规划'))
+  check('S07-1 反例错 parentSession 的 child 不被发现', !s07.output.includes('s07-child-misparent') && s07.output.includes('直接 child=7'))
+  check('S07-2 正例 orphan 无 link 降级 role-evidence-insufficient', countOf(s07.output, '父工具关联：role-evidence-insufficient（无可关联 parent call/result child ID）') === 3 && s07.output.includes('role-evidence-insufficient'))
+  check('S07-2 反例 dangling 无 complete link 不越级 + S07-6 无歧义 count=0', s07.output.includes('child ID=s07-child-dangling complete=no') && s07.output.includes('A44 parent association ambiguity count=0'))
   const step07BadJson = runScript(STEP07, idSessionArgs('g5-bad-json-main', join(sessionsRoot, 'g5-bad-json-workspace')), { PLANNER_PROMPT_SUFFIX: 'fixture-suffix' })
   const step07BadJsonRaw = writeRawEvidence({ directory: v4EvidenceRoot, baseName: 'step07-bad-json', stdout: step07BadJson.stdout, stderr: step07BadJson.stderr })
   checkRawEvidence('step-07坏JSON raw', step07BadJsonRaw, step07BadJson.stdout, step07BadJson.stderr)
@@ -571,7 +783,7 @@ try {
   const step07BadFrameRaw = writeRawEvidence({ directory: v4EvidenceRoot, baseName: 'step07-bad-frame', stdout: step07BadFrame.stdout, stderr: step07BadFrame.stderr })
   checkRawEvidence('step-07坏帧 raw', step07BadFrameRaw, step07BadFrame.stdout, step07BadFrame.stderr)
   check('step-07坏帧退出1且保存非空stderr诊断', step07BadFrame.status === 1 && step07BadFrame.stderr !== '' && step07BadFrame.output.includes('byte ') && step07BadFrame.output.includes('INCOMPLETE'))
-  const stdioProbe = runScript('--eval', ["process.stdout.write('v4-out' + String.fromCharCode(10)); process.stderr.write('v4-err' + String.fromCharCode(10)); process.exitCode = 7"])
+  const stdioProbe = runScript('--eval', ["process.stdout.write('v4-out' + String.fromCharCode(10)); process.stderr.write('v4-err' + String.fromCharCode(10)); process.exitCode = 7"], { DSH_HOST_DEPS_QUIET: '1' })
   checkRawEvidence('纯stdio exit7探针 raw', stdioProbe.raw, stdioProbe.stdout, stdioProbe.stderr)
   const probeStdout = 'v4-out' + String.fromCharCode(10)
   const probeStderr = 'v4-err' + String.fromCharCode(10)
@@ -681,8 +893,11 @@ try {
     }
   }
 } catch (error) {
+  const executedBeforeAbort = pass + fail + fidelity
   fail += 1
+  incompleteAssertions = Math.max(0, declaredAssertionSites() - executedBeforeAbort)
   output.error('FAIL  fixture harness exception：' + (error instanceof Error ? error.message : String(error)))
+  output.error('INCOMPLETE  夹具异常中断，S04-S07 断言区间未执行完毕：最后执行到「' + lastAssertionLabel + '」，已执行断言 ' + String(executedBeforeAbort) + ' 条（含保真），源码调用点 ' + String(declaredAssertionSites()) + ' 条，未执行上界 ' + String(incompleteAssertions) + ' 条')
 } finally {
   try {
     writeFileSync(v4EvidenceIndexPath, JSON.stringify(v4EvidenceRecords, null, 2) + '\n')
@@ -692,5 +907,7 @@ try {
   }
 }
 check('fixture finally 清理整个fixture根及capture/temp兄弟目录', cleaned)
-output.summary(pass, fail)
+// 保真断言口径与 checkFidelity 实现一致：成功只计入 fidelity 独立赛道、不计入通过数 pass；失败已计入 fail。
+output.emit('保真断言（独立赛道 fidelity：如实呈现即计入此数，不计入通过 pass；失败另计 fail）：' + String(fidelity))
+output.summary(pass, fail, incompleteAssertions > 0 ? { incomplete: incompleteAssertions } : {})
 process.exitCode = fail === 0 ? 0 : 1

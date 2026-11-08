@@ -230,7 +230,7 @@ export function createRunCodeStatic({ askTool, isDispatchStart }) {
   // 多调用容错闸门：tools.* 调用点（未去重、含多行与动态访问；裸写不计）≥2 时，
   // 每点必须有独立 try/catch（try 内恰 1 点、块后紧跟 catch）；allSettled/.catch/包装函数不算。
   // 单调用豁免；depth 0 且参数可解析的嵌套 run_code 展平，静态识别失败按未保护拒绝；
-  // decomposeRunCode 与 native/both 直呼路径保持同一合同。
+  // decomposeRunCode 与 native 直呼路径保持同一合同。
   function runCodeCatchGateReason(code) {
     const text = typeof code === 'string' ? code : ''
     if (text === '') return null

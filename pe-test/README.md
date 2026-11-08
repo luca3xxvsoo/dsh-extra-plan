@@ -28,7 +28,7 @@ node pe-test/tools/一键step测试.mjs
 ```
 → 自动跑一键脚本 AUTO 数组中的全部自动判定项（项数以 runner 的 AUTO 数组实际项为准），按实际结果分级为通过/部分执行/未执行/失败，结果保存到 `pe-test/reports/测试报告-<时间>.md`；历史批次数字不作为当前通过数。
 → 涉及 Host 代码依赖项时，须由调用者显式前置 `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/一键step测试.mjs`（仅授只读代码根，不授数据 H）；纯 W/只读取证工具直接 `node`；AUTO 不透传真实 Host 选择，实机/provider 项按 HUMAN/NOT-RUN 单列，不自动执行。
-→ 判读：中文「未完成」与英文 `INCOMPLETE` 均计入未完成；`NOT-RUN`/`HUMAN`/`SKIP` 正数不计 PASS；exit 0 只表示无失败，不等于全量执行。
+→ 判读：中文「未完成」与英文 `INCOMPLETE` 均计入未完成；`NOT-RUN`/`HUMAN`/`SKIP` 正数不计 PASS；exit 0 只表示无失败，不等于全量执行。「保真断言」（唯一入口 = `step-06-08-v4取证回归.mjs` 的 `checkFidelity`）只验证取证工具对畸形或异常输入如实呈现且不崩，成功只计入 fidelity 独立赛道、不计入通过数，失败仍计入失败并使脚本退出码非零。
 → 跑之前先确认：**在完整目录（pe-test 与 plugins 同级 = 仓库根）下运行**才有完整结果
 → QQBot 环境项默认只读真实 profile；缺环境或 junction 能力不足显示结构化 SKIP，不计失败，不会自动 heal/建链；报告末尾会列出「人眼项/需参数项」——那些需要你自己跑并人工判读，不是自动的；HUMAN 独立报告保留 stdout/stderr 全量原文
 
@@ -50,7 +50,7 @@ node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-07-子代理
 | 步骤 | 跑什么 | 全过 = 说明 |
 |---|---|---|
 | 0 全局逻辑回归 | step-00-全流程回归 / step-00-跨平台写拦截 | 插件核心逻辑没被改坏 |
-| 1 安装与配置 | step-01-设置迁移 / 预设完整性 / 设置页配置 / step-01-qqbot-安装映射（静态） | 选择性恢复、格式安全、后端权威行/投影回归、0.2 独立 tab 移除、legacy row 按宿主 slot 条件呈现、QQBot 静态 patch/迁移逻辑通过 |
+| 1 安装与配置 | step-01-设置迁移 / 预设完整性 / 设置页配置 / step-01-qqbot-安装映射（静态） | 选择性恢复、格式安全、后端权威行/投影回归、0.2 独立 tab 移除、QQBot 静态 patch/迁移逻辑通过 |
 | 1A QQBot 环境 | step-01-qqbot-环境验证（条件只读） | 五条件命中时只读核验 profile；环境/能力不足为 SKIP，不计失败 |
 | 2 anchored 引导开关 | 人工对比（无自动工具） | 开=AI 先看再答；关=直接开干；两遍有区别=开关生效 |
 | 4 路由确认与写闸门 | step-04-路由与写闸门 (+ 工具清单查看) | 路由没确认时 AI 不能改文件；reviewer 不能写 |
@@ -64,14 +64,14 @@ node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-07-子代理
 
 **限制口径**：`PROBE_LIMITS` 与 `exploreBudget=18` 均以源码合同/作者 YAML 为唯一口径；本文不复制全量限制值，避免与历史批次数字漂移。报告中的源改动、删除文件、backup、reports 与 context fixture 分开统计；AUTO/HUMAN/SKIP 以报告字段为准，历史批次数字不作为当前通过数。
 
-**工具包目录说明**：pe-test/_shared/ 是取证脚本共用的解码/定位模块（workspace-paths / session-finder / test-output / zstd-frames / host-deps / host-preload / v4-tool-result）；其中 workspace-paths 是多数脚本共用的坐标地基，host-deps 与 host-preload 是宿主依赖解析边界，均不可删。HUMAN 项报告沿用 `测试报告-<时间>.md` 命名，独立运行不覆盖一键体检主报告。
+**工具包目录说明**：pe-test/_shared/ 是取证脚本共用的解码/定位模块（workspace-paths / session-finder / test-output / zstd-frames / host-deps / host-preload / v4-tool-result / session-fixture.mjs）；其中 workspace-paths 是多数脚本共用的坐标地基，host-deps 与 host-preload 是宿主依赖解析边界，均不可删；session-fixture.mjs 是 step-06-08 专用的会话夹具，事件构造与 zstd 帧/会话落盘只服务该步的取证回归。HUMAN 项报告沿用 `测试报告-<时间>.md` 命名，独立运行不覆盖一键体检主报告。
 
 ## 两个注意事项
 
 1. **运行前提**：部分文件要 `import 仓库里的插件代码`（相对路径 `../../plugins/...`）——如果运行时报「找不到模块」，说明当前目录不是完整目录；把 pe-test 挪回仓库根（或你准备挪回工作区时带齐 plugins）再跑。
-2. `step-99-用量统计.mjs` 需要参数：普通相对路径 `node step-99-用量统计.mjs <ledger-v2.jsonl>` 固定按 W 短锁统计；手工归档已移除（`--archive` 报 `usage-removed`），归档统一由插件启动归档与 lib/usage-archive.js 的 `archiveLedger` 执行；显式 `--host-root <H 数据根>` 加 H 内绝对精确账本为只读稳定观察（最多两次观察、不取锁、零 Host 写；锁忙、元数据变化或两次字节不一致记 `INCOMPLETE`）。
-   - 固定文件为同目录 `ledger-v2.jsonl`（active）、`ledger-v2.archive.jsonl`（archive）和 `ledger-v2.jsonl.lock`（active + `.lock`）。锁内容记录 owner 的 PID、token、创建时间；统计与 writer 共用排他锁。
-   - 默认统计只在锁内读取 archive+active 字节快照，释放锁后自动合并解析，零写入、cursor 不读写；按完整九字段身份键 `schemaVersion | rootSessionId | sessionId | parentSessionId | agentPreset | delegationDepth | role | model | provider` 分组，输出四桶、`maxSeq`、`ts` 及派生总量，不输出调用计数列。writer/严格归档固定15键，`rootSessionId` 与 `agentPreset` 合法为空字符串；archive 每个完整身份仅保留一条累计行，`seq` 是身份累计水位而非调用数，active 中同身份 `seq` 不大于该水位的重放行跳过并计入 `covered`。
-   - 手工归档已移除：`--archive` 报 `usage-removed`（在任何 IO 前拒绝），归档统一由插件启动归档与 lib/usage-archive.js 的 `archiveLedger` 执行；统计可在 DSH 运行中调用（共享锁内只读 archive+active 字节快照，释放锁后合并解析，零写入、cursor 不读写）。
-   - writer 最多短等约 1 秒；timeout 静默返回 `delayed`，不推进 ledger/cursor，后续 fold 补记。stale-lock 由下一次取锁原子接管（死 PID 判死后 rename + token 校验，不匹配还原）；接管失败才告警一次并 delayed，后续 fold 重试；非法输入拒绝。release 失败返回明确的 `failed`/`release-failed`，已提交写入不伪装回滚。V1 不迁移。
-   - 插件内置启动归档：DSH 服务进程启动时对默认 H 账本 usage-ledger/ledger-v2.jsonl 执行一次合并归档（3 秒预算、失败回滚并追加写 usage-ledger/archive-failed.log 一行时间+原因、锁忙跳过、绝不阻断启动）；step-99 CLI 仅做统计，不再提供手工归档。
+2. `step-99-用量统计.mjs` 需要参数：普通相对路径 `node step-99-用量统计.mjs <ledger-v2.archive.jsonl>` 即只读统计（只读、不取锁、零写入）；手工归档已移除（`--archive` 报 `usage-removed`），归档统一由插件启动扫描与 lib/usage-ledger.js 的 `archiveLedger` 执行；新增 `--compare <ledger-v2.archive.jsonl>` 只读对拍：额外跑一次现场扫描，与账本按 role→model 两维逐项对拍，全程零写盘；显式 `--host-root <H 数据根>` 加 H 内绝对精确账本为只读稳定观察（最多两次观察、不取锁、零 Host 写；元数据变化或两次字节不一致记 `INCOMPLETE`）。
+   - 唯一账本为 `usage-ledger/ledger-v2.archive.jsonl`，其路径由启动归档固定拼接为该文件，`usageLedger` 配置项已退役、无运行期消费者；不再有第二本账、锁期快照合并或任何旁路文件参与统计。
+   - 统计只读、不取锁、零写入：写入由插件启动扫描用「临时文件 + `rename`」原子发布，读者要么看到完整旧版本、要么看到完整新版本，不会读到半成品。按完整九字段身份键 `schemaVersion | rootSessionId | sessionId | parentSessionId | agentPreset | delegationDepth | role | model | provider` 分组，输出四桶、`maxSeq`、`ts` 及派生总量，不输出调用计数列。账本行固定 15 键，`rootSessionId` 与 `agentPreset` 合法为空字符串；每个完整身份仅保留一条累计行，`seq` 是会话内事件序号而非调用数。
+   - 手工归档已移除：`--archive` 报 `usage-removed`（在任何 IO 前拒绝），归档统一由插件启动扫描与 lib/usage-ledger.js 的 `archiveLedger` 执行；统计可在 DSH 运行中调用，只读不互斥。
+   - 写入侧只有插件启动扫描一处：严格白名单（`extra-plan` 与四个角色 preset）、按身份覆盖式幂等更新、单调性保护（本次扫描小于现状则保留旧值并告警一次）；写入互斥是一次 `O_EXCL` 建 `<archive>.lock` 的简易互斥，拿不到锁就跳过本次启动扫描并留痕，不等待、不接管、不删他人锁。V1 不迁移。
+   - 插件内置启动扫描：DSH 服务进程启动时扫描本地 v4 会话日志（`%DSH_HOME%/sessions`），覆盖式更新 `usage-ledger/ledger-v2.archive.jsonl`（3 秒预算只约束写路径；锁忙、扫描失败等情况追加写 `usage-ledger/archive-failed.log` 一行时间+原因，绝不阻断启动）；step-99 CLI 仅做统计与对拍，不再提供手工归档。

@@ -14,6 +14,7 @@ import {
 } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
 import {
   assetDefinition,
+  declarationBodyMatchesAsset,
   readLegacyState,
   resolveUnifiedConfig,
   restateSettingsConfig,
@@ -290,7 +291,7 @@ function projectionOf(result) {
   const plugins = result.plan === undefined ? [] : result.plan.definition.plugins
   return {
     webFetch: findPluginRow(plugins, 'tool-web').config.fetch,
-    toolPresentationMode: findPluginRow(plugins, 'tool-presentation').config.mode,
+    toolPresentationMode: (() => { const nativeRow = findPluginRow(plugins, 'tool-executor-native'); if (nativeRow !== undefined) return 'native'; const ptcRow = findPluginRow(plugins, 'tool-executor-ptc'); if (ptcRow !== undefined) return 'ptc'; return undefined })(),
     gateWords: structuredClone(findPluginRow(plugins, 'extra-plan').config.gateWords),
   }
 }
@@ -395,7 +396,14 @@ for (const [kind, words] of invalidCurrentGateCases) {
 const declaredOnlyGate = { routeDirect: '旧直', routePlan: '旧规', routeDisagree: '旧异', approvalApprove: '旧同', approvalReplan: '旧转', purposeRefine: '旧完', purposeRedo: '旧重' }
 const declaredOnlyPlugins = structuredClone(definition.plugins)
 findPluginRow(declaredOnlyPlugins, 'tool-web').config.fetch = true
-findPluginRow(declaredOnlyPlugins, 'tool-presentation').config.mode = 'ptc'
+const execRow = findPluginRow(declaredOnlyPlugins, 'tool-executor-native')
+if (execRow === undefined) {
+  // 资产缺 executor 行时显式失败并跳过依赖它的行身份改写，不得让后续赋值抛 TypeError。
+  check('F03 声明体缺少 executor 行 tool-executor-native，跳过行身份改写', false)
+} else {
+  execRow.id = 'tool-executor-ptc'
+  execRow.name = '@deepseek-ai/dsh-tool-executor-ptc'
+}
 findPluginRow(declaredOnlyPlugins, 'extra-plan').config.gateWords = structuredClone(declaredOnlyGate)
 const declaredOnlyBefore = structuredClone(declaredOnlyPlugins)
 const declaredOnlyRun = await syncPreset({ pathContext: MIGRATION_PATH_CONTEXT, declaredPlugins: declaredOnlyPlugins })
@@ -425,6 +433,33 @@ const explicitLegacyState = {
 const explicitLegacyRun = await syncPreset({ pathContext: MIGRATION_PATH_CONTEXT, declaredPlugins: declaredOnlyPlugins, readPatch: () => bodyOnly, legacyState: explicitLegacyState })
 const explicitLegacyExpected = { webFetch: false, toolPresentationMode: 'native', gateWords: explicitLegacyGate }
 check('F03 显式 legacyState 优先于 readPatch 与 declaredPlugins', explicitLegacyRun.action === 'written' && isDeepStrictEqual(projectionOf(explicitLegacyRun), explicitLegacyExpected) && explicitLegacyRun.plan.diagnostics.includes('explicit legacyState marker'))
+
+// F03b 配置矩阵：锁住 declarationBodyMatchesAsset 的抹平边界（行身份 / 叶值 / 结构）与已同步稳态的 idle 判定。
+function f03bIdentityBody() {
+  const plugins = structuredClone(definition.plugins)
+  const executorRow = findPluginRow(plugins, 'tool-executor-native')
+  if (executorRow === undefined) throw new Error('F03b 资产缺少 tool-executor-native 行')
+  executorRow.id = 'tool-executor-ptc'
+  executorRow.name = '@deepseek-ai/dsh-tool-executor-ptc'
+  return plugins
+}
+const f03bIdentityPlugins = f03bIdentityBody()
+check('F03b ① 仅执行器行身份差异（id/name 同为 ptc，其余逐字不动）判等为 true', declarationBodyMatchesAsset(f03bIdentityPlugins, definition.plugins) === true)
+// 稳态构造：声明体已切 ptc，settingsValues 的 toolPresentationMode 必须同为 ptc 才代表「已同步」稳态（native 会与声明冲突）。
+const f03bSteadySettings = { ...defaultGlobalAfter(), toolPresentationMode: 'ptc' }
+const f03bIdentityRun = await syncPreset({ pathContext: MIGRATION_PATH_CONTEXT,
+  declaredPlugins: f03bIdentityPlugins,
+  settingsValues: f03bSteadySettings,
+})
+check('F03b ① 仅行身份差异的已同步稳态 syncPreset 返回 idle（无待写设置且无结构差异）', f03bIdentityRun.action === 'idle')
+const f03bLeafPlugins = structuredClone(definition.plugins)
+findPluginRow(f03bLeafPlugins, 'tool-web').config.fetch = true
+check('F03b ② 仅 tool-web.config.fetch 叶值差异（用户可写叶已抹平）判等为 true', declarationBodyMatchesAsset(f03bLeafPlugins, definition.plugins) === true)
+const f03bMissingWebPlugins = structuredClone(definition.plugins).filter((row) => row === null || typeof row !== 'object' || row.id !== 'tool-web')
+check('F03b ③ 结构性真差异（tool-web 整行缺失）判等为 false', declarationBodyMatchesAsset(f03bMissingWebPlugins, definition.plugins) === false)
+const f03bIdentityTwin = f03bIdentityBody()
+check('F03b ④ 对称性：两侧同为行身份差异体时判等为 true', declarationBodyMatchesAsset(f03bIdentityPlugins, f03bIdentityTwin) === true)
+check('F03b ④ 对称性：参数顺序对调后仍为 true（抹平不依赖比较方向）', declarationBodyMatchesAsset(f03bIdentityTwin, f03bIdentityPlugins) === true)
 
 const invalidCurrent = { ...complete, gateWords: invalidGate }
 const invalidEditor = makeEditor(invalidCurrent)

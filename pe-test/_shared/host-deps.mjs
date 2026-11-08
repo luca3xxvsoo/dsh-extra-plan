@@ -405,7 +405,8 @@ export async function registerHostDeps() {
       throw new Error('[host-deps] 当前 Node 既无 module.registerHooks 也无 module.register（需 Node >= 20.6），无法注册宿主解析钩子')
     }
     registeredRoots.add(strictRoot)
-    console.log('[host-deps] 实际宿主版本: ' + anchor.version + '（' + anchor.manifest + '）')
+    // 需要纯净 stdout 的子进程探针（如 step-06-08 exit7 探针）可设 DSH_HOST_DEPS_QUIET=1 抑制横幅；默认打印行为不变量。
+    if (process.env.DSH_HOST_DEPS_QUIET !== '1') { console.log('[host-deps] 实际宿主版本: ' + anchor.version + '（' + anchor.manifest + '）') }
   } catch (error) {
     throw error
   }

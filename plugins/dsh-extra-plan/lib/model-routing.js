@@ -62,7 +62,12 @@ export function resolveAgentRouteSources(agent, agents) {
   let current = parent
   let complete = true
   let depth = 0
-  while (isSubagentChild(current)) {
+  // 父链上行判定走 header-only（传空 events）降级：isSubagentChild 的 header origin/delegationDepth
+  // 判据足以识别子代理会话（header 必带标记），事件流 descriptor 兜底不再使用。
+  // 不迁 observeSession：它是 async，本循环在同步上下文无法 await；而 resolveAgentRouteSources 被
+  // 生产入口（index.js 的 agent/request 决策面）与模块内 nonPlannerRouteSources 同步直调，
+  // 改 async 会破坏调用契约。故这里跳过事件流扫描。
+  while (isSubagentChild(current, [])) {
     const currentHeader = current !== undefined && current !== null && current.session !== undefined && current.session !== null && current.session.header !== undefined && current.session.header !== null ? current.session.header : null
     const upId = currentHeader !== null ? currentHeader.parentSession : undefined
     if (typeof upId !== 'string') { complete = false; break }
@@ -308,7 +313,7 @@ async function collectStrictProbeCandidates(llm, model, parentSignal) {
 }
 // False/缺失/非法开关的旧单 provider 流程原样保留：只查父 provider 的 advisory 目录，
 // 不枚举 provider，也不调用真实 prepareCall/stream 或严格 fallback probe。
-async function resolvePlannerEntryLegacy(agent) {
+async function resolvePlannerEntrySingleProvider(agent) {
   let provider
   let model
   let maxTokens
@@ -431,7 +436,7 @@ function resolvePlannerEntry(agent, parentSignal) {
   const crossProvider = getCrossProviderPlannerModel(agent)
   const pending = crossProvider
     ? resolvePlannerEntryStrict(agent, parentSignal)
-    : resolvePlannerEntryLegacy(agent)
+    : resolvePlannerEntrySingleProvider(agent)
   plannerModelCache.set(agent, pending)
   return pending
 }
@@ -455,7 +460,7 @@ function nonPlannerFallbackEntry(sources, probe) {
 }
 
 // cross=false/缺失/非法：只对顶层主会话 provider 做 advisory listModels；不做真实探针。
-async function resolveOtherAgentEntryLegacy(agent, probe) {
+async function resolveOtherAgentEntrySingleProvider(agent, probe) {
   const sources = nonPlannerRouteSources(agent)
   const fallback = nonPlannerFallbackEntry(sources, probe)
   const targetModel = getOtherAgentModel(agent)
@@ -484,7 +489,7 @@ async function resolveOtherAgentEntryStrict(agent, parentSignal, probe) {
     if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
     throw new Error(NON_PLANNER_BLOCKED_REASON)
   }
-  // 空串等于继承主会话：父 fallback 即最终路由，零网络零探针（与 Legacy 空串语义对齐）。
+  // 空串等于继承主会话：父 fallback 即最终路由，零网络零探针（与单 provider 路径的空串语义对齐）。
   if (targetModel === '' && fallback.provider !== undefined) {
     if (parentSignal !== undefined && parentSignal !== null && parentSignal.aborted) throw plannerAbortError(parentSignal)
     return fallback
@@ -515,7 +520,7 @@ function resolveOtherAgentEntry(agent, parentSignal, probe) {
   const crossProvider = getCrossProviderPlannerModel(agent)
   const pending = crossProvider
     ? resolveOtherAgentEntryStrict(agent, parentSignal, probe)
-    : resolveOtherAgentEntryLegacy(agent, probe)
+    : resolveOtherAgentEntrySingleProvider(agent, probe)
   otherAgentModelCache.set(agent, pending)
   return pending
 }
@@ -606,7 +611,7 @@ async function resolveReviewerEntry(agent, parentSignal) {
   // 同一 ownerSignal 合并 in-flight；不同 signal 旁路独立解析，迟到结果不得回写新条目。
   const pending = (crossProvider
     ? resolvePlannerEntryStrict(agent, ownerSignal)
-    : resolvePlannerEntryLegacy(agent)
+    : resolvePlannerEntrySingleProvider(agent)
   ).then((entry) => {
     throwIfReviewerAborted(ownerSignal)
     return {

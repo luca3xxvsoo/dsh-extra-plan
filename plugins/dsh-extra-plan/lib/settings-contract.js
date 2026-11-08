@@ -5,8 +5,8 @@ export { DEFAULT_SETTINGS }
 const isString = (value) => typeof value === 'string'
 const isPositiveInteger = (value) => typeof value === 'number' && Number.isInteger(value) && value > 0
 const isBoolean = (value) => typeof value === 'boolean'
-// 0.2.1：呈现模式二值化（dsh-agent-tool-presentation 只接受 native/ptc，同一 composition
-// 二次 presentAs 会抛错）；旧混合值不写迁移，由归一化路径回落 native。
+// 0.2.2：executor 行身份模型——呈现模式由宿主行 id 承载（tool-executor-native / tool-executor-ptc），
+// tool-presentation 行已降级为 @deprecated 兼容壳（只读旧值，不再作为新写入目标）。
 const modeOptions = Object.freeze(['native', 'ptc'])
 const isMode = (value) => typeof value === 'string' && modeOptions.includes(value)
 
@@ -18,17 +18,40 @@ export const SETTINGS_ROW_NAME = 'dsh-extra-plan/settings'
 export const PRESET_ROW_ID = 'extra-plan-preset-sync'
 /** 旧 profile 预设声明行：仅用于非破坏读取迁移，不再作为新写入目标。 */
 export const LEGACY_PRESET_ROW_ID = 'preset-extra-plan'
-/** 声明行 plugins 内承载 2 项宿主行设置的子行 id（投影落点的行 id）。 */
-export const HOST_ROW_IDS = Object.freeze({ webFetch: 'tool-web', toolPresentationMode: 'tool-presentation' })
+/**
+ * 声明行 plugins 内承载宿主行设置的子行 id（投影落点的行 id）。
+ * toolPresentationMode 用行身份承载模式（两个 executor 行 id），不再有叶键。
+ */
+export const HOST_ROW_IDS = Object.freeze({
+  webFetch: 'tool-web',
+  toolPresentationMode: Object.freeze({ native: 'tool-executor-native', ptc: 'tool-executor-ptc' }),
+})
+/** 行 id → 呈现模式的唯一映射源：键由 HOST_ROW_IDS.toolPresentationMode 派生，不再另写字面量。 */
+export const MODE_BY_ROW_ID = Object.freeze({
+  [HOST_ROW_IDS.toolPresentationMode.native]: 'native',
+  [HOST_ROW_IDS.toolPresentationMode.ptc]: 'ptc',
+})
+/** executor 宿主行包名前缀：name = 前缀 + 裸模式名（native/ptc）；运行期行 id 是裸行 id（不带包名前缀），两种形态不得混用。 */
+export const EXECUTOR_TOOL_NAME_PREFIX = '@deepseek-ai/dsh-tool-executor-'
+/** 旧 profile 的呈现模式行 id：@deprecated 兼容壳，只读旧值，不再作为新写入目标。 */
+export const LEGACY_PRESENTATION_ROW_ID = 'tool-presentation'
 /** 投影落点的叶键（宿主行 config 内键名）：源模板与投影共用同一份 leaf 名，不新增第二份键名清单。 */
-export const HOST_ROW_LEAF_KEYS = Object.freeze({ webFetch: 'fetch', toolPresentationMode: 'mode' })
+export const HOST_ROW_LEAF_KEYS = Object.freeze({ webFetch: 'fetch' })
 /** descriptor 分组（消费方）：11 项统一落 settings 全局行；2 项另派生到内存 definition。 */
 export const SETTING_GROUPS = Object.freeze({ EXTRA_PLAN: 'extra-plan', HOST_ROWS: 'host-rows' })
 
 const setting = (definition) => Object.freeze({
   ...definition,
   type: definition.scalarType,
-  sourceLocator: Object.freeze({ ...definition.sourceLocator }),
+  sourceLocator: Object.freeze({
+    ...definition.sourceLocator,
+    ...(definition.sourceLocator.rowIds === undefined
+      ? {}
+      : { rowIds: Object.freeze([...definition.sourceLocator.rowIds]) }),
+    ...(definition.sourceLocator.modeByRowId === undefined
+      ? {}
+      : { modeByRowId: Object.freeze({ ...definition.sourceLocator.modeByRowId }) }),
+  }),
   rowLocator: Object.freeze({ ...definition.rowLocator }),
   ...(definition.projectionLocator === undefined
     ? {}
@@ -67,6 +90,7 @@ const hostRowProjectionLocator = (key) => ({
 /** 旧声明行内的投影定位器，仅用于读取迁移与旧 body carry。 */
 const legacyHostRowProjectionLocator = (key) => ({
   rowId: LEGACY_PRESET_ROW_ID,
+  // 防误用：仅 webFetch 可用——HOST_ROW_IDS[key] 对 toolPresentationMode 是 frozen 对象、HOST_ROW_LEAF_KEYS 无该键，复用会得到 pluginsRowId=对象、path='config.undefined'，findPluginsRow 严格相等恒不命中。
   pluginsRowId: HOST_ROW_IDS[key],
   path: 'config.' + HOST_ROW_LEAF_KEYS[key],
 })
@@ -94,17 +118,22 @@ export const SETTING_DEFINITIONS = Object.freeze([
   }),
   setting({
     key: 'toolPresentationMode', group: SETTING_GROUPS.HOST_ROWS, scalarType: 'mode', defaultValue: DEFAULT_SETTINGS.toolPresentationMode,
-    sourceLocator: { rowId: HOST_ROW_IDS.toolPresentationMode, path: 'config.' + HOST_ROW_LEAF_KEYS.toolPresentationMode },
+    // 行身份模型：值 = 命中的 executor 行 id 对应的 mode（两个行 id 合计恰 1 命中），无 config 叶键。
+    sourceLocator: {
+      rowIds: [HOST_ROW_IDS.toolPresentationMode.native, HOST_ROW_IDS.toolPresentationMode.ptc],
+      modeByRowId: MODE_BY_ROW_ID,
+    },
     rowLocator: settingsRowLocator('toolPresentationMode'),
     projectionLocator: hostRowProjectionLocator('toolPresentationMode'),
-    legacyProjectionLocator: legacyHostRowProjectionLocator('toolPresentationMode'),
+    // 旧 profile 里的该值仍在 tool-presentation 行的 config.mode 叶（@deprecated 兼容壳）：只读迁移，不作新写入目标。
+    legacyProjectionLocator: { rowId: LEGACY_PRESET_ROW_ID, pluginsRowId: LEGACY_PRESENTATION_ROW_ID, path: 'config.mode' },
     validator: isMode,
     ui: {
       control: 'select', options: modeOptions,
       optionLocale: { native: 'toolPresentationModeNative', ptc: 'toolPresentationModePtc' },
       locale: 'toolPresentationMode',
       section: 'general',
-      hint: '工具呈现方式切换（默认/PTC模式），无法进行会话内切换 ｜ 重启生效',
+      hint: '工具执行器切换（默认/PTC模式），无法进行会话内切换 ｜ 重启生效',
     },
     locatorAliases: [],
   }),

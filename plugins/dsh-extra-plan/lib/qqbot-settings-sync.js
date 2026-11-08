@@ -489,7 +489,7 @@ function renderedConfig(snapshot, configIndent) {
   return lines
 }
 
-// 0.2.1 patch 方言：新写入一律用「- id: <设置行 id> + 全量 config」的朴素行，不再写 override 包装键。
+// 单版本 patch 方言：新写入一律用「- id: <设置行 id> + 全量 config」的朴素行，不再写 override 包装键。
 function renderedRow(snapshot, rootIndent) {
   const spaces = (value) => ' '.repeat(value)
   const lines = [

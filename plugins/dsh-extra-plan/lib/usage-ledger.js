@@ -1,42 +1,115 @@
-// per-apply usage 账本：cursor 表、增量 fold 与一次性告警。
-import { mkdirSync, readFileSync, appendFileSync, writeFileSync, openSync, closeSync, writeSync, renameSync, unlinkSync } from 'node:fs'
+// 用量账本（改造11 三模块合并）——本文件是账本唯一实现，四段职责：
+//   ① 常量与身份键；
+//   ② 扫描（改造11 前在独立扫描模块：枚举 sessions/<ws>/<sid>/session.v4.jsonl.zstd、node:zlib 多帧解压、
+//      事件提取、白名单过滤、身份聚合）；
+//   ③ 写入（改造11 前在独立归档模块：读现有 archive、按身份覆盖式更新、单调性保护、说明行、temp→rename 原子发布）；
+//   ④ 启动入口 startupArchive。
+// 改造11 相对合并前（291+543+1000=1834 行）删除：createUsageLedger 空壳、archivePathOf/archiveLedger 直调入口、
+// 整套跨进程锁（等待轮询、死 PID 接管、stale-lock 告警）、双文件事务、逆序回滚、active 相关分支。
+// 写入互斥只剩一次 O_EXCL 建 <archive>.lock：拿不到即跳过本次启动扫描并留痕，不等待、不接管、不删他人锁。
+import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { dirname, isAbsolute, join } from 'node:path'
-import { resolveWorkspacePath, resolveHostPath, prepareWriteTarget, validateReadTarget } from './path-policy.js'
+import { basename, dirname, join } from 'node:path'
+import { zstdDecompressSync } from 'node:zlib'
+import { ROLE_IDS, USAGE_ROLE_BY_PRESET } from './role-contract.js'
+import { resolveHostPath, prepareWriteTarget, validateReadTarget } from './path-policy.js'
 
-export const WRITER_LOCK_WAIT_MS = 1000
-const LOCK_POLL_MS = 25
-const LOCK_WAIT_BUFFER = new Int32Array(new SharedArrayBuffer(4))
 
-function lockPathOf(activePath) {
-  return typeof activePath === 'string' && activePath !== '' ? activePath + '.lock' : ''
+// ── ① 常量区 ─────────────────────────────────────────────────────────────────
+const SESSIONS_DIRECTORY = 'sessions'
+const SESSION_LOG_FILE_NAME = 'session.v4.jsonl.zstd'
+const SUPPORTED_SESSION_VERSION = 4
+const USAGE_PRESET = 'extra-plan'
+
+// 严格白名单：主预设 extra-plan 与 role-contract 的四个角色预设 id（executor/planner/reviewer/prober）。
+// 预设不在白名单的会话整体跳过，不产出任何行。
+export const ALLOWED_PRESETS = Object.freeze([USAGE_PRESET, ...ROLE_IDS])
+
+export const IDENTITY_KEYS = Object.freeze([
+  'schemaVersion',
+  'rootSessionId',
+  'sessionId',
+  'parentSessionId',
+  'agentPreset',
+  'delegationDepth',
+  'role',
+  'model',
+  'provider',
+])
+
+const TOKEN_KEYS = Object.freeze([
+  'inputTokens',
+  'cacheReadTokens',
+  'cacheWriteTokens',
+  'outputTokens',
+])
+
+// 主会话目录名是 session-<uuid>，子代理会话目录名是裸 <uuid>（目录名即会话 id）；
+// 两者都是会话目录，其余目录（临时/缓存等）整体跳过。
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const SESSION_ID_PREFIX = 'session-'
+const MAX_PARENT_DEPTH = 8
+
+// 只用字符串前缀判断行里是否可能是目标事件：整行 JSON.parse 前先做 O(n) 子串过滤，
+// 避免为几乎全部内容型事件（assistant 正文、工具输出）付解析代价。
+const EVENT_MARKERS = Object.freeze({
+  session: '"session"',
+  usage: '"assistant/message"',
+  presetSelected: '"agent-preset/selected"',
+  requestHeader: '"request/header"',
+})
+
+// ── ①b 账本常量（由旧归档模块迁入）────────────────────────────────────
+const STARTUP_ARCHIVE_BUDGET_MS = 3000
+
+const ARCHIVE_FILE_NAME = 'ledger-v2.archive.jsonl'
+const LEDGER_DIRECTORY = 'usage-ledger'
+const DIAGNOSTIC_FILE_NAME = 'archive-failed.log'
+const LEDGER_PURPOSE = 'usage-ledger'
+
+const V2_KEYS = Object.freeze([
+  'schemaVersion',
+  'ts',
+  'sessionId',
+  'parentSessionId',
+  'rootSessionId',
+  'agentPreset',
+  'delegationDepth',
+  'role',
+  'model',
+  'provider',
+  'inputTokens',
+  'cacheReadTokens',
+  'cacheWriteTokens',
+  'outputTokens',
+  'seq',
+])
+
+// 归档首行说明行：kind 固定为「账本说明」，说明 给人类读口径，键 是数据行 15 个键的逗号展开。
+// 说明行只允许唯一一条出现在首行，统计与归档一律跳过；判定必须三字段全形，避免把只有 kind 的垃圾行当说明行静默吞掉。
+export const SCHEMA_DOC_KIND = '账本说明'
+export const SCHEMA_DOC_ROW = Object.freeze({
+  kind: SCHEMA_DOC_KIND,
+  说明: '一行等于一个完整身份累计行；总消耗为四桶相加；inputTokens 是未命中缓存输入，cacheReadTokens 是命中输入，'
+    + 'cacheWriteTokens 可为非零，outputTokens 为输出；seq 是会话内事件水位，不可当主键；'
+    + 'ts 是该身份最后一次写入时刻；delegationDepth 0 主会话、1 一级委派；parentSessionId 空串为主会话；'
+    + 'role 取值含 main、child 及 executor/planner/reviewer/prober 四角色；agentPreset 是预设名；model 与 provider 分别为模型名与供应商名。',
+  键: V2_KEYS.join(','),
+})
+export const SCHEMA_DOC_LINE = JSON.stringify(SCHEMA_DOC_ROW)
+
+export function isSchemaDocRow(row) {
+  return isPlainObject(row) && row.kind === SCHEMA_DOC_KIND && typeof row.说明 === 'string' && typeof row.键 === 'string'
 }
 
-function staleLockPathOf(lockPath) {
-  return lockPath + '.stale-' + process.pid + '-' + randomUUID()
-}
-
-// 接管僵尸锁：复用 releaseUsageLedgerLock 已验证的 rename 独占搬走 → token 复核 → 不匹配还原模式；
-// 只有搬走后读到的 token 仍与判死时的 owner 一致才删除，绝不无校验直删他人锁。
-// 搬走失败（ENOENT/EEXIST 等）按原样抛出，由调用方记为 takeover-failed。
-function takeoverStaleLock(lockPath, expectedOwner) {
-  const stalePath = staleLockPathOf(lockPath)
-  renameSync(lockPath, stalePath)
-  const moved = readLockOwner(stalePath)
-  if (moved === undefined || moved.token !== expectedOwner.token) {
-    try { renameSync(stalePath, lockPath) } catch (restoreError) { /* do not delete another owner's lock */ }
-    return { taken: false, reason: 'token-mismatch' }
-  }
-  try {
-    unlinkSync(stalePath)
-  } catch (error) {
-    if (errorCodeOf(error) !== 'ENOENT') {
-      try { renameSync(stalePath, lockPath) } catch (restoreError) { /* keep the moved lock rather than lose it */ }
-      return { taken: false, reason: 'delete-failed' }
-    }
-  }
-  return { taken: true }
-}
+const DEFAULT_FS_OPS = Object.freeze({
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+  appendFileSync,
+})
 
 function errorCodeOf(error) {
   return error !== null && typeof error === 'object' && typeof error.code === 'string' ? error.code : ''
@@ -46,556 +119,998 @@ function errorMessageOf(error) {
   return error instanceof Error ? error.message : String(error)
 }
 
-function pathContextOf(source) {
-  if (source !== null && typeof source === 'object') {
-    if (source.pathContext !== undefined && source.pathContext !== null) return source.pathContext
-    if (typeof source.getPathContext === 'function') {
-      const supplied = source.getPathContext()
-      if (supplied !== undefined && supplied !== null) return supplied
-    }
-  }
-  return null
+function archiveError(code, message) {
+  const error = new Error(message)
+  error.code = code
+  return error
 }
 
-function resolveLedgerTarget(context, value, purpose) {
-  let hostError
-  try { return resolveHostPath(context, value, { purpose }) } catch (error) { hostError = error }
-  let workspaceError
-  try { return resolveWorkspacePath(context, value, { purpose }) } catch (error) { workspaceError = error }
-  throw workspaceError || hostError || new Error('账本路径不在授权H/W根内')
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-function resolveAbsoluteLedgerPath(context, value) {
-  return resolveLedgerTarget(context, value, 'usage-ledger').path
+function bytesOf(value) {
+  if (Buffer.isBuffer(value)) return Buffer.from(value)
+  if (value instanceof Uint8Array) return Buffer.from(value)
+  return Buffer.from(String(value === undefined || value === null ? '' : value), 'utf8')
 }
 
-function resolveLedgerPath(raw, context) {
-  if (context === null) throw new Error('账本缺少明确H/W根')
-  if (raw === '') return resolveHostPath(context, join('usage-ledger', 'ledger-v2.jsonl'), { purpose: 'usage-ledger' }).path
-  if (isAbsolute(raw)) return resolveAbsoluteLedgerPath(context, raw)
-  return resolveHostPath(context, raw, { purpose: 'usage-ledger' }).path
+function textOfBytes(value) {
+  return bytesOf(value).toString('utf8')
 }
 
-function ledgerTargetOf(context, path, purpose) {
-  if (isAbsolute(path)) return resolveLedgerTarget(context, path, purpose)
-  return resolveHostPath(context, path, { purpose })
+// ── ② 路径枚举 ───────────────────────────────────────────────────────────────
+function isSessionDirectoryName(name) {
+  if (typeof name !== 'string' || name === '') return false
+  const candidate = name.startsWith(SESSION_ID_PREFIX) ? name.slice(SESSION_ID_PREFIX.length) : name
+  return UUID_PATTERN.test(candidate)
 }
 
-function authorizeLedgerWrite(context, path, purpose) {
-  if (context === null) return null
-  return prepareWriteTarget(context, ledgerTargetOf(context, path, purpose), { expectedType: 'file', purpose })
-}
-
-function ensureLedgerDirectory(context, path, purpose) {
-  if (context === null) return
-  const target = ledgerTargetOf(context, path, purpose)
-  prepareWriteTarget(context, target, { expectedType: 'any', purpose })
-  mkdirSync(target.path, { recursive: true })
-  validateReadTarget(context, target, { expectedType: 'directory', purpose })
-}
-
-function validLockOwner(owner) {
-  return owner !== null && typeof owner === 'object' && !Array.isArray(owner)
-    && Number.isInteger(owner.pid) && owner.pid > 0
-    && typeof owner.token === 'string' && owner.token !== ''
-    && owner.createdAt !== undefined
-}
-
-function readLockOwner(lockPath) {
+function listEntries(directory) {
   try {
-    const owner = JSON.parse(readFileSync(lockPath, 'utf8'))
-    return validLockOwner(owner) ? owner : undefined
+    return readdirSync(directory, { withFileTypes: true })
   } catch (error) {
-    return undefined
+    return []
   }
 }
 
-function pidIsAlive(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return undefined
-  if (pid === process.pid) return true
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (error) {
-    const code = errorCodeOf(error)
-    if (code === 'ESRCH' || code === 'EINVAL' || code === 'ENOENT') return false
-    return true
-  }
-}
-
-function tryCreateLock(lockPath) {
-  const owner = { pid: process.pid, token: randomUUID(), createdAt: Date.now() }
-  let fd
-  let created = false
-  let closeAttempted = false
-  let cleanupAttempted = false
-  let cleanupResult
-  let failureDecorated = false
-  const cleanupCreatedLock = () => {
-    if (cleanupAttempted) return cleanupResult
-    cleanupAttempted = true
-    try {
-      unlinkSync(lockPath)
-      cleanupResult = { ok: true, path: lockPath }
-    } catch (error) {
-      cleanupResult = { ok: false, path: lockPath, error }
+// 遍历 sessions/<workspace>/<sessionId>/session.v4.jsonl.zstd；逐层列举，跳过非会话目录与非目标文件名。
+export function enumerateSessionLogs({ hostRoot } = {}) {
+  const root = typeof hostRoot === 'string' && hostRoot.trim() !== '' ? hostRoot : ''
+  const logFiles = []
+  let skippedEntries = 0
+  if (root === '') return { logFiles, skippedEntries, root }
+  const sessionsRoot = join(root, SESSIONS_DIRECTORY)
+  for (const workspaceEntry of listEntries(sessionsRoot)) {
+    if (!workspaceEntry.isDirectory()) {
+      skippedEntries += 1
+      continue
     }
-    return cleanupResult
-  }
-  const decorateFailure = (error, closeError, includeCleanup) => {
-    const details = []
-    if (closeError !== undefined) details.push('closeSync failed: ' + errorMessageOf(closeError))
-    if (includeCleanup || (cleanupResult !== undefined && cleanupResult.ok !== true)) {
-      if (cleanupResult === undefined) {
-        details.push('cleanup not attempted: ' + lockPath)
-      } else if (cleanupResult.ok) {
-        details.push('cleanup succeeded: ' + cleanupResult.path)
-      } else {
-        details.push('cleanup failed: ' + errorMessageOf(cleanupResult.error) + '; residual lock path: ' + cleanupResult.path)
+    const workspacePath = join(sessionsRoot, workspaceEntry.name)
+    for (const sessionEntry of listEntries(workspacePath)) {
+      if (!sessionEntry.isDirectory() || !isSessionDirectoryName(sessionEntry.name)) {
+        skippedEntries += 1
+        continue
       }
-    }
-    if (details.length > 0 && error !== null && (typeof error === 'object' || typeof error === 'function')) {
-      error.message = errorMessageOf(error) + '; ' + details.join('; ')
-    }
-    return error
-  }
-  try {
-    fd = openSync(lockPath, 'wx')
-    created = true
-    writeSync(fd, JSON.stringify(owner), 0, 'utf8')
-    try {
-      closeSync(fd)
-      fd = undefined
-      closeAttempted = true
-    } catch (closeError) {
-      closeAttempted = true
-      fd = undefined
-      cleanupCreatedLock()
-      const failure = new Error('usage lock creation failed after successful write')
-      failure.cause = closeError
-      decorateFailure(failure, closeError, true)
-      failureDecorated = true
-      throw failure
-    }
-    return { acquired: true, lockPath, token: owner.token, owner }
-  } catch (error) {
-    let closeError
-    if (fd !== undefined && !closeAttempted) {
-      closeAttempted = true
+      const logPath = join(workspacePath, sessionEntry.name, SESSION_LOG_FILE_NAME)
       try {
-        closeSync(fd)
-      } catch (errorOnClose) {
-        closeError = errorOnClose
-      }
-      fd = undefined
-    }
-    if (created) cleanupCreatedLock()
-    if (!created && errorCodeOf(error) === 'EEXIST') return undefined
-    if (!failureDecorated) decorateFailure(error, closeError, closeError !== undefined)
-    throw error
-  }
-}
-
-function sleepSync(ms) {
-  if (ms > 0) Atomics.wait(LOCK_WAIT_BUFFER, 0, 0, ms)
-}
-
-export function usageLedgerLockPath(activePath) {
-  return lockPathOf(activePath)
-}
-
-export function acquireUsageLedgerLock(activePath, options = WRITER_LOCK_WAIT_MS) {
-  const lockPath = lockPathOf(activePath)
-  if (lockPath === '') return { acquired: false, reason: 'invalid-path', lockPath, owner: undefined }
-  const pathOptions = options !== null && typeof options === 'object' ? options : {}
-  const pathContext = pathOptions.pathContext !== undefined && pathOptions.pathContext !== null ? pathOptions.pathContext : null
-  const purpose = typeof pathOptions.purpose === 'string' && pathOptions.purpose !== '' ? pathOptions.purpose : 'usage-ledger'
-  if (pathContext === null) return { acquired: false, reason: 'path-context-required', lockPath, owner: undefined }
-  authorizeLedgerWrite(pathContext, activePath, purpose)
-  authorizeLedgerWrite(pathContext, lockPath, purpose)
-  const requestedWait = typeof options === 'number' && Number.isFinite(options)
-    ? options
-    : options !== null && typeof options === 'object' && Number.isFinite(options.waitMs)
-      ? options.waitMs
-      : options !== null && typeof options === 'object' && Number.isFinite(options.timeoutMs)
-        ? options.timeoutMs
-        : WRITER_LOCK_WAIT_MS
-  const waitMs = Math.max(0, requestedWait)
-  const deadline = Date.now() + waitMs
-  let owner
-  while (true) {
-    const acquired = tryCreateLock(lockPath)
-    if (acquired !== undefined) return { ...acquired, pathContext, purpose }
-    owner = readLockOwner(lockPath)
-    if (owner !== undefined && pidIsAlive(owner.pid) === false) {
-      let takeover
-      try {
-        takeover = takeoverStaleLock(lockPath, owner)
-      } catch (error) {
-        takeover = { taken: false, reason: 'takeover-failed', error }
-      }
-      // 接管成功直接继续取锁：下一轮 tryCreateLock 会立即成功；无界循环仍由活锁轮询分支的 deadline 检查兜底。
-      if (takeover.taken === true) continue
-      return { acquired: false, reason: 'stale-lock', lockPath, owner, takeoverError: takeover.error !== undefined ? errorMessageOf(takeover.error) : takeover.reason }
-    }
-    const remaining = deadline - Date.now()
-    if (remaining <= 0) return { acquired: false, reason: 'timeout', lockPath, owner }
-    sleepSync(Math.min(LOCK_POLL_MS, remaining))
-  }
-}
-
-export function releaseUsageLedgerLock(handle) {
-  if (handle === null || typeof handle !== 'object' || handle.acquired !== true
-    || typeof handle.lockPath !== 'string' || handle.lockPath === ''
-    || typeof handle.token !== 'string' || handle.token === '') {
-    return { released: false, reason: 'not-owner' }
-  }
-  const pathContext = handle.pathContext !== undefined && handle.pathContext !== null ? handle.pathContext : null
-  const purpose = typeof handle.purpose === 'string' && handle.purpose !== '' ? handle.purpose : 'usage-ledger'
-  if (pathContext === null) return { released: false, reason: 'path-context-required' }
-  authorizeLedgerWrite(pathContext, handle.lockPath, purpose)
-  const current = readLockOwner(handle.lockPath)
-  if (current === undefined) return { released: false, reason: 'missing-or-invalid' }
-  if (current.token !== handle.token) return { released: false, reason: 'token-mismatch', owner: current }
-  const stalePath = staleLockPathOf(handle.lockPath)
-  authorizeLedgerWrite(pathContext, stalePath, purpose)
-  try {
-    renameSync(handle.lockPath, stalePath)
-  } catch (error) {
-    return { released: false, reason: errorCodeOf(error) === 'ENOENT' ? 'missing' : 'rename-failed' }
-  }
-  const moved = readLockOwner(stalePath)
-  if (moved === undefined || moved.token !== handle.token) {
-    try { renameSync(stalePath, handle.lockPath) } catch (restoreError) { /* do not delete another owner's lock */ }
-    return { released: false, reason: 'token-mismatch', owner: moved }
-  }
-  try {
-    unlinkSync(stalePath)
-  } catch (error) {
-    if (errorCodeOf(error) !== 'ENOENT') return { released: false, reason: 'delete-failed' }
-  }
-  return { released: true }
-}
-
-export function createUsageLedger(options = {}) {
-  // usage 账本（写入带 (sessionId,seq) 去重，跨插件实例安全）
-  const source = options !== null && typeof options === 'object' ? options : {}
-  const ledgerOn = source.enabled === true
-  const pathContext = pathContextOf(source)
-  const rawLedgerPath = typeof source.path === 'string' ? source.path.trim() : ''
-  let ledgerPath = ''
-  let ledgerPathError = ''
-  try {
-    ledgerPath = resolveLedgerPath(rawLedgerPath, pathContext)
-  } catch (error) {
-    ledgerPathError = errorMessageOf(error)
-  }
-  const ledgerCursorPath = ledgerPath === '' ? '' : ledgerPath + '.cursor.json'
-  const ledgerPurpose = 'usage-ledger'
-  let ledgerWarned = false
-  // cursor 降级告警口径：每插件实例（= 每个会话各一份）首次进入空表降级时告警一次
-  // （与 ledgerWarned 同一次式风格）；同一实例内多次降级读不重复告警。
-  let cursorDegradedWarned = false
-  // 0 字节/纯空白 cursor 文件的一次性自愈提示标志（与 cursorDegradedWarned 同口径：每插件实例一次）。
-  let cursorEmptyWarned = false
-  let staleLockWarned = false
-  let releaseFailureWarned = false
-  // usageCursors 只保存活跃 session：sessionId → { seq, index }（index = 上次折叠时读到的
-  // session.seq 水位＝会话日志长度）。disposed final fold 后删除本 session 项；同 session 再次
-  // 激活且内存无项时按 sessionId 从 cursor JSON 单项续载（水位可续做增量：只读 [index, seq)
-  // 区间；水位不可读/日志截断/首次折叠才回退全量扫描，靠 seq 跳过旧消息）。
-  const usageCursors = new Map()
-  const injectedLockApi = source.lockApi !== undefined ? source.lockApi : source.lockOps
-  const lockAcquire = injectedLockApi !== null && typeof injectedLockApi === 'object' && typeof injectedLockApi.acquire === 'function'
-    ? injectedLockApi.acquire
-    : typeof source.acquireLock === 'function' ? source.acquireLock : acquireUsageLedgerLock
-  const lockRelease = injectedLockApi !== null && typeof injectedLockApi === 'object' && typeof injectedLockApi.release === 'function'
-    ? injectedLockApi.release
-    : typeof source.releaseLock === 'function' ? source.releaseLock : releaseUsageLedgerLock
-  // cursor JSON 读取（续载与写回前的现状盘点共用）：返回 { ok, table }。
-  // - ENOENT（首次运行尚无 cursor 文件）→ ok:true + 空表，静默不告警（本就没有可保留内容）；
-  // - 其它读取错误 / JSON 解析失败 / 根值非对象（null、数组、标量）→ 本实例首次降级告警一次，
-  //   ok:false + 空表降级：写回只能覆盖写「空表 + 当前 session」，其它 session 的去重基准会
-  //   丢失、其后续恢复可能重复追加 ledger 行（机制说明与风险已写入 ai-机制设计.md）。
-  function readUsageCursorTable() {
-    let raw
-    try {
-      if (pathContext !== null) authorizeLedgerWrite(pathContext, ledgerCursorPath, ledgerPurpose)
-      raw = readFileSync(ledgerCursorPath, 'utf8')
-    } catch (error) {
-      if (error !== null && typeof error === 'object' && error.code === 'ENOENT') return { ok: true, table: {} }
-      warnUsageCursorDegraded(error)
-      return { ok: false, table: {} }
-    }
-    // 0 字节/纯空白文件：不可能存在任何 session 基准，按 ENOENT 同口径空表自愈
-    // （一次性提示保留线索；本次 fold rows>0 时即重建 cursor JSON，解除 0B 永不写回死锁）。
-    if (raw.trim() === '') {
-      if (!cursorEmptyWarned) {
-        cursorEmptyWarned = true
-        console.warn('extra-plan: usage cursor JSON file is empty — treating as an empty cursor table; other sessions dedupe baselines are already lost and the cursor file will be rebuilt on the next write')
-      }
-      return { ok: true, table: {} }
-    }
-    let saved
-    try {
-      saved = JSON.parse(raw)
-    } catch (error) {
-      warnUsageCursorDegraded(error)
-      return { ok: false, table: {} }
-    }
-    if (saved === null || typeof saved !== 'object' || Array.isArray(saved)) {
-      warnUsageCursorDegraded(new Error('cursor root is not a plain object: ' + (Array.isArray(saved) ? 'array' : typeof saved)))
-      return { ok: false, table: {} }
-    }
-    return { ok: true, table: saved }
-  }
-
-  // 降级告警：每插件实例首次降级时一次（同 ledgerWarned 口径），避免多次降级读重复刷屏。
-  function warnUsageCursorDegraded(error) {
-    if (cursorDegradedWarned) return
-    cursorDegradedWarned = true
-    console.warn('extra-plan: usage cursor JSON unreadable or corrupt — falling back to an empty cursor table; other sessions dedupe baselines may be lost on the next write: ' + (error instanceof Error ? error.message : String(error)))
-  }
-
-  function warnStaleLock(lock) {
-    if (staleLockWarned) return
-    staleLockWarned = true
-    const lockPath = lock !== null && typeof lock === 'object' && typeof lock.lockPath === 'string' ? lock.lockPath : ledgerPath + '.lock'
-    const owner = lock !== null && typeof lock === 'object' && lock.owner !== null && typeof lock.owner === 'object' ? lock.owner : {}
-    const pid = owner.pid === undefined ? 'unknown' : String(owner.pid)
-    const token = owner.token === undefined ? 'unknown' : String(owner.token)
-    console.warn('extra-plan: usage ledger stale-lock takeover failed; lockPath=' + lockPath + '; owner pid=' + pid + ' token=' + token + '；本次账本写入延迟，后续 fold 会重试接管')
-  }
-
-  // cursor 单项归一：只接受 V2 的 { seq, index } 形状；其它形状均视为无效。
-  // 增量改由 session.seq 水位 + snapshotEvents(from, to) 区间读取实现。
-  function usageCursorEntryOf(table, sessionId) {
-    const value = table[sessionId]
-    if (value !== null && typeof value === 'object' && !Array.isArray(value)
-      && Number.isInteger(value.seq) && value.seq >= 0
-      && Number.isInteger(value.index) && value.index >= 0) {
-      return { seq: value.seq, index: value.index }
-    }
-    return undefined
-  }
-
-  // ledger 扫描（cursor JSON 降级时的 seq 去重基线恢复）：seq 可以从 ledger 重建，index 不能也不需要——
-  // index 取 -1 即让 foldUsage 走全量快照，全量快照后 index 自然回到会话日志长度（宿主 session.seq）。
-  // 纯读：授权口径同 readUsageCursorTable；文件缺失、授权失败或任何异常一律返回 0（视作无可恢复基线），绝不抛错。
-  // 单行 JSON 解析失败只跳过该行，不中断整次扫描。
-  function scanLedgerMaxSeq(sessionId) {
-    try {
-      if (pathContext !== null) authorizeLedgerWrite(pathContext, ledgerPath, ledgerPurpose)
-      const raw = readFileSync(ledgerPath, 'utf8')
-      let maxSeq = 0
-      const lines = raw.split('\n')
-      for (let idx = 0; idx < lines.length; idx += 1) {
-        const line = lines[idx]
-        if (line.trim() === '') continue
-        let row
-        try {
-          row = JSON.parse(line)
-        } catch (error) {
+        if (!statSync(logPath).isFile()) {
+          skippedEntries += 1
           continue
         }
-        if (row === null || typeof row !== 'object' || row.sessionId !== sessionId) continue
-        if (!Number.isInteger(row.seq) || row.seq <= maxSeq) continue
-        maxSeq = row.seq
-      }
-      return maxSeq
-    } catch (error) {
-      return 0
-    }
-  }
-
-  function isUsageContext(value) {
-    return value !== null && typeof value === 'object' && !Array.isArray(value)
-      && typeof value.sessionId === 'string' && value.sessionId.trim() !== ''
-      && typeof value.parentSessionId === 'string'
-      && typeof value.rootSessionId === 'string'
-      && typeof value.agentPreset === 'string'
-      && Number.isInteger(value.delegationDepth) && value.delegationDepth >= 0
-      && typeof value.role === 'string' && value.role.trim() !== ''
-  }
-
-  // usage 折叠：同步函数（禁止改成 async——agent/disposed 是 emit/void，宿主不等待 Promise，
-  // 异步文件 I/O 会重新打开末轮漏记窗口）。只扫描 assistant/message，写入 V2 上下文与四桶。
-  // 只有新增行才追加并持久化 cursor、cursor JSON 整文件改写。
-  // 增量口径（P1-4）：以宿主 session.seq（＝会话日志长度，O(1)、不物化数组）为水位，配合
-  // session.snapshotEvents(from, to) 区间读取只物化新增区间；水位不可读 / prevIndex > 水位
-  // （日志截断）/ 首次折叠（无 prev）才回退全量快照。绝不在同一趟里同时跑全量与增量再对拍。
-  function foldUsage(agent, usageContext) {
-    if (!ledgerOn) return { status: 'disabled' }
-    if (ledgerPath === '') return { status: 'unavailable', reason: ledgerPathError || 'ledger path unavailable' }
-    const session = agent !== undefined && agent !== null ? agent.session : undefined
-    if (session === undefined || session === null) return { status: 'ignored' }
-    try {
-      if (!isUsageContext(usageContext)) throw new Error('usage context is invalid')
-      if (typeof session.snapshotEvents !== 'function') return { status: 'ignored' }
-      const context = usageContext
-      const sid = context.sessionId
-      authorizeLedgerWrite(pathContext, ledgerPath, ledgerPurpose)
-      const dir = dirname(ledgerPath)
-      ensureLedgerDirectory(pathContext, dir, ledgerPurpose)
-      const lockOptions = { waitMs: WRITER_LOCK_WAIT_MS, pathContext, purpose: ledgerPurpose }
-      const lock = lockAcquire(ledgerPath, lockOptions)
-      if (lock.acquired !== true) {
-        if (lock.reason === 'stale-lock') warnStaleLock(lock)
-        return { status: 'delayed', reason: lock.reason, lockPath: lock.lockPath, owner: lock.owner }
-      }
-      let operationResult
-      let operationError
-      let releaseResult
-      let releaseError
-      try {
-        // ① 共享锁覆盖 cursor 读取、事件折叠、ledger append 与 cursor 写回。
-        const logLen = session.seq
-        const hasWatermark = typeof logLen === 'number' && Number.isFinite(logLen) && logLen >= 0
-        // 水位两段式：内存 → cursor JSON，任一命中即不再扫描 ledger。cursor 表非空说明 cursor 文件完好、
-        // 该会话只是首次出现，不必扫描（ledger 中本就没有它的历史行）；仅当表整体为空（被删除或清空）或
-        // 读取降级（损坏）时，才可能是基线真丢了，值得从 ledger 重建该会话的 seq 去重基线：index 取 -1 不满足
-        // 「prevIndex 大于等于 0」的增量分支，因而走全量快照，但 seq 去重（seq <= cursor 跳过）仍然生效，
-        // 不会把该会话历史用量重复追加进 ledger。
-        let prev = usageCursors.get(sid)
-        if (prev === undefined) {
-          const cursorTable = readUsageCursorTable()
-          prev = usageCursorEntryOf(cursorTable.table, sid)
-          if (prev === undefined && (cursorTable.ok === false || Object.keys(cursorTable.table).length === 0)) {
-            const ledgerMaxSeq = scanLedgerMaxSeq(sid)
-            if (ledgerMaxSeq > 0) prev = { seq: ledgerMaxSeq, index: -1 }
-          }
-        }
-        let cursor = 0
-        let prevIndex = -1
-        if (prev !== undefined && prev !== null) {
-          cursor = prev.seq
-          prevIndex = prev.index
-        }
-        let start = 0
-        let events
-        if (hasWatermark && prevIndex === logLen) {
-          operationResult = { status: 'unchanged', rows: 0 }
-        } else {
-          if (hasWatermark && prevIndex >= 0 && prevIndex <= logLen) {
-            start = prevIndex
-            events = session.snapshotEvents(prevIndex, logLen)
-          } else {
-            events = session.snapshotEvents()
-          }
-          if (!Array.isArray(events)) {
-            operationResult = { status: 'ignored' }
-          } else {
-            const rows = []
-            for (let idx = 0; idx < events.length; idx += 1) {
-              const event = events[idx]
-              if (event === null || typeof event !== 'object' || event.type !== 'assistant/message') continue
-              const seq = typeof event.seq === 'number' ? event.seq : start + idx
-              if (seq <= cursor) continue
-              cursor = seq
-              const data = event.data
-              if (data === null || typeof data !== 'object') continue
-              const usage = data.usage
-              if (usage === null || typeof usage !== 'object') continue
-              const inputTokens = typeof usage.inputTokens === 'number' ? usage.inputTokens : 0
-              const cacheReadTokens = typeof usage.cacheReadTokens === 'number' ? usage.cacheReadTokens : 0
-              const cacheWriteTokens = typeof usage.cacheWriteTokens === 'number' ? usage.cacheWriteTokens : 0
-              const outputTokens = typeof usage.outputTokens === 'number' ? usage.outputTokens : 0
-              if (inputTokens === 0 && cacheReadTokens === 0 && cacheWriteTokens === 0 && outputTokens === 0) continue
-              const msg = data.message
-              const model = msg !== null && typeof msg === 'object' && msg.source !== null && typeof msg.source === 'object' && typeof msg.source.model === 'string' ? msg.source.model : ''
-              const provider = msg !== null && typeof msg === 'object' && msg.source !== null && typeof msg.source === 'object' && typeof msg.source.provider === 'string' ? msg.source.provider : ''
-              rows.push(JSON.stringify({
-                schemaVersion: 2,
-                ts: new Date().toISOString(),
-                sessionId: sid,
-                parentSessionId: context.parentSessionId,
-                rootSessionId: context.rootSessionId,
-                agentPreset: context.agentPreset,
-                delegationDepth: context.delegationDepth,
-                role: context.role,
-                model,
-                provider,
-                inputTokens,
-                cacheReadTokens,
-                cacheWriteTokens,
-                outputTokens,
-                seq,
-              }))
-            }
-            const nextIndex = hasWatermark ? logLen : events.length
-            const nextCursor = { seq: cursor, index: nextIndex }
-            if (rows.length === 0) {
-              usageCursors.set(sid, nextCursor)
-              operationResult = { status: 'advanced', rows: 0, cursor: nextCursor }
-            } else {
-              if (pathContext !== null) authorizeLedgerWrite(pathContext, ledgerPath, ledgerPurpose)
-              appendFileSync(ledgerPath, rows.join('\n') + '\n', 'utf8')
-              usageCursors.set(sid, nextCursor)
-              const current = readUsageCursorTable()
-              if (!current.ok) {
-                operationResult = { status: 'written', rows: rows.length, cursorPersisted: false }
-              } else {
-                const persisted = {}
-                for (const key of Object.keys(current.table)) {
-                  if (key === sid) continue
-                  const entry = usageCursorEntryOf(current.table, key)
-                  if (entry === undefined) continue
-                  persisted[key] = { seq: entry.seq, index: entry.index }
-                }
-                persisted[sid] = nextCursor
-                let cursorPersisted = true
-                try {
-                  if (pathContext !== null) authorizeLedgerWrite(pathContext, ledgerCursorPath, ledgerPurpose)
-                  writeFileSync(ledgerCursorPath, JSON.stringify(persisted), 'utf8')
-                } catch (error) {
-                  cursorPersisted = false
-                }
-                operationResult = { status: 'written', rows: rows.length, cursor: nextCursor, cursorPersisted }
-              }
-            }
-          }
-        }
       } catch (error) {
-        operationError = error
-      } finally {
-        try {
-          releaseResult = lockRelease(lock)
-          if (releaseResult === null || typeof releaseResult !== 'object' || releaseResult.released !== true) {
-            const reason = releaseResult !== null && releaseResult !== undefined ? String(releaseResult.reason || 'unknown') : 'unknown'
-            releaseError = new Error('usage ledger lock release failed: ' + reason)
-          }
-        } catch (error) {
-          releaseError = error
-        }
+        skippedEntries += 1
+        continue
       }
-      if (releaseError !== undefined) {
-        const detail = releaseError instanceof Error ? releaseError.message : String(releaseError)
-        if (!releaseFailureWarned) {
-          releaseFailureWarned = true
-          console.warn('extra-plan: usage ledger release failed: ' + detail)
-        }
-        const failed = {
-          status: 'failed',
-          reason: 'release-failed',
-          releaseFailed: true,
-          operationStatus: operationResult === undefined ? undefined : operationResult.status,
-          operationResult,
-          releaseResult,
-          releaseError: detail,
-        }
-        if (operationError !== undefined) failed.operationError = operationError instanceof Error ? operationError.message : String(operationError)
-        return failed
-      }
-      if (operationError !== undefined) throw operationError
-      return operationResult
-    } catch (error) {
-      if (!ledgerWarned) {
-        ledgerWarned = true
-        console.warn('extra-plan: usage ledger fold failed: ' + (error instanceof Error ? error.message : String(error)))
-      }
-      return { status: 'failed' }
+      logFiles.push({ workspace: workspaceEntry.name, sessionDirectory: sessionEntry.name, logPath })
     }
   }
+  return { logFiles, skippedEntries, root }
+}
 
-  return { foldUsage, disposeSession: (sessionId) => usageCursors.delete(sessionId) }
+// ── ③ 解码：zstd 多帧 ───────────────────────────────────────────────────────
+// 帧切分的最小实现（不 import 任何测试目录模块）：返回这一帧的结束偏移，缺损/非法块边界返回 null。
+function frameEndAt(bytes, start) {
+  let cursor = start + 4
+  const descriptor = bytes[cursor]
+  if (descriptor === undefined) return null
+  cursor += 1
+  const singleSegment = (descriptor >> 5) & 1
+  const frameContentSizeFlag = (descriptor >> 6) & 3
+  const dictionaryFlag = descriptor & 3
+  const checksumFlag = (descriptor >> 2) & 1
+  if (!singleSegment) cursor += 1
+  cursor += dictionaryFlag === 1 ? 1 : dictionaryFlag === 2 ? 2 : dictionaryFlag === 3 ? 4 : 0
+  if (frameContentSizeFlag !== 0) cursor += frameContentSizeFlag === 1 ? 2 : frameContentSizeFlag === 2 ? 4 : 8
+  else if (singleSegment) cursor += 1
+  let last = false
+  while (!last) {
+    if (cursor + 3 > bytes.length) return null
+    const blockHeader = bytes.readUIntLE(cursor, 3)
+    const blockType = (blockHeader >> 1) & 3
+    const blockSize = blockHeader >> 3
+    if (blockType === 3 || blockSize > 0x20000) return null
+    last = (blockHeader & 1) === 1
+    // RLE 块的 Block_Size 是解压后长度，压缩载荷仅 1 字节。
+    const payloadSize = blockType === 1 ? 1 : blockSize
+    if (cursor + 3 + payloadSize > bytes.length) return null
+    cursor += 3 + payloadSize
+  }
+  if (checksumFlag !== 0) cursor += 4
+  return cursor <= bytes.length ? cursor : null
+}
+
+const ZSTD_MAGIC = 0xfd2fb528
+const SKIPPABLE_MAGIC_MIN = 0x184d2a50
+const SKIPPABLE_MAGIC_MAX = 0x184d2a5f
+
+// 多帧输入按帧边界循环解压；帧间可能有 skippable frame，逐帧跳过。UTF-8 跨帧用流式解码器续接。
+function* decodedLinesOf(bytes) {
+  if (!Buffer.isBuffer(bytes)) throw new TypeError('decodedLinesOf requires a Buffer')
+  const decoder = new TextDecoder('utf-8')
+  let cursor = 0
+  let frames = 0
+  let pending = ''
+  while (cursor < bytes.length) {
+    if (bytes.length - cursor < 4) throw new Error('truncated zstd frame header at byte ' + cursor)
+    const magic = bytes.readUInt32LE(cursor)
+    if (magic >= SKIPPABLE_MAGIC_MIN && magic <= SKIPPABLE_MAGIC_MAX) {
+      if (bytes.length - cursor < 8) throw new Error('truncated skippable frame header at byte ' + cursor)
+      const end = cursor + 8 + bytes.readUInt32LE(cursor + 4)
+      if (end > bytes.length) throw new Error('truncated skippable frame at byte ' + cursor)
+      cursor = end
+      continue
+    }
+    if (magic !== ZSTD_MAGIC) throw new Error('unexpected bytes at byte ' + cursor)
+    const end = frameEndAt(bytes, cursor)
+    if (end === null) throw new Error('incomplete zstd frame at byte ' + cursor)
+    let chunk
+    try {
+      chunk = zstdDecompressSync(bytes.subarray(cursor, end))
+    } catch (error) {
+      throw new Error('zstd frame decode failed at byte ' + cursor + ': ' + (error instanceof Error ? error.message : String(error)))
+    }
+    frames += 1
+    cursor = end
+    pending += decoder.decode(chunk, { stream: true })
+    let newline = pending.indexOf('\n')
+    while (newline !== -1) {
+      yield pending.slice(0, newline)
+      pending = pending.slice(newline + 1)
+      newline = pending.indexOf('\n')
+    }
+  }
+  if (frames === 0) throw new Error('no complete zstd frame')
+  pending += decoder.decode()
+  if (pending !== '') yield pending
+}
+
+// ── ④ 事件提取 ──────────────────────────────────────────────────────────────
+function finiteNumberOrZero(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0
+}
+
+function stringOrEmpty(value) {
+  return typeof value === 'string' ? value : ''
+}
+
+function intOrNull(value) {
+  return Number.isInteger(value) && value >= 0 ? value : null
+}
+
+function isoOf(epochMs) {
+  const value = typeof epochMs === 'number' && Number.isFinite(epochMs) ? epochMs : Date.now()
+  return new Date(value).toISOString()
+}
+
+// session 事件：会话身份与血缘（id/cwd/agentPreset/delegationDepth/parentSession/origin）。
+function sessionMetaOf(event, directoryName) {
+  const id = stringOrEmpty(event.id) !== '' ? stringOrEmpty(event.id) : directoryName
+  const parentSessionId = stringOrEmpty(event.parentSession)
+  const delegationDepth = intOrNull(event.delegationDepth)
+  return {
+    version: Number.isInteger(event.version) ? event.version : null,
+    sessionId: id,
+    cwd: stringOrEmpty(event.cwd),
+    createdAt: typeof event.createdAt === 'number' && Number.isFinite(event.createdAt) ? event.createdAt : null,
+    parentSessionId,
+    delegationDepth: delegationDepth === null ? 0 : delegationDepth,
+    hasExplicitDepth: delegationDepth !== null,
+    agentPreset: stringOrEmpty(event.agentPreset),
+    origin: stringOrEmpty(event.origin),
+  }
+}
+
+// assistant/message 事件：四桶 + model/provider；四桶全 0 的事件与账本折叠口径一致地跳过。
+function usageOf(event) {
+  const data = event.data
+  if (!isPlainObject(data)) return null
+  const usage = data.usage
+  if (!isPlainObject(usage)) return null
+  const tokens = TOKEN_KEYS.map((key) => finiteNumberOrZero(usage[key]))
+  let total = 0
+  for (const token of tokens) total += token
+  if (total === 0) return null
+  const message = data.message
+  const source = isPlainObject(message) ? message.source : undefined
+  return {
+    tokens,
+    model: isPlainObject(source) ? stringOrEmpty(source.model) : '',
+    provider: isPlainObject(source) ? stringOrEmpty(source.provider) : '',
+    seq: intOrNull(event.seq),
+    ts: isoOf(event.time),
+  }
+}
+
+// agent-preset/selected 事件：会话中途切换预设时以最后一次为准（多种载荷形状都认，取不到就忽略）。
+function presetOfSelectedEvent(event) {
+  const candidates = [event.agentPreset, event.preset]
+  if (isPlainObject(event.data)) candidates.push(event.data.agentPreset, event.data.preset, event.data.id)
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate !== '') return candidate
+  }
+  return ''
+}
+
+// request/header 事件：parentSession/delegationDepth 的兜底来源（session 事件缺失这两项时才用）。
+function lineageOfRequestHeader(event) {
+  const data = event.data
+  const header = isPlainObject(data) ? data.header : undefined
+  if (!isPlainObject(header)) return null
+  const parentSessionId = stringOrEmpty(header.parentSession)
+  const delegationDepth = intOrNull(header.delegationDepth)
+  if (parentSessionId === '' && delegationDepth === null) return null
+  return { parentSessionId, delegationDepth }
+}
+
+// 单文件扫描：只保留会话元信息与用量事件，其余事件一律丢弃。
+function scanLogText(lines, directoryName) {
+  const state = {
+    meta: null,
+    selectedPreset: '',
+    requestHeader: null,
+    usageEvents: [],
+    parseErrors: 0,
+  }
+  for (const line of lines) {
+    if (line.trim() === '') continue
+    const maybeSession = line.includes(EVENT_MARKERS.session)
+    const maybeUsage = line.includes(EVENT_MARKERS.usage)
+    const maybePreset = line.includes(EVENT_MARKERS.presetSelected)
+    const maybeHeader = line.includes(EVENT_MARKERS.requestHeader)
+    if (!maybeSession && !maybeUsage && !maybePreset && !maybeHeader) continue
+    let event
+    try {
+      event = JSON.parse(line)
+    } catch (error) {
+      state.parseErrors += 1
+      continue
+    }
+    if (!isPlainObject(event)) continue
+    if (event.type === 'session') {
+      if (state.meta === null) state.meta = sessionMetaOf(event, directoryName)
+      continue
+    }
+    if (event.type === 'assistant/message') {
+      const usage = usageOf(event)
+      if (usage !== null) state.usageEvents.push(usage)
+      continue
+    }
+    if (event.type === 'agent-preset/selected') {
+      const preset = presetOfSelectedEvent(event)
+      if (preset !== '') state.selectedPreset = preset
+      continue
+    }
+    if (event.type === 'request/header') {
+      const lineage = lineageOfRequestHeader(event)
+      if (lineage !== null) state.requestHeader = lineage
+    }
+  }
+  return state
+}
+
+// ── ⑤⑥ 白名单过滤与身份聚合 ─────────────────────────────────────────────────
+function hasOwn(object, key) {
+  return Object.prototype.hasOwnProperty.call(object, key)
+}
+
+function identityValueOf(value, key) {
+  if (key === 'delegationDepth') return Number.isInteger(value) && value >= 0 ? value : ''
+  if (key === 'schemaVersion') return value
+  return typeof value === 'string' ? value : ''
+}
+
+function identityKeyOf(identity) {
+  const parts = []
+  for (const key of IDENTITY_KEYS) parts.push(identityValueOf(identity[key], key))
+  return JSON.stringify(parts)
+}
+
+// 血缘根：与 agent-runtime.usageRootOf 同口径（depth 1 直接取 parent；更深的沿 parent 链上溯，
+// 链路缺失/成环一律返回空串）。
+function rootSessionOf(sessionId, parentSessionId, delegationDepth, parentById) {
+  if (parentSessionId === '') return ''
+  if (delegationDepth === 1) return parentSessionId
+  const seen = new Set([sessionId])
+  let currentId = parentSessionId
+  for (let level = 0; level < MAX_PARENT_DEPTH; level += 1) {
+    if (currentId === '' || seen.has(currentId)) return ''
+    seen.add(currentId)
+    const parent = parentById.get(currentId)
+    if (parent === undefined) return ''
+    const nextId = parent.parentSessionId
+    if (nextId === '') return currentId
+    if (seen.has(nextId)) return ''
+    currentId = nextId
+  }
+  return ''
+}
+
+function isChildSession(meta) {
+  return meta.delegationDepth > 0 || meta.parentSessionId !== '' || meta.origin === 'subagent'
+}
+
+// 角色口径与 agent-runtime.usageContextOf 一致：主会话 main；子会话按预设映射到四角色，其余 child。
+function roleOf(meta, child) {
+  if (!child) return 'main'
+  return hasOwn(USAGE_ROLE_BY_PRESET, meta.agentPreset) ? USAGE_ROLE_BY_PRESET[meta.agentPreset] : 'child'
+}
+
+function emptyGroup(identity) {
+  return {
+    schemaVersion: 2,
+    rootSessionId: identity.rootSessionId,
+    sessionId: identity.sessionId,
+    parentSessionId: identity.parentSessionId,
+    agentPreset: identity.agentPreset,
+    delegationDepth: identity.delegationDepth,
+    role: identity.role,
+    model: identity.model,
+    provider: identity.provider,
+    inputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    outputTokens: 0,
+    calls: 0,
+    seq: null,
+    ts: '',
+  }
+}
+
+function compareValues(left, right) {
+  const a = String(left === undefined || left === null ? '' : left)
+  const b = String(right === undefined || right === null ? '' : right)
+  return a < b ? -1 : a > b ? 1 : 0
+}
+
+function rowSort(a, b) {
+  for (const key of IDENTITY_KEYS) {
+    const compared = compareValues(a[key], b[key])
+    if (compared !== 0) return compared
+  }
+  return compareValues(a.seq === null ? '' : a.seq, b.seq === null ? '' : b.seq)
+}
+
+function addUsageToGroups(groups, meta, usage) {
+  const identity = {
+    schemaVersion: 2,
+    rootSessionId: meta.rootSessionId,
+    sessionId: meta.sessionId,
+    parentSessionId: meta.parentSessionId,
+    agentPreset: meta.agentPreset,
+    delegationDepth: meta.delegationDepth,
+    role: meta.role,
+    model: usage.model,
+    provider: usage.provider,
+  }
+  const groupKey = identityKeyOf(identity)
+  let group = groups.get(groupKey)
+  if (group === undefined) group = emptyGroup(identity)
+  for (let index = 0; index < TOKEN_KEYS.length; index += 1) group[TOKEN_KEYS[index]] += usage.tokens[index]
+  group.calls += 1
+  if (usage.seq !== null && (group.seq === null || usage.seq >= group.seq)) {
+    group.seq = usage.seq
+    if (usage.ts !== '') group.ts = usage.ts
+  }
+  groups.set(groupKey, group)
+}
+
+function allowedOf(allowedPresets) {
+  if (allowedPresets === undefined || allowedPresets === null) return ALLOWED_PRESETS
+  if (allowedPresets instanceof Set) return [...allowedPresets]
+  return Array.isArray(allowedPresets) ? allowedPresets : ALLOWED_PRESETS
+}
+
+// ── ⑦ 导出：scanUsageRows({ hostRoot }) → { rows, stats } ────────────────────
+export function scanUsageRows(options = {}) {
+  const settings = isPlainObject(options) ? options : {}
+  const whitelist = new Set(allowedOf(settings.allowedPresets))
+  const stats = {
+    files: 0,
+    sessions: 0,
+    rows: 0,
+    skipped: 0,
+    enumerationSkipped: 0,
+    whitelistSkipped: 0,
+    decodeFailed: 0,
+    unsupported: 0,
+    parseErrors: 0,
+  }
+  const enumeration = enumerateSessionLogs({ hostRoot: settings.hostRoot })
+  stats.skipped += enumeration.skippedEntries
+  stats.enumerationSkipped += enumeration.skippedEntries
+  const scanned = []
+  const parentById = new Map()
+  for (const logFile of enumeration.logFiles) {
+    stats.files += 1
+    let state
+    try {
+      state = scanLogText(decodedLinesOf(readFileSync(logFile.logPath)), logFile.sessionDirectory)
+    } catch (error) {
+      stats.decodeFailed += 1
+      continue
+    }
+    stats.parseErrors += state.parseErrors
+    const meta = state.meta
+    if (meta === null) {
+      stats.unsupported += 1
+      continue
+    }
+    if (meta.version !== null && meta.version !== SUPPORTED_SESSION_VERSION) {
+      stats.unsupported += 1
+      continue
+    }
+    stats.sessions += 1
+    // agentPreset：session 事件为主，agent-preset/selected 为会话中途切换的最新值。
+    const agentPreset = state.selectedPreset !== '' ? state.selectedPreset : meta.agentPreset
+    // parentSession 与 delegationDepth：session 事件优先，request/header 兜底（取不到按主会话处理）。
+    const lineage = state.requestHeader
+    const parentSessionId = meta.parentSessionId !== '' ? meta.parentSessionId : lineage === null ? '' : lineage.parentSessionId
+    const delegationDepth = meta.hasExplicitDepth
+      ? meta.delegationDepth
+      : lineage !== null && lineage.delegationDepth !== null ? lineage.delegationDepth : 0
+    const resolved = {
+      ...meta,
+      delegationDepth,
+      parentSessionId,
+      agentPreset,
+    }
+    parentById.set(resolved.sessionId, resolved)
+    scanned.push({ meta: resolved, usageEvents: state.usageEvents })
+  }
+
+  const groups = new Map()
+  for (const session of scanned) {
+    const meta = session.meta
+    // ⑤ 白名单过滤：不在白名单的会话整体跳过，不产出任何行。
+    if (!whitelist.has(meta.agentPreset)) {
+      stats.skipped += 1
+      stats.whitelistSkipped += 1
+      continue
+    }
+    if (session.usageEvents.length === 0) continue
+    const child = isChildSession(meta)
+    const identityMeta = {
+      ...meta,
+      role: roleOf(meta, child),
+      rootSessionId: child ? rootSessionOf(meta.sessionId, meta.parentSessionId, meta.delegationDepth, parentById) : meta.sessionId,
+    }
+    for (const usage of session.usageEvents) addUsageToGroups(groups, identityMeta, usage)
+  }
+
+  const rows = [...groups.values()].map((group) => {
+    const copy = { ...group }
+    // seq 缺失（事件全无 seq 字段）时落 0，保证归档行 seq 仍是非负整数。
+    if (copy.seq === null) copy.seq = 0
+    // 扫描行在事件全无 time 字段时 ts 落空串，只有这一条路径需要兜底；归档行 ts 必为 ISO 串，构造上不会为空。
+    if (copy.ts === '') copy.ts = new Date(0).toISOString()
+    return copy
+  }).sort(rowSort)
+  stats.rows = rows.length
+  return { rows, stats }
+}
+
+// ── ③a 归档读侧：严格解析、身份、分组、单调性覆盖（由旧归档模块迁入）──────
+function mergedFsOps(fsOps) {
+  return { ...DEFAULT_FS_OPS, ...(isPlainObject(fsOps) ? fsOps : {}) }
+}
+
+function nowOf(clock) {
+  if (typeof clock === 'function') {
+    const value = Number(clock())
+    return Number.isFinite(value) ? value : Date.now()
+  }
+  if (clock !== null && typeof clock === 'object' && typeof clock.now === 'function') {
+    const value = Number(clock.now())
+    return Number.isFinite(value) ? value : Date.now()
+  }
+  return Date.now()
+}
+
+function hostRootOf(pathContext) {
+  if (!isPlainObject(pathContext)) return ''
+  const root = pathContext.hostDataRoot
+  if (typeof root !== 'string' || root.trim() === '') return ''
+  if (!isPlainObject(pathContext.hostCapabilities)) return ''
+  return root
+}
+function tokenNumber(row, key) {
+  return typeof row[key] === 'number' && Number.isFinite(row[key]) ? row[key] : 0
+}
+
+function identityValue(row, key) {
+  if (key === 'delegationDepth') return Number.isInteger(row[key]) && row[key] >= 0 ? row[key] : ''
+  if (key === 'schemaVersion') return row[key]
+  return typeof row[key] === 'string' ? row[key] : ''
+}
+
+function groupSort(a, b) {
+  for (const key of IDENTITY_KEYS) {
+    const compared = compareValues(a[key], b[key])
+    if (compared !== 0) return compared
+  }
+  return compareValues(a.maxSeq === null ? '' : a.maxSeq, b.maxSeq === null ? '' : b.maxSeq)
+}
+
+function validDedupeKey(row) {
+  return isPlainObject(row)
+    && typeof row.sessionId === 'string'
+    && row.sessionId.trim() !== ''
+    && Number.isInteger(row.seq)
+    && row.seq >= 0
+}
+function validationIssue(row) {
+  if (!isPlainObject(row)) return '根值不是对象'
+  const actual = Object.keys(row).sort()
+  const expected = [...V2_KEYS].sort()
+  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) return '必须严格包含固定' + V2_KEYS.length + '个键'
+  if (row.schemaVersion !== 2) return 'schemaVersion必须为2'
+  if (typeof row.ts !== 'string' || row.ts.trim() === '' || !Number.isFinite(Date.parse(row.ts))) return 'ts必须是有效时间字符串'
+  for (const key of ['sessionId', 'role']) {
+    if (typeof row[key] !== 'string' || row[key].trim() === '') return key + '必须是非空字符串'
+  }
+  for (const key of ['rootSessionId', 'agentPreset', 'parentSessionId', 'model', 'provider']) {
+    if (typeof row[key] !== 'string') return key + '必须是字符串'
+  }
+  if (!Number.isInteger(row.delegationDepth) || row.delegationDepth < 0) return 'delegationDepth必须是非负整数'
+  for (const key of TOKEN_KEYS) {
+    if (typeof row[key] !== 'number' || !Number.isFinite(row[key]) || row[key] < 0) return key + '必须是非负有限数'
+  }
+  if (!Number.isInteger(row.seq) || row.seq < 0) return 'seq必须是非负整数'
+  return ''
+}
+
+// strict 解析：坏行/非 V2/字段非法均视为失败，调用方据此放弃本次归档（账本原样不动）。
+function parseStrictLedgerText(text, source, check) {
+  const rows = []
+  let lineNumber = 0
+  let schemaDocCount = 0
+  for (const line of String(text === undefined || text === null ? '' : text).split(/\r?\n/)) {
+    if (line.trim() === '') continue
+    if (typeof check === 'function') check()
+    lineNumber += 1
+    let row
+    try {
+      row = JSON.parse(line)
+    } catch (error) {
+      throw archiveError('bad-json', source + ' 第' + lineNumber + '行坏JSON；发布前未改写')
+    }
+    if (typeof check === 'function') check()
+    // 说明行只允许唯一一条且必须在首行：重复或错位一律判失败，避免说明行混进数据行改变统计口径。
+    if (isSchemaDocRow(row)) {
+      schemaDocCount += 1
+      if (schemaDocCount > 1 || rows.length !== 0) {
+        throw archiveError('schema-doc-misplaced', source + ' 第' + lineNumber + '行说明行位置非法（说明行只能唯一一条出现在首行）；发布前未改写')
+      }
+      if (typeof check === 'function') check()
+      continue
+    }
+    if (!isPlainObject(row) || row.schemaVersion !== 2) {
+      const kind = isPlainObject(row) ? 'V1/非V2对象' : 'V1/非V2值'
+      throw archiveError('non-v2', source + ' 第' + lineNumber + '行' + kind + '；发布前未改写')
+    }
+    const issue = validationIssue(row)
+    if (issue !== '') throw archiveError('invalid-v2', source + ' 第' + lineNumber + '行非法V2：' + issue + '；发布前未改写')
+    rows.push(row)
+    if (typeof check === 'function') check()
+  }
+  return rows
+}
+
+function identityOf(row) {
+  const identity = {}
+  for (const key of IDENTITY_KEYS) identity[key] = identityValue(row, key)
+  return identity
+}
+
+function identityKeyOfRow(row) {
+  const identity = identityOf(row)
+  return JSON.stringify(IDENTITY_KEYS.map((key) => identity[key]))
+}
+
+function emptyGroupOf(row) {
+  const identity = identityOf(row)
+  return {
+    ...identity,
+    inputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    outputTokens: 0,
+    maxSeq: null,
+    latestTs: '',
+    _latestSeq: null,
+  }
+}
+
+function groupFromArchiveRow(row) {
+  const group = emptyGroupOf(row)
+  for (const key of TOKEN_KEYS) group[key] = tokenNumber(row, key)
+  const seq = validDedupeKey(row) ? row.seq : null
+  if (seq !== null) {
+    group._latestSeq = seq
+    group.maxSeq = seq
+    group.latestTs = typeof row.ts === 'string' ? row.ts : ''
+  }
+  return group
+}
+
+// 扫描行还原分组：四桶与 calls 取扫描值，maxSeq/latestTs 取扫描水位与最新事件时间。
+function groupFromScanRow(row) {
+  const group = emptyGroupOf(row)
+  for (const key of TOKEN_KEYS) group[key] = tokenNumber(row, key)
+  const seq = Number.isInteger(row.seq) && row.seq >= 0 ? row.seq : null
+  if (seq !== null) {
+    group._latestSeq = seq
+    group.maxSeq = seq
+    group.latestTs = typeof row.ts === 'string' && row.ts !== '' ? row.ts : ''
+  }
+  group.calls = Number.isInteger(row.calls) && row.calls >= 0 ? row.calls : null
+  return group
+}
+
+function tokenTotalOf(group) {
+  let total = 0
+  for (const key of TOKEN_KEYS) total += tokenNumber(group, key)
+  return total
+}
+
+// 覆盖式更新：现有 archive 行作基线，扫描行整体覆盖（四桶、calls、ts、seq 全用本次扫描值）。
+// 单调性保护：本次扫描的 calls 或四桶合计小于基线时保留旧值并登记一条告警，绝不回退已记账消耗；
+// 扫描里已不存在的身份（日志被删/迁移）原样保留，不删除 archive 行。
+function mergedArchiveGroups(archiveRows, scanRows) {
+  const groups = new Map()
+  for (const row of Array.isArray(archiveRows) ? archiveRows : []) {
+    groups.set(identityKeyOfRow(row), groupFromArchiveRow(row))
+  }
+  const monotonicWarnings = []
+  for (const scanRow of Array.isArray(scanRows) ? scanRows : []) {
+    const groupKey = identityKeyOfRow(scanRow)
+    const current = groups.get(groupKey)
+    if (current === undefined) {
+      groups.set(groupKey, groupFromScanRow(scanRow))
+      continue
+    }
+    // archive 行按归档契约只落 15 键、永不落 calls，故此处 current 只能来自 archive、currentCalls 恒为 null；
+    // 下面这一半 calls 回退条件恒假，仅为外部注入重复扫描行的防御性保留。
+    const scanCalls = Number.isInteger(scanRow.calls) && scanRow.calls >= 0 ? scanRow.calls : null
+    const currentCalls = Number.isInteger(current.calls) && current.calls >= 0 ? current.calls : null
+    const regressed = tokenTotalOf(scanRow) < tokenTotalOf(current)
+      || (scanCalls !== null && currentCalls !== null && scanCalls < currentCalls)
+    if (regressed) {
+      monotonicWarnings.push({
+        sessionId: typeof scanRow.sessionId === 'string' ? scanRow.sessionId : '',
+        agentPreset: typeof scanRow.agentPreset === 'string' ? scanRow.agentPreset : '',
+        role: typeof scanRow.role === 'string' ? scanRow.role : '',
+        model: typeof scanRow.model === 'string' ? scanRow.model : '',
+      })
+      continue
+    }
+    for (const tokenKey of TOKEN_KEYS) current[tokenKey] = tokenNumber(scanRow, tokenKey)
+    current.calls = scanCalls
+    if (Number.isInteger(scanRow.seq) && scanRow.seq >= 0) {
+      current._latestSeq = scanRow.seq
+      current.maxSeq = scanRow.seq
+      current.latestTs = typeof scanRow.ts === 'string' && scanRow.ts !== '' ? scanRow.ts : current.latestTs
+    }
+  }
+  return { groups, monotonicWarnings }
+}
+
+function finalizedGroups(groups) {
+  return [...groups.values()].sort(groupSort).map((group) => {
+    const copy = { ...group }
+    delete copy._latestSeq
+    return copy
+  })
+}
+
+function assertUniqueArchiveRows(rows, source, check) {
+  const seen = new Set()
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (check !== undefined) check()
+    const key = identityKeyOfRow(row)
+    if (seen.has(key)) throw archiveError('duplicate-archive', source + ' 同一完整身份出现多个累计行；发布前未改写')
+    seen.add(key)
+  }
+}
+
+function archiveRowOf(group) {
+  return {
+    schemaVersion: 2,
+    ts: group.latestTs,
+    sessionId: group.sessionId,
+    parentSessionId: group.parentSessionId,
+    rootSessionId: group.rootSessionId,
+    agentPreset: group.agentPreset,
+    delegationDepth: group.delegationDepth,
+    role: group.role,
+    model: group.model,
+    provider: group.provider,
+    inputTokens: group.inputTokens,
+    cacheReadTokens: group.cacheReadTokens,
+    cacheWriteTokens: group.cacheWriteTokens,
+    outputTokens: group.outputTokens,
+    seq: group.maxSeq,
+  }
+}
+
+function archiveTextOf(groups, check) {
+  if (!Array.isArray(groups) || groups.length === 0) return ''
+  const lines = [SCHEMA_DOC_LINE]
+  for (const group of groups) {
+    if (typeof check === 'function') check()
+    lines.push(JSON.stringify(archiveRowOf(group)))
+    if (typeof check === 'function') check()
+  }
+  return lines.join('\n') + '\n'
+}
+
+function ensureLedgerDirectory(pathContext, purpose, fsOps) {
+  const target = resolveHostPath(pathContext, LEDGER_DIRECTORY, { purpose })
+  prepareWriteTarget(pathContext, target, { expectedType: 'any', purpose })
+  // 目录创建优先走调用方注入的 fsOps（与同文件其它写操作同口径），未注入或缺失时回落模块级 mkdirSync。
+  const makeDirectory = isPlainObject(fsOps) && typeof fsOps.mkdirSync === 'function' ? fsOps.mkdirSync : mkdirSync
+  makeDirectory(target.path, { recursive: true })
+  validateReadTarget(pathContext, target, { expectedType: 'directory', purpose })
+}
+
+function authorizeWriteTarget(pathContext, target, purpose) {
+  return prepareWriteTarget(pathContext, resolveHostPath(pathContext, target, { purpose }), { expectedType: 'file', purpose })
+}
+
+function authorizeReadIfPresent(pathContext, target, purpose) {
+  try {
+    validateReadTarget(pathContext, resolveHostPath(pathContext, target, { purpose }), { expectedType: 'file', purpose })
+  } catch (error) {
+    if (errorCodeOf(error) !== 'TARGET_MISSING') throw error
+  }
+}
+
+function optionalRead(fsOps, filePath) {
+  try {
+    const bytes = bytesOf(fsOps.readFileSync(filePath))
+    return { exists: true, bytes }
+  } catch (error) {
+    if (errorCodeOf(error) === 'ENOENT') return { exists: false, bytes: Buffer.alloc(0) }
+    throw archiveError(errorCodeOf(error) || 'read-failed', '读取账本失败 ' + filePath + ': ' + errorMessageOf(error))
+  }
+}
+
+function recordDiagnostic(pathContext, fsOps, reason, message, purpose) {
+  try {
+    const directoryTarget = resolveHostPath(pathContext, LEDGER_DIRECTORY, { purpose })
+    prepareWriteTarget(pathContext, directoryTarget, { expectedType: 'any', purpose })
+    fsOps.mkdirSync(directoryTarget.path, { recursive: true })
+    const logTarget = resolveHostPath(pathContext, join(LEDGER_DIRECTORY, DIAGNOSTIC_FILE_NAME), { purpose })
+    prepareWriteTarget(pathContext, logTarget, { expectedType: 'file', purpose })
+    const line = new Date().toISOString() + ' startup-archive reason=' + reason + ' message=' + String(message).replace(/\r?\n/g, ' ') + '\n'
+    fsOps.appendFileSync(logTarget.path, line, 'utf8')
+  } catch (error) {
+    // 诊断写失败仅忽略：启动归档绝不因留痕失败而阻断启动。
+  }
+}
+
+function reportFailure(pathContext, fsOps, error, purpose) {
+  const reason = errorCodeOf(error) !== '' ? errorCodeOf(error) : 'archive-failed'
+  const message = errorMessageOf(error)
+  try {
+    console.warn('[dsh-extra-plan] startup archive failed: ' + reason + ': ' + message)
+  } catch (warnError) {
+    // warning 通道不可用时忽略。
+  }
+  recordDiagnostic(pathContext, fsOps, reason, message, purpose)
+  return { status: 'failed', reason, error }
+}
+// ── ③ 写入：原子发布、简易互斥、聚合与发布 ──────────────────────────────────
+// 单目标原子发布：写临时文件 → rename 覆盖 archive。rename 是同目录原子替换，读者要么看到完整旧版本
+// 要么看到完整新版本；失败只可能发生在 rename 之前，既有 archive 原样保留（不再备份/回滚）。
+function publishArchive({ archivePath, archiveText, fsOps, checkBudget, pathContext, purpose }) {
+  const id = process.pid + '-' + Date.now() + '-' + randomUUID()
+  const temp = join(dirname(archivePath), basename(archivePath) + '.tmp-' + id)
+  for (const target of [archivePath, temp]) {
+    prepareWriteTarget(pathContext, resolveHostPath(pathContext, target, { purpose }), { expectedType: 'file', purpose })
+  }
+  try {
+    fsOps.writeFileSync(temp, archiveText, 'utf8')
+    checkBudget()
+    fsOps.renameSync(temp, archivePath)
+    // rename 已是 try 的最后一步：其后无可失败步骤，catch 只可能在 rename 之前触发，既有 archive 必未被改写。
+  } catch (error) {
+    try { fsOps.unlinkSync(temp) } catch (cleanupError) { /* 临时文件不存在或不可清理时保留现场 */ }
+    throw archiveError(errorCodeOf(error) || 'publish-failed', errorMessageOf(error) + '；发布前未改写既有 archive')
+  }
+}
+
+// 简易互斥（改造11）：一次 O_EXCL 创建 <archive>.lock。Windows 下 'wx' 即 O_CREAT|O_EXCL|O_WRONLY，
+// 创建成功即独占；拿不到即视为另一实例正在写账本——本次启动扫描跳过并留痕，不等待、不接管死锁、不删他人锁。
+// 锁只挂在启动路径（startupArchive）上：直调入口 archiveLedger 只做给定路径的聚合与发布，不再承担进程互斥。
+function acquireArchiveLock(archivePath) {
+  const lockPath = archivePath + '.lock'
+  let fd
+  try {
+    fd = openSync(lockPath, 'wx')
+  } catch (error) {
+    if (errorCodeOf(error) !== 'EEXIST') return { acquired: false, lockPath, error }
+    return { acquired: false, lockPath }
+  }
+  try {
+    writeSync(fd, JSON.stringify({ pid: process.pid, token: randomUUID(), createdAt: new Date().toISOString() }))
+  } catch (error) {
+    // owner 元信息只是现场线索：写不进去也不影响互斥语义，锁已独占创建。
+  } finally {
+    try { closeSync(fd) } catch (error) { /* 关闭失败同样不影响互斥语义 */ }
+  }
+  return { acquired: true, lockPath }
+}
+
+// 释放只用同一路径 unlink（try/finally 内调用）：锁是本次 O_EXCL 独占创建的，失败只留现场，绝不抛给启动路径。
+function releaseArchiveLock(fsOps, lock) {
+  try { fsOps.unlinkSync(lock.lockPath) } catch (error) { /* 释放失败不影响本次归档结果 */ }
+}
+
+// 直调入口（改造11 M9 恢复的精简版）：给定 archive 路径的「聚合与发布」，与 startupArchive 共用本实现。
+// 语义：严格读现有 archive（可不存在）→ 取本次身份行（options.rows 注入优先，否则现场扫描 host 根下的会话日志）
+// → 按身份覆盖式更新 + 单调性保护 → 写说明行 → temp→rename 原子发布。
+// 不含 active 参数、不清空 active、无双文件合并、无逆序回滚、无 parse-active 阶段；预算阶段只有
+// start／parse-archive／unique／merge／serialize／publish。失败一律抛出带 code 的 Error；
+// 成功返回 { status, archivePath, rows, groups, scannedRows, scannedFiles, scannedSessions, monotonicWarnings, archiveBytes }。
+export function archiveLedger(archivePath, options = {}) {
+  const settings = isPlainObject(options) ? options : {}
+  if (typeof archivePath !== 'string' || archivePath === '') {
+    throw archiveError('invalid-archive-path', '归档目标是空路径')
+  }
+  const fsOps = mergedFsOps(settings.fsOps)
+  const purpose = typeof settings.purpose === 'string' && settings.purpose !== '' ? settings.purpose : LEDGER_PURPOSE
+  const pathContext = settings.pathContext !== undefined && settings.pathContext !== null ? settings.pathContext : {}
+  // H/W 双根授权：目录可建、archive 可写可读；直调也先过授权，避免绕过启动路径的写目标校验。
+  try {
+    ensureLedgerDirectory(pathContext, purpose, fsOps)
+    authorizeWriteTarget(pathContext, archivePath, purpose)
+    authorizeReadIfPresent(pathContext, archivePath, purpose)
+  } catch (error) {
+    throw archiveError(errorCodeOf(error) || 'path-not-authorized', '启动归档目标未获 H/W 双根授权：' + errorMessageOf(error))
+  }
+  const budgetMs = Number.isFinite(settings.budgetMs) && settings.budgetMs >= 0 ? settings.budgetMs : STARTUP_ARCHIVE_BUDGET_MS
+  const startedAt = nowOf(settings.clock)
+  const deadline = startedAt + budgetMs
+  const onCheck = typeof settings.onCheck === 'function' ? settings.onCheck : undefined
+  let currentPhase = 'start'
+  const checkBudget = () => {
+    if (onCheck !== undefined && onCheck(currentPhase) === true) {
+      throw archiveError('budget-timeout', '启动归档预算超时（阶段' + currentPhase + '，约' + budgetMs + 'ms），发布前未改写')
+    }
+    if (nowOf(settings.clock) >= deadline) {
+      throw archiveError('budget-timeout', '启动归档预算超时（约' + budgetMs + 'ms），发布前未改写')
+    }
+  }
+  currentPhase = 'start'
+  checkBudget()
+  const archiveRead = optionalRead(fsOps, archivePath)
+  currentPhase = 'parse-archive'
+  checkBudget()
+  const archiveRows = parseStrictLedgerText(textOfBytes(archiveRead.bytes), archivePath, checkBudget)
+  currentPhase = 'unique'
+  checkBudget()
+  assertUniqueArchiveRows(archiveRows, archivePath, checkBudget)
+  currentPhase = 'merge'
+  let scanRows
+  if (Array.isArray(settings.rows)) {
+    scanRows = settings.rows
+  } else {
+    const hostRoot = hostRootOf(pathContext)
+    if (hostRoot === '') throw archiveError('no-host-root', '归档缺少明确 host 根，无法扫描会话日志')
+    scanRows = scanUsageRows({ hostRoot }).rows
+  }
+  const merged = mergedArchiveGroups(archiveRows, scanRows)
+  currentPhase = 'serialize'
+  checkBudget()
+  const archiveText = archiveTextOf(finalizedGroups(merged.groups), checkBudget)
+  currentPhase = 'publish'
+  checkBudget()
+  publishArchive({ archivePath, archiveText, fsOps, checkBudget, pathContext, purpose })
+  if (merged.monotonicWarnings.length > 0) {
+    try {
+      const labels = merged.monotonicWarnings.map((item) => item.sessionId + '/' + (item.agentPreset !== '' ? item.agentPreset : '-') + '/' + (item.role !== '' ? item.role : '-') + '/' + (item.model !== '' ? item.model : '-'))
+      console.warn('[dsh-extra-plan] usage archive monotonic guard: ' + merged.monotonicWarnings.length + ' 个身份本次扫描小于 archive 现有值，保留旧值不覆盖：' + labels.join(', '))
+    } catch (warnError) {
+      // warning 通道不可用时忽略。
+    }
+  }
+  const scanStats = isPlainObject(settings.scanStats) ? settings.scanStats : null
+  return {
+    status: 'archived',
+    archivePath,
+    rows: merged.groups.size,
+    // groups 是 rows 的兼容别名：同值同源，保留只为不牵动既有 step-00:1518 的双断言；新消费者请只用 rows。
+    groups: merged.groups.size,
+    scannedRows: scanRows.length,
+    scannedFiles: scanStats !== null && Number.isInteger(scanStats.files) ? scanStats.files : null,
+    scannedSessions: scanStats !== null && Number.isInteger(scanStats.sessions) ? scanStats.sessions : null,
+    monotonicWarnings: merged.monotonicWarnings.length,
+    archiveBytes: Buffer.byteLength(archiveText, 'utf8'),
+  }
+}
+
+// 跳过也要留痕：扫描失败/无归档范围一律在 archive-failed.log 留一行，避免被静默吞掉。
+function skipWithDiagnostic(pathContext, fsOps, reason, message, purpose) {
+  try {
+    console.warn('[dsh-extra-plan] startup archive skipped: ' + reason + ': ' + message)
+  } catch (warnError) {
+    // warning 通道不可用时忽略。
+  }
+  recordDiagnostic(pathContext, fsOps, reason, message, purpose)
+  return { status: 'skipped', reason }
+}
+
+// ── ④ 启动入口 ───────────────────────────────────────────────────────────────
+// startupArchive 只负责「host 根判定 + 路径解析 + 双根授权 + 简易锁 + 调用 archiveLedger」；
+// 聚合、单调性、说明行与原子发布全部在 archiveLedger 内，二者共用同一实现（不复制聚合逻辑）。
+function startupArchiveUnsafe(pathContext, options) {
+  const fsOps = mergedFsOps(options.fsOps)
+  const purpose = LEDGER_PURPOSE
+  const hostRoot = hostRootOf(pathContext)
+  if (hostRoot === '') {
+    try {
+      console.warn('[dsh-extra-plan] startup archive skipped: no-host-root')
+    } catch (warnError) {
+      // warning 通道不可用时忽略。
+    }
+    return { status: 'skipped', reason: 'no-host-root' }
+  }
+  // 会话日志扫描只读、不写盘，放在预算与锁之外：预算在 archiveLedger 的解析、去重、合并、序列化与发布各检查点生效，只豁免会话日志扫描本身。
+  let scan
+  try {
+    scan = scanUsageRows({ hostRoot })
+  } catch (error) {
+    return skipWithDiagnostic(pathContext, fsOps, 'scan-failed', '扫描会话日志失败：' + errorMessageOf(error), purpose)
+  }
+  // 显式 options.archivePath 优先（夹具/直调可指定）；否则落在与配置同口径的 usage-ledger/ledger-v2.archive.jsonl。
+  const archivePath = typeof options.archivePath === 'string' && options.archivePath !== ''
+    ? options.archivePath
+    : resolveHostPath(pathContext, join(LEDGER_DIRECTORY, ARCHIVE_FILE_NAME), { purpose }).path
+  try {
+    ensureLedgerDirectory(pathContext, purpose, fsOps)
+    authorizeWriteTarget(pathContext, archivePath, purpose)
+    authorizeReadIfPresent(pathContext, archivePath, purpose)
+  } catch (error) {
+    return reportFailure(pathContext, fsOps, archiveError(errorCodeOf(error) || 'path-not-authorized', '启动归档目标未获 H/W 双根授权：' + errorMessageOf(error)), purpose)
+  }
+  // 简易互斥：拿不到锁只跳过本次启动扫描并留痕；不等待、不接管、不删他人锁。
+  const lock = acquireArchiveLock(archivePath)
+  if (lock.acquired !== true) {
+    if (lock.error !== undefined) {
+      return reportFailure(pathContext, fsOps, archiveError(errorCodeOf(lock.error) || 'lock-failed', '账本锁创建失败：' + errorMessageOf(lock.error)), purpose)
+    }
+    return skipWithDiagnostic(pathContext, fsOps, 'lock-busy', '另一实例正在写账本，本次启动归档跳过', purpose)
+  }
+  let result
+  let failure
+  try {
+    result = archiveLedger(archivePath, { ...options, fsOps, pathContext, purpose, rows: scan.rows, scanStats: scan.stats })
+  } catch (error) {
+    failure = error
+  } finally {
+    releaseArchiveLock(fsOps, lock)
+  }
+  if (failure !== undefined) return reportFailure(pathContext, fsOps, failure, purpose)
+  return result
+}
+
+// 启动归档唯一入口：全程同步（宿主启动路径不能等 Promise），返回带 status 的结构化结果供调用方留痕；
+// 任何异常都在内部消化，绝不向调用方抛出。
+export function startupArchive(pathContext, options = {}) {
+  const settings = isPlainObject(options) ? options : {}
+  try {
+    return startupArchiveUnsafe(pathContext, settings)
+  } catch (error) {
+    const reason = errorCodeOf(error) || 'archive-failed'
+    const message = errorMessageOf(error)
+    try {
+      console.warn('[dsh-extra-plan] startup archive failed: ' + reason + ': ' + message)
+    } catch (warnError) {
+      // warning 通道不可用时忽略。
+    }
+    recordDiagnostic(pathContext, mergedFsOps(settings.fsOps), reason, message, LEDGER_PURPOSE)
+    return { status: 'failed', reason, error }
+  }
 }

@@ -602,6 +602,8 @@ console.log('PLANNER_PROMPT_SUFFIX（显式存在=' + (hasOwn('PLANNER_PROMPT_SU
 if (output.mode === 'full') printFullText('suffix baseline（完整）', plannerPromptSuffix === '' ? '<empty string>' : plannerPromptSuffix)
 else console.log('suffix baseline index length=' + plannerPromptSuffix.length + ' sha256=' + sha256Text(plannerPromptSuffix))
 console.log('定位结果：' + found.kind + '；主会话=' + parent.dir + '；直接 child=' + children.length)
+// S07-3 自检记录：逐 child 收集 suffix 判定与独立重算的父 prompt 证据，会话循环结束后统一判定两条 check。
+const suffixCheckRecords = []
 printParentEvidence(parentBundle, parent)
 console.log('A44 parent association ambiguity count=' + parentBundle.ambiguities.length)
 for (const ambiguity of parentBundle.ambiguities) {
@@ -645,6 +647,26 @@ for (const session of sessions) {
     printPlannerMessages(messages)
     const level = suffixLevel({ role, mode }, links, route, messages)
     console.log('suffix判定=' + level)
+    // S07-3 证据独立重算：与 suffixLevel 使用同一批原语另行记录，供循环后两条 check 交叉核对，不复制判定分支。
+    const s07First = firstTextForSuffix(messages)
+    const s07FirstText = s07First !== null ? budgetFragmentsOf(s07First.text).reduce((value, fragment) => value.replaceAll(fragment, ''), s07First.text) : ''
+    const s07Prompts = parentPromptEvidence(links)
+    const s07PlanLinks = linkedPlanLinks(links)
+    suffixCheckRecords.push({
+      dir: session.dir,
+      childId: typeof session.header.id === 'string' ? session.header.id : '',
+      level,
+      suffixMatched: plannerPromptSuffix !== '' && s07First !== null && !isHostGuidance(s07First.text) && s07FirstText.includes(plannerPromptSuffix),
+      parentPromptSuffixMatch: s07Prompts.some((record) => record.call.arguments.prompt.includes(plannerPromptSuffix)) ? 'yes' : 'no',
+      // 互斥判定的独立证据：①子会话原始 messages 全文任一块含 suffix（不经 firstTextForSuffix 首块定位、不剔预算片段）；
+      // ②父 subagent_plan 调用的原始 arguments 原文含 suffix（不经 arguments.prompt 字段解析，另覆盖 JSON 转义形态）。
+      rawMessagesHaveSuffix: plannerPromptSuffix !== '' && messages.some((message) => message.blocks.some((block) => typeof block.text === 'string' && block.text.includes(plannerPromptSuffix))),
+      rawParentArgsHaveSuffix: plannerPromptSuffix !== '' && s07PlanLinks.some((link) => {
+        const raw = link.call === undefined || link.call.rawArguments === undefined ? '' : (typeof link.call.rawArguments === 'string' ? link.call.rawArguments : jsonText(link.call.rawArguments))
+        return raw.includes(plannerPromptSuffix) || raw.includes(JSON.stringify(plannerPromptSuffix).slice(1, -1))
+      }) ? 'yes' : 'no',
+      associationComplete: s07PlanLinks.length > 0 && s07Prompts.length === s07PlanLinks.length,
+    })
     console.log('模型证据等级=' + routeStatus + '（前栏=request/header/context/selection attempted route；后栏=assistant/message actual provenance）')
   } else {
     console.log('suffix判定=not-applicable')
@@ -652,6 +674,24 @@ for (const session of sessions) {
   }
 }
 
+// S07-3 两条 check：把 suffixLevel 的判定与独立证据交叉核对。
+// ①注入档的互斥判定**不**复用 suffixLevel 分支的判定输入（parentPromptSuffixMatch 与其同表达式、恒真）：
+//   改为「子会话原始 messages 全文含 suffix」+「父 subagent_plan 原始 arguments 原文不含 suffix」两条原始证据，
+//   verified-injection 档必须同时成立，否则记违例。
+// ②可定档 child 的 content-only 与父含 suffix 互为充要（该条检测力来自「关联不完整」与「父含 suffix」两性质分离，保留）。
+const s07Injected = suffixCheckRecords.filter((record) => record.level === 'verified-injection')
+const s07InjectionViolations = s07Injected.filter((record) => record.rawMessagesHaveSuffix !== true || record.rawParentArgsHaveSuffix !== 'no')
+const s07Decisive = suffixCheckRecords.filter((record) => record.suffixMatched && record.associationComplete && (record.level === 'verified-injection' || record.level === 'content-only'))
+const s07ContentMismatches = s07Decisive.filter((record) => (record.level === 'content-only') !== (record.parentPromptSuffixMatch === 'yes'))
+// S07-3 失败项收口：两条 check 结论仍按原样式打印，同时把非空违例项按「标签加 childId 或 dir」逐条收集，供退出码与 stderr 逐条定位。
+const s07Failures = [
+  ...s07InjectionViolations.map((record) => 'suffix 注入互斥原始证据违例 ' + (record.childId !== '' ? 'childId=' + record.childId : 'dir=' + record.dir) + ' rawMessagesHaveSuffix=' + String(record.rawMessagesHaveSuffix) + ' rawParentArgsHaveSuffix=' + record.rawParentArgsHaveSuffix + ' level=' + record.level),
+  ...s07ContentMismatches.map((record) => 'content-only 与父含 suffix 判定不一致 ' + (record.childId !== '' ? 'childId=' + record.childId : 'dir=' + record.dir) + ' level=' + record.level + ' parentPromptSuffixMatch=' + record.parentPromptSuffixMatch),
+]
+console.log('S07-3 suffix 注入互斥（原始证据：子 messages 全文含 suffix 且父原始 arguments 不含）成立=' + (s07InjectionViolations.length === 0 ? 'PASS' : 'FAIL') + '（受检 child=' + suffixCheckRecords.length + '；verified-injection=' + s07Injected.length + '；互斥违例=' + s07InjectionViolations.length + '）')
+console.log('S07-3 content-only 与父含 suffix 判定一致=' + (s07ContentMismatches.length === 0 ? 'PASS' : 'FAIL') + '（可定档 child=' + s07Decisive.length + '；content-only=' + s07Decisive.filter((record) => record.level === 'content-only').length + '；父含 suffix=' + s07Decisive.filter((record) => record.parentPromptSuffixMatch === 'yes').length + '；不一致=' + s07ContentMismatches.length + '）')
+
 const incompleteLog = sessions.some((session) => session.file === null || session.parseFailures > 0 || session.decodeFailures > 0)
 if (incompleteLog) console.error('INCOMPLETE 会话日志存在缺失或解析/解码失败')
-process.exitCode = incompleteLog ? 1 : 0
+for (const failure of s07Failures) console.error('S07-3 FAIL ' + failure)
+process.exitCode = incompleteLog || s07Failures.length > 0 ? 1 : 0

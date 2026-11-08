@@ -174,12 +174,13 @@ function assertInstallAnchor(installAnchor) {
   return installAnchor
 }
 
-export function dshToolsEntryCandidates(installAnchor) {
+// 单候选语义：目标包（dsh-tool-executor-ptc）只有一个入口，解析成功即返回该入口路径（不再是数组）。
+export function dshToolsEntryPath(installAnchor) {
   const anchor = assertInstallAnchor(installAnchor)
   try {
-    return [createRequire(anchor).resolve('@deepseek-ai/dsh-tools')]
+    return createRequire(anchor).resolve('@deepseek-ai/dsh-tool-executor-ptc')
   } catch (cause) {
-    throw errorWithCause('extra-plan: 无法从 installAnchor 解析 @deepseek-ai/dsh-tools：' + anchor, cause)
+    throw errorWithCause('extra-plan: 无法从 installAnchor 解析 @deepseek-ai/dsh-tool-executor-ptc：' + anchor, cause)
   }
 }
 
@@ -188,16 +189,14 @@ export function loadSdkRendererModule(installAnchor) {
   const anchor = assertInstallAnchor(installAnchor)
   const cached = sdkRendererModulePromises.get(anchor)
   if (cached !== undefined) return cached
+  // 入口解析在 async 包装外同步抛：调用方须经 async 函数（如 resolveToolsSdkRenderer）承接，否则会变成同步异常。
+  const entry = dshToolsEntryPath(anchor)
   const pending = (async () => {
-    let importCause
-    for (const entry of dshToolsEntryCandidates(anchor)) {
-      try {
-        return await import(pathToFileURL(entry).href)
-      } catch (cause) {
-        importCause = cause
-      }
+    try {
+      return await import(pathToFileURL(entry).href)
+    } catch (cause) {
+      throw errorWithCause('extra-plan: dsh-tool-executor-ptc SDK renderer 不可用（installAnchor=' + anchor + '）', cause)
     }
-    throw errorWithCause('extra-plan: dsh-tools SDK renderer 不可用（installAnchor=' + anchor + '）', importCause)
   })()
   sdkRendererModulePromises.set(anchor, pending)
   pending.catch(() => {
@@ -234,28 +233,33 @@ export function toolSdkSchemasOf(agent) {
   const tools = toolRegistryOf(agent)
   if (tools === undefined) return undefined
   try {
-    if (typeof tools.sdkSchemas === 'function') {
-      const schemas = tools.sdkSchemas(agent)
-      if (Array.isArray(schemas)) return schemas
+    // 0.2.2 取数口：definitions(agent)（agent 是合法 ScopeKey）。parameters 原样透传不 snapshot
+    // （等于宿主 projectToolSchema(def, false) 口径）；deferLoading 仅 true 时携带；
+    // output 取 definition.output.schema，缺省回退宽松对象 schema。
+    if (typeof tools.definitions === 'function') {
+      const definitions = tools.definitions(agent)
+      if (Array.isArray(definitions)) {
+        return definitions
+          .filter((definition) => definition !== null
+            && typeof definition === 'object'
+            && definition.name !== 'run_code'
+            && !isCordisPresentationTool(definition.name))
+          .map((definition) => ({
+            name: definition.name,
+            description: definition.description,
+            parameters: definition.parameters,
+            ...(definition.deferLoading === true ? { deferLoading: true } : {}),
+            output: definition.output?.schema ?? { type: 'object', additionalProperties: true },
+          }))
+      }
     }
     if (typeof tools.schemas !== 'function') return undefined
     const schemas = tools.schemas(agent)
     if (!Array.isArray(schemas)) return undefined
-    return schemas.filter((schema) => schema !== null && typeof schema === 'object' && schema.name !== 'run_code').map((schema) => ({
+    return schemas.filter((schema) => schema !== null && typeof schema === 'object' && schema.name !== 'run_code' && !isCordisPresentationTool(schema.name)).map((schema) => ({
       ...schema,
       output: schema.output !== undefined ? schema.output : { type: 'object', additionalProperties: true },
     }))
-  } catch (error) {
-    return undefined
-  }
-}
-
-export function toolPresentationModeOf(agent) {
-  const tools = toolRegistryOf(agent)
-  if (tools === undefined || typeof tools.modeFor !== 'function') return undefined
-  try {
-    const mode = tools.modeFor(agent)
-    return typeof mode === 'string' ? mode : undefined
   } catch (error) {
     return undefined
   }

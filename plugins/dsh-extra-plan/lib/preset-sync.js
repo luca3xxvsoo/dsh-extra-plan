@@ -13,14 +13,13 @@ import {
   HOST_ROW_IDS,
   HOST_ROW_LEAF_KEYS,
   HOST_ROW_SETTING_DEFINITIONS,
+  LEGACY_PRESENTATION_ROW_ID,
   LEGACY_PRESET_ROW_ID,
   PRESET_ROW_ID,
   PROJECTION_SETTING_DEFINITIONS,
   SETTINGS_ROW_ID,
   SETTING_DEFINITIONS,
-  captureRowSettings,
   createDefaultSettings,
-  hostRowDefaultsFromTemplate,
   findPluginsRow,
   normalizeSettingValue,
   readPath,
@@ -30,7 +29,7 @@ import {
   GATE_WORDS_GROUP_DEFINITION,
   validateGateWords,
 } from './gate-words.js'
-import { parsePresetYaml, resolveSetting } from './preset-settings.js'
+import { parsePresetYaml, resolveSetting, EXECUTOR_TOOL_NAME_PREFIX } from './preset-settings.js'
 import { ROLE_IDS } from './role-contract.js'
 
 const officialAgentPresetByAnchor = new Map()
@@ -76,7 +75,7 @@ function loadOfficialAgentPreset(installAnchor) {
 const PRESET_ID = 'extra-plan'
 export const CORE_FILES = ['preset.yml', 'agent.cordis.yml']
 /** 生成 definition 顶层的 17 条 agent plugin 行。 */
-export const DECLARATION_ROW_IDS = Object.freeze(['extra-plan', HOST_ROW_IDS.webFetch, HOST_ROW_IDS.toolPresentationMode])
+const DECLARATION_ROW_IDS = Object.freeze(['extra-plan', HOST_ROW_IDS.webFetch, HOST_ROW_IDS.toolPresentationMode.native, HOST_ROW_IDS.toolPresentationMode.ptc])
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 export const ASSET_DIR = join(HERE, '..', 'assets', 'presets', PRESET_ID)
@@ -181,9 +180,14 @@ export function pluginRowIds(plugins) {
 }
 
 export function declarationCoversAsset(plugins) {
+  // 非 executor 行须全部命中；executor 行在同 scope 恰一行才算覆盖（与 projectHostRow 同一恰一行口径：
+  // 两行并存时宿主判为矛盾并拒绝挂载，故此处同样判不覆盖，交由上层按 needsWork 重写修正）。
   if (!Array.isArray(plugins)) return false
   const ids = new Set(pluginRowIds(plugins))
-  return DECLARATION_ROW_IDS.every((id) => ids.has(id))
+  const executorIds = [HOST_ROW_IDS.toolPresentationMode.native, HOST_ROW_IDS.toolPresentationMode.ptc]
+  const fixedOk = DECLARATION_ROW_IDS.filter((id) => id !== executorIds[0] && id !== executorIds[1]).every((id) => ids.has(id))
+  const executorOk = executorIds.filter((id) => ids.has(id)).length === 1
+  return fixedOk && executorOk
 }
 
 function plainObject(value) {
@@ -208,13 +212,34 @@ function userWritableByRow() {
   return table
 }
 
+/** 行身份型设置的行 id 占位符：值由命中的行 id 映射而来（无 config 叶键），判等前双方统一归一。 */
+const USER_ROW_ID_PLACEHOLDER = '__user_row__'
+
+/** 从 HOST_ROW_SETTING_DEFINITIONS 收集 sourceLocator 形状为 rowIds 数组的 descriptor 的行 id 并集。 */
+function userIdentityRowIds() {
+  const ids = new Set()
+  for (const definition of HOST_ROW_SETTING_DEFINITIONS) {
+    const locator = definition.sourceLocator
+    if (locator === null || typeof locator !== 'object' || !Array.isArray(locator.rowIds)) continue
+    for (const rowId of locator.rowIds) if (typeof rowId === 'string' && rowId !== '') ids.add(rowId)
+  }
+  return ids
+}
+
 export function stripUserWritable(plugins) {
   if (!Array.isArray(plugins)) return plugins
   const next = structuredClone(plugins)
   const table = userWritableByRow()
+  const identityRowIds = userIdentityRowIds()
   for (const row of pluginRows(next)) {
+    const rowId = typeof row.id === 'string' ? row.id : undefined
+    const writable = rowId === undefined ? undefined : table.get(rowId)
+    // 行身份型设置：用户把执行器切到另一个行 id 时，声明与资产的唯一合法差异就是该行 id/name，命中则两者同时替换为占位符。
+    if (rowId !== undefined && identityRowIds.has(rowId)) {
+      row.id = USER_ROW_ID_PLACEHOLDER
+      if (typeof row.name === 'string') row.name = USER_ROW_ID_PLACEHOLDER
+    }
     if (Array.isArray(row.config) || !plainObject(row.config)) continue
-    const writable = typeof row.id === 'string' ? table.get(row.id) : undefined
     if (writable === undefined) continue
     for (const key of writable) if (Object.prototype.hasOwnProperty.call(row.config, key)) row.config[key] = '__user__'
   }
@@ -265,31 +290,6 @@ export function effectiveRowConfig(row) {
   return layers.length === 0 ? null : Object.assign({}, ...layers)
 }
 
-export function readAuthoritySettings(options) {
-  const input = options !== null && typeof options === 'object' ? options : {}
-  const provided = input.settingsValues
-  if (provided !== undefined && provided !== null && plainObject(provided)) {
-    const values = {}
-    for (const definition of SETTING_DEFINITIONS) {
-      const raw = provided[definition.key]
-      if (validateSettingValue(definition, raw)) values[definition.key] = normalizeSettingValue(definition, raw)
-    }
-    return { present: true, values }
-  }
-  if (typeof input.readPatch === 'function') {
-    try {
-      const text = input.readPatch()
-      if (typeof text === 'string' && text.trim() !== '') {
-        const captured = captureRowSettings(text, SETTING_DEFINITIONS)
-        return { present: captured.rowPresent === true, values: captured.values }
-      }
-    } catch {
-      return { present: false, values: {} }
-    }
-  }
-  return { present: false, values: {} }
-}
-
 
 function findRowsById(document, rowId) {
   const rows = []
@@ -317,6 +317,50 @@ function captureLegacyValues(plugins) {
   const states = {}
   for (const definition of SETTING_DEFINITIONS) {
     const locator = definition.sourceLocator
+    // toolPresentationMode 双口径：新形状按两个 executor 行 id 合计判定（模式由行身份承载，无叶键）；
+    // 合计为 0 时不在此定稿，回落旧形状 tool-presentation 行的 config.mode（升级前选过 ptc 的旧值）；
+    // 合计大于 1 时判 ambiguous 并 continue：不回落旧形状，也不在此定稿。
+    if (Array.isArray(locator.rowIds)) {
+      const identityRows = locator.rowIds.filter((rowId) => typeof rowId === 'string').flatMap((rowId) => findRowsById(plugins, rowId))
+      if (identityRows.length > 1) {
+        states[definition.key] = 'ambiguous'
+        continue
+      }
+      if (identityRows.length === 1) {
+        const modes = plainObject(locator.modeByRowId) ? locator.modeByRowId : {}
+        const mode = Object.prototype.hasOwnProperty.call(modes, identityRows[0].id) ? modes[identityRows[0].id] : undefined
+        if (mode === undefined) {
+          states[definition.key] = 'missing'
+          continue
+        }
+        if (!validDefinitionValue(definition, mode)) {
+          states[definition.key] = 'invalid'
+          continue
+        }
+        values[definition.key] = normalizeSettingValue(definition, mode)
+        states[definition.key] = 'captured'
+        continue
+      }
+      // 旧形状回落：旧 profile 的呈现模式仍在 tool-presentation 行的 config.mode 叶。
+      // LEGACY_PRESENTATION_MODE_PATH 是同一模块内下方声明的常量（模块求值完成后才被调用，无 TDZ 问题）。
+      const legacyRows = findRowsById(plugins, LEGACY_PRESENTATION_ROW_ID)
+      if (legacyRows.length !== 1) {
+        states[definition.key] = legacyRows.length > 1 ? 'ambiguous' : 'missing'
+        continue
+      }
+      const legacyRead = readPath(legacyRows[0], LEGACY_PRESENTATION_MODE_PATH)
+      if (!legacyRead.exists) {
+        states[definition.key] = 'missing'
+        continue
+      }
+      if (!validDefinitionValue(definition, legacyRead.value)) {
+        states[definition.key] = 'invalid'
+        continue
+      }
+      values[definition.key] = normalizeSettingValue(definition, legacyRead.value)
+      states[definition.key] = 'captured'
+      continue
+    }
     const rows = findRowsById(plugins, locator.rowId)
     if (rows.length !== 1) {
       states[definition.key] = rows.length > 1 ? 'ambiguous' : 'missing'
@@ -512,8 +556,6 @@ export function restateSettingsConfig(current, inherited, patch = {}) {
   return next
 }
 
-export const hostRowDefaultsOf = hostRowDefaultsFromTemplate
-
 function assertPresetDefinition(definition, label = 'preset definition') {
   if (!plainObject(definition)) throw new Error(label + ' 必须是对象')
   if (definition.id !== PRESET_ID) throw new Error(label + ' id 必须为 ' + PRESET_ID)
@@ -534,8 +576,14 @@ export function parsePresetDefinition(text) {
   return assertPresetDefinition(parsePresetYaml(text))
 }
 
+// 资产构建期生成、运行期不可变；缓存对象视为只读，所有变异方均先 structuredClone。
+let cachedAsset = null
+
 export function assetDefinition() {
-  return parsePresetDefinition(readAssetBytes(ASSET_DEFINITION_FILE, '预设 definition').toString('utf8'))
+  if (cachedAsset !== null) return cachedAsset
+  const parsed = parsePresetDefinition(readAssetBytes(ASSET_DEFINITION_FILE, '预设 definition').toString('utf8'))
+  cachedAsset = parsed
+  return cachedAsset
 }
 
 /** 角色 definition 校验：不套用主预设的 17 条/三组契约，只固定 id/name/description/order 与前两行。 */
@@ -567,18 +615,21 @@ export function assetDefinitions() {
 
 /**
  * 四个角色 definition 跟随主 definition 的 toolPresentationMode：取值 = 主 definition
- * （已由 cloneDefinitionWithProjection 按权威快照派生）内 tool-presentation 行的 config.mode——
- * 复用同一派生结果，不新增第二份配置读取；落点与原语走 projectHostRow（与主 definition 同一条派生路径）。
- * 行缺失/重复/值非法/克隆异常时原样返回生成物 definition（保留生成物默认值），永不抛错、不中断预设挂载。
+ * （已由 cloneDefinitionWithProjection 按权威快照派生）plugins 内唯一一个 executor 行 id
+ * （tool-executor-native → native、tool-executor-ptc → ptc）——复用同一派生结果，不新增第二份配置读取；
+ * 落点与原语走 projectHostRow（与主 definition 同一条派生路径）。
+ * executor 行缺失/两行并存/克隆异常时原样返回生成物 definition（保留生成物默认值），永不抛错、不中断预设挂载。
  */
 export function roleDefinitionsWithPresentation(mainDefinition) {
   const definitions = assetDefinitions().slice(1)
   let mode
   try {
     const plugins = mainDefinition !== null && typeof mainDefinition === 'object' ? mainDefinition.plugins : undefined
-    const row = findPluginsRow(plugins, HOST_ROW_IDS.toolPresentationMode)
-    if (row === null || !plainObject(row.config)) return definitions
-    mode = row.config[HOST_ROW_LEAF_KEYS.toolPresentationMode]
+    const ids = pluginRowIds(plugins)
+    const nativeRows = ids.filter((id) => id === HOST_ROW_IDS.toolPresentationMode.native).length
+    const ptcRows = ids.filter((id) => id === HOST_ROW_IDS.toolPresentationMode.ptc).length
+    if (nativeRows + ptcRows !== 1) return definitions
+    mode = nativeRows === 1 ? 'native' : 'ptc'
   } catch {
     return definitions
   }
@@ -586,17 +637,13 @@ export function roleDefinitionsWithPresentation(mainDefinition) {
     try {
       const next = structuredClone(definition)
       if (projectHostRow(next.plugins, 'toolPresentationMode', mode) !== 'ok') return definition
-      // 同一 definition 内绝不允许第二行 tool-presentation（宿主判为矛盾并拒绝挂载）：行数不为 1 时保留生成物默认值。
-      if (pluginRowIds(next.plugins).filter((id) => id === HOST_ROW_IDS.toolPresentationMode).length !== 1) return definition
+      // 同一 definition 内绝不允许两个 executor 行并存（宿主判为矛盾并拒绝挂载）：两行 id 合计不为 1 时保留生成物默认值。
+      if (pluginRowIds(next.plugins).filter((id) => id === HOST_ROW_IDS.toolPresentationMode.native || id === HOST_ROW_IDS.toolPresentationMode.ptc).length !== 1) return definition
       return next
     } catch {
       return definition
     }
   })
-}
-
-export function assetPlugins() {
-  try { return assetDefinition().plugins } catch { return undefined }
 }
 
 export function readDefinitionGateWords(definition = assetDefinition()) {
@@ -608,12 +655,26 @@ export function readDefinitionGateWords(definition = assetDefinition()) {
 /**
  * 宿主行投影的单一实现：主 definition 与 4 个角色 definition 共用同一张定位表（HOST_ROW_IDS /
  * HOST_ROW_LEAF_KEYS）与同一套校验/归一化原语（validateSettingValue / normalizeSettingValue）。
- * 返回 'ok' = 已重述该叶；'skipped' = 值非法或非投影键（调用方跳过）；'missing' = 值合法但 definition
- * 缺该行或行内无 config 对象（主 definition 视为坏资产，角色 definition 保留生成物默认值）。
+ * toolPresentationMode 按 executor 行身份处理：按两个 executor 行 id 合计判定，恰一行时按目标 mode
+ * 改写该行 id/name 并删除其 config（executor 行无 config）；webFetch 等叶值键沿用原叶改写。
+ * 返回 'ok' = 已重述该值；'skipped' = 值非法或非投影键（调用方跳过）；'missing' = 值合法但 definition
+ * 缺该行（executor 行 0 行或多行）或叶值键所在行无 config 对象（主 definition 视为坏资产，
+ * 角色 definition 保留生成物默认值）。
  */
 function projectHostRow(plugins, key, value) {
   const setting = PROJECTION_SETTING_DEFINITIONS.find((item) => item.key === key)
   if (setting === undefined || !validateSettingValue(setting, value)) return 'skipped'
+  if (key === 'toolPresentationMode') {
+    const nativeRow = findPluginsRow(plugins, HOST_ROW_IDS[key].native)
+    const ptcRow = findPluginsRow(plugins, HOST_ROW_IDS[key].ptc)
+    if ((nativeRow === null) === (ptcRow === null)) return 'missing'
+    const row = nativeRow !== null ? nativeRow : ptcRow
+    if (row.id === HOST_ROW_IDS[key][value]) return 'ok'
+    row.id = HOST_ROW_IDS[key][value]
+    row.name = EXECUTOR_TOOL_NAME_PREFIX + value
+    delete row.config
+    return 'ok'
+  }
   const row = findPluginsRow(plugins, HOST_ROW_IDS[key])
   if (row === null || !plainObject(row.config)) return 'missing'
   row.config[HOST_ROW_LEAF_KEYS[key]] = normalizeSettingValue(setting, value)
@@ -624,7 +685,7 @@ function cloneDefinitionWithProjection(definition, projection = {}) {
   const next = structuredClone(definition)
   for (const [key, value] of Object.entries(projection)) {
     if (key === 'gateWords') continue
-    if (projectHostRow(next.plugins, key, value) === 'missing') throw new Error('definition 缺少宿主行 ' + HOST_ROW_IDS[key])
+    if (projectHostRow(next.plugins, key, value) === 'missing') throw new Error('definition 缺少宿主行 ' + (key === 'toolPresentationMode' ? 'tool-executor-native/tool-executor-ptc' : HOST_ROW_IDS[key]))
   }
   if (projection.gateWords !== undefined && projection.gateWords !== null) {
     const row = findPluginsRow(next.plugins, GATE_WORDS_GROUP_DEFINITION.rowId)
@@ -643,13 +704,20 @@ function publicConfigOf(value) {
   return plainObject(value) ? value : {}
 }
 
+/** 旧 profile 的呈现模式叶：tool-presentation 行内 config.mode（新模型改用 executor 行身份承载）。
+ *  取值派生自 settings-contract 的 legacyProjectionLocator.path（同源，改一处须同步另一处），不再另写一份字面量。 */
+const LEGACY_PRESENTATION_MODE_PATH = SETTING_DEFINITIONS.find((item) => item.key === 'toolPresentationMode').legacyProjectionLocator.path
+
 function directProjectionFromLegacy(plugins) {
   const carry = carryUserWritable(plugins)
   const result = {}
   const web = carry.hostRowConfig[HOST_ROW_IDS.webFetch]
-  const mode = carry.hostRowConfig[HOST_ROW_IDS.toolPresentationMode]
+  // 旧 profile 里仍是 tool-presentation 行 + config.mode 叶（新 HOST_ROW_IDS.toolPresentationMode 是
+  // { native, ptc } 映射，不能作 hostRowConfig 键）；hostRowConfig 以行 id 索引（carryUserWritable L250 同口径），旧行按 LEGACY_PRESENTATION_ROW_ID 取行再读 config.mode 叶。
+  const modeLeaf = LEGACY_PRESENTATION_MODE_PATH.slice('config.'.length)
+  const mode = carry.hostRowConfig[LEGACY_PRESENTATION_ROW_ID]
   if (web !== undefined && validateSettingValue(PROJECTION_SETTING_DEFINITIONS.find((item) => item.key === 'webFetch'), web[HOST_ROW_LEAF_KEYS.webFetch])) result.webFetch = web[HOST_ROW_LEAF_KEYS.webFetch]
-  if (mode !== undefined && validateSettingValue(PROJECTION_SETTING_DEFINITIONS.find((item) => item.key === 'toolPresentationMode'), mode[HOST_ROW_LEAF_KEYS.toolPresentationMode])) result.toolPresentationMode = mode[HOST_ROW_LEAF_KEYS.toolPresentationMode]
+  if (mode !== undefined && validateSettingValue(PROJECTION_SETTING_DEFINITIONS.find((item) => item.key === 'toolPresentationMode'), mode[modeLeaf])) result.toolPresentationMode = mode[modeLeaf]
   if (carry.gateWords !== null && carry.gateWords !== undefined) {
     try { result.gateWords = validateGateWords(carry.gateWords) } catch { /* 非法旧值回落默认 */ }
   }
@@ -726,7 +794,6 @@ export async function syncPreset(options = {}) {
     settings: Object.keys(settingsPatch).length === 0 ? null : { values: settingsPatch, diagnostics: legacyDiagnostics },
     preset: null,
     hostRowConfig: {},
-    bodyStale: !bodyOk,
     diagnostics: legacyDiagnostics,
     definition: cloneDefinitionWithProjection(definition, {
       webFetch: resolved.values.webFetch,
