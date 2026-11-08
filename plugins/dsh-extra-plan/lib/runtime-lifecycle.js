@@ -4,11 +4,12 @@ import { PROBER_PRESET_ID } from './role-contract.js'
 export function createRuntimeLifecycle(options = {}) {
   const {
     defineSavePlan, defineSaveProbe,
+    isBootstrapPhase,
     isSubagentChild, isPlannerChild, toolSchemasOf, schemasHasWriteTools,
     isRunCodeSubCall, runCodeDispatchCapText,
   } = options
 
-  function registerTool(registered, toolName, defineFn, agent) {
+  function registerTool(registered, toolName, defineFn, agent, when) {
     if (registered.has(agent)) return
     let tools
     try {
@@ -21,7 +22,7 @@ export function createRuntimeLifecycle(options = {}) {
       return
     }
     try {
-      tools.register(defineFn())
+      tools.register(defineFn(), typeof when === 'function' ? { when } : undefined)
       registered.add(agent)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -50,8 +51,18 @@ export function createRuntimeLifecycle(options = {}) {
   const toolJobsNoticesConsumed = new Map()
   const runCodeDenyRecords = new Map()
 
-  function registerSavePlan(agent) { registerTool(savePlanRegistered, 'save_plan', defineSavePlan, agent) }
-  function registerSaveProbe(agent) { registerTool(saveProbeRegistered, 'save_probe', defineSaveProbe, agent) }
+  function saveBootstrapWhen(context) {
+    try {
+      const agent = context !== null && typeof context === 'object' ? context.agent : undefined
+      if (agent === undefined) return true
+      return !(typeof isBootstrapPhase === 'function' && isBootstrapPhase(agent))
+    } catch (error) {
+      return true
+    }
+  }
+
+  function registerSavePlan(agent) { registerTool(savePlanRegistered, 'save_plan', defineSavePlan, agent, saveBootstrapWhen) }
+  function registerSaveProbe(agent) { registerTool(saveProbeRegistered, 'save_probe', defineSaveProbe, agent, saveBootstrapWhen) }
 
   // F1：prober 角色的预设身份判据。pendingProbeClaims 是 per-apply 实例 Map，父实例写入的
   // 认领子实例读不到，故先按 session.header.agentPreset 的身份直接放行。本函数只读一个字符串

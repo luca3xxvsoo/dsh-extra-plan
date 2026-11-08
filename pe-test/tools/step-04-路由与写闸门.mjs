@@ -662,6 +662,64 @@ function makeArmAgent(id, toolsStub, withAppend) {
   const harnessArmPtc = makeHarness({ anchoredBootstrap: true })
   await fireAgentCreatedForArm(harnessArmPtc, ptcAgent)
   checkTrue('R16 schemas 折叠为仅 run_code（PTC 折叠）跳过收窄：restrict 未被调用', ptcRecorder.calls.restrict.length === 0)
+{
+  // v5 D-B 断言：save_plan/save_probe 注册透传 { when }；mock 按宿主 resolve() 语义求值 admitted 集。
+  const { createRuntimeLifecycle } = await import('../../plugins/dsh-extra-plan/lib/runtime-lifecycle.js')
+  function makeWhenTools() {
+    const registered = []
+    const tools = {
+      register(definition, options) {
+        registered.push({ definition, when: options !== null && typeof options === 'object' && typeof options.when === 'function' ? options.when : undefined })
+      },
+      resolve(context) {
+        const admitted = []
+        for (const reg of registered) {
+          if (reg.when === undefined || reg.when(context) === true) admitted.push(reg.definition.name)
+        }
+        return admitted
+      },
+    }
+    return { registered, tools }
+  }
+  const defineSavePlan = () => ({ name: 'save_plan', description: 'plan', schema: { type: 'object', properties: {}, additionalProperties: false } })
+  const defineSaveProbe = () => ({ name: 'save_probe', description: 'probe', schema: { type: 'object', properties: {}, additionalProperties: false } })
+  const noop = () => false
+  function whenAgent(id, phaseOf) {
+    const rec = makeWhenTools()
+    const agent = { session: { header: { id } }, ctx: { get: (name) => (name === 'tools' ? rec.tools : undefined) } }
+    const lifecycle = createRuntimeLifecycle({
+      defineSavePlan, defineSaveProbe,
+      isSubagentChild: noop, isPlannerChild: noop, toolSchemasOf: () => [], schemasHasWriteTools: () => false,
+      isRunCodeSubCall: () => false, runCodeDispatchCapText: '',
+      isBootstrapPhase: phaseOf,
+    })
+    lifecycle.registerSavePlan(agent)
+    lifecycle.registerSaveProbe(agent)
+    return { rec, agent }
+  }
+  {
+    const { rec, agent } = whenAgent('v4-when-f', () => true)
+    checkTrue('W1 引导期 save_plan/save_probe 注册均带 when 函数且求值 false（不激活）',
+      rec.registered.length === 2 && rec.registered.every((reg) => typeof reg.when === 'function' && reg.when({ agent }) === false))
+    checkTrue('W2 引导期 mock resolve（宿主语义）admitted 不含 save_plan/save_probe', rec.tools.resolve({ agent }).length === 0)
+  }
+  {
+    const { rec, agent } = whenAgent('v4-when-l', () => false)
+    checkTrue('W3 L 相（首个 tool/call 之后）when 求值 true：admitted 恰 save_plan|save_probe', rec.tools.resolve({ agent }).sort().join('|') === 'save_plan|save_probe')
+  }
+  {
+    const { rec, agent } = whenAgent('v4-when-throw', () => { throw new Error('phase down') })
+    let resolved = null
+    try { resolved = rec.tools.resolve({ agent }) } catch (error) { resolved = 'threw' }
+    checkTrue('W4 isBootstrapPhase 抛错时 when 保守返回 true、resolve 不抛且 admitted 两工具（不打断 step）',
+      resolved !== null && Array.isArray(resolved) && resolved.sort().join('|') === 'save_plan|save_probe')
+  }
+  {
+    const { rec } = whenAgent('v4-when-no-agent', () => true)
+    const resolved = rec.tools.resolve(undefined)
+    checkTrue('W5 context 缺 agent 时保守激活（saveBootstrapWhen 对 agent===undefined 提前返回 true）', Array.isArray(resolved) && resolved.sort().join('|') === 'save_plan|save_probe')
+  }
+}
 }
 {
   const armSchemas = [{ name: 'read' }, { name: 'pwsh' }]
@@ -1552,6 +1610,24 @@ checkTrue('回退链：tools 服务缺失/退化/抛错三用例均返回 undefi
 {
   const ptcExecutor = await assemble(harnessBoot, executor, [{ name: 'run_code' }])
   check('P11 PTC executor 不引导（tools 原样 [run_code]）', Array.isArray(ptcExecutor.tools) ? ptcExecutor.tools.map((t) => t.name) : null, ['run_code'])
+{
+  // v5 F 相隐藏面断言：native F 恰 pwsh+read、sections 恰 [extra-plan-bootstrap] 且文本=bootstrapPersona、禁止文案防回潮；PTC F 保持 persona+tool:read 手写示例（P2/P5/P10 回归保护）。
+  const F_PERSONA = 'You are a helpful software engineer assistant.'
+  const fDir = [{ name: 'read' }, { name: 'pwsh' }, { name: 'run_code' }, { name: 'save_plan' }, { name: 'save_probe' }, { name: 'glob' }]
+  const fAssembly = await assemble(harnessBoot, mainAgent, fDir)
+  check('P12 native F 工具恰 pwsh+read（save_plan/save_probe/run_code/glob 全被滤掉）', Array.isArray(fAssembly.tools) ? fAssembly.tools.map((t) => t.name).sort() : null, ['pwsh', 'read'])
+  check('P13 native F sections 段名恰 [extra-plan-bootstrap]', Array.isArray(fAssembly.sections) ? fAssembly.sections.map((s) => s.name) : null, ['extra-plan-bootstrap'])
+  check('P14 native F 唯一段文本恰为 bootstrapPersona', Array.isArray(fAssembly.sections) && fAssembly.sections.length === 1 ? fAssembly.sections[0].text : null, F_PERSONA)
+  const fText = Array.isArray(fAssembly.sections) ? fAssembly.sections.map((s) => (s !== null && typeof s === 'object' && typeof s.text === 'string' ? s.text : '')).join('\n') : ''
+  const FORBIDDEN = ['You are an AI agent powered by DeepSeek Harness', '按需规划模式', 'E1 探查链', 'mcp__chrome-devtools-mcp', 'tools:sdk', 'tool:read', 'run_code 调用 read 示例', 'ask_user_question']
+  checkTrue('P15 native F sections 全文不含宿主身份段/完整 persona/MCP 名/SDK/read 示例/ask 提示（防回潮）', FORBIDDEN.every((word) => !fText.includes(word)))
+  const ptcSections = [{ name: 'tools:ptc-only', text: 'ptc' }]
+  const ptcAssembly = await assemble(harnessBoot, mainAgent, [{ name: 'run_code' }], ptcSections)
+  check('P16 PTC F 回归：sections 恰 [extra-plan-bootstrap, tool:read]', Array.isArray(ptcAssembly.sections) ? ptcAssembly.sections.map((s) => s.name) : null, ['extra-plan-bootstrap', 'tool:read'])
+  const ptcReadText = sectionText(ptcAssembly, 'tool:read')
+  checkTrue('P17 PTC F 回归：tool:read 为手写示例（非空且满足 hint 四要素）', typeof ptcReadText === 'string' && ptcReadText !== '' && hintReadOk(ptcReadText))
+  checkTrue('P18 PTC F 回归：persona 文本不变且工具仍仅 run_code', sectionText(ptcAssembly, 'extra-plan-bootstrap') === F_PERSONA && Array.isArray(ptcAssembly.tools) && ptcAssembly.tools.map((t) => t.name).join('|') === 'run_code')
+}
 }
 
 

@@ -610,6 +610,7 @@ export function apply(ctx, config) {
   // save_plan/save_probe 的合同、校验、渲染与单次落盘由 lib 工厂提供；此处仅保留注册与生命周期接线。
   const runtimeLifecycle = createRuntimeLifecycle({
     defineSavePlan, defineSaveProbe, isSubagentChild, isPlannerChild, toolSchemasOf,
+    isBootstrapPhase,
     schemasHasWriteTools, isRunCodeSubCall, runCodeDispatchCapText,
   })
   const {
@@ -1130,14 +1131,15 @@ export function apply(ctx, config) {
     }
 
     // 展示决策按 phase → creative → mode 分层；所有分支只返回模型可见副本。
-    // 改造8：本钩子是 async 钩子，phase 判定改取 observeSession 租约快照，租约在 finally 释放。
-    let phase = 'later'
-    let phaseLease
+    // v4 D-A：phase 决策用与 arm 同源同步判据 isBootstrapPhase(agent)（同步 sessionEvents 通道）；租约只读求值仅用于 assemble-diag 取证对比（phaseLease 字段），不参与 anchoredFirst 决策；差异记录：同步快照可能滞后于租约不可变快照，但 arm 用同判据已在实机 arm-ok 生效，同源即对齐。
+    const phase = isBootstrapPhase(agent) ? 'first' : 'later'
+    let phaseLease = null
     try {
-      phaseLease = await observeSessionLeaseOf(agent)
-      phase = isBootstrapPhase(agent, phaseLease?.events) ? 'first' : 'later'
-    } finally {
-      if (phaseLease !== undefined && typeof phaseLease[Symbol.dispose] === 'function') phaseLease[Symbol.dispose]()
+      const lease = await observeSessionLeaseOf(agent)
+      phaseLease = isBootstrapPhase(agent, lease?.events) ? 'first' : 'later'
+      if (lease !== undefined && typeof lease[Symbol.dispose] === 'function') lease[Symbol.dispose]()
+    } catch (error) {
+      phaseLease = 'unavailable'
     }
     const role = planner ? 'planner' : child ? 'executor' : 'main'
     // 呈现模式二值化：唯一来源是宿主装配结果里的 tools:ptc-only 段，由实际挂载的 ptc 执行器注入，其余 native。
@@ -1184,6 +1186,29 @@ export function apply(ctx, config) {
     } else {
       // creativeMode 仍需复制投影以剥离已退役 tool:cordis 段，但保留两个展示工具与 SDK 原文。
       presented = projectAssemblyForPresentation(result, schemas, { hideCordis: false })
+    }
+
+    // v4 assemble-diag：投影完成后、anchoredFirst 提前返回之前落盘——anchoredFirst=false 或工具为空等任何路径都有证据。
+    // phaseSync=决策用同步判据；phaseLease=租约只读求值（仅取证对比，不参与 anchoredFirst 决策）；phaseSource=决策来源。
+    try {
+      appendDiagnostic(ctx, agent, 'extra-plan-anchored.jsonl', {
+        ts: new Date().toISOString(),
+        sessionId: typeof agent?.session?.header?.id === 'string' ? agent.session.header.id : '',
+        event: 'assemble-diag',
+        phase,
+        phaseSync: phase,
+        phaseLease,
+        phaseSource: 'sync-sessionEvents',
+        anchoredFirst,
+        mode,
+        bootstrapOn: bootstrapOn(agent),
+        role,
+        toolsIn: Array.isArray(result.tools) ? result.tools.length : null,
+        toolsOut: Array.isArray(presented.tools) ? presented.tools.length : null,
+        sectionsIn: Array.isArray(result.sections) ? result.sections.map((section) => (section !== null && typeof section === 'object' ? section.name : null)) : null,
+        sectionsOut: Array.isArray(presented.sections) ? presented.sections.map((section) => (section !== null && typeof section === 'object' ? section.name : null)) : null,
+      })
+    } catch (error) {
     }
 
     if (!anchoredFirst) return presented
