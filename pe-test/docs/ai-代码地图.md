@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-11-08 13:33:20（脚本自动更新时间戳行）
+> 上次同步：2026-11-08 15:55:32（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -108,7 +108,7 @@
 | plugins/dsh-extra-plan-qqbot/lib/heal.js | 654 | 自愈纯函数模块（共享 sameRealPath 路径比较；profileNames 可缩小 profile 候选；定位/旧块迁移/建链；供 index.js/CLI/测试复用） |
 | plugins/dsh-extra-plan-qqbot/lib/path-policy.js | 464 | QQBot 包 H/W 双根路径策略：按 QQBot 用途隔离读写边界，覆盖变量、链接、只读能力与写入预检 |
 | plugins/dsh-extra-plan-qqbot/scripts/heal.mjs | 273 | CLI 入口：无参仅打印帮助、不自愈；--install 严格安装模式（失败非零）；显式 --host-root/--profile [--dry-run] 仅维护测试；启动自愈由 index.js#apply 调用 |
-| plugins/dsh-extra-plan/index.js | 1370 | 核心入口：四级闸门、预算、save 工具注册与生命周期；接线 planner/非 planner 路由、A/C/M 投影、P2-2 cache、usage 启动扫描账本（覆盖式幂等更新）、v4 MALFORMED 自愈。gateWords 只来自 YAML，apply 先校验再副作用；tools/pre-execute 先用原始 `isSubagentChild` 预审 child 控制工具，再进入角色/root 闸门，main 控制与自动最终结果保持。 |
+| plugins/dsh-extra-plan/index.js | 1465 | 核心入口：四级闸门、预算、save 工具注册与生命周期；接线 planner/非 planner 路由、A/C/M 投影、P2-2 cache、usage 启动扫描账本（覆盖式幂等更新）、v4 MALFORMED 自愈。gateWords 只来自 YAML，apply 先校验再副作用；tools/pre-execute 先用原始 `isSubagentChild` 预审 child 控制工具，再进入角色/root 闸门，main 控制与自动最终结果保持。 |
 | plugins/dsh-extra-plan/lib/agent-runtime.js | 175 | 每次 apply 的角色识别、descriptor/工具 schema 缓存、usage 血缘上下文与 role baseline、四角色宿主 mode 与显式 override 幂等；不 import index.js |
 | plugins/dsh-extra-plan/lib/agent-session.js | 65 | 会话事件与子代理识别的唯一来源：sessionEvents/isSubagentChild 零依赖纯函数，被 index.js 与 lib/model-routing.js 共用（无镜像副本；不 import index.js） |
 | plugins/dsh-extra-plan/lib/assembly-presentation.js | 266 | A/C/M 与 skill catalog 模型可见投影；从 scoped tools 读 schema/模式，SDK renderer 按 language 整体重建；F/PTC 的 tool:read 由 index.js 手写，L 段回宿主原文。 |
@@ -390,7 +390,7 @@
 | plugins/dsh-extra-plan/index.js | prepareDiagnosticPath | L458-474 | 先建父目录再校验写入目标，成功返回可写诊断路径，任一步失败都一律返回空串且不抛错 |  |
 | plugins/dsh-extra-plan/index.js | appendDiagnostic | L476-481 | 以 UTF-8 追加一行 JSON 诊断记录，路径不可得时返回假而不抛错，供调用方判空 |  |
 | plugins/dsh-extra-plan/index.js | recordAgentError | L483-500 | agent/error 回合错误取证：错误链逐字追加到诊断目录（落点见 getDiagPath），整体吞错不阻断。 | 与 recordRequestError 同诊断模式 |
-| plugins/dsh-extra-plan/index.js | apply | L504-1370 | 插件主入口：闸门词表先校验，再接线投影、路由与 save 工具注册（顺序以机制设计为准）。 |  |
+| plugins/dsh-extra-plan/index.js | apply | L504-1465 | 插件主入口：闸门词表先校验，再接线投影、路由与 save 工具注册（顺序以机制设计为准）。 |  |
 | plugins/dsh-extra-plan/index.js | getPathContext | L527 | 传给保存类工具工厂的取上下文回调：按 cwd 现算路径上下文，属宿主接线且不缓存 |  |
 | plugins/dsh-extra-plan/index.js | resolveDocumentTarget | L537 | 传给配置热读器的文档目标回调：按 agent 现算精确宿主目标，属宿主接线不缓存 |  |
 | plugins/dsh-extra-plan/index.js | getPathContext | L538 | 传给配置热读器的取上下文回调：按 agent 的会话工作目录现算路径上下文，属宿主接线 |  |
@@ -414,14 +414,16 @@
 | plugins/dsh-extra-plan/index.js | noteRunCodeSubCall | L621 | 单实例子调用上限（planner）：按 sessionId→rootCallId 桶读计数、未超限则 +1；返回拒绝文案或 null；空 rootCallId 与 exploreBudget 文案保持 |  |
 | plugins/dsh-extra-plan/index.js | consumeToolJobsNotice | L622-655 | tool-jobs 通知按 message.id 判重：首次有效通知解锁 job_output 与 pollGuard。 | 消费与双解锁语义见 ai-机制设计.md 六「session 生命周期与 usage 账本」的通知消费合同条。 |
 | plugins/dsh-extra-plan/index.js | selectChildModelOnCreate | L668-719 | （待补充） |  |
-| plugins/dsh-extra-plan/index.js | toolsServiceOf | L725-738 | （待补充） |  |
-| plugins/dsh-extra-plan/index.js | anchoredAllowNamesOf | L741-755 | （待补充） |  |
-| plugins/dsh-extra-plan/index.js | armAnchoredToolRestriction | L756-783 | （待补充） |  |
-| plugins/dsh-extra-plan/index.js | releaseAnchoredToolRestriction | L784-789 | （待补充） |  |
-| plugins/dsh-extra-plan/index.js | shouldHideCreativeCatalog | L814-816 | HP1 判定：C=1、A=1、F、main/planner、M=ptc 时暂隐两个创造 skill |  |
-| plugins/dsh-extra-plan/index.js | isAnchoredContextGate | L820-825 | 判定当前 agent 是否满足 anchored context gate：bootstrap 开启、Session 仍处 F，且角色为 main 或 planner（非 live child） | 只读 payload.agent；角色沿现有 isPlannerChild/isChild 语义，不使用 selfAgent 或父 Session 相位 |
-| plugins/dsh-extra-plan/index.js | warnPreStepFailure | L827-831 | pre-step 可降级 C 投影/去重异常的一次性告警 helper；返回路径仍保留已经完成的 source 过滤副本，并保证 next 只调用一次 | 不得在关键 source gate/phase 失败时吞错后发送未过滤 decision |
-| plugins/dsh-extra-plan/index.js | recordRequestError | L936-956 | agent/request-error：按 diagPath 追加 jsonl，含 ts、role 与错误链，整体吞错。 |  |
+| plugins/dsh-extra-plan/index.js | toolsServiceOf | L727-740 | （待补充） |  |
+| plugins/dsh-extra-plan/index.js | anchoredAllowNamesOf | L744-772 | （待补充） |  |
+| plugins/dsh-extra-plan/index.js | armAnchoredToolRestriction | L773-862 | （待补充） |  |
+| plugins/dsh-extra-plan/index.js | anchoredDiag | L778-799 | （待补充） |  |
+| plugins/dsh-extra-plan/index.js | releaseAnchoredToolRestriction | L863-887 | （待补充） |  |
+| plugins/dsh-extra-plan/index.js | releaseDiag | L868-879 | （待补充） |  |
+| plugins/dsh-extra-plan/index.js | shouldHideCreativeCatalog | L912-914 | HP1 判定：C=1、A=1、F、main/planner、M=ptc 时暂隐两个创造 skill |  |
+| plugins/dsh-extra-plan/index.js | isAnchoredContextGate | L918-923 | 判定当前 agent 是否满足 anchored context gate：bootstrap 开启、Session 仍处 F，且角色为 main 或 planner（非 live child） | 只读 payload.agent；角色沿现有 isPlannerChild/isChild 语义，不使用 selfAgent 或父 Session 相位 |
+| plugins/dsh-extra-plan/index.js | warnPreStepFailure | L925-929 | pre-step 可降级 C 投影/去重异常的一次性告警 helper；返回路径仍保留已经完成的 source 过滤副本，并保证 next 只调用一次 | 不得在关键 source gate/phase 失败时吞错后发送未过滤 decision |
+| plugins/dsh-extra-plan/index.js | recordRequestError | L1034-1054 | agent/request-error：按 diagPath 追加 jsonl，含 ts、role 与错误链，整体吞错。 |  |
 | plugins/dsh-extra-plan/lib/agent-runtime.js | isLiveDelegation | L17-28 | 按父会话 registry 存活状态判定委托是否仍有效 |  |
 | plugins/dsh-extra-plan/lib/agent-runtime.js | createAgentRuntime | L30-175 | 创建 per-apply 角色/缓存/usage baseline 工厂 |  |
 | plugins/dsh-extra-plan/lib/agent-runtime.js | isChild | L37-45 | 按显式 events 判定 live child 并发出恢复为 root 警示 |  |

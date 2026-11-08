@@ -718,10 +718,12 @@ export function apply(ctx, config) {
     }
   }
 
-  // 0.2.2-rc.1 修复（BUG-1）：宿主装配期以 provider 并集覆盖 waterfall 返回的 tools，
-  // 引导期工具面收窄改走 ctx.tools.restrict（返回 disposer，首个 tool/call 后释放）。
-  // PTC（catalog 含 run_code）与只读 child 一律不 arm，避免砍掉嵌套绑定或污染只读分类。
+  // 0.2.2-rc.1 修复（BUG-1）：宿主装配期以 provider 并集覆盖 waterfall 返回的 tools，改返回 tools 无结构效果，
+  // 故引导期工具面收窄只走 ctx.tools.restrict 通道（返回 disposer，首个 tool/call 后释放）。
+  // allow = 配置集 ∩ 可收窄名（view(agent).restrictableNames 优先、schemas 兜底）；PTC 折叠与只读 child 一律不 arm。
+  // 全路径诊断落盘 <数据根>/logs/dsh-extra-plan/extra-plan-anchored.jsonl（含 source 字段区分 arm 来源）。
   const anchoredRestrictions = new WeakMap()
+  const anchoredDiagSeen = new WeakMap()
   function toolsServiceOf(agent) {
     try {
       const scoped = agent !== undefined && agent !== null ? agent.ctx : undefined
@@ -736,56 +738,152 @@ export function apply(ctx, config) {
       return undefined
     }
   }
-  // 引导期 allow 名单 = 配置的 shell/common 工具集 ∩ 当前 agent 实际 schema 名。
-  // 取不到 schema 时按配置集原样使用；交集为空则不 arm（避免 restrict 空集合整体禁工具）。
+  // 引导期 allow = 配置集 ∩ 可收窄名（view.restrictableNames 优先、schemas 兜底）；
+  // 两者都不可用或交集为空时返回空数组，调用方不 arm 并落诊断（不回落配置集：
+  // 配置集默认含 win32 上并不存在的 bash，restrict 对未知名整次抛错）。
   function anchoredAllowNamesOf(agent) {
-    const schemas = toolSchemasOf(agent)
-    const names = new Set()
-    if (Array.isArray(schemas)) {
-      for (const schema of schemas) {
-        if (schema !== null && typeof schema === 'object' && typeof schema.name === 'string') names.add(schema.name)
+    let names = null
+    const tools = toolsServiceOf(agent)
+    if (tools !== undefined && typeof tools.view === 'function') {
+      try {
+        const view = tools.view(agent)
+        if (view !== undefined && view !== null && view.restrictableNames instanceof Set) names = view.restrictableNames
+      } catch (error) {
+        // view 取不到时退回 schemas 兜底
       }
     }
+    if (names === null) {
+      const schemas = toolSchemasOf(agent)
+      if (Array.isArray(schemas)) {
+        const schemaNames = new Set()
+        for (const schema of schemas) {
+          if (schema !== null && typeof schema === 'object' && typeof schema.name === 'string') schemaNames.add(schema.name)
+        }
+        names = schemaNames
+      }
+    }
+    if (names === null) return []
     const allow = []
     for (const name of [...bootstrapShellTools, ...bootstrapCommonTools]) {
-      if (names.size > 0 && !names.has(name)) continue
+      if (!names.has(name)) continue
       if (!allow.includes(name)) allow.push(name)
     }
     return allow
   }
-  function armAnchoredToolRestriction(agent) {
+  function armAnchoredToolRestriction(agent, source) {
+    let allow = []
+    let restrictable = null
+    // 诊断统一出口：自带 try/catch 吞错（诊断失败不得影响 arm/release 主流程）；
+    // skip-* 事件按 event + source 每 agent 去重，arm-ok/arm-failed 每次落盘。
+    const anchoredDiag = (event, detail) => {
+      try {
+        let seen = anchoredDiagSeen.get(agent)
+        if (seen === undefined) {
+          seen = new Set()
+          anchoredDiagSeen.set(agent, seen)
+        }
+        if (String(event).startsWith('skip-')) {
+          const key = event + ':' + source
+          if (seen.has(key)) return
+          seen.add(key)
+        }
+        appendDiagnostic(ctx, agent, 'extra-plan-anchored.jsonl', {
+          ts: new Date().toISOString(),
+          sessionId: typeof agent?.session?.header?.id === 'string' ? agent.session.header.id : '',
+          event,
+          source: typeof source === 'string' ? source : 'unknown',
+          ...detail,
+        })
+      } catch (error) {
+      }
+    }
     try {
-      if (!bootstrapOn(agent)) return
+      if (!bootstrapOn(agent)) {
+        anchoredDiag('skip-bootstrap-off', {})
+        return
+      }
       // 只在仍处引导期时 arm：resume 后已过首个 tool/call 的会话不再收窄。
-      if (!isBootstrapPhase(agent)) return
-      if (isChild(agent) && !isPlannerChild(agent)) return
+      if (!isBootstrapPhase(agent)) {
+        anchoredDiag('skip-phase', {})
+        return
+      }
+      if (isChild(agent) && !isPlannerChild(agent)) {
+        anchoredDiag('skip-child', {})
+        return
+      }
       // 只在真实宿主 Session 上 arm：真实 Session 提供 append（事件落盘能力），
       // 静态契约/工具面夹具不提供该能力，因此不会被运行期收窄污染（路线 A）。
       const session = agent.session
-      if (session === undefined || session === null || typeof session.append !== 'function') return
-      // PTC 部署（宿主挂 ptcRuntime）跳过：顶层只有 run_code，收窄会砍掉嵌套绑定。
-      try {
-        const ptcRuntime = typeof ctx.get === 'function' ? ctx.get('ptcRuntime') : undefined
-        if (ptcRuntime !== undefined && ptcRuntime !== null) return
-      } catch (error) {
-        // 取不到按 native 处理
+      if (session === undefined || session === null || typeof session.append !== 'function') {
+        anchoredDiag('skip-no-session-append', {})
+        return
       }
-      if (anchoredRestrictions.has(agent)) return
+      // PTC 部署跳过：工具面折叠为仅 run_code 时收窄会砍掉嵌套绑定（不再以 ptcRuntime 服务是否存在判定）。
+      const armSchemas = toolSchemasOf(agent)
+      if (catalogIsCollapsed(armSchemas)) {
+        anchoredDiag('skip-ptc-collapsed', { reason: 'schemas collapsed to run_code' })
+        return
+      }
+      if (anchoredRestrictions.has(agent)) {
+        anchoredDiag('skip-already-armed', {})
+        return
+      }
       const tools = toolsServiceOf(agent)
-      if (tools === undefined || typeof tools.restrict !== 'function') return
-      const allow = anchoredAllowNamesOf(agent)
-      if (allow.length === 0) return
+      if (tools === undefined || typeof tools.restrict !== 'function') {
+        anchoredDiag('skip-no-restrict', {})
+        return
+      }
+      // 快照一次供 skip-empty-allow 与 arm-ok/arm-failed 共用（取不到记 null）。
+      try {
+        const armView = typeof tools.view === 'function' ? tools.view(agent) : undefined
+        if (armView !== undefined && armView !== null && armView.restrictableNames instanceof Set) restrictable = [...armView.restrictableNames].sort()
+      } catch (error) {
+      }
+      allow = anchoredAllowNamesOf(agent)
+      if (allow.length === 0) {
+        anchoredDiag('skip-empty-allow', {
+          restrictable,
+          schemasNames: Array.isArray(armSchemas) ? armSchemas.filter((s) => s !== null && typeof s === 'object' && typeof s.name === 'string').map((s) => s.name) : null,
+          configured: [...bootstrapShellTools, ...bootstrapCommonTools],
+        })
+        return
+      }
       const disposer = tools.restrict({ allow })
-      if (typeof disposer === 'function') anchoredRestrictions.set(agent, disposer)
+      if (typeof disposer === 'function') {
+        anchoredRestrictions.set(agent, disposer)
+        anchoredDiag('arm-ok', { allow, restrictable })
+      } else {
+        anchoredDiag('arm-failed', { message: 'restrict returned non-function disposer', allow, restrictable })
+      }
     } catch (error) {
       console.warn('extra-plan: 引导期工具面收窄失败（不影响会话创建）：' + (error instanceof Error ? error.message : String(error)))
+      anchoredDiag('arm-failed', { message: error instanceof Error ? error.message : String(error), allow, restrictable })
     }
   }
   function releaseAnchoredToolRestriction(agent) {
     const disposer = anchoredRestrictions.get(agent)
     if (disposer === undefined) return
     anchoredRestrictions.delete(agent)
-    try { disposer() } catch (error) { console.warn('extra-plan: 引导期工具面收窄释放失败：' + (error instanceof Error ? error.message : String(error))) }
+    // 释放诊断与 arm 同一落盘通道（source 固定 release：释放调用点不带来源参数）。
+    const releaseDiag = (event, detail) => {
+      try {
+        appendDiagnostic(ctx, agent, 'extra-plan-anchored.jsonl', {
+          ts: new Date().toISOString(),
+          sessionId: typeof agent?.session?.header?.id === 'string' ? agent.session.header.id : '',
+          event,
+          source: 'release',
+          ...detail,
+        })
+      } catch (error) {
+      }
+    }
+    try {
+      disposer()
+      releaseDiag('release-ok', {})
+    } catch (error) {
+      console.warn('extra-plan: 引导期工具面收窄释放失败：' + (error instanceof Error ? error.message : String(error)))
+      releaseDiag('release-failed', { message: error instanceof Error ? error.message : String(error) })
+    }
   }
 
   ctx.on('agent/created', async (payload) => {
@@ -800,7 +898,7 @@ export function apply(ctx, config) {
     }
     // 模型选择与引导期工具面收窄各自独立吞错：注册/基线失败不得连坐这两步。
     await selectChildModelOnCreate(agent, payload.signal)
-    armAnchoredToolRestriction(agent)
+    armAnchoredToolRestriction(agent, 'agent-created')
   })
 
   // 2) pre-step：账本补记（会话最终消息的行延迟到此）；规划子代理初始任务与
@@ -873,7 +971,7 @@ export function apply(ctx, config) {
         if (isPlannerChild(agent) || !isSubagentChild(agent)) registerSavePlan(agent)
         if (!isSubagentChild(agent) || probeClaimFor(agent)) { registerSaveProbe(agent) }
         // 引导期收窄兜底：recompose 不重发 agent/created 的会话（Web 首启）在这里补 arm。
-        armAnchoredToolRestriction(agent)
+        armAnchoredToolRestriction(agent, 'pre-step')
       } catch (error) {
         initializationFailed = true
         warnPreStepFailure(error)
@@ -1195,11 +1293,8 @@ export function apply(ctx, config) {
     const agent = exec.agent
     // 0.2.2-rc.1 修复（BUG-1）：引导期工具面收窄在首个工具调用前释放，使下一步装配
     // （宿主 assemble 早于 agent/pre-step）即为 L 段完整工具面。
-    const releaseAnchored = anchoredRestrictions.get(agent)
-    if (releaseAnchored !== undefined) {
-      anchoredRestrictions.delete(agent)
-      try { releaseAnchored() } catch (error) { console.warn('extra-plan: 引导期工具面收窄释放失败：' + (error instanceof Error ? error.message : String(error))) }
-    }
+    // 释放逻辑单一来源 releaseAnchoredToolRestriction（含诊断落盘），此处不内联释放实现。
+    releaseAnchoredToolRestriction(agent)
     // 单次会话事件快照（P1-4）：本钩子内全部消费点（锚点扫描、tool-jobs 通知扫描、角色判定、
     // planner 闸门、main 闸门与状态推导）复用同一份快照引用，只取一次。宿主无参快照返回缓存全量
     // 视图（无新事件即同一引用），故此处只做快照来源收敛与可读性整理——本批**不减少**各消费点

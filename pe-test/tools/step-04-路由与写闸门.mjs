@@ -612,7 +612,7 @@ check('R13 bootstrapOn=true planner 首轮收窄为 shell+read', Array.isArray(b
 const bootExecutor = await assemble(harnessBoot, executor, [{ name: 'read' }, { name: 'pwsh' }, { name: 'write' }])
 check('R14 bootstrapOn=true executor 不引导（目录原样）', Array.isArray(bootExecutor.tools) ? bootExecutor.tools.map((t) => t.name).sort() : null, ['pwsh', 'read', 'write'])
 
-// ── R15-R18：引导期收窄改走 ctx.tools.restrict 的行为断言（0.2.2-rc.1 BUG-1 v2 补齐） ──
+// ── R15-R18：引导期收窄改走 ctx.tools.restrict 的行为断言（0.2.2-rc.1 BUG-1 v3 固化：R16 折叠跳过 + R16b 非折叠调用） ──
 // 真实宿主 Session 具备 append；路线 A：无 append 的静态契约/工具面夹具不 arm。
 async function fireAgentCreatedForArm(listeners, agent) {
   const created = listeners['agent/created']
@@ -656,12 +656,20 @@ function makeArmAgent(id, toolsStub, withAppend) {
   checkTrue('R17 引导期结束后 release：restrict disposer 被调用恰一次', armRecorder.calls.released === 1)
 }
 {
-  const armSchemas = [{ name: 'read' }, { name: 'pwsh' }]
+  const armSchemas = [{ name: 'run_code' }]
   const ptcRecorder = makeArmRecorder(armSchemas)
   const ptcAgent = makeArmAgent('boot-restrict-ptc', ptcRecorder.tools, true)
   const harnessArmPtc = makeHarness({ anchoredBootstrap: true })
   await fireAgentCreatedForArm(harnessArmPtc, ptcAgent)
-  checkTrue('R16 PTC 部署（ptcRuntime 存在）跳过收窄：restrict 未被调用', ptcRecorder.calls.restrict.length === 0)
+  checkTrue('R16 schemas 折叠为仅 run_code（PTC 折叠）跳过收窄：restrict 未被调用', ptcRecorder.calls.restrict.length === 0)
+}
+{
+  const armSchemas = [{ name: 'read' }, { name: 'pwsh' }]
+  const nonPtcRecorder = makeArmRecorder(armSchemas)
+  const nonPtcAgent = makeArmAgent('boot-restrict-nonptc', nonPtcRecorder.tools, true)
+  const harnessArmNonPtc = makeHarness({ anchoredBootstrap: true })
+  await fireAgentCreatedForArm(harnessArmNonPtc, nonPtcAgent)
+  checkTrue('R16b ptcRuntime 存在但 schemas 非折叠：restrict 被调用恰一次', nonPtcRecorder.calls.restrict.length === 1)
 }
 {
   const armSchemas = [{ name: 'read' }, { name: 'pwsh' }]
