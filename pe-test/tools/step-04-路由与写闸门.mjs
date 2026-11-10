@@ -75,7 +75,7 @@ import { createGateRuntime } from '../../plugins/dsh-extra-plan/lib/gate-words.j
 import { createLiveConfig } from '../../plugins/dsh-extra-plan/lib/live-config.js'
 import { CREATIVE_SKILL_NAMES as CREATIVE_SKILL_NAMES_FOR_TEST } from '../../plugins/dsh-extra-plan/lib/assembly-presentation.js'
 const routeAssemblyPresentation = await import('../../plugins/dsh-extra-plan/lib/assembly-presentation.js')
-import { SETTING_DEFINITIONS as SETTING_DEFINITIONS_E, SETTING_GROUPS as SETTING_GROUPS_E, PRESET_ROW_ID as PRESET_ROW_ID_E, SETTINGS_ROW_ID as SETTINGS_ROW_ID_E, EXTRA_PLAN_SETTING_DEFINITIONS as EXTRA_PLAN_SETTING_DEFINITIONS_E } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
+import { SETTING_DEFINITIONS as SETTING_DEFINITIONS_E, SETTING_GROUPS as SETTING_GROUPS_E, SETTINGS_ROW_ID as SETTINGS_ROW_ID_E, SETTINGS_ROW_NAME as SETTINGS_ROW_NAME_E, EXTRA_PLAN_SETTING_DEFINITIONS as EXTRA_PLAN_SETTING_DEFINITIONS_E } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
 import { ASSET_DEFINITION_FILE as ASSET_DEFINITION_FILE_E, roleDefinitionOf } from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
 // 说明：不 import lib/settings.js——它顶层 import '@deepseek-ai/schemastery'，解析环境依赖宿主副本
 // （本机 npm 全局 dsh 与 profiles/web 的 profile 内副本都可能提供该依赖）；
@@ -2312,7 +2312,7 @@ function matrixAgent(role, phase, serial) {
     ? { id: 'matrix-main-' + serial, cwd: 'C:/work' }
     : { id: 'matrix-' + role + '-' + serial, origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work', ...role === 'planner' ? { agentPreset: PLANNER_PRESET } : {} }
   return {
-    session: { header, snapshotEvents: () => events },
+    session: makeRouteSession(header, events),
     options: {},
     ctx: { get: (name) => name === 'tools' ? { schemas: () => schemas, definitions: () => definitions } : undefined },
   }
@@ -2457,6 +2457,18 @@ for (const anchoredBootstrap of matrixAnchoredOptions) {
           const phaseOk = (isBootstrapPhase(agent) ? 'first' : 'later') === phase
           const contextsOk = !anchored || (Array.isArray(assembled.contexts) && assembled.contexts.length === 0)
           const catalog = await matrixCatalog(harnessMatrix, agent, creativeMode)
+          const matrixSessionEvents = agent.session.snapshotEvents()
+          const matrixOriginalEvents = phase === 'first' ? [] : [{ type: 'tool/call', data: {} }]
+          if (role === 'planner') matrixOriginalEvents.unshift(DESC)
+          const matrixOriginalKept = JSON.stringify(matrixSessionEvents.slice(0, matrixOriginalEvents.length)) === JSON.stringify(matrixOriginalEvents)
+          const matrixAppendedEvents = matrixSessionEvents.slice(matrixOriginalEvents.length)
+          const matrixPlannerModeObserved = role === 'planner'
+            ? matrixAppendedEvents.length === 1
+              && matrixAppendedEvents[0]?.type === 'sandbox/mode'
+              && matrixAppendedEvents[0]?.data?.mode === 'read-only'
+              && matrixAppendedEvents[0]?.data?.source === 'delegation'
+            : true
+          checkTrue('M' + matrixSerial + ' session事件保留原快照；planner追加sandbox/mode read-only delegation', matrixOriginalKept && matrixPlannerModeObserved)
           const catalogMessage = Array.isArray(catalog.messages) ? catalog.messages.find((message) => message !== null && typeof message === 'object' && message.source !== undefined) : undefined
           const catalogEntries = catalogMessage !== undefined && catalogMessage.source !== null && typeof catalogMessage.source === 'object' && Array.isArray(catalogMessage.source.entries) ? catalogMessage.source.entries : []
           const catalogCreative = catalogEntries.filter((entry) => entry !== null && typeof entry === 'object' && MATRIX_CREATIVE_SKILLS.includes(entry.name))
@@ -3119,11 +3131,11 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
     !settingsCode.includes('settings.register') && !settingsCode.includes('ExtraPlanSettingsSchema') &&
     !settingsCode.includes('.agent-presets') && settingsCode.includes("child.settings.configure({ auto: false }, ctx.fiber)"))
   check('T9-3o descriptor 分组：extra-plan 恰 9 项、host-rows 恰 2 项', EXTRA_PLAN_SETTING_DEFINITIONS_E.length + '|' + SETTING_DEFINITIONS_E.filter((item) => item.group === SETTING_GROUPS_E.HOST_ROWS).length, '9|2')
-  checkTrue('T9-3p 新载体行 id 常量与声明行一致', SETTINGS_ROW_ID_E === 'dsh-extra-plan-settings' && PRESET_ROW_ID_E === 'extra-plan-preset-sync')
+  checkTrue('T9-3p 新载体行 id/name 常量与当前规范一致', SETTINGS_ROW_ID_E === 'dsh-extra-plan-settings' && SETTINGS_ROW_NAME_E === 'dsh-extra-plan/settings')
    // ④ 当前写链只经 settings row；旧 preset-sync helper/公开写入入口已退役。
    const presetSyncSource = readFileSyncE(fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/preset-sync.js', import.meta.url)), 'utf8')
-   const retiredPresetSyncExports = [['restate', 'Preset', 'Plugins'], ['restate', 'Preset', 'SyncConfig'], ['active', 'Preset', 'SyncRow'], ['public', 'Config', 'FromRows']].map((parts) => parts.join(''))
-   checkTrue('T9-3q preset-sync 仅保留 raw legacy 读取与 mountPresetSync，旧 helper/export 均移除', presetSyncSource.includes('export function readLegacyState') && presetSyncSource.includes('export function mountPresetSync') && !presetSyncSource.includes('export function apply') && retiredPresetSyncExports.every((name) => !presetSyncSource.includes(name)))
+   const retiredPresetSyncSymbols = ['PRESET_ROW_ID', 'LEGACY_PRESET_ROW_ID', 'LEGACY_PRESENTATION_ROW_ID', 'readLegacyState', 'readLegacyPresetState', 'readDeclaredPluginsFromPatch', 'declarationCoversAsset', 'declarationBodyMatchesAsset', 'stripUserWritable', 'carryUserWritable', 'activeLegacyRow', 'restatePresetPlugins', 'restatePresetSyncConfig', 'activePresetSyncRow', 'publicConfigFromRows']
+   checkTrue('T9-3q preset-sync 保留mountPresetSync且旧API/常量/写入helper缺席', presetSyncSource.includes('export function mountPresetSync') && !presetSyncSource.includes('export function apply') && retiredPresetSyncSymbols.every((name) => !presetSyncSource.includes(name)))
   // ── ①c 空串零探针短路与验收者 pro 入口（[任务5] M1）──────────────────────
   {
     const mrRouting = (options) => createModelRouting({

@@ -39,7 +39,7 @@
 2. **mode 必须是两值之一（native 或 ptc）**：`both` 已随宿主 `dsh-agent-tool-presentation` 的二值契约退出，读到 `both` 视为非法旧值（插件无专门归一化分支，isMode 校验失败回落默认 native，但仍须先改成显式值）。若 `mode` 既非 native 也非 ptc，先明确提示用户切换、**等用户确认后再开始**；提示语模板（照读）：
    > 当前模式为 <值>，本流程需按 native 轮与 ptc 轮两轮执行：请优先在“插件 → 按需规划模式”当前包详情的全局管理表单保存 `toolPresentationMode=native`（第一轮）／`ptc`（第二轮）；该表单槽缺失或被让位时，才由用户通过 configEditor/SettingsForms 或手工 profile 权威行改同一键，然后重启 Harness 并**新开会话**（切 mode 后原会话不可继续：native 开头的会话切到 ptc 后 resume 会因工具面全 deferred 被上游 400 拒），完成后按本流程进入后续取证
    用户侧成本 = 每轮 1 次后端权威行配置更新 ＋ 重启 Harness ＋ 新开会话（见 1.5、7.1）。
-3. **读取现场的 7 个闸门关键词（v0.3.0 起为强制前置）**：同一次 read 取**全局行 `dsh-extra-plan-settings` 的 `config.gateWords` 7 个字段值；若全局行缺项，再安全只读旧 `extra-plan-preset-sync` 或 `preset-extra-plan.config.plugins` 作为迁移证据**（routeDirect/routePlan/routeDisagree/approvalApprove/approvalReplan/purposeRefine/purposeRedo），**写进该次实测记录的配置快照**。此后所有 ask 选项、deny 文案判定与「旧词拒绝」判据都以这 7 个现场值为准；**禁止只按出厂示例词（直接执行｜进行pro规划｜不同意｜同意执行｜转交pro规划｜完善方案｜重新规划）测试**。若 `config.gateWords` 缺失/非法：插件在该预设挂载时同步抛错（预设不可用），此时实测不成立——先按 7 键整组补齐（非空的 7 个互不相同字符串、首尾无空白、无 CR/LF、不以推荐后缀结尾）再开始。
+3. **读取现场的 7 个闸门关键词（v0.3.0 起为强制前置）**：同一次 read 取**全局行 `dsh-extra-plan-settings` 的 `config.gateWords` 7 个字段值**（routeDirect/routePlan/routeDisagree/approvalApprove/approvalReplan/purposeRefine/purposeRedo），**写进该次实测记录的配置快照**；两个历史配置 ID 不读取、不一次性迁移、不回退、不判旧 owner，不以真实旧行补齐；当前规范行普通项缺失/非法只用新默认，`config.gateWords` 整个属性缺失可用当前资产默认，显式提供对象必须七键整组合法，否则严格失败且零写。此后所有 ask 选项、deny 文案判定与「旧词拒绝」判据都以这 7 个现场值为准；**禁止只按出厂示例词（直接执行｜进行pro规划｜不同意｜同意执行｜转交pro规划｜完善方案｜重新规划）测试**。若显式提供的 `config.gateWords` 对象缺键/非法：插件在该预设挂载时同步抛错（预设不可用），此时实测不成立——先按 7 键整组补齐（非空的 7 个互不相同字符串、首尾无空白、无 CR/LF、不以推荐后缀结尾）再开始；整个属性缺失则使用当前资产默认。
 4. **catchGate 三段口径**：①第一轮（native 轮）固定按 `catchGate=true`（拦截面轮）执行：起步已是 `true` → 直接开始；起步非 true → 在切 native 的**同一次后端权威行更新**中一并设为 `true`。②第二轮切到 `ptc`（U8）时 **`runcodeCatchGate` 保持 `true` 不动**，2A 段仍在拦截面下取聚合行（见 3.3／3.4.1-3.4.7）。③2A 段全部跑完后由 **U9** 把 `runcodeCatchGate` 切为 `false`（放行面段，见 3.4.8）：该键为插件侧配置热读、权威行更新即生效，**不重启、不新开会话**。
 
 > 第 0 节的两轮 mode 前置、catchGate 三段口径（第一轮 true／第二轮 2A 段仍 true／2B 段由 U9 切 false）与「现场 7 词快照」只约束机械闸门回归；PTC 专项的干净 F/L 取证在 ptc 轮内按 C=0/C=1 各开一条 A=1 顶层会话执行。
@@ -687,7 +687,7 @@ node --input-type=module -e $js $dir
   → 以第 0 节自查结果为准：起步 M 既非 native 也非 ptc → 按第 0 节第 2 步提示用户切到本轮 mode（1 次后端权威行配置更新＋重启 Harness 并新开会话；A/C 只记录现场 settings 权威值；起步 runcodeCatchGate 已是 true → 第一轮固定 catchGate=true，可直接开始；起步非 true → 切 native 的同一次后端权威行更新搭车设为 true。
 - 其它前置值（报告须记录同一部署配置快照）：exploreBudget、savePlanDir=.extra-plan、plannerModel、otherAgentModel、crossProviderPlannerModel、plannerPromptSuffix；save_probe 限制只引用 `plugins/dsh-extra-plan/lib/save-contract.js#PROBE_LIMITS`（不在本 runbook 维护第二份操作表）。
 - **后端权威行改动（由用户操作，AI 只旁读）**：第一轮前置 = 把「工具执行器」**切到 native** ＋ 把 `runcodeCatchGate` 置 true（**同一次后端权威行更新**），随后重启 Harness 并新开会话，即 4.1 的 U7；轮间 U8 = 再 1 次后端权威行配置更新**只把模式切到 `ptc`**（`runcodeCatchGate` 保持 true 不动），随后重启 Harness 并新开会话；2A 段跑完后 U9 = 1 次后端权威行更新**只把 `runcodeCatchGate` 切为 false**（插件侧配置热读、权威行更新即生效，**不重启、不新开会话**）。后端权威行配置更新共 2 次（U8、U9），起步 mode/catchGate 不合规时为 3 次（U7、U8、U9）。
-- 全程只动工作区会话；**AI 不触碰生产环境**（DSH_HOME/profiles、.agent-presets 零操作）；后端权威行改动**由用户操作** —— 其受管文件为 profile patch `DSH_HOME/profiles/<profile>/cordis.patch.yml`（11 项权威设置统一落 `dsh-extra-plan-settings` 全局行，2 项宿主值仅由该快照派生到内存 definition），即后端权威行的**正常写入路径**（不是 AI 的写入路径）；旧公开/旧 body 只读迁移，不作为写入目标。
+- 全程只动工作区会话；**AI 不触碰生产环境**（DSH_HOME/profiles、.agent-presets 零操作）；后端权威行改动**由用户操作** —— 其受管文件为 profile patch `DSH_HOME/profiles/<profile>/cordis.patch.yml`（11 项权威设置统一落 `dsh-extra-plan-settings` 全局行，2 项宿主值仅由该快照派生到内存 definition），即后端权威行的**正常写入路径**（不是 AI 的写入路径）；两个历史配置 ID 不作来源、不自动迁移、不回退、不判旧 owner，真实旧行不编辑、不删除。
 
 - A42/A43 AI 自动取证命令（pwsh 运行，在子代理完成后执行）：`$env:PLANNER_PROMPT_SUFFIX='<同一部署快照的精确 suffix>'; node pe-test/tools/step-07-子代理模型与引导取证.mjs --session <顶层主会话ID> --sessions-dir <会话根> --discover-children --full`（会话在宿主数据根时另加 `--host-root <H 数据根>`）。无 `--session`/`--sessions-dir` 记 `NOT-RUN`（exit 0）；会话选择非法/不完整、或选择后缺 `PLANNER_PROMPT_SUFFIX` 必须报输入错误（exit 1）；`SESSION_ID` 只作报告/输出字段，不作选择参数。该命令为只读日志、直接 `node`，不自动猜会话、不发请求，无需 Host 代码 preload。plannerModel / otherAgentModel / crossProviderPlannerModel 由报告人只读部署侧 settings 行 `dsh-extra-plan-settings` 的 config.* 取得（step-07 脚本不输出），与 PLANNER_PROMPT_SUFFIX 一并作为同一部署快照记录。同一部署快照还须一并登记 llm provider 集合与登录态（rc2 起含 `deepseek-account`，未登录时其模型目录为空）与 `crossProviderPlannerModel` 开关值。
 
@@ -762,21 +762,21 @@ node --input-type=module -e $js $dir
 ## 7.6 闸门关键词单源实机取证
 前置：完成第 0 节四步（含**现场 7 词快照**）。本节四类步骤必须在**同一份现场快照**下至少执行 A、B 两类；C/D 两类在改了词或升级版本时必须执行。
 
-- **A 定制词识别（证明词表来自 profile 全局行，不是作者默认或 JS 常量）**：由用户在当前 profile 的 `DSH_HOME/profiles/<profile>/cordis.patch.yml` 中把唯一全局行 `dsh-extra-plan-settings.config.gateWords` 7 个字段**全部换成与出厂词不重叠的新词**（例如 甲直行/乙规划/丙否决/丁批准/戊转规划/己完整/庚重做；7 值必须两两不同），**重启 Harness（不新开会话）**，然后按第一轮编排重跑路由 ask、目的 ask、批准 ask；作者 `plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml` 仅作默认真源，不是现场改动对象；旧 `extra-plan-preset-sync`/`preset-extra-plan` 仅作只读迁移证据。**A 类与 B 类取证在两轮中各执行一次**：第二轮用 run_code 成员形态重跑路由 ask、目的 ask、批准 ask（分别见 3.4.1／3.4.3／3.4.5，主会话侧一律写成 run_code 成员、不用直呼）。
+- **A 定制词识别（证明词表来自 profile 全局行，不是作者默认或 JS 常量）**：由用户在当前 profile 的 `DSH_HOME/profiles/<profile>/cordis.patch.yml` 中把唯一全局行 `dsh-extra-plan-settings.config.gateWords` 7 个字段**全部换成与出厂词不重叠的新词**（例如 甲直行/乙规划/丙否决/丁批准/戊转规划/己完整/庚重做；7 值必须两两不同），**重启 Harness（不新开会话）**，然后按第一轮编排重跑路由 ask、目的 ask、批准 ask；作者 `plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml` 仅作默认真源，不是现场改动对象；两个历史配置 ID 不作来源、不自动迁移、不回退、不判旧 owner，真实旧行不编辑、不删除。**A 类与 B 类取证在两轮中各执行一次**：第二轮用 run_code 成员形态重跑路由 ask、目的 ask、批准 ask（分别见 3.4.1／3.4.3／3.4.5，主会话侧一律写成 run_code 成员、不用直呼）。
   - 判据①：ask 选项用**新词**时状态机正常推进（route→purpose→clarify→approved 依次置位，写工具与委派按锚点放行）。
   - 判据②：deny 卡片文案里的「选项固定为…」逐字等于**新词**拼出的句子（不再出现任何出厂词）。
   - 判据③：模型侧或日志里 persona 生效文本中的选项词等于新词（变量注册成功、宿主严格渲染通过）。
 - **B 旧词拒绝（改词后旧 label（标签）不得复活）**：保持上一类的新词现场，用户在 ask 里**手动输入/选择旧出厂词**（或重放含旧词的旧会话）：
   - 判据：route 保持 `none`（或沿用旧词前的状态）、purpose 保持 `none`、approved 为 `false`；随后 write/edit 与 subagent 委派返回 deny，且 deny 文案只含当前新词。旧词带 `(Recommended)`/`（推荐）` 等白名单后缀同样不得生效。
 - **C 普通重启（现场全局行逐字保留）**：在**未升级版本**的前提下修改唯一全局行 `dsh-extra-plan-settings.config.gateWords` 或其它设置，重启 Harness：
-  - 判据：以同一版本的纯 definition 与全局合法快照判定 `idle` → **唯一全局行不被改写**（不产生 edit）、合法值生效；把现场全局行 `dsh-extra-plan-settings.config.gateWords` 改成缺键/非法组后重启，同样**不被自愈**，且该预设挂载时同步抛错（`extra-plan: config.gateWords …`）——即「普通重启保留用户配置」与「非法配置阻止使用」同时成立。旧公开行/旧声明 body 仍只读，不作为该次实测现场修改位置。
-- **D 版本变化升级（新版纯 definition 与全局合法快照迁移）**：安装/更新到新的发行版本后重启：
+  - 判据：以同一版本的纯 definition 与全局合法快照判定 `idle` → **唯一全局行不被改写**（不产生 edit）、合法值生效；把现场全局行 `dsh-extra-plan-settings.config.gateWords` 改成缺键/非法组后重启，同样**不被自愈**，且该预设挂载时同步抛错（`extra-plan: config.gateWords …`）——即「普通重启保留用户配置」与「非法配置阻止使用」同时成立。两个历史配置 ID 不读取、不自动迁移、不回退、不判旧 owner，真实旧行不编辑、不删除；不以历史行作为该次实测现场修改位置。
+- **D 版本变化升级（新版纯 definition 与当前设置快照装配）**：安装/更新到新的发行版本后重启：
   - 判据①：现场 7 词以升级前保存的**全局行合法快照**为准，不以作者资产词覆盖；新版纯 definition 的非用户设置内容（如 `bootstrapPersona`）来自新版资产，persona 仅含必填 prefix、不含旧 text 兼容键，且含 7 个 `{{extra_plan_*}}` 变量引用。
-  - 判据②：全局行十一项与 gateWords 均完整合法时按新版纯 definition 挂载并判定 `idle`（不写盘）；仅有缺项时从旧公开/旧 body **只读**迁移到唯一全局行；不重写旧声明 body、不恢复旧公开写链，2 项宿主值由全局快照派生到内存 definition。
+  - 判据②：全局行十一项与 gateWords 均完整合法时按新版纯 definition 挂载并判定 `idle`（不写盘）；普通设置缺项/非法项只用新默认，gateWords 整个属性缺失可用当前资产默认；显式提供 gateWords 对象必须七键整组合法，否则严格失败且零 edit；两个历史配置 ID 不读取、不自动迁移、不回退、不判旧 owner、不承诺旧值，真实旧行不编辑、不删除；2 项宿主值由全局快照派生到内存 definition。
   - 判据③：**插件不落任何自有台账或额外审计文件**；判定只依赖新版纯 definition、全局合法快照与既有 profile 配置，不依赖已退役的发布状态字段。
   - 判据④：新版本模板本身坏（缺键/重复/保留后缀）时同步**抛错且目标物不被替换**（唯一全局行的旧值原样保留）。
 - 取证命令（仓库侧，mock（模拟）层证据，不替代实机）：`DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-01-设置迁移.mjs`（描述表与源模板定位矩阵）、`DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-04-路由与写闸门.mjs`（GW 段：定制词三路 dispatch 与旧词拒绝）、`DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-00-全流程回归.mjs`（GWY/GWV/GWC 段）。
-- 边界：本节只读/改 profile patch 的唯一全局行（`DSH_HOME/profiles/<profile>/cordis.patch.yml`）属**用户侧部署动作**；旧 `extra-plan-preset-sync` / `preset-extra-plan` 只读迁移、不自动删除；AI 不代做生产部署，只出判据与取证脚本。`.agent-presets/extra-plan/` 已随死代码清理删除，本插件不再使用任何自有状态目录。
+- 边界：本节只读/改 profile patch 的唯一全局行（`DSH_HOME/profiles/<profile>/cordis.patch.yml`）属**用户侧部署动作**；两个历史配置 ID 不读取、不自动迁移、不回退、不判旧 owner，真实旧行不编辑、不删除；为当前规范行唯一性/指纹可读取含旧行的同一 raw 文件，但不按历史 ID 取值；AI 不代做生产部署，只出判据与取证脚本。`.agent-presets/extra-plan/` 已随死代码清理删除，本插件不再使用任何自有状态目录。
 
 ## 七点九 context-gate 独立验收
 
