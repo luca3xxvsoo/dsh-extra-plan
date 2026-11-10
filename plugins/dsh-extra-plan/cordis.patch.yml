@@ -1,6 +1,6 @@
 # 宿主平面 bundle patch：按需规划模式只公开一个全局管理组件。
-# settings 行同时拥有 11 项配置、API、内部 carrier、旧值迁移、同步核对与官方 adapter。
-# 旧 extra-plan-preset-sync / preset-extra-plan 仅在 settings 内安全读取，不再作为新公开入口或写入目标。
+# settings 行同时拥有 11 项配置、API、内部 carrier、当前值补齐、同步核对与官方 adapter。
+# 两个历史配置 ID 不读取、不一次性迁移、不回退、不判旧 owner、不承诺旧值；真实旧行不编辑、不删除，也不作为新写入目标。
 # 两项宿主设置由 settings 权威值派生到内存 definition；官方启停机制与额外声明不由插件删除。
 - insert:
     - id: dsh-extra-plan-settings

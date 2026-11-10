@@ -1,6 +1,6 @@
 // 预设核对组件：读取生成 definition，直接挂载官方 AgentPreset adapter。
-// 旧 extra-plan-preset-sync 仅作非破坏读取来源；新结构不再写入或依赖该公开行。
-// 旧 preset-extra-plan 只做非破坏读取迁移，新的 profile 写入一律经 configEditor.edit。
+// 当前规范配置唯一来源为 settings 行（id=dsh-extra-plan-settings，name=dsh-extra-plan/settings）；普通缺项只取新默认。
+// 历史配置 ID 不读取、不迁移、不回退；profile 写入仍一律经 configEditor.edit。
 // definition 的 group/isolate/!!js 原文交给官方 adapter，不能提前求值或复制 registry。
 
 import { createHash } from 'node:crypto'
@@ -12,17 +12,12 @@ import { createPathContext, resolveHostPath, resolveWorkspacePath, validateReadT
 import {
   HOST_ROW_IDS,
   HOST_ROW_LEAF_KEYS,
-  HOST_ROW_SETTING_DEFINITIONS,
-  LEGACY_PRESENTATION_ROW_ID,
-  LEGACY_PRESET_ROW_ID,
-  PRESET_ROW_ID,
   PROJECTION_SETTING_DEFINITIONS,
   SETTINGS_ROW_ID,
   SETTING_DEFINITIONS,
   createDefaultSettings,
   findPluginsRow,
   normalizeSettingValue,
-  readPath,
   validateSettingValue,
 } from './preset-settings.js'
 import {
@@ -75,7 +70,7 @@ function loadOfficialAgentPreset(installAnchor) {
 const PRESET_ID = 'extra-plan'
 export const CORE_FILES = ['preset.yml', 'agent.cordis.yml']
 /** 生成 definition 顶层的 17 条 agent plugin 行。 */
-const DECLARATION_ROW_IDS = Object.freeze(['extra-plan', HOST_ROW_IDS.webFetch, HOST_ROW_IDS.toolPresentationMode.native, HOST_ROW_IDS.toolPresentationMode.ptc])
+
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 export const ASSET_DIR = join(HERE, '..', 'assets', 'presets', PRESET_ID)
@@ -179,103 +174,21 @@ export function pluginRowIds(plugins) {
   return pluginRows(plugins).filter((row) => typeof row.id === 'string' && row.id !== '').map((row) => row.id)
 }
 
-export function declarationCoversAsset(plugins) {
-  // 非 executor 行须全部命中；executor 行在同 scope 恰一行才算覆盖（与 projectHostRow 同一恰一行口径：
-  // 两行并存时宿主判为矛盾并拒绝挂载，故此处同样判不覆盖，交由上层按 needsWork 重写修正）。
-  if (!Array.isArray(plugins)) return false
-  const ids = new Set(pluginRowIds(plugins))
-  const executorIds = [HOST_ROW_IDS.toolPresentationMode.native, HOST_ROW_IDS.toolPresentationMode.ptc]
-  const fixedOk = DECLARATION_ROW_IDS.filter((id) => id !== executorIds[0] && id !== executorIds[1]).every((id) => ids.has(id))
-  const executorOk = executorIds.filter((id) => ids.has(id)).length === 1
-  return fixedOk && executorOk
-}
+
 
 function plainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-function userWritableByRow() {
-  const table = new Map()
-  const push = (rowId, path) => {
-    if (typeof rowId !== 'string' || rowId === '' || typeof path !== 'string') return
-    const key = path.startsWith('config.') ? path.slice('config.'.length) : path
-    if (key === '' || key.includes('.')) return
-    const set = table.get(rowId)
-    if (set === undefined) table.set(rowId, new Set([key]))
-    else set.add(key)
-  }
-  for (const definition of HOST_ROW_SETTING_DEFINITIONS) {
-    const locator = definition.legacyProjectionLocator || definition.projectionLocator
-    if (locator !== null && typeof locator === 'object') push(locator.pluginsRowId, locator.path)
-  }
-  push(GATE_WORDS_GROUP_DEFINITION.rowId, GATE_WORDS_GROUP_DEFINITION.path)
-  return table
-}
 
-/** 行身份型设置的行 id 占位符：值由命中的行 id 映射而来（无 config 叶键），判等前双方统一归一。 */
-const USER_ROW_ID_PLACEHOLDER = '__user_row__'
 
-/** 从 HOST_ROW_SETTING_DEFINITIONS 收集 sourceLocator 形状为 rowIds 数组的 descriptor 的行 id 并集。 */
-function userIdentityRowIds() {
-  const ids = new Set()
-  for (const definition of HOST_ROW_SETTING_DEFINITIONS) {
-    const locator = definition.sourceLocator
-    if (locator === null || typeof locator !== 'object' || !Array.isArray(locator.rowIds)) continue
-    for (const rowId of locator.rowIds) if (typeof rowId === 'string' && rowId !== '') ids.add(rowId)
-  }
-  return ids
-}
 
-export function stripUserWritable(plugins) {
-  if (!Array.isArray(plugins)) return plugins
-  const next = structuredClone(plugins)
-  const table = userWritableByRow()
-  const identityRowIds = userIdentityRowIds()
-  for (const row of pluginRows(next)) {
-    const rowId = typeof row.id === 'string' ? row.id : undefined
-    const writable = rowId === undefined ? undefined : table.get(rowId)
-    // 行身份型设置：用户把执行器切到另一个行 id 时，声明与资产的唯一合法差异就是该行 id/name，命中则两者同时替换为占位符。
-    if (rowId !== undefined && identityRowIds.has(rowId)) {
-      row.id = USER_ROW_ID_PLACEHOLDER
-      if (typeof row.name === 'string') row.name = USER_ROW_ID_PLACEHOLDER
-    }
-    if (Array.isArray(row.config) || !plainObject(row.config)) continue
-    if (writable === undefined) continue
-    for (const key of writable) if (Object.prototype.hasOwnProperty.call(row.config, key)) row.config[key] = '__user__'
-  }
-  return next
-}
 
-export function declarationBodyMatchesAsset(declaredPlugins, assetBody) {
-  if (!Array.isArray(declaredPlugins) || !Array.isArray(assetBody)) return true
-  return JSON.stringify(stripUserWritable(declaredPlugins)) === JSON.stringify(stripUserWritable(assetBody))
-}
 
-export function carryUserWritable(plugins) {
-  const hostRowConfig = {}
-  let gateWords = null
-  if (!Array.isArray(plugins)) return { hostRowConfig, gateWords }
-  const table = userWritableByRow()
-  const gateRowId = GATE_WORDS_GROUP_DEFINITION.rowId
-  const gateKey = GATE_WORDS_GROUP_DEFINITION.path.startsWith('config.')
-    ? GATE_WORDS_GROUP_DEFINITION.path.slice('config.'.length)
-    : GATE_WORDS_GROUP_DEFINITION.path
-  for (const row of pluginRows(plugins)) {
-    if (Array.isArray(row.config) || typeof row.id !== 'string' || !plainObject(row.config)) continue
-    const writable = table.get(row.id)
-    if (writable === undefined) continue
-    const pick = {}
-    for (const key of writable) if (Object.prototype.hasOwnProperty.call(row.config, key)) pick[key] = row.config[key]
-    if (Object.keys(pick).length === 0) continue
-    if (row.id === gateRowId) {
-      if (Object.prototype.hasOwnProperty.call(pick, gateKey)) gateWords = pick[gateKey]
-      continue
-    }
-    const merged = hostRowConfig[row.id] === undefined ? {} : hostRowConfig[row.id]
-    hostRowConfig[row.id] = { ...merged, ...pick }
-  }
-  return { hostRowConfig, gateWords }
-}
+
+
+
+
 
 export function effectiveRowConfig(row) {
   if (row === null || typeof row !== 'object') return null
@@ -291,242 +204,51 @@ export function effectiveRowConfig(row) {
 }
 
 
-function findRowsById(document, rowId) {
-  const rows = []
-  const seen = new Set()
-  const visit = (value) => {
-    if (value === null || typeof value !== 'object' || seen.has(value)) return
-    seen.add(value)
-    if (value.id === rowId) rows.push(value)
-    if (Array.isArray(value)) {
-      for (const item of value) visit(item)
-    } else {
-      for (const child of Object.values(value)) visit(child)
-    }
-  }
-  visit(document)
-  return rows
-}
+
 
 function validDefinitionValue(definition, value) {
   return validateSettingValue(definition, value)
 }
 
-function captureLegacyValues(plugins) {
-  const values = {}
-  const states = {}
-  for (const definition of SETTING_DEFINITIONS) {
-    const locator = definition.sourceLocator
-    // toolPresentationMode 双口径：新形状按两个 executor 行 id 合计判定（模式由行身份承载，无叶键）；
-    // 合计为 0 时不在此定稿，回落旧形状 tool-presentation 行的 config.mode（升级前选过 ptc 的旧值）；
-    // 合计大于 1 时判 ambiguous 并 continue：不回落旧形状，也不在此定稿。
-    if (Array.isArray(locator.rowIds)) {
-      const identityRows = locator.rowIds.filter((rowId) => typeof rowId === 'string').flatMap((rowId) => findRowsById(plugins, rowId))
-      if (identityRows.length > 1) {
-        states[definition.key] = 'ambiguous'
-        continue
-      }
-      if (identityRows.length === 1) {
-        const modes = plainObject(locator.modeByRowId) ? locator.modeByRowId : {}
-        const mode = Object.prototype.hasOwnProperty.call(modes, identityRows[0].id) ? modes[identityRows[0].id] : undefined
-        if (mode === undefined) {
-          states[definition.key] = 'missing'
-          continue
-        }
-        if (!validDefinitionValue(definition, mode)) {
-          states[definition.key] = 'invalid'
-          continue
-        }
-        values[definition.key] = normalizeSettingValue(definition, mode)
-        states[definition.key] = 'captured'
-        continue
-      }
-      // 旧形状回落：旧 profile 的呈现模式仍在 tool-presentation 行的 config.mode 叶。
-      // LEGACY_PRESENTATION_MODE_PATH 是同一模块内下方声明的常量（模块求值完成后才被调用，无 TDZ 问题）。
-      const legacyRows = findRowsById(plugins, LEGACY_PRESENTATION_ROW_ID)
-      if (legacyRows.length !== 1) {
-        states[definition.key] = legacyRows.length > 1 ? 'ambiguous' : 'missing'
-        continue
-      }
-      const legacyRead = readPath(legacyRows[0], LEGACY_PRESENTATION_MODE_PATH)
-      if (!legacyRead.exists) {
-        states[definition.key] = 'missing'
-        continue
-      }
-      if (!validDefinitionValue(definition, legacyRead.value)) {
-        states[definition.key] = 'invalid'
-        continue
-      }
-      values[definition.key] = normalizeSettingValue(definition, legacyRead.value)
-      states[definition.key] = 'captured'
-      continue
-    }
-    const rows = findRowsById(plugins, locator.rowId)
-    if (rows.length !== 1) {
-      states[definition.key] = rows.length > 1 ? 'ambiguous' : 'missing'
-      continue
-    }
-    const read = readPath(rows[0], locator.path)
-    if (!read.exists) {
-      states[definition.key] = 'missing'
-      continue
-    }
-    if (!validDefinitionValue(definition, read.value)) {
-      states[definition.key] = 'invalid'
-      continue
-    }
-    values[definition.key] = normalizeSettingValue(definition, read.value)
-    states[definition.key] = 'captured'
-  }
-  return { values, states }
-}
 
-function validGateWordsOrUndefined(value) {
-  try { return validateGateWords(value) } catch { return undefined }
-}
 
-function legacyStateFromPlugins(plugins) {
-  const capture = captureLegacyValues(plugins)
-  const rows = findRowsById(plugins, GATE_WORDS_GROUP_DEFINITION.rowId)
-  let gateWords
-  let gateWordsState = rows.length === 0 ? 'missing' : rows.length > 1 ? 'ambiguous' : 'missing'
-  if (rows.length === 1) {
-    const raw = rows[0].config === undefined ? undefined : rows[0].config.gateWords
-    if (raw === undefined) gateWordsState = 'missing'
-    else {
-      gateWords = validGateWordsOrUndefined(raw)
-      gateWordsState = gateWords === undefined ? 'invalid' : 'captured'
-    }
-  }
-  return { ...capture, gateWords, gateWordsState, plugins }
-}
 
-/** 安全读取旧公开行与旧 preset-extra-plan body；parsePresetYaml 只做数据解析，不求值 !!js。 */
-export function readLegacyState(text) {
-  const empty = { authority: { values: {}, states: {} }, projection: {}, projectionSources: {}, gateWords: undefined, gateWordsSource: undefined, diagnostics: [], legacyPlugins: undefined }
-  if (typeof text !== 'string' || text.trim() === '') return empty
-  let document
-  try { document = parsePresetYaml(text) } catch (error) {
-    return { ...empty, diagnostics: ['legacy patch YAML parse failed: ' + String(error && error.message || error)] }
-  }
-  const diagnostics = []
-  const syncRows = findRowsById(document, PRESET_ROW_ID)
-  const legacyRows = findRowsById(document, LEGACY_PRESET_ROW_ID)
-  let legacyPlugins
-  if (legacyRows.length > 1) diagnostics.push('duplicate legacy preset rows')
-  else if (legacyRows.length === 1 && plainObject(legacyRows[0].config) && Array.isArray(legacyRows[0].config.plugins)) legacyPlugins = legacyRows[0].config.plugins
-  const body = legacyStateFromPlugins(legacyPlugins)
-  if (legacyRows.length === 1 && legacyPlugins === undefined) diagnostics.push('legacy preset plugins missing')
-  const projection = {}
-  const projectionSources = {}
-  let publicConfig
-  if (syncRows.length > 1) diagnostics.push('duplicate extra-plan-preset-sync rows')
-  else if (syncRows.length === 1 && plainObject(syncRows[0].config)) publicConfig = syncRows[0].config
-  for (const definition of PROJECTION_SETTING_DEFINITIONS) {
-    const key = definition.key
-    if (publicConfig !== undefined && Object.prototype.hasOwnProperty.call(publicConfig, key)) {
-      if (!validateSettingValue(definition, publicConfig[key])) diagnostics.push('invalid legacy projection ' + key)
-      else {
-        projection[key] = normalizeSettingValue(definition, publicConfig[key])
-        projectionSources[key] = 'legacy-projection'
-      }
-    } else if (Object.prototype.hasOwnProperty.call(body.values, key)) {
-      projection[key] = body.values[key]
-      projectionSources[key] = 'legacy-preset'
-    }
-  }
-  let publicGate
-  let gateWordsSource
-  if (publicConfig !== undefined && Object.prototype.hasOwnProperty.call(publicConfig, 'gateWords')) {
-    publicGate = validGateWordsOrUndefined(publicConfig.gateWords)
-    if (publicGate === undefined) diagnostics.push('invalid legacy gateWords')
-    else gateWordsSource = 'legacy-projection'
-  }
-  const gateWords = publicGate !== undefined ? publicGate : body.gateWords
-  if (gateWords !== undefined && gateWordsSource === undefined) gateWordsSource = 'legacy-preset'
-  if (body.gateWordsState === 'ambiguous') diagnostics.push('ambiguous legacy gateWords')
-  if (body.gateWordsState === 'invalid') diagnostics.push('invalid legacy body gateWords')
-  return {
-    authority: body,
-    projection,
-    projectionSources,
-    gateWords,
-    gateWordsSource,
-    diagnostics,
-    legacyPlugins,
-    publicConfig: publicConfig || {},
-  }
-}
 
-/** 统一解析全局权威值；当前 settings 行合法值优先，旧值仅填缺项。 */
+
+
+
+
+/** 统一解析当前 settings 行；缺失或非法普通项只取新默认。 */
 export function resolveUnifiedConfig(options = {}) {
   const input = options !== null && typeof options === 'object' ? options : {}
   const defaults = createDefaultSettings()
-  const legacy = input.legacyState !== undefined
-    ? input.legacyState
-    : (input.declaredPlugins !== undefined && typeof input.readPatch !== 'function'
-      ? (() => {
-          const body = legacyStateFromPlugins(input.declaredPlugins)
-          const projection = directProjectionFromLegacy(input.declaredPlugins)
-          const projectionSources = Object.fromEntries(Object.keys(projection).map((key) => [key, 'legacy-preset']))
-          return { authority: body, projection, projectionSources, gateWords: body.gateWords, gateWordsSource: body.gateWords === undefined ? undefined : 'legacy-preset', diagnostics: [], legacyPlugins: input.declaredPlugins }
-        })()
-      : readLegacyState(typeof input.readPatch === 'function' ? input.readPatch() : undefined))
   const authority = plainObject(input.settingsValues) ? input.settingsValues : {}
   const authorityHasGateWords = Object.prototype.hasOwnProperty.call(authority, 'gateWords')
   if (authorityHasGateWords) {
     try { validateGateWords(authority.gateWords) }
     catch (error) { throw new Error('当前全局 gateWords 非法：' + String(error && error.message || error)) }
   }
-  const publicFallback = { ...(legacy.projection || {}) }
-  const legacyProjectionSources = legacy.projectionSources !== null && typeof legacy.projectionSources === 'object' ? legacy.projectionSources : {}
   const values = {}
   const sources = {}
   const patch = {}
   for (const definition of SETTING_DEFINITIONS) {
     const key = definition.key
-    let value
-    if (validDefinitionValue(definition, authority[key])) {
-      value = normalizeSettingValue(definition, authority[key])
+    const captured = validDefinitionValue(definition, authority[key])
+    if (captured) {
+      values[key] = normalizeSettingValue(definition, authority[key])
       sources[key] = 'settings-row'
-    } else if (PROJECTION_SETTING_DEFINITIONS.includes(definition) && validDefinitionValue(definition, publicFallback[key]) && (legacyProjectionSources[key] === 'legacy-projection' || legacyProjectionSources[key] === undefined)) {
-      value = normalizeSettingValue(definition, publicFallback[key])
-      sources[key] = 'legacy-projection'
-    } else if (validDefinitionValue(definition, legacy.authority && legacy.authority.values[key])) {
-      value = normalizeSettingValue(definition, legacy.authority.values[key])
-      sources[key] = 'legacy-preset'
-    } else if (validDefinitionValue(definition, publicFallback[key])) {
-      value = normalizeSettingValue(definition, publicFallback[key])
-      sources[key] = 'legacy-projection'
     } else {
-      value = defaults[key]
+      values[key] = defaults[key]
       sources[key] = 'default'
-    }
-    values[key] = value
-    if (!validDefinitionValue(definition, authority[key])) patch[key] = value
-  }
-  let gateWords
-  if (authorityHasGateWords) {
-    gateWords = validateGateWords(authority.gateWords)
-    sources.gateWords = 'settings-row'
-  }
-  if (gateWords === undefined && legacy.gateWords !== undefined) {
-    const legacyGateWords = validGateWordsOrUndefined(legacy.gateWords)
-    if (legacyGateWords !== undefined) {
-      gateWords = legacyGateWords
-      sources.gateWords = legacy.gateWordsSource || 'legacy-preset'
+      patch[key] = values[key]
     }
   }
-  if (gateWords === undefined && validGateWordsOrUndefined(publicFallback.gateWords) !== undefined) {
-    gateWords = validGateWordsOrUndefined(publicFallback.gateWords)
-    sources.gateWords = 'legacy-projection'
-  }
-  if (gateWords === undefined) {
-    gateWords = readDefinitionGateWords(assetDefinition())
-    sources.gateWords = 'default'
-  }
+  const gateWords = authorityHasGateWords
+    ? validateGateWords(authority.gateWords)
+    : readDefinitionGateWords(assetDefinition())
+  sources.gateWords = authorityHasGateWords ? 'settings-row' : 'default'
   if (!authorityHasGateWords) patch.gateWords = gateWords
-  return { values, defaults, sources, patch, gateWords, legacy, authority }
+  return { values, defaults, sources, patch, gateWords, authority, diagnostics: [] }
 }
 
 export function restateSettingsConfig(current, inherited, patch = {}) {
@@ -704,25 +426,7 @@ function publicConfigOf(value) {
   return plainObject(value) ? value : {}
 }
 
-/** 旧 profile 的呈现模式叶：tool-presentation 行内 config.mode（新模型改用 executor 行身份承载）。
- *  取值派生自 settings-contract 的 legacyProjectionLocator.path（同源，改一处须同步另一处），不再另写一份字面量。 */
-const LEGACY_PRESENTATION_MODE_PATH = SETTING_DEFINITIONS.find((item) => item.key === 'toolPresentationMode').legacyProjectionLocator.path
 
-function directProjectionFromLegacy(plugins) {
-  const carry = carryUserWritable(plugins)
-  const result = {}
-  const web = carry.hostRowConfig[HOST_ROW_IDS.webFetch]
-  // 旧 profile 里仍是 tool-presentation 行 + config.mode 叶（新 HOST_ROW_IDS.toolPresentationMode 是
-  // { native, ptc } 映射，不能作 hostRowConfig 键）；hostRowConfig 以行 id 索引（carryUserWritable L250 同口径），旧行按 LEGACY_PRESENTATION_ROW_ID 取行再读 config.mode 叶。
-  const modeLeaf = LEGACY_PRESENTATION_MODE_PATH.slice('config.'.length)
-  const mode = carry.hostRowConfig[LEGACY_PRESENTATION_ROW_ID]
-  if (web !== undefined && validateSettingValue(PROJECTION_SETTING_DEFINITIONS.find((item) => item.key === 'webFetch'), web[HOST_ROW_LEAF_KEYS.webFetch])) result.webFetch = web[HOST_ROW_LEAF_KEYS.webFetch]
-  if (mode !== undefined && validateSettingValue(PROJECTION_SETTING_DEFINITIONS.find((item) => item.key === 'toolPresentationMode'), mode[modeLeaf])) result.toolPresentationMode = mode[modeLeaf]
-  if (carry.gateWords !== null && carry.gateWords !== undefined) {
-    try { result.gateWords = validateGateWords(carry.gateWords) } catch { /* 非法旧值回落默认 */ }
-  }
-  return result
-}
 
 function assertTemplateGateWords(text) {
   const captured = resolveSetting(parsePresetYaml(text), GATE_WORDS_GROUP_DEFINITION, { aliases: false })
@@ -730,30 +434,9 @@ function assertTemplateGateWords(text) {
   return validateGateWords(captured.value)
 }
 
-export function readDeclaredPluginsFromPatch(text) {
-  if (typeof text !== 'string' || text.trim() === '') return undefined
-  let document
-  try { document = parsePresetYaml(text) } catch { return undefined }
-  const found = []
-  const visit = (value) => {
-    if (value === null || typeof value !== 'object') return
-    if (Array.isArray(value)) { for (const item of value) visit(item); return }
-    if (value.id === LEGACY_PRESET_ROW_ID && plainObject(value.config) && Array.isArray(value.config.plugins)) found.push(value.config.plugins)
-    for (const child of Object.values(value)) visit(child)
-  }
-  visit(document)
-  return found.length === 0 ? undefined : found[0]
-}
 
-export function readLegacyPresetState(text) {
-  const plugins = readDeclaredPluginsFromPatch(text)
-  return { plugins, projection: directProjectionFromLegacy(plugins) }
-}
 
-/**
- * 计算启动迁移与 public row 收敛。publicConfig 存在时只计划新公开行/­settings 行写入；
- * 未传 publicConfig 时保留旧纯内存 body 合同，便于验证旧值 carry 与 gateWords。
- */
+/** 计算当前 settings 行补齐与官方 definition；不读取历史声明或原始 patch。 */
 export async function syncPreset(options = {}) {
   const templateFile = join(ASSET_DIR, 'agent.cordis.yml')
   const templateText = readAssetBytes(templateFile, '预设模板').toString('utf8')
@@ -761,48 +444,18 @@ export async function syncPreset(options = {}) {
   const currentHash = contentHash(ASSET_DIR)
   if (currentHash === null) throw new Error('预设资产缺失：' + ASSET_DIR)
   const definition = assetDefinition()
-  let declaredPlugins = options.declaredPlugins
-  const hasReadPatch = typeof options.readPatch === 'function'
-  let rawPatch
-  if (hasReadPatch) {
-    try { rawPatch = options.readPatch() } catch { rawPatch = undefined }
-  }
-  const resolveOptions = {
-    settingsValues: options.settingsValues,
-  }
-  if (declaredPlugins !== undefined) resolveOptions.declaredPlugins = declaredPlugins
-  if (hasReadPatch) resolveOptions.readPatch = () => rawPatch
-  if (options.legacyState !== undefined) resolveOptions.legacyState = options.legacyState
-  const resolved = resolveUnifiedConfig(resolveOptions)
-  if (declaredPlugins === undefined && resolved.legacy !== null && typeof resolved.legacy === 'object') declaredPlugins = resolved.legacy.legacyPlugins
-  const legacyDiagnostics = resolved.legacy !== null && typeof resolved.legacy === 'object' && Array.isArray(resolved.legacy.diagnostics)
-    ? resolved.legacy.diagnostics
-    : []
-  const assetBody = options.assetPlugins === undefined ? definition.plugins : options.assetPlugins
-  const bodyOk = declarationBodyMatchesAsset(declaredPlugins, assetBody)
-  const declarationOk = declaredPlugins === undefined ? true : declarationCoversAsset(declaredPlugins)
-  const settingsSource = plainObject(options.settingsValues) ? options.settingsValues : {}
-  const settingsPatch = {}
-  for (const [key, value] of Object.entries(resolved.patch)) {
-    if (key === 'gateWords') {
-      if (!Object.prototype.hasOwnProperty.call(settingsSource, key) || validGateWordsOrUndefined(settingsSource[key]) === undefined) settingsPatch[key] = value
-      continue
-    }
-    if (!Object.prototype.hasOwnProperty.call(settingsSource, key) || !validDefinitionValue(SETTING_DEFINITIONS.find((item) => item.key === key), settingsSource[key])) settingsPatch[key] = value
-  }
+  const resolved = resolveUnifiedConfig({ settingsValues: options.settingsValues })
+  const settingsPatch = resolved.patch
   const planned = {
-    settings: Object.keys(settingsPatch).length === 0 ? null : { values: settingsPatch, diagnostics: legacyDiagnostics },
-    preset: null,
-    hostRowConfig: {},
-    diagnostics: legacyDiagnostics,
+    settings: Object.keys(settingsPatch).length === 0 ? null : { values: settingsPatch, diagnostics: resolved.diagnostics },
     definition: cloneDefinitionWithProjection(definition, {
       webFetch: resolved.values.webFetch,
       toolPresentationMode: resolved.values.toolPresentationMode,
       gateWords: resolved.gateWords,
     }),
+    diagnostics: resolved.diagnostics,
   }
-  const needsWork = planned.settings !== null || !declarationOk || !bodyOk
-  if (!needsWork) return { action: 'idle' }
+  if (planned.settings === null) return { action: 'idle' }
   if (typeof options.apply === 'function') await options.apply(planned, { action: 'written' })
   return { action: 'written', plan: planned }
 }
@@ -831,62 +484,18 @@ function trustedProfileContextOf(ctx) {
   return undefined
 }
 
-function withProfilePatchCapability(existing, patchPath) {
-  if (Array.isArray(existing)) return [...existing, { name: 'profilePatch', path: patchPath, type: 'file', access: 'read', purpose: 'config-editor' }]
-  return { ...(existing !== null && typeof existing === 'object' ? existing : {}), profilePatch: { path: patchPath, type: 'file', access: 'read', purpose: 'config-editor' } }
-}
 
-function syncPathContext(ctx, options, patchPath) {
-  const supplied = options.pathContext
-  if (supplied !== undefined && (patchPath === undefined || supplied.hostCapabilities?.profilePatch !== undefined)) return supplied
-  const capabilities = patchPath === undefined ? options.hostCapabilities : withProfilePatchCapability(options.hostCapabilities, patchPath)
-  if (options.workspaceRoot === undefined && options.hostDataRoot === undefined && (capabilities === undefined || (Array.isArray(capabilities) ? capabilities.length === 0 : Object.keys(capabilities).length === 0))) return null
-  try {
-    return createPathContext({ workspaceRoot: options.workspaceRoot, hostDataRoot: options.hostDataRoot, hostCapabilities: capabilities })
-  } catch {
-    return null
-  }
-}
-
-function readRawPatch(editor, ctx, options = {}) {
-  const profile = trustedProfileContextOf(ctx)
-  const trustedPatchPath = profile !== null && typeof profile === 'object' && typeof profile.patchPath === 'string' ? profile.patchPath : undefined
-  const documentPath = editor !== undefined && typeof editor.documentPath === 'string' ? editor.documentPath.trim() : ''
-  const pathContext = syncPathContext(ctx, options, trustedPatchPath)
-  if (pathContext === null) return undefined
-  try {
-    if (trustedPatchPath !== undefined) {
-      const target = resolveHostPath(pathContext, trustedPatchPath, { capability: 'profilePatch', purpose: 'config-editor' })
-      return readFileSync(validateReadTarget(pathContext, target, { expectedType: 'file', purpose: 'config-editor' }).path, 'utf8')
-    }
-    if (documentPath === '') return undefined
-    const target = resolveWorkspacePath(pathContext, documentPath, { purpose: 'config-editor' })
-    return readFileSync(validateReadTarget(pathContext, target, { expectedType: 'file', purpose: 'config-editor' }).path, 'utf8')
-  } catch {
-    return undefined
-  }
-}
 
 function settingsValuesFromRows(rows) {
   const matches = rows.filter((item) => item !== null && typeof item === 'object' && item.entry !== undefined && item.entry.options !== undefined && item.entry.options.id === SETTINGS_ROW_ID)
   return matches.length === 1 ? effectiveRowConfig(matches[0]) : undefined
 }
 
-export function activeLegacyRow(rows) {
-  const entry = findEntry(rows, LEGACY_PRESET_ROW_ID)
-  return entry !== undefined
-    && entry.disabled !== true
-    && entry.fiber !== undefined
-    && entry.fiber !== null
-    && (entry.fiber.state === 0 || entry.fiber.state === 1 || entry.fiber.state === 2)
-}
 
-/** 幂等落定路径的 definition：只按当前 settings 行与 raw patch 投影，不再走旧行（preset-extra-plan）迁移。 */
-function projectedAssetDefinition(settingsValues, rawPatch) {
-  const resolved = resolveUnifiedConfig({
-    settingsValues,
-    readPatch: () => rawPatch,
-  })
+
+/** 幂等落定路径的 definition：只按当前 settings 行值解析投影。 */
+function projectedAssetDefinition(settingsValues) {
+  const resolved = resolveUnifiedConfig({ settingsValues })
   return cloneDefinitionWithProjection(assetDefinition(), {
     webFetch: resolved.values.webFetch,
     toolPresentationMode: resolved.values.toolPresentationMode,
@@ -946,7 +555,7 @@ export function structuralFingerprint(rows) {
     }
   }
   visit(rows)
-  return JSON.stringify({ owner: activeLegacyRow(rows) ? 'legacy' : 'official', rows: records })
+  return JSON.stringify({ rows: records })
 }
 
 function installAnchorOf(ctx, options) {
@@ -992,22 +601,15 @@ export function mountPresetSync(ctx, options = {}) {
   const readState = () => {
     const editor = child.configEditor
     const rows = typeof editor.configuration === 'function' ? editor.configuration() : []
-    const rawPatch = readRawPatch(editor, child, options)
-    const legacyState = readLegacyState(rawPatch)
     return {
       editor,
       rows,
-      rawPatch,
-      legacyState,
       structureKey: structuralFingerprint(rows),
-      owner: activeLegacyRow(rows) ? 'legacy' : 'official',
     }
   }
   const snapshotOf = (state) => {
     const resolved = resolveUnifiedConfig({
       settingsValues: settingsValuesFromRows(state.rows),
-      readPatch: () => state.rawPatch,
-      legacyState: state.legacyState,
     })
     return {
       values: { ...resolved.values },
@@ -1086,17 +688,14 @@ export function mountPresetSync(ctx, options = {}) {
     const editor = current.editor
     const rows = current.rows
     const result = await syncPreset({
-      declaredPlugins: current.legacyState.legacyPlugins,
       settingsValues: settingsValuesFromRows(rows),
-      readPatch: () => current.rawPatch,
-      legacyState: current.legacyState,
       apply: async (planned) => applyPlan(editor, rows, planned, () => active),
     })
     if (!active) return
     const latest = readState()
     const mainDefinition = result.plan !== undefined && result.plan.definition !== undefined
       ? result.plan.definition
-      : projectedAssetDefinition(settingsValuesFromRows(latest.rows), latest.rawPatch)
+      : projectedAssetDefinition(settingsValuesFromRows(latest.rows))
     if (adapterOwner === 'official') await disposeCurrentAdapter()
     await mountOfficialAdapter([mainDefinition, ...roleDefinitionsWithPresentation(mainDefinition)])
   }
@@ -1107,10 +706,7 @@ export function mountPresetSync(ctx, options = {}) {
     let result
     try {
       result = await syncPreset({
-        declaredPlugins: initial.legacyState.legacyPlugins,
         settingsValues: settingsValuesFromRows(initial.rows),
-        readPatch: () => initial.rawPatch,
-        legacyState: initial.legacyState,
         apply: async (planned) => applyPlan(initial.editor, initial.rows, planned, () => active),
       })
       if (!active) return
@@ -1121,7 +717,7 @@ export function mountPresetSync(ctx, options = {}) {
       if (!active) return
       const mainDefinition = result.plan !== undefined && result.plan.definition !== undefined
         ? result.plan.definition
-        : projectedAssetDefinition(settingsValuesFromRows(latest.rows), latest.rawPatch)
+        : projectedAssetDefinition(settingsValuesFromRows(latest.rows))
       await mountOfficialAdapter([mainDefinition, ...roleDefinitionsWithPresentation(mainDefinition)])
     } catch (error) {
       reportAdapterError(error, 'initialMount')
@@ -1158,4 +754,4 @@ export function mountPresetSync(ctx, options = {}) {
 }
 
 
-export { SETTINGS_ROW_ID, PRESET_ROW_ID, LEGACY_PRESET_ROW_ID }
+export { SETTINGS_ROW_ID }

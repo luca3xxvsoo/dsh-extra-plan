@@ -722,6 +722,56 @@ try {
   if (conflictOk) console.log('SETTINGS_ROW_UNIQUE_OR_CONFLICT_EXPLICIT_OK')
 
   check('重复 settings 行 GET/PUT 显式 conflict 且零 edit/enqueue/QQBot 写', conflictOk)
+
+  const legacyApiProbeRow = '# legacy-only probe\n- id: preset-extra-plan\n  name: legacy\n  config:\n    marker: !!js "globalThis.__legacyApiProbe = true"\n'
+  const currentWithLegacyRaw = qbotSettingsRow(qbotConfigValues, { name: 'dsh-extra-plan/settings' }) + '\n' + legacyApiProbeRow
+  const currentAfterLegacyPut = { ...syncValues, creativeMode: false }
+  async function runLegacyApiCase(label, rawText, includeCurrentRow) {
+    const fixture = makeSyncFixture()
+    const apiEditor = makeEditor(qbotConfigValues, fixture.webPatch, { profileContext: fixture.webProfileContext })
+    if (!includeCurrentRow) apiEditor.state.rows = []
+    writeFileSync(fixture.webPatch, rawText, 'utf8')
+    const beforeWeb = readFileSync(fixture.webPatch)
+    const beforeQq = readFileSync(fixture.qqPatch)
+    delete globalThis.__legacyApiProbe
+    const apiRun = await start(apiEditor)
+    try {
+      const get = await requestJson(apiRun.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
+      const put = await requestJson(apiRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { creativeMode: false })
+      const afterWeb = readFileSync(fixture.webPatch)
+      const afterQq = readFileSync(fixture.qqPatch)
+      const untouched = get.status === 409 && put.status === 409 && apiEditor.state.edits.length === 0 && beforeWeb.equals(afterWeb) && beforeQq.equals(afterQq) && patchBackupCount(fixture.profileDir) === 0 && globalThis.__legacyApiProbe === undefined
+      check('M26 ' + label + ' 旧输入/坏当前行仍409且零edit/enqueue/QQ写，旧文本与!!js不变', untouched)
+    } finally {
+      await new Promise((resolve) => apiRun.server.close(resolve))
+      rmSync(fixture.root, { recursive: true, force: true })
+    }
+  }
+  {
+    const legacyCurrentFixture = makeSyncFixture()
+    const legacyCurrentEditor = makeEditor(qbotConfigValues, legacyCurrentFixture.webPatch, { profileContext: legacyCurrentFixture.webProfileContext })
+    const legacyCurrentBeforeGet = readFileSync(legacyCurrentFixture.webPatch)
+    writeFileSync(legacyCurrentFixture.webPatch, currentWithLegacyRaw, 'utf8')
+    const legacyCurrentRun = await start(legacyCurrentEditor)
+    try {
+      const legacyCurrentGet = await requestJson(legacyCurrentRun.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
+      const legacyCurrentPut = await requestJson(legacyCurrentRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { creativeMode: false })
+      const legacyCurrentDetails = apiPatchDetails(legacyCurrentFixture, { values: currentAfterLegacyPut, gateWords: syncGateWords })
+      const currentOk = legacyCurrentGet.status === 200 && legacyCurrentGet.body.values.webFetch === syncValues.webFetch && legacyCurrentGet.body.values.toolPresentationMode === syncValues.toolPresentationMode &&
+        legacyCurrentPut.status === 200 && isDeepStrictEqual(legacyCurrentPut.body.values, currentAfterLegacyPut) &&
+        legacyCurrentDetails.webMatch === true && legacyCurrentDetails.qqMatch === true && legacyCurrentPut.body.profileSync.status === 'synced' && legacyCurrentPut.body.profileSync.pending === false &&
+        legacyCurrentBeforeGet.length > 0 && globalThis.__legacyApiProbe === undefined
+      check('M26 当前完整行旁放旧ID冲突值：GET/PUT/QQ仍取当前11+7且旧!!js不执行', currentOk)
+    } finally {
+      await new Promise((resolve) => legacyCurrentRun.server.close(resolve))
+      rmSync(legacyCurrentFixture.root, { recursive: true, force: true })
+    }
+  }
+  await runLegacyApiCase('only-legacy-row', legacyApiProbeRow, false)
+  await runLegacyApiCase('missing-current-row', '# unrelated\n- id: unrelated\n  name: unrelated\n  config:\n    marker: !!js "globalThis.__legacyApiProbe = true"\n', false)
+  await runLegacyApiCase('wrong-name-current-row', qbotSettingsRow(qbotConfigValues, { name: 'wrong/name' }) + '\n' + legacyApiProbeRow, true)
+  await runLegacyApiCase('duplicate-current-row', qbotSettingsRow(qbotConfigValues, { name: 'dsh-extra-plan/settings' }) + '\n' + qbotSettingsRow(qbotConfigValues, { name: 'dsh-extra-plan/settings' }) + '\n' + legacyApiProbeRow, true)
+
   const migrationEffective = duplicateEditor.state.rows[0]
   const migration = planCanonicalSettingsMigration(duplicateRaw, migrationEffective)
   let migrationAfterRows = []
