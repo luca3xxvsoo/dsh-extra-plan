@@ -75,9 +75,9 @@
 
 ### settings-only 保存与 AgentPreset 生命周期（硬合同）
 
-- **首次启动**：官方 AgentPreset 的主预设 register=1 仅表示主 definition 一次注册；同轮仍由同一 owner 尝试挂载主预设 1 份与 4 个角色 definition，共 5 份。当前资产 definition 决定非用户内容，当前规范 settings 行决定用户值；同 ID 可能装载失败，真实相遇效果留 HUMAN，不宣称已避免 duplicate 或已保证只保留单一 owner。
+- **首次启动**：官方 AgentPreset 的主预设 register=1 仅表示主 definition 一次注册；同轮仍由同一 owner 尝试挂载主预设 1 份与 4 个角色 definition，共 5 份。旧 owner/旧行只参与结构指纹与 adapter 诊断，不作为抑制挂载条件；同 ID 可能装载失败，真实相遇效果留 HUMAN，不宣称已抢占、已避免 duplicate 或已保证只保留旧 owner。
 - **settings-only** 保存是 **no-remount**：只读取最终完整 11 项与 `gateWords`，立即进入 settled/profileSync 并同步 QQBot；绝不调用、等待、dispose 或重建 AgentPreset。唯一允许 adapter register/dispose 的增量为 0/0。
-- 非 settings 声明结构变化才进入 `structuralHandoff`；settled-only 与 adapter/structural 队列独立，adapter failure、reject 或 hang 不得阻断 profileSync。
+- 非 settings 声明结构变化，或旧 owner ↔ 官方 owner transition，才进入 `structuralHandoff`；settled-only 与 adapter/structural 队列独立，adapter failure、reject 或 hang 不得阻断 profileSync。
 - `profileSync` 初始为 `status=pending,pending=true`；任何同步终态（`synced`、`not-applicable`、`not-installed`、`unavailable`、`failed`、`partial`）后才 `pending=false`，禁止把 QQ 的 `not-applicable` 或其它未适用状态伪造为 `synced`。
 - 9 项（`anchoredBootstrap`、`creativeMode`、`runcodeCatchGate`、`crossProviderPlannerModel`、`plannerModel`、`plannerPromptSuffix`、`exploreBudget`、`otherAgentModel`、`reviewerUsesPlannerModel`）保持同进程热读；`webFetch` 与 `toolPresentationMode` 是 2 项需重启的装载期投影；toolPresentationMode 切换后必须新开会话，原会话不可继续（见台账 ⑭）。完整 7 键 `gateWords` 立即持久化，但当前 apply 词表不原地替换，需重启后由 HUMAN 验证新词/旧词拒绝/非法词无 fallback。配置本身同进程热读，但模型/路由类开关对已存在的子代理不重算，故 UI 标注「新会话/新子代理生效」。生成器按 L121 的 `DSH_INSTALL_ROOT`+`host-preload` 前缀运行（缺 js-yaml 即表示未带代码根前置）；仅在无法使用 host-preload 前缀时，才用 `NODE_PATH` 指向 profile 的 `node_modules` 兜底。
 - **同源检查项**：改动 `anchoredBootstrap` 或 `creativeMode` 任一路的可见面裁剪逻辑，必须同步核对另一路，并跑 step-04 的同源结构断言（`restrict(` 仅 1 处且位于 `armToolRestriction` 内、两个开关的 arm 均调用它）。
@@ -92,9 +92,9 @@
 
 ## 唯一 settings 行与保存终态维护规则
 
-- 只允许 canonical `id=dsh-extra-plan-settings/name=dsh-extra-plan/settings` 作为新写入目标；两个历史配置 ID 不读取、不一次性迁移、不回退、不判旧 owner、不承诺旧值，也不编辑/删除真实旧行；`rawCount/effectiveCount/canonicalNameCount` 任一不满足唯一条件时，GET/PUT 必须停在 409 conflict，不能用旧 projection 或旧 terminal 绿灯。
+- 只允许 canonical `id=dsh-extra-plan-settings/name=dsh-extra-plan/settings` 作为新写入目标；`rawCount/effectiveCount/canonicalNameCount` 任一不满足唯一条件时，GET/PUT 必须停在 409 conflict，不能用旧 projection 或旧 terminal 绿灯。
 - `profileSync` 的 cache 与 requestResult 分离：无参数 GET 只能显示最后 terminal 的 cache 元数据；只有带相同 `saveRunId` 查询或当前 PUT 的 request/terminal 三元组全等，才可将 `terminalMatch` 置为 true。
-- canonical 重复行规划器只在临时 fixture 执行，不用于两个历史配置 ID 迁移；必须保留无关注释、`!!js` 和用户字段，并给出 before/after bytes/SHA 与唯一 rollback bytes；生产 duplicate 行清理、部署和重启由 HUMAN 执行。
+- 迁移 planner 只在临时 fixture 执行，必须保留无关注释、`!!js` 和用户字段，并给出 before/after bytes/SHA 与唯一 rollback bytes；生产 duplicate 行清理、部署和重启由 HUMAN 执行。
 - 每次单字段仍构造完整 11 项 values + 7 键 gateWords；`creativeMode` 的自动通过只证明 patch 已立即持久化，不证明重启前运行时行为。
 
 ## QQBot CLI 与维护所有权
@@ -107,7 +107,7 @@
 
 1. 逐文件对实际修改的全部 JS/MJS 执行 `node --check`；`package.json` 执行 `JSON.parse`。嵌套生成的 host-deps hookSource 必须展开成 data URL 后做 ESM 解析回放，不能只检查外层；涉及宿主样本时从 W 显式设置 `DSH_INSTALL_ROOT=<本次真实代码根>`，并使用 `node --import ./pe-test/_shared/host-preload.mjs`，只读核对声明根内的 manifest/adapter，禁止借用 profile/全局宿主。
 2. 严格按验收顺序运行（纯 W 工具直接 `node`，需要 Host 代码的测试才显式设置代码根与 host-preload）：
-   - `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-01-设置迁移.mjs`
+   - `node pe-test/tools/step-01-设置迁移.mjs`
    - `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-01-设置页配置.mjs`
    - `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-01-qqbot-安装映射.mjs`
    - `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-01-预设完整性.mjs`
@@ -150,8 +150,8 @@
 
 - `## 意图速查`、`## 文件总览`、`## 函数索引` 和原表头必须保留。先 grep 意图词得到函数名，再按函数名读机器行号。
 - 运行地图生成器负责路径、函数名、行号区间、增删和漏检；人工只改意图、文件说明、功能描述与备注。机器生成的行数/行号不能手填冻结。
-- 稳定匹配键是“相对路径 + 函数名 + 同名出现顺序”。维护时必须保持 `routeKey` 1 条、`isIdChar` 1 条的约束，并按当前源码实际同名条目及其顺序对拍 `visit`，不另写死历史次数；`--check` 不覆盖人工描述/固定尾部的全文比较，所以需另做结构键对拍。
-- 描述必须保留当前行为关键词：证据引用成对剥除与单侧不剥、`atomicCommit` 阶段语义、`syncPreset` 以当前 settings 补齐 patch 为空为 idle（空闲稳态），但不因 idle 跳过资产校验与新资产挂载、`createApiHandler` PUT 仅投影、P2-2 agent-only（仅 Agent）cache、usage 启动扫描与覆盖式更新（幂等）、单调性保护 等。
+- 稳定匹配键是“相对路径 + 函数名 + 同名出现顺序”。维护时必须保持 `routeKey` 1 条、`visit` 4 条、`isIdChar` 1 条的顺序；`--check` 不覆盖人工描述/固定尾部的全文比较，所以需另做结构键对拍。
+- 描述必须保留当前行为关键词：证据引用成对剥除与单侧不剥、`atomicCommit` 阶段语义、`syncPreset` 三条件 idle（空闲稳态）、`createApiHandler` PUT 仅投影、P2-2 agent-only（仅 Agent）cache、usage 启动扫描与覆盖式更新（幂等）、单调性保护 等。
 - 地图生成器是源码/测试索引，不是历史归档；无函数文件或纯描述变化不能只靠 `--check` 判定。
 - 扫描根 = `代码地图生成.mjs` 的 `--roots` 默认 `plugins,pe-test/_shared`（不含 pe-test/tools）。仅扫描根内 .js/.mjs 增删或行号漂移、或地图人工描述需维护时运行普通生成；纯文档、pe-test/docs、pe-test/tools、pe-test/reports 改动不触发地图更新，收尾与验收只运行 `--check`。
 

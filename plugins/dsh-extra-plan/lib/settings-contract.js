@@ -5,7 +5,8 @@ export { DEFAULT_SETTINGS }
 const isString = (value) => typeof value === 'string'
 const isPositiveInteger = (value) => typeof value === 'number' && Number.isInteger(value) && value > 0
 const isBoolean = (value) => typeof value === 'boolean'
-// 0.2.2：executor 行身份模型——呈现模式由宿主行 id 承载（tool-executor-native / tool-executor-ptc）。
+// 0.2.2：executor 行身份模型——呈现模式由宿主行 id 承载（tool-executor-native / tool-executor-ptc），
+// tool-presentation 行已降级为 @deprecated 兼容壳（只读旧值，不再作为新写入目标）。
 const modeOptions = Object.freeze(['native', 'ptc'])
 const isMode = (value) => typeof value === 'string' && modeOptions.includes(value)
 
@@ -13,6 +14,10 @@ const isMode = (value) => typeof value === 'string' && modeOptions.includes(valu
 export const SETTINGS_ROW_ID = 'dsh-extra-plan-settings'
 /** settings 行的规范 name：定位落点 = 行 id + 该 name 双条件（旧 @local 别名行不再作候选）。 */
 export const SETTINGS_ROW_NAME = 'dsh-extra-plan/settings'
+/** 历史预设核对行 id；仅作兼容读取，不再作为新写入目标。 */
+export const PRESET_ROW_ID = 'extra-plan-preset-sync'
+/** 旧 profile 预设声明行：仅用于非破坏读取迁移，不再作为新写入目标。 */
+export const LEGACY_PRESET_ROW_ID = 'preset-extra-plan'
 /**
  * 声明行 plugins 内承载宿主行设置的子行 id（投影落点的行 id）。
  * toolPresentationMode 用行身份承载模式（两个 executor 行 id），不再有叶键。
@@ -28,6 +33,8 @@ export const MODE_BY_ROW_ID = Object.freeze({
 })
 /** executor 宿主行包名前缀：name = 前缀 + 裸模式名（native/ptc）；运行期行 id 是裸行 id（不带包名前缀），两种形态不得混用。 */
 export const EXECUTOR_TOOL_NAME_PREFIX = '@deepseek-ai/dsh-tool-executor-'
+/** 旧 profile 的呈现模式行 id：@deprecated 兼容壳，只读旧值，不再作为新写入目标。 */
+export const LEGACY_PRESENTATION_ROW_ID = 'tool-presentation'
 /** 投影落点的叶键（宿主行 config 内键名）：源模板与投影共用同一份 leaf 名，不新增第二份键名清单。 */
 export const HOST_ROW_LEAF_KEYS = Object.freeze({ webFetch: 'fetch' })
 /** descriptor 分组（消费方）：11 项统一落 settings 全局行；2 项另派生到内存 definition。 */
@@ -46,6 +53,12 @@ const setting = (definition) => Object.freeze({
       : { modeByRowId: Object.freeze({ ...definition.sourceLocator.modeByRowId }) }),
   }),
   rowLocator: Object.freeze({ ...definition.rowLocator }),
+  ...(definition.projectionLocator === undefined
+    ? {}
+    : { projectionLocator: Object.freeze({ ...definition.projectionLocator }) }),
+  ...(definition.legacyProjectionLocator === undefined
+    ? {}
+    : { legacyProjectionLocator: Object.freeze({ ...definition.legacyProjectionLocator }) }),
   locatorAliases: Object.freeze((definition.locatorAliases || []).map((alias) => Object.freeze({
     rowId: alias.rowId,
     path: alias.path,
@@ -69,6 +82,18 @@ export const settingsRowLocator = (key, path) => ({
   path: path === undefined ? 'config.' + key : path,
 })
 const sourceLocator = (key, path) => ({ rowId: 'extra-plan', path: path === undefined ? 'config.' + key : path })
+/** 旧公开投影行的读取落点：extra-plan-preset-sync.config.<key>；新结构不再写该行。 */
+const hostRowProjectionLocator = (key) => ({
+  rowId: PRESET_ROW_ID,
+  path: 'config.' + key,
+})
+/** 旧声明行内的投影定位器，仅用于读取迁移与旧 body carry。 */
+const legacyHostRowProjectionLocator = (key) => ({
+  rowId: LEGACY_PRESET_ROW_ID,
+  // 防误用：仅 webFetch 可用——HOST_ROW_IDS[key] 对 toolPresentationMode 是 frozen 对象、HOST_ROW_LEAF_KEYS 无该键，复用会得到 pluginsRowId=对象、path='config.undefined'，findPluginsRow 严格相等恒不命中。
+  pluginsRowId: HOST_ROW_IDS[key],
+  path: 'config.' + HOST_ROW_LEAF_KEYS[key],
+})
 
 export const SETTING_DEFINITIONS = Object.freeze([
   setting({
@@ -83,9 +108,12 @@ export const SETTING_DEFINITIONS = Object.freeze([
   }),
   setting({
     key: 'webFetch', group: SETTING_GROUPS.HOST_ROWS, scalarType: 'boolean', defaultValue: DEFAULT_SETTINGS.webFetch,
-    // 源模板行 = 宿主行同叶（tool-web.config.fetch）；权威值落点 = settings 行 config.webFetch。
+    // 源模板行 = 投影落点同行同叶（tool-web.config.fetch）；
+    // 权威值落点 = settings 行 config.webFetch；投影落点 = 声明行 tool-web 子行（须与源同形）。
     sourceLocator: { rowId: HOST_ROW_IDS.webFetch, path: 'config.' + HOST_ROW_LEAF_KEYS.webFetch },
     rowLocator: settingsRowLocator('webFetch'),
+    projectionLocator: hostRowProjectionLocator('webFetch'),
+    legacyProjectionLocator: legacyHostRowProjectionLocator('webFetch'),
     validator: isBoolean, ui: { control: 'select', options: [true, false], locale: 'webFetch', section: 'general', hint: '是否开启web_fetch ｜ 重启生效' }, locatorAliases: [],
   }),
   setting({
@@ -96,6 +124,9 @@ export const SETTING_DEFINITIONS = Object.freeze([
       modeByRowId: MODE_BY_ROW_ID,
     },
     rowLocator: settingsRowLocator('toolPresentationMode'),
+    projectionLocator: hostRowProjectionLocator('toolPresentationMode'),
+    // 旧 profile 里的该值仍在 tool-presentation 行的 config.mode 叶（@deprecated 兼容壳）：只读迁移，不作新写入目标。
+    legacyProjectionLocator: { rowId: LEGACY_PRESET_ROW_ID, pluginsRowId: LEGACY_PRESENTATION_ROW_ID, path: 'config.mode' },
     validator: isMode,
     ui: {
       control: 'select', options: modeOptions,
@@ -154,12 +185,14 @@ export function createDefaultSettings() {
 export const EXTRA_PLAN_SETTING_DEFINITIONS = Object.freeze(
   SETTING_DEFINITIONS.filter((item) => item.group === SETTING_GROUPS.EXTRA_PLAN),
 )
-/** 2 项宿主行设置（权威值同样落 settings 行；内存 definition 由当前宿主 descriptor 派生）。 */
+/** 2 项宿主行设置（权威值同样落 settings 行；projectionLocator 仅作旧值读取兼容）。 */
 export const HOST_ROW_SETTING_DEFINITIONS = Object.freeze(
   SETTING_DEFINITIONS.filter((item) => item.group === SETTING_GROUPS.HOST_ROWS),
 )
-/** 宿主行投影集合（= 2 项宿主行设置）——由当前宿主 descriptor 派生的唯一遍历源。 */
-export const PROJECTION_SETTING_DEFINITIONS = Object.freeze([...HOST_ROW_SETTING_DEFINITIONS])
+/** 带历史投影面的设置（= 2 项宿主行设置）——内存 definition 派生的唯一遍历源。 */
+export const PROJECTION_SETTING_DEFINITIONS = Object.freeze(
+  SETTING_DEFINITIONS.filter((item) => item.projectionLocator !== undefined),
+)
 
 const descriptorByKey = new Map(SETTING_DEFINITIONS.map((item) => [item.key, item]))
 

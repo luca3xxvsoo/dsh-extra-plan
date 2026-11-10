@@ -8,13 +8,13 @@
 | 分类 | 检查什么 | 什么时候用 |
 |---|---|---|
 | **逻辑检查**（step-00） | 插件「脑子里的规矩」对不对（写命令该拦的拦不拦、预算算得对不对） | 每次改完插件后 |
-| **安装检查**（step-01，含设置页/预设完整性/QQBot 静态映射） | 文件、唯一 settings owner、当前规范行补齐与新默认及 QQBot 自身 patch/安装迁移逻辑 | 装完插件后第一次 |
+| **安装检查**（step-01，含设置页/预设完整性/QQBot 静态映射） | 文件、唯一 settings owner、raw 旧值迁移与 QQBot patch/迁移逻辑 | 装完插件后第一次 |
 | **QQBot 环境检查**（step-01-qqbot-环境验证） | 严格环境预检、junction 能力与真实 profile 只读映射核验 | 有对应环境时自动运行；环境不足则 SKIP |
 | **痕迹检查**（step-04/05/06/07/08/99） | 跑完一次真实流程后，看日志：AI 这轮干了什么、有没有违规 | 每次试完流程后 |
 
 ## 设置管理路径
 设置表单仅经 `plugins.detail.section` 渲染于当前 bundle 详情页行列表之后（自绘标题）；本包不注册 `plugins.bundle.config`、`plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`。若 bundle.config 槽出现本包条目，detail.section 让位，避免重复表单。ConfigForms 使用稳定 namespace，一次提交十一项字段与 revision。
-唯一公开管理组件是 `dsh-extra-plan/settings`；其 PUT 只 edit `dsh-extra-plan-settings` 唯一全局行，保留其它字段与合法 gateWords；只认当前规范 `id=dsh-extra-plan-settings`/`name=dsh-extra-plan/settings`，两个历史配置 ID 不读取、不一次性迁移、不回退、不判旧 owner、不承诺旧值，真实旧行不编辑、不删除；当前 11 项合法值（含空串/false）保留，缺失/非法普通项只用新默认，gateWords 整个属性缺失可用当前资产默认，显式对象必须七键整组合法，否则严格失败且零 edit。`./preset-sync` 及其 locale exports 已退役；`lib/preset-sync.js` 仍由 settings owner 内部相对调用。预设本体来自纯 `preset-definition.generated.yml`，由内部同步交给官方 AgentPreset adapter；`toolPresentationMode` 为装载期值，`runcodeCatchGate` 由 live-config 热读。
+唯一公开管理组件是 `dsh-extra-plan/settings`；其 PUT 只 edit `dsh-extra-plan-settings` 唯一全局行，保留其它字段与 gateWords。`./preset-sync` 及其 locale exports 已退役；`lib/preset-sync.js` 仍由 settings owner 内部相对调用，raw patch 中旧 `extra-plan-preset-sync`/`preset-extra-plan` 值只作迁移来源。预设本体来自纯 `preset-definition.generated.yml`，由内部同步交给官方 AgentPreset adapter；`toolPresentationMode` 为装载期值，`runcodeCatchGate` 由 live-config 热读。
 
 ## 非 `@local` 迁移部署（HUMAN）
 
@@ -50,7 +50,7 @@ node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-07-子代理
 | 步骤 | 跑什么 | 全过 = 说明 |
 |---|---|---|
 | 0 全局逻辑回归 | step-00-全流程回归 / step-00-跨平台写拦截 | 插件核心逻辑没被改坏 |
-| 1 安装与配置 | step-01-设置迁移 / 预设完整性 / 设置页配置 / step-01-qqbot-安装映射（静态） | 当前规范行补齐/缺省新默认、旧历史 ID 不作来源、格式安全、后端权威行/投影回归、0.2 独立 tab 移除、QQBot 自愈/静态 patch 与安装迁移逻辑通过 |
+| 1 安装与配置 | step-01-设置迁移 / 预设完整性 / 设置页配置 / step-01-qqbot-安装映射（静态） | 选择性恢复、格式安全、后端权威行/投影回归、0.2 独立 tab 移除、QQBot 静态 patch/迁移逻辑通过 |
 | 1A QQBot 环境 | step-01-qqbot-环境验证（条件只读） | 五条件命中时只读核验 profile；环境/能力不足为 SKIP，不计失败 |
 | 2 anchored 引导开关 | 人工对比（无自动工具） | 开=AI 先看再答；关=直接开干；两遍有区别=开关生效 |
 | 4 路由确认与写闸门 | step-04-路由与写闸门 (+ 工具清单查看) | 路由没确认时 AI 不能改文件；reviewer 不能写 |

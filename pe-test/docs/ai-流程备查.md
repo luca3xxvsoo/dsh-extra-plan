@@ -98,4 +98,4 @@ PTC C=0/C=1 必须各用干净 A=1 顶层会话取 F→首个 tool/call→L→�
 
 ## 设置与默认链交接
 
-9 项 UI 设置与 2 项宿主行设置的权威值都走 `dsh-extra-plan-settings` 唯一 settings 行；PUT 只 edit 该行并保留其它字段；只认当前规范 id/name，两个历史配置 ID 不读取、不一次性迁移、不回退、不判旧 owner、不承诺旧值，也不编辑/删除真实旧行。当前 11 项合法值（含空串/false）保留，缺失/非法普通项只用新默认；gateWords 整个属性缺失可用当前资产默认，显式对象必须七键整组合法，否则严格失败且零 edit。`./preset-sync` 已退役，locale exports 并未退役（package.json 仍导出 `./locale/*.json` 与 `./settings/locale/*`），但 `lib/preset-sync.js` 仍由 settings owner 内部相对调用。`toolPresentationMode` 为装载期值，`runcodeCatchGate` 按配置热读。默认作者值来自 `agent.cordis.yml`，生成器产物不可手改；坏模板保持 last-known-good。
+9 项 UI 设置与 2 项宿主行设置的权威值都走 `dsh-extra-plan-settings` 唯一 settings 行；PUT 只 edit 该行并保留其它字段，不再写旧公开 preset-sync 行。`./preset-sync` 已退役，locale exports 并未退役（package.json 仍导出 `./locale/*.json` 与 `./settings/locale/*`），但 `lib/preset-sync.js` 仍由 settings owner 内部相对调用，raw patch 旧值继续迁移。`toolPresentationMode` 为装载期值，`runcodeCatchGate` 按配置热读。默认作者值来自 `agent.cordis.yml`，生成器产物不可手改；坏模板保持 last-known-good。

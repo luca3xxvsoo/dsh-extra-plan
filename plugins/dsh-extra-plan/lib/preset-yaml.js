@@ -85,7 +85,7 @@ export function rowsByIdWithPath(document, rowId) {
 function resolveLocator(document, locator) {
   // rowIds 分支（行身份模型）：逐行 id 各自收集候选后合计——0 条 missing、>1 条 ambiguous、
   // 恰 1 条时值 = modeByRowId[命中行 id]；该行 id 在 modeByRowId 无键即「值缺失」，返回 missing
-  // 只有取到值时才判 ok；当前值来源由 settings 行统一归并。
+  // （与 preset-sync 的 legacy 捕获同口径），只有取到值时才判 ok。
   if (Array.isArray(locator.rowIds)) {
     const hits = []
     for (const rowId of locator.rowIds) {
@@ -328,6 +328,31 @@ export function findPluginsRow(plugins, rowId) {
   return null
 }
 
+/**
+ * 读声明行 plugins 内某项设置的**当前投影值**（按 projectionLocator 定位子行 + 叶键）。
+ * 返回 undefined = 该投影缺失（子行缺失 / 叶缺失 / 值非法）——判定侧一律按出厂默认参与比较。
+ * 只服务 2 项宿主行设置；权威值不走这里（见 captureRowSettings）。
+ */
+export function readProjectedValue(target, definition) {
+  if (definition === null || definition === undefined) return undefined
+  // 新公开 preset-sync 行直接读取 config.<key>；旧 preset-extra-plan body
+  // 仍按 legacyProjectionLocator 读取，仅用于非破坏迁移和 carry。
+  const locator = Array.isArray(target) && definition.legacyProjectionLocator !== undefined
+    ? definition.legacyProjectionLocator
+    : definition.projectionLocator
+  if (locator === undefined || locator === null) return undefined
+  if (locator.pluginsRowId !== undefined) {
+    const row = findPluginsRow(target, locator.pluginsRowId)
+    if (row === null) return undefined
+    const read = readPath(row, locator.path)
+    if (!read.exists || !validateSettingValue(definition, read.value)) return undefined
+    return normalizeSettingValue(definition, read.value)
+  }
+  const path = locator.path.startsWith('config.') ? locator.path.slice('config.'.length) : locator.path
+  const read = readPath(target, path)
+  if (!read.exists || !validateSettingValue(definition, read.value)) return undefined
+  return normalizeSettingValue(definition, read.value)
+}
 
 /** 声明行 config.plugins 深拷贝后整体重述：只改目标子行的指定 config 键（config 不深合并语义）。 */
 export function restatePluginsRow(plugins, rowId, patch) {
