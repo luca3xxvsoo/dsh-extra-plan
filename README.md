@@ -124,6 +124,8 @@ dsh-extra-plan/
 │   │   │   ├── settings-contract.js                                  # 设置项单一合同：键、默认值、校验与元数据
 │   │   │   ├── settings.js                                           # 设置页宿主端
 │   │   │   ├── shell-mutation.js                                     # 写操作判定：跨平台命令解码与写形态
+│   │   │   ├── usage-ledger-background.js                            # usage 账本：调度管理
+│   │   │   ├── usage-ledger-worker.js                                # usage 账本：执行入口
 │   │   │   └── usage-ledger.js                                       # usage 账本
 │   │   ├── locale/                                     
 │   │   │   ├── settings/  

@@ -121,6 +121,8 @@
    - `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs --check`（生成器经 preset-settings 静态 import preset-yaml 顶层加载 js-yaml，本仓及祖先目录无 node_modules，裸 node 必 MODULE_NOT_FOUND；缺 js-yaml 即表示未带代码根前置；实测带前缀后 7 个生成物逐个 [check] 通过）
    - 扫描根内代码改动时冻结前完成代码地图生成与人工描述复核；纯文档改动不生成正式地图，正式阶段只运行 `node pe-test/tools/代码地图生成.mjs --check`，避免普通生成改时间戳，再执行最后一键 step。
 3. 自动测试不得执行真实 PowerShell 重定向写；测试前后 `pe-test/reports/_s4b_pwsh.txt` 必须不存在。常规回归命令退出码必须为 0，输出不得有 FAIL、SyntaxError、UnhandledPromiseRejection；runner 的 ETIMEDOUT 明确归失败而非环境未执行，普通说明含 FAIL/Error/导航失效不单独判失败，必须以退出码/结构化统计为准；context-gate 独立脚本若有 INCOMPLETE 必须非零，一键结果结构化标为部分执行而不计 PASS。缺少 js-yaml、dsh-llm 或其它模块导致 `MODULE_NOT_FOUND` 只记 `INCOMPLETE`；真实断言失败、`TypeError`、超时仍按 `FAIL`，不因 `--full`、文件捕获或 exit 0 改写。SKIP/INCOMPLETE/HUMAN/NOT-RUN 单列且不计 AUTO PASS。
+   - **usage 后台专项门（AUTO/W）**：在隔离 fixture 与模拟安装布局中，Worker 正在忙算时主线程仍须完成 HTTP 响应；真实 Worker 完成扫描/解压/聚合，失败只 `failed`/warn 且不回退同步主线程。协作取消只在首次 archive rename 前安全退出，要求本次 temp/lock 清理且 archive/cache 字节与原始 mtime 零变化；rename 后视为已提交，返回真实 `archived` 并完成模式缓存发布尝试。既有同步与失败水位回归不得弱化，三秒预算仅为 archive 检查点，不是全部扫描期限。
+   - **权限与部署分层（HUMAN/NOT-RUN）**：Host 权限、真实安装/启动/HMR、生产会话和大日志内存仍待用户复测；缺少这些条件不得销 AUTO，静态/隔离结果不写成实机通过。
 4. 当前声明范围为 dsh `0.2.2-rc.1` 单版本（`engines.dsh` 与三项 @deepseek-ai peer 同值，`schemastery` peer `~3.19.0`）；0.2.2-rc.1 仅在显式 `DSH_INSTALL_ROOT=<本次真实代码根>` 的只读代码样本与隔离自动结果中核实，0.2.1 系列仅存于远端分支 dsh-v0.2.1rc-qqbot-v0.5.2-only，当前 main 不承载。生产部署及真实 provider、GUI、QQBot 消息、重启和台账所列 HUMAN 待办项由用户另行复测；静态/隔离 PASS 不替代 HUMAN。
 5. **部署前预检与版本迁移测试要求**（不等于部署许可）：
    - **何时必做**：任何插件代码改动的交付前，以及宿主版本升级（含 `engines.dsh` 与三项 @deepseek-ai peer 收口到新版本）时，必须完整重跑本节 1 至 3 步，不得以「仓库验收已完成」代替。
@@ -151,7 +153,7 @@
 - `## 意图速查`、`## 文件总览`、`## 函数索引` 和原表头必须保留。先 grep 意图词得到函数名，再按函数名读机器行号。
 - 运行地图生成器负责路径、函数名、行号区间、增删和漏检；人工只改意图、文件说明、功能描述与备注。机器生成的行数/行号不能手填冻结。
 - 稳定匹配键是“相对路径 + 函数名 + 同名出现顺序”。维护时必须保持 `routeKey` 1 条、`isIdChar` 1 条的约束，并按当前源码实际同名条目及其顺序对拍 `visit`，不另写死历史次数；`--check` 不覆盖人工描述/固定尾部的全文比较，所以需另做结构键对拍。
-- 描述必须保留当前行为关键词：证据引用成对剥除与单侧不剥、`atomicCommit` 阶段语义、`syncPreset` 以当前 settings 补齐 patch 为空为 idle（空闲稳态），但不因 idle 跳过资产校验与新资产挂载、`createApiHandler` PUT 仅投影、P2-2 agent-only（仅 Agent）cache、usage 启动扫描与覆盖式更新（幂等）、单调性保护 等。
+- 描述必须保留当前行为关键词：证据引用成对剥除与单侧不剥、`atomicCommit` 阶段语义、`syncPreset` 以当前 settings 补齐 patch 为空为 idle（空闲稳态），但不因 idle 跳过资产校验与新资产挂载、`createApiHandler` PUT 仅投影、P2-2 agent-only（仅 Agent）cache、usage 启动扫描与覆盖式更新（幂等）、单调性保护、模式白名单预筛与文件 mtime 水位、同步 API 与 Worker 调度边界、失败批次持续重试、提交前后协作取消 等。
 - 地图生成器是源码/测试索引，不是历史归档；无函数文件或纯描述变化不能只靠 `--check` 判定。
 - 扫描根 = `代码地图生成.mjs` 的 `--roots` 默认 `plugins,pe-test/_shared`（不含 pe-test/tools）。仅扫描根内 .js/.mjs 增删或行号漂移、或地图人工描述需维护时运行普通生成；纯文档、pe-test/docs、pe-test/tools、pe-test/reports 改动不触发地图更新，收尾与验收只运行 `--check`。
 

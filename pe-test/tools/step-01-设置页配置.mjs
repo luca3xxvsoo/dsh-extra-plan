@@ -63,6 +63,7 @@ const keys = ['anchoredBootstrap', 'creativeMode', 'webFetch', 'toolPresentation
 
 let pass = 0
 let fail = 0
+const rootCleanupErrors = []
 const output = createOutput({ argv: process.argv.slice(2) })
 function check(label, condition) {
   if (condition) pass += 1
@@ -260,6 +261,20 @@ async function start(editor, options = {}) {
   const routes = []
   const policies = []
   const lifecycle = { cleanup: undefined, update: undefined }
+  const rootCleanups = []
+  let rootDisposePromise
+  const disposeRoot = () => {
+    if (rootDisposePromise !== undefined) return rootDisposePromise
+    rootDisposePromise = (async () => {
+      try {
+        for (const cleanup of rootCleanups) if (typeof cleanup === 'function') await cleanup()
+      } catch (error) {
+        rootCleanupErrors.push(error)
+        throw error
+      }
+    })()
+    return rootDisposePromise
+  }
   const trace = Array.isArray(options.trace) ? options.trace : []
   const getCalls = []
   const injectRequests = []
@@ -365,6 +380,11 @@ async function start(editor, options = {}) {
       }
       throw new Error('unexpected inject ' + deps.join(','))
     },
+    effect: (fn) => {
+      const cleanup = fn()
+      rootCleanups.push(cleanup)
+      return cleanup
+    },
   }
   proxy.readViaGet = () => targetCtx.get('configEditor')
   const ctx = new Proxy(targetCtx, {
@@ -385,15 +405,33 @@ async function start(editor, options = {}) {
     settingsModule.apply(ctx)
   } catch (error) {
     applyError = error
-    if (options.allowApplyError !== true) throw error
+    if (options.allowApplyError !== true) {
+      let cleanupError
+      try { await disposeRoot() } catch (errorDuringCleanup) { cleanupError = errorDuringCleanup }
+      if (cleanupError !== undefined && error !== null && typeof error === 'object') error.cleanupError = cleanupError
+      throw error
+    }
   }
   proxy.applyError = applyError === undefined ? undefined : String(applyError && applyError.message || applyError)
-  if (applyError !== undefined) return { lifecycle, proxy, applyError }
+  if (applyError !== undefined) {
+    await disposeRoot()
+    return { lifecycle, proxy, applyError, disposeRoot }
+  }
   const route = routes.find((item) => item.path === '/api/dsh-extra-plan-settings')
   check('V03 apply 注册单一路由与 auto:false policy', route !== undefined && policies.length === 1 && policies[0].policy.auto === false)
   const server = createServer((req, res) => Promise.resolve(route.handler(req, res)).catch((error) => { if (!res.headersSent) { res.writeHead(500, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: String(error) })) } }))
+  const nativeClose = server.close.bind(server)
+  server.close = (callback) => nativeClose((serverError) => {
+    disposeRoot().then(() => {
+      if (typeof callback === 'function') callback(serverError)
+    }, (cleanupError) => {
+      proxy.rootCleanupError = cleanupError
+      trace.push('root-cleanup-error')
+      if (typeof callback === 'function') callback(cleanupError)
+    })
+  })
   const port = await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', () => resolve(server.address().port)) })
-  return { server, port, lifecycle, proxy }
+  return { server, port, lifecycle, proxy, disposeRoot }
 }
 
 const TEST_ENV_KEYS = Object.freeze(['DSH_HOME', 'DSH_PROFILE', 'USERPROFILE', 'HOME'])
@@ -2002,6 +2040,142 @@ failedSurface.unmount()
     rmSync(m17DriftFixture.root, { recursive: true, force: true })
   }
 }
+
+// ── G5-WORKER：root effect 独立生命周期、apply/API 非阻塞与幂等卸载 ──
+{
+  const lifecycleFixture = makeSyncFixture()
+  const lifecycleEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, lifecycleFixture.webPatch, { persistDocument: true, profileContext: lifecycleFixture.webProfileContext })
+  const lifecycleRun = await start(lifecycleEditor, { mount: true })
+  const childCleanupBefore = lifecycleRun.lifecycle.cleanup
+  try {
+    const lifecycleResponse = await requestJson(lifecycleRun.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
+    check('G5-WORKER 设置apply后API仍可响应', lifecycleResponse.status === 200 && lifecycleResponse.body?.values !== undefined)
+    const firstDispose = lifecycleRun.disposeRoot()
+    const secondDispose = lifecycleRun.disposeRoot()
+    check('G5-WORKER root disposer重复调用幂等且共享Promise', firstDispose === secondDispose)
+    let disposeError
+    try { await firstDispose } catch (error) { disposeError = error }
+    check('G5-WORKER root disposer等待后台退出且无清理错误', disposeError === undefined)
+    check('G5-WORKER root清理独立于configEditor子effect', typeof childCleanupBefore === 'function' && lifecycleRun.lifecycle.cleanup === childCleanupBefore)
+  } finally {
+    await lifecycleRun.disposeRoot()
+    if (typeof lifecycleRun.lifecycle.cleanup === 'function') await lifecycleRun.lifecycle.cleanup()
+    await new Promise((resolve) => lifecycleRun.server.close(resolve))
+    rmSync(lifecycleFixture.root, { recursive: true, force: true })
+  }
+}
+
+// ── G5-R5：settings真实忙算期间API、构造失败warn与默认早失败清理 ──
+{
+  const workerThreads = createRequire(import.meta.url)('node:worker_threads')
+  const originalWorker = workerThreads.Worker
+  const waitForMarker = async (markerPath) => {
+    for (let index = 0; index < 100000; index += 1) {
+      if (existsSync(markerPath)) return true
+      await new Promise((resolve) => setImmediate(resolve))
+    }
+    return existsSync(markerPath)
+  }
+  const busyFixture = makeSyncFixture()
+  const busyProgress = join(busyFixture.root, 'settings-worker-progress.marker')
+  const busyDone = join(busyFixture.root, 'settings-worker-done.marker')
+  const busyWorkerFile = join(busyFixture.root, 'settings-busy-worker.mjs')
+  const busyProgressLiteral = JSON.stringify(busyProgress)
+  const busyDoneLiteral = JSON.stringify(busyDone)
+  const busyWorkerSource = [
+    "import { parentPort, threadId, workerData } from 'node:worker_threads'",
+    "import { writeFileSync } from 'node:fs'",
+    "const release = new Int32Array(workerData.cancelBuffer)",
+    "const progressMarker = " + busyProgressLiteral,
+    "const doneMarker = " + busyDoneLiteral,
+    "let started = false",
+    "let progressed = false",
+    "parentPort.postMessage({ type: 'ready', version: 1, id: workerData.id, threadId })",
+    "parentPort.on('message', (message) => {",
+    "  if (message.type === 'cancel') { Atomics.store(release, 0, 1); return }",
+    "  if (message.type !== 'run' || started) return",
+    "  started = true",
+    "  parentPort.postMessage({ type: 'running', version: 1, id: workerData.id, threadId })",
+    "  while (Atomics.load(release, 0) === 0) { let value = 0; for (let index = 0; index < 50000; index += 1) value = (value + index) & 65535; if (!progressed) { progressed = true; writeFileSync(progressMarker, 'progress') } }",
+    "  writeFileSync(doneMarker, 'done')",
+    "  parentPort.postMessage({ type: 'result', version: 1, id: workerData.id, result: { status: 'cancelled', reason: 'cancel-requested' } })",
+    "  parentPort.close()",
+    "})",
+  ].join('\n')
+  writeFileSync(busyWorkerFile, busyWorkerSource, 'utf8')
+  const busyEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, busyFixture.webPatch, { persistDocument: true, profileContext: busyFixture.webProfileContext })
+  const BusyWorker = class extends originalWorker {
+    constructor(_url, options) { super(busyWorkerFile, options) }
+  }
+  let busyRun
+  try {
+    workerThreads.Worker = BusyWorker
+    syncBuiltinESMExports()
+    busyRun = await start(busyEditor, { mount: true })
+    const busyRunning = await waitForMarker(busyProgress)
+    const busyResponse = await requestJson(busyRun.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
+    check('G5-R5 settings真实忙算running/进度期间API响应且done未结束', busyRunning && busyResponse.status === 200 && !existsSync(busyDone))
+    console.log('SETTINGS_BUSY_HTTP=' + JSON.stringify({ runningProgress: busyRunning, httpStatus: busyResponse.status, doneBeforeDispose: existsSync(busyDone) }))
+    const busyDispose = busyRun.disposeRoot()
+    const busyDisposeAgain = busyRun.disposeRoot()
+    check('G5-R5 settings busy root dispose幂等', busyDispose === busyDisposeAgain)
+    await busyDispose
+    check('G5-R5 settings busy root dispose后真实Worker exit证据', existsSync(busyDone))
+  } catch (error) {
+    check('G5-R5 settings忙算夹具启动无异常', false)
+  } finally {
+    workerThreads.Worker = originalWorker
+    syncBuiltinESMExports()
+    if (busyRun !== undefined) {
+      try { await busyRun.disposeRoot() } catch {}
+      if (typeof busyRun.lifecycle?.cleanup === 'function') await busyRun.lifecycle.cleanup()
+      await new Promise((resolve) => busyRun.server.close(resolve))
+    }
+    rmSync(busyFixture.root, { recursive: true, force: true })
+  }
+  const failedWorkerFixture = makeSyncFixture()
+  const failedWorkerEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, failedWorkerFixture.webPatch, { persistDocument: true, profileContext: failedWorkerFixture.webProfileContext })
+  const failureWarnings = []
+  const previousWarn = console.warn
+  let failedWorkerRun
+  try {
+    workerThreads.Worker = class {
+      constructor() { throw new Error('g5-settings-worker-construction') }
+    }
+    syncBuiltinESMExports()
+    console.warn = (...args) => { failureWarnings.push(args.map(String).join(' ')); previousWarn(...args) }
+    failedWorkerRun = await start(failedWorkerEditor, { mount: true })
+    await new Promise((resolve) => setImmediate(resolve))
+    const failedWorkerResponse = await requestJson(failedWorkerRun.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
+    check('G5-R5 settings构造失败warn后API/同步仍正常且无同步归档兜底', failedWorkerResponse.status === 200 && failureWarnings.some((line) => line.includes('startup archive failed') && line.includes('worker-create-failed')) && !existsSync(join(failedWorkerFixture.root, 'usage-ledger')))
+    console.log('SETTINGS_WORKER_CREATE_FAILURE=' + JSON.stringify({ apiStatus: failedWorkerResponse.status, warned: failureWarnings.some((line) => line.includes('worker-create-failed')), syncArchiveFallback: existsSync(join(failedWorkerFixture.root, 'usage-ledger')) }))
+  } catch (error) {
+    check('G5-R5 settings构造失败不阻断apply/API', false)
+  } finally {
+    console.warn = previousWarn
+    workerThreads.Worker = originalWorker
+    syncBuiltinESMExports()
+    if (failedWorkerRun !== undefined) {
+      try { await failedWorkerRun.disposeRoot() } catch {}
+      if (typeof failedWorkerRun.lifecycle?.cleanup === 'function') await failedWorkerRun.lifecycle.cleanup()
+      await new Promise((resolve) => failedWorkerRun.server.close(resolve))
+    }
+    rmSync(failedWorkerFixture.root, { recursive: true, force: true })
+  }
+  const earlyFixture = makeSyncFixture()
+  const earlyEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, earlyFixture.webPatch, { persistDocument: true, profileContext: earlyFixture.webProfileContext })
+  let earlyError
+  try {
+    await start(earlyEditor, { mount: true, hostProxyMode: 'inject-throws' })
+  } catch (error) {
+    earlyError = error
+  } finally {
+    rmSync(earlyFixture.root, { recursive: true, force: true })
+  }
+  check('G5-R5 默认allowApplyError=false先保留inject-error再完成root清理', earlyError?.message === 'inject-error' && earlyError?.cleanupError === undefined)
+  console.log('EARLY_APPLY_ERROR_CLEANUP=' + JSON.stringify({ message: earlyError?.message, cleanupError: earlyError?.cleanupError }))
+}
+check('G5-R5 root cleanupError统一进入最终FAIL计数', rootCleanupErrors.length === 0)
 
 restoreEnvironment(testEnvironment)
 for (const key of settingsEnvKeys) {

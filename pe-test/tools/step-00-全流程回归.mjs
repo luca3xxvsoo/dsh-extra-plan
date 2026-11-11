@@ -4,6 +4,8 @@
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { isDeepStrictEqual } from 'node:util'
 import { registerHostDeps } from '../_shared/host-deps.mjs'
+import { createServer } from 'node:http'
+import { Worker } from 'node:worker_threads'
 import { assertionLine, createOutput, parseOutputMode, stableStringify, sha256Text, writeRawEvidence } from '../_shared/test-output.mjs'
 // host-deps 只按命令显式 DSH_INSTALL_ROOT 解析宿主真包；运行时由 node --import ../_shared/host-preload.mjs 预加载。
 const step00Fixture = makeFixtureDir({ label: 'step00' })
@@ -59,10 +61,11 @@ const roleGenerator = await import('../../plugins/dsh-extra-plan/scripts/generat
 const usageStats = await import('./step-99-用量统计.mjs')
 // 改造11：三账本模块已合并为唯一账本模块（usageArchiveModule），旧名别名不再保留。
 import * as usageArchiveModule from '../../plugins/dsh-extra-plan/lib/usage-ledger.js'
+import { startUsageLedgerBackground } from '../../plugins/dsh-extra-plan/lib/usage-ledger-background.js'
 // 改造11：旧 active→archive 路径推导入口已随三模块合并删除，测试内按唯一账本文件名本地拼接（与插件默认口径一致）。
 const STEP00_ARCHIVE_FILE_NAME = 'ledger-v2.archive.jsonl'
 import { DEFAULT_EXPLORE_BUDGET as GENERATED_DEFAULT_EXPLORE_BUDGET, DEFAULT_PLANNER_PROMPT_SUFFIX as GENERATED_DEFAULT_PLANNER_PROMPT_SUFFIX } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
-import { existsSync, readFileSync, readdirSync, rmSync, mkdirSync, writeFileSync, renameSync, unlinkSync, statSync } from 'node:fs'
+import { copyFileSync, existsSync, readFileSync, readdirSync, rmSync, mkdirSync, writeFileSync, renameSync, unlinkSync, statSync, utimesSync } from 'node:fs'
 import { zstdCompressSync } from 'node:zlib'
 import { makeFixtureDir } from '../_shared/workspace-paths.mjs'
 import { createPathContext } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
@@ -1370,7 +1373,7 @@ const archiveRow = (patch = {}) => ({
   ...patch,
 })
 const archiveBytesOf = (path) => existsSync(path) ? readFileSync(path, 'utf8') : ''
-const archiveResiduals = (directory) => readdirSync(directory).filter((name) => name.includes('.tmp-') || name.includes('.bak-') || name.includes('.lock'))
+const archiveResiduals = (directory) => readdirSync(directory).filter((name) => name !== 'session-presets.json' && (name.includes('.tmp-') || name.includes('.bak-') || name.includes('.lock')))
 const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => JSON.stringify(row)).join('\n') + (rows.length > 0 ? '\n' : ''), 'utf8')
 const decodeArchiveProduct = (text) => {
   const objects = String(text === undefined || text === null ? '' : text).split(/\r?\n/).filter((line) => line.trim() !== '').map((line) => JSON.parse(line))
@@ -1521,6 +1524,7 @@ checkTrue('M6 step-99 旧strict模式拒绝：有效V2输入前置返回strict-p
     const lowerResult = usageArchiveModule.archiveLedger(archive, { pathContext: STEP00_PATH_CONTEXT, rows: [scanRowOf({ ts: '2026-10-22T00:00:01.000Z', inputTokens: 1, cacheReadTokens: 2, cacheWriteTokens: 3, outputTokens: 4, seq: 1 })] })
     const guardedRow = decodeArchiveProduct(archiveBytesOf(archive)).rows.find((row) => row.provider === 'm6-provider-a')
     checkTrue('M6 直调单调性保护：扫描侧更小则保留archive旧值且告警1条、字节不变', lowerResult.monotonicWarnings === 1 && guardedRow !== undefined && guardedRow.inputTokens === 11 && guardedRow.cacheReadTokens === 22 && guardedRow.cacheWriteTokens === 33 && guardedRow.outputTokens === 44 && archiveBytesOf(archive) === archiveAfter)
+    checkTrue('M6 直调单调回退默认策略保留archive旧ts', guardedRow !== undefined && guardedRow.ts === archiveProduct.rows.find((row) => row.provider === 'm6-provider-a')?.ts)
 
     const invalidCases = [
       ['V1拒绝', JSON.stringify({ schemaVersion: 1, sessionId: 'v1' }) + '\n', 'non-v2'],
@@ -1726,23 +1730,509 @@ checkTrue('M6 step-99 旧strict模式拒绝：有效V2输入前置返回strict-p
     const keptRow = firstProduct.rows[0]
     // ① archive 被创建，数据行数等于身份数（说明行单独计一行）。
     checkTrue('M6-T2 启动扫描创建archive且数据行数等于身份数', first.status === 'archived' && existsSync(archive) && first.rows === 1 && first.groups === 1 && first.scannedSessions === 2 && firstProduct.rows.length === 1 && firstProduct.noticeLines === 1)
+    checkTrue('M6-T2 首扫识别会话数与实际用量解码数分离', first.scannedSessions === 2 && first.scannedUsageSessions === 1 && first.scannedRows === 1)
     // ② 同身份四桶为两条 usage 之和，身份字段取扫描结果。
     checkTrue('M6-T2 同身份四桶为两条usage之和且身份字段精确', keptRow !== undefined && keptRow.sessionId === keptSessionId && keptRow.agentPreset === 'extra-plan-executor' && keptRow.role === 'main' && keptRow.rootSessionId === keptSessionId && keptRow.model === 'scan-model' && keptRow.provider === 'scan-provider' && keptRow.inputTokens === 11 && keptRow.cacheReadTokens === 22 && keptRow.cacheWriteTokens === 33 && keptRow.outputTokens === 44 && keptRow.seq === 2)
     // ③ 重复执行字节完全一致（覆盖式幂等）。
     const firstBytes = archiveBytesOf(archive)
     const again = usageArchiveModule.startupArchive(context, { budgetMs: 5000 })
-    checkTrue('M6-T2 重复启动扫描幂等：archive字节完全一致且无单调性告警', again.status === 'archived' && archiveBytesOf(archive) === firstBytes && again.rows === 1 && again.monotonicWarnings === 0)
+    checkTrue('M6-T2 重复启动扫描增量幂等：up-to-date且archive字节完全一致且无单调性告警', again.status === 'up-to-date' && archiveBytesOf(archive) === firstBytes && again.monotonicWarnings === 0)
+    // 预置他人锁反证健康路径不取锁、不写 archive 或模式缓存。
+    const healthyIo = { write: 0, move: 0, remove: 0 }
+    writeFileSync(archive + '.lock', 'busy', 'utf8')
+    const healthy = usageArchiveModule.startupArchive(context, { budgetMs: 5000, fsOps: {
+      writeFileSync: (...args) => { healthyIo.write += 1; return writeFileSync(...args) },
+      renameSync: (...args) => { healthyIo.move += 1; return renameSync(...args) },
+      unlinkSync: (...args) => { healthyIo.remove += 1; return unlinkSync(...args) },
+    } })
+    checkTrue('M6-T2 健康重复调用零锁零写且零用量重扫', healthy.status === 'up-to-date' && healthy.monotonicWarnings === 0 && healthy.scannedRows === 0 && healthy.scannedFiles === 0 && healthy.scannedUsageSessions === 0 && healthyIo.write === 0 && healthyIo.move === 0 && healthyIo.remove === 0 && existsSync(archive + '.lock') && archiveBytesOf(archive) === firstBytes)
+    unlinkSync(archive + '.lock')
     // ④ 人为抬高某身份四桶后重跑：出现单调性告警且保留旧值不覆盖。
     archiveWriteRows(archive, [{ ...keptRow, inputTokens: 100, cacheReadTokens: 200, cacheWriteTokens: 300, outputTokens: 400 }])
+    const touchedAt = Date.now()
+    utimesSync(join(home, 'sessions', 'w1', 'session-' + keptSessionId, 'session.v4.jsonl.zstd'), new Date(touchedAt), new Date(touchedAt))
+    utimesSync(join(home, 'sessions', 'w1', 'session-' + skippedSessionId, 'session.v4.jsonl.zstd'), new Date(touchedAt), new Date(touchedAt))
     const guarded = usageArchiveModule.startupArchive(context, { budgetMs: 5000 })
     const guardedRow = decodeArchiveProduct(archiveBytesOf(archive)).rows[0]
     checkTrue('M6-T2 抬高四桶后重跑：单调性告警1条且保留旧值不回退', guarded.status === 'archived' && guarded.monotonicWarnings === 1 && guardedRow !== undefined && guardedRow.inputTokens === 100 && guardedRow.cacheReadTokens === 200 && guardedRow.cacheWriteTokens === 300 && guardedRow.outputTokens === 400)
+    checkTrue('M6-T2 启动回退保四桶并刷新文件mtime水位', guardedRow !== undefined && Date.parse(guardedRow.ts) === new Date(statSync(join(home, 'sessions', 'w1', 'session-' + keptSessionId, 'session.v4.jsonl.zstd')).mtimeMs).getTime())
     // ⑤ 目录内无 active 文件、无残留锁与临时文件。
     checkTrue('M6-T2 启动扫描不建active且无锁/临时残留', !existsSync(active) && !existsSync(archive + '.lock') && archiveResiduals(ledgerDir).length === 0 && readdirSync(ledgerDir).every((name) => !name.includes('.stale-')))
     // ⑥ 白名单外 preset 的会话整体跳过，不产出身份行。
     checkTrue('M6-T2 白名单外preset会话整体跳过', firstProduct.rows.every((row) => row.sessionId !== skippedSessionId) && guardedRow.sessionId !== skippedSessionId && !archiveBytesOf(archive).includes(skippedSessionId))
+    const keptLog = join(home, 'sessions', 'w1', 'session-' + keptSessionId, 'session.v4.jsonl.zstd')
+    const sessionPresets = join(ledgerDir, 'session-presets.json')
+    const beforeTouchRows = decodeArchiveProduct(archiveBytesOf(archive)).rows
+    const beforeTouchKept = beforeTouchRows.find((row) => row.sessionId === keptSessionId)
+    const touchMtimeMs = Date.now() + 1000
+    utimesSync(keptLog, new Date(touchMtimeMs), new Date(touchMtimeMs))
+    const touched = usageArchiveModule.startupArchive(context, { budgetMs: 5000 })
+    const touchedRows = decodeArchiveProduct(archiveBytesOf(archive)).rows
+    const touchedKept = touchedRows.find((row) => row.sessionId === keptSessionId)
+    checkTrue('M6-T2 触碰白名单日志仅重扫且更新ts', touched.status === 'archived' && touchedKept !== undefined && touchedKept.inputTokens === 100 && touchedKept.cacheReadTokens === 200 && touchedKept.cacheWriteTokens === 300 && touchedKept.outputTokens === 400 && Date.parse(touchedKept.ts) === statSync(keptLog).mtimeMs && beforeTouchKept !== undefined && touchedKept.sessionId === beforeTouchKept.sessionId)
+    const bytesBeforePresetRebuild = archiveBytesOf(archive)
+    rmSync(sessionPresets, { force: true })
+    writeFileSync(archive + '.lock', 'busy', 'utf8')
+    const busyPresetRepair = usageArchiveModule.startupArchive(context, { budgetMs: 5000 })
+    checkTrue('M6-T2 缓存修复锁忙不删他人锁且不改archive', busyPresetRepair.status === 'skipped' && busyPresetRepair.reason === 'lock-busy' && existsSync(archive + '.lock') && !existsSync(sessionPresets) && archiveBytesOf(archive) === bytesBeforePresetRebuild)
+    unlinkSync(archive + '.lock')
+    const missingPreset = usageArchiveModule.startupArchive(context, { budgetMs: 5000 })
+    checkTrue('M6-T2 删除模式文件后整体跳过并重建', missingPreset.status === 'up-to-date' && archiveBytesOf(archive) === bytesBeforePresetRebuild && existsSync(sessionPresets))
+    checkTrue('M6-T2 缺失模式缓存仅修复且零用量重扫', missingPreset.cacheRepaired === true && missingPreset.scannedRows === 0 && missingPreset.scannedFiles === 0 && missingPreset.scannedUsageSessions === 0 && missingPreset.monotonicWarnings === 0)
+    writeFileSync(sessionPresets, '{broken-json', 'utf8')
+    const bytesBeforeCorruptRebuild = archiveBytesOf(archive)
+    const corruptPreset = usageArchiveModule.startupArchive(context, { budgetMs: 5000 })
+    checkTrue('M6-T2 损坏模式文件后整体跳过并重建', corruptPreset.status === 'up-to-date' && archiveBytesOf(archive) === bytesBeforeCorruptRebuild && existsSync(sessionPresets) && (() => { try { JSON.parse(readFileSync(sessionPresets, 'utf8')); return true } catch { return false } })())
+    checkTrue('M6-T2 损坏模式缓存仅修复且零用量重扫', corruptPreset.cacheRepaired === true && corruptPreset.scannedRows === 0 && corruptPreset.scannedFiles === 0 && corruptPreset.scannedUsageSessions === 0 && corruptPreset.monotonicWarnings === 0)
+    const rowsBeforeNewSession = decodeArchiveProduct(archiveBytesOf(archive)).rows
+    const newSessionId = '6d2f4c8a-1f11-4b2c-8e5a-000000000003'
+    writeSessionLog('w1', 'session-' + newSessionId, jsonlOf([
+      sessionEventOf(newSessionId),
+      presetEventOf('extra-plan-executor'),
+      usageEventOf(1, { inputTokens: 7, cacheReadTokens: 8, cacheWriteTokens: 9, outputTokens: 10 }, 'new-scan-model', 'new-scan-provider'),
+    ]))
+    const appended = usageArchiveModule.startupArchive(context, { budgetMs: 5000 })
+    const rowsAfterNewSession = decodeArchiveProduct(archiveBytesOf(archive)).rows
+    checkTrue('M6-T2 新白名单会话仅增量扫描且既有行不变', appended.status === 'archived' && rowsAfterNewSession.length === rowsBeforeNewSession.length + 1 && rowsBeforeNewSession.every((row, index) => JSON.stringify(row) === JSON.stringify(rowsAfterNewSession[index])) && rowsAfterNewSession.some((row) => row.sessionId === newSessionId))
+    checkTrue('M6-T2 新白名单会话仅解码新日志且识别统计完整', appended.scannedUsageSessions === 1 && appended.scannedSessions === 3)
+    {
+      const precisionDir = makeWTemp('dsh-startup-mtime-precision')
+      try {
+        const precisionHome = join(precisionDir, 'home')
+        mkdirSync(precisionHome, { recursive: true })
+        const precisionContext = createPathContext({ workspaceRoot: precisionDir, hostDataRoot: precisionHome })
+        const precisionSessionId = '6d2f4c8a-1f11-4b2c-8e5a-000000000004'
+        const precisionLog = join(precisionHome, 'sessions', 'w1', 'session-' + precisionSessionId, 'session.v4.jsonl.zstd')
+        mkdirSync(dirname(precisionLog), { recursive: true })
+        writeFileSync(precisionLog, zstdCompressSync(Buffer.from(jsonlOf([
+          sessionEventOf(precisionSessionId),
+          presetEventOf('extra-plan-executor'),
+          usageEventOf(1, { inputTokens: 2, cacheReadTokens: 3, cacheWriteTokens: 4, outputTokens: 5 }, 'precision-model', 'precision-provider'),
+        ]), 'utf8')))
+        const precisionArchive = join(precisionHome, 'usage-ledger', 'ledger-v2.archive.jsonl')
+        const precisionFirst = usageArchiveModule.startupArchive(precisionContext, { budgetMs: 5000 })
+        const precisionFirstMtime = 1760000000123.75
+        utimesSync(precisionLog, precisionFirstMtime / 1000, precisionFirstMtime / 1000)
+        const precisionSet = usageArchiveModule.startupArchive(precisionContext, { budgetMs: 5000 })
+        const precisionSecondMtime = 1760000000123.25
+        const precisionBeforeRaw = statSync(precisionLog).mtimeMs
+        utimesSync(precisionLog, precisionSecondMtime / 1000, precisionSecondMtime / 1000)
+        const precisionAfterRaw = statSync(precisionLog).mtimeMs
+        const precisionRescan = usageArchiveModule.startupArchive(precisionContext, { budgetMs: 5000 })
+        const precisionRow = decodeArchiveProduct(archiveBytesOf(precisionArchive)).rows[0]
+        checkTrue('M6-T2 亚毫秒mtime同ISO毫秒仍按原始指纹重扫且ts按文件时间裁剪', precisionFirst.status === 'archived' && precisionSet.status === 'archived' && precisionRescan.status === 'archived' && precisionBeforeRaw !== precisionAfterRaw && new Date(precisionBeforeRaw).getTime() === new Date(precisionAfterRaw).getTime() && precisionRescan.scannedUsageSessions === 1 && precisionRow !== undefined && Date.parse(precisionRow.ts) === new Date(precisionAfterRaw).getTime())
+      } finally {
+        rmSync(precisionDir, { recursive: true, force: true })
+      }
+    }
+    {
+      const failureDir = makeWTemp('dsh-startup-scan-failure-retry')
+      try {
+        const failureHome = join(failureDir, 'home')
+        mkdirSync(failureHome, { recursive: true })
+        const failureContext = createPathContext({ workspaceRoot: failureDir, hostDataRoot: failureHome })
+        const failureSessionId = '6d2f4c8a-1f11-4b2c-8e5a-000000000005'
+        const failureLog = join(failureHome, 'sessions', 'w1', 'session-' + failureSessionId, 'session.v4.jsonl.zstd')
+        mkdirSync(dirname(failureLog), { recursive: true })
+        const failureGoodFrame = zstdCompressSync(Buffer.from(jsonlOf([
+          sessionEventOf(failureSessionId),
+          presetEventOf('extra-plan-executor'),
+          usageEventOf(1, { inputTokens: 13, cacheReadTokens: 14, cacheWriteTokens: 15, outputTokens: 16 }, 'failure-model', 'failure-provider'),
+        ]), 'utf8'))
+        writeFileSync(failureLog, failureGoodFrame)
+        const failureArchive = join(failureHome, 'usage-ledger', 'ledger-v2.archive.jsonl')
+        const failureInitial = usageArchiveModule.startupArchive(failureContext, { budgetMs: 5000 })
+        const seededMtime = 1760000000123.2495
+        utimesSync(failureLog, seededMtime / 1000, seededMtime / 1000)
+        const failureSeeded = usageArchiveModule.startupArchive(failureContext, { budgetMs: 5000 })
+        const failurePresets = join(failureHome, 'usage-ledger', 'session-presets.json')
+        const archiveBeforeFailure = archiveBytesOf(failureArchive)
+        const presetsBeforeFailure = readFileSync(failurePresets, 'utf8')
+        const badTailMtime = 1760000000123.7505
+        const badTailBytes = Buffer.concat([failureGoodFrame, Buffer.from([0x28, 0xb5, 0x2f, 0xfd])])
+        writeFileSync(failureLog, badTailBytes)
+        utimesSync(failureLog, badTailMtime / 1000, badTailMtime / 1000)
+        const badTailFirst = usageArchiveModule.startupArchive(failureContext, { budgetMs: 5000 })
+        checkTrue('M6-T2 坏zstd尾帧同ISO毫秒失败不推进archive/模式成功水位', failureInitial.status === 'archived' && failureSeeded.status === 'archived' && new Date(seededMtime).getTime() === new Date(badTailMtime).getTime() && badTailFirst.status === 'skipped' && badTailFirst.reason === 'scan-failed' && archiveBytesOf(failureArchive) === archiveBeforeFailure && readFileSync(failurePresets, 'utf8') === presetsBeforeFailure)
+        const badTailSecond = usageArchiveModule.startupArchive(failureContext, { budgetMs: 5000 })
+        checkTrue('M6-T2 文件不变连续失败仍持续重试而非伪up-to-date', badTailSecond.status === 'skipped' && badTailSecond.reason === 'scan-failed' && archiveBytesOf(failureArchive) === archiveBeforeFailure && readFileSync(failurePresets, 'utf8') === presetsBeforeFailure)
+        writeFileSync(failureLog, failureGoodFrame)
+        utimesSync(failureLog, badTailMtime / 1000, badTailMtime / 1000)
+        const recovered = usageArchiveModule.startupArchive(failureContext, { budgetMs: 5000 })
+        const recoveredArchive = archiveBytesOf(failureArchive)
+        const recoveredHealthy = usageArchiveModule.startupArchive(failureContext, { budgetMs: 5000 })
+        checkTrue('M6-T2 修复后恢复解析并在下一次真正up-to-date', recovered.status === 'archived' && recovered.scannedRows === 1 && recovered.scannedUsageSessions === 1 && recoveredArchive === archiveBeforeFailure && recoveredHealthy.status === 'up-to-date' && recoveredHealthy.reason === 'no-changed-logs' && recoveredHealthy.scannedRows === 0 && recoveredHealthy.scannedUsageSessions === 0)
+        const presetsAfterRecovery = readFileSync(failurePresets, 'utf8')
+        const badJsonFrame = zstdCompressSync(Buffer.from('{"type":"assistant/message"\n', 'utf8'))
+        const jsonFailureMtime = 1760000000123.8505
+        writeFileSync(failureLog, Buffer.concat([failureGoodFrame, badJsonFrame]))
+        utimesSync(failureLog, jsonFailureMtime / 1000, jsonFailureMtime / 1000)
+        const badJson = usageArchiveModule.startupArchive(failureContext, { budgetMs: 5000 })
+        checkTrue('M6-T2 目标JSON事件解析失败不推进成功水位', badJson.status === 'skipped' && badJson.reason === 'scan-failed' && archiveBytesOf(failureArchive) === recoveredArchive && readFileSync(failurePresets, 'utf8') === presetsAfterRecovery)
+      } finally {
+        rmSync(failureDir, { recursive: true, force: true })
+      }
+    }
+
   } finally {
     rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// ── M6-WORKER：默认真实Worker、取消提交线与非阻塞响应矩阵 ──
+{
+  const workerMatrixRoot = makeWTemp('dsh-worker-matrix')
+  const busyMarker = join(workerMatrixRoot, 'busy-running.marker')
+  const cancelledMarker = join(workerMatrixRoot, 'cancelled-running.marker')
+  const queueMarker = join(workerMatrixRoot, 'queue-running.marker')
+  const singleMarker = join(workerMatrixRoot, 'single-running.marker')
+  const syncRoot = join(workerMatrixRoot, 'sync')
+  const workerRoot = join(workerMatrixRoot, 'worker')
+  const failureRoot = join(workerMatrixRoot, 'failure')
+  mkdirSync(syncRoot, { recursive: true })
+  mkdirSync(workerRoot, { recursive: true })
+  mkdirSync(failureRoot, { recursive: true })
+  const matrixJsonl = (events) => events.map((event) => JSON.stringify(event)).join('\n') + '\n'
+  const matrixSessionEvent = (id, patch = {}) => ({ type: 'session', version: 4, id, cwd: workerMatrixRoot, createdAt: Date.UTC(2026, 9, 22), agentPreset: '', delegationDepth: 0, parentSession: '', origin: '', ...patch })
+  const matrixPresetEvent = (preset) => ({ type: 'agent-preset/selected', agentPreset: preset, time: Date.UTC(2026, 9, 22, 0, 0, 1) })
+  const matrixUsageEvent = (seq, inputTokens, model = 'worker-model', provider = 'worker-provider') => ({ type: 'assistant/message', seq, time: Date.UTC(2026, 9, 22, 0, 0, seq), data: { usage: { inputTokens, cacheReadTokens: inputTokens + 1, cacheWriteTokens: inputTokens + 2, outputTokens: inputTokens + 3 }, message: { source: { model, provider } } } })
+  const matrixLogOf = (home, id, inputTokens = 1, preset = 'extra-plan-executor') => {
+    const log = join(home, 'sessions', 'w1', 'session-' + id, 'session.v4.jsonl.zstd')
+    mkdirSync(dirname(log), { recursive: true })
+    writeFileSync(log, zstdCompressSync(Buffer.from(matrixJsonl([matrixSessionEvent(id), matrixPresetEvent(preset), matrixUsageEvent(1, inputTokens)]), 'utf8')))
+    return log
+  }
+  const matrixArchiveOf = (home) => join(home, 'usage-ledger', STEP00_ARCHIVE_FILE_NAME)
+  const matrixPresetsOf = (home) => join(home, 'usage-ledger', 'session-presets.json')
+  const matrixHomeOf = (root) => join(root, 'home')
+  const runBackground = async (owner, context, options = {}) => (await startUsageLedgerBackground(owner, context, options)).done
+  const workerSourceOf = (resultStatus, busy, markerPath) => [
+    "import { parentPort, threadId, workerData } from 'node:worker_threads'",
+    "import { writeFileSync } from 'node:fs'",
+    "const release = new Int32Array(workerData.cancelBuffer)",
+    "let finished = false",
+    "let runStarted = false",
+    "const finish = (status) => { if (finished) return; finished = true; const result = { status }; if (status === 'cancelled') result.reason = 'cancel-requested'; parentPort.postMessage({ type: 'result', version: 1, id: workerData.id, result }); parentPort.close() }",
+    "parentPort.postMessage({ type: 'ready', version: 1, id: workerData.id, threadId })",
+    "parentPort.on('message', (message) => {",
+    "  if (message.type === 'cancel') { Atomics.store(release, 0, 1); if (!runStarted) finish('cancelled'); return }",
+    "  if (message.type !== 'run' || runStarted) return",
+    "  runStarted = true",
+    "  parentPort.postMessage({ type: 'running', version: 1, id: workerData.id, threadId })",
+    busy ? "  let progress = false; while (Atomics.load(release, 0) === 0) { let value = 0; for (let index = 0; index < 50000; index += 1) value = (value + index) & 65535; if (!progress) { progress = true; writeFileSync(" + JSON.stringify(markerPath).replaceAll('\\', '/') + ", 'busy-progress') } }" : "  writeFileSync(" + JSON.stringify(markerPath).replaceAll('\\', '/') + ", 'quick-progress')",
+    "  finish('" + resultStatus + "')",
+    "})",
+  ].join('\n')
+  let busyWorkerFile
+  let cancelledWorkerFile
+  let quickWorkerFile
+  const waitForMarker = async (markerPath, state) => {
+    for (let index = 0; index < 100000; index += 1) {
+      if (existsSync(markerPath) && (state === undefined || state.runningSeen === true)) return true
+      await new Promise((resolve) => setImmediate(resolve))
+    }
+    return existsSync(markerPath) && (state === undefined || state.runningSeen === true)
+  }
+  let server
+  let busyHandle
+  let cancelledHandle
+  const busyState = { runningSeen: false }
+  const cancelledState = { runningSeen: false }
+  const singleState = { runningSeen: false }
+  const workerWithRunningObserver = (workerFile, state, workerOptions) => {
+    const worker = new Worker(workerFile, workerOptions)
+    worker.on('message', (message) => { if (message !== null && typeof message === 'object' && message.type === 'running') state.runningSeen = true })
+    return worker
+  }
+  try {
+    busyWorkerFile = join(workerMatrixRoot, 'busy-worker.mjs')
+    cancelledWorkerFile = join(workerMatrixRoot, 'cancelled-worker.mjs')
+    quickWorkerFile = join(workerMatrixRoot, 'quick-worker.mjs')
+    writeFileSync(busyWorkerFile, workerSourceOf('archived', true, busyMarker), 'utf8')
+    writeFileSync(cancelledWorkerFile, workerSourceOf('cancelled', true, cancelledMarker), 'utf8')
+    writeFileSync(quickWorkerFile, workerSourceOf('archived', false, queueMarker), 'utf8')
+    const parseEmbeddedWorker = (sourcePath) => {
+      const source = readFileSync(sourcePath, 'utf8').split('\n').filter((line) => !line.startsWith('import ')).join('\n')
+      try {
+        new Function(source)
+        return ''
+      } catch (error) {
+        return String(error && error.message || error)
+      }
+    }
+    const embeddedParseErrors = [busyWorkerFile, cancelledWorkerFile, quickWorkerFile].map(parseEmbeddedWorker).filter((message) => message !== '')
+    checkTrue('M6-WORKER 内嵌Worker正文展开后逐文件解析回放' + (embeddedParseErrors.length === 0 ? '' : ' [' + embeddedParseErrors.join('; ') + ']'), embeddedParseErrors.length === 0)
+    const syncHome = matrixHomeOf(syncRoot)
+    const workerHome = matrixHomeOf(workerRoot)
+    const failureHome = matrixHomeOf(failureRoot)
+    mkdirSync(syncHome, { recursive: true })
+    mkdirSync(workerHome, { recursive: true })
+    mkdirSync(failureHome, { recursive: true })
+    const matrixSessionId = '6d2f4c8a-1f11-4b2c-8e5a-000000000010'
+    const syncLog = matrixLogOf(syncHome, matrixSessionId, 11)
+    const workerLog = matrixLogOf(workerHome, matrixSessionId, 11)
+    const fixedMtime = 1760000000123.75
+    utimesSync(syncLog, fixedMtime / 1000, fixedMtime / 1000)
+    utimesSync(workerLog, fixedMtime / 1000, fixedMtime / 1000)
+    const syncContext = createPathContext({ workspaceRoot: syncRoot, hostDataRoot: syncHome })
+    const workerContext = createPathContext({ workspaceRoot: workerRoot, hostDataRoot: workerHome })
+    const syncFirst = usageArchiveModule.startupArchive(syncContext, { budgetMs: 5000 })
+    const defaultOwner = {}
+    const defaultFirst = await runBackground(defaultOwner, workerContext)
+    const syncArchiveBytes = archiveBytesOf(matrixArchiveOf(syncHome))
+    const workerArchiveBytes = archiveBytesOf(matrixArchiveOf(workerHome))
+    checkTrue('M6-WORKER 默认真实Worker首次归档与同步基准对拍且threadId非主线程', syncFirst.status === 'archived' && defaultFirst.status === 'archived' && workerArchiveBytes === syncArchiveBytes && defaultFirst.threadId > 0)
+    const defaultHealthy = await runBackground(defaultOwner, workerContext)
+    checkTrue('M6-WORKER 默认Worker健康重复调用up-to-date且零锁零写', defaultHealthy.status === 'up-to-date' && defaultHealthy.scannedRows === 0 && archiveResiduals(join(workerHome, 'usage-ledger')).length === 0)
+    rmSync(matrixPresetsOf(workerHome), { force: true })
+    const defaultCacheRepair = await runBackground(defaultOwner, workerContext)
+    checkTrue('M6-WORKER 默认Worker缺模式缓存只自愈且不重扫用量', defaultCacheRepair.status === 'up-to-date' && defaultCacheRepair.cacheRepaired === true && defaultCacheRepair.scannedRows === 0 && defaultCacheRepair.scannedUsageSessions === 0)
+    const rawMtimeA = 1760000001123.75
+    const rawMtimeB = 1760000001123.25
+    utimesSync(workerLog, rawMtimeA / 1000, rawMtimeA / 1000)
+    const rawFirst = await runBackground(defaultOwner, workerContext)
+    const rawBefore = statSync(workerLog).mtimeMs
+    utimesSync(workerLog, rawMtimeB / 1000, rawMtimeB / 1000)
+    const rawAfter = statSync(workerLog).mtimeMs
+    const rawSecond = await runBackground(defaultOwner, workerContext)
+    const rawRow = decodeArchiveProduct(archiveBytesOf(matrixArchiveOf(workerHome))).rows[0]
+    checkTrue('M6-WORKER 同ISO原始size/mtime指纹变化继续重扫且ts按文件mtime毫秒裁剪', rawFirst.status === 'archived' && rawSecond.status === 'archived' && rawBefore !== rawAfter && new Date(rawBefore).getTime() === new Date(rawAfter).getTime() && rawSecond.scannedUsageSessions === 1 && rawRow !== undefined && Date.parse(rawRow.ts) === new Date(rawAfter).getTime())
+    const failureSessionId = '6d2f4c8a-1f11-4b2c-8e5a-000000000011'
+    const failureLog = matrixLogOf(failureHome, failureSessionId, 21)
+    const failureGoodBytes = readFileSync(failureLog)
+    const failureContext = createPathContext({ workspaceRoot: failureRoot, hostDataRoot: failureHome })
+    const failureOwner = {}
+    const failureFirst = await runBackground(failureOwner, failureContext)
+    const failureArchive = matrixArchiveOf(failureHome)
+    const failurePresets = matrixPresetsOf(failureHome)
+    const failureArchiveBefore = archiveBytesOf(failureArchive)
+    const failurePresetsBefore = readFileSync(failurePresets, 'utf8')
+    writeFileSync(failureLog, Buffer.concat([failureGoodBytes, Buffer.from([0xfd, 0x2f, 0xb5, 0x28])]))
+    utimesSync(failureLog, 1760000002123.75 / 1000, 1760000002123.75 / 1000)
+    const failureBadFirst = await runBackground(failureOwner, failureContext)
+    const failureBadSecond = await runBackground(failureOwner, failureContext)
+    checkTrue('M6-WORKER 坏尾帧连续失败不推进archive/cache且持续重试', failureFirst.status === 'archived' && failureBadFirst.status === 'skipped' && failureBadFirst.reason === 'scan-failed' && failureBadSecond.status === 'skipped' && failureBadSecond.reason === 'scan-failed' && archiveBytesOf(failureArchive) === failureArchiveBefore && readFileSync(failurePresets, 'utf8') === failurePresetsBefore)
+    writeFileSync(failureLog, failureGoodBytes)
+    utimesSync(failureLog, 1760000002123.75 / 1000, 1760000002123.75 / 1000)
+    const failureRecovered = await runBackground(failureOwner, failureContext)
+    checkTrue('M6-WORKER 坏尾帧修复后恢复归档', failureRecovered.status === 'archived' && decodeArchiveProduct(archiveBytesOf(failureArchive)).rows.some((row) => row.sessionId === failureSessionId))
+    const newFailureSessionId = '6d2f4c8a-1f11-4b2c-8e5a-000000000012'
+    matrixLogOf(failureHome, newFailureSessionId, 31)
+    const failureRowsBeforeAppend = decodeArchiveProduct(archiveBytesOf(failureArchive)).rows
+    const failureAppended = await runBackground(failureOwner, failureContext)
+    const failureRowsAfterAppend = decodeArchiveProduct(archiveBytesOf(failureArchive)).rows
+    checkTrue('M6-WORKER 新会话增量扫描只增加新身份行', failureAppended.status === 'archived' && failureAppended.scannedUsageSessions === 1 && failureRowsAfterAppend.length === failureRowsBeforeAppend.length + 1 && failureRowsAfterAppend.some((row) => row.sessionId === newFailureSessionId))
+    rmSync(matrixPresetsOf(failureHome), { force: true })
+    writeFileSync(failureArchive + '.lock', 'busy', 'utf8')
+    const failureBusy = await runBackground(failureOwner, failureContext)
+    checkTrue('M6-WORKER 缓存修复锁忙不删他人锁且不改archive', failureBusy.status === 'skipped' && failureBusy.reason === 'lock-busy' && existsSync(failureArchive + '.lock') && archiveBytesOf(failureArchive).length > 0)
+    unlinkSync(failureArchive + '.lock')
+    const cancelRoot = join(workerMatrixRoot, 'cancel')
+    const cancelHome = matrixHomeOf(cancelRoot)
+    mkdirSync(cancelHome, { recursive: true })
+    const cancelContext = createPathContext({ workspaceRoot: cancelRoot, hostDataRoot: cancelHome })
+    const cancelBeforeScan = usageArchiveModule.startupArchive(cancelContext, { shouldCancel: () => true })
+    checkTrue('M6-WORKER 同步startupArchive取消归一化cancelled且不刷失败', cancelBeforeScan.status === 'cancelled' && cancelBeforeScan.reason === 'cancel-requested' && !existsSync(join(cancelHome, 'usage-ledger')))
+    const cancelArchive = join(cancelHome, 'usage-ledger', STEP00_ARCHIVE_FILE_NAME)
+    mkdirSync(dirname(cancelArchive), { recursive: true })
+    const oldArchive = usageArchiveModule.SCHEMA_DOC_LINE + '\n'
+    writeFileSync(cancelArchive, oldArchive, 'utf8')
+    let cancelTempWritten = false
+    let cancelBeforeError
+    try {
+      usageArchiveModule.archiveLedger(cancelArchive, {
+        pathContext: cancelContext,
+        rows: [archiveRow({ sessionId: 'm6-worker-cancel-before-rename' })],
+        shouldCancel: () => cancelTempWritten,
+        fsOps: { writeFileSync: (...args) => { const result = writeFileSync(...args); if (String(args[0]).includes('.tmp-')) cancelTempWritten = true; return result } },
+      })
+    } catch (error) {
+      cancelBeforeError = error
+    }
+    checkTrue('M6-WORKER 首次archive rename前取消保留旧archive并清本人temp', cancelBeforeError?.code === 'archive-cancelled' && archiveBytesOf(cancelArchive) === oldArchive && archiveResiduals(dirname(cancelArchive)).length === 0)
+    let cancelRenamed = false
+    const cancelAfter = usageArchiveModule.archiveLedger(cancelArchive, {
+      pathContext: cancelContext,
+      rows: [archiveRow({ sessionId: 'm6-worker-cancel-after-rename' })],
+      shouldCancel: () => cancelRenamed,
+      fsOps: { renameSync: (...args) => { const result = renameSync(...args); cancelRenamed = true; return result } },
+    })
+    checkTrue('M6-WORKER 首次archive rename后取消仍完成真实archived并无残留', cancelAfter.status === 'archived' && cancelRenamed && archiveResiduals(dirname(cancelArchive)).length === 0)
+    const startupCancelRoot = join(workerMatrixRoot, 'startup-cancel')
+    const startupCancelHome = matrixHomeOf(startupCancelRoot)
+    mkdirSync(startupCancelHome, { recursive: true })
+    const startupCancelId = '6d2f4c8a-1f11-4b2c-8e5a-000000000013'
+    const startupCancelLog = matrixLogOf(startupCancelHome, startupCancelId, 41)
+    const startupCancelContext = createPathContext({ workspaceRoot: startupCancelRoot, hostDataRoot: startupCancelHome })
+    const startupSeed = usageArchiveModule.startupArchive(startupCancelContext, { budgetMs: 5000 })
+    const startupArchivePath = matrixArchiveOf(startupCancelHome)
+    const startupModePath = matrixPresetsOf(startupCancelHome)
+    const startupArchiveBefore = archiveBytesOf(startupArchivePath)
+    const startupModeBefore = readFileSync(startupModePath, 'utf8')
+    const startupArchiveMtimeBefore = statSync(startupArchivePath).mtimeMs
+    const startupModeMtimeBefore = statSync(startupModePath).mtimeMs
+    const startupDiagBefore = readdirSync(dirname(startupArchivePath)).filter((name) => name.includes('failed'))
+    utimesSync(startupCancelLog, 1760000003123.75 / 1000, 1760000003123.75 / 1000)
+    let startupTempWritten = false
+    const startupCancelWarnings = []
+    const startupCancelWarn = console.warn
+    let startupCancelled
+    try {
+      console.warn = (...args) => startupCancelWarnings.push(args.map(String).join(' '))
+      startupCancelled = usageArchiveModule.startupArchive(startupCancelContext, {
+        shouldCancel: () => startupTempWritten,
+        fsOps: { writeFileSync: (...args) => { const result = writeFileSync(...args); if (String(args[0]).includes('.tmp-')) startupTempWritten = true; return result } },
+      })
+    } finally {
+      console.warn = startupCancelWarn
+    }
+    const startupArchiveAfterCancel = archiveBytesOf(startupArchivePath)
+    const startupModeAfterCancel = readFileSync(startupModePath, 'utf8')
+    const startupDiagAfter = readdirSync(dirname(startupArchivePath)).filter((name) => name.includes('failed'))
+    checkTrue('M6-WORKER 实际startup持锁archive temp后rename前取消归一化且零warn/诊断/残留', startupSeed.status === 'archived' && startupCancelled.status === 'cancelled' && startupCancelled.reason === 'cancel-requested' && startupCancelWarnings.length === 0 && startupDiagAfter.length === startupDiagBefore.length && startupArchiveAfterCancel === startupArchiveBefore && startupModeAfterCancel === startupModeBefore && statSync(startupArchivePath).mtimeMs === startupArchiveMtimeBefore && statSync(startupModePath).mtimeMs === startupModeMtimeBefore && archiveResiduals(dirname(startupArchivePath)).length === 0)
+    console.log('MID_LOCK_CANCEL=' + JSON.stringify({ seeded: startupSeed.status, status: startupCancelled.status, reason: startupCancelled.reason, warns: startupCancelWarnings.length, diagnostics: startupDiagAfter.length - startupDiagBefore.length, archiveUnchanged: startupArchiveAfterCancel === startupArchiveBefore, cacheUnchanged: startupModeAfterCancel === startupModeBefore, lockExists: archiveResiduals(dirname(startupArchivePath)).some((name) => name.endsWith('.lock')) }))
+    const startupRecovered = usageArchiveModule.startupArchive(startupCancelContext, { budgetMs: 5000 })
+    checkTrue('M6-WORKER 实际startup取消后无取消重试可正常归档', startupRecovered.status === 'archived' && archiveResiduals(dirname(startupArchivePath)).length === 0)
+    const startupModeBeforeCommitCancel = readFileSync(startupModePath, 'utf8')
+    utimesSync(startupCancelLog, 1760000004123.75 / 1000, 1760000004123.75 / 1000)
+    let startupArchiveRenamed = false
+    const startupCommitted = usageArchiveModule.startupArchive(startupCancelContext, {
+      shouldCancel: () => startupArchiveRenamed,
+      fsOps: { renameSync: (...args) => { const result = renameSync(...args); if (String(args[1]) === startupArchivePath) startupArchiveRenamed = true; return result } },
+    })
+    const startupModeAfterCommit = readFileSync(startupModePath, 'utf8')
+    const startupModeProduct = JSON.parse(startupModeAfterCommit)
+    const startupModeEntry = startupModeProduct.entries.find((entry) => entry.sessionId === startupCancelId)
+    checkTrue('M6-WORKER 实际startup archive提交后取消仍完成mode cache发布/释锁并返回archived', startupCommitted.status === 'archived' && startupArchiveRenamed && startupModeAfterCommit !== startupModeBeforeCommitCancel && startupModeEntry !== undefined && startupModeEntry.mtimeMs === statSync(startupCancelLog).mtimeMs && archiveResiduals(dirname(startupArchivePath)).length === 0)
+    console.log('STARTUP_POST_COMMIT_CANCEL=' + JSON.stringify({ status: startupCommitted.status, archiveRenamed: startupArchiveRenamed, cacheCommitted: startupModeEntry !== undefined, cacheMtime: startupModeEntry?.mtimeMs, lockOrTempResiduals: archiveResiduals(dirname(startupArchivePath)) }))
+    writeFileSync(cancelArchive, oldArchive, 'utf8')
+    rmSync(join(cancelHome, 'usage-ledger', 'session-presets.json'), { force: true })
+    let cacheTempWritten = false
+    const cacheCancelled = usageArchiveModule.startupArchive(cancelContext, {
+      shouldCancel: () => cacheTempWritten,
+      fsOps: { writeFileSync: (...args) => { const result = writeFileSync(...args); if (String(args[0]).includes('.tmp-')) cacheTempWritten = true; return result } },
+    })
+    checkTrue('M6-WORKER cache-only rename前取消不伪造成功且清本人temp/lock', cacheCancelled.status === 'cancelled' && cacheCancelled.reason === 'cancel-requested' && !existsSync(join(cancelHome, 'usage-ledger', 'session-presets.json')) && archiveResiduals(dirname(cancelArchive)).length === 0)
+    const failureModesRoot = join(workerMatrixRoot, 'failure-modes')
+    const failureModesHome = matrixHomeOf(failureModesRoot)
+    mkdirSync(failureModesHome, { recursive: true })
+    const failureModesContext = createPathContext({ workspaceRoot: failureModesRoot, hostDataRoot: failureModesHome })
+    let unhandledRejectionCount = 0
+    const onUnhandledRejection = () => { unhandledRejectionCount += 1 }
+    process.on('unhandledRejection', onUnhandledRejection)
+    let constructionResult
+    try {
+      constructionResult = await startUsageLedgerBackground({}, failureModesContext, { workerFactory: () => { throw new Error('g5-construction-failure') } }).done
+    } finally {
+      process.off('unhandledRejection', onUnhandledRejection)
+    }
+    checkTrue('M6-WORKER Worker构造失败归一化failed且不回退同步扫描', constructionResult.status === 'failed' && !existsSync(join(failureModesHome, 'usage-ledger')))
+    const invalidWorkerFile = join(failureModesRoot, 'invalid-worker.mjs')
+    const protocolWorkerFile = join(failureModesRoot, 'protocol-worker.mjs')
+    const unknownWorkerFile = join(failureModesRoot, 'unknown-worker.mjs')
+    const noResultWorkerFile = join(failureModesRoot, 'no-result-worker.mjs')
+    writeFileSync(invalidWorkerFile, 'export ???', 'utf8')
+    writeFileSync(protocolWorkerFile, "import { parentPort, threadId } from 'node:worker_threads'; parentPort.postMessage({ type: 'ready', version: 999, id: 'wrong-id', threadId }); parentPort.close()", 'utf8')
+    writeFileSync(unknownWorkerFile, "import { parentPort, threadId, workerData } from 'node:worker_threads'; parentPort.postMessage({ type: 'ready', version: 1, id: workerData.id, threadId }); parentPort.on('message', (message) => { if (message.type === 'run') { parentPort.postMessage({ type: 'running', version: 1, id: workerData.id, threadId }); parentPort.postMessage({ type: 'unexpected-message', version: 1, id: workerData.id, payload: 'must-fail-closed' }); parentPort.postMessage({ type: 'result', version: 1, id: workerData.id, result: { status: 'archived' } }); parentPort.close() } })", 'utf8')
+    writeFileSync(noResultWorkerFile, "import { parentPort } from 'node:worker_threads'; parentPort.close()", 'utf8')
+    let importResult
+    let protocolResult
+    let unknownResult
+    let noResult
+    let failureUnhandled = 0
+    const onFailureUnhandled = () => { failureUnhandled += 1 }
+    process.on('unhandledRejection', onFailureUnhandled)
+    try {
+      importResult = await startUsageLedgerBackground({}, failureModesContext, { workerFactory: (_url, workerOptions) => new Worker(invalidWorkerFile, workerOptions) }).done
+      protocolResult = await startUsageLedgerBackground({}, failureModesContext, { workerFactory: (_url, workerOptions) => new Worker(protocolWorkerFile, workerOptions) }).done
+      unknownResult = await startUsageLedgerBackground({}, failureModesContext, { workerFactory: (_url, workerOptions) => new Worker(unknownWorkerFile, workerOptions) }).done
+      noResult = await startUsageLedgerBackground({}, failureModesContext, { workerFactory: (_url, workerOptions) => new Worker(noResultWorkerFile, workerOptions) }).done
+      await new Promise((resolve) => setImmediate(resolve))
+    } finally {
+      process.off('unhandledRejection', onFailureUnhandled)
+    }
+    checkTrue('M6-WORKER 模块导入失败归一化failed且无同步回退', importResult?.status === 'failed' && !existsSync(join(failureModesHome, 'usage-ledger')))
+    checkTrue('M6-WORKER 协议错误归一化failed且无UnhandledRejection', protocolResult?.status === 'failed' && failureUnhandled === 0)
+    checkTrue('M6-WORKER 正确id/version未知消息fail-closed且后续合法result不能冲掉错误', unknownResult?.status === 'failed' && unknownResult.reason === 'worker-protocol' && failureUnhandled === 0)
+    console.log('UNKNOWN_MESSAGE_RESULT=' + JSON.stringify({ status: unknownResult?.status, reason: unknownResult?.reason, threadId: unknownResult?.threadId }))
+    checkTrue('M6-WORKER 无结果退出归一化failed且不伪造成功', noResult?.status === 'failed' && noResult.reason === 'worker-exit-no-result' && unhandledRejectionCount === 0)
+    const busyWorkerSource = readFileSync(busyWorkerFile, 'utf8')
+    const busyParseReplay = busyWorkerSource.includes("parentPort.postMessage({ type: 'running'") && busyWorkerSource.includes('Atomics.load(release, 0)')
+    checkTrue('M6-WORKER 忙算Worker正文回放含running与共享release轮询', busyParseReplay)
+    server = createServer((_request, response) => { response.writeHead(200, { 'content-type': 'text/plain' }); response.end('worker-http-ok') })
+    const port = await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', () => resolve(server.address().port)) })
+    let busyDone = false
+    rmSync(busyMarker, { force: true })
+    busyHandle = startUsageLedgerBackground({}, workerContext, { workerFactory: (_url, workerOptions) => workerWithRunningObserver(busyWorkerFile, busyState, workerOptions) })
+    const busyStarted = await waitForMarker(busyMarker, busyState)
+    const busyDonePromise = busyHandle.done.then((result) => { busyDone = true; return result })
+    const httpResponse = await fetch('http://127.0.0.1:' + port + '/')
+    const httpText = await httpResponse.text()
+    checkTrue('M6-WORKER 真实忙算期间主线程HTTP先完成再释放', busyStarted && httpResponse.status === 200 && httpText === 'worker-http-ok' && busyDone === false)
+    console.log('BUSY_HTTP_ORDER=' + JSON.stringify({ runningObserved: busyState.runningSeen, progressObserved: busyStarted, httpStatus: httpResponse.status, httpCompletedBeforeDone: busyDone === false, releaseBeforeHttp: false }))
+    busyHandle.cancel()
+    const busyResult = await busyDonePromise
+    checkTrue('M6-WORKER 忙算Worker释放后真实done退出且threadId非主线程', busyResult.status === 'archived' && busyResult.threadId > 0)
+    await new Promise((resolve) => server.close(resolve))
+    server = undefined
+    let cancelledWorkerCount = 0
+    rmSync(cancelledMarker, { force: true })
+    cancelledHandle = startUsageLedgerBackground({}, workerContext, { workerFactory: (_url, workerOptions) => { cancelledWorkerCount += 1; return workerWithRunningObserver(cancelledWorkerFile, cancelledState, workerOptions) } })
+    const cancelledStarted = await waitForMarker(cancelledMarker, cancelledState)
+    cancelledHandle.cancel()
+    const cancelledWorkerResult = await cancelledHandle.done
+    checkTrue('M6-WORKER 实际Worker运行中协作取消后result/exit归一化', cancelledStarted && cancelledWorkerCount === 1 && cancelledWorkerResult.status === 'cancelled' && cancelledWorkerResult.threadId > 0)
+    let queueWorkerCount = 0
+    const queueFactory = (_url, workerOptions) => { queueWorkerCount += 1; return new Worker(quickWorkerFile, workerOptions) }
+    const queueRoot = join(workerMatrixRoot, 'queue')
+    const queueHome = matrixHomeOf(queueRoot)
+    mkdirSync(queueHome, { recursive: true })
+    const queueContext = createPathContext({ workspaceRoot: queueRoot, hostDataRoot: queueHome })
+    rmSync(queueMarker, { force: true })
+    const queueFirst = startUsageLedgerBackground({}, queueContext, { workerFactory: queueFactory })
+    const queueSecond = startUsageLedgerBackground({}, queueContext, { workerFactory: queueFactory })
+    const queueStarted = await waitForMarker(queueMarker)
+    queueSecond.cancel()
+    queueFirst.cancel()
+    const queueFirstResult = await queueFirst.done
+    const queueSecondResult = await queueSecond.done
+    checkTrue('M6-WORKER 同根跨owner串行且排队取消不建Worker', queueStarted && queueWorkerCount === 1 && queueFirstResult.status === 'archived' && queueSecondResult.status === 'cancelled')
+    let singleWorkerCount = 0
+    const singleFactory = (_url, workerOptions) => { singleWorkerCount += 1; return workerWithRunningObserver(busyWorkerFile, singleState, workerOptions) }
+    const singleOwner = {}
+    rmSync(busyMarker, { force: true })
+    const singleFirst = startUsageLedgerBackground(singleOwner, queueContext, { workerFactory: singleFactory })
+    const singleSecond = startUsageLedgerBackground(singleOwner, queueContext, { workerFactory: singleFactory })
+    checkTrue('M6-WORKER owner单飞返回同一进行中句柄', singleFirst === singleSecond)
+    const singleStarted = await waitForMarker(busyMarker, singleState)
+    singleFirst.cancel()
+    const singleResult = await singleFirst.done
+    checkTrue('M6-WORKER owner单飞仅创建一个Worker并正常退出', singleStarted && singleWorkerCount === 1 && singleResult.status === 'archived')
+    const layoutRoot = join(workerMatrixRoot, 'layout')
+    const layoutLib = join(layoutRoot, 'node_modules', 'fixture-ledger', 'lib')
+    const layoutOtherCwd = join(layoutRoot, 'other-cwd')
+    mkdirSync(layoutLib, { recursive: true })
+    mkdirSync(layoutOtherCwd, { recursive: true })
+    for (const name of ['usage-ledger.js', 'usage-ledger-background.js', 'usage-ledger-worker.js', 'path-policy.js', 'role-contract.js']) copyFileSync(join('plugins/dsh-extra-plan/lib', name), join(layoutLib, name))
+    writeFileSync(join(layoutRoot, 'node_modules', 'fixture-ledger', 'package.json'), JSON.stringify({ type: 'module' }), 'utf8')
+    let layoutResult
+    const originalCwd = process.cwd()
+    try {
+      process.chdir(layoutOtherCwd)
+      const copiedController = await import(pathToFileURL(join(layoutLib, 'usage-ledger-background.js')).href + '?g5-layout=1')
+      const layoutContext = createPathContext({ workspaceRoot: layoutRoot, hostDataRoot: layoutRoot })
+      layoutResult = await copiedController.startUsageLedgerBackground({}, layoutContext).done
+    } catch (error) {
+      layoutResult = { status: 'failed', reason: String(error && error.message || error) }
+    } finally {
+      process.chdir(originalCwd)
+    }
+    checkTrue('M6-WORKER W复制包type布局不同cwd固定相对URL可加载' + (layoutResult?.status === 'failed' ? ' [' + layoutResult.reason + ']' : ''), layoutResult !== undefined && ['archived', 'up-to-date'].includes(layoutResult.status) && layoutResult.threadId > 0)
+  } finally {
+    if (server !== undefined) await new Promise((resolve) => server.close(resolve))
+    if (busyHandle !== undefined) { try { busyHandle.cancel(); await busyHandle.done } catch {} }
+    if (cancelledHandle !== undefined) { try { cancelledHandle.cancel(); await cancelledHandle.done } catch {} }
+    rmSync(workerMatrixRoot, { recursive: true, force: true })
   }
 }
 

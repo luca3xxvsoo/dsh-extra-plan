@@ -63,6 +63,8 @@ const EVENT_MARKERS = Object.freeze({
 const STARTUP_ARCHIVE_BUDGET_MS = 3000
 
 const ARCHIVE_FILE_NAME = 'ledger-v2.archive.jsonl'
+const SESSION_PRESETS_FILE_NAME = 'session-presets.json'
+const SESSION_PRESETS_SCHEMA_VERSION = 1
 const LEDGER_DIRECTORY = 'usage-ledger'
 const DIAGNOSTIC_FILE_NAME = 'archive-failed.log'
 const LEDGER_PURPOSE = 'usage-ledger'
@@ -92,7 +94,7 @@ export const SCHEMA_DOC_ROW = Object.freeze({
   kind: SCHEMA_DOC_KIND,
   说明: '一行等于一个完整身份累计行；总消耗为四桶相加；inputTokens 是未命中缓存输入，cacheReadTokens 是命中输入，'
     + 'cacheWriteTokens 可为非零，outputTokens 为输出；seq 是会话内事件水位，不可当主键；'
-    + 'ts 是该身份最后一次写入时刻；delegationDepth 0 主会话、1 一级委派；parentSessionId 空串为主会话；'
+    + 'ts 是该会话日志上次被解析时的最后修改时间（文件时间点）；增量判定锚点：日志当前 mtime 与该值一致则跳过重扫；delegationDepth 0 主会话、1 一级委派；parentSessionId 空串为主会话；'
     + 'role 取值含 main、child 及 executor/planner/reviewer/prober 四角色；agentPreset 是预设名；model 与 provider 分别为模型名与供应商名。',
   键: V2_KEYS.join(','),
 })
@@ -125,6 +127,12 @@ function archiveError(code, message) {
   return error
 }
 
+function checkArchiveCancellation(options) {
+  if (isPlainObject(options) && typeof options.shouldCancel === 'function' && options.shouldCancel() === true) {
+    throw archiveError('archive-cancelled', '归档已协作取消')
+  }
+}
+
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
@@ -155,19 +163,26 @@ function listEntries(directory) {
 }
 
 // 遍历 sessions/<workspace>/<sessionId>/session.v4.jsonl.zstd；逐层列举，跳过非会话目录与非目标文件名。
-export function enumerateSessionLogs({ hostRoot } = {}) {
+export function enumerateSessionLogs({ hostRoot, shouldCancel } = {}) {
   const root = typeof hostRoot === 'string' && hostRoot.trim() !== '' ? hostRoot : ''
   const logFiles = []
   let skippedEntries = 0
+  checkArchiveCancellation({ shouldCancel })
   if (root === '') return { logFiles, skippedEntries, root }
   const sessionsRoot = join(root, SESSIONS_DIRECTORY)
-  for (const workspaceEntry of listEntries(sessionsRoot)) {
+  const workspaceEntries = listEntries(sessionsRoot)
+  checkArchiveCancellation({ shouldCancel })
+  for (const workspaceEntry of workspaceEntries) {
+    checkArchiveCancellation({ shouldCancel })
     if (!workspaceEntry.isDirectory()) {
       skippedEntries += 1
       continue
     }
     const workspacePath = join(sessionsRoot, workspaceEntry.name)
-    for (const sessionEntry of listEntries(workspacePath)) {
+    const sessionEntries = listEntries(workspacePath)
+    checkArchiveCancellation({ shouldCancel })
+    for (const sessionEntry of sessionEntries) {
+      checkArchiveCancellation({ shouldCancel })
       if (!sessionEntry.isDirectory() || !isSessionDirectoryName(sessionEntry.name)) {
         skippedEntries += 1
         continue
@@ -182,9 +197,11 @@ export function enumerateSessionLogs({ hostRoot } = {}) {
         skippedEntries += 1
         continue
       }
+      checkArchiveCancellation({ shouldCancel })
       logFiles.push({ workspace: workspaceEntry.name, sessionDirectory: sessionEntry.name, logPath })
     }
   }
+  checkArchiveCancellation({ shouldCancel })
   return { logFiles, skippedEntries, root }
 }
 
@@ -225,13 +242,16 @@ const SKIPPABLE_MAGIC_MIN = 0x184d2a50
 const SKIPPABLE_MAGIC_MAX = 0x184d2a5f
 
 // 多帧输入按帧边界循环解压；帧间可能有 skippable frame，逐帧跳过。UTF-8 跨帧用流式解码器续接。
-function* decodedLinesOf(bytes) {
+function* decodedLinesOf(bytes, shouldCancel) {
   if (!Buffer.isBuffer(bytes)) throw new TypeError('decodedLinesOf requires a Buffer')
   const decoder = new TextDecoder('utf-8')
   let cursor = 0
   let frames = 0
   let pending = ''
+  let linesSinceCheck = 0
+  checkArchiveCancellation({ shouldCancel })
   while (cursor < bytes.length) {
+    checkArchiveCancellation({ shouldCancel })
     if (bytes.length - cursor < 4) throw new Error('truncated zstd frame header at byte ' + cursor)
     const magic = bytes.readUInt32LE(cursor)
     if (magic >= SKIPPABLE_MAGIC_MIN && magic <= SKIPPABLE_MAGIC_MAX) {
@@ -239,6 +259,7 @@ function* decodedLinesOf(bytes) {
       const end = cursor + 8 + bytes.readUInt32LE(cursor + 4)
       if (end > bytes.length) throw new Error('truncated skippable frame at byte ' + cursor)
       cursor = end
+      checkArchiveCancellation({ shouldCancel })
       continue
     }
     if (magic !== ZSTD_MAGIC) throw new Error('unexpected bytes at byte ' + cursor)
@@ -246,10 +267,13 @@ function* decodedLinesOf(bytes) {
     if (end === null) throw new Error('incomplete zstd frame at byte ' + cursor)
     let chunk
     try {
+      checkArchiveCancellation({ shouldCancel })
       chunk = zstdDecompressSync(bytes.subarray(cursor, end))
     } catch (error) {
+      if (errorCodeOf(error) === 'archive-cancelled') throw error
       throw new Error('zstd frame decode failed at byte ' + cursor + ': ' + (error instanceof Error ? error.message : String(error)))
     }
+    checkArchiveCancellation({ shouldCancel })
     frames += 1
     cursor = end
     pending += decoder.decode(chunk, { stream: true })
@@ -258,11 +282,18 @@ function* decodedLinesOf(bytes) {
       yield pending.slice(0, newline)
       pending = pending.slice(newline + 1)
       newline = pending.indexOf('\n')
+      linesSinceCheck += 1
+      if (linesSinceCheck >= 32) {
+        linesSinceCheck = 0
+        checkArchiveCancellation({ shouldCancel })
+      }
     }
   }
+  checkArchiveCancellation({ shouldCancel })
   if (frames === 0) throw new Error('no complete zstd frame')
   pending += decoder.decode()
   if (pending !== '') yield pending
+  checkArchiveCancellation({ shouldCancel })
 }
 
 // ── ④ 事件提取 ──────────────────────────────────────────────────────────────
@@ -344,7 +375,7 @@ function lineageOfRequestHeader(event) {
 }
 
 // 单文件扫描：只保留会话元信息与用量事件，其余事件一律丢弃。
-function scanLogText(lines, directoryName) {
+function scanLogText(lines, directoryName, shouldCancel) {
   const state = {
     meta: null,
     selectedPreset: '',
@@ -353,6 +384,7 @@ function scanLogText(lines, directoryName) {
     parseErrors: 0,
   }
   for (const line of lines) {
+    checkArchiveCancellation({ shouldCancel })
     if (line.trim() === '') continue
     const maybeSession = line.includes(EVENT_MARKERS.session)
     const maybeUsage = line.includes(EVENT_MARKERS.usage)
@@ -386,6 +418,7 @@ function scanLogText(lines, directoryName) {
       if (lineage !== null) state.requestHeader = lineage
     }
   }
+  checkArchiveCancellation({ shouldCancel })
   return state
 }
 
@@ -490,7 +523,6 @@ function addUsageToGroups(groups, meta, usage) {
   group.calls += 1
   if (usage.seq !== null && (group.seq === null || usage.seq >= group.seq)) {
     group.seq = usage.seq
-    if (usage.ts !== '') group.ts = usage.ts
   }
   groups.set(groupKey, group)
 }
@@ -501,93 +533,221 @@ function allowedOf(allowedPresets) {
   return Array.isArray(allowedPresets) ? allowedPresets : ALLOWED_PRESETS
 }
 
-// ── ⑦ 导出：scanUsageRows({ hostRoot }) → { rows, stats } ────────────────────
-export function scanUsageRows(options = {}) {
+function scanUsageRowsOf(logFiles, options = {}) {
   const settings = isPlainObject(options) ? options : {}
+  const shouldCancel = typeof settings.shouldCancel === 'function' ? settings.shouldCancel : undefined
+  checkArchiveCancellation({ shouldCancel })
   const whitelist = new Set(allowedOf(settings.allowedPresets))
-  const stats = {
-    files: 0,
-    sessions: 0,
-    rows: 0,
-    skipped: 0,
-    enumerationSkipped: 0,
-    whitelistSkipped: 0,
-    decodeFailed: 0,
-    unsupported: 0,
-    parseErrors: 0,
+  const trackOutcome = settings.trackOutcome === true
+  const scanOutcome = trackOutcome ? { failed: false, failedFiles: [], successfulFiles: [] } : null
+  const markFailed = (logFile, reason) => {
+    if (scanOutcome === null) return
+    scanOutcome.failed = true
+    scanOutcome.failedFiles.push({ logPath: logFile.logPath, reason })
   }
-  const enumeration = enumerateSessionLogs({ hostRoot: settings.hostRoot })
-  stats.skipped += enumeration.skippedEntries
-  stats.enumerationSkipped += enumeration.skippedEntries
+  const fingerprintStable = (logFile) => {
+    if (scanOutcome === null) return true
+    if (!Number.isFinite(logFile.size) || !Number.isFinite(logFile.mtimeMs)) {
+      markFailed(logFile, 'missing-fingerprint')
+      return false
+    }
+    try {
+      const stat = statSync(logFile.logPath)
+      if (!stat.isFile() || stat.size !== logFile.size || stat.mtimeMs !== logFile.mtimeMs) {
+        markFailed(logFile, 'fingerprint-changed-during-read')
+        return false
+      }
+    } catch (error) {
+      markFailed(logFile, 'stat-failed-after-read')
+      return false
+    }
+    return true
+  }
+  const stats = { files: 0, sessions: 0, rows: 0, skipped: 0, enumerationSkipped: 0, whitelistSkipped: 0, decodeFailed: 0, unsupported: 0, parseErrors: 0 }
   const scanned = []
-  const parentById = new Map()
-  for (const logFile of enumeration.logFiles) {
+  const parentById = new Map(Array.isArray(settings.parentSessions) ? settings.parentSessions.map((item) => [item.sessionId, item]) : [])
+  for (const logFile of logFiles) {
+    checkArchiveCancellation({ shouldCancel })
     stats.files += 1
     let state
-    try {
-      state = scanLogText(decodedLinesOf(readFileSync(logFile.logPath)), logFile.sessionDirectory)
-    } catch (error) {
+    try { state = scanLogText(decodedLinesOf(readFileSync(logFile.logPath), shouldCancel), logFile.sessionDirectory, shouldCancel) } catch (error) {
+      if (errorCodeOf(error) === 'archive-cancelled') throw error
       stats.decodeFailed += 1
+      markFailed(logFile, 'decode-failed')
       continue
     }
+    checkArchiveCancellation({ shouldCancel })
     stats.parseErrors += state.parseErrors
+    if (trackOutcome && state.parseErrors > 0) { markFailed(logFile, 'event-parse-errors'); continue }
     const meta = state.meta
-    if (meta === null) {
+    if (meta === null || (meta.version !== null && meta.version !== SUPPORTED_SESSION_VERSION)) {
       stats.unsupported += 1
+      markFailed(logFile, meta === null ? 'missing-session-metadata' : 'unsupported-session-version')
       continue
     }
-    if (meta.version !== null && meta.version !== SUPPORTED_SESSION_VERSION) {
-      stats.unsupported += 1
-      continue
-    }
+    if (!fingerprintStable(logFile)) continue
     stats.sessions += 1
-    // agentPreset：session 事件为主，agent-preset/selected 为会话中途切换的最新值。
     const agentPreset = state.selectedPreset !== '' ? state.selectedPreset : meta.agentPreset
-    // parentSession 与 delegationDepth：session 事件优先，request/header 兜底（取不到按主会话处理）。
     const lineage = state.requestHeader
     const parentSessionId = meta.parentSessionId !== '' ? meta.parentSessionId : lineage === null ? '' : lineage.parentSessionId
-    const delegationDepth = meta.hasExplicitDepth
-      ? meta.delegationDepth
-      : lineage !== null && lineage.delegationDepth !== null ? lineage.delegationDepth : 0
-    const resolved = {
-      ...meta,
-      delegationDepth,
-      parentSessionId,
-      agentPreset,
-    }
+    const delegationDepth = meta.hasExplicitDepth ? meta.delegationDepth : lineage !== null && lineage.delegationDepth !== null ? lineage.delegationDepth : 0
+    const resolved = { ...meta, delegationDepth, parentSessionId, agentPreset }
     parentById.set(resolved.sessionId, resolved)
-    scanned.push({ meta: resolved, usageEvents: state.usageEvents })
+    scanned.push({ meta: resolved, usageEvents: state.usageEvents, mtimeMs: logFile.mtimeMs })
+    if (scanOutcome !== null) scanOutcome.successfulFiles.push(logFile.logPath)
   }
-
   const groups = new Map()
   for (const session of scanned) {
+    checkArchiveCancellation({ shouldCancel })
     const meta = session.meta
-    // ⑤ 白名单过滤：不在白名单的会话整体跳过，不产出任何行。
-    if (!whitelist.has(meta.agentPreset)) {
-      stats.skipped += 1
-      stats.whitelistSkipped += 1
-      continue
-    }
+    if (!whitelist.has(meta.agentPreset)) { stats.skipped += 1; stats.whitelistSkipped += 1; continue }
     if (session.usageEvents.length === 0) continue
     const child = isChildSession(meta)
-    const identityMeta = {
-      ...meta,
-      role: roleOf(meta, child),
-      rootSessionId: child ? rootSessionOf(meta.sessionId, meta.parentSessionId, meta.delegationDepth, parentById) : meta.sessionId,
+    const identityMeta = { ...meta, role: roleOf(meta, child), rootSessionId: child ? rootSessionOf(meta.sessionId, meta.parentSessionId, meta.delegationDepth, parentById) : meta.sessionId }
+    for (const usage of session.usageEvents) {
+      checkArchiveCancellation({ shouldCancel })
+      addUsageToGroups(groups, identityMeta, usage)
     }
-    for (const usage of session.usageEvents) addUsageToGroups(groups, identityMeta, usage)
+    for (const group of groups.values()) if (group.sessionId === meta.sessionId && group.ts !== isoOf(session.mtimeMs)) group.ts = isoOf(session.mtimeMs)
   }
-
   const rows = [...groups.values()].map((group) => {
     const copy = { ...group }
-    // seq 缺失（事件全无 seq 字段）时落 0，保证归档行 seq 仍是非负整数。
     if (copy.seq === null) copy.seq = 0
-    // 扫描行在事件全无 time 字段时 ts 落空串，只有这一条路径需要兜底；归档行 ts 必为 ISO 串，构造上不会为空。
-    if (copy.ts === '') copy.ts = new Date(0).toISOString()
     return copy
   }).sort(rowSort)
   stats.rows = rows.length
-  return { rows, stats }
+  const result = { rows, stats }
+  if (scanOutcome !== null) result.scanOutcome = scanOutcome
+  checkArchiveCancellation({ shouldCancel })
+  return result
+}
+
+// 全量公开扫描保持稳定签名，供 step-99 确定性对拍使用。
+export function scanUsageRows(options = {}) {
+  const settings = isPlainObject(options) ? options : {}
+  const enumeration = enumerateSessionLogs({ hostRoot: settings.hostRoot, shouldCancel: settings.shouldCancel })
+  const logFiles = []
+  for (const file of enumeration.logFiles) {
+    try { const stat = statSync(file.logPath); if (stat.isFile()) logFiles.push({ ...file, size: stat.size, mtimeMs: stat.mtimeMs }) } catch (error) { /* 文件枚举后消失时略过 */ }
+  }
+  const result = scanUsageRowsOf(logFiles, settings)
+  result.stats.skipped += enumeration.skippedEntries
+  result.stats.enumerationSkipped += enumeration.skippedEntries
+  return result
+}
+
+function firstFrameSessionOf(bytes, directoryName) {
+  const empty = { sessionId: directoryName, preset: '', parentSessionId: '', delegationDepth: 0 }
+  try {
+    let start = 0
+    if (bytes.length < 4) return empty
+    const magic = bytes.readUInt32LE(0)
+    if (magic >= SKIPPABLE_MAGIC_MIN && magic <= SKIPPABLE_MAGIC_MAX) {
+      if (bytes.length < 8) return empty
+      start = 8 + bytes.readUInt32LE(4)
+    }
+    if (start + 4 > bytes.length || bytes.readUInt32LE(start) !== ZSTD_MAGIC) return empty
+    const end = frameEndAt(bytes, start)
+    if (end === null) return empty
+    const lines = zstdDecompressSync(bytes.subarray(start, end)).toString('utf8').split(/\r?\n/)
+    let sessionId = directoryName
+    let preset = ''
+    let parentSessionId = ''
+    let delegationDepth = 0
+    let hasExplicitDepth = false
+    let requestHeader = null
+    for (const line of lines) {
+      if (!line.includes(EVENT_MARKERS.session) && !line.includes(EVENT_MARKERS.presetSelected) && !line.includes(EVENT_MARKERS.requestHeader)) continue
+      try {
+        const event = JSON.parse(line)
+        if (event.type === 'session') {
+          sessionId = stringOrEmpty(event.id) || directoryName
+          preset = stringOrEmpty(event.agentPreset)
+          parentSessionId = stringOrEmpty(event.parentSession)
+          hasExplicitDepth = intOrNull(event.delegationDepth) !== null
+          delegationDepth = hasExplicitDepth ? intOrNull(event.delegationDepth) : 0
+        } else if (event.type === 'agent-preset/selected') {
+          const selected = presetOfSelectedEvent(event)
+          if (selected !== '') preset = selected
+        } else if (event.type === 'request/header') requestHeader = lineageOfRequestHeader(event)
+      } catch (error) { /* malformed first-frame event is ignored */ }
+    }
+    if (parentSessionId === '' && requestHeader !== null) parentSessionId = requestHeader.parentSessionId
+    if (!hasExplicitDepth && requestHeader !== null && requestHeader.delegationDepth !== null) delegationDepth = requestHeader.delegationDepth
+    return { sessionId, preset, parentSessionId, delegationDepth }
+  } catch (error) { return empty }
+}
+
+function scanSessionPresets({ hostRoot, modePath, fsOps, shouldCancel }) {
+  const operations = mergedFsOps(fsOps)
+  checkArchiveCancellation({ shouldCancel })
+  let cached = new Map()
+  let cacheFingerprintUsable = false
+  let cacheNeedsRepair = false
+  try {
+    checkArchiveCancellation({ shouldCancel })
+    const parsed = JSON.parse(textOfBytes(operations.readFileSync(modePath)))
+    const rawEntries = parsed !== null && parsed.schemaVersion === SESSION_PRESETS_SCHEMA_VERSION && Array.isArray(parsed.entries) ? parsed.entries : null
+    const validEntries = rawEntries !== null && rawEntries.every((entry) => isPlainObject(entry)
+      && typeof entry.logPath === 'string'
+      && typeof entry.sessionId === 'string'
+      && typeof entry.preset === 'string'
+      && typeof entry.parentSessionId === 'string'
+      && Number.isInteger(entry.delegationDepth)
+      && entry.delegationDepth >= 0
+      && Number.isFinite(entry.size)
+      && Number.isFinite(entry.mtimeMs))
+    if (validEntries) {
+      cached = new Map(rawEntries.map((entry) => [entry.logPath, entry]))
+      cacheFingerprintUsable = cached.size === rawEntries.length
+      cacheNeedsRepair = !cacheFingerprintUsable
+    } else cacheNeedsRepair = true
+  } catch (error) {
+    if (errorCodeOf(error) === 'archive-cancelled') throw error
+    cacheNeedsRepair = true
+  }
+  checkArchiveCancellation({ shouldCancel })
+  const enumeration = enumerateSessionLogs({ hostRoot, shouldCancel })
+  const entries = []
+  const logFiles = []
+  const stats = { files: 0, sessions: 0, cacheHits: 0, decoded: 0, skipped: enumeration.skippedEntries }
+  for (const file of enumeration.logFiles) {
+    checkArchiveCancellation({ shouldCancel })
+    try {
+      const stat = statSync(file.logPath)
+      if (!stat.isFile()) continue
+      const prior = cached.get(file.logPath)
+      let identity
+      const priorHasLineage = prior && typeof prior.parentSessionId === 'string' && Number.isInteger(prior.delegationDepth) && prior.delegationDepth >= 0
+      const fingerprintMatches = prior !== undefined && prior.size === stat.size && prior.mtimeMs === stat.mtimeMs && priorHasLineage
+      if (fingerprintMatches) { identity = { sessionId: prior.sessionId, preset: prior.preset, parentSessionId: prior.parentSessionId, delegationDepth: prior.delegationDepth }; stats.cacheHits += 1 }
+      else {
+        checkArchiveCancellation({ shouldCancel })
+        identity = firstFrameSessionOf(readFileSync(file.logPath), file.sessionDirectory)
+        checkArchiveCancellation({ shouldCancel })
+        stats.decoded += 1
+        cacheNeedsRepair = true
+      }
+      stats.sessions += 1
+      const entry = { logPath: file.logPath, sessionId: identity.sessionId, preset: identity.preset, parentSessionId: identity.parentSessionId, delegationDepth: identity.delegationDepth, size: stat.size, mtimeMs: stat.mtimeMs }
+      entries.push(entry)
+      logFiles.push({ ...file, size: stat.size, mtimeMs: stat.mtimeMs, sessionId: entry.sessionId, preset: entry.preset, parentSessionId: entry.parentSessionId, delegationDepth: entry.delegationDepth, fingerprintChanged: cacheFingerprintUsable && !fingerprintMatches })
+      stats.files += 1
+    } catch (error) {
+      if (errorCodeOf(error) === 'archive-cancelled') throw error
+      stats.skipped += 1
+      cacheNeedsRepair = true
+    }
+    checkArchiveCancellation({ shouldCancel })
+  }
+  if (cacheFingerprintUsable && cached.size !== entries.length) cacheNeedsRepair = true
+  checkArchiveCancellation({ shouldCancel })
+  if (cacheFingerprintUsable) {
+    const currentPaths = new Set(entries.map((entry) => entry.logPath))
+    for (const logPath of cached.keys()) if (!currentPaths.has(logPath)) { cacheNeedsRepair = true; break }
+  }
+  checkArchiveCancellation({ shouldCancel })
+  return { entries, logFiles, stats, cacheHealthy: !cacheNeedsRepair, cacheNeedsRepair }
 }
 
 // ── ③a 归档读侧：严格解析、身份、分组、单调性覆盖（由旧归档模块迁入）──────
@@ -757,13 +917,18 @@ function tokenTotalOf(group) {
 // 覆盖式更新：现有 archive 行作基线，扫描行整体覆盖（四桶、calls、ts、seq 全用本次扫描值）。
 // 单调性保护：本次扫描的 calls 或四桶合计小于基线时保留旧值并登记一条告警，绝不回退已记账消耗；
 // 扫描里已不存在的身份（日志被删/迁移）原样保留，不删除 archive 行。
-function mergedArchiveGroups(archiveRows, scanRows) {
+function mergedArchiveGroups(archiveRows, scanRows, options = {}) {
+  const refreshRegressedTimestamp = isPlainObject(options) && options.refreshRegressedTimestamp === true
+  const shouldCancel = isPlainObject(options) && typeof options.shouldCancel === 'function' ? options.shouldCancel : undefined
+  checkArchiveCancellation({ shouldCancel })
   const groups = new Map()
   for (const row of Array.isArray(archiveRows) ? archiveRows : []) {
+    checkArchiveCancellation({ shouldCancel })
     groups.set(identityKeyOfRow(row), groupFromArchiveRow(row))
   }
   const monotonicWarnings = []
   for (const scanRow of Array.isArray(scanRows) ? scanRows : []) {
+    checkArchiveCancellation({ shouldCancel })
     const groupKey = identityKeyOfRow(scanRow)
     const current = groups.get(groupKey)
     if (current === undefined) {
@@ -783,16 +948,18 @@ function mergedArchiveGroups(archiveRows, scanRows) {
         role: typeof scanRow.role === 'string' ? scanRow.role : '',
         model: typeof scanRow.model === 'string' ? scanRow.model : '',
       })
-      continue
-    }
-    for (const tokenKey of TOKEN_KEYS) current[tokenKey] = tokenNumber(scanRow, tokenKey)
-    current.calls = scanCalls
-    if (Number.isInteger(scanRow.seq) && scanRow.seq >= 0) {
-      current._latestSeq = scanRow.seq
-      current.maxSeq = scanRow.seq
+      if (refreshRegressedTimestamp && typeof scanRow.ts === 'string' && scanRow.ts !== '') current.latestTs = scanRow.ts
+    } else {
+      for (const tokenKey of TOKEN_KEYS) current[tokenKey] = tokenNumber(scanRow, tokenKey)
+      current.calls = scanCalls
+      if (Number.isInteger(scanRow.seq) && scanRow.seq >= 0) {
+        current._latestSeq = scanRow.seq
+        current.maxSeq = scanRow.seq
+      }
       current.latestTs = typeof scanRow.ts === 'string' && scanRow.ts !== '' ? scanRow.ts : current.latestTs
     }
   }
+  checkArchiveCancellation({ shouldCancel })
   return { groups, monotonicWarnings }
 }
 
@@ -976,6 +1143,7 @@ export function archiveLedger(archivePath, options = {}) {
   const onCheck = typeof settings.onCheck === 'function' ? settings.onCheck : undefined
   let currentPhase = 'start'
   const checkBudget = () => {
+    checkArchiveCancellation(settings)
     if (onCheck !== undefined && onCheck(currentPhase) === true) {
       throw archiveError('budget-timeout', '启动归档预算超时（阶段' + currentPhase + '，约' + budgetMs + 'ms），发布前未改写')
     }
@@ -999,9 +1167,9 @@ export function archiveLedger(archivePath, options = {}) {
   } else {
     const hostRoot = hostRootOf(pathContext)
     if (hostRoot === '') throw archiveError('no-host-root', '归档缺少明确 host 根，无法扫描会话日志')
-    scanRows = scanUsageRows({ hostRoot }).rows
+    scanRows = scanUsageRows({ hostRoot, shouldCancel: settings.shouldCancel }).rows
   }
-  const merged = mergedArchiveGroups(archiveRows, scanRows)
+  const merged = mergedArchiveGroups(archiveRows, scanRows, { refreshRegressedTimestamp: settings.scanSource === 'startup-file', shouldCancel: settings.shouldCancel })
   currentPhase = 'serialize'
   checkBudget()
   const archiveText = archiveTextOf(finalizedGroups(merged.groups), checkBudget)
@@ -1026,6 +1194,7 @@ export function archiveLedger(archivePath, options = {}) {
     scannedRows: scanRows.length,
     scannedFiles: scanStats !== null && Number.isInteger(scanStats.files) ? scanStats.files : null,
     scannedSessions: scanStats !== null && Number.isInteger(scanStats.sessions) ? scanStats.sessions : null,
+    scannedUsageSessions: scanStats !== null && Number.isInteger(scanStats.usageSessions) ? scanStats.usageSessions : scanStats !== null && Number.isInteger(scanStats.sessions) ? scanStats.sessions : null,
     monotonicWarnings: merged.monotonicWarnings.length,
     archiveBytes: Buffer.byteLength(archiveText, 'utf8'),
   }
@@ -1043,60 +1212,158 @@ function skipWithDiagnostic(pathContext, fsOps, reason, message, purpose) {
 }
 
 // ── ④ 启动入口 ───────────────────────────────────────────────────────────────
-// startupArchive 只负责「host 根判定 + 路径解析 + 双根授权 + 简易锁 + 调用 archiveLedger」；
-// 聚合、单调性、说明行与原子发布全部在 archiveLedger 内，二者共用同一实现（不复制聚合逻辑）。
+// startupArchive 保持同步 API；后台调用方由 Worker 调度，模式层白名单过滤后按日志 mtime 增量判定。
+// ts 使用会话日志文件时间点；聚合、单调性、说明行与账本原子发布仍由 archiveLedger 统一完成。
+function publishSessionPresetCache({ pathContext, modePath, entries, fsOps, purpose, shouldCancel }) {
+  const id = process.pid + '-' + Date.now() + '-' + randomUUID()
+  const temp = modePath + '.tmp-' + id
+  try {
+    checkArchiveCancellation({ shouldCancel })
+    authorizeWriteTarget(pathContext, temp, purpose)
+    fsOps.writeFileSync(temp, JSON.stringify({ schemaVersion: SESSION_PRESETS_SCHEMA_VERSION, entries }), 'utf8')
+    checkArchiveCancellation({ shouldCancel })
+    fsOps.renameSync(temp, modePath)
+    return true
+  } catch (error) {
+    try { fsOps.unlinkSync(temp) } catch (cleanupError) { /* leave failed temp for diagnosis */ }
+    if (errorCodeOf(error) === 'archive-cancelled') throw error
+    try { console.warn('[dsh-extra-plan] session preset cache publish failed: ' + errorMessageOf(error)) } catch (warnError) { /* warning channel unavailable */ }
+    return false
+  }
+}
+
+function upToDateArchiveResult({ archivePath, archiveRead, archiveRows, mode, reason, cacheRepaired }) {
+  return {
+    status: 'up-to-date',
+    reason,
+    archivePath,
+    rows: archiveRows.length,
+    groups: archiveRows.length,
+    scannedRows: 0,
+    scannedFiles: 0,
+    scannedSessions: mode.stats.sessions,
+    scannedUsageSessions: 0,
+    monotonicWarnings: 0,
+    archiveBytes: archiveRead.bytes.length,
+    cacheRepaired: cacheRepaired === true,
+  }
+}
+
 function startupArchiveUnsafe(pathContext, options) {
   const fsOps = mergedFsOps(options.fsOps)
+  const shouldCancel = typeof options.shouldCancel === 'function' ? options.shouldCancel : undefined
+  checkArchiveCancellation({ shouldCancel })
   const purpose = LEDGER_PURPOSE
   const hostRoot = hostRootOf(pathContext)
   if (hostRoot === '') {
-    try {
-      console.warn('[dsh-extra-plan] startup archive skipped: no-host-root')
-    } catch (warnError) {
-      // warning 通道不可用时忽略。
-    }
+    try { console.warn('[dsh-extra-plan] startup archive skipped: no-host-root') } catch (warnError) { /* warning channel unavailable */ }
     return { status: 'skipped', reason: 'no-host-root' }
   }
-  // 会话日志扫描只读、不写盘，放在预算与锁之外：预算在 archiveLedger 的解析、去重、合并、序列化与发布各检查点生效，只豁免会话日志扫描本身。
-  let scan
-  try {
-    scan = scanUsageRows({ hostRoot })
-  } catch (error) {
-    return skipWithDiagnostic(pathContext, fsOps, 'scan-failed', '扫描会话日志失败：' + errorMessageOf(error), purpose)
-  }
-  // 显式 options.archivePath 优先（夹具/直调可指定）；否则落在与配置同口径的 usage-ledger/ledger-v2.archive.jsonl。
   const archivePath = typeof options.archivePath === 'string' && options.archivePath !== ''
     ? options.archivePath
     : resolveHostPath(pathContext, join(LEDGER_DIRECTORY, ARCHIVE_FILE_NAME), { purpose }).path
+  const modePath = resolveHostPath(pathContext, join(LEDGER_DIRECTORY, SESSION_PRESETS_FILE_NAME), { purpose }).path
   try {
     ensureLedgerDirectory(pathContext, purpose, fsOps)
     authorizeWriteTarget(pathContext, archivePath, purpose)
     authorizeReadIfPresent(pathContext, archivePath, purpose)
+    authorizeWriteTarget(pathContext, modePath, purpose)
+    authorizeReadIfPresent(pathContext, modePath, purpose)
   } catch (error) {
     return reportFailure(pathContext, fsOps, archiveError(errorCodeOf(error) || 'path-not-authorized', '启动归档目标未获 H/W 双根授权：' + errorMessageOf(error)), purpose)
   }
-  // 简易互斥：拿不到锁只跳过本次启动扫描并留痕；不等待、不接管、不删他人锁。
+  let mode
+  try { mode = scanSessionPresets({ hostRoot, modePath, fsOps, shouldCancel }) }
+  catch (error) {
+    if (errorCodeOf(error) === 'archive-cancelled') throw error
+    return skipWithDiagnostic(pathContext, fsOps, 'scan-failed', '扫描会话日志失败：' + errorMessageOf(error), purpose)
+  }
+  const whitelist = new Set(ALLOWED_PRESETS)
+  const allowed = mode.logFiles.filter((file) => whitelist.has(file.preset))
+  const archiveRead = optionalRead(fsOps, archivePath)
+  let archiveRows = []
+  let archiveValid = true
+  if (archiveRead.exists) {
+    try {
+      checkArchiveCancellation({ shouldCancel })
+      archiveRows = parseStrictLedgerText(textOfBytes(archiveRead.bytes), archivePath)
+      checkArchiveCancellation({ shouldCancel })
+      assertUniqueArchiveRows(archiveRows, archivePath)
+    } catch (error) {
+      if (errorCodeOf(error) === 'archive-cancelled') throw error
+      archiveValid = false
+    }
+  }
+  const rowsBySession = new Map()
+  for (const row of archiveRows) {
+    checkArchiveCancellation({ shouldCancel })
+    const group = rowsBySession.get(row.sessionId) || []
+    group.push(Date.parse(row.ts))
+    rowsBySession.set(row.sessionId, group)
+  }
+  const changed = allowed.filter((file) => {
+    checkArchiveCancellation({ shouldCancel })
+    const timestamps = rowsBySession.get(file.sessionId)
+    const fileMtimeMs = new Date(file.mtimeMs).getTime()
+    return !archiveRead.exists || !archiveValid || file.fingerprintChanged === true || !timestamps || !timestamps.some((timestamp) => timestamp === fileMtimeMs)
+  })
+  const noChangedLogs = archiveRead.exists && archiveValid && changed.length === 0
+  checkArchiveCancellation({ shouldCancel })
+  if (noChangedLogs && mode.cacheNeedsRepair !== true) {
+    return upToDateArchiveResult({ archivePath, archiveRead, archiveRows, mode, reason: 'no-changed-logs', cacheRepaired: false })
+  }
+  if (noChangedLogs) {
+    const repairLock = acquireArchiveLock(archivePath)
+    if (repairLock.acquired !== true) {
+      if (repairLock.error !== undefined) return reportFailure(pathContext, fsOps, archiveError(errorCodeOf(repairLock.error) || 'lock-failed', '账本锁创建失败：' + errorMessageOf(repairLock.error)), purpose)
+      return skipWithDiagnostic(pathContext, fsOps, 'lock-busy', '另一实例正在修复账本模式缓存，本次启动归档跳过', purpose)
+    }
+    let cacheRepaired
+    try { cacheRepaired = publishSessionPresetCache({ pathContext, modePath, entries: mode.entries, fsOps, purpose, shouldCancel }) }
+    finally { releaseArchiveLock(fsOps, repairLock) }
+    if (cacheRepaired !== true) return { status: 'skipped', reason: 'cache-repair-failed', archivePath }
+    return upToDateArchiveResult({ archivePath, archiveRead, archiveRows, mode, reason: 'cache-repaired', cacheRepaired: true })
+  }
+  const parentSessions = mode.logFiles.map((file) => ({
+    sessionId: file.sessionDirectory,
+    parentSessionId: file.parentSessionId,
+    delegationDepth: file.delegationDepth,
+  }))
+  checkArchiveCancellation({ shouldCancel })
+  const scan = scanUsageRowsOf(changed, { parentSessions, trackOutcome: true, shouldCancel })
+  if (scan.scanOutcome !== undefined && scan.scanOutcome.failed === true) {
+    const failedFiles = scan.scanOutcome.failedFiles.length
+    return skipWithDiagnostic(pathContext, fsOps, 'scan-failed', '本轮扫描有' + failedFiles + '个日志未完整解码或指纹不稳定，保留既有archive与模式缓存并等待重试', purpose)
+  }
+  const usageSessions = scan.stats.sessions
+  scan.stats.usageSessions = usageSessions
+  scan.stats.sessions = mode.stats.sessions
+  scan.stats.skipped += mode.stats.skipped
+  scan.stats.enumerationSkipped += mode.stats.skipped
+  scan.stats.files = allowed.length
+  // Keep all enumerated sessions in parent resolution, while decoding only changed whitelisted logs.
+  checkArchiveCancellation({ shouldCancel })
   const lock = acquireArchiveLock(archivePath)
   if (lock.acquired !== true) {
-    if (lock.error !== undefined) {
-      return reportFailure(pathContext, fsOps, archiveError(errorCodeOf(lock.error) || 'lock-failed', '账本锁创建失败：' + errorMessageOf(lock.error)), purpose)
-    }
+    if (lock.error !== undefined) return reportFailure(pathContext, fsOps, archiveError(errorCodeOf(lock.error) || 'lock-failed', '账本锁创建失败：' + errorMessageOf(lock.error)), purpose)
     return skipWithDiagnostic(pathContext, fsOps, 'lock-busy', '另一实例正在写账本，本次启动归档跳过', purpose)
   }
   let result
   let failure
   try {
-    result = archiveLedger(archivePath, { ...options, fsOps, pathContext, purpose, rows: scan.rows, scanStats: scan.stats })
-  } catch (error) {
-    failure = error
-  } finally {
-    releaseArchiveLock(fsOps, lock)
+    result = archiveLedger(archivePath, { ...options, fsOps, pathContext, purpose, scanSource: 'startup-file', rows: scan.rows, scanStats: scan.stats })
+    const cacheRepaired = publishSessionPresetCache({ pathContext, modePath, entries: mode.entries, fsOps, purpose })
+    result = { ...result, cacheRepaired }
+  } catch (error) { failure = error }
+  finally { releaseArchiveLock(fsOps, lock) }
+  if (failure !== undefined) {
+    if (errorCodeOf(failure) === 'archive-cancelled') throw failure
+    return reportFailure(pathContext, fsOps, failure, purpose)
   }
-  if (failure !== undefined) return reportFailure(pathContext, fsOps, failure, purpose)
   return result
 }
 
-// 启动归档唯一入口：全程同步（宿主启动路径不能等 Promise），返回带 status 的结构化结果供调用方留痕；
+// 启动归档唯一入口：同步API由settings Worker调用，返回带 status 的结构化结果供调用方留痕；
 // 任何异常都在内部消化，绝不向调用方抛出。
 export function startupArchive(pathContext, options = {}) {
   const settings = isPlainObject(options) ? options : {}
@@ -1104,6 +1371,7 @@ export function startupArchive(pathContext, options = {}) {
     return startupArchiveUnsafe(pathContext, settings)
   } catch (error) {
     const reason = errorCodeOf(error) || 'archive-failed'
+    if (reason === 'archive-cancelled') return { status: 'cancelled', reason: 'cancel-requested' }
     const message = errorMessageOf(error)
     try {
       console.warn('[dsh-extra-plan] startup archive failed: ' + reason + ': ' + message)

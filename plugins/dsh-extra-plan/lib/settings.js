@@ -27,7 +27,7 @@ import { createQqbotSettingsSynchronizer, stableSnapshotHash } from './qqbot-set
 import { parsePresetYaml, rowsByIdWithPath } from './preset-yaml.js'
 import { GATE_WORD_FIELDS, validateGateWords } from './gate-words.js'
 import { createPathContext, resolveWorkspacePath, resolveHostPath, validateReadTarget } from './path-policy.js'
-import { startupArchive } from './usage-ledger.js'
+import { startUsageLedgerBackground } from './usage-ledger-background.js'
 
 function safeContextGet(ctx, key) {
   try { return ctx !== undefined && ctx !== null && typeof ctx.get === 'function' ? ctx.get(key) : undefined } catch (error) { return undefined }
@@ -630,10 +630,30 @@ function startupArchiveForApply(ctx) {
     const startupContext = settingsPathContext(ctx, undefined)
     if (startupContext === null) {
       console.warn('[dsh-extra-plan] startup archive skipped: no-host-root')
-    } else {
-      const result = startupArchive(startupContext)
-      if (result.status !== 'archived') console.warn('[dsh-extra-plan] startup archive ' + result.status + ': ' + result.reason)
+      return
     }
+    if (typeof ctx.effect !== 'function') {
+      console.warn('[dsh-extra-plan] startup archive failed（不阻断启动）: root ctx.effect unavailable')
+      return
+    }
+    ctx.effect(() => {
+      const handle = startUsageLedgerBackground(ctx, startupContext)
+      let disposePromise
+      const dispose = () => {
+        if (disposePromise !== undefined) return disposePromise
+        handle.cancel()
+        disposePromise = Promise.resolve(handle.done).then(() => undefined, (error) => {
+          console.warn('[dsh-extra-plan] startup archive dispose failed（不阻断卸载）: ' + (error instanceof Error ? error.message : String(error)))
+        })
+        return disposePromise
+      }
+      Promise.resolve(handle.done).then((result) => {
+        if (result.status !== 'archived' && result.status !== 'up-to-date' && result.status !== 'cancelled') console.warn('[dsh-extra-plan] startup archive ' + result.status + ': ' + (result.reason || 'unknown'))
+      }, (error) => {
+        console.warn('[dsh-extra-plan] startup archive failed（不阻断启动）: ' + (error instanceof Error ? error.message : String(error)))
+      })
+      return dispose
+    }, 'dsh-extra-plan-settings: usage ledger background')
   } catch (error) {
     console.warn('[dsh-extra-plan] startup archive failed（不阻断启动）: ' + (error instanceof Error ? error.message : String(error)))
   }

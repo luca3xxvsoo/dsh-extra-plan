@@ -155,7 +155,7 @@ export function forensicCommand(file, args = []) {
 
 // 需参数项
 const NEED_ARG = [
-  ['step-99-用量统计.mjs', '参数: <ledger-v2.archive.jsonl>；普通相对输入固定为W目标（只读统计）；只读统计单一账本 ledger-v2.archive.jsonl（该文件由插件启动时扫描 %DSH_HOME%/sessions 下 v4 会话日志后覆盖式更新，本工具不写账本字节、不建目录、不写临时文件）；账本唯一实现为 lib/usage-ledger.js（扫描聚合 + 覆盖式更新 + 启动入口），写入互斥是 26 行 O_EXCL 简易互斥（拿不到即跳过、不接管不删他人锁）；只读统计无锁；显式H绝对路径仅为Host只读稳定观察（最多两次观察，不取锁、不写Host资源/锁/备份/temp）；--compare 对拍现场扫描：额外用 lib/usage-ledger.js 的 scanUsageRows 扫两次日志，按 role→model 输出扫描侧/账本侧/差异/身份集合差四张表与三条自检结论，只读取、不取锁、零写盘；--archive 报 usage-removed；V1与坏JSON仅计数跳过'],
+  ['step-99-用量统计.mjs', '参数: <ledger-v2.archive.jsonl>；普通相对输入固定为W目标（只读统计）；只读统计单一账本 ledger-v2.archive.jsonl（由插件 settings 行 apply 期 root ctx.effect 调度固定包内真实 Worker 维护：主线程只传递可信的小型 pathContext 快照与内部控制消息，Worker 复用同步 startupArchive 完成模式缓存白名单预筛、会话日志 size/mtime 增量判定、扫描、解压、聚合、严格 archive 解析、序列化与发布；模式缓存与账本分层，健康无变化零锁零写，缺/坏模式缓存仅原子自愈，坏帧/JSON/不稳定日志整批不推进水位并持续重试；Worker失败只留 failed/warn，不回退主线程；本工具不写账本或模式缓存字节、不建目录、不写临时文件）；同步 scanUsageRows/archiveLedger/startupArchive 直调仍是同步API，不混称后台API；启动写侧使用一次 O_EXCL 锁，锁忙即跳过、不等待、不接管、不删他人锁，archive与模式缓存分别temp→rename原子发布，不是双文件事务；只读统计无锁；显式H绝对路径仅为Host只读稳定观察（最多两次观察，不取锁、不写Host资源/锁/备份/temp）；--compare 对拍现场只读调用 lib/usage-ledger.js 的 scanUsageRows 做两次全量扫描，按 role→model 输出扫描侧/账本侧/差异/身份集合差四张表与三条自检结论，零写盘；--archive 报 usage-removed；V1与坏JSON仅计数跳过'],
 ]
 
 function reportIncompleteDirectory() {
