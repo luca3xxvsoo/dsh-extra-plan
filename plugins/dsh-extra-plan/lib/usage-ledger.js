@@ -63,8 +63,6 @@ const EVENT_MARKERS = Object.freeze({
 const STARTUP_ARCHIVE_BUDGET_MS = 3000
 
 const ARCHIVE_FILE_NAME = 'ledger-v2.archive.jsonl'
-const SESSION_PRESETS_FILE_NAME = 'session-presets.json'
-const SESSION_PRESETS_SCHEMA_VERSION = 1
 const LEDGER_DIRECTORY = 'usage-ledger'
 const DIAGNOSTIC_FILE_NAME = 'archive-failed.log'
 const LEDGER_PURPOSE = 'usage-ledger'
@@ -678,76 +676,31 @@ function firstFrameSessionOf(bytes, directoryName) {
   } catch (error) { return empty }
 }
 
-function scanSessionPresets({ hostRoot, modePath, fsOps, shouldCancel }) {
-  const operations = mergedFsOps(fsOps)
-  checkArchiveCancellation({ shouldCancel })
-  let cached = new Map()
-  let cacheFingerprintUsable = false
-  let cacheNeedsRepair = false
-  try {
-    checkArchiveCancellation({ shouldCancel })
-    const parsed = JSON.parse(textOfBytes(operations.readFileSync(modePath)))
-    const rawEntries = parsed !== null && parsed.schemaVersion === SESSION_PRESETS_SCHEMA_VERSION && Array.isArray(parsed.entries) ? parsed.entries : null
-    const validEntries = rawEntries !== null && rawEntries.every((entry) => isPlainObject(entry)
-      && typeof entry.logPath === 'string'
-      && typeof entry.sessionId === 'string'
-      && typeof entry.preset === 'string'
-      && typeof entry.parentSessionId === 'string'
-      && Number.isInteger(entry.delegationDepth)
-      && entry.delegationDepth >= 0
-      && Number.isFinite(entry.size)
-      && Number.isFinite(entry.mtimeMs))
-    if (validEntries) {
-      cached = new Map(rawEntries.map((entry) => [entry.logPath, entry]))
-      cacheFingerprintUsable = cached.size === rawEntries.length
-      cacheNeedsRepair = !cacheFingerprintUsable
-    } else cacheNeedsRepair = true
-  } catch (error) {
-    if (errorCodeOf(error) === 'archive-cancelled') throw error
-    cacheNeedsRepair = true
-  }
+function scanSessionPresets({ hostRoot, shouldCancel }) {
   checkArchiveCancellation({ shouldCancel })
   const enumeration = enumerateSessionLogs({ hostRoot, shouldCancel })
-  const entries = []
   const logFiles = []
-  const stats = { files: 0, sessions: 0, cacheHits: 0, decoded: 0, skipped: enumeration.skippedEntries }
+  const stats = { files: 0, sessions: 0, decoded: 0, skipped: enumeration.skippedEntries }
   for (const file of enumeration.logFiles) {
     checkArchiveCancellation({ shouldCancel })
     try {
       const stat = statSync(file.logPath)
       if (!stat.isFile()) continue
-      const prior = cached.get(file.logPath)
-      let identity
-      const priorHasLineage = prior && typeof prior.parentSessionId === 'string' && Number.isInteger(prior.delegationDepth) && prior.delegationDepth >= 0
-      const fingerprintMatches = prior !== undefined && prior.size === stat.size && prior.mtimeMs === stat.mtimeMs && priorHasLineage
-      if (fingerprintMatches) { identity = { sessionId: prior.sessionId, preset: prior.preset, parentSessionId: prior.parentSessionId, delegationDepth: prior.delegationDepth }; stats.cacheHits += 1 }
-      else {
-        checkArchiveCancellation({ shouldCancel })
-        identity = firstFrameSessionOf(readFileSync(file.logPath), file.sessionDirectory)
-        checkArchiveCancellation({ shouldCancel })
-        stats.decoded += 1
-        cacheNeedsRepair = true
-      }
+      checkArchiveCancellation({ shouldCancel })
+      const identity = firstFrameSessionOf(readFileSync(file.logPath), file.sessionDirectory)
+      checkArchiveCancellation({ shouldCancel })
+      stats.decoded += 1
       stats.sessions += 1
-      const entry = { logPath: file.logPath, sessionId: identity.sessionId, preset: identity.preset, parentSessionId: identity.parentSessionId, delegationDepth: identity.delegationDepth, size: stat.size, mtimeMs: stat.mtimeMs }
-      entries.push(entry)
-      logFiles.push({ ...file, size: stat.size, mtimeMs: stat.mtimeMs, sessionId: entry.sessionId, preset: entry.preset, parentSessionId: entry.parentSessionId, delegationDepth: entry.delegationDepth, fingerprintChanged: cacheFingerprintUsable && !fingerprintMatches })
+      logFiles.push({ ...file, size: stat.size, mtimeMs: stat.mtimeMs, sessionId: identity.sessionId, preset: identity.preset, parentSessionId: identity.parentSessionId, delegationDepth: identity.delegationDepth })
       stats.files += 1
     } catch (error) {
       if (errorCodeOf(error) === 'archive-cancelled') throw error
       stats.skipped += 1
-      cacheNeedsRepair = true
     }
     checkArchiveCancellation({ shouldCancel })
   }
-  if (cacheFingerprintUsable && cached.size !== entries.length) cacheNeedsRepair = true
   checkArchiveCancellation({ shouldCancel })
-  if (cacheFingerprintUsable) {
-    const currentPaths = new Set(entries.map((entry) => entry.logPath))
-    for (const logPath of cached.keys()) if (!currentPaths.has(logPath)) { cacheNeedsRepair = true; break }
-  }
-  checkArchiveCancellation({ shouldCancel })
-  return { entries, logFiles, stats, cacheHealthy: !cacheNeedsRepair, cacheNeedsRepair }
+  return { logFiles, stats }
 }
 
 // ── ③a 归档读侧：严格解析、身份、分组、单调性覆盖（由旧归档模块迁入）──────
@@ -1214,25 +1167,7 @@ function skipWithDiagnostic(pathContext, fsOps, reason, message, purpose) {
 // ── ④ 启动入口 ───────────────────────────────────────────────────────────────
 // startupArchive 保持同步 API；后台调用方由 Worker 调度，模式层白名单过滤后按日志 mtime 增量判定。
 // ts 使用会话日志文件时间点；聚合、单调性、说明行与账本原子发布仍由 archiveLedger 统一完成。
-function publishSessionPresetCache({ pathContext, modePath, entries, fsOps, purpose, shouldCancel }) {
-  const id = process.pid + '-' + Date.now() + '-' + randomUUID()
-  const temp = modePath + '.tmp-' + id
-  try {
-    checkArchiveCancellation({ shouldCancel })
-    authorizeWriteTarget(pathContext, temp, purpose)
-    fsOps.writeFileSync(temp, JSON.stringify({ schemaVersion: SESSION_PRESETS_SCHEMA_VERSION, entries }), 'utf8')
-    checkArchiveCancellation({ shouldCancel })
-    fsOps.renameSync(temp, modePath)
-    return true
-  } catch (error) {
-    try { fsOps.unlinkSync(temp) } catch (cleanupError) { /* leave failed temp for diagnosis */ }
-    if (errorCodeOf(error) === 'archive-cancelled') throw error
-    try { console.warn('[dsh-extra-plan] session preset cache publish failed: ' + errorMessageOf(error)) } catch (warnError) { /* warning channel unavailable */ }
-    return false
-  }
-}
-
-function upToDateArchiveResult({ archivePath, archiveRead, archiveRows, mode, reason, cacheRepaired }) {
+function upToDateArchiveResult({ archivePath, archiveRead, archiveRows, mode, reason }) {
   return {
     status: 'up-to-date',
     reason,
@@ -1245,7 +1180,6 @@ function upToDateArchiveResult({ archivePath, archiveRead, archiveRows, mode, re
     scannedUsageSessions: 0,
     monotonicWarnings: 0,
     archiveBytes: archiveRead.bytes.length,
-    cacheRepaired: cacheRepaired === true,
   }
 }
 
@@ -1262,18 +1196,15 @@ function startupArchiveUnsafe(pathContext, options) {
   const archivePath = typeof options.archivePath === 'string' && options.archivePath !== ''
     ? options.archivePath
     : resolveHostPath(pathContext, join(LEDGER_DIRECTORY, ARCHIVE_FILE_NAME), { purpose }).path
-  const modePath = resolveHostPath(pathContext, join(LEDGER_DIRECTORY, SESSION_PRESETS_FILE_NAME), { purpose }).path
   try {
     ensureLedgerDirectory(pathContext, purpose, fsOps)
     authorizeWriteTarget(pathContext, archivePath, purpose)
     authorizeReadIfPresent(pathContext, archivePath, purpose)
-    authorizeWriteTarget(pathContext, modePath, purpose)
-    authorizeReadIfPresent(pathContext, modePath, purpose)
   } catch (error) {
     return reportFailure(pathContext, fsOps, archiveError(errorCodeOf(error) || 'path-not-authorized', '启动归档目标未获 H/W 双根授权：' + errorMessageOf(error)), purpose)
   }
   let mode
-  try { mode = scanSessionPresets({ hostRoot, modePath, fsOps, shouldCancel }) }
+  try { mode = scanSessionPresets({ hostRoot, shouldCancel }) }
   catch (error) {
     if (errorCodeOf(error) === 'archive-cancelled') throw error
     return skipWithDiagnostic(pathContext, fsOps, 'scan-failed', '扫描会话日志失败：' + errorMessageOf(error), purpose)
@@ -1305,24 +1236,12 @@ function startupArchiveUnsafe(pathContext, options) {
     checkArchiveCancellation({ shouldCancel })
     const timestamps = rowsBySession.get(file.sessionId)
     const fileMtimeMs = new Date(file.mtimeMs).getTime()
-    return !archiveRead.exists || !archiveValid || file.fingerprintChanged === true || !timestamps || !timestamps.some((timestamp) => timestamp === fileMtimeMs)
+    return !archiveRead.exists || !archiveValid || !timestamps || !timestamps.some((timestamp) => timestamp === fileMtimeMs)
   })
   const noChangedLogs = archiveRead.exists && archiveValid && changed.length === 0
   checkArchiveCancellation({ shouldCancel })
-  if (noChangedLogs && mode.cacheNeedsRepair !== true) {
-    return upToDateArchiveResult({ archivePath, archiveRead, archiveRows, mode, reason: 'no-changed-logs', cacheRepaired: false })
-  }
   if (noChangedLogs) {
-    const repairLock = acquireArchiveLock(archivePath)
-    if (repairLock.acquired !== true) {
-      if (repairLock.error !== undefined) return reportFailure(pathContext, fsOps, archiveError(errorCodeOf(repairLock.error) || 'lock-failed', '账本锁创建失败：' + errorMessageOf(repairLock.error)), purpose)
-      return skipWithDiagnostic(pathContext, fsOps, 'lock-busy', '另一实例正在修复账本模式缓存，本次启动归档跳过', purpose)
-    }
-    let cacheRepaired
-    try { cacheRepaired = publishSessionPresetCache({ pathContext, modePath, entries: mode.entries, fsOps, purpose, shouldCancel }) }
-    finally { releaseArchiveLock(fsOps, repairLock) }
-    if (cacheRepaired !== true) return { status: 'skipped', reason: 'cache-repair-failed', archivePath }
-    return upToDateArchiveResult({ archivePath, archiveRead, archiveRows, mode, reason: 'cache-repaired', cacheRepaired: true })
+    return upToDateArchiveResult({ archivePath, archiveRead, archiveRows, mode, reason: 'no-changed-logs' })
   }
   const parentSessions = mode.logFiles.map((file) => ({
     sessionId: file.sessionDirectory,
@@ -1333,7 +1252,7 @@ function startupArchiveUnsafe(pathContext, options) {
   const scan = scanUsageRowsOf(changed, { parentSessions, trackOutcome: true, shouldCancel })
   if (scan.scanOutcome !== undefined && scan.scanOutcome.failed === true) {
     const failedFiles = scan.scanOutcome.failedFiles.length
-    return skipWithDiagnostic(pathContext, fsOps, 'scan-failed', '本轮扫描有' + failedFiles + '个日志未完整解码或指纹不稳定，保留既有archive与模式缓存并等待重试', purpose)
+    return skipWithDiagnostic(pathContext, fsOps, 'scan-failed', '本轮扫描有' + failedFiles + '个日志未完整解码或指纹不稳定，保留既有archive并等待重试', purpose)
   }
   const usageSessions = scan.stats.sessions
   scan.stats.usageSessions = usageSessions
@@ -1352,8 +1271,6 @@ function startupArchiveUnsafe(pathContext, options) {
   let failure
   try {
     result = archiveLedger(archivePath, { ...options, fsOps, pathContext, purpose, scanSource: 'startup-file', rows: scan.rows, scanStats: scan.stats })
-    const cacheRepaired = publishSessionPresetCache({ pathContext, modePath, entries: mode.entries, fsOps, purpose })
-    result = { ...result, cacheRepaired }
   } catch (error) { failure = error }
   finally { releaseArchiveLock(fsOps, lock) }
   if (failure !== undefined) {
