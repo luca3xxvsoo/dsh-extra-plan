@@ -571,9 +571,9 @@ export function apply(ctx, config) {
   const sdkTextCache = createSdkTextCache()
 
   // 改造11：createUsageLedger 工厂已删除（它只返回 {enabled,path,pathError}，且此处无消费者）。
-  // 账本默认路径为固定拼接（不经任何路径解析函数）：apply 期 startupArchiveForApply → startupArchive 用
-  // lib/usage-ledger.js 的 LEDGER_DIRECTORY（'usage-ledger'）与 ARCHIVE_FILE_NAME
-  // （'ledger-v2.archive.jsonl'）拼出 <host 根>/usage-ledger/ledger-v2.archive.jsonl。
+  // 账本默认路径经 settings root effect 由 Worker 调用 startupArchive：
+  // lib/usage-ledger.js 的 LEDGER_DIRECTORY（'logs/dsh-extra-plan'）与 ARCHIVE_FILE_NAME
+  // （'extra-plan-usage-ledger.jsonl'）经 Host 路径授权解析为 <host 根>/logs/dsh-extra-plan/extra-plan-usage-ledger.jsonl。
   const sandboxPolicy = ctx.get('sandboxPolicy')
   const { isChild, isPlannerChild, isReviewerChild, toolSchemasOf, childBaseline } = createAgentRuntime({
     getAgents: () => ctx.get('agents'),

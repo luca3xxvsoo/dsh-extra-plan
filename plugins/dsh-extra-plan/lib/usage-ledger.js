@@ -62,9 +62,9 @@ const EVENT_MARKERS = Object.freeze({
 // ── ①b 账本常量（由旧归档模块迁入）────────────────────────────────────
 const STARTUP_ARCHIVE_BUDGET_MS = 3000
 
-const ARCHIVE_FILE_NAME = 'ledger-v2.archive.jsonl'
-const LEDGER_DIRECTORY = 'usage-ledger'
-const DIAGNOSTIC_FILE_NAME = 'archive-failed.log'
+const ARCHIVE_FILE_NAME = 'extra-plan-usage-ledger.jsonl'
+const LEDGER_DIRECTORY = join('logs', 'dsh-extra-plan')
+const DIAGNOSTIC_FILE_NAME = 'extra-plan-usage-errors.jsonl'
 const LEDGER_PURPOSE = 'usage-ledger'
 
 const V2_KEYS = Object.freeze([
@@ -1003,7 +1003,7 @@ function recordDiagnostic(pathContext, fsOps, reason, message, purpose) {
     fsOps.mkdirSync(directoryTarget.path, { recursive: true })
     const logTarget = resolveHostPath(pathContext, join(LEDGER_DIRECTORY, DIAGNOSTIC_FILE_NAME), { purpose })
     prepareWriteTarget(pathContext, logTarget, { expectedType: 'file', purpose })
-    const line = new Date().toISOString() + ' startup-archive reason=' + reason + ' message=' + String(message).replace(/\r?\n/g, ' ') + '\n'
+    const line = JSON.stringify({ ts: new Date().toISOString(), reason: String(reason), message: String(message) }) + '\n'
     fsOps.appendFileSync(logTarget.path, line, 'utf8')
   } catch (error) {
     // 诊断写失败仅忽略：启动归档绝不因留痕失败而阻断启动。
@@ -1153,7 +1153,7 @@ export function archiveLedger(archivePath, options = {}) {
   }
 }
 
-// 跳过也要留痕：扫描失败/无归档范围一律在 archive-failed.log 留一行，避免被静默吞掉。
+// 跳过也要留痕：扫描失败/无归档范围等需要诊断的状态写入 logs/dsh-extra-plan/extra-plan-usage-errors.jsonl；协作取消不记失败。
 function skipWithDiagnostic(pathContext, fsOps, reason, message, purpose) {
   try {
     console.warn('[dsh-extra-plan] startup archive skipped: ' + reason + ': ' + message)

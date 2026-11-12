@@ -1,7 +1,7 @@
-// step-99-用量统计.mjs — 单一账本 ledger-v2.archive.jsonl 的只读统计与现场扫描对拍。
-// 用法：node step-99-用量统计.mjs <ledger-v2.archive.jsonl>[--host-root <H>]
-//       node step-99-用量统计.mjs --compare <ledger-v2.archive.jsonl>[--host-root <H>]
-// 唯一账本是 ledger-v2.archive.jsonl：插件启动时扫描 %DSH_HOME%/sessions 下的 v4 会话日志
+// step-99-用量统计.mjs — 单一账本 extra-plan-usage-ledger.jsonl 的只读统计与现场扫描对拍。
+// 用法：node step-99-用量统计.mjs <extra-plan-usage-ledger.jsonl>[--host-root <H>]
+//       node step-99-用量统计.mjs --compare <extra-plan-usage-ledger.jsonl>[--host-root <H>]
+// 默认宿主落点为 logs/dsh-extra-plan/extra-plan-usage-ledger.jsonl；CLI仍须显式传入账本位置，插件启动时扫描 %DSH_HOME%/sessions 下的 v4 会话日志
 // 后覆盖式更新（幂等）；本工具只统计这一份账本，不写账本字节、不建目录、不写临时文件。
 // 观察分两类，两类都不取锁：W 目标直接只读统计；显式 Host 只读目标做最多两次稳定观察，
 // 不写所选 Host 资源/锁/备份/temp。只读无需互斥——账本写入只有启动扫描一处且用 temp+rename
@@ -17,7 +17,7 @@ import { ALLOWED_PRESETS, isSchemaDocRow, scanUsageRows } from '../../plugins/ds
 import { prepareWriteTarget, resolveHostPath, resolveWorkspacePath, validateReadTarget } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
 import { createMaintenanceContext, parseMaintenanceArgs } from '../_shared/workspace-paths.mjs'
 
-export const ARCHIVE_FILE_NAME = 'ledger-v2.archive.jsonl'
+export const ARCHIVE_FILE_NAME = 'extra-plan-usage-ledger.jsonl'
 const IDENTITY_KEYS = Object.freeze([
   'schemaVersion',
   'rootSessionId',
@@ -565,7 +565,7 @@ function cliLedgerTarget(context, options, positionalArgs = []) {
   throw new LedgerError('公共维护上下文缺少明确账本目标', 'path-not-authorized')
 }
 
-const USAGE_REMOVED_MESSAGE = '手工归档已移除：--archive 不再提供；统计请直接传 ledger-v2.archive.jsonl 位置参数，归档由插件启动扫描维护（扫描 %DSH_HOME%/sessions 下的 v4 会话日志后覆盖式更新），不再有手工归档入口'
+const USAGE_REMOVED_MESSAGE = '手工归档已移除：--archive 不再提供；统计请直接传 extra-plan-usage-ledger.jsonl 位置参数，归档由插件启动扫描维护（扫描 %DSH_HOME%/sessions 下的 v4 会话日志后覆盖式更新），不再有手工归档入口'
 
 function usageRemovedError() {
   return new LedgerError(USAGE_REMOVED_MESSAGE, 'usage-removed')

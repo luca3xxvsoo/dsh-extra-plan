@@ -63,7 +63,7 @@ const usageStats = await import('./step-99-用量统计.mjs')
 import * as usageArchiveModule from '../../plugins/dsh-extra-plan/lib/usage-ledger.js'
 import { startUsageLedgerBackground } from '../../plugins/dsh-extra-plan/lib/usage-ledger-background.js'
 // 改造11：旧 active→archive 路径推导入口已随三模块合并删除，测试内按唯一账本文件名本地拼接（与插件默认口径一致）。
-const STEP00_ARCHIVE_FILE_NAME = 'ledger-v2.archive.jsonl'
+const STEP00_ARCHIVE_FILE_NAME = 'extra-plan-usage-ledger.jsonl'
 import { DEFAULT_EXPLORE_BUDGET as GENERATED_DEFAULT_EXPLORE_BUDGET, DEFAULT_PLANNER_PROMPT_SUFFIX as GENERATED_DEFAULT_PLANNER_PROMPT_SUFFIX } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
 import { copyFileSync, existsSync, readFileSync, readdirSync, rmSync, mkdirSync, writeFileSync, renameSync, unlinkSync, statSync, utimesSync } from 'node:fs'
 import { zstdCompressSync } from 'node:zlib'
@@ -1373,8 +1373,27 @@ const archiveRow = (patch = {}) => ({
   ...patch,
 })
 const archiveBytesOf = (path) => existsSync(path) ? readFileSync(path, 'utf8') : ''
-const ARCHIVE_TERMINAL_NAMES = new Set(['ledger-v2.archive.jsonl', 'archive-failed.log'])
-const archiveResiduals = (directory) => readdirSync(directory).filter((name) => !ARCHIVE_TERMINAL_NAMES.has(name) || name.includes('.tmp-') || name.includes('.bak-') || name.includes('.lock'))
+const ARCHIVE_TERMINAL_NAMES = new Set(['extra-plan-usage-ledger.jsonl', 'extra-plan-usage-errors.jsonl'])
+const archiveResiduals = (directory, existingNames = []) => {
+  const existing = new Set(existingNames)
+  return readdirSync(directory).filter((name) => !existing.has(name) && (!ARCHIVE_TERMINAL_NAMES.has(name) || name.includes('.tmp-') || name.includes('.bak-') || name.includes('.lock')))
+}
+const SHARED_LOG_NAMES = Object.freeze(['extra-plan-agent-errors.jsonl', 'extra-plan-anchored.jsonl', 'extra-plan-request-errors.jsonl'])
+const snapshotNamedFiles = (directory, names) => names.map((name) => {
+  const target = join(directory, name)
+  const stat = statSync(target)
+  return { name, bytes: readFileSync(target), mtimeMs: stat.mtimeMs }
+})
+const namedFilesUnchanged = (directory, snapshots) => snapshots.every(({ name, bytes, mtimeMs }) => {
+  const target = join(directory, name)
+  return existsSync(target) && statSync(target).mtimeMs === mtimeMs && readFileSync(target).equals(bytes)
+})
+const diagnosticRowsOf = (path) => existsSync(path) ? readFileSync(path, 'utf8').split(/\r?\n/).filter((line) => line.trim() !== '').map((line) => JSON.parse(line)) : []
+const diagnosticRowIsExact = (row, reason, message) => row !== null && typeof row === 'object' && !Array.isArray(row)
+  && Object.keys(row).sort().join(',') === 'message,reason,ts'
+  && typeof row.ts === 'string' && !Number.isNaN(Date.parse(row.ts)) && new Date(row.ts).toISOString() === row.ts
+  && typeof row.reason === 'string' && row.reason === reason
+  && typeof row.message === 'string' && row.message === message
 const archiveWriteRows = (path, rows) => writeFileSync(path, rows.map((row) => JSON.stringify(row)).join('\n') + (rows.length > 0 ? '\n' : ''), 'utf8')
 const decodeArchiveProduct = (text) => {
   const objects = String(text === undefined || text === null ? '' : text).split(/\r?\n/).filter((line) => line.trim() !== '').map((line) => JSON.parse(line))
@@ -1397,7 +1416,7 @@ const archiveReject = (text, label = 'dsh-archive-reject') => {
   const fixture = makeFixtureDir({ label })
   try {
     const pathContext = createPathContext({ workspaceRoot: fixture.root, hostDataRoot: fixture.home })
-    const archive = join(fixture.home, 'usage-ledger', STEP00_ARCHIVE_FILE_NAME)
+    const archive = join(fixture.home, 'logs', 'dsh-extra-plan', STEP00_ARCHIVE_FILE_NAME)
     const directory = dirname(archive)
     mkdirSync(directory, { recursive: true })
     writeFileSync(archive, text, 'utf8')
@@ -1695,16 +1714,19 @@ checkTrue('M6 step-99 旧strict模式拒绝：有效V2输入前置返回strict-p
     rmSync(dir, { recursive: true, force: true })
   }
 }
-// M6-T2：启动扫描覆盖式更新（启动时扫描 <DSH_HOME>/sessions 的 v4 会话日志 → 覆盖式写 ledger-v2.archive.jsonl）
+// M6-T2：启动扫描覆盖式更新（启动时扫描 <DSH_HOME>/sessions 的 v4 会话日志 → 覆盖式写 logs/dsh-extra-plan/extra-plan-usage-ledger.jsonl）
 {
   const dir = makeWTemp('dsh-startup-scan-archive')
   try {
     const home = join(dir, 'home')
     mkdirSync(home, { recursive: true })
     const context = createPathContext({ workspaceRoot: dir, hostDataRoot: home })
-    const ledgerDir = join(home, 'usage-ledger')
-    const archive = join(ledgerDir, 'ledger-v2.archive.jsonl')
+    const ledgerDir = join(home, 'logs', 'dsh-extra-plan')
+    const archive = join(ledgerDir, STEP00_ARCHIVE_FILE_NAME)
     const active = join(ledgerDir, 'ledger-v2.jsonl')
+    mkdirSync(ledgerDir, { recursive: true })
+    for (const [index, name] of SHARED_LOG_NAMES.entries()) writeFileSync(join(ledgerDir, name), JSON.stringify({ fixture: 'existing-shared-log', index }) + '\n', 'utf8')
+    const sharedLogSnapshot = snapshotNamedFiles(ledgerDir, SHARED_LOG_NAMES)
     const keptSessionId = '6d2f4c8a-1f11-4b2c-8e5a-000000000001'
     const skippedSessionId = '6d2f4c8a-1f11-4b2c-8e5a-000000000002'
     const writeSessionLog = (workspace, directoryName, logText) => {
@@ -1729,6 +1751,8 @@ checkTrue('M6 step-99 旧strict模式拒绝：有效V2输入前置返回strict-p
     const first = usageArchiveModule.startupArchive(context, { budgetMs: 5000 })
     const firstProduct = decodeArchiveProduct(archiveBytesOf(archive))
     const keptRow = firstProduct.rows[0]
+    const diagnosticPath = join(ledgerDir, 'extra-plan-usage-errors.jsonl')
+    checkTrue('M6-T2 默认只产生新账本且共享既有日志bytes/mtime不变', existsSync(archive) && !existsSync(diagnosticPath) && namedFilesUnchanged(ledgerDir, sharedLogSnapshot) && archiveResiduals(ledgerDir, SHARED_LOG_NAMES).length === 0)
     // ① archive 被创建，数据行数等于身份数（说明行单独计一行）。
     checkTrue('M6-T2 启动扫描创建archive且数据行数等于身份数', first.status === 'archived' && existsSync(archive) && first.rows === 1 && first.groups === 1 && first.scannedSessions === 2 && firstProduct.rows.length === 1 && firstProduct.noticeLines === 1)
     checkTrue('M6-T2 首扫识别会话数与实际用量解码数分离', first.scannedSessions === 2 && first.scannedUsageSessions === 1 && first.scannedRows === 1)
@@ -1758,7 +1782,7 @@ checkTrue('M6 step-99 旧strict模式拒绝：有效V2输入前置返回strict-p
     checkTrue('M6-T2 抬高四桶后重跑：单调性告警1条且保留旧值不回退', guarded.status === 'archived' && guarded.monotonicWarnings === 1 && guardedRow !== undefined && guardedRow.inputTokens === 100 && guardedRow.cacheReadTokens === 200 && guardedRow.cacheWriteTokens === 300 && guardedRow.outputTokens === 400)
     checkTrue('M6-T2 启动回退保四桶并刷新文件mtime水位', guardedRow !== undefined && Date.parse(guardedRow.ts) === new Date(statSync(join(home, 'sessions', 'w1', 'session-' + keptSessionId, 'session.v4.jsonl.zstd')).mtimeMs).getTime())
     // ⑤ 目录内无 active 文件、无残留锁与临时文件。
-    checkTrue('M6-T2 启动扫描不建active且无锁/临时残留', !existsSync(active) && !existsSync(archive + '.lock') && archiveResiduals(ledgerDir).length === 0 && readdirSync(ledgerDir).every((name) => !name.includes('.stale-')))
+    checkTrue('M6-T2 启动扫描不建active且无锁/临时残留', !existsSync(active) && !existsSync(archive + '.lock') && archiveResiduals(ledgerDir, SHARED_LOG_NAMES).length === 0 && namedFilesUnchanged(ledgerDir, sharedLogSnapshot) && readdirSync(ledgerDir).every((name) => !name.includes('.stale-')))
     // ⑥ 白名单外 preset 的会话整体跳过，不产出身份行。
     checkTrue('M6-T2 白名单外preset会话整体跳过', firstProduct.rows.every((row) => row.sessionId !== skippedSessionId) && guardedRow.sessionId !== skippedSessionId && !archiveBytesOf(archive).includes(skippedSessionId))
     const keptLog = join(home, 'sessions', 'w1', 'session-' + keptSessionId, 'session.v4.jsonl.zstd')
@@ -1793,7 +1817,7 @@ checkTrue('M6 step-99 旧strict模式拒绝：有效V2输入前置返回strict-p
     const corruptPreset = usageArchiveModule.startupArchive(context, { budgetMs: 5000, fsOps: legacyFsOps })
     checkTrue('M6-T2 显式坏旧缓存健康忽略且不读写删', corruptPreset.status === 'up-to-date' && corruptPreset.scannedRows === 0 && corruptPreset.scannedFiles === 0 && corruptPreset.scannedUsageSessions === 0 && archiveBytesOf(archive) === bytesBeforeNoCache && readFileSync(sessionPresets, 'utf8') === corruptCacheBefore && legacyIo.read === 0 && legacyIo.write === 0 && legacyIo.move === 0 && legacyIo.remove === 0)
     rmSync(sessionPresets, { force: true })
-    checkTrue('M6-T2 旧缓存夹具清理后终态目录仅含精确允许文件', archiveResiduals(ledgerDir).length === 0)
+    checkTrue('M6-T2 旧缓存夹具清理后终态目录仅含精确允许文件', archiveResiduals(ledgerDir, SHARED_LOG_NAMES).length === 0 && namedFilesUnchanged(ledgerDir, sharedLogSnapshot))
     const rowsBeforeNewSession = decodeArchiveProduct(archiveBytesOf(archive)).rows
     const newSessionId = '6d2f4c8a-1f11-4b2c-8e5a-000000000003'
     writeSessionLog('w1', 'session-' + newSessionId, jsonlOf([
@@ -1819,7 +1843,7 @@ checkTrue('M6 step-99 旧strict模式拒绝：有效V2输入前置返回strict-p
           presetEventOf('extra-plan-executor'),
           usageEventOf(1, { inputTokens: 2, cacheReadTokens: 3, cacheWriteTokens: 4, outputTokens: 5 }, 'precision-model', 'precision-provider'),
         ]), 'utf8')))
-        const precisionArchive = join(precisionHome, 'usage-ledger', 'ledger-v2.archive.jsonl')
+        const precisionArchive = join(precisionHome, 'logs', 'dsh-extra-plan', STEP00_ARCHIVE_FILE_NAME)
         const precisionTenMinute = Date.parse('2026-10-22T00:10:00.000Z')
         utimesSync(precisionLog, precisionTenMinute / 1000, precisionTenMinute / 1000)
         const precisionFirst = usageArchiveModule.startupArchive(precisionContext, { budgetMs: 5000 })
@@ -1856,32 +1880,53 @@ checkTrue('M6 step-99 旧strict模式拒绝：有效V2输入前置返回strict-p
           usageEventOf(1, { inputTokens: 13, cacheReadTokens: 14, cacheWriteTokens: 15, outputTokens: 16 }, 'failure-model', 'failure-provider'),
         ]), 'utf8'))
         writeFileSync(failureLog, failureGoodFrame)
-        const failureArchive = join(failureHome, 'usage-ledger', 'ledger-v2.archive.jsonl')
+        const failureArchive = join(failureHome, 'logs', 'dsh-extra-plan', STEP00_ARCHIVE_FILE_NAME)
         const failureInitial = usageArchiveModule.startupArchive(failureContext, { budgetMs: 5000 })
         const seededMtime = Date.parse('2026-10-22T00:10:00.000Z')
         utimesSync(failureLog, seededMtime / 1000, seededMtime / 1000)
         const failureSeeded = usageArchiveModule.startupArchive(failureContext, { budgetMs: 5000 })
-        const failurePresets = join(failureHome, 'usage-ledger', 'session-presets.json')
+        const failurePresets = join(failureHome, 'logs', 'dsh-extra-plan', 'session-presets.json')
+        const failureDiagnostic = join(failureHome, 'logs', 'dsh-extra-plan', 'extra-plan-usage-errors.jsonl')
+        checkTrue('M6-T2 正常扫描不预建错误JSONL', failureInitial.status === 'archived' && failureSeeded.status === 'archived' && !existsSync(failureDiagnostic))
         const archiveBeforeFailure = archiveBytesOf(failureArchive)
         const failureRowBefore = decodeArchiveProduct(archiveBeforeFailure).rows.find((row) => row.sessionId === failureSessionId)
         const failureTsBefore = failureRowBefore?.ts
         const badTailMtime = Date.parse('2026-10-22T00:11:00.000Z')
         const badTailBytes = Buffer.concat([failureGoodFrame, Buffer.from([0x28, 0xb5, 0x2f, 0xfd])])
         writeFileSync(failureLog, badTailBytes)
+        const scanFailureMessage = '本轮扫描有1个日志未完整解码或指纹不稳定，保留既有archive并等待重试'
+        const diagnosticMessage = '诊断引号"中文\n换行'
+        const diagnosticExpectedMessage = '读取账本失败 ' + failureArchive + ': ' + diagnosticMessage
+        const diagnosticFsOps = {
+          readFileSync: (...args) => {
+            if (String(args[0]) === failureArchive) {
+              const error = new Error(diagnosticMessage)
+              error.code = 'fixture-diagnostic'
+              throw error
+            }
+            return readFileSync(...args)
+          },
+        }
         utimesSync(failureLog, badTailMtime / 1000, badTailMtime / 1000)
         const badTailFirst = usageArchiveModule.startupArchive(failureContext, { budgetMs: 5000 })
         const badTailFirstRow = decodeArchiveProduct(archiveBytesOf(failureArchive)).rows.find((row) => row.sessionId === failureSessionId)
-        checkTrue('M6-T2 坏zstd尾帧不同ISO毫秒失败不推进archive/ts且不建旧缓存', failureInitial.status === 'archived' && failureSeeded.status === 'archived' && badTailFirst.status === 'skipped' && badTailFirst.reason === 'scan-failed' && archiveBytesOf(failureArchive) === archiveBeforeFailure && badTailFirstRow?.ts === failureTsBefore && !existsSync(failurePresets))
+        const diagnosticsAfterFirst = diagnosticRowsOf(failureDiagnostic)
+        checkTrue('M6-T2 坏zstd尾帧失败不推进archive/ts且错误JSONL三字段可解析', badTailFirst.status === 'skipped' && badTailFirst.reason === 'scan-failed' && archiveBytesOf(failureArchive) === archiveBeforeFailure && badTailFirstRow?.ts === failureTsBefore && !existsSync(failurePresets) && diagnosticsAfterFirst.length === 1 && diagnosticRowIsExact(diagnosticsAfterFirst[0], 'scan-failed', scanFailureMessage))
         const badTailSecond = usageArchiveModule.startupArchive(failureContext, { budgetMs: 5000 })
         const badTailSecondRow = decodeArchiveProduct(archiveBytesOf(failureArchive)).rows.find((row) => row.sessionId === failureSessionId)
-        checkTrue('M6-T2 文件不变连续失败仍持续重试且archive/ts不推进', badTailSecond.status === 'skipped' && badTailSecond.reason === 'scan-failed' && archiveBytesOf(failureArchive) === archiveBeforeFailure && badTailSecondRow?.ts === failureTsBefore && !existsSync(failurePresets))
+        const diagnosticsAfterSecond = diagnosticRowsOf(failureDiagnostic)
+        checkTrue('M6-T2 文件不变连续失败仍持续重试且archive/ts不推进、错误JSONL追加不覆盖', badTailSecond.status === 'skipped' && badTailSecond.reason === 'scan-failed' && archiveBytesOf(failureArchive) === archiveBeforeFailure && badTailSecondRow?.ts === failureTsBefore && !existsSync(failurePresets) && diagnosticsAfterSecond.length === 2 && diagnosticsAfterSecond.every((row) => diagnosticRowIsExact(row, 'scan-failed', scanFailureMessage)))
         writeFileSync(failureLog, failureGoodFrame)
         utimesSync(failureLog, badTailMtime / 1000, badTailMtime / 1000)
         const recovered = usageArchiveModule.startupArchive(failureContext, { budgetMs: 5000 })
         const recoveredArchive = archiveBytesOf(failureArchive)
         const recoveredRow = decodeArchiveProduct(recoveredArchive).rows.find((row) => row.sessionId === failureSessionId)
         const recoveredHealthy = usageArchiveModule.startupArchive(failureContext, { budgetMs: 5000 })
-        checkTrue('M6-T2 修复后推进到文件mtime并在下一次真正up-to-date', recovered.status === 'archived' && recovered.scannedRows === 1 && recovered.scannedUsageSessions === 1 && recoveredArchive !== archiveBeforeFailure && recoveredRow !== undefined && Date.parse(recoveredRow.ts) === badTailMtime && recoveredHealthy.status === 'up-to-date' && recoveredHealthy.reason === 'no-changed-logs' && recoveredHealthy.scannedRows === 0 && recoveredHealthy.scannedUsageSessions === 0 && !existsSync(failurePresets))
+        checkTrue('M6-T2 修复后推进到文件mtime并在下一次真正up-to-date', recovered.status === 'archived' && recovered.scannedRows === 1 && recovered.scannedUsageSessions === 1 && recoveredArchive !== archiveBeforeFailure && recoveredRow !== undefined && Date.parse(recoveredRow.ts) === badTailMtime && recoveredHealthy.status === 'up-to-date' && recoveredHealthy.reason === 'no-changed-logs' && recoveredHealthy.scannedRows === 0 && recoveredHealthy.scannedUsageSessions === 0 && !existsSync(failurePresets) && diagnosticRowsOf(failureDiagnostic).length === 2)
+        const diagnosticBeforeFailure = archiveBytesOf(failureArchive)
+        const diagnosticFailure = usageArchiveModule.startupArchive(failureContext, { budgetMs: 5000, fsOps: diagnosticFsOps })
+        const diagnosticsAfterEscapedMessage = diagnosticRowsOf(failureDiagnostic)
+        checkTrue('M6-T2 fsOps故障注入的引号中文换行消息保持单行JSONL语义', diagnosticFailure.status === 'failed' && diagnosticFailure.reason === 'fixture-diagnostic' && archiveBytesOf(failureArchive) === diagnosticBeforeFailure && diagnosticsAfterEscapedMessage.length === 3 && diagnosticRowIsExact(diagnosticsAfterEscapedMessage[2], 'fixture-diagnostic', diagnosticExpectedMessage))
         const emptySessionId = '6d2f4c8a-1f11-4b2c-8e5a-000000000006'
         const emptyLog = join(failureHome, 'sessions', 'w1', 'session-' + emptySessionId, 'session.v4.jsonl.zstd')
         mkdirSync(dirname(emptyLog), { recursive: true })
@@ -1897,7 +1942,7 @@ checkTrue('M6 step-99 旧strict模式拒绝：有效V2输入前置返回strict-p
         writeFileSync(failureLog, Buffer.concat([failureGoodFrame, badJsonFrame]))
         utimesSync(failureLog, jsonFailureMtime / 1000, jsonFailureMtime / 1000)
         const badJson = usageArchiveModule.startupArchive(failureContext, { budgetMs: 5000 })
-        checkTrue('M6-T2 目标JSON事件解析失败不推进成功水位且持续无缓存', badJson.status === 'skipped' && badJson.reason === 'scan-failed' && archiveBytesOf(failureArchive) === archiveBeforeBadJson && !existsSync(failurePresets) && archiveResiduals(dirname(failureArchive)).length === 0)
+        checkTrue('M6-T2 目标JSON事件解析失败不推进成功水位且持续无缓存', badJson.status === 'skipped' && badJson.reason === 'scan-failed' && archiveBytesOf(failureArchive) === archiveBeforeBadJson && !existsSync(failurePresets) && diagnosticRowsOf(failureDiagnostic).length === 4 && archiveResiduals(dirname(failureArchive)).length === 0)
       } finally {
         rmSync(failureDir, { recursive: true, force: true })
       }
@@ -1931,7 +1976,7 @@ checkTrue('M6 step-99 旧strict模式拒绝：有效V2输入前置返回strict-p
     writeFileSync(log, zstdCompressSync(Buffer.from(matrixJsonl([matrixSessionEvent(id), matrixPresetEvent(preset), matrixUsageEvent(1, inputTokens)]), 'utf8')))
     return log
   }
-  const matrixArchiveOf = (home) => join(home, 'usage-ledger', STEP00_ARCHIVE_FILE_NAME)
+  const matrixArchiveOf = (home) => join(home, 'logs', 'dsh-extra-plan', STEP00_ARCHIVE_FILE_NAME)
   const matrixEmptyLogOf = (home, id, preset = 'extra-plan-executor') => {
     const log = join(home, 'sessions', 'w1', 'session-' + id, 'session.v4.jsonl.zstd')
     mkdirSync(dirname(log), { recursive: true })
@@ -2002,6 +2047,16 @@ checkTrue('M6 step-99 旧strict模式拒绝：有效V2输入前置返回strict-p
     mkdirSync(syncHome, { recursive: true })
     mkdirSync(workerHome, { recursive: true })
     mkdirSync(failureHome, { recursive: true })
+    const workerLedgerDir = join(workerHome, 'logs', 'dsh-extra-plan')
+    const failureLedgerDir = join(failureHome, 'logs', 'dsh-extra-plan')
+    mkdirSync(workerLedgerDir, { recursive: true })
+    mkdirSync(failureLedgerDir, { recursive: true })
+    for (const [index, name] of SHARED_LOG_NAMES.entries()) {
+      writeFileSync(join(workerLedgerDir, name), JSON.stringify({ fixture: 'worker-shared-log', index }) + '\n', 'utf8')
+      writeFileSync(join(failureLedgerDir, name), JSON.stringify({ fixture: 'worker-failure-shared-log', index }) + '\n', 'utf8')
+    }
+    const workerSharedLogSnapshot = snapshotNamedFiles(workerLedgerDir, SHARED_LOG_NAMES)
+    const failureSharedLogSnapshot = snapshotNamedFiles(failureLedgerDir, SHARED_LOG_NAMES)
     const matrixSessionId = '6d2f4c8a-1f11-4b2c-8e5a-000000000010'
     const syncLog = matrixLogOf(syncHome, matrixSessionId, 11)
     const workerLog = matrixLogOf(workerHome, matrixSessionId, 11)
@@ -2017,9 +2072,8 @@ checkTrue('M6 step-99 旧strict模式拒绝：有效V2输入前置返回strict-p
     const workerArchiveBytes = archiveBytesOf(matrixArchiveOf(workerHome))
     checkTrue('M6-WORKER 默认真实Worker首次归档与同步基准对拍且threadId非主线程', syncFirst.status === 'archived' && defaultFirst.status === 'archived' && workerArchiveBytes === syncArchiveBytes && defaultFirst.threadId > 0)
     const defaultHealthy = await runBackground(defaultOwner, workerContext)
-    checkTrue('M6-WORKER 默认Worker健康重复调用up-to-date且零锁零写', defaultHealthy.status === 'up-to-date' && defaultHealthy.scannedRows === 0 && archiveResiduals(join(workerHome, 'usage-ledger')).length === 0)
-    const workerLedgerDir = join(workerHome, 'usage-ledger')
-    checkTrue('M6-WORKER 默认Worker无持久缓存且终态目录符合白名单', !existsSync(join(workerLedgerDir, 'session-presets.json')) && archiveResiduals(workerLedgerDir).length === 0)
+    checkTrue('M6-WORKER 默认Worker健康重复调用up-to-date且零锁零写', defaultHealthy.status === 'up-to-date' && defaultHealthy.scannedRows === 0 && archiveResiduals(workerLedgerDir, SHARED_LOG_NAMES).length === 0 && namedFilesUnchanged(workerLedgerDir, workerSharedLogSnapshot))
+    checkTrue('M6-WORKER 默认Worker无持久缓存且终态目录符合白名单', !existsSync(join(workerLedgerDir, 'session-presets.json')) && archiveResiduals(workerLedgerDir, SHARED_LOG_NAMES).length === 0 && namedFilesUnchanged(workerLedgerDir, workerSharedLogSnapshot))
     const equalBytesBefore = archiveBytesOf(matrixArchiveOf(workerHome))
     const equalMtime = await runBackground(defaultOwner, workerContext)
     checkTrue('M6-WORKER 同ISO毫秒mtime相等up-to-date且零完整用量重扫', equalMtime.status === 'up-to-date' && equalMtime.scannedRows === 0 && equalMtime.scannedUsageSessions === 0 && archiveBytesOf(matrixArchiveOf(workerHome)) === equalBytesBefore && !existsSync(join(workerLedgerDir, 'session-presets.json')))
@@ -2031,7 +2085,7 @@ checkTrue('M6 step-99 旧strict模式拒绝：有效V2输入前置返回strict-p
     utimesSync(workerLog, rollbackMtime / 1000, rollbackMtime / 1000)
     const workerRollback = await runBackground(defaultOwner, workerContext)
     const workerRollbackRow = decodeArchiveProduct(archiveBytesOf(matrixArchiveOf(workerHome))).rows[0]
-    checkTrue('M6-WORKER 不同mtime含前进与回退均重扫且ts取文件mtime', workerForward.status === 'archived' && workerForward.scannedUsageSessions === 1 && workerForwardRow !== undefined && Date.parse(workerForwardRow.ts) === forwardMtime && workerRollback.status === 'archived' && workerRollback.scannedUsageSessions === 1 && workerRollbackRow !== undefined && Date.parse(workerRollbackRow.ts) === rollbackMtime && archiveResiduals(workerLedgerDir).length === 0)
+    checkTrue('M6-WORKER 不同mtime含前进与回退均重扫且ts取文件mtime', workerForward.status === 'archived' && workerForward.scannedUsageSessions === 1 && workerForwardRow !== undefined && Date.parse(workerForwardRow.ts) === forwardMtime && workerRollback.status === 'archived' && workerRollback.scannedUsageSessions === 1 && workerRollbackRow !== undefined && Date.parse(workerRollbackRow.ts) === rollbackMtime && archiveResiduals(workerLedgerDir, SHARED_LOG_NAMES).length === 0 && namedFilesUnchanged(workerLedgerDir, workerSharedLogSnapshot))
     const failureSessionId = '6d2f4c8a-1f11-4b2c-8e5a-000000000011'
     const failureLog = matrixLogOf(failureHome, failureSessionId, 21)
     const failureGoodBytes = readFileSync(failureLog)
@@ -2039,11 +2093,10 @@ checkTrue('M6 step-99 旧strict模式拒绝：有效V2输入前置返回strict-p
     const failureOwner = {}
     const failureFirst = await runBackground(failureOwner, failureContext)
     const failureArchive = matrixArchiveOf(failureHome)
-    const failureLedgerDir = dirname(failureArchive)
     const failureArchiveBefore = archiveBytesOf(failureArchive)
     const failureRowBefore = decodeArchiveProduct(failureArchiveBefore).rows.find((row) => row.sessionId === failureSessionId)
     const failureTsBefore = failureRowBefore?.ts
-    checkTrue('M6-WORKER 默认失败夹具无持久缓存且终态目录符合白名单', failureFirst.status === 'archived' && !existsSync(join(failureLedgerDir, 'session-presets.json')) && archiveResiduals(failureLedgerDir).length === 0)
+    checkTrue('M6-WORKER 默认失败夹具无持久缓存且终态目录符合白名单', failureFirst.status === 'archived' && !existsSync(join(failureLedgerDir, 'session-presets.json')) && archiveResiduals(failureLedgerDir, SHARED_LOG_NAMES).length === 0 && namedFilesUnchanged(failureLedgerDir, failureSharedLogSnapshot))
     writeFileSync(failureLog, Buffer.concat([failureGoodBytes, Buffer.from([0xfd, 0x2f, 0xb5, 0x28])]))
     utimesSync(failureLog, Date.parse('2026-10-22T00:04:00.000Z') / 1000, Date.parse('2026-10-22T00:04:00.000Z') / 1000)
     const failureBadFirst = await runBackground(failureOwner, failureContext)
@@ -2055,7 +2108,7 @@ checkTrue('M6 step-99 旧strict模式拒绝：有效V2输入前置返回strict-p
     utimesSync(failureLog, Date.parse('2026-10-22T00:04:00.000Z') / 1000, Date.parse('2026-10-22T00:04:00.000Z') / 1000)
     const failureRecovered = await runBackground(failureOwner, failureContext)
     const failureRecoveredRow = decodeArchiveProduct(archiveBytesOf(failureArchive)).rows.find((row) => row.sessionId === failureSessionId)
-    checkTrue('M6-WORKER 坏尾帧修复后按文件mtime恢复归档且无缓存', failureRecovered.status === 'archived' && failureRecoveredRow !== undefined && Date.parse(failureRecoveredRow.ts) === Date.parse('2026-10-22T00:04:00.000Z') && !existsSync(join(failureLedgerDir, 'session-presets.json')) && archiveResiduals(failureLedgerDir).length === 0)
+    checkTrue('M6-WORKER 坏尾帧修复后按文件mtime恢复归档且无缓存', failureRecovered.status === 'archived' && failureRecoveredRow !== undefined && Date.parse(failureRecoveredRow.ts) === Date.parse('2026-10-22T00:04:00.000Z') && !existsSync(join(failureLedgerDir, 'session-presets.json')) && archiveResiduals(failureLedgerDir, SHARED_LOG_NAMES).length === 0 && namedFilesUnchanged(failureLedgerDir, failureSharedLogSnapshot))
     const newFailureSessionId = '6d2f4c8a-1f11-4b2c-8e5a-000000000012'
     matrixLogOf(failureHome, newFailureSessionId, 31)
     const failureRowsBeforeAppend = decodeArchiveProduct(archiveBytesOf(failureArchive)).rows
@@ -2074,8 +2127,8 @@ checkTrue('M6 step-99 旧strict模式拒绝：有效V2输入前置返回strict-p
     mkdirSync(cancelHome, { recursive: true })
     const cancelContext = createPathContext({ workspaceRoot: cancelRoot, hostDataRoot: cancelHome })
     const cancelBeforeScan = usageArchiveModule.startupArchive(cancelContext, { shouldCancel: () => true })
-    checkTrue('M6-WORKER 同步startupArchive取消归一化cancelled且不刷失败', cancelBeforeScan.status === 'cancelled' && cancelBeforeScan.reason === 'cancel-requested' && !existsSync(join(cancelHome, 'usage-ledger')))
-    const cancelArchive = join(cancelHome, 'usage-ledger', STEP00_ARCHIVE_FILE_NAME)
+    checkTrue('M6-WORKER 同步startupArchive取消归一化cancelled且不刷失败', cancelBeforeScan.status === 'cancelled' && cancelBeforeScan.reason === 'cancel-requested' && !existsSync(join(cancelHome, 'logs', 'dsh-extra-plan')))
+    const cancelArchive = join(cancelHome, 'logs', 'dsh-extra-plan', STEP00_ARCHIVE_FILE_NAME)
     mkdirSync(dirname(cancelArchive), { recursive: true })
     const oldArchive = usageArchiveModule.SCHEMA_DOC_LINE + '\n'
     writeFileSync(cancelArchive, oldArchive, 'utf8')
@@ -2111,7 +2164,9 @@ checkTrue('M6 step-99 旧strict模式拒绝：有效V2输入前置返回strict-p
     const startupLedgerDir = dirname(startupArchivePath)
     const startupArchiveBefore = archiveBytesOf(startupArchivePath)
     const startupArchiveMtimeBefore = statSync(startupArchivePath).mtimeMs
-    const startupDiagBefore = readdirSync(startupLedgerDir).filter((name) => name.includes('failed'))
+    const startupDiagnosticPath = join(startupLedgerDir, 'extra-plan-usage-errors.jsonl')
+    const startupDiagnosticBeforeExists = existsSync(startupDiagnosticPath)
+    const startupDiagnosticBeforeBytes = startupDiagnosticBeforeExists ? readFileSync(startupDiagnosticPath) : undefined
     utimesSync(startupCancelLog, Date.parse('2026-10-22T00:03:00.000Z') / 1000, Date.parse('2026-10-22T00:03:00.000Z') / 1000)
     let startupTempWritten = false
     const startupCancelWarnings = []
@@ -2127,9 +2182,11 @@ checkTrue('M6 step-99 旧strict模式拒绝：有效V2输入前置返回strict-p
       console.warn = startupCancelWarn
     }
     const startupArchiveAfterCancel = archiveBytesOf(startupArchivePath)
-    const startupDiagAfter = readdirSync(startupLedgerDir).filter((name) => name.includes('failed'))
-    checkTrue('M6-WORKER 实际startup持锁archive temp后rename前取消归一化且零warn/诊断/残留', startupSeed.status === 'archived' && startupCancelled.status === 'cancelled' && startupCancelled.reason === 'cancel-requested' && startupCancelWarnings.length === 0 && startupDiagAfter.length === startupDiagBefore.length && startupArchiveAfterCancel === startupArchiveBefore && statSync(startupArchivePath).mtimeMs === startupArchiveMtimeBefore && !existsSync(join(startupLedgerDir, 'session-presets.json')) && archiveResiduals(startupLedgerDir).length === 0)
-    console.log('MID_LOCK_CANCEL=' + JSON.stringify({ seeded: startupSeed.status, status: startupCancelled.status, reason: startupCancelled.reason, warns: startupCancelWarnings.length, diagnostics: startupDiagAfter.length - startupDiagBefore.length, archiveUnchanged: startupArchiveAfterCancel === startupArchiveBefore, cacheAbsent: !existsSync(join(startupLedgerDir, 'session-presets.json')), lockExists: archiveResiduals(startupLedgerDir).some((name) => name.endsWith('.lock')) }))
+    const startupDiagnosticAfterExists = existsSync(startupDiagnosticPath)
+    const startupDiagnosticAfterBytes = startupDiagnosticAfterExists ? readFileSync(startupDiagnosticPath) : undefined
+    const startupDiagnosticUnchanged = startupDiagnosticAfterExists === startupDiagnosticBeforeExists && (!startupDiagnosticBeforeExists || (startupDiagnosticAfterBytes !== undefined && startupDiagnosticAfterBytes.equals(startupDiagnosticBeforeBytes)))
+    checkTrue('M6-WORKER 实际startup持锁archive temp后rename前取消归一化且零warn/诊断/残留', startupSeed.status === 'archived' && startupCancelled.status === 'cancelled' && startupCancelled.reason === 'cancel-requested' && startupCancelWarnings.length === 0 && startupDiagnosticUnchanged && startupArchiveAfterCancel === startupArchiveBefore && statSync(startupArchivePath).mtimeMs === startupArchiveMtimeBefore && !existsSync(join(startupLedgerDir, 'session-presets.json')) && archiveResiduals(startupLedgerDir).length === 0)
+    console.log('MID_LOCK_CANCEL=' + JSON.stringify({ seeded: startupSeed.status, status: startupCancelled.status, reason: startupCancelled.reason, warns: startupCancelWarnings.length, diagnosticsUnchanged: startupDiagnosticUnchanged, archiveUnchanged: startupArchiveAfterCancel === startupArchiveBefore, cacheAbsent: !existsSync(join(startupLedgerDir, 'session-presets.json')), lockExists: archiveResiduals(startupLedgerDir).some((name) => name.endsWith('.lock')) }))
     const startupRecovered = usageArchiveModule.startupArchive(startupCancelContext, { budgetMs: 5000 })
     checkTrue('M6-WORKER 实际startup取消后无取消重试可正常归档且无缓存', startupRecovered.status === 'archived' && !existsSync(join(startupLedgerDir, 'session-presets.json')) && archiveResiduals(startupLedgerDir).length === 0)
     utimesSync(startupCancelLog, Date.parse('2026-10-22T00:04:00.000Z') / 1000, Date.parse('2026-10-22T00:04:00.000Z') / 1000)
@@ -2163,7 +2220,7 @@ checkTrue('M6 step-99 旧strict模式拒绝：有效V2输入前置返回strict-p
     } finally {
       process.off('unhandledRejection', onUnhandledRejection)
     }
-    checkTrue('M6-WORKER Worker构造失败归一化failed且不回退同步扫描', constructionResult.status === 'failed' && !existsSync(join(failureModesHome, 'usage-ledger')))
+    checkTrue('M6-WORKER Worker构造失败归一化failed且不回退同步扫描', constructionResult.status === 'failed' && !existsSync(join(failureModesHome, 'logs', 'dsh-extra-plan', 'extra-plan-usage-ledger.jsonl')) && !existsSync(join(failureModesHome, 'logs', 'dsh-extra-plan', 'extra-plan-usage-errors.jsonl')))
     const invalidWorkerFile = join(failureModesRoot, 'invalid-worker.mjs')
     const protocolWorkerFile = join(failureModesRoot, 'protocol-worker.mjs')
     const unknownWorkerFile = join(failureModesRoot, 'unknown-worker.mjs')
@@ -2188,7 +2245,7 @@ checkTrue('M6 step-99 旧strict模式拒绝：有效V2输入前置返回strict-p
     } finally {
       process.off('unhandledRejection', onFailureUnhandled)
     }
-    checkTrue('M6-WORKER 模块导入失败归一化failed且无同步回退', importResult?.status === 'failed' && !existsSync(join(failureModesHome, 'usage-ledger')))
+    checkTrue('M6-WORKER 模块导入失败归一化failed且无同步回退', importResult?.status === 'failed' && !existsSync(join(failureModesHome, 'logs', 'dsh-extra-plan', 'extra-plan-usage-ledger.jsonl')) && !existsSync(join(failureModesHome, 'logs', 'dsh-extra-plan', 'extra-plan-usage-errors.jsonl')))
     checkTrue('M6-WORKER 协议错误归一化failed且无UnhandledRejection', protocolResult?.status === 'failed' && failureUnhandled === 0)
     checkTrue('M6-WORKER 正确id/version未知消息fail-closed且后续合法result不能冲掉错误', unknownResult?.status === 'failed' && unknownResult.reason === 'worker-protocol' && failureUnhandled === 0)
     console.log('UNKNOWN_MESSAGE_RESULT=' + JSON.stringify({ status: unknownResult?.status, reason: unknownResult?.reason, threadId: unknownResult?.threadId }))
@@ -4369,7 +4426,7 @@ check('GWC13 默认 runtime 下定制词不误推进（双向隔离）', deriveF
   const { resolveWorkspacePath, resolveHostPath } = await import('../../plugins/dsh-extra-plan/lib/path-policy.js')
   const m8WorkspaceRoot = makeWTemp('dsh-m8-workspace-root')
   const m8HostRoot = makeWTemp('dsh-m8-host-root')
-  const m8Relative = join('ledger-input', 'ledger-v2.archive.jsonl')
+  const m8Relative = join('ledger-input', 'extra-plan-usage-ledger.jsonl')
   const m8WLedger = join(m8WorkspaceRoot, m8Relative)
   mkdirSync(dirname(m8WLedger), { recursive: true })
   writeFileSync(m8WLedger, JSON.stringify(archiveRow({ sessionId: 'm8-public-w', role: 'main', agentPreset: '', delegationDepth: 0, rootSessionId: 'm8-public-w' })) + '\n', 'utf8')
@@ -4379,13 +4436,13 @@ check('GWC13 默认 runtime 下定制词不误推进（双向隔离）', deriveF
   const m8WithHostStats = usageStats.statLedger(m8Relative, { pathContext: m8WithHostContext })
   checkTrue('M8 M14 relative 无Host根/有独立Host根均精确返回W物理目标且不进入H观察', m8NoHostStats.archivePath === m8WLedger && m8WithHostStats.archivePath === m8WLedger && m8NoHostStats.groups.length === 1 && m8WithHostStats.groups.length === 1 && m8NoHostStats.observation === undefined && m8WithHostStats.observation === undefined)
   const m8WTarget = resolveWorkspacePath(m8WithHostContext, m8WLedger, { purpose: 'ledger-read' })
-  const m8WAbsolute = join(m8WorkspaceRoot, 'absolute-input', 'ledger-v2.archive.jsonl')
+  const m8WAbsolute = join(m8WorkspaceRoot, 'absolute-input', 'extra-plan-usage-ledger.jsonl')
   mkdirSync(dirname(m8WAbsolute), { recursive: true })
   writeFileSync(m8WAbsolute, JSON.stringify(archiveRow({ sessionId: 'm8-public-w-absolute', role: 'main', agentPreset: '', delegationDepth: 0, rootSessionId: 'm8-public-w-absolute' })) + '\n', 'utf8')
   const m8WAbsoluteTarget = resolveWorkspacePath(m8WithHostContext, m8WAbsolute, { purpose: 'ledger-read' })
   const m8WAbsoluteStats = usageStats.statLedger(m8WAbsolute, { pathContext: m8WithHostContext, target: m8WAbsoluteTarget })
   checkTrue('M8 M14 纯W absolute经公开resolver进入W且物理路径精确', m8WAbsoluteStats.archivePath === m8WAbsolute && m8WAbsoluteStats.groups.length === 1 && m8WAbsoluteStats.observation === undefined && m8WAbsoluteTarget.kind === 'workspace')
-  const m8HostLedger = join(m8HostRoot, 'ledger-v2.archive.jsonl')
+  const m8HostLedger = join(m8HostRoot, 'extra-plan-usage-ledger.jsonl')
   writeFileSync(m8HostLedger, JSON.stringify(archiveRow({ sessionId: 'm8-public-h', role: 'main', agentPreset: '', delegationDepth: 0, rootSessionId: 'm8-public-h' })) + '\n', 'utf8')
   const m8HostTarget = resolveHostPath(m8WithHostContext, m8HostLedger, { purpose: 'ledger-read' })
   const m8HostMaintenance = { workspaceRoot: m8WorkspaceRoot, pathContext: m8WithHostContext, hostAccess: 'read-only', ledger: { mode: 'stats', target: m8HostTarget } }
@@ -4417,8 +4474,8 @@ check('GWC13 默认 runtime 下定制词不误推进（双向隔离）', deriveF
   const m8HostAfterEntries = readdirSync(m8HostRoot).sort().join('\n')
   checkTrue('M8 M14 授权H absolute只读：输出/观察物理路径精确、最多两次稳定观察且H零写', m8HostStats.groups.length === 1 && m8HostStats.archivePath === m8HostLedger && m8HostStats.observation !== undefined && m8HostStats.observation.scope === 'host' && m8HostStats.observation.level === 'stable-read-only' && m8HostStats.observation.attempts <= 2 && m8HostStats.observation.archivePath === m8HostLedger && m8HostIo.reads.length > 0 && m8HostIo.writes.length === 0 && readFileSync(m8HostLedger, 'utf8') === m8HostBefore && statSync(m8HostLedger).mtimeMs === m8HostBeforeStat.mtimeMs && m8HostAfterEntries === m8HostBeforeEntries && !existsSync((m8HostLedger + '.lock')))
   const m8OverlapContext = createPathContext({ workspaceRoot: m8WorkspaceRoot, hostDataRoot: m8OverlapRoot })
-  const m8OverlapRelative = join('overlap-host-root', 'ledger-v2.archive.jsonl')
-  const m8OverlapLedger = join(m8OverlapRoot, 'ledger-v2.archive.jsonl')
+  const m8OverlapRelative = join('overlap-host-root', 'extra-plan-usage-ledger.jsonl')
+  const m8OverlapLedger = join(m8OverlapRoot, 'extra-plan-usage-ledger.jsonl')
   writeFileSync(m8OverlapLedger, JSON.stringify(archiveRow({ sessionId: 'm8-public-overlap', role: 'main', agentPreset: '', delegationDepth: 0, rootSessionId: 'm8-public-overlap' })) + '\n', 'utf8')
   const m8OverlapDefaultBefore = readFileSync(m8OverlapLedger, 'utf8')
   const m8OverlapDefaultBeforeStat = statSync(m8OverlapLedger)

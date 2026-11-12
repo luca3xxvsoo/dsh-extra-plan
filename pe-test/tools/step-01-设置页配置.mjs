@@ -2134,6 +2134,20 @@ failedSurface.unmount()
     rmSync(busyFixture.root, { recursive: true, force: true })
   }
   const failedWorkerFixture = makeSyncFixture()
+  const failedWorkerLedgerDir = join(failedWorkerFixture.root, 'logs', 'dsh-extra-plan')
+  const failedWorkerSharedLogNames = ['extra-plan-agent-errors.jsonl', 'extra-plan-anchored.jsonl', 'extra-plan-request-errors.jsonl']
+  mkdirSync(failedWorkerLedgerDir, { recursive: true })
+  for (const [index, name] of failedWorkerSharedLogNames.entries()) writeFileSync(join(failedWorkerLedgerDir, name), JSON.stringify({ fixture: 'settings-shared-log', index }) + '\n', 'utf8')
+  const failedWorkerSharedLogSnapshot = failedWorkerSharedLogNames.map((name) => {
+    const target = join(failedWorkerLedgerDir, name)
+    return { name, bytes: readFileSync(target), mtimeMs: statSync(target).mtimeMs }
+  })
+  const failedWorkerSharedLogsUnchanged = () => failedWorkerSharedLogSnapshot.every(({ name, bytes, mtimeMs }) => {
+    const target = join(failedWorkerLedgerDir, name)
+    return existsSync(target) && statSync(target).mtimeMs === mtimeMs && readFileSync(target).equals(bytes)
+  })
+  const failedWorkerArchive = join(failedWorkerLedgerDir, 'extra-plan-usage-ledger.jsonl')
+  const failedWorkerDiagnostic = join(failedWorkerLedgerDir, 'extra-plan-usage-errors.jsonl')
   const failedWorkerEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, failedWorkerFixture.webPatch, { persistDocument: true, profileContext: failedWorkerFixture.webProfileContext })
   const failureWarnings = []
   const previousWarn = console.warn
@@ -2147,8 +2161,8 @@ failedSurface.unmount()
     failedWorkerRun = await start(failedWorkerEditor, { mount: true })
     await new Promise((resolve) => setImmediate(resolve))
     const failedWorkerResponse = await requestJson(failedWorkerRun.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
-    check('G5-R5 settings构造失败warn后API/同步仍正常且无同步归档兜底', failedWorkerResponse.status === 200 && failureWarnings.some((line) => line.includes('startup archive failed') && line.includes('worker-create-failed')) && !existsSync(join(failedWorkerFixture.root, 'usage-ledger')))
-    console.log('SETTINGS_WORKER_CREATE_FAILURE=' + JSON.stringify({ apiStatus: failedWorkerResponse.status, warned: failureWarnings.some((line) => line.includes('worker-create-failed')), syncArchiveFallback: existsSync(join(failedWorkerFixture.root, 'usage-ledger')) }))
+    check('G5-R5 settings构造失败warn后API/同步仍正常且无同步归档兜底', failedWorkerResponse.status === 200 && failureWarnings.some((line) => line.includes('startup archive failed') && line.includes('worker-create-failed')) && !existsSync(failedWorkerArchive) && !existsSync(failedWorkerDiagnostic) && failedWorkerSharedLogsUnchanged())
+    console.log('SETTINGS_WORKER_CREATE_FAILURE=' + JSON.stringify({ apiStatus: failedWorkerResponse.status, warned: failureWarnings.some((line) => line.includes('worker-create-failed')), ledgerProduced: existsSync(failedWorkerArchive), errorsProduced: existsSync(failedWorkerDiagnostic), sharedLogsUnchanged: failedWorkerSharedLogsUnchanged() }))
   } catch (error) {
     check('G5-R5 settings构造失败不阻断apply/API', false)
   } finally {

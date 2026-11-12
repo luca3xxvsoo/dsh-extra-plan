@@ -155,7 +155,7 @@ export function forensicCommand(file, args = []) {
 
 // 需参数项
 const NEED_ARG = [
-  ['step-99-用量统计.mjs', '参数: <ledger-v2.archive.jsonl>；普通相对输入固定为W目标（只读统计）；只读统计单一账本 ledger-v2.archive.jsonl；启动模式/血缘识别仅保留在内存，现有首帧路径仍整文件读盘仅解首帧；按日志当前mtime与账本ts以统一ISO毫秒精度比较，相同跳过完整用量重扫，不同（含mtime回退）或未入账才解析，成功记文件mtime，失败不推进；无持久session-presets读写/修复/自愈，不向说明行增加检查点，也不以全量重扫替代；单archive temp→rename原子发布；保留真实Worker、同步scanUsageRows/archiveLedger/startupArchive API、只读两次compare、显式Host只读边界及全部runner逻辑，不承诺零IO或启动绝不卡顿；--compare只读对拍；--archive报usage-removed；V1与坏JSON仅计数跳过'],
+  ['step-99-用量统计.mjs', '参数: <extra-plan-usage-ledger.jsonl>；默认Host落点为 logs/dsh-extra-plan/extra-plan-usage-ledger.jsonl，按需诊断追加 logs/dsh-extra-plan/extra-plan-usage-errors.jsonl（JSONL每行仅有字符串ts/reason/message），与共享目录中的其他日志共存；普通相对输入固定为W目标（只读统计）；只读统计单一账本 extra-plan-usage-ledger.jsonl；启动模式/血缘识别仅保留在内存，现有首帧路径仍整文件读盘仅解首帧；按日志当前mtime与账本ts以统一ISO毫秒精度比较，相同跳过完整用量重扫，不同（含mtime回退）或未入账才解析，成功记文件mtime，失败不推进；无持久session-presets读写/修复/自愈，不向说明行增加检查点，也不以全量重扫替代；单archive temp→rename原子发布；保留真实Worker、同步scanUsageRows/archiveLedger/startupArchive API、只读两次compare、显式Host只读边界及全部runner逻辑，不承诺零IO或启动绝不卡顿；取消不记失败，错误文件仅在需要诊断留痕时生成；--compare只读对拍；--archive报usage-removed；V1与坏JSON仅计数跳过'],
 ]
 
 function reportIncompleteDirectory() {

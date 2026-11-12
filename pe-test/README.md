@@ -69,9 +69,9 @@ node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-07-子代理
 ## 两个注意事项
 
 1. **运行前提**：部分文件要 `import 仓库里的插件代码`（相对路径 `../../plugins/...`）——如果运行时报「找不到模块」，说明当前目录不是完整目录；把 pe-test 挪回仓库根（或你准备挪回工作区时带齐 plugins）再跑。
-2. `step-99-用量统计.mjs` 需要参数：普通相对路径 `node step-99-用量统计.mjs <ledger-v2.archive.jsonl>` 即只读统计；`--compare <ledger-v2.archive.jsonl>` 只读对拍，实际调用 `scanUsageRows` 做两次独立全量现场扫描并按 role→model 对拍，全程零写盘；手工归档已移除，`--archive` 在任何 IO 前报 `usage-removed`；显式 `--host-root <H 数据根>` 加 H 内绝对精确账本只作只读稳定观察（最多两次观察、不取锁、零 Host 写；元数据变化或两次字节不一致记 `INCOMPLETE`）。
-   - `step-99` 只读单一 `usage-ledger/ledger-v2.archive.jsonl`，不取锁、不写入；写入统一由插件启动扫描与 `lib/usage-ledger.js` 的 `archiveLedger` 完成。
+2. `step-99-用量统计.mjs` 需要参数：普通相对路径 `node step-99-用量统计.mjs <extra-plan-usage-ledger.jsonl>` 即只读统计；`--compare <extra-plan-usage-ledger.jsonl>` 只读对拍，实际调用 `scanUsageRows` 做两次独立全量现场扫描并按 role→model 对拍，全程零写盘；手工归档已移除，`--archive` 在任何 IO 前报 `usage-removed`；显式 `--host-root <H 数据根>` 加 H 内绝对精确账本只作只读稳定观察（最多两次观察、不取锁、零 Host 写；元数据变化或两次字节不一致记 `INCOMPLETE`）。默认 Host 目标为 `logs/dsh-extra-plan/extra-plan-usage-ledger.jsonl`。
+   - `step-99` 只读单一 `extra-plan-usage-ledger.jsonl`，不取锁、不写入；写入统一由插件启动扫描与 `lib/usage-ledger.js` 的 `archiveLedger` 完成。错误诊断按需追加 `logs/dsh-extra-plan/extra-plan-usage-errors.jsonl`，每行仅有字符串 `ts`、`reason`、`message`；错误文件不是正常启动必有，账本 `ts` 仍为成功解析会话文件 mtime。
    - 启动写入由 settings 行 apply 期 root `ctx.effect` 调度固定包内真实 Worker；Worker 复用同步 `startupArchive` 完成扫描、解压、聚合、严格解析、序列化与发布，失败只留 `failed`/warn，不回退主线程；`scanUsageRows`、`archiveLedger`、`startupArchive` 仍是同步 API，不混称后台 API。
    - 模式/血缘识别仅保留在当轮内存，现有首帧路径仍整文件读盘仅解首帧；按日志当前 mtime 与账本 `ts` 以统一 ISO 毫秒精度比较，相同跳过完整用量重扫，不同（含回退）或未入账才解析，成功 `ts` 记文件 mtime，失败不推进；无持久 `session-presets` 读写/修复/自愈，不向说明行增加检查点，也不以全量重扫替代。
-   - 账本固定为单一 archive，采用同目录 temp→rename 原子发布；正常新目录仅有 `ledger-v2.archive.jsonl`，失败时另有 `archive-failed.log`，运行中允许本人 lock/temp，正常完成或协作取消清理本人残留，不删他人锁；账本行仍固定 15 键并保留白名单、血缘、单调性等合同。
-   - 旧部署由用户停止旧代码并重新部署后手动清理一次旧 `session-presets.json`；新代码不读取、改写、重建或自动删除旧缓存。W 隔离/模拟安装布局属于 AUTO，真实 Host 权限、启动/HMR、内存与生产会话属于 HUMAN/NOT-RUN。
+   - 账本固定为单一 archive，采用同目录 temp→rename 原子发布；共享目录还可有现有 agent/request/anchored 等其他日志，本模块只管理自己的账本、错误 JSONL 与本人 lock/temp；账本行仍固定 15 键并保留白名单、血缘、单调性等合同。
+   - 用户操作指引：先停止所有可能写入旧账本的进程，确认新账本目标不存在并自行备份，再只将旧账本移动/重命名为新账本（原内容不变），随后以新版本启动；若目标已存在立即停手，不覆盖、不合并。旧报错不导入、不转换、不自动删除，不提供迁移脚本或自动回退；现有三类日志不动。W 隔离/模拟安装布局属于 AUTO，真实 Host 权限、启动/HMR、内存与生产会话属于 HUMAN/NOT-RUN。

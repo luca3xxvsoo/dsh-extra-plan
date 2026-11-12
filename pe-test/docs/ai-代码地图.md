@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-11-11 19:30:50（脚本自动更新时间戳行）
+> 上次同步：2026-11-12 12:58:19（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -33,9 +33,9 @@
 | 批准前禁委派（approval deny） | index.js | approvalDenyReason |
 | 规划子代理分支闸门（planner 写禁+预算） | index.js | plannerGateReason、shellMutationReason |
 | 会话事件快照／角色常量与身份识别（ROLE_IDS/ROLE_ORDERS 只描述身份与顺序，不承载权限）／单次快照复用（execEvents）／planner descriptor 缓存／usage 血缘上下文 | lib/agent-session.js、lib/agent-runtime.js、lib/runtime-lifecycle.js、lib/role-contract.js、index.js | sessionEvents、isSubagentChild、isLiveDelegation、createAgentRuntime、applyChildPolicy、isChild、isPlannerChild、toolSchemasOf、usageContextOf、usageRootOf、childBaseline |
-| 同步 usage 扫描/聚合/覆盖式更新／路径授权（同步入口 `scanUsageRows`/`archiveLedger`/`startupArchive`；扫描白名单、v4 多帧解压、九字段身份合并、单调性保护与单 archive temp→rename；当轮内存模式/血缘识别由 `scanSessionPresets` 预筛，`startupArchive` 再以日志 `mtime`→账本 `ts` 做增量判定，不读写持久 `session-presets`，统计只读快照不负责归档事务） | plugins/dsh-extra-plan/lib/usage-ledger.js | enumerateSessionLogs、scanUsageRows、scanUsageRowsOf、scanSessionPresets、ensureLedgerDirectory、publishArchive |
+| 同步 usage 扫描/聚合/覆盖式更新／路径授权（同步入口 `scanUsageRows`/`archiveLedger`/`startupArchive`；扫描白名单、v4 多帧解压、九字段身份合并、单调性保护与单 archive temp→rename；当轮内存模式/血缘识别由 `scanSessionPresets` 收集首帧，白名单由 `startupArchiveUnsafe` 过滤，`startupArchive` 再以日志 `mtime`→账本 `ts` 做增量判定，不读写持久 `session-presets`；默认 Host 账本为 `logs/dsh-extra-plan/extra-plan-usage-ledger.jsonl`，错误诊断按需写 `logs/dsh-extra-plan/extra-plan-usage-errors.jsonl`（`ts`/`reason`/`message` 均为字符串），共享目录中的其他日志由各自功能独立管理，统计只读快照不负责归档事务） | plugins/dsh-extra-plan/lib/usage-ledger.js | enumerateSessionLogs、scanUsageRows、scanUsageRowsOf、scanSessionPresets、ensureLedgerDirectory、publishArchive |
 | 会话状态生命周期／disposed 收尾／同步扫描聚合与单调性保护／root 与自身 session 血缘（断链/循环仍以空 root 合法落账；rootSessionId/agentPreset 可空，非法 context 拒绝）／四桶字段（provider、input/cacheRead/cacheWrite/output）／账本按九字段身份恒等一行、重复扫描结果恒等、本次扫描小于现状保留旧值并告警一次、`archiveRowOf` 的 `ts` 取成功解析 session 文件 ISO 毫秒 mtime／后台 controller owner 单飞与同根串行、取消提交边界 | index.js、lib/agent-runtime.js、lib/usage-ledger.js、lib/usage-ledger-background.js、lib/usage-ledger-worker.js | usageContextOf、usageRootOf、mergedArchiveGroups、archiveRowOf、noteRunCodeSubCall、childBaseline、startUsageLedgerBackground、createWorkerHandle、settleAfterExit、validateAndRebuild |
-| 启动归档／插件内置自动归档／H 默认账本唯一严格归档（settings 行 apply 期由 root `ctx.effect` 调度固定 Worker；主线程只传 pathContext 快照，Worker 复用 `startupArchive` 完成扫描/解压/聚合/严格解析/序列化/发布，失败只 `failed`/warn 不回退；`archiveLedger`/`startupArchive` 仍可同步直调；当轮内存首帧模式/血缘识别后按白名单与日志当前 `mtime` 对账本 `ts` 做统一 ISO 毫秒增量比较，相同跳过完整用量重扫，变化/回退/未入账才解析，成功记文件 mtime，失败批次不推进 archive 水位并重试；不读写持久 `session-presets`，健康 up-to-date 零锁零写；首次 archive rename 前可协作取消并清本人 temp/lock，提交后返回真实 archived；单 archive temp→rename，不是双文件事务；预算 STARTUP_ARCHIVE_BUDGET_MS=3000ms 只在 archive 阶段检查点生效，不是扫描期限；可捕获的后台错误只报告失败/跳过并按既有诊断留痕，apply 不等待归档、不会回退主线程同步扫描；账本路径由启动归档固定拼接，配置项 usageLedger.path 已退役；首行说明行位置与固定15键校验由本实现负责，options.onCheck 仅测试探针） | plugins/dsh-extra-plan/lib/usage-ledger.js、plugins/dsh-extra-plan/lib/usage-ledger-background.js、plugins/dsh-extra-plan/lib/usage-ledger-worker.js | archiveLedger、startupArchive、startupArchiveUnsafe、parseStrictLedgerText、assertUniqueArchiveRows、archiveTextOf、publishArchive、reportFailure、recordDiagnostic、acquireArchiveLock、startUsageLedgerBackground、createWorkerHandle |
+| 启动归档／插件内置自动归档／H 默认账本唯一严格归档（默认账本为 `logs/dsh-extra-plan/extra-plan-usage-ledger.jsonl`；诊断仅按需写 `logs/dsh-extra-plan/extra-plan-usage-errors.jsonl`，每行仅有字符串 `ts`/`reason`/`message`；共享目录可含其他日志，本模块只管理本人两目标与 temp/lock；settings 行 apply 期由 root `ctx.effect` 调度固定 Worker；主线程只传 pathContext 快照，Worker 复用 `startupArchive` 完成扫描/解压/聚合/严格解析/序列化/发布，失败只 `failed`/warn 不回退；`archiveLedger`/`startupArchive` 仍可同步直调；当轮内存首帧模式/血缘识别后按白名单与日志当前 `mtime` 对账本 `ts` 做统一 ISO 毫秒增量比较，相同跳过完整用量重扫，变化/回退/未入账才解析，成功记文件 mtime，失败批次不推进 archive 水位并重试；不读写持久 `session-presets`，健康 up-to-date 零锁零写；首次 archive rename 前可协作取消并清本人 temp/lock，提交后返回真实 archived；单 archive temp→rename，不是双文件事务；预算 STARTUP_ARCHIVE_BUDGET_MS=3000ms 只在 archive 阶段检查点生效，不是扫描期限；可捕获的后台错误只报告失败/跳过并按需诊断留痕，apply 不等待归档、不会回退主线程同步扫描；账本路径由启动归档固定拼接，配置项 usageLedger.path 已退役；首行说明行位置与固定15键校验由本实现负责，options.onCheck 仅测试探针） | plugins/dsh-extra-plan/lib/usage-ledger.js、plugins/dsh-extra-plan/lib/usage-ledger-background.js、plugins/dsh-extra-plan/lib/usage-ledger-worker.js | archiveLedger、startupArchive、startupArchiveUnsafe、parseStrictLedgerText、assertUniqueArchiveRows、archiveTextOf、publishArchive、reportFailure、recordDiagnostic、acquireArchiveLock、startUsageLedgerBackground、createWorkerHandle |
 | 方案与验收落盘／save_plan 双写（逐文件操作与 M 点合同；修改前范围/唯一原文锚点→未来验收定位；真实源核实与行漂移取证；主会话侧任意路由态放行的受限规划工件，仅写 cwd/.extra-plan；工具不自动调度） | lib/save-tool-factories.js、lib/save-contract.js、index.js | defineSavePlan、registerSavePlan、saveArtifactBase |
 | 落盘单次提交／有限清理（atomic/commit） | lib/save-persistence.js、index.js | atomicCommit |
 | 线索落盘／save_probe／证据报告（probe/evidence；限制值唯一来自 `save-contract.js#PROBE_LIMITS`；step-00 PR23/PR34/PR35 回归；主会话侧放行条件保持现状——route=plan + 目的已定 + 澄清完成；extractProbeEvidenceRefs 顺序固定：整体成对剥除（循环）→ 按顿号/分号/竖线拆分 → 逐段成对剥除 + trim → 过滤空串 → 去重；拆分符与剥除集均不含空格、半角逗号、`.`、`/`，单侧一律不剥） | lib/save-contract.js、lib/save-probe-validation.js、lib/save-tool-factories.js、index.js | validateProbe、renderProbeMarkdown、extractProbeEvidenceRefs |
@@ -78,12 +78,12 @@
 | MALFORMED_RESPONSE 限次自愈／请求失败兜底 retry／注入模型可读提示（source.kind 用生产者自有 `plugin:dsh-extra-plan`；developer/message 须自带 ≥1 的 turn/step，宿主 append 不补坐标；坐标缺失/非正整数 → 不注入但仍返回 retry） | index.js | malformedRecovery、recordRequestError |
 | 会话日志格式 v4 代际／session.v4.jsonl.zstd／共享 session-finder/logPath 三代候选名并存（v4/v3/旧名，未知形状归 v0）；step-06/07 与 step-06-08-v4取证回归 只接受 session.v4.jsonl.zstd | pe-test/_shared/session-finder.mjs、pe-test/tools/step-07-子代理模型与引导取证.mjs |  |
 
-- step-99 文件说明：只读 usage 统计 CLI；默认模式直接读取单一 `ledger-v2.archive.jsonl`（不取锁：写入侧是单 archive temp→rename 原子发布，读者只见完整版本），容错解析与宽松合并计数（坏 JSON、非账本对象、说明行仅计数，零写入）；新增 `--compare` 只读对拍（额外跑现场扫描并按 role→model 对拍，零写盘）；旧 `strict:true` 显式拒绝 `strict-parser-removed`，`--archive` 显式拒绝 `usage-removed`；归档路径与 H/W 访问委托公共 pathContext/usage-ledger 能力；模式/血缘识别与 mtime→ts 增量属于插件当轮内存启动路径，CLI 不读写持久 `session-presets`，统计不生产归档事务。
+- step-99 文件说明：只读 usage 统计 CLI；调用必须显式提供账本位置，普通相对路径固定为 W 目标，显式 Host 目标配合 `--host-root` 与授权上下文；默认 Host 落点为 `logs/dsh-extra-plan/extra-plan-usage-ledger.jsonl`，默认模式直接读取单一 `extra-plan-usage-ledger.jsonl`（不取锁：写入侧是单 archive temp→rename 原子发布，读者只见完整版本），容错解析与宽松合并计数（坏 JSON、非账本对象、说明行仅计数，零写入）；`--compare` 只读对拍（额外跑现场扫描并按 role→model 对拍，零写盘）；旧 `strict:true` 显式拒绝 `strict-parser-removed`，`--archive` 在 IO 前显式拒绝 `usage-removed`；错误诊断按需写 `logs/dsh-extra-plan/extra-plan-usage-errors.jsonl`，每行仅有字符串 `ts`/`reason`/`message`，不读取其他共享日志；归档路径与 H/W 访问委托公共 pathContext/usage-ledger 能力；模式/血缘识别与 mtime→ts 增量属于插件当轮内存启动路径，CLI 不读写持久 `session-presets`，统计不生产归档事务。
 - step-99 统计关键符号（该测试工具不在生成根内，行号不在此维护；按函数名到源码定位；仅作统计说明来源）：`readSnapshots`、`parseLedgerText`、`summarizeSnapshotTexts`、`renderStats`、`statLedger`。
   - 统计读取与输出：`readSnapshots` → `summarizeSnapshotTexts` → `renderStats`；`parseLedgerText` 容错计数 badJson、非账本对象与说明行，不写归档。
-  - 旧模式与路径：`parseLedgerText(options.strict=true)` 抛出 `strict-parser-removed`；`main` 前置拒绝 `--archive`/`usage-removed`；账本目标直接由位置参数给定（唯一账本 `ledger-v2.archive.jsonl`，不再经归档入口委托解析）；`--compare` 先由 `hasCompareFlag` 剥离，再走 `readLedgerReadOnly` 只读对拍。
-  - 统计只汇总单一 `ledger-v2.archive.jsonl`（不取锁，写入侧 temp→rename 原子发布）；严格解析、首行位置、固定键与唯一性校验、归档序列化与事务发布全部归 plugins/dsh-extra-plan/lib/usage-ledger.js 的 `archiveLedger`/`startupArchive` 及其内部函数。
-  - `lib/usage-ledger.js` 负责扫描聚合、覆盖式更新、单调性保护、白名单与一次 `O_EXCL` 简易互斥；统计读取链路（`parseLedgerText`/`summarizeSnapshotTexts`）是 step-99 自建解析与聚合副本、不 import lib 的聚合实现，仅 `--compare` 才额外调用 lib 的 `scanUsageRows` 取现场扫描，不等于生产归档事务。
+  - CLI 路径与拒绝：`parseLedgerText(options.strict=true)` 抛出 `strict-parser-removed`；`main` 在 IO 前拒绝 `--archive`/`usage-removed`；账本目标直接由显式位置参数给定（唯一账本 `extra-plan-usage-ledger.jsonl`，不再经归档入口委托解析）；`--compare` 先由 `hasCompareFlag` 剥离，再走 `readLedgerReadOnly` 只读对拍。
+  - 统计只汇总单一 `extra-plan-usage-ledger.jsonl`（不取锁，写入侧 temp→rename 原子发布）；严格解析、首行位置、固定键与唯一性校验、归档序列化与事务发布全部归 plugins/dsh-extra-plan/lib/usage-ledger.js 的 `archiveLedger`/`startupArchive` 及其内部函数。
+  - `lib/usage-ledger.js` 负责扫描聚合、覆盖式更新、单调性保护、白名单与一次 `O_EXCL` 简易互斥；统计读取链路（`parseLedgerText`/`summarizeSnapshotTexts`）是 step-99 自建解析与聚合副本、不 import lib 的聚合实现，仅 `--compare` 才额外调用 lib 的 `scanUsageRows` 取现场扫描，不等于生产归档事务；step-99 不读取或改写 usage 错误 JSONL及其他共享日志。
   - 归档测试/启动路径应调用 `archiveLedger`/`startupArchive`；统计 CLI 不提供归档实现。
   - 本段不维护机器行号；函数名须在默认机器索引中可导航，step-99 仅作人工说明来源。
   - CLI：`main`（统计用法；旧 strict/--archive 模式拒绝），`parseCliArgs`（仅统计用法）。
@@ -141,7 +141,7 @@
 | plugins/dsh-extra-plan/lib/shell-mutation.js | 428 | 跨平台命令文本解码与 pwsh/bash 写形态判定；纯函数、不持有 apply 状态 |
 | plugins/dsh-extra-plan/lib/usage-ledger-background.js | 218 | 后台账本调度 controller：只快照可信 pathContext，按 owner 单飞与 hostDataRoot 串行创建固定 Worker，处理协议、协作取消和 exit 后终态；不复制扫描算法。 |
 | plugins/dsh-extra-plan/lib/usage-ledger-worker.js | 116 | 真实 Worker 入口：重建 pathContext 并复用同步 startupArchive 完成扫描、解析与发布，传递小型终态结果，响应共享取消位后关闭 port。 |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | 1301 | 账本唯一实现：扫描聚合 + 覆盖式更新 + 启动入口（常量与身份键 → 扫描 %DSH_HOME%/sessions 下 v4 会话日志并按九字段身份聚合 → 内存首帧模式/血缘识别后按日志 mtime 与账本 ts 做增量判定 → 读现有 archive 后覆盖式更新、单调性保护、说明行、单 archive temp→rename 原子发布 → startupArchive 启动入口）；固定15键（rootSessionId/agentPreset 可空）、四桶口径、严格白名单、一次 `O_EXCL` 简易互斥（拿不到即跳过、不接管不删他人锁），失败只留痕、绝不阻断启动。 |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | 1301 | 账本唯一实现：默认 Host 目标为 `logs/dsh-extra-plan/extra-plan-usage-ledger.jsonl`，诊断按需写 `logs/dsh-extra-plan/extra-plan-usage-errors.jsonl`；扫描聚合 + 覆盖式更新 + 启动入口（常量与身份键 → 扫描 %DSH_HOME%/sessions 下 v4 会话日志并按九字段身份聚合 → 内存首帧模式/血缘识别后按日志 mtime 与账本 ts 做增量判定 → 读现有 archive 后覆盖式更新、单调性保护、说明行、单 archive temp→rename 原子发布 → startupArchive 启动入口）；固定15键（rootSessionId/agentPreset 可空）、四桶口径、严格白名单、一次 `O_EXCL` 简易互斥（拿不到即跳过、不接管不删他人锁），失败按需留痕，可处理异常返回结构化状态，正常由 settings Worker 调用；直调 API 仍同步，真实启动及内存风险需另行验证；共享目录中的其他日志不由本模块接管。 |
 | plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | 792 | 从 agent.cordis.yml 校验并生成 runtime 默认常量、纯主/角色 definition 与 client 标记区块（顶层结构逐字平移并保留 group/isolate/!!js）；默认仓库七输出，自定义 client 默认关闭；支持 --check 且坏源不覆盖 last-known-good（上次已知良好版本） |
 
 ## 函数索引
@@ -1182,14 +1182,14 @@
 | plugins/dsh-extra-plan/lib/usage-ledger.js | authorizeWriteTarget | L977-979 | 写目标 H/W 双根授权（prepareWriteTarget，含用途与期望类型）。 |  |
 | plugins/dsh-extra-plan/lib/usage-ledger.js | authorizeReadIfPresent | L981-987 | 读目标存在时做只读授权复核，缺失不报错。 |  |
 | plugins/dsh-extra-plan/lib/usage-ledger.js | optionalRead | L989-997 | 容错读：ENOENT 视为不存在，其它错误转 read-failed。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | recordDiagnostic | L999-1011 | 向 usage-ledger/archive-failed.log 追加一行时间+原因；写失败静默忽略，不阻断启动。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | recordDiagnostic | L999-1011 | 仅在原调用需要留痕时向 Host `logs/dsh-extra-plan/extra-plan-usage-errors.jsonl` 按需追加一行 JSONL；字段恰为字符串 `ts`、`reason`、`message`，`ts` 为诊断发生时间；写失败静默忽略，不阻断启动。 |  |
 | plugins/dsh-extra-plan/lib/usage-ledger.js | reportFailure | L1013-1023 | 失败统一出口：warn + 写诊断行 + 返回 { status:'failed', reason, error }。 |  |
 | plugins/dsh-extra-plan/lib/usage-ledger.js | publishArchive | L1027-1042 | 单目标原子发布：写同目录临时文件 → 预算检查 → rename 覆盖 archive；失败清理临时文件、既有账本原样保留。 |  |
 | plugins/dsh-extra-plan/lib/usage-ledger.js | acquireArchiveLock | L1047-1064 | 一次 O_EXCL 创建 <archive>.lock 的简易互斥；拿不到即返回未获取，不等待、不接管死锁、不删他人锁。 |  |
 | plugins/dsh-extra-plan/lib/usage-ledger.js | releaseArchiveLock | L1067-1069 | 仅 unlink 本次 O_EXCL 创建的锁文件，失败只在 try/finally 内忽略，不抛给启动路径。 |  |
 | plugins/dsh-extra-plan/lib/usage-ledger.js | archiveLedger | L1077-1154 | 直调入口：给定 archive 路径的「聚合 + 覆盖式更新 + 原子发布」，不承担进程互斥。 |  |
 | plugins/dsh-extra-plan/lib/usage-ledger.js | checkBudget | L1098-1106 | 预算与 onCheck 阶段探针：超时抛 budget-timeout，阶段名供 step-00 M6 断言。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | skipWithDiagnostic | L1157-1165 | 可预期跳过（无 host 根/锁忙/扫描失败）时返回 skipped 并写一行诊断。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | skipWithDiagnostic | L1157-1165 | 可预期跳过（无 host 根/锁忙/扫描失败）时返回 skipped，并仅在原 `recordDiagnostic` 需要留痕时按需写 usage 错误 JSONL；取消不记失败。 |  |
 | plugins/dsh-extra-plan/lib/usage-ledger.js | upToDateArchiveResult | L1170-1184 | 构造日志 mtime 与账本 ts 无变化的健康终态，报告 archive 现有行/字节并标记零完整用量扫描。 |  |
 | plugins/dsh-extra-plan/lib/usage-ledger.js | startupArchiveUnsafe | L1186-1281 | 启动路径主体：host 根判定 → 路径解析与双根授权 → 内存首帧/白名单识别及 mtime→ts 增量判定 → 简易锁 → 调 archiveLedger；失败转结构化结果，取消按 archive rename 提交边界处理。 |  |
 | plugins/dsh-extra-plan/lib/usage-ledger.js | startupArchive | L1285-1301 | 同步启动归档入口：捕获可处理异常并返回结构化状态，正常由 settings Worker 调用；不作无条件绝不阻断保证。 |  |
