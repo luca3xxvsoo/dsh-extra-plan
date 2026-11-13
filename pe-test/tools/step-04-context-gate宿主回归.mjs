@@ -29,17 +29,31 @@ const DURABLE_PATH = join(BATCH_DIR, 'durable-events.json')
 const PUBLICATION_INDEX_PATH = join(BATCH_DIR, 'context-publication-index.json')
 const CONTEXT_GATE_FIXTURE_TEXT = Object.freeze({
   agents: '# context-gate fixture\nfixture baseline instructions\n',
-  ordinarySkill: '---\nname: ordinary-skill\ndescription: ordinary fixture skill\n---\nordinary skill body\n',
-  creativeSkill: '---\nname: cordis-plugin-development\ndescription: creative fixture skill\n---\ncreative skill body\n'
+  // DSH_COMPAT_RC1：旧三名兼容技能；仅在明确撤销rc.1兼容并保留共享context安全回归后删除。
+  compatCordisPluginDevelopment: '---\nname: cordis-plugin-development\ndescription: rc1 compatibility creative fixture skill\n---\nrc1 compatibility creative skill body\n',
+  compatEditingCordisCompositions: '---\nname: editing-cordis-compositions\ndescription: rc1 compatibility creative fixture skill\n---\nrc1 compatibility creative skill body\n',
+  compatCordisCompositionReference: '---\nname: cordis-composition-reference\ndescription: rc1 compatibility creative fixture skill\n---\nrc1 compatibility creative skill body\n',
+  // DSH_CURRENT_RC2：rc.2当前来源；ordinary项仍是普通技能，不归历史可删。
+  currentDshDoc: '---\nname: dsh-doc\ndescription: rc2 current creative fixture skill\n---\nrc2 current creative skill body\n',
+  currentAgentExperience: '---\nname: agent-experience\ndescription: rc2 current ordinary fixture skill\n---\nrc2 current ordinary skill body\n',
+  currentOrdinarySkill: '---\nname: ordinary-skill\ndescription: rc2 current ordinary fixture skill\n---\nrc2 current ordinary skill body\n'
 })
 mkdirSync(HOME_DIR, { recursive: true })
 mkdirSync(SESSION_ROOT, { recursive: true })
 mkdirSync(join(WORKSPACE, '.git'), { recursive: true })
-mkdirSync(join(SKILLS_ROOT, 'ordinary-skill'), { recursive: true })
 mkdirSync(join(SKILLS_ROOT, 'cordis-plugin-development'), { recursive: true })
+mkdirSync(join(SKILLS_ROOT, 'editing-cordis-compositions'), { recursive: true })
+mkdirSync(join(SKILLS_ROOT, 'cordis-composition-reference'), { recursive: true })
+mkdirSync(join(SKILLS_ROOT, 'dsh-doc'), { recursive: true })
+mkdirSync(join(SKILLS_ROOT, 'agent-experience'), { recursive: true })
+mkdirSync(join(SKILLS_ROOT, 'ordinary-skill'), { recursive: true })
 writeFileSync(join(WORKSPACE, 'AGENTS.md'), CONTEXT_GATE_FIXTURE_TEXT.agents, 'utf8')
-writeFileSync(join(SKILLS_ROOT, 'ordinary-skill', 'SKILL.md'), CONTEXT_GATE_FIXTURE_TEXT.ordinarySkill, 'utf8')
-writeFileSync(join(SKILLS_ROOT, 'cordis-plugin-development', 'SKILL.md'), CONTEXT_GATE_FIXTURE_TEXT.creativeSkill, 'utf8')
+writeFileSync(join(SKILLS_ROOT, 'cordis-plugin-development', 'SKILL.md'), CONTEXT_GATE_FIXTURE_TEXT.compatCordisPluginDevelopment, 'utf8')
+writeFileSync(join(SKILLS_ROOT, 'editing-cordis-compositions', 'SKILL.md'), CONTEXT_GATE_FIXTURE_TEXT.compatEditingCordisCompositions, 'utf8')
+writeFileSync(join(SKILLS_ROOT, 'cordis-composition-reference', 'SKILL.md'), CONTEXT_GATE_FIXTURE_TEXT.compatCordisCompositionReference, 'utf8')
+writeFileSync(join(SKILLS_ROOT, 'dsh-doc', 'SKILL.md'), CONTEXT_GATE_FIXTURE_TEXT.currentDshDoc, 'utf8')
+writeFileSync(join(SKILLS_ROOT, 'agent-experience', 'SKILL.md'), CONTEXT_GATE_FIXTURE_TEXT.currentAgentExperience, 'utf8')
+writeFileSync(join(SKILLS_ROOT, 'ordinary-skill', 'SKILL.md'), CONTEXT_GATE_FIXTURE_TEXT.currentOrdinarySkill, 'utf8')
 
 const CONTEXT_ENV_KEYS = Object.freeze(['DSH_HOME', 'HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'XDG_CACHE_HOME', 'DSH_EXTRA_PLAN_CAPTURE_DIR', 'DSH_EXTRA_PLAN_REPORT_DIR', 'TEMP', 'TMP', 'TMPDIR', 'DSH_PROFILE', 'DSH_EXTRA_PLAN_CONFIG_PATH'])
 const previousEnv = Object.fromEntries(CONTEXT_ENV_KEYS.map((key) => [key, process.env[key]]))
@@ -828,7 +842,11 @@ try {
   check('L阶段durable surface含agent-instructions或skill-catalog', currentKinds.includes('agent-instructions') && currentKinds.includes('skill-catalog'))
   const catalogMessage = durableMessages.find((message) => sourceKind(message) === 'skill-catalog')
   const entries = catalogMessage?.source?.entries || []
-  check('C=0真实目录投影保留普通skill且隐藏creative skill', entries.some((entry) => entry.name === 'ordinary-skill') && !entries.some((entry) => entry.name === 'cordis-plugin-development'))
+  const entryNames = new Set(entries.filter((entry) => entry !== null && typeof entry === 'object' && typeof entry.name === 'string').map((entry) => entry.name))
+  // DSH_COMPAT_RC1：旧三名隐藏但仍注册；DSH_CURRENT_RC2：dsh-doc隐藏但仍注册；两项ordinary必须保留。
+  const c0HiddenCreativeNames = ['cordis-plugin-development', 'editing-cordis-compositions', 'cordis-composition-reference', 'dsh-doc']
+  const c0OrdinaryNames = ['agent-experience', 'ordinary-skill']
+  check('C=0真实目录投影保留两项ordinary且隐藏四名creative', c0OrdinaryNames.every((name) => entryNames.has(name)) && c0HiddenCreativeNames.every((name) => !entryNames.has(name)))
   // request.tools 集合断言（C=0）：L 请求工具面不含两个 cordis 展示工具，且两名仍在 restrict 前可收窄名内
   // （证明缺席来自 agent 作用域 restrict({ deny })，不是工具未注册的空通过；投影副本不作判据）。
   const requestToolNamesOf = (request) => Array.isArray(request?.tools) ? request.tools.map((tool) => tool?.name).filter((name) => typeof name === 'string') : []
@@ -860,6 +878,11 @@ try {
         c1ToolNames.length >= 2
           && c1LastNames.length > CORDIS_FIXTURE_TOOL_NAMES.length
           && CORDIS_FIXTURE_TOOL_NAMES.every((name) => c1LastNames.includes(name)))
+      const c1DerivedMessages = c1Handle.agent.session.deriveMessages()
+      const c1CatalogMessage = (Array.isArray(c1DerivedMessages) ? c1DerivedMessages : []).slice().reverse().find((message) => sourceKind(message) === 'skill-catalog' && Array.isArray(message?.source?.entries))
+      const c1CatalogNames = new Set((c1CatalogMessage?.source?.entries || []).filter((entry) => entry !== null && typeof entry === 'object' && typeof entry.name === 'string').map((entry) => entry.name))
+      const c1RetainedNames = ['cordis-plugin-development', 'editing-cordis-compositions', 'cordis-composition-reference', 'dsh-doc', 'agent-experience', 'ordinary-skill']
+      check('C=1公开session.deriveMessages末个合法catalog保留四名creative及两项ordinary', c1RetainedNames.every((name) => c1CatalogNames.has(name)))
       await c1Handle.dispose()
     } finally {
       c1Registration()
@@ -868,8 +891,12 @@ try {
     }
   }
   const skillSnapshot = await root.skills.snapshot({ cwd: WORKSPACE, scope: handle.agent })
-  const loadedSkill = await root.skills.get('ordinary-skill', { cwd: WORKSPACE, scope: handle.agent })
-  check('skill schema/registry与按名加载真实可用', skillSnapshot.complete === true && skillSnapshot.skills.some((skill) => skill.name === 'ordinary-skill') && loadedSkill?.name === 'ordinary-skill' && String(loadedSkill.content).includes('ordinary skill body'))
+  const hiddenSkillNames = ['cordis-plugin-development', 'editing-cordis-compositions', 'cordis-composition-reference', 'dsh-doc']
+  const ordinarySkillNames = ['agent-experience', 'ordinary-skill']
+  const snapshotNames = new Set((Array.isArray(skillSnapshot?.skills) ? skillSnapshot.skills : []).map((skill) => skill?.name).filter((name) => typeof name === 'string'))
+  const hiddenSkills = await Promise.all(hiddenSkillNames.map((name) => root.skills.get(name, { cwd: WORKSPACE, scope: handle.agent })))
+  const ordinarySkills = await Promise.all(ordinarySkillNames.map((name) => root.skills.get(name, { cwd: WORKSPACE, scope: handle.agent })))
+  check('skill snapshot保留四名隐藏creative与两项ordinary且get不注销隐藏项', skillSnapshot.complete === true && [...hiddenSkillNames, ...ordinarySkillNames].every((name) => snapshotNames.has(name)) && hiddenSkills.every((skill, index) => skill?.name === hiddenSkillNames[index]) && ordinarySkills.every((skill, index) => skill?.name === ordinarySkillNames[index]))
   const traceKinds = trace.map((request) => countKinds(request.messages, ['agent-instructions', 'skill-catalog']))
   check('宿主request与durable source在F/L边界可对照', traceKinds.slice(0, 2).every((count) => count === 0) && traceKinds.slice(2).some((count) => count > 0))
   durableMessages = handle.agent.session.deriveMessages()

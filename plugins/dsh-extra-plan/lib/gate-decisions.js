@@ -810,7 +810,7 @@ function probeDisposalWarning(remaining) {
 //    → job_output（wait 检查 + 计数器查重，只读不写入；set 由 recordJobOutputCall 在放行路径执行）→ null。
 //    save_plan 已移除路由态限制：无显式分支，由本函数兜底 return null 任意路由态放行
 //    （受限规划工件：仅写 cwd/.extra-plan 固定形状 Markdown，内容闸门与规划子代理同一实现）。
-//    gateCtx: { events, planToolName, jobOutputCallCounters, pollGuardCounters, runCodeDepth, runcodeCatchGate, getAgents(可选), gateRuntime }（gateRuntime 必填）。
+//    gateCtx: { events, planToolName, jobOutputCallCounters, pollGuardCounters, runCodeDepth, runcodeCatchGate, getAgents(可选), messageTargetIdOf(arguments)(可选), gateRuntime }（gateRuntime 必填）。
 function mainGateReason(state, exec, gateCtx) {
   const ctx = gateCtx !== undefined && gateCtx !== null ? gateCtx : {}
   const gateRuntime = ctx.gateRuntime
@@ -923,8 +923,12 @@ function mainGateReason(state, exec, gateCtx) {
       const agents = ctx.getAgents()
       if (agents !== undefined && agents !== null && typeof agents.get === 'function') {
         const smArgs = exec !== undefined && exec !== null ? exec.arguments : undefined
-        const targetId = smArgs !== undefined && smArgs !== null && typeof smArgs === 'object' && typeof smArgs.agent_id === 'string' ? smArgs.agent_id : undefined
-        if (targetId !== undefined) {
+        // DSH_CURRENT_RC2：可选回调优先读取新 agent 名称/路径的本轮解析ID；删除边界仅限 rc.2 agent/resolveName 适配，须另行授权，不含共享安全核心。
+        // DSH_COMPAT_RC1：新参数未提供时读取旧 agent_id Session ID；删除边界仅限 rc.1 旧参数兼容，须另行授权，不含共享安全核心。
+        const targetId = typeof ctx.messageTargetIdOf === 'function'
+          ? ctx.messageTargetIdOf(smArgs)
+          : smArgs !== undefined && smArgs !== null && typeof smArgs === 'object' && typeof smArgs.agent_id === 'string' ? smArgs.agent_id : null
+        if (typeof targetId === 'string') {
           const target = agents.get(targetId)
           if (target !== undefined && target !== null && target.status === 'running') {
             return '子代理running中，禁止打扰'
@@ -936,7 +940,7 @@ function mainGateReason(state, exec, gateCtx) {
   }
   if (name === 'job_list' || name === 'list_agents') return pollGuardGateReason(exec, ctx.pollGuardCounters)
   if (name === 'run_code') {
-    return runCodeGroupDenyReason(state, exec, { kind: 'main' }, { events, planToolName, jobOutputCallCounters: ctx.jobOutputCallCounters, pollGuardCounters: ctx.pollGuardCounters, getAgents: ctx.getAgents, runcodeCatchGate: ctx.runcodeCatchGate, runCodeDepth: (typeof ctx.runCodeDepth === 'number' ? ctx.runCodeDepth : 0) + 1, gateRuntime })
+    return runCodeGroupDenyReason(state, exec, { kind: 'main' }, { events, planToolName, jobOutputCallCounters: ctx.jobOutputCallCounters, pollGuardCounters: ctx.pollGuardCounters, getAgents: ctx.getAgents, messageTargetIdOf: ctx.messageTargetIdOf, runcodeCatchGate: ctx.runcodeCatchGate, runCodeDepth: (typeof ctx.runCodeDepth === 'number' ? ctx.runCodeDepth : 0) + 1, gateRuntime })
   }
   if (name === 'job_output') return jobOutputGateReason(exec, ctx.jobOutputCallCounters)
   return null
@@ -946,7 +950,7 @@ function mainGateReason(state, exec, gateCtx) {
 // state：主会话 flow state（role.kind==='main' 时必传；其它角色忽略）；缺省归一化为
 // { route:'none', clarified:false, approved:false, purpose:'none', channelBroken:false }。
 // role：{ kind:'main' } | { kind:'planner' } | { kind:'child', readOnly:boolean, probe:boolean }。
-// gateCtx: { events, planToolName, jobOutputCallCounters, pollGuardCounters, runCodeDepth, runcodeCatchGate, getAgents(可选), gateRuntime }（gateRuntime 必填）。
+// gateCtx: { events, planToolName, jobOutputCallCounters, pollGuardCounters, runCodeDepth, runcodeCatchGate, getAgents(可选), messageTargetIdOf(arguments)(可选), gateRuntime }（gateRuntime 必填）。
 // 缺省：events:[]、planToolName:'subagent_plan'、jobOutputCallCounters:new Map()、pollGuardCounters:new Map()、
 // exploreBudget:DEFAULT_EXPLORE_BUDGET、runCodeDepth:0、runcodeCatchGate:false；getAgents 不设缺省（undefined 即 fail-open 放行）；
 // gateRuntime 必须由调用方显式传入（词表唯一值源是 config.gateWords，helper 无默认词表）。

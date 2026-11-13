@@ -344,13 +344,19 @@ try {
   check('S04 严格模式合规会话 exit0 且 SESSION_META/HEADER 字段齐全', s04Strict.status === 0 && s04Strict.output.includes('SESSION_META {"id":"s04-main","version":3,"cwd":"C:/fixture-cwd"}') && s04Strict.output.includes('HEADER line=2 seq=2 sessionId=s04-main version=3 cwd=C:/fixture-cwd toolNames=["read","pwsh"] toolCount=2'))
   check('S04 严格模式 MESSAGE 与 INBOX_ONLY 行齐全', s04Strict.output.includes('MESSAGE {') && s04Strict.output.includes('INBOX_ONLY {') && s04Strict.output.includes('"role":"system"') && s04Strict.output.includes('"inboxOnly":true'))
   const s04CatalogDir = join(s04Workspace, 's04-catalog')
+  // DSH_COMPAT_RC1：旧三名仅作为兼容来源；仅在未来另行授权、协调移除旧技能分类专用数据/期望并完成共享安全回归后，才可撤销。
+  // DSH_CURRENT_RC2：dsh-doc为当前来源；当前dsh-doc与共享安全不在rc.1撤销边界。
+  // 共享v4/序号/坏帧/普通项数据和期望不得随rc.1撤销整块删除。
   writeSession(s04CatalogDir, SESSION_LOG_NAME, [
     { type: 'session', data: { id: 's04-catalog', version: 1, cwd: 'C:/fixture-cwd' }, seq: 1 },
     { type: 'request/header', data: { header: { config: { model: 's04-model' }, tools: ['read'] } }, seq: 2 },
-    { type: 'user/message', data: { message: { id: 's04-cat', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'catalog carrier', skillCatalog: { kind: 'skill-catalog', entries: [{ name: 'cordis-plugin-development' }, { name: 'office' }] } }] } }, seq: 3 },
+    { type: 'user/message', data: { message: { id: 's04-cat', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'catalog carrier', skillCatalog: { kind: 'skill-catalog', entries: [{ name: 'cordis-plugin-development' }, { name: 'editing-cordis-compositions' }, { name: 'cordis-composition-reference' }, { name: 'dsh-doc' }, { name: 'agent-experience' }, { name: 'office' }] } }] } }, seq: 3 },
   ])
   const s04Catalog = runScript(STEP04, exactSessionArgs(s04CatalogDir))
-  check('S04 skill-catalog 行与 creative 归类可见', s04Catalog.status === 0 && s04Catalog.output.includes('source.kind=skill-catalog entries=["cordis-plugin-development","office"]') && s04Catalog.output.includes('creativeSkills=["cordis-plugin-development"]') && s04Catalog.output.includes('creativeCount=1'))
+  const s04CatalogOutput = s04Catalog.output
+  check('S04 skill-catalog 实际子命令保留六项原entries顺序', s04Catalog.status === 0 && s04CatalogOutput.includes('source.kind=skill-catalog entries=["cordis-plugin-development","editing-cordis-compositions","cordis-composition-reference","dsh-doc","agent-experience","office"]'))
+  check('S04 creative 分类独立包含旧三名与dsh-doc且计数为4', s04Catalog.status === 0 && s04CatalogOutput.includes('creativeSkills=["cordis-plugin-development","editing-cordis-compositions","cordis-composition-reference","dsh-doc"]') && s04CatalogOutput.includes('creativeCount=4'))
+  check('S04 ordinary 分类独立保留agent-experience与office两项', s04Catalog.status === 0 && s04CatalogOutput.includes('ordinary=["agent-experience","office"]'))
   const s04SeqBadDir = join(s04Workspace, 's04-seq-bad')
   writeSession(s04SeqBadDir, SESSION_LOG_NAME, [
     { type: 'session', data: { id: 's04-seq-bad', version: 1, cwd: 'C:/fixture-cwd' }, seq: 1 },

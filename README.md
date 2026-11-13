@@ -4,7 +4,7 @@
 
 **作者从reasonix得到的灵感，实现权限控制+子代理角色分配的agent模板**
 
-**兼容性**：DSH = v0.2.2-rc.1、dsh-qqbot 0.5.2（未确认）。旧版本兼容详见Releases
+**兼容性**：DSH = v0.2.2-rc.1 ~ v0.2.2-rc.2、dsh-qqbot 0.5.5（未确认）。旧版本兼容详见Releases
 
 ## 2. 核心优势
 

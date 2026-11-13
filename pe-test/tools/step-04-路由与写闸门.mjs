@@ -311,7 +311,7 @@ for (const [rowId, toolName, presetId] of [['tool-subagent', 'subagent', 'extra-
 // ── ③ 真实监听器拦截行为（[任务5]，mock ctx 走插件 apply） ─────────────
 // 取径订正：C=1 创造 skill 面不再经 agentPresets.resolve('cordis') 运行期注册
 // （该 resolve 只返回 {id[,broken]}，path 恒 undefined），改为预设 skill-filesystem
-// 行 config.customSkillDirs 静态注册——故 agentPresets/skills mock 与其断言整体退役。
+// 行 config.bundledSkillDir 静态注册——故 agentPresets/skills mock 与其断言整体退役。
 function makeHarness(config = {}) {
   const listeners = {}
   const variables = []
@@ -343,6 +343,9 @@ function makeHarness(config = {}) {
       // createAgentRuntime/isLiveDelegation 的 agents 缺席豁免路径不破坏 child 判定）；
       // 用例经 config.agents 显式注入 registry（如 { get: (id) => ({ status: 'running' }) }）。
       if (name === 'agents') return config.agents
+      // DSH_CURRENT_RC2：新 agent 名称/路径解析能力只由用例显式注入；删除边界仅限 rc.2
+      // subagents.resolveName 适配，不改变默认缺席语义或共享安全判定。
+      if (name === 'subagents') return config.subagents
       if (name === 'profileContext') return { home: ROUTE_FIXTURE.home, installAnchor: DSH_PACKAGE_MANIFEST }
       if (name === 'dshHomePath') return (...parts) => join(ROUTE_FIXTURE.home, ...parts.map((part) => String(part)))
       return undefined
@@ -1347,7 +1350,8 @@ const budgetExhaustedText = decisions.budgetExhaustedReason(Math.min(budgetUsedC
 const planChildMain = mainWithEvents([umE(), callE('subagent_plan', 'p1', '{}'), okE('p1', '已启动规划子代理 3a7c1e5b-9d2f-4e8a-b6c4-1f0e9d8c7b6a，可 send_message 继续')])
 const freeCode = { code: "try { await tools.save_plan({ plan: 'p', checklist: 'c' }) } catch (e) {}", description: 'FREE_TOOLS 组（仅 save_plan）' }
 const readMemberCode = { code: "await tools.read({ file_path: 'x' })", description: '读成员' }
-const smCode = { code: 'await tools.send_message({ "agent_id": "session-x", "message": "hi" })', description: 'send_message 成员' }
+// DSH_COMPAT_RC1：旧 agent_id 形状仅保留兼容回归；删除边界仅限 rc.1 旧参数，须另行授权。
+const smCode = { code: 'await tools.send_message({ "agent_id": "session-x", "message": "hi" })', description: 'DSH_COMPAT_RC1 send_message 旧agent_id成员' }
 const joCode = { code: 'await tools.job_output({ "job_id": "j1", "wait": true })', description: 'job_output 成员' }
 const revCode = { code: "await tools.subagent_review({ task: '验收', run_in_background: true })", description: 'subagent_review 成员' }
 
@@ -1369,6 +1373,7 @@ r = preExecute(harness, approvedMain, 'workflow', {})
 checkTrue('R59 workflow 批准放行 → allow', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, approvedMain, 'ralph', {})
 checkTrue('R60 ralph 批准放行 → allow', r !== null && r !== undefined && r.kind === 'allow')
+// DSH_COMPAT_RC1：R61-R62c 下列显式 agent_id 仅是旧参数输入形状；删除边界不含共享 running/idle/冷目标安全判定。
 r = preExecute(harness, noneMain, 'send_message', { agent_id: 'session-x', message: 'hi' })
 checkTrue('R61 send_message 主会话 目标未驻留 → allow（agents 未注入 fail-open，宿主 NOT_RESUMABLE 自理）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harnessAgents, noneMain, 'send_message', { agent_id: 'unknown-id', message: 'hi' })
@@ -1441,12 +1446,14 @@ for (const [roleName, agent, caseHarness] of controlChildCases) {
     checkTrue('R83 ' + roleName + ' ' + controlName + ' 一层嵌套 run_code → 整组 deny 且 next=0', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(controlName) && nextCalls === 0)
   }
 }
+// DSH_COMPAT_RC1：下方 args.agent_id 只标示旧 send_message 输入；running/idle/未驻留与 interrupt_agent 安全合同仍是共享当前断言。
 // 主会话控制合同保留：send_message 的 running/idle/未驻留与 interrupt_agent 均由 main 分支处理。
 for (const target of ['running', 'idle', 'unresident']) {
   const args = { agent_id: target === 'running' ? 'session-x' : target === 'idle' ? 'session-idle' : 'unknown-id', message: 'hi' }
   r = preExecute(target === 'running' ? harnessAgents : target === 'idle' ? harnessAgentsIdle : harness, mainAgent, 'send_message', args)
   checkTrue('R84 main send_message ' + target + ' → allow/旧running拒绝合同', target === 'running' ? r !== null && r.kind === 'deny' && String(r.reason).includes('子代理running中，禁止打扰') : r !== null && r.kind === 'allow')
 }
+// DSH_COMPAT_RC1：interrupt_agent 夹具仍使用旧 agent_id 形状；主会话控制放行合同不归旧兼容删除边界。
 r = preExecute(harness, mainAgent, 'interrupt_agent', { agent_id: 'session-x' })
 checkTrue('R85 main interrupt_agent → allow（主会话控制合同保持）', r !== null && r !== undefined && r.kind === 'allow')
 r = preExecute(harness, planMain, 'subagent_plan', { run_in_background: false })
@@ -1467,6 +1474,181 @@ r = preExecute(harness, noneMain, 'run_code', joCode)
 checkTrue('R85 组内 job_output wait 成员 → deny 且含「job_output 禁止带 wait: true」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止带 wait: true'))
 r = preExecute(harness, noneMain, 'run_code', revCode)
 checkTrue('R86 组内 subagent_review 成员无批准 → deny 且含「执行类委派未放行：subagent_review」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('执行类委派未放行：subagent_review'))
+
+// DSH_CURRENT_RC2：新 agent 名称/路径参数与 subagents.resolveName 的异常、取消和本轮去重回归。
+// 删除边界仅限 rc.2 新参数/解析适配；旧 agent_id、child 硬拒及共享安全断言不归本兼容块。
+{
+  const rc2Caller = mainWithEvents([])
+  const rc2Signal = new AbortController().signal
+  const rc2ResolveCalls = []
+  const rc2TargetIds = new Map([
+    ['lead', 'rc2-target-id'],
+    ['plugins/lead', 'rc2-target-id'],
+    ['rc2-target-id', 'rc2-target-id'],
+    ['priority-name', 'rc2-target-id'],
+    ['cold-name', 'rc2-cold-target'],
+  ])
+  const rc2AgentGets = []
+  const rc2Harness = makeHarness({
+    agents: { get: (id) => { rc2AgentGets.push(id); return id === 'rc2-target-id' ? { status: 'idle' } : id === 'session-x' ? { status: 'running' } : undefined } },
+    subagents: {
+      resolveName: async (caller, ref, signal) => {
+        const targetId = rc2TargetIds.get(ref)
+        rc2ResolveCalls.push({ caller, ref, signal, targetId })
+        return targetId
+      },
+    },
+  })
+  let rc2NextCalls = 0
+  const rc2Lead = await preExecute(rc2Harness, rc2Caller, 'send_message', { agent: 'lead', message: 'hi' }, { signal: rc2Signal }, () => { rc2NextCalls += 1 })
+  const rc2Path = await preExecute(rc2Harness, rc2Caller, 'send_message', { agent: 'plugins/lead', message: 'hi' }, { signal: rc2Signal }, () => { rc2NextCalls += 1 })
+  const rc2SessionId = await preExecute(rc2Harness, rc2Caller, 'send_message', { agent: 'rc2-target-id', message: 'hi' }, { signal: rc2Signal }, () => { rc2NextCalls += 1 })
+  checkTrue('DSH_CURRENT_RC2 新 agent 名称/路径/Session ID 分别解析并放行', rc2Lead?.kind === 'allow' && rc2Path?.kind === 'allow' && rc2SessionId?.kind === 'allow')
+  const rc2ColdBefore = rc2ResolveCalls.length
+  let rc2ColdNext = 0
+  const rc2Cold = await preExecute(rc2Harness, rc2Caller, 'send_message', { agent: 'cold-name', message: 'cold' }, { signal: rc2Signal }, () => { rc2ColdNext += 1 })
+  const rc2ColdCall = rc2ResolveCalls.at(-1)
+  checkTrue('DSH_CURRENT_RC2 新参数冷目标独立用例：解析到明确冷ID、registry缺席仍allow且next一次', rc2Cold?.kind === 'allow' && rc2ResolveCalls.length === rc2ColdBefore + 1 && rc2ColdCall?.caller === rc2Caller && rc2ColdCall?.ref === 'cold-name' && rc2ColdCall?.signal === rc2Signal && rc2ColdCall?.targetId === 'rc2-cold-target' && rc2AgentGets.at(-1) === 'rc2-cold-target' && rc2ColdNext === 1)
+  checkTrue('DSH_CURRENT_RC2 resolveName 精确收到 caller/ref/signal', rc2ResolveCalls[0]?.caller === rc2Caller && rc2ResolveCalls[0]?.ref === 'lead' && rc2ResolveCalls[0]?.signal === rc2Signal && rc2NextCalls === 3)
+  const rc2DedupeBefore = rc2ResolveCalls.length
+  const rc2Dedupe = await preExecute(rc2Harness, rc2Caller, 'send_message', { agent: 'lead', message: 'same ref' }, { signal: rc2Signal }, () => { rc2NextCalls += 1 })
+  checkTrue('DSH_CURRENT_RC2 同一 ref 在一次监听调用内去重且最终只next一次', rc2Dedupe?.kind === 'allow' && rc2ResolveCalls.length === rc2DedupeBefore + 1 && rc2NextCalls === 4)
+  const rc2Priority = await preExecute(rc2Harness, rc2Caller, 'send_message', { agent: 'priority-name', agent_id: 'session-x', message: 'agent优先' }, { signal: rc2Signal }, () => { rc2NextCalls += 1 })
+  checkTrue('DSH_CURRENT_RC2 双字段同时存在时 agent 优先于旧 agent_id（idle 放行而非 running 拒绝）', rc2Priority?.kind === 'allow' && rc2ResolveCalls.at(-1)?.ref === 'priority-name')
+
+  const rc2OldNext = { count: 0 }
+  const rc2OldSync = preExecute(harnessAgentsIdle, rc2Caller, 'send_message', { agent_id: 'session-x', message: 'old' }, undefined, () => { rc2OldNext.count += 1 })
+  checkTrue('DSH_COMPAT_RC1 旧 agent_id 调用保持同步且不要求 resolveName', rc2OldSync?.kind === 'allow' && !(rc2OldSync instanceof Promise) && rc2OldNext.count === 1)
+
+  let rc2Status = 'idle'
+  let rc2StatusResolveCalls = 0
+  let rc2StatusNext = 0
+  const rc2StatusHarness = makeHarness({
+    agents: { get: (id) => id === 'rc2-status-target' ? { status: rc2Status } : undefined },
+    subagents: { resolveName: async () => { rc2StatusResolveCalls += 1; return 'rc2-status-target' } },
+  })
+  const rc2StatusFirst = await preExecute(rc2StatusHarness, rc2Caller, 'send_message', { agent: 'lead', message: 'first' }, { signal: rc2Signal }, () => { rc2StatusNext += 1 })
+  rc2Status = 'running'
+  const rc2StatusSecond = await preExecute(rc2StatusHarness, rc2Caller, 'send_message', { agent: 'lead', message: 'second' }, { signal: rc2Signal }, () => { rc2StatusNext += 1 })
+  checkTrue('DSH_CURRENT_RC2 两次状态变更不缓存：idle放行后running重新解析并拒绝', rc2StatusFirst?.kind === 'allow' && rc2StatusSecond?.kind === 'deny' && String(rc2StatusSecond.reason).includes('子代理running中，禁止打扰') && rc2StatusResolveCalls === 2 && rc2StatusNext === 1)
+
+  let rc2MissingError
+  let rc2MissingNext = 0
+  try {
+    await preExecute(makeHarness({ agents: { get: () => ({ status: 'idle' }) } }), rc2Caller, 'send_message', { agent: 'lead', message: 'missing' }, { signal: rc2Signal }, () => { rc2MissingNext += 1 })
+  } catch (error) { rc2MissingError = error }
+  checkTrue('DSH_CURRENT_RC2 缺 resolveName 明确抛错且next=0', rc2MissingError instanceof Error && String(rc2MissingError.message).includes('subagents.resolveName(agent, ref, exec.signal)') && rc2MissingNext === 0)
+
+  const rc2ResolveFailure = { marker: 'rc2 resolve failure' }
+  let rc2FailureObserved
+  let rc2FailureNext = 0
+  try {
+    await preExecute(makeHarness({ agents: { get: () => ({ status: 'idle' }) }, subagents: { resolveName: async () => { throw rc2ResolveFailure } } }), rc2Caller, 'send_message', { agent: 'lead', message: 'failure' }, { signal: rc2Signal }, () => { rc2FailureNext += 1 })
+  } catch (error) { rc2FailureObserved = error }
+  checkTrue('DSH_CURRENT_RC2 解析异常原对象传播且next=0', rc2FailureObserved === rc2ResolveFailure && rc2FailureNext === 0)
+
+  const rc2CancelController = new AbortController()
+  const rc2CancelError = new Error('rc2 cancelled')
+  rc2CancelController.abort(rc2CancelError)
+  let rc2CancelObserved
+  let rc2CancelSignal
+  let rc2CancelNext = 0
+  try {
+    await preExecute(makeHarness({ agents: { get: () => ({ status: 'idle' }) }, subagents: { resolveName: async (caller, ref, signal) => { rc2CancelSignal = signal; throw signal.reason } } }), rc2Caller, 'send_message', { agent: 'lead', message: 'cancel' }, { signal: rc2CancelController.signal }, () => { rc2CancelNext += 1 })
+  } catch (error) { rc2CancelObserved = error }
+  checkTrue('DSH_CURRENT_RC2 signal取消原对象传播、signal原样透传且next=0', rc2CancelObserved === rc2CancelError && rc2CancelSignal === rc2CancelController.signal && rc2CancelNext === 0)
+
+  let rc2ChildResolveCalls = 0
+  const rc2ChildHarness = makeHarness({ subagents: { resolveName: async () => { rc2ChildResolveCalls += 1; return 'rc2-child-target' } } })
+  let rc2ChildNext = 0
+  const rc2ChildDirect = preExecute(rc2ChildHarness, childAgent('rc2-child'), 'send_message', { agent: 'lead', message: 'child' }, undefined, () => { rc2ChildNext += 1 })
+  checkTrue('DSH_CURRENT_RC2 其它已有拒因（child直呼）先拒绝且不解析', rc2ChildDirect?.kind === 'deny' && rc2ChildResolveCalls === 0 && rc2ChildNext === 0)
+
+  const rc2MixedAgent = mainWithEvents([])
+  const rc2MixedEventsBefore = rc2MixedAgent.session.snapshotEvents().length
+  let rc2MixedNext = 0
+  const rc2MixedHarness = makeHarness({ agents: { get: (id) => id === 'session-x' ? { status: 'running' } : undefined } })
+  // DSH_COMPAT_RC1：旧 agent_id 混合组保留两次不同 message；String.fromCharCode(10) 保证送入真实换行。
+  const rc2MixedCode = { code: [
+    "await tools.send_message({ agent_id: 'session-x', message: 'running-old-1' })",
+    "await tools.send_message({ agent_id: 'session-x', message: 'running-old-2' })",
+    "await tools.job_output({ job_id: 'rc2-mixed-job' })",
+    "await tools.job_list({})",
+    "await tools.list_agents({})",
+  ].join(String.fromCharCode(10)), description: 'DSH_COMPAT_RC1 静态混合组 running send_message' }
+  let rc2MixedSyntaxError = null
+  try { new Function('return (async () => {' + rc2MixedCode.code + String.fromCharCode(10) + '})') } catch (error) { rc2MixedSyntaxError = error }
+  checkTrue('DSH_COMPAT_RC1 静态旧ID混合组代码仅编译且含真实换行', rc2MixedSyntaxError === null && rc2MixedCode.code.includes(String.fromCharCode(10)) && !rc2MixedCode.code.includes(String.fromCharCode(92) + 'n'))
+  const rc2Mixed = preExecute(rc2MixedHarness, rc2MixedAgent, 'run_code', rc2MixedCode, undefined, () => { rc2MixedNext += 1 })
+  const rc2MixedEventsAfter = rc2MixedAgent.session.snapshotEvents().length
+  const rc2MixedJob = preExecute(rc2MixedHarness, rc2MixedAgent, 'job_output', { job_id: 'rc2-mixed-job' })
+  const rc2MixedJobs = preExecute(rc2MixedHarness, rc2MixedAgent, 'job_list', {})
+  const rc2MixedAgents = preExecute(rc2MixedHarness, rc2MixedAgent, 'list_agents', {})
+  checkTrue('DSH_COMPAT_RC1 静态混合组 running send_message → deny、next=0、事件不变且job/poll成员首调无污染', rc2Mixed?.kind === 'deny' && String(rc2Mixed.reason).includes('子代理running中，禁止打扰') && rc2MixedNext === 0 && rc2MixedEventsBefore === rc2MixedEventsAfter && rc2MixedJob?.kind === 'allow' && rc2MixedJobs?.kind === 'allow' && rc2MixedAgents?.kind === 'allow')
+
+  // DSH_CURRENT_RC2：新 agent 异步解析混合组独立受测；同一 ref 两次 send 用不同 message，解析只应一次。
+  const rc2NewMixedAgent = mainWithEvents([])
+  const rc2NewMixedEventsBefore = rc2NewMixedAgent.session.snapshotEvents().length
+  const rc2NewMixedResolveCalls = []
+  const rc2NewMixedHarness = makeHarness({
+    agents: { get: (id) => id === 'rc2-new-running' ? { status: 'running' } : undefined },
+    subagents: { resolveName: async (caller, ref, signal) => { rc2NewMixedResolveCalls.push({ caller, ref, signal, targetId: 'rc2-new-running' }); return 'rc2-new-running' } },
+  })
+  const rc2NewMixedCode = { code: [
+    "await tools.send_message({ agent: 'lead', message: 'running-new-1' })",
+    "await tools.send_message({ agent: 'lead', message: 'running-new-2' })",
+    "await tools.job_output({ job_id: 'rc2-new-mixed-job' })",
+    "await tools.job_list({})",
+    "await tools.list_agents({})",
+  ].join(String.fromCharCode(10)), description: 'DSH_CURRENT_RC2 静态新agent混合组 running send_message' }
+  let rc2NewMixedSyntaxError = null
+  try { new Function('return (async () => {' + rc2NewMixedCode.code + String.fromCharCode(10) + '})') } catch (error) { rc2NewMixedSyntaxError = error }
+  checkTrue('DSH_CURRENT_RC2 静态新agent混合组代码仅编译且含真实换行', rc2NewMixedSyntaxError === null && rc2NewMixedCode.code.includes(String.fromCharCode(10)) && !rc2NewMixedCode.code.includes(String.fromCharCode(92) + 'n'))
+  let rc2NewMixedNext = 0
+  const rc2NewMixed = await preExecute(rc2NewMixedHarness, rc2NewMixedAgent, 'run_code', rc2NewMixedCode, { signal: rc2Signal }, () => { rc2NewMixedNext += 1 })
+  const rc2NewMixedEventsAfter = rc2NewMixedAgent.session.snapshotEvents().length
+  const rc2NewMixedJob = preExecute(rc2NewMixedHarness, rc2NewMixedAgent, 'job_output', { job_id: 'rc2-new-mixed-job' })
+  const rc2NewMixedJobs = preExecute(rc2NewMixedHarness, rc2NewMixedAgent, 'job_list', {})
+  const rc2NewMixedAgents = preExecute(rc2NewMixedHarness, rc2NewMixedAgent, 'list_agents', {})
+  const rc2NewMixedResolve = rc2NewMixedResolveCalls[0]
+  checkTrue('DSH_CURRENT_RC2 静态新agent混合组解析一次后running拒、next=0、事件不变且job/poll首调无污染', rc2NewMixed?.kind === 'deny' && String(rc2NewMixed.reason).includes('子代理running中，禁止打扰') && rc2NewMixedNext === 0 && rc2NewMixedEventsBefore === rc2NewMixedEventsAfter && rc2NewMixedResolveCalls.length === 1 && rc2NewMixedResolve?.caller === rc2NewMixedAgent && rc2NewMixedResolve?.ref === 'lead' && rc2NewMixedResolve?.signal === rc2Signal && rc2NewMixedResolve?.targetId === 'rc2-new-running' && rc2NewMixedJob?.kind === 'allow' && rc2NewMixedJobs?.kind === 'allow' && rc2NewMixedAgents?.kind === 'allow')
+
+  const rc2DynamicCalls = []
+  const rc2DynamicHarness = makeHarness({
+    agents: { get: (id) => id === 'rc2-dynamic-running' ? { status: 'running' } : undefined },
+    subagents: { resolveName: async (caller, ref, signal) => { rc2DynamicCalls.push({ caller, ref, signal }); return 'rc2-dynamic-running' } },
+  })
+  const rc2DynamicAgent = mainWithEvents([])
+  let rc2DynamicOuterNext = 0
+  let rc2DynamicInnerNext = 0
+  const rc2DynamicOuter = preExecute(rc2DynamicHarness, rc2DynamicAgent, 'run_code', { code: "const ref = 'lead'; await tools.send_message({ agent: ref, message: 'dynamic' })", description: 'DSH_CURRENT_RC2 动态参数外层静态组' }, undefined, () => { rc2DynamicOuterNext += 1 })
+  const rc2DynamicInner = await preExecute(rc2DynamicHarness, rc2DynamicAgent, 'send_message', { agent: 'lead', message: 'dynamic' }, { rootCallId: 'rc2-dynamic', parent: Symbol('rc2-dynamic') }, () => { rc2DynamicInnerNext += 1 })
+  checkTrue('DSH_CURRENT_RC2 动态参数实际pre-execute重入 → 外层放行、内层按running拒绝且next=0', rc2DynamicOuter?.kind === 'allow' && rc2DynamicOuterNext === 1 && rc2DynamicInner?.kind === 'deny' && String(rc2DynamicInner.reason).includes('子代理running中，禁止打扰') && rc2DynamicInnerNext === 0 && rc2DynamicCalls.length === 1)
+
+  const rc2ChildCases = [
+    ['planner', plannerAgent],
+    ['prober', probeAgent],
+    ['reviewer', reviewer],
+    ['executor', executor],
+    ['unknown-child', unknownControlChild],
+  ]
+  for (const [roleName, child] of rc2ChildCases) {
+    let resolveCalls = 0
+    const childHarness = makeHarness({ subagents: { resolveName: async () => { resolveCalls += 1; return 'rc2-child-target' } } })
+    for (const [shape, args] of [['DSH_COMPAT_RC1 old agent_id', { agent_id: 'parent', message: 'hi' }], ['DSH_CURRENT_RC2 new agent', { agent: 'lead', message: 'hi' }]]) {
+      let nextCalls = 0
+      const result = preExecute(childHarness, child, 'send_message', args, undefined, () => { nextCalls += 1 })
+      checkTrue(shape + ' ' + roleName + ' 直呼 send_message 硬拒、解析spy=0', result?.kind === 'deny' && nextCalls === 0 && resolveCalls === 0)
+      const code = 'await tools.send_message(' + JSON.stringify(args) + ')'
+      nextCalls = 0
+      const groupResult = preExecute(childHarness, child, 'run_code', { code, description: shape + ' PTC send_message' }, undefined, () => { nextCalls += 1 })
+      checkTrue(shape + ' ' + roleName + ' PTC send_message 硬拒、解析spy=0、next=0', groupResult?.kind === 'deny' && nextCalls === 0 && resolveCalls === 0)
+    }
+    let interruptNext = 0
+    const interruptResult = preExecute(childHarness, child, 'interrupt_agent', { agent_id: 'parent' }, undefined, () => { interruptNext += 1 })
+    checkTrue('DSH_COMPAT_RC1 ' + roleName + ' 直呼 interrupt_agent 硬拒且不解析', interruptResult?.kind === 'deny' && interruptNext === 0 && resolveCalls === 0)
+  }
+}
 
 // ── ⑭b T3：主会话 save_plan 受限规划工件（任意路由态放行，D8-B 口径） ──────
 // 内容闸门与规划子代理共用同一 defineSavePlan 实现（强度一致），本节只锁路由闸门；
@@ -2254,8 +2436,12 @@ checkTrue('P4-0 通知行为：同 message.id 幂等、同 job 新 id 可解锁�
 
 // ── ⑮ 创造模式装配投影矩阵：2 × 2 × 2 × 2 × 5 = 80 ───────────────────────
 // 使用真实 registry schema 形状的 mock；只断言模型可见 assembly，不把隐藏误报为 runtime binding 安全隔离。
-const MATRIX_CORDIS_TOOLS = CORDIS_PRESENTATION_TOOLS
-const MATRIX_CREATIVE_SKILLS = ['cordis-plugin-development', 'editing-cordis-compositions', 'cordis-composition-reference']
+// M12 独立协议期望：固定工具名不从被测 CORDIS_PRESENTATION_TOOLS 导出生成 fixture；导出相等另行断言。
+const MATRIX_CORDIS_TOOLS = ['cordis_inspect_list', 'cordis_inspect_query']
+// DSH_COMPAT_RC1：合成 catalog 保留 rc.1 旧三名；删除边界仅限这三项且须另行授权。
+// DSH_CURRENT_RC2：合成 catalog 追加当前 rc.2 dsh-doc；agent-experience 是普通项，不进入隐藏集合。
+const MATRIX_CREATIVE_SKILLS = ['cordis-plugin-development', 'editing-cordis-compositions', 'cordis-composition-reference', 'dsh-doc']
+const MATRIX_ORDINARY_SKILLS = ['matrix-ordinary-skill', 'agent-experience']
 const MATRIX_SCHEMA = (name, description, parameters) => ({
   name,
   description,
@@ -2288,6 +2474,16 @@ function matrixDirectTools(schemas, mode) {
   if (mode === 'ptc') return schemas.filter((schema) => schema.name === 'run_code')
   // native（含任何旧值回落）＝ 全部直呼工具、无 run_code
   return schemas.filter((schema) => schema.name !== 'run_code')
+}
+// M12 独立期望只由输入 A/C/M/phase/role 与本文件 fixture 计算，不读取 deny 记录或 assembly 结果。
+const MATRIX_ANCHORED_NATIVE_TOOLS = ['bash', 'pwsh', 'read']
+function matrixExpectedToolNames(role, mode, anchored, creativeMode) {
+  const roleFixtureNames = matrixSchemasFor(role).map((schema) => schema.name)
+  const directNames = mode === 'ptc' ? ['run_code'] : roleFixtureNames.filter((name) => name !== 'run_code')
+  const visibleNames = creativeMode ? directNames : directNames.filter((name) => !MATRIX_CORDIS_TOOLS.includes(name))
+  if (anchored && mode === 'ptc') return ['run_code']
+  if (anchored) return visibleNames.filter((name) => MATRIX_ANCHORED_NATIVE_TOOLS.includes(name))
+  return visibleNames
 }
 function matrixSections(mode) {
   const sections = []
@@ -2327,7 +2523,7 @@ function sectionText(assembly, name) {
 // 旧 declarationNames（从官方单-read SDK 骨架里抽声明名）随 F 段改为手写文案而失去调用点，已删除。
 function matrixCatalogDecision(creativeMode) {
   const entries = [
-    { name: 'matrix-ordinary-skill', description: 'Ordinary skill kept in every catalog.' },
+    ...MATRIX_ORDINARY_SKILLS.map((name) => ({ name, description: name === 'agent-experience' ? 'Ordinary agent experience skill.' : 'Ordinary skill kept in every catalog.' })),
     ...(creativeMode ? MATRIX_CREATIVE_SKILLS.map((name) => ({ name, description: 'Creative Cordis skill.' })) : []),
   ]
   return { kind: 'enter', messages: [{ source: { kind: 'skill-catalog', update: false, entries }, content: [{ type: 'text', text: 'matrix skill catalog' }] }] }
@@ -2393,18 +2589,11 @@ for (const anchoredBootstrap of matrixAnchoredOptions) {
           // 先 arm 再算期望：期望工具面只表达 restrict deny 求值后的结果，不按 creativeMode 预先剔除。
           const cordisArmAgent = { session: { header: { id: 'matrix-cordis-' + matrixSerial, cwd: 'C:/work' }, snapshotEvents: () => [] }, options: {}, ctx: agent.ctx }
           for (const listener of Array.isArray(harnessMatrix['agent/created']) ? harnessMatrix['agent/created'] : []) await listener({ agent: cordisArmAgent, source: 'matrix' })
-          const denyNames = matrixDenyCalls.length === 1 && Array.isArray(matrixDenyCalls[0].deny) ? matrixDenyCalls[0].deny : []
           const assembled = await assemble(harnessMatrix, agent, rawTools, matrixSections(mode))
           const anchored = anchoredBootstrap && phase === 'first' && (role === 'main' || role === 'planner')
           const anchoredPtc = anchored && mode === 'ptc'
-          // 装配投影层不承担 cordis 裁剪（宿主以 provider 并集覆盖 waterfall 返回的 tools），
-          // 期望值只表达 restrict deny 求值后的工具面。
-          const visibleRawTools = rawTools.filter((tool) => !denyNames.includes(tool.name))
-          const expectedNames = anchoredPtc
-            ? ['run_code']
-            : anchored
-              ? visibleRawTools.filter((tool) => ['bash', 'pwsh', 'read'].includes(tool.name)).map((tool) => tool.name)
-              : visibleRawTools.map((tool) => tool.name)
+          // 独立期望只看输入维度和 fixture；实际 restrict deny 记录留到下方与独立名单对拍。
+          const expectedNames = matrixExpectedToolNames(role, mode, anchored, creativeMode)
           const gotNames = Array.isArray(assembled.tools) ? assembled.tools.map((tool) => tool.name) : []
           const expectedSectionNames = anchoredPtc
             ? ['extra-plan-bootstrap', 'tool:read']
@@ -2473,8 +2662,8 @@ for (const anchoredBootstrap of matrixAnchoredOptions) {
           const catalogEntries = catalogMessage !== undefined && catalogMessage.source !== null && typeof catalogMessage.source === 'object' && Array.isArray(catalogMessage.source.entries) ? catalogMessage.source.entries : []
           const catalogCreative = catalogEntries.filter((entry) => entry !== null && typeof entry === 'object' && MATRIX_CREATIVE_SKILLS.includes(entry.name))
           const catalogExpected = anchored ? 0 : creativeMode ? MATRIX_CREATIVE_SKILLS.length : 0
-          const catalogOk = catalogCreative.length === catalogExpected && (anchored ? catalogEntries.length === 0 : catalogEntries.some((entry) => entry !== null && typeof entry === 'object' && entry.name === 'matrix-ordinary-skill'))
-          const ordinarySkillToolOk = anchoredPtc ? schemas.some((schema) => schema.name === 'skill') : mode === 'ptc' ? sdk.includes('skill') : visibleRawTools.some((tool) => tool.name === 'skill')
+          const catalogOk = catalogCreative.length === catalogExpected && (anchored ? catalogEntries.length === 0 : MATRIX_ORDINARY_SKILLS.every((name) => catalogEntries.some((entry) => entry !== null && typeof entry === 'object' && entry.name === name)))
+          const ordinarySkillToolOk = anchoredPtc || mode !== 'ptc' ? matrixSchemasFor(role).some((schema) => schema.name === 'skill') : sdk.includes('skill')
           const ptcBoundaryOk = mode !== 'ptc' || (gotNames.length === 1 && gotNames[0] === 'run_code' && !gotNames.includes('read') && (anchoredPtc ? !gotSectionNames.includes('tools:ptc-only') : gotSectionNames.includes('tools:ptc-only')) && gotSectionNames.includes('tool:read') && (anchoredPtc ? !gotSectionNames.includes('tools:sdk') : gotSectionNames.includes('tools:sdk')))
           const hpOk = !anchoredPtc || (gotSectionNames.join('|') === 'extra-plan-bootstrap|tool:read' && sdk === '' && cordisSection === '' && !gotSectionNames.includes('matrix-user-section'))
           const hnHbOk = !(anchored && mode !== 'ptc') || (gotSectionNames.join('|') === 'extra-plan-bootstrap' && gotNames.includes('read') && !gotSectionNames.includes('tool:read') && !gotSectionNames.includes('tools:ptc-only') && !gotSectionNames.includes('tools:sdk') && !gotSectionNames.includes('tool:cordis'))
@@ -2489,13 +2678,28 @@ for (const anchoredBootstrap of matrixAnchoredOptions) {
 // 二值化后矩阵总数 = 五维长度之积（anchoredBootstrap × creative × mode × phase × role）
 const expectedMatrixCases = matrixAnchoredOptions.length * matrixCreativeOptions.length * matrixModes.length * matrixPhases.length * matrixRoles.length
 check('装配矩阵案例总数（native/ptc 两轮）', matrixCases, expectedMatrixCases)
-checkTrue('Cordis 固定集合恰有 2 项且名称唯一', MATRIX_CORDIS_TOOLS.length === 2 && new Set(MATRIX_CORDIS_TOOLS).size === 2)
+checkTrue('M12 独立Cordis协议期望恰有2项且被测导出仅作独立对拍', MATRIX_CORDIS_TOOLS.length === 2 && new Set(MATRIX_CORDIS_TOOLS).size === 2 && CORDIS_PRESENTATION_TOOLS.length === MATRIX_CORDIS_TOOLS.length && MATRIX_CORDIS_TOOLS.every((name) => CORDIS_PRESENTATION_TOOLS.includes(name)))
 const projectionSource = { tools: [{ name: 'read' }, { name: MATRIX_CORDIS_TOOLS[0] }], sections: [{ name: 'tool:cordis', text: 'hidden' }, { name: 'tools:sdk', text: 'old' }] }
 const projectionCopy = projectAssemblyForPresentation(projectionSource, projectionSource.tools, { sdkText: 'read:' })
 checkTrue('projectAssemblyForPresentation 返回新 assembly 且不原地修改', projectionCopy !== projectionSource && projectionSource.tools.length === 2 && projectionSource.sections[0].name === 'tool:cordis' && projectionCopy.tools.length === 1 && projectionCopy.tools[0].name === 'read' && sectionText(projectionCopy, 'tool:cordis') === '' && sectionText(projectionCopy, 'tools:sdk') === 'read:')
 // C=1 创造 skill 面（换通道后）：预设 skill-filesystem 行的 config.bundledSkillDir
-// 指向官方包内 skills/（含 3 个 SKILL.md 目录）并配 watch: false；旧键 customSkillDirs 已删（坏通道）。
-const expectedCreativeSkills = ['cordis-plugin-development', 'editing-cordis-compositions', 'cordis-composition-reference']
+// 按实际 DSH_PACKAGE_MANIFEST 版本检查官方包内 skills/：rc.1 旧三名、rc.2 dsh-doc；不要求单根同时四名，且配 watch: false；旧键 customSkillDirs 已删（坏通道）。
+// 合成投影期望独立于物理 bundledSkillDir：四名均应参与 C0/C1 目录投影。
+const expectedCreativeSkills = MATRIX_CREATIVE_SKILLS.slice()
+// DSH_COMPAT_RC1：rc.1 物理根只检查旧三名；删除边界仅限该版本的物理兼容。
+// DSH_CURRENT_RC2：rc.2 物理根只检查 dsh-doc；未知/缺根保持 undefined，禁止伪 PASS。
+const physicalCreativeSkillsByVersion = {
+  '0.2.2-rc.1': ['cordis-plugin-development', 'editing-cordis-compositions', 'cordis-composition-reference'],
+  '0.2.2-rc.2': ['dsh-doc'],
+}
+const hostManifestVersion = (() => {
+  if (typeof DSH_PACKAGE_MANIFEST !== 'string' || !existsSync(DSH_PACKAGE_MANIFEST)) return undefined
+  try {
+    const manifest = JSON.parse(readFileSync(DSH_PACKAGE_MANIFEST, 'utf8'))
+    return manifest !== null && typeof manifest === 'object' && typeof manifest.version === 'string' ? manifest.version : undefined
+  } catch { return undefined }
+})()
+const expectedPhysicalCreativeSkills = physicalCreativeSkillsByVersion[hostManifestVersion]
 {
   const skillFsRow = all.find((row) => row.id === 'skill-filesystem')
   const skillFsConfig = skillFsRow !== undefined && skillFsRow.config !== undefined ? skillFsRow.config : undefined
@@ -2513,14 +2717,14 @@ const expectedCreativeSkills = ['cordis-plugin-development', 'editing-cordis-com
   }
   const resolvedSkillDir = resolveBundledSkillDir()
   const resolvedSkillNames = typeof resolvedSkillDir === 'string' && existsSync(resolvedSkillDir) ? readdirSync(resolvedSkillDir) : []
-  checkTrue('T9-3b bundledSkillDir 解析出的目录存在且含 ' + expectedCreativeSkills.length + ' 个 creative skill 子目录，且 config.customSkillDirs === undefined',
-    typeof resolvedSkillDir === 'string' && existsSync(resolvedSkillDir) && expectedCreativeSkills.every((name) => resolvedSkillNames.includes(name) && existsSync(join(resolvedSkillDir, name, 'SKILL.md'))) && skillFsConfig.customSkillDirs === undefined)
+  checkTrue('T9-3b bundledSkillDir 按实际版本 ' + String(hostManifestVersion) + ' 解析物理 skill，未知版本/缺根不伪PASS且 config.customSkillDirs === undefined',
+    Array.isArray(expectedPhysicalCreativeSkills) && typeof resolvedSkillDir === 'string' && existsSync(resolvedSkillDir) && expectedPhysicalCreativeSkills.every((name) => resolvedSkillNames.includes(name) && existsSync(join(resolvedSkillDir, name, 'SKILL.md'))) && skillFsConfig.customSkillDirs === undefined)
 }
-// 隐藏集合（C=0 只从 catalog 去名，旧「不注册」已废）：三 id 全在 CREATIVE_SKILL_NAMES，且 C=0 时从 catalog 隐藏。
-const skillCatalogFixture = (names) => ({
+// 隐藏集合（C=0 只从 catalog 去名，旧「不注册」已废）：旧三名+dsh-doc 四项在 CREATIVE_SKILL_NAMES，普通 agent-experience 保留且 C=0 时不隐藏。
+const skillCatalogFixture = (names, update = false) => ({
   kind: 'enter',
   messages: [{
-    source: { kind: 'skill-catalog', update: false, entries: [{ name: 'matrix-ordinary-skill', description: 'ordinary' }].concat(names.map((name) => ({ name, description: 'creative' }))) },
+    source: { kind: 'skill-catalog', update, form: 'catalog', incomplete: false, entries: MATRIX_ORDINARY_SKILLS.map((name) => ({ name, description: name === 'agent-experience' ? 'ordinary agent experience' : 'ordinary' })).concat(names.map((name) => ({ name, description: 'creative' }))) },
     content: [{ type: 'text', text: 'matrix skill catalog' }],
   }],
 })
@@ -2531,16 +2735,27 @@ const catalogNamesOf = (decision) => {
 const foreignCatalogDecision = { kind: 'enter', messages: [{ source: { kind: 'other-source', entries: [{ name: 'cordis-plugin-development', description: 'keep' }] }, content: [{ type: 'text', text: 'foreign source text' }] }] }
 const foreignProjected = projectSkillCatalogDecision(foreignCatalogDecision)
 checkTrue('T9-3c0 非 skill-catalog source 即使带 entries 也保持对象与正文原样', foreignProjected === foreignCatalogDecision && foreignProjected.messages[0].content[0].text === 'foreign source text')
+// DSH_CURRENT_RC2：dsh-doc 与 agent-experience 只作为当前合成投影数据；删除边界不涵盖共享投影算法。
+const emptyUpdateDecision = { kind: 'enter', messages: [{ source: { kind: 'skill-catalog', update: true, form: 'catalog', incomplete: false, revision: 'empty-update', entries: [] }, content: [{ type: 'text', text: 'empty update original' }] }] }
+const emptyUpdateProjected = projectSkillCatalogDecision(emptyUpdateDecision)
+checkTrue('T9-3c1 空 update catalog 无创造项时保持输入对象/含form-incomplete元数据/正文', emptyUpdateProjected === emptyUpdateDecision && emptyUpdateDecision.messages[0].source.form === 'catalog' && emptyUpdateDecision.messages[0].source.incomplete === false && emptyUpdateDecision.messages[0].source.revision === 'empty-update' && emptyUpdateDecision.messages[0].content[0].text === 'empty update original')
+const updateOrdinary = { name: 'agent-experience', description: 'ordinary agent experience' }
+const updateCreative = { name: 'dsh-doc', description: 'current dsh doc' }
+const updateUnrelatedPart = { type: 'image', data: 'unrelated-body' }
+const updateDecision = { kind: 'enter', messages: [{ id: 'update-message', source: { kind: 'skill-catalog', update: true, form: 'catalog', incomplete: true, revision: 'update-1', metadata: 'keep', entries: [updateOrdinary, updateCreative] }, content: [{ type: 'text', text: 'stale catalog text' }, updateUnrelatedPart] }, foreignMessage] }
+const updateProjected = projectSkillCatalogDecision(updateDecision)
+const updateMessage = updateProjected.messages[0]
+checkTrue('T9-3c2 update catalog 过滤创造项但保留普通项、source元数据/无关正文且不原地改输入', updateProjected !== updateDecision && updateMessage.source.update === true && updateMessage.source.form === 'catalog' && updateMessage.source.incomplete === true && updateMessage.source.revision === 'update-1' && updateMessage.source.metadata === 'keep' && updateMessage.source.entries.length === 1 && updateMessage.source.entries[0].name === 'agent-experience' && updateMessage.content[0].text.includes('The available skill catalog changed') && updateMessage.content[1] === updateUnrelatedPart && updateDecision.messages[0].source.entries.length === 2 && updateDecision.messages[0].content[0].text === 'stale catalog text' && updateProjected.messages[1] === foreignMessage)
 {
-  checkTrue('T9-3c 隐藏集合恰含 3 个 cordis skill 且全部为 true 名单', expectedCreativeSkills.every((name) => CREATIVE_SKILL_NAMES_FOR_TEST.has(name)) && CREATIVE_SKILL_NAMES_FOR_TEST.size === 3)
+  checkTrue('T9-3c 合成隐藏集合恰含旧三+dsh-doc四名，且全部命中当前集合', expectedCreativeSkills.length === 4 && expectedCreativeSkills.every((name) => CREATIVE_SKILL_NAMES_FOR_TEST.has(name)) && CREATIVE_SKILL_NAMES_FOR_TEST.size === 4)
   const offHarness = makeHarness({ anchoredBootstrap: false, creativeMode: false })
   const hiddenOff = await offHarness['agent/pre-step'][0]({ agent: mainAgent }, async () => skillCatalogFixture(expectedCreativeSkills))
   const namesOff = catalogNamesOf(hiddenOff)
-  checkTrue('T9-3d C=0 全 phase 隐藏 3 个 cordis skill 且保留普通 skill', expectedCreativeSkills.every((name) => !namesOff.includes(name)) && namesOff.includes('matrix-ordinary-skill'))
+  checkTrue('T9-3d C=0 全 phase 隐藏四个创造 skill 且保留普通 matrix/agent-experience', expectedCreativeSkills.every((name) => !namesOff.includes(name)) && MATRIX_ORDINARY_SKILLS.every((name) => namesOff.includes(name)))
   const onHarness = makeHarness({ anchoredBootstrap: false, creativeMode: true })
   const keptOn = await onHarness['agent/pre-step'][0]({ agent: mainAgent }, async () => skillCatalogFixture(expectedCreativeSkills))
   const namesOn = catalogNamesOf(keptOn)
-  checkTrue('T9-3e C=1 非 HP1 窗口保留 3 个创造 skill（投影不隐藏）', expectedCreativeSkills.every((name) => namesOn.includes(name)))
+  checkTrue('T9-3e C=1 非 HP1 窗口保留四个创造 skill 与普通项（投影不隐藏普通 skill）', expectedCreativeSkills.every((name) => namesOn.includes(name)) && MATRIX_ORDINARY_SKILLS.every((name) => namesOn.includes(name)))
 }
 checkTrue('skill 工具仍属于普通模型可见工具', matrixDirectTools(MATRIX_TOOL_DEFINITIONS, 'native').some((tool) => tool.name === 'skill'))
 checkTrue('F/L 判定识别数组型 tool/call 事件', !isBootstrapPhase({ session: { snapshotEvents: () => [{ type: ['assistant', 'tool/call'] }] } }))
@@ -2970,11 +3185,12 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
   // 夹具 = profile patch 内的 settings 行（当前载体：captureRowSettings 按
   // id='dsh-extra-plan-settings' + config.<key> 定位），exploreBudget 取与内置默认 18
   // 不同的值，确保「读到文件」与「回退 fallback」可区分。
-  const lcFixture = (anchored, budget) => '- id: dsh-extra-plan-settings\n  name: dsh-extra-plan/settings\n  config:\n    anchoredBootstrap: ' + anchored + '\n    creativeMode: false\n    runcodeCatchGate: true\n    crossProviderPlannerModel: false\n    plannerModel: deepseek-v4-pro\n    plannerPromptSuffix: probe\n    exploreBudget: ' + budget + '\n    otherAgentModel: ""\n    reviewerUsesPlannerModel: false\n'
+  const lcFixture = (anchored, creative, budget) => '- id: dsh-extra-plan-settings\n  name: dsh-extra-plan/settings\n  config:\n    anchoredBootstrap: ' + anchored + '\n    creativeMode: ' + creative + '\n    runcodeCatchGate: true\n    crossProviderPlannerModel: false\n    plannerModel: deepseek-v4-pro\n    plannerPromptSuffix: probe\n    exploreBudget: ' + budget + '\n    otherAgentModel: ""\n    reviewerUsesPlannerModel: false\n'
   const lcOffFile = join(lcDir, 'agent-off.cordis.yml')
   const lcOnFile = join(lcDir, 'agent-on.cordis.yml')
-  writeFileSync(lcOffFile, lcFixture(false, 7), 'utf8')
-  writeFileSync(lcOnFile, lcFixture(true, 7), 'utf8')
+  const lcFlipFile = join(lcDir, 'agent-creative-flip.cordis.yml')
+  writeFileSync(lcOffFile, lcFixture(false, false, 7), 'utf8')
+  writeFileSync(lcOnFile, lcFixture(true, false, 7), 'utf8')
 
   // ① 显式 configPath：构造完成即可取到文件真值，不需要任何 stamp 变化
   const lcExplicit = createLiveConfig({ configPath: lcOffFile, getPathContext: () => lcPathContext, fallbackDefaults: { exploreBudget: 18, runcodeCatchGate: false, anchoredBootstrap: true } })
@@ -3000,13 +3216,40 @@ checkTrue('GW19 旧词不得推进 → subagent deny 且文案只含当前定制
     const lcOldFalseHarness = makeHarness({ anchoredBootstrap: false })
     const lcOldFalseAssembly = await assemble(lcOldFalseHarness, lcAgent, lcTools, lcSections)
     checkTrue('LC3b 反向对照：旧快照(false) vs 文件真值(true) → 首拍装配注入 extra-plan-bootstrap（判据敏感）', lcOldFalseAssembly.sections.some((section) => section.name === 'extra-plan-bootstrap'))
+
+    // DSH_CURRENT_RC2：同一 harness/Agent 在同一 W 夹具上 C=false→true→false 热翻转。
+    // 每次改写同时改变 size（7→421→7），不 sleep、不新建 Agent，不把冷启动冒充热读。
+    process.env.DSH_EXTRA_PLAN_CONFIG_PATH = lcFlipFile
+    writeFileSync(lcFlipFile, lcFixture(false, false, 7), 'utf8')
+    const lcFlipHarness = makeHarness({ anchoredBootstrap: true, creativeMode: true })
+    const lcFlipAgent = lcAgent
+    const lcFlipAgentsSeen = []
+    const lcFlipNext = async () => { lcFlipAgentsSeen.push(lcFlipAgent); return skillCatalogFixture(expectedCreativeSkills) }
+    const lcFlipFalse = await lcFlipHarness['agent/pre-step'][0]({ agent: lcFlipAgent }, lcFlipNext)
+    const lcFlipFalseNames = catalogNamesOf(lcFlipFalse)
+    const lcFlipFalseSize = readFileSync(lcFlipFile, 'utf8').length
+    writeFileSync(lcFlipFile, lcFixture(false, true, 421), 'utf8')
+    const lcFlipTrueSize = readFileSync(lcFlipFile, 'utf8').length
+    const lcFlipTrue = await lcFlipHarness['agent/pre-step'][0]({ agent: lcFlipAgent }, lcFlipNext)
+    const lcFlipTrueNames = catalogNamesOf(lcFlipTrue)
+    writeFileSync(lcFlipFile, lcFixture(false, false, 7), 'utf8')
+    const lcFlipFalseAgainSize = readFileSync(lcFlipFile, 'utf8').length
+    const lcFlipFalseAgain = await lcFlipHarness['agent/pre-step'][0]({ agent: lcFlipAgent }, lcFlipNext)
+    const lcFlipFalseAgainNames = catalogNamesOf(lcFlipFalseAgain)
+    checkTrue('LC3c DSH_CURRENT_RC2 同一 harness/Agent C false→true→false 即时投影、size stamp变化且不新建',
+      expectedCreativeSkills.every((name) => !lcFlipFalseNames.includes(name))
+      && expectedCreativeSkills.every((name) => lcFlipTrueNames.includes(name))
+      && expectedCreativeSkills.every((name) => !lcFlipFalseAgainNames.includes(name))
+      && MATRIX_ORDINARY_SKILLS.every((name) => lcFlipFalseNames.includes(name) && lcFlipTrueNames.includes(name) && lcFlipFalseAgainNames.includes(name))
+      && lcFlipFalseSize !== lcFlipTrueSize && lcFlipTrueSize !== lcFlipFalseAgainSize
+      && lcFlipAgentsSeen.length === 3 && new Set(lcFlipAgentsSeen).size === 1 && lcFlipAgentsSeen[0] === lcAgent)
   } finally {
     if (lcSavedConfigPath === undefined) delete process.env.DSH_EXTRA_PLAN_CONFIG_PATH
     else process.env.DSH_EXTRA_PLAN_CONFIG_PATH = lcSavedConfigPath
   }
 
   // ④ 后续取值仍走 mtimeMs+size 变更检测：文件改写（size 同步变化）→ 取值跟进
-  writeFileSync(lcOffFile, lcFixture(false, 421), 'utf8')
+  writeFileSync(lcOffFile, lcFixture(false, false, 421), 'utf8')
   check('LC4 文件改写后 stamp 变化 → 取值跟进 exploreBudget=421', lcExplicit.exploreBudget, 421)
 
   // ⑤ 读盘失败（文件不存在）→ 构造期回退 fallbackDefaults 且不抛（自带一次 console.warn 防抖）

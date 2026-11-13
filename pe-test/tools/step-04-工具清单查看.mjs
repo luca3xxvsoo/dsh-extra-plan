@@ -16,7 +16,11 @@ const maintenanceContext = createMaintenanceContext(maintenanceArgs)
 const argv = maintenanceArgs.domainArgv
 const output = createOutput({ argv })
 const NL = String.fromCharCode(10)
-const CREATIVE_SKILLS = new Set(['cordis-plugin-development', 'editing-cordis-compositions', 'cordis-composition-reference'])
+// DSH_COMPAT_RC1：旧三名兼容技能；仅在明确撤销rc.1兼容并保留共享查看器回归后删除。
+const DSH_COMPAT_RC1_CREATIVE_SKILLS = new Set(['cordis-plugin-development', 'editing-cordis-compositions', 'cordis-composition-reference'])
+// DSH_CURRENT_RC2：rc.2当前技能；在rc.2支持范围内保留，撤销边界同上。
+const DSH_CURRENT_RC2_CREATIVE_SKILLS = new Set(['dsh-doc'])
+const CREATIVE_SKILLS = new Set([...DSH_COMPAT_RC1_CREATIVE_SKILLS, ...DSH_CURRENT_RC2_CREATIVE_SKILLS])
 function jsonText(value) {
   try { return JSON.stringify(value) } catch { return 'null' }
 }

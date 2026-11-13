@@ -989,7 +989,11 @@ export function apply(ctx, config) {
   // 续轮转达机械拼接 plannerPromptSuffix（「任务要求 + 空行 + 配置文本」——宿主
   // exec.arguments 与消息对象均 deepFreeze，拼接走 pre-step 消息替换通道，
   // 与 agent-instructions 基线注入同通道）。
-  // C=0：三个官方 cordis skill 由 skill-filesystem 的 bundledSkillDir 静态注册进本预设组合
+  // C=0：按各宿主实际装载目录，把两版本的精确隐藏名投影到模型可见 catalog；不把跨版本并集当成单根物理装载。
+  // DSH_COMPAT_RC1：rc.1 旧隐藏名为 cordis-plugin-development、editing-cordis-compositions、
+  // cordis-composition-reference；rc.1另含但不隐藏 agent-experience。删除边界仅限上述旧隐藏名，须另行授权，不含共享安全核心。
+  // DSH_CURRENT_RC2：rc.2 当前隐藏名为 dsh-doc；agent-experience 不在隐藏集合。
+  // 删除边界：rc.2 当前隐藏名须保留，撤销兼容仍须另行授权，不含共享安全核心。
   // （换通道后旧 customSkillDirs 走 ctx.fs 扫 asar 会抛错；不再靠「不注册」），
   // 一律从模型可见 catalog 隐藏——只影响名字可见性，skill 仍注册、按名调用仍可加载。
   // C=1：首轮暂隐已由 filterBootstrapContextDecision 在 gated 为 true 时整条剔除 skill-catalog 消息承担；本函数只保留 C=0 全量隐藏分支。
@@ -1408,10 +1412,8 @@ export function apply(ctx, config) {
     // planner 闸门、main 闸门与状态推导）复用同一份快照引用，只取一次。宿主无参快照返回缓存全量
     // 视图（无新事件即同一引用），故此处只做快照来源收敛与可读性整理——本批**不减少**各消费点
     // 各自的 O(n) 扫描次数（6 个独立循环各自保持 O(n)）。
-    // 改造8：tools/pre-execute 是同步钩子、无法 await observeSession，且宿主 live 读内部本身即全量
-    // 物化，改走 observeSession 无收益——因此本钩子仍用 deprecated 同步快照，是本次改造后保留的
-    // 唯一同步读取点；其余异步钩子（agent/pre-step、agent/request、system-prompt/assemble）已全部
-    // 走 events 通道。
+    // 改造8：tools/pre-execute 是同步钩子；普通路径仍同步取一次 execEvents，只有名称解析按需返回 Promise，
+    // 不新增 deprecated 读取，也不把监听器整体异步化。
     const execEvents = sessionEvents(agent.session)
     // job_output 计数器锚点重置：新用户消息或 send_message 续轮转达时清空该 session 的计数器
     {
@@ -1536,16 +1538,53 @@ export function apply(ctx, config) {
     }
 
     const state = deriveFlowState(execEvents, gateRuntime)
-    const reason = mainGateReason(state, exec, { events: execEvents, planToolName, jobOutputCallCounters, pollGuardCounters, runcodeCatchGate: runcodeCatchGateOn(agent), runCodeDepth: 0, gateRuntime, getAgents: () => ctx.get('agents') })
-    if (reason !== null) {
-      recordRunCodeDeny(agent, exec, reason)
-      return { kind: 'deny', reason }
+    // DSH_CURRENT_RC2：本轮局部 Set/Map 仅把 send_message.agent 名称/路径引用解析为 Session ID；
+    // 删除边界仅限 rc.2 agent/resolveName 适配，须另行授权，不含共享安全核心。
+    // DSH_COMPAT_RC1：agent 非字符串时保留旧 agent_id 直接 Session ID 路径；
+    // 删除边界仅限 rc.1 旧参数兼容，须另行授权，不含共享安全核心。
+    const messageTargetRefs = new Set()
+    const messageTargetIds = new Map()
+    const messageTargetIdOf = (args) => {
+      if (args !== undefined && args !== null && typeof args === 'object' && typeof args.agent === 'string') {
+        const ref = args.agent
+        const targetId = messageTargetIds.get(ref)
+        if (targetId !== undefined) return targetId
+        messageTargetRefs.add(ref)
+        return null
+      }
+      return args !== undefined && args !== null && typeof args === 'object' && typeof args.agent_id === 'string' ? args.agent_id : null
     }
-    // 放行副作用：job_output 计数器记录（B3 收敛：与 planner/只读 child 共用 recordJobOutputCall；
-    // 仅在全部闸门放行后执行，时序等价）
-    recordJobOutputCall(agent, exec, jobOutputCallCounters)
-    recordPollGuardCall(agent, exec, pollGuardCounters)
-    return next()
+    const gateCtx = { events: execEvents, planToolName, jobOutputCallCounters, pollGuardCounters, runcodeCatchGate: runcodeCatchGateOn(agent), runCodeDepth: 0, gateRuntime, getAgents: () => ctx.get('agents'), messageTargetIdOf }
+    let finished = false
+    const finish = (reason) => {
+      if (finished) return undefined
+      finished = true
+      if (reason !== null) {
+        recordRunCodeDeny(agent, exec, reason)
+        return { kind: 'deny', reason }
+      }
+      // 放行副作用：job_output 计数器记录（B3 收敛：与 planner/只读 child 共用 recordJobOutputCall；
+      // 仅在全部闸门放行后执行，时序等价）
+      recordJobOutputCall(agent, exec, jobOutputCallCounters)
+      recordPollGuardCall(agent, exec, pollGuardCounters)
+      return next()
+    }
+    const reason = mainGateReason(state, exec, gateCtx)
+    if (reason !== null || messageTargetRefs.size === 0) return finish(reason)
+    const subagents = ctx.get('subagents')
+    if (subagents === undefined || subagents === null || typeof subagents.resolveName !== 'function') {
+      throw new Error('extra-plan: send_message 使用 agent 名称/路径时需要宿主 subagents.resolveName(agent, ref, exec.signal) 能力')
+    }
+    return (async () => {
+      for (const ref of messageTargetRefs) {
+        const targetId = await subagents.resolveName(agent, ref, exec.signal)
+        if (typeof targetId !== 'string' || targetId.length === 0) {
+          throw new Error('extra-plan: subagents.resolveName(agent, ref, exec.signal) 必须返回非空字符串 Session ID')
+        }
+        messageTargetIds.set(ref, targetId)
+      }
+      return finish(mainGateReason(state, exec, gateCtx))
+    })()
   })
 
   // 6) 呈现兜底（tools/post-execute）：run_code 失败结果的 error.message 含本插件刚记下的
