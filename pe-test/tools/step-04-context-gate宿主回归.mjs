@@ -33,7 +33,7 @@ const CONTEXT_GATE_FIXTURE_TEXT = Object.freeze({
   compatCordisPluginDevelopment: '---\nname: cordis-plugin-development\ndescription: rc1 compatibility creative fixture skill\n---\nrc1 compatibility creative skill body\n',
   compatEditingCordisCompositions: '---\nname: editing-cordis-compositions\ndescription: rc1 compatibility creative fixture skill\n---\nrc1 compatibility creative skill body\n',
   compatCordisCompositionReference: '---\nname: cordis-composition-reference\ndescription: rc1 compatibility creative fixture skill\n---\nrc1 compatibility creative skill body\n',
-  // DSH_CURRENT_RC2：rc.2当前来源；ordinary项仍是普通技能，不归历史可删。
+  // DSH_CURRENT_RC2：最新路径当前来源（rc.2 与 rc.3 共用）；ordinary项仍是普通技能，不归历史可删。
   currentDshDoc: '---\nname: dsh-doc\ndescription: rc2 current creative fixture skill\n---\nrc2 current creative skill body\n',
   currentAgentExperience: '---\nname: agent-experience\ndescription: rc2 current ordinary fixture skill\n---\nrc2 current ordinary skill body\n',
   currentOrdinarySkill: '---\nname: ordinary-skill\ndescription: rc2 current ordinary fixture skill\n---\nrc2 current ordinary skill body\n'

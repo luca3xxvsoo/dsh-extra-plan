@@ -25,10 +25,10 @@ const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url))
 const DSH_INSTALL_ROOT = typeof process.env.DSH_INSTALL_ROOT === 'string' && process.env.DSH_INSTALL_ROOT.trim() !== ''
   ? process.env.DSH_INSTALL_ROOT.trim()
   : null
-// DSH_COMPAT_RC1：rc.1兼容基线；仅在明确撤销授权且保留共享安全回归后删除。
-// DSH_CURRENT_RC2：rc.2当前目标；在rc.2支持范围内保留，撤销边界同上。
-// TARGET_PEER_RANGE仅覆盖两个精确目标，不放宽到正式版、其它rc或旧版。
-const TARGET_PEER_RANGE = '0.2.2-rc.1 || 0.2.2-rc.2'
+// DSH_COMPAT_RC1：rc1兼容路径；仅在明确撤销授权且保留共享安全回归后删除。
+// DSH_CURRENT_RC2：最新路径（rc.2 与 rc.3 共用）；在rc.2与rc.3支持范围内保留，撤销边界同上。
+// TARGET_PEER_RANGE仅覆盖三个精确目标，不放宽到正式版、其它rc或旧版。
+const TARGET_PEER_RANGE = '0.2.2-rc.1 || 0.2.2-rc.2 || 0.2.2-rc.3'
 const LEGACY_HOST_VERSIONS = ['0.1.7-rc.1', '0.1.7-rc.2', '0.2.0-rc.1', '0.2.0-rc.2']
 const TARGET_SCHEMASTERY_PEER = '~3.19.0'
 const PRESET_DIR = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'assets', 'presets', 'extra-plan')
@@ -263,7 +263,7 @@ check('M4 两个子包 LICENSE 存在且与根 LICENSE 字节全同', rootLicens
 check('M4 两包 package.json license=MIT', packageJson.license === 'MIT' && qqbotPackageJson.license === 'MIT')
 check('B2 package files/scripts 含生成器、generate 与 prepack', packageFiles.includes('scripts/generate-runtime-defaults.mjs') && packageJson.scripts['generate:runtime-defaults'] === 'node scripts/generate-runtime-defaults.mjs' && packageJson.scripts.prepack === 'node scripts/generate-runtime-defaults.mjs', true)
 check('M1 核心 manifest name/version/repository/client/deps/patch/private 契约', packageJson.name === 'dsh-extra-plan' && packageJson.repository === 'git+https://github.com/luca3xxvsoo/dsh-extra-plan.git' && packageJson.dsh?.bundle?.patch === './cordis.patch.yml' && packageJson.dsh?.client?.platform === 'web' && Array.isArray(packageJson.dsh?.client?.inject) && packageJson.dependencies?.['js-yaml'] === '^4.2.0' && !Object.prototype.hasOwnProperty.call(packageJson, 'private') && !JSON.stringify(packageJson).includes('@local/dsh-extra-plan'))
-check('M2 两包 engines/peer 五字段均为 0.2.2-rc.1 || 0.2.2-rc.2 双版本',
+check('M2 两包 engines/peer 五字段均为 0.2.2-rc.1 || 0.2.2-rc.2 || 0.2.2-rc.3 三版本',
   packageJson.engines?.dsh === TARGET_PEER_RANGE
   && packageJson.peerDependencies?.['@deepseek-ai/dsh'] === TARGET_PEER_RANGE
   && packageJson.peerDependencies?.['@deepseek-ai/dsh-llm'] === TARGET_PEER_RANGE
@@ -759,7 +759,7 @@ if (executorRows.length === 1 && executorRows[0].config === undefined) {
 }
 
 // S2：宿主 runtime 包不得进入 dependencies；只能由 peerDependencies 声明。
-// dsh/dsh-llm 的 0.2.2-rc.1 || 0.2.2-rc.2 精确并集是版本门控，不等价于实机兼容结论。
+// dsh/dsh-llm 的 0.2.2-rc.1 || 0.2.2-rc.2 || 0.2.2-rc.3 精确并集是版本门控，不等价于实机兼容结论。
 const pluginPkgFile = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'package.json')
 let pluginPkg
 try { pluginPkg = JSON.parse(readFileSync(pluginPkgFile, 'utf8')) } catch { pluginPkg = undefined }
@@ -770,23 +770,24 @@ const hostLeaks = Object.keys(pluginDeps).filter((name) => name.startsWith('@dee
 check('S2 dependencies 不含 @deepseek-ai/* 宿主包（profile 不得出现第二份宿主副本）'
   + (hostLeaks.length > 0 ? '，实际: ' + hostLeaks.join(', ') : ''),
   pluginPkg !== undefined && hostLeaks.length === 0)
-check('S2 engines.dsh 与三项 @deepseek-ai peer 同值 0.2.2-rc.1 || 0.2.2-rc.2；schemastery peer 单独校验',
+check('S2 engines.dsh 与三项 @deepseek-ai peer 同值 0.2.2-rc.1 || 0.2.2-rc.2 || 0.2.2-rc.3；schemastery peer 单独校验',
   pluginPeers['@deepseek-ai/dsh'] === TARGET_PEER_RANGE
   && pluginPeers['@deepseek-ai/dsh-llm'] === TARGET_PEER_RANGE
   && pluginPeers['@deepseek-ai/dsh-agent-preset'] === TARGET_PEER_RANGE
   && pluginPkg?.engines?.dsh === TARGET_PEER_RANGE
   && qqbotPackageJson.engines?.dsh === TARGET_PEER_RANGE)
-check('S2 peerDependencies 不使用 caret/compatibility 豁免，且精确双版本仍由宿主供给，schemastery 仍由宿主供给',
+check('S2 peerDependencies 不使用 caret/compatibility 豁免，且精确三版本仍由宿主供给，schemastery 仍由宿主供给',
   typeof pluginPeers['@deepseek-ai/schemastery'] === 'string' && pluginPeers['@deepseek-ai/schemastery'] !== '' &&
   !String(pluginPeers['@deepseek-ai/dsh']).includes('^') && !String(pluginPeers['@deepseek-ai/dsh-llm']).includes('^'))
 
 const semanticPositiveCases = Object.freeze([
   { label: 'DSH_COMPAT_RC1', version: '0.2.2-rc.1' },
   { label: 'DSH_CURRENT_RC2', version: '0.2.2-rc.2' },
+  { label: 'DSH_CURRENT_RC2', version: '0.2.2-rc.3' },
 ])
 const semanticNegativeCases = Object.freeze([
   { label: 'DSH_BOUNDARY_RC0', version: '0.2.2-rc.0' },
-  { label: 'DSH_BOUNDARY_RC3', version: '0.2.2-rc.3' },
+  { label: 'DSH_BOUNDARY_RC4', version: '0.2.2-rc.4' },
   { label: 'DSH_BOUNDARY_RELEASE', version: '0.2.2' },
   { label: 'DSH_OLD_RC', version: '0.2.1-rc.5' },
   { label: 'DSH_OLD_RELEASE', version: '0.2.1' },
@@ -818,9 +819,9 @@ if (semanticSemver === null) {
 } else {
   // DSH_COMPAT_RC1与DSH_CURRENT_RC2分别保留独立正例；边界表独立维护，不从产品range反推expected。
   for (const positive of semanticPositiveCases) {
-    check('S2 ' + positive.label + ' ' + positive.version + ' 正例落在精确双版本声明', semanticSemver.satisfies(positive.version, TARGET_PEER_RANGE, { includePrerelease: true }))
+    check('S2 ' + positive.label + ' ' + positive.version + ' 正例落在精确三版本声明', semanticSemver.satisfies(positive.version, TARGET_PEER_RANGE, { includePrerelease: true }))
   }
-  check('S2 rc.0/rc.3/正式版/旧版均被精确双版本声明拒绝', semanticNegativeCases.every(({ version }) => !semanticSemver.satisfies(version, TARGET_PEER_RANGE, { includePrerelease: true })))
+  check('S2 rc.0/rc.4/正式版/旧版均被精确三版本声明拒绝', semanticNegativeCases.every(({ version }) => !semanticSemver.satisfies(version, TARGET_PEER_RANGE, { includePrerelease: true })))
 }
 
 const appBootManifestPath = targetManifestPath('dsh-app-boot')
@@ -864,7 +865,7 @@ if (typeof appBoot?.evaluatePluginCompatibility === 'function' && targetDsh !== 
   const enginesRc1OnlyPeerUnion = enginesRc1OnlyManifest.peerDependencies?.['@deepseek-ai/dsh'] === TARGET_PEER_RANGE
     && enginesRc1OnlyManifest.peerDependencies?.['@deepseek-ai/dsh-llm'] === TARGET_PEER_RANGE
     && enginesRc1OnlyManifest.peerDependencies?.['@deepseek-ai/dsh-agent-preset'] === TARGET_PEER_RANGE
-  check('S2 缺陷副本只收窄engines到rc.1且peer仍为精确双版本并集', enginesRc1OnlyManifest.engines?.dsh === '0.2.2-rc.1' && enginesRc1OnlyPeerUnion)
+  check('S2 缺陷副本只收窄engines到rc.1且peer仍为精确三版本并集', enginesRc1OnlyManifest.engines?.dsh === '0.2.2-rc.1' && enginesRc1OnlyPeerUnion)
   for (const positive of semanticPositiveCases) {
     const issue = appBoot.evaluatePluginCompatibility(enginesRc1OnlyManifest, noExemptions, positive.version)
     console.log('APP_BOOT_DEFECT_CASE ' + JSON.stringify({ manifest: 'dsh-extra-plan-engines-rc1-only', name: enginesRc1OnlyManifest.name, version: enginesRc1OnlyManifest.version, label: positive.label, runtimeVersion: positive.version, sourceRootRuntimeVersion, engines: enginesRc1OnlyManifest.engines, peerDependencies: enginesRc1OnlyManifest.peerDependencies, issue }))
@@ -876,7 +877,7 @@ if (typeof appBoot?.evaluatePluginCompatibility === 'function' && targetDsh !== 
         && issue.version === enginesRc1OnlyManifest.version
         && issue.runtimeVersion === positive.version
         && issue.requirements?.['engines.dsh'] === '0.2.2-rc.1'
-    check('S2 缺陷副本app-boot无豁免 runtime=' + positive.version + '（rc.1接受、rc.2拒绝）', defectExpected)
+    check('S2 缺陷副本app-boot无豁免 runtime=' + positive.version + '（rc.1接受、其余精确版本均拒绝）', defectExpected)
   }
 } else {
   console.log('NOT-RUN  {"scope":"APP-BOOT-COMPATIBILITY","reason":"未取得显式DSH_INSTALL_ROOT下的app-boot公开evaluatePluginCompatibility、dsh/dsh-llm manifest或有效runtimeVersion，未伪造双根宿主结论"}' + (appBootLoadError === null ? '' : ' error=' + String(appBootLoadError?.message || appBootLoadError)))
@@ -1004,7 +1005,7 @@ if (h1ManifestPath === null || h1Entry === null || h1AdapterEntry === null || h1
     rmSync(h1EmptyRoot, { recursive: true, force: true })
   }
 }
-console.log('HUMAN  双版本宿主与实机模型行为【未核实·HUMAN】：本脚本仅证明 0.2.2-rc.1 || 0.2.2-rc.2 精确声明门、显式样本根隔离及本脚本实际执行的只读加载门控范围；不证明其它 API/全量矩阵/真实 GUI/provider/模型通过')
+console.log('HUMAN  三版本宿主与实机模型行为【未核实·HUMAN】：本脚本仅证明 0.2.2-rc.1 || 0.2.2-rc.2 || 0.2.2-rc.3 精确声明门、显式样本根隔离及本脚本实际执行的只读加载门控范围；不证明其它 API/全量矩阵/真实 GUI/provider/模型通过')
 
 // S3：包级与全局管理行 locale 通过 exports 真实解析；旧 preset-sync 通道必须退役。
 const LOCALE_CHANNELS = [

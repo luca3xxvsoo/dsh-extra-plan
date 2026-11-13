@@ -345,7 +345,7 @@ try {
   check('S04 严格模式 MESSAGE 与 INBOX_ONLY 行齐全', s04Strict.output.includes('MESSAGE {') && s04Strict.output.includes('INBOX_ONLY {') && s04Strict.output.includes('"role":"system"') && s04Strict.output.includes('"inboxOnly":true'))
   const s04CatalogDir = join(s04Workspace, 's04-catalog')
   // DSH_COMPAT_RC1：旧三名仅作为兼容来源；仅在未来另行授权、协调移除旧技能分类专用数据/期望并完成共享安全回归后，才可撤销。
-  // DSH_CURRENT_RC2：dsh-doc为当前来源；当前dsh-doc与共享安全不在rc.1撤销边界。
+  // DSH_CURRENT_RC2：dsh-doc为最新路径当前来源（rc.2 与 rc.3 共用）；当前dsh-doc与共享安全不在rc.1撤销边界。
   // 共享v4/序号/坏帧/普通项数据和期望不得随rc.1撤销整块删除。
   writeSession(s04CatalogDir, SESSION_LOG_NAME, [
     { type: 'session', data: { id: 's04-catalog', version: 1, cwd: 'C:/fixture-cwd' }, seq: 1 },

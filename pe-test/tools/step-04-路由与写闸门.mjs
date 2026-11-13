@@ -343,8 +343,8 @@ function makeHarness(config = {}) {
       // createAgentRuntime/isLiveDelegation 的 agents 缺席豁免路径不破坏 child 判定）；
       // 用例经 config.agents 显式注入 registry（如 { get: (id) => ({ status: 'running' }) }）。
       if (name === 'agents') return config.agents
-      // DSH_CURRENT_RC2：新 agent 名称/路径解析能力只由用例显式注入；删除边界仅限 rc.2
-      // subagents.resolveName 适配，不改变默认缺席语义或共享安全判定。
+      // DSH_CURRENT_RC2：新 agent 名称/路径解析能力只由用例显式注入；删除边界仅限最新路径
+      // subagents.resolveName 适配（rc.2 与 rc.3 共用），不改变默认缺席语义或共享安全判定。
       if (name === 'subagents') return config.subagents
       if (name === 'profileContext') return { home: ROUTE_FIXTURE.home, installAnchor: DSH_PACKAGE_MANIFEST }
       if (name === 'dshHomePath') return (...parts) => join(ROUTE_FIXTURE.home, ...parts.map((part) => String(part)))
@@ -1476,7 +1476,7 @@ r = preExecute(harness, noneMain, 'run_code', revCode)
 checkTrue('R86 组内 subagent_review 成员无批准 → deny 且含「执行类委派未放行：subagent_review」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('执行类委派未放行：subagent_review'))
 
 // DSH_CURRENT_RC2：新 agent 名称/路径参数与 subagents.resolveName 的异常、取消和本轮去重回归。
-// 删除边界仅限 rc.2 新参数/解析适配；旧 agent_id、child 硬拒及共享安全断言不归本兼容块。
+// 删除边界仅限最新路径新参数与解析适配（rc.2 与 rc.3 共用）；旧 agent_id、child 硬拒及共享安全断言不归本兼容块。
 {
   const rc2Caller = mainWithEvents([])
   const rc2Signal = new AbortController().signal
@@ -2439,7 +2439,7 @@ checkTrue('P4-0 通知行为：同 message.id 幂等、同 job 新 id 可解锁�
 // M12 独立协议期望：固定工具名不从被测 CORDIS_PRESENTATION_TOOLS 导出生成 fixture；导出相等另行断言。
 const MATRIX_CORDIS_TOOLS = ['cordis_inspect_list', 'cordis_inspect_query']
 // DSH_COMPAT_RC1：合成 catalog 保留 rc.1 旧三名；删除边界仅限这三项且须另行授权。
-// DSH_CURRENT_RC2：合成 catalog 追加当前 rc.2 dsh-doc；agent-experience 是普通项，不进入隐藏集合。
+// DSH_CURRENT_RC2：合成 catalog 追加最新路径 dsh-doc（rc.2 与 rc.3 共用）；agent-experience 是普通项，不进入隐藏集合。
 const MATRIX_CREATIVE_SKILLS = ['cordis-plugin-development', 'editing-cordis-compositions', 'cordis-composition-reference', 'dsh-doc']
 const MATRIX_ORDINARY_SKILLS = ['matrix-ordinary-skill', 'agent-experience']
 const MATRIX_SCHEMA = (name, description, parameters) => ({
@@ -2683,14 +2683,15 @@ const projectionSource = { tools: [{ name: 'read' }, { name: MATRIX_CORDIS_TOOLS
 const projectionCopy = projectAssemblyForPresentation(projectionSource, projectionSource.tools, { sdkText: 'read:' })
 checkTrue('projectAssemblyForPresentation 返回新 assembly 且不原地修改', projectionCopy !== projectionSource && projectionSource.tools.length === 2 && projectionSource.sections[0].name === 'tool:cordis' && projectionCopy.tools.length === 1 && projectionCopy.tools[0].name === 'read' && sectionText(projectionCopy, 'tool:cordis') === '' && sectionText(projectionCopy, 'tools:sdk') === 'read:')
 // C=1 创造 skill 面（换通道后）：预设 skill-filesystem 行的 config.bundledSkillDir
-// 按实际 DSH_PACKAGE_MANIFEST 版本检查官方包内 skills/：rc.1 旧三名、rc.2 dsh-doc；不要求单根同时四名，且配 watch: false；旧键 customSkillDirs 已删（坏通道）。
+// 按实际 DSH_PACKAGE_MANIFEST 版本检查官方包内 skills/：rc.1 旧三名、rc.2 与 rc.3 同为 dsh-doc；不要求单根同时四名，且配 watch: false；旧键 customSkillDirs 已删（坏通道）。
 // 合成投影期望独立于物理 bundledSkillDir：四名均应参与 C0/C1 目录投影。
 const expectedCreativeSkills = MATRIX_CREATIVE_SKILLS.slice()
 // DSH_COMPAT_RC1：rc.1 物理根只检查旧三名；删除边界仅限该版本的物理兼容。
-// DSH_CURRENT_RC2：rc.2 物理根只检查 dsh-doc；未知/缺根保持 undefined，禁止伪 PASS。
+// DSH_CURRENT_RC2：最新路径物理根（rc.2 与 rc.3 共用）只检查 dsh-doc；未知/缺根保持 undefined，禁止伪 PASS。
 const physicalCreativeSkillsByVersion = {
   '0.2.2-rc.1': ['cordis-plugin-development', 'editing-cordis-compositions', 'cordis-composition-reference'],
   '0.2.2-rc.2': ['dsh-doc'],
+  '0.2.2-rc.3': ['dsh-doc'],
 }
 const hostManifestVersion = (() => {
   if (typeof DSH_PACKAGE_MANIFEST !== 'string' || !existsSync(DSH_PACKAGE_MANIFEST)) return undefined

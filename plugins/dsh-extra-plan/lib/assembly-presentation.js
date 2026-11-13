@@ -19,14 +19,14 @@ export const SDK_SECTION_NAME = 'tools:sdk'
 export const READ_SECTION_NAME = 'tool:read'
 // C=1 创造模式官方 skill 面（skill-filesystem 行 bundledSkillDir 静态注册，换通道原因：
 // 旧 customSkillDirs 经 ctx.fs 扫 asar 抛非 absent 错 → 改 trustedHost/node:fs 通道 + watch: false）：
-// 跨版本模型可见投影集合：rc.1旧三名与rc.2 dsh-doc，不代表任一宿主的物理技能数；C=0 时由 projectSkillCatalogDecision 从模型可见 catalog 隐藏
+// 跨版本模型可见投影集合：rc.1旧三名与 rc.2/rc.3 共用的 dsh-doc，不代表任一宿主的物理技能数；C=0 时由 projectSkillCatalogDecision 从模型可见 catalog 隐藏
 // （旧实现是「不在插件里注册」；静态注册后改为投影隐藏——仅名字不可见，按名调用仍可达）。
 export const CREATIVE_SKILL_NAMES = new Set([
   // DSH_COMPAT_RC1：旧 rc.1 兼容三名；删除边界仅限这三名且须另行授权，不含共享安全核心。
   'cordis-plugin-development',
   'editing-cordis-compositions',
   'cordis-composition-reference',
-  // DSH_CURRENT_RC2：当前 rc.2 的 dsh-doc，不在 rc.1 删除边界内；agent-experience 不加入此集合。
+  // DSH_CURRENT_RC2：最新路径的 dsh-doc（rc.2 与 rc.3 共用），不在 rc.1 删除边界内；agent-experience 不加入此集合。
   'dsh-doc',
 ])
 

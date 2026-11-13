@@ -923,7 +923,7 @@ function mainGateReason(state, exec, gateCtx) {
       const agents = ctx.getAgents()
       if (agents !== undefined && agents !== null && typeof agents.get === 'function') {
         const smArgs = exec !== undefined && exec !== null ? exec.arguments : undefined
-        // DSH_CURRENT_RC2：可选回调优先读取新 agent 名称/路径的本轮解析ID；删除边界仅限 rc.2 agent/resolveName 适配，须另行授权，不含共享安全核心。
+        // DSH_CURRENT_RC2：可选回调优先读取新 agent 名称/路径的本轮解析ID；删除边界仅限最新路径 agent 与 resolveName 适配（rc.2 与 rc.3 共用），须另行授权，不含共享安全核心。
         // DSH_COMPAT_RC1：新参数未提供时读取旧 agent_id Session ID；删除边界仅限 rc.1 旧参数兼容，须另行授权，不含共享安全核心。
         const targetId = typeof ctx.messageTargetIdOf === 'function'
           ? ctx.messageTargetIdOf(smArgs)

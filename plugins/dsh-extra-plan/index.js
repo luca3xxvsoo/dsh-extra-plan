@@ -989,11 +989,11 @@ export function apply(ctx, config) {
   // 续轮转达机械拼接 plannerPromptSuffix（「任务要求 + 空行 + 配置文本」——宿主
   // exec.arguments 与消息对象均 deepFreeze，拼接走 pre-step 消息替换通道，
   // 与 agent-instructions 基线注入同通道）。
-  // C=0：按各宿主实际装载目录，把两版本的精确隐藏名投影到模型可见 catalog；不把跨版本并集当成单根物理装载。
+  // C=0：按各宿主实际装载目录，把三版本的精确隐藏名投影到模型可见 catalog；不把跨版本并集当成单根物理装载。
   // DSH_COMPAT_RC1：rc.1 旧隐藏名为 cordis-plugin-development、editing-cordis-compositions、
   // cordis-composition-reference；rc.1另含但不隐藏 agent-experience。删除边界仅限上述旧隐藏名，须另行授权，不含共享安全核心。
-  // DSH_CURRENT_RC2：rc.2 当前隐藏名为 dsh-doc；agent-experience 不在隐藏集合。
-  // 删除边界：rc.2 当前隐藏名须保留，撤销兼容仍须另行授权，不含共享安全核心。
+  // DSH_CURRENT_RC2：最新路径隐藏名为 dsh-doc（rc.2 与 rc.3 共用）；agent-experience 不在隐藏集合。
+  // 删除边界：最新路径隐藏名须保留，撤销兼容仍须另行授权，不含共享安全核心。
   // （换通道后旧 customSkillDirs 走 ctx.fs 扫 asar 会抛错；不再靠「不注册」），
   // 一律从模型可见 catalog 隐藏——只影响名字可见性，skill 仍注册、按名调用仍可加载。
   // C=1：首轮暂隐已由 filterBootstrapContextDecision 在 gated 为 true 时整条剔除 skill-catalog 消息承担；本函数只保留 C=0 全量隐藏分支。
@@ -1539,7 +1539,7 @@ export function apply(ctx, config) {
 
     const state = deriveFlowState(execEvents, gateRuntime)
     // DSH_CURRENT_RC2：本轮局部 Set/Map 仅把 send_message.agent 名称/路径引用解析为 Session ID；
-    // 删除边界仅限 rc.2 agent/resolveName 适配，须另行授权，不含共享安全核心。
+    // 删除边界仅限最新路径 agent 与 resolveName 适配（rc.2 与 rc.3 共用），须另行授权，不含共享安全核心。
     // DSH_COMPAT_RC1：agent 非字符串时保留旧 agent_id 直接 Session ID 路径；
     // 删除边界仅限 rc.1 旧参数兼容，须另行授权，不含共享安全核心。
     const messageTargetRefs = new Set()
