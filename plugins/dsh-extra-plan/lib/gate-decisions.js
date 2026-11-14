@@ -665,8 +665,7 @@ function runCodeGroupDenyReason(state, exec, role, gateCtx) {
     const askReason = roleKind === 'main' ? askOrGateReturnGateReason(codeArg) : null
     const decomposed = decomposeRunCode(codeArg)
     if (askReason !== null) {
-      const askMember = { kind: 'tool', name: ASK_TOOL, argsParsed: true, args: {}, argsText: '' }
-      if (!decomposed.members.some((member) => member.kind === 'tool' && member.name === ASK_TOOL)) members.push(askMember)
+      const askMember = { kind: 'ask-gate', name: ASK_TOOL, argsParsed: true, args: {}, argsText: '' }
       denies.push({ member: askMember, reason: askReason })
     }
     for (const member of decomposed.members) {
@@ -730,7 +729,7 @@ function runCodeGroupDenyReason(state, exec, role, gateCtx) {
 
 // 聚合报错（统一格式，任何一次组判定拒绝均用此格式；子文案逐字不变）：
 // header 一行（组规模 + 触发明细计数 + 「全通过才放行」语义）+ 逐行 `- <标签>: <子文案>`；
-// 标签规则：普通成员=工具名；裸写=`write（裸写特征：<hints 顿号连接>）`；
+// 标签规则：普通成员=工具名；裸写=`write（裸写特征：<hints 顿号连接>）`；ask-gate（A22 返回链闸门）=无工具标签，直接输出「- 」加子文案全文（工具名已由文案承载）；
 // 参数不可解析=`<工具名>（参数不可解析）`；行序=组员顺序（展平后）；子文案来自闸门函数原返回值；catch/cap/budget 直接取成员 name。
 function aggregateRunCodeDenyReason(members, denies) {
   const lines = [`run_code 拆解预审未通过：工具组共 ${members.length} 项（去重后），${denies.length} 项触发闸门，任一触发即整体拒绝：`]
@@ -738,6 +737,7 @@ function aggregateRunCodeDenyReason(members, denies) {
     if (d.member.kind === 'catch') { lines.push(`- ${d.member.name}: ${d.reason}`); continue }
     if (d.member.kind === 'cap') { lines.push(`- ${d.member.name}: ${d.reason}`); continue }
     if (d.member.kind === 'budget') { lines.push(`- ${d.member.name}: ${d.reason}`); continue }
+    if (d.member.kind === 'ask-gate') { lines.push(`- ${d.reason}`); continue }
     let label = d.member.name
     if (d.member.kind === 'bare-write') label = `write（裸写特征：${d.member.hints.join('、')}）`
     else if (!d.member.argsParsed) label = `${d.member.name}（参数不可解析）`

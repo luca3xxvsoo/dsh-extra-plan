@@ -93,7 +93,7 @@ export function createGateRuntime(raw) {
   })
   const confirm = Object.freeze({
     route: '须先调用 extra_plan_gate(gate=\'route\') 完成路线确认（选项固定为' + options.route + '）',
-    purpose: '须先调用 extra_plan_gate 并传入 gate 为 purpose 询问用户本次 pro 规划的目的（选项固定为' + options.purpose + '）',
+    purpose: '须先调用 extra_plan_gate 并传入 gate = purpose 询问用户本次 pro 规划的目的（选项固定为' + options.purpose + '）',
   })
   const variables = {}
   for (const item of GATE_WORD_FIELDS) variables[item.variable] = words[item.field]

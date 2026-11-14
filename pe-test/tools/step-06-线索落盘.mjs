@@ -491,7 +491,7 @@ check('S8hg channel-error 不改动既有状态：route/purpose/clarified 保持
 // S8cg：独立事件流（route→clarify、目的未定）的 save_probe 拒绝文案（第四锚点教学式文案，机械层放行前置）
 const s8Agent = { session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => [um(), ...gateRoute('a1', 'plan', W.routePlan), ...gateClarify('a2')] }, options: {}, ctx: agentCtx }
 const s8r = preExecute(harness, s8Agent, 'save_probe', {})
-checkTrue('S8cg 目的未定 save_probe 拒绝文案含「规划目的尚未确认」与「须先调用 extra_plan_gate 并传入 gate 为 purpose」', s8r !== null && s8r !== undefined && s8r.kind === 'deny' && String(s8r.reason).includes('规划目的尚未确认') && String(s8r.reason).includes('extra_plan_gate 并传入 gate 为 purpose'))
+checkTrue('S8cg 目的未定 save_probe 拒绝文案含「规划目的尚未确认」与「须先调用 extra_plan_gate 并传入 gate = purpose」', s8r !== null && s8r !== undefined && s8r.kind === 'deny' && String(s8r.reason).includes('规划目的尚未确认') && String(s8r.reason).includes('extra_plan_gate 并传入 gate = purpose'))
 
 let r
 // 完整阶段（route=plan→目的→澄清→executor 路线）后重选 route=plan 必须清掉旧目的/澄清；按 route→purpose→clarify 才恢复下游放行。
