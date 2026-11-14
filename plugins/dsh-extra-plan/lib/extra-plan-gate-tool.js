@@ -16,6 +16,9 @@ const ROUTE_QUESTION = '这次任务走哪条路线？'
 const NOTE_HEADER = '其他说明'
 const NOTE_QUESTION = '其他说明：如转交pro规划等。可置空'
 const NOTE_LABEL = '其他说明'
+// 两个自由文本标签分属 route 的两问、互不合并：CHOICE_NOTE_LABEL 是第一问（路线四选一）外可填的自由输入，
+// NOTE_LABEL 是第二问「其他说明」。
+const CHOICE_NOTE_LABEL = '路线自由输入'
 const PURPOSE_HEADER = '规划目的'
 const PURPOSE_QUESTION = '这次让规划者分析的目的？'
 const PURPOSE_DETAIL = '完善方案＝在已有方案基础上修改；重新规划＝把原始需求交给规划者重新理解'
@@ -115,6 +118,8 @@ function boundGateTool(gateRuntime, ask, getState) {
       purpose: null,
       note: '',
       noteLabel: NOTE_LABEL,
+      choiceNote: '',
+      choiceNoteLabel: CHOICE_NOTE_LABEL,
       outcome: 'answered',
     }
     let answers
@@ -136,9 +141,11 @@ function boundGateTool(gateRuntime, ask, getState) {
       return failResult(result, error)
     }
     result.note = customTextOf(answers[1])
+    result.choiceNote = customTextOf(answers[0])
     const selected = selectedLabelsOf(answers[0])
     // 第一问未选中（用户跳过，selected 为空）→ outcome='skipped'：route 仍落 none（与旧机制同口径），
     // routeLabel 置空串，绝不回填 disagree 词值，避免把「没作答」误报成「不同意」。
+    // selected 为空仍判 skipped，但两个自由文本字段保留原文（note 与 choiceNote 均在上面赋值，不回退为空串）。
     if (selected.length === 0) {
       result.route = 'none'
       result.routeLabel = ''
@@ -219,11 +226,7 @@ function boundGateTool(gateRuntime, ask, getState) {
   function defineGateTool(agent) {
     return {
       name: GATE_TOOL_NAME,
-      description: '闸门提问：gate=route（路线确认）与 gate=purpose（规划目的）两个分支的选项与文案一律由插件按当前 gateWords 词表生成，模型不得自行构造、追加或改写这两个分支的选项文案；gate=clarify（意图澄清）的 questions 与候选 options 由模型提供、插件原样转交用户，不生成也不改写。'
-        + 'gate=route 时插件发两问：第一问四选一（依次对应 route 枚举 main/executor/plan/none），第二问为纯文本可空的其他说明；返回 gate、route、routeLabel（中文路线词）、purpose=null、note（其他说明原文或空串）、noteLabel（说明标签）。'
-        + 'gate=purpose 时插件发一问两选一（依次对应 purpose 枚举 refine/redo）；返回 gate、purpose、purposeLabel（中文目的词）。'
-        + 'gate=clarify 时由你在 questions 里给 1-3 个意图澄清问题，插件原样转交用户；返回 gate、answers。'
-        + '三个分支都不向外抛错：outcome=answered（用户作答）、skipped（用户跳过未作答）、cancelled（用户取消）、channel-error（提问通道失败，附 error.code）。',
+      description: '闸门提问。gate=route 路线确认；gate=purpose 规划目的；gate=clarify 意图澄清：在 questions 里给 1-3 个问题（header/question/options），插件原样转交用户',
       parameters: {
         type: 'object',
         properties: {
@@ -237,7 +240,7 @@ function boundGateTool(gateRuntime, ask, getState) {
             minItems: 1,
             maxItems: 3,
             items: { type: 'object' },
-            description: '仅 gate=clarify 使用：意图澄清问题数组（1-3 个问题，每问含 header/question 与候选 options），插件原样转交用户；gate=route/purpose 时不要传',
+            description: '仅 gate=clarify：1-3 个澄清问题（header/question/options），原样转交；route/purpose 不传',
           },
         },
         required: ['gate'],
@@ -256,6 +259,8 @@ function boundGateTool(gateRuntime, ask, getState) {
             purposeLabel: { description: 'purpose 分支：purpose 对应的中文目的词（取自 gateRuntime 词表）；跳过时为空串' },
             note: { type: 'string', description: 'route 分支：第二问「其他说明」的原文，未填为空串' },
             noteLabel: { type: 'string', description: 'route 分支：note 的固定标签（其他说明）' },
+            choiceNote: { type: 'string', description: 'route 分支：第一问（路线四选一）自由输入的原文，未填为空串；与 note 分属两问，不合并' },
+            choiceNoteLabel: { type: 'string', description: 'route 分支：choiceNote 的固定标签（路线自由输入）' },
             answers: { type: 'array', items: { type: 'object' }, description: 'clarify 分支：宿主原样返回的答复数组' },
             error: {
               type: 'object',

@@ -894,7 +894,8 @@ export function apply(ctx, config) {
   // 引导期 allow = 配置集 ∩ 可收窄名（view.restrictableNames 优先、schemas 兜底）；
   // 两者都不可用或交集为空时返回空数组，调用方不 arm 并落诊断（不回落配置集：
   // 配置集默认含 win32 上并不存在的 bash，restrict 对未知名整次抛错）。
-  // 交集非空时再对闸门工具 extra_plan_gate 做核心能力补齐（见函数尾注释）。
+  // 引导期 allow 仅由 bootstrapShellTools 与 bootstrapCommonTools 组成，不再补齐
+  // extra_plan_gate；闸门工具在首个 tool/call 后自然可见。
   function anchoredAllowNamesOf(agent) {
     let names = null
     const tools = toolsServiceOf(agent)
@@ -922,12 +923,6 @@ export function apply(ctx, config) {
       if (!names.has(name)) continue
       if (!allow.includes(name)) allow.push(name)
     }
-    // 闸门工具是插件核心能力：首个 tool/call 之前就得能发闸门，不能在 F 段被收窄隐藏。
-    // 故在「配置集 ∩ 可收窄名」之外无条件补齐它（名字沿用 pre-execute 硬拒处的同一字面量，
-    // 不新造第二个名字）。只在 allow 非空时补齐：allow 为空仍原样返回空数组，caller 的
-    // skip-empty-allow 判据（不 arm、工具面整面可见）逐字不变——追加只改 allow 内容，
-    // 叠加在既有的「该不该 arm」判定之后，不参与该判定。
-    if (allow.length > 0 && names.has('extra_plan_gate') && !allow.includes('extra_plan_gate')) allow.push('extra_plan_gate')
     return allow
   }
   // 通用 arm：restrict 的唯一调用点，filter 名单校验、幂等与诊断集中于此。

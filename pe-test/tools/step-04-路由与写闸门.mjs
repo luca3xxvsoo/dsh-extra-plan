@@ -646,7 +646,7 @@ function makeArmAgent(id, toolsStub, withAppend) {
   }
 }
 {
-  const armSchemas = [{ name: 'read' }, { name: 'pwsh' }, { name: 'write' }, { name: 'edit' }]
+  const armSchemas = [{ name: 'read' }, { name: 'pwsh' }, { name: 'write' }, { name: 'edit' }, { name: 'extra_plan_gate' }]
   const armRecorder = makeArmRecorder(armSchemas)
   const armAgent = makeArmAgent('boot-restrict-main', armRecorder.tools, true)
   const harnessArmNative = makeHarness({ anchoredBootstrap: true, ptcRuntime: null })
@@ -655,6 +655,10 @@ function makeArmAgent(id, toolsStub, withAppend) {
     ? armRecorder.calls.restrict[0].allow.join('|')
     : null
   checkTrue('R15 真实 Session 引导期 arm：restrict allow 为配置集与 schema 交集（pwsh|read）', armAllow === 'pwsh|read')
+  // R15a：夹具 schema 已含 extra_plan_gate，修复前「核心能力补齐」分支会把它追加进 allow（R15 一并失败），
+  // 修复后引导期 allow 只由 bootstrapShellTools 与 bootstrapCommonTools 组成，gate 不得进入 allow。
+  const armAllowNames = armRecorder.calls.restrict.length === 1 && Array.isArray(armRecorder.calls.restrict[0].allow) ? armRecorder.calls.restrict[0].allow : []
+  checkTrue('R15a 引导期 allow 不含 extra_plan_gate（修复前补齐分支会让 gate 进入 allow，修复后不再补齐）', armAllowNames.length > 0 && !armAllowNames.includes('extra_plan_gate'))
   preExecute(harnessArmNative, armAgent, 'read', { file_path: 'README.md' })
   checkTrue('R17 引导期结束后 release：restrict disposer 被调用恰一次', armRecorder.calls.released === 1)
 }
@@ -858,7 +862,8 @@ for (const route of writeGateRoutes) {
     checkTrue('R18j-5 plan pwsh 写（无 sandbox_permissions）→ 拒句含越界指引（含 sandbox_permissions 提示）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('sandbox_permissions'))
     r = preExecute(harness, agent, 'pwsh', { command: 'New-Item x.txt', sandbox_permissions: 'workspace-write' })
     checkTrue('R18j-6 route=plan pwsh 写 + sandbox_permissions 字符串 → allow（工作区外写入放行）', r !== null && r !== undefined && r.kind === 'allow')
-  } else {
+  } else if (route === 'none') {
+    // route=main 迭代由 expectedKind=allow 处理（R18h/R18i 已断言 allow），不进入本分支；本分支只覆盖 route=none。
     // route=none（未确认）：带参数与不带参数都拒，且拒句一律不得含越界指引——未确认路线不接受「越界重试」。
     r = preExecute(harness, agent, 'pwsh', { command: 'New-Item x.txt' })
     checkTrue('R18j route=none pwsh 写 → deny', r !== null && r !== undefined && r.kind === 'deny')

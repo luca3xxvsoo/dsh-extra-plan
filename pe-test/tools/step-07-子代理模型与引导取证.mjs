@@ -277,6 +277,47 @@ function buildParentLinks(parent, children) {
   }
   const callsById = recordsByCallId(calls)
   const resultsById = recordsByCallId(results)
+  // 宿主 subagent/catalog（version 3：childId/mode/label/name）是 call/result 之外的现成父子桥：
+  // call.arguments.description 逐字等于 catalog.label，tool/result 的 data.meta.name 等于 catalog.name；
+  // 只做逐字相等且反查唯一的查表，不做近似匹配；仅在 UUID 文本匹配无命中时兜底。
+  const catalogs = parent.events.map((item) => {
+    if (!hasType(item.event, 'subagent/catalog')) return null
+    const data = dataOf(item.event)
+    if (typeof data.childId !== 'string' || data.childId === '') return null
+    return {
+      line: item.line,
+      childId: data.childId,
+      label: typeof data.label === 'string' ? data.label : '',
+      name: typeof data.name === 'string' ? data.name : '',
+    }
+  }).filter((record) => record !== null)
+  const catalogsByLabel = new Map()
+  const catalogsByName = new Map()
+  for (const record of catalogs) {
+    if (record.label !== '') catalogsByLabel.set(record.label, [...(catalogsByLabel.get(record.label) || []), record])
+    if (record.name !== '') catalogsByName.set(record.name, [...(catalogsByName.get(record.name) || []), record])
+  }
+  const uniqueChildIdOf = (records) => {
+    const childIds = [...new Set(records.map((record) => record.childId))]
+    return childIds.length === 1 ? childIds[0] : null
+  }
+  // 按 label（对应 call.arguments.description）反查 childId；同名多条或缺失返回 null（不猜）。
+  const childIdByLabel = (label) => (label === '' || !catalogsByLabel.has(label) ? null : uniqueChildIdOf(catalogsByLabel.get(label)))
+  // 按 name（对应 tool/result.data.meta.name）反查 childId；同名多条或缺失返回 null（不猜）。
+  const childIdByName = (name) => (name === '' || !catalogsByName.has(name) ? null : uniqueChildIdOf(catalogsByName.get(name)))
+  const catalogChildIdOf = (call, result) => {
+    const description = isObject(call.arguments) && typeof call.arguments.description === 'string' ? call.arguments.description : ''
+    const meta = result === null ? {} : dataOf(result.event).meta
+    const name = isObject(meta) && typeof meta.name === 'string' ? meta.name : ''
+    const byLabel = childIdByLabel(description)
+    const byName = childIdByName(name)
+    if (byLabel !== null && byName !== null) return byLabel === byName ? byLabel : null
+    return byLabel !== null ? byLabel : byName
+  }
+  const childDirsOfChildId = (childId) => {
+    if (typeof childId !== 'string' || childId === '') return []
+    return [...new Set(children.filter((child) => child.dir === childId || child.header.id === childId).map((child) => child.dir))]
+  }
   const links = []
   const ambiguities = []
   const recordAmbiguity = (call, result, match) => {
@@ -304,7 +345,10 @@ function buildParentLinks(parent, children) {
       recordAmbiguity(call, result, match)
       continue
     }
-    for (const dir of match.dirs) links.push({
+    // catalog 兜底：UUID 文本未命中时改走 catalog 桥（label↔description、name↔result.data.meta.name），
+    // 只有反查到唯一 childId 且该 childId 对应唯一已发现 child 目录才补 link；原 match.dirs 路径与歧义判定不变。
+    const linkedDirs = match.dirs.length === 0 ? childDirsOfChildId(catalogChildIdOf(call, result)) : match.dirs
+    for (const dir of linkedDirs) links.push({
       dir,
       name: call.name,
       call,

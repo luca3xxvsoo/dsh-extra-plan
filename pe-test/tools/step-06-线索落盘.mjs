@@ -342,7 +342,8 @@ function visibleNames(assembly) {
   check('S6 save_plan 服务不可用首轮未注册', registered6.length, 0)
   ref.current = stubToolsOf(registered6, { mode: 'ok' })
   await firePreStep(harness6, agent6)
-  check('S6 服务不可用 → 次轮 pre-step 两个工具各注册一次', registered6, ['save_plan', 'save_probe'])
+  // extra_plan_gate 由 index.js pre-step 的 registerGateTool 注册（与 save_plan/save_probe 同一次 pre-step 兜底）。
+  check('S6 服务不可用 → 次轮 pre-step 三个工具各注册一次', registered6, ['save_plan', 'save_probe', 'extra_plan_gate'])
   registered6.length = 0
   await firePreStep(harness6, agent6)
   check('S6 注册成功后 WeakSet 短路：后续 pre-step 不再注册', registered6, [])
