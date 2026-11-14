@@ -10,7 +10,7 @@
 | QQBot 目标 | `0.5.2` | 静态目标，不等于集成通过 |
 | 核心插件 | `dsh-extra-plan` `1.7.0` | 当前包契约；仓库子目录安装路径不变 |
 | QQBot 精简插件 | `dsh-extra-plan-qqbot` `2.0.1` | 源码合同为 `2.0.1`，仓库子目录为 plugins/dsh-extra-plan-qqbot；标准包 `postinstall` 的 `--install` 受 `--allow-build=dsh-extra-plan-qqbot` 授权后执行严格单目标校验，普通启动保留非阻断兜底；核心/宿主范围不变，公共发布、真实安装/运行及 allow-build 放行仍未核实（HUMAN） |
-| 预设载体 | `dsh-extra-plan-settings` 全局管理行 + 内部纯 definition（主 1 + 角色 4） | `dsh.bundle.patch` 只装载一行；只认当前规范 id/name，当前资产 definition 决定非用户内容、当前 settings 行决定用户值；当前行补齐保存 11 项+6 键 gateWords，缺失/非法普通项只用新默认，gateWords 整个属性缺失可用当前资产默认，显式对象必须六键整组合法，否则严格失败零写；两个历史配置 ID 不读取、不一次性迁移、不回退、不判旧 owner、不承诺旧值，真实旧行不编辑、不删除；官方 adapter 由 settings owner 内部按主在前、角色 101..104 在后的顺序尝试挂载 5 个 definition；真实相遇效果仍 HUMAN |
+| 预设载体 | `dsh-extra-plan-settings` 全局管理行 + 内部纯 definition（主 1 + 角色 4） | `dsh.bundle.patch` 只装载一行；只认当前规范 id/name，当前资产 definition 决定非用户内容、当前 settings 行决定用户值；当前行补齐保存 11 项+6 键 gateWords，缺失/非法普通项只用新默认，gateWords 整个属性缺失或显式对象非法都回落当前资产默认并整组补齐（旧键随写盘删除），只有资产自身损坏才严格失败零写；两个历史配置 ID 不读取、不一次性迁移、不回退、不判旧 owner、不承诺旧值，真实旧行不编辑、不删除；官方 adapter 由 settings owner 内部按主在前、角色 101..104 在后的顺序尝试挂载 5 个 definition；真实相遇效果仍 HUMAN |
 | 状态判读 | `【已核实】` 表示台账静态/源码核对；`【未核实】`、`HUMAN`、`SKIP` 不得改为通过 | 当前台账纪律 |
 
 ### 双根与可信 Host 接口
@@ -228,7 +228,7 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 ## ⑦ 三版本声明下的风险与开放验证
 
 1. isolate 审计：`mountPreset/leakedServices` 对未隔离 root service 抛错；必要/保险名单必须保持 `isolate: true`。
-2. settings 换代：设置表单仅经 `plugins.detail.section` 渲染于当前插件包详情行列表之后（自绘标题），不注册 `plugins.bundle.config`、`plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`，若本包 bundle.config 槽被任何一方注册条目则 detail.section 让位保持唯一表单；ConfigForms 通过稳定 namespace 订阅快照并一次 mutate 十一项。当前 settings 行是唯一权威载体，当前资产 definition 决定非用户内容、当前 settings 行决定用户值；11 项合法值（含空串/false）保留，缺失/非法普通项只用新默认，gateWords 整个属性缺失可用当前资产默认，显式对象必须六键整组合法，否则严格失败零写；两个历史配置 ID 不读取、不一次性迁移、不回退、不判旧 owner、不承诺旧值，真实旧行不编辑、不删除；settled-only 与 adapter/structural 队列隔离，settings-only adapter register/dispose=0/0；真实相遇效果仍 HUMAN。
+2. settings 换代：设置表单仅经 `plugins.detail.section` 渲染于当前插件包详情行列表之后（自绘标题），不注册 `plugins.bundle.config`、`plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`，若本包 bundle.config 槽被任何一方注册条目则 detail.section 让位保持唯一表单；ConfigForms 通过稳定 namespace 订阅快照并一次 mutate 十一项。当前 settings 行是唯一权威载体，当前资产 definition 决定非用户内容、当前 settings 行决定用户值；11 项合法值（含空串/false）保留，缺失/非法普通项只用新默认，gateWords 整个属性缺失或显式对象非法都回落当前资产默认并整组补齐（旧键随写盘删除），只有资产自身损坏才严格失败零写；两个历史配置 ID 不读取、不一次性迁移、不回退、不判旧 owner、不承诺旧值，真实旧行不编辑、不删除；settled-only 与 adapter/structural 队列隔离，settings-only adapter register/dispose=0/0；真实相遇效果仍 HUMAN。
 3. profile patch 载体：旧 `.agent-presets` 无读取方；`compatibility.json`/peer 门控可能使 bundle skipped、loader disabled；QQBot 仍有 allow-build/postinstall 欠账。
 4. 包/服务换代：workflow-ptc/tool-workflow/tool-ralph 三段在作者源里整段删除、当前未挂载；`ptcRuntime` 服务名、tool:cordis 只注册两项只读工具、`bundledSkillDir`（配 `watch:false`；旧 `customSkillDirs` 已删）必须按当前真值核对。MCP `publicToolName` 只允许 `[A-Za-z0-9_-]`（当前前缀形如 `mcp__chrome-devtools-mcp__...`），不支持点或 Unicode；静态扫描器仅同步连字符与注释遮蔽合同。descriptor 属 child、catalog 属 parent；保留 header-first+descriptor，不新增运行时兼容分支。
 5. 三版本声明不等于完整矩阵或实机通过：rc.1 与 rc.2 兼容、rc.3 当前的局部证据只作限定核对；完整矩阵必须在源码/文档/地图冻结后按两根串行执行，并以相符的当次完整报告逐项判定；没有相符报告/结论即 `NOT-RUN` 或 `INCOMPLETE`，局部执行不得替代完整/真实验收。真实宿主/Provider/GUI/QQBot/重启仍 HUMAN 或 `NOT-RUN`；名称/技能差异（旧三名与 rc.2 的 dsh-doc）和 send_message 新旧参数（旧 agent_id 与新 agent/resolveName）按版本分别核对；旧版证据只作历史导航。

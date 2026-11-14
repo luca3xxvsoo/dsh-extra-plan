@@ -1432,27 +1432,42 @@ const oldRuntime = createGateRuntime(syncGateWords)
 const restartGate = Object.fromEntries(GATE_WORD_FIELDS.map((item, index) => [item.field, '重词' + index]))
 const nextRuntime = createGateRuntime(restartGate)
 check('GATEWORDS_FULL_SYNC_RESTART_SEMANTICS', oldRuntime.words.routeMain === syncGateWords.routeMain && nextRuntime.words.routeMain === restartGate.routeMain && oldRuntime.words.routeMain !== nextRuntime.words.routeMain)
-console.log('HUMAN  {"scope":"RESTART-AND-GATEWORDS","reason":"真实 Harness/QQBot 重启、旧词拒绝与非法词无 fallback 需部署后复测"}')
+console.log('HUMAN  {"scope":"RESTART-AND-GATEWORDS","reason":"真实 Harness/QQBot 重启、旧词拒绝与非法词按同口径回落资产默认需部署后复测"}')
 rmSync(liveRoot, { recursive: true, force: true })
 for (const root of adapterFixtureRoots) rmSync(root, { recursive: true, force: true })
 
-const invalidApiGateCases = [
-  ['missing-key', (() => { const value = structuredClone(gateWords); delete value.routeMain; return value })()],
-  ['duplicate-value', { ...gateWords, routePlan: gateWords.routeMain }],
-  ['recommended-suffix', { ...gateWords, routeMain: gateWords.routeMain + ' (recommended)' }],
-  ['crlf', { ...gateWords, routeMain: 'direct\r\nline' }],
-  ['js-expression', { ...gateWords, routeMain: { __jsExpr: 'must-not-run' } }],
-]
-for (const [kind, words] of invalidApiGateCases) {
-  const badGateEditor = makeEditor({ ...initial, gateWords: words })
-  const originalConfig = structuredClone(badGateEditor.state.rows[0].entry.options.config)
-  const badGateRun = await start(badGateEditor)
-  try {
-    const badGet = await requestJson(badGateRun.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
-    const badPut = await requestJson(badGateRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
-     check('V02 API ' + kind + ' GET/PUT均冲突、零edit且完整存储深等不变', badGet.status === 409 && badPut.status === 409 && badGet.body?.settingsRow?.status === 'conflict' && badPut.body?.settingsRow?.status === 'conflict' && badGateEditor.state.edits.length === 0 && isDeepStrictEqual(badGateEditor.state.rows[0].entry.options.config, originalConfig))
-  } finally { await new Promise((resolve) => badGateRun.server.close(resolve)) }
+// GTW：非法 gateWords 与 11 项普通值同口径——GET 不再 conflict（回落诊断可见），PUT 单次 edit 补齐资产默认并删除旧键。
+function assetGateWordsOf(value) {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = assetGateWordsOf(item)
+      if (found !== undefined) return found
+    }
+    return undefined
+  }
+  if (value === null || typeof value !== 'object') return undefined
+  if (value.id === 'extra-plan' && value.config !== null && typeof value.config === 'object' && value.config.gateWords !== undefined) return structuredClone(value.config.gateWords)
+  for (const child of Object.values(value)) {
+    const found = assetGateWordsOf(child)
+    if (found !== undefined) return found
+  }
+  return undefined
 }
+const assetGateWords = assetGateWordsOf(generatedDefinition)
+const legacySevenGateWords = { routeDirect: '直接执行', routePlan: '进行pro规划', routeDisagree: '不同意', approvalApprove: '同意执行', approvalReplan: '转交pro规划', purposeRefine: '完善方案', purposeRedo: '重新规划' }
+const repairFixture = makeSyncFixture()
+const repairEditor = makeEditor({ ...syncValues, gateWords: syncGateWords }, repairFixture.webPatch, { profileContext: repairFixture.webProfileContext })
+const repairRun = await start(repairEditor)
+try {
+  // 运行期把唯一行改坏（模拟旧版本遗留/外部编辑），再走真实 GET/PUT。
+  repairEditor.state.rows[0].entry.options.config = { ...syncValues, gateWords: structuredClone(legacySevenGateWords) }
+  const repairGet = await requestJson(repairRun.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
+  const repairPut = await requestJson(repairRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: false })
+  const expectedRepair = { ...syncValues, webFetch: false, gateWords: assetGateWords }
+  const assetGateShapeOk = assetGateWords !== undefined && Object.keys(assetGateWords).length === GATE_WORD_FIELDS.length && GATE_WORD_FIELDS.every((item) => typeof assetGateWords[item.field] === 'string') && !Object.prototype.hasOwnProperty.call(assetGateWords, 'approvalApprove') && !Object.prototype.hasOwnProperty.call(assetGateWords, 'routeDirect')
+  check('GTW 非法 gateWords GET 不再 conflict 且回落诊断可见', repairGet.status === 200 && repairGet.body?.settingsRow?.status === 'ok' && Array.isArray(repairGet.body?.diagnostics) && repairGet.body.diagnostics.some((line) => String(line).includes('gateWords')) && isDeepStrictEqual(repairGet.body?.values, syncValues))
+  check('GTW 非法 gateWords PUT 一次 edit 回落资产默认六键并整组删除旧键', assetGateShapeOk && repairPut.status === 200 && repairPut.body?.profileSync?.status === 'synced' && repairPut.body?.web?.applied === true && repairEditor.state.edits.length === 1 && isDeepStrictEqual(repairEditor.state.edits[0].next, expectedRepair) && isDeepStrictEqual(syncConfigOf(readFileSync(repairFixture.webPatch, 'utf8')), expectedRepair) && isDeepStrictEqual(syncConfigOf(readFileSync(repairFixture.qqPatch, 'utf8')), expectedRepair))
+} finally { await new Promise((resolve) => repairRun.server.close(resolve)); rmSync(repairFixture.root, { recursive: true, force: true }) }
 
 function makeClientHarness(snapshot, outcome = true, failDetail = false, savingInitial = false, options = {}) {
   let definition

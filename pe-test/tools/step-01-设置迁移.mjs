@@ -265,30 +265,30 @@ const legalRepairBefore = structuredClone(legalRepairInput)
 const legalRepair = restateSettingsConfig(legalRepairInput, {}, { gateWords: gate })
 check('M21 合法显式整组修复允许且不改输入', isDeepStrictEqual(legalRepair.gateWords, gate) && isDeepStrictEqual(legalRepairInput, legalRepairBefore))
 
+const completeWithoutGate = Object.fromEntries(Object.entries(complete).filter(([key]) => key !== 'gateWords'))
+const legacySevenGate = { routeDirect: '直接执行', routePlan: '进行pro规划', routeDisagree: '不同意', approvalApprove: '同意执行', approvalReplan: '转交pro规划', purposeRefine: '完善方案', purposeRedo: '重新规划' }
 for (const [kind, words] of [
   ['missing-key', (() => { const value = structuredClone(gate); delete value.routeMain; return value })()],
   ['duplicate-value', { ...gate, routePlan: gate.routeMain }],
   ['recommended-suffix', { ...gate, routeMain: gate.routeMain + ' (recommended)' }],
   ['crlf', { ...gate, routeMain: 'direct\r\nline' }],
   ['js-expression', { ...gate, routeMain: { __jsExpr: 'must-not-run' } }],
+  ['legacy-seven-keys', legacySevenGate],
 ]) {
-  const invalidCurrent = { ...complete, gateWords: words }
-  const resolveBefore = structuredClone(invalidCurrent)
-  const resolveFailed = throws(() => resolveUnifiedConfig({ settingsValues: invalidCurrent }), '当前全局 gateWords 非法')
-  check('M21 ' + kind + ' resolve拒绝且输入深等不变', resolveFailed && isDeepStrictEqual(invalidCurrent, resolveBefore))
+  const invalidCurrent = { ...complete, gateWords: structuredClone(words) }
+  const invalidCurrentBefore = structuredClone(invalidCurrent)
+  const resolved = resolveUnifiedConfig({ settingsValues: invalidCurrent })
+  check('M21 ' + kind + ' resolve回落资产默认：11项保留+patch只补gateWords+诊断可见+输入不变', isDeepStrictEqual(resolved.values, completeWithoutGate) && isDeepStrictEqual(resolved.gateWords, gate) && resolved.sources.gateWords === 'default' && Object.keys(resolved.patch).length === 1 && isDeepStrictEqual(resolved.patch.gateWords, gate) && resolved.diagnostics.length === 1 && String(resolved.diagnostics[0]).includes('gateWords') && isDeepStrictEqual(invalidCurrent, invalidCurrentBefore))
 
-  const restateBefore = structuredClone(invalidCurrent)
-  const restateFailed = throws(() => restateSettingsConfig(invalidCurrent, {}, { webFetch: true }), 'gateWords')
-  check('M21 ' + kind + ' restate拒绝且输入深等不变', restateFailed && isDeepStrictEqual(invalidCurrent, restateBefore))
+  const restated = restateSettingsConfig(invalidCurrent, {}, { webFetch: true })
+  check('M21 ' + kind + ' restate回落资产默认且旧键整组删除、输入不变', isDeepStrictEqual(restated, { ...completeWithoutGate, webFetch: true, gateWords: gate }) && isDeepStrictEqual(invalidCurrent, invalidCurrentBefore))
 
   const invalidEditor = makeEditor(invalidCurrent)
   const invalidSettingsConfig = invalidEditor.state.rows[0].entry.options.config
   const inputIdentity = invalidSettingsConfig === invalidEditor.state.rows[0].entry.options.config
   const syncInputBefore = structuredClone(invalidSettingsConfig)
-  const storageBefore = structuredClone(invalidEditor.state)
   const syncCounters = { declaredPlugins: 0, readPatch: 0, legacyState: 0, assetPlugins: 0 }
   let applyCount = 0
-  let syncFailed = false
   let syncError = ''
   try {
     const syncOptions = retiredOptions({
@@ -301,15 +301,13 @@ for (const [kind, words] of [
     }, syncCounters)
     await syncPreset(syncOptions)
   } catch (error) {
-    syncFailed = true
     syncError = String(error && error.message || error)
   }
   const inputUnchanged = isDeepStrictEqual(invalidSettingsConfig, syncInputBefore)
-  const storageUnchanged = isDeepStrictEqual(invalidEditor.state, storageBefore)
+  const editedConfig = invalidEditor.state.edits.length === 1 ? invalidEditor.state.edits[0].config : undefined
   check('M21 ' + kind + ' sync直接绑定真实entry.options.config身份', inputIdentity)
-  check('M21 ' + kind + ' sync严格失败且错误指向当前全局gateWords', syncFailed && syncError.includes('当前全局 gateWords 非法'))
-  check('M21 ' + kind + ' sync在apply前失败、apply/真实edit均为零且输入/完整storage深等不变', applyCount === 0 && invalidEditor.state.edits.length === 0 && inputUnchanged && storageUnchanged)
-  check('M21 ' + kind + ' sync退役参数getter/回调均未触达', Object.values(syncCounters).every((value) => value === 0))
+  check('M21 ' + kind + ' sync按同口径补齐落盘：单次edit当前行、六键默认且旧键全删、无错误', syncError === '' && applyCount === 1 && isDeepStrictEqual(editedConfig, { ...completeWithoutGate, gateWords: gate }) && Object.values(syncCounters).every((value) => value === 0))
+  check('M21 ' + kind + ' sync写盘不改输入对象、退役参数getter零触达', inputUnchanged && Object.values(syncCounters).every((value) => value === 0))
 }
 const completeRun = await runSync(complete)
 check('M20 完整当前值sync idle且真实editor零edit', completeRun.result.action === 'idle' && completeRun.applyCount === 0 && completeRun.editor.state.edits.length === 0 && Object.values(completeRun.counters).every((value) => value === 0))

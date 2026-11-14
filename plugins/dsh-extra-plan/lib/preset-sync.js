@@ -1,5 +1,6 @@
 // 预设核对组件：读取生成 definition，直接挂载官方 AgentPreset adapter。
 // 当前规范配置唯一来源为 settings 行（id=dsh-extra-plan-settings，name=dsh-extra-plan/settings）；普通缺项只取新默认。
+// gateWords 与普通项同口径：属性缺失或显式对象非法都回落当前资产默认并写入补齐，旧键随整组写盘删除；资产本身坏才严格抛错。
 // 历史配置 ID 不读取、不迁移、不回退；profile 写入仍一律经 configEditor.edit。
 // definition 的 group/isolate/!!js 原文交给官方 adapter，不能提前求值或复制 registry。
 
@@ -218,15 +219,22 @@ function validDefinitionValue(definition, value) {
 
 
 
-/** 统一解析当前 settings 行；缺失或非法普通项只取新默认。 */
+/**
+ * 统一解析当前 settings 行；缺失或非法普通项只取新默认。
+ * gateWords 与普通项同口径：整个属性缺失或显式对象非法都回落当前资产默认（agent.cordis.yml 当前值），
+ * 并写入 patch 补齐——非法对象被整组替换，旧键随本次写盘删除。
+ * 资产自身损坏（缺 gateWords 行/资产值非法）仍由 assetDefinition/readDefinitionGateWords 严格抛错，不吞代码缺陷。
+ */
 export function resolveUnifiedConfig(options = {}) {
   const input = options !== null && typeof options === 'object' ? options : {}
   const defaults = createDefaultSettings()
   const authority = plainObject(input.settingsValues) ? input.settingsValues : {}
   const authorityHasGateWords = Object.prototype.hasOwnProperty.call(authority, 'gateWords')
+  const diagnostics = []
+  let capturedGateWords
   if (authorityHasGateWords) {
-    try { validateGateWords(authority.gateWords) }
-    catch (error) { throw new Error('当前全局 gateWords 非法：' + String(error && error.message || error)) }
+    try { capturedGateWords = validateGateWords(authority.gateWords) }
+    catch (error) { diagnostics.push('gateWords-invalid-fallback-default:' + String(error && error.message || error)) }
   }
   const values = {}
   const sources = {}
@@ -243,12 +251,12 @@ export function resolveUnifiedConfig(options = {}) {
       patch[key] = values[key]
     }
   }
-  const gateWords = authorityHasGateWords
-    ? validateGateWords(authority.gateWords)
-    : readDefinitionGateWords(assetDefinition())
-  sources.gateWords = authorityHasGateWords ? 'settings-row' : 'default'
-  if (!authorityHasGateWords) patch.gateWords = gateWords
-  return { values, defaults, sources, patch, gateWords, authority, diagnostics: [] }
+  const gateWords = capturedGateWords === undefined
+    ? readDefinitionGateWords(assetDefinition())
+    : capturedGateWords
+  sources.gateWords = capturedGateWords === undefined ? 'default' : 'settings-row'
+  if (capturedGateWords === undefined) patch.gateWords = gateWords
+  return { values, defaults, sources, patch, gateWords, authority, diagnostics }
 }
 
 export function restateSettingsConfig(current, inherited, patch = {}) {
@@ -271,7 +279,12 @@ export function restateSettingsConfig(current, inherited, patch = {}) {
     if (validDefinitionValue(definition, source[key])) next[key] = normalizeSettingValue(definition, source[key])
   }
   if (hasGatePatch) next.gateWords = validatedPatch.gateWords
-  else if (Object.prototype.hasOwnProperty.call(source, 'gateWords')) next.gateWords = validateGateWords(source.gateWords)
+  else if (Object.prototype.hasOwnProperty.call(source, 'gateWords')) {
+    // 与 resolveUnifiedConfig 同口径：持久值非法时回落当前资产默认，旧键随本次整组重述删除；
+    // 资产自身损坏仍抛错（代码缺陷不静默）。
+    try { next.gateWords = validateGateWords(source.gateWords) }
+    catch { next.gateWords = readDefinitionGateWords(assetDefinition()) }
+  }
   for (const [key, value] of Object.entries(validatedPatch)) {
     if (key !== 'gateWords') next[key] = value
   }

@@ -39,6 +39,8 @@ export function normalizeGateLabel(label) {
 /**
  * 整组严格校验：合法 → 返回冻结副本；任何一条不合法 → 抛 Error（消息以
  * 'extra-plan: config.gateWords' 开头并指出字段与原因）。禁止部分接受。
+ * 本函数只判定单次入参（apply 的 definition 行、资产模板、资产 definition）；
+ * 持久化 settings 值缺失/非法时由 preset-sync 回落当前资产默认并补齐，不在此放宽。
  */
 export function validateGateWords(raw) {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {

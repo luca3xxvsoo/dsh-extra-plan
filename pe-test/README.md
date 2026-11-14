@@ -14,7 +14,7 @@
 
 ## 设置管理路径
 设置表单仅经 `plugins.detail.section` 渲染于当前 bundle 详情页行列表之后（自绘标题）；本包不注册 `plugins.bundle.config`、`plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`。若 bundle.config 槽出现本包条目，detail.section 让位，避免重复表单。ConfigForms 使用稳定 namespace，一次提交十一项字段与 revision。
-唯一公开管理组件是 `dsh-extra-plan/settings`；其 PUT 只 edit `dsh-extra-plan-settings` 唯一全局行，保留其它字段与合法 gateWords；只认当前规范 `id=dsh-extra-plan-settings`/`name=dsh-extra-plan/settings`，两个历史配置 ID 不读取、不一次性迁移、不回退、不判旧 owner、不承诺旧值，真实旧行不编辑、不删除；当前 11 项合法值（含空串/false）保留，缺失/非法普通项只用新默认，gateWords 整个属性缺失可用当前资产默认，显式对象必须六键整组合法，否则严格失败且零 edit。`./preset-sync` 及其 locale exports 已退役；`lib/preset-sync.js` 仍由 settings owner 内部相对调用。预设本体来自纯 `preset-definition.generated.yml`，由内部同步交给官方 AgentPreset adapter；`toolPresentationMode` 为装载期值，`runcodeCatchGate` 由 live-config 热读。
+唯一公开管理组件是 `dsh-extra-plan/settings`；其 PUT 只 edit `dsh-extra-plan-settings` 唯一全局行，保留其它字段与合法 gateWords；只认当前规范 `id=dsh-extra-plan-settings`/`name=dsh-extra-plan/settings`，两个历史配置 ID 不读取、不一次性迁移、不回退、不判旧 owner、不承诺旧值，真实旧行不编辑、不删除；当前 11 项合法值（含空串/false）保留，缺失/非法普通项只用新默认，gateWords 整个属性缺失或显式对象非法都回落当前资产默认并整组补齐（旧键随写盘删除），只有资产自身损坏才严格失败且零 edit。`./preset-sync` 及其 locale exports 已退役；`lib/preset-sync.js` 仍由 settings owner 内部相对调用。预设本体来自纯 `preset-definition.generated.yml`，由内部同步交给官方 AgentPreset adapter；`toolPresentationMode` 为装载期值，`runcodeCatchGate` 由 live-config 热读。
 
 ## 非 `@local` 迁移部署（HUMAN）
 

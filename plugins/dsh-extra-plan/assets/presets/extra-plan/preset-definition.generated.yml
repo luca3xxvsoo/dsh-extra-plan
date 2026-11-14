@@ -165,10 +165,11 @@ plugins:
             return r
           # 闸门关键词：唯一人工编辑位置（6 个字段集中于此；改后普通重启即生效，
           # 旧词不再推进状态机）。persona 正文只引用 {{extra_plan_*}} 变量，不维护第二份词值。
-          # 校验（JS 侧只有 schema 没有默认值）：缺失/非法整组拒绝——插件 apply 同步抛错、
-          # 阻止该预设被使用；非法具体条件=非对象/数组、键集合不等于 6 键、非字符串、空串、
+          # 校验（JS 侧只有 schema 没有默认值）：单次入参整组严格——插件 apply 对本行 config 同步校验，
+          # 非法即抛错、阻止该预设被使用；非法具体条件=非对象/数组、键集合不等于 6 键、非字符串、空串、
           # 首尾空白、含 CR/LF、6 值重复、以 (Recommended)/（Recommended）/(推荐)/（推荐）结尾。
-          # 版本升级（dist hash 变化）时整组合法旧值原子迁移；同 hash 普通重启保留现场文件。
+          # 持久值（settings 行）与 11 项普通设置同口径：属性缺失或显式对象非法都回落本资产默认并整组补齐，
+          # 旧的键随写盘删除；只有本资产自身损坏（本行缺失/本值非法）才严格失败且零写。
           # 字段 ↔ prompt variable：routeMain=extra_plan_route_main、
           # routeExecutor=extra_plan_route_executor、routePlan=extra_plan_route_plan、
           # routeDisagree=extra_plan_route_disagree、purposeRefine=extra_plan_purpose_refine、

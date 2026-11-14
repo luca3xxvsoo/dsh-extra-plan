@@ -287,6 +287,10 @@ function rowConfigOf(row) {
   return { ...inherited, ...own, ...(override !== null && typeof override === 'object' ? override : {}) }
 }
 
+/**
+ * 唯一规范行的结构完整性：11 项普通值必须齐全合法；gateWords 只带出原值，合法性不参与判定
+ * （非法值由 resolveUnifiedConfig 回落当前资产默认并补齐，避免旧值把整行判成 conflict 卡死 GET/PUT）。
+ */
 function completeConfig(config) {
   if (config === null || typeof config !== 'object' || Array.isArray(config)) return undefined
   const values = {}
@@ -294,9 +298,15 @@ function completeConfig(config) {
     if (!Object.prototype.hasOwnProperty.call(config, definition.key) || !validateSettingValue(definition, config[definition.key])) return undefined
     values[definition.key] = normalizeSettingValue(definition, config[definition.key])
   }
-  let gateWords
-  try { gateWords = validateGateWords(config.gateWords) } catch { return undefined }
-  return { values, gateWords }
+  const hasGateWords = Object.prototype.hasOwnProperty.call(config, 'gateWords')
+  return { values, gateWords: hasGateWords ? config.gateWords : undefined }
+}
+
+/** 当前行 config 的 gateWords 是否合法；缺失/非法都返回 false（与普通项同口径，需要补齐）。 */
+function configGateWordsValid(config) {
+  if (config === null || typeof config !== 'object' || Array.isArray(config)) return false
+  if (!Object.prototype.hasOwnProperty.call(config, 'gateWords')) return false
+  try { validateGateWords(config.gateWords); return true } catch { return false }
 }
 
 function rowSummary(row, pathText) {
@@ -364,7 +374,10 @@ export function inspectSettingsAuthority(editor, pathContext) {
     rawRows,
     effectiveRows,
     diagnostics,
-    selectedConfig: selectedConfig === undefined ? undefined : { values: { ...selectedConfig.values }, gateWords: { ...selectedConfig.gateWords } },
+    selectedConfig: selectedConfig === undefined ? undefined : {
+      values: { ...selectedConfig.values },
+      ...(selectedConfig.gateWords === undefined ? {} : { gateWords: structuredClone(selectedConfig.gateWords) }),
+    },
   }
 }
 
@@ -413,7 +426,9 @@ function readUnifiedState(editor, pathContext) {
     settingsRow: authority,
   }
   const settingsRow = findSettingsRow(editor)
-  const resolved = resolveUnifiedConfig({ settingsValues: { ...authority.selectedConfig.values, gateWords: authority.selectedConfig.gateWords } })
+  const settingsValues = { ...authority.selectedConfig.values }
+  if (authority.selectedConfig.gateWords !== undefined) settingsValues.gateWords = authority.selectedConfig.gateWords
+  const resolved = resolveUnifiedConfig({ settingsValues })
   const overridden = {}
   const sources = {}
   for (const definition of HOST_ROW_SETTING_DEFINITIONS) {
@@ -610,7 +625,8 @@ function createApiHandler(ctx, syncEditor, getProfileSync) {
           const key = definition.key
           if (Object.prototype.hasOwnProperty.call(body, key)) patch[key] = normalizeSettingValue(definition, body[key])
         }
-        if (!Object.prototype.hasOwnProperty.call(current, 'gateWords')) patch.gateWords = state.gateWords
+        // 普通项缺失/非法都补；gateWords 同口径：缺失或非法都补当前资产默认，落盘即整组覆盖并删除旧键。
+        if (!configGateWordsValid(current)) patch.gateWords = state.gateWords
         const nextConfig = restateSettingsConfig(current, row.inherited, patch)
         if (!isDeepStrictEqual(nextConfig, current)) await editor.edit(row.entry, (latest, inherited) => restateSettingsConfig(latest, inherited, patch))
         const profileSync = await syncEditor(editor, { trigger: 'api-put' })
