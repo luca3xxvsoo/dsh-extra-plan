@@ -123,6 +123,7 @@ export const inject = ['systemPrompt']
 import { mkdirSync, appendFileSync } from 'node:fs'
 import { join, dirname, isAbsolute, resolve as pathResolve } from 'node:path'
 import { createPathContext, resolveWorkspacePath, resolveHostPath, prepareWriteTarget } from './lib/path-policy.js'
+import { pruneDiagnosticLogs } from './lib/log-retention.js'
 import { PROBE_LIMITS, sanitizeTaskName, timestamp, renderSavePlan, renderSaveProbe, renderProbeMarkdown, extractProbeEvidenceRefs } from './lib/save-contract.js'
 import { validateProbe } from './lib/save-probe-validation.js'
 import { atomicCommit } from './lib/save-persistence.js'
@@ -499,6 +500,30 @@ function recordAgentError(payload, options = {}) {
   }
 }
 
+// 启动期诊断日志裁剪（每次插件启动执行一次）：删除 <host 根>/logs/dsh-extra-plan 下各诊断 jsonl 中
+// ts 早于 48 小时的行，避免追加型诊断日志无限增长；usage-ledger 由 lib/usage-ledger.js 的
+// startupArchive 自行归档，不在本次裁剪范围内。失败只 warn，不阻断插件启动。
+function startupPruneDiagnosticLogs(ctx) {
+  let pathContext = null
+  try { pathContext = pathContextFor(ctx, '') } catch { pathContext = null }
+  const hostDataRoot = pathContext !== null && pathContext !== undefined ? pathContext.hostDataRoot : null
+  if (typeof hostDataRoot !== 'string' || hostDataRoot === '') {
+    console.warn('[dsh-extra-plan] diagnostic log prune skipped: no-host-root')
+    return
+  }
+  const pruneNow = () => {
+    Promise.resolve(pruneDiagnosticLogs(pathContext)).then((result) => {
+      if (result !== null && typeof result === 'object' && result.status === 'pruned') {
+        console.warn('[dsh-extra-plan] diagnostic log prune: ' + JSON.stringify(result))
+      }
+    }, (error) => {
+      console.warn('[dsh-extra-plan] diagnostic log prune failed（不阻断启动）: ' + (error instanceof Error ? error.message : String(error)))
+    })
+  }
+  const timer = setTimeout(pruneNow, 0)
+  if (timer !== null && typeof timer === 'object' && typeof timer.unref === 'function') timer.unref()
+}
+
 export { PROBE_LIMITS, extractProbeEvidenceRefs, malformedRecovery, recordAgentError }
 
 export function apply(ctx, config) {
@@ -519,6 +544,9 @@ export function apply(ctx, config) {
       for (const dispose of disposers) dispose()
     }
   })
+  // 启动期诊断日志裁剪（每次插件启动恰一次）：只删除 ts 早于 48 小时的行；
+  // usage-ledger 由 startupArchive 自行管理，任何失败只 warn 不阻断启动。
+  startupPruneDiagnosticLogs(ctx)
   const planToolName = typeof cfg.planTool === 'string' ? cfg.planTool : 'subagent_plan'
   const savePlanDir = typeof cfg.savePlanDir === 'string' && cfg.savePlanDir !== '' ? cfg.savePlanDir : '.extra-plan'
   const { defineSavePlan, defineSaveProbe } = createSaveToolFactories({

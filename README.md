@@ -102,6 +102,7 @@ dsh-extra-plan/
 │   │   │   ├── gate-decisions.js                                     # 闸门纯决策：路由/目的/澄清/批准与只读判定
 │   │   │   ├── gate-words.js                                         # 闸门词契约：字段规格/整组校验/运行时派生
 │   │   │   ├── live-config.js                                        # 热修改支持模块
+│   │   │   ├── log-retention.js                                      # 日志裁剪：除账本外的日志只保留48小时
 │   │   │   ├── model-routing.js                                      # 子代理模型选择：planner/非 planner 路由解析
 │   │   │   ├── path-policy.js                                        # 路径安全策略闸门
 │   │   │   ├── planner-budget.js                                     # 探查预算：用量计数与提醒/耗尽文案

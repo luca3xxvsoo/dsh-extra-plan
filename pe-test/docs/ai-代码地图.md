@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-11-13 09:54:54（脚本自动更新时间戳行）
+> 上次同步：2026-11-14 09:49:59（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -108,7 +108,7 @@
 | plugins/dsh-extra-plan-qqbot/lib/heal.js | 654 | 自愈纯函数模块（共享 sameRealPath 路径比较；profileNames 可缩小 profile 候选；定位/旧块迁移/建链；供 index.js/CLI/测试复用） |
 | plugins/dsh-extra-plan-qqbot/lib/path-policy.js | 464 | QQBot 包 H/W 双根路径策略：按 QQBot 用途隔离读写边界，覆盖变量、链接、只读能力与写入预检 |
 | plugins/dsh-extra-plan-qqbot/scripts/heal.mjs | 273 | CLI 入口：无参仅打印帮助、不自愈；--install 严格安装模式（失败非零）；显式 --host-root/--profile [--dry-run] 仅维护测试；启动自愈由 index.js#apply 调用 |
-| plugins/dsh-extra-plan/index.js | 1613 | 核心入口：四级闸门、预算、save 工具注册与生命周期；接线 planner/非 planner 路由、A/C/M 投影、P2-2 cache、usage 启动扫描账本（覆盖式幂等更新）、v4 MALFORMED 自愈。gateWords 只来自 YAML，apply 先校验再副作用；tools/pre-execute 先用原始 `isSubagentChild` 预审 child 控制工具，再进入角色/root 闸门，main 控制与自动最终结果保持。 |
+| plugins/dsh-extra-plan/index.js | 1641 | 核心入口：四级闸门、预算、save 工具注册与生命周期；接线 planner/非 planner 路由、A/C/M 投影、P2-2 cache、usage 启动扫描账本（覆盖式幂等更新）、v4 MALFORMED 自愈。gateWords 只来自 YAML，apply 先校验再副作用；tools/pre-execute 先用原始 `isSubagentChild` 预审 child 控制工具，再进入角色/root 闸门，main 控制与自动最终结果保持。 |
 | plugins/dsh-extra-plan/lib/agent-runtime.js | 175 | 每次 apply 的角色识别、descriptor/工具 schema 缓存、usage 血缘上下文与 role baseline、四角色宿主 mode 与显式 override 幂等；不 import index.js |
 | plugins/dsh-extra-plan/lib/agent-session.js | 65 | 会话事件与子代理识别的唯一来源：sessionEvents/isSubagentChild 零依赖纯函数，被 index.js 与 lib/model-routing.js 共用（无镜像副本；不 import index.js） |
 | plugins/dsh-extra-plan/lib/assembly-presentation.js | 269 | A/C/M 与 skill catalog 模型可见投影；从 scoped tools 读 schema/模式，SDK renderer 按 language 整体重建；F/PTC 的 tool:read 由 index.js 手写，L 段回宿主原文。 |
@@ -117,6 +117,7 @@
 | plugins/dsh-extra-plan/lib/gate-decisions.js | 1089 | 四级闸门与角色分流判定纯函数集 |
 | plugins/dsh-extra-plan/lib/gate-words.js | 114 | 闸门关键词共享契约（唯一值源是 YAML 的 config.gateWords）：字段规格 GATE_WORD_FIELDS/GATE_WORDS_GROUP_DEFINITION + 整组严格校验 validateGateWords（错误一律以 extra-plan: config.gateWords 开头）+ 运行时词表 createGateRuntime（显式入参严格校验，无默认词表）；纯模块：不含任何出厂词值、不读文件与环境变量，被 index.js（运行时）与 lib/preset-sync.js（启动自愈）共享（迁移叶 locator 已随跨版本搬迁链删除） |
 | plugins/dsh-extra-plan/lib/live-config.js | 298 | 配置热读：仅 9 项运行时 getter；2 项宿主行权威设置只读并派生到内存 definition，不暴露为 getter；构造期读盘一次，后续按增强 stamp（dev/ino/size/mtimeNs/ctimeNs，兼容 ino/size/mtimeMs/ctimeMs）重读；失败整组回退并告警，不读 DSH_HOME 旧目录 |
+| plugins/dsh-extra-plan/lib/log-retention.js | 113 | 诊断日志保留期裁剪：只处理 <host 根>/logs/dsh-extra-plan 下 .jsonl 诊断日志，删除 ts 早于滚动 48 小时的行；usage-ledger 归 startupArchive 不在此列；解析失败或无 ts 的行保留，无过期行时零写零残留；不 import index.js。 |
 | plugins/dsh-extra-plan/lib/model-routing.js | 650 | planner/非 planner 子代理模型路由：顶层纯判定函数 + createModelRouting per-apply 工厂（per-instance WeakMap、惰性 llm/agents getter；不 import index.js） |
 | plugins/dsh-extra-plan/lib/path-policy.js | 464 | 核心包双根路径策略入口：H/W 用途判定、变量与链接边界、只读能力与写入预检，供各工具复用 |
 | plugins/dsh-extra-plan/lib/planner-budget.js | 137 | planner 工具计数、消息后缀/预算提示/耗尽文案；**预算提醒消息经宿主 createUserMessage 构造，source 用生产者自有 kind `plugin:dsh-extra-plan`（v4 行准入禁旧包裹 `plugin`，违者会话当场终止）**；默认预算由生成模块提供，FREE_TOOLS 仍在根入口 |
@@ -372,70 +373,72 @@
 | plugins/dsh-extra-plan-qqbot/scripts/heal.mjs | setOnce | L174-178 | 登记一次性参数：同键重复出现即抛错，并写入解析结果，供各参数分支共用同一份状态。 |  |
 | plugins/dsh-extra-plan-qqbot/scripts/heal.mjs | reportCliFailure | L214-219 | 把参数或测试失败原因以 JSON 写入 stderr 并置非零退出码，不抛异常中断流程。 |  |
 | plugins/dsh-extra-plan-qqbot/scripts/heal.mjs | runDryRun | L221-233 | 以显式根与单个 profile 走试运行自愈（零写），失败或异常转成命令行失败报告。 |  |
-| plugins/dsh-extra-plan/index.js | malformedRecovery | L207-241 | MALFORMED_RESPONSE 同回合限次自愈：注入失败或坐标缺失仍返回 retry，其余回退原 action。 |  |
-| plugins/dsh-extra-plan/index.js | safeContextGet | L254-260 | 通过 ctx.get 取宿主服务，取不到或抛错时返回 undefined，不向上传播异常 |  |
-| plugins/dsh-extra-plan/index.js | absoluteRoot | L264-271 | 把候选根路径归一成绝对工作区根，空串、非字符串或非法输入一律返回 null 而不抛错 |  |
-| plugins/dsh-extra-plan/index.js | profileIdentityOf | L273-284 | 按 profile 名与已启动 bundle 判定 web、qqbot 或冲突身份，缺字段记为未知 |  |
-| plugins/dsh-extra-plan/index.js | rootFact | L286-290 | 把带存在标记的根路径归一为 missing、invalid 或 valid 三态事实对象 |  |
-| plugins/dsh-extra-plan/index.js | sameRoot | L292-297 | 两个根路径都非空时按平台归一后比较是否同一根，Windows 下转小写，任一侧为空即判否 |  |
-| plugins/dsh-extra-plan/index.js | configEditorServiceOf | L299-302 | 取 configEditor 服务并校验具备读取与编辑方法，不合格返回 null |  |
-| plugins/dsh-extra-plan/index.js | documentFact | L304-308 | 把配置文档路径归一为 missing、invalid 或 valid 事实，空值按缺失处理 |  |
-| plugins/dsh-extra-plan/index.js | profileFactsOf | L310-375 | 汇总 profile、宿主根与配置文档的可信事实，并标注 valid、conflict 或 invalid 状态 |  |
-| plugins/dsh-extra-plan/index.js | has | L312 | 判断 profile 对象是否为对象且自身带有某键，用于区分字段缺失与显式空值，不抛错 |  |
-| plugins/dsh-extra-plan/index.js | installAnchorOf | L377-379 | 从 profile 事实里取出安装锚点路径，缺失或非法时返回 null，不抛错，供锚点钩子判空 |  |
-| plugins/dsh-extra-plan/index.js | pathRootsOverlap | L383-391 | 判定两个路径根是否重叠：规范化后互为前缀即视为重叠，供 H/W 重叠分类使用 |  |
-| plugins/dsh-extra-plan/index.js | pathContextFor | L393-415 | 用可信 profile 事实装配路径上下文与写入口径能力，全部为空时返回 null 而不抛错 |  |
-| plugins/dsh-extra-plan/index.js | resolveDocumentTargetFor | L417-425 | 按配置文档事实解析精确宿主目标路径，事实非法或矛盾时抛错拒绝热读，缺路径返回空串 |  |
-| plugins/dsh-extra-plan/index.js | sessionCwdOf | L427-431 | 从 agent 的会话头里取工作目录，缺失或非字符串时返回空串，供路径上下文现算使用 |  |
-| plugins/dsh-extra-plan/index.js | resolveAbsoluteLogTarget | L433-439 | 绝对诊断路径的两级解析：先按宿主根解析再按工作区根解析，两者皆失败时抛出首个错误 |  |
-| plugins/dsh-extra-plan/index.js | diagnosticTargetOf | L441-456 | 决定诊断文件落点：裸文件名按宿主、工作区、缺根三态分派，不可用时返回 null 不抛错 |  |
-| plugins/dsh-extra-plan/index.js | prepareDiagnosticPath | L458-474 | 先建父目录再校验写入目标，成功返回可写诊断路径，任一步失败都一律返回空串且不抛错 |  |
-| plugins/dsh-extra-plan/index.js | appendDiagnostic | L476-481 | 以 UTF-8 追加一行 JSON 诊断记录，路径不可得时返回假而不抛错，供调用方判空 |  |
-| plugins/dsh-extra-plan/index.js | recordAgentError | L483-500 | agent/error 回合错误取证：错误链逐字追加到诊断目录（落点见 getDiagPath），整体吞错不阻断。 | 与 recordRequestError 同诊断模式 |
-| plugins/dsh-extra-plan/index.js | apply | L504-1613 | 插件主入口：闸门词表先校验，再接线投影、路由与 save 工具注册（顺序以机制设计为准）；静态可解析 run_code 组在 next 前预审，动态或未解析成员交由实际 pre-execute 重入重新判定。 |  |
-| plugins/dsh-extra-plan/index.js | getPathContext | L527 | 传给保存类工具工厂的取上下文回调：按 cwd 现算路径上下文，属宿主接线且不缓存 |  |
-| plugins/dsh-extra-plan/index.js | resolveDocumentTarget | L537 | 传给配置热读器的文档目标回调：按 agent 现算精确宿主目标，属宿主接线不缓存 |  |
-| plugins/dsh-extra-plan/index.js | getPathContext | L538 | 传给配置热读器的取上下文回调：按 agent 的会话工作目录现算路径上下文，属宿主接线 |  |
-| plugins/dsh-extra-plan/index.js | plannerModel | L552 | 热读箭头 getter：pro 规划默认模型（liveConfig.plannerModel；消费点=model-routing 的 getPlannerModel） |  |
-| plugins/dsh-extra-plan/index.js | otherAgentModel | L553 | 热读箭头 getter：其他子代理默认模型（消费点=model-routing 的 getOtherAgentModel） |  |
-| plugins/dsh-extra-plan/index.js | reviewerUsesPlannerModel | L554 | 热读箭头 getter：验收者是否复用规划模型，按 agent 现取并回退 apply 快照 |  |
-| plugins/dsh-extra-plan/index.js | exploreBudget | L555 | 热读箭头 getter：pro 规划探查额度/单实例子调用上限（消费点=预算文案、noteRunCodeSubCall、plannerGateReason 与组判定） |  |
-| plugins/dsh-extra-plan/index.js | plannerPromptSuffix | L556 | 热读箭头 getter：pre-step 拼接的额外引导后缀 |  |
-| plugins/dsh-extra-plan/index.js | bootstrapOn | L557 | 热读箭头 getter：anchored 首轮引导开关；A/F gate 优先由 isAnchoredContextGate 与 pre-step 按当前 agent/events 判定，不把 C catalog 隐藏混入本 getter |  |
-| plugins/dsh-extra-plan/index.js | runcodeCatchGateOn | L558 | 热读箭头 getter：PTC try/catch 闸门开关（消费点=planner/只读 child/主会话三处组判定传参） |  |
-| plugins/dsh-extra-plan/index.js | crossProviderPlannerModel | L559 | 热读箭头 getter：跨 provider 规划模型开关，按 agent 现取配置值 |  |
-| plugins/dsh-extra-plan/index.js | creativeModeOn | L562 | 热读箭头 getter：C creativeMode 开关；C=0 时 shouldHideCreativeCatalog 供投影视图暂隐创造 skill，展示隐藏不改变 registry binding |  |
-| plugins/dsh-extra-plan/index.js | getAgents | L579 | 惰性返回 ctx.get('agents') 服务；注入 createAgentRuntime，供判定子会话是否为其父代理下的活跃派发。 |  |
-| plugins/dsh-extra-plan/index.js | warn | L581 | 把告警参数原样转发到 console.warn；注入 createAgentRuntime，作为缺父代理等异常情况的告警出口。 |  |
-| plugins/dsh-extra-plan/index.js | getPlannerModel | L589 | 返回热读配置 plannerModel（planner 子代理所用模型名）；注入 createModelRouting 供 planner 模型路由决议。 |  |
-| plugins/dsh-extra-plan/index.js | getOtherAgentModel | L590 | 返回热读配置 otherAgentModel（非 planner 子代理所用模型名，空串表示不覆盖）；供非 planner 路由决议。 |  |
-| plugins/dsh-extra-plan/index.js | getCrossProviderPlannerModel | L591 | 返回热读布尔开关 crossProviderPlannerModel；决定 planner 路由走跨 provider 严格探针还是旧单 provider 路径。 |  |
-| plugins/dsh-extra-plan/index.js | getLlm | L592 | 返回 ctx.get('llm') 服务；供 model-routing 查 provider 模型目录（listModels）与真实探针调用。 |  |
-| plugins/dsh-extra-plan/index.js | getAgents | L593 | 返回 ctx.get('agents') 服务（同名第 2 处，消费方为 model-routing）；供经 agents.get 回溯父会话链的 provider/model/maxTokens。 |  |
-| plugins/dsh-extra-plan/index.js | getDiagPath | L594 | 返回诊断路径：诊断目录 host logs/dsh-extra-plan/ 或 W .extra-plan/logs/；供 planner 降级诊断。 |  |
-| plugins/dsh-extra-plan/index.js | noteRunCodeSubCall | L622 | 单实例子调用上限（planner）：按 sessionId→rootCallId 桶读计数、未超限则 +1；返回拒绝文案或 null；空 rootCallId 与 exploreBudget 文案保持 |  |
-| plugins/dsh-extra-plan/index.js | consumeToolJobsNotice | L623-656 | tool-jobs 通知按 message.id 判重：首次有效通知解锁 job_output 与 pollGuard。 | 消费与双解锁语义见 ai-机制设计.md 六「session 生命周期与 usage 账本」的通知消费合同条。 |
-| plugins/dsh-extra-plan/index.js | selectChildModelOnCreate | L669-720 | 子代理创建时按角色选模型：验收者按 reviewerUsesPlannerModel 走 planner 路由，其余走 otherAgentModel，失败普通回退 |  |
-| plugins/dsh-extra-plan/index.js | toolsServiceOf | L736-749 | 取 agent 作用域 tools 服务：优先 ctx.tools，其次 ctx.get('tools')，异常一律返回 undefined |  |
-| plugins/dsh-extra-plan/index.js | restrictableNamesOf | L752-762 | 取可收窄名集合：仅取 view(agent).restrictableNames，缺失或异常一律返回 null（schemas 兜底在 anchoredAllowNamesOf 内） |  |
-| plugins/dsh-extra-plan/index.js | cordisRestrictableOf | L764-766 | cordis deny 用的可收窄名薄封装，保留旧名以免断引用 |  |
-| plugins/dsh-extra-plan/index.js | restrictableSnapshotOf | L767-770 | 把可收窄名集合转成排序数组供诊断落盘，null 原样透传 |  |
-| plugins/dsh-extra-plan/index.js | toolRestrictionSlotOf | L772-779 | 取/建 per-agent 的 Map<source,{disposer,filter}> 槽位，供多路裁剪共存 |  |
-| plugins/dsh-extra-plan/index.js | toolRestrictionDiag | L783-807 | 统一诊断出口：skip-* 按 agent 去重，arm-ok/arm-failed/release-ok 恒带 source 与 filter |  |
-| plugins/dsh-extra-plan/index.js | anchoredAllowNamesOf | L811-839 | 算引导期 allow：bootstrapShellTools ∪ bootstrapCommonTools ∩ 可收窄名，空集返回 [] 由调用方跳过 |  |
-| plugins/dsh-extra-plan/index.js | armToolRestriction | L843-895 | 唯一裁剪入口：可收窄名校验 + 幂等判定后调 tools.restrict(filter)，disposer 存入槽位 |  |
-| plugins/dsh-extra-plan/index.js | releaseToolRestriction | L898-911 | 唯一释放入口：只调 disposer() 并删槽位，绝不用空 filter 调 restrict |  |
-| plugins/dsh-extra-plan/index.js | anchoredBootstrapArmOptionsOf | L914-953 | 算引导期 arm 选项：判定相位/角色等跳过条件并生成 allow filter 与诊断字段 |  |
-| plugins/dsh-extra-plan/index.js | armAnchoredToolRestriction | L954-956 | 引导期 arm 薄适配：算 allow 后转调 armToolRestriction |  |
-| plugins/dsh-extra-plan/index.js | releaseAnchoredToolRestriction | L957-959 | 引导期 release 薄适配：转调 releaseToolRestriction |  |
-| plugins/dsh-extra-plan/index.js | armCordisPresentationRestriction | L963-966 | C=0 cordis deny 薄适配：算 deny 后转调 armToolRestriction |  |
-| plugins/dsh-extra-plan/index.js | releaseCordisPresentationRestriction | L968-970 | C=0 cordis release 薄适配：转调 releaseToolRestriction |  |
-| plugins/dsh-extra-plan/index.js | shouldHideCreativeCatalog | L1000-1002 | C 热读判定：仅 creativeMode=false（C=0）返回 true，供调用方在 A/F 优先的投影视图隐藏创造 skill；本函数不检查 A/F、角色或 M，也不改变 registry binding |  |
-| plugins/dsh-extra-plan/index.js | isAnchoredContextGate | L1006-1011 | 判定当前 agent 是否满足 anchored context gate：bootstrap 开启、Session 仍处 F，且角色为 main 或 planner（非 live child） | 只读 payload.agent；角色沿现有 isPlannerChild/isChild 语义，不使用 selfAgent 或父 Session 相位 |
-| plugins/dsh-extra-plan/index.js | warnPreStepFailure | L1013-1017 | pre-step 可降级 C 投影/去重异常的一次性告警 helper；返回路径仍保留已经完成的 source 过滤副本，并保证 next 只调用一次 | 不得在关键 source gate/phase 失败时吞错后发送未过滤 decision |
-| plugins/dsh-extra-plan/index.js | recordRequestError | L1125-1145 | agent/request-error：按 diagPath 追加 jsonl，含 ts、role 与错误链，整体吞错。 |  |
-| plugins/dsh-extra-plan/index.js | messageTargetIdOf | L1547-1556 | send_message 目标回调：只读本轮名称或路径引用的已解析 Session ID；未命中即登记本轮 Set 供 resolveName 逐个补齐，非字符串 agent 回退旧 agent_id，不跨调用缓存且不调用宿主。 | 最新路径 agent 与 resolveName 适配（rc.2 与 rc.3 共用）；旧 agent_id 仅 rc.1 兼容，删除边界均须另行授权。 |
-| plugins/dsh-extra-plan/index.js | finish | L1559-1571 | 本轮 apply 闸门唯一一次性收尾：拒绝先记 run_code deny；最终放行才记 job_output 与轮询计数并 next 一次；解析名称的匿名异步闭包复用此收尾，解析异常或取消原样传播。 | 同一 apply 内防重复调用，不把 resolveName 异常吞为 allow 或 deny。 |
+| plugins/dsh-extra-plan/index.js | malformedRecovery | L208-242 | MALFORMED_RESPONSE 同回合限次自愈：注入失败或坐标缺失仍返回 retry，其余回退原 action。 |  |
+| plugins/dsh-extra-plan/index.js | safeContextGet | L255-261 | 通过 ctx.get 取宿主服务，取不到或抛错时返回 undefined，不向上传播异常 |  |
+| plugins/dsh-extra-plan/index.js | absoluteRoot | L265-272 | 把候选根路径归一成绝对工作区根，空串、非字符串或非法输入一律返回 null 而不抛错 |  |
+| plugins/dsh-extra-plan/index.js | profileIdentityOf | L274-285 | 按 profile 名与已启动 bundle 判定 web、qqbot 或冲突身份，缺字段记为未知 |  |
+| plugins/dsh-extra-plan/index.js | rootFact | L287-291 | 把带存在标记的根路径归一为 missing、invalid 或 valid 三态事实对象 |  |
+| plugins/dsh-extra-plan/index.js | sameRoot | L293-298 | 两个根路径都非空时按平台归一后比较是否同一根，Windows 下转小写，任一侧为空即判否 |  |
+| plugins/dsh-extra-plan/index.js | configEditorServiceOf | L300-303 | 取 configEditor 服务并校验具备读取与编辑方法，不合格返回 null |  |
+| plugins/dsh-extra-plan/index.js | documentFact | L305-309 | 把配置文档路径归一为 missing、invalid 或 valid 事实，空值按缺失处理 |  |
+| plugins/dsh-extra-plan/index.js | profileFactsOf | L311-376 | 汇总 profile、宿主根与配置文档的可信事实，并标注 valid、conflict 或 invalid 状态 |  |
+| plugins/dsh-extra-plan/index.js | has | L313 | 判断 profile 对象是否为对象且自身带有某键，用于区分字段缺失与显式空值，不抛错 |  |
+| plugins/dsh-extra-plan/index.js | installAnchorOf | L378-380 | 从 profile 事实里取出安装锚点路径，缺失或非法时返回 null，不抛错，供锚点钩子判空 |  |
+| plugins/dsh-extra-plan/index.js | pathRootsOverlap | L384-392 | 判定两个路径根是否重叠：规范化后互为前缀即视为重叠，供 H/W 重叠分类使用 |  |
+| plugins/dsh-extra-plan/index.js | pathContextFor | L394-416 | 用可信 profile 事实装配路径上下文与写入口径能力，全部为空时返回 null 而不抛错 |  |
+| plugins/dsh-extra-plan/index.js | resolveDocumentTargetFor | L418-426 | 按配置文档事实解析精确宿主目标路径，事实非法或矛盾时抛错拒绝热读，缺路径返回空串 |  |
+| plugins/dsh-extra-plan/index.js | sessionCwdOf | L428-432 | 从 agent 的会话头里取工作目录，缺失或非字符串时返回空串，供路径上下文现算使用 |  |
+| plugins/dsh-extra-plan/index.js | resolveAbsoluteLogTarget | L434-440 | 绝对诊断路径的两级解析：先按宿主根解析再按工作区根解析，两者皆失败时抛出首个错误 |  |
+| plugins/dsh-extra-plan/index.js | diagnosticTargetOf | L442-457 | 决定诊断文件落点：裸文件名按宿主、工作区、缺根三态分派，不可用时返回 null 不抛错 |  |
+| plugins/dsh-extra-plan/index.js | prepareDiagnosticPath | L459-475 | 先建父目录再校验写入目标，成功返回可写诊断路径，任一步失败都一律返回空串且不抛错 |  |
+| plugins/dsh-extra-plan/index.js | appendDiagnostic | L477-482 | 以 UTF-8 追加一行 JSON 诊断记录，路径不可得时返回假而不抛错，供调用方判空 |  |
+| plugins/dsh-extra-plan/index.js | recordAgentError | L484-501 | agent/error 回合错误取证：错误链逐字追加到诊断目录（落点见 getDiagPath），整体吞错不阻断。 | 与 recordRequestError 同诊断模式 |
+| plugins/dsh-extra-plan/index.js | startupPruneDiagnosticLogs | L506-525 | 启动期日志裁剪接线：按 host 根装配路径上下文后把裁剪排到下一个宏任务，缺 host 根或任何失败只 warn，绝不阻断 apply | 与 settings 的 startupArchive 同属启动期整理，但各自独立 |
+| plugins/dsh-extra-plan/index.js | pruneNow | L514-522 | 启动裁剪的执行回调：只有 status 为 pruned 才落一行 warn 摘要，失败只 warn 错误消息 |  |
+| plugins/dsh-extra-plan/index.js | apply | L529-1641 | 插件主入口：闸门词表先校验，再接线投影、路由与 save 工具注册（顺序以机制设计为准）；静态可解析 run_code 组在 next 前预审，动态或未解析成员交由实际 pre-execute 重入重新判定。 |  |
+| plugins/dsh-extra-plan/index.js | getPathContext | L555 | 传给保存类工具工厂的取上下文回调：按 cwd 现算路径上下文，属宿主接线且不缓存 |  |
+| plugins/dsh-extra-plan/index.js | resolveDocumentTarget | L565 | 传给配置热读器的文档目标回调：按 agent 现算精确宿主目标，属宿主接线不缓存 |  |
+| plugins/dsh-extra-plan/index.js | getPathContext | L566 | 传给配置热读器的取上下文回调：按 agent 的会话工作目录现算路径上下文，属宿主接线 |  |
+| plugins/dsh-extra-plan/index.js | plannerModel | L580 | 热读箭头 getter：pro 规划默认模型（liveConfig.plannerModel；消费点=model-routing 的 getPlannerModel） |  |
+| plugins/dsh-extra-plan/index.js | otherAgentModel | L581 | 热读箭头 getter：其他子代理默认模型（消费点=model-routing 的 getOtherAgentModel） |  |
+| plugins/dsh-extra-plan/index.js | reviewerUsesPlannerModel | L582 | 热读箭头 getter：验收者是否复用规划模型，按 agent 现取并回退 apply 快照 |  |
+| plugins/dsh-extra-plan/index.js | exploreBudget | L583 | 热读箭头 getter：pro 规划探查额度/单实例子调用上限（消费点=预算文案、noteRunCodeSubCall、plannerGateReason 与组判定） |  |
+| plugins/dsh-extra-plan/index.js | plannerPromptSuffix | L584 | 热读箭头 getter：pre-step 拼接的额外引导后缀 |  |
+| plugins/dsh-extra-plan/index.js | bootstrapOn | L585 | 热读箭头 getter：anchored 首轮引导开关；A/F gate 优先由 isAnchoredContextGate 与 pre-step 按当前 agent/events 判定，不把 C catalog 隐藏混入本 getter |  |
+| plugins/dsh-extra-plan/index.js | runcodeCatchGateOn | L586 | 热读箭头 getter：PTC try/catch 闸门开关（消费点=planner/只读 child/主会话三处组判定传参） |  |
+| plugins/dsh-extra-plan/index.js | crossProviderPlannerModel | L587 | 热读箭头 getter：跨 provider 规划模型开关，按 agent 现取配置值 |  |
+| plugins/dsh-extra-plan/index.js | creativeModeOn | L590 | 热读箭头 getter：C creativeMode 开关；C=0 时 shouldHideCreativeCatalog 供投影视图暂隐创造 skill，展示隐藏不改变 registry binding |  |
+| plugins/dsh-extra-plan/index.js | getAgents | L607 | 惰性返回 ctx.get('agents') 服务；注入 createAgentRuntime，供判定子会话是否为其父代理下的活跃派发。 |  |
+| plugins/dsh-extra-plan/index.js | warn | L609 | 把告警参数原样转发到 console.warn；注入 createAgentRuntime，作为缺父代理等异常情况的告警出口。 |  |
+| plugins/dsh-extra-plan/index.js | getPlannerModel | L617 | 返回热读配置 plannerModel（planner 子代理所用模型名）；注入 createModelRouting 供 planner 模型路由决议。 |  |
+| plugins/dsh-extra-plan/index.js | getOtherAgentModel | L618 | 返回热读配置 otherAgentModel（非 planner 子代理所用模型名，空串表示不覆盖）；供非 planner 路由决议。 |  |
+| plugins/dsh-extra-plan/index.js | getCrossProviderPlannerModel | L619 | 返回热读布尔开关 crossProviderPlannerModel；决定 planner 路由走跨 provider 严格探针还是旧单 provider 路径。 |  |
+| plugins/dsh-extra-plan/index.js | getLlm | L620 | 返回 ctx.get('llm') 服务；供 model-routing 查 provider 模型目录（listModels）与真实探针调用。 |  |
+| plugins/dsh-extra-plan/index.js | getAgents | L621 | 返回 ctx.get('agents') 服务（同名第 2 处，消费方为 model-routing）；供经 agents.get 回溯父会话链的 provider/model/maxTokens。 |  |
+| plugins/dsh-extra-plan/index.js | getDiagPath | L622 | 返回诊断路径：诊断目录 host logs/dsh-extra-plan/ 或 W .extra-plan/logs/；供 planner 降级诊断。 |  |
+| plugins/dsh-extra-plan/index.js | noteRunCodeSubCall | L650 | 单实例子调用上限（planner）：按 sessionId→rootCallId 桶读计数、未超限则 +1；返回拒绝文案或 null；空 rootCallId 与 exploreBudget 文案保持 |  |
+| plugins/dsh-extra-plan/index.js | consumeToolJobsNotice | L651-684 | tool-jobs 通知按 message.id 判重：首次有效通知解锁 job_output 与 pollGuard。 | 消费与双解锁语义见 ai-机制设计.md 六「session 生命周期与 usage 账本」的通知消费合同条。 |
+| plugins/dsh-extra-plan/index.js | selectChildModelOnCreate | L697-748 | 子代理创建时按角色选模型：验收者按 reviewerUsesPlannerModel 走 planner 路由，其余走 otherAgentModel，失败普通回退 |  |
+| plugins/dsh-extra-plan/index.js | toolsServiceOf | L764-777 | 取 agent 作用域 tools 服务：优先 ctx.tools，其次 ctx.get('tools')，异常一律返回 undefined |  |
+| plugins/dsh-extra-plan/index.js | restrictableNamesOf | L780-790 | 取可收窄名集合：仅取 view(agent).restrictableNames，缺失或异常一律返回 null（schemas 兜底在 anchoredAllowNamesOf 内） |  |
+| plugins/dsh-extra-plan/index.js | cordisRestrictableOf | L792-794 | cordis deny 用的可收窄名薄封装，保留旧名以免断引用 |  |
+| plugins/dsh-extra-plan/index.js | restrictableSnapshotOf | L795-798 | 把可收窄名集合转成排序数组供诊断落盘，null 原样透传 |  |
+| plugins/dsh-extra-plan/index.js | toolRestrictionSlotOf | L800-807 | 取/建 per-agent 的 Map<source,{disposer,filter}> 槽位，供多路裁剪共存 |  |
+| plugins/dsh-extra-plan/index.js | toolRestrictionDiag | L811-835 | 统一诊断出口：skip-* 按 agent 去重，arm-ok/arm-failed/release-ok 恒带 source 与 filter |  |
+| plugins/dsh-extra-plan/index.js | anchoredAllowNamesOf | L839-867 | 算引导期 allow：bootstrapShellTools ∪ bootstrapCommonTools ∩ 可收窄名，空集返回 [] 由调用方跳过 |  |
+| plugins/dsh-extra-plan/index.js | armToolRestriction | L871-923 | 唯一裁剪入口：可收窄名校验 + 幂等判定后调 tools.restrict(filter)，disposer 存入槽位 |  |
+| plugins/dsh-extra-plan/index.js | releaseToolRestriction | L926-939 | 唯一释放入口：只调 disposer() 并删槽位，绝不用空 filter 调 restrict |  |
+| plugins/dsh-extra-plan/index.js | anchoredBootstrapArmOptionsOf | L942-981 | 算引导期 arm 选项：判定相位/角色等跳过条件并生成 allow filter 与诊断字段 |  |
+| plugins/dsh-extra-plan/index.js | armAnchoredToolRestriction | L982-984 | 引导期 arm 薄适配：算 allow 后转调 armToolRestriction |  |
+| plugins/dsh-extra-plan/index.js | releaseAnchoredToolRestriction | L985-987 | 引导期 release 薄适配：转调 releaseToolRestriction |  |
+| plugins/dsh-extra-plan/index.js | armCordisPresentationRestriction | L991-994 | C=0 cordis deny 薄适配：算 deny 后转调 armToolRestriction |  |
+| plugins/dsh-extra-plan/index.js | releaseCordisPresentationRestriction | L996-998 | C=0 cordis release 薄适配：转调 releaseToolRestriction |  |
+| plugins/dsh-extra-plan/index.js | shouldHideCreativeCatalog | L1028-1030 | C 热读判定：仅 creativeMode=false（C=0）返回 true，供调用方在 A/F 优先的投影视图隐藏创造 skill；本函数不检查 A/F、角色或 M，也不改变 registry binding |  |
+| plugins/dsh-extra-plan/index.js | isAnchoredContextGate | L1034-1039 | 判定当前 agent 是否满足 anchored context gate：bootstrap 开启、Session 仍处 F，且角色为 main 或 planner（非 live child） | 只读 payload.agent；角色沿现有 isPlannerChild/isChild 语义，不使用 selfAgent 或父 Session 相位 |
+| plugins/dsh-extra-plan/index.js | warnPreStepFailure | L1041-1045 | pre-step 可降级 C 投影/去重异常的一次性告警 helper；返回路径仍保留已经完成的 source 过滤副本，并保证 next 只调用一次 | 不得在关键 source gate/phase 失败时吞错后发送未过滤 decision |
+| plugins/dsh-extra-plan/index.js | recordRequestError | L1153-1173 | agent/request-error：按 diagPath 追加 jsonl，含 ts、role 与错误链，整体吞错。 |  |
+| plugins/dsh-extra-plan/index.js | messageTargetIdOf | L1575-1584 | send_message 目标回调：只读本轮名称或路径引用的已解析 Session ID；未命中即登记本轮 Set 供 resolveName 逐个补齐，非字符串 agent 回退旧 agent_id，不跨调用缓存且不调用宿主。 | 最新路径 agent 与 resolveName 适配（rc.2 与 rc.3 共用）；旧 agent_id 仅 rc.1 兼容，删除边界均须另行授权。 |
+| plugins/dsh-extra-plan/index.js | finish | L1587-1599 | 本轮 apply 闸门唯一一次性收尾：拒绝先记 run_code deny；最终放行才记 job_output 与轮询计数并 next 一次；解析名称的匿名异步闭包复用此收尾，解析异常或取消原样传播。 | 同一 apply 内防重复调用，不把 resolveName 异常吞为 allow 或 deny。 |
 | plugins/dsh-extra-plan/lib/agent-runtime.js | isLiveDelegation | L17-28 | 按父会话 registry 存活状态判定委托是否仍有效 |  |
 | plugins/dsh-extra-plan/lib/agent-runtime.js | createAgentRuntime | L30-175 | 创建 per-apply 角色/缓存/usage baseline 工厂 |  |
 | plugins/dsh-extra-plan/lib/agent-runtime.js | isChild | L37-45 | 按显式 events 判定 live child 并发出恢复为 root 警示 |  |
@@ -580,6 +583,11 @@
 | plugins/dsh-extra-plan/lib/live-config.js | exploreBudget | L293 | 热读箭头 getter：pro 探查额度，取值即刷新配置，非法或缺失回退到内置默认额度 |  |
 | plugins/dsh-extra-plan/lib/live-config.js | otherAgentModel | L294 | 热读箭头 getter：其他子代理默认模型，取值即刷新配置，失败时回退 apply 期快照 |  |
 | plugins/dsh-extra-plan/lib/live-config.js | reviewerUsesPlannerModel | L295 | 热读箭头 getter：验收者是否复用规划模型，取值即刷新配置，失败回退快照布尔值 |  |
+| plugins/dsh-extra-plan/lib/log-retention.js | parsedTsOf | L16-26 | 行级 ts 解析：空行、解析失败、非对象、ts 非字符串或非法时间一律返回 null，调用方据此保留该行 |  |
+| plugins/dsh-extra-plan/lib/log-retention.js | closeInput | L29-38 | 显式 destroy 读流并等 close 后 resolve：Windows 上 rename 覆盖要求目标文件不再被任何句柄持有 |  |
+| plugins/dsh-extra-plan/lib/log-retention.js | scanHasExpired | L40-53 | 只读预判：流式逐行找第一条过期 ts，命中即提前关流返回真，保证无过期行时完全不写盘 |  |
+| plugins/dsh-extra-plan/lib/log-retention.js | rewriteWithoutExpired | L55-86 | 仅在确有过期行时调用：授权同目录临时文件后流式写回保留行并 rename 覆盖原文件，出错先清理临时文件再重抛 |  |
+| plugins/dsh-extra-plan/lib/log-retention.js | pruneDiagnosticLogs | L88-113 | 启动裁剪入口：只枚举 <host 根>/logs/dsh-extra-plan 下 .jsonl 普通文件并排除 usage-ledger，返回 skipped/up-to-date/pruned 与 scanned/pruned/removedRows 计数 |  |
 | plugins/dsh-extra-plan/lib/model-routing.js | isExplicitRoute | L11-17 | 显式路由判定：子级 provider 或 model 任一与父值不同即算显式，空串视为无选择 |  |
 | plugins/dsh-extra-plan/lib/model-routing.js | isExplicitEffort | L21-23 | 显式 effort 判定：仅非空字符串且与父值不同才算显式，空串与 undefined 一律不算 |  |
 | plugins/dsh-extra-plan/lib/model-routing.js | requestConfigSnapshot | L33-46 | 请求配置快照：从会话 header 取 provider、model 与 maxTokens，取不到即返回 null |  |
