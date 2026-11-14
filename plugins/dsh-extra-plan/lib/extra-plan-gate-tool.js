@@ -6,6 +6,7 @@
 // 用户作答、跳过（selected 为空）、取消与提问通道故障。取消类错误 → cancelled，
 // 其余错误 → channel-error 并附 error.code。
 // route/purpose 分支的选项文案一律取自 gateRuntime.words 词表；clarify 分支的 questions/header/options 由模型提供；route/purpose 的 header、问题正文与 noteLabel 是固定提示语，可硬编码。
+// 结果的 content 固定为一个 text ContentBlock、正文是返回值整体 JSON：宿主 spill-policy 的 post-execute 与 PTC 提交都按数组消费 content，状态机只解析这块 JSON。
 
 const GATE_TOOL_NAME = 'extra_plan_gate'
 
@@ -93,36 +94,6 @@ function failResult(result, error) {
   result.outcome = 'channel-error'
   result.error = { code: errorCodeOf(error) }
   return result
-}
-
-// output.render 的一句话摘要（只做展示，不参与任何判定）。
-function renderGateValue(value) {
-  if (value === null || typeof value !== 'object') return GATE_TOOL_NAME + '：无结果'
-  const outcome = typeof value.outcome === 'string' ? value.outcome : ''
-  if (outcome === 'cancelled') return GATE_TOOL_NAME + '：用户已取消提问'
-  if (outcome === 'skipped') {
-    const reason = typeof value.reason === 'string' && value.reason !== '' ? value.reason : ''
-    if (reason !== '') return GATE_TOOL_NAME + '：前置条件未满足，未提问（' + reason + '）'
-    return GATE_TOOL_NAME + '：用户跳过提问（未作答）'
-  }
-  if (outcome === 'channel-error') {
-    const code = value.error !== null && typeof value.error === 'object' && typeof value.error.code === 'string' && value.error.code !== '' ? value.error.code : '未知'
-    return GATE_TOOL_NAME + '：提问通道失败（' + code + '）'
-  }
-  if (value.gate === 'route') {
-    const label = typeof value.routeLabel === 'string' && value.routeLabel !== '' ? value.routeLabel : '未选'
-    const note = typeof value.note === 'string' && value.note !== '' ? value.note : '空'
-    return GATE_TOOL_NAME + '：路线=' + label + '，说明=' + note
-  }
-  if (value.gate === 'purpose') {
-    const label = typeof value.purposeLabel === 'string' && value.purposeLabel !== '' ? value.purposeLabel : '未选'
-    return GATE_TOOL_NAME + '：规划目的=' + label
-  }
-  if (value.gate === 'clarify') {
-    const count = Array.isArray(value.answers) ? value.answers.length : 0
-    return GATE_TOOL_NAME + '：澄清答复 ' + count + ' 条'
-  }
-  return GATE_TOOL_NAME + '：已完成'
 }
 
 // 私有绑定：校验依赖，把本次 apply 的词表、ask 通道与 getState 状态读取绑到三支分支上，返回 { defineGateTool }。
@@ -297,8 +268,11 @@ function boundGateTool(gateRuntime, ask, getState) {
           required: ['gate', 'outcome'],
           additionalProperties: false,
         },
+        // 结果 content 必须恰为一个 text ContentBlock、正文是返回值整体 JSON：
+        // 宿主按数组消费 content（spill-policy 的 post-execute 与 PTC 提交都对 content 调 .some），
+        // 状态机只解析这块 JSON 的 outcome 与 route/purpose；裸字符串会崩宿主，人类摘要会让三锚点停在原地。
         render(_args, value) {
-          return renderGateValue(value)
+          return [{ type: 'text', text: JSON.stringify(value) }]
         },
       },
       async execute(args, exec) {

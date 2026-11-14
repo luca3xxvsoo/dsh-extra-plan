@@ -183,7 +183,7 @@
 
 单轮连发清单（AI 一轮内全部发出，用户 0 操作；R-none 只执行 native 可达直呼；run_code 编号只作 PTC 轮索引，native 不执行组判定）：
 1. **PTC 索引 run_code#1（第二轮 2A；本轮不执行）**（6 成员；subagent_probe 放行，满足独立 catch、成员参数静态可解析且无额外容错错误时，一次聚合取证 5 条成员拒因；额外 run_code 诊断另列）：write / subagent_plan / save_probe / subagent / subagent_probe / job_output（wait:true）——save_plan 是任意路线放行的受限规划工件，不是组拒成员；subagent_probe 由主会话放行（A30）。
-2. **闸门取证（U1 本身）**：直呼 `extra_plan_gate({ gate: 'route' })` → 用户在弹窗第一问点**跳过** → 返回 `outcome='skipped'`、`route='none'`、`routeLabel=''`；route/purpose/clarified 不改动（仍为默认态）；卡片摘要 `extra_plan_gate：用户跳过提问（未作答）`。
+2. **闸门取证（U1 本身）**：直呼 `extra_plan_gate({ gate: 'route' })` → 用户在弹窗第一问点**跳过** → 返回 `outcome='skipped'`、`route='none'`、`routeLabel=''`；route/purpose/clarified 不改动（仍为默认态）；卡片内容＝返回值 JSON（`{"gate":"route","outcome":"skipped","route":"none","routeLabel":""}`），仅展示、不作判据。
 3. **直呼单条对照（直呼面）**：直呼 write → 单条 `Error:` 卡片（A02）；其子文案必须与第 1 步聚合行 `- write: …` 逐字一致（C9 硬判据②）。
 4. **PTC 索引 run_code#2（A22 仅第二轮 PTC 聚合；本轮不执行）**：裸 `await tools.ask_user_question(...)`（不 return）→ A22；同批再取一条裸 `await tools.extra_plan_gate({ gate: 'clarify', questions: [...] })`（不 return）→ 同一闸门按工具名落 `- extra_plan_gate: run_code 内 extra_plan_gate 的结果未正确返回用户层：…`。
 5. 直呼只读对照：read / glob / grep（放行、无文案）
@@ -205,7 +205,7 @@
 | `A06` | PTC 索引 run_code#1 成员 subagent | `执行类委派未放行：subagent。请先调用 extra_plan_gate 并传入 gate 为 route，让用户选择「执行者执行」后再委派执行者` |
 | `A30` | PTC 索引 run_code#1 成员 subagent_probe（不带后台参数） | 无聚合行（放行侧，A30 记「已退役·放行」，编号保留） |
 | `A16` | PTC 索引 run_code#1 成员 job_output（wait:true） | `job_output 禁止带 wait: true 前台等待。请省略 wait 参数或设 wait: false，job 完成后会收到通知` |
-| 闸门 route（跳过） | 直呼 `extra_plan_gate({ gate: 'route' })` + 用户点跳过 | `outcome='skipped'`、`route='none'`、`routeLabel=''`；route/purpose/clarified 不改动；卡片摘要 `extra_plan_gate：用户跳过提问（未作答）` |
+| 闸门 route（跳过） | 直呼 `extra_plan_gate({ gate: 'route' })` + 用户点跳过 | `outcome='skipped'`、`route='none'`、`routeLabel=''`；route/purpose/clarified 不改动；卡片内容＝返回值 JSON（`{"gate":"route","outcome":"skipped","route":"none","routeLabel":""}`），仅展示、不作判据 |
 | `A47` | 直呼 write（跳过后） | 单条 `Error:` 卡片；子文案与 PTC 索引 run_code#1 的 `- write: …` 行**逐字一致**（C9） |
 | `A47`（变体） | 闸门选「不同意」→ 随后直呼 write | `outcome='answered'`、`route='none'`、`routeLabel='不同意'`；write 被 A02 拒：`路由未确认：write/edit。…` |
 | `A22` | PTC 索引 run_code#2 裸调用 | `run_code 内 ask_user_question 的结果未正确返回用户层：…` / `run_code 内 extra_plan_gate 的结果未正确返回用户层：…` |
@@ -227,7 +227,7 @@ PTC 索引 run_code#1 预期聚合 header：工具组共 6 项（去重后），
 状态：route=main、purpose=none、clarified=false（route 闸门作答无条件清阶段态）。
 > **取证前置**：该 PTC 索引 run_code#3 的成员参数按同一安全静态 literal 合同解析；变量、spread、computed、调用、成员访问、模板、重复/污染键等动态形态会保留 argsText 并交运行时瀑布，不能假设静态参数闸门已命中。
 单轮连发清单：
-1. **闸门取证（U2 本身）**：直呼 `extra_plan_gate({ gate: 'route' })`，用户选「主会话执行」→ `outcome='answered'`、`route='main'`、`routeLabel='主会话执行'`、`purpose=null`；卡片摘要 `extra_plan_gate：路线=主会话执行，说明=空`。
+1. **闸门取证（U2 本身）**：直呼 `extra_plan_gate({ gate: 'route' })`，用户选「主会话执行」→ `outcome='answered'`、`route='main'`、`routeLabel='主会话执行'`、`purpose=null`；卡片内容＝返回值 JSON（`{"gate":"route","outcome":"answered","route":"main","routeLabel":"主会话执行","note":""}`），仅展示、不作判据。
 2. **PTC 索引 run_code#3（第二轮 2A；本轮不执行）**（5 成员）：subagent_plan / save_probe / subagent / subagent_probe / job_output（wait:true）
 3. 直呼放行侧（**主会话 write 正向放行探针**）：直呼 write 写 `pe-test/reports/` 下一个临时文件 → read 验证存在 → 删除该临时文件（0 用户操作）；同批直呼 job_kill → 放行（A52：route=main 下 job_kill 无闸门拒绝文案，宿主侧 job owner 隔离自理）
 4. **A46 放行侧**：直呼 save_plan（plan/checklist 各 ≥200 字、无方括号未探查/待确认标记、无证据引用）→ 成功 content 为唯一 text ContentBlock（文本精确为 paths 两项经 String 转换后以单个换行符连接）；structured output value 仍仅含 paths 数组 → read 验证两文件存在且可读（0 用户操作）；探针约束：plan 正文只含卷首＋任务，`[检查N]` 与 `[全局验收]` 只写进验收清单（写进方案会先吃文件级合同诊断，实测 10 条）
@@ -264,7 +264,7 @@ PTC 索引 run_code#1 预期聚合 header：工具组共 6 项（去重后），
 状态：route=plan、purpose∈{refine,redo}、clarified=false。（这是正常可达态：purpose 闸门 answered 后写入 purpose 并清 clarified；U4 后 U5 前在此窗口直测 A04/A13。）
 单轮连发清单：
 1. **PTC 索引 run_code#4b（第二轮 2A；本轮不执行）**（2 成员，一次聚合）：subagent_plan / save_probe（目的已定、澄清未完成 → 两条各落澄清文案）
-2. **闸门取证（U4 本身）**：`extra_plan_gate({ gate: 'purpose' })` → 用户选「完善方案」或「重新规划」→ `outcome='answered'`、`purpose='refine'|'redo'`、`purposeLabel` 为对应词值、`clarified=false`；卡片摘要 `extra_plan_gate：规划目的=完善方案`。purpose 闸门只在 route=plan 时写入状态（其它路线即使被调用也不推进）。
+2. **闸门取证（U4 本身）**：`extra_plan_gate({ gate: 'purpose' })` → 用户选「完善方案」或「重新规划」→ `outcome='answered'`、`purpose='refine'|'redo'`、`purposeLabel` 为对应词值、`clarified=false`；卡片内容＝返回值 JSON（`{"gate":"purpose","outcome":"answered","purpose":"refine","purposeLabel":"完善方案"}`），仅展示、不作判据。purpose 闸门只在 route=plan 时写入状态（其它路线即使被调用也不推进）。
 
 | 命中 A | 成员/路径 | 期望文案关键句 |
 |:--|:--|:--|
@@ -275,7 +275,7 @@ PTC 索引 run_code#1 预期聚合 header：工具组共 6 项（去重后），
 状态：route=plan、clarified=true、purpose∈{refine,redo}。（clarified=true 必须经目的已定后的澄清答复置位）
 单轮连发清单：
 1. **PTC 索引 run_code#5（第二轮 2A；本轮不执行）**（3 成员，ptc 轮执行）：subagent_plan / subagent / job_output（wait:true）——save_plan 已不在组拒清单内；native 轮同一批改直呼对照（A10 放行、A06、A16）
-2. **闸门取证（U5 本身）**：`extra_plan_gate({ gate: 'clarify', questions: [...] })`，由模型给 1-3 个意图澄清问题（该闸门的题面与选项由模型提供、插件原样转交，不来自 gateWords）→ 用户作答 → `outcome='answered'`、`answers` 为答复数组、`clarified=true`；卡片摘要 `extra_plan_gate：澄清答复 N 条`
+2. **闸门取证（U5 本身）**：`extra_plan_gate({ gate: 'clarify', questions: [...] })`，由模型给 1-3 个意图澄清问题（该闸门的题面与选项由模型提供、插件原样转交，不来自 gateWords）→ 用户作答 → `outcome='answered'`、`answers` 为答复数组、`clarified=true`；卡片内容＝返回值 JSON（`{"gate":"clarify","outcome":"answered","answers":[...]}`），仅展示、不作判据
 3. 起一个后台 pwsh job（只读命令，如列目录）→ **同轮内** job_output 调两次（第一次放行、第二次拒 → A17）；ptc 轮推荐写成**同一次 run_code 内两次同参 job_output**（组判定同参去重只留 1 成员，第二次为运行时嵌套 re-entry 被拒），native 轮直呼两次为对照写法；A55/A56 仿此同轮直呼两次模板（job_list/list_agents 首次放行、第二次拒）
 4. 直呼放行侧：委派 **planner 会话**（subagent_plan；委派合同无后台参数，参数跳过检查=放行）执行 3.2.6.1 序列（0 用户操作）
 5. **A12 放行侧（route=plan）**：直呼 save_plan（plan/checklist 各 ≥200 字、无方括号未探查/待确认标记、无证据引用）→ 成功 content 为唯一 text ContentBlock（文本精确为 paths 两项经 String 转换后以单个换行符连接）；structured output value 仍仅含 paths 数组 → read 验证两文件存在且可读（0 用户操作）
@@ -379,14 +379,14 @@ A21 的 **planner 侧**另由 mock 兜底（不另开 planner 会话）：`step-
 #### 3.2.8 闸门四种 outcome 与主会话据此的四种后续动作（不占编排批次）
 `extra_plan_gate` 的结果只有四种 `outcome`，主会话按 `outcome` 决定后续动作；该判定**不占任何编排批次**（用户作答本身已计入对应 U 行）：
 
-| outcome | 状态影响（`applyGateOutcome`） | 结果字段 | 主会话后续动作 | 卡片摘要（仅展示、不作判据） |
+| outcome | 状态影响（`applyGateOutcome`） | 结果字段 | 主会话后续动作 | 卡片内容＝返回值 JSON（仅展示、不作判据） |
 |:--|:--|:--|:--|:--|
-| `answered` | 推进状态：route 闸门清 `purpose='none'`/`clarified=false` 后覆盖写 route；purpose 闸门只在 route=plan 时写 purpose 并清 clarified；clarify 闸门置 clarified=true | `route`/`routeLabel`、`purpose`/`purposeLabel`、`answers`、`note` | 按回填值继续：routeLabel 直接读，写/委派/规划按新路线判定，不另发闸门 | `extra_plan_gate：路线=<词>` / `规划目的=<词>` / `澄清答复 N 条` |
-| `skipped` | 不改动既有字段（route 仍停在原值；结果里 `route='none'`、`routeLabel=''`，但状态推导只认 answered） | `route='none'`、`routeLabel=''`、`purpose=null` | 保持原路线继续；需要路线确认时重发 `gate='route'`；不得据该结果记状态推进 | `extra_plan_gate：用户跳过提问（未作答）` |
-| `cancelled` | 三字段全复位：`route='none'`、`purpose='none'`、`clarified=false` | 保留已填字段 | 回未确认态：写/委派按 route=none 判定，继续推进须重发 `gate='route'` | `extra_plan_gate：用户已取消提问` |
-| `channel-error` | 不改动既有字段 | `error.code`（如 `INVALID_GATE`/`INVALID_QUESTIONS`） | 不作任何闸门结论：记录 code 后重试；仍取不到即该条记 `NOT-RUN`，不得以通道故障冒充拒绝或放行 | `extra_plan_gate：提问通道失败（<code>）` |
+| `answered` | 推进状态：route 闸门清 `purpose='none'`/`clarified=false` 后覆盖写 route；purpose 闸门只在 route=plan 时写 purpose 并清 clarified；clarify 闸门置 clarified=true | `route`/`routeLabel`、`purpose`/`purposeLabel`、`answers`、`note` | 按回填值继续：routeLabel 直接读，写/委派/规划按新路线判定，不另发闸门 | 返回值 JSON：`{"gate":"route","outcome":"answered","route":"main","routeLabel":"主会话执行"}` 等 |
+| `skipped` | 不改动既有字段（route 仍停在原值；结果里 `route='none'`、`routeLabel=''`，但状态推导只认 answered） | `route='none'`、`routeLabel=''`、`purpose=null` | 保持原路线继续；需要路线确认时重发 `gate='route'`；不得据该结果记状态推进 | 返回值 JSON：`{"gate":"route","outcome":"skipped","route":"none","routeLabel":""}` |
+| `cancelled` | 三字段全复位：`route='none'`、`purpose='none'`、`clarified=false` | 保留已填字段 | 回未确认态：写/委派按 route=none 判定，继续推进须重发 `gate='route'` | 返回值 JSON：`{"gate":"route","outcome":"cancelled",...}` |
+| `channel-error` | 不改动既有字段 | `error.code`（如 `INVALID_GATE`/`INVALID_QUESTIONS`） | 不作任何闸门结论：记录 code 后重试；仍取不到即该条记 `NOT-RUN`，不得以通道故障冒充拒绝或放行 | 返回值 JSON：`{"gate":"route","outcome":"channel-error","error":{"code":"<code>"}}` |
 
-> 取证件：`tool/result` 首个 text 块的 JSON 含 `gate`/`outcome`/`route`/`routeLabel`/`purpose`/`purposeLabel`/`note`/`answers`/`error`；render 摘要只做展示、不参与任何判定。参数非法（`gate` 非三值、clarify 缺 questions）同样以 `channel-error` 返回、绝不向外抛错。
+> 取证件：`tool/result` 首个 text 块的 JSON 含 `gate`/`outcome`/`route`/`routeLabel`/`purpose`/`purposeLabel`/`note`/`answers`/`error`；render 就是这块 JSON（单个 text ContentBlock）——宿主按数组消费 content，状态机只解析它，不得返回裸字符串或人类摘要。参数非法（`gate` 非三值、clarify 缺 questions）同样以 `channel-error` 返回、绝不向外抛错。
 
 #### 3.2.9 操作批次归并总览（最少干预口径）
 
@@ -446,7 +446,7 @@ A21 的 **planner 侧**另由 mock 兜底（不另开 planner 会话）：`step-
 | `A16` | `tools.job_output({ wait: true })` | `- job_output: job_output 禁止带 wait: true 前台等待。请省略 wait 参数或设 wait: false，job 完成后会收到通知` |
 
 **同窗搭车项的期望（同样逐字取 A 表）**：
-- 闸门 route（U1b 本身）：`tools.extra_plan_gate({ gate: 'route' })` 单成员 → 用户点跳过 → 结果 JSON `outcome='skipped'`、`route='none'`、`routeLabel=''`；卡片摘要 `extra_plan_gate：用户跳过提问（未作答）`；route/purpose/clarified 不改动
+- 闸门 route（U1b 本身）：`tools.extra_plan_gate({ gate: 'route' })` 单成员 → 用户点跳过 → 结果 JSON `outcome='skipped'`、`route='none'`、`routeLabel=''`；卡片内容＝返回值 JSON（`{"gate":"route","outcome":"skipped","route":"none","routeLabel":""}`）；route/purpose/clarified 不改动
 - `A22`：`run_code#2b` 裸 `await tools.ask_user_question(...)`（不 return）→ 聚合行 `- ask_user_question: run_code 内 ask_user_question 的结果未正确返回用户层：请直接 return await tools.ask_user_question(...)，或先用变量接收后在紧随的顶层 return 中返回该结果；不得只调用、只赋值、通过别名/动态访问，或用 .then/函数包装结果`；另一条裸 `await tools.extra_plan_gate({ gate: 'clarify', questions: [...] })` → 同一闸门按工具名落 `- extra_plan_gate: run_code 内 extra_plan_gate 的结果未正确返回用户层：…`。两条均**不得**用 try/catch 包裹（单调用点时 A21 不触发；一旦进入 try 块就不再是顶层调用点，A22 会按「无法证明返回链」直接拒绝）
 - 只读对照：`tools.read` / `tools.glob` / `tools.grep` 单成员各一次 → 放行、无聚合行
 - `A12`：`tools.save_plan` 单成员（plan/checklist 各 ≥200 字、无方括号未探查/待确认标记、无证据引用）→ 无拒绝文案，成功 content 为唯一 text ContentBlock（文本精确为 paths 两项经 String 转换后以单个换行符连接）；structured output value 仍仅含 paths 数组（方案-{base}.md、验收-{base}.md）
@@ -456,7 +456,7 @@ A21 的 **planner 侧**另由 mock 兜底（不另开 planner 会话）：`step-
 - `A55`：同一次 run_code 内 `tools.job_list` 两次（同参去重只留 1 成员，第二次为运行时嵌套 re-entry）→ 聚合行 `- job_list: 禁止轮询子代理状态，停止操作并等待子代理通知`
 - `A56`：同 A55 写法，`tools.list_agents` 同文案 `禁止轮询子代理状态，停止操作并等待子代理通知`
 
-**判定方式**：按 C9 与第一轮 3.2.1 的直呼单条卡片**跨轮逐字比对**——只比 `- <标签>: ` 之后的子文案与 A 表期望逐字一致；标签后缀（如 `write（参数不可解析）`）照录、不作通过条件；A39 按 ptc 段判据（顶层仅 run_code、sections 精确两项 persona + 手写 `tool:read`）另记一行结论。闸门 route 的判据取结果 JSON 的 `outcome`/`route`/`routeLabel` 三值，不取 render 摘要。
+**判定方式**：按 C9 与第一轮 3.2.1 的直呼单条卡片**跨轮逐字比对**——只比 `- <标签>: ` 之后的子文案与 A 表期望逐字一致；标签后缀（如 `write（参数不可解析）`）照录、不作通过条件；A39 按 ptc 段判据（顶层仅 run_code、sections 精确两项 persona + 手写 `tool:read`）另记一行结论。闸门 route 的判据取结果 JSON 的 `outcome`/`route`/`routeLabel` 三值，不取卡片展示内容。
 
 **A21 拦截面批（2A 段唯一的 try/catch 例外）**：在 R-none 同轮发一个含 ≥2 个 `tools.*` 调用点且**故意不逐点独立 try/catch** 的 run_code，成员含 write（route=none → 兼作 A02 复验）→ 期望**同批双闸门聚合**：`- run_code: run_code 内 N 个工具调用未全部独立容错：请给每个调用点各写一个独立 try/catch——一次只包 1 个调用、块后紧跟 catch。已保护 M 个。写法示例：try { await tools.read({ file_path: "x" }) } catch (e) {}` ＋ `- write: 路由未确认：write/edit。只读探查可随时进行。创建/修改/删除文件须先调用 extra_plan_gate(gate='route') 完成路线确认（…），用户选定路线后才可动手`。判定：按 C9 与第一轮 3.2.7 的 A21 mock/静态兜底及 A 表 A21 行逐字对齐；planner 侧仍由 mock 兜底。
 

@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-11-14 20:20:41（脚本自动更新时间戳行）
+> 上次同步：2026-11-14 21:04:16（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -114,7 +114,7 @@
 | plugins/dsh-extra-plan/lib/assembly-presentation.js | 269 | A/C/M 与 skill catalog 模型可见投影；从 scoped tools 读 schema/模式，SDK renderer 按 language 整体重建；F/PTC 的 tool:read 由 index.js 手写，L 段回宿主原文。 |
 | plugins/dsh-extra-plan/lib/client-carrier.js | 7 | settings 内部 Loader Group 的无副作用 Client carrier；不对应 bundle row/公开 export。 |
 | plugins/dsh-extra-plan/lib/client.js | 324 | 客户端模块加载共享样式/词条与 SettingsCard/ExtraPlanForm；设置表单仅经 detail.section 渲染于当前包详情行列表之后（自绘标题，不注册 bundle.config；若本包 bundle.config 槽出现条目则让位）；后端全局 settings API/Config 与 definition/adapter 由同一 owner 活动。 |
-| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | 341 | 闸门专用工具 extra_plan_gate：route/purpose 的选项文案由插件按 gateWords 生成，模型不得构造或改写；clarify 只透传问题；三支都收敛为 outcome 四值（answered/skipped/cancelled/channel-error），execute 从不向外抛错 |
+| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | 315 | 闸门专用工具 extra_plan_gate：route/purpose 的选项文案由插件按 gateWords 生成，模型不得构造或改写；clarify 只透传问题；三支都收敛为 outcome 四值（answered/skipped/cancelled/channel-error），execute 从不向外抛错；结果 content 固定为单个 text ContentBlock、正文是返回值整体 JSON |
 | plugins/dsh-extra-plan/lib/gate-decisions.js | 774 | 闸门状态推导（唯一推进源是 extra_plan_gate 事件）与角色分流判定纯函数集 |
 | plugins/dsh-extra-plan/lib/gate-words.js | 110 | 闸门关键词共享契约（唯一值源是 YAML 的 config.gateWords）：字段规格 GATE_WORD_FIELDS/GATE_WORDS_GROUP_DEFINITION（6 键整组）+ 整组严格校验 validateGateWords（错误一律以 extra-plan: config.gateWords 开头）+ 运行时词表 createGateRuntime（显式入参严格校验，无默认词表）；纯模块：不含任何出厂词值、不读文件与环境变量，被 index.js（运行时）与 lib/preset-sync.js（启动自愈）共享（迁移叶 locator 已随跨版本搬迁链删除）；本函数只判定单次入参，持久值缺失/非法的回落补齐在 preset-sync |
 | plugins/dsh-extra-plan/lib/live-config.js | 298 | 配置热读：仅 9 项运行时 getter；2 项宿主行权威设置只读并派生到内存 definition，不暴露为 getter；构造期读盘一次，后续按增强 stamp（dev/ino/size/mtimeNs/ctimeNs，兼容 ino/size/mtimeMs/ctimeMs）重读；失败整组回退并告警，不读 DSH_HOME 旧目录 |
@@ -497,25 +497,24 @@
 | plugins/dsh-extra-plan/lib/client.js | DetailSettingsSection | L295-301 | 详情页设置段：仅包主体且槽内无同包条目时渲染设置卡片，其余情况返回空不占位也不报错 |  |
 | plugins/dsh-extra-plan/lib/client.js | safeInject | L303-305 | 槽位注入包装：捕获注入过程异常并退回未定义值，不中断其余客户端界面登记与后续渲染 |  |
 | plugins/dsh-extra-plan/lib/client.js | registerClientSurfaces | L307-314 | 在配置命名空间被服务期间登记详情设置段，返回注销函数供效果清理时调用，避免重复登记 |  |
-| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | errorCodeOf | L25-27 | 取错误对象上的字符串 code，非对象或缺失一律返回空串，供 channel-error 摘要使用。 |  |
-| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | isCancelError | L31-37 | 取消判别：AbortError 名、取消类错误码或含 cancel/abort 的文案算取消；通道码仍落 channel-error。 |  |
-| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | answersOf | L40-44 | 兼容宿主回传 { answers } 与直接回传数组两种 ask 成功形状，其余形状按空答复处理。 |  |
-| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | selectedLabelsOf | L47-52 | 取单条答复里字符串型 selected 标签，非数组或非字符串项一律丢弃。 |  |
-| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | customTextOf | L55-58 | 取单条答复的自定义文本原文（route 第二问其他说明），缺失返空串。 |  |
-| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | routeOptionsOf | L62-69 | 生成 route 四选项（main、executor、plan、none），label 只取词表，description 为固定提示语。 |  |
-| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | purposeOptionsOf | L72-77 | 生成 purpose 两选项（refine、redo），顺序即 ask 返回的序号口径。 |  |
-| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | pickBySelected | L80-84 | 按选中标签精确回查选项，未选中或标签不匹配返回 null。 |  |
-| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | failResult | L88-96 | 把 ask 异常收敛成取消或通道失败两种结果：取消保留已填字段，其余附 error.code，不向外抛错。 |  |
-| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | renderGateValue | L99-126 | 按 outcome 与 gate 生成一句话展示摘要，只作展示不参与任何判定。 |  |
-| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | boundGateTool | L130-330 | 校验词表与 ask 通道后绑定三支分支，返回冻结的 defineGateTool；依赖非法在创建期同步报错。 |  |
-| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | askRoute | L138-182 | route 分支发两问（四选一加其他说明），选中项落 route 并回填中文 routeLabel；未作答为 skipped 且 route 仍取 none。 |  |
-| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | askPurpose | L185-230 | purpose 分支单问两选一，选中项落 refine/redo 并回填 purposeLabel；未作答为 skipped 且 purpose 为 null。 |  |
-| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | askClarify | L233-244 | clarify 分支把 questions 原样透传宿主 ask、答复原样回传，插件侧不构造任何选项。 |  |
-| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | defineGateTool | L248-327 | 产出 extra_plan_gate 工具定义：gate 参数三值、输出 schema、render 摘要与 execute 兜底。 |  |
-| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | render | L300-302 | 工具定义中的 render 回调，转调 renderGateValue 输出一句话摘要。 |  |
-| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | execute | L304-325 | 工具执行入口：按 gate 分派三支分支，非法 gate 与未预期异常都收敛成 channel-error 普通对象。 |  |
-| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | createGateToolFactories | L334-336 | 工具工厂：把本次 apply 的 gateRuntime 词表与 ask 通道绑定，返回 defineGateTool。 |  |
-| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | defineGateTool | L339-341 | 便捷出口：用同一绑定实现直取某个 agent 的闸门工具定义。 |  |
+| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | errorCodeOf | L26-28 | 取错误对象上的字符串 code，非对象或缺失一律返回空串，供 channel-error 的错误码使用。 |  |
+| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | isCancelError | L32-38 | 取消判别：AbortError 名、取消类错误码或含 cancel/abort 的文案算取消；通道码仍落 channel-error。 |  |
+| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | answersOf | L41-45 | 兼容宿主回传 { answers } 与直接回传数组两种 ask 成功形状，其余形状按空答复处理。 |  |
+| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | selectedLabelsOf | L48-53 | 取单条答复里字符串型 selected 标签，非数组或非字符串项一律丢弃。 |  |
+| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | customTextOf | L56-59 | 取单条答复的自定义文本原文（route 第二问其他说明），缺失返空串。 |  |
+| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | routeOptionsOf | L63-70 | 生成 route 四选项（main、executor、plan、none），label 只取词表，description 为固定提示语。 |  |
+| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | purposeOptionsOf | L73-78 | 生成 purpose 两选项（refine、redo），顺序即 ask 返回的序号口径。 |  |
+| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | pickBySelected | L81-85 | 按选中标签精确回查选项，未选中或标签不匹配返回 null。 |  |
+| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | failResult | L89-97 | 把 ask 异常收敛成取消或通道失败两种结果：取消保留已填字段，其余附 error.code，不向外抛错。 |  |
+| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | boundGateTool | L101-304 | 校验词表与 ask 通道后绑定三支分支，返回冻结的 defineGateTool；依赖非法在创建期同步报错。 |  |
+| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | askRoute | L109-153 | route 分支发两问（四选一加其他说明），选中项落 route 并回填中文 routeLabel；未作答为 skipped 且 route 仍取 none。 |  |
+| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | askPurpose | L156-201 | purpose 分支单问两选一，选中项落 refine/redo 并回填 purposeLabel；未作答为 skipped 且 purpose 为 null。 |  |
+| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | askClarify | L204-215 | clarify 分支把 questions 原样透传宿主 ask、答复原样回传，插件侧不构造任何选项。 |  |
+| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | defineGateTool | L219-301 | 产出 extra_plan_gate 工具定义：gate 参数三值、输出 schema、render 输出返回值整体 JSON 与 execute 兜底。 |  |
+| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | render | L274-276 | 工具定义中的 render 回调：返回单个 text ContentBlock、正文为返回值整体 JSON；宿主按数组消费 content、状态机只解析该块，返回裸字符串或人类摘要都会打断闸门。 |  |
+| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | execute | L278-299 | 工具执行入口：按 gate 分派三支分支，非法 gate 与未预期异常都收敛成 channel-error 普通对象。 |  |
+| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | createGateToolFactories | L308-310 | 工具工厂：把本次 apply 的 gateRuntime 词表与 ask 通道绑定，返回 defineGateTool。 |  |
+| plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js | defineGateTool | L313-315 | 便捷出口：用同一绑定实现直取某个 agent 的闸门工具定义。 |  |
 | plugins/dsh-extra-plan/lib/gate-decisions.js | isDispatchStart | L8 | 判定宿主事件类型是否为嵌套派发起始事件 tool/ptc-dispatch-start，只做字符串等值比较。 |  |
 | plugins/dsh-extra-plan/lib/gate-decisions.js | isDispatch | L9 | 判定事件类型是否为嵌套派发结果事件 tool/ptc-dispatch，供后续结果解析前做分流。 |  |
 | plugins/dsh-extra-plan/lib/gate-decisions.js | routeDenyReason | L13-21 | 生成主会话写入的路线拒绝文案：规划态、执行者态与未确认态三种文案不同，带出工具名与各自的放行路径。 |  |

@@ -3712,6 +3712,21 @@ for (const [name, got, expected] of AS) check(name, got, expected)
   const noStateTool = defineGateTool({}, { gateRuntime, ask: purposeAskMock })
   const unavailable = await noStateTool.execute({ gate: 'purpose' }, { agent: {}, signal: undefined })
   checkTrue('AS4d 未注入 getState 调 gate=purpose → skipped（reason=state-unavailable）且不弹卡', unavailable !== null && typeof unavailable === 'object' && unavailable.outcome === 'skipped' && unavailable.reason === 'state-unavailable')
+  // AS4e-AS4g（094e6b9 实机崩溃回归）：render 曾返回裸字符串，宿主 spill-policy 的 post-execute 与 PTC
+  // 提交都对 content 调 .some → TypeError；而状态机只解析首个 text 块 JSON，摘要同样会让三锚点停在原地。
+  const parseGateBlock = (blocks) => {
+    if (!Array.isArray(blocks) || blocks.length !== 1) return null
+    const block = blocks[0]
+    if (block === null || typeof block !== 'object' || block.type !== 'text' || typeof block.text !== 'string') return null
+    try { return JSON.parse(block.text) } catch { return null }
+  }
+  const skippedRender = mainStateTool.output.render({ gate: 'purpose' }, guarded)
+  const answeredRender = planStateTool.output.render({ gate: 'purpose' }, answered)
+  const skippedParsed = parseGateBlock(skippedRender)
+  const answeredParsed = parseGateBlock(answeredRender)
+  checkTrue('AS4e render 返回恰一个 text ContentBlock（宿主按数组消费 content，裸字符串会崩 spill-policy/PTC）', Array.isArray(skippedRender) && skippedRender.length === 1 && skippedRender[0].type === 'text' && typeof skippedRender[0].text === 'string', true)
+  checkTrue('AS4f render 正文是返回值整体 JSON（deriveFlowState 只解析首块，skipped 的 gate/outcome/reason 全部保真）', skippedParsed !== null && skippedParsed.gate === 'purpose' && skippedParsed.outcome === 'skipped' && skippedParsed.reason === 'route-not-plan', true)
+  checkTrue('AS4g render JSON 保留用户选项字段（purpose/purposeLabel），原生模式模型据此判断选择', answeredParsed !== null && answeredParsed.outcome === 'answered' && answeredParsed.purpose === 'refine' && answeredParsed.purposeLabel === gateRuntime.words.purposeRefine, true)
 }
 
 let dispatchSeriesChecks = 0

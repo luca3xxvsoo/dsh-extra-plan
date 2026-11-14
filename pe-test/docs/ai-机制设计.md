@@ -12,7 +12,7 @@
 
 - 状态是事件流推导的三个字段 `{ route, purpose, clarified }`；批准由用户选「执行者执行」表达，没有独立批准字段。主会话顺序固定为 `route → purpose → clarify`；ordinary（普通）探查/澄清可在路由前发生。入口判定只决定引导词顺序，不改变这三个机械锚点。
 - `route` 取四值：`none`（未确认）、`main`（主会话执行）、`executor`（执行者执行）、`plan`（规划者分析）；用户选「不同意」仍落 `none` 并只保留该词值，不视为确认。`purpose` 取 `none`、`refine`、`redo`，`clarified` 是布尔；route 闸门每次作答无条件复位 purpose 与 clarified，purpose 只在 `route=plan` 时写入并复位 clarified，澄清闸门作答才置 `clarified=true`。
-- 闸门入口唯一是专用工具 `extra_plan_gate`，其 `gate` 参数取 `route`、`purpose`、`clarify` 三值；选项文案由插件按当前 `gateWords` 生成，模型不得构造选项；普通 `ask_user_question` 不承载闸门。
+- 闸门入口唯一是专用工具 `extra_plan_gate`，其 `gate` 参数取 `route`、`purpose`、`clarify` 三值；选项文案由插件按当前 `gateWords` 生成，模型不得构造选项；普通 `ask_user_question` 不承载闸门。工具的 `output.render` 固定返回单个 text ContentBlock、正文为返回值整体 JSON：宿主（spill-policy 后置钩子与 PTC 提交）按数组消费 content，状态机只解析该块，返回裸字符串或人类摘要都会让闸门失效。
 - 状态推进源唯一：只认 `extra_plan_gate` 的 `tool/call` 与 `tool/result`（含 `run_code` 内嵌套的 `tool/ptc-dispatch-start` 与 `tool/ptc-dispatch` 形态）；普通 `ask_user_question` 不参与状态推导，新 `user/message` 切断旧事件窗。状态解码与写入只有 `applyGateOutcome` 一处：调用参数取 `gate`，结果取首个 text 块内的 JSON 中的 `outcome` 与 `route`/`purpose`，解析失败不推进状态。
 - 闸门结果恰有四种 outcome：`answered` 按 gate 推进状态；`skipped`（用户跳过未作答）与 `channel-error`（提问通道故障，附 `error.code`）不改动既有字段；`cancelled` 清空 `route`、`purpose`、`clarified`。
 - `config.gateWords` 在 [agent.cordis.yml](../../plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml) 中是唯一人工值源，恰为 6 键：`routeMain`、`routeExecutor`、`routePlan`、`routeDisagree`、`purposeRefine`、`purposeRedo`，当前值依次为「主会话执行」「执行者执行」「规划者分析」「不同意」「完善方案」「重新规划」。[gate-words.js](../../plugins/dsh-extra-plan/lib/gate-words.js) 只保存字段元数据、整组严格校验（六词两两不同、禁止保留推荐后缀）、运行时派生和六个 prompt variable；apply 先校验再产生工具/监听器/服务副作用。
