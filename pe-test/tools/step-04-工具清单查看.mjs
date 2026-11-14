@@ -51,7 +51,7 @@ function systemTextHits(systemText) {
   return {
     ptcInstruction: systemText.includes('Writing code for run_code') || systemText.includes('Only the run_code transport is directly callable') || systemText.includes('tools:ptc-only') || systemText.includes('PTC'),
     readHostText: systemText.includes('Use the read tool') && systemText.includes('not shell commands like cat'),
-    readHint: systemText.includes('run_code 调用 read 示例') && systemText.includes('tools.read') && systemText.includes('file_path') && systemText.includes('offset') && systemText.includes('limit'),
+    readHint: systemText.includes('run_code 调用 read 示例') && systemText.includes('tools.read') && systemText.includes('file_path'),
     minimalRead: (systemText.includes('read:') || systemText.includes('tools.read')) && systemText.includes('file_path') && systemText.includes('offset') && systemText.includes('limit'),
     sdkRenderer: systemText.includes('interface ToolArgsMap') && systemText.includes('declare const tools'),
     c7,
@@ -88,11 +88,13 @@ function physicalMeta(records, dir) {
     const event = record.event
     const data = event?.data && typeof event.data === 'object' ? event.data : {}
     const header = data.header && typeof data.header === 'object' ? data.header : event?.header && typeof event.header === 'object' ? event.header : {}
-    if (typeof event?.version === 'number') version = event.version
-    if (typeof data.version === 'number') version = data.version
-    if (typeof event?.id === 'string') id = event.id
-    if (typeof data.id === 'string') id = data.id
-    if (typeof header.id === 'string') id = header.id
+    if (record.types.includes('session')) {
+      if (typeof event?.version === 'number') version = event.version
+      if (typeof data.version === 'number') version = data.version
+      if (typeof event?.id === 'string') id = event.id
+      if (typeof data.id === 'string') id = data.id
+      if (typeof header.id === 'string') id = header.id
+    }
     if (typeof event?.cwd === 'string') cwd = event.cwd
     if (typeof data.cwd === 'string') cwd = data.cwd
     if (typeof header.cwd === 'string') cwd = header.cwd
@@ -132,18 +134,28 @@ function strictMessages(records, meta) {
   const output = []
   const inboxOnly = []
   const systemMessages = systemMessagesOf(records)
+  const headerSeqEntries = []
+  for (const record of records) if (record.types.includes('request/header') && Number.isInteger(record.event?.seq)) headerSeqEntries.push({ line: record.line, seq: record.event.seq })
+  const adjacentHeaderSeqAt = (line) => {
+    let previous = null
+    for (const entry of headerSeqEntries) {
+      if (entry.line > line) return entry.seq
+      if (entry.line < line) previous = entry.seq
+    }
+    return previous
+  }
   let precedingToolCalls = 0
-  let activeHeaderSeq = null
+  let headerSeq = null
   for (const record of records) {
     const event = record.event
     if (record.types.includes('request/header')) {
       const header = headerOf(event)
-      activeHeaderSeq = Number.isInteger(event.seq) ? event.seq : activeHeaderSeq
+      headerSeq = Number.isInteger(event.seq) ? event.seq : headerSeq
       const headerTools = Array.isArray(header.tools) ? header.tools : []
       const phaseSystemMessage = precedingToolCalls === 0 ? systemMessages.firstText : systemMessages.latestText
       const phaseText = phaseSystemMessage === null ? '' : phaseSystemMessage.text
-      if (output.mode === 'full') console.log('HEADER line=' + record.line + ' seq=' + String(activeHeaderSeq) + ' sessionId=' + meta.id + ' version=' + meta.version + ' cwd=' + meta.cwd + ' tools=' + jsonText(headerTools) + ' systemMessageEvidenceOnly=' + jsonText(systemTextHits(phaseText)))
-      else console.log('HEADER line=' + record.line + ' seq=' + String(activeHeaderSeq) + ' sessionId=' + meta.id + ' version=' + meta.version + ' cwd=' + meta.cwd + ' toolNames=' + jsonText(toolNamesOf(headerTools)) + ' toolCount=' + headerTools.length + ' systemMessageEvidenceOnly=' + jsonText(systemTextHits(phaseText)))
+      if (output.mode === 'full') console.log('HEADER line=' + record.line + ' seq=' + String(headerSeq) + ' sessionId=' + meta.id + ' version=' + meta.version + ' cwd=' + meta.cwd + ' tools=' + jsonText(headerTools) + ' systemMessageEvidenceOnly=' + jsonText(systemTextHits(phaseText)))
+      else console.log('HEADER line=' + record.line + ' seq=' + String(headerSeq) + ' sessionId=' + meta.id + ' version=' + meta.version + ' cwd=' + meta.cwd + ' toolNames=' + jsonText(toolNamesOf(headerTools)) + ' toolCount=' + headerTools.length + ' systemMessageEvidenceOnly=' + jsonText(systemTextHits(phaseText)))
     }
     const inbox = record.types.some((type) => type.startsWith('agent/inbox/'))
     const message = messageFromEvent(record)
@@ -164,7 +176,7 @@ function strictMessages(records, meta) {
         surfaceOp: event.surfaceOp ?? event.data?.surfaceOp ?? null,
         sourceEventSeqs: event.sourceEventSeqs ?? event.data?.sourceEventSeqs ?? null,
         precedingDurableToolCalls: precedingToolCalls,
-        activeHeaderSeq,
+        activeHeaderSeq: adjacentHeaderSeqAt(record.line),
         inboxOnly: false,
       })
     }
@@ -251,6 +263,25 @@ function defaultSummary(args, context) {
     const logicalText = framesOf(buf).map((frame) => decodeText(buf, frame)).join('')
     const records = parseRecordsStrict(logicalText)
     const systemMessages = systemMessagesOf(records)
+    const headerSnapshots = []
+    {
+      let headerToolCalls = 0
+      for (const record of records) {
+        if (record.types.includes('request/header')) {
+          const header = headerOf(record.event)
+          headerSnapshots.push({ line: record.line, phase: headerToolCalls === 0 ? 'first' : 'later', precedingToolCalls: headerToolCalls, tools: Array.isArray(header.tools) ? header.tools : [] })
+        }
+        if (record.types.includes('tool/call')) headerToolCalls += 1
+      }
+    }
+    const adjacentHeaderAt = (line) => {
+      let previous = null
+      for (const snapshot of headerSnapshots) {
+        if (snapshot.line > line) return snapshot
+        if (snapshot.line < line) previous = snapshot
+      }
+      return previous
+    }
     let previousHeader = null
     let precedingToolCalls = 0
     for (const record of records) {
@@ -272,8 +303,9 @@ function defaultSummary(args, context) {
         const names = source.entries.filter((entry) => entry !== null && typeof entry === 'object' && typeof entry.name === 'string').map((entry) => entry.name)
         const creative = names.filter((name) => CREATIVE_SKILLS.has(name))
         const ordinary = names.filter((name) => !CREATIVE_SKILLS.has(name))
-        if (output.mode === 'full') console.log('L' + record.line + ' source.kind=skill-catalog entries=' + jsonText(names) + ' ordinary=' + jsonText(ordinary) + ' creativeSkills=' + jsonText(creative) + ' creativeCount=' + creative.length + ' adjacentHeader=' + jsonText(previousHeader))
-        else console.log('L' + record.line + ' source.kind=skill-catalog entries=' + jsonText(names) + ' ordinary=' + jsonText(ordinary) + ' creativeSkills=' + jsonText(creative) + ' creativeCount=' + creative.length + ' adjacentHeaderLine=' + (previousHeader === null ? '?' : previousHeader.line))
+        const adjacentHeader = adjacentHeaderAt(record.line)
+        if (output.mode === 'full') console.log('L' + record.line + ' source.kind=skill-catalog entries=' + jsonText(names) + ' ordinary=' + jsonText(ordinary) + ' creativeSkills=' + jsonText(creative) + ' creativeCount=' + creative.length + ' adjacentHeader=' + jsonText(adjacentHeader))
+        else console.log('L' + record.line + ' source.kind=skill-catalog entries=' + jsonText(names) + ' ordinary=' + jsonText(ordinary) + ' creativeSkills=' + jsonText(creative) + ' creativeCount=' + creative.length + ' adjacentHeaderLine=' + (adjacentHeader === null ? '?' : adjacentHeader.line))
       }
       if (record.types.includes('tool/call')) precedingToolCalls += 1
     }

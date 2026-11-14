@@ -7,11 +7,11 @@
 
 
 // F 段（HP 首轮）tool:read 的内置兜底文案（= 预设 agent.cordis.yml 的 bootstrapReadHint 示例，逐字一致）。
-// 除代码外用中文；四要素必须保留：工具名 read、程序内 tools.read(...) 调用形态、file_path 必填与
-// offset/limit 默认值、返回形状（path/offset/totalLines/lines 带行号）。文案不再由官方 renderer 生成，
-// 与宿主 read 契约（dsh-tool-fs）的人工核对见台账 HS26。
+// 除代码外用中文；要点保留：工具名 read 与程序内 tools.read(...) 调用形态、file_path 必填。
+// 参数默认值与返回形状由宿主 read 契约（dsh-tool-fs）单独承载，不写进本文案。
+// 与宿主 read 契约的人工核对见台账 HS26。
 const BOOTSTRAP_READ_HINT_FALLBACK = [
-  '在 run_code 程序里读文件：调用 tools.read({ file_path })，file_path 必填；可选 offset（默认 1）与 limit（默认 2000）。返回含 path、offset、totalLines 与带行号的 lines（每项为 { number, text }）。示例：',
+  'run_code 调用 read 示例：',
   "const r = await tools.read({ file_path: 'README.md' })",
   'return r',
 ].join('\n')

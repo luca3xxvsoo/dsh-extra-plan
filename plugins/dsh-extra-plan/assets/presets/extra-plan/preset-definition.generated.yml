@@ -145,8 +145,8 @@ plugins:
           bootstrapShellTools: [bash, pwsh]
           bootstrapCommonTools: [read]
           # F 段（HP 首轮）tool:read 的手写文案（借宿主段名覆盖 text）：空串/非字符串时插件用内置同文案兜底。
-          # 除代码外用中文；四要素必须保留：工具名 read、程序内 tools.read(...) 调用形态、
-          # file_path 必填与 offset（默认 1）/limit（默认 2000）、返回形状（path/offset/totalLines/lines 带行号）。
+          # 除代码外用中文；要点保留：工具名 read 与程序内 tools.read(...) 调用形态、file_path 必填。
+          # 参数默认值与返回形状由宿主 read 契约（dsh-tool-fs）单独承载，不写进本文案。
           # 文案不再由官方 renderer 生成，与宿主 read 契约（dsh-tool-fs）的人工核对见 pe-test/docs/ai-宿主耦合台账.md HS26。
           bootstrapReadHint: |-
             run_code 调用 read 示例：

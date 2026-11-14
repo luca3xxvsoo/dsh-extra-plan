@@ -89,12 +89,12 @@ const { catalogHasWriteTools, isReadOnlyChildByCatalog, routeDenyReason, runCode
 // hintReadOk 结构化判据表达；HOST_READ_FIXTURE 只是「宿主直通段」的哨兵串（非宿主原文抄本），
 // 用于区分 F/PTC 的借槽覆盖产物与 N/P/B、L 段的直通文本。
 const HOST_READ_FIXTURE = 'Use the read tool — host passthrough fixture sentinel (not plugin output).'
-// 变量②文案的四要素判据：工具名、调用形态、参数与默认值、返回形状；且不得含官方 SDK 骨架。
+// 变量②文案的判据：工具名、调用形态与 file_path 必填；参数默认值与返回形状由宿主 read 契约单独核对。
 function hintReadOk(text) {
   return typeof text === 'string'
     && text.includes('tools.read') && text.includes('file_path')
-    && text.includes('offset') && text.includes('limit')
-    && text.includes('run_code') && text.includes('totalLines') && text.includes('lines')
+    && text.includes('run_code')
+    && text.trim() !== ''
     && !text.includes('interface ToolArgsMap') && !text.includes('declare const tools') && !text.includes('Use the read tool')
 }
 
@@ -1730,7 +1730,7 @@ check('P1 HP0 主会话首轮 tools 恰为 [run_code]', hpMain.tools.map((tool) 
 check('P2 HP0 sections 恰为 persona/read 两项（宿主 tools:ptc-only 段已停用）', hpMain.sections.map((section) => section.name), ['extra-plan-bootstrap', 'tool:read'])
 checkTrue('P3 HP0 无顶层 read、无 SDK/Cordis，contexts 清空', !hpMain.tools.some((tool) => tool.name === 'read') && !hpMain.sections.some((section) => section.name === 'tools:sdk' || section.name === 'tool:cordis') && Array.isArray(hpMain.contexts) && hpMain.contexts.length === 0)
 // P4（与 P4a 重复的逐字等值断言）已于 S4 退役：文案正文契约由 P4a 的 hintReadOk 结构化判据覆盖。
-checkTrue('P4a HP0 tool:read 含四要素（tools.read/file_path/offset/limit/totalLines）且不含官方骨架与宿主原文',
+checkTrue('P4a HP0 tool:read 含核心要素（tools.read/file_path/run_code）且不含官方骨架与宿主原文',
   hintReadOk(hpReadText) && !hpReadText.includes('Use the read tool') && !CORDIS_PRESENTATION_TOOLS.some((name) => hpReadText.includes(name)))
 checkTrue('P4b HP0 tool:read 不是宿主直通骨架文本（不含「Use the read tool」且不等于直通夹具）', hpReadText !== HOST_READ_FIXTURE && !hpReadText.includes('Use the read tool'))
 const hpPlanner = { ...ptcBootAgent, session: { ...ptcBootAgent.session, header: { id: 'ptc-boot-planner', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', cwd: 'C:/work', agentPreset: PLANNER_PRESET }, snapshotEvents: () => [DESC] } }
@@ -1773,8 +1773,8 @@ checkTrue('回退链：tools 服务缺失/退化/抛错三用例均返回 undefi
   const nonStringHarness = makeHarness({ anchoredBootstrap: true, bootstrapReadHint: 42 })
   const nonStringText = sectionText(await assemble(nonStringHarness, ptcBootAgent, [{ name: 'run_code' }], ptcBootSections), 'tool:read')
   // 回退语义改为结构判据（不再保存内置文案副本）：回退值与「未配置」实例同源，且满足 hintReadOk。
-  checkTrue('V2-3 空串 bootstrapReadHint → 回退内置默认文案（与未配置实例同源且满足四要素）', emptyText !== '' && emptyText === hpReadText && hintReadOk(emptyText))
-  checkTrue('V2-4 非字符串 bootstrapReadHint → 回退内置默认文案（与未配置实例同源且满足四要素）', nonStringText === hpReadText && hintReadOk(nonStringText))
+  checkTrue('V2-3 空串 bootstrapReadHint → 回退内置默认文案（与未配置实例同源且满足 hint 判据）', emptyText !== '' && emptyText === hpReadText && hintReadOk(emptyText))
+  checkTrue('V2-4 非字符串 bootstrapReadHint → 回退内置默认文案（与未配置实例同源且满足 hint 判据）', nonStringText === hpReadText && hintReadOk(nonStringText))
   checkTrue('V2-5 四个实例互不影响（默认/显式/空串/非字符串各自独立）', hintReadOk(hpReadText) && explicitText === HINT_READ_EXPLICIT && emptyText !== HINT_READ_EXPLICIT && nonStringText !== HINT_READ_EXPLICIT && emptyText === nonStringText)
 }
 {
@@ -1817,7 +1817,7 @@ checkTrue('回退链：tools 服务缺失/退化/抛错三用例均返回 undefi
   const ptcAssembly = await assemble(harnessBoot, mainAgent, [{ name: 'run_code' }], ptcSections)
   check('P16 PTC F 回归：sections 恰 [extra-plan-bootstrap, tool:read]', Array.isArray(ptcAssembly.sections) ? ptcAssembly.sections.map((s) => s.name) : null, ['extra-plan-bootstrap', 'tool:read'])
   const ptcReadText = sectionText(ptcAssembly, 'tool:read')
-  checkTrue('P17 PTC F 回归：tool:read 为手写示例（非空且满足 hint 四要素）', typeof ptcReadText === 'string' && ptcReadText !== '' && hintReadOk(ptcReadText))
+  checkTrue('P17 PTC F 回归：tool:read 为手写示例（非空且满足 hint 判据）', typeof ptcReadText === 'string' && ptcReadText !== '' && hintReadOk(ptcReadText))
   checkTrue('P18 PTC F 回归：persona 文本不变且工具仍仅 run_code', sectionText(ptcAssembly, 'extra-plan-bootstrap') === F_PERSONA && Array.isArray(ptcAssembly.tools) && ptcAssembly.tools.map((t) => t.name).join('|') === 'run_code')
 }
 }
