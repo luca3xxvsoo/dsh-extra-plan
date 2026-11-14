@@ -78,31 +78,16 @@ import { probePathOf } from '../../plugins/dsh-extra-plan/lib/save-probe-validat
 import { validateSavePlanContract as validateRealSavePlanContract } from '../../plugins/dsh-extra-plan/lib/save-plan-validation.js'
 import { SAVE_PLAN_LIMITS as REAL_SAVE_PLAN_LIMITS, formatSavePlanSummary as formatRealSavePlanSummary, renderSavePlan as renderRealSavePlan } from '../../plugins/dsh-extra-plan/lib/save-contract.js'
 import { createSaveToolFactories } from '../../plugins/dsh-extra-plan/lib/save-tool-factories.js'
-// decisions 未再导出该 deny 文案构造器：直接取 lib 同一实现（不复制文案）。
-import { purposeRouteDenyReason } from '../../plugins/dsh-extra-plan/lib/gate-decisions.js'
 const {
-  CHANNEL_BROKEN_CODES,
   routeDenyReason,
   planDenyReason,
-  approvalDenyReason,
+  executorDenyReason,
+  applyGateOutcome,
   isSubagentChild,
   isLiveDelegation,
   isBootstrapPhase,
   pwshCommandOf,
   pwshMutationMatches,
-  labelsOfCallData,
-  askKindOf,
-  askKindOfRelaxed,
-  isExactGateSet,
-  isPartialGateSet,
-  categorizeGateAsk,
-  gateAskDenyReason,
-  validateGateAskStructure,
-  matchRouteLabel,
-  matchApprovalLabel,
-  matchPurposeLabel,
-  parseAskResultData,
-  parseDispatchAskResult,
   catalogIsCollapsed,
   schemasHasWriteTools,
   schemasHasTool,
@@ -113,7 +98,7 @@ const {
   runCodeGroupDenyReason,
   childControlGateReason,
   mainGateReason,
-  askUserQuestionReturnGateReason,
+  askOrGateReturnGateReason,
   deriveFlowState,
   toolCallCount,
   toolCallsSinceUser,
@@ -165,13 +150,13 @@ const assetRowsAll = flattenAssetRows(assetDocument)
 const assetExtraPlanConfig = assetRowsAll.find((row) => row.id === 'extra-plan').config
 const assetGateWords = assetExtraPlanConfig.gateWords
 const gateRuntime = createGateRuntime(assetGateWords)
-const ROUTE_WORD_DIRECT = gateRuntime.words.routeDirect
+// 四种路线词 + 两种目的词（词表六键，字段名与 YAML config.gateWords 一一对应）。
+const ROUTE_WORD_MAIN = gateRuntime.words.routeMain
+const ROUTE_WORD_EXECUTOR = gateRuntime.words.routeExecutor
 const ROUTE_WORD_PLAN = gateRuntime.words.routePlan
 const ROUTE_WORD_DISAGREE = gateRuntime.words.routeDisagree
-const APPROVAL_WORD_APPROVE = gateRuntime.words.approvalApprove
-const APPROVAL_WORD_REPLAN = gateRuntime.words.approvalReplan
-const ROUTE_OPTIONS_TEXT = gateRuntime.options.route
-const APPROVAL_OPTIONS_TEXT = gateRuntime.options.approval
+const PURPOSE_WORD_REFINE = gateRuntime.words.purposeRefine
+const PURPOSE_WORD_REDO = gateRuntime.words.purposeRedo
 
 // ── apply 统一入口（4 处 plugin.apply 站点同源） ────────────────────────────
 // 合并资产 YAML 的 gateWords（调用方显式传 gateWords 时以调用方为准），并补齐
@@ -200,27 +185,29 @@ const ok = (cid, text) => ({ type: 'tool/result', data: { message: { toolCallId:
 const err = (cid, code) => ({ type: 'tool/result', data: { error: { name: 'Error', ...(code === undefined ? {} : { code }) }, message: { toolCallId: cid, isError: true, content: [] } } })
 // 真实 deny 形状（pre-execute 拒绝结果：message 顶层 isError:true、无 data.error）
 const deny = (cid, reason) => ({ type: 'tool/result', data: { message: { toolCallId: cid, isError: true, content: [{ type: 'text', text: 'Error: ' + reason }] } } })
-const routeArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }] })
-const approvalArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }] })
-// D7：路由 ask 双问夹具——第二问为纯文本「补充要求」（可留空、不得带 options）
-const route2qArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }, { id: 'supplement', question: '补充要求' }] })
-const route2qArgsWithOpts = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }, { id: 'supplement', question: '补充要求', options: [{ label: '选项A' }] }] })
-const clarifyArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '方案A' }, { label: '方案B' }] }] })
-const purposeArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '完善方案' }, { label: '重新规划' }] }] })
-const wordPurposeArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '完善方案' }] }] })
-const answer = (labels) => JSON.stringify({ answers: labels.map((l) => ({ id: 'q1', selected: [l] })) })
-const customAnswer = '{"answers":[{"id":"q1","custom":"改成XX"}]}'
-const emptyAnswer = '{"answers":[]}'
+// 闸门事件（1b 新接口）：调用事件的 arguments 只含 gate；结果事件文本是 extra_plan_gate 返回值的结构化 JSON。
+// 状态机只读 outcome 与 route/purpose 枚举，中文 label 只作为真实形状的一部分随事件携带。
+const ROUTE_WORD_OF = (route) => route === 'main' ? ROUTE_WORD_MAIN : route === 'executor' ? ROUTE_WORD_EXECUTOR : route === 'plan' ? ROUTE_WORD_PLAN : ROUTE_WORD_DISAGREE
+const routePayload = (route, note = '') => ({ gate: 'route', route, routeLabel: ROUTE_WORD_OF(route), purpose: null, note, noteLabel: '其他说明', outcome: 'answered' })
+// 跳过（用户未作答）：route 恒为 none、routeLabel 空串，outcome=skipped（不推进状态）。
+const routeSkippedPayload = () => ({ gate: 'route', route: 'none', routeLabel: '', purpose: null, note: '', noteLabel: '其他说明', outcome: 'skipped' })
+// 取消 / 通道故障：字段保持初始形状，只有 outcome 变化；语义由 applyGateOutcome 分流——
+// cancelled 清空闸门状态（route/purpose/clarified 全复位），channel-error 不改动既有字段。
+const routeFailedPayload = (outcome, code) => ({ gate: 'route', route: null, routeLabel: null, purpose: null, note: '', noteLabel: '其他说明', outcome, ...(code === undefined ? {} : { error: { code } }) })
+const purposePayload = (purpose) => ({ gate: 'purpose', purpose, purposeLabel: purpose === 'refine' ? PURPOSE_WORD_REFINE : PURPOSE_WORD_REDO, outcome: 'answered' })
+const purposeSkippedPayload = () => ({ gate: 'purpose', purpose: null, purposeLabel: '', outcome: 'skipped' })
+const clarifyPayload = (labels = ['方案A']) => ({ gate: 'clarify', answers: [{ id: 'q1', selected: labels }], outcome: 'answered' })
+const gateOutcomePayload = (gate, outcome, code) => (code === undefined ? { gate, outcome } : { gate, outcome, error: { code } })
+// 直呼事件对：tool/call（arguments 含 gate）+ tool/result（结构化 JSON）。
+const gateEvents = (cid, payload) => [call('extra_plan_gate', cid, JSON.stringify({ gate: payload.gate })), ok(cid, JSON.stringify(payload))]
 // 嵌套事件 fixture（run_code 程序内嵌套调用，混合模式桥接 F1-F4）：
 // dispatch-start 的 data={rootCallId,parentCallId,subCallId,name,arguments}（arguments 为对象形态，
 // 与直呼 call 的 arguments JSON 字符串形态区别）；dispatch 的 data 另含 isError+content
 // content 直接是 ContentBlock 数组；当前只保留 tool/ptc-dispatch-start / tool/ptc-dispatch。
-const nestedRouteArgs = { questions: [{ id: 'q1', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }] }
-const nestedApprovalArgs = { questions: [{ id: 'q1', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }] }
-const nestedClarifyArgs = { questions: [{ id: 'q1', options: [{ label: '方案A' }, { label: '方案B' }] }] }
-const nestedPurposeArgs = { questions: [{ id: 'q1', options: [{ label: '完善方案' }, { label: '重新规划' }] }] }
+const nestedGateArgs = (gate) => ({ gate })
 const ptcStart = (sid, name, argsObj) => ({ type: 'tool/ptc-dispatch-start', data: { rootCallId: 'matrix-root', parentCallId: 'matrix-parent', subCallId: sid, name, arguments: argsObj } })
-const ptcEnd = (sid, text, isError = false) => ({ type: 'tool/ptc-dispatch', data: { rootCallId: 'matrix-root', parentCallId: 'matrix-parent', subCallId: sid, name: 'ask_user_question', arguments: {}, isError, content: [{ type: 'text', text }] } })
+const ptcEnd = (sid, text, isError = false) => ({ type: 'tool/ptc-dispatch', data: { rootCallId: 'matrix-root', parentCallId: 'matrix-parent', subCallId: sid, name: 'extra_plan_gate', arguments: {}, isError, content: [{ type: 'text', text }] } })
+const ptcGateEvents = (sid, payload) => [ptcStart(sid, 'extra_plan_gate', nestedGateArgs(payload.gate)), ptcEnd(sid, JSON.stringify(payload))]
 
 let pass = 0
 let fail = 0
@@ -534,7 +521,7 @@ for (const field of ['anchoredBootstrap', 'creativeMode', 'runcodeCatchGate', 'c
 expectConfigFailure('CFG20 bootstrapShellTools 含非字符串失败', { gateWords: assetGateWords, bootstrapShellTools: ['bash', 7] })
 expectConfigFailure('CFG21 bootstrapCommonTools 含非字符串失败', { gateWords: assetGateWords, bootstrapCommonTools: ['read', 7] })
 expectConfigFailure('CFG22 usageLedger 字段类型错误失败', { gateWords: assetGateWords, usageLedger: { enabled: 'false', path: '' } })
-expectConfigFailure('CFG23 gateWords 值类型错误失败', { gateWords: Object.assign({}, assetGateWords, { routeDirect: 42 }) })
+expectConfigFailure('CFG23 gateWords 值类型错误失败', { gateWords: Object.assign({}, assetGateWords, { routeMain: 42 }) })
 function expectGateRuntimeFailure(label, raw) {
   let message = null
   try {
@@ -550,167 +537,75 @@ const extraRuntimeGateWords = Object.assign({}, assetGateWords, { extraKey: 'x' 
 expectGateRuntimeFailure('CFG24 gateWords 缺键不被部分接受', missingRuntimeGateWords)
 expectGateRuntimeFailure('CFG25 gateWords 多键不被裁剪放行', extraRuntimeGateWords)
 
-// ── KA 系列:ask 分类与参数解析（v4 更名：原 K 系列让位于子代理角色组判定 K 系列；断言内容逐字不变） ──
-const KA = [
-  ['K1 路由 ask(含直行+规划词) → route', { name: 'ask_user_question', callId: 'k1', arguments: routeArgs }, 'route'],
-  ['K2 批准 ask(含同意执行) → approve', { name: 'ask_user_question', callId: 'k2', arguments: approvalArgs }, 'approve'],
-  ['K3 澄清 ask(自由选项) → clarify', { name: 'ask_user_question', callId: 'k3', arguments: clarifyArgs }, 'clarify'],
-  ['K4 参数无法解析 → null(跳过)', { name: 'ask_user_question', callId: 'k4', arguments: 'not-json' }, null],
-  ['K5 无 questions 字段 → null', { name: 'ask_user_question', callId: 'k5', arguments: '{}' }, null],
-  ['KA6 目的 ask(两个目的词) → purpose', { name: 'ask_user_question', callId: 'k6', arguments: purposeArgs }, 'purpose'],
+// ── AO 系列:applyGateOutcome（1b 改名；outcome 按下列四值分流，语义不可混用） ──
+// answered 按 gate 推进（route 覆盖并清阶段态 / purpose 写入并复位 clarified / clarify 仅当 route=plan 且 purpose∈{refine,redo} 时置 clarified=true，其余不置位）；
+// cancelled 清空 route、purpose、clarified（resetRouteState 全复位）；
+// skipped（未作答）与 channel-error（通道故障）不改动既有字段。
+const aoApply = (state, gate, result) => { const next = Object.assign({}, state); applyGateOutcome(next, gate, result); return next }
+const AO = [
+  ['AO1 gate=route 答「主会话执行」→ route=main 且阶段态清空', aoApply({ route: 'plan', clarified: true, purpose: 'refine' }, 'route', routePayload('main')), { route: 'main', clarified: false, purpose: 'none' }],
+  ['AO2 gate=route 答「执行者执行」→ route=executor', aoApply({ route: 'none', clarified: false, purpose: 'none' }, 'route', routePayload('executor')), { route: 'executor', clarified: false, purpose: 'none' }],
+  ['AO3 gate=route 答「不同意」→ route=none', aoApply({ route: 'main', clarified: false, purpose: 'none' }, 'route', routePayload('none')), { route: 'none', clarified: false, purpose: 'none' }],
+  ['AO4 gate=route outcome=skipped（未作答）→ 不改动字段', aoApply({ route: 'executor', clarified: false, purpose: 'none' }, 'route', routeSkippedPayload()), { route: 'executor', clarified: false, purpose: 'none' }],
+  ['AO5 gate=route outcome=cancelled → 清空闸门状态（route/purpose/clarified 全复位）', aoApply({ route: 'plan', clarified: true, purpose: 'refine' }, 'route', routeFailedPayload('cancelled')), { route: 'none', clarified: false, purpose: 'none' }],
+  ['AO6 gate=route outcome=channel-error（通道故障）→ 不改动字段', aoApply({ route: 'plan', clarified: true, purpose: 'refine' }, 'route', routeFailedPayload('channel-error', 'NO_PROVIDER')), { route: 'plan', clarified: true, purpose: 'refine' }],
+  ['AO7 gate=route 非法 route 值（旧 direct）→ 忽略', aoApply({ route: 'none', clarified: false, purpose: 'none' }, 'route', { gate: 'route', route: 'direct', outcome: 'answered' }), { route: 'none', clarified: false, purpose: 'none' }],
+  ['AO8 gate=purpose 答「完善方案」（route=plan）→ purpose=refine 且 clarified 复位', aoApply({ route: 'plan', clarified: true, purpose: 'none' }, 'purpose', purposePayload('refine')), { route: 'plan', clarified: false, purpose: 'refine' }],
+  ['AO9 gate=purpose 在 route=main 下答「重新规划」→ 忽略（目的只在规划路线成立）', aoApply({ route: 'main', clarified: false, purpose: 'none' }, 'purpose', purposePayload('redo')), { route: 'main', clarified: false, purpose: 'none' }],
+  ['AO10 gate=purpose outcome=skipped → purpose 不变', aoApply({ route: 'plan', clarified: false, purpose: 'redo' }, 'purpose', purposeSkippedPayload()), { route: 'plan', clarified: false, purpose: 'redo' }],
+  ['AO11 gate=clarify 答 → clarified=true 且 route/purpose 不动', aoApply({ route: 'plan', clarified: false, purpose: 'refine' }, 'clarify', clarifyPayload()), { route: 'plan', clarified: true, purpose: 'refine' }],
+  ['AO12 gate=clarify route=main（前置不满足）→ clarified 不置位', aoApply({ route: 'main', clarified: false, purpose: 'none' }, 'clarify', clarifyPayload()), { route: 'main', clarified: false, purpose: 'none' }],
+  ['AO13 gate=clarify purpose=none（前置不满足）→ clarified 不置位', aoApply({ route: 'plan', clarified: false, purpose: 'none' }, 'clarify', clarifyPayload()), { route: 'plan', clarified: false, purpose: 'none' }],
+  ['AO14 gate=clarify outcome=channel-error → clarified 不变', aoApply({ route: 'plan', clarified: false, purpose: 'none' }, 'clarify', gateOutcomePayload('clarify', 'channel-error', 'NO_PROVIDER')), { route: 'plan', clarified: false, purpose: 'none' }],
 ]
-for (const [name, data, expected] of KA) {
-  const labels = labelsOfCallData(data)
-  check(name, labels === null ? null : askKindOf(labels, gateRuntime), expected)
-}
+for (const [name, got, expected] of AO) check(name, got, expected)
 
-// ── LQ 系列:labelsOfCallData 只收首问（第二问选项不进入验词集合） ─────────
-const lqTwoQArgsJson = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }, { id: 'q2', question: '修改意见', options: [{ label: '无' }, { label: '有意见（填写）' }] }] })
-const lqTwoQArgsObj = { questions: [{ id: 'q1', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }, { id: 'q2', question: '修改意见', options: [{ label: '无' }] }] }
-const lqSecondOnlyArgs = JSON.stringify({ questions: [{ id: 'q1', question: '同意执行？' }, { id: 'q2', question: '修改意见', options: [{ label: '无' }] }] })
-const lqOneQArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }] })
-const LQ = [
-  ['LQ1 两问带选项（JSON 字符串 arguments）→ 只收首问三词', { name: 'ask_user_question', callId: 'lq1', arguments: lqTwoQArgsJson }, ['同意执行', '转交pro规划', '不同意']],
-  ['LQ2 两问带选项（对象形态 arguments）→ 只收首问三词', { name: 'ask_user_question', callId: 'lq2', arguments: lqTwoQArgsObj }, ['同意执行', '转交pro规划', '不同意']],
-  ['LQ3 首问无 options、第二问有 options → 空（不兜底收集）', { name: 'ask_user_question', callId: 'lq3', arguments: lqSecondOnlyArgs }, []],
-  ['LQ4 单问批准三词 → 三词（现状保持）', { name: 'ask_user_question', callId: 'lq4', arguments: lqOneQArgs }, ['同意执行', '转交pro规划', '不同意']],
-  ['LQ5 questions 为空数组 → 空', { name: 'ask_user_question', callId: 'lq5', arguments: '{"questions":[]}' }, []],
-]
-for (const [name, data, expected] of LQ) {
-  check(name, labelsOfCallData(data), expected)
-}
-
-// ── M 系列:验词映射 ────────────────────────────────────────────────────
-const M = [
-  ['M1 路由词「直接执行」→ direct', matchRouteLabel(['直接执行'], gateRuntime), 'direct'],
-  ['M2 路由词「进行pro规划」→ plan', matchRouteLabel(['进行pro规划'], gateRuntime), 'plan'],
-  ['M3 路由词「不同意」→ disagree', matchRouteLabel(['不同意'], gateRuntime), 'disagree'],
-  ['M4 路由词无匹配 → null', matchRouteLabel([], gateRuntime), null],
-  ['M5 路由词带后缀「直接执行（推荐）」→ direct', matchRouteLabel(['直接执行（推荐）'], gateRuntime), 'direct'],
-  ['M6 批准词「同意执行」→ approve', matchApprovalLabel(['同意执行'], gateRuntime), 'approve'],
-  ['M7 批准词「转交pro规划」→ replan', matchApprovalLabel(['转交pro规划'], gateRuntime), 'replan'],
-  ['M8 批准词「不同意」→ disagree', matchApprovalLabel(['不同意'], gateRuntime), 'disagree'],
-  ['M9 批准词无匹配 → null', matchApprovalLabel(['别的词'], gateRuntime), null],
-  ['M10 目的词「完善方案」→ refine', matchPurposeLabel(['完善方案'], gateRuntime), 'refine'],
-  ['M11 目的词「重新规划」→ redo', matchPurposeLabel(['重新规划'], gateRuntime), 'redo'],
-  ['M12 目的词无匹配 → null', matchPurposeLabel(['别的词'], gateRuntime), null],
-]
-for (const [name, got, expected] of M) check(name, got, expected)
-
-// ── F 系列:deriveFlowState(自最近人类消息起) ──────────────────────────
-const fullPlanApprovedEvents = [
+// ── F 系列:deriveFlowState(自最近人类消息起；唯一推进源=extra_plan_gate 的调用与结构化返回) ──
+// 期望只有三字段 route / clarified / purpose：旧的批准标志与通道故障标志已随新接口删除；
+// outcome 三值语义不同，不能共用一条断言：cancelled 清空闸门状态（route=none、purpose=none、
+// clarified=false），skipped 与 channel-error 不改动既有字段。
+const FLOW_NONE = { route: 'none', clarified: false, purpose: 'none' }
+const FLOW_MAIN = { route: 'main', clarified: false, purpose: 'none' }
+const FLOW_EXECUTOR = { route: 'executor', clarified: false, purpose: 'none' }
+const FLOW_PLAN = { route: 'plan', clarified: false, purpose: 'none' }
+const fullPlanEvents = [
   um(),
-  call('ask_user_question', 'fa1', routeArgs),
-  ok('fa1', answer(['进行pro规划'])),
-  call('ask_user_question', 'fa2', purposeArgs),
-  ok('fa2', answer(['完善方案'])),
-  call('ask_user_question', 'fa3', clarifyArgs),
-  ok('fa3', answer(['方案A'])),
-  call('ask_user_question', 'fa4', approvalArgs),
-  ok('fa4', answer(['同意执行'])),
+  ...gateEvents('fa1', routePayload('plan')),
+  ...gateEvents('fa2', purposePayload('refine')),
+  ...gateEvents('fa3', clarifyPayload()),
 ]
 const F = [
-  ['F1 无事件 → 全空', [], { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['F2 路由答「直接执行」→ direct', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['直接执行']))], { route: 'direct', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['F3 路由答规划 + 澄清自定义答复（目的未定）→ plan·未澄清', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', customAnswer)], { route: 'plan', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['F4 路由空白回复 → 保持 none', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', emptyAnswer)], { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['F5 路由答「不同意」→ none', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['不同意']))], { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['F6 全链路:规划+澄清+同意执行（目的未定）→ approved', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A'])), call('ask_user_question', 'a3', approvalArgs), ok('a3', answer(['同意执行']))], { route: 'plan', clarified: false, approved: true, purpose: 'none', channelBroken: false }],
-  ['F7 批准答「转交pro规划」→ approved=false', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A'])), call('ask_user_question', 'a3', approvalArgs), ok('a3', answer(['转交pro规划']))], { route: 'plan', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['F8 批准答「不同意」→ approved=false', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A'])), call('ask_user_question', 'a3', approvalArgs), ok('a3', answer(['不同意']))], { route: 'plan', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['F9 路由被用户取消(ASK_CANCELLED) → none', [um(), call('ask_user_question', 'a1', routeArgs), err('a1', 'ASK_CANCELLED')], { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['F10 通道错误(NO_PROVIDER) → channelBroken', [um(), call('ask_user_question', 'a1', routeArgs), err('a1', 'NO_PROVIDER')], { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: true }],
-  ['F11 新人类消息 → 重置', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['直接执行'])), um()], { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['F12 澄清空白回复（目的未定）→ 未澄清', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', emptyAnswer)], { route: 'plan', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['F13 两次路由答:先直行后规划 → 后答生效', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['直接执行'])), call('ask_user_question', 'a2', routeArgs), ok('a2', answer(['进行pro规划']))], { route: 'plan', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['F14 澄清自定义答复(无 selected)（目的未定）→ 未澄清', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', customAnswer)], { route: 'plan', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['F15 无关工具结果不影响状态', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['直接执行'])), call('read', 'r1'), ok('r1', '这里写着 "answers" 字样')], { route: 'direct', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['F16 路由先确认后空白回复 → 重置 none', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['直接执行'])), call('ask_user_question', 'a2', routeArgs), ok('a2', emptyAnswer)], { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['F17 路由先确认后取消 → 重置 none', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['直接执行'])), call('ask_user_question', 'a2', routeArgs), err('a2', 'ASK_CANCELLED')], { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['F18 批准先确认后空白回复 → 重置 false', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A'])), call('ask_user_question', 'a3', approvalArgs), ok('a3', answer(['同意执行'])), call('ask_user_question', 'a4', approvalArgs), ok('a4', emptyAnswer)], { route: 'plan', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['F19 批准先确认后取消 → 重置 false', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A'])), call('ask_user_question', 'a3', approvalArgs), ok('a3', answer(['同意执行'])), call('ask_user_question', 'a4', approvalArgs), err('a4', 'ASK_CANCELLED')], { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['F20 通道错误逃生回归：不重置已确认状态', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['直接执行'])), call('ask_user_question', 'a2', routeArgs), err('a2', 'NO_PROVIDER')], { route: 'direct', clarified: false, approved: false, purpose: 'none', channelBroken: true }],
-  ['F23 目的答「完善方案」→ purpose=refine 且 clarified 不变', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', purposeArgs), ok('a2', answer(['完善方案']))], { route: 'plan', clarified: false, approved: false, purpose: 'refine', channelBroken: false }],
-  ['F24 目的答「重新规划」→ purpose=redo', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', purposeArgs), ok('a2', answer(['重新规划']))], { route: 'plan', clarified: false, approved: false, purpose: 'redo', channelBroken: false }],
-  ['F25 目的空白答复 → purpose 保持 none', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', purposeArgs), ok('a2', emptyAnswer)], { route: 'plan', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['F26 目的答复未命中两词 → purpose 保持 none', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', purposeArgs), ok('a2', answer(['别的词']))], { route: 'plan', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['F27 目的 ask 取消(ASK_CANCELLED) → route=none + purpose=none', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', purposeArgs), err('a2', 'ASK_CANCELLED')], { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['F28 目的答复后接澄清答复 → purpose 保留且 clarified=true（目的答复不置 clarified 守门）', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', purposeArgs), ok('a2', answer(['完善方案'])), call('ask_user_question', 'a3', clarifyArgs), ok('a3', answer(['方案A']))], { route: 'plan', clarified: true, approved: false, purpose: 'refine', channelBroken: false }],
-  ['F29 完整阶段后重选「直接执行」→ 清理阶段状态', fullPlanApprovedEvents.concat([call('ask_user_question', 'fa5', routeArgs), ok('fa5', answer(['直接执行']))]), { route: 'direct', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['F30 完整阶段后重选「进行pro规划」→ 清理阶段状态', fullPlanApprovedEvents.concat([call('ask_user_question', 'fa5', routeArgs), ok('fa5', answer(['进行pro规划']))]), { route: 'plan', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['F31 完整阶段后重选「不同意」→ 清理阶段状态', fullPlanApprovedEvents.concat([call('ask_user_question', 'fa5', routeArgs), ok('fa5', answer(['不同意']))]), { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['F32 完整阶段后有效目的重选「重新规划」→ 清理 clarified/approved', fullPlanApprovedEvents.concat([call('ask_user_question', 'fa5', purposeArgs), ok('fa5', answer(['重新规划']))]), { route: 'plan', clarified: false, approved: false, purpose: 'redo', channelBroken: false }],
-  ['F33 完整阶段后 ASK_CANCELLED → 五字段清理', fullPlanApprovedEvents.concat([call('ask_user_question', 'fa5', routeArgs), err('fa5', 'ASK_CANCELLED')]), { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['F34 完整阶段后新用户消息 → 默认态', fullPlanApprovedEvents.concat([um()]), { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['F35 完整阶段后 NO_PROVIDER → 保留阶段状态并逃生', fullPlanApprovedEvents.concat([call('ask_user_question', 'fa5', routeArgs), err('fa5', 'NO_PROVIDER')]), { route: 'plan', clarified: true, approved: true, purpose: 'refine', channelBroken: true }],
+  ['F1 无事件 → 全空', [], FLOW_NONE],
+  ['F2 路由答「主会话执行」→ main', [um(), ...gateEvents('a1', routePayload('main'))], FLOW_MAIN],
+  ['F3 路由答「执行者执行」→ executor', [um(), ...gateEvents('a1', routePayload('executor'))], FLOW_EXECUTOR],
+  ['F4 路由答「规划者分析」+ 澄清答（目的未定）→ plan 且未澄清', [um(), ...gateEvents('a1', routePayload('plan')), ...gateEvents('a2', clarifyPayload())], { route: 'plan', clarified: false, purpose: 'none' }],
+  ['F5 路由答「不同意」→ none', [um(), ...gateEvents('a1', routePayload('none'))], FLOW_NONE],
+  ['F6 路由 outcome=skipped（未作答）→ 保持 none', [um(), ...gateEvents('a1', routeSkippedPayload())], FLOW_NONE],
+  ['F7 路由 outcome=cancelled（用户取消）→ 清空闸门状态（none）', [um(), ...gateEvents('a1', routeFailedPayload('cancelled'))], FLOW_NONE],
+  ['F8 路由 outcome=channel-error → 不改动字段，保持 none', [um(), ...gateEvents('a1', routeFailedPayload('channel-error', 'NO_PROVIDER'))], FLOW_NONE],
+  ['F9 结果非 JSON（闸门拒绝形状）→ 不推进', [um(), call('extra_plan_gate', 'a1', JSON.stringify({ gate: 'route' })), deny('a1', '闸门拒绝')], FLOW_NONE],
+  ['F10 新人类消息 → 重置', [um(), ...gateEvents('a1', routePayload('main')), um()], FLOW_NONE],
+  ['F11 两次路由答:先主会话执行后规划者分析 → 后答生效', [um(), ...gateEvents('a1', routePayload('main')), ...gateEvents('a2', routePayload('plan'))], FLOW_PLAN],
+  ['F12 路由已确认后再 skipped → 保留 main（跳过不改字段）', [um(), ...gateEvents('a1', routePayload('main')), ...gateEvents('a2', routeSkippedPayload())], FLOW_MAIN],
+  ['F13 路由已确认后再 cancelled → 清空为 none（取消复位 route/purpose/clarified）', [um(), ...gateEvents('a1', routePayload('main')), ...gateEvents('a2', routeFailedPayload('cancelled'))], FLOW_NONE],
+  ['F14 无关工具结果不影响状态', [um(), ...gateEvents('a1', routePayload('main')), call('read', 'r1'), ok('r1', '这里写着 "answers" 字样')], FLOW_MAIN],
+  ['F15 未配对的闸门结果（无对应 gate 调用）不推进', [um(), call('read', 'r1'), ok('r1', JSON.stringify(routePayload('main')))], FLOW_NONE],
+  ['F16 目的答「完善方案」→ purpose=refine 且 clarified 复位', [um(), ...gateEvents('a1', routePayload('plan')), ...gateEvents('a2', clarifyPayload()), ...gateEvents('a3', purposePayload('refine'))], { route: 'plan', clarified: false, purpose: 'refine' }],
+  ['F17 目的答「重新规划」→ purpose=redo', [um(), ...gateEvents('a1', routePayload('plan')), ...gateEvents('a2', purposePayload('redo'))], { route: 'plan', clarified: false, purpose: 'redo' }],
+  ['F18 目的 outcome=skipped → purpose 保持 none', [um(), ...gateEvents('a1', routePayload('plan')), ...gateEvents('a2', purposeSkippedPayload())], FLOW_PLAN],
+  ['F19 目的在 route=main 下作答 → 忽略（目的只在规划路线成立）', [um(), ...gateEvents('a1', routePayload('main')), ...gateEvents('a2', purposePayload('refine'))], FLOW_MAIN],
+  ['F20 目的答复后接澄清答复 → purpose 保留且 clarified=true', [um(), ...gateEvents('a1', routePayload('plan')), ...gateEvents('a2', purposePayload('refine')), ...gateEvents('a3', clarifyPayload())], { route: 'plan', clarified: true, purpose: 'refine' }],
+  ['F21 完整阶段后重选「主会话执行」→ 清理阶段状态', fullPlanEvents.concat(gateEvents('fa5', routePayload('main'))), FLOW_MAIN],
+  ['F22 完整阶段后重选「规划者分析」→ 清理阶段状态', fullPlanEvents.concat(gateEvents('fa5', routePayload('plan'))), FLOW_PLAN],
+  ['F23 完整阶段后重选「不同意」→ 清理阶段状态', fullPlanEvents.concat(gateEvents('fa5', routePayload('none'))), FLOW_NONE],
+  ['F24 完整阶段后重选「执行者执行」→ executor 且阶段态清空', fullPlanEvents.concat(gateEvents('fa5', routePayload('executor'))), FLOW_EXECUTOR],
+  ['F25 完整阶段后路由 skipped → 阶段状态全保留', fullPlanEvents.concat(gateEvents('fa5', routeSkippedPayload())), { route: 'plan', clarified: true, purpose: 'refine' }],
+  ['F26 完整阶段后路由 channel-error → 阶段状态全保留', fullPlanEvents.concat(gateEvents('fa5', routeFailedPayload('channel-error', 'NO_PROVIDER'))), { route: 'plan', clarified: true, purpose: 'refine' }],
+  ['F27 完整阶段后新用户消息 → 默认态', fullPlanEvents.concat([um()]), FLOW_NONE],
 ]
 for (const [name, events, expected] of F) {
   check(name, deriveFlowState(events, gateRuntime), expected)
 }
-
-// ── GK 系列:三分法 gate ask 分类（categorizeGateAsk） ────────────────────
-const wordRouteArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '直接执行' }] }] })
-const wordApproveArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '同意执行' }] }] })
-const twoWordRouteArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '直接执行' }, { label: '进行pro规划' }] }] })
-const GK = [
-  ['GK1 标准三词路由 ask → standard', categorizeGateAsk(['直接执行', '进行pro规划', '不同意'], gateRuntime), 'standard'],
-  ['GK2 标准三词批准 ask → standard', categorizeGateAsk(['同意执行', '转交pro规划', '不同意'], gateRuntime), 'standard'],
-  ['GK3 单词路由 ask（只有「直接执行」）→ malformed', categorizeGateAsk(['直接执行'], gateRuntime), 'malformed'],
-  ['GK4 两词路由 ask（缺「不同意」）→ malformed', categorizeGateAsk(['直接执行', '进行pro规划'], gateRuntime), 'malformed'],
-  ['GK5 纯澄清 ask → ordinary', categorizeGateAsk(['方案A', '方案B'], gateRuntime), 'ordinary'],
-  ['GK6 带 (Recommended) 后缀的路由 ask → standard', categorizeGateAsk(['直接执行 (Recommended)', '进行pro规划 (Recommended)', '不同意 (Recommended)'], gateRuntime), 'standard'],
-  ['GK7 带（推荐）后缀的批准 ask → standard', categorizeGateAsk(['同意执行（推荐）', '转交pro规划（推荐）', '不同意（推荐）'], gateRuntime), 'standard'],
-  ['GK8 带 (recommended) 小写后缀 → standard', categorizeGateAsk(['直接执行 (recommended)', '进行pro规划 (recommended)', '不同意 (recommended)'], gateRuntime), 'standard'],
-  ['GK8b 无空格半角（推荐）后缀 → standard', categorizeGateAsk(['直接执行(推荐)', '进行pro规划(推荐)', '不同意(推荐)'], gateRuntime), 'standard'],
-  ['GK9 非白名单变体（! 等额外字符）→ malformed', categorizeGateAsk(['直接执行!', '进行pro规划', '不同意'], gateRuntime), 'malformed'],
-  ['GK10 方括号后缀 [推荐] → malformed', categorizeGateAsk(['直接执行 [推荐]', '进行pro规划 [推荐]', '不同意 [推荐]'], gateRuntime), 'malformed'],
-  ['GK11 标准二词目的 ask → standard', categorizeGateAsk(['完善方案', '重新规划'], gateRuntime), 'standard'],
-  ['GK12 单词目的 ask（只有「完善方案」）→ malformed', categorizeGateAsk(['完善方案'], gateRuntime), 'malformed'],
-  ['GK13 带 (Recommended) 后缀的目的 ask → standard', categorizeGateAsk(['完善方案 (Recommended)', '重新规划 (Recommended)'], gateRuntime), 'standard'],
-]
-for (const [name, got, expected] of GK) check(name, got, expected)
-
-// ── GM 系列:gate ask deny 分类（只断「是否给出拒绝原因」，具体缺项按词表关系派生） ──────
-const gmDenied = (labels) => { const reason = gateAskDenyReason(labels, gateRuntime); return typeof reason === 'string' && reason.trim().length > 0 }
-// 缺项关系式：词表中未出现在 labels 的词，必须逐个出现在拒绝原因里（词值从 gateRuntime 派生，不抄文案）。
-const gmMissingMentioned = (labels, wordSet) => {
-  const reason = gateAskDenyReason(labels, gateRuntime)
-  const missing = [...wordSet].filter((word) => !labels.some((label) => String(label).includes(word)))
-  return typeof reason === 'string' && missing.length > 0 && missing.every((word) => reason.includes(word))
-}
-const GM = [
-  ['GM1 单词路由 ask → 非空 deny 原因', gmDenied(['直接执行']), true],
-  ['GM2 单词路由 deny 指明词表缺项（缺项由 gateRuntime 派生）', gmMissingMentioned(['直接执行'], gateRuntime.routeSet), true],
-  ['GM3 非白名单变体 ask → 非空 deny 原因', gmDenied(['直接执行!', '进行pro规划', '不同意']), true],
-  ['GM4 单词目的 ask → 非空 deny 原因且指明目的缺项', gmDenied(['完善方案']) && gmMissingMentioned(['完善方案'], gateRuntime.purposeSet), true],
-]
-for (const [name, got, expected] of GM) check(name, got, expected)
-
-// ── F 系列补充:单词副作用修复（deriveFlowState + askKindOfRelaxed） ──────
-const F21 = [
-  ['F21 单词路由 ask 答「直接执行」→ route=direct', [um(), call('ask_user_question', 'a1', wordRouteArgs), ok('a1', answer(['直接执行']))], { route: 'direct', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['F22 单词批准 ask 答「同意执行」→ approved=true', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划'])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A'])), call('ask_user_question', 'a3', wordApproveArgs), ok('a3', answer(['同意执行']))], { route: 'plan', clarified: false, approved: true, purpose: 'none', channelBroken: false }],
-]
-for (const [name, events, expected] of F21) {
-  check(name, deriveFlowState(events, gateRuntime), expected)
-}
-
-// ── GL 系列:结构校验纯函数（validateGateAskStructure） ────────────────────
-const glApproveQ1 = [{ id: 'q1', question: '请选择', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }]
-const GL = [
-  ['GL1 路由 ask 恰好 1 个问题（缺第二问）→ 不通过（返回非空拒绝原因）', (() => { const r = validateGateAskStructure('route', [{ id: 'q1', question: '请选择', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }], gateRuntime); return typeof r === 'string' && r.trim().length > 0 })(), true],
-  ['GL2 批准 ask 仅 1 个问题缺修改意见 → 不通过，含"修改意见"', validateGateAskStructure('approve', [{ id: 'q1', question: '请选择', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }], gateRuntime) !== null && validateGateAskStructure('approve', [{ id: 'q1', question: '请选择', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }], gateRuntime).includes('修改意见'), true],
-  ['GL3 批准第二问带非空 options → 拒（含修改意见/纯文本/不得提供选项）', (() => { const r = validateGateAskStructure('approve', [...glApproveQ1, { id: 'q2', question: '修改意见', options: [{ label: '无' }] }], gateRuntime); return r !== null && r.includes('修改意见') && r.includes('纯文本') && r.includes('不得提供选项') })(), true],
-  ['GL4 批准第二问 options:[] → 通过（空数组=纯文本框）', validateGateAskStructure('approve', [...glApproveQ1, { id: 'q2', question: '修改意见', options: [] }], gateRuntime), null],
-  ['GL5 批准第二问无 options 字段 → 通过', validateGateAskStructure('approve', [...glApproveQ1, { id: 'q2', question: '修改意见' }], gateRuntime), null],
-  ['GL6 批准第三问带 options → 拒（第二问起全部校验）', (() => { const r = validateGateAskStructure('approve', [...glApproveQ1, { id: 'q2', question: '修改意见' }, { id: 'q3', question: '补充', options: [{ label: 'x' }] }], gateRuntime); return r !== null && r.includes('纯文本') })(), true],
-  ['GL7 路由 2 问（第二问纯文本补充要求）→ 通过', validateGateAskStructure('route', [{ id: 'q1', question: '请选择', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }, { id: 'q2', question: '补充要求' }], gateRuntime), null],
-  ['GL7b 路由 2 问第二问带非空 options → 拒（含「补充要求」「纯文本」）', (() => { const r = validateGateAskStructure('route', [{ id: 'q1', question: '请选择', options: [{ label: '直接执行' }, { label: '进行pro规划' }, { label: '不同意' }] }, { id: 'q2', question: '补充要求', options: [{ label: '选项A' }] }], gateRuntime); return r !== null && r.includes('补充要求') && r.includes('纯文本') })(), true],
-  ['GL8 目的 ask 恰好 1 个问题 → 通过', validateGateAskStructure('purpose', [{ id: 'q1', question: '请选择', options: [{ label: '完善方案' }, { label: '重新规划' }] }], gateRuntime), null],
-  ['GL9 目的 ask 2 问 → 拒含「目的 ask 结构错误」与「须恰好 1 个问题」', (() => { const r = validateGateAskStructure('purpose', [{ id: 'q1', question: '请选择', options: [{ label: '完善方案' }, { label: '重新规划' }] }, { id: 'q2', question: '补充' }], gateRuntime); return r !== null && r.includes('目的 ask 结构错误') && r.includes('须恰好 1 个问题') })(), true],
-]
-for (const [name, got, expected] of GL) check(name, got, expected)
-
 
 // ── SW 系列:真实工具集判定纯函数（schemasHasWriteTools / schemasHasTool，方案B） ──
 const SW = [
@@ -894,12 +789,12 @@ check('MR5 非 MALFORMED_RESPONSE → null 不干预', plugin.malformedRecovery(
 const mrAborted = mrStub('aborted', { turn: 1, step: 1, signal: { aborted: true } })
 check('MR6 signal.aborted → null 不干预', plugin.malformedRecovery(mrAborted.payload), null)
 
-// ── DR 系列:deny 提示模板与闸门词表同源（v0.1.9） ─────────────────────
+// ── DR 系列:deny 提示模板与闸门词表同源（词值一律从 gateRuntime 派生，不抄文案） ─────
 const DR = [
-  ['DR1 routeDenyReason 含三个路由词', routeDenyReason('write/edit', undefined, gateRuntime).includes(ROUTE_WORD_DIRECT) && routeDenyReason('write/edit', undefined, gateRuntime).includes(ROUTE_WORD_PLAN) && routeDenyReason('write/edit', undefined, gateRuntime).includes(ROUTE_WORD_DISAGREE), true],
-  ['DR2 planDenyReason 含三个路由词', planDenyReason('subagent_plan', undefined, gateRuntime).includes(ROUTE_WORD_DIRECT) && planDenyReason('subagent_plan', undefined, gateRuntime).includes(ROUTE_WORD_PLAN) && planDenyReason('subagent_plan', undefined, gateRuntime).includes(ROUTE_WORD_DISAGREE), true],
-  ['DR3 approvalDenyReason 含三个批准词', approvalDenyReason('subagent', undefined, gateRuntime).includes(APPROVAL_WORD_APPROVE) && approvalDenyReason('subagent', undefined, gateRuntime).includes(APPROVAL_WORD_REPLAN) && approvalDenyReason('subagent', undefined, gateRuntime).includes(ROUTE_WORD_DISAGREE), true],
-  ['DR4 approvalDenyReason 不误用路由词集合', !approvalDenyReason('subagent', undefined, gateRuntime).includes(ROUTE_WORD_DIRECT), true],
+  ['DR1 routeDenyReason 含三个路由词', routeDenyReason('write/edit', undefined, gateRuntime).includes(ROUTE_WORD_MAIN) && routeDenyReason('write/edit', undefined, gateRuntime).includes(ROUTE_WORD_PLAN) && routeDenyReason('write/edit', undefined, gateRuntime).includes(ROUTE_WORD_DISAGREE), true],
+  ['DR2 planDenyReason 含三个路由词', planDenyReason('subagent_plan', undefined, gateRuntime).includes(ROUTE_WORD_MAIN) && planDenyReason('subagent_plan', undefined, gateRuntime).includes(ROUTE_WORD_PLAN) && planDenyReason('subagent_plan', undefined, gateRuntime).includes(ROUTE_WORD_DISAGREE), true],
+  ['DR3 executorDenyReason 指向执行者词并说明先走 route 闸门', executorDenyReason('subagent', undefined, gateRuntime).includes(ROUTE_WORD_EXECUTOR) && executorDenyReason('subagent', undefined, gateRuntime).includes('extra_plan_gate'), true],
+  ['DR4 executorDenyReason 不误用主会话词', !executorDenyReason('subagent', undefined, gateRuntime).includes(ROUTE_WORD_MAIN), true],
 ]
 for (const [name, got, expected] of DR) check(name, got, expected)
 
@@ -3776,99 +3671,102 @@ const askMainAgent = {
   options: {},
   ctx: undefined,
 }
-function askPreExecute(name, argumentsObj, events = []) {
+function askPreExecute(name, argumentsObj, events = [], agent = askMainAgent) {
   const entry = askHarness['tools/pre-execute']
   if (entry === undefined || entry.length === 0) throw new Error('pre-execute 监听器未注册')
-  const agent = { ...askMainAgent, session: { ...askMainAgent.session, snapshotEvents: () => events } }
-  return entry[0]({ agent, name, arguments: argumentsObj }, () => ({ kind: 'allow' }))
+  const scoped = { ...agent, session: { ...agent.session, snapshotEvents: () => events } }
+  return entry[0]({ agent: scoped, name, arguments: argumentsObj }, () => ({ kind: 'allow' }))
 }
-const askStandardQ1 = [{ id: 'q1', options: [{ label: '同意执行' }, { label: '转交pro规划' }, { label: '不同意' }] }]
-const askDirectEvents = [um(), call('ask_user_question', 'aa1', routeArgs), ok('aa1', answer(['直接执行']))]
-const askPlanEvents = [um(), call('ask_user_question', 'aa1', routeArgs), ok('aa1', answer(['进行pro规划']))]
-const askChannelBrokenEvents = [um(), call('ask_user_question', 'aa1', routeArgs), err('aa1', 'NO_PROVIDER')]
-const ordinaryProbeArgs = { questions: [{ id: 'q1', options: [{ label: '主会话探查' }, { label: '探查者探查' }] }] }
-const ordinaryClarifyArgs = { questions: [{ id: 'q1', options: [{ label: '方案A' }, { label: '方案B' }] }] }
-const purposeRunCode = { code: 'return await tools.ask_user_question({"questions":[{"id":"q1","options":[{"label":"完善方案"},{"label":"重新规划"}]}]})', description: '嵌套目的确认' }
+// 子代理夹具：header.origin=subagent 即命中原始子代理判定（闸门与用户提问只属主会话）。
+const askChildAgent = {
+  session: { header: { id: 'child-1', cwd: 'C:/work', origin: 'subagent' }, snapshotEvents: () => [] },
+  options: {},
+  ctx: undefined,
+}
+const askRouteOkEvents = gateEvents('aa1', routePayload('main'))
+const askPurposeOkEvents = [um(), ...gateEvents('aa1', routePayload('plan')), ...gateEvents('aa2', purposePayload('refine'))]
 const AS = [
-  ['AS1 首问标准三词+第二问带选项 → deny（standard 单报路径）', (() => { const r = askPreExecute('ask_user_question', { questions: [...askStandardQ1, { id: 'q2', question: '修改意见', options: [{ label: '无' }, { label: '有意见（填写）' }] }] }); return r !== null && r !== undefined && r.kind === 'deny' })(), true],
-  ['AS2 首问标准三词+第二问无 options → allow', (() => { const r = askPreExecute('ask_user_question', { questions: [...askStandardQ1, { id: 'q2', question: '修改意见' }] }); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
-  ['AS3 首问非白名单变体+第二问无 options → deny（kind 特异性回归）', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', options: [{ label: '同意执行!' }, { label: '转交pro规划' }, { label: '不同意' }] }, { id: 'q2', question: '修改意见' }] }); return r !== null && r !== undefined && r.kind === 'deny' })(), true],
-  ['AS4 单问「同意执行!」变体 → deny（approve 模板路径）', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', options: [{ label: '同意执行!' }] }] }); return r !== null && r !== undefined && r.kind === 'deny' })(), true],
-  ['AS5 路由变体（直接执行!）+第二问纯文本 → deny（route 特异不回归）', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', options: [{ label: '直接执行!' }, { label: '进行pro规划' }, { label: '不同意' }] }, { id: 'q2', question: '补充要求' }] }); return r !== null && r !== undefined && r.kind === 'deny' })(), true],
-  ['AS8 cordis_inspect_list 路由未确认 → allow', (() => { const r = askPreExecute('cordis_inspect_list', {}); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
-  ['AS9 目的标准二选一 route=none → deny', (() => { const r = askPreExecute('ask_user_question', JSON.parse(purposeArgs), []); return r !== null && r !== undefined && r.kind === 'deny' })(), true],
-  ['AS9b 目的标准二选一 route=direct → deny', (() => { const r = askPreExecute('ask_user_question', JSON.parse(purposeArgs), askDirectEvents); return r !== null && r !== undefined && r.kind === 'deny' })(), true],
-  ['AS9c 目的标准二选一 route=plan → allow', (() => { const r = askPreExecute('ask_user_question', JSON.parse(purposeArgs), askPlanEvents); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
-  ['AS9d 目的标准二选一 channelBroken → allow（逃生）', (() => { const r = askPreExecute('ask_user_question', JSON.parse(purposeArgs), askChannelBrokenEvents); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
-  ['AS9e 单问路由 ask（缺第二问）route=none → deny', (() => { const r = askPreExecute('ask_user_question', JSON.parse(routeArgs), []); return r !== null && r !== undefined && r.kind === 'deny' })(), true],
-  ['AS9h 路由双问（第二问纯文本）route=none → allow', (() => { const r = askPreExecute('ask_user_question', JSON.parse(route2qArgs), []); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
-  ['AS9i 路由双问第二问带 options route=none → deny', (() => { const r = askPreExecute('ask_user_question', JSON.parse(route2qArgsWithOpts), []); return r !== null && r !== undefined && r.kind === 'deny' })(), true],
-  ['AS9f ordinary 探查 ask route=none → allow', (() => { const r = askPreExecute('ask_user_question', ordinaryProbeArgs, []); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
-  ['AS9g ordinary 澄清 ask route=none → allow', (() => { const r = askPreExecute('ask_user_question', ordinaryClarifyArgs, []); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
-  ['AS10 目的缺一词 ask → deny', (() => { const r = askPreExecute('ask_user_question', JSON.parse(wordPurposeArgs)); return r !== null && r !== undefined && r.kind === 'deny' })(), true],
-  ['AS11 非计划目的 2 问 ask → deny', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', options: [{ label: '完善方案' }, { label: '重新规划' }] }, { id: 'q2', question: '补充' }] }); return r !== null && r !== undefined && r.kind === 'deny' })(), true],
-  ['AS12 run_code 内 none 态目的 ask → deny', (() => { const r = askPreExecute('run_code', purposeRunCode, []); return r !== null && r !== undefined && r.kind === 'deny' })(), true],
-  ['AS12b run_code 内 direct 态目的 ask → deny', (() => { const r = askPreExecute('run_code', purposeRunCode, askDirectEvents); return r !== null && r !== undefined && r.kind === 'deny' })(), true],
+  ['AS1 main 发 ask_user_question（第二问带非空 options）→ allow（选项结构校验已退场）', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', options: [{ label: '任意A' }, { label: '任意B' }] }, { id: 'q2', question: '补充', options: [{ label: '无' }] }] }); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
+  ['AS2 main 发 ask_user_question（无 options）→ allow', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', question: '纯文本问题' }] }); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
+  ['AS3 main 调 extra_plan_gate(gate=route) route=none → allow（选项由插件生成，无前置条件）', (() => { const r = askPreExecute('extra_plan_gate', { gate: 'route' }, []); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
+  ['AS4 main 调 extra_plan_gate(gate=purpose) route=main → pre-execute 仍 allow（purpose 前置守卫在工具 execute 内）', (() => { const r = askPreExecute('extra_plan_gate', { gate: 'purpose' }, askRouteOkEvents); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
+  ['AS5 main 调 extra_plan_gate(gate=clarify) route=plan 已答目的 → allow', (() => { const r = askPreExecute('extra_plan_gate', { gate: 'clarify' }, askPurposeOkEvents); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
+  ['AS6 cordis_inspect_list 路由未确认 → allow', (() => { const r = askPreExecute('cordis_inspect_list', {}); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
+  ['AS7 子代理调 ask_user_question → deny（只属主会话）', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', question: '纯文本问题' }] }, [], askChildAgent); return r !== null && r !== undefined && r.kind === 'deny' })(), true],
+  ['AS8 子代理调 extra_plan_gate → deny（只属主会话）', (() => { const r = askPreExecute('extra_plan_gate', { gate: 'route' }, [], askChildAgent); return r !== null && r !== undefined && r.kind === 'deny' })(), true],
+  ['AS9 子代理硬拒文案说明闸门与用户提问归属', (() => { const r = askPreExecute('extra_plan_gate', { gate: 'route' }, [], askChildAgent); return r !== null && r !== undefined && typeof r.reason === 'string' && r.reason.includes('只属于主会话') })(), true],
 ]
 for (const [name, got, expected] of AS) check(name, got, expected)
+
+// AS4b-d（2d）：purpose 前置守卫在工具 execute 内，直接执行工具定义验证三情形；双向断言防失明。
+{
+  const { defineGateTool } = await import('../../plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js')
+  const purposeAskMock = async () => ({ answers: [{ id: 'q1', selected: [gateRuntime.words.purposeRefine] }] })
+  let askCalls = 0
+  const mainStateTool = defineGateTool({}, { gateRuntime, ask: async () => { askCalls += 1; return { answers: [] } }, getState: () => ({ route: 'main', purpose: 'none', clarified: false }) })
+  const guarded = await mainStateTool.execute({ gate: 'purpose' }, { agent: {}, signal: undefined })
+  checkTrue('AS4b route=main 调 gate=purpose → 工具层返回 skipped（reason=route-not-plan）且不调用 ask', guarded !== null && typeof guarded === 'object' && guarded.outcome === 'skipped' && guarded.purpose === null && guarded.purposeLabel === null && guarded.reason === 'route-not-plan' && askCalls === 0)
+  const planStateTool = defineGateTool({}, { gateRuntime, ask: purposeAskMock, getState: () => ({ route: 'plan', purpose: 'refine', clarified: true }) })
+  const answered = await planStateTool.execute({ gate: 'purpose' }, { agent: {}, signal: undefined })
+  checkTrue('AS4c route=plan 调 gate=purpose → 正常弹卡并返回 answered/refine', answered !== null && typeof answered === 'object' && answered.outcome === 'answered' && answered.purpose === 'refine' && answered.purposeLabel === gateRuntime.words.purposeRefine)
+  const noStateTool = defineGateTool({}, { gateRuntime, ask: purposeAskMock })
+  const unavailable = await noStateTool.execute({ gate: 'purpose' }, { agent: {}, signal: undefined })
+  checkTrue('AS4d 未注入 getState 调 gate=purpose → skipped（reason=state-unavailable）且不弹卡', unavailable !== null && typeof unavailable === 'object' && unavailable.outcome === 'skipped' && unavailable.reason === 'state-unavailable')
+}
 
 let dispatchSeriesChecks = 0
 function runDispatchSeries(ev) {
   const cdStart = (name, sid, argsObj) => ({ type: ev.start, data: { rootCallId: 'r1', parentCallId: 'pc1', subCallId: sid, name, arguments: argsObj } })
-  const cdEnd = (sid, text, isError = false) => ({ type: ev.end, data: { rootCallId: 'r1', parentCallId: 'pc1', subCallId: sid, name: 'ask_user_question', arguments: {}, isError, content: [{ type: 'text', text }] } })
+  const cdEnd = (sid, text, isError = false) => ({ type: ev.end, data: { rootCallId: 'r1', parentCallId: 'pc1', subCallId: sid, name: 'extra_plan_gate', arguments: {}, isError, content: [{ type: 'text', text }] } })
+  // 嵌套闸门事件对：dispatch-start 的 arguments 是对象形态且含 gate，dispatch 回传结构化 JSON。
+  const cdGate = (sid, payload) => [cdStart('extra_plan_gate', sid, nestedGateArgs(payload.gate)), cdEnd(sid, JSON.stringify(payload))]
 
-// ── F-code 系列:deriveFlowState 识别 run_code 内嵌套 ask（F1 桥接） ─────────
-const fullNestedPlanApprovedEvents = [
+// ── F-code 系列:deriveFlowState 识别 run_code 内嵌套的 extra_plan_gate（F1 桥接） ─────────
+const fullNestedPlanEvents = [
   um(),
-  cdStart('ask_user_question', 'fn1', nestedRouteArgs),
-  cdEnd('fn1', answer(['进行pro规划'])),
-  cdStart('ask_user_question', 'fn2', nestedPurposeArgs),
-  cdEnd('fn2', answer(['完善方案'])),
-  cdStart('ask_user_question', 'fn3', nestedClarifyArgs),
-  cdEnd('fn3', answer(['方案A'])),
-  cdStart('ask_user_question', 'fn4', nestedApprovalArgs),
-  cdEnd('fn4', answer(['同意执行'])),
+  ...cdGate('fn1', routePayload('plan')),
+  ...cdGate('fn2', purposePayload('refine')),
+  ...cdGate('fn3', clarifyPayload()),
 ]
-// 嵌套失败结果按两类语义划分 denied/error（测试内既不持有文案副本，也不从源码抠字面量）：
-// ① 插件闸门拒绝 = 'Error: ' + lib purposeRouteDenyReason 返回的整句 → kind:'denied'，状态不重置；
-// ② 取消/中断 = 嵌套层只按 isError 信封分类（正文不参与断言）→ kind:'error'，清四字段。
-//    故夹具只用最小 isError 信封，不复制宿主取消句；分类本身由 FC0 只断 kind 与结构字段。
-const FC_DENY_TEXT = 'Error: ' + purposeRouteDenyReason(gateRuntime)
-const fcCancelEnd = (sid) => ({ type: ev.end, data: { rootCallId: 'r1', parentCallId: 'pc1', subCallId: sid, name: 'ask_user_question', arguments: {}, isError: true, content: [] } })
-const fcCancelParsed = parseDispatchAskResult(fcCancelEnd('fc-cancel-classify').data)
-checkTrue('FC0 嵌套取消信封的解析分类为 error（只断 kind 与结构字段，不比对正文）', fcCancelParsed.kind === 'error' && fcCancelParsed.callId === 'fc-cancel-classify' && fcCancelParsed.code === '')
+// 嵌套失败结果：闸门拒绝以 isError 信封 + 非 JSON 文本回传（解析失败即不推进，不改动既有字段）。
+const FC_DENY_TEXT = 'Error: ' + routeDenyReason('write/edit', { route: 'none' }, gateRuntime)
+const fcCancelEnd = (sid) => ({ type: ev.end, data: { rootCallId: 'r1', parentCallId: 'pc1', subCallId: sid, name: 'extra_plan_gate', arguments: {}, isError: true, content: [] } })
 const FC = [
-  ['FC1 嵌套路由答「直接执行」→ direct', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['直接执行']))], { route: 'direct', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['FC2 嵌套路由答「进行pro规划」→ plan', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['进行pro规划']))], { route: 'plan', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['FC3 嵌套路由答「不同意」→ none', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['不同意']))], { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['FC4 嵌套澄清自定义答复（目的未定）→ 未澄清', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['进行pro规划'])), cdStart('ask_user_question', 'n2', nestedClarifyArgs), cdEnd('n2', customAnswer)], { route: 'plan', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['FC5 嵌套批准「同意执行」（目的未定·未澄清）→ approved', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['进行pro规划'])), cdStart('ask_user_question', 'n2', nestedClarifyArgs), cdEnd('n2', answer(['方案A'])), cdStart('ask_user_question', 'n3', nestedApprovalArgs), cdEnd('n3', answer(['同意执行']))], { route: 'plan', clarified: false, approved: true, purpose: 'none', channelBroken: false }],
-  ['FC6 嵌套空白 answers:[] → 全默认', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', emptyAnswer)], { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['FC7 嵌套闸门拒绝（denied：真实中文文案）→ 五字段保持默认（拒绝不重置）', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', FC_DENY_TEXT, true)], { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['FC8 直呼+嵌套混排互不干扰（后答生效）', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['直接执行'])), call('ask_user_question', 'a1', routeArgs), ok('a1', answer(['进行pro规划']))], { route: 'plan', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['FC9 嵌套目的 ask 答「完善方案」→ purpose=refine 且 clarified=false', [um(), cdStart('ask_user_question', 'n1', nestedRouteArgs), cdEnd('n1', answer(['进行pro规划'])), cdStart('ask_user_question', 'n2', nestedPurposeArgs), cdEnd('n2', answer(['完善方案']))], { route: 'plan', clarified: false, approved: false, purpose: 'refine', channelBroken: false }],
-  ['FC10 嵌套完整阶段后重选「直接执行」→ 清理阶段状态', fullNestedPlanApprovedEvents.concat([cdStart('ask_user_question', 'fn5', nestedRouteArgs), cdEnd('fn5', answer(['直接执行']))]), { route: 'direct', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['FC11 嵌套完整阶段后取消/中断（kind:error 清四字段）→ 五字段清理', fullNestedPlanApprovedEvents.concat([cdStart('ask_user_question', 'fn5', nestedRouteArgs), fcCancelEnd('fn5')]), { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['FC12 嵌套完整阶段后闸门拒绝（denied）→ 五字段全保留（route=plan、目的/澄清/批准不动）', fullNestedPlanApprovedEvents.concat([cdStart('ask_user_question', 'fn5', nestedRouteArgs), cdEnd('fn5', FC_DENY_TEXT, true)]), { route: 'plan', clarified: true, approved: true, purpose: 'refine', channelBroken: false }],
+  ['FC1 嵌套路由答「主会话执行」→ main', [um(), ...cdGate('n1', routePayload('main'))], FLOW_MAIN],
+  ['FC2 嵌套路由答「执行者执行」→ executor', [um(), ...cdGate('n1', routePayload('executor'))], FLOW_EXECUTOR],
+  ['FC3 嵌套路由答「规划者分析」→ plan', [um(), ...cdGate('n1', routePayload('plan'))], FLOW_PLAN],
+  ['FC4 嵌套路由答「不同意」→ none', [um(), ...cdGate('n1', routePayload('none'))], FLOW_NONE],
+  ['FC5 嵌套路由 outcome=skipped → 保持 none', [um(), ...cdGate('n1', routeSkippedPayload())], FLOW_NONE],
+  ['FC6 嵌套路由 outcome=cancelled → 清空闸门状态（none）', [um(), ...cdGate('n1', routeFailedPayload('cancelled'))], FLOW_NONE],
+  ['FC7 嵌套闸门拒绝（isError + 非 JSON）→ 三字段保持默认', [um(), cdStart('extra_plan_gate', 'n1', nestedGateArgs('route')), cdEnd('n1', FC_DENY_TEXT, true)], FLOW_NONE],
+  ['FC8 直呼+嵌套混排互不干扰（后答生效）', [um(), ...cdGate('n1', routePayload('main')), ...gateEvents('a1', routePayload('plan'))], FLOW_PLAN],
+  ['FC9 嵌套目的答「完善方案」→ purpose=refine 且 clarified 复位', [um(), ...cdGate('n1', routePayload('plan')), ...cdGate('n2', clarifyPayload()), ...cdGate('n3', purposePayload('refine'))], { route: 'plan', clarified: false, purpose: 'refine' }],
+  ['FC10 嵌套完整阶段后重选「主会话执行」→ 清理阶段状态', fullNestedPlanEvents.concat(cdGate('fn5', routePayload('main'))), FLOW_MAIN],
+  ['FC11 嵌套完整阶段后取消（outcome=cancelled）→ 阶段状态清空为默认', fullNestedPlanEvents.concat(cdGate('fn5', routeFailedPayload('cancelled'))), FLOW_NONE],
+  ['FC12 嵌套完整阶段后闸门拒绝（isError）→ 阶段状态全保留', fullNestedPlanEvents.concat([cdStart('extra_plan_gate', 'fn5', nestedGateArgs('route')), cdEnd('fn5', FC_DENY_TEXT, true)]), { route: 'plan', clarified: true, purpose: 'refine' }],
+  ['FC13 嵌套完整阶段后新用户消息 → 默认态', fullNestedPlanEvents.concat([um()]), FLOW_NONE],
 ]
 for (const [name, events, expected] of FC) {
   check(name, deriveFlowState(events, gateRuntime), expected)
 }
 
 // ── F-MATRIX：普通 tool/result 与 PTC dispatch 的可表达语义对照（独立期望） ──
-const FLOW_DEFAULT = { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }
-const FLOW_FULL = { route: 'plan', clarified: true, approved: true, purpose: 'refine', channelBroken: false }
+// 四种路线（main/executor/plan/none）与四种结果（answered/skipped/cancelled/channel-error）两通道同语义；
+// 四个 outcome 的期望各自独立：answered 推进、cancelled 清空、skipped 与 channel-error 不改动既有字段。
 function nativePlanFull(prefix = 'mx') {
-  return [um(), call('ask_user_question', prefix + '-route', routeArgs), ok(prefix + '-route', answer(['进行pro规划'])), call('ask_user_question', prefix + '-purpose', purposeArgs), ok(prefix + '-purpose', answer(['完善方案'])), call('ask_user_question', prefix + '-clarify', clarifyArgs), ok(prefix + '-clarify', answer(['方案A'])), call('ask_user_question', prefix + '-approve', approvalArgs), ok(prefix + '-approve', answer(['同意执行']))]
+  return [um(), ...gateEvents(prefix + '-route', routePayload('plan')), ...gateEvents(prefix + '-purpose', purposePayload('refine')), ...gateEvents(prefix + '-clarify', clarifyPayload())]
 }
 function ptcPlanFull(prefix = 'mx') {
-  return [um(), ptcStart(prefix + '-route', 'ask_user_question', nestedRouteArgs), ptcEnd(prefix + '-route', answer(['进行pro规划'])), ptcStart(prefix + '-purpose', 'ask_user_question', nestedPurposeArgs), ptcEnd(prefix + '-purpose', answer(['完善方案'])), ptcStart(prefix + '-clarify', 'ask_user_question', nestedClarifyArgs), ptcEnd(prefix + '-clarify', answer(['方案A'])), ptcStart(prefix + '-approve', 'ask_user_question', nestedApprovalArgs), ptcEnd(prefix + '-approve', answer(['同意执行']))]
+  return [um(), ...ptcGateEvents(prefix + '-route', routePayload('plan')), ...ptcGateEvents(prefix + '-purpose', purposePayload('refine')), ...ptcGateEvents(prefix + '-clarify', clarifyPayload())]
 }
+const FLOW_FULL = { route: 'plan', clarified: true, purpose: 'refine' }
 const STATE_MATRIX = [
-  ['direct', [um(), call('ask_user_question', 'mx-direct', routeArgs), ok('mx-direct', answer(['直接执行']))], [um(), ptcStart('mx-direct', 'ask_user_question', nestedRouteArgs), ptcEnd('mx-direct', answer(['直接执行']))], { route: 'direct', clarified: false, approved: false, purpose: 'none', channelBroken: false }],
-  ['plan-refine-clarify-approve', nativePlanFull(), ptcPlanFull(), FLOW_FULL],
-  ['disagree', [um(), call('ask_user_question', 'mx-disagree', routeArgs), ok('mx-disagree', answer(['不同意']))], [um(), ptcStart('mx-disagree', 'ask_user_question', nestedRouteArgs), ptcEnd('mx-disagree', answer(['不同意']))], FLOW_DEFAULT],
-  ['purpose-redo', [um(), call('ask_user_question', 'mx-route', routeArgs), ok('mx-route', answer(['进行pro规划'])), call('ask_user_question', 'mx-purpose', purposeArgs), ok('mx-purpose', answer(['重新规划']))], [um(), ptcStart('mx-route', 'ask_user_question', nestedRouteArgs), ptcEnd('mx-route', answer(['进行pro规划'])), ptcStart('mx-purpose', 'ask_user_question', nestedPurposeArgs), ptcEnd('mx-purpose', answer(['重新规划']))], { route: 'plan', clarified: false, approved: false, purpose: 'redo', channelBroken: false }],
+  ['main', [um(), ...gateEvents('mx-main', routePayload('main'))], [um(), ...ptcGateEvents('mx-main', routePayload('main'))], FLOW_MAIN],
+  ['executor', [um(), ...gateEvents('mx-executor', routePayload('executor'))], [um(), ...ptcGateEvents('mx-executor', routePayload('executor'))], FLOW_EXECUTOR],
+  ['plan-refine-clarify', nativePlanFull(), ptcPlanFull(), FLOW_FULL],
+  ['disagree', [um(), ...gateEvents('mx-disagree', routePayload('none'))], [um(), ...ptcGateEvents('mx-disagree', routePayload('none'))], FLOW_NONE],
+  ['purpose-redo', [um(), ...gateEvents('mx-route', routePayload('plan')), ...gateEvents('mx-purpose', purposePayload('redo'))], [um(), ...ptcGateEvents('mx-route', routePayload('plan')), ...ptcGateEvents('mx-purpose', purposePayload('redo'))], { route: 'plan', clarified: false, purpose: 'redo' }],
+  ['purpose-skipped', [um(), ...gateEvents('mx-route', routePayload('plan')), ...gateEvents('mx-purpose', purposeSkippedPayload())], [um(), ...ptcGateEvents('mx-route', routePayload('plan')), ...ptcGateEvents('mx-purpose', purposeSkippedPayload())], FLOW_PLAN],
 ]
 for (const [name, nativeEvents, ptcEvents, expected] of STATE_MATRIX) {
   const nativeState = deriveFlowState(nativeEvents, gateRuntime)
@@ -3877,25 +3775,25 @@ for (const [name, nativeEvents, ptcEvents, expected] of STATE_MATRIX) {
   check('F-MATRIX ' + name + ' PTC通道同语义对照', ptcState, expected)
   check('F-MATRIX ' + name + ' 两通道规范化字段一致', nativeState, ptcState)
 }
-const deniedNative = nativePlanFull('mx-deny').concat([call('ask_user_question', 'mx-deny-route', routeArgs), deny('mx-deny-route', '路由闸门拒绝')])
-const deniedPtc = ptcPlanFull('mx-deny').concat([ptcStart('mx-deny-route', 'ask_user_question', nestedRouteArgs), ptcEnd('mx-deny-route', FC_DENY_TEXT, true)])
-check('F-MATRIX denied 普通拒绝保持既有五字段', deriveFlowState(deniedNative, gateRuntime), FLOW_FULL)
-check('F-MATRIX denied PTC文本拒绝保持既有五字段', deriveFlowState(deniedPtc, gateRuntime), FLOW_FULL)
-const cancelNative = nativePlanFull('mx-cancel').concat([call('ask_user_question', 'mx-cancel-route', routeArgs), err('mx-cancel-route', 'ASK_CANCELLED')])
-const cancelPtc = ptcPlanFull('mx-cancel').concat([ptcStart('mx-cancel-route', 'ask_user_question', nestedRouteArgs), fcCancelEnd('mx-cancel-route')])
-check('F-MATRIX cancel 普通 ASK_CANCELLED 清理阶段', deriveFlowState(cancelNative, gateRuntime), FLOW_DEFAULT)
-check('F-MATRIX cancel PTC 取消/中断清理阶段', deriveFlowState(cancelPtc, gateRuntime), FLOW_DEFAULT)
-const nativeChannel = [um(), call('ask_user_question', 'mx-channel', routeArgs), ok('mx-channel', answer(['直接执行'])), call('ask_user_question', 'mx-channel-fail', routeArgs), err('mx-channel-fail', 'NO_PROVIDER')]
-const ptcTextError = [um(), ptcStart('mx-channel', 'ask_user_question', nestedRouteArgs), ptcEnd('mx-channel', answer(['直接执行'])), ptcStart('mx-channel-fail', 'ask_user_question', nestedRouteArgs), ptcEnd('mx-channel-fail', 'Error: NO_PROVIDER', true)]
-check('F-MATRIX native code NO_PROVIDER 置 channelBroken 且保留 route', deriveFlowState(nativeChannel, gateRuntime), { route: 'direct', clarified: false, approved: false, purpose: 'none', channelBroken: true })
-check('F-MATRIX PTC文本 NO_PROVIDER 不推断原生 code（拒绝语义不置 channelBroken）', deriveFlowState(ptcTextError, gateRuntime), { route: 'direct', clarified: false, approved: false, purpose: 'none', channelBroken: false })
-checkTrue('F-MATRIX native code 与 PTC 文本错误差异保留', JSON.stringify(deriveFlowState(nativeChannel, gateRuntime)) !== JSON.stringify(deriveFlowState(ptcTextError, gateRuntime)))
-check('F-MATRIX 新 human 消息普通通道重置窗口', deriveFlowState(nativePlanFull('mx-human').concat([um()]), gateRuntime), FLOW_DEFAULT)
-check('F-MATRIX 新 human 消息 PTC通道重置窗口', deriveFlowState(ptcPlanFull('mx-human').concat([um()]), gateRuntime), FLOW_DEFAULT)
-const badNative = [um(), call('ask_user_question', 'mx-bad', routeArgs), { type: 'tool/result', data: { message: { toolCallId: 'mx-bad', isError: false, content: 'bad-shape' } } }, ok('unpaired', answer(['直接执行']))]
-const badPtc = [um(), ptcStart('mx-bad', 'ask_user_question', { bad: true }), { type: 'tool/ptc-dispatch', data: { subCallId: 'mx-bad', isError: false, content: 'bad-shape' } }, ptcEnd('unpaired', answer(['直接执行']))]
-check('F-MATRIX 坏形状/未配对普通事件忽略', deriveFlowState(badNative, gateRuntime), FLOW_DEFAULT)
-check('F-MATRIX 坏形状/未配对 PTC事件忽略', deriveFlowState(badPtc, gateRuntime), FLOW_DEFAULT)
+const deniedNative = nativePlanFull('mx-deny').concat([call('extra_plan_gate', 'mx-deny-route', JSON.stringify({ gate: 'route' })), deny('mx-deny-route', '闸门拒绝')])
+const deniedPtc = ptcPlanFull('mx-deny').concat([ptcStart('mx-deny-route', 'extra_plan_gate', nestedGateArgs('route')), ptcEnd('mx-deny-route', FC_DENY_TEXT, true)])
+check('F-MATRIX denied 普通拒绝保持既有三字段', deriveFlowState(deniedNative, gateRuntime), FLOW_FULL)
+check('F-MATRIX denied PTC文本拒绝保持既有三字段', deriveFlowState(deniedPtc, gateRuntime), FLOW_FULL)
+const cancelNative = nativePlanFull('mx-cancel').concat(gateEvents('mx-cancel-route', routeFailedPayload('cancelled')))
+const cancelPtc = ptcPlanFull('mx-cancel').concat([ptcStart('mx-cancel-route', 'extra_plan_gate', nestedGateArgs('route')), fcCancelEnd('mx-cancel-route')])
+check('F-MATRIX cancel 普通通道 outcome=cancelled → 清空阶段状态（route/purpose/clarified 全复位）', deriveFlowState(cancelNative, gateRuntime), FLOW_NONE)
+check('F-MATRIX cancel PTC 无结构化 outcome 的中断信封（isError）→ 不改动既有三字段', deriveFlowState(cancelPtc, gateRuntime), FLOW_FULL)
+const nativeChannel = [um(), ...gateEvents('mx-channel', routePayload('main')), ...gateEvents('mx-channel-fail', routeFailedPayload('channel-error', 'NO_PROVIDER'))]
+const ptcTextError = [um(), ...ptcGateEvents('mx-channel', routePayload('main')), ptcStart('mx-channel-fail', 'extra_plan_gate', nestedGateArgs('route')), ptcEnd('mx-channel-fail', 'Error: NO_PROVIDER', true)]
+check('F-MATRIX native 通道故障 outcome=channel-error 保留 route', deriveFlowState(nativeChannel, gateRuntime), FLOW_MAIN)
+check('F-MATRIX PTC 非 JSON 错误文本不推进（与 channel-error 语义同向）', deriveFlowState(ptcTextError, gateRuntime), FLOW_MAIN)
+checkTrue('F-MATRIX 两通道失败结果都不推进既有状态', isDeepStrictEqual(deriveFlowState(nativeChannel, gateRuntime), deriveFlowState(ptcTextError, gateRuntime)))
+check('F-MATRIX 新 human 消息普通通道重置窗口', deriveFlowState(nativePlanFull('mx-human').concat([um()]), gateRuntime), FLOW_NONE)
+check('F-MATRIX 新 human 消息 PTC通道重置窗口', deriveFlowState(ptcPlanFull('mx-human').concat([um()]), gateRuntime), FLOW_NONE)
+const badNative = [um(), call('extra_plan_gate', 'mx-bad', JSON.stringify({ gate: 'route' })), { type: 'tool/result', data: { message: { toolCallId: 'mx-bad', isError: false, content: 'bad-shape' } } }, ok('unpaired', JSON.stringify(routePayload('main')))]
+const badPtc = [um(), ptcStart('mx-bad', 'extra_plan_gate', { bad: true }), { type: 'tool/ptc-dispatch', data: { subCallId: 'mx-bad', isError: false, content: 'bad-shape' } }, ptcEnd('unpaired', JSON.stringify(routePayload('main')))]
+check('F-MATRIX 坏形状/未配对普通事件忽略', deriveFlowState(badNative, gateRuntime), FLOW_NONE)
+check('F-MATRIX 坏形状/未配对 PTC事件忽略', deriveFlowState(badPtc, gateRuntime), FLOW_NONE)
 
 // ── CFG-DEFAULT：十一项默认、显式 false/空串与角色边界独立期望 ──
 // 默认值不在测试内落第二份：插件配置类键与资产 YAML（真源）对拍，设置页独有键与 settings 生成真源对拍；键集合仍显式锁定。
@@ -3999,7 +3897,7 @@ for (const [name, code, expected] of H) {
   check(name, codeMutationHints(code), expected)
 }
 
-// ── ASK 系列:ask_user_question 返回链闸门纯函数（任务1/2） ─────────────
+// ── ASK 系列:ask/gate 返回链闸门纯函数（askOrGateReturnGateReason；ask_user_question 与 extra_plan_gate 同口径） ─────
 const ASK_RETURN = [
   ['AR1 无 ask 源码 → null', 'const x = 1', null],
   ['AR2 直接 return-await → null', 'return await tools.ask_user_question({})', null],
@@ -4015,9 +3913,11 @@ const ASK_RETURN = [
   ['AR11 动态复杂包装 → 拒绝', 'return await Promise.resolve(tools.ask_user_question({}))', 'deny'],
   ['AR12 字符串/注释中的 ask 不触发', "const s = 'tools.ask_user_question({})'; // tools.ask_user_question({})", null],
   ['AR13 MCP静态方括号调用不误判 ask 返回链', "return await tools['mcp__chrome-devtools-mcp__list_pages']({})", null],
+  ['AR14 闸门工具直接 return-await → null', 'return await tools.extra_plan_gate({ gate: "route" })', null],
+  ['AR15 闸门工具裸 await → 拒绝（与 ask 同口径）', 'await tools.extra_plan_gate({ gate: "route" })', 'deny'],
 ]
 for (const [name, code, expected] of ASK_RETURN) {
-  const got = askUserQuestionReturnGateReason(code)
+  const got = askOrGateReturnGateReason(code)
   const okResult = expected === null
     ? got === null
     : typeof got === 'string' && got.includes('结果未正确返回用户层')
@@ -4028,17 +3928,18 @@ for (const [name, code, expected] of ASK_RETURN) {
 // ── I 系列:runCodeGroupDenyReason 主会话组判定（F7' v4:拆解 → 组判定 → 聚合） ──
 const readOnlyCodeFx = "await readFileSync('x', 'utf8')"
 const writeCodeFx = "await writeFileSync('x', '1')"
-const noneStateFx = { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }
-const planStateFx = { route: 'plan', clarified: true, approved: false, purpose: 'refine', channelBroken: false }
-const approvedStateFx = { route: 'plan', clarified: true, approved: true, purpose: 'refine', channelBroken: false }
+const noneStateFx = { route: 'none', clarified: false, purpose: 'none' }
+const planStateFx = { route: 'plan', clarified: true, purpose: 'refine' }
+// 原「已批准执行」在四值 route 枚举下即 executor（阶段态随路线重置）。
+const executorStateFx = { route: 'executor', clarified: false, purpose: 'none' }
   const mainGroupReason = (state, code) => runCodeGroupDenyReason(state, { arguments: { code } }, { kind: 'main' }, { gateRuntime })
 const I = [
   ['I1 主会话 none+纯只读 → 放行(null)', readOnlyCodeFx, noneStateFx, null],
   ['I2 主会话 none+裸写 → 聚合含 routeDenyReason(write/edit,{route:none}) 全文', writeCodeFx, noneStateFx, [routeDenyReason('write/edit', { route: 'none' }, gateRuntime)]],
   ['I3 主会话 plan+裸写 → 聚合含 routeDenyReason(write/edit,{route:plan}) 全文（含「规划态下主会话不可写文件」）', writeCodeFx, planStateFx, [routeDenyReason('write/edit', { route: 'plan' }, gateRuntime)]],
-  ['I4 主会话 approved+纯只读 → 放行(null)（v4:组空全过，ptc 死锁解除）', readOnlyCodeFx, approvedStateFx, null],
-  ['I5 主会话 approved+裸写 → 聚合含「方案已批准，执行请走 subagent 委派」', writeCodeFx, approvedStateFx, ['方案已批准，执行请走 subagent 委派']],
-  ['I6 主会话 approved+tools.subagent(run_in_background:true) → 放行(null)', "await tools.subagent({ task: 'x', run_in_background: true })", approvedStateFx, null],
+  ['I4 主会话 executor+纯只读 → 放行(null)（v4:组空全过，ptc 死锁解除）', readOnlyCodeFx, executorStateFx, null],
+  ['I5 主会话 executor+裸写 → 聚合含 routeDenyReason(write/edit,{route:executor}) 全文（非 main 即拒）', writeCodeFx, executorStateFx, [routeDenyReason('write/edit', { route: 'executor' }, gateRuntime)]],
+  ['I6 主会话 executor+tools.subagent(run_in_background:true) → 放行(null)', "await tools.subagent({ task: 'x', run_in_background: true })", executorStateFx, null],
   ['I7 主会话 none+裸写+subagent_plan → 聚合同时含两条子文案', "await writeFileSync('x', '1'); await tools.subagent_plan({ task: '规划', run_in_background: true })", noneStateFx, [routeDenyReason('write/edit', { route: 'none' }, gateRuntime), planDenyReason('subagent_plan', { route: 'none' }, gateRuntime)]],
 ]
 for (const [name, code, state, expected] of I) {
@@ -4246,20 +4147,20 @@ const mcpWriteReason = runCodeGroupDenyReason(noneStateFx, { name: 'run_code', a
 checkTrue('K12 MCP独立catch+受阻write混合组只报write且不出现假ask', typeof mcpWriteReason === 'string' && mcpWriteReason.includes('路由未确认：write/edit') && !mcpWriteReason.includes('结果未正确返回用户层'))
 
 // ── GW 系列：YAML 单一来源、prompt variable 契约、严格校验与动态词表 ────────
-const GATE_FIELD_NAMES = ['routeDirect', 'routePlan', 'routeDisagree', 'approvalApprove', 'approvalReplan', 'purposeRefine', 'purposeRedo']
-const GATE_VARIABLE_NAMES = ['extra_plan_route_direct', 'extra_plan_route_plan', 'extra_plan_route_disagree', 'extra_plan_approval_approve', 'extra_plan_approval_replan', 'extra_plan_purpose_refine', 'extra_plan_purpose_redo']
+const GATE_FIELD_NAMES = ['routeMain', 'routeExecutor', 'routePlan', 'routeDisagree', 'purposeRefine', 'purposeRedo']
+const GATE_VARIABLE_NAMES = ['extra_plan_route_main', 'extra_plan_route_executor', 'extra_plan_route_plan', 'extra_plan_route_disagree', 'extra_plan_purpose_refine', 'extra_plan_purpose_redo']
 const factoryValuesPattern = new RegExp(GATE_FIELD_NAMES.map((field) => assetGateWords[field]).join('|'))
 
-// GWY1-GWY3：YAML 七键布局 / 字段元数据契约（迁移叶 locator 已随搬迁链删除，不再断言）
-check('GWY1 资产 YAML config.gateWords 直属键恰为 7 个闸门字段', Object.keys(assetGateWords), GATE_FIELD_NAMES)
-check('GWY2 GATE_WORD_FIELDS 恰 7 项且每项只含 field/variable 元数据', GATE_WORD_FIELDS.map((item) => Object.keys(item).sort().join('+')), GATE_FIELD_NAMES.map(() => 'field+variable'))
+// GWY1-GWY3：YAML 六键布局 / 字段元数据契约（迁移叶 locator 已随搬迁链删除，不再断言）
+check('GWY1 资产 YAML config.gateWords 直属键恰为 6 个闸门字段', Object.keys(assetGateWords), GATE_FIELD_NAMES)
+check('GWY2 GATE_WORD_FIELDS 恰 6 项且每项只含 field/variable 元数据', GATE_WORD_FIELDS.map((item) => Object.keys(item).sort().join('+')), GATE_FIELD_NAMES.map(() => 'field+variable'))
 check('GWY3 GATE_WORD_FIELDS 的 field/variable 与 YAML 键一一对应', GATE_WORD_FIELDS.map((item) => [item.field, item.variable]), GATE_FIELD_NAMES.map((field, index) => [field, GATE_VARIABLE_NAMES[index]]))
 
-// GWY5-GWY7：persona prefix-only（正文仅 prefix 键）、7 个变量引用、无值字面量
+// GWY5-GWY7：persona prefix-only（正文仅 prefix 键）、6 个变量引用、无值字面量（persona 文案属 2b 文档层，尚未改名）
 const personaRow = assetRowsAll.find((row) => row.id === 'persona')
 const personaText = personaRow.config.prefix
 check('GWY5 persona config 正文键集合恰为 [prefix]（prefix-only，不含旧 text 兼容键）', Object.keys(personaRow.config), ['prefix'])
-check('GWY6 persona 正文引用的变量集合恰为 7 个', Array.from(new Set(personaText.match(/\{\{extra_plan_[a-z_]+\}\}/g) || [])).sort(), GATE_VARIABLE_NAMES.map((name) => '{{' + name + '}}').sort())
+check('GWY6 persona 正文引用的变量集合恰为 6 个', Array.from(new Set(personaText.match(/\{\{extra_plan_[a-z_]+\}\}/g) || [])).sort(), GATE_VARIABLE_NAMES.map((name) => '{{' + name + '}}').sort())
 check('GWY7 persona 正文不含任何闸门值字面量', factoryValuesPattern.test(personaText), false)
 
 // GWY8：宿主严格 renderPrompt 对 prefix-only 路径完成替换
@@ -4272,7 +4173,7 @@ const normalizedHostEntry = hostSystemPromptEntry === null ? '' : hostSystemProm
 const hostSystemPromptInRoot = explicitRoot !== '' && hostSystemPromptEntry !== null && existsSync(hostSystemPromptEntry) && (normalizedHostEntry === normalizedHostRoot || normalizedHostEntry.startsWith(normalizedHostRoot + '\\'))
 const hostRenderPrompt = hostSystemPromptInRoot ? (await import(hostSystemPromptUrl)).renderPrompt : null
 const renderedPrefix = typeof hostRenderPrompt === 'function' ? hostRenderPrompt({ sections: [{ name: 'deployment:persona', text: personaText }], contexts: [], variables: gateRuntime.variables }) : ''
-checkTrue('GWY8 宿主严格 renderPrompt 对 prefix 完成全部变量替换且含 7 个当前值', typeof hostRenderPrompt === 'function' && !renderedPrefix.includes('{{') && GATE_FIELD_NAMES.every((field) => renderedPrefix.includes(assetGateWords[field])))
+checkTrue('GWY8 宿主严格 renderPrompt 对 prefix 完成全部变量替换且含 6 个当前值', typeof hostRenderPrompt === 'function' && !renderedPrefix.includes('{{') && GATE_FIELD_NAMES.every((field) => renderedPrefix.includes(assetGateWords[field])))
 
 // GWV 系列：validator 非法矩阵（表驱动，全部必须抛同一前缀）
 const cloneWords = (patch) => Object.assign({}, gateRuntime.words, patch)
@@ -4280,19 +4181,19 @@ const dropField = (field) => { const out = Object.assign({}, gateRuntime.words);
 const GWV = [
   ['非对象 undefined', undefined],
   ['null', null],
-  ['数组', [gateRuntime.words.routeDirect]],
+  ['数组', [gateRuntime.words.routeMain]],
   ['整组缺失（空对象）', {}],
   ['单键缺失 routePlan', dropField('routePlan')],
   ['额外键', cloneWords({ extraKey: 'x' })],
-  ['非字符串（数字）', cloneWords({ routeDirect: 42 })],
-  ['空串', cloneWords({ routeDirect: '' })],
-  ['首尾空白', cloneWords({ routeDirect: ' ' + gateRuntime.words.routeDirect })],
-  ['CR/LF', cloneWords({ routeDirect: gateRuntime.words.routeDirect + String.fromCharCode(10) })],
-  ['重复值', cloneWords({ approvalApprove: gateRuntime.words.routeDirect })],
-  ['保留后缀 (Recommended)', cloneWords({ routeDirect: gateRuntime.words.routeDirect + ' (Recommended)' })],
-  ['保留后缀 （Recommended）', cloneWords({ routeDirect: gateRuntime.words.routeDirect + '（Recommended）' })],
-  ['保留后缀 (推荐)', cloneWords({ routeDirect: gateRuntime.words.routeDirect + '(推荐)' })],
-  ['保留后缀 （推荐）', cloneWords({ routeDirect: gateRuntime.words.routeDirect + '（推荐）' })],
+  ['非字符串（数字）', cloneWords({ routeMain: 42 })],
+  ['空串', cloneWords({ routeMain: '' })],
+  ['首尾空白', cloneWords({ routeMain: ' ' + gateRuntime.words.routeMain })],
+  ['CR/LF', cloneWords({ routeMain: gateRuntime.words.routeMain + String.fromCharCode(10) })],
+  ['重复值', cloneWords({ routeExecutor: gateRuntime.words.routeMain })],
+  ['保留后缀 (Recommended)', cloneWords({ routeMain: gateRuntime.words.routeMain + ' (Recommended)' })],
+  ['保留后缀 （Recommended）', cloneWords({ routeMain: gateRuntime.words.routeMain + '（Recommended）' })],
+  ['保留后缀 (推荐)', cloneWords({ routeMain: gateRuntime.words.routeMain + '(推荐)' })],
+  ['保留后缀 （推荐）', cloneWords({ routeMain: gateRuntime.words.routeMain + '（推荐）' })],
 ]
 let validatorMatrixOk = true
 for (const [label, raw] of GWV) {
@@ -4305,32 +4206,25 @@ for (const [label, raw] of GWV) {
 }
 checkTrue('GWV1 非法配置矩阵（15 例）全部抛出以 extra-plan: config.gateWords 开头的错误', validatorMatrixOk)
 const frozenWords = validateGateWords(Object.assign({}, gateRuntime.words))
-checkTrue('GWV2 合法七词返回冻结副本（非同一引用）', Object.isFrozen(frozenWords) && frozenWords !== gateRuntime.words && frozenWords.routeDirect === gateRuntime.words.routeDirect)
+checkTrue('GWV2 合法六词返回冻结副本（非同一引用）', Object.isFrozen(frozenWords) && frozenWords !== gateRuntime.words && frozenWords.routeMain === gateRuntime.words.routeMain)
 let noArgMessage = null
 try { createGateRuntime(undefined) } catch (error) { noArgMessage = error instanceof Error ? error.message : String(error) }
 checkTrue('GWV3 createGateRuntime 无参不存在默认词表（抛错）', noArgMessage !== null && noArgMessage.startsWith('extra-plan: config.gateWords'))
 
-// GWC 系列：定制七词正例（与出厂词无子串重叠）+ 旧词负例
-const CUSTOM_WORDS = { routeDirect: '甲直行', routePlan: '乙规划', routeDisagree: '丙否决', approvalApprove: '丁批准', approvalReplan: '戊转规划', purposeRefine: '己完整', purposeRedo: '庚重做' }
+// GWC 系列：定制六词正例（与出厂词无子串重叠）+ 词表隔离
+const CUSTOM_WORDS = { routeMain: '甲直行', routeExecutor: '丁批准', routePlan: '乙规划', routeDisagree: '丙否决', purposeRefine: '己完整', purposeRedo: '庚重做' }
 const customRuntime = createGateRuntime(CUSTOM_WORDS)
 const customValues = GATE_FIELD_NAMES.map((field) => CUSTOM_WORDS[field])
-const customRouteArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: CUSTOM_WORDS.routeDirect }, { label: CUSTOM_WORDS.routePlan }, { label: CUSTOM_WORDS.routeDisagree }] }] })
-const customPurposeArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: CUSTOM_WORDS.purposeRefine }, { label: CUSTOM_WORDS.purposeRedo }] }] })
-const customApprovalArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: CUSTOM_WORDS.approvalApprove }, { label: CUSTOM_WORDS.approvalReplan }, { label: CUSTOM_WORDS.routeDisagree }] }] })
-checkTrue('GWC0 定制七词与出厂七词无子串重叠且不含出厂词（静默失效检测前置）', !factoryValuesPattern.test(customValues.join('|')) && customValues.every((value) => !GATE_FIELD_NAMES.some((field) => value.includes(assetGateWords[field]) || assetGateWords[field].includes(value))))
-check('GWC1 定制词标准三词 → categorizeGateAsk standard', categorizeGateAsk([CUSTOM_WORDS.routeDirect, CUSTOM_WORDS.routePlan, CUSTOM_WORDS.routeDisagree], customRuntime), 'standard')
-check('GWC2 定制词缺一词 → malformed（partial 子串教学路径）', categorizeGateAsk([CUSTOM_WORDS.routeDirect, CUSTOM_WORDS.routePlan], customRuntime), 'malformed')
-check('GWC3 与定制词完全不相交 → ordinary', categorizeGateAsk(['方案A', '方案B'], customRuntime), 'ordinary')
-check('GWC4 三类 match 精确匹配定制词（route/approval/purpose 共 8 项）', [matchRouteLabel([CUSTOM_WORDS.routeDirect], customRuntime), matchRouteLabel([CUSTOM_WORDS.routePlan], customRuntime), matchRouteLabel([CUSTOM_WORDS.routeDisagree], customRuntime), matchApprovalLabel([CUSTOM_WORDS.approvalApprove], customRuntime), matchApprovalLabel([CUSTOM_WORDS.approvalReplan], customRuntime), matchApprovalLabel([CUSTOM_WORDS.routeDisagree], customRuntime), matchPurposeLabel([CUSTOM_WORDS.purposeRefine], customRuntime), matchPurposeLabel([CUSTOM_WORDS.purposeRedo], customRuntime)], ['direct', 'plan', 'disagree', 'approve', 'replan', 'disagree', 'refine', 'redo'])
-check('GWC5 定制词带白名单推荐后缀 → 归一后仍精确匹配', matchRouteLabel([CUSTOM_WORDS.routeDirect + '（推荐）'], customRuntime), 'direct')
-check('GWC6 定制词的非白名单变体不匹配（禁止 indexOf 子串）', [matchRouteLabel([CUSTOM_WORDS.routeDirect + '!'], customRuntime), matchApprovalLabel(['前缀' + CUSTOM_WORDS.approvalApprove], customRuntime)], [null, null])
-check('GWC7 旧出厂词在定制 runtime 下三类 match 全部不匹配', [matchRouteLabel([assetGateWords.routeDirect], customRuntime), matchApprovalLabel([assetGateWords.approvalApprove], customRuntime), matchPurposeLabel([assetGateWords.purposeRefine], customRuntime)], [null, null, null])
-checkTrue('GWC8 定制词 deny 文案由当前词表插值（路由确认句含定制三词）', routeDenyReason('write/edit', { route: 'none' }, customRuntime).includes('「' + CUSTOM_WORDS.routeDirect + '」「' + CUSTOM_WORDS.routePlan + '」「' + CUSTOM_WORDS.routeDisagree + '」'))
-checkTrue('GWC9 定制词 deny 文案（路由/规划/批准三类）不含任何出厂词', !factoryValuesPattern.test(routeDenyReason('write/edit', { route: 'none' }, customRuntime) + planDenyReason('subagent_plan', { route: 'none' }, customRuntime) + approvalDenyReason('subagent', { route: 'none' }, customRuntime)))
-check('GWC10 定制词 deriveFlowState 全链 → plan/redo/clarified/approved', deriveFlowState([um(), call('ask_user_question', 'gw1', customRouteArgs), ok('gw1', answer([CUSTOM_WORDS.routePlan])), call('ask_user_question', 'gw2', customPurposeArgs), ok('gw2', answer([CUSTOM_WORDS.purposeRedo])), call('ask_user_question', 'gw3', clarifyArgs), ok('gw3', answer(['方案A'])), call('ask_user_question', 'gw4', customApprovalArgs), ok('gw4', answer([CUSTOM_WORDS.approvalApprove]))], customRuntime), { route: 'plan', clarified: true, approved: true, purpose: 'redo', channelBroken: false })
-check('GWC11 定制 runtime 下提交旧出厂词 → 全部未确认', deriveFlowState([um(), call('ask_user_question', 'go1', routeArgs), ok('go1', answer([assetGateWords.routeDirect])), call('ask_user_question', 'go2', purposeArgs), ok('go2', answer([assetGateWords.purposeRefine])), call('ask_user_question', 'go3', approvalArgs), ok('go3', answer([assetGateWords.approvalApprove]))], customRuntime), { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false })
-check('GWC12 定制 runtime 下旧词 + 推荐后缀仍不推进', deriveFlowState([um(), call('ask_user_question', 'go4', routeArgs), ok('go4', answer([assetGateWords.routeDirect + '（推荐）']))], customRuntime).route, 'none')
-check('GWC13 默认 runtime 下定制词不误推进（双向隔离）', deriveFlowState([um(), call('ask_user_question', 'gm1', customRouteArgs), ok('gm1', answer([CUSTOM_WORDS.routeDirect]))], gateRuntime).route, 'none')
+checkTrue('GWC0 定制六词与出厂六词无子串重叠且不含出厂词（静默失效检测前置）', !factoryValuesPattern.test(customValues.join('|')) && customValues.every((value) => !GATE_FIELD_NAMES.some((field) => value.includes(assetGateWords[field]) || assetGateWords[field].includes(value))))
+check('GWC1 定制 runtime 四路线词按枚举顺序派生（main/executor/plan/none）', [...customRuntime.route], [CUSTOM_WORDS.routeMain, CUSTOM_WORDS.routeExecutor, CUSTOM_WORDS.routePlan, CUSTOM_WORDS.routeDisagree])
+check('GWC2 定制 runtime 两目的词按枚举顺序派生（refine/redo）', [...customRuntime.purpose], [CUSTOM_WORDS.purposeRefine, CUSTOM_WORDS.purposeRedo])
+checkTrue('GWC3 定制 runtime confirm 文案插值定制四路线词', customRuntime.confirm.route.includes('「' + CUSTOM_WORDS.routeMain + '」「' + CUSTOM_WORDS.routeExecutor + '」「' + CUSTOM_WORDS.routePlan + '」「' + CUSTOM_WORDS.routeDisagree + '」'))
+checkTrue('GWC4 定制 runtime confirm 文案插值定制两目的词', customRuntime.confirm.purpose.includes('「' + CUSTOM_WORDS.purposeRefine + '」「' + CUSTOM_WORDS.purposeRedo + '」'))
+checkTrue('GWC8 定制词 deny 文案由当前词表插值（路由确认句含定制四词）', routeDenyReason('write/edit', { route: 'none' }, customRuntime).includes('「' + CUSTOM_WORDS.routeMain + '」「' + CUSTOM_WORDS.routeExecutor + '」「' + CUSTOM_WORDS.routePlan + '」「' + CUSTOM_WORDS.routeDisagree + '」'))
+checkTrue('GWC9 定制词 deny 文案（路由/规划/执行三类）不含任何出厂词', !factoryValuesPattern.test(routeDenyReason('write/edit', { route: 'none' }, customRuntime) + planDenyReason('subagent_plan', { route: 'none' }, customRuntime) + executorDenyReason('subagent', { route: 'none' }, customRuntime)))
+check('GWC10 定制词 deriveFlowState 全链（闸门驱动）→ plan/redo/clarified', deriveFlowState([um(), ...gateEvents('gw1', routePayload('plan')), ...gateEvents('gw2', purposePayload('redo')), ...gateEvents('gw3', clarifyPayload())], customRuntime), { route: 'plan', clarified: true, purpose: 'redo' })
+const gwcIsolationEvents = [um(), ...gateEvents('gw9', routePayload('plan')), ...gateEvents('gw10', purposePayload('refine'))]
+checkTrue('GWC11 定制 runtime 与出厂 runtime 对同一结构化结果推进完全一致（词值不参与状态推断）', isDeepStrictEqual(deriveFlowState(gwcIsolationEvents, customRuntime), deriveFlowState(gwcIsolationEvents, gateRuntime)))
 
 // ── M8：直接消费者补证（真实换行/嵌参写/定制词包含/W-H公共统计） ─────────
 {
@@ -4419,10 +4313,9 @@ check('GWC13 默认 runtime 下定制词不误推进（双向隔离）', deriveF
   }
   const m8DeniedDirect = m8PreExecute({ agent: askMainAgent, name: 'run_code', arguments: { code: m8BareCode } }, m8NextSpy)
   checkTrue('M8 裸写实际预审拒绝且next/member执行计数为0', m8Bare.members.length === 1 && m8Bare.members[0].kind === 'bare-write' && typeof m8BareReason === 'string' && m8BareReason.includes('- write') && m8DeniedDirect !== null && m8DeniedDirect.kind === 'deny' && m8NextCalls === 0 && m8BareMemberCalls === 0)
-  const m8ContainingWords = { routeDirect: '甲', routePlan: '甲规划', routeDisagree: '丙', approvalApprove: '丁批准', approvalReplan: '戊转规划', purposeRefine: '己完整', purposeRedo: '庚重做' }
+  const m8ContainingWords = { routeMain: '甲', routeExecutor: '丁批准', routePlan: '甲规划', routeDisagree: '丙', purposeRefine: '己完整', purposeRedo: '庚重做' }
   const m8ContainingRuntime = createGateRuntime(m8ContainingWords)
-  check('M8 定制词存在包含关系仍按精确 route match', [matchRouteLabel([m8ContainingWords.routeDirect], m8ContainingRuntime), matchRouteLabel([m8ContainingWords.routePlan], m8ContainingRuntime)], ['direct', 'plan'])
-  check('M8 定制词存在包含关系时标准三词仍只认当前词表', categorizeGateAsk([m8ContainingWords.routeDirect, m8ContainingWords.routePlan, m8ContainingWords.routeDisagree], m8ContainingRuntime), 'standard')
+  checkTrue('M8 定制词存在包含关系时整组仍严格合法（只按整值判重复，不做子串判等）', Object.isFrozen(m8ContainingRuntime.words) && m8ContainingRuntime.words.routeMain === '甲' && m8ContainingRuntime.words.routePlan === '甲规划' && m8ContainingRuntime.route.length === 4)
   const { resolveWorkspacePath, resolveHostPath } = await import('../../plugins/dsh-extra-plan/lib/path-policy.js')
   const m8WorkspaceRoot = makeWTemp('dsh-m8-workspace-root')
   const m8HostRoot = makeWTemp('dsh-m8-host-root')

@@ -67,7 +67,7 @@
 - 结果必须区分 `synced`、`not-applicable`、`not-installed`、`unavailable`、`failed` 与 `partial`：只有标准 Web owner 对当前明确且满足双锚点的 QQ profile 做 Web→QQ 镜像时才是 `synced`；QQ owner 本身返回 `not-applicable`，不跨 profile 启动。Web owner 已成功落盘而镜像失败时保留 `web.applied=true`、`overall=partial`，不伪造双端成功。
 - 镜像只持久化完整 11 项和完整 `gateWords`；其中 9 项沿既有热读语义，`webFetch` 与 `toolPresentationMode` 仍是 2 项宿主重启生效值，不发送 reload、不改变生效机制；toolPresentationMode 切换后必须新开会话，原会话不可继续（见台账 ⑭）。
 - **UI 双步保存合同**：设置页保存第一步 `form.mutate(ops, revision)`（宿主 ConfigForms 规范写盘，accepted 才算 Web 侧成功）；第二步在 accepted 分支内同源 `PUT /api/dsh-extra-plan-settings/pro-config`（绝对路径，body 为 11 项字段对象，值与 ops 同源）静默执行——独立 try/catch 吞异常，PUT 响应与结果不驱动 UI 消息。UI 提示不变：accepted→原「已保存」、非 accepted 或异常→原「保存失败」；同步状态不进提示，经 GET `/api/dsh-extra-plan-settings/pro-config` 查询（含 stale 检测）。volatile-only UI 保存不产生 `internal/update`，第二步 PUT 是 QQBot 同步的主触发。
-- **PUT 同值修复漂移**：PUT 请求值与当前 patch 深等时跳过 `editor.edit` 但无条件 `syncEditor`（全量 11+7 关联同步），同值重试保存即可把漂移的 QQBot patch 修复为最新值（回归锁定：`SYNC 同值保存仍检查并修复 QQBot 漂移`）。
+- **PUT 同值修复漂移**：PUT 请求值与当前 patch 深等时跳过 `editor.edit` 但无条件 `syncEditor`（全量 11+6 关联同步），同值重试保存即可把漂移的 QQBot patch 修复为最新值（回归锁定：`SYNC 同值保存仍检查并修复 QQBot 漂移`）。
 - **GET 无参 stale 语义**：GET 无 `saveRunId` 返回 last-terminal-cache 前，若缓存 terminal 含 `rawWebPatchFingerprint` 且其 `patchSha256` 与 `editor.documentPath` 磁盘现算 sha256 不一致，`profileSync` 附加 `stale:true`、`source:'stale-terminal-cache'` 并 console.warn 一行漂移提示；GET 保持无副作用（不自动触发同步）；documentPath 不可读/异常按现状返回不报错；指纹一致时响应结构与改动前一致（无 stale 键）。
 - **settled 链仅作 Web 宿主重启兜底**：volatile 快路径 + fiber 定向 waterfall 使真实 UI 保存的 `internal/update` 不到达 preset-sync 监听器（宿主契约事实，见台账⑬）；`settled-initial` 仅在 Web 宿主重启/插件装载时补同步 QQBot，不作为保存链同步依据。
 
@@ -79,7 +79,7 @@
 - **settings-only** 保存是 **no-remount**：只读取最终完整 11 项与 `gateWords`，立即进入 settled/profileSync 并同步 QQBot；绝不调用、等待、dispose 或重建 AgentPreset。唯一允许 adapter register/dispose 的增量为 0/0。
 - 非 settings 声明结构变化才进入 `structuralHandoff`；settled-only 与 adapter/structural 队列独立，adapter failure、reject 或 hang 不得阻断 profileSync。
 - `profileSync` 初始为 `status=pending,pending=true`；任何同步终态（`synced`、`not-applicable`、`not-installed`、`unavailable`、`failed`、`partial`）后才 `pending=false`，禁止把 QQ 的 `not-applicable` 或其它未适用状态伪造为 `synced`。
-- 9 项（`anchoredBootstrap`、`creativeMode`、`runcodeCatchGate`、`crossProviderPlannerModel`、`plannerModel`、`plannerPromptSuffix`、`exploreBudget`、`otherAgentModel`、`reviewerUsesPlannerModel`）保持同进程热读；`webFetch` 与 `toolPresentationMode` 是 2 项需重启的装载期投影；toolPresentationMode 切换后必须新开会话，原会话不可继续（见台账 ⑭）。完整 7 键 `gateWords` 立即持久化，但当前 apply 词表不原地替换，需重启后由 HUMAN 验证新词/旧词拒绝/非法词无 fallback。配置本身同进程热读，但模型/路由类开关对已存在的子代理不重算，故 UI 标注「新会话/新子代理生效」。生成器按 L121 的 `DSH_INSTALL_ROOT`+`host-preload` 前缀运行（缺 js-yaml 即表示未带代码根前置）；仅在无法使用 host-preload 前缀时，才用 `NODE_PATH` 指向 profile 的 `node_modules` 兜底。
+- 9 项（`anchoredBootstrap`、`creativeMode`、`runcodeCatchGate`、`crossProviderPlannerModel`、`plannerModel`、`plannerPromptSuffix`、`exploreBudget`、`otherAgentModel`、`reviewerUsesPlannerModel`）保持同进程热读；`webFetch` 与 `toolPresentationMode` 是 2 项需重启的装载期投影；toolPresentationMode 切换后必须新开会话，原会话不可继续（见台账 ⑭）。完整 6 键 `gateWords` 立即持久化，但当前 apply 词表不原地替换，需重启后由 HUMAN 验证新词/旧词拒绝/非法词无 fallback。配置本身同进程热读，但模型/路由类开关对已存在的子代理不重算，故 UI 标注「新会话/新子代理生效」。生成器按 L121 的 `DSH_INSTALL_ROOT`+`host-preload` 前缀运行（缺 js-yaml 即表示未带代码根前置）；仅在无法使用 host-preload 前缀时，才用 `NODE_PATH` 指向 profile 的 `node_modules` 兜底。
 - **同源检查项**：改动 `anchoredBootstrap` 或 `creativeMode` 任一路的可见面裁剪逻辑，必须同步核对另一路，并跑 step-04 的同源结构断言（`restrict(` 仅 1 处且位于 `armToolRestriction` 内、两个开关的 arm 均调用它）。
 - 自动结果必须分别记录 PASS/FAIL/SKIP/INCOMPLETE/HUMAN/NOT-RUN；SKIP、HUMAN 不销账，真实 Harness/QQBot 重启、消息链、生产 profile 与 adapter 完整工具图保持 HUMAN。
 
@@ -87,7 +87,7 @@
 
 - `settings.js` 的 settled callback 只通过 `editorOf(undefined)` / `ctx.get('configEditor')` 解析 editor；`mountPresetSync` 的 adapter 仍由 `ctx.inject(['configEditor'])` child 挂载，不能把 get-only 当作挂载成功。
 - 设置页脚本使用受控 host-proxy 四态：正常态必须记录外层 without-inject 门槛、ctx.get、child 身份、effect/cleanup、adapter 与 terminal 顺序；get-only/no-op-inject 输出 `HUMAN scope=HOST-PROXY-GET-ONLY`；inject-throws、child-missing-configEditor 必须保留结构化失败。
-- 每个单字段 PUT/internal-update 都对拍完整 11 项 values 与完整 7 键 gateWords；Web patch、QQBot patch 和 terminal 输入不得只含 changed key。既有 throw/reject/hang/no-remount 合同继续执行。
+- 每个单字段 PUT/internal-update 都对拍完整 11 项 values 与完整 6 键 gateWords；Web patch、QQBot patch 和 terminal 输入不得只含 changed key。既有 throw/reject/hang/no-remount 合同继续执行。
 - 证据生成器每次新建 runId，SOURCE-MANIFEST 按取证脚本实际声明的源文件记录备份 bytes/SHA-256；不得把某次任务的固定文件数当通用规模。旧证据只读对拍。缺少真实宿主、生产 profile、QQBot、GUI、消息链和重启一律是 HUMAN，不能改写为 PASS。
 
 ## 唯一 settings 行与保存终态维护规则
@@ -95,7 +95,7 @@
 - 只允许 canonical `id=dsh-extra-plan-settings/name=dsh-extra-plan/settings` 作为新写入目标；两个历史配置 ID 不读取、不一次性迁移、不回退、不判旧 owner、不承诺旧值，也不编辑/删除真实旧行；`rawCount/effectiveCount/canonicalNameCount` 任一不满足唯一条件时，GET/PUT 必须停在 409 conflict，不能用旧 projection 或旧 terminal 绿灯。
 - `profileSync` 的 cache 与 requestResult 分离：无参数 GET 只能显示最后 terminal 的 cache 元数据；只有带相同 `saveRunId` 查询或当前 PUT 的 request/terminal 三元组全等，才可将 `terminalMatch` 置为 true。
 - canonical 重复行规划器只在临时 fixture 执行，不用于两个历史配置 ID 迁移；必须保留无关注释、`!!js` 和用户字段，并给出 before/after bytes/SHA 与唯一 rollback bytes；生产 duplicate 行清理、部署和重启由 HUMAN 执行。
-- 每次单字段仍构造完整 11 项 values + 7 键 gateWords；`creativeMode` 的自动通过只证明 patch 已立即持久化，不证明重启前运行时行为。
+- 每次单字段仍构造完整 11 项 values + 6 键 gateWords；`creativeMode` 的自动通过只证明 patch 已立即持久化，不证明重启前运行时行为。
 
 ## QQBot CLI 与维护所有权
 

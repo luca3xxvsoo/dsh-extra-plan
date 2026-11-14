@@ -10,7 +10,7 @@
 | QQBot 目标 | `0.5.2` | 静态目标，不等于集成通过 |
 | 核心插件 | `dsh-extra-plan` `1.7.0` | 当前包契约；仓库子目录安装路径不变 |
 | QQBot 精简插件 | `dsh-extra-plan-qqbot` `2.0.1` | 源码合同为 `2.0.1`，仓库子目录为 plugins/dsh-extra-plan-qqbot；标准包 `postinstall` 的 `--install` 受 `--allow-build=dsh-extra-plan-qqbot` 授权后执行严格单目标校验，普通启动保留非阻断兜底；核心/宿主范围不变，公共发布、真实安装/运行及 allow-build 放行仍未核实（HUMAN） |
-| 预设载体 | `dsh-extra-plan-settings` 全局管理行 + 内部纯 definition（主 1 + 角色 4） | `dsh.bundle.patch` 只装载一行；只认当前规范 id/name，当前资产 definition 决定非用户内容、当前 settings 行决定用户值；当前行补齐保存 11 项+7 键 gateWords，缺失/非法普通项只用新默认，gateWords 整个属性缺失可用当前资产默认，显式对象必须七键整组合法，否则严格失败零写；两个历史配置 ID 不读取、不一次性迁移、不回退、不判旧 owner、不承诺旧值，真实旧行不编辑、不删除；官方 adapter 由 settings owner 内部按主在前、角色 101..104 在后的顺序尝试挂载 5 个 definition；真实相遇效果仍 HUMAN |
+| 预设载体 | `dsh-extra-plan-settings` 全局管理行 + 内部纯 definition（主 1 + 角色 4） | `dsh.bundle.patch` 只装载一行；只认当前规范 id/name，当前资产 definition 决定非用户内容、当前 settings 行决定用户值；当前行补齐保存 11 项+6 键 gateWords，缺失/非法普通项只用新默认，gateWords 整个属性缺失可用当前资产默认，显式对象必须六键整组合法，否则严格失败零写；两个历史配置 ID 不读取、不一次性迁移、不回退、不判旧 owner、不承诺旧值，真实旧行不编辑、不删除；官方 adapter 由 settings owner 内部按主在前、角色 101..104 在后的顺序尝试挂载 5 个 definition；真实相遇效果仍 HUMAN |
 | 状态判读 | `【已核实】` 表示台账静态/源码核对；`【未核实】`、`HUMAN`、`SKIP` 不得改为通过 | 当前台账纪律 |
 
 ### 双根与可信 Host 接口
@@ -50,7 +50,7 @@
 | HS2 | settings 行 `dsh-extra-plan-settings` | 行 id 同时是命名空间、configForms key、插件行详情 key | 【已核实·静态】 |
 | HS3 | `lib/settings.js` webServer prefix | `/api/dsh-extra-plan-settings` prefix 路由 | 【已核实·静态】 |
 | HS4 | `live-config.js` 路径决议 | `configPath → DSH_EXTRA_PLAN_CONFIG_PATH → configEditor.documentPath`；不读旧预设目录 | 【已核实·静态】 |
-| HS5 | `settings.js` owner → `preset-sync.js` `configEditor.edit` | 当前规范 settings 行缺项补齐/保存只 edit 唯一全局行；合法 11 项与 7 键 gateWords 重述不丢键；当前非法 gateWords/非法 PUT 先失败且零 edit，插件不直写 patch | 【已核实·静态+专项】 |
+| HS5 | `settings.js` owner → `preset-sync.js` `configEditor.edit` | 当前规范 settings 行缺项补齐/保存只 edit 唯一全局行；合法 11 项与 6 键 gateWords 重述不丢键；当前非法 gateWords/非法 PUT 先失败且零 edit，插件不直写 patch | 【已核实·静态+专项】 |
 | HS6 | `preset-definition.generated.yml` | 纯 definition 的 id/name/description/order/plugins；由生成器维护，preset-sync 交官方 adapter | 【已核实·静态】 |
 | HS12 | 官方 spawn／四类 tool-subagent | 父路由继承；显式 `agentOptions` 覆盖；`agentPreset` 选择子角色组合 | 【已核实·静态】 |
 | HS13 | `preset-yaml.js` `loadYaml`/`parsePresetYaml` | 预设 YAML 解析归 `preset-yaml`；核心包自有 js-yaml，QQBot 由 package-local js-yaml 依赖保障，失败返回 null | 【已核实·静态】 |
@@ -72,7 +72,7 @@
 | HS30 | 角色预设 definition（`agent.cordis.yml` 第二文档 → `preset-definition-<role>.generated.yml`） | 4 角色的 id/order 由 `ROLE_IDS`/`ROLE_ORDERS` 统一校验（身份常量不承载权限）；personaPrefix 由作者源逐字搬运、extra-plan 行 config 由主预设同 id 行逐字复制（含 gateWords）；各角色均挂 `tool-web`（fetch:false、searchTimeoutMs:60000）与只读 `tool-cordis`，四角色 definition 均不挂 `tool-subagent-control`/`send_message`/`interrupt_agent`；main definition 保留 `tool-subagent-control`（`list-agents` 子行在 0.2.2 已并入该包根入口、不再单独声明）。运行时按原始 `isSubagentChild` 对 child 的两控制工具直呼与 `run_code` 成员硬拒，覆盖 unknown/断链 child；main 的 send 直属父子、interrupt 仅调用者获授权后代、running 子原禁扰与自动最终结果保持。planner/reviewer/prober 的 `dsh-tool-fs` 置 write/edit=false，executor 保留 write/edit 与既有两行 shell；四个角色 definition 的派生范围跟随同一 `toolPresentationMode`（各恰一行 `tool-executor-native` 或 `tool-executor-ptc`（随 `toolPresentationMode` 派生），派生异常保留生成物默认值且不抛错）；生成物不得手改；native/PTC 双模式由宿主回归实际 mount、schemas/get 与 SDK 文本解析取证（0.2.2 已删 sdkSchemas/modeFor，SDK 取证改走 tools.definitions） | 【已核实·静态+宿主回归；真实消息/中断 HUMAN】 |
 | HS31 | `pe-test/tools/step-05-角色预设宿主回归.mjs` | 两个串行独立 Context 注册原始五 ID；各模式真实 agents.create + preset mount，planner 两模式均以原 ID 与 `isPlannerChild` 核实；每角色/每模式以 `tools.schemas`/`tools.get` 同时核实 `send_message`/`interrupt_agent` 缺席和 Cordis 两工具存在；PTC F 顶层仅 `run_code` 且 `tools:sdk` 无 control 文本；Cordis schemas/get 仍在；保留 roster、三键 tool-subagent、只读/可写、persona、both 回落与禁委派/list_agents；不证明真实父子投递/中断 | 【已核实·集成；真实 provider/模型/GUI/消息/中断 HUMAN】 |
 | HS32 | `ctx.get(sandboxPolicy)` 与 `overrideOf(session)` | 决定同一 child 的 `sandbox/mode` 是否重复 append，并作为 SD12 幂等判定来源 | 【已核实·静态】 |
-| HS33 | `inject:[systemPrompt]` 与 `ctx.systemPrompt.variable(name, provider)` | apply 期注册 gateWords 七变量；宿主严格渲染失败（缺变量或非法 provider）属升级敏感面 | 【已核实·静态】 |
+| HS33 | `inject:[systemPrompt]` 与 `ctx.systemPrompt.variable(name, provider)` | apply 期注册 gateWords 六变量；宿主严格渲染失败（缺变量或非法 provider）属升级敏感面 | 【已核实·静态】 |
 | HS34 | `ctx.get(ptcRuntime).language` | run_code 渲染语言来源；服务或字段缺失时默认 `typescript` | 【已核实·静态】 |
 | HS35 | `@deepseek-ai/schemastery` | Config 元数据 `.default/.volatile/.step/.union/.describe` 语义；不参与宿主 engines/peer 门控 | 【已核实·静态】 |
 | HS36 | `@deepseek-ai/dsh-llm` 具名导出 `createUserMessage`/`createDeveloperMessage` | v4 producer kind 消息构造符号契约；导出符号名变更属升级敏感面 | 【已核实·静态】 |
@@ -98,7 +98,7 @@
 | settings-only | 读取最终完整 11 项 + `gateWords`，settled-only 队列直接交 `profileSync`/QQBot | **no-remount**：adapter register/dispose/rebuild 均不得发生；不调用、不等待、不 dispose 官方 AgentPreset | 【已核实·专项】 |
 | structuralHandoff | 仅非 settings 通用结构指纹变化才进入 adapter/structural 队列；不专门识别历史 ID/owner，结构树仍可包含其它宿主行，不据此声称删除旧行 | 与 settled-only 分离；adapter failure/reject/hang 不得撤销 Web 或阻断 QQBot 同步 | 【已核实·专项】 |
 | profileSync | 初始 `pending=true`，terminal 后 `pending=false`；记录真实 `synced/not-applicable/not-installed/unavailable/failed/partial` | 禁止 `pending/pending=false`、把 QQ 的 `not-applicable` 伪造为 `synced`、双端成功伪造或用 adapter register 充当保存成功条件 | 【已核实·专项】 |
-| 生效分组 | 9 项沿 live-config 热读；`webFetch`/`toolPresentationMode` 为 2 项需重启投影；完整 7 键 `gateWords` 立即持久化 | 当前 apply 词表不原地换词；重启、旧词拒绝、非法词无 fallback 为 HUMAN | 【已核实·专项/HUMAN】 |
+| 生效分组 | 9 项沿 live-config 热读；`webFetch`/`toolPresentationMode` 为 2 项需重启投影；完整 6 键 `gateWords` 立即持久化 | 当前 apply 词表不原地换词；重启、旧词拒绝、非法词无 fallback 为 HUMAN | 【已核实·专项/HUMAN】 |
 
 ## ③ 当前 HK：钩子与文件组合契约
 
@@ -112,7 +112,7 @@
 | HK6 | `agent/request` | next 后再做模型路由屏障与 fallback（回退） | 【已核实·静态】 |
 | HK6a | `model-routing.js` listModels/listProviders | strict（严格）路径候选枚举；legacy（兼容）不枚举 | 【已核实·静态】 |
 | HK6b | `model-routing.js` prepareCall/stream | 真实 OK probe 完整消费、超时/abort 独立 | 【已核实·静态】 |
-| HK7 | `tools/pre-execute` | waterfall（瀑布式处理）；四级闸门与组判定；next 默认 allow | 【已核实·静态】 |
+| HK7 | `tools/pre-execute` | waterfall（瀑布式处理）；三锚点闸门（route/purpose/clarify）与组判定；next 默认 allow | 【已核实·静态】 |
 | HK8 | 七个钩子 `payload.agent` | agentEvents fused 形状 | 【已核实·静态】 |
 | HK9 | tool-jobs 通知 | `source.kind='tool-jobs'` 且 `form='notice'`；旧三元组已废；v0.4.0 起新增 job_list/list_agents 轮询守卫清整表消费方（consumed 标记与 job_output 跟踪命中解耦） | 【已核实·静态】 |
 | HK10 | step-06 事件夹具 | 事件负载必须与真实 subagent/ask/tool 形状一致 | 【已核实·静态】 |
@@ -174,7 +174,7 @@ HK23 当前无定义，不补造编号；HS7-HS11、HS27 与 HK18 均为已退�
 | SD29 | ToolResultBlock | 内容块与 isError 计费排除 |
 | SD30 | ToolSchema | name/description/parameters |
 | SD31 | AssembleContext | context.agent/scope |
-| SD32 | ask 错误码 | channelBroken 白名单 |
+| SD32 | ask 错误码 | 宿主仍返回这些 ask 错误码；插件不再用其做逃生标记，闸门侧由 `extra_plan_gate` 返回 `outcome=channel-error` 承接且不改动闸门状态 |
 | SD33 | profile node_modules/宿主安装锚点 | step-04/step-01 依赖解析；静态入口不等于实机通过 |
 | SD35 | 宿主工具名清单 | deny 必须与宿主真值对拍；deny 名含已退役的 `workflow`/`ralph` 等工具名，当前宿主工具面已无对应工具，保留为防御性 deny，升级核对仍以宿主真实工具名为准。 |
 | SD37 | Session.deriveMessages() | context 去重按 kind 只读取当前 Session 可见 durable message surface；catalog 比较有序 [name,description]，agent-instructions 比较非空 content JSON 形状；缺能力的 mock 不推断已发布 |
@@ -228,7 +228,7 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 ## ⑦ 三版本声明下的风险与开放验证
 
 1. isolate 审计：`mountPreset/leakedServices` 对未隔离 root service 抛错；必要/保险名单必须保持 `isolate: true`。
-2. settings 换代：设置表单仅经 `plugins.detail.section` 渲染于当前插件包详情行列表之后（自绘标题），不注册 `plugins.bundle.config`、`plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`，若本包 bundle.config 槽被任何一方注册条目则 detail.section 让位保持唯一表单；ConfigForms 通过稳定 namespace 订阅快照并一次 mutate 十一项。当前 settings 行是唯一权威载体，当前资产 definition 决定非用户内容、当前 settings 行决定用户值；11 项合法值（含空串/false）保留，缺失/非法普通项只用新默认，gateWords 整个属性缺失可用当前资产默认，显式对象必须七键整组合法，否则严格失败零写；两个历史配置 ID 不读取、不一次性迁移、不回退、不判旧 owner、不承诺旧值，真实旧行不编辑、不删除；settled-only 与 adapter/structural 队列隔离，settings-only adapter register/dispose=0/0；真实相遇效果仍 HUMAN。
+2. settings 换代：设置表单仅经 `plugins.detail.section` 渲染于当前插件包详情行列表之后（自绘标题），不注册 `plugins.bundle.config`、`plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`，若本包 bundle.config 槽被任何一方注册条目则 detail.section 让位保持唯一表单；ConfigForms 通过稳定 namespace 订阅快照并一次 mutate 十一项。当前 settings 行是唯一权威载体，当前资产 definition 决定非用户内容、当前 settings 行决定用户值；11 项合法值（含空串/false）保留，缺失/非法普通项只用新默认，gateWords 整个属性缺失可用当前资产默认，显式对象必须六键整组合法，否则严格失败零写；两个历史配置 ID 不读取、不一次性迁移、不回退、不判旧 owner、不承诺旧值，真实旧行不编辑、不删除；settled-only 与 adapter/structural 队列隔离，settings-only adapter register/dispose=0/0；真实相遇效果仍 HUMAN。
 3. profile patch 载体：旧 `.agent-presets` 无读取方；`compatibility.json`/peer 门控可能使 bundle skipped、loader disabled；QQBot 仍有 allow-build/postinstall 欠账。
 4. 包/服务换代：workflow-ptc/tool-workflow/tool-ralph 三段在作者源里整段删除、当前未挂载；`ptcRuntime` 服务名、tool:cordis 只注册两项只读工具、`bundledSkillDir`（配 `watch:false`；旧 `customSkillDirs` 已删）必须按当前真值核对。MCP `publicToolName` 只允许 `[A-Za-z0-9_-]`（当前前缀形如 `mcp__chrome-devtools-mcp__...`），不支持点或 Unicode；静态扫描器仅同步连字符与注释遮蔽合同。descriptor 属 child、catalog 属 parent；保留 header-first+descriptor，不新增运行时兼容分支。
 5. 三版本声明不等于完整矩阵或实机通过：rc.1 与 rc.2 兼容、rc.3 当前的局部证据只作限定核对；完整矩阵必须在源码/文档/地图冻结后按两根串行执行，并以相符的当次完整报告逐项判定；没有相符报告/结论即 `NOT-RUN` 或 `INCOMPLETE`，局部执行不得替代完整/真实验收。真实宿主/Provider/GUI/QQBot/重启仍 HUMAN 或 `NOT-RUN`；名称/技能差异（旧三名与 rc.2 的 dsh-doc）和 send_message 新旧参数（旧 agent_id 与新 agent/resolveName）按版本分别核对；旧版证据只作历史导航。
@@ -290,20 +290,20 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 - `client.js` 的三组字段常量只允许生成器在成对标记区块内更新；默认仓库路径七个输出一并校验/发布，自定义 source/output 默认关闭仓库 client，显式 client source/output 才启用。
 - 迁移顺序固定为先生成并验证新导出，再切换消费者；生成器先完整 parse/validate/编译，再同目录暂存、备份、顺序发布和逆序有限回滚。`--check` 零写；失败不保留新版本，恢复失败保留首错、阶段和残留诊断。
 - `preset-sync` 的 idle（空闲稳态）仅表示当前 settings 行没有需要补齐的 patch，不表示跳过当前资产装配；当前资产 definition 决定非用户内容，当前 settings 行决定用户值，合法 gateWords 派生到内存 definition；两个历史配置 ID 不读取、不一次性迁移、不回退、不判旧 owner、不承诺旧值，真实旧行不编辑、不删除；新写入只走唯一全局行 `configEditor.edit`，不产生自有迁移台账。
-- gateWords 是 YAML 七键唯一值源；apply 先 `createGateRuntime`，当前 agent scope 注册七个 `systemPrompt.variable`；deny、match、状态机和投影都消费当前词表；旧词不推进。
+- gateWords 是 YAML 六键唯一值源；apply 先 `createGateRuntime`，当前 agent scope 注册六个 `systemPrompt.variable`；deny、match、状态机和投影都消费当前词表；旧词不推进。
 - `system-prompt/assemble` 的模型可见副本必须保留 variables 映射；宿主严格渲染失败、变量缺失或未知变量属于升级敏感面，静态台账不冒充实机通过。
 
 ## ⑪ 生产注入与取证合同
 
 - settled callback 在触发时经 `editorOf(undefined)` 使用 `ctx.get('configEditor')` 解析当前服务；`mountPresetSync` 仍只在 `ctx.inject(['configEditor'])` 的 child 作用域读取 editor，未把 child 捕获到外层。
 - 受控证据合同分四态 host-proxy：`normal-injection` 要求外层直接访问保留 `cannot get property "configEditor" without inject`、ctx.get 成功、初始 settled 先于 adapter；`get-only/no-op-inject` 为 `HUMAN`（`HOST-PROXY-GET-ONLY`），不得以 register=0 销账；`inject-throws` 与 `child-missing-configEditor` 保留显式失败。
-- 单字段触发仍核对完整十一项 values 与完整七键 gateWords，并对 Web patch、每个 QQBot patch 与 terminal 输入做同一快照对拍；旧 no-remount 结果只作历史归档，不能销当前验证状态。
+- 单字段触发仍核对完整十一项 values 与完整六键 gateWords，并对 Web patch、每个 QQBot patch 与 terminal 输入做同一快照对拍；旧 no-remount 结果只作历史归档，不能销当前验证状态。
 - 缺少显式 `DSH_INSTALL_ROOT` 的只读代码样本记 `NOT-RUN`；缺少 `--host-root` 或精确 Host 数据选择时为 `NOT-RUN`/目标 IO 0，不由环境变量补根。真实宿主/provider/profile、生产 QQBot、GUI、消息链与重启仍保持结构化 `HUMAN`；本项目维护只写工作区，不作生产副本部署。
 
 ## ⑫ 唯一 settings 行与可关联保存终态
 
 - canonical 权威行固定为 `id=dsh-extra-plan-settings`、`name=dsh-extra-plan/settings`；`inspectSettingsAuthority` 同时报告 raw/effective/canonicalName 计数、选中 name、documentPath、候选摘要。raw 或 effective 不唯一时 GET/PUT 返回 409 conflict，PUT 在 `editor.edit` 与 synchronizer enqueue 前停止。
-- 每次 API PUT、`settled-initial`、`settled-update` 都生成 `saveRunId`、单调 `syncRevision`、固定 11 项 values + 7 键 gateWords 的 `snapshotHash` 与 trigger；PUT 返回 request/terminal 全等，GET 无参数只显示 `source=last-terminal-cache,cache=true,terminalMatch=false`。
+- 每次 API PUT、`settled-initial`、`settled-update` 都生成 `saveRunId`、单调 `syncRevision`、固定 11 项 values + 6 键 gateWords 的 `snapshotHash` 与 trigger；PUT 返回 request/terminal 全等，GET 无参数只显示 `source=last-terminal-cache,cache=true,terminalMatch=false`。
 - Web 与每个 QQBot 目标分别保留 bytes/mtime/raw SHA、managed snapshot hash、backup 路径/SHA；raw SHA 可不同，但 managed hash 必须和 request snapshotHash 相等。外部 writer 漂移归类 `drift-detected`，不回写旧 backup。
 - `creativeMode` 自动验收只看双端即时 patch/managed hash 和 terminal 关联；运行时重启、真实 profile 清理、QQBot 消息链继续 `HUMAN`。
 

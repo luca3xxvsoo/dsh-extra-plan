@@ -375,7 +375,7 @@ function findSettingsRow(editor) {
 
 
 
-/** 固定十一项 values 与七键 gateWords 的规范快照；changed key 不参与单独哈希。 */
+/** 固定十一项 values 与六键 gateWords 的规范快照；changed key 不参与单独哈希。 */
 export function stableSnapshot(snapshot) {
   if (snapshot === null || typeof snapshot !== 'object' || Array.isArray(snapshot)) throw new Error('invalid-snapshot')
   const sourceValues = snapshot.values !== undefined ? snapshot.values : snapshot

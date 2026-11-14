@@ -605,7 +605,7 @@ if (yamlResolution.module === null) {
   // ⑪ Web documentPath 真源、双锚点与完整快照局部写回
   const syncKeys = ['anchoredBootstrap', 'creativeMode', 'webFetch', 'toolPresentationMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel', 'reviewerUsesPlannerModel']
   const syncValues = { anchoredBootstrap: false, creativeMode: true, webFetch: true, toolPresentationMode: 'ptc', runcodeCatchGate: true, crossProviderPlannerModel: true, plannerModel: 'planner-sync-test', plannerPromptSuffix: 'sync-suffix-test', exploreBudget: 37, otherAgentModel: 'other-sync-test', reviewerUsesPlannerModel: true }
-  const syncGateWords = { routeDirect: '甲', routePlan: '乙', routeDisagree: '丙', approvalApprove: '丁', approvalReplan: '戊', purposeRefine: '己', purposeRedo: '庚' }
+  const syncGateWords = { routeMain: '甲', routeExecutor: '乙', routePlan: '丙', routeDisagree: '丁', purposeRefine: '戊', purposeRedo: '己' }
   const syncSnapshot = { values: syncValues, gateWords: syncGateWords }
   function makeSyncDocument(home) {
     const dir = join(home, 'profiles', 'web')
@@ -649,7 +649,7 @@ if (yamlResolution.module === null) {
   const repeatSync = qqbotSync.writeQqbotSettingsPatch(syncTarget, syncSnapshot, { pathContext: contextOf(syncHome) })
   check('SYNC 同字节重复写返回 idempotent 且备份数不增加', repeatSync.status === 'idempotent' && readFileSync(join(syncTarget, 'cordis.patch.yml'), 'utf8') === firstText && syncBackupCount(syncTarget) === firstBackupCount)
 
-  const directText = '# outside comment\n- id: dsh-extra-plan-settings\n  metadata: keep\n  config:\n    customKey: !!js "globalThis.__unknown = true"\n    plannerModel: old-model\n    exploreBudget: invalid\n    gateWords:\n      routeDirect: 乙\n      routePlan: 乙\n      routeDisagree: 丙\n      approvalApprove: 丁\n      approvalReplan: 戊\n      purposeRefine: 己\n      purposeRedo: 庚\n- insert:\n    - id: nested-user-row\n      config:\n        marker: !!js "globalThis.__nested = true"\n'
+  const directText = '# outside comment\n- id: dsh-extra-plan-settings\n  metadata: keep\n  config:\n    customKey: !!js "globalThis.__unknown = true"\n    plannerModel: old-model\n    exploreBudget: invalid\n    gateWords:\n      routeMain: 乙\n      routeExecutor: 丁\n      routePlan: 乙\n      routeDisagree: 丙\n      purposeRefine: 戊\n      purposeRedo: 己\n- insert:\n    - id: nested-user-row\n      config:\n        marker: !!js "globalThis.__nested = true"\n'
   writeFileSync(join(syncTarget, 'cordis.patch.yml'), directText, 'utf8')
   const directBefore = readFileSync(join(syncTarget, 'cordis.patch.yml'), 'utf8')
   const directSync = qqbotSync.writeQqbotSettingsPatch(syncTarget, syncSnapshot, { pathContext: contextOf(syncHome) })
@@ -667,11 +667,10 @@ if (yamlResolution.module === null) {
     '    plannerModel: old-model',
     '    gateWords:',
     '      # gateWords comment',
-    '      routeDirect: old-direct # direct comment',
+    '      routeMain: old-main # direct comment',
+    '      routeExecutor: old-executor',
     '      routePlan: old-plan',
     '      routeDisagree: old-disagree',
-    '      approvalApprove: old-approve',
-    '      approvalReplan: old-replan',
     '      purposeRefine: old-refine',
     '      purposeRedo: old-redo',
     '# W tail comment',
@@ -683,7 +682,7 @@ if (yamlResolution.module === null) {
   const wFirstStat = statSync(wPath)
   const wFirstBackups = syncBackupCount(wProfile)
   const wProjection = syncProjection(syncConfigOf(wAfter))
-  check('M11 W裸apostrophe不吞# keep、引号#/gateWords注释保留且11+7快照正确', wFirst.status === 'applied' && wAfter.includes('plannerPromptSuffix: ' + String.fromCharCode(34) + 'sync-suffix-test' + String.fromCharCode(34) + ' # keep') && wAfter.includes('customKey: ' + String.fromCharCode(34) + 'quoted # keep' + String.fromCharCode(34)) && wAfter.includes('# gateWords comment') && wAfter.includes('# direct comment') && wAfter.includes('# W root comment') && wAfter.includes('# W tail comment') && wAfter.includes('\r\n') && !wAfter.replace(/\r\n/g, '').includes('\n') && !wAfter.endsWith('\n') && isDeepStrictEqual(wProjection, { ...syncValues, gateWords: syncGateWords }))
+  check('M11 W裸apostrophe不吞# keep、引号#/gateWords注释保留且11+6快照正确', wFirst.status === 'applied' && wAfter.includes('plannerPromptSuffix: ' + String.fromCharCode(34) + 'sync-suffix-test' + String.fromCharCode(34) + ' # keep') && wAfter.includes('customKey: ' + String.fromCharCode(34) + 'quoted # keep' + String.fromCharCode(34)) && wAfter.includes('# gateWords comment') && wAfter.includes('# direct comment') && wAfter.includes('# W root comment') && wAfter.includes('# W tail comment') && wAfter.includes('\r\n') && !wAfter.replace(/\r\n/g, '').includes('\n') && !wAfter.endsWith('\n') && isDeepStrictEqual(wProjection, { ...syncValues, gateWords: syncGateWords }))
   const wRepeat = qqbotSync.writeQqbotSettingsPatch(wProfile, syncSnapshot, { pathContext: contextOf(syncHome) })
   const wAfterRepeat = readFileSync(wPath, 'utf8')
   const wRepeatStat = statSync(wPath)
@@ -747,7 +746,7 @@ if (yamlResolution.module === null) {
   assertNoWrite('SYNC 源快照缺键原文不变且零备份', negativeHome, 'invalid-snapshot-missing', '- id: user\n', invalidSnapshot)
   const invalidType = { values: { ...syncValues, exploreBudget: 0 }, gateWords: { ...syncGateWords } }
   assertNoWrite('SYNC 源快照类型/范围非法原文不变且零备份', negativeHome, 'invalid-snapshot-type', '- id: user\n', invalidType)
-  const invalidGate = { values: { ...syncValues }, gateWords: { ...syncGateWords, routeDirect: syncGateWords.routePlan } }
+  const invalidGate = { values: { ...syncValues }, gateWords: { ...syncGateWords, routeMain: syncGateWords.routePlan } }
   assertNoWrite('SYNC 源 gateWords 非法原文不变且零备份', negativeHome, 'invalid-snapshot-gate', '- id: user\n', invalidGate)
 
   function faultCase(label, hookName) {

@@ -84,7 +84,7 @@ DSH web界面 -> 插件 -> 按需规划模式配置
 ```
 dsh-extra-plan/
 ├── plugins/              
-│   ├── dsh-extra-plan/                                               # 模式核心插件（四级闸门/探查上限/save_plan 等）
+│   ├── dsh-extra-plan/                                               # 模式核心插件（三级闸门/探查上限/save_plan 等）
 │   │   ├── assets/presets/extra-plan/                                 
 │   │   │   ├── agent.cordis.yml                                      # 预设主配置（persona/工具/插件行/delegation）
 │   │   │   ├── preset-definition.generated.yml                       # 纯预设 definition 生成资产
@@ -99,7 +99,8 @@ dsh-extra-plan/
 │   │   │   ├── assembly-presentation.js                              # 展示投影：A/C/M 投影与 skill catalog
 │   │   │   ├── client-carrier.js                                     # 配置组件内部 Client 载体，不形成公开组件
 │   │   │   ├── client.js                                             # 设置页前端 UI
-│   │   │   ├── gate-decisions.js                                     # 闸门纯决策：路由/目的/澄清/批准与只读判定
+│   │   │   ├── extra-plan-gate-tool.js                               # 闸门工具：extra_plan_gate，选项由插件按词表生成
+│   │   │   ├── gate-decisions.js                                     # 闸门纯决策：路由/目的/澄清与只读判定
 │   │   │   ├── gate-words.js                                         # 闸门词契约：字段规格/整组校验/运行时派生
 │   │   │   ├── live-config.js                                        # 热修改支持模块
 │   │   │   ├── log-retention.js                                      # 日志裁剪：除账本外的日志只保留48小时
@@ -136,7 +137,7 @@ dsh-extra-plan/
 │   │   │   └── zh.json                        
 │   │   ├── scripts/generate-runtime-defaults.mjs                     # 构建期生成器：11 项设置默认值 → runtime js、主 definition、4 个角色 definition、client 字段（共 7 个产物）
 │   │   ├── cordis.patch.yml                                                    
-│   │   ├── index.js                                                  # 四级闸门：路由/目的/澄清/批准 + apply 接线
+│   │   ├── index.js                                                  # 三级闸门：路由/目的/澄清 + apply 接线
 │   │   ├── LICENSE                                                 
 │   │   └── package.json              
 │   └── dsh-extra-plan-qqbot/                                

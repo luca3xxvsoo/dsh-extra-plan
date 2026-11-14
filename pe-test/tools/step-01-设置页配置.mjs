@@ -161,7 +161,7 @@ if (TARGET_INSTALL_ROOT === undefined) {
   }
 }
 
-const gateWords = { routeDirect: '甲', routePlan: '乙', routeDisagree: '丙', approvalApprove: '丁', approvalReplan: '戊', purposeRefine: '己', purposeRedo: '庚' }
+const gateWords = { routeMain: '甲', routeExecutor: '丁', routePlan: '乙', routeDisagree: '丙', purposeRefine: '己', purposeRedo: '庚' }
 const initial = { anchoredBootstrap: true, creativeMode: false, webFetch: false, toolPresentationMode: 'native', runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: 'stable-model', plannerPromptSuffix: 'suffix', exploreBudget: 19, otherAgentModel: '', reviewerUsesPlannerModel: false, gateWords }
 function makeEditor(config = initial, documentPath = '', options = {}) {
   const row = { entry: { options: { id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: structuredClone(config) }, fiber: {} }, inherited: {}, override: {} }
@@ -628,7 +628,7 @@ function apiSnapshotBodyOk(response, snapshot) {
   return response?.body?.values !== undefined && isDeepStrictEqual(response.body.values, snapshot.values)
 }
 const syncValues = { anchoredBootstrap: false, creativeMode: true, webFetch: true, toolPresentationMode: 'ptc', runcodeCatchGate: true, crossProviderPlannerModel: true, plannerModel: 'planner-sync-test', plannerPromptSuffix: 'sync-suffix-test', exploreBudget: 37, otherAgentModel: 'other-sync-test', reviewerUsesPlannerModel: true }
-const syncGateWords = { routeDirect: '甲', routePlan: '乙', routeDisagree: '丙', approvalApprove: '丁', approvalReplan: '戊', purposeRefine: '己', purposeRedo: '庚' }
+const syncGateWords = { routeMain: '甲', routeExecutor: '丁', routePlan: '乙', routeDisagree: '丙', purposeRefine: '己', purposeRedo: '庚' }
 const syncSnapshot = { values: syncValues, gateWords: syncGateWords }
 
 // G5 任务11：直接调用QQBot同步修复模块，覆盖新行、既有id-only、冲突零写和fatal汇总。
@@ -653,7 +653,7 @@ function qbotManagedCaptured(text) {
 }
 const qbotEmptyPlan = planQqbotSettingsPatch('[]', syncSnapshot)
 const qbotEmptyCaptured = qbotManagedCaptured(qbotEmptyPlan.text || '')
-check('G5 QQBot空patch新增规范name与完整11+7快照', qbotEmptyPlan.status === 'planned' && qbotEmptyPlan.text.includes('name: dsh-extra-plan/settings') && qbotEmptyCaptured.ok && qbotEmptyCaptured.captured.values.plannerModel === syncValues.plannerModel)
+check('G5 QQBot空patch新增规范name与完整11+6快照', qbotEmptyPlan.status === 'planned' && qbotEmptyPlan.text.includes('name: dsh-extra-plan/settings') && qbotEmptyCaptured.ok && qbotEmptyCaptured.captured.values.plannerModel === syncValues.plannerModel)
 const qbotDirectIdOnly = '# outside comment\r\n' + qbotSettingsRow(qbotConfigValues, { metadata: true, extra: true, eol: '\r\n' }) + '\r\n# trailing comment'
 const qbotDirectPlan = planQqbotSettingsPatch(qbotDirectIdOnly, syncSnapshot)
 const qbotDirectAgain = qbotDirectPlan.text === undefined ? null : planQqbotSettingsPatch(qbotDirectPlan.text, syncSnapshot)
@@ -799,7 +799,7 @@ try {
         legacyCurrentPut.status === 200 && isDeepStrictEqual(legacyCurrentPut.body.values, currentAfterLegacyPut) &&
         legacyCurrentDetails.webMatch === true && legacyCurrentDetails.qqMatch === true && legacyCurrentPut.body.profileSync.status === 'synced' && legacyCurrentPut.body.profileSync.pending === false &&
         legacyCurrentBeforeGet.length > 0 && globalThis.__legacyApiProbe === undefined
-      check('M26 当前完整行旁放旧ID冲突值：GET/PUT/QQ仍取当前11+7且旧!!js不执行', currentOk)
+      check('M26 当前完整行旁放旧ID冲突值：GET/PUT/QQ仍取当前11+6且旧!!js不执行', currentOk)
     } finally {
       await new Promise((resolve) => legacyCurrentRun.server.close(resolve))
       rmSync(legacyCurrentFixture.root, { recursive: true, force: true })
@@ -1068,7 +1068,7 @@ try {
   const driftRun = await start(driftEditor)
   try {
     const first = await requestJson(driftRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
-    const driftText = '- override:\n    id: dsh-extra-plan-settings\n    config:\n      plannerModel: drifted\n      gateWords:\n        routeDirect: 甲\n        routePlan: 乙\n        routeDisagree: 丙\n        approvalApprove: 丁\n        approvalReplan: 戊\n        purposeRefine: 己\n        purposeRedo: 庚\n'
+    const driftText = '- override:\n    id: dsh-extra-plan-settings\n    config:\n      plannerModel: drifted\n      gateWords:\n        routeMain: 甲\n        routeExecutor: 丁\n        routePlan: 乙\n        routeDisagree: 丙\n        purposeRefine: 己\n        purposeRedo: 庚\n'
     writeFileSync(drift.qqPatch, driftText, 'utf8')
     const second = await requestJson(driftRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
     check('SYNC 同值保存仍检查并修复 QQBot 漂移', first.body.profileSync.status === 'synced' && second.body.profileSync.status === 'synced' && syncConfigOf(readFileSync(drift.qqPatch, 'utf8')).plannerModel === syncValues.plannerModel)
@@ -1137,7 +1137,7 @@ async function runHostProxyMatrix() {
   if (normalBoundaryOk) console.log('HOST_PROXY_NORMAL_SETTLED_CTX_GET_OK')
   check('host-proxy normal settled assertion', normalBoundaryOk)
   check('V03 settings owner 生命周期由真实 host-proxy trace 覆盖', normalBoundaryOk && ['loader', 'settings', 'webServer', 'configEditor'].every((name) => normalCase.injectRequests.some((item) => item.deps[0] === name)) && normalTrace.includes('ctx.get:configEditor') && normalTrace.includes('adapter-start'))
-  if (normalOk) console.log('FULL_SNAPSHOT_10_PLUS_7_EACH_TRIGGER_OK')
+  if (normalOk) console.log('FULL_SNAPSHOT_10_PLUS_6_EACH_TRIGGER_OK')
   check('full snapshot each trigger assertion', normalOk)
   if (typeof normalRun.lifecycle.cleanup === 'function') await normalRun.lifecycle.cleanup()
   await new Promise((resolve) => normalRun.server.close(resolve))
@@ -1431,17 +1431,17 @@ check('RESTART_2_DEFINITION_PROJECTIONS_REMAIN_LOAD_TIME', restartOk)
 const oldRuntime = createGateRuntime(syncGateWords)
 const restartGate = Object.fromEntries(GATE_WORD_FIELDS.map((item, index) => [item.field, '重词' + index]))
 const nextRuntime = createGateRuntime(restartGate)
-check('GATEWORDS_FULL_SYNC_RESTART_SEMANTICS', oldRuntime.words.routeDirect === syncGateWords.routeDirect && nextRuntime.words.routeDirect === restartGate.routeDirect && oldRuntime.words.routeDirect !== nextRuntime.words.routeDirect)
+check('GATEWORDS_FULL_SYNC_RESTART_SEMANTICS', oldRuntime.words.routeMain === syncGateWords.routeMain && nextRuntime.words.routeMain === restartGate.routeMain && oldRuntime.words.routeMain !== nextRuntime.words.routeMain)
 console.log('HUMAN  {"scope":"RESTART-AND-GATEWORDS","reason":"真实 Harness/QQBot 重启、旧词拒绝与非法词无 fallback 需部署后复测"}')
 rmSync(liveRoot, { recursive: true, force: true })
 for (const root of adapterFixtureRoots) rmSync(root, { recursive: true, force: true })
 
 const invalidApiGateCases = [
-  ['missing-key', (() => { const value = structuredClone(gateWords); delete value.routeDirect; return value })()],
-  ['duplicate-value', { ...gateWords, routePlan: gateWords.routeDirect }],
-  ['recommended-suffix', { ...gateWords, routeDirect: gateWords.routeDirect + ' (recommended)' }],
-  ['crlf', { ...gateWords, routeDirect: 'direct\r\nline' }],
-  ['js-expression', { ...gateWords, routeDirect: { __jsExpr: 'must-not-run' } }],
+  ['missing-key', (() => { const value = structuredClone(gateWords); delete value.routeMain; return value })()],
+  ['duplicate-value', { ...gateWords, routePlan: gateWords.routeMain }],
+  ['recommended-suffix', { ...gateWords, routeMain: gateWords.routeMain + ' (recommended)' }],
+  ['crlf', { ...gateWords, routeMain: 'direct\r\nline' }],
+  ['js-expression', { ...gateWords, routeMain: { __jsExpr: 'must-not-run' } }],
 ]
 for (const [kind, words] of invalidApiGateCases) {
   const badGateEditor = makeEditor({ ...initial, gateWords: words })

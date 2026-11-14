@@ -14,7 +14,7 @@
 
 ## 设置管理路径
 设置表单仅经 `plugins.detail.section` 渲染于当前 bundle 详情页行列表之后（自绘标题）；本包不注册 `plugins.bundle.config`、`plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`。若 bundle.config 槽出现本包条目，detail.section 让位，避免重复表单。ConfigForms 使用稳定 namespace，一次提交十一项字段与 revision。
-唯一公开管理组件是 `dsh-extra-plan/settings`；其 PUT 只 edit `dsh-extra-plan-settings` 唯一全局行，保留其它字段与合法 gateWords；只认当前规范 `id=dsh-extra-plan-settings`/`name=dsh-extra-plan/settings`，两个历史配置 ID 不读取、不一次性迁移、不回退、不判旧 owner、不承诺旧值，真实旧行不编辑、不删除；当前 11 项合法值（含空串/false）保留，缺失/非法普通项只用新默认，gateWords 整个属性缺失可用当前资产默认，显式对象必须七键整组合法，否则严格失败且零 edit。`./preset-sync` 及其 locale exports 已退役；`lib/preset-sync.js` 仍由 settings owner 内部相对调用。预设本体来自纯 `preset-definition.generated.yml`，由内部同步交给官方 AgentPreset adapter；`toolPresentationMode` 为装载期值，`runcodeCatchGate` 由 live-config 热读。
+唯一公开管理组件是 `dsh-extra-plan/settings`；其 PUT 只 edit `dsh-extra-plan-settings` 唯一全局行，保留其它字段与合法 gateWords；只认当前规范 `id=dsh-extra-plan-settings`/`name=dsh-extra-plan/settings`，两个历史配置 ID 不读取、不一次性迁移、不回退、不判旧 owner、不承诺旧值，真实旧行不编辑、不删除；当前 11 项合法值（含空串/false）保留，缺失/非法普通项只用新默认，gateWords 整个属性缺失可用当前资产默认，显式对象必须六键整组合法，否则严格失败且零 edit。`./preset-sync` 及其 locale exports 已退役；`lib/preset-sync.js` 仍由 settings owner 内部相对调用。预设本体来自纯 `preset-definition.generated.yml`，由内部同步交给官方 AgentPreset adapter；`toolPresentationMode` 为装载期值，`runcodeCatchGate` 由 live-config 热读。
 
 ## 非 `@local` 迁移部署（HUMAN）
 
@@ -55,7 +55,7 @@ node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-07-子代理
 | 2 anchored 引导开关 | 人工对比（无自动工具） | 开=AI 先看再答；关=直接开干；两遍有区别=开关生效 |
 | 4 路由确认与写闸门 | step-04-路由与写闸门 (+ 工具清单查看) | 路由没确认时 AI 不能改文件；reviewer 不能写 |
 | 5 澄清意图 | 人眼看 step-05-会话解码 | 会话里确认问过澄清问题 |
-| 6 线索落盘 | step-06-线索落盘 (+ 真实会话查看) | save_probe 五态闸门、落盘无残留 |
+| 6 线索落盘 | step-06-线索落盘 (+ 真实会话查看) | save_probe 四路线闸门（none/main/executor/plan）与四 outcome（answered/skipped/cancelled/channel-error）、落盘无残留 |
 | 7 规划预算 | 人眼看 step-06-真实会话查看 | 预算耗尽时 AI 被拒绝（日志里有 TOOL-ERROR） |
 | 7A 子代理模型/引导取证 | step-07-子代理模型与引导取证（HUMAN） | A42/A43：实际 provider/model、route 与 provenance 分栏，suffix 精确等级 |
 | 8 方案配对 | 当前配对、失效配对与 alias 反例均由 `step-06-08-v4取证回归.mjs` 的实际 V4 查看器回归覆盖 | 只读实际 V4 查看器输出，不引用已归档旧路径或旧 summary |

@@ -522,10 +522,10 @@ try {
   checkFidelity('S06-5 PTC 直呼非 run_code 工具的回显保真（保真断言：仅验证查看器逐字回显 C10 早退文案，按文档 C10 该文案不计入闸门证据）', s06Ptc.status === 0 && s06PtcToolErrorLines.length === 1 && s06PtcReason === s06PtcUnknownText, JSON.stringify({ lines: s06PtcToolErrorLines.length, reason: s06PtcReason }))
 
 
-  // S06-4：四级 ask 锚点（route→purpose→clarify→approve）各一条 ask 调用与结果；查看器按日志顺序逐行打印
-  // CALL ask_user_question，故用四个锚点在输出行上的下标做严格递增比较（不做宽松 includes）。
+  // S06-4：三类 gate 取值（route→purpose→clarify）的 ask 标签各一条 ask 调用与结果；查看器按日志顺序逐行打印
+  // CALL ask_user_question，故用三个标签在输出行上的下标做严格递增比较（不做宽松 includes）。
   const s06AskOrderDir = join(s06Workspace, 's06-ask-order')
-  const s06AskAnchors = ['route', 'purpose', 'clarify', 'approve']
+  const s06AskAnchors = ['route', 'purpose', 'clarify']
   writeSession(s06AskOrderDir, SESSION_LOG_NAME, [
     session('s06-ask-order'),
     { type: 'agent-preset/selected', data: { agentPreset: 'extra-plan-planner' } },
@@ -537,7 +537,7 @@ try {
   const s06AskOrder = runScript(STEP06, exactSessionArgs(s06AskOrderDir))
   const s06AskOrderLines = s06AskOrder.output.split('\n')
   const s06AskOrderIndexes = s06AskAnchors.map((askAnchor) => s06AskOrderLines.findIndex((line) => line.includes('CALL ask_user_question') && line.includes('s06-ask-anchor-' + askAnchor)))
-  check('S06-4 四级锚点 ask 顺序在查看器输出中保持', s06AskOrder.status === 0 && s06AskOrderIndexes.every((index) => index >= 0) && s06AskOrderIndexes.every((index, position) => position === 0 || index > s06AskOrderIndexes[position - 1]), JSON.stringify(s06AskOrderIndexes))
+  check('S06-4 三类 gate 取值的 ask 回显顺序在查看器输出中保持', s06AskOrder.status === 0 && s06AskOrderIndexes.every((index) => index >= 0) && s06AskOrderIndexes.every((index, position) => position === 0 || index > s06AskOrderIndexes[position - 1]), JSON.stringify(s06AskOrderIndexes))
 
   const pairWorkspace = join(sessionsRoot, 'pair-workspace')
   const pairDir = join(pairWorkspace, 'pair-main-v4')

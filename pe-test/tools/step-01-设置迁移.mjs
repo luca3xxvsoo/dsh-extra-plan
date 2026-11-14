@@ -54,7 +54,7 @@ const frozenDefaults = Object.freeze({ ...DEFAULT_SETTINGS })
 const descriptorKeys = SETTING_DEFINITIONS.map((item) => item.key)
 const expectedKeys = 'anchoredBootstrap|creativeMode|webFetch|toolPresentationMode|runcodeCatchGate|crossProviderPlannerModel|plannerModel|plannerPromptSuffix|exploreBudget|otherAgentModel|reviewerUsesPlannerModel'
 const defaultGlobalAfter = () => ({ ...frozenDefaults, gateWords: structuredClone(gate) })
-const invalidGate = { routeDirect: 'not-valid' }
+const invalidGate = { routeMain: 'not-valid' }
 const complete = {
   anchoredBootstrap: true,
   creativeMode: false,
@@ -123,7 +123,7 @@ function legacyBodyRow(values = legacySentinelValues, words = legacyGate) {
 }
 const legacyPatch = legacyRow() + '\n' + legacyBodyRow() + '\n'
 const duplicateLegacyPatch = legacyRow() + '\n' + legacyRow() + '\n'
-const invalidLegacyPatch = legacyBodyRow(legacySentinelValues, { ...legacyGate, routeDirect: { __jsExpr: 'must-not-run' } }) + '\n'
+const invalidLegacyPatch = legacyBodyRow(legacySentinelValues, { ...legacyGate, routeMain: { __jsExpr: 'must-not-run' } }) + '\n'
 
 function makeEditor(initial = {}) {
   const row = { entry: { options: { id: SETTINGS_ROW_ID, name: 'dsh-extra-plan/settings', config: structuredClone(initial) } }, inherited: {}, override: {} }
@@ -232,7 +232,7 @@ function currentOnlyOptions(settingsValues, counters) {
 
 check('M17 namespace 导入后退役旧导出缺席', presetSyncModule.readLegacyState === undefined && presetSyncModule.declarationBodyMatchesAsset === undefined && typeof presetSyncModule.mountPresetSync === 'function')
 check('V04 descriptor 十一键顺序与稳定 settings locator', SETTING_DEFINITIONS.length === 11 && descriptorKeys.join('|') === expectedKeys && SETTING_DEFINITIONS.every((item) => item.rowLocator.rowId === SETTINGS_ROW_ID))
-check('V04 合法 gateWords 恰七键且输入不可变', (() => { const before = structuredClone(gate); const after = validateGateWords(gate); return Object.keys(after).length === 7 && isDeepStrictEqual(gate, before) })())
+check('V04 合法 gateWords 恰六键且输入不可变', (() => { const before = structuredClone(gate); const after = validateGateWords(gate); return Object.keys(after).length === 6 && isDeepStrictEqual(gate, before) })())
 const definition = assetDefinition()
 check('M21 主资产可解析且保留17条插件行', Array.isArray(definition.plugins) && definition.plugins.length === 17)
 check('M21 全部角色definition可解析且保留17条插件行', (() => { try { const roles = roleDefinitionsWithPresentation(definition); return roles.length === 4 && roles.every((item) => Array.isArray(item.plugins) && item.plugins.length > 0) } catch { return false } })())
@@ -266,11 +266,11 @@ const legalRepair = restateSettingsConfig(legalRepairInput, {}, { gateWords: gat
 check('M21 合法显式整组修复允许且不改输入', isDeepStrictEqual(legalRepair.gateWords, gate) && isDeepStrictEqual(legalRepairInput, legalRepairBefore))
 
 for (const [kind, words] of [
-  ['missing-key', (() => { const value = structuredClone(gate); delete value.routeDirect; return value })()],
-  ['duplicate-value', { ...gate, routePlan: gate.routeDirect }],
-  ['recommended-suffix', { ...gate, routeDirect: gate.routeDirect + ' (recommended)' }],
-  ['crlf', { ...gate, routeDirect: 'direct\r\nline' }],
-  ['js-expression', { ...gate, routeDirect: { __jsExpr: 'must-not-run' } }],
+  ['missing-key', (() => { const value = structuredClone(gate); delete value.routeMain; return value })()],
+  ['duplicate-value', { ...gate, routePlan: gate.routeMain }],
+  ['recommended-suffix', { ...gate, routeMain: gate.routeMain + ' (recommended)' }],
+  ['crlf', { ...gate, routeMain: 'direct\r\nline' }],
+  ['js-expression', { ...gate, routeMain: { __jsExpr: 'must-not-run' } }],
 ]) {
   const invalidCurrent = { ...complete, gateWords: words }
   const resolveBefore = structuredClone(invalidCurrent)
@@ -321,7 +321,7 @@ const fullOldRun = await runSync(complete)
 check('M22 完整当前值即使存在旧哨兵也idle零edit', fullOldRun.result.action === 'idle' && fullOldRun.editor.state.edits.length === 0 && Object.values(fullOldRun.counters).every((value) => value === 0))
 const projectionRun = await syncPreset({ settingsValues: { webFetch: false, toolPresentationMode: 'ptc', gateWords: structuredClone(gate) } })
 const projection = projectionOf(projectionRun.plan?.definition)
-check('M21 当前主definition投影保留webFetch/ptc/七词', projectionRun.action === 'written' && projection.webFetch === false && projection.native === false && projection.ptc === true && isDeepStrictEqual(projection.gateWords, gate))
+check('M21 当前主definition投影保留webFetch/ptc/六词', projectionRun.action === 'written' && projection.webFetch === false && projection.native === false && projection.ptc === true && isDeepStrictEqual(projection.gateWords, gate))
 check('M21 当前角色definition投影与主definition一致', (() => { try { return roleDefinitionsWithPresentation(projectionRun.plan.definition).every((item) => { const p = projectionOf(item); return p.webFetch === false && p.native === false && p.ptc === true && isDeepStrictEqual(p.gateWords, gate) }) } catch { return false } })())
 
 for (const [caseName, settingsValues, patch, expectedEditCount, expected] of [
@@ -341,7 +341,7 @@ for (const [caseName, settingsValues, patch, expectedEditCount, expected] of [
     const exact = isDeepStrictEqual(actual, expected)
     const oldUntouched = isDeepStrictEqual(run.legacyBefore, run.legacyAfter)
     output.structured('K03', { case: caseName, mode: legacyVisible ? 'visible' : 'withdrawn', expectedGlobalAfter: expected, actualGlobalAfter: actual, editCount: run.editor.state.edits.length, expectedEditCount, editedIds, oldUntouched, retiredTouches: run.counters }, { case: caseName, mode: legacyVisible ? 'visible' : 'withdrawn', editCount: run.editor.state.edits.length, expectedEditCount, editedIds, oldUntouched, deepEqual: exact }, { failure: !exact })
-    check('M22 ' + caseName + ' ' + (legacyVisible ? 'visible' : 'withdrawn') + ' 全局11+7独立期望deep-equal', exact)
+    check('M22 ' + caseName + ' ' + (legacyVisible ? 'visible' : 'withdrawn') + ' 全局11+6独立期望deep-equal', exact)
     check('M22 ' + caseName + ' ' + (legacyVisible ? 'visible' : 'withdrawn') + ' edit次数/目标仅当前settings行', run.editor.state.edits.length === expectedEditCount && editedIds.every((id) => id === SETTINGS_ROW_ID) && run.applyCount === expectedEditCount)
     check('M22 ' + caseName + ' ' + (legacyVisible ? 'visible' : 'withdrawn') + ' 旧行原始store前后deep-equal且fixture树准确', oldUntouched && configTreeOk && run.editor.state.rejectedEdits.length === 0 && Object.values(run.counters).every((value) => value === 0))
   }

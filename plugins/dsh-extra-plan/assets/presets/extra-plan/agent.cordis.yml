@@ -6,7 +6,9 @@
 # 提供服务的行必须放在带 isolate realm 的 group 内（root realm 是进程级，跨预设
 # 冲突且 dsh-agent-preset-registry 会拒绝挂载（'Preset services require isolate realms: ...'））。
 #
-# 闸门由 @local/dsh-extra-plan 以四级机械锚点实现（路由/目的/澄清/批准）
+# 状态机以三机械锚点实现：只有 route、purpose、clarified 三个状态字段。
+# 闸门只有一道 route 闸门、可多次出现；选定执行者路线即表达执行意图，不设其它闸门。
+# 闸门入口是专用工具 extra_plan_gate（gate 取 route / purpose / clarify），选项由插件按 gateWords 生成。
 # 规划子代理只读 + 探查硬上限 + save_plan 落盘，力度完全继承主会话。
 #
 # 防坑（R2 教训，历史）：toolFilter deny 只列本预设实际注册的工具名——本预设没有 fork 行、
@@ -28,59 +30,70 @@
       你是一个「按需规划模式」下的主会话。使用简体中文思考和回复
 
       入口判定：
-        - 已给出现成方案（方案文档、任务清单或 save_plan 工件，含文件、动作、期望）→ 「E3 执行链」
-        - 其余情况（新需求、疑问、只读咨询）→ 「E1 探查链」
+        - 已给出现成方案（方案文档、任务清单或 save_plan 工件，含文件、动作、期望）→ 「闸门」 第 1 步
+        - 其余情况（新需求、疑问、只读咨询）→ 「探查链」
         - 已在某条链中途的消息，按该链当前位置继续处理，不重新分流
         - 拿不准就用 ask_user_question 问一句
 
-      E1 探查链：
+      探查链：
         1. 收到需求后，理解用户需求。并从涉及对象数、涉及代码行数、信息完整度评估需求复杂度
         2. 需求复杂度评估完成后，用 ask_user_question 发起一次二选一。选项固定为「主会话探查」「探查者探查」。把你的推荐排第一
         3. 探查派发：确认探查地形，评估哪些方向互不依赖；≥ 2 个独立方向优先用 subagent_probe 并行多派探查者。prompt 说明「只读探查、save_probe 落盘证据报告、回主会话只给路径 + 2-3 行摘要」
         4. 探查结束后按需分两个出口：
            · 只需只读答复：直接给出结论，不落方案、不进路由
-           · 涉及工作区改动：汇总探查结果，展示初版方案，转 「E2 规划链」 第 1 步
-          
-      E2 规划链：
-        1. 用 ask_user_question 发起一次三选一。选项固定为「{{extra_plan_route_direct}}」「{{extra_plan_route_plan}}」「{{extra_plan_route_disagree}}」，附第二个问题「补充要求」可留空。把你的推荐排第一
-        2. 选「{{extra_plan_route_direct}}」：用 save_plan 落盘操作方案。落盘完成后根据方案执行 + 完工验收自查
-        3. 选「{{extra_plan_route_disagree}}」：说明用户对任务方向有一定调整。与用户探讨后再决定后续步骤
-        4. 选「{{extra_plan_route_plan}}」：
-           · 先用 ask_user_question 发起一次二选一： 选项固定为「{{extra_plan_purpose_refine}}」「{{extra_plan_purpose_redo}}」。用来判断用户{{extra_plan_route_plan}}的目的
-           · 再用 ask_user_question 发起一次澄清： 1-3 个关键问题（给候选选项）
-           · 澄清完成后，用 save_probe 落盘探查线索（落盘前自查：path 必须真实存在、range 格式 12 或 L12-34、evidence.line 单个行号（不含区间）、每项 evidence 须 line/value/text 至少其一，超出工具描述上限先压缩或分批落盘）
-           · 拿到线索路径后，用 subagent_plan 委派规划子代理。prompt 带上用户需求、线索文件路径，说明「先 read 再补查」、[方案修改范围仅工作区]、「用户希望{{extra_plan_purpose_refine}}/{{extra_plan_purpose_redo}}」
-           · 等待规划子代理返回：
-             - 「阻塞疑问」：原样展示疑问 → 用户答复后 send_message 转发
-             - 「申请继续探查」：用 ask_user_question 发起一次二选一，选项固定为「继续探查」「取消任务」；选「继续探查」用 subagent_probe 委派探查者，探查完毕后把线索转交规划子代理；选「取消任务」不做任何动作，等待用户下一步指示
-             - 「方案+验收文档」：转 「E3 执行链」 第 1 步
-      
-      E3 执行链：
+           · 涉及工作区改动：汇总探查结果，展示初版方案，转 「闸门」 第 1 步
+
+      闸门：
+        1. 先判断「当前是否已有方案工件」：
+           · 有：本会话已用 save_plan 落盘过方案，或用户直接提供了方案文档与验收清单
+           · 无：以上都不成立
+        2. 调用 extra_plan_gate 并传入 gate = route。向用户确认下一步流程规划
+        3. 按第 1 步的判定结果与用户选择分流：
+           · 选「{{extra_plan_route_main}}」：
+               - 有方案：主会话根据方案执行 + 完工验收自查
+               - 无方案：主会话用 save_plan 落盘操作方案。落盘完成后根据方案执行 + 完工验收自查
+           · 选「{{extra_plan_route_executor}}」：
+               - 有方案：转 「派遣流程」 第 1 步
+               - 无方案：主会话用 save_plan 落盘操作方案。落盘完成后转 「派遣流程」 第 1 步
+           · 选「{{extra_plan_route_plan}}」：
+               - 有方案，且该方案由本会话派遣过的规划子代理产出（它曾回传方案文档路径）：把用户意见用 send_message 转发给该规划子代理
+               - 有方案但不是规划子代理产出（即主会话落盘的、或用户现成给的）：转 「规划流程」 第 1 步
+               - 无方案：转 「规划流程」 第 1 步
+           · 选「{{extra_plan_route_disagree}}」：说明用户对任务方向有一定调整。与用户探讨后再决定后续步骤
+
+      规划流程：
+        1. 用 extra_plan_gate 并传入 gate = purpose 询问目的。用来判断用户让规划者分析的目的
+        2. 用 extra_plan_gate 并传入 gate = clarify 做澄清：questions 里给 1-3 个关键问题（给候选选项）
+        3. 澄清完成后，用 save_probe 落盘探查线索（落盘前自查：path 必须真实存在、range 格式 12 或 L12-34、evidence.line 单个行号（不含区间）、每项 evidence 须 line/value/text 至少其一，超出工具描述上限先压缩或分批落盘）
+        4. 拿到线索路径后，用 subagent_plan 委派规划子代理。prompt 带上用户需求、线索文件路径，说明「先 read 再补查」、[方案修改范围仅工作区]、「用户希望{{extra_plan_purpose_refine}}/{{extra_plan_purpose_redo}}」
+        5. 等待规划子代理返回：
+           - 「阻塞疑问」：原样展示疑问 → 用户答复后 send_message 转发
+           - 「申请继续探查」：用 ask_user_question 发起一次二选一，选项固定为「继续探查」「取消任务」；选「继续探查」用 subagent_probe 委派探查者，探查完毕后把线索转交规划子代理；选「取消任务」不做任何动作，等待用户下一步指示
+           - 「方案+验收文档」：记下该规划子代理的名字及其返回的方案与验收文档路径，转 「闸门」 第 1 步（此时已属有方案）
+
+      派遣流程：
         1. 读取方案与验收两个文档，总结修改内容并以表格形式：修改文件路径、修改内容、是否有验收方案
         2. 确认方案中是否存在与用户需求意图不一致的地方；存在疑似不一致时反馈用户
-        3. 用 ask_user_question 发起一次三选一。选项固定为「{{extra_plan_approval_approve}}」「{{extra_plan_approval_replan}}」「{{extra_plan_route_disagree}}」，附第二个问题「修改意见」可留空。把你的推荐排第一
-        4. 选「{{extra_plan_route_disagree}}」：说明用户对任务方向有一定调整。与用户探讨后再决定后续步骤
-        5. 选「{{extra_plan_approval_replan}}」：如修改意见有实际内容，send_message 转发给规划子代理；无实际内容时，向用户确认修改意见；本会话没有可续轮的规划子代理时，回到 「E2 规划链」 第 1 步重新路由
-        6. 选「{{extra_plan_approval_approve}}」：
-           · 基于最近一次 read 结果，返回的实际行号确定各任务块和检查块的完整范围
-           · 按执行组和依赖关系分层；存在依赖或文件交集时串行，否则同层任务可以并行
-           · 工件交接统一使用：
-             - 文件：<工作区相对路径，含文件名>
-             - 范围：<任务或检查ID：L起始行-结束行>
-           · 文件路径与行号范围分开书写。范围必须来自主会话最近一次 read 返回的实际行号；不得只提供任务或检查 ID。单个范围跨度不超过 120 行，超出时按修改点 M 拆成多个范围。必要范围缺失时，子代理应报告阻塞或 INCOMPLETE，不得读取整份工件自行补齐
-           · 派遣执行者时，prompt 必须提供：
-             1. 执行组、任务 ID、允许修改的文件和依赖交付
-             2. 方案文件及对应任务范围
-             3. 验收文件及对应任务、引用检查范围
-             4. 明确“只承担该执行组，只修改所列文件，不得触碰其他组文件”
-           · 每个执行者返回后：用 subagent_review 派遣验收者；验收者 prompt 必须提供：执行组、任务 ID、检查 ID 和待验文件；验收文件及对应任务、引用检查范围；执行者产出、原始证据位置和当前冻结状态
-           · 不向验收者提供方案文件；验收者只按验收文件指定范围进行独立复核
-           · 验收不通过时，主会话先验证问题；问题属实则用 send_message 把问题+证据原文+修改方案返回执行者修复（最多两轮），修复后重新派该组验收者复验；两轮仍不通过则记录该组失败
-           · 验收通过时：记录相关任务组成功
-           · 所有任务组完成后，核对 git status、跨组越界写和禁改面，并汇总各组结论
-        7. 用户给出的方案文档缺验收口径或缺任务范围时：回到 「E2 规划链」 第 1 步重新路由
+        3. 基于最近一次 read 结果，返回的实际行号确定各任务块和检查块的完整范围
+        4. 按执行组和依赖关系分层；存在依赖或文件交集时串行，否则同层任务可以并行
+        5. 工件交接统一使用：
+           - 文件：<工作区相对路径，含文件名>
+           - 范围：<任务或检查ID：L起始行-结束行>
+        6. 文件路径与行号范围分开书写。范围必须来自主会话最近一次 read 返回的实际行号；不得只提供任务或检查 ID。单个范围跨度不超过 120 行，超出时按修改点 M 拆成多个范围。必要范围缺失时，子代理应报告阻塞或 INCOMPLETE，不得读取整份工件自行补齐
+        7. 派遣执行者时，prompt 必须提供：
+           1) 执行组、任务 ID、允许修改的文件和依赖交付
+           2) 方案文件及对应任务范围
+           3) 验收文件及对应任务、引用检查范围
+           4) 明确“只承担该执行组，只修改所列文件，不得触碰其他组文件”
+        8. 每个执行者返回后：用 subagent_review 派遣验收者；验收者 prompt 必须提供：执行组、任务 ID、检查 ID 和待验文件；验收文件及对应任务、引用检查范围；执行者产出、原始证据位置和当前冻结状态
+        9. 不向验收者提供方案文件；验收者只按验收文件指定范围进行独立复核
+        10. 验收不通过时，主会话先验证问题；问题属实则用 send_message 把问题+证据原文+修改方案返回执行者修复（最多两轮），修复后重新派该组验收者复验；两轮仍不通过则记录该组失败
+        11. 验收通过时：记录相关任务组成功
+        12. 所有任务组完成后，核对 git status、跨组越界写和禁改面，并汇总各组结论
+        13. 用户给出的方案文档缺验收口径或缺任务范围时：回到 「闸门」 第 1 步重新路由
       
       注意事项：
+        - 用户每次新消息，均会重置闸门状态
         - 子代理相关：派遣子代理后，除非用户主动要求，否则不得使用 send_message、job_kill 干预子代理进度
         - dsh 官方预设禁令：必须复制现有预设为副本、再在副本上改动；如需自定义官方 cordis 预设 → 复制为副本后在副本上改动。禁止编辑或删除官方安装的预设与官方文件
 
@@ -137,7 +150,7 @@
 
 # ── extra-plan 核心插件 ──
 
-#  以四级机械锚点实现（路由/目的/澄清/批准，状态机 + 选项验词）、主会话与规划子代理 anchored
+#  以 route / purpose / clarified 三机械锚点实现状态机、主会话与规划子代理 anchored
 # 引导、规划子代理探查硬上限与只读备份防线、save_plan 注册（主会话层与规划子代理层；
 # 执行者与验收者不可见）、
 # 力度继承（子代理 reasoningEffort = 父会话配置）、按角色固定宿主模式（探查/规划read-only，执行/验收workspace-write）、usage 账本。
@@ -166,22 +179,21 @@
           run_code 调用 read 示例：
           const r = await tools.read({ file_path: 'README.md' })
           return r
-        # 闸门关键词：唯一人工编辑位置（7 个字段集中于此；改后普通重启即生效，
+        # 闸门关键词：唯一人工编辑位置（6 个字段集中于此；改后普通重启即生效，
         # 旧词不再推进状态机）。persona 正文只引用 {{extra_plan_*}} 变量，不维护第二份词值。
         # 校验（JS 侧只有 schema 没有默认值）：缺失/非法整组拒绝——插件 apply 同步抛错、
-        # 阻止该预设被使用；非法具体条件=非对象/数组、键集合不等于 7 键、非字符串、空串、
-        # 首尾空白、含 CR/LF、7 值重复、以 (Recommended)/（Recommended）/(推荐)/（推荐）结尾。
+        # 阻止该预设被使用；非法具体条件=非对象/数组、键集合不等于 6 键、非字符串、空串、
+        # 首尾空白、含 CR/LF、6 值重复、以 (Recommended)/（Recommended）/(推荐)/（推荐）结尾。
         # 版本升级（dist hash 变化）时整组合法旧值原子迁移；同 hash 普通重启保留现场文件。
-        # 字段 ↔ prompt variable：routeDirect=extra_plan_route_direct、
-        # routePlan=extra_plan_route_plan、routeDisagree=extra_plan_route_disagree、
-        # approvalApprove=extra_plan_approval_approve、approvalReplan=extra_plan_approval_replan、
-        # purposeRefine=extra_plan_purpose_refine、purposeRedo=extra_plan_purpose_redo。
+        # 字段 ↔ prompt variable：routeMain=extra_plan_route_main、
+        # routeExecutor=extra_plan_route_executor、routePlan=extra_plan_route_plan、
+        # routeDisagree=extra_plan_route_disagree、purposeRefine=extra_plan_purpose_refine、
+        # purposeRedo=extra_plan_purpose_redo。
         gateWords:
-          routeDirect: '直接执行'
-          routePlan: '进行pro规划'
+          routeMain: '主会话执行'
+          routeExecutor: '执行者执行'
+          routePlan: '规划者分析'
           routeDisagree: '不同意'
-          approvalApprove: '同意执行'
-          approvalReplan: '转交pro规划'
           purposeRefine: '完善方案'
           purposeRedo: '重新规划'
         # planner 模型名：仅 planner 使用；置空=继承主会话模型；非空且主会话 provider 目录明确不含该模型时
@@ -250,7 +262,7 @@
     - id: tool-subagent-control
       name: '@deepseek-ai/dsh-tool-subagent-control'
 
-    # 执行者（非 planner child）：优先使用 otherAgentModel，空/未匹配/真实探针失败回退主会话；批准后经 subagent 委派。
+    # 执行者（非 planner child）：优先使用 otherAgentModel，空/未匹配/真实探针失败回退主会话；选定执行者路线后经 subagent 委派。
     # 0.2.2 起宿主只认 provider/toolName/modelSelection/modelDiscovery/agentOptions/agentPreset/
     # allowedAgentPresets/maxDepth（modelSelectionSettings 已删，persona 与 toolFilter 仍会抛错，backgroundMode 无此键），
     # 故本行只留 provider/toolName 并由 agentPreset 指向角色预设；人设、deny 与只读面在角色预设里。
@@ -410,6 +422,7 @@
             - 方案：写明目标、步骤、文件、命令、风险与回滚，并保留精确位置和数值，任务块的修改位置跨度不超过 120 行，超出拆成多个 M 点。自行核实标【已探查核实】；引用探查者证据标【探查者已核实】并写「证据：<路径>」
             - 验收：清单每条以「[任务N]」开头，写明文件、精确期望和禁止项
             - 产出的 方案、验收 不得引用其他 方案、验收 内容
+            - 如因方案内容过多导致字数超限额，允许落盘多个独立方案
           5. 成功后在最终回复中返回两个文件路径、涉及文件数和任务数（2-3行）
           使用简体中文思考和回复
   tools:

@@ -1144,13 +1144,12 @@ function userSettingsConfig() {
     exploreBudget: 37,
     otherAgentModel: 'user-other',
     gateWords: {
-      routeDirect: 'user-a',
-      routePlan: 'user-b',
-      routeDisagree: 'user-c',
-      approvalApprove: 'user-d',
-      approvalReplan: 'user-e',
-      purposeRefine: 'user-f',
-      purposeRedo: 'user-g',
+      routeMain: 'user-a',
+      routeExecutor: 'user-b',
+      routePlan: 'user-c',
+      routeDisagree: 'user-d',
+      purposeRefine: 'user-e',
+      purposeRedo: 'user-f',
     },
   }
 }

@@ -174,9 +174,11 @@ export function parseStaticLiteral(input) {
   }
 }
 
-export function createRunCodeStatic({ askTool, isDispatchStart }) {
+export function createRunCodeStatic({ askTool, gateTool, isDispatchStart }) {
   // run_code 拆解、组判定与聚合共用单一纯函数实现；直呼与组成员路径不复制规则，
   // 闭包依赖显式传入，分支顺序与 listener 合同保持一致。
+  // 闸门工具 gateTool 与 askTool 同受返回链闸门（askOrGateReturnGateReason）约束：
+  // 两者在 run_code 内都只能直接 return await，或变量接收后紧随顶层 return 返回该结果。
   
   // 拆解 run_code 的 code 文本为工具组（静态预审用）。返回 { members, dynamic }：
   // members = 去重后的组员数组（按出现顺序；裸写伪成员固定排末尾）；
@@ -304,13 +306,15 @@ export function createRunCodeStatic({ askTool, isDispatchStart }) {
     return 'run_code 内 ' + total + ' 个工具调用未全部独立容错：请给每个调用点各写一个独立 try/catch——一次只包 1 个调用、块后紧跟 catch。已保护 ' + protectedCount + ' 个。写法示例：try { await tools.read({ file_path: "x" }) } catch (e) {}'
   }
   
-  // ask_user_question 返回链闸门（第一版）：只在主会话 run_code 预执行前做保守静态证明。
-  // 允许直接 return await，或单一标识符接收后紧随顶层 return 且按标识符边界实际引用；其余无法证明结果返回用户层的形态拒绝。
-  function askUserQuestionReturnGateReason(code) {
+  // ask_user_question / extra_plan_gate 返回链闸门（第一版）：只在主会话 run_code 预执行前做保守静态证明。
+  // 两个闸门工具同受本闸门约束：允许直接 return await，或单一标识符接收后紧随顶层 return 且按标识符边界实际引用；其余无法证明结果返回用户层的形态拒绝。
+  function askOrGateReturnGateReason(code) {
     const text = typeof code === 'string' ? code : ''
     if (text === '') return null
     const masked = maskCodeLiteralsAndComments(text)
-    const reason = 'run_code 内 ask_user_question 结果未正确返回用户层：请直接 return await tools.ask_user_question(...)，或先用变量接收后在紧随的顶层 return 中返回该结果；不得只调用、只赋值、通过别名/动态访问，或用 .then/函数包装结果'
+    // 拒绝文案按实际命中的工具名填入：同一闸门同时覆盖 ask_user_question 与 extra_plan_gate。
+    const reasonFor = (name) => 'run_code 内 ' + name + ' 的结果未正确返回用户层：请直接 return await tools.' + name + '(...)，或先用变量接收后在紧随的顶层 return 中返回该结果；不得只调用、只赋值、通过别名或动态访问，或用 .then 与函数包装结果'
+    let reason = reasonFor(askTool)
     const isIdChar = (ch) => ch !== undefined && /[A-Za-z0-9_$]/.test(ch)
     const skipWs = (value, start) => {
       let i = start
@@ -318,7 +322,7 @@ export function createRunCodeStatic({ askTool, isDispatchStart }) {
       return i
     }
     const sites = collectRunCodeSites(text, masked)
-    const askSites = sites.filter((site) => site.name === askTool)
+    const askSites = sites.filter((site) => typeof site.name === 'string' && (site.name === askTool || site.name === gateTool))
     const askStarts = new Set(askSites.map((site) => site.start))
     let invalidReference = sites.some((site) => site.name === undefined)
   
@@ -332,8 +336,11 @@ export function createRunCodeStatic({ askTool, isDispatchStart }) {
         if (masked[k] === '.') {
           k = skipWs(masked, k + 1)
           const m = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(masked.slice(k))
-          if (m !== null && m[0] === askTool && !isIdChar(masked[k + m[0].length])) {
-            if (!askStarts.has(idx)) invalidReference = true
+          if (m !== null && (m[0] === askTool || m[0] === gateTool) && !isIdChar(masked[k + m[0].length])) {
+            if (!askStarts.has(idx)) {
+              invalidReference = true
+              reason = reasonFor(m[0])
+            }
           }
         } else if (masked[k] === '[') {
           const close = masked.indexOf(']', k + 1)
@@ -348,7 +355,10 @@ export function createRunCodeStatic({ askTool, isDispatchStart }) {
             }
             const literal = text.slice(q + 1, endQuote)
             const afterQuote = skipWs(text, endQuote + 1)
-            if (close === -1 || afterQuote !== close || literal === askTool || literal.includes('\\')) invalidReference = true
+            if (close === -1 || afterQuote !== close || literal === askTool || literal === gateTool || literal.includes('\\')) {
+              invalidReference = true
+              if (literal === askTool || literal === gateTool) reason = reasonFor(literal)
+            }
           } else {
             invalidReference = true
           }
@@ -357,25 +367,31 @@ export function createRunCodeStatic({ askTool, isDispatchStart }) {
       scan = idx + 5
     }
   
-    // bare ask 或非 tools 对象的属性调用同样属于别名/未知访问，不能放行。
-    scan = 0
-    while (scan < masked.length) {
-      const idx = masked.indexOf(askTool, scan)
-      if (idx === -1) break
-      if ((idx === 0 || !isIdChar(masked[idx - 1])) && !isIdChar(masked[idx + askTool.length])) {
-        let p = idx - 1
-        while (p >= 0 && /\s/.test(masked[p])) p -= 1
-        let direct = false
-        if (masked[p] === '.') {
-          p -= 1
+    // bare ask/gate 或非 tools 对象的属性调用同样属于别名/未知访问，不能放行。
+    for (const gatedName of [askTool, gateTool]) {
+      if (typeof gatedName !== 'string' || gatedName === '') continue
+      scan = 0
+      while (scan < masked.length) {
+        const idx = masked.indexOf(gatedName, scan)
+        if (idx === -1) break
+        if ((idx === 0 || !isIdChar(masked[idx - 1])) && !isIdChar(masked[idx + gatedName.length])) {
+          let p = idx - 1
           while (p >= 0 && /\s/.test(masked[p])) p -= 1
-          const end = p
-          while (p >= 0 && isIdChar(masked[p])) p -= 1
-          direct = masked.slice(p + 1, end + 1) === 'tools'
+          let direct = false
+          if (masked[p] === '.') {
+            p -= 1
+            while (p >= 0 && /\s/.test(masked[p])) p -= 1
+            const end = p
+            while (p >= 0 && isIdChar(masked[p])) p -= 1
+            direct = masked.slice(p + 1, end + 1) === 'tools'
+          }
+          if (!direct) {
+            invalidReference = true
+            reason = reasonFor(gatedName)
+          }
         }
-        if (!direct) invalidReference = true
+        scan = idx + gatedName.length
       }
-      scan = idx + askTool.length
     }
     if (invalidReference) return reason
     if (askSites.length === 0) return null
@@ -468,10 +484,15 @@ export function createRunCodeStatic({ askTool, isDispatchStart }) {
       return { pos: k, semicolon, gap: text.slice(site.end + 1, k) }
     }
   
+    // 站点形态只认 tools 点号调用，且工具名必须恰为两个闸门工具之一：分组选择式正则 + 两侧词边界，
+    // 避免前缀相同的名字（如 extra_plan_gate 与 extra_plan_gate_x）被误配；名字先转义再拼进选择式。
+    const escapeRegExpText = (value) => String(value).replace(/[^A-Za-z0-9_$]/g, '\\$&')
+    const gatedNames = [askTool, gateTool].filter((name) => typeof name === 'string' && name !== '')
+    const gatedCallHeadPattern = new RegExp('^tools\\s*\\.\\s*\\b(?:' + gatedNames.map(escapeRegExpText).join('|') + ')\\b\\s*[(]')
     for (const site of askSites) {
       const callHead = masked.slice(site.start, site.end + 1)
-      if (!isTopLevel(site.start) || !/^tools\s*\.\s*ask_user_question\s*\(/.test(callHead)) return reason
-      if (callHead.includes('=>') || /\bfunction\b/.test(callHead)) return reason
+      if (!isTopLevel(site.start) || !gatedCallHeadPattern.test(callHead)) return reasonFor(site.name)
+      if (callHead.includes('=>') || /\bfunction\b/.test(callHead)) return reasonFor(site.name)
       let accepted = false
       for (const start of candidateStarts(site.start)) {
         const prefix = masked.slice(start, site.start).trim()
@@ -498,7 +519,7 @@ export function createRunCodeStatic({ askTool, isDispatchStart }) {
         if (/\bconsole\s*\./.test(expression) || /\.\s*then\b/.test(expression) || expression.includes('=>') || /\bfunction\b/.test(expression)) continue
         accepted = true
       }
-      if (!accepted) return reason
+      if (!accepted) return reasonFor(site.name)
     }
     return null
   }
@@ -562,7 +583,7 @@ export function createRunCodeStatic({ askTool, isDispatchStart }) {
     decomposeRunCode,
     runCodeCatchGateReason,
     collectRunCodeSites,
-    askUserQuestionReturnGateReason,
+    askOrGateReturnGateReason,
     runCodeSiteCount,
     isRunCodeSubCall,
     runCodeDispatchCapText,

@@ -1,6 +1,8 @@
-// save_probe 注册、五态闸门、planner 预算、持久化与故障注入回归：
-// 注册保持 save_probe/save_plan 的角色可见性；闸门覆盖 none/plan/direct/cancel/channelBroken
-// 五种结果；DEFAULT_EXPLORE_BUDGET 个成功配对耗尽预算且 save_plan 不豁免。持久化覆盖
+// save_probe 注册、路线闸门、planner 预算、持久化与故障注入回归：
+// 注册保持 save_probe/save_plan 的角色可见性；闸门覆盖 none/main/executor/plan 四种路线与
+// answered/skipped/cancelled/channel-error 四种结果（统一由 extra_plan_gate 驱动）：cancelled 清空闸门
+// 状态（route 回 none、purpose 归零、clarified 复位），skipped 与 channel-error 不改动既有状态；
+// DEFAULT_EXPLORE_BUDGET 个成功配对耗尽预算且 save_plan 不豁免。持久化覆盖
 // 单次双写/单写、失败阶段与有限清理及各 fs 依赖注入；不扫描/恢复 journal；fs 故障注入不做全局 monkeypatch；O1 只在 try/finally 临界区固定并恢复 Date。
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync, renameSync, unlinkSync, lstatSync, rmdirSync, realpathSync, symlinkSync } from 'node:fs'
@@ -114,14 +116,19 @@ const um = () => ({ type: 'user/message', data: { source: { kind: 'user' } } })
 const umk = (kind) => ({ type: 'user/message', data: { source: { kind } } })
 const call = (name, cid, argumentsStr = '{}') => ({ type: 'tool/call', data: { name, callId: cid, arguments: argumentsStr } })
 const ok = (cid, text) => ({ type: 'tool/result', data: { message: { toolCallId: cid, isError: false, content: [{ type: 'text', text }] } } })
-const err = (cid, code) => ({ type: 'tool/result', data: { error: { name: 'Error', ...(code === undefined ? {} : { code }) }, message: { toolCallId: cid, isError: true, content: [] } } })
 // 闸门词一律从 gateRuntime.words 派生（单一来源，不复制作者文本）
 const W = gateRuntime.words
-const routeArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: W.routeDirect }, { label: W.routePlan }, { label: W.routeDisagree }] }] })
-const clarifyArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: '方案A' }, { label: '方案B' }] }] })
-const purposeArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: W.purposeRefine }, { label: W.purposeRedo }] }] })
-const approvalArgs = JSON.stringify({ questions: [{ id: 'q1', options: [{ label: W.approvalApprove }, { label: W.approvalReplan }, { label: W.routeDisagree }] }] })
-const answer = (labels) => JSON.stringify({ answers: labels.map((l) => ({ id: 'q1', selected: [l] })) })
+// 闸门驱动：调用参数只携带 gate 分支，结果文本是插件返回的整体 JSON（形状同 lib/extra-plan-gate-tool.js）。
+const GATE_TOOL = 'extra_plan_gate'
+const gateCall = (gate, cid) => call(GATE_TOOL, cid, JSON.stringify({ gate }))
+const gateOk = (cid, value) => ok(cid, JSON.stringify(value))
+const gateRoute = (cid, route, routeLabel) => [gateCall('route', cid), gateOk(cid, { gate: 'route', route, routeLabel, purpose: null, note: '', noteLabel: '其他说明', outcome: 'answered' })]
+const gateRouteSkipped = (cid) => [gateCall('route', cid), gateOk(cid, { gate: 'route', route: 'none', routeLabel: '', purpose: null, note: '', noteLabel: '其他说明', outcome: 'skipped' })]
+const gateRouteChannelError = (cid) => [gateCall('route', cid), gateOk(cid, { gate: 'route', route: null, routeLabel: null, purpose: null, note: '', noteLabel: '其他说明', outcome: 'channel-error', error: { code: 'NO_PROVIDER' } })]
+const gatePurpose = (cid, purpose, purposeLabel) => [gateCall('purpose', cid), gateOk(cid, { gate: 'purpose', purpose, purposeLabel, outcome: 'answered' })]
+const gateClarify = (cid) => [gateCall('clarify', cid), gateOk(cid, { gate: 'clarify', answers: [{ id: 'q1', selected: ['方案A'] }], outcome: 'answered' })]
+const gateClarifyCancelled = (cid) => [gateCall('clarify', cid), gateOk(cid, { gate: 'clarify', answers: [], outcome: 'cancelled' })]
+const gateClarifyChannelError = (cid) => [gateCall('clarify', cid), gateOk(cid, { gate: 'clarify', answers: [], outcome: 'channel-error', error: { code: 'NO_PROVIDER' } })]
 
 // ── mock ctx harness（ctx.get 按 name==='tools' 返回注册表） ─────────────
 function makeSession(header, initialEvents = []) {
@@ -453,16 +460,20 @@ function visibleNames(assembly) {
   check('S10 本步目录不含新注册工具（第一步快照）', visibleNames(firstAssembly), ['read'])
   check('S10 注册只在下一步生效：第二步快照含 save_plan（两个工具各注册一次）', [visibleNames(secondAssembly), planAttempts10, probeAttempts10], [['read', 'save_plan'], 1, 1])
 }
-// ── ② pre-execute save_probe 五态闸门（[任务4.2]，主会话） ───────────────
-const FIVE = [
+// ── ② pre-execute save_probe 闸门矩阵（[任务4.2]，主会话；extra_plan_gate 驱动） ──
+// 取消与通道故障的事件流只差最后一对事件：cancelled 清空状态（→ deny），channel-error 保留状态（→ allow）。
+const planReadyEvents = [um(), ...gateRoute('a1', 'plan', W.routePlan), ...gatePurpose('a2', 'refine', W.purposeRefine), ...gateClarify('a3')]
+const cancelAfterReadyEvents = planReadyEvents.concat(gateClarifyCancelled('a4'))
+const channelErrorAfterReadyEvents = planReadyEvents.concat(gateClarifyChannelError('a4'))
+const GATE_MATRIX = [
   ['S6g route=none → deny', [um()], 'deny'],
-  ['S7g route=plan 未澄清 → deny', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer([W.routePlan]))], 'deny'],
-  ['S8g 取消后五字段清理:route=none·目的归零·未澄清 → deny', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer([W.routePlan])), call('ask_user_question', 'a2', purposeArgs), ok('a2', answer([W.purposeRefine])), call('ask_user_question', 'a3', clarifyArgs), ok('a3', answer(['方案A'])), call('ask_user_question', 'a4', clarifyArgs), err('a4', 'ASK_CANCELLED')], 'deny'],
-  ['S8bg route=plan 已澄清且目的已定 → allow', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer([W.routePlan])), call('ask_user_question', 'a2', purposeArgs), ok('a2', answer([W.purposeRefine])), call('ask_user_question', 'a3', clarifyArgs), ok('a3', answer(['方案A']))], 'allow'],
-  ['S9g route=direct → deny', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer([W.routeDirect]))], 'deny'],
-  ['S10g channelBroken → allow（逃生）', [um(), call('ask_user_question', 'a1', routeArgs), err('a1', 'NO_PROVIDER')], 'allow'],
+  ['S7g route=plan 未澄清 → deny', [um(), ...gateRoute('a1', 'plan', W.routePlan)], 'deny'],
+  ['S8g 取消后状态清空:route=none·目的归零·未澄清 → deny', cancelAfterReadyEvents, 'deny'],
+  ['S8bg route=plan 已澄清且目的已定 → allow', planReadyEvents, 'allow'],
+  ['S8hg channel-error 不改动既有状态 → allow（与取消清空区分）', channelErrorAfterReadyEvents, 'allow'],
+  ['S9g route=main → deny（save_probe 仅规划态放行）', [um(), ...gateRoute('a1', 'main', W.routeMain)], 'deny'],
 ]
-for (const [name, events, expected] of FIVE) {
+for (const [name, events, expected] of GATE_MATRIX) {
   const agent = { session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => events }, options: {}, ctx: agentCtx }
   const r = preExecute(harness, agent, 'save_probe', {})
   if (expected === 'deny') {
@@ -471,24 +482,26 @@ for (const [name, events, expected] of FIVE) {
     checkTrue(`${name}`, r !== null && r !== undefined && r.kind === 'allow')
   }
 }
-const cancelledState = deriveFlowState(FIVE[2][1], gateRuntime)
-check('S8g ASK_CANCELLED 后状态五字段全清', cancelledState, { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false })
+const cancelledState = deriveFlowState(cancelAfterReadyEvents, gateRuntime)
+check('S8g 取消后状态清空：route 回 none·purpose 归零·clarified 复位', cancelledState, { route: 'none', clarified: false, purpose: 'none' })
+const channelErrorState = deriveFlowState(channelErrorAfterReadyEvents, gateRuntime)
+check('S8hg channel-error 不改动既有状态：route/purpose/clarified 保持', channelErrorState, { route: 'plan', clarified: true, purpose: 'refine' })
 
 // S8cg：独立事件流（route→clarify、目的未定）的 save_probe 拒绝文案（第四锚点教学式文案，机械层放行前置）
-const s8Agent = { session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer([W.routePlan])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A']))] }, options: {}, ctx: agentCtx }
+const s8Agent = { session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => [um(), ...gateRoute('a1', 'plan', W.routePlan), ...gateClarify('a2')] }, options: {}, ctx: agentCtx }
 const s8r = preExecute(harness, s8Agent, 'save_probe', {})
-checkTrue('S8cg 目的未定 save_probe 拒绝文案含「规划目的尚未确认」与「须先 ask_user_question 询问用户本次 pro 规划的目的」', s8r !== null && s8r !== undefined && s8r.kind === 'deny' && String(s8r.reason).includes('规划目的尚未确认') && String(s8r.reason).includes('须先 ask_user_question 询问用户本次 pro 规划的目的'))
+checkTrue('S8cg 目的未定 save_probe 拒绝文案含「规划目的尚未确认」与「须先调用 extra_plan_gate 并传入 gate 为 purpose」', s8r !== null && s8r !== undefined && s8r.kind === 'deny' && String(s8r.reason).includes('规划目的尚未确认') && String(s8r.reason).includes('extra_plan_gate 并传入 gate 为 purpose'))
 
 let r
-// 完整阶段后重选 route=plan 必须清掉旧目的/澄清/批准；按 route→purpose→clarify 才恢复下游放行。
-const completePlanEvents = [um(), call('ask_user_question', 'r1', routeArgs), ok('r1', answer([W.routePlan])), call('ask_user_question', 'r2', purposeArgs), ok('r2', answer([W.purposeRefine])), call('ask_user_question', 'r3', clarifyArgs), ok('r3', answer(['方案A'])), call('ask_user_question', 'r4', approvalArgs), ok('r4', answer([W.approvalApprove]))]
-const reselectPlanEvents = completePlanEvents.concat([call('ask_user_question', 'r5', routeArgs), ok('r5', answer([W.routePlan]))])
+// 完整阶段（route=plan→目的→澄清→executor 路线）后重选 route=plan 必须清掉旧目的/澄清；按 route→purpose→clarify 才恢复下游放行。
+const completePlanEvents = [um(), ...gateRoute('r1', 'plan', W.routePlan), ...gatePurpose('r2', 'refine', W.purposeRefine), ...gateClarify('r3'), ...gateRoute('r4', 'executor', W.routeExecutor)]
+const reselectPlanEvents = completePlanEvents.concat(gateRoute('r5', 'plan', W.routePlan))
 const reselectPlanAgent = { session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => reselectPlanEvents }, options: {}, ctx: agentCtx }
 r = preExecute(harness, reselectPlanAgent, 'save_probe', {})
 checkTrue('S8dg 完整阶段后重选 plan 的 save_probe → deny 且含「规划目的尚未确认」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划目的尚未确认'))
 r = preExecute(harness, reselectPlanAgent, 'subagent_plan', {})
 checkTrue('S8eg 完整阶段后重选 plan 的 subagent_plan → deny 且含「规划目的尚未确认」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划目的尚未确认'))
-const reselectPlanReadyEvents = reselectPlanEvents.concat([call('ask_user_question', 'r6', purposeArgs), ok('r6', answer([W.purposeRedo])), call('ask_user_question', 'r7', clarifyArgs), ok('r7', answer(['方案B']))])
+const reselectPlanReadyEvents = reselectPlanEvents.concat(gatePurpose('r6', 'redo', W.purposeRedo), gateClarify('r7'))
 const reselectPlanReadyAgent = { session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => reselectPlanReadyEvents }, options: {}, ctx: agentCtx }
 r = preExecute(harness, reselectPlanReadyAgent, 'save_probe', {})
 checkTrue('S8fg 重选 plan 后目的→澄清完成的 save_probe → allow', r !== null && r !== undefined && r.kind === 'allow')
@@ -496,15 +509,18 @@ r = preExecute(harness, reselectPlanReadyAgent, 'subagent_plan', {})
 checkTrue('S8gg 重选 plan 后目的→澄清完成的 subagent_plan → allow', r !== null && r !== undefined && r.kind === 'allow')
 
 // ── ②b pre-execute save_plan 路由矩阵（D8-B，主会话：任意路由态放行） ───────
-// 与上表同五态：direct / none / plan 未澄清（目的未定）/ approved / 非通道取消后五字段清理 → 全部 allow
+// 与上表同矩阵：main / none / plan 未澄清（目的未定）/ executor / route 闸门 skipped / 通道故障 → 全部 allow
 // （save_plan 已移除路由态限制，由 mainGateReason 兜底 return null 放行；内容闸门见 ④ 执行层冒烟，与规划子代理同一实现）。
+// 口径：cancelled 清空状态（S8g 已断言），skipped 与 channel-error 不改动既有状态（S33/S34 与 S8hg 断言）。
 const ROUTE_GATE_ARGS = { plan: '路由闸门样例方案', checklist: '路由闸门样例验收' }
 const SAVE_PLAN_STATES = [
-  ['S28 主会话 route=direct → save_plan allow', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer([W.routeDirect]))], 'allow'],
+  ['S28 主会话 route=main → save_plan allow', [um(), ...gateRoute('a1', 'main', W.routeMain)], 'allow'],
   ['S29 主会话 route=none → save_plan allow（受限工件）', [um()], 'allow'],
-  ['S30 主会话 route=plan 未澄清 → save_plan allow（路由态不再拦截）', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer([W.routePlan]))], 'allow'],
-  ['S31 主会话 route=plan 未澄清（目的未定）→ save_plan allow（路由态不再拦截）', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer([W.routePlan])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A']))], 'allow'],
-  ['S32 主会话 route=approved → save_plan allow（路由态不再拦截）', [um(), call('ask_user_question', 'a1', routeArgs), ok('a1', answer([W.routePlan])), call('ask_user_question', 'a2', clarifyArgs), ok('a2', answer(['方案A'])), call('ask_user_question', 'a3', approvalArgs), ok('a3', answer([W.approvalApprove]))], 'allow'],
+  ['S30 主会话 route=plan 未澄清 → save_plan allow（路由态不再拦截）', [um(), ...gateRoute('a1', 'plan', W.routePlan)], 'allow'],
+  ['S31 主会话 route=plan 未澄清（目的未定）→ save_plan allow（路由态不再拦截）', [um(), ...gateRoute('a1', 'plan', W.routePlan), ...gateClarify('a2')], 'allow'],
+  ['S32 主会话 route=executor → save_plan allow（路由态不再拦截）', [um(), ...gateRoute('a1', 'executor', W.routeExecutor)], 'allow'],
+  ['S33 主会话 route 闸门 skipped（未作答）→ save_plan allow（route 仍 none）', [um(), ...gateRouteSkipped('a1')], 'allow'],
+  ['S34 主会话 route 闸门通道故障 → save_plan allow（channel-error 不改动状态，与 cancelled 清空区分）', [um(), ...gateRouteChannelError('a1')], 'allow'],
 ]
 for (const [name, events, expected] of SAVE_PLAN_STATES) {
   const agent = { session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => events }, options: {}, ctx: agentCtx }

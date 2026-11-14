@@ -1,4 +1,4 @@
-// dsh-extra-plan 入口：route/purpose/clarify/approve 四级闸门、子角色、A/C/M 投影、
+// dsh-extra-plan 入口：route/purpose/clarified 三锚点、extra_plan_gate 闸门入口、子角色、A/C/M 投影、
 // save 工件、探查预算、模型路由、按 session 隔离的 usage 与宿主事件契约。
 // 当前本地契约紧邻决策实现；架构与历史见 pe-test/docs/ai-概览.md、ai-机制设计.md、
 // ai-宿主耦合台账.md 及历史归档。
@@ -16,13 +16,12 @@ const BOOTSTRAP_READ_HINT_FALLBACK = [
   'return r',
 ].join('\n')
 
-// 路由/目的/批准 ask 的关键词唯一真源是 YAML（config.gateWords，见 agent.cordis.yml）：
+// 路由/目的 ask 的关键词唯一真源是 YAML（config.gateWords，见 agent.cordis.yml）：
 // JS 侧只有字段规格、派生与严格校验（lib/gate-words.js），没有内置词值、没有默认词表。
 // 每次 apply 现场 createGateRuntime(cfg.gateWords) 建立本 agent scope 的词表，并作为
 // 显式参数贯穿全部 helper、状态机与闸门（helper 不得自建默认词表、不得改走模块全局）。
 // 供场景测试直接复用（消除"复制品"漂移）。模块顶层无副作用，纯 Node 可 import。
 export const decisions = {
-  CHANNEL_BROKEN_CODES,
   FREE_TOOLS,
   PWSH_MUTATION,
   BASH_MUTATION,
@@ -44,20 +43,8 @@ export const decisions = {
   catalogIsCollapsed,
   schemasHasWriteTools,
   schemasHasTool,
-  labelsOfCallData,
-  askKindOf,
-  askKindOfRelaxed,
-  isExactGateSet,
-  isPartialGateSet,
-  categorizeGateAsk,
-  gateAskDenyReason,
-  validateGateAskStructure,
-  matchRouteLabel,
-  matchApprovalLabel,
-  matchPurposeLabel,
-  parseAskResultData,
-  parseDispatchAskResult,
   deriveFlowState,
+  applyGateOutcome,
   toolCallCount,
   toolCallsSinceUser,
   withPlannerPromptSuffix,
@@ -71,7 +58,7 @@ export const decisions = {
   budgetExceeded,
   routeDenyReason,
   planDenyReason,
-  approvalDenyReason,
+  executorDenyReason,
   sanitizeTaskName,
   timestamp,
   renderSavePlan,
@@ -85,7 +72,7 @@ export const decisions = {
   decomposeRunCode,
   runCodeCatchGateReason,
   collectRunCodeSites,
-  askUserQuestionReturnGateReason,
+  askOrGateReturnGateReason,
   runCodeSiteCount,
   isRunCodeSubCall,
   runCodeDispatchGateReason,
@@ -128,6 +115,7 @@ import { PROBE_LIMITS, sanitizeTaskName, timestamp, renderSavePlan, renderSavePr
 import { validateProbe } from './lib/save-probe-validation.js'
 import { atomicCommit } from './lib/save-persistence.js'
 import { createSaveToolFactories } from './lib/save-tool-factories.js'
+import { createGateToolFactories } from './lib/extra-plan-gate-tool.js'
 import { RUNCODE_MUTATION_HINTS, codeMutationHints } from './lib/run-code-static.js'
 import { PWSH_MUTATION, BASH_MUTATION, PWSH_BARE_WORDS, BASH_BARE_WORDS, pwshCommandOf, bashCommandOf, pwshMutationMatches, bashMutationMatches } from './lib/shell-mutation.js'
 import { DEFAULT_SETTINGS } from './lib/preset-defaults.generated.js'
@@ -136,7 +124,7 @@ import { causeChainOf } from './lib/runtime-static.js'
 import { createAgentRuntime, isLiveDelegation } from './lib/agent-runtime.js'
 import { sessionEvents, isSubagentChild, observeSessionLeaseOf } from './lib/agent-session.js'
 import { createModelRouting, isExplicitRoute, isExplicitEffort, resolveAgentRouteSources, decidePlannerModelUse, PLANNER_PROBE_TIMEOUT_MS, PLANNER_BLOCKED_REASON, NON_PLANNER_BLOCKED_REASON, sortPlannerCandidates } from './lib/model-routing.js'
-import { CHANNEL_BROKEN_CODES, FREE_TOOLS, routeDenyReason, planDenyReason, approvalDenyReason, isBootstrapPhase, labelsOfCallData, askKindOf, askKindOfRelaxed, isExactGateSet, isPartialGateSet, categorizeGateAsk, gateAskDenyReason, validateGateAskStructure, matchRouteLabel, matchApprovalLabel, matchPurposeLabel, parseAskResultData, parseDispatchAskResult, deriveFlowState, filterBootstrapContextDecision, dedupeProjectedContextDecision, catalogHasWriteTools, isReadOnlyChildByCatalog, schemasHasWriteTools, schemasHasTool, catalogIsCollapsed, subagentProbeGateReason, shellMutationReason, childControlGateReason, plannerGateReason, childReadonlyGateReason, jobOutputGateReason, recordJobOutputCall, pollGuardGateReason, recordPollGuardCall, probeDisposalWarning, mainGateReason, runCodeGroupDenyReason, aggregateRunCodeDenyReason, decomposeRunCode, runCodeCatchGateReason, collectRunCodeSites, askUserQuestionReturnGateReason, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, runCodeDispatchCapText } from './lib/gate-decisions.js'
+import { FREE_TOOLS, routeDenyReason, planDenyReason, executorDenyReason, applyGateOutcome, isBootstrapPhase, deriveFlowState, filterBootstrapContextDecision, dedupeProjectedContextDecision, catalogHasWriteTools, isReadOnlyChildByCatalog, schemasHasWriteTools, schemasHasTool, catalogIsCollapsed, subagentProbeGateReason, shellMutationReason, childControlGateReason, plannerGateReason, childReadonlyGateReason, jobOutputGateReason, recordJobOutputCall, pollGuardGateReason, recordPollGuardCall, probeDisposalWarning, mainGateReason, runCodeGroupDenyReason, aggregateRunCodeDenyReason, decomposeRunCode, runCodeCatchGateReason, collectRunCodeSites, askOrGateReturnGateReason, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, runCodeDispatchCapText } from './lib/gate-decisions.js'
 import { CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilteredToolsSdk, resolveToolsSdkRenderer, sdkSchemasForRendering, toolSdkSchemasOf, projectSkillCatalogDecision, PTC_SECTION_NAME, READ_SECTION_NAME, SDK_SECTION_NAME, sectionOf, hasSection, hasNonEmptySection } from './lib/assembly-presentation.js'
 import { createSdkTextCache } from './lib/sdk-text-cache.js'
 import { createRuntimeLifecycle } from './lib/runtime-lifecycle.js'
@@ -531,7 +519,7 @@ export function apply(ctx, config) {
   // 闸门词表（唯一值源 = 本次 apply 的 YAML config.gateWords）：缺失/非法同步抛出，
   // 阻止该预设被使用（不回退到任何内置旧词）。必须在任何工具/监听器/服务副作用之前求值。
   const gateRuntime = createGateRuntime(cfg.gateWords)
-  // prompt variable 注册（当前 agent scope，恰好 7 个）：persona 的 {{extra_plan_*}} 依赖它。
+  // prompt variable 注册（当前 agent scope，恰好 6 个）：persona 的 {{extra_plan_*}} 依赖它。
   // provider 返回本次 apply 捕获的值（改 YAML 后普通重启即生效）；effect 随 scope 释放，
   // 不注册全局变量、不跨 apply 缓存。
   ctx.effect(() => {
@@ -685,6 +673,76 @@ export function apply(ctx, config) {
   ctx.on('agent/inbox/claimed', (payload) => {
     consumeToolJobsNotice(payload?.agent, payload?.message)
   })
+  // ── 闸门工具 extra_plan_gate 的接线（1b）──────────────────────────────
+  // 选项文案由预设词表生成（gateRuntime.words），模型不再手写 ask_user_question 的选项；
+  // 提问通道落在宿主 userQuestions 服务上（与官方 ask_user_question 同一入口），
+  // 服务侧 assertLiveRoot 对子代理回 DELEGATED_CALLER，与本文件 pre-execute 硬拒同口径。
+  function userQuestionsServiceOf(agent) {
+    try {
+      const scoped = agent !== undefined && agent !== null ? agent.ctx : undefined
+      if (scoped !== undefined && scoped !== null && typeof scoped.get === 'function') {
+        const service = scoped.get('userQuestions')
+        if (service !== undefined && service !== null && typeof service.ask === 'function') return service
+      }
+    } catch (error) {
+      // 落到 apply 级 ctx 兜底
+    }
+    try {
+      const fallback = typeof ctx.get === 'function' ? ctx.get('userQuestions') : undefined
+      if (fallback !== undefined && fallback !== null && typeof fallback.ask === 'function') return fallback
+    } catch (error) {
+      return undefined
+    }
+    return undefined
+  }
+  // 闸门提问通道：id 缺失时由本层补齐稳定 id（1a 的提问模板只给 header/question/options，
+  // 宿主答案按 id 回填）；不传 wait＝不绑定某个 tool call 卡片的无限等待，工具结果照常回填。
+  async function askGateUser(request) {
+    const source = request !== null && typeof request === 'object' && !Array.isArray(request) ? request : {}
+    const agent = source.agent
+    const service = userQuestionsServiceOf(agent)
+    if (service === undefined) {
+      const missing = new Error('extra-plan: userQuestions 服务不可用，extra_plan_gate 无法向用户提问')
+      missing.code = 'NO_PROVIDER'
+      throw missing
+    }
+    const questions = Array.isArray(source.questions) ? source.questions : []
+    const normalized = questions.map((question, index) => {
+      const item = question !== null && typeof question === 'object' && !Array.isArray(question) ? question : {}
+      const id = typeof item.id === 'string' && item.id !== '' ? item.id : 'extra_plan_gate_' + index
+      return { ...item, id }
+    })
+    const askRequest = { questions: normalized }
+    if (agent !== undefined && agent !== null) askRequest.agent = agent
+    if (source.signal !== undefined) askRequest.signal = source.signal
+    return await service.ask(askRequest)
+  }
+  // 闸门工具前置状态读取：每次 execute 现场取该 agent 会话的最新事件快照求三字段状态（route/purpose/clarified），供 purpose 分支在弹卡前做路线校验。
+  const gateToolFactories = createGateToolFactories({ gateRuntime, ask: askGateUser, getState: (agent) => deriveFlowState(sessionEvents(agent !== undefined && agent !== null ? agent.session : undefined), gateRuntime) })
+  const gateToolRegistered = new WeakSet()
+  // 与 registerSavePlan/registerSaveProbe 同构的 per-apply 注册：幂等、服务缺失只 warn、
+  // 绝不向 agent/created 抛出。省略 when＝闸门工具不做相位屏蔽（save 工具引导期隐藏，
+  // 闸门工具必须随时可调）；子代理不可见由调用点的 !isSubagentChild 条件保证。
+  function registerGateTool(agent) {
+    if (gateToolRegistered.has(agent)) return
+    const tools = toolsServiceOf(agent)
+    if (tools === undefined || tools === null || typeof tools.register !== 'function') {
+      console.warn('extra-plan: tools service unavailable — extra_plan_gate not registered')
+      return
+    }
+    try {
+      tools.register(gateToolFactories.defineGateTool(agent))
+      gateToolRegistered.add(agent)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (error instanceof Error && message.includes('already registered')) {
+        gateToolRegistered.add(agent)
+        console.warn('extra-plan: extra_plan_gate already registered in this scope — keeping the existing tool, no retry')
+        return
+      }
+      console.error('extra-plan: extra_plan_gate registration failed: ' + message)
+    }
+  }
   // 1) 会话启动：子代理基线（账本 + 角色固定宿主模式）；规划子代理与主会话注册 save_plan
   //    （主会话侧任意路由态放行：受限规划工件，判定在 mainGateReason 兜底）；主会话与探查子代理
   //    注册 save_probe（scoped；recompose 不重发 session-start，pre-step 兜底）。
@@ -836,6 +894,7 @@ export function apply(ctx, config) {
   // 引导期 allow = 配置集 ∩ 可收窄名（view.restrictableNames 优先、schemas 兜底）；
   // 两者都不可用或交集为空时返回空数组，调用方不 arm 并落诊断（不回落配置集：
   // 配置集默认含 win32 上并不存在的 bash，restrict 对未知名整次抛错）。
+  // 交集非空时再对闸门工具 extra_plan_gate 做核心能力补齐（见函数尾注释）。
   function anchoredAllowNamesOf(agent) {
     let names = null
     const tools = toolsServiceOf(agent)
@@ -863,6 +922,12 @@ export function apply(ctx, config) {
       if (!names.has(name)) continue
       if (!allow.includes(name)) allow.push(name)
     }
+    // 闸门工具是插件核心能力：首个 tool/call 之前就得能发闸门，不能在 F 段被收窄隐藏。
+    // 故在「配置集 ∩ 可收窄名」之外无条件补齐它（名字沿用 pre-execute 硬拒处的同一字面量，
+    // 不新造第二个名字）。只在 allow 非空时补齐：allow 为空仍原样返回空数组，caller 的
+    // skip-empty-allow 判据（不 arm、工具面整面可见）逐字不变——追加只改 allow 内容，
+    // 叠加在既有的「该不该 arm」判定之后，不参与该判定。
+    if (allow.length > 0 && names.has('extra_plan_gate') && !allow.includes('extra_plan_gate')) allow.push('extra_plan_gate')
     return allow
   }
   // 通用 arm：restrict 的唯一调用点，filter 名单校验、幂等与诊断集中于此。
@@ -1004,6 +1069,7 @@ export function apply(ctx, config) {
       childBaseline(agent)
       if (isPlannerChild(agent) || !isSubagentChild(agent)) registerSavePlan(agent)
       if (!isSubagentChild(agent) || probeClaimFor(agent)) { registerSaveProbe(agent) }
+      if (!isSubagentChild(agent)) registerGateTool(agent)
     } catch (error) {
       console.warn('extra-plan: agent/created 初始化失败（不阻断会话创建）：' + (error instanceof Error ? error.message : String(error)))
     }
@@ -1086,6 +1152,7 @@ export function apply(ctx, config) {
         // 会漏注册；registerTool 的 WeakSet 保证不重复注册）。
         if (isPlannerChild(agent) || !isSubagentChild(agent)) registerSavePlan(agent)
         if (!isSubagentChild(agent) || probeClaimFor(agent)) { registerSaveProbe(agent) }
+        if (!isSubagentChild(agent)) registerGateTool(agent)
         // 引导期收窄兜底：recompose 不重发 agent/created 的会话（Web 首启）在这里补 arm。
         armAnchoredToolRestriction(agent, 'pre-step')
         armCordisPresentationRestriction(agent, 'pre-step')
@@ -1428,7 +1495,7 @@ export function apply(ctx, config) {
   })
 
   // 单实例子调用上限与 PTC 拒绝记录由 runtime-lifecycle.js 持有。
-  // 5) 硬闸门（tools/pre-execute）：规划子代理只读 + 探查硬上限；主会话四级锚点。
+  // 5) 硬闸门（tools/pre-execute）：规划子代理只读 + 探查硬上限；主会话三锚点（route、purpose、clarified）。
   ctx.on('tools/pre-execute', (exec, next) => {
     if (exec.agent === undefined) return next()
     const agent = exec.agent
@@ -1477,6 +1544,14 @@ export function apply(ctx, config) {
     }
     // 控制工具硬闸必须使用原始子代理判定：不依赖 live parent，覆盖 unknown、断链与恢复 child。
     const subagentChild = isSubagentChild(agent, execEvents)
+    // 1b 硬拒：闸门与用户提问只属于主会话。用原始 subagentChild 判定（含 unknown/断链 child），
+    // 且置于全部角色闸门之前——否则 planner 会先被 plannerGateReason 以别的文案拒绝，
+    // 执行者与断链 child 也会走进各自分支；这里统一给同一句主会话归属说明。
+    if (subagentChild && (exec.name === 'ask_user_question' || exec.name === 'extra_plan_gate')) {
+      const gateUserDenyReason = '子代理不得调用「' + exec.name + '」：闸门与用户提问只属于主会话，如需澄清请把问题写进最终回复由主会话转达'
+      recordRunCodeDeny(agent, exec, gateUserDenyReason)
+      return { kind: 'deny', reason: gateUserDenyReason }
+    }
     const child = childBaseline(agent, execEvents)
     const planner = isPlannerChild(agent, execEvents)
     const controlReason = subagentChild ? childControlGateReason(exec) : null

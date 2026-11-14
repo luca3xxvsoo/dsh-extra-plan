@@ -5,18 +5,17 @@
 // 推荐后缀仅按文档白名单归一，匹配仍使用当前词的精确值。
 const RECOMMENDED_SUFFIX = /\s*(?:\((?:recommended|推荐)\)|（(?:recommended|推荐)）)\s*$/i
 
-/** 7 个闸门词字段与对应 prompt variable 名（仅元数据，不含任何词值）。 */
+/** 6 个闸门词字段与对应 prompt variable 名（仅元数据，不含任何词值）。 */
 export const GATE_WORD_FIELDS = Object.freeze([
-  Object.freeze({ field: 'routeDirect', variable: 'extra_plan_route_direct' }),
+  Object.freeze({ field: 'routeMain', variable: 'extra_plan_route_main' }),
+  Object.freeze({ field: 'routeExecutor', variable: 'extra_plan_route_executor' }),
   Object.freeze({ field: 'routePlan', variable: 'extra_plan_route_plan' }),
   Object.freeze({ field: 'routeDisagree', variable: 'extra_plan_route_disagree' }),
-  Object.freeze({ field: 'approvalApprove', variable: 'extra_plan_approval_approve' }),
-  Object.freeze({ field: 'approvalReplan', variable: 'extra_plan_approval_replan' }),
   Object.freeze({ field: 'purposeRefine', variable: 'extra_plan_purpose_refine' }),
   Object.freeze({ field: 'purposeRedo', variable: 'extra_plan_purpose_redo' }),
 ])
 
-/** 7 个字段名（顺序即 YAML 中的集中排列顺序）。 */
+/** 6 个字段名（顺序即 YAML 中的集中排列顺序）。 */
 export const GATE_WORD_FIELD_NAMES = Object.freeze(GATE_WORD_FIELDS.map((item) => item.field))
 
 /** 整组 locator：源模板（资产）内 id=extra-plan 行的 config.gateWords（供 resolveSetting 直接使用）。 */
@@ -32,7 +31,7 @@ function fail(detail) {
   throw new Error('extra-plan: config.gateWords ' + detail)
 }
 
-/** 推荐后缀归一（与 index.js normalizeLabel 逐字同规则；仅用于判定保留后缀，不做子串匹配）。 */
+/** 推荐后缀归一：把选项标签末尾的推荐标记剥掉，仅用于判定是否使用保留后缀，不做子串匹配。 */
 export function normalizeGateLabel(label) {
   return String(label).trim().replace(RECOMMENDED_SUFFIX, '').trim()
 }
@@ -43,7 +42,7 @@ export function normalizeGateLabel(label) {
  */
 export function validateGateWords(raw) {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
-    fail('必须是含恰好 7 个字段的普通对象（当前 ' + (raw === null ? 'null' : Array.isArray(raw) ? 'array' : typeof raw) + '）')
+    fail('必须是含恰好 6 个字段的普通对象（当前 ' + (raw === null ? 'null' : Array.isArray(raw) ? 'array' : typeof raw) + '）')
   }
   const keys = Object.keys(raw)
   for (const field of GATE_WORD_FIELD_NAMES) {
@@ -63,7 +62,7 @@ export function validateGateWords(raw) {
       fail('.' + field + ' 不得以保留的推荐后缀结尾（(Recommended)/（Recommended）/(推荐)/（推荐））')
     }
     const twin = seenByValue.get(value)
-    if (twin !== undefined) fail('.' + field + ' 与 .' + twin + ' 取值重复（7 个词必须两两不同）')
+    if (twin !== undefined) fail('.' + field + ' 与 .' + twin + ' 取值重复（6 个词必须两两不同）')
     seenByValue.set(value, field)
     words[field] = value
   }
@@ -76,36 +75,31 @@ function bracketed(words) {
 
 /**
  * 运行时词表：只从入参派生（无参默认值不存在）。
- * 返回 { words, route, approval, purpose, routeSet, approvalSet, purposeSet, options, confirm, variables }：
- *  - words：7 个字段 → 值（冻结）
- *  - route/approval/purpose：冻结数组（approval 第三项与 route 共享 routeDisagree 词）
+ * 返回 { words, route, purpose, routeSet, purposeSet, options, confirm, variables }：
+ *  - words：6 个字段 → 值（冻结）
+ *  - route/purpose：冻结数组（route 为四值：routeMain、routeExecutor、routePlan、routeDisagree；purpose 为两值）
  *  - options/confirm：deny 教学文案插值片段（与历史静态文案逐字同构）
  *  - variables：prompt variable 名 → 本次 apply 的值（冻结映射）
  */
 export function createGateRuntime(raw) {
   const words = validateGateWords(raw)
-  const route = Object.freeze([words.routeDirect, words.routePlan, words.routeDisagree])
-  const approval = Object.freeze([words.approvalApprove, words.approvalReplan, words.routeDisagree])
+  const route = Object.freeze([words.routeMain, words.routeExecutor, words.routePlan, words.routeDisagree])
   const purpose = Object.freeze([words.purposeRefine, words.purposeRedo])
   const options = Object.freeze({
     route: bracketed(route),
-    approval: bracketed(approval),
     purpose: bracketed(purpose),
   })
   const confirm = Object.freeze({
-    route: '须先 ask_user_question 路由确认（选项固定为' + options.route + '）',
-    approval: '须先 ask_user_question 让用户对方案点「' + words.approvalApprove + '」（批准选项固定为' + options.approval + '）',
-    purpose: '须先 ask_user_question 询问用户本次 pro 规划的目的（选项固定为' + options.purpose + '）',
+    route: '须先调用 extra_plan_gate(gate=\'route\') 完成路线确认（选项固定为' + options.route + '）',
+    purpose: '须先调用 extra_plan_gate 并传入 gate 为 purpose 询问用户本次 pro 规划的目的（选项固定为' + options.purpose + '）',
   })
   const variables = {}
   for (const item of GATE_WORD_FIELDS) variables[item.variable] = words[item.field]
   return Object.freeze({
     words,
     route,
-    approval,
     purpose,
     routeSet: new Set(route),
-    approvalSet: new Set(approval),
     purposeSet: new Set(purpose),
     options,
     confirm,

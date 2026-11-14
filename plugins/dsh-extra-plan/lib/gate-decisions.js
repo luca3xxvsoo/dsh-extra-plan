@@ -3,37 +3,39 @@ import { sessionEvents } from './agent-session.js'
 import { budgetExceeded, budgetExhaustedReason, toolCallsSinceUser, DEFAULT_EXPLORE_BUDGET } from './planner-budget.js'
 import { runCodeTextOf, createRunCodeStatic } from './run-code-static.js'
 import { pwshMutationEvidence, bashMutationEvidence } from './shell-mutation.js'
-import { normalizeGateLabel } from './gate-words.js'
 
 const ASK_TOOL = 'ask_user_question'
 const isDispatchStart = (t) => t === 'tool/ptc-dispatch-start'
 const isDispatch = (t) => t === 'tool/ptc-dispatch'
-const CHANNEL_BROKEN_CODES = new Set(['NO_PROVIDER', 'CALLER_NOT_LIVE', 'DELEGATED_CALLER'])
-function purposeRouteDenyReason(gateRuntime) {
-  return `目的确认 ask 未按路由顺序：${gateRuntime.confirm.route}，选择「${gateRuntime.words.routePlan}」后再询问规划目的（目的选项固定为${gateRuntime.options.purpose}）`
-}
+const GATE_TOOL = 'extra_plan_gate'
 
 // deny 提示模板（与闸门验词同源：引用本次 apply 的 gateRuntime，改词表则提示自动跟随）
 function routeDenyReason(toolLabel, state, gateRuntime) {
   if (state && state.route === 'plan') {
-    return `规划态下主会话不可写文件：${toolLabel}。探查请走 save_probe，写文件请等方案批准后走执行者委派`
+    return `规划态下主会话不可写文件：${toolLabel}。探查请走 save_probe，写文件请等方案就绪后走执行者委派`
   }
-  return `路由未确认：${toolLabel}。只读探查可随时进行。创建/修改/删除文件${gateRuntime.confirm.route}，用户批准后才可动手`
+  if (state && state.route === 'executor') {
+    return `执行者态下主会话不直做写入：${toolLabel}。路线已确认「${gateRuntime.words.routeExecutor}」，请通过 subagent 委派执行者执行`
+  }
+  return `路由未确认：${toolLabel}。只读探查可随时进行。创建/修改/删除文件${gateRuntime.confirm.route}，用户选定路线后才可动手`
 }
+// 越界操作指引：沿用 routeDenyReason 既有口径，仅在其后追加一句（不另造文案风格）。
+// 对应改造前 shell 写命令分支的第二级判定——非直行态禁止工作区内自写，但允许带 sandbox_permissions 做工作区外写入。
+const OUT_OF_SCOPE_WRITE_HINT = '。工作区内写入请走 subagent 委派执行者；越界操作（工作区外写入）可带 sandbox_permissions 参数与 justification 重试'
 function planDenyReason(action, state, gateRuntime) {
-  if (state && state.route === 'direct') {
-    return `直行态下不可规划：${action}。「${gateRuntime.words.routeDirect}」已选，请直接使用 write/edit/pwsh/bash 等工具动手完成任务`
+  if (state && state.route === 'main') {
+    return `直行态下不可规划：${action}。「${gateRuntime.words.routeMain}」已选，请直接使用 write/edit/pwsh/bash 等工具动手完成任务`
   }
   if (state && state.route === 'plan' && state.purpose !== 'refine' && state.purpose !== 'redo') {
     return `规划目的尚未确认：${action}。${gateRuntime.confirm.purpose}，答复后再调用 ${action}`
   }
   if (state && state.route === 'plan' && state.clarified === false) {
-    return `澄清问答尚未完成：${action}。请先独立发一次 ask_user_question 做澄清问答（1-3 个关键问题，给候选选项），完成后再调用 ${action}`
+    return `澄清问答尚未完成：${action}。请先调用 extra_plan_gate 并传入 gate = clarify 做澄清问答（1-3 个关键问题，给候选选项），完成后再调用 ${action}`
   }
   return `子代理未放行：${action}。${gateRuntime.confirm.route}，意图澄清问答后再调用 ${action}`
 }
-function approvalDenyReason(action, state, gateRuntime) {
-  return `执行类委派未放行：${action}。${gateRuntime.confirm.approval}，用户批准后才可委派`
+function executorDenyReason(action, state, gateRuntime) {
+  return `执行类委派未放行：${action}。请先调用 extra_plan_gate 并传入 gate = route，让用户选择「${gateRuntime.words.routeExecutor}」后再委派执行者`
 }
 
 // 当前宿主事件只保留 PTC dispatch 形状；旧 code-dispatch 运行分支已删除。
@@ -43,12 +45,6 @@ function approvalDenyReason(action, state, gateRuntime) {
 
 
 // ── 纯判定函数（模块顶层；经 decisions 导出供场景测试直接复用，防复制漂移） ──
-
-// 宿主在「用户取消/中断 ask」时回流的文案句（逐字常量，2026-09-23 实测：嵌套 PTC 路径
-// 与 native 路径同句）。嵌套路径无错误码，故只按文案判别取消；以 'Error: ' 开头且不等于
-// 本表任一条 → 判为闸门拒绝（parseAskResultData/parseDispatchAskResult 返回 kind:'denied'），
-// 不触发 resetRouteState（状态机连带修复）。
-const HOST_ASK_CANCEL_TEXTS = ['Error: ask_user_question was aborted before the user answered', 'Error: the user cancelled ask_user_question']
 
 // 会话事件快照的唯一来源 = lib/agent-session.js；本模块不复制子代理识别逻辑。
 
@@ -162,222 +158,8 @@ function isBootstrapPhase(agent, events) {
 // shell 命令解码与 mutation 匹配由 lib/shell-mutation.js 提供。
 
 
-// 从 ask_user_question 的 tool/call 事件解析选项标签集——只收首问 questions[0] 的选项标签（第二问「补充要求／修改意见」为纯文本输入，其选项不进入验词集合）。
-// 事件里 arguments 是 JSON 字符串；解析失败返回 null（跳过该调用的分类）。
-function labelsOfCallData(data) {
-  if (data === null || typeof data !== 'object') return null
-  let parsed = null
-  if (typeof data.arguments === 'string' && data.arguments.length > 0) {
-    try { parsed = JSON.parse(data.arguments) } catch (error) { return null }
-  } else if (data.arguments !== null && typeof data.arguments === 'object') {
-    parsed = data.arguments
-  }
-  if (parsed === null || !Array.isArray(parsed.questions)) return null
-  const labels = []
-  const q = parsed.questions[0]
-  if (q === null || typeof q !== 'object' || !Array.isArray(q.options)) return labels
-  for (const opt of q.options) {
-    if (opt !== null && typeof opt === 'object' && typeof opt.label === 'string') labels.push(opt.label)
-  }
-  return labels
-}
-
-// 路由/批准/目的的标准词集合来自本次 apply 的 gateRuntime（routeSet/approvalSet/
-// purposeSet）；模块内不再保留任何静态 Set，也不存在默认词表。
-
 // 免计瀑布预算的工具白名单（planner 预算计数与 pre-execute 闸门豁免共用）。
 const FREE_TOOLS = new Set(['save_plan'])
-
-// 白名单后缀剥离：把选项标签末尾的推荐标记去掉，用于精确匹配前净化。
-// 四种白名单后缀：(Recommended)、（Recommended）、(推荐)、（推荐）；英文不区分大小写。
-// 对齐前端 parseRecommendedLabel（本轮）：后缀前后任意空白、半角组不再要求前置空格。
-// 三分法判定：labels 集合是否与 gateSet 集合完全相等（精确字符串比较，不用 indexOf）。
-function isExactGateSet(labels, gateSet) {
-  const labelSet = new Set(labels.map(normalizeGateLabel))
-  if (labelSet.size !== gateSet.size) return false
-  for (const word of gateSet) {
-    if (!labelSet.has(word)) return false
-  }
-  return true
-}
-
-// 三分法判定：labels 是否与 gateSet 有交集（≥1 个词相同，用 indexOf 包含匹配）但不完全相等。
-function isPartialGateSet(labels, gateSet) {
-  if (isExactGateSet(labels, gateSet)) return false
-  for (const label of labels) {
-    for (const word of gateSet) {
-      if (label.indexOf(word) !== -1) return true
-    }
-  }
-  return false
-}
-
-// 综合三分法判定：对 ask 的选项做「完全等于 / 部分相交 / 完全不相交」分类。
-function categorizeGateAsk(labels, gateRuntime) {
-  if (isExactGateSet(labels, gateRuntime.routeSet) || isExactGateSet(labels, gateRuntime.approvalSet) || isExactGateSet(labels, gateRuntime.purposeSet)) return 'standard'
-  if (isPartialGateSet(labels, gateRuntime.routeSet) || isPartialGateSet(labels, gateRuntime.approvalSet) || isPartialGateSet(labels, gateRuntime.purposeSet)) return 'malformed'
-  return 'ordinary'
-}
-
-// 根据缺失的词生成大白话 deny 提示，列出标准模板和具体缺项。
-function gateAskDenyReason(labels, gateRuntime) {
-  const routeMissing = []
-  for (const word of gateRuntime.routeSet) {
-    let found = false
-    for (const label of labels) {
-      if (label.indexOf(word) !== -1) { found = true; break }
-    }
-    if (!found) routeMissing.push(word)
-  }
-  const approvalMissing = []
-  for (const word of gateRuntime.approvalSet) {
-    let found = false
-    for (const label of labels) {
-      if (label.indexOf(word) !== -1) { found = true; break }
-    }
-    if (!found) approvalMissing.push(word)
-  }
-  const purposeMissing = []
-  for (const word of gateRuntime.purposeSet) {
-    let found = false
-    for (const label of labels) {
-      if (label.indexOf(word) !== -1) { found = true; break }
-    }
-    if (!found) purposeMissing.push(word)
-  }
-  let msg = `ask 选项不规范。路由 ask 选项固定为${gateRuntime.options.route}；批准 ask 选项固定为${gateRuntime.options.approval}；目的 ask 选项固定为${gateRuntime.options.purpose}。`
-  const pickPurpose = purposeMissing.length < routeMissing.length && purposeMissing.length < approvalMissing.length
-  const pickRoute = !pickPurpose && routeMissing.length <= approvalMissing.length
-  const missing = pickPurpose ? purposeMissing : pickRoute ? routeMissing : approvalMissing
-  if (missing.length === 0) {
-    msg += ' 当前选项包含了标准三词但带有非标准修饰（如额外字符、非白名单后缀）。推荐标记仅限 (Recommended)/（Recommended）/(推荐)/（推荐）四种'
-  } else {
-    msg += ` 当前${pickPurpose ? '目的' : pickRoute ? '路由' : '批准'} ask 缺少：${missing.join('、')}。`
-  }
-  msg += ' 请按标准模板重提'
-  return msg
-}
-
-// 结构校验纯函数：校验标准 ask 的 questions 结构是否符合规范。
-// kind='route'：须至少 2 个问题（第二个为补充要求可空）；kind='approve'：须至少 2 个问题（第二个为修改意见可空）。
-// kind='route'/'approve' 追加：第二问（questions[1]）起不得带非空 options（补充要求/修改意见必须纯文本输入）。
-// 通过返回 null，不通过返回 deny reason 字符串（路由文案含"补充要求"、批准文案含"修改意见"提示）。
-function validateGateAskStructure(kind, questions, gateRuntime) {
-  if (!Array.isArray(questions)) return 'ask 结构错误：缺少 questions 数组'
-  if (kind === 'route') {
-    if (questions.length < 2) return `路由 ask 结构错误：须至少 2 个问题（第一个为路由选项固定为${gateRuntime.options.route}，第二个为补充要求可空），当前 ${questions.length} 个问题`
-    for (let i = 1; i < questions.length; i += 1) {
-      const q = questions[i]
-      if (q !== null && typeof q === 'object' && Array.isArray(q.options) && q.options.length > 0) {
-        return `路由 ask 结构错误：第 ${i + 1} 个问题（补充要求）必须为纯文本输入，不得提供选项（预设选项不符合用户想法），当前带 ${q.options.length} 个选项。请改为纯文本大文本框、去掉 options`
-      }
-    }
-    return null
-  }
-  if (kind === 'purpose') {
-    if (questions.length !== 1) return `目的 ask 结构错误：须恰好 1 个问题（规划目的确认 ask 只做一次二选一，后续澄清请另发一次 ask_user_question。选项固定为${gateRuntime.options.purpose}），当前 ${questions.length} 个问题`
-    return null
-  }
-  if (kind === 'approve') {
-    if (questions.length < 2) return `批准 ask 结构错误：须至少 2 个问题（第一个为批准选项固定为${gateRuntime.options.approval}，第二个为修改意见可空），当前 ${questions.length} 个问题`
-    for (let i = 1; i < questions.length; i += 1) {
-      const q = questions[i]
-      if (q !== null && typeof q === 'object' && Array.isArray(q.options) && q.options.length > 0) {
-        return `批准 ask 结构错误：第 ${i + 1} 个问题（修改意见）必须为纯文本输入，不得提供选项（预设选项不符合用户想法），当前带 ${q.options.length} 个选项。请改为纯文本大文本框、去掉 options`
-      }
-    }
-    return null
-  }
-  return `ask 结构错误：未知的 ask 类型 "${kind}"。`
-}
-
-// 测试契约 API（非死代码）：运行时状态机只用 askKindOfRelaxed（见 L436），本严格版
-// 仅经 decisions 导出（L1244）供 pe-test step-00-全流程回归.mjs L149 调用（K1-K5）。
-// 删除定义会使 decisions 顶层求值 ReferenceError（index.js 模块加载即崩）——保留。
-// ask 分类：路由 ask（同时含路由特有词 routeDirect/routePlan）、批准 ask（含
-// 批准特有词 approvalApprove）、其余视为澄清 ask。词值一律来自当前 config.gateWords。
-function askKindOf(labels, gateRuntime) {
-  let hasDirect = false
-  let hasPlan = false
-  let hasApprove = false
-  let hasRefine = false
-  let hasRedo = false
-  for (const label of labels) {
-    if (label.indexOf(gateRuntime.words.routeDirect) !== -1) hasDirect = true
-    if (label.indexOf(gateRuntime.words.routePlan) !== -1) hasPlan = true
-    if (label.indexOf(gateRuntime.words.approvalApprove) !== -1) hasApprove = true
-    if (label.indexOf(gateRuntime.words.purposeRefine) !== -1) hasRefine = true
-    if (label.indexOf(gateRuntime.words.purposeRedo) !== -1) hasRedo = true
-  }
-  if (hasDirect && hasPlan) return 'route'
-  if (hasApprove) return 'approve'
-  if (hasRefine && hasRedo) return 'purpose'
-  return 'clarify'
-}
-
-// 宽松版 ask 分类：专给状态机用，只要 ask 选项里出现任一路由词/批准词就归类，
-// 不要求同时包含两个词（run_code 子调用路径不做选项集校验，宽松分类器避免状态机误判）。
-// 路由否决词（routeDisagree）是路由组与批准组的共享词，按特异性优先：路由特有词
-// （routeDirect/routePlan）→ route；批准特有词（approvalApprove/approvalReplan）→ approve；
-// 仅有 routeDisagree → route。
-function askKindOfRelaxed(labels, gateRuntime) {
-  if (isExactGateSet(labels, gateRuntime.routeSet)) return 'route'
-  if (isExactGateSet(labels, gateRuntime.approvalSet)) return 'approve'
-  if (isExactGateSet(labels, gateRuntime.purposeSet)) return 'purpose'
-  let hasRouteSpecific = false
-  let hasApproveSpecific = false
-  let hasDisagree = false
-  let hasPurposeSpecific = false
-  for (const label of labels) {
-    if (label.indexOf(gateRuntime.words.routeDirect) !== -1 || label.indexOf(gateRuntime.words.routePlan) !== -1) hasRouteSpecific = true
-    if (label.indexOf(gateRuntime.words.approvalApprove) !== -1 || label.indexOf(gateRuntime.words.approvalReplan) !== -1) hasApproveSpecific = true
-    if (label.indexOf(gateRuntime.words.routeDisagree) !== -1) hasDisagree = true
-    if (label.indexOf(gateRuntime.words.purposeRefine) !== -1 || label.indexOf(gateRuntime.words.purposeRedo) !== -1) hasPurposeSpecific = true
-  }
-  if (hasRouteSpecific) return 'route'
-  if (hasApproveSpecific) return 'approve'
-  if (hasDisagree) return 'route'
-  if (hasPurposeSpecific) return 'purpose'
-  return 'clarify'
-}
-
-// 三类 match 的唯一判定口径：标签先按白名单后缀归一（normalizeGateLabel），再与当前
-// config.gateWords 的值**精确相等**才返回内部枚举；禁止 indexOf 子串推进 route/
-// purpose/approved（旧词与任何变体都不得靠子串或推荐后缀重新生效）。
-function matchExactKind(selected, table) {
-  for (const label of selected) {
-    const normalized = normalizeGateLabel(label)
-    for (const entry of table) {
-      if (normalized === entry[0]) return entry[1]
-    }
-  }
-  return null
-}
-
-function matchRouteLabel(selected, gateRuntime) {
-  const routeSpecific = matchExactKind(selected, [
-    [gateRuntime.words.routeDirect, 'direct'],
-    [gateRuntime.words.routePlan, 'plan'],
-  ])
-  if (routeSpecific !== null) return routeSpecific
-  return matchExactKind(selected, [[gateRuntime.words.routeDisagree, 'disagree']])
-}
-
-function matchApprovalLabel(selected, gateRuntime) {
-  const approvalSpecific = matchExactKind(selected, [
-    [gateRuntime.words.approvalApprove, 'approve'],
-    [gateRuntime.words.approvalReplan, 'replan'],
-  ])
-  if (approvalSpecific !== null) return approvalSpecific
-  return matchExactKind(selected, [[gateRuntime.words.routeDisagree, 'disagree']])
-}
-
-function matchPurposeLabel(selected, gateRuntime) {
-  return matchExactKind(selected, [
-    [gateRuntime.words.purposeRefine, 'refine'],
-    [gateRuntime.words.purposeRedo, 'redo'],
-  ])
-}
 
 // ContentBlock 数组首条 text 块的文本（无 text 块 → ''）
 function firstTextOfBlocks(blocks) {
@@ -388,98 +170,9 @@ function firstTextOfBlocks(blocks) {
   return ''
 }
 
-// 闸门拒绝判别：以 'Error: ' 开头且不等于宿主取消句（HOST_ASK_CANCEL_TEXTS）→ true。
-// 依据（2026-09-23 实测）：嵌套拒绝=插件中文文案（本插件 deny reason），嵌套取消=宿主英文句，
-// 两者其它字段同构（同键集、同 isError:true、同无 error/code），只能按文案判别。
-function askResultTextIsDenied(text) {
-  return typeof text === 'string' && text.startsWith('Error: ') && !HOST_ASK_CANCEL_TEXTS.includes(text)
-}
-
-// 解析一次 ask 的结果（tool/result 事件）。返回：
-//   { callId, kind: 'ok', answersLen, selected } —— 正常答复（answersLen=0 为空白回复）
-//   { callId, kind: 'denied', code: '' } —— 闸门拒绝（插件中文文案，isError:true、无 data.error）
-//   { callId, kind: 'error', code } —— 错误结果（取消/中断/通道错误/参数错误）
-//   { callId: undefined } —— 与该次 ask 无关的结果
-function parseAskResultData(data) {
-  if (data === null || typeof data !== 'object') return { callId: undefined }
-  const message = data.message
-  if (message === null || typeof message !== 'object' || !Array.isArray(message.content)) return { callId: undefined }
-  const callId = message.toolCallId
-  const inner = message.content
-  const outerIsError = message.isError === true
-  const outerText = firstTextOfBlocks(message.content)
-  if (typeof callId !== 'string') return { callId: undefined }
-  if (data.error !== undefined && data.error !== null) {
-    return { callId, kind: 'error', code: typeof data.error.code === 'string' ? data.error.code : '' }
-  }
-  // 无 data.error 但信封 isError:true：闸门拒绝（中文文案）→ denied；其余（含宿主取消句）→ error。
-  // 空 code 走既有 else 分支（取消清四字段/denied 不重置由 deriveFlowState 区分）。
-  if (outerIsError) {
-    if (askResultTextIsDenied(outerText)) return { callId, kind: 'denied', code: '' }
-    return { callId, kind: 'error', code: '' }
-  }
-  let answersLen = 0
-  const selected = []
-  if (inner !== undefined) {
-    for (const block of inner) {
-      if (block !== null && typeof block === 'object' && block.type === 'text' && typeof block.text === 'string') {
-        let parsed = null
-        try { parsed = JSON.parse(block.text) } catch (error) { /* 非 JSON，跳过 */ }
-        if (parsed !== null && parsed !== undefined && Array.isArray(parsed.answers)) {
-          answersLen = parsed.answers.length
-          for (const answer of parsed.answers) {
-            if (answer !== null && typeof answer === 'object' && Array.isArray(answer.selected)) {
-              for (const label of answer.selected) if (typeof label === 'string') selected.push(label)
-            }
-          }
-        }
-      }
-    }
-  }
-  return { callId, kind: 'ok', answersLen, selected }
-}
-
-// 解析一次嵌套 ask 的结果（tool/ptc-dispatch 事件，run_code 程序内嵌套调用）。
-// data.content 直接是 ContentBlock 数组。
-// 返回（与 parseAskResultData 同构）：
-//   { callId, kind: 'ok', answersLen, selected } —— 正常答复（answersLen=0 为空白回复）
-//   { callId, kind: 'denied', code: '' } —— 闸门拒绝（isError===true + 插件中文文案，非宿主取消句）
-//   { callId, kind: 'error', code } —— isError===true 的其它情形（嵌套层无错误码 → code=''）
-//   { callId: undefined } —— 防御（subCallId 非 string）
-function parseDispatchAskResult(data) {
-  if (data === null || typeof data !== 'object') return { callId: undefined }
-  const callId = data.subCallId
-  if (typeof callId !== 'string') return { callId: undefined }
-  if (data.isError === true) {
-    // 嵌套层无错误码：闸门拒绝=插件中文文案 → denied；宿主取消句等其它 → error（清四字段语义保留）。
-    if (askResultTextIsDenied(firstTextOfBlocks(data.content))) return { callId, kind: 'denied', code: '' }
-    return { callId, kind: 'error', code: '' }
-  }
-  let answersLen = 0
-  const selected = []
-  if (Array.isArray(data.content)) {
-    for (const block of data.content) {
-      if (block !== null && typeof block === 'object' && block.type === 'text' && typeof block.text === 'string') {
-        let parsed = null
-        try { parsed = JSON.parse(block.text) } catch (error) { /* 非 JSON，跳过 */ }
-        if (parsed !== null && parsed !== undefined && Array.isArray(parsed.answers)) {
-          answersLen = parsed.answers.length
-          for (const answer of parsed.answers) {
-            if (answer !== null && typeof answer === 'object' && Array.isArray(answer.selected)) {
-              for (const label of answer.selected) if (typeof label === 'string') selected.push(label)
-            }
-          }
-        }
-      }
-    }
-  }
-  return { callId, kind: 'ok', answersLen, selected }
-}
-
 function resetStageState(state) {
   state.purpose = 'none'
   state.clarified = false
-  state.approved = false
 }
 
 function resetRouteState(state) {
@@ -487,48 +180,48 @@ function resetRouteState(state) {
   resetStageState(state)
 }
 
-function applyAskOutcome(state, kind, result, gateRuntime) {
-  // 闸门拒绝不改变任何状态；错误结果保留通道故障与取消的原有差异。
-  if (result.kind === 'denied') return
-  if (result.kind === 'error') {
-    if (CHANNEL_BROKEN_CODES.has(result.code)) state.channelBroken = true
-    else resetRouteState(state)
+function applyGateOutcome(state, gate, result) {
+  // outcome 口径：answered 推进状态；cancelled 清空闸门状态（route/purpose/clarified 全复位，
+  // 与改造前对「用户取消」的处理一致）；skipped（未作答）与 channel-error（提问通道故障）不改动既有字段。
+  // clarify 仅当 route=plan 且 purpose∈{refine,redo} 时由 answered 置位（与 purpose 分支的 route 前置同口径）。
+  if (result === null || typeof result !== 'object') return
+  const outcome = result.outcome
+  if (outcome === 'cancelled') {
+    resetRouteState(state)
     return
   }
-
-  if (kind === 'route') {
+  if (outcome !== 'answered') return
+  if (gate === 'route') {
+    // route 覆盖式写入；每次 route 闸门作答都无条件清空 purpose 与 clarified（与改造前一致）。
+    const route = result.route
+    if (route !== 'main' && route !== 'executor' && route !== 'plan' && route !== 'none') return
     resetStageState(state)
-    const matched = matchRouteLabel(result.selected, gateRuntime)
-    if (matched === 'direct') state.route = 'direct'
-    else if (matched === 'plan') state.route = 'plan'
-    else state.route = 'none'
-  } else if (kind === 'purpose') {
-    if (state.route === 'plan' && result.answersLen > 0) {
-      const matched = matchPurposeLabel(result.selected, gateRuntime)
-      if (matched !== null) {
-        resetStageState(state)
-        state.purpose = matched
-      }
-    }
-  } else if (kind === 'clarify') {
-    if (result.answersLen > 0 && state.route === 'plan' && (state.purpose === 'refine' || state.purpose === 'redo')) state.clarified = true
-  } else if (kind === 'approve') {
-    const matched = matchApprovalLabel(result.selected, gateRuntime)
-    if (matched === 'approve') state.approved = true
-    else state.approved = false
+    state.route = route
+    return
   }
+  if (gate === 'purpose') {
+    // purpose 只在规划路线上成立，写入的同时把澄清态复位。
+    if (state.route !== 'plan') return
+    const purpose = result.purpose
+    if (purpose !== 'refine' && purpose !== 'redo') return
+    state.purpose = purpose
+    state.clarified = false
+    return
+  }
+  if (gate === 'clarify' && state.route === 'plan' && (state.purpose === 'refine' || state.purpose === 'redo')) state.clarified = true
 }
 
-// 四级锚点状态机（纯函数，自最近一条人类消息起的事件推导）：
-//   route: 'none' | 'direct' | 'plan'（routeDisagree → 回 'none'，保持未确认）
-//   clarified: 是否有完成的澄清问答（空白回复不算）
-//   approved: 是否已获 approvalApprove（approvalReplan / routeDisagree → 重置 false）
+// 三锚点状态机（纯函数，自最近一条人类消息起的事件推导）：
+//   route: 'none' | 'main' | 'executor' | 'plan'（用户选「暂不推进」→ 回 'none'，保持未确认）
 //   purpose: 'none' | 'refine' | 'redo'（purposeRefine → refine / purposeRedo → redo）
-//   channelBroken: 提问通道级错误（逃生放行标记）
-// 失败分支判别：kind==='denied'（插件闸门拒绝）→ 不改任何字段；kind==='error' →
-// 通道码置 channelBroken，其余（含宿主取消句 / ASK_CANCELLED）resetRouteState 清四字段。
+//   clarified: 是否有完成的澄清问答（clarify 闸门 answered 且 route=plan 且 purpose∈{refine,redo} 时置 true，换路线时随阶段态一起清空）
+// 唯一推进源是 extra_plan_gate 的 tool/call 与 tool/result（含 run_code 内嵌套的 ptc-dispatch 形态）：
+// 调用参数取 gate，结果文本解析 JSON 后取 outcome 与 route/purpose，交 applyGateOutcome 处理：
+// answered 按 gate 推进（clarify 仅当 route=plan 且 purpose∈{refine,redo} 时置位 clarified）；cancelled 清空闸门状态（route/purpose/clarified 全复位）；
+// skipped（未作答）与 channel-error（提问通道故障）均不改动既有字段。
+// 普通 ask_user_question 不再参与状态推导。
 function deriveFlowState(events, gateRuntime) {
-  const state = { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }
+  const state = { route: 'none', clarified: false, purpose: 'none' }
   if (!Array.isArray(events)) return state
   let lastHuman = -1
   for (let i = events.length - 1; i >= 0; i -= 1) {
@@ -542,33 +235,55 @@ function deriveFlowState(events, gateRuntime) {
     }
   }
   if (lastHuman === -1) return state
-  const asks = new Map() // callId → kind
+  const calls = new Map() // callId / subCallId → gate（route、purpose、clarify）
+  // 调用参数取 gate：arguments 可能是 JSON 字符串，也可能是已解析对象。
+  const gateOfArgs = (args) => {
+    let parsed = null
+    if (typeof args === 'string' && args.length > 0) {
+      try { parsed = JSON.parse(args) } catch (error) { return null }
+    } else if (args !== null && typeof args === 'object') {
+      parsed = args
+    }
+    if (parsed === null || typeof parsed !== 'object') return null
+    return typeof parsed.gate === 'string' ? parsed.gate : null
+  }
+  // 结果文本取 JSON：闸门工具的返回值整体序列化在首个 text 块里，解析失败即跳过。
+  const resultOfBlocks = (blocks) => {
+    const text = firstTextOfBlocks(blocks)
+    if (typeof text !== 'string' || text === '') return null
+    let parsed = null
+    try { parsed = JSON.parse(text) } catch (error) { return null }
+    return parsed !== null && typeof parsed === 'object' ? parsed : null
+  }
   for (let i = lastHuman + 1; i < events.length; i += 1) {
     const e = events[i]
     if (e === null || typeof e !== 'object') continue
-    if (e.type === 'tool/call' && e.data !== null && typeof e.data === 'object' &&
-        e.data.name === ASK_TOOL && typeof e.data.callId === 'string') {
-      const labels = labelsOfCallData(e.data)
-      if (labels !== null) asks.set(e.data.callId, askKindOfRelaxed(labels, gateRuntime))
+    if (e.data === null || typeof e.data !== 'object') continue
+    // 形态一：普通直呼——tool/call 登记 gate，tool/result 交回结果。
+    if (e.type === 'tool/call') {
+      if (e.data.name !== GATE_TOOL || typeof e.data.callId !== 'string') continue
+      const gate = gateOfArgs(e.data.arguments)
+      if (gate !== null) calls.set(e.data.callId, gate)
       continue
     }
-    if (isDispatchStart(e.type) && e.data !== null && typeof e.data === 'object' &&
-        e.data.name === ASK_TOOL && typeof e.data.subCallId === 'string') {
-      const labels = labelsOfCallData(e.data)
-      if (labels !== null) asks.set(e.data.subCallId, askKindOfRelaxed(labels, gateRuntime))
+    if (e.type === 'tool/result') {
+      const message = e.data.message
+      if (message === null || typeof message !== 'object' || typeof message.toolCallId !== 'string') continue
+      if (!calls.has(message.toolCallId)) continue
+      applyGateOutcome(state, calls.get(message.toolCallId), resultOfBlocks(message.content))
       continue
     }
-    if (isDispatch(e.type) && e.data !== null && typeof e.data === 'object' &&
-        typeof e.data.subCallId === 'string') {
-      const result = parseDispatchAskResult(e.data)
-      if (result.callId === undefined || !asks.has(result.callId)) continue
-      applyAskOutcome(state, asks.get(result.callId), result, gateRuntime)
+    // 形态二：run_code 内嵌套调用——tool/ptc-dispatch-start 登记 gate，tool/ptc-dispatch 交回结果。
+    if (isDispatchStart(e.type)) {
+      if (e.data.name !== GATE_TOOL || typeof e.data.subCallId !== 'string') continue
+      const gate = gateOfArgs(e.data.arguments)
+      if (gate !== null) calls.set(e.data.subCallId, gate)
       continue
     }
-    if (e.type !== 'tool/result') continue
-    const result = parseAskResultData(e.data)
-    if (result.callId === undefined || !asks.has(result.callId)) continue
-    applyAskOutcome(state, asks.get(result.callId), result, gateRuntime)
+    if (isDispatch(e.type)) {
+      if (typeof e.data.subCallId !== 'string' || !calls.has(e.data.subCallId)) continue
+      applyGateOutcome(state, calls.get(e.data.subCallId), resultOfBlocks(e.data.content))
+    }
   }
   return state
 }
@@ -819,49 +534,17 @@ function mainGateReason(state, exec, gateCtx) {
   }
   const events = ctx.events !== undefined && ctx.events !== null ? ctx.events : []
   const planToolName = typeof ctx.planToolName === 'string' && ctx.planToolName !== '' ? ctx.planToolName : 'subagent_plan'
-  state = state !== undefined && state !== null ? state : { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }
-  const escape = state.channelBroken === true
+  state = state !== undefined && state !== null ? state : { route: 'none', clarified: false, purpose: 'none' }
   const name = exec !== undefined && exec !== null && typeof exec.name === 'string' ? exec.name : ''
   if (name === ASK_TOOL) {
-    const labels = labelsOfCallData(exec)
-    if (labels !== null) {
-      const category = categorizeGateAsk(labels, gateRuntime)
-      if (category === 'malformed') {
-        const denyMsg = gateAskDenyReason(labels, gateRuntime)
-        // 同时检查结构错误，合并为一条报错，一次性告知模型两个问题
-        const askKind = askKindOfRelaxed(labels, gateRuntime)
-        const kind = askKind === 'approve' ? 'approve' : askKind === 'purpose' ? 'purpose' : 'route'
-        // kind 按特异性判定（复用 askKindOfRelaxed 语义）：批准特异词→approve；路由特异词或仅共享 routeDisagree→route
-        const args = exec.arguments
-        const questions = args !== undefined && args !== null && typeof args === 'object' ? args.questions : undefined
-        const structErr = validateGateAskStructure(kind, questions, gateRuntime)
-        if (structErr !== null) {
-          return `${denyMsg.replace(/请按标准模板重提$/, '')}同时，${structErr} 请一并修正后重提。`
-        }
-        return denyMsg
-      }
-      if (category === 'standard') {
-        const kind = isExactGateSet(labels, gateRuntime.routeSet) ? 'route' : isExactGateSet(labels, gateRuntime.purposeSet) ? 'purpose' : 'approve'
-        const args = exec.arguments
-        const questions = args !== undefined && args !== null && typeof args === 'object' ? args.questions : undefined
-        const structErr = validateGateAskStructure(kind, questions, gateRuntime)
-        if (structErr !== null) {
-          if (kind === 'purpose' && !escape && state.route !== 'plan') return `${purposeRouteDenyReason(gateRuntime)}同时，${structErr} 请一并修正后重提。`
-          return structErr
-        }
-        if (kind === 'purpose' && !escape && state.route !== 'plan') return purposeRouteDenyReason(gateRuntime)
-      }
-      // 'ordinary' → 放行；'standard' 结构校验通过 → 放行
-    }
+    // 1b：普通 ask_user_question 的选项标签推断与结构校验整体退场（选项由 extra_plan_gate 生成）；
+    // 主会话侧的闸门判定已前移到 extra_plan_gate 工具，这里直接放行以免旧路径形成死锁。
     return null
   }
   if (name === 'write' || name === 'edit') {
-    if (!escape && state.route !== 'direct' && state.approved !== true) {
+    // route 非 main 即拒：main 才允许主会话直接动手，plan 走规划子代理，executor 走执行者委派。
+    if (state.route !== 'main') {
       return routeDenyReason('write/edit', state, gateRuntime)
-    }
-    // 新增：approved 态下，主会话不得自己动手改工作区内文件
-    if (!escape && state.approved === true && state.route !== 'direct') {
-      return '方案已批准，执行请走 subagent 委派 flash 执行者（读方案/验收文件执行）。主会话直做仅限越界操作（工作区外写入，走 shell（Windows 用 pwsh、Linux/macOS 用 bash）+ sandbox_permissions）'
     }
     return null
   }
@@ -872,21 +555,24 @@ function mainGateReason(state, exec, gateCtx) {
   const shellEvidence = name === 'pwsh' ? pwshMutationEvidence(exec) : name === 'bash' ? bashMutationEvidence(exec) : null
   if (shellEvidence !== null) {
     const shellLabel = name
-    if (!escape && state.route !== 'direct' && state.approved !== true) {
-      return withShellEvidence(routeDenyReason(shellLabel, state, gateRuntime), shellLabel, shellEvidence)
-    }
-    // 新增：approved 态下，shell 写命令需区分工作区内/越界（pwsh 与 bash 同口径）
-    if (!escape && state.approved === true && state.route !== 'direct') {
-      const args = exec.arguments
-      const hasEscalation = args !== undefined && args !== null && typeof args === 'object' && typeof args.sandbox_permissions === 'string'
-      if (!hasEscalation) {
-        return withShellEvidence('方案已批准，工作区内写入请走 subagent 委派执行者。越界操作（工作区外写入）请带 sandbox_permissions 参数（如 sandbox_permissions: "workspace-write"）与 justification 重试', shellLabel, shellEvidence)
+    // 越界特例的等价映射（对应改造前的两级串行判定）：
+    // 第一级 = 路线是否已确认：route=none（未确认）一律拒绝、且不追加越界指引，避免误导为可绕过；
+    // 第二级 = 已确认路线（executor/plan）：带 sandbox_permissions 字符串才是「工作区外写入」放行
+    // （宿主审批闸在其后），不带则拒绝并在 routeDenyReason 口径后追加越界指引。
+    if (state.route !== 'main') {
+      if (state.route === 'none') {
+        return withShellEvidence(routeDenyReason(shellLabel, state, gateRuntime), shellLabel, shellEvidence)
       }
+      const shellArgs = exec !== undefined && exec !== null ? exec.arguments : undefined
+      if (shellArgs !== undefined && shellArgs !== null && typeof shellArgs === 'object' && typeof shellArgs.sandbox_permissions === 'string') {
+        return null
+      }
+      return withShellEvidence(routeDenyReason(shellLabel, state, gateRuntime) + OUT_OF_SCOPE_WRITE_HINT, shellLabel, shellEvidence)
     }
     return null
   }
   if (name === planToolName) {
-    if (!escape && (state.route !== 'plan' || state.clarified !== true || (state.purpose !== 'refine' && state.purpose !== 'redo'))) {
+    if (state.route !== 'plan' || state.clarified !== true || (state.purpose !== 'refine' && state.purpose !== 'redo')) {
       return planDenyReason(planToolName, state, gateRuntime)
     }
     // 委派工具参数表里已无后台标志：规划子代理的续轮由宿主 continuable 后端固定为
@@ -894,32 +580,32 @@ function mainGateReason(state, exec, gateCtx) {
     return null
   }
   if (name === 'save_probe') {
-    if (!escape && (state.route !== 'plan' || state.clarified !== true || (state.purpose !== 'refine' && state.purpose !== 'redo'))) {
+    if (state.route !== 'plan' || state.clarified !== true || (state.purpose !== 'refine' && state.purpose !== 'redo')) {
       return planDenyReason('save_probe', state, gateRuntime)
     }
     return null
   }
   if (name === 'subagent' || name === 'subagent_fork' || name === 'workflow' || name === 'ralph' || name === 'subagent_review') {
-    if (!escape && state.approved !== true) {
-      return approvalDenyReason(name, state, gateRuntime)
+    if (state.route !== 'executor') {
+      return executorDenyReason(name, state, gateRuntime)
     }
     // 委派工具参数表里已无后台标志：subagent/subagent_review 恒为立即返回 subagentId
-    // 加完成通知，后台约束在宿主层，本处只保留批准态判定。
+    // 加完成通知，后台约束在宿主层，本处只保留路线判定。
     return null
   }
   // 主会话层工具限制（v0.4.0 四工具治理）：job_kill 仅直行路线放行；
   // send_message 主会话向 running 目标拒绝；job_list/list_agents 同锚点防轮询。
   // planner/只读 child/执行者不进本函数（pre-execute 角色分流），子代理侧维持现状。
   if (name === 'job_kill') {
-    if (!escape && state.route !== 'direct') {
-      return `当前状态禁止job_kill。如用户要求停止子代理，${gateRuntime.confirm.route}，选择「${gateRuntime.words.routeDirect}」后才可执行 job_kill`
+    if (state.route !== 'main') {
+      return `当前状态禁止job_kill。如用户要求停止子代理，${gateRuntime.confirm.route}，选择「${gateRuntime.words.routeMain}」后才可执行 job_kill`
     }
     return null
   }
   if (name === 'send_message') {
     // 主会话调用者：目标 running → 拒；idle/未驻留/agents 服务不可用 → 放行
-    // （未驻留或已回收目标由宿主 coldResume NOT_RESUMABLE 自拒；escape 通道逃生放行防死锁）。
-    if (!escape && typeof ctx.getAgents === 'function') {
+    // （未驻留或已回收目标由宿主 coldResume NOT_RESUMABLE 自拒）。
+    if (typeof ctx.getAgents === 'function') {
       const agents = ctx.getAgents()
       if (agents !== undefined && agents !== null && typeof agents.get === 'function') {
         const smArgs = exec !== undefined && exec !== null ? exec.arguments : undefined
@@ -948,7 +634,7 @@ function mainGateReason(state, exec, gateCtx) {
 
 // 组判定：run_code 拆解 → 逐成员走「与直呼完全相同的闸门」→ 聚合拒绝。
 // state：主会话 flow state（role.kind==='main' 时必传；其它角色忽略）；缺省归一化为
-// { route:'none', clarified:false, approved:false, purpose:'none', channelBroken:false }。
+// { route:'none', clarified:false, purpose:'none' }。
 // role：{ kind:'main' } | { kind:'planner' } | { kind:'child', readOnly:boolean, probe:boolean }。
 // gateCtx: { events, planToolName, jobOutputCallCounters, pollGuardCounters, runCodeDepth, runcodeCatchGate, getAgents(可选), messageTargetIdOf(arguments)(可选), gateRuntime }（gateRuntime 必填）。
 // 缺省：events:[]、planToolName:'subagent_plan'、jobOutputCallCounters:new Map()、pollGuardCounters:new Map()、
@@ -969,14 +655,14 @@ function runCodeGroupDenyReason(state, exec, role, gateCtx) {
   }
   const st = state !== undefined && state !== null
     ? state
-    : { route: 'none', clarified: false, approved: false, purpose: 'none', channelBroken: false }
+    : { route: 'none', clarified: false, purpose: 'none' }
   const r = role !== undefined && role !== null && typeof role === 'object' && typeof role.kind === 'string' ? role : { kind: 'main' }
   const roleKind = r.kind
   const members = []
   const denies = []
   const visit = (codeArg, depth) => {
     // ask 返回值硬闸门只接入主会话；嵌套超出既有展开深度的部分仍由实际 pre-execute 重入兜底。
-    const askReason = roleKind === 'main' ? askUserQuestionReturnGateReason(codeArg) : null
+    const askReason = roleKind === 'main' ? askOrGateReturnGateReason(codeArg) : null
     const decomposed = decomposeRunCode(codeArg)
     if (askReason !== null) {
       const askMember = { kind: 'tool', name: ASK_TOOL, argsParsed: true, args: {}, argsText: '' }
@@ -1000,7 +686,7 @@ function runCodeGroupDenyReason(state, exec, role, gateCtx) {
         reason = subagentProbeGateReason(vExec, roleKind)
       } else if (reason === null && ctx.controlOnly !== true && member.kind === 'bare-write') {
         // 裸写成员按角色分流：只读角色保留 v2 共享文案（hits 拼写与既有共享文案逐字同构）；
-        // 主会话走 write/edit 闸门（routeDenyReason 与 approved 文案）；
+        // 主会话走 write/edit 闸门（routeDenyReason 文案）；
         // 执行者（child 非只读）豁免。
         if (roleKind === 'planner' || (roleKind === 'child' && r.readOnly === true)) {
           const h = member.hints
@@ -1064,26 +750,25 @@ function aggregateRunCodeDenyReason(members, denies) {
 
 
 
-// run_code 静态 helper 单向接线：依赖只由根的 ASK_TOOL 与当前 PTC dispatch 判定显式注入。
+// run_code 静态 helper 单向接线：依赖只由根的 ASK_TOOL、GATE_TOOL 与当前 PTC dispatch 判定显式注入。
 const {
   decomposeRunCode,
   runCodeCatchGateReason,
   collectRunCodeSites,
-  askUserQuestionReturnGateReason,
+  askOrGateReturnGateReason,
   runCodeSiteCount,
   isRunCodeSubCall,
   runCodeDispatchGateReason,
   runCodeDispatchCapText,
-} = createRunCodeStatic({ askTool: ASK_TOOL, isDispatchStart })
+} = createRunCodeStatic({ askTool: ASK_TOOL, gateTool: GATE_TOOL, isDispatchStart })
 
 export {
-  CHANNEL_BROKEN_CODES, FREE_TOOLS, ASK_TOOL,
-  purposeRouteDenyReason, routeDenyReason, planDenyReason, approvalDenyReason,
-  isBootstrapPhase, filterBootstrapContextDecision, dedupeProjectedContextDecision, labelsOfCallData,
-  askKindOf, askKindOfRelaxed, isExactGateSet, isPartialGateSet, categorizeGateAsk, gateAskDenyReason, validateGateAskStructure,
-  matchRouteLabel, matchApprovalLabel, matchPurposeLabel, parseAskResultData, parseDispatchAskResult, deriveFlowState,
+  FREE_TOOLS, ASK_TOOL,
+  routeDenyReason, planDenyReason, executorDenyReason, applyGateOutcome,
+  isBootstrapPhase, filterBootstrapContextDecision, dedupeProjectedContextDecision,
+  deriveFlowState,
   catalogHasWriteTools, isReadOnlyChildByCatalog, schemasHasWriteTools, schemasHasTool, catalogIsCollapsed,
   subagentProbeGateReason, shellMutationReason, childControlGateReason, plannerGateReason, childReadonlyGateReason, jobOutputGateReason, recordJobOutputCall,
   pollGuardGateReason, recordPollGuardCall, probeDisposalWarning, mainGateReason, runCodeGroupDenyReason, aggregateRunCodeDenyReason,
-  decomposeRunCode, runCodeCatchGateReason, collectRunCodeSites, askUserQuestionReturnGateReason, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, runCodeDispatchCapText,
+  decomposeRunCode, runCodeCatchGateReason, collectRunCodeSites, askOrGateReturnGateReason, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, runCodeDispatchCapText,
 }
