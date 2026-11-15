@@ -413,10 +413,6 @@ export function mutationTextEvidence(text, syntaxRe, bareRe, depth) {
   return null
 }
 
-export function mutationTextMatches(text, syntaxRe, bareRe, depth) {
-  return mutationTextEvidence(text, syntaxRe, bareRe, depth) !== null
-}
-
 function mutationEvidence(commandOf, exec, syntaxRe, bareRe) {
   const cmd = commandOf(exec)
   return cmd !== '' ? mutationTextEvidence(cmd, syntaxRe, bareRe, 0) : null

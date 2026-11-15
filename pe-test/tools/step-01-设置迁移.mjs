@@ -285,7 +285,6 @@ for (const [kind, words] of [
 
   const invalidEditor = makeEditor(invalidCurrent)
   const invalidSettingsConfig = invalidEditor.state.rows[0].entry.options.config
-  const inputIdentity = invalidSettingsConfig === invalidEditor.state.rows[0].entry.options.config
   const syncInputBefore = structuredClone(invalidSettingsConfig)
   const syncCounters = { declaredPlugins: 0, readPatch: 0, legacyState: 0, assetPlugins: 0 }
   let applyCount = 0
@@ -305,7 +304,6 @@ for (const [kind, words] of [
   }
   const inputUnchanged = isDeepStrictEqual(invalidSettingsConfig, syncInputBefore)
   const editedConfig = invalidEditor.state.edits.length === 1 ? invalidEditor.state.edits[0].config : undefined
-  check('M21 ' + kind + ' sync直接绑定真实entry.options.config身份', inputIdentity)
   check('M21 ' + kind + ' sync按同口径补齐落盘：单次edit当前行、六键默认且旧键全删、无错误', syncError === '' && applyCount === 1 && isDeepStrictEqual(editedConfig, { ...completeWithoutGate, gateWords: gate }) && Object.values(syncCounters).every((value) => value === 0))
   check('M21 ' + kind + ' sync写盘不改输入对象、退役参数getter零触达', inputUnchanged && Object.values(syncCounters).every((value) => value === 0))
 }

@@ -15,10 +15,6 @@ function errorText(error) {
   return error instanceof Error ? error.message : String(error)
 }
 
-function errorCodeOf(error) {
-  return error !== null && typeof error === 'object' && typeof error.code === 'string' ? error.code : ''
-}
-
 function policyOf(options) {
   return options !== null && typeof options === 'object' ? options : {}
 }

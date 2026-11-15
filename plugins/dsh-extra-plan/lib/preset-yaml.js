@@ -224,7 +224,6 @@ function migrationComparable(config) {
 
 function migrationHash(text) { return createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex') }
 function migrationIgnorable(line) { const value = line.trim(); return value === '' || value.startsWith('#') }
-function migrationIndent(line) { return (line.match(/^[ \t]*/) || [''])[0].length }
 
 function migrationScalarToken(value) {
   const token = value.trim().replace(/\s+#.*$/, '').trim()
@@ -328,16 +327,6 @@ export function findPluginsRow(plugins, rowId) {
   return null
 }
 
-
-/** 声明行 config.plugins 深拷贝后整体重述：只改目标子行的指定 config 键（config 不深合并语义）。 */
-export function restatePluginsRow(plugins, rowId, patch) {
-  const next = structuredClone(plugins)
-  const row = findPluginsRow(next, rowId)
-  if (row === null) return null
-  const base = row.config !== null && typeof row.config === 'object' && !Array.isArray(row.config) ? row.config : {}
-  row.config = { ...base, ...structuredClone(patch) }
-  return next
-}
 
 function inlineCommentIndex(value) {
   let quote = null

@@ -224,7 +224,9 @@ async function firePreStep(listeners, agent, defaultDecision) {
 function preExecute(listeners, agent, name, argumentsObj) {
   const entry = listeners['tools/pre-execute']
   if (entry === undefined || entry.length === 0) throw new Error('pre-execute 监听器未注册')
-  return entry[0]({ agent, name, arguments: argumentsObj }, () => ({ kind: 'allow' }))
+  const result = entry[0]({ agent, name, arguments: argumentsObj }, () => ({ kind: 'allow' }))
+  if (result === null || result === undefined || typeof result !== 'object') throw new Error(`pre-execute 返回值非法（${name}）：${String(result)}`)
+  return result
 }
 
 // ── ① 注册层断言（[任务3]） ─────────────────────────────────────────────
@@ -478,9 +480,9 @@ for (const [name, events, expected] of GATE_MATRIX) {
   const agent = { session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => events }, options: {}, ctx: agentCtx }
   const r = preExecute(harness, agent, 'save_probe', {})
   if (expected === 'deny') {
-    checkTrue(`${name}`, r !== null && r !== undefined && r.kind === 'deny')
+    checkTrue(`${name}`, r.kind === 'deny')
   } else {
-    checkTrue(`${name}`, r !== null && r !== undefined && r.kind === 'allow')
+    checkTrue(`${name}`, r.kind === 'allow')
   }
 }
 const cancelledState = deriveFlowState(cancelAfterReadyEvents, gateRuntime)
@@ -491,7 +493,7 @@ check('S8hg channel-error 不改动既有状态：route/purpose/clarified 保持
 // S8cg：独立事件流（route→clarify、目的未定）的 save_probe 拒绝文案（第四锚点教学式文案，机械层放行前置）
 const s8Agent = { session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => [um(), ...gateRoute('a1', 'plan', W.routePlan), ...gateClarify('a2')] }, options: {}, ctx: agentCtx }
 const s8r = preExecute(harness, s8Agent, 'save_probe', {})
-checkTrue('S8cg 目的未定 save_probe 拒绝文案含「规划目的尚未确认」与「须先调用 extra_plan_gate 并传入 gate = purpose」', s8r !== null && s8r !== undefined && s8r.kind === 'deny' && String(s8r.reason).includes('规划目的尚未确认') && String(s8r.reason).includes('extra_plan_gate 并传入 gate = purpose'))
+checkTrue('S8cg 目的未定 save_probe 拒绝文案含「规划目的尚未确认」与「须先调用 extra_plan_gate 并传入 gate = purpose」', s8r.kind === 'deny' && String(s8r.reason).includes('规划目的尚未确认') && String(s8r.reason).includes('extra_plan_gate 并传入 gate = purpose'))
 
 let r
 // 完整阶段（route=plan→目的→澄清→executor 路线）后重选 route=plan 必须清掉旧目的/澄清；按 route→purpose→clarify 才恢复下游放行。
@@ -499,15 +501,15 @@ const completePlanEvents = [um(), ...gateRoute('r1', 'plan', W.routePlan), ...ga
 const reselectPlanEvents = completePlanEvents.concat(gateRoute('r5', 'plan', W.routePlan))
 const reselectPlanAgent = { session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => reselectPlanEvents }, options: {}, ctx: agentCtx }
 r = preExecute(harness, reselectPlanAgent, 'save_probe', {})
-checkTrue('S8dg 完整阶段后重选 plan 的 save_probe → deny 且含「规划目的尚未确认」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划目的尚未确认'))
+checkTrue('S8dg 完整阶段后重选 plan 的 save_probe → deny 且含「规划目的尚未确认」', r.kind === 'deny' && String(r.reason).includes('规划目的尚未确认'))
 r = preExecute(harness, reselectPlanAgent, 'subagent_plan', {})
-checkTrue('S8eg 完整阶段后重选 plan 的 subagent_plan → deny 且含「规划目的尚未确认」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划目的尚未确认'))
+checkTrue('S8eg 完整阶段后重选 plan 的 subagent_plan → deny 且含「规划目的尚未确认」', r.kind === 'deny' && String(r.reason).includes('规划目的尚未确认'))
 const reselectPlanReadyEvents = reselectPlanEvents.concat(gatePurpose('r6', 'redo', W.purposeRedo), gateClarify('r7'))
 const reselectPlanReadyAgent = { session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => reselectPlanReadyEvents }, options: {}, ctx: agentCtx }
 r = preExecute(harness, reselectPlanReadyAgent, 'save_probe', {})
-checkTrue('S8fg 重选 plan 后目的→澄清完成的 save_probe → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('S8fg 重选 plan 后目的→澄清完成的 save_probe → allow', r.kind === 'allow')
 r = preExecute(harness, reselectPlanReadyAgent, 'subagent_plan', {})
-checkTrue('S8gg 重选 plan 后目的→澄清完成的 subagent_plan → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('S8gg 重选 plan 后目的→澄清完成的 subagent_plan → allow', r.kind === 'allow')
 
 // ── ②b pre-execute save_plan 路由矩阵（D8-B，主会话：任意路由态放行） ───────
 // 与上表同矩阵：main / none / plan 未澄清（目的未定）/ executor / route 闸门 skipped / 通道故障 → 全部 allow
@@ -527,9 +529,9 @@ for (const [name, events, expected] of SAVE_PLAN_STATES) {
   const agent = { session: { header: { id: 'main-1', cwd: 'C:/work' }, snapshotEvents: () => events }, options: {}, ctx: agentCtx }
   const r = preExecute(harness, agent, 'save_plan', ROUTE_GATE_ARGS)
   if (expected === 'deny') {
-    checkTrue(`${name}`, r !== null && r !== undefined && r.kind === 'deny')
+    checkTrue(`${name}`, r.kind === 'deny')
   } else {
-    checkTrue(`${name}`, r !== null && r !== undefined && r.kind === 'allow')
+    checkTrue(`${name}`, r.kind === 'allow')
   }
 }
 
@@ -541,9 +543,9 @@ for (let i = 0; i < DEFAULT_EXPLORE_BUDGET; i += 1) {
 }
 const exhaustedPlanner = { session: makeSession({ id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', agentPreset: 'extra-plan-planner', cwd: 'C:/work' }, plannerEvents), options: { model: 'deepseek-v4-pro' }, ctx: plannerCtx }
 r = preExecute(harness, exhaustedPlanner, 'read', { file_path: 'C:/work/.extra-plan/线索-x-20260816090000.md' })
-checkTrue('S11 预算耗尽后 read 线索文件 → deny（read 线索计入预算，v1 口径）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('探查预算已耗尽'))
+checkTrue('S11 预算耗尽后 read 线索文件 → deny（read 线索计入预算，v1 口径）', r.kind === 'deny' && String(r.reason).includes('探查预算已耗尽'))
 r = preExecute(harness, exhaustedPlanner, 'save_plan', ROUTE_GATE_ARGS)
-checkTrue('S12 预算耗尽后 save_plan → allow（跳过名单仍仅 save_plan）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('S12 预算耗尽后 save_plan → allow（跳过名单仍仅 save_plan）', r.kind === 'allow')
 // 11 次成功配对后第 12 次 read（线索文件）不拒绝——12 ≤ DEFAULT_EXPLORE_BUDGET（默认）未超预算
 const plannerEvents11 = [DESC, umk('user')]
 for (let i = 0; i < 11; i += 1) {
@@ -552,11 +554,11 @@ for (let i = 0; i < 11; i += 1) {
 }
 const planner11 = { session: makeSession({ id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', agentPreset: 'extra-plan-planner', cwd: 'C:/work' }, plannerEvents11), options: { model: 'deepseek-v4-pro' }, ctx: plannerCtx }
 r = preExecute(harness, planner11, 'read', { file_path: 'C:/work/.extra-plan/线索-x-20260816090000.md' })
-checkTrue('S13 第 12 次 read（线索文件）→ allow（11 配对 + 本次 = 12 ≤ DEFAULT_EXPLORE_BUDGET 未超预算）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('S13 第 12 次 read（线索文件）→ allow（11 配对 + 本次 = 12 ≤ DEFAULT_EXPLORE_BUDGET 未超预算）', r.kind === 'allow')
 const plannerEventsWithTransfer = [...plannerEvents, umk('agent-message')]
 const transferredPlanner = { session: makeSession({ id: 'planner-1', origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', agentPreset: 'extra-plan-planner', cwd: 'C:/work' }, plannerEventsWithTransfer), options: { model: 'deepseek-v4-pro' }, ctx: plannerCtx }
 r = preExecute(harness, transferredPlanner, 'read', { file_path: 'C:/work/.extra-plan/线索-x-20260816090000.md' })
-checkTrue('S14 预算耗尽后收到 agent-message 转达 → 预算重置 read allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('S14 预算耗尽后收到 agent-message 转达 → 预算重置 read allow', r.kind === 'allow')
 
 // ── ④ 执行层冒烟（真实落盘：单次双写/单写 + 失败主动重试，[任务1]） ──
 const smokeMain = makeAgent({ id: 'smoke-main', cwd: 'C:/work' }, [], mainRegistry)

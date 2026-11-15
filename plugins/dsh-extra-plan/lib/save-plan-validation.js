@@ -12,8 +12,6 @@ const CLOSURE_CANDIDATE_RE = /^\[收尾/
 const GLOBAL_CANDIDATE_RE = /^\[全局验收/
 const GROUP_RE = /^G[1-9]\d*$/
 const REVIEW_GROUP_RE = /^R[1-9]\d*$/
-const DEPENDENCY_RE = /^\[任务([1-9]\d*)\]$/
-const CHECK_REF_RE = /^\[检查([1-9]\d*)\]$/
 
 const DISPATCH_PREFIX = '- 派遣说明：'
 const REVIEW_PREFIX = '- 验收说明：'
@@ -1024,12 +1022,6 @@ function buildInternalOrder(members, byId) {
   return order.length === memberIds.length ? order : memberIds
 }
 
-function reviewGroupSort(left, right) {
-  const a = Number(String(left).slice(1))
-  const b = Number(String(right).slice(1))
-  return a - b || String(left).localeCompare(String(right))
-}
-
 function summarizeFileRecord(file) {
   return {
     path: file.path,
@@ -1130,7 +1122,7 @@ function buildSummary(plan, checklist) {
     if (!reviewGroupMap.has(group)) reviewGroupMap.set(group, [])
     reviewGroupMap.get(group).push(check)
   }
-  const reviewGroups = Array.from(reviewGroupMap.keys()).sort(reviewGroupSort).map((group) => {
+  const reviewGroups = Array.from(reviewGroupMap.keys()).sort(groupSort).map((group) => {
     const members = reviewGroupMap.get(group)
     return {
       id: group,
@@ -1227,5 +1219,4 @@ export function validateSavePlanContract(plan, checklist, options) {
   return { ok: true, summary, diagnostics: [] }
 }
 
-export const validateSavePlan = validateSavePlanContract
 export { parseTaskDocument, CONTRACT_ERROR_PREFIX, pathIssue, parseDependencies, parseResources, parseCheckRefs }

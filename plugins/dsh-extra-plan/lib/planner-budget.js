@@ -39,17 +39,23 @@ export function toolCallCount(events, skipNames) {
   return count
 }
 
-// 自最近一条主会话 user/agent-message 锚点之后计数；无锚点时与 toolCallCount 同口径。
-export function toolCallsSinceUser(events, skipNames) {
-  if (!Array.isArray(events)) return 0
-  let anchor = -1
+// 反向查找最近一条主会话 user/agent-message 锚点的下标；找不到返回 -1。
+function lastMainSessionAnchorIndex(events) {
+  if (!Array.isArray(events)) return -1
   for (let i = events.length - 1; i >= 0; i -= 1) {
     const e = events[i]
     if (e === null || typeof e !== 'object' || e.type !== 'user/message') continue
     const d = e.data
     const kind = d !== null && typeof d === 'object' && d.source !== null && typeof d.source === 'object' ? d.source.kind : ''
-    if (kind === 'user' || kind === 'agent-message') { anchor = i; break }
+    if (kind === 'user' || kind === 'agent-message') return i
   }
+  return -1
+}
+
+// 自最近一条主会话 user/agent-message 锚点之后计数；无锚点时与 toolCallCount 同口径。
+export function toolCallsSinceUser(events, skipNames) {
+  if (!Array.isArray(events)) return 0
+  const anchor = lastMainSessionAnchorIndex(events)
   if (anchor === -1) return toolCallCount(events, skipNames)
   return toolCallCount(events.slice(anchor + 1), skipNames)
 }
@@ -108,14 +114,7 @@ export function budgetReminderMessage(reminder) {
 
 export function budgetReminderSent(events, marker) {
   if (!Array.isArray(events)) return false
-  let anchor = -1
-  for (let i = events.length - 1; i >= 0; i -= 1) {
-    const e = events[i]
-    if (e === null || typeof e !== 'object' || e.type !== 'user/message') continue
-    const d = e.data
-    const kind = d !== null && typeof d === 'object' && d.source !== null && typeof d.source === 'object' ? d.source.kind : ''
-    if (kind === 'user' || kind === 'agent-message') { anchor = i; break }
-  }
+  const anchor = lastMainSessionAnchorIndex(events)
   for (let i = anchor + 1; i < events.length; i += 1) {
     const e = events[i]
     if (e === null || typeof e !== 'object' || e.type !== 'user/message') continue

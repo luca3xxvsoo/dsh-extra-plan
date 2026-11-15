@@ -525,7 +525,7 @@ function resolveOtherAgentEntry(agent, parentSignal, probe) {
   return pending
 }
 
-// 验收者模型入口：plannerModel 作为验收者的 pro 模型来源，空串等于继承主会话（直接回退父
+// 验收者模型入口：plannerModel 作为验收者的规划者模型来源，空串等于继承主会话（直接回退父
 // fallback，不取 llm）。reviewerRoutePendingCache/reviewerRouteSettledCache 是 per-apply 实例
 // （不得提升为模块全局），按 plannerModel、crossProviderPlannerModel 真假、顶层主会话
 // provider/model/maxTokens 五段拼键；pending 与 settled 隔离，条目超过 32 条时整表清空。

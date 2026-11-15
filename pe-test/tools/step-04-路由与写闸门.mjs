@@ -241,7 +241,7 @@ try {
   output.error(`FAIL  YAML 解析失败: ${error.message}`)
   process.exit(1)
 }
-output.assertion(true, 'YAML 解析成功', '数组', Array.isArray(rows) ? rows.length : '非数组!')
+output.assertion(rows !== undefined, 'YAML 解析成功', '数组', rows === undefined ? '未解析（零文档）' : (Array.isArray(rows) ? rows.length : '非数组!'))
 
 function flatten(list) {
   const out = []
@@ -434,10 +434,12 @@ async function assemble(listeners, agent, tools, sections = []) {
 function preExecute(listeners, agent, name, argumentsObj, execExtras, nextSpy) {
   const entry = listeners['tools/pre-execute']
   if (entry === undefined || entry.length === 0) throw new Error('pre-execute 监听器未注册')
-  return entry[0]({ agent, name, arguments: argumentsObj, ...(execExtras !== undefined && execExtras !== null ? execExtras : {}) }, () => {
+  const result = entry[0]({ agent, name, arguments: argumentsObj, ...(execExtras !== undefined && execExtras !== null ? execExtras : {}) }, () => {
     if (typeof nextSpy === 'function') nextSpy()
     return { kind: 'allow' }
   })
+  if (result === null || result === undefined || typeof result !== 'object') throw new Error(`pre-execute 返回值非法（${name}）：${String(result)}`)
+  return result
 }
 function emitClaimed(listeners, agent, message) {
   const entry = listeners['agent/inbox/claimed']
@@ -554,58 +556,58 @@ for (const [label, command, expected] of H3Q_COMMAND_CASES) {
     const result = preExecute(h3qHarness, h3qAgent, 'bash', argumentsObj, undefined, nextSpy)
     const reason = result === null || result === undefined ? '' : String(result.reason)
     checkTrue('H3Q ' + label + '/' + shape + ' isolated preExecute', expected === null
-      ? result !== null && result !== undefined && result.kind === 'allow' && h3qNextCalls === 1
-      : result !== null && result !== undefined && result.kind === 'deny' && h3qNextCalls === 0 && reason.includes(expected.rule) && reason.includes(expected.value))
+      ? result.kind === 'allow' && h3qNextCalls === 1
+      : result.kind === 'deny' && h3qNextCalls === 0 && reason.includes(expected.rule) && reason.includes(expected.value))
   }
 }
 checkTrue('H3Q variants===20', h3qVariants === 20)
 let r = preExecute(harness, reviewer, 'pwsh', { command: 'New-Item x.txt' })
-checkTrue('R1 reviewer pwsh New-Item → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === H3_REASONS.reviewerPwshNewItem)
-checkTrue('R2 reviewer pwsh deny 文案含只读限定', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('pwsh 仅限只读探查命令，禁止创建/修改/删除文件'))
+checkTrue('R1 reviewer pwsh New-Item → deny + H3 完整依据', r.kind === 'deny' && String(r.reason) === H3_REASONS.reviewerPwshNewItem)
+checkTrue('R2 reviewer pwsh deny 文案含只读限定', r.kind === 'deny' && String(r.reason).includes('pwsh 仅限只读探查命令，禁止创建/修改/删除文件'))
 r = preExecute(harness, reviewer, 'pwsh', { command: 'Set-Content a.txt x' })
-checkTrue('R3 reviewer pwsh Set-Content → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === H3_REASONS.reviewerPwshSetContent)
+checkTrue('R3 reviewer pwsh Set-Content → deny + H3 完整依据', r.kind === 'deny' && String(r.reason) === H3_REASONS.reviewerPwshSetContent)
 r = preExecute(harness, reviewer, 'pwsh', { command: 'cmd /c del x.txt' })
-checkTrue('R3a reviewer pwsh cmd /c 写命令 → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === H3_REASONS.reviewerPwshCmdDel)
+checkTrue('R3a reviewer pwsh cmd /c 写命令 → deny + H3 完整依据', r.kind === 'deny' && String(r.reason) === H3_REASONS.reviewerPwshCmdDel)
 r = preExecute(harness, reviewer, 'pwsh', { command: 'CMD.EXE /C "del x.txt"' })
-checkTrue('R3b reviewer pwsh CMD.EXE /C 引号写命令 → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === H3_REASONS.reviewerPwshCmdDel)
+checkTrue('R3b reviewer pwsh CMD.EXE /C 引号写命令 → deny + H3 完整依据', r.kind === 'deny' && String(r.reason) === H3_REASONS.reviewerPwshCmdDel)
 r = preExecute(harness, reviewer, 'pwsh', { command: 'cmd.exe /C "dir"' })
-checkTrue('R3c reviewer pwsh cmd.exe /C dir 只读 → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R3c reviewer pwsh cmd.exe /C dir 只读 → allow', r.kind === 'allow')
 r = preExecute(harness, reviewer, 'pwsh', { command: 'Get-ChildItem' })
-checkTrue('R4 reviewer pwsh Get-ChildItem → 放行', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R4 reviewer pwsh Get-ChildItem → 放行', r.kind === 'allow')
 r = preExecute(harness, reviewer, 'pwsh', { command: '$i > 4' })
-checkTrue('R4a reviewer pwsh 裸 > 数字重定向 → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === shellMutationReason('reviewer', { name: 'pwsh', arguments: { command: '$i > 4' } }))
+checkTrue('R4a reviewer pwsh 裸 > 数字重定向 → deny + H3 完整依据', r.kind === 'deny' && String(r.reason) === shellMutationReason('reviewer', { name: 'pwsh', arguments: { command: '$i > 4' } }))
 r = preExecute(harness, reviewer, 'pwsh', { command: '$a >= 5' })
-checkTrue('R4b reviewer pwsh >= 重定向 → deny + H3 完整依据（回归锁定）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === shellMutationReason('reviewer', { name: 'pwsh', arguments: { command: '$a >= 5' } }))
+checkTrue('R4b reviewer pwsh >= 重定向 → deny + H3 完整依据（回归锁定）', r.kind === 'deny' && String(r.reason) === shellMutationReason('reviewer', { name: 'pwsh', arguments: { command: '$a >= 5' } }))
 r = preExecute(harness, reviewer, 'write', {})
-checkTrue('R5 reviewer write → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('验收复核者只读'))
+checkTrue('R5 reviewer write → deny', r.kind === 'deny' && String(r.reason).includes('验收复核者只读'))
 r = preExecute(harness, reviewer, 'edit', {})
-checkTrue('R6 reviewer edit → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('验收复核者只读'))
+checkTrue('R6 reviewer edit → deny', r.kind === 'deny' && String(r.reason).includes('验收复核者只读'))
 
 // 执行者目录（含 write/edit）：缓存未命中 → 放行（现状不变）
 const executor = childAgent('executor-1')
 await assemble(harness, executor, [{ name: 'read' }, { name: 'write' }, { name: 'edit' }, { name: 'pwsh' }])
 r = preExecute(harness, executor, 'pwsh', { command: 'New-Item x.txt' })
-checkTrue('R7 executor pwsh New-Item → 放行（现状不变）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R7 executor pwsh New-Item → 放行（现状不变）', r.kind === 'allow')
 
 // 缓存未装配（目录尚未记录）→ 放行（fail-open，不误伤）
 const fresh = childAgent('fresh-1')
 r = preExecute(harness, fresh, 'write', {})
-checkTrue('R8 缓存未命中（未装配）→ 放行 fail-open', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R8 缓存未命中（未装配）→ 放行 fail-open', r.kind === 'allow')
 
 // ── ④ 回归 ────────────────────────────────────────────────────────────
 // 主会话路由未确认：write/pwsh 写拦截不变（bootstrapOn=false 下同样生效）
 r = preExecute(harness, mainAgent, 'write', {})
-checkTrue('R9 主会话路由未确认 write → deny（回归）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认'))
+checkTrue('R9 主会话路由未确认 write → deny（回归）', r.kind === 'deny' && String(r.reason).includes('路由未确认'))
 r = preExecute(harness, mainAgent, 'pwsh', { command: 'New-Item x.txt' })
-checkTrue('R10 主会话路由未确认 pwsh 写 → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === H3_REASONS.mainNonePwshNewItem)
+checkTrue('R10 主会话路由未确认 pwsh 写 → deny + H3 完整依据', r.kind === 'deny' && String(r.reason) === H3_REASONS.mainNonePwshNewItem)
 r = preExecute(harness, mainAgent, 'pwsh', { command: 'cmd.exe /C "del x.txt"' })
-checkTrue('R10a 主会话路由未确认 cmd.exe /C 写 → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === H3_REASONS.mainNonePwshCmdDel)
+checkTrue('R10a 主会话路由未确认 cmd.exe /C 写 → deny + H3 完整依据', r.kind === 'deny' && String(r.reason) === H3_REASONS.mainNonePwshCmdDel)
 
 // planner 分支拦截照旧（write deny 文案含「规划子代理只读」）
 r = preExecute(harness, plannerAgent, 'write', {})
-checkTrue('R11 planner write → deny（回归）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划子代理只读'))
+checkTrue('R11 planner write → deny（回归）', r.kind === 'deny' && String(r.reason).includes('规划子代理只读'))
 r = preExecute(harness, plannerAgent, 'pwsh', { command: 'cmd /c "Remove-Item x.txt"' })
-checkTrue('R11a planner pwsh cmd /c 引号写 → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === H3_REASONS.plannerPwshRemoveItem)
+checkTrue('R11a planner pwsh cmd /c 引号写 → deny + H3 完整依据', r.kind === 'deny' && String(r.reason) === H3_REASONS.plannerPwshRemoveItem)
 
 // bootstrapOn=true：主会话/规划子代理首轮目录收窄为 shell+read；executor 不引导
 const bootMain = await assemble(harnessBoot, mainAgent, [{ name: 'read' }, { name: 'pwsh' }, { name: 'write' }, { name: 'glob' }])
@@ -815,19 +817,19 @@ const gateChannelErrorMain = mainWithEvents([umE(), ...channelErrorGateE('route'
 
 // 闸门工具（extra_plan_gate）在 route/purpose/clarify 三类 gate 上一律放行：路线/目的/澄清判定已内置到工具与状态机。
 r = preExecute(harness, noneMain, 'extra_plan_gate', { gate: 'route' })
-checkTrue('R18a 主会话 none 态 extra_plan_gate(gate=route) → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R18a 主会话 none 态 extra_plan_gate(gate=route) → allow', r.kind === 'allow')
 r = preExecute(harness, mainRouteMain, 'extra_plan_gate', { gate: 'route' })
-checkTrue('R18b 主会话 main 态 extra_plan_gate(gate=route)（重选路线）→ allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R18b 主会话 main 态 extra_plan_gate(gate=route)（重选路线）→ allow', r.kind === 'allow')
 r = preExecute(harness, planMain, 'extra_plan_gate', { gate: 'purpose' })
-checkTrue('R18c 主会话 plan 态 extra_plan_gate(gate=purpose) → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R18c 主会话 plan 态 extra_plan_gate(gate=purpose) → allow', r.kind === 'allow')
 r = preExecute(harness, planPurposeMain, 'extra_plan_gate', { gate: 'clarify', questions: askQuestionsE.questions })
-checkTrue('R18d 主会话三锚点齐备 extra_plan_gate(gate=clarify) → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R18d 主会话三锚点齐备 extra_plan_gate(gate=clarify) → allow', r.kind === 'allow')
 r = preExecute(harness, noneMain, 'ask_user_question', askQuestionsE)
-checkTrue('R18e 主会话 none 态普通 ask_user_question → allow（闸门选项改由 extra_plan_gate 生成，旧前置拒退场）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R18e 主会话 none 态普通 ask_user_question → allow（闸门选项改由 extra_plan_gate 生成，旧前置拒退场）', r.kind === 'allow')
 r = preExecute(harness, executorRouteMain, 'extra_plan_gate', { gate: 'route' })
-checkTrue('R18f 主会话 executor 态 extra_plan_gate(gate=route) → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R18f 主会话 executor 态 extra_plan_gate(gate=route) → allow', r.kind === 'allow')
 r = preExecute(harness, gateChannelErrorMain, 'extra_plan_gate', { gate: 'route' })
-checkTrue('R18g 通道故障（channel-error）后 extra_plan_gate → 仍 allow（不形成死锁）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R18g 通道故障（channel-error）后 extra_plan_gate → 仍 allow（不形成死锁）', r.kind === 'allow')
 
 // ── R18h-R18k 写闸门四路线矩阵：route=main 放行主会话直做（write/edit/写 shell），
 // ── route=executor 只放行执行类委派（write/edit 仍拒；shell 写按 sandbox_permissions 的二级判定单独锁两种情形），
@@ -837,49 +839,49 @@ for (const route of writeGateRoutes) {
   const agent = mainWithEvents([umE(), ...routeGateE(route, 'wg-' + route)])
   const expectedKind = route === 'main' ? 'allow' : 'deny'
   r = preExecute(harness, agent, 'write', { file_path: 'x', content: '1' })
-  checkTrue('R18h route=' + route + ' write → ' + expectedKind + '，deny 拒句不含 sandbox_permissions 越界指引', r !== null && r !== undefined && r.kind === expectedKind && (expectedKind === 'allow' || !String(r.reason).includes('sandbox_permissions')))
+  checkTrue('R18h route=' + route + ' write → ' + expectedKind + '，deny 拒句不含 sandbox_permissions 越界指引', r.kind === expectedKind && (expectedKind === 'allow' || !String(r.reason).includes('sandbox_permissions')))
   r = preExecute(harness, agent, 'edit', { file_path: 'x', old_string: 'a', new_string: 'b' })
-  checkTrue('R18i route=' + route + ' edit → ' + expectedKind + '，deny 拒句不含 sandbox_permissions 越界指引', r !== null && r !== undefined && r.kind === expectedKind && (expectedKind === 'allow' || !String(r.reason).includes('sandbox_permissions')))
+  checkTrue('R18i route=' + route + ' edit → ' + expectedKind + '，deny 拒句不含 sandbox_permissions 越界指引', r.kind === expectedKind && (expectedKind === 'allow' || !String(r.reason).includes('sandbox_permissions')))
   if (route === 'executor') {
     // shell 写命令二级判定（write/edit 不享受此特例）：无 sandbox_permissions → 拒；
     // sandbox_permissions 为字符串 → 放行（工作区外写入）；非字符串 → 仍拒并提示可带该参数重试。
     r = preExecute(harness, agent, 'pwsh', { command: 'New-Item x.txt' })
-    checkTrue('R18j route=executor pwsh 写（无 sandbox_permissions）→ deny 且拒句提示可带 sandbox_permissions 重试', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('sandbox_permissions'))
+    checkTrue('R18j route=executor pwsh 写（无 sandbox_permissions）→ deny 且拒句提示可带 sandbox_permissions 重试', r.kind === 'deny' && String(r.reason).includes('sandbox_permissions'))
     r = preExecute(harness, agent, 'pwsh', { command: 'New-Item x.txt', sandbox_permissions: 'workspace-write' })
-    checkTrue('R18j-1 route=executor pwsh 写 + sandbox_permissions 字符串 → allow（工作区外写入放行）', r !== null && r !== undefined && r.kind === 'allow')
+    checkTrue('R18j-1 route=executor pwsh 写 + sandbox_permissions 字符串 → allow（工作区外写入放行）', r.kind === 'allow')
     r = preExecute(harness, agent, 'pwsh', { command: 'New-Item x.txt', sandbox_permissions: true })
-    checkTrue('R18j-2 route=executor pwsh 写 + sandbox_permissions 非字符串 → deny 且拒句含越界指引', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('sandbox_permissions'))
+    checkTrue('R18j-2 route=executor pwsh 写 + sandbox_permissions 非字符串 → deny 且拒句含越界指引', r.kind === 'deny' && String(r.reason).includes('sandbox_permissions'))
     r = preExecute(harness, agent, 'bash', { command: 'rm -rf x', sandbox_permissions: 'workspace-write' })
-    checkTrue('R18j-3 route=executor bash 写 + sandbox_permissions 字符串 → allow（bash 与 pwsh 同口径）', r !== null && r !== undefined && r.kind === 'allow')
+    checkTrue('R18j-3 route=executor bash 写 + sandbox_permissions 字符串 → allow（bash 与 pwsh 同口径）', r.kind === 'allow')
     r = preExecute(harness, agent, 'write', { file_path: 'x', content: '1', sandbox_permissions: 'workspace-write' })
-    checkTrue('R18j-4 route=executor write + sandbox_permissions 字符串 → 仍 deny 且拒句不含 shell 越界指引（write/edit 不享受该特例）', r !== null && r !== undefined && r.kind === 'deny' && !String(r.reason).includes('sandbox_permissions'))
+    checkTrue('R18j-4 route=executor write + sandbox_permissions 字符串 → 仍 deny 且拒句不含 shell 越界指引（write/edit 不享受该特例）', r.kind === 'deny' && !String(r.reason).includes('sandbox_permissions'))
     r = preExecute(harness, agent, 'edit', { file_path: 'x', old_string: 'a', new_string: 'b', sandbox_permissions: 'workspace-write' })
-    checkTrue('R18j-4b route=executor edit + sandbox_permissions 字符串 → 仍 deny 且拒句不含 shell 越界指引（edit 与 write 同口径）', r !== null && r !== undefined && r.kind === 'deny' && !String(r.reason).includes('sandbox_permissions'))
+    checkTrue('R18j-4b route=executor edit + sandbox_permissions 字符串 → 仍 deny 且拒句不含 shell 越界指引（edit 与 write 同口径）', r.kind === 'deny' && !String(r.reason).includes('sandbox_permissions'))
   } else if (route === 'plan') {
     r = preExecute(harness, agent, 'pwsh', { command: 'New-Item x.txt' })
-    checkTrue('R18j route=plan pwsh 写 → deny', r !== null && r !== undefined && r.kind === 'deny')
+    checkTrue('R18j route=plan pwsh 写 → deny', r.kind === 'deny')
     // 已确认路线（plan）不带参被拒时，拒句必须追加越界指引（提示可带 sandbox_permissions 重试）。
-    checkTrue('R18j-5 plan pwsh 写（无 sandbox_permissions）→ 拒句含越界指引（含 sandbox_permissions 提示）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('sandbox_permissions'))
+    checkTrue('R18j-5 plan pwsh 写（无 sandbox_permissions）→ 拒句含越界指引（含 sandbox_permissions 提示）', r.kind === 'deny' && String(r.reason).includes('sandbox_permissions'))
     r = preExecute(harness, agent, 'pwsh', { command: 'New-Item x.txt', sandbox_permissions: 'workspace-write' })
-    checkTrue('R18j-6 route=plan pwsh 写 + sandbox_permissions 字符串 → allow（工作区外写入放行）', r !== null && r !== undefined && r.kind === 'allow')
+    checkTrue('R18j-6 route=plan pwsh 写 + sandbox_permissions 字符串 → allow（工作区外写入放行）', r.kind === 'allow')
   } else if (route === 'none') {
     // route=main 迭代由 expectedKind=allow 处理（R18h/R18i 已断言 allow），不进入本分支；本分支只覆盖 route=none。
     // route=none（未确认）：带参数与不带参数都拒，且拒句一律不得含越界指引——未确认路线不接受「越界重试」。
     r = preExecute(harness, agent, 'pwsh', { command: 'New-Item x.txt' })
-    checkTrue('R18j route=none pwsh 写 → deny', r !== null && r !== undefined && r.kind === 'deny')
-    checkTrue('R18j-5 route=none pwsh 写（无 sandbox_permissions）→ 拒句不含越界指引（不得出现 sandbox_permissions）', r !== null && r !== undefined && r.kind === 'deny' && !String(r.reason).includes('sandbox_permissions'))
+    checkTrue('R18j route=none pwsh 写 → deny', r.kind === 'deny')
+    checkTrue('R18j-5 route=none pwsh 写（无 sandbox_permissions）→ 拒句不含越界指引（不得出现 sandbox_permissions）', r.kind === 'deny' && !String(r.reason).includes('sandbox_permissions'))
     r = preExecute(harness, agent, 'pwsh', { command: 'New-Item x.txt', sandbox_permissions: 'workspace-write' })
-    checkTrue('R18j-6 route=none pwsh 写 + sandbox_permissions 字符串 → deny 且拒句不含越界指引（sandbox_permissions 不是未确认路线的绕过）', r !== null && r !== undefined && r.kind === 'deny' && !String(r.reason).includes('sandbox_permissions'))
+    checkTrue('R18j-6 route=none pwsh 写 + sandbox_permissions 字符串 → deny 且拒句不含越界指引（sandbox_permissions 不是未确认路线的绕过）', r.kind === 'deny' && !String(r.reason).includes('sandbox_permissions'))
   }
   r = preExecute(harness, agent, 'subagent', { task: '执行' })
   const expectedDelegateKind = route === 'executor' ? 'allow' : 'deny'
-  checkTrue('R18k route=' + route + ' subagent 委派 → ' + expectedDelegateKind, r !== null && r !== undefined && r.kind === expectedDelegateKind)
+  checkTrue('R18k route=' + route + ' subagent 委派 → ' + expectedDelegateKind, r.kind === expectedDelegateKind)
 }
 
 
 r = preExecute(harness, mainRouteMain, 'subagent_probe', {})
 // 委派工具参数表已无后台标志，原「缺后台即拒」断言退役 → 缺省参数同样放行（后台约束在宿主层）。
-checkTrue('R19 主会话 main 态 subagent_probe(无后台参数) → 放行（后台闸门已上移宿主层）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R19 主会话 main 态 subagent_probe(无后台参数) → 放行（后台闸门已上移宿主层）', r.kind === 'allow')
 // 待认领计数等价补记：原 R18/R20/R21 三次后台参数放行各挂 1 个待认领计数（供 C1/C2/C2b 认领，见 C1 区注释），随旧参数删除；此处补两次与 R19 同形的无参放行，维持 main-1 待认领计数=3（C1 消费 1、C2 不消费、C2b 仍可认领）。这两次调用的返回值不被读取，作用是维持 main-1 待认领计数为 3，供 C1、C2、C2b 消费。
 r = preExecute(harness, mainRouteMain, 'subagent_probe', {})
 r = preExecute(harness, mainRouteMain, 'subagent_probe', {})
@@ -890,13 +892,13 @@ const probeAgent = childAgent('probe-1', 'extra-plan-prober', [], { parentSessio
 probeAgent.ctx = { get: (n) => (n === 'tools' ? { schemas: () => [{ name: 'read' }, { name: 'glob' }, { name: 'grep' }, { name: 'pwsh' }, { name: 'save_probe' }] } : undefined) }
 await assemble(harness, probeAgent, [{ name: 'read' }, { name: 'glob' }, { name: 'grep' }, { name: 'pwsh' }, { name: 'save_probe' }])
 r = preExecute(harness, probeAgent, 'write', {})
-checkTrue('R15 probe 会话 write → deny 且文案含「探查者只读」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('探查者只读'))
+checkTrue('R15 probe 会话 write → deny 且文案含「探查者只读」', r.kind === 'deny' && String(r.reason).includes('探查者只读'))
 r = preExecute(harness, probeAgent, 'pwsh', { command: 'Get-ChildItem' })
-checkTrue('R16 probe 会话 pwsh 只读 → 放行', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R16 probe 会话 pwsh 只读 → 放行', r.kind === 'allow')
 r = preExecute(harness, probeAgent, 'pwsh', { command: 'cmd.exe /C "del x.txt"' })
-checkTrue('R16a probe 会话 pwsh cmd.exe /C 写 → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('探查者只读'))
+checkTrue('R16a probe 会话 pwsh cmd.exe /C 写 → deny', r.kind === 'deny' && String(r.reason).includes('探查者只读'))
 r = preExecute(harness, probeAgent, 'save_probe', { fileMap: [], focusAreas: [], exclusions: [], background: [] })
-checkTrue('R17 probe 会话 save_probe → 放行', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R17 probe 会话 save_probe → 放行', r.kind === 'allow')
 
 const g3RunCreated = async (listeners, agent) => {
   const entry = listeners['agent/created']
@@ -932,7 +934,7 @@ for (const [roleName, preset, expectedMode] of g3RoleCases) {
   let firstPreExecuteNextSnapshot = null
   const firstPreExecuteResult = preExecute(g3RoleHarness, firstPreExecuteAgent, 'read', {}, undefined, () => { firstPreExecuteNextCalls += 1; firstPreExecuteNextSnapshot = firstPreExecuteAgent.session.snapshotEvents(); return { kind: 'allow' } })
   const firstPreExecuteModes = firstPreExecuteAgent.session.snapshotEvents().filter((event) => event !== null && typeof event === 'object' && event.type === 'sandbox/mode')
-  checkTrue('M10 ' + roleName + ' 未created/pre-step首次pre-execute直接绑定mode=' + expectedMode + '且原read gate/next保持', firstPreExecuteBefore.length === 0 && firstPreExecuteResult !== null && firstPreExecuteResult.kind === 'allow' && firstPreExecuteNextCalls === 1 && firstPreExecuteNextSnapshot !== null && firstPreExecuteNextSnapshot.some((event) => event !== null && typeof event === 'object' && event.type === 'sandbox/mode' && event.data.mode === expectedMode && event.data.source === 'delegation') && firstPreExecuteModes.length === 1 && firstPreExecuteModes[0].data.mode === expectedMode && firstPreExecuteModes[0].data.source === 'delegation')
+  checkTrue('M10 ' + roleName + ' 未created/pre-step首次pre-execute直接绑定mode=' + expectedMode + '且原read gate/next保持', firstPreExecuteBefore.length === 0 && firstPreExecuteResult.kind === 'allow' && firstPreExecuteNextCalls === 1 && firstPreExecuteNextSnapshot !== null && firstPreExecuteNextSnapshot.some((event) => event !== null && typeof event === 'object' && event.type === 'sandbox/mode' && event.data.mode === expectedMode && event.data.source === 'delegation') && firstPreExecuteModes.length === 1 && firstPreExecuteModes[0].data.mode === expectedMode && firstPreExecuteModes[0].data.source === 'delegation')
 
   const agent = childAgent('g3-mode-' + roleName, preset)
   const before = agent.session.snapshotEvents()
@@ -957,7 +959,7 @@ for (const [roleName, preset, expectedMode] of g3RoleCases) {
   const afterExecute = agent.session.snapshotEvents()
   const executeModes = afterExecute.filter((event) => event !== null && typeof event === 'object' && event.type === 'sandbox/mode')
   checkTrue('M10 ' + roleName + ' created→pre-step 前 mode=' + expectedMode + ' 且next前已绑定', before.length === 0 && createdModes.length === 1 && createdModes[0].data.mode === expectedMode && createdModes[0].data.source === 'delegation' && nextSnapshot !== null && nextSnapshot.some((event) => event !== null && typeof event === 'object' && event.type === 'sandbox/mode' && event.data.mode === expectedMode) && nextCalls === 1 && stepModeCount === 1)
-  checkTrue('M10 ' + roleName + ' 重复pre-step/pre-execute幂等且本session append仅一次', repeatNextCalls === 1 && repeatModeCount === 1 && executeResult !== null && executeResult.kind === 'allow' && executeNextCalls === 1 && executeModes.length === 1 && executeModes[0].data.mode === expectedMode)
+  checkTrue('M10 ' + roleName + ' 重复pre-step/pre-execute幂等且本session append仅一次', repeatNextCalls === 1 && repeatModeCount === 1 && executeResult.kind === 'allow' && executeNextCalls === 1 && executeModes.length === 1 && executeModes[0].data.mode === expectedMode)
   checkTrue('M10 ' + roleName + ' 非目标主/另一child快照不变', isDeepStrictEqual(mainAgent.session.snapshotEvents(), g3MainSnapshot) && isDeepStrictEqual(g3OtherChild.session.snapshotEvents(), g3OtherChildSnapshot))
 }
 
@@ -983,7 +985,7 @@ const g3RunGateCase = (agent, name, argumentsObj) => {
 for (const [name, argumentsObj, label] of g3ReviewerGateCases) {
   const baseline = g3RunGateCase(g3ReviewerBaseline, name, argumentsObj)
   const reviewerResult = g3RunGateCase(g3ReviewerMode, name, argumentsObj)
-  checkTrue('M10 reviewer mode=workspace-write 仍拒绝' + label + '、next=0且原reason不变', baseline.result !== null && baseline.result.kind === 'deny' && reviewerResult.result !== null && reviewerResult.result.kind === 'deny' && baseline.nextCount === 0 && reviewerResult.nextCount === 0 && String(reviewerResult.result.reason) === String(baseline.result.reason))
+  checkTrue('M10 reviewer mode=workspace-write 仍拒绝' + label + '、next=0且原reason不变', baseline.result.kind === 'deny' && reviewerResult.result.kind === 'deny' && baseline.nextCount === 0 && reviewerResult.nextCount === 0 && String(reviewerResult.result.reason) === String(baseline.result.reason))
 }
 checkTrue('M10 reviewer workspace-write mode事件来自独立session且仅一次', g3ReviewerModeEvents.length === 1 && g3ReviewerModeEvents[0].data.mode === 'workspace-write' && g3ReviewerModeEvents[0].data.source === 'delegation')
 
@@ -1003,56 +1005,56 @@ const childWithSchemas = (id, schemas) => ({
   const t1 = childWithSchemas('t-exec-1', [{ name: 'read' }, { name: 'write' }, { name: 'edit' }])
   await assemble(harness, t1, [{ name: 'run_code' }])
   r = preExecute(harness, t1, 'write', {})
-  checkTrue('T1 折叠+executor（schemas 含 write/edit）write → 放行（误判修复）', r !== null && r !== undefined && r.kind === 'allow')
+  checkTrue('T1 折叠+executor（schemas 含 write/edit）write → 放行（误判修复）', r.kind === 'allow')
 }
 // T2 折叠+probe：目录 [run_code]、真实工具集无写含 save_probe → write deny 且文案含「探查者只读」
 {
   const t2 = childWithSchemas('t-probe-1', [{ name: 'read' }, { name: 'glob' }, { name: 'save_probe' }])
   await assemble(harness, t2, [{ name: 'run_code' }])
   r = preExecute(harness, t2, 'write', {})
-  checkTrue('T2 折叠+probe（无写含 save_probe）write → deny 且含「探查者只读」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('探查者只读'))
+  checkTrue('T2 折叠+probe（无写含 save_probe）write → deny 且含「探查者只读」', r.kind === 'deny' && String(r.reason).includes('探查者只读'))
 }
 // T3 折叠+reviewer：目录 [run_code]、真实工具集无写无 save_probe → write deny 且文案含「验收复核者只读」
 {
   const t3 = childWithSchemas('t-review-1', [{ name: 'read' }, { name: 'glob' }])
   await assemble(harness, t3, [{ name: 'run_code' }])
   r = preExecute(harness, t3, 'write', {})
-  checkTrue('T3 折叠+reviewer（无写无 save_probe）write → deny 且含「验收复核者只读」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('验收复核者只读'))
+  checkTrue('T3 折叠+reviewer（无写无 save_probe）write → deny 且含「验收复核者只读」', r.kind === 'deny' && String(r.reason).includes('验收复核者只读'))
 }
 // T4 非折叠+executor：目录含 write、真实工具集含 write → write 放行
 {
   const t4 = childWithSchemas('t-exec-2', [{ name: 'read' }, { name: 'write' }])
   await assemble(harness, t4, [{ name: 'read' }, { name: 'write' }])
   r = preExecute(harness, t4, 'write', {})
-  checkTrue('T4 非折叠+executor（schemas 含 write）write → 放行', r !== null && r !== undefined && r.kind === 'allow')
+  checkTrue('T4 非折叠+executor（schemas 含 write）write → 放行', r.kind === 'allow')
 }
 // T5 非折叠+probe：目录无写、真实工具集无写含 save_probe → write deny 且文案含「探查者只读」
 {
   const t5 = childWithSchemas('t-probe-2', [{ name: 'read' }, { name: 'save_probe' }])
   await assemble(harness, t5, [{ name: 'read' }, { name: 'glob' }])
   r = preExecute(harness, t5, 'write', {})
-  checkTrue('T5 非折叠+probe（无写含 save_probe）write → deny 且含「探查者只读」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('探查者只读'))
+  checkTrue('T5 非折叠+probe（无写含 save_probe）write → deny 且含「探查者只读」', r.kind === 'deny' && String(r.reason).includes('探查者只读'))
 }
 // T6 非折叠+reviewer：目录无写、真实工具集无写 → write deny 且文案含「验收复核者只读」
 {
   const t6 = childWithSchemas('t-review-2', [{ name: 'read' }, { name: 'glob' }])
   await assemble(harness, t6, [{ name: 'read' }, { name: 'glob' }])
   r = preExecute(harness, t6, 'write', {})
-  checkTrue('T6 非折叠+reviewer（无写）write → deny 且含「验收复核者只读」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('验收复核者只读'))
+  checkTrue('T6 非折叠+reviewer（无写）write → deny 且含「验收复核者只读」', r.kind === 'deny' && String(r.reason).includes('验收复核者只读'))
 }
 // T7 折叠+schemas 不可得（ctx: undefined）：目录 [run_code] → write 放行（回落 fail-open，同 R25）
 {
   const t7 = childAgent('t-fresh-1')
   await assemble(harness, t7, [{ name: 'run_code' }])
   r = preExecute(harness, t7, 'write', {})
-  checkTrue('T7 折叠+schemas 不可得 write → 放行（回落 fail-open）', r !== null && r !== undefined && r.kind === 'allow')
+  checkTrue('T7 折叠+schemas 不可得 write → 放行（回落 fail-open）', r.kind === 'allow')
 }
 // T8 非折叠无写目录+schemas 不可得：目录 [read] → write deny 且含「验收复核者只读」（回落目录判定，同 R26）
 {
   const t8 = childAgent('t-fresh-2')
   await assemble(harness, t8, [{ name: 'read' }])
   r = preExecute(harness, t8, 'write', {})
-  checkTrue('T8 非折叠无写目录+schemas 不可得 write → deny 且含「验收复核者只读」（回落目录判定）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('验收复核者只读'))
+  checkTrue('T8 非折叠无写目录+schemas 不可得 write → deny 且含「验收复核者只读」（回落目录判定）', r.kind === 'deny' && String(r.reason).includes('验收复核者只读'))
 }
 
 // ── ⑤c 认领（放行→待认领计数→probe 子会话 session-start 认领并注册 save_probe；C1-C3） ──
@@ -1209,19 +1211,19 @@ const nestedRouteNoneMain = mainWithEvents([umE(), cdStartE('extra_plan_gate', '
 const nestedChannelErrorMain = mainWithEvents([umE(), cdStartE('extra_plan_gate', 'outer1', nestedRouteGateArgs), cdEndE('outer1', gateJson(outcomeGateValue('route', 'channel-error')))])
 
 r = preExecute(harness, nestedMainRoute, 'write', {})
-checkTrue('R22 嵌套 route 闸门答 main → write 放行（F1 桥接）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R22 嵌套 route 闸门答 main → write 放行（F1 桥接）', r.kind === 'allow')
 r = preExecute(harness, nestedPlanMain, 'subagent_plan', {})
-checkTrue('R23 嵌套 route=plan + 嵌套 purpose + 嵌套 clarify → subagent_plan 放行（F1 桥接）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R23 嵌套 route=plan + 嵌套 purpose + 嵌套 clarify → subagent_plan 放行（F1 桥接）', r.kind === 'allow')
 r = preExecute(harness, nestedExecutorMain, 'subagent', { run_in_background: true })
-checkTrue('R24 嵌套 route 闸门答 executor → subagent 委派放行（F1 桥接）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R24 嵌套 route 闸门答 executor → subagent 委派放行（F1 桥接）', r.kind === 'allow')
 r = preExecute(harness, nestedExecutorMain, 'write', {})
-checkTrue('R24a 嵌套 route 闸门答 executor → write deny（执行者路线主会话不直做）且拒句不含 sandbox_permissions 越界指引', r !== null && r !== undefined && r.kind === 'deny' && !String(r.reason).includes('sandbox_permissions'))
+checkTrue('R24a 嵌套 route 闸门答 executor → write deny（执行者路线主会话不直做）且拒句不含 sandbox_permissions 越界指引', r.kind === 'deny' && !String(r.reason).includes('sandbox_permissions'))
 r = preExecute(harness, nestedRouteNoneMain, 'write', {})
-checkTrue('R24b 嵌套 route 闸门答「不同意」（route=none）→ write deny 且含固定路由确认句', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(ROUTE_CONFIRM_TEXT))
+checkTrue('R24b 嵌套 route 闸门答「不同意」（route=none）→ write deny 且含固定路由确认句', r.kind === 'deny' && String(r.reason).includes(ROUTE_CONFIRM_TEXT))
 r = preExecute(harness, nestedPlanMain, 'extra_plan_gate', nestedPurposeGateArgs)
-checkTrue('R24c 嵌套 plan 态 extra_plan_gate(gate=purpose) → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R24c 嵌套 plan 态 extra_plan_gate(gate=purpose) → allow', r.kind === 'allow')
 r = preExecute(harness, nestedChannelErrorMain, 'extra_plan_gate', nestedPurposeGateArgs)
-checkTrue('R24d 嵌套 channel-error 后 extra_plan_gate → allow（通道故障不推进、不形成死锁）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R24d 嵌套 channel-error 后 extra_plan_gate → allow（通道故障不推进、不形成死锁）', r.kind === 'allow')
 
 checkTrue('UC27 runCodeDispatchGateReason：上限内→null / 上限+1→拒且与 runCodeDispatchCapText 派生值逐字一致 / 无rootCallId→null', (() => {
   const cap = DEFAULT_EXPLORE_BUDGET
@@ -1241,17 +1243,17 @@ runDispatchSeriesE({ start: 'tool/ptc-dispatch-start', end: 'tool/ptc-dispatch' 
 const ptcExecutor = childAgent('ptc-executor-1')
 await assemble(harness, ptcExecutor, [{ name: 'run_code' }])
 r = preExecute(harness, ptcExecutor, 'write', {})
-checkTrue('R25 ptc 折叠目录 executor write → 放行（F4 桥接：不再误判只读）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R25 ptc 折叠目录 executor write → 放行（F4 桥接：不再误判只读）', r.kind === 'allow')
 // 只读目录（非折叠形态）：原判定路径不受影响，write → deny 且文案含「只读」
 const roCatalogChild = childAgent('ro-catalog-1')
 await assemble(harness, roCatalogChild, [{ name: 'read' }])
 r = preExecute(harness, roCatalogChild, 'write', {})
-checkTrue('R26 只读目录 write → deny 且文案含「只读」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('只读'))
+checkTrue('R26 只读目录 write → deny 且文案含「只读」', r.kind === 'deny' && String(r.reason).includes('只读'))
 // 含 write 目录（非折叠形态）：write → 放行
 const rwCatalogChild = childAgent('rw-catalog-1')
 await assemble(harness, rwCatalogChild, [{ name: 'read' }, { name: 'write' }])
 r = preExecute(harness, rwCatalogChild, 'write', {})
-checkTrue('R27 含 write 目录 write → 放行', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R27 含 write 目录 write → 放行', r.kind === 'allow')
 
 // ── ⑧ R-code 系列:F7'（run_code 统一审查关口） ────────────────────────────
 // executorBaseEvents：执行者路线 + 澄清（重选路线的基线事件序）
@@ -1268,85 +1270,85 @@ const pwshRedirect = { command: 'Write-Output x > out.txt' }
 const pwshRedirectGroup = { code: "await tools.pwsh({ command: 'Write-Output x > out.txt' })", description: 'A09 重定向组成员' }
 const h3NewItemGroup = { code: "await tools.pwsh({ command: 'New-Item x.txt' })", description: 'H3 直呼聚合同源' }
 r = preExecute(harness, noneMain, 'pwsh', { command: 'New-Item x.txt' })
-const h3DirectReason = r !== null && r !== undefined && r.kind === 'deny' ? String(r.reason) : ''
+const h3DirectReason = r.kind === 'deny' ? String(r.reason) : ''
 let h3GroupNextCalls = 0
 const h3Group = preExecute(harness, noneMain, 'run_code', h3NewItemGroup, undefined, () => { h3GroupNextCalls += 1 })
-const h3GroupReason = h3Group !== null && h3Group !== undefined && h3Group.kind === 'deny' ? String(h3Group.reason) : ''
+const h3GroupReason = h3Group.kind === 'deny' ? String(h3Group.reason) : ''
 checkTrue('H3 直呼/聚合子句同源且整组 next=0', h3DirectReason === H3_REASONS.mainNonePwshNewItem && h3GroupReason.includes('- pwsh: ' + h3DirectReason) && h3GroupNextCalls === 0)
 r = preExecute(harness, noneMain, 'pwsh', pwshRedirect)
-checkTrue('A09 none 态 pwsh 重定向 → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === H3_REASONS.mainNonePwshRedirect)
+checkTrue('A09 none 态 pwsh 重定向 → deny + H3 完整依据', r.kind === 'deny' && String(r.reason) === H3_REASONS.mainNonePwshRedirect)
 r = preExecute(harness, planMain, 'pwsh', pwshRedirect)
-checkTrue('A09 plan 态 pwsh 重定向 → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === H3_REASONS.mainPlanPwshRedirect)
+checkTrue('A09 plan 态 pwsh 重定向 → deny + H3 完整依据', r.kind === 'deny' && String(r.reason) === H3_REASONS.mainPlanPwshRedirect)
 r = preExecute(harness, mainRouteMain, 'pwsh', pwshRedirect)
-checkTrue('A09 main 态 pwsh 重定向 → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('A09 main 态 pwsh 重定向 → allow', r.kind === 'allow')
 r = preExecute(harness, executorReadyMain, 'pwsh', { command: 'Write-Output x > out.txt', sandbox_permissions: true })
-checkTrue('A09 executor 态 + sandbox_permissions 非字符串 → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === H3_REASONS.mainExecutorPwshRedirect)
+checkTrue('A09 executor 态 + sandbox_permissions 非字符串 → deny + H3 完整依据', r.kind === 'deny' && String(r.reason) === H3_REASONS.mainExecutorPwshRedirect)
 r = preExecute(harness, executorReadyMain, 'pwsh', pwshRedirect)
-checkTrue('A09 executor 态缺 sandbox_permissions → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === H3_REASONS.mainExecutorPwshRedirect)
+checkTrue('A09 executor 态缺 sandbox_permissions → deny + H3 完整依据', r.kind === 'deny' && String(r.reason) === H3_REASONS.mainExecutorPwshRedirect)
 r = preExecute(harness, executorReadyMain, 'pwsh', { command: 'Write-Output x > out.txt', sandbox_permissions: 'workspace-write' })
-checkTrue('A09 executor 态 + sandbox_permissions 字符串 → allow（非 main 路线的 shell 写二级判定，供工作区外写入）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('A09 executor 态 + sandbox_permissions 字符串 → allow（非 main 路线的 shell 写二级判定，供工作区外写入）', r.kind === 'allow')
 r = preExecute(harness, noneMain, 'run_code', pwshRedirectGroup)
-checkTrue('A09 none 态 run_code 重定向组成员 → deny + H3 子句同源', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('- pwsh: ' + H3_REASONS.mainNonePwshRedirect))
+checkTrue('A09 none 态 run_code 重定向组成员 → deny + H3 子句同源', r.kind === 'deny' && String(r.reason).includes('- pwsh: ' + H3_REASONS.mainNonePwshRedirect))
 r = preExecute(harness, executorReadyMain, 'run_code', pwshRedirectGroup)
-checkTrue('A09 executor 态 run_code 重定向组成员缺 sandbox_permissions → deny + H3 子句同源', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('- pwsh: ' + H3_REASONS.mainExecutorPwshRedirect))
+checkTrue('A09 executor 态 run_code 重定向组成员缺 sandbox_permissions → deny + H3 子句同源', r.kind === 'deny' && String(r.reason).includes('- pwsh: ' + H3_REASONS.mainExecutorPwshRedirect))
 r = preExecute(harness, plannerAgent, 'pwsh', pwshRedirect)
-checkTrue('A09 planner pwsh 重定向 → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === H3_REASONS.plannerPwshRedirect)
+checkTrue('A09 planner pwsh 重定向 → deny + H3 完整依据', r.kind === 'deny' && String(r.reason) === H3_REASONS.plannerPwshRedirect)
 r = preExecute(harness, probeAgent, 'pwsh', pwshRedirect)
-checkTrue('A09 probe 只读 pwsh 重定向 → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === H3_REASONS.probePwshRedirect)
+checkTrue('A09 probe 只读 pwsh 重定向 → deny + H3 完整依据', r.kind === 'deny' && String(r.reason) === H3_REASONS.probePwshRedirect)
 r = preExecute(harness, reviewer, 'run_code', pwshRedirectGroup)
-checkTrue('A09 reviewer run_code 重定向组成员 → deny + H3 子句同源', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('- pwsh: ' + H3_REASONS.reviewerPwshRedirect))
+checkTrue('A09 reviewer run_code 重定向组成员 → deny + H3 子句同源', r.kind === 'deny' && String(r.reason).includes('- pwsh: ' + H3_REASONS.reviewerPwshRedirect))
 
 
 // 重选路线必须复位目的与澄清态；重选 plan 后目的必须重新确认，按 route→purpose→clarify 才恢复放行。
 r = preExecute(harness, reselectRouteMain, 'subagent', { run_in_background: true })
-checkTrue('R27a 重选 main 路线 → 执行类委派仍 deny（purpose/clarified 复位）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('执行类委派未放行：subagent'))
+checkTrue('R27a 重选 main 路线 → 执行类委派仍 deny（purpose/clarified 复位）', r.kind === 'deny' && String(r.reason).includes('执行类委派未放行：subagent'))
 r = preExecute(harness, reselectRouteNone, 'subagent', { run_in_background: true })
-checkTrue('R27b 重选「不同意」（route=none）→ 执行类委派仍 deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('执行类委派未放行：subagent'))
+checkTrue('R27b 重选「不同意」（route=none）→ 执行类委派仍 deny', r.kind === 'deny' && String(r.reason).includes('执行类委派未放行：subagent'))
 r = preExecute(harness, reselectPlanMain, 'subagent', { run_in_background: true })
-checkTrue('R27c 重选 plan 路线 → 执行类委派仍 deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('执行类委派未放行：subagent'))
+checkTrue('R27c 重选 plan 路线 → 执行类委派仍 deny', r.kind === 'deny' && String(r.reason).includes('执行类委派未放行：subagent'))
 r = preExecute(harness, reselectPlanMain, 'save_probe', {})
-checkTrue('R27d 重选 plan 后 save_probe → deny 且含「规划目的尚未确认」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划目的尚未确认'))
+checkTrue('R27d 重选 plan 后 save_probe → deny 且含「规划目的尚未确认」', r.kind === 'deny' && String(r.reason).includes('规划目的尚未确认'))
 r = preExecute(harness, reselectPlanMain, 'subagent_plan', {})
-checkTrue('R27e 重选 plan 后 subagent_plan → deny 且含「规划目的尚未确认」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划目的尚未确认'))
+checkTrue('R27e 重选 plan 后 subagent_plan → deny 且含「规划目的尚未确认」', r.kind === 'deny' && String(r.reason).includes('规划目的尚未确认'))
 r = preExecute(harness, reselectPlanReadyMain, 'save_probe', {})
-checkTrue('R27f 重选 plan 后按目的→澄清顺序 save_probe → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R27f 重选 plan 后按目的→澄清顺序 save_probe → allow', r.kind === 'allow')
 r = preExecute(harness, reselectPlanReadyMain, 'subagent_plan', {})
-checkTrue('R27g 重选 plan 后按目的→澄清顺序 subagent_plan → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R27g 重选 plan 后按目的→澄清顺序 subagent_plan → allow', r.kind === 'allow')
 
 r = preExecute(harness, noneMain, 'run_code', readOnlyCode)
-checkTrue('R28 主会话 none 态 run_code（纯只读）→ 放行（终版：无写模式放行，ptc 死锁解除）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R28 主会话 none 态 run_code（纯只读）→ 放行（终版：无写模式放行，ptc 死锁解除）', r.kind === 'allow')
 r = preExecute(harness, noneMain, 'run_code', writeCode)
-checkTrue('R29 主会话 none 态 run_code（含写）→ deny 且聚合含 routeDenyReason(\'write/edit\', { route: \'none\' }) 全文（组判定聚合报错）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(routeDenyReason('write/edit', { route: 'none' }, gateRuntime)))
+checkTrue('R29 主会话 none 态 run_code（含写）→ deny 且聚合含 routeDenyReason(\'write/edit\', { route: \'none\' }) 全文（组判定聚合报错）', r.kind === 'deny' && String(r.reason).includes(routeDenyReason('write/edit', { route: 'none' }, gateRuntime)))
 r = preExecute(harness, mainRouteMain, 'run_code', writeCode)
-checkTrue('R30 主会话 main 态 run_code（含写）→ 放行（route=main 才可直做）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R30 主会话 main 态 run_code（含写）→ 放行（route=main 才可直做）', r.kind === 'allow')
 r = preExecute(harness, planMain, 'run_code', readOnlyCode)
-checkTrue('R31 主会话 plan 态（目的未定）run_code（纯只读）→ 放行（终版：无写模式放行）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R31 主会话 plan 态（目的未定）run_code（纯只读）→ 放行（终版：无写模式放行）', r.kind === 'allow')
 r = preExecute(harness, executorReadyMain, 'run_code', readOnlyCode)
-checkTrue('R32 主会话 executor 态 run_code（纯只读）→ 放行（v4：组空全过，ptc 死锁解除）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R32 主会话 executor 态 run_code（纯只读）→ 放行（v4：组空全过，ptc 死锁解除）', r.kind === 'allow')
 r = preExecute(harness, gateChannelErrorEscapeMain, 'run_code', writeCode)
-checkTrue('R33 主会话 route 闸门 channel-error（通道故障）后状态不推进 → run_code 含写仍 deny', r !== null && r !== undefined && r.kind === 'deny')
+checkTrue('R33 主会话 route 闸门 channel-error（通道故障）后状态不推进 → run_code 含写仍 deny', r.kind === 'deny')
 r = preExecute(harness, plannerAgent, 'run_code', readOnlyCode)
-checkTrue('R34 planner run_code 纯只读 → 放行', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R34 planner run_code 纯只读 → 放行', r.kind === 'allow')
 // 裸写拒句判据（S4）：期望依据由 lib 的 codeMutationHints 派生——只读角色的 run_code 裸写拒句必须
 // 引用本次命中的写模式特征（同族 R35/R36/R40 共用），不再比对中文正文片段；kind 判定保留。
 const bareWriteDenyOk = (result) => {
   const hints = decisions.codeMutationHints(writeCode.code)
-  return hints.length > 0 && result !== null && result !== undefined && result.kind === 'deny' && String(result.reason).includes(hints.join('、'))
+  return hints.length > 0 && result.kind === 'deny' && String(result.reason).includes(hints.join('、'))
 }
 r = preExecute(harness, plannerAgent, 'run_code', writeCode)
 checkTrue('R35 planner run_code 含写 → deny 且拒句引用 codeMutationHints 命中项', bareWriteDenyOk(r))
 r = preExecute(harness, reviewer, 'run_code', writeCode)
 checkTrue('R36 reviewer（只读目录）run_code 含写 → deny（同判据）', bareWriteDenyOk(r))
 r = preExecute(harness, reviewer, 'run_code', readOnlyCode)
-checkTrue('R37 reviewer run_code 纯只读 → 放行', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R37 reviewer run_code 纯只读 → 放行', r.kind === 'allow')
 r = preExecute(harness, executor, 'run_code', writeCode)
-checkTrue('R38 executor（含写目录）run_code 含写 → 放行（执行者豁免）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R38 executor（含写目录）run_code 含写 → 放行（执行者豁免）', r.kind === 'allow')
 r = preExecute(harness, ptcExecutor, 'run_code', writeCode)
-checkTrue('R39 ptc 折叠目录 executor run_code 含写 → 放行（折叠默认放行）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R39 ptc 折叠目录 executor run_code 含写 → 放行（折叠默认放行）', r.kind === 'allow')
 r = preExecute(harness, probeAgent, 'run_code', writeCode)
 checkTrue('R40 probe（只读目录+放行记录）run_code 含写 → deny（同判据）', bareWriteDenyOk(r))
 r = preExecute(harness, fresh, 'run_code', writeCode)
-checkTrue('R41 缓存未命中子代理 run_code → 放行（fail-open）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R41 缓存未命中子代理 run_code → 放行（fail-open）', r.kind === 'allow')
 // ── A10/A11 STATIC-TOOLS：JS literal 参数与角色闸门逐项对拍 ───────────────
 const staticToolGroups = [
   ['write', "await tools.write({ file_path: 'x', content: '1', })", noneMain, '路由未确认', false],
@@ -1361,14 +1363,14 @@ const staticToolGroups = [
 ]
 for (const [name, code, agent, expectedText, expectedAllow] of staticToolGroups) {
   r = preExecute(harness, agent, 'run_code', { code, description: '静态 literal 工具组 ' + name })
-  checkTrue('A10/A11 ' + name + ' JS literal 参数 ' + (expectedAllow ? 'allow' : 'deny'), expectedAllow ? (r !== null && r !== undefined && r.kind === 'allow') : (r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(expectedText)))
+  checkTrue('A10/A11 ' + name + ' JS literal 参数 ' + (expectedAllow ? 'allow' : 'deny'), expectedAllow ? (r.kind === 'allow') : (r.kind === 'deny' && String(r.reason).includes(expectedText)))
 }
 r = preExecute(harness, executorReadyMain, 'subagent', { task: '执行' })
-checkTrue('A11 subagent 真实对象（无后台参数）→ 放行（后台约束在宿主层）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('A11 subagent 真实对象（无后台参数）→ 放行（后台约束在宿主层）', r.kind === 'allow')
 r = preExecute(harness, reselectPlanReadyMain, 'subagent_plan', { task: '规划' })
-checkTrue('A10 subagent_plan 真实对象（无后台参数）→ 放行（continuable 由宿主管理）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('A10 subagent_plan 真实对象（无后台参数）→ 放行（continuable 由宿主管理）', r.kind === 'allow')
 r = preExecute(harness, executorReadyMain, 'run_code', { code: "const task = '执行'; await tools.subagent({ task, run_in_background: true })", description: '动态参数运行时兜底' })
-checkTrue('A11 动态参数保留 argsText 并交运行时瀑布（不静态猜值）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('A11 动态参数保留 argsText 并交运行时瀑布（不静态猜值）', r.kind === 'allow')
 
 
 // ── ⑨ R-ptc 系列:F7' 终版修订（ptc 死锁解除 + 嵌套瀑布等价） ───────────────
@@ -1377,25 +1379,25 @@ const nestedPlanCode = { code: "await tools.subagent_plan({ task: '规划', run_
 const nestedProbeCode = { code: "await tools.subagent_probe({ run_in_background: true })", description: '嵌套探查委派' }
 
 r = preExecute(harness, noneMain, 'run_code', nestedAskCode)
-checkTrue('R42 主会话 none 态 run_code（code 含未返回的嵌套 ask_user_question）→ deny（返回链闸门）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('结果未正确返回用户层'))
+checkTrue('R42 主会话 none 态 run_code（code 含未返回的嵌套 ask_user_question）→ deny（返回链闸门）', r.kind === 'deny' && String(r.reason).includes('结果未正确返回用户层'))
 r = preExecute(harness, noneMain, 'run_code', nestedPlanCode)
-checkTrue('R43 主会话 none 态 run_code（code 含嵌套 subagent_plan）→ deny 且含「子代理未放行：subagent_plan」（v4：组判定按直呼同闸门预审）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('子代理未放行：subagent_plan'))
+checkTrue('R43 主会话 none 态 run_code（code 含嵌套 subagent_plan）→ deny 且含「子代理未放行：subagent_plan」（v4：组判定按直呼同闸门预审）', r.kind === 'deny' && String(r.reason).includes('子代理未放行：subagent_plan'))
 r = preExecute(harness, noneMain, 'subagent_plan', { run_in_background: true })
-checkTrue('R44 主会话 none 态直呼 subagent_plan（嵌套瀑布等价）→ deny 且文案含「子代理未放行：subagent_plan」（route 不符，与嵌套调用同文案）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('子代理未放行：subagent_plan'))
+checkTrue('R44 主会话 none 态直呼 subagent_plan（嵌套瀑布等价）→ deny 且文案含「子代理未放行：subagent_plan」（route 不符，与嵌套调用同文案）', r.kind === 'deny' && String(r.reason).includes('子代理未放行：subagent_plan'))
 r = preExecute(harness, noneMain, 'run_code', nestedProbeCode)
-checkTrue('R45 主会话 none 态 run_code（code 含嵌套 subagent_probe）→ 放行（外壳不拦嵌套探查委派）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R45 主会话 none 态 run_code（code 含嵌套 subagent_probe）→ 放行（外壳不拦嵌套探查委派）', r.kind === 'allow')
 r = preExecute(harness, planMain, 'run_code', writeCode)
-checkTrue('R46 主会话 plan 态（目的未定）run_code（含写）→ deny 且聚合含 routeDenyReason(\'write/edit\', { route: \'plan\' }) 全文（含「规划态下主会话不可写文件」）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(routeDenyReason('write/edit', { route: 'plan' }, gateRuntime)))
+checkTrue('R46 主会话 plan 态（目的未定）run_code（含写）→ deny 且聚合含 routeDenyReason(\'write/edit\', { route: \'plan\' }) 全文（含「规划态下主会话不可写文件」）', r.kind === 'deny' && String(r.reason).includes(routeDenyReason('write/edit', { route: 'plan' }, gateRuntime)))
 r = preExecute(harness, executorReadyMain, 'run_code', writeCode)
-checkTrue('R47 主会话 executor 态 run_code（含写）→ deny 且聚合含 routeDenyReason(\'write/edit\', { route: \'executor\' }) 全文（执行者路线主会话不直做）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(routeDenyReason('write/edit', { route: 'executor' }, gateRuntime)))
+checkTrue('R47 主会话 executor 态 run_code（含写）→ deny 且聚合含 routeDenyReason(\'write/edit\', { route: \'executor\' }) 全文（执行者路线主会话不直做）', r.kind === 'deny' && String(r.reason).includes(routeDenyReason('write/edit', { route: 'executor' }, gateRuntime)))
 r = preExecute(harness, executorReadyMain, 'run_code', { code: "await tools.subagent({ task: '执行', run_in_background: true })", description: '嵌套委派' })
-checkTrue('R48 主会话 executor 态 run_code（code 含嵌套 tools.subagent(run_in_background:true)）→ 放行（v4：组判定 subagent 闸门在 executor 路线放行，ptc 死锁解除）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R48 主会话 executor 态 run_code（code 含嵌套 tools.subagent(run_in_background:true)）→ 放行（v4：组判定 subagent 闸门在 executor 路线放行，ptc 死锁解除）', r.kind === 'allow')
 r = preExecute(harness, noneMain, 'run_code', { code: "await writeFileSync('x', '1'); await tools.subagent_plan({ task: '规划', run_in_background: true })", description: '多工具组' })
-checkTrue('R49 主会话 none 态 run_code（裸写+subagent_plan 工具组）→ deny 且聚合同时含「路由未确认：write/edit」与「子代理未放行：subagent_plan」（多错误聚合）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认：write/edit') && String(r.reason).includes('子代理未放行：subagent_plan'))
+checkTrue('R49 主会话 none 态 run_code（裸写+subagent_plan 工具组）→ deny 且聚合同时含「路由未确认：write/edit」与「子代理未放行：subagent_plan」（多错误聚合）', r.kind === 'deny' && String(r.reason).includes('路由未确认：write/edit') && String(r.reason).includes('子代理未放行：subagent_plan'))
 r = preExecute(harness, noneMain, 'run_code', { code: "try { await tools.read({ file_path: 'x' }) } catch (e) {}\ntry { await tools.read({ file_path: 'x' }) } catch (e) {}\ntry { await tools.subagent_probe({ run_in_background: true }) } catch (e) {}", description: '去重组（独立容错）' })
-checkTrue('R50 主会话 none 态 run_code（read 去重×2+subagent_probe(run_in_background:true)）→ 放行（去重后全过）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R50 主会话 none 态 run_code（read 去重×2+subagent_probe(run_in_background:true)）→ 放行（去重后全过）', r.kind === 'allow')
 r = preExecute(harness, noneMain, 'run_code', { code: "await tools.write({ file_path: 'x', content: '1' })", description: '显式 write' })
-checkTrue('R51 主会话 none 态 run_code（code 含显式 tools.write）→ deny 且聚合含「路由未确认：write/edit」（显式 write 成员与裸写同文案）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('路由未确认：write/edit'))
+checkTrue('R51 主会话 none 态 run_code（code 含显式 tools.write）→ deny 且聚合含「路由未确认：write/edit」（显式 write 成员与裸写同文案）', r.kind === 'deny' && String(r.reason).includes('路由未确认：write/edit'))
 
 // ── ⑩ R52-R84：全闸门补测（预算与覆盖回归） ─────────────
 // 预算耗尽场景：DEFAULT_EXPLORE_BUDGET 组成功配对 = 已用满额（修复A 成功配对口径；预算耗尽后 run_code 组判定仅放行全 FREE_TOOLS 白名单组）。
@@ -1416,69 +1418,69 @@ const joCode = { code: 'await tools.job_output({ "job_id": "j1", "wait": true })
 const revCode = { code: "await tools.subagent_review({ task: '验收', run_in_background: true })", description: 'subagent_review 成员' }
 
 r = preExecute(harness, noneMain, 'subagent_review', {})
-checkTrue('R52 subagent_review 非执行者路线 → deny 且含「执行类委派未放行：subagent_review」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('执行类委派未放行：subagent_review'))
+checkTrue('R52 subagent_review 非执行者路线 → deny 且含「执行类委派未放行：subagent_review」', r.kind === 'deny' && String(r.reason).includes('执行类委派未放行：subagent_review'))
 r = preExecute(harness, executorReadyMain, 'subagent_review', { run_in_background: true })
-checkTrue('R53 subagent_review 执行者路线放行 → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R53 subagent_review 执行者路线放行 → allow', r.kind === 'allow')
 r = preExecute(harness, executorReadyMain, 'subagent_review', {})
-checkTrue('R54 subagent_review 执行者路线无后台参数 → 放行（路线判定仍在，后台闸门已删）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R54 subagent_review 执行者路线无后台参数 → 放行（路线判定仍在，后台闸门已删）', r.kind === 'allow')
 r = preExecute(harness, noneMain, 'subagent_fork', {})
-checkTrue('R55 subagent_fork 非执行者路线 → deny 且含「执行类委派未放行：subagent_fork」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('执行类委派未放行：subagent_fork'))
+checkTrue('R55 subagent_fork 非执行者路线 → deny 且含「执行类委派未放行：subagent_fork」', r.kind === 'deny' && String(r.reason).includes('执行类委派未放行：subagent_fork'))
 r = preExecute(harness, noneMain, 'workflow', {})
-checkTrue('R56 workflow 非执行者路线 → deny 且含「执行类委派未放行：workflow」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('执行类委派未放行：workflow'))
+checkTrue('R56 workflow 非执行者路线 → deny 且含「执行类委派未放行：workflow」', r.kind === 'deny' && String(r.reason).includes('执行类委派未放行：workflow'))
 r = preExecute(harness, noneMain, 'ralph', {})
-checkTrue('R57 ralph 非执行者路线 → deny 且含「执行类委派未放行：ralph」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('执行类委派未放行：ralph'))
+checkTrue('R57 ralph 非执行者路线 → deny 且含「执行类委派未放行：ralph」', r.kind === 'deny' && String(r.reason).includes('执行类委派未放行：ralph'))
 r = preExecute(harness, executorReadyMain, 'subagent_fork', {})
-checkTrue('R58 subagent_fork 执行者路线放行 → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R58 subagent_fork 执行者路线放行 → allow', r.kind === 'allow')
 r = preExecute(harness, executorReadyMain, 'workflow', {})
-checkTrue('R59 workflow 执行者路线放行 → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R59 workflow 执行者路线放行 → allow', r.kind === 'allow')
 r = preExecute(harness, executorReadyMain, 'ralph', {})
-checkTrue('R60 ralph 执行者路线放行 → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R60 ralph 执行者路线放行 → allow', r.kind === 'allow')
 // DSH_COMPAT_RC1：R61-R62c 下列显式 agent_id 仅是旧参数输入形状；删除边界不含共享 running/idle/冷目标安全判定。
 r = preExecute(harness, noneMain, 'send_message', { agent_id: 'session-x', message: 'hi' })
-checkTrue('R61 send_message 主会话 目标未驻留 → allow（agents 未注入 fail-open，宿主 NOT_RESUMABLE 自理）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R61 send_message 主会话 目标未驻留 → allow（agents 未注入 fail-open，宿主 NOT_RESUMABLE 自理）', r.kind === 'allow')
 r = preExecute(harnessAgents, noneMain, 'send_message', { agent_id: 'unknown-id', message: 'hi' })
-checkTrue('R61b send_message 主会话 目标未驻留（registry 可用、get→undefined）→ allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R61b send_message 主会话 目标未驻留（registry 可用、get→undefined）→ allow', r.kind === 'allow')
 r = preExecute(harness, planChildMain, 'send_message', { agent_id: '3a7c1e5b-9d2f-4e8a-b6c4-1f0e9d8c7b6a', message: 'hi' })
-checkTrue('R62 send_message planner 目标 未驻留 → allow（agents 未注入 fail-open 放行）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R62 send_message planner 目标 未驻留 → allow（agents 未注入 fail-open 放行）', r.kind === 'allow')
 r = preExecute(harnessAgents, planChildMain, 'send_message', { agent_id: '3a7c1e5b-9d2f-4e8a-b6c4-1f0e9d8c7b6a', message: 'hi' })
-checkTrue('R62b send_message 主会话 目标 running → deny 且含「子代理running中，禁止打扰」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('子代理running中，禁止打扰'))
+checkTrue('R62b send_message 主会话 目标 running → deny 且含「子代理running中，禁止打扰」', r.kind === 'deny' && String(r.reason).includes('子代理running中，禁止打扰'))
 r = preExecute(harnessAgentsIdle, planChildMain, 'send_message', { agent_id: '3a7c1e5b-9d2f-4e8a-b6c4-1f0e9d8c7b6a', message: 'hi' })
-checkTrue('R62c send_message 主会话 目标 idle → allow（非 running 放行）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R62c send_message 主会话 目标 idle → allow（非 running 放行）', r.kind === 'allow')
 r = preExecute(harness, mainAgent, 'job_output', { job_id: 'j1', wait: true })
-checkTrue('R63 job_output wait → deny 且含「job_output 禁止带 wait: true」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止带 wait: true'))
+checkTrue('R63 job_output wait → deny 且含「job_output 禁止带 wait: true」', r.kind === 'deny' && String(r.reason).includes('job_output 禁止带 wait: true'))
 r = preExecute(harness, mainAgent, 'job_output', { job_id: 'j1' })
-checkTrue('R64 job_output 正常 → allow（并 set 计数器，供 R65 查重）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R64 job_output 正常 → allow（并 set 计数器，供 R65 查重）', r.kind === 'allow')
 r = preExecute(harness, mainAgent, 'job_output', { job_id: 'j1' })
-checkTrue('R65 job_output 同 job 重复 → deny 且含「job_output 禁止对同一 job 重复调用」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止对同一 job 重复调用'))
+checkTrue('R65 job_output 同 job 重复 → deny 且含「job_output 禁止对同一 job 重复调用」', r.kind === 'deny' && String(r.reason).includes('job_output 禁止对同一 job 重复调用'))
 r = preExecute(harness, mainAgent, 'job_output', { job_id: 'j2' })
-checkTrue('R66 job_output 不同 job → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R66 job_output 不同 job → allow', r.kind === 'allow')
 r = preExecute(harness, noneMain, 'save_probe', { fileMap: [], focusAreas: [], exclusions: [], background: [] })
-checkTrue('R69 save_probe 主会话 none 态 → deny 且含「子代理未放行：save_probe」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('子代理未放行：save_probe'))
+checkTrue('R69 save_probe 主会话 none 态 → deny 且含「子代理未放行：save_probe」', r.kind === 'deny' && String(r.reason).includes('子代理未放行：save_probe'))
 r = preExecute(harness, planMain, 'save_probe', { fileMap: [], focusAreas: [], exclusions: [], background: [] })
-checkTrue('R70 save_probe 主会话 plan 态但目的未定 → deny 且含「规划目的尚未确认」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划目的尚未确认'))
+checkTrue('R70 save_probe 主会话 plan 态但目的未定 → deny 且含「规划目的尚未确认」', r.kind === 'deny' && String(r.reason).includes('规划目的尚未确认'))
 r = preExecute(harness, planPurposeMain, 'save_probe', { fileMap: [], focusAreas: [], exclusions: [], background: [] })
-checkTrue('R70b save_probe 主会话 plan 态（目的已定+已澄清）→ allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R70b save_probe 主会话 plan 态（目的已定+已澄清）→ allow', r.kind === 'allow')
 r = preExecute(harness, budgetPlanner, 'read', {})
-checkTrue('R71 planner 预算耗尽 listener 层 → deny 且拒句与 budgetExhaustedReason 派生值一致', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(budgetExhaustedText))
+checkTrue('R71 planner 预算耗尽 listener 层 → deny 且拒句与 budgetExhaustedReason 派生值一致', r.kind === 'deny' && String(r.reason).includes(budgetExhaustedText))
 r = preExecute(harness, budgetPlanner, 'run_code', freeCode)
-checkTrue('R72 planner 预算耗尽 FREE_TOOLS 组 → allow（白名单放行）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R72 planner 预算耗尽 FREE_TOOLS 组 → allow（白名单放行）', r.kind === 'allow')
 r = preExecute(harness, budgetPlanner, 'run_code', readMemberCode)
-checkTrue('R73 planner 预算耗尽 非豁免组成员（read）→ deny 且含 budgetExhaustedReason 派生拒句与「仅可调用 save_plan」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(budgetExhaustedText) && String(r.reason).includes('仅可调用 save_plan'))
+checkTrue('R73 planner 预算耗尽 非豁免组成员（read）→ deny 且含 budgetExhaustedReason 派生拒句与「仅可调用 save_plan」', r.kind === 'deny' && String(r.reason).includes(budgetExhaustedText) && String(r.reason).includes('仅可调用 save_plan'))
 const emptyGroupCode = { code: 'const x = 1', description: '空组（无 tools 调用）' }
 const dynamicMemberCode = { code: "const fn = 'read'\nawait tools[fn]({ file_path: 'x' })", description: '动态访问成员' }
 const spOnlyCode = { code: 'await tools.save_plan({ "plan": "p", "checklist": "c" })', description: '仅 save_plan 成员' }
 r = preExecute(harness, budgetPlanner, 'run_code', emptyGroupCode)
-checkTrue('R74 planner 预算耗尽 空组（无 tools 调用）→ deny 且含 budgetExhaustedReason 派生拒句与「仅可调用 save_plan」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(budgetExhaustedText) && String(r.reason).includes('仅可调用 save_plan'))
+checkTrue('R74 planner 预算耗尽 空组（无 tools 调用）→ deny 且含 budgetExhaustedReason 派生拒句与「仅可调用 save_plan」', r.kind === 'deny' && String(r.reason).includes(budgetExhaustedText) && String(r.reason).includes('仅可调用 save_plan'))
 r = preExecute(harness, budgetPlanner, 'run_code', dynamicMemberCode)
-checkTrue('R74b planner 预算耗尽 动态访问成员（tools[var]）→ deny 且含 budgetExhaustedReason 派生拒句与「仅可调用 save_plan」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(budgetExhaustedText) && String(r.reason).includes('仅可调用 save_plan'))
+checkTrue('R74b planner 预算耗尽 动态访问成员（tools[var]）→ deny 且含 budgetExhaustedReason 派生拒句与「仅可调用 save_plan」', r.kind === 'deny' && String(r.reason).includes(budgetExhaustedText) && String(r.reason).includes('仅可调用 save_plan'))
 r = preExecute(harness, budgetPlanner, 'run_code', spOnlyCode)
-checkTrue('R75 planner 预算耗尽 仅 save_plan 单成员 → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R75 planner 预算耗尽 仅 save_plan 单成员 → allow', r.kind === 'allow')
 r = preExecute(harness, plannerAgent, 'pwsh', { command: 'New-Item x.txt' })
-checkTrue('R76 planner pwsh 写 → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === H3_REASONS.plannerPwshNewItem)
+checkTrue('R76 planner pwsh 写 → deny + H3 完整依据', r.kind === 'deny' && String(r.reason) === H3_REASONS.plannerPwshNewItem)
 r = preExecute(harness, plannerAgent, 'bash', { command: 'rm -rf x' })
-checkTrue('R77 planner bash 写 → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === H3_REASONS.plannerBashRm)
+checkTrue('R77 planner bash 写 → deny + H3 完整依据', r.kind === 'deny' && String(r.reason) === H3_REASONS.plannerBashRm)
 r = preExecute(harness, probeAgent, 'bash', { command: 'rm -rf x' })
-checkTrue('R78 probe bash 写 → deny + H3 完整依据', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === H3_REASONS.probeBashRm)
+checkTrue('R78 probe bash 写 → deny + H3 完整依据', r.kind === 'deny' && String(r.reason) === H3_REASONS.probeBashRm)
 const unknownControlChild = { session: { header: { id: 'unknown-control-child', origin: 'subagent', delegationDepth: 1, parentSession: 'missing-live-parent', agentPreset: 'extra-plan-unknown' }, snapshotEvents: () => [] }, options: {}, ctx: undefined }
 const controlChildCases = [
   ['planner', plannerAgent, harness],
@@ -1496,14 +1498,14 @@ for (const [roleName, agent, caseHarness] of controlChildCases) {
     const previousWarn = console.warn
     if (captureUnknownWarning) console.warn = (...args) => { unknownWarnings.push(args.map((value) => String(value)).join(' ')); previousWarn(...args) }
     try { r = preExecute(caseHarness, agent, controlName, args) } finally { if (captureUnknownWarning) console.warn = previousWarn }
-    checkTrue('R79/R80 ' + roleName + ' ' + controlName + ' 直呼 → deny（childControlGateReason）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('子代理禁止调用 ' + controlName))
+    checkTrue('R79/R80 ' + roleName + ' ' + controlName + ' 直呼 → deny（childControlGateReason）', r.kind === 'deny' && String(r.reason).includes('子代理禁止调用 ' + controlName))
     if (captureUnknownWarning) checkTrue('R79 unknown-child live parent 缺失 → 恰一次 live without its parent 警告且仍按原始 child deny', unknownWarnings.filter((message) => message.includes('live without its parent')).length === 1 && r.kind === 'deny')
   }
   for (const controlName of ['send_message', 'interrupt_agent']) {
     const nestedControlCode = { code: 'await tools.run_code({ "code": ' + JSON.stringify('await tools.' + controlName + '({})') + ' })', description: '一层嵌套控制工具组' }
     let nextCalls = 0
     r = preExecute(caseHarness, agent, 'run_code', nestedControlCode, undefined, () => { nextCalls += 1 })
-    checkTrue('R83 ' + roleName + ' ' + controlName + ' 一层嵌套 run_code → 整组 deny 且 next=0', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(controlName) && nextCalls === 0)
+    checkTrue('R83 ' + roleName + ' ' + controlName + ' 一层嵌套 run_code → 整组 deny 且 next=0', r.kind === 'deny' && String(r.reason).includes(controlName) && nextCalls === 0)
   }
 }
 // DSH_COMPAT_RC1：下方 args.agent_id 只标示旧 send_message 输入；running/idle/未驻留与 interrupt_agent 安全合同仍是共享当前断言。
@@ -1511,29 +1513,29 @@ for (const [roleName, agent, caseHarness] of controlChildCases) {
 for (const target of ['running', 'idle', 'unresident']) {
   const args = { agent_id: target === 'running' ? 'session-x' : target === 'idle' ? 'session-idle' : 'unknown-id', message: 'hi' }
   r = preExecute(target === 'running' ? harnessAgents : target === 'idle' ? harnessAgentsIdle : harness, mainAgent, 'send_message', args)
-  checkTrue('R84 main send_message ' + target + ' → allow/旧running拒绝合同', target === 'running' ? r !== null && r.kind === 'deny' && String(r.reason).includes('子代理running中，禁止打扰') : r !== null && r.kind === 'allow')
+  checkTrue('R84 main send_message ' + target + ' → allow/旧running拒绝合同', target === 'running' ? r.kind === 'deny' && String(r.reason).includes('子代理running中，禁止打扰') : r.kind === 'allow')
 }
 // DSH_COMPAT_RC1：interrupt_agent 夹具仍使用旧 agent_id 形状；主会话控制放行合同不归旧兼容删除边界。
 r = preExecute(harness, mainAgent, 'interrupt_agent', { agent_id: 'session-x' })
-checkTrue('R85 main interrupt_agent → allow（主会话控制合同保持）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R85 main interrupt_agent → allow（主会话控制合同保持）', r.kind === 'allow')
 r = preExecute(harness, planMain, 'subagent_plan', { run_in_background: false })
-checkTrue('R81 subagent_plan 目的未定+前台参数 → deny 且含「规划目的尚未确认」、不含「规划子代理不可前台等待」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划目的尚未确认') && !String(r.reason).includes('规划子代理不可前台等待'))
+checkTrue('R81 subagent_plan 目的未定+前台参数 → deny 且含「规划目的尚未确认」、不含「规划子代理不可前台等待」', r.kind === 'deny' && String(r.reason).includes('规划目的尚未确认') && !String(r.reason).includes('规划子代理不可前台等待'))
 r = preExecute(harness, planPurposeMain, 'subagent_plan', { task: '规划' })
-checkTrue('R81b subagent_plan 目的已定+无后台参数 → 放行（前台等待断言已随参数删除退役）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R81b subagent_plan 目的已定+无后台参数 → 放行（前台等待断言已随参数删除退役）', r.kind === 'allow')
 r = preExecute(harness, planPurposeMain, 'subagent_plan', {})
-checkTrue('R81c subagent_plan 目的已定+不传参 → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R81c subagent_plan 目的已定+不传参 → allow', r.kind === 'allow')
 r = preExecute(harness, noneMain, 'cordis_inspect_query', {})
-checkTrue('R82 cordis 只读族 → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R82 cordis 只读族 → allow', r.kind === 'allow')
 r = preExecute(harness, noneMain, 'run_code', smCode)
-checkTrue('R83 组内 send_message 成员 → allow（白名单已删除，组判定放行）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R83 组内 send_message 成员 → allow（白名单已删除，组判定放行）', r.kind === 'allow')
 r = preExecute(harnessAgents, noneMain, 'run_code', smCode)
-checkTrue('R83b harnessAgents 组内 send_message 成员目标 running → deny 且聚合含「子代理running中，禁止打扰」（组判定同口径，gateCtx 透传 getAgents）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('子代理running中，禁止打扰'))
+checkTrue('R83b harnessAgents 组内 send_message 成员目标 running → deny 且聚合含「子代理running中，禁止打扰」（组判定同口径，gateCtx 透传 getAgents）', r.kind === 'deny' && String(r.reason).includes('子代理running中，禁止打扰'))
 r = preExecute(harness, executorReadyMain, 'run_code', revCode)
-checkTrue('R84 组内 subagent_review 成员（执行者路线）→ allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R84 组内 subagent_review 成员（执行者路线）→ allow', r.kind === 'allow')
 r = preExecute(harness, noneMain, 'run_code', joCode)
-checkTrue('R85 组内 job_output wait 成员 → deny 且含「job_output 禁止带 wait: true」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止带 wait: true'))
+checkTrue('R85 组内 job_output wait 成员 → deny 且含「job_output 禁止带 wait: true」', r.kind === 'deny' && String(r.reason).includes('job_output 禁止带 wait: true'))
 r = preExecute(harness, noneMain, 'run_code', revCode)
-checkTrue('R86 组内 subagent_review 成员非执行者路线 → deny 且含「执行类委派未放行：subagent_review」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('执行类委派未放行：subagent_review'))
+checkTrue('R86 组内 subagent_review 成员非执行者路线 → deny 且含「执行类委派未放行：subagent_review」', r.kind === 'deny' && String(r.reason).includes('执行类委派未放行：subagent_review'))
 
 // DSH_CURRENT_RC2：新 agent 名称/路径参数与 subagents.resolveName 的异常、取消和本轮去重回归。
 // 删除边界仅限最新路径新参数与解析适配（rc.2 与 rc.3 共用）；旧 agent_id、child 硬拒及共享安全断言不归本兼容块。
@@ -1716,16 +1718,16 @@ checkTrue('R86 组内 subagent_review 成员非执行者路线 → deny 且含�
 // 反面证据（不随本批放开）：write/edit → R29、写 shell/subagent_plan/执行委派各节照旧。
 const planUnclarifiedMain = mainWithEvents([umE(), ...routeGateE('plan', 'a1')])
 r = preExecute(harness, mainRouteMain, 'save_plan', { plan: 'p', checklist: 'c' })
-checkTrue('T3-1 主会话 main 态 save_plan → allow（受限工件）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('T3-1 主会话 main 态 save_plan → allow（受限工件）', r.kind === 'allow')
 r = preExecute(harness, noneMain, 'save_plan', { plan: 'p', checklist: 'c' })
-checkTrue('T3-2 主会话 none 态 save_plan → allow（路由态不再拦截）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('T3-2 主会话 none 态 save_plan → allow（路由态不再拦截）', r.kind === 'allow')
 r = preExecute(harness, planUnclarifiedMain, 'save_plan', { plan: 'p', checklist: 'c' })
-checkTrue('T3-3 主会话 plan 未澄清态 save_plan → allow（路由态不再拦截）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('T3-3 主会话 plan 未澄清态 save_plan → allow（路由态不再拦截）', r.kind === 'allow')
 r = preExecute(harness, planMain, 'save_plan', { plan: 'p', checklist: 'c' })
-checkTrue('T3-4 主会话 plan 态(目的未定·未澄清) save_plan → allow（路由态不再拦截）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('T3-4 主会话 plan 态(目的未定·未澄清) save_plan → allow（路由态不再拦截）', r.kind === 'allow')
 r = preExecute(harness, executorReadyMain, 'save_plan', { plan: 'p', checklist: 'c' })
 // 注：executor 路线（执行者委派）同样放行 save_plan——本工件只受内容闸门约束，不受路线限制。
-checkTrue('T3-5 主会话 executor 态 save_plan → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('T3-5 主会话 executor 态 save_plan → allow', r.kind === 'allow')
 
 // ── ⑭c T5：planner 不得委派探查者（subagent_probe 仅主会话可用） ───────────
 // planner 身份由 header.agentPreset 精确判定，descriptor.mode 不再承担角色判据；
@@ -1741,24 +1743,24 @@ const plannerProbeStates = [
 ]
 for (const [label, agent] of plannerProbeStates) {
   r = preExecute(harness, agent, 'subagent_probe', { run_in_background: true })
-  checkTrue(label + ' 直呼 subagent_probe(run_in_background: true) → deny 且含「仅主会话可用」与「申请继续探查」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('仅主会话可用') && String(r.reason).includes('申请继续探查'))
+  checkTrue(label + ' 直呼 subagent_probe(run_in_background: true) → deny 且含「仅主会话可用」与「申请继续探查」', r.kind === 'deny' && String(r.reason).includes('仅主会话可用') && String(r.reason).includes('申请继续探查'))
 }
 r = preExecute(harness, plannerAgent, 'subagent_probe', {})
-checkTrue('T5-4 planner 缺 run_in_background → 角色拒绝分支先命中（含「规划子代理不得委派探查者」，非 run_in_background 文案）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('规划子代理不得委派探查者') && !String(r.reason).includes('探查者必须后台运行'))
+checkTrue('T5-4 planner 缺 run_in_background → 角色拒绝分支先命中（含「规划子代理不得委派探查者」，非 run_in_background 文案）', r.kind === 'deny' && String(r.reason).includes('规划子代理不得委派探查者') && !String(r.reason).includes('探查者必须后台运行'))
 const nestedProbeGroupCode = { code: "await tools.subagent_probe({ run_in_background: true })", description: '嵌套探查委派' }
 r = preExecute(harness, plannerAgent, 'run_code', nestedProbeGroupCode)
-checkTrue('T5-5 planner 经 run_code 组内调用 subagent_probe 成员 → 聚合拒绝（含「仅主会话可用」与「申请继续探查」）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('run_code 拆解预审未通过') && String(r.reason).includes('仅主会话可用') && String(r.reason).includes('申请继续探查'))
+checkTrue('T5-5 planner 经 run_code 组内调用 subagent_probe 成员 → 聚合拒绝（含「仅主会话可用」与「申请继续探查」）', r.kind === 'deny' && String(r.reason).includes('run_code 拆解预审未通过') && String(r.reason).includes('仅主会话可用') && String(r.reason).includes('申请继续探查'))
 r = preExecute(harness, noneMain, 'run_code', nestedProbeGroupCode)
-checkTrue('T5-6 主会话 none 态 run_code 组内 subagent_probe → 仍放行（禁令只针对 planner）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('T5-6 主会话 none 态 run_code 组内 subagent_probe → 仍放行（禁令只针对 planner）', r.kind === 'allow')
 const childProbeGate = childAgent('child-probe-gate', 'extra-plan-prober')
 await assemble(harness, childProbeGate, [{ name: 'read' }, { name: 'glob' }, { name: 'save_probe' }])
 r = preExecute(harness, childProbeGate, 'subagent_probe', { run_in_background: true })
-checkTrue('T5-7 非 planner child 直呼 subagent_probe → 第二道防线拒绝且保持只读角色文案', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('只读子代理不得委派探查者'))
+checkTrue('T5-7 非 planner child 直呼 subagent_probe → 第二道防线拒绝且保持只读角色文案', r.kind === 'deny' && String(r.reason).includes('只读子代理不得委派探查者'))
 r = preExecute(harness, childProbeGate, 'run_code', nestedProbeGroupCode)
-checkTrue('T5-8 非 planner child 经 run_code 调用 subagent_probe → 聚合拒绝', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('只读子代理不得委派探查者'))
+checkTrue('T5-8 非 planner child 经 run_code 调用 subagent_probe → 聚合拒绝', r.kind === 'deny' && String(r.reason).includes('只读子代理不得委派探查者'))
 const customPlanHarness = makeHarness({ planTool: 'custom_plan' })
 r = preExecute(customPlanHarness, noneMain, 'custom_plan', {})
-checkTrue('T5-9 自定义 planTool 拒绝文案使用真实工具名而非 subagent_plan', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('custom_plan') && !String(r.reason).includes('子代理未放行：subagent_plan'))
+checkTrue('T5-9 自定义 planTool 拒绝文案使用真实工具名而非 subagent_plan', r.kind === 'deny' && String(r.reason).includes('custom_plan') && !String(r.reason).includes('子代理未放行：subagent_plan'))
 
 // ── ⑨ PTC/HN/HB 锚定基线（首轮按真实 phase、mode、role 分支） ─────────────
 // 宿主 read tool 的注册 schema 复刻（registry mock）：F/PTC 不再渲染它，仅供工具过滤/mode 判定。
@@ -1908,8 +1910,8 @@ const askReturnRunCases = [
 ]
 for (const [label, code, expectedKind] of askReturnRunCases) {
   r = preExecute(harness, noneMain, 'run_code', { code, description: label })
-  const hasExamples = expectedKind === 'allow' || (r !== null && r !== undefined && String(r.reason).includes('结果未正确返回用户层'))
-  checkTrue(label + '（默认 harness，闸门不依赖 runcodeCatchGate）', r !== null && r !== undefined && r.kind === expectedKind && hasExamples)
+  const hasExamples = expectedKind === 'allow' || (String(r.reason).includes('结果未正确返回用户层'))
+  checkTrue(label + '（默认 harness，闸门不依赖 runcodeCatchGate）', r.kind === expectedKind && hasExamples)
 }
 
 // 外层静态展开达到既有 depth 边界时先放行；实际内层带 parent 重新进入主会话 pre-execute，必须拒绝裸 await ask。
@@ -1917,9 +1919,9 @@ const nestedAskInnerCode = 'await tools.ask_user_question({})'
 const nestedAskLevelOneCode = 'await tools.run_code({ "code": ' + JSON.stringify(nestedAskInnerCode) + ' })'
 const nestedAskOuterCode = 'await tools.run_code({ "code": ' + JSON.stringify(nestedAskLevelOneCode) + ' })'
 r = preExecute(harness, noneMain, 'run_code', { code: nestedAskOuterCode, description: '嵌套 ask 外层容器' })
-checkTrue('R-ASK9 外层嵌套容器沿用 depth 边界 → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R-ASK9 外层嵌套容器沿用 depth 边界 → allow', r.kind === 'allow')
 r = preExecute(harness, noneMain, 'run_code', { code: nestedAskInnerCode, description: '嵌套 ask 实际内层' }, { rootCallId: 'nested-ask-root', parent: Symbol('nested-ask-parent') })
-checkTrue('R-ASK10 带 parent 的实际内层裸 await ask 重入 → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('结果未正确返回用户层'))
+checkTrue('R-ASK10 带 parent 的实际内层裸 await ask 重入 → deny', r.kind === 'deny' && String(r.reason).includes('结果未正确返回用户层'))
 
 // ── ⑪ UC 系列:runCodeCatchGateReason 纯函数（多调用容错硬闸门，任务1/3） ──
 checkTrue('UC1 ≥2 无保护→拒', (() => { const got = runCodeCatchGateReason("await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })"); return typeof got === 'string' && got.includes('run_code 内 2 个工具调用未全部独立容错') && got.includes('已保护 0 个') })())
@@ -1952,38 +1954,38 @@ checkTrue('UC26 isRunCodeSubCall：parent→true / sub:true→true / 普通→fa
 
 // ── ⑫ R87-R93：多调用容错硬闸门监听器级（任务3） ──
 r = preExecute(harnessCatchOn, noneMain, 'run_code', { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })", description: 'UC1 同款' })
-checkTrue('R87 runcodeCatchGate:true 主会话 none 态多调用无容错 → deny 且含「未全部独立容错」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
+checkTrue('R87 runcodeCatchGate:true 主会话 none 态多调用无容错 → deny 且含「未全部独立容错」', r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
 r = preExecute(harness, noneMain, 'run_code', { code: "const r = await Promise.allSettled([tools.read({ file_path: 'x' }), tools.read({ file_path: 'y' })])", description: 'UC3 同款' })
-checkTrue('R88 主会话 none 态 allSettled → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R88 主会话 none 态 allSettled → allow', r.kind === 'allow')
 r = preExecute(harnessCatchOn, plannerAgent, 'run_code', { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })", description: 'UC1 同款' })
-checkTrue('R89 runcodeCatchGate:true planner 多调用无容错 → deny 且含「未全部独立容错」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
+checkTrue('R89 runcodeCatchGate:true planner 多调用无容错 → deny 且含「未全部独立容错」', r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
 await assemble(harnessCatchOn, probeAgent, [{ name: 'read' }, { name: 'glob' }, { name: 'grep' }, { name: 'pwsh' }, { name: 'save_probe' }])
 r = preExecute(harnessCatchOn, probeAgent, 'run_code', { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })", description: 'UC1 同款' })
-checkTrue('R90 runcodeCatchGate:true probe（只读 child）多调用无容错 → deny 且含「未全部独立容错」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
+checkTrue('R90 runcodeCatchGate:true probe（只读 child）多调用无容错 → deny 且含「未全部独立容错」', r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
 r = preExecute(harness, noneMain, 'run_code', { code: "try { await tools.read({ file_path: 'x' }) } catch (e) {}\ntry { await tools.read({ file_path: 'x' }) } catch (e) {}\ntry { await tools.subagent_probe({ run_in_background: true }) } catch (e) {}", description: '去重组（独立容错）' })
-checkTrue('R91 R50 改造后 → allow（去重后全过语义保持）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R91 R50 改造后 → allow（去重后全过语义保持）', r.kind === 'allow')
 r = preExecute(harness, executor, 'run_code', { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })", description: 'UC1 同款' })
-checkTrue('R92 executor 多调用无容错 → allow（执行者豁免）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R92 executor 多调用无容错 → allow（执行者豁免）', r.kind === 'allow')
 r = preExecute(harnessCatchOn, noneMain, 'run_code', { code: "await tools.run_code({ \"code\": \"await tools.read({ file_path: 'x' })\" })\nawait tools.read({ file_path: 'y' })", description: 'UC11 同款' })
-checkTrue('R93 runcodeCatchGate:true 主会话 none 态嵌套展平无容错 → deny 且含「未全部独立容错」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
+checkTrue('R93 runcodeCatchGate:true 主会话 none 态嵌套展平无容错 → deny 且含「未全部独立容错」', r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
 
 // ── ⑬ R94-R99：job_output 全角色 wait 禁令/查重（任务4/5） ──
 r = preExecute(harness, plannerAgent, 'job_output', { job_id: 'j1', wait: true })
-checkTrue('R94 planner job_output wait → deny 且含「job_output 禁止带 wait: true」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止带 wait: true'))
+checkTrue('R94 planner job_output wait → deny 且含「job_output 禁止带 wait: true」', r.kind === 'deny' && String(r.reason).includes('job_output 禁止带 wait: true'))
 r = preExecute(harness, reviewer, 'job_output', { job_id: 'j1', wait: true })
-checkTrue('R95 reviewer job_output wait → deny 且含「job_output 禁止带 wait: true」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止带 wait: true'))
+checkTrue('R95 reviewer job_output wait → deny 且含「job_output 禁止带 wait: true」', r.kind === 'deny' && String(r.reason).includes('job_output 禁止带 wait: true'))
 r = preExecute(harness, plannerAgent, 'job_output', { job_id: 'j1' })
-checkTrue('R96 planner job_output 正常 → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R96 planner job_output 正常 → allow', r.kind === 'allow')
 r = preExecute(harness, plannerAgent, 'job_output', { job_id: 'j1' })
-checkTrue('R96b planner 同 job 再调 → deny 且含「job_output 禁止对同一 job 重复调用」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止对同一 job 重复调用'))
+checkTrue('R96b planner 同 job 再调 → deny 且含「job_output 禁止对同一 job 重复调用」', r.kind === 'deny' && String(r.reason).includes('job_output 禁止对同一 job 重复调用'))
 r = preExecute(harness, plannerAgent, 'job_output', { job_id: 'j2' })
-checkTrue('R96c planner 不同 job → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R96c planner 不同 job → allow', r.kind === 'allow')
 r = preExecute(harness, probeAgent, 'job_output', { job_id: 'j1' })
-checkTrue('R97 probeAgent job_output 正常 → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R97 probeAgent job_output 正常 → allow', r.kind === 'allow')
 r = preExecute(harness, executor, 'job_output', { job_id: 'j1', wait: true })
-checkTrue('R98 executor job_output wait → allow（执行者豁免保持）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R98 executor job_output wait → allow（执行者豁免保持）', r.kind === 'allow')
 r = preExecute(harness, plannerAgent, 'run_code', joCode)
-checkTrue('R99 planner run_code 组内 job_output wait → deny 且含「job_output 禁止带 wait: true」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止带 wait: true'))
+checkTrue('R99 planner run_code 组内 job_output wait → deny 且含「job_output 禁止带 wait: true」', r.kind === 'deny' && String(r.reason).includes('job_output 禁止带 wait: true'))
 
 // ── ⑬b 四工具治理：job_kill 仅直行路线放行（v0.4.0；编号自文件内最大 R107 顺延） ──
 const jkCode = { code: 'await tools.job_kill({ "job_id": "j1", "reason": "x" })', description: 'job_kill 成员' }
@@ -1995,21 +1997,21 @@ const jkDenyNone = jobKillDenyTextOf(noneMain)
 const jkDenyPlan = jobKillDenyTextOf(planMain)
 const jkDenyExecutor = jobKillDenyTextOf(executorReadyMain)
 r = preExecute(harness, noneMain, 'job_kill', jkArgs)
-checkTrue('R108 主会话 none 态 job_kill → deny 且拒句与 mainGateReason 派生值逐字一致', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === jkDenyNone)
+checkTrue('R108 主会话 none 态 job_kill → deny 且拒句与 mainGateReason 派生值逐字一致', r.kind === 'deny' && String(r.reason) === jkDenyNone)
 r = preExecute(harness, mainRouteMain, 'job_kill', jkArgs)
-checkTrue('R109 主会话 main 态 job_kill → allow（route=main 才可停止子代理）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R109 主会话 main 态 job_kill → allow（route=main 才可停止子代理）', r.kind === 'allow')
 r = preExecute(harness, planMain, 'job_kill', jkArgs)
-checkTrue('R110 主会话 plan 态 job_kill → deny 且拒句与 mainGateReason 派生值逐字一致', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === jkDenyPlan)
+checkTrue('R110 主会话 plan 态 job_kill → deny 且拒句与 mainGateReason 派生值逐字一致', r.kind === 'deny' && String(r.reason) === jkDenyPlan)
 r = preExecute(harness, executorReadyMain, 'job_kill', jkArgs)
-checkTrue('R111 主会话 executor 态 job_kill → deny 且拒句与 mainGateReason 派生值逐字一致', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === jkDenyExecutor)
+checkTrue('R111 主会话 executor 态 job_kill → deny 且拒句与 mainGateReason 派生值逐字一致', r.kind === 'deny' && String(r.reason) === jkDenyExecutor)
 r = preExecute(harness, gateChannelErrorMain, 'job_kill', { job_id: 'j1', reason: 'x' })
-checkTrue('R112 主会话 route 闸门 channel-error 后 job_kill → deny（通道故障不推进，不形成放行逃生）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason) === jkDenyNone)
+checkTrue('R112 主会话 route 闸门 channel-error 后 job_kill → deny（通道故障不推进，不形成放行逃生）', r.kind === 'deny' && String(r.reason) === jkDenyNone)
 r = preExecute(harness, reselectRouteMain, 'job_kill', { job_id: 'j1', reason: 'x' })
-checkTrue('R113 重选 main 路线后 job_kill → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R113 重选 main 路线后 job_kill → allow', r.kind === 'allow')
 r = preExecute(harness, noneMain, 'run_code', jkCode)
-checkTrue('R114 主会话 none 态 run_code 组内 job_kill 成员 → deny 且聚合行与 mainGateReason 派生值一致（组判定同口径）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('- job_kill: ' + jkDenyNone))
+checkTrue('R114 主会话 none 态 run_code 组内 job_kill 成员 → deny 且聚合行与 mainGateReason 派生值一致（组判定同口径）', r.kind === 'deny' && String(r.reason).includes('- job_kill: ' + jkDenyNone))
 r = preExecute(harness, mainRouteMain, 'run_code', jkCode)
-checkTrue('R115 主会话 main 态 run_code 组内 job_kill 成员 → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R115 主会话 main 态 run_code 组内 job_kill 成员 → allow', r.kind === 'allow')
 
 // ── ⑭d 可变事件流 tool-jobs 完成通知解锁（任务4） ──────────────────────
 {
@@ -2021,10 +2023,10 @@ checkTrue('R115 主会话 main 态 run_code 组内 job_kill 成员 → allow', r
   }
   // 首次 job_output j1 → allow
   r = preExecute(harness, mutableMain, 'job_output', { job_id: 'j1' })
-  checkTrue('TJ1 可变事件流 job_output j1 首次 → allow', r !== null && r !== undefined && r.kind === 'allow')
+  checkTrue('TJ1 可变事件流 job_output j1 首次 → allow', r.kind === 'allow')
   // 无通知时同 job 再调 → deny（回归）
   r = preExecute(harness, mutableMain, 'job_output', { job_id: 'j1' })
-  checkTrue('TJ2 可变事件流 job_output j1 无通知再调 → deny', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止对同一 job 重复调用'))
+  checkTrue('TJ2 可变事件流 job_output j1 无通知再调 → deny', r.kind === 'deny' && String(r.reason).includes('job_output 禁止对同一 job 重复调用'))
   // 注入 tool-jobs 完成通知事件
   sharedEvents.push({
     type: 'user/message',
@@ -2038,7 +2040,7 @@ checkTrue('R115 主会话 main 态 run_code 组内 job_kill 成员 → allow', r
   })
   // 通知注入后 job_output j1 → allow（修复生效）
   r = preExecute(harness, mutableMain, 'job_output', { job_id: 'j1' })
-  checkTrue('TJ3 可变事件流 tool-jobs 通知后 job_output j1 → allow（修复生效）', r !== null && r !== undefined && r.kind === 'allow')
+  checkTrue('TJ3 可变事件流 tool-jobs 通知后 job_output j1 → allow（修复生效）', r.kind === 'allow')
 
    const multiNoticeEvents = []
    const multiNoticeMain = { session: { header: { id: 'multi-notice-main', cwd: 'C:/work' }, snapshotEvents: () => multiNoticeEvents }, options: {}, ctx: undefined }
@@ -2061,26 +2063,26 @@ checkTrue('R115 主会话 main 态 run_code 组内 job_kill 成员 → allow', r
   const mutableMain2 = { session: { header: { id: 'mutable-main-2', cwd: 'C:/work' }, snapshotEvents: () => sharedEvents }, options: {}, ctx: undefined }
   // 首次放行（隐式验证 recordPollGuardCall 生效）
   r = preExecute(harness, mutableMain2, 'job_list', {})
-  checkTrue('PG1 job_list 首次 → allow（recordPollGuardCall 生效）', r !== null && r !== undefined && r.kind === 'allow')
+  checkTrue('PG1 job_list 首次 → allow（recordPollGuardCall 生效）', r.kind === 'allow')
   r = preExecute(harness, mutableMain2, 'job_list', {})
-  checkTrue('PG2 job_list 同轮第二次 → deny 且含「禁止轮询子代理状态，停止操作并等待子代理通知」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('禁止轮询子代理状态，停止操作并等待子代理通知'))
+  checkTrue('PG2 job_list 同轮第二次 → deny 且含「禁止轮询子代理状态，停止操作并等待子代理通知」', r.kind === 'deny' && String(r.reason).includes('禁止轮询子代理状态，停止操作并等待子代理通知'))
   r = preExecute(harness, mutableMain2, 'list_agents', {})
-  checkTrue('PG3 list_agents 首次 → allow（不同工具独立计数）', r !== null && r !== undefined && r.kind === 'allow')
+  checkTrue('PG3 list_agents 首次 → allow（不同工具独立计数）', r.kind === 'allow')
   r = preExecute(harness, mutableMain2, 'list_agents', {})
-  checkTrue('PG4 list_agents 同轮第二次 → deny 且含同文案', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('禁止轮询子代理状态，停止操作并等待子代理通知'))
+  checkTrue('PG4 list_agents 同轮第二次 → deny 且含同文案', r.kind === 'deny' && String(r.reason).includes('禁止轮询子代理状态，停止操作并等待子代理通知'))
   // 重置通道①：注入新 user 消息（锚点变化清整表）
   sharedEvents.push({ type: 'user/message', data: { id: 'pg-user-anchor', role: 'user', source: { kind: 'user' }, content: [] } })
   r = preExecute(harness, mutableMain2, 'job_list', {})
-  checkTrue('PG5 新 user 消息锚点重置后 job_list → allow（清整表）', r !== null && r !== undefined && r.kind === 'allow')
+  checkTrue('PG5 新 user 消息锚点重置后 job_list → allow（清整表）', r.kind === 'allow')
   r = preExecute(harness, mutableMain2, 'list_agents', {})
-  checkTrue('PG6 锚点重置后 list_agents → allow（清整表）', r !== null && r !== undefined && r.kind === 'allow')
+  checkTrue('PG6 锚点重置后 list_agents → allow（清整表）', r.kind === 'allow')
   // 同轮第二次再拒
   r = preExecute(harness, mutableMain2, 'job_list', {})
-  checkTrue('PG7 锚点重置后同轮 job_list 第二次 → deny 且含同文案', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('禁止轮询子代理状态，停止操作并等待子代理通知'))
+  checkTrue('PG7 锚点重置后同轮 job_list 第二次 → deny 且含同文案', r.kind === 'deny' && String(r.reason).includes('禁止轮询子代理状态，停止操作并等待子代理通知'))
   // 重置通道②：注入 tool-jobs 完成通知（jobId 'jx' 不在 job_output 计数器中，也必须清 pollGuard——验证 consumed 解耦）
   sharedEvents.push({ type: 'user/message', data: { id: 'pg-jx-notice', role: 'user', source: { kind: 'tool-jobs', form: 'notice' }, content: [{ type: 'text', text: 'background job jx (subagent: test) finished [status: completed]. Read its output with job_output.' }] } })
   r = preExecute(harness, mutableMain2, 'job_list', {})
-  checkTrue('PG8 tool-jobs 通知（未跟踪 jobId jx）后 job_list → allow（consumed 解耦清 pollGuard）', r !== null && r !== undefined && r.kind === 'allow')
+  checkTrue('PG8 tool-jobs 通知（未跟踪 jobId jx）后 job_list → allow（consumed 解耦清 pollGuard）', r.kind === 'allow')
 }
 
 // ── ⑭g claimed 实时主入口：pre-durable 时序、幂等、隔离、坏输入与组拒副作用 ──
@@ -2097,23 +2099,23 @@ checkTrue('R115 主会话 main 态 run_code 组内 job_kill 成员 → allow', r
 
   // pre-durable 预热：没有 push user/message，三类工具均首调 allow、后两调 deny。
   r = preExecute(harness, claimedMain, 'job_output', { job_id: 'j3' })
-  const claimedWarmOutputFirst = r !== null && r !== undefined && r.kind === 'allow'
+  const claimedWarmOutputFirst = r.kind === 'allow'
   r = preExecute(harness, claimedMain, 'job_output', { job_id: 'j3' })
-  const claimedWarmOutputSecond = r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止对同一 job 重复调用')
+  const claimedWarmOutputSecond = r.kind === 'deny' && String(r.reason).includes('job_output 禁止对同一 job 重复调用')
   r = preExecute(harness, claimedMain, 'job_output', { job_id: 'j3' })
-  const claimedWarmOutputThird = r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止对同一 job 重复调用')
+  const claimedWarmOutputThird = r.kind === 'deny' && String(r.reason).includes('job_output 禁止对同一 job 重复调用')
   r = preExecute(harness, claimedMain, 'job_list', {})
-  const claimedWarmListFirst = r !== null && r !== undefined && r.kind === 'allow'
+  const claimedWarmListFirst = r.kind === 'allow'
   r = preExecute(harness, claimedMain, 'job_list', {})
-  const claimedWarmListSecond = r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('禁止轮询子代理状态，停止操作并等待子代理通知')
+  const claimedWarmListSecond = r.kind === 'deny' && String(r.reason).includes('禁止轮询子代理状态，停止操作并等待子代理通知')
   r = preExecute(harness, claimedMain, 'job_list', {})
-  const claimedWarmListThird = r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('禁止轮询子代理状态，停止操作并等待子代理通知')
+  const claimedWarmListThird = r.kind === 'deny' && String(r.reason).includes('禁止轮询子代理状态，停止操作并等待子代理通知')
   r = preExecute(harness, claimedMain, 'list_agents', {})
-  const claimedWarmAgentsFirst = r !== null && r !== undefined && r.kind === 'allow'
+  const claimedWarmAgentsFirst = r.kind === 'allow'
   r = preExecute(harness, claimedMain, 'list_agents', {})
-  const claimedWarmAgentsSecond = r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('禁止轮询子代理状态，停止操作并等待子代理通知')
+  const claimedWarmAgentsSecond = r.kind === 'deny' && String(r.reason).includes('禁止轮询子代理状态，停止操作并等待子代理通知')
   r = preExecute(harness, claimedMain, 'list_agents', {})
-  const claimedWarmAgentsThird = r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('禁止轮询子代理状态，停止操作并等待子代理通知')
+  const claimedWarmAgentsThird = r.kind === 'deny' && String(r.reason).includes('禁止轮询子代理状态，停止操作并等待子代理通知')
   checkTrue('CN1 claimed 前无 durable：job_output/job_list/list_agents 各首调 allow、后两调 deny', claimedWarmOutputFirst && claimedWarmOutputSecond && claimedWarmOutputThird && claimedWarmListFirst && claimedWarmListSecond && claimedWarmListThird && claimedWarmAgentsFirst && claimedWarmAgentsSecond && claimedWarmAgentsThird)
   checkTrue('CN2 claimed 前后 sharedEvents 始终为空（通知尚未落 durable）', sharedEvents.length === 0)
 
@@ -2121,58 +2123,58 @@ checkTrue('R115 主会话 main 态 run_code 组内 job_kill 成员 → allow', r
   emitClaimed(harness, claimedMain, currentNotice)
   checkTrue('CN3 同步 claimed 返回后立即仍无 durable event', sharedEvents.length === 0)
   r = preExecute(harness, claimedMain, 'job_output', { job_id: 'j3' })
-  const claimedPostOutputFirst = r !== null && r !== undefined && r.kind === 'allow'
+  const claimedPostOutputFirst = r.kind === 'allow'
   r = preExecute(harness, claimedMain, 'job_list', {})
-  const claimedPostListFirst = r !== null && r !== undefined && r.kind === 'allow'
+  const claimedPostListFirst = r.kind === 'allow'
   r = preExecute(harness, claimedMain, 'list_agents', {})
-  const claimedPostAgentsFirst = r !== null && r !== undefined && r.kind === 'allow'
+  const claimedPostAgentsFirst = r.kind === 'allow'
   r = preExecute(harness, claimedMain, 'job_output', { job_id: 'j3' })
-  const claimedPostOutputSecond = r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止对同一 job 重复调用')
+  const claimedPostOutputSecond = r.kind === 'deny' && String(r.reason).includes('job_output 禁止对同一 job 重复调用')
   r = preExecute(harness, claimedMain, 'job_list', {})
-  const claimedPostListSecond = r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('禁止轮询子代理状态，停止操作并等待子代理通知')
+  const claimedPostListSecond = r.kind === 'deny' && String(r.reason).includes('禁止轮询子代理状态，停止操作并等待子代理通知')
   r = preExecute(harness, claimedMain, 'list_agents', {})
-  const claimedPostAgentsSecond = r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('禁止轮询子代理状态，停止操作并等待子代理通知')
+  const claimedPostAgentsSecond = r.kind === 'deny' && String(r.reason).includes('禁止轮询子代理状态，停止操作并等待子代理通知')
   checkTrue('CN4 有效 claimed 后三工具首调 allow、各自第二调恢复原 deny', claimedPostOutputFirst && claimedPostListFirst && claimedPostAgentsFirst && claimedPostOutputSecond && claimedPostListSecond && claimedPostAgentsSecond)
 
   // 锚点变化后重复 claimed + durable：同一 message.id 仍只允许一次状态迁移。
   sharedEvents.push({ type: 'user/message', data: { id: 'claimed-user-anchor', role: 'user', source: { kind: 'user' }, content: [] } })
   r = preExecute(harness, claimedMain, 'read', {})
-  const claimedAnchorReset = r !== null && r !== undefined && r.kind === 'allow'
+  const claimedAnchorReset = r.kind === 'allow'
   r = preExecute(harness, claimedMain, 'job_output', { job_id: 'j3' })
-  const claimedAnchorWarmOutput = r !== null && r !== undefined && r.kind === 'allow'
+  const claimedAnchorWarmOutput = r.kind === 'allow'
   r = preExecute(harness, claimedMain, 'job_list', {})
-  const claimedAnchorWarmList = r !== null && r !== undefined && r.kind === 'allow'
+  const claimedAnchorWarmList = r.kind === 'allow'
   r = preExecute(harness, claimedMain, 'list_agents', {})
-  const claimedAnchorWarmAgents = r !== null && r !== undefined && r.kind === 'allow'
+  const claimedAnchorWarmAgents = r.kind === 'allow'
   emitClaimed(harness, claimedMain, currentNotice)
   sharedEvents.push({ type: 'user/message', data: currentNotice })
   r = preExecute(harness, claimedMain, 'job_output', { job_id: 'j3' })
-  const claimedDuplicateOutput = r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止对同一 job 重复调用')
+  const claimedDuplicateOutput = r.kind === 'deny' && String(r.reason).includes('job_output 禁止对同一 job 重复调用')
   r = preExecute(harness, claimedMain, 'job_list', {})
-  const claimedDuplicateList = r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('禁止轮询子代理状态，停止操作并等待子代理通知')
+  const claimedDuplicateList = r.kind === 'deny' && String(r.reason).includes('禁止轮询子代理状态，停止操作并等待子代理通知')
   r = preExecute(harness, claimedMain, 'list_agents', {})
-  const claimedDuplicateAgents = r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('禁止轮询子代理状态，停止操作并等待子代理通知')
+  const claimedDuplicateAgents = r.kind === 'deny' && String(r.reason).includes('禁止轮询子代理状态，停止操作并等待子代理通知')
   checkTrue('CN5 同 id claimed+durable 幂等且跨锚点保留：不清理通知后重建的三类计数', claimedAnchorReset && claimedAnchorWarmOutput && claimedAnchorWarmList && claimedAnchorWarmAgents && claimedDuplicateOutput && claimedDuplicateList && claimedDuplicateAgents && sharedEvents.length === 2)
 
   // 同 session 多 job：j1 通知只清 j1，不能提前放行 j2。
   const multiJobEvents = []
   const multiJobMain = { session: { header: { id: 'claimed-multi-job', cwd: 'C:/work' }, snapshotEvents: () => multiJobEvents }, options: {}, ctx: undefined }
   r = preExecute(harness, multiJobMain, 'job_output', { job_id: 'j1' })
-  const multiJ1Warm = r !== null && r !== undefined && r.kind === 'allow'
+  const multiJ1Warm = r.kind === 'allow'
   r = preExecute(harness, multiJobMain, 'job_output', { job_id: 'j1' })
-  const multiJ1WarmDeny = r !== null && r !== undefined && r.kind === 'deny'
+  const multiJ1WarmDeny = r.kind === 'deny'
   r = preExecute(harness, multiJobMain, 'job_output', { job_id: 'j2' })
-  const multiJ2Warm = r !== null && r !== undefined && r.kind === 'allow'
+  const multiJ2Warm = r.kind === 'allow'
   r = preExecute(harness, multiJobMain, 'job_output', { job_id: 'j2' })
-  const multiJ2WarmDeny = r !== null && r !== undefined && r.kind === 'deny'
+  const multiJ2WarmDeny = r.kind === 'deny'
   emitClaimed(harness, multiJobMain, noticeOf('j1', 'multi-job-j1'))
   r = preExecute(harness, multiJobMain, 'job_output', { job_id: 'j1' })
-  const multiJ1Released = r !== null && r !== undefined && r.kind === 'allow'
+  const multiJ1Released = r.kind === 'allow'
   r = preExecute(harness, multiJobMain, 'job_output', { job_id: 'j2' })
-  const multiJ2StillDenied = r !== null && r !== undefined && r.kind === 'deny'
+  const multiJ2StillDenied = r.kind === 'deny'
   emitClaimed(harness, multiJobMain, noticeOf('j2', 'multi-job-j2'))
   r = preExecute(harness, multiJobMain, 'job_output', { job_id: 'j2' })
-  const multiJ2Released = r !== null && r !== undefined && r.kind === 'allow'
+  const multiJ2Released = r.kind === 'allow'
   checkTrue('CN6 同 session j1/j2 精确 jobId：j1 通知不放行 j2，随后 j2 独立解锁', multiJ1Warm && multiJ1WarmDeny && multiJ2Warm && multiJ2WarmDeny && multiJ1Released && multiJ2StillDenied && multiJ2Released && multiJobEvents.length === 0)
 
   // 同 jobId 双 session：A 通知不清 B 的 job_output 与 pollGuard。
@@ -2182,47 +2184,47 @@ checkTrue('R115 主会话 main 态 run_code 组内 job_kill 成员 → allow', r
   const sessionB = { session: { header: { id: 'claimed-session-b', cwd: 'C:/work' }, snapshotEvents: () => sessionEventsB }, options: {}, ctx: undefined }
   for (const agent of [sessionA, sessionB]) {
     r = preExecute(harness, agent, 'job_output', { job_id: 'shared-job' })
-    const outputFirst = r !== null && r !== undefined && r.kind === 'allow'
+    const outputFirst = r.kind === 'allow'
     r = preExecute(harness, agent, 'job_output', { job_id: 'shared-job' })
-    const outputSecond = r !== null && r !== undefined && r.kind === 'deny'
+    const outputSecond = r.kind === 'deny'
     r = preExecute(harness, agent, 'job_list', {})
-    const listFirst = r !== null && r !== undefined && r.kind === 'allow'
+    const listFirst = r.kind === 'allow'
     r = preExecute(harness, agent, 'job_list', {})
-    const listSecond = r !== null && r !== undefined && r.kind === 'deny'
+    const listSecond = r.kind === 'deny'
     if (!(outputFirst && outputSecond && listFirst && listSecond)) { fail += 1; output.error('FAIL  CN7 同 session jobId/pollGuard 预热边界') }
   }
   emitClaimed(harness, sessionA, noticeOf('shared-job', 'session-a-shared-job'))
   r = preExecute(harness, sessionA, 'job_output', { job_id: 'shared-job' })
-  const sessionAOutputReleased = r !== null && r !== undefined && r.kind === 'allow'
+  const sessionAOutputReleased = r.kind === 'allow'
   r = preExecute(harness, sessionA, 'job_list', {})
-  const sessionAListReleased = r !== null && r !== undefined && r.kind === 'allow'
+  const sessionAListReleased = r.kind === 'allow'
   r = preExecute(harness, sessionB, 'job_output', { job_id: 'shared-job' })
-  const sessionBOutputStillDenied = r !== null && r !== undefined && r.kind === 'deny'
+  const sessionBOutputStillDenied = r.kind === 'deny'
   r = preExecute(harness, sessionB, 'job_list', {})
-  const sessionBListStillDenied = r !== null && r !== undefined && r.kind === 'deny'
+  const sessionBListStillDenied = r.kind === 'deny'
   checkTrue('CN7 session 隔离：A 通知不放行 B 的同 jobId 与 pollGuard', sessionAOutputReleased && sessionAListReleased && sessionBOutputStillDenied && sessionBListStillDenied && sessionEventsA.length === 0 && sessionEventsB.length === 0)
   emitClaimed(harness, sessionB, noticeOf('shared-job', 'session-b-shared-job'))
   r = preExecute(harness, sessionB, 'job_output', { job_id: 'shared-job' })
-  const sessionBOutputReleased = r !== null && r !== undefined && r.kind === 'allow'
+  const sessionBOutputReleased = r.kind === 'allow'
   r = preExecute(harness, sessionB, 'job_list', {})
-  const sessionBListReleased = r !== null && r !== undefined && r.kind === 'allow'
+  const sessionBListReleased = r.kind === 'allow'
   checkTrue('CN8 B 收到自己的 claimed 后才解锁', sessionBOutputReleased && sessionBListReleased)
 
   // 坏 source/form/content/job 文本与坏 agent：均零副作用且不抛。
   const badEvents = []
   const badMain = { session: { header: { id: 'claimed-bad-input', cwd: 'C:/work' }, snapshotEvents: () => badEvents }, options: {}, ctx: undefined }
   r = preExecute(harness, badMain, 'job_output', { job_id: 'bad-job' })
-  const badWarmOutput = r !== null && r !== undefined && r.kind === 'allow'
+  const badWarmOutput = r.kind === 'allow'
   r = preExecute(harness, badMain, 'job_output', { job_id: 'bad-job' })
-  const badWarmOutputDeny = r !== null && r !== undefined && r.kind === 'deny'
+  const badWarmOutputDeny = r.kind === 'deny'
   r = preExecute(harness, badMain, 'job_list', {})
-  const badWarmList = r !== null && r !== undefined && r.kind === 'allow'
+  const badWarmList = r.kind === 'allow'
   r = preExecute(harness, badMain, 'job_list', {})
-  const badWarmListDeny = r !== null && r !== undefined && r.kind === 'deny'
+  const badWarmListDeny = r.kind === 'deny'
   r = preExecute(harness, badMain, 'list_agents', {})
-  const badWarmAgents = r !== null && r !== undefined && r.kind === 'allow'
+  const badWarmAgents = r.kind === 'allow'
   r = preExecute(harness, badMain, 'list_agents', {})
-  const badWarmAgentsDeny = r !== null && r !== undefined && r.kind === 'deny'
+  const badWarmAgentsDeny = r.kind === 'deny'
   const validContent = noticeOf('bad-job', 'valid-bad-notice').content
   const invalidMessages = [
     null,
@@ -2244,11 +2246,11 @@ checkTrue('R115 主会话 main 态 run_code 组内 job_kill 成员 → allow', r
     try { emitClaimed(harness, agent, noticeOf('bad-job', 'bad-agent-notice')) } catch (error) { invalidThrew = true }
   }
   r = preExecute(harness, badMain, 'job_output', { job_id: 'bad-job' })
-  const badOutputStillDenied = r !== null && r !== undefined && r.kind === 'deny'
+  const badOutputStillDenied = r.kind === 'deny'
   r = preExecute(harness, badMain, 'job_list', {})
-  const badListStillDenied = r !== null && r !== undefined && r.kind === 'deny'
+  const badListStillDenied = r.kind === 'deny'
   r = preExecute(harness, badMain, 'list_agents', {})
-  const badAgentsStillDenied = r !== null && r !== undefined && r.kind === 'deny'
+  const badAgentsStillDenied = r.kind === 'deny'
   checkTrue('CN9 坏输入零副作用且不抛：三类计数仍维持 deny', !invalidThrew && badWarmOutput && badWarmOutputDeny && badWarmList && badWarmListDeny && badWarmAgents && badWarmAgentsDeny && badOutputStillDenied && badListStillDenied && badAgentsStillDenied && badEvents.length === 0)
 
   // run_code 组内整体 deny 不得预写成员计数；随后三者直接首调仍 allow。
@@ -2257,11 +2259,11 @@ checkTrue('R115 主会话 main 态 run_code 组内 job_kill 成员 → allow', r
   const groupCode = { code: "try { await tools['mcp__chrome-devtools-mcp__list_pages']({}) } catch (e) {}\nawait tools.job_output({ job_id: 'group-job' })\nawait tools.job_list({})\nawait tools.list_agents({})\nawait tools.write({ file_path: 'blocked.txt', content: 'x' })", description: 'MCP+claimed 组拒零计数' }
   let groupNextCalls = 0
   r = preExecute(harness, groupMain, 'run_code', groupCode, undefined, () => { groupNextCalls += 1 })
-  const groupDenied = r !== null && r !== undefined && r.kind === 'deny'
+  const groupDenied = r.kind === 'deny'
   const groupOutputAfter = preExecute(harness, groupMain, 'job_output', { job_id: 'group-job' })
   const groupListAfter = preExecute(harness, groupMain, 'job_list', {})
   const groupAgentsAfter = preExecute(harness, groupMain, 'list_agents', {})
-  checkTrue('CN10 MCP独立catch+三工具+受阻write整体 deny 不污染计数：next=0且直接首调仍 allow', groupDenied && groupNextCalls === 0 && groupOutputAfter !== null && groupOutputAfter.kind === 'allow' && groupListAfter !== null && groupListAfter.kind === 'allow' && groupAgentsAfter !== null && groupAgentsAfter.kind === 'allow' && groupEvents.length === 0)
+  checkTrue('CN10 MCP独立catch+三工具+受阻write整体 deny 不污染计数：next=0且直接首调仍 allow', groupDenied && groupNextCalls === 0 && groupOutputAfter.kind === 'allow' && groupListAfter.kind === 'allow' && groupAgentsAfter.kind === 'allow' && groupEvents.length === 0)
 
   // P0 碰撞：同一长 session 的历史 durable notice 与新 incarnation 复用 subagent-1。
   const collisionJobId = 'subagent-1'
@@ -2271,22 +2273,22 @@ checkTrue('R115 主会话 main 态 run_code 组内 job_kill 成员 → allow', r
   const collisionMain = { session: { header: { id: 'claimed-collision', cwd: 'C:/work' }, snapshotEvents: () => collisionEvents }, options: {}, ctx: undefined }
   // 先消费历史 durable notice 建立 notice-id 基线，再追加新 user 锚点；锚点扫描不得删基线。
   r = preExecute(harness, collisionMain, 'read', {})
-  const collisionHistoryBaseline = r !== null && r !== undefined && r.kind === 'allow'
+  const collisionHistoryBaseline = r.kind === 'allow'
   collisionEvents.push({ type: 'user/message', data: { id: 'collision-user-anchor', role: 'user', source: { kind: 'user' }, content: [] } })
   r = preExecute(harness, collisionMain, 'read', {})
-  const collisionAnchorAfterHistory = r !== null && r !== undefined && r.kind === 'allow'
+  const collisionAnchorAfterHistory = r.kind === 'allow'
   r = preExecute(harness, collisionMain, 'job_output', { job_id: collisionJobId })
-  const collisionWarmOutput = r !== null && r !== undefined && r.kind === 'allow'
+  const collisionWarmOutput = r.kind === 'allow'
   r = preExecute(harness, collisionMain, 'job_list', {})
-  const collisionWarmList = r !== null && r !== undefined && r.kind === 'allow'
+  const collisionWarmList = r.kind === 'allow'
   r = preExecute(harness, collisionMain, 'list_agents', {})
-  const collisionWarmAgents = r !== null && r !== undefined && r.kind === 'allow'
+  const collisionWarmAgents = r.kind === 'allow'
   r = preExecute(harness, collisionMain, 'job_output', { job_id: collisionJobId })
-  const collisionWarmOutputDeny = r !== null && r !== undefined && r.kind === 'deny'
+  const collisionWarmOutputDeny = r.kind === 'deny'
   r = preExecute(harness, collisionMain, 'job_list', {})
-  const collisionWarmListDeny = r !== null && r !== undefined && r.kind === 'deny'
+  const collisionWarmListDeny = r.kind === 'deny'
   r = preExecute(harness, collisionMain, 'list_agents', {})
-  const collisionWarmAgentsDeny = r !== null && r !== undefined && r.kind === 'deny'
+  const collisionWarmAgentsDeny = r.kind === 'deny'
   const collisionNotice = noticeOf(collisionJobId, collisionNewNoticeId)
   emitClaimed(harness, collisionMain, collisionNotice)
   const collisionOutputFirst = preExecute(harness, collisionMain, 'job_output', { job_id: collisionJobId })
@@ -2318,23 +2320,23 @@ checkTrue('R115 主会话 main 态 run_code 组内 job_kill 成员 → allow', r
 
 // ── ⑭ R100-R105：runcodeCatchGate 开关 + safe 白名单 + 容器计费 + 实例上限 ──
 r = preExecute(harness, noneMain, 'run_code', { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })", description: 'UC1 同款' })
-checkTrue('R100 默认（runcodeCatchGate 缺省=关）多调用无容错 → allow（默认关放行）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R100 默认（runcodeCatchGate 缺省=关）多调用无容错 → allow（默认关放行）', r.kind === 'allow')
 r = preExecute(harnessCatchOn, noneMain, 'run_code', { code: "await tools.read({ file_path: 'x' })\nawait tools.read({ file_path: 'y' })", description: 'UC1 同款' })
-checkTrue('R100b runcodeCatchGate:true 多调用无容错 → deny 且含「未全部独立容错」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
+checkTrue('R100b runcodeCatchGate:true 多调用无容错 → deny 且含「未全部独立容错」', r.kind === 'deny' && String(r.reason).includes('未全部独立容错'))
 r = preExecute(harness, noneMain, 'run_code', { code: "const safe = (p) => p.catch((e) => ({ _error: String(e).slice(0, 200) }))\nawait safe(tools.read({ file_path: 'x' }))\ntry { await tools.read({ file_path: 'y' }) } catch (e) {}", description: 'UC18 同款' })
-checkTrue('R101 safe 白名单监听器级 → allow', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R101 safe 白名单监听器级 → allow', r.kind === 'allow')
 r = preExecute(harnessCatchOn, noneMain, 'run_code', { code: "const safe = (p) => p.catch((e) => ({ _error: String(e).slice(0, 200) }))\nawait safe(tools.read({ file_path: 'x' }).then(() => tools.read({ file_path: 'y' })))", description: 'UC19 同款' })
-checkTrue('R102 runcodeCatchGate:true safe 实参 2 调用点 → deny 且含「已保护 0 个」', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('已保护 0 个'))
+checkTrue('R102 runcodeCatchGate:true safe 实参 2 调用点 → deny 且含「已保护 0 个」', r.kind === 'deny' && String(r.reason).includes('已保护 0 个'))
 r = preExecute(harness, budgetPlanner, 'read', { file_path: 'x' }, { rootCallId: 'r9', parent: Symbol('r101') })
-checkTrue('R103 planner 子调用（语义）预算 → allow（容器计费）', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('R103 planner 子调用（语义）预算 → allow（容器计费）', r.kind === 'allow')
 {
   // 上限由 DEFAULT_EXPLORE_BUDGET 派生（= 插件 Config 的 exploreBudget 默认值）；只断 kind，不匹配拒句片段。
   const dgExec = () => ({ rootCallId: 'r1', parent: Symbol('r102') })
   let r102Ok = true
   for (let i = 1; i <= DEFAULT_EXPLORE_BUDGET + 2; i += 1) {
     const rr = preExecute(harness, budgetPlanner, 'read', { file_path: 'x' }, dgExec())
-    if (i <= DEFAULT_EXPLORE_BUDGET && !(rr !== null && rr !== undefined && rr.kind === 'allow')) r102Ok = false
-    if (i > DEFAULT_EXPLORE_BUDGET && !(rr !== null && rr !== undefined && rr.kind === 'deny')) r102Ok = false
+    if (i <= DEFAULT_EXPLORE_BUDGET && !(rr.kind === 'allow')) r102Ok = false
+    if (i > DEFAULT_EXPLORE_BUDGET && !(rr.kind === 'deny')) r102Ok = false
   }
   checkTrue('R104 单实例子调用循环至上限+2 → 上限内 allow、超上限 deny（上限由 DEFAULT_EXPLORE_BUDGET 派生）', r102Ok)
 }
@@ -2343,17 +2345,17 @@ checkTrue('R103 planner 子调用（语义）预算 → allow（容器计费）'
   const overCapSites = DEFAULT_EXPLORE_BUDGET + 1
   const longCode = Array.from({ length: overCapSites }, (_, i) => "await tools.read({ file_path: 'x" + i + "' })").join('\n')
   r = preExecute(harness, plannerMock, 'run_code', { code: longCode, description: overCapSites + ' 行 read 调用' })
-  checkTrue('R105 planner 静态调用点超过 DEFAULT_EXPLORE_BUDGET（上限+1）→ deny（只断 kind）', r !== null && r !== undefined && r.kind === 'deny')
+  checkTrue('R105 planner 静态调用点超过 DEFAULT_EXPLORE_BUDGET（上限+1）→ deny（只断 kind）', r.kind === 'deny')
 }
 
 
 const rcBridgePlannerCode = 'await tools.write({})\nawait tools.subagent_probe({})'
 r = preExecute(harness, plannerAgent, 'run_code', { code: rcBridgePlannerCode, description: 'R106 planner 组判定桥接' })
-const rcBridgeReason = r !== null && r !== undefined && r.kind === 'deny' ? String(r.reason) : ''
-checkTrue('R106 planner run_code write+subagent_probe → 聚合两项拒绝且成员顺序 write→subagent_probe', r !== null && r !== undefined && r.kind === 'deny' && rcBridgeReason.includes('工具组共 2 项（去重后），2 项触发闸门') && rcBridgeReason.includes('规划子代理只读') && rcBridgeReason.includes('仅主会话可用') && rcBridgeReason.indexOf('- write:') < rcBridgeReason.indexOf('- subagent_probe:'))
+const rcBridgeReason = r.kind === 'deny' ? String(r.reason) : ''
+checkTrue('R106 planner run_code write+subagent_probe → 聚合两项拒绝且成员顺序 write→subagent_probe', r.kind === 'deny' && rcBridgeReason.includes('工具组共 2 项（去重后），2 项触发闸门') && rcBridgeReason.includes('规划子代理只读') && rcBridgeReason.includes('仅主会话可用') && rcBridgeReason.indexOf('- write:') < rcBridgeReason.indexOf('- subagent_probe:'))
 r = preExecute(harness, noneMain, 'run_code', { code: 'await tools.save_plan({})\nawait tools.write({})', description: 'R107 noneMain 组判定：save_plan 放行 + write 仍拒' })
-const rc107Reason = r !== null && r !== undefined && r.kind === 'deny' ? String(r.reason) : ''
-checkTrue('R107 noneMain run_code save_plan+write → 组内 save_plan 放行、write 仍拒 → 聚合 deny（2 项 1 项触发，不含 save_plan 行）', r !== null && r !== undefined && r.kind === 'deny' && rc107Reason.includes('工具组共 2 项（去重后），1 项触发闸门') && rc107Reason.includes(routeDenyReason('write/edit', { route: 'none' }, gateRuntime)) && rc107Reason.includes('- write:') && rc107Reason.includes('save_plan') === false)
+const rc107Reason = r.kind === 'deny' ? String(r.reason) : ''
+checkTrue('R107 noneMain run_code save_plan+write → 组内 save_plan 放行、write 仍拒 → 聚合 deny（2 项 1 项触发，不含 save_plan 行）', r.kind === 'deny' && rc107Reason.includes('工具组共 2 项（去重后），1 项触发闸门') && rc107Reason.includes(routeDenyReason('write/edit', { route: 'none' }, gateRuntime)) && rc107Reason.includes('- write:') && rc107Reason.includes('save_plan') === false)
 
 // ── ⑭e P0-4：会话状态生命周期（通知/job 计数/rootCall 桶）──
 // 口径：账本用例块已删除（账本改由启动扫描维护，见 lib/usage-ledger.js）；
@@ -2994,7 +2996,7 @@ checkTrue('P2-20 ptc 轮 C=0 L 对拍：Cordis 隐藏、tools:sdk 保留 read/fi
   && sectionText(p2LPtc, 'tools:sdk').includes('read')
   && sectionText(p2LPtc, 'tools:sdk').includes('file_path'))
 const p2RuntimeDeny = preExecute(harness, mainAgent, 'write', {})
-checkTrue('P2-21 C=0 runtime deny/权限行为保持：主会话未确认 write 仍 deny', p2RuntimeDeny !== null && p2RuntimeDeny.kind === 'deny' && String(p2RuntimeDeny.reason).includes('路由未确认'))
+checkTrue('P2-21 C=0 runtime deny/权限行为保持：主会话未确认 write 仍 deny', p2RuntimeDeny.kind === 'deny' && String(p2RuntimeDeny.reason).includes('路由未确认'))
 
 // ── ⑯ B3 收敛：shell 只读文案单源 + job_output 记录单源（T2/T3） ─────────────
 // ① 六格逐字矩阵：完整字符串等值比较（不用 includes），负例锁 null 边界。
@@ -3082,14 +3084,14 @@ checkTrue('B3-6 未知角色与缺失入参 → null（无异常）',
   const reEntryPlanner = plannerWithId('b3-reentry-planner', [DESC])
   const subExec = { rootCallId: 'b3-re-entry', parent: Symbol('b3-re-entry') }
   r = preExecute(harness, reEntryPlanner, 'job_output', { job_id: 'jr1' }, subExec)
-  checkTrue('B3-20 planner run_code 内 job_output 子调用首次 re-entry → allow（容器计费口径不变）', r !== null && r !== undefined && r.kind === 'allow')
+  checkTrue('B3-20 planner run_code 内 job_output 子调用首次 re-entry → allow（容器计费口径不变）', r.kind === 'allow')
   r = preExecute(harness, reEntryPlanner, 'job_output', { job_id: 'jr1' }, subExec)
-  checkTrue('B3-21 同 job 第二次 re-entry → deny 且含「job_output 禁止对同一 job 重复调用」（首次放行已记录）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('job_output 禁止对同一 job 重复调用'))
+  checkTrue('B3-21 同 job 第二次 re-entry → deny 且含「job_output 禁止对同一 job 重复调用」（首次放行已记录）', r.kind === 'deny' && String(r.reason).includes('job_output 禁止对同一 job 重复调用'))
   const sideFxPlanner = plannerWithId('b3-group-deny-planner', [DESC])
   r = preExecute(harness, sideFxPlanner, 'run_code', { code: "await tools.job_output({ job_id: 'jg3' })\nawait tools.write({})", description: 'B3 组拒（write 成员）含 job_output 成员' })
-  checkTrue('B3-22 组内含 job_output 成员的组拒 → deny（write 成员触发，文案不变）', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes('run_code 拆解预审未通过') && String(r.reason).includes('- write:'))
+  checkTrue('B3-22 组内含 job_output 成员的组拒 → deny（write 成员触发，文案不变）', r.kind === 'deny' && String(r.reason).includes('run_code 拆解预审未通过') && String(r.reason).includes('- write:'))
   r = preExecute(harness, sideFxPlanner, 'job_output', { job_id: 'jg3' })
-  checkTrue('B3-23 组拒零副作用：该 job 直呼仍首次放行（组判定未写入计数器）', r !== null && r !== undefined && r.kind === 'allow')
+  checkTrue('B3-23 组拒零副作用：该 job 直呼仍首次放行（组判定未写入计数器）', r.kind === 'allow')
 }
 
 // ── ⑯ GW 系列：闸门词单源（资产 YAML config.gateWords）运行时贯通 ──────────
@@ -3161,15 +3163,15 @@ check('GW6 第一实例 provider 不受第二实例影响（无跨 apply 缓存�
 // 直呼路径（tool/call + tool/result）：定制词 label 与 route 枚举全链 main / plan+refine / executor。
 const cMainRoute = mainWithEvents([umE(), ...cRouteE('main', 'c1')])
 r = preExecute(customHarness, cMainRoute, 'write', {})
-checkTrue('GW7 定制词「甲直行」（route=main）直呼路由 → write 放行', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('GW7 定制词「甲直行」（route=main）直呼路由 → write 放行', r.kind === 'allow')
 const cPlanRefine = mainWithEvents([umE(), ...cRouteE('plan', 'c1'), ...cPurposeE('refine', 'c2'), ...cClarifyE('c3')])
 check('GW8 定制词三锚点 → deriveFlowState plan/refine/clarified', decisions.deriveFlowState(cPlanRefine.session.snapshotEvents(), customRuntime), { route: 'plan', clarified: true, purpose: 'refine' })
 r = preExecute(customHarness, cPlanRefine, 'subagent_plan', { run_in_background: true })
-checkTrue('GW9 定制词 plan 态 → subagent_plan 放行', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('GW9 定制词 plan 态 → subagent_plan 放行', r.kind === 'allow')
 const cExecutor = mainWithEvents([umE(), ...cRouteE('executor', 'c1'), ...cClarifyE('c2')])
 check('GW10 定制词「丁执行」（route=executor）→ deriveFlowState executor/澄清不置位（clarify 需 route=plan 且目的已定）', decisions.deriveFlowState(cExecutor.session.snapshotEvents(), customRuntime), { route: 'executor', clarified: false, purpose: 'none' })
 r = preExecute(customHarness, cExecutor, 'subagent', { run_in_background: true })
-checkTrue('GW11 定制词执行者态 → subagent 委派放行', r !== null && r !== undefined && r.kind === 'allow')
+checkTrue('GW11 定制词执行者态 → subagent 委派放行', r.kind === 'allow')
 const cPlanOnly = mainWithEvents([umE(), ...cRouteE('plan', 'c1'), ...cClarifyE('c2')])
 check('GW12 定制词「乙规划」（route=plan）→ 未走执行者路线', decisions.deriveFlowState(cPlanOnly.session.snapshotEvents(), customRuntime).route, 'plan')
 const cDisagree = mainWithEvents([umE(), ...cRouteE('none', 'c1')])
@@ -3190,7 +3192,7 @@ for (const generation of [['ptc', 'tool/ptc-dispatch-start', 'tool/ptc-dispatch'
   const state = decisions.deriveFlowState(fullEvents, customRuntime)
   checkTrue('GW14 ' + label + ' dispatch 定制词全链 → 重选路线复位为 plan/未澄清/目的未定', state.route === 'plan' && state.purpose === 'none' && state.clarified === false)
   r = preExecute(customHarness, mainWithEvents(fullEvents), 'subagent', { run_in_background: true })
-  checkTrue('GW15 ' + label + ' dispatch 重选 plan 路线后 → subagent deny 且文案只含当前定制执行者词', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(CUSTOM_WORDS.routeExecutor) && !FACTORY_WORDS_PATTERN.test(String(r.reason)))
+  checkTrue('GW15 ' + label + ' dispatch 重选 plan 路线后 → subagent deny 且文案只含当前定制执行者词', r.kind === 'deny' && String(r.reason).includes(CUSTOM_WORDS.routeExecutor) && !FACTORY_WORDS_PATTERN.test(String(r.reason)))
   const approveEvents = [
     umE(),
     startE('n1', { gate: 'route' }), endE('n1', { gate: 'route', route: 'executor', routeLabel: CUSTOM_WORDS.routeExecutor, purpose: null, note: '', noteLabel: '其他说明', outcome: 'answered' }),
@@ -3198,7 +3200,7 @@ for (const generation of [['ptc', 'tool/ptc-dispatch-start', 'tool/ptc-dispatch'
     startE('n3', { gate: 'clarify' }), endE('n3', { gate: 'clarify', answers: [{ id: 'q1', selected: ['方案A'] }], outcome: 'answered' }),
   ]
   r = preExecute(customHarness, mainWithEvents(approveEvents), 'subagent', { run_in_background: true })
-  checkTrue('GW16 ' + label + ' dispatch 定制词 route=executor → subagent 委派放行', r !== null && r !== undefined && r.kind === 'allow')
+  checkTrue('GW16 ' + label + ' dispatch 定制词 route=executor → subagent 委派放行', r.kind === 'allow')
 }
 
 // 旧出厂词负例：定制 runtime 下路线只由 route 枚举推进，出厂词出现在 label 上也不改变状态，deny 文案只含当前定制词。
@@ -3207,9 +3209,9 @@ const oldWordEvents = [umE(), callE('extra_plan_gate', 'o1', gateJson({ gate: 'r
 check('GW17 定制 runtime 下提交旧出厂词 label（route=none）→ route/purpose 全部未确认', decisions.deriveFlowState(oldWordEvents, customRuntime), { route: 'none', clarified: false, purpose: 'none' })
 const oldWordMain = mainWithEvents(oldWordEvents)
 r = preExecute(customHarness, oldWordMain, 'write', {})
-checkTrue('GW18 旧词不推进路线 → write deny 且文案含当前定制四词、不含任何出厂词', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(customRuntime.options.route) && !FACTORY_WORDS_PATTERN.test(String(r.reason)))
+checkTrue('GW18 旧词不推进路线 → write deny 且文案含当前定制四词、不含任何出厂词', r.kind === 'deny' && String(r.reason).includes(customRuntime.options.route) && !FACTORY_WORDS_PATTERN.test(String(r.reason)))
 r = preExecute(customHarness, oldWordMain, 'subagent', { run_in_background: true })
-checkTrue('GW19 旧词不推进路线 → subagent deny 且文案只含当前定制执行者词', r !== null && r !== undefined && r.kind === 'deny' && String(r.reason).includes(CUSTOM_WORDS.routeExecutor) && !FACTORY_WORDS_PATTERN.test(String(r.reason)))
+checkTrue('GW19 旧词不推进路线 → subagent deny 且文案只含当前定制执行者词', r.kind === 'deny' && String(r.reason).includes(CUSTOM_WORDS.routeExecutor) && !FACTORY_WORDS_PATTERN.test(String(r.reason)))
 {
   // 状态推进分三类：answered 按枚举推进、skipped/channel-error 不改动既有字段、cancelled 全部复位。
   const skippedState = decisions.deriveFlowState([umE(), ...cRouteE('main', 's1'), callE('extra_plan_gate', 's2', gateJson({ gate: 'route' })), okE('s2', gateJson({ gate: 'route', route: 'none', routeLabel: '', purpose: null, note: '', noteLabel: '其他说明', outcome: 'skipped' }))], customRuntime)
@@ -3333,7 +3335,7 @@ checkTrue('GW19 旧词不推进路线 → subagent deny 且文案只含当前定
 {
   // 真实拒绝产物（route 非 main 时 write 由 mainGateReason 拒绝；none 态 write 必拒）
   const dzDeny = preExecute(harness, noneMain, 'write', {}, { sub: true, rootCallId: 'rc-1', parent: 'rc-1' })
-  const dzDenyOk = dzDeny !== null && dzDeny !== undefined && dzDeny.kind === 'deny'
+  const dzDenyOk = dzDeny.kind === 'deny'
   const dzReason = dzDenyOk ? String(dzDeny.reason) : ''
   const dzText = 'Error: ' + dzReason
   // post-execute 宿主失败结果形状（逐字同宿主证据链：error.message 带英文包装与 worker.cjs 堆栈）
@@ -3364,7 +3366,7 @@ checkTrue('GW19 旧词不推进路线 → subagent deny 且文案只含当前定
   checkTrue('DZ10 无记录 → next() 透传（result 不被改写）', dzOut10 === dzPass)
   // DZ11：exec.name!=='run_code' → 透传；且记录不被消费（随后同名 rootCallId 的 run_code 仍命中）
   const dz11Pre = preExecute(harness, noneMain, 'write', {}, { sub: true, rootCallId: 'rc-11', parent: 'rc-11' })
-  const dz11Reason = dz11Pre !== null && dz11Pre !== undefined && dz11Pre.kind === 'deny' ? String(dz11Pre.reason) : ''
+  const dz11Reason = dz11Pre.kind === 'deny' ? String(dz11Pre.reason) : ''
   const dzOut11 = dzHook === null ? null : dzHook({ agent: mainAgent, name: 'write', callId: 'rc-11', rootCallId: 'rc-11' }, dzFailOf(dz11Reason), dzNext)
   const dzHit11 = dzHook === null ? null : dzHook({ agent: mainAgent, name: 'run_code', callId: 'rc-11', rootCallId: 'rc-11' }, dzFailOf(dz11Reason), dzNext)
   checkTrue('DZ11 exec.name!==run_code → 透传（且记录未消费：同名 run_code 随后仍命中）', dzOut11 === dzPass && dzHit11 !== null && dzHit11 !== dzPass && String(dzHit11.content[0].text) === 'Error: ' + dz11Reason)
@@ -3711,7 +3713,7 @@ checkTrue('GW19 旧词不推进路线 → subagent deny 且文案只含当前定
   const m9GateNext = () => { m9GateNextCalls += 1 }
   const m9FreeResult = preExecute(harness, plannerAgent, 'run_code', { code: "await tools.save_plan({ plan: 'm9', checklist: 'm9' })", description: 'M9 FREE_TOOLS 实际放行' }, undefined, m9GateNext)
   const m9NonFreeResult = preExecute(harness, plannerAgent, 'run_code', { code: 'await tools.write({})', description: 'M9 非 FREE_TOOLS 实际拒绝' }, undefined, m9GateNext)
-  checkTrue('M9 生产pre-execute实际复用FREE_TOOLS组预审：可执行放行/拒绝且next仅一次', m9FreeResult !== null && m9FreeResult !== undefined && m9FreeResult.kind === 'allow' && m9NonFreeResult !== null && m9NonFreeResult !== undefined && m9NonFreeResult.kind === 'deny' && m9GateNextCalls === 1)
+  checkTrue('M9 生产pre-execute实际复用FREE_TOOLS组预审：可执行放行/拒绝且next仅一次', m9FreeResult.kind === 'allow' && m9NonFreeResult.kind === 'deny' && m9GateNextCalls === 1)
   const m9PureDecision = { kind: 'enter', messages: [gateInstructions('m9-new-decision'), gateCatalog([{ name: 'm9-skill', description: 'new' }]), gateMessage('user-message')] }
   const m9PureFiltered = filterBootstrapContextDecision(m9PureDecision, true)
   checkTrue('M9 CG 纯例只接收新增decision并过滤两类来源，不传完整历史request', m9PureFiltered !== m9PureDecision && m9PureFiltered.messages.length === 1 && m9PureFiltered.messages[0].source.kind === 'user-message')

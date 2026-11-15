@@ -14,7 +14,7 @@ const GATE_TOOL_NAME = 'extra_plan_gate'
 const ROUTE_HEADER = '路线确认'
 const ROUTE_QUESTION = '这次任务走哪条路线？'
 const NOTE_HEADER = '其他说明'
-const NOTE_QUESTION = '其他说明：如转交pro规划等。可置空'
+const NOTE_QUESTION = '其他说明：如转交规划者等。可置空'
 const NOTE_LABEL = '其他说明'
 // 两个自由文本标签分属 route 的两问、互不合并：CHOICE_NOTE_LABEL 是第一问（路线四选一）外可填的自由输入，
 // NOTE_LABEL 是第二问「其他说明」。
@@ -67,7 +67,7 @@ function routeOptionsOf(words) {
   return [
     { route: 'main', label: words.routeMain, description: '本次会话直接动手执行' },
     { route: 'executor', label: words.routeExecutor, description: '按已有方案转交执行者落地' },
-    { route: 'plan', label: words.routePlan, description: '先转交 pro 规划出方案，再按方案动手' },
+    { route: 'plan', label: words.routePlan, description: '先转交规划者出方案，再按方案动手' },
     { route: 'none', label: words.routeDisagree, description: '暂不推进，先澄清方向' },
   ]
 }

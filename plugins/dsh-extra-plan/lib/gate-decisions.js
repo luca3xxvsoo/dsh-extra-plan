@@ -313,12 +313,7 @@ function isReadOnlyChildByCatalog(tools) {
 // 工具集判定：真实工具集（tools.schemas，restrict 后非折叠）是否含 write/edit——
 // 含 write/edit=可写（executor），无 write/edit=只读（probe/reviewer）。
 // 形状约定与 catalogHasWriteTools 同（字符串元素 / { name } 对象）；非数组 → false。
-function schemasHasWriteTools(schemas) {
-  if (!Array.isArray(schemas)) return false
-  return schemas.some((tool) =>
-    (typeof tool === 'string' && (tool === 'write' || tool === 'edit')) ||
-    (tool !== null && typeof tool === 'object' && (tool.name === 'write' || tool.name === 'edit')))
-}
+function schemasHasWriteTools(schemas) { return catalogHasWriteTools(schemas) }
 
 // 工具集判定：真实工具集是否含指定工具名（save_probe 信号：仅主会话与认领的 probe 子代理注册）。
 // 形状约定同上；非数组 → false。

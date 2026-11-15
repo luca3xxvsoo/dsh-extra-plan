@@ -482,8 +482,8 @@ try {
    const profile = terminal?.profiles?.[0]
    const associationOk = put.status === 200 && terminal?.profileKind === 'web' && terminal?.profileIdentityState === 'valid' && terminal?.request?.saveRunId === terminal?.saveRunId && terminal.request.syncRevision === terminal.syncRevision && terminal.request.snapshotHash === terminal.snapshotHash && terminal.terminalMatch === true && matchingGet.status === 200 && matchingGet.body.profileSync.terminalMatch === true && mismatchGet.status === 409 && mismatchGet.body.profileSync.terminalMatch === false && mismatchGet.body.profileSync.status !== 'synced' && mismatchGet.body.profileSync.source === 'last-terminal-cache' && cacheGet.body.profileSync.cache === true && cacheGet.body.profileSync.terminalMatch === false && cacheGet.body.profileSync.source === 'last-terminal-cache'
    const patchMetadataOk = typeof terminal.snapshotHash === 'string' && terminal.webAfter?.patchBytes > 0 && typeof terminal.webAfter.patchMtimeMs === 'number' && typeof terminal.webAfter.patchSha256 === 'string' && terminal.webAfter.managedSnapshotHash === terminal.snapshotHash && profile?.patchBytes > 0 && typeof profile.patchMtimeMs === 'number' && typeof profile.patchSha256 === 'string' && profile.managedSnapshotHash === terminal.snapshotHash && typeof profile.backupPath === 'string' && typeof profile.backupSha256 === 'string' && profile.before?.patchSha256 !== undefined && profile.after?.patchSha256 === profile.patchSha256
-   if (associationOk) console.log('SAVE_RUN_ID_TERMINAL_HASH_MATCH_OK')
-   if (patchMetadataOk) console.log('PATCH_MTIME_MANAGED_HASH_COMPARE_OK')
+   check('SAVE_RUN_ID_TERMINAL_HASH_MATCH_OK', associationOk)
+   check('PATCH_MTIME_MANAGED_HASH_COMPARE_OK', patchMetadataOk)
    check('V03 合法 PUT 仅 edit 唯一全局行并保留另九项与 gateWords（终态关联）', put.status === 200 && put.body.profileSync.status === 'synced' && put.body.profileSync.terminalMatch === true && put.body.overall === 'synced' && put.body.web.applied === true && put.body.projection.owner === 'dsh-extra-plan-settings' && editor.state.edits.length === 1 && editor.state.edits[0].id === 'dsh-extra-plan-settings' && rowConfig.webFetch === true && rowConfig.toolPresentationMode === 'ptc' && rowConfig.plannerModel === initial.plannerModel && rowConfig.exploreBudget === initial.exploreBudget && JSON.stringify(rowConfig.gateWords) === JSON.stringify(gateWords) && localReadbackOk)
   const noOp = await requestJson(run.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true, toolPresentationMode: 'ptc' })
   check('V03 同值 PUT 深等 no-op 零新增 edit且产生新关联终态', noOp.status === 200 && noOp.body.profileSync.status === 'synced' && noOp.body.profileSync.terminalMatch === true && noOp.body.projection.applied === true && editor.state.edits.length === 1 && noOp.body.profileSync.saveRunId !== put.body.profileSync.saveRunId && noOp.body.profileSync.webAfter?.managedSnapshotHash === noOp.body.profileSync.snapshotHash)
@@ -882,7 +882,7 @@ try {
 } finally { await new Promise((resolve) => pendingDocumentRun.server.close(resolve)); rmSync(pendingDocumentFixture.root, { recursive: true, force: true }) }
 
 const externalDriftFixture = makeSyncFixture()
-const externalDriftEditor = makeEditor({ ...syncValues, gateWords: syncGateWords }, externalDriftFixture.webPatch, { persistDocument: true, profileContext: externalDriftFixture.webProfileContext })
+makeEditor({ ...syncValues, gateWords: syncGateWords }, externalDriftFixture.webPatch, { persistDocument: true, profileContext: externalDriftFixture.webProfileContext })
 const externalDriftText = '# external writer value\n- id: external-writer\n  name: external\n  config:\n    marker: !!js \"globalThis.__externalWriter = true\"\n'
 const externalDriftSynchronizer = createQqbotSettingsSynchronizer({ hooks: { beforeFinalVerify: ({ patchFile }) => writeFileSync(patchFile, externalDriftText, 'utf8') } })
 const externalDriftRun = await externalDriftSynchronizer.enqueue({ documentPath: externalDriftFixture.webPatch, pathContext: externalDriftFixture.pathContext, profileFacts: externalDriftFixture.webProfileContext, env: {}, snapshot: syncSnapshot, saveRunId: 'external-drift-run', syncRevision: 1, snapshotHash: stableSnapshotHash(syncSnapshot), trigger: 'api-put', associated: true })
@@ -1020,7 +1020,6 @@ try {
   const unavailableHome = join(unavailable.root, 'missing-home')
   rmSync(unavailableUserProfile, { recursive: true, force: true })
   rmSync(unavailableHome, { recursive: true, force: true })
-  const unavailableProfilesRoot = join(unavailable.root, 'profiles')
   let unavailableProbe
   await withEnvironment({ DSH_HOME: undefined, DSH_PROFILE: undefined, USERPROFILE: unavailableUserProfile, HOME: unavailableHome }, async () => {
      const unavailableEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, unavailable.webPatch, { profileContext: unavailable.webProfileContext })

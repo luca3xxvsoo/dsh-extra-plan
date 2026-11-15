@@ -77,7 +77,7 @@ function bracketed(words) {
 
 /**
  * 运行时词表：只从入参派生（无参默认值不存在）。
- * 返回 { words, route, purpose, routeSet, purposeSet, options, confirm, variables }：
+ * 返回 { words, route, purpose, options, confirm, variables }：
  *  - words：6 个字段 → 值（冻结）
  *  - route/purpose：冻结数组（route 为四值：routeMain、routeExecutor、routePlan、routeDisagree；purpose 为两值）
  *  - options/confirm：deny 教学文案插值片段（与历史静态文案逐字同构）
@@ -93,7 +93,7 @@ export function createGateRuntime(raw) {
   })
   const confirm = Object.freeze({
     route: '须先调用 extra_plan_gate(gate=\'route\') 完成路线确认（选项固定为' + options.route + '）',
-    purpose: '须先调用 extra_plan_gate 并传入 gate = purpose 询问用户本次 pro 规划的目的（选项固定为' + options.purpose + '）',
+    purpose: '须先调用 extra_plan_gate 并传入 gate = purpose 询问用户本次规划者的目的（选项固定为' + options.purpose + '）',
   })
   const variables = {}
   for (const item of GATE_WORD_FIELDS) variables[item.variable] = words[item.field]
@@ -101,8 +101,6 @@ export function createGateRuntime(raw) {
     words,
     route,
     purpose,
-    routeSet: new Set(route),
-    purposeSet: new Set(purpose),
     options,
     confirm,
     variables: Object.freeze(variables),

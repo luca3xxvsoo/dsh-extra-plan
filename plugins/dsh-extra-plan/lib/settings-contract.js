@@ -122,17 +122,17 @@ export const SETTING_DEFINITIONS = Object.freeze([
     // T4：允许空串（= 显式清空 = 继承主会话模型；解析侧只判 !==''，键缺失才用代码缺省值）。
     // 空白串经 normalize trim 归一为 ''，与空串同义；非 string（如 YAML 数字）仍非法。
     validator: isString, normalize: (value) => value.trim(),
-    ui: { control: 'text', locale: 'plannerModel', section: 'pro', hint: 'pro规划默认使用模型。未匹配/置空时：使用主会话模型 ｜ 新会话/新子代理生效' }, locatorAliases: [],
+    ui: { control: 'text', locale: 'plannerModel', section: 'pro', hint: '规划者默认使用模型。未匹配/置空时：使用主会话模型 ｜ 新会话/新子代理生效' }, locatorAliases: [],
   }),
   setting({
     key: 'plannerPromptSuffix', group: SETTING_GROUPS.EXTRA_PLAN, scalarType: 'string', defaultValue: DEFAULT_SETTINGS.plannerPromptSuffix,
     sourceLocator: sourceLocator('plannerPromptSuffix'), rowLocator: settingsRowLocator('plannerPromptSuffix'),
-    validator: isString, ui: { control: 'textarea', locale: 'plannerPromptSuffix', section: 'pro', hint: '在主会话发送给pro规划的任务结尾，拼接上的内容。可能能增加pro规划的智商（未验证）。可置空 ｜ 立即生效' }, locatorAliases: [],
+    validator: isString, ui: { control: 'textarea', locale: 'plannerPromptSuffix', section: 'pro', hint: '在主会话发送给规划者的任务结尾，拼接上的内容。可能能增加规划者的智商（未验证）。可置空 ｜ 立即生效' }, locatorAliases: [],
   }),
   setting({
     key: 'exploreBudget', group: SETTING_GROUPS.EXTRA_PLAN, scalarType: 'integer', defaultValue: DEFAULT_SETTINGS.exploreBudget,
     sourceLocator: sourceLocator('exploreBudget'), rowLocator: settingsRowLocator('exploreBudget'),
-    validator: isPositiveInteger, ui: { control: 'number', min: 1, step: 1, locale: 'exploreBudget', section: 'pro', hint: '允许pro规划调用工具的次数，避免后台无限制调用。同时限制一次runcode内可调用的工具上限数 ｜ 立即生效' }, locatorAliases: [],
+    validator: isPositiveInteger, ui: { control: 'number', min: 1, step: 1, locale: 'exploreBudget', section: 'pro', hint: '允许规划者调用工具的次数，避免后台无限制调用。同时限制一次runcode内可调用的工具上限数 ｜ 立即生效' }, locatorAliases: [],
   }),
   setting({
     key: 'otherAgentModel', group: SETTING_GROUPS.EXTRA_PLAN, scalarType: 'string', defaultValue: DEFAULT_SETTINGS.otherAgentModel,
@@ -143,7 +143,7 @@ export const SETTING_DEFINITIONS = Object.freeze([
   setting({
     key: 'reviewerUsesPlannerModel', group: SETTING_GROUPS.EXTRA_PLAN, scalarType: 'boolean', defaultValue: DEFAULT_SETTINGS.reviewerUsesPlannerModel,
     sourceLocator: sourceLocator('reviewerUsesPlannerModel'), rowLocator: settingsRowLocator('reviewerUsesPlannerModel'),
-    validator: isBoolean, ui: { control: 'select', options: [true, false], locale: 'reviewerUsesPlannerModel', section: 'pro', hint: '验收者是否改用pro规划的模型。默认关闭 ｜ 新会话/新子代理生效' }, locatorAliases: [],
+    validator: isBoolean, ui: { control: 'select', options: [true, false], locale: 'reviewerUsesPlannerModel', section: 'pro', hint: '验收者是否改用规划者的模型。默认关闭 ｜ 新会话/新子代理生效' }, locatorAliases: [],
   }),
 ])
 

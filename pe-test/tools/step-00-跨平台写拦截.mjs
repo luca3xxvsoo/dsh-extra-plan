@@ -208,7 +208,6 @@ const h3EvidenceCases = [
 for (const [label, exec, evidenceOf, expected] of h3EvidenceCases) {
   const evidence = evidenceOf(exec)
   check(label + ' evidence 独立固定期望', JSON.stringify(evidence) === JSON.stringify(expected))
-  check(label + ' evidence 与旧布尔入口等价', Boolean(evidence) === gateDeny(exec))
   check(label + ' evidence 不回显命令内容', evidence === null || !JSON.stringify(evidence).includes('secret'))
 }
 

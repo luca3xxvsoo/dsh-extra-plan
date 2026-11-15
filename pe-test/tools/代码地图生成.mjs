@@ -341,7 +341,7 @@ function collectDefCandidates(text) {
 function parseOldMap(text) {
   const byKey = new Map() // key = 文件路径|函数名 → 行数组（同名函数按地图内出现顺序存，逐个配对）
   const fileDesc = new Map()
-  if (!text.includes('| 文件 | 函数 | 行号 | 功能描述 | 备注 |')) return { byKey, fileDesc, hasTable: false }
+  if (!text.includes('| 文件 | 函数 | 行号 | 功能描述 | 备注 |')) return { byKey, fileDesc }
   let inFuncTable = false
   let inFileTable = false
   for (const line of text.split(NL)) {
@@ -364,7 +364,7 @@ function parseOldMap(text) {
       if (cells.length >= 4 && cells[1] && !cells[1].startsWith(':')) fileDesc.set(cells[1], cells[3] || '')
     }
   }
-  return { byKey, fileDesc, hasTable: true }
+  return { byKey, fileDesc }
 }
 
 // ---------- 人工保留段（意图速查） ----------

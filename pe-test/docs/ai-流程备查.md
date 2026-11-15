@@ -31,7 +31,7 @@ PTC C=0/C=1 必须各用干净 A=1 顶层会话取 F→首个 tool/call→L→�
 
 ## ⑥ 复杂度与推荐路由
 
-根据对象数量、改动规模和信息完整度推荐：简单明确可直行，复杂/多文件/需要方案走 pro 规划，需求不明确先澄清。推荐不是自动决策，仍须用户确认。E3 执行链跳过本步的复杂度评估与推荐。
+根据对象数量、改动规模和信息完整度推荐：简单明确可直行，复杂/多文件/需要方案走规划者，需求不明确先澄清。推荐不是自动决策，仍须用户确认。E3 执行链跳过本步的复杂度评估与推荐。
 
 ## ⑦ 路由确认
 
@@ -92,7 +92,7 @@ route=plan 后，**第一个** 闸门必须是独立的目的闸门：调用 `ex
 
 所有扫描根内代码修改（`--roots` 默认 `plugins,pe-test/_shared` 的 .js/.mjs）完成后、最终冻结前，主会话从 W 运行 `node pe-test/tools/代码地图生成.mjs`，检查 stdout 的新增/删除/行号提示；只补人工意图/描述，不手改机器路径、函数、行号和同名顺序；再运行同前缀的 `--check`。地图生成与人工描述复核必须在最终冻结前完成；正式验收阶段只运行地图 `--check`，避免生成时间戳使冻结指纹漂移。纯文档或扫描根外文件改动不运行生成，验收仅 `--check`。修改来自执行者时也必须由主会话完成这一步。
 
-固定仓库回归顺序：源码自检 → 当前文档/地图生成冻结 → 正式最终回归的 13 脚本矩阵与两项 check → 一键 runner 的 AUTO 项数以 runner 的 AUTO 数组实际项为准；纯 W 工具直接 `node`，需要 Host 代码的测试才显式采用 `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs`，代码根不授权数据 H。Markdown 不伪造 `node --check` 结果，SKIP/INCOMPLETE/HUMAN/NOT-RUN 不计 PASS；正式矩阵、两项 check 与 runner 的实际状态以当次冻结后的独立验收工件为准；未执行、部分执行和 HUMAN 必须分层保留，不得由局部自检替代整体验收。
+固定仓库回归顺序：源码自检 → 当前文档/地图生成冻结 → 正式最终回归的 11 个脚本与 2 项 check → 一键 runner 的 AUTO 项数以 runner 的 AUTO 数组实际项为准；纯 W 工具直接 `node`，需要 Host 代码的测试才显式采用 `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs`，代码根不授权数据 H。Markdown 不伪造 `node --check` 结果，SKIP/INCOMPLETE/HUMAN/NOT-RUN 不计 PASS；正式矩阵、两项 check 与 runner 的实际状态以当次冻结后的独立验收工件为准；未执行、部分执行和 HUMAN 必须分层保留，不得由局部自检替代整体验收。
 
 ## P2-2 执行口径
 
@@ -100,4 +100,4 @@ route=plan 后，**第一个** 闸门必须是独立的目的闸门：调用 `ex
 
 ## 设置与默认链交接
 
-9 项 UI 设置与 2 项宿主行设置的权威值都走 `dsh-extra-plan-settings` 唯一 settings 行；PUT 只 edit 该行并保留其它字段；只认当前规范 id/name，两个历史配置 ID 不读取、不一次性迁移、不回退、不判旧 owner、不承诺旧值，也不编辑/删除真实旧行。当前 11 项合法值（含空串/false）保留，缺失/非法普通项只用新默认；gateWords 整个属性缺失或显式对象非法都回落当前资产默认并整组补齐（旧键随写盘删除），只有资产自身损坏才严格失败且零 edit。`./preset-sync` 已退役，locale exports 并未退役（package.json 仍导出 `./locale/*.json` 与 `./settings/locale/*`），但 `lib/preset-sync.js` 仍由 settings owner 内部相对调用。`toolPresentationMode` 为装载期值，`runcodeCatchGate` 按配置热读。默认作者值来自 `agent.cordis.yml`，生成器产物不可手改；坏模板保持 last-known-good。
+9 项 UI 设置与 2 项宿主行设置的权威值都走 `dsh-extra-plan-settings` 唯一 settings 行；PUT 只 edit 该行并保留其它字段；只认当前规范 id/name，两个历史配置 ID 不读取、不一次性迁移、不回退、不判旧 owner、不承诺旧值，也不编辑/删除真实旧行。11 项与 gateWords 的补齐/回落口径见 [ai-机制设计](ai-机制设计.md)（唯一真源）。`./preset-sync` 已退役，locale exports 并未退役（package.json 仍导出 `./locale/*.json` 与 `./settings/locale/*`），但 `lib/preset-sync.js` 仍由 settings owner 内部相对调用。`toolPresentationMode` 为装载期值，`runcodeCatchGate` 按配置热读。默认作者值来自 `agent.cordis.yml`，生成器产物不可手改；坏模板保持 last-known-good。

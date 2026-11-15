@@ -4,6 +4,7 @@
 import { spawnSync } from 'node:child_process'
 import { createRequire, registerHooks, syncBuiltinESMExports } from 'node:module'
 import fs from 'node:fs'
+import { createHash } from 'node:crypto'
 import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createIsolatedEnv, makeFixtureDir } from '../_shared/workspace-paths.mjs'
 import { createPathContext } from '../../plugins/dsh-extra-plan-qqbot/lib/path-policy.js'
@@ -24,6 +25,9 @@ const SOURCE_PACKAGE = join(SOURCE_ROOT, 'plugins', 'dsh-extra-plan-qqbot')
 const SOURCE_HEAL = join(SOURCE_PACKAGE, 'scripts', 'heal.mjs')
 const SOURCE_PACKAGE_MANIFEST = join(SOURCE_PACKAGE, 'package.json')
 const SOURCE_HEAL_TEXT = readFileSync(join(SOURCE_PACKAGE, 'lib', 'heal.js'), 'utf8')
+const CORE_PATH_POLICY = join(SOURCE_ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'path-policy.js')
+const QQBOT_PATH_POLICY = join(SOURCE_PACKAGE, 'lib', 'path-policy.js')
+function sha256Of(file) { return createHash('sha256').update(readFileSync(file)).digest('hex') }
 
 let pass = 0
 let fail = 0
@@ -43,6 +47,9 @@ function emitSkip(scope, reason, details) {
   console.log('SKIP  ' + JSON.stringify({ scope, reason, details }))
 }
 
+const corePathPolicyHash = sha256Of(CORE_PATH_POLICY)
+const qqbotPathPolicyHash = sha256Of(QQBOT_PATH_POLICY)
+check('QB-path-policy 双包副本逐字节一致（引导死锁下的受控冗余）', corePathPolicyHash === qqbotPathPolicyHash, JSON.stringify({ core: corePathPolicyHash, qqbot: qqbotPathPolicyHash }))
 let sourcePackageJson = null
 try { sourcePackageJson = JSON.parse(readFileSync(SOURCE_PACKAGE_MANIFEST, 'utf8')) } catch { sourcePackageJson = null }
 check('QB5 健壮性改进：QQBot package-local 声明 js-yaml ^4.2.0',

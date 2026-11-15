@@ -248,8 +248,6 @@ function safeContextGet(ctx, key) {
   }
 }
 
-const QQBOT_BUNDLE = '@tencent-connect/dsh-qqbot'
-
 function absoluteRoot(value) {
   if (typeof value !== 'string' || value.trim() === '') return null
   try {
@@ -257,19 +255,6 @@ function absoluteRoot(value) {
   } catch {
     return null
   }
-}
-
-function profileIdentityOf(profile) {
-  const name = profile !== undefined && profile !== null && typeof profile.name === 'string' ? profile.name.trim().toLowerCase() : null
-  const startedBundles = profile !== undefined && profile !== null && Array.isArray(profile.startedBundles) && profile.startedBundles.every((item) => typeof item === 'string')
-    ? [...profile.startedBundles]
-    : null
-  if (name === null || startedBundles === null) return { state: 'unknown', kind: 'unknown', name, startedBundles, reason: 'profile-identity-missing' }
-  const qqbot = startedBundles.includes(QQBOT_BUNDLE)
-  if (name === 'web' && !qqbot) return { state: 'valid', kind: 'web', name, startedBundles, reason: null }
-  if (name === 'qqbot' && qqbot) return { state: 'valid', kind: 'qqbot', name, startedBundles, reason: null }
-  if (name !== 'web' && name !== 'qqbot') return { state: 'unknown', kind: 'unknown', name, startedBundles, reason: 'profile-name-unknown' }
-  return { state: 'conflict', kind: 'unknown', name, startedBundles, reason: 'profile-identity-conflict' }
 }
 
 function rootFact(value, present) {
@@ -338,28 +323,15 @@ function profileFactsOf(ctx) {
   const hostConflict = trustedConflict || envConflict
   const hostState = invalidTrustedSource || envInvalidWithTrustedRoot ? 'invalid' : hostConflict ? 'conflict' : validSources.length === 0 ? 'missing' : 'valid'
   const hostDataRoot = hostState === 'valid' ? validSources[0].path : null
-  const identity = profileIdentityOf(profile)
   return {
-    profile,
-    profileName: identity.name,
-    startedBundles: identity.startedBundles,
-    profileKind: identity.kind,
-    profileIdentityState: identity.state,
-    profileIdentityReason: identity.reason,
-    envHome: envHomeFact.state === 'valid' ? envHomeFact.path : null,
-    envHomeState: envHomeFact.state,
     hostDataRoot,
-    hostConflict,
     hostState,
     profileDir: profileDirFact.state === 'valid' ? profileDirFact.path : null,
-    profileDirState: profileDirFact.state,
     profilePatch: profilePatchFact.state === 'valid' ? profilePatchFact.path : null,
-    profilePatchState: profilePatchFact.state,
     documentState,
     documentPath,
     documentCapability,
     installAnchor: installAnchorFact.state === 'valid' ? installAnchorFact.path : null,
-    installAnchorState: installAnchorFact.state,
   }
 }
 
@@ -845,10 +817,6 @@ export function apply(ctx, config) {
       return null
     }
     return null
-  }
-  // 原名保留为薄别名：既有引用与文档按此名读取，实现只此一处。
-  function cordisRestrictableOf(agent) {
-    return restrictableNamesOf(agent)
   }
   function restrictableSnapshotOf(agent) {
     const names = restrictableNamesOf(agent)
@@ -1463,10 +1431,7 @@ export function apply(ctx, config) {
     const parentModel = parentConfig.model
     const resolvedProvider = typeof resolved.provider === 'string' ? resolved.provider : ''
     const resolvedModel = typeof resolved.model === 'string' ? resolved.model : ''
-    const resolvedEffort = typeof resolved.reasoningEffort === 'string' ? resolved.reasoningEffort : ''
-    const parentEffort = parentConfig.reasoningEffort
     const routeExplicit = isExplicitRoute(resolvedProvider, resolvedModel, parentProvider, parentModel)
-    const effortExplicit = isExplicitEffort(resolvedEffort, parentEffort)
     const probe = schemasHasTool(toolSchemasOf(payload.agent), 'save_probe')
     const tokenSource = probe && sources.source !== null ? sources.source : parentConfig
     const nextConfig = { ...resolved }
@@ -1474,7 +1439,7 @@ export function apply(ctx, config) {
     if (!routeExplicit) {
       // 非 planner resolver 内部把 provider/model fallback 固定取顶层主会话；probe 同样不绕过该入口。
       // 验收者开关只在「非显式路由」这一分支生效：开启且命中验收者时改走 resolveReviewerEntry
-      // （复用 pro 规划的模型与跨提供方解析）；力度仍由下方尾部继承主会话（不走 planner 早退分支）。
+      // （复用规划者的模型与跨提供方解析）；力度仍由下方尾部继承主会话（不走 planner 早退分支）。
       let entry
       if (reviewerUsesPlannerModel(payload.agent) && isReviewerChild(payload.agent)) {
         entry = await resolveReviewerEntry(payload.agent, payload.signal)

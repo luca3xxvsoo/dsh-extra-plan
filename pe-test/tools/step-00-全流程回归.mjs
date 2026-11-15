@@ -135,7 +135,6 @@ const HERE = fileURLToPath(new URL('.', import.meta.url))
 // 默认正例与期望文案一律由 parsePresetYaml 取到的配置经 createGateRuntime 派生；
 // decisions 不再导出任何词值常量，测试也不手写第二份词值。
 const ASSET_AGENT_FILE = fileURLToPath(new URL('../../plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml', import.meta.url))
-const GATE_WORDS_LIB_FILE = fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/gate-words.js', import.meta.url))
 const assetDocument = parsePresetYaml(readFileSync(ASSET_AGENT_FILE, 'utf8'))
 function flattenAssetRows(list) {
   const out = []
@@ -1854,7 +1853,6 @@ checkTrue('M6 step-99 旧strict模式拒绝：有效V2输入前置返回strict-p
   const busyMarker = join(workerMatrixRoot, 'busy-running.marker')
   const cancelledMarker = join(workerMatrixRoot, 'cancelled-running.marker')
   const queueMarker = join(workerMatrixRoot, 'queue-running.marker')
-  const singleMarker = join(workerMatrixRoot, 'single-running.marker')
   const syncRoot = join(workerMatrixRoot, 'sync')
   const workerRoot = join(workerMatrixRoot, 'worker')
   const failureRoot = join(workerMatrixRoot, 'failure')
@@ -2818,8 +2816,7 @@ try {
   const g2FactoryRenderText = Array.isArray(g2FactoryRendered) && g2FactoryRendered.length === 1 && g2FactoryRendered[0].type === 'text' ? g2FactoryRendered[0].text : ''
   const g2FactoryExpectedText = g2FactoryResult !== null && Array.isArray(g2FactoryResult.paths) ? g2FactoryResult.paths.map((path) => String(path)).join('\n') : ''
   check('G2-H factory structured output只含paths且render精确双路径', JSON.stringify(Object.keys(g2SavePlanDefinition.output.schema.properties || {})) === JSON.stringify(['paths']) && JSON.stringify(g2SavePlanDefinition.output.schema.required) === JSON.stringify(['paths']) && g2SavePlanDefinition.output.schema.additionalProperties === false && g2FactoryResult !== null && Array.isArray(g2FactoryRendered) && g2FactoryRendered.length === 1 && g2FactoryRendered[0].type === 'text' && g2FactoryRenderText === g2FactoryExpectedText, true)
-  const g2TokenMeasurement = 'NOT-RUN'
-  check('G2-H schema与renderer字符可测且token口径保持NOT-RUN', typeof schemaPlanDescription === 'string' && schemaPlanDescription.length > 0 && JSON.stringify(schemaPlanParameters).length > 0 && g2FactoryRendered.length === 1 && g2FactoryRenderText === g2FactoryExpectedText && !g2FactoryRenderText.includes('PLAN_FIELD_SENTINEL') && !g2FactoryRenderText.includes('CHECKLIST_FIELD_SENTINEL') && !g2FactoryRenderText.includes('派遣摘要（') && !g2FactoryRenderText.includes('[任务') && g2TokenMeasurement === 'NOT-RUN' && !g2FactoryRenderText.includes('token'), true)
+  check('G2-H schema与renderer字符可测且token口径保持NOT-RUN', typeof schemaPlanDescription === 'string' && schemaPlanDescription.length > 0 && JSON.stringify(schemaPlanParameters).length > 0 && g2FactoryRendered.length === 1 && g2FactoryRenderText === g2FactoryExpectedText && !g2FactoryRenderText.includes('PLAN_FIELD_SENTINEL') && !g2FactoryRenderText.includes('CHECKLIST_FIELD_SENTINEL') && !g2FactoryRenderText.includes('派遣摘要（') && !g2FactoryRenderText.includes('[任务') && !g2FactoryRenderText.includes('token'), true)
 } finally {
   rmSync(g2FactoryEvidenceRoot, { recursive: true, force: true })
 }
@@ -3675,7 +3672,9 @@ function askPreExecute(name, argumentsObj, events = [], agent = askMainAgent) {
   const entry = askHarness['tools/pre-execute']
   if (entry === undefined || entry.length === 0) throw new Error('pre-execute 监听器未注册')
   const scoped = { ...agent, session: { ...agent.session, snapshotEvents: () => events } }
-  return entry[0]({ agent: scoped, name, arguments: argumentsObj }, () => ({ kind: 'allow' }))
+  const result = entry[0]({ agent: scoped, name, arguments: argumentsObj }, () => ({ kind: 'allow' }))
+  if (result === null || result === undefined || typeof result !== 'object') throw new Error('pre-execute 返回值形状非法（name=' + name + '，实际=' + String(result) + '）')
+  return result
 }
 // 子代理夹具：header.origin=subagent 即命中原始子代理判定（闸门与用户提问只属主会话）。
 const askChildAgent = {
@@ -3686,15 +3685,15 @@ const askChildAgent = {
 const askRouteOkEvents = gateEvents('aa1', routePayload('main'))
 const askPurposeOkEvents = [um(), ...gateEvents('aa1', routePayload('plan')), ...gateEvents('aa2', purposePayload('refine'))]
 const AS = [
-  ['AS1 main 发 ask_user_question（第二问带非空 options）→ allow（选项结构校验已退场）', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', options: [{ label: '任意A' }, { label: '任意B' }] }, { id: 'q2', question: '补充', options: [{ label: '无' }] }] }); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
-  ['AS2 main 发 ask_user_question（无 options）→ allow', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', question: '纯文本问题' }] }); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
-  ['AS3 main 调 extra_plan_gate(gate=route) route=none → allow（选项由插件生成，无前置条件）', (() => { const r = askPreExecute('extra_plan_gate', { gate: 'route' }, []); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
-  ['AS4 main 调 extra_plan_gate(gate=purpose) route=main → pre-execute 仍 allow（purpose 前置守卫在工具 execute 内）', (() => { const r = askPreExecute('extra_plan_gate', { gate: 'purpose' }, askRouteOkEvents); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
-  ['AS5 main 调 extra_plan_gate(gate=clarify) route=plan 已答目的 → allow', (() => { const r = askPreExecute('extra_plan_gate', { gate: 'clarify' }, askPurposeOkEvents); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
-  ['AS6 cordis_inspect_list 路由未确认 → allow', (() => { const r = askPreExecute('cordis_inspect_list', {}); return r !== null && r !== undefined && r.kind === 'allow' })(), true],
-  ['AS7 子代理调 ask_user_question → deny（只属主会话）', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', question: '纯文本问题' }] }, [], askChildAgent); return r !== null && r !== undefined && r.kind === 'deny' })(), true],
-  ['AS8 子代理调 extra_plan_gate → deny（只属主会话）', (() => { const r = askPreExecute('extra_plan_gate', { gate: 'route' }, [], askChildAgent); return r !== null && r !== undefined && r.kind === 'deny' })(), true],
-  ['AS9 子代理硬拒文案说明闸门与用户提问归属', (() => { const r = askPreExecute('extra_plan_gate', { gate: 'route' }, [], askChildAgent); return r !== null && r !== undefined && typeof r.reason === 'string' && r.reason.includes('只属于主会话') })(), true],
+  ['AS1 main 发 ask_user_question（第二问带非空 options）→ allow（选项结构校验已退场）', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', options: [{ label: '任意A' }, { label: '任意B' }] }, { id: 'q2', question: '补充', options: [{ label: '无' }] }] }); return r.kind === 'allow' })(), true],
+  ['AS2 main 发 ask_user_question（无 options）→ allow', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', question: '纯文本问题' }] }); return r.kind === 'allow' })(), true],
+  ['AS3 main 调 extra_plan_gate(gate=route) route=none → allow（选项由插件生成，无前置条件）', (() => { const r = askPreExecute('extra_plan_gate', { gate: 'route' }, []); return r.kind === 'allow' })(), true],
+  ['AS4 main 调 extra_plan_gate(gate=purpose) route=main → pre-execute 仍 allow（purpose 前置守卫在工具 execute 内）', (() => { const r = askPreExecute('extra_plan_gate', { gate: 'purpose' }, askRouteOkEvents); return r.kind === 'allow' })(), true],
+  ['AS5 main 调 extra_plan_gate(gate=clarify) route=plan 已答目的 → allow', (() => { const r = askPreExecute('extra_plan_gate', { gate: 'clarify' }, askPurposeOkEvents); return r.kind === 'allow' })(), true],
+  ['AS6 cordis_inspect_list 路由未确认 → allow', (() => { const r = askPreExecute('cordis_inspect_list', {}); return r.kind === 'allow' })(), true],
+  ['AS7 子代理调 ask_user_question → deny（只属主会话）', (() => { const r = askPreExecute('ask_user_question', { questions: [{ id: 'q1', question: '纯文本问题' }] }, [], askChildAgent); return r.kind === 'deny' })(), true],
+  ['AS8 子代理调 extra_plan_gate → deny（只属主会话）', (() => { const r = askPreExecute('extra_plan_gate', { gate: 'route' }, [], askChildAgent); return r.kind === 'deny' })(), true],
+  ['AS9 子代理硬拒文案说明闸门与用户提问归属', (() => { const r = askPreExecute('extra_plan_gate', { gate: 'route' }, [], askChildAgent); return typeof r.reason === 'string' && r.reason.includes('只属于主会话') })(), true],
 ]
 for (const [name, got, expected] of AS) check(name, got, expected)
 

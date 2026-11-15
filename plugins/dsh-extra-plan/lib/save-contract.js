@@ -170,7 +170,7 @@ export function renderProbeMarkdown(args) {
   if (hasEvidence) {
     lines.push('> 本文件为探查者已核实的证据报告：行号/数值/文案照实记录，可被规划子代理作为【探查者已核实】证据引用（引用时在方案中注明「证据来源：本文件路径」）')
   } else {
-    lines.push('> 本文件只有定位线索、没有证据；不得引用本文件的行号/数值/文案作为【已探查核实】证据——证据须由 pro 规划子代理自行 read/glob/grep 核实')
+    lines.push('> 本文件只有定位线索、没有证据；不得引用本文件的行号/数值/文案作为【已探查核实】证据——证据须由规划子代理自行 read/glob/grep 核实')
   }
   lines.push('')
   lines.push('## 一、文件地图')

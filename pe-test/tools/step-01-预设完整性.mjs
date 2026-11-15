@@ -38,7 +38,6 @@ const generatedFile = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'prese
 const definitionGeneratedFile = join(PRESET_DIR, 'preset-definition.generated.yml')
 const coreManifestFile = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'package.json')
 const qqbotManifestFile = join(REPO_ROOT, 'plugins', 'dsh-extra-plan-qqbot', 'package.json')
-const generatorFile = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'scripts', 'generate-runtime-defaults.mjs')
 const assemblySource = readFileSync(join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'assembly-presentation.js'), 'utf8')
 
 function targetManifestPath(name) {
@@ -72,7 +71,13 @@ try {
 }
 let pass = 0
 let fail = 0
-console.log('PASS  工作区 agent/preset YAML 解析成功（' + (Array.isArray(rows) ? rows.length : '非数组!') + ' 行）')
+if (Array.isArray(rows)) {
+  pass += 1
+  console.log('PASS  工作区 agent/preset YAML 解析成功（' + rows.length + ' 行）')
+} else {
+  fail += 1
+  console.log('FAIL  工作区 agent 模板 YAML 未解析为行数组（实际类型：' + (rows === null ? 'null' : typeof rows) + '）')
+}
 if (!Array.isArray(preset) && preset !== null && typeof preset === 'object') {
   pass += 1
   console.log('PASS  preset.yml 解析为有效映射结构')
@@ -219,7 +224,6 @@ if (defaults.plannerModel === 'deepseek-v4-pro' && defaults.crossProviderPlanner
 }
 
 // ── T1 纯 definition 资产（官方 adapter 由 preset-sync 内部挂载） ──────────────
-const definitionFile = join(PRESET_DIR, 'preset-definition.generated.yml')
 const definitionText = definitionGeneratedText
 check('T1 生成资产是纯 definition（无 insert wrapper/官方独立公开行）',
   !definitionText.includes('insert:') && !definitionText.includes('preset-extra-plan') && !definitionText.includes("name: '@deepseek-ai/dsh-agent-preset'"))
