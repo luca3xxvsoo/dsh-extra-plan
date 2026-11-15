@@ -1,5 +1,13 @@
 // 仅接受显式参数的纯 helper；不依赖 ctx，也不保存 per-apply 状态。
 
+export function errorCodeOf(error) {
+  return error !== null && typeof error === 'object' && typeof error.code === 'string' ? error.code : ''
+}
+
+export function errorText(error) {
+  return error instanceof Error ? error.message : String(error)
+}
+
 export function causeChainOf(error, depth) {
   const chain = []
   let current = error

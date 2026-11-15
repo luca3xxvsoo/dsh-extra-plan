@@ -175,3 +175,14 @@ export function normalizeSettingValue(definition, value) {
   return typeof definition.normalize === 'function' ? definition.normalize(value) : value
 }
 
+// definition 恒来自 SETTING_DEFINITIONS，故此处不重复校验 definition 存在性。
+export function checkManagedValues(source) {
+  const values = {}
+  for (const definition of SETTING_DEFINITIONS) {
+    if (!Object.prototype.hasOwnProperty.call(source, definition.key)) return { ok: false, key: definition.key, reason: 'missing' }
+    if (!validateSettingValue(definition, source[definition.key])) return { ok: false, key: definition.key, reason: 'invalid' }
+    values[definition.key] = normalizeSettingValue(definition, source[definition.key])
+  }
+  return { ok: true, values }
+}
+

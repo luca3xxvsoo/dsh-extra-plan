@@ -554,10 +554,9 @@ for (const [label, command, expected] of H3Q_COMMAND_CASES) {
     let h3qNextCalls = 0
     const nextSpy = () => { h3qNextCalls += 1 }
     const result = preExecute(h3qHarness, h3qAgent, 'bash', argumentsObj, undefined, nextSpy)
-    const reason = result === null || result === undefined ? '' : String(result.reason)
     checkTrue('H3Q ' + label + '/' + shape + ' isolated preExecute', expected === null
       ? result.kind === 'allow' && h3qNextCalls === 1
-      : result.kind === 'deny' && h3qNextCalls === 0 && reason.includes(expected.rule) && reason.includes(expected.value))
+      : result.kind === 'deny' && h3qNextCalls === 0 && String(result.reason).includes(expected.rule) && String(result.reason).includes(expected.value))
   }
 }
 checkTrue('H3Q variants===20', h3qVariants === 20)
@@ -1580,7 +1579,7 @@ checkTrue('R86 组内 subagent_review 成员非执行者路线 → deny 且含�
 
   const rc2OldNext = { count: 0 }
   const rc2OldSync = preExecute(harnessAgentsIdle, rc2Caller, 'send_message', { agent_id: 'session-x', message: 'old' }, undefined, () => { rc2OldNext.count += 1 })
-  checkTrue('DSH_COMPAT_RC1 旧 agent_id 调用保持同步且不要求 resolveName', rc2OldSync?.kind === 'allow' && !(rc2OldSync instanceof Promise) && rc2OldNext.count === 1)
+  checkTrue('DSH_COMPAT_RC1 旧 agent_id 调用保持同步且不要求 resolveName', rc2OldSync.kind === 'allow' && !(rc2OldSync instanceof Promise) && rc2OldNext.count === 1)
 
   let rc2Status = 'idle'
   let rc2StatusResolveCalls = 0
@@ -1624,7 +1623,7 @@ checkTrue('R86 组内 subagent_review 成员非执行者路线 → deny 且含�
   const rc2ChildHarness = makeHarness({ subagents: { resolveName: async () => { rc2ChildResolveCalls += 1; return 'rc2-child-target' } } })
   let rc2ChildNext = 0
   const rc2ChildDirect = preExecute(rc2ChildHarness, childAgent('rc2-child'), 'send_message', { agent: 'lead', message: 'child' }, undefined, () => { rc2ChildNext += 1 })
-  checkTrue('DSH_CURRENT_RC2 其它已有拒因（child直呼）先拒绝且不解析', rc2ChildDirect?.kind === 'deny' && rc2ChildResolveCalls === 0 && rc2ChildNext === 0)
+  checkTrue('DSH_CURRENT_RC2 其它已有拒因（child直呼）先拒绝且不解析', rc2ChildDirect.kind === 'deny' && rc2ChildResolveCalls === 0 && rc2ChildNext === 0)
 
   const rc2MixedAgent = mainWithEvents([])
   const rc2MixedEventsBefore = rc2MixedAgent.session.snapshotEvents().length
@@ -1646,7 +1645,7 @@ checkTrue('R86 组内 subagent_review 成员非执行者路线 → deny 且含�
   const rc2MixedJob = preExecute(rc2MixedHarness, rc2MixedAgent, 'job_output', { job_id: 'rc2-mixed-job' })
   const rc2MixedJobs = preExecute(rc2MixedHarness, rc2MixedAgent, 'job_list', {})
   const rc2MixedAgents = preExecute(rc2MixedHarness, rc2MixedAgent, 'list_agents', {})
-  checkTrue('DSH_COMPAT_RC1 静态混合组 running send_message → deny、next=0、事件不变且job/poll成员首调无污染', rc2Mixed?.kind === 'deny' && String(rc2Mixed.reason).includes('子代理running中，禁止打扰') && rc2MixedNext === 0 && rc2MixedEventsBefore === rc2MixedEventsAfter && rc2MixedJob?.kind === 'allow' && rc2MixedJobs?.kind === 'allow' && rc2MixedAgents?.kind === 'allow')
+  checkTrue('DSH_COMPAT_RC1 静态混合组 running send_message → deny、next=0、事件不变且job/poll成员首调无污染', rc2Mixed.kind === 'deny' && String(rc2Mixed.reason).includes('子代理running中，禁止打扰') && rc2MixedNext === 0 && rc2MixedEventsBefore === rc2MixedEventsAfter && rc2MixedJob.kind === 'allow' && rc2MixedJobs.kind === 'allow' && rc2MixedAgents.kind === 'allow')
 
   // DSH_CURRENT_RC2：新 agent 异步解析混合组独立受测；同一 ref 两次 send 用不同 message，解析只应一次。
   const rc2NewMixedAgent = mainWithEvents([])
@@ -1673,7 +1672,7 @@ checkTrue('R86 组内 subagent_review 成员非执行者路线 → deny 且含�
   const rc2NewMixedJobs = preExecute(rc2NewMixedHarness, rc2NewMixedAgent, 'job_list', {})
   const rc2NewMixedAgents = preExecute(rc2NewMixedHarness, rc2NewMixedAgent, 'list_agents', {})
   const rc2NewMixedResolve = rc2NewMixedResolveCalls[0]
-  checkTrue('DSH_CURRENT_RC2 静态新agent混合组解析一次后running拒、next=0、事件不变且job/poll首调无污染', rc2NewMixed?.kind === 'deny' && String(rc2NewMixed.reason).includes('子代理running中，禁止打扰') && rc2NewMixedNext === 0 && rc2NewMixedEventsBefore === rc2NewMixedEventsAfter && rc2NewMixedResolveCalls.length === 1 && rc2NewMixedResolve?.caller === rc2NewMixedAgent && rc2NewMixedResolve?.ref === 'lead' && rc2NewMixedResolve?.signal === rc2Signal && rc2NewMixedResolve?.targetId === 'rc2-new-running' && rc2NewMixedJob?.kind === 'allow' && rc2NewMixedJobs?.kind === 'allow' && rc2NewMixedAgents?.kind === 'allow')
+  checkTrue('DSH_CURRENT_RC2 静态新agent混合组解析一次后running拒、next=0、事件不变且job/poll首调无污染', rc2NewMixed?.kind === 'deny' && String(rc2NewMixed.reason).includes('子代理running中，禁止打扰') && rc2NewMixedNext === 0 && rc2NewMixedEventsBefore === rc2NewMixedEventsAfter && rc2NewMixedResolveCalls.length === 1 && rc2NewMixedResolve?.caller === rc2NewMixedAgent && rc2NewMixedResolve?.ref === 'lead' && rc2NewMixedResolve?.signal === rc2Signal && rc2NewMixedResolve?.targetId === 'rc2-new-running' && rc2NewMixedJob.kind === 'allow' && rc2NewMixedJobs.kind === 'allow' && rc2NewMixedAgents.kind === 'allow')
 
   const rc2DynamicCalls = []
   const rc2DynamicHarness = makeHarness({
@@ -1685,7 +1684,7 @@ checkTrue('R86 组内 subagent_review 成员非执行者路线 → deny 且含�
   let rc2DynamicInnerNext = 0
   const rc2DynamicOuter = preExecute(rc2DynamicHarness, rc2DynamicAgent, 'run_code', { code: "const ref = 'lead'; await tools.send_message({ agent: ref, message: 'dynamic' })", description: 'DSH_CURRENT_RC2 动态参数外层静态组' }, undefined, () => { rc2DynamicOuterNext += 1 })
   const rc2DynamicInner = await preExecute(rc2DynamicHarness, rc2DynamicAgent, 'send_message', { agent: 'lead', message: 'dynamic' }, { rootCallId: 'rc2-dynamic', parent: Symbol('rc2-dynamic') }, () => { rc2DynamicInnerNext += 1 })
-  checkTrue('DSH_CURRENT_RC2 动态参数实际pre-execute重入 → 外层放行、内层按running拒绝且next=0', rc2DynamicOuter?.kind === 'allow' && rc2DynamicOuterNext === 1 && rc2DynamicInner?.kind === 'deny' && String(rc2DynamicInner.reason).includes('子代理running中，禁止打扰') && rc2DynamicInnerNext === 0 && rc2DynamicCalls.length === 1)
+  checkTrue('DSH_CURRENT_RC2 动态参数实际pre-execute重入 → 外层放行、内层按running拒绝且next=0', rc2DynamicOuter.kind === 'allow' && rc2DynamicOuterNext === 1 && rc2DynamicInner?.kind === 'deny' && String(rc2DynamicInner.reason).includes('子代理running中，禁止打扰') && rc2DynamicInnerNext === 0 && rc2DynamicCalls.length === 1)
 
   const rc2ChildCases = [
     ['planner', plannerAgent],
@@ -1700,15 +1699,15 @@ checkTrue('R86 组内 subagent_review 成员非执行者路线 → deny 且含�
     for (const [shape, args] of [['DSH_COMPAT_RC1 old agent_id', { agent_id: 'parent', message: 'hi' }], ['DSH_CURRENT_RC2 new agent', { agent: 'lead', message: 'hi' }]]) {
       let nextCalls = 0
       const result = preExecute(childHarness, child, 'send_message', args, undefined, () => { nextCalls += 1 })
-      checkTrue(shape + ' ' + roleName + ' 直呼 send_message 硬拒、解析spy=0', result?.kind === 'deny' && nextCalls === 0 && resolveCalls === 0)
+      checkTrue(shape + ' ' + roleName + ' 直呼 send_message 硬拒、解析spy=0', result.kind === 'deny' && nextCalls === 0 && resolveCalls === 0)
       const code = 'await tools.send_message(' + JSON.stringify(args) + ')'
       nextCalls = 0
       const groupResult = preExecute(childHarness, child, 'run_code', { code, description: shape + ' PTC send_message' }, undefined, () => { nextCalls += 1 })
-      checkTrue(shape + ' ' + roleName + ' PTC send_message 硬拒、解析spy=0、next=0', groupResult?.kind === 'deny' && nextCalls === 0 && resolveCalls === 0)
+      checkTrue(shape + ' ' + roleName + ' PTC send_message 硬拒、解析spy=0、next=0', groupResult.kind === 'deny' && nextCalls === 0 && resolveCalls === 0)
     }
     let interruptNext = 0
     const interruptResult = preExecute(childHarness, child, 'interrupt_agent', { agent_id: 'parent' }, undefined, () => { interruptNext += 1 })
-    checkTrue('DSH_COMPAT_RC1 ' + roleName + ' 直呼 interrupt_agent 硬拒且不解析', interruptResult?.kind === 'deny' && interruptNext === 0 && resolveCalls === 0)
+    checkTrue('DSH_COMPAT_RC1 ' + roleName + ' 直呼 interrupt_agent 硬拒且不解析', interruptResult.kind === 'deny' && interruptNext === 0 && resolveCalls === 0)
   }
 }
 
@@ -2408,7 +2407,7 @@ checkTrue('P4-0 通知行为：同 message.id 幂等、同 job 新 id 可解锁�
   const released = preExecute(behaviorHarness, agent, 'job_output', { job_id: 'p4-cn-job' })
   emitClaimed(behaviorHarness, agent, notice('p4-cn-notice'))
   const duplicate = preExecute(behaviorHarness, agent, 'job_output', { job_id: 'p4-cn-job' })
-  return first?.kind === 'allow' && warmDeny?.kind === 'deny' && released?.kind === 'allow' && duplicate?.kind === 'deny' && events.length === 0
+  return first.kind === 'allow' && warmDeny.kind === 'deny' && released.kind === 'allow' && duplicate.kind === 'deny' && events.length === 0
 })())
 
 // P4-3：两个 session 同 rootCallId 各自 cap 内 allow、cap+1 次 deny（cap = DEFAULT_EXPLORE_BUDGET；计数按 session 隔离）
@@ -3075,7 +3074,7 @@ checkTrue('B3-6 未知角色与缺失入参 → null（无异常）',
     const groupAgent = plannerWithId('b3-behavior-group', [DESC])
     const groupResult = preExecute(harness, groupAgent, 'run_code', { code: "await tools.job_output({ job_id: 'b3-group' })\nawait tools.write({})", description: 'B3 behavior group reject' })
     const directResult = preExecute(harness, groupAgent, 'job_output', { job_id: 'b3-group' })
-    return groupResult?.kind === 'deny' && directResult?.kind === 'allow'
+    return groupResult.kind === 'deny' && directResult.kind === 'allow'
   })())
 }
 

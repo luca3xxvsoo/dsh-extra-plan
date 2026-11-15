@@ -13,6 +13,7 @@ import { basename, dirname, join } from 'node:path'
 import { zstdDecompressSync } from 'node:zlib'
 import { ROLE_IDS, USAGE_ROLE_BY_PRESET } from './role-contract.js'
 import { resolveHostPath, prepareWriteTarget, validateReadTarget } from './path-policy.js'
+import { errorCodeOf, errorText as errorMessageOf } from './runtime-static.js'
 
 
 // ── ① 常量区 ─────────────────────────────────────────────────────────────────
@@ -110,14 +111,6 @@ const DEFAULT_FS_OPS = Object.freeze({
   writeFileSync,
   appendFileSync,
 })
-
-function errorCodeOf(error) {
-  return error !== null && typeof error === 'object' && typeof error.code === 'string' ? error.code : ''
-}
-
-function errorMessageOf(error) {
-  return error instanceof Error ? error.message : String(error)
-}
 
 function archiveError(code, message) {
   const error = new Error(message)

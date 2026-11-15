@@ -7,6 +7,7 @@ import { registerHostDeps } from '../_shared/host-deps.mjs'
 import { createServer } from 'node:http'
 import { Worker } from 'node:worker_threads'
 import { assertionLine, createOutput, parseOutputMode, stableStringify, sha256Text, writeRawEvidence } from '../_shared/test-output.mjs'
+import { renderPlanFile as g2PlanFile, renderChecklistFile as g2ChecklistFile } from '../_shared/plan-text.mjs'
 // host-deps 只按命令显式 DSH_INSTALL_ROOT 解析宿主真包；运行时由 node --import ../_shared/host-preload.mjs 预加载。
 const step00Fixture = makeFixtureDir({ label: 'step00' })
 const isolatedDshHome = step00Fixture.home
@@ -2200,7 +2201,7 @@ checkTrue('M6 step-99 旧strict模式拒绝：有效V2输入前置返回strict-p
     const layoutOtherCwd = join(layoutRoot, 'other-cwd')
     mkdirSync(layoutLib, { recursive: true })
     mkdirSync(layoutOtherCwd, { recursive: true })
-    for (const name of ['usage-ledger.js', 'usage-ledger-background.js', 'usage-ledger-worker.js', 'path-policy.js', 'role-contract.js']) copyFileSync(join('plugins/dsh-extra-plan/lib', name), join(layoutLib, name))
+    for (const name of ['usage-ledger.js', 'usage-ledger-background.js', 'usage-ledger-worker.js', 'path-policy.js', 'role-contract.js', 'runtime-static.js']) copyFileSync(join('plugins/dsh-extra-plan/lib', name), join(layoutLib, name))
     writeFileSync(join(layoutRoot, 'node_modules', 'fixture-ledger', 'package.json'), JSON.stringify({ type: 'module' }), 'utf8')
     let layoutResult
     const originalCwd = process.cwd()
@@ -2430,22 +2431,6 @@ function g2Check(id, overrides = {}) {
   }, overrides)
 }
 
-function g2PlanFile(lines, label, record, actionLabel = '修改') {
-  lines.push('- ' + label + '：' + record.path)
-  lines.push('- 文件操作：' + record.operation)
-  for (const point of record.points || []) {
-    lines.push('- 修改点：' + point.id)
-    if (record.operation === '修改') {
-      lines.push('- 修改位置：' + point.location)
-      lines.push('- 定位锚点：' + point.anchor)
-    }
-    for (const source of point.sources || []) lines.push('- 生成来源：' + source)
-    for (const command of point.commands || []) lines.push('- 生成命令：' + command)
-    for (const output of point.outputs || []) lines.push('- 生成产物：' + output)
-    lines.push('- ' + actionLabel + '：' + point.action)
-  }
-}
-
 function g2PlanText({ tasks = [g2Task(1)], instruction = '先读两份工件，完成后冻结再验收', closure = null } = {}) {
   const lines = ['- 派遣说明：' + instruction]
   for (const task of tasks) {
@@ -2470,16 +2455,6 @@ function g2PlanText({ tasks = [g2Task(1)], instruction = '先读两份工件，�
     lines.push('- 独占资源：' + (closure.resource || '无'))
   }
   return lines.join('\n')
-}
-
-function g2ChecklistFile(lines, label, record) {
-  lines.push('- ' + label + '：' + record.path)
-  lines.push('- 文件操作：' + record.operation)
-  for (const point of record.points || []) {
-    lines.push('- 对应修改点：' + point.id)
-    lines.push('- 验收定位：' + point.acceptance)
-    for (const expectation of point.expectations || ['结果可验证']) lines.push('- 期望：' + expectation)
-  }
 }
 
 function g2ChecklistText({ tasks = [g2Task(1)], instruction = '按检查ID复核，漏项不得通过', checks = [g2Check(1)], closure = null, global = null } = {}) {

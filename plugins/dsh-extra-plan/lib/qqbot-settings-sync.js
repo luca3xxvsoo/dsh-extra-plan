@@ -18,8 +18,9 @@ import {
 import { basename, dirname, join, resolve } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { createPathContext, resolveHostPath, prepareWriteTarget, validateReadTarget } from './path-policy.js'
-import { SETTING_DEFINITIONS, SETTINGS_ROW_NAME } from './preset-settings.js'
+import { SETTING_DEFINITIONS, SETTINGS_ROW_NAME, checkManagedValues } from './preset-settings.js'
 import { GATE_WORD_FIELDS, validateGateWords } from './gate-words.js'
+import { errorText } from './runtime-static.js'
 
 const SETTINGS_ROW_ID = 'dsh-extra-plan-settings'
 const QQBOT_BUNDLE = '@tencent-connect/dsh-qqbot'
@@ -94,10 +95,6 @@ let tempSequence = 0
 
 function plainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
-}
-
-function errorText(error) {
-  return error instanceof Error ? error.message : String(error)
 }
 
 function loadYaml() {
@@ -289,16 +286,11 @@ export function validateSettingsSnapshot(snapshot) {
   const values = snapshotValues(snapshot)
   const extra = Object.keys(values).filter((key) => !MANAGED_KEY_SET.has(key) && key !== 'gateWords')
   if (extra.length > 0) throw new Error('invalid-source-snapshot-extra-key:' + extra.join(','))
-  const normalized = {}
-  for (const definition of SETTING_DEFINITIONS) {
-    if (!Object.prototype.hasOwnProperty.call(values, definition.key)) throw new Error('invalid-source-snapshot-missing:' + definition.key)
-    const value = values[definition.key]
-    if (typeof definition.validator !== 'function' || !definition.validator(value)) throw new Error('invalid-source-snapshot-type:' + definition.key)
-    normalized[definition.key] = typeof definition.normalize === 'function' ? definition.normalize(value) : value
-  }
+  const checked = checkManagedValues(values)
+  if (!checked.ok) throw new Error('invalid-source-snapshot-' + (checked.reason === 'missing' ? 'missing:' : 'type:') + checked.key)
   let gateWords
   try { gateWords = validateGateWords(snapshotGateWords(snapshot)) } catch (error) { throw new Error('invalid-source-snapshot-gateWords:' + errorText(error)) }
-  return Object.freeze({ values: Object.freeze(normalized), gateWords })
+  return Object.freeze({ values: Object.freeze(checked.values), gateWords })
 }
 
 function expectedManaged(snapshot) {

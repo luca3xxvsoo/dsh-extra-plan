@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync, renameSync, existsSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { resolveWorkspacePath, prepareWriteTarget, validateReadTarget } from './path-policy.js'
+import { errorText } from './runtime-static.js'
 
 // 单次调用的临时写入与顺序发布；不创建、不扫描、不恢复跨调用 journal。
 // fsOps 仅供隔离测试注入，默认操作冻结以避免夹具修改共享依赖。
@@ -9,10 +10,6 @@ const DEFAULT_FS_OPS = Object.freeze({ mkdirSync, writeFileSync, renameSync, exi
 function fsOpsOf(overrides) {
   if (overrides === null || overrides === undefined || typeof overrides !== 'object') return DEFAULT_FS_OPS
   return { ...DEFAULT_FS_OPS, ...overrides }
-}
-
-function errorText(error) {
-  return error instanceof Error ? error.message : String(error)
 }
 
 function policyOf(options) {

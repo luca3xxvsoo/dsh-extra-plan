@@ -20,6 +20,7 @@ import {
   EXTRA_PLAN_SETTING_DEFINITIONS,
   SETTING_DEFINITIONS,
   SETTINGS_ROW_ID,
+  checkManagedValues,
   getSettingDefinition,
   normalizeSettingValue,
   validateSettingValue,
@@ -207,14 +208,11 @@ function migrationEntryConfig(entry) {
 
 function migrationManagedConfig(config) {
   if (config === null || typeof config !== 'object' || Array.isArray(config)) return undefined
-  const values = {}
-  for (const definition of SETTING_DEFINITIONS) {
-    if (!hasOwn(config, definition.key) || !validateSettingValue(definition, config[definition.key])) return undefined
-    values[definition.key] = normalizeSettingValue(definition, config[definition.key])
-  }
+  const checked = checkManagedValues(config)
+  if (!checked.ok) return undefined
   let gateWords
   try { gateWords = validateGateWords(config.gateWords) } catch { return undefined }
-  return { values, gateWords }
+  return { values: checked.values, gateWords }
 }
 
 function migrationComparable(config) {

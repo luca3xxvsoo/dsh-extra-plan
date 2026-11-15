@@ -11,6 +11,7 @@ import { createPathContext, prepareWriteTarget, resolveHostPath, resolveWorkspac
 import { SETTING_DEFINITIONS, parsePresetYaml, resolveTemplateSettingDefault } from '../lib/preset-settings.js'
 import { ROLE_IDS, ROLE_ORDERS } from '../lib/role-contract.js'
 import { HOST_ROW_IDS, EXECUTOR_TOOL_NAME_PREFIX } from '../lib/settings-contract.js'
+import { errorText } from '../lib/runtime-static.js'
 import { Script } from 'node:vm'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -453,10 +454,6 @@ let publishSequence = 0
 function publishFsOpsOf(overrides) {
   if (overrides === null || overrides === undefined || typeof overrides !== 'object') return DEFAULT_PUBLISH_FS_OPS
   return { ...DEFAULT_PUBLISH_FS_OPS, ...overrides }
-}
-
-function errorText(error) {
-  return error instanceof Error ? error.message : String(error)
 }
 
 function uniquePaths(paths) {

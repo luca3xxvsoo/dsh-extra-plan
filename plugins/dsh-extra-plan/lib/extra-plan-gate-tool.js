@@ -8,6 +8,8 @@
 // route/purpose 分支的选项文案一律取自 gateRuntime.words 词表；clarify 分支的 questions/header/options 由模型提供；route/purpose 的 header、问题正文与 noteLabel 是固定提示语，可硬编码。
 // 结果的 content 固定为一个 text ContentBlock、正文是返回值整体 JSON：宿主 spill-policy 的 post-execute 与 PTC 提交都按数组消费 content，状态机只解析这块 JSON。
 
+import { errorCodeOf } from './runtime-static.js'
+
 const GATE_TOOL_NAME = 'extra_plan_gate'
 
 // 固定提示语（不是闸门选项文案）：三问的 header、问题正文与 note 标签。
@@ -25,10 +27,6 @@ const PURPOSE_DETAIL = '完善方案＝在已有方案基础上修改；重新�
 
 // 取消类错误码：命中即按用户取消处理（不算通道故障），execute 以 outcome='cancelled' 返回。
 const CANCEL_CODES = new Set(['ASK_CANCELLED', 'CANCELLED', 'CANCELED', 'ABORTED', 'ABORT_ERR', 'ERR_CANCELED'])
-
-function errorCodeOf(error) {
-  return error !== null && typeof error === 'object' && typeof error.code === 'string' ? error.code : ''
-}
 
 // 取消判别：只认取消类错误码、AbortError 名或宿主的取消句（cancel/abort 文案）；
 // 通道码（NO_PROVIDER/CALLER_NOT_LIVE/DELEGATED_CALLER 等）不含这些词，仍落 channel-error。

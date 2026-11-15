@@ -7,6 +7,7 @@
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync, renameSync, unlinkSync, lstatSync, rmdirSync, realpathSync, symlinkSync } from 'node:fs'
 import { makeFixtureDir } from '../_shared/workspace-paths.mjs'
+import { renderPlanFile as g3PlanFile, renderChecklistFile as g3ChecklistFile } from '../_shared/plan-text.mjs'
 import { createPathContext } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
 import { renderProbeMarkdown } from '../../plugins/dsh-extra-plan/lib/save-contract.js'
 import { join } from 'node:path'
@@ -645,30 +646,6 @@ function g3Point(id, path, operation = '修改') {
 function g3Record(path, role = 'main', operation = '修改', pointId = 'M1') {
   g3EnsureSource(path, 'fixture ' + path + '\n')
   return { path, role, operation, points: [g3Point(pointId, path, operation)] }
-}
-function g3PlanFile(lines, label, record, actionLabel = '修改') {
-  lines.push('- ' + label + '：' + record.path)
-  lines.push('- 文件操作：' + record.operation)
-  for (const point of record.points || []) {
-    lines.push('- 修改点：' + point.id)
-    if (record.operation === '修改') {
-      lines.push('- 修改位置：' + point.location)
-      lines.push('- 定位锚点：' + point.anchor)
-    }
-    for (const source of point.sources || []) lines.push('- 生成来源：' + source)
-    for (const command of point.commands || []) lines.push('- 生成命令：' + command)
-    for (const output of point.outputs || []) lines.push('- 生成产物：' + output)
-    lines.push('- ' + actionLabel + '：' + point.action)
-  }
-}
-function g3ChecklistFile(lines, label, record) {
-  lines.push('- ' + label + '：' + record.path)
-  lines.push('- 文件操作：' + record.operation)
-  for (const point of record.points || []) {
-    lines.push('- 对应修改点：' + point.id)
-    lines.push('- 验收定位：' + point.acceptance)
-    for (const expectation of point.expectations || ['结果可验证']) lines.push('- 期望：' + expectation)
-  }
 }
 function g3PlanTask({ id, fileRecords, group, dependency, dependencyReason, groupReason, resource, selfChecks, pad }) {
   const lines = ['[任务' + id + '] G3真实合同任务' + pad]

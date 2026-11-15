@@ -24,6 +24,7 @@ import {
   validateSettingValue,
 } from './preset-settings.js'
 import { resolveWorkspacePath, resolveHostPath, validateReadTarget } from './path-policy.js'
+import { errorText } from './runtime-static.js'
 
 const LIVE_KEYS = Object.freeze(EXTRA_PLAN_SETTING_DEFINITIONS.map((item) => item.key))
 const READ_KEYS = LIVE_KEYS
@@ -37,10 +38,6 @@ function textOf(value) {
 
 function envConfigPath() {
   return textOf(process.env.DSH_EXTRA_PLAN_CONFIG_PATH)
-}
-
-function errorText(error) {
-  return error instanceof Error ? error.message : String(error)
 }
 
 function sameAbsolutePath(left, right) {

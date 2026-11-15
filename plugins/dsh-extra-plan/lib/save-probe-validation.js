@@ -1,11 +1,9 @@
 import { isAbsolute, join, resolve } from 'node:path'
 import { createPathContext, resolveWorkspacePath, resolveHostPath, validateReadTarget } from './path-policy.js'
 import { PROBE_LIMITS, LINE_FORMAT_HINT, RANGE_FORMAT_HINT } from './save-contract.js'
+import { errorCodeOf } from './runtime-static.js'
 
 // save_probe 校验合同：先完成结构、条目、长度、总量与 range 校验，再按已授权根做路径读校验。
-function errorCodeOf(error) {
-  return error !== null && typeof error === 'object' && typeof error.code === 'string' ? error.code : ''
-}
 
 function contextOf(cwd, supplied) {
   if (supplied !== undefined && supplied !== null) return supplied

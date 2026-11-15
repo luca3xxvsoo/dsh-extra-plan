@@ -5,6 +5,7 @@ import { validateProbe, resolveProbeTarget } from './save-probe-validation.js'
 import { createPathContext, resolveWorkspacePath, assertAllowedPath, validateReadTarget } from './path-policy.js'
 import { validateSavePlanContract } from './save-plan-validation.js'
 import { TextDecoder } from 'node:util'
+import { errorCodeOf } from './runtime-static.js'
 
 const sourceDecoder = new TextDecoder('utf-8', { fatal: true })
 
@@ -21,10 +22,6 @@ function cwdOf(exec) {
   const session = exec !== undefined && exec !== null && exec.agent !== undefined && exec.agent !== null ? exec.agent.session : undefined
   const header = session !== undefined && session !== null && session.header !== undefined && session.header !== null ? session.header : undefined
   return header !== undefined && typeof header.cwd === 'string' ? header.cwd : ''
-}
-
-function errorCodeOf(error) {
-  return error !== null && typeof error === 'object' && typeof error.code === 'string' ? error.code : ''
 }
 
 function pathContextOf(cwd, getPathContext) {

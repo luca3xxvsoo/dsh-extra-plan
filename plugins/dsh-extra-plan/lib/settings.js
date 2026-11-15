@@ -12,6 +12,7 @@ import {
   HOST_ROW_SETTING_DEFINITIONS,
   SETTING_DEFINITIONS,
   SETTINGS_ROW_ID,
+  checkManagedValues,
   createDefaultSettings,
   normalizeSettingValue,
   readPath,
@@ -293,13 +294,10 @@ function rowConfigOf(row) {
  */
 function completeConfig(config) {
   if (config === null || typeof config !== 'object' || Array.isArray(config)) return undefined
-  const values = {}
-  for (const definition of SETTING_DEFINITIONS) {
-    if (!Object.prototype.hasOwnProperty.call(config, definition.key) || !validateSettingValue(definition, config[definition.key])) return undefined
-    values[definition.key] = normalizeSettingValue(definition, config[definition.key])
-  }
+  const checked = checkManagedValues(config)
+  if (!checked.ok) return undefined
   const hasGateWords = Object.prototype.hasOwnProperty.call(config, 'gateWords')
-  return { values, gateWords: hasGateWords ? config.gateWords : undefined }
+  return { values: checked.values, gateWords: hasGateWords ? config.gateWords : undefined }
 }
 
 /** 当前行 config 的 gateWords 是否合法；缺失/非法都返回 false（与普通项同口径，需要补齐）。 */
