@@ -154,6 +154,7 @@ dsh-extra-plan/
 │   ├── _shared/                                                      
 │   │   ├── host-deps.mjs             
 │   │   ├── host-preload.mjs       
+│   │   ├── plan-text.mjs                
 │   │   ├── session-finder.mjs          
 │   │   ├── session-fixture.mjs                  
 │   │   ├── test-output.mjs                

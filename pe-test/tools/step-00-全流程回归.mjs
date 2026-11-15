@@ -3703,6 +3703,77 @@ for (const [name, got, expected] of AS) check(name, got, expected)
   checkTrue('AS4g render JSON 保留用户选项字段（purpose/purposeLabel），原生模式模型据此判断选择', answeredParsed !== null && answeredParsed.outcome === 'answered' && answeredParsed.purpose === 'refine' && answeredParsed.purposeLabel === gateRuntime.words.purposeRefine, true)
 }
 
+// AS4h-AS4n（recommended 参数）：推荐只给对应选项的展示 label 追加推荐后缀，选项顺序、描述与词值一律不动；
+// 非法值或跨组词不弹卡，直接以 channel-error/INVALID_RECOMMENDED 返回。期望值全部从 gateRuntime.words 派生。
+{
+  const { defineGateTool } = await import('../../plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js')
+  // 推荐后缀是宿主展示约定（宿主据此渲染「推荐」徽标），不是闸门词：闸门词仍然只从 gateRuntime.words 派生。
+  const recommendSuffix = '（推荐）'
+  const routeWords = [gateRuntime.words.routeMain, gateRuntime.words.routeExecutor, gateRuntime.words.routePlan, gateRuntime.words.routeDisagree]
+  const purposeWords = [gateRuntime.words.purposeRefine, gateRuntime.words.purposeRedo]
+  // 捕获型 ask：把宿主收到的 request.questions 存到外层 capture，并累计调用次数（断言「未弹卡」靠计数）。
+  const captureAsk = (answers) => {
+    const capture = { ask: null, calls: 0, questions: null }
+    capture.ask = async (request) => {
+      capture.calls += 1
+      capture.questions = request !== null && typeof request === 'object' ? request.questions : null
+      return { answers }
+    }
+    return capture
+  }
+  // 取第一问的选项 label 序列（形状不符返回 null，让断言直接判假而不是抛错）。
+  const labelsOf = (capture) => {
+    if (!Array.isArray(capture.questions) || capture.questions.length === 0) return null
+    const first = capture.questions[0] !== null && typeof capture.questions[0] === 'object' ? capture.questions[0].options : null
+    if (!Array.isArray(first)) return null
+    return first.map((option) => option !== null && typeof option === 'object' ? option.label : undefined)
+  }
+  // 只允许第 index 项多出推荐后缀，其余项与词值逐字相等（顺序由下标同一性与 words 对齐表达）。
+  const withSuffixAt = (labels, index, words) => Array.isArray(labels) && labels.length === words.length && labels.every((label, i) => label === (i === index ? words[i] + recommendSuffix : words[i]))
+  const plainWords = (labels, words) => Array.isArray(labels) && labels.length === words.length && labels.every((label, i) => label === words[i])
+  const anySuffix = (labels) => Array.isArray(labels) && labels.some((label) => typeof label === 'string' && label.endsWith(recommendSuffix))
+
+  const hCapture = captureAsk([{ id: 'q1', selected: [gateRuntime.words.routeExecutor] }])
+  const hTool = defineGateTool({}, { gateRuntime, ask: hCapture.ask })
+  const hResult = await hTool.execute({ gate: 'route', recommended: gateRuntime.words.routeExecutor }, { agent: {}, signal: undefined })
+  checkTrue('AS4h route 传非首项推荐词 → 传给 ask 的四项顺序与词值不变，仅第 2 项 label 带推荐后缀、第 1/3/4 项不带', withSuffixAt(labelsOf(hCapture), 1, routeWords) && hResult !== null && typeof hResult === 'object' && hResult.outcome === 'answered')
+
+  const iCapture = captureAsk([{ id: 'q1', selected: [gateRuntime.words.routeMain] }])
+  const iTool = defineGateTool({}, { gateRuntime, ask: iCapture.ask })
+  const iResult = await iTool.execute({ gate: 'route', recommended: gateRuntime.words.routeMain }, { agent: {}, signal: undefined })
+  checkTrue('AS4i route 传首项推荐词 → 第 1 项 label 带推荐后缀、其余三项逐字不变', withSuffixAt(labelsOf(iCapture), 0, routeWords) && iResult !== null && typeof iResult === 'object' && iResult.outcome === 'answered')
+
+  const jCapture = captureAsk([{ id: 'q1', selected: [gateRuntime.words.routeMain] }])
+  const jTool = defineGateTool({}, { gateRuntime, ask: jCapture.ask })
+  const jResult = await jTool.execute({ gate: 'route', recommended: gateRuntime.words.purposeRefine }, { agent: {}, signal: undefined })
+  const jMessage = jResult !== null && typeof jResult === 'object' && jResult.error !== null && typeof jResult.error === 'object' && typeof jResult.error.message === 'string' ? jResult.error.message : ''
+  checkTrue('AS4j route 传跨组词（purpose 词）→ channel-error/INVALID_RECOMMENDED，message 含全部四个路线词且 ask 调用计数为 0', jResult !== null && typeof jResult === 'object' && jResult.outcome === 'channel-error' && jResult.error !== null && typeof jResult.error === 'object' && jResult.error.code === 'INVALID_RECOMMENDED' && routeWords.every((word) => jMessage.includes(word)) && jCapture.calls === 0)
+
+  const kCapture = captureAsk([{ id: 'q1', selected: [gateRuntime.words.routeMain] }])
+  const kTool = defineGateTool({}, { gateRuntime, ask: kCapture.ask })
+  const kResult = await kTool.execute({ gate: 'route', recommended: 'bogus' }, { agent: {}, signal: undefined })
+  const kMessage = kResult !== null && typeof kResult === 'object' && kResult.error !== null && typeof kResult.error === 'object' && typeof kResult.error.message === 'string' ? kResult.error.message : ''
+  checkTrue('AS4k route 传任意非法值 → 与跨组词同判据（channel-error/INVALID_RECOMMENDED、message 含四词、ask 未调用）', kResult !== null && typeof kResult === 'object' && kResult.outcome === 'channel-error' && kResult.error !== null && typeof kResult.error === 'object' && kResult.error.code === 'INVALID_RECOMMENDED' && routeWords.every((word) => kMessage.includes(word)) && kCapture.calls === 0)
+
+  const lCapture = captureAsk([{ id: 'q1', selected: [gateRuntime.words.purposeRedo] }])
+  const lTool = defineGateTool({}, { gateRuntime, ask: lCapture.ask, getState: () => ({ route: 'plan', purpose: 'none', clarified: false }) })
+  const lResult = await lTool.execute({ gate: 'purpose', recommended: gateRuntime.words.purposeRedo }, { agent: {}, signal: undefined })
+  checkTrue('AS4l purpose 传第二项目的词（route=plan）→ 第 2 项 label 带推荐后缀、第 1 项不带', withSuffixAt(labelsOf(lCapture), 1, purposeWords) && lResult !== null && typeof lResult === 'object' && lResult.outcome === 'answered')
+
+  const mCapture = captureAsk([{ id: 'q1', selected: [gateRuntime.words.routeMain + recommendSuffix] }])
+  const mTool = defineGateTool({}, { gateRuntime, ask: mCapture.ask })
+  const mResult = await mTool.execute({ gate: 'route', recommended: gateRuntime.words.routeMain }, { agent: {}, signal: undefined })
+  checkTrue('AS4m 宿主回传 selected 为带推荐后缀的原 label → route 仍落 main、routeLabel 恰为纯词值 routeMain', mResult !== null && typeof mResult === 'object' && mResult.outcome === 'answered' && mResult.route === 'main' && mResult.routeLabel === gateRuntime.words.routeMain)
+
+  const nCapture = captureAsk([{ id: 'q1', selected: [gateRuntime.words.routeMain] }])
+  const nTool = defineGateTool({}, { gateRuntime, ask: nCapture.ask })
+  const nOmitted = await nTool.execute({ gate: 'route' }, { agent: {}, signal: undefined })
+  const nOmittedLabels = labelsOf(nCapture)
+  const nEmpty = await nTool.execute({ gate: 'route', recommended: '' }, { agent: {}, signal: undefined })
+  const nEmptyLabels = labelsOf(nCapture)
+  checkTrue('AS4n 不传或传空串 recommended → 四项 label 与既有词值逐字相等且均不带推荐后缀', plainWords(nOmittedLabels, routeWords) && plainWords(nEmptyLabels, routeWords) && !anySuffix(nOmittedLabels) && !anySuffix(nEmptyLabels) && nCapture.calls === 2 && nOmitted !== null && typeof nOmitted === 'object' && nOmitted.outcome === 'answered' && nEmpty !== null && typeof nEmpty === 'object' && nEmpty.outcome === 'answered')
+}
+
 let dispatchSeriesChecks = 0
 function runDispatchSeries(ev) {
   const cdStart = (name, sid, argsObj) => ({ type: ev.start, data: { rootCallId: 'r1', parentCallId: 'pc1', subCallId: sid, name, arguments: argsObj } })

@@ -9,8 +9,12 @@
 // 结果的 content 固定为一个 text ContentBlock、正文是返回值整体 JSON：宿主 spill-policy 的 post-execute 与 PTC 提交都按数组消费 content，状态机只解析这块 JSON。
 
 import { errorCodeOf } from './runtime-static.js'
+import { normalizeGateLabel } from './gate-words.js'
 
 const GATE_TOOL_NAME = 'extra_plan_gate'
+// 宿主 ask 的「推荐」是 label 后缀约定（Web 端 parseRecommendedLabel 剥离后缀后渲染「推荐」徽标），
+// 这里的后缀只作用于展示用 label；返回值与闸门词匹配一律按纯词值处理。
+const RECOMMEND_SUFFIX = '（推荐）'
 
 // 固定提示语（不是闸门选项文案）：三问的 header、问题正文与 note 标签。
 const ROUTE_HEADER = '路线确认'
@@ -43,6 +47,37 @@ function answersOf(asked) {
   if (Array.isArray(asked)) return asked
   if (asked !== null && typeof asked === 'object' && Array.isArray(asked.answers)) return asked.answers
   return []
+}
+
+// recommended 归一：undefined/null 视为不标记（空串）；字符串 trim 后返回；非字符串原样返回交给校验。
+function recommendValueOf(raw) {
+  if (raw === undefined || raw === null) return ''
+  if (typeof raw !== 'string') return raw
+  return raw.trim()
+}
+
+// 展示标签：recommended 与当前选项词全等时追加推荐后缀，其余原样返回（不改顺序、不改描述）。
+function askLabelOf(label, recommended) {
+  return recommended !== '' && recommended === label ? label + RECOMMEND_SUFFIX : label
+}
+
+// recommended 校验：route 只接受当前四个路线词、purpose 只接受当前两个目的词，空串表示不标记。
+// 非法值不抛出、不弹卡，直接返回可用的 channel-error 对象；gateOptions 取不到时提示里容忍为空串。
+function recommendedOrError(gate, raw, words, gateOptions) {
+  const value = recommendValueOf(raw)
+  if (value === '') return ''
+  const legal = gate === 'purpose'
+    ? [words.purposeRefine, words.purposeRedo]
+    : [words.routeMain, words.routeExecutor, words.routePlan, words.routeDisagree]
+  if (legal.includes(value)) return value
+  const options = gateOptions !== null && typeof gateOptions === 'object' ? gateOptions : {}
+  const listed = gate === 'purpose'
+    ? (typeof options.purpose === 'string' ? options.purpose : '')
+    : (typeof options.route === 'string' ? options.route : '')
+  const branch = gate === 'purpose' ? 'purpose' : 'route'
+  const kind = gate === 'purpose' ? '当前目的词之一' : '当前路线词之一'
+  const message = 'recommended 取值无效：' + branch + ' 闸门只接受' + kind + '（' + listed + '）；不传或传空串表示不标记'
+  return { gate, outcome: 'channel-error', error: { code: 'INVALID_RECOMMENDED', message } }
 }
 
 // 单条答复的选中标签（宿主可能回传 selected 为空数组或非字符串项）。
@@ -105,9 +140,15 @@ function boundGateTool(gateRuntime, ask, getState) {
   }
   if (typeof ask !== 'function') throw new Error('extra-plan: extra_plan_gate 需要注入 ask 通道函数')
   const words = gateRuntime.words
+  // 选项词串只用于 recommended 非法值的中文提示：缺字段时回落空对象，不抛错。
+  const gateOptions = gateRuntime.options !== null && typeof gateRuntime.options === 'object' ? gateRuntime.options : {}
 
   // route 分支：两问（路线四选一 + 其他说明可空），返回中文 routeLabel 供主会话直接读。
-  async function askRoute(execAgent, signal) {
+  async function askRoute(execAgent, signal, recommendedArg) {
+    // recommended 先校验：非法值直接返回 channel-error（不弹卡）；空串表示本次不标记推荐项。
+    const recommended = recommendedOrError('route', recommendedArg, words, gateOptions)
+    // 合法词与「不标记」都是字符串；只有校验失败才返回对象 → 直接回传，不调用 ask。
+    if (typeof recommended !== 'string') return recommended
     const options = routeOptionsOf(words)
     const result = {
       gate: 'route',
@@ -127,7 +168,7 @@ function boundGateTool(gateRuntime, ask, getState) {
           {
             header: ROUTE_HEADER,
             question: ROUTE_QUESTION,
-            options: options.map((option) => ({ label: option.label, description: option.description })),
+            options: options.map((option) => ({ label: askLabelOf(option.label, recommended), description: option.description })),
           },
           { header: NOTE_HEADER, question: NOTE_QUESTION },
         ],
@@ -140,7 +181,8 @@ function boundGateTool(gateRuntime, ask, getState) {
     }
     result.note = customTextOf(answers[1])
     result.choiceNote = customTextOf(answers[0])
-    const selected = selectedLabelsOf(answers[0])
+    // 宿主可能回传带推荐后缀的原 label：先剥离后缀，再与当前词值精确比对（返回的 label 仍是纯词值）。
+    const selected = selectedLabelsOf(answers[0]).map((label) => normalizeGateLabel(label))
     // 第一问未选中（用户跳过，selected 为空）→ outcome='skipped'：route 仍落 none（与旧机制同口径），
     // routeLabel 置空串，绝不回填 disagree 词值，避免把「没作答」误报成「不同意」。
     // selected 为空仍判 skipped，但两个自由文本字段保留原文（note 与 choiceNote 均在上面赋值，不回退为空串）。
@@ -158,7 +200,7 @@ function boundGateTool(gateRuntime, ask, getState) {
   }
 
   // purpose 分支：单问两选一（目的解释在 detail 里），返回中文 purposeLabel。
-  async function askPurpose(execAgent, signal) {
+  async function askPurpose(execAgent, signal, recommendedArg) {
     // 路线前置守卫（2c）：purpose 只在 route=plan 路线成立；非 plan 或状态不可判定一律不弹卡、
     // 直接以 skipped 返回（applyGateOutcome 对 skipped 不改动任何字段），避免用户被问无效问题。
     let state = null
@@ -169,6 +211,10 @@ function boundGateTool(gateRuntime, ask, getState) {
     if (stateUnavailable || state === null || typeof state !== 'object' || state.route !== 'plan') {
       return { gate: 'purpose', purpose: null, purposeLabel: null, outcome: 'skipped', reason: stateUnavailable ? 'state-unavailable' : 'route-not-plan' }
     }
+    // recommended 校验排在路线守卫之后（非 plan 路线本就不弹卡）；非法值直接返回 channel-error，不调用 ask。
+    const recommended = recommendedOrError('purpose', recommendedArg, words, gateOptions)
+    // 同上：校验失败返回对象 → 直接回传，不弹卡。
+    if (typeof recommended !== 'string') return recommended
     const options = purposeOptionsOf(words)
     const result = { gate: 'purpose', purpose: null, purposeLabel: null, outcome: 'answered' }
     let answers
@@ -179,7 +225,7 @@ function boundGateTool(gateRuntime, ask, getState) {
             header: PURPOSE_HEADER,
             question: PURPOSE_QUESTION,
             detail: PURPOSE_DETAIL,
-            options: options.map((option) => ({ label: option.label })),
+            options: options.map((option) => ({ label: askLabelOf(option.label, recommended) })),
           },
         ],
         agent: execAgent,
@@ -189,7 +235,8 @@ function boundGateTool(gateRuntime, ask, getState) {
     } catch (error) {
       return failResult(result, error)
     }
-    const selected = selectedLabelsOf(answers[0])
+    // 同 route 分支：选中标签先剥离推荐后缀再匹配，purposeLabel 仍取纯词值。
+    const selected = selectedLabelsOf(answers[0]).map((label) => normalizeGateLabel(label))
     // 未选中（用户跳过）→ outcome='skipped'，purpose 保持 null，purposeLabel 置空串。
     if (selected.length === 0) {
       result.purposeLabel = ''
@@ -224,7 +271,7 @@ function boundGateTool(gateRuntime, ask, getState) {
   function defineGateTool(agent) {
     return {
       name: GATE_TOOL_NAME,
-      description: '闸门提问。gate=route 路线确认；gate=purpose 规划目的；gate=clarify 意图澄清：在 questions 里给 1-3 个问题（header/question/options），插件原样转交用户',
+      description: '闸门提问。gate=route 路线确认；gate=purpose 规划目的；gate=clarify 意图澄清：在 questions 里给 1-3 个问题（header/question/options），插件原样转交用户；可选 recommended 指定本次推荐项、插件只给该选项加（推荐）标记、不改选项顺序与文案',
       parameters: {
         type: 'object',
         properties: {
@@ -232,6 +279,10 @@ function boundGateTool(gateRuntime, ask, getState) {
             type: 'string',
             enum: ['route', 'purpose', 'clarify'],
             description: 'route=路线确认；purpose=规划目的确认；clarify=意图澄清问答',
+          },
+          recommended: {
+            type: 'string',
+            description: '仅 route/purpose：本次要推荐的选项原文，route 取当前四个路线词之一、purpose 取当前两个目的词之一，与卡片选项文字一致；不传或空串表示不标记；填错返回 INVALID_RECOMMENDED；clarify 忽略本参数',
           },
           questions: {
             type: 'array',
@@ -250,7 +301,7 @@ function boundGateTool(gateRuntime, ask, getState) {
           properties: {
             gate: { type: 'string', description: '回填入参 gate 取值（route/purpose/clarify）' },
             reason: { type: 'string', description: '仅 outcome=skipped 时可能出现：route-not-plan=purpose 前置守卫因路线非 plan 未弹卡；state-unavailable=状态读取不可用未弹卡' },
-            outcome: { type: 'string', enum: ['answered', 'skipped', 'cancelled', 'channel-error'], description: 'answered=用户作答；skipped=用户跳过未作答（route/purpose 的 label 为空串、route 恒为 none）；cancelled=用户取消；channel-error=提问通道失败（见 error.code）' },
+            outcome: { type: 'string', enum: ['answered', 'skipped', 'cancelled', 'channel-error'], description: 'answered=用户作答；skipped=用户跳过未作答（route/purpose 的 label 为空串、route 恒为 none）；cancelled=用户取消；channel-error=提问通道失败或参数校验失败（见 error.code）' },
             route: { description: 'route 分支：main/executor/plan/none 之一（跳过时仍为 none）；其它分支不返回' },
             routeLabel: { description: 'route 分支：route 对应的中文路线词（取自 gateRuntime 词表）；跳过时为空串；其它分支为 null' },
             purpose: { description: 'purpose 分支：refine/redo，未选中为 null；route 分支恒为 null' },
@@ -263,7 +314,10 @@ function boundGateTool(gateRuntime, ask, getState) {
             error: {
               type: 'object',
               description: 'channel-error 时的错误摘要',
-              properties: { code: { type: 'string', description: '宿主错误码，缺失时为空串' } },
+              properties: {
+                code: { type: 'string', description: '宿主错误码，缺失时为空串' },
+                message: { type: 'string', description: '面向模型的中文说明，缺失时为空串' },
+              },
               required: ['code'],
               additionalProperties: false,
             },
@@ -280,11 +334,13 @@ function boundGateTool(gateRuntime, ask, getState) {
       },
       async execute(args, exec) {
         const gate = args !== null && typeof args === 'object' && typeof args.gate === 'string' ? args.gate : ''
+        // recommended 只对 route/purpose 生效；clarify 分支不读取该参数，保持原样透传。
+        const recommendedArg = args !== null && typeof args === 'object' ? args.recommended : undefined
         const execAgent = exec !== null && typeof exec === 'object' ? exec.agent : undefined
         const signal = exec !== null && typeof exec === 'object' ? exec.signal : undefined
         try {
-          if (gate === 'route') return await askRoute(execAgent, signal)
-          if (gate === 'purpose') return await askPurpose(execAgent, signal)
+          if (gate === 'route') return await askRoute(execAgent, signal, recommendedArg)
+          if (gate === 'purpose') return await askPurpose(execAgent, signal, recommendedArg)
           if (gate === 'clarify') {
             const questions = args !== null && typeof args === 'object' ? args.questions : undefined
             // clarify 要求非空数组；参数 schema 的 minItems 已拦截，此处只做不抛错的兜底。

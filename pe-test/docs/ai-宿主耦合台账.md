@@ -184,6 +184,7 @@ HK23 当前无定义，不补造编号；HS7-HS11、HS27 与 HK18 均为已退�
 | SD40 | ToolExecution.agent / arguments.agent_id / arguments.agent | main `send_message` 方向判定契约：`ToolExecution.agent`=调用者；旧 `arguments.agent_id`=目标 Session ID（`DSH_COMPAT_RC1`，rc1 兼容路径）；新 `arguments.agent`=名称/路径引用，由本轮 `subagents.resolveName(agent, ref, exec.signal)` 异步解析为目标 ID（`DSH_CURRENT_RC2`，最新路径，rc.2 与 rc.3 共用该路径）；实测宿主 dsh-tool-subagent-control 对 `agent_id` 零命中，本插件 rc1 旧参分支在 rc.2 与 rc.3 下均为死分支；解析后与 SD39 共享 `status` running 判定。child 控制工具由 `isSubagentChild` 硬拒；删除边界仅限上述参数适配，不含共享安全核心；SD25 字段清单未列 agent 字段，此处补记 |
 | SD41 | `configEditor.syncDocumentPath` 与 `configuration()` | 宿主 configEditor 无 `syncDocumentPath` 成员（rc.2 与 rc.3 均零命中），插件实际始终使用 `configEditor.documentPath`，故同步文档路径无有效首选源；`configuration()` 仍是插件行读取入口；Web 到 QQBot 镜像以该口径为准 |
 | SD42 | 宿主行 config 键真值表 | `maxBytes`、`sampleOverCapGlobResults`、`thresholdChars/headChars/tailChars`、`allowParallelInProgress`（宿主侧 `z.boolean().required()`）、`fetch/searchTimeoutMs`、`watch`、`bundledSkillDir` |
+| SD43 | ask 选项推荐后缀 | 宿主无结构化推荐字段（`AskUserQuestionOption` 只有 `label` 与 `description`），推荐等于 `label` 末尾后缀（`(Recommended)`、`(recommended)`、全角圆括号「（推荐）」、半角圆括号「(推荐)」四种写法），由 Web 端 `dsh-client-ui-user-questions` 的 `parseRecommendedLabel` 剥离后渲染推荐徽标；单选仅对首项预选、多选对全部推荐项预选，草稿与回答值都保留原 `label`（含后缀）；宿主工具 schema 原文要求推荐项排首位并追加 `(Recommended)`。状态【已核实·静态】 |
 
 SD8 与 SD36 已退役并移入历史归档、不补造定义；SD9 是历史缺定义编号、保留不补；SD34 是本插件不调用 `sessionProjections.stateOf` 的反向记录；SD13 已由 2026-10-23 实机核证定义为 system 段落盘形态合同。
 
