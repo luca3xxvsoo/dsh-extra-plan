@@ -1,6 +1,6 @@
 # https://github.com/luca3xxvsoo/dsh-extra-plan
 
-## 诊断日志：`logs/dsh-extra-plan/`
+## 诊断日志
 
 位于数据根下（Windows：`%USERPROFILE%\.dsh\logs\dsh-extra-plan\`）。
 每行一个 JSON，均为追加写入，**仅供排查问题，可随时删除，不影响插件功能**。
