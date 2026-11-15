@@ -1,5 +1,5 @@
 // dsh-extra-plan planner budget 辅助函数。
-// 纯 message、计数与预算策略函数；FREE_TOOLS 仍定义在 index.js。
+// 纯 message、计数与预算策略函数；FREE_TOOLS 定义在 lib/gate-decisions.js（根入口 import 后透传）。
 
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { DEFAULT_EXPLORE_BUDGET } from './preset-defaults.generated.js'

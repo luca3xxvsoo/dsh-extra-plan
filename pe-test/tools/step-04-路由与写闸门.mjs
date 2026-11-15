@@ -1464,14 +1464,14 @@ checkTrue('R71 planner 预算耗尽 listener 层 → deny 且拒句与 budgetExh
 r = preExecute(harness, budgetPlanner, 'run_code', freeCode)
 checkTrue('R72 planner 预算耗尽 FREE_TOOLS 组 → allow（白名单放行）', r.kind === 'allow')
 r = preExecute(harness, budgetPlanner, 'run_code', readMemberCode)
-checkTrue('R73 planner 预算耗尽 非豁免组成员（read）→ deny 且含 budgetExhaustedReason 派生拒句与「仅可调用 save_plan」', r.kind === 'deny' && String(r.reason).includes(budgetExhaustedText) && String(r.reason).includes('仅可调用 save_plan'))
+checkTrue('R73 planner 预算耗尽 非豁免组成员（read）→ deny 且含 budgetExhaustedReason 派生拒句与「仅可调用 save_plan/edit_plan_draft」', r.kind === 'deny' && String(r.reason).includes(budgetExhaustedText) && String(r.reason).includes('仅可调用 save_plan/edit_plan_draft'))
 const emptyGroupCode = { code: 'const x = 1', description: '空组（无 tools 调用）' }
 const dynamicMemberCode = { code: "const fn = 'read'\nawait tools[fn]({ file_path: 'x' })", description: '动态访问成员' }
 const spOnlyCode = { code: 'await tools.save_plan({ "plan": "p", "checklist": "c" })', description: '仅 save_plan 成员' }
 r = preExecute(harness, budgetPlanner, 'run_code', emptyGroupCode)
-checkTrue('R74 planner 预算耗尽 空组（无 tools 调用）→ deny 且含 budgetExhaustedReason 派生拒句与「仅可调用 save_plan」', r.kind === 'deny' && String(r.reason).includes(budgetExhaustedText) && String(r.reason).includes('仅可调用 save_plan'))
+checkTrue('R74 planner 预算耗尽 空组（无 tools 调用）→ deny 且含 budgetExhaustedReason 派生拒句与「仅可调用 save_plan/edit_plan_draft」', r.kind === 'deny' && String(r.reason).includes(budgetExhaustedText) && String(r.reason).includes('仅可调用 save_plan/edit_plan_draft'))
 r = preExecute(harness, budgetPlanner, 'run_code', dynamicMemberCode)
-checkTrue('R74b planner 预算耗尽 动态访问成员（tools[var]）→ deny 且含 budgetExhaustedReason 派生拒句与「仅可调用 save_plan」', r.kind === 'deny' && String(r.reason).includes(budgetExhaustedText) && String(r.reason).includes('仅可调用 save_plan'))
+checkTrue('R74b planner 预算耗尽 动态访问成员（tools[var]）→ deny 且含 budgetExhaustedReason 派生拒句与「仅可调用 save_plan/edit_plan_draft」', r.kind === 'deny' && String(r.reason).includes(budgetExhaustedText) && String(r.reason).includes('仅可调用 save_plan/edit_plan_draft'))
 r = preExecute(harness, budgetPlanner, 'run_code', spOnlyCode)
 checkTrue('R75 planner 预算耗尽 仅 save_plan 单成员 → allow', r.kind === 'allow')
 r = preExecute(harness, plannerAgent, 'pwsh', { command: 'New-Item x.txt' })
@@ -3717,7 +3717,7 @@ checkTrue('GW19 旧词不推进路线 → subagent deny 且文案只含当前定
   const m9PureFiltered = filterBootstrapContextDecision(m9PureDecision, true)
   checkTrue('M9 CG 纯例只接收新增decision并过滤两类来源，不传完整历史request', m9PureFiltered !== m9PureDecision && m9PureFiltered.messages.length === 1 && m9PureFiltered.messages[0].source.kind === 'user-message')
   const m9PluginSource = readFileSync(PLUGIN_PATH, 'utf8')
-  checkTrue('M9 FREE_TOOLS与生产pre-execute接线仍指向共享组预审、无私有复制', decisions.FREE_TOOLS instanceof Set && [...decisions.FREE_TOOLS].join('|') === 'save_plan' && m9PluginSource.includes('runCodeGroupDenyReason') && m9PluginSource.includes('FREE_TOOLS') && !/function\s+runCodeGroupDenyReason/.test(m9PluginSource))
+  checkTrue('M9 FREE_TOOLS与生产pre-execute接线仍指向共享组预审、无私有复制', decisions.FREE_TOOLS instanceof Set && [...decisions.FREE_TOOLS].join('|') === 'save_plan|edit_plan_draft' && m9PluginSource.includes('runCodeGroupDenyReason') && m9PluginSource.includes('FREE_TOOLS') && !/function\s+runCodeGroupDenyReason/.test(m9PluginSource))
 }
 
 output.summary(pass, fail)

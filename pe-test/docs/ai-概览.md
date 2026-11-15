@@ -18,7 +18,7 @@
 |:--|:--|:--|
 | 主会话 | 接收需求、入口判定、复杂度评估、route 闸门、分派、汇总 | 只读探查可随时做；主会话写入只在 route=main 时放行；main 保留 `send_message`/`interrupt_agent`/`list_agents`，job_kill 与轮询仍受主会话层闸门限制 |
 | 探查者 | 后台只读批量探查、`save_probe` 证据落盘 | 仅主会话可委派；回传路径与短摘要 |
-| 规划子代理 | 读取线索、补充只读核对、`save_plan` 双文件 | 不得委派探查者；预算耗尽走继续探查往返 |
+| 规划子代理 | 读取线索、补充只读核对、`save_plan` 双文件、`edit_plan_draft` 修草稿 | 不得委派探查者；预算耗尽走继续探查往返 |
 | 执行者 | 按方案与验收文件改工作区 | 不重新规划；逐项自验证；禁止越界写入 |
 | 验收者 | 只读验收文件逐条复核（每个执行者返回后按组派遣，主会话汇总） | 输出逐项通过/不通过与证据；不改文件 |
 
@@ -39,6 +39,7 @@ main 保留 `send_message`、`interrupt_agent`、`list_agents`；四角色 defin
 | 功能域 | 负责人（owner）/ 入口 | 当前摘要与唯一详版 |
 |:--|:--|:--|
 | 闸门工具与选项文案 | `plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js` | `extra_plan_gate` 的唯一 owner：`gate` 取 route/purpose/clarify 三值；route 为四选一（主会话执行/执行者执行/规划者分析/不同意）加可空「其他说明」，purpose 为两选一，clarify 透传主会话的澄清问题；选项文案由插件从 gateWords 生成，模型不得构造选项；可传可选 recommended（取当前选项词原文）指定推荐项，插件只追加「（推荐）」后缀、不改顺序，非法值返回 INVALID_RECOMMENDED；结果有 answered/skipped/cancelled/channel-error 四种 outcome。详见 [机制设计](ai-机制设计.md)。 |
+| 方案草稿工具 | `plugins/dsh-extra-plan/lib/plan-draft-tool.js` | `edit_plan_draft` 只改 `.extra-plan/draft/` 下的 `.md_mid`（草稿由 `save_plan` 失败时成对落盘，派遣摘要超限不落）；三种行操作（替换、真删行、行前插入）按原行号倒序整批应用，任一编辑非法或越界则整批不生效；每次写盘后跑与 `save_plan` 同一套检测（同一源核实与证据核实函数），通过即用 `atomicCommit` 双文件转正并删除草稿，不通过则保留修改并返回带行号诊断；上下文不可用时与 `save_plan` 不同：缺 cwd 在 execute 入口即拒绝、未解析路径也未写盘，不存在「全部核实通过但上下文不可用」；权限与 `FREE_TOOLS` 口径同 `save_plan`，两工具共用同一引导期 when，引导期同时隐藏、首个 `tool/call` 后同时可见。详见 [机制设计](ai-机制设计.md)。 |
 | 闸门状态派生与判定 | 根入口 + `plugins/dsh-extra-plan/lib/gate-decisions.js` | 状态字段只有 `route`/`purpose`/`clarified`（`route` 取 none/main/executor/plan）；`deriveFlowState` 只认 `extra_plan_gate` 的 `tool/call` 与 `tool/result`（含 `run_code` 内嵌套的 ptc-dispatch 形态）为唯一推进源，结果交 `applyGateOutcome`：answered 推进、cancelled 清空三字段、skipped 与 channel-error 不改动既有字段。写路线判定：shell 写命令 route=main 放行、route=none 一律拒绝且拒句不含越界指引、route=executor/plan 仅带 `sandbox_permissions` 字符串才按工作区外写入放行；write/edit 只有 route=main 放行；委派执行类工具只认 route=executor，`subagent_plan`/`save_probe` 认 route=plan 且目的已定且澄清完成。job_kill 仅直行放行、send_message 主会话方向限制、job_list/list_agents 同锚点防轮询；不含标签推断与结构校验。详见 [机制设计](ai-机制设计.md)。 |
 | 角色标识与顺序 | `plugins/dsh-extra-plan/lib/role-contract.js`、`lib/agent-runtime.js`、`lib/runtime-lifecycle.js`、`lib/preset-sync.js` | `ROLE_IDS`/`ROLE_ORDERS` 是冻结身份与顺序合同，`PLANNER_PRESET_ID`/`REVIEWER_PRESET_ID`/`PROBER_PRESET_ID` 从同一数组派生；只描述身份与装配顺序，不承载权限策略。 |
 | gateWords | `assets/presets/extra-plan/agent.cordis.yml` + `lib/gate-words.js` | YAML 六键是唯一值源，apply 先整组校验，再注册六个变量；选项文案由闸门工具消费，旧词不推进状态。详见 [机制设计](ai-机制设计.md)。 |

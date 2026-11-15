@@ -3,7 +3,7 @@ import { PROBER_PRESET_ID } from './role-contract.js'
 
 export function createRuntimeLifecycle(options = {}) {
   const {
-    defineSavePlan, defineSaveProbe,
+    defineSavePlan, defineSaveProbe, defineEditPlanDraft,
     isBootstrapPhase,
     isSubagentChild, isPlannerChild, toolSchemasOf, schemasHasWriteTools,
     isRunCodeSubCall, runCodeDispatchCapText,
@@ -63,6 +63,10 @@ export function createRuntimeLifecycle(options = {}) {
 
   function registerSavePlan(agent) { registerTool(savePlanRegistered, 'save_plan', defineSavePlan, agent, saveBootstrapWhen) }
   function registerSaveProbe(agent) { registerTool(saveProbeRegistered, 'save_probe', defineSaveProbe, agent, saveBootstrapWhen) }
+  // edit_plan_draft 与 save_plan/save_probe 同构注册：第 5 参复用同一个 saveBootstrapWhen 引用（不复制 when 函数），
+  // 弱集独立（editPlanDraftRegistered），不与 savePlanRegistered 共用。
+  const editPlanDraftRegistered = new WeakSet()
+  function registerEditPlanDraft(agent) { registerTool(editPlanDraftRegistered, 'edit_plan_draft', defineEditPlanDraft, agent, saveBootstrapWhen) }
 
   // F1：prober 角色的预设身份判据。pendingProbeClaims 是 per-apply 实例 Map，父实例写入的
   // 认领子实例读不到，故先按 session.header.agentPreset 的身份直接放行。本函数只读一个字符串
@@ -149,7 +153,7 @@ export function createRuntimeLifecycle(options = {}) {
   }
 
   return {
-    registerSavePlan, registerSaveProbe, probeClaimFor, recordProbeClaim,
+    registerSavePlan, registerSaveProbe, registerEditPlanDraft, probeClaimFor, recordProbeClaim,
     pendingProbeClaims, jobOutputCallCounters, jobOutputLastAnchors, pollGuardCounters,
     subCallCounters, toolJobsNoticesConsumed, runCodeDenyRecords,
     noteRunCodeSubCall, recordRunCodeDeny, takeRunCodeDenyRecords, disposeSession,

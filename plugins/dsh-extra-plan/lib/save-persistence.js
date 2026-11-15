@@ -103,3 +103,60 @@ export function atomicCommit(dir, base, files, fsOps, policyOptions) {
     throw commitError(stage, error, cleanupFailures)
   }
 }
+
+function replaceError(stage, original, cleanupFailures) {
+  const prefix = 'atomicReplace: 阶段=' + stage + '；原始失败=' + errorText(original)
+  const suffix = cleanupFailures.length === 0 ? '' : '；清理失败：' + cleanupFailures.join('；')
+  const wrapped = new Error(prefix + suffix)
+  wrapped.cause = original
+  return wrapped
+}
+
+// 覆盖语义：目录创建 → 逐个临时写入 → 逐个 rename 覆盖目标 → 逐个确认就位。
+// 目标允许已存在，不做存在性拒绝；失败只清理本次临时文件，既有目标文件不删除、不回退。
+export function atomicReplace(dir, files, fsOps, policyOptions) {
+  const ops = fsOpsOf(fsOps)
+  const policy = policyOf(policyOptions)
+  const pathContext = policy.pathContext
+  const purpose = typeof policy.purpose === 'string' && policy.purpose !== '' ? policy.purpose : 'save-artifacts'
+  const authorizedDir = authorizeDirectory(dir, pathContext, purpose)
+  const suffix = '.tmp-' + process.pid + '-' + Date.now()
+  const entries = files.map((file) => ({
+    tmp: join(dir, file.name + suffix),
+    file: join(dir, file.name),
+    content: file.content,
+  }))
+  const attemptedTemps = []
+  let stage = '准备'
+  try {
+    stage = '目录授权'
+    if (pathContext === undefined || pathContext === null) throw new Error('atomicReplace: 缺少workspace授权上下文')
+    if (authorizedDir === null) throw new Error('atomicReplace: 缺少workspace授权上下文')
+    stage = '目录创建'
+    ops.mkdirSync(dir, { recursive: true })
+    if (pathContext !== undefined && pathContext !== null) validateReadTarget(pathContext, resolveWorkspacePath(pathContext, dir, { purpose }), { expectedType: 'directory', purpose })
+    stage = '准备目标'
+    for (const entry of entries) {
+      authorizeFile(entry.file, pathContext, purpose)
+      authorizeFile(entry.tmp, pathContext, purpose)
+    }
+    for (let index = 0; index < entries.length; index += 1) {
+      const entry = entries[index]
+      stage = '临时写入' + (index + 1)
+      authorizeFile(entry.tmp, pathContext, purpose)
+      attemptedTemps.push(entry.tmp)
+      ops.writeFileSync(entry.tmp, entry.content, 'utf8')
+    }
+    for (let index = 0; index < entries.length; index += 1) {
+      const entry = entries[index]
+      stage = '覆盖' + (index + 1)
+      authorizeFile(entry.file, pathContext, purpose)
+      ops.renameSync(entry.tmp, entry.file)
+      authorizeFile(entry.file, pathContext, purpose)
+      if (!ops.existsSync(entry.file)) throw new Error('覆盖后目标未就位：' + entry.file)
+    }
+  } catch (error) {
+    const cleanupFailures = cleanupCreated(attemptedTemps, ops, pathContext, purpose)
+    throw replaceError(stage, error, cleanupFailures)
+  }
+}

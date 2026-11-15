@@ -106,6 +106,7 @@ dsh-extra-plan/
 │   │   │   ├── log-retention.js                                      # 日志裁剪：除账本外的日志只保留48小时
 │   │   │   ├── model-routing.js                                      # 子代理模型选择：planner/非 planner 路由解析
 │   │   │   ├── path-policy.js                                        # 路径安全策略闸门
+│   │   │   ├── plan-draft-tool.js                                    # save_plan：中间态文档修改
 │   │   │   ├── planner-budget.js                                     # 探查预算：用量计数与提醒/耗尽文案
 │   │   │   ├── preset-defaults.generated.js                          # 构建期生成：11 项 DEFAULT_SETTINGS 默认值（含 exploreBudget）
 │   │   │   ├── preset-settings.js                                    # 设置项 descriptor 与 YAML 处理 facade（供迁移复用）

@@ -65,7 +65,7 @@ const { createSaveToolFactories } = await import(pathToFileURL(fileURLToPath(new
 import { DEFAULT_EXPLORE_BUDGET } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
 import { parsePresetYaml } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
 import { createGateRuntime } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
-const { deriveFlowState } = plugin.decisions
+const { deriveFlowState, FREE_TOOLS } = plugin.decisions
 
 // ── 闸门词注入（与 step-04 同口径） ──────────────────────────────────────
 // 插件在 apply 里对 config.gateWords 做整组严格校验：缺失/非法同步抛错。故所有 harness
@@ -346,7 +346,7 @@ function visibleNames(assembly) {
   ref.current = stubToolsOf(registered6, { mode: 'ok' })
   await firePreStep(harness6, agent6)
   // extra_plan_gate 由 index.js pre-step 的 registerGateTool 注册（与 save_plan/save_probe 同一次 pre-step 兜底）。
-  check('S6 服务不可用 → 次轮 pre-step 三个工具各注册一次', registered6, ['save_plan', 'save_probe', 'extra_plan_gate'])
+  check('S6 服务不可用 → 次轮 pre-step 四个工具各注册一次', registered6, ['save_plan', 'edit_plan_draft', 'save_probe', 'extra_plan_gate'])
   registered6.length = 0
   await firePreStep(harness6, agent6)
   check('S6 注册成功后 WeakSet 短路：后续 pre-step 不再注册', registered6, [])
@@ -546,7 +546,17 @@ const exhaustedPlanner = { session: makeSession({ id: 'planner-1', origin: 'suba
 r = preExecute(harness, exhaustedPlanner, 'read', { file_path: 'C:/work/.extra-plan/线索-x-20260816090000.md' })
 checkTrue('S11 预算耗尽后 read 线索文件 → deny（read 线索计入预算，v1 口径）', r.kind === 'deny' && String(r.reason).includes('探查预算已耗尽'))
 r = preExecute(harness, exhaustedPlanner, 'save_plan', ROUTE_GATE_ARGS)
-checkTrue('S12 预算耗尽后 save_plan → allow（跳过名单仍仅 save_plan）', r.kind === 'allow')
+checkTrue('S12 预算耗尽后 save_plan → allow（跳过名单为 FREE_TOOLS 两项）', r.kind === 'allow')
+// M2：预算耗尽白名单（FREE_TOOLS = save_plan + edit_plan_draft）新成员行为取证——
+// 直呼放行 / run_code 单成员组放行 / 含非白名单成员的成员组拒绝；文案断言按 gate-decisions
+// 的动态拼接口径派生（白名单列表取自 FREE_TOOLS 本身，不写死 save_plan 单项）。
+const budgetFreeWhitelist = '预算耗尽后 run_code 仅可调用 ' + [...FREE_TOOLS].join('/') + '，其他工具均不放行'
+const s12aDirect = preExecute(harness, exhaustedPlanner, 'edit_plan_draft', { path: '.extra-plan/draft/方案-x.md_mid', edit: '补充一行' })
+checkTrue('S12a 预算耗尽后直呼 edit_plan_draft → allow（FREE_TOOLS 新成员不受预算拦截）', s12aDirect.kind === 'allow')
+const s12bGroup = preExecute(harness, exhaustedPlanner, 'run_code', { code: "await tools.edit_plan_draft({ path: '.extra-plan/draft/方案-x.md_mid', edit: '补充一行' })" })
+checkTrue('S12b 预算耗尽后 run_code 成员组仅含 edit_plan_draft → allow（成员组全为 FREE_TOOLS）', s12bGroup.kind === 'allow')
+const s12cMixed = preExecute(harness, exhaustedPlanner, 'run_code', { code: "await tools.edit_plan_draft({ path: '.extra-plan/draft/方案-x.md_mid', edit: '补充一行' })\nawait tools.glob({ pattern: '*.md' })" })
+checkTrue('S12c 预算耗尽后 run_code 成员组含非 FREE_TOOLS 工具 → deny 且拒绝文案为动态拼接白名单', s12cMixed.kind === 'deny' && String(s12cMixed.reason).includes(budgetFreeWhitelist) && String(s12cMixed.reason).includes('run_code 拆解预审未通过'))
 // 11 次成功配对后第 12 次 read（线索文件）不拒绝——12 ≤ DEFAULT_EXPLORE_BUDGET（默认）未超预算
 const plannerEvents11 = [DESC, umk('user')]
 for (let i = 0; i < 11; i += 1) {
@@ -603,10 +613,11 @@ writeFileSync(legalEvidenceB, '# 探查证据报告（推荐格式）\n', 'utf8'
 const legalEvidencePlan = evidenceBase.plan.replace(evidenceMarker, evidenceMarker + '【探查者已核实】·证据：evidence-old.md 与【探查者已核实】·证据来源：evidence-recommended.md')
 check('G5 旧/推荐证据关键词均被真实提取', saveContractNamespace.extractProbeEvidenceRefs(legalEvidencePlan), ['evidence-old.md', 'evidence-recommended.md'])
 const evidenceCalls = []
-const evidenceFactory = createSaveToolFactories({ savePlanDir: '.extra-plan', atomicCommit: (...args) => evidenceCalls.push(args), getPathContext: () => pathContextForDir(work) })
+const evidenceReplaceCalls = []
+const evidenceFactory = createSaveToolFactories({ savePlanDir: '.extra-plan', atomicCommit: (...args) => evidenceCalls.push(args), atomicReplace: (...args) => evidenceReplaceCalls.push(args), getPathContext: () => pathContextForDir(work) })
 let missingEvidenceError = ''
 try { await evidenceFactory.defineSavePlan().execute({ plan: missingEvidencePlan, checklist: evidenceBase.checklist, taskName: 'missing-evidence' }, execFake(work)) } catch (error) { missingEvidenceError = String(error.message) }
-checkTrue('G5 缺失推荐证据在提交前失败且 atomicCommit=0', missingEvidenceError.includes('证据文件不存在') && evidenceCalls.length === 0)
+checkTrue('G5 缺失推荐证据在提交前失败且 atomicCommit=0、草稿写入恰1次', missingEvidenceError.includes('证据文件不存在') && evidenceCalls.length === 0 && evidenceReplaceCalls.length === 1)
 let legalEvidenceError = ''
 try { await evidenceFactory.defineSavePlan().execute({ plan: legalEvidencePlan, checklist: evidenceBase.checklist, taskName: 'legal-evidence' }, execFake(work)) } catch (error) { legalEvidenceError = String(error.message) }
 checkTrue('G5 旧/推荐合法证据报告均可提交', legalEvidenceError === '' && evidenceCalls.length === 1 && evidenceCalls[0][2].length === 2)
@@ -770,7 +781,23 @@ const opGeneratePair = g3OperationPair(g3OperationRecord('fixtures/op-generated.
 const opValidations = [opEditPair, opNewPair, opDeletePair, opGeneratePair].map((pair) => validateSavePlanContract(pair.plan, pair.checklist))
 checkTrue('G3-I 四操作纯validator合法基底全部通过', opValidations.every((result) => result.ok === true))
 const opAtomic = []
-const opFactory = createSaveToolFactories({ savePlanDir: '.extra-plan', atomicCommit: (...args) => opAtomic.push(args), getPathContext: (cwd) => pathContextForDir(cwd || work) })
+const opReplace = []
+// M1 补强：atomicReplace 桩在记录调用的同时真实写盘（参数形状与 save-persistence.atomicReplace 一致：
+// (dir, files[{ name, content }])），使「零正式工件」断言里的树快照取证不再是空真——只有真落了盘，
+// 新增目录项才可能被枚举出来并与调用参数逐名、逐内容比对；记录形状仍与旧桩一致（push 原始 args）。
+function g3AtomicReplaceStub(...args) {
+  opReplace.push(args)
+  const dir = args[0]
+  const files = args[1]
+  if (typeof dir !== 'string') throw new Error('G3 夹具：atomicReplace 桩收到非法目录 ' + JSON.stringify(dir))
+  if (!Array.isArray(files)) throw new Error('G3 夹具：atomicReplace 桩收到非法文件清单 ' + JSON.stringify(files))
+  mkdirSync(dir, { recursive: true })
+  for (const file of files) {
+    if (file === null || typeof file !== 'object' || typeof file.name !== 'string' || typeof file.content !== 'string') throw new Error('G3 夹具：atomicReplace 桩收到非法文件记录 ' + JSON.stringify(file))
+    writeFileSync(join(dir, file.name), file.content, 'utf8')
+  }
+}
+const opFactory = createSaveToolFactories({ savePlanDir: '.extra-plan', atomicCommit: (...args) => opAtomic.push(args), atomicReplace: g3AtomicReplaceStub, getPathContext: (cwd) => pathContextForDir(cwd || work) })
 const opDef = opFactory.defineSavePlan()
 function g3TreeSnapshot(root) {
   const entries = []
@@ -788,23 +815,70 @@ function g3SourceBaseParts(value) {
   const match = String(value).match(/-(\d{17})-\d+-(\d+)$/)
   return match === null ? null : { stamp: match[1], sequence: Number(match[2]) }
 }
+// base 计数器（saveArtifactBase）是模块级共享状态，按毫秒归零，工厂依赖里没有可注入的 base/时钟替身；
+// 故在取样前把 Date 钉在固定毫秒，使「before 取样 → execute 内部铸造 → after 取样」三次调用同毫秒，
+// 共享计数器的序号推进量才可精确比较（与下方 G3-H 非法合同矩阵同一做法），不再受毫秒边界抖动影响。
+const g3SourceRealDate = globalThis.Date
+const g3SourceFixedMillis = 1893456000789
+class G3SourceFixedDate extends g3SourceRealDate {
+  constructor(...args) { super(...(args.length === 0 ? [g3SourceFixedMillis] : args)) }
+}
 async function assertG3SourceFailure(label, pair, expectedError, execCwd = work) {
-  const beforeTree = g3TreeSnapshot(work)
-  const beforeExtraPlan = existsSync(join(work, '.extra-plan'))
+  // 树快照以真实执行根（execCwd）为界：草稿落在该根下的 .extra-plan/draft，别名用例是独立 subject workspace。
+  const beforeTree = existsSync(execCwd) ? g3TreeSnapshot(execCwd) : []
   const beforeAtomic = opAtomic.length
-  const beforeBase = saveArtifactBase('g3-source-failure', 'g3-source-failure')
+  const beforeReplace = opReplace.length
   let idReads = 0
   const sourceExec = { agent: { session: { header: { cwd: execCwd, get id() { idReads += 1; return 'g3-exec-1' } } } } }
   let error = ''
-  try { await opDef.execute({ plan: pair.plan, checklist: pair.checklist, taskName: 'source-failure-' + label }, sourceExec) } catch (caught) { error = String(caught.message) }
-  const afterBase = saveArtifactBase('g3-source-failure', 'g3-source-failure')
+  let beforeParts = null
+  let afterParts = null
+  try {
+    globalThis.Date = G3SourceFixedDate
+    beforeParts = g3SourceBaseParts(saveArtifactBase('g3-source-failure', 'g3-source-failure'))
+    try { await opDef.execute({ plan: pair.plan, checklist: pair.checklist, taskName: 'source-failure-' + label }, sourceExec) } catch (caught) { error = String(caught.message) }
+    afterParts = g3SourceBaseParts(saveArtifactBase('g3-source-failure', 'g3-source-failure'))
+  } finally {
+    globalThis.Date = g3SourceRealDate
+  }
   if (!error.includes(expectedError)) console.error('G3-K-ERROR ' + JSON.stringify({ scope: 'G3-K-source-failure', label, expectedError, actualError: error, execCwd }))
   checkTrue('G3-K ' + label + ' 源失败错误分类', error.includes(expectedError))
-  checkTrue('G3-K ' + label + ' 零目录/临时/atomic副作用', JSON.stringify(g3TreeSnapshot(work)) === JSON.stringify(beforeTree) && existsSync(join(work, '.extra-plan')) === beforeExtraPlan && opAtomic.length === beforeAtomic)
-  const beforeParts = g3SourceBaseParts(beforeBase)
-  const afterParts = g3SourceBaseParts(afterBase)
-  checkTrue('G3-K ' + label + ' 不消耗base证据', beforeParts !== null && afterParts !== null && (beforeParts.stamp === afterParts.stamp ? afterParts.sequence === beforeParts.sequence + 1 : afterParts.sequence === 0))
-  check('G3-K ' + label + ' 源失败不读取session id', idReads, 0)
+  // 新契约：失败不再零副作用，改为在 .extra-plan/draft/ 落两份 .md_mid 草稿；正式工件仍只能走 atomicCommit。
+  // M1 补强（真写盘取证）：桩已把调用参数真实写入 execCwd 下的 draft 目录，故此处比对的是磁盘实际新增项——
+  // 新增项只允许 draft 目录本身与两份 .md_mid；磁盘文件名必须与调用参数逐名一致、内容逐字一致。
+  // 旧版此处只枚举「桩未写盘的树」→ 新增项恒为空、every 空真，本断言才恒真。
+  const lastReplace = opReplace[opReplace.length - 1]
+  const replaceDir = lastReplace === undefined ? null : String(lastReplace[0])
+  const replaceFiles = lastReplace === undefined || !Array.isArray(lastReplace[1]) ? [] : lastReplace[1]
+  const draftRelativeDir = ['.extra-plan', 'draft'].join('/')
+  const newEntries = existsSync(execCwd) ? g3TreeSnapshot(execCwd).filter((entry) => beforeTree.indexOf(entry) === -1) : []
+  const newDirs = newEntries.filter((entry) => entry.endsWith('/'))
+  const newFiles = newEntries.filter((entry) => !entry.endsWith('/'))
+  checkTrue(
+    'G3-K ' + label + ' 零正式工件：atomicCommit 零调用，新增项仅draft下两份真实落盘的md_mid',
+    opAtomic.length === beforeAtomic
+      && opReplace.length === beforeReplace + 1
+      && lastReplace !== undefined
+      && replaceDir !== null && replaceDir.endsWith(join('.extra-plan', 'draft'))
+      && replaceFiles.length === 2
+      && replaceFiles.every((file) => typeof file.name === 'string' && file.name.endsWith('.md_mid'))
+      && newDirs.every((entry) => entry === '.extra-plan/' || entry === draftRelativeDir + '/')
+      && newFiles.length === 2
+      && newFiles.every((entry) => entry.startsWith(draftRelativeDir + '/') && entry.endsWith('.md_mid'))
+      && newFiles.map((entry) => entry.slice(draftRelativeDir.length + 1)).sort().join('|') === replaceFiles.map((file) => file.name).sort().join('|')
+      // M1 补强（有齿性）：草稿正文必须与本次 execute 实参逐字一致。桩写进盘的是 file.content，再读回与 file.content
+      // 相比等于自写自读、恒真零约束（工具若对正文做任何改写都抓不到）；故按 file.name 的 方案-/验收- 前缀分别取
+      // pair.plan / pair.checklist——即上文 execute 传入的同一份字符串——作为期望值比对盘上实际内容。
+      && replaceFiles.map((file) => (file.name.startsWith('方案-') ? 'plan' : file.name.startsWith('验收-') ? 'checklist' : '')).sort().join('|') === 'checklist|plan'
+      && replaceFiles.every((file) => {
+        const expectedDraftText = file.name.startsWith('方案-') ? pair.plan : file.name.startsWith('验收-') ? pair.checklist : null
+        return expectedDraftText !== null && readFileSync(join(replaceDir, file.name), 'utf8') === expectedDraftText
+      }),
+  )
+  // 钉住时钟后差值恒定：before 取样推进一次 + execute 内部铸造一次 + after 取样推进一次 = 恰 2。
+  // 失败路径完全不消耗 base 时差值为 1，重复消耗时差值 ≥ 3，两种回归都会在这里失败。
+  checkTrue('G3-K ' + label + ' base序号每次调用只推进一次', beforeParts !== null && afterParts !== null && beforeParts.stamp === afterParts.stamp && afterParts.sequence === beforeParts.sequence + 2)
+  check('G3-K ' + label + ' 为判定草稿落点读取session id恰一次', idReads, 1)
 }
 for (const [label, pair] of [['修改', opEditPair], ['新建', opNewPair], ['删除', opDeletePair], ['生成', opGeneratePair]]) {
   const factoryPair = {
@@ -1144,10 +1218,11 @@ const invalidCases = [
   ['G3-E 收尾双文档不一致', { plan: invalidClosure.plan, checklist: invalidClosure.checklist, needle: '收尾' }],
   ['G3-F 摘要超过上限' + saveContractNamespace.SAVE_PLAN_LIMITS.maxSummaryChars + '字符', { plan: oversizedSummary.plan, checklist: oversizedSummary.checklist, needle: '派遣摘要' }],
 ]
-const invalidEffects = { atomic: 0 }
+const invalidEffects = { atomic: 0, replace: 0 }
 const invalidFactory = createSaveToolFactories({
   savePlanDir: '.extra-plan',
   atomicCommit: () => { invalidEffects.atomic += 1 },
+  atomicReplace: () => { invalidEffects.replace += 1 },
   getPathContext: () => pathContextForDir(work),
 })
 const invalidPlanDef = invalidFactory.defineSavePlan()
@@ -1158,7 +1233,7 @@ async function rejectG3BeforeIO(label, item) {
   } catch (error) {
     message = String(error.message)
   }
-  checkTrue(label + ' 在context/base、证据IO、atomic前拒绝', message.includes(item.needle) && message.includes('文件级任务合同校验不通过'))
+  checkTrue(label + ' 在合同校验处拒绝（base 恰消耗一次，证据IO与atomic零触发）', message.includes(item.needle) && message.includes('文件级任务合同校验不通过'))
   if (item.evidenceGuard === true) checkTrue(label + ' 未先触发证据文件IO', !message.includes('证据文件不存在'))
 }
 const g3DateBeforeInvalid = globalThis.Date
@@ -1177,7 +1252,8 @@ try {
   globalThis.Date = g3DateBeforeInvalid
 }
 const g3InvalidBaseSequence = (value) => Number((String(value).match(/-(\d+)$/) || [])[1])
-checkTrue('G3-H 所有非法合同不消耗context/base序号且恢复Date', globalThis.Date === g3DateBeforeInvalid && g3InvalidBaseSequence(invalidBaseAfter) === g3InvalidBaseSequence(invalidBaseBefore) + 1 && invalidEffects.atomic === 0)
+// 新契约：五个非法用例各消耗一次 base（上下限与摘要超限同样先解析上下文）；尾部取样再推进一次，故序号差为 5+1。
+checkTrue('G3-H 非法合同恢复Date、零正式提交、草稿写入4次且base逐例推进', globalThis.Date === g3DateBeforeInvalid && invalidEffects.atomic === 0 && invalidEffects.replace === 4 && g3InvalidBaseSequence(invalidBaseAfter) === g3InvalidBaseSequence(invalidBaseBefore) + 6)
 
 const tmpRoot = g3TmpRoot
 try {

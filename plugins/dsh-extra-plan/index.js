@@ -113,8 +113,9 @@ import { createPathContext, resolveWorkspacePath, resolveHostPath, prepareWriteT
 import { pruneDiagnosticLogs } from './lib/log-retention.js'
 import { PROBE_LIMITS, sanitizeTaskName, timestamp, renderSavePlan, renderSaveProbe, renderProbeMarkdown, extractProbeEvidenceRefs } from './lib/save-contract.js'
 import { validateProbe } from './lib/save-probe-validation.js'
-import { atomicCommit } from './lib/save-persistence.js'
+import { atomicCommit, atomicReplace } from './lib/save-persistence.js'
 import { createSaveToolFactories } from './lib/save-tool-factories.js'
+import { createPlanDraftToolFactories } from './lib/plan-draft-tool.js'
 import { createGateToolFactories } from './lib/extra-plan-gate-tool.js'
 import { RUNCODE_MUTATION_HINTS, codeMutationHints } from './lib/run-code-static.js'
 import { PWSH_MUTATION, BASH_MUTATION, PWSH_BARE_WORDS, BASH_BARE_WORDS, pwshCommandOf, bashCommandOf, pwshMutationMatches, bashMutationMatches } from './lib/shell-mutation.js'
@@ -512,6 +513,14 @@ export function apply(ctx, config) {
   const { defineSavePlan, defineSaveProbe } = createSaveToolFactories({
     savePlanDir,
     atomicCommit,
+    atomicReplace,
+    getPathContext: (cwd) => pathContextFor(ctx, cwd),
+  })
+  // edit_plan_draft（草稿修复工具）与 save_plan 并列接线：草稿工厂独立实例，不塞进 save 工厂内部。
+  const { defineEditPlanDraft } = createPlanDraftToolFactories({
+    savePlanDir,
+    atomicCommit,
+    atomicReplace,
     getPathContext: (cwd) => pathContextFor(ctx, cwd),
   })
   // ── 配置热读：9 项设置从「apply 期一次性常量」改为「消费点现场取值」 ──────
@@ -597,12 +606,12 @@ export function apply(ctx, config) {
 
   // save_plan/save_probe 的合同、校验、渲染与单次落盘由 lib 工厂提供；此处仅保留注册与生命周期接线。
   const runtimeLifecycle = createRuntimeLifecycle({
-    defineSavePlan, defineSaveProbe, isSubagentChild, isPlannerChild, toolSchemasOf,
+    defineSavePlan, defineSaveProbe, defineEditPlanDraft, isSubagentChild, isPlannerChild, toolSchemasOf,
     isBootstrapPhase,
     schemasHasWriteTools, isRunCodeSubCall, runCodeDispatchCapText,
   })
   const {
-    registerSavePlan, registerSaveProbe, probeClaimFor,
+    registerSavePlan, registerSaveProbe, registerEditPlanDraft, probeClaimFor,
     jobOutputCallCounters, jobOutputLastAnchors, pollGuardCounters,
     subCallCounters, toolJobsNoticesConsumed,
     recordRunCodeDeny, takeRunCodeDenyRecords, recordProbeClaim,
@@ -1030,7 +1039,10 @@ export function apply(ctx, config) {
     if (agent === undefined) return
     try {
       childBaseline(agent)
-      if (isPlannerChild(agent) || !isSubagentChild(agent)) registerSavePlan(agent)
+      if (isPlannerChild(agent) || !isSubagentChild(agent)) {
+        registerSavePlan(agent)
+        registerEditPlanDraft(agent)
+      }
       if (!isSubagentChild(agent) || probeClaimFor(agent)) { registerSaveProbe(agent) }
       if (!isSubagentChild(agent)) registerGateTool(agent)
     } catch (error) {
@@ -1113,7 +1125,10 @@ export function apply(ctx, config) {
         // T3：save_plan 与 save_probe 同构——主会话侧同样在 pre-step 幂等兜底注册
         // （web 会话先按默认预设发布、recompose 不重发 session-start，仅靠 session-start
         // 会漏注册；registerTool 的 WeakSet 保证不重复注册）。
-        if (isPlannerChild(agent) || !isSubagentChild(agent)) registerSavePlan(agent)
+        if (isPlannerChild(agent) || !isSubagentChild(agent)) {
+          registerSavePlan(agent)
+          registerEditPlanDraft(agent)
+        }
         if (!isSubagentChild(agent) || probeClaimFor(agent)) { registerSaveProbe(agent) }
         if (!isSubagentChild(agent)) registerGateTool(agent)
         // 引导期收窄兜底：recompose 不重发 agent/created 的会话（Web 首启）在这里补 arm。

@@ -3774,6 +3774,467 @@ for (const [name, got, expected] of AS) check(name, got, expected)
   checkTrue('AS4n 不传或传空串 recommended → 四项 label 与既有词值逐字相等且均不带推荐后缀', plainWords(nOmittedLabels, routeWords) && plainWords(nEmptyLabels, routeWords) && !anySuffix(nOmittedLabels) && !anySuffix(nEmptyLabels) && nCapture.calls === 2 && nOmitted !== null && typeof nOmitted === 'object' && nOmitted.outcome === 'answered' && nEmpty !== null && typeof nEmpty === 'object' && nEmpty.outcome === 'answered')
 }
 
+// ── DRAFT 系列:save_plan 失败草稿与 edit_plan_draft 草稿合同（接线后的新契约） ──────────
+// 期望全部从既有夹具与常量派生：savePlanDir 用插件默认的 '.extra-plan'、合法正文取自 g2Pair(新建操作)，
+// 摘要上限取自 REAL_SAVE_PLAN_LIMITS.maxSummaryChars；落盘点一律在 makeWTemp 生成的临时工作区内，
+// 断言不写死项目绝对路径；测毕删除本块创建的各临时根。
+{
+  const { createRuntimeLifecycle } = await import('../../plugins/dsh-extra-plan/lib/runtime-lifecycle.js')
+  const { createPlanDraftToolFactories } = await import('../../plugins/dsh-extra-plan/lib/plan-draft-tool.js')
+  const draftSavePlanDir = '.extra-plan'
+  const draftToPosix = (value) => String(value).replace(/\\/g, '/')
+  const draftSamePath = (left, right) => draftToPosix(left).toLowerCase() === draftToPosix(right).toLowerCase()
+  const draftLinesOf = (text) => String(text).split('\n')
+  const draftNamesOf = (dir) => (existsSync(dir) ? readdirSync(dir).sort() : [])
+  const draftTreeOf = (root) => {
+    const entries = []
+    const visit = (dir, prefix) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const relative = prefix + entry.name
+        entries.push(entry.isDirectory() ? relative + '/' : relative)
+        if (entry.isDirectory()) visit(join(dir, entry.name), relative + '/')
+      }
+    }
+    if (existsSync(root)) visit(root, '')
+    return entries.sort()
+  }
+  // ① 引导期一致性：记录型 register 桩逐次记录 (definition.name, options.when)，不复制插件判定逻辑。
+  const draftRegHarness = (label, phaseOf) => {
+    const calls = []
+    const tools = { register(definition, options) { calls.push({ name: definition.name, when: options !== null && typeof options === 'object' ? options.when : undefined }) } }
+    const agent = { session: { header: { id: label } }, ctx: { get: (name) => (name === 'tools' ? tools : undefined) } }
+    const lifecycle = createRuntimeLifecycle({
+      defineSavePlan: () => ({ name: 'save_plan', description: 'plan', parameters: { type: 'object', properties: {} } }),
+      defineEditPlanDraft: () => ({ name: 'edit_plan_draft', description: 'draft', parameters: { type: 'object', properties: {} } }),
+      isBootstrapPhase: phaseOf,
+      isSubagentChild: () => false,
+      isPlannerChild: () => false,
+      toolSchemasOf: () => [],
+      schemasHasWriteTools: () => false,
+      isRunCodeSubCall: () => false,
+      runCodeDispatchCapText: '',
+    })
+    lifecycle.registerSavePlan(agent)
+    lifecycle.registerEditPlanDraft(agent)
+    return { calls, agent, lifecycle }
+  }
+  const draftBoot = draftRegHarness('draft-boot', () => true)
+  const draftLive = draftRegHarness('draft-live', () => false)
+  check('DRAFT1 引导期注册名依次为 save_plan 与 edit_plan_draft（紧邻注册）', draftBoot.calls.map((call) => call.name), ['save_plan', 'edit_plan_draft'])
+  checkTrue('DRAFT2 两个注册收到同一 when 函数引用（不复制 when，复用 saveBootstrapWhen）', typeof draftBoot.calls[0].when === 'function' && draftBoot.calls[0].when === draftBoot.calls[1].when)
+  checkTrue('DRAFT3 引导期该 when 对同一 agent 求值 false：save_plan 与 edit_plan_draft 均不激活', draftBoot.calls.every((call) => call.when({ agent: draftBoot.agent }) === false))
+  checkTrue('DRAFT4 非引导期同一 when 引用求值 true：两工具均激活', draftLive.calls.length === 2 && draftLive.calls[0].when === draftLive.calls[1].when && draftLive.calls.every((call) => call.when({ agent: draftLive.agent }) === true))
+  draftBoot.lifecycle.registerSavePlan(draftBoot.agent)
+  draftBoot.lifecycle.registerEditPlanDraft(draftBoot.agent)
+  draftLive.lifecycle.registerSavePlan(draftLive.agent)
+  draftLive.lifecycle.registerEditPlanDraft(draftLive.agent)
+  checkTrue('DRAFT5 同一 agent 重复注册不增加 register 桩调用次数（两相位各仍 2 次）', draftBoot.calls.length === 2 && draftLive.calls.length === 2)
+  // ② 工具替身：atomicCommit/atomicReplace 按插件传入的绝对目录真实写盘（便于断言草稿内容与删除），
+  //    getPathContext 指向各场景自己的临时工作区；savePlanDir 由调用方给出。
+  const draftToolsFor = (root, savePlanDir) => {
+    const io = []
+    const writeFiles = (dir, files) => {
+      mkdirSync(dir, { recursive: true })
+      for (const file of files) writeFileSync(join(dir, file.name), file.content, 'utf8')
+    }
+    const deps = {
+      savePlanDir,
+      atomicCommit: (dir, base, files) => { io.push({ op: 'commit', dir, base, files }); writeFiles(dir, files) },
+      atomicReplace: (dir, files) => { io.push({ op: 'replace', dir, files }); writeFiles(dir, files) },
+      getPathContext: () => createPathContext({ workspaceRoot: root, hostDataRoot: isolatedDshHome }),
+    }
+    return { io, savePlan: createSaveToolFactories(deps).defineSavePlan(), draft: createPlanDraftToolFactories(deps).defineEditPlanDraft() }
+  }
+  const draftExecOf = (cwd) => ({ agent: { session: { header: { cwd, id: 'draft-exec' } } } })
+  // 合同失败但正文够长的夹具：单点破坏正式验收引用（沿用既有 g2InvalidLongPair 手法）。
+  const draftInvalidPair = { plan: g2Pad(g2OneTaskPair.plan), checklist: g2Pad(g2OneTaskPair.checklist.replace('- 正式验收：[检查1]', '- 正式验收：[检查9]')) }
+  const draftInvalidContract = validateRealSavePlanContract(draftInvalidPair.plan, draftInvalidPair.checklist)
+  checkTrue('DRAFT6 合同失败夹具自证：validator 拒绝且非摘要超限（只走落草稿分支）', draftInvalidContract.ok === false && draftInvalidContract.limitExceeded === false)
+  const draftFailRoot = makeWTemp('dsh-plan-draft-fail')
+  const draftFailTools = draftToolsFor(draftFailRoot, draftSavePlanDir)
+  let draftFailError = ''
+  try { await draftFailTools.savePlan.execute(draftInvalidPair, draftExecOf(draftFailRoot)) } catch (error) { draftFailError = error instanceof Error ? error.message : String(error) }
+  const draftFailDir = join(draftFailRoot, draftSavePlanDir, 'draft')
+  const draftFailNames = draftNamesOf(draftFailDir)
+  const draftFailPlanName = draftFailNames.find((name) => name.startsWith('方案-'))
+  const draftFailCheckName = draftFailNames.find((name) => name.startsWith('验收-'))
+  checkTrue('DRAFT7 合同失败在 savePlanDir/draft 下写出 方案-/验收- 两份 .md_mid', draftFailNames.length === 2 && draftFailPlanName !== undefined && draftFailCheckName !== undefined && draftFailNames.every((name) => name.endsWith('.md_mid')))
+  checkTrue('DRAFT8 两份草稿正文与本次入参逐字一致（可供 edit_plan_draft 就地修复）', draftFailPlanName !== undefined && draftFailCheckName !== undefined && readFileSync(join(draftFailDir, draftFailPlanName), 'utf8') === draftInvalidPair.plan && readFileSync(join(draftFailDir, draftFailCheckName), 'utf8') === draftInvalidPair.checklist)
+  const draftFailPaths = [draftFailPlanName, draftFailCheckName].filter((name) => name !== undefined).map((name) => draftToPosix(join(draftSavePlanDir, 'draft', name)))
+  checkTrue('DRAFT9 错误文本保留合同诊断并含两份草稿相对路径与 edit_plan_draft 提示、零正式工件', draftFailError.startsWith('save_plan:') && draftFailError.includes(draftInvalidContract.error) && draftFailPaths.length === 2 && draftFailPaths.every((value) => draftFailError.includes(value)) && draftFailError.includes('edit_plan_draft') && draftFailTools.io.filter((entry) => entry.op === 'commit').length === 0)
+  // ③ limitExceeded 为 true：只能改写更短的方案，不写草稿。超限夹具由常量上限派生，逐个候选取真命中者。
+  const draftLimitPad = 'x'.repeat(REAL_SAVE_PLAN_LIMITS.maxSummaryChars + 1000)
+  const draftLimitPair = [
+    g2Pair({ tasks: [g2Task(1, { title: '超限摘要' + draftLimitPad })] }),
+    g2Pair({ tasks: [g2Task(1, { selfChecks: ['核对合成任务1' + draftLimitPad] })] }),
+    g2Pair({ tasks: [g2Task(1, { modifications: ['细节' + draftLimitPad] })] }),
+  ].find((pair) => validateRealSavePlanContract(pair.plan, pair.checklist).limitExceeded === true)
+  const draftLimitContract = draftLimitPair === undefined ? null : validateRealSavePlanContract(draftLimitPair.plan, draftLimitPair.checklist)
+  checkTrue('DRAFT10 摘要超限夹具自证：limitExceeded 为 true（上限取 SAVE_PLAN_LIMITS.maxSummaryChars）', draftLimitContract !== null && draftLimitContract.ok === false && draftLimitContract.limitExceeded === true)
+  const draftLimitRoot = makeWTemp('dsh-plan-draft-limit')
+  const draftLimitTools = draftToolsFor(draftLimitRoot, draftSavePlanDir)
+  let draftLimitError = ''
+  if (draftLimitContract !== null) { try { await draftLimitTools.savePlan.execute(draftLimitPair, draftExecOf(draftLimitRoot)) } catch (error) { draftLimitError = error instanceof Error ? error.message : String(error) } }
+  const draftLimitDir = join(draftLimitRoot, draftSavePlanDir, 'draft')
+  checkTrue('DRAFT11 摘要超限时只回原合同诊断原文、不写草稿也不落正式工件', draftLimitContract !== null && draftLimitError === draftLimitContract.error && !existsSync(draftLimitDir) && draftLimitTools.io.length === 0)
+  // ④ 路径解析失败（落盘目录越界）时仍先返回合同诊断：诊断顺序不因路径问题被替换。
+  const draftEscapeRoot = makeWTemp('dsh-plan-draft-escape')
+  const draftEscapeTools = draftToolsFor(draftEscapeRoot, join('..', 'plan-draft-escape'))
+  let draftEscapeError = ''
+  try { await draftEscapeTools.savePlan.execute(draftInvalidPair, draftExecOf(draftEscapeRoot)) } catch (error) { draftEscapeError = error instanceof Error ? error.message : String(error) }
+  checkTrue('DRAFT12 落盘目录不可解析(越界)时仍返回合同诊断且零正式工件', draftEscapeError.includes(draftInvalidContract.error) && draftEscapeTools.io.filter((entry) => entry.op === 'commit').length === 0)
+  // ⑤ context 为 null（会话缺工作区路径）时抛原错误：合同通过后不落盘、不写草稿。
+  const draftNullRoot = makeWTemp('dsh-plan-draft-null')
+  const draftNullTools = draftToolsFor(draftNullRoot, draftSavePlanDir)
+  const draftValidPair = g2Pair({ tasks: [g2Task(1, { mainFile: 'g2-synthetic/draft-promote-target.js', fileOperation: '新建' })] })
+  const draftValidPlanText = g2Pad(draftValidPair.plan)
+  const draftValidChecklistText = g2Pad(draftValidPair.checklist)
+  const draftNullContract = validateRealSavePlanContract(draftValidPlanText, draftValidChecklistText)
+  let draftNullError = ''
+  try { await draftNullTools.savePlan.execute({ plan: draftValidPlanText, checklist: draftValidChecklistText }, draftExecOf('')) } catch (error) { draftNullError = error instanceof Error ? error.message : String(error) }
+  checkTrue('DRAFT13 context 为 null 时抛原错误（缺少工作区路径）且零落盘零 commit', draftNullContract.ok === true && draftValidPlanText.length >= 200 && draftValidChecklistText.length >= 200 && draftNullError.includes('缺少工作区路径') && draftNullTools.io.length === 0 && !existsSync(join(draftNullRoot, draftSavePlanDir)))
+  // ⑥ edit_plan_draft：非白名单路径一律被拒且不创建草稿。
+  const draftEditRoot = makeWTemp('dsh-plan-draft-edit')
+  const draftEditTools = draftToolsFor(draftEditRoot, draftSavePlanDir)
+  const draftEditDir = join(draftEditRoot, draftSavePlanDir, 'draft')
+  const draftSavePlanRoot = join(draftEditRoot, draftSavePlanDir)
+  const draftEditBase = 'draft-' + String(process.pid)
+  mkdirSync(draftEditDir, { recursive: true })
+  const draftRejections = [draftSavePlanDir + '/方案-拒绝.md', draftSavePlanDir + '/draft/方案-.md_mid', 'scratch/draft/方案-拒绝.md_mid', draftSavePlanDir + '/draft/notes.md_mid']
+  const draftBeforeReject = draftTreeOf(draftEditRoot)
+  const draftRejectErrors = []
+  for (const requested of draftRejections) {
+    let message = ''
+    try { await draftEditTools.draft.execute({ path: requested, edits: [{ line: 1, text: 'x' }] }, draftExecOf(draftEditRoot)) } catch (error) { message = error instanceof Error ? error.message : String(error) }
+    draftRejectErrors.push(message)
+  }
+  checkTrue('DRAFT14 非白名单路径全部被拒（根目录/空 base/非 draft 目录/缺 方案-验收- 前缀）且零落盘', draftRejectErrors.length === draftRejections.length && draftRejectErrors.every((message) => message.includes('edit_plan_draft') && message.includes('一律拒绝')) && JSON.stringify(draftTreeOf(draftEditRoot)) === JSON.stringify(draftBeforeReject))
+  const draftMissing = await draftEditTools.draft.execute({ path: draftSavePlanDir + '/draft/方案-draft-missing.md_mid', edits: [{ line: 1, text: 'x' }] }, draftExecOf(draftEditRoot))
+  checkTrue('DRAFT15 白名单内但草稿不存在 → saved-with-errors 返回且不创建文件', draftMissing !== null && typeof draftMissing === 'object' && draftMissing.status === 'saved-with-errors' && Array.isArray(draftMissing.paths) && draftMissing.paths.length === 1 && draftMissing.lineCount === 0 && !existsSync(join(draftEditDir, '方案-draft-missing.md_mid')))
+  // ⑦ edits 倒序应用（乱序入参）与越界整批拒绝。
+  const draftEditOriginal = ['行一', '行二', '行三', '行四']
+  const draftEditPlanName = '方案-' + draftEditBase + '.md_mid'
+  const draftEditCheckName = '验收-' + draftEditBase + '.md_mid'
+  writeFileSync(join(draftEditDir, draftEditPlanName), draftEditOriginal.join('\n') + '\n', 'utf8')
+  writeFileSync(join(draftEditDir, draftEditCheckName), '验收占位\n', 'utf8')
+  const draftEditOps = [{ line: 2, text: '行二改' }, { line: 4, drop: true }, { line: 3, insert: '插入行' }]
+  const draftEditExpected = (() => {
+    const next = draftEditOriginal.slice()
+    for (const edit of draftEditOps.slice().sort((left, right) => right.line - left.line)) {
+      const index = edit.line - 1
+      if (edit.drop === true) next.splice(index, 1)
+      else if (edit.insert !== undefined) next.splice(index, 0, edit.insert)
+      else next[index] = edit.text
+    }
+    return next.join('\n') + '\n'
+  })()
+  const draftEditPath = draftSavePlanDir + '/draft/' + draftEditPlanName
+  const draftEditResult = await draftEditTools.draft.execute({ path: draftEditPath, edits: draftEditOps }, draftExecOf(draftEditRoot))
+  check('DRAFT16 混合增删改乱序输入 → 按行号倒序应用后正文逐字一致（含结尾换行）', readFileSync(join(draftEditDir, draftEditPlanName), 'utf8'), draftEditExpected)
+  checkTrue('DRAFT17 倒序应用后按新正文回报 lineCount 且未通过校验时状态为 saved-with-errors', draftEditResult !== null && typeof draftEditResult === 'object' && draftEditResult.status === 'saved-with-errors' && draftEditResult.lineCount === draftLinesOf(draftEditExpected).length - 1)
+  const draftEditBefore = readFileSync(join(draftEditDir, draftEditPlanName), 'utf8')
+  let draftOverflowError = ''
+  try { await draftEditTools.draft.execute({ path: draftEditPath, edits: [{ line: 1, text: '越界前' }, { line: draftLinesOf(draftEditExpected).length, text: '越界' }] }, draftExecOf(draftEditRoot)) } catch (error) { draftOverflowError = error instanceof Error ? error.message : String(error) }
+  checkTrue('DRAFT18 任一编辑越界 → 整批不生效且草稿正文未被改动', draftOverflowError.includes('越界') && draftOverflowError.includes('整批不生效') && readFileSync(join(draftEditDir, draftEditPlanName), 'utf8') === draftEditBefore)
+  // ⑧ 校验不通过：修改保留、诊断带行号（期望行号从 validator 自己的 diagnostics.line 派生）。
+  const draftDiagName = '方案-' + draftEditBase + '-diag.md_mid'
+  const draftDiagCheckName = '验收-' + draftEditBase + '-diag.md_mid'
+  writeFileSync(join(draftEditDir, draftDiagName), draftValidPlanText, 'utf8')
+  writeFileSync(join(draftEditDir, draftDiagCheckName), draftValidChecklistText, 'utf8')
+  // 破坏方式：真删任务的自检行——任务块仍在，validator 的字段级诊断会挂在任务块行号上。
+  const draftDiagHasFinalNewline = draftValidPlanText.endsWith('\n')
+  const draftDiagLines = draftDiagHasFinalNewline ? draftValidPlanText.slice(0, -1).split('\n') : draftValidPlanText.split('\n')
+  const draftSelfCheckDropIndex = draftDiagLines.findIndex((line) => line.startsWith('- 自检：'))
+  const draftDiagExpectedLines = draftDiagLines.slice()
+  if (draftSelfCheckDropIndex >= 0) draftDiagExpectedLines.splice(draftSelfCheckDropIndex, 1)
+  const draftDiagExpectedText = draftDiagExpectedLines.join('\n') + (draftDiagHasFinalNewline ? '\n' : '')
+  const draftDiagContract = validateRealSavePlanContract(draftDiagExpectedText, draftValidChecklistText)
+  const draftDiagLine = (Array.isArray(draftDiagContract.diagnostics) ? draftDiagContract.diagnostics : []).map((item) => item.line).find((line) => Number.isInteger(line) && line > 0)
+  const draftDiagResult = await draftEditTools.draft.execute({ path: draftSavePlanDir + '/draft/' + draftDiagName, edits: [{ line: draftSelfCheckDropIndex + 1, drop: true }] }, draftExecOf(draftEditRoot))
+  const draftDiagTexts = draftDiagResult !== null && typeof draftDiagResult === 'object' && Array.isArray(draftDiagResult.diagnostics) ? draftDiagResult.diagnostics : []
+  checkTrue('DRAFT19 校验不通过 → saved-with-errors、修改已落盘保留、诊断带「位置：第 N 行」', draftSelfCheckDropIndex >= 0 && draftDiagContract.ok === false && Number.isInteger(draftDiagLine) && draftDiagResult.status === 'saved-with-errors' && readFileSync(join(draftEditDir, draftDiagName), 'utf8') === draftDiagExpectedText && draftDiagTexts.some((text) => String(text).includes('位置：第 ' + draftDiagLine + ' 行')) && typeof draftDiagResult.error === 'string' && draftDiagResult.error.length > 0)
+  // ⑨ 校验通过：转正到 savePlanDir 根（绝不是 draft 子目录），随后删除两份草稿。
+  const draftPromoteName = '方案-' + draftEditBase + '-promote.md_mid'
+  const draftPromoteCheckName = '验收-' + draftEditBase + '-promote.md_mid'
+  writeFileSync(join(draftEditDir, draftPromoteName), draftValidPlanText, 'utf8')
+  writeFileSync(join(draftEditDir, draftPromoteCheckName), draftValidChecklistText, 'utf8')
+  const draftPromoteLines = draftLinesOf(draftValidPlanText)
+  const draftSelfCheckIndex = draftPromoteLines.findIndex((line) => line.startsWith('- 自检：'))
+  const draftEditedSelfCheck = draftSelfCheckIndex >= 0 ? draftPromoteLines[draftSelfCheckIndex] + '（草稿转正）' : ''
+  const draftPromoteExpectedLines = draftPromoteLines.slice()
+  if (draftSelfCheckIndex >= 0) draftPromoteExpectedLines[draftSelfCheckIndex] = draftEditedSelfCheck
+  const draftPromoteExpectedPlan = draftPromoteExpectedLines.join('\n')
+  const draftPromoteContract = validateRealSavePlanContract(draftPromoteExpectedPlan, draftValidChecklistText)
+  const draftPromoteBase = draftPromoteName.slice('方案-'.length, draftPromoteName.length - '.md_mid'.length)
+  const draftPromotedPlan = join(draftSavePlanRoot, '方案-' + draftPromoteBase + '.md')
+  const draftPromotedCheck = join(draftSavePlanRoot, '验收-' + draftPromoteBase + '.md')
+  const draftPromoteResult = await draftEditTools.draft.execute({ path: draftSavePlanDir + '/draft/' + draftPromoteName, edits: [{ line: draftSelfCheckIndex + 1, text: draftEditedSelfCheck }] }, draftExecOf(draftEditRoot))
+  checkTrue('DRAFT20 校验通过 → promoted 且正式工件落在 savePlanDir 根（非 draft 子目录）', draftSelfCheckIndex >= 0 && draftPromoteContract.ok === true && draftPromoteResult.status === 'promoted' && Array.isArray(draftPromoteResult.paths) && draftPromoteResult.paths.length === 2 && draftSamePath(draftPromoteResult.paths[0], draftPromotedPlan) && draftSamePath(draftPromoteResult.paths[1], draftPromotedCheck) && draftPromoteResult.error === '' && draftEditTools.io.some((entry) => entry.op === 'commit' && draftSamePath(entry.dir, draftSavePlanRoot)))
+  checkTrue('DRAFT21 转正后两份草稿被删除、正式工件正文含草稿修改', !existsSync(join(draftEditDir, draftPromoteName)) && !existsSync(join(draftEditDir, draftPromoteCheckName)) && existsSync(draftPromotedPlan) && existsSync(draftPromotedCheck) && readFileSync(draftPromotedPlan, 'utf8') === draftPromoteExpectedPlan && readFileSync(draftPromotedCheck, 'utf8') === draftValidChecklistText)
+  // ⑨-2 未探查标记：save_plan 与 edit_plan_draft 共用同一判定与同一时机（合同校验之前），
+  //     期望值一律从模块出口 unexploredMarkerOf 与上面已建的合法夹具派生，不写死项目绝对路径。
+  const { unexploredMarkerOf: draftMarkerOf } = await import('../../plugins/dsh-extra-plan/lib/save-tool-factories.js')
+  const draftMarkerLine = '【待确认：' + draftEditBase + ' 未探查项】'
+  checkTrue('DRAFT21a 未探查标记夹具自证：合法夹具本身不含标记、插入行被模块出口整体识别为标记', draftMarkerOf(draftValidPlanText) === null && draftMarkerOf(draftMarkerLine) === draftMarkerLine)
+  // save_plan：命中标记即整批拒绝，草稿落盘与合同失败同款（两份 .md_mid），错误追加标记提示与草稿相对路径。
+  const draftMarkerRoot = makeWTemp('dsh-plan-draft-marker')
+  const draftMarkerTools = draftToolsFor(draftMarkerRoot, draftSavePlanDir)
+  const draftMarkerDir = join(draftMarkerRoot, draftSavePlanDir, 'draft')
+  const draftMarkerPlanText = draftValidPlanText + (draftValidPlanText.endsWith('\n') ? '' : '\n') + draftMarkerLine + '\n'
+  let draftMarkerError = ''
+  try { await draftMarkerTools.savePlan.execute({ plan: draftMarkerPlanText, checklist: draftValidChecklistText }, draftExecOf(draftMarkerRoot)) } catch (error) { draftMarkerError = error instanceof Error ? error.message : String(error) }
+  const draftMarkerNames = draftNamesOf(draftMarkerDir)
+  const draftMarkerPlanName = draftMarkerNames.find((name) => name.startsWith('方案-'))
+  const draftMarkerCheckName = draftMarkerNames.find((name) => name.startsWith('验收-'))
+  const draftMarkerDraftPaths = [draftMarkerPlanName, draftMarkerCheckName].filter((name) => name !== undefined).map((name) => draftToPosix(join(draftSavePlanDir, 'draft', name)))
+  checkTrue('DRAFT21b save_plan 命中未探查标记 → draft 目录仍落两份 .md_mid（正文逐字同入参）、错误含标记提示与 edit_plan_draft 引导且零正式工件', draftMarkerOf(draftMarkerPlanText) === draftMarkerLine && draftMarkerNames.length === 2 && draftMarkerNames.every((name) => name.endsWith('.md_mid')) && draftMarkerPlanName !== undefined && draftMarkerCheckName !== undefined && draftMarkerDraftPaths.length === 2 && readFileSync(join(draftMarkerDir, draftMarkerPlanName), 'utf8') === draftMarkerPlanText && readFileSync(join(draftMarkerDir, draftMarkerCheckName), 'utf8') === draftValidChecklistText && draftMarkerError.startsWith('save_plan:') && draftMarkerError.includes('未探查/待确认标记') && draftMarkerError.includes('edit_plan_draft') && draftMarkerDraftPaths.every((value) => draftMarkerError.includes(value)) && draftMarkerTools.io.filter((entry) => entry.op === 'commit').length === 0)
+  // edit_plan_draft：草稿正文本就是能通过校验的合法方案，标记只由本次编辑引入 → 拒绝只可能归因于标记判定。
+  const draftMarkerEditRoot = makeWTemp('dsh-plan-draft-marker-edit')
+  const draftMarkerEditTools = draftToolsFor(draftMarkerEditRoot, draftSavePlanDir)
+  const draftMarkerEditDir = join(draftMarkerEditRoot, draftSavePlanDir, 'draft')
+  mkdirSync(draftMarkerEditDir, { recursive: true })
+  const draftMarkerEditBase = draftEditBase + '-marker'
+  const draftMarkerEditPlanName = '方案-' + draftMarkerEditBase + '.md_mid'
+  const draftMarkerEditCheckName = '验收-' + draftMarkerEditBase + '.md_mid'
+  writeFileSync(join(draftMarkerEditDir, draftMarkerEditPlanName), draftValidPlanText, 'utf8')
+  writeFileSync(join(draftMarkerEditDir, draftMarkerEditCheckName), draftValidChecklistText, 'utf8')
+  const draftMarkerEditBefore = readFileSync(join(draftMarkerEditDir, draftMarkerEditPlanName), 'utf8')
+  const draftMarkerAttempted = draftMarkerLine + '\n' + draftMarkerEditBefore
+  const draftMarkerEditResult = await draftMarkerEditTools.draft.execute({ path: draftSavePlanDir + '/draft/' + draftMarkerEditPlanName, edits: [{ line: 1, insert: draftMarkerLine }] }, draftExecOf(draftMarkerEditRoot))
+  const draftMarkerPromotedPlan = join(draftMarkerEditRoot, draftSavePlanDir, '方案-' + draftMarkerEditBase + '.md')
+  const draftMarkerPromotedCheck = join(draftMarkerEditRoot, draftSavePlanDir, '验收-' + draftMarkerEditBase + '.md')
+  const draftMarkerEditDiagnostics = draftMarkerEditResult !== null && typeof draftMarkerEditResult === 'object' && Array.isArray(draftMarkerEditResult.diagnostics) ? draftMarkerEditResult.diagnostics : []
+  checkTrue('DRAFT21c edit_plan_draft 命中未探查标记 → saved-with-errors 拒绝转正且不写回草稿（零落盘调用）', draftMarkerOf(draftMarkerAttempted) === draftMarkerLine && draftMarkerEditResult !== null && typeof draftMarkerEditResult === 'object' && draftMarkerEditResult.status === 'saved-with-errors' && readFileSync(join(draftMarkerEditDir, draftMarkerEditPlanName), 'utf8') === draftMarkerEditBefore && readFileSync(join(draftMarkerEditDir, draftMarkerEditCheckName), 'utf8') === draftValidChecklistText && draftMarkerEditTools.io.length === 0 && !existsSync(draftMarkerPromotedPlan) && !existsSync(draftMarkerPromotedCheck) && draftMarkerEditDiagnostics.some((text) => String(text).includes(draftMarkerLine)) && typeof draftMarkerEditResult.error === 'string' && draftMarkerEditResult.error.includes('未探查/待确认标记'))
+  // ⑨-3 未覆盖分支补强（DRAFT23-DRAFT26）：四条各自新建工厂实例，不复用本块既有实例；新增临时根一并纳入 DRAFT22 清理。
+  //      期望正文全部由既有合法夹具派生（只改一行正文），不写死项目绝对路径或行号。
+  const draftReplaceLineOf = (text, lineIndex, nextText) => {
+    const hasFinalNewline = String(text).endsWith('\n')
+    const lines = draftLinesOf(hasFinalNewline ? String(text).slice(0, -1) : String(text))
+    lines[lineIndex] = nextText
+    return lines.join('\n') + (hasFinalNewline ? '\n' : '')
+  }
+  const draftActionLineIndex = (text) => draftLinesOf(text).findIndex((line) => line.startsWith('- 修改：'))
+  // DRAFT23 配对草稿缺失：只放 方案- 草稿、不建配对 验收- 草稿 → 修改先写回草稿，再返回「配对草稿不存在」，不转正、不建正式工件。
+  const draftPairMissingRoot = makeWTemp('dsh-plan-draft-pair-missing')
+  const draftPairMissingTools = draftToolsFor(draftPairMissingRoot, draftSavePlanDir)
+  const draftPairMissingDir = join(draftPairMissingRoot, draftSavePlanDir, 'draft')
+  mkdirSync(draftPairMissingDir, { recursive: true })
+  const draftPairMissingBase = draftEditBase + '-pair-missing'
+  const draftPairMissingName = '方案-' + draftPairMissingBase + '.md_mid'
+  const draftPairMissingCheckName = '验收-' + draftPairMissingBase + '.md_mid'
+  writeFileSync(join(draftPairMissingDir, draftPairMissingName), draftValidPlanText, 'utf8')
+  const draftPairMissingIndex = draftActionLineIndex(draftValidPlanText)
+  const draftPairMissingNextLine = draftLinesOf(draftValidPlanText)[draftPairMissingIndex] + '（配对草稿缺失用例）'
+  const draftPairMissingEdited = draftReplaceLineOf(draftValidPlanText, draftPairMissingIndex, draftPairMissingNextLine)
+  const draftPairMissingResult = await draftPairMissingTools.draft.execute({ path: draftSavePlanDir + '/draft/' + draftPairMissingName, edits: [{ line: draftPairMissingIndex + 1, text: draftPairMissingNextLine }] }, draftExecOf(draftPairMissingRoot))
+  checkTrue('DRAFT23 配对草稿缺失 → saved-with-errors 且错误含「配对草稿不存在」、方案草稿写回保留、无正式工件', draftPairMissingIndex >= 0 && draftPairMissingResult !== null && typeof draftPairMissingResult === 'object' && draftPairMissingResult.status === 'saved-with-errors' && String(draftPairMissingResult.error).includes('配对草稿不存在') && readFileSync(join(draftPairMissingDir, draftPairMissingName), 'utf8') === draftPairMissingEdited && !existsSync(join(draftPairMissingDir, draftPairMissingCheckName)) && draftPairMissingTools.io.length === 1 && draftPairMissingTools.io[0].op === 'replace' && draftSamePath(draftPairMissingTools.io[0].dir, draftPairMissingDir) && draftNamesOf(join(draftPairMissingRoot, draftSavePlanDir)).join('|') === 'draft')
+  // DRAFT24 源核实失败：草稿正文的修改点指向不存在的路径，合同校验仍通过 → 源核实失败（草稿已写回保留、不转正）。
+  const draftSourceFailPair = g2Pair({ tasks: [g2Task(1, { mainFile: 'g2-synthetic/draft-missing-source.js', fileOperation: '修改' })] })
+  const draftSourceFailPlan = g2Pad(draftSourceFailPair.plan)
+  const draftSourceFailChecklist = g2Pad(draftSourceFailPair.checklist)
+  const draftSourceFailRoot = makeWTemp('dsh-plan-draft-source-fail')
+  const draftSourceFailTools = draftToolsFor(draftSourceFailRoot, draftSavePlanDir)
+  const draftSourceFailDir = join(draftSourceFailRoot, draftSavePlanDir, 'draft')
+  mkdirSync(draftSourceFailDir, { recursive: true })
+  const draftSourceFailBase = draftEditBase + '-source-fail'
+  const draftSourceFailName = '方案-' + draftSourceFailBase + '.md_mid'
+  const draftSourceFailCheckName = '验收-' + draftSourceFailBase + '.md_mid'
+  writeFileSync(join(draftSourceFailDir, draftSourceFailName), draftSourceFailPlan, 'utf8')
+  writeFileSync(join(draftSourceFailDir, draftSourceFailCheckName), draftSourceFailChecklist, 'utf8')
+  const draftSourceFailIndex = draftActionLineIndex(draftSourceFailPlan)
+  const draftSourceFailNextLine = draftLinesOf(draftSourceFailPlan)[draftSourceFailIndex] + '（源核实失败用例）'
+  const draftSourceFailEdited = draftReplaceLineOf(draftSourceFailPlan, draftSourceFailIndex, draftSourceFailNextLine)
+  const draftSourceFailContract = validateRealSavePlanContract(draftSourceFailEdited, draftSourceFailChecklist)
+  const draftSourceFailResult = await draftSourceFailTools.draft.execute({ path: draftSavePlanDir + '/draft/' + draftSourceFailName, edits: [{ line: draftSourceFailIndex + 1, text: draftSourceFailNextLine }] }, draftExecOf(draftSourceFailRoot))
+  checkTrue('DRAFT24 源核实失败 → 合同仍通过但返回「源核实失败」、草稿写回保留、无正式工件', draftSourceFailIndex >= 0 && draftSourceFailContract.ok === true && draftSourceFailResult !== null && typeof draftSourceFailResult === 'object' && draftSourceFailResult.status === 'saved-with-errors' && String(draftSourceFailResult.error).includes('源核实失败') && readFileSync(join(draftSourceFailDir, draftSourceFailName), 'utf8') === draftSourceFailEdited && readFileSync(join(draftSourceFailDir, draftSourceFailCheckName), 'utf8') === draftSourceFailChecklist && draftSourceFailTools.io.length === 1 && draftSourceFailTools.io[0].op === 'replace' && draftNamesOf(join(draftSourceFailRoot, draftSavePlanDir)).join('|') === 'draft')
+  // DRAFT25 证据核实失败：合法草稿另加一条【探查者已核实】·证据来源指向不存在的报告 → 证据核实失败，
+  //      且报错只有单层 edit_plan_draft: 前缀：不出现双重前缀、也不出现 save_plan（任务1 修正后的返回口径）。
+  const draftEvidenceRef = 'missing-report.md'
+  const draftEvidenceLine = '【探查者已核实】·证据来源：' + draftEvidenceRef
+  const draftEvidencePlan = draftValidPlanText + (draftValidPlanText.endsWith('\n') ? '' : '\n') + draftEvidenceLine + '\n'
+  const draftEvidenceRoot = makeWTemp('dsh-plan-draft-evidence-fail')
+  const draftEvidenceTools = draftToolsFor(draftEvidenceRoot, draftSavePlanDir)
+  const draftEvidenceDir = join(draftEvidenceRoot, draftSavePlanDir, 'draft')
+  mkdirSync(draftEvidenceDir, { recursive: true })
+  const draftEvidenceBase = draftEditBase + '-evidence-fail'
+  const draftEvidenceName = '方案-' + draftEvidenceBase + '.md_mid'
+  const draftEvidenceCheckName = '验收-' + draftEvidenceBase + '.md_mid'
+  writeFileSync(join(draftEvidenceDir, draftEvidenceName), draftEvidencePlan, 'utf8')
+  writeFileSync(join(draftEvidenceDir, draftEvidenceCheckName), draftValidChecklistText, 'utf8')
+  const draftEvidenceIndex = draftActionLineIndex(draftEvidencePlan)
+  const draftEvidenceNextLine = draftLinesOf(draftEvidencePlan)[draftEvidenceIndex] + '（证据核实失败用例）'
+  const draftEvidenceEdited = draftReplaceLineOf(draftEvidencePlan, draftEvidenceIndex, draftEvidenceNextLine)
+  const draftEvidenceContract = validateRealSavePlanContract(draftEvidenceEdited, draftValidChecklistText)
+  const draftEvidenceResult = await draftEvidenceTools.draft.execute({ path: draftSavePlanDir + '/draft/' + draftEvidenceName, edits: [{ line: draftEvidenceIndex + 1, text: draftEvidenceNextLine }] }, draftExecOf(draftEvidenceRoot))
+  const draftEvidenceError = draftEvidenceResult !== null && typeof draftEvidenceResult === 'object' && typeof draftEvidenceResult.error === 'string' ? draftEvidenceResult.error : ''
+  const draftEvidencePrefixCount = draftEvidenceError.split('edit_plan_draft:').length - 1
+  checkTrue('DRAFT25 证据核实失败 → 返回「证据核实失败」且仅单层工具名前缀（无双重前缀、无 save_plan）、草稿写回保留、无正式工件', draftEvidenceIndex >= 0 && draftEvidenceContract.ok === true && JSON.stringify(extractProbeEvidenceRefs(draftEvidenceEdited)) === JSON.stringify([draftEvidenceRef]) && draftEvidenceResult !== null && typeof draftEvidenceResult === 'object' && draftEvidenceResult.status === 'saved-with-errors' && draftEvidenceError.includes('证据核实失败') && draftEvidencePrefixCount === 1 && !draftEvidenceError.includes('edit_plan_draft: edit_plan_draft') && !draftEvidenceError.includes('save_plan') && readFileSync(join(draftEvidenceDir, draftEvidenceName), 'utf8') === draftEvidenceEdited && readFileSync(join(draftEvidenceDir, draftEvidenceCheckName), 'utf8') === draftValidChecklistText && draftEvidenceTools.io.length === 1 && draftEvidenceTools.io[0].op === 'replace' && draftNamesOf(join(draftEvidenceRoot, draftSavePlanDir)).join('|') === 'draft')
+  // DRAFT26 转正落盘失败：注入抛错的 atomicCommit 桩 → 该分支返回 saved-with-errors（plan-draft-tool.js 转正 catch 内，
+  //      不是抛错），草稿两份仍在、savePlanDir 根零正式工件；commit 桩确实被调用一次以证明走到了转正落盘。
+  const draftPromoteFailRoot = makeWTemp('dsh-plan-draft-promote-fail')
+  const draftPromoteFailIo = []
+  const draftPromoteFailWriteFiles = (dir, files) => {
+    mkdirSync(dir, { recursive: true })
+    for (const file of files) writeFileSync(join(dir, file.name), file.content, 'utf8')
+  }
+  const draftPromoteFailTool = createPlanDraftToolFactories({
+    savePlanDir: draftSavePlanDir,
+    atomicCommit: (dir, base, files) => { draftPromoteFailIo.push({ op: 'commit', dir, base, files }); throw new Error('注入的转正落盘失败') },
+    atomicReplace: (dir, files) => { draftPromoteFailIo.push({ op: 'replace', dir, files }); draftPromoteFailWriteFiles(dir, files) },
+    getPathContext: () => createPathContext({ workspaceRoot: draftPromoteFailRoot, hostDataRoot: isolatedDshHome }),
+  }).defineEditPlanDraft()
+  const draftPromoteFailDir = join(draftPromoteFailRoot, draftSavePlanDir, 'draft')
+  const draftPromoteFailRootDir = join(draftPromoteFailRoot, draftSavePlanDir)
+  mkdirSync(draftPromoteFailDir, { recursive: true })
+  const draftPromoteFailBase = draftEditBase + '-promote-fail'
+  const draftPromoteFailName = '方案-' + draftPromoteFailBase + '.md_mid'
+  const draftPromoteFailCheckName = '验收-' + draftPromoteFailBase + '.md_mid'
+  writeFileSync(join(draftPromoteFailDir, draftPromoteFailName), draftValidPlanText, 'utf8')
+  writeFileSync(join(draftPromoteFailDir, draftPromoteFailCheckName), draftValidChecklistText, 'utf8')
+  const draftPromoteFailIndex = draftActionLineIndex(draftValidPlanText)
+  const draftPromoteFailNextLine = draftLinesOf(draftValidPlanText)[draftPromoteFailIndex] + '（转正落盘失败用例）'
+  const draftPromoteFailEdited = draftReplaceLineOf(draftValidPlanText, draftPromoteFailIndex, draftPromoteFailNextLine)
+  const draftPromoteFailResult = await draftPromoteFailTool.execute({ path: draftSavePlanDir + '/draft/' + draftPromoteFailName, edits: [{ line: draftPromoteFailIndex + 1, text: draftPromoteFailNextLine }] }, draftExecOf(draftPromoteFailRoot))
+  checkTrue('DRAFT26 转正落盘失败 → saved-with-errors 且错误含「转正落盘失败」「草稿保留」、两份草稿仍在、savePlanDir 根零正式工件', draftPromoteFailIndex >= 0 && draftPromoteFailResult !== null && typeof draftPromoteFailResult === 'object' && draftPromoteFailResult.status === 'saved-with-errors' && String(draftPromoteFailResult.error).includes('转正落盘失败') && String(draftPromoteFailResult.error).includes('草稿保留') && draftPromoteFailIo.length === 2 && draftPromoteFailIo[0].op === 'replace' && draftPromoteFailIo[1].op === 'commit' && draftSamePath(draftPromoteFailIo[1].dir, draftPromoteFailRootDir) && draftPromoteFailIo.filter((entry) => entry.op === 'commit').length === 1 && readFileSync(join(draftPromoteFailDir, draftPromoteFailName), 'utf8') === draftPromoteFailEdited && readFileSync(join(draftPromoteFailDir, draftPromoteFailCheckName), 'utf8') === draftValidChecklistText && !existsSync(join(draftPromoteFailRootDir, '方案-' + draftPromoteFailBase + '.md')) && !existsSync(join(draftPromoteFailRootDir, '验收-' + draftPromoteFailBase + '.md')) && draftNamesOf(draftPromoteFailRootDir).join('|') === 'draft')
+  // DRAFT27 真实 output 契约：DRAFT 系列其余用例都用只含 name/description/parameters 的手写桩，从不读 .output；
+  // 这里用 createPlanDraftToolFactories 取真实定义（只断言定义、不调 execute，故不传 atomicCommit/atomicReplace/getPathContext）。
+  // 断言照 AS4e/AS4f 范式：宿主按数组消费 content，裸字符串会崩 spill-policy/PTC；只锁结构与键集，不锁描述文案（沿用 SCHEMA1 纪律）。
+  const draftRealTool = createPlanDraftToolFactories({ savePlanDir: draftSavePlanDir }).defineEditPlanDraft()
+  const draftRealOutput = draftRealTool.output !== undefined && draftRealTool.output !== null && typeof draftRealTool.output === 'object' ? draftRealTool.output : null
+  const draftRealRenderValue = { status: 'promoted', paths: [draftSavePlanDir + '/方案-x.md', draftSavePlanDir + '/验收-x.md'], lineCount: 12, diagnostics: ['位置：第 3 行 样例行'], error: '' }
+  const draftParseContentBlock = (content) => {
+    if (!Array.isArray(content) || content.length !== 1) return null
+    const block = content[0]
+    if (block === null || typeof block !== 'object' || block.type !== 'text' || typeof block.text !== 'string') return null
+    try { return JSON.parse(block.text) } catch { return null }
+  }
+  const draftRealRender = draftRealOutput !== null && typeof draftRealOutput.render === 'function' ? draftRealOutput.render({}, draftRealRenderValue) : null
+  checkTrue('DRAFT27 output.render 返回恰一个 text ContentBlock（真实定义非手写桩；宿主按数组消费 content，裸字符串会崩 spill-policy/PTC）', Array.isArray(draftRealRender) && draftRealRender.length === 1 && draftRealRender[0] !== null && typeof draftRealRender[0] === 'object' && draftRealRender[0].type === 'text' && typeof draftRealRender[0].text === 'string')
+  check('DRAFT27a output.render 正文是返回值整体 JSON（status/paths/lineCount/diagnostics/error 五字段逐字保真）', draftParseContentBlock(draftRealRender), draftRealRenderValue)
+  const draftRealSchema = draftRealOutput !== null && draftRealOutput.schema !== undefined && draftRealOutput.schema !== null && typeof draftRealOutput.schema === 'object' ? draftRealOutput.schema : null
+  const draftRealSchemaKeys = draftRealSchema !== null && draftRealSchema.properties !== null && typeof draftRealSchema.properties === 'object' ? Object.keys(draftRealSchema.properties).sort() : []
+  const draftRealRequired = draftRealSchema !== null && Array.isArray(draftRealSchema.required) ? draftRealSchema.required.slice().sort() : null
+  const draftRealExpectedKeys = ['status', 'paths', 'lineCount', 'diagnostics', 'error'].sort()
+  checkTrue('DRAFT27b output.schema 结构契约：properties 键集恰为 status/paths/lineCount/diagnostics/error、required 为同五字段、additionalProperties 为 false（不锁描述文案）', draftRealSchema !== null && JSON.stringify(draftRealSchemaKeys) === JSON.stringify(draftRealExpectedKeys) && draftRealRequired !== null && JSON.stringify(draftRealRequired) === JSON.stringify(draftRealExpectedKeys) && draftRealSchema.additionalProperties === false)
+  // DRAFT27c 取值域与类型契约：status 的 enum 恰两值且顺序按源码 STATUS_PROMOTED → STATUS_SAVED_WITH_ERRORS；
+  // 五字段 type 逐字段对齐源码；仍不锁 description 文案（沿用 SCHEMA1 纪律）。
+  const draftRealPropOf = (name) => (draftRealSchema !== null && draftRealSchema.properties !== null && typeof draftRealSchema.properties === 'object' && draftRealSchema.properties[name] !== null && typeof draftRealSchema.properties[name] === 'object' ? draftRealSchema.properties[name] : null)
+  const draftRealTypeOf = (name) => { const prop = draftRealPropOf(name); return prop === null || prop.type === undefined ? null : prop.type }
+  const draftRealStatusProp = draftRealPropOf('status')
+  check('DRAFT27c output.schema 取值域与类型契约（status.enum 恰为 promoted→saved-with-errors 两值且顺序与源码一致；status/paths/lineCount/diagnostics/error 的 type 逐字段与源码一致；不锁 description 文案）', {
+    statusEnum: draftRealStatusProp !== null && Array.isArray(draftRealStatusProp.enum) ? draftRealStatusProp.enum : null,
+    types: { status: draftRealTypeOf('status'), paths: draftRealTypeOf('paths'), lineCount: draftRealTypeOf('lineCount'), diagnostics: draftRealTypeOf('diagnostics'), error: draftRealTypeOf('error') },
+  }, {
+    statusEnum: ['promoted', 'saved-with-errors'],
+    types: { status: 'string', paths: 'array', lineCount: 'integer', diagnostics: 'array', error: 'string' },
+  })
+  // DRAFT28 编辑「验收-」草稿（isPlanDraft=false）：与该块既有编辑用例（草稿名全为「方案-」前缀）互补的分支。
+  // 必须成对放草稿，否则先命中「配对草稿不存在」；对验收草稿只做不破坏合法性的行级改写（带检查/期望/验收证据前缀的三行加后缀），
+  // 该分支 planText 取未编辑的配对方案、checklistText 取编辑后的验收——与 DRAFT21（编辑方案）方向相反；新用例新建工厂实例，不复用本块既有实例。
+  const draftCheckEditRoot = makeWTemp('dsh-plan-draft-check-edit')
+  const draftCheckEditTools = draftToolsFor(draftCheckEditRoot, draftSavePlanDir)
+  const draftCheckEditDir = join(draftCheckEditRoot, draftSavePlanDir, 'draft')
+  mkdirSync(draftCheckEditDir, { recursive: true })
+  const draftCheckEditBase = draftEditBase + '-check-edit'
+  const draftCheckEditPlanName = '方案-' + draftCheckEditBase + '.md_mid'
+  const draftCheckEditCheckName = '验收-' + draftCheckEditBase + '.md_mid'
+  writeFileSync(join(draftCheckEditDir, draftCheckEditPlanName), draftValidPlanText, 'utf8')
+  writeFileSync(join(draftCheckEditDir, draftCheckEditCheckName), draftValidChecklistText, 'utf8')
+  const draftCheckEditLines = draftLinesOf(draftValidChecklistText)
+  const draftCheckEditSuffix = '（验收草稿编辑用例）'
+  const draftCheckEditTargets = draftCheckEditLines.map((line, index) => (/^-\s*(检查|期望|验收证据)：/.test(line) ? index : -1)).filter((index) => index >= 0)
+  const draftCheckEditExpected = draftCheckEditLines.map((line, index) => (draftCheckEditTargets.includes(index) ? line + draftCheckEditSuffix : line)).join('\n')
+  const draftCheckEditContract = validateRealSavePlanContract(draftValidPlanText, draftCheckEditExpected)
+  const draftCheckEditResult = await draftCheckEditTools.draft.execute({ path: draftSavePlanDir + '/draft/' + draftCheckEditCheckName, edits: draftCheckEditTargets.map((index) => ({ line: index + 1, text: draftCheckEditLines[index] + draftCheckEditSuffix })) }, draftExecOf(draftCheckEditRoot))
+  const draftCheckEditRootDir = join(draftCheckEditRoot, draftSavePlanDir)
+  const draftCheckEditPromotedPlan = join(draftCheckEditRootDir, '方案-' + draftCheckEditBase + '.md')
+  const draftCheckEditPromotedCheck = join(draftCheckEditRootDir, '验收-' + draftCheckEditBase + '.md')
+  checkTrue('DRAFT28 编辑「验收-」草稿 → promoted 且正式方案取未编辑的配对方案草稿、正式验收取编辑后的验收草稿、两份草稿已删除（与 DRAFT21 方向相反）', draftCheckEditTargets.length >= 3 && draftCheckEditContract.ok === true && draftCheckEditResult !== null && typeof draftCheckEditResult === 'object' && draftCheckEditResult.status === 'promoted' && Array.isArray(draftCheckEditResult.paths) && draftCheckEditResult.paths.length === 2 && draftSamePath(draftCheckEditResult.paths[0], draftCheckEditPromotedPlan) && draftSamePath(draftCheckEditResult.paths[1], draftCheckEditPromotedCheck) && draftCheckEditResult.error === '' && draftCheckEditTools.io.length === 2 && draftCheckEditTools.io[0].op === 'replace' && draftCheckEditTools.io[1].op === 'commit' && draftSamePath(draftCheckEditTools.io[1].dir, draftCheckEditRootDir) && readFileSync(draftCheckEditPromotedPlan, 'utf8') === draftValidPlanText && readFileSync(draftCheckEditPromotedCheck, 'utf8') === draftCheckEditExpected && !existsSync(join(draftCheckEditDir, draftCheckEditPlanName)) && !existsSync(join(draftCheckEditDir, draftCheckEditCheckName)))
+  // ⑨-4 DRAFT29-DRAFT32：applyEdits 的 XOR/缺操作矩阵、空 edits 契约、save_plan 与 edit_plan_draft 两侧草稿写失败降级。
+  // execute 在这些分支上是抛出异常（不是返回失败对象），断言一律 try/catch 捕获 message；四组各自新建工厂实例，
+  // 不复用本块既有实例（DRAFT23/24/25 断言 io.length===1、DRAFT26 与 DRAFT28 断言 ===2，复用会互相污染计数）。
+  const draftBrokenWriteToolsFor = (root, savePlanDir, failMessage) => {
+    const io = []
+    const deps = {
+      savePlanDir,
+      // 本组用例绝不应转正：atomicCommit 只记一次调用并抛出，供断言取证。
+      atomicCommit: (dir, base, files) => { io.push({ op: 'commit', dir, base, files }); throw new Error('意外调用 atomicCommit：' + failMessage) },
+      // 记录调用即抛：模拟草稿落盘/写回失败，且保证磁盘零变化（不写任何文件）。
+      atomicReplace: (dir, files) => { io.push({ op: 'replace', dir, files }); throw new Error(failMessage) },
+      getPathContext: () => createPathContext({ workspaceRoot: root, hostDataRoot: isolatedDshHome }),
+    }
+    return { io, savePlan: createSaveToolFactories(deps).defineSavePlan(), draft: createPlanDraftToolFactories(deps).defineEditPlanDraft() }
+  }
+  // ① DRAFT29 applyEdits 的 XOR 与缺操作矩阵：execute 先用 validateReadTarget 读草稿，随后在写回/配对重建之前调 applyEdits；
+  //    目标草稿不存在会先在更早处抛「草稿不存在」，所以每条子用例都必须先落一份合法草稿文件，再经 execute 触发。
+  const draftXorCases = [
+    { label: 'drop+text', fragment: 'drop 不能与 text/insert 同时出现', edit: { line: 1, drop: true, text: 'XOR 子用例：drop 与 text 同时出现' } },
+    { label: 'drop+insert', fragment: 'drop 不能与 text/insert 同时出现', edit: { line: 1, drop: true, insert: 'XOR 子用例：drop 与 insert 同时出现' } },
+    { label: 'insert+text', fragment: 'insert 不能与 text 同时出现', edit: { line: 1, insert: 'XOR 子用例：insert 与 text 同时出现', text: 'XOR 子用例：insert 与 text 同时出现' } },
+    { label: '三者都缺', fragment: '缺少操作', edit: { line: 1 } },
+  ]
+  const draftXorRoots = []
+  for (const draftXorCase of draftXorCases) {
+    const draftXorRoot = makeWTemp('dsh-plan-draft-xor-' + draftXorCase.label)
+    const draftXorTools = draftToolsFor(draftXorRoot, draftSavePlanDir)
+    const draftXorDir = join(draftXorRoot, draftSavePlanDir, 'draft')
+    mkdirSync(draftXorDir, { recursive: true })
+    const draftXorName = '方案-' + draftEditBase + '-xor.md_mid'
+    const draftXorPath = join(draftXorDir, draftXorName)
+    writeFileSync(draftXorPath, draftValidPlanText, 'utf8')
+    let draftXorError = ''
+    try { await draftXorTools.draft.execute({ path: draftSavePlanDir + '/draft/' + draftXorName, edits: [draftXorCase.edit] }, draftExecOf(draftXorRoot)) } catch (error) { draftXorError = error instanceof Error ? error.message : String(error) }
+    checkTrue('DRAFT29 edits 的 ' + draftXorCase.label + ' → execute 抛出且 message 含「整批不生效」与「' + draftXorCase.fragment + '」（已到 applyEdits，不是更早的「草稿不存在」）、草稿磁盘内容零变化、零写盘', draftXorError.includes('整批不生效') && draftXorError.includes(draftXorCase.fragment) && !draftXorError.includes('草稿不存在') && readFileSync(draftXorPath, 'utf8') === draftValidPlanText && draftXorTools.io.length === 0)
+    draftXorRoots.push(draftXorRoot)
+  }
+  // ② DRAFT30 空数组 edits 契约：合法且合同本就通过的成对草稿 + edits: [] → 零编辑、直接重跑全套检测并转正；
+  //    正式工件逐字等于草稿原文（写回落地的是同一内容，转正取 editedText）。
+  const draftEmptyEditsRoot = makeWTemp('dsh-plan-draft-empty-edits')
+  const draftEmptyEditsTools = draftToolsFor(draftEmptyEditsRoot, draftSavePlanDir)
+  const draftEmptyEditsDir = join(draftEmptyEditsRoot, draftSavePlanDir, 'draft')
+  mkdirSync(draftEmptyEditsDir, { recursive: true })
+  const draftEmptyEditsBase = draftEditBase + '-empty-edits'
+  const draftEmptyEditsPlanName = '方案-' + draftEmptyEditsBase + '.md_mid'
+  const draftEmptyEditsCheckName = '验收-' + draftEmptyEditsBase + '.md_mid'
+  writeFileSync(join(draftEmptyEditsDir, draftEmptyEditsPlanName), draftValidPlanText, 'utf8')
+  writeFileSync(join(draftEmptyEditsDir, draftEmptyEditsCheckName), draftValidChecklistText, 'utf8')
+  const draftEmptyEditsContract = validateRealSavePlanContract(draftValidPlanText, draftValidChecklistText)
+  const draftEmptyEditsResult = await draftEmptyEditsTools.draft.execute({ path: draftSavePlanDir + '/draft/' + draftEmptyEditsPlanName, edits: [] }, draftExecOf(draftEmptyEditsRoot))
+  const draftEmptyEditsRootDir = join(draftEmptyEditsRoot, draftSavePlanDir)
+  const draftEmptyEditsPromotedPlan = join(draftEmptyEditsRootDir, '方案-' + draftEmptyEditsBase + '.md')
+  const draftEmptyEditsPromotedCheck = join(draftEmptyEditsRootDir, '验收-' + draftEmptyEditsBase + '.md')
+  checkTrue('DRAFT30 edits 为空数组 → 零编辑直接重跑检测并 promoted、正式方案/验收逐字等于草稿原文、两份草稿已删除', draftEmptyEditsContract.ok === true && draftEmptyEditsResult !== null && typeof draftEmptyEditsResult === 'object' && draftEmptyEditsResult.status === 'promoted' && draftEmptyEditsResult.error === '' && Array.isArray(draftEmptyEditsResult.paths) && draftEmptyEditsResult.paths.length === 2 && draftSamePath(draftEmptyEditsResult.paths[0], draftEmptyEditsPromotedPlan) && draftSamePath(draftEmptyEditsResult.paths[1], draftEmptyEditsPromotedCheck) && draftEmptyEditsTools.io.length === 2 && draftEmptyEditsTools.io[0].op === 'replace' && draftEmptyEditsTools.io[1].op === 'commit' && draftSamePath(draftEmptyEditsTools.io[1].dir, draftEmptyEditsRootDir) && readFileSync(draftEmptyEditsPromotedPlan, 'utf8') === draftValidPlanText && readFileSync(draftEmptyEditsPromotedCheck, 'utf8') === draftValidChecklistText && !existsSync(join(draftEmptyEditsDir, draftEmptyEditsPlanName)) && !existsSync(join(draftEmptyEditsDir, draftEmptyEditsCheckName)))
+  // ③ DRAFT31 save_plan 侧 dumpDrafts 写失败降级：注入抛错的 atomicReplace，夹具用非摘要超限的合同失败（draftInvalidPair）；
+  //    断言最终抛出的仍是原本的校验失败报错（未被掩盖），末尾恰为该降级说明（带「草稿未写成」与注入错误本身）。
+  const draftDumpFailRoot = makeWTemp('dsh-plan-draft-dump-fail')
+  const draftDumpFailFailure = 'DRAFT31 注入的草稿写失败（atomicReplace 桩）'
+  const draftDumpFailTools = draftBrokenWriteToolsFor(draftDumpFailRoot, draftSavePlanDir, draftDumpFailFailure)
+  let draftDumpFailError = ''
+  try { await draftDumpFailTools.savePlan.execute(draftInvalidPair, draftExecOf(draftDumpFailRoot)) } catch (error) { draftDumpFailError = error instanceof Error ? error.message : String(error) }
+  const draftDumpFailSuffix = draftDumpFailError.startsWith(draftInvalidContract.error) ? draftDumpFailError.slice(draftInvalidContract.error.length) : ''
+  checkTrue('DRAFT31 save_plan 草稿写失败 → 仍抛原校验失败报错（未被掩盖）、末尾恰为「（草稿未写成：注入错误）」（非「未解析到可写的草稿目录」降级）、零 commit 零落盘', draftInvalidContract.ok === false && draftInvalidContract.limitExceeded === false && draftDumpFailSuffix === '（草稿未写成：' + draftDumpFailFailure + '）' && draftDumpFailTools.io.length === 1 && draftDumpFailTools.io[0].op === 'replace' && draftDumpFailTools.io.filter((entry) => entry.op === 'commit').length === 0 && draftNamesOf(join(draftDumpFailRoot, draftSavePlanDir)).join('|') === '')
+  // ④ DRAFT32 edit 侧草稿写回失败：同样注入抛错的 atomicReplace，对白名单内合法成对草稿执行一次合法 edits。
+  const draftWriteBackFailRoot = makeWTemp('dsh-plan-draft-write-back-fail')
+  const draftWriteBackFailFailure = 'DRAFT32 注入的草稿写回失败（atomicReplace 桩）'
+  const draftWriteBackFailTools = draftBrokenWriteToolsFor(draftWriteBackFailRoot, draftSavePlanDir, draftWriteBackFailFailure)
+  const draftWriteBackFailDir = join(draftWriteBackFailRoot, draftSavePlanDir, 'draft')
+  mkdirSync(draftWriteBackFailDir, { recursive: true })
+  const draftWriteBackFailBase = draftEditBase + '-write-back-fail'
+  const draftWriteBackFailPlanName = '方案-' + draftWriteBackFailBase + '.md_mid'
+  const draftWriteBackFailCheckName = '验收-' + draftWriteBackFailBase + '.md_mid'
+  writeFileSync(join(draftWriteBackFailDir, draftWriteBackFailPlanName), draftValidPlanText, 'utf8')
+  writeFileSync(join(draftWriteBackFailDir, draftWriteBackFailCheckName), draftValidChecklistText, 'utf8')
+  const draftWriteBackFailIndex = draftActionLineIndex(draftValidPlanText)
+  const draftWriteBackFailNextLine = draftLinesOf(draftValidPlanText)[draftWriteBackFailIndex] + '（草稿写回失败用例）'
+  let draftWriteBackFailError = ''
+  try { await draftWriteBackFailTools.draft.execute({ path: draftSavePlanDir + '/draft/' + draftWriteBackFailPlanName, edits: [{ line: draftWriteBackFailIndex + 1, text: draftWriteBackFailNextLine }] }, draftExecOf(draftWriteBackFailRoot)) } catch (error) { draftWriteBackFailError = error instanceof Error ? error.message : String(error) }
+  checkTrue('DRAFT32 草稿写回失败 → 抛出「edit_plan_draft: 草稿写回失败」且带注入错误、草稿磁盘内容零变化（两份草稿仍在且逐字未变）、无转正工件、零 commit', draftWriteBackFailIndex >= 0 && draftWriteBackFailError.startsWith('edit_plan_draft: 草稿写回失败：') && draftWriteBackFailError.includes(draftWriteBackFailFailure) && draftWriteBackFailTools.io.length === 1 && draftWriteBackFailTools.io[0].op === 'replace' && readFileSync(join(draftWriteBackFailDir, draftWriteBackFailPlanName), 'utf8') === draftValidPlanText && readFileSync(join(draftWriteBackFailDir, draftWriteBackFailCheckName), 'utf8') === draftValidChecklistText && draftNamesOf(draftWriteBackFailDir).length === 2 && draftNamesOf(join(draftWriteBackFailRoot, draftSavePlanDir)).filter((name) => name.endsWith('.md')).length === 0)
+  // ⑩ 清理本块临时根。
+  const draftRoots = [draftFailRoot, draftLimitRoot, draftEscapeRoot, draftNullRoot, draftEditRoot, draftMarkerRoot, draftMarkerEditRoot, draftPairMissingRoot, draftSourceFailRoot, draftEvidenceRoot, draftPromoteFailRoot, draftCheckEditRoot, ...draftXorRoots, draftEmptyEditsRoot, draftDumpFailRoot, draftWriteBackFailRoot]
+  for (const root of draftRoots) rmSync(root, { recursive: true, force: true })
+  checkTrue('DRAFT22 测毕清理本块临时工作区根（makeWTemp 各场景目录不再存在）', draftRoots.every((root) => !existsSync(root)))
+}
+
 let dispatchSeriesChecks = 0
 function runDispatchSeries(ev) {
   const cdStart = (name, sid, argsObj) => ({ type: ev.start, data: { rootCallId: 'r1', parentCallId: 'pc1', subCallId: sid, name, arguments: argsObj } })
@@ -4183,7 +4644,7 @@ for (const [name, role, code, expected, gateCtx] of K) {
   output.assertion(okResult, name, expected, got)
 }
 // ── CONTROL-GATE：FREE_TOOLS 与全角色控制工具矩阵（子代理硬拒、主会话对照） ──
-check('CONTROL1 FREE_TOOLS 恰为 save_plan', [...FREE_TOOLS], ['save_plan'])
+check('CONTROL1 FREE_TOOLS 恰为 save_plan 与 edit_plan_draft', [...FREE_TOOLS], ['save_plan', 'edit_plan_draft'])
 const controlRoles = [
   ['planner', { kind: 'planner' }],
   ['readOnly', { kind: 'child', readOnly: true, probe: true }],

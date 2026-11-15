@@ -92,14 +92,15 @@ function newGlobal(line) {
   return { kind: 'global', line, expectations: [], prohibitions: [], formalAcceptance: [], checkRefs: [] }
 }
 
-function makeDiagnostic(document, taskId, field, value, message, template) {
+function makeDiagnostic(document, taskId, field, value, message, template, line) {
   return {
     document,
     taskId,
     field,
     value: value === undefined || value === null ? '' : String(value),
     message,
-    template: template || defaultTemplate(field, taskId)
+    template: template || defaultTemplate(field, taskId),
+    line: Number.isInteger(line) ? line : null
   }
 }
 
@@ -450,14 +451,14 @@ function parseTaskDocument(text, document) {
 function validateIds(items, document, diagnostics, kind) {
   const seen = new Map()
   for (const item of items) {
-    if (seen.has(item.id)) diagnostics.push(makeDiagnostic(document, item.id, kind + 'ID', item.id, kind + ' ID 不得重复'))
+    if (seen.has(item.id)) diagnostics.push(makeDiagnostic(document, item.id, kind + 'ID', item.id, kind + ' ID 不得重复', undefined, item.line))
     else seen.set(item.id, item)
   }
   const ids = Array.from(seen.keys()).sort((a, b) => a - b)
   const continuous = ids.length > 0 && ids.every((id, index) => id === index + 1)
   const ordered = items.every((item, index) => item.id === index + 1)
-  if (ids.length > 0 && !continuous) diagnostics.push(makeDiagnostic(document, ids[0], kind + 'ID', ids.join('、'), kind + ' ID 必须从 1 连续递增且不重复'))
-  if (ids.length > 0 && continuous && !ordered) diagnostics.push(makeDiagnostic(document, items[0].id, kind + 'ID', items.map((item) => item.id).join('、'), kind + '块必须按 ID 从 1 递增出现'))
+  if (ids.length > 0 && !continuous) diagnostics.push(makeDiagnostic(document, ids[0], kind + 'ID', ids.join('、'), kind + ' ID 必须从 1 连续递增且不重复', undefined, seen.get(ids[0]).line))
+  if (ids.length > 0 && continuous && !ordered) diagnostics.push(makeDiagnostic(document, items[0].id, kind + 'ID', items.map((item) => item.id).join('、'), kind + '块必须按 ID 从 1 递增出现', undefined, items[0].line))
 }
 
 function isMarkdownWrapped(path) {
@@ -659,40 +660,40 @@ function validateAcceptanceFileRecords(owner, document, taskId, diagnostics, opt
 }
 
 function validateTaskShape(task, document, isPlan, diagnostics, options) {
-  if (task.title === '') diagnostics.push(makeDiagnostic(document, task.id, '标题', '', '任务标题不能为空'))
-  if (task.mainFiles.length !== 1) diagnostics.push(makeDiagnostic(document, task.id, '主文件', task.mainFiles.join('、'), '每个任务必须恰好有一个非空主文件'))
+  if (task.title === '') diagnostics.push(makeDiagnostic(document, task.id, '标题', '', '任务标题不能为空', undefined, task.line))
+  if (task.mainFiles.length !== 1) diagnostics.push(makeDiagnostic(document, task.id, '主文件', task.mainFiles.join('、'), '每个任务必须恰好有一个非空主文件', undefined, task.line))
   validatePathSet(task, document, diagnostics, options)
   if (isPlan) {
     validatePlanFileRecords(task, document, task.id, diagnostics, options)
-    if (task.groups.length !== 1) diagnostics.push(makeDiagnostic(document, task.id, '执行组', task.groups.join('、'), '每个方案任务必须恰好有一个执行组'))
-    for (const group of task.groups) if (!GROUP_RE.test(group)) diagnostics.push(makeDiagnostic(document, task.id, '执行组', group, '执行组必须匹配 G1、G2 等正整数组名'))
+    if (task.groups.length !== 1) diagnostics.push(makeDiagnostic(document, task.id, '执行组', task.groups.join('、'), '每个方案任务必须恰好有一个执行组', undefined, task.line))
+    for (const group of task.groups) if (!GROUP_RE.test(group)) diagnostics.push(makeDiagnostic(document, task.id, '执行组', group, '执行组必须匹配 G1、G2 等正整数组名', undefined, task.line))
     if (task.dependencyFields.length !== 1) {
-      diagnostics.push(makeDiagnostic(document, task.id, '依赖', task.dependencyFields.join('、'), '每个方案任务必须恰好有一条依赖字段'))
+      diagnostics.push(makeDiagnostic(document, task.id, '依赖', task.dependencyFields.join('、'), '每个方案任务必须恰好有一条依赖字段', undefined, task.line))
     } else {
       const parsed = parseDependencies(task.dependencyFields[0])
       task.dependencies = parsed.ids
-      if (parsed.issue !== null) diagnostics.push(makeDiagnostic(document, task.id, '依赖', task.dependencyFields[0], parsed.issue))
+      if (parsed.issue !== null) diagnostics.push(makeDiagnostic(document, task.id, '依赖', task.dependencyFields[0], parsed.issue, undefined, task.line))
     }
-    if (task.dependencyReasons.length !== 1) diagnostics.push(makeDiagnostic(document, task.id, '依赖理由', task.dependencyReasons.join('、'), '每个方案任务必须恰好有一条依赖理由'))
-    if (task.groupReasons.length !== 1) diagnostics.push(makeDiagnostic(document, task.id, '分组理由', task.groupReasons.join('、'), '每个方案任务必须恰好有一条分组理由'))
-    if (task.modifications.length === 0) diagnostics.push(makeDiagnostic(document, task.id, '修改', '', '每个方案任务至少需要一条修改'))
-    if (task.selfChecks.length === 0) diagnostics.push(makeDiagnostic(document, task.id, '自检', '', '每个方案任务至少需要一条自检'))
+    if (task.dependencyReasons.length !== 1) diagnostics.push(makeDiagnostic(document, task.id, '依赖理由', task.dependencyReasons.join('、'), '每个方案任务必须恰好有一条依赖理由', undefined, task.line))
+    if (task.groupReasons.length !== 1) diagnostics.push(makeDiagnostic(document, task.id, '分组理由', task.groupReasons.join('、'), '每个方案任务必须恰好有一条分组理由', undefined, task.line))
+    if (task.modifications.length === 0) diagnostics.push(makeDiagnostic(document, task.id, '修改', '', '每个方案任务至少需要一条修改', undefined, task.line))
+    if (task.selfChecks.length === 0) diagnostics.push(makeDiagnostic(document, task.id, '自检', '', '每个方案任务至少需要一条自检', undefined, task.line))
     if (task.dependencyReasons.length === 1) {
       const reason = task.dependencyReasons[0].trim()
-      if (task.dependencies.length === 0 && reason !== '无') diagnostics.push(makeDiagnostic(document, task.id, '依赖理由', reason, '无依赖时依赖理由必须写“无”'))
-      if (task.dependencies.length > 0 && (reason === '' || reason === '无')) diagnostics.push(makeDiagnostic(document, task.id, '依赖理由', reason, '有依赖时依赖理由必须是非“无”的实现先后说明'))
+      if (task.dependencies.length === 0 && reason !== '无') diagnostics.push(makeDiagnostic(document, task.id, '依赖理由', reason, '无依赖时依赖理由必须写“无”', undefined, task.line))
+      if (task.dependencies.length > 0 && (reason === '' || reason === '无')) diagnostics.push(makeDiagnostic(document, task.id, '依赖理由', reason, '有依赖时依赖理由必须是非“无”的实现先后说明', undefined, task.line))
     }
-    if (task.groupReasons.length === 1 && task.relatedFiles.length > 0 && task.groupReasons[0].trim() === '无') diagnostics.push(makeDiagnostic(document, task.id, '分组理由', task.groupReasons[0], '存在关联文件时必须说明不能安全拆分的原因'))
+    if (task.groupReasons.length === 1 && task.relatedFiles.length > 0 && task.groupReasons[0].trim() === '无') diagnostics.push(makeDiagnostic(document, task.id, '分组理由', task.groupReasons[0], '存在关联文件时必须说明不能安全拆分的原因', undefined, task.line))
     validateResourceField(task, document, task.id, diagnostics)
   } else {
     validateAcceptanceFileRecords(task, document, task.id, diagnostics, options)
-    if (task.expectations.filter((value) => value !== '').length === 0) diagnostics.push(makeDiagnostic(document, task.id, '期望', task.expectations.join('、'), '验收任务至少需要一条非空期望'))
-    if (task.prohibitions.filter((value) => value !== '').length === 0) diagnostics.push(makeDiagnostic(document, task.id, '禁止', task.prohibitions.join('、'), '验收任务至少需要一条非空禁止'))
-    if (task.formalAcceptance.length !== 1) diagnostics.push(makeDiagnostic(document, task.id, '正式验收', task.formalAcceptance.join('、'), '每个验收任务必须恰好有一条正式验收引用列表'))
+    if (task.expectations.filter((value) => value !== '').length === 0) diagnostics.push(makeDiagnostic(document, task.id, '期望', task.expectations.join('、'), '验收任务至少需要一条非空期望', undefined, task.line))
+    if (task.prohibitions.filter((value) => value !== '').length === 0) diagnostics.push(makeDiagnostic(document, task.id, '禁止', task.prohibitions.join('、'), '验收任务至少需要一条非空禁止', undefined, task.line))
+    if (task.formalAcceptance.length !== 1) diagnostics.push(makeDiagnostic(document, task.id, '正式验收', task.formalAcceptance.join('、'), '每个验收任务必须恰好有一条正式验收引用列表', undefined, task.line))
     if (task.formalAcceptance.length === 1) {
       const parsed = parseCheckRefs(task.formalAcceptance[0])
       task.checkRefs = parsed.ids
-      if (parsed.issue !== null) diagnostics.push(makeDiagnostic(document, task.id, '正式验收', task.formalAcceptance[0], parsed.issue))
+      if (parsed.issue !== null) diagnostics.push(makeDiagnostic(document, task.id, '正式验收', task.formalAcceptance[0], parsed.issue, undefined, task.line))
     }
   }
 }
@@ -1173,7 +1174,8 @@ function formatDiagnostic(diagnostic) {
   const document = diagnostic.document || 'plan/checklist'
   const task = diagnostic.taskId === null || diagnostic.taskId === undefined ? '任务全局' : '任务' + diagnostic.taskId
   const value = String(diagnostic.value || '').replace(/[\r\n]+/g, ' ').slice(0, 240)
-  return '- ' + document + ' ' + task + ' 字段「' + diagnostic.field + '」值「' + value + '」：' + diagnostic.message + '；最小修复模板：' + diagnostic.template
+  const position = Number.isInteger(diagnostic.line) && diagnostic.line > 0 ? '；位置：第 ' + diagnostic.line + ' 行' : ''
+  return '- ' + document + ' ' + task + ' 字段「' + diagnostic.field + '」值「' + value + '」：' + diagnostic.message + position + '；最小修复模板：' + diagnostic.template
 }
 
 function finalizeFailure(diagnostics) {
@@ -1208,15 +1210,15 @@ export function validateSavePlanContract(plan, checklist, options) {
   validateCrossDocument(parsedPlan, parsedChecklist, diagnostics, options)
   validateGlobal(parsedChecklist.global, diagnostics)
   validateChecks(parsedChecklist, diagnostics, options)
-  if (diagnostics.length > 0) return finalizeFailure(diagnostics)
+  if (diagnostics.length > 0) return { ...finalizeFailure(diagnostics), limitExceeded: false }
   const summary = buildSummary(parsedPlan, parsedChecklist)
   const summaryText = formatSavePlanSummary(summary)
   summary.summaryCharCount = summaryText.length
   if (summaryText.length > SAVE_PLAN_LIMITS.maxSummaryChars) {
     diagnostics.push(makeDiagnostic('plan/checklist', null, '派遣摘要', summaryText.length, '确定性派遣摘要超过 ' + SAVE_PLAN_LIMITS.maxSummaryChars + ' 字符上限；请减少任务、检查或正文重复'))
-    return finalizeFailure(diagnostics)
+    return { ...finalizeFailure(diagnostics), limitExceeded: true }
   }
-  return { ok: true, summary, diagnostics: [] }
+  return { ok: true, summary, diagnostics: [], limitExceeded: false }
 }
 
 export { parseTaskDocument, CONTRACT_ERROR_PREFIX, pathIssue, parseDependencies, parseResources, parseCheckRefs }

@@ -141,7 +141,8 @@ function verifyModificationPoint(entry, relativePath, point) {
   if (matches !== 1) throw new Error('定位锚点在指定范围内必须恰好匹配一次：' + relativePath + '#' + String(point.id || '') + '（实际 ' + matches + ' 次）')
 }
 
-function verifyPlanSources(summary, pathContext) {
+// 源核实与证据核实为 save_plan 与草稿工具共用实现，导出复用，禁止复制语义。
+export function verifyPlanSources(summary, pathContext) {
   const cache = new Map()
   const targetOwners = new Map()
   const verifyFile = (fileRecord) => {
@@ -177,29 +178,70 @@ function verifyPlanSources(summary, pathContext) {
   return { cache }
 }
 
-function verifyProbeEvidenceRef(cwd, reference, sourceState, pathContext) {
+export function verifyProbeEvidenceRef(cwd, reference, sourceState, pathContext, toolLabel = 'save_plan') {
+  // 前缀由调用方指定：非空才拼「label: 」；空串表示外层调用方已带工具名，不得重复拼。
+  const labelPrefix = typeof toolLabel === 'string' && toolLabel !== '' ? toolLabel + ': ' : ''
   const target = resolveProbeTarget(cwd, reference, pathContext)
   let readTarget
   try {
     readTarget = validateReadTarget(pathContext, target, { expectedType: 'file', purpose: 'probe-evidence' })
   } catch (error) {
-    if (errorCodeOf(error) === 'TARGET_MISSING') throw new Error('save_plan: 【探查者已核实】证据文件不存在：' + JSON.stringify(reference) + probeRefDecorationHint(reference))
-    throw new Error('save_plan: 【探查者已核实】证据文件无法读取：' + JSON.stringify(reference) + '（' + String(error.message || error) + '）')
+    if (errorCodeOf(error) === 'TARGET_MISSING') throw new Error(labelPrefix + '【探查者已核实】证据文件不存在：' + JSON.stringify(reference) + probeRefDecorationHint(reference))
+    throw new Error(labelPrefix + '【探查者已核实】证据文件无法读取：' + JSON.stringify(reference) + '（' + String(error.message || error) + '）')
   }
   const key = sourceCacheKey(readTarget.realPath)
   let buffer
   const cached = sourceState.cache.get(key)
   if (cached !== undefined && cached.buffer !== null) buffer = cached.buffer
   else {
-    try { buffer = readFileSync(readTarget.realPath) } catch (error) { throw new Error('save_plan: 【探查者已核实】证据文件无法读取：' + JSON.stringify(reference) + '（' + String(error.message || error) + '）') }
+    try { buffer = readFileSync(readTarget.realPath) } catch (error) { throw new Error(labelPrefix + '【探查者已核实】证据文件无法读取：' + JSON.stringify(reference) + '（' + String(error.message || error) + '）') }
     sourceState.cache.set(key, { exists: true, path: readTarget.realPath, buffer, text: undefined, lines: undefined })
   }
   const head = buffer.toString('utf8').slice(0, 200)
-  if (!head.includes('探查证据报告')) throw new Error('save_plan: 【探查者已核实】证据文件非探查者落盘（缺「探查证据报告」标题）：' + JSON.stringify(reference))
+  if (!head.includes('探查证据报告')) throw new Error(labelPrefix + '【探查者已核实】证据文件非探查者落盘（缺「探查证据报告」标题）：' + JSON.stringify(reference))
+}
+
+// 方括号包裹的未探查/待确认标记：命中返回匹配文本，未命中返回 null。
+// save_plan 与 edit_plan_draft 共用同一判定与同一时机（合同校验之前），否则草稿工具会
+// 旁路 save_plan 的未探查拒绝，把带标记的方案转正。
+const UNEXPLORED_MARKER_RE = /【[^】]*(?:未探查|待确认)[^】]*】/
+export function unexploredMarkerOf(plan) {
+  if (typeof plan !== 'string') return null
+  const matched = UNEXPLORED_MARKER_RE.exec(plan)
+  return matched === null ? null : matched[0]
 }
 
 // save_plan/save_probe 工具定义只捕获显式目录与持久化依赖，不持有宿主会话状态。
-export function createSaveToolFactories({ savePlanDir, atomicCommit, getPathContext }) {
+export function createSaveToolFactories({ savePlanDir, atomicCommit, atomicReplace, getPathContext }) {
+  // 草稿与正式工件同形落盘：优先 atomicReplace；未提供时回落 atomicCommit（同一套目录/文件授权）。
+  // 两者签名不同（atomicReplace(dir, files, …) / atomicCommit(dir, base, files, …)），回落时按各自形状调用。
+  function replaceFiles(dir, base, files, pathContext) {
+    if (typeof atomicReplace === 'function') return atomicReplace(dir, files, undefined, { pathContext })
+    return atomicCommit(dir, base, files, undefined, { pathContext })
+  }
+
+  // 失败草稿：仅当上下文可用（context 非 null 且 dir 非空串）时写 <dir>/draft 下的 .md_mid，
+  // 供 edit_plan_draft 就地修复后重跑校验；上下文不可用时只降级为一句提示，禁止拼接落盘路径。
+  // 草稿写失败只降级说明，绝不掩盖调用方原本要抛出的报错。
+  function dumpDrafts(context, plan, checklist) {
+    if (context === null || context === undefined || typeof context.dir !== 'string' || context.dir === '') {
+      return { wrote: false, suffix: '（草稿未写成：未解析到可写的草稿目录，请先修复上述失败原因后重试）' }
+    }
+    const draftDir = join(context.dir, 'draft')
+    const planName = `方案-${context.base}.md_mid`
+    const checkName = `验收-${context.base}.md_mid`
+    try {
+      replaceFiles(draftDir, context.base, [{ name: planName, content: plan }, { name: checkName, content: checklist }], context.pathContext)
+    } catch (error) {
+      return { wrote: false, suffix: '（草稿未写成：' + (error instanceof Error ? error.message : String(error)) + '）' }
+    }
+    const relativeOf = (name) => join(savePlanDir, 'draft', name).replace(/\\/g, '/')
+    return {
+      wrote: true,
+      suffix: '\n可用 edit_plan_draft 修改这两份草稿后重试：校验通过会自动转正为正式 .md\n草稿：' + relativeOf(planName) + '、' + relativeOf(checkName),
+    }
+  }
+
   function defineSavePlan() {
     return {
       name: 'save_plan',
@@ -231,35 +273,66 @@ export function createSaveToolFactories({ savePlanDir, atomicCommit, getPathCont
           throw new Error('save_plan: plan/checklist 参数缺失或内容过短（未收到合法参数；调用参数须为合法 JSON，请检查后重试）')
         }
         const plan = args.plan
-        if (/【[^】]*(?:未探查|待确认)[^】]*】/.test(plan)) {
-          throw new Error('save_plan: 方案中包含方括号包裹的未探查/待确认标记。请先申请追加预算继续探查，确认所有项均已探查核实后再调用 save_plan')
-        }
-        const contract = validateSavePlanContract(plan, args.checklist)
-        if (!contract.ok) throw new Error(contract.error)
-        // 合同通过后只读取一次 cwd；真实源核实、证据核实均在 base/目录/atomic 前完成。
+        const checklist = args.checklist
+        // 执行顺序固定：参数校验 → 取一次 cwd → 容错解析上下文（目录/base/会话标识）→ 未探查标记
+        // → 合同校验 → 源核实 → 证据核实 → 用 context 落盘。上下文解析失败只记原错误继续走，
+        // 绝不用路径错误替换合同诊断；判空只认 sessionTag（缺 sessionId 时 base 仍非空）。
         const cwd = cwdOf(exec)
-        if (cwd === '') throw new Error('save_plan: 会话缺少工作区路径，无法落盘')
-        const pathContext = pathContextOf(cwd, getPathContext)
-        let sourceState
-        try {
-          sourceState = verifyPlanSources(contract.summary, pathContext)
-        } catch (error) {
-          throw new Error('save_plan: 源核实失败：' + (error instanceof Error ? error.message : String(error)))
+        let contextError = null
+        let context = null
+        if (cwd === '') contextError = new Error('save_plan: 会话缺少工作区路径，无法落盘')
+        else {
+          try {
+            const resolved = resolveSaveContext(args, exec, savePlanDir, cwd, getPathContext)
+            if (resolved.sessionTag === '') contextError = new Error('save_plan: 会话缺少有效标识，无法隔离落盘事务')
+            else if (resolved.pathContext === null || resolved.pathContext === undefined || resolved.dir === '') contextError = new Error('save_plan: 无法解析允许写入的落盘目录，无法落盘')
+            else context = resolved
+          } catch (error) {
+            contextError = error
+            context = null
+          }
         }
-        // 【探查者已核实】证据校验：方案中标注引用的证据文件必须真实存在、且为探查者
-        // save_probe 落盘的证据报告（标题含「探查证据报告」），杜绝编造证据引用。
-        for (const ref of extractProbeEvidenceRefs(plan)) verifyProbeEvidenceRef(cwd, ref, sourceState, pathContext)
+        // 四处失败出口统一先落草稿再抛错：草稿提示追加在原报错末尾，绝不替换原报错。
+        const failWithDraft = (message) => {
+          throw new Error(message + dumpDrafts(context, plan, checklist).suffix)
+        }
+        if (unexploredMarkerOf(plan) !== null) {
+          failWithDraft('save_plan: 方案中包含方括号包裹的未探查/待确认标记。请先申请追加预算继续探查，确认所有项均已探查核实后再调用 save_plan')
+        }
+        const contract = validateSavePlanContract(plan, checklist)
+        if (!contract.ok) {
+          // 派遣摘要超限只能改写更短的方案，草稿助不了修复：不落草稿、不追加提示。
+          if (contract.limitExceeded === true) throw new Error(contract.error)
+          failWithDraft(contract.error)
+        }
+        // 上下文不可用（缺 cwd/会话标识，或目录授权失败）时无法核实真实源与证据：跳过核实，
+        // 全部校验通过后一律以已记下的原错误拒绝落盘，不落草稿、不拼接任何落盘路径。
+        if (context !== null) {
+          const pathContext = context.pathContext
+          let sourceState
+          try {
+            sourceState = verifyPlanSources(contract.summary, pathContext)
+          } catch (error) {
+            failWithDraft('save_plan: 源核实失败：' + (error instanceof Error ? error.message : String(error)))
+          }
+          // 【探查者已核实】证据校验：方案中标注引用的证据文件必须真实存在、且为探查者
+          // save_probe 落盘的证据报告（标题含「探查证据报告」），杜绝编造证据引用。
+          try {
+            for (const ref of extractProbeEvidenceRefs(plan)) verifyProbeEvidenceRef(cwd, ref, sourceState, pathContext)
+          } catch (error) {
+            failWithDraft(error instanceof Error ? error.message : String(error))
+          }
+        }
         // T3：base 内嵌调用方会话标识段（主会话与规划子代理同秒落盘不再撞名）。
-        const context = resolveSaveContext(args, exec, savePlanDir, cwd, getPathContext)
-        const { sessionTag, dir, base } = context
-        if (sessionTag === '') throw new Error('save_plan: 会话缺少有效标识，无法隔离落盘事务')
+        if (context === null) throw contextError !== null && contextError !== undefined ? contextError : new Error('save_plan: 会话缺少有效标识，无法隔离落盘事务')
+        const { dir, base } = context
         const planFile = join(dir, `方案-${base}.md`)
         const checkFile = join(dir, `验收-${base}.md`)
         try {
           atomicCommit(dir, base, [
-            { name: `方案-${base}.md`, content: args.plan },
-            { name: `验收-${base}.md`, content: args.checklist },
-          ], undefined, { pathContext })
+            { name: `方案-${base}.md`, content: plan },
+            { name: `验收-${base}.md`, content: checklist },
+          ], undefined, { pathContext: context.pathContext })
         } catch (error) {
           throw new Error(`save_plan: 落盘失败：${error instanceof Error ? error.message : String(error)}`)
         }

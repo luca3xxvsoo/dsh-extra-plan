@@ -159,7 +159,7 @@ function isBootstrapPhase(agent, events) {
 
 
 // 免计瀑布预算的工具白名单（planner 预算计数与 pre-execute 闸门豁免共用）。
-const FREE_TOOLS = new Set(['save_plan'])
+const FREE_TOOLS = new Set(['save_plan', 'edit_plan_draft'])
 
 // ContentBlock 数组首条 text 块的文本（无 text 块 → ''）
 function firstTextOfBlocks(blocks) {
