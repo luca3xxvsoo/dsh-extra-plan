@@ -650,23 +650,58 @@ function startupArchiveForApply(ctx) {
       console.warn('[dsh-extra-plan] startup archive failed（不阻断启动）: root ctx.effect unavailable')
       return
     }
-    ctx.effect(() => {
-      const handle = startUsageLedgerBackground(ctx, startupContext)
-      let disposePromise
-      const dispose = () => {
-        if (disposePromise !== undefined) return disposePromise
-        handle.cancel()
-        disposePromise = Promise.resolve(handle.done).then(() => undefined, (error) => {
-          console.warn('[dsh-extra-plan] startup archive dispose failed（不阻断卸载）: ' + (error instanceof Error ? error.message : String(error)))
+    // 账本扫描体：回调体逐字沿用原 ctx.effect 内容，自带 try/catch（可能运行在 cordis 帧之外）。
+    const startBackground = () => {
+      try {
+        const handle = startUsageLedgerBackground(ctx, startupContext)
+        let disposePromise
+        const dispose = () => {
+          if (disposePromise !== undefined) return disposePromise
+          handle.cancel()
+          disposePromise = Promise.resolve(handle.done).then(() => undefined, (error) => {
+            console.warn('[dsh-extra-plan] startup archive dispose failed（不阻断卸载）: ' + (error instanceof Error ? error.message : String(error)))
+          })
+          return disposePromise
+        }
+        Promise.resolve(handle.done).then((result) => {
+          if (result.status !== 'archived' && result.status !== 'up-to-date' && result.status !== 'cancelled') console.warn('[dsh-extra-plan] startup archive ' + result.status + ': ' + (result.reason || 'unknown'))
+        }, (error) => {
+          console.warn('[dsh-extra-plan] startup archive failed（不阻断启动）: ' + (error instanceof Error ? error.message : String(error)))
         })
-        return disposePromise
-      }
-      Promise.resolve(handle.done).then((result) => {
-        if (result.status !== 'archived' && result.status !== 'up-to-date' && result.status !== 'cancelled') console.warn('[dsh-extra-plan] startup archive ' + result.status + ': ' + (result.reason || 'unknown'))
-      }, (error) => {
+        return dispose
+      } catch (error) {
         console.warn('[dsh-extra-plan] startup archive failed（不阻断启动）: ' + (error instanceof Error ? error.message : String(error)))
+        return undefined
+      }
+    }
+    const ready = safeContextGet(ctx, 'appReady')
+    // 无 appReady 服务：与改动前逐字等价，仍在 effect 挂载时立即起扫。
+    if (ready === undefined || ready === null || typeof ready.onReady !== 'function') {
+      ctx.effect(startBackground, 'dsh-extra-plan-settings: usage ledger background')
+      return
+    }
+    // 有 appReady：把账本扫描推迟到启动完成后的下一个宏任务，启动关键路径不再等扫描。
+    ctx.effect(() => {
+      let closed = false
+      let pending = null
+      let dispose
+      const cancelReady = ready.onReady(() => {
+        pending = setImmediate(() => {
+          pending = null
+          if (closed) return
+          try {
+            dispose = startBackground()
+          } catch (error) {
+            console.warn('[dsh-extra-plan] startup archive failed（不阻断启动）: ' + (error instanceof Error ? error.message : String(error)))
+          }
+        })
       })
-      return dispose
+      return () => {
+        closed = true
+        if (typeof cancelReady === 'function') cancelReady()
+        if (pending !== null) { clearImmediate(pending); pending = null }
+        return typeof dispose === 'function' ? dispose() : undefined
+      }
     }, 'dsh-extra-plan-settings: usage ledger background')
   } catch (error) {
     console.warn('[dsh-extra-plan] startup archive failed（不阻断启动）: ' + (error instanceof Error ? error.message : String(error)))

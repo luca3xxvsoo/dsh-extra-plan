@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-11-15 19:40:23（脚本自动更新时间戳行）
+> 上次同步：2026-11-16 00:01:03（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -33,9 +33,9 @@
 | 执行类委派只在 route=executor 时放行（未放行的拒绝文案） | plugins/dsh-extra-plan/lib/gate-decisions.js、index.js | executorDenyReason、mainGateReason |
 | 规划子代理分支闸门（planner 写禁+预算） | index.js | plannerGateReason、shellMutationReason |
 | 会话事件快照／角色常量与身份识别（ROLE_IDS/ROLE_ORDERS 只描述身份与顺序，不承载权限）／单次快照复用（execEvents）／planner descriptor 缓存／usage 血缘上下文 | lib/agent-session.js、lib/agent-runtime.js、lib/runtime-lifecycle.js、lib/role-contract.js、index.js | sessionEvents、isSubagentChild、isLiveDelegation、createAgentRuntime、applyChildPolicy、isChild、isPlannerChild、toolSchemasOf、usageContextOf、usageRootOf、childBaseline |
-| 同步 usage 扫描/聚合/覆盖式更新／路径授权（同步入口 `scanUsageRows`/`archiveLedger`/`startupArchive`；扫描白名单、v4 多帧解压、九字段身份合并、单调性保护与单 archive temp→rename；当轮内存模式/血缘识别由 `scanSessionPresets` 收集首帧，白名单由 `startupArchiveUnsafe` 过滤，`startupArchive` 再以日志 `mtime`→账本 `ts` 做增量判定，不读写持久 `session-presets`；默认 Host 账本为 `logs/dsh-extra-plan/extra-plan-usage-ledger.jsonl`，错误诊断按需写 `logs/dsh-extra-plan/extra-plan-usage-errors.jsonl`（`ts`/`reason`/`message` 均为字符串），共享目录中的其他日志由各自功能独立管理，统计只读快照不负责归档事务） | plugins/dsh-extra-plan/lib/usage-ledger.js | enumerateSessionLogs、scanUsageRows、scanUsageRowsOf、scanSessionPresets、ensureLedgerDirectory、publishArchive |
+| 同步 usage 扫描/聚合/覆盖式更新／路径授权（同步入口 `scanUsageRows`/`archiveLedger`/`startupArchive`；扫描白名单、v4 多帧解压、九字段身份合并、单调性保护与单 archive temp→rename；`startupArchive` 先以日志 `mtime`→账本 `ts` 做增量判定裁定 changed，当轮内存模式/血缘识别由 `scanSessionPresets` 只对 changed 文件按递进窗口读首帧，白名单由 `startupArchiveUnsafe` 过滤后才解析，不读写持久 `session-presets`；默认 Host 账本为 `logs/dsh-extra-plan/extra-plan-usage-ledger.jsonl`，错误诊断按需写 `logs/dsh-extra-plan/extra-plan-usage-errors.jsonl`（`ts`/`reason`/`message` 均为字符串），共享目录中的其他日志由各自功能独立管理，统计只读快照不负责归档事务） | plugins/dsh-extra-plan/lib/usage-ledger.js | enumerateSessionLogs、scanUsageRows、scanUsageRowsOf、scanSessionPresets、ensureLedgerDirectory、publishArchive |
 | 会话状态生命周期／disposed 收尾／同步扫描聚合与单调性保护／root 与自身 session 血缘（断链/循环仍以空 root 合法落账；rootSessionId/agentPreset 可空，非法 context 拒绝）／四桶字段（provider、input/cacheRead/cacheWrite/output）／账本按九字段身份恒等一行、重复扫描结果恒等、本次扫描小于现状保留旧值并告警一次、`archiveRowOf` 的 `ts` 取成功解析 session 文件 ISO 毫秒 mtime／后台 controller owner 单飞与同根串行、取消提交边界 | index.js、lib/agent-runtime.js、lib/usage-ledger.js、lib/usage-ledger-background.js、lib/usage-ledger-worker.js | usageContextOf、usageRootOf、mergedArchiveGroups、archiveRowOf、noteRunCodeSubCall、childBaseline、startUsageLedgerBackground、createWorkerHandle、settleAfterExit、validateAndRebuild |
-| 启动归档／插件内置自动归档／H 默认账本唯一严格归档（默认账本为 `logs/dsh-extra-plan/extra-plan-usage-ledger.jsonl`；诊断仅按需写 `logs/dsh-extra-plan/extra-plan-usage-errors.jsonl`，每行仅有字符串 `ts`/`reason`/`message`；共享目录可含其他日志，本模块只管理本人两目标与 temp/lock；settings 行 apply 期由 root `ctx.effect` 调度固定 Worker；主线程只传 pathContext 快照，Worker 复用 `startupArchive` 完成扫描/解压/聚合/严格解析/序列化/发布，失败只 `failed`/warn 不回退；`archiveLedger`/`startupArchive` 仍可同步直调；当轮内存首帧模式/血缘识别后按白名单与日志当前 `mtime` 对账本 `ts` 做统一 ISO 毫秒增量比较，相同跳过完整用量重扫，变化/回退/未入账才解析，成功记文件 mtime，失败批次不推进 archive 水位并重试；不读写持久 `session-presets`，健康 up-to-date 零锁零写；首次 archive rename 前可协作取消并清本人 temp/lock，提交后返回真实 archived；单 archive temp→rename，不是双文件事务；预算 STARTUP_ARCHIVE_BUDGET_MS=3000ms 只在 archive 阶段检查点生效，不是扫描期限；可捕获的后台错误只报告失败/跳过并按需诊断留痕，apply 不等待归档、不会回退主线程同步扫描；账本路径由启动归档固定拼接，配置项 usageLedger.path 已退役；首行说明行位置与固定15键校验由本实现负责，options.onCheck 仅测试探针） | plugins/dsh-extra-plan/lib/usage-ledger.js、plugins/dsh-extra-plan/lib/usage-ledger-background.js、plugins/dsh-extra-plan/lib/usage-ledger-worker.js | archiveLedger、startupArchive、startupArchiveUnsafe、parseStrictLedgerText、assertUniqueArchiveRows、archiveTextOf、publishArchive、reportFailure、recordDiagnostic、acquireArchiveLock、startUsageLedgerBackground、createWorkerHandle |
+| 启动归档／插件内置自动归档／H 默认账本唯一严格归档（默认账本为 `logs/dsh-extra-plan/extra-plan-usage-ledger.jsonl`；诊断仅按需写 `logs/dsh-extra-plan/extra-plan-usage-errors.jsonl`，每行仅有字符串 `ts`/`reason`/`message`；共享目录可含其他日志，本模块只管理本人两目标与 temp/lock；settings 行 apply 期只注册调度，存在 appReady 时在单层 root `ctx.effect` 内 `onReady` 之后经 `setImmediate` 发起固定 Worker，缺失或无 `onReady` 时回落 apply 内直接发起；主线程只传 pathContext 快照，Worker 复用 `startupArchive` 完成扫描/解压/聚合/严格解析/序列化/发布，失败只 `failed`/warn 不回退；`archiveLedger`/`startupArchive` 仍可同步直调；先按日志当前 `mtime` 与账本 `ts` 做统一 ISO 毫秒增量比较裁定 changed（相同跳过完整用量重扫，变化/回退/未入账才解析），只对 changed 文件按 512、8192、65536、整份递进窗口读首帧并判白名单、命中才解析；模式/血缘结果仅当轮内存，成功记文件 mtime，失败批次不推进 archive 水位并重试；不读写持久 `session-presets`，健康 up-to-date 零锁零写；首次 archive rename 前可协作取消并清本人 temp/lock，提交后返回真实 archived；单 archive temp→rename，不是双文件事务；预算 STARTUP_ARCHIVE_BUDGET_MS=3000ms 只在 archive 阶段检查点生效，不是扫描期限；可捕获的后台错误只报告失败/跳过并按需诊断留痕，apply 不等待归档、不会回退主线程同步扫描；账本路径由启动归档固定拼接，配置项 usageLedger.path 已退役；首行说明行位置与固定15键校验由本实现负责，options.onCheck 仅测试探针） | plugins/dsh-extra-plan/lib/usage-ledger.js、plugins/dsh-extra-plan/lib/usage-ledger-background.js、plugins/dsh-extra-plan/lib/usage-ledger-worker.js | archiveLedger、startupArchive、startupArchiveUnsafe、parseStrictLedgerText、assertUniqueArchiveRows、archiveTextOf、publishArchive、reportFailure、recordDiagnostic、acquireArchiveLock、startUsageLedgerBackground、createWorkerHandle |
 | 方案与验收落盘／save_plan 双写（逐文件操作与 M 点合同；修改前范围/唯一原文锚点→未来验收定位；真实源核实与行漂移取证；主会话侧任意路由态放行的受限规划工件，仅写 cwd/.extra-plan；工具不自动调度） | lib/save-tool-factories.js、lib/save-contract.js、index.js | defineSavePlan、registerSavePlan、saveArtifactBase |
 | 落盘单次提交／有限清理（atomic/commit） | lib/save-persistence.js、index.js | atomicCommit |
 | 线索落盘／save_probe／证据报告（probe/evidence；限制值唯一来自 `save-contract.js#PROBE_LIMITS`；step-00 PR23/PR34/PR35 回归；主会话侧放行条件保持现状——route=plan + 目的已定 + 澄清完成；extractProbeEvidenceRefs 顺序固定：整体成对剥除（循环）→ 按顿号/分号/竖线拆分 → 逐段成对剥除 + trim → 过滤空串 → 去重；拆分符与剥除集均不含空格、半角逗号、`.`、`/`，单侧一律不剥） | lib/save-contract.js、lib/save-probe-validation.js、lib/save-tool-factories.js、index.js | validateProbe、renderProbeMarkdown、extractProbeEvidenceRefs |
@@ -142,11 +142,11 @@
 | plugins/dsh-extra-plan/lib/save-tool-factories.js | 459 | 显式依赖工厂：save_plan 执行顺序固定——参数校验（plan/checklist 均为字符串且各 ≥200 字）→ 取一次 cwd → 容错解析上下文（目录/base/会话标识，解析失败只记原错误继续走、绝不替换合同诊断）→ 未探查标记 → 合同校验 → 源核实 → 证据核实 → 用 context 单次 atomicCommit 落盘；未探查标记、合同校验（派遣摘要超限除外，只能改写更短的方案，不落草稿）、源核实、证据核实四处失败出口统一先落成对 .md_mid 草稿再抛错，草稿提示追加在原报错末尾、上下文不可用或草稿写失败只降级为一句提示；合法正文逐字保存、structured output 仅 paths、render 仅将两个 paths 投影为唯一 text ContentBlock；save_probe 保留既有证据诊断与落盘；不缓存 ctx/agent/会话状态。 |
 | plugins/dsh-extra-plan/lib/sdk-text-cache.js | 161 | apply 级 agent-keyed WeakMap SDK 文本缓存：完整 renderer 输入保守指纹、language/renderer 身份比较、并发 Promise 合并、reject/过期 Promise 不回写、dispose 回收；不持有 sessionId 或 PromptAssembly |
 | plugins/dsh-extra-plan/lib/settings-contract.js | 188 | 服务端设置 descriptor 单一合同：11 项的类型/生成默认引用/校验/UI metadata 与权威-投影双定位器，并导出 `createDefaultSettings`、分组与投影遍历源 |
-| plugins/dsh-extra-plan/lib/settings.js | 789 | 11 字段 volatile Config、页面策略与 loopback GET/PUT；权威值在唯一 settings 行，PUT 先拒绝空/null/数组/原始/未知/非法混合载荷，缺失/非法 gateWords 回落当前资产默认后与普通项一并补齐，再只 edit 全局行，no-op 也重读最终快照并等待 profileSync，结构化区分 synced/not-installed/unavailable/failed/partial。 |
+| plugins/dsh-extra-plan/lib/settings.js | 824 | 11 字段 volatile Config、页面策略与 loopback GET/PUT；权威值在唯一 settings 行，PUT 先拒绝空/null/数组/原始/未知/非法混合载荷，缺失/非法 gateWords 回落当前资产默认后与普通项一并补齐，再只 edit 全局行，no-op 也重读最终快照并等待 profileSync，结构化区分 synced/not-installed/unavailable/failed/partial。 |
 | plugins/dsh-extra-plan/lib/shell-mutation.js | 424 | 跨平台命令文本解码与 pwsh/bash 写形态判定；纯函数、不持有 apply 状态 |
 | plugins/dsh-extra-plan/lib/usage-ledger-background.js | 218 | 后台账本调度 controller：只快照可信 pathContext，按 owner 单飞与 hostDataRoot 串行创建固定 Worker，处理协议、协作取消和 exit 后终态；不复制扫描算法。 |
 | plugins/dsh-extra-plan/lib/usage-ledger-worker.js | 116 | 真实 Worker 入口：重建 pathContext 并复用同步 startupArchive 完成扫描、解析与发布，传递小型终态结果，响应共享取消位后关闭 port。 |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | 1294 | 账本唯一实现：默认 Host 目标为 `logs/dsh-extra-plan/extra-plan-usage-ledger.jsonl`，诊断按需写 `logs/dsh-extra-plan/extra-plan-usage-errors.jsonl`；扫描聚合 + 覆盖式更新 + 启动入口（常量与身份键 → 扫描 %DSH_HOME%/sessions 下 v4 会话日志并按九字段身份聚合 → 内存首帧模式/血缘识别后按日志 mtime 与账本 ts 做增量判定 → 读现有 archive 后覆盖式更新、单调性保护、说明行、单 archive temp→rename 原子发布 → startupArchive 启动入口）；固定15键（rootSessionId/agentPreset 可空）、四桶口径、严格白名单、一次 `O_EXCL` 简易互斥（拿不到即跳过、不接管不删他人锁），失败按需留痕，可处理异常返回结构化状态，正常由 settings Worker 调用；直调 API 仍同步，真实启动及内存风险需另行验证；共享目录中的其他日志不由本模块接管。 |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | 1383 | 账本唯一实现：默认 Host 目标为 `logs/dsh-extra-plan/extra-plan-usage-ledger.jsonl`，诊断按需写 `logs/dsh-extra-plan/extra-plan-usage-errors.jsonl`；扫描聚合 + 覆盖式更新 + 启动入口（常量与身份键 → 扫描 %DSH_HOME%/sessions 下 v4 会话日志并按九字段身份聚合 → 按日志 mtime 与账本 ts 判定 changed、只对变化文件按递进窗口读首帧并判白名单才解析 → 读现有 archive 后覆盖式更新、单调性保护、说明行、单 archive temp→rename 原子发布 → startupArchive 启动入口）；固定15键（rootSessionId/agentPreset 可空）、四桶口径、严格白名单、一次 `O_EXCL` 简易互斥（拿不到即跳过、不接管不删他人锁），失败按需留痕，可处理异常返回结构化状态，正常由 settings Worker 调用；直调 API 仍同步，真实启动及内存风险需另行验证；共享目录中的其他日志不由本模块接管。 |
 | plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | 789 | 从 agent.cordis.yml 校验并生成 runtime 默认常量、纯主/角色 definition 与 client 标记区块（顶层结构逐字平移并保留 group/isolate/!!js）；默认仓库七输出，自定义 client 默认关闭；支持 --check 且坏源不覆盖 last-known-good（上次已知良好版本） |
 
 ## 函数索引
@@ -1112,17 +1112,18 @@
 | plugins/dsh-extra-plan/lib/settings.js | conflictProfileSync | L546-556 | 构造设置行冲突的同步视图，带上冲突原因与行事实，状态固定标为 conflict。 |  |
 | plugins/dsh-extra-plan/lib/settings.js | createApiHandler | L558-640 | 生成设置接口处理器：仅本机回环可访问，GET 取状态、PUT 校验收敛后改行并触发同步。 |  |
 | plugins/dsh-extra-plan/lib/settings.js | responseForProfile | L559-572 | 按同步状态推导响应状态码与总体结论，未匹配的请求一律判为冲突并以 409 返回。 |  |
-| plugins/dsh-extra-plan/lib/settings.js | startupArchiveForApply | L642-674 | 启动时尝试归档用量记录，缺少宿主根目录则跳过，归档整体异常只告警而不阻断插件启动。 |  |
-| plugins/dsh-extra-plan/lib/settings.js | dispose | L656-663 | root effect disposer：请求后台账本任务协作取消并等待 done，卸载不强杀或提前释放活 Worker。 |  |
-| plugins/dsh-extra-plan/lib/settings.js | apply | L676-787 | 插件入口：启动归档、挂载客户端载体、设置接口与预设同步，并注入设置策略与生命周期。 |  |
-| plugins/dsh-extra-plan/lib/settings.js | onResult | L683 | 同步器结果回调，先把结果置为非待定状态再写入终态缓存，并输出一条同步状态日志留痕。 |  |
-| plugins/dsh-extra-plan/lib/settings.js | editorOf | L685-692 | 取配置编辑器服务并做空值兜底，服务缺失或取值抛错时回退为调用方传入的备用编辑器。 |  |
-| plugins/dsh-extra-plan/lib/settings.js | documentPathOf | L693-701 | 取编辑器同步文档路径再退回文档路径，取值异常或非字符串时返回 undefined 不抛错。 |  |
-| plugins/dsh-extra-plan/lib/settings.js | environmentSnapshot | L702 | 采集 DSH_HOME 与 DSH_PROFILE 两个环境变量作为同步环境快照，缺项记为 undefined。 |  |
-| plugins/dsh-extra-plan/lib/settings.js | conflictResult | L703-717 | 生成设置行冲突的同步结果并写入终态缓存，同时把请求字段与冲突原因一并原样带回结果。 |  |
-| plugins/dsh-extra-plan/lib/settings.js | syncEditor | L718-760 | 在给定编辑器上校验权威行、生成稳定快照并入队同步，任一步异常即转失败结果不抛出。 |  |
-| plugins/dsh-extra-plan/lib/settings.js | settledSettings | L761-765 | 设置落定回调，按首次或后续落定选择触发标签交给同步，并累计落定次数以便区分来源。 |  |
-| plugins/dsh-extra-plan/lib/settings.js | settledError | L766-778 | 设置落定回调发生异常时构造失败结果并写入终态缓存，只输出告警而不向调用方抛出错误。 |  |
+| plugins/dsh-extra-plan/lib/settings.js | startupArchiveForApply | L642-709 | 启动时尝试归档用量记录，缺少宿主根目录则跳过，归档整体异常只告警而不阻断插件启动。 |  |
+| plugins/dsh-extra-plan/lib/settings.js | startBackground | L654-676 | 创建账本后台句柄并返回可取消的 dispose，异常只告警不阻断启动。 |  |
+| plugins/dsh-extra-plan/lib/settings.js | dispose | L658-665 | root effect disposer：请求后台账本任务协作取消并等待 done，卸载不强杀或提前释放活 Worker。 |  |
+| plugins/dsh-extra-plan/lib/settings.js | apply | L711-822 | 插件入口：启动归档、挂载客户端载体、设置接口与预设同步，并注入设置策略与生命周期。 |  |
+| plugins/dsh-extra-plan/lib/settings.js | onResult | L718 | 同步器结果回调，先把结果置为非待定状态再写入终态缓存，并输出一条同步状态日志留痕。 |  |
+| plugins/dsh-extra-plan/lib/settings.js | editorOf | L720-727 | 取配置编辑器服务并做空值兜底，服务缺失或取值抛错时回退为调用方传入的备用编辑器。 |  |
+| plugins/dsh-extra-plan/lib/settings.js | documentPathOf | L728-736 | 取编辑器同步文档路径再退回文档路径，取值异常或非字符串时返回 undefined 不抛错。 |  |
+| plugins/dsh-extra-plan/lib/settings.js | environmentSnapshot | L737 | 采集 DSH_HOME 与 DSH_PROFILE 两个环境变量作为同步环境快照，缺项记为 undefined。 |  |
+| plugins/dsh-extra-plan/lib/settings.js | conflictResult | L738-752 | 生成设置行冲突的同步结果并写入终态缓存，同时把请求字段与冲突原因一并原样带回结果。 |  |
+| plugins/dsh-extra-plan/lib/settings.js | syncEditor | L753-795 | 在给定编辑器上校验权威行、生成稳定快照并入队同步，任一步异常即转失败结果不抛出。 |  |
+| plugins/dsh-extra-plan/lib/settings.js | settledSettings | L796-800 | 设置落定回调，按首次或后续落定选择触发标签交给同步，并累计落定次数以便区分来源。 |  |
+| plugins/dsh-extra-plan/lib/settings.js | settledError | L801-813 | 设置落定回调发生异常时构造失败结果并写入终态缓存，只输出告警而不向调用方抛出错误。 |  |
 | plugins/dsh-extra-plan/lib/shell-mutation.js | commandTextOf | L39-51 | 从执行参数里取命令文本：兼容 JSON 字符串与对象两种形态，缺失或非法返回空串 |  |
 | plugins/dsh-extra-plan/lib/shell-mutation.js | pwshCommandOf | L53 | PowerShell 侧的命令取文本入口，直接复用通用取文本逻辑，不额外解析也不做参数校验 |  |
 | plugins/dsh-extra-plan/lib/shell-mutation.js | bashCommandOf | L54 | bash 侧的命令取文本入口，与 PowerShell 侧共用同一取文本实现不另设规则 |  |
@@ -1173,70 +1174,76 @@
 | plugins/dsh-extra-plan/lib/usage-ledger.js | textOfBytes | L137-139 | 先经 bytesOf 归一，再按 UTF-8 解码为字符串 |  |
 | plugins/dsh-extra-plan/lib/usage-ledger.js | isSessionDirectoryName | L142-146 | 判目录名去掉 session- 前缀后是否匹配 UUID 模式，用于筛出会话目录 |  |
 | plugins/dsh-extra-plan/lib/usage-ledger.js | listEntries | L148-154 | readdirSync withFileTypes 列举目录项，异常一律返回空数组 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | enumerateSessionLogs | L157-197 | 枚举 %DSH_HOME%/sessions 下的 v4 会话日志（会话目录名只认 session-<uuid> 与裸 <uuid>，其余跳过）。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | frameEndAt | L201-229 | zstd 帧切分：从帧起点解析 descriptor、字典与内容长度、逐个 block header，返回帧结束偏移；非法块类型或截断返回 null |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | decodedLinesOf | L236-288 | 生成器函数：按帧边界循环 zstdDecompressSync 解压，跳过 skippable frame，流式 UTF-8 解码并按换行切行；魔数非法或帧截断抛错 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | finiteNumberOrZero | L291-293 | 非负有限数原样返回，其余归零 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | stringOrEmpty | L295-297 | 字符串原样返回，其余归空串 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | intOrNull | L299-301 | 非负整数原样返回，其余返回 null |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | isoOf | L303-306 | 毫秒时间戳转 ISO 字符串，非法值用 Date.now() 兜底 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | sessionMetaOf | L309-324 | 从 session 事件取会话元信息（id 缺失用目录名，含 cwd/agentPreset/parentSession/delegationDepth/origin），delegationDepth 缺失记 0 且 hasExplicitDepth=false |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | usageOf | L327-345 | 从 assistant/message 事件取 usage 四桶，缺失/非法字段归零，非目标事件返回空。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | presetOfSelectedEvent | L348-355 | 依次在事件顶层与 data 的 agentPreset/preset/id 里取首个非空字符串，取不到返回空串 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | lineageOfRequestHeader | L358-366 | 从 request/header 的 parentSession 与 delegationDepth 取血缘兜底值，两者都缺返回 null |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | scanLogText | L369-414 | 对单个会话日志文本做前缀粗筛后逐行解析，累加 usage 到身份分组。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | hasOwn | L417-419 | Object.prototype.hasOwnProperty 的调用封装 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | identityValueOf | L421-425 | 身份键归一：delegationDepth 只收非负整数、schemaVersion 原样、其余只收字符串 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | identityKeyOf | L427-431 | 按 IDENTITY_KEYS 顺序取归一值，JSON.stringify 成九字段身份键 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | rootSessionOf | L435-451 | 沿 parentById 链上溯求血缘根：depth 1 直接取 parent，更深逐级上溯，链路缺失或成环返回空串 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | isChildSession | L453-455 | delegationDepth>0 或 parentSessionId 非空或 origin=subagent 即判为子会话 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | roleOf | L458-461 | 非子会话固定 main；子会话按 USAGE_ROLE_BY_PRESET 映射四角色，未命中记 child |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | emptyGroup | L463-482 | 按身份建零值聚合组：四桶与 calls 归零、seq 为 null、ts 空串 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | compareValues | L484-488 | 两值转字符串后比较（null/undefined 视作空串），返回 -1/0/1 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | rowSort | L490-496 | 行排序比较器：先按 IDENTITY_KEYS 逐键比较，再按 seq（null 视空）比较 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | addUsageToGroups | L498-519 | 按身份键累加进 groups：四桶与 calls 累加，seq/ts 只在本次 seq 不小于既有水位时更新 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | allowedOf | L521-525 | 白名单归一：未传用 ALLOWED_PRESETS，Set 转数组，数组原样，其余回落 ALLOWED_PRESETS |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | scanUsageRowsOf | L527-614 | 按白名单解码日志、校验读取指纹、解析 usage 并按九字段聚合；可追踪整批失败以阻止水位推进。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | markFailed | L534-538 | 把单个日志失败原因登记到 scanOutcome，供整批失败重试判定。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | fingerprintStable | L539-556 | 读后重新 stat 比对 size/mtime，文件缺失或变化即登记失败。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | scanUsageRows | L617-628 | 公开同步全量扫描：枚举并 stat 会话日志后调用 scanUsageRowsOf，返回扫描 rows/stats（按选项可附 scanOutcome），不在此执行归档单调性保护。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | firstFrameSessionOf | L630-670 | 从会话日志首帧解析 session 元数据；启动模式层仅把结果用于当轮内存白名单/血缘预筛，现有调用仍先整文件读盘。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | scanSessionPresets | L672-697 | 枚举可读会话日志，逐份整文件读盘并只解首帧，在本轮内存收集身份/预设/父链与 size/mtime；白名单由 `startupArchiveUnsafe` 过滤，不读写持久缓存，供 mtime 与账本 ts 比较使用。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | mergedFsOps | L700-702 | 把注入的 fs 与默认实现合并，供夹具替换单点文件操作。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | nowOf | L704-714 | 取当前毫秒时间：clock 可传函数或带 now() 的对象，非法值回落 Date.now() |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | hostRootOf | L716-722 | 从 pathContext 取 host 数据根；空根即跳过本次启动扫描。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | tokenNumber | L723-725 | 读组内 token 字段的非负有限数，非法归零 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | identityValue | L727-731 | 账本行身份键取值：delegationDepth 只收非负整数、schemaVersion 原样、其余只收字符串 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | groupSort | L733-739 | 合并组排序比较器：先按 IDENTITY_KEYS 逐键比较，再按 maxSeq（null 视空）比较 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | validDedupeKey | L741-747 | 判行能否提供去重水位：是对象且 sessionId 非空、seq 为非负整数 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | validationIssue | L748-767 | 单行 15 键与身份字段合法性检查，返回问题文本供严格解析组错误码。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | parseStrictLedgerText | L770-804 | 严格解析既有 archive：坏 JSON、说明行位置、non-v2 与 15 键合法性逐行校验，不合法即拒绝发布。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | identityOf | L806-810 | 按 IDENTITY_KEYS 从行抽出九字段身份对象 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | identityKeyOfRow | L812-815 | 把行身份的九字段序列化成 JSON 键，作为合并分组键 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | emptyGroupOf | L817-829 | 按九字段身份建立聚合组：四桶归零、maxSeq/_latestSeq 为 null、latestTs 为空串。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | groupFromArchiveRow | L831-841 | 账本行转合并组：四桶取行内值，seq 有效时记 maxSeq 并落到 latestTs |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | groupFromScanRow | L844-855 | 扫描行转合并组：四桶与 calls 取扫描行值，seq 有效时保存水位并复制扫描行 ts；日志扫描行的 ts 为成功解析文件的 ISO 毫秒 mtime。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | tokenTotalOf | L857-861 | 合并组四桶求和，用于单调性比较 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | mergedArchiveGroups | L866-910 | archive 现有行与本次扫描行按身份合并：覆盖式更新 + 单调性保护（小于现状保留旧值并记告警）。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | finalizedGroups | L912-918 | 合并组按 groupSort 排序并逐组复制，剔除内部字段 _latestSeq |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | assertUniqueArchiveRows | L920-928 | 同一完整身份出现多条累计行即报 duplicate-archive，发布前拒绝。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | archiveRowOf | L930-948 | 把聚合身份投影为固定 15 键数据行（`ts` 取成功解析 session 文件的 ISO 毫秒 mtime、`seq` 取会话内事件序号且不作主键）。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | archiveTextOf | L950-959 | 说明行（首行唯一）+ 数据行的序列化，归档文本唯一来源。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | ensureLedgerDirectory | L961-968 | 上下文缺失直接返回；否则先授权再递归建账本目录，随后按目录类型回读校验，失败即抛错。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | authorizeWriteTarget | L970-972 | 写目标 H/W 双根授权（prepareWriteTarget，含用途与期望类型）。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | authorizeReadIfPresent | L974-980 | 读目标存在时做只读授权复核，缺失不报错。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | optionalRead | L982-990 | 容错读：ENOENT 视为不存在，其它错误转 read-failed。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | recordDiagnostic | L992-1004 | 仅在原调用需要留痕时向 Host `logs/dsh-extra-plan/extra-plan-usage-errors.jsonl` 按需追加一行 JSONL；字段恰为字符串 `ts`、`reason`、`message`，`ts` 为诊断发生时间；写失败静默忽略，不阻断启动。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | reportFailure | L1006-1016 | 失败统一出口：warn + 写诊断行 + 返回 { status:'failed', reason, error }。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | publishArchive | L1020-1035 | 单目标原子发布：写同目录临时文件 → 预算检查 → rename 覆盖 archive；失败清理临时文件、既有账本原样保留。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | acquireArchiveLock | L1040-1057 | 一次 O_EXCL 创建 <archive>.lock 的简易互斥；拿不到即返回未获取，不等待、不接管死锁、不删他人锁。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | releaseArchiveLock | L1060-1062 | 仅 unlink 本次 O_EXCL 创建的锁文件，失败只在 try/finally 内忽略，不抛给启动路径。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | archiveLedger | L1070-1147 | 直调入口：给定 archive 路径的「聚合 + 覆盖式更新 + 原子发布」，不承担进程互斥。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | checkBudget | L1091-1099 | 预算与 onCheck 阶段探针：超时抛 budget-timeout，阶段名供 step-00 M6 断言。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | skipWithDiagnostic | L1150-1158 | 可预期跳过（无 host 根/锁忙/扫描失败）时返回 skipped，并仅在原 `recordDiagnostic` 需要留痕时按需写 usage 错误 JSONL；取消不记失败。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | upToDateArchiveResult | L1163-1177 | 构造日志 mtime 与账本 ts 无变化的健康终态，报告 archive 现有行/字节并标记零完整用量扫描。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | startupArchiveUnsafe | L1179-1274 | 启动路径主体：host 根判定 → 路径解析与双根授权 → 内存首帧/白名单识别及 mtime→ts 增量判定 → 简易锁 → 调 archiveLedger；失败转结构化结果，取消按 archive rename 提交边界处理。 |  |
-| plugins/dsh-extra-plan/lib/usage-ledger.js | startupArchive | L1278-1294 | 同步启动归档入口：捕获可处理异常并返回结构化状态，正常由 settings Worker 调用；不作无条件绝不阻断保证。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | enumerateSessionLogs | L157-200 | 枚举 %DSH_HOME%/sessions 下的 v4 会话日志（会话目录名只认 session-<uuid> 与裸 <uuid>，其余跳过）。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | frameEndAt | L204-232 | zstd 帧切分：从帧起点解析 descriptor、字典与内容长度、逐个 block header，返回帧结束偏移；非法块类型或截断返回 null |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | decodedLinesOf | L239-291 | 生成器函数：按帧边界循环 zstdDecompressSync 解压，跳过 skippable frame，流式 UTF-8 解码并按换行切行；魔数非法或帧截断抛错 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | finiteNumberOrZero | L294-296 | 非负有限数原样返回，其余归零 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | stringOrEmpty | L298-300 | 字符串原样返回，其余归空串 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | intOrNull | L302-304 | 非负整数原样返回，其余返回 null |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | isoOf | L306-309 | 毫秒时间戳转 ISO 字符串，非法值用 Date.now() 兜底 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | sessionMetaOf | L312-327 | 从 session 事件取会话元信息（id 缺失用目录名，含 cwd/agentPreset/parentSession/delegationDepth/origin），delegationDepth 缺失记 0 且 hasExplicitDepth=false |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | usageOf | L330-348 | 从 assistant/message 事件取 usage 四桶，缺失/非法字段归零，非目标事件返回空。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | presetOfSelectedEvent | L351-358 | 依次在事件顶层与 data 的 agentPreset/preset/id 里取首个非空字符串，取不到返回空串 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | lineageOfRequestHeader | L361-369 | 从 request/header 的 parentSession 与 delegationDepth 取血缘兜底值，两者都缺返回 null |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | scanLogText | L372-417 | 对单个会话日志文本做前缀粗筛后逐行解析，累加 usage 到身份分组。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | hasOwn | L420-422 | Object.prototype.hasOwnProperty 的调用封装 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | identityValueOf | L424-428 | 身份键归一：delegationDepth 只收非负整数、schemaVersion 原样、其余只收字符串 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | identityKeyOf | L430-434 | 按 IDENTITY_KEYS 顺序取归一值，JSON.stringify 成九字段身份键 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | rootSessionOf | L438-454 | 沿 parentById 链上溯求血缘根：depth 1 直接取 parent，更深逐级上溯，链路缺失或成环返回空串 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | isChildSession | L456-458 | delegationDepth>0 或 parentSessionId 非空或 origin=subagent 即判为子会话 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | roleOf | L461-464 | 非子会话固定 main；子会话按 USAGE_ROLE_BY_PRESET 映射四角色，未命中记 child |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | emptyGroup | L466-485 | 按身份建零值聚合组：四桶与 calls 归零、seq 为 null、ts 空串 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | compareValues | L487-491 | 两值转字符串后比较（null/undefined 视作空串），返回 -1/0/1 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | rowSort | L493-499 | 行排序比较器：先按 IDENTITY_KEYS 逐键比较，再按 seq（null 视空）比较 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | addUsageToGroups | L501-522 | 按身份键累加进 groups：四桶与 calls 累加，seq/ts 只在本次 seq 不小于既有水位时更新 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | allowedOf | L524-528 | 白名单归一：未传用 ALLOWED_PRESETS，Set 转数组，数组原样，其余回落 ALLOWED_PRESETS |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | scanUsageRowsOf | L530-617 | 按白名单解码日志、校验读取指纹、解析 usage 并按九字段聚合；可追踪整批失败以阻止水位推进。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | markFailed | L537-541 | 把单个日志失败原因登记到 scanOutcome，供整批失败重试判定。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | fingerprintStable | L542-559 | 读后重新 stat 比对 size/mtime，文件缺失或变化即登记失败。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | scanUsageRows | L620-631 | 公开同步全量扫描：枚举并 stat 会话日志后调用 scanUsageRowsOf，返回扫描 rows/stats（按选项可附 scanOutcome），不在此执行归档单调性保护。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | firstFrameSessionOf | L633-673 | 从会话日志首帧解析 session 元数据；保留接收 Buffer 的签名，扫描路径改由 `firstFrameSessionByPath` 按 512、8192、65536、整份递进窗口取首帧。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | emptyIdentityOf | L679-681 | 首帧结构非法或读取失败时返回空身份（preset 为空）供调用方跳过。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | firstFrameRangeWithin | L684-696 | 裁定单窗口内首帧边界，区分需扩窗、结构非法与已含完整首帧。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | readWindowOf | L698-702 | 从文件偏移 0 读取指定长度窗口，返回实际读到的前缀字节。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | firstFrameSessionByPath | L704-727 | 按 512、8192、65536、整份递进窗口读首帧身份，失败降级为空身份。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | scanSessionPresets | L730-743 | 只对 changed 文件按 512、8192、65536、整份递进窗口读首帧，未变化文件零字节读取、size 与 mtime 复用枚举结果，在本轮内存收集身份/预设/父链供白名单与血缘使用，白名单由 `startupArchiveUnsafe` 过滤，不读写持久缓存。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | mergedFsOps | L746-748 | 把注入的 fs 与默认实现合并，供夹具替换单点文件操作。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | nowOf | L750-760 | 取当前毫秒时间：clock 可传函数或带 now() 的对象，非法值回落 Date.now() |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | hostRootOf | L762-768 | 从 pathContext 取 host 数据根；空根即跳过本次启动扫描。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | tokenNumber | L769-771 | 读组内 token 字段的非负有限数，非法归零 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | identityValue | L773-777 | 账本行身份键取值：delegationDepth 只收非负整数、schemaVersion 原样、其余只收字符串 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | groupSort | L779-785 | 合并组排序比较器：先按 IDENTITY_KEYS 逐键比较，再按 maxSeq（null 视空）比较 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | validDedupeKey | L787-793 | 判行能否提供去重水位：是对象且 sessionId 非空、seq 为非负整数 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | validationIssue | L794-813 | 单行 15 键与身份字段合法性检查，返回问题文本供严格解析组错误码。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | parseStrictLedgerText | L816-850 | 严格解析既有 archive：坏 JSON、说明行位置、non-v2 与 15 键合法性逐行校验，不合法即拒绝发布。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | identityOf | L852-856 | 按 IDENTITY_KEYS 从行抽出九字段身份对象 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | identityKeyOfRow | L858-861 | 把行身份的九字段序列化成 JSON 键，作为合并分组键 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | emptyGroupOf | L863-875 | 按九字段身份建立聚合组：四桶归零、maxSeq/_latestSeq 为 null、latestTs 为空串。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | groupFromArchiveRow | L877-887 | 账本行转合并组：四桶取行内值，seq 有效时记 maxSeq 并落到 latestTs |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | groupFromScanRow | L890-901 | 扫描行转合并组：四桶与 calls 取扫描行值，seq 有效时保存水位并复制扫描行 ts；日志扫描行的 ts 为成功解析文件的 ISO 毫秒 mtime。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | tokenTotalOf | L903-907 | 合并组四桶求和，用于单调性比较 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | mergedArchiveGroups | L912-956 | archive 现有行与本次扫描行按身份合并：覆盖式更新 + 单调性保护（小于现状保留旧值并记告警）。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | finalizedGroups | L958-964 | 合并组按 groupSort 排序并逐组复制，剔除内部字段 _latestSeq |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | assertUniqueArchiveRows | L966-974 | 同一完整身份出现多条累计行即报 duplicate-archive，发布前拒绝。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | archiveRowOf | L976-994 | 把聚合身份投影为固定 15 键数据行（`ts` 取成功解析 session 文件的 ISO 毫秒 mtime、`seq` 取会话内事件序号且不作主键）。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | archiveTextOf | L996-1005 | 说明行（首行唯一）+ 数据行的序列化，归档文本唯一来源。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | ensureLedgerDirectory | L1007-1014 | 上下文缺失直接返回；否则先授权再递归建账本目录，随后按目录类型回读校验，失败即抛错。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | authorizeWriteTarget | L1016-1018 | 写目标 H/W 双根授权（prepareWriteTarget，含用途与期望类型）。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | authorizeReadIfPresent | L1020-1026 | 读目标存在时做只读授权复核，缺失不报错。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | optionalRead | L1028-1036 | 容错读：ENOENT 视为不存在，其它错误转 read-failed。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | recordDiagnostic | L1038-1050 | 仅在原调用需要留痕时向 Host `logs/dsh-extra-plan/extra-plan-usage-errors.jsonl` 按需追加一行 JSONL；字段恰为字符串 `ts`、`reason`、`message`，`ts` 为诊断发生时间；写失败静默忽略，不阻断启动。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | reportFailure | L1052-1062 | 失败统一出口：warn + 写诊断行 + 返回 { status:'failed', reason, error }。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | publishArchive | L1066-1081 | 单目标原子发布：写同目录临时文件 → 预算检查 → rename 覆盖 archive；失败清理临时文件、既有账本原样保留。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | acquireArchiveLock | L1086-1103 | 一次 O_EXCL 创建 <archive>.lock 的简易互斥；拿不到即返回未获取，不等待、不接管死锁、不删他人锁。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | releaseArchiveLock | L1106-1108 | 仅 unlink 本次 O_EXCL 创建的锁文件，失败只在 try/finally 内忽略，不抛给启动路径。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | archiveLedger | L1116-1193 | 直调入口：给定 archive 路径的「聚合 + 覆盖式更新 + 原子发布」，不承担进程互斥。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | checkBudget | L1137-1145 | 预算与 onCheck 阶段探针：超时抛 budget-timeout，阶段名供 step-00 M6 断言。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | skipWithDiagnostic | L1196-1204 | 可预期跳过（无 host 根/锁忙/扫描失败）时返回 skipped，并仅在原 `recordDiagnostic` 需要留痕时按需写 usage 错误 JSONL；取消不记失败。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | upToDateArchiveResult | L1209-1223 | 构造日志 mtime 与账本 ts 无变化的健康终态，报告 archive 现有行/字节并标记零完整用量扫描。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | startupArchiveUnsafe | L1225-1363 | 启动路径主体：host 根判定 → 路径解析与双根授权 → 枚举会话日志只做 statSync → 读旧账本建 sessionId 到 ts 索引并判 changed（目录名命中即跳过，查不到才用首帧 sessionId 兜底）→ 只对 changed 读首帧判白名单 → 命中才解析用量 → 简易锁 → 调 archiveLedger；失败转结构化结果，取消按 archive rename 提交边界处理。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | identityOf | L1277-1282 | 按日志路径缓存首帧身份，同一轮扫描不重复读同一文件头。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | ledgerHasTimestamp | L1283-1286 | 账本中该会话是否已有与文件 mtime 相等的 ts，用于跳过未变化文件。 |  |
+| plugins/dsh-extra-plan/lib/usage-ledger.js | startupArchive | L1367-1383 | 同步启动归档入口：捕获可处理异常并返回结构化状态，正常由 settings Worker 调用；不作无条件绝不阻断保证。 |  |
 | plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | repositoryRootFromKnownLayout | L18-26 | 从脚本位置向上三级推导仓库根，pe-test、plugins 与包清单缺任一即返回 null 不抛错。 |  |
 | plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | roleDefinitionFile | L52-54 | 按角色 id 拼出角色 definition 产出文件名，只做路径拼接不校验目录是否存在。 |  |
 | plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs | runtimeDefaultsFromTemplate | L56-61 | 按设置合同逐键从模板文本解析默认值并组成键值对象，不校验模板是否缺键，也不校验形状。 |  |

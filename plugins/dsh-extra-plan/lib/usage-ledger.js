@@ -7,7 +7,7 @@
 // 改造11 相对合并前（291+543+1000=1834 行）删除：createUsageLedger 空壳、archivePathOf/archiveLedger 直调入口、
 // 整套跨进程锁（等待轮询、死 PID 接管、stale-lock 告警）、双文件事务、逆序回滚、active 相关分支。
 // 写入互斥只剩一次 O_EXCL 建 <archive>.lock：拿不到即跳过本次启动扫描并留痕，不等待、不接管、不删他人锁。
-import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs'
+import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { basename, dirname, join } from 'node:path'
 import { zstdDecompressSync } from 'node:zlib'
@@ -179,8 +179,10 @@ export function enumerateSessionLogs({ hostRoot, shouldCancel } = {}) {
         continue
       }
       const logPath = join(workspacePath, sessionEntry.name, SESSION_LOG_FILE_NAME)
+      let logStat
       try {
-        if (!statSync(logPath).isFile()) {
+        logStat = statSync(logPath)
+        if (!logStat.isFile()) {
           skippedEntries += 1
           continue
         }
@@ -189,7 +191,8 @@ export function enumerateSessionLogs({ hostRoot, shouldCancel } = {}) {
         continue
       }
       checkArchiveCancellation({ shouldCancel })
-      logFiles.push({ workspace: workspaceEntry.name, sessionDirectory: sessionEntry.name, logPath })
+      // 枚举结果自带大小与 mtime，读取侧不再对同一 logPath 二次 statSync。
+      logFiles.push({ workspace: workspaceEntry.name, sessionDirectory: sessionEntry.name, logPath, size: logStat.size, mtimeMs: logStat.mtimeMs })
     }
   }
   checkArchiveCancellation({ shouldCancel })
@@ -669,31 +672,74 @@ function firstFrameSessionOf(bytes, directoryName) {
   } catch (error) { return empty }
 }
 
-function scanSessionPresets({ hostRoot, shouldCancel }) {
-  checkArchiveCancellation({ shouldCancel })
-  const enumeration = enumerateSessionLogs({ hostRoot, shouldCancel })
-  const logFiles = []
-  const stats = { files: 0, sessions: 0, decoded: 0, skipped: enumeration.skippedEntries }
-  for (const file of enumeration.logFiles) {
-    checkArchiveCancellation({ shouldCancel })
-    try {
-      const stat = statSync(file.logPath)
-      if (!stat.isFile()) continue
-      checkArchiveCancellation({ shouldCancel })
-      const identity = firstFrameSessionOf(readFileSync(file.logPath), file.sessionDirectory)
-      checkArchiveCancellation({ shouldCancel })
-      stats.decoded += 1
-      stats.sessions += 1
-      logFiles.push({ ...file, size: stat.size, mtimeMs: stat.mtimeMs, sessionId: identity.sessionId, preset: identity.preset, parentSessionId: identity.parentSessionId, delegationDepth: identity.delegationDepth })
-      stats.files += 1
-    } catch (error) {
-      if (errorCodeOf(error) === 'archive-cancelled') throw error
-      stats.skipped += 1
+// 首帧窗口递进读取（M3）：只为判白名单与身份读文件头部，512 → 8192 → 65536 → 整份逐级扩窗；
+// 结构非法按空身份降级（preset 为空即非白名单，最终跳过），不抛错、不记为失败。
+const FIRST_FRAME_WINDOW_SIZES = [512, 8192, 65536]
+
+function emptyIdentityOf(directoryName) {
+  return { sessionId: directoryName, preset: '', parentSessionId: '', delegationDepth: 0 }
+}
+
+// 单窗口内的首帧边界：short＝窗口不足需扩窗，invalid＝结构非法直接降级，frame＝窗口已含完整首帧。
+function firstFrameRangeWithin(bytes, fileSize) {
+  if (bytes.length < 4) return { state: bytes.length < fileSize ? 'short' : 'invalid' }
+  let start = 0
+  const magic = bytes.readUInt32LE(0)
+  if (magic >= SKIPPABLE_MAGIC_MIN && magic <= SKIPPABLE_MAGIC_MAX) {
+    if (bytes.length < 8) return { state: bytes.length < fileSize ? 'short' : 'invalid' }
+    start = 8 + bytes.readUInt32LE(4)
+  }
+  if (start + 4 > bytes.length) return { state: start + 4 > fileSize ? 'invalid' : 'short' }
+  if (bytes.readUInt32LE(start) !== ZSTD_MAGIC) return { state: 'invalid' }
+  if (frameEndAt(bytes, start) === null) return { state: bytes.length < fileSize ? 'short' : 'invalid' }
+  return { state: 'frame' }
+}
+
+function readWindowOf(fd, length) {
+  const buffer = Buffer.allocUnsafe(length)
+  const read = readSync(fd, buffer, 0, length, 0)
+  return buffer.subarray(0, read)
+}
+
+function firstFrameSessionByPath(logPath, directoryName, size) {
+  const fileSize = Number.isFinite(size) && size >= 0 ? Math.floor(size) : null
+  if (fileSize === null) {
+    try { return firstFrameSessionOf(readFileSync(logPath), directoryName) } catch (error) { return emptyIdentityOf(directoryName) }
+  }
+  let fd = null
+  try {
+    fd = openSync(logPath, 'r')
+    for (const windowSize of FIRST_FRAME_WINDOW_SIZES) {
+      if (windowSize >= fileSize) break
+      const bytes = readWindowOf(fd, windowSize)
+      const range = firstFrameRangeWithin(bytes, fileSize)
+      if (range.state === 'frame') return firstFrameSessionOf(bytes, directoryName)
+      if (range.state === 'invalid') return emptyIdentityOf(directoryName)
     }
+    const bytes = readWindowOf(fd, fileSize)
+    if (firstFrameRangeWithin(bytes, fileSize).state !== 'frame') return emptyIdentityOf(directoryName)
+    return firstFrameSessionOf(bytes, directoryName)
+  } catch (error) {
+    return emptyIdentityOf(directoryName)
+  } finally {
+    if (fd !== null) { try { closeSync(fd) } catch (error) { /* fd 已关闭或不可关闭时保持降级 */ } }
+  }
+}
+
+// 只对 changed 文件读首帧窗口（M3）：未变化文件零字节读取；size/mtimeMs 复用枚举结果，不再对同一 logPath 二次 statSync。
+function scanSessionPresets({ logFiles, shouldCancel, identityOf }) {
+  checkArchiveCancellation({ shouldCancel })
+  const changedFiles = []
+  const stats = { files: 0, sessions: 0, decoded: 0, skipped: 0 }
+  for (const file of logFiles) {
     checkArchiveCancellation({ shouldCancel })
+    const identity = identityOf(file)
+    checkArchiveCancellation({ shouldCancel })
+    stats.decoded += 1
+    changedFiles.push({ ...file, sessionId: identity.sessionId, preset: identity.preset, parentSessionId: identity.parentSessionId, delegationDepth: identity.delegationDepth })
   }
   checkArchiveCancellation({ shouldCancel })
-  return { logFiles, stats }
+  return { logFiles: changedFiles, stats }
 }
 
 // ── ③a 归档读侧：严格解析、身份、分组、单调性覆盖（由旧归档模块迁入）──────
@@ -1196,14 +1242,14 @@ function startupArchiveUnsafe(pathContext, options) {
   } catch (error) {
     return reportFailure(pathContext, fsOps, archiveError(errorCodeOf(error) || 'path-not-authorized', '启动归档目标未获 H/W 双根授权：' + errorMessageOf(error)), purpose)
   }
-  let mode
-  try { mode = scanSessionPresets({ hostRoot, shouldCancel }) }
+  // 第一步：只枚举会话日志（自带 size 与 mtimeMs），不读任何日志内容。
+  let enumeration
+  try { enumeration = enumerateSessionLogs({ hostRoot, shouldCancel }) }
   catch (error) {
     if (errorCodeOf(error) === 'archive-cancelled') throw error
     return skipWithDiagnostic(pathContext, fsOps, 'scan-failed', '扫描会话日志失败：' + errorMessageOf(error), purpose)
   }
-  const whitelist = new Set(ALLOWED_PRESETS)
-  const allowed = mode.logFiles.filter((file) => whitelist.has(file.preset))
+  // 第二步：读旧账本并构建 sessionId → ts 索引。
   const archiveRead = optionalRead(fsOps, archivePath)
   let archiveRows = []
   let archiveValid = true
@@ -1225,24 +1271,67 @@ function startupArchiveUnsafe(pathContext, options) {
     group.push(Date.parse(row.ts))
     rowsBySession.set(row.sessionId, group)
   }
-  const changed = allowed.filter((file) => {
+  // 第三步：changed 判定——用会话目录名查账本，ts 与文件 mtime 相等即未变化、一字节不读；
+  // 目录名在账本里查不到时才读该文件首帧窗口取 identity.sessionId 再查一次。
+  const identities = new Map()
+  const identityOf = (file) => {
+    if (identities.has(file.logPath)) return identities.get(file.logPath)
+    const identity = firstFrameSessionByPath(file.logPath, file.sessionDirectory, file.size)
+    identities.set(file.logPath, identity)
+    return identity
+  }
+  const ledgerHasTimestamp = (sessionId, fileMtimeMs) => {
+    const timestamps = rowsBySession.get(sessionId)
+    return timestamps !== undefined && timestamps.some((timestamp) => timestamp === fileMtimeMs)
+  }
+  const changed = []
+  for (const file of enumeration.logFiles) {
     checkArchiveCancellation({ shouldCancel })
-    const timestamps = rowsBySession.get(file.sessionId)
+    if (!archiveRead.exists || !archiveValid) { changed.push(file); continue }
     const fileMtimeMs = new Date(file.mtimeMs).getTime()
-    return !archiveRead.exists || !archiveValid || !timestamps || !timestamps.some((timestamp) => timestamp === fileMtimeMs)
-  })
-  const noChangedLogs = archiveRead.exists && archiveValid && changed.length === 0
+    if (ledgerHasTimestamp(file.sessionDirectory, fileMtimeMs)) continue
+    if (!rowsBySession.has(file.sessionDirectory) && ledgerHasTimestamp(identityOf(file).sessionId, fileMtimeMs)) continue
+    changed.push(file)
+  }
+  // 第四步：只对 changed 文件读首帧窗口取 preset/父会话/深度，构造与既有同形的 logFiles；allowed 仍按 ALLOWED_PRESETS 过滤。
+  let mode
+  try { mode = scanSessionPresets({ logFiles: changed, shouldCancel, identityOf }) }
+  catch (error) {
+    if (errorCodeOf(error) === 'archive-cancelled') throw error
+    return skipWithDiagnostic(pathContext, fsOps, 'scan-failed', '扫描会话日志失败：' + errorMessageOf(error), purpose)
+  }
+  mode.stats.sessions = enumeration.logFiles.length
+  mode.stats.skipped += enumeration.skippedEntries
+  const whitelist = new Set(ALLOWED_PRESETS)
+  const allowed = mode.logFiles.filter((file) => whitelist.has(file.preset))
+  const noChangedLogs = archiveRead.exists && archiveValid && allowed.length === 0
   checkArchiveCancellation({ shouldCancel })
   if (noChangedLogs) {
     return upToDateArchiveResult({ archivePath, archiveRead, archiveRows, mode, reason: 'no-changed-logs' })
   }
-  const parentSessions = mode.logFiles.map((file) => ({
-    sessionId: file.sessionDirectory,
-    parentSessionId: file.parentSessionId,
-    delegationDepth: file.delegationDepth,
-  }))
+  // parentSessions：账本行与 changed 首帧的并集；深度≥2 且父会话缺失时惰性读该父目录日志首帧补齐，
+  // 仍缺失则由既有断链规则把 rootSessionId 归空（rootSessionOf 对未知父返回空串）。
+  const parentSessions = new Map()
+  for (const row of archiveRows) {
+    checkArchiveCancellation({ shouldCancel })
+    if (!parentSessions.has(row.sessionId)) parentSessions.set(row.sessionId, { sessionId: row.sessionId, parentSessionId: row.parentSessionId, delegationDepth: row.delegationDepth })
+  }
+  for (const file of mode.logFiles) {
+    checkArchiveCancellation({ shouldCancel })
+    parentSessions.set(file.sessionId, { sessionId: file.sessionId, parentSessionId: file.parentSessionId, delegationDepth: file.delegationDepth })
+  }
+  const logFileByDirectory = new Map(enumeration.logFiles.map((file) => [file.sessionDirectory, file]))
+  for (const file of mode.logFiles) {
+    if (file.delegationDepth < 2 || file.parentSessionId === '') continue
+    if (parentSessions.has(file.parentSessionId)) continue
+    const parentFile = logFileByDirectory.get(file.parentSessionId)
+    if (parentFile === undefined) continue
+    checkArchiveCancellation({ shouldCancel })
+    const identity = identityOf(parentFile)
+    if (!parentSessions.has(identity.sessionId)) parentSessions.set(identity.sessionId, { sessionId: identity.sessionId, parentSessionId: identity.parentSessionId, delegationDepth: identity.delegationDepth })
+  }
   checkArchiveCancellation({ shouldCancel })
-  const scan = scanUsageRowsOf(changed, { parentSessions, trackOutcome: true, shouldCancel })
+  const scan = scanUsageRowsOf(allowed, { parentSessions: [...parentSessions.values()], trackOutcome: true, shouldCancel })
   if (scan.scanOutcome !== undefined && scan.scanOutcome.failed === true) {
     const failedFiles = scan.scanOutcome.failedFiles.length
     return skipWithDiagnostic(pathContext, fsOps, 'scan-failed', '本轮扫描有' + failedFiles + '个日志未完整解码或指纹不稳定，保留既有archive并等待重试', purpose)

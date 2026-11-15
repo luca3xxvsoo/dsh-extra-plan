@@ -349,6 +349,8 @@ async function start(editor, options = {}) {
         if (typeof explicitHome === 'string') return () => explicitHome
         return undefined
       }
+      // appReady 分支探针：返回 options.appReady（未传即 undefined），不写入 getCalls/trace，避免影响既有断言计数。
+      if (name === 'appReady') return options.appReady
       getCalls.push({ name, result: 'undefined' })
       return undefined
     },
@@ -2204,6 +2206,133 @@ failedSurface.unmount()
   console.log('EARLY_APPLY_ERROR_CLEANUP=' + JSON.stringify({ message: earlyError?.message, cleanupError: earlyError?.cleanupError }))
 }
 check('G5-R5 root cleanupError统一进入最终FAIL计数', rootCleanupErrors.length === 0)
+
+// ── G5-R7：appReady 分支后置扫描（apply 期零 Worker 构造、commit 后宏任务才起扫、dispose 两条拦截路径）──
+{
+  const workerThreads = createRequire(import.meta.url)('node:worker_threads')
+  const originalWorker = workerThreads.Worker
+  const constructionLog = []
+  const cleanupErrors = []
+  // 计数型 Worker stub：只记录构造次数，并按 usage-ledger Worker 协议回一条终态再 exit，使后台 done 可收敛、root 清理不悬挂。
+  class CountingWorker {
+    constructor(url, workerOptions) {
+      const data = workerOptions !== null && typeof workerOptions === 'object' && workerOptions.workerData !== null && typeof workerOptions.workerData === 'object' ? workerOptions.workerData : {}
+      this.workerDataSnapshot = data
+      this.threadId = 9100 + constructionLog.length + 1
+      this.listeners = new Map()
+      this.postedMessages = []
+      constructionLog.push({ url: String(url), id: data.id, threadId: this.threadId })
+      setImmediate(() => this.emitStubTerminal())
+    }
+    on(event, listener) {
+      const bucket = this.listeners.get(event)
+      if (bucket === undefined) this.listeners.set(event, [listener])
+      else bucket.push(listener)
+      return this
+    }
+    postMessage(message) { this.postedMessages.push(message) }
+    dispatchStubEvent(event, payload) {
+      for (const listener of this.listeners.get(event) || []) listener(payload)
+    }
+    emitStubTerminal() {
+      const data = this.workerDataSnapshot
+      const version = data.version === undefined ? 1 : data.version
+      this.dispatchStubEvent('message', { version, id: data.id, type: 'ready', threadId: this.threadId })
+      const cancelled = this.postedMessages.some((message) => message !== null && typeof message === 'object' && message.type === 'cancel')
+      if (!cancelled) this.dispatchStubEvent('message', { version, id: data.id, type: 'running', threadId: this.threadId })
+      this.dispatchStubEvent('message', { version, id: data.id, type: 'result', threadId: this.threadId, result: { id: data.id, version, status: cancelled ? 'cancelled' : 'up-to-date', reason: cancelled ? 'cancel-requested' : 'stub-up-to-date' } })
+      this.dispatchStubEvent('exit', 0)
+    }
+  }
+  // 假 appReady 服务：onReady 收集 listener 并返回取消函数（保留已注册 listener 以便验证 closed 闸门）；commit 同步遍历已收集 listener。
+  const createFakeAppReady = () => {
+    const state = { listeners: [], cancels: 0, commits: 0 }
+    const service = {
+      onReady(listener) {
+        state.listeners.push(listener)
+        return () => { state.cancels += 1 }
+      },
+      commit() {
+        state.commits += 1
+        for (const listener of [...state.listeners]) listener()
+      },
+    }
+    return { service, state, listenerCount: () => state.listeners.length }
+  }
+  const nextImmediate = () => new Promise((resolve) => setImmediate(resolve))
+  const openReadyRun = async (fixture) => {
+    const editor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, fixture.webPatch, { persistDocument: true, profileContext: fixture.webProfileContext })
+    const ready = createFakeAppReady()
+    const run = await start(editor, { mount: true, appReady: ready.service })
+    return { run, ready }
+  }
+  const closeReadyRun = async (run, fixture) => {
+    try { await run.disposeRoot() } catch (error) { cleanupErrors.push(error) }
+    if (typeof run.lifecycle?.cleanup === 'function') await run.lifecycle.cleanup()
+    await new Promise((resolve) => run.server.close(resolve))
+    rmSync(fixture.root, { recursive: true, force: true })
+  }
+  const readyFixture = makeSyncFixture()
+  let constructedAfterStart = -1
+  let listenerCountAfterStart = -1
+  let constructedAfterCommitStack = -1
+  let constructedAfterImmediate = -1
+  let clearImmediatePathConstructed = -1
+  let disposeFirstPathConstructed = -1
+  try {
+    workerThreads.Worker = CountingWorker
+    syncBuiltinESMExports()
+    const opened = await openReadyRun(readyFixture)
+    try {
+      constructedAfterStart = constructionLog.length
+      listenerCountAfterStart = opened.ready.listenerCount()
+      check('G5-R7 appReady启动后Worker构造数为0', constructedAfterStart === 0)
+      check('G5-R7 appReady启动后onReady listener数为1', listenerCountAfterStart === 1)
+      opened.ready.service.commit()
+      constructedAfterCommitStack = constructionLog.length
+      check('G5-R7 commit同一同步栈内Worker构造数仍为0', constructedAfterCommitStack === 0)
+      await nextImmediate()
+      constructedAfterImmediate = constructionLog.length
+      check('G5-R7 commit后一拍setImmediate Worker构造数为1', constructedAfterImmediate === 1)
+      // 再让一拍，等 stub 的 ready/running/result/exit 协议终态收敛，使 dispose 走正常退出而非取消协议。
+      await nextImmediate()
+    } finally {
+      await closeReadyRun(opened.run, readyFixture)
+    }
+    // clearImmediate 路径：commit 已排好待起扫宏任务后同栈 dispose，待起扫任务被清掉，构造数不增。
+    const clearImmediateFixture = makeSyncFixture()
+    const clearImmediateOpened = await openReadyRun(clearImmediateFixture)
+    try {
+      clearImmediateOpened.ready.service.commit()
+      const constructedBeforeDispose = constructionLog.length
+      await closeReadyRun(clearImmediateOpened.run, clearImmediateFixture)
+      await nextImmediate()
+      clearImmediatePathConstructed = constructionLog.length
+      check('G5-R7 commit后同栈dispose经clearImmediate使Worker构造数不增', clearImmediatePathConstructed === constructedBeforeDispose)
+    } finally {
+      rmSync(clearImmediateFixture.root, { recursive: true, force: true })
+    }
+    // closed 闸门：commit 之前 dispose，之后的 commit 回调不再起扫，构造数不增。
+    const disposeFirstFixture = makeSyncFixture()
+    const disposeFirstOpened = await openReadyRun(disposeFirstFixture)
+    try {
+      await closeReadyRun(disposeFirstOpened.run, disposeFirstFixture)
+      const constructedBeforeCommit = constructionLog.length
+      disposeFirstOpened.ready.service.commit()
+      await nextImmediate()
+      disposeFirstPathConstructed = constructionLog.length
+      check('G5-R7 commit前dispose则commit后Worker构造数不增', disposeFirstPathConstructed === constructedBeforeCommit)
+    } finally {
+      rmSync(disposeFirstFixture.root, { recursive: true, force: true })
+    }
+    check('G5-R7 appReady用例root清理无错误', cleanupErrors.length === 0)
+  } finally {
+    workerThreads.Worker = originalWorker
+    syncBuiltinESMExports()
+    rmSync(readyFixture.root, { recursive: true, force: true })
+  }
+  console.log('MARKER G5-R7 appReady后置扫描 ' + JSON.stringify({ constructedAfterStart, listenerCountAfterStart, constructedAfterCommitStack, constructedAfterImmediate, clearImmediatePathConstructed, disposeFirstPathConstructed, cleanupErrors: cleanupErrors.length, checks: ['G5-R7 appReady启动后Worker构造数为0', 'G5-R7 appReady启动后onReady listener数为1', 'G5-R7 commit同一同步栈内Worker构造数仍为0', 'G5-R7 commit后一拍setImmediate Worker构造数为1', 'G5-R7 commit后同栈dispose经clearImmediate使Worker构造数不增', 'G5-R7 commit前dispose则commit后Worker构造数不增'] }))
+}
 
 restoreEnvironment(testEnvironment)
 for (const key of settingsEnvKeys) {
