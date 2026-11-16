@@ -110,7 +110,6 @@ export const inject = ['systemPrompt']
 import { mkdirSync, appendFileSync } from 'node:fs'
 import { join, dirname, isAbsolute, resolve as pathResolve } from 'node:path'
 import { createPathContext, resolveWorkspacePath, resolveHostPath, prepareWriteTarget } from './lib/path-policy.js'
-import { pruneDiagnosticLogs } from './lib/log-retention.js'
 import { PROBE_LIMITS, sanitizeTaskName, timestamp, renderSavePlan, renderSaveProbe, renderProbeMarkdown, extractProbeEvidenceRefs } from './lib/save-contract.js'
 import { validateProbe } from './lib/save-probe-validation.js'
 import { atomicCommit, atomicReplace } from './lib/save-persistence.js'
@@ -461,30 +460,6 @@ function recordAgentError(payload, options = {}) {
   }
 }
 
-// 启动期诊断日志裁剪（每次插件启动执行一次）：删除 <host 根>/logs/dsh-extra-plan 下各诊断 jsonl 中
-// ts 早于 48 小时的行，避免追加型诊断日志无限增长；usage-ledger 由 lib/usage-ledger.js 的
-// startupArchive 自行归档，不在本次裁剪范围内。失败只 warn，不阻断插件启动。
-function startupPruneDiagnosticLogs(ctx) {
-  let pathContext = null
-  try { pathContext = pathContextFor(ctx, '') } catch { pathContext = null }
-  const hostDataRoot = pathContext !== null && pathContext !== undefined ? pathContext.hostDataRoot : null
-  if (typeof hostDataRoot !== 'string' || hostDataRoot === '') {
-    console.warn('[dsh-extra-plan] diagnostic log prune skipped: no-host-root')
-    return
-  }
-  const pruneNow = () => {
-    Promise.resolve(pruneDiagnosticLogs(pathContext)).then((result) => {
-      if (result !== null && typeof result === 'object' && result.status === 'pruned') {
-        console.warn('[dsh-extra-plan] diagnostic log prune: ' + JSON.stringify(result))
-      }
-    }, (error) => {
-      console.warn('[dsh-extra-plan] diagnostic log prune failed（不阻断启动）: ' + (error instanceof Error ? error.message : String(error)))
-    })
-  }
-  const timer = setTimeout(pruneNow, 0)
-  if (timer !== null && typeof timer === 'object' && typeof timer.unref === 'function') timer.unref()
-}
-
 export { PROBE_LIMITS, extractProbeEvidenceRefs, malformedRecovery, recordAgentError }
 
 export function apply(ctx, config) {
@@ -505,9 +480,6 @@ export function apply(ctx, config) {
       for (const dispose of disposers) dispose()
     }
   })
-  // 启动期诊断日志裁剪（每次插件启动恰一次）：只删除 ts 早于 48 小时的行；
-  // usage-ledger 由 startupArchive 自行管理，任何失败只 warn 不阻断启动。
-  startupPruneDiagnosticLogs(ctx)
   const planToolName = typeof cfg.planTool === 'string' ? cfg.planTool : 'subagent_plan'
   const savePlanDir = typeof cfg.savePlanDir === 'string' && cfg.savePlanDir !== '' ? cfg.savePlanDir : '.extra-plan'
   const { defineSavePlan, defineSaveProbe } = createSaveToolFactories({
@@ -799,7 +771,7 @@ export function apply(ctx, config) {
   const CORDIS_PRESENTATION_SOURCE = 'cordis-presentation'
   // 单一存储：agent → (source → { disposer, filter })；同 agent 同 source 已 arm 即幂等返回。
   const toolRestrictions = new WeakMap()
-  const anchoredDiagSeen = new WeakMap()
+  const anchoredDiagState = new WeakMap()
   function toolsServiceOf(agent) {
     try {
       const scoped = agent !== undefined && agent !== null ? agent.ctx : undefined
@@ -840,33 +812,72 @@ export function apply(ctx, config) {
     }
     return slot
   }
-  // 两条通路共用的诊断出口（arm/release 唯一落盘点）：自带 try/catch 吞错（诊断失败不得影响主流程）；
-  // skip-* 按 event + trigger 每 agent 去重，arm-ok/arm-failed/release-ok 每次落盘；
+  // 两条通路共用的诊断出口（arm/release 唯一状态点）：自带 try/catch 吞错（诊断失败不得影响主流程）；
+  // 每个 agent/source 只保留最近 arm/release/skip 快照，仅 arm-failed/release-failed 即时落盘；
   // source 区分裁剪通路、filter 落 allow/deny 原值（前置判据不成立时无 filter，落 null）。
+  function anchoredDiagStateOf(agent) {
+    let state = anchoredDiagState.get(agent)
+    if (state === undefined) {
+      state = {
+        first: false,
+        later: false,
+        restrictions: {
+          [ANCHORED_BOOTSTRAP_SOURCE]: { arm: null, release: null, skip: null },
+          [CORDIS_PRESENTATION_SOURCE]: { arm: null, release: null, skip: null },
+        },
+      }
+      anchoredDiagState.set(agent, state)
+    }
+    return state
+  }
+
   function toolRestrictionDiag(agent, source, event, filter, trigger, detail) {
     try {
-      let seen = anchoredDiagSeen.get(agent)
-      if (seen === undefined) {
-        seen = new Set()
-        anchoredDiagSeen.set(agent, seen)
-      }
+      const state = anchoredDiagStateOf(agent)
       const triggerText = typeof trigger === 'string' && trigger !== '' ? trigger : 'unknown'
-      if (String(event).startsWith('skip-')) {
-        const key = event + ':' + triggerText
-        if (seen.has(key)) return
-        seen.add(key)
+      const sourceText = typeof source === 'string' ? source : 'unknown'
+      const snapshot = {
+        event,
+        source: sourceText,
+        filter: filter !== undefined ? filter : null,
+        trigger: triggerText,
+        ...(detail !== undefined && detail !== null ? detail : {}),
       }
+      const sourceState = state.restrictions[sourceText]
+      if (sourceState !== undefined) {
+        const eventText = String(event)
+        if (eventText.startsWith('arm-')) sourceState.arm = snapshot
+        else if (eventText.startsWith('release-')) sourceState.release = snapshot
+        else if (eventText.startsWith('skip-')) sourceState.skip = snapshot
+      }
+      if (event !== 'arm-failed' && event !== 'release-failed') return
       appendDiagnostic(ctx, agent, 'extra-plan-anchored.jsonl', {
         ts: new Date().toISOString(),
         sessionId: typeof agent?.session?.header?.id === 'string' ? agent.session.header.id : '',
         event,
-        source: typeof source === 'string' ? source : 'unknown',
+        source: sourceText,
         filter: filter !== undefined ? filter : null,
         trigger: triggerText,
         ...(detail !== undefined && detail !== null ? detail : {}),
       })
     } catch (error) {
     }
+  }
+
+  function restrictionsSnapshotOf(agent, state) {
+    const active = toolRestrictions.get(agent)
+    const snapshot = {}
+    for (const source of [ANCHORED_BOOTSTRAP_SOURCE, CORDIS_PRESENTATION_SOURCE]) {
+      const entry = active !== undefined ? active.get(source) : undefined
+      const latest = state.restrictions[source]
+      snapshot[source] = {
+        active: entry !== undefined ? entry.filter : null,
+        arm: latest !== undefined ? latest.arm : null,
+        release: latest !== undefined ? latest.release : null,
+        skip: latest !== undefined ? latest.skip : null,
+      }
+    }
+    return snapshot
   }
   // 引导期 allow = 配置集 ∩ 可收窄名（view.restrictableNames 优先、schemas 兜底）；
   // 两者都不可用或交集为空时返回空数组，调用方不 arm 并落诊断（不回落配置集：
@@ -1245,6 +1256,7 @@ export function apply(ctx, config) {
   //    重复 disposed 幂等；其它 session 的同名 rootCallId 与计数均不受影响。
   ctx.on('agent/disposed', (payload) => {
     const agent = payload.agent
+    anchoredDiagState.delete(agent)
     const sessionId = agent?.session?.header?.id
     if (typeof sessionId !== 'string') return
     try {
@@ -1269,9 +1281,8 @@ export function apply(ctx, config) {
   //    另负责按装配目录机械识别只读子代理（reviewer）写入 per-agent 缓存，供
   //    pre-execute 拦截复用；bootstrapOn=false 时仅记录目录、不改装配产物。
   const readOnlyChildren = new WeakSet()
-  // 0.2.2-rc.1 修复（BUG-1）诊断：每个 agent 只记录一次 anchored 分支的实际判定，
+  // 0.2.2-rc.1 修复（BUG-1）诊断：每个 agent 按当前 apply 的 first/later 各保留一次成功装配判定，
   // 用于区分「工具面被宿主并集覆盖」与「引导分支根本没进入」这两种同源症状。
-  const anchoredDiagOnce = new WeakSet()
   ctx.on('system-prompt/assemble', async (assembly, context, next) => {
     const result = await next()
     const agent = context.agent
@@ -1308,10 +1319,6 @@ export function apply(ctx, config) {
     // 呈现模式二值化：唯一来源是宿主装配结果里的 tools:ptc-only 段，由实际挂载的 ptc 执行器注入，其余 native。
     const mode = hasNonEmptySection(result.sections, PTC_SECTION_NAME) ? 'ptc' : 'native'
     const anchoredFirst = bootstrapOn(agent) && phase === 'first' && (role === 'main' || role === 'planner')
-    if (!anchoredDiagOnce.has(agent)) {
-      anchoredDiagOnce.add(agent)
-      console.warn('extra-plan: anchored 诊断 phase=' + phase + ' role=' + role + ' mode=' + mode + ' bootstrapOn=' + String(bootstrapOn(agent)) + ' anchoredFirst=' + String(anchoredFirst))
-    }
     const anchoredPtc = anchoredFirst && mode === 'ptc'
     let presented = result
     if (anchoredPtc) {
@@ -1352,7 +1359,7 @@ export function apply(ctx, config) {
       presented = projectAssemblyForPresentation(result, schemas, { hideCordis: false })
     }
 
-    // v4 assemble-diag：投影完成后、anchoredFirst 提前返回之前落盘——anchoredFirst=false 或工具为空等任何路径都有证据。
+    // v4 assemble-diag：当前 apply 内同一 Agent 的首次实际 F/L 各自最多成功落盘一次。
     // phaseSync=决策用同步判据；phaseLease=租约只读求值（仅取证对比，不参与 anchoredFirst 决策）；phaseSource=决策来源。
 
     const hasTools = Array.isArray(presented.tools) && presented.tools.length > 0
@@ -1381,26 +1388,33 @@ export function apply(ctx, config) {
       narrowed = { sections: [{ name: 'extra-plan-bootstrap', text: bootstrapPersona }], contexts: [] }
     }
     // anchoredPtc 且 tools 缺失：仍按 persona 与手写 read 文案投影，tools 维持宿主原样
-    try {
-      appendDiagnostic(ctx, agent, 'extra-plan-anchored.jsonl', {
-        ts: new Date().toISOString(),
-        sessionId: typeof agent?.session?.header?.id === 'string' ? agent.session.header.id : '',
-        event: 'assemble-diag',
-        phase,
-        phaseSync: phase,
-        phaseLease,
-        phaseSource: 'sync-sessionEvents',
-        anchoredFirst,
-        mode,
-        bootstrapOn: bootstrapOn(agent),
-        role,
-        toolsIn: Array.isArray(result.tools) ? result.tools.length : null,
-        toolsOut: Array.isArray(presented.tools) ? presented.tools.length : null,
-        toolsPresent: hasTools,
-        sectionsIn: Array.isArray(result.sections) ? result.sections.map((section) => (section !== null && typeof section === 'object' ? section.name : null)) : null,
-        sectionsOut: narrowed === null ? (Array.isArray(presented.sections) ? presented.sections.map((section) => (section !== null && typeof section === 'object' ? section.name : null)) : null) : narrowed.sections.map((section) => section.name),
-      })
-    } catch (error) {
+    const diagState = anchoredDiagStateOf(agent)
+    const diagKey = phase === 'first' ? 'first' : 'later'
+    if (diagState[diagKey] !== true) {
+      const keypoint = phase === 'first' ? 'first-assembly' : 'first-after-tool-call'
+      try {
+        if (appendDiagnostic(ctx, agent, 'extra-plan-anchored.jsonl', {
+          ts: new Date().toISOString(),
+          sessionId: typeof agent?.session?.header?.id === 'string' ? agent.session.header.id : '',
+          event: 'assemble-diag',
+          keypoint,
+          phase,
+          phaseSync: phase,
+          phaseLease,
+          phaseSource: 'sync-sessionEvents',
+          anchoredFirst,
+          mode,
+          bootstrapOn: bootstrapOn(agent),
+          role,
+          toolsIn: Array.isArray(result.tools) ? result.tools.length : null,
+          toolsOut: Array.isArray(presented.tools) ? presented.tools.length : null,
+          toolsPresent: hasTools,
+          sectionsIn: Array.isArray(result.sections) ? result.sections.map((section) => (section !== null && typeof section === 'object' ? section.name : null)) : null,
+          sectionsOut: narrowed === null ? (Array.isArray(presented.sections) ? presented.sections.map((section) => (section !== null && typeof section === 'object' ? section.name : null)) : null) : narrowed.sections.map((section) => section.name),
+          restrictions: restrictionsSnapshotOf(agent, diagState),
+        })) diagState[diagKey] = true
+      } catch (error) {
+      }
     }
 
     if (!anchoredFirst) return presented

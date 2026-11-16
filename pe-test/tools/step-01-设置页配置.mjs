@@ -54,7 +54,9 @@ const targetConfigForms = readHostText([
   ...hostCandidates('node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-settings/lib/types/client/config-form.d.ts'),
 ])
 const OFFICIAL_ROOT = TARGET_INSTALL_ROOT === undefined ? undefined : join(TARGET_INSTALL_ROOT, 'node_modules', '@deepseek-ai', 'dsh')
-const INSTALL_ANCHOR = OFFICIAL_ROOT === undefined ? undefined : join(OFFICIAL_ROOT, 'package.json')
+// DSH_COMPAT_RC1（rc1 兼容路径）：rc.1 安装形态在 CLI 包 node_modules 下嵌套 dsh 自副本，副本存在时优先，保留 rc.1 取证兼容。
+// DSH_CURRENT_RC2（最新路径，rc.2 与 rc.3 共用该路径）：rc.3 安装形态不含嵌套自副本，以安装根 package.json 为锚点后备；删除边界=撤销 rc.1 兼容时移除嵌套候选。
+const INSTALL_ANCHOR = OFFICIAL_ROOT === undefined ? undefined : (existsSync(join(OFFICIAL_ROOT, 'package.json')) ? join(OFFICIAL_ROOT, 'package.json') : join(TARGET_INSTALL_ROOT, 'package.json'))
 
 
 const patchText = readFileSync(join(REPO_ROOT, 'plugins/dsh-extra-plan/cordis.patch.yml'), 'utf8')
@@ -335,6 +337,7 @@ async function start(editor, options = {}) {
     ? options.dshHomePath
     : editor !== undefined && editor !== null ? editor.dshHomePath : undefined
   const targetCtx = {
+    root: options.rootIdentity === undefined || options.rootIdentity === null ? {} : options.rootIdentity,
     fiber: { uid: 'settings-test' },
     get: (name) => {
       if (name === 'configEditor') {
@@ -401,7 +404,7 @@ async function start(editor, options = {}) {
     },
   })
   try { void ctx.configEditor } catch {}
-  const settingsModule = await import('../../plugins/dsh-extra-plan/lib/settings.js')
+  const settingsModule = options.settingsModule === undefined ? await import('../../plugins/dsh-extra-plan/lib/settings.js') : options.settingsModule
   let applyError
   try {
     settingsModule.apply(ctx)
@@ -2206,6 +2209,280 @@ failedSurface.unmount()
   console.log('EARLY_APPLY_ERROR_CLEANUP=' + JSON.stringify({ message: earlyError?.message, cleanupError: earlyError?.cleanupError }))
 }
 check('G5-R5 root cleanupError统一进入最终FAIL计数', rootCleanupErrors.length === 0)
+
+// ── G3：diagnostic prune 全局 owner 调度生命周期隔离取证 ──
+{
+  const cleanupFixture = makeSyncFixture()
+  const errorFixture = makeSyncFixture()
+  const cleanupLogDir = join(cleanupFixture.root, 'logs', 'dsh-extra-plan')
+  const cleanupLogPath = join(cleanupLogDir, 'extra-plan-anchored.jsonl')
+  const errorLogDir = join(errorFixture.root, 'logs', 'dsh-extra-plan')
+  const errorLogPath = join(errorLogDir, 'extra-plan-anchored.jsonl')
+  const expiredRow = JSON.stringify({ ts: '2000-01-01T00:00:00.000Z', fixture: 'g3-cleanup' }) + String.fromCharCode(10)
+  mkdirSync(cleanupLogDir, { recursive: true })
+  mkdirSync(errorLogDir, { recursive: true })
+  writeFileSync(cleanupLogPath, expiredRow, 'utf8')
+  writeFileSync(errorLogPath, expiredRow, 'utf8')
+  const timerQueue = []
+  const timerStats = { scheduled: 0, cleared: 0, callbackRuns: 0, lateCallbackRuns: 0 }
+  const originalSetTimeout = globalThis.setTimeout
+  const originalClearTimeout = globalThis.clearTimeout
+  const originalWarn = console.warn
+  const warningLines = []
+  const cleanupErrors = []
+  const activeRuns = new Set()
+  const observedRuns = []
+  const fsProbe = createFsAccessProbe([
+    { name: 'cleanup', root: cleanupFixture.root },
+    { name: 'error', root: errorFixture.root },
+  ])
+  const renameCounts = { cleanup: 0, error: 0 }
+  const normalizeProbePath = (value) => {
+    try { return resolve(String(value)).toLowerCase() } catch { return '' }
+  }
+  const pathUnder = (value, root) => {
+    const target = normalizeProbePath(value)
+    const base = normalizeProbePath(root)
+    return target === base || target.startsWith(base + '\\') || target.startsWith(base + '/')
+  }
+  let originalRename
+  let originalReaddir
+  let errorReaddir = false
+  let probesInstalled = false
+  let closeCleanupRun
+  const nextPendingTimer = () => {
+    let pending
+    for (const item of timerQueue) if (!item.fired && !item.cancelled) pending = item
+    return pending
+  }
+  const fireTimer = (item, late = false) => {
+    if (item === undefined) return
+    item.invoke(late)
+  }
+  const diagnosticStateOf = (root) => root !== null && (typeof root === 'object' || typeof root === 'function')
+    ? root[Symbol.for('dsh-extra-plan.diagnostic-prune-state')]
+    : undefined
+  const diagnosticKeyOf = (fixture) => {
+    const normalized = resolve(fixture.root)
+    return process.platform === 'win32' ? normalized.toLowerCase() : normalized
+  }
+  const cleanupRecordOf = (root, fixture) => {
+    const state = diagnosticStateOf(root)
+    return state instanceof Map ? state.get(diagnosticKeyOf(fixture)) : undefined
+  }
+  const waitForCleanupRecord = async (root, fixture) => {
+    const record = cleanupRecordOf(root, fixture)
+    if (record === undefined || record.promise === null || record.promise === undefined) return { record, done: false }
+    await record.promise
+    return { record, done: record.status === 'done' }
+  }
+  const createCleanupAppReady = () => {
+    const state = { listeners: [], cancels: 0, commits: 0 }
+    const service = {
+      onReady(listener) {
+        state.listeners.push(listener)
+        return () => { state.cancels += 1 }
+      },
+      commit() {
+        state.commits += 1
+        for (const listener of [...state.listeners]) listener()
+      },
+    }
+    return { service, state }
+  }
+  try {
+    console.warn = (...args) => { warningLines.push(args.map(String).join(' ')) }
+    globalThis.setTimeout = (callback, delay, ...args) => {
+      if (delay !== 0) return originalSetTimeout(callback, delay, ...args)
+      const item = {
+        g3Controlled: true,
+        cancelled: false,
+        fired: false,
+        unref() { return this },
+        ref() { return this },
+        invoke(late = false) {
+          if (this.fired && !late) return
+          this.fired = true
+          timerStats.callbackRuns += 1
+          if (late) timerStats.lateCallbackRuns += 1
+          return callback(...args)
+        },
+      }
+      timerQueue.push(item)
+      timerStats.scheduled += 1
+      return item
+    }
+    globalThis.clearTimeout = (item) => {
+      if (item !== null && typeof item === 'object' && item.g3Controlled === true) {
+        if (!item.cancelled) timerStats.cleared += 1
+        item.cancelled = true
+        return
+      }
+      return originalClearTimeout(item)
+    }
+    fsProbe.install()
+    probesInstalled = true
+    originalRename = fs.renameSync
+    fs.renameSync = (...args) => {
+      for (const name of ['cleanup', 'error']) {
+        if (pathUnder(args[0], name === 'cleanup' ? cleanupFixture.root : errorFixture.root) || pathUnder(args[1], name === 'cleanup' ? cleanupFixture.root : errorFixture.root)) renameCounts[name] += 1
+      }
+      return originalRename(...args)
+    }
+    originalReaddir = fs.readdirSync
+    fs.readdirSync = (target, ...args) => {
+      if (errorReaddir && normalizeProbePath(target) === normalizeProbePath(errorLogDir)) throw new Error('g3-forced-prune-error')
+      return originalReaddir(target, ...args)
+    }
+    syncBuiltinESMExports()
+    const cleanupSettingsModule = await import('../../plugins/dsh-extra-plan/lib/settings.js')
+    const hmrSettingsModule = await import('../../plugins/dsh-extra-plan/lib/settings.js?g3-cleanup-hmr')
+    const hmrRunningSettingsModule = await import('../../plugins/dsh-extra-plan/lib/settings.js?g3-cleanup-hmr-running')
+    const corePluginModule = await import('../../plugins/dsh-extra-plan/index.js')
+    const coreCleanups = []
+    const coreApply = (root) => {
+      const ctx = {
+        root,
+        systemPrompt: { variable: () => () => {} },
+        get: (name) => {
+          if (name === 'profileContext') return cleanupFixture.webProfileContext
+          if (name === 'dshHomePath') return () => cleanupFixture.root
+          return undefined
+        },
+        effect: (fn) => { const cleanup = fn(); coreCleanups.push(cleanup); return cleanup },
+        on: () => () => {},
+      }
+      corePluginModule.apply(ctx, { gateWords: syncGateWords })
+    }
+    const openCleanupRun = async (fixture, rootIdentity, settingsModule = cleanupSettingsModule, mount = false) => {
+      const editor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, fixture.webPatch, { persistDocument: true, profileContext: fixture.webProfileContext })
+      const ready = createCleanupAppReady()
+      const run = await start(editor, { mount, appReady: ready.service, rootIdentity, settingsModule })
+      const opened = { run, ready, fixture, closed: false }
+      activeRuns.add(opened)
+      observedRuns.push(opened)
+      return opened
+    }
+    closeCleanupRun = async (opened) => {
+      if (opened === undefined || opened.closed) return
+      opened.closed = true
+      try { await opened.run.disposeRoot() } catch (error) { cleanupErrors.push(error) }
+      try {
+        if (typeof opened.run.lifecycle?.cleanup === 'function') await opened.run.lifecycle.cleanup()
+      } catch (error) { cleanupErrors.push(error) }
+      try {
+        if (opened.run.server !== undefined) await new Promise((resolve) => opened.run.server.close(resolve))
+      } catch (error) { cleanupErrors.push(error) }
+      activeRuns.delete(opened)
+    }
+    const sharedRoot = {}
+    const sharedRuns = []
+    sharedRuns.push(await openCleanupRun(cleanupFixture, sharedRoot))
+    for (let index = 0; index < 5; index += 1) sharedRuns.push(await openCleanupRun(cleanupFixture, sharedRoot))
+    const sharedTimer = nextPendingTimer()
+    check('G3 同root六次settings owner只安排一次0ms清理', timerStats.scheduled === 1 && sharedTimer !== undefined)
+    const coreScheduleBefore = timerStats.scheduled
+    const coreRenameBefore = renameCounts.cleanup
+    for (let index = 0; index < 5; index += 1) coreApply(sharedRoot)
+    check('G3 五次真实core apply不新增清理调度或实际清理', timerStats.scheduled === coreScheduleBefore && renameCounts.cleanup === coreRenameBefore)
+    for (const cleanup of coreCleanups) if (typeof cleanup === 'function') cleanup()
+    const hmrPendingScheduleBefore = timerStats.scheduled
+    const hmrPendingRun = await openCleanupRun(cleanupFixture, sharedRoot, hmrSettingsModule)
+    check('G3 pending共享owner期间HMR不重复调度', timerStats.scheduled === hmrPendingScheduleBefore && nextPendingTimer() === sharedTimer)
+    const clearBeforeOldOwnerDispose = timerStats.cleared
+    await sharedRuns[0].run.disposeRoot()
+    check('G3 重叠owner先卸旧不取消仍存活的共享timer', timerStats.cleared === clearBeforeOldOwnerDispose && sharedTimer.cancelled === false)
+    fireTimer(sharedTimer)
+    const sharedRecordAtRun = cleanupRecordOf(sharedRoot, cleanupFixture)
+    const hmrRunningRun = await openCleanupRun(cleanupFixture, sharedRoot, hmrRunningSettingsModule)
+    check('G3 running共享owner期间HMR不重复调度', sharedRecordAtRun?.status === 'running' && timerStats.scheduled === hmrPendingScheduleBefore && nextPendingTimer() === undefined)
+    const sharedBarrier = await waitForCleanupRecord(sharedRoot, cleanupFixture)
+    const sharedFsAfterCleanup = fsProbe.count('cleanup')
+    check('G3 同root实际清理恰一次且仅触达fixture fs', sharedBarrier.done && renameCounts.cleanup === 1 && sharedFsAfterCleanup > 0)
+    await closeCleanupRun(hmrRunningRun)
+    await closeCleanupRun(hmrPendingRun)
+    for (const opened of sharedRuns) await closeCleanupRun(opened)
+    check('G3 未commit fake appReady隔离账本', sharedRuns.every((opened) => opened.ready.state.commits === 0 && opened.ready.state.listeners.length === 1) && hmrPendingRun.ready.state.commits === 0 && hmrRunningRun.ready.state.commits === 0)
+    const hmrScheduleBefore = timerStats.scheduled
+    const hmrRun = await openCleanupRun(cleanupFixture, sharedRoot, hmrSettingsModule)
+    check('G3 完成后同root模块HMR不再重复调度', timerStats.scheduled === hmrScheduleBefore && nextPendingTimer() === undefined)
+    await closeCleanupRun(hmrRun)
+    writeFileSync(cleanupLogPath, expiredRow, 'utf8')
+    const newRoot = {}
+    const newRootRun = await openCleanupRun(cleanupFixture, newRoot)
+    const newRootTimer = nextPendingTimer()
+    check('G3 新root允许新一轮调度', timerStats.scheduled === hmrScheduleBefore + 1 && newRootTimer !== undefined)
+    const renameBeforeInFlightDispose = renameCounts.cleanup
+    if (newRootTimer !== undefined) {
+      fireTimer(newRootTimer)
+      const firstDispose = newRootRun.run.disposeRoot()
+      const secondDispose = newRootRun.run.disposeRoot()
+      check('G3 在途清理卸载幂等并共享等待Promise', firstDispose === secondDispose)
+      await firstDispose
+      const newRootBarrier = await waitForCleanupRecord(newRoot, cleanupFixture)
+      check('G3 卸载等待在途清理结算并完成一次真实重写', newRootBarrier.done && renameCounts.cleanup === renameBeforeInFlightDispose + 1 && !readFileSync(cleanupLogPath, 'utf8').includes('2000-01-01'))
+    }
+    await closeCleanupRun(newRootRun)
+    writeFileSync(cleanupLogPath, expiredRow, 'utf8')
+    const cancelRoot = {}
+    const cancelRun = await openCleanupRun(cleanupFixture, cancelRoot)
+    const cancelTimer = nextPendingTimer()
+    const renameBeforeCancel = renameCounts.cleanup
+    await cancelRun.run.disposeRoot()
+    check('G3 所有owner在timer前卸载则取消且零实际清理', cancelTimer !== undefined && timerStats.cleared >= 1 && renameCounts.cleanup === renameBeforeCancel)
+    const reOwnerScheduleBefore = timerStats.scheduled
+    const reOwnerRun = await openCleanupRun(cleanupFixture, cancelRoot)
+    const reOwnerTimer = nextPendingTimer()
+    check('G3 取消后同root新owner可重新安排新timer', reOwnerTimer !== undefined && reOwnerTimer !== cancelTimer && timerStats.scheduled === reOwnerScheduleBefore + 1)
+    const fsBeforeLateCancel = fsProbe.count('cleanup')
+    if (cancelTimer !== undefined) fireTimer(cancelTimer, true)
+    check('G3 旧callback在新记录存在时仍无效', timerStats.lateCallbackRuns >= 1 && fsProbe.count('cleanup') === fsBeforeLateCancel && renameCounts.cleanup === renameBeforeCancel)
+    if (reOwnerTimer !== undefined) {
+      fireTimer(reOwnerTimer)
+      const reOwnerBarrier = await waitForCleanupRecord(cancelRoot, cleanupFixture)
+      check('G3 新owner重新安排后仅实际清理一次', reOwnerBarrier.done && renameCounts.cleanup === renameBeforeCancel + 1 && !readFileSync(cleanupLogPath, 'utf8').includes('2000-01-01'))
+    }
+    await closeCleanupRun(cancelRun)
+    await closeCleanupRun(reOwnerRun)
+    const noRootReady = createCleanupAppReady()
+    const noRootEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false })
+    const noRootScheduleBefore = timerStats.scheduled
+    const noRootRun = await start(noRootEditor, { appReady: noRootReady.service, rootIdentity: {}, settingsModule: cleanupSettingsModule })
+    check('G3 无H根不调度且只给可观测跳过告警', timerStats.scheduled === noRootScheduleBefore && warningLines.some((line) => line.includes('diagnostic log prune skipped: no-host-root')))
+    const noRootOpened = { run: noRootRun, ready: noRootReady, closed: false }
+    activeRuns.add(noRootOpened)
+    observedRuns.push(noRootOpened)
+    await closeCleanupRun(noRootOpened)
+    errorReaddir = true
+    const errorRoot = {}
+    const errorRun = await openCleanupRun(errorFixture, errorRoot, cleanupSettingsModule)
+    const errorTimer = nextPendingTimer()
+    if (errorTimer !== undefined) fireTimer(errorTimer)
+    const errorBarrier = await waitForCleanupRecord(errorRoot, errorFixture)
+    const errorResponse = await requestJson(errorRun.run.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
+    check('G3 清理错误只warn且settings API仍可用', errorTimer !== undefined && errorBarrier.done && errorResponse.status === 200 && warningLines.some((line) => line.includes('diagnostic log prune failed') && line.includes('g3-forced-prune-error')) && renameCounts.error === 0)
+    errorReaddir = false
+    await closeCleanupRun(errorRun)
+    check('G3 全部fake appReady保持未commit且无root清理错误', observedRuns.every((opened) => opened.ready.state.commits === 0) && cleanupErrors.length === 0)
+    console.log('MARKER G3 cleanup lifecycle ' + JSON.stringify({ scheduled: timerStats.scheduled, cleared: timerStats.cleared, callbackRuns: timerStats.callbackRuns, lateCallbackRuns: timerStats.lateCallbackRuns, renameCounts, fixtureFs: { cleanup: fsProbe.count('cleanup'), error: fsProbe.count('error') }, appReadyCommits: observedRuns.map((opened) => opened.ready.state.commits), cleanupErrors: cleanupErrors.length }))
+  } catch (error) {
+    check('G3 独立清理生命周期夹具未抛出异常', false)
+    console.log('MARKER G3 cleanup lifecycle error=' + String(error && error.stack || error))
+  } finally {
+    for (const opened of [...activeRuns]) {
+      try { await closeCleanupRun(opened) } catch {}
+    }
+    if (originalReaddir !== undefined) fs.readdirSync = originalReaddir
+    if (originalRename !== undefined) fs.renameSync = originalRename
+    if (originalReaddir !== undefined || originalRename !== undefined) syncBuiltinESMExports()
+    if (probesInstalled) fsProbe.restore()
+    globalThis.setTimeout = originalSetTimeout
+    globalThis.clearTimeout = originalClearTimeout
+    console.warn = originalWarn
+    rmSync(cleanupFixture.root, { recursive: true, force: true })
+    rmSync(errorFixture.root, { recursive: true, force: true })
+  }
+}
 
 // ── G5-R7：appReady 分支后置扫描（apply 期零 Worker 构造、commit 后宏任务才起扫、dispose 两条拦截路径）──
 {

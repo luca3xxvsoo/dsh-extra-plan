@@ -29,6 +29,9 @@ import { parsePresetYaml, rowsByIdWithPath } from './preset-yaml.js'
 import { GATE_WORD_FIELDS, validateGateWords } from './gate-words.js'
 import { createPathContext, resolveWorkspacePath, resolveHostPath, validateReadTarget } from './path-policy.js'
 import { startUsageLedgerBackground } from './usage-ledger-background.js'
+import { pruneDiagnosticLogs } from './log-retention.js'
+
+const DIAGNOSTIC_PRUNE_STATE = Symbol.for('dsh-extra-plan.diagnostic-prune-state')
 
 function safeContextGet(ctx, key) {
   try { return ctx !== undefined && ctx !== null && typeof ctx.get === 'function' ? ctx.get(key) : undefined } catch (error) { return undefined }
@@ -639,6 +642,129 @@ function createApiHandler(ctx, syncEditor, getProfileSync) {
   }
 }
 
+function diagnosticPruneRootOf(ctx) {
+  try {
+    if (ctx === null || ctx === undefined) return null
+    const root = ctx.root !== undefined && ctx.root !== null ? ctx.root : ctx
+    return root !== null && (typeof root === 'object' || typeof root === 'function') ? root : null
+  } catch (error) {
+    return null
+  }
+}
+
+function diagnosticPruneStateOf(ctx) {
+  const root = diagnosticPruneRootOf(ctx)
+  if (root === null) return null
+  try {
+    const existing = root[DIAGNOSTIC_PRUNE_STATE]
+    if (existing instanceof Map) return existing
+    if (existing !== undefined) return null
+    const state = new Map()
+    Object.defineProperty(root, DIAGNOSTIC_PRUNE_STATE, {
+      value: state,
+      enumerable: false,
+      configurable: false,
+      writable: false,
+    })
+    return state
+  } catch (error) {
+    return null
+  }
+}
+
+function diagnosticPruneKey(hostDataRoot) {
+  const normalized = pathResolve(hostDataRoot)
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized
+}
+
+function startupPruneDiagnosticLogsForApply(ctx) {
+  let startupContext = null
+  try { startupContext = settingsPathContext(ctx, undefined) } catch (error) { startupContext = null }
+  const hostDataRoot = startupContext !== null && startupContext !== undefined ? startupContext.hostDataRoot : null
+  if (typeof hostDataRoot !== 'string' || hostDataRoot === '') {
+    console.warn('[dsh-extra-plan] diagnostic log prune skipped: no-host-root')
+    return
+  }
+  if (ctx === null || ctx === undefined || typeof ctx.effect !== 'function') {
+    console.warn('[dsh-extra-plan] diagnostic log prune skipped: root ctx.effect unavailable')
+    return
+  }
+  const records = diagnosticPruneStateOf(ctx)
+  if (!(records instanceof Map)) {
+    console.warn('[dsh-extra-plan] diagnostic log prune skipped: root state unavailable')
+    return
+  }
+  let key
+  try {
+    key = diagnosticPruneKey(hostDataRoot)
+  } catch (error) {
+    console.warn('[dsh-extra-plan] diagnostic log prune skipped: invalid-host-root')
+    return
+  }
+  try {
+    ctx.effect(() => {
+      const owner = { alive: true, released: false }
+      let record = records.get(key)
+      let created = false
+      if (record === undefined) {
+        record = { owners: new Set(), status: 'scheduled', timer: null, promise: null, error: null }
+        records.set(key, record)
+        created = true
+      }
+      record.owners.add(owner)
+      if (created) {
+        const run = () => {
+          const hasLiveOwner = [...record.owners].some((item) => item.alive === true)
+          if (records.get(key) !== record || !hasLiveOwner) return
+          record.status = 'running'
+          record.timer = null
+          record.promise = Promise.resolve().then(() => pruneDiagnosticLogs(startupContext)).then((result) => {
+            record.status = 'done'
+            if (result !== null && typeof result === 'object' && result.status === 'pruned') {
+              try { console.warn('[dsh-extra-plan] diagnostic log prune: ' + JSON.stringify(result)) } catch (error) {}
+            }
+          }, (error) => {
+            record.error = error
+            record.status = 'done'
+            try { console.warn('[dsh-extra-plan] diagnostic log prune failed（不阻断启动）: ' + (error instanceof Error ? error.message : String(error))) } catch (warnError) {}
+          })
+        }
+        try {
+          const timer = setTimeout(run, 0)
+          record.timer = timer
+          if (timer !== null && typeof timer === 'object' && typeof timer.unref === 'function') timer.unref()
+        } catch (error) {
+          record.error = error
+          record.status = 'done'
+          record.owners.delete(owner)
+          owner.alive = false
+          if (records.get(key) === record) records.delete(key)
+          try { console.warn('[dsh-extra-plan] diagnostic log prune scheduling failed（不阻断启动）: ' + (error instanceof Error ? error.message : String(error))) } catch (warnError) {}
+        }
+      }
+      return () => {
+        if (owner.released) return record.promise
+        owner.released = true
+        owner.alive = false
+        record.owners.delete(owner)
+        if (records.get(key) !== record) return record.promise
+        if (record.status === 'scheduled' && record.owners.size === 0) {
+          if (record.timer !== null) {
+            try { clearTimeout(record.timer) } catch (error) {}
+            record.timer = null
+          }
+          records.delete(key)
+          return undefined
+        }
+        if (record.status === 'running' || record.status === 'done') return record.promise
+        return undefined
+      }
+    }, 'dsh-extra-plan-settings: diagnostic log prune')
+  } catch (error) {
+    try { console.warn('[dsh-extra-plan] diagnostic log prune effect failed（不阻断启动）: ' + (error instanceof Error ? error.message : String(error))) } catch (warnError) {}
+  }
+}
+
 function startupArchiveForApply(ctx) {
   try {
     const startupContext = settingsPathContext(ctx, undefined)
@@ -709,6 +835,7 @@ function startupArchiveForApply(ctx) {
 }
 
 export function apply(ctx) {
+  startupPruneDiagnosticLogsForApply(ctx)
   startupArchiveForApply(ctx)
   // Client carrier、settings API、当前值补齐与 profileSync 由这一行 owner 持有；adapter 生命周期独立。
   let lastTerminalCache

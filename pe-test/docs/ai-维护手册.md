@@ -148,6 +148,7 @@
 **诊断落盘契约**：`agent/error` 与 `agent/request-error` 各自向诊断目录追加一份 jsonl 诊断（裸文件名时写 host 侧 logs/dsh-extra-plan/，H 缺失时改用工作区 .extra-plan/logs/），写入整体吞错；usage 账本默认写 Host `logs/dsh-extra-plan/extra-plan-usage-ledger.jsonl`，按需诊断写 `logs/dsh-extra-plan/extra-plan-usage-errors.jsonl`，每行恰为字符串 `ts`、`reason`、`message`，无 Host 根不落 W 回退且不取代既有 agent/request/anchored 三类日志；记录存在不等于宿主重试已通过——诊断只用于定位根因，不是 retry 或恢复的证据。
 - `agent/error` 侧写 `extra-plan-agent-errors.jsonl`，行字段为 `ts`、`sessionId`、`turn`、`step`、`chain`（无 `role`）；写入失败由模块级标志保证每进程只告警一次。
 - `agent/request-error` 侧写 `extra-plan-request-errors.jsonl`（路径可经 `cfg.diagFile` 覆盖），行字段为 `ts`、`sessionId`、`role`、`turn`、`step`、`provider`、`message`、`code`（仅 `failure.code` 存在时带）、`causeChain`；写入失败由实例内标志保证每实例只告警一次。
+- anchored 诊断入口为 `extra-plan-anchored.jsonl`；其正常装配摘要与即时失败规则、settings 全局清理入口见 [ai-机制设计](ai-机制设计.md)；以上 `agent/error` 与 `agent/request-error` 的路径、字段及写入失败吞错规则不变。
 
 ## 代码地图维护规则
 

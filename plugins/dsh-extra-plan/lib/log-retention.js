@@ -3,15 +3,21 @@ import { createInterface } from 'node:readline'
 import { join } from 'node:path'
 import { resolveHostPath, prepareWriteTarget } from './path-policy.js'
 
-// 诊断日志保留期裁剪：只处理 <host 根>/logs/dsh-extra-plan 下的 .jsonl 诊断日志，
-// 删除 ts 早于保留窗口的行（滚动 48 小时），避免追加型诊断日志（尤其 extra-plan-anchored.jsonl）无限增长。
+// 诊断日志保留期裁剪：只处理 <host 根>/logs/dsh-extra-plan 下的 .jsonl 诊断日志。
+// 全部诊断 JSONL（usage ledger 除外）统一按固定 UTC+8 北京时间昨日零点裁剪，保留今天/昨天两个自然日。
 // 不处理 usage-ledger：该文件由 lib/usage-ledger.js 的 startupArchive 归档链路自行管理。
-// 判据保守：空行/解析失败/ts 缺失或非法的行一律保留；无过期行时零写且不留临时文件。
+// 清理算法为前缀边界裁剪：分界线=首个可解析且 cutoff<=ts<=now 的行；不可解析行（空行/坏JSON/无ts/非法ts）与未来时间行（ts>now，时钟过快写入）不作为分界，作为前缀候选随前缀删除。
+// 分界线之后原样保留（含坏行与乱序过期行，随保留窗口自然收敛）；零写条件=文件0行或分界为0；全部为前缀候选时清空为空文件。导出面调整见下，cutoff规则单一。
 export const LOG_DIRECTORY = 'logs/dsh-extra-plan'
-export const LOG_RETENTION_MS = 172800000
 export const EXCLUDED_LOG_FILES = Object.freeze(['extra-plan-usage-ledger.jsonl'])
+const DAY_MS = 86400000
+const OFFSET_MS = 28800000
 const PURPOSE = 'diagnostics'
 const NEWLINE = String.fromCharCode(10)
+
+function beijingYesterdayCutoffMs(now) {
+  return (Math.floor((now + OFFSET_MS) / DAY_MS) - 1) * DAY_MS - OFFSET_MS
+}
 
 function parsedTsOf(line) {
   const text = typeof line === 'string' ? line.trim() : ''
@@ -37,33 +43,37 @@ function closeInput(input) {
   })
 }
 
-async function scanHasExpired(filePath, cutoffMs) {
+async function findPrefixBoundary(filePath, cutoffMs, now) {
   const input = createReadStream(filePath, { encoding: 'utf8' })
   const reader = createInterface({ input, crlfDelay: Infinity })
+  let lines = 0
+  let boundary = null
   try {
     for await (const line of reader) {
-      const ts = parsedTsOf(line)
-      if (ts !== null && ts < cutoffMs) return true
+      if (boundary === null) {
+        const ts = parsedTsOf(line)
+        if (ts !== null && ts >= cutoffMs && ts <= now) boundary = lines
+      }
+      lines += 1
     }
-    return false
+    return { boundary, lines }
   } finally {
     reader.close()
     input.destroy()
   }
 }
 
-async function rewriteWithoutExpired(filePath, tmpPath, cutoffMs, pathContext) {
+async function copyFromBoundary(filePath, tmpPath, skipCount, pathContext) {
   const tmpTarget = resolveHostPath(pathContext, tmpPath, { purpose: PURPOSE })
   prepareWriteTarget(pathContext, tmpTarget, { expectedType: 'file', purpose: PURPOSE })
   const input = createReadStream(filePath, { encoding: 'utf8' })
   const writer = createWriteStream(tmpTarget.path, { encoding: 'utf8' })
   const reader = createInterface({ input, crlfDelay: Infinity })
-  let removed = 0
+  let skipped = 0
   try {
     for await (const line of reader) {
-      const ts = parsedTsOf(line)
-      if (ts !== null && ts < cutoffMs) {
-        removed += 1
+      if (skipped < skipCount) {
+        skipped += 1
         continue
       }
       writer.write(line + NEWLINE)
@@ -75,7 +85,6 @@ async function rewriteWithoutExpired(filePath, tmpPath, cutoffMs, pathContext) {
     })
     await closeInput(input)
     renameSync(tmpTarget.path, filePath)
-    return removed
   } catch (error) {
     try { reader.close() } catch {}
     try { input.destroy() } catch {}
@@ -87,13 +96,11 @@ async function rewriteWithoutExpired(filePath, tmpPath, cutoffMs, pathContext) {
 
 export async function pruneDiagnosticLogs(pathContext, options = {}) {
   const settings = options !== null && typeof options === 'object' ? options : {}
-  const retentionMs = Number.isFinite(settings.retentionMs) ? settings.retentionMs : LOG_RETENTION_MS
   const now = Number.isFinite(settings.now) ? settings.now : Date.now()
-  const cutoffMs = now - retentionMs
   const root = pathContext !== null && typeof pathContext === 'object' ? pathContext.hostDataRoot : null
-  if (typeof root !== 'string' || root === '') return { status: 'skipped', reason: 'no-host-root', retentionMs }
+  if (typeof root !== 'string' || root === '') return { status: 'skipped', reason: 'no-host-root' }
   const dirTarget = resolveHostPath(pathContext, LOG_DIRECTORY, { purpose: PURPOSE })
-  if (!existsSync(dirTarget.path)) return { status: 'skipped', reason: 'no-log-directory', retentionMs }
+  if (!existsSync(dirTarget.path)) return { status: 'skipped', reason: 'no-log-directory' }
   prepareWriteTarget(pathContext, dirTarget, { expectedType: 'directory', purpose: PURPOSE })
   const names = readdirSync(dirTarget.path).filter((name) => {
     if (!name.endsWith('.jsonl')) return false
@@ -104,10 +111,13 @@ export async function pruneDiagnosticLogs(pathContext, options = {}) {
   let removedRows = 0
   for (const name of names) {
     const filePath = join(dirTarget.path, name)
-    if (!(await scanHasExpired(filePath, cutoffMs))) continue
+    const cutoffMs = beijingYesterdayCutoffMs(now)
+    const found = await findPrefixBoundary(filePath, cutoffMs, now)
+    if (found.lines === 0 || found.boundary === 0) continue
     const tmpPath = join(dirTarget.path, name + '.prune-tmp-' + String(process.pid) + '-' + String(Date.now()))
-    removedRows += await rewriteWithoutExpired(filePath, tmpPath, cutoffMs, pathContext)
+    removedRows += found.boundary === null ? found.lines : found.boundary
+    await copyFromBoundary(filePath, tmpPath, found.boundary === null ? found.lines : found.boundary, pathContext)
     pruned += 1
   }
-  return { status: pruned > 0 ? 'pruned' : 'up-to-date', scanned: names.length, pruned, removedRows, retentionMs }
+  return { status: pruned > 0 ? 'pruned' : 'up-to-date', scanned: names.length, pruned, removedRows }
 }

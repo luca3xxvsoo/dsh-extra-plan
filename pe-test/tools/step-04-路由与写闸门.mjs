@@ -19,7 +19,13 @@ const ROUTE_FIXTURE = makeFixtureDir({ label: 'route-gate' })
 const DSH_HOME = ROUTE_FIXTURE.home.replaceAll('\\', '/')
 const ROUTE_PATH_CONTEXT = createPathContext({ hostDataRoot: ROUTE_FIXTURE.home })
 const ROUTE_INSTALL_ROOT = typeof process.env.DSH_INSTALL_ROOT === 'string' && process.env.DSH_INSTALL_ROOT.trim() !== '' ? process.env.DSH_INSTALL_ROOT.trim() : null
-const DSH_PACKAGE_MANIFEST = ROUTE_INSTALL_ROOT === null ? null : join(ROUTE_INSTALL_ROOT, 'node_modules', '@deepseek-ai', 'dsh', 'package.json')
+// DSH_COMPAT_RC1（rc1 兼容路径）：rc.1 安装形态在 CLI 包 node_modules 下嵌套 dsh 自副本，副本存在时优先，保留 rc.1 取证兼容。
+// DSH_CURRENT_RC2（最新路径，rc.2 与 rc.3 共用该路径）：rc.3 安装形态不含嵌套自副本，以安装根 package.json 为锚点后备；删除边界=撤销 rc.1 兼容时移除嵌套候选。
+const DSH_PACKAGE_MANIFEST = ROUTE_INSTALL_ROOT === null
+  ? null
+  : existsSync(join(ROUTE_INSTALL_ROOT, 'node_modules', '@deepseek-ai', 'dsh', 'package.json'))
+    ? join(ROUTE_INSTALL_ROOT, 'node_modules', '@deepseek-ai', 'dsh', 'package.json')
+    : join(ROUTE_INSTALL_ROOT, 'package.json')
 const makeTmpDir = (label) => { const dir = join(ROUTE_FIXTURE.home, 'tmp', String(label).replace(/[^A-Za-z0-9_-]+/g, '-')); mkdirSync(dir, { recursive: true }); return dir }
 const PLUGIN_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/index.js', import.meta.url))
 const AGENT_RUNTIME_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/agent-runtime.js', import.meta.url))
@@ -745,6 +751,454 @@ function makeArmAgent(id, toolsStub, withAppend) {
   await fireAgentCreatedForArm(harnessArmNoAppend, noAppendAgent)
   checkTrue('R18 无 session.append 的夹具不 arm（路线 A）', noAppendRecorder.calls.restrict.length === 0)
 }
+
+// ── M10：真实 fixture JSONL 的 F/L 配额、隔离、失败细节与业务等价取证 ──
+{
+  const G2_DIAG_FILE = join(ROUTE_FIXTURE.home, 'logs', 'dsh-extra-plan', 'extra-plan-anchored.jsonl')
+  const G2_SESSION_PREFIX = 'g2-m10-'
+  const g2RowsFor = (sessionId) => {
+    if (!existsSync(G2_DIAG_FILE)) return []
+    const rows = []
+    const lines = readFileSync(G2_DIAG_FILE, 'utf8').split(/\r?\n/).filter((line) => line.trim() !== '')
+    for (const line of lines) {
+      try {
+        const row = JSON.parse(line)
+        if (row !== null && typeof row === 'object' && row.sessionId === sessionId) rows.push(row)
+      } catch (error) {
+      }
+    }
+    return rows
+  }
+  const g2Tool = (name) => ({
+    name,
+    description: 'G2 ' + name,
+    parameters: { type: 'object', properties: {}, additionalProperties: true },
+    output: { type: 'object', additionalProperties: true },
+  })
+  const g2SchemasFor = (mode) => mode === 'ptc'
+    ? [g2Tool('run_code')]
+    : ['read', 'pwsh', 'write', 'edit', 'cordis_inspect_list', 'cordis_inspect_query'].map((name) => g2Tool(name))
+  const g2ToolsFor = (mode) => g2SchemasFor(mode).map((schema) => ({ ...schema }))
+  const g2SectionsFor = (mode) => [
+    { name: 'extra-plan-bootstrap', text: 'G2 persona sentinel' },
+    { name: 'tool:read', text: 'G2 read sentinel' },
+    ...(mode === 'ptc' ? [{ name: 'tools:ptc-only', text: 'G2 ptc sentinel' }] : []),
+    { name: 'tools:sdk', text: 'G2 SDK sentinel' },
+    { name: 'tool:cordis', text: 'G2 Cordis sentinel' },
+  ]
+  const g2AllRestrictableNames = (schemas) => new Set([
+    ...schemas.map((schema) => schema.name),
+    'cordis_inspect_list',
+    'cordis_inspect_query',
+  ])
+  function makeG2Recorder(schemas, options = {}) {
+    const recorder = makeArmRecorder(schemas)
+    const restrictableNames = options.restrictableNames === undefined
+      ? g2AllRestrictableNames(schemas)
+      : new Set(options.restrictableNames)
+    recorder.tools.view = () => ({ restrictableNames })
+    const originalRestrict = recorder.tools.restrict
+    if (options.restrictMode !== undefined) {
+      recorder.tools.restrict = (filter) => {
+        recorder.calls.restrict.push(filter)
+        if (options.restrictMode === 'non-function') return 'g2-non-function-disposer'
+        if (options.restrictMode === 'throw') throw new Error('g2 arm throw')
+        if (options.restrictMode === 'release-throw') {
+          return () => {
+            recorder.calls.released += 1
+            throw new Error('g2 release throw')
+          }
+        }
+        return originalRestrict(filter)
+      }
+    }
+    if (options.noRestrict === true) delete recorder.tools.restrict
+    return recorder
+  }
+  const G2_ROLE_PRESETS = Object.freeze({
+    main: null,
+    planner: PLANNER_PRESET,
+    executor: 'extra-plan-executor',
+    reviewer: 'extra-plan-reviewer',
+    probe: 'extra-plan-prober',
+  })
+  const g2DiagnosticRoleOf = (role) => role === 'main' ? 'main' : role === 'planner' ? 'planner' : 'executor'
+  function makeG2Agent(sessionId, role, recorder, query) {
+    const agentPreset = G2_ROLE_PRESETS[role]
+    const header = {
+      id: sessionId,
+      cwd: 'C:/work',
+      ...(agentPreset === null ? {} : { origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1', agentPreset }),
+    }
+    const session = makeRouteSession(header)
+    const agent = {
+      session,
+      options: { model: 'deepseek-v4-pro' },
+      ctx: undefined,
+      model: { select: () => {}, current: () => undefined },
+    }
+    agent.ctx = {
+      get: (name) => {
+        if (name === 'tools') return recorder === null ? undefined : recorder.tools
+        if (name === 'sessionQuery') {
+          query.gets += 1
+          return {
+            observeSession: () => {
+              query.observes += 1
+              return {
+                events: session.snapshotEvents(),
+                [Symbol.dispose]() { query.disposes += 1 },
+              }
+            },
+          }
+        }
+        return undefined
+      },
+    }
+    return agent
+  }
+  const g2ToolCall = (id) => ({ type: 'tool/call', data: { name: 'read', callId: id, arguments: '{}' } })
+  const g2AssemblySignature = (assembly) => ({
+    tools: Array.isArray(assembly?.tools)
+      ? assembly.tools.map((tool) => tool === null || typeof tool !== 'object' ? tool : { name: tool.name, description: tool.description, parameters: tool.parameters, output: tool.output })
+      : assembly?.tools === undefined ? null : assembly.tools,
+    sections: Array.isArray(assembly?.sections)
+      ? assembly.sections.map((section) => section === null || typeof section !== 'object' ? section : { name: section.name, text: section.text })
+      : assembly?.sections === undefined ? null : assembly.sections,
+    contexts: Array.isArray(assembly?.contexts) ? assembly.contexts : assembly?.contexts === undefined ? null : assembly.contexts,
+  })
+  const g2AllSame = (values) => values.length > 0 && values.every((value) => isDeepStrictEqual(value, values[0]))
+  const g2AppendToolCall = (agent, id) => agent.session.append('tool/call', { name: 'read', callId: id, arguments: '{}' })
+  const g2NormalRows = (rows) => rows.filter((row) => row.event === 'assemble-diag')
+  const g2FailureRows = (rows) => rows.filter((row) => row.event === 'arm-failed' || row.event === 'release-failed')
+
+  const stressSessionId = G2_SESSION_PREFIX + 'stress'
+  const stressQuery = { gets: 0, observes: 0, disposes: 0 }
+  const stressRecorder = makeG2Recorder(g2SchemasFor('native'))
+  const stressAgent = makeG2Agent(stressSessionId, 'main', stressRecorder, stressQuery)
+  const stressHarness = makeHarness({ anchoredBootstrap: true, creativeMode: false, ptcRuntime: null })
+  const stressTools = g2ToolsFor('native')
+  const stressSections = g2SectionsFor('native')
+  await fireAgentCreatedForArm(stressHarness, stressAgent)
+  const stressBeforeF = stressQuery.observes
+  const stressF = await Promise.all(Array.from({ length: 50 }, () => assemble(stressHarness, stressAgent, stressTools, stressSections)))
+  const stressAfterF = stressQuery.observes
+  g2AppendToolCall(stressAgent, 'g2-stress-tool-call')
+  let stressNext = 0
+  const stressRelease = preExecute(stressHarness, stressAgent, 'read', { file_path: 'g2-stress' }, undefined, () => { stressNext += 1 })
+  const stressAfterRelease = stressQuery.observes
+  const stressBeforeL = stressQuery.observes
+  const stressL = await Promise.all(Array.from({ length: 50 }, () => assemble(stressHarness, stressAgent, stressTools, stressSections)))
+  const stressAfterL = stressQuery.observes
+  const stressRows = g2RowsFor(stressSessionId)
+  const stressNormal = g2NormalRows(stressRows)
+  const stressFRow = stressNormal.find((row) => row.keypoint === 'first-assembly')
+  const stressLRow = stressNormal.find((row) => row.keypoint === 'first-after-tool-call')
+  checkTrue('G2 stress 50次并发F与50次并发L真实JSONL恰有F/L各一条', stressNormal.length === 2 && stressFRow !== undefined && stressLRow !== undefined && g2FailureRows(stressRows).length === 0 && stressRows.every((row) => row.event === 'assemble-diag'))
+  checkTrue('G2 stress 真实fixture按sessionId/keypoint隔离且phaseLease对齐F/L', stressFRow?.sessionId === stressSessionId && stressLRow?.sessionId === stressSessionId && stressFRow?.phase === 'first' && stressFRow?.phaseLease === 'first' && stressLRow?.phase === 'later' && stressLRow?.phaseLease === 'later')
+  checkTrue('G2 stress phaseLease每次装配求值：F=50、L=50、租约dispose等量', stressAfterF - stressBeforeF === 50 && stressAfterL - stressBeforeL === 50 && stressQuery.gets === stressQuery.observes && stressQuery.observes === stressQuery.disposes)
+  checkTrue('G2 stress recovery next恰一次且restrict/disposer次数保持原业务', stressRelease.kind === 'allow' && stressNext === 1 && stressRecorder.calls.restrict.length === 2 && stressRecorder.calls.released === 1 && stressAfterRelease - stressAfterF >= 0)
+  checkTrue('G2 stress tools/sections/persona/SDK重复装配业务等价', g2AllSame(stressF.map(g2AssemblySignature)) && g2AllSame(stressL.map(g2AssemblySignature)) && stressF.length === 50 && stressL.length === 50)
+  checkTrue('G2 stress F/L restrictions体现arm与恢复而非伪计数', stressFRow?.restrictions?.['anchored-bootstrap']?.active !== null && stressLRow?.restrictions?.['anchored-bootstrap']?.active === null && stressFRow?.restrictions?.['cordis-presentation']?.active !== null)
+
+  const onlyLId = G2_SESSION_PREFIX + 'only-l'
+  const onlyLQuery = { gets: 0, observes: 0, disposes: 0 }
+  const onlyLRecorder = makeG2Recorder(g2SchemasFor('native'))
+  const onlyLAgent = makeG2Agent(onlyLId, 'main', onlyLRecorder, onlyLQuery)
+  const onlyLHarness = makeHarness({ anchoredBootstrap: true, creativeMode: true, ptcRuntime: null })
+  g2AppendToolCall(onlyLAgent, 'g2-only-l-tool-call')
+  const onlyLAssembly = await assemble(onlyLHarness, onlyLAgent, g2ToolsFor('native'), g2SectionsFor('native'))
+  const onlyLRows = g2RowsFor(onlyLId)
+  checkTrue('G2 仅L恢复不补F：真实JSONL只有first-after-tool-call且装配未失败', g2NormalRows(onlyLRows).length === 1 && g2NormalRows(onlyLRows)[0].keypoint === 'first-after-tool-call' && g2FailureRows(onlyLRows).length === 0 && onlyLQuery.observes === 1 && g2AssemblySignature(onlyLAssembly).sections !== null)
+
+  const onlyFId = G2_SESSION_PREFIX + 'only-f'
+  const onlyFQuery = { gets: 0, observes: 0, disposes: 0 }
+  const onlyFRecorder = makeG2Recorder(g2SchemasFor('native'))
+  const onlyFAgent = makeG2Agent(onlyFId, 'main', onlyFRecorder, onlyFQuery)
+  const onlyFHarness = makeHarness({ anchoredBootstrap: true, creativeMode: true, ptcRuntime: null })
+  await fireAgentCreatedForArm(onlyFHarness, onlyFAgent)
+  const onlyFAssembly = await assemble(onlyFHarness, onlyFAgent, g2ToolsFor('native'), g2SectionsFor('native'))
+  const onlyFRows = g2RowsFor(onlyFId)
+  checkTrue('G2 仅F不造L：真实JSONL只有first-assembly且装配未失败', g2NormalRows(onlyFRows).length === 1 && g2NormalRows(onlyFRows)[0].keypoint === 'first-assembly' && g2FailureRows(onlyFRows).length === 0 && onlyFQuery.observes === 1 && g2AssemblySignature(onlyFAssembly).sections !== null)
+
+  const sharedId = G2_SESSION_PREFIX + 'new-agent'
+  const sharedHarness = makeHarness({ anchoredBootstrap: true, creativeMode: true, ptcRuntime: null })
+  const sharedQueryA = { gets: 0, observes: 0, disposes: 0 }
+  const sharedQueryB = { gets: 0, observes: 0, disposes: 0 }
+  const sharedAgentA = makeG2Agent(sharedId, 'main', makeG2Recorder(g2SchemasFor('native')), sharedQueryA)
+  const sharedAgentB = makeG2Agent(sharedId, 'main', makeG2Recorder(g2SchemasFor('native')), sharedQueryB)
+  await fireAgentCreatedForArm(sharedHarness, sharedAgentA)
+  await fireAgentCreatedForArm(sharedHarness, sharedAgentB)
+  const sharedFA = await assemble(sharedHarness, sharedAgentA, g2ToolsFor('native'), g2SectionsFor('native'))
+  g2AppendToolCall(sharedAgentA, 'g2-new-agent-a-tool-call')
+  const sharedLA = await assemble(sharedHarness, sharedAgentA, g2ToolsFor('native'), g2SectionsFor('native'))
+  const sharedFB = await assemble(sharedHarness, sharedAgentB, g2ToolsFor('native'), g2SectionsFor('native'))
+  g2AppendToolCall(sharedAgentB, 'g2-new-agent-b-tool-call')
+  const sharedLB = await assemble(sharedHarness, sharedAgentB, g2ToolsFor('native'), g2SectionsFor('native'))
+  const sharedRows = g2RowsFor(sharedId)
+  const sharedNormal = g2NormalRows(sharedRows)
+  checkTrue('G2 新Agent同sessionId仍按WeakMap隔离：F/L各两条且每Agent查询两次', sharedNormal.length === 4 && sharedNormal.filter((row) => row.keypoint === 'first-assembly').length === 2 && sharedNormal.filter((row) => row.keypoint === 'first-after-tool-call').length === 2 && sharedQueryA.observes === 2 && sharedQueryB.observes === 2 && g2FailureRows(sharedRows).length === 0)
+  checkTrue('G2 新Agent tools/sections/persona/SDK与同配置业务等价', isDeepStrictEqual(g2AssemblySignature(sharedFA), g2AssemblySignature(sharedFB)) && isDeepStrictEqual(g2AssemblySignature(sharedLA), g2AssemblySignature(sharedLB)))
+
+  const applyId = G2_SESSION_PREFIX + 'new-apply'
+  const applyQuery = { gets: 0, observes: 0, disposes: 0 }
+  const applyHarnessA = makeHarness({ anchoredBootstrap: true, creativeMode: false, ptcRuntime: null })
+  const applyHarnessB = makeHarness({ anchoredBootstrap: true, creativeMode: false, ptcRuntime: null })
+  const applyAgent = makeG2Agent(applyId, 'main', makeG2Recorder(g2SchemasFor('native')), applyQuery)
+  await fireAgentCreatedForArm(applyHarnessA, applyAgent)
+  await fireAgentCreatedForArm(applyHarnessB, applyAgent)
+  const applyAF = await assemble(applyHarnessA, applyAgent, g2ToolsFor('native'), g2SectionsFor('native'))
+  const applyRowsAfterAF = g2RowsFor(applyId)
+  const applyBF = await assemble(applyHarnessB, applyAgent, g2ToolsFor('native'), g2SectionsFor('native'))
+  const applyRowsAfterBF = g2RowsFor(applyId)
+  g2AppendToolCall(applyAgent, 'g2-new-apply-tool-call')
+  const applyAL = await assemble(applyHarnessA, applyAgent, g2ToolsFor('native'), g2SectionsFor('native'))
+  const applyRowsAfterAL = g2RowsFor(applyId)
+  const applyBL = await assemble(applyHarnessB, applyAgent, g2ToolsFor('native'), g2SectionsFor('native'))
+  const applyRows = g2RowsFor(applyId)
+  checkTrue('G2 同Agent同sessionId跨两个独立apply：同相位各自新增F/L配额', g2NormalRows(applyRows).length === 4 && g2NormalRows(applyRowsAfterAF).length === 1 && g2NormalRows(applyRowsAfterBF).length === 2 && g2NormalRows(applyRowsAfterAL).length === 3 && g2NormalRows(applyRows).filter((row) => row.keypoint === 'first-assembly').length === 2 && g2NormalRows(applyRows).filter((row) => row.keypoint === 'first-after-tool-call').length === 2 && applyQuery.observes === 4 && applyQuery.observes === applyQuery.disposes && g2FailureRows(applyRows).length === 0)
+  checkTrue('G2 跨apply两次F/L保持原tools/sections/persona/SDK投影', isDeepStrictEqual(g2AssemblySignature(applyAF), g2AssemblySignature(applyBF)) && isDeepStrictEqual(g2AssemblySignature(applyAL), g2AssemblySignature(applyBL)) && isDeepStrictEqual(g2AssemblySignature(applyAF), g2AssemblySignature(stressF[0])) && isDeepStrictEqual(g2AssemblySignature(applyAL), g2AssemblySignature(stressL[0])))
+
+  const matrixRoles = ['main', 'planner', 'executor', 'reviewer', 'probe']
+  const matrixModes = ['native', 'ptc']
+  const matrixRows = []
+  for (const role of matrixRoles) {
+    for (const anchoredBootstrap of [false, true]) {
+      for (const creativeMode of [false, true]) {
+        for (const mode of matrixModes) {
+          const label = role + '-' + (anchoredBootstrap ? 'A1' : 'A0') + '-' + (creativeMode ? 'C1' : 'C0') + '-' + mode
+          const sessionId = G2_SESSION_PREFIX + 'matrix-' + label
+          const query = { gets: 0, observes: 0, disposes: 0 }
+          const recorder = makeG2Recorder(g2SchemasFor(mode))
+          const agent = makeG2Agent(sessionId, role, recorder, query)
+          const harness = makeHarness({ anchoredBootstrap, creativeMode, ...(mode === 'native' ? { ptcRuntime: null } : {}) })
+          const tools = g2ToolsFor(mode)
+          const sections = g2SectionsFor(mode)
+          await fireAgentCreatedForArm(harness, agent)
+          const f = await assemble(harness, agent, tools, sections)
+          const fAgain = await assemble(harness, agent, tools, sections)
+          g2AppendToolCall(agent, 'g2-matrix-' + label + '-tool-call')
+          const l = await assemble(harness, agent, tools, sections)
+          const lAgain = await assemble(harness, agent, tools, sections)
+          const rows = g2RowsFor(sessionId)
+          const normal = g2NormalRows(rows)
+          const fRow = normal.find((row) => row.keypoint === 'first-assembly')
+          const lRow = normal.find((row) => row.keypoint === 'first-after-tool-call')
+          const expectedDiagRole = g2DiagnosticRoleOf(role)
+          const expectedAnchoredFirst = anchoredBootstrap && (expectedDiagRole === 'main' || expectedDiagRole === 'planner')
+          const lNames = Array.isArray(l?.sections) ? l.sections.map((section) => section?.name) : []
+          checkTrue('G2 matrix ' + label + ' 真实F/L各一次、无额外成功/skip且phaseLease每装配执行', normal.length === 2 && fRow !== undefined && lRow !== undefined && g2FailureRows(rows).length === 0 && rows.every((row) => row.event === 'assemble-diag') && query.observes === 4 && query.disposes === 4)
+          checkTrue('G2 matrix ' + label + ' 角色preset/A/M与原role语义保持', fRow?.role === expectedDiagRole && lRow?.role === expectedDiagRole && fRow?.bootstrapOn === anchoredBootstrap && lRow?.bootstrapOn === anchoredBootstrap && fRow?.mode === mode && lRow?.mode === mode && fRow?.anchoredFirst === expectedAnchoredFirst && lRow?.anchoredFirst === false && fRow?.phaseLease === 'first' && lRow?.phaseLease === 'later' && (role === 'main' ? agent.session.header.agentPreset === undefined : agent.session.header.agentPreset === G2_ROLE_PRESETS[role]))
+          checkTrue('G2 matrix ' + label + ' tools/sections/persona/SDK重复装配等价且native L按原矩阵剥离Cordis', isDeepStrictEqual(g2AssemblySignature(f), g2AssemblySignature(fAgain)) && isDeepStrictEqual(g2AssemblySignature(l), g2AssemblySignature(lAgain)) && (mode !== 'native' || !lNames.includes('tool:cordis')))
+          matrixRows.push({ label, sessionId, role, anchoredBootstrap, creativeMode, mode, f, l, fRow, lRow })
+        }
+      }
+    }
+  }
+  checkTrue('G2 matrix 覆盖main/planner/executor/reviewer/probe全部role及A/C/M组合（5×2×2×2）', matrixRows.length === 40)
+
+  const noToolsId = G2_SESSION_PREFIX + 'no-tools'
+  const noToolsQuery = { gets: 0, observes: 0, disposes: 0 }
+  const noToolsRecorder = makeG2Recorder(g2SchemasFor('native'))
+  const noToolsAgent = makeG2Agent(noToolsId, 'main', noToolsRecorder, noToolsQuery)
+  const noToolsHarness = makeHarness({ anchoredBootstrap: true, creativeMode: true, ptcRuntime: null })
+  await fireAgentCreatedForArm(noToolsHarness, noToolsAgent)
+  const noToolsF = await assemble(noToolsHarness, noToolsAgent, undefined, g2SectionsFor('native'))
+  g2AppendToolCall(noToolsAgent, 'g2-no-tools-tool-call')
+  const noToolsL = await assemble(noToolsHarness, noToolsAgent, undefined, g2SectionsFor('native'))
+  const noToolsRows = g2RowsFor(noToolsId)
+  checkTrue('G2 无tools真实装配形态仍落F/L且不抛错', g2NormalRows(noToolsRows).length === 2 && g2NormalRows(noToolsRows).map((row) => row.keypoint).sort().join('|') === 'first-after-tool-call|first-assembly' && g2FailureRows(noToolsRows).length === 0 && noToolsF.tools === undefined && noToolsL.tools === undefined && noToolsQuery.observes === 2)
+  checkTrue('G2 无tools的persona/sections仍按相位稳定投影', Array.isArray(noToolsF.sections) && Array.isArray(noToolsL.sections) && noToolsF.sections.length > 0 && noToolsL.sections.length > 0)
+
+  const recomposeId = G2_SESSION_PREFIX + 'recompose'
+  const recomposeQuery = { gets: 0, observes: 0, disposes: 0 }
+  const recomposeRecorder = makeG2Recorder(g2SchemasFor('native'))
+  const recomposeAgent = makeG2Agent(recomposeId, 'main', recomposeRecorder, recomposeQuery)
+  const recomposeHarness = makeHarness({ anchoredBootstrap: true, creativeMode: false, ptcRuntime: null })
+  const recomposeBeforeF = recomposeQuery.observes
+  const recomposeF = await assemble(recomposeHarness, recomposeAgent, g2ToolsFor('native'), g2SectionsFor('native'))
+  const recomposeAfterF = recomposeQuery.observes
+  let recomposeNext = 0
+  await runWaterfall(recomposeHarness, 'agent/pre-step', { agent: recomposeAgent }, async () => { recomposeNext += 1; return { kind: 'enter', messages: [] } })
+  g2AppendToolCall(recomposeAgent, 'g2-recompose-tool-call')
+  const recomposeBeforeL = recomposeQuery.observes
+  const recomposeL = await assemble(recomposeHarness, recomposeAgent, g2ToolsFor('native'), g2SectionsFor('native'))
+  const recomposeAfterL = recomposeQuery.observes
+  const recomposeRows = g2RowsFor(recomposeId)
+  const recomposeNormal = g2NormalRows(recomposeRows)
+  const recomposeFRow = recomposeNormal.find((row) => row.keypoint === 'first-assembly')
+  const recomposeLRow = recomposeNormal.find((row) => row.keypoint === 'first-after-tool-call')
+  checkTrue('G2 recompose先装配后补arm仍只落一组F/L且next恰一次', recomposeNormal.length === 2 && recomposeFRow !== undefined && recomposeLRow !== undefined && recomposeNext === 1 && recomposeQuery.observes === recomposeQuery.disposes && g2FailureRows(recomposeRows).length === 0)
+  const recomposeUnobserved = (row) => ['anchored-bootstrap', 'cordis-presentation'].every((source) => {
+    const state = row?.restrictions?.[source]
+    return state !== undefined && state.active === null && state.arm === null && state.release === null && state.skip === null
+  })
+  const recomposeObserved = (row) => ['anchored-bootstrap', 'cordis-presentation'].every((source) => {
+    const state = row?.restrictions?.[source]
+    return state !== undefined && state.active !== null && state.arm?.event === 'arm-ok' && state.release === null && state.skip === null
+  })
+  checkTrue('G2 recompose首次F两source arm/release/skip/active均null、补arm后状态可观测且phaseLease每装配一次', recomposeAfterF - recomposeBeforeF === 1 && recomposeAfterL - recomposeBeforeL === 1 && recomposeUnobserved(recomposeFRow) && recomposeObserved(recomposeLRow) && recomposeF.tools !== undefined && recomposeL.tools !== undefined)
+
+  const g2FailureKeys = (row) => Object.keys(row).filter((key) => key !== 'ts' && key !== 'sessionId').sort().join('|')
+  const g2NativeRestrictable = [...g2AllRestrictableNames(g2SchemasFor('native'))].sort()
+  const makeG2FailureFixture = (label, config, recorderOptions) => {
+    const sessionId = G2_SESSION_PREFIX + 'failure-' + label
+    const query = { gets: 0, observes: 0, disposes: 0 }
+    const recorder = makeG2Recorder(g2SchemasFor('native'), recorderOptions)
+    const agent = makeG2Agent(sessionId, 'main', recorder, query)
+    const harness = makeHarness(config)
+    return { sessionId, query, recorder, agent, harness }
+  }
+  const completeG2FailureFixture = async (fixture) => {
+    const f = await assemble(fixture.harness, fixture.agent, g2ToolsFor('native'), g2SectionsFor('native'))
+    g2AppendToolCall(fixture.agent, 'g2-failure-' + fixture.sessionId + '-tool-call')
+    const l = await assemble(fixture.harness, fixture.agent, g2ToolsFor('native'), g2SectionsFor('native'))
+    return { ...fixture, f, l, rows: g2RowsFor(fixture.sessionId) }
+  }
+  const g2ExactMissingFailure = (row) => row?.event === 'arm-failed'
+    && row.source === 'cordis-presentation'
+    && row.trigger === 'agent-created'
+    && isDeepStrictEqual(row.filter, { deny: ['cordis_inspect_list', 'cordis_inspect_query'] })
+    && row.reason === 'missing-restrictable-names'
+    && isDeepStrictEqual(row.missing, ['cordis_inspect_list', 'cordis_inspect_query'])
+    && isDeepStrictEqual(row.restrictable, ['pwsh', 'read'])
+    && isDeepStrictEqual(row.deny, ['cordis_inspect_list', 'cordis_inspect_query'])
+    && g2FailureKeys(row) === 'deny|event|filter|missing|reason|restrictable|source|trigger'
+  const g2ExactNonFunctionFailure = (row) => row?.event === 'arm-failed'
+    && row.source === 'anchored-bootstrap'
+    && row.trigger === 'agent-created'
+    && isDeepStrictEqual(row.filter, { allow: ['pwsh', 'read'] })
+    && isDeepStrictEqual(row.allow, ['pwsh', 'read'])
+    && isDeepStrictEqual(row.restrictable, g2NativeRestrictable)
+    && row.message === 'restrict returned non-function disposer'
+    && g2FailureKeys(row) === 'allow|event|filter|message|restrictable|source|trigger'
+  const g2ExactArmThrowFailure = (row) => row?.event === 'arm-failed'
+    && row.source === 'anchored-bootstrap'
+    && row.trigger === 'agent-created'
+    && isDeepStrictEqual(row.filter, { allow: ['pwsh', 'read'] })
+    && isDeepStrictEqual(row.allow, ['pwsh', 'read'])
+    && isDeepStrictEqual(row.restrictable, g2NativeRestrictable)
+    && row.message === 'g2 arm throw'
+    && g2FailureKeys(row) === 'allow|event|filter|message|restrictable|source|trigger'
+  const assertRepeatedArmFailure = async (label, fixture, exact) => {
+    let previousRows = g2RowsFor(fixture.sessionId)
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      await fireAgentCreatedForArm(fixture.harness, fixture.agent)
+      const currentRows = g2RowsFor(fixture.sessionId)
+      const delta = currentRows.slice(previousRows.length)
+      checkTrue('G2 ' + label + ' 第' + attempt + '次arm失败即时落一条真实failure原文、未触发F/L配额', delta.length === 1 && exact(delta[0]) && g2FailureRows(currentRows).length === attempt && g2NormalRows(currentRows).length === 0)
+      previousRows = currentRows
+    }
+    const completed = await completeG2FailureFixture(fixture)
+    checkTrue('G2 ' + label + ' 三次arm失败均不占正常F/L配额且随后F/L各一条', g2FailureRows(completed.rows).length === 3 && g2NormalRows(completed.rows).length === 2 && completed.query.observes === 2 && completed.query.observes === completed.query.disposes)
+    return completed
+  }
+  const missingFixture = makeG2FailureFixture('missing', { anchoredBootstrap: false, creativeMode: false, ptcRuntime: null }, { restrictableNames: ['read', 'pwsh'] })
+  const missing = await assertRepeatedArmFailure('missing', missingFixture, g2ExactMissingFailure)
+  const nonFunctionFixture = makeG2FailureFixture('non-function', { anchoredBootstrap: true, creativeMode: true, ptcRuntime: null }, { restrictMode: 'non-function' })
+  const nonFunction = await assertRepeatedArmFailure('non-function disposer', nonFunctionFixture, g2ExactNonFunctionFailure)
+  const armThrowFixture = makeG2FailureFixture('arm-throw', { anchoredBootstrap: true, creativeMode: true, ptcRuntime: null }, { restrictMode: 'throw' })
+  const armThrow = await assertRepeatedArmFailure('restrict抛错', armThrowFixture, g2ExactArmThrowFailure)
+
+  const releaseThrow = makeG2FailureFixture('release-throw', { anchoredBootstrap: true, creativeMode: true, ptcRuntime: null }, { restrictMode: 'release-throw' })
+  await fireAgentCreatedForArm(releaseThrow.harness, releaseThrow.agent)
+  await assemble(releaseThrow.harness, releaseThrow.agent, g2ToolsFor('native'), g2SectionsFor('native'))
+  g2AppendToolCall(releaseThrow.agent, 'g2-release-throw-release-tool-call')
+  const releaseRowsBefore = g2RowsFor(releaseThrow.sessionId)
+  let releaseNext = 0
+  const releaseResult = preExecute(releaseThrow.harness, releaseThrow.agent, 'read', { file_path: 'g2-release-throw' }, undefined, () => { releaseNext += 1 })
+  const releaseRowsImmediate = g2RowsFor(releaseThrow.sessionId)
+  const releaseDelta = releaseRowsImmediate.slice(releaseRowsBefore.length)
+  const releaseFailure = releaseDelta.find((row) => row.event === 'release-failed')
+  checkTrue('G2 release抛错动作后立即核对完整真实failure结构且不提前产生L', releaseDelta.length === 1 && releaseFailure?.event === 'release-failed' && releaseFailure.source === 'anchored-bootstrap' && releaseFailure.trigger === 'release' && isDeepStrictEqual(releaseFailure.filter, { allow: ['pwsh', 'read'] }) && !Object.prototype.hasOwnProperty.call(releaseFailure, 'allow') && releaseFailure.message === 'g2 release throw' && g2FailureKeys(releaseFailure) === 'event|filter|message|source|trigger' && releaseResult.kind === 'allow' && releaseNext === 1 && g2NormalRows(releaseRowsImmediate).length === 1)
+  await assemble(releaseThrow.harness, releaseThrow.agent, g2ToolsFor('native'), g2SectionsFor('native'))
+  const releaseRows = g2RowsFor(releaseThrow.sessionId)
+  checkTrue('G2 release失败不占F/L配额且后续L仍恰一条', g2FailureRows(releaseRows).length === 1 && g2NormalRows(releaseRows).length === 2 && releaseThrow.recorder.calls.released === 1 && releaseThrow.query.observes === 2 && releaseThrow.query.observes === releaseThrow.query.disposes)
+
+  const emptyFixture = makeG2FailureFixture('empty', { anchoredBootstrap: true, creativeMode: true, ptcRuntime: null }, { restrictableNames: ['write'] })
+  await fireAgentCreatedForArm(emptyFixture.harness, emptyFixture.agent)
+  const empty = await completeG2FailureFixture(emptyFixture)
+  const emptyFRow = g2NormalRows(empty.rows).find((row) => row.keypoint === 'first-assembly')
+  checkTrue('G2 empty allow仅在摘要呈skip-empty-allow、不写失败行且不占F/L配额', empty.recorder.calls.restrict.length === 0 && emptyFRow?.restrictions?.['anchored-bootstrap']?.skip?.event === 'skip-empty-allow' && g2FailureRows(empty.rows).length === 0 && g2NormalRows(empty.rows).length === 2 && empty.query.observes === 2)
+
+  const skipNoRestrictFixture = makeG2FailureFixture('skip-no-restrict', { anchoredBootstrap: true, creativeMode: true, ptcRuntime: null }, { noRestrict: true })
+  await fireAgentCreatedForArm(skipNoRestrictFixture.harness, skipNoRestrictFixture.agent)
+  const skipNoRestrict = await completeG2FailureFixture(skipNoRestrictFixture)
+  const skipFRow = g2NormalRows(skipNoRestrict.rows).find((row) => row.keypoint === 'first-assembly')
+  checkTrue('G2 skip-no-restrict只呈摘要降级、不伪造失败行且不占F/L配额', skipNoRestrict.recorder.calls.restrict.length === 0 && skipFRow?.restrictions?.['anchored-bootstrap']?.skip?.event === 'skip-no-restrict' && g2FailureRows(skipNoRestrict.rows).length === 0 && g2NormalRows(skipNoRestrict.rows).length === 2 && skipNoRestrict.query.observes === 2)
+
+  const appendFailureId = G2_SESSION_PREFIX + 'append-retry'
+  const appendFailureQuery = { gets: 0, observes: 0, disposes: 0 }
+  const appendFailureRecorder = makeG2Recorder(g2SchemasFor('native'))
+  const appendFailureAgent = makeG2Agent(appendFailureId, 'main', appendFailureRecorder, appendFailureQuery)
+  const appendFailureHarness = makeHarness({ anchoredBootstrap: true, creativeMode: true, ptcRuntime: null })
+  const nodeFs = createRequire(import.meta.url)('node:fs')
+  const nodeModule = await import('node:module')
+  const originalAppendFileSync = nodeFs.appendFileSync
+  const fixturePath = G2_DIAG_FILE.replaceAll('\\', '/')
+  let blockedFixtureWrites = 0
+  nodeFs.appendFileSync = (target, ...args) => {
+    if (String(target).replaceAll('\\', '/') === fixturePath) {
+      blockedFixtureWrites += 1
+      throw new Error('g2 fixture append blocked')
+    }
+    return originalAppendFileSync(target, ...args)
+  }
+  nodeModule.syncBuiltinESMExports()
+  let appendFailedAssembly
+  try {
+    appendFailedAssembly = await assemble(appendFailureHarness, appendFailureAgent, g2ToolsFor('native'), g2SectionsFor('native'))
+  } finally {
+    nodeFs.appendFileSync = originalAppendFileSync
+    nodeModule.syncBuiltinESMExports()
+  }
+  const appendRetryAssembly = await assemble(appendFailureHarness, appendFailureAgent, g2ToolsFor('native'), g2SectionsFor('native'))
+  g2AppendToolCall(appendFailureAgent, 'g2-append-retry-tool-call')
+  await assemble(appendFailureHarness, appendFailureAgent, g2ToolsFor('native'), g2SectionsFor('native'))
+  const appendRows = g2RowsFor(appendFailureId)
+  checkTrue('G2 仅拦fixture目标的append失败不使装配失败且恢复后可重试', appendFailedAssembly !== undefined && appendRetryAssembly !== undefined && blockedFixtureWrites === 1 && g2NormalRows(appendRows).length === 2 && g2NormalRows(appendRows).map((row) => row.keypoint).sort().join('|') === 'first-after-tool-call|first-assembly' && g2FailureRows(appendRows).length === 0)
+  checkTrue('G2 append失败不吞配额：三次装配各自执行phaseLease、恢复行与业务投影可对拍', appendFailureQuery.observes === 3 && appendFailureQuery.disposes === 3 && isDeepStrictEqual(g2AssemblySignature(appendRetryAssembly), g2AssemblySignature(appendFailedAssembly)) && g2AssemblySignature(appendFailedAssembly).sections !== null)
+
+  const appendFalseId = G2_SESSION_PREFIX + 'append-false'
+  const appendFalseQuery = { gets: 0, observes: 0, disposes: 0 }
+  const appendFalseRecorder = makeG2Recorder(g2SchemasFor('native'))
+  const appendFalseAgent = makeG2Agent(appendFalseId, 'main', appendFalseRecorder, appendFalseQuery)
+  const appendFalseHarness = makeHarness({ anchoredBootstrap: true, creativeMode: true, ptcRuntime: null })
+  const fixtureLogParent = join(ROUTE_FIXTURE.home, 'logs', 'dsh-extra-plan')
+  const originalMkdirSyncForFalse = nodeFs.mkdirSync
+  const originalAppendFileSyncForFalse = nodeFs.appendFileSync
+  let blockedFixtureMkdirs = 0
+  let appendCallsWhileMkdirBlocked = 0
+  const falseFixturePath = G2_DIAG_FILE.replaceAll('\\', '/')
+  nodeFs.mkdirSync = (target, ...args) => {
+    if (String(target).replaceAll('\\', '/') === fixtureLogParent.replaceAll('\\', '/')) {
+      blockedFixtureMkdirs += 1
+      throw new Error('g2 fixture mkdir blocked')
+    }
+    return originalMkdirSyncForFalse(target, ...args)
+  }
+  nodeFs.appendFileSync = (target, ...args) => {
+    if (String(target).replaceAll('\\', '/') === falseFixturePath) appendCallsWhileMkdirBlocked += 1
+    return originalAppendFileSyncForFalse(target, ...args)
+  }
+  nodeModule.syncBuiltinESMExports()
+  let appendFalseAssembly
+  try {
+    appendFalseAssembly = await assemble(appendFalseHarness, appendFalseAgent, g2ToolsFor('native'), g2SectionsFor('native'))
+  } finally {
+    nodeFs.mkdirSync = originalMkdirSyncForFalse
+    nodeFs.appendFileSync = originalAppendFileSyncForFalse
+    nodeModule.syncBuiltinESMExports()
+  }
+  const appendFalseRowsAfterBlocked = g2RowsFor(appendFalseId)
+  const appendFalseRetry = await assemble(appendFalseHarness, appendFalseAgent, g2ToolsFor('native'), g2SectionsFor('native'))
+  g2AppendToolCall(appendFalseAgent, 'g2-append-false-tool-call')
+  await assemble(appendFalseHarness, appendFalseAgent, g2ToolsFor('native'), g2SectionsFor('native'))
+  const appendFalseRows = g2RowsFor(appendFalseId)
+  checkTrue('G2 prepareDiagnosticPath返回false路径仅阻断fixture父目录：装配成功、appendFileSync未调用且恢复后可重试', appendFalseAssembly !== undefined && blockedFixtureMkdirs === 1 && appendCallsWhileMkdirBlocked === 0 && g2NormalRows(appendFalseRowsAfterBlocked).length === 0 && g2FailureRows(appendFalseRows).length === 0 && g2NormalRows(appendFalseRows).length === 2 && g2NormalRows(appendFalseRows).map((row) => row.keypoint).sort().join('|') === 'first-after-tool-call|first-assembly')
+  checkTrue('G2 prepareDiagnosticPath false不吞配额：每次装配仍phaseLease、恢复F投影可对拍', appendFalseQuery.observes === 3 && appendFalseQuery.disposes === 3 && isDeepStrictEqual(g2AssemblySignature(appendFalseAssembly), g2AssemblySignature(appendFalseRetry)) && g2AssemblySignature(appendFalseAssembly).sections !== null)
+}
+
 
 // ── ⑤ 探查子代理（subagent_probe）行为断言：工具面拒/放行（write、pwsh 只读、pwsh 包裹写、save_probe）
 // ── + 主会话闸门判定（route 的 none/main/executor/plan 四态、purpose 与 clarify 闸门）+ 无参 subagent_probe 放行与等价补记

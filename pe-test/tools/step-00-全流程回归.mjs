@@ -1247,6 +1247,471 @@ checkTrue(
     modeIsolationMainSnapshot.length === 0,
 )
 
+{
+  const g4LogRetention = await import('../../plugins/dsh-extra-plan/lib/log-retention.js')
+  const g4AnchoredName = 'extra-plan-anchored.jsonl'
+  const g4LedgerName = 'extra-plan-usage-ledger.jsonl'
+  const g4RowsText = (...rows) => rows.join('\n') + '\n'
+  const g4LinesOf = (text) => {
+    if (String(text) === '') return []
+    const lines = String(text).split(/\r?\n/)
+    if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop()
+    return lines
+  }
+  const g4ParsedTs = (line) => {
+    const text = typeof line === 'string' ? line.trim() : ''
+    if (text === '') return null
+    let row
+    try { row = JSON.parse(text) } catch { return null }
+    if (row === null || typeof row !== 'object') return null
+    if (typeof row.ts !== 'string') return null
+    const value = Date.parse(row.ts)
+    return Number.isNaN(value) ? null : value
+  }
+  const g4CutoffFor = (now) => (Math.floor((now + 28800000) / 86400000) - 1) * 86400000 - 28800000
+  const g4ExpectedFor = (name, text, now) => {
+    if (!name.endsWith('.jsonl') || name === g4LedgerName) return { text, removedRows: 0, scanned: false }
+    const cutoff = g4CutoffFor(now)
+    const lines = g4LinesOf(text)
+    if (lines.length === 0) return { text, removedRows: 0, scanned: true }
+    let boundary = null
+    for (let index = 0; index < lines.length; index += 1) {
+      const ts = g4ParsedTs(lines[index])
+      if (ts !== null && ts >= cutoff && ts <= now) {
+        boundary = index
+        break
+      }
+    }
+    const skipCount = boundary === null ? lines.length : boundary
+    const kept = lines.slice(skipCount)
+    return { text: kept.length === 0 ? '' : kept.join('\n') + '\n', removedRows: skipCount, scanned: true }
+  }
+  const g4CaptureFile = (target) => {
+    if (!existsSync(target)) return { exists: false, bytes: null, text: null, mtimeMs: null }
+    const bytes = readFileSync(target)
+    return { exists: true, bytes, text: bytes.toString('utf8'), mtimeMs: statSync(target).mtimeMs }
+  }
+  const g4ObserveFixtureWrites = async (directory) => {
+    const fsModule = await import('node:fs')
+    const { syncBuiltinESMExports } = await import('node:module')
+    const pathModule = await import('node:path')
+    const fsDefault = fsModule.default
+    const pathApi = pathModule.default || pathModule
+    const root = pathApi.resolve(directory)
+    const records = {
+      createWriteStream: [],
+      renameSync: [],
+      unlinkSync: [],
+      writeFileSync: [],
+      appendFileSync: [],
+      mkdirSync: [],
+      openSync: []
+    }
+    const watched = Object.keys(records)
+    const originals = new Map()
+    const isInside = (value) => {
+      if (typeof value !== 'string') return false
+      const relative = pathApi.relative(root, pathApi.resolve(value))
+      return relative === '' || (relative !== '..' && !relative.startsWith('..' + pathApi.sep) && !pathApi.isAbsolute(relative))
+    }
+    const restore = () => {
+      for (const [name, original] of originals) fsDefault[name] = original
+      syncBuiltinESMExports()
+    }
+    try {
+      for (const name of watched) {
+        const original = fsDefault[name]
+        originals.set(name, original)
+        fsDefault[name] = function (...args) {
+          const inside = name === 'renameSync'
+            ? isInside(args[0]) || isInside(args[1])
+            : isInside(args[0])
+          if (inside) records[name].push(args)
+          return original.apply(this, args)
+        }
+      }
+      syncBuiltinESMExports()
+      return { records, restore }
+    } catch (error) {
+      restore()
+      throw error
+    }
+  }
+  const g4RunCase = async ({ label, now, files, observeWrites = false }) => {
+    const fixture = makeFixtureDir({ label })
+    try {
+      const directory = join(fixture.home, 'logs', 'dsh-extra-plan')
+      mkdirSync(directory, { recursive: true })
+      const pathContext = createPathContext({ workspaceRoot: fixture.root, hostDataRoot: fixture.home })
+      const before = new Map()
+      const expected = new Map()
+      for (const [name, text] of Object.entries(files)) {
+        const target = join(directory, name)
+        writeFileSync(target, text, 'utf8')
+        before.set(name, g4CaptureFile(target))
+        expected.set(name, g4ExpectedFor(name, text, now))
+      }
+      const options = { now }
+      const writeObserver = observeWrites ? await g4ObserveFixtureWrites(directory) : null
+      let result
+      try {
+        result = await g4LogRetention.pruneDiagnosticLogs(pathContext, options)
+      } finally {
+        if (writeObserver !== null) writeObserver.restore()
+      }
+      const after = new Map()
+      for (const name of Object.keys(files)) after.set(name, g4CaptureFile(join(directory, name)))
+      const residuals = readdirSync(directory).filter((name) => name.includes('.prune-tmp-')).sort()
+      return { result, before, expected, after, residuals, writeObservation: writeObserver === null ? null : writeObserver.records }
+    } finally {
+      fixture.cleanup()
+    }
+  }
+  const g4StableNames = (outcome, names) => names.every((name) => {
+    const before = outcome.before.get(name)
+    const after = outcome.after.get(name)
+    return before !== undefined && after !== undefined && before.exists && after.exists && before.bytes.equals(after.bytes) && before.mtimeMs === after.mtimeMs
+  })
+  const g4CheckCase = (label, outcome) => {
+    const expectedEntries = [...outcome.expected.entries()]
+    const scannedEntries = expectedEntries.filter(([, item]) => item.scanned)
+    const expectedPruned = scannedEntries.filter(([, item]) => item.removedRows > 0).length
+    const expectedRemovedRows = scannedEntries.reduce((total, [, item]) => total + item.removedRows, 0)
+    checkTrue(label + ' 返回状态/扫描/清理计数符合独立expected', outcome.result.status === (expectedPruned > 0 ? 'pruned' : 'up-to-date') && outcome.result.scanned === scannedEntries.length && outcome.result.pruned === expectedPruned && outcome.result.removedRows === expectedRemovedRows)
+    checkTrue(label + ' 每个文件内容符合独立expected', expectedEntries.every(([name, item]) => {
+      const actual = outcome.after.get(name)
+      return actual !== undefined && actual.exists && actual.text === item.text
+    }))
+    checkTrue(label + ' 无prune临时残留', outcome.residuals.length === 0)
+  }
+
+  const g4MatrixNow = Date.parse('2026-11-16T01:00:00.000Z')
+  const g4Matrix = await g4RunCase({
+    label: 'g4-diagnostic-matrix',
+    now: g4MatrixNow,
+    files: {
+      [g4AnchoredName]: g4RowsText(
+        JSON.stringify({ id: 'future', ts: '2026-11-16T01:00:00.001Z' }),
+        '',
+        '{bad-json',
+        JSON.stringify({ id: 'missing-ts' }),
+        JSON.stringify({ id: 'invalid-ts', ts: 'not-a-date' }),
+        JSON.stringify({ id: 'keep-yesterday-midnight', ts: '2026-11-15T00:00:00+08:00' }),
+        JSON.stringify({ id: 'delete-before-1ms', ts: '2026-11-14T15:59:59.999Z' }),
+        JSON.stringify({ id: 'keep-cutoff', ts: '2026-11-14T16:00:00.000Z' }),
+        JSON.stringify({ id: 'keep-today', ts: '2026-11-16T00:00:00.000Z' })
+      ),
+      'extra-plan-agent-errors.jsonl': g4RowsText(
+        JSON.stringify({ id: 'agent-delete', ts: '2026-11-14T15:59:59.999Z' }),
+        JSON.stringify({ id: 'agent-keep-boundary', ts: '2026-11-14T16:00:00.000Z' }),
+        JSON.stringify({ id: 'agent-future', ts: '2026-11-17T00:00:00.000Z' }),
+        '',
+        '{bad-agent-json',
+        JSON.stringify({ id: 'agent-no-ts' })
+      ),
+      'extra-plan-request-errors.jsonl': g4RowsText(
+        JSON.stringify({ id: 'request-delete', ts: '2026-11-14T15:59:59.999Z' }),
+        JSON.stringify({ id: 'request-keep-boundary', ts: '2026-11-14T16:00:00.000Z' })
+      ),
+      'extra-plan-usage-errors.jsonl': g4RowsText(
+        JSON.stringify({ id: 'usage-delete', ts: '2026-11-14T15:59:59.999Z' }),
+        JSON.stringify({ id: 'usage-keep-boundary', ts: '2026-11-14T16:00:00.000Z' })
+      ),
+      'extra-plan-anchored-copy.jsonl': g4RowsText(
+        JSON.stringify({ id: 'similar-delete', ts: '2026-11-14T15:59:59.998Z' }),
+        JSON.stringify({ id: 'similar-keep', ts: '2026-11-14T16:00:00.000Z' })
+      ),
+      'extra-plan-no-expiry.jsonl': g4RowsText(
+        JSON.stringify({ id: 'no-expiry-future', ts: '2026-11-17T00:00:00.000Z' }),
+        '',
+        '{bad-no-expiry-json',
+        JSON.stringify({ id: 'no-expiry-no-ts' })
+      ),
+      [g4LedgerName]: g4RowsText(JSON.stringify({ id: 'ledger-old', ts: '2000-01-01T00:00:00.000Z' })),
+      'extra-plan-anchored.jsonl.bak': 'non-jsonl old bytes\n'
+    }
+  })
+  g4CheckCase('G4 精确anchored/北京时间跨日/坏行与统一诊断矩阵', g4Matrix)
+  checkTrue('G4 ledger原bytes/mtime不变', g4StableNames(g4Matrix, [g4LedgerName]))
+  checkTrue('G4 无过期诊断全前缀候选随前缀清空', g4Matrix.after.get('extra-plan-no-expiry.jsonl').text === '')
+  checkTrue('G4 相似非精确文件名同规则', g4Matrix.after.get('extra-plan-anchored-copy.jsonl').text.includes('similar-keep') && !g4Matrix.after.get('extra-plan-anchored-copy.jsonl').text.includes('similar-delete'))
+
+  const g4BeforeBeijingMidnight = await g4RunCase({
+    label: 'g4-before-beijing-midnight',
+    now: Date.parse('2026-11-15T15:59:59.999Z'),
+    files: {
+      [g4AnchoredName]: g4RowsText(
+        JSON.stringify({ id: 'midnight-before-delete', ts: '2026-11-13T15:59:59.999Z' }),
+        JSON.stringify({ id: 'midnight-before-keep', ts: '2026-11-13T16:00:00.000Z' }),
+        JSON.stringify({ id: 'midnight-before-cross-date', ts: '2026-11-14T15:59:59.999Z' }),
+        JSON.stringify({ id: 'midnight-before-now', ts: '2026-11-15T15:59:59.999Z' })
+      )
+    }
+  })
+  g4CheckCase('G4 北京午夜前now昨日零点边界（UTC/北京同日）', g4BeforeBeijingMidnight)
+  checkTrue('G4 北京午夜前真实边界行集合', g4BeforeBeijingMidnight.after.get(g4AnchoredName).text.includes('midnight-before-keep') && g4BeforeBeijingMidnight.after.get(g4AnchoredName).text.includes('midnight-before-cross-date') && g4BeforeBeijingMidnight.after.get(g4AnchoredName).text.includes('midnight-before-now') && !g4BeforeBeijingMidnight.after.get(g4AnchoredName).text.includes('midnight-before-delete'))
+
+  const g4AfterBeijingMidnight = await g4RunCase({
+    label: 'g4-after-beijing-midnight',
+    now: Date.parse('2026-11-15T16:00:00.000Z'),
+    files: {
+      [g4AnchoredName]: g4RowsText(
+        JSON.stringify({ id: 'midnight-after-delete', ts: '2026-11-14T15:59:59.999Z' }),
+        JSON.stringify({ id: 'midnight-after-keep', ts: '2026-11-14T16:00:00.000Z' }),
+        JSON.stringify({ id: 'midnight-after-future', ts: '2026-11-16T00:00:00.000Z' })
+      )
+    }
+  })
+  g4CheckCase('G4 北京午夜后now自然日边界并击穿UTC日期算法', g4AfterBeijingMidnight)
+  checkTrue('G4 北京午夜后真实边界行集合击穿UTC日期算法', g4AfterBeijingMidnight.after.get(g4AnchoredName).text.includes('midnight-after-keep') && g4AfterBeijingMidnight.after.get(g4AnchoredName).text.includes('midnight-after-future') && !g4AfterBeijingMidnight.after.get(g4AnchoredName).text.includes('midnight-after-delete'))
+
+  const g4MonthUtcPrevious = await g4RunCase({
+    label: 'g4-month-utc-previous-day',
+    now: Date.parse('2026-11-30T16:00:00.000Z'),
+    files: {
+      [g4AnchoredName]: g4RowsText(
+        JSON.stringify({ id: 'month-utc-previous-delete', ts: '2026-11-29T15:59:59.999Z' }),
+        JSON.stringify({ id: 'month-utc-previous-keep', ts: '2026-11-29T16:00:00.000Z' }),
+        JSON.stringify({ id: 'month-beijing-december', ts: '2026-11-30T16:00:00.000Z' })
+      )
+    }
+  })
+  g4CheckCase('G4 北京月界且UTC仍前一天', g4MonthUtcPrevious)
+  checkTrue('G4 北京月界真实行集合击穿UTC日期算法', g4MonthUtcPrevious.after.get(g4AnchoredName).text.includes('month-utc-previous-keep') && g4MonthUtcPrevious.after.get(g4AnchoredName).text.includes('month-beijing-december') && !g4MonthUtcPrevious.after.get(g4AnchoredName).text.includes('month-utc-previous-delete'))
+
+  const g4YearUtcPrevious = await g4RunCase({
+    label: 'g4-year-utc-previous-day',
+    now: Date.parse('2026-12-31T16:00:00.000Z'),
+    files: {
+      [g4AnchoredName]: g4RowsText(
+        JSON.stringify({ id: 'year-utc-previous-delete', ts: '2026-12-30T15:59:59.999Z' }),
+        JSON.stringify({ id: 'year-utc-previous-keep', ts: '2026-12-30T16:00:00.000Z' }),
+        JSON.stringify({ id: 'year-beijing-new-year', ts: '2026-12-31T16:00:00.000Z' })
+      )
+    }
+  })
+  g4CheckCase('G4 北京年界且UTC仍前一天', g4YearUtcPrevious)
+  checkTrue('G4 北京年界真实行集合击穿UTC日期算法', g4YearUtcPrevious.after.get(g4AnchoredName).text.includes('year-utc-previous-keep') && g4YearUtcPrevious.after.get(g4AnchoredName).text.includes('year-beijing-new-year') && !g4YearUtcPrevious.after.get(g4AnchoredName).text.includes('year-utc-previous-delete'))
+
+  const g4YearBoundary = await g4RunCase({
+    label: 'g4-year-boundary',
+    now: Date.parse('2027-01-01T00:30:00.000Z'),
+    files: {
+      [g4AnchoredName]: g4RowsText(
+        JSON.stringify({ id: 'year-delete-before-1ms', ts: '2026-12-30T15:59:59.999Z' }),
+        JSON.stringify({ id: 'year-keep-midnight', ts: '2026-12-30T16:00:00.000Z' }),
+        JSON.stringify({ id: 'year-future', ts: '2027-01-01T00:30:00.000Z' })
+      )
+    }
+  })
+  g4CheckCase('G4 年界北京昨日零点与边界1ms', g4YearBoundary)
+
+  const g4MonthBoundary = await g4RunCase({
+    label: 'g4-month-boundary',
+    now: Date.parse('2028-03-01T00:30:00.000Z'),
+    files: {
+      [g4AnchoredName]: g4RowsText(
+        JSON.stringify({ id: 'month-delete-before-1ms', ts: '2028-02-28T15:59:59.999Z' }),
+        JSON.stringify({ id: 'month-keep-midnight', ts: '2028-02-28T16:00:00.000Z' }),
+        JSON.stringify({ id: 'month-future', ts: '2028-03-01T00:30:00.000Z' })
+      )
+    }
+  })
+  g4CheckCase('G4 月界/闰年北京昨日零点与边界1ms', g4MonthBoundary)
+
+  const g4PrefixFirstValid = await g4RunCase({
+    label: 'g4-prefix-first-valid',
+    now: g4MatrixNow,
+    observeWrites: true,
+    files: {
+      'extra-plan-agent-errors.jsonl': g4RowsText(
+        JSON.stringify({ id: 'prefix-first-valid-head', ts: '2026-11-16T01:00:00.000Z' }),
+        JSON.stringify({ id: 'prefix-first-valid-expired', ts: '2026-11-14T00:59:59.999Z' }),
+        JSON.stringify({ id: 'prefix-first-valid-tail', ts: '2026-11-15T00:00:00.000Z' })
+      ),
+      [g4AnchoredName]: g4RowsText(
+        JSON.stringify({ id: 'prefix-first-valid-anchored-head', ts: '2026-11-15T23:00:00.000Z' }),
+        JSON.stringify({ id: 'prefix-first-valid-anchored-expired', ts: '2026-11-14T15:59:59.999Z' })
+      )
+    }
+  })
+  g4CheckCase('G4 前缀首行有效未过期零写整文件保留', g4PrefixFirstValid)
+  checkTrue('G4 前缀首行有效写观测全0', g4PrefixFirstValid.writeObservation !== null && Object.values(g4PrefixFirstValid.writeObservation).every((calls) => calls.length === 0))
+  checkTrue('G4 前缀首行有效后续过期行原样保留', g4PrefixFirstValid.after.get('extra-plan-agent-errors.jsonl').text.includes('prefix-first-valid-expired') && g4PrefixFirstValid.after.get(g4AnchoredName).text.includes('prefix-first-valid-anchored-expired'))
+  checkTrue('G4 前缀首行有效status零写零清理', g4PrefixFirstValid.result.status === 'up-to-date' && g4PrefixFirstValid.result.pruned === 0 && g4PrefixFirstValid.result.removedRows === 0)
+
+  const g4PrefixBadRows = await g4RunCase({
+    label: 'g4-prefix-bad-rows',
+    now: g4MatrixNow,
+    files: {
+      'extra-plan-agent-errors.jsonl': g4RowsText(
+        '{bad-prefix-json',
+        '',
+        JSON.stringify({ id: 'prefix-bad-boundary', ts: '2026-11-15T00:00:00.000Z' }),
+        '{bad-suffix-json',
+        JSON.stringify({ id: 'prefix-bad-keep', ts: '2026-11-15T12:00:00.000Z' })
+      )
+    }
+  })
+  g4CheckCase('G4 前缀坏行随前缀删除分界后坏行保留', g4PrefixBadRows)
+  checkTrue('G4 前缀坏行删除且分界后坏行保留', g4PrefixBadRows.after.get('extra-plan-agent-errors.jsonl').text.includes('prefix-bad-boundary') && g4PrefixBadRows.after.get('extra-plan-agent-errors.jsonl').text.includes('bad-suffix-json') && !g4PrefixBadRows.after.get('extra-plan-agent-errors.jsonl').text.includes('bad-prefix-json'))
+  checkTrue('G4 前缀坏行计数恰为前缀两行', g4PrefixBadRows.result.removedRows === 2 && g4PrefixBadRows.result.pruned === 1)
+
+  const g4PrefixAllBad = await g4RunCase({
+    label: 'g4-prefix-all-bad',
+    now: g4MatrixNow,
+    files: {
+      'extra-plan-agent-errors.jsonl': g4RowsText('{bad-all-agent-1', '{bad-all-agent-2', ''),
+      [g4AnchoredName]: g4RowsText('{bad-all-anchored', JSON.stringify({ id: 'prefix-all-bad-anchored-no-ts' }))
+    }
+  })
+  g4CheckCase('G4 全坏行文件清空为空文件', g4PrefixAllBad)
+  checkTrue('G4 全坏行两文件均清空', g4PrefixAllBad.after.get('extra-plan-agent-errors.jsonl').text === '' && g4PrefixAllBad.after.get(g4AnchoredName).text === '')
+  checkTrue('G4 全坏行计数等于全部行数', g4PrefixAllBad.result.removedRows === 5 && g4PrefixAllBad.result.pruned === 2)
+
+  const g4PrefixFutureRows = await g4RunCase({
+    label: 'g4-prefix-future-rows',
+    now: g4MatrixNow,
+    files: {
+      'extra-plan-agent-errors.jsonl': g4RowsText(
+        JSON.stringify({ id: 'future-mid-valid', ts: '2026-11-15T00:00:00.000Z' }),
+        JSON.stringify({ id: 'future-mid-row', ts: '2026-11-17T00:00:00.000Z' }),
+        JSON.stringify({ id: 'future-mid-keep', ts: '2026-11-15T12:00:00.000Z' })
+      ),
+      [g4AnchoredName]: g4RowsText(
+        JSON.stringify({ id: 'future-head-row', ts: '2026-11-17T00:00:00.000Z' }),
+        JSON.stringify({ id: 'future-head-boundary', ts: '2026-11-15T00:00:00.000Z' })
+      )
+    }
+  })
+  g4CheckCase('G4 未来行居中保留居首删除', g4PrefixFutureRows)
+  checkTrue('G4 未来行居中随分界保留', g4PrefixFutureRows.after.get('extra-plan-agent-errors.jsonl').text.includes('future-mid-row') && g4PrefixFutureRows.after.get('extra-plan-agent-errors.jsonl').text.includes('future-mid-keep'))
+  checkTrue('G4 未来行居首作前缀候选删除', !g4PrefixFutureRows.after.get(g4AnchoredName).text.includes('future-head-row') && g4PrefixFutureRows.after.get(g4AnchoredName).text.includes('future-head-boundary'))
+  checkTrue('G4 未来行两路径计数符合前缀语义', g4PrefixFutureRows.result.removedRows === 1 && g4PrefixFutureRows.result.pruned === 1)
+
+  const g4PrefixEmptyFile = await g4RunCase({
+    label: 'g4-prefix-empty-file',
+    now: g4MatrixNow,
+    observeWrites: true,
+    files: {
+      'extra-plan-agent-errors.jsonl': '',
+      [g4AnchoredName]: ''
+    }
+  })
+  g4CheckCase('G4 空文件零写保持up-to-date', g4PrefixEmptyFile)
+  checkTrue('G4 空文件写观测全0', g4PrefixEmptyFile.writeObservation !== null && Object.values(g4PrefixEmptyFile.writeObservation).every((calls) => calls.length === 0))
+  checkTrue('G4 空文件status零写零清理', g4PrefixEmptyFile.result.status === 'up-to-date' && g4PrefixEmptyFile.result.pruned === 0 && g4PrefixEmptyFile.result.removedRows === 0)
+  checkTrue('G4 空文件内容保持为空', g4PrefixEmptyFile.after.get('extra-plan-agent-errors.jsonl').text === '' && g4PrefixEmptyFile.after.get(g4AnchoredName).text === '')
+
+  const g4AllExpired = await g4RunCase({
+    label: 'g4-all-expired',
+    now: g4MatrixNow,
+    files: {
+      [g4AnchoredName]: g4RowsText(
+        JSON.stringify({ id: 'all-expired-anchored-a', ts: '2026-11-14T15:59:59.998Z' }),
+        JSON.stringify({ id: 'all-expired-anchored-b', ts: '2026-11-14T15:59:59.999Z' })
+      ),
+      'extra-plan-agent-errors.jsonl': g4RowsText(JSON.stringify({ id: 'all-expired-other', ts: '2026-11-14T00:59:59.999Z' })),
+      [g4LedgerName]: g4RowsText(JSON.stringify({ id: 'all-expired-ledger', ts: '2000-01-01T00:00:00.000Z' }))
+    }
+  })
+  g4CheckCase('G4 全过期清空文件与临时残留', g4AllExpired)
+  checkTrue('G4 全过期仅清理诊断且ledger不动', g4AllExpired.after.get(g4AnchoredName).text === '' && g4AllExpired.after.get('extra-plan-agent-errors.jsonl').text === '' && g4StableNames(g4AllExpired, [g4LedgerName]))
+
+  const g4NoExpiry = await g4RunCase({
+    label: 'g4-no-expiry',
+    now: g4MatrixNow,
+    observeWrites: true,
+    files: {
+      [g4AnchoredName]: g4RowsText(
+        JSON.stringify({ id: 'no-expiry-anchored-boundary', ts: '2026-11-14T16:00:00.000Z' }),
+        JSON.stringify({ id: 'no-expiry-anchored-future', ts: '2026-11-17T00:00:00.000Z' }),
+        '',
+        '{bad-no-expiry-anchored',
+        JSON.stringify({ id: 'no-expiry-anchored-no-ts' })
+      ),
+      'extra-plan-agent-errors.jsonl': g4RowsText(
+        JSON.stringify({ id: 'no-expiry-other-boundary', ts: '2026-11-14T16:00:00.000Z' }),
+        JSON.stringify({ id: 'no-expiry-other-future', ts: '2026-11-17T00:00:00.000Z' }),
+        '{bad-no-expiry-other'
+      ),
+      [g4LedgerName]: g4RowsText(JSON.stringify({ id: 'no-expiry-ledger', ts: '2000-01-01T00:00:00.000Z' }))
+    }
+  })
+  g4CheckCase('G4 无过期零写/零临时文件', g4NoExpiry)
+  checkTrue('G4 无过期真实prune调用期间写入/建临时调用为0', g4NoExpiry.writeObservation !== null && Object.values(g4NoExpiry.writeObservation).every((calls) => calls.length === 0))
+  checkTrue('G4 无过期status与计数为up-to-date零清理', g4NoExpiry.result.status === 'up-to-date' && g4NoExpiry.result.pruned === 0 && g4NoExpiry.result.removedRows === 0)
+  checkTrue('G4 无过期全部原文件bytes/mtime不变', g4StableNames(g4NoExpiry, [g4AnchoredName, 'extra-plan-agent-errors.jsonl', g4LedgerName]))
+
+  const g4NoRootFixture = makeFixtureDir({ label: 'g4-no-host-root' })
+  try {
+    const beforeEntries = readdirSync(g4NoRootFixture.root).sort().join('\n')
+    const result = await g4LogRetention.pruneDiagnosticLogs(createPathContext({ workspaceRoot: g4NoRootFixture.root }), { now: g4MatrixNow })
+    const afterEntries = readdirSync(g4NoRootFixture.root).sort().join('\n')
+    checkTrue('G4 无host根保持旧skipped返回且零改动', result.status === 'skipped' && result.reason === 'no-host-root' && beforeEntries === afterEntries)
+  } finally {
+    g4NoRootFixture.cleanup()
+  }
+
+  const g4MissingDirFixture = makeFixtureDir({ label: 'g4-missing-log-directory' })
+  try {
+    const beforeEntries = readdirSync(g4MissingDirFixture.home).sort().join('\n')
+    const result = await g4LogRetention.pruneDiagnosticLogs(createPathContext({ workspaceRoot: g4MissingDirFixture.root, hostDataRoot: g4MissingDirFixture.home }), { now: g4MatrixNow })
+    const afterEntries = readdirSync(g4MissingDirFixture.home).sort().join('\n')
+    checkTrue('G4 缺诊断目录保持旧skipped返回且零改动', result.status === 'skipped' && result.reason === 'no-log-directory' && beforeEntries === afterEntries)
+  } finally {
+    g4MissingDirFixture.cleanup()
+  }
+
+  const g4TypeFixture = makeFixtureDir({ label: 'g4-log-directory-type-error' })
+  try {
+    const logsRoot = join(g4TypeFixture.home, 'logs')
+    const directoryTarget = join(logsRoot, 'dsh-extra-plan')
+    mkdirSync(logsRoot, { recursive: true })
+    writeFileSync(directoryTarget, 'directory-type-sentinel\n', 'utf8')
+    const beforeBytes = readFileSync(directoryTarget)
+    const beforeMtimeMs = statSync(directoryTarget).mtimeMs
+    let failure
+    try {
+      await g4LogRetention.pruneDiagnosticLogs(createPathContext({ workspaceRoot: g4TypeFixture.root, hostDataRoot: g4TypeFixture.home }), { now: g4MatrixNow })
+    } catch (error) {
+      failure = error
+    }
+    checkTrue('G4 诊断目录类型错误按旧合同抛TARGET_TYPE', failure !== undefined && failure.code === 'TARGET_TYPE')
+    checkTrue('G4 目录类型错误原文件bytes/mtime与temp均不变', readFileSync(directoryTarget).equals(beforeBytes) && statSync(directoryTarget).mtimeMs === beforeMtimeMs && readdirSync(logsRoot).filter((name) => name.includes('.prune-tmp-')).length === 0)
+  } finally {
+    g4TypeFixture.cleanup()
+  }
+
+  const g4AuthFixture = makeFixtureDir({ label: 'g4-readonly-authorization' })
+  try {
+    const authDirectory = join(g4AuthFixture.home, 'logs', 'dsh-extra-plan')
+    const authLog = join(authDirectory, 'extra-plan-agent-errors.jsonl')
+    mkdirSync(authDirectory, { recursive: true })
+    writeFileSync(authLog, g4RowsText(JSON.stringify({ id: 'auth-old', ts: '2000-01-01T00:00:00.000Z' })), 'utf8')
+    const beforeBytes = readFileSync(authLog)
+    const beforeMtimeMs = statSync(authLog).mtimeMs
+    const beforeEntries = readdirSync(authDirectory).sort().join('\n')
+    let failure
+    try {
+      await g4LogRetention.pruneDiagnosticLogs(createPathContext({
+        workspaceRoot: g4AuthFixture.root,
+        hostDataRoot: g4AuthFixture.home,
+        hostCapabilities: {
+          g4DiagnosticLogs: { path: authDirectory, type: 'directory', access: 'read', purpose: 'diagnostics' }
+        }
+      }), { now: g4MatrixNow })
+    } catch (error) {
+      failure = error
+    }
+    const afterEntries = readdirSync(authDirectory).sort().join('\n')
+    checkTrue('G4 诊断Host只读授权错误按旧合同抛HOST_RESOURCE_READONLY', failure !== undefined && failure.code === 'HOST_RESOURCE_READONLY')
+    checkTrue('G4 授权错误原文件bytes/mtime/目录与temp均不变', readFileSync(authLog).equals(beforeBytes) && statSync(authLog).mtimeMs === beforeMtimeMs && beforeEntries === afterEntries && !afterEntries.includes('.prune-tmp-'))
+  } finally {
+    g4AuthFixture.cleanup()
+  }
+}
+
 // ── M6 系列：step-99 导入、临时双文件统计/真实归档拒绝与事务回滚 ───────
 checkTrue('M6 step-99 导入仅暴露函数且不触发CLI副作用（归档入口已迁至 usage-ledger.js）', typeof usageStats.main === 'function' && typeof usageStats.statLedger === 'function' && typeof usageArchiveModule.archiveLedger === 'function' && !Object.hasOwn(usageStats, 'V2_KEYS') && !Object.hasOwn(usageStats, 'archiveLedger') && process.exitCode === undefined)
 const archiveRow = (patch = {}) => ({
