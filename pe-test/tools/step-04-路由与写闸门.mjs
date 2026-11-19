@@ -3775,8 +3775,8 @@ checkTrue('GW19 旧词不推进路线 → subagent deny 且文案只含当前定
   // ⑤ 读盘失败（文件不存在）→ 构造期回退 fallbackDefaults 且不抛（自带一次 console.warn 防抖）
   const lcMissing = createLiveConfig({ configPath: join(lcDir, 'missing.cordis.yml'), getPathContext: () => lcPathContext, fallbackDefaults: { exploreBudget: 18 } })
   check('LC5 文件不存在 → 构造期回退 fallback exploreBudget=18（不抛）', lcMissing.exploreBudget, 18)
-   const liveGetterNames = ['anchoredBootstrap', 'creativeMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel', 'reviewerUsesPlannerModel']
-   checkTrue('LC6 live-config 仅暴露九项热读 getter，webFetch/toolPresentationMode 不再作为运行时 getter', liveGetterNames.every((key) => key in lcExplicit) && !('webFetch' in lcExplicit) && !('toolPresentationMode' in lcExplicit))
+   const liveGetterNames = ['anchoredBootstrap', 'creativeMode', 'webFetch', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel', 'reviewerUsesPlannerModel']
+   checkTrue('LC6 live-config 暴露十项热读 getter 含 webFetch，toolPresentationMode 不作运行时 getter', liveGetterNames.length === 10 && liveGetterNames.every((key) => key in lcExplicit) && !('toolPresentationMode' in lcExplicit))
 
   rmSync(lcDir, { recursive: true, force: true })
 }
@@ -3829,8 +3829,9 @@ checkTrue('GW19 旧词不推进路线 → subagent deny 且文案只含当前定
 }
 
 // ── ⑰ T9-3 契约硬门槛：isolate / volatile / 写链 / 声明行覆盖 ────────
-// 四组断言全部机械可核对：isolate 名单（预设挂载必过审计）、settings 行 Config 8 字段
-// 全 volatile、2 项宿主行写链（声明行 plugins 整体重述）、声明行与生成产物一致性。
+// 四组断言全部机械可核对：isolate 名单（预设挂载必过审计）、settings 行 Config 11 字段
+// 全 volatile（10 项 extra-plan + 1 项装载期宿主行）、1 项装载期宿主行写链（声明行 plugins 整体重述）、
+// 声明行与生成产物一致性。
 {
   // ① isolate：三组名单 ⊇ {subagentModelSelection, toolResultPruner} 且值全 true，delegation 不含 workflowEngine。
   const requiredIsolate = ['subagentModelSelection', 'toolResultPruner']
@@ -3865,22 +3866,22 @@ checkTrue('GW19 旧词不推进路线 → subagent deny 且文案只含当前定
   const genPluginsText = generatedDefinitionText.slice(generatedDefinitionText.indexOf('plugins:\n') + 9).replace(/\n+$/, '')
   const stripped = genPluginsText.split('\n').map((line) => (line.startsWith('  ') ? line.slice(2) : line)).join('\n')
   checkTrue('T9-3k definition plugins 文本逐字保留作者源注释/缩进语义', stripped === assetTop)
-  // ③ settings 行 Config：8 字段全 volatile（源码文本静态核对）+ 2 项宿主行 descriptor 分组
+  // ③ settings 行 Config：11 字段全 volatile（源码文本静态核对，10 项 extra-plan + 1 项装载期宿主行）+ 1 项装载期宿主行 descriptor 分组
   const settingsText = readFileSyncE(fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/settings.js', import.meta.url)), 'utf8')
   // 只取代码行（剥注释），避免注释里的示例（如官方 maxParallelToolCalls 习语）混进字段集合。
   const settingsCodeOnly = settingsText.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n')
   const configBody = settingsCodeOnly.slice(settingsCodeOnly.indexOf('export const Config = z.object('), settingsCodeOnly.indexOf('})', settingsCodeOnly.indexOf('export const Config = z.object(')))
   const extraDefinitions = SETTING_DEFINITIONS_E.filter((item) => item.group === SETTING_GROUPS_E.EXTRA_PLAN)
   const exploreDefinition = SETTING_DEFINITIONS_E.find((item) => item.key === 'exploreBudget')
-  checkTrue('T9-3l settings 行 Config 由 11 项 descriptor 映射构造，extra-plan 9 项均经 schemaField volatile',
-    extraDefinitions.length === 9 && settingsCodeOnly.includes('function schemaField(definition)') && settingsCodeOnly.includes('SETTING_DEFINITIONS.map') && settingsCodeOnly.includes('return field.default(definition.defaultValue).volatile()'))
+  checkTrue('T9-3l settings 行 Config 由 11 项 descriptor 映射构造，extra-plan 10 项均经 schemaField volatile',
+    extraDefinitions.length === 10 && settingsCodeOnly.includes('function schemaField(definition)') && settingsCodeOnly.includes('SETTING_DEFINITIONS.map') && settingsCodeOnly.includes('return field.default(definition.defaultValue).volatile()'))
   checkTrue('T9-3m exploreBudget descriptor 为整数字段默认 18，settings schema 统一使用 z.number().step(1).min(1)',
     exploreDefinition !== undefined && exploreDefinition.scalarType === 'integer' && exploreDefinition.defaultValue === 18 && exploreDefinition.ui.min === 1 && exploreDefinition.ui.step === 1 && settingsCodeOnly.includes('field = z.number().step(1).min(1)'))
   const settingsCode = settingsCodeOnly
   checkTrue('T9-3n settings.js 代码段无 settings.register / ExtraPlanSettingsSchema / 旧预设目录写入',
     !settingsCode.includes('settings.register') && !settingsCode.includes('ExtraPlanSettingsSchema') &&
     !settingsCode.includes('.agent-presets') && settingsCode.includes("child.settings.configure({ auto: false }, ctx.fiber)"))
-  check('T9-3o descriptor 分组：extra-plan 恰 9 项、host-rows 恰 2 项', EXTRA_PLAN_SETTING_DEFINITIONS_E.length + '|' + SETTING_DEFINITIONS_E.filter((item) => item.group === SETTING_GROUPS_E.HOST_ROWS).length, '9|2')
+  check('T9-3o descriptor 分组：extra-plan 恰 10 项、host-rows 恰 1 项', EXTRA_PLAN_SETTING_DEFINITIONS_E.length + '|' + SETTING_DEFINITIONS_E.filter((item) => item.group === SETTING_GROUPS_E.HOST_ROWS).length, '10|1')
   checkTrue('T9-3p 新载体行 id/name 常量与当前规范一致', SETTINGS_ROW_ID_E === 'dsh-extra-plan-settings' && SETTINGS_ROW_NAME_E === 'dsh-extra-plan/settings')
    // ④ 当前写链只经 settings row；旧 preset-sync helper/公开写入入口已退役。
    const presetSyncSource = readFileSyncE(fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/preset-sync.js', import.meta.url)), 'utf8')

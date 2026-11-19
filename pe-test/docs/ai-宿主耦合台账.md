@@ -6,7 +6,7 @@
 
 | 项 | 当前值/口径 | 状态 |
 |:--|:--|:--|
-| DSH | `0.2.2-rc.1 \|\| 0.2.2-rc.2 \|\| 0.2.2-rc.3` | 活动支持精确并集：rc.3 为当前目标，rc.1 与 rc.2 为仍在活动支持的兼容目标；两插件各自 manifest 为版本真源：核心插件以[核心插件 package.json](<../../plugins/dsh-extra-plan/package.json>)中的 `engines.dsh` 与三项 @deepseek-ai peer 为准，QQBot插件以[QQBot插件 package.json](<../../plugins/dsh-extra-plan-qqbot/package.json>)中的 `engines.dsh` 为准，`schemastery` peer 为 `~3.19.0` 且不参与 engines/peer 版本值并集；根 README 的旧 rc.1 单版本声明冻结，不作当前真源；0.2.1 系列仅存于远端分支 dsh-v0.2.1rc-qqbot-v0.5.2-only（main 不承载） |
+| DSH | `0.2.2-rc.1 \|\| 0.2.2-rc.2 \|\| 0.2.2-rc.3 \|\| 0.2.2-rc.4 \|\| 0.2.2-rc.5` | 活动支持精确并集：rc.3 为当前目标，rc.1 与 rc.2 为仍在活动支持的兼容目标；两插件各自 manifest 为版本真源：核心插件以[核心插件 package.json](<../../plugins/dsh-extra-plan/package.json>)中的 `engines.dsh` 与三项 @deepseek-ai peer 为准，QQBot插件以[QQBot插件 package.json](<../../plugins/dsh-extra-plan-qqbot/package.json>)中的 `engines.dsh` 为准，`schemastery` peer 为 `~3.19.0` 且不参与 engines/peer 版本值并集；根 README 的旧 rc.1 单版本声明冻结，不作当前真源；0.2.1 系列仅存于远端分支 dsh-v0.2.1rc-qqbot-v0.5.2-only（main 不承载） |
 | QQBot 目标 | `0.5.2` | 静态目标，不等于集成通过 |
 | 核心插件 | `dsh-extra-plan` `1.7.0` | 当前包契约；仓库子目录安装路径不变 |
 | QQBot 精简插件 | `dsh-extra-plan-qqbot` `2.0.1` | 源码合同为 `2.0.1`，仓库子目录为 plugins/dsh-extra-plan-qqbot；标准包 `postinstall` 的 `--install` 受 `--allow-build=dsh-extra-plan-qqbot` 授权后执行严格单目标校验，普通启动保留非阻断兜底；核心/宿主范围不变，公共发布、真实安装/运行及 allow-build 放行仍未核实（HUMAN） |
@@ -46,7 +46,7 @@
 
 | 编号 | 本仓位置 | 当前契约/升级敏感点 | 状态 |
 |:--|:--|:--|:--|
-| HS1 | `lib/settings.js` Config + `settings.configure` | 11 项（9 项热读 + 2 项宿主值）`.volatile()`；全局 owner 由 ConfigForms 管理 describe/update/replace/mutate，并统一拥有同步与 adapter；`settings.configure({ auto: false }, ctx.fiber)` 以宿主 fiber 为第二参绑定生命周期，`auto:false` 表示不参与自动表单投影；此第二参与 fiber 语义属升级敏感面 | 【已核实·静态】 |
+| HS1 | `lib/settings.js` Config + `settings.configure` | 11 项（10 项热读 + 1 项宿主值）`.volatile()`；全局 owner 由 ConfigForms 管理 describe/update/replace/mutate，并统一拥有同步与 adapter；`settings.configure({ auto: false }, ctx.fiber)` 以宿主 fiber 为第二参绑定生命周期，`auto:false` 表示不参与自动表单投影；此第二参与 fiber 语义属升级敏感面 | 【已核实·静态】 |
 | HS2 | settings 行 `dsh-extra-plan-settings` | 行 id 同时是命名空间、configForms key、插件行详情 key | 【已核实·静态】 |
 | HS3 | `lib/settings.js` webServer prefix | `/api/dsh-extra-plan-settings` prefix 路由 | 【已核实·静态】 |
 | HS4 | `live-config.js` 路径决议 | `configPath → DSH_EXTRA_PLAN_CONFIG_PATH → configEditor.documentPath`；不读旧预设目录 | 【已核实·静态】 |
@@ -55,7 +55,7 @@
 | HS12 | 官方 spawn／四类 tool-subagent | 父路由继承；显式 `agentOptions` 覆盖；`agentPreset` 选择子角色组合 | 【已核实·静态】 |
 | HS13 | `preset-yaml.js` `loadYaml`/`parsePresetYaml` | 预设 YAML 解析归 `preset-yaml`；核心包自有 js-yaml，QQBot 由 package-local js-yaml 依赖保障，失败返回 null | 【已核实·静态】 |
 | HS14 | `!!js` YAML 标签 | YAML_SCHEMA 对 `dshHomePath` 等表达式的解析 | 【已核实·静态】 |
-| HS15 | `settings-contract.js` `SETTING_DEFINITIONS` + `DEFAULT_SETTINGS` | 11 项 source/row/projection 定位与 9+2 分组；默认值来自生成对象，validator/合法性与 UI metadata 仍以合同手工声明 | 【已核实·静态】 |
+| HS15 | `settings-contract.js` `SETTING_DEFINITIONS` + `DEFAULT_SETTINGS` | 11 项 source/row/projection 定位与 10+1 分组；默认值来自生成对象，validator/合法性与 UI metadata 仍以合同手工声明 | 【已核实·静态】 |
 | HS16 | `tool-presentation` 行 → `tool-executor-native`/`-ptc` 行 | `tool-presentation` 行已退役为 `@deprecated` 兼容壳（内部 `ctx.plugin(执行器)`）；本预设改为按 `toolPresentationMode` 生成单行 `@deepseek-ai/dsh-tool-executor-native` 或 `-ptc`，mode 进入行身份而非 `config.mode`；同 scope 只允许一个 executor（重复 `setExecutor` 抛错） | 【已核实·静态+代码】 |
 | HS17 | `client.js` `__ModuleLoader__` | loader id 必须与包名/组合图一致 | 【已核实·静态】 |
 | HS18 | `client.js` `require("react")` | 共享 client module 提供 React | 【已核实·静态】 |
@@ -87,7 +87,7 @@
 | 显式授权边界 | 真实运行时只接受可信 `profileContext.name`/`startedBundles` 与精确能力；维护数据须显式 `--host-root` 加精确 `--profile`/`--file`/会话目标。`DSH_HOME`/`DSH_PROFILE`/`SESSION_ID`、homedir、USERPROFILE/HOME 与 `home/.dsh` 均不授根；`DSH_INSTALL_ROOT`+host-preload 只授只读代码根；`DSH_HOME` 加 `DSH_PROFILE=web` 构成 explicit-DSH-HOME 第二合规来源，仍必须通过 pathContext 读权限校验，不做目录猜测 | 【已核实·专项】 |
 | 标准 Web/QQ 身份与双锚点 | 仅 `profileContext.name='web'` 且 `startedBundles`/直接同级 profile 的 `package.json` 与 `node_modules/dsh-extra-plan-qqbot` 双锚点一致时做 Web→QQ 镜像；QQ 当前 profile 返回 `not-applicable`，不误启动跨 profile | 【已核实·专项】 |
 | 持久化范围 | 同步完整 11 项与完整 `gateWords`；局部 YAML 安全改写保留未知行、注释、`!!js` 与嵌套 insert，写前临时文件/备份/落盘后终验并支持恢复 | 【已核实·专项】 |
-| 状态与生效 | `synced` 仅代表标准 Web→QQ 镜像；QQ owner 不适用为 `not-applicable`，另区分 `not-installed`/`unavailable`/`failed`/`partial`；9 项沿既有热读，`webFetch` 与 `toolPresentationMode` 为 2 项宿主重启生效，不发送跨进程 reload | 【已核实·专项】 |
+| 状态与生效 | `synced` 仅代表标准 Web→QQ 镜像；QQ owner 不适用为 `not-applicable`，另区分 `not-installed`/`unavailable`/`failed`/`partial`；10 项沿既有热读（含 `webFetch`），仅 `toolPresentationMode` 为 1 项宿主重启生效；`webFetch` 关断由运行期 `restrict` deny `web_fetch` 在下一 step 生效，不发送跨进程 reload | 【已核实·专项】 |
 | 与 HS4 边界 | `live-config.js` 的 `DSH_EXTRA_PLAN_CONFIG_PATH` 热读优先级只服务 Web 核心消费，不是跨 profile 根定位依据；两条用途不得混用 | 【已核实·专项】 |
 
 ### ②-B settings-only no-remount 生命周期合同
@@ -98,7 +98,7 @@
 | settings-only | 读取最终完整 11 项 + `gateWords`，settled-only 队列直接交 `profileSync`/QQBot | **no-remount**：adapter register/dispose/rebuild 均不得发生；不调用、不等待、不 dispose 官方 AgentPreset | 【已核实·专项】 |
 | structuralHandoff | 仅非 settings 通用结构指纹变化才进入 adapter/structural 队列；不专门识别历史 ID/owner，结构树仍可包含其它宿主行，不据此声称删除旧行 | 与 settled-only 分离；adapter failure/reject/hang 不得撤销 Web 或阻断 QQBot 同步 | 【已核实·专项】 |
 | profileSync | 初始 `pending=true`，terminal 后 `pending=false`；记录真实 `synced/not-applicable/not-installed/unavailable/failed/partial` | 禁止 `pending/pending=false`、把 QQ 的 `not-applicable` 伪造为 `synced`、双端成功伪造或用 adapter register 充当保存成功条件 | 【已核实·专项】 |
-| 生效分组 | 9 项沿 live-config 热读；`webFetch`/`toolPresentationMode` 为 2 项需重启投影；完整 6 键 `gateWords` 立即持久化 | 当前 apply 词表不原地换词；重启、旧词拒绝、非法词无 fallback 为 HUMAN | 【已核实·专项/HUMAN】 |
+| 生效分组 | 10 项（含 `webFetch`）沿 live-config 热读；仅 `toolPresentationMode` 为 1 项需重启投影，`webFetch` 关断由运行期 `restrict` deny 在下一 step 生效；完整 6 键 `gateWords` 立即持久化 | 当前 apply 词表不原地换词；重启、旧词拒绝、非法词无 fallback 为 HUMAN | 【已核实·专项/HUMAN】 |
 
 ## ③ 当前 HK：钩子与文件组合契约
 
@@ -201,7 +201,7 @@ SD8 与 SD36 已退役并移入历史归档、不补造定义；SD9 是历史缺
 | CF9 | 临时 DSH_HOME/profile 夹具形状 | 【已核实·静态】 |
 | CF10 | preset.yml 元数据与纯 definition Config | id/name/description/order/plugins 与作者源同源，definition 不含 Loader insert wrapper | 【已核实·静态】 |
 | CF11 | QQBot 映射测试的 profile/依赖夹具 | 【已核实·静态】 |
-| CF12 | `@deepseek-ai/*` 不进 dependencies；[核心插件 package.json](<../../plugins/dsh-extra-plan/package.json>)的 manifest `engines.dsh` 独占版本判定且优先于 peer，dsh/dsh-llm/dsh-agent-preset 三项 peer 与其均精确钉 `0.2.2-rc.1 \|\| 0.2.2-rc.2 \|\| 0.2.2-rc.3`；[QQBot插件 package.json](<../../plugins/dsh-extra-plan-qqbot/package.json>)的 `engines.dsh` 同并集，`schemastery ~3.19.0` 仍是另一口径；bundle 不兼容时是双层断裂、两门独立且同时成立：bundle 层由 `loadProfileDirectory` 抛出后进入 `skippedBundles` 并打印 `skipping profile bundle`；行层由 preflight 置 `row.disabled=true` 且 `row.group=false` 并打印 `disabling profile plugin`；宿主定位只写包名+包内相对路径+符号，不写固定行号 | 【当前声明·局部证据分层；实机与 profile 清理仍待 HUMAN】 |
+| CF12 | `@deepseek-ai/*` 不进 dependencies；[核心插件 package.json](<../../plugins/dsh-extra-plan/package.json>)的 manifest `engines.dsh` 独占版本判定且优先于 peer，dsh/dsh-llm/dsh-agent-preset 三项 peer 与其均精确钉 `0.2.2-rc.1 \|\| 0.2.2-rc.2 \|\| 0.2.2-rc.3 \|\| 0.2.2-rc.4 \|\| 0.2.2-rc.5`；[QQBot插件 package.json](<../../plugins/dsh-extra-plan-qqbot/package.json>)的 `engines.dsh` 同并集，`schemastery ~3.19.0` 仍是另一口径；bundle 不兼容时是双层断裂、两门独立且同时成立：bundle 层由 `loadProfileDirectory` 抛出后进入 `skippedBundles` 并打印 `skipping profile bundle`；行层由 preflight 置 `row.disabled=true` 且 `row.group=false` 并打印 `disabling profile plugin`；宿主定位只写包名+包内相对路径+符号，不写固定行号 | 【当前声明·局部证据分层；实机与 profile 清理仍待 HUMAN】 |
 | CF13 | 客户端注册面 `exports.inject=["slots","locale","configForms"]` | 涉及 `ctx.slots.inject/entries`、`ctx.configForms.whileServed` 与 `plugins.detail.section` 让位判定 | 【已核实·静态】 |
 
 CF1/CF2（extra-plan postinstall/distribute-preset）已删除，作为历史归档，不列当前安装合同。
@@ -276,7 +276,7 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 
 - 维护数据取证先显式选择 `--host-root` 与精确 `--profile`/`--file`/会话目标；会话只能用 `--session-dir`，或 `--session`+`--sessions-dir`，`--discover-children` 才开启一层发现（最多 512 候选、每个日志头 262144 字节）。无选择为 `NOT-RUN`/目标 IO 0，Host 统计最多两次稳定观察，Host archive/清理 `--apply` 零写拒绝；`DSH_INSTALL_ROOT`+host-preload 仅用于各版本对应的只读依赖前缀。完整矩阵必须在源码/文档/地图冻结后按两根串行执行，并以当次完整报告逐项判定；没有相符报告/结论为 `NOT-RUN` 或 `INCOMPLETE`，局部执行不得替代完整/真实验收。AUTO 数量按实际 runner 数组为 13（12 个脚本加 1 项代码地图 --check）；正式最终回归为 11 个脚本加 2 项 check，两者不混称。
 
-1. 分别按 rc.1 兼容轮、rc.2 兼容轮与 rc.3 当前轮的 `dsh` 命令和安装 `package.json` 只读取得各自绝对依赖前缀后设置 `DSH_INSTALL_ROOT`（只写占位，不写死机器盘符）；版本声明范围为 `0.2.2-rc.1 || 0.2.2-rc.2 || 0.2.2-rc.3`，三轮先核实际 `dsh`/解析到的 `dsh-llm` 版本匹配，真实 Web/GUI/Provider/模型/消息/重启与 PTC 实机仍 HUMAN/NOT-RUN。0.2.1 系列仅存于远端分支 dsh-v0.2.1rc-qqbot-v0.5.2-only（main 不承载）；既有安装专用 `--dsh-root` 若表示应用包根，不与 `DSH_INSTALL_ROOT` 混用，本轮不执行该安装。再从 W 以对应前缀运行 `step-01-qqbot-安装映射.mjs` 与 `step-01-qqbot-环境验证.mjs`；静态先行，环境项条件只读，SKIP/HUMAN 不销账。
+1. 分别按 rc.1 兼容轮、rc.2 兼容轮与 rc.3 当前轮的 `dsh` 命令和安装 `package.json` 只读取得各自绝对依赖前缀后设置 `DSH_INSTALL_ROOT`（只写占位，不写死机器盘符）；版本声明范围为 `0.2.2-rc.1 || 0.2.2-rc.2 || 0.2.2-rc.3 || 0.2.2-rc.4 || 0.2.2-rc.5`，三轮先核实际 `dsh`/解析到的 `dsh-llm` 版本匹配，真实 Web/GUI/Provider/模型/消息/重启与 PTC 实机仍 HUMAN/NOT-RUN。0.2.1 系列仅存于远端分支 dsh-v0.2.1rc-qqbot-v0.5.2-only（main 不承载）；既有安装专用 `--dsh-root` 若表示应用包根，不与 `DSH_INSTALL_ROOT` 混用，本轮不执行该安装。再从 W 以对应前缀运行 `step-01-qqbot-安装映射.mjs` 与 `step-01-qqbot-环境验证.mjs`；静态先行，环境项条件只读，SKIP/HUMAN 不销账。
 2. `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-01-设置页配置.mjs` 与同前缀的 `step-04-路由与写闸门.mjs`；确认全局 owner/configEditor 后端合同、detail.section 同页唯一表单（行列表之后）、A09/A10/A11 与工具执行器设置。
 3. `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/一键step测试.mjs`；AUTO 数量按实际数组为 13（12 个脚本加 1 项代码地图 --check），正式最终回归是 11 个脚本加 2 项 check，两者不混称；HUMAN/参数项按四态判读。
 4. 按 HS/HK/SD/CF/QB 当前表，先钩子 mode，再服务方法，再事件/Session 形状，再 bundle/exports/patch/isolate 契约；旧 API 只作负向核对。
@@ -322,7 +322,7 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 - `native` 开头的会话切到 `ptc` 并重启后，resume 该会话的每一轮请求都以 400 被拒，上游原文为 `tools: at least one tool must have defer_loading=false. All tools cannot be deferred.`（code `INVALID_REQUEST`；宿主只透传上游 message，不做本地校验）。
 - 同配置下**新开会话**正常：工具面只有 `run_code` 且不带 defer 标记，可正常回答。
 - 把 mode 切回 `native` 并重启后，该原会话恢复（投影回到 25 个直呼工具、零 deferred）。
-- 边界：本条只约束 `toolPresentationMode` 切换；`creativeMode` 属 9 项热读；`runcodeCatchGate`（U9）继续热读、无需重启/新开会话，`gateWords` 则在 apply 时捕获，改词需重启 Harness（不因词表切换要求新开会话），均不改变本契约。
+- 边界：本条只约束 `toolPresentationMode` 切换；`creativeMode` 与 `webFetch` 均属 10 项热读；`runcodeCatchGate`（U9）继续热读、无需重启/新开会话，`gateWords` 则在 apply 时捕获，改词需重启 Harness（不因词表切换要求新开会话），均不改变本契约。
 
 **二、机制链**
 

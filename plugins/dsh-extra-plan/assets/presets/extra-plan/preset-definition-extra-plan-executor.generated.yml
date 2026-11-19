@@ -32,6 +32,7 @@ plugins:
     config:
       anchoredBootstrap: true
       creativeMode: false
+      webFetch: false
       runcodeCatchGate: false
       bootstrapPersona: '你是一位乐于助人的软件工程师助手，使用简体中文思考和回复。'
       bootstrapShellTools: [bash, pwsh]

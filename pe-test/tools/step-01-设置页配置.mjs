@@ -116,7 +116,7 @@ const configKeySetMatches = JSON.stringify([...configKeys].sort()) === JSON.stri
 check('V03 patch 顶层公开 insert 恰一行且稳定 id=dsh-extra-plan-settings', Array.isArray(patch) && patch.length === 1 && Array.isArray(patch[0].insert) && patch[0].insert.length === 1 && patch[0].insert[0].id === 'dsh-extra-plan-settings')
 
 
-check('V03 descriptor 与 Config 实际字段集合均恰11项且包含两项宿主值', descriptorKeys.length === 11 && configKeys.length === 11 && configKeySetMatches && JSON.stringify([...configKeys].sort()) === JSON.stringify(keys.slice().sort()) && descriptorKeys.includes('webFetch') && descriptorKeys.includes('toolPresentationMode'))
+check('V03 descriptor 与 Config 实际字段集合均恰11项且包含十项热读与一项宿主值', descriptorKeys.length === 11 && configKeys.length === 11 && configKeySetMatches && JSON.stringify([...configKeys].sort()) === JSON.stringify(keys.slice().sort()) && descriptorKeys.includes('webFetch') && descriptorKeys.includes('toolPresentationMode'))
 
 
 
@@ -470,7 +470,7 @@ const editor = makeEditor(initial, initialAuthorityFixture.webPatch, { profileCo
 const run = await start(editor)
 try {
   const before = await requestJson(run.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
-  check('V03 GET 读取统一行两项宿主值', before.status === 200 && before.body.values.webFetch === false && before.body.values.toolPresentationMode === 'native' && before.body.fields.length === 2)
+  check('V03 GET 读取统一行一项宿主值', before.status === 200 && before.body.values.toolPresentationMode === 'native' && before.body.fields.length === 1)
   check('PROFILE_SYNC_INITIAL_PENDING_TRUE', before.status === 200 && before.body.profileSync.status === 'pending' && before.body.profileSync.pending === true)
   const put = await requestJson(run.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true, toolPresentationMode: 'ptc' })
 
@@ -1303,9 +1303,9 @@ const liveDir = join(liveRoot, 'profiles', 'web')
 mkdirSync(liveDir, { recursive: true })
 const livePath = join(liveDir, 'cordis.patch.yml')
 const liveCapability = (name) => ({ name, path: livePath, type: 'file', purpose: 'config-editor', access: 'read' })
-const hotKeys = ['anchoredBootstrap', 'creativeMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel', 'reviewerUsesPlannerModel']
-const hotGetters = { anchoredBootstrap: 'anchoredBootstrap', creativeMode: 'creativeMode', runcodeCatchGate: 'runcodeCatchGate', crossProviderPlannerModel: 'crossProviderPlannerModel', plannerModel: 'plannerModel', plannerPromptSuffix: 'plannerPromptSuffix', exploreBudget: 'exploreBudget', otherAgentModel: 'otherAgentModel', reviewerUsesPlannerModel: 'reviewerUsesPlannerModel' }
-const hotNext = { anchoredBootstrap: true, creativeMode: false, runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: 'hot-model', plannerPromptSuffix: 'hot-suffix', exploreBudget: 47, otherAgentModel: 'hot-other', reviewerUsesPlannerModel: false }
+const hotKeys = ['anchoredBootstrap', 'creativeMode', 'webFetch', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel', 'reviewerUsesPlannerModel']
+const hotGetters = { anchoredBootstrap: 'anchoredBootstrap', creativeMode: 'creativeMode', webFetch: 'webFetch', runcodeCatchGate: 'runcodeCatchGate', crossProviderPlannerModel: 'crossProviderPlannerModel', plannerModel: 'plannerModel', plannerPromptSuffix: 'plannerPromptSuffix', exploreBudget: 'exploreBudget', otherAgentModel: 'otherAgentModel', reviewerUsesPlannerModel: 'reviewerUsesPlannerModel' }
+const hotNext = { anchoredBootstrap: true, creativeMode: false, webFetch: false, runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: 'hot-model', plannerPromptSuffix: 'hot-suffix', exploreBudget: 47, otherAgentModel: 'hot-other', reviewerUsesPlannerModel: false }
 const liveMatrixRoot = makeWRoot('settings-live-config-matrix')
 const liveMatrixDir = join(liveMatrixRoot, 'profiles', 'web')
 mkdirSync(liveMatrixDir, { recursive: true })
@@ -1332,7 +1332,7 @@ try {
   writeFileSync(liveMatrixPath, JSON.stringify([{ id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: { ...syncValues, ...hotNext } }]), 'utf8')
   const matrixRecovered = Object.fromEntries(hotKeys.map((key) => [key, liveMatrixConfig.get(hotGetters[key], { session: { header: { cwd: liveMatrixRoot } } })]))
   const matrixRecoveredOk = hotKeys.every((key) => Object.is(matrixRecovered[key], hotNext[key]))
-  check('G5 A可读→B缺失→B可读：9项回退/恢复且缺失最多一次告警', matrixHotReadOk && matrixFallbackOk && matrixRecoveredOk && matrixWarningsAfterMissing === 1 && liveMatrixWarnings.length === 1 && adapterNoRemount)
+  check('G5 A可读→B缺失→B可读：10项回退/恢复且缺失最多一次告警', matrixHotReadOk && matrixFallbackOk && matrixRecoveredOk && matrixWarningsAfterMissing === 1 && liveMatrixWarnings.length === 1 && adapterNoRemount)
 } finally {
   console.warn = liveMatrixWarn
 }
@@ -1386,7 +1386,7 @@ try {
   const restoredOk = hotValuesEqual(restoredValues, hotNext)
   const evidence = { path: livePath, bytesSha256: liveBytesSha256, bytes: liveBytes.length, stamp: liveOriginalStamp, reads: { initial: readsAfterInitial, sameIdentity: readsAfterSameIdentity, capabilityChange: readsAfterCapabilityChange, sameCapability: readsAfterSameCapability, revoke: readsAfterRevoke, restore: readsAfterRestore }, warnings: liveWarnings.length, values: { initial: initialValues, capabilityChanged: capabilityChangedValues, revoked: revokedValues, restored: restoredValues } }
   output.structured('G5_LIVE_CONFIG_EVIDENCE', evidence, { path: livePath, bytes: liveBytes.length, stamp: liveOriginalStamp, reads: evidence.reads, warningCount: liveWarnings.length }, { failure: !(readCountsOk && bytesUnchanged && stampUnchanged && sameIdentityOk && capabilityChangedOk && revokedOk && restoredOk) })
-  check('G5 9热读键同路径同stamp能力切换/撤权/恢复、真实read计数且字节stamp不变', readCountsOk && bytesUnchanged && stampUnchanged && sameIdentityOk && capabilityChangedOk && revokedOk && restoredOk && liveWarnings.length === 1 && adapterNoRemount)
+  check('G5 10热读键同路径同stamp能力切换/撤权/恢复、真实read计数且字节stamp不变', readCountsOk && bytesUnchanged && stampUnchanged && sameIdentityOk && capabilityChangedOk && revokedOk && restoredOk && liveWarnings.length === 1 && adapterNoRemount)
 } finally {
   fs.readFileSync = liveOriginalReadFileSync
   syncBuiltinESMExports()
@@ -1429,9 +1429,11 @@ const generatedDefinition = parsePresetYaml(readFileSync(join(REPO_ROOT, 'plugin
 const restartRows = generatedDefinition.plugins || []
 const restartWeb = restartRows.find((row) => row && row.id === 'tool-web')
 const restartPresentation = restartRows.find((row) => row && (row.id === 'tool-executor-native' || row.id === 'tool-executor-ptc'))
-const restartOk = restartWeb !== undefined && restartWeb.config !== undefined && restartPresentation !== undefined && restartPresentation.config === undefined &&
-  !hotKeys.includes('webFetch') && !hotKeys.includes('toolPresentationMode')
-check('RESTART_2_DEFINITION_PROJECTIONS_REMAIN_LOAD_TIME', restartOk)
+// 热读键集合取 settings contract 的 EXTRA_PLAN 组（10 项，含 webFetch）；toolPresentationMode 属装载期宿主行投影。
+const restartHotKeys = presetSettings.EXTRA_PLAN_SETTING_DEFINITIONS.map((item) => item.key)
+const restartOk = restartWeb !== undefined && restartWeb.config !== undefined && restartWeb.config.fetch === true && restartPresentation !== undefined && restartPresentation.config === undefined &&
+  restartHotKeys.length === 10 && restartHotKeys.includes('webFetch') && !restartHotKeys.includes('toolPresentationMode')
+check('RESTART_1_DEFINITION_PROJECTION_REMAINS_LOAD_TIME', restartOk)
 const oldRuntime = createGateRuntime(syncGateWords)
 const restartGate = Object.fromEntries(GATE_WORD_FIELDS.map((item, index) => [item.field, '重词' + index]))
 const nextRuntime = createGateRuntime(restartGate)
@@ -1786,7 +1788,7 @@ function fieldRowsOf(view) {
 const UI_FIELD_ORDER = ['anchoredBootstrap', 'creativeMode', 'webFetch', 'toolPresentationMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel', 'reviewerUsesPlannerModel']
 // 六个 pro/通用开关的 descriptor hint 统一写「新会话/新子代理生效」；HINT_SCOPE_SUFFIXES 保留旧口径仅为兼容历史 descriptor。
 const HINT_SCOPE_SUFFIXES = ['立即生效', '重启生效', '新会话/新子代理生效', '新子代理生效']
-const RESTART_SCOPE_KEYS = ['toolPresentationMode', 'webFetch']
+const RESTART_SCOPE_KEYS = ['toolPresentationMode']
 function hintScopeOf(hint) {
   if (typeof hint !== 'string') return ''
   return HINT_SCOPE_SUFFIXES.find((suffix) => hint.endsWith(suffix)) || ''

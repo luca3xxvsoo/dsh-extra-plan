@@ -224,7 +224,9 @@ function projectionOf(definition) {
   const native = findPluginRow(plugins, 'tool-executor-native')
   const ptc = findPluginRow(plugins, 'tool-executor-ptc')
   const gateRow = findPluginRow(plugins, 'extra-plan')
-  return { webFetch: web?.config?.fetch, native: native !== undefined, ptc: ptc !== undefined, gateWords: gateRow?.config?.gateWords }
+  // 两个独立字段：registeredFetch = tool-web 行注册值（主 definition 恒 true、四角色恒 false）；
+  // switchWebFetch = extra-plan 行 config.webFetch（开关的资产源值；主 definition 与 settings 行权威值同口径，角色保留生成默认、不接收开关覆盖）。
+  return { registeredFetch: web?.config?.fetch, switchWebFetch: gateRow?.config?.webFetch, native: native !== undefined, ptc: ptc !== undefined, gateWords: gateRow?.config?.gateWords }
 }
 function currentOnlyOptions(settingsValues, counters) {
   return retiredOptions({ settingsValues }, counters)
@@ -315,10 +317,11 @@ const oldOnlyRun = await runSync({})
 check('M22 仅旧输入旁路不迁值，实际只写新默认', oldOnlyRun.result.action === 'written' && oldOnlyRun.editor.state.edits.length === 1 && isDeepStrictEqual(oldOnlyRun.editor.state.edits[0].config, defaultGlobalAfter()) && Object.values(oldOnlyRun.counters).every((value) => value === 0))
 const fullOldRun = await runSync(complete)
 check('M22 完整当前值即使存在旧哨兵也idle零edit', fullOldRun.result.action === 'idle' && fullOldRun.editor.state.edits.length === 0 && Object.values(fullOldRun.counters).every((value) => value === 0))
-const projectionRun = await syncPreset({ settingsValues: { webFetch: false, toolPresentationMode: 'ptc', gateWords: structuredClone(gate) } })
+const projectionAuthority = { webFetch: false, toolPresentationMode: 'ptc', gateWords: structuredClone(gate) }
+const projectionRun = await syncPreset({ settingsValues: projectionAuthority })
 const projection = projectionOf(projectionRun.plan?.definition)
-check('M21 当前主definition投影保留webFetch/ptc/六词', projectionRun.action === 'written' && projection.webFetch === false && projection.native === false && projection.ptc === true && isDeepStrictEqual(projection.gateWords, gate))
-check('M21 当前角色definition投影与主definition一致', (() => { try { return roleDefinitionsWithPresentation(projectionRun.plan.definition).every((item) => { const p = projectionOf(item); return p.webFetch === false && p.native === false && p.ptc === true && isDeepStrictEqual(p.gateWords, gate) }) } catch { return false } })())
+check('M21 当前主definition投影：tool-web行fetch恒true且extra-plan行webFetch等于settings行权威值', projectionRun.action === 'written' && projection.registeredFetch === true && projection.switchWebFetch === projectionAuthority.webFetch && projection.native === false && projection.ptc === true && isDeepStrictEqual(projection.gateWords, gate))
+check('M21 当前角色definition投影：tool-web行fetch恒false且角色无extra-plan开关覆盖', (() => { try { return roleDefinitionsWithPresentation(projectionRun.plan.definition).every((item) => { const p = projectionOf(item); return p.registeredFetch === false && p.switchWebFetch === frozenDefaults.webFetch && p.native === false && p.ptc === true && isDeepStrictEqual(p.gateWords, gate) }) } catch { return false } })())
 
 for (const [caseName, settingsValues, patch, expectedEditCount, expected] of [
   ['complete-current-old', complete, legacyPatch, 0, complete],

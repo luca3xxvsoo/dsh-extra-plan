@@ -149,6 +149,7 @@ export const Config = z.object({
   plannerPromptSuffix: z.string().default(DEFAULT_SETTINGS.plannerPromptSuffix),
   anchoredBootstrap: z.boolean().default(DEFAULT_SETTINGS.anchoredBootstrap),
   creativeMode: z.boolean().default(DEFAULT_SETTINGS.creativeMode),
+  webFetch: z.boolean().default(DEFAULT_SETTINGS.webFetch),
   runcodeCatchGate: z.boolean().default(DEFAULT_SETTINGS.runcodeCatchGate),
   crossProviderPlannerModel: z.boolean().default(DEFAULT_SETTINGS.crossProviderPlannerModel),
   bootstrapPersona: z.string().default('You are a helpful software engineer assistant.'),
@@ -495,7 +496,7 @@ export function apply(ctx, config) {
     atomicReplace,
     getPathContext: (cwd) => pathContextFor(ctx, cwd),
   })
-  // ── 配置热读：9 项设置从「apply 期一次性常量」改为「消费点现场取值」 ──────
+  // ── 配置热读：10 项设置从「apply 期一次性常量」改为「消费点现场取值」 ──────
   // 设置页改 YAML 后同会话即时生效（无需重启）；取值经 mtime+size 变更检测缓存，
   // 文件未变时零读盘零解析，详见 lib/live-config.js。fallbackDefaults = apply 期
   // cfg 快照：既是磁盘不可用/解析失败时的兜底，也是本实例初始值（生产上与该
@@ -513,11 +514,12 @@ export function apply(ctx, config) {
       plannerPromptSuffix: typeof cfg.plannerPromptSuffix === 'string' ? cfg.plannerPromptSuffix : DEFAULT_SETTINGS.plannerPromptSuffix,
       anchoredBootstrap: typeof cfg.anchoredBootstrap === 'boolean' ? cfg.anchoredBootstrap : DEFAULT_SETTINGS.anchoredBootstrap,
       creativeMode: typeof cfg.creativeMode === 'boolean' ? cfg.creativeMode : DEFAULT_SETTINGS.creativeMode,
+      webFetch: typeof cfg.webFetch === 'boolean' ? cfg.webFetch : DEFAULT_SETTINGS.webFetch,
       runcodeCatchGate: typeof cfg.runcodeCatchGate === 'boolean' ? cfg.runcodeCatchGate : DEFAULT_SETTINGS.runcodeCatchGate,
       crossProviderPlannerModel: typeof cfg.crossProviderPlannerModel === 'boolean' ? cfg.crossProviderPlannerModel : DEFAULT_SETTINGS.crossProviderPlannerModel,
     },
   })
-  // ── 9 项热读：消费点现场取值（全部加括号调用） ──
+  // ── 10 项热读：消费点现场取值（全部加括号调用） ──
   const plannerModel = (agent) => liveConfig.get('plannerModel', agent)
   const otherAgentModel = (agent) => liveConfig.get('otherAgentModel', agent)
   const reviewerUsesPlannerModel = (agent) => liveConfig.get('reviewerUsesPlannerModel', agent)
@@ -529,6 +531,8 @@ export function apply(ctx, config) {
   // creativeMode 三消费点全部改走 live-config getter（T5-5）：C 隐藏集合（shouldHideCreativeCatalog）
   // 与装配投影 hideCordis 两处现场取值，链 = settings 行 override → cfg 快照 → BUILTIN_DEFAULTS。
   const creativeModeOn = (agent) => liveConfig.get('creativeMode', agent)
+  // webFetch 热读：运行期 restrict 逐会话生效（改值免重启），链与 creativeMode 同源（settings 行 → cfg 快照 → 内置默认）。
+  const webFetchOn = (agent) => liveConfig.get('webFetch', agent)
   const bootstrapPersona = typeof cfg.bootstrapPersona === 'string' ? cfg.bootstrapPersona : 'You are a helpful software engineer assistant.'
   // 变量②：F 段（HP 首轮）tool:read 的手写文案；空串/非字符串一律回退内置同文案兜底。
   const bootstrapReadHint = typeof cfg.bootstrapReadHint === 'string' && cfg.bootstrapReadHint !== ''
@@ -769,6 +773,9 @@ export function apply(ctx, config) {
   const CORDIS_PRESENTATION_DENY = ['cordis_inspect_list', 'cordis_inspect_query']
   const ANCHORED_BOOTSTRAP_SOURCE = 'anchored-bootstrap'
   const CORDIS_PRESENTATION_SOURCE = 'cordis-presentation'
+  // web_fetch 免重启开关：deny 单名走同一条 restrict 通路（source 独立，便于诊断区分）。
+  const WEB_FETCH_SOURCE = 'web-fetch'
+  const WEB_FETCH_TOOL_NAME = 'web_fetch'
   // 单一存储：agent → (source → { disposer, filter })；同 agent 同 source 已 arm 即幂等返回。
   const toolRestrictions = new WeakMap()
   const anchoredDiagState = new WeakMap()
@@ -824,6 +831,7 @@ export function apply(ctx, config) {
         restrictions: {
           [ANCHORED_BOOTSTRAP_SOURCE]: { arm: null, release: null, skip: null },
           [CORDIS_PRESENTATION_SOURCE]: { arm: null, release: null, skip: null },
+          [WEB_FETCH_SOURCE]: { arm: null, release: null, skip: null },
         },
       }
       anchoredDiagState.set(agent, state)
@@ -867,7 +875,7 @@ export function apply(ctx, config) {
   function restrictionsSnapshotOf(agent, state) {
     const active = toolRestrictions.get(agent)
     const snapshot = {}
-    for (const source of [ANCHORED_BOOTSTRAP_SOURCE, CORDIS_PRESENTATION_SOURCE]) {
+    for (const source of [ANCHORED_BOOTSTRAP_SOURCE, CORDIS_PRESENTATION_SOURCE, WEB_FETCH_SOURCE]) {
       const entry = active !== undefined ? active.get(source) : undefined
       const latest = state.restrictions[source]
       snapshot[source] = {
@@ -1044,6 +1052,26 @@ export function apply(ctx, config) {
   function releaseCordisPresentationRestriction(agent) {
     releaseToolRestriction(agent, CORDIS_PRESENTATION_SOURCE)
   }
+  // web_fetch 免重启开关适配：判据只读 webFetchOn（与 settings 行热读同源），逐会话 arm deny 单名 web_fetch。
+  // 三条前置判定按序且都在通用 arm 之前完成：
+  // ① 开关为真 → 不裁剪、不落诊断（与 C=1 的 cordis 通路同口径）；
+  // ② 子代理是注册级缺失（web_fetch 本就不在子代理工具面），对未注册名 arm 会让宿主 restrict 整次抛错，故直接返回；
+  // ③ 可收窄名快照取到且不含 web_fetch → 改传 skip 事件 skip-no-web-fetch-name，落 skip 而非 arm-failed，避免污染失败计数。
+  function armWebFetchRestriction(agent, source) {
+    if (webFetchOn(agent)) return
+    if (isSubagentChild(agent)) return
+    const filter = { deny: [WEB_FETCH_TOOL_NAME] }
+    const restrictable = restrictableNamesOf(agent)
+    if (restrictable !== null && !restrictable.has(WEB_FETCH_TOOL_NAME)) {
+      armToolRestriction(agent, { source: WEB_FETCH_SOURCE, trigger: source, filter, skip: { event: 'skip-no-web-fetch-name', detail: {} } })
+      return
+    }
+    armToolRestriction(agent, { source: WEB_FETCH_SOURCE, trigger: source, filter })
+  }
+  // 释放只调通用 release（内部只调 disposer() 再删项）：宿主空 filter 会整次抛错，故不做任何空 filter 调用。
+  function releaseWebFetchRestriction(agent) {
+    releaseToolRestriction(agent, WEB_FETCH_SOURCE)
+  }
 
   ctx.on('agent/created', async (payload) => {
     const agent = payload !== undefined && payload !== null ? payload.agent : undefined
@@ -1063,6 +1091,7 @@ export function apply(ctx, config) {
     await selectChildModelOnCreate(agent, payload.signal)
     armAnchoredToolRestriction(agent, 'agent-created')
     armCordisPresentationRestriction(agent, 'agent-created')
+    armWebFetchRestriction(agent, 'agent-created')
   })
 
   // 2) pre-step：账本补记（会话最终消息的行延迟到此）；规划子代理初始任务与
@@ -1145,6 +1174,7 @@ export function apply(ctx, config) {
         // 引导期收窄兜底：recompose 不重发 agent/created 的会话（Web 首启）在这里补 arm。
         armAnchoredToolRestriction(agent, 'pre-step')
         armCordisPresentationRestriction(agent, 'pre-step')
+        armWebFetchRestriction(agent, 'pre-step')
       } catch (error) {
         initializationFailed = true
         warnPreStepFailure(error)
@@ -1160,6 +1190,8 @@ export function apply(ctx, config) {
           if (!isBootstrapPhase(agent, releaseLease?.events)) releaseAnchoredToolRestriction(agent)
           // C=1 转档释放：中途切到 C=1 时解除 cordis 展示工具 deny；判据与 arm 同源（只读 creativeModeOn）。
           if (creativeModeOn(agent)) releaseCordisPresentationRestriction(agent)
+          // webFetch 开启即释放 web_fetch deny：改值后下一 pre-step 生效，无需重启宿主。
+          if (webFetchOn(agent)) releaseWebFetchRestriction(agent)
         } finally {
           if (releaseLease !== undefined && typeof releaseLease[Symbol.dispose] === 'function') releaseLease[Symbol.dispose]()
         }

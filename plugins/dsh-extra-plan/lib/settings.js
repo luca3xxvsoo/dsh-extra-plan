@@ -1,7 +1,7 @@
 // dsh-extra-plan-settings 的唯一全局管理入口。
 // settings 行 config 是全部 11 个权威值的载体；gateWords 作为兼容数据同样由该 owner 严格保留。
 // 本入口统一拥有 settings/API/carrier、当前值补齐与 profileSync；AgentPreset 仅由 preset-sync 初始/结构路径管理。
-// 两项宿主设置只从权威值派生到内存 definition，不再写独立公开投影行。
+// 1 项宿主设置（toolPresentationMode）只从权威值派生到内存 definition，不再写独立公开投影行。
 
 import { createHash, randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'

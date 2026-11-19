@@ -151,6 +151,7 @@ plugins:
         config:
           anchoredBootstrap: true
           creativeMode: false
+          webFetch: false
           runcodeCatchGate: false
           bootstrapPersona: '你是一位乐于助人的软件工程师助手，使用简体中文思考和回复。'
           bootstrapShellTools: [bash, pwsh]
@@ -303,7 +304,7 @@ plugins:
   - id: tool-web
     name: '@deepseek-ai/dsh-tool-web'
     config:
-      fetch: false
+      fetch: true
       searchTimeoutMs: 60000
 
   # 执行器行按 toolPresentationMode 派生（native→tool-executor-native / ptc→tool-executor-ptc），同 scope 只允许一行

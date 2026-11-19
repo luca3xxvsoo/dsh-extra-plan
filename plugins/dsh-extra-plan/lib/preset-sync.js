@@ -391,10 +391,11 @@ export function readDefinitionGateWords(definition = assetDefinition()) {
  * 宿主行投影的单一实现：主 definition 与 4 个角色 definition 共用同一张定位表（HOST_ROW_IDS /
  * HOST_ROW_LEAF_KEYS）与同一套校验/归一化原语（validateSettingValue / normalizeSettingValue）。
  * toolPresentationMode 按 executor 行身份处理：按两个 executor 行 id 合计判定，恰一行时按目标 mode
- * 改写该行 id/name 并删除其 config（executor 行无 config）；webFetch 等叶值键沿用原叶改写。
+ * 改写该行 id/name 并删除其 config（executor 行无 config）；投影集合当前只有该行身份项，不投影叶值
+ * （webFetch 已归 extra-plan 热读组，权威值在 settings 行、由运行期 restrict 生效）。
  * 返回 'ok' = 已重述该值；'skipped' = 值非法或非投影键（调用方跳过）；'missing' = 值合法但 definition
- * 缺该行（executor 行 0 行或多行）或叶值键所在行无 config 对象（主 definition 视为坏资产，
- * 角色 definition 保留生成物默认值）。
+ * 缺该行（executor 行 0 行或多行），或叶键投影路径下叶值键所在行无 config 对象（主 definition 视为
+ * 坏资产，角色 definition 保留生成物默认值）。
  */
 function projectHostRow(plugins, key, value) {
   const setting = PROJECTION_SETTING_DEFINITIONS.find((item) => item.key === key)
@@ -410,6 +411,7 @@ function projectHostRow(plugins, key, value) {
     delete row.config
     return 'ok'
   }
+  // 当前投影集合只剩行身份项 toolPresentationMode，本叶键分支暂无消费者，保留为通用投影原语。
   const row = findPluginsRow(plugins, HOST_ROW_IDS[key])
   if (row === null || !plainObject(row.config)) return 'missing'
   row.config[HOST_ROW_LEAF_KEYS[key]] = normalizeSettingValue(setting, value)
@@ -462,7 +464,6 @@ export async function syncPreset(options = {}) {
   const planned = {
     settings: Object.keys(settingsPatch).length === 0 ? null : { values: settingsPatch, diagnostics: resolved.diagnostics },
     definition: cloneDefinitionWithProjection(definition, {
-      webFetch: resolved.values.webFetch,
       toolPresentationMode: resolved.values.toolPresentationMode,
       gateWords: resolved.gateWords,
     }),
@@ -510,7 +511,6 @@ function settingsValuesFromRows(rows) {
 function projectedAssetDefinition(settingsValues) {
   const resolved = resolveUnifiedConfig({ settingsValues })
   return cloneDefinitionWithProjection(assetDefinition(), {
-    webFetch: resolved.values.webFetch,
     toolPresentationMode: resolved.values.toolPresentationMode,
     gateWords: resolved.gateWords,
   })

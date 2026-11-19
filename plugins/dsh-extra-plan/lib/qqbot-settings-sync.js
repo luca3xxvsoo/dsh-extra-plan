@@ -280,7 +280,7 @@ function snapshotGateWords(snapshot) {
   return undefined
 }
 
-/** Copy, normalize, validate and freeze the complete ten-value plus gateWords snapshot. */
+/** Copy, normalize, validate and freeze the complete eleven-value plus gateWords snapshot. */
 export function validateSettingsSnapshot(snapshot) {
   if (!plainObject(snapshot)) throw new Error('invalid-source-snapshot')
   const values = snapshotValues(snapshot)

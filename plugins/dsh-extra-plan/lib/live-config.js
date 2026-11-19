@@ -3,13 +3,14 @@
 // settings 行是权威值，旧预设目录不作回退。
 // stamp 由路径和 stat 元数据组成；未变则跳过读盘和 YAML 解析。
 // 构造期先读一次源文件建立初始基线，避免宿主 cfg 快照过期。
-// 构造期同时做装载期严格校验：settings 行在（按行 id）时 9 个热读键出现 ambiguous /
+// 构造期同时做装载期严格校验：settings 行在（按行 id）时 10 个热读键出现 ambiguous /
 // invalid → 直接抛错、插件不装载；missing（老版本升级缺新键）→ 告警一次并按 apply 快照/
 // 内置默认回填；整行缺席（出厂形态）仍静默按 cfg 快照启动。
 // 运行期（refresh 触发的读盘）保持 fail-safe：路径、文件、stat、YAML 或值失败时按键回退
 // 并只告警一次，其中 ambiguous / invalid 显性告警、missing 静默。
 // 回退顺序为 settings 行覆盖 → apply cfg → BUILTIN_DEFAULTS；每个 agent 的缓存键保持隔离。
-// 11 项共享同一 row locator：9 项在此热读，2 项由宿主装载期快照消费，投影改变后需重启宿主。
+// 11 项共享同一 row locator：10 项在此热读；余 1 项 toolPresentationMode 由宿主装载期快照消费，
+// 改值需重启宿主。webFetch 属热读项：值由运行期 restrict 逐会话生效，不需重启。
 
 import { statSync, readFileSync } from 'node:fs'
 import { isAbsolute, resolve as pathResolve } from 'node:path'
@@ -283,6 +284,7 @@ export function createLiveConfig(options) {
     get(key, agent) { return read(key, agent) },
     get anchoredBootstrap() { return read('anchoredBootstrap') },
     get creativeMode() { return read('creativeMode') },
+    get webFetch() { return read('webFetch') },
     get runcodeCatchGate() { return read('runcodeCatchGate') },
     get crossProviderPlannerModel() { return read('crossProviderPlannerModel') },
     get plannerModel() { return read('plannerModel') },

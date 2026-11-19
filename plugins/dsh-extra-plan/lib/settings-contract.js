@@ -15,10 +15,10 @@ export const SETTINGS_ROW_ID = 'dsh-extra-plan-settings'
 export const SETTINGS_ROW_NAME = 'dsh-extra-plan/settings'
 /**
  * 声明行 plugins 内承载宿主行设置的子行 id（投影落点的行 id）。
- * toolPresentationMode 用行身份承载模式（两个 executor 行 id），不再有叶键。
+ * 当前只剩 toolPresentationMode：用行身份承载模式（两个 executor 行 id），没有叶键；
+ * 原 webFetch 条目已删（权威值在 settings 行、由运行期 restrict 生效，不再有宿主行 id）。
  */
 export const HOST_ROW_IDS = Object.freeze({
-  webFetch: 'tool-web',
   toolPresentationMode: Object.freeze({ native: 'tool-executor-native', ptc: 'tool-executor-ptc' }),
 })
 /** 行 id → 呈现模式的唯一映射源：键由 HOST_ROW_IDS.toolPresentationMode 派生，不再另写字面量。 */
@@ -28,9 +28,11 @@ export const MODE_BY_ROW_ID = Object.freeze({
 })
 /** executor 宿主行包名前缀：name = 前缀 + 裸模式名（native/ptc）；运行期行 id 是裸行 id（不带包名前缀），两种形态不得混用。 */
 export const EXECUTOR_TOOL_NAME_PREFIX = '@deepseek-ai/dsh-tool-executor-'
-/** 投影落点的叶键（宿主行 config 内键名）：源模板与投影共用同一份 leaf 名，不新增第二份键名清单。 */
-export const HOST_ROW_LEAF_KEYS = Object.freeze({ webFetch: 'fetch' })
-/** descriptor 分组（消费方）：11 项统一落 settings 全局行；2 项另派生到内存 definition。 */
+/** 投影落点的叶键（宿主行 config 内键名）：源模板与投影共用同一份 leaf 名，不新增第二份键名清单。
+ * 当前为空集（原 webFetch:'fetch' 已删：web_fetch 现由 extra-plan 行 config.webFetch + 运行期 restrict 生效），
+ * 表结构保留为叶键投影原语。 */
+export const HOST_ROW_LEAF_KEYS = Object.freeze({})
+/** descriptor 分组（消费方）：11 项统一落 settings 全局行；1 项另派生到内存 definition。 */
 export const SETTING_GROUPS = Object.freeze({ EXTRA_PLAN: 'extra-plan', HOST_ROWS: 'host-rows' })
 
 const setting = (definition) => Object.freeze({
@@ -82,11 +84,12 @@ export const SETTING_DEFINITIONS = Object.freeze([
     validator: isBoolean, ui: { control: 'select', options: [true, false], locale: 'creativeMode', section: 'general', hint: '是否开启dsh官方创造模式 ｜ 立即生效' }, locatorAliases: [],
   }),
   setting({
-    key: 'webFetch', group: SETTING_GROUPS.HOST_ROWS, scalarType: 'boolean', defaultValue: DEFAULT_SETTINGS.webFetch,
-    // 源模板行 = 宿主行同叶（tool-web.config.fetch）；权威值落点 = settings 行 config.webFetch。
-    sourceLocator: { rowId: HOST_ROW_IDS.webFetch, path: 'config.' + HOST_ROW_LEAF_KEYS.webFetch },
+    key: 'webFetch', group: SETTING_GROUPS.EXTRA_PLAN, scalarType: 'boolean', defaultValue: DEFAULT_SETTINGS.webFetch,
+    // 源模板值 = extra-plan 行 config.webFetch（作者源主 tool-web 行常开 fetch: true，运行期由 restrict 按本值逐会话改配置）；
+    // 故不再指向宿主行同叶，权威值落点仍为 settings 行 config.webFetch。
+    sourceLocator: sourceLocator('webFetch'),
     rowLocator: settingsRowLocator('webFetch'),
-    validator: isBoolean, ui: { control: 'select', options: [true, false], locale: 'webFetch', section: 'general', hint: '是否开启web_fetch ｜ 重启生效' }, locatorAliases: [],
+    validator: isBoolean, ui: { control: 'select', options: [true, false], locale: 'webFetch', section: 'general', hint: '是否开启web_fetch ｜ 立即生效' }, locatorAliases: [],
   }),
   setting({
     key: 'toolPresentationMode', group: SETTING_GROUPS.HOST_ROWS, scalarType: 'mode', defaultValue: DEFAULT_SETTINGS.toolPresentationMode,
@@ -150,15 +153,15 @@ export const SETTING_DEFINITIONS = Object.freeze([
 export function createDefaultSettings() {
   return Object.fromEntries(SETTING_DEFINITIONS.map((definition) => [definition.key, DEFAULT_SETTINGS[definition.key]]))
 }
-/** 9 项 UI 设置（权威值落 settings 行；= live-config 热读键集合）。 */
+/** 10 项 UI 设置（权威值落 settings 行；= live-config 热读键集合）。 */
 export const EXTRA_PLAN_SETTING_DEFINITIONS = Object.freeze(
   SETTING_DEFINITIONS.filter((item) => item.group === SETTING_GROUPS.EXTRA_PLAN),
 )
-/** 2 项宿主行设置（权威值同样落 settings 行；内存 definition 由当前宿主 descriptor 派生）。 */
+/** 1 项宿主行设置（权威值同样落 settings 行；内存 definition 由当前宿主 descriptor 派生）。 */
 export const HOST_ROW_SETTING_DEFINITIONS = Object.freeze(
   SETTING_DEFINITIONS.filter((item) => item.group === SETTING_GROUPS.HOST_ROWS),
 )
-/** 宿主行投影集合（= 2 项宿主行设置）——由当前宿主 descriptor 派生的唯一遍历源。 */
+/** 宿主行投影集合（= 1 项宿主行设置）——由当前宿主 descriptor 派生的唯一遍历源。 */
 export const PROJECTION_SETTING_DEFINITIONS = Object.freeze([...HOST_ROW_SETTING_DEFINITIONS])
 
 const descriptorByKey = new Map(SETTING_DEFINITIONS.map((item) => [item.key, item]))

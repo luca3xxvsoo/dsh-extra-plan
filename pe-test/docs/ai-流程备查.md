@@ -100,4 +100,4 @@ route=plan 后，**第一个** 闸门必须是独立的目的闸门：调用 `ex
 
 ## 设置与默认链交接
 
-9 项 UI 设置与 2 项宿主行设置的权威值都走 `dsh-extra-plan-settings` 唯一 settings 行；PUT 只 edit 该行并保留其它字段；只认当前规范 id/name，两个历史配置 ID 不读取、不一次性迁移、不回退、不判旧 owner、不承诺旧值，也不编辑/删除真实旧行。11 项与 gateWords 的补齐/回落口径见 [ai-机制设计](ai-机制设计.md)（唯一真源）。`./preset-sync` 已退役，locale exports 并未退役（package.json 仍导出 `./locale/*.json` 与 `./settings/locale/*`），但 `lib/preset-sync.js` 仍由 settings owner 内部相对调用。`toolPresentationMode` 为装载期值，`runcodeCatchGate` 按配置热读。默认作者值来自 `agent.cordis.yml`，生成器产物不可手改；坏模板保持 last-known-good。
+10 项热读设置与 1 项宿主行设置（`toolPresentationMode`）的权威值都走 `dsh-extra-plan-settings` 唯一 settings 行；PUT 只 edit 该行并保留其它字段；只认当前规范 id/name，两个历史配置 ID 不读取、不一次性迁移、不回退、不判旧 owner、不承诺旧值，也不编辑/删除真实旧行。11 项与 gateWords 的补齐/回落口径见 [ai-机制设计](ai-机制设计.md)（唯一真源）。`./preset-sync` 已退役，locale exports 并未退役（package.json 仍导出 `./locale/*.json` 与 `./settings/locale/*`），但 `lib/preset-sync.js` 仍由 settings owner 内部相对调用。`toolPresentationMode` 为装载期值，`runcodeCatchGate` 按配置热读。默认作者值来自 `agent.cordis.yml`，生成器产物不可手改；坏模板保持 last-known-good。
