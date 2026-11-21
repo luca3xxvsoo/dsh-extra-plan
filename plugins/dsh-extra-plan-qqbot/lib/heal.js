@@ -193,7 +193,7 @@ export function resolveQqbotHostRoot(ctx) {
   return { ...profileFacts, root: normalized[0].value, source: normalized.map((entry) => entry.name).join('+') }
 }
 
-// ── 旧版错误块：只迁移根级完整生成条目，静态 insert 由 cordis.patch.yml 唯一提供 ──
+// ── 旧版错误块：只读诊断根级完整生成条目；同 ID 冲突返回 failed 并阻断建链，其余命中返回 preserved；旧块处理全程不写 patch、不做备份，静态 insert 由 cordis.patch.yml 唯一提供 ──
 // 静态包族由静态回归覆盖；严格环境命中时由环境脚本执行只读核验；
 // QQBot 消息、/preset、question/approval 与 postinstall 仍属部署后 HUMAN。
 const LEGACY_ROOT_ENTRIES = [
@@ -221,7 +221,7 @@ function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-// 仅这两个历史 ID 仍由当前 QQBot bundle 的 insert 提供；同 ID 的根级行必须先由用户确认。
+// 仅检测当前 QQBot bundle insert 中的这两个历史 ID；同 ID 的根级行必须先由用户确认。
 const LEGACY_INSERT_IDS = new Set(['ptc-runtime', 'agent-preset-registry'])
 
 function legacyEntryKind(entry) {
@@ -244,7 +244,7 @@ export function healPatchRows(profileDir, options = {}) {
     profile = validateReadTarget(context, resolveHostPath(context, profileDir, { purpose: 'qqbot-profile' }), { expectedType: 'directory' })
     patchTarget = resolveHostPath(context, join(profile.path, 'cordis.patch.yml'), { purpose: 'qqbot-patch' })
   } catch (error) {
-    console.warn(LOG_PREFIX + ' profile 根校验失败，跳过迁移:', errorText(error))
+    console.warn(LOG_PREFIX + ' profile 根校验失败，跳过诊断:', errorText(error))
     return { status: 'skipped', reason: 'path-invalid', error: errorText(error) }
   }
   let checkedPatch
@@ -252,14 +252,14 @@ export function healPatchRows(profileDir, options = {}) {
     checkedPatch = validateReadTarget(context, patchTarget, { expectedType: 'file' })
   } catch (error) {
     if (isMissingError(error)) return { status: 'skipped', reason: 'no-file' }
-    console.warn(LOG_PREFIX + ' 读取 ' + patchTarget.path + ' 失败，跳过迁移:', errorText(error))
+    console.warn(LOG_PREFIX + ' 读取 ' + patchTarget.path + ' 失败，跳过诊断:', errorText(error))
     return { status: 'skipped', reason: 'read-failed', error: errorText(error) }
   }
   let content
   try {
     content = readFileSync(checkedPatch.path, 'utf8')
   } catch (error) {
-    console.warn(LOG_PREFIX + ' 读取 ' + checkedPatch.path + ' 失败，跳过迁移:', errorText(error))
+    console.warn(LOG_PREFIX + ' 读取 ' + checkedPatch.path + ' 失败，跳过诊断:', errorText(error))
     return { status: 'skipped', reason: 'read-failed' }
   }
   const yaml = loadYamlModule()
@@ -284,10 +284,10 @@ export function healPatchRows(profileDir, options = {}) {
 }
 
 /**
- * 扫描 $DSH_HOME/profiles/*，锚定「安装了本插件的 qqbot profile」：
- * ① package.json 可读且 dsh.profile.bundles 含 '@tencent-connect/dsh-qqbot'；
- * ② node_modules/dsh-extra-plan-qqbot 目录存在（本插件已装）。
- * 任一不满足 → 跳过；只处理所选Host根内标准位置，根外副本/未装插件的 profile 天然排除。
+ * 在 Host 授权根下选择 QQBot profile：显式 profileNames 精确检查指定名称，否则最多检查 128 个候选；
+ * 以 package.json 的 dsh.profile.bundles 与 node_modules/dsh-extra-plan-qqbot 双锚点确认本插件已装；
+ * dshHome 仅作 Host 根输入，不单独构成通用授权；
+ * 任一锚点不满足即跳过，根外副本不处理。
  */
 export function findOwnQqbotProfiles(dshHome, options = {}) {
   const MAX_PROFILE_CANDIDATES = 128
@@ -365,10 +365,10 @@ export function findOwnQqbotProfiles(dshHome, options = {}) {
 }
 
 /**
- * 建链与旧块迁移职责分离。web 缺失 → warn 跳过；已正确链接 → 不动；
- * 非目标链接/实体目录 → 保留并提示 pnpm 迁移；
- * 仅 ENOENT → mkdirSync(node_modules) + symlinkSync(webPkg, target, win32 ? junction : dir)；
- * 全程 try/catch 只记录日志不阻断；目标用绝对路径 webPkg（Windows junction 支持跨盘符）。
+ * 建链与旧块诊断职责分离。web 缺失 → warn 跳过；已正确链接 → 不动；
+ * 非目标链接/实体目录 → 保留并提示通过 pnpm 完成迁移；仅目标缺失且既有父目录已获授权时才创建 junction/dir；不自动补建缺失目录。
+ * dryRun 只返回计划；实体/异链不覆盖，回读失败仅按本轮创建链接的身份尝试有限回滚。
+ * 全程 try/catch 只记录日志不阻断；目标使用绝对路径 webPkg（Windows junction 支持跨盘符）。
  */
 // 不跟随链接：回滚只对创建时记录的同一个 inode 和同一链接文字生效。
 function linkIdentity(path) {

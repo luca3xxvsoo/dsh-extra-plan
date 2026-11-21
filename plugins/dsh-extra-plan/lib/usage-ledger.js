@@ -3,10 +3,10 @@
 //   ② 扫描（改造11 前在独立扫描模块：枚举 sessions/<ws>/<sid>/session.v4.jsonl.zstd、node:zlib 多帧解压、
 //      事件提取、白名单过滤、身份聚合）；
 //   ③ 写入（改造11 前在独立归档模块：读现有 archive、按身份覆盖式更新、单调性保护、说明行、temp→rename 原子发布）；
-//   ④ 启动入口 startupArchive。
-// 改造11 相对合并前（291+543+1000=1834 行）删除：createUsageLedger 空壳、archivePathOf/archiveLedger 直调入口、
+//   ④ 同步直调 archiveLedger、启动归档 startupArchive；启动归档由 settings Worker 调度。
+// 同步直调 archiveLedger 不承担进程互斥；改造11 相对合并前（291+543+1000=1834 行）删除：createUsageLedger 空壳、
 // 整套跨进程锁（等待轮询、死 PID 接管、stale-lock 告警）、双文件事务、逆序回滚、active 相关分支。
-// 写入互斥只剩一次 O_EXCL 建 <archive>.lock：拿不到即跳过本次启动扫描并留痕，不等待、不接管、不删他人锁。
+// 启动归档写入互斥只剩一次 O_EXCL 建 <archive>.lock：锁忙即跳过本次启动归档写入并留痕，不等待、不接管、不删他人锁；单 archive 经 temp→rename 原子发布，不承诺 CLI 手工归档。
 import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { basename, dirname, join } from 'node:path'
@@ -1110,7 +1110,7 @@ function releaseArchiveLock(fsOps, lock) {
   try { fsOps.unlinkSync(lock.lockPath) } catch (error) { /* 释放失败不影响本次归档结果 */ }
 }
 
-// 直调入口（改造11 M9 恢复的精简版）：给定 archive 路径的「聚合与发布」，与 startupArchive 共用本实现。
+// 同步直调入口 archiveLedger：给定 archive 路径执行当前聚合与发布，与 startupArchive 共用本实现。
 // 语义：严格读现有 archive（可不存在）→ 取本次身份行（options.rows 注入优先，否则现场扫描 host 根下的会话日志）
 // → 按身份覆盖式更新 + 单调性保护 → 写说明行 → temp→rename 原子发布。
 // 不含 active 参数、不清空 active、无双文件合并、无逆序回滚、无 parse-active 阶段；预算阶段只有

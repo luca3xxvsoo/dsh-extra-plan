@@ -111,8 +111,8 @@ rc.1、rc.2 是活动兼容目标，rc.3 是当前目标，rc.4、rc.5 是新增
 | HK8 | 七个钩子 `payload.agent` | agentEvents fused 形状 | 【已核实·静态】 |
 | HK9 | tool-jobs 通知 | `source.kind='tool-jobs'` 且 `form='notice'`；旧三元组已废；v0.4.0 起新增 job_list/list_agents 轮询守卫清整表消费方（consumed 标记与 job_output 跟踪命中解耦） | 【已核实·静态】 |
 | HK10 | step-06 事件夹具 | 事件负载必须与真实 subagent/ask/tool 形状一致 | 【已核实·静态】 |
-| HK11 | `cordis.patch.yml` 单条 insert | 仅 `dsh-extra-plan-settings` 全局行公开；carrier、同步、迁移与官方 adapter 均归同一 owner 内部 | 【已核实·静态】 |
-| HK12 | package `dsh.bundle.patch` | 只指向单一 `./cordis.patch.yml`（核心与 QQBot 两包同构）；不存在额外的 preset patch 文件，definition 由 settings owner 读取生成资产后交官方 adapter | 【已核实·静态】 |
+| HK11 | `cordis.patch.yml` 单条 insert | 核心 patch 仅一条 `dsh-extra-plan-settings` 全局行；QQBot patch 是五行 wrapper，含一条同 owner 的 `dsh-extra-plan-settings` 行；carrier、同步、迁移与官方 adapter 均归同一 owner 内部 | 【已核实·静态】 |
+| HK12 | package `dsh.bundle.patch` | 核心与 QQBot 两包均只指向单一 `./cordis.patch.yml`；核心是单 settings 行，QQBot 是五行 wrapper/单 settings owner；不存在额外的 preset patch 文件，definition 由 settings owner 读取生成资产后交官方 adapter | 【已核实·静态】 |
 | HK13 | package exports | 根包、settings/client、根 locale/settings locale 当前子路径必须可解析；`./preset-sync` 根与 locale 子路径必须解析失败 | 【已核实·静态】 |
 | HK14 | package `dsh.client` | platform=web、inject 顺序与 `./client` export | 【已核实·静态】 |
 | HK15 | 预设 isolate | mountPreset 审计；必要/保险服务名均 `isolate: true` | 【已核实·静态】 |
@@ -210,9 +210,9 @@ CF1/CF2（extra-plan postinstall/distribute-preset）已删除，作为历史归
 | QB5 | package-local `js-yaml:^4.2.0`，heal.js 移除 APPDATA/固定宿主后备；失败返回 null | 【已核实·静态；健壮性改进】 |
 | QB8-QB9 | profile bundles 与 `node_modules/dsh-extra-plan-qqbot` 双条件锚定 | 【已核实·静态】 |
 | QB10-QB11 | Web `node_modules/dsh-extra-plan` 到 QQBot `node_modules/dsh-extra-plan` 的 junction/dir 建链；非目标实体不替换 | 【已核实·静态；部署结果待 HUMAN】 |
-| QB12-QB13 | patch 写前备份、写后 YAML 顶层数组/旧块校验；不引用旧 AgentPresetSettingsSchema 为当前合同 | 【已核实·静态】 |
+| QB12-QB13 | 只读 YAML/根级旧块诊断；不写 patch、不备份；不引用旧 AgentPresetSettingsSchema 为当前合同 | 【已核实·静态】 |
 | QB14-QB18 | QQBot patch、ptc-runtime、agent-preset-registry、cordis-host-runner 当前行 | 【已核实·静态】 |
-| QB19 | QQBot bundle patch 第五行 `- insert:` 下保留 canonical 行 `id: dsh-extra-plan-settings` / `name: dsh-extra-plan/settings`；核心 bundle/预设仍由核心独立提供 | 【已核实·源码静态；受控 compose 有效实例】 |
+| QB19 | QQBot bundle patch 的单个 `insert` 块保留 canonical 行 `id: dsh-extra-plan-settings` / `name: dsh-extra-plan/settings`；核心 bundle/预设仍由核心独立提供 | 【已核实·源码静态；受控 compose 有效实例】 |
 | QB20-QB21 | `scripts/heal.mjs` 无参仅打印帮助并 exit 0、不自愈；`--install` 为 postinstall 严格入口，单目标且 patch/link/最终 realpath 任一失败 exit 1；插件 `plugins/dsh-extra-plan-qqbot/index.js` 的 `apply` 仅在明确 Host/profile 身份校验通过后执行启动兼容自愈，失败仅告警、不抛出、不阻断宿主（不以 CLI exit 0 描述 apply）；allow-build 放行与实际生命周期安装待 HUMAN | 【已核实·源码静态；lifecycle 尚无完整通过证据】 |
 | QB25-QB26 | 静态服务/config.default 断言与间接消费 extra-plan | 【已核实·静态】 |
 | QB27/QB31 | 一键 AUTO/四态汇总仅引用对应原始证据；install、compose、cache 分开判定，install/cache 的 INCOMPLETE/NOT-RUN 不改写为 AUTO PASS；只有实际证实跳钩子且缺链才记 CACHE-BLOCKED，受限 child-spawn EPERM 保持 INCOMPLETE；六项 HUMAN 单列且不销账 | 【已核实·证据边界】 |

@@ -699,10 +699,10 @@ export function apply(ctx, config) {
       console.error('extra-plan: extra_plan_gate registration failed: ' + message)
     }
   }
-  // 1) 会话启动：子代理基线（账本 + 角色固定宿主模式）；规划子代理与主会话注册 save_plan
+  // 1) agent/created：子代理基线（角色 + 固定宿主模式）；规划子代理与主会话注册 save_plan/edit_plan_draft
   //    （主会话侧任意路由态放行：受限规划工件，判定在 mainGateReason 兜底）；主会话与探查子代理
-  //    注册 save_probe（scoped；recompose 不重发 session-start，pre-step 兜底）。
-  // HK1（事件与状态模型换代）：agent/session-start 已删除；agent/created 升为 serial——
+  //    注册 save_probe（scoped；创建监听与 pre-step 互补兜底）。
+  // HK1（事件与状态模型）：agent/created 升为 serial——
   // 监听器被宿主 await，任何抛出都会让会话创建失败。故整块必须吞错：内部异常只
   // console.warn 留痕，绝不放任传播（gateRuntime 已在 apply 期求值，此处不再抛）。
   // 0.2.2-rc.1 修复（BUG-2）：宿主已禁止在 agent/request 改 provider/model/reasoningEffort，
@@ -1093,7 +1093,7 @@ export function apply(ctx, config) {
     armWebFetchRestriction(agent, 'agent-created')
   })
 
-  // 2) pre-step：账本补记（会话最终消息的行延迟到此）；规划子代理初始任务与
+  // 2) pre-step：消息投影；规划子代理初始任务与
   // 续轮转达机械拼接 plannerPromptSuffix（「任务要求 + 空行 + 配置文本」——宿主
   // exec.arguments 与消息对象均 deepFreeze，拼接走 pre-step 消息替换通道，
   // 与 agent-instructions 基线注入同通道）。
@@ -1162,8 +1162,8 @@ export function apply(ctx, config) {
       try {
         childBaseline(agent)
         // T3：save_plan 与 save_probe 同构——主会话侧同样在 pre-step 幂等兜底注册
-        // （web 会话先按默认预设发布、recompose 不重发 session-start，仅靠 session-start
-        // 会漏注册；registerTool 的 WeakSet 保证不重复注册）。
+        // （web 会话先按默认预设发布；agent/created 与本处 pre-step 互补，recompose 不重发前者时
+        // 仍可补齐注册；registerTool 的 WeakSet 保证不重复注册）。
         if (isPlannerChild(agent) || !isSubagentChild(agent)) {
           registerSavePlan(agent)
           registerEditPlanDraft(agent)
@@ -1304,13 +1304,13 @@ export function apply(ctx, config) {
     malformedRetried.delete(sessionId)
   })
 
-  // 3) anchored 引导（默认开）：主会话与规划子代理首轮极简；执行者/reviewer 不引导。
+  // 3) anchored 引导（默认开）：主会话与规划子代理首轮极简；executor/reviewer/prober 不引导。
   //    native 首轮保留 bootstrap shell(s)+read，sections 仅 persona；Pure PTC
   //    首轮保留唯一 run_code、persona 与 tool:read 手写文案——宿主 tools:ptc-only 段已按
   //    用户要求停用、不透传；借宿主段名覆盖 text（cfg.bootstrapReadHint），不生成完整 SDK。
   //    无 shell 无 run_code 跳过+警告一次。钩子常驻（bootstrapOn=false 时也注册）：
-  //    另负责按装配目录机械识别只读子代理（reviewer）写入 per-agent 缓存，供
-  //    pre-execute 拦截复用；bootstrapOn=false 时仅记录目录、不改装配产物。
+  //    另负责按真实 schemas 优先、未折叠装配目录回退识别非 planner child 的只读分类（含 prober/reviewer），写入 per-agent
+  //    缓存，供 pre-execute 拦截复用；bootstrapOn=false 时仍记录分类，不据此承诺 C 投影或执行隔离。
   const readOnlyChildren = new WeakSet()
   // 0.2.2-rc.1 修复（BUG-1）诊断：每个 agent 按当前 apply 的 first/later 各保留一次成功装配判定，
   // 用于区分「工具面被宿主并集覆盖」与「引导分支根本没进入」这两种同源症状。
@@ -1385,8 +1385,8 @@ export function apply(ctx, config) {
       // Pure PTC 的保留传输始终是唯一顶层工具；其余 binding 只在嵌套 SDK 中出现。
       presented = projectAssemblyForPresentation(result, schemas, { hideCordis: false, ptcOnly: true })
     } else {
-      // creativeMode=false 的工具面裁剪由 agent 作用域的 restrict 通道（{ deny }）承担；本投影对 tools 无效果，
-      // 仅负责剥离已退役 tool:cordis 段与 SDK 文本（两个展示工具保留在 SDK 原文中）。
+      // C=1/native：不主动隐藏 Cordis 或替换 SDK；仅剥离已退役 tool:cordis 段，
+      // 两个展示工具保留在 SDK 原文中；展示投影不等于运行隔离，C=0 适用分支负责过滤/重渲（失败清空）。
       presented = projectAssemblyForPresentation(result, schemas, { hideCordis: false })
     }
 
@@ -1590,8 +1590,8 @@ export function apply(ctx, config) {
     // 探查者委派属只读探查能力（与 read/glob/grep 同级）：主会话在任意路由状态放行，
     // 委派工具已无后台参数，固定后台语义上移宿主；本处只保留角色判定。
     // 置于 planner/child 判定之前，但闸门函数内首先按角色拒绝 planner（T5）：
-    // subagent_probe 仅主会话可委派；放行时挂「待认领计数」供 probe 子会话
-    // session-start 认领（否则 probe 子会话经 parentSession 无放行痕迹）。
+    // subagent_probe 仅主会话可委派；放行时挂「待认领计数」，由探查子会话在 agent/created 或 pre-step
+    // 按身份优先认领，无法精确匹配时按父会话计数回退；此处只记录放行，不改变探查资格。
     if (exec.name === 'subagent_probe') {
       const reason = subagentProbeGateReason(exec, planner ? 'planner' : child ? 'child' : 'main')
       if (reason !== null) {

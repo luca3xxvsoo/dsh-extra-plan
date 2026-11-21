@@ -1,4 +1,4 @@
-// QQBot 兼容 apply：逐 profile 只清理完整的根级旧块，然后确保 web 包链接。
+// QQBot 兼容 apply：仅针对当前明确 profile 诊断根级旧块；检查未阻断时再尝试确保 web 包链接。
 // 仅使用Host明确提供的 profileContext.home 或 dshHomePath()；缺根不猜用户目录。
 // 静态 insert 行来自包 patch；question/approval 行为由原生 QQBot 负责。
 import { healQqbotCompatibility, resolveQqbotHostRoot } from './lib/heal.js'
@@ -10,7 +10,7 @@ export function apply(ctx) {
   try {
     const resolved = resolveQqbotHostRoot(ctx)
     if (!resolved.root) {
-      console.warn('[dsh-extra-plan-qqbot] 自愈跳过（缺少明确Host根）: ' + JSON.stringify(resolved))
+      console.warn('[dsh-extra-plan-qqbot] Host/profile 解析未通过: ' + JSON.stringify(resolved))
       return
     }
     if (resolved.profileIdentityState !== 'valid' || resolved.profileKind !== 'qqbot' || typeof resolved.profileName !== 'string') {

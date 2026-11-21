@@ -1,6 +1,6 @@
 // 任务短名净化：仅保留安全字符（字母/数字/下划线/连字符/中日韩文字），
 // 其余字符折为连字符；≤PROBE_LIMITS.maxTaskNameLen 字；去首尾连字符。
-// 净化失败或空串返回 ''（只用时间戳）。
+// 净化失败或空串返回 ''；工件 base 仅省略短名，仍保留可选会话标记及毫秒时间、PID、序号。
 export function sanitizeTaskName(name) {
   if (typeof name !== 'string') return ''
   let out = ''
@@ -144,7 +144,7 @@ export const PROBE_LIMITS = {
   maxNoteLen: 400, // 备注/注释最大长度
   maxTopicLen: 120, // 主题/标题最大长度
   maxDetailLen: 1000, // 详细说明最大长度
-  maxTotalChars: 20000, // 整个探测内容总字符数上限
+  maxTotalChars: 20000, // 四字段探测内容 JSON 序列化 .length 上限（不含 evidence）
   rangePattern: '^L?0*[1-9]\\d*(?:-0*[1-9]\\d*)?$', // 范围格式正则：端点从 1 开始，匹配 123、L123、123-456、L123-456；L 可能表示 Line
   maxEvidenceEntries: 150, // 证据条目最大数量
   maxEvidenceLineLen: 20, // 证据行号字符串最大长度，例如 "L123"

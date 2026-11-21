@@ -305,7 +305,7 @@ function catalogHasWriteTools(tools) {
     (tool !== null && typeof tool === 'object' && (tool.name === 'write' || tool.name === 'edit')))
 }
 
-// 只读子代理（reviewer）判定：目录非空且不含 write/edit。
+// 只读子代理回退判定：供真实 schemas 不可得且目录未折叠时使用；目录非空且不含 write/edit，不等同角色权限。
 function isReadOnlyChildByCatalog(tools) {
   return Array.isArray(tools) && tools.length > 0 && !catalogHasWriteTools(tools)
 }

@@ -236,7 +236,7 @@ export function createRunCodeStatic({ askTool, gateTool }) {
   function runCodeCatchGateReason(code) {
     const text = typeof code === 'string' ? code : ''
     if (text === '') return null
-    // 调用点收集：模块顶层 collectRunCodeSites（逻辑自本函数局部 collectSites 逐字提升，见函数定义处）。
+    // 调用点收集：来自 run-code-scanner.js 的 collectRunCodeSites。
     let total = 0
     let protectedCount = 0
     // 单层扫描（嵌套层递归；protection 按层内区间判定，跨层不继承）

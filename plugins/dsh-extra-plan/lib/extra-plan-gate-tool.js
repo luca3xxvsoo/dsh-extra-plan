@@ -3,8 +3,8 @@
 // 每次 apply 由 createGateToolFactories 绑定当前 gateRuntime 词表、注入的 ask 通道与 getState 状态读取闭包；
 // get 到的 defineGateTool(agent) 只产出工具定义，执行期任何失败都以普通对象返回。
 // outcome 的取值集合恰为四种：answered、skipped、cancelled、channel-error；主会话据此区分
-// 用户作答、跳过（selected 为空）、取消与提问通道故障。取消类错误 → cancelled，
-// 其余错误 → channel-error 并附 error.code。
+// route/purpose 无主选项时 outcome='skipped'（purpose 在 route 非 plan 或状态不可用时也 skipped）；clarify 仅在所有答复均无选中项且无自定义文本（含空答复）时 skipped；
+// 其余正常答复为 answered。取消类错误 → cancelled，其余错误 → channel-error 并附 error.code。
 // route/purpose 分支的选项文案一律取自 gateRuntime.words 词表；clarify 分支的 questions/header/options 由模型提供；route/purpose 的 header、问题正文与 noteLabel 是固定提示语，可硬编码。
 // 结果的 content 固定为一个 text ContentBlock、正文是返回值整体 JSON：宿主 spill-policy 的 post-execute 与 PTC 提交都按数组消费 content，状态机只解析这块 JSON。
 

@@ -293,8 +293,8 @@ function rowConfigOf(row) {
 }
 
 /**
- * 唯一规范行的结构完整性：11 项普通值必须齐全合法；gateWords 只带出原值，合法性不参与判定
- * （非法值由 resolveUnifiedConfig 回落当前资产默认并补齐，避免旧值把整行判成 conflict 卡死 GET/PUT）。
+ * authority 只检查唯一规范行的 11 项普通值是否齐全合法；gateWords 只带出原值，不参与 authority 判定。
+ * 普通项不合格时形成 conflict，API 返回 409；gateWords 的解析与补齐另由 resolveUnifiedConfig 和写入流程按当前资产默认处理。
  */
 function completeConfig(config) {
   if (config === null || typeof config !== 'object' || Array.isArray(config)) return undefined
@@ -304,7 +304,7 @@ function completeConfig(config) {
   return { values: checked.values, gateWords: hasGateWords ? config.gateWords : undefined }
 }
 
-/** 当前行 config 的 gateWords 是否合法；缺失/非法都返回 false（与普通项同口径，需要补齐）。 */
+/** 当前行 config 的 gateWords 是否合法；缺失/非法都返回 false，PUT 按当前资产默认整组补齐，不参与 authority 的普通项检查。 */
 function configGateWordsValid(config) {
   if (config === null || typeof config !== 'object' || Array.isArray(config)) return false
   if (!Object.prototype.hasOwnProperty.call(config, 'gateWords')) return false
@@ -627,7 +627,7 @@ function createApiHandler(ctx, syncEditor, getProfileSync) {
           const key = definition.key
           if (Object.prototype.hasOwnProperty.call(body, key)) patch[key] = normalizeSettingValue(definition, body[key])
         }
-        // 普通项缺失/非法都补；gateWords 同口径：缺失或非法都补当前资产默认，落盘即整组覆盖并删除旧键。
+        // 请求值非法先返回 400、authority 不合格先返回 409；通过前置校验后，普通项仅作防御性补齐，gateWords 缺失/非法按当前资产默认整组替换并清除旧键。
         if (!configGateWordsValid(current)) patch.gateWords = state.gateWords
         // 预判只比托管值；本地未知键归属在实际 edit 回调中确认。
         const nextManaged = restateSettingsConfig(current, row.inherited, patch, {})
@@ -780,7 +780,7 @@ function startupArchiveForApply(ctx) {
       console.warn('[dsh-extra-plan] startup archive failed（不阻断启动）: root ctx.effect unavailable')
       return
     }
-    // 账本扫描体：回调体逐字沿用原 ctx.effect 内容，自带 try/catch（可能运行在 cordis 帧之外）。
+    // 账本工作交由后台 controller/Worker 调度；保留 cancel/done 生命周期控制与非阻断诊断。
     const startBackground = () => {
       try {
         const handle = startUsageLedgerBackground(ctx, startupContext)
@@ -805,7 +805,7 @@ function startupArchiveForApply(ctx) {
       }
     }
     const ready = safeContextGet(ctx, 'appReady')
-    // 无 appReady 服务：与改动前逐字等价，仍在 effect 挂载时立即起扫。
+    // 无有效 appReady：root effect 直接调度后台 controller/Worker，不在主线程同步扫描。
     if (ready === undefined || ready === null || typeof ready.onReady !== 'function') {
       ctx.effect(startBackground, 'dsh-extra-plan-settings: usage ledger background')
       return

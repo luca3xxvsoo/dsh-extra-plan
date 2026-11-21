@@ -145,7 +145,7 @@ export function createPlanDraftToolFactories({ savePlanDir, atomicCommit, atomic
   function defineEditPlanDraft() {
     return {
       name: 'edit_plan_draft',
-      description: '修复 save_plan 报错后生成的 .md_mid 中间文档（仅少量错误时使用）：行级增删改后自动重跑 save_plan 全套校验，通过即转正为正式工件并返回路径，不通过返回带行号的诊断，修改已保存可继续改；派遣摘要超限时 save_plan 不生成草稿，应改写更短的方案重新调用 save_plan。',
+      description: '修复 save_plan 报错后生成的 .md_mid 中间文档（仅少量错误时使用）：行级增删改后先检查方案中的方括号包裹的未探查/待确认标记，命中即在写回前整批拒绝且不写；无标记时写回并自动重跑 save_plan 全套校验，通过即转正为正式工件并返回路径，写回后的合同、源或证据核实不通过则保留修改并返回带行号的诊断，可继续改；派遣摘要超限时 save_plan 不生成草稿，应改写更短的方案重新调用 save_plan。',
       parameters: {
         type: 'object',
         properties: {
