@@ -791,7 +791,8 @@ function validDedupeKey(row) {
     && Number.isInteger(row.seq)
     && row.seq >= 0
 }
-function validationIssue(row) {
+// 生产严格解析与 step-99 诊断共用单行判据；空字符串表示通过。
+export function validationIssue(row) {
   if (!isPlainObject(row)) return '根值不是对象'
   const actual = Object.keys(row).sort()
   const expected = [...V2_KEYS].sort()
@@ -1064,18 +1065,20 @@ function reportFailure(pathContext, fsOps, error, purpose) {
 // 单目标原子发布：写临时文件 → rename 覆盖 archive。rename 是同目录原子替换，读者要么看到完整旧版本
 // 要么看到完整新版本；失败只可能发生在 rename 之前，既有 archive 原样保留（不再备份/回滚）。
 function publishArchive({ archivePath, archiveText, fsOps, checkBudget, pathContext, purpose }) {
+  const destination = authorizeWriteTarget(pathContext, archivePath, purpose).path
   const id = process.pid + '-' + Date.now() + '-' + randomUUID()
-  const temp = join(dirname(archivePath), basename(archivePath) + '.tmp-' + id)
-  for (const target of [archivePath, temp]) {
-    prepareWriteTarget(pathContext, resolveHostPath(pathContext, target, { purpose }), { expectedType: 'file', purpose })
-  }
+  const temp = authorizeWriteTarget(pathContext, join(dirname(destination), basename(destination) + '.tmp-' + id), purpose).path
+  let written = false
   try {
-    fsOps.writeFileSync(temp, archiveText, 'utf8')
+    fsOps.writeFileSync(temp, archiveText, { encoding: 'utf8', flag: 'wx' })
+    written = true
     checkBudget()
-    fsOps.renameSync(temp, archivePath)
+    fsOps.renameSync(temp, destination)
     // rename 已是 try 的最后一步：其后无可失败步骤，catch 只可能在 rename 之前触发，既有 archive 必未被改写。
   } catch (error) {
-    try { fsOps.unlinkSync(temp) } catch (cleanupError) { /* 临时文件不存在或不可清理时保留现场 */ }
+    if (written || errorCodeOf(error) !== 'EEXIST') {
+      try { fsOps.unlinkSync(temp) } catch { /* 临时文件不存在或不可清理时保留现场 */ }
+    }
     throw archiveError(errorCodeOf(error) || 'publish-failed', errorMessageOf(error) + '；发布前未改写既有 archive')
   }
 }
@@ -1121,10 +1124,10 @@ export function archiveLedger(archivePath, options = {}) {
   const fsOps = mergedFsOps(settings.fsOps)
   const purpose = typeof settings.purpose === 'string' && settings.purpose !== '' ? settings.purpose : LEDGER_PURPOSE
   const pathContext = settings.pathContext !== undefined && settings.pathContext !== null ? settings.pathContext : {}
-  // H/W 双根授权：目录可建、archive 可写可读；直调也先过授权，避免绕过启动路径的写目标校验。
+  // 直调和启动归档共用授权目标的绝对路径；下游不得回到调用方的相对输入。
   try {
+    archivePath = authorizeWriteTarget(pathContext, archivePath, purpose).path
     ensureLedgerDirectory(pathContext, purpose, fsOps)
-    authorizeWriteTarget(pathContext, archivePath, purpose)
     authorizeReadIfPresent(pathContext, archivePath, purpose)
   } catch (error) {
     throw archiveError(errorCodeOf(error) || 'path-not-authorized', '启动归档目标未获 H/W 双根授权：' + errorMessageOf(error))
@@ -1232,12 +1235,13 @@ function startupArchiveUnsafe(pathContext, options) {
     try { console.warn('[dsh-extra-plan] startup archive skipped: no-host-root') } catch (warnError) { /* warning channel unavailable */ }
     return { status: 'skipped', reason: 'no-host-root' }
   }
-  const archivePath = typeof options.archivePath === 'string' && options.archivePath !== ''
+  const requestedArchivePath = typeof options.archivePath === 'string' && options.archivePath !== ''
     ? options.archivePath
     : resolveHostPath(pathContext, join(LEDGER_DIRECTORY, ARCHIVE_FILE_NAME), { purpose }).path
+  let archivePath
   try {
     ensureLedgerDirectory(pathContext, purpose, fsOps)
-    authorizeWriteTarget(pathContext, archivePath, purpose)
+    archivePath = authorizeWriteTarget(pathContext, requestedArchivePath, purpose).path
     authorizeReadIfPresent(pathContext, archivePath, purpose)
   } catch (error) {
     return reportFailure(pathContext, fsOps, archiveError(errorCodeOf(error) || 'path-not-authorized', '启动归档目标未获 H/W 双根授权：' + errorMessageOf(error)), purpose)

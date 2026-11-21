@@ -1,11 +1,11 @@
-import { mkdirSync, writeFileSync, renameSync, existsSync, unlinkSync } from 'node:fs'
+import { mkdirSync, writeFileSync, renameSync, existsSync, unlinkSync, readFileSync, lstatSync, fstatSync, openSync, closeSync } from 'node:fs'
 import { join } from 'node:path'
 import { resolveWorkspacePath, prepareWriteTarget, validateReadTarget } from './path-policy.js'
 import { errorText } from './runtime-static.js'
 
 // 单次调用的临时写入与顺序发布；不创建、不扫描、不恢复跨调用 journal。
 // fsOps 仅供隔离测试注入，默认操作冻结以避免夹具修改共享依赖。
-const DEFAULT_FS_OPS = Object.freeze({ mkdirSync, writeFileSync, renameSync, existsSync, unlinkSync })
+const DEFAULT_FS_OPS = Object.freeze({ mkdirSync, writeFileSync, renameSync, existsSync, unlinkSync, readFileSync, lstatSync, fstatSync, openSync, closeSync })
 
 function fsOpsOf(overrides) {
   if (overrides === null || overrides === undefined || typeof overrides !== 'object') return DEFAULT_FS_OPS
@@ -104,16 +104,34 @@ export function atomicCommit(dir, base, files, fsOps, policyOptions) {
   }
 }
 
-function replaceError(stage, original, cleanupFailures) {
-  const prefix = 'atomicReplace: 阶段=' + stage + '；原始失败=' + errorText(original)
-  const suffix = cleanupFailures.length === 0 ? '' : '；清理失败：' + cleanupFailures.join('；')
-  const wrapped = new Error(prefix + suffix)
-  wrapped.cause = original
-  return wrapped
+function replaceError(stage, original, cleanupFailures, restoreFailures) {
+  const parts = ['atomicReplace: 阶段=' + stage + '；原始失败=' + errorText(original)]
+  if (restoreFailures.length !== 0) parts.push('恢复失败：' + restoreFailures.join('；'))
+  if (cleanupFailures.length !== 0) parts.push('清理失败：' + cleanupFailures.join('；'))
+  return new Error(parts.join('；'), { cause: original })
 }
 
-// 覆盖语义：目录创建 → 逐个临时写入 → 逐个 rename 覆盖目标 → 逐个确认就位。
-// 目标允许已存在，不做存在性拒绝；失败只清理本次临时文件，既有目标文件不删除、不回退。
+function sameFile(left, right) {
+  return left !== undefined && right !== undefined && left.isFile() && right.isFile()
+    && left.ino > 0n && left.ino === right.ino && left.dev === right.dev
+}
+
+function stagePairFile(ops, path, content, pending) {
+  const fd = ops.openSync(path, 'wx')
+  pending.set(path, undefined)
+  let failed = false
+  try {
+    pending.set(path, ops.fstatSync(fd, { bigint: true }))
+    ops.writeFileSync(fd, content, 'utf8')
+  } catch (error) {
+    failed = true
+    throw error
+  } finally {
+    try { ops.closeSync(fd) } catch (error) { if (!failed) throw error }
+  }
+}
+
+// 成对覆盖只在本次调用中保留旧字节；不承诺外部并发或跨进程崩溃原子性。
 export function atomicReplace(dir, files, fsOps, policyOptions) {
   const ops = fsOpsOf(fsOps)
   const policy = policyOf(policyOptions)
@@ -126,7 +144,10 @@ export function atomicReplace(dir, files, fsOps, policyOptions) {
     file: join(dir, file.name),
     content: file.content,
   }))
+  const paired = entries.length === 2
   const attemptedTemps = []
+  const pending = new Map()
+  const published = []
   let stage = '准备'
   try {
     stage = '目录授权'
@@ -137,26 +158,66 @@ export function atomicReplace(dir, files, fsOps, policyOptions) {
     if (pathContext !== undefined && pathContext !== null) validateReadTarget(pathContext, resolveWorkspacePath(pathContext, dir, { purpose }), { expectedType: 'directory', purpose })
     stage = '准备目标'
     for (const entry of entries) {
-      authorizeFile(entry.file, pathContext, purpose)
+      const target = authorizeFile(entry.file, pathContext, purpose)
       authorizeFile(entry.tmp, pathContext, purpose)
+      if (paired) entry.previous = target.exists ? ops.readFileSync(target.realPath) : null
     }
     for (let index = 0; index < entries.length; index += 1) {
       const entry = entries[index]
       stage = '临时写入' + (index + 1)
       authorizeFile(entry.tmp, pathContext, purpose)
-      attemptedTemps.push(entry.tmp)
-      ops.writeFileSync(entry.tmp, entry.content, 'utf8')
+      if (paired) stagePairFile(ops, entry.tmp, entry.content, pending)
+      else {
+        attemptedTemps.push(entry.tmp)
+        ops.writeFileSync(entry.tmp, entry.content, 'utf8')
+      }
     }
     for (let index = 0; index < entries.length; index += 1) {
       const entry = entries[index]
       stage = '覆盖' + (index + 1)
       authorizeFile(entry.file, pathContext, purpose)
+      if (paired) entry.identity = pending.get(entry.tmp)
       ops.renameSync(entry.tmp, entry.file)
+      if (paired) {
+        published.push(entry)
+        pending.delete(entry.tmp)
+      }
       authorizeFile(entry.file, pathContext, purpose)
       if (!ops.existsSync(entry.file)) throw new Error('覆盖后目标未就位：' + entry.file)
     }
   } catch (error) {
+    const restoreFailures = []
+    for (const entry of published.reverse()) {
+      try {
+        const target = authorizeFile(entry.file, pathContext, purpose)
+        if (!target.exists && entry.previous === null) continue
+        if (!target.exists || !sameFile(entry.identity, ops.lstatSync(entry.file, { bigint: true }))) throw new Error('无法确认是本轮发布，保留现场')
+        if (entry.previous === null) {
+          ops.unlinkSync(entry.file)
+          if (authorizeFile(entry.file, pathContext, purpose).exists) throw new Error('本轮新增目标未恢复为缺席')
+        } else {
+          const restoreTmp = entry.tmp + '-restore'
+          authorizeFile(restoreTmp, pathContext, purpose)
+          stagePairFile(ops, restoreTmp, entry.previous, pending)
+          ops.renameSync(restoreTmp, entry.file)
+          pending.delete(restoreTmp)
+          const restored = authorizeFile(entry.file, pathContext, purpose)
+          if (!restored.exists || !ops.readFileSync(restored.realPath).equals(entry.previous)) throw new Error('原始字节未恢复')
+        }
+      } catch (restoreError) {
+        restoreFailures.push(entry.file + '（' + errorText(restoreError) + '）')
+      }
+    }
     const cleanupFailures = cleanupCreated(attemptedTemps, ops, pathContext, purpose)
-    throw replaceError(stage, error, cleanupFailures)
+    for (const [temp, identity] of pending) {
+      try {
+        if (!authorizeFile(temp, pathContext, purpose).exists) continue
+        if (!sameFile(identity, ops.lstatSync(temp, { bigint: true }))) throw new Error('无法确认本轮临时文件，保留现场')
+        ops.unlinkSync(temp)
+      } catch (cleanupError) {
+        cleanupFailures.push(temp + '（' + errorText(cleanupError) + '）')
+      }
+    }
+    throw replaceError(stage, error, cleanupFailures, restoreFailures)
   }
 }

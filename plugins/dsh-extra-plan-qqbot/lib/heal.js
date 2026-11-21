@@ -1,10 +1,10 @@
 // QQBot 兼容自愈纯模块；import 不产生文件系统副作用。
-// 供启动 apply、CLI 兜底和测试复用：定位自有 profile，只清理完整根级旧块，再确保 web 包链接。
-// 备份/校验/恢复以及 profile/link 合同分别在对应函数内；总调度器告警但不阻断启动。
+// 供启动 apply、CLI 与测试复用：只诊断根级旧形态，不靠形状猜所有权；仅给自有 profile 建立 Web 映射。
+// 严格安装可恢复本轮创建的映射，普通启动只告警。
 // question/approval 行为由原生 QQBot 提供，不属于本兼容模块。
-import { copyFileSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
+import { lstatSync, readFileSync, readlinkSync, readdirSync, realpathSync, symlinkSync, unlinkSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { dirname, join } from 'node:path'
+import { dirname, join, toNamespacedPath } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { assertAllowedPath, createPathContext, prepareWriteTarget, resolveHostPath, validateReadTarget } from './path-policy.js'
 
@@ -48,11 +48,6 @@ function loadYamlSchema() {
   return yamlSchema
 }
 
-function timestamp() {
-  const d = new Date()
-  const pad = (n) => String(n).padStart(2, '0')
-  return String(d.getFullYear()) + pad(d.getMonth() + 1) + pad(d.getDate()) + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds()) + pad(d.getMilliseconds())
-}
 
 const OWN_PACKAGE_NAME = 'dsh-extra-plan-qqbot'
 const WEB_PACKAGE_NAME = 'dsh-extra-plan'
@@ -226,151 +221,20 @@ function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-function stripBom(line) {
-  return line.startsWith('\uFEFF') ? line.slice(1) : line
-}
-
-function lineIndent(line) {
-  return (line.match(/^[ \t]*/) || [''])[0].length
-}
-
-function isIgnorableLine(line) {
-  const trimmed = line.trim()
-  return trimmed.length === 0 || trimmed.startsWith('#')
-}
-
-
-
-function parseEntryBlock(blockLines) {
-  const yaml = loadYamlModule()
-  if (yaml === null) return { status: 'yaml-unavailable', entry: null }
-  try {
-    const parsed = yaml.load(blockLines.join('\n'), { schema: loadYamlSchema() })
-    if (Array.isArray(parsed) && parsed.length === 1 && isObject(parsed[0])) return { status: 'parsed', entry: parsed[0] }
-  } catch { return { status: 'parse-failed', entry: null } }
-  return { status: 'parse-failed', entry: null }
-}
+// 仅这两个历史 ID 仍由当前 QQBot bundle 的 insert 提供；同 ID 的根级行必须先由用户确认。
+const LEGACY_INSERT_IDS = new Set(['ptc-runtime', 'agent-preset-registry'])
 
 function legacyEntryKind(entry) {
   if (!isObject(entry)) return null
   for (const legacy of LEGACY_ROOT_ENTRIES) {
     if (entry.id !== legacy.id || entry.name !== legacy.name) continue
-    if (legacy.default !== undefined) {
-      if (!isObject(entry.config) || entry.config.default !== legacy.default) continue
-    }
+    if (legacy.default !== undefined && (!isObject(entry.config) || entry.config.default !== legacy.default)) continue
     return legacy.id
   }
   return null
 }
 
-function rootSequenceIndent(lines) {
-  for (const line of lines) {
-    const normalized = stripBom(line)
-    if (isIgnorableLine(normalized)) continue
-    const trimmed = normalized.trim()
-    if (trimmed === '---' || trimmed.startsWith('%')) continue
-    const match = /^([ \t]*)-\s+/.exec(normalized)
-    return match === null ? null : match[1].length
-  }
-  return null
-}
-
-function isRootSequenceLine(line, rootIndent) {
-  const normalized = stripBom(line)
-  const match = /^([ \t]*)-\s+/.exec(normalized)
-  return match !== null && match[1].length === rootIndent
-}
-
-function scanRootBlocks(content) {
-  const lines = content.split(/\r?\n/)
-  const rootIndent = rootSequenceIndent(lines)
-  if (rootIndent === null) return { lines, rootIndent, blocks: [] }
-  const starts = []
-  for (let i = 0; i < lines.length; i += 1) {
-    if (isRootSequenceLine(lines[i], rootIndent)) starts.push(i)
-  }
-  const blocks = []
-  for (let i = 0; i < starts.length; i += 1) {
-    const start = starts[i]
-    let end = lines.length
-    for (let j = start + 1; j < lines.length; j += 1) {
-      if (isRootSequenceLine(lines[j], rootIndent)) {
-        end = j
-        break
-      }
-      // 未缩进的非注释行不是当前条目的一部分，保留给写后 YAML 校验发现。
-      if (!isIgnorableLine(lines[j]) && lineIndent(stripBom(lines[j])) <= rootIndent) {
-        end = j
-        break
-      }
-    }
-    blocks.push({ start, end, kind: null })
-  }
-  return { lines, rootIndent, blocks }
-}
-
-function findLegacyRootBlocks(content) {
-  const scan = scanRootBlocks(content)
-  const legacyBlocks = []
-  let parseIssue = null
-  for (const block of scan.blocks) {
-    const blockLines = scan.lines.slice(block.start, block.end)
-    const parsed = parseEntryBlock(blockLines)
-    if (parsed.status !== 'parsed') {
-      parseIssue = parseIssue === null ? parsed.status : parseIssue
-      continue
-    }
-    const kind = legacyEntryKind(parsed.entry)
-    if (kind !== null) legacyBlocks.push({ ...block, kind })
-  }
-  return { ...scan, blocks: legacyBlocks, parseIssue }
-}
-
-function removeLegacyRootBlocks(content, migration) {
-  const removed = new Set()
-  for (const block of migration.blocks) {
-    for (let i = block.start; i < block.end; i += 1) {
-      const normalized = stripBom(migration.lines[i])
-      const trimmed = normalized.trim()
-      if (trimmed.length === 0) continue
-      if (trimmed.startsWith('#') && lineIndent(normalized) <= migration.rootIndent) continue
-      removed.add(i)
-    }
-  }
-  const eol = content.includes('\r\n') ? '\r\n' : '\n'
-  const kept = migration.lines.filter((_line, index) => !removed.has(index))
-  const hasMeaningful = kept.some((line) => !isIgnorableLine(line))
-  if (hasMeaningful) return kept.join(eol)
-  const firstRemoved = Math.min(...removed)
-  const output = []
-  for (let index = 0; index < migration.lines.length; index += 1) {
-    if (index === firstRemoved) output.push('[]')
-    if (!removed.has(index)) output.push(migration.lines[index])
-  }
-  return output.join(eol)
-}
-
-function verifyMigratedPatch(content) {
-  const yaml = loadYamlModule()
-  if (yaml === null) return false
-  try {
-    const parsed = yaml.load(content, { schema: loadYamlSchema() })
-    if (!Array.isArray(parsed)) return false
-    return !parsed.some((entry) => legacyEntryKind(entry))
-  } catch {
-    return false
-  }
-}
-
-
-/**
- * 只迁移旧版自愈生成的根级完整块：
- * - ptc-runtime 的 name 必须是 dsh-ptc-runtime-node；
- * - agent-preset-registry 的 name 必须匹配且 config.default 必须为 extra-plan；
- * - code-runtime / agent-presets 只按其根级形状匹配（config.default 分别为未声明与 standard）；
- * - 嵌套 insert、im-qqbot 及其他用户条目原样保留。
- * 实际迁移前备份，写后验证顶层 YAML 数组和旧块消失，失败恢复原文；无旧块零写入零备份。
- */
+/** 检查根级条目；没有所有权证据时保留原始 patch，不进入写入路径。 */
 export function healPatchRows(profileDir, options = {}) {
   const context = isObject(options) ? options.context : undefined
   if (context === undefined) return { status: 'skipped', reason: 'host-root-required' }
@@ -398,49 +262,25 @@ export function healPatchRows(profileDir, options = {}) {
     console.warn(LOG_PREFIX + ' 读取 ' + checkedPatch.path + ' 失败，跳过迁移:', errorText(error))
     return { status: 'skipped', reason: 'read-failed' }
   }
-  const migration = findLegacyRootBlocks(content)
-  if (migration.parseIssue !== null) {
-    console.warn(LOG_PREFIX + ' 解析 patch 失败，跳过迁移：' + migration.parseIssue)
-    return { status: 'skipped', reason: migration.parseIssue }
-  }
-  if (migration.blocks.length === 0) return { status: 'idempotent' }
-  const merged = removeLegacyRootBlocks(content, migration)
-  if (merged === content) return { status: 'idempotent' }
-  let writeTarget
-  let backupTarget
-  const backupFile = checkedPatch.path + '.bak-' + timestamp()
+  const yaml = loadYamlModule()
+  if (yaml === null) return { status: 'skipped', reason: 'yaml-unavailable' }
+  let entries
   try {
-    writeTarget = prepareWriteTarget(context, checkedPatch, { expectedType: 'file' })
-    backupTarget = prepareWriteTarget(context, resolveHostPath(context, backupFile, { purpose: 'qqbot-patch-backup' }), { expectedType: 'file' })
-    if (backupTarget.exists) return { status: 'failed', reason: 'backup-exists', backup: backupFile }
+    entries = yaml.load(content, { schema: loadYamlSchema() })
+    if (entries === undefined) return { status: 'idempotent' }
+    if (!Array.isArray(entries)) throw new Error('patch-root-not-sequence')
   } catch (error) {
-    console.warn(LOG_PREFIX + ' 写入目标校验失败，跳过迁移:', errorText(error))
-    return { status: 'failed', reason: 'write-target-invalid', error: errorText(error) }
+    console.warn(LOG_PREFIX + ' 解析 patch 失败，保留原状:', errorText(error))
+    return { status: 'skipped', reason: 'parse-failed' }
   }
-  if (options.dryRun === true) return { status: 'ready', backup: backupFile, migrated: migration.blocks.map((block) => block.kind) }
-  try {
-    copyFileSync(writeTarget.path, backupTarget.path)
-  } catch (error) {
-    console.warn(LOG_PREFIX + ' 备份失败，跳过迁移:', errorText(error))
-    return { status: 'failed', reason: 'backup-failed' }
+  const conflicts = [...new Set(entries.filter((entry) => isObject(entry) && LEGACY_INSERT_IDS.has(entry.id)).map((entry) => entry.id))]
+  if (conflicts.length > 0) {
+    console.warn(LOG_PREFIX + ' 根级条目与 bundle insert 同 ID，保留原状，请人工确认:', conflicts.join('/'))
+    return { status: 'failed', reason: 'legacy-root-conflict', conflicts }
   }
-  try {
-    writeFileSync(writeTarget.path, merged, 'utf8')
-  } catch (error) {
-    try { copyFileSync(backupTarget.path, writeTarget.path) } catch { /* 保留原始错误 */ }
-    console.warn(LOG_PREFIX + ' 迁移失败（已尝试用备份恢复，请核对备份）:', errorText(error))
-    return { status: 'failed', reason: 'write-failed', backup: backupTarget.path }
-  }
-  let verified = false
-  try { verified = verifyMigratedPatch(merged) } catch { /* 将校验器异常视为校验失败 */ }
-  if (!verified) {
-    try { copyFileSync(backupTarget.path, writeTarget.path) } catch { /* 保留原始错误 */ }
-    console.warn(LOG_PREFIX + ' 迁移后校验失败，已尝试用备份恢复，请核对备份: ' + writeTarget.path)
-    return { status: 'failed', reason: 'verify-failed', backup: backupTarget.path }
-  }
-  const migrated = migration.blocks.map((block) => block.kind)
-  console.log(LOG_PREFIX + ' 已迁移旧版根级块 ' + migrated.join('/') + ' → ' + writeTarget.path)
-  return { status: 'migrated', backup: backupTarget.path, migrated }
+  const retained = [...new Set(entries.map(legacyEntryKind).filter((kind) => kind !== null))]
+  if (retained.length === 0) return { status: 'idempotent' }
+  return { status: 'preserved', reason: 'legacy-ownership-unverified', retained }
 }
 
 /**
@@ -530,6 +370,30 @@ export function findOwnQqbotProfiles(dshHome, options = {}) {
  * 仅 ENOENT → mkdirSync(node_modules) + symlinkSync(webPkg, target, win32 ? junction : dir)；
  * 全程 try/catch 只记录日志不阻断；目标用绝对路径 webPkg（Windows junction 支持跨盘符）。
  */
+// 不跟随链接：回滚只对创建时记录的同一个 inode 和同一链接文字生效。
+function linkIdentity(path) {
+  const stat = lstatSync(path, { bigint: true })
+  if (!stat.isSymbolicLink() || stat.ino === 0n) return null
+  return [stat.dev, stat.ino, stat.birthtimeNs, stat.ctimeNs, readlinkSync(path)]
+}
+
+function removeCreatedLink(context, parent, path, identity) {
+  try {
+    const checkedParent = prepareWriteTarget(context, parent, { expectedType: 'directory' })
+    if (!sameRealPath(checkedParent.realPath, parent.realPath)) throw new Error('link-parent-changed')
+    const current = linkIdentity(path)
+    if (identity === null || current === null || !current.every((value, index) => value === identity[index])) {
+      return { status: 'retained', path, reason: 'link-identity-unverified' }
+    }
+    unlinkSync(path)
+    lstatSync(path)
+    return { status: 'retained', path, reason: 'link-path-still-present' }
+  } catch (error) {
+    if (error?.code === 'ENOENT' && error.path === path) return { status: 'restored' }
+    return { status: 'retained', path, reason: errorText(error) }
+  }
+}
+
 export function ensureDshExtraPlanLink(dshHome, profileName, options = {}) {
   try {
     const access = createHostAccess(dshHome, isObject(options) ? options.context : undefined)
@@ -570,19 +434,24 @@ export function ensureDshExtraPlanLink(dshHome, profileName, options = {}) {
       return { status: 'kept', reason: 'entity' }
     }
     const writeTarget = prepareWriteTarget(access.context, target, { expectedType: 'any' })
+    const parent = prepareWriteTarget(access.context, hostPath(access, dirname(writeTarget.path), 'qqbot-profile-link'), { expectedType: 'directory' })
     if (options.dryRun === true) return { status: 'planned' }
-    mkdirSync(writeTarget.parentPath, { recursive: true })
     symlinkSync(webChecked.path, writeTarget.path, process.platform === 'win32' ? 'junction' : 'dir')
+    let identity = null
+    const rollback = () => removeCreatedLink(access.context, parent, writeTarget.path, identity)
+    try {
+      const observed = linkIdentity(writeTarget.path)
+      if (observed !== null && sameRealPath(toNamespacedPath(observed[4]), toNamespacedPath(webChecked.path))) identity = observed
+    } catch { /* 有些宿主不暴露链接自身身份；照常核验映射，不以失败的身份读取授权删除。 */ }
     try {
       const finalStat = lstatSync(writeTarget.path)
       const finalRealPath = nativeRealpathSync(writeTarget.path)
       if (!isLinkEntity(writeTarget.path, finalStat) || !sameRealPath(finalRealPath, webChecked.realPath)) throw new Error('link-verification-failed')
+      console.log(LOG_PREFIX + ' 已建立映射: ' + profileName + ' → web')
     } catch (error) {
-      try { unlinkSync(writeTarget.path) } catch { /* 仅清理本次创建失败的映射 */ }
-      return { status: 'failed', reason: 'link-verification-failed', error: errorText(error) }
+      return { status: 'failed', reason: 'link-verification-failed', error: errorText(error), rollback: rollback() }
     }
-    console.log(LOG_PREFIX + ' 已建立映射: ' + profileName + ' → web')
-    return { status: 'linked' }
+    return { status: 'linked', rollback }
   } catch (error) {
     console.error(LOG_PREFIX + ' 映射建立失败:', errorText(error))
     return { status: 'failed', error: errorText(error) }
@@ -590,8 +459,8 @@ export function ensureDshExtraPlanLink(dshHome, profileName, options = {}) {
 }
 
 /**
- * 对 findOwnQqbotProfiles 命中的每个 profile 先迁移旧块再 ensureDshExtraPlanLink；
- * options.profileNames 只传递精确目录，不先扫描全量候选；整体 try/catch 仍不阻断插件加载与 DSH 启动。
+ * 对匹配的自有 profile 先诊断 patch 再建链；严格模式下 patch 检查不通过即不写。
+ * options.profileNames 只传递精确目录，不先扫描全量候选；普通启动不因诊断中断。
  */
 export function healQqbotCompatibility(dshHome, options) {
   try {
@@ -629,13 +498,15 @@ export function healQqbotCompatibility(dshHome, options) {
     const results = []
     const failed = []
     const dryRun = isObject(options) && options.dryRun === true
+    const strict = isObject(options) && options.strict === true
     for (const profileName of profiles) {
       const profileDir = profilePath(access, profileName).path
-      const patch = healPatchRows(profileDir, { context: access.context, dryRun })
-      const link = ensureDshExtraPlanLink(dshHome, profileName, { context: access.context, dryRun })
+      const patch = healPatchRows(profileDir, { context: access.context })
+      const blocked = patch.status === 'failed' || (strict && patch.status === 'skipped' && patch.reason !== 'no-file')
+      const link = blocked ? { status: 'skipped', reason: 'patch-blocked' } : ensureDshExtraPlanLink(dshHome, profileName, { context: access.context, dryRun })
       const summary = { profile: profileName, patch, link }
       results.push(summary)
-      if (patch.status === 'failed' || patch.reason === 'read-failed' || patch.reason === 'path-invalid' || link.status === 'failed') failed.push(summary)
+      if (blocked || patch.reason === 'read-failed' || patch.reason === 'path-invalid' || link.status === 'failed') failed.push(summary)
     }
     return {
       profiles,

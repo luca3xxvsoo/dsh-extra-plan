@@ -941,12 +941,25 @@ function makeInstance(root, storeDir) {
   return instance
 }
 
-function successObserved(record, state) {
-  return commandCompletedCleanly(record) && state.compatPackageExists === true && state.linkedToWeb && state.strictHookCompleted
+function successObserved(record, state, options = {}) {
+  const patchCondition = options.requireMissingPatch === true ? state.patchExists === false : state.patchExists === true
+  return commandCompletedCleanly(record) && state.compatPackageExists === true && state.linkedToWeb === true && state.strictHookCompleted === true && state.selectedBundle === true && patchCondition
 }
 
 function commandCompletedCleanly(record) {
   return Boolean(record) && Number.isInteger(record.exitCode) && record.exitCode === 0 && record.timedOut === false && record.signal === null && (record.error === null || record.error === undefined || record.error === '') && record.spawnError !== true && record.processStillRunning === false
+}
+
+function comparableFingerprint(item) {
+  if (item === null || typeof item !== 'object') return item
+  return { path: item.path, exists: item.exists, type: item.type, sha256: item.sha256, linkTarget: item.linkTarget, realPath: item.realPath, entries: item.entries, entryCount: item.entryCount }
+}
+
+function failureStateUnchanged(record, state, beforeState) {
+  const stateKeys = ['targetType', 'targetRealPath', 'coreTargetType', 'coreTargetRealPath', 'patchExists', 'patchSha256', 'backupCount', 'backups', 'profileDependency', 'profileDependencyInstalled', 'selectedBundle']
+  const stateStable = beforeState !== undefined && state !== undefined && stateKeys.every((key) => isDeepStrictEqual(state[key], beforeState[key]))
+  const snapshotsStable = Array.isArray(record?.before) && Array.isArray(record?.after) && isDeepStrictEqual(record.before.map(comparableFingerprint), record.after.map(comparableFingerprint))
+  return stateStable && snapshotsStable
 }
 
 function commandHasExpectedFailure(record, reason, state) {
@@ -958,8 +971,8 @@ function commandHasExpectedFailure(record, reason, state) {
   return reasons.has(reason)
 }
 
-function expectedFailureObserved(spec, record, state) {
-  return commandHasExpectedFailure(record, spec.expected, state)
+function expectedFailureObserved(spec, record, state, beforeState) {
+  return commandHasExpectedFailure(record, spec.expected, state) && (beforeState === undefined || failureStateUnchanged(record, state, beforeState))
 }
 
 function isSandboxSpawnEperm(record) {
@@ -1056,13 +1069,36 @@ async function runInstall(run, dshInfo) {
     const store = join(caseRoot, 'cold-store')
     const cold = makeInstance(join(caseRoot, 'cold'), store)
     createHome(cold, artifacts.coreRoot, { legacy: true, allowBuild: true })
+    const coldPatchPath = join(cold.dshHome, 'profiles', 'qqbot', 'cordis.patch.yml')
+    writeFileSync(coldPatchPath, [
+      '# fixture user comment',
+      '- id: code-runtime',
+      '  name: @deepseek-ai/dsh-code-runtime-worker-thread',
+      '- id: agent-presets',
+      '  name: @deepseek-ai/dsh-agent-presets',
+      '  config:',
+      '    default: standard',
+      '- id: fixture-user-row',
+      '  name: fixture/user',
+      '  config:',
+      '    userField: preserve-me',
+      '',
+    ].join(NL), 'utf8')
+    const coldPatchBeforeBytes = readFileSync(coldPatchPath)
+    const coldPatchBeforeSha256 = createHash('sha256').update(coldPatchBeforeBytes).digest('hex').toUpperCase()
     const coldAdd = await runDshAdd(run, dshInfo, registry, cold, { id: 'dsh-add-cold' })
     const coldState = inspectInstallState(cold, coldAdd)
+    const coldPatchAfterBytes = readFileSync(coldPatchPath)
+    const coldPatchAfterSha256 = createHash('sha256').update(coldPatchAfterBytes).digest('hex').toUpperCase()
+    const coldLegacyFormsPreserved = coldPatchAfterBytes.equals(coldPatchBeforeBytes) && coldPatchAfterSha256 === coldPatchBeforeSha256
+    const beforeRepeatState = inspectInstallState(cold, coldAdd)
     const beforeRepeat = fingerprints([join(cold.dshHome, 'profiles', 'qqbot', 'cordis.patch.yml'), join(cold.dshHome, 'profiles', 'qqbot', 'package.json')])
     const repeatAdd = await runDshAdd(run, dshInfo, registry, cold, { id: 'dsh-add-repeat' })
     const repeatState = inspectInstallState(cold, repeatAdd)
     const afterRepeat = fingerprints([join(cold.dshHome, 'profiles', 'qqbot', 'cordis.patch.yml'), join(cold.dshHome, 'profiles', 'qqbot', 'package.json')])
-    const repeatStable = JSON.stringify(beforeRepeat) === JSON.stringify(afterRepeat) && repeatState.linkedToWeb && commandCompletedCleanly(repeatAdd)
+    const repeatLinkStable = isDeepStrictEqual({ targetType: repeatState.targetType, targetRealPath: repeatState.targetRealPath, coreTargetType: repeatState.coreTargetType, coreTargetRealPath: repeatState.coreTargetRealPath, webRealPath: repeatState.webRealPath, linkedToWeb: repeatState.linkedToWeb }, { targetType: beforeRepeatState.targetType, targetRealPath: beforeRepeatState.targetRealPath, coreTargetType: beforeRepeatState.coreTargetType, coreTargetRealPath: beforeRepeatState.coreTargetRealPath, webRealPath: beforeRepeatState.webRealPath, linkedToWeb: beforeRepeatState.linkedToWeb })
+    const repeatBackupsStable = repeatState.backupCount === beforeRepeatState.backupCount && isDeepStrictEqual(repeatState.backups, beforeRepeatState.backups)
+    const repeatStable = JSON.stringify(beforeRepeat) === JSON.stringify(afterRepeat) && repeatState.linkedToWeb === true && commandCompletedCleanly(repeatAdd) && repeatLinkStable && repeatBackupsStable
     const errors = []
     const errorSpecs = [
       { name: 'missing-web', withWeb: false, expected: 'web-source-missing' },
@@ -1093,13 +1129,17 @@ async function runInstall(run, dshInfo) {
         errors.push({ name: spec.name, expected: spec.expected, status: 'NOT-COVERED', notCovered: true, observed: false, reason: 'broken-link fixture construction rejected before add', construction: instance.fixtureConstruction, state: { target: pathForEvidence(join(instance.dshHome, 'profiles', 'qqbot', 'node_modules', CORE_PACKAGE)) } })
         continue
       }
+      const beforeState = inspectInstallState(instance, undefined)
       const command = await runDshAdd(run, dshInfo, registry, instance, { id: 'dsh-add-error-' + spec.name, allowBuild: !spec.noAuthorization })
       const state = inspectInstallState(instance, command)
       const expectedSuccess = spec.expectedSuccess === true
-      const observedReason = expectedSuccess ? false : expectedFailureObserved(spec, command, state)
-      const observed = expectedSuccess ? successObserved(command, state) : observedReason
+      const observedReason = expectedSuccess ? false : expectedFailureObserved(spec, command, state, beforeState)
+      const observed = expectedSuccess ? successObserved(command, state, { requireMissingPatch: spec.patch === 'missing' }) : observedReason
       const commandSandboxBlocked = isSandboxSpawnEperm(command)
-      errors.push({ name: spec.name, expected: expectedSuccess ? 'success/no-file' : spec.expected, commandId: command.id, commandRecord: command, exitCode: command.exitCode, sandboxBlocked: commandSandboxBlocked, observedReason, observed, notCovered: false, status: commandSandboxBlocked ? 'INCOMPLETE' : observed ? 'PASS' : 'FAIL', state })
+      const postconditions = expectedSuccess
+        ? { missingPatch: state.patchExists === false, selectedBundle: state.selectedBundle === true, linkedToWeb: state.linkedToWeb === true }
+        : { unchanged: failureStateUnchanged(command, state, beforeState), patchSha256: state.patchSha256, beforePatchSha256: beforeState.patchSha256, backupCount: state.backupCount, beforeBackupCount: beforeState.backupCount }
+      errors.push({ name: spec.name, expected: expectedSuccess ? 'success/no-file' : spec.expected, commandId: command.id, commandRecord: command, exitCode: command.exitCode, sandboxBlocked: commandSandboxBlocked, observedReason, observed, notCovered: false, status: commandSandboxBlocked ? 'INCOMPLETE' : observed ? 'PASS' : 'FAIL', beforeState, state, postconditions })
     }
     const normalRecords = [coldAdd, repeatAdd]
     const normalClean = normalRecords.every(commandCompletedCleanly)
@@ -1107,7 +1147,7 @@ async function runInstall(run, dshInfo) {
     const errorMatrixSandboxBlocked = errors.some((item) => item.sandboxBlocked === true)
     const sandboxBlocked = normalSandboxBlocked || errorMatrixSandboxBlocked
     const errorMatrixPass = errors.every((item) => item.status === 'PASS')
-    const normalPass = normalClean && coldState.compatPackageExists === true && coldState.linkedToWeb === true && coldState.strictHookCompleted && coldState.selectedBundle && coldState.userFieldPreserved && coldState.legacyCodeRuntimeRemoved && repeatState.compatPackageExists === true && repeatState.linkedToWeb === true && repeatStable
+    const normalPass = normalClean && coldState.compatPackageExists === true && coldState.linkedToWeb === true && coldState.strictHookCompleted === true && coldState.selectedBundle === true && coldState.userFieldPreserved === true && coldLegacyFormsPreserved === true && repeatState.compatPackageExists === true && repeatState.linkedToWeb === true && repeatState.selectedBundle === true && repeatStable
     const sourceUnchanged = artifacts.sourceUnchanged && JSON.stringify(artifacts.sourceBefore) === JSON.stringify(artifacts.sourceAfter)
     const requestLines = existsSync(registry.requestPath) ? readFileSync(registry.requestPath, 'utf8').split(NL).filter(Boolean).map((line) => JSON.parse(line)) : []
     const loopbackOnly = requestLines.every((item) => String(item.url).startsWith('/') || String(item.url).includes('127.0.0.1'))
@@ -1118,7 +1158,7 @@ async function runInstall(run, dshInfo) {
       dsh: { root: pathForEvidence(dshInfo.root), version: dshInfo.version, cli: pathForEvidence(dshInfo.cliPath), pnpm: pathForEvidence(dshInfo.pnpm), npm: pathForEvidence(dshInfo.npm) },
       commandContract: { normal: 'dsh plugin --profile qqbot add dsh-extra-plan-qqbot --registry=<loopback> --allow-build=dsh-extra-plan-qqbot', unauthorizedCase: '仅错误矩阵故意省略allow-build', noHealRebuildActivationAfterAdd: true },
       packageAudit: artifacts.packageAudit,
-      cold: { commandId: coldAdd.id, exitCode: coldAdd.exitCode, compatPackageInstalled: coldState.compatPackageExists, coreLinkToWeb: coldState.linkedToWeb, state: coldState },
+      cold: { commandId: coldAdd.id, exitCode: coldAdd.exitCode, compatPackageInstalled: coldState.compatPackageExists, coreLinkToWeb: coldState.linkedToWeb, state: { ...coldState, legacyFormsPreserved: coldLegacyFormsPreserved, patchBeforeSha256: coldPatchBeforeSha256, patchAfterSha256: coldPatchAfterSha256, patchBytesUnchanged: coldPatchAfterBytes.equals(coldPatchBeforeBytes), repeatLinkStable, repeatBackupsStable } },
       repeat: { commandId: repeatAdd.id, exitCode: repeatAdd.exitCode, stable: repeatStable, compatPackageInstalled: repeatState.compatPackageExists, coreLinkToWeb: repeatState.linkedToWeb, state: repeatState },
       errors,
       checks: { normalPass, normalClean, normalSandboxBlocked, errorMatrixPass, errorMatrixSandboxBlocked, sandboxBlocked, sourceUnchanged, loopbackOnly, requestCount: requestLines.length, classification },

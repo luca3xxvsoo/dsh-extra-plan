@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 代码地图生成.mjs — 增量同步结构并保留人工描述。
-// --strict 拒绝未解决的疑似遗漏；--check 只读检查过期/新增/删除索引项和损坏导航。
+// --strict 拒绝未解决的疑似遗漏；--check 只读比对文件总览、函数索引和导航。
 // 稳定键 = 相对路径 + 函数名 + 同名出现顺序。
 import { readFileSync, writeFileSync, existsSync, readdirSync, lstatSync, realpathSync, mkdirSync } from 'node:fs'
 import { join, resolve, relative, dirname, isAbsolute } from 'node:path'
@@ -341,12 +341,20 @@ function collectDefCandidates(text) {
 function parseOldMap(text) {
   const byKey = new Map() // key = 文件路径|函数名 → 行数组（同名函数按地图内出现顺序存，逐个配对）
   const fileDesc = new Map()
-  if (!text.includes('| 文件 | 函数 | 行号 | 功能描述 | 备注 |')) return { byKey, fileDesc }
+  const fileCounts = new Map()
+  const fileIssues = []
+  let hasFileTable = false
   let inFuncTable = false
   let inFileTable = false
   for (const line of text.split(NL)) {
     if (line === '| 文件 | 函数 | 行号 | 功能描述 | 备注 |') { inFuncTable = true; inFileTable = false; continue }
-    if (line === '| 文件 | 行数 | 说明 |') { inFileTable = true; inFuncTable = false; continue }
+    if (line === '| 文件 | 行数 | 说明 |') {
+      if (hasFileTable) fileIssues.push('[文件总览格式] 出现重复总览表')
+      hasFileTable = true
+      inFileTable = true
+      inFuncTable = false
+      continue
+    }
     if (!line.startsWith('|')) { inFuncTable = false; inFileTable = false; continue }
     if (inFuncTable) {
       const cells = line.split('|').map((s) => s.trim())
@@ -361,10 +369,24 @@ function parseOldMap(text) {
     }
     if (inFileTable) {
       const cells = line.split('|').map((s) => s.trim())
-      if (cells.length >= 4 && cells[1] && !cells[1].startsWith(':')) fileDesc.set(cells[1], cells[3] || '')
+      const path = cells[1]
+      if (/^:?-+:?$/.test(path || '')) continue
+      if (cells.length < 5 || !path) {
+        fileIssues.push('[文件总览格式] 无效文件行：' + line)
+        continue
+      }
+      if (fileCounts.has(path)) {
+        fileIssues.push('[文件总览格式] 重复文件路径：' + path)
+        continue
+      }
+      const lines = /^(?:0|[1-9]\d*)$/.test(cells[2]) ? Number(cells[2]) : NaN
+      if (!Number.isSafeInteger(lines)) fileIssues.push('[文件总览格式] 非法行数：' + path + '（' + cells[2] + '）')
+      fileCounts.set(path, lines)
+      fileDesc.set(path, cells[3] || '')
     }
   }
-  return { byKey, fileDesc }
+  if (!hasFileTable) fileIssues.push('[文件总览缺失] 未找到机器文件总览表')
+  return { byKey, fileDesc, fileCounts, fileIssues }
 }
 
 // ---------- 人工保留段（意图速查） ----------
@@ -506,6 +528,22 @@ for (const file of srcFiles) {
 }
 funcs.sort((a, b) => a.path === b.path ? a.startLine - b.startLine : (a.path < b.path ? -1 : 1))
 fileRows.sort((a, b) => a.path < b.path ? -1 : 1)
+if (CHECK) {
+  for (const issue of old.fileIssues) report.push(issue)
+  const currentFiles = new Set()
+  for (const row of fileRows) {
+    currentFiles.add(row.path)
+    if (!old.fileCounts.has(row.path)) {
+      report.push('[文件新增] ' + row.path + '（当前 ' + row.lines + ' 行，旧总览缺项）')
+      continue
+    }
+    const previous = old.fileCounts.get(row.path)
+    if (Number.isSafeInteger(previous) && previous !== row.lines) report.push('[文件行数] ' + row.path + ' ' + previous + ' -> ' + row.lines)
+  }
+  for (const path of old.fileCounts.keys()) {
+    if (!currentFiles.has(path)) report.push('[文件删除] ' + path + '（旧总览有项，当前不在扫描范围）')
+  }
+}
 
 // 导航校验：「意图速查」节引用的函数名必须真实存在于索引（函数改名/删除后必须同步该节，否则报 [导航失效]）
 const knownNames = new Set(funcs.map((f) => f.name))
@@ -533,7 +571,7 @@ if (CHECK) {
     console.log('[检查模式] 地图与代码不一致或存在问题（见上）→ 退出码 1；请运行 node pe-test/tools/代码地图生成.mjs 同步，并按提示处理漏检/导航失效')
     process.exitCode = 1
   } else {
-    console.log('[检查模式] 地图与代码一致，无漏检、无导航失效')
+    console.log('[检查模式] 地图与代码一致，文件总览、函数索引与导航无异常')
   }
 } else if (missed.length > 0 && STRICT) {
   console.log('[严格模式] 未接受的疑似漏检 ' + missed.length + ' 条 → 退出码 1')

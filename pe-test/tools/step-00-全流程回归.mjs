@@ -66,11 +66,11 @@ import { startUsageLedgerBackground } from '../../plugins/dsh-extra-plan/lib/usa
 // 改造11：旧 active→archive 路径推导入口已随三模块合并删除，测试内按唯一账本文件名本地拼接（与插件默认口径一致）。
 const STEP00_ARCHIVE_FILE_NAME = 'extra-plan-usage-ledger.jsonl'
 import { DEFAULT_EXPLORE_BUDGET as GENERATED_DEFAULT_EXPLORE_BUDGET, DEFAULT_PLANNER_PROMPT_SUFFIX as GENERATED_DEFAULT_PLANNER_PROMPT_SUFFIX } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
-import { copyFileSync, existsSync, readFileSync, readdirSync, rmSync, mkdirSync, writeFileSync, renameSync, unlinkSync, statSync, utimesSync } from 'node:fs'
+import { copyFileSync, existsSync, readFileSync, readdirSync, rmSync, mkdirSync, mkdtempSync, writeFileSync, renameSync, unlinkSync, statSync, utimesSync } from 'node:fs'
 import { zstdCompressSync } from 'node:zlib'
 import { makeFixtureDir } from '../_shared/workspace-paths.mjs'
 import { createPathContext } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative, sep } from 'node:path'
 import { parsePresetYaml, createDefaultSettings, DEFAULT_SETTINGS } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
 import { ROLE_IDS, ROLE_ORDERS, PLANNER_PRESET_ID, PROBER_PRESET_ID } from '../../plugins/dsh-extra-plan/lib/role-contract.js'
 import { ROLE_IDS as PRESET_SYNC_ROLE_IDS, ROLE_DEFINITION_FILES } from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
@@ -104,7 +104,6 @@ const {
   toolCallCount,
   toolCallsSinceUser,
   isRunCodeSubCall,
-  runCodeDispatchGateReason,
   runCodeSiteCount,
   withPlannerPromptSuffix,
   BUDGET_REMINDER_THRESHOLD,
@@ -174,7 +173,6 @@ function applyPlugin(ctx, config, registry) {
 }
 const staticRunCode = createRunCodeStatic({
   askTool: 'ask_user_question',
-  isDispatchStart: (type) => type === 'tool/ptc-dispatch-start',
 })
 const { maskCodeLiteralsAndComments, sliceBalancedArgs } = staticRunCode
 
@@ -451,7 +449,7 @@ check('runtime-static causeChainOf 按显式 depth 截断', runtimeStatic.causeC
 // ── CFG 系列：主插件 loader Config 真实导入、默认值与边界 ────────────────
 const CONFIG_KEYS = [
   'gateWords', 'planTool', 'savePlanDir', 'plannerModel', 'otherAgentModel', 'exploreBudget',
-  'plannerPromptSuffix', 'anchoredBootstrap', 'creativeMode', 'runcodeCatchGate',
+  'plannerPromptSuffix', 'anchoredBootstrap', 'creativeMode', 'webFetch', 'runcodeCatchGate',
   'crossProviderPlannerModel', 'bootstrapPersona', 'bootstrapReadHint', 'bootstrapShellTools',
   'bootstrapCommonTools', 'usageLedger', 'diagFile', 'reviewerUsesPlannerModel',
 ]
@@ -459,7 +457,7 @@ const configWithAssetGateWords = plugin.Config({ gateWords: assetGateWords })
 check('CFG1 主插件 name 保持 extra-plan', plugin.name, 'extra-plan')
 check('CFG2 主插件 inject 恰为 systemPrompt', plugin.inject, ['systemPrompt'])
 checkTrue('CFG3 主插件 apply 与 Config 均为函数', typeof plugin.apply === 'function' && typeof plugin.Config === 'function')
-check('CFG4 Config 顶层键恰为 18 个', Object.keys(configWithAssetGateWords).sort(), CONFIG_KEYS.slice().sort())
+check('CFG4 Config 顶层键与预期清单严格一致', Object.keys(configWithAssetGateWords).sort(), CONFIG_KEYS.slice().sort())
 check('CFG5 资产 gateWords 经 Config 保持原值', configWithAssetGateWords.gateWords, assetGateWords)
 check('CFG6 Config 标量默认值与 apply fallback 相同', [
   configWithAssetGateWords.planTool,
@@ -1925,11 +1923,19 @@ checkTrue('M6 step-99 旧strict模式拒绝：有效V2输入前置返回strict-p
         archiveWriteRows(budgetArchive, parseArchiveRows)
         const parseBefore = archiveBytesOf(budgetArchive)
         const parseIo = { write: 0, move: 0, remove: 0 }
+        const parsePhaseChecks = []
+        let parseChecks = 0
         let parseFailure
         try {
           usageArchiveModule.archiveLedger(budgetArchive, { pathContext: STEP00_PATH_CONTEXT,
             budgetMs: 60000,
-            onCheck: (phase) => phase === 'parse-archive',
+            onCheck: (phase) => {
+              parsePhaseChecks.push(phase)
+              if (phase !== 'parse-archive') return false
+              parseChecks += 1
+              // start入口后：首行依次经历「循环前/解析后/入rows后」，第5次才进入下一输入前。
+              return parseChecks >= 5
+            },
             fsOps: {
               writeFileSync: (...args) => { parseIo.write += 1; return writeFileSync(...args) },
               renameSync: (...args) => { parseIo.move += 1; return renameSync(...args) },
@@ -1937,7 +1943,7 @@ checkTrue('M6 step-99 旧strict模式拒绝：有效V2输入前置返回strict-p
             },
           })
         } catch (error) { parseFailure = error }
-        checkTrue('M6-B1 多行解析中途budget-timeout：任何write/move/remove前账本hash不变', parseFailure !== undefined && parseFailure.code === 'budget-timeout' && parseIo.write === 0 && parseIo.move === 0 && parseIo.remove === 0 && archiveBytesOf(budgetArchive) === parseBefore && archiveResiduals(budgetDir).length === 0)
+        checkTrue('M6-B1 多行解析首行处理后budget-timeout：命中parse-archive循环、零发布IO且旧账本字节不变', parseFailure !== undefined && parseFailure.code === 'budget-timeout' && parseChecks === 5 && parsePhaseChecks[0] === 'start' && parsePhaseChecks[1] === 'parse-archive' && parsePhaseChecks.slice(1).every((phase) => phase === 'parse-archive') && parseIo.write === 0 && parseIo.move === 0 && parseIo.remove === 0 && archiveBytesOf(budgetArchive) === parseBefore && archiveResiduals(budgetDir).length === 0)
       } finally { rmSync(budgetDir, { recursive: true, force: true }) }
     }
     // M6-B2：多组 archiveTextOf 序列化中途预算超时；阶段探针锚定 serialize——只有序列化阶段才判超时且发布尚未开始。
@@ -1949,11 +1955,19 @@ checkTrue('M6 step-99 旧strict模式拒绝：有效V2输入前置返回strict-p
         archiveWriteRows(budgetArchive, serializeArchiveRows)
         const serializeBefore = archiveBytesOf(budgetArchive)
         const serializeIo = { write: 0, move: 0, remove: 0 }
+        const serializePhaseChecks = []
+        let serializeChecks = 0
         let serializeFailure
         try {
           usageArchiveModule.archiveLedger(budgetArchive, { pathContext: STEP00_PATH_CONTEXT,
             budgetMs: 60000,
-            onCheck: (phase) => phase === 'serialize',
+            onCheck: (phase) => {
+              serializePhaseChecks.push(phase)
+              if (phase !== 'serialize') return false
+              serializeChecks += 1
+              // serialize入口为第1次；首个group完成前后各一次，第4次才进入下一group前。
+              return serializeChecks >= 4
+            },
             fsOps: {
               writeFileSync: (...args) => { serializeIo.write += 1; return writeFileSync(...args) },
               renameSync: (...args) => { serializeIo.move += 1; return renameSync(...args) },
@@ -1961,7 +1975,7 @@ checkTrue('M6 step-99 旧strict模式拒绝：有效V2输入前置返回strict-p
             },
           })
         } catch (error) { serializeFailure = error }
-        checkTrue('M6-B2 多组archiveTextOf中途budget-timeout：任何write/move/remove前账本hash不变', serializeFailure !== undefined && serializeFailure.code === 'budget-timeout' && serializeIo.write === 0 && serializeIo.move === 0 && serializeIo.remove === 0 && archiveBytesOf(budgetArchive) === serializeBefore && archiveResiduals(budgetDir).length === 0)
+        checkTrue('M6-B2 多组archiveTextOf首组处理后budget-timeout：命中serialize循环、零发布IO且旧账本字节不变', serializeFailure !== undefined && serializeFailure.code === 'budget-timeout' && serializeChecks === 4 && serializePhaseChecks[0] === 'start' && serializePhaseChecks.indexOf('parse-archive') > 0 && serializePhaseChecks.indexOf('unique') > serializePhaseChecks.indexOf('parse-archive') && serializePhaseChecks.slice(-4).every((phase) => phase === 'serialize') && serializeIo.write === 0 && serializeIo.move === 0 && serializeIo.remove === 0 && archiveBytesOf(budgetArchive) === serializeBefore && archiveResiduals(budgetDir).length === 0)
       } finally { rmSync(budgetDir, { recursive: true, force: true }) }
     }
 
@@ -1980,41 +1994,66 @@ checkTrue('M6 step-99 旧strict模式拒绝：有效V2输入前置返回strict-p
       } finally { rmSync(probeDir, { recursive: true, force: true }) }
     }
 
-    // M6-B3：archive 唯一性数据集下预算检查超时必须在发布前拒绝（零发布 IO、账本不变、无锁）。
+    // M6-B3：唯一性阶段必须在入口后处理过至少一行，才在下一轮检查触发预算超时。
     {
-      const budgetDir = makeWTemp('dsh-g2-budget-unique')
+      const budgetDir = makeWTemp('dsh-g3-budget-unique')
       try {
         const budgetArchive = join(budgetDir, STEP00_ARCHIVE_FILE_NAME)
-        const uniqueRows = Array.from({ length: 5 }, (_, index) => archiveRow({ sessionId: 'g2-unique-' + index, provider: 'g2-unique-provider-' + index, seq: index + 1 }))
+        const uniqueRows = Array.from({ length: 5 }, (_, index) => archiveRow({ sessionId: 'g3-unique-' + index, provider: 'g3-unique-provider-' + index, seq: index + 1 }))
         archiveWriteRows(budgetArchive, uniqueRows)
         const before = archiveBytesOf(budgetArchive)
         const io = { write: 0, move: 0, remove: 0 }
-        // 预算闸门计时器：首次 clock 取起点（0），其后任一预算检查即超时——不再依调用栈/源码行定位。
-        let clockCalls = 0
-        const clock = () => { clockCalls += 1; return clockCalls > 1 ? 1 : 0 }
+        const phaseChecks = []
+        let uniqueChecks = 0
         let failure
         try {
-          usageArchiveModule.archiveLedger(budgetArchive, { pathContext: STEP00_PATH_CONTEXT, budgetMs: 1, clock, fsOps: { writeFileSync: (...args) => { io.write += 1; return writeFileSync(...args) }, renameSync: (...args) => { io.move += 1; return renameSync(...args) }, unlinkSync: (...args) => { io.remove += 1; return unlinkSync(...args) } } })
+          usageArchiveModule.archiveLedger(budgetArchive, {
+            pathContext: STEP00_PATH_CONTEXT,
+            budgetMs: 60000,
+            onCheck: (phase) => {
+              phaseChecks.push(phase)
+              if (phase !== 'unique') return false
+              uniqueChecks += 1
+              // unique入口为第1次；第3次已完成首行并进入下一行前，不能命中入口check。
+              return uniqueChecks >= 3
+            },
+            fsOps: {
+              writeFileSync: (...args) => { io.write += 1; return writeFileSync(...args) },
+              renameSync: (...args) => { io.move += 1; return renameSync(...args) },
+              unlinkSync: (...args) => { io.remove += 1; return unlinkSync(...args) },
+            },
+          })
         } catch (error) { failure = error }
-        checkTrue('M6-B3 唯一性数据集预算超时：budget-timeout且无发布IO/账本不变/无锁残留', failure !== undefined && failure.code === 'budget-timeout' && io.write === 0 && io.move === 0 && io.remove === 0 && archiveBytesOf(budgetArchive) === before && !existsSync((budgetArchive + '.lock')) && archiveResiduals(budgetDir).length === 0)
+        checkTrue('M6-B3 唯一性阶段首行处理后budget-timeout：阶段顺序正确且无发布IO/账本不变/无锁残留', failure !== undefined && failure.code === 'budget-timeout' && uniqueChecks === 3 && phaseChecks[0] === 'start' && phaseChecks.indexOf('parse-archive') > 0 && phaseChecks.indexOf('unique') > phaseChecks.indexOf('parse-archive') && phaseChecks.slice(-3).every((phase) => phase === 'unique') && io.write === 0 && io.move === 0 && io.remove === 0 && archiveBytesOf(budgetArchive) === before && !existsSync((budgetArchive + '.lock')) && archiveResiduals(budgetDir).length === 0)
       } finally { rmSync(budgetDir, { recursive: true, force: true }) }
     }
-    // M6-B4：archiveEntries 数据集下预算检查超时必须在发布前拒绝（零发布 IO、账本不变、无锁）。
+    // M6-B4：当前实现没有独立 archiveEntries 阶段，改用现有 publish 入口检查覆盖发布前拒绝。
     {
-      const budgetDir = makeWTemp('dsh-g2-budget-archive-entries')
+      const budgetDir = makeWTemp('dsh-g3-budget-publish')
       try {
         const budgetArchive = join(budgetDir, STEP00_ARCHIVE_FILE_NAME)
-        const archiveEntryRows = Array.from({ length: 5 }, (_, index) => archiveRow({ sessionId: 'g2-archive-entry-' + index, provider: 'g2-archive-entry-provider-' + index, seq: index + 1 }))
-        archiveWriteRows(budgetArchive, archiveEntryRows)
+        const publishRows = Array.from({ length: 5 }, (_, index) => archiveRow({ sessionId: 'g3-publish-' + index, provider: 'g3-publish-provider-' + index, seq: index + 1 }))
+        archiveWriteRows(budgetArchive, publishRows)
         const before = archiveBytesOf(budgetArchive)
         const io = { write: 0, move: 0, remove: 0 }
-        let clockCalls = 0
-        const clock = () => { clockCalls += 1; return clockCalls > 1 ? 1 : 0 }
+        const phaseChecks = []
         let failure
         try {
-          usageArchiveModule.archiveLedger(budgetArchive, { pathContext: STEP00_PATH_CONTEXT, budgetMs: 1, clock, fsOps: { writeFileSync: (...args) => { io.write += 1; return writeFileSync(...args) }, renameSync: (...args) => { io.move += 1; return renameSync(...args) }, unlinkSync: (...args) => { io.remove += 1; return unlinkSync(...args) } } })
+          usageArchiveModule.archiveLedger(budgetArchive, {
+            pathContext: STEP00_PATH_CONTEXT,
+            budgetMs: 60000,
+            onCheck: (phase) => {
+              phaseChecks.push(phase)
+              return phase === 'publish'
+            },
+            fsOps: {
+              writeFileSync: (...args) => { io.write += 1; return writeFileSync(...args) },
+              renameSync: (...args) => { io.move += 1; return renameSync(...args) },
+              unlinkSync: (...args) => { io.remove += 1; return unlinkSync(...args) },
+            },
+          })
         } catch (error) { failure = error }
-        checkTrue('M6-B4 archiveEntries 数据集预算超时：budget-timeout且无发布IO/账本不变/无锁残留', failure !== undefined && failure.code === 'budget-timeout' && io.write === 0 && io.move === 0 && io.remove === 0 && archiveBytesOf(budgetArchive) === before && !existsSync((budgetArchive + '.lock')) && archiveResiduals(budgetDir).length === 0)
+        checkTrue('M6-B4 现有publish入口预算超时：阶段顺序正确且发布前零IO/账本不变/无锁残留', failure !== undefined && failure.code === 'budget-timeout' && phaseChecks[0] === 'start' && phaseChecks.indexOf('parse-archive') > 0 && phaseChecks.indexOf('unique') > phaseChecks.indexOf('parse-archive') && phaseChecks.indexOf('serialize') > phaseChecks.indexOf('unique') && phaseChecks[phaseChecks.length - 1] === 'publish' && phaseChecks.filter((phase) => phase === 'publish').length === 1 && io.write === 0 && io.move === 0 && io.remove === 0 && archiveBytesOf(budgetArchive) === before && !existsSync((budgetArchive + '.lock')) && archiveResiduals(budgetDir).length === 0)
       } finally { rmSync(budgetDir, { recursive: true, force: true }) }
     }
 
@@ -2313,6 +2352,147 @@ checkTrue('M6 step-99 旧strict模式拒绝：有效V2输入前置返回strict-p
   }
 }
 
+{
+  const targetBindingRoot = makeWTemp('dsh-startup-target-binding')
+  const targetBindingHome = join(targetBindingRoot, 'home')
+  const targetBindingContext = createPathContext({ workspaceRoot: targetBindingRoot, hostDataRoot: targetBindingHome })
+  const targetBindingArchive = join(targetBindingHome, 'logs', 'dsh-extra-plan', STEP00_ARCHIVE_FILE_NAME)
+  const targetBindingRelative = 'logs/dsh-extra-plan/' + STEP00_ARCHIVE_FILE_NAME
+  const targetBindingWArchive = join(targetBindingRoot, targetBindingRelative)
+  const targetBindingWLock = targetBindingWArchive + '.lock'
+  const targetBindingSessionId = '6d2f4c8a-1f11-4b2c-8e5a-0000000000a7'
+  const targetBindingLog = join(targetBindingHome, 'sessions', 'w1', 'session-' + targetBindingSessionId, 'session.v4.jsonl.zstd')
+  const targetBindingDiagnostic = join(dirname(targetBindingArchive), 'extra-plan-usage-errors.jsonl')
+  const targetBindingJsonl = (events) => events.map((event) => JSON.stringify(event)).join(String.fromCharCode(10)) + String.fromCharCode(10)
+  const { createHash } = await import('node:crypto')
+  const { appendFileSync: targetBindingAppendFileSync } = await import('node:fs')
+  const targetBindingDigest = (bytes) => createHash('sha256').update(bytes).digest('hex')
+  const targetBindingLogInputs = []
+  const targetBindingSnapshot = (path) => {
+    if (!existsSync(path)) return { exists: false, bytes: 0, sha256: null }
+    const bytes = readFileSync(path)
+    return { exists: true, bytes: bytes.length, sha256: targetBindingDigest(bytes) }
+  }
+  const targetBindingSnapshotSet = () => ({
+    hArchive: targetBindingSnapshot(targetBindingArchive),
+    hLock: targetBindingSnapshot(targetBindingArchive + '.lock'),
+    cwdArchive: targetBindingSnapshot(targetBindingWArchive),
+    cwdLock: targetBindingSnapshot(targetBindingWLock),
+    diagnostic: targetBindingSnapshot(targetBindingDiagnostic),
+  })
+  const targetBindingWriteSession = (phase, tokens, mtime) => {
+    mkdirSync(dirname(targetBindingLog), { recursive: true })
+    const input = Buffer.from(targetBindingJsonl([
+      { type: 'session', version: 4, id: targetBindingSessionId, cwd: targetBindingRoot, createdAt: Date.UTC(2026, 9, 22), agentPreset: '', delegationDepth: 0, parentSession: '', origin: '' },
+      { type: 'agent-preset/selected', agentPreset: 'extra-plan-executor', time: Date.UTC(2026, 9, 22, 0, 0, 1) },
+      { type: 'assistant/message', seq: 1, time: Date.UTC(2026, 9, 22, 0, 0, 1), data: { usage: tokens, message: { source: { model: 'target-binding-model', provider: 'target-binding-provider' } } } }
+    ]), 'utf8')
+    const compressed = zstdCompressSync(input)
+    targetBindingLogInputs.push({ phase, inputBytes: input.length, inputSha256: targetBindingDigest(input), compressedBytes: compressed.length, compressedSha256: targetBindingDigest(compressed) })
+    writeFileSync(targetBindingLog, compressed)
+    utimesSync(targetBindingLog, mtime / 1000, mtime / 1000)
+  }
+  const targetBindingIo = { read: [], write: [], publish: [], release: [], mkdir: [], append: [] }
+  const targetBindingResetIo = () => {
+    targetBindingIo.read.length = 0
+    targetBindingIo.write.length = 0
+    targetBindingIo.publish.length = 0
+    targetBindingIo.release.length = 0
+    targetBindingIo.mkdir.length = 0
+    targetBindingIo.append.length = 0
+  }
+  const targetBindingFsOps = {
+    readFileSync: (...args) => { targetBindingIo.read.push(String(args[0])); return readFileSync(...args) },
+    writeFileSync: (...args) => { targetBindingIo.write.push(String(args[0])); return writeFileSync(...args) },
+    renameSync: (...args) => { targetBindingIo.publish.push([String(args[0]), String(args[1])]); return renameSync(...args) },
+    unlinkSync: (...args) => { targetBindingIo.release.push(String(args[0])); return unlinkSync(...args) },
+    mkdirSync: (...args) => { targetBindingIo.mkdir.push(String(args[0])); return mkdirSync(...args) },
+    appendFileSync: (...args) => { targetBindingIo.append.push(String(args[0])); return targetBindingAppendFileSync(...args) },
+  }
+  const { createRequire, syncBuiltinESMExports } = await import('node:module')
+  const targetBindingNativeFs = createRequire(import.meta.url)('node:fs')
+  const targetBindingOriginalOpenSync = targetBindingNativeFs.openSync
+  const targetBindingNativeWx = []
+  targetBindingNativeFs.openSync = (...args) => {
+    if (String(args[1]) === 'wx' && String(args[0]).endsWith('.lock')) targetBindingNativeWx.push(String(args[0]))
+    return targetBindingOriginalOpenSync(...args)
+  }
+  syncBuiltinESMExports()
+  const targetBindingOriginalCwd = process.cwd()
+  try {
+    mkdirSync(targetBindingHome, { recursive: true })
+    targetBindingWriteSession('seed', { inputTokens: 1, cacheReadTokens: 2, cacheWriteTokens: 3, outputTokens: 4 }, Date.parse('2026-10-22T00:20:00.000Z'))
+    const targetBindingSeed = usageArchiveModule.startupArchive(targetBindingContext, { budgetMs: 5000 })
+    const targetBindingHBefore = readFileSync(targetBindingArchive)
+    const targetBindingWText = targetBindingHBefore.toString('utf8').split(String.fromCharCode(10)).filter(Boolean).map((line) => {
+      const row = JSON.parse(line)
+      if (row.schemaVersion === 2) row.ts = '2026-10-22T00:00:00.000Z'
+      return JSON.stringify(row)
+    }).join(String.fromCharCode(10)) + String.fromCharCode(10)
+    mkdirSync(dirname(targetBindingWArchive), { recursive: true })
+    writeFileSync(targetBindingWArchive, targetBindingWText, 'utf8')
+    writeFileSync(targetBindingWLock, 'cwd-lock-sentinel', 'utf8')
+    const targetBindingWBefore = readFileSync(targetBindingWArchive)
+    const targetBindingWLockBefore = readFileSync(targetBindingWLock)
+    process.chdir(targetBindingRoot)
+    const targetBindingRelativeBefore = targetBindingSnapshotSet()
+    targetBindingResetIo()
+    targetBindingNativeWx.length = 0
+    const targetBindingRelativeNoChange = usageArchiveModule.startupArchive(targetBindingContext, { archivePath: targetBindingRelative, budgetMs: 5000, fsOps: targetBindingFsOps })
+    const targetBindingHAfterRelative = readFileSync(targetBindingArchive)
+    const targetBindingWAfterRelative = readFileSync(targetBindingWArchive)
+    const targetBindingRelativeAfter = targetBindingSnapshotSet()
+    checkTrue('G1-M2 相对请求只读H绝对账本且无变化早返、不读cwd同名账本/锁', targetBindingSeed.status === 'archived' && targetBindingRelativeNoChange.status === 'up-to-date' && targetBindingRelativeNoChange.archivePath === targetBindingArchive && targetBindingIo.read.length > 0 && targetBindingIo.read.every((path) => path === targetBindingArchive) && targetBindingIo.write.length === 0 && targetBindingIo.publish.length === 0 && targetBindingIo.release.length === 0 && targetBindingNativeWx.length === 0 && targetBindingHAfterRelative.equals(targetBindingHBefore) && targetBindingWAfterRelative.equals(targetBindingWBefore) && readFileSync(targetBindingWLock).equals(targetBindingWLockBefore))
+    const targetBindingRelativeObserved = { reads: targetBindingIo.read.slice(), writes: targetBindingIo.write.slice(), publishes: targetBindingIo.publish.slice(), releases: targetBindingIo.release.slice(), nativeWx: targetBindingNativeWx.slice() }
+    const targetBindingAbsoluteBefore = targetBindingSnapshotSet()
+    targetBindingResetIo()
+    targetBindingNativeWx.length = 0
+    const targetBindingAbsoluteNoChange = usageArchiveModule.startupArchive(targetBindingContext, { archivePath: targetBindingArchive, budgetMs: 5000, fsOps: targetBindingFsOps })
+    const targetBindingAbsoluteAfter = targetBindingSnapshotSet()
+    checkTrue('G1-M2 绝对请求与相对请求同一H目标且无变化零发布零释放', targetBindingAbsoluteNoChange.status === 'up-to-date' && targetBindingAbsoluteNoChange.archivePath === targetBindingArchive && targetBindingIo.read.length > 0 && targetBindingIo.read.every((path) => path === targetBindingArchive) && targetBindingIo.write.length === 0 && targetBindingIo.publish.length === 0 && targetBindingIo.release.length === 0 && targetBindingNativeWx.length === 0 && readFileSync(targetBindingArchive).equals(targetBindingHBefore) && readFileSync(targetBindingWArchive).equals(targetBindingWBefore) && readFileSync(targetBindingWLock).equals(targetBindingWLockBefore))
+    const targetBindingAbsoluteObserved = { reads: targetBindingIo.read.slice(), writes: targetBindingIo.write.slice(), publishes: targetBindingIo.publish.slice(), releases: targetBindingIo.release.slice(), nativeWx: targetBindingNativeWx.slice() }
+    targetBindingWriteSession('changed', { inputTokens: 10, cacheReadTokens: 20, cacheWriteTokens: 30, outputTokens: 40 }, Date.parse('2026-10-22T00:21:00.000Z'))
+    writeFileSync(targetBindingArchive + '.lock', 'h-lock-sentinel', 'utf8')
+    const targetBindingBusyBefore = targetBindingSnapshotSet()
+    const targetBindingBusyLockBefore = readFileSync(targetBindingArchive + '.lock')
+    targetBindingResetIo()
+    targetBindingNativeWx.length = 0
+    const targetBindingBusy = usageArchiveModule.startupArchive(targetBindingContext, { archivePath: targetBindingRelative, budgetMs: 5000, fsOps: targetBindingFsOps })
+    const targetBindingBusyLockAfter = readFileSync(targetBindingArchive + '.lock')
+    const targetBindingBusyAfter = targetBindingSnapshotSet()
+    checkTrue('G1-M2 变化时H真实wx锁被占用返回lock-busy且不删H锁/不发布', targetBindingBusy.status === 'skipped' && targetBindingBusy.reason === 'lock-busy' && targetBindingBusyLockAfter.equals(targetBindingBusyLockBefore) && targetBindingDigest(targetBindingBusyLockAfter) === targetBindingDigest(targetBindingBusyLockBefore) && targetBindingBusyAfter.hLock.sha256 === targetBindingBusyBefore.hLock.sha256 && existsSync(targetBindingArchive + '.lock') && targetBindingNativeWx.includes(targetBindingArchive + '.lock') && targetBindingIo.publish.length === 0 && targetBindingIo.release.length === 0 && readFileSync(targetBindingArchive).equals(targetBindingHBefore))
+    const targetBindingBusyObserved = { reads: targetBindingIo.read.slice(), writes: targetBindingIo.write.slice(), publishes: targetBindingIo.publish.slice(), releases: targetBindingIo.release.slice(), nativeWx: targetBindingNativeWx.slice() }
+    unlinkSync(targetBindingArchive + '.lock')
+    const targetBindingChangedBefore = targetBindingSnapshotSet()
+    targetBindingResetIo()
+    targetBindingNativeWx.length = 0
+    const targetBindingChanged = usageArchiveModule.startupArchive(targetBindingContext, { archivePath: targetBindingRelative, budgetMs: 5000, fsOps: targetBindingFsOps })
+    const targetBindingHAfterChanged = readFileSync(targetBindingArchive)
+    const targetBindingWAfterChanged = readFileSync(targetBindingWArchive)
+    const targetBindingWLockAfterChanged = readFileSync(targetBindingWLock)
+    const targetBindingChangedAfter = targetBindingSnapshotSet()
+    checkTrue('G1-M2 解锁后变化请求真实发布到H、原生wx与注入读写释放路径同一绝对目标', targetBindingChanged.status === 'archived' && targetBindingChanged.archivePath === targetBindingArchive && !targetBindingHAfterChanged.equals(targetBindingHBefore) && targetBindingIo.read.length > 0 && targetBindingIo.read.every((path) => path === targetBindingArchive) && targetBindingIo.write.length > 0 && targetBindingIo.write.every((path) => path.startsWith(dirname(targetBindingArchive))) && targetBindingIo.publish.some((paths) => paths[1] === targetBindingArchive) && targetBindingIo.release.includes(targetBindingArchive + '.lock') && targetBindingNativeWx.includes(targetBindingArchive + '.lock') && !existsSync(targetBindingArchive + '.lock') && targetBindingWAfterChanged.equals(targetBindingWBefore) && targetBindingWLockAfterChanged.equals(targetBindingWLockBefore))
+    const targetBindingChangedObserved = { reads: targetBindingIo.read.slice(), writes: targetBindingIo.write.slice(), publishes: targetBindingIo.publish.slice(), releases: targetBindingIo.release.slice(), nativeWx: targetBindingNativeWx.slice() }
+    const targetBindingHBeforeReject = readFileSync(targetBindingArchive)
+    const targetBindingWBeforeReject = readFileSync(targetBindingWArchive)
+    const targetBindingWLockBeforeReject = readFileSync(targetBindingWLock)
+    const targetBindingRejectedBefore = targetBindingSnapshotSet()
+    const targetBindingDiagnosticBeforeRows = targetBindingRejectedBefore.diagnostic.exists ? readFileSync(targetBindingDiagnostic, 'utf8').split(String.fromCharCode(10)).filter(Boolean).map((line) => JSON.parse(line)) : []
+    targetBindingResetIo()
+    targetBindingNativeWx.length = 0
+    const targetBindingRejected = usageArchiveModule.startupArchive(targetBindingContext, { archivePath: targetBindingWArchive, budgetMs: 5000, fsOps: targetBindingFsOps })
+    const targetBindingRejectedAfter = targetBindingSnapshotSet()
+    const targetBindingDiagnosticAfterRows = targetBindingRejectedAfter.diagnostic.exists ? readFileSync(targetBindingDiagnostic, 'utf8').split(String.fromCharCode(10)).filter(Boolean).map((line) => JSON.parse(line)) : []
+    checkTrue('G1-M2 H外W目标拒绝且不读写目标、不创建W锁（仅允许标准诊断）', targetBindingRejected.status === 'failed' && targetBindingRejected.reason === 'ROOT_ESCAPE' && targetBindingRejectedAfter.hArchive.sha256 === targetBindingRejectedBefore.hArchive.sha256 && targetBindingRejectedAfter.cwdArchive.sha256 === targetBindingRejectedBefore.cwdArchive.sha256 && targetBindingRejectedAfter.cwdLock.sha256 === targetBindingRejectedBefore.cwdLock.sha256 && targetBindingIo.read.length === 0 && targetBindingIo.write.length === 0 && targetBindingIo.publish.length === 0 && targetBindingIo.release.length === 0 && targetBindingIo.mkdir.length === 2 && targetBindingIo.mkdir.every((path) => path === dirname(targetBindingArchive)) && targetBindingIo.append.length === 1 && targetBindingIo.append[0] === targetBindingDiagnostic && targetBindingNativeWx.length === 0 && targetBindingDiagnosticAfterRows.length === targetBindingDiagnosticBeforeRows.length + 1 && targetBindingDiagnosticAfterRows.at(-1)?.reason === 'ROOT_ESCAPE' && targetBindingIo.read.every((path) => path !== targetBindingWArchive) && targetBindingIo.write.every((path) => path !== targetBindingWArchive) && targetBindingIo.publish.every((paths) => paths[0] !== targetBindingWArchive && paths[1] !== targetBindingWArchive) && targetBindingIo.release.every((path) => path !== targetBindingWArchive + '.lock') && targetBindingNativeWx.length === 0 && readFileSync(targetBindingArchive).equals(targetBindingHBeforeReject) && readFileSync(targetBindingWArchive).equals(targetBindingWBeforeReject) && readFileSync(targetBindingWLock).equals(targetBindingWLockBeforeReject))
+    const targetBindingRejectedObserved = { reads: targetBindingIo.read.slice(), writes: targetBindingIo.write.slice(), publishes: targetBindingIo.publish.slice(), releases: targetBindingIo.release.slice(), nativeWx: targetBindingNativeWx.slice() }
+    console.log('G1_STARTUP_TARGET_BINDING=' + JSON.stringify({ requested: { relative: targetBindingRelative, absolute: targetBindingArchive, rejected: targetBindingWArchive }, seed: targetBindingSeed, relativeNoChange: targetBindingRelativeNoChange, absoluteNoChange: targetBindingAbsoluteNoChange, busy: targetBindingBusy, changed: targetBindingChanged, rejected: targetBindingRejected, observed: { relativeNoChange: targetBindingRelativeObserved, absoluteNoChange: targetBindingAbsoluteObserved, busy: targetBindingBusyObserved, changed: targetBindingChangedObserved, rejected: targetBindingRejectedObserved }, inputs: targetBindingLogInputs, snapshots: { relativeNoChange: { before: targetBindingRelativeBefore, after: targetBindingRelativeAfter }, absoluteNoChange: { before: targetBindingAbsoluteBefore, after: targetBindingAbsoluteAfter }, busy: { before: targetBindingBusyBefore, after: targetBindingBusyAfter, lockBeforeSha256: targetBindingDigest(targetBindingBusyLockBefore), lockAfterSha256: targetBindingDigest(targetBindingBusyLockAfter) }, changed: { before: targetBindingChangedBefore, after: targetBindingChangedAfter }, rejected: { before: targetBindingRejectedBefore, after: targetBindingRejectedAfter } }, diagnostic: { beforeRows: targetBindingDiagnosticBeforeRows.length, afterRows: targetBindingDiagnosticAfterRows.length, lastReason: targetBindingDiagnosticAfterRows.at(-1)?.reason || null }, artifacts: { hArchive: targetBindingArchive, cwdArchive: targetBindingWArchive, cwdLock: targetBindingWLock, hArchiveSha256: targetBindingDigest(readFileSync(targetBindingArchive)), cwdArchiveSha256: targetBindingDigest(readFileSync(targetBindingWArchive)), cwdLockSha256: targetBindingDigest(readFileSync(targetBindingWLock)) } }))
+  } finally {
+    process.chdir(targetBindingOriginalCwd)
+    targetBindingNativeFs.openSync = targetBindingOriginalOpenSync
+    syncBuiltinESMExports()
+    rmSync(targetBindingRoot, { recursive: true, force: true })
+  }
+}
 // ── M6-WORKER：默认真实Worker、取消提交线与非阻塞响应矩阵 ──
 {
   const workerMatrixRoot = makeWTemp('dsh-worker-matrix')
@@ -4817,20 +4997,7 @@ for (const [name, events, skip, expected] of CUCODE) {
   check(name, toolCallsSinceUser(events, skip), expected)
 }
 
-// ── DG 系列:runCodeDispatchGateReason 运行时实例上限判定 ─────────────────
-const dg18 = Array.from({ length: 18 }, (_, i) => cdStart('read', 'd' + i, {}))
-const dg19 = dg18.concat([cdStart('read', 'd19', {})])
-const DG = [
-  ['DG1 18×dispatch-start + cap18 → null', runCodeDispatchGateReason(dg18, { rootCallId: 'r1' }, 18), null],
-  ['DG2 19×dispatch-start → 非 null 且含「超过上限」', runCodeDispatchGateReason(dg19, { rootCallId: 'r1' }, 18) !== null && String(runCodeDispatchGateReason(dg19, { rootCallId: 'r1' }, 18)).includes('超过上限'), true],
-  ['DG3 exec 无 rootCallId → null', runCodeDispatchGateReason(dg18, {}, 18), null],
-  ['DG4 cap=0 → null', runCodeDispatchGateReason(dg18, { rootCallId: 'r1' }, 0), null],
-  ['DG5 events 非数组 → null', runCodeDispatchGateReason(null, { rootCallId: 'r1' }, 18), null],
-]
-for (const [name, got, expected] of DG) {
-  check(name, got, expected)
-}
-  dispatchSeriesChecks += FC.length + CC.length + CUCODE.length + DG.length
+  dispatchSeriesChecks += FC.length + CC.length + CUCODE.length
 }
 runDispatchSeries({ start: 'tool/ptc-dispatch-start', end: 'tool/ptc-dispatch' })
 
@@ -4901,6 +5068,17 @@ const ASK_RETURN = [
   ['AR13 MCP静态方括号调用不误判 ask 返回链', "return await tools['mcp__chrome-devtools-mcp__list_pages']({})", null],
   ['AR14 闸门工具直接 return-await → null', 'return await tools.extra_plan_gate({ gate: "route" })', null],
   ['AR15 闸门工具裸 await → 拒绝（与 ask 同口径）', 'await tools.extra_plan_gate({ gate: "route" })', 'deny'],
+  ['AR16 ask 同名仅为局部标量 → 放行', 'const ask_user_question = 1; return ask_user_question;', null],
+  ['AR17 gate 同名仅为局部标量 → 放行', 'let extra_plan_gate = false\nreturn extra_plan_gate', null],
+  ['AR18 两个同名对象数据键 → 放行', 'const data = { ask_user_question: true, extra_plan_gate: 2 }; return data;', null],
+  ['AR19 同名数据不影响合法真实返回', 'const extra_plan_gate = false; return await tools.extra_plan_gate({})', null],
+  ['AR20 同名数据不掩盖真实工具未返回', 'const ask_user_question = 1; await tools.ask_user_question({})', 'deny'],
+  ['AR21 同名数据不掩盖未知成员调用', 'const ask_user_question = 1; obj.ask_user_question()', 'deny'],
+  ['AR22 局部标量未能证明后续裸调用 → 拒绝', 'let extra_plan_gate = false; extra_plan_gate()', 'deny'],
+  ['AR23 带可执行值的同名属性不被当作静态数据', 'return { extra_plan_gate: value() }', 'deny'],
+  ['AR24 不把裸标签位置当对象键', 'ask_user_question: { statement(); }', 'deny'],
+  ['AR25 同名数据不影响另一个真实工具的拒绝', 'const extra_plan_gate = false; await tools.ask_user_question({})', 'deny'],
+  ['AR26 return 后换行的块不被认作对象数据', 'return \n{ ask_user_question: 1 }', 'deny'],
 ]
 for (const [name, code, expected] of ASK_RETURN) {
   const got = askOrGateReturnGateReason(code)
@@ -5073,13 +5251,7 @@ checkTrue('RC-N1 可解析嵌套 run_code 一层展平、不可解析参数保�
 const rcP1Result = decomposeRunCode('tools.read({ "file_path": "x" }); tools.read({ "file_path": "y" })')
 checkTrue('RC-P1 同名不同 JSON 参数保留两个成员', rcP1Result.members.length === 2 && rcP1Result.members[0].name === 'read' && rcP1Result.members[1].name === 'read' && rcP1Result.members[0].args.file_path === 'x' && rcP1Result.members[1].args.file_path === 'y')
 
-const rcDgEvents = [
-  { type: 'tool/ptc-dispatch-start', data: { rootCallId: 'rc-same' } },
-  { type: 'tool/ptc-dispatch-start', data: { rootCallId: 'rc-same' } },
-  { type: 'tool/ptc-dispatch-start', data: { rootCallId: 'rc-other' } },
-]
-const rcDgExceeded = runCodeDispatchGateReason(rcDgEvents, { rootCallId: 'rc-same' }, 1)
-checkTrue('RC-DG1 新旧 dispatch-start 同 root 计数、异 root 不计，非法 cap/root 返回 null', typeof rcDgExceeded === 'string' && rcDgExceeded.includes('子调用数 2') && runCodeDispatchGateReason(rcDgEvents, { rootCallId: 'rc-same' }, 2) === null && runCodeDispatchGateReason(rcDgEvents, { rootCallId: 'rc-same' }, 0) === null && runCodeDispatchGateReason(rcDgEvents, { rootCallId: 'rc-same' }, -1) === null && runCodeDispatchGateReason(rcDgEvents, { rootCallId: 'rc-same' }, 1.5) === null && runCodeDispatchGateReason(rcDgEvents, { rootCallId: 7 }, 1) === null)
+
 
 const rcAgReason = runCodeGroupDenyReason(undefined, { name: 'run_code', arguments: { code: 'await tools.write({})\nawait tools.subagent_probe({})' } }, { kind: 'planner' }, {})
 checkTrue('RC-AG1 planner write+subagent_probe 聚合 2 项且保持成员顺序', typeof rcAgReason === 'string' && rcAgReason.includes('工具组共 2 项（去重后），2 项触发闸门') && rcAgReason.includes('规划子代理只读') && rcAgReason.includes('仅主会话可用') && rcAgReason.indexOf('- write:') < rcAgReason.indexOf('- subagent_probe:'))
@@ -5330,7 +5502,7 @@ checkTrue('GWC11 定制 runtime 与出厂 runtime 对同一结构化结果推进
   const m8HostIo = { writes: [], reads: [], stats: [] }
   const m8OverlapRoot = join(m8WorkspaceRoot, 'overlap-host-root')
   mkdirSync(m8OverlapRoot, { recursive: true })
-  const m8TrackedRoots = [m8HostRoot, m8OverlapRoot, m8OtherRoot]
+  const m8TrackedRoots = [m8WorkspaceRoot, m8HostRoot, m8OverlapRoot, m8OtherRoot]
   const m8IsTrackedPath = (value) => {
     const text = String(value)
     return m8TrackedRoots.some((root) => text === root || text.startsWith(root + String.fromCharCode(92)) || text.startsWith(root + '/'))
@@ -5346,12 +5518,37 @@ checkTrue('GWC11 定制 runtime 与出厂 runtime 对同一结构化结果推进
     renameSync: (...args) => { if (m8IsTrackedPath(args[0]) || m8IsTrackedPath(args[1])) m8HostIo.writes.push('rename:' + String(args[0]) + '->' + String(args[1])); return renameSync(...args) },
     unlinkSync: (...args) => { if (m8IsTrackedPath(args[0])) m8HostIo.writes.push('unlink:' + String(args[0])); return unlinkSync(...args) },
   }
+  const { default: m8OverlapNodeFs } = await import('node:fs')
+  const { syncBuiltinESMExports: m8OverlapSyncBuiltinESMExports } = await import('node:module')
+  const m8OverlapOriginalReaddirSync = m8OverlapNodeFs.readdirSync
+  const m8OverlapReaddirIo = { workspace: { readdir: [], blocked: [] }, host: { readdir: [], blocked: [] } }
+  let m8OverlapReaddirWindow = null
+  const m8OverlapInstallReaddirObserver = (window) => {
+    m8OverlapReaddirWindow = window
+    m8OverlapNodeFs.readdirSync = (...args) => {
+      const path = String(args[0])
+      m8OverlapReaddirIo[m8OverlapReaddirWindow].readdir.push(path)
+      m8OverlapReaddirIo[m8OverlapReaddirWindow].blocked.push(path)
+      const error = new Error('overlap direct readdir blocked before actual enumeration: ' + path)
+      error.code = 'overlap-direct-readdir'
+      throw error
+    }
+    m8OverlapSyncBuiltinESMExports()
+  }
+  const m8OverlapRestoreReaddirObserver = () => {
+    m8OverlapNodeFs.readdirSync = m8OverlapOriginalReaddirSync
+    m8OverlapReaddirWindow = null
+    m8OverlapSyncBuiltinESMExports()
+  }
   const m8HostBefore = readFileSync(m8HostLedger, 'utf8')
   const m8HostBeforeStat = statSync(m8HostLedger)
   const m8HostBeforeEntries = readdirSync(m8HostRoot).sort().join('\n')
   const m8HostStats = usageStats.statLedger(m8HostLedger, { pathContext: m8WithHostContext, target: m8HostTarget, maintenanceContext: m8HostMaintenance, fsOps: m8HostFsOps })
+  const m8AuthorizedHReads = m8HostIo.reads.slice()
+  const m8AuthorizedHStats = m8HostIo.stats.slice()
+  const m8AuthorizedHWrites = m8HostIo.writes.slice()
   const m8HostAfterEntries = readdirSync(m8HostRoot).sort().join('\n')
-  checkTrue('M8 M14 授权H absolute只读：输出/观察物理路径精确、最多两次稳定观察且H零写', m8HostStats.groups.length === 1 && m8HostStats.archivePath === m8HostLedger && m8HostStats.observation !== undefined && m8HostStats.observation.scope === 'host' && m8HostStats.observation.level === 'stable-read-only' && m8HostStats.observation.attempts <= 2 && m8HostStats.observation.archivePath === m8HostLedger && m8HostIo.reads.length > 0 && m8HostIo.writes.length === 0 && readFileSync(m8HostLedger, 'utf8') === m8HostBefore && statSync(m8HostLedger).mtimeMs === m8HostBeforeStat.mtimeMs && m8HostAfterEntries === m8HostBeforeEntries && !existsSync((m8HostLedger + '.lock')))
+  checkTrue('M8 M14 授权H absolute只读：输出/观察物理路径精确、最多两次稳定观察且H零写', m8HostStats.groups.length === 1 && m8HostStats.archivePath === m8HostLedger && m8HostStats.observation !== undefined && m8HostStats.observation.scope === 'host' && m8HostStats.observation.level === 'stable-read-only' && m8HostStats.observation.attempts <= 2 && m8HostStats.observation.archivePath === m8HostLedger && m8HostIo.reads.length > 0 && m8HostIo.reads.every((path) => path === m8HostLedger) && m8HostIo.stats.every((path) => path === m8HostLedger) && m8HostIo.writes.length === 0 && readFileSync(m8HostLedger, 'utf8') === m8HostBefore && statSync(m8HostLedger).mtimeMs === m8HostBeforeStat.mtimeMs && m8HostAfterEntries === m8HostBeforeEntries && !existsSync((m8HostLedger + '.lock')))
   const m8OverlapContext = createPathContext({ workspaceRoot: m8WorkspaceRoot, hostDataRoot: m8OverlapRoot })
   const m8OverlapRelative = join('overlap-host-root', 'extra-plan-usage-ledger.jsonl')
   const m8OverlapLedger = join(m8OverlapRoot, 'extra-plan-usage-ledger.jsonl')
@@ -5359,22 +5556,89 @@ checkTrue('GWC11 定制 runtime 与出厂 runtime 对同一结构化结果推进
   const m8OverlapDefaultBefore = readFileSync(m8OverlapLedger, 'utf8')
   const m8OverlapDefaultBeforeStat = statSync(m8OverlapLedger)
   const m8OverlapDefaultBeforeEntries = readdirSync(m8OverlapRoot).sort().join('\n')
+  const m8OverlapDefaultBeforeLock = existsSync(m8OverlapLedger + '.lock')
   const m8OverlapDefaultIoBefore = m8IoCounts()
-  const m8OverlapDefaultStats = usageStats.statLedger(m8OverlapRelative, { pathContext: m8OverlapContext, fsOps: m8HostFsOps })
+  let m8OverlapDefaultStats
+  m8OverlapInstallReaddirObserver('workspace')
+  try {
+    m8OverlapDefaultStats = usageStats.statLedger(m8OverlapRelative, { pathContext: m8OverlapContext, fsOps: m8HostFsOps })
+  } finally {
+    m8OverlapRestoreReaddirObserver()
+  }
   const m8OverlapDefaultIo = m8IoDelta(m8OverlapDefaultIoBefore)
   const m8OverlapDefaultReads = m8HostIo.reads.slice(m8OverlapDefaultIoBefore.read)
+  const m8OverlapDefaultStatPaths = m8HostIo.stats.slice(m8OverlapDefaultIoBefore.stat)
+  const m8OverlapDefaultWritePaths = m8HostIo.writes.slice(m8OverlapDefaultIoBefore.write)
   const m8OverlapDefaultAfterEntries = readdirSync(m8OverlapRoot).sort().join('\n')
   // W/H 重叠账本有两个合法物理身份：workspace 侧解析与 host 侧解析（本夹具下重叠为同一文件）；读点只能落在这两者上。
   const m8OverlapDefaultWReadPath = resolveWorkspacePath(m8OverlapContext, m8OverlapRelative, { purpose: 'ledger-read' }).path
   const m8OverlapHostTarget = resolveHostPath(m8OverlapContext, m8OverlapLedger, { purpose: 'ledger-read' })
-  checkTrue('M8 M14 W/H重叠relative默认W：fsOps仅触及W active/archive，Host根零stat/write且字节/mtime/目录/lock不变', m8OverlapDefaultStats.archivePath === m8OverlapLedger && m8OverlapDefaultStats.groups.length === 1 && m8OverlapDefaultStats.observation === undefined && m8OverlapDefaultIo.read > 0 && m8OverlapDefaultIo.stat === 0 && m8OverlapDefaultIo.write === 0 && m8OverlapDefaultReads.every((path) => path === m8OverlapDefaultWReadPath || path === m8OverlapHostTarget.path) && readFileSync(m8OverlapLedger, 'utf8') === m8OverlapDefaultBefore && statSync(m8OverlapLedger).mtimeMs === m8OverlapDefaultBeforeStat.mtimeMs && m8OverlapDefaultAfterEntries === m8OverlapDefaultBeforeEntries && !existsSync((m8OverlapLedger + '.lock')))
+  const m8OverlapDefaultAfter = readFileSync(m8OverlapLedger, 'utf8')
+  const m8OverlapDefaultAfterStat = statSync(m8OverlapLedger)
+  const m8OverlapDefaultAfterLock = existsSync(m8OverlapLedger + '.lock')
+  const m8OverlapDefaultEvidence = {
+    scope: 'workspace',
+    target: m8OverlapDefaultWReadPath,
+    targetKind: 'workspace',
+    io: { read: m8OverlapDefaultReads, stat: m8OverlapDefaultStatPaths, write: m8OverlapDefaultWritePaths, readdir: m8OverlapReaddirIo.workspace.readdir, blocked: m8OverlapReaddirIo.workspace.blocked },
+    before: { bytes: Buffer.byteLength(m8OverlapDefaultBefore, 'utf8'), sha256: sha256Text(m8OverlapDefaultBefore), mtimeMs: m8OverlapDefaultBeforeStat.mtimeMs, directoryEntries: m8OverlapDefaultBeforeEntries, lock: m8OverlapDefaultBeforeLock },
+    after: { bytes: Buffer.byteLength(m8OverlapDefaultAfter, 'utf8'), sha256: sha256Text(m8OverlapDefaultAfter), mtimeMs: m8OverlapDefaultAfterStat.mtimeMs, directoryEntries: m8OverlapDefaultAfterEntries, lock: m8OverlapDefaultAfterLock },
+  }
+  checkTrue('M8 M14 W/H重叠relative默认W：fsOps仅触及W active/archive，Host根零stat/write且字节/mtime/目录/lock不变', m8OverlapDefaultStats.archivePath === m8OverlapLedger && m8OverlapDefaultStats.groups.length === 1 && m8OverlapDefaultStats.observation === undefined && m8OverlapDefaultIo.read > 0 && m8OverlapDefaultReads.length > 0 && m8OverlapDefaultReads.every((path) => path === m8OverlapDefaultWReadPath) && m8OverlapDefaultIo.stat === 0 && m8OverlapDefaultIo.write === 0 && m8OverlapReaddirIo.workspace.readdir.length === 0 && m8OverlapReaddirIo.workspace.blocked.length === 0 && m8OverlapDefaultBeforeLock === m8OverlapDefaultAfterLock && !m8OverlapDefaultAfterLock && readFileSync(m8OverlapLedger, 'utf8') === m8OverlapDefaultBefore && statSync(m8OverlapLedger).mtimeMs === m8OverlapDefaultBeforeStat.mtimeMs && m8OverlapDefaultAfterEntries === m8OverlapDefaultBeforeEntries && !existsSync((m8OverlapLedger + '.lock')))
   const m8OverlapHostMaintenance = { workspaceRoot: m8WorkspaceRoot, pathContext: m8OverlapContext, hostAccess: 'read-only', ledger: { mode: 'stats', target: m8OverlapHostTarget } }
   const m8OverlapBefore = readFileSync(m8OverlapLedger, 'utf8')
   const m8OverlapBeforeStat = statSync(m8OverlapLedger)
   const m8OverlapBeforeEntries = readdirSync(m8OverlapRoot).sort().join('\n')
-  const m8OverlapHostStats = usageStats.statLedger(m8OverlapLedger, { pathContext: m8OverlapContext, target: m8OverlapHostTarget, maintenanceContext: m8OverlapHostMaintenance, fsOps: m8HostFsOps })
+  const m8OverlapBeforeLock = existsSync(m8OverlapLedger + '.lock')
+  const m8OverlapHostDirectIo = { read: [], stat: [], write: [], blocked: [] }
+  const m8OverlapHostDirectPath = (kind, value, allowTarget = false) => {
+    const path = String(value)
+    m8OverlapHostDirectIo[kind].push(path)
+    if (!allowTarget || path !== m8OverlapHostTarget.path) {
+      m8OverlapHostDirectIo.blocked.push(kind + ':' + path)
+      const error = new Error('overlap H direct IO outside exact fixture target: ' + path)
+      error.code = 'overlap-direct-outside'
+      throw error
+    }
+    return path
+  }
+  const m8OverlapHostDirectFsOps = {
+    readFileSync: (...args) => { m8OverlapHostDirectPath('read', args[0], true); return readFileSync(...args) },
+    statSync: (...args) => { m8OverlapHostDirectPath('stat', args[0], true); return statSync(...args) },
+    mkdirSync: (...args) => m8OverlapHostDirectPath('write', 'mkdir:' + String(args[0])),
+    writeFileSync: (...args) => m8OverlapHostDirectPath('write', 'write:' + String(args[0])),
+    rmSync: (...args) => m8OverlapHostDirectPath('write', 'remove:' + String(args[0])),
+    renameSync: (...args) => m8OverlapHostDirectPath('write', 'rename:' + String(args[0]) + '->' + String(args[1])),
+    unlinkSync: (...args) => m8OverlapHostDirectPath('write', 'unlink:' + String(args[0])),
+  }
+  const m8OverlapHostDirectWindowBefore = { read: m8OverlapHostDirectIo.read.length, stat: m8OverlapHostDirectIo.stat.length, write: m8OverlapHostDirectIo.write.length, blocked: m8OverlapHostDirectIo.blocked.length }
+  let m8OverlapHostStats
+  m8OverlapInstallReaddirObserver('host')
+  try {
+    m8OverlapHostStats = usageStats.statLedger(m8OverlapLedger, { pathContext: m8OverlapContext, target: m8OverlapHostTarget, maintenanceContext: m8OverlapHostMaintenance, fsOps: m8OverlapHostDirectFsOps })
+  } finally {
+    m8OverlapRestoreReaddirObserver()
+  }
+  const m8OverlapHostDirectWindow = {
+    read: m8OverlapHostDirectIo.read.slice(m8OverlapHostDirectWindowBefore.read),
+    stat: m8OverlapHostDirectIo.stat.slice(m8OverlapHostDirectWindowBefore.stat),
+    write: m8OverlapHostDirectIo.write.slice(m8OverlapHostDirectWindowBefore.write),
+    blocked: m8OverlapHostDirectIo.blocked.slice(m8OverlapHostDirectWindowBefore.blocked),
+  }
   const m8OverlapAfterEntries = readdirSync(m8OverlapRoot).sort().join('\n')
-  checkTrue('M8 M14 W/H重叠：relative默认W而明确Host只读target优先H', m8OverlapDefaultStats.archivePath === m8OverlapLedger && m8OverlapDefaultStats.groups.length === 1 && m8OverlapDefaultStats.observation === undefined && m8OverlapHostTarget.kind === 'host' && m8OverlapHostStats.archivePath === m8OverlapLedger && m8OverlapHostStats.observation !== undefined && m8OverlapHostStats.observation.scope === 'host' && m8OverlapHostStats.observation.attempts <= 2 && m8HostIo.writes.length === 0 && readFileSync(m8OverlapLedger, 'utf8') === m8OverlapBefore && statSync(m8OverlapLedger).mtimeMs === m8OverlapBeforeStat.mtimeMs && m8OverlapAfterEntries === m8OverlapBeforeEntries && !existsSync((m8OverlapLedger + '.lock')))
+  const m8OverlapAfter = readFileSync(m8OverlapLedger, 'utf8')
+  const m8OverlapAfterStat = statSync(m8OverlapLedger)
+  const m8OverlapAfterLock = existsSync(m8OverlapLedger + '.lock')
+  const m8OverlapHostEvidence = {
+    scope: 'host',
+    target: m8OverlapHostTarget.path,
+    targetKind: m8OverlapHostTarget.kind,
+    io: { read: m8OverlapHostDirectWindow.read, stat: m8OverlapHostDirectWindow.stat, write: m8OverlapHostDirectWindow.write, readdir: m8OverlapReaddirIo.host.readdir, blocked: [...m8OverlapHostDirectWindow.blocked, ...m8OverlapReaddirIo.host.blocked] },
+    before: { bytes: Buffer.byteLength(m8OverlapBefore, 'utf8'), sha256: sha256Text(m8OverlapBefore), mtimeMs: m8OverlapBeforeStat.mtimeMs, directoryEntries: m8OverlapBeforeEntries, lock: m8OverlapBeforeLock },
+    after: { bytes: Buffer.byteLength(m8OverlapAfter, 'utf8'), sha256: sha256Text(m8OverlapAfter), mtimeMs: m8OverlapAfterStat.mtimeMs, directoryEntries: m8OverlapAfterEntries, lock: m8OverlapAfterLock },
+  }
+  const m8OverlapDirectEvidence = { workspace: m8OverlapDefaultEvidence, host: m8OverlapHostEvidence }
+  checkTrue('M8 M14 W/H重叠：relative默认W而明确Host只读target优先H', m8OverlapDefaultStats.archivePath === m8OverlapLedger && m8OverlapDefaultStats.groups.length === 1 && m8OverlapDefaultStats.observation === undefined && m8OverlapHostTarget.kind === 'host' && m8OverlapHostStats.archivePath === m8OverlapLedger && m8OverlapHostStats.observation !== undefined && m8OverlapHostStats.observation.scope === 'host' && m8OverlapHostStats.observation.attempts <= 2 && m8OverlapHostDirectWindow.read.length > 0 && m8OverlapHostDirectWindow.read.every((path) => path === m8OverlapHostTarget.path) && m8OverlapHostDirectWindow.stat.length > 0 && m8OverlapHostDirectWindow.stat.every((path) => path === m8OverlapHostTarget.path) && m8OverlapHostDirectWindow.write.length === 0 && m8OverlapHostDirectWindow.blocked.length === 0 && m8OverlapReaddirIo.host.readdir.length === 0 && m8OverlapReaddirIo.host.blocked.length === 0 && m8OverlapBeforeLock === m8OverlapAfterLock && !m8OverlapAfterLock && m8HostIo.writes.length === 0 && readFileSync(m8OverlapLedger, 'utf8') === m8OverlapBefore && statSync(m8OverlapLedger).mtimeMs === m8OverlapBeforeStat.mtimeMs && m8OverlapAfterEntries === m8OverlapBeforeEntries && !existsSync((m8OverlapLedger + '.lock')))
   const m8UnauthorizedHostBefore = readFileSync(m8HostLedger, 'utf8')
   const m8UnauthorizedHostBeforeStat = statSync(m8HostLedger)
   const m8UnauthorizedHostBeforeEntries = readdirSync(m8HostRoot).sort().join('\n')
@@ -5405,8 +5669,12 @@ checkTrue('GWC11 定制 runtime 与出厂 runtime 对同一结构化结果推进
     return { exit, lines }
   }
   const m8WMaintenance = { workspaceRoot: m8WorkspaceRoot, pathContext: m8WithHostContext, hostAccess: 'read-only', ledger: { mode: 'stats', target: m8WTarget } }
+  const m8WMainIoBefore = m8IoCounts()
   const m8WMain = m8CaptureMain([m8WLedger], { maintenanceContext: m8WMaintenance, pathContext: m8WithHostContext, target: m8WTarget, fsOps: m8HostFsOps })
-  checkTrue('M8 M14 公共main W入口使用明确maintenanceContext并返回精确W路径', m8WMain.exit === 0 && m8WMain.lines.some((line) => line.includes(m8WLedger) && line.includes(m8WTarget.path)))
+  const m8WMainIo = m8IoDelta(m8WMainIoBefore)
+  const m8WMainReads = m8HostIo.reads.slice(m8WMainIoBefore.read)
+  const m8WMainStats = m8HostIo.stats.slice(m8WMainIoBefore.stat)
+  checkTrue('M8 M14 公共main W入口使用明确maintenanceContext并返回精确W路径且实际IO逐项命中W账本', m8WMain.exit === 0 && m8WMain.lines.some((line) => line.includes(m8WLedger) && line.includes(m8WTarget.path)) && m8WMainIo.read > 0 && m8WMainReads.every((path) => path === m8WTarget.path) && m8WMainStats.every((path) => path === m8WTarget.path))
   const m8UnauthorizedHostMaintenance = { workspaceRoot: m8WorkspaceRoot, pathContext: m8NoHostContext, hostAccess: 'none', ledger: { mode: 'stats' } }
   const m8UnauthorizedHostMainIoBefore = m8IoCounts()
   const m8UnauthorizedHostMain = m8CaptureMain([m8HostLedger], { maintenanceContext: m8UnauthorizedHostMaintenance, pathContext: m8NoHostContext, fsOps: m8HostFsOps })
@@ -5421,18 +5689,25 @@ checkTrue('GWC11 定制 runtime 与出厂 runtime 对同一结构化结果推进
   const m8OverlapMainW = m8CaptureMain([m8OverlapRelative], { maintenanceContext: m8OverlapWMaintenance, pathContext: m8OverlapContext, target: m8OverlapWTarget, fsOps: m8HostFsOps })
   const m8OverlapMainWIo = m8IoDelta(m8OverlapMainWIoBefore)
   const m8OverlapMainWReads = m8HostIo.reads.slice(m8OverlapMainWIoBefore.read)
+  const m8OverlapMainWStats = m8HostIo.stats.slice(m8OverlapMainWIoBefore.stat)
   // 同一重叠账本的 W 目标（m8OverlapWTarget）与其 H 目标（m8OverlapHostTarget）是两个合法物理身份，读点越出即失败。
-  checkTrue('M8 M14 公共main W/H重叠relative默认W且Host根零stat/write', m8OverlapMainW.exit === 0 && m8OverlapMainW.lines.some((line) => line.includes(m8OverlapLedger)) && m8OverlapMainWIo.read > 0 && m8OverlapMainWIo.stat === 0 && m8OverlapMainWIo.write === 0 && m8OverlapMainWReads.every((path) => path === m8OverlapWTarget.path || path === m8OverlapHostTarget.path) && readFileSync(m8OverlapLedger, 'utf8') === m8OverlapMainWBefore && statSync(m8OverlapLedger).mtimeMs === m8OverlapMainWBeforeStat.mtimeMs && readdirSync(m8OverlapRoot).sort().join('\n') === m8OverlapMainWBeforeEntries && !existsSync((m8OverlapLedger + '.lock')))
+  checkTrue('M8 M14 公共main W/H重叠relative默认W且Host根零stat/write', m8OverlapMainW.exit === 0 && m8OverlapMainW.lines.some((line) => line.includes(m8OverlapLedger)) && m8OverlapMainWIo.read > 0 && m8OverlapMainWReads.length > 0 && m8OverlapMainWReads.every((path) => path === m8OverlapWTarget.path) && m8OverlapMainWIo.stat === 0 && m8OverlapMainWStats.every((path) => path === m8OverlapWTarget.path) && m8OverlapMainWIo.write === 0 && readFileSync(m8OverlapLedger, 'utf8') === m8OverlapMainWBefore && statSync(m8OverlapLedger).mtimeMs === m8OverlapMainWBeforeStat.mtimeMs && readdirSync(m8OverlapRoot).sort().join('\n') === m8OverlapMainWBeforeEntries && !existsSync((m8OverlapLedger + '.lock')))
   const m8OverlapMainHBefore = readFileSync(m8OverlapLedger, 'utf8')
   const m8OverlapMainHBeforeStat = statSync(m8OverlapLedger)
   const m8OverlapMainHBeforeEntries = readdirSync(m8OverlapRoot).sort().join('\n')
   const m8OverlapMainHIoBefore = m8IoCounts()
   const m8OverlapMainH = m8CaptureMain([m8OverlapLedger], { maintenanceContext: m8OverlapHostMaintenance, pathContext: m8OverlapContext, target: m8OverlapHostTarget, fsOps: m8HostFsOps })
   const m8OverlapMainHIo = m8IoDelta(m8OverlapMainHIoBefore)
-  checkTrue('M8 M14 公共main W/H重叠明确Host target优先H且只读无写', m8OverlapMainH.exit === 0 && m8OverlapMainH.lines.some((line) => line.includes(m8OverlapLedger)) && m8OverlapMainHIo.read > 0 && m8OverlapMainHIo.stat > 0 && m8OverlapMainHIo.write === 0 && readFileSync(m8OverlapLedger, 'utf8') === m8OverlapMainHBefore && statSync(m8OverlapLedger).mtimeMs === m8OverlapMainHBeforeStat.mtimeMs && readdirSync(m8OverlapRoot).sort().join('\n') === m8OverlapMainHBeforeEntries && !existsSync((m8OverlapLedger + '.lock')))
+  const m8OverlapMainHReads = m8HostIo.reads.slice(m8OverlapMainHIoBefore.read)
+  const m8OverlapMainHStats = m8HostIo.stats.slice(m8OverlapMainHIoBefore.stat)
+  checkTrue('M8 M14 公共main W/H重叠明确Host target优先H且只读无写', m8OverlapMainH.exit === 0 && m8OverlapMainH.lines.some((line) => line.includes(m8OverlapLedger)) && m8OverlapMainHIo.read > 0 && m8OverlapMainHReads.length > 0 && m8OverlapMainHReads.every((path) => path === m8OverlapHostTarget.path) && m8OverlapMainHIo.stat > 0 && m8OverlapMainHStats.length > 0 && m8OverlapMainHStats.every((path) => path === m8OverlapHostTarget.path) && m8OverlapMainHIo.write === 0 && readFileSync(m8OverlapLedger, 'utf8') === m8OverlapMainHBefore && statSync(m8OverlapLedger).mtimeMs === m8OverlapMainHBeforeStat.mtimeMs && readdirSync(m8OverlapRoot).sort().join('\n') === m8OverlapMainHBeforeEntries && !existsSync((m8OverlapLedger + '.lock')))
+  const m8HostMainIoBefore = m8IoCounts()
   const m8HostMain = m8CaptureMain([m8HostLedger], { maintenanceContext: m8HostMaintenance, pathContext: m8WithHostContext, target: m8HostTarget, fsOps: m8HostFsOps })
+  const m8HostMainIo = m8IoDelta(m8HostMainIoBefore)
+  const m8HostMainReads = m8HostIo.reads.slice(m8HostMainIoBefore.read)
+  const m8HostMainStats = m8HostIo.stats.slice(m8HostMainIoBefore.stat)
   const m8HostAfterMainEntries = readdirSync(m8HostRoot).sort().join('\n')
-  checkTrue('M8 M14 公共main H入口只读返回、物理路径准确且H零写', m8HostMain.exit === 0 && m8HostMain.lines.some((line) => line.includes(m8HostLedger)) && m8HostIo.writes.length === 0 && readFileSync(m8HostLedger, 'utf8') === m8HostBefore && statSync(m8HostLedger).mtimeMs === m8HostBeforeStat.mtimeMs && m8HostAfterMainEntries === m8HostBeforeEntries && !existsSync((m8HostLedger + '.lock')))
+  checkTrue('M8 M14 公共main H入口只读返回、物理路径准确且H零写', m8HostMain.exit === 0 && m8HostMain.lines.some((line) => line.includes(m8HostLedger)) && m8HostMainIo.read > 0 && m8HostMainReads.every((path) => path === m8HostLedger) && m8HostMainStats.every((path) => path === m8HostLedger) && m8HostMainIo.write === 0 && readFileSync(m8HostLedger, 'utf8') === m8HostBefore && statSync(m8HostLedger).mtimeMs === m8HostBeforeStat.mtimeMs && m8HostAfterMainEntries === m8HostBeforeEntries && !existsSync((m8HostLedger + '.lock')))
   const m8OtherMaintenance = { workspaceRoot: m8WorkspaceRoot, pathContext: m8WithHostContext, hostAccess: 'read-only', ledger: { mode: 'stats' } }
   const m8OtherMainBeforeEntries = readdirSync(m8OtherRoot).sort().join('\n')
   const m8OtherMainIoBefore = m8IoCounts()
@@ -5454,6 +5729,282 @@ checkTrue('GWC11 定制 runtime 与出厂 runtime 对同一结构化结果推进
   const m8ArchiveBeforeEntries = readdirSync(m8WorkspaceRoot).sort().join('\n')
   const m8ArchiveMain = m8CaptureMain(['--archive'], { maintenanceContext: m8WMaintenance, pathContext: m8WithHostContext, target: m8WTarget, fsOps: m8ArchiveFsOps })
   checkTrue('M8 M14 main --archive提前usage-removed且目标IO=0', m8ArchiveMain.exit === 1 && m8ArchiveMain.lines.some((line) => line.includes('--archive') || line.includes('手工归档已移除')) && m8ArchiveIo.length === 0 && readFileSync(m8WLedger, 'utf8') === m8ArchiveBefore && statSync(m8WLedger).mtimeMs === m8ArchiveBeforeStat.mtimeMs && readdirSync(m8WorkspaceRoot).sort().join('\n') === m8ArchiveBeforeEntries && !existsSync((m8WLedger + '.lock')))
+
+  // M10：CLI 对拍只用工作区 W 账本与本地 H 形态夹具；扫描目录严格按 sessions/<ws>/<sid>/session.v4.jsonl.zstd 构造。
+  const m8CliFixtureDir = join(step00Fixture.root, 'm10-cli-w')
+  const m8CliLedger = join(m8CliFixtureDir, STEP00_ARCHIVE_FILE_NAME)
+  const m8CliRelativeLedger = relative(step00Fixture.workspaceRoot, m8CliLedger).split(sep).join('/')
+  const m8CliHostRoot = makeWTemp('dsh-g3-m10-cli-host')
+  const m8CliSessionId = '6d2f4c8a-1f11-4b2c-8e5a-000000000002'
+  const m8CliLog = join(m8CliHostRoot, 'sessions', 'm8-cli-workspace', 'session-' + m8CliSessionId, 'session.v4.jsonl.zstd')
+  const m8CliTokenRow = { inputTokens: 11, cacheReadTokens: 12, cacheWriteTokens: 13, outputTokens: 14 }
+  const m8CliLedgerRow = archiveRow({
+    ts: '2026-10-22T00:00:01.000Z',
+    sessionId: m8CliSessionId,
+    parentSessionId: '',
+    rootSessionId: m8CliSessionId,
+    agentPreset: 'extra-plan-executor',
+    delegationDepth: 0,
+    role: 'main',
+    model: 'm8-cli-model',
+    provider: 'm8-cli-provider',
+    ...m8CliTokenRow,
+    seq: 1,
+  })
+  const m8CliEvents = [
+    { type: 'session', version: 4, id: m8CliSessionId, cwd: 'm8-cli-workspace', createdAt: Date.UTC(2026, 9, 22), agentPreset: '', delegationDepth: 0, parentSession: '', origin: '' },
+    { type: 'agent-preset/selected', agentPreset: 'extra-plan-executor', time: Date.UTC(2026, 9, 22, 0, 0, 1) },
+    { type: 'assistant/message', seq: 1, time: Date.UTC(2026, 9, 22, 0, 0, 1), data: { usage: m8CliTokenRow, message: { source: { model: 'm8-cli-model', provider: 'm8-cli-provider' } } } },
+  ]
+  const m8CliIo = { reads: [], stats: [], writes: [] }
+  const m8CliIoCounts = () => ({ read: m8CliIo.reads.length, stat: m8CliIo.stats.length, write: m8CliIo.writes.length })
+  const m8CliIoDelta = (before) => ({ read: m8CliIo.reads.length - before.read, stat: m8CliIo.stats.length - before.stat, write: m8CliIo.writes.length - before.write })
+  const m8CliFsOps = {
+    readFileSync: (...args) => { m8CliIo.reads.push(String(args[0])); return readFileSync(...args) },
+    statSync: (...args) => { m8CliIo.stats.push(String(args[0])); return statSync(...args) },
+    mkdirSync: (...args) => { m8CliIo.writes.push('mkdir:' + String(args[0])); return mkdirSync(...args) },
+    writeFileSync: (...args) => { m8CliIo.writes.push('write:' + String(args[0])); return writeFileSync(...args) },
+    rmSync: (...args) => { m8CliIo.writes.push('remove:' + String(args[0])); return rmSync(...args) },
+    renameSync: (...args) => { m8CliIo.writes.push('rename:' + String(args[0]) + '->' + String(args[1])); return renameSync(...args) },
+    unlinkSync: (...args) => { m8CliIo.writes.push('unlink:' + String(args[0])); return unlinkSync(...args) },
+  }
+  const { default: m8NodeFs } = await import('node:fs')
+  const { syncBuiltinESMExports } = await import('node:module')
+  const m8OriginalFsReadFileSync = m8NodeFs.readFileSync
+  const m8OriginalFsStatSync = m8NodeFs.statSync
+  const m8OriginalFsReaddirSync = m8NodeFs.readdirSync
+  const m8CliSessionsRoot = join(m8CliHostRoot, 'sessions')
+  const m8CliScanWorkspaceRoot = join(m8CliSessionsRoot, 'm8-cli-workspace')
+  const m8CliMaintenanceRoot = process.cwd()
+  const m8CliPreflightRoot = join(m8CliMaintenanceRoot, 'pe-test')
+  const m8CliPluginRoot = join(m8CliMaintenanceRoot, 'plugins')
+  const m8CliScanAllowedPaths = new Set([m8CliMaintenanceRoot, m8CliPreflightRoot, m8CliPluginRoot, m8CliHostRoot, m8CliSessionsRoot, m8CliScanWorkspaceRoot, m8CliLog, m8CliLedger])
+  const m8CliRejectedScanAllowedStatPaths = new Set([m8CliPreflightRoot, m8CliPluginRoot])
+  let m8ScanWindow = 'positive'
+  const m8ScanIo = { read: [], stat: [], readdir: [], blocked: [] }
+  const m8ScanIoCounts = () => ({ read: m8ScanIo.read.length, stat: m8ScanIo.stat.length, readdir: m8ScanIo.readdir.length, blocked: m8ScanIo.blocked.length })
+  const m8ScanIoDelta = (before) => ({ read: m8ScanIo.read.length - before.read, stat: m8ScanIo.stat.length - before.stat, readdir: m8ScanIo.readdir.length - before.readdir, blocked: m8ScanIo.blocked.length - before.blocked })
+  const m8ScanPathOrBlock = (kind, value) => {
+    const path = String(value)
+    m8ScanIo[kind].push(path)
+    const allowed = m8ScanWindow === 'rejected'
+      ? kind === 'stat' && m8CliRejectedScanAllowedStatPaths.has(path)
+      : m8CliScanAllowedPaths.has(path)
+    if (!allowed) {
+      m8ScanIo.blocked.push(path)
+      const error = new Error('fixture scan path outside allowed W/H fixture: ' + path)
+      error.code = 'fixture-scan-outside'
+      throw error
+    }
+    return path
+  }
+  const m8InstallScanObserver = (window = 'positive') => {
+    m8ScanWindow = window
+    m8NodeFs.readFileSync = (...args) => { m8ScanPathOrBlock('read', args[0]); return m8OriginalFsReadFileSync(...args) }
+    m8NodeFs.statSync = (...args) => { m8ScanPathOrBlock('stat', args[0]); return m8OriginalFsStatSync(...args) }
+    m8NodeFs.readdirSync = (...args) => { m8ScanPathOrBlock('readdir', args[0]); return m8OriginalFsReaddirSync(...args) }
+    syncBuiltinESMExports()
+  }
+  const m8RestoreScanObserver = () => {
+    m8NodeFs.readFileSync = m8OriginalFsReadFileSync
+    m8NodeFs.statSync = m8OriginalFsStatSync
+    m8NodeFs.readdirSync = m8OriginalFsReaddirSync
+    m8ScanWindow = 'positive'
+    syncBuiltinESMExports()
+  }
+  try {
+    mkdirSync(dirname(m8CliLedger), { recursive: true })
+    mkdirSync(dirname(m8CliLog), { recursive: true })
+    archiveWriteRows(m8CliLedger, [m8CliLedgerRow])
+    writeFileSync(m8CliLog, zstdCompressSync(Buffer.from(m8CliEvents.map((event) => JSON.stringify(event)).join('\n') + '\n', 'utf8')))
+    const m8CliLedgerBefore = readFileSync(m8CliLedger)
+    const m8CliLedgerBeforeStat = statSync(m8CliLedger)
+    const m8CliWBeforeEntries = readdirSync(m8CliFixtureDir).sort().join('\n')
+    const m8CliHBeforeEntries = readdirSync(m8CliHostRoot).sort().join('\n')
+    const m8CliEqualIoBefore = m8CliIoCounts()
+    const m8CliLogBefore = readFileSync(m8CliLog)
+    const m8CliLogBeforeStat = statSync(m8CliLog)
+    const m8CliLogBeforeEntries = readdirSync(dirname(m8CliLog)).sort().join('\n')
+    const m8CliEqualScanBefore = m8ScanIoCounts()
+    let m8CliEqualScanTrace
+    let m8CliEqual
+    m8InstallScanObserver()
+    try {
+      m8CliEqual = m8CaptureMain(['--compare', '--host-root', m8CliHostRoot, m8CliRelativeLedger], { fsOps: m8CliFsOps })
+      m8CliEqualScanTrace = { read: m8ScanIo.read.slice(m8CliEqualScanBefore.read), stat: m8ScanIo.stat.slice(m8CliEqualScanBefore.stat), readdir: m8ScanIo.readdir.slice(m8CliEqualScanBefore.readdir), blocked: m8ScanIo.blocked.slice(m8CliEqualScanBefore.blocked) }
+    } finally {
+      m8RestoreScanObserver()
+    }
+    const m8CliEqualIo = m8CliIoDelta(m8CliEqualIoBefore)
+    const m8CliEqualReads = m8CliIo.reads.slice(m8CliEqualIoBefore.read)
+    const m8CliEqualStats = m8CliIo.stats.slice(m8CliEqualIoBefore.stat)
+    const m8CliLogAfter = readFileSync(m8CliLog)
+    const m8CliLogAfterStat = statSync(m8CliLog)
+    const m8CliLogAfterEntries = readdirSync(dirname(m8CliLog)).sort().join('\n')
+    const m8CliEqualAfterText = readFileSync(m8CliLedger, 'utf8')
+    const m8CliEqualAfterStat = statSync(m8CliLedger)
+    const m8CliEqualAfterWEntries = readdirSync(m8CliFixtureDir).sort().join('\n')
+    const m8CliEqualAfterHEntries = readdirSync(m8CliHostRoot).sort().join('\n')
+    checkTrue('M10 CLI --compare显式host-root加一个W目标：相对账本先解析为绝对、差异0且确定性PASS exit0', m8CliEqual.exit === 0 && m8CliEqual.lines.some((line) => line.includes('=== 对拍上下文：账本 ' + m8CliLedger) && line.includes('现场扫描根 ' + m8CliHostRoot)) && m8CliEqual.lines.some((line) => line.includes('存在差异的 role→model 数: 0 / 1')) && m8CliEqual.lines.some((line) => line.includes('① 扫描两次输出逐字一致（确定性）: PASS')) && m8CliEqualIo.read > 0 && m8CliEqualReads.every((path) => path === m8CliLedger) && m8CliEqualStats.every((path) => path === m8CliLedger) && m8CliEqualIo.write === 0 && m8CliEqualScanTrace.blocked.length === 0 && m8CliEqualScanTrace.read.filter((path) => path === m8CliLog).length === 2 && m8CliEqualScanTrace.read.filter((path) => path === m8CliLedger).length === 1 && m8CliEqualScanTrace.read.every((path) => m8CliScanAllowedPaths.has(path)) && m8CliEqualScanTrace.readdir.length >= 2 && m8CliEqualScanTrace.readdir.every((path) => m8CliScanAllowedPaths.has(path)) && m8CliEqualScanTrace.stat.every((path) => m8CliScanAllowedPaths.has(path)) && readFileSync(m8CliLog).equals(m8CliLogBefore) && statSync(m8CliLog).mtimeMs === m8CliLogBeforeStat.mtimeMs && readdirSync(dirname(m8CliLog)).sort().join('\n') === m8CliLogBeforeEntries && readFileSync(m8CliLedger).equals(m8CliLedgerBefore) && statSync(m8CliLedger).mtimeMs === m8CliLedgerBeforeStat.mtimeMs && readdirSync(m8CliFixtureDir).sort().join('\n') === m8CliWBeforeEntries && readdirSync(m8CliHostRoot).sort().join('\n') === m8CliHBeforeEntries && !existsSync(m8CliLedger + '.lock'))
+
+    let m8CliMissingRoot
+    let m8CliMissingTarget
+    let m8CliUnauthorized
+    let m8CliRejectedScanTrace
+    let m8CliMissingRootRejectedTrace
+    let m8CliMissingTargetRejectedTrace
+    let m8CliUnauthorizedRejectedTrace
+    const m8CliRejectedScanWindowBefore = m8ScanIoCounts()
+    const m8CliRejectedExpectedStats = {
+      missingRoot: [],
+      missingTarget: [],
+      unauthorized: [m8CliPreflightRoot, m8CliPluginRoot],
+    }
+    const m8CliSnapshot = () => {
+      const ledger = readFileSync(m8CliLedger)
+      const log = readFileSync(m8CliLog)
+      const ledgerStat = statSync(m8CliLedger)
+      const logStat = statSync(m8CliLog)
+      return {
+        ledger: { bytes: ledger.length, sha256: sha256Text(ledger.toString('utf8')), mtimeMs: ledgerStat.mtimeMs, lock: existsSync(m8CliLedger + '.lock') },
+        log: { bytes: log.length, sha256: sha256Text(log.toString('utf8')), mtimeMs: logStat.mtimeMs, lock: existsSync(m8CliLog + '.lock') },
+        fixtureEntries: readdirSync(m8CliFixtureDir).sort().join('\n'),
+        hostEntries: readdirSync(m8CliHostRoot).sort().join('\n'),
+        logDirectoryEntries: readdirSync(dirname(m8CliLog)).sort().join('\n'),
+      }
+    }
+    const m8CliRejectedTraceFor = (scanBefore, io, result, beforeSnapshot, afterSnapshot) => ({
+      exit: result.exit,
+      io,
+      scan: { read: m8ScanIo.read.slice(scanBefore.read), stat: m8ScanIo.stat.slice(scanBefore.stat), readdir: m8ScanIo.readdir.slice(scanBefore.readdir), blocked: m8ScanIo.blocked.slice(scanBefore.blocked) },
+      snapshots: { before: beforeSnapshot, after: afterSnapshot },
+      reason: result.lines.filter((line) => line.includes('失败') || line.includes('必须显式提供')),
+    })
+    const m8CliRejectedScanMatches = (trace, expectedStats) => trace.read.length === 0 && trace.readdir.length === 0 && trace.blocked.length === 0 && trace.stat.length === expectedStats.length && trace.stat.every((path) => expectedStats.includes(path)) && expectedStats.every((path) => trace.stat.includes(path))
+    const m8CliSnapshotsStable = (trace) => JSON.stringify(trace.snapshots.before) === JSON.stringify(trace.snapshots.after)
+    m8InstallScanObserver('rejected')
+    try {
+      m8RestoreScanObserver()
+      const m8CliMissingRootBeforeSnapshot = m8CliSnapshot()
+      m8InstallScanObserver('rejected')
+      const m8CliMissingRootIoBefore = m8CliIoCounts()
+      const m8CliMissingRootScanBefore = m8ScanIoCounts()
+      m8CliMissingRoot = m8CaptureMain(['--compare', m8CliRelativeLedger], { fsOps: m8CliFsOps })
+      const m8CliMissingRootIo = m8CliIoDelta(m8CliMissingRootIoBefore)
+      const m8CliMissingRootScanIo = m8ScanIoDelta(m8CliMissingRootScanBefore)
+      m8RestoreScanObserver()
+      const m8CliMissingRootAfterSnapshot = m8CliSnapshot()
+      m8CliMissingRootRejectedTrace = m8CliRejectedTraceFor(m8CliMissingRootScanBefore, m8CliMissingRootIo, m8CliMissingRoot, m8CliMissingRootBeforeSnapshot, m8CliMissingRootAfterSnapshot)
+      checkTrue('M10 CLI --compare缺少显式host-root时确定性FAIL非零且W/H零IO零扫描', m8CliMissingRoot.exit === 1 && m8CliMissingRoot.lines.some((line) => line.includes('必须显式提供 --host-root 和一个精确账本路径')) && m8CliMissingRootIo.read === 0 && m8CliMissingRootIo.stat === 0 && m8CliMissingRootIo.write === 0 && m8CliMissingRootScanIo.read === 0 && m8CliMissingRootScanIo.readdir === 0 && m8CliRejectedScanMatches(m8CliMissingRootRejectedTrace.scan, m8CliRejectedExpectedStats.missingRoot) && m8CliSnapshotsStable(m8CliMissingRootRejectedTrace))
+
+      const m8CliMissingTargetBeforeSnapshot = m8CliSnapshot()
+      m8InstallScanObserver('rejected')
+      const m8CliMissingTargetIoBefore = m8CliIoCounts()
+      const m8CliMissingTargetScanBefore = m8ScanIoCounts()
+      m8CliMissingTarget = m8CaptureMain(['--compare', '--host-root', m8CliHostRoot], { fsOps: m8CliFsOps })
+      const m8CliMissingTargetIo = m8CliIoDelta(m8CliMissingTargetIoBefore)
+      const m8CliMissingTargetScanIo = m8ScanIoDelta(m8CliMissingTargetScanBefore)
+      m8RestoreScanObserver()
+      const m8CliMissingTargetAfterSnapshot = m8CliSnapshot()
+      m8CliMissingTargetRejectedTrace = m8CliRejectedTraceFor(m8CliMissingTargetScanBefore, m8CliMissingTargetIo, m8CliMissingTarget, m8CliMissingTargetBeforeSnapshot, m8CliMissingTargetAfterSnapshot)
+      checkTrue('M10 CLI --compare缺少唯一目标时拒绝且零账本IO零扫描', m8CliMissingTarget.exit === 1 && m8CliMissingTarget.lines.some((line) => line.includes('必须显式提供 --host-root 和一个精确账本路径')) && m8CliMissingTargetIo.read === 0 && m8CliMissingTargetIo.stat === 0 && m8CliMissingTargetIo.write === 0 && m8CliMissingTargetScanIo.read === 0 && m8CliMissingTargetScanIo.readdir === 0 && m8CliRejectedScanMatches(m8CliMissingTargetRejectedTrace.scan, m8CliRejectedExpectedStats.missingTarget) && m8CliSnapshotsStable(m8CliMissingTargetRejectedTrace))
+
+      const m8CliUnauthorizedBeforeSnapshot = m8CliSnapshot()
+      m8InstallScanObserver('rejected')
+      const m8CliUnauthorizedIoBefore = m8CliIoCounts()
+      const m8CliUnauthorizedScanBefore = m8ScanIoCounts()
+      m8CliUnauthorized = m8CaptureMain(['--compare', '--host-root', m8CliHostRoot, 'C:/dsh-g3-m10-unauthorized/extra-plan-usage-ledger.jsonl'], { fsOps: m8CliFsOps })
+      const m8CliUnauthorizedIo = m8CliIoDelta(m8CliUnauthorizedIoBefore)
+      const m8CliUnauthorizedScanIo = m8ScanIoDelta(m8CliUnauthorizedScanBefore)
+      m8RestoreScanObserver()
+      const m8CliUnauthorizedAfterSnapshot = m8CliSnapshot()
+      m8CliUnauthorizedRejectedTrace = m8CliRejectedTraceFor(m8CliUnauthorizedScanBefore, m8CliUnauthorizedIo, m8CliUnauthorized, m8CliUnauthorizedBeforeSnapshot, m8CliUnauthorizedAfterSnapshot)
+      checkTrue('M10 CLI --compare无授权目标拒绝且不读取W/H数据、不进入扫描', m8CliUnauthorized.exit === 1 && m8CliUnauthorized.lines.some((line) => line.includes('失败')) && m8CliUnauthorizedIo.read === 0 && m8CliUnauthorizedIo.stat === 0 && m8CliUnauthorizedIo.write === 0 && m8CliUnauthorizedScanIo.read === 0 && m8CliUnauthorizedScanIo.readdir === 0 && m8CliUnauthorizedScanIo.stat >= 0 && m8CliUnauthorizedScanIo.blocked === 0 && m8CliRejectedScanMatches(m8CliUnauthorizedRejectedTrace.scan, m8CliRejectedExpectedStats.unauthorized) && m8CliSnapshotsStable(m8CliUnauthorizedRejectedTrace))
+      const m8CliRejectedLogStatCounterexample = { ...m8CliMissingTargetRejectedTrace.scan, stat: [...m8CliMissingTargetRejectedTrace.scan.stat, m8CliLog] }
+      checkTrue('M10 拒绝窗口多一次夹具日志stat对照使允许谓词失效', !m8CliRejectedScanMatches(m8CliRejectedLogStatCounterexample, m8CliRejectedExpectedStats.missingTarget))
+      m8CliRejectedScanTrace = {
+        read: m8ScanIo.read.slice(m8CliRejectedScanWindowBefore.read),
+        stat: m8ScanIo.stat.slice(m8CliRejectedScanWindowBefore.stat),
+        readdir: m8ScanIo.readdir.slice(m8CliRejectedScanWindowBefore.readdir),
+        blocked: m8ScanIo.blocked.slice(m8CliRejectedScanWindowBefore.blocked),
+        byCase: {
+          missingRoot: m8CliMissingRootRejectedTrace,
+          missingTarget: m8CliMissingTargetRejectedTrace,
+          unauthorized: m8CliUnauthorizedRejectedTrace,
+        },
+      }
+    } finally {
+      m8RestoreScanObserver()
+    }
+
+    archiveWriteRows(m8CliLedger, [archiveRow({ ...m8CliLedgerRow, inputTokens: 99 })])
+    const m8CliDiff = m8CaptureMain(['--compare', '--host-root', m8CliHostRoot, m8CliRelativeLedger], { fsOps: m8CliFsOps })
+    checkTrue('M10 CLI --compare差异报数不替代确定性结果：差异非零仍exit0', m8CliDiff.exit === 0 && m8CliDiff.lines.some((line) => line.includes('存在差异的 role→model 数: 1 / 1')) && m8CliDiff.lines.some((line) => line.includes('① 扫描两次输出逐字一致（确定性）: PASS')))
+
+    // 本地读注入只改 W 夹具：第一次扫描读完目标日志后恢复写入新字节，第二次扫描得到不同结果；不靠时钟竞争。
+    const m8InjectedEvents = m8CliEvents.map((event) => event.type === 'assistant/message' ? { ...event, data: { ...event.data, usage: { ...event.data.usage, inputTokens: 22 } } } : event)
+    let m8ReadInjectionDone = false
+    m8NodeFs.readFileSync = (...args) => {
+      const value = m8OriginalFsReadFileSync(...args)
+      if (!m8ReadInjectionDone && String(args[0]) === m8CliLog) {
+        m8ReadInjectionDone = true
+        writeFileSync(m8CliLog, zstdCompressSync(Buffer.from(m8InjectedEvents.map((event) => JSON.stringify(event)).join('\n') + '\n', 'utf8')))
+      }
+      return value
+    }
+    syncBuiltinESMExports()
+    let m8CliDeterministic
+    try {
+      m8CliDeterministic = m8CaptureMain(['--compare', '--host-root', m8CliHostRoot, m8CliRelativeLedger], { fsOps: m8CliFsOps })
+    } finally {
+      m8NodeFs.readFileSync = m8OriginalFsReadFileSync
+      syncBuiltinESMExports()
+    }
+    checkTrue('M10 CLI --compare局部读注入触发确定性FAIL且exit非零（与一般差异分离）', m8ReadInjectionDone && m8CliDeterministic.exit === 1 && m8CliDeterministic.lines.some((line) => line.includes('① 扫描两次输出逐字一致（确定性）: FAIL')))
+
+    const m8CliCleanText = usageArchiveModule.SCHEMA_DOC_LINE + '\n' + JSON.stringify(m8CliLedgerRow) + '\n'
+    const m8CliMixedText = m8CliCleanText + JSON.stringify({ ...m8CliLedgerRow, calls: 1 }) + '\n'
+    const m8CliKnownTokenLine = '11 | 12 | 13 | 14 | 12 | 24 | 14 | 50'
+    writeFileSync(m8CliLedger, m8CliCleanText, 'utf8')
+    const m8CliCleanIoBefore = m8CliIoCounts()
+    const m8CliClean = m8CaptureMain([m8CliRelativeLedger], { fsOps: m8CliFsOps })
+    const m8CliCleanIo = m8CliIoDelta(m8CliCleanIoBefore)
+    writeFileSync(m8CliLedger, m8CliMixedText, 'utf8')
+    const m8CliMixedIoBefore = m8CliIoCounts()
+    const m8CliMixed = m8CaptureMain([m8CliRelativeLedger], { fsOps: m8CliFsOps })
+    const m8CliMixedIo = m8CliIoDelta(m8CliMixedIoBefore)
+    checkTrue('M10 公开CLI干净账本：已知有效token总量与状态独立正确、非法V2为0', m8CliClean.exit === 0 && m8CliClean.lines.some((line) => line.includes(m8CliKnownTokenLine)) && m8CliClean.lines.some((line) => line.includes('V2 记录（去重后）: 1')) && m8CliClean.lines.some((line) => line.includes('字段非法V2行（已跳过，不计入统计）: 0')) && m8CliCleanIo.read > 0 && m8CliCleanIo.write === 0)
+    checkTrue('M10 公开CLI混合账本：坏V2单列、有效token总量/输出/状态不受污染', m8CliMixed.exit === 0 && m8CliMixed.lines.some((line) => line.includes(m8CliKnownTokenLine)) && m8CliMixed.lines.some((line) => line.includes('V2 记录（去重后）: 1')) && m8CliMixed.lines.some((line) => line.includes('字段非法V2行（已跳过，不计入统计）: 1')) && m8CliMixedIo.read > 0 && m8CliMixedIo.write === 0)
+    const m8CliEvidenceDir = mkdtempSync(join(runnerReportsDir, 'task3-g3-m10-cli-io-'))
+    const m8CliEvidencePath = join(m8CliEvidenceDir, 'io.json')
+    writeFileSync(m8CliEvidencePath, JSON.stringify({
+      command: 'DSH_INSTALL_ROOT=C:/Users/Administrator/AppData/Roaming/npm node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-00-全流程回归.mjs --output-mode=full',
+      target: fileURLToPath(new URL('./step-00-全流程回归.mjs', import.meta.url)),
+      evidencePath: m8CliEvidencePath,
+      targetSha256: sha256Text(readFileSync(fileURLToPath(new URL('./step-00-全流程回归.mjs', import.meta.url)), 'utf8')),
+      dshInstallRoot: process.env.DSH_INSTALL_ROOT || '',
+      io: {
+        authorizedH: { reads: m8AuthorizedHReads, stats: m8AuthorizedHStats, writes: m8AuthorizedHWrites },
+        authorizedWMain: { reads: m8WMainReads, stats: m8WMainStats, counts: m8WMainIo },
+        authorizedHMain: { reads: m8HostMainReads, stats: m8HostMainStats, counts: m8HostMainIo },
+        cliLedger: { reads: m8CliIo.reads, stats: m8CliIo.stats, writes: m8CliIo.writes },
+        overlapDirect: m8OverlapDirectEvidence,
+        equalScan: m8CliEqualScanTrace,
+        rejectedScan: m8CliRejectedScanTrace,
+      },
+      snapshots: {
+        cliEqualBefore: { sha256: sha256Text(m8CliLedgerBefore.toString('utf8')), bytes: m8CliLedgerBefore.length, mtimeMs: m8CliLedgerBeforeStat.mtimeMs, wEntries: m8CliWBeforeEntries, hEntries: m8CliHBeforeEntries },
+        cliEqualAfter: { sha256: sha256Text(m8CliEqualAfterText), bytes: Buffer.byteLength(m8CliEqualAfterText, 'utf8'), mtimeMs: m8CliEqualAfterStat.mtimeMs, wEntries: m8CliEqualAfterWEntries, hEntries: m8CliEqualAfterHEntries },
+        scanLogBefore: { sha256: sha256Text(m8CliLogBefore.toString('utf8')), bytes: m8CliLogBefore.length, mtimeMs: m8CliLogBeforeStat.mtimeMs, entries: m8CliLogBeforeEntries },
+        scanLogAfter: { sha256: sha256Text(m8CliLogAfter.toString('utf8')), bytes: m8CliLogAfter.length, mtimeMs: m8CliLogAfterStat.mtimeMs, entries: m8CliLogAfterEntries },
+      },
+      cliStatuses: { equal: m8CliEqual.exit, missingRoot: m8CliMissingRoot.exit, missingTarget: m8CliMissingTarget.exit, unauthorized: m8CliUnauthorized.exit, difference: m8CliDiff.exit, deterministicFailure: m8CliDeterministic.exit, clean: m8CliClean.exit, mixed: m8CliMixed.exit },
+      cliOutputs: { clean: m8CliClean.lines, mixed: m8CliMixed.lines, unauthorized: m8CliUnauthorized.lines },
+    }, null, 2) + '\n', { encoding: 'utf8', flag: 'wx' })
+    console.log('M10 IO evidence: ' + m8CliEvidencePath)
+  } finally {
+    rmSync(m8CliFixtureDir, { recursive: true, force: true })
+  }
 }
 
 output.summary(pass, fail)

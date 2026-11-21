@@ -51,6 +51,14 @@ for (const dir of found.dirs) {
         incompleteReasons.push('L' + lineNo + ' invalid JSON: ' + (error instanceof Error ? error.message : String(error)))
         continue
       }
+      const validEvent = ev !== null && typeof ev === 'object' && !Array.isArray(ev) && (
+        (typeof ev.type === 'string' && ev.type.length > 0) ||
+        (Array.isArray(ev.type) && ev.type.length > 0 && ev.type.every((value) => typeof value === 'string' && value.length > 0))
+      )
+      if (!validEvent) {
+        incompleteReasons.push('L' + lineNo + ' invalid event structure')
+        continue
+      }
       recordCount += 1
       const t = ev.type
       const keys = Array.isArray(t) ? t : [t]
@@ -59,16 +67,36 @@ for (const dir of found.dirs) {
       if (joined.includes('agent-preset')) {
         presetEvents.push({ line: lineNo, type: joined, data: JSON.stringify(ev.data) })
       }
-      if (joined === 'plan/mode') planEvents.push({ line: lineNo, data: JSON.stringify(ev.data) })
-      if (joined === 'request/header') {
-        const h = (ev.data && ev.data.header) || ev.data || {}
-        headers.push({ line: lineNo, model: h.config && h.config.model, ntools: Array.isArray(h.tools) ? h.tools.length : 0 })
+      const hasType = (type) => keys.includes(type)
+      const isCompound = Array.isArray(t)
+      if (hasType('plan/mode') && (!isCompound || (ev.data !== undefined && ev.data !== null))) {
+        planEvents.push({ line: lineNo, data: JSON.stringify(ev.data) })
+      }
+      if (hasType('request/header')) {
+        const scalarHeader = (ev.data && ev.data.header) || ev.data || {}
+        if (!isCompound) {
+          headers.push({ line: lineNo, model: scalarHeader.config && scalarHeader.config.model, ntools: Array.isArray(scalarHeader.tools) ? scalarHeader.tools.length : 0 })
+        } else {
+          const dataObject = ev.data !== null && typeof ev.data === 'object' && !Array.isArray(ev.data) ? ev.data : null
+          const nestedHeader = dataObject && dataObject.header !== null && typeof dataObject.header === 'object' && !Array.isArray(dataObject.header) ? dataObject.header : null
+          const compoundHeaderInfo = (value) => {
+            const objectValue = value !== null && typeof value === 'object' && !Array.isArray(value) ? value : null
+            const config = objectValue && objectValue.config !== null && typeof objectValue.config === 'object' && !Array.isArray(objectValue.config) ? objectValue.config : null
+            const model = config && typeof config.model === 'string' && config.model.length > 0 ? config.model : undefined
+            const tools = objectValue && Array.isArray(objectValue.tools) ? objectValue.tools.length : null
+            return { valid: model !== undefined || tools !== null, model, ntools: tools === null ? 'unknown' : tools }
+          }
+          const nestedInfo = compoundHeaderInfo(nestedHeader)
+          const directInfo = compoundHeaderInfo(dataObject)
+          const info = nestedInfo.valid ? nestedInfo : directInfo
+          if (info.valid) headers.push({ line: lineNo, model: info.model, ntools: info.ntools })
+        }
       }
     }
   } catch (error) {
     incompleteReasons.push(error instanceof Error ? error.message : String(error))
   }
-  if (recordCount === 0) incompleteReasons.push('no JSON records')
+  if (recordCount === 0) incompleteReasons.push('no valid events')
   console.log('事件类型计数：', JSON.stringify(types))
   if (output.mode === 'full') {
     console.log('--- agent-preset 相关事件 ---')

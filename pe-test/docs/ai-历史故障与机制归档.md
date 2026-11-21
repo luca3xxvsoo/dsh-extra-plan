@@ -13,7 +13,7 @@
 1. **旧预设载体**：早期文档把预设描述为分发到 `$DSH_HOME/.agent-presets/extra-plan/` 的目录，并配套 `postinstall`/`distribute-preset.mjs`、manifest 和状态目录迁移。0.1.7 后改为 profile patch 根级 `preset-extra-plan` 声明行；extra-plan 核心包无 postinstall，启动自愈由 `lib/preset-sync.js` 负责。
 2. **旧宿主 API/插槽**：`settings.register`、`settings.plugin.item` 与旧的独立设置卡片属于已退役路径；当前 0.2 独立 `settings.plugins.tab` 不再注册，但 0.1.7 原始 `plugins.row.config` keyed row 兼容接线由 0.1.7/0.2 支持构建保留，宿主提供对应 slot 时显示插件详情配置，slot 缺失时走 configEditor/SettingsForms 或 profile 权威行后备路径。后端 `.volatile()` Config、settings API、权威行/投影/热读仍活动。
 3. **旧运行面**：`tool:cordis` 段、7 项 Cordis 工具、`codeRuntime`、`agentPresets.resolve/skills.register`、旧 workflow worker 包和旧工具结果信封不属于当前合同；旧 `customSkillDirs` 已被 `bundledSkillDir` 取代；当前只保留两项 Cordis 展示工具、`ptcRuntime` 与当前 PTC dispatch。
-4. **旧兼容面**：0.1.2-rc.1～0.1.5-rc.2 的同码兼容、旧 `session.jsonl.zstd` 主世代、旧 profile 副本和旧预设迁移链只作历史回放背景；当前 peer 范围为 0.1.7-rc.1/rc.2 与 0.2.0-rc.1/rc.2，0.2.0-rc.2 仅有用户提供的范围受限 HUMAN 基线（2026-10-01 rc2 兼容反馈批次），不能把该命名批次之外的修复说成已通过。
+4. **旧兼容面**：0.1.2-rc.1～0.1.5-rc.2 的同码兼容、旧 `session.jsonl.zstd` 主世代、旧 profile 副本和旧预设迁移链只作历史回放背景；该历史快照当时的 peer 范围为 0.1.7-rc.1/rc.2 与 0.2.0-rc.1/rc.2，0.2.0-rc.2 仅有用户提供的范围受限 HUMAN 基线（2026-10-01 rc2 兼容反馈批次），不能把该命名批次之外的修复说成已通过。
 5. **旧流程**：原 13 步流程已由主会话探查二选一、route→purpose→clarify、批准和执行/验收交接替换；旧步骤编号只用于历史报告配对。
 
 ## 故障与修复时间线
@@ -146,7 +146,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
 // source 同须用生产者自有 kind，v4 禁止旧包裹形状（kind 取旧兜底值 plugin + plugin 包名字段）；本插件统一 plugin:dsh-extra-plan。
 ```
 
-- 解释的当前行为：`malformedRecovery` 注入 developer/message 时必须自带 turn/step 坐标、`surfaceOp:'append'`、`source.kind` 用插件自有值 `plugin:dsh-extra-plan`；纯文本 content 不带 headerSeq。当前代码的注入形状按此实现。
+- 解释该快照中的当时行为：`malformedRecovery` 注入 developer/message 时必须自带 turn/step 坐标、`surfaceOp:'append'`、`source.kind` 用插件自有值 `plugin:dsh-extra-plan`；纯文本 content 不带 headerSeq。该快照中的注入形状按此实现。
 
 **2. `plugins/dsh-extra-plan/index.js:377`**（原文 377-378 行）
 
@@ -155,7 +155,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
   // 恒无 path → 整块静默失效（预设挂载成功但 skill 永远不注册）。
 ```
 
-- 解释的当前行为：说明为什么不能在 apply 期经 `agentPresets.resolve('cordis')` + `skills.register` 注册官方 SKILL.md：resolve 只返回 `{id[,broken]}`，恒无 path，整块静默失效。
+- 解释该快照中的当时行为：说明为什么不能在 apply 期经 `agentPresets.resolve('cordis')` + `skills.register` 注册官方 SKILL.md：resolve 只返回 `{id[,broken]}`，恒无 path，整块静默失效。
 
 **3. `plugins/dsh-extra-plan/index.js:381`**（原文 381-382 行）
 
@@ -164,7 +164,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
   // 非 absent 错被 registry 整体跳过，故改 bundledSkillDir（trustedHost → node:fs）+ watch: false；
 ```
 
-- 解释的当前行为：当前 C=1 创造 skill 面改由预设 `skill-filesystem` 行 `bundledSkillDir`（trustedHost → node:fs、watch:false）静态注册。
+- 解释该快照中的当时行为：当时 C=1 创造 skill 面改由预设 `skill-filesystem` 行 `bundledSkillDir`（trustedHost → node:fs、watch:false）静态注册。
 
 **4. `plugins/dsh-extra-plan/index.js:440`**（原文 440-442 行）
 
@@ -174,7 +174,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
   // console.warn 留痕，绝不放任传播（gateRuntime 已在 apply 期求值，此处不再抛）。
 ```
 
-- 解释的当前行为：`agent/created` 为 serial：监听器内异常只 `console.warn` 留痕，不得放任传播导致会话创建失败。
+- 解释该快照中的当时行为：`agent/created` 为 serial：监听器内异常只 `console.warn` 留痕，不得放任传播导致会话创建失败。
 
 **5. `plugins/dsh-extra-plan/index.js:460`**（原文 460-461 行）
 
@@ -183,7 +183,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
   // 一律从模型可见 catalog 隐藏——只影响名字可见性，skill 仍注册、按名调用仍可加载。
 ```
 
-- 解释的当前行为：C=0 用 catalog 投影隐藏三个官方 cordis skill 名；skill 仍静态注册、按名调用仍可加载，不靠「不注册」实现隐藏。
+- 解释该快照中的当时行为：C=0 用 catalog 投影隐藏三个官方 cordis skill 名；skill 仍静态注册、按名调用仍可加载，不靠「不注册」实现隐藏。
 
 **6. `plugins/dsh-extra-plan/index.js:681`**（原文 681 行）
 
@@ -191,7 +191,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
           // 0.1.7 服务名换代：codeRuntime → ptcRuntime（dsh-tools 的 PTC 运行服务）。
 ```
 
-- 解释的当前行为：SDK renderer 语言取 `ctx.get('ptcRuntime').language`；旧服务名 `codeRuntime` 已不存在，缺失时回退 `typescript`。
+- 解释该快照中的当时行为：SDK renderer 语言取 `ctx.get('ptcRuntime').language`；旧服务名 `codeRuntime` 已不存在，缺失时回退 `typescript`。
 
 ### 预设作者源 `plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml`
 
@@ -205,7 +205,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
   # 并加 watch: false（asar 目录不可 watch，否则 list() complete=false 同样不发 catalog）。
 ```
 
-- 解释的当前行为：`skill-filesystem` 行改用 `bundledSkillDir` + `watch: false` 的换通道理由（asar 下的 ctx.fs 通道会抛非 absent 错、provider 被 registry 整体跳过、catalog 一条不发）。
+- 解释该快照中的当时行为：`skill-filesystem` 行改用 `bundledSkillDir` + `watch: false` 的换通道理由（asar 下的 ctx.fs 通道会抛非 absent 错、provider 被 registry 整体跳过、catalog 一条不发）。
 
 **8. `plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml:301`**（原文 301-303 行）
 
@@ -215,7 +215,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
     # 由本组 isolate.workflowEngine 覆盖）；provider 保留本仓自定义薄委托层名。
 ```
 
-- 解释的当前行为：预设 workflow 行替身为 `dsh-workflow-ptc`（PtcWorkflowEngine 继承 WorkflowEngine，仍注册 workflowEngine），由本组 `isolate.workflowEngine` 覆盖。
+- 解释该快照中的当时行为：预设 workflow 行替身为 `dsh-workflow-ptc`（PtcWorkflowEngine 继承 WorkflowEngine，仍注册 workflowEngine），由本组 `isolate.workflowEngine` 覆盖。
 
 **9. `plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml:348`**（原文 348-357 行）
 
@@ -232,7 +232,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
 # 无卡死风险，不入任何 deny。
 ```
 
-- 解释的当前行为：`dsh-tool-cordis` 只注册两个只读工具（cordis_inspect_list 与 cordis_inspect 的 _query 名），`cordis_run` 等 5 名不得写进 deny（未知名会让 `tools.restrict()` 抛错）；第二文档四角色不挂该行，故查询工具对子代理天然不可见。
+- 解释该快照中的当时行为：`dsh-tool-cordis` 只注册两个只读工具（cordis_inspect_list 与 cordis_inspect 的 _query 名），`cordis_run` 等 5 名不得写进 deny（未知名会让 `tools.restrict()` 抛错）；第二文档四角色不挂该行，故查询工具对子代理天然不可见。
 
 ### QQBot 静态 patch `plugins/dsh-extra-plan-qqbot/cordis.patch.yml`
 
@@ -243,7 +243,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
 # 无 qqbot 0.5.0 包可实测（方案 U3/U4 未核实项）。
 ```
 
-- 解释的当前行为：本文件按 dsh `0.2.1-rc.2` 包族维护两行 insert；本机无 qqbot 0.5.0 包可实测，该环境项仍是 HUMAN。
+- 解释该快照中的当时行为：本文件按 dsh `0.2.1-rc.2` 包族维护两行 insert；本机无 qqbot 0.5.0 包可实测，该环境项仍是 HUMAN。
 
 **11. `plugins/dsh-extra-plan-qqbot/cordis.patch.yml:8`**（原文 8-11 行）
 
@@ -254,7 +254,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
     # 若目标 qqbot 宿主的基础组合已带该行，本行须删除以免重复注册。
 ```
 
-- 解释的当前行为：patch 里 insert 的 `ptc-runtime` 行提供 `ctx.ptcRuntime`；若目标 qqbot 宿主基础组合已带该行，本行必须删除以免重复注册。
+- 解释该快照中的当时行为：patch 里 insert 的 `ptc-runtime` 行提供 `ctx.ptcRuntime`；若目标 qqbot 宿主基础组合已带该行，本行必须删除以免重复注册。
 
 **12. `plugins/dsh-extra-plan-qqbot/cordis.patch.yml:14`**（原文 14-16 行）
 
@@ -264,7 +264,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
     # 预设声明行由各 bundle patch 提供）。
 ```
 
-- 解释的当前行为：patch 里 insert 的 `agent-preset-registry` 行提供 `Config{default, selectedDefault}`；`modeSelectionEnabled` 已不属于该行契约。
+- 解释该快照中的当时行为：patch 里 insert 的 `agent-preset-registry` 行提供 `Config{default, selectedDefault}`；`modeSelectionEnabled` 已不属于该行契约。
 
 **13. `plugins/dsh-extra-plan-qqbot/cordis.patch.yml:15`**（原文 15 行）
 
@@ -272,7 +272,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
     # （Config{default, selectedDefault}；modeSelectionEnabled 已在 dsh 0.1.7-rc.2 删除，勿再写；
 ```
 
-- 解释的当前行为：同上块续行：`modeSelectionEnabled` 不得再写，预设声明行由各 bundle patch 提供。
+- 解释该快照中的当时行为：同上块续行：`modeSelectionEnabled` 不得再写，预设声明行由各 bundle patch 提供。
 
 ### 回归脚本 `pe-test/tools/step-04-路由与写闸门.mjs`
 
@@ -283,7 +283,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
 // 故 Config 的 volatile/默认值契约改用源码文本静态核对（机械可核对），不依赖本机 schemastery 版本。
 ```
 
-- 解释的当前行为：该测试不 import `lib/settings.js`（顶层依赖宿主 schemastery），改为源码文本静态核对 Config 的 volatile/默认值契约，避免依赖本机 schemastery 版本。
+- 解释该快照中的当时行为：该测试不 import `lib/settings.js`（顶层依赖宿主 schemastery），改为源码文本静态核对 Config 的 volatile/默认值契约，避免依赖本机 schemastery 版本。
 
 **15. `pe-test/tools/step-04-路由与写闸门.mjs:268`**（原文 268-270 行）
 
@@ -293,7 +293,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
 // 行 config.customSkillDirs 静态注册——故 agentPresets/skills mock 与其断言整体退役。
 ```
 
-- 解释的当前行为：创造 skill 面改为预设行静态注册后，`agentPresets`/`skills` mock 及其断言整体退役；mock harness 只保留 ptcRuntime 等现行服务。
+- 解释该快照中的当时行为：创造 skill 面改为预设行静态注册后，`agentPresets`/`skills` mock 及其断言整体退役；mock harness 只保留 ptcRuntime 等当时使用的服务。
 
 **16. `pe-test/tools/step-04-路由与写闸门.mjs:269`**（原文 269 行）
 
@@ -301,7 +301,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
 // （该 resolve 在 0.1.7 只返回 {id[,broken]}，path 恒 undefined），改为预设 skill-filesystem
 ```
 
-- 解释的当前行为：同上块续行：resolve 只返回 `{id[,broken]}`、path 恒 undefined，这是静态注册取径的直接依据。
+- 解释该快照中的当时行为：同上块续行：resolve 只返回 `{id[,broken]}`、path 恒 undefined，这是静态注册取径的直接依据。
 
 **17. `pe-test/tools/step-04-路由与写闸门.mjs:279`**（原文 279 行）
 
@@ -309,7 +309,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
       // 0.1.7 服务名换代：codeRuntime → ptcRuntime（SDK renderer 语言来源）。
 ```
 
-- 解释的当前行为：harness 的 `ctx.get('ptcRuntime')` mock 对应插件 SDK renderer 语言来源，服务名为换代后的 `ptcRuntime`。
+- 解释该快照中的当时行为：harness 的 `ctx.get('ptcRuntime')` mock 对应插件 SDK renderer 语言来源，服务名为换代后的 `ptcRuntime`。
 
 **18. `pe-test/tools/step-04-路由与写闸门.mjs:598`**（原文 598-599 行）
 
@@ -318,7 +318,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
 // { agent, source }) 承担——监听器被宿主 await，抛错即会话创建失败。
 ```
 
-- 解释的当前行为：回归夹具统一用 `agent/created`（serial，payload `{ agent, source }`）驱动会话启动注册，不再有 `agent/session-start` 通道。
+- 解释该快照中的当时行为：回归夹具统一用 `agent/created`（serial，payload `{ agent, source }`）驱动会话启动注册，不再有 `agent/session-start` 通道。
 
 **19. `pe-test/tools/step-04-路由与写闸门.mjs:1270`**（原文 1270 行）
 
@@ -326,7 +326,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
       // 0.1.7 换代：dsh-tool-jobs 的完成通知源为 { kind:'tool-jobs', form:'notice' }（旧 plugin 兜底 kind 已废）。
 ```
 
-- 解释的当前行为：tool-jobs 完成通知的源形状是 `{ kind:'tool-jobs', form:'notice' }`；旧 `plugin` 兜底 kind 不再参与 job_output 重复调用放行。
+- 解释该快照中的当时行为：tool-jobs 完成通知的源形状是 `{ kind:'tool-jobs', form:'notice' }`；旧 `plugin` 兜底 kind 不再参与 job_output 重复调用放行。
 
 **20. `pe-test/tools/step-04-路由与写闸门.mjs:2211`**（原文 2211-2212 行）
 
@@ -335,7 +335,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
 // 指向官方包内 skills/（含 3 个 SKILL.md 目录）并配 watch: false；旧键 customSkillDirs 已删（坏通道）。
 ```
 
-- 解释的当前行为：装配矩阵对 `skill-filesystem` 行的期望是 `config.bundledSkillDir` 指向官方包内 skills/ 且 `watch: false`；旧键 `customSkillDirs` 已删。
+- 解释该快照中的当时行为：装配矩阵对 `skill-filesystem` 行的期望是 `config.bundledSkillDir` 指向官方包内 skills/ 且 `watch: false`；旧键 `customSkillDirs` 已删。
 
 **21. `pe-test/tools/step-04-路由与写闸门.mjs:2666`**（原文 2666-2668 行）
 
@@ -345,7 +345,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
   // 不同的值，确保「读到文件」与「回退 fallback」可区分。
 ```
 
-- 解释的当前行为：live-config 夹具取 profile patch 内的 `settings` 行（`id='dsh-extra-plan-settings'` + `config.<key>` 定位），exploreBudget 取非默认值以区分「读到文件」与「回退 fallback」。
+- 解释该快照中的当时行为：live-config 夹具取 profile patch 内的 `settings` 行（`id='dsh-extra-plan-settings'` + `config.<key>` 定位），exploreBudget 取非默认值以区分「读到文件」与「回退 fallback」。
 
 ### 其它回归脚本与共享模块
 
@@ -355,7 +355,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
 // 0.1.7 换代：agent/session-start 已删除，启动注册改由 agent/created（serial）承担。
 ```
 
-- 解释的当前行为：schema 段启动注册由 `agent/created` 承担，回归脚本直接调用其监听器。
+- 解释该快照中的当时行为：schema 段启动注册由 `agent/created` 承担，回归脚本直接调用其监听器。
 
 **23. `pe-test/tools/step-00-跨平台写拦截.mjs:104`**（原文 104 行）
 
@@ -363,7 +363,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
   'nano notes.txt',       // 文本编辑器写文件：拦截（v0.1.7 起 BASH_MUTATION 覆盖 nano/vim/vi）
 ```
 
-- 解释的当前行为：`nano`/`vim`/`vi` 文本编辑器写文件归入 `BASH_MUTATION` 拦截集合，用例数据保持该行。
+- 解释该快照中的当时行为：`nano`/`vim`/`vi` 文本编辑器写文件归入 `BASH_MUTATION` 拦截集合，用例数据保持该行。
 
 **24. `plugins/dsh-extra-plan/lib/executor-spawn.js:9`**（原文 9-10 行）
 
@@ -372,7 +372,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
 // 故不列出——deny 未知名会使宿主 tools.restrict() 抛错），预设加载路径下本清单不可达；
 ```
 
-- 解释的当前行为：`DEFAULT_DENY` 仅作 fallback（11 项，含 subagent_plan）；不列 `cordis_run` 的原因是 deny 未知名会让 `tools.restrict()` 抛错，预设加载路径恒以 `config.deny` 为准。
+- 解释该快照中的当时行为：`DEFAULT_DENY` 仅作 fallback（11 项，含 subagent_plan）；不列 `cordis_run` 的原因是 deny 未知名会让 `tools.restrict()` 抛错，预设加载路径恒以 `config.deny` 为准。
 
 **25. `pe-test/_shared/host-deps.mjs:14`**（原文 14-15 行）
 
@@ -381,7 +381,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
 //   会话内工具集变化产生的线上 tool_removal 被 API 422 拒绝、整会话报废；详见 ai-宿主耦合台账.md CF12）。
 ```
 
-- 解释的当前行为：现场告警语义：profile 副本会被 DSH 优先解析并顶替宿主同名运行时行（缺 tool-update 投影），线上 `tool_removal` 会被 API 422 拒绝、整会话报废；只告警不改解析。
+- 解释该快照中的当时行为：现场告警语义：profile 副本会被 DSH 优先解析并顶替宿主同名运行时行（缺 tool-update 投影），线上 `tool_removal` 会被 API 422 拒绝、整会话报废；只告警不改解析。
 
 ### 插件库 `plugins/dsh-extra-plan/lib`
 
@@ -392,7 +392,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
 // 旧 customSkillDirs 经 ctx.fs 扫 asar 抛非 absent 错 → 改 trustedHost/node:fs 通道 + watch: false）：
 ```
 
-- 解释的当前行为：`CREATIVE_SKILL_NAMES` 对应 `skill-filesystem` 行的 `bundledSkillDir` 静态注册（trustedHost/node:fs 通道 + watch:false），C=0 时只做投影隐藏。
+- 解释该快照中的当时行为：`CREATIVE_SKILL_NAMES` 对应 `skill-filesystem` 行的 `bundledSkillDir` 静态注册（trustedHost/node:fs 通道 + watch:false），C=0 时只做投影隐藏。
 
 **27. `plugins/dsh-extra-plan/lib/preset-yaml.js:550`**（原文 550 行）
 

@@ -221,12 +221,19 @@ export function createPlanDraftToolFactories({ savePlanDir, atomicCommit, atomic
         const pairedDeclared = resolveWorkspacePath(pathContext, join(savePlanDir, 'draft', pairedName), { purpose: PURPOSE })
         if (draftBaseOf(pairedDeclared.path, expectedDraftDir) === null) throw new Error('edit_plan_draft: 无法重建配对草稿路径：' + pairedDeclared.path + '（应为 ' + draftDirLabel + '/ 下的 .md_mid）')
         let pairedTarget = null
+        let pairedText = ''
         try {
           pairedTarget = validateReadTarget(pathContext, pairedDeclared, { expectedType: 'file', purpose: PURPOSE })
         } catch (error) {
-          pairedTarget = null
+          if (errorCodeOf(error) !== 'TARGET_MISSING') throw new Error('edit_plan_draft: 配对草稿无法读取：' + errorText(error), { cause: error })
         }
-        const pairedText = pairedTarget === null ? '' : readText(pairedTarget.realPath)
+        if (pairedTarget !== null) {
+          try {
+            pairedText = readText(pairedTarget.realPath)
+          } catch (error) {
+            throw new Error('edit_plan_draft: 配对草稿无法读取：' + errorText(error), { cause: error })
+          }
+        }
         const planText = isPlanDraft ? editedText : pairedText
         const checklistText = isPlanDraft ? pairedText : editedText
         // 检测顺序与 save_plan 完全一致：未探查标记 → 合同校验 → 源核实 → 证据核实。
@@ -236,7 +243,7 @@ export function createPlanDraftToolFactories({ savePlanDir, atomicCommit, atomic
           const markerLine = planText.slice(0, planText.indexOf(unexploredMarker)).split('\n').length
           return savedWithErrors([currentTarget.path], original.lines.length, ['位置：第 ' + markerLine + ' 行 方案中含未探查/待确认标记「' + unexploredMarker + '」'], 'edit_plan_draft: 方案中包含方括号包裹的未探查/待确认标记。请先申请追加预算继续探查，确认所有项均已探查核实后再调用 save_plan（本次修改未写回草稿）')
         }
-        // 先写回再校验：合同等校验不通过时修改也已经落盘，可以继续改（未探查标记是唯一整批不写回的入口）。
+        // 通过读取和标记前置检查后先写回再校验；合同等不通过时仍可继续编辑。
         try {
           writeDraft(dirname(currentTarget.path), draftName, editedText, pathContext)
         } catch (error) {

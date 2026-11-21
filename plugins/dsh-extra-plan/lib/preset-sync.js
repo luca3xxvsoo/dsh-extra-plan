@@ -259,10 +259,12 @@ export function resolveUnifiedConfig(options = {}) {
   return { values, defaults, sources, patch, gateWords, authority, diagnostics }
 }
 
-export function restateSettingsConfig(current, inherited, patch = {}) {
+export function restateSettingsConfig(current, inherited, patch = {}, localConfig) {
   const currentConfig = publicConfigOf(current)
   const inheritedConfig = publicConfigOf(inherited)
   const source = { ...inheritedConfig, ...currentConfig }
+  // 纯重述调用可传已知本地配置为首参；持久化调用必须显式区分 Loader 与本地覆写。
+  const own = localConfig === undefined ? currentConfig : localConfig
   const hasGatePatch = Object.prototype.hasOwnProperty.call(patch, 'gateWords')
   const validatedPatch = {}
   for (const [key, value] of Object.entries(patch)) {
@@ -273,7 +275,10 @@ export function restateSettingsConfig(current, inherited, patch = {}) {
       validatedPatch[key] = normalizeSettingValue(definition, value)
     }
   }
-  const next = {}
+  // 只保留当前行自有的非管理字段；继承层陌生字段不物化到 override。
+  const next = Object.fromEntries(Object.entries(own).filter(([key]) =>
+    key !== 'gateWords' && !SETTING_DEFINITIONS.some((definition) => definition.key === key),
+  ))
   for (const definition of SETTING_DEFINITIONS) {
     const key = definition.key
     if (validDefinitionValue(definition, source[key])) next[key] = normalizeSettingValue(definition, source[key])
@@ -479,12 +484,26 @@ function findEntry(rows, id) {
   return matches.length === 1 ? matches[0].entry : undefined
 }
 
+export async function editSettingsConfig(editor, entry, patch) {
+  await editor.edit(entry, (current, inherited) => {
+    // 宿主已在写锁内重载。current 是 Loader 值；首次覆写时它可能全来自继承层。
+    const rows = editor.configuration()
+    const latest = Array.isArray(rows) ? findEntry(rows, SETTINGS_ROW_ID) : undefined
+    const row = latest !== undefined && latest === entry ? rows.find((item) => item?.entry === entry) : undefined
+    const own = row?.override
+    if (row === undefined || entry.options.name !== 'dsh-extra-plan/settings' || !plainObject(own) || row.disabled === true || entry.disabled === true || entry.options.disabled === true) {
+      throw new Error('无法确定唯一全局管理行的本地覆写：' + SETTINGS_ROW_ID)
+    }
+    return restateSettingsConfig(current, inherited, patch, own)
+  })
+}
+
 async function applyPlan(editor, rows, planned, isActive = () => true) {
   if (planned.settings !== null) {
     const entry = findEntry(rows, SETTINGS_ROW_ID)
     if (entry === undefined) throw new Error('全局管理行缺失：' + SETTINGS_ROW_ID)
     if (!isActive()) return
-    await editor.edit(entry, (current, inherited) => restateSettingsConfig(current, inherited, planned.settings.values))
+    await editSettingsConfig(editor, entry, planned.settings.values)
     if (!isActive()) return
   }
 }

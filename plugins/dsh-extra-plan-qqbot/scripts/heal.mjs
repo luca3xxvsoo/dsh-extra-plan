@@ -28,6 +28,10 @@ function installFailure(reason, detail) {
   return { error: output }
 }
 
+function patchAllowsInstall(patch) {
+  return patch && (patch.status === 'idempotent' || patch.status === 'preserved' || (patch.status === 'skipped' && patch.reason === 'no-file'))
+}
+
 function errorText(error) {
   return error instanceof Error ? error.message : String(error)
 }
@@ -112,42 +116,42 @@ function strictInstall(dshHome) {
     if (!sameRealPath(targetRealPath, webRealPath)) return installFailure('target-other-link', targetRealPath)
   }
 
-  const preflight = healQqbotCompatibility(dshHome, { profileNames: [profileName], context: access.context, dryRun: true })
+  const installOptions = { profileNames: [profileName], context: access.context, strict: true }
+  const isSelected = (result) => result.profiles.length === 1 && result.count === 1 && result.results.length === 1 && result.profiles[0] === profileName
+  const preflight = healQqbotCompatibility(dshHome, { ...installOptions, dryRun: true })
   if (preflight.error) return installFailure('preflight-error', preflight.error)
-  if (preflight.profiles.length !== 1 || preflight.count !== 1 || preflight.results.length !== 1 || preflight.profiles[0] !== profileName) {
-    return installFailure('preflight-target-mismatch', { profiles: preflight.profiles, count: preflight.count })
-  }
+  if (!isSelected(preflight)) return installFailure('preflight-target-mismatch', { profiles: preflight.profiles, count: preflight.count })
   const preflightSummary = preflight.results[0]
-  const preflightPatch = preflightSummary.patch
-  const patchReady = preflightPatch && (preflightPatch.status === 'idempotent' || preflightPatch.status === 'ready' || (preflightPatch.status === 'skipped' && preflightPatch.reason === 'no-file'))
-  if (!patchReady) return installFailure('patch-preflight-failed', preflightPatch)
+  if (!patchAllowsInstall(preflightSummary.patch)) return installFailure('patch-preflight-failed', preflightSummary.patch)
   const preflightLink = preflightSummary.link
   if (!preflightLink || (preflightLink.status !== 'planned' && preflightLink.status !== 'up-to-date')) return installFailure('link-preflight-failed', preflightLink)
 
-  const result = healQqbotCompatibility(dshHome, { profileNames: [profileName], context: access.context })
-  if (result.error) return installFailure('heal-error', result.error)
-  if (result.profiles.length !== 1 || result.count !== 1 || result.results.length !== 1 || result.profiles[0] !== profileName) {
-    return installFailure('heal-target-mismatch', { profiles: result.profiles, count: result.count })
+  const result = healQqbotCompatibility(dshHome, installOptions)
+  const summary = result.results.find((item) => item.profile === profileName)
+  const link = summary?.link
+  const fail = (reason, detail) => {
+    // patch 仅只读诊断；唯一可恢复的副作用是本轮成功创建的映射。
+    if (typeof link?.rollback !== 'function') return installFailure(reason, detail)
+    return installFailure(reason, { failure: detail, rollback: link.rollback() })
   }
-  const summary = result.results[0]
+  if (result.error) return fail('heal-error', result.error)
+  if (!isSelected(result)) return fail('heal-target-mismatch', { profiles: result.profiles, count: result.count })
   const patch = summary.patch
-  const patchValid = patch && (patch.status === 'idempotent' || patch.status === 'migrated' || (patch.status === 'skipped' && patch.reason === 'no-file'))
-  if (!patchValid) return installFailure('patch-failed', patch)
-  const link = summary.link
-  if (!link || (link.status !== 'linked' && link.status !== 'up-to-date')) return installFailure('link-failed', link)
+  if (!patchAllowsInstall(patch)) return fail('patch-failed', patch)
+  if (!link || (link.status !== 'linked' && link.status !== 'up-to-date')) return fail('link-failed', link)
 
   let finalStat
   let finalSource
   let finalTarget
   try {
     finalStat = lstatSync(target.path)
-    finalSource = nativeRealpathSync(webTarget.path)
+    finalSource = validateReadTarget(access.context, webTarget, { expectedType: 'directory' }).realPath
     finalTarget = nativeRealpathSync(target.path)
   } catch (error) {
-    return installFailure('final-link-check-failed', errorText(error))
+    return fail('final-link-check-failed', errorText(error))
   }
-  if (!isLinkEntity(target.path, finalStat)) return installFailure('final-target-not-link', target.path)
-  if (!sameRealPath(finalSource, finalTarget)) return installFailure('final-realpath-mismatch', { source: finalSource, target: finalTarget })
+  if (!isLinkEntity(target.path, finalStat)) return fail('final-target-not-link', target.path)
+  if (!sameRealPath(finalSource, webRealPath) || !sameRealPath(finalSource, finalTarget)) return fail('final-realpath-mismatch', { source: finalSource, target: finalTarget })
   return { profile: profileName, patch: patch.status, link: link.status }
 }
 
@@ -164,7 +168,7 @@ function printHelp() {
     '  DSH_HOME=<绝对路径> node scripts/heal.mjs --install',
     '规则: 无参仅提示，不因继承 DSH_HOME 执行自愈。',
     '维护测试必须同时显式 --host-root 与 --profile，且固定 dryRun、零Host写。',
-    '--install 是明确部署入口；缺根、候选超限或校验失败均失败且零业务写。',
+    '--install 是明确部署入口；预检失败零写，发布后失败仅恢复可确认的本轮链接；来源不明的 patch 条目原样保留。',
   ].join('\n') + '\n')
 }
 

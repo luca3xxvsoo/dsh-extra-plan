@@ -139,6 +139,8 @@ function runCli(home, opts = {}) {
     delete env.DSH_PROFILE
     delete env.SESSION_ID
     if (yamlNodePath !== '') env.NODE_PATH = [yamlNodePath, env.NODE_PATH].filter((value) => typeof value === 'string' && value !== '').join(process.platform === 'win32' ? ';' : ':')
+    if (typeof opts.injectLinkPath === 'string') env.DSH_EXTRA_PLAN_INJECT_LINK_PATH = opts.injectLinkPath
+    if (typeof opts.injectMarkerPath === 'string') env.DSH_EXTRA_PLAN_INJECT_MARKER = opts.injectMarkerPath
     const mode = opts.mode === undefined ? 'help' : opts.mode
     const profile = opts.profile === undefined ? 'qqbot' : opts.profile
     const cliScript = mode === 'help' ? SOURCE_HEAL : prepareCliPackage(home, profile)
@@ -149,7 +151,11 @@ function runCli(home, opts = {}) {
       env.DSH_HOME = home
     }
     else if (mode !== 'help') throw new Error('unknown-cli-mode:' + mode)
-    result = spawnSync(process.execPath, ['--import', pathToFileURL(join(SOURCE_ROOT, 'pe-test', '_shared', 'host-preload.mjs')).href, cliScript, ...args], {
+    if (typeof opts.beforeSpawn === 'function') opts.beforeSpawn({ cliScript, args, env })
+    const nodeArgs = ['--import', pathToFileURL(join(SOURCE_ROOT, 'pe-test', '_shared', 'host-preload.mjs')).href]
+    if (typeof opts.preloadPath === 'string') nodeArgs.push('--import', pathToFileURL(opts.preloadPath).href)
+    nodeArgs.push(cliScript, ...args)
+    result = spawnSync(process.execPath, nodeArgs, {
       cwd: home,
       timeout: 120000,
       stdio: ['ignore', stdoutFd, stderrFd],
@@ -318,18 +324,65 @@ if (yamlResolution.module === null) {
   const parsed1Result = parseYaml(after1)
   const parsed1 = parsed1Result.ok ? parsed1Result.value : null
   const backups1 = patchBackups(qqProfileDir(h1))
-  const backupText1 = backups1.length === 1 ? readFileSync(join(qqProfileDir(h1), backups1[0]), 'utf8') : ''
   const hasLegacy1 = Array.isArray(parsed1) && parsed1.some((row) => isMap(row) &&
     ((row.id === 'code-runtime' && row.name === '@deepseek-ai/dsh-code-runtime-worker-thread') ||
      (row.id === 'agent-presets' && row.name === '@deepseek-ai/dsh-agent-presets' && isMap(row.config) && row.config.default === 'standard')))
-  check('生产同形 patch 只迁移两个旧根级完整块', r1.status === 'migrated' && Array.isArray(r1.migrated) && r1.migrated.join('/') === 'code-runtime/agent-presets')
-  check('迁移后顶层数组有效且 im-qqbot/非旧版完整用户行保留、旧根级块消失', parsed1Result.ok && Array.isArray(parsed1) && isMap(rootRow(parsed1, 'im-qqbot')) && isMap(rootRow(parsed1, 'user-custom')) && !hasLegacy1, parsed1Result.error || '')
+  check('无所有权旧根级块保留即成功且列出两个 retained', r1.status === 'preserved' && Array.isArray(r1.retained) && r1.retained.join('/') === 'code-runtime/agent-presets')
+  check('保留后顶层数组有效且 im-qqbot/用户行/旧根级块均保留', parsed1Result.ok && Array.isArray(parsed1) && isMap(rootRow(parsed1, 'im-qqbot')) && isMap(rootRow(parsed1, 'user-custom')) && hasLegacy1 && after1 === before1, parsed1Result.error || '')
   const parsedMarker1 = rootRow(parsed1, 'user-custom')?.config?.marker
-  check('合法非目标 !!js 条目迁移后保留原表达式且不求值', after1.includes('marker: !!js "' + markerExpr + '"') && !after1.includes(markerExpr + '()') && parsedMarker1?.__jsExpr === markerExpr && globalThis.__qqbotFixtureSideEffect === undefined)
-  check('实际迁移产生一份备份且备份字节等于迁移前', backups1.length === 1 && backupText1 === before1)
+  check('合法非目标 !!js 条目保留原表达式且不求值', after1.includes('marker: !!js "' + markerExpr + '"') && !after1.includes(markerExpr + '()') && parsedMarker1?.__jsExpr === markerExpr && globalThis.__qqbotFixtureSideEffect === undefined)
+  check('无所有权旧块零写且不创建备份', backups1.length === 0 && readFileSync(qqPatch(h1), 'utf8') === before1)
   const repeatBefore1 = after1
   const repeatResult1 = healPatchAt(qqProfileDir(h1))
-  check('迁移重复调用字节不变且不新增备份', repeatResult1.status === 'idempotent' && readFileSync(qqPatch(h1), 'utf8') === repeatBefore1 && patchBackups(qqProfileDir(h1)).length === 1)
+  check('无所有权重复调用仍保留、字节不变且不新增备份', repeatResult1.status === 'preserved' && readFileSync(qqPatch(h1), 'utf8') === repeatBefore1 && patchBackups(qqProfileDir(h1)).length === 0)
+
+  // 同 ID 的 bundle insert 候选是实际冲突：独立夹具必须阻塞并保持原文/备份集合。
+  const hConflict = join(tempRoot, 's2-legacy-root-conflict')
+  makeProfile(hConflict, 'qqbot')
+  installOwnPlugin(hConflict, 'qqbot')
+  const conflictText = [
+    '- id: ptc-runtime',
+    "  name: '@deepseek-ai/dsh-ptc-runtime-node'",
+    '- id: agent-preset-registry',
+    "  name: '@deepseek-ai/dsh-agent-preset-registry'",
+    '  config:',
+    '    default: extra-plan',
+    '- id: user-custom',
+    '  name: user',
+    '',
+  ].join('\n')
+  writeFileSync(qqPatch(hConflict), conflictText, 'utf8')
+  const conflictBefore = readFileSync(qqPatch(hConflict), 'utf8')
+  const conflictResult = healPatchAt(qqProfileDir(hConflict))
+  check('ptc-runtime 与 agent-preset-registry 同 ID 候选实际冲突阻断且零写', conflictResult.status === 'failed' && conflictResult.reason === 'legacy-root-conflict' && conflictResult.conflicts?.join('/') === 'ptc-runtime/agent-preset-registry' && readFileSync(qqPatch(hConflict), 'utf8') === conflictBefore && patchBackups(qqProfileDir(hConflict)).length === 0)
+
+  const independentLegacyForms = [
+    { id: 'code-runtime', name: '@deepseek-ai/dsh-code-runtime-worker-thread', kind: 'preserved' },
+    { id: 'agent-presets', name: '@deepseek-ai/dsh-agent-presets', default: 'standard', kind: 'preserved' },
+    { id: 'ptc-runtime', name: '@deepseek-ai/dsh-ptc-runtime-node', kind: 'conflict' },
+    { id: 'agent-preset-registry', name: '@deepseek-ai/dsh-agent-preset-registry', default: 'extra-plan', kind: 'conflict' },
+  ]
+  for (const form of independentLegacyForms) {
+    const home = join(tempRoot, 's2-independent-' + form.id)
+    makeProfile(home, 'qqbot')
+    installOwnPlugin(home, 'qqbot')
+    const lines = ['- id: ' + form.id, '  name: ' + JSON.stringify(form.name)]
+    if (form.default !== undefined) lines.push('  config:', '    default: ' + form.default)
+    const text = lines.join('\n') + '\n'
+    writeFileSync(qqPatch(home), text, 'utf8')
+    const beforeBytes = readFileSync(qqPatch(home))
+    const beforeEntries = readdirSync(qqProfileDir(home)).sort()
+    const result = healPatchAt(qqProfileDir(home))
+    const afterBytes = readFileSync(qqPatch(home))
+    const afterEntries = readdirSync(qqProfileDir(home)).sort()
+    const bytesUnchanged = beforeBytes.equals(afterBytes)
+    const directoryUnchanged = isDeepStrictEqual(beforeEntries, afterEntries)
+    const backupsUnchanged = patchBackups(qqProfileDir(home)).length === 0
+    const observed = form.kind === 'preserved'
+      ? result.status === 'preserved' && result.retained?.join('/') === form.id
+      : result.status === 'failed' && result.reason === 'legacy-root-conflict' && result.conflicts?.join('/') === form.id
+    check('独立根级形态 ' + form.id + ' 判据/原始字节/目录/备份集合', observed && bytesUnchanged && directoryUnchanged && backupsUnchanged)
+  }
 
   // G5：根级注释可出现在旧块前后或映射键之间；CRLF 与无末尾换行均须保真。
   const hComments = join(tempRoot, 's2-comments-crlf-noeol')
@@ -357,11 +410,11 @@ if (yamlResolution.module === null) {
   const commentsAfter = readFileSync(qqPatch(hComments), 'utf8')
   const commentsParsed = parseYaml(commentsAfter)
   const commentsBackups = patchBackups(qqProfileDir(hComments))
-  const commentsOldGone = !commentsAfter.includes('code-runtime-worker-thread') && !commentsAfter.includes('dsh-agent-presets')
-  check('G5 旧块前后/块内根级注释保留且旧块完整删除', commentsResult.status === 'migrated' && commentsOldGone && commentsAfter.includes('# before-old') && commentsAfter.includes('# root comment between rows') && commentsAfter.includes('# root comment between mapping keys') && commentsAfter.includes('# root comment after old block') && commentsAfter.includes('# file-tail') && commentsAfter.includes('user-before') && commentsParsed.ok)
-  check('G5 注释夹具保留CRLF与无末尾换行、备份保留原字节', !commentsAfter.includes('\n') || commentsAfter.includes('\r\n') && !commentsAfter.replace(/\r\n/g, '').includes('\n') && !commentsAfter.endsWith('\n') && commentsBackups.length === 1 && readFileSync(join(qqProfileDir(hComments), commentsBackups[0]), 'utf8') === commentsBefore)
+  const commentsOldKept = commentsAfter.includes('code-runtime-worker-thread') && commentsAfter.includes('dsh-agent-presets')
+  check('G5 无所有权旧块及前后/块内根级注释全部保留', commentsResult.status === 'preserved' && commentsOldKept && commentsAfter.includes('# before-old') && commentsAfter.includes('# root comment between rows') && commentsAfter.includes('# root comment between mapping keys') && commentsAfter.includes('# root comment after old block') && commentsAfter.includes('# file-tail') && commentsAfter.includes('user-before') && commentsAfter === commentsBefore && commentsParsed.ok)
+  check('G5 注释夹具保留CRLF与无末尾换行、零备份', commentsAfter.includes('\r\n') && !commentsAfter.replace(/\r\n/g, '').includes('\n') && !commentsAfter.endsWith('\n') && commentsBackups.length === 0)
   const commentsRepeat = healPatchAt(qqProfileDir(hComments))
-  check('G5 注释夹具二次迁移幂等且备份不增', commentsRepeat.status === 'idempotent' && readFileSync(qqPatch(hComments), 'utf8') === commentsAfter && patchBackups(qqProfileDir(hComments)).length === 1)
+  check('G5 注释夹具二次保留且备份不增', commentsRepeat.status === 'preserved' && readFileSync(qqPatch(hComments), 'utf8') === commentsAfter && patchBackups(qqProfileDir(hComments)).length === 0)
 
   // 仅余根级注释时补合法顶层空数组，保留CRLF和无末尾换行。
   const hOnlyComments = join(tempRoot, 's3-only-comments-crlf-noeol')
@@ -372,10 +425,10 @@ if (yamlResolution.module === null) {
   const onlyCommentsResult = healPatchAt(qqProfileDir(hOnlyComments))
   const onlyCommentsAfter = readFileSync(qqPatch(hOnlyComments), 'utf8')
   const onlyCommentsParsed = parseYaml(onlyCommentsAfter)
-  check('G5 仅余根级注释时保留注释并补[]/EOL', onlyCommentsResult.status === 'migrated' && onlyCommentsAfter === '# top\r\n[]\r\n# tail' && onlyCommentsParsed.ok && Array.isArray(onlyCommentsParsed.value))
-  check('G5 仅余注释二次迁移幂等', healPatchAt(qqProfileDir(hOnlyComments)).status === 'idempotent')
+  check('G5 仅余根级注释与无所有权旧块原文保留', onlyCommentsResult.status === 'preserved' && onlyCommentsAfter === onlyCommentsBefore && onlyCommentsParsed.ok && Array.isArray(onlyCommentsParsed.value) && onlyCommentsAfter.includes('code-runtime-worker-thread'))
+  check('G5 仅余注释二次仍保留且无备份', healPatchAt(qqProfileDir(hOnlyComments)).status === 'preserved' && patchBackups(qqProfileDir(hOnlyComments)).length === 0)
 
-  // ③ 仅剩旧块 → 写入 []；正确 [] 与重复调用均不写不备份
+  // ③ 仅剩无所有权旧块 → 保留原文；正确 [] 与重复调用均不写不备份
   const hOnly = join(tempRoot, 's3-only-legacy')
   makeProfile(hOnly, 'qqbot')
   installOwnPlugin(hOnly, 'qqbot')
@@ -385,8 +438,8 @@ if (yamlResolution.module === null) {
   const onlyAfter = readFileSync(qqPatch(hOnly), 'utf8')
   const onlyParsedResult = parseYaml(onlyAfter)
   const onlyParsed = onlyParsedResult.ok ? onlyParsedResult.value : null
-  check('仅剩旧块时迁移结果为顶层 [] 而非空文件', onlyResult.status === 'migrated' && onlyAfter === '[]\n' && onlyParsedResult.ok && Array.isArray(onlyParsed) && onlyParsed.length === 0, onlyParsedResult.error || '')
-  check('仅剩旧块时产生一份备份', patchBackups(qqProfileDir(hOnly)).length === 1)
+  check('仅剩旧块时保留顶层数组原文且仍可解析', onlyResult.status === 'preserved' && onlyAfter === beforeOnly && onlyParsedResult.ok && Array.isArray(onlyParsed) && onlyParsed.length > 0, onlyParsedResult.error || '')
+  check('仅剩旧块时零写且不产生备份', patchBackups(qqProfileDir(hOnly)).length === 0)
 
   const hEmpty = join(tempRoot, 's3-empty-array')
   makeProfile(hEmpty, 'qqbot')
@@ -481,15 +534,45 @@ if (yamlResolution.module === null) {
   writeFileSync(qqPatch(hInvalid), invalidText, 'utf8')
   const invalidResult = healPatchAt(qqProfileDir(hInvalid))
   const invalidAfter = readFileSync(qqPatch(hInvalid), 'utf8')
-  check('非法 YAML 写后校验失败并恢复原文', invalidResult.status === 'failed' && invalidResult.reason === 'verify-failed' && invalidAfter === invalidText && patchBackups(qqProfileDir(hInvalid)).length === 1)
+  check('非法 YAML 在解析阶段跳过、原文与备份均不变', invalidResult.status === 'skipped' && invalidResult.reason === 'parse-failed' && invalidAfter === invalidText && patchBackups(qqProfileDir(hInvalid)).length === 0)
    const invalidSummary = captureWarn(() => healAt(hInvalid))
-   check('healQqbotCompatibility 返回逐 profile patch/link 摘要并收集 failed', invalidSummary.result !== undefined && invalidSummary.result.results.length === 1 && invalidSummary.result.failed.length === 1 && invalidSummary.result.failed[0].patch.status === 'failed')
+   check('healQqbotCompatibility 返回逐 profile patch/link 摘要且解析失败不伪报 failed', invalidSummary.result !== undefined && invalidSummary.result.results.length === 1 && invalidSummary.result.failed.length === 0 && invalidSummary.result.results[0].patch.status === 'skipped' && invalidSummary.result.results[0].patch.reason === 'parse-failed')
    const applySummary = captureWarn(() => applyAt(hInvalid))
-   check('启动 apply 对 failed 项输出结构化失败摘要且不抛', applySummary.messages.some((message) => message.includes('自愈失败摘要') && message.includes('verify-failed')))
+   check('启动 apply 对解析失败保留原状且不输出伪造失败摘要', applySummary.messages.every((message) => !message.includes('自愈失败摘要')))
    const cliInvalidBefore = readFileSync(qqPatch(hInvalid), 'utf8')
    const cliInvalidBackups = bakCount(qqProfileDir(hInvalid))
    const cliInvalid = runCli(hInvalid, { mode: 'install' })
-   check('CLI --install 非法迁移恢复原文但保留恢复备份并返回非零', cliInvalid.status === 1 && cliInvalid.error === undefined && cliInvalid.stderr.includes('严格安装失败') && cliInvalid.stderr.includes('patch-failed') && cliInvalid.stderr.includes('verify-failed') && readFileSync(qqPatch(hInvalid), 'utf8') === cliInvalidBefore && bakCount(qqProfileDir(hInvalid)) === cliInvalidBackups + 1, JSON.stringify({ status: cliInvalid.status, error: cliInvalid.error, stdout: cliInvalid.stdout, stderr: cliInvalid.stderr, backups: [cliInvalidBackups, bakCount(qqProfileDir(hInvalid))] }))
+   check('CLI --install 非法 patch 预检失败、原文保留且零新增备份', cliInvalid.status === 1 && cliInvalid.error === undefined && cliInvalid.stderr.includes('严格安装失败') && cliInvalid.stderr.includes('patch-preflight-failed') && cliInvalid.stderr.includes('parse-failed') && readFileSync(qqPatch(hInvalid), 'utf8') === cliInvalidBefore && bakCount(qqProfileDir(hInvalid)) === cliInvalidBackups, JSON.stringify({ status: cliInvalid.status, error: cliInvalid.error, stdout: cliInvalid.stdout, stderr: cliInvalid.stderr, backups: [cliInvalidBackups, bakCount(qqProfileDir(hInvalid))] }))
+
+  const cliNoFollowIdentity = (path) => {
+    try {
+      const stat = lstatSync(path)
+      return { exists: true, type: stat.isSymbolicLink() ? 'symlink' : stat.isDirectory() ? 'directory' : stat.isFile() ? 'file' : 'other', mode: stat.mode, dev: stat.dev, ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs, birthtimeMs: stat.birthtimeMs }
+    } catch (error) { return { exists: false, code: error?.code || String(error) } }
+  }
+  const cliStateNoFollow = (home) => {
+    const profileDir = qqProfileDir(home)
+    const nodeModules = join(profileDir, 'node_modules')
+    return {
+      patch: readFileSync(qqPatch(home)),
+      backups: readdirSync(profileDir).filter((name) => name.startsWith('cordis.patch.yml.bak-')).sort(),
+      link: cliNoFollowIdentity(qqExtraPlanDir(home)),
+      profileEntries: readdirSync(profileDir).sort(),
+      nodeModulesEntries: readdirSync(nodeModules).sort(),
+    }
+  }
+  // 独立 CLI 预检失败：不提前建 dsh-extra-plan 链接，子进程前后原始状态必须全等。
+  const hCliPreflight = join(tempRoot, 'cli-preflight-failure')
+  makeProfile(hCliPreflight, 'qqbot')
+  installOwnPlugin(hCliPreflight, 'qqbot')
+  createWebPackage(hCliPreflight)
+  writeFileSync(qqPatch(hCliPreflight), invalidText, 'utf8')
+  let cliPreflightBefore
+  const cliPreflight = runCli(hCliPreflight, { mode: 'install', beforeSpawn: () => { cliPreflightBefore = cliStateNoFollow(hCliPreflight) } })
+  const cliPreflightAfter = cliStateNoFollow(hCliPreflight)
+  const cliPreflightExact = cliPreflightBefore !== undefined && cliPreflight.status === 1 && cliPreflight.error === undefined && cliPreflight.stderr.includes('patch-preflight-failed') && cliPreflight.stderr.includes('parse-failed') && cliPreflightBefore.patch.equals(cliPreflightAfter.patch) && isDeepStrictEqual(cliPreflightBefore.backups, cliPreflightAfter.backups) && isDeepStrictEqual(cliPreflightBefore.link, cliPreflightAfter.link) && isDeepStrictEqual(cliPreflightBefore.profileEntries, cliPreflightAfter.profileEntries) && isDeepStrictEqual(cliPreflightBefore.nodeModulesEntries, cliPreflightAfter.nodeModulesEntries)
+  check('M9 独立 CLI 预检失败子进程前后 patch/备份名称/链接身份/目录项全等', cliPreflightExact, JSON.stringify({ mode: 'strictInstall-cli-preflight', status: cliPreflight.status, error: cliPreflight.error, stdout: cliPreflight.stdout, stderr: cliPreflight.stderr, before: cliPreflightBefore, after: cliPreflightAfter }))
+  console.log('M9_CLI_PREFLIGHT_EVIDENCE ' + JSON.stringify({ mode: 'strictInstall-cli-preflight', status: cliPreflight.status, stdout: cliPreflight.stdout, stderr: cliPreflight.stderr, before: cliPreflightBefore, after: cliPreflightAfter, exact: cliPreflightExact }))
 
   // ⑤a 写回失败即恢复失败路径：返回 failed/write-failed，不改写原文、不伪报成功
   const hWriteFailed = join(tempRoot, 's5a-write-failed')
@@ -509,7 +592,7 @@ if (yamlResolution.module === null) {
     return originalWriteFile(...args)
   }, () => captureWarn(() => healAt(hWriteFailed)))
   const writeFailedPatch = writeFailedSummary.result?.results?.[0]?.patch
-  check('写回失败时返回 failed/write-failed 且原文保持迁移前字节', writeFailedPatch !== undefined && writeFailedPatch.status === 'failed' && writeFailedPatch.reason === 'write-failed' && writeFailedSummary.result.failed.length === 1 && readFileSync(qqPatch(hWriteFailed), 'utf8') === writeFailedText)
+  check('无所有权旧块不进入写回路径且注入写错误不改变原文', writeFailedPatch !== undefined && writeFailedPatch.status === 'preserved' && writeFailedPatch.reason === 'legacy-ownership-unverified' && writeFailedSummary.result.failed.length === 0 && readFileSync(qqPatch(hWriteFailed), 'utf8') === writeFailedText && patchBackups(qqProfileDir(hWriteFailed)).length === 0)
 
   // ⑤b patch 文件可见但读取失败：保留 healPatchRows 原形状，dryRun CLI 进入失败分类
   const hReadFailed = join(tempRoot, 's5b-read-failed')
@@ -569,11 +652,12 @@ if (yamlResolution.module === null) {
   const h12 = join(tempRoot, 's12-explicit-profile')
   makeProfile(h12, 'qqbot')
   installOwnPlugin(h12, 'qqbot')
-  writeFileSync(qqPatch(h12), legacyPatch(true), 'utf8')
+  const applyBefore12 = legacyPatch(true)
+  writeFileSync(qqPatch(h12), applyBefore12, 'utf8')
   applyAt(h12)
   const applied12Result = parseYaml(readFileSync(qqPatch(h12), 'utf8'))
   const applied12 = applied12Result.ok ? applied12Result.value : null
-  check('index.js apply 使用显式W内QQ profile事实迁移旧根级块', applied12Result.ok && Array.isArray(applied12) && isMap(rootRow(applied12, 'im-qqbot')) && !applied12.some((row) => isMap(row) && (row.id === 'code-runtime' || row.id === 'agent-presets')), applied12Result.error || '')
+  check('index.js apply 使用显式W内QQ profile事实保留无所有权旧根级块且零写', applied12Result.ok && Array.isArray(applied12) && isMap(rootRow(applied12, 'im-qqbot')) && isMap(rootRow(applied12, 'code-runtime')) && isMap(rootRow(applied12, 'agent-presets')) && readFileSync(qqPatch(h12), 'utf8') === applyBefore12, applied12Result.error || '')
   check('findOwnQqbotProfiles 直测命中显式QQ profile', profilesAt(h12).includes('qqbot'))
 
   // CLI 冒烟：完整W假安装树显式 --install，验证迁移/建链与退出码
@@ -585,14 +669,27 @@ if (yamlResolution.module === null) {
   const cli = runCli(hCli, { mode: 'install' })
   const cliParsedResult = parseYaml(readFileSync(qqPatch(hCli), 'utf8'))
   const cliParsed = cliParsedResult.ok ? cliParsedResult.value : null
-  check('CLI --install 完整W假树退出码 0 且严格安装完成', cli.status === 0 && cli.error === undefined && cli.stdout.includes('严格安装完成'), JSON.stringify({ status: cli.status, error: cli.error, stdout: cli.stdout, stderr: cli.stderr }))
-  check('CLI --install 实际迁移旧根级块并完成W内目标最终链接核验', cli.status === 0 && cli.stdout.includes('严格安装完成') && cliParsedResult.ok && Array.isArray(cliParsed) && isMap(rootRow(cliParsed, 'im-qqbot')) && !cliParsed.some((row) => isMap(row) && (row.id === 'code-runtime' || row.id === 'agent-presets')), JSON.stringify({ parseError: cliParsedResult.error, parsed: cliParsed, cliStatus: cli.status, cliStdout: cli.stdout, linkObserver: existsSync(qqExtraPlanDir(hCli)) && isLink(qqExtraPlanDir(hCli)), exists: existsSync(qqExtraPlanDir(hCli)), resolved: resolve(qqExtraPlanDir(hCli)), real: existsSync(qqExtraPlanDir(hCli)) ? realpathSync(qqExtraPlanDir(hCli)) : null, platform: process.platform }))
-  const cliRepeat = runCli(hCli, { mode: 'install' })
-  check('CLI --install 幂等重跑退出码 0', cliRepeat.status === 0 && cliRepeat.error === undefined, JSON.stringify({ status: cliRepeat.status, error: cliRepeat.error, stdout: cliRepeat.stdout, stderr: cliRepeat.stderr }))
+  const cliLegacyKept = Array.isArray(cliParsed) && cliParsed.some((row) => isMap(row) && row.id === 'code-runtime' && row.name === '@deepseek-ai/dsh-code-runtime-worker-thread') && cliParsed.some((row) => isMap(row) && row.id === 'agent-presets' && row.name === '@deepseek-ai/dsh-agent-presets' && isMap(row.config) && row.config.default === 'standard')
   const cliLinkPath = qqExtraPlanDir(hCli)
+  const cliWebPath = webExtraPlanDir(hCli)
+  const cliNativeRealpath = typeof realpathSync.native === 'function' ? realpathSync.native : realpathSync
+  const cliLinkReal = existsSync(cliLinkPath) ? cliNativeRealpath(cliLinkPath) : undefined
+  const cliWebReal = existsSync(cliWebPath) ? cliNativeRealpath(cliWebPath) : undefined
+  let cliLinkStat
+  try { cliLinkStat = lstatSync(cliLinkPath) } catch {}
+  const cliLinkEntity = cliLinkStat !== undefined && (cliLinkStat.isSymbolicLink() || process.platform === 'win32' && cliLinkReal !== undefined && !sameRealPath(cliLinkReal, resolve(cliLinkPath), process.platform))
+  const cliLinkToAuthorizedWeb = cliLinkEntity && cliLinkReal !== undefined && cliWebReal !== undefined && sameRealPath(cliLinkReal, cliWebReal, process.platform)
+  check('CLI --install 完整W假树退出码 0 且严格安装完成', cli.status === 0 && cli.error === undefined && cli.stdout.includes('严格安装完成'), JSON.stringify({ status: cli.status, error: cli.error, stdout: cli.stdout, stderr: cli.stderr }))
+  check('CLI --install 实际迁移旧根级块并完成授权Web目标真实路径核验', cli.status === 0 && cli.stdout.includes('严格安装完成') && cliParsedResult.ok && Array.isArray(cliParsed) && isMap(rootRow(cliParsed, 'im-qqbot')) && cliLegacyKept && cliLinkToAuthorizedWeb, JSON.stringify({ parseError: cliParsedResult.error, parsed: cliParsed, cliStatus: cli.status, cliStdout: cli.stdout, linkObserver: cliLinkEntity, linkPath: resolve(cliLinkPath), linkReal: cliLinkReal, webPath: resolve(cliWebPath), webReal: cliWebReal, linkToAuthorizedWeb: cliLinkToAuthorizedWeb, platform: process.platform }))
+  const cliRepeatPatchBefore = readFileSync(qqPatch(hCli), 'utf8')
+  const cliRepeatBackupsBefore = patchBackups(qqProfileDir(hCli)).slice().sort()
+  const cliRepeat = runCli(hCli, { mode: 'install' })
+  const cliRepeatPatchAfter = readFileSync(qqPatch(hCli), 'utf8')
+  const cliRepeatBackupsAfter = patchBackups(qqProfileDir(hCli)).slice().sort()
+  check('CLI --install 幂等重跑退出码 0且patch字节/备份集合不变', cliRepeat.status === 0 && cliRepeat.error === undefined && cliRepeatPatchAfter === cliRepeatPatchBefore && isDeepStrictEqual(cliRepeatBackupsAfter, cliRepeatBackupsBefore), JSON.stringify({ status: cliRepeat.status, error: cliRepeat.error, stdout: cliRepeat.stdout, stderr: cliRepeat.stderr, patchUnchanged: cliRepeatPatchAfter === cliRepeatPatchBefore, backupsBefore: cliRepeatBackupsBefore, backupsAfter: cliRepeatBackupsAfter }))
   let cliLinkDetail
-  try { const linkStat = lstatSync(cliLinkPath); cliLinkDetail = { platform: process.platform, exists: true, symbolic: linkStat.isSymbolicLink(), directory: linkStat.isDirectory(), resolved: resolve(cliLinkPath), real: realpathSync(cliLinkPath), detected: isLink(cliLinkPath) } } catch (error) { cliLinkDetail = { platform: process.platform, exists: false, error: String(error) } }
-  check('CLI --install 重复运行文件字节不变且 .bak-* 不增', bakCount(qqProfileDir(hCli)) === 1, JSON.stringify({ backups: bakCount(qqProfileDir(hCli)), cliLinkDetail }))
+  try { const linkStat = lstatSync(cliLinkPath); cliLinkDetail = { platform: process.platform, exists: true, symbolic: linkStat.isSymbolicLink(), directory: linkStat.isDirectory(), resolved: resolve(cliLinkPath), real: cliLinkReal, detected: cliLinkEntity, authorizedWebReal: cliWebReal, linkToAuthorizedWeb: cliLinkToAuthorizedWeb } } catch (error) { cliLinkDetail = { platform: process.platform, exists: false, error: String(error), authorizedWebReal: cliWebReal, linkToAuthorizedWeb: false } }
+  check('CLI --install 重复运行文件字节不变且 .bak-* 不增', cliRepeatPatchAfter === cliRepeatPatchBefore && isDeepStrictEqual(cliRepeatBackupsAfter, cliRepeatBackupsBefore), JSON.stringify({ backupsBefore: cliRepeatBackupsBefore, backupsAfter: cliRepeatBackupsAfter, cliLinkDetail }))
 
   // 无参CLI仅帮助；显式维护仅dryRun，均不依赖普通环境自愈。
   const hEmptyCli = join(tempRoot, 'cli-empty')
@@ -768,6 +865,91 @@ if (yamlResolution.module === null) {
   faultCase('SYNC 注入备份错误返回 failed/fatal 且原文保留', 'beforeBackup')
   faultCase('SYNC 注入 rename 错误恢复原文且不伪装 synced', 'beforeRename')
   faultCase('SYNC 注入终验错误从备份恢复原文且不伪装 synced', 'beforeFinalVerify')
+
+  // M9 strictInstall 真实 CLI 最终核验失败：仅在W合成子进程内区分本轮身份、同名实体、外来替换与身份不明，禁止真实删除 Junction。
+  const cliFinalScenarios = [
+    { id: 'created-link', kind: 'created-link', label: '本轮创建映射' },
+    { id: 'same-name-directory', kind: 'ordinary-directory', label: '同名普通目录' },
+    { id: 'identity-changed-same-destination', kind: 'identity-changed', label: '身份变化但目的相同' },
+    { id: 'destination-changed-same-identity', kind: 'destination-changed', label: '目的变化但身份相同' },
+    { id: 'unknown-identity', kind: 'unknown-identity', label: '身份不明' },
+  ]
+  const sameFixturePath = (left, right) => typeof left === 'string' && typeof right === 'string' && left.split(String.fromCharCode(92)).join('/').toLowerCase() === right.split(String.fromCharCode(92)).join('/').toLowerCase()
+  for (const cliFinalScenario of cliFinalScenarios) {
+    const hCliFinal = join(tempRoot, 'G1-cli-final-verify-failure-' + cliFinalScenario.id)
+    makeProfile(hCliFinal, 'qqbot')
+    installOwnPlugin(hCliFinal, 'qqbot')
+    createWebPackage(hCliFinal)
+    writeFileSync(qqPatch(hCliFinal), legacyPatch(true), 'utf8')
+    const cliFinalTarget = qqExtraPlanDir(hCliFinal)
+    const cliFinalMarker = join(hCliFinal, 'G1-' + cliFinalScenario.id + '-marker.json')
+    const cliFinalPreload = join(hCliFinal, 'G1-' + cliFinalScenario.id + '-preload.mjs')
+    writeFileSync(cliFinalPreload, [
+      "import fs from 'node:fs'",
+      "import { syncBuiltinESMExports } from 'node:module'",
+      "const target = process.env.DSH_EXTRA_PLAN_INJECT_LINK_PATH",
+      "const marker = process.env.DSH_EXTRA_PLAN_INJECT_MARKER",
+      "const scenario = " + JSON.stringify(cliFinalScenario.kind),
+      "const key = (value) => String(value).split(String.fromCharCode(92)).join('/').toLowerCase()",
+      "const sameTarget = (value) => target !== undefined && key(value) === key(target)",
+      "const native = fs.realpathSync.native",
+      "const originalLstat = fs.lstatSync",
+      "const originalReadlink = fs.readlinkSync",
+      "const originalUnlink = fs.unlinkSync",
+      "const separator = target !== undefined && target.includes(String.fromCharCode(92)) ? String.fromCharCode(92) : '/'",
+      "const expectedWeb = target === undefined ? undefined : target.replace(separator + 'qqbot' + separator, separator + 'web' + separator)",
+      "const foreignWeb = expectedWeb === undefined ? undefined : expectedWeb + '-foreign-identity'",
+      "const toJson = (value) => JSON.stringify(value, (_, item) => typeof item === 'bigint' ? String(item) : item)",
+      "const evidence = { fixture: 'W-synthetic-fs', scenario, target, expectedWeb, foreignWeb, targetCalls: 0, postCreateRealpathCalls: 0, createdObserved: false, syntheticTargetPresent: false, syntheticLstatReads: 0, syntheticReadlinkReads: 0, syntheticAbsenceRechecks: 0, syntheticUnlinkCalls: 0, syntheticUnlinkIntercepted: false, syntheticEvents: [], syntheticCreatedIdentity: { dev: 7101n, ino: 9201n, birthtimeNs: 1700000000000000000n, ctimeNs: 1700000000000001000n }, syntheticChangedIdentity: { dev: 7101n, ino: 9202n, birthtimeNs: 1700000000000000000n, ctimeNs: 1700000000000002000n }, syntheticFinalObject: undefined, syntheticRollback: undefined, actualDiskBefore: undefined, actualDiskAfterCreate: undefined, actualDiskAtExit: undefined }",
+      "const identitySummary = (identity) => ({ dev: String(identity.dev), ino: String(identity.ino), birthtimeNs: String(identity.birthtimeNs), ctimeNs: String(identity.ctimeNs) })",
+      "const linkStat = (identity) => ({ isSymbolicLink: () => true, isDirectory: () => true, isFile: () => false, ...identity })",
+      "const directoryStat = () => ({ isSymbolicLink: () => false, isDirectory: () => true, isFile: () => false, ino: 0n, dev: 0n, birthtimeNs: 0n, ctimeNs: 0n })",
+      "const diskSnapshot = () => { if (target === undefined) return { exists: false, reason: 'target-unset' }; try { const stat = originalLstat(target); let realPath; try { realPath = native(target) } catch (error) { realPath = 'unavailable:' + String(error) }; let actualReadlink; try { actualReadlink = originalReadlink(target) } catch {} return { exists: true, objectType: stat.isSymbolicLink() ? 'symlink' : stat.isDirectory() ? 'directory' : stat.isFile() ? 'file' : 'other', symbolic: stat.isSymbolicLink(), directory: stat.isDirectory(), realPath, actualReadlink } } catch (error) { return { exists: false, code: error?.code || String(error) } } }",
+      "evidence.actualDiskBefore = diskSnapshot()",
+      "const captureCreation = () => { if (evidence.createdObserved || target === undefined) return; try { originalLstat(target); evidence.createdObserved = true; evidence.syntheticTargetPresent = true; evidence.actualDiskAfterCreate = diskSnapshot(); evidence.syntheticEvents.push({ phase: 'creation-observed', actualDisk: evidence.actualDiskAfterCreate, synthetic: { objectType: 'link', identity: identitySummary(evidence.syntheticCreatedIdentity), readlink: expectedWeb } }) } catch {} }",
+      "const finalIdentity = () => scenario === 'identity-changed' ? evidence.syntheticChangedIdentity : evidence.syntheticCreatedIdentity",
+      "const finalObject = () => { const identity = finalIdentity(); evidence.syntheticFinalObject = { objectType: 'link', identity: identitySummary(identity), readlink: expectedWeb, destination: expectedWeb }; evidence.syntheticEvents.push({ phase: 'final-object', objectType: 'link', identity: evidence.syntheticFinalObject.identity, readlink: expectedWeb }); return linkStat(identity) }",
+      "const rollbackObject = () => { if (scenario === 'ordinary-directory') { evidence.syntheticRollback = { objectType: 'directory', identityAvailable: false, deletionExpected: false }; evidence.syntheticEvents.push({ phase: 'rollback-object', objectType: 'directory', unlinkExpected: false }); return directoryStat() }; if (scenario === 'unknown-identity') { evidence.syntheticRollback = { objectType: 'unknown-identity', reason: 'synthetic-identity-unavailable', deletionExpected: false }; evidence.syntheticEvents.push({ phase: 'rollback-object', objectType: 'unknown-identity', unlinkExpected: false }); const error = new Error('synthetic-identity-unavailable'); error.code = 'EIO'; throw error }; const identity = scenario === 'identity-changed' ? evidence.syntheticChangedIdentity : evidence.syntheticCreatedIdentity; const readlink = scenario === 'destination-changed' ? foreignWeb : expectedWeb; const identitySame = scenario === 'created-link' && identitySummary(identity).ino === identitySummary(evidence.syntheticCreatedIdentity).ino && readlink === expectedWeb; evidence.syntheticRollback = { objectType: 'link', identity: identitySummary(identity), readlink, identitySame, deletionExpected: identitySame }; evidence.syntheticEvents.push({ phase: 'rollback-object', objectType: 'link', identity: evidence.syntheticRollback.identity, readlink, identitySame, unlinkExpected: identitySame }); return linkStat(identity) }",
+      "const wrappedNative = (value, ...args) => { const result = native(value, ...args); if (!sameTarget(value)) return result; evidence.targetCalls += 1; captureCreation(); if (!evidence.createdObserved) return result; evidence.postCreateRealpathCalls += 1; if (evidence.postCreateRealpathCalls >= 2) { evidence.syntheticEvents.push({ phase: 'final-realpath', result: 'synthetic-final-mismatch', targetCalls: evidence.targetCalls }); return String(value) + '-synthetic-final-mismatch' }; return result }",
+      "const wrappedLstat = (value, ...args) => { if (!sameTarget(value)) return originalLstat(value, ...args); const actual = originalLstat(value, ...args); captureCreation(); if (!evidence.createdObserved) return actual; if (!evidence.syntheticTargetPresent) { evidence.syntheticAbsenceRechecks += 1; if (evidence.syntheticRollback !== undefined) evidence.syntheticRollback.status = 'restored'; evidence.syntheticEvents.push({ phase: 'synthetic-absence-recheck', target: value, status: 'restored', actualDelete: false }); const error = new Error('synthetic-target-absent'); error.code = 'ENOENT'; error.path = value; throw error }; evidence.syntheticLstatReads += 1; if (evidence.syntheticLstatReads <= 2) { evidence.syntheticEvents.push({ phase: evidence.syntheticLstatReads === 1 ? 'creation-identity' : 'creation-verification', objectType: 'link', identity: identitySummary(evidence.syntheticCreatedIdentity), readlink: expectedWeb }); return linkStat(evidence.syntheticCreatedIdentity) }; if (evidence.syntheticFinalObject === undefined) return finalObject(); if (evidence.syntheticRollback === undefined) return rollbackObject(); return linkStat(evidence.syntheticCreatedIdentity) }",
+      "const wrappedReadlink = (value, ...args) => { if (sameTarget(value)) { if (!evidence.syntheticTargetPresent) { const error = new Error('synthetic-target-absent'); error.code = 'ENOENT'; error.path = value; throw error }; evidence.syntheticReadlinkReads += 1; if (evidence.syntheticFinalObject !== undefined && scenario === 'destination-changed') return foreignWeb; if (evidence.syntheticFinalObject !== undefined && scenario === 'unknown-identity') { const error = new Error('synthetic-identity-unavailable'); error.code = 'EIO'; throw error }; return expectedWeb }; return originalReadlink(value, ...args) }",
+      "const wrappedUnlink = (value, ...args) => { if (sameTarget(value)) { evidence.syntheticUnlinkCalls += 1; evidence.syntheticUnlinkIntercepted = true; if (scenario === 'created-link') evidence.syntheticTargetPresent = false; evidence.syntheticEvents.push({ phase: 'synthetic-unlink', target: value, actualDelete: false, modelPresentAfter: evidence.syntheticTargetPresent }); return }; return originalUnlink(value, ...args) }",
+      "const writeMarker = () => { evidence.actualDiskAtExit = diskSnapshot(); if (marker) fs.writeFileSync(marker, toJson(evidence), 'utf8') }",
+      "try { fs.realpathSync.native = wrappedNative } catch { Object.defineProperty(fs.realpathSync, 'native', { value: wrappedNative, configurable: true }) }",
+      "fs.lstatSync = wrappedLstat",
+      "fs.readlinkSync = wrappedReadlink",
+      "fs.unlinkSync = wrappedUnlink",
+      "syncBuiltinESMExports()",
+      "process.on('exit', writeMarker)",
+    ].join('\n'), 'utf8')
+    let cliFinalBefore
+    const cliFinal = runCli(hCliFinal, { mode: 'install', preloadPath: cliFinalPreload, injectLinkPath: cliFinalTarget, injectMarkerPath: cliFinalMarker, beforeSpawn: () => { cliFinalBefore = cliStateNoFollow(hCliFinal) } })
+    const cliFinalAfter = cliStateNoFollow(hCliFinal)
+    let cliFinalMarkerValue
+    let cliFinalMarkerError
+    try { cliFinalMarkerValue = JSON.parse(readFileSync(cliFinalMarker, 'utf8')) } catch (error) { cliFinalMarkerError = String(error); cliFinalMarkerValue = undefined }
+    const cliFinalExpectedNodeModules = cliFinalBefore === undefined ? [] : [...new Set([...cliFinalBefore.nodeModulesEntries, 'dsh-extra-plan'])].sort()
+    const positiveIdentity = cliFinalMarkerValue?.syntheticCreatedIdentity
+    const identityValid = (identity) => identity !== undefined && ['dev', 'ino', 'birthtimeNs', 'ctimeNs'].every((keyName) => typeof identity[keyName] === 'string' && /^[1-9][0-9]*$/.test(identity[keyName]))
+    const identityEqual = (left, right) => identityValid(left) && identityValid(right) && left.dev === right.dev && left.ino === right.ino && left.birthtimeNs === right.birthtimeNs && left.ctimeNs === right.ctimeNs
+    const creationEvent = cliFinalMarkerValue?.syntheticEvents?.find((event) => event.phase === 'creation-observed')
+    const cliFinalSyntheticReady = cliFinalMarkerValue?.fixture === 'W-synthetic-fs' && cliFinalMarkerValue.createdObserved === true && identityValid(positiveIdentity) && sameFixturePath(cliFinalMarkerValue.expectedWeb, creationEvent?.synthetic?.readlink) && cliFinalMarkerValue.actualDiskBefore?.exists === false && cliFinalMarkerValue.actualDiskAfterCreate?.exists === true && cliFinalMarkerValue.actualDiskAtExit?.exists === true
+    const cliFinalActualDiskStable = cliFinalMarkerValue?.actualDiskAfterCreate?.objectType === cliFinalMarkerValue?.actualDiskAtExit?.objectType && sameFixturePath(cliFinalMarkerValue?.actualDiskAfterCreate?.realPath, cliFinalMarkerValue?.actualDiskAtExit?.realPath)
+    const cliFinalScenarioOk = cliFinalScenario.kind === 'created-link'
+      ? cliFinalMarkerValue?.syntheticFinalObject?.objectType === 'link' && cliFinalMarkerValue?.syntheticRollback?.objectType === 'link' && identityEqual(cliFinalMarkerValue.syntheticRollback.identity, positiveIdentity) && sameFixturePath(cliFinalMarkerValue.syntheticRollback.readlink, cliFinalMarkerValue.expectedWeb) && cliFinalMarkerValue.syntheticRollback.identitySame === true && cliFinalMarkerValue.syntheticRollback.status === 'restored' && cliFinalMarkerValue.syntheticUnlinkCalls === 1 && cliFinalMarkerValue.syntheticUnlinkIntercepted === true && cliFinalMarkerValue.syntheticAbsenceRechecks >= 1 && cliFinalMarkerValue.syntheticTargetPresent === false
+      : cliFinalScenario.kind === 'ordinary-directory'
+        ? cliFinalMarkerValue?.syntheticFinalObject?.objectType === 'link' && cliFinalMarkerValue?.syntheticRollback?.objectType === 'directory' && cliFinalMarkerValue.syntheticUnlinkCalls === 0 && cliFinalMarkerValue.syntheticAbsenceRechecks === 0 && cliFinalMarkerValue.syntheticTargetPresent === true
+        : cliFinalScenario.kind === 'identity-changed'
+          ? cliFinalMarkerValue?.syntheticFinalObject?.objectType === 'link' && cliFinalMarkerValue?.syntheticRollback?.objectType === 'link' && !identityEqual(cliFinalMarkerValue.syntheticRollback.identity, positiveIdentity) && sameFixturePath(cliFinalMarkerValue.syntheticRollback.readlink, cliFinalMarkerValue.expectedWeb) && cliFinalMarkerValue.syntheticRollback.identitySame === false && cliFinalMarkerValue.syntheticUnlinkCalls === 0 && cliFinalMarkerValue.syntheticAbsenceRechecks === 0 && cliFinalMarkerValue.syntheticTargetPresent === true
+          : cliFinalScenario.kind === 'destination-changed'
+            ? cliFinalMarkerValue?.syntheticFinalObject?.objectType === 'link' && cliFinalMarkerValue?.syntheticRollback?.objectType === 'link' && identityEqual(cliFinalMarkerValue.syntheticRollback.identity, positiveIdentity) && !sameFixturePath(cliFinalMarkerValue.syntheticRollback.readlink, cliFinalMarkerValue.expectedWeb) && cliFinalMarkerValue.syntheticRollback.identitySame === false && cliFinalMarkerValue.syntheticUnlinkCalls === 0 && cliFinalMarkerValue.syntheticAbsenceRechecks === 0 && cliFinalMarkerValue.syntheticTargetPresent === true
+            : cliFinalMarkerValue?.syntheticFinalObject?.objectType === 'link' && cliFinalMarkerValue?.syntheticRollback?.objectType === 'unknown-identity' && cliFinalMarkerValue.syntheticUnlinkCalls === 0 && cliFinalMarkerValue.syntheticAbsenceRechecks === 0 && cliFinalMarkerValue.syntheticTargetPresent === true
+    const cliFinalCommand = [process.execPath, '--import', pathToFileURL(join(SOURCE_ROOT, 'pe-test', '_shared', 'host-preload.mjs')).href, '--import', pathToFileURL(cliFinalPreload).href, join(hCliFinal, '.cli-package', 'scripts', 'heal.mjs'), '--install'].map((value) => JSON.stringify(value)).join(' ')
+    const cliFinalFailureOk = cliFinalBefore !== undefined && cliFinal.status === 1 && cliFinal.error === undefined && cliFinal.stderr.includes('严格安装失败') && cliFinal.stderr.includes('final-realpath-mismatch') && (cliFinalScenario.kind !== 'created-link' || cliFinal.stderr.includes('"rollback":{"status":"restored"}')) && !cliFinal.stdout.includes('严格安装完成') && cliFinalSyntheticReady && cliFinalActualDiskStable && cliFinalScenarioOk && cliFinalMarkerValue?.syntheticEvents?.some((event) => event.phase === 'final-realpath') && cliFinalBefore.patch.equals(cliFinalAfter.patch) && isDeepStrictEqual(cliFinalBefore.backups, cliFinalAfter.backups) && isDeepStrictEqual(cliFinalBefore.profileEntries, cliFinalAfter.profileEntries) && isDeepStrictEqual(cliFinalAfter.nodeModulesEntries, cliFinalExpectedNodeModules) && cliFinalBefore.link.exists === false && cliFinalAfter.link.exists === true
+    check('M9 ' + cliFinalScenario.label + ' CLI严格终验身份/目的与安全回滚分支', cliFinalFailureOk, JSON.stringify({ mode: 'strictInstall-cli-synthetic-fs', scenario: cliFinalScenario.kind, status: cliFinal.status, command: cliFinalCommand, cwd: hCliFinal, env: { DSH_HOME: hCliFinal, DSH_INSTALL_ROOT: process.env.DSH_INSTALL_ROOT || null }, exitCode: cliFinal.status, error: cliFinal.error, stdout: cliFinal.stdout, stderr: cliFinal.stderr, synthetic: cliFinalMarkerValue, markerError: cliFinalMarkerError, actualDiskBefore: cliFinalMarkerValue?.actualDiskBefore, actualDiskAfterCreate: cliFinalMarkerValue?.actualDiskAfterCreate, actualDiskAtExit: cliFinalMarkerValue?.actualDiskAtExit, before: cliFinalBefore, after: cliFinalAfter, expectedNodeModules: cliFinalExpectedNodeModules }))
+    console.log('M9_CLI_FINAL_EVIDENCE ' + JSON.stringify({ mode: 'strictInstall-cli-synthetic-fs', scenario: cliFinalScenario.kind, label: cliFinalScenario.label, command: cliFinalCommand, cwd: hCliFinal, env: { DSH_HOME: hCliFinal, DSH_INSTALL_ROOT: process.env.DSH_INSTALL_ROOT || null }, exitCode: cliFinal.status, stdout: cliFinal.stdout, stderr: cliFinal.stderr, synthetic: cliFinalMarkerValue, markerError: cliFinalMarkerError, actualDiskBefore: cliFinalMarkerValue?.actualDiskBefore, actualDiskAfterCreate: cliFinalMarkerValue?.actualDiskAfterCreate, actualDiskAtExit: cliFinalMarkerValue?.actualDiskAtExit, before: cliFinalBefore, after: cliFinalAfter, expectedNodeModules: cliFinalExpectedNodeModules, passed: cliFinalFailureOk }))
+  }
+  if (process.platform === 'win32') emitSkip('M9-WINDOWS-JUNCTION-DELETE', 'INCOMPLETE', { mode: 'real-windows-junction', reason: '实机安全删除未验证；未尝试其它删除方式；W合成身份证据已单列', identityAvailable: false })
 
   const missingRootDoc = join(tempRoot, 'missing-root', 'profiles', 'web', 'cordis.patch.yml')
   const unavailableRoot = qqbotSync.resolveProfilesRoot({ documentPath: missingRootDoc, profileFacts: profileContextOf(tempRoot, 'web'), pathContext: contextOf(tempRoot), env: {} })

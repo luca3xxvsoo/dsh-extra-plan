@@ -19,6 +19,7 @@ import {
   validateSettingValue,
 } from './preset-settings.js'
 import {
+  editSettingsConfig,
   effectiveRowConfig,
   mountPresetSync,
   resolveUnifiedConfig,
@@ -628,8 +629,11 @@ function createApiHandler(ctx, syncEditor, getProfileSync) {
         }
         // 普通项缺失/非法都补；gateWords 同口径：缺失或非法都补当前资产默认，落盘即整组覆盖并删除旧键。
         if (!configGateWordsValid(current)) patch.gateWords = state.gateWords
-        const nextConfig = restateSettingsConfig(current, row.inherited, patch)
-        if (!isDeepStrictEqual(nextConfig, current)) await editor.edit(row.entry, (latest, inherited) => restateSettingsConfig(latest, inherited, patch))
+        // 预判只比托管值；本地未知键归属在实际 edit 回调中确认。
+        const nextManaged = restateSettingsConfig(current, row.inherited, patch, {})
+        if (Object.entries(nextManaged).some(([key, value]) => !isDeepStrictEqual(value, current[key]))) {
+          await editSettingsConfig(editor, row.entry, patch)
+        }
         const profileSync = await syncEditor(editor, { trigger: 'api-put' })
         const request = profileSync !== null && profileSync !== undefined && profileSync.request !== undefined ? profileSync.request : undefined
         const response = responseForProfile(editor, profileSync, true, request, true, pathContext)

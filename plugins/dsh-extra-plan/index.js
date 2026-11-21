@@ -75,7 +75,6 @@ export const decisions = {
   askOrGateReturnGateReason,
   runCodeSiteCount,
   isRunCodeSubCall,
-  runCodeDispatchGateReason,
   runCodeDispatchCapText,
   runCodeGroupDenyReason,
   childControlGateReason,
@@ -124,7 +123,7 @@ import { causeChainOf } from './lib/runtime-static.js'
 import { createAgentRuntime, isLiveDelegation } from './lib/agent-runtime.js'
 import { sessionEvents, isSubagentChild, observeSessionLeaseOf } from './lib/agent-session.js'
 import { createModelRouting, isExplicitRoute, isExplicitEffort, resolveAgentRouteSources, decidePlannerModelUse, PLANNER_PROBE_TIMEOUT_MS, PLANNER_BLOCKED_REASON, NON_PLANNER_BLOCKED_REASON, sortPlannerCandidates } from './lib/model-routing.js'
-import { FREE_TOOLS, routeDenyReason, planDenyReason, executorDenyReason, applyGateOutcome, isBootstrapPhase, deriveFlowState, filterBootstrapContextDecision, dedupeProjectedContextDecision, catalogHasWriteTools, isReadOnlyChildByCatalog, schemasHasWriteTools, schemasHasTool, catalogIsCollapsed, subagentProbeGateReason, shellMutationReason, childControlGateReason, plannerGateReason, childReadonlyGateReason, jobOutputGateReason, recordJobOutputCall, pollGuardGateReason, recordPollGuardCall, probeDisposalWarning, mainGateReason, runCodeGroupDenyReason, aggregateRunCodeDenyReason, decomposeRunCode, runCodeCatchGateReason, collectRunCodeSites, askOrGateReturnGateReason, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, runCodeDispatchCapText } from './lib/gate-decisions.js'
+import { FREE_TOOLS, routeDenyReason, planDenyReason, executorDenyReason, applyGateOutcome, isBootstrapPhase, deriveFlowState, filterBootstrapContextDecision, dedupeProjectedContextDecision, catalogHasWriteTools, isReadOnlyChildByCatalog, schemasHasWriteTools, schemasHasTool, catalogIsCollapsed, subagentProbeGateReason, shellMutationReason, childControlGateReason, plannerGateReason, childReadonlyGateReason, jobOutputGateReason, recordJobOutputCall, pollGuardGateReason, recordPollGuardCall, probeDisposalWarning, mainGateReason, runCodeGroupDenyReason, aggregateRunCodeDenyReason, decomposeRunCode, runCodeCatchGateReason, collectRunCodeSites, askOrGateReturnGateReason, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchCapText } from './lib/gate-decisions.js'
 import { CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilteredToolsSdk, resolveToolsSdkRenderer, sdkSchemasForRendering, toolSdkSchemasOf, projectSkillCatalogDecision, PTC_SECTION_NAME, READ_SECTION_NAME, SDK_SECTION_NAME, sectionOf, hasSection, hasNonEmptySection } from './lib/assembly-presentation.js'
 import { createSdkTextCache } from './lib/sdk-text-cache.js'
 import { createRuntimeLifecycle } from './lib/runtime-lifecycle.js'

@@ -1,6 +1,6 @@
 // step-99-用量统计.mjs — 单一账本 extra-plan-usage-ledger.jsonl 的只读统计与现场扫描对拍。
 // 用法：node step-99-用量统计.mjs <extra-plan-usage-ledger.jsonl>[--host-root <H>]
-//       node step-99-用量统计.mjs --compare <extra-plan-usage-ledger.jsonl>[--host-root <H>]
+//       node step-99-用量统计.mjs --compare --host-root <H> <extra-plan-usage-ledger.jsonl>
 // 默认宿主落点为 logs/dsh-extra-plan/extra-plan-usage-ledger.jsonl；CLI仍须显式传入账本位置，插件启动时扫描 %DSH_HOME%/sessions 下的 v4 会话日志
 // 后覆盖式更新（幂等）；本工具只统计这一份账本，不写账本字节、不建目录、不写临时文件。
 // 观察分两类，两类都不取锁：W 目标直接只读统计；显式 Host 只读目标做最多两次稳定观察，
@@ -10,10 +10,9 @@
 // 结果，与账本按 role→model 两维汇总逐项对拍，输出四张表与三条自检结论；全程只读、零写盘。
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { basename, isAbsolute, join, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { ALLOWED_PRESETS, isSchemaDocRow, scanUsageRows } from '../../plugins/dsh-extra-plan/lib/usage-ledger.js'
+import { ALLOWED_PRESETS, isSchemaDocRow, scanUsageRows, validationIssue } from '../../plugins/dsh-extra-plan/lib/usage-ledger.js'
 import { prepareWriteTarget, resolveHostPath, resolveWorkspacePath, validateReadTarget } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
 import { createMaintenanceContext, parseMaintenanceArgs } from '../_shared/workspace-paths.mjs'
 
@@ -225,6 +224,7 @@ export function parseLedgerText(text, options = {}) {
   const rows = []
   let skippedNonV2Objects = 0
   let badJsonLines = 0
+  const invalidV2Reasons = new Map()
   let noticeLines = 0
   let lineNumber = 0
   for (const line of String(text === undefined || text === null ? '' : text).split(/\r?\n/)) {
@@ -250,10 +250,13 @@ export function parseLedgerText(text, options = {}) {
       if (check !== undefined) check()
       continue
     }
-    rows.push(row)
+    const issue = validationIssue(row)
+    if (issue === '') rows.push(row)
+    else invalidV2Reasons.set(issue, (invalidV2Reasons.get(issue) || 0) + 1)
     if (check !== undefined) check()
   }
-  return { rows, skippedNonV2Objects, badJsonLines, noticeLines, lineCount: lineNumber }
+  const invalidV2Lines = [...invalidV2Reasons.values()].reduce((total, count) => total + count, 0)
+  return { rows, skippedNonV2Objects, badJsonLines, noticeLines, lineCount: lineNumber, invalidV2Lines, invalidV2Reasons: Object.fromEntries(invalidV2Reasons) }
 }
 
 function compareValues(left, right) {
@@ -367,6 +370,8 @@ export function summarizeRows(rows, options = {}) {
 export function summarizeSnapshotTexts(sources, options = {}) {
   let skippedNonV2Objects = 0
   let badJsonLines = 0
+  let invalidV2Lines = 0
+  const invalidV2Reasons = new Map()
   let noticeLines = 0
   const input = Array.isArray(sources) ? sources : []
   const rows = []
@@ -375,10 +380,12 @@ export function summarizeSnapshotTexts(sources, options = {}) {
     rows.push(...parsed.rows)
     skippedNonV2Objects += parsed.skippedNonV2Objects
     badJsonLines += parsed.badJsonLines
+    invalidV2Lines += parsed.invalidV2Lines
+    for (const [issue, count] of Object.entries(parsed.invalidV2Reasons)) invalidV2Reasons.set(issue, (invalidV2Reasons.get(issue) || 0) + count)
     noticeLines += parsed.noticeLines
   }
   const summary = summarizeRows(rows, options)
-  return { ...summary, skippedNonV2Objects, badJsonLines, noticeLines }
+  return { ...summary, skippedNonV2Objects, badJsonLines, noticeLines, invalidV2Lines, invalidV2Reasons: Object.fromEntries(invalidV2Reasons) }
 }
 
 function shown(value) {
@@ -401,6 +408,8 @@ export function renderStats(summary, paths = {}) {
   lines.push('V1/非V2对象（已跳过，输入未改写）: ' + summary.skippedNonV2Objects)
   lines.push('账本说明行（首行说明，已跳过，未计入V1/非V2）: ' + (Number.isFinite(summary.noticeLines) ? summary.noticeLines : 0))
   lines.push('坏JSON行（已跳过，未计入V1/非V2）: ' + summary.badJsonLines)
+  lines.push('字段非法V2行（已跳过，不计入统计）: ' + (summary.invalidV2Lines || 0))
+  for (const [issue, count] of Object.entries(summary.invalidV2Reasons || {})) lines.push('  ' + issue + ': ' + count)
   if (summary.duplicateV2Rows > 0) lines.push('重复V2记录（按非空sessionId+非负整数seq去重）: ' + summary.duplicateV2Rows + '（已跳过）')
   if (paths.archivePath !== undefined) lines.push('统计来源（单一账本）: ' + paths.archivePath)
   return lines.join('\n')
@@ -582,14 +591,10 @@ function argvWithoutCompare(argv) {
   return (Array.isArray(argv) ? argv : []).filter((arg) => arg !== COMPARE_FLAG)
 }
 
-// 对拍扫描根：显式 --host-root（维护上下文）→ options.hostRoot → DSH_HOME → ~/.dsh（与插件扫描口径一致）。
-function compareHostRootOf(context, options) {
-  const fromContext = context !== null && typeof context === 'object' && typeof context.hostRoot === 'string' ? context.hostRoot : ''
-  if (fromContext !== '') return fromContext
-  const fromOptions = objectOf(options).hostRoot
-  if (typeof fromOptions === 'string' && fromOptions !== '') return fromOptions
-  const fromEnv = typeof process.env.DSH_HOME === 'string' ? process.env.DSH_HOME.trim() : ''
-  return fromEnv !== '' ? fromEnv : join(homedir(), '.dsh')
+function validatedCompareRoot(context) {
+  const purpose = 'host-data-read'
+  const target = resolveHostPath(context.pathContext, '.', { purpose })
+  return validateReadTarget(context.pathContext, target, { expectedType: 'directory', purpose }).realPath
 }
 
 function roleModelOf(row) {
@@ -719,14 +724,17 @@ function renderCompare({ summary, archivePath, hostRoot }) {
   const ledgerBuckets = aggregateRoleModel(summary.rows)
   const identityDiff = renderIdentityDiffTable(scanBuckets, ledgerBuckets)
   const conclusions = renderCompareConclusions({ scanned, scannedAgain, scanText, summary, ledgerOnlyKeys: identityDiff.ledgerOnly })
-  return [
-    '=== 对拍上下文：账本 ' + archivePath + ' | 现场扫描根 ' + hostRoot + ' | 只读零写盘（不取锁/不建目录/不写文件） ===',
-    scanText,
-    renderLedgerTable(summary),
-    renderDiffTable(scanBuckets, ledgerBuckets),
-    identityDiff.text,
-    conclusions.text,
-  ].join('\n')
+  return {
+    deterministic: conclusions.deterministic,
+    text: [
+      '=== 对拍上下文：账本 ' + archivePath + ' | 现场扫描根 ' + hostRoot + ' | 只读零写盘（不取锁/不建目录/不写文件） ===',
+      scanText,
+      renderLedgerTable(summary),
+      renderDiffTable(scanBuckets, ledgerBuckets),
+      identityDiff.text,
+      conclusions.text,
+    ].join('\n'),
+  }
 }
 
 export function main(argv = process.argv.slice(2), options = {}) {
@@ -738,8 +746,11 @@ export function main(argv = process.argv.slice(2), options = {}) {
     // 前置：--archive 已移除。必须在构造维护上下文之前判定，否则 W 外目标会先被 ROOT_ESCAPE 抢报。
     if (parsed.ledger !== null && typeof parsed.ledger === 'object' && parsed.ledger.mode === 'archive') throw usageRemovedError()
     const source = objectOf(options)
-    const suppliedContext = maintenanceContextOf(source)
-    let context = suppliedContext
+    // 对拍只接受本次 CLI 明确选择的根和一份账本，不能继承调用方注入的维护上下文或账本目标。
+    if (compare && (parsed.hostRoot === null || parsed.domainArgv.length !== 1 || parsed.domainArgv[0].trim() === '')) {
+      throw new LedgerError('--compare 必须显式提供 --host-root 和一个精确账本路径', 'compare-target-required')
+    }
+    let context = compare ? createMaintenanceContext(parsed) : maintenanceContextOf(source)
     if (context === undefined) {
       const contextInput = { ...parsed }
       if (contextInput.hostRoot === null && typeof source.hostRoot === 'string') contextInput.hostRoot = source.hostRoot
@@ -752,19 +763,22 @@ export function main(argv = process.argv.slice(2), options = {}) {
     const purpose = LEDGER_READ_PURPOSE
     const contextLedgerTarget = context.ledger !== null && typeof context.ledger === 'object' ? context.ledger.target : undefined
     const scopedOptions = {
-      ...source,
+      ...(compare ? { fsOps: source.fsOps } : source),
       maintenanceContext: context,
       pathContext: cliPathContext({ maintenanceContext: context }),
       purpose,
-      target: contextLedgerTarget !== null && contextLedgerTarget !== undefined ? contextLedgerTarget : source.target,
+      target: compare ? undefined : contextLedgerTarget !== null && contextLedgerTarget !== undefined ? contextLedgerTarget : source.target,
     }
     const archiveTarget = cliLedgerTarget(context, scopedOptions, parsed.domainArgv)
     const archivePath = targetPathOf(archiveTarget)
     if (archivePath === undefined) throw new LedgerError('公共维护上下文缺少明确账本目标', 'path-not-authorized')
+    const hostRoot = compare ? validatedCompareRoot(context) : null
     const result = compare ? readLedgerReadOnly(archivePath, scopedOptions) : statLedger(archivePath, scopedOptions)
     console.log(renderStats(result, result))
-    if (compare) console.log(renderCompare({ summary: result, archivePath, hostRoot: compareHostRootOf(context, source) }))
-    return 0
+    if (!compare) return 0
+    const compared = renderCompare({ summary: result, archivePath, hostRoot })
+    console.log(compared.text)
+    return compared.deterministic ? 0 : 1
   } catch (error) {
     console.error('失败：' + errorMessageOf(error))
     return 1

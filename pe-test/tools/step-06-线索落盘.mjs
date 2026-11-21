@@ -92,7 +92,8 @@ function systemPromptMock(registry) {
 
 // P0-3：持久化函数直连导入（故障注入用；与 index.js 注入给 save 工具工厂的是同一模块实例）
 const PERSISTENCE_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/save-persistence.js', import.meta.url))
-const { atomicCommit: atomicCommitRaw } = await import(pathToFileURL(PERSISTENCE_PATH).href)
+const { atomicCommit: atomicCommitRaw, atomicReplace: atomicReplaceRaw } = await import(pathToFileURL(PERSISTENCE_PATH).href)
+const { createPlanDraftToolFactories } = await import('../../plugins/dsh-extra-plan/lib/plan-draft-tool.js')
 function pathContextForDir(dir) { return createPathContext({ workspaceRoot: dir }) }
 function atomicCommit(dir, base, files, fsOps, policyOptions = {}) { return atomicCommitRaw(dir, base, files, fsOps, { ...policyOptions, pathContext: pathContextForDir(dir), purpose: policyOptions.purpose || 'save-artifacts' }) }
 
@@ -1558,6 +1559,108 @@ inScenario('f8-retry-new-args', (dir) => {
   check('F8/F9 第二次调用只处理新参数且旧现场字节不变', [contentsOf(dir, ['方案-f8.md', '验收-f8.md', '方案-f9.md', '验收-f9.md']), readFileSync(oldJournal, 'utf8'), readFileSync(oldTarget, 'utf8')], [['PLAN-f8', 'CHECK-f8', 'PLAN-f9', 'CHECK-f9'], 'OLD-JOURNAL-BYTES', 'OLD-TARGET-BYTES'])
   check('F8/F9 正常调用无新 journal/tmp', [leftovers(dir), readdirSync(dir).filter((name) => name.startsWith('.journal-'))], [[], ['.journal-old-sentinel.json']])
 })
+
+// 成对草稿：走真实工具 execute；计数只包真实持久化，不用替身代替落盘。
+{
+  const dir = makeWTemp('pair-edit')
+  try {
+    const draft = join(dir, '.extra-plan', 'draft')
+    mkdirSync(draft, { recursive: true })
+    const plan = join(draft, '方案-paired.md_mid')
+    const paired = join(draft, '验收-paired.md_mid')
+    const initial = Buffer.from('before\r\n')
+    writeFileSync(plan, initial)
+    let writes = 0
+    let promotes = 0
+    const def = createPlanDraftToolFactories({
+      savePlanDir: '.extra-plan',
+      atomicReplace: (...args) => { writes += 1; return atomicReplaceRaw(...args) },
+      atomicCommit: (...args) => { promotes += 1; return atomicCommitRaw(...args) },
+    }).defineEditPlanDraft()
+    const edit = { path: '.extra-plan/draft/方案-paired.md_mid', edits: [{ line: 1, text: 'after' }] }
+    const missing = await def.execute(edit, execFake(dir))
+    checkTrue('PAIR-E1 配对确实缺失：仅写当前草稿、无转正', missing.status === 'saved-with-errors'
+      && missing.error.includes('配对草稿不存在') && writes === 1 && promotes === 0
+      && readFileSync(plan, 'utf8') === 'after\n' && !existsSync(paired)
+      && readdirSync(draft).join() === '方案-paired.md_mid')
+    writeFileSync(plan, initial)
+    mkdirSync(paired)
+    const sentinel = join(paired, 'sentinel.txt')
+    writeFileSync(sentinel, 'untouched')
+    const beforeEntries = readdirSync(draft).sort()
+    let denied = null
+    try { await def.execute(edit, execFake(dir)) } catch (error) { denied = error }
+    checkTrue('PAIR-E2 配对为目录：原始错误链、零写回、零转正', denied?.message.includes('配对草稿无法读取')
+      && denied.cause?.code === 'TARGET_TYPE' && writes === 1 && promotes === 0
+      && readFileSync(plan).equals(initial) && readFileSync(sentinel, 'utf8') === 'untouched'
+      && readdirSync(draft).sort().join() === beforeEntries.join())
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+for (const scenario of ['success', 'second-rename', 'first-missing', 'postcheck', 'restore-fails', 'identity-changed', 'snapshot-eacces']) {
+  inScenario('pair-' + scenario, (dir) => {
+    const files = [{ name: '方案-paired.md_mid', content: 'new plan' }, { name: '验收-paired.md_mid', content: 'new checklist' }]
+    const [first, second] = files.map(({ name }) => join(dir, name))
+    const oldPlan = Buffer.from([0xef, 0xbb, 0xbf, 0x41, 0x0d, 0x0a, 0xff])
+    const oldCheck = Buffer.from([0x42, 0x0d, 0x0a, 0x00, 0xfe])
+    const sentinel = join(dir, 'sentinel.txt')
+    writeFileSync(sentinel, 'untouched')
+    if (scenario !== 'first-missing') writeFileSync(first, oldPlan)
+    writeFileSync(second, oldCheck)
+    const renameFailure = new Error('inject: second rename failed')
+    const restoreFailure = new Error('inject: restoring first failed')
+    const eacces = Object.assign(new Error('inject: snapshot unreadable'), { code: 'EACCES' })
+    const calls = []
+    const error = thrownBy(() => atomicReplaceRaw(dir, files, {
+      readFileSync: (path, ...args) => {
+        if (scenario === 'snapshot-eacces' && path === second) throw eacces
+        return readFileSync(path, ...args)
+      },
+      existsSync: (path) => scenario === 'postcheck' && path === second ? false : existsSync(path),
+      renameSync: (from, to) => {
+        const restore = from.endsWith('-restore')
+        calls.push([to, restore])
+        if (scenario === 'restore-fails' && restore && to === first) throw restoreFailure
+        if (!restore && to === second && ['second-rename', 'first-missing', 'restore-fails', 'identity-changed'].includes(scenario)) {
+          if (scenario === 'identity-changed') {
+            const unrelated = join(dir, 'external-object')
+            writeFileSync(unrelated, 'external version', { flag: 'wx' })
+            renameSync(unrelated, first)
+          }
+          throw renameFailure
+        }
+        renameSync(from, to)
+      },
+    }, { pathContext: pathContextForDir(dir) }))
+    const exactEntries = ['sentinel.txt', ...files.filter((_, i) => i !== 0 || scenario !== 'first-missing').map(x => x.name)].sort()
+    check('PAIR-R ' + scenario + ' 目录项/无关哨兵保持', [readdirSync(dir).sort(), readFileSync(sentinel, 'utf8')], [exactEntries, 'untouched'])
+    if (scenario === 'success') {
+      check('PAIR-R success 双草稿均就位', [error, ...contentsOf(dir, files.map(x => x.name)), calls], [null, 'new plan', 'new checklist', [[first, false], [second, false]]])
+      return
+    }
+    if (scenario === 'snapshot-eacces') {
+      checkTrue('PAIR-R snapshot-eacces 首错保留且无发布', error?.cause === eacces && error.message.includes('阶段=准备目标') && calls.length === 0)
+    } else if (scenario === 'postcheck') {
+      checkTrue('PAIR-R postcheck 后验失败：逆序恢复所有已发布件', error?.cause?.message.includes('覆盖后目标未就位')
+        && error.message.includes('阶段=覆盖2') && !error.message.includes('恢复失败')
+        && JSON.stringify(calls) === JSON.stringify([[first, false], [second, false], [second, true], [first, true]]))
+    } else {
+      checkTrue('PAIR-R ' + scenario + ' 保留第二次覆盖阶段与原始错误', error?.cause === renameFailure && error.message.includes('阶段=覆盖2'))
+    }
+    if (scenario === 'restore-fails' || scenario === 'identity-changed') {
+      const reason = scenario === 'restore-fails' ? restoreFailure.message : '无法确认是本轮发布'
+      checkTrue('PAIR-R ' + scenario + ' 分列恢复失败、保留现场', error?.message.includes('恢复失败')
+        && error.message.includes(first) && error.message.includes(reason)
+        && readFileSync(first, 'utf8') === (scenario === 'restore-fails' ? 'new plan' : 'external version'))
+    } else {
+      checkTrue('PAIR-R ' + scenario + ' 第一件还原原字节或缺席', (scenario === 'first-missing' ? !existsSync(first) : readFileSync(first).equals(oldPlan))
+        && !error?.message.includes('恢复失败') && !error?.message.includes('清理失败'))
+    }
+    checkTrue('PAIR-R ' + scenario + ' 第二件原字节保留', readFileSync(second).equals(oldCheck))
+  })
+}
 
 output.detail('证据范围：mock 注册与普通 Node atomicCommit 仅为本脚本夹具；真实 Host read-only save 及 OS shell/node 阻断均为 NOT-RUN，不计入 PASS。', { always: true })
 output.summary(pass, fail)

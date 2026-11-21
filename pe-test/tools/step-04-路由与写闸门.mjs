@@ -88,7 +88,7 @@ import { ASSET_DEFINITION_FILE as ASSET_DEFINITION_FILE_E, roleDefinitionOf } fr
 // 故 Config 的 volatile/默认值契约改用源码文本静态核对（机械可核对），不依赖本机 schemastery 版本。
 import { readFileSync as readFileSyncE } from 'node:fs'
 const decisions = plugin.decisions
-const { catalogHasWriteTools, isReadOnlyChildByCatalog, routeDenyReason, runCodeCatchGateReason, runCodeGroupDenyReason, askOrGateReturnGateReason, probeDisposalWarning, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilteredToolsSdk, projectSkillCatalogDecision, isBootstrapPhase, filterBootstrapContextDecision, dedupeProjectedContextDecision, shellMutationReason, recordJobOutputCall, deriveFlowState } = decisions
+const { catalogHasWriteTools, isReadOnlyChildByCatalog, routeDenyReason, runCodeCatchGateReason, runCodeGroupDenyReason, askOrGateReturnGateReason, probeDisposalWarning, runCodeSiteCount, isRunCodeSubCall, CORDIS_PRESENTATION_TOOLS, projectAssemblyForPresentation, renderFilteredToolsSdk, projectSkillCatalogDecision, isBootstrapPhase, filterBootstrapContextDecision, dedupeProjectedContextDecision, shellMutationReason, recordJobOutputCall, deriveFlowState } = decisions
 
 // ── F 段（HP 首轮）tool:read 文案（变量②）判据 ─────────────────────────
 // S4 降耦合：内置兜底文案 / 预设示例 / 宿主原文的三份副本不再落在测试里——文案正文契约统一由下方
@@ -1678,14 +1678,25 @@ checkTrue('R24c 嵌套 plan 态 extra_plan_gate(gate=purpose) → allow', r.kind
 r = preExecute(harness, nestedChannelErrorMain, 'extra_plan_gate', nestedPurposeGateArgs)
 checkTrue('R24d 嵌套 channel-error 后 extra_plan_gate → allow（通道故障不推进、不形成死锁）', r.kind === 'allow')
 
-checkTrue('UC27 runCodeDispatchGateReason：上限内→null / 上限+1→拒且与 runCodeDispatchCapText 派生值逐字一致 / 无rootCallId→null', (() => {
-  const cap = DEFAULT_EXPLORE_BUDGET
-  const atCap = Array.from({ length: cap }, (_, i) => cdStartE('read', 's' + i, {}))
-  const overCapEvents = atCap.concat([cdStartE('read', 's' + cap, {})])
-  const got = runCodeDispatchGateReason(overCapEvents, { rootCallId: 'r1' }, cap)
-  return runCodeDispatchGateReason(atCap, { rootCallId: 'r1' }, cap) === null
-    && typeof got === 'string' && got === decisions.runCodeDispatchCapText('r1', cap + 1, cap)
-    && runCodeDispatchGateReason(atCap, {}, cap) === null
+checkTrue('UC27 实际 planner 子调用：上限、隔离、缺根和 next 轨迹', (() => {
+  const cap = 2
+  const counterHarness = makeHarness({ anchoredBootstrap: false, exploreBudget: cap })
+  const planner = (id) => ({ ...childAgent(id, PLANNER_PRESET, () => [DESC]), options: { model: 'deepseek-v4-pro' } })
+  const a = planner('uc27-counter-a')
+  const b = planner('uc27-counter-b')
+  const invoke = (agent, extras) => {
+    let nextCalls = 0
+    const result = preExecute(counterHarness, agent, 'read', { file_path: 'fixture' }, extras, () => { nextCalls += 1 })
+    return { kind: result.kind, reason: result.reason, nextCalls }
+  }
+  const nested = (rootCallId) => ({ parent: Symbol('uc27'), rootCallId })
+  const allows = (result) => result.kind === 'allow' && result.nextCalls === 1
+  const denies = (result, expected) => result.kind === 'deny' && result.nextCalls === 0 && result.reason === expected
+  return allows(invoke(a, { rootCallId: 'same' }))
+    && allows(invoke(a, nested('same'))) && allows(invoke(a, nested('same')))
+    && denies(invoke(a, nested('same')), decisions.runCodeDispatchCapText('same', 3, 2))
+    && allows(invoke(a, nested('different'))) && allows(invoke(b, nested('same')))
+    && denies(invoke(a, nested(undefined)), decisions.runCodeDispatchCapText('?', 1, 2))
 })())
 }
 runDispatchSeriesE({ start: 'tool/ptc-dispatch-start', end: 'tool/ptc-dispatch' })
@@ -3098,12 +3109,15 @@ for (const anchoredBootstrap of matrixAnchoredOptions) {
             schemas: () => schemas,
             definitions: () => schemas.map((schema) => ({ name: schema.name, description: schema.description, parameters: schema.parameters })),
             view: () => ({ restrictableNames: matrixRestrictable }),
-            restrict: (filter) => { matrixDenyCalls.push(filter); return () => {} },
+            restrict: (filter) => {
+              // 同一 Agent 首轮可能另有 anchored allow；此断言只核真实 deny 轨迹。
+              if (Object.hasOwn(filter, 'deny')) matrixDenyCalls.push(filter)
+              return () => {}
+            },
           }
           agent.ctx = { get: (name) => (name === 'tools' ? matrixToolsStub : undefined) }
           // 先 arm 再算期望：期望工具面只表达 restrict deny 求值后的结果，不按 creativeMode 预先剔除。
-          const cordisArmAgent = { session: { header: { id: 'matrix-cordis-' + matrixSerial, cwd: 'C:/work' }, snapshotEvents: () => [] }, options: {}, ctx: agent.ctx }
-          for (const listener of Array.isArray(harnessMatrix['agent/created']) ? harnessMatrix['agent/created'] : []) await listener({ agent: cordisArmAgent, source: 'matrix' })
+          for (const listener of Array.isArray(harnessMatrix['agent/created']) ? harnessMatrix['agent/created'] : []) await listener({ agent, source: 'matrix' })
           const assembled = await assemble(harnessMatrix, agent, rawTools, matrixSections(mode))
           const anchored = anchoredBootstrap && phase === 'first' && (role === 'main' || role === 'planner')
           const anchoredPtc = anchored && mode === 'ptc'
@@ -3198,15 +3212,17 @@ const projectionSource = { tools: [{ name: 'read' }, { name: MATRIX_CORDIS_TOOLS
 const projectionCopy = projectAssemblyForPresentation(projectionSource, projectionSource.tools, { sdkText: 'read:' })
 checkTrue('projectAssemblyForPresentation 返回新 assembly 且不原地修改', projectionCopy !== projectionSource && projectionSource.tools.length === 2 && projectionSource.sections[0].name === 'tool:cordis' && projectionCopy.tools.length === 1 && projectionCopy.tools[0].name === 'read' && sectionText(projectionCopy, 'tool:cordis') === '' && sectionText(projectionCopy, 'tools:sdk') === 'read:')
 // C=1 创造 skill 面（换通道后）：预设 skill-filesystem 行的 config.bundledSkillDir
-// 按实际 DSH_PACKAGE_MANIFEST 版本检查官方包内 skills/：rc.1 旧三名、rc.2 与 rc.3 同为 dsh-doc；不要求单根同时四名，且配 watch: false；旧键 customSkillDirs 已删（坏通道）。
+// 按实际 DSH_PACKAGE_MANIFEST 版本检查官方包内 skills/：rc.1 旧三名、rc.2 - rc.5 均为 dsh-doc；不要求单根同时四名，且配 watch: false；旧键 customSkillDirs 已删（坏通道）。
 // 合成投影期望独立于物理 bundledSkillDir：四名均应参与 C0/C1 目录投影。
 const expectedCreativeSkills = MATRIX_CREATIVE_SKILLS.slice()
 // DSH_COMPAT_RC1：rc.1 物理根只检查旧三名；删除边界仅限该版本的物理兼容。
-// DSH_CURRENT_RC2：最新路径物理根（rc.2 与 rc.3 共用）只检查 dsh-doc；未知/缺根保持 undefined，禁止伪 PASS。
+// DSH_CURRENT_RC2：对已核实的 rc.2 - rc.5 只检查 dsh-doc；未列版本和缺根不判为通过。
 const physicalCreativeSkillsByVersion = {
   '0.2.2-rc.1': ['cordis-plugin-development', 'editing-cordis-compositions', 'cordis-composition-reference'],
   '0.2.2-rc.2': ['dsh-doc'],
   '0.2.2-rc.3': ['dsh-doc'],
+  '0.2.2-rc.4': ['dsh-doc'],
+  '0.2.2-rc.5': ['dsh-doc'],
 }
 const hostManifestVersion = (() => {
   if (typeof DSH_PACKAGE_MANIFEST !== 'string' || !existsSync(DSH_PACKAGE_MANIFEST)) return undefined
@@ -3378,14 +3394,15 @@ let resolveOld
 const oldPromise = p2Cache.getOrCreate(p2StaleAgent, p2FullInput, 'typescript', () => new Promise((resolve) => { resolveOld = resolve }))
 await Promise.resolve()
 const freshInput = [{ ...p2FullInput[0] }, { ...p2FullInput[1], parameters: { type: 'object', properties: { fresh: { type: 'string' } } } }]
-const freshRenderer = () => 'fresh-text'
+let freshCalls = 0
+const freshRenderer = () => { freshCalls += 1; return 'fresh-text' }
 const freshPromise = p2Cache.getOrCreate(p2StaleAgent, freshInput, 'typescript', freshRenderer)
 const freshText = await freshPromise
+const freshBeforeLate = freshCalls
 resolveOld('old-text')
 await oldPromise
-let staleConfirmCalls = 0
 const staleConfirm = await p2Cache.getOrCreate(p2StaleAgent, freshInput, 'typescript', freshRenderer)
-checkTrue('P2-16 旧 key 迟到 resolve 不覆盖新 entry', freshText === 'fresh-text' && staleConfirm === 'fresh-text' && staleConfirmCalls === 0)
+checkTrue('P2-16 旧 key 迟到 resolve 不覆盖新 entry', freshText === 'fresh-text' && staleConfirm === 'fresh-text' && freshBeforeLate === 1 && freshCalls === freshBeforeLate)
 checkTrue('P2-17 entry 三元组按 renderer 身份比较且 dispose 可回收',
   sdkTextCacheEntryMatches({ fingerprint: 'f', language: 'typescript', renderer: p2Renderer }, 'f', 'typescript', p2Renderer)
   && !sdkTextCacheEntryMatches({ fingerprint: 'f', language: 'typescript', renderer: p2Renderer }, 'f', 'python', p2Renderer)

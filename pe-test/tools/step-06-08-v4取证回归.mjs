@@ -1,5 +1,6 @@
 // step-06-08-v4取证回归.mjs — 隔离 v4 取证脚本回归
 // 只在工作区内隔离fixture生成 session.v4.jsonl.zstd，不读取生产会话或运行实机人眼项。
+import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { makeFixtureDir, resolveEvidencePath } from '../_shared/workspace-paths.mjs'
@@ -449,6 +450,80 @@ try {
   checkRawEvidence('step-07 摘要raw', step07Raw, step07.stdout, step07.stderr)
   check('step-07 raw保留status/error/argv关联', step07.status === 0 && step07.signal === null && step07.error === undefined && Array.isArray(step07.argv) && step07.argv.includes(STEP07))
 
+  const s07LinesOf = (text) => String(text).split(/\r?\n/).filter((line) => line.startsWith('S07-3 '))
+  const s07NotRunZero = (lines) => lines.length === 2 && lines[0].includes('NOT-RUN') && lines[0].includes('受检样本=0；verified-injection=0；互斥违例=0') && !lines[0].includes('成立=PASS') && lines[1].includes('NOT-RUN') && lines[1].includes('可定档样本=0；不一致=0') && !lines[1].includes('一致=PASS')
+  const fixtureProofDir = join(v4EvidenceRoot, 'fixture-proof')
+  mkdirSync(fixtureProofDir, { recursive: true })
+  const fixtureProofs = []
+  const saveFixtureProof = (label, directory) => {
+    const source = join(directory, SESSION_LOG_NAME)
+    const compressed = join(fixtureProofDir, label + '.session.v4.jsonl.zstd')
+    const decoded = join(fixtureProofDir, label + '.decoded.json')
+    copyFileSync(source, compressed)
+    const rows = Array.from(decodedJsonlLines(readFileSync(source))).map((row) => ({ lineNo: row.lineNo, line: row.line }))
+    writeFileSync(decoded, JSON.stringify({ label, compressed, rows }, null, 2) + '\n')
+    fixtureProofs.push({ label, compressed, decoded })
+  }
+  const saveFixtureMapping = (subprocesses) => {
+    writeFileSync(join(fixtureProofDir, 'subprocess-mapping.json'), JSON.stringify({
+      fixtures: fixtureProofs,
+      subprocesses: subprocesses.map(({ label, script, outcome }) => ({ label, script, scriptArgv: outcome.scriptArgv, argv: outcome.argv, status: outcome.status, signal: outcome.signal, error: outcome.error ?? null, raw: outcome.raw })),
+    }, null, 2) + '\n')
+  }
+  const s07ParentOnlyDir = join(v4Workspace, 's07-parent-only')
+  writeSession(s07ParentOnlyDir, SESSION_LOG_NAME, [
+    session('s07-parent-only'),
+    call('subagent_plan', 's07-parent-only-call', { prompt: 'parent-only fixture' }),
+    result('s07-parent-only-call', false, 's07-child-never-created'),
+  ])
+  saveFixtureProof('s07-parent-only', s07ParentOnlyDir)
+  const s07ParentOnly = runScript(STEP07, idSessionArgs('s07-parent-only', v4Workspace, '--discover-children'), { PLANNER_PROMPT_SUFFIX: 'fixture-suffix' })
+  check('S07-3 仅父会话两条均NOT-RUN且计数为零', s07ParentOnly.status === 0 && s07ParentOnly.output.includes('直接 child=0') && s07NotRunZero(s07LinesOf(s07ParentOnly.output)))
+
+  const s07NoSampleParentDir = join(v4Workspace, 's07-no-sample-parent')
+  const s07NoSampleChildDir = join(v4Workspace, 's07-no-sample-child')
+  writeSession(s07NoSampleParentDir, SESSION_LOG_NAME, [
+    session('s07-no-sample-parent'),
+    call('subagent_plan', 's07-no-sample-call', { prompt: 's07 no sample' }),
+    result('s07-no-sample-call', false, 's07-no-sample-child'),
+  ])
+  writeSession(s07NoSampleChildDir, SESSION_LOG_NAME, [
+    session('s07-no-sample-child', { parentSession: 's07-no-sample-parent', origin: 'subagent', delegationDepth: 1 }),
+    descriptor(),
+  ])
+  saveFixtureProof('s07-no-sample-parent', s07NoSampleParentDir)
+  saveFixtureProof('s07-no-sample-child', s07NoSampleChildDir)
+  const s07NoSample = runScript(STEP07, idSessionArgs('s07-no-sample-parent', v4Workspace, '--discover-children'), { PLANNER_PROMPT_SUFFIX: 'fixture-suffix' })
+  check('S07-3 无可定档子会话两条均NOT-RUN且计数为零', s07NoSample.status === 0 && s07NoSample.output.includes('child ID=s07-no-sample-child') && s07NotRunZero(s07LinesOf(s07NoSample.output)))
+
+  const s07LegalParentDir = join(v4Workspace, 's07-legal-parent')
+  const s07LegalChildDir = join(v4Workspace, 's07-legal-child')
+  writeSession(s07LegalParentDir, SESSION_LOG_NAME, [
+    session('s07-legal-parent'),
+    call('subagent_plan', 's07-legal-call', { prompt: 'delegate legal child' }),
+    result('s07-legal-call', false, 's07-legal-child'),
+  ])
+  writeSession(s07LegalChildDir, SESSION_LOG_NAME, [
+    session('s07-legal-child', { parentSession: 's07-legal-parent', origin: 'subagent', delegationDepth: 1 }),
+    descriptor(),
+    { type: 'request/header', data: { header: { config: { provider: 'fixture-provider', model: 'fixture-model' } } } },
+    { type: 'assistant/message', data: { message: { source: { kind: 'model', provider: 'fixture-provider', model: 'fixture-model' }, content: [{ type: 'text', text: 'fixture legal model output' }] } } },
+    { type: 'user/message', data: { message: { source: { kind: 'user' }, content: [{ type: 'text', text: 'legal child fixture-suffix' }] } } },
+  ])
+  saveFixtureProof('s07-legal-parent', s07LegalParentDir)
+  saveFixtureProof('s07-legal-child', s07LegalChildDir)
+  const s07Legal = runScript(STEP07, idSessionArgs('s07-legal-parent', v4Workspace, '--discover-children'), { PLANNER_PROMPT_SUFFIX: 'fixture-suffix' })
+  const s07LegalLines = s07LinesOf(s07Legal.output)
+  check('S07-3 合法样本两条PASS且受检数量与互斥/一致计数精确', s07Legal.status === 0 && s07Legal.output.includes('suffix判定=verified-injection') && s07LegalLines.length === 2 && s07LegalLines[0].includes('成立=PASS（受检 child=1；verified-injection=1；互斥违例=0）') && s07LegalLines[1].includes('一致=PASS（可定档 child=1；content-only=0；父含 suffix=0；不一致=0）'))
+
+  const s07BadLogDir = join(v4Workspace, 's07-bad-log')
+  const s07BadLogText = [JSON.stringify(session('s07-bad-log')), '{"type":"broken"'].join('\n') + '\n'
+  mkdirSync(s07BadLogDir, { recursive: true })
+  writeFileSync(join(s07BadLogDir, SESSION_LOG_NAME), zstdCompressSync(Buffer.from(s07BadLogText, 'utf8')))
+  saveFixtureProof('s07-bad-log', s07BadLogDir)
+  const s07BadLog = runScript(STEP07, idSessionArgs('s07-bad-log', v4Workspace, '--discover-children'), { PLANNER_PROMPT_SUFFIX: 'fixture-suffix' })
+  check('S07-3 坏日志两条均NOT-RUN且零计数并保持INCOMPLETE/非零', s07BadLog.status !== 0 && s07BadLog.output.includes('INCOMPLETE') && s07BadLog.output.includes('JSON解析失败') && s07NotRunZero(s07LinesOf(s07BadLog.output)))
+
   const step06 = runScript(STEP06, exactSessionArgs(mainDir))
   check('step-06 v4 fixture 退出码为 0', step06.status === 0, String(step06.status))
   check('step-06 错误文本恰展示一次', countOf(step06.output, 'TOOL-ERROR') === 1 && countOf(step06.output, 'fixture-error-text') === 1)
@@ -494,6 +569,235 @@ try {
   ])
   const s06Reviewer = runScript(STEP06, exactSessionArgs(s06ReviewerDir))
   check('S06-3 正例 reviewer write 必被拒', s06Reviewer.output.includes(reviewerRejectText) && countOf(s06Reviewer.output, 'TOOL-ERROR') === 1, String(s06Reviewer.output).slice(0, 200))
+
+  const s06PureNonEventDir = join(s06Workspace, 's06-pure-non-event')
+  const s06PureNonEventValues = [{ fixture: 'pure-non-event' }, 'fixture scalar', 7, null, true]
+  const s06PureNonEventText = s06PureNonEventValues.map((value) => JSON.stringify(value)).join('\n') + '\n'
+  mkdirSync(s06PureNonEventDir, { recursive: true })
+  writeFileSync(join(s06PureNonEventDir, SESSION_LOG_NAME), zstdCompressSync(Buffer.from(s06PureNonEventText, 'utf8')))
+  saveFixtureProof('s06-pure-non-event', s06PureNonEventDir)
+  const s06PureNonEventReplay = replayJsonl(join(s06PureNonEventDir, SESSION_LOG_NAME))
+  const s06PureNonEvent05 = runScript(STEP05, exactSessionArgs(s06PureNonEventDir))
+  const s06PureNonEvent06 = runScript(STEP06, exactSessionArgs(s06PureNonEventDir))
+  check('S06 纯非事件JSON每行可JSON.parse且step05/06均INCOMPLETE', s06PureNonEventReplay.rowCount === s06PureNonEventValues.length && s06PureNonEventReplay.invalid === 0 && s06PureNonEvent05.status !== 0 && s06PureNonEvent06.status !== 0 && s06PureNonEvent05.output.includes('INCOMPLETE') && s06PureNonEvent06.output.includes('INCOMPLETE') && s06PureNonEvent05.output.includes('invalid event structure') && s06PureNonEvent06.output.includes('invalid event structure'))
+
+  const s06MixedDir = join(s06Workspace, 's06-mixed-bad-row')
+  const s06MixedText = [
+    JSON.stringify(session('s06-mixed-bad-row')),
+    JSON.stringify({ type: 'request/header', data: { header: { config: { model: 's06-mixed-model' }, tools: ['read'] } } }),
+    '{"bad":',
+    JSON.stringify({ fixture: 'mixed-non-event' }),
+    JSON.stringify(result('s06-mixed-result', true, 's06-mixed-error')),
+  ].join('\n') + '\n'
+  mkdirSync(s06MixedDir, { recursive: true })
+  writeFileSync(join(s06MixedDir, SESSION_LOG_NAME), zstdCompressSync(Buffer.from(s06MixedText, 'utf8')))
+  saveFixtureProof('s06-mixed-bad-row', s06MixedDir)
+  const s06MixedReplay = replayJsonl(join(s06MixedDir, SESSION_LOG_NAME))
+  const s06Mixed05 = runScript(STEP05, exactSessionArgs(s06MixedDir))
+  const s06Mixed06 = runScript(STEP06, exactSessionArgs(s06MixedDir))
+  check('S06 混合坏行step05/06均INCOMPLETE/非零、区分两种坏行并保留后续结果', s06MixedReplay.rowCount === 5 && s06MixedReplay.invalid === 1 && s06Mixed05.status !== 0 && s06Mixed06.status !== 0 && s06Mixed05.output.includes('INCOMPLETE') && s06Mixed06.output.includes('INCOMPLETE') && s06Mixed05.output.includes('invalid JSON') && s06Mixed06.output.includes('invalid JSON') && s06Mixed05.output.includes('invalid event structure') && s06Mixed06.output.includes('invalid event structure') && s06Mixed05.output.includes('L2 model=s06-mixed-model tools=1') && s06Mixed05.output.includes('\"tool/result\":1') && s06Mixed06.output.includes('L2 HEADER model=s06-mixed-model effort=- tools=1') && s06Mixed06.output.includes('L5 TOOL-ERROR s06-mixed-error') && countOf(s06Mixed06.output, 'TOOL-ERROR') === 1)
+
+  const s06CompoundResult = (callId, isError, text, sourceCallId = callId) => ({
+    type: ['tool/result', 'agent/inbox/spliced'],
+    data: { message: { id: 'result-' + callId, role: 'tool', source: { kind: 'tool', callId: sourceCallId }, toolCallId: callId, isError, content: [{ type: 'text', text }] } },
+  })
+  const s06CompoundDir = join(s06Workspace, 's06-compound-results')
+  writeSession(s06CompoundDir, SESSION_LOG_NAME, [
+    session('s06-compound-results'),
+    { type: 'request/header', data: { header: { config: { model: 's06-compound-model' }, tools: [] } } },
+    s06CompoundResult('s06-compound-error', true, 's06-compound-error'),
+    s06CompoundResult('s06-compound-ok', false, 's06-compound-ok'),
+  ])
+  saveFixtureProof('s06-compound-results', s06CompoundDir)
+  const s06Compound05 = runScript(STEP05, exactSessionArgs(s06CompoundDir))
+  const s06Compound06 = runScript(STEP06, exactSessionArgs(s06CompoundDir))
+  check('S06 复合tool/result错误与非错误均保留且无结构错误', s06Compound05.status === 0 && !s06Compound05.output.includes('INCOMPLETE') && s06Compound05.output.includes('"tool/result":2') && s06Compound05.output.includes('"agent/inbox/spliced":2'))
+  check('S06 复合tool/result仅错误项产生一次诊断', s06Compound06.status === 0 && s06Compound06.output.includes('TOOL-ERROR s06-compound-error') && countOf(s06Compound06.output, 'TOOL-ERROR') === 1 && !s06Compound06.output.includes('TOOL-ERROR s06-compound-ok'))
+  const g2SourceFiles = [STEP05, STEP06, fileURLToPath(import.meta.url)]
+  const g2SourceSha256Before = Object.fromEntries(g2SourceFiles.map((file) => [file, sha256Text(readFileSync(file, 'utf8'))]))
+  const g2NodeCheckDir = join(fixtureProofDir, 'g2-node-check')
+  mkdirSync(g2NodeCheckDir)
+  const g2NodeCheckRecords = []
+  for (const [index, script] of g2SourceFiles.entries()) {
+    const label = 'node-check-' + String(index + 1)
+    const stdoutPath = join(g2NodeCheckDir, label + '.stdout.log')
+    const stderrPath = join(g2NodeCheckDir, label + '.stderr.log')
+    const stdoutFd = openSync(stdoutPath, 'wx')
+    const stderrFd = openSync(stderrPath, 'wx')
+    const command = [process.execPath, '--check', script]
+    let child
+    try {
+      child = spawnSync(process.execPath, ['--check', script], {
+        cwd: ROOT,
+        env: { ...process.env },
+        stdio: ['ignore', stdoutFd, stderrFd],
+      })
+    } finally {
+      closeSync(stdoutFd)
+      closeSync(stderrFd)
+    }
+    const stdout = readFileSync(stdoutPath, 'utf8')
+    const stderr = readFileSync(stderrPath, 'utf8')
+    const error = child.error === undefined || child.error === null ? null : { name: child.error.name ?? null, code: child.error.code ?? null, message: child.error.message ?? String(child.error) }
+    const raw = {
+      stdout: { path: stdoutPath, bytes: Buffer.byteLength(stdout, 'utf8'), lines: rawLineCount(stdout), sha256: sha256Text(stdout) },
+      stderr: { path: stderrPath, bytes: Buffer.byteLength(stderr, 'utf8'), lines: rawLineCount(stderr), sha256: sha256Text(stderr) },
+    }
+    const record = { label, command, cwd: ROOT, node: process.execPath, nodeVersion: process.version, source: script, sourceSha256: g2SourceSha256Before[script], status: child.status, signal: child.signal, error, raw }
+    g2NodeCheckRecords.push(record)
+    check('G2 node --check ' + label + ' status=0且无signal/error、双流SHA有效', record.status === 0 && record.signal === null && record.error === null && raw.stdout.sha256 === sha256Text(stdout) && raw.stderr.sha256 === sha256Text(stderr))
+  }
+  const g2NodeCheckManifest = join(g2NodeCheckDir, 'node-check.json')
+  const g2NodeCheckManifestFd = openSync(g2NodeCheckManifest, 'wx')
+  try {
+    writeFileSync(g2NodeCheckManifestFd, JSON.stringify({ node: process.execPath, nodeVersion: process.version, DSH_INSTALL_ROOT: process.env.DSH_INSTALL_ROOT ?? null, sourceSha256Before: g2SourceSha256Before, records: g2NodeCheckRecords }, null, 2) + String.fromCharCode(10), 'utf8')
+  } finally {
+    closeSync(g2NodeCheckManifestFd)
+  }
+
+  const s06CompoundIdentityDir = join(s06Workspace, 's06-compound-identity')
+  writeSession(s06CompoundIdentityDir, SESSION_LOG_NAME, [
+    session('s06-compound-identity'),
+    { type: 'request/header', data: { header: { config: { model: 's06-identity-model' }, tools: [] } } },
+    s06CompoundResult('s06-identity-error', true, 's06-identity-error'),
+    s06CompoundResult('s06-identity-ok', false, 's06-identity-ok'),
+    s06CompoundResult('s06-identity-mismatch', true, 's06-identity-mismatch', 's06-identity-other'),
+  ])
+  saveFixtureProof('s06-compound-identity', s06CompoundIdentityDir)
+  const s06CompoundIdentity05 = runScript(STEP05, exactSessionArgs(s06CompoundIdentityDir))
+  const s06CompoundIdentity06 = runScript(STEP06, exactSessionArgs(s06CompoundIdentityDir))
+  check('S06 复合result身份错配保持有效日志且计数完整', s06CompoundIdentity05.status === 0 && s06CompoundIdentity05.output.includes('"tool/result":3') && s06CompoundIdentity05.output.includes('"agent/inbox/spliced":3') && !s06CompoundIdentity05.output.includes('INCOMPLETE'))
+  check('S06 复合result仅身份正确的失败项报一次错误', s06CompoundIdentity06.status === 0 && s06CompoundIdentity06.output.includes('TOOL-ERROR s06-identity-error') && countOf(s06CompoundIdentity06.output, 'TOOL-ERROR') === 1 && !s06CompoundIdentity06.output.includes('s06-identity-ok') && !s06CompoundIdentity06.output.includes('s06-identity-mismatch'))
+
+  const s06CompoundMixedBadDir = join(s06Workspace, 's06-compound-mixed-bad-row')
+  const s06CompoundMixedBadText = [
+    JSON.stringify(session('s06-compound-mixed-bad-row')),
+    JSON.stringify({ type: 'request/header', data: { header: { config: { model: 's06-compound-mixed-scalar' }, tools: ['read'] } } }),
+    '{"bad":',
+    JSON.stringify({ fixture: 's06-compound-mixed-non-event' }),
+    JSON.stringify({ type: ['request/header', 'agent/inbox/spliced'], data: { header: { config: { model: 's06-compound-mixed-model' }, tools: ['read'] } } }),
+    JSON.stringify(s06CompoundResult('s06-compound-mixed-result', true, 's06-compound-mixed-error')),
+  ].join(String.fromCharCode(10)) + String.fromCharCode(10)
+  mkdirSync(s06CompoundMixedBadDir, { recursive: true })
+  writeFileSync(join(s06CompoundMixedBadDir, SESSION_LOG_NAME), zstdCompressSync(Buffer.from(s06CompoundMixedBadText, 'utf8')))
+  saveFixtureProof('s06-compound-mixed-bad-row', s06CompoundMixedBadDir)
+  const s06CompoundMixedBadReplay = replayJsonl(join(s06CompoundMixedBadDir, SESSION_LOG_NAME))
+  const s06CompoundMixedBad05 = runScript(STEP05, exactSessionArgs(s06CompoundMixedBadDir))
+  const s06CompoundMixedBad06 = runScript(STEP06, exactSessionArgs(s06CompoundMixedBadDir))
+  check('S06 复合混合坏行两CLI均非零并保留坏行后复合摘要/错误', s06CompoundMixedBadReplay.rowCount === 6 && s06CompoundMixedBadReplay.invalid === 1 && s06CompoundMixedBad05.status === 1 && s06CompoundMixedBad06.status === 1 && s06CompoundMixedBad05.signal === null && s06CompoundMixedBad06.signal === null && s06CompoundMixedBad05.error === undefined && s06CompoundMixedBad06.error === undefined && s06CompoundMixedBad05.output.includes('INCOMPLETE') && s06CompoundMixedBad06.output.includes('INCOMPLETE') && s06CompoundMixedBad05.output.includes('invalid JSON') && s06CompoundMixedBad06.output.includes('invalid JSON') && s06CompoundMixedBad05.output.includes('invalid event structure') && s06CompoundMixedBad06.output.includes('invalid event structure') && s06CompoundMixedBad05.output.includes('L5 model=s06-compound-mixed-model tools=1') && s06CompoundMixedBad06.output.includes('L5 HEADER model=s06-compound-mixed-model effort=- tools=1') && s06CompoundMixedBad06.output.includes('L6 TOOL-ERROR s06-compound-mixed-error') && countOf(s06CompoundMixedBad06.output, 'TOOL-ERROR') === 1)
+
+  const s06CompoundContrastDir = join(s06Workspace, 's06-compound-contrast')
+  writeSession(s06CompoundContrastDir, SESSION_LOG_NAME, [
+    session('s06-compound-contrast'),
+    { type: 'request/header', data: { header: { config: { model: 's06-scalar-model', reasoningEffort: 'medium' }, tools: ['scalar'] } } },
+    { type: ['request/header', 'agent/inbox/spliced'], data: { header: { config: { model: 's06-nested-model', reasoningEffort: 'high' }, tools: ['read', 'pwsh'] } } },
+    { type: ['request/header', 'agent/inbox/spliced'], data: { config: { model: 's06-direct-model', reasoningEffort: 'low' }, tools: ['direct'] } },
+    { type: ['request/header', 'request/header', 'agent/inbox/spliced'], data: { header: { config: { model: 's06-duplicate-model' }, tools: [] } } },
+    { type: ['request/header', 'agent/inbox/spliced'], data: { header: { config: {}, tools: { length: 73 } } } },
+    { type: ['request/header', 'agent/inbox/spliced'], data: { header: { config: { model: 's06-model-no-tools' }, tools: { length: 73 } } } },
+    { type: ['request/header-extra', 'agent/inbox/spliced'], data: { config: { model: 's06-fake-header' }, tools: ['fake'] } },
+    { type: 'plan/mode', data: { mode: 's06-scalar-mode' } },
+    { type: ['plan/mode', 'agent/inbox/spliced'], data: { mode: 's06-compound-mode' } },
+    { type: ['plan/mode', 'plan/mode', 'agent/inbox/spliced'], data: { mode: 's06-duplicate-mode' } },
+    { type: ['plan/mode', 'agent/inbox/spliced'] },
+    { type: ['plan/mode-extra', 'agent/inbox/spliced'], data: { mode: 's06-fake-mode' } },
+    { type: 'tool/call', data: { name: 'ask_user_question', arguments: JSON.stringify({ question: 's06 scalar call' }) } },
+    { type: ['tool/call', 'agent/inbox/spliced'], data: { name: 'send_message', arguments: JSON.stringify({ text: 's06 compound call' }) } },
+    { type: ['tool/call', 'tool/call', 'agent/inbox/spliced'], data: { name: 'subagent_plan', arguments: JSON.stringify({ prompt: 's06 duplicate call' }) } },
+    { type: ['tool/call', 'agent/inbox/spliced'], data: { name: 'save_plan', arguments: JSON.stringify({ plan: 's06 unsupported call' }) } },
+    { type: ['tool/call-extra', 'agent/inbox/spliced'], data: { name: 'ask_user_question', arguments: JSON.stringify({ question: 's06 fake call' }) } },
+    { ...s06CompoundResult('s06-branch-error', true, 's06-branch-error'), type: ['request/header', 'tool/result', 'agent/inbox/spliced'] },
+    { type: 'request/header', data: { header: { config: {}, tools: { length: 73 } } } },
+  ])
+  saveFixtureProof('s06-compound-contrast', s06CompoundContrastDir)
+  const s06CompoundContrast05 = runScript(STEP05, exactSessionArgs(s06CompoundContrastDir))
+  const s06CompoundContrast06 = runScript(STEP06, exactSessionArgs(s06CompoundContrastDir))
+  const s06CompoundContrast05Full = runScript(STEP05, exactSessionArgs(s06CompoundContrastDir, '--output-mode', 'full'))
+  check('S06 复合对照好日志两只CLI均退出0且无INCOMPLETE', s06CompoundContrast05.status === 0 && s06CompoundContrast06.status === 0 && s06CompoundContrast05Full.status === 0 && s06CompoundContrast05.signal === null && s06CompoundContrast06.signal === null && s06CompoundContrast05Full.signal === null && s06CompoundContrast05.error === undefined && s06CompoundContrast06.error === undefined && s06CompoundContrast05Full.error === undefined && !s06CompoundContrast05.output.includes('INCOMPLETE') && !s06CompoundContrast06.output.includes('INCOMPLETE') && !s06CompoundContrast05Full.output.includes('INCOMPLETE'))
+  check('S06 step05标量/复合header与plan精确匹配且每行一次', countOf(s06CompoundContrast05.output, 'model=s06-') === 5 && s06CompoundContrast05.output.includes('L2 model=s06-scalar-model tools=1') && s06CompoundContrast05.output.includes('L3 model=s06-nested-model tools=2') && s06CompoundContrast05.output.includes('L4 model=s06-direct-model tools=1') && s06CompoundContrast05.output.includes('L5 model=s06-duplicate-model tools=0') && s06CompoundContrast05.output.includes('L7 model=s06-model-no-tools tools=unknown') && s06CompoundContrast05.output.includes('--- plan/mode 事件 count=3 ---') && s06CompoundContrast05.output.includes('L9 summary={"type":"object","keyCount":1,"keys":["mode"],"truncatedKeys":0}') && s06CompoundContrast05.output.includes('L10 summary={"type":"object","keyCount":1,"keys":["mode"],"truncatedKeys":0}') && s06CompoundContrast05.output.includes('L11 summary={"type":"object","keyCount":1,"keys":["mode"],"truncatedKeys":0}') && !s06CompoundContrast05.output.includes('s06-fake-') && !s06CompoundContrast05.output.includes('s06-header-no-evidence') && s06CompoundContrast05.output.includes('"request/header":9') && s06CompoundContrast05.output.includes('"plan/mode":5') && s06CompoundContrast05.output.includes('"tool/call":5') && s06CompoundContrast05.output.includes('L20 model=undefined tools=0'))
+  check('S06 step06标量/复合header、受支持call与独立结果分支均一次', countOf(s06CompoundContrast06.output, ' HEADER ') === 5 && s06CompoundContrast06.output.includes('L2 HEADER model=s06-scalar-model effort=medium tools=1') && s06CompoundContrast06.output.includes('L3 HEADER model=s06-nested-model effort=high tools=2') && !s06CompoundContrast06.output.includes('L4 HEADER') && s06CompoundContrast06.output.includes('L5 HEADER model=s06-duplicate-model effort=- tools=0') && s06CompoundContrast06.output.includes('L7 HEADER model=s06-model-no-tools effort=- tools=unknown') && s06CompoundContrast06.output.includes('L20 HEADER model=undefined effort=- tools=73') && countOf(s06CompoundContrast06.output, 'CALL ') === 3 && s06CompoundContrast06.output.includes('CALL ask_user_question') && s06CompoundContrast06.output.includes('CALL send_message') && s06CompoundContrast06.output.includes('CALL subagent_plan') && s06CompoundContrast06.output.includes('TOOL-ERROR s06-branch-error') && countOf(s06CompoundContrast06.output, 'TOOL-ERROR') === 1 && !s06CompoundContrast06.output.includes('s06-fake-') && !s06CompoundContrast06.output.includes('s06 unsupported call'))
+
+  check('S06 step05 full模式保留复合plan/mode原数据', s06CompoundContrast05Full.status === 0 && s06CompoundContrast05Full.output.includes('L9 {\"mode\":\"s06-scalar-mode\"}') && s06CompoundContrast05Full.output.includes('L10 {\"mode\":\"s06-compound-mode\"}') && s06CompoundContrast05Full.output.includes('L11 {\"mode\":\"s06-duplicate-mode\"}'))
+  const s06CallEvidenceRoot = join(fixtureProofDir, 's06-persistent-inputs')
+  mkdirSync(s06CallEvidenceRoot)
+  const s06CallContrastDir = join(s06CallEvidenceRoot, 's06-compound-call-contrast')
+  writeSession(s06CallContrastDir, SESSION_LOG_NAME, [
+    session('s06-compound-call-contrast'),
+    { type: ['tool/call', 'agent/inbox/spliced'], data: { name: 'pwsh', arguments: JSON.stringify({ command: 'Get-ChildItem' }) } },
+    { type: ['tool/call', 'agent/inbox/spliced'], data: { name: 'pwsh' } },
+    { ...s06CompoundResult('s06-call-error', true, 's06-call-error'), type: ['tool/call', 'tool/result', 'agent/inbox/spliced'], data: { name: 'pwsh', arguments: { command: 'bad-shape' }, ...s06CompoundResult('s06-call-error', true, 's06-call-error').data } },
+    { type: ['tool/call', 'agent/inbox/spliced'], data: { name: 'send_message', arguments: 'after-call' } },
+    { type: ['tool/call', 'agent/inbox/spliced'], data: { name: 'ask_user_question', arguments: { question: 'not-readable' } } },
+  ])
+  saveFixtureProof('s06-compound-call-contrast', s06CallContrastDir)
+  const s06CallContrast06 = runScript(STEP06, ['--host-root', s06CallEvidenceRoot, '--session-dir', s06CallContrastDir])
+  check('S06 复合pwsh严格参数、坏call同条result与下行继续', s06CallContrast06.status === 0 && s06CallContrast06.signal === null && s06CallContrast06.error === undefined && s06CallContrast06.output.includes('L2 PWSH-CALL Get-ChildItem') && !s06CallContrast06.output.includes('L3 PWSH-CALL') && s06CallContrast06.output.includes('L4 TOOL-ERROR s06-call-error') && s06CallContrast06.output.includes('L5 CALL send_message after-call') && !s06CallContrast06.output.includes('L6 CALL ask_user_question') && countOf(s06CallContrast06.output, 'TOOL-ERROR') === 1)
+
+  const s06BufferSha256 = (buffer) => createHash('sha256').update(buffer).digest('hex')
+  const s06InputSpec = (label, directory) => {
+    const inputPath = join(directory, SESSION_LOG_NAME)
+    const proofPath = join(fixtureProofDir, label + '.session.v4.jsonl.zstd')
+    const inputBuffer = readFileSync(inputPath)
+    const proofBuffer = readFileSync(proofPath)
+    return { inputPath, inputBytes: inputBuffer.length, inputSha256: s06BufferSha256(inputBuffer), proofPath, proofBytes: proofBuffer.length, proofSha256: s06BufferSha256(proofBuffer), inputMatchesProof: inputBuffer.equals(proofBuffer) }
+  }
+  const s06SourceSha256After = Object.fromEntries(g2SourceFiles.map((file) => [file, sha256Text(readFileSync(file, 'utf8'))]))
+  const s06NewSubprocesses = [
+    { label: 's06-compound-identity-step05', script: STEP05, outcome: s06CompoundIdentity05, input: s06InputSpec('s06-compound-identity', s06CompoundIdentityDir) },
+    { label: 's06-compound-identity-step06', script: STEP06, outcome: s06CompoundIdentity06, input: s06InputSpec('s06-compound-identity', s06CompoundIdentityDir) },
+    { label: 's06-compound-mixed-bad-row-step05', script: STEP05, outcome: s06CompoundMixedBad05, input: s06InputSpec('s06-compound-mixed-bad-row', s06CompoundMixedBadDir) },
+    { label: 's06-compound-mixed-bad-row-step06', script: STEP06, outcome: s06CompoundMixedBad06, input: s06InputSpec('s06-compound-mixed-bad-row', s06CompoundMixedBadDir) },
+    { label: 's06-compound-contrast-step05', script: STEP05, outcome: s06CompoundContrast05, input: s06InputSpec('s06-compound-contrast', s06CompoundContrastDir) },
+    { label: 's06-compound-contrast-step06', script: STEP06, outcome: s06CompoundContrast06, input: s06InputSpec('s06-compound-contrast', s06CompoundContrastDir) },
+    { label: 's06-compound-contrast-step05-full', script: STEP05, outcome: s06CompoundContrast05Full, input: s06InputSpec('s06-compound-contrast', s06CompoundContrastDir) },
+    { label: 's06-compound-call-contrast-step06', script: STEP06, outcome: s06CallContrast06, input: s06InputSpec('s06-compound-call-contrast', s06CallContrastDir) },
+  ]
+  writeFileSync(join(fixtureProofDir, 's06-subprocess-evidence.json'), JSON.stringify({
+    node: process.execPath,
+    nodeVersion: process.version,
+    sourceSha256Before: g2SourceSha256Before,
+    sourceSha256After: s06SourceSha256After,
+    preload: pathToFileURL(HOST_PRELOAD).href,
+    preloadPath: HOST_PRELOAD,
+    DSH_INSTALL_ROOT: process.env.DSH_INSTALL_ROOT ?? null,
+    runnerSource: fileURLToPath(import.meta.url),
+    runnerSourceSha256: sha256Text(readFileSync(fileURLToPath(import.meta.url), 'utf8')),
+    subprocesses: s06NewSubprocesses.map(({ label, script, outcome, input }) => ({
+      label,
+      command: outcome.argv,
+      scriptArgv: outcome.scriptArgv,
+      node: process.execPath,
+      nodeVersion: process.version,
+      source: script,
+      sourceSha256: sha256Text(readFileSync(script, 'utf8')),
+      input,
+      status: outcome.status,
+      signal: outcome.signal,
+      error: outcome.error ? { name: outcome.error.name ?? null, code: outcome.error.code ?? null, message: outcome.error.message ?? String(outcome.error) } : null,
+      raw: { stdout: outcome.stdout, stderr: outcome.stderr, evidence: outcome.raw },
+    })),
+  }, null, 2) + String.fromCharCode(10))
+
+  saveFixtureMapping([
+    { label: 's07-parent-only', script: STEP07, outcome: s07ParentOnly },
+    { label: 's07-no-sample-parent', script: STEP07, outcome: s07NoSample },
+    { label: 's07-legal-parent', script: STEP07, outcome: s07Legal },
+    { label: 's07-bad-log', script: STEP07, outcome: s07BadLog },
+    { label: 's06-pure-non-event-step05', script: STEP05, outcome: s06PureNonEvent05 },
+    { label: 's06-pure-non-event-step06', script: STEP06, outcome: s06PureNonEvent06 },
+    { label: 's06-mixed-bad-row-step05', script: STEP05, outcome: s06Mixed05 },
+    { label: 's06-mixed-bad-row-step06', script: STEP06, outcome: s06Mixed06 },
+    { label: 's06-compound-results-step05', script: STEP05, outcome: s06Compound05 },
+    { label: 's06-compound-results-step06', script: STEP06, outcome: s06Compound06 },
+    { label: 's06-compound-identity-step05', script: STEP05, outcome: s06CompoundIdentity05, input: s06InputSpec('s06-compound-identity', s06CompoundIdentityDir) },
+    { label: 's06-compound-identity-step06', script: STEP06, outcome: s06CompoundIdentity06, input: s06InputSpec('s06-compound-identity', s06CompoundIdentityDir) },
+    { label: 's06-compound-mixed-bad-row-step05', script: STEP05, outcome: s06CompoundMixedBad05, input: s06InputSpec('s06-compound-mixed-bad-row', s06CompoundMixedBadDir) },
+    { label: 's06-compound-mixed-bad-row-step06', script: STEP06, outcome: s06CompoundMixedBad06, input: s06InputSpec('s06-compound-mixed-bad-row', s06CompoundMixedBadDir) },
+    { label: 's06-compound-contrast-step05', script: STEP05, outcome: s06CompoundContrast05, input: s06InputSpec('s06-compound-contrast', s06CompoundContrastDir) },
+    { label: 's06-compound-contrast-step06', script: STEP06, outcome: s06CompoundContrast06, input: s06InputSpec('s06-compound-contrast', s06CompoundContrastDir) },
+    { label: 's06-compound-contrast-step05-full', script: STEP05, outcome: s06CompoundContrast05Full, input: s06InputSpec('s06-compound-contrast', s06CompoundContrastDir) },
+    { label: 's06-compound-call-contrast-step06', script: STEP06, outcome: s06CallContrast06, input: s06InputSpec('s06-compound-call-contrast', s06CallContrastDir) },
+  ])
   const s06WriteOkDir = join(s06Workspace, 's06-write-ok')
   writeSession(s06WriteOkDir, SESSION_LOG_NAME, [
     session('s06-write-ok'),

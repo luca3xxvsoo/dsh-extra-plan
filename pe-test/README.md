@@ -18,6 +18,8 @@
 
 ## 非 `@local` 迁移部署（HUMAN）
 
+本节仅适用于从下列旧布局迁移的用户（包括只残留旧 bundle 条目的情况）。标准包或全新安装见 [QQBot CLI 与维护所有权](docs/ai-维护手册.md#qqbot-cli-与维护所有权)；全新安装无需执行下述旧包卸载。标准包的源码合同不代表已发布或可部署。
+
 停止相关进程后，按顺序卸载 QQBot 的 `@local/dsh-qqbot-user-questions`、QQBot 的 `@local/dsh-extra-plan`、Web 的 `@local/dsh-extra-plan`；确认三个旧精确路径和 profile bundle 旧条目均不存在。随后从 `https://github.com/luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan` 安装核心包，从 `https://github.com/luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan-qqbot` 安装 QQBot 包。QQBot allow-build 必须精确使用 `dsh-extra-plan-qqbot@git+https://github.com/luca3xxvsoo/dsh-extra-plan.git`，bundle 值为 `dsh-extra-plan-qqbot` 与 `dsh-extra-plan`。不得整删 `node_modules/@local`，也不得自动删除用户 settings 配置或与包改名无关的 raw patch 历史行；重启、设置页、`/preset`、真实 question/approval 与消息仍由用户验收。
 
 ## 怎么跑
@@ -28,7 +30,7 @@ node pe-test/tools/一键step测试.mjs
 ```
 → 自动跑一键脚本 AUTO 数组中的全部自动判定项（项数以 runner 的 AUTO 数组实际项为准），按实际结果分级为通过/部分执行/未执行/失败，结果保存到 `pe-test/reports/测试报告-<时间>.md`；历史批次数字不作为当前通过数。
 → 涉及 Host 代码依赖项时，须由调用者显式前置 `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/一键step测试.mjs`（仅授只读代码根，不授数据 H）；纯 W/只读取证工具直接 `node`；AUTO 不透传真实 Host 选择，实机/provider 项按 HUMAN/NOT-RUN 单列，不自动执行。
-→ 判读：中文「未完成」与英文 `INCOMPLETE` 均计入未完成；`NOT-RUN`/`HUMAN`/`SKIP` 正数不计 PASS；exit 0 只表示无失败，不等于全量执行。「保真断言」（唯一入口 = `step-06-08-v4取证回归.mjs` 的 `checkFidelity`）只验证取证工具对畸形或异常输入如实呈现且不崩，成功只计入 fidelity 独立赛道、不计入通过数，失败仍计入失败并使脚本退出码非零。
+→ 判读：中文「未完成」与英文 `INCOMPLETE` 均计入未完成；`NOT-RUN`/`HUMAN`/`SKIP` 正数不计 PASS；一键脚本正常生成报告时，退出码只由 AUTO 失败数决定，不包括人眼项自身状态；exit 0 不等于全量执行。目录不完整或运行器自身异常时，按结构化状态及原始输出判读。「保真断言」（唯一入口 = `step-06-08-v4取证回归.mjs` 的 `checkFidelity`）只验证取证工具对畸形或异常输入如实呈现且不崩，成功只计入 fidelity 独立赛道、不计入通过数，失败仍计入失败并使脚本退出码非零。
 → 跑之前先确认：**在完整目录（pe-test 与 plugins 同级 = 仓库根）下运行**才有完整结果
 → QQBot 环境项默认只读真实 profile；缺环境或 junction 能力不足显示结构化 SKIP，不计失败，不会自动 heal/建链；报告末尾会列出「人眼项/需参数项」——那些需要你自己跑并人工判读，不是自动的；HUMAN 独立报告保留 stdout/stderr 全量原文
 

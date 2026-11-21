@@ -166,22 +166,38 @@ if (TARGET_INSTALL_ROOT === undefined) {
 const gateWords = { routeMain: '甲', routeExecutor: '丁', routePlan: '乙', routeDisagree: '丙', purposeRefine: '己', purposeRedo: '庚' }
 const initial = { anchoredBootstrap: true, creativeMode: false, webFetch: false, toolPresentationMode: 'native', runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: 'stable-model', plannerPromptSuffix: 'suffix', exploreBudget: 19, otherAgentModel: '', reviewerUsesPlannerModel: false, gateWords }
 function makeEditor(config = initial, documentPath = '', options = {}) {
-  const row = { entry: { options: { id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: structuredClone(config) }, fiber: {} }, inherited: {}, override: {} }
-  const state = { rows: [row], edits: [] }
+  const layers = options.layers
+  const inherited = structuredClone(layers?.inherited ?? {})
+  const row = { entry: { options: { id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: structuredClone(layers === undefined ? config : layers.local ?? inherited) }, fiber: {} }, inherited, override: structuredClone(layers?.local ?? {}) }
+  const state = { rows: [row], edits: [], callbackInputs: [], beforeEdit: undefined }
   const persistDocument = documentPath !== '' && existsSync(documentPath)
-  if (persistDocument) writeFileSync(documentPath, JSON.stringify([{ id: row.entry.options.id, name: row.entry.options.name, config: row.entry.options.config }]), 'utf8')
+  const persist = (local) => {
+    if (persistDocument) writeFileSync(documentPath, JSON.stringify([{ id: row.entry.options.id, name: row.entry.options.name, ...(local === undefined ? {} : { config: local }) }]), 'utf8')
+  }
+  persist(layers === undefined ? row.entry.options.config : layers.local)
   return {
     state,
     documentPath,
     profileContext: options.profileContext,
     dshHomePath: options.dshHomePath,
-    configuration: () => state.rows,
+    configuration: () => state.rows.map((item) => item === row ? {
+      ...item,
+      inherited: structuredClone(item.inherited),
+      // 不分层的老夹具把整个 config 作为本地事实；分层夹具必须从独立的覆写取值。
+      override: structuredClone(layers === undefined ? item.entry.options.config ?? {} : item.override),
+    } : item),
     edit: async (entry, change) => {
       const current = state.rows.find((item) => item.entry === entry)
       if (current === undefined) throw new Error('entry disappeared')
-      const next = change(structuredClone(current.entry.options.config), current.inherited)
-      current.entry.options.config = next
-      if (persistDocument) writeFileSync(documentPath, JSON.stringify([{ id: entry.options.id, name: entry.options.name, config: next }]), 'utf8')
+      if (layers !== undefined) {
+        if (state.beforeEdit !== undefined) state.beforeEdit(current, persist)
+        state.callbackInputs.push({ current: structuredClone(entry.options.config), inherited: structuredClone(current.inherited), override: structuredClone(current.override) })
+      }
+      const next = change(structuredClone(entry.options.config), current.inherited)
+      // 宿主按整组覆写，Loader 原始 config 不自动合并继承层。
+      entry.options.config = next
+      if (layers !== undefined) current.override = structuredClone(next)
+      persist(next)
       state.edits.push({ id: entry.options.id, next: structuredClone(next) })
     },
   }
@@ -505,6 +521,69 @@ try {
   const sameServerEmpty = await requestJson(run.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', {})
   check('V03 成功后同一 server 收到空对象仍拒绝，不是成功 no-op', sameServerEmpty.status === 400 && editor.state.edits.length === 1)
 } finally { await new Promise((resolve) => run.server.close(resolve)); rmSync(initialAuthorityFixture.root, { recursive: true, force: true }) }
+
+async function withLayeredSettings(layers, options, exercise) {
+  const fixture = makeSyncFixture()
+  const editor = makeEditor(initial, fixture.webPatch, { profileContext: fixture.webProfileContext, layers })
+  let run
+  try {
+    run = await start(editor, options)
+    await exercise(editor, fixture, run)
+  } finally {
+    if (typeof run?.lifecycle.cleanup === 'function') await run.lifecycle.cleanup()
+    if (run !== undefined) await new Promise((resolve) => run.server.close(resolve))
+    rmSync(fixture.root, { recursive: true, force: true })
+  }
+}
+
+const layeredRoute = '/api/dsh-extra-plan-settings/pro-config'
+await withLayeredSettings({ inherited: { ...initial, inheritedOnly: 'base-v1' } }, {}, async (editor, fixture, run) => {
+  const row = editor.state.rows[0]
+  const before = readFileSync(fixture.webPatch)
+  const noOp = await requestJson(run.port, 'PUT', layeredRoute, { webFetch: false })
+  // 此时 raw 行仍无 config；跨 profile 的 raw-verified 同步按原契约报 drift，但本地不应为同值请求物化覆写。
+  check('LAYER 首次同值 PUT 不因继承独有键写盘', noOp.status === 502 && noOp.body?.profileSync?.status === 'drift-detected' && editor.state.edits.length === 0 && before.equals(readFileSync(fixture.webPatch)))
+  const put = await requestJson(run.port, 'PUT', layeredRoute, { webFetch: true })
+  const local = syncConfigOf(readFileSync(fixture.webPatch, 'utf8'))
+  const input = editor.state.callbackInputs[0]
+  check('LAYER 首次 PUT 在 Loader 当前值含继承键时不将其写成本地覆盖', put.status === 200 && editor.state.edits.length === 1 && input?.current.inheritedOnly === 'base-v1' && isDeepStrictEqual(input.override, {}) && isDeepStrictEqual(local, { ...initial, webFetch: true }) && isDeepStrictEqual(row.entry.options.config, local))
+  row.inherited.inheritedOnly = 'base-v2'
+  const get = await requestJson(run.port, 'GET', layeredRoute)
+  const effective = get.body?.settingsRow?.effectiveRows?.[0]?.config
+  check('LAYER 首次覆写后插件读取可见继承新值且保留托管 false 空串与 gateWords', get.status === 200 && effective?.inheritedOnly === 'base-v2' && effective.webFetch === true && effective.creativeMode === false && effective.otherAgentModel === '' && isDeepStrictEqual(effective.gateWords, gateWords) && !Object.hasOwn(row.entry.options.config, 'inheritedOnly'))
+})
+
+await withLayeredSettings({ inherited: { ...initial, inheritedOnly: 'base-v1', sameKey: 'same' }, local: { ...initial, localOnly: 'saved-v1', sameKey: 'same' } }, {}, async (editor, fixture, run) => {
+  editor.state.beforeEdit = (row, persist) => {
+    row.override = { ...row.override, localOnly: 'saved-v2' }
+    row.entry.options.config = { ...row.override, loaderOnly: 'not-local' }
+    persist(row.override)
+  }
+  const put = await requestJson(run.port, 'PUT', layeredRoute, { webFetch: true })
+  const local = syncConfigOf(readFileSync(fixture.webPatch, 'utf8'))
+  check('LAYER PUT 使用回调中的最新本地事实并保留双层同值的本地键', put.status === 200 && editor.state.edits.length === 1 && editor.state.callbackInputs[0]?.current.loaderOnly === 'not-local' && isDeepStrictEqual(local, { ...initial, localOnly: 'saved-v2', sameKey: 'same', webFetch: true }))
+  const row = editor.state.rows[0]
+  row.inherited.inheritedOnly = 'base-v2'
+  row.inherited.sameKey = 'base-changed'
+  const get = await requestJson(run.port, 'GET', layeredRoute)
+  const effective = get.body?.settingsRow?.effectiveRows?.[0]?.config
+  check('LAYER 继承层改变后双层同名仍取本地且独有继承键更新', get.status === 200 && effective?.sameKey === 'same' && effective.inheritedOnly === 'base-v2' && effective.localOnly === 'saved-v2')
+  editor.state.beforeEdit = (candidate) => { candidate.override = undefined }
+  const saved = readFileSync(fixture.webPatch)
+  const rejected = await requestJson(run.port, 'PUT', layeredRoute, { webFetch: false })
+  check('LAYER 编辑回调失去可靠本地归属时拒绝且旧字节不变', rejected.status === 500 && editor.state.callbackInputs.at(-1)?.override === undefined && editor.state.edits.length === 1 && saved.equals(readFileSync(fixture.webPatch)))
+})
+
+const inheritedBeforeRepair = { ...initial, inheritedOnly: 'startup-base' }
+delete inheritedBeforeRepair.creativeMode
+const creativeModeDefault = SETTING_DEFINITIONS.find((definition) => definition.key === 'creativeMode').defaultValue
+const layeredBootTrace = []
+await withLayeredSettings({ inherited: inheritedBeforeRepair }, { mount: true, trace: layeredBootTrace }, async (editor, fixture) => {
+  await waitForTrace(layeredBootTrace, 'adapter-resolved')
+  const local = syncConfigOf(readFileSync(fixture.webPatch, 'utf8'))
+  const input = editor.state.callbackInputs[0]
+  check('LAYER 自动补齐走真实挂载回调且不写继承独有键', layeredBootTrace.includes('adapter-resolved') && editor.state.edits.length === 1 && input?.current.inheritedOnly === 'startup-base' && isDeepStrictEqual(input.override, {}) && isDeepStrictEqual(local, { ...initial, creativeMode: creativeModeDefault }))
+})
 
 function makeSyncFixture() {
   const fixture = makeFixtureDir({ label: 'settings-sync' })
@@ -1092,29 +1171,41 @@ async function runHostProxyMatrix() {
   const baseValues = { ...syncValues }
   const gate = structuredClone(syncGateWords)
   const matrixFixture = makeSyncFixture()
-  const matrixEditor = makeEditor({ ...baseValues, gateWords: gate }, matrixFixture.webPatch, { persistDocument: true, profileContext: matrixFixture.webProfileContext })
+  const unmanagedConfigKey = 'webUnmanagedConfig'
+  const unmanagedConfigValue = 'keep-web-config-field'
+  const matrixEditor = makeEditor({ ...baseValues, gateWords: gate, [unmanagedConfigKey]: unmanagedConfigValue }, matrixFixture.webPatch, { persistDocument: true, profileContext: matrixFixture.webProfileContext })
   const initialSnapshot = { values: { ...baseValues }, gateWords: gate }
-  writeFileSync(matrixFixture.webPatch, JSON.stringify([{ id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: { ...baseValues, gateWords: gate } }]), 'utf8')
+  let savedValues = { ...baseValues }
   const normalTrace = []
   const normalStats = { register: 0, dispose: 0 }
   const normalRun = await start(matrixEditor, { mount: true, trace: normalTrace, hostProxyMode: 'normal-injection', matrixStats: normalStats })
   let normalOk = true
-  let normalTerminal = await waitForFullSnapshotTerminal(normalRun.port, matrixFixture, initialSnapshot)
+  let normalTerminal = await waitForTerminal(normalRun.port)
   await waitForAdapterRegister(normalStats)
   const initialRegister = normalStats.register
   const initialDispose = normalStats.dispose
   for (const [index, key] of keys.entries()) {
-    const nextValues = { ...baseValues, [key]: nextMatrixValue(baseValues, key, index) }
+    const nextValues = { ...savedValues, [key]: nextMatrixValue(baseValues, key, index) }
     const nextSnapshot = { values: nextValues, gateWords: gate }
-    matrixEditor.state.rows[0].entry.options.config = { ...nextValues, gateWords: gate }
-    writeFileSync(matrixFixture.webPatch, JSON.stringify([{ id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: { ...nextValues, gateWords: gate } }]), 'utf8')
+    const put = await requestJson(normalRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { [key]: nextValues[key] })
     if (typeof normalRun.lifecycle.update === 'function') normalRun.lifecycle.update()
     await flush(4)
-    normalTerminal = await waitForFullSnapshotTerminal(normalRun.port, matrixFixture, nextSnapshot)
-    normalOk = normalOk && fullSnapshotShapeOk(nextSnapshot) && normalTerminal?.body?.profileSync?.status === 'synced' &&
-      normalTerminal.body.profileSync.pending === false && isDeepStrictEqual(normalTerminal.body.values, nextValues) &&
-      isDeepStrictEqual(syncConfigOf(readFileSync(matrixFixture.webPatch, 'utf8')), { ...nextValues, gateWords: gate }) &&
-      isDeepStrictEqual(syncConfigOf(readFileSync(matrixFixture.qqPatch, 'utf8')), { ...nextValues, gateWords: gate })
+    normalTerminal = await waitForTerminal(normalRun.port)
+    const apiValues = normalTerminal?.body?.values
+    const apiGateWords = normalTerminal?.body?.settingsRow?.selectedConfig?.gateWords
+    const apiValuesShapeOk = apiValues !== undefined && JSON.stringify(Object.keys(apiValues).sort()) === JSON.stringify(keys.slice().sort())
+    const apiGateWordsShapeOk = apiGateWords !== undefined && JSON.stringify(Object.keys(apiGateWords).sort()) === JSON.stringify(GATE_WORD_FIELDS.map((item) => item.field).sort())
+    const apiResponseOk = apiValuesShapeOk && apiGateWordsShapeOk && isDeepStrictEqual(apiValues, nextValues) && isDeepStrictEqual(apiGateWords, gate)
+    const webConfigAfterSave = syncConfigOf(readFileSync(matrixFixture.webPatch, 'utf8'))
+    const webManagedValuesAfterSave = Object.fromEntries(keys.map((item) => [item, webConfigAfterSave?.[item]]))
+    const webCanonicalConfigOk = isDeepStrictEqual(webManagedValuesAfterSave, nextValues) && isDeepStrictEqual(webConfigAfterSave?.gateWords, gate) && webConfigAfterSave?.[unmanagedConfigKey] === unmanagedConfigValue
+    const qqConfigAfterSave = syncConfigOf(readFileSync(matrixFixture.qqPatch, 'utf8'))
+    const iterationOk = put.status === 200 && fullSnapshotShapeOk(nextSnapshot) && normalTerminal?.body?.profileSync?.status === 'synced' &&
+      normalTerminal.body.profileSync.pending === false && apiResponseOk && webCanonicalConfigOk &&
+      isDeepStrictEqual(qqConfigAfterSave, { ...nextValues, gateWords: gate })
+    if (!iterationOk) console.log('HOST_PROXY_MATRIX_FAILURE_DETAIL ' + JSON.stringify({ key, putStatus: put.status, profileStatus: normalTerminal?.body?.profileSync?.status, apiValuesMatch: isDeepStrictEqual(apiValues, nextValues), apiValue: apiValues?.[key], expectedValue: nextValues[key], apiGateWordsMatch: isDeepStrictEqual(apiGateWords, gate), webManagedValuesMatch: isDeepStrictEqual(webManagedValuesAfterSave, nextValues), webValue: webConfigAfterSave?.[key], webGateWordsMatch: isDeepStrictEqual(webConfigAfterSave?.gateWords, gate), webUnmanagedValue: webConfigAfterSave?.[unmanagedConfigKey], webCanonicalConfigOk, qqConfigMatch: isDeepStrictEqual(qqConfigAfterSave, { ...nextValues, gateWords: gate }), qqValue: qqConfigAfterSave?.[key] }))
+    normalOk = normalOk && iterationOk
+    savedValues = nextValues
   }
   const normalProxy = normalRun.proxy
   const normalCase = {

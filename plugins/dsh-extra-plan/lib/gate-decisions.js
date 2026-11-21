@@ -745,7 +745,7 @@ function aggregateRunCodeDenyReason(members, denies) {
 
 
 
-// run_code 静态 helper 单向接线：依赖只由根的 ASK_TOOL、GATE_TOOL 与当前 PTC dispatch 判定显式注入。
+// run_code 静态 helper 单向接线：依赖只由根的 ASK_TOOL、GATE_TOOL显式注入。
 const {
   decomposeRunCode,
   runCodeCatchGateReason,
@@ -753,9 +753,8 @@ const {
   askOrGateReturnGateReason,
   runCodeSiteCount,
   isRunCodeSubCall,
-  runCodeDispatchGateReason,
   runCodeDispatchCapText,
-} = createRunCodeStatic({ askTool: ASK_TOOL, gateTool: GATE_TOOL, isDispatchStart })
+} = createRunCodeStatic({ askTool: ASK_TOOL, gateTool: GATE_TOOL })
 
 export {
   FREE_TOOLS, ASK_TOOL,
@@ -765,5 +764,5 @@ export {
   catalogHasWriteTools, isReadOnlyChildByCatalog, schemasHasWriteTools, schemasHasTool, catalogIsCollapsed,
   subagentProbeGateReason, shellMutationReason, childControlGateReason, plannerGateReason, childReadonlyGateReason, jobOutputGateReason, recordJobOutputCall,
   pollGuardGateReason, recordPollGuardCall, probeDisposalWarning, mainGateReason, runCodeGroupDenyReason, aggregateRunCodeDenyReason,
-  decomposeRunCode, runCodeCatchGateReason, collectRunCodeSites, askOrGateReturnGateReason, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchGateReason, runCodeDispatchCapText,
+  decomposeRunCode, runCodeCatchGateReason, collectRunCodeSites, askOrGateReturnGateReason, runCodeSiteCount, isRunCodeSubCall, runCodeDispatchCapText,
 }

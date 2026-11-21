@@ -727,13 +727,21 @@ const s07Injected = suffixCheckRecords.filter((record) => record.level === 'veri
 const s07InjectionViolations = s07Injected.filter((record) => record.rawMessagesHaveSuffix !== true || record.rawParentArgsHaveSuffix !== 'no')
 const s07Decisive = suffixCheckRecords.filter((record) => record.suffixMatched && record.associationComplete && (record.level === 'verified-injection' || record.level === 'content-only'))
 const s07ContentMismatches = s07Decisive.filter((record) => (record.level === 'content-only') !== (record.parentPromptSuffixMatch === 'yes'))
-// S07-3 失败项收口：两条 check 结论仍按原样式打印，同时把非空违例项按「标签加 childId 或 dir」逐条收集，供退出码与 stderr 逐条定位。
+// S07-3 失败项收口：两条 check 独立判定；空受检集合只记 NOT-RUN，不把无样本误报为 PASS。
 const s07Failures = [
   ...s07InjectionViolations.map((record) => 'suffix 注入互斥原始证据违例 ' + (record.childId !== '' ? 'childId=' + record.childId : 'dir=' + record.dir) + ' rawMessagesHaveSuffix=' + String(record.rawMessagesHaveSuffix) + ' rawParentArgsHaveSuffix=' + record.rawParentArgsHaveSuffix + ' level=' + record.level),
   ...s07ContentMismatches.map((record) => 'content-only 与父含 suffix 判定不一致 ' + (record.childId !== '' ? 'childId=' + record.childId : 'dir=' + record.dir) + ' level=' + record.level + ' parentPromptSuffixMatch=' + record.parentPromptSuffixMatch),
 ]
-console.log('S07-3 suffix 注入互斥（原始证据：子 messages 全文含 suffix 且父原始 arguments 不含）成立=' + (s07InjectionViolations.length === 0 ? 'PASS' : 'FAIL') + '（受检 child=' + suffixCheckRecords.length + '；verified-injection=' + s07Injected.length + '；互斥违例=' + s07InjectionViolations.length + '）')
-console.log('S07-3 content-only 与父含 suffix 判定一致=' + (s07ContentMismatches.length === 0 ? 'PASS' : 'FAIL') + '（可定档 child=' + s07Decisive.length + '；content-only=' + s07Decisive.filter((record) => record.level === 'content-only').length + '；父含 suffix=' + s07Decisive.filter((record) => record.parentPromptSuffixMatch === 'yes').length + '；不一致=' + s07ContentMismatches.length + '）')
+if (s07Injected.length === 0) {
+  console.log('S07-3 suffix 注入互斥（原始证据：子 messages 全文含 suffix 且父原始 arguments 不含）NOT-RUN（原因=受检集合为空：无 verified-injection 可定档样本；受检样本=0；verified-injection=0；互斥违例=0）')
+} else {
+  console.log('S07-3 suffix 注入互斥（原始证据：子 messages 全文含 suffix 且父原始 arguments 不含）成立=' + (s07InjectionViolations.length === 0 ? 'PASS' : 'FAIL') + '（受检 child=' + suffixCheckRecords.length + '；verified-injection=' + s07Injected.length + '；互斥违例=' + s07InjectionViolations.length + '）')
+}
+if (s07Decisive.length === 0) {
+  console.log('S07-3 content-only 与父含 suffix 判定一致 NOT-RUN（原因=受检集合为空：无 suffixMatched 且 associationComplete 的可定档样本；可定档样本=0；不一致=0）')
+} else {
+  console.log('S07-3 content-only 与父含 suffix 判定一致=' + (s07ContentMismatches.length === 0 ? 'PASS' : 'FAIL') + '（可定档 child=' + s07Decisive.length + '；content-only=' + s07Decisive.filter((record) => record.level === 'content-only').length + '；父含 suffix=' + s07Decisive.filter((record) => record.parentPromptSuffixMatch === 'yes').length + '；不一致=' + s07ContentMismatches.length + '）')
+}
 
 const incompleteLog = sessions.some((session) => session.file === null || session.parseFailures > 0 || session.decodeFailures > 0)
 if (incompleteLog) console.error('INCOMPLETE 会话日志存在缺失或解析/解码失败')

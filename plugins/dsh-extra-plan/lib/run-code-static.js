@@ -174,7 +174,7 @@ export function parseStaticLiteral(input) {
   }
 }
 
-export function createRunCodeStatic({ askTool, gateTool, isDispatchStart }) {
+export function createRunCodeStatic({ askTool, gateTool }) {
   // run_code 拆解、组判定与聚合共用单一纯函数实现；直呼与组成员路径不复制规则，
   // 闭包依赖显式传入，分支顺序与 listener 合同保持一致。
   // 闸门工具 gateTool 与 askTool 同受返回链闸门（askOrGateReturnGateReason）约束：
@@ -367,7 +367,57 @@ export function createRunCodeStatic({ askTool, gateTool, isDispatchStart }) {
       scan = idx + 5
     }
   
-    // bare ask/gate 或非 tools 对象的属性调用同样属于别名/未知访问，不能放行。
+    // 仅为可证明的数据位留例外。取顶层简单语句和静态字面量，不执行代码，
+    // 不以整个名字为豁免键；同名调用、成员/别名和无法证明的上下文仍按旧规则。
+    const dataOffsets = () => {
+      const offsets = new Set()
+      const scalars = new Set()
+      let start = 0
+      const accept = (end) => {
+        const raw = text.slice(start, end)
+        const visible = masked.slice(start, end)
+        if (raw.trim() === '') return
+        const binding = /^\s*(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=/u.exec(visible)
+        const returned = /^\s*return[ \t]+(?=\S)/u.exec(raw)
+        const form = binding ?? returned
+        if (form === null) { scalars.clear(); return }
+        const initializer = raw.slice(form[0].length)
+        const literal = parseStaticLiteral(initializer)
+        if (!literal.ok) {
+          const name = initializer.trim()
+          if (returned !== null && scalars.has(name)) offsets.add(start + form[0].length + initializer.indexOf(name))
+          scalars.clear()
+          return
+        }
+        if (binding !== null && (literal.value === null || typeof literal.value !== 'object')) {
+          const name = binding[1]
+          offsets.add(start + binding[0].lastIndexOf(name))
+          scalars.add(name)
+        } else if (binding !== null) scalars.delete(binding[1])
+        if (literal.value !== null && typeof literal.value === 'object') {
+          const valueStart = start + form[0].length
+          for (const m of masked.slice(valueStart, end).matchAll(/[{,]\s*([A-Za-z_$][\w$]*)\s*:/gu)) {
+            offsets.add(valueStart + m.index + m[0].indexOf(m[1]))
+          }
+        }
+      }
+      const stack = []
+      const close = { ')': '(', ']': '[', '}': '{' }
+      for (let i = 0; i < masked.length; i += 1) {
+        const ch = masked[i]
+        if (ch === '(' || ch === '[' || ch === '{') stack.push(ch)
+        else if (close[ch] !== undefined && stack.pop() !== close[ch]) return new Set()
+        if (stack.length !== 0) continue
+        if (ch === ';' || (ch === '\n' && /^\s*(?:const|let|return)\b/u.test(masked.slice(i + 1)))) {
+          accept(i)
+          start = i + 1
+        }
+      }
+      if (stack.length === 0) accept(text.length)
+      return offsets
+    }
+    let plainData
+    // 裸名或非 tools 的属性在无法证明仅是数据时仍拒绝。
     for (const gatedName of [askTool, gateTool]) {
       if (typeof gatedName !== 'string' || gatedName === '') continue
       scan = 0
@@ -385,7 +435,7 @@ export function createRunCodeStatic({ askTool, gateTool, isDispatchStart }) {
             while (p >= 0 && isIdChar(masked[p])) p -= 1
             direct = masked.slice(p + 1, end + 1) === 'tools'
           }
-          if (!direct) {
+          if (!direct && !(plainData ??= dataOffsets()).has(idx)) {
             invalidReference = true
             reason = reasonFor(gatedName)
           }
@@ -554,29 +604,11 @@ export function createRunCodeStatic({ askTool, gateTool, isDispatchStart }) {
     return false
   }
   
-  // 单实例子调用超限文案（T3 逐字；listener 运行时检查与纯函数共用）。
+  // 单实例子调用超限文案（供运行时计数器与测试共用）。
   function runCodeDispatchCapText(rid, count, cap) {
     return `run_code 实例（rootCallId ${rid}）子调用数 ${count} 超过上限 ${cap}（exploreBudget）：请拆分 run_code 或提高 exploreBudget；循环/动态放大同样受限`
   }
   
-  // 运行时单实例上限判定（planner 专属）：统计调用方接线传入的现行 dispatch-start 事件且
-  // data.rootCallId===rid 的条数 count；当前宿主接线仅识别 tool/ptc-dispatch-start，旧 code-dispatch 已删除。
-  // exec.rootCallId 非 string / events 非数组 / cap 非正整数 → null。
-  function runCodeDispatchGateReason(events, exec, cap) {
-    const rid = exec !== null && exec !== undefined ? exec.rootCallId : undefined
-    if (typeof rid !== 'string' || !Array.isArray(events)) return null
-    if (!Number.isInteger(cap) || cap <= 0) return null
-    let count = 0
-    for (const e of events) {
-      if (e === null || typeof e !== 'object') continue
-      if (!isDispatchStart(e.type)) continue
-      const d = e.data
-      if (d === null || typeof d !== 'object') continue
-      if (d.rootCallId === rid) count += 1
-    }
-    if (count > cap) return runCodeDispatchCapText(rid, count, cap)
-    return null
-  }
   return {
     maskCodeLiteralsAndComments,
     sliceBalancedArgs,
@@ -587,6 +619,5 @@ export function createRunCodeStatic({ askTool, gateTool, isDispatchStart }) {
     runCodeSiteCount,
     isRunCodeSubCall,
     runCodeDispatchCapText,
-    runCodeDispatchGateReason,
   }
 }

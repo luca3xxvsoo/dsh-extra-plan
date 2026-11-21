@@ -36,25 +36,65 @@ for (const dir of found.dirs) {
         console.error('INCOMPLETE L' + lineNo + ' invalid JSON: ' + (error instanceof Error ? error.message : String(error)))
         continue
       }
+      const validEvent = ev !== null && typeof ev === 'object' && !Array.isArray(ev) && (
+        (typeof ev.type === 'string' && ev.type.length > 0) ||
+        (Array.isArray(ev.type) && ev.type.length > 0 && ev.type.every((value) => typeof value === 'string' && value.length > 0))
+      )
+      if (!validEvent) {
+        invalidLog = true
+        console.error('INCOMPLETE L' + lineNo + ' invalid event structure')
+        continue
+      }
       recordCount += 1
       const t = ev.type
       const data = ev.data ?? {}
       const trunc = (s, n) => (typeof s !== 'string' ? s : s.length > n ? s.slice(0, n) + '…' : s)
-      if (t === 'request/header') {
-        const h = data.header || {}
-        console.log('L' + lineNo + ' HEADER model=' + h.config?.model + ' effort=' + (h.config?.reasoningEffort ?? '-') + ' tools=' + (h.tools || []).length)
-      } else if (t === 'tool/call') {
-        if (data.name === 'pwsh') {
-          let cmd = ''
-          try { cmd = JSON.parse(data.arguments || '{}').command ?? '' } catch { cmd = String(data.arguments) }
-          console.log('L' + lineNo + ' PWSH-CALL ' + trunc(cmd, 220))
-        } else if (data.name === 'subagent_plan' || data.name === 'ask_user_question' || data.name === 'send_message' || data.name === 'subagent' || data.name === 'subagent_review' || data.name === 'subagent_probe') {
-          console.log('L' + lineNo + ' CALL ' + data.name + ' ' + trunc(data.arguments, 220))
+      const isCompound = Array.isArray(t)
+      const hasType = (type) => isCompound ? t.includes(type) : t === type
+      const dataObject = data !== null && typeof data === 'object' && !Array.isArray(data) ? data : null
+      const nestedHeader = dataObject && dataObject.header !== null && typeof dataObject.header === 'object' && !Array.isArray(dataObject.header) ? dataObject.header : null
+      if (hasType('request/header')) {
+        if (!isCompound) {
+          const h = data.header || {}
+          console.log('L' + lineNo + ' HEADER model=' + h.config?.model + ' effort=' + (h.config?.reasoningEffort ?? '-') + ' tools=' + (h.tools || []).length)
+        } else if (nestedHeader !== null) {
+          const config = nestedHeader.config !== null && typeof nestedHeader.config === 'object' && !Array.isArray(nestedHeader.config) ? nestedHeader.config : null
+          const model = config && typeof config.model === 'string' && config.model.length > 0 ? config.model : undefined
+          const effort = config && typeof config.reasoningEffort === 'string' && config.reasoningEffort.length > 0 ? config.reasoningEffort : undefined
+          const tools = Array.isArray(nestedHeader.tools) ? nestedHeader.tools.length : null
+          if (model !== undefined || effort !== undefined || tools !== null) console.log('L' + lineNo + ' HEADER model=' + model + ' effort=' + (effort ?? '-') + ' tools=' + (tools === null ? 'unknown' : tools))
         }
-      } else if (t === 'tool/result') {
+      }
+      if (hasType('tool/call')) {
+        if (!isCompound) {
+          if (data.name === 'pwsh') {
+            let cmd = ''
+            try { cmd = JSON.parse(data.arguments || '{}').command ?? '' } catch { cmd = String(data.arguments) }
+            console.log('L' + lineNo + ' PWSH-CALL ' + trunc(cmd, 220))
+          } else if (data.name === 'subagent_plan' || data.name === 'ask_user_question' || data.name === 'send_message' || data.name === 'subagent' || data.name === 'subagent_review' || data.name === 'subagent_probe') {
+            console.log('L' + lineNo + ' CALL ' + data.name + ' ' + trunc(data.arguments, 220))
+          }
+        } else {
+          const argumentsText = typeof data.arguments === 'string' ? data.arguments : null
+          if (data.name === 'pwsh') {
+            let cmd = ''
+            if (argumentsText !== null) {
+              try {
+                const parsed = JSON.parse(argumentsText)
+                if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) && typeof parsed.command === 'string' && parsed.command.length > 0) cmd = parsed.command
+              } catch {}
+            }
+            if (cmd.length > 0) console.log('L' + lineNo + ' PWSH-CALL ' + trunc(cmd, 220))
+          } else if ((data.name === 'subagent_plan' || data.name === 'ask_user_question' || data.name === 'send_message' || data.name === 'subagent' || data.name === 'subagent_review' || data.name === 'subagent_probe') && argumentsText !== null && argumentsText.length > 0) {
+            console.log('L' + lineNo + ' CALL ' + data.name + ' ' + trunc(argumentsText, 220))
+          }
+        }
+      }
+      if (hasType('tool/result')) {
         const result = toolResultOf(ev)
         if (result !== null && result.isError === true) console.log('L' + lineNo + ' TOOL-ERROR ' + trunc(result.text || 'tool result isError=true', 260))
-      } else if (typeof t === 'string' && /retry|error|failed/i.test(t)) {
+      }
+      if (!isCompound && typeof t === 'string' && /retry|error|failed/i.test(t)) {
         console.log('L' + lineNo + ' EVENT[' + t + '] ' + trunc(JSON.stringify(data), 300))
       }
     }
@@ -64,7 +104,7 @@ for (const dir of found.dirs) {
   }
   if (recordCount === 0) {
     invalidLog = true
-    console.error('INCOMPLETE no JSON records')
+    console.error('INCOMPLETE no valid events')
   }
 }
 process.exitCode = invalidLog ? 1 : 0
