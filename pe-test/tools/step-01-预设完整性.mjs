@@ -37,7 +37,6 @@ const presetFile = join(PRESET_DIR, 'preset.yml')
 const generatedFile = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'preset-defaults.generated.js')
 const definitionGeneratedFile = join(PRESET_DIR, 'preset-definition.generated.yml')
 const coreManifestFile = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'package.json')
-const qqbotManifestFile = join(REPO_ROOT, 'plugins', 'dsh-extra-plan-qqbot', 'package.json')
 const assemblySource = readFileSync(join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'assembly-presentation.js'), 'utf8')
 
 function targetManifestPath(name) {
@@ -247,7 +246,6 @@ check('T1 skill-filesystem 行保留 watch:false 与 bundledSkillDir、不含 cu
 check('T1 作者源保留官方 preset registry 说明且无包装层恢复配方', agentText.includes('dsh-agent-preset-registry 会拒绝挂载') && !agentText.includes("provider: extra-executor-spawn"))
 // B2：YAML exploreBudget 是作者真源，生成模块只保存派生 fallback；非法 source 不覆盖 sentinel。
 const packageJson = JSON.parse(readFileSync(coreManifestFile, 'utf8'))
-const qqbotPackageJson = JSON.parse(readFileSync(qqbotManifestFile, 'utf8'))
 const generatedText = readFileSync(generatedFile, 'utf8')
 const EXPECTED_DEFAULT_SETTINGS = { anchoredBootstrap: true, creativeMode: false, webFetch: false, toolPresentationMode: 'native', runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: 'deepseek-v4-pro', plannerPromptSuffix: '你的深度思考部分需要以"好了，现在我以全局视角来看待这个问题"开头', exploreBudget: 18, otherAgentModel: '', reviewerUsesPlannerModel: false }
 check('B2 导入生成物 DEFAULT_SETTINGS 恰十一键/值/冻结且旧别名同值', Object.isFrozen(DEFAULT_SETTINGS) && isDeepStrictEqual(DEFAULT_SETTINGS, EXPECTED_DEFAULT_SETTINGS) && DEFAULT_EXPLORE_BUDGET === DEFAULT_SETTINGS.exploreBudget && DEFAULT_PLANNER_PROMPT_SUFFIX === DEFAULT_SETTINGS.plannerPromptSuffix && resolveTemplateSettingDefault(agentText, 'exploreBudget') === DEFAULT_SETTINGS.exploreBudget && resolveTemplateSettingDefault(agentText, 'plannerPromptSuffix') === DEFAULT_SETTINGS.plannerPromptSuffix, true)
@@ -255,26 +253,20 @@ check('B2 导入生成物 DEFAULT_SETTINGS 恰十一键/值/冻结且旧别名�
 check('B2 render 文本与已提交生成模块逐字一致', renderRuntimeDefaults(agentText) === generatedText, true)
 check('B2 definition render 与提交资产逐字一致且 package 仅装载 cordis.patch.yml', renderPresetDefinition(agentText, readFileSync(presetFile, 'utf8')) === definitionGeneratedText && JSON.parse(readFileSync(join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'package.json'), 'utf8')).dsh.bundle.patch === './cordis.patch.yml', true)
 const packageFiles = Array.isArray(packageJson.files) ? packageJson.files : []
-const qqbotExports = qqbotPackageJson.exports !== null && typeof qqbotPackageJson.exports === 'object' ? qqbotPackageJson.exports : {}
-const qqbotFiles = Array.isArray(qqbotPackageJson.files) ? qqbotPackageJson.files : []
 const rootLicenseFile = join(REPO_ROOT, 'LICENSE')
 const packageLicenseFile = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'LICENSE')
-const qqbotLicenseFile = join(REPO_ROOT, 'plugins', 'dsh-extra-plan-qqbot', 'LICENSE')
 const rootLicenseBytes = existsSync(rootLicenseFile) ? readFileSync(rootLicenseFile) : null
 const packageLicenseBytes = existsSync(packageLicenseFile) ? readFileSync(packageLicenseFile) : null
-const qqbotLicenseBytes = existsSync(qqbotLicenseFile) ? readFileSync(qqbotLicenseFile) : null
-check('M4 两个子包 LICENSE 存在且与根 LICENSE 字节全同', rootLicenseBytes !== null && packageLicenseBytes !== null && qqbotLicenseBytes !== null && packageLicenseBytes.equals(rootLicenseBytes) && qqbotLicenseBytes.equals(rootLicenseBytes))
-check('M4 两包 package.json license=MIT', packageJson.license === 'MIT' && qqbotPackageJson.license === 'MIT')
+check('M4 核心包 LICENSE 存在且与根 LICENSE 字节全同', rootLicenseBytes !== null && packageLicenseBytes !== null && packageLicenseBytes.equals(rootLicenseBytes))
+check('M4 核心包 package.json license=MIT', packageJson.license === 'MIT')
 check('B2 package files/scripts 含生成器、generate 与 prepack', packageFiles.includes('scripts/generate-runtime-defaults.mjs') && packageJson.scripts['generate:runtime-defaults'] === 'node scripts/generate-runtime-defaults.mjs' && packageJson.scripts.prepack === 'node scripts/generate-runtime-defaults.mjs', true)
 check('M1 核心 manifest name/version/repository/client/deps/patch/private 契约', packageJson.name === 'dsh-extra-plan' && packageJson.repository === 'git+https://github.com/luca3xxvsoo/dsh-extra-plan.git' && packageJson.dsh?.bundle?.patch === './cordis.patch.yml' && packageJson.dsh?.client?.platform === 'web' && Array.isArray(packageJson.dsh?.client?.inject) && packageJson.dependencies?.['js-yaml'] === '^4.2.0' && !Object.prototype.hasOwnProperty.call(packageJson, 'private') && !JSON.stringify(packageJson).includes('@local/dsh-extra-plan'))
-check('M2 两包 engines/peer 五字段均为 0.2.2-rc.1 || 0.2.2-rc.2 || 0.2.2-rc.3 || 0.2.2-rc.4 || 0.2.2-rc.5 五版本',
+check('M2 核心包 engines/peer 四字段均为 0.2.2-rc.1 || 0.2.2-rc.2 || 0.2.2-rc.3 || 0.2.2-rc.4 || 0.2.2-rc.5 五版本',
   packageJson.engines?.dsh === TARGET_PEER_RANGE
   && packageJson.peerDependencies?.['@deepseek-ai/dsh'] === TARGET_PEER_RANGE
   && packageJson.peerDependencies?.['@deepseek-ai/dsh-llm'] === TARGET_PEER_RANGE
-  && packageJson.peerDependencies?.['@deepseek-ai/dsh-agent-preset'] === TARGET_PEER_RANGE
-  && qqbotPackageJson.engines?.dsh === TARGET_PEER_RANGE)
+  && packageJson.peerDependencies?.['@deepseek-ai/dsh-agent-preset'] === TARGET_PEER_RANGE)
 check('M2 核心 exports/files 保持所需子路径与 peer 声明、包装层 export/实现均缺席', packageJson.exports?.['.'] === './index.js' && packageJson.exports?.['./settings'] === './lib/settings.js' && !Object.prototype.hasOwnProperty.call(packageJson.exports || {}, './executor-spawn') && !existsSync(join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'executor-spawn.js')) && packageFiles.includes('index.js') && packageFiles.includes('lib/') && packageFiles.includes('locale/') && packageFiles.includes('cordis.patch.yml') && packageJson.peerDependencies?.['@deepseek-ai/dsh'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/dsh-llm'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/dsh-agent-preset'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/schemastery'] === TARGET_SCHEMASTERY_PEER)
-check('M3 QQBot manifest name/version/exports/files/dependency/postinstall/patch/private 契约', qqbotPackageJson.name === 'dsh-extra-plan-qqbot' && qqbotExports['.'] === './index.js' && qqbotExports['./cordis.patch.yml'] === './cordis.patch.yml' && qqbotExports['./package.json'] === './package.json' && JSON.stringify(qqbotFiles) === JSON.stringify(['index.js', 'cordis.patch.yml', 'lib/', 'scripts/']) && qqbotPackageJson.dependencies?.['js-yaml'] === '^4.2.0' && qqbotPackageJson.scripts?.postinstall === 'node scripts/heal.mjs --install' && qqbotPackageJson.dsh?.bundle?.patch === './cordis.patch.yml' && !Object.prototype.hasOwnProperty.call(qqbotPackageJson, 'private') && !JSON.stringify(qqbotPackageJson).includes('@local/dsh-qqbot-user-questions'))
 // ── T3 角色预设链：作者源第二文档 4 角色 + 4 个生成 definition（persona 逐字相等） ─────
 const roleSourceText = secondDocumentOf(agentText)
 const roleSource = parsePresetYaml(roleSourceText)
@@ -701,7 +693,7 @@ for (const [label, sourceText] of usagePathSources) {
 }
 
 
-// T1 禁止项：本修复走宿主 patch（dsh-extra-plan-qqbot/cordis.patch.yml 补
+// T1 禁止项：本修复走宿主 patch（核心包 cordis.patch.yml 补
 // cordis-host-runner 行），资产预设的 tool-cordis 行必须逐字未变（仅 id + name 两行、无 config）。
 const toolCordisRow = all.find((row) => row.id === 'tool-cordis')
 const toolCordisTextRe = /- id: tool-cordis\n  name: '@deepseek-ai\/dsh-tool-cordis'(?:\n|$)/
@@ -779,8 +771,7 @@ check('S2 engines.dsh 与三项 @deepseek-ai peer 同值 0.2.2-rc.1 || 0.2.2-rc.
   pluginPeers['@deepseek-ai/dsh'] === TARGET_PEER_RANGE
   && pluginPeers['@deepseek-ai/dsh-llm'] === TARGET_PEER_RANGE
   && pluginPeers['@deepseek-ai/dsh-agent-preset'] === TARGET_PEER_RANGE
-  && pluginPkg?.engines?.dsh === TARGET_PEER_RANGE
-  && qqbotPackageJson.engines?.dsh === TARGET_PEER_RANGE)
+  && pluginPkg?.engines?.dsh === TARGET_PEER_RANGE)
 check('S2 peerDependencies 不使用 caret/compatibility 豁免，且精确五版本仍由宿主供给，schemastery 仍由宿主供给',
   typeof pluginPeers['@deepseek-ai/schemastery'] === 'string' && pluginPeers['@deepseek-ai/schemastery'] !== '' &&
   !String(pluginPeers['@deepseek-ai/dsh']).includes('^') && !String(pluginPeers['@deepseek-ai/dsh-llm']).includes('^'))
@@ -843,7 +834,6 @@ if (typeof appBoot?.evaluatePluginCompatibility === 'function' && targetDsh !== 
   const sourceRootRuntimeVersion = targetDshVersion
   const actualManifests = [
     { label: 'dsh-extra-plan', manifest: packageJson },
-    { label: 'dsh-extra-plan-qqbot', manifest: qqbotPackageJson },
   ]
   console.log('INFO  APP-BOOT 公开纯函数根实际dsh=' + sourceRootRuntimeVersion + '；显式纯函数runtimeVersion正例=' + semanticPositiveCases.map((entry) => entry.label + ':' + entry.version).join(','))
   for (const actual of actualManifests) {

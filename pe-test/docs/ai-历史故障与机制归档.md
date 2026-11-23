@@ -129,7 +129,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
 
 ## 0.1.7 / 0.2.0 阶段宿主契约变化依据
 
-> 本节由「单版本口径（仅 dsh 0.2.1-rc.2）」清理迁入：以下 27 条注释原文原先散落在插件源码、预设作者源、QQBot patch 与回归脚本里，说明「为什么当前实现是这个形状」。清理后活代码不再保留版本依据注释，原文逐字存此备查。行号为清理前快照行号（原文件镜像见 `.extra-plan/backup-dsh-extra-plan-清理0-1-7与0-2-0残留-20261018000842/`）。本节只作历史依据，不是当前合同；当前契约以源码、[ai-机制设计](ai-机制设计.md) 与回归脚本为准。
+> 本节由「单版本口径（仅 dsh 0.2.1-rc.2）」清理迁入：以下 23 条注释原文原先散落在插件源码、预设作者源与回归脚本里，说明「为什么当前实现是这个形状」。清理后活代码不再保留版本依据注释，原文逐字存此备查。行号为清理前快照行号（该批原文件镜像已不可用）。本节只作历史依据，不是当前合同；当前契约以源码、[ai-机制设计](ai-机制设计.md) 与回归脚本为准。
 ### 插件主入口 `plugins/dsh-extra-plan/index.js`
 
 **1. `plugins/dsh-extra-plan/index.js:186`**（原文 186-194 行）
@@ -234,49 +234,9 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
 
 - 解释该快照中的当时行为：`dsh-tool-cordis` 只注册两个只读工具（cordis_inspect_list 与 cordis_inspect 的 _query 名），`cordis_run` 等 5 名不得写进 deny（未知名会让 `tools.restrict()` 抛错）；第二文档四角色不挂该行，故查询工具对子代理天然不可见。
 
-### QQBot 静态 patch `plugins/dsh-extra-plan-qqbot/cordis.patch.yml`
-
-**10. `plugins/dsh-extra-plan-qqbot/cordis.patch.yml:2`**（原文 2-3 行）
-
-```text
-# 【待有 QQBOT 环境再测试，本机不做验证】本文件两行按 dsh 0.1.7-rc.1 新包族静态重写，
-# 无 qqbot 0.5.0 包可实测（方案 U3/U4 未核实项）。
-```
-
-- 解释该快照中的当时行为：本文件按 dsh `0.2.1-rc.2` 包族维护两行 insert；本机无 qqbot 0.5.0 包可实测，该环境项仍是 HUMAN。
-
-**11. `plugins/dsh-extra-plan-qqbot/cordis.patch.yml:8`**（原文 8-11 行）
-
-```text
-    # 0.1.7-rc.1：旧 code-runtime 行（worker-thread 族的 code-runtime 包）整包消失，
-    # 等价行 = ptc-runtime（dsh-base 同形行：id: ptc-runtime / name:
-    # '@deepseek-ai/dsh-ptc-runtime-node'，提供 ctx.ptcRuntime）。
-    # 若目标 qqbot 宿主的基础组合已带该行，本行须删除以免重复注册。
-```
-
-- 解释该快照中的当时行为：patch 里 insert 的 `ptc-runtime` 行提供 `ctx.ptcRuntime`；若目标 qqbot 宿主基础组合已带该行，本行必须删除以免重复注册。
-
-**12. `plugins/dsh-extra-plan-qqbot/cordis.patch.yml:14`**（原文 14-16 行）
-
-```text
-    # 0.1.7-rc.1：旧 agent-presets 行（复数包）整包消失，替身 = dsh-agent-preset-registry
-    # （Config{default, selectedDefault}；modeSelectionEnabled 已在 dsh 0.1.7-rc.2 删除，勿再写；
-    # 预设声明行由各 bundle patch 提供）。
-```
-
-- 解释该快照中的当时行为：patch 里 insert 的 `agent-preset-registry` 行提供 `Config{default, selectedDefault}`；`modeSelectionEnabled` 已不属于该行契约。
-
-**13. `plugins/dsh-extra-plan-qqbot/cordis.patch.yml:15`**（原文 15 行）
-
-```text
-    # （Config{default, selectedDefault}；modeSelectionEnabled 已在 dsh 0.1.7-rc.2 删除，勿再写；
-```
-
-- 解释该快照中的当时行为：同上块续行：`modeSelectionEnabled` 不得再写，预设声明行由各 bundle patch 提供。
-
 ### 回归脚本 `pe-test/tools/step-04-路由与写闸门.mjs`
 
-**14. `pe-test/tools/step-04-路由与写闸门.mjs:58`**（原文 58-59 行）
+**10. `pe-test/tools/step-04-路由与写闸门.mjs:58`**（原文 58-59 行）
 
 ```text
 // （本机 npm 全局 dsh 实测 0.1.7-rc.2，profiles/web 另有 profile 内副本）；
@@ -285,7 +245,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
 
 - 解释该快照中的当时行为：该测试不 import `lib/settings.js`（顶层依赖宿主 schemastery），改为源码文本静态核对 Config 的 volatile/默认值契约，避免依赖本机 schemastery 版本。
 
-**15. `pe-test/tools/step-04-路由与写闸门.mjs:268`**（原文 268-270 行）
+**11. `pe-test/tools/step-04-路由与写闸门.mjs:268`**（原文 268-270 行）
 
 ```text
 // 0.1.7 取径订正：C=1 创造 skill 面不再经 agentPresets.resolve('cordis') 运行期注册
@@ -295,7 +255,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
 
 - 解释该快照中的当时行为：创造 skill 面改为预设行静态注册后，`agentPresets`/`skills` mock 及其断言整体退役；mock harness 只保留 ptcRuntime 等当时使用的服务。
 
-**16. `pe-test/tools/step-04-路由与写闸门.mjs:269`**（原文 269 行）
+**12. `pe-test/tools/step-04-路由与写闸门.mjs:269`**（原文 269 行）
 
 ```text
 // （该 resolve 在 0.1.7 只返回 {id[,broken]}，path 恒 undefined），改为预设 skill-filesystem
@@ -303,7 +263,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
 
 - 解释该快照中的当时行为：同上块续行：resolve 只返回 `{id[,broken]}`、path 恒 undefined，这是静态注册取径的直接依据。
 
-**17. `pe-test/tools/step-04-路由与写闸门.mjs:279`**（原文 279 行）
+**13. `pe-test/tools/step-04-路由与写闸门.mjs:279`**（原文 279 行）
 
 ```text
       // 0.1.7 服务名换代：codeRuntime → ptcRuntime（SDK renderer 语言来源）。
@@ -311,7 +271,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
 
 - 解释该快照中的当时行为：harness 的 `ctx.get('ptcRuntime')` mock 对应插件 SDK renderer 语言来源，服务名为换代后的 `ptcRuntime`。
 
-**18. `pe-test/tools/step-04-路由与写闸门.mjs:598`**（原文 598-599 行）
+**14. `pe-test/tools/step-04-路由与写闸门.mjs:598`**（原文 598-599 行）
 
 ```text
 // 0.1.7 换代：agent/session-start 已删除，会话启动注册改由 agent/created（serial，payload
@@ -320,7 +280,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
 
 - 解释该快照中的当时行为：回归夹具统一用 `agent/created`（serial，payload `{ agent, source }`）驱动会话启动注册，不再有 `agent/session-start` 通道。
 
-**19. `pe-test/tools/step-04-路由与写闸门.mjs:1270`**（原文 1270 行）
+**15. `pe-test/tools/step-04-路由与写闸门.mjs:1270`**（原文 1270 行）
 
 ```text
       // 0.1.7 换代：dsh-tool-jobs 的完成通知源为 { kind:'tool-jobs', form:'notice' }（旧 plugin 兜底 kind 已废）。
@@ -328,7 +288,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
 
 - 解释该快照中的当时行为：tool-jobs 完成通知的源形状是 `{ kind:'tool-jobs', form:'notice' }`；旧 `plugin` 兜底 kind 不再参与 job_output 重复调用放行。
 
-**20. `pe-test/tools/step-04-路由与写闸门.mjs:2211`**（原文 2211-2212 行）
+**16. `pe-test/tools/step-04-路由与写闸门.mjs:2211`**（原文 2211-2212 行）
 
 ```text
 // C=1 创造 skill 面（0.2.0-rc.2 换通道）：预设 skill-filesystem 行的 config.bundledSkillDir
@@ -337,7 +297,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
 
 - 解释该快照中的当时行为：装配矩阵对 `skill-filesystem` 行的期望是 `config.bundledSkillDir` 指向官方包内 skills/ 且 `watch: false`；旧键 `customSkillDirs` 已删。
 
-**21. `pe-test/tools/step-04-路由与写闸门.mjs:2666`**（原文 2666-2668 行）
+**17. `pe-test/tools/step-04-路由与写闸门.mjs:2666`**（原文 2666-2668 行）
 
 ```text
   // 夹具 = profile patch 内的 settings 行（0.1.7 新载体：captureRowSettings 按
@@ -349,7 +309,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
 
 ### 其它回归脚本与共享模块
 
-**22. `pe-test/tools/step-00-全流程回归.mjs:931`**（原文 931 行）
+**18. `pe-test/tools/step-00-全流程回归.mjs:931`**（原文 931 行）
 
 ```text
 // 0.1.7 换代：agent/session-start 已删除，启动注册改由 agent/created（serial）承担。
@@ -357,7 +317,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
 
 - 解释该快照中的当时行为：schema 段启动注册由 `agent/created` 承担，回归脚本直接调用其监听器。
 
-**23. `pe-test/tools/step-00-跨平台写拦截.mjs:104`**（原文 104 行）
+**19. `pe-test/tools/step-00-跨平台写拦截.mjs:104`**（原文 104 行）
 
 ```text
   'nano notes.txt',       // 文本编辑器写文件：拦截（v0.1.7 起 BASH_MUTATION 覆盖 nano/vim/vi）
@@ -365,7 +325,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
 
 - 解释该快照中的当时行为：`nano`/`vim`/`vi` 文本编辑器写文件归入 `BASH_MUTATION` 拦截集合，用例数据保持该行。
 
-**24. `plugins/dsh-extra-plan/lib/executor-spawn.js:9`**（原文 9-10 行）
+**20. `plugins/dsh-extra-plan/lib/executor-spawn.js:9`**（原文 9-10 行）
 
 ```text
 // config.deny（11 项，含 subagent_plan；0.1.7 起宿主已无 cordis 执行口工具 cordis_run，
@@ -374,7 +334,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
 
 - 解释该快照中的当时行为：`DEFAULT_DENY` 仅作 fallback（11 项，含 subagent_plan）；不列 `cordis_run` 的原因是 deny 未知名会让 `tools.restrict()` 抛错，预设加载路径恒以 `config.deny` 为准。
 
-**25. `pe-test/_shared/host-deps.mjs:14`**（原文 14-15 行）
+**21. `pe-test/_shared/host-deps.mjs:14`**（原文 14-15 行）
 
 ```text
 //   不写盘）——profile 副本会被 DSH 优先解析并顶替宿主同名运行时行（0.1.7-rc.1 副本缺 tool-update 投影 →
@@ -385,7 +345,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
 
 ### 插件库 `plugins/dsh-extra-plan/lib`
 
-**26. `plugins/dsh-extra-plan/lib/assembly-presentation.js:20`**（原文 20-21 行）
+**22. `plugins/dsh-extra-plan/lib/assembly-presentation.js:20`**（原文 20-21 行）
 
 ```text
 // C=1 创造模式官方 skill 面（skill-filesystem 行 bundledSkillDir 静态注册，0.2.0-rc.2 换通道：
@@ -394,7 +354,7 @@ PTC 子调用被拒时，宿主曾把中文闸门 reason 包进英文 `code run 
 
 - 解释该快照中的当时行为：`CREATIVE_SKILL_NAMES` 对应 `skill-filesystem` 行的 `bundledSkillDir` 静态注册（trustedHost/node:fs 通道 + watch:false），C=0 时只做投影隐藏。
 
-**27. `plugins/dsh-extra-plan/lib/preset-yaml.js:550`**（原文 550 行）
+**23. `plugins/dsh-extra-plan/lib/preset-yaml.js:550`**（原文 550 行）
 
 ```text
  * 纯字符串处理、不写文件；dsh 0.1.7-rc.1 的宿主写链一律走 configEditor.edit。

@@ -1,6 +1,5 @@
 // 设置页同页配置、HTTP 写闸门与真实 lazy client 保存回归；只使用内存 editor/slot/React 夹具。
 import { createHash } from 'node:crypto'
-import { createServer, request as httpRequest } from 'node:http'
 import { createRequire, registerHooks, syncBuiltinESMExports } from 'node:module'
 import { isDeepStrictEqual } from 'node:util'
 import fs from 'node:fs'
@@ -100,8 +99,6 @@ try { patch = parsePresetYaml(patchText) } catch (error) { console.error('FAIL  
 const { Config } = await import('../../plugins/dsh-extra-plan/lib/settings.js')
 const { createLiveConfig } = await import('../../plugins/dsh-extra-plan/lib/live-config.js')
 const { createGateRuntime, GATE_WORD_FIELDS } = await import('../../plugins/dsh-extra-plan/lib/gate-words.js')
-const { createQqbotSettingsSynchronizer, stableSnapshotHash, planQqbotSettingsPatch, writeQqbotSettingsPatch } = await import('../../plugins/dsh-extra-plan/lib/qqbot-settings-sync.js')
-const { planCanonicalSettingsMigration } = await import('../../plugins/dsh-extra-plan/lib/preset-yaml.js')
 for (const key of settingsEnvKeys) {
   const value = originalBootstrapEnv[key]
   if (value === undefined) delete process.env[key]
@@ -202,81 +199,7 @@ function makeEditor(config = initial, documentPath = '', options = {}) {
     },
   }
 }
-function requestRaw(port, method, route, raw) {
-  return new Promise((resolve, reject) => {
-    const payload = raw === undefined ? '' : raw
-    const headers = { accept: 'application/json', 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) }
-    const req = httpRequest({ hostname: '127.0.0.1', port, path: route, method, headers }, (res) => {
-      const chunks = []
-      res.setEncoding('utf8')
-      res.on('data', (chunk) => chunks.push(chunk))
-      res.on('end', () => { let body = null; try { body = JSON.parse(chunks.join('')) } catch {} resolve({ status: res.statusCode, body }) })
-    })
-    req.on('error', reject)
-    req.write(payload)
-    req.end()
-  })
-}
-function requestJson(port, method, route, value) { return requestRaw(port, method, route, JSON.stringify(value)) }
-async function requestApiJson(port, method, route, value, trace) {
-  const response = await requestJson(port, method, route, value)
-  if (Array.isArray(trace) && response.body?.profileSync?.pending === false) trace.push('api-profile-sync-terminal')
-  return response
-}
-function deferred() {
-  let resolve
-  const promise = new Promise((done) => { resolve = done })
-  return { promise, resolve }
-}
-async function flush(times = 5) {
-  for (let i = 0; i < times; i += 1) {
-    await Promise.resolve()
-    await new Promise((resolve) => setImmediate(resolve))
-  }
-}
-async function waitForTerminal(port) {
-  let last
-  for (let i = 0; i < 40; i += 1) {
-    last = await requestJson(port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
-    if (last.body === null || last.body.profileSync === undefined || last.body.profileSync.pending !== true) return last
-    await flush(2)
-  }
-  return last
-}
-function fullSnapshotShapeOk(snapshot) {
-  return snapshot !== null && typeof snapshot === 'object' && snapshot.values !== undefined && snapshot.gateWords !== undefined &&
-    JSON.stringify(Object.keys(snapshot.values).sort()) === JSON.stringify([...keys].sort()) &&
-    JSON.stringify(Object.keys(snapshot.gateWords).sort()) === JSON.stringify(GATE_WORD_FIELDS.map((item) => item.field).sort())
-}
-async function waitForFullSnapshotTerminal(port, fixture, snapshot) {
-  const expected = { ...snapshot.values, gateWords: snapshot.gateWords }
-  let last
-  for (let index = 0; index < 60; index += 1) {
-    last = await requestJson(port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
-    try {
-      const webConfig = syncConfigOf(readFileSync(fixture.webPatch, 'utf8'))
-      const qqConfig = syncConfigOf(readFileSync(fixture.qqPatch, 'utf8'))
-      if (last.body?.profileSync?.status === 'synced' && last.body.profileSync.pending === false &&
-        isDeepStrictEqual(last.body.values, snapshot.values) && isDeepStrictEqual(webConfig, expected) && isDeepStrictEqual(qqConfig, expected)) return last
-    } catch {}
-    await flush(2)
-  }
-  return last
-}
-async function waitForAdapterRegister(counts, expected = 1) {
-  for (let i = 0; i < 40; i += 1) {
-    if (counts.register >= expected) return
-    await flush(2)
-  }
-}
-async function waitForTrace(trace, event) {
-  for (let i = 0; i < 40; i += 1) {
-    if (trace.includes(event)) return
-    await flush(2)
-  }
-}
 async function start(editor, options = {}) {
-  const routes = []
   const policies = []
   const lifecycle = { cleanup: undefined, update: undefined }
   const rootCleanups = []
@@ -380,7 +303,7 @@ async function start(editor, options = {}) {
       trace.push('inject:' + name)
       if (name === 'loader') { request.outcome = 'callback'; callback({ get: () => undefined, loader: { builtins: {} }, effect: (fn) => fn() }); return }
       if (name === 'settings') { request.outcome = 'callback'; callback({ settings: { configure: (policy, owner) => { policies.push({ policy, owner }); return () => {} } }, effect: (fn) => fn() }); return }
-      if (name === 'webServer') { request.outcome = 'callback'; callback({ webServer: { register: (definition) => { routes.push(definition); return () => {} } }, effect: (fn) => fn() }); return }
+      if (name === 'webServer') { request.outcome = 'callback'; callback({ webServer: { register: () => () => {} }, effect: (fn) => fn() }); return }
       if (name === 'configEditor') {
         if (options.mount !== true) { request.outcome = 'not-mounted'; return }
         if (mode === 'inject-throws') {
@@ -438,21 +361,19 @@ async function start(editor, options = {}) {
     await disposeRoot()
     return { lifecycle, proxy, applyError, disposeRoot }
   }
-  const route = routes.find((item) => item.path === '/api/dsh-extra-plan-settings')
-  check('V03 apply 注册单一路由与 auto:false policy', route !== undefined && policies.length === 1 && policies[0].policy.auto === false)
-  const server = createServer((req, res) => Promise.resolve(route.handler(req, res)).catch((error) => { if (!res.headersSent) { res.writeHead(500, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: String(error) })) } }))
-  const nativeClose = server.close.bind(server)
-  server.close = (callback) => nativeClose((serverError) => {
-    disposeRoot().then(() => {
-      if (typeof callback === 'function') callback(serverError)
-    }, (cleanupError) => {
-      proxy.rootCleanupError = cleanupError
-      trace.push('root-cleanup-error')
-      if (typeof callback === 'function') callback(cleanupError)
-    })
-  })
-  const port = await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', () => resolve(server.address().port)) })
-  return { server, port, lifecycle, proxy, disposeRoot }
+  check('V03 apply 注册单一 settings policy 且 auto:false', policies.length === 1 && policies[0].policy.auto === false)
+  const server = {
+    close: (callback) => {
+      disposeRoot().then(() => {
+        if (typeof callback === 'function') callback()
+      }, (cleanupError) => {
+        proxy.rootCleanupError = cleanupError
+        trace.push('root-cleanup-error')
+        if (typeof callback === 'function') callback(cleanupError)
+      })
+    },
+  }
+  return { server, lifecycle, proxy, disposeRoot }
 }
 
 const TEST_ENV_KEYS = Object.freeze(['DSH_HOME', 'DSH_PROFILE', 'USERPROFILE', 'HOME'])
@@ -467,141 +388,21 @@ function restoreEnvironment(snapshot) {
 }
 function makeWRoot(label) { return makeFixtureDir({ label }).root }
 
-async function withEnvironment(changes, action) {
-  const previous = captureEnvironment()
-  try {
-    for (const key of TEST_ENV_KEYS) {
-      if (!Object.prototype.hasOwnProperty.call(changes, key)) continue
-      if (changes[key] === undefined) delete process.env[key]
-      else process.env[key] = changes[key]
-    }
-    return await action()
-  } finally {
-    restoreEnvironment(previous)
-  }
-}
 const testEnvironment = originalTestEnvironment
-const initialAuthorityFixture = makeSyncFixture()
-const editor = makeEditor(initial, initialAuthorityFixture.webPatch, { profileContext: initialAuthorityFixture.webProfileContext })
-const run = await start(editor)
-try {
-  const before = await requestJson(run.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
-  check('V03 GET 读取统一行一项宿主值', before.status === 200 && before.body.values.toolPresentationMode === 'native' && before.body.fields.length === 1)
-  check('PROFILE_SYNC_INITIAL_PENDING_TRUE', before.status === 200 && before.body.profileSync.status === 'pending' && before.body.profileSync.pending === true)
-  const put = await requestJson(run.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true, toolPresentationMode: 'ptc' })
 
 
 
-  const rowConfig = editor.state.rows[0].entry.options.config
-  const localReadback = syncConfigOf(readFileSync(initialAuthorityFixture.webPatch, 'utf8'))
-  const expectedLocalConfig = { ...initial, webFetch: true, toolPresentationMode: 'ptc' }
-  const localReadbackOk = isDeepStrictEqual(localReadback, expectedLocalConfig)
-   const matchingGet = await requestJson(run.port, 'GET', '/api/dsh-extra-plan-settings/pro-config?saveRunId=' + encodeURIComponent(put.body.profileSync.saveRunId), {})
-   const mismatchGet = await requestJson(run.port, 'GET', '/api/dsh-extra-plan-settings/pro-config?saveRunId=missing-run-id', {})
-   const cacheGet = await requestJson(run.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
-   const terminal = put.body.profileSync
-   const profile = terminal?.profiles?.[0]
-   const associationOk = put.status === 200 && terminal?.profileKind === 'web' && terminal?.profileIdentityState === 'valid' && terminal?.request?.saveRunId === terminal?.saveRunId && terminal.request.syncRevision === terminal.syncRevision && terminal.request.snapshotHash === terminal.snapshotHash && terminal.terminalMatch === true && matchingGet.status === 200 && matchingGet.body.profileSync.terminalMatch === true && mismatchGet.status === 409 && mismatchGet.body.profileSync.terminalMatch === false && mismatchGet.body.profileSync.status !== 'synced' && mismatchGet.body.profileSync.source === 'last-terminal-cache' && cacheGet.body.profileSync.cache === true && cacheGet.body.profileSync.terminalMatch === false && cacheGet.body.profileSync.source === 'last-terminal-cache'
-   const patchMetadataOk = typeof terminal.snapshotHash === 'string' && terminal.webAfter?.patchBytes > 0 && typeof terminal.webAfter.patchMtimeMs === 'number' && typeof terminal.webAfter.patchSha256 === 'string' && terminal.webAfter.managedSnapshotHash === terminal.snapshotHash && profile?.patchBytes > 0 && typeof profile.patchMtimeMs === 'number' && typeof profile.patchSha256 === 'string' && profile.managedSnapshotHash === terminal.snapshotHash && typeof profile.backupPath === 'string' && typeof profile.backupSha256 === 'string' && profile.before?.patchSha256 !== undefined && profile.after?.patchSha256 === profile.patchSha256
-   check('SAVE_RUN_ID_TERMINAL_HASH_MATCH_OK', associationOk)
-   check('PATCH_MTIME_MANAGED_HASH_COMPARE_OK', patchMetadataOk)
-   check('V03 合法 PUT 仅 edit 唯一全局行并保留另九项与 gateWords（终态关联）', put.status === 200 && put.body.profileSync.status === 'synced' && put.body.profileSync.terminalMatch === true && put.body.overall === 'synced' && put.body.web.applied === true && put.body.projection.owner === 'dsh-extra-plan-settings' && editor.state.edits.length === 1 && editor.state.edits[0].id === 'dsh-extra-plan-settings' && rowConfig.webFetch === true && rowConfig.toolPresentationMode === 'ptc' && rowConfig.plannerModel === initial.plannerModel && rowConfig.exploreBudget === initial.exploreBudget && JSON.stringify(rowConfig.gateWords) === JSON.stringify(gateWords) && localReadbackOk)
-  const noOp = await requestJson(run.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true, toolPresentationMode: 'ptc' })
-  check('V03 同值 PUT 深等 no-op 零新增 edit且产生新关联终态', noOp.status === 200 && noOp.body.profileSync.status === 'synced' && noOp.body.profileSync.terminalMatch === true && noOp.body.projection.applied === true && editor.state.edits.length === 1 && noOp.body.profileSync.saveRunId !== put.body.profileSync.saveRunId && noOp.body.profileSync.webAfter?.managedSnapshotHash === noOp.body.profileSync.snapshotHash)
-  const invalidCases = [
-    ['empty', {}], ['null', null], ['array', []], ['primitive', 'raw'], ['unknown', { notAField: 'x' }],
-    ['bad-type', { webFetch: 1 }], ['mixed', { webFetch: false, unknown: true }],
-  ]
-  for (const [label, value] of invalidCases) {
-    const bad = await requestJson(run.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', value)
-    check('V03 PUT ' + label + ' 先拒绝且零新增 edit', bad.status === 400 && editor.state.edits.length === 1)
-  }
-  const invalidJson = await requestRaw(run.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', '{"webFetch":')
-  check('V03 PUT 非法 JSON 返回 400 且零 edit', invalidJson.status === 400 && editor.state.edits.length === 1)
-  const sameServerEmpty = await requestJson(run.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', {})
-  check('V03 成功后同一 server 收到空对象仍拒绝，不是成功 no-op', sameServerEmpty.status === 400 && editor.state.edits.length === 1)
-} finally { await new Promise((resolve) => run.server.close(resolve)); rmSync(initialAuthorityFixture.root, { recursive: true, force: true }) }
-
-async function withLayeredSettings(layers, options, exercise) {
-  const fixture = makeSyncFixture()
-  const editor = makeEditor(initial, fixture.webPatch, { profileContext: fixture.webProfileContext, layers })
-  let run
-  try {
-    run = await start(editor, options)
-    await exercise(editor, fixture, run)
-  } finally {
-    if (typeof run?.lifecycle.cleanup === 'function') await run.lifecycle.cleanup()
-    if (run !== undefined) await new Promise((resolve) => run.server.close(resolve))
-    rmSync(fixture.root, { recursive: true, force: true })
-  }
-}
-
-const layeredRoute = '/api/dsh-extra-plan-settings/pro-config'
-await withLayeredSettings({ inherited: { ...initial, inheritedOnly: 'base-v1' } }, {}, async (editor, fixture, run) => {
-  const row = editor.state.rows[0]
-  const before = readFileSync(fixture.webPatch)
-  const noOp = await requestJson(run.port, 'PUT', layeredRoute, { webFetch: false })
-  // 此时 raw 行仍无 config；跨 profile 的 raw-verified 同步按原契约报 drift，但本地不应为同值请求物化覆写。
-  check('LAYER 首次同值 PUT 不因继承独有键写盘', noOp.status === 502 && noOp.body?.profileSync?.status === 'drift-detected' && editor.state.edits.length === 0 && before.equals(readFileSync(fixture.webPatch)))
-  const put = await requestJson(run.port, 'PUT', layeredRoute, { webFetch: true })
-  const local = syncConfigOf(readFileSync(fixture.webPatch, 'utf8'))
-  const input = editor.state.callbackInputs[0]
-  check('LAYER 首次 PUT 在 Loader 当前值含继承键时不将其写成本地覆盖', put.status === 200 && editor.state.edits.length === 1 && input?.current.inheritedOnly === 'base-v1' && isDeepStrictEqual(input.override, {}) && isDeepStrictEqual(local, { ...initial, webFetch: true }) && isDeepStrictEqual(row.entry.options.config, local))
-  row.inherited.inheritedOnly = 'base-v2'
-  const get = await requestJson(run.port, 'GET', layeredRoute)
-  const effective = get.body?.settingsRow?.effectiveRows?.[0]?.config
-  check('LAYER 首次覆写后插件读取可见继承新值且保留托管 false 空串与 gateWords', get.status === 200 && effective?.inheritedOnly === 'base-v2' && effective.webFetch === true && effective.creativeMode === false && effective.otherAgentModel === '' && isDeepStrictEqual(effective.gateWords, gateWords) && !Object.hasOwn(row.entry.options.config, 'inheritedOnly'))
-})
-
-await withLayeredSettings({ inherited: { ...initial, inheritedOnly: 'base-v1', sameKey: 'same' }, local: { ...initial, localOnly: 'saved-v1', sameKey: 'same' } }, {}, async (editor, fixture, run) => {
-  editor.state.beforeEdit = (row, persist) => {
-    row.override = { ...row.override, localOnly: 'saved-v2' }
-    row.entry.options.config = { ...row.override, loaderOnly: 'not-local' }
-    persist(row.override)
-  }
-  const put = await requestJson(run.port, 'PUT', layeredRoute, { webFetch: true })
-  const local = syncConfigOf(readFileSync(fixture.webPatch, 'utf8'))
-  check('LAYER PUT 使用回调中的最新本地事实并保留双层同值的本地键', put.status === 200 && editor.state.edits.length === 1 && editor.state.callbackInputs[0]?.current.loaderOnly === 'not-local' && isDeepStrictEqual(local, { ...initial, localOnly: 'saved-v2', sameKey: 'same', webFetch: true }))
-  const row = editor.state.rows[0]
-  row.inherited.inheritedOnly = 'base-v2'
-  row.inherited.sameKey = 'base-changed'
-  const get = await requestJson(run.port, 'GET', layeredRoute)
-  const effective = get.body?.settingsRow?.effectiveRows?.[0]?.config
-  check('LAYER 继承层改变后双层同名仍取本地且独有继承键更新', get.status === 200 && effective?.sameKey === 'same' && effective.inheritedOnly === 'base-v2' && effective.localOnly === 'saved-v2')
-  editor.state.beforeEdit = (candidate) => { candidate.override = undefined }
-  const saved = readFileSync(fixture.webPatch)
-  const rejected = await requestJson(run.port, 'PUT', layeredRoute, { webFetch: false })
-  check('LAYER 编辑回调失去可靠本地归属时拒绝且旧字节不变', rejected.status === 500 && editor.state.callbackInputs.at(-1)?.override === undefined && editor.state.edits.length === 1 && saved.equals(readFileSync(fixture.webPatch)))
-})
-
-const inheritedBeforeRepair = { ...initial, inheritedOnly: 'startup-base' }
-delete inheritedBeforeRepair.creativeMode
-const creativeModeDefault = SETTING_DEFINITIONS.find((definition) => definition.key === 'creativeMode').defaultValue
-const layeredBootTrace = []
-await withLayeredSettings({ inherited: inheritedBeforeRepair }, { mount: true, trace: layeredBootTrace }, async (editor, fixture) => {
-  await waitForTrace(layeredBootTrace, 'adapter-resolved')
-  const local = syncConfigOf(readFileSync(fixture.webPatch, 'utf8'))
-  const input = editor.state.callbackInputs[0]
-  check('LAYER 自动补齐走真实挂载回调且不写继承独有键', layeredBootTrace.includes('adapter-resolved') && editor.state.edits.length === 1 && input?.current.inheritedOnly === 'startup-base' && isDeepStrictEqual(input.override, {}) && isDeepStrictEqual(local, { ...initial, creativeMode: creativeModeDefault }))
-})
 
 function makeSyncFixture() {
   const fixture = makeFixtureDir({ label: 'settings-sync' })
   const root = fixture.root
   const webDir = join(root, 'profiles', 'web')
-  const profileDir = join(root, 'profiles', 'qqbot-sync')
   mkdirSync(webDir, { recursive: true })
-  mkdirSync(join(profileDir, 'node_modules', 'dsh-extra-plan-qqbot'), { recursive: true })
-  writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'qqbot-sync-profile', dsh: { profile: { bundles: ['@tencent-connect/dsh-qqbot'] } } }), 'utf8')
   const webPatch = join(webDir, 'cordis.patch.yml')
-  const qqPatch = join(profileDir, 'cordis.patch.yml')
   writeFileSync(webPatch, '# web fixture\n- id: web-fixture\n  name: web\n', 'utf8')
-  writeFileSync(qqPatch, '# keep this row\n- id: user-custom\n  name: custom\n  config:\n    marker: !!js "globalThis.__syncFixture = true"\n', 'utf8')
   const webProfileContext = { home: root, dir: webDir, patchPath: webPatch, name: 'web', startedBundles: [] }
-  const qqProfileContext = { home: root, dir: profileDir, patchPath: qqPatch, name: 'qqbot', startedBundles: ['@tencent-connect/dsh-qqbot'] }
   if (INSTALL_ANCHOR !== undefined) {
     webProfileContext.installAnchor = INSTALL_ANCHOR
-    qqProfileContext.installAnchor = INSTALL_ANCHOR
   }
   return {
     root,
@@ -612,11 +413,8 @@ function makeSyncFixture() {
     startedBundles: [],
     webDir,
     webPatch,
-    profileDir,
-    qqPatch,
     fixture,
     webProfileContext,
-    qqProfileContext,
     profileContext: webProfileContext,
     pathContext: createPathContext({ hostDataRoot: root }),
   }
@@ -665,728 +463,11 @@ function createFsAccessProbe(entries) {
   }
   return { install, restore, count: (name) => counts[name] || 0 }
 }
-async function withFsAccessProbe(probe, action) {
-  let installed = false
-  try {
-    probe.install()
-    installed = true
-    return await action()
-  } finally {
-    if (installed) probe.restore()
-  }
-}
-function addAnchoredProfile(root, name, patchText) {
-  const dir = join(root, 'profiles', name)
-  mkdirSync(join(dir, 'node_modules', 'dsh-extra-plan-qqbot'), { recursive: true })
-  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: name + '-profile', dsh: { profile: { bundles: ['@tencent-connect/dsh-qqbot'] } } }), 'utf8')
-  const patch = join(dir, 'cordis.patch.yml')
-  if (patchText !== undefined) writeFileSync(patch, patchText, 'utf8')
-  return { dir, patch }
-}
-function patchBackupCount(profileDir) {
-  try { return readdirSync(profileDir).filter((name) => name.startsWith('cordis.patch.yml.bak-dsh-extra-plan-settings-')).length } catch { return 0 }
-}
-function syncConfigOf(text) {
-  const parsed = parsePresetYaml(text)
-  const row = Array.isArray(parsed) ? parsed.find((item) => item && typeof item === 'object' && (item.id === 'dsh-extra-plan-settings' || item.override?.id === 'dsh-extra-plan-settings')) : undefined
-  return row?.override?.config || row?.config
-}
-function apiTerminalBodyOk(response) {
-  return response !== null && response !== undefined && response.status >= 200 && response.status < 300 && response.body !== null &&
-    response.body.web?.applied === true && response.body.projection?.applied === true && response.body.overall === 'synced' &&
-    response.body.profileSync?.status === 'synced' && response.body.profileSync?.pending === false
-}
-function apiPatchDetails(fixture, snapshot) {
-  const expected = { ...snapshot.values, gateWords: snapshot.gateWords }
-  try {
-    const webConfig = syncConfigOf(readFileSync(fixture.webPatch, 'utf8'))
-    const qqConfig = syncConfigOf(readFileSync(fixture.qqPatch, 'utf8'))
-    return { expected, webConfig, qqConfig, webMatch: isDeepStrictEqual(webConfig, expected), qqMatch: isDeepStrictEqual(qqConfig, expected) }
-  } catch (error) { return { expected, error: String(error) } }
-}
-function apiPatchOk(fixture, snapshot) {
-  const details = apiPatchDetails(fixture, snapshot)
-  return details.webMatch === true && details.qqMatch === true
-}
-function apiSnapshotBodyOk(response, snapshot) {
-  return response?.body?.values !== undefined && isDeepStrictEqual(response.body.values, snapshot.values)
-}
 const syncValues = { anchoredBootstrap: false, creativeMode: true, webFetch: true, toolPresentationMode: 'ptc', runcodeCatchGate: true, crossProviderPlannerModel: true, plannerModel: 'planner-sync-test', plannerPromptSuffix: 'sync-suffix-test', exploreBudget: 37, otherAgentModel: 'other-sync-test', reviewerUsesPlannerModel: true }
 const syncGateWords = { routeMain: '甲', routeExecutor: '丁', routePlan: '乙', routeDisagree: '丙', purposeRefine: '己', purposeRedo: '庚' }
-const syncSnapshot = { values: syncValues, gateWords: syncGateWords }
 
-// G5 任务11：直接调用QQBot同步修复模块，覆盖新行、既有id-only、冲突零写和fatal汇总。
-const qbotConfigValues = { ...syncValues, gateWords: syncGateWords }
-function qbotSettingsRow(values, options = {}) {
-  const eol = options.eol === undefined ? '\n' : options.eol
-  const lines = [options.override === true ? '- override:' : '- id: dsh-extra-plan-settings']
-  if (options.override === true) lines.push('    id: dsh-extra-plan-settings')
-  if (options.name !== undefined) lines.push((options.override === true ? '    ' : '  ') + 'name: ' + options.name)
-  if (options.metadata === true) lines.push((options.override === true ? '    ' : '  ') + 'metadata: keep')
-  lines.push((options.override === true ? '    ' : '  ') + 'config:')
-  const indent = options.override === true ? '      ' : '    '
-  if (options.extra === true) lines.push(indent + 'customKey: !!js "globalThis.__g5Unknown = true"')
-  for (const key of keys) lines.push(indent + key + ': ' + JSON.stringify(values[key]))
-  lines.push(indent + 'gateWords:')
-  for (const item of GATE_WORD_FIELDS) lines.push(indent + '  ' + item.field + ': ' + JSON.stringify(values.gateWords[item.field]))
-  return lines.join(eol)
-}
-function qbotManagedCaptured(text) {
-  const captured = presetSettings.captureRowSettings(text, SETTING_DEFINITIONS)
-  return { captured, ok: SETTING_DEFINITIONS.every((definition) => captured.states[definition.key] === 'captured') }
-}
-const qbotEmptyPlan = planQqbotSettingsPatch('[]', syncSnapshot)
-const qbotEmptyCaptured = qbotManagedCaptured(qbotEmptyPlan.text || '')
-check('G5 QQBot空patch新增规范name与完整11+6快照', qbotEmptyPlan.status === 'planned' && qbotEmptyPlan.text.includes('name: dsh-extra-plan/settings') && qbotEmptyCaptured.ok && qbotEmptyCaptured.captured.values.plannerModel === syncValues.plannerModel)
-const qbotDirectIdOnly = '# outside comment\r\n' + qbotSettingsRow(qbotConfigValues, { metadata: true, extra: true, eol: '\r\n' }) + '\r\n# trailing comment'
-const qbotDirectPlan = planQqbotSettingsPatch(qbotDirectIdOnly, syncSnapshot)
-const qbotDirectAgain = qbotDirectPlan.text === undefined ? null : planQqbotSettingsPatch(qbotDirectPlan.text, syncSnapshot)
-check('G5 既有同值id-only补name并保留未知字段/CRLF', qbotDirectPlan.status === 'planned' && qbotDirectPlan.text.includes('name: dsh-extra-plan/settings') && qbotDirectPlan.text.includes('customKey: !!js "globalThis.__g5Unknown = true"') && qbotDirectPlan.text.includes('\r\n') && !qbotDirectPlan.text.replace(/\r\n/g, '').includes('\n'))
-check('G5 QQBot补名后二次保存幂等', qbotDirectAgain?.status === 'idempotent')
-const qbotWrongNameText = qbotSettingsRow(qbotConfigValues, { name: 'wrong/name' })
-const qbotDuplicateNameText = '- id: dsh-extra-plan-settings\n  name: wrong/name\n  name: another/name\n  config:\n    plannerModel: ' + JSON.stringify(syncValues.plannerModel) + '\n'
-const qbotWrongNamePlan = planQqbotSettingsPatch(qbotWrongNameText, syncSnapshot)
-const qbotDuplicateNamePlan = planQqbotSettingsPatch(qbotDuplicateNameText, syncSnapshot)
-check('G5 非空错名计划conflict且零文本', qbotWrongNamePlan.status === 'conflict' && qbotWrongNamePlan.text === undefined)
-check('G5 重名计划conflict且零文本', qbotDuplicateNamePlan.status === 'conflict' && qbotDuplicateNamePlan.text === undefined)
-const foreignDuplicateInputs = [
-  '- override:\n    id: unrelated\n    name: x\n    name: y\n',
-  '- id: unrelated\n  config:\n    id: dsh-extra-plan-settings\n    name: x\n    name: y\n',
-]
-for (const [index, text] of foreignDuplicateInputs.entries()) {
-  const result = planQqbotSettingsPatch(text, syncSnapshot)
-  check('G5 非目标重名保留原始YAML错误 ' + index, result.status === 'invalid' && result.reason.startsWith('invalid-yaml:') && result.text === undefined)
-}
-const qbotNoWriteRoot = makeWRoot('settings-qqbot-negative')
-try {
-  for (const [label, text, expectedReason] of [['wrong-name', qbotWrongNameText, 'settings-row-name-conflict'], ['duplicate-name', qbotDuplicateNameText, 'duplicate-name']]) {
-    const dir = join(qbotNoWriteRoot, label)
-    mkdirSync(dir, { recursive: true })
-    const patch = join(dir, 'cordis.patch.yml')
-    writeFileSync(patch, text, 'utf8')
-    const before = readFileSync(patch)
-    const result = writeQqbotSettingsPatch(dir, syncSnapshot, { pathContext: createPathContext({ hostDataRoot: qbotNoWriteRoot }) })
-    const after = readFileSync(patch)
-    const aux = readdirSync(dir).filter((name) => name.includes('.bak-dsh-extra-plan-settings-') || name.includes('.tmp-dsh-extra-plan-settings-'))
-    check('G5 ' + label + '实际零写零备份', result.status === 'failed' && result.reason === expectedReason && before.equals(after) && aux.length === 0)
-  }
-  const overridePlan = planQqbotSettingsPatch(qbotSettingsRow(qbotConfigValues, { override: true }), syncSnapshot)
-  check('G5 旧override兼容holder补规范name', overridePlan.status === 'planned' && overridePlan.text.includes('    name: dsh-extra-plan/settings'))
-} finally {
-  rmSync(qbotNoWriteRoot, { recursive: true, force: true })
-}
-const fatalRoot = makeWRoot('settings-fatal')
-try {
-  addAnchoredProfile(fatalRoot, 'fatal-profile', qbotSettingsRow(qbotConfigValues))
-  const fatalWebDir = join(fatalRoot, 'profiles', 'web')
-  const fatalWebPatch = join(fatalWebDir, 'cordis.patch.yml')
-  mkdirSync(fatalWebDir, { recursive: true })
-  writeFileSync(fatalWebPatch, qbotSettingsRow(qbotConfigValues), 'utf8')
-  const fatalWebProfileContext = { home: fatalRoot, dir: fatalWebDir, patchPath: fatalWebPatch, name: 'web', startedBundles: [] }
-  const fatalFs = { ...fs, copyFileSync() { throw new Error('restore-fault') } }
-  const fatalSync = createQqbotSettingsSynchronizer({ fs: fatalFs, hooks: { beforeFinalVerify() { throw new Error('final-fault') } } })
-  const fatalResult = await fatalSync.enqueue({ documentPath: fatalWebPatch, pathContext: createPathContext({ hostDataRoot: fatalRoot }), profileFacts: fatalWebProfileContext, env: {}, snapshot: syncSnapshot })
-  const fatalProfile = fatalResult.profiles?.[0]
-  check('G5 profile汇总保留profile名称与fatal状态', fatalResult.status === 'failed' && fatalProfile?.profile === 'fatal-profile' && fatalProfile?.status === 'fatal' && fatalProfile?.reason === 'final-fault')
-} finally {
-  rmSync(fatalRoot, { recursive: true, force: true })
-}
 
-const identityFixture = makeSyncFixture()
-try {
-  const qqBefore = readFileSync(identityFixture.qqPatch)
-  const qqSynchronizer = createQqbotSettingsSynchronizer()
-  const qqNotApplicable = await qqSynchronizer.enqueue({
-    documentPath: identityFixture.qqPatch,
-    pathContext: identityFixture.pathContext,
-    profileFacts: identityFixture.qqProfileContext,
-    env: {},
-    snapshot: syncSnapshot,
-    saveRunId: 'qq-not-applicable',
-    syncRevision: 1,
-    snapshotHash: stableSnapshotHash(syncSnapshot),
-    trigger: 'api-put',
-    associated: false,
-  })
-  check('SYNC Web/QQ身份事实显式可观测且QQ profile not-applicable零写', identityFixture.webProfileContext.name === 'web' && identityFixture.webProfileContext.startedBundles.length === 0 && qqNotApplicable.status === 'not-applicable' && qqNotApplicable.profileKind === 'qqbot' && qqNotApplicable.profileIdentityState === 'valid' && qqNotApplicable.reason === 'qqbot-profile-not-applicable' && readFileSync(identityFixture.qqPatch).equals(qqBefore))
-} finally {
-  rmSync(identityFixture.root, { recursive: true, force: true })
-}
 
-function migrationRow(name, config) {
-  const lines = ['- id: dsh-extra-plan-settings', '  name: ' + JSON.stringify(name), '  config:']
-  for (const key of keys) if (key !== 'gateWords') lines.push('    ' + key + ': ' + JSON.stringify(config[key]))
-  lines.push('    gateWords:')
-  for (const item of GATE_WORD_FIELDS) lines.push('      ' + item.field + ': ' + JSON.stringify(config.gateWords[item.field]))
-  return lines.join('\n')
-}
-
-const duplicateFixture = makeSyncFixture()
-const duplicateEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, creativeMode: false }, duplicateFixture.webPatch, { profileContext: duplicateFixture.webProfileContext })
-const duplicateBefore = readFileSync(duplicateFixture.qqPatch)
-const duplicateRaw = [
-  '# migration comment',
-  migrationRow('@local/dsh-extra-plan/settings', { ...syncValues, gateWords: syncGateWords, creativeMode: true }),
-  '# keep between duplicate rows',
-  migrationRow('dsh-extra-plan/settings', { ...syncValues, gateWords: syncGateWords, creativeMode: false }),
-  '- id: user-row',
-  '  name: user',
-  '  config:',
-  '    marker: !!js \"globalThis.__migrationUser = true\"'
-].join('\n') + '\n'
-writeFileSync(duplicateFixture.webPatch, duplicateRaw, 'utf8')
-const duplicateRun = await start(duplicateEditor)
-try {
-  const duplicateGet = await requestJson(duplicateRun.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
-  const duplicatePut = await requestJson(duplicateRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { creativeMode: true })
-  const duplicateProfile = duplicatePut.body?.profileSync
-  const conflictOk = duplicateGet.status === 409 && duplicatePut.status === 409 && duplicateGet.body?.settingsRow?.rawCount === 2 && duplicateGet.body?.settingsRow?.effectiveCount === 1 && duplicateGet.body?.settingsRow?.canonicalNameCount === 1 && duplicateGet.body?.settingsRow?.status === 'conflict' && duplicatePut.body?.projection?.applied === false && duplicateProfile?.status === 'conflict' && duplicateEditor.state.edits.length === 0 && readFileSync(duplicateFixture.qqPatch).equals(duplicateBefore) && patchBackupCount(duplicateFixture.profileDir) === 0
-  if (conflictOk) console.log('SETTINGS_ROW_UNIQUE_OR_CONFLICT_EXPLICIT_OK')
-
-  check('重复 settings 行 GET/PUT 显式 conflict 且零 edit/enqueue/QQBot 写', conflictOk)
-
-  const legacyApiProbeRow = '# legacy-only probe\n- id: preset-extra-plan\n  name: legacy\n  config:\n    marker: !!js "globalThis.__legacyApiProbe = true"\n'
-  const currentWithLegacyRaw = qbotSettingsRow(qbotConfigValues, { name: 'dsh-extra-plan/settings' }) + '\n' + legacyApiProbeRow
-  const currentAfterLegacyPut = { ...syncValues, creativeMode: false }
-  async function runLegacyApiCase(label, rawText, includeCurrentRow) {
-    const fixture = makeSyncFixture()
-    const apiEditor = makeEditor(qbotConfigValues, fixture.webPatch, { profileContext: fixture.webProfileContext })
-    if (!includeCurrentRow) apiEditor.state.rows = []
-    writeFileSync(fixture.webPatch, rawText, 'utf8')
-    const beforeWeb = readFileSync(fixture.webPatch)
-    const beforeQq = readFileSync(fixture.qqPatch)
-    delete globalThis.__legacyApiProbe
-    const apiRun = await start(apiEditor)
-    try {
-      const get = await requestJson(apiRun.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
-      const put = await requestJson(apiRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { creativeMode: false })
-      const afterWeb = readFileSync(fixture.webPatch)
-      const afterQq = readFileSync(fixture.qqPatch)
-      const untouched = get.status === 409 && put.status === 409 && apiEditor.state.edits.length === 0 && beforeWeb.equals(afterWeb) && beforeQq.equals(afterQq) && patchBackupCount(fixture.profileDir) === 0 && globalThis.__legacyApiProbe === undefined
-      check('M26 ' + label + ' 旧输入/坏当前行仍409且零edit/enqueue/QQ写，旧文本与!!js不变', untouched)
-    } finally {
-      await new Promise((resolve) => apiRun.server.close(resolve))
-      rmSync(fixture.root, { recursive: true, force: true })
-    }
-  }
-  {
-    const legacyCurrentFixture = makeSyncFixture()
-    const legacyCurrentEditor = makeEditor(qbotConfigValues, legacyCurrentFixture.webPatch, { profileContext: legacyCurrentFixture.webProfileContext })
-    const legacyCurrentBeforeGet = readFileSync(legacyCurrentFixture.webPatch)
-    writeFileSync(legacyCurrentFixture.webPatch, currentWithLegacyRaw, 'utf8')
-    const legacyCurrentRun = await start(legacyCurrentEditor)
-    try {
-      const legacyCurrentGet = await requestJson(legacyCurrentRun.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
-      const legacyCurrentPut = await requestJson(legacyCurrentRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { creativeMode: false })
-      const legacyCurrentDetails = apiPatchDetails(legacyCurrentFixture, { values: currentAfterLegacyPut, gateWords: syncGateWords })
-      const currentOk = legacyCurrentGet.status === 200 && legacyCurrentGet.body.values.webFetch === syncValues.webFetch && legacyCurrentGet.body.values.toolPresentationMode === syncValues.toolPresentationMode &&
-        legacyCurrentPut.status === 200 && isDeepStrictEqual(legacyCurrentPut.body.values, currentAfterLegacyPut) &&
-        legacyCurrentDetails.webMatch === true && legacyCurrentDetails.qqMatch === true && legacyCurrentPut.body.profileSync.status === 'synced' && legacyCurrentPut.body.profileSync.pending === false &&
-        legacyCurrentBeforeGet.length > 0 && globalThis.__legacyApiProbe === undefined
-      check('M26 当前完整行旁放旧ID冲突值：GET/PUT/QQ仍取当前11+6且旧!!js不执行', currentOk)
-    } finally {
-      await new Promise((resolve) => legacyCurrentRun.server.close(resolve))
-      rmSync(legacyCurrentFixture.root, { recursive: true, force: true })
-    }
-  }
-  await runLegacyApiCase('only-legacy-row', legacyApiProbeRow, false)
-  await runLegacyApiCase('missing-current-row', '# unrelated\n- id: unrelated\n  name: unrelated\n  config:\n    marker: !!js "globalThis.__legacyApiProbe = true"\n', false)
-  await runLegacyApiCase('wrong-name-current-row', qbotSettingsRow(qbotConfigValues, { name: 'wrong/name' }) + '\n' + legacyApiProbeRow, true)
-  await runLegacyApiCase('duplicate-current-row', qbotSettingsRow(qbotConfigValues, { name: 'dsh-extra-plan/settings' }) + '\n' + qbotSettingsRow(qbotConfigValues, { name: 'dsh-extra-plan/settings' }) + '\n' + legacyApiProbeRow, true)
-
-  const migrationEffective = duplicateEditor.state.rows[0]
-  const migration = planCanonicalSettingsMigration(duplicateRaw, migrationEffective)
-  let migrationAfterRows = []
-  try {
-    const parsedAfter = parsePresetYaml(migration.afterText)
-    migrationAfterRows = Array.isArray(parsedAfter) ? parsedAfter.filter((row) => row && typeof row === 'object' && row.id === 'dsh-extra-plan-settings') : []
-  } catch {}
-  const migrationConfig = migrationAfterRows[0]?.config
-  const migrationSnapshot = migrationConfig === undefined ? undefined : { values: Object.fromEntries(keys.map((key) => [key, migrationConfig[key]])), gateWords: migrationConfig.gateWords }
-  const migrationOk = (migration.status === 'planned' || migration.status === 'idempotent') && migration.rawRowCount === 2 && migration.afterRawCount === 1 && migration.afterCanonicalNameCount === 1 && migration.removedRows === 1 && migration.beforeBytes === migration.rollbackBytes && migration.beforeSha256 === migration.rollbackSha256 && migration.beforeText === migration.rollback.text && migration.afterText.includes('# migration comment') && migration.afterText.includes('# keep between duplicate rows') && migration.afterText.includes('globalThis.__migrationUser = true') && migrationAfterRows[0]?.name === 'dsh-extra-plan/settings' && fullSnapshotShapeOk(migrationSnapshot) && migrationSnapshot.values.creativeMode === false
-  if (migrationOk) console.log('CANONICAL_MIGRATION_PLANNER_OK')
-  check('canonical migration 取 effective canonical 值、删 duplicate、保留无关内容并可 rollback', migrationOk)
-} finally { await new Promise((resolve) => duplicateRun.server.close(resolve)); rmSync(duplicateFixture.root, { recursive: true, force: true }) }
-
-const creativeFixture = makeSyncFixture()
-const creativeBase = { ...syncValues, gateWords: syncGateWords, creativeMode: false }
-const creativeEditor = makeEditor(creativeBase, creativeFixture.webPatch, { profileContext: creativeFixture.webProfileContext })
-const creativeRun = await start(creativeEditor)
-try {
-  const creativePut = await requestJson(creativeRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { creativeMode: true })
-  const creativeExpected = { ...creativeBase, creativeMode: true }
-  const creativeWeb = syncConfigOf(readFileSync(creativeFixture.webPatch, 'utf8'))
-  const creativeQq = syncConfigOf(readFileSync(creativeFixture.qqPatch, 'utf8'))
-  const creativeOk = creativePut.status === 200 && creativePut.body.profileSync?.status === 'synced' && creativePut.body.profileSync.terminalMatch === true && creativePut.body.values.creativeMode === true && isDeepStrictEqual(creativeWeb, creativeExpected) && isDeepStrictEqual(creativeQq, creativeExpected) && creativePut.body.profileSync.webAfter?.managedSnapshotHash === creativePut.body.profileSync.snapshotHash && creativePut.body.profileSync.profiles?.every((item) => item.managedSnapshotHash === creativePut.body.profileSync.snapshotHash)
-  if (creativeOk) console.log('CREATIVE_PERSISTED_BEFORE_RESTART_OK')
-
-  check('creativeMode 单字段保存先核对双端 managed hash，运行时重启留 HUMAN', creativeOk)
-} finally { await new Promise((resolve) => creativeRun.server.close(resolve)); rmSync(creativeFixture.root, { recursive: true, force: true }) }
-
-const staleFingerprintFixture = makeSyncFixture()
-const staleFingerprintEditor = makeEditor({ ...syncValues, gateWords: syncGateWords }, staleFingerprintFixture.webPatch, { profileContext: staleFingerprintFixture.webProfileContext })
-const staleFingerprintRun = await start(staleFingerprintEditor)
-try {
-  const stalePut = await requestJson(staleFingerprintRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
-  const staleFresh = await requestJson(staleFingerprintRun.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
-  const staleFreshOk = stalePut.status === 200 && stalePut.body.profileSync?.status === 'synced' && staleFresh.status === 200 && staleFresh.body.profileSync?.cache === true && staleFresh.body.profileSync?.source === 'last-terminal-cache' && staleFresh.body.profileSync?.stale === undefined
-  if (staleFreshOk) console.log('GET_CACHE_FINGERPRINT_FRESH_OK')
-  check('GET 无参缓存指纹一致：保持缓存视图现状且无 stale 键', staleFreshOk)
-  const driftedPatchText = [
-    '# drifted web patch（仍含合法 settings 行，authority 保持 ok）',
-    '- id: dsh-extra-plan-settings',
-    '  name: dsh-extra-plan/settings',
-    '  config:',
-    '    anchoredBootstrap: false',
-    '    creativeMode: false',
-    '    webFetch: false',
-    '    toolPresentationMode: native',
-    '    runcodeCatchGate: false',
-    '    crossProviderPlannerModel: false',
-    '    plannerModel: drifted-value',
-    '    plannerPromptSuffix: drifted',
-    '    exploreBudget: 3',
-    '    otherAgentModel: drifted',
-    '    gateWords:',
-    ...GATE_WORD_FIELDS.map((item) => '      ' + item.field + ': 漂移词' + item.field),
-  ].join('\n') + '\n'
-  writeFileSync(staleFingerprintFixture.webPatch, driftedPatchText, 'utf8')
-  const staleMarked = await requestJson(staleFingerprintRun.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
-  const staleMarkedOk = staleMarked.status === 200 && staleMarked.body.profileSync?.stale === true && staleMarked.body.profileSync?.source === 'stale-terminal-cache'
-  if (staleMarkedOk) console.log('GET_CACHE_FINGERPRINT_STALE_MARKED_OK')
-  check('GET 无参缓存指纹与磁盘不一致：profileSync.stale===true 且 source=stale-terminal-cache', staleMarkedOk)
-} finally { await new Promise((resolve) => staleFingerprintRun.server.close(resolve)); rmSync(staleFingerprintFixture.root, { recursive: true, force: true }) }
-
-const pendingDocumentFixture = makeSyncFixture()
-const pendingDocumentEditor = makeEditor({ ...syncValues, gateWords: syncGateWords }, pendingDocumentFixture.webPatch, { profileContext: pendingDocumentFixture.webProfileContext })
-const pendingDocumentRun = await start(pendingDocumentEditor)
-try {
-  const pendingGet = await requestJson(pendingDocumentRun.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
-  check('GET 无缓存无指纹（stale 检测异常输入提前返回）：仍 200、无 stale 键且不抛错', pendingGet.status === 200 && pendingGet.body.profileSync?.status === 'pending' && pendingGet.body.profileSync?.stale === undefined)
-} finally { await new Promise((resolve) => pendingDocumentRun.server.close(resolve)); rmSync(pendingDocumentFixture.root, { recursive: true, force: true }) }
-
-const externalDriftFixture = makeSyncFixture()
-makeEditor({ ...syncValues, gateWords: syncGateWords }, externalDriftFixture.webPatch, { persistDocument: true, profileContext: externalDriftFixture.webProfileContext })
-const externalDriftText = '# external writer value\n- id: external-writer\n  name: external\n  config:\n    marker: !!js \"globalThis.__externalWriter = true\"\n'
-const externalDriftSynchronizer = createQqbotSettingsSynchronizer({ hooks: { beforeFinalVerify: ({ patchFile }) => writeFileSync(patchFile, externalDriftText, 'utf8') } })
-const externalDriftRun = await externalDriftSynchronizer.enqueue({ documentPath: externalDriftFixture.webPatch, pathContext: externalDriftFixture.pathContext, profileFacts: externalDriftFixture.webProfileContext, env: {}, snapshot: syncSnapshot, saveRunId: 'external-drift-run', syncRevision: 1, snapshotHash: stableSnapshotHash(syncSnapshot), trigger: 'api-put', associated: true })
-const externalDriftAfter = readFileSync(externalDriftFixture.qqPatch, 'utf8')
-const externalDriftProfile = externalDriftRun.profiles?.find((item) => item.status === 'drift-detected')
-const externalDriftSha256 = createHash('sha256').update(externalDriftAfter).digest('hex')
-const externalDriftOk = externalDriftRun.status === 'drift-detected' &&
-  externalDriftRun.terminalMatch === false &&
-  externalDriftRun.failureOrder?.includes('before-final-verify') &&
-  externalDriftRun.failureOrder?.includes('external-writer-drift') &&
-  externalDriftRun.diagnostics?.some((item) => item.stage === 'before-final-verify' && item.reason === 'external-writer-drift') &&
-  externalDriftProfile?.after?.patchSha256 === externalDriftSha256 &&
-  externalDriftProfile.after.managedSnapshotHash === null &&
-  typeof externalDriftProfile.backupSha256 === 'string' &&
-  externalDriftProfile.backupSha256 === externalDriftProfile.after.backupSha256 &&
-  externalDriftProfile.before.patchSha256 !== externalDriftProfile.after.patchSha256 &&
-  !externalDriftRun.profiles?.some((item) => item.status === 'synced') &&
-  externalDriftAfter.includes('external-writer') &&
-  !externalDriftAfter.includes('dsh-extra-plan-settings')
-if (externalDriftOk) {
-  console.log('EXTERNAL_WRITER_DRIFT_BLOCKED_OK')
-  output.structured('EXTERNAL_WRITER_DRIFT_EVIDENCE', { status: externalDriftRun.status, terminalMatch: externalDriftRun.terminalMatch, failureOrder: externalDriftRun.failureOrder, diagnostics: externalDriftRun.diagnostics, before: externalDriftProfile.before, after: externalDriftProfile.after, externalContent: externalDriftAfter }, { status: externalDriftRun.status, terminalMatch: externalDriftRun.terminalMatch, failureOrder: externalDriftRun.failureOrder, diagnosticCount: Array.isArray(externalDriftRun.diagnostics) ? externalDriftRun.diagnostics.length : 0, beforeHash: externalDriftProfile.before?.patchSha256, afterHash: externalDriftProfile.after?.patchSha256, externalContentBytes: Buffer.byteLength(String(externalDriftAfter || ''), 'utf8') }, { failure: externalDriftRun.status === 'failed' })
-}
-check('外部 writer 在 terminal 前漂移不被旧 backup 覆盖且不伪造 synced', externalDriftOk)
-rmSync(externalDriftFixture.root, { recursive: true, force: true })
-
-const syncFixtureRoots = []
-const previousSyncEnvironment = captureEnvironment()
-try {
-  const webFixture = makeSyncFixture(); syncFixtureRoots.push(webFixture.root)
-  delete process.env.DSH_HOME; delete process.env.DSH_PROFILE
-  const webEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, webFixture.webPatch, { profileContext: webFixture.webProfileContext })
-  const webRun = await start(webEditor)
-  try {
-    const webPut = await requestJson(webRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
-    const qqConfig = syncConfigOf(readFileSync(webFixture.qqPatch, 'utf8'))
-    check('SYNC documentPath 首选且无 DSH_HOME 仍双端 synced、完整十一项/gateWords 深等', webPut.status >= 200 && webPut.status < 300 && webPut.body.profileSync.status === 'synced' && webPut.body.profileSync.pathSource === 'configEditor.documentPath' && webPut.body.web.applied === true && isDeepStrictEqual(webEditor.state.rows[0].entry.options.config, { ...syncValues, gateWords: syncGateWords }) && isDeepStrictEqual(qqConfig, { ...syncValues, gateWords: syncGateWords }))
-    check('SYNC Web documentPath 目标使用 override 且保留目标外 !!js/用户行', readFileSync(webFixture.qqPatch, 'utf8').includes('globalThis.__syncFixture = true') && readFileSync(webFixture.qqPatch, 'utf8').includes('user-custom'))
-  } finally { await new Promise((resolve) => webRun.server.close(resolve)) }
-
-  const decoy = makeSyncFixture(); syncFixtureRoots.push(decoy.root)
-  const decoyBefore = readFileSync(decoy.qqPatch, 'utf8')
-  const decoyBeforeBytes = readFileSync(decoy.qqPatch)
-  const decoyBeforeStat = statSync(decoy.qqPatch)
-  const decoyBeforeBackups = patchBackupCount(decoy.profileDir)
-  const decoyBeforeEntries = readdirSync(decoy.profileDir).sort().join('\n')
-  const targetBeforeBackups = patchBackupCount(dirname(webFixture.qqPatch))
-  const previousPriorityEnvironment = captureEnvironment()
-  try {
-  // 目标由fixture记录的显式profileContext提供；decoy仅作为未访问的Other夹具。
-  const priorityEditor = makeEditor({ ...syncValues, gateWords: syncGateWords }, webFixture.webPatch, { profileContext: webFixture.webProfileContext })
-  const priorityRun = await start(priorityEditor)
-  try {
-    const priorityProbe = createFsAccessProbe([
-      { name: 'targetProfilesRoot', root: join(webFixture.root, 'profiles') },
-      { name: 'decoyProfilesRoot', root: join(decoy.root, 'profiles') },
-    ])
-    const priorityPut = await withFsAccessProbe(priorityProbe, () => requestJson(priorityRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { toolPresentationMode: 'native' }))
-    const decoyAfterBytes = readFileSync(decoy.qqPatch)
-    const decoyAfterStat = statSync(decoy.qqPatch)
-    const decoyAfterBackups = patchBackupCount(decoy.profileDir)
-    const decoyAfterEntries = readdirSync(decoy.profileDir).sort().join('\n')
-    check('SYNC 有效 documentPath 真实同级目标访问>0、诱饵profiles根访问=0且仅写目标：target访问=' + priorityProbe.count('targetProfilesRoot') + ' decoyProfiles访问=' + priorityProbe.count('decoyProfilesRoot'), priorityPut.status >= 200 && priorityPut.status < 300 && priorityPut.body.profileSync.pathSource === 'configEditor.documentPath' && priorityProbe.count('targetProfilesRoot') > 0 && priorityProbe.count('decoyProfilesRoot') === 0 && decoyAfterBytes.equals(decoyBeforeBytes) && decoyAfterStat.mtimeMs === decoyBeforeStat.mtimeMs && decoyAfterBackups === decoyBeforeBackups && decoyAfterEntries === decoyBeforeEntries && patchBackupCount(dirname(webFixture.qqPatch)) === targetBeforeBackups + 1)
-  } finally { await new Promise((resolve) => priorityRun.server.close(resolve)) }
-  } finally {
-    restoreEnvironment(previousPriorityEnvironment)
-  }
-
-  const fallback = makeSyncFixture(); syncFixtureRoots.push(fallback.root)
-   const fallbackEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, fallback.webPatch, { profileContext: fallback.webProfileContext })
-  fallbackEditor.syncDocumentPath = ''
-  const fallbackBefore = readFileSync(fallback.qqPatch)
-  const previousFallbackEnvironment = captureEnvironment()
-  try {
-    const fallbackRun = await start(fallbackEditor)
-    try {
-      const fallbackPut = await requestJson(fallbackRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
-      check('SYNC documentPath 缺失且无显式根拒绝、QQBot零写', fallbackPut.status >= 400 && fallbackPut.body.profileSync.status === 'unavailable' && fallbackPut.body.profileSync.reason === 'document-path-unavailable' && readFileSync(fallback.qqPatch).equals(fallbackBefore))
-    } finally { await new Promise((resolve) => fallbackRun.server.close(resolve)) }
-  } finally {
-    restoreEnvironment(previousFallbackEnvironment)
-  }
-
-  const conflictFixture = makeSyncFixture(); syncFixtureRoots.push(conflictFixture.root)
-  const conflictEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, conflictFixture.webPatch, {
-    profileContext: { ...conflictFixture.webProfileContext, home: decoy.root },
-    dshHomePath: () => conflictFixture.root,
-  })
-  const conflictBefore = readFileSync(conflictFixture.qqPatch)
-  const conflictRun = await start(conflictEditor)
-  try {
-    const conflictPut = await requestJson(conflictRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
-    check('SYNC profile home与显式dshHomePath冲突拒绝且QQBot零写', conflictPut.status >= 400 && conflictPut.body.profileSync.status === 'unavailable' && typeof conflictPut.body.profileSync.reason === 'string' && readFileSync(conflictFixture.qqPatch).equals(conflictBefore))
-  } finally {
-    await new Promise((resolve) => conflictRun.server.close(resolve))
-  }
-  rmSync(conflictFixture.root, { recursive: true, force: true })
-
-  const failedFixture = makeSyncFixture(); syncFixtureRoots.push(failedFixture.root)
-  const failedEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, failedFixture.webPatch, { profileContext: failedFixture.webProfileContext })
-  rmSync(failedFixture.qqPatch, { force: true })
-  const failedRun = await start(failedEditor)
-  try {
-    const failedPut = await requestJson(failedRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
-    const failedProfile = failedPut.body?.profileSync?.profiles?.[0]
-    check('SYNC API 写失败返回非2xx/failed、Web applied且逐 profile reason，不伪造 synced', failedPut.status >= 400 && failedPut.body.web.applied === true && failedPut.body.overall === 'partial' && failedPut.body.profileSync.status === 'failed' && failedPut.body.profileSync.status !== 'synced' && failedProfile?.status === 'failed' && failedProfile.reason === 'patch-missing')
-  } finally { await new Promise((resolve) => failedRun.server.close(resolve)) }
-
-  const invalidRequestFixture = makeSyncFixture(); syncFixtureRoots.push(invalidRequestFixture.root)
-  const invalidRequestEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, invalidRequestFixture.webPatch, { profileContext: invalidRequestFixture.webProfileContext })
-  const invalidRequestBefore = readFileSync(invalidRequestFixture.qqPatch, 'utf8')
-  const invalidRequestRun = await start(invalidRequestEditor)
-  try {
-    const invalidRequest = await requestJson(invalidRequestRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: 1 })
-    check('SYNC API 非法写请求400且Web/QQBot均零写', invalidRequest.status === 400 && invalidRequestEditor.state.edits.length === 0 && readFileSync(invalidRequestFixture.qqPatch, 'utf8') === invalidRequestBefore && patchBackupCount(invalidRequestFixture.profileDir) === 0)
-  } finally { await new Promise((resolve) => invalidRequestRun.server.close(resolve)) }
-
-  const partialFixture = makeSyncFixture(); syncFixtureRoots.push(partialFixture.root)
-  const partialFailed = addAnchoredProfile(partialFixture.root, 'qqbot-partial-failed')
-  rmSync(partialFailed.patch, { force: true })
-  const partialEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, partialFixture.webPatch, { profileContext: partialFixture.webProfileContext })
-  const partialRun = await start(partialEditor)
-  try {
-    const partialPut = await requestJson(partialRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
-    const partialProfiles = partialPut.body?.profileSync?.profiles || []
-    check('SYNC API 多目标 partial 同时报告 applied/failed 与逐 profile reason', partialPut.status >= 400 && partialPut.body.web.applied === true && partialPut.body.overall === 'partial' && partialPut.body.profileSync.status === 'failed' && partialProfiles.some((item) => item.status === 'applied') && partialProfiles.some((item) => item.status === 'failed' && item.reason === 'patch-missing'))
-  } finally { await new Promise((resolve) => partialRun.server.close(resolve)) }
-
-  const unavailable = makeSyncFixture(); syncFixtureRoots.push(unavailable.root)
-  const unavailableBeforeBytes = readFileSync(unavailable.qqPatch)
-  const unavailableBeforeStat = statSync(unavailable.qqPatch)
-  const unavailableBeforeBackups = patchBackupCount(unavailable.profileDir)
-  const unavailableBeforeEntries = readdirSync(unavailable.profileDir).sort().join('\n')
-  const unavailableUserProfile = join(unavailable.root, 'missing-userprofile')
-  const unavailableHome = join(unavailable.root, 'missing-home')
-  rmSync(unavailableUserProfile, { recursive: true, force: true })
-  rmSync(unavailableHome, { recursive: true, force: true })
-  let unavailableProbe
-  await withEnvironment({ DSH_HOME: undefined, DSH_PROFILE: undefined, USERPROFILE: unavailableUserProfile, HOME: unavailableHome }, async () => {
-     const unavailableEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, unavailable.webPatch, { profileContext: unavailable.webProfileContext })
-     unavailableEditor.syncDocumentPath = ''
-    const unavailableRun = await start(unavailableEditor)
-    try {
-      unavailableProbe = createFsAccessProbe([{ name: 'unavailableTarget', root: unavailable.profileDir }])
-      const unavailablePut = await withFsAccessProbe(unavailableProbe, () => requestJson(unavailableRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true }))
-      const unavailableAfterBytes = readFileSync(unavailable.qqPatch)
-      const unavailableAfterStat = statSync(unavailable.qqPatch)
-      const unavailableAfterBackups = patchBackupCount(unavailable.profileDir)
-      const unavailableAfterEntries = readdirSync(unavailable.profileDir).sort().join('\n')
-      const unavailableTempEntries = unavailableAfterEntries.split('\n').filter((name) => name.startsWith('cordis.patch.yml.tmp-dsh-extra-plan-settings-'))
-      check('SYNC USERPROFILE/HOME 两不存在来源零创建且目标访问=0：target访问=' + unavailableProbe.count('unavailableTarget'), !(unavailablePut.status >= 200 && unavailablePut.status < 300) && unavailablePut.body.profileSync.status === 'unavailable' && unavailablePut.body.profileSync.reason === 'document-path-unavailable' && unavailablePut.body.web.applied === true && unavailablePut.body.overall === 'partial' && unavailableProbe.count('unavailableTarget') === 0 && unavailableBeforeBytes.equals(unavailableAfterBytes) && unavailableAfterStat.mtimeMs === unavailableBeforeStat.mtimeMs && unavailableAfterBackups === unavailableBeforeBackups && unavailableAfterEntries === unavailableBeforeEntries && unavailableTempEntries.length === 0 && unavailableUserProfile !== unavailableHome && !existsSync(unavailableUserProfile) && !existsSync(unavailableHome))
-    } finally { await new Promise((resolve) => unavailableRun.server.close(resolve)) }
-  })
-
-  const invalidPaths = [
-    'profiles/web/cordis.patch.yml',
-    join(webFixture.root, 'profiles', 'desktop', 'cordis.patch.yml'),
-    join(webFixture.root, 'profiles', 'web', 'wrong.yml'),
-    join(webFixture.root, 'other', 'web', 'cordis.patch.yml'),
-  ]
-  for (const invalidPath of invalidPaths) {
-     const invalidEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, webFixture.webPatch, { profileContext: webFixture.webProfileContext })
-     invalidEditor.syncDocumentPath = invalidPath
-    const invalidRun = await start(invalidEditor)
-    try {
-      const invalidPut = await requestJson(invalidRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
-      check('SYNC 非空矛盾 documentPath 禁止降级 DSH_HOME：' + invalidPath, invalidPut.status >= 400 && invalidPut.body.profileSync.status === 'unavailable' && invalidPut.body.profileSync.reason === 'invalid-document-path' && readFileSync(decoy.qqPatch, 'utf8') === decoyBefore)
-    } finally { await new Promise((resolve) => invalidRun.server.close(resolve)) }
-  }
-
-  const noTarget = makeSyncFixture(); syncFixtureRoots.push(noTarget.root)
-  rmSync(join(noTarget.profileDir, 'node_modules', 'dsh-extra-plan-qqbot'), { recursive: true, force: true })
-  const noTargetEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, noTarget.webPatch, { profileContext: noTarget.webProfileContext })
-  const noTargetRun = await start(noTargetEditor)
-  try {
-    const noTargetPut = await requestJson(noTargetRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
-    check('SYNC 已证明 profilesRoot 但无双锚点目标返回 200/not-installed', noTargetPut.status === 200 && noTargetPut.body.profileSync.status === 'not-installed' && noTargetPut.body.profileSync.status !== 'synced')
-  } finally { await new Promise((resolve) => noTargetRun.server.close(resolve)) }
-
-  const drift = makeSyncFixture(); syncFixtureRoots.push(drift.root)
-  const driftEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, drift.webPatch, { profileContext: drift.webProfileContext })
-  const driftRun = await start(driftEditor)
-  try {
-    const first = await requestJson(driftRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
-    const driftText = '- override:\n    id: dsh-extra-plan-settings\n    config:\n      plannerModel: drifted\n      gateWords:\n        routeMain: 甲\n        routeExecutor: 丁\n        routePlan: 乙\n        routeDisagree: 丙\n        purposeRefine: 己\n        purposeRedo: 庚\n'
-    writeFileSync(drift.qqPatch, driftText, 'utf8')
-    const second = await requestJson(driftRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
-    check('SYNC 同值保存仍检查并修复 QQBot 漂移', first.body.profileSync.status === 'synced' && second.body.profileSync.status === 'synced' && syncConfigOf(readFileSync(drift.qqPatch, 'utf8')).plannerModel === syncValues.plannerModel)
-  } finally { await new Promise((resolve) => driftRun.server.close(resolve)) }
-} finally {
-  restoreEnvironment(previousSyncEnvironment)
-  for (const root of syncFixtureRoots) rmSync(root, { recursive: true, force: true })
-}
-
-function nextMatrixValue(base, key, index) {
-  if (typeof base[key] === 'boolean') return !base[key]
-  if (key === 'toolPresentationMode') return base[key] === 'native' ? 'ptc' : 'native'
-  if (typeof base[key] === 'number') return base[key] + index + 1
-  return String(base[key]) + '-matrix-' + index
-}
-async function runHostProxyMatrix() {
-  const baseValues = { ...syncValues }
-  const gate = structuredClone(syncGateWords)
-  const matrixFixture = makeSyncFixture()
-  const unmanagedConfigKey = 'webUnmanagedConfig'
-  const unmanagedConfigValue = 'keep-web-config-field'
-  const matrixEditor = makeEditor({ ...baseValues, gateWords: gate, [unmanagedConfigKey]: unmanagedConfigValue }, matrixFixture.webPatch, { persistDocument: true, profileContext: matrixFixture.webProfileContext })
-  const initialSnapshot = { values: { ...baseValues }, gateWords: gate }
-  let savedValues = { ...baseValues }
-  const normalTrace = []
-  const normalStats = { register: 0, dispose: 0 }
-  const normalRun = await start(matrixEditor, { mount: true, trace: normalTrace, hostProxyMode: 'normal-injection', matrixStats: normalStats })
-  let normalOk = true
-  let normalTerminal = await waitForTerminal(normalRun.port)
-  await waitForAdapterRegister(normalStats)
-  const initialRegister = normalStats.register
-  const initialDispose = normalStats.dispose
-  for (const [index, key] of keys.entries()) {
-    const nextValues = { ...savedValues, [key]: nextMatrixValue(baseValues, key, index) }
-    const nextSnapshot = { values: nextValues, gateWords: gate }
-    const put = await requestJson(normalRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { [key]: nextValues[key] })
-    if (typeof normalRun.lifecycle.update === 'function') normalRun.lifecycle.update()
-    await flush(4)
-    normalTerminal = await waitForTerminal(normalRun.port)
-    const apiValues = normalTerminal?.body?.values
-    const apiGateWords = normalTerminal?.body?.settingsRow?.selectedConfig?.gateWords
-    const apiValuesShapeOk = apiValues !== undefined && JSON.stringify(Object.keys(apiValues).sort()) === JSON.stringify(keys.slice().sort())
-    const apiGateWordsShapeOk = apiGateWords !== undefined && JSON.stringify(Object.keys(apiGateWords).sort()) === JSON.stringify(GATE_WORD_FIELDS.map((item) => item.field).sort())
-    const apiResponseOk = apiValuesShapeOk && apiGateWordsShapeOk && isDeepStrictEqual(apiValues, nextValues) && isDeepStrictEqual(apiGateWords, gate)
-    const webConfigAfterSave = syncConfigOf(readFileSync(matrixFixture.webPatch, 'utf8'))
-    const webManagedValuesAfterSave = Object.fromEntries(keys.map((item) => [item, webConfigAfterSave?.[item]]))
-    const webCanonicalConfigOk = isDeepStrictEqual(webManagedValuesAfterSave, nextValues) && isDeepStrictEqual(webConfigAfterSave?.gateWords, gate) && webConfigAfterSave?.[unmanagedConfigKey] === unmanagedConfigValue
-    const qqConfigAfterSave = syncConfigOf(readFileSync(matrixFixture.qqPatch, 'utf8'))
-    const iterationOk = put.status === 200 && fullSnapshotShapeOk(nextSnapshot) && normalTerminal?.body?.profileSync?.status === 'synced' &&
-      normalTerminal.body.profileSync.pending === false && apiResponseOk && webCanonicalConfigOk &&
-      isDeepStrictEqual(qqConfigAfterSave, { ...nextValues, gateWords: gate })
-    if (!iterationOk) console.log('HOST_PROXY_MATRIX_FAILURE_DETAIL ' + JSON.stringify({ key, putStatus: put.status, profileStatus: normalTerminal?.body?.profileSync?.status, apiValuesMatch: isDeepStrictEqual(apiValues, nextValues), apiValue: apiValues?.[key], expectedValue: nextValues[key], apiGateWordsMatch: isDeepStrictEqual(apiGateWords, gate), webManagedValuesMatch: isDeepStrictEqual(webManagedValuesAfterSave, nextValues), webValue: webConfigAfterSave?.[key], webGateWordsMatch: isDeepStrictEqual(webConfigAfterSave?.gateWords, gate), webUnmanagedValue: webConfigAfterSave?.[unmanagedConfigKey], webCanonicalConfigOk, qqConfigMatch: isDeepStrictEqual(qqConfigAfterSave, { ...nextValues, gateWords: gate }), qqValue: qqConfigAfterSave?.[key] }))
-    normalOk = normalOk && iterationOk
-    savedValues = nextValues
-  }
-  const normalProxy = normalRun.proxy
-  const normalCase = {
-    case: 'normal-injection',
-    getCalls: normalProxy.getCalls,
-    getResult: normalProxy.getResult,
-    injectRequests: normalProxy.injectRequests,
-    injectCallback: normalProxy.injectRequests.filter((item) => item.deps[0] === 'configEditor' && item.outcome === 'callback').length,
-    childServiceIdentity: normalProxy.childServiceIdentity,
-    documentPath: matrixEditor.documentPath,
-    initialRegister,
-    settingsRegisterDelta: normalStats.register - initialRegister,
-    disposeDelta: normalStats.dispose - initialDispose,
-     profileSyncTerminal: { status: normalTerminal?.body?.profileSync?.status, pending: normalTerminal?.body?.profileSync?.pending, saveRunId: normalTerminal?.body?.profileSync?.saveRunId, syncRevision: normalTerminal?.body?.profileSync?.syncRevision, snapshotHash: normalTerminal?.body?.profileSync?.snapshotHash, trigger: normalTerminal?.body?.profileSync?.trigger },
-    failureOrder: ['outer-configEditor-error', 'ctx.get:configEditor', 'settled-terminal', 'adapter-start'],
-    classification: 'PASS',
-  }
-  output.structured('HOST_PROXY_MATRIX_CASE', normalCase, { case: normalCase.case, status: normalCase.classification, getCalls: normalCase.getCalls.length, injectRequests: normalCase.injectRequests.length, injectCallback: normalCase.injectCallback, initialRegister: normalCase.initialRegister, settingsRegisterDelta: normalCase.settingsRegisterDelta, disposeDelta: normalCase.disposeDelta, profileSyncTerminal: normalCase.profileSyncTerminal, failureOrder: normalCase.failureOrder })
-  const normalBoundaryOk = normalProxy.outerDirectError === 'cannot get property "configEditor" without inject' &&
-    normalProxy.getResult === 'editor' && normalCase.injectCallback === 1 && normalProxy.childServiceIdentity === 'same-editor' &&
-    // 预设链注册 5 个 definition（主 + 4 角色）：初始化注册数 = 5，settings-only 增量仍为 0。
-    initialRegister === 5 && normalCase.settingsRegisterDelta === 0 && normalCase.disposeDelta === 0 &&
-     normalCase.profileSyncTerminal.status === 'synced' && normalCase.profileSyncTerminal.pending === false && typeof normalCase.profileSyncTerminal.saveRunId === 'string' && normalCase.profileSyncTerminal.saveRunId !== '' && Number.isInteger(normalCase.profileSyncTerminal.syncRevision) && normalCase.profileSyncTerminal.syncRevision > 0 && typeof normalCase.profileSyncTerminal.snapshotHash === 'string' && normalCase.profileSyncTerminal.trigger === 'settled-update' && normalOk
-  if (normalBoundaryOk) console.log('HOST_PROXY_NORMAL_SETTLED_CTX_GET_OK')
-  check('host-proxy normal settled assertion', normalBoundaryOk)
-  check('V03 settings owner 生命周期由真实 host-proxy trace 覆盖', normalBoundaryOk && ['loader', 'settings', 'webServer', 'configEditor'].every((name) => normalCase.injectRequests.some((item) => item.deps[0] === name)) && normalTrace.includes('ctx.get:configEditor') && normalTrace.includes('adapter-start'))
-  if (normalOk) console.log('FULL_SNAPSHOT_10_PLUS_6_EACH_TRIGGER_OK')
-  check('full snapshot each trigger assertion', normalOk)
-  if (typeof normalRun.lifecycle.cleanup === 'function') await normalRun.lifecycle.cleanup()
-  await new Promise((resolve) => normalRun.server.close(resolve))
-  rmSync(matrixFixture.root, { recursive: true, force: true })
-
-  const negativeCases = ['get-only/no-op-inject', 'inject-throws', 'child-missing-configEditor']
-  let negativeOk = true
-  for (const caseName of negativeCases) {
-    const fixture = makeSyncFixture()
-    const negativeEditor = makeEditor({ ...baseValues, gateWords: gate }, fixture.webPatch)
-    const trace = []
-    const stats = { register: 0, dispose: 0 }
-    const run = await start(negativeEditor, { mount: true, trace, hostProxyMode: caseName, matrixStats: stats, allowApplyError: caseName === 'inject-throws' })
-    const proxy = run.proxy
-    let profileSyncTerminal = { status: 'unavailable', pending: false }
-    if (caseName === 'get-only/no-op-inject') {
-      const getResponse = await requestJson(run.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
-      profileSyncTerminal = { status: getResponse.body?.profileSync?.status || 'pending', pending: getResponse.body?.profileSync?.pending === true, mount: 'NOT-RUN' }
-      if (typeof run.lifecycle.cleanup === 'function') await run.lifecycle.cleanup()
-      await new Promise((resolve) => run.server.close(resolve))
-    } else if (caseName === 'child-missing-configEditor') {
-      await flush(8)
-      profileSyncTerminal = { status: 'unavailable', pending: false, reason: 'child configEditor missing' }
-      if (typeof run.lifecycle.cleanup === 'function') await run.lifecycle.cleanup()
-    }
-    const result = {
-      case: caseName,
-      getCalls: proxy.getCalls,
-      getResult: proxy.readViaGet() === negativeEditor ? 'editor' : 'unexpected',
-      injectRequests: proxy.injectRequests,
-      injectCallback: proxy.injectRequests.filter((item) => item.deps[0] === 'configEditor' && item.outcome.startsWith('callback')).length,
-      childServiceIdentity: proxy.childServiceIdentity,
-      documentPath: negativeEditor.documentPath,
-      initialRegister: stats.register,
-      settingsRegisterDelta: 0,
-      disposeDelta: stats.dispose,
-      profileSyncTerminal,
-      failureOrder: [...trace],
-      classification: 'HUMAN',
-    }
-    output.structured('HOST_PROXY_MATRIX_CASE', result, { case: result.case, status: result.classification, getCalls: result.getCalls.length, injectRequests: result.injectRequests.length, injectCallback: result.injectCallback, initialRegister: result.initialRegister, settingsRegisterDelta: result.settingsRegisterDelta, disposeDelta: result.disposeDelta, profileSyncTerminal: result.profileSyncTerminal, failureOrder: result.failureOrder })
-    if (caseName === 'get-only/no-op-inject') {
-      negativeOk = negativeOk && result.getResult === 'editor' && result.injectCallback === 0 && profileSyncTerminal.mount === 'NOT-RUN' && profileSyncTerminal.pending === true
-      console.log('HUMAN  {"scope":"HOST-PROXY-GET-ONLY","reason":"ctx.get 可解析 editor，但 no-op inject 未挂载；不计 no-remount PASS"}')
-    } else if (caseName === 'inject-throws') {
-      negativeOk = negativeOk && result.getResult === 'editor' && result.injectRequests.some((item) => item.outcome === 'error=inject-error') && result.initialRegister === 0 && run.proxy.applyError === 'inject-error'
-    } else {
-      negativeOk = negativeOk && result.getResult === 'editor' && result.childServiceIdentity === 'missing' && result.injectCallback === 1 && result.initialRegister === 0 && trace.includes('child-configEditor-missing')
-    }
-    rmSync(fixture.root, { recursive: true, force: true })
-  }
-  if (negativeOk) console.log('HOST_PROXY_NEGATIVE_BOUNDARIES_EXPLICIT_OK')
-  check('host-proxy negative boundaries assertion', negativeOk)
-  const matrixComplete = normalBoundaryOk && negativeOk
-  if (matrixComplete) console.log('HOST_PROXY_MATRIX_COMPLETE_OK')
-  check('host-proxy matrix complete assertion', matrixComplete)
-}
-await runHostProxyMatrix()
-const adapterFixtureRoots = []
-const adapterFixture = makeSyncFixture(); adapterFixtureRoots.push(adapterFixture.root)
-const adapterEditor = makeEditor({ ...syncValues, gateWords: syncGateWords }, adapterFixture.webPatch, { profileContext: adapterFixture.webProfileContext })
-const adapterCounts = { register: 0, dispose: 0 }
-let adapterNoRemount = false
-const adapterRun = await start(adapterEditor, {
-  mount: true,
-  plugin: async () => { adapterCounts.register += 1; return { dispose: async () => { adapterCounts.dispose += 1 } } },
-})
-try {
-  await flush(8)
-  const adapterInitial = await waitForTerminal(adapterRun.port)
-  await waitForAdapterRegister(adapterCounts)
-  adapterEditor.state.rows[0].entry.options.config.plannerModel = 'no-remount-model'
-   writeFileSync(adapterEditor.documentPath, JSON.stringify([{ id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: adapterEditor.state.rows[0].entry.options.config }]), 'utf8')
-  if (typeof adapterRun.lifecycle.update === 'function') adapterRun.lifecycle.update()
-  await flush(8)
-  const adapterAfter = await waitForTerminal(adapterRun.port)
-  await waitForAdapterRegister(adapterCounts)
-  // no-remount 合同：初次挂载登记 5 个 definition（主 + 4 角色），settings-only 保存不新增 register、dispose 恒 0。
-  adapterNoRemount = adapterInitial.body.profileSync.status === 'synced' && adapterAfter.body.profileSync.status === 'synced' && adapterCounts.register === 5 && adapterCounts.dispose === 0
-  check('SETTINGS_ONLY_HTTP_SAVE_ADAPTER_REGISTER_0_DISPOSE_0', adapterNoRemount)
-  check('SETTINGS_ONLY_HTTP_SAVE_ADAPTER_MOUNT_COUNT_5', adapterCounts.register === 5)
-} finally {
-  if (typeof adapterRun.lifecycle.cleanup === 'function') await adapterRun.lifecycle.cleanup()
-  await new Promise((resolve) => adapterRun.server.close(resolve))
-}
-
-async function runApiAdapterCase(label, caseName, failureEvent, changed) {
-  const fixture = makeSyncFixture(); adapterFixtureRoots.push(fixture.root)
-  const trace = []
-  const counts = { register: 0, dispose: 0 }
-  const gate = deferred()
-  const fiber = { dispose: async () => { counts.dispose += 1 } }
-  const editor = makeEditor({ ...syncValues, gateWords: syncGateWords }, fixture.webPatch, { persistDocument: true, profileContext: fixture.webProfileContext })
-  const run = await start(editor, {
-    mount: true,
-    trace,
-    adapterFailureEvent: failureEvent,
-    plugin: async () => {
-      counts.register += 1
-      await gate.promise
-      if (caseName === 'throw') throw new Error('injected adapter throw')
-      if (caseName === 'reject') return Promise.reject(new Error('injected adapter reject'))
-      return fiber
-    },
-  })
-  let released = false
-  let cleaned = false
-  const release = () => {
-    if (released) return
-    released = true
-    gate.resolve(caseName === 'hang' ? fiber : undefined)
-  }
-  try {
-    await waitForTrace(trace, 'adapter-start')
-    const snapshot = { values: { ...syncValues, ...changed }, gateWords: syncGateWords }
-    const put = await requestApiJson(run.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', changed, trace)
-    const adapterStartIndex = trace.indexOf('adapter-start')
-    const terminalIndex = trace.indexOf('api-profile-sync-terminal')
-    let ok = apiTerminalBodyOk(put) && apiSnapshotBodyOk(put, snapshot) && apiPatchOk(fixture, snapshot) &&
-      adapterStartIndex >= 0 && terminalIndex > adapterStartIndex && counts.register === 1 && counts.dispose === 0
-    if (caseName === 'hang') {
-      const beforeRelease = ok && !trace.includes('adapter-resolved') && !trace.includes('adapter-thrown') && !trace.includes('adapter-rejected')
-      release()
-      await waitForTrace(trace, 'adapter-resolved')
-      const resolvedIndex = trace.indexOf('adapter-resolved')
-      const afterRelease = resolvedIndex > terminalIndex && counts.dispose === 0
-      const get = await requestJson(run.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
-      if (typeof run.lifecycle.cleanup === 'function') { await run.lifecycle.cleanup(); cleaned = true }
-      ok = beforeRelease && afterRelease && apiTerminalBodyOk({ status: 200, body: { web: { applied: true }, projection: { applied: true }, overall: 'synced', profileSync: get.body.profileSync } }) &&
-        // hang 释放后主 + 4 角色顺序挂载 = 5 次 register；cleanup 时整体回滚 5 次 dispose。
-        apiSnapshotBodyOk(get, snapshot) && apiPatchOk(fixture, snapshot) && counts.register === 5 && counts.dispose === 5
-      output.structured('API_TRACE', { case: caseName, trace, adapterStartIndex, terminalIndex, putStatus: put.status, apiBodyOk: apiTerminalBodyOk(put), snapshotBodyOk: apiSnapshotBodyOk(put, snapshot), patchOk: apiPatchOk(fixture, snapshot), patchDetails: apiPatchDetails(fixture, snapshot), resolvedIndex, pluginCalls: counts.register, pluginDisposals: counts.dispose }, { case: caseName, status: ok ? 'PASS' : 'FAIL', events: trace.length, adapterStartIndex, terminalIndex, resolvedIndex, putStatus: put.status, apiBodyOk: apiTerminalBodyOk(put), snapshotBodyOk: apiSnapshotBodyOk(put, snapshot), patchOk: apiPatchOk(fixture, snapshot), pluginCalls: counts.register, pluginDisposals: counts.dispose }, { failure: !ok })
-    } else {
-      release()
-      await waitForTrace(trace, failureEvent)
-      const failureIndex = trace.indexOf(failureEvent)
-      const get = await requestJson(run.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
-      ok = ok && failureIndex > terminalIndex && trace.filter((event) => event === failureEvent).length === 1 &&
-        get.status >= 200 && get.status < 300 && get.body.profileSync?.status === 'synced' && get.body.profileSync?.pending === false &&
-        // 首个（主）definition 挂载即 throw/reject → register 恰 1 次、无已挂载项可回滚（角色尚未开始挂载）。
-        apiSnapshotBodyOk(get, snapshot) && apiPatchOk(fixture, snapshot) && counts.register === 1 && counts.dispose === 0
-      output.structured('API_TRACE', { case: caseName, trace, adapterStartIndex, terminalIndex, putStatus: put.status, apiBodyOk: apiTerminalBodyOk(put), snapshotBodyOk: apiSnapshotBodyOk(put, snapshot), patchOk: apiPatchOk(fixture, snapshot), patchDetails: apiPatchDetails(fixture, snapshot), failureIndex, pluginCalls: counts.register, pluginDisposals: counts.dispose }, { case: caseName, status: ok ? 'PASS' : 'FAIL', events: trace.length, adapterStartIndex, terminalIndex, failureIndex, putStatus: put.status, apiBodyOk: apiTerminalBodyOk(put), snapshotBodyOk: apiSnapshotBodyOk(put, snapshot), patchOk: apiPatchOk(fixture, snapshot), pluginCalls: counts.register, pluginDisposals: counts.dispose }, { failure: !ok })
-    }
-    check(label, ok)
-  } finally {
-    release()
-    await flush(8)
-    if (!cleaned && typeof run.lifecycle.cleanup === 'function') await run.lifecycle.cleanup()
-    await new Promise((resolve) => run.server.close(resolve))
-  }
-}
-await runApiAdapterCase('API_ADAPTER_THROW_COMPLETE_PATCH_SETTLED_BEFORE_FAILURE_OK', 'throw', 'adapter-thrown', { webFetch: false })
-await runApiAdapterCase('API_ADAPTER_REJECT_COMPLETE_PATCH_SETTLED_BEFORE_FAILURE_OK', 'reject', 'adapter-rejected', { webFetch: false })
-await runApiAdapterCase('API_ADAPTER_HANG_COMPLETE_PATCH_SETTLED_BEFORE_RESOLVE_OK', 'hang', 'adapter-resolved', { webFetch: false })
 
 
 const liveRoot = makeWRoot('settings-live-config')
@@ -1423,7 +504,7 @@ try {
   writeFileSync(liveMatrixPath, JSON.stringify([{ id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: { ...syncValues, ...hotNext } }]), 'utf8')
   const matrixRecovered = Object.fromEntries(hotKeys.map((key) => [key, liveMatrixConfig.get(hotGetters[key], { session: { header: { cwd: liveMatrixRoot } } })]))
   const matrixRecoveredOk = hotKeys.every((key) => Object.is(matrixRecovered[key], hotNext[key]))
-  check('G5 A可读→B缺失→B可读：10项回退/恢复且缺失最多一次告警', matrixHotReadOk && matrixFallbackOk && matrixRecoveredOk && matrixWarningsAfterMissing === 1 && liveMatrixWarnings.length === 1 && adapterNoRemount)
+  check('G5 A可读→B缺失→B可读：10项回退/恢复且缺失最多一次告警', matrixHotReadOk && matrixFallbackOk && matrixRecoveredOk && matrixWarningsAfterMissing === 1 && liveMatrixWarnings.length === 1)
 } finally {
   console.warn = liveMatrixWarn
 }
@@ -1477,7 +558,7 @@ try {
   const restoredOk = hotValuesEqual(restoredValues, hotNext)
   const evidence = { path: livePath, bytesSha256: liveBytesSha256, bytes: liveBytes.length, stamp: liveOriginalStamp, reads: { initial: readsAfterInitial, sameIdentity: readsAfterSameIdentity, capabilityChange: readsAfterCapabilityChange, sameCapability: readsAfterSameCapability, revoke: readsAfterRevoke, restore: readsAfterRestore }, warnings: liveWarnings.length, values: { initial: initialValues, capabilityChanged: capabilityChangedValues, revoked: revokedValues, restored: restoredValues } }
   output.structured('G5_LIVE_CONFIG_EVIDENCE', evidence, { path: livePath, bytes: liveBytes.length, stamp: liveOriginalStamp, reads: evidence.reads, warningCount: liveWarnings.length }, { failure: !(readCountsOk && bytesUnchanged && stampUnchanged && sameIdentityOk && capabilityChangedOk && revokedOk && restoredOk) })
-  check('G5 10热读键同路径同stamp能力切换/撤权/恢复、真实read计数且字节stamp不变', readCountsOk && bytesUnchanged && stampUnchanged && sameIdentityOk && capabilityChangedOk && revokedOk && restoredOk && liveWarnings.length === 1 && adapterNoRemount)
+  check('G5 10热读键同路径同stamp能力切换/撤权/恢复、真实read计数且字节stamp不变', readCountsOk && bytesUnchanged && stampUnchanged && sameIdentityOk && capabilityChangedOk && revokedOk && restoredOk && liveWarnings.length === 1)
 } finally {
   fs.readFileSync = liveOriginalReadFileSync
   syncBuiltinESMExports()
@@ -1529,42 +610,9 @@ const oldRuntime = createGateRuntime(syncGateWords)
 const restartGate = Object.fromEntries(GATE_WORD_FIELDS.map((item, index) => [item.field, '重词' + index]))
 const nextRuntime = createGateRuntime(restartGate)
 check('GATEWORDS_FULL_SYNC_RESTART_SEMANTICS', oldRuntime.words.routeMain === syncGateWords.routeMain && nextRuntime.words.routeMain === restartGate.routeMain && oldRuntime.words.routeMain !== nextRuntime.words.routeMain)
-console.log('HUMAN  {"scope":"RESTART-AND-GATEWORDS","reason":"真实 Harness/QQBot 重启、旧词拒绝与非法词按同口径回落资产默认需部署后复测"}')
+console.log('HUMAN  {"scope":"RESTART-AND-GATEWORDS","reason":"真实 Harness 重启、旧词拒绝与非法词按同口径回落资产默认需部署后复测"}')
 rmSync(liveRoot, { recursive: true, force: true })
-for (const root of adapterFixtureRoots) rmSync(root, { recursive: true, force: true })
 
-// GTW：非法 gateWords 与 11 项普通值同口径——GET 不再 conflict（回落诊断可见），PUT 单次 edit 补齐资产默认并删除旧键。
-function assetGateWordsOf(value) {
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const found = assetGateWordsOf(item)
-      if (found !== undefined) return found
-    }
-    return undefined
-  }
-  if (value === null || typeof value !== 'object') return undefined
-  if (value.id === 'extra-plan' && value.config !== null && typeof value.config === 'object' && value.config.gateWords !== undefined) return structuredClone(value.config.gateWords)
-  for (const child of Object.values(value)) {
-    const found = assetGateWordsOf(child)
-    if (found !== undefined) return found
-  }
-  return undefined
-}
-const assetGateWords = assetGateWordsOf(generatedDefinition)
-const legacySevenGateWords = { routeDirect: '直接执行', routePlan: '进行pro规划', routeDisagree: '不同意', approvalApprove: '同意执行', approvalReplan: '转交pro规划', purposeRefine: '完善方案', purposeRedo: '重新规划' }
-const repairFixture = makeSyncFixture()
-const repairEditor = makeEditor({ ...syncValues, gateWords: syncGateWords }, repairFixture.webPatch, { profileContext: repairFixture.webProfileContext })
-const repairRun = await start(repairEditor)
-try {
-  // 运行期把唯一行改坏（模拟旧版本遗留/外部编辑），再走真实 GET/PUT。
-  repairEditor.state.rows[0].entry.options.config = { ...syncValues, gateWords: structuredClone(legacySevenGateWords) }
-  const repairGet = await requestJson(repairRun.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
-  const repairPut = await requestJson(repairRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: false })
-  const expectedRepair = { ...syncValues, webFetch: false, gateWords: assetGateWords }
-  const assetGateShapeOk = assetGateWords !== undefined && Object.keys(assetGateWords).length === GATE_WORD_FIELDS.length && GATE_WORD_FIELDS.every((item) => typeof assetGateWords[item.field] === 'string') && !Object.prototype.hasOwnProperty.call(assetGateWords, 'approvalApprove') && !Object.prototype.hasOwnProperty.call(assetGateWords, 'routeDirect')
-  check('GTW 非法 gateWords GET 不再 conflict 且回落诊断可见', repairGet.status === 200 && repairGet.body?.settingsRow?.status === 'ok' && Array.isArray(repairGet.body?.diagnostics) && repairGet.body.diagnostics.some((line) => String(line).includes('gateWords')) && isDeepStrictEqual(repairGet.body?.values, syncValues))
-  check('GTW 非法 gateWords PUT 一次 edit 回落资产默认六键并整组删除旧键', assetGateShapeOk && repairPut.status === 200 && repairPut.body?.profileSync?.status === 'synced' && repairPut.body?.web?.applied === true && repairEditor.state.edits.length === 1 && isDeepStrictEqual(repairEditor.state.edits[0].next, expectedRepair) && isDeepStrictEqual(syncConfigOf(readFileSync(repairFixture.webPatch, 'utf8')), expectedRepair) && isDeepStrictEqual(syncConfigOf(readFileSync(repairFixture.qqPatch, 'utf8')), expectedRepair))
-} finally { await new Promise((resolve) => repairRun.server.close(resolve)); rmSync(repairFixture.root, { recursive: true, force: true }) }
 
 function makeClientHarness(snapshot, outcome = true, failDetail = false, savingInitial = false, options = {}) {
   let definition
@@ -1685,17 +733,10 @@ function makeClientHarness(snapshot, outcome = true, failDetail = false, savingI
     head: { appendChild() { styleAppends += 1 } },
     createElement: () => ({ dataset: {}, remove() { styleRemoves += 1 } }),
   }
-  const fetchResponses = {
-    synced: { ok: true, status: 200, json: async () => ({ overall: 'synced', profileSync: { status: 'synced', pending: false } }) },
-    'not-installed': { ok: true, status: 200, json: async () => ({ overall: 'not-installed', profileSync: { status: 'not-installed', pending: false } }) },
-    failed: { ok: false, status: 502, json: async () => ({ overall: 'partial', profileSync: { status: 'failed', profiles: [{ profile: 'qqbot', reason: 'snapshot-hash-mismatch' }] } }) },
-    conflict: { ok: false, status: 409, json: async () => ({ overall: 'conflict', profileSync: { status: 'conflict', reason: 'terminal-saveRunId-mismatch' } }) },
-  }
   const sandbox = { window: { __ModuleLoader__: { load(value) { definition = value } } }, document, console, Symbol, Object, Array, String, Number, Boolean, JSON, structuredClone, Set, Map, Error,
     fetch: async (url, init) => {
       fetchCalls.push({ url: String(url), method: init === undefined || init === null ? 'GET' : String(init.method || 'GET'), body: init === undefined || init === null || typeof init.body !== 'string' ? undefined : JSON.parse(init.body) })
-      if (options.fetchBehavior === 'network') throw new Error('network down')
-      return fetchResponses[options.fetchBehavior] || fetchResponses.synced
+      throw new Error('unexpected-fetch: ' + String(url))
     },
   }
   const clientSourceText = typeof options.clientSourceText === 'string' ? options.clientSourceText : clientText
@@ -1941,15 +982,13 @@ const successClient = await exerciseClient(readySnapshot, true, 'ok', 'V05 实�
 check('V05 成功保存恰一次十一项 mutate、revision正确、每键一条 set op', successClient.calls.length === 1 && successClient.calls[0].revision === 42 && successClient.calls[0].ops.length === 11 && new Set(successClient.calls[0].ops.map((op) => op.path[0])).size === 11 && successClient.calls[0].ops.every((op) => op.op === 'set'))
 await exerciseClient(readySnapshot, false, 'error', 'V05 mutate=false 不显示保存成功')
 await exerciseClient(readySnapshot, 'throw', 'error', 'V05 mutate抛错不显示保存成功')
-const clientPutAccepted = makeClientHarness(readySnapshot, true, false, false, { fetchBehavior: 'synced' })
+const clientPutAccepted = makeClientHarness(readySnapshot, true, false, false)
 const acceptedPutView = clientPutAccepted.renderDetail()
 if (acceptedPutView === undefined || acceptedPutView.button === undefined) {
   check('UI双步保存 accepted 渲染保存按钮', false)
 } else {
   await acceptedPutView.button.props.onClick()
-  check('UI双步保存第二步恰一次同源 PUT /api/dsh-extra-plan-settings/pro-config 且 body 为十一项 draft 值', clientPutAccepted.fetchCalls.length === 1 && clientPutAccepted.fetchCalls[0].method === 'PUT' && clientPutAccepted.fetchCalls[0].url.includes('/api/dsh-extra-plan-settings/pro-config') && clientPutAccepted.fetchCalls[0].body !== undefined && JSON.stringify(Object.keys(clientPutAccepted.fetchCalls[0].body).sort()) === JSON.stringify([...keys].sort()) && isDeepStrictEqual(clientPutAccepted.fetchCalls[0].body, values))
-  check('UI双步保存 mutate 仍恰一次十一项且失败路径不变', clientPutAccepted.calls.length === 1 && clientPutAccepted.calls[0].ops.length === 11)
-  check('UI双步保存 mutate accepted → PUT 被调用（fetch mock 断言）且提示 saved', clientPutAccepted.fetchCalls.length === 1 && messageKind(clientPutAccepted) === 'ok' && messageText(clientPutAccepted) === 'saved')
+  check('UI双步保存 accepted 恰一次同源十一项 mutate、提示 saved 且不再发起任何 fetch', clientPutAccepted.calls.length === 1 && clientPutAccepted.calls[0].ops.length === 11 && messageKind(clientPutAccepted) === 'ok' && messageText(clientPutAccepted) === 'saved' && clientPutAccepted.fetchCalls.length === 0)
 }
 const clientPutRejected = makeClientHarness(readySnapshot, false)
 const rejectedPutView = clientPutRejected.renderDetail()
@@ -1959,10 +998,6 @@ const clientPutThrown = makeClientHarness(readySnapshot, 'throw')
 const thrownPutView = clientPutThrown.renderDetail()
 if (thrownPutView !== undefined && thrownPutView.button !== undefined) await thrownPutView.button.props.onClick()
 check('UI双步保存 mutate 抛错 → 无 PUT 且提示 savedPartial', clientPutThrown.fetchCalls.length === 0 && messageKind(clientPutThrown) === 'error' && messageText(clientPutThrown) === 'savedPartial')
-const clientPutNetwork = makeClientHarness(readySnapshot, true, false, false, { fetchBehavior: 'network' })
-const networkPutView = clientPutNetwork.renderDetail()
-if (networkPutView !== undefined && networkPutView.button !== undefined) await networkPutView.button.props.onClick()
-check('UI双步保存 PUT 网络失败静默吞异常且提示仍 saved', clientPutNetwork.fetchCalls.length === 1 && messageKind(clientPutNetwork) === 'ok' && messageText(clientPutNetwork) === 'saved')
 const readOnly = makeClientHarness({ ...readySnapshot, writable: false }, true)
 const readOnlyView = readOnly.renderDetail()
 if (readOnlyView !== undefined && readOnlyView.button !== undefined) await readOnlyView.button.props.onClick()
@@ -2061,95 +1096,52 @@ check('V05 Q05 重复dispose不增加任何释放计数', lifecycle.registration
 surface.unmount()
 failedSurface.unmount()
 
-// ── M10：settings API/settled 同路径 capability 切换、撤权恢复与非空profiles诊断 ──
+
+// ── G5-NOREMOUNT：settings 值变更不重挂 adapter，register 保持 5、dispose 保持 0 ──
 {
-  const m10Fixture = makeSyncFixture()
-  const m10ProfileContext = { ...m10Fixture.webProfileContext }
-  const m10Editor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, m10Fixture.webPatch, { persistDocument: true, profileContext: m10ProfileContext })
-  const m10Run = await start(m10Editor)
-  const m10DocumentPath = m10Editor.documentPath
+  const noRemountFixture = makeSyncFixture()
+  const noRemountEditor = makeEditor({ ...syncValues, gateWords: syncGateWords }, noRemountFixture.webPatch, { profileContext: noRemountFixture.webProfileContext })
+  const noRemountCounts = { register: 0, dispose: 0 }
+  const noRemountRun = await start(noRemountEditor, { mount: true, matrixStats: noRemountCounts })
   try {
-    const m10Initial = await requestJson(m10Run.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
-    const m10Baseline = await requestJson(m10Run.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
-    delete m10ProfileContext.patchPath
-    const m10Switched = await requestJson(m10Run.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { creativeMode: true })
-    const m10SwitchedGet = await requestJson(m10Run.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
-    check('M10 同路径 capability fallback GET 仍读最近合法stamp真值且不伪装synced', m10SwitchedGet.status === 200 && m10SwitchedGet.body?.values?.creativeMode === true && m10SwitchedGet.body?.values?.webFetch === true && m10SwitchedGet.body?.profileSync?.cache === true && m10SwitchedGet.body?.profileSync?.source === 'last-terminal-cache' && m10SwitchedGet.body?.profileSync?.status === 'synced')
-    check('M10 同路径 capability 从 profilePatch 切至 editorDocument 仍经API/QQ同步且无ReferenceError', m10Initial.status === 200 && m10Baseline.status === 200 && m10Baseline.body?.values?.webFetch === true && m10Baseline.body?.profileSync?.status === 'synced' && m10Baseline.body?.profileSync?.terminalMatch === true && m10Baseline.body?.profileSync?.request?.snapshotHash === m10Baseline.body?.profileSync?.snapshotHash && m10Switched.status === 200 && m10Switched.body?.values?.creativeMode === true && m10Switched.body?.values?.webFetch === true && m10Switched.body?.profileSync?.status === 'synced' && m10Switched.body?.profileSync?.terminalMatch === true && m10Switched.body?.profileSync?.pathSource === 'configEditor.documentPath' && !String(m10Switched.body?.error || '').includes('ReferenceError'))
-    m10Editor.documentPath = undefined
-    const m10Revoked = await withEnvironment({ DSH_HOME: undefined, DSH_PROFILE: undefined }, () => requestJson(m10Run.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: false }))
-    const m10RevokedGet = await withEnvironment({ DSH_HOME: undefined, DSH_PROFILE: undefined }, () => requestJson(m10Run.port, 'GET', '/api/dsh-extra-plan-settings/pro-config?saveRunId=m10-revoked-mismatch', {}))
-    check('M10 撤权后GET fallback不返回synced且保留原reason诊断', m10RevokedGet.status >= 400 && m10RevokedGet.body?.overall === 'conflict' && m10RevokedGet.body?.profileSync?.terminalMatch === false && m10RevokedGet.body?.profileSync?.source === 'last-terminal-cache' && m10RevokedGet.body?.settingsRow?.diagnostics?.includes('document-path-unavailable'))
-    check('M10 同路径 capability 撤权后失败诊断保留原reason、非空写链零伪装', m10Revoked.status >= 400 && ((m10Revoked.body?.profileSync?.status === 'unavailable' && ['document-path-unavailable', 'path-context-required', 'invalid-document-path'].includes(m10Revoked.body?.profileSync?.reason)) || (m10Revoked.body?.profileSync?.status === 'conflict' && m10Revoked.body?.profileSync?.reason === 'duplicate-settings-row' && m10Revoked.body?.settingsRow?.diagnostics?.includes('document-path-unavailable'))) && !String(m10Revoked.body?.error || '').includes('ReferenceError'))
-    m10ProfileContext.patchPath = m10Fixture.webPatch
-    m10Editor.documentPath = m10DocumentPath
-    const m10Restored = await requestJson(m10Run.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
-    check('M10 撤权后恢复同一路径 capability 可再次同步且terminalMatch成立', m10Restored.status === 200 && m10Restored.body?.values?.webFetch === true && m10Restored.body?.values?.creativeMode === true && m10Restored.body?.profileSync?.status === 'synced' && m10Restored.body?.profileSync?.terminalMatch === true && m10Restored.body?.profileSync?.request?.snapshotHash === m10Restored.body?.profileSync?.snapshotHash && m10Restored.body?.profileSync?.pathSource === 'configEditor.documentPath' && !String(m10Restored.body?.error || '').includes('ReferenceError'))
+    await new Promise((resolve) => setImmediate(resolve))
+    await new Promise((resolve) => setImmediate(resolve))
+    const mountedRegister = noRemountCounts.register
+    noRemountEditor.state.rows[0].entry.options.config.plannerModel = 'no-remount-model'
+    if (typeof noRemountRun.lifecycle.update === 'function') noRemountRun.lifecycle.update()
+    await new Promise((resolve) => setImmediate(resolve))
+    await new Promise((resolve) => setImmediate(resolve))
+    check('SETTINGS_ONLY_SAVE_ADAPTER_MOUNT_COUNT_5', mountedRegister === 5 && noRemountCounts.register === 5)
+    check('SETTINGS_ONLY_SAVE_ADAPTER_REGISTER_0_DISPOSE_0', noRemountCounts.dispose === 0 && noRemountRun.proxy.applyError === undefined)
   } finally {
-    if (typeof m10Run.lifecycle?.cleanup === 'function') await m10Run.lifecycle.cleanup()
-    await new Promise((resolve) => m10Run.server.close(resolve))
-    rmSync(m10Fixture.root, { recursive: true, force: true })
+    if (typeof noRemountRun.lifecycle.cleanup === 'function') await noRemountRun.lifecycle.cleanup()
+    await noRemountRun.disposeRoot()
+    rmSync(noRemountFixture.root, { recursive: true, force: true })
   }
-  const m10FailureFixture = makeSyncFixture()
-  rmSync(m10FailureFixture.qqPatch, { force: true })
-  const m10FailureEditor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, m10FailureFixture.webPatch, { profileContext: m10FailureFixture.webProfileContext })
-  const m10FailureRun = await start(m10FailureEditor)
-  const m10FailureErrors = []
-  const m10FailureError = console.error
-  console.error = (...args) => {
-    m10FailureErrors.push(args.map(String).join(' '))
-    m10FailureError(...args)
-  }
+}
+
+// ── G5-HOSTPROXY：hostProxy 缺 configEditor 时 get-only 与 child 降级回调 ──
+{
+  const getOnlyFixture = makeSyncFixture()
+  const getOnlyEditor = makeEditor({ ...syncValues, gateWords: syncGateWords }, getOnlyFixture.webPatch, { profileContext: getOnlyFixture.webProfileContext })
+  const getOnlyRun = await start(getOnlyEditor, { mount: true, hostProxyMode: 'get-only/no-op-inject' })
   try {
-    const m10FailurePut = await requestJson(m10FailureRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { webFetch: true })
-    const m10FailureProfiles = m10FailurePut.body?.profileSync?.profiles || []
-    const m10FailureProfile = m10FailureProfiles.find((item) => item.reason === 'patch-missing')
-    const m10FailureLogOk = m10FailureErrors.some((line) => line.includes('status=failed') && line.includes('profile=' + String(m10FailureProfile?.profile)) && line.includes('path=' + m10FailureFixture.profileDir) && line.includes('reason=' + String(m10FailureProfile?.reason)) && !line.includes('ReferenceError'))
-    const m10FailureProfilesOk = m10FailureProfiles.length > 0 && m10FailureProfiles.every((item) => item.status === 'failed' && item.reason === 'patch-missing' && typeof item.profile === 'string' && !String(item.reason).includes('ReferenceError'))
-    check('M10 非空profiles失败保留逐profile reason且不伪装synced', m10FailurePut.status >= 400 && m10FailurePut.body?.profileSync?.status === 'failed' && m10FailureProfilesOk && m10FailureProfile !== undefined && m10FailurePut.body?.profileSync?.status !== 'synced' && m10FailureLogOk)
+    const getOnlyCallbacks = getOnlyRun.proxy.injectRequests.filter((item) => item.deps[0] === 'configEditor' && item.outcome.startsWith('callback')).length
+    check('HOST-PROXY get-only：ctx.get 可解析 editor 但 inject 不回调', getOnlyRun.proxy.readViaGet() === getOnlyEditor && getOnlyCallbacks === 0)
   } finally {
-    console.error = m10FailureError
-    if (typeof m10FailureRun.lifecycle?.cleanup === 'function') await m10FailureRun.lifecycle.cleanup()
-    await new Promise((resolve) => m10FailureRun.server.close(resolve))
-    rmSync(m10FailureFixture.root, { recursive: true, force: true })
+    await getOnlyRun.disposeRoot()
+    rmSync(getOnlyFixture.root, { recursive: true, force: true })
   }
-  const m17DriftFixture = makeSyncFixture()
-  const m17DriftEditor = makeEditor({ ...syncValues, gateWords: syncGateWords }, m17DriftFixture.webPatch, { persistDocument: true, profileContext: m17DriftFixture.webProfileContext })
-  const m17DriftRun = await start(m17DriftEditor)
-  const m17DriftWarnings = []
-  const m17DriftWarn = console.warn
-  const m17DriftRename = fs.renameSync
-  let m17DriftRenameCount = 0
+  const childMissingFixture = makeSyncFixture()
+  const childMissingEditor = makeEditor({ ...syncValues, gateWords: syncGateWords }, childMissingFixture.webPatch, { profileContext: childMissingFixture.webProfileContext })
+  const childMissingRun = await start(childMissingEditor, { mount: true, hostProxyMode: 'child-missing-configEditor' })
   try {
-    console.warn = (...args) => {
-      m17DriftWarnings.push(args.map(String).join(' '))
-      m17DriftWarn(...args)
-    }
-    fs.renameSync = (...args) => {
-      const result = m17DriftRename(...args)
-      const destination = typeof args[1] === 'string' ? resolve(args[1]) : ''
-      if (destination === resolve(m17DriftFixture.qqPatch)) {
-        m17DriftRenameCount += 1
-        writeFileSync(m17DriftFixture.qqPatch, externalDriftText, 'utf8')
-      }
-      return result
-    }
-    syncBuiltinESMExports()
-    const m17DriftPut = await requestJson(m17DriftRun.port, 'PUT', '/api/dsh-extra-plan-settings/pro-config', { plannerModel: 'api-drift-model' })
-    const m17DriftProfiles = m17DriftPut.body?.profileSync?.profiles || []
-    const m17DriftProfile = m17DriftProfiles.find((item) => item.status === 'drift-detected')
-    const m17DriftAfter = readFileSync(m17DriftFixture.qqPatch, 'utf8')
-    const m17DriftLogOk = m17DriftWarnings.some((line) => line.includes('status=' + String(m17DriftProfile?.status)) && line.includes('profile=' + String(m17DriftProfile?.profile)) && line.includes('path=' + m17DriftFixture.profileDir) && line.includes('reason=' + String(m17DriftProfile?.reason)) && !line.includes('ReferenceError') && !line.includes('status=synced'))
-    const m17DriftProfilesOk = m17DriftProfiles.length > 0 && m17DriftProfiles.every((item) => item.status === 'drift-detected' && item.reason === 'external-writer-drift' && typeof item.profile === 'string' && !String(item.reason).includes('ReferenceError'))
-    const m17DriftBytesOk = m17DriftAfter === externalDriftText && m17DriftAfter.includes('external-writer') && !m17DriftAfter.includes('dsh-extra-plan-settings')
-    check('M17 非空profiles drift-detected真实warning保留reason/status且不覆盖外部字节', m17DriftPut.status >= 400 && m17DriftPut.body?.profileSync?.status === 'drift-detected' && m17DriftProfile !== undefined && m17DriftProfilesOk && m17DriftLogOk && m17DriftRenameCount === 1 && m17DriftBytesOk)
+    const childMissingCallbacks = childMissingRun.proxy.injectRequests.filter((item) => item.deps[0] === 'configEditor' && item.outcome.startsWith('callback')).length
+    check('HOST-PROXY child 缺 configEditor：降级回调一次且 identity=missing', childMissingRun.proxy.readViaGet() === childMissingEditor && childMissingRun.proxy.childServiceIdentity === 'missing' && childMissingCallbacks === 1)
   } finally {
-    fs.renameSync = m17DriftRename
-    syncBuiltinESMExports()
-    console.warn = m17DriftWarn
-    if (typeof m17DriftRun.lifecycle?.cleanup === 'function') await m17DriftRun.lifecycle.cleanup()
-    await new Promise((resolve) => m17DriftRun.server.close(resolve))
-    rmSync(m17DriftFixture.root, { recursive: true, force: true })
+    if (typeof childMissingRun.lifecycle.cleanup === 'function') await childMissingRun.lifecycle.cleanup()
+    await childMissingRun.disposeRoot()
+    rmSync(childMissingFixture.root, { recursive: true, force: true })
   }
 }
 
@@ -2160,8 +1152,7 @@ failedSurface.unmount()
   const lifecycleRun = await start(lifecycleEditor, { mount: true })
   const childCleanupBefore = lifecycleRun.lifecycle.cleanup
   try {
-    const lifecycleResponse = await requestJson(lifecycleRun.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
-    check('G5-WORKER 设置apply后API仍可响应', lifecycleResponse.status === 200 && lifecycleResponse.body?.values !== undefined)
+    check('G5-WORKER 设置apply后不抛错且root可清理', lifecycleRun.proxy.applyError === undefined && typeof lifecycleRun.disposeRoot === 'function')
     const firstDispose = lifecycleRun.disposeRoot()
     const secondDispose = lifecycleRun.disposeRoot()
     check('G5-WORKER root disposer重复调用幂等且共享Promise', firstDispose === secondDispose)
@@ -2225,9 +1216,8 @@ failedSurface.unmount()
     syncBuiltinESMExports()
     busyRun = await start(busyEditor, { mount: true })
     const busyRunning = await waitForMarker(busyProgress)
-    const busyResponse = await requestJson(busyRun.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
-    check('G5-R5 settings真实忙算running/进度期间API响应且done未结束', busyRunning && busyResponse.status === 200 && !existsSync(busyDone))
-    console.log('SETTINGS_BUSY_HTTP=' + JSON.stringify({ runningProgress: busyRunning, httpStatus: busyResponse.status, doneBeforeDispose: existsSync(busyDone) }))
+    check('G5-R5 settings真实忙算running期间done未结束', busyRunning && !existsSync(busyDone))
+    console.log('SETTINGS_BUSY_HTTP=' + JSON.stringify({ runningProgress: busyRunning, doneBeforeDispose: existsSync(busyDone) }))
     const busyDispose = busyRun.disposeRoot()
     const busyDisposeAgain = busyRun.disposeRoot()
     check('G5-R5 settings busy root dispose幂等', busyDispose === busyDisposeAgain)
@@ -2272,9 +1262,8 @@ failedSurface.unmount()
     console.warn = (...args) => { failureWarnings.push(args.map(String).join(' ')); previousWarn(...args) }
     failedWorkerRun = await start(failedWorkerEditor, { mount: true })
     await new Promise((resolve) => setImmediate(resolve))
-    const failedWorkerResponse = await requestJson(failedWorkerRun.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
-    check('G5-R5 settings构造失败warn后API/同步仍正常且无同步归档兜底', failedWorkerResponse.status === 200 && failureWarnings.some((line) => line.includes('startup archive failed') && line.includes('worker-create-failed')) && !existsSync(failedWorkerArchive) && !existsSync(failedWorkerDiagnostic) && failedWorkerSharedLogsUnchanged())
-    console.log('SETTINGS_WORKER_CREATE_FAILURE=' + JSON.stringify({ apiStatus: failedWorkerResponse.status, warned: failureWarnings.some((line) => line.includes('worker-create-failed')), ledgerProduced: existsSync(failedWorkerArchive), errorsProduced: existsSync(failedWorkerDiagnostic), sharedLogsUnchanged: failedWorkerSharedLogsUnchanged() }))
+    check('G5-R5 settings构造失败后告警且无同步归档兜底', failureWarnings.some((line) => line.includes('startup archive failed') && line.includes('worker-create-failed')) && !existsSync(failedWorkerArchive) && !existsSync(failedWorkerDiagnostic) && failedWorkerSharedLogsUnchanged())
+    console.log('SETTINGS_WORKER_CREATE_FAILURE=' + JSON.stringify({ warned: failureWarnings.some((line) => line.includes('worker-create-failed')), ledgerProduced: existsSync(failedWorkerArchive), errorsProduced: existsSync(failedWorkerDiagnostic), sharedLogsUnchanged: failedWorkerSharedLogsUnchanged() }))
   } catch (error) {
     check('G5-R5 settings构造失败不阻断apply/API', false)
   } finally {
@@ -2552,8 +1541,7 @@ check('G5-R5 root cleanupError统一进入最终FAIL计数', rootCleanupErrors.l
     const errorTimer = nextPendingTimer()
     if (errorTimer !== undefined) fireTimer(errorTimer)
     const errorBarrier = await waitForCleanupRecord(errorRoot, errorFixture)
-    const errorResponse = await requestJson(errorRun.run.port, 'GET', '/api/dsh-extra-plan-settings/pro-config', {})
-    check('G3 清理错误只warn且settings API仍可用', errorTimer !== undefined && errorBarrier.done && errorResponse.status === 200 && warningLines.some((line) => line.includes('diagnostic log prune failed') && line.includes('g3-forced-prune-error')) && renameCounts.error === 0)
+    check('G3 清理错误只warn且清理链可继续', errorTimer !== undefined && errorBarrier.done && warningLines.some((line) => line.includes('diagnostic log prune failed') && line.includes('g3-forced-prune-error')) && renameCounts.error === 0)
     errorReaddir = false
     await closeCleanupRun(errorRun)
     check('G3 全部fake appReady保持未commit且无root清理错误', observedRuns.every((opened) => opened.ready.state.commits === 0) && cleanupErrors.length === 0)

@@ -1,4 +1,4 @@
-# 宿主耦合台账（当前 DSH/QQBot 升级核对）
+# 宿主耦合台账（当前 DSH 升级核对）
 
 > 本台账只保留当前活动契约、风险、未核实项和升级 checklist（核对清单）。宿主侧按“包名 + 包内相对路径 + 符号名”定位，不写宿主固定行号；本仓库函数行号见 [ai-代码地图](ai-代码地图.md)。旧版本、已删除耦合、77/217/209 等历史快照与 evidence 勾销见[宿主耦合历史归档](ai-宿主耦合历史归档.md)，不作当前统计。
 
@@ -6,10 +6,8 @@
 
 | 项 | 当前值/口径 | 状态 |
 |:--|:--|:--|
-| DSH | `0.2.2-rc.1 \|\| 0.2.2-rc.2 \|\| 0.2.2-rc.3 \|\| 0.2.2-rc.4 \|\| 0.2.2-rc.5` | 活动支持精确并集：rc.3 为当前目标，rc.1 与 rc.2 为仍在活动支持的兼容目标，rc.4 与 rc.5 为兼容声明目标；两插件各自 manifest 为版本真源：核心插件以[核心插件 package.json](<../../plugins/dsh-extra-plan/package.json>)中的 `engines.dsh` 与三项 @deepseek-ai peer 为准，QQBot插件以[QQBot插件 package.json](<../../plugins/dsh-extra-plan-qqbot/package.json>)中的 `engines.dsh` 为准，`schemastery` peer 为 `~3.19.0` 且不参与 engines/peer 版本值并集；根 README 的过时兼容描述冻结，不作当前真源；0.2.1 系列仅存于远端分支 dsh-v0.2.1rc-qqbot-v0.5.2-only（main 不承载） |
-| QQBot 目标 | `0.5.2` | 静态目标，不等于集成通过 |
+| DSH | `0.2.2-rc.1 \|\| 0.2.2-rc.2 \|\| 0.2.2-rc.3 \|\| 0.2.2-rc.4 \|\| 0.2.2-rc.5` | 活动支持精确并集：rc.3 为当前目标，rc.1 与 rc.2 为仍在活动支持的兼容目标，rc.4 与 rc.5 为兼容声明目标；核心插件以[核心插件 package.json](<../../plugins/dsh-extra-plan/package.json>)中的 `engines.dsh` 与三项 @deepseek-ai peer 为版本真源，`schemastery` peer 为 `~3.19.0` 且不参与 engines/peer 版本值并集；根 README 的过时兼容描述冻结，不作当前真源；0.2.1 系列仅存于远端分支 dsh-v0.2.1rc-qqbot-v0.5.2-only（main 不承载） |
 | 核心插件 | `dsh-extra-plan` `1.7.0` | 当前包契约；仓库子目录安装路径不变 |
-| QQBot 精简插件 | `dsh-extra-plan-qqbot` `2.0.1` | 源码合同为 `2.0.1`，仓库子目录为 plugins/dsh-extra-plan-qqbot；标准包 `postinstall` 的 `--install` 受 `--allow-build=dsh-extra-plan-qqbot` 授权后执行严格单目标校验，普通启动保留非阻断兜底；核心/宿主范围不变，公共发布、真实安装/运行及 allow-build 放行仍未核实（HUMAN） |
 | 预设载体 | `dsh-extra-plan-settings` 全局管理行 + 内部纯 definition（主 1 + 角色 4） | `dsh.bundle.patch` 只装载一行；只认当前规范 id/name，当前资产 definition 决定非用户内容、当前 settings 行决定用户值；当前行补齐与 gateWords 补齐口径见 [ai-机制设计](ai-机制设计.md)（唯一真源）；两个历史配置 ID 不读取、不一次性迁移、不回退、不判旧 owner、不承诺旧值，真实旧行不编辑、不删除；官方 adapter 由 settings owner 内部按主在前、角色 101..104 在后的顺序尝试挂载 5 个 definition；真实相遇效果仍 HUMAN |
 | 状态判读 | `【已核实】` 表示台账静态/源码核对；`【未核实】`、`HUMAN`、`SKIP` 不得改为通过 | 当前台账纪律 |
 
@@ -25,8 +23,6 @@ rc.1、rc.2 是活动兼容目标，rc.3 是当前目标，rc.4、rc.5 是新增
 
 
 
-生产事实：用户已核实 `C:\Users\Administrator\.dsh\profiles\qqbot\node_modules\js-yaml\package.json` 为 `4.3.2`；QQBot 先从包自身解析，QB5 属于“健壮性改进”而非当前生产阻断。AI 不写入或重装生产 profile，生产动作仅由用户部署流程执行。
-
 ### 当前宿主接触面总表
 
 | 层 | 当前活动范围 | 复核入口 |
@@ -34,8 +30,7 @@ rc.1、rc.2 是活动兼容目标，rc.3 是当前目标，rc.4、rc.5 是新增
 | HS 服务/注册 | HS1-HS6、HS12-HS26、HS28-HS38 | 下面“当前 HS” |
 | HK 钩子/组合 | HK1-HK17（含6a/6b）、HK19-HK22、HK24-HK32 | 下面“当前 HK” |
 | SD 数据/布局 | SD1-SD7、SD10-SD33（含 SD19b）、SD35、SD37、SD37b、SD38-SD42；SD8/SD36 已退役移入历史归档；SD9/SD34 保留缺号说明 | 下面“当前 SD” |
-| CF 安装配置 | CF3-CF13；CF1/CF2 已删除历史 | 下面“当前 CF” |
-| QB 兼容包 | QB1-QB3、QB5、QB8-QB21、QB25-QB26、QB32；QB27-QB31 为测试/条件环境面 | 下面“当前 QB” |
+| CF 安装配置 | CF3-CF10、CF12-CF13；CF1/CF2 已删除历史，CF11 已随兼容插件下线删除 | 下面“当前 CF” |
 
 ## ② 当前 HS：宿主服务与注册面
 
@@ -43,12 +38,12 @@ rc.1、rc.2 是活动兼容目标，rc.3 是当前目标，rc.4、rc.5 是新增
 |:--|:--|:--|:--|
 | HS1 | `lib/settings.js` Config + `settings.configure` | 11 项（10 项热读 + 1 项宿主值）`.volatile()`；全局 owner 由 ConfigForms 管理 describe/update/replace/mutate，并统一拥有同步与 adapter；`settings.configure({ auto: false }, ctx.fiber)` 以宿主 fiber 为第二参绑定生命周期，`auto:false` 表示不参与自动表单投影；此第二参与 fiber 语义属升级敏感面 | 【已核实·静态】 |
 | HS2 | settings 行 `dsh-extra-plan-settings` | 行 id 同时是命名空间、configForms key、插件行详情 key | 【已核实·静态】 |
-| HS3 | `lib/settings.js` webServer prefix | `/api/dsh-extra-plan-settings` prefix 路由 | 【已核实·静态】 |
+| HS3 | （已下线）原 `lib/settings.js` webServer prefix | 自建 `/api/dsh-extra-plan-settings` prefix 路由已随兼容插件下线删除；settings.js 不再申请 webServer 能力，设置页数据改由宿主注入 `props.configForm` | 【已核实·静态】 |
 | HS4 | `live-config.js` 路径决议 | `configPath → DSH_EXTRA_PLAN_CONFIG_PATH → configEditor.documentPath`；不读旧预设目录 | 【已核实·静态】 |
-| HS5 | `settings.js` owner → `preset-sync.js` `configEditor.edit` | 当前规范 settings 行缺项补齐/保存只 edit 唯一全局行；合法 11 项与 6 键 gateWords 重述不丢键；规范行持久化的 gateWords 缺失或非法时整组回落当前资产默认并补齐；资产损坏严格失败且零写。公开 PUT 只收支持的设置字段，非法或未知请求拒绝且零写；插件不直写 patch | 【已核实·静态+专项】 |
+| HS5 | `settings.js` owner → `preset-sync.js` `configEditor.edit` | 当前规范 settings 行缺项补齐/保存只 edit 唯一全局行；合法 11 项与 6 键 gateWords 重述不丢键；规范行持久化的 gateWords 缺失或非法时整组回落当前资产默认并补齐；资产损坏严格失败且零写。设置写入统一走宿主 ConfigForms `form.mutate`；自建写入端点已随兼容插件下线删除；插件不直写 patch | 【已核实·静态+专项】 |
 | HS6 | `preset-definition.generated.yml` | 纯 definition 的 id/name/description/order/plugins；由生成器维护，preset-sync 交官方 adapter | 【已核实·静态】 |
 | HS12 | 官方 spawn／四类 tool-subagent | 父路由继承；显式 `agentOptions` 覆盖；`agentPreset` 选择子角色组合 | 【已核实·静态】 |
-| HS13 | `preset-yaml.js` `loadYaml`/`parsePresetYaml` | 预设 YAML 解析归 `preset-yaml`；核心包自有 js-yaml，QQBot 由 package-local js-yaml 依赖保障，失败返回 null | 【已核实·静态】 |
+| HS13 | `preset-yaml.js` `loadYaml`/`parsePresetYaml` | 预设 YAML 解析归 `preset-yaml`；核心包自有 js-yaml，失败返回 null | 【已核实·静态】 |
 | HS14 | `!!js` YAML 标签 | YAML_SCHEMA 对 `dshHomePath` 等表达式的解析 | 【已核实·静态】 |
 | HS15 | `settings-contract.js` `SETTING_DEFINITIONS` + `DEFAULT_SETTINGS` | 11 项 source/row/projection 定位与 10+1 分组；默认值来自生成对象，validator/合法性与 UI metadata 仍以合同手工声明 | 【已核实·静态】 |
 | HS16 | `tool-presentation` 行 → `tool-executor-native`/`-ptc` 行 | `tool-presentation` 行已退役为 `@deprecated` 兼容壳（内部 `ctx.plugin(执行器)`）；本预设改为按 `toolPresentationMode` 生成单行 `@deepseek-ai/dsh-tool-executor-native` 或 `-ptc`，mode 进入行身份而非 `config.mode`；同 scope 只允许一个 executor（重复 `setExecutor` 抛错） | 【已核实·静态+代码】 |
@@ -74,25 +69,13 @@ rc.1、rc.2 是活动兼容目标，rc.3 是当前目标，rc.4、rc.5 是新增
 | HS37 | `ctx.get(tools)` 方法面 `register/get/schemas/definitions` | 方法名级契约（形状归 SD18 与 SD19）；0.2.2 已移除 `sdkSchemas`/`modeFor`，SDK 取数改走 `tools.definitions(agent)`（与 HS30 一致）；任一方法缺失走降级分支 | 【已核实·静态】 |
 | HS38 | `@deepseek-ai/dsh-agent-preset` 包解析与 `default` export | 以 `installAnchor` 的 `createRequire` 解析后交 `child.plugin` 挂载 | 【已核实·静态】 |
 
-## ②-A Web→QQBot 镜像路径契约（独立于 HS4）
-
-| 项 | 当前合同 | 状态 |
-|:--|:--|:--|
-| Web→QQBot 真源 | Web 实际唯一可用路径是 `configEditor.documentPath`；`configEditor.syncDocumentPath` 虽在插件接线中作为首选候选，但宿主 dsh-config-editor、dsh-settings、dsh-api-settings-controller、dsh-app-boot、dsh-client-ui-settings 五包对它均为 0 命中（rc.2 与 rc.3 相同），因此首选分支恒不命中、实际始终走 `documentPath`，`syncDocumentPath` 不构成有效首选源；路径仍由 `profiles/web/cordis.patch.yml` 反推同级 `profiles`，不从当前进程 cwd 或用户目录猜测 | 【已核实·专项】 |
-| 显式授权边界 | 真实运行时只接受可信 `profileContext.name`/`startedBundles` 与精确能力；维护数据须显式 `--host-root` 加精确 `--profile`/`--file`/会话目标。`DSH_HOME`/`DSH_PROFILE`/`SESSION_ID`、homedir、USERPROFILE/HOME 与 `home/.dsh` 均不授根；`DSH_INSTALL_ROOT`+host-preload 只授只读代码根；`DSH_HOME` 加 `DSH_PROFILE=web` 构成 explicit-DSH-HOME 第二合规来源，仍必须通过 pathContext 读权限校验，不做目录猜测 | 【已核实·专项】 |
-| 标准 Web/QQ 身份与双锚点 | 仅 `profileContext.name='web'` 且 `startedBundles`/直接同级 profile 的 `package.json` 与 `node_modules/dsh-extra-plan-qqbot` 双锚点一致时做 Web→QQ 镜像；QQ 当前 profile 返回 `not-applicable`，不误启动跨 profile | 【已核实·专项】 |
-| 持久化范围 | 同步完整 11 项与完整 `gateWords`；局部 YAML 安全改写保留未知行、注释、`!!js` 与嵌套 insert，写前临时文件/备份/落盘后终验并支持恢复 | 【已核实·专项】 |
-| 状态与生效 | `synced` 仅代表标准 Web→QQ 镜像；QQ owner 不适用为 `not-applicable`，另区分 `not-installed`/`unavailable`/`failed`/`partial`；10 项沿既有热读（含 `webFetch`），仅 `toolPresentationMode` 为 1 项宿主重启生效；`webFetch` 关断由运行期 `restrict` deny `web_fetch` 在下一 step 生效，不发送跨进程 reload | 【已核实·专项】 |
-| 与 HS4 边界 | `live-config.js` 的 `DSH_EXTRA_PLAN_CONFIG_PATH` 热读优先级只服务 Web 核心消费，不是跨 profile 根定位依据；两条用途不得混用 | 【已核实·专项】 |
-
-### ②-B settings-only no-remount 生命周期合同
+### ②-A settings-only no-remount 生命周期合同
 
 | 场景 | 允许动作 | 禁止/失败语义 | 状态 |
 |:--|:--|:--|:--|
 | 首次启动 | 读取/补齐当前 settings、构造 17 条纯 definition；当前资产按主 1 份 + 角色 4 份共 5 份尝试由官方 AgentPreset 挂载 | 当前资产 definition 决定非用户内容、当前规范 settings 行决定用户值；同 ID 可能失败，真实相遇效果仍 HUMAN | 【已核实·专项】 |
-| settings-only | 读取最终完整 11 项 + `gateWords`，settled-only 队列直接交 `profileSync`/QQBot | **no-remount**：adapter register/dispose/rebuild 均不得发生；不调用、不等待、不 dispose 官方 AgentPreset | 【已核实·专项】 |
-| structuralHandoff | 仅非 settings 通用结构指纹变化才进入 adapter/structural 队列；不专门识别历史 ID/owner，结构树仍可包含其它宿主行，不据此声称删除旧行 | 与 settled-only 分离；adapter failure/reject/hang 不得撤销 Web 或阻断 QQBot 同步 | 【已核实·专项】 |
-| profileSync | 初始 `pending=true`，terminal 后 `pending=false`；记录真实 `synced/not-applicable/not-installed/unavailable/failed/partial` | 禁止 `pending/pending=false`、把 QQ 的 `not-applicable` 伪造为 `synced`、双端成功伪造或用 adapter register 充当保存成功条件 | 【已核实·专项】 |
+| settings-only | 读取最终完整 11 项 + `gateWords`，settled 队列直接交后端写盘 | **no-remount**：adapter register/dispose/rebuild 均不得发生；不调用、不等待、不 dispose 官方 AgentPreset | 【已核实·专项】 |
+| structuralHandoff | 仅非 settings 通用结构指纹变化才进入 adapter/structural 队列；不专门识别历史 ID/owner，结构树仍可包含其它宿主行，不据此声称删除旧行 | 与 settled-only 分离；adapter failure/reject/hang 不得撤销 Web 或阻断后续结构交接 | 【已核实·专项】 |
 | 生效分组 | 10 项（含 `webFetch`）沿 live-config 热读；仅 `toolPresentationMode` 为 1 项需重启投影，`webFetch` 关断由运行期 `restrict` deny 在下一 step 生效；完整 6 键 `gateWords` 立即持久化 | 当前 apply 词表不原地换词；合法改词需重启，旧词不推进；持久化行非法按默认补齐，资产损坏严格失败且零写。真实重启与词表生效仍 HUMAN | 【已核实·专项/HUMAN】 |
 
 ## ③ 当前 HK：钩子与文件组合契约
@@ -111,8 +94,8 @@ rc.1、rc.2 是活动兼容目标，rc.3 是当前目标，rc.4、rc.5 是新增
 | HK8 | 七个钩子 `payload.agent` | agentEvents fused 形状 | 【已核实·静态】 |
 | HK9 | tool-jobs 通知 | `source.kind='tool-jobs'` 且 `form='notice'`；旧三元组已废；v0.4.0 起新增 job_list/list_agents 轮询守卫清整表消费方（consumed 标记与 job_output 跟踪命中解耦） | 【已核实·静态】 |
 | HK10 | step-06 事件夹具 | 事件负载必须与真实 subagent/ask/tool 形状一致 | 【已核实·静态】 |
-| HK11 | `cordis.patch.yml` 单条 insert | 核心 patch 仅一条 `dsh-extra-plan-settings` 全局行；QQBot patch 是五行 wrapper，含一条同 owner 的 `dsh-extra-plan-settings` 行；carrier、同步、迁移与官方 adapter 均归同一 owner 内部 | 【已核实·静态】 |
-| HK12 | package `dsh.bundle.patch` | 核心与 QQBot 两包均只指向单一 `./cordis.patch.yml`；核心是单 settings 行，QQBot 是五行 wrapper/单 settings owner；不存在额外的 preset patch 文件，definition 由 settings owner 读取生成资产后交官方 adapter | 【已核实·静态】 |
+| HK11 | `cordis.patch.yml` 单条 insert | 核心 patch 仅一条 `dsh-extra-plan-settings` 全局行；carrier、同步、迁移与官方 adapter 均归同一 owner 内部 | 【已核实·静态】 |
+| HK12 | package `dsh.bundle.patch` | 核心包只指向单一 `./cordis.patch.yml`，为单 settings 行；不存在额外的 preset patch 文件，definition 由 settings owner 读取生成资产后交官方 adapter | 【已核实·静态】 |
 | HK13 | package exports | 根包、settings/client、根 locale/settings locale 当前子路径必须可解析；`./preset-sync` 根与 locale 子路径必须解析失败 | 【已核实·静态】 |
 | HK14 | package `dsh.client` | platform=web、inject 顺序与 `./client` export | 【已核实·静态】 |
 | HK15 | 预设 isolate | mountPreset 审计；必要/保险服务名均 `isolate: true` | 【已核实·静态】 |
@@ -177,7 +160,7 @@ HK23 当前无定义，不补造编号；HS7-HS11、HS27 与 HK18 均为已退�
 | SD38 | step-07 输出 | attempted（尝试路由）/actual provenance（实际来源）、suffix、父子行号；父 `subagent_plan` 的 `childIds=[]` 是 `step-07` 解析缺口（只做 UUID 文本匹配）。宿主已落 `subagent/catalog`（含 `childId`、`mode`、`label`、`name`），关联桥为 `catalog.label` 与 `call.arguments.description` 逐字匹配、`catalog.name` 与 `result` 的 `data.meta.name` 匹配，反查唯一 `childId` 后落到唯一 child 目录；补桥后同次 `subagent_plan` 的 `childIds` 非空、`associationComplete` 可为真，A43 可由 content-only 升级为 verified-injection |
 | SD39 | agents.get(id).status | AgentRegistry.get(id)（dsh-agent）返回驻留 Agent，.status getter 真源 dsh-agent-loop：phase idle/maintenance（空闲/维护）→ 'idle'，否则 'running'（运行中）；插件经 ctx.get('agents') 查询 main `send_message` 目标运行状态，child 不进入该放行路径 |
 | SD40 | ToolExecution.agent / arguments.agent_id / arguments.agent | main `send_message` 方向判定契约：`ToolExecution.agent`=调用者；旧 `arguments.agent_id`=目标 Session ID（`DSH_COMPAT_RC1`，rc1 兼容路径）；新 `arguments.agent`=名称/路径引用，由本轮 `subagents.resolveName(agent, ref, exec.signal)` 异步解析为目标 ID（`DSH_CURRENT_RC2`，最新路径，rc.2 与 rc.3 共用该路径）；实测宿主 dsh-tool-subagent-control 对 `agent_id` 零命中，本插件 rc1 旧参分支在 rc.2 与 rc.3 下均为死分支；解析后与 SD39 共享 `status` running 判定。child 控制工具由 `isSubagentChild` 硬拒；删除边界仅限上述参数适配，不含共享安全核心；SD25 字段清单未列 agent 字段，此处补记 |
-| SD41 | `configEditor.syncDocumentPath` 与 `configuration()` | 宿主 configEditor 无 `syncDocumentPath` 成员（rc.2 与 rc.3 均零命中），插件实际始终使用 `configEditor.documentPath`，故同步文档路径无有效首选源；`configuration()` 仍是插件行读取入口；Web 到 QQBot 镜像以该口径为准 |
+| SD41 | `configEditor.syncDocumentPath` 与 `configuration()` | 宿主 configEditor 无 `syncDocumentPath` 成员（rc.2 与 rc.3 均零命中），插件实际始终使用 `configEditor.documentPath`，故同步文档路径无有效首选源；`configuration()` 仍是插件行读取入口 |
 | SD42 | 宿主行 config 键真值表 | `maxBytes`、`sampleOverCapGlobResults`、`thresholdChars/headChars/tailChars`、`allowParallelInProgress`（宿主侧 `z.boolean().required()`）、`fetch/searchTimeoutMs`、`watch`、`bundledSkillDir` |
 | SD43 | ask 选项推荐后缀 | 宿主无结构化推荐字段（`AskUserQuestionOption` 只有 `label` 与 `description`），推荐等于 `label` 末尾后缀（`(Recommended)`、`(recommended)`、全角圆括号「（推荐）」、半角圆括号「(推荐)」四种写法），由 Web 端 `dsh-client-ui-user-questions` 的 `parseRecommendedLabel` 剥离后渲染推荐徽标；单选仅对首项预选、多选对全部推荐项预选，草稿与回答值都保留原 `label`（含后缀）；宿主工具 schema 原文要求推荐项排首位并追加 `(Recommended)`。状态【已核实·静态】 |
 
@@ -195,39 +178,18 @@ SD8 与 SD36 已退役并移入历史归档、不补造定义；SD9 是历史缺
 | CF8 | dependencies 仅 js-yaml | 【已核实·静态】 |
 | CF9 | 临时 DSH_HOME/profile 夹具形状 | 【已核实·静态】 |
 | CF10 | preset.yml 元数据与纯 definition Config | id/name/description/order/plugins 与作者源同源，definition 不含 Loader insert wrapper | 【已核实·静态】 |
-| CF11 | QQBot 映射测试的 profile/依赖夹具 | 【已核实·静态】 |
-| CF12 | `@deepseek-ai/*` 不进 dependencies；[核心插件 package.json](<../../plugins/dsh-extra-plan/package.json>)的 manifest `engines.dsh` 独占版本判定且优先于 peer，dsh/dsh-llm/dsh-agent-preset 三项 peer 与其均精确钉 `0.2.2-rc.1 \|\| 0.2.2-rc.2 \|\| 0.2.2-rc.3 \|\| 0.2.2-rc.4 \|\| 0.2.2-rc.5`；[QQBot插件 package.json](<../../plugins/dsh-extra-plan-qqbot/package.json>)的 `engines.dsh` 同并集，`schemastery ~3.19.0` 仍是另一口径；bundle 不兼容时是双层断裂、两门独立且同时成立：bundle 层由 `loadProfileDirectory` 抛出后进入 `skippedBundles` 并打印 `skipping profile bundle`；行层由 preflight 置 `row.disabled=true` 且 `row.group=false` 并打印 `disabling profile plugin`；宿主定位只写包名+包内相对路径+符号，不写固定行号 | 【当前声明·局部证据分层；实机与 profile 清理仍待 HUMAN】 |
+| CF12 | `@deepseek-ai/*` 不进 dependencies；[核心插件 package.json](<../../plugins/dsh-extra-plan/package.json>)的 manifest `engines.dsh` 独占版本判定且优先于 peer，dsh/dsh-llm/dsh-agent-preset 三项 peer 与其均精确钉 `0.2.2-rc.1 \|\| 0.2.2-rc.2 \|\| 0.2.2-rc.3 \|\| 0.2.2-rc.4 \|\| 0.2.2-rc.5`；`schemastery ~3.19.0` 仍是另一口径；bundle 不兼容时是双层断裂、两门独立且同时成立：bundle 层由 `loadProfileDirectory` 抛出后进入 `skippedBundles` 并打印 `skipping profile bundle`；行层由 preflight 置 `row.disabled=true` 且 `row.group=false` 并打印 `disabling profile plugin`；宿主定位只写包名+包内相对路径+符号，不写固定行号 | 【当前声明·局部证据分层；实机与 profile 清理仍待 HUMAN】 |
 | CF13 | 客户端注册面 `exports.inject=["slots","locale","configForms"]` | 涉及 `ctx.slots.inject/entries`、`ctx.configForms.whileServed` 与 `plugins.detail.section` 让位判定 | 【已核实·静态】 |
 
 CF1/CF2（extra-plan postinstall/distribute-preset）已删除，作为历史归档，不列当前安装合同。
-
-## ⑥ 当前 QB：QQBot 活动面与测试面
-
-| 编号 | 当前契约/边界 | 状态 |
-|:--|:--|:--|
-| QB1 | 精简插件 `inject=[]` | 【已核实·静态】 |
-| QB2-QB3 | DSH_HOME/profile 解析与启动 apply 自愈 | 【已核实·静态】 |
-| QB5 | package-local `js-yaml:^4.2.0`，heal.js 移除 APPDATA/固定宿主后备；失败返回 null | 【已核实·静态；健壮性改进】 |
-| QB8-QB9 | profile bundles 与 `node_modules/dsh-extra-plan-qqbot` 双条件锚定 | 【已核实·静态】 |
-| QB10-QB11 | Web `node_modules/dsh-extra-plan` 到 QQBot `node_modules/dsh-extra-plan` 的 junction/dir 建链；非目标实体不替换 | 【已核实·静态；部署结果待 HUMAN】 |
-| QB12-QB13 | 只读 YAML/根级旧块诊断；不写 patch、不备份；不引用旧 AgentPresetSettingsSchema 为当前合同 | 【已核实·静态】 |
-| QB14-QB18 | QQBot patch、ptc-runtime、agent-preset-registry、cordis-host-runner 当前行 | 【已核实·静态】 |
-| QB19 | QQBot bundle patch 的单个 `insert` 块保留 canonical 行 `id: dsh-extra-plan-settings` / `name: dsh-extra-plan/settings`；核心 bundle/预设仍由核心独立提供 | 【已核实·源码静态；受控 compose 有效实例】 |
-| QB20-QB21 | `scripts/heal.mjs` 无参仅打印帮助并 exit 0、不自愈；`--install` 为 postinstall 严格入口，单目标且 patch/link/最终 realpath 任一失败 exit 1；插件 `plugins/dsh-extra-plan-qqbot/index.js` 的 `apply` 仅在明确 Host/profile 身份校验通过后执行启动兼容自愈，失败仅告警、不抛出、不阻断宿主（不以 CLI exit 0 描述 apply）；allow-build 放行与实际生命周期安装待 HUMAN | 【已核实·源码静态；lifecycle 尚无完整通过证据】 |
-| QB25-QB26 | 静态服务/config.default 断言与间接消费 extra-plan | 【已核实·静态】 |
-| QB27/QB31 | 一键 AUTO/四态汇总仅引用对应原始证据；install、compose、cache 分开判定，install/cache 的 INCOMPLETE/NOT-RUN 不改写为 AUTO PASS；只有实际证实跳钩子且缺链才记 CACHE-BLOCKED，受限 child-spawn EPERM 保持 INCOMPLETE；六项 HUMAN 单列且不销账 | 【已核实·证据边界】 |
-| QB28-QB30 | 五条件预检、junction 能力、真实 profile 只读映射；缺环境/权限为 SKIP | 【已核实·静态；SKIP 不销账】 |
-| QB32 | `@tencent-connect/dsh-qqbot` bundle 名是 profile 身份双锚点（bundles 声明与 `node_modules/dsh-extra-plan-qqbot`）的包名真值，核心 `index.js`、`lib/qqbot-settings-sync.js`、QQBot `lib/heal.js` 三处同源 | 【已核实·静态】 |
-
-QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；QB4、QB23、QB24 继续列为未核实；QB6/QB7 不计入当前活动区间（当前活动区间为 QB1-QB3、QB5、QB8-QB21、QB25-QB26、QB32），不改成通过。
 
 ## ⑦ 版本声明下的风险与开放验证
 
 1. isolate 审计：`mountPreset/leakedServices` 对未隔离 root service 抛错；必要/保险名单必须保持 `isolate: true`。
 2. settings 换代：设置表单仅经 `plugins.detail.section` 渲染于当前插件包详情行列表之后（自绘标题），不注册 `plugins.bundle.config`、`plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`，若本包 bundle.config 槽被任何一方注册条目则 detail.section 让位保持唯一表单；ConfigForms 通过稳定 namespace 订阅快照并一次 mutate 十一项。当前 settings 行是唯一权威载体，当前资产 definition 决定非用户内容、当前 settings 行决定用户值；11 项与 gateWords 的补齐/回落口径见 [ai-机制设计](ai-机制设计.md)（唯一真源）；两个历史配置 ID 不读取、不一次性迁移、不回退、不判旧 owner、不承诺旧值，真实旧行不编辑、不删除；settled-only 与 adapter/structural 队列隔离，settings-only adapter register/dispose=0/0；真实相遇效果仍 HUMAN。
-3. profile patch 载体：旧 `.agent-presets` 无读取方；`compatibility.json`/peer 门控可能使 bundle skipped、loader disabled；QQBot 仍有 allow-build/postinstall 欠账。
+3. profile patch 载体：旧 `.agent-presets` 无读取方；`compatibility.json`/peer 门控可能使 bundle skipped、loader disabled。
 4. 包/服务换代：workflow-ptc/tool-workflow/tool-ralph 三段在作者源里整段删除、当前未挂载；`ptcRuntime` 服务名、tool:cordis 只注册两项只读工具、`bundledSkillDir`（配 `watch:false`；旧 `customSkillDirs` 已删）必须按当前真值核对。MCP `publicToolName` 只允许 `[A-Za-z0-9_-]`（当前前缀形如 `mcp__chrome-devtools-mcp__...`），不支持点或 Unicode；静态扫描器仅同步连字符与注释遮蔽合同。descriptor 属 child、catalog 属 parent；保留 header-first+descriptor，不新增运行时兼容分支。
-5. 版本声明不等于完整矩阵或实机通过：以[当前验证状态](#当前验证状态)为准。每版使用相符的只读依赖前缀和冻结报告，按双根约束取证；没有相符记录时记为 `NOT-RUN` 或 `INCOMPLETE`，局部执行不得替代整套或真实验收。真实宿主、Provider、GUI、QQBot 和重启仍 HUMAN 或 `NOT-RUN`；技能与 send_message 的旧新口径按各版实际证据判定。旧版证据仅作历史导航。
+5. 版本声明不等于完整矩阵或实机通过：以[当前验证状态](#当前验证状态)为准。每版使用相符的只读依赖前缀和冻结报告，按双根约束取证；没有相符记录时记为 `NOT-RUN` 或 `INCOMPLETE`，局部执行不得替代整套或真实验收。真实宿主、Provider、GUI 和重启仍 HUMAN 或 `NOT-RUN`；技能与 send_message 的旧新口径按各版实际证据判定。旧版证据仅作历史导航。
 6. session v4：`session.v4.jsonl.zstd`、自有 source.kind、developer/message 坐标和 step-07 三代候选必须保留。
 7. CF12 422 开放 incident：profile 中宿主运行时副本曾导致 `tool_removal` 422；清理 profile node_modules/lock、污染会话续聊、native↔PTC 切换三项均待用户验证。当前单一全局行、内部 carrier、内存 definition/adapter 仍需用户部署后 HUMAN 验证。native↔PTC 切换的会话边界与规避见 ⑭。
 
@@ -250,35 +212,30 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 | `0.2.2-rc.4`（兼容声明） | 无对应版本的运行证据，不借用 rc.5 或其他版本结果 | `NOT-RUN`；实机仍 HUMAN |
 | `0.2.2-rc.5`（兼容声明） | 显式 rc.5 只读安装代码根上的 `step-00` 全流程隔离证据；另有既有冻结版 `step-04` 专项证据（含 T9-3b 核对官方包的 `dsh-doc/SKILL.md`），不能替代现版专项复验 | 仅对应冻结源码及用例通过；现版闸门专项本轮未复验，完整矩阵 `NOT-RUN`，真实装载、部署及生产仍 HUMAN |
 
-## ⑧ 六项 HUMAN 欠账（全部未销账）
+## ⑧ 两项 HUMAN 欠账（全部未销账）
 
 | 序号 | 待核实事项 | 后续动作 | 状态 |
 |:--|:--|:--|:--|
 | 1 | QuestionChannel/ApprovalChannel 静态声明与真实消息链 | 静态检查 + 部署后真实问答/审批 | 【未核实·HUMAN】 |
-| 2 | QQBot 0.5.2 manifest 实际装载运行 | 环境脚本只读 + 部署后运行 | 【未核实·HUMAN】 |
-| 3 | `im-qqbot` 宿主 schema/id/name/config | 用户侧按真实宿主 schema 比对 | 【未核实·HUMAN】 |
-| 4 | web→qqbot 建链真实结果 | 环境脚本只读；必要时用户 `dir`/`fsutil` 复核 | 【未核实·HUMAN】 |
-| 5 | 新会话当前设置沿用、两个历史配置 ID 不自动迁移与 QQBot `/preset` 行为 | 部署后由用户执行 `/preset`；AI 不读取、编辑或清理旧 profile 行 | 【未核实·HUMAN】 |
-| 6 | QQBot postinstall 是否被 allow-build 放行 | 用户部署时查命令与安装日志 | 【未核实·HUMAN】 |
+| 5 | 新会话当前设置沿用、两个历史配置 ID 不自动迁移 | 部署后由用户执行 `/preset`；AI 不读取、编辑或清理旧 profile 行 | 【未核实·HUMAN】 |
 
-环境不足、权限不足或脚本输出 SKIP 不能销账；自动全通过也不能替代以上六项。
+环境不足、权限不足或脚本输出 SKIP 不能销账；自动全通过也不能替代以上两项。
 
 ## 当前代码落点（符号级）
 
 - 核心入口 `plugins/dsh-extra-plan/index.js` 负责宿主 hook、配置快照与 session-scoped 状态；统一全局 owner 由 `lib/settings.js` 调度 `lib/preset-sync.js`，设置合同由 `lib/preset-settings.js`/`lib/settings-contract.js` 提供；`lib/client.js` 仅经 `plugins.detail.section` 接线稳定 namespace 的唯一共享表单（bundle.config 槽若有本包条目则让位）。角色身份与装配顺序由 `lib/role-contract.js` 提供，不参与权限策略。
-- QQBot 启动默认路径仍为 `plugins/dsh-extra-plan-qqbot/index.js#apply` → `lib/heal.js#healQqbotCompatibility`；严格安装入口为 `scripts/heal.mjs --install`。自愈只处理当前明确 profile；必要的一层候选发现最多 128 个，超限只出诊断，不跨 profile 启动；CLI 无参仅显示帮助，不等于 `index.js#apply` 自愈或实机效果。
-- 当前静态核对不等于部署通过；真实 profile、消息、`/preset`、postinstall 和 allow-build 仍按本台账 HUMAN 项执行，严格入口不扩张核心/生产写入授权。
+- 当前静态核对不等于部署通过；真实 profile、消息、`/preset` 仍按本台账 HUMAN 项执行，严格入口不扩张核心/生产写入授权。
 
 ## ⑨ 升级 checklist（核对清单，顺序固定）
 
-- 维护数据取证先显式选择 `--host-root` 与精确 `--profile`/`--file`/会话目标；会话只能用 `--session-dir`，或 `--session`+`--sessions-dir`，`--discover-children` 才开启一层发现（最多 512 候选、每个日志头 262144 字节）。无选择为 `NOT-RUN`/目标 IO 0，Host 统计最多两次稳定观察，Host archive/清理 `--apply` 零写拒绝；`DSH_INSTALL_ROOT`+host-preload 仅用于各版本对应的只读依赖前缀。完整矩阵必须在源码、文档与地图冻结后，按待验证宿主版本分别取证，每轮依双根约束执行，并以当次完整报告逐项判定；没有相符报告/结论为 `NOT-RUN` 或 `INCOMPLETE`，局部执行不得替代完整/真实验收。AUTO 数量按实际 runner 数组为 13（12 个脚本加 1 项代码地图 --check）；正式最终回归为 11 个脚本加 2 项 check，两者不混称。
+- 维护数据取证先显式选择 `--host-root` 与精确 `--profile`/`--file`/会话目标；会话只能用 `--session-dir`，或 `--session`+`--sessions-dir`，`--discover-children` 才开启一层发现（最多 512 候选、每个日志头 262144 字节）。无选择为 `NOT-RUN`/目标 IO 0，Host 统计最多两次稳定观察，Host archive/清理 `--apply` 零写拒绝；`DSH_INSTALL_ROOT`+host-preload 仅用于各版本对应的只读依赖前缀。完整矩阵必须在源码、文档与地图冻结后，按待验证宿主版本分别取证，每轮依双根约束执行，并以当次完整报告逐项判定；没有相符报告/结论为 `NOT-RUN` 或 `INCOMPLETE`，局部执行不得替代完整/真实验收。AUTO 数量按实际 runner 数组为 11（10 个脚本加 1 项代码地图 --check）；正式最终回归为 11 个脚本加 2 项 check，两者不混称。
 
-1. 针对本次待验证的每个版本，分别按 `dsh` 命令和安装 `package.json` 只读取得各自绝对依赖前缀后设置 `DSH_INSTALL_ROOT`（只写占位，不写死机器盘符）；版本声明范围为 `0.2.2-rc.1 || 0.2.2-rc.2 || 0.2.2-rc.3 || 0.2.2-rc.4 || 0.2.2-rc.5`，每轮先核实际 `dsh`/解析到的 `dsh-llm` 版本匹配，没有对应依赖前缀记 `NOT-RUN`，证据不完整记 `INCOMPLETE`；不得借用其他版本的结果。真实 Web/GUI/Provider/模型/消息/重启与 PTC 实机仍 HUMAN/NOT-RUN。0.2.1 系列仅存于远端分支 dsh-v0.2.1rc-qqbot-v0.5.2-only（main 不承载）；既有安装专用 `--dsh-root` 若表示应用包根，不与 `DSH_INSTALL_ROOT` 混用，本轮不执行该安装。再从 W 以对应前缀运行 `step-01-qqbot-安装映射.mjs` 与 `step-01-qqbot-环境验证.mjs`；静态先行，环境项条件只读，SKIP/HUMAN 不销账。
+1. 针对本次待验证的每个版本，分别按 `dsh` 命令和安装 `package.json` 只读取得各自绝对依赖前缀后设置 `DSH_INSTALL_ROOT`（只写占位，不写死机器盘符）；版本声明范围为 `0.2.2-rc.1 || 0.2.2-rc.2 || 0.2.2-rc.3 || 0.2.2-rc.4 || 0.2.2-rc.5`，每轮先核实际 `dsh`/解析到的 `dsh-llm` 版本匹配，没有对应依赖前缀记 `NOT-RUN`，证据不完整记 `INCOMPLETE`；不得借用其他版本的结果。真实 Web/GUI/Provider/模型/消息/重启与 PTC 实机仍 HUMAN/NOT-RUN。0.2.1 系列仅存于远端分支 dsh-v0.2.1rc-qqbot-v0.5.2-only（main 不承载）；既有安装专用 `--dsh-root` 若表示应用包根，不与 `DSH_INSTALL_ROOT` 混用，本轮不执行该安装。静态先行，SKIP/HUMAN 不销账。
 2. `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-01-设置页配置.mjs` 与同前缀的 `step-04-路由与写闸门.mjs`；确认全局 owner/configEditor 后端合同、detail.section 同页唯一表单（行列表之后）、A09/A10/A11 与工具执行器设置。
-3. `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/一键step测试.mjs`；AUTO 数量按实际数组为 13（12 个脚本加 1 项代码地图 --check），正式最终回归是 11 个脚本加 2 项 check，两者不混称；HUMAN/参数项按四态判读。
-4. 按 HS/HK/SD/CF/QB 当前表，先钩子 mode，再服务方法，再事件/Session 形状，再 bundle/exports/patch/isolate 契约；旧 API 只作负向核对。
+3. `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/一键step测试.mjs`；AUTO 数量按实际数组为 11（10 个脚本加 1 项代码地图 --check），正式最终回归是 11 个脚本加 2 项 check，两者不混称；HUMAN/参数项按四态判读。
+4. 按 HS/HK/SD/CF 当前表，先钩子 mode，再服务方法，再事件/Session 形状，再 bundle/exports/patch/isolate 契约；旧 API 只作负向核对。
 5. `node pe-test/tools/代码地图生成.mjs --check`，退出码必须为 0；地图只读 W roots，临时测试 map 也在 W，人工描述/固定尾部另做对拍；纯文档改动不生成正式地图。
-6. 逐条复核本节六项 HUMAN；保留未核实状态，用户部署后再销账。
+6. 逐条复核本节两项 HUMAN；保留未核实状态，用户部署后再销账。
 
 ## ⑩ P2-4 与 gateWords 当前合同
 
@@ -295,21 +252,21 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 
 - settled callback 在触发时经 `editorOf(undefined)` 使用 `ctx.get('configEditor')` 解析当前服务；`mountPresetSync` 仍只在 `ctx.inject(['configEditor'])` 的 child 作用域读取 editor，未把 child 捕获到外层。
 - 受控证据合同分四态 host-proxy：`normal-injection` 要求外层直接访问保留 `cannot get property "configEditor" without inject`、ctx.get 成功、初始 settled 先于 adapter；`get-only/no-op-inject` 为 `HUMAN`（`HOST-PROXY-GET-ONLY`），不得以 register=0 销账；`inject-throws` 与 `child-missing-configEditor` 保留显式失败。
-- 单字段触发仍核对完整十一项 values 与完整六键 gateWords，并对 Web patch、每个 QQBot patch 与 terminal 输入做同一快照对拍；旧 no-remount 结果只作历史归档，不能销当前验证状态。
-- 缺少显式 `DSH_INSTALL_ROOT` 的只读代码样本记 `NOT-RUN`；缺少 `--host-root` 或精确 Host 数据选择时为 `NOT-RUN`/目标 IO 0，不由环境变量补根。真实宿主/provider/profile、生产 QQBot、GUI、消息链与重启仍保持结构化 `HUMAN`；本项目维护只写工作区，不作生产副本部署。
+- 单字段触发仍核对完整十一项 values 与完整六键 gateWords，并对 Web patch 与权威行配置做同一快照对拍；旧 no-remount 结果只作历史归档，不能销当前验证状态。
+- 缺少显式 `DSH_INSTALL_ROOT` 的只读代码样本记 `NOT-RUN`；缺少 `--host-root` 或精确 Host 数据选择时为 `NOT-RUN`/目标 IO 0，不由环境变量补根。真实宿主/provider/profile、GUI、消息链与重启仍保持结构化 `HUMAN`；本项目维护只写工作区，不作生产副本部署。
 
 ## ⑫ 唯一 settings 行与可关联保存终态
 
-- canonical 权威行固定为 `id=dsh-extra-plan-settings`、`name=dsh-extra-plan/settings`；`inspectSettingsAuthority` 同时报告 raw/effective/canonicalName 计数、选中 name、documentPath、候选摘要。raw 或 effective 不唯一时 GET/PUT 返回 409 conflict，PUT 在 `editor.edit` 与 synchronizer enqueue 前停止。
-- 每次 API PUT、`settled-initial`、`settled-update` 都生成 `saveRunId`、单调 `syncRevision`、固定 11 项 values + 6 键 gateWords 的 `snapshotHash` 与 trigger；PUT 返回 request/terminal 全等，GET 无参数只显示 `source=last-terminal-cache,cache=true,terminalMatch=false`。
-- Web 与每个 QQBot 目标分别保留 bytes/mtime/raw SHA、managed snapshot hash、backup 路径/SHA；raw SHA 可不同，但 managed hash 必须和 request snapshotHash 相等。外部 writer 漂移归类 `drift-detected`，不回写旧 backup。
-- `creativeMode` 自动验收只看双端即时 patch/managed hash 和 terminal 关联；运行时重启、真实 profile 清理、QQBot 消息链继续 `HUMAN`。
+- canonical 权威行固定为 `id=dsh-extra-plan-settings`、`name=dsh-extra-plan/settings`；规范行校验同时报告 rawRowCount/canonicalNameCount 计数、选中 name；raw 或 effective 不唯一即拒绝本次写入，不改 `editor.edit`、不触发 settled 回调与 adapter handoff。
+- 每次设置保存经 `settledSettingsUpdate` → `snapshotOf` 生成 11 项 values 与 6 键 gateWords 快照，并按 `settledQueue` 串行执行；`onSettledSettings` 钩子可选，当前 settings.js 未挂接，失败只告警、不阻断 adapter。自建 GET 投影端点与终态缓存已随兼容插件下线删除。
+- 原同步链的字节/mtime/raw SHA、快照 hash 与备份路径指标随兼容插件下线删除；当前设置写入只落唯一权威行，不产生备份、hash 对拍或漂移状态。
+- `creativeMode` 自动验收只看 mutate 回执与权威行即时 patch 值；运行时重启、真实 profile 清理继续 `HUMAN`。
 
 ## ⑬ UI 保存不产生 internal/update（宿主契约事实）
 
 - 真实 UI 保存走宿主 ConfigForms `form.mutate`（dsh-client-ui-settings ConfigForm.mutate → remote.settings.mutate → settings.mutate → configEditor.edit）；11 项 settings 字段全部 `.volatile()`，Loader 判定 volatile-only（`equalExceptVolatile` 把 volatile 字段视为相等）后就地替换 `fiber._config` 直接 return，不调 `fiber.update`，`internal/update` waterfall 根本不运行（cordis 4.0.4 宿主源码核对）。
 - 即使产生该事件，`internal/update` 也是 fiber 定向 waterfall（非 global 注册存入注册者 `child.fiber._hooks`，`thisArg`=被 update 的 fiber）；`preset-sync.js` 的监听器位于 `ctx.inject(['configEditor'])` child fiber ≠ settings 行 entry.fiber，永远收不到。两层都断 ⇒ 保存时不产生可消费的 settled 链。
-- 结论：UI 保存的 QQBot 同步主触发是 client.js saveAll 第二步同源 PUT（`api-put` trigger，无条件全量 syncEditor）；settled 链仅作 Web 宿主重启/装载兜底（settled-initial）。真实生产漂移、旧批次证据和部署动作保持 HUMAN，历史经过见[宿主耦合历史归档](ai-宿主耦合历史归档.md)。
+- 结论：UI 保存的唯一触发是 client.js saveAll 的宿主 `form.mutate`（经 ConfigForms 落 `configEditor.edit`），插件不直写 patch、也不再发起任何自建写入；settled 链仅作 Web 宿主装载与结构变更时的兜底。真实生产漂移、旧批次证据和部署动作保持 HUMAN，历史经过见[宿主耦合历史归档](ai-宿主耦合历史归档.md)。
 
 ## ⑭ toolPresentationMode 切换与会话边界（当前合同）
 
@@ -358,7 +315,7 @@ QB6/QB7 旧包匹配、QB22 根 README 文档入口属于历史/导航说明；Q
 
 **三、装载期严格校验与运行期热读**
 
-- 装载期（apply 构造 `createLiveConfig`）严格校验：settings 行存在且出现非法（invalid）或多命中（ambiguous）→ 直接抛 `extra-plan: settings 行校验失败：<key> = <state>（期望在 dsh-extra-plan-settings 行、name 为 dsh-extra-plan/settings 的 config 内取得合法值）`，插件拒绝装载；仅缺键（missing）告警并按当前 apply 快照/内置默认补齐，不按历史 ID 取值。API authority/PUT 仍按唯一规范行校验，缺失/歧义不转为可写，继续 409 零写。
+- 装载期（apply 构造 `createLiveConfig`）严格校验：settings 行存在且出现非法（invalid）或多命中（ambiguous）→ 直接抛 `extra-plan: settings 行校验失败：<key> = <state>（期望在 dsh-extra-plan-settings 行、name 为 dsh-extra-plan/settings 的 config 内取得合法值）`，插件拒绝装载；仅缺键（missing）告警并按当前 apply 快照/内置默认补齐，不按历史 ID 取值。该唯一规范行校验同样适用于保存路径：缺失/歧义不转为可写，插件拒绝写入。
 - 整行缺席（首次安装、profile 无任何 settings 覆盖）仍按出厂形态静默：不抛错、不告警，整组取 cfg 快照。
 - 运行期热读保留 fail-safe（未 captured 的键一律沿用 fallback，fallback 取值顺序不变）：ambiguous 与 invalid 只作 `warnOnce` 告警，missing 仍沿用当前 apply 快照/内置默认且不按旧 ID 寻值——配置被改坏变得可见，不再无声吞掉。
 

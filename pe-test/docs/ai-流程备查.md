@@ -86,7 +86,7 @@ route=plan 后，**第一个** 闸门必须是独立的目的闸门：调用 `ex
 
 在仓库/工作区内验收，不把生产同步当验收动作。创建后台 `subagent_review` 时，除验收文件路径外还要给出领取的任务/检查 ID、各自期望与禁止、公共检查原始证据位置和冻结状态；维护 dsh-extra-plan 项目时，验收者 prompt 与验收工件必须显式携带完整项目专属当前态/历史归档约束及适用范围，不能只假定验收者读过入口。reviewer 只读验收文件、源文件和原始证据，逐项输出“通过/不通过 + 一行证据”，末行输出“验收通过”或“验收不通过：N 项问题”，全文不超过 20 行。main 再核对任务、检查、收尾和全局全覆盖；漏项、矛盾或源变化后的过期证据分别判为 INCOMPLETE/FAIL/需复验。验收不通过时主会话先判真伪，属实的用 send_message 把问题与证据原文返回该组执行者（每个执行者最多两轮），修复后重新派该组 reviewer 复验；两轮仍不通过记该组失败；组级成功/失败结论用于最终汇总。失败问题修正后按受影响任务、依赖消费者和共享检查重跑，最多两轮。
 
-用户部署后才进行真实 DSH/QQBot 实测；静态 PASS、SKIP、HUMAN 不互相替代。
+用户部署后才进行真实 DSH 实测；静态 PASS、SKIP、HUMAN 不互相替代。
 
 ## ⑭ 地图维护与收口
 
@@ -100,4 +100,4 @@ route=plan 后，**第一个** 闸门必须是独立的目的闸门：调用 `ex
 
 ## 设置与默认链交接
 
-10 项热读设置与 1 项宿主行设置（`toolPresentationMode`）的权威值都走 `dsh-extra-plan-settings` 唯一 settings 行；PUT 只 edit 该行并保留其它字段；只认当前规范 id/name，两个历史配置 ID 不读取、不一次性迁移、不回退、不判旧 owner、不承诺旧值，也不编辑/删除真实旧行。11 项与 gateWords 的补齐/回落口径见 [ai-机制设计](ai-机制设计.md)（唯一真源）。`./preset-sync` 已退役，locale exports 并未退役（package.json 仍导出 `./locale/*.json` 与 `./settings/locale/*`），但 `lib/preset-sync.js` 仍由 settings owner 内部相对调用。`toolPresentationMode` 为装载期值，`runcodeCatchGate` 按配置热读。默认作者值来自 `agent.cordis.yml`，生成器产物不可手改；坏模板保持 last-known-good。
+10 项热读设置与 1 项宿主行设置（`toolPresentationMode`）的权威值都走 `dsh-extra-plan-settings` 唯一 settings 行；保存只 edit 该行并保留其它字段；只认当前规范 id/name，两个历史配置 ID 不读取、不一次性迁移、不回退、不判旧 owner、不承诺旧值，也不编辑/删除真实旧行。11 项与 gateWords 的补齐/回落口径见 [ai-机制设计](ai-机制设计.md)（唯一真源）。`./preset-sync` 已退役，locale exports 并未退役（package.json 仍导出 `./locale/*.json` 与 `./settings/locale/*`），但 `lib/preset-sync.js` 仍由 settings owner 内部相对调用。`toolPresentationMode` 为装载期值，`runcodeCatchGate` 按配置热读。默认作者值来自 `agent.cordis.yml`，生成器产物不可手改；坏模板保持 last-known-good。

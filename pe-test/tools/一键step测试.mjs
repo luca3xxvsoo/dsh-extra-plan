@@ -52,8 +52,6 @@ const AUTO = [
   ['step-01-设置迁移.mjs', true, ''],
   ['step-01-预设完整性.mjs', true, ''],
   ['step-01-设置页配置.mjs', true, ''],
-  ['step-01-qqbot-安装映射.mjs', true, ''],
-  ['step-01-qqbot-环境验证.mjs', true, ''],
   ['step-04-路由与写闸门.mjs', true, ''],
   ['step-04-context-gate宿主回归.mjs', true, '受控adapter/工作区JSONL集成；真实provider与HUMAN另列NOT-RUN'],
   ['step-06-线索落盘.mjs', true, ''],
@@ -602,7 +600,7 @@ function runMain() {
   lines.push('')
   lines.push('## 四、结论')
   lines.push('- 自动判定项结论：通过 ' + autoPass + ' / 部分执行 ' + autoPartial + ' / 未执行 ' + autoSkip + ' / 失败 ' + autoFail + '，共 ' + AUTO.length + ' 项')
-  lines.push('- 说明：部分执行/未执行不计失败；INCOMPLETE 单列为部分执行，不计 AUTO PASS；结构化 SKIP/HUMAN 会分别保留在统计与诊断，真实 QQBot 消息与交互仍属 HUMAN')
+  lines.push('- 说明：部分执行/未执行不计失败；INCOMPLETE 单列为部分执行，不计 AUTO PASS；结构化 SKIP/HUMAN 会分别保留在统计与诊断，真实宿主重启与人工交互仍属 HUMAN')
   if (autoFail > 0) lines.push('- 说明：失败项含「已知预存问题」（见自动判定项表格备注列），其余失败需排查')
 
   mkdirSync(REPORTS_DIR, { recursive: true })

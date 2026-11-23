@@ -11,7 +11,7 @@
 | 备份、禁改、回归、交付 | [ai-维护手册](pe-test/docs/ai-维护手册.md) | 修改前后 |
 | 主会话到验收的交接顺序 | [ai-流程备查](pe-test/docs/ai-流程备查.md) | 流程拿不准时 |
 | 函数定位、行号与机器索引 | [ai-代码地图](pe-test/docs/ai-代码地图.md) | grep 后局部 read |
-| DSH/QQBot 当前宿主契约 | [ai-宿主耦合台账](pe-test/docs/ai-宿主耦合台账.md) | 升级或宿主异常时 |
+| DSH 当前宿主契约 | [ai-宿主耦合台账](pe-test/docs/ai-宿主耦合台账.md) | 升级或宿主异常时 |
 | 唯一实机顺序 runbook | [ai-实机闸门测试流程](pe-test/docs/ai-实机闸门测试流程.md) | 部署后由用户验收 |
 | 旧机制、故障与批次追溯（非默认） | [ai-历史故障与机制归档](pe-test/docs/ai-历史故障与机制归档.md) | 需要历史根因时 |
 | 旧宿主耦合、历史快照与证据勾销（非默认） | [ai-宿主耦合历史归档](pe-test/docs/ai-宿主耦合历史归档.md) | 需要升级历史时 |
@@ -22,10 +22,10 @@
 
 - save_probe 的证据引用根为 W 工作区、H 数据根与已注册 Host capability；宿主只读代码根 `installRoot` 的形态与注册条件见 [ai-机制设计](pe-test/docs/ai-机制设计.md)（双根合同 B1a）。该根仅用于引用宿主源码作为证据，不授予任何写权限。该口径与「`DSH_INSTALL_ROOT`+host-preload 只是独立只读代码根许可，不是数据 H」一致。
 
-- 当前声明范围为 dsh 精确并集 `0.2.2-rc.1 || 0.2.2-rc.2 || 0.2.2-rc.3 || 0.2.2-rc.4 || 0.2.2-rc.5`：`0.2.2-rc.3` 是当前目标，`0.2.2-rc.1` 与 `0.2.2-rc.2` 是仍在活动支持的兼容目标，`0.2.2-rc.4` 与 `0.2.2-rc.5` 是新增的兼容声明目标（只扩展兼容声明范围，不改变当前目标）；两插件各自 manifest 为版本真源：核心插件以[核心插件 package.json](<plugins/dsh-extra-plan/package.json>)中的 `engines.dsh` 与三项 @deepseek-ai peer 为准，QQBot 插件以[QQBot插件 package.json](<plugins/dsh-extra-plan-qqbot/package.json>)中的 `engines.dsh` 为准，`schemastery` peer 仍为 `~3.19.0`。0.2.1 起的历史版本仅存于远端分支 dsh-v0.2.1rc-qqbot-v0.5.2-only，当前 main 不承载。逐版本证据等级、NOT-RUN/HUMAN 状态与待复测项统一见[ai-宿主耦合台账](pe-test/docs/ai-宿主耦合台账.md)的当前验证状态；局部静态/隔离证据不替代完整矩阵或生产实测，未执行项保持 `NOT-RUN`；QQBot、生产、真实消息、`/preset`、question/approval、GUI 与模型行为仍需部署后 HUMAN 复测。
+- 当前声明范围为 dsh 精确并集 `0.2.2-rc.1 || 0.2.2-rc.2 || 0.2.2-rc.3 || 0.2.2-rc.4 || 0.2.2-rc.5`：`0.2.2-rc.3` 是当前目标，`0.2.2-rc.1` 与 `0.2.2-rc.2` 是仍在活动支持的兼容目标，`0.2.2-rc.4` 与 `0.2.2-rc.5` 是新增的兼容声明目标（只扩展兼容声明范围，不改变当前目标）；版本真源为核心插件以[核心插件 package.json](<plugins/dsh-extra-plan/package.json>)中的 `engines.dsh` 与三项 @deepseek-ai peer 为准，`schemastery` peer 仍为 `~3.19.0`。0.2.1 起的历史版本仅存于远端分支 dsh-v0.2.1rc-qqbot-v0.5.2-only，当前 main 不承载。逐版本证据等级、NOT-RUN/HUMAN 状态与待复测项统一见[ai-宿主耦合台账](pe-test/docs/ai-宿主耦合台账.md)的当前验证状态；局部静态/隔离证据不替代完整矩阵或生产实测，未执行项保持 `NOT-RUN`；生产、真实消息、`/preset`、question/approval、GUI 与模型行为仍需部署后 HUMAN 复测。
 - 五角色顺序：主会话 → 探查者 → 规划子代理 → 执行者 → 验收者。main 保留官方 `send_message`/`interrupt_agent`/`list_agents`；四角色 definition 不挂 control 包，运行时按原始 `isSubagentChild` 对 `send_message`/`interrupt_agent` 直呼与 `run_code` 成员硬拒（含 unknown/断链 child）。自动最终结果仍返回；child 的阻塞疑问以最终回复返回，main 可向 idle child 续轮。只读 Cordis 两工具仍按角色预设保留；main 的目标纪律是 send 直属父子、interrupt 仅调用者获授权的后代，主向 running 子发送仍保留原禁扰；`FREE_TOOLS` 为 `save_plan` 与 `edit_plan_draft` 两项。机械锚点为 route、purpose、clarified 三项，批准不再作为锚点而是由 route 选执行者表达，其他工作区写入按批准后的执行者流程进行。
 - A/C/M 是模型可见投影维度：A=anchoredBootstrap，C=creativeMode，M=`native|ptc`（`both` 随二值化退出；插件无专门归一化分支，读到非法旧值经校验失败回落默认 native）；F/L 以首个 `tool/call` 为界。MCP public tool 名遵循 `[A-Za-z0-9_-]`，静态 `tools['mcp__...-...'](...)` 可被预审识别，真正动态/拼接/转义访问与 ask 返回链约束不变。展示隐藏不等于运行时 binding 安全隔离，真实取证见实机流程。
-- 当前路径采用两种 W 口径：维护 W 取可信源树布局（按已知 `pe-test/plugins` 结构锚定，绝不取 `process.cwd`、插件安装目录或普通文件 `dirname`）；部署/会话 W 取保存方案的运行时 `session.header.cwd`。数据 H 的授权来源、拒绝规则与 H/W 重叠分类见 [ai-机制设计](pe-test/docs/ai-机制设计.md)（双根合同 B1）。Web/QQ 只按可信 `profileContext.name`/`startedBundles` 识别：Web→QQ 镜像保留，QQ 非适用返回 `not-applicable`，不跨 profile 启动；维护/测试默认零 Host 写。详见 [ai-机制设计](pe-test/docs/ai-机制设计.md) 与 [ai-宿主耦合台账](pe-test/docs/ai-宿主耦合台账.md)。
+- 当前路径采用两种 W 口径：维护 W 取可信源树布局（按已知 `pe-test/plugins` 结构锚定，绝不取 `process.cwd`、插件安装目录或普通文件 `dirname`）；部署/会话 W 取保存方案的运行时 `session.header.cwd`。数据 H 的授权来源、拒绝规则与 H/W 重叠分类见 [ai-机制设计](pe-test/docs/ai-机制设计.md)（双根合同 B1）。Web 只按可信 `profileContext.name`/`startedBundles` 识别：不跨 profile 启动；维护/测试默认零 Host 写。详见 [ai-机制设计](pe-test/docs/ai-机制设计.md) 与 [ai-宿主耦合台账](pe-test/docs/ai-宿主耦合台账.md)。
 - AI 不执行生产部署；仓库验收通过后由用户操作部署与实测。工作区外写入被委派边界拒绝时，不逐条尝试，不设置 `sandbox_permissions`，只在汇报中列越界清单。
 
 ## 真相源短表

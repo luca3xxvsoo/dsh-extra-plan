@@ -1,6 +1,6 @@
 # 宿主耦合历史归档
 
-> **历史追溯层，非当前宿主真源，非默认加载。** 当前 HS/HK/SD/CF/QB、HUMAN 欠账和升级顺序以 [ai-宿主耦合台账](ai-宿主耦合台账.md) 为准；本文件只保留旧版本、已删除耦合、历史覆盖快照与 evidence 勾销，避免历史数字污染当前状态。
+> **历史追溯层，非当前宿主真源，非默认加载。** 当前 HS/HK/SD/CF、HUMAN 欠账和升级顺序以 [ai-宿主耦合台账](ai-宿主耦合台账.md) 为准；本文件只保留旧版本、已删除耦合、历史覆盖快照与 evidence 勾销，避免历史数字污染当前状态。
 
 ## 历史统计快照（原值保留）
 
@@ -29,7 +29,8 @@
 ```
 
 - 原 U1-U6 覆盖数显示 `16+6+6+2+7+6=43`，而表注旧值为 `42`，两者矛盾；A40 删除后 U6/U6b 各显示 5，状态操作仍为 12。这里只归档原数与矛盾，不臆造新总数。
-- 根 README 原 98/164 行的两目录项是明确文档偏差，禁改；另一历史归档不重写。
+- 根 README 原 98/164 行的两目录项是明确文档偏差，禁改；另一历史归档同步清理后不再重写。
+- 当前预设选择由 agent-preset-registry 行的 config.default=extra-plan 承载。
 
 1. `CF1`：旧 `plugins/dsh-extra-plan/package.json` 的 `scripts.postinstall` 与 `distribute-preset.mjs`，曾在安装后解析 DSH_HOME、分发 `.agent-presets/extra-plan`；2026-09-25 死代码清理后核心包无 postinstall。
 2. `CF2`：旧 `plugins/dsh-extra-plan/scripts/distribute-preset.mjs` 的 DSH_HOME 解析与 `syncPreset` 委派；当前启动自愈独立由 `lib/preset-sync.js` 处理。
@@ -42,13 +43,6 @@
 - `SD8`（历史形状）：`subagent/descriptor.mode` 只是历史形状——代码按事件类型扫描 descriptor、不读 `mode`，角色判据是 `session.header.agentPreset`，该行不再是活动耦合。
 - `SD36`（已退役）：`backgroundMode` → `descriptor.mode` 的改写已退役，`plugins/` 下已无 `backgroundMode` 配置键（仅退役注释提及该键）。
 - 台账第七节第 4 条原核对项「Client 查询有界等待（默认 10000ms）」在本仓无可核对对象：`tool-cordis` 行无 `config`，仓内亦无 `clientInspectTimeoutMs` 配置键，只有注释说明 10000ms 是宿主配置默认值而非现场时延实测。
-
-### QQBot 旧四处越权耦合
-
-1. 旧 `inject = ['qqbot.bot', 'qqbot.sessionManager', 'userQuestions']`，直接依赖 qqbot 内部服务并 monkey-patch manager；当前精简包 `inject=[]`。
-2. 旧 `apply-patch.mjs` 直接覆盖 qqbot 包 `dist/gateway/bootstrap.js` 与 `transport/outbound.js`；当前改为 profile patch 与自愈。
-3. 旧做法向 `im-qqbot` 行写入 `config.preset: extra-plan`；当前由 agent-preset-registry 行的 `config.default=extra-plan` 间接承载。
-4. 旧 patch 行带 `approvalEnabled:false` 越权开关；当前该 config 段已删除。
 
 ## 旧版本/旧 API 面
 
@@ -71,7 +65,7 @@
 
 ## 历史证据勾销索引（209）
 
-原台账的 ③-E 曾按报告段落把 209 条 evidence 分配到 HS/HK/SD/CF/QB 条目：
+原台账的 ③-E 曾按报告段落把 209 条 evidence 分配到 HS/HK/SD/CF 条目：
 
 | 历史证据段 | 原记录条数 | 历史去向 |
 |:--|--:|:--|
@@ -87,11 +81,8 @@
 | 报告 B：宿主服务与图形/设置/预设 | 12 | HS1-HS16、SD13-SD22 |
 | 报告 B：模块解析/locale/隔离/默认值 | 17 | HK11/13-16/20-22、HS5-7/17-22、SD33/34/36、CF7/9/11 |
 | 报告 B：客户端/路径/子代理/布局 | 21 | HK10/13/19/23/24、HS8-HS16、SD1/2/35、CF2-CF9 |
-| 报告 C：QQBot 插件/patch/package | 24 | QB1-QB21 |
-| 报告 C：README/维护/回归/反证 | 17 | QB22-QB27 |
-| 报告 C：宿主 app-boot/registry/CLI 与删除面 | 9 | QB13-QB18、QB20-QB21、④-B 历史四处 |
 
-这张表是历史证据索引，不是当前活动覆盖率；SD9、SD13 等缺号按当时编号说明保留，不补造定义。
+这张表是历史证据索引，不是当前活动覆盖率；SD9、SD13 等缺号按当时编号说明保留，不补造定义。原报告 C 的 50 条 evidence 已随兼容插件下线移出本表；209 为当时的原始勾销口径（80 + 79 + 50），不作当前统计，也不随本表删行而改数。
 
 ## 历史来源
 
@@ -99,12 +90,12 @@
 - `D:\AI项目\dsh-extra-plan\.extra-plan\线索-宿主耦合台账复核-4d2b33fc-20260929142933865-8148-0.md`
 - `D:\AI项目\dsh-extra-plan\.extra-plan\线索-台账升级面核对-77303b0b-20260929142411630-8148-0.md`
 - `D:\AI项目\dsh-extra-plan\.extra-plan\线索-文档职责核对-9d3fa918-20260929142106718-8148-0.md`
-- 原备份台账中的 HS/HK/SD/CF/QB 四层表、③-E evidence 勾销表、④-B 历史耦合与 ⑦-1 历史面。
+- 原备份台账中的 HS/HK/SD/CF 四层表、③-E evidence 勾销表、④-B 历史耦合与 ⑦-1 历史面。
 
 ## 历史生产注入、模式现场与清理回放
 
 - 生产注入批次的受控 host-proxy 曾分为 normal-injection、get-only/no-op-inject、inject-throws、child-missing-configEditor 四态；normal 需保留外层直接访问错误“cannot get property "configEditor" without inject”、ctx.get 成功、settled 先于 adapter；get-only/no-op-inject 固定为 HUMAN（HOST-PROXY-GET-ONLY），inject-throws 与 child-missing-configEditor 保留失败。该批次的旧 no-remount 结果为 `AUTO_REGRESSION_PASS=NO`，不能销当前 HUMAN。
-- 当时 SOURCE-MANIFEST 以八个工作区文件记录备份 bytes/SHA-256；这是该批次证据元数据，不是当前通用任务规模。单次生产漂移取证记录 settledCount 停在 1、缓存停在 settled-initial + syncRevision=1，来源为既有“生产实况取证-Web到QQBot配置漂移”证据；不得据此伪报保存链通过。
+- 当时 SOURCE-MANIFEST 以八个工作区文件记录备份 bytes/SHA-256；这是该批次证据元数据，不是当前通用任务规模。该批次的同步回执取证结论已随兼容插件下线失效，不得据此伪报保存链通过。
 - 2026-09-12 旧模式观察记录：重启后同一既有会话的 native 直呼面曾可用；随后 0.2.1-rc.2 的 all-deferred 400 复现推翻了“重启即可继续原 PTC 会话”的旧结论，相关现场原文保留在 [ai-实机闸门测试流程](ai-实机闸门测试流程.md) 的模式历史表注。
 - 2026-10-03 profile 现场观察记录 desktop/web 的 mode 与 runcodeCatchGate 取值可不同；该值差异只说明跨 profile 不可互推，来源同上实机流程。
 - 2026-10-18 模式实测/重放：PTC 2A＋2B 在切换后新开会话完成；真实会话重放的 resume wire 为 [{"name":"run_code","defer_loading":true}]，新会话 wire 为 [{"name":"run_code"}]；现场结果保留“全部通过、无 400”的原文，但不销真实 provider、GUI、生产与消息 HUMAN。

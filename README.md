@@ -4,7 +4,7 @@
 
 **作者从reasonix得到的灵感，实现权限控制+子代理角色分配的agent模板**
 
-**兼容性**：DSH = v0.2.2-rc.1 ~ v0.2.2-rc.5、dsh-qqbot 0.5.5（未确认）。旧版本兼容详见Releases
+**兼容性**：DSH = v0.2.2-rc.1 ~ v0.2.2-rc.5。旧版本兼容详见Releases
 
 ## 2. 核心优势
 
@@ -21,40 +21,16 @@
 
 ## 3. 安装及卸载方式（面向 DSH 环境用户）
 
-### 核心安装
+### 安装步骤
 
 1. dsh web - 插件 - 添加插件 - https://github.com/luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan 或 [解压路径]/dsh-extra-plan-main/plugins/dsh-extra-plan - 允许脚本并重试 - 立即启用
 2. **重启 DSH 进程**使插件生效
 3. 新建会话，在预设列表中选择「按需规划模式」
 
-### qqbot兼容插件安装
-
-1. 安装
-```powershell 7+ 在线
-dsh plugin --profile qqbot add 'luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan-qqbot' --allow-build='dsh-extra-plan-qqbot@git+https://github.com/luca3xxvsoo/dsh-extra-plan.git'
-```
-```powershell 7+ 离线
-$pkg = (Resolve-Path '[解压路径]\dsh-extra-plan-main\plugins\dsh-extra-plan-qqbot').Path -replace '\\', '/'
-
-dsh plugin --profile qqbot add "file:///$pkg" --preserve-absolute-paths --allow-build="dsh-extra-plan-qqbot@file:$pkg"
-```
-2. **重启 DSH 进程**使插件生效
-3. qqbot下使用 /preset 切换预设
-
 ### 卸载步骤
 
-1. 核心卸载
-```powershell 7+
-dsh plugin --profile web remove dsh-extra-plan
-```
-2. qqbot兼容插件卸载 (如装)
-```powershell 7+
-dsh plugin --profile qqbot remove dsh-extra-plan-qqbot
-```
-
-    手动删除qqbot环境下的文件夹：dsh-extra-plan
-
-4. **重启 DSH 进程**
+1. dsh plugin --profile web remove dsh-extra-plan
+2. **重启 DSH 进程**
 
 ### 平台实测说明
 
@@ -112,7 +88,6 @@ dsh-extra-plan/
 │   │   │   ├── preset-settings.js                                    # 设置项 descriptor 与 YAML 处理 facade（供迁移复用）
 │   │   │   ├── preset-sync.js                                        # settings owner 内部同步/adapter 与 raw 旧值迁移
 │   │   │   ├── preset-yaml.js                                        # 预设 YAML 解析、定位与保格式改写纯模块
-│   │   │   ├── qqbot-settings-sync.js                                # QQBot 设置同步：Web→QQBot 持久化与回执
 │   │   │   ├── role-contract.js                                      # 角色身份常量表
 │   │   │   ├── run-code-scanner.js                                   # run_code 无宿主状态词法与调用点扫描
 │   │   │   ├── run-code-static.js                                    # run_code：静态解析与理由函数
@@ -140,16 +115,7 @@ dsh-extra-plan/
 │   │   ├── cordis.patch.yml                                                    
 │   │   ├── index.js                                                  # 三级闸门：路由/目的/澄清 + apply 接线
 │   │   ├── LICENSE                                                 
-│   │   └── package.json              
-│   └── dsh-extra-plan-qqbot/                                
-│       ├── lib                                               
-│       │   ├── heal.js                                               # QQBot 兼容自愈：定位自有 profile、清理完整旧块、确保 web 包链接
-│       │   └── path-policy.js                                        # 路径安全策略闸门
-│       ├── scripts/heal.mjs                                          # 自愈分发                      
-│       ├── cordis.patch.yml                                  
-│       ├── index.js                                    
-│       ├── LICENSE                                                 
-│       └── package.json                      
+│   │   └── package.json                                              
 ├── pe-test/                                                          # 自检/取证工具
 │   ├── README.md                                                     # 自检/取证工具介绍
 │   ├── _shared/                                                      
@@ -179,9 +145,6 @@ dsh-extra-plan/
 │       ├── step-01-设置迁移.mjs
 │       ├── step-01-设置页配置.mjs
 │       ├── step-01-预设完整性.mjs
-│       ├── step-01-qqbot-单命令安装.mjs
-│       ├── step-01-qqbot-安装映射.mjs
-│       ├── step-01-qqbot-环境验证.mjs
 │       ├── step-04-工具清单查看.mjs
 │       ├── step-04-context-gate宿主回归.mjs
 │       ├── step-04-路由与写闸门.mjs

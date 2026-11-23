@@ -285,7 +285,6 @@ function profileFactsOf(ctx) {
   const profile = safeContextGet(ctx, 'profileContext')
   const has = (key) => profile !== undefined && profile !== null && Object.prototype.hasOwnProperty.call(profile, key)
   const profileHomeFact = rootFact(profile?.home, has('home'))
-  const profileDirFact = rootFact(profile?.dir, has('dir'))
   const profilePatchFact = rootFact(profile?.patchPath, has('patchPath'))
   const installAnchorFact = rootFact(profile?.installAnchor, has('installAnchor'))
   const editor = configEditorServiceOf(ctx)
@@ -326,7 +325,6 @@ function profileFactsOf(ctx) {
   return {
     hostDataRoot,
     hostState,
-    profileDir: profileDirFact.state === 'valid' ? profileDirFact.path : null,
     profilePatch: profilePatchFact.state === 'valid' ? profilePatchFact.path : null,
     documentState,
     documentPath,
@@ -355,7 +353,6 @@ function pathContextFor(ctx, cwd) {
   const facts = profileFactsOf(ctx)
   const workspaceRoot = absoluteRoot(cwd)
   const capabilities = {}
-  if (facts.profileDir !== null) capabilities.profileDir = { path: facts.profileDir, type: 'directory', access: 'write', purpose: 'qqbot-settings-sync' }
   if (facts.profilePatch !== null) capabilities.profilePatch = { path: facts.profilePatch, type: 'file', access: 'write', purpose: 'config-editor' }
   if (facts.documentCapability === 'editorDocument' && facts.documentPath !== null) capabilities.editorDocument = { path: facts.documentPath, type: 'file', access: 'read', purpose: 'config-editor' }
   if (facts.installAnchor !== null) capabilities.installAnchor = { path: facts.installAnchor, type: 'file', access: 'read', purpose: 'install-anchor' }
