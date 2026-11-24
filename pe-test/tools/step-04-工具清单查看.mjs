@@ -7,8 +7,8 @@ import path from 'node:path'
 import { framesOf, decodeText } from '../_shared/zstd-frames.mjs'
 import { authorizedSessionLogPath, findSession } from '../_shared/session-finder.mjs'
 import { parseMaintenanceArgs, createMaintenanceContext } from '../_shared/workspace-paths.mjs'
-import { validateReadTarget } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
-import { CORDIS_PRESENTATION_TOOLS } from '../../plugins/dsh-extra-plan/lib/assembly-presentation.js'
+import { validateReadTarget } from '../../lib/path-policy.js'
+import { CORDIS_PRESENTATION_TOOLS } from '../../lib/assembly-presentation.js'
 import { createOutput } from '../_shared/test-output.mjs'
 
 const maintenanceArgs = parseMaintenanceArgs(process.argv.slice(2))

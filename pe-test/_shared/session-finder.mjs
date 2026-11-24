@@ -5,7 +5,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { framesOf, decodeText } from './zstd-frames.mjs'
 import { createMaintenanceContext } from './workspace-paths.mjs'
-import { resolveHostPath, resolveWorkspacePath, validateReadTarget } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
+import { resolveHostPath, resolveWorkspacePath, validateReadTarget } from '../../lib/path-policy.js'
 
 const SESSION_LOG_NAMES = ['session.v4.jsonl.zstd', 'session.v3.jsonl.zstd', 'session.jsonl.zstd']
 const SESSION_PURPOSE = 'session-forensics-read'

@@ -2,7 +2,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
-import { createPathContext, resolveHostPath, resolveWorkspacePath } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
+import { createPathContext, resolveHostPath, resolveWorkspacePath } from '../../lib/path-policy.js'
 
 const nativePath = process.platform === 'win32' ? path.win32 : path.posix
 const isWindows = process.platform === 'win32'
@@ -87,10 +87,22 @@ function repoRoot() {
   const peTestDir = nativePath.dirname(sharedDir)
   const root = nativePath.dirname(peTestDir)
   if (nativePath.basename(peTestDir) !== 'pe-test') throw factoryError('STRUCTURE_INVALID', '维护根缺少 pe-test 结构锚')
-  for (const marker of [peTestDir, nativePath.join(root, 'plugins')]) {
+  let peTestStat
+  try { peTestStat = fs.statSync(peTestDir) } catch (error) { throw factoryError('STRUCTURE_INVALID', '维护根结构锚不可读', { path: peTestDir, cause: error.code || String(error) }) }
+  if (!peTestStat.isDirectory()) throw factoryError('STRUCTURE_INVALID', '维护根结构锚不是目录', { path: peTestDir })
+  const packageFile = nativePath.join(root, 'package.json')
+  let packageText
+  try { packageText = fs.readFileSync(packageFile, 'utf8') } catch (error) { throw factoryError('STRUCTURE_INVALID', '维护根包清单不可读', { path: packageFile, cause: error.code || String(error) }) }
+  let packageMeta
+  try { packageMeta = JSON.parse(packageText) } catch (error) { throw factoryError('STRUCTURE_INVALID', '维护根包清单不是 JSON', { path: packageFile, cause: error.code || String(error) }) }
+  if (packageMeta === null || typeof packageMeta !== 'object' || packageMeta.name !== 'dsh-extra-plan') {
+    throw factoryError('STRUCTURE_INVALID', '维护根包身份不符', { path: packageFile, name: packageMeta !== null && typeof packageMeta === 'object' ? String(packageMeta.name) : null })
+  }
+  for (const name of ['index.js', 'cordis.patch.yml']) {
+    const marker = nativePath.join(root, name)
     let stat
     try { stat = fs.statSync(marker) } catch (error) { throw factoryError('STRUCTURE_INVALID', '维护根结构锚不可读', { path: marker, cause: error.code || String(error) }) }
-    if (!stat.isDirectory()) throw factoryError('STRUCTURE_INVALID', '维护根结构锚不是目录', { path: marker })
+    if (!stat.isFile()) throw factoryError('STRUCTURE_INVALID', '维护根结构锚不是文件', { path: marker })
   }
   return realpathSync(root)
 }

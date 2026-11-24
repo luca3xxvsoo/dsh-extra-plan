@@ -48,37 +48,37 @@ function restoreIsolatedEnv() {
 }
 process.on('exit', restoreIsolatedEnv)
 
-const plannerBudget = await import('../../plugins/dsh-extra-plan/lib/planner-budget.js')
-const PLUGIN_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/index.js', import.meta.url))
+const plannerBudget = await import('../../lib/planner-budget.js')
+const PLUGIN_PATH = fileURLToPath(new URL('../../index.js', import.meta.url))
 const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
-const { FREE_TOOLS } = await import('../../plugins/dsh-extra-plan/lib/gate-decisions.js')
-const { Config: SETTINGS_CONFIG } = await import('../../plugins/dsh-extra-plan/lib/settings.js')
-import { createRunCodeStatic } from '../../plugins/dsh-extra-plan/lib/run-code-static.js'
-import * as runCodeScanner from '../../plugins/dsh-extra-plan/lib/run-code-scanner.js'
-import * as shellMutation from '../../plugins/dsh-extra-plan/lib/shell-mutation.js'
-import * as runtimeStatic from '../../plugins/dsh-extra-plan/lib/runtime-static.js'
-import * as agentRuntime from '../../plugins/dsh-extra-plan/lib/agent-runtime.js'
-const roleGenerator = await import('../../plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs')
+const { FREE_TOOLS } = await import('../../lib/gate-decisions.js')
+const { Config: SETTINGS_CONFIG } = await import('../../lib/settings.js')
+import { createRunCodeStatic } from '../../lib/run-code-static.js'
+import * as runCodeScanner from '../../lib/run-code-scanner.js'
+import * as shellMutation from '../../lib/shell-mutation.js'
+import * as runtimeStatic from '../../lib/runtime-static.js'
+import * as agentRuntime from '../../lib/agent-runtime.js'
+const roleGenerator = await import('../../scripts/generate-runtime-defaults.mjs')
 const usageStats = await import('./step-99-用量统计.mjs')
 // 改造11：三账本模块已合并为唯一账本模块（usageArchiveModule），旧名别名不再保留。
-import * as usageArchiveModule from '../../plugins/dsh-extra-plan/lib/usage-ledger.js'
-import { startUsageLedgerBackground } from '../../plugins/dsh-extra-plan/lib/usage-ledger-background.js'
+import * as usageArchiveModule from '../../lib/usage-ledger.js'
+import { startUsageLedgerBackground } from '../../lib/usage-ledger-background.js'
 // 改造11：旧 active→archive 路径推导入口已随三模块合并删除，测试内按唯一账本文件名本地拼接（与插件默认口径一致）。
 const STEP00_ARCHIVE_FILE_NAME = 'extra-plan-usage-ledger.jsonl'
-import { DEFAULT_EXPLORE_BUDGET as GENERATED_DEFAULT_EXPLORE_BUDGET, DEFAULT_PLANNER_PROMPT_SUFFIX as GENERATED_DEFAULT_PLANNER_PROMPT_SUFFIX } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
+import { DEFAULT_EXPLORE_BUDGET as GENERATED_DEFAULT_EXPLORE_BUDGET, DEFAULT_PLANNER_PROMPT_SUFFIX as GENERATED_DEFAULT_PLANNER_PROMPT_SUFFIX } from '../../lib/preset-defaults.generated.js'
 import { copyFileSync, existsSync, readFileSync, readdirSync, rmSync, mkdirSync, mkdtempSync, writeFileSync, renameSync, unlinkSync, statSync, utimesSync } from 'node:fs'
 import { zstdCompressSync } from 'node:zlib'
 import { makeFixtureDir } from '../_shared/workspace-paths.mjs'
-import { createPathContext } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
+import { createPathContext } from '../../lib/path-policy.js'
 import { dirname, join, relative, sep } from 'node:path'
-import { parsePresetYaml, createDefaultSettings, DEFAULT_SETTINGS } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
-import { ROLE_IDS, ROLE_ORDERS, PLANNER_PRESET_ID, PROBER_PRESET_ID } from '../../plugins/dsh-extra-plan/lib/role-contract.js'
-import { ROLE_IDS as PRESET_SYNC_ROLE_IDS, ROLE_DEFINITION_FILES } from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
-import { GATE_WORD_FIELDS, createGateRuntime, validateGateWords } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
-import { probePathOf } from '../../plugins/dsh-extra-plan/lib/save-probe-validation.js'
-import { validateSavePlanContract as validateRealSavePlanContract } from '../../plugins/dsh-extra-plan/lib/save-plan-validation.js'
-import { SAVE_PLAN_LIMITS as REAL_SAVE_PLAN_LIMITS, formatSavePlanSummary as formatRealSavePlanSummary, renderSavePlan as renderRealSavePlan } from '../../plugins/dsh-extra-plan/lib/save-contract.js'
-import { createSaveToolFactories } from '../../plugins/dsh-extra-plan/lib/save-tool-factories.js'
+import { parsePresetYaml, createDefaultSettings, DEFAULT_SETTINGS } from '../../lib/preset-settings.js'
+import { ROLE_IDS, ROLE_ORDERS, PLANNER_PRESET_ID, PROBER_PRESET_ID } from '../../lib/role-contract.js'
+import { ROLE_IDS as PRESET_SYNC_ROLE_IDS, ROLE_DEFINITION_FILES } from '../../lib/preset-sync.js'
+import { GATE_WORD_FIELDS, createGateRuntime, validateGateWords } from '../../lib/gate-words.js'
+import { probePathOf } from '../../lib/save-probe-validation.js'
+import { validateSavePlanContract as validateRealSavePlanContract } from '../../lib/save-plan-validation.js'
+import { SAVE_PLAN_LIMITS as REAL_SAVE_PLAN_LIMITS, formatSavePlanSummary as formatRealSavePlanSummary, renderSavePlan as renderRealSavePlan } from '../../lib/save-contract.js'
+import { createSaveToolFactories } from '../../lib/save-tool-factories.js'
 const {
   routeDenyReason,
   planDenyReason,
@@ -134,7 +134,7 @@ const HERE = fileURLToPath(new URL('.', import.meta.url))
 // ── 闸门词唯一真源 = 资产 YAML（config.gateWords） ───────────────────────────
 // 默认正例与期望文案一律由 parsePresetYaml 取到的配置经 createGateRuntime 派生；
 // decisions 不再导出任何词值常量，测试也不手写第二份词值。
-const ASSET_AGENT_FILE = fileURLToPath(new URL('../../plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml', import.meta.url))
+const ASSET_AGENT_FILE = fileURLToPath(new URL('../../assets/presets/extra-plan/agent.cordis.yml', import.meta.url))
 const assetDocument = parsePresetYaml(readFileSync(ASSET_AGENT_FILE, 'utf8'))
 function flattenAssetRows(list) {
   const out = []
@@ -1246,7 +1246,7 @@ checkTrue(
 )
 
 {
-  const g4LogRetention = await import('../../plugins/dsh-extra-plan/lib/log-retention.js')
+  const g4LogRetention = await import('../../lib/log-retention.js')
   const g4AnchoredName = 'extra-plan-anchored.jsonl'
   const g4LedgerName = 'extra-plan-usage-ledger.jsonl'
   const g4RowsText = (...rows) => rows.join('\n') + '\n'
@@ -2846,7 +2846,7 @@ checkTrue('M6 step-99 旧strict模式拒绝：有效V2输入前置返回strict-p
     const layoutOtherCwd = join(layoutRoot, 'other-cwd')
     mkdirSync(layoutLib, { recursive: true })
     mkdirSync(layoutOtherCwd, { recursive: true })
-    for (const name of ['usage-ledger.js', 'usage-ledger-background.js', 'usage-ledger-worker.js', 'path-policy.js', 'role-contract.js', 'runtime-static.js']) copyFileSync(join('plugins/dsh-extra-plan/lib', name), join(layoutLib, name))
+    for (const name of ['usage-ledger.js', 'usage-ledger-background.js', 'usage-ledger-worker.js', 'path-policy.js', 'role-contract.js', 'runtime-static.js']) copyFileSync(join('lib', name), join(layoutLib, name))
     writeFileSync(join(layoutRoot, 'node_modules', 'fixture-ledger', 'package.json'), JSON.stringify({ type: 'module' }), 'utf8')
     let layoutResult
     const originalCwd = process.cwd()
@@ -2957,7 +2957,7 @@ const pr31ZeroIoRoot = join(prFixtureRoot, 'not-created')
 const pr31ZeroIo = validateProbe({ ...validProbe(), background: [{ topic: 't', detail: 'x'.repeat(PROBE_LIMITS.maxDetailLen + 1) }] }, pr31ZeroIoRoot, createPathContext({ workspaceRoot: pr31ZeroIoRoot }))
 checkTrue('PR31 结构非法优先零IO且不探测路径', typeof pr31ZeroIo === 'string' && pr31ZeroIo.includes('background[0].detail') && !pr31ZeroIo.includes('路径'))
 // ── PR36-PR39：宿主只读代码根（installRoot）授权与边界回归（0.2.2-rc.1 BUG-3） ──
-const { prepareWriteTarget, resolveHostPath } = await import('../../plugins/dsh-extra-plan/lib/path-policy.js')
+const { prepareWriteTarget, resolveHostPath } = await import('../../lib/path-policy.js')
 const prInstallRoot = join(prFixtureRoot, 'install-root')
 mkdirSync(prInstallRoot, { recursive: true })
 const prInstallFile = join(prInstallRoot, 'peer-package.json')
@@ -4319,7 +4319,7 @@ for (const [name, got, expected] of AS) check(name, got, expected)
 
 // AS4b-d（2d）：purpose 前置守卫在工具 execute 内，直接执行工具定义验证三情形；双向断言防失明。
 {
-  const { defineGateTool } = await import('../../plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js')
+  const { defineGateTool } = await import('../../lib/extra-plan-gate-tool.js')
   const purposeAskMock = async () => ({ answers: [{ id: 'q1', selected: [gateRuntime.words.purposeRefine] }] })
   let askCalls = 0
   const mainStateTool = defineGateTool({}, { gateRuntime, ask: async () => { askCalls += 1; return { answers: [] } }, getState: () => ({ route: 'main', purpose: 'none', clarified: false }) })
@@ -4351,7 +4351,7 @@ for (const [name, got, expected] of AS) check(name, got, expected)
 // AS4h-AS4n（recommended 参数）：推荐只给对应选项的展示 label 追加推荐后缀，选项顺序、描述与词值一律不动；
 // 非法值或跨组词不弹卡，直接以 channel-error/INVALID_RECOMMENDED 返回。期望值全部从 gateRuntime.words 派生。
 {
-  const { defineGateTool } = await import('../../plugins/dsh-extra-plan/lib/extra-plan-gate-tool.js')
+  const { defineGateTool } = await import('../../lib/extra-plan-gate-tool.js')
   // 推荐后缀是宿主展示约定（宿主据此渲染「推荐」徽标），不是闸门词：闸门词仍然只从 gateRuntime.words 派生。
   const recommendSuffix = '（推荐）'
   const routeWords = [gateRuntime.words.routeMain, gateRuntime.words.routeExecutor, gateRuntime.words.routePlan, gateRuntime.words.routeDisagree]
@@ -4424,8 +4424,8 @@ for (const [name, got, expected] of AS) check(name, got, expected)
 // 摘要上限取自 REAL_SAVE_PLAN_LIMITS.maxSummaryChars；落盘点一律在 makeWTemp 生成的临时工作区内，
 // 断言不写死项目绝对路径；测毕删除本块创建的各临时根。
 {
-  const { createRuntimeLifecycle } = await import('../../plugins/dsh-extra-plan/lib/runtime-lifecycle.js')
-  const { createPlanDraftToolFactories } = await import('../../plugins/dsh-extra-plan/lib/plan-draft-tool.js')
+  const { createRuntimeLifecycle } = await import('../../lib/runtime-lifecycle.js')
+  const { createPlanDraftToolFactories } = await import('../../lib/plan-draft-tool.js')
   const draftSavePlanDir = '.extra-plan'
   const draftToPosix = (value) => String(value).replace(/\\/g, '/')
   const draftSamePath = (left, right) => draftToPosix(left).toLowerCase() === draftToPosix(right).toLowerCase()
@@ -4618,7 +4618,7 @@ for (const [name, got, expected] of AS) check(name, got, expected)
   checkTrue('DRAFT21 转正后两份草稿被删除、正式工件正文含草稿修改', !existsSync(join(draftEditDir, draftPromoteName)) && !existsSync(join(draftEditDir, draftPromoteCheckName)) && existsSync(draftPromotedPlan) && existsSync(draftPromotedCheck) && readFileSync(draftPromotedPlan, 'utf8') === draftPromoteExpectedPlan && readFileSync(draftPromotedCheck, 'utf8') === draftValidChecklistText)
   // ⑨-2 未探查标记：save_plan 与 edit_plan_draft 共用同一判定与同一时机（合同校验之前），
   //     期望值一律从模块出口 unexploredMarkerOf 与上面已建的合法夹具派生，不写死项目绝对路径。
-  const { unexploredMarkerOf: draftMarkerOf } = await import('../../plugins/dsh-extra-plan/lib/save-tool-factories.js')
+  const { unexploredMarkerOf: draftMarkerOf } = await import('../../lib/save-tool-factories.js')
   const draftMarkerLine = '【待确认：' + draftEditBase + ' 未探查项】'
   checkTrue('DRAFT21a 未探查标记夹具自证：合法夹具本身不含标记、插入行被模块出口整体识别为标记', draftMarkerOf(draftValidPlanText) === null && draftMarkerOf(draftMarkerLine) === draftMarkerLine)
   // save_plan：命中标记即整批拒绝，草稿落盘与合同失败同款（两份 .md_mid），错误追加标记提示与草稿相对路径。
@@ -5474,7 +5474,7 @@ checkTrue('GWC11 定制 runtime 与出厂 runtime 对同一结构化结果推进
   const m8ContainingWords = { routeMain: '甲', routeExecutor: '丁批准', routePlan: '甲规划', routeDisagree: '丙', purposeRefine: '己完整', purposeRedo: '庚重做' }
   const m8ContainingRuntime = createGateRuntime(m8ContainingWords)
   checkTrue('M8 定制词存在包含关系时整组仍严格合法（只按整值判重复，不做子串判等）', Object.isFrozen(m8ContainingRuntime.words) && m8ContainingRuntime.words.routeMain === '甲' && m8ContainingRuntime.words.routePlan === '甲规划' && m8ContainingRuntime.route.length === 4)
-  const { resolveWorkspacePath, resolveHostPath } = await import('../../plugins/dsh-extra-plan/lib/path-policy.js')
+  const { resolveWorkspacePath, resolveHostPath } = await import('../../lib/path-policy.js')
   const m8WorkspaceRoot = makeWTemp('dsh-m8-workspace-root')
   const m8HostRoot = makeWTemp('dsh-m8-host-root')
   const m8Relative = join('ledger-input', 'extra-plan-usage-ledger.jsonl')
@@ -5777,9 +5777,14 @@ checkTrue('GWC11 定制 runtime 与出厂 runtime 对同一结构化结果推进
   const m8CliScanWorkspaceRoot = join(m8CliSessionsRoot, 'm8-cli-workspace')
   const m8CliMaintenanceRoot = process.cwd()
   const m8CliPreflightRoot = join(m8CliMaintenanceRoot, 'pe-test')
-  const m8CliPluginRoot = join(m8CliMaintenanceRoot, 'plugins')
-  const m8CliScanAllowedPaths = new Set([m8CliMaintenanceRoot, m8CliPreflightRoot, m8CliPluginRoot, m8CliHostRoot, m8CliSessionsRoot, m8CliScanWorkspaceRoot, m8CliLog, m8CliLedger])
-  const m8CliRejectedScanAllowedStatPaths = new Set([m8CliPreflightRoot, m8CliPluginRoot])
+  // 包已上提到维护根：包根即维护根，结构锚改为根 manifest 与 index.js/cordis.patch.yml，维护根下不再有独立包子目录。
+  const m8CliPluginRoot = m8CliMaintenanceRoot
+  const m8CliPackageManifestFile = join(m8CliPluginRoot, 'package.json')
+  const m8CliRejectedScanExpectedReads = [m8CliPackageManifestFile]
+  const m8CliRejectedScanExpectedStats = [m8CliPreflightRoot, join(m8CliPluginRoot, 'index.js'), join(m8CliPluginRoot, 'cordis.patch.yml')]
+  const m8CliScanAllowedPaths = new Set([m8CliMaintenanceRoot, m8CliPreflightRoot, m8CliPluginRoot, ...m8CliRejectedScanExpectedStats, ...m8CliRejectedScanExpectedReads, m8CliHostRoot, m8CliSessionsRoot, m8CliScanWorkspaceRoot, m8CliLog, m8CliLedger])
+  const m8CliRejectedScanAllowedStatPaths = new Set(m8CliRejectedScanExpectedStats)
+  const m8CliRejectedScanAllowedReadPaths = new Set(m8CliRejectedScanExpectedReads)
   let m8ScanWindow = 'positive'
   const m8ScanIo = { read: [], stat: [], readdir: [], blocked: [] }
   const m8ScanIoCounts = () => ({ read: m8ScanIo.read.length, stat: m8ScanIo.stat.length, readdir: m8ScanIo.readdir.length, blocked: m8ScanIo.blocked.length })
@@ -5788,7 +5793,7 @@ checkTrue('GWC11 定制 runtime 与出厂 runtime 对同一结构化结果推进
     const path = String(value)
     m8ScanIo[kind].push(path)
     const allowed = m8ScanWindow === 'rejected'
-      ? kind === 'stat' && m8CliRejectedScanAllowedStatPaths.has(path)
+      ? (kind === 'stat' && m8CliRejectedScanAllowedStatPaths.has(path)) || (kind === 'read' && m8CliRejectedScanAllowedReadPaths.has(path))
       : m8CliScanAllowedPaths.has(path)
     if (!allowed) {
       m8ScanIo.blocked.push(path)
@@ -5858,7 +5863,7 @@ checkTrue('GWC11 定制 runtime 与出厂 runtime 对同一结构化结果推进
     const m8CliRejectedExpectedStats = {
       missingRoot: [],
       missingTarget: [],
-      unauthorized: [m8CliPreflightRoot, m8CliPluginRoot],
+      unauthorized: m8CliRejectedScanExpectedStats,
     }
     const m8CliSnapshot = () => {
       const ledger = readFileSync(m8CliLedger)
@@ -5880,7 +5885,7 @@ checkTrue('GWC11 定制 runtime 与出厂 runtime 对同一结构化结果推进
       snapshots: { before: beforeSnapshot, after: afterSnapshot },
       reason: result.lines.filter((line) => line.includes('失败') || line.includes('必须显式提供')),
     })
-    const m8CliRejectedScanMatches = (trace, expectedStats) => trace.read.length === 0 && trace.readdir.length === 0 && trace.blocked.length === 0 && trace.stat.length === expectedStats.length && trace.stat.every((path) => expectedStats.includes(path)) && expectedStats.every((path) => trace.stat.includes(path))
+    const m8CliRejectedScanMatches = (trace, expectedStats, expectedReads = []) => trace.read.length === expectedReads.length && trace.read.every((path) => expectedReads.includes(path)) && trace.readdir.length === 0 && trace.blocked.length === 0 && trace.stat.length === expectedStats.length && trace.stat.every((path) => expectedStats.includes(path)) && expectedStats.every((path) => trace.stat.includes(path))
     const m8CliSnapshotsStable = (trace) => JSON.stringify(trace.snapshots.before) === JSON.stringify(trace.snapshots.after)
     m8InstallScanObserver('rejected')
     try {
@@ -5919,7 +5924,7 @@ checkTrue('GWC11 定制 runtime 与出厂 runtime 对同一结构化结果推进
       m8RestoreScanObserver()
       const m8CliUnauthorizedAfterSnapshot = m8CliSnapshot()
       m8CliUnauthorizedRejectedTrace = m8CliRejectedTraceFor(m8CliUnauthorizedScanBefore, m8CliUnauthorizedIo, m8CliUnauthorized, m8CliUnauthorizedBeforeSnapshot, m8CliUnauthorizedAfterSnapshot)
-      checkTrue('M10 CLI --compare无授权目标拒绝且不读取W/H数据、不进入扫描', m8CliUnauthorized.exit === 1 && m8CliUnauthorized.lines.some((line) => line.includes('失败')) && m8CliUnauthorizedIo.read === 0 && m8CliUnauthorizedIo.stat === 0 && m8CliUnauthorizedIo.write === 0 && m8CliUnauthorizedScanIo.read === 0 && m8CliUnauthorizedScanIo.readdir === 0 && m8CliUnauthorizedScanIo.stat >= 0 && m8CliUnauthorizedScanIo.blocked === 0 && m8CliRejectedScanMatches(m8CliUnauthorizedRejectedTrace.scan, m8CliRejectedExpectedStats.unauthorized) && m8CliSnapshotsStable(m8CliUnauthorizedRejectedTrace))
+      checkTrue('M10 CLI --compare无授权目标拒绝且不读取W/H数据、不进入扫描', m8CliUnauthorized.exit === 1 && m8CliUnauthorized.lines.some((line) => line.includes('失败')) && m8CliUnauthorizedIo.read === 0 && m8CliUnauthorizedIo.stat === 0 && m8CliUnauthorizedIo.write === 0 && m8CliUnauthorizedScanIo.readdir === 0 && m8CliUnauthorizedScanIo.stat >= 0 && m8CliUnauthorizedScanIo.blocked === 0 && m8CliRejectedScanMatches(m8CliUnauthorizedRejectedTrace.scan, m8CliRejectedExpectedStats.unauthorized, m8CliRejectedScanExpectedReads) && m8CliSnapshotsStable(m8CliUnauthorizedRejectedTrace))
       const m8CliRejectedLogStatCounterexample = { ...m8CliMissingTargetRejectedTrace.scan, stat: [...m8CliMissingTargetRejectedTrace.scan.stat, m8CliLog] }
       checkTrue('M10 拒绝窗口多一次夹具日志stat对照使允许谓词失效', !m8CliRejectedScanMatches(m8CliRejectedLogStatCounterexample, m8CliRejectedExpectedStats.missingTarget))
       m8CliRejectedScanTrace = {

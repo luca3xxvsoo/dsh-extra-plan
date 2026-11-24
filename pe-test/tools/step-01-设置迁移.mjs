@@ -4,17 +4,17 @@ import { readFileSync } from 'node:fs'
 import { isDeepStrictEqual } from 'node:util'
 import { join } from 'node:path'
 import { makeFixtureDir } from '../_shared/workspace-paths.mjs'
-import { createPathContext } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
+import { createPathContext } from '../../lib/path-policy.js'
 import { fileURLToPath } from 'node:url'
-import { DEFAULT_SETTINGS } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
+import { DEFAULT_SETTINGS } from '../../lib/preset-defaults.generated.js'
 import {
   SETTING_DEFINITIONS,
   SETTINGS_ROW_ID,
   captureRowSettings,
   parsePresetYaml,
-} from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
-import * as presetSyncModule from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
-import { GATE_WORD_FIELDS, validateGateWords } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
+} from '../../lib/preset-settings.js'
+import * as presetSyncModule from '../../lib/preset-sync.js'
+import { GATE_WORD_FIELDS, validateGateWords } from '../../lib/gate-words.js'
 import { createOutput } from '../_shared/test-output.mjs'
 
 const {
@@ -29,7 +29,7 @@ const {
 const ROOT = fileURLToPath(new URL('../..', import.meta.url))
 const migrationFixture = makeFixtureDir({ label: 'settings-migration' })
 const MIGRATION_PATH_CONTEXT = createPathContext({ hostDataRoot: migrationFixture.root })
-const ASSET = join(ROOT, 'plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml')
+const ASSET = join(ROOT, 'assets/presets/extra-plan/agent.cordis.yml')
 
 function findTemplateGateWords(value) {
   if (Array.isArray(value)) {

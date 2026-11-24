@@ -6,17 +6,17 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync } from 'no
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createIsolatedEnv, makeFixtureDir } from '../_shared/workspace-paths.mjs'
-import { createPathContext } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
+import { createPathContext } from '../../lib/path-policy.js'
 import { registerHostDeps } from '../_shared/host-deps.mjs'
 
 
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '..', '..')
-const PLUGIN_PATH = join(ROOT, 'plugins', 'dsh-extra-plan', 'index.js')
-const GATE_PATH = join(ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'gate-decisions.js')
-const ASSEMBLY_PATH = join(ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'assembly-presentation.js')
-const AUTHOR_SOURCE_PATH = join(ROOT, 'plugins', 'dsh-extra-plan', 'assets', 'presets', 'extra-plan', 'agent.cordis.yml')
+const PLUGIN_PATH = join(ROOT, 'index.js')
+const GATE_PATH = join(ROOT, 'lib', 'gate-decisions.js')
+const ASSEMBLY_PATH = join(ROOT, 'lib', 'assembly-presentation.js')
+const AUTHOR_SOURCE_PATH = join(ROOT, 'assets', 'presets', 'extra-plan', 'agent.cordis.yml')
 const INSTALL_ROOT_RAW = typeof process.env.DSH_INSTALL_ROOT === 'string' && process.env.DSH_INSTALL_ROOT.trim() !== '' ? process.env.DSH_INSTALL_ROOT.trim() : null
 const contextFixture = makeFixtureDir({ label: 'context-gate' })
 const BATCH_DIR = contextFixture.root
@@ -68,7 +68,7 @@ await registerHostDeps()
 const { Context } = await import('@deepseek-ai/cordis')
 const { default: Loader } = await import('@deepseek-ai/cordis-plugin-loader')
 const { LlmAdapter } = await import('@deepseek-ai/dsh-llm')
-const { parsePresetYaml } = await import('../../plugins/dsh-extra-plan/lib/preset-settings.js')
+const { parsePresetYaml } = await import('../../lib/preset-settings.js')
 
 let pass = 0
 let fail = 0
@@ -498,7 +498,7 @@ async function inspectPersistence(service, expectedHeader, expectedEvents) {
 
 const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
 const gate = plugin.decisions
-const assetRows = parsePresetYaml(readFileSync(join(ROOT, 'plugins', 'dsh-extra-plan', 'assets', 'presets', 'extra-plan', 'agent.cordis.yml'), 'utf8'))
+const assetRows = parsePresetYaml(readFileSync(join(ROOT, 'assets', 'presets', 'extra-plan', 'agent.cordis.yml'), 'utf8'))
 function flatten(rows, out = []) {
   for (const row of rows) {
     if (row === null || typeof row !== 'object') continue

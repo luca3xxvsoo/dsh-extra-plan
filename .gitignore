@@ -10,3 +10,4 @@ reports/
 # 跨平台系统杂项
 .DS_Store
 Thumbs.db
+node_modules/

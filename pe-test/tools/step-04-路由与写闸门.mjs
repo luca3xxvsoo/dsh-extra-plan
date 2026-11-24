@@ -9,9 +9,9 @@ import { createRequire } from 'node:module'
 import { isDeepStrictEqual } from 'node:util'
 import { readFileSync, writeFileSync, existsSync, readdirSync, rmSync, mkdirSync } from 'node:fs'
 import { makeFixtureDir } from '../_shared/workspace-paths.mjs'
-import { createPathContext } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
+import { createPathContext } from '../../lib/path-policy.js'
 // S4 降耦合：探查预算上限唯一来源（生成值）；上限断言一律由 DEFAULT_EXPLORE_BUDGET 派生，不内嵌固定数值。
-import { DEFAULT_EXPLORE_BUDGET } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
+import { DEFAULT_EXPLORE_BUDGET } from '../../lib/preset-defaults.generated.js'
 
 // 隔离前的原始 DSH_HOME：仅供下方 createRequire 锚定宿主 profile 的 js-yaml；
 // 插件运行时的 DSH_HOME 见紧随 registerHostDeps 之后的隔离块。
@@ -27,9 +27,9 @@ const DSH_PACKAGE_MANIFEST = ROUTE_INSTALL_ROOT === null
     ? join(ROUTE_INSTALL_ROOT, 'node_modules', '@deepseek-ai', 'dsh', 'package.json')
     : join(ROUTE_INSTALL_ROOT, 'package.json')
 const makeTmpDir = (label) => { const dir = join(ROUTE_FIXTURE.home, 'tmp', String(label).replace(/[^A-Za-z0-9_-]+/g, '-')); mkdirSync(dir, { recursive: true }); return dir }
-const PLUGIN_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/index.js', import.meta.url))
-const AGENT_RUNTIME_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/agent-runtime.js', import.meta.url))
-const SHELL_MUTATION_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/shell-mutation.js', import.meta.url))
+const PLUGIN_PATH = fileURLToPath(new URL('../../index.js', import.meta.url))
+const AGENT_RUNTIME_PATH = fileURLToPath(new URL('../../lib/agent-runtime.js', import.meta.url))
+const SHELL_MUTATION_PATH = fileURLToPath(new URL('../../lib/shell-mutation.js', import.meta.url))
 // 注：gate-decisions/usage-ledger/runtime-lifecycle 的路径锚点随 M6 源码 includes 断言一并退役。
 import { registerHostDeps } from '../_shared/host-deps.mjs'
 // 宿主契约：planner 身份判据是会话 header.agentPreset（插件 isPlannerChild 读该值，descriptor.mode 不再参与）。
@@ -48,7 +48,7 @@ process.env.TMP = ROUTE_FIXTURE.temp
 process.env.TMPDIR = ROUTE_FIXTURE.temp
 delete process.env.DSH_EXTRA_PLAN_CONFIG_PATH
 await registerHostDeps()
-const { createModelRouting, resolveAgentRouteSources, PLANNER_BLOCKED_REASON, NON_PLANNER_BLOCKED_REASON, routeKey } = await import('../../plugins/dsh-extra-plan/lib/model-routing.js')
+const { createModelRouting, resolveAgentRouteSources, PLANNER_BLOCKED_REASON, NON_PLANNER_BLOCKED_REASON, routeKey } = await import('../../lib/model-routing.js')
 
 // ── 测试隔离（构造期配置读取）─────────────────────────
 // live-config 构造期会无条件读盘一次（优先 DSH_EXTRA_PLAN_CONFIG_PATH，否则读取 settings 行的
@@ -75,14 +75,14 @@ process.on('exit', restoreIsolatedEnv)
 const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
 const agentRuntimeModule = await import(pathToFileURL(AGENT_RUNTIME_PATH).href)
 const shellMutationModule = await import(pathToFileURL(SHELL_MUTATION_PATH).href)
-import { createSdkTextCache, sdkSchemasFingerprint, sdkTextCacheEntryMatches } from '../../plugins/dsh-extra-plan/lib/sdk-text-cache.js'
-import { toolSdkSchemasOf } from '../../plugins/dsh-extra-plan/lib/assembly-presentation.js'
-import { createGateRuntime } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
-import { createLiveConfig } from '../../plugins/dsh-extra-plan/lib/live-config.js'
-import { CREATIVE_SKILL_NAMES as CREATIVE_SKILL_NAMES_FOR_TEST } from '../../plugins/dsh-extra-plan/lib/assembly-presentation.js'
-const routeAssemblyPresentation = await import('../../plugins/dsh-extra-plan/lib/assembly-presentation.js')
-import { SETTING_DEFINITIONS as SETTING_DEFINITIONS_E, SETTING_GROUPS as SETTING_GROUPS_E, SETTINGS_ROW_ID as SETTINGS_ROW_ID_E, SETTINGS_ROW_NAME as SETTINGS_ROW_NAME_E, EXTRA_PLAN_SETTING_DEFINITIONS as EXTRA_PLAN_SETTING_DEFINITIONS_E } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
-import { ASSET_DEFINITION_FILE as ASSET_DEFINITION_FILE_E, roleDefinitionOf } from '../../plugins/dsh-extra-plan/lib/preset-sync.js'
+import { createSdkTextCache, sdkSchemasFingerprint, sdkTextCacheEntryMatches } from '../../lib/sdk-text-cache.js'
+import { toolSdkSchemasOf } from '../../lib/assembly-presentation.js'
+import { createGateRuntime } from '../../lib/gate-words.js'
+import { createLiveConfig } from '../../lib/live-config.js'
+import { CREATIVE_SKILL_NAMES as CREATIVE_SKILL_NAMES_FOR_TEST } from '../../lib/assembly-presentation.js'
+const routeAssemblyPresentation = await import('../../lib/assembly-presentation.js')
+import { SETTING_DEFINITIONS as SETTING_DEFINITIONS_E, SETTING_GROUPS as SETTING_GROUPS_E, SETTINGS_ROW_ID as SETTINGS_ROW_ID_E, SETTINGS_ROW_NAME as SETTINGS_ROW_NAME_E, EXTRA_PLAN_SETTING_DEFINITIONS as EXTRA_PLAN_SETTING_DEFINITIONS_E } from '../../lib/preset-settings.js'
+import { ASSET_DEFINITION_FILE as ASSET_DEFINITION_FILE_E, roleDefinitionOf } from '../../lib/preset-sync.js'
 // 说明：不 import lib/settings.js——它顶层 import '@deepseek-ai/schemastery'，解析环境依赖宿主副本
 // （本机 npm 全局 dsh 与 profiles/web 的 profile 内副本都可能提供该依赖）；
 // 故 Config 的 volatile/默认值契约改用源码文本静态核对（机械可核对），不依赖本机 schemastery 版本。
@@ -236,7 +236,7 @@ const JsExpr = new yaml.Type('tag:yaml.org,2002:js', { kind: 'scalar', resolve: 
 const schema = yaml.JSON_SCHEMA.extend(JsExpr)
 // 预设静态断言读取工作区资产，与 step-01-预设完整性使用同一来源；
 // 不得依赖用户已部署的 DSH_HOME。
-const presetFile = fileURLToPath(new URL('../../plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml', import.meta.url))
+const presetFile = fileURLToPath(new URL('../../assets/presets/extra-plan/agent.cordis.yml', import.meta.url))
 const presetText = readFileSync(presetFile, 'utf8')
 let rows
 try {
@@ -678,7 +678,7 @@ function makeArmAgent(id, toolsStub, withAppend) {
   checkTrue('R16 schemas 折叠为仅 run_code（PTC 折叠）跳过收窄：restrict 未被调用', ptcRecorder.calls.restrict.length === 0)
 {
   // v5 D-B 断言：save_plan/save_probe 注册透传 { when }；mock 按宿主 resolve() 语义求值 admitted 集。
-  const { createRuntimeLifecycle } = await import('../../plugins/dsh-extra-plan/lib/runtime-lifecycle.js')
+  const { createRuntimeLifecycle } = await import('../../lib/runtime-lifecycle.js')
   function makeWhenTools() {
     const registered = []
     const tools = {
@@ -3884,7 +3884,7 @@ checkTrue('GW19 旧词不推进路线 → subagent deny 且文案只含当前定
   const stripped = genPluginsText.split('\n').map((line) => (line.startsWith('  ') ? line.slice(2) : line)).join('\n')
   checkTrue('T9-3k definition plugins 文本逐字保留作者源注释/缩进语义', stripped === assetTop)
   // ③ settings 行 Config：11 字段全 volatile（源码文本静态核对，10 项 extra-plan + 1 项装载期宿主行）+ 1 项装载期宿主行 descriptor 分组
-  const settingsText = readFileSyncE(fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/settings.js', import.meta.url)), 'utf8')
+  const settingsText = readFileSyncE(fileURLToPath(new URL('../../lib/settings.js', import.meta.url)), 'utf8')
   // 只取代码行（剥注释），避免注释里的示例（如官方 maxParallelToolCalls 习语）混进字段集合。
   const settingsCodeOnly = settingsText.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n')
   const configBody = settingsCodeOnly.slice(settingsCodeOnly.indexOf('export const Config = z.object('), settingsCodeOnly.indexOf('})', settingsCodeOnly.indexOf('export const Config = z.object(')))
@@ -3901,7 +3901,7 @@ checkTrue('GW19 旧词不推进路线 → subagent deny 且文案只含当前定
   check('T9-3o descriptor 分组：extra-plan 恰 10 项、host-rows 恰 1 项', EXTRA_PLAN_SETTING_DEFINITIONS_E.length + '|' + SETTING_DEFINITIONS_E.filter((item) => item.group === SETTING_GROUPS_E.HOST_ROWS).length, '10|1')
   checkTrue('T9-3p 新载体行 id/name 常量与当前规范一致', SETTINGS_ROW_ID_E === 'dsh-extra-plan-settings' && SETTINGS_ROW_NAME_E === 'dsh-extra-plan/settings')
    // ④ 当前写链只经 settings row；旧 preset-sync helper/公开写入入口已退役。
-   const presetSyncSource = readFileSyncE(fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/preset-sync.js', import.meta.url)), 'utf8')
+   const presetSyncSource = readFileSyncE(fileURLToPath(new URL('../../lib/preset-sync.js', import.meta.url)), 'utf8')
    const retiredPresetSyncSymbols = ['PRESET_ROW_ID', 'LEGACY_PRESET_ROW_ID', 'LEGACY_PRESENTATION_ROW_ID', 'readLegacyState', 'readLegacyPresetState', 'readDeclaredPluginsFromPatch', 'declarationCoversAsset', 'declarationBodyMatchesAsset', 'stripUserWritable', 'carryUserWritable', 'activeLegacyRow', 'restatePresetPlugins', 'restatePresetSyncConfig', 'activePresetSyncRow', 'publicConfigFromRows']
    checkTrue('T9-3q preset-sync 保留mountPresetSync且旧API/常量/写入helper缺席', presetSyncSource.includes('export function mountPresetSync') && !presetSyncSource.includes('export function apply') && retiredPresetSyncSymbols.every((name) => !presetSyncSource.includes(name)))
   // ── ①c 空串零探针短路与验收者 pro 入口（[任务5] M1）──────────────────────

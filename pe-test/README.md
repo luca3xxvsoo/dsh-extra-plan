@@ -19,7 +19,7 @@
 
 本节仅适用于从下列旧布局迁移的用户（包括只残留旧 bundle 条目的情况）。标准包或全新安装见 [验收顺序](docs/ai-维护手册.md#验收顺序)；全新安装无需执行下述旧包卸载。标准包的源码合同不代表已发布或可部署。
 
-停止相关进程后，按顺序卸载 Web 的 `@local/dsh-extra-plan`；确认该旧精确路径和 profile bundle 旧条目均不存在。随后从 `https://github.com/luca3xxvsoo/dsh-extra-plan#path:/plugins/dsh-extra-plan` 安装核心包。不得整删 `node_modules/@local`，也不得自动删除用户 settings 配置或与包改名无关的 raw patch 历史行；重启、设置页、`/preset`、真实 question/approval 与消息仍由用户验收。
+停止相关进程后，按顺序卸载 Web 的 `@local/dsh-extra-plan`；确认该旧精确路径和 profile bundle 旧条目均不存在。随后从 `https://github.com/luca3xxvsoo/dsh-extra-plan` 安装核心包。不得整删 `node_modules/@local`，也不得自动删除用户 settings 配置或与包改名无关的 raw patch 历史行；重启、设置页、`/preset`、真实 question/approval 与消息仍由用户验收。
 
 ## 怎么跑
 
@@ -30,7 +30,7 @@ node pe-test/tools/一键step测试.mjs
 → 自动跑一键脚本 AUTO 数组中的全部自动判定项（项数以 runner 的 AUTO 数组实际项为准），按实际结果分级为通过/部分执行/未执行/失败，结果保存到 `pe-test/reports/测试报告-<时间>.md`；历史批次数字不作为当前通过数。
 → 涉及 Host 代码依赖项时，须由调用者显式前置 `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/一键step测试.mjs`（仅授只读代码根，不授数据 H）；纯 W/只读取证工具直接 `node`；AUTO 不透传真实 Host 选择，实机/provider 项按 HUMAN/NOT-RUN 单列，不自动执行。
 → 判读：中文「未完成」与英文 `INCOMPLETE` 均计入未完成；`NOT-RUN`/`HUMAN`/`SKIP` 正数不计 PASS；一键脚本正常生成报告时，退出码只由 AUTO 失败数决定，不包括人眼项自身状态；exit 0 不等于全量执行。目录不完整或运行器自身异常时，按结构化状态及原始输出判读。「保真断言」（唯一入口 = `step-06-08-v4取证回归.mjs` 的 `checkFidelity`）只验证取证工具对畸形或异常输入如实呈现且不崩，成功只计入 fidelity 独立赛道、不计入通过数，失败仍计入失败并使脚本退出码非零。
-→ 跑之前先确认：**在完整目录（pe-test 与 plugins 同级 = 仓库根）下运行**才有完整结果
+→ 跑之前先确认：**在完整目录（仓库根含 index.js 与 pe-test）下运行**才有完整结果
 → 报告末尾会列出「人眼项/需参数项」——那些需要你自己跑并人工判读，不是自动的；HUMAN 独立报告保留 stdout/stderr 全量原文
 
 **step-07 实机子代理取证（HUMAN，不能无参运行）**：显式传会话参数对 `--session <顶层主会话ID>` 与 `--sessions-dir <会话根>`，并在同一部署配置快照下提供 `PLANNER_PROMPT_SUFFIX`（空串也要显式设置）；`SESSION_ID` 只作报告/输出字段，不作选择参数；纯 W 工具可直接 `node`，需要 Host 代码的完整 P 取证必须带 `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs`，裸 node 不等同完整 P：
@@ -68,7 +68,7 @@ node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-07-子代理
 
 ## 两个注意事项
 
-1. **运行前提**：部分文件要 `import 仓库里的插件代码`（相对路径 `../../plugins/...`）——如果运行时报「找不到模块」，说明当前目录不是完整目录；把 pe-test 挪回仓库根（或你准备挪回工作区时带齐 plugins）再跑。
+1. **运行前提**：部分文件要 `import 仓库里的插件代码`（相对路径 `../../lib/...`）——如果运行时报「找不到模块」，说明当前目录不是完整目录；把 pe-test 挪回仓库根再跑。
 2. `step-99-用量统计.mjs` 需要参数：普通相对路径 `node step-99-用量统计.mjs <extra-plan-usage-ledger.jsonl>` 即只读统计；`--compare <extra-plan-usage-ledger.jsonl>` 只读对拍，实际调用 `scanUsageRows` 做两次独立全量现场扫描并按 role→model 对拍，全程零写盘；手工归档已移除，`--archive` 在任何 IO 前报 `usage-removed`；显式 `--host-root <H 数据根>` 加 H 内绝对精确账本只作只读稳定观察（最多两次观察、不取锁、零 Host 写；元数据变化或两次字节不一致记 `INCOMPLETE`）。默认 Host 目标为 `logs/dsh-extra-plan/extra-plan-usage-ledger.jsonl`。
    - `step-99` 只读单一 `extra-plan-usage-ledger.jsonl`，不取锁、不写入；写入统一由插件启动扫描与 `lib/usage-ledger.js` 的 `archiveLedger` 完成。错误诊断按需追加 `logs/dsh-extra-plan/extra-plan-usage-errors.jsonl`，每行仅有字符串 `ts`、`reason`、`message`；错误文件不是正常启动必有，账本 `ts` 仍为成功解析会话文件 mtime。
    - 启动写入由 settings 行 apply 期只注册调度：存在 appReady 服务时在单层 root `ctx.effect` 内 `onReady` 之后经一个 `setImmediate` 宏任务才发起固定包内真实 Worker，appReady 缺失或无 `onReady` 时回落 apply 内直接发起；Worker 复用同步 `startupArchive` 完成扫描、解压、聚合、严格解析、序列化与发布，失败只留 `failed`/warn，不回退主线程；`scanUsageRows`、`archiveLedger`、`startupArchive` 仍是同步 API，不混称后台 API。

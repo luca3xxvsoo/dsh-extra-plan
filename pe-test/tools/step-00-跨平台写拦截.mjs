@@ -26,8 +26,8 @@ import { registerHostDeps } from '../_shared/host-deps.mjs'
 await registerHostDeps()
 
 // 插件顶层静态 import '@deepseek-ai/dsh-llm' → 必须先注册宿主真包解析钩子，再动态加载插件模块。
-const { decisions } = await import('../../plugins/dsh-extra-plan/index.js')
-const { pwshMutationEvidence, bashMutationEvidence } = await import('../../plugins/dsh-extra-plan/lib/shell-mutation.js')
+const { decisions } = await import('../../index.js')
+const { pwshMutationEvidence, bashMutationEvidence } = await import('../../lib/shell-mutation.js')
 
 const {
   bashCommandOf,

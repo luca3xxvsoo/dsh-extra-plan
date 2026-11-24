@@ -7,7 +7,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { symlinkSync } from 'node:fs'
 import { createIsolatedEnv, makeFixtureDir } from '../_shared/workspace-paths.mjs'
-import { createPathContext } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
+import { createPathContext } from '../../lib/path-policy.js'
 import { registerHostDeps } from '../_shared/host-deps.mjs'
 
 
@@ -15,8 +15,8 @@ import { registerHostDeps } from '../_shared/host-deps.mjs'
 const HERE = dirname(fileURLToPath(import.meta.url))
 const THIS_FILE = fileURLToPath(import.meta.url)
 const ROOT = resolve(HERE, '..', '..')
-const PLUGIN_PATH = join(ROOT, 'plugins', 'dsh-extra-plan', 'index.js')
-const PRESET_DIR = join(ROOT, 'plugins', 'dsh-extra-plan', 'assets', 'presets', 'extra-plan')
+const PLUGIN_PATH = join(ROOT, 'index.js')
+const PRESET_DIR = join(ROOT, 'assets', 'presets', 'extra-plan')
 const INSTALL_ROOT_RAW = typeof process.env.DSH_INSTALL_ROOT === 'string' && process.env.DSH_INSTALL_ROOT.trim() !== '' ? process.env.DSH_INSTALL_ROOT.trim() : null
 const roleFixture = makeFixtureDir({ label: 'role-preset' })
 const BATCH_DIR = roleFixture.root
@@ -40,7 +40,7 @@ await registerHostDeps()
 // 本仓插件名映射到源码，等价于生产安装后的 'dsh-extra-plan' 解析，不改宿主也不写仓库。
 const moduleHooks = await import('node:module')
 if (typeof moduleHooks.registerHooks === 'function') {
-  const PLUGIN_ENTRY = pathToFileURL(join(resolve(dirname(fileURLToPath(import.meta.url)), '..', '..'), 'plugins', 'dsh-extra-plan', 'index.js')).href
+  const PLUGIN_ENTRY = pathToFileURL(join(resolve(dirname(fileURLToPath(import.meta.url)), '..', '..'), 'index.js')).href
   moduleHooks.registerHooks({ resolve(specifier, context, nextResolve) {
     if (specifier === 'dsh-extra-plan') return { url: PLUGIN_ENTRY, shortCircuit: true }
     return nextResolve(specifier, context)
@@ -50,7 +50,7 @@ const { Context } = await import('@deepseek-ai/cordis')
 const { assembleContextFor } = await import('@deepseek-ai/dsh-agent')
 const { default: Loader } = await import('@deepseek-ai/cordis-plugin-loader')
 const { default: AgentPresetAdapter } = await import('@deepseek-ai/dsh-agent-preset')
-const { parsePresetYaml } = await import('../../plugins/dsh-extra-plan/lib/preset-settings.js')
+const { parsePresetYaml } = await import('../../lib/preset-settings.js')
 
 let pass = 0
 let fail = 0
@@ -86,7 +86,7 @@ function sectionTexts(assembly) {
   return Array.isArray(assembly.sections) ? assembly.sections.map((section) => typeof section.text === 'string' ? section.text : '').join('\n') : ''
 }
 
-const { assetDefinitions, assetDefinition, definitionWithProjection, roleDefinitionsWithPresentation } = await import('../../plugins/dsh-extra-plan/lib/preset-sync.js')
+const { assetDefinitions, assetDefinition, definitionWithProjection, roleDefinitionsWithPresentation } = await import('../../lib/preset-sync.js')
 
 const EXPECTED_ROSTER = ['extra-plan', 'extra-plan-executor', 'extra-plan-planner', 'extra-plan-reviewer', 'extra-plan-prober']
 const EXPECTED_ROSTER_RECORDS = [
@@ -131,7 +131,7 @@ async function runMode(mode, defaultSandboxMode) {
     root.provide('dshHomePath', (...parts) => join(modeHome, ...parts.map((part) => String(part))))
     root.provide('profileContext', { home: modeHome, dir: modeHome, patchPath: join(modeHome, 'cordis.patch.yml'), installAnchor: INSTALL_ANCHOR })
     mkdirSync(join(loaderRoot, 'node_modules'), { recursive: true })
-    try { symlinkSync(join(ROOT, 'plugins', 'dsh-extra-plan'), join(loaderRoot, 'node_modules', 'dsh-extra-plan'), 'junction') } catch { /* 已存在 */ }
+    try { symlinkSync(ROOT, join(loaderRoot, 'node_modules', 'dsh-extra-plan'), 'junction') } catch { /* 已存在 */ }
     await root.plugin(Loader, { baseUrl: resolutionBase })
     const rows = [
       { id: 'session', name: '@deepseek-ai/dsh-session' },
@@ -250,7 +250,7 @@ async function runMode(mode, defaultSandboxMode) {
       handles.push(handle)
       return agent
     }
-    const { createAgentRuntime } = await import('../../plugins/dsh-extra-plan/lib/agent-runtime.js')
+    const { createAgentRuntime } = await import('../../lib/agent-runtime.js')
     // createAgentRuntime({ getAgents, sandboxPolicy, warn }) 已不接受账本折叠回调（运行时同步折叠随改造11删除），
     // 此处不再传该残壳实参；工厂签名收敛属方案3 范围。
     const runtime = createAgentRuntime({ getAgents: () => root.agents, sandboxPolicy, warn: () => {} })

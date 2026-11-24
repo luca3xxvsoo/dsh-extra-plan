@@ -13,8 +13,8 @@
 ## save_plan 并行交接、冻结与复验
 
 - 续跑先沿用对应任务的既有增量备份目录；原始镜像及 manifest 不覆盖。失败修复另建独立 checkpoint，不能把失败版本写回原镜像，也不能用回滚删除此前已存在的 validator 或保留的未提交实现。
-- `SAVE_PLAN_LIMITS` 的唯一限制真源是 [save-contract.js](../../plugins/dsh-extra-plan/lib/save-contract.js)；本文只引用真源，不复制运行时限值。方案/验收工件自身携带模式、任务/组、检查与交接约定，某次任务的任务、检查、文件数量不作为未来模板。
-- 正文格式和字段关系以 [save-plan-validation.js](../../plugins/dsh-extra-plan/lib/save-plan-validation.js) 为真源，保存时真实源文件核实以 [save-tool-factories.js](../../plugins/dsh-extra-plan/lib/save-tool-factories.js) 为准；这里不复制另一张硬限制数值表。
+- `SAVE_PLAN_LIMITS` 的唯一限制真源是 [save-contract.js](../../lib/save-contract.js)；本文只引用真源，不复制运行时限值。方案/验收工件自身携带模式、任务/组、检查与交接约定，某次任务的任务、检查、文件数量不作为未来模板。
+- 正文格式和字段关系以 [save-plan-validation.js](../../lib/save-plan-validation.js) 为真源，保存时真实源文件核实以 [save-tool-factories.js](../../lib/save-tool-factories.js) 为准；这里不复制另一张硬限制数值表。
 - **新 save_plan 合同**：主文件、关联文件和带文件收尾都必须逐项声明文件操作与 `M` 修改点；既有文本修改的每个点写修改前范围、唯一原文锚点和具体动作，新建、删除、生成按受控例外填写。新调用强制新合同，旧工件只作历史，不自动补行。
 - 验收按同文件、同操作、对应 `M` 点、修改后新定位和客观期望核对，不要求改后行号等于改前；取证写当前真实行号，原方案不回写追坐标。
 - **字段示意（仅示意，不是当前仓库可直接保存的完整输入）**：真实使用须先读当前文件并替换路径、范围、锚点，同时保留卷首、组、依赖、自检、检查定义、200 字符等完整合同；行号仅作为字段值，不拼入路径或新顶层 JSON 参数。
@@ -96,12 +96,12 @@
    - `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-05-角色预设宿主回归.mjs`（角色预设机械契约：roster/assertProvider/header.agentPreset/工具面/persona 渲染/旧值回落）
    - `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-06-08-v4取证回归.mjs`（顶层 import 插件模块经 gate-decisions 连带 @deepseek-ai/dsh-llm 等 peer 依赖，必须带代码根与 host-preload；缺 js-yaml 或 dsh-llm 即表示未带代码根前置）
    - `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-06-线索落盘.mjs --full`（完整 P 取证仅由批准窗口执行；需保留完整 stdout/stderr 时使用 `--full` 或分别捕获到文件；compact 模式下脚本末尾 `process.exit` 可能截断管道 stdout，退出码0不等于完整结果；输出模式不补依赖、不改变断言）
-   - `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs --check`（生成器经 preset-settings 静态 import preset-yaml 顶层加载 js-yaml，本仓及祖先目录无 node_modules，裸 node 必 MODULE_NOT_FOUND；缺 js-yaml 即表示未带代码根前置；实测带前缀后 7 个生成物逐个 [check] 通过）
+   - `DSH_INSTALL_ROOT=<本次真实代码根> node --import ./pe-test/_shared/host-preload.mjs scripts/generate-runtime-defaults.mjs --check`（生成器经 preset-settings 静态 import preset-yaml 顶层加载 js-yaml，本仓及祖先目录无 node_modules，裸 node 必 MODULE_NOT_FOUND；缺 js-yaml 即表示未带代码根前置；实测带前缀后 7 个生成物逐个 [check] 通过）
    - 扫描根内代码改动时冻结前完成代码地图生成与人工描述复核；纯文档改动不生成正式地图，正式阶段只运行 `node pe-test/tools/代码地图生成.mjs --check`，避免普通生成改时间戳，再执行最后一键 step。
 3. 自动测试不得执行真实 PowerShell 重定向写；测试前后 `pe-test/reports/_s4b_pwsh.txt` 必须不存在。常规回归命令退出码必须为 0，输出不得有 FAIL、SyntaxError、UnhandledPromiseRejection；runner 的 ETIMEDOUT 明确归失败而非环境未执行，普通说明含 FAIL/Error/导航失效不单独判失败，必须以退出码/结构化统计为准；context-gate 独立脚本若有 INCOMPLETE 必须非零，一键结果结构化标为部分执行而不计 PASS。缺少 js-yaml、dsh-llm 或其它模块导致 `MODULE_NOT_FOUND` 只记 `INCOMPLETE`；真实断言失败、`TypeError`、超时仍按 `FAIL`，不因 `--full`、文件捕获或 exit 0 改写。SKIP/INCOMPLETE/HUMAN/NOT-RUN 单列且不计 AUTO PASS。
    - **usage 后台专项门（AUTO/W）**：在隔离 fixture 与模拟安装布局中，Worker 正在忙算时主线程仍须完成 HTTP 响应；settings 行 apply 期只注册调度：存在 appReady 服务时在单层 root `ctx.effect` 内 `onReady` 之后经一个 `setImmediate` 宏任务才发起真实 Worker，appReady 缺失或无 `onReady` 时回落 apply 内直接发起，Worker 完成当轮模式/血缘首帧识别、mtime→ts 增量筛选、扫描/解压/聚合、严格解析与单 archive temp→rename 发布，失败只 `failed`/warn 且不回退同步主线程；owner 单飞、同根串行及 `scanUsageRows`/`archiveLedger`/`startupArchive` 同步 API 保持。模式/血缘识别仅保留当轮内存，首帧识别按 512 字节、8192 字节、65536 字节、整份递进窗口读取，仅结构非法时降级为空身份；判定顺序为先 `statSync` 比 mtime、仅对变化文件读首帧判白名单、命中白名单才全量解析；相同 ISO 毫秒 mtime/ts 跳过完整用量重扫，变化/回退/未入账才解析，成功 ts 记文件 mtime，失败不推进；无持久 `session-presets` 读写、无说明行检查点或全量重扫替代。共享 `logs/dsh-extra-plan/` 只管理本人 `extra-plan-usage-ledger.jsonl`、按需 `extra-plan-usage-errors.jsonl` 与本人 temp/lock；错误 JSONL 每行可解析且仅含字符串 `ts`、`reason`、`message`，目录可同时含其他 owner 日志/文件，专项门不得按“仅两文件”误判、改名、合并或清理他人日志。协作取消只在首次 archive rename 前安全退出，要求清理本人 temp/lock 且既有 archive 字节与 mtime 零变化；rename 后视为已提交并返回真实 `archived`。不对真实并发日志 mtime 绝对不变作承诺；三秒预算仅为 archive 检查点，不是全部扫描期限。
    - **权限与部署分层（HUMAN/NOT-RUN）**：Host 权限、真实安装/启动/HMR、生产会话和大日志内存仍待用户复测；缺少这些条件不得销 AUTO，静态/隔离结果不写成实机通过。
-4. 当前声明范围为 dsh 精确并集 `0.2.2-rc.1 || 0.2.2-rc.2 || 0.2.2-rc.3 || 0.2.2-rc.4 || 0.2.2-rc.5`：rc.3 是当前目标，rc.1 与 rc.2 是活动兼容目标，rc.4 与 rc.5 是兼容声明目标；版本真源为核心插件以[核心插件 package.json](<../../plugins/dsh-extra-plan/package.json>)中的 `engines.dsh` 与三项 @deepseek-ai peer 为准，`schemastery` peer 为 `~3.19.0`。对每个待验证版本分别用相符的只读前缀设置 `DSH_INSTALL_ROOT`，证据等级见[宿主耦合台账](ai-宿主耦合台账.md#当前验证状态)，不把本机盘符写进通用文档；0.2.1 系列仅存于远端分支 dsh-v0.2.1rc-qqbot-v0.5.2-only，当前 main 不承载。根 `README.md` 的兼容描述已过时，不作当前版本真源。生产部署及真实 provider、GUI、重启和台账所列 HUMAN 待办项由用户另行复测；静态/隔离 PASS 不替代 HUMAN，未执行项保持 `NOT-RUN`。
+4. 当前声明范围为 dsh 精确并集 `0.2.2-rc.1 || 0.2.2-rc.2 || 0.2.2-rc.3 || 0.2.2-rc.4 || 0.2.2-rc.5`：rc.3 是当前目标，rc.1 与 rc.2 是活动兼容目标，rc.4 与 rc.5 是兼容声明目标；版本真源为核心插件以[核心插件 package.json](<../../package.json>)中的 `engines.dsh` 与三项 @deepseek-ai peer 为准，`schemastery` peer 为 `~3.19.0`。对每个待验证版本分别用相符的只读前缀设置 `DSH_INSTALL_ROOT`，证据等级见[宿主耦合台账](ai-宿主耦合台账.md#当前验证状态)，不把本机盘符写进通用文档；0.2.1 系列仅存于远端分支 dsh-v0.2.1rc-qqbot-v0.5.2-only，当前 main 不承载。根 `README.md` 的兼容描述已过时，不作当前版本真源。生产部署及真实 provider、GUI、重启和台账所列 HUMAN 待办项由用户另行复测；静态/隔离 PASS 不替代 HUMAN，未执行项保持 `NOT-RUN`。
 5. **部署前预检与版本迁移测试要求**（不等于部署许可）：
    - **版本路径标记与将来撤销**：`DSH_COMPAT_RC1`（rc1 兼容路径）只紧邻 rc.1 专用块（旧 `agent_id`、旧三名、五字段旧范围：核心 `engines.dsh`、`dsh`/`dsh-llm`/`dsh-agent-preset` 三项 peer，以及 rc.1 专用正例/矩阵），`DSH_CURRENT_RC2`（最新路径，rc.2 与 rc.3 共用该路径）只紧邻 rc.2 与 rc.3 共用块（新 `agent`/`resolveName`、`dsh-doc`、rc.2 与 rc.3 共用正例/矩阵），并在相邻文字写用途与删除边界；共享安全核心、通用日志解析、普通项与必要历史取证不得归入旧兼容。JSON 保持合法 JSON，不加注释。未来撤销 rc.1 必须另获授权：先检索两标记、精确版本声明/正例和旧参数/技能，再协调删除五字段旧范围、旧参数/旧三名/专用测试与旧矩阵，最后完整复验 rc.2 与共享安全；禁止按标签或字符串批量删除所有 rc.1 行。生产边界与根 README 冻结差异继续保留。
    - **何时必做**：任何插件代码改动的交付前，以及宿主版本升级（含 `engines.dsh` 与三项 @deepseek-ai peer 收口到新版本）时，必须完整重跑本节 1 至 3 步，不得以「仓库验收已完成」代替。
@@ -135,7 +135,7 @@
 - 稳定匹配键是“相对路径 + 函数名 + 同名出现顺序”。维护时必须保持 `routeKey` 1 条、`isIdChar` 1 条的约束，并按当前源码实际同名条目及其顺序对拍 `visit`，不另写死历史次数；`--check` 不覆盖人工描述/固定尾部的全文比较，所以需另做结构键对拍。
 - 描述必须保留当前行为关键词：证据引用成对剥除与单侧不剥、`atomicCommit` 阶段语义、`syncPreset` 以当前 settings 补齐 patch 为空为 idle（空闲稳态），但不因 idle 跳过资产校验与新资产挂载、P2-2 agent-only（仅 Agent）cache、usage 启动扫描与覆盖式更新（幂等）、单调性保护、模式白名单预筛与文件 mtime 水位、同步 API 与 Worker 调度边界、失败批次持续重试、提交前后协作取消 等。
 - 地图生成器是源码/测试索引，不是历史归档；无函数文件或纯描述变化不能只靠 `--check` 判定。
-- 扫描根 = `代码地图生成.mjs` 的 `--roots` 默认 `plugins,pe-test/_shared`（不含 pe-test/tools）。仅扫描根内 .js/.mjs 增删或行号漂移、或地图人工描述需维护时运行普通生成；纯文档、pe-test/docs、pe-test/tools、pe-test/reports 改动不触发地图更新，收尾与验收只运行 `--check`。
+- 扫描根 = `代码地图生成.mjs` 的 `--roots` 默认 `index.js,lib,scripts,pe-test/_shared`（不含 pe-test/tools）。仅扫描根内 .js/.mjs 增删或行号漂移、或地图人工描述需维护时运行普通生成；纯文档、pe-test/docs、pe-test/tools、pe-test/reports 改动不触发地图更新，收尾与验收只运行 `--check`。
 
 ## 交付格式与回滚
 
@@ -149,7 +149,7 @@
 
 ## P2-4 生成链
 
-作者值在 `plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml`；`runtimeDefaultsFromTemplate` 按十一项 sourceLocator 完整解析并由 `renderRuntimeDefaults` 生成 `DEFAULT_SETTINGS` 与兼容别名，运行时不解析作者 YAML。迁移顺序固定为：先改/校验生成器并生成新导出，再切换 settings-contract、Config/fallback、快照、同步和 client 消费者；未确认新导出前不得切消费者。
+作者值在 `assets/presets/extra-plan/agent.cordis.yml`；`runtimeDefaultsFromTemplate` 按十一项 sourceLocator 完整解析并由 `renderRuntimeDefaults` 生成 `DEFAULT_SETTINGS` 与兼容别名，运行时不解析作者 YAML。迁移顺序固定为：先改/校验生成器并生成新导出，再切换 settings-contract、Config/fallback、快照、同步和 client 消费者；未确认新导出前不得切消费者。
 
 `client.js` 的 `EXTRA_FIELDS`/`HOST_ROW_FIELDS`/`ALL_FIELDS` 只允许生成器替换成对标记区块，标记内只派生 UI metadata，不带默认值、validator 或宿主对象，禁止手工编辑。默认仓库路径一并发布七个输出（运行时常量、主 definition、四角色 definition、client）；自定义 source/output 默认关闭仓库 client，显式 client source/output 才启用。
 
@@ -157,7 +157,7 @@
 
 ## 单一来源提醒
 
-`gateWords` 只改 YAML；`SAVE_PLAN_LIMITS` 与 save_plan 限制数值只读 [lib/save-contract.js](../../plugins/dsh-extra-plan/lib/save-contract.js)，正文格式与字段关系以 [lib/save-plan-validation.js](../../plugins/dsh-extra-plan/lib/save-plan-validation.js) 为真源，真实源核实以 [lib/save-tool-factories.js](../../plugins/dsh-extra-plan/lib/save-tool-factories.js) 为准；`PROBE_LIMITS` 同样只读 save-contract 源码，文档不维护第二份运行时限值表。模型/usage/投影细节分别以对应 lib 与 step 脚本为准；历史故障、旧宿主面、77/217/209 等历史统计读[归档](ai-宿主耦合历史归档.md)，不作为当前值。
+`gateWords` 只改 YAML；`SAVE_PLAN_LIMITS` 与 save_plan 限制数值只读 [lib/save-contract.js](../../lib/save-contract.js)，正文格式与字段关系以 [lib/save-plan-validation.js](../../lib/save-plan-validation.js) 为真源，真实源核实以 [lib/save-tool-factories.js](../../lib/save-tool-factories.js) 为准；`PROBE_LIMITS` 同样只读 save-contract 源码，文档不维护第二份运行时限值表。模型/usage/投影细节分别以对应 lib 与 step 脚本为准；历史故障、旧宿主面、77/217/209 等历史统计读[归档](ai-宿主耦合历史归档.md)，不作为当前值。
 
 ## 已知限制与遗留项
 

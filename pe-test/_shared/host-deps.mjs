@@ -4,7 +4,7 @@ import { lstatSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import * as module from 'node:module'
-import { createPathContext } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
+import { createPathContext } from '../../lib/path-policy.js'
 
 const TARGET = '@deepseek-ai/dsh-llm'
 const SCOPE = '@deepseek-ai'

@@ -6,7 +6,7 @@ import fs from 'node:fs'
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { createIsolatedEnv, makeFixtureDir } from '../_shared/workspace-paths.mjs'
-import { createPathContext } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
+import { createPathContext } from '../../lib/path-policy.js'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createOutput } from '../_shared/test-output.mjs'
 import { runInNewContext } from 'node:vm'
@@ -58,8 +58,8 @@ const OFFICIAL_ROOT = TARGET_INSTALL_ROOT === undefined ? undefined : join(TARGE
 const INSTALL_ANCHOR = OFFICIAL_ROOT === undefined ? undefined : (existsSync(join(OFFICIAL_ROOT, 'package.json')) ? join(OFFICIAL_ROOT, 'package.json') : join(TARGET_INSTALL_ROOT, 'package.json'))
 
 
-const patchText = readFileSync(join(REPO_ROOT, 'plugins/dsh-extra-plan/cordis.patch.yml'), 'utf8')
-const clientText = readFileSync(join(REPO_ROOT, 'plugins/dsh-extra-plan/lib/client.js'), 'utf8')
+const patchText = readFileSync(join(REPO_ROOT, 'cordis.patch.yml'), 'utf8')
+const clientText = readFileSync(join(REPO_ROOT, 'lib/client.js'), 'utf8')
 const keys = ['anchoredBootstrap', 'creativeMode', 'webFetch', 'toolPresentationMode', 'runcodeCatchGate', 'crossProviderPlannerModel', 'plannerModel', 'plannerPromptSuffix', 'exploreBudget', 'otherAgentModel', 'reviewerUsesPlannerModel']
 
 let pass = 0
@@ -93,12 +93,12 @@ try {
   } })
 } catch { /* 静态合同仍可执行；宿主缺依赖时运行时项会明确失败 */ }
 let patch
-const presetSettings = await import('../../plugins/dsh-extra-plan/lib/preset-settings.js')
+const presetSettings = await import('../../lib/preset-settings.js')
 const { parsePresetYaml, SETTING_DEFINITIONS } = presetSettings
 try { patch = parsePresetYaml(patchText) } catch (error) { console.error('FAIL  patch YAML parse: ' + String(error)); process.exit(1) }
-const { Config } = await import('../../plugins/dsh-extra-plan/lib/settings.js')
-const { createLiveConfig } = await import('../../plugins/dsh-extra-plan/lib/live-config.js')
-const { createGateRuntime, GATE_WORD_FIELDS } = await import('../../plugins/dsh-extra-plan/lib/gate-words.js')
+const { Config } = await import('../../lib/settings.js')
+const { createLiveConfig } = await import('../../lib/live-config.js')
+const { createGateRuntime, GATE_WORD_FIELDS } = await import('../../lib/gate-words.js')
 for (const key of settingsEnvKeys) {
   const value = originalBootstrapEnv[key]
   if (value === undefined) delete process.env[key]
@@ -138,7 +138,7 @@ if (TARGET_INSTALL_ROOT === undefined) {
   let declaredDsh = null
   let declaredLlm = null
   try {
-    const manifest = JSON.parse(readFileSync(new URL('../../plugins/dsh-extra-plan/package.json', import.meta.url), 'utf8'))
+    const manifest = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'))
     declaredDsh = manifest.peerDependencies?.['@deepseek-ai/dsh']
     declaredLlm = manifest.peerDependencies?.['@deepseek-ai/dsh-llm']
   } catch { declaredDsh = null; declaredLlm = null }
@@ -343,7 +343,7 @@ async function start(editor, options = {}) {
     },
   })
   try { void ctx.configEditor } catch {}
-  const settingsModule = options.settingsModule === undefined ? await import('../../plugins/dsh-extra-plan/lib/settings.js') : options.settingsModule
+  const settingsModule = options.settingsModule === undefined ? await import('../../lib/settings.js') : options.settingsModule
   let applyError
   try {
     settingsModule.apply(ctx)
@@ -597,7 +597,7 @@ try {
 console.warn = g6Warn
 check('G6 settings 行缺新键仍能装载并回填、非法键值仍抛错', g6BootError === '' && g6Reviewer === true && g6WarnCountAfterBoot === 1 && g6InvalidError.includes('settings 行校验失败'))
 rmSync(g6Root, { recursive: true, force: true })
-const generatedDefinition = parsePresetYaml(readFileSync(join(REPO_ROOT, 'plugins/dsh-extra-plan/assets/presets/extra-plan/preset-definition.generated.yml'), 'utf8'))
+const generatedDefinition = parsePresetYaml(readFileSync(join(REPO_ROOT, 'assets/presets/extra-plan/preset-definition.generated.yml'), 'utf8'))
 const restartRows = generatedDefinition.plugins || []
 const restartWeb = restartRows.find((row) => row && row.id === 'tool-web')
 const restartPresentation = restartRows.find((row) => row && (row.id === 'tool-executor-native' || row.id === 'tool-executor-ptc'))
@@ -1417,10 +1417,10 @@ check('G5-R5 root cleanupError统一进入最终FAIL计数', rootCleanupErrors.l
       return originalReaddir(target, ...args)
     }
     syncBuiltinESMExports()
-    const cleanupSettingsModule = await import('../../plugins/dsh-extra-plan/lib/settings.js')
-    const hmrSettingsModule = await import('../../plugins/dsh-extra-plan/lib/settings.js?g3-cleanup-hmr')
-    const hmrRunningSettingsModule = await import('../../plugins/dsh-extra-plan/lib/settings.js?g3-cleanup-hmr-running')
-    const corePluginModule = await import('../../plugins/dsh-extra-plan/index.js')
+    const cleanupSettingsModule = await import('../../lib/settings.js')
+    const hmrSettingsModule = await import('../../lib/settings.js?g3-cleanup-hmr')
+    const hmrRunningSettingsModule = await import('../../lib/settings.js?g3-cleanup-hmr-running')
+    const corePluginModule = await import('../../index.js')
     const coreCleanups = []
     const coreApply = (root) => {
       const ctx = {

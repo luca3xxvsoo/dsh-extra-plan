@@ -15,11 +15,11 @@ import {
   resolveSetting,
   findTextLocatorMatches,
   resolveTemplateSettingDefault,
-} from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
-import { DEFAULT_SETTINGS, DEFAULT_EXPLORE_BUDGET, DEFAULT_PLANNER_PROMPT_SUFFIX } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
-import { generateRuntimeDefaults, renderRuntimeDefaults, renderPresetDefinition, renderRoleDefinitions, secondDocumentOf, ROLE_IDS, roleDefinitionFile, ROLE_LAST_ROW_BY_MODE } from '../../plugins/dsh-extra-plan/scripts/generate-runtime-defaults.mjs'
-import { HOST_CORDIS_TOOLS } from '../../plugins/dsh-extra-plan/lib/assembly-presentation.js'
-import { HOST_ROW_IDS, EXECUTOR_TOOL_NAME_PREFIX, MODE_BY_ROW_ID } from '../../plugins/dsh-extra-plan/lib/settings-contract.js'
+} from '../../lib/preset-settings.js'
+import { DEFAULT_SETTINGS, DEFAULT_EXPLORE_BUDGET, DEFAULT_PLANNER_PROMPT_SUFFIX } from '../../lib/preset-defaults.generated.js'
+import { generateRuntimeDefaults, renderRuntimeDefaults, renderPresetDefinition, renderRoleDefinitions, secondDocumentOf, ROLE_IDS, roleDefinitionFile, ROLE_LAST_ROW_BY_MODE } from '../../scripts/generate-runtime-defaults.mjs'
+import { HOST_CORDIS_TOOLS } from '../../lib/assembly-presentation.js'
+import { HOST_ROW_IDS, EXECUTOR_TOOL_NAME_PREFIX, MODE_BY_ROW_ID } from '../../lib/settings-contract.js'
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url))
 const DSH_INSTALL_ROOT = typeof process.env.DSH_INSTALL_ROOT === 'string' && process.env.DSH_INSTALL_ROOT.trim() !== ''
@@ -31,13 +31,13 @@ const DSH_INSTALL_ROOT = typeof process.env.DSH_INSTALL_ROOT === 'string' && pro
 const TARGET_PEER_RANGE = '0.2.2-rc.1 || 0.2.2-rc.2 || 0.2.2-rc.3 || 0.2.2-rc.4 || 0.2.2-rc.5'
 const LEGACY_HOST_VERSIONS = ['0.1.7-rc.1', '0.1.7-rc.2', '0.2.0-rc.1', '0.2.0-rc.2']
 const TARGET_SCHEMASTERY_PEER = '~3.19.0'
-const PRESET_DIR = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'assets', 'presets', 'extra-plan')
+const PRESET_DIR = join(REPO_ROOT, 'assets', 'presets', 'extra-plan')
 const file = join(PRESET_DIR, 'agent.cordis.yml')
 const presetFile = join(PRESET_DIR, 'preset.yml')
-const generatedFile = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'preset-defaults.generated.js')
+const generatedFile = join(REPO_ROOT, 'lib', 'preset-defaults.generated.js')
 const definitionGeneratedFile = join(PRESET_DIR, 'preset-definition.generated.yml')
-const coreManifestFile = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'package.json')
-const assemblySource = readFileSync(join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'assembly-presentation.js'), 'utf8')
+const coreManifestFile = join(REPO_ROOT, 'package.json')
+const assemblySource = readFileSync(join(REPO_ROOT, 'lib', 'assembly-presentation.js'), 'utf8')
 
 function targetManifestPath(name) {
   if (DSH_INSTALL_ROOT === null) return null
@@ -251,13 +251,11 @@ const EXPECTED_DEFAULT_SETTINGS = { anchoredBootstrap: true, creativeMode: false
 check('B2 导入生成物 DEFAULT_SETTINGS 恰十一键/值/冻结且旧别名同值', Object.isFrozen(DEFAULT_SETTINGS) && isDeepStrictEqual(DEFAULT_SETTINGS, EXPECTED_DEFAULT_SETTINGS) && DEFAULT_EXPLORE_BUDGET === DEFAULT_SETTINGS.exploreBudget && DEFAULT_PLANNER_PROMPT_SUFFIX === DEFAULT_SETTINGS.plannerPromptSuffix && resolveTemplateSettingDefault(agentText, 'exploreBudget') === DEFAULT_SETTINGS.exploreBudget && resolveTemplateSettingDefault(agentText, 'plannerPromptSuffix') === DEFAULT_SETTINGS.plannerPromptSuffix, true)
 
 check('B2 render 文本与已提交生成模块逐字一致', renderRuntimeDefaults(agentText) === generatedText, true)
-check('B2 definition render 与提交资产逐字一致且 package 仅装载 cordis.patch.yml', renderPresetDefinition(agentText, readFileSync(presetFile, 'utf8')) === definitionGeneratedText && JSON.parse(readFileSync(join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'package.json'), 'utf8')).dsh.bundle.patch === './cordis.patch.yml', true)
+check('B2 definition render 与提交资产逐字一致且 package 仅装载 cordis.patch.yml', renderPresetDefinition(agentText, readFileSync(presetFile, 'utf8')) === definitionGeneratedText && JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8')).dsh.bundle.patch === './cordis.patch.yml', true)
 const packageFiles = Array.isArray(packageJson.files) ? packageJson.files : []
 const rootLicenseFile = join(REPO_ROOT, 'LICENSE')
-const packageLicenseFile = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'LICENSE')
-const rootLicenseBytes = existsSync(rootLicenseFile) ? readFileSync(rootLicenseFile) : null
-const packageLicenseBytes = existsSync(packageLicenseFile) ? readFileSync(packageLicenseFile) : null
-check('M4 核心包 LICENSE 存在且与根 LICENSE 字节全同', rootLicenseBytes !== null && packageLicenseBytes !== null && packageLicenseBytes.equals(rootLicenseBytes))
+const rootLicenseText = existsSync(rootLicenseFile) ? readFileSync(rootLicenseFile, 'utf8') : null
+check('M4 核心包 LICENSE 存在于包根且为 MIT 文本', rootLicenseText !== null && rootLicenseText.trim().length > 0 && rootLicenseText.includes('MIT License'))
 check('M4 核心包 package.json license=MIT', packageJson.license === 'MIT')
 check('B2 package files/scripts 含生成器、generate 与 prepack', packageFiles.includes('scripts/generate-runtime-defaults.mjs') && packageJson.scripts['generate:runtime-defaults'] === 'node scripts/generate-runtime-defaults.mjs' && packageJson.scripts.prepack === 'node scripts/generate-runtime-defaults.mjs', true)
 check('M1 核心 manifest name/version/repository/client/deps/patch/private 契约', packageJson.name === 'dsh-extra-plan' && packageJson.repository === 'git+https://github.com/luca3xxvsoo/dsh-extra-plan.git' && packageJson.dsh?.bundle?.patch === './cordis.patch.yml' && packageJson.dsh?.client?.platform === 'web' && Array.isArray(packageJson.dsh?.client?.inject) && packageJson.dependencies?.['js-yaml'] === '^4.2.0' && !Object.prototype.hasOwnProperty.call(packageJson, 'private') && !JSON.stringify(packageJson).includes('@local/dsh-extra-plan'))
@@ -266,7 +264,7 @@ check('M2 核心包 engines/peer 四字段均为 0.2.2-rc.1 || 0.2.2-rc.2 || 0.2
   && packageJson.peerDependencies?.['@deepseek-ai/dsh'] === TARGET_PEER_RANGE
   && packageJson.peerDependencies?.['@deepseek-ai/dsh-llm'] === TARGET_PEER_RANGE
   && packageJson.peerDependencies?.['@deepseek-ai/dsh-agent-preset'] === TARGET_PEER_RANGE)
-check('M2 核心 exports/files 保持所需子路径与 peer 声明、包装层 export/实现均缺席', packageJson.exports?.['.'] === './index.js' && packageJson.exports?.['./settings'] === './lib/settings.js' && !Object.prototype.hasOwnProperty.call(packageJson.exports || {}, './executor-spawn') && !existsSync(join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'executor-spawn.js')) && packageFiles.includes('index.js') && packageFiles.includes('lib/') && packageFiles.includes('locale/') && packageFiles.includes('cordis.patch.yml') && packageJson.peerDependencies?.['@deepseek-ai/dsh'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/dsh-llm'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/dsh-agent-preset'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/schemastery'] === TARGET_SCHEMASTERY_PEER)
+check('M2 核心 exports/files 保持所需子路径与 peer 声明、包装层 export/实现均缺席', packageJson.exports?.['.'] === './index.js' && packageJson.exports?.['./settings'] === './lib/settings.js' && !Object.prototype.hasOwnProperty.call(packageJson.exports || {}, './executor-spawn') && !existsSync(join(REPO_ROOT, 'lib', 'executor-spawn.js')) && packageFiles.includes('index.js') && packageFiles.includes('lib/') && packageFiles.includes('locale/') && packageFiles.includes('cordis.patch.yml') && packageJson.peerDependencies?.['@deepseek-ai/dsh'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/dsh-llm'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/dsh-agent-preset'] === TARGET_PEER_RANGE && packageJson.peerDependencies?.['@deepseek-ai/schemastery'] === TARGET_SCHEMASTERY_PEER)
 // ── T3 角色预设链：作者源第二文档 4 角色 + 4 个生成 definition（persona 逐字相等） ─────
 const roleSourceText = secondDocumentOf(agentText)
 const roleSource = parsePresetYaml(roleSourceText)
@@ -442,7 +440,7 @@ try {
   const roleDefinitionDir = join(outputDir, 'roles')
   const rolePaths = ROLE_IDS.map((roleId) => roleDefinitionFile(roleId, roleDefinitionDir))
   const sevenPaths = [outputPath, definitionOutputPath, ...rolePaths, clientOutputPath]
-  const clientSource = readFileSync(join(REPO_ROOT, 'plugins/dsh-extra-plan/lib/client.js'), 'utf8')
+  const clientSource = readFileSync(join(REPO_ROOT, 'lib/client.js'), 'utf8')
   writeFileSync(sourcePath, clientSource, 'utf8')
   const sevenOptions = { sourcePath: file, outputPath, metaSourcePath: presetFile, definitionOutputPath, roleDefinitionDir, clientSourcePath: sourcePath, clientOutputPath }
   const snapshot = (paths, includeMtime = true) => paths.map((path) => {
@@ -479,7 +477,7 @@ try {
   try { generatorDefaults({ ...sevenOptions, check: true }) } catch (error) { missingClientError = error }
   check('G3 client --check 缺失非零且不写回', missingClientError !== null && !existsSync(clientOutputPath), true)
   generatorDefaults(sevenOptions)
-  const repoClientPath = join(REPO_ROOT, 'plugins/dsh-extra-plan/lib/client.js')
+  const repoClientPath = join(REPO_ROOT, 'lib/client.js')
   const repoClientBefore = snapshot([repoClientPath])
   const customNoClientSource = join(g3ClientFixture, 'custom-source.yml')
   const customNoClientOutput = join(g3ClientFixture, 'custom-output.js')
@@ -757,7 +755,7 @@ if (executorRows.length === 1 && executorRows[0].config === undefined) {
 
 // S2：宿主 runtime 包不得进入 dependencies；只能由 peerDependencies 声明。
 // dsh/dsh-llm 的 0.2.2-rc.1 || 0.2.2-rc.2 || 0.2.2-rc.3 || 0.2.2-rc.4 || 0.2.2-rc.5 精确并集是版本门控，不等价于实机兼容结论。
-const pluginPkgFile = join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'package.json')
+const pluginPkgFile = join(REPO_ROOT, 'package.json')
 let pluginPkg
 try { pluginPkg = JSON.parse(readFileSync(pluginPkgFile, 'utf8')) } catch { pluginPkg = undefined }
 const asRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {}
@@ -940,12 +938,12 @@ if (h1ManifestPath === null || h1Entry === null || h1AdapterEntry === null || h1
     })
     const specialReplay = await import('data:text/javascript;base64,' + Buffer.from(h1SpecialHookSource, 'utf8').toString('base64'))
     const insideUrl = pathToFileURL(h1Entry).href
-    const workspacePlannerUrl = pathToFileURL(join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'planner-budget.js')).href
+    const workspacePlannerUrl = pathToFileURL(join(REPO_ROOT, 'lib', 'planner-budget.js')).href
     const targetResult = await serializedReplay.resolve('@deepseek-ai/dsh-llm', {}, async () => ({ url: workspacePlannerUrl }))
     const adapterResult = await serializedReplay.resolve('@deepseek-ai/dsh-llm-deepseek', {}, async () => ({ url: workspacePlannerUrl }))
     const jsYamlSpecialResult = await specialReplay.resolve('js-yaml', {}, async () => ({ url: workspacePlannerUrl }))
     const nativeResult = await serializedReplay.resolve('node:fs', {}, async () => ({ url: 'node:fs' }))
-    const workspaceRelativeResult = await serializedReplay.resolve('../../plugins/dsh-extra-plan/lib/planner-budget.js', {}, async () => ({ url: workspacePlannerUrl }))
+    const workspaceRelativeResult = await serializedReplay.resolve('../../lib/planner-budget.js', {}, async () => ({ url: workspacePlannerUrl }))
     const workspaceFileResult = await serializedReplay.resolve(workspacePlannerUrl, {}, async () => ({ url: workspacePlannerUrl }))
     const hostNativeResult = await serializedReplay.resolve('@deepseek-ai/host-native', {}, async () => ({ url: insideUrl }))
     const jsYamlInsideResult = await serializedReplay.resolve('js-yaml', {}, async () => ({ url: insideUrl }))
@@ -976,7 +974,7 @@ if (h1ManifestPath === null || h1Entry === null || h1AdapterEntry === null || h1
       && missingRejected)
 
     const hostDepsUrl = pathToFileURL(join(REPO_ROOT, 'pe-test', '_shared', 'host-deps.mjs')).href
-    const plannerBudgetUrl = pathToFileURL(join(REPO_ROOT, 'plugins', 'dsh-extra-plan', 'lib', 'planner-budget.js')).href
+    const plannerBudgetUrl = pathToFileURL(join(REPO_ROOT, 'lib', 'planner-budget.js')).href
     const childCode = [
       'import { registerHostDeps } from ' + JSON.stringify(hostDepsUrl) + ';',
       'await registerHostDeps();',
@@ -1009,7 +1007,7 @@ const LOCALE_CHANNELS = [
   { label: '包卡片', specifier: 'dsh-extra-plan', dir: 'locale', zh: { title: '按需规划模式', description: '按需规划模式的预设、设置与启动核对' }, en: { title: 'Extra Plan', description: 'Preset, settings, and startup check' } },
   { label: '全局管理行', specifier: 'dsh-extra-plan/settings', dir: join('locale', 'settings'), zh: { title: '按需规划模式全局管理', description: '统一管理配置、预设核对与界面加载' }, en: { title: 'Extra Plan Global Manager', description: 'Manage configuration, preset checks, and UI loading' } },
 ]
-const pluginDir = join(REPO_ROOT, 'plugins', 'dsh-extra-plan')
+const pluginDir = join(REPO_ROOT)
 const exportsMap = pluginPkg !== undefined ? asRecord(pluginPkg.exports) : {}
 check('S3 exports 保留根包/settings locale，明确删除 preset-sync 与其 locale 通道', exportsMap['./settings/locale/*'] === './locale/settings/*' && exportsMap['./locale/*.json'] === './locale/*.json' && exportsMap['./preset-sync'] === undefined && exportsMap['./preset-sync/locale/*'] === undefined)
 const localeProblems = []

@@ -10,7 +10,7 @@ import { zstdCompressSync, zstdDecompressSync } from 'node:zlib'
 import { decodeText, decodedJsonlLines, framesOf } from '../_shared/zstd-frames.mjs'
 import { createOutput, sha256Text, writeRawEvidence } from '../_shared/test-output.mjs'
 import { badIdentityResult, call, descriptor, g5MultiFrame, inboxResult, replayJsonl, result, session, skippable, syntheticFrame, writeSession } from '../_shared/session-fixture.mjs'
-import { shellMutationReason, childReadonlyGateReason } from '../../plugins/dsh-extra-plan/lib/gate-decisions.js'
+import { shellMutationReason, childReadonlyGateReason } from '../../lib/gate-decisions.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(HERE, '..', '..')
@@ -1184,7 +1184,7 @@ try {
   const partialAutoFiles = partialAutoRows.map((line) => line.split('|')[1].trim())
   const partialThree = ['step-06-08-v4取证回归.mjs', 'step-01-预设完整性.mjs', 'step-01-设置页配置.mjs']
   check('G5 partial-runner 子进程退出0', partialChild?.status === 0, 'status=' + String(partialChild?.status) + '; output=' + partialOutput.slice(0, 1200))
-  check('G5 partial-runner 无plugins', !existsSync(join(partialRunnerRoot, 'plugins')), 'plugins=' + String(existsSync(join(partialRunnerRoot, 'plugins'))))
+  check('G5 partial-runner 无 index.js', !existsSync(join(partialRunnerRoot, 'index.js')), 'index.js=' + String(existsSync(join(partialRunnerRoot, 'index.js'))))
   check('G5 partial-runner AUTO报告表非空、无重复且每行标记未执行', partialAutoFiles.length > 0 && new Set(partialAutoFiles).size === partialAutoFiles.length && partialAutoRows.every((line) => line.includes('| 未执行 |')), 'rows=' + String(partialAutoRows.length) + '；files=' + partialAutoFiles.join(',') + '；reports=' + partialReports.join(',') + '；output=' + partialOutput.slice(0, 1200) + '；' + partialAutoRows.join(' || '))
   check('G5 partial-runner 三项仓库依赖未进入spawn', partialThree.every((file) => partialAutoRows.some((line) => line.includes('| ' + file + ' | 未执行 |') && line.includes('需完整目录'))), partialAutoRows.join(' || '))
 

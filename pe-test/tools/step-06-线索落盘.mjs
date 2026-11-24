@@ -8,11 +8,11 @@ import { pathToFileURL, fileURLToPath } from 'node:url'
 import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync, renameSync, unlinkSync, lstatSync, rmdirSync, realpathSync, symlinkSync } from 'node:fs'
 import { makeFixtureDir } from '../_shared/workspace-paths.mjs'
 import { renderPlanFile as g3PlanFile, renderChecklistFile as g3ChecklistFile } from '../_shared/plan-text.mjs'
-import { createPathContext } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
-import { renderProbeMarkdown } from '../../plugins/dsh-extra-plan/lib/save-contract.js'
+import { createPathContext } from '../../lib/path-policy.js'
+import { renderProbeMarkdown } from '../../lib/save-contract.js'
 import { join } from 'node:path'
 
-const PLUGIN_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/index.js', import.meta.url))
+const PLUGIN_PATH = fileURLToPath(new URL('../../index.js', import.meta.url))
 import { registerHostDeps } from '../_shared/host-deps.mjs'
 import { createOutput } from '../_shared/test-output.mjs'
 // host-deps 先于隔离完成解析（它按候选① DSH_HOME/profiles/web 锚定宿主真包）。
@@ -57,20 +57,20 @@ function restoreIsolatedEnv() {
 process.on('exit', restoreIsolatedEnv)
 
 const plugin = await import(pathToFileURL(PLUGIN_PATH).href)
-const saveContractNamespace = await import(pathToFileURL(fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/save-contract.js', import.meta.url))).href)
+const saveContractNamespace = await import(pathToFileURL(fileURLToPath(new URL('../../lib/save-contract.js', import.meta.url))).href)
 const { saveArtifactBase } = saveContractNamespace
-const { validateSavePlanContract } = await import(pathToFileURL(fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/save-plan-validation.js', import.meta.url))).href)
-const { validateProbe } = await import(pathToFileURL(fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/save-probe-validation.js', import.meta.url))).href)
-const { createSaveToolFactories } = await import(pathToFileURL(fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/save-tool-factories.js', import.meta.url))).href)
-import { DEFAULT_EXPLORE_BUDGET } from '../../plugins/dsh-extra-plan/lib/preset-defaults.generated.js'
-import { parsePresetYaml } from '../../plugins/dsh-extra-plan/lib/preset-settings.js'
-import { createGateRuntime } from '../../plugins/dsh-extra-plan/lib/gate-words.js'
+const { validateSavePlanContract } = await import(pathToFileURL(fileURLToPath(new URL('../../lib/save-plan-validation.js', import.meta.url))).href)
+const { validateProbe } = await import(pathToFileURL(fileURLToPath(new URL('../../lib/save-probe-validation.js', import.meta.url))).href)
+const { createSaveToolFactories } = await import(pathToFileURL(fileURLToPath(new URL('../../lib/save-tool-factories.js', import.meta.url))).href)
+import { DEFAULT_EXPLORE_BUDGET } from '../../lib/preset-defaults.generated.js'
+import { parsePresetYaml } from '../../lib/preset-settings.js'
+import { createGateRuntime } from '../../lib/gate-words.js'
 const { deriveFlowState, FREE_TOOLS } = plugin.decisions
 
 // ── 闸门词注入（与 step-04 同口径） ──────────────────────────────────────
 // 插件在 apply 里对 config.gateWords 做整组严格校验：缺失/非法同步抛错。故所有 harness
 // 必须先从【资产 YAML】解析 extra-plan config，再合并 gateWords 后 apply——测试不手写词值。
-const ASSET_AGENT_FILE = fileURLToPath(new URL('../../plugins/dsh-extra-plan/assets/presets/extra-plan/agent.cordis.yml', import.meta.url))
+const ASSET_AGENT_FILE = fileURLToPath(new URL('../../assets/presets/extra-plan/agent.cordis.yml', import.meta.url))
 function flattenRows(list) {
   const out = []
   for (const row of list) {
@@ -91,9 +91,9 @@ function systemPromptMock(registry) {
 }
 
 // P0-3：持久化函数直连导入（故障注入用；与 index.js 注入给 save 工具工厂的是同一模块实例）
-const PERSISTENCE_PATH = fileURLToPath(new URL('../../plugins/dsh-extra-plan/lib/save-persistence.js', import.meta.url))
+const PERSISTENCE_PATH = fileURLToPath(new URL('../../lib/save-persistence.js', import.meta.url))
 const { atomicCommit: atomicCommitRaw, atomicReplace: atomicReplaceRaw } = await import(pathToFileURL(PERSISTENCE_PATH).href)
-const { createPlanDraftToolFactories } = await import('../../plugins/dsh-extra-plan/lib/plan-draft-tool.js')
+const { createPlanDraftToolFactories } = await import('../../lib/plan-draft-tool.js')
 function pathContextForDir(dir) { return createPathContext({ workspaceRoot: dir }) }
 function atomicCommit(dir, base, files, fsOps, policyOptions = {}) { return atomicCommitRaw(dir, base, files, fsOps, { ...policyOptions, pathContext: pathContextForDir(dir), purpose: policyOptions.purpose || 'save-artifacts' }) }
 

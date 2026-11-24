@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { getWorkspaceRoot } from './workspace-paths.mjs'
-import { createPathContext, prepareWriteTarget, resolveWorkspacePath, validateReadTarget } from '../../plugins/dsh-extra-plan/lib/path-policy.js'
+import { createPathContext, prepareWriteTarget, resolveWorkspacePath, validateReadTarget } from '../../lib/path-policy.js'
 
 export const OUTPUT_MODES = Object.freeze({
   COMPACT: 'compact',

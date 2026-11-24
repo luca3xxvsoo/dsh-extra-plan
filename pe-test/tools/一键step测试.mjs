@@ -15,7 +15,7 @@ let maintenanceContext
 let commonForwardArgs = []
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const REPO_PLUGIN = join(HERE, '..', '..', 'plugins', 'dsh-extra-plan', 'index.js')
+const REPO_PLUGIN = join(HERE, '..', '..', 'index.js')
 const FULL_DIR = existsSync(REPO_PLUGIN)
 const REPORTS_DIR = join(dirname(HERE), 'reports')
 const HOST_PRELOAD = join(HERE, '..', '_shared', 'host-preload.mjs')
@@ -159,7 +159,7 @@ const NEED_ARG = [
 function reportIncompleteDirectory() {
   const lines = [
     `# pe-test 体检报告 ${ts()}`,
-    '- 完整目录检测（plugins 同级）: 非完整',
+    '- 完整目录检测（仓库根含 index.js 与 pe-test）: 非完整',
     '- 依赖前置保护: 未加载业务/插件helper；未定位会话、未读取Host、未spawn子进程；不创建报告',
     '',
     '## 一、自动判定项',
@@ -527,8 +527,8 @@ function runMain() {
   lines.push(`- 输出模式: ${output.mode}（--full 优先于 --verbose；失败与raw证据不压缩）`)
   lines.push('')
   lines.push(`- 运行目录: ${HERE}`)
-  lines.push(`- 完整目录检测（plugins 同级）: ${FULL_DIR ? '完整' : '非完整'}`)
-  if (!FULL_DIR) lines.push('- 提示: 当前目录缺少 plugins/，仓库依赖项未执行；请到仓库根（pe-test 与 plugins 同级）运行以获得完整结果')
+  lines.push(`- 完整目录检测（仓库根含 index.js 与 pe-test）: ${FULL_DIR ? '完整' : '非完整'}`)
+  if (!FULL_DIR) lines.push('- 提示: 当前目录缺少 index.js，仓库依赖项未执行；请到仓库根（含 index.js 与 pe-test）运行以获得完整结果')
   lines.push('')
   const sessionLocLines = []
   if (sessionLoc.kind === 'notfound') {

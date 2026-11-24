@@ -81,17 +81,29 @@ function assertWorkspaceChain(candidate, label) {
 
 function assertWorkspaceLayout() {
   assertWorkspaceChain(PROJECT_ROOT, 'W')
-  for (const name of ['pe-test', 'plugins']) {
+  for (const name of ['pe-test']) {
     const marker = join(PROJECT_ROOT, name)
     assertWorkspaceChain(marker, 'W/' + name)
     let stat
     try { stat = lstatSync(marker) } catch (error) { throw new Error('W/' + name + ' 不可读取：' + (error.code || String(error))) }
     if (!stat.isDirectory()) throw new Error('W/' + name + ' 必须是目录')
   }
+  const packageFile = join(PROJECT_ROOT, 'package.json')
+  assertWorkspaceChain(packageFile, 'W/package.json')
+  let packageMeta
+  try { packageMeta = JSON.parse(readFileSync(packageFile, 'utf8')) } catch (error) { throw new Error('W/package.json 不可解析：' + (error.code || String(error))) }
+  if (packageMeta === null || typeof packageMeta !== 'object' || packageMeta.name !== 'dsh-extra-plan') throw new Error('W/package.json 包身份不符：' + (packageMeta !== null && typeof packageMeta === 'object' ? String(packageMeta.name) : 'null'))
+  for (const name of ['index.js', 'cordis.patch.yml']) {
+    const marker = join(PROJECT_ROOT, name)
+    assertWorkspaceChain(marker, 'W/' + name)
+    let stat
+    try { stat = lstatSync(marker) } catch (error) { throw new Error('W/' + name + ' 不可读取：' + (error.code || String(error))) }
+    if (!stat.isFile()) throw new Error('W/' + name + ' 必须是文件')
+  }
 }
 
 assertWorkspaceLayout()
-const ROOTS = (parseArg('--roots', 'plugins,pe-test/_shared') || 'plugins,pe-test/_shared').split(',').map((s) => s.trim()).filter(Boolean).map((value) => validateWorkspaceInput(value, '--roots'))
+const ROOTS = (parseArg('--roots', 'index.js,lib,scripts,pe-test/_shared') || 'index.js,lib,scripts,pe-test/_shared').split(',').map((s) => s.trim()).filter(Boolean).map((value) => validateWorkspaceInput(value, '--roots'))
 const MAP_PATH = validateWorkspaceInput(parseArg('--map', 'pe-test/docs/ai-代码地图.md') || 'pe-test/docs/ai-代码地图.md', '--map')
 
 // ---------- 源码文件收集 ----------
@@ -120,6 +132,10 @@ const srcFiles = []
 for (const r of ROOTS) {
   let stat
   try { stat = lstatSync(r) } catch (error) { throw new Error('源码根不存在：' + r + '；' + (error.code || String(error))) }
+  if (stat.isFile()) {
+    srcFiles.push(r)
+    continue
+  }
   if (!stat.isDirectory()) throw new Error('源码根必须是目录：' + r)
   collectJsFiles(r, srcFiles)
 }
