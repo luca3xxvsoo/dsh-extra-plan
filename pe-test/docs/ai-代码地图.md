@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-11-24 23:25:03（脚本自动更新时间戳行）
+> 上次同步：2026-11-25 17:28:10（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -94,7 +94,7 @@
 
 | 文件 | 行数 | 说明 |
 |:--|--:|:--|
-| index.js | 1733 | 核心入口：闸门状态与 extra_plan_gate 工具注册、预算、save 工具注册与生命周期；接线 planner/非 planner 路由、A/C/M 投影、P2-2 cache、usage 启动扫描账本（覆盖式幂等更新）、v4 MALFORMED 自愈。gateWords 只来自 YAML，apply 先校验再副作用；tools/pre-execute 先用原始 `isSubagentChild` 预审 child 控制工具，再进入角色/root 闸门，main 控制与自动最终结果保持；不再负责诊断日志启动清理。 |
+| index.js | 1744 | 核心入口：闸门状态与 extra_plan_gate 工具注册、预算、save 工具注册与生命周期；接线 planner/非 planner 路由、A/C/M 投影、P2-2 cache、usage 启动扫描账本（覆盖式幂等更新）、v4 MALFORMED 自愈。gateWords 只来自 YAML，apply 先校验再副作用；tools/pre-execute 先用原始 `isSubagentChild` 预审 child 控制工具，再进入角色/root 闸门，main 控制与自动最终结果保持；不再负责诊断日志启动清理。 |
 | lib/agent-runtime.js | 175 | 每次 apply 的角色识别、descriptor/工具 schema 缓存、usage 血缘上下文与 role baseline、四角色宿主 mode 与显式 override 幂等；不 import index.js |
 | lib/agent-session.js | 65 | 会话事件与子代理识别的唯一来源：sessionEvents/isSubagentChild 零依赖纯函数，被 index.js 与 lib/model-routing.js 共用（无镜像副本；不 import index.js） |
 | lib/assembly-presentation.js | 269 | A/C/M 与 skill catalog 模型可见投影；从 scoped tools 读 schema/模式，SDK renderer 按 language 整体重建；F/PTC 的 tool:read 由 index.js 手写，L 段回宿主原文。 |
@@ -126,7 +126,7 @@
 | lib/sdk-text-cache.js | 161 | apply 级 agent-keyed WeakMap SDK 文本缓存：完整 renderer 输入保守指纹、language/renderer 身份比较、并发 Promise 合并、reject/过期 Promise 不回写、dispose 回收；不持有 sessionId 或 PromptAssembly |
 | lib/settings-contract.js | 191 | 服务端设置 descriptor 单一合同：11 项的类型/生成默认引用/校验/UI metadata 与权威-投影双定位器，并导出 `createDefaultSettings`、分组与投影遍历源 |
 | lib/settings.js | 361 | 11 字段 volatile Config 与宿主行投影；settings apply 同时作为诊断日志清理与用量归档的唯一 owner，按 root 与 hostDataRoot 去重调度且两者分离；启动即执行 startupPrune 与 startupArchive；设置读写与权威行落盘由宿主 ConfigForms 与 preset-sync 的 mountPresetSync 承担，本入口不自建 HTTP 端点。 |
-| lib/shell-mutation.js | 424 | 跨平台命令文本解码与 pwsh/bash 写形态判定；纯函数、不持有 apply 状态 |
+| lib/shell-mutation.js | 484 | 跨平台命令文本解码与 pwsh/bash 写形态判定；纯函数、不持有 apply 状态 |
 | lib/usage-ledger-background.js | 218 | 后台账本调度 controller：只快照可信 pathContext，按 owner 单飞与 hostDataRoot 串行创建固定 Worker，处理协议、协作取消和 exit 后终态；不复制扫描算法。 |
 | lib/usage-ledger-worker.js | 116 | 真实 Worker 入口：重建 pathContext 并复用同步 startupArchive 完成扫描、解析与发布，传递小型终态结果，响应共享取消位后关闭 port。 |
 | lib/usage-ledger.js | 1387 | 账本唯一实现：默认 Host 目标为 `logs/dsh-extra-plan/extra-plan-usage-ledger.jsonl`，诊断按需写 `logs/dsh-extra-plan/extra-plan-usage-errors.jsonl`；扫描聚合 + 覆盖式更新 + 启动入口（常量与身份键 → 扫描 %DSH_HOME%/sessions 下 v4 会话日志并按九字段身份聚合 → 按日志 mtime 与账本 ts 判定 changed、只对变化文件按递进窗口读首帧并判白名单才解析 → 读现有 archive 后覆盖式更新、单调性保护、说明行、单 archive temp→rename 原子发布 → startupArchive 启动入口）；固定15键（rootSessionId/agentPreset 可空）、四桶口径、严格白名单、一次 `O_EXCL` 简易互斥（拿不到即跳过、不接管不删他人锁），失败按需留痕，可处理异常返回结构化状态，正常由 settings Worker 调用；直调 API 仍同步，真实启动及内存风险需另行验证；共享目录中的其他日志不由本模块接管。 |
@@ -164,7 +164,7 @@
 | index.js | prepareDiagnosticPath | L416-432 | 先建父目录再校验写入目标，成功返回可写诊断路径，任一步失败都一律返回空串且不抛错 |  |
 | index.js | appendDiagnostic | L434-439 | 以 UTF-8 追加一行 JSON 诊断记录，路径不可得时返回假而不抛错，供调用方判空 |  |
 | index.js | recordAgentError | L441-458 | agent/error 回合错误取证：错误链逐字追加到诊断目录（落点见 getDiagPath），整体吞错不阻断。 | 与 recordRequestError 同诊断模式 |
-| index.js | apply | L462-1733 | 插件主入口：闸门词表先校验，再接线投影、路由与 save 工具注册（顺序以机制设计为准）；静态可解析 run_code 组在 next 前预审，动态或未解析成员交由实际 pre-execute 重入重新判定；不再接管诊断日志启动清理。 |  |
+| index.js | apply | L462-1744 | 插件主入口：闸门词表先校验，再接线投影、路由与 save 工具注册（顺序以机制设计为准）；静态可解析 run_code 组在 next 前预审，动态或未解析成员交由实际 pre-execute 重入重新判定；不再接管诊断日志启动清理。 |  |
 | index.js | getPathContext | L486 | 传给保存类工具工厂的取上下文回调：按 cwd 现算路径上下文，属宿主接线且不缓存 |  |
 | index.js | getPathContext | L493 | 传给草稿修复工具工厂的取上下文回调：按 cwd 现算路径上下文，属宿主接线且不缓存 |  |
 | index.js | resolveDocumentTarget | L503 | 传给配置热读器的文档目标回调：按 agent 现算精确宿主目标，属宿主接线不缓存 |  |
@@ -193,29 +193,30 @@
 | index.js | askGateUser | L653-672 | 闸门提问通道：缺 id 的提问补齐稳定 id 后交 userQuestions.ask；服务缺失抛 NO_PROVIDER，由工具层转 channel-error。 |  |
 | index.js | registerGateTool | L679-698 | 按 apply 幂等注册 extra_plan_gate（WeakSet 记录）：tools 服务缺失只 warn，重复注册保留既有工具，不向 agent/created 抛出。 |  |
 | index.js | selectChildModelOnCreate | L708-759 | 子代理创建时按角色选模型：验收者按 reviewerUsesPlannerModel 走 planner 路由，其余走 otherAgentModel，失败普通回退 |  |
-| index.js | toolsServiceOf | L778-791 | 取 agent 作用域 tools 服务：优先 ctx.tools，其次 ctx.get('tools')，异常一律返回 undefined |  |
-| index.js | restrictableNamesOf | L794-804 | 取可收窄名集合：仅取 view(agent).restrictableNames，缺失或异常一律返回 null（schemas 兜底在 anchoredAllowNamesOf 内） |  |
-| index.js | restrictableSnapshotOf | L805-808 | 把可收窄名集合转成排序数组供诊断落盘，null 原样透传 |  |
-| index.js | toolRestrictionSlotOf | L810-817 | 取/建 per-agent 的 Map<source,{disposer,filter}> 槽位，供多路裁剪共存 |  |
-| index.js | anchoredDiagStateOf | L821-836 | 按 agent 惰性建立 anchored 诊断状态，保存 first/later 装配标记与三路 source（anchored-bootstrap／cordis-presentation／web-fetch）最近的 arm/release/skip 快照，供内存摘要与即时失败落盘共用。 |  |
-| index.js | toolRestrictionDiag | L838-869 | 三路裁剪共用诊断出口：按 agent/source 更新最近 arm/release/skip 快照；仅 arm-failed/release-failed 立即追加 extra-plan-anchored.jsonl，诊断写失败吞掉且不影响主流程。 |  |
-| index.js | restrictionsSnapshotOf | L871-885 | 汇总三路裁剪的当前与最近诊断：active 是当前槽位保存的 filter 对象或 null（不是布尔标志），并带 arm/release/skip 最近快照。 |  |
-| index.js | anchoredAllowNamesOf | L891-919 | 算引导期 allow：bootstrapShellTools ∪ bootstrapCommonTools ∩ 可收窄名，空集返回 [] 由调用方跳过 |  |
-| index.js | armToolRestriction | L923-975 | 通用裁剪入口：校验 allow/deny filter、跳过/幂等/可收窄名后调用 tools.restrict；非法、空、缺名、非函数 disposer 或异常均落 arm-failed 并即时诊断。 |  |
-| index.js | releaseToolRestriction | L978-991 | 通用释放入口：只释放槽位保存的 disposer；成功落 release-ok，disposer 异常落 release-failed 并即时诊断，不调用空 filter restrict。 |  |
-| index.js | anchoredBootstrapArmOptionsOf | L994-1033 | 算引导期 arm 选项：判定相位/角色等跳过条件并生成 allow filter 与诊断字段 |  |
-| index.js | armAnchoredToolRestriction | L1034-1036 | 引导期 arm 薄适配：算 allow 后转调 armToolRestriction |  |
-| index.js | releaseAnchoredToolRestriction | L1037-1039 | 引导期 release 薄适配：转调 releaseToolRestriction |  |
-| index.js | armCordisPresentationRestriction | L1043-1046 | C=0 cordis deny 薄适配：算 deny 后转调 armToolRestriction |  |
-| index.js | releaseCordisPresentationRestriction | L1048-1050 | C=0 cordis release 薄适配：转调 releaseToolRestriction |  |
-| index.js | armWebFetchRestriction | L1056-1066 | web_fetch deny 薄适配：webFetch 关闭时逐会话 arm 只 deny 单名 web_fetch 的 restrict，开启时跳过 |  |
-| index.js | releaseWebFetchRestriction | L1068-1070 | web_fetch release 薄适配：webFetch 开启时释放该会话的 web_fetch deny |  |
-| index.js | shouldHideCreativeCatalog | L1105-1107 | C 热读判定：仅 creativeMode=false（C=0）返回 true，供调用方在 A/F 优先的投影视图隐藏创造 skill；本函数不检查 A/F、角色或 M，也不改变 registry binding |  |
-| index.js | isAnchoredContextGate | L1111-1116 | 判定当前 agent 是否满足 anchored context gate：bootstrap 开启、Session 仍处 F，且角色为 main 或 planner（非 live child） | 只读 payload.agent；角色沿现有 isPlannerChild/isChild 语义，不使用 selfAgent 或父 Session 相位 |
-| index.js | warnPreStepFailure | L1118-1122 | pre-step 可降级 C 投影/去重异常的一次性告警 helper；返回路径仍保留已经完成的 source 过滤副本，并保证 next 只调用一次 | 不得在关键 source gate/phase 失败时吞错后发送未过滤 decision |
-| index.js | recordRequestError | L1237-1257 | agent/request-error：按 diagPath 追加 jsonl，含 ts、role 与错误链，整体吞错。 |  |
-| index.js | messageTargetIdOf | L1667-1676 | send_message 目标回调：只读本轮名称或路径引用的已解析 Session ID；未命中即登记本轮 Set 供 resolveName 逐个补齐，非字符串 agent 回退旧 agent_id，不跨调用缓存且不调用宿主。 | 最新路径 agent 与 resolveName 适配（rc.2 与 rc.3 共用）；旧 agent_id 仅 rc.1 兼容，删除边界均须另行授权。 |
-| index.js | finish | L1679-1691 | 本轮 apply 闸门唯一一次性收尾：拒绝先记 run_code deny；最终放行才记 job_output 与轮询计数并 next 一次；解析名称的匿名异步闭包复用此收尾，解析异常或取消原样传播。 | 同一 apply 内防重复调用，不把 resolveName 异常吞为 allow 或 deny。 |
+| index.js | toolsServiceOf | L780-793 | 取 agent 作用域 tools 服务：优先 ctx.tools，其次 ctx.get('tools')，异常一律返回 undefined |  |
+| index.js | restrictableNamesOf | L796-806 | 取可收窄名集合：仅取 view(agent).restrictableNames，缺失或异常一律返回 null（schemas 兜底在 anchoredAllowNamesOf 内） |  |
+| index.js | restrictableSnapshotOf | L807-810 | 把可收窄名集合转成排序数组供诊断落盘，null 原样透传 |  |
+| index.js | toolRestrictionSlotOf | L812-819 | 取/建 per-agent 的 Map<source,{disposer,filter}> 槽位，供多路裁剪共存 |  |
+| index.js | anchoredDiagStateOf | L823-839 | 按 agent 惰性建立 anchored 诊断状态，保存 first/later 装配标记与三路 source（anchored-bootstrap／cordis-presentation／web-fetch）最近的 arm/release/skip 快照，供内存摘要与即时失败落盘共用。 |  |
+| index.js | toolRestrictionDiag | L841-872 | 三路裁剪共用诊断出口：按 agent/source 更新最近 arm/release/skip 快照；仅 arm-failed/release-failed 立即追加 extra-plan-anchored.jsonl，诊断写失败吞掉且不影响主流程。 |  |
+| index.js | restrictionsSnapshotOf | L874-888 | 汇总三路裁剪的当前与最近诊断：active 是当前槽位保存的 filter 对象或 null（不是布尔标志），并带 arm/release/skip 最近快照。 |  |
+| index.js | anchoredAllowNamesOf | L894-922 | 算引导期 allow：bootstrapShellTools ∪ bootstrapCommonTools ∩ 可收窄名，空集返回 [] 由调用方跳过 |  |
+| index.js | armToolRestriction | L926-978 | 通用裁剪入口：校验 allow/deny filter、跳过/幂等/可收窄名后调用 tools.restrict；非法、空、缺名、非函数 disposer 或异常均落 arm-failed 并即时诊断。 |  |
+| index.js | releaseToolRestriction | L981-994 | 通用释放入口：只释放槽位保存的 disposer；成功落 release-ok，disposer 异常落 release-failed 并即时诊断，不调用空 filter restrict。 |  |
+| index.js | anchoredBootstrapArmOptionsOf | L997-1036 | 算引导期 arm 选项：判定相位/角色等跳过条件并生成 allow filter 与诊断字段 |  |
+| index.js | armAnchoredToolRestriction | L1037-1039 | 引导期 arm 薄适配：算 allow 后转调 armToolRestriction |  |
+| index.js | releaseAnchoredToolRestriction | L1040-1042 | 引导期 release 薄适配：转调 releaseToolRestriction |  |
+| index.js | armCordisPresentationRestriction | L1046-1049 | C=0 cordis deny 薄适配：算 deny 后转调 armToolRestriction |  |
+| index.js | releaseCordisPresentationRestriction | L1051-1053 | C=0 cordis release 薄适配：转调 releaseToolRestriction |  |
+| index.js | armWebFetchRestriction | L1059-1069 | web_fetch deny 薄适配：webFetch 关闭时逐会话 arm 只 deny 单名 web_fetch 的 restrict，开启时跳过 |  |
+| index.js | releaseWebFetchRestriction | L1071-1073 | web_fetch release 薄适配：webFetch 开启时释放该会话的 web_fetch deny |  |
+| index.js | armWaitAgentRestriction | L1076-1079 | 按代理作用域拒绝继承的 `wait_agent`，保留其他控制工具 |  |
+| index.js | shouldHideCreativeCatalog | L1115-1117 | C 热读判定：仅 creativeMode=false（C=0）返回 true，供调用方在 A/F 优先的投影视图隐藏创造 skill；本函数不检查 A/F、角色或 M，也不改变 registry binding |  |
+| index.js | isAnchoredContextGate | L1121-1126 | 判定当前 agent 是否满足 anchored context gate：bootstrap 开启、Session 仍处 F，且角色为 main 或 planner（非 live child） | 只读 payload.agent；角色沿现有 isPlannerChild/isChild 语义，不使用 selfAgent 或父 Session 相位 |
+| index.js | warnPreStepFailure | L1128-1132 | pre-step 可降级 C 投影/去重异常的一次性告警 helper；返回路径仍保留已经完成的 source 过滤副本，并保证 next 只调用一次 | 不得在关键 source gate/phase 失败时吞错后发送未过滤 decision |
+| index.js | recordRequestError | L1248-1268 | agent/request-error：按 diagPath 追加 jsonl，含 ts、role 与错误链，整体吞错。 |  |
+| index.js | messageTargetIdOf | L1678-1687 | send_message 目标回调：只读本轮名称或路径引用的已解析 Session ID；未命中即登记本轮 Set 供 resolveName 逐个补齐，非字符串 agent 回退旧 agent_id，不跨调用缓存且不调用宿主。 | 最新路径 agent 与 resolveName 适配（rc.2 与 rc.3 共用）；旧 agent_id 仅 rc.1 兼容，删除边界均须另行授权。 |
+| index.js | finish | L1690-1702 | 本轮 apply 闸门唯一一次性收尾：拒绝先记 run_code deny；最终放行才记 job_output 与轮询计数并 next 一次；解析名称的匿名异步闭包复用此收尾，解析异常或取消原样传播。 | 同一 apply 内防重复调用，不把 resolveName 异常吞为 allow 或 deny。 |
 | lib/agent-runtime.js | isLiveDelegation | L17-28 | 按父会话 registry 存活状态判定委托是否仍有效 |  |
 | lib/agent-runtime.js | createAgentRuntime | L30-175 | 创建 per-apply 角色/缓存/usage baseline 工厂 |  |
 | lib/agent-runtime.js | isChild | L37-45 | 按显式 events 判定 live child 并发出恢复为 root 警示 |  |
@@ -796,23 +797,25 @@
 | lib/shell-mutation.js | commandTextOf | L39-51 | 从执行参数里取命令文本：兼容 JSON 字符串与对象两种形态，缺失或非法返回空串 |  |
 | lib/shell-mutation.js | pwshCommandOf | L53 | PowerShell 侧的命令取文本入口，直接复用通用取文本逻辑，不额外解析也不做参数校验 |  |
 | lib/shell-mutation.js | bashCommandOf | L54 | bash 侧的命令取文本入口，与 PowerShell 侧共用同一取文本实现不另设规则 |  |
-| lib/shell-mutation.js | shellWords | L59-86 | 把单段命令切成词元，记录是否被引号包裹并处理反引号转义，供命令位状态机判定裸写动词 |  |
-| lib/shell-mutation.js | splitShellSegments | L88-114 | 按分号、换行与与或管道把命令切段，引号内分隔符不切段，仅做切分不改变每段的原词序 |  |
-| lib/shell-mutation.js | shellParenEnd | L116-135 | 自左圆括号配平到配对右括号，跳过引号与转义，未闭合时返回文本末尾交由调用方自行兜底 |  |
-| lib/shell-mutation.js | executableShellSubexpressions | L137-162 | 提取可执行的美元括号与数组子表达式内层文本，双引号内与反引号转义按可执行内容处理 |  |
-| lib/shell-mutation.js | shellSyntaxText | L164-179 | 生成只留语法符号的镜像文本，引号内容与转义一律抹为空格，供语法级写形态正则做匹配 |  |
-| lib/shell-mutation.js | isInnerShellWord | L183-186 | 判断词元是否为内层 shell 命令名，含 cmd.exe 路径形态，比较前统一转小写 |  |
-| lib/shell-mutation.js | isEnvAssignment | L187-189 | 判断词元是否为环境变量赋值前缀，形如标识符紧跟等号的裸赋值开头，参数位不参与判定 |  |
-| lib/shell-mutation.js | redirectEvidence | L197-214 | 裸写重定向判定：引号内、箭头左邻与右侧流合并豁免，其余判 PWSH_MUTATION。 |  |
-| lib/shell-mutation.js | syntaxRuleOf | L221-225 | 把语法级写形态正则映射回规则标识，非已知正则返回空而不臆造规则名，供拒绝文案取用 |  |
-| lib/shell-mutation.js | bareRuleOf | L227-231 | 把裸写动词正则映射回规则标识，未知正则返回空值，以免产出无主证据与错误的拒绝文案 |  |
-| lib/shell-mutation.js | mutationTextEvidence | L233-414 | 命令位状态机：切段后逐词判定裸写动词，递归子表达式与内层 shell，只产出命中证据 |  |
-| lib/shell-mutation.js | nestedEvidenceOf | L244-256 | 对子表达式内层依次跑当前平台、PowerShell 与 bash 三套规则，返回首个命中证据 |  |
-| lib/shell-mutation.js | mutationEvidence | L416-419 | 按传入的取文本函数取命令后再判定，空命令直接返回空值，不进入命令位状态机也不报错 |  |
-| lib/shell-mutation.js | pwshMutationEvidence | L421 | PowerShell 入参的写判定，命中产出规则与词元组成的拒绝证据，本身不执行任何命令 |  |
-| lib/shell-mutation.js | bashMutationEvidence | L422 | bash 入参的写判定，命中产出拒绝证据对象，仅用于拦截与留证而不落实任何执行动作 |  |
-| lib/shell-mutation.js | pwshMutationMatches | L423 | PowerShell 侧的布尔写判定包装，等价于证据非空判定，不给调用方额外产出拒绝文案 |  |
-| lib/shell-mutation.js | bashMutationMatches | L424 | bash 侧的布尔写判定包装，供只关心是否拦截的调用方使用，不改变底层证据判定语义 |  |
+| lib/shell-mutation.js | shellWords | L59-87 | 把单段命令切成词元，记录是否被引号包裹并处理反引号转义，供命令位状态机判定裸写动词 |  |
+| lib/shell-mutation.js | pwshCommandSegmentsText | L93-125 | 为 PowerShell 扫描排除注释并合并显式续行 |  |
+| lib/shell-mutation.js | hasPwshDownloadOutput | L127-142 | 检查当前 PowerShell 下载命令的顶层 `OutFile` 参数 |  |
+| lib/shell-mutation.js | splitShellSegments | L144-170 | 按分号、换行与与或管道把命令切段，引号内分隔符不切段，仅做切分不改变每段的原词序 |  |
+| lib/shell-mutation.js | shellParenEnd | L172-191 | 自左圆括号配平到配对右括号，跳过引号与转义，未闭合时返回文本末尾交由调用方自行兜底 |  |
+| lib/shell-mutation.js | executableShellSubexpressions | L193-218 | 提取可执行的美元括号与数组子表达式内层文本，双引号内与反引号转义按可执行内容处理 |  |
+| lib/shell-mutation.js | shellSyntaxText | L220-235 | 生成只留语法符号的镜像文本，引号内容与转义一律抹为空格，供语法级写形态正则做匹配 |  |
+| lib/shell-mutation.js | isInnerShellWord | L239-242 | 判断词元是否为内层 shell 命令名，含 cmd.exe 路径形态，比较前统一转小写 |  |
+| lib/shell-mutation.js | isEnvAssignment | L243-245 | 判断词元是否为环境变量赋值前缀，形如标识符紧跟等号的裸赋值开头，参数位不参与判定 |  |
+| lib/shell-mutation.js | redirectEvidence | L253-270 | 裸写重定向判定：引号内、箭头左邻与右侧流合并豁免，其余判 PWSH_MUTATION。 |  |
+| lib/shell-mutation.js | syntaxRuleOf | L277-281 | 把语法级写形态正则映射回规则标识，非已知正则返回空而不臆造规则名，供拒绝文案取用 |  |
+| lib/shell-mutation.js | bareRuleOf | L283-287 | 把裸写动词正则映射回规则标识，未知正则返回空值，以免产出无主证据与错误的拒绝文案 |  |
+| lib/shell-mutation.js | mutationTextEvidence | L289-474 | 命令位状态机：切段后逐词判定裸写动词，递归子表达式与内层 shell，只产出命中证据 |  |
+| lib/shell-mutation.js | nestedEvidenceOf | L301-313 | 对子表达式内层依次跑当前平台、PowerShell 与 bash 三套规则，返回首个命中证据 |  |
+| lib/shell-mutation.js | mutationEvidence | L476-479 | 按传入的取文本函数取命令后再判定，空命令直接返回空值，不进入命令位状态机也不报错 |  |
+| lib/shell-mutation.js | pwshMutationEvidence | L481 | PowerShell 入参的写判定，命中产出规则与词元组成的拒绝证据，本身不执行任何命令 |  |
+| lib/shell-mutation.js | bashMutationEvidence | L482 | bash 入参的写判定，命中产出拒绝证据对象，仅用于拦截与留证而不落实任何执行动作 |  |
+| lib/shell-mutation.js | pwshMutationMatches | L483 | PowerShell 侧的布尔写判定包装，等价于证据非空判定，不给调用方额外产出拒绝文案 |  |
+| lib/shell-mutation.js | bashMutationMatches | L484 | bash 侧的布尔写判定包装，供只关心是否拦截的调用方使用，不改变底层证据判定语义 |  |
 | lib/usage-ledger-background.js | isObject | L11-13 | 判定 owner/pathContext 是否可作为对象键，函数也视为对象。 |  |
 | lib/usage-ledger-background.js | stringOrEmpty | L15-17 | 只接受字符串，其他值归空串供根路径与错误字段归一。 |  |
 | lib/usage-ledger-background.js | errorDetails | L19-23 | 将 Worker/controller 异常收敛为 code/message 诊断对象。 |  |

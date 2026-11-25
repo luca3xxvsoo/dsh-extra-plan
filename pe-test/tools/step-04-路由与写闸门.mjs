@@ -1732,6 +1732,13 @@ const writeCode = { code: "await writeFileSync('x', '1')", description: '写文�
 const readOnlyCode = { code: "await readFileSync('x', 'utf8')", description: '只读' }
 const pwshRedirect = { command: 'Write-Output x > out.txt' }
 const pwshRedirectGroup = { code: "await tools.pwsh({ command: 'Write-Output x > out.txt' })", description: 'A09 重定向组成员' }
+const pwshDownload = { command: "Invoke-WebRequest -Uri 'https://example.invalid/report.csv' -OutFile:'local report.csv'" }
+const pwshDownloadGroup = { code: 'await tools.pwsh(' + JSON.stringify(pwshDownload) + ')', description: '下载落盘组成员' }
+const directDownload = preExecute(harness, noneMain, 'pwsh', pwshDownload)
+const groupedDownload = preExecute(harness, noneMain, 'run_code', pwshDownloadGroup)
+checkTrue('未授权下载落盘：直呼与 run_code 同源拒绝', directDownload.kind === 'deny' && groupedDownload.kind === 'deny' && String(groupedDownload.reason).includes('- pwsh: ' + directDownload.reason))
+checkTrue('已授权下载落盘：沿用 main 路线放行', preExecute(harness, mainRouteMain, 'pwsh', pwshDownload).kind === 'allow' && preExecute(harness, mainRouteMain, 'run_code', pwshDownloadGroup).kind === 'allow')
+
 const h3NewItemGroup = { code: "await tools.pwsh({ command: 'New-Item x.txt' })", description: 'H3 直呼聚合同源' }
 r = preExecute(harness, noneMain, 'pwsh', { command: 'New-Item x.txt' })
 const h3DirectReason = r.kind === 'deny' ? String(r.reason) : ''

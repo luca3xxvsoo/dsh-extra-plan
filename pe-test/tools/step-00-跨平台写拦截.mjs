@@ -179,6 +179,31 @@ for (const [cmd, expected] of pwshRedirectMatrix) {
   for (const shape of ['object', 'string']) check(`${shape} arguments ${expected ? '拦截' : '放行'}: ${cmd}`, gateDeny(pwshExec(cmd, shape)) === expected)
 }
 
+console.log('== PowerShell 下载落盘：命令位和同命令参数 ==')
+const pwshDownloadCases = [
+  ["Invoke-WebRequest -Uri https://example.invalid/a -OutFile 'some file.csv'", true],
+  ["IWR -Uri https://example.invalid/a -oUtF:'some file.csv'", true],
+  ['Invoke-RestMethod -Uri https://example.invalid/a -OutFi file.csv', true],
+  ['irm -Uri https://example.invalid/a -OutFil:file.csv', true],
+  ['$resp = (iwr -Uri https://example.invalid/a -OutFile out.csv)', true],
+  ['iwr -Uri https://example.invalid/a#fragment -OutFile out.csv', true],
+  ['iwr -Uri https://example.invalid/a ' + String.fromCharCode(96) + '\r\n -OutFile out.csv', true],
+  ['iwr <# note #> -OutFile out.csv', true],
+  ['iwr -Uri https://example.invalid/a -OutBuffer 1 -OutVariable response', false],
+  ['iwr -Uri https://example.invalid/a -OutFake out.csv', false],
+  ["iwr -Uri 'https://example.invalid/a' -UserAgent '-OutFile'", false],
+  ["Write-Output 'iwr -OutFile out.csv'", false],
+  ['iwr -Uri https://example.invalid/a # -OutFile out.csv', false],
+  ['iwr -Uri https://example.invalid/a # ignored; irm -OutF ignored.csv', false],
+  ['iwr <# -OutFile ignored.csv #> -Uri https://example.invalid/a', false],
+  ['iwr -Uri (Get-Thing -OutFile ignored.csv)', false],
+  ['iwr -Uri https://example.invalid/a | Get-Thing -OutFile ignored.csv', false],
+  ['iwr -Uri https://example.invalid/a; Get-Thing -OutFile ignored.csv', false],
+]
+for (const [cmd, expected] of pwshDownloadCases) {
+  for (const shape of ['object', 'string']) check('下载落盘 ' + shape + ': ' + cmd, gateDeny(pwshExec(cmd, shape)) === expected)
+}
+
 console.log('== H3 短证据与布尔等价（纯函数，无真实 shell） ==')
 const h3EvidenceCases = [
   ['pwsh bare object', pwshExec('New-Item secret.txt'), pwshMutationEvidence, { rule: 'PWSH_BARE_WORDS', value: 'New-Item' }],

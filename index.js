@@ -772,6 +772,8 @@ export function apply(ctx, config) {
   // web_fetch 免重启开关：deny 单名走同一条 restrict 通路（source 独立，便于诊断区分）。
   const WEB_FETCH_SOURCE = 'web-fetch'
   const WEB_FETCH_TOOL_NAME = 'web_fetch'
+  const WAIT_AGENT_SOURCE = 'wait-agent'
+  const WAIT_AGENT_TOOL_NAME = 'wait_agent'
   // 单一存储：agent → (source → { disposer, filter })；同 agent 同 source 已 arm 即幂等返回。
   const toolRestrictions = new WeakMap()
   const anchoredDiagState = new WeakMap()
@@ -828,6 +830,7 @@ export function apply(ctx, config) {
           [ANCHORED_BOOTSTRAP_SOURCE]: { arm: null, release: null, skip: null },
           [CORDIS_PRESENTATION_SOURCE]: { arm: null, release: null, skip: null },
           [WEB_FETCH_SOURCE]: { arm: null, release: null, skip: null },
+          [WAIT_AGENT_SOURCE]: { arm: null, release: null, skip: null },
         },
       }
       anchoredDiagState.set(agent, state)
@@ -871,7 +874,7 @@ export function apply(ctx, config) {
   function restrictionsSnapshotOf(agent, state) {
     const active = toolRestrictions.get(agent)
     const snapshot = {}
-    for (const source of [ANCHORED_BOOTSTRAP_SOURCE, CORDIS_PRESENTATION_SOURCE, WEB_FETCH_SOURCE]) {
+    for (const source of [ANCHORED_BOOTSTRAP_SOURCE, CORDIS_PRESENTATION_SOURCE, WEB_FETCH_SOURCE, WAIT_AGENT_SOURCE]) {
       const entry = active !== undefined ? active.get(source) : undefined
       const latest = state.restrictions[source]
       snapshot[source] = {
@@ -1069,6 +1072,12 @@ export function apply(ctx, config) {
     releaseToolRestriction(agent, WEB_FETCH_SOURCE)
   }
 
+  // 永久收窄当前 Agent 的注册表视图；不撤掉控制包或影响子代理完成通知。
+  function armWaitAgentRestriction(agent, trigger) {
+    if (!restrictableNamesOf(agent)?.has(WAIT_AGENT_TOOL_NAME)) return
+    armToolRestriction(agent, { source: WAIT_AGENT_SOURCE, trigger, filter: { deny: [WAIT_AGENT_TOOL_NAME] } })
+  }
+
   ctx.on('agent/created', async (payload) => {
     const agent = payload !== undefined && payload !== null ? payload.agent : undefined
     if (agent === undefined) return
@@ -1088,6 +1097,7 @@ export function apply(ctx, config) {
     armAnchoredToolRestriction(agent, 'agent-created')
     armCordisPresentationRestriction(agent, 'agent-created')
     armWebFetchRestriction(agent, 'agent-created')
+    armWaitAgentRestriction(agent, 'agent-created')
   })
 
   // 2) pre-step：消息投影；规划子代理初始任务与
@@ -1171,6 +1181,7 @@ export function apply(ctx, config) {
         armAnchoredToolRestriction(agent, 'pre-step')
         armCordisPresentationRestriction(agent, 'pre-step')
         armWebFetchRestriction(agent, 'pre-step')
+        armWaitAgentRestriction(agent, 'pre-step')
       } catch (error) {
         initializationFailed = true
         warnPreStepFailure(error)
