@@ -1962,33 +1962,25 @@ const controlChildCases = [
   ['unknown-child', unknownControlChild, harnessAgents],
 ]
 for (const [roleName, agent, caseHarness] of controlChildCases) {
-  for (const controlName of ['send_message', 'interrupt_agent']) {
-    const args = controlName === 'send_message' ? { agent_id: 'parent', message: 'hi' } : { agent_id: 'parent' }
-    let unknownWarnings = []
-    const captureUnknownWarning = roleName === 'unknown-child' && controlName === 'send_message'
-    const previousWarn = console.warn
-    if (captureUnknownWarning) console.warn = (...args) => { unknownWarnings.push(args.map((value) => String(value)).join(' ')); previousWarn(...args) }
-    try { r = preExecute(caseHarness, agent, controlName, args) } finally { if (captureUnknownWarning) console.warn = previousWarn }
-    checkTrue('R79/R80 ' + roleName + ' ' + controlName + ' 直呼 → deny（childControlGateReason）', r.kind === 'deny' && String(r.reason).includes('子代理禁止调用 ' + controlName))
-    if (captureUnknownWarning) checkTrue('R79 unknown-child live parent 缺失 → 恰一次 live without its parent 警告且仍按原始 child deny', unknownWarnings.filter((message) => message.includes('live without its parent')).length === 1 && r.kind === 'deny')
-  }
-  for (const controlName of ['send_message', 'interrupt_agent']) {
-    const nestedControlCode = { code: 'await tools.run_code({ "code": ' + JSON.stringify('await tools.' + controlName + '({})') + ' })', description: '一层嵌套控制工具组' }
-    let nextCalls = 0
-    r = preExecute(caseHarness, agent, 'run_code', nestedControlCode, undefined, () => { nextCalls += 1 })
-    checkTrue('R83 ' + roleName + ' ' + controlName + ' 一层嵌套 run_code → 整组 deny 且 next=0', r.kind === 'deny' && String(r.reason).includes(controlName) && nextCalls === 0)
-  }
+  const args = { agent_id: 'parent', message: 'hi' }
+  const unknownWarnings = []
+  const captureUnknownWarning = roleName === 'unknown-child'
+  const previousWarn = console.warn
+  if (captureUnknownWarning) console.warn = (...items) => { unknownWarnings.push(items.map(String).join(' ')); previousWarn(...items) }
+  try { r = preExecute(caseHarness, agent, 'send_message', args) } finally { if (captureUnknownWarning) console.warn = previousWarn }
+  checkTrue('R79 ' + roleName + ' send_message 直呼 → deny（childControlGateReason）', r.kind === 'deny' && String(r.reason).includes('子代理禁止调用 send_message'))
+  if (captureUnknownWarning) checkTrue('R79 unknown-child live parent 缺失 → 恰一次 live without its parent 警告且仍按原始 child deny', unknownWarnings.filter((message) => message.includes('live without its parent')).length === 1 && r.kind === 'deny')
+  const nestedControlCode = { code: 'await tools.run_code({ "code": ' + JSON.stringify('await tools.send_message({})') + ' })', description: '一层嵌套控制工具组' }
+  let nextCalls = 0
+  r = preExecute(caseHarness, agent, 'run_code', nestedControlCode, undefined, () => { nextCalls += 1 })
+  checkTrue('R83 ' + roleName + ' send_message 一层嵌套 run_code → 整组 deny 且 next=0', r.kind === 'deny' && String(r.reason).includes('send_message') && nextCalls === 0)
 }
-// DSH_COMPAT_RC1：下方 args.agent_id 只标示旧 send_message 输入；running/idle/未驻留与 interrupt_agent 安全合同仍是共享当前断言。
-// 主会话控制合同保留：send_message 的 running/idle/未驻留与 interrupt_agent 均由 main 分支处理。
+// DSH_COMPAT_RC1：下方 args.agent_id 只标示旧 send_message 输入。
 for (const target of ['running', 'idle', 'unresident']) {
   const args = { agent_id: target === 'running' ? 'session-x' : target === 'idle' ? 'session-idle' : 'unknown-id', message: 'hi' }
   r = preExecute(target === 'running' ? harnessAgents : target === 'idle' ? harnessAgentsIdle : harness, mainAgent, 'send_message', args)
   checkTrue('R84 main send_message ' + target + ' → allow/旧running拒绝合同', target === 'running' ? r.kind === 'deny' && String(r.reason).includes('子代理running中，禁止打扰') : r.kind === 'allow')
 }
-// DSH_COMPAT_RC1：interrupt_agent 夹具仍使用旧 agent_id 形状；主会话控制放行合同不归旧兼容删除边界。
-r = preExecute(harness, mainAgent, 'interrupt_agent', { agent_id: 'session-x' })
-checkTrue('R85 main interrupt_agent → allow（主会话控制合同保持）', r.kind === 'allow')
 r = preExecute(harness, planMain, 'subagent_plan', { run_in_background: false })
 checkTrue('R81 subagent_plan 目的未定+前台参数 → deny 且含「规划目的尚未确认」、不含「规划子代理不可前台等待」', r.kind === 'deny' && String(r.reason).includes('规划目的尚未确认') && !String(r.reason).includes('规划子代理不可前台等待'))
 r = preExecute(harness, planPurposeMain, 'subagent_plan', { task: '规划' })
@@ -2177,9 +2169,6 @@ checkTrue('R86 组内 subagent_review 成员非执行者路线 → deny 且含�
       const groupResult = preExecute(childHarness, child, 'run_code', { code, description: shape + ' PTC send_message' }, undefined, () => { nextCalls += 1 })
       checkTrue(shape + ' ' + roleName + ' PTC send_message 硬拒、解析spy=0、next=0', groupResult.kind === 'deny' && nextCalls === 0 && resolveCalls === 0)
     }
-    let interruptNext = 0
-    const interruptResult = preExecute(childHarness, child, 'interrupt_agent', { agent_id: 'parent' }, undefined, () => { interruptNext += 1 })
-    checkTrue('DSH_COMPAT_RC1 ' + roleName + ' 直呼 interrupt_agent 硬拒且不解析', interruptResult.kind === 'deny' && interruptNext === 0 && resolveCalls === 0)
   }
 }
 
@@ -2458,31 +2447,14 @@ checkTrue('R98 executor job_output wait → allow（执行者豁免保持）', r
 r = preExecute(harness, plannerAgent, 'run_code', joCode)
 checkTrue('R99 planner run_code 组内 job_output wait → deny 且含「job_output 禁止带 wait: true」', r.kind === 'deny' && String(r.reason).includes('job_output 禁止带 wait: true'))
 
-// ── ⑬b 四工具治理：job_kill 仅直行路线放行（v0.4.0；编号自文件内最大 R107 顺延） ──
-const jkCode = { code: 'await tools.job_kill({ "job_id": "j1", "reason": "x" })', description: 'job_kill 成员' }
-// job_kill 拒句判据（S4）：期望值改为对拍 lib 构造器——状态取夹具 events 的 deriveFlowState、词表取
-// gateRuntime，不再匹配中文正文片段；R108/R110/R111 直呼与 R114 组判定（聚合行）同口径。
-const jkArgs = { job_id: 'j1', reason: 'x' }
-const jobKillDenyTextOf = (agent) => decisions.mainGateReason(deriveFlowState(agent.session.snapshotEvents(), gateRuntime), { name: 'job_kill', arguments: jkArgs }, { gateRuntime })
-const jkDenyNone = jobKillDenyTextOf(noneMain)
-const jkDenyPlan = jobKillDenyTextOf(planMain)
-const jkDenyExecutor = jobKillDenyTextOf(executorReadyMain)
-r = preExecute(harness, noneMain, 'job_kill', jkArgs)
-checkTrue('R108 主会话 none 态 job_kill → deny 且拒句与 mainGateReason 派生值逐字一致', r.kind === 'deny' && String(r.reason) === jkDenyNone)
-r = preExecute(harness, mainRouteMain, 'job_kill', jkArgs)
-checkTrue('R109 主会话 main 态 job_kill → allow（route=main 才可停止子代理）', r.kind === 'allow')
-r = preExecute(harness, planMain, 'job_kill', jkArgs)
-checkTrue('R110 主会话 plan 态 job_kill → deny 且拒句与 mainGateReason 派生值逐字一致', r.kind === 'deny' && String(r.reason) === jkDenyPlan)
-r = preExecute(harness, executorReadyMain, 'job_kill', jkArgs)
-checkTrue('R111 主会话 executor 态 job_kill → deny 且拒句与 mainGateReason 派生值逐字一致', r.kind === 'deny' && String(r.reason) === jkDenyExecutor)
-r = preExecute(harness, gateChannelErrorMain, 'job_kill', { job_id: 'j1', reason: 'x' })
-checkTrue('R112 主会话 route 闸门 channel-error 后 job_kill → deny（通道故障不推进，不形成放行逃生）', r.kind === 'deny' && String(r.reason) === jkDenyNone)
-r = preExecute(harness, reselectRouteMain, 'job_kill', { job_id: 'j1', reason: 'x' })
-checkTrue('R113 重选 main 路线后 job_kill → allow', r.kind === 'allow')
-r = preExecute(harness, noneMain, 'run_code', jkCode)
-checkTrue('R114 主会话 none 态 run_code 组内 job_kill 成员 → deny 且聚合行与 mainGateReason 派生值一致（组判定同口径）', r.kind === 'deny' && String(r.reason).includes('- job_kill: ' + jkDenyNone))
-r = preExecute(harness, mainRouteMain, 'run_code', jkCode)
-checkTrue('R115 主会话 main 态 run_code 组内 job_kill 成员 → allow', r.kind === 'allow')
+// ── ⑬b job_kill 保留给宿主取消后台作业，不受本插件路线限制 ──────────────
+const jkArgs = { job_id: 'fixture-job', reason: '模拟授权透传，不停止真实作业' }
+const jkCode = { code: 'await tools.job_kill(' + JSON.stringify(jkArgs) + ')', description: 'job_kill 成员' }
+for (const [label, agent] of [['none', noneMain], ['main', mainRouteMain], ['plan', planMain], ['executor', executorReadyMain], ['channel-error', gateChannelErrorMain]]) {
+  const direct = preExecute(harness, agent, 'job_kill', jkArgs)
+  const group = preExecute(harness, agent, 'run_code', jkCode)
+  checkTrue('job_kill ' + label + '：直呼与 run_code 均交宿主', direct.kind === 'allow' && group.kind === 'allow')
+}
 
 // ── ⑭d 可变事件流 tool-jobs 完成通知解锁（任务4） ──────────────────────
 {

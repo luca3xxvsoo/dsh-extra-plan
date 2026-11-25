@@ -279,7 +279,7 @@ async function runMode(mode, defaultSandboxMode) {
       plugins: [waitControl, { ...waitPlugin, config: { ...waitPlugin.config, anchoredBootstrap: false } }],
     }
     adapters.push(await root.plugin(AgentPresetAdapter, waitMainDefinition))
-    adapters.push(await root.plugin(AgentPresetAdapter, { id: 'wait-fixture-control', plugins: [waitControl] }))
+    adapters.push(await root.plugin(AgentPresetAdapter, { id: 'wait-fixture-control', plugins: [{ ...waitControl, config: { ...waitControl.config, interrupt: true } }] }))
 
     async function createWaitFixture(label, presetId, depth = 0, parent = undefined) {
       const handle = await root.agents.create({
@@ -296,24 +296,27 @@ async function runMode(mode, defaultSandboxMode) {
       return handle.agent
     }
 
-    async function checkWaitTool(label, agent, expected) {
-      const binding = root.tools.get('wait_agent', agent) !== undefined
-      const schema = namesOf(root.tools.schemas(agent)).includes('wait_agent')
+    async function checkScopedTools(label, agent, expected) {
+      const registry = namesOf(root.tools.schemas(agent))
       const assembly = await root.systemPrompt.assemble(assembleContextFor(agent))
       const sdk = assembly.sections.find((section) => section.name === 'tools:sdk')?.text ?? ''
-      const modelFace = mode === 'native' ? namesOf(assembly.tools).includes('wait_agent') : /\bwait_agent\b/.test(sdk)
-      check('WAIT_TOOL ' + scenarioKey + ' ' + label + ' registry + ' + mode, binding === expected && schema === expected && modelFace === expected, JSON.stringify({ binding, schema, modelFace, expected }))
+      for (const toolName of ['wait_agent', 'interrupt_agent']) {
+        const binding = root.tools.get(toolName, agent) !== undefined
+        const schema = registry.includes(toolName)
+        const modelFace = mode === 'native' ? namesOf(assembly.tools).includes(toolName) : sdk.includes(toolName)
+        check('SCOPED_TOOL ' + scenarioKey + ' ' + label + ' ' + toolName + ' registry + ' + mode, binding === expected && schema === expected && modelFace === expected, JSON.stringify({ binding, schema, modelFace, expected }))
+      }
     }
 
     const waitMainAgent = await createWaitFixture('main', waitMainDefinition.id)
     const waitChildAgent = await createWaitFixture('child', waitMainDefinition.id, 1, waitMainAgent)
     const waitNestedAgent = await createWaitFixture('nested', waitMainDefinition.id, 2, waitChildAgent)
-    await checkWaitTool('main', waitMainAgent, false)
-    await checkWaitTool('child', waitChildAgent, false)
-    await checkWaitTool('nested', waitNestedAgent, false)
+    await checkScopedTools('main', waitMainAgent, false)
+    await checkScopedTools('child', waitChildAgent, false)
+    await checkScopedTools('nested', waitNestedAgent, false)
     const waitUnmanagedAgent = await createWaitFixture('unmanaged', 'wait-fixture-control')
-    await checkWaitTool('unmanaged', waitUnmanagedAgent, true)
-    check('WAIT_TOOL ' + scenarioKey + ' 主会话保留其余 control 工具', ['send_message', 'list_agents', 'interrupt_agent'].every((name) => root.tools.get(name, waitMainAgent) !== undefined))
+    await checkScopedTools('unmanaged', waitUnmanagedAgent, true)
+    check('SCOPED_TOOL ' + scenarioKey + ' 主会话保留 send_message/list_agents', ['send_message', 'list_agents'].every((name) => root.tools.get(name, waitMainAgent) !== undefined))
 
     const plannerAgent = await createChild('extra-plan-planner', 1)
     check('组3 ' + mode + ' planner 子会话 header.agentPreset === extra-plan-planner', plannerAgent.session.header.agentPreset === 'extra-plan-planner', String(plannerAgent.session.header.agentPreset))
@@ -391,7 +394,7 @@ async function runMode(mode, defaultSandboxMode) {
       const modeOk = observation !== undefined && observation.override === expectedOverride && observation.effectiveMode === expectedMode && observation.modeEvents.length === modeEventCount && (lastModeEvent === null ? modeEventCount === 0 : lastEventMode === expectedMode)
       check('组3 ' + scenarioKey + ' ' + roleName + ' 创建后固定mode/override', modeOk, JSON.stringify({ expectedMode, expectedOverride: expectedOverride ?? null, override: observation?.override ?? null, effectiveMode: observation?.effectiveMode ?? null, modeEvents: observation?.modeEvents ?? [] }))
       console.log('ROLE_SESSION=' + JSON.stringify({ scenario: scenarioKey, mode, defaultSandboxMode, role: roleName, preset: agent.session.header.agentPreset, id: agent.session.header.id, override: observation?.override ?? null, lastMode: observation?.effectiveMode ?? null, lastModeEvent, childModeEvents: observation?.modeEvents ?? [] }))
-      await checkWaitTool(roleName, agent, false)
+      await checkScopedTools(roleName, agent, false)
       const schemas = root.tools.schemas(agent)
       const schemaNames = namesOf(schemas)
       if (roleName === 'reviewer') check('组4 ' + mode + ' reviewer 工具面不含 write/edit', !schemaNames.includes('write') && !schemaNames.includes('edit'), JSON.stringify(schemaNames))

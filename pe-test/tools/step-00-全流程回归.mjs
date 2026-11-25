@@ -5289,18 +5289,15 @@ const controlRoles = [
   ['unknown-child', { kind: 'child', readOnly: false, probe: false }],
 ]
 for (const [roleName, role] of controlRoles) {
-  for (const controlName of ['send_message', 'interrupt_agent']) {
-    const directReason = runCodeGroupDenyReason(undefined, { name: 'run_code', arguments: { code: 'await tools.' + controlName + '({})' } }, role, { gateRuntime })
-    checkTrue('CONTROL2 ' + roleName + ' ' + controlName + ' 直呼语义 → childControlGateReason deny', typeof childControlGateReason({ name: controlName }) === 'string' && typeof directReason === 'string' && directReason.includes(controlName))
-    const nestedCode = 'await tools.run_code({ "code": ' + JSON.stringify('await tools.' + controlName + '({})') + ' })'
-    const nestedReason = runCodeGroupDenyReason(undefined, { name: 'run_code', arguments: { code: nestedCode } }, role, { gateRuntime })
-    checkTrue('CONTROL3 ' + roleName + ' ' + controlName + ' 一层嵌套 run_code → 稳定 deny', typeof nestedReason === 'string' && nestedReason.includes(controlName))
-  }
+  const directReason = runCodeGroupDenyReason(undefined, { name: 'run_code', arguments: { code: 'await tools.send_message({})' } }, role, { gateRuntime })
+  checkTrue('CONTROL2 ' + roleName + ' send_message 直呼与组内 → deny', typeof childControlGateReason({ name: 'send_message' }) === 'string' && typeof directReason === 'string' && directReason.includes('send_message'))
+  const nestedCode = 'await tools.run_code({ "code": ' + JSON.stringify('await tools.send_message({})') + ' })'
+  const nestedReason = runCodeGroupDenyReason(undefined, { name: 'run_code', arguments: { code: nestedCode } }, role, { gateRuntime })
+  checkTrue('CONTROL3 ' + roleName + ' send_message 一层嵌套 run_code → deny', typeof nestedReason === 'string' && nestedReason.includes('send_message'))
 }
-for (const controlName of ['send_message', 'interrupt_agent']) {
-  check('CONTROL4 main ' + controlName + ' helper 对照不命中', mainGateReason(noneStateFx, { name: controlName, arguments: {} }, { gateRuntime }), null)
-  check('CONTROL5 main ' + controlName + ' group 对照不命中', runCodeGroupDenyReason(noneStateFx, { name: 'run_code', arguments: { code: 'await tools.' + controlName + '({})' } }, { kind: 'main' }, { gateRuntime }), null)
-}
+check('CONTROL4 main send_message 无 child 硬拒', mainGateReason(noneStateFx, { name: 'send_message', arguments: {} }, { gateRuntime }), null)
+check('CONTROL5 main send_message group 对照不命中', runCodeGroupDenyReason(noneStateFx, { name: 'run_code', arguments: { code: 'await tools.send_message({})' } }, { kind: 'main' }, { gateRuntime }), null)
+check('CONTROL5 interrupt_agent 由工具注册控制，不再由 child 硬拒', childControlGateReason({ name: 'interrupt_agent' }), null)
 const mcpWriteReason = runCodeGroupDenyReason(noneStateFx, { name: 'run_code', arguments: { code: "try { await tools['mcp__chrome-devtools-mcp__list_pages']({}) } catch (e) {}\nawait tools.write({ file_path: 'x', content: '1' })" } }, { kind: 'main' }, { gateRuntime })
 checkTrue('K12 MCP独立catch+受阻write混合组只报write且不出现假ask', typeof mcpWriteReason === 'string' && mcpWriteReason.includes('路由未确认：write/edit') && !mcpWriteReason.includes('结果未正确返回用户层'))
 

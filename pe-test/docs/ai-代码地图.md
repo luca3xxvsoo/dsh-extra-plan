@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-11-25 17:28:10（脚本自动更新时间戳行）
+> 上次同步：2026-11-25 18:30:28（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -21,7 +21,7 @@
 | ask 与闸门工具结果返回用户层／返回链闸门 | lib/run-code-static.js | askOrGateReturnGateReason、reasonFor |
 | 单实例调用点上限／循环放大 | lib/run-code-static.js、lib/runtime-lifecycle.js | runCodeSiteCount、noteRunCodeSubCall、runCodeDispatchCapText |
 | job_output 禁 wait:true／同 job 查重／放行后记录计数器 | index.js | jobOutputGateReason、recordJobOutputCall |
-| job_kill 仅主会话执行（route=main）放行／main send_message 目标解析与方向限制／job_list·list_agents 同锚点防轮询／child 控制工具硬拒 | index.js、lib/gate-decisions.js | mainGateReason、messageTargetIdOf、finish、childControlGateReason、pollGuardGateReason、recordPollGuardCall |
+| job_kill 不受插件路线限制／main send_message 目标解析与方向限制／job_list·list_agents 同锚点防轮询／child send_message 硬拒 | index.js、lib/gate-decisions.js | mainGateReason、messageTargetIdOf、finish、childControlGateReason、pollGuardGateReason、recordPollGuardCall |
 | 原始 child 预审／直呼与 run_code 成员控制拒绝（unknown/断链也覆盖） | index.js、lib/agent-session.js、lib/gate-decisions.js | apply、isSubagentChild、childControlGateReason、runCodeGroupDenyReason |
 | 命令文本提取／写操作判定／只读角色 shell 拒绝文案／触发依据（write/拦截） | lib/shell-mutation.js、lib/gate-decisions.js、index.js、lib/run-code-static.js | commandTextOf、pwshCommandOf、bashCommandOf、mutationTextEvidence、pwshMutationEvidence、bashMutationEvidence、pwshMutationMatches、bashMutationMatches、withShellEvidence、shellMutationReason、runCodeTextOf、codeMutationHints |
 | 锚定引导／F-L 首轮极简／bootstrap／HN-HB-HP／F 段 tool:read 手写文案（bootstrapReadHint）／三路工具面裁剪诊断与即时失败 | index.js、lib/assembly-presentation.js | isBootstrapPhase、projectAssemblyForPresentation、anchoredDiagStateOf、toolRestrictionDiag、restrictionsSnapshotOf、armToolRestriction、releaseToolRestriction |
@@ -101,7 +101,7 @@
 | lib/client-carrier.js | 7 | settings 内部 Loader Group 的无副作用 Client carrier；不对应 bundle row/公开 export。 |
 | lib/client.js | 314 | 客户端模块加载共享样式/词条与 SettingsCard/ExtraPlanForm；设置表单仅经 detail.section 渲染于当前包详情行列表之后（自绘标题，不注册 bundle.config；若本包 bundle.config 槽出现条目则让位）；后端全局 settings API/Config 与 definition/adapter 由同一 owner 活动。 |
 | lib/extra-plan-gate-tool.js | 374 | 闸门专用工具 extra_plan_gate：route/purpose 的选项文案由插件按 gateWords 生成，模型不得构造或改写；clarify 只透传问题；三支都收敛为 outcome 四值（answered/skipped/cancelled/channel-error），execute 从不向外抛错；结果 content 固定为单个 text ContentBlock、正文是返回值整体 JSON |
-| lib/gate-decisions.js | 768 | 闸门状态推导（唯一推进源是 extra_plan_gate 事件）与角色分流判定纯函数集 |
+| lib/gate-decisions.js | 760 | 闸门状态推导（唯一推进源是 extra_plan_gate 事件）与角色分流判定纯函数集 |
 | lib/gate-words.js | 108 | 闸门关键词共享契约（唯一值源是 YAML 的 config.gateWords）：字段规格 GATE_WORD_FIELDS/GATE_WORDS_GROUP_DEFINITION（6 键整组）+ 整组严格校验 validateGateWords（错误一律以 extra-plan: config.gateWords 开头）+ 运行时词表 createGateRuntime（显式入参严格校验，无默认词表）；纯模块：不含任何出厂词值、不读文件与环境变量，被 index.js（运行时）与 lib/preset-sync.js（启动自愈）共享（迁移叶 locator 已随跨版本搬迁链删除）；本函数只判定单次入参，持久值缺失/非法的回落补齐在 preset-sync |
 | lib/live-config.js | 297 | 配置热读：10 项运行时 getter（含 webFetch）；1 项装载期权威设置（toolPresentationMode）只读并派生到内存 definition，不暴露为 getter；构造期读盘一次，后续按增强 stamp（dev/ino/size/mtimeNs/ctimeNs，兼容 ino/size/mtimeMs/ctimeMs）重读；失败整组回退并告警，不读 DSH_HOME 旧目录 |
 | lib/log-retention.js | 123 | 诊断日志保留期裁剪：只处理 <host 根>/logs/dsh-extra-plan 下 .jsonl 普通文件并排除 usage-ledger；全部诊断 JSONL 统一按固定 UTC+8 北京时间昨日零点保留今天/昨天两个自然日；前缀边界算法两遍式（分界扫描+自分界起无解析复制）经临时文件原子替换，分界线=首个可解析且 cutoff<=ts<=now 的行，坏行/空行/未来行随前缀删除，分界后原样保留（含乱序过期行，随保留窗口自然收敛），零写=文件0行或分界为0，全前缀候选清空为空文件；不 import index.js。 |
@@ -318,7 +318,7 @@
 | lib/gate-decisions.js | subagentProbeGateReason | L345-357 | 限制探查者委派只能由主会话发起，规划子代理与其它只读子角色各自返回专属的拒绝文案。 |  |
 | lib/gate-decisions.js | withShellEvidence | L363-367 | 把 shell 命中的规则与取值追加到拒绝文案尾部，证据为 null 时原样返回传入文案。 |  |
 | lib/gate-decisions.js | shellMutationReason | L369-385 | 对规划者、探查者与验收复核者的 pwsh/bash 写命令生成拒绝文案，其余角色返回 null。 |  |
-| lib/gate-decisions.js | childControlGateReason | L388-392 | 仅允许 main 使用 `send_message`/`interrupt_agent`；child 直呼统一返回硬拒文案，供 planner/只读 child/执行者/unknown child 与 run_code 组判定复用。 | 纯函数；mainGateReason 不经此拒绝。 |
+| lib/gate-decisions.js | childControlGateReason | L388-392 | 仅允许 main 使用 `send_message`；child 直呼统一返回硬拒文案，供 planner/只读 child/执行者/unknown child 与 run_code 组判定复用。 | 纯函数；mainGateReason 不经此拒绝。 |
 | lib/gate-decisions.js | plannerGateReason | L396-412 | 规划子代理的写工具、shell 写命令、job_output 与预算闸门串联判定，全不命中返回 null。 |  |
 | lib/gate-decisions.js | childReadonlyGateReason | L416-426 | 只读子代理的写工具、shell 写命令与 job_output 闸门，按探查者或复核者挑选文案。 |  |
 | lib/gate-decisions.js | jobOutputGateReason | L431-453 | job_output 禁止前台等待与同 job 重复调用，缺会话上下文时跳过去重只查等待参数。 |  |
@@ -326,10 +326,10 @@
 | lib/gate-decisions.js | pollGuardGateReason | L477-490 | 同锚点周期内第二次调用 job_list 或 list_agents 即拒绝，无会话上下文时跳过查重。 |  |
 | lib/gate-decisions.js | recordPollGuardCall | L492-503 | 放行后把 job_list 或 list_agents 记入会话集合，参数不全时返回 false 且无副作用。 |  |
 | lib/gate-decisions.js | probeDisposalWarning | L511-514 | 仍有未认领的探查者委派时生成级联取消告警文案，计数非正整数时返回 null 不告警。 |  |
-| lib/gate-decisions.js | mainGateReason | L524-628 | 主会话工具闸门总入口，按 ask（普通 ask_user_question 直接放行）、写入（route 非 main 即拒）、shell（越界特例）、规划、委派与轮询顺序判定；send_message 通过可选 messageTargetIdOf 回调读取本轮目标 ID，running 目标拒绝，回调未提供时保留 agent_id 兼容路径，最后兜底放行。 | target callback 只读本轮解析结果；最新路径 resolveName（rc.2 与 rc.3 共用）与 rc.1 agent_id 边界不含共享安全核心。 |
-| lib/gate-decisions.js | runCodeGroupDenyReason | L640-723 | 静态 run_code 组预审：拆解可解析成员并逐个走对应角色闸门，聚合拒绝并追加预算与防护判定；动态或未解析成员留给实际 pre-execute 重入重新判定，不以动态访问当作放行。 |  |
-| lib/gate-decisions.js | visit | L658-700 | 静态组递归访问器：展开可解析嵌套 run_code 并逐成员选取角色闸门；深度或参数不可解析的成员跳过静态展开，交由实际 pre-execute 重入。 |  |
-| lib/gate-decisions.js | aggregateRunCodeDenyReason | L729-742 | 把成员与拒绝项拼成统一的组拒文案，首行给组规模与放行语义，后续逐行列出成员与原因。 |  |
+| lib/gate-decisions.js | mainGateReason | L524-620 | 主会话工具闸门总入口，按 ask（普通 ask_user_question 直接放行）、写入（route 非 main 即拒）、shell（越界特例）、规划、委派与轮询顺序判定；send_message 通过可选 messageTargetIdOf 回调读取本轮目标 ID，running 目标拒绝，回调未提供时保留 agent_id 兼容路径，最后兜底放行。 | target callback 只读本轮解析结果；最新路径 resolveName（rc.2 与 rc.3 共用）与 rc.1 agent_id 边界不含共享安全核心。 |
+| lib/gate-decisions.js | runCodeGroupDenyReason | L632-715 | 静态 run_code 组预审：拆解可解析成员并逐个走对应角色闸门，聚合拒绝并追加预算与防护判定；动态或未解析成员留给实际 pre-execute 重入重新判定，不以动态访问当作放行。 |  |
+| lib/gate-decisions.js | visit | L650-692 | 静态组递归访问器：展开可解析嵌套 run_code 并逐成员选取角色闸门；深度或参数不可解析的成员跳过静态展开，交由实际 pre-execute 重入。 |  |
+| lib/gate-decisions.js | aggregateRunCodeDenyReason | L721-734 | 把成员与拒绝项拼成统一的组拒文案，首行给组规模与放行语义，后续逐行列出成员与原因。 |  |
 | lib/gate-words.js | fail | L30-32 | 以 extra-plan: config.gateWords 前缀同步抛出整组校验错误，供各字段分支统一复用。 |  |
 | lib/gate-words.js | normalizeGateLabel | L35-37 | 去掉标签首尾空白与保留的推荐后缀（中英文圆括号），只做归一不做子串匹配，也不改词值。 |  |
 | lib/gate-words.js | validateGateWords | L45-72 | 严格校验 6 个闸门词字段的齐全、非空、无空白、无保留后缀与两两不同；合法即返回冻结副本。 |  |

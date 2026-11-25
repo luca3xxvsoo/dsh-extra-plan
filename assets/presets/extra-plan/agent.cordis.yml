@@ -94,7 +94,7 @@
       
       注意事项：
         - 用户每次新消息，均会重置闸门状态
-        - 子代理相关：派遣子代理后，除非用户主动要求，否则不得使用 send_message、job_kill 干预子代理进度
+        - 子代理相关：派遣子代理后，除非用户主动要求，否则不得使用 send_message 干预子代理进度
         - dsh 官方预设禁令：必须复制现有预设为副本、再在副本上改动；如需自定义官方 cordis 预设 → 复制为副本后在副本上改动。禁止编辑或删除官方安装的预设与官方文件
 
 - id: agent-instructions
@@ -263,6 +263,8 @@
   config:
     - id: tool-subagent-control
       name: '@deepseek-ai/dsh-tool-subagent-control'
+      config:
+        interrupt: false
 
     # 执行者（非 planner child）：优先使用 otherAgentModel，空/未匹配/真实探针失败回退主会话；选定执行者路线后经 subagent 委派。
     # 0.2.2 起宿主只认 provider/toolName/modelSelection/modelDiscovery/agentOptions/agentPreset/
@@ -350,9 +352,9 @@
 # 与只读 dsh-tool-cordis；planner/reviewer/prober 另挂 shell 两行 tool-pwsh / tool-bash
 # （win32 条件 disabled，写法同第一文档，写命令由运行时只读闸门拦下），executor 沿用既有两行 shell；
 # 主预设保留 dsh-tool-subagent-control（list-agents 子行在 0.2.2 已并入根入口、不再单独声明）；四角色不挂 dsh-tool-subagent-control。
-# 主预设控制工具的宿主目标纪律仍有效：send_message 仅直属父子，interrupt_agent 仅
-# 调用者自己的后代；调用者不得主动干预父/兄弟或任意目标，主向 running 子发送的原禁扰规则保留。
-# 这只记录工具绑定与宿主授权边界，不新增插件禁闸；四角色均不挂 dsh-tool-subagent、list-agents、
+# 主预设用官方开关不注册 interrupt_agent；需要中断子代理时由用户操作。
+# send_message 仅直属父子使用，主向 running 子发送的原禁扰规则保留。
+# 四角色均不挂 dsh-tool-subagent、list-agents、
 # dsh-tool-workflow、dsh-tool-ralph、dsh-tool-ask-user、dsh-tool-todo。
 
 - id: extra-plan-executor

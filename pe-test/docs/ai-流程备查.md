@@ -43,7 +43,7 @@ PTC C=0/C=1 必须各用干净 A=1 顶层会话取 F→首个 tool/call→L→�
 - 不同意（route=none）：保持未确认，不进入执行或规划分支。
 - 四种 outcome：answered 推进状态（每次 route 闸门作答都覆盖式写入 route 并清空 purpose/clarified）；skipped 不改动既有字段；cancelled 清空 `route`/`purpose`/`clarified`；channel-error 不改动既有字段，通道恢复后重发闸门。
 - `send_message` 仅 main 用于续轮转达，不替代 `extra_plan_gate` 的路线与目的确认，不产生或清除闸门状态；child 不得直呼或在 `run_code` 中调用。新 user/message 会切断旧事件窗。main 向 running 子代理发 send_message 被拒（文案『子代理running中，禁止打扰』）；目标 idle/非 running 放行，main 可续轮。child 的阻塞疑问不走 send，而以最终回复返回。
-- `interrupt_agent` 仅 main 保留；main 仍须任务/用户授权且目标属于调用者自己的后代，不得干预父/兄弟或任意目标。`isSubagentChild` 对 child 直呼与 `run_code` 成员统一硬拒；自动最终结果不受影响。真实消息/中断留 HUMAN/NOT-RUN，当前验证状态看[ai-宿主耦合台账](ai-宿主耦合台账.md)。
+- 主预设通过官方 `interrupt: false` 不注册 `interrupt_agent`；停止子代理由用户在界面操作，不影响自动最终结果。`job_kill` 只取消后台作业，不用于中断子代理，也不受插件路线限制。真实消息/中断留 HUMAN/NOT-RUN，当前验证状态看[ai-宿主耦合台账](ai-宿主耦合台账.md)。
 
 ## ⑧ 目的与澄清
 

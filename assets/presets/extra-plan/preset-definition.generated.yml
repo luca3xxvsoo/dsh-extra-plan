@@ -78,7 +78,7 @@ plugins:
         
         注意事项：
           - 用户每次新消息，均会重置闸门状态
-          - 子代理相关：派遣子代理后，除非用户主动要求，否则不得使用 send_message、job_kill 干预子代理进度
+          - 子代理相关：派遣子代理后，除非用户主动要求，否则不得使用 send_message 干预子代理进度
           - dsh 官方预设禁令：必须复制现有预设为副本、再在副本上改动；如需自定义官方 cordis 预设 → 复制为副本后在副本上改动。禁止编辑或删除官方安装的预设与官方文件
 
   - id: agent-instructions
@@ -247,6 +247,8 @@ plugins:
     config:
       - id: tool-subagent-control
         name: '@deepseek-ai/dsh-tool-subagent-control'
+        config:
+          interrupt: false
 
       # 执行者（非 planner child）：优先使用 otherAgentModel，空/未匹配/真实探针失败回退主会话；选定执行者路线后经 subagent 委派。
       # 0.2.2 起宿主只认 provider/toolName/modelSelection/modelDiscovery/agentOptions/agentPreset/

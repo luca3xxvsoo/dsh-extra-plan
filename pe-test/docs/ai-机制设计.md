@@ -17,7 +17,7 @@
 - 闸门结果恰有四种 outcome：`answered` 按 gate 推进状态；`skipped`（用户跳过未作答）与 `channel-error`（提问通道故障，附 `error.code`）不改动既有字段；`cancelled` 清空 `route`、`purpose`、`clarified`。
 - `config.gateWords` 在 [agent.cordis.yml](../../assets/presets/extra-plan/agent.cordis.yml) 中是唯一人工值源，恰为 6 键：`routeMain`、`routeExecutor`、`routePlan`、`routeDisagree`、`purposeRefine`、`purposeRedo`，当前值依次为「主会话执行」「执行者执行」「规划者分析」「不同意」「完善方案」「重新规划」。[gate-words.js](../../lib/gate-words.js) 只保存字段元数据、整组严格校验（六词两两不同、禁止保留推荐后缀）、运行时派生和六个 prompt variable；apply 先校验再产生工具/监听器/服务副作用。
 - 所有 match、deny 文案和状态推导都消费同一 `gateRuntime`；推荐后缀只做白名单归一，推进状态必须与当前词精确相等，旧词不会复活旧事件。推荐后缀只用于展示，宿主回传的 selected 原文先经 normalizeGateLabel 剥离，再与当前词精确比对，返回的 routeLabel 与 purposeLabel 仍是纯词值。
-- 主会话工具放行按 `route` 收口：`write`/`edit` 仅在 `route=main` 放行，其余路线一律拒绝；shell 写命令在 `main` 放行，`none` 一律拒绝且拒句不含越界指引，`executor`/`plan` 仅在 `sandbox_permissions` 为字符串（工作区外写入）时放行、否则拒绝并附越界指引；`subagent`、`subagent_fork`、`workflow`、`ralph`、`subagent_review` 只在 `route=executor` 放行；`subagent_plan` 与 `save_probe` 要求 `route=plan` 且 `clarified=true` 且 `purpose` 属 `refine`/`redo`；`job_kill` 仅 `route=main` 放行。
+- 主会话工具放行按 `route` 收口：`write`/`edit` 仅在 `route=main` 放行，其余路线一律拒绝；shell 写命令在 `main` 放行，`none` 一律拒绝且拒句不含越界指引，`executor`/`plan` 仅在 `sandbox_permissions` 为字符串（工作区外写入）时放行、否则拒绝并附越界指引；`subagent`、`subagent_fork`、`workflow`、`ralph`、`subagent_review` 只在 `route=executor` 放行；`subagent_plan` 与 `save_probe` 要求 `route=plan` 且 `clarified=true` 且 `purpose` 属 `refine`/`redo`；`job_kill` 取消后台作业，不受插件路线限制，归属由宿主校验。
 - `ROLE_IDS`、`ROLE_ORDERS`、`PLANNER_PRESET_ID`、`PROBER_PRESET_ID` 只提供冻结身份/装配顺序；角色标识不承载工具权限、沙箱或生命周期策略。
 - 宿主运行时只按当前 Session 的精确 `agentPreset`/角色 ID 分配 child 的 Host `mode`；四个固定目标为 `extra-plan-executor → workspace-write`、`extra-plan-planner → read-only`、`extra-plan-reviewer → workspace-write`、`extra-plan-prober → read-only`。这只是宿主 Session mode 的唯一功能变化，不改变身份、工具面、提示词或模型路由。
 - `childBaseline` 是三个入口 `agent/created`、`agent/pre-step`、`tools/pre-execute` 的共用路径；每次 apply 的 runtime factory 独立，模式事件只追加到当前 `agent.session`，同一 mode 已由当前 override 提供时幂等不重复。main 不按角色目标追加 mode；其它 live child 缺少/不匹配四个精确 ID 时也不获默认目标，父 Session、默认目标和其它 Session 不参与选定或串改。
@@ -30,7 +30,7 @@
 
 - `run_code` 是批量调用边界，静态拆解出的成员逐个复用直呼闸门；任一成员拒绝则整条 run_code 拒绝，成员不执行、不落地。参数先走 JSON.parse 快路径，再走无 eval/Function/vm/YAML 的安全 literal 子集（对象/数组、标识符或引号键、单/双引号、布尔/null、有限数字、尾逗号）；变量、spread、computed、getter/setter/方法、调用/成员/模板/正则、重复键和污染键均保留 argsText 交运行时瀑布兜底。静态方括号工具名允许 MCP 合同中的连字符，并按 masked 文本跳过 `]` 后行/块注释；不放开点访问或真正动态表达式。
 - 多调用容错闸门只认“一个 try 块一个调用点、后接 catch”；单调用豁免，嵌套 run_code 与 decompose 共用安全 literal 入口。主会话/planner/只读子代理受此检查，执行者保持既有豁免；`ask_user_question` 与 `extra_plan_gate` 的返回链另有保守静态证明。真正动态 `tools[var]`、const 绑定、参数遮蔽、注释伪绑定、字符串/方括号拼接和转义名仍按原约束处理；非 ask 静态工具别名的既有边界不夸大为统一预审拒绝。只有直接调用 `tools.ask_user_question(...)` 或 `tools.extra_plan_gate(...)` 的参数可动态，直接 return-await 语义不变。
-- planner 预算按最近主会话消息或续轮转达的锚点计数；run_code 容器计一次，直呼工具按一次计，被拒调用不烧预算。提醒和耗尽文案由 [planner-budget.js](../../lib/planner-budget.js) 负责，耗尽后只能按流程申请继续探查。control 包仅挂 main，`FREE_TOOLS` 为 `save_plan` 与 `edit_plan_draft`；`isSubagentChild` 对 `send_message`/`interrupt_agent` 的直呼与 `run_code` 成员硬拒，覆盖 planner、只读 child、executor 及 unknown/断链 child；mainGateReason 与自动最终结果不变。child 阻塞疑问以最终回复回传，main 可向 idle child 续轮。Client 查询有界等待（默认 10000ms 为配置口径、非现场时延实测），C 投影也不是安全隔离。
+- planner 预算按最近主会话消息或续轮转达的锚点计数；run_code 容器计一次，直呼工具按一次计，被拒调用不烧预算。提醒和耗尽文案由 [planner-budget.js](../../lib/planner-budget.js) 负责，耗尽后只能按流程申请继续探查。control 包仅挂 main，配置 `interrupt: false` 不注册 `interrupt_agent`，中断由用户操作；`FREE_TOOLS` 为 `save_plan` 与 `edit_plan_draft`；`isSubagentChild` 对 `send_message` 的直呼与 `run_code` 成员硬拒，覆盖 planner、只读 child、executor 及 unknown/断链 child；mainGateReason 与自动最终结果不变。child 阻塞疑问以最终回复回传，main 可向 idle child 续轮。Client 查询有界等待（默认 10000ms 为配置口径、非现场时延实测），C 投影也不是安全隔离。
 - 预算与 `save_probe` 的参数限制是两套合同：预算检查由 planner 计数实现，`PROBE_LIMITS` 的字段与数值唯一来自 [save-contract.js](../../lib/save-contract.js)，校验由 [save-probe-validation.js](../../lib/save-probe-validation.js) 执行；step-00/step-06 是回归入口，文档不复制完整值表。
 
 
@@ -87,7 +87,7 @@
 | 模型路由必须真实验证或可靠 fallback（回退） | `model-routing.js`；流程 ⑩/step-00 |
 | 展示隐藏不是 runtime 安全隔离；P2-2 cache 不跨 Agent | `assembly-presentation.js`、`sdk-text-cache.js`；step-04 |
 | usage 账本由启动扫描覆盖式更新，按身份隔离且单调 | `lib/usage-ledger.js`；step-00 M6 |
-| job_kill 仅直行放行 | `mainGateReason`；step-04 |
+| job_kill 不受路线限制，仍交宿主校验归属 | step-04（直呼与 run_code 透传） |
 | send_message 主会话向 running 目标拒绝 | `mainGateReason`（gateCtx.getAgents）；step-04 |
 | job_list/list_agents 同锚点防轮询 | `pollGuardGateReason`/`recordPollGuardCall`；step-04 |
 | 通知解锁双动作（job_output 单键+pollGuard 清表） | apply 的 `agent/inbox/claimed` 同步主入口 + `tools/pre-execute` durable snapshot fallback，共用 `consumeToolJobsNotice`；按 session 内 `message.id` 幂等，jobId 仅删除当前 job_output 键；notice-id Set 跨锚点保留、dispose 回收；step-04 TJ/PG/CN |

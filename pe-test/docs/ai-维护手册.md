@@ -115,7 +115,7 @@
 
 | 改动域 | 主要检查 |
 |:--|:--|
-| 闸门（含 job_kill/send_message/job_list/list_agents 四工具闸门）、route/purpose、A/C/M、PTC 呈现 | `step-00-全流程回归.mjs`、`step-04-路由与写闸门.mjs` |
+| 闸门（含 send_message/job_list/list_agents 限制与 job_kill 透传对照）、route/purpose、A/C/M、PTC 呈现 | `step-00-全流程回归.mjs`、`step-04-路由与写闸门.mjs` |
 | save_plan/save_probe、单次失败清理、证据合同 | `step-00-全流程回归.mjs`、`step-06-线索落盘.mjs`；save_plan 按逐文件操作/M点和真实源核实合同执行，验收按新定位取证；限制以 `lib/save-contract.js` 为准；失败保留首错/阶段并由 AI 主动重试，不扫描旧 journal |
 | 预设默认、settings、profile patch 自愈 | 对应 step-01 脚本；生成器与产物 `--check` 只读验证 |
 | 模型路由、usage、会话形状 | step-00、step-04 P4、step-07 HUMAN 取证；静态结果不替代实机 |
