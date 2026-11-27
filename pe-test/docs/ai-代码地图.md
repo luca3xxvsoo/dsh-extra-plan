@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-11-25 18:30:28（脚本自动更新时间戳行）
+> 上次同步：2026-11-27 13:35:17（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -97,17 +97,17 @@
 | index.js | 1744 | 核心入口：闸门状态与 extra_plan_gate 工具注册、预算、save 工具注册与生命周期；接线 planner/非 planner 路由、A/C/M 投影、P2-2 cache、usage 启动扫描账本（覆盖式幂等更新）、v4 MALFORMED 自愈。gateWords 只来自 YAML，apply 先校验再副作用；tools/pre-execute 先用原始 `isSubagentChild` 预审 child 控制工具，再进入角色/root 闸门，main 控制与自动最终结果保持；不再负责诊断日志启动清理。 |
 | lib/agent-runtime.js | 175 | 每次 apply 的角色识别、descriptor/工具 schema 缓存、usage 血缘上下文与 role baseline、四角色宿主 mode 与显式 override 幂等；不 import index.js |
 | lib/agent-session.js | 65 | 会话事件与子代理识别的唯一来源：sessionEvents/isSubagentChild 零依赖纯函数，被 index.js 与 lib/model-routing.js 共用（无镜像副本；不 import index.js） |
-| lib/assembly-presentation.js | 269 | A/C/M 与 skill catalog 模型可见投影；从 scoped tools 读 schema/模式，SDK renderer 按 language 整体重建；F/PTC 的 tool:read 由 index.js 手写，L 段回宿主原文。 |
+| lib/assembly-presentation.js | 267 | A/C/M 与 skill catalog 模型可见投影；从 scoped tools 读 schema/模式，SDK renderer 按 language 整体重建；F/PTC 的 tool:read 由 index.js 手写，L 段回宿主原文。 |
 | lib/client-carrier.js | 7 | settings 内部 Loader Group 的无副作用 Client carrier；不对应 bundle row/公开 export。 |
 | lib/client.js | 314 | 客户端模块加载共享样式/词条与 SettingsCard/ExtraPlanForm；设置表单仅经 detail.section 渲染于当前包详情行列表之后（自绘标题，不注册 bundle.config；若本包 bundle.config 槽出现条目则让位）；后端全局 settings API/Config 与 definition/adapter 由同一 owner 活动。 |
 | lib/extra-plan-gate-tool.js | 374 | 闸门专用工具 extra_plan_gate：route/purpose 的选项文案由插件按 gateWords 生成，模型不得构造或改写；clarify 只透传问题；三支都收敛为 outcome 四值（answered/skipped/cancelled/channel-error），execute 从不向外抛错；结果 content 固定为单个 text ContentBlock、正文是返回值整体 JSON |
-| lib/gate-decisions.js | 760 | 闸门状态推导（唯一推进源是 extra_plan_gate 事件）与角色分流判定纯函数集 |
+| lib/gate-decisions.js | 755 | 闸门状态推导（唯一推进源是 extra_plan_gate 事件）与角色分流判定纯函数集 |
 | lib/gate-words.js | 108 | 闸门关键词共享契约（唯一值源是 YAML 的 config.gateWords）：字段规格 GATE_WORD_FIELDS/GATE_WORDS_GROUP_DEFINITION（6 键整组）+ 整组严格校验 validateGateWords（错误一律以 extra-plan: config.gateWords 开头）+ 运行时词表 createGateRuntime（显式入参严格校验，无默认词表）；纯模块：不含任何出厂词值、不读文件与环境变量，被 index.js（运行时）与 lib/preset-sync.js（启动自愈）共享（迁移叶 locator 已随跨版本搬迁链删除）；本函数只判定单次入参，持久值缺失/非法的回落补齐在 preset-sync |
 | lib/live-config.js | 297 | 配置热读：10 项运行时 getter（含 webFetch）；1 项装载期权威设置（toolPresentationMode）只读并派生到内存 definition，不暴露为 getter；构造期读盘一次，后续按增强 stamp（dev/ino/size/mtimeNs/ctimeNs，兼容 ino/size/mtimeMs/ctimeMs）重读；失败整组回退并告警，不读 DSH_HOME 旧目录 |
 | lib/log-retention.js | 123 | 诊断日志保留期裁剪：只处理 <host 根>/logs/dsh-extra-plan 下 .jsonl 普通文件并排除 usage-ledger；全部诊断 JSONL 统一按固定 UTC+8 北京时间昨日零点保留今天/昨天两个自然日；前缀边界算法两遍式（分界扫描+自分界起无解析复制）经临时文件原子替换，分界线=首个可解析且 cutoff<=ts<=now 的行，坏行/空行/未来行随前缀删除，分界后原样保留（含乱序过期行，随保留窗口自然收敛），零写=文件0行或分界为0，全前缀候选清空为空文件；不 import index.js。 |
-| lib/model-routing.js | 650 | planner/非 planner 子代理模型路由：顶层纯判定函数 + createModelRouting per-apply 工厂（per-instance WeakMap、惰性 llm/agents getter；不 import index.js） |
+| lib/model-routing.js | 648 | planner/非 planner 子代理模型路由：顶层纯判定函数 + createModelRouting per-apply 工厂（per-instance WeakMap、惰性 llm/agents getter；不 import index.js） |
 | lib/path-policy.js | 464 | 核心包双根路径策略入口：H/W 用途判定、变量与链接边界、只读能力与写入预检，供各工具复用 |
-| lib/plan-draft-tool.js | 308 | edit_plan_draft 工具工厂：只接受 save_plan 报错给出的 <savePlanDir>/draft 下 方案-/验收- 前缀 .md_mid（按归一化 target.path 判白名单，其它路径一律拒绝且不创建草稿）；对草稿做行级增删改后先写回再重跑与 save_plan 同源的合同/源/证据校验，通过即转正为成对正式 .md 并删草稿；唯一不写回的入口是命中未探查/待确认标记 |
+| lib/plan-draft-tool.js | 294 | edit_plan_draft 工具工厂：只接受 save_plan 报错给出的 <savePlanDir>/draft 下 方案-/验收- 前缀 .md_mid（按归一化 target.path 判白名单，其它路径一律拒绝且不创建草稿）；对草稿做行级增删改后先写回再重跑与 save_plan 同源的合同/源/证据校验，通过即转正为成对正式 .md 并删草稿；唯一不写回的入口是命中未探查/待确认标记 |
 | lib/planner-budget.js | 136 | planner 工具计数、消息后缀/预算提示/耗尽文案；**预算提醒消息经宿主 createUserMessage 构造，source 用生产者自有 kind `plugin:dsh-extra-plan`（v4 行准入禁旧包裹 `plugin`，违者会话当场终止）**；默认预算由生成模块提供，FREE_TOOLS 定义在 lib/gate-decisions.js |
 | lib/preset-defaults.generated.js | 17 | 由 YAML 模板生成的十一键 `DEFAULT_SETTINGS` 与兼容别名 runtime fallback（回退）常量；generated（生成）/do not edit（勿手改） |
 | lib/preset-settings.js | 3 | 11 项设置描述与 YAML 定位；settings 行是权威值，声明行只投影 1 项装载期项（toolPresentationMode，靠 executor 行身份）；capture/投影读取、plugins 行整体重述。 |
@@ -115,7 +115,7 @@
 | lib/preset-yaml.js | 438 | 预设 YAML 纯职责模块：解析、当前行定位与歧义分类、权威设置捕获、canonical settings 行规划与规范文本定位。 |
 | lib/role-contract.js | 11 | 冻结角色 ID/order 数组，并由同一 ROLE_IDS 数组派生 planner/reviewer/prober preset ID；只提供身份与装配顺序，不承载权限、沙箱或生命周期策略。 |
 | lib/run-code-scanner.js | 360 | run_code 无宿主状态词法扫描器：字符串/注释遮蔽、括号配平、tools 调用点收集与动态访问判定。 |
-| lib/run-code-static.js | 623 | run_code 纯静态解析/理由模块：安全 JSON/JS literal 解析、动态 argsText 瀑布兜底、写模式 hint、工具组拆解、ask 与闸门工具返回值白名单、调用点计数与当前 PTC dispatch cap；仅显式注入普通依赖，不持有宿主状态。 |
+| lib/run-code-static.js | 621 | run_code 纯静态解析/理由模块：安全 JSON/JS literal 解析、动态 argsText 瀑布兜底、写模式 hint、工具组拆解、ask 与闸门工具返回值白名单、调用点计数与当前 PTC dispatch cap；仅显式注入普通依赖，不持有宿主状态。 |
 | lib/runtime-lifecycle.js | 162 | per-apply 运行时生命周期：save 工具注册、probe 名额认领与 run_code 子调用计数/拒绝记录，状态在闭包内并按会话清理 |
 | lib/runtime-static.js | 23 | 显式参数纯 helper：causeChainOf 解析 cause 链；不持有宿主状态 |
 | lib/save-contract.js | 263 | save 合同唯一真源：任务名/sessionTag/base、SAVE_PLAN_LIMITS 与内部确定性 summary、paths-only ContentBlock 投影、PROBE_LIMITS、Markdown 渲染与证据引用清洗；无宿主状态，运行时限制只在本文件维护。 |
@@ -127,9 +127,9 @@
 | lib/settings-contract.js | 191 | 服务端设置 descriptor 单一合同：11 项的类型/生成默认引用/校验/UI metadata 与权威-投影双定位器，并导出 `createDefaultSettings`、分组与投影遍历源 |
 | lib/settings.js | 361 | 11 字段 volatile Config 与宿主行投影；settings apply 同时作为诊断日志清理与用量归档的唯一 owner，按 root 与 hostDataRoot 去重调度且两者分离；启动即执行 startupPrune 与 startupArchive；设置读写与权威行落盘由宿主 ConfigForms 与 preset-sync 的 mountPresetSync 承担，本入口不自建 HTTP 端点。 |
 | lib/shell-mutation.js | 484 | 跨平台命令文本解码与 pwsh/bash 写形态判定；纯函数、不持有 apply 状态 |
-| lib/usage-ledger-background.js | 218 | 后台账本调度 controller：只快照可信 pathContext，按 owner 单飞与 hostDataRoot 串行创建固定 Worker，处理协议、协作取消和 exit 后终态；不复制扫描算法。 |
+| lib/usage-ledger-background.js | 214 | 后台账本调度 controller：只快照可信 pathContext，按 owner 单飞与 hostDataRoot 串行创建固定 Worker，处理协议、协作取消和 exit 后终态；不复制扫描算法。 |
 | lib/usage-ledger-worker.js | 116 | 真实 Worker 入口：重建 pathContext 并复用同步 startupArchive 完成扫描、解析与发布，传递小型终态结果，响应共享取消位后关闭 port。 |
-| lib/usage-ledger.js | 1387 | 账本唯一实现：默认 Host 目标为 `logs/dsh-extra-plan/extra-plan-usage-ledger.jsonl`，诊断按需写 `logs/dsh-extra-plan/extra-plan-usage-errors.jsonl`；扫描聚合 + 覆盖式更新 + 启动入口（常量与身份键 → 扫描 %DSH_HOME%/sessions 下 v4 会话日志并按九字段身份聚合 → 按日志 mtime 与账本 ts 判定 changed、只对变化文件按递进窗口读首帧并判白名单才解析 → 读现有 archive 后覆盖式更新、单调性保护、说明行、单 archive temp→rename 原子发布 → startupArchive 启动入口）；固定15键（rootSessionId/agentPreset 可空）、四桶口径、严格白名单、一次 `O_EXCL` 简易互斥（拿不到即跳过、不接管不删他人锁），失败按需留痕，可处理异常返回结构化状态，正常由 settings Worker 调用；直调 API 仍同步，真实启动及内存风险需另行验证；共享目录中的其他日志不由本模块接管。 |
+| lib/usage-ledger.js | 1386 | 账本唯一实现：默认 Host 目标为 `logs/dsh-extra-plan/extra-plan-usage-ledger.jsonl`，诊断按需写 `logs/dsh-extra-plan/extra-plan-usage-errors.jsonl`；扫描聚合 + 覆盖式更新 + 启动入口（常量与身份键 → 扫描 %DSH_HOME%/sessions 下 v4 会话日志并按九字段身份聚合 → 按日志 mtime 与账本 ts 判定 changed、只对变化文件按递进窗口读首帧并判白名单才解析 → 读现有 archive 后覆盖式更新、单调性保护、说明行、单 archive temp→rename 原子发布 → startupArchive 启动入口）；固定15键（rootSessionId/agentPreset 可空）、四桶口径、严格白名单、一次 `O_EXCL` 简易互斥（拿不到即跳过、不接管不删他人锁），失败按需留痕，可处理异常返回结构化状态，正常由 settings Worker 调用；直调 API 仍同步，真实启动及内存风险需另行验证；共享目录中的其他日志不由本模块接管。 |
 | pe-test/_shared/host-deps.mjs | 413 | 解析宿主依赖候选并注册隔离加载钩子 |
 | pe-test/_shared/host-preload.mjs | 52 | 测试侧预加载：从显式安装根环境变量解析真实宿主根并导出，缺失或非法即抛错、不回退 profile。 |
 | pe-test/_shared/plan-text.mjs | 27 | 测试侧：plan/checklist 渲染文本共享实现，step-00 与 step-06 共用同一份拼装逻辑。 |
@@ -231,24 +231,24 @@
 | lib/agent-session.js | observeSessionLeaseOf | L29-44 | sessionQuery 租约探测：能力缺失或异常返回 undefined，lease 由调用方 finally 释放。 |  |
 | lib/agent-session.js | isSubagentChild | L51-65 | 判定会话属于子代理（header.origin/delegationDepth/descriptor 三路探测）；唯一来源，index.js 经 decisions re-export |  |
 | lib/assembly-presentation.js | sectionOf | L33-36 | 按名称取 PromptAssembly section |  |
-| lib/assembly-presentation.js | skillCatalogEntriesOf | L42-50 | 校验并提取 skill catalog 的最小 name/description 条目，供 C=0 投影隐藏使用；普通 skill 条目保持，静态注册与 runtime binding 不在此注销。 |  |
-| lib/assembly-presentation.js | renderSkillCatalogText | L52-74 | 按过滤后的条目重建系统 skill catalog 文本，普通 skill 保留；仅重写模型可见文本，不改静态注册或 runtime binding。 |  |
-| lib/assembly-presentation.js | projectSkillCatalogDecision | L76-102 | 在当前消息副本中按 CREATIVE_SKILL_NAMES 暂隐创造 skill，不注销静态 binding；旧三名为 rc.1 兼容，dsh-doc 为最新路径当前（rc.2 与 rc.3 共用），展示隐藏不等绑定隔离。 |  |
-| lib/assembly-presentation.js | isCordisPresentationTool | L104-106 | 判断名称是否属于固定 2 项 Cordis 模型可见工具集合 | 模型可见投影；不改变 registry binding |
-| lib/assembly-presentation.js | filteredCordisSchemas | L108-111 | 从 schema 数组排除固定 2 项 Cordis 工具，供 SDK 整体重建 |  |
-| lib/assembly-presentation.js | hasSection | L113-115 | 判断 PromptAssembly 是否含指定命名 section |  |
-| lib/assembly-presentation.js | hasNonEmptySection | L117-119 | 判断 tools:ptc-only 是否为有效非空 section，识别 Pure PTC |  |
-| lib/assembly-presentation.js | projectAssemblyForPresentation | L122-146 | 创建不原地修改的模型可见 assembly：按当前 schema 交集过滤工具，替换 SDK 文本并隐藏 tool:cordis，另支持 Pure PTC 顶层单入口 | 不改变 registry/restrict/pre-execute |
-| lib/assembly-presentation.js | sdkSchemasForRendering | L148-155 | 从 schema 输入排除 run_code 与 Cordis，并确保 renderer 获得输出 schema | 不读取原始 tools:sdk 文本 |
-| lib/assembly-presentation.js | errorWithCause | L157-161 | 构造带 cause 链的 Error，供上层保留底层失败原因，不做额外包装也不吞错。 |  |
-| lib/assembly-presentation.js | assertInstallAnchor | L163-178 | 校验锚点是否为存在的绝对 dsh 应用 package.json，且清单 name 匹配，任一条件不满足即抛错。 |  |
-| lib/assembly-presentation.js | dshToolsEntryPath | L181-188 | 单候选入口解析：先断言 installAnchor 是 @deepseek-ai/dsh 的 package.json，再用 createRequire(anchor).resolve 解析 dsh-tool-executor-ptc 入口，返回单个路径字符串（不再返回数组），解析失败抛带 cause 的错误 |  |
-| lib/assembly-presentation.js | loadSdkRendererModule | L191-209 | 按安装锚点缓存渲染模块的动态导入 Promise，导入失败带 cause 抛出且不留下失败缓存。 |  |
-| lib/assembly-presentation.js | pending | L197-207 | 按锚点首次执行的异步导入体：逐个候选入口尝试，全部失败时带 cause 抛出最终错误。 |  |
-| lib/assembly-presentation.js | resolveToolsSdkRenderer | L212-217 | 按语言选官方渲染函数（python 走 Python 版），不支持的语言抛错，模块按锚点隔离缓存。 |  |
-| lib/assembly-presentation.js | renderFilteredToolsSdk | L220-223 | 只接收已过滤 schema，整体调用官方渲染函数重建 SDK 文本，不从原始文本里删块。 |  |
-| lib/assembly-presentation.js | toolRegistryOf | L225-233 | 防御式取 agent 上下文里的工具注册表，缺失或读取抛错时返回 undefined，不向调用方抛错。 |  |
-| lib/assembly-presentation.js | toolSdkSchemasOf | L235-269 | 优先从工具定义取 schema，失败再回退 schema 列表；两种来源都过滤两个固定内置呈现工具。 |  |
+| lib/assembly-presentation.js | skillCatalogEntriesOf | L40-48 | 校验并提取 skill catalog 的最小 name/description 条目，供 C=0 投影隐藏使用；普通 skill 条目保持，静态注册与 runtime binding 不在此注销。 |  |
+| lib/assembly-presentation.js | renderSkillCatalogText | L50-72 | 按过滤后的条目重建系统 skill catalog 文本，普通 skill 保留；仅重写模型可见文本，不改静态注册或 runtime binding。 |  |
+| lib/assembly-presentation.js | projectSkillCatalogDecision | L74-100 | 在当前消息副本中按 CREATIVE_SKILL_NAMES 暂隐创造 skill，不注销静态 binding；旧三名为 rc.1 兼容，dsh-doc 为最新路径当前（rc.2 与 rc.3 共用），展示隐藏不等绑定隔离。 |  |
+| lib/assembly-presentation.js | isCordisPresentationTool | L102-104 | 判断名称是否属于固定 2 项 Cordis 模型可见工具集合 | 模型可见投影；不改变 registry binding |
+| lib/assembly-presentation.js | filteredCordisSchemas | L106-109 | 从 schema 数组排除固定 2 项 Cordis 工具，供 SDK 整体重建 |  |
+| lib/assembly-presentation.js | hasSection | L111-113 | 判断 PromptAssembly 是否含指定命名 section |  |
+| lib/assembly-presentation.js | hasNonEmptySection | L115-117 | 判断 tools:ptc-only 是否为有效非空 section，识别 Pure PTC |  |
+| lib/assembly-presentation.js | projectAssemblyForPresentation | L120-144 | 创建不原地修改的模型可见 assembly：按当前 schema 交集过滤工具，替换 SDK 文本并隐藏 tool:cordis，另支持 Pure PTC 顶层单入口 | 不改变 registry/restrict/pre-execute |
+| lib/assembly-presentation.js | sdkSchemasForRendering | L146-153 | 从 schema 输入排除 run_code 与 Cordis，并确保 renderer 获得输出 schema | 不读取原始 tools:sdk 文本 |
+| lib/assembly-presentation.js | errorWithCause | L155-159 | 构造带 cause 链的 Error，供上层保留底层失败原因，不做额外包装也不吞错。 |  |
+| lib/assembly-presentation.js | assertInstallAnchor | L161-176 | 校验锚点是否为存在的绝对 dsh 应用 package.json，且清单 name 匹配，任一条件不满足即抛错。 |  |
+| lib/assembly-presentation.js | dshToolsEntryPath | L179-186 | 单候选入口解析：先断言 installAnchor 是 @deepseek-ai/dsh 的 package.json，再用 createRequire(anchor).resolve 解析 dsh-tool-executor-ptc 入口，返回单个路径字符串（不再返回数组），解析失败抛带 cause 的错误 |  |
+| lib/assembly-presentation.js | loadSdkRendererModule | L189-207 | 按安装锚点缓存渲染模块的动态导入 Promise，导入失败带 cause 抛出且不留下失败缓存。 |  |
+| lib/assembly-presentation.js | pending | L195-205 | 按锚点首次执行的异步导入体：逐个候选入口尝试，全部失败时带 cause 抛出最终错误。 |  |
+| lib/assembly-presentation.js | resolveToolsSdkRenderer | L210-215 | 按语言选官方渲染函数（python 走 Python 版），不支持的语言抛错，模块按锚点隔离缓存。 |  |
+| lib/assembly-presentation.js | renderFilteredToolsSdk | L218-221 | 只接收已过滤 schema，整体调用官方渲染函数重建 SDK 文本，不从原始文本里删块。 |  |
+| lib/assembly-presentation.js | toolRegistryOf | L223-231 | 防御式取 agent 上下文里的工具注册表，缺失或读取抛错时返回 undefined，不向调用方抛错。 |  |
+| lib/assembly-presentation.js | toolSdkSchemasOf | L233-267 | 优先从工具定义取 schema，失败再回退 schema 列表；两种来源都过滤两个固定内置呈现工具。 |  |
 | lib/client-carrier.js | apply | L5-7 | 空实现的内部客户端入口：由设置组件经官方加载组动态挂载，真正加载交由客户端清单，无业务副作用。 |  |
 | lib/client.js | factory | L3-313 | 客户端模块加载器工厂：包装生成物入口，返回 exports 并挂 apply 与 inject 依赖声明 |  |
 | lib/client.js | apply | L115-308 | 客户端生效入口：注入样式表、注册中英双语字典并登记详情设置区块，不触碰宿主其它槽位与表单实例 |  |
@@ -310,26 +310,26 @@
 | lib/gate-decisions.js | deriveFlowState | L223-289 | 自最近一条用户消息起回放 extra_plan_gate 的 tool/result 事件（含嵌套派发形态）推导 route/purpose/clarified 三字段，没有用户消息时返回初始状态。 |  |
 | lib/gate-decisions.js | gateOfArgs | L240-249 | 从 tool 调用参数（JSON 字符串或已解析对象）取 gate 值，解析失败或非字符串返回 null。 |  |
 | lib/gate-decisions.js | resultOfBlocks | L251-257 | 从结果消息首个 text 块解析 JSON 结果对象，空文本或解析失败返回 null 即跳过。 |  |
-| lib/gate-decisions.js | catalogHasWriteTools | L301-306 | 判断工具目录是否含 write 或 edit，兼容字符串与对象两种元素形状，非数组返回 false。 |  |
-| lib/gate-decisions.js | isReadOnlyChildByCatalog | L309-311 | 按目录判定只读子代理：目录非空且不含写工具才算只读，空目录与非数组都不算作只读。 |  |
-| lib/gate-decisions.js | schemasHasWriteTools | L316 | 判断真实工具集是否含写工具，目录折叠时用它替代目录信号，非数组返回 false。 |  |
-| lib/gate-decisions.js | schemasHasTool | L320-325 | 判断真实工具集是否含指定工具名，兼容字符串与对象两种形状，非数组返回 false。 |  |
-| lib/gate-decisions.js | catalogIsCollapsed | L334-339 | 判断 ptc 目录是否折叠成仅 run_code，折叠后目录信号不可用需改看真实工具集。 |  |
-| lib/gate-decisions.js | subagentProbeGateReason | L345-357 | 限制探查者委派只能由主会话发起，规划子代理与其它只读子角色各自返回专属的拒绝文案。 |  |
-| lib/gate-decisions.js | withShellEvidence | L363-367 | 把 shell 命中的规则与取值追加到拒绝文案尾部，证据为 null 时原样返回传入文案。 |  |
-| lib/gate-decisions.js | shellMutationReason | L369-385 | 对规划者、探查者与验收复核者的 pwsh/bash 写命令生成拒绝文案，其余角色返回 null。 |  |
-| lib/gate-decisions.js | childControlGateReason | L388-392 | 仅允许 main 使用 `send_message`；child 直呼统一返回硬拒文案，供 planner/只读 child/执行者/unknown child 与 run_code 组判定复用。 | 纯函数；mainGateReason 不经此拒绝。 |
-| lib/gate-decisions.js | plannerGateReason | L396-412 | 规划子代理的写工具、shell 写命令、job_output 与预算闸门串联判定，全不命中返回 null。 |  |
-| lib/gate-decisions.js | childReadonlyGateReason | L416-426 | 只读子代理的写工具、shell 写命令与 job_output 闸门，按探查者或复核者挑选文案。 |  |
-| lib/gate-decisions.js | jobOutputGateReason | L431-453 | job_output 禁止前台等待与同 job 重复调用，缺会话上下文时跳过去重只查等待参数。 |  |
-| lib/gate-decisions.js | recordJobOutputCall | L459-471 | 放行后把已调用的 job 号记入会话计数，任一条件不满足即返回 false 且不做写入。 |  |
-| lib/gate-decisions.js | pollGuardGateReason | L477-490 | 同锚点周期内第二次调用 job_list 或 list_agents 即拒绝，无会话上下文时跳过查重。 |  |
-| lib/gate-decisions.js | recordPollGuardCall | L492-503 | 放行后把 job_list 或 list_agents 记入会话集合，参数不全时返回 false 且无副作用。 |  |
-| lib/gate-decisions.js | probeDisposalWarning | L511-514 | 仍有未认领的探查者委派时生成级联取消告警文案，计数非正整数时返回 null 不告警。 |  |
-| lib/gate-decisions.js | mainGateReason | L524-620 | 主会话工具闸门总入口，按 ask（普通 ask_user_question 直接放行）、写入（route 非 main 即拒）、shell（越界特例）、规划、委派与轮询顺序判定；send_message 通过可选 messageTargetIdOf 回调读取本轮目标 ID，running 目标拒绝，回调未提供时保留 agent_id 兼容路径，最后兜底放行。 | target callback 只读本轮解析结果；最新路径 resolveName（rc.2 与 rc.3 共用）与 rc.1 agent_id 边界不含共享安全核心。 |
-| lib/gate-decisions.js | runCodeGroupDenyReason | L632-715 | 静态 run_code 组预审：拆解可解析成员并逐个走对应角色闸门，聚合拒绝并追加预算与防护判定；动态或未解析成员留给实际 pre-execute 重入重新判定，不以动态访问当作放行。 |  |
-| lib/gate-decisions.js | visit | L650-692 | 静态组递归访问器：展开可解析嵌套 run_code 并逐成员选取角色闸门；深度或参数不可解析的成员跳过静态展开，交由实际 pre-execute 重入。 |  |
-| lib/gate-decisions.js | aggregateRunCodeDenyReason | L721-734 | 把成员与拒绝项拼成统一的组拒文案，首行给组规模与放行语义，后续逐行列出成员与原因。 |  |
+| lib/gate-decisions.js | catalogHasWriteTools | L296-301 | 判断工具目录是否含 write 或 edit，兼容字符串与对象两种元素形状，非数组返回 false。 |  |
+| lib/gate-decisions.js | isReadOnlyChildByCatalog | L304-306 | 按目录判定只读子代理：目录非空且不含写工具才算只读，空目录与非数组都不算作只读。 |  |
+| lib/gate-decisions.js | schemasHasWriteTools | L311 | 判断真实工具集是否含写工具，目录折叠时用它替代目录信号，非数组返回 false。 |  |
+| lib/gate-decisions.js | schemasHasTool | L315-320 | 判断真实工具集是否含指定工具名，兼容字符串与对象两种形状，非数组返回 false。 |  |
+| lib/gate-decisions.js | catalogIsCollapsed | L329-334 | 判断 ptc 目录是否折叠成仅 run_code，折叠后目录信号不可用需改看真实工具集。 |  |
+| lib/gate-decisions.js | subagentProbeGateReason | L340-352 | 限制探查者委派只能由主会话发起，规划子代理与其它只读子角色各自返回专属的拒绝文案。 |  |
+| lib/gate-decisions.js | withShellEvidence | L358-362 | 把 shell 命中的规则与取值追加到拒绝文案尾部，证据为 null 时原样返回传入文案。 |  |
+| lib/gate-decisions.js | shellMutationReason | L364-380 | 对规划者、探查者与验收复核者的 pwsh/bash 写命令生成拒绝文案，其余角色返回 null。 |  |
+| lib/gate-decisions.js | childControlGateReason | L383-387 | 仅允许 main 使用 `send_message`；child 直呼统一返回硬拒文案，供 planner/只读 child/执行者/unknown child 与 run_code 组判定复用。 | 纯函数；mainGateReason 不经此拒绝。 |
+| lib/gate-decisions.js | plannerGateReason | L391-407 | 规划子代理的写工具、shell 写命令、job_output 与预算闸门串联判定，全不命中返回 null。 |  |
+| lib/gate-decisions.js | childReadonlyGateReason | L411-421 | 只读子代理的写工具、shell 写命令与 job_output 闸门，按探查者或复核者挑选文案。 |  |
+| lib/gate-decisions.js | jobOutputGateReason | L426-448 | job_output 禁止前台等待与同 job 重复调用，缺会话上下文时跳过去重只查等待参数。 |  |
+| lib/gate-decisions.js | recordJobOutputCall | L454-466 | 放行后把已调用的 job 号记入会话计数，任一条件不满足即返回 false 且不做写入。 |  |
+| lib/gate-decisions.js | pollGuardGateReason | L472-485 | 同锚点周期内第二次调用 job_list 或 list_agents 即拒绝，无会话上下文时跳过查重。 |  |
+| lib/gate-decisions.js | recordPollGuardCall | L487-498 | 放行后把 job_list 或 list_agents 记入会话集合，参数不全时返回 false 且无副作用。 |  |
+| lib/gate-decisions.js | probeDisposalWarning | L506-509 | 仍有未认领的探查者委派时生成级联取消告警文案，计数非正整数时返回 null 不告警。 |  |
+| lib/gate-decisions.js | mainGateReason | L519-615 | 主会话工具闸门总入口，按 ask（普通 ask_user_question 直接放行）、写入（route 非 main 即拒）、shell（越界特例）、规划、委派与轮询顺序判定；send_message 通过可选 messageTargetIdOf 回调读取本轮目标 ID，running 目标拒绝，回调未提供时保留 agent_id 兼容路径，最后兜底放行。 | target callback 只读本轮解析结果；最新路径 resolveName（rc.2 与 rc.3 共用）与 rc.1 agent_id 边界不含共享安全核心。 |
+| lib/gate-decisions.js | runCodeGroupDenyReason | L627-710 | 静态 run_code 组预审：拆解可解析成员并逐个走对应角色闸门，聚合拒绝并追加预算与防护判定；动态或未解析成员留给实际 pre-execute 重入重新判定，不以动态访问当作放行。 |  |
+| lib/gate-decisions.js | visit | L645-687 | 静态组递归访问器：展开可解析嵌套 run_code 并逐成员选取角色闸门；深度或参数不可解析的成员跳过静态展开，交由实际 pre-execute 重入。 |  |
+| lib/gate-decisions.js | aggregateRunCodeDenyReason | L716-729 | 把成员与拒绝项拼成统一的组拒文案，首行给组规模与放行语义，后续逐行列出成员与原因。 |  |
 | lib/gate-words.js | fail | L30-32 | 以 extra-plan: config.gateWords 前缀同步抛出整组校验错误，供各字段分支统一复用。 |  |
 | lib/gate-words.js | normalizeGateLabel | L35-37 | 去掉标签首尾空白与保留的推荐后缀（中英文圆括号），只做归一不做子串匹配，也不改词值。 |  |
 | lib/gate-words.js | validateGateWords | L45-72 | 严格校验 6 个闸门词字段的齐全、非空、无空白、无保留后缀与两两不同；合法即返回冻结副本。 |  |
@@ -375,37 +375,37 @@
 | lib/log-retention.js | pruneDiagnosticLogs | L97-123 | 诊断裁剪入口：枚举并排除 usage-ledger；全部诊断 JSONL 统一用 UTC+8 北京昨日零点 cutoff 保留今天/昨天两个自然日；每文件先 findPrefixBoundary 分界扫描，0行或分界为0 零写零临时跳过，否则 copyFromBoundary 自分界起无解析复制原样保留（含坏行/乱序过期行，随保留窗口自然收敛），removedRows=分界或全行数，经临时文件原子替换，返回 skipped/up-to-date/pruned 与计数。 |  |
 | lib/model-routing.js | isExplicitRoute | L11-17 | 显式路由判定：子级 provider 或 model 任一与父值不同即算显式，空串视为无选择 |  |
 | lib/model-routing.js | isExplicitEffort | L21-23 | 显式 effort 判定：仅非空字符串且与父值不同才算显式，空串与 undefined 一律不算 |  |
-| lib/model-routing.js | requestConfigSnapshot | L33-46 | 请求配置快照：从会话 header 取 provider、model 与 maxTokens，取不到即返回 null |  |
-| lib/model-routing.js | agentFromRegistry | L48-51 | 注册表取 Agent：agents 无 get 或抛异常一律回 undefined，绝不上抛中断父链上溯 |  |
-| lib/model-routing.js | resolveAgentRouteSources | L54-84 | 路由来源解析：沿 parentSession 链上溯顶层主会话，断链或超 8 层标记不完整且不给 source |  |
-| lib/model-routing.js | decidePlannerModelUse | L106-119 | planner 模型取舍：目录命中才覆盖，未命中静默降级，目录空或报错保守沿用配置模型 |  |
-| lib/model-routing.js | routeKey | L130-132 | 路由键拼接：provider 与 model 之间插 NUL 分隔，供探针结果与 fallback 复用查表 |  |
-| lib/model-routing.js | comparePlannerText | L134-138 | 候选文案比较：两侧非字符串一律当空串，再按字典序给出 -1、0、1，供候选排序使用 |  |
-| lib/model-routing.js | plannerProviderRank | L140-144 | 候选优先级打分：官方 provider 记 2、与父同 provider 记 1、其余 0，用于排序 |  |
-| lib/model-routing.js | sortPlannerCandidates | L146-157 | 候选排序：先按 provider 优先级降序，再按名称与 id 字典序，保证选择可复现 |  |
-| lib/model-routing.js | createModelRouting | L162-650 | per-apply 路由工厂：两份 WeakMap 与惰性 llm、agents getter，返回三个解析入口 |  |
-| lib/model-routing.js | plannerAbortError | L170-173 | 中断错误归一：signal 的 reason 为 Error 就原样返回，否则造固定文案的新错误 |  |
-| lib/model-routing.js | withPlannerProbeDeadline | L177-210 | 探针截止封装：本地 AbortController 覆盖 30 秒超时与父 signal，超时返回标记不抛错 |  |
-| lib/model-routing.js | probePlannerRoute | L214-256 | 真实路由探针：可先查目录命中，再 prepareCall 并收流，只认单个非 error 的 finish |  |
-| lib/model-routing.js | probePlannerCandidates | L263-279 | 候选并发探针：按上限建 worker 依序取号，结果按发起顺序回填，完成顺序不影响选择 |  |
-| lib/model-routing.js | worker | L266-273 | 并发池工作体：循环领取下一个候选序号，越界即退出，逐个执行真实探针且不共享控制器 |  |
-| lib/model-routing.js | uniqueProviderCandidates | L281-290 | 候选去重：跳过缺 id 或重复 id 的 provider，缺名时用 id 顶替名称 |  |
-| lib/model-routing.js | collectStrictProbeCandidates | L293-313 | 严格候选收集：列 provider 后去重并发探针，按 routeKey 存 outcomes 并汇总成功候选 |  |
-| lib/model-routing.js | resolvePlannerEntrySingleProvider | L316-374 | 单 provider 路径：只查父目录与 advisory 列表，命中才用配置模型，异常静默保留已取值 |  |
-| lib/model-routing.js | resolvePlannerEntryStrict | L377-429 | 严格 planner 路径：空串直接继承父路由，否则并发探针排序，全失败才验父 fallback，拒未验证路由 |  |
-| lib/model-routing.js | resolvePlannerEntry | L433-442 | planner 入口：首次调用即缓存 promise，成功与拒绝都固定在 Agent 生命周期，不重复探针 |  |
-| lib/model-routing.js | nonPlannerRouteSources | L446-450 | 非 planner 来源：取 getAgents 异常兜底后解析父链来源，拿不到注册表也不抛错 |  |
-| lib/model-routing.js | nonPlannerFallbackEntry | L452-460 | 非 planner 兜底项：来源缺失返回 null，probe 取顶层 maxTokens、普通 child 取父值 |  |
-| lib/model-routing.js | resolveOtherAgentEntrySingleProvider | L463-480 | 单 provider 非 planner：父目录命中配置模型才覆盖，目录异常静默回退父路由 |  |
-| lib/model-routing.js | resolveOtherAgentEntryStrict | L484-514 | 严格非 planner：来源缺失即拒，空串继承父路由免探针，否则并发探针排序后验 fallback |  |
-| lib/model-routing.js | resolveOtherAgentEntry | L517-526 | 非 planner 入口：每 child 独立缓存首个 promise，成功与拒绝都不重复解析 |  |
-| lib/model-routing.js | throwIfReviewerAborted | L535-537 | 验收者中断前置：父 signal 已取消就抛规划者中断错误，未取消则静默返回继续 |  |
-| lib/model-routing.js | awaitReviewerPending | L539-571 | 验收者等待：无 signal 直接返回原 promise，取消时清理挂起项并拒绝，避免悬挂 |  |
-| lib/model-routing.js | cleanup | L547-549 | 取消监听清理：移除父 signal 上的 abort 监听，重复调用安全，不触碰 pending 本体 |  |
-| lib/model-routing.js | onAbort | L550-556 | 中断回调：只生效一次，先清监听再注销挂起项并拒绝，迟到结果被 done 标志拦住 |  |
-| lib/model-routing.js | removeReviewerPending | L573-578 | 挂起项注销：仅当桶内仍是同一 promise 才删掉该条目，桶空时连同键一起清除 |  |
-| lib/model-routing.js | reviewerPendingEntryCount | L580-584 | 挂起项计数：遍历所有桶逐个累加条目数，供总数超 32 条时整表清空挂起与已结算缓存 |  |
-| lib/model-routing.js | resolveReviewerEntry | L586-648 | 验收者入口：空串回退父项，按五段键缓存 settled 与 pending，失败兜底父项且取消原样传播 |  |
+| lib/model-routing.js | requestConfigSnapshot | L31-44 | 请求配置快照：从会话 header 取 provider、model 与 maxTokens，取不到即返回 null |  |
+| lib/model-routing.js | agentFromRegistry | L46-49 | 注册表取 Agent：agents 无 get 或抛异常一律回 undefined，绝不上抛中断父链上溯 |  |
+| lib/model-routing.js | resolveAgentRouteSources | L52-82 | 路由来源解析：沿 parentSession 链上溯顶层主会话，断链或超 8 层标记不完整且不给 source |  |
+| lib/model-routing.js | decidePlannerModelUse | L104-117 | planner 模型取舍：目录命中才覆盖，未命中静默降级，目录空或报错保守沿用配置模型 |  |
+| lib/model-routing.js | routeKey | L128-130 | 路由键拼接：provider 与 model 之间插 NUL 分隔，供探针结果与 fallback 复用查表 |  |
+| lib/model-routing.js | comparePlannerText | L132-136 | 候选文案比较：两侧非字符串一律当空串，再按字典序给出 -1、0、1，供候选排序使用 |  |
+| lib/model-routing.js | plannerProviderRank | L138-142 | 候选优先级打分：官方 provider 记 2、与父同 provider 记 1、其余 0，用于排序 |  |
+| lib/model-routing.js | sortPlannerCandidates | L144-155 | 候选排序：先按 provider 优先级降序，再按名称与 id 字典序，保证选择可复现 |  |
+| lib/model-routing.js | createModelRouting | L160-648 | per-apply 路由工厂：两份 WeakMap 与惰性 llm、agents getter，返回三个解析入口 |  |
+| lib/model-routing.js | plannerAbortError | L168-171 | 中断错误归一：signal 的 reason 为 Error 就原样返回，否则造固定文案的新错误 |  |
+| lib/model-routing.js | withPlannerProbeDeadline | L175-208 | 探针截止封装：本地 AbortController 覆盖 30 秒超时与父 signal，超时返回标记不抛错 |  |
+| lib/model-routing.js | probePlannerRoute | L212-254 | 真实路由探针：可先查目录命中，再 prepareCall 并收流，只认单个非 error 的 finish |  |
+| lib/model-routing.js | probePlannerCandidates | L261-277 | 候选并发探针：按上限建 worker 依序取号，结果按发起顺序回填，完成顺序不影响选择 |  |
+| lib/model-routing.js | worker | L264-271 | 并发池工作体：循环领取下一个候选序号，越界即退出，逐个执行真实探针且不共享控制器 |  |
+| lib/model-routing.js | uniqueProviderCandidates | L279-288 | 候选去重：跳过缺 id 或重复 id 的 provider，缺名时用 id 顶替名称 |  |
+| lib/model-routing.js | collectStrictProbeCandidates | L291-311 | 严格候选收集：列 provider 后去重并发探针，按 routeKey 存 outcomes 并汇总成功候选 |  |
+| lib/model-routing.js | resolvePlannerEntrySingleProvider | L314-372 | 单 provider 路径：只查父目录与 advisory 列表，命中才用配置模型，异常静默保留已取值 |  |
+| lib/model-routing.js | resolvePlannerEntryStrict | L375-427 | 严格 planner 路径：空串直接继承父路由，否则并发探针排序，全失败才验父 fallback，拒未验证路由 |  |
+| lib/model-routing.js | resolvePlannerEntry | L431-440 | planner 入口：首次调用即缓存 promise，成功与拒绝都固定在 Agent 生命周期，不重复探针 |  |
+| lib/model-routing.js | nonPlannerRouteSources | L444-448 | 非 planner 来源：取 getAgents 异常兜底后解析父链来源，拿不到注册表也不抛错 |  |
+| lib/model-routing.js | nonPlannerFallbackEntry | L450-458 | 非 planner 兜底项：来源缺失返回 null，probe 取顶层 maxTokens、普通 child 取父值 |  |
+| lib/model-routing.js | resolveOtherAgentEntrySingleProvider | L461-478 | 单 provider 非 planner：父目录命中配置模型才覆盖，目录异常静默回退父路由 |  |
+| lib/model-routing.js | resolveOtherAgentEntryStrict | L482-512 | 严格非 planner：来源缺失即拒，空串继承父路由免探针，否则并发探针排序后验 fallback |  |
+| lib/model-routing.js | resolveOtherAgentEntry | L515-524 | 非 planner 入口：每 child 独立缓存首个 promise，成功与拒绝都不重复解析 |  |
+| lib/model-routing.js | throwIfReviewerAborted | L533-535 | 验收者中断前置：父 signal 已取消就抛规划者中断错误，未取消则静默返回继续 |  |
+| lib/model-routing.js | awaitReviewerPending | L537-569 | 验收者等待：无 signal 直接返回原 promise，取消时清理挂起项并拒绝，避免悬挂 |  |
+| lib/model-routing.js | cleanup | L545-547 | 取消监听清理：移除父 signal 上的 abort 监听，重复调用安全，不触碰 pending 本体 |  |
+| lib/model-routing.js | onAbort | L548-554 | 中断回调：只生效一次，先清监听再注销挂起项并拒绝，迟到结果被 done 标志拦住 |  |
+| lib/model-routing.js | removeReviewerPending | L571-576 | 挂起项注销：仅当桶内仍是同一 promise 才删掉该条目，桶空时连同键一起清除 |  |
+| lib/model-routing.js | reviewerPendingEntryCount | L578-582 | 挂起项计数：遍历所有桶逐个累加条目数，供总数超 32 条时整表清空挂起与已结算缓存 |  |
+| lib/model-routing.js | resolveReviewerEntry | L584-646 | 验收者入口：空串回退父项，按五段键缓存 settled 与 pending，失败兜底父项且取消原样传播 |  |
 | lib/path-policy.js | policyError | L13-18 | 核心包错误工厂：生成携带 code 与冻结 details 的 TypeError，前缀统一便于上层按码分类 |  |
 | lib/path-policy.js | isObject | L20-22 | 核心包内类型判定：仅非 null 且非数组的普通对象为真，数组、函数与类实例一律返回假值 |  |
 | lib/path-policy.js | isOther | L24-26 | 核心包保留类别判定：字符串转小写后等于 other 才为真，其它类型与非字符串直接返回假 |  |
@@ -444,21 +444,19 @@
 | lib/path-policy.js | prepareWriteTarget | L431-464 | 核心包写校验：宿主写须显式用途且能力可写，目标不得是符号链接，目录缺失时不隐式创建 |  |
 | lib/plan-draft-tool.js | pathKey | L22-25 | 仅用于白名单比较的平台归一化键：反斜杠转正斜杠，Windows 下再转小写；落盘路径一律取 resolveWorkspacePath 的 target.path，不用此 key。 |  |
 | lib/plan-draft-tool.js | draftBaseOf | L28-37 | 归一化绝对路径还原成草稿 base：父目录须等于期望草稿目录、后缀恰为 .md_mid、去掉 方案-/验收- 前缀后非空，任一不符返回 null 由调用方一律拒绝。 |  |
-| lib/plan-draft-tool.js | cwdOf | L39-43 | 从 exec.agent.session.header.cwd 逐级容错取会话工作区路径，任一层缺失或值非字符串即返回空串，全程不抛错。 |  |
-| lib/plan-draft-tool.js | pathContextOf | L45-51 | 优先用注入的 getPathContext(cwd) 返回值，未注入或返回空时按会话 cwd 新建工作区路径上下文。 |  |
-| lib/plan-draft-tool.js | readText | L53-59 | 按 utf8 读取文件，失败统一改抛「edit_plan_draft: 文件读取失败」并附错误文本，供上层转成可读诊断。 |  |
-| lib/plan-draft-tool.js | splitLines | L62-67 | 行级编号基线：只剥掉一个结尾换行参与编号并回报 hasFinalNewline，使行号与编辑器/grep 汇报一致。 |  |
-| lib/plan-draft-tool.js | joinLines | L69-72 | splitLines 的逆操作：空数组返回空串，否则按换行拼接并按 hasFinalNewline 原样补回结尾换行。 |  |
-| lib/plan-draft-tool.js | diagnosticText | L74-79 | 把单条合同诊断渲染成「文档 任务 字段：说明」，行号为正整数时追加「位置：第 N 行」；文档缺省 plan/checklist，无任务号写作任务全局。 |  |
-| lib/plan-draft-tool.js | savedWithErrors | L81-83 | 构造 saved-with-errors 返回值五字段（status/paths/lineCount/diagnostics/error），表示修改已保存但未通过校验、草稿保留可继续改。 |  |
-| lib/plan-draft-tool.js | applyEdits | L87-116 | 批量行级编辑：{line,text} 替换、{line,drop:true} 真删、{line,insert} 行前插入三种操作互斥校验，按行号倒序应用；任一编辑非法或越界即整批抛错不生效。 |  |
-| lib/plan-draft-tool.js | authorizeDraftFile | L119-122 | 删草稿前的授权：与 save-persistence 内部 authorizeFile 同形，先 resolveWorkspacePath 再 prepareWriteTarget，越界即抛错。 |  |
-| lib/plan-draft-tool.js | createPlanDraftToolFactories | L124-308 | 按 savePlanDir 与 atomicCommit/atomicReplace 显式依赖构造 edit_plan_draft 工具工厂（内部定义超时 60s），不持有宿主会话状态。 |  |
-| lib/plan-draft-tool.js | expectedDraftDirOf | L127-133 | 由可配置的 savePlanDir 推导期望草稿目录 <savePlanDir>/draft 的归一化绝对路径；推导失败返回 null 让调用方按非白名单拒绝，绝不回退硬编码目录。 |  |
-| lib/plan-draft-tool.js | writeDraft | L140-143 | 以覆盖语义 atomicReplace(dir,[{name,content}]) 写回草稿；缺 atomicReplace 依赖即抛错（未写入任何修改），转正另走 atomicCommit 不可互替。 |  |
-| lib/plan-draft-tool.js | defineEditPlanDraft | L145-305 | 组装 edit_plan_draft 工具定义：path/edits 参数合同、promoted 与 saved-with-errors 两态输出 schema 及行级修复执行体。 |  |
-| lib/plan-draft-tool.js | render | L189-191 | 结果渲染：把返回值整体 JSON 串成恰一个 text ContentBlock，裸字符串会崩宿主。 |  |
-| lib/plan-draft-tool.js | execute | L194-303 | 草稿修复执行体：参数与 cwd 校验、白名单 base 判定、读草稿应用编辑、未探查标记命中即整批不写回、写回草稿后再走合同/源/证据核实，通过则转正成对工件并授权删除两份草稿，其余失败出口一律返回 saved-with-errors。 |  |
+| lib/plan-draft-tool.js | readText | L39-45 | 按 utf8 读取文件，失败统一改抛「edit_plan_draft: 文件读取失败」并附错误文本，供上层转成可读诊断。 |  |
+| lib/plan-draft-tool.js | splitLines | L48-53 | 行级编号基线：只剥掉一个结尾换行参与编号并回报 hasFinalNewline，使行号与编辑器/grep 汇报一致。 |  |
+| lib/plan-draft-tool.js | joinLines | L55-58 | splitLines 的逆操作：空数组返回空串，否则按换行拼接并按 hasFinalNewline 原样补回结尾换行。 |  |
+| lib/plan-draft-tool.js | diagnosticText | L60-65 | 把单条合同诊断渲染成「文档 任务 字段：说明」，行号为正整数时追加「位置：第 N 行」；文档缺省 plan/checklist，无任务号写作任务全局。 |  |
+| lib/plan-draft-tool.js | savedWithErrors | L67-69 | 构造 saved-with-errors 返回值五字段（status/paths/lineCount/diagnostics/error），表示修改已保存但未通过校验、草稿保留可继续改。 |  |
+| lib/plan-draft-tool.js | applyEdits | L73-102 | 批量行级编辑：{line,text} 替换、{line,drop:true} 真删、{line,insert} 行前插入三种操作互斥校验，按行号倒序应用；任一编辑非法或越界即整批抛错不生效。 |  |
+| lib/plan-draft-tool.js | authorizeDraftFile | L105-108 | 删草稿前的授权：与 save-persistence 内部 authorizeFile 同形，先 resolveWorkspacePath 再 prepareWriteTarget，越界即抛错。 |  |
+| lib/plan-draft-tool.js | createPlanDraftToolFactories | L110-294 | 按 savePlanDir 与 atomicCommit/atomicReplace 显式依赖构造 edit_plan_draft 工具工厂（内部定义超时 60s），不持有宿主会话状态。 |  |
+| lib/plan-draft-tool.js | expectedDraftDirOf | L113-119 | 由可配置的 savePlanDir 推导期望草稿目录 <savePlanDir>/draft 的归一化绝对路径；推导失败返回 null 让调用方按非白名单拒绝，绝不回退硬编码目录。 |  |
+| lib/plan-draft-tool.js | writeDraft | L126-129 | 以覆盖语义 atomicReplace(dir,[{name,content}]) 写回草稿；缺 atomicReplace 依赖即抛错（未写入任何修改），转正另走 atomicCommit 不可互替。 |  |
+| lib/plan-draft-tool.js | defineEditPlanDraft | L131-291 | 组装 edit_plan_draft 工具定义：path/edits 参数合同、promoted 与 saved-with-errors 两态输出 schema 及行级修复执行体。 |  |
+| lib/plan-draft-tool.js | render | L175-177 | 结果渲染：把返回值整体 JSON 串成恰一个 text ContentBlock，裸字符串会崩宿主。 |  |
+| lib/plan-draft-tool.js | execute | L180-289 | 草稿修复执行体：参数与 cwd 校验、白名单 base 判定、读草稿应用编辑、未探查标记命中即整批不写回、写回草稿后再走合同/源/证据核实，通过则转正成对工件并授权删除两份草稿，其余失败出口一律返回 saved-with-errors。 |  |
 | lib/planner-budget.js | toolCallCount | L11-40 | 统计成功配对的工具调用次数，按调用方传入的 skipNames 跳过豁免名（现为 FREE_TOOLS 两项：save_plan 与 edit_plan_draft），事件非数组直接返回 0。 |  |
 | lib/planner-budget.js | lastMainSessionAnchorIndex | L43-53 | 从消息序列尾部反向定位最近一条主会话锚点的索引；供 toolCallsSinceUser 与 budgetReminderSent 复用同一遍历，避免两处各写一遍反向查找逻辑。 |  |
 | lib/planner-budget.js | toolCallsSinceUser | L56-61 | 只统计最近一条用户或代理消息锚点之后的成功工具调用，无锚点时退回与全量口径一致。 |  |
@@ -590,36 +588,35 @@
 | lib/run-code-scanner.js | bracketEndOf | L310-320 | 调用点收集内自左方括号配平，供静态键识别与括号后是否紧跟调用的形态判断，未闭合返回负一 |  |
 | lib/run-code-static.js | runCodeTextOf | L22-26 | 从执行参数里取 run_code 的 code 文本，非字符串一律返回空串而不抛错 |  |
 | lib/run-code-static.js | codeMutationHints | L29-37 | 静态扫描 code 是否命中写模式黑名单，返回去重的 hint id 列表并保持黑名单顺序 |  |
-| lib/run-code-static.js | parseStaticLiteral | L41-175 | 解析安全的静态字面量子集：先走 JSON 快路径再走无执行解析器，不合法返回失败标记 |  |
+| lib/run-code-static.js | parseStaticLiteral | L41-173 | 解析安全的静态字面量子集：先走 JSON 快路径再走无执行解析器，不合法返回失败标记 |  |
 | lib/run-code-static.js | fail | L52 | 字面量解析失败时抛出固定的 not a static literal 错误，由外层统一收敛为解析失败结果 |  |
 | lib/run-code-static.js | skipWhitespace | L53-55 | 解析器内的辅助闭包：把游标下标前移跳过空白字符，到源串末尾即停，不返回新下标也不报错 |  |
-| lib/run-code-static.js | isIdentifierStart | L56 | 判断字符是否可作标识符首字符，仅字母、下划线或美元符为真，未定义字符一律判假，供解析用 |  |
-| lib/run-code-static.js | isIdentifierChar | L57 | 判断字符是否可作标识符后续字符，字母数字下划线与美元符为真，未定义字符判假，用于边界判定 |  |
-| lib/run-code-static.js | parseString | L59-99 | 解析单双引号字符串字面量并还原常见转义，遇换行、未闭合或非法转义立即抛出失败，不返回半成品 |  |
-| lib/run-code-static.js | parseValue | L101-165 | 递归解析字面量值：对象、数组、字符串、布尔、空值与数字，并拦截原型污染键和重复键 |  |
-| lib/run-code-static.js | createRunCodeStatic | L177-623 | 装配 run_code 静态预审闭包：拆解、容错闸门、问询返回闸门与上限判定共用一套纯函数 |  |
-| lib/run-code-static.js | decomposeRunCode | L192-230 | 把 code 拆成去重的工具调用组成员并标记动态访问，动态或不可解析的调用不计入组 |  |
-| lib/run-code-static.js | addMember | L199-208 | 按调用名称与参数序列化拼成去重键后追加成员，同名同参合并去重，同名不同参分别保留为两条 |  |
-| lib/run-code-static.js | markRange | L209-211 | 在占用位图上把已识别调用点覆盖的字符区间逐位标记为已占用，供后续裸写扫描跳过这些文本 |  |
-| lib/run-code-static.js | runCodeCatchGateReason | L236-307 | 多调用容错闸门：调用点达两个且未逐个独立 try/catch 时返回拒绝文案，单调用豁免 |  |
-| lib/run-code-static.js | within | L263 | 判断调用点起始位置是否落在给定起止区间内，供 try 块内调用点归属与保护计数使用，含两端 |  |
-| lib/run-code-static.js | askOrGateReturnGateReason | L311-575 | ask_user_question 与 extra_plan_gate 共用的返回链闸门：真实调用仍必须证明结果返回用户层；只排除已静态证明的同名数据位置，无法证明的裸名、工具访问或返回链仍拒绝。 |  |
-| lib/run-code-static.js | reasonFor | L316 | 按实际命中的工具名（ask_user_question 或 extra_plan_gate）拼出返回链拒绝文案。 |  |
-| lib/run-code-static.js | isIdChar | L318 | 判断字符是否为标识符字符，字母数字下划线与美元符为真，用于词边界判定且不抛错，只读纯函数 |  |
-| lib/run-code-static.js | skipWs | L319-323 | 从给定下标起跳过空白字符并返回新的下标，到串尾即停，供前缀匹配与表达式定位使用，不修改入参 |  |
-| lib/run-code-static.js | dataOffsets | L372-418 | （待补充） |  |
-| lib/run-code-static.js | accept | L376-403 | （待补充） |  |
-| lib/run-code-static.js | isTopLevel | L470 | 判断该位置是否处于花括号、圆括号、方括号三种深度都为 0 的顶层语句位置，用于语句切分 |  |
-| lib/run-code-static.js | candidateStarts | L471-478 | 收集调用点之前所有顶层语句的起始下标，供匹配 return 或赋值前缀时逐段尝试 |  |
-| lib/run-code-static.js | tokenAt | L479-480 | 判断位置处是否为独立关键字，要求前后都属于标识符边界，避免命中更长标识符或属性名的一部分 |  |
-| lib/run-code-static.js | expressionEnd | L481-490 | 取顶层表达式的结束下标：遇顶层分号或后接语句的换行即止，否则一直取到源串末尾，不解析语义 |  |
-| lib/run-code-static.js | references | L491-506 | 判断表达式是否按标识符边界实际引用了该变量，属性名与对象键名不算引用，不抛错也不建语法树 |  |
-| lib/run-code-static.js | hasReassignment | L507-524 | 判断表达式内是否对该变量重新赋值或自增自减，含前后置自增与复合赋值形态，不解析语义 |  |
-| lib/run-code-static.js | afterCall | L525-535 | 取调用点之后的非空白下标与是否带分号的标记，供判定该调用是否独立成句，不修改原文本 |  |
-| lib/run-code-static.js | escapeRegExpText | L539 | 把工具名中的非标识符字符转义后再拼进正则选择式，避免前缀同名工具被误配。 |  |
-| lib/run-code-static.js | runCodeSiteCount | L579-596 | 统计 code 内的工具调用点数：run_code 自身不计，参数可解析时递归展开其 code |  |
-| lib/run-code-static.js | isRunCodeSubCall | L600-605 | 判定执行是否为子调用：带 sub 标记或有 parent 即为真，直呼与根调用为假 |  |
-| lib/run-code-static.js | runCodeDispatchCapText | L608-610 | 生成子调用超上限的固定告警文案，含实例 ID、实际计数与额度上限三项，供运行时与纯函数共用 |  |
+| lib/run-code-static.js | isIdentifierChar | L56 | 判断字符是否可作标识符后续字符，字母数字下划线与美元符为真，未定义字符判假，用于边界判定 |  |
+| lib/run-code-static.js | parseString | L58-98 | 解析单双引号字符串字面量并还原常见转义，遇换行、未闭合或非法转义立即抛出失败，不返回半成品 |  |
+| lib/run-code-static.js | parseValue | L100-163 | 递归解析字面量值：对象、数组、字符串、布尔、空值与数字，并拦截原型污染键和重复键 |  |
+| lib/run-code-static.js | createRunCodeStatic | L175-621 | 装配 run_code 静态预审闭包：拆解、容错闸门、问询返回闸门与上限判定共用一套纯函数 |  |
+| lib/run-code-static.js | decomposeRunCode | L190-228 | 把 code 拆成去重的工具调用组成员并标记动态访问，动态或不可解析的调用不计入组 |  |
+| lib/run-code-static.js | addMember | L197-206 | 按调用名称与参数序列化拼成去重键后追加成员，同名同参合并去重，同名不同参分别保留为两条 |  |
+| lib/run-code-static.js | markRange | L207-209 | 在占用位图上把已识别调用点覆盖的字符区间逐位标记为已占用，供后续裸写扫描跳过这些文本 |  |
+| lib/run-code-static.js | runCodeCatchGateReason | L234-305 | 多调用容错闸门：调用点达两个且未逐个独立 try/catch 时返回拒绝文案，单调用豁免 |  |
+| lib/run-code-static.js | within | L261 | 判断调用点起始位置是否落在给定起止区间内，供 try 块内调用点归属与保护计数使用，含两端 |  |
+| lib/run-code-static.js | askOrGateReturnGateReason | L309-573 | ask_user_question 与 extra_plan_gate 共用的返回链闸门：真实调用仍必须证明结果返回用户层；只排除已静态证明的同名数据位置，无法证明的裸名、工具访问或返回链仍拒绝。 |  |
+| lib/run-code-static.js | reasonFor | L314 | 按实际命中的工具名（ask_user_question 或 extra_plan_gate）拼出返回链拒绝文案。 |  |
+| lib/run-code-static.js | isIdChar | L316 | 判断字符是否为标识符字符，字母数字下划线与美元符为真，用于词边界判定且不抛错，只读纯函数 |  |
+| lib/run-code-static.js | skipWs | L317-321 | 从给定下标起跳过空白字符并返回新的下标，到串尾即停，供前缀匹配与表达式定位使用，不修改入参 |  |
+| lib/run-code-static.js | dataOffsets | L370-416 | （待补充） |  |
+| lib/run-code-static.js | accept | L374-401 | （待补充） |  |
+| lib/run-code-static.js | isTopLevel | L468 | 判断该位置是否处于花括号、圆括号、方括号三种深度都为 0 的顶层语句位置，用于语句切分 |  |
+| lib/run-code-static.js | candidateStarts | L469-476 | 收集调用点之前所有顶层语句的起始下标，供匹配 return 或赋值前缀时逐段尝试 |  |
+| lib/run-code-static.js | tokenAt | L477-478 | 判断位置处是否为独立关键字，要求前后都属于标识符边界，避免命中更长标识符或属性名的一部分 |  |
+| lib/run-code-static.js | expressionEnd | L479-488 | 取顶层表达式的结束下标：遇顶层分号或后接语句的换行即止，否则一直取到源串末尾，不解析语义 |  |
+| lib/run-code-static.js | references | L489-504 | 判断表达式是否按标识符边界实际引用了该变量，属性名与对象键名不算引用，不抛错也不建语法树 |  |
+| lib/run-code-static.js | hasReassignment | L505-522 | 判断表达式内是否对该变量重新赋值或自增自减，含前后置自增与复合赋值形态，不解析语义 |  |
+| lib/run-code-static.js | afterCall | L523-533 | 取调用点之后的非空白下标与是否带分号的标记，供判定该调用是否独立成句，不修改原文本 |  |
+| lib/run-code-static.js | escapeRegExpText | L537 | 把工具名中的非标识符字符转义后再拼进正则选择式，避免前缀同名工具被误配。 |  |
+| lib/run-code-static.js | runCodeSiteCount | L577-594 | 统计 code 内的工具调用点数：run_code 自身不计，参数可解析时递归展开其 code |  |
+| lib/run-code-static.js | isRunCodeSubCall | L598-603 | 判定执行是否为子调用：带 sub 标记或有 parent 即为真，直呼与根调用为假 |  |
+| lib/run-code-static.js | runCodeDispatchCapText | L606-608 | 生成子调用超上限的固定告警文案，含实例 ID、实际计数与额度上限三项，供运行时与纯函数共用 |  |
 | lib/runtime-lifecycle.js | createRuntimeLifecycle | L4-162 | 按 apply 建立运行时生命周期，集中工具注册、prober 认领与 run_code 拒绝记录，状态不跨实例共享。 |  |
 | lib/runtime-lifecycle.js | registerTool | L12-41 | 按 agent 幂等注册工具，服务缺失或 schema 永久失败只记日志不抛错，重复注册保留既有工具。 |  |
 | lib/runtime-lifecycle.js | saveBootstrapWhen | L54-62 | save 工具注册的 when 判据：引导相位不激活；异常或缺 context 时保守返回 true |  |
@@ -817,19 +814,18 @@
 | lib/shell-mutation.js | pwshMutationMatches | L483 | PowerShell 侧的布尔写判定包装，等价于证据非空判定，不给调用方额外产出拒绝文案 |  |
 | lib/shell-mutation.js | bashMutationMatches | L484 | bash 侧的布尔写判定包装，供只关心是否拦截的调用方使用，不改变底层证据判定语义 |  |
 | lib/usage-ledger-background.js | isObject | L11-13 | 判定 owner/pathContext 是否可作为对象键，函数也视为对象。 |  |
-| lib/usage-ledger-background.js | stringOrEmpty | L15-17 | 只接受字符串，其他值归空串供根路径与错误字段归一。 |  |
-| lib/usage-ledger-background.js | errorDetails | L19-23 | 将 Worker/controller 异常收敛为 code/message 诊断对象。 |  |
-| lib/usage-ledger-background.js | normalizedRootOf | L25-30 | 规范化 hostDataRoot 为跨 owner 串行键，Windows 转小写；缺失归空根键。 |  |
-| lib/usage-ledger-background.js | capabilitySnapshot | L32-48 | 仅复制带 name/path/type/access/purpose 的原有能力描述，形成传给 Worker 的小型快照。 |  |
-| lib/usage-ledger-background.js | pathContextSnapshot | L50-57 | 从可信 pathContext 提取 workspaceRoot/hostDataRoot/hostCapabilities 快照，不传 ctx、函数或宿主对象。 |  |
-| lib/usage-ledger-background.js | normalizedResult | L59-69 | 把 Worker 终态限制为小型结构化结果，成功态去掉 error，其他状态收敛为 failed。 |  |
-| lib/usage-ledger-background.js | protocolFailure | L71-73 | 构造协议或退出类 failed 结果。 |  |
-| lib/usage-ledger-background.js | createWorkerHandle | L75-181 | 按固定包内 URL 创建 Worker，校验 ready/running/result 协议，监听 error/messageerror/exit，并让 done 在 exit 后结算。 |  |
-| lib/usage-ledger-background.js | send | L87-90 | 向未终态 Worker 发送协议消息，发送异常登记为失败。 |  |
-| lib/usage-ledger-background.js | markProtocolFailure | L91-95 | 标记协议错误、置共享取消位并请求 Worker 结束。 |  |
-| lib/usage-ledger-background.js | settleAfterExit | L96-111 | 仅在 Worker exit 后按错误、退出码或终态结算 done，覆盖无结果退出。 |  |
-| lib/usage-ledger-background.js | startUsageLedgerBackground | L183-218 | 按 owner WeakMap 单飞、按 hostDataRoot 尾链串行调度 Worker，返回 done/cancel；等待期取消不创建 Worker。 |  |
-| lib/usage-ledger-background.js | cancel | L204-209 | 幂等设置共享取消位并向已启动 Worker 发送 cancel，不 terminate 或 unref 活任务。 |  |
+| lib/usage-ledger-background.js | errorDetails | L15-19 | 将 Worker/controller 异常收敛为 code/message 诊断对象。 |  |
+| lib/usage-ledger-background.js | normalizedRootOf | L21-26 | 规范化 hostDataRoot 为跨 owner 串行键，Windows 转小写；缺失归空根键。 |  |
+| lib/usage-ledger-background.js | capabilitySnapshot | L28-44 | 仅复制带 name/path/type/access/purpose 的原有能力描述，形成传给 Worker 的小型快照。 |  |
+| lib/usage-ledger-background.js | pathContextSnapshot | L46-53 | 从可信 pathContext 提取 workspaceRoot/hostDataRoot/hostCapabilities 快照，不传 ctx、函数或宿主对象。 |  |
+| lib/usage-ledger-background.js | normalizedResult | L55-65 | 把 Worker 终态限制为小型结构化结果，成功态去掉 error，其他状态收敛为 failed。 |  |
+| lib/usage-ledger-background.js | protocolFailure | L67-69 | 构造协议或退出类 failed 结果。 |  |
+| lib/usage-ledger-background.js | createWorkerHandle | L71-177 | 按固定包内 URL 创建 Worker，校验 ready/running/result 协议，监听 error/messageerror/exit，并让 done 在 exit 后结算。 |  |
+| lib/usage-ledger-background.js | send | L83-86 | 向未终态 Worker 发送协议消息，发送异常登记为失败。 |  |
+| lib/usage-ledger-background.js | markProtocolFailure | L87-91 | 标记协议错误、置共享取消位并请求 Worker 结束。 |  |
+| lib/usage-ledger-background.js | settleAfterExit | L92-107 | 仅在 Worker exit 后按错误、退出码或终态结算 done，覆盖无结果退出。 |  |
+| lib/usage-ledger-background.js | startUsageLedgerBackground | L179-214 | 按 owner WeakMap 单飞、按 hostDataRoot 尾链串行调度 Worker，返回 done/cancel；等待期取消不创建 Worker。 |  |
+| lib/usage-ledger-background.js | cancel | L200-205 | 幂等设置共享取消位并向已启动 Worker 发送 cancel，不 terminate 或 unref 活任务。 |  |
 | lib/usage-ledger-worker.js | errorDetails | L13-17 | 将 Worker 异常收敛为可传输的 code/message 诊断对象。 |  |
 | lib/usage-ledger-worker.js | resultOf | L19-31 | 将 startupArchive 结果投影为可传输的标量终态，禁止发送会话正文或账本内容。 |  |
 | lib/usage-ledger-worker.js | post | L33-36 | 向主线程发送带 version/id 的 ready/running/result 协议消息。 |  |
@@ -878,44 +874,44 @@
 | lib/usage-ledger.js | firstFrameRangeWithin | L684-696 | 裁定单窗口内首帧边界，区分需扩窗、结构非法与已含完整首帧。 |  |
 | lib/usage-ledger.js | readWindowOf | L698-702 | 从文件偏移 0 读取指定长度窗口，返回实际读到的前缀字节。 |  |
 | lib/usage-ledger.js | firstFrameSessionByPath | L704-727 | 按 512、8192、65536、整份递进窗口读首帧身份，失败降级为空身份。 |  |
-| lib/usage-ledger.js | scanSessionPresets | L730-743 | 只对 changed 文件按 512、8192、65536、整份递进窗口读首帧，未变化文件零字节读取、size 与 mtime 复用枚举结果，在本轮内存收集身份/预设/父链供白名单与血缘使用，白名单由 `startupArchiveUnsafe` 过滤，不读写持久缓存。 |  |
-| lib/usage-ledger.js | mergedFsOps | L746-748 | 把注入的 fs 与默认实现合并，供夹具替换单点文件操作。 |  |
-| lib/usage-ledger.js | nowOf | L750-760 | 取当前毫秒时间：clock 可传函数或带 now() 的对象，非法值回落 Date.now() |  |
-| lib/usage-ledger.js | hostRootOf | L762-768 | 从 pathContext 取 host 数据根；空根即跳过本次启动扫描。 |  |
-| lib/usage-ledger.js | tokenNumber | L769-771 | 读组内 token 字段的非负有限数，非法归零 |  |
-| lib/usage-ledger.js | identityValue | L773-777 | 账本行身份键取值：delegationDepth 只收非负整数、schemaVersion 原样、其余只收字符串 |  |
-| lib/usage-ledger.js | groupSort | L779-785 | 合并组排序比较器：先按 IDENTITY_KEYS 逐键比较，再按 maxSeq（null 视空）比较 |  |
-| lib/usage-ledger.js | validDedupeKey | L787-793 | 判行能否提供去重水位：是对象且 sessionId 非空、seq 为非负整数 |  |
-| lib/usage-ledger.js | validationIssue | L795-814 | 单行 15 键与身份字段合法性检查，返回问题文本供严格解析组错误码。 |  |
-| lib/usage-ledger.js | parseStrictLedgerText | L817-851 | 严格解析既有 archive：坏 JSON、说明行位置、non-v2 与 15 键合法性逐行校验，不合法即拒绝发布。 |  |
-| lib/usage-ledger.js | identityOf | L853-857 | 按 IDENTITY_KEYS 从行抽出九字段身份对象 |  |
-| lib/usage-ledger.js | identityKeyOfRow | L859-862 | 把行身份的九字段序列化成 JSON 键，作为合并分组键 |  |
-| lib/usage-ledger.js | emptyGroupOf | L864-876 | 按九字段身份建立聚合组：四桶归零、maxSeq/_latestSeq 为 null、latestTs 为空串。 |  |
-| lib/usage-ledger.js | groupFromArchiveRow | L878-888 | 账本行转合并组：四桶取行内值，seq 有效时记 maxSeq 并落到 latestTs |  |
-| lib/usage-ledger.js | groupFromScanRow | L891-902 | 扫描行转合并组：四桶与 calls 取扫描行值，seq 有效时保存水位并复制扫描行 ts；日志扫描行的 ts 为成功解析文件的 ISO 毫秒 mtime。 |  |
-| lib/usage-ledger.js | tokenTotalOf | L904-908 | 合并组四桶求和，用于单调性比较 |  |
-| lib/usage-ledger.js | mergedArchiveGroups | L913-957 | archive 现有行与本次扫描行按身份合并：覆盖式更新 + 单调性保护（小于现状保留旧值并记告警）。 |  |
-| lib/usage-ledger.js | finalizedGroups | L959-965 | 合并组按 groupSort 排序并逐组复制，剔除内部字段 _latestSeq |  |
-| lib/usage-ledger.js | assertUniqueArchiveRows | L967-975 | 同一完整身份出现多条累计行即报 duplicate-archive，发布前拒绝。 |  |
-| lib/usage-ledger.js | archiveRowOf | L977-995 | 把聚合身份投影为固定 15 键数据行（`ts` 取成功解析 session 文件的 ISO 毫秒 mtime、`seq` 取会话内事件序号且不作主键）。 |  |
-| lib/usage-ledger.js | archiveTextOf | L997-1006 | 说明行（首行唯一）+ 数据行的序列化，归档文本唯一来源。 |  |
-| lib/usage-ledger.js | ensureLedgerDirectory | L1008-1015 | 上下文缺失直接返回；否则先授权再递归建账本目录，随后按目录类型回读校验，失败即抛错。 |  |
-| lib/usage-ledger.js | authorizeWriteTarget | L1017-1019 | 写目标 H/W 双根授权（prepareWriteTarget，含用途与期望类型）。 |  |
-| lib/usage-ledger.js | authorizeReadIfPresent | L1021-1027 | 读目标存在时做只读授权复核，缺失不报错。 |  |
-| lib/usage-ledger.js | optionalRead | L1029-1037 | 容错读：ENOENT 视为不存在，其它错误转 read-failed。 |  |
-| lib/usage-ledger.js | recordDiagnostic | L1039-1051 | 仅在原调用需要留痕时向 Host `logs/dsh-extra-plan/extra-plan-usage-errors.jsonl` 按需追加一行 JSONL；字段恰为字符串 `ts`、`reason`、`message`，`ts` 为诊断发生时间；写失败静默忽略，不阻断启动。 |  |
-| lib/usage-ledger.js | reportFailure | L1053-1063 | 失败统一出口：warn + 写诊断行 + 返回 { status:'failed', reason, error }。 |  |
-| lib/usage-ledger.js | publishArchive | L1067-1084 | 单目标原子发布：写同目录临时文件 → 预算检查 → rename 覆盖 archive；失败清理临时文件、既有账本原样保留。 |  |
-| lib/usage-ledger.js | acquireArchiveLock | L1089-1106 | 一次 O_EXCL 创建 <archive>.lock 的简易互斥；拿不到即返回未获取，不等待、不接管死锁、不删他人锁。 |  |
-| lib/usage-ledger.js | releaseArchiveLock | L1109-1111 | 仅 unlink 本次 O_EXCL 创建的锁文件，失败只在 try/finally 内忽略，不抛给启动路径。 |  |
-| lib/usage-ledger.js | archiveLedger | L1119-1196 | 直调入口：给定 archive 路径的「聚合 + 覆盖式更新 + 原子发布」，不承担进程互斥。 |  |
-| lib/usage-ledger.js | checkBudget | L1140-1148 | 预算与 onCheck 阶段探针：超时抛 budget-timeout，阶段名供 step-00 M6 断言。 |  |
-| lib/usage-ledger.js | skipWithDiagnostic | L1199-1207 | 可预期跳过（无 host 根/锁忙/扫描失败）时返回 skipped，并仅在原 `recordDiagnostic` 需要留痕时按需写 usage 错误 JSONL；取消不记失败。 |  |
-| lib/usage-ledger.js | upToDateArchiveResult | L1212-1226 | 构造日志 mtime 与账本 ts 无变化的健康终态，报告 archive 现有行/字节并标记零完整用量扫描。 |  |
-| lib/usage-ledger.js | startupArchiveUnsafe | L1228-1367 | 启动路径主体：host 根判定 → 路径解析与双根授权 → 枚举会话日志只做 statSync → 读旧账本建 sessionId 到 ts 索引并判 changed（目录名命中即跳过，查不到才用首帧 sessionId 兜底）→ 只对 changed 读首帧判白名单 → 命中才解析用量 → 简易锁 → 调 archiveLedger；失败转结构化结果，取消按 archive rename 提交边界处理。 |  |
-| lib/usage-ledger.js | identityOf | L1281-1286 | 按日志路径缓存首帧身份，同一轮扫描不重复读同一文件头。 |  |
-| lib/usage-ledger.js | ledgerHasTimestamp | L1287-1290 | 账本中该会话是否已有与文件 mtime 相等的 ts，用于跳过未变化文件。 |  |
-| lib/usage-ledger.js | startupArchive | L1371-1387 | 同步启动归档入口：捕获可处理异常并返回结构化状态，正常由 settings Worker 调用；不作无条件绝不阻断保证。 |  |
+| lib/usage-ledger.js | scanSessionPresets | L730-742 | 只对 changed 文件按 512、8192、65536、整份递进窗口读首帧，未变化文件零字节读取、size 与 mtime 复用枚举结果，在本轮内存收集身份/预设/父链供白名单与血缘使用，白名单由 `startupArchiveUnsafe` 过滤，不读写持久缓存。 |  |
+| lib/usage-ledger.js | mergedFsOps | L745-747 | 把注入的 fs 与默认实现合并，供夹具替换单点文件操作。 |  |
+| lib/usage-ledger.js | nowOf | L749-759 | 取当前毫秒时间：clock 可传函数或带 now() 的对象，非法值回落 Date.now() |  |
+| lib/usage-ledger.js | hostRootOf | L761-767 | 从 pathContext 取 host 数据根；空根即跳过本次启动扫描。 |  |
+| lib/usage-ledger.js | tokenNumber | L768-770 | 读组内 token 字段的非负有限数，非法归零 |  |
+| lib/usage-ledger.js | identityValue | L772-776 | 账本行身份键取值：delegationDepth 只收非负整数、schemaVersion 原样、其余只收字符串 |  |
+| lib/usage-ledger.js | groupSort | L778-784 | 合并组排序比较器：先按 IDENTITY_KEYS 逐键比较，再按 maxSeq（null 视空）比较 |  |
+| lib/usage-ledger.js | validDedupeKey | L786-792 | 判行能否提供去重水位：是对象且 sessionId 非空、seq 为非负整数 |  |
+| lib/usage-ledger.js | validationIssue | L794-813 | 单行 15 键与身份字段合法性检查，返回问题文本供严格解析组错误码。 |  |
+| lib/usage-ledger.js | parseStrictLedgerText | L816-850 | 严格解析既有 archive：坏 JSON、说明行位置、non-v2 与 15 键合法性逐行校验，不合法即拒绝发布。 |  |
+| lib/usage-ledger.js | identityOf | L852-856 | 按 IDENTITY_KEYS 从行抽出九字段身份对象 |  |
+| lib/usage-ledger.js | identityKeyOfRow | L858-861 | 把行身份的九字段序列化成 JSON 键，作为合并分组键 |  |
+| lib/usage-ledger.js | emptyGroupOf | L863-875 | 按九字段身份建立聚合组：四桶归零、maxSeq/_latestSeq 为 null、latestTs 为空串。 |  |
+| lib/usage-ledger.js | groupFromArchiveRow | L877-887 | 账本行转合并组：四桶取行内值，seq 有效时记 maxSeq 并落到 latestTs |  |
+| lib/usage-ledger.js | groupFromScanRow | L890-901 | 扫描行转合并组：四桶与 calls 取扫描行值，seq 有效时保存水位并复制扫描行 ts；日志扫描行的 ts 为成功解析文件的 ISO 毫秒 mtime。 |  |
+| lib/usage-ledger.js | tokenTotalOf | L903-907 | 合并组四桶求和，用于单调性比较 |  |
+| lib/usage-ledger.js | mergedArchiveGroups | L912-956 | archive 现有行与本次扫描行按身份合并：覆盖式更新 + 单调性保护（小于现状保留旧值并记告警）。 |  |
+| lib/usage-ledger.js | finalizedGroups | L958-964 | 合并组按 groupSort 排序并逐组复制，剔除内部字段 _latestSeq |  |
+| lib/usage-ledger.js | assertUniqueArchiveRows | L966-974 | 同一完整身份出现多条累计行即报 duplicate-archive，发布前拒绝。 |  |
+| lib/usage-ledger.js | archiveRowOf | L976-994 | 把聚合身份投影为固定 15 键数据行（`ts` 取成功解析 session 文件的 ISO 毫秒 mtime、`seq` 取会话内事件序号且不作主键）。 |  |
+| lib/usage-ledger.js | archiveTextOf | L996-1005 | 说明行（首行唯一）+ 数据行的序列化，归档文本唯一来源。 |  |
+| lib/usage-ledger.js | ensureLedgerDirectory | L1007-1014 | 上下文缺失直接返回；否则先授权再递归建账本目录，随后按目录类型回读校验，失败即抛错。 |  |
+| lib/usage-ledger.js | authorizeWriteTarget | L1016-1018 | 写目标 H/W 双根授权（prepareWriteTarget，含用途与期望类型）。 |  |
+| lib/usage-ledger.js | authorizeReadIfPresent | L1020-1026 | 读目标存在时做只读授权复核，缺失不报错。 |  |
+| lib/usage-ledger.js | optionalRead | L1028-1036 | 容错读：ENOENT 视为不存在，其它错误转 read-failed。 |  |
+| lib/usage-ledger.js | recordDiagnostic | L1038-1050 | 仅在原调用需要留痕时向 Host `logs/dsh-extra-plan/extra-plan-usage-errors.jsonl` 按需追加一行 JSONL；字段恰为字符串 `ts`、`reason`、`message`，`ts` 为诊断发生时间；写失败静默忽略，不阻断启动。 |  |
+| lib/usage-ledger.js | reportFailure | L1052-1062 | 失败统一出口：warn + 写诊断行 + 返回 { status:'failed', reason, error }。 |  |
+| lib/usage-ledger.js | publishArchive | L1066-1083 | 单目标原子发布：写同目录临时文件 → 预算检查 → rename 覆盖 archive；失败清理临时文件、既有账本原样保留。 |  |
+| lib/usage-ledger.js | acquireArchiveLock | L1088-1105 | 一次 O_EXCL 创建 <archive>.lock 的简易互斥；拿不到即返回未获取，不等待、不接管死锁、不删他人锁。 |  |
+| lib/usage-ledger.js | releaseArchiveLock | L1108-1110 | 仅 unlink 本次 O_EXCL 创建的锁文件，失败只在 try/finally 内忽略，不抛给启动路径。 |  |
+| lib/usage-ledger.js | archiveLedger | L1118-1195 | 直调入口：给定 archive 路径的「聚合 + 覆盖式更新 + 原子发布」，不承担进程互斥。 |  |
+| lib/usage-ledger.js | checkBudget | L1139-1147 | 预算与 onCheck 阶段探针：超时抛 budget-timeout，阶段名供 step-00 M6 断言。 |  |
+| lib/usage-ledger.js | skipWithDiagnostic | L1198-1206 | 可预期跳过（无 host 根/锁忙/扫描失败）时返回 skipped，并仅在原 `recordDiagnostic` 需要留痕时按需写 usage 错误 JSONL；取消不记失败。 |  |
+| lib/usage-ledger.js | upToDateArchiveResult | L1211-1225 | 构造日志 mtime 与账本 ts 无变化的健康终态，报告 archive 现有行/字节并标记零完整用量扫描。 |  |
+| lib/usage-ledger.js | startupArchiveUnsafe | L1227-1366 | 启动路径主体：host 根判定 → 路径解析与双根授权 → 枚举会话日志只做 statSync → 读旧账本建 sessionId 到 ts 索引并判 changed（目录名命中即跳过，查不到才用首帧 sessionId 兜底）→ 只对 changed 读首帧判白名单 → 命中才解析用量 → 简易锁 → 调 archiveLedger；失败转结构化结果，取消按 archive rename 提交边界处理。 |  |
+| lib/usage-ledger.js | identityOf | L1280-1285 | 按日志路径缓存首帧身份，同一轮扫描不重复读同一文件头。 |  |
+| lib/usage-ledger.js | ledgerHasTimestamp | L1286-1289 | 账本中该会话是否已有与文件 mtime 相等的 ts，用于跳过未变化文件。 |  |
+| lib/usage-ledger.js | startupArchive | L1370-1386 | 同步启动归档入口：捕获可处理异常并返回结构化状态，正常由 settings Worker 调用；不作无条件绝不阻断保证。 |  |
 | pe-test/_shared/host-deps.mjs | samePath | L15-17 | 测试侧：以 relative 结果为空判定两条路径同指一处，不做大小写归一与真实路径解析。 |  |
 | pe-test/_shared/host-deps.mjs | isWithinRoot | L19-23 | 测试侧：判定候选绝对路径是否位于根内（可等于根），非绝对或越界返回假，只做词法比较。 |  |
 | pe-test/_shared/host-deps.mjs | explicitPath | L25-31 | 测试侧：以显式安装根构造路径上下文并返回规范化根，失败转成带标签的说明性错误文本。 |  |
