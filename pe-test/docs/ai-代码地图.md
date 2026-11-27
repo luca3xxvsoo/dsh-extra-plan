@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-11-27 16:11:28（脚本自动更新时间戳行）
+> 上次同步：2026-11-27 21:40:33（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -95,15 +95,15 @@
 | 文件 | 行数 | 说明 |
 |:--|--:|:--|
 | index.js | 1744 | 核心入口：闸门状态与 extra_plan_gate 工具注册、预算、save 工具注册与生命周期；接线 planner/非 planner 路由、A/C/M 投影、P2-2 cache、usage 启动扫描账本（覆盖式幂等更新）、v4 MALFORMED 自愈。gateWords 只来自 YAML，apply 先校验再副作用；tools/pre-execute 先用原始 `isSubagentChild` 预审 child 控制工具，再进入角色/root 闸门，main 控制与自动最终结果保持；不再负责诊断日志启动清理。 |
-| lib/agent-runtime.js | 175 | 每次 apply 的角色识别、descriptor/工具 schema 缓存、usage 血缘上下文与 role baseline、四角色宿主 mode 与显式 override 幂等；不 import index.js |
+| lib/agent-runtime.js | 172 | 每次 apply 的角色识别、descriptor/工具 schema 缓存、usage 血缘上下文与 role baseline、四角色宿主 mode 与显式 override 幂等；不 import index.js |
 | lib/agent-session.js | 65 | 会话事件与子代理识别的唯一来源：sessionEvents/isSubagentChild 零依赖纯函数，被 index.js 与 lib/model-routing.js 共用（无镜像副本；不 import index.js） |
 | lib/assembly-presentation.js | 267 | A/C/M 与 skill catalog 模型可见投影；从 scoped tools 读 schema/模式，SDK renderer 按 language 整体重建；F/PTC 的 tool:read 由 index.js 手写，L 段回宿主原文。 |
 | lib/client-carrier.js | 7 | settings 内部 Loader Group 的无副作用 Client carrier；不对应 bundle row/公开 export。 |
 | lib/client.js | 314 | 客户端模块加载共享样式/词条与 SettingsCard/ExtraPlanForm；设置表单仅经 detail.section 渲染于当前包详情行列表之后（自绘标题，不注册 bundle.config；若本包 bundle.config 槽出现条目则让位）；后端全局 settings API/Config 与 definition/adapter 由同一 owner 活动。 |
 | lib/extra-plan-gate-tool.js | 374 | 闸门专用工具 extra_plan_gate：route/purpose 的选项文案由插件按 gateWords 生成，模型不得构造或改写；clarify 只透传问题；三支都收敛为 outcome 四值（answered/skipped/cancelled/channel-error），execute 从不向外抛错；结果 content 固定为单个 text ContentBlock、正文是返回值整体 JSON |
-| lib/gate-decisions.js | 755 | 闸门状态推导（唯一推进源是 extra_plan_gate 事件）与角色分流判定纯函数集 |
+| lib/gate-decisions.js | 749 | 闸门状态推导（唯一推进源是 extra_plan_gate 事件）与角色分流判定纯函数集 |
 | lib/gate-words.js | 108 | 闸门关键词共享契约（唯一值源是 YAML 的 config.gateWords）：字段规格 GATE_WORD_FIELDS/GATE_WORDS_GROUP_DEFINITION（6 键整组）+ 整组严格校验 validateGateWords（错误一律以 extra-plan: config.gateWords 开头）+ 运行时词表 createGateRuntime（显式入参严格校验，无默认词表）；纯模块：不含任何出厂词值、不读文件与环境变量，被 index.js（运行时）与 lib/preset-sync.js（启动自愈）共享（迁移叶 locator 已随跨版本搬迁链删除）；本函数只判定单次入参，持久值缺失/非法的回落补齐在 preset-sync |
-| lib/live-config.js | 297 | 配置热读：10 项运行时 getter（含 webFetch）；1 项装载期权威设置（toolPresentationMode）只读并派生到内存 definition，不暴露为 getter；构造期读盘一次，后续按增强 stamp（dev/ino/size/mtimeNs/ctimeNs，兼容 ino/size/mtimeMs/ctimeMs）重读；失败整组回退并告警，不读 DSH_HOME 旧目录 |
+| lib/live-config.js | 293 | 配置热读：10 项运行时 getter（含 webFetch）；1 项装载期权威设置（toolPresentationMode）只读并派生到内存 definition，不暴露为 getter；构造期读盘一次，后续按增强 stamp（dev/ino/size/mtimeNs/ctimeNs，兼容 ino/size/mtimeMs/ctimeMs）重读；失败整组回退并告警，不读 DSH_HOME 旧目录 |
 | lib/log-retention.js | 123 | 诊断日志保留期裁剪：只处理 <host 根>/logs/dsh-extra-plan 下 .jsonl 普通文件并排除 usage-ledger；全部诊断 JSONL 统一按固定 UTC+8 北京时间昨日零点保留今天/昨天两个自然日；前缀边界算法两遍式（分界扫描+自分界起无解析复制）经临时文件原子替换，分界线=首个可解析且 cutoff<=ts<=now 的行，坏行/空行/未来行随前缀删除，分界后原样保留（含乱序过期行，随保留窗口自然收敛），零写=文件0行或分界为0，全前缀候选清空为空文件；不 import index.js。 |
 | lib/model-routing.js | 648 | planner/非 planner 子代理模型路由：顶层纯判定函数 + createModelRouting per-apply 工厂（per-instance WeakMap、惰性 llm/agents getter；不 import index.js） |
 | lib/path-policy.js | 464 | 核心包双根路径策略入口：H/W 用途判定、变量与链接边界、只读能力与写入预检，供各工具复用 |
@@ -120,7 +120,7 @@
 | lib/runtime-static.js | 23 | 显式参数纯 helper：causeChainOf 解析 cause 链；不持有宿主状态 |
 | lib/save-contract.js | 263 | save 合同唯一真源：任务名/sessionTag/base、SAVE_PLAN_LIMITS 与内部确定性 summary、paths-only ContentBlock 投影、PROBE_LIMITS、Markdown 渲染与证据引用清洗；无宿主状态，运行时限制只在本文件维护。 |
 | lib/save-persistence.js | 223 | 单次调用阶段感知提交：mkdir→临时文件逐项写入→逐项检查并顺序发布；失败保留首错/阶段，仅清理本次临时与已发布半套工件，清理失败附残留路径与原因，预存目标不覆盖；不创建/扫描/恢复跨调用 journal；末位 fs 依赖可注入。 |
-| lib/save-plan-validation.js | 1224 | save_plan 文本合同校验：模式/任务/路径所有权/依赖与执行组 DAG/资源/检查引用与验收组/收尾全局/摘要早拒；不启动代理或执行命令。 |
+| lib/save-plan-validation.js | 1222 | save_plan 文本合同校验：模式/任务/路径所有权/依赖与执行组 DAG/资源/检查引用与验收组/收尾全局/摘要早拒；不启动代理或执行命令。 |
 | lib/save-probe-validation.js | 173 | save_probe 参数校验：数组/条目/长度/总量/path 存在性/range/evidence 聚合拒绝 |
 | lib/save-tool-factories.js | 459 | 显式依赖工厂：save_plan 执行顺序固定——参数校验（plan/checklist 均为字符串且各 ≥200 字）→ 取一次 cwd → 容错解析上下文（目录/base/会话标识，解析失败只记原错误继续走、绝不替换合同诊断）→ 未探查标记 → 合同校验 → 源核实 → 证据核实 → 用 context 单次 atomicCommit 落盘；未探查标记、合同校验（派遣摘要超限除外，只能改写更短的方案，不落草稿）、源核实、证据核实四处失败出口统一先落成对 .md_mid 草稿再抛错，草稿提示追加在原报错末尾、上下文不可用或草稿写失败只降级为一句提示；合法正文逐字保存、structured output 仅 paths、render 仅将两个 paths 投影为唯一 text ContentBlock；save_probe 保留既有证据诊断与落盘；不缓存 ctx/agent/会话状态。 |
 | lib/sdk-text-cache.js | 161 | apply 级 agent-keyed WeakMap SDK 文本缓存：完整 renderer 输入保守指纹、language/renderer 身份比较、并发 Promise 合并、reject/过期 Promise 不回写、dispose 回收；不持有 sessionId 或 PromptAssembly |
@@ -129,7 +129,7 @@
 | lib/shell-mutation.js | 484 | 跨平台命令文本解码与 pwsh/bash 写形态判定；纯函数、不持有 apply 状态 |
 | lib/usage-ledger-background.js | 214 | 后台账本调度 controller：只快照可信 pathContext，按 owner 单飞与 hostDataRoot 串行创建固定 Worker，处理协议、协作取消和 exit 后终态；不复制扫描算法。 |
 | lib/usage-ledger-worker.js | 116 | 真实 Worker 入口：重建 pathContext 并复用同步 startupArchive 完成扫描、解析与发布，传递小型终态结果，响应共享取消位后关闭 port。 |
-| lib/usage-ledger.js | 1386 | 账本唯一实现：默认 Host 目标为 `logs/dsh-extra-plan/extra-plan-usage-ledger.jsonl`，诊断按需写 `logs/dsh-extra-plan/extra-plan-usage-errors.jsonl`；扫描聚合 + 覆盖式更新 + 启动入口（常量与身份键 → 扫描 %DSH_HOME%/sessions 下 v4 会话日志并按九字段身份聚合 → 按日志 mtime 与账本 ts 判定 changed、只对变化文件按递进窗口读首帧并判白名单才解析 → 读现有 archive 后覆盖式更新、单调性保护、说明行、单 archive temp→rename 原子发布 → startupArchive 启动入口）；固定15键（rootSessionId/agentPreset 可空）、四桶口径、严格白名单、一次 `O_EXCL` 简易互斥（拿不到即跳过、不接管不删他人锁），失败按需留痕，可处理异常返回结构化状态，正常由 settings Worker 调用；直调 API 仍同步，真实启动及内存风险需另行验证；共享目录中的其他日志不由本模块接管。 |
+| lib/usage-ledger.js | 1378 | 账本唯一实现：默认 Host 目标为 `logs/dsh-extra-plan/extra-plan-usage-ledger.jsonl`，诊断按需写 `logs/dsh-extra-plan/extra-plan-usage-errors.jsonl`；扫描聚合 + 覆盖式更新 + 启动入口（常量与身份键 → 扫描 %DSH_HOME%/sessions 下 v4 会话日志并按九字段身份聚合 → 按日志 mtime 与账本 ts 判定 changed、只对变化文件按递进窗口读首帧并判白名单才解析 → 读现有 archive 后覆盖式更新、单调性保护、说明行、单 archive temp→rename 原子发布 → startupArchive 启动入口）；固定15键（rootSessionId/agentPreset 可空）、四桶口径、严格白名单、一次 `O_EXCL` 简易互斥（拿不到即跳过、不接管不删他人锁），失败按需留痕，可处理异常返回结构化状态，正常由 settings Worker 调用；直调 API 仍同步，真实启动及内存风险需另行验证；共享目录中的其他日志不由本模块接管。 |
 | pe-test/_shared/host-deps.mjs | 409 | 解析宿主依赖候选并注册隔离加载钩子 |
 | pe-test/_shared/host-preload.mjs | 52 | 测试侧预加载：从显式安装根环境变量解析真实宿主根并导出，缺失或非法即抛错、不回退 profile。 |
 | pe-test/_shared/plan-text.mjs | 27 | 测试侧：plan/checklist 渲染文本共享实现，step-00 与 step-06 共用同一份拼装逻辑。 |
@@ -218,15 +218,16 @@
 | index.js | messageTargetIdOf | L1678-1687 | send_message 目标回调：只读本轮名称或路径引用的已解析 Session ID；未命中即登记本轮 Set 供 resolveName 逐个补齐，非字符串 agent 回退旧 agent_id，不跨调用缓存且不调用宿主。 | 最新路径 agent 与 resolveName 适配（rc.2 与 rc.3 共用）；旧 agent_id 仅 rc.1 兼容，删除边界均须另行授权。 |
 | index.js | finish | L1690-1702 | 本轮 apply 闸门唯一一次性收尾：拒绝先记 run_code deny；最终放行才记 job_output 与轮询计数并 next 一次；解析名称的匿名异步闭包复用此收尾，解析异常或取消原样传播。 | 同一 apply 内防重复调用，不把 resolveName 异常吞为 allow 或 deny。 |
 | lib/agent-runtime.js | isLiveDelegation | L17-28 | 按父会话 registry 存活状态判定委托是否仍有效 |  |
-| lib/agent-runtime.js | createAgentRuntime | L30-175 | 创建 per-apply 角色/缓存/usage baseline 工厂 |  |
+| lib/agent-runtime.js | createAgentRuntime | L30-172 | 创建 per-apply 角色/缓存/usage baseline 工厂 |  |
 | lib/agent-runtime.js | isChild | L37-45 | 按显式 events 判定 live child 并发出恢复为 root 警示 |  |
-| lib/agent-runtime.js | isPlannerChild | L50-58 | 每次按当前 Agent 的 header.agentPreset 与 isSubagentChild 判定 planner 子会话；不共享跨 Agent 的预设名布尔缓存，缺失必要信息返回 false。 |  |
-| lib/agent-runtime.js | isReviewerChild | L62-70 | 按当前 Agent 会话头的预设名与子会话判定验收者子代理，缺失必要信息或类型不符一律返回假。 |  |
-| lib/agent-runtime.js | usageRootOf | L72-103 | 沿最多 8 层 parentSession 回溯 rootSessionId；断链、循环或异常返回空 rootSessionId，由 usageContextOf 保持合法上下文落账，不伪造根会话。 | createAgentRuntime 内部闭包。 |
-| lib/agent-runtime.js | usageContextOf | L108-129 | 按 Agent 缓存 usage 血缘 context：断链或循环下 rootSessionId 为空仍合法。 | createAgentRuntime 内部 WeakMap 闭包。 |
-| lib/agent-runtime.js | toolSchemasOf | L132-150 | 防御式读取 agent scoped tools.schemas，失败/非数组返回 undefined |  |
-| lib/agent-runtime.js | applyChildPolicy | L152-163 | 仅按本 child 四角色 preset 追加 sandbox/mode，override 已是目标 mode 时幂等。 |  |
-| lib/agent-runtime.js | childBaseline | L168-172 | 同步解析 main/四角色/未知 child 的 usage context，fold usage，并为本 child 应用四角色宿主 mode 的幂等策略。 | createAgentRuntime 内部闭包。 |
+| lib/agent-runtime.js | isPresetChild | L47-55 | 共用角色子代理判定：先检查会话头预设 ID，匹配后才调用 isSubagentChild 并转发 events。 | createAgentRuntime 内部闭包。 |
+| lib/agent-runtime.js | isPlannerChild | L60-62 | 每次按当前 Agent 的 header.agentPreset 与 isSubagentChild 判定 planner 子会话；不共享跨 Agent 的预设名布尔缓存，缺失必要信息返回 false。 |  |
+| lib/agent-runtime.js | isReviewerChild | L65-67 | 按当前 Agent 会话头的预设名与子会话判定验收者子代理，缺失必要信息或类型不符一律返回假。 |  |
+| lib/agent-runtime.js | usageRootOf | L69-100 | 沿最多 8 层 parentSession 回溯 rootSessionId；断链、循环或异常返回空 rootSessionId，由 usageContextOf 保持合法上下文落账，不伪造根会话。 | createAgentRuntime 内部闭包。 |
+| lib/agent-runtime.js | usageContextOf | L105-126 | 按 Agent 缓存 usage 血缘 context：断链或循环下 rootSessionId 为空仍合法。 | createAgentRuntime 内部 WeakMap 闭包。 |
+| lib/agent-runtime.js | toolSchemasOf | L129-147 | 防御式读取 agent scoped tools.schemas，失败/非数组返回 undefined |  |
+| lib/agent-runtime.js | applyChildPolicy | L149-160 | 仅按本 child 四角色 preset 追加 sandbox/mode，override 已是目标 mode 时幂等。 |  |
+| lib/agent-runtime.js | childBaseline | L165-169 | 同步解析 main/四角色/未知 child 的 usage context，fold usage，并为本 child 应用四角色宿主 mode 的幂等策略。 | createAgentRuntime 内部闭包。 |
 | lib/agent-session.js | sessionEvents | L13-22 | 取 agent.session 事件快照（缺失兜底空数组）；唯一来源 |  |
 | lib/agent-session.js | observeSessionLeaseOf | L29-44 | sessionQuery 租约探测：能力缺失或异常返回 undefined，lease 由调用方 finally 释放。 |  |
 | lib/agent-session.js | isSubagentChild | L51-65 | 判定会话属于子代理（header.origin/delegationDepth/descriptor 三路探测）；唯一来源，index.js 经 decisions re-export |  |
@@ -326,10 +327,10 @@
 | lib/gate-decisions.js | pollGuardGateReason | L472-485 | 同锚点周期内第二次调用 job_list 或 list_agents 即拒绝，无会话上下文时跳过查重。 |  |
 | lib/gate-decisions.js | recordPollGuardCall | L487-498 | 放行后把 job_list 或 list_agents 记入会话集合，参数不全时返回 false 且无副作用。 |  |
 | lib/gate-decisions.js | probeDisposalWarning | L506-509 | 仍有未认领的探查者委派时生成级联取消告警文案，计数非正整数时返回 null 不告警。 |  |
-| lib/gate-decisions.js | mainGateReason | L519-615 | 主会话工具闸门总入口，按 ask（普通 ask_user_question 直接放行）、写入（route 非 main 即拒）、shell（越界特例）、规划、委派与轮询顺序判定；send_message 通过可选 messageTargetIdOf 回调读取本轮目标 ID，running 目标拒绝，回调未提供时保留 agent_id 兼容路径，最后兜底放行。 | target callback 只读本轮解析结果；最新路径 resolveName（rc.2 与 rc.3 共用）与 rc.1 agent_id 边界不含共享安全核心。 |
-| lib/gate-decisions.js | runCodeGroupDenyReason | L627-710 | 静态 run_code 组预审：拆解可解析成员并逐个走对应角色闸门，聚合拒绝并追加预算与防护判定；动态或未解析成员留给实际 pre-execute 重入重新判定，不以动态访问当作放行。 |  |
-| lib/gate-decisions.js | visit | L645-687 | 静态组递归访问器：展开可解析嵌套 run_code 并逐成员选取角色闸门；深度或参数不可解析的成员跳过静态展开，交由实际 pre-execute 重入。 |  |
-| lib/gate-decisions.js | aggregateRunCodeDenyReason | L716-729 | 把成员与拒绝项拼成统一的组拒文案，首行给组规模与放行语义，后续逐行列出成员与原因。 |  |
+| lib/gate-decisions.js | mainGateReason | L519-609 | 主会话工具闸门总入口，按 ask（普通 ask_user_question 直接放行）、写入（route 非 main 即拒）、shell（越界特例）、规划、委派与轮询顺序判定；send_message 通过可选 messageTargetIdOf 回调读取本轮目标 ID，running 目标拒绝，回调未提供时保留 agent_id 兼容路径，最后兜底放行。 | target callback 只读本轮解析结果；最新路径 resolveName（rc.2 与 rc.3 共用）与 rc.1 agent_id 边界不含共享安全核心。 |
+| lib/gate-decisions.js | runCodeGroupDenyReason | L621-704 | 静态 run_code 组预审：拆解可解析成员并逐个走对应角色闸门，聚合拒绝并追加预算与防护判定；动态或未解析成员留给实际 pre-execute 重入重新判定，不以动态访问当作放行。 |  |
+| lib/gate-decisions.js | visit | L639-681 | 静态组递归访问器：展开可解析嵌套 run_code 并逐成员选取角色闸门；深度或参数不可解析的成员跳过静态展开，交由实际 pre-execute 重入。 |  |
+| lib/gate-decisions.js | aggregateRunCodeDenyReason | L710-723 | 把成员与拒绝项拼成统一的组拒文案，首行给组规模与放行语义，后续逐行列出成员与原因。 |  |
 | lib/gate-words.js | fail | L30-32 | 以 extra-plan: config.gateWords 前缀同步抛出整组校验错误，供各字段分支统一复用。 |  |
 | lib/gate-words.js | normalizeGateLabel | L35-37 | 去掉标签首尾空白与保留的推荐后缀（中英文圆括号），只做归一不做子串匹配，也不改词值。 |  |
 | lib/gate-words.js | validateGateWords | L45-72 | 严格校验 6 个闸门词字段的齐全、非空、无空白、无保留后缀与两两不同；合法即返回冻结副本。 |  |
@@ -349,24 +350,24 @@
 | lib/live-config.js | pick | L126-130 | 按设置定义校验单个取值，不合法时回退到传入默认值，合法则归一化后返回，全程不抛错 |  |
 | lib/live-config.js | describeProblems | L132-134 | 把缺键、歧义、非法等问题列表拼成「键 = 状态」的一行告警文案，便于日志单行呈现 |  |
 | lib/live-config.js | normalizedFallback | L136-141 | 以 apply 期配置快照补齐全部热读键，缺失或非法键回退到内置默认值，保证读取始终有值 |  |
-| lib/live-config.js | createLiveConfig | L151-297 | 创建配置热读器：构造期读盘建基线并做装载期严格校验，运行期只按键回退、不向调用方抛错 |  |
+| lib/live-config.js | createLiveConfig | L151-293 | 创建配置热读器：构造期读盘建基线并做装载期严格校验，运行期只按键回退、不向调用方抛错 |  |
 | lib/live-config.js | warnOnce | L164-168 | 热读降级只告警一次的提示，带回落原因与配置路径，避免每次取值都重复刷屏污染运行日志 |  |
-| lib/live-config.js | currentResolved | L170-187 | 按显式路径、环境变量、文档解析器三段取当前配置目标，失败时返回空路径与原因不抛错 |  |
-| lib/live-config.js | currentContext | L189-191 | 取当前调用方的路径上下文并原样透传，供授权校验与目标解析复用，过程中不做任何缓存 |  |
-| lib/live-config.js | readDiskValues | L193-215 | 读盘并解析 settings 行，逐键记录 captured 或 missing 状态，整行缺席时静默回退默认值 |  |
-| lib/live-config.js | refresh | L238-276 | 目标或读盘戳变化时重读配置，失败按键回退快照，歧义与非法只告警一次而不向调用方抛错 |  |
-| lib/live-config.js | read | L278-281 | 取某个热读键的当前值：先按需刷新配置再读缓存，键不存在时返回 undefined 而不抛错 |  |
-| lib/live-config.js | get | L284 | 按键热读配置值，接收 agent 以取得按会话隔离的结果，非法值在读取前已回退默认值 |  |
-| lib/live-config.js | anchoredBootstrap | L285 | 热读箭头 getter：anchored 首轮引导开关，每次取值先刷新磁盘配置，失败回退快照 |  |
-| lib/live-config.js | creativeMode | L286 | 热读箭头 getter：创造模式开关，取值即刷新配置，读盘失败按键回退到 apply 期快照 |  |
-| lib/live-config.js | webFetch | L287 | 热读箭头 getter：web_fetch 免重启开关，取值即刷新配置，读盘失败按键回退 apply 快照 |  |
-| lib/live-config.js | runcodeCatchGate | L288 | 热读箭头 getter：PTC try/catch 闸门开关，取值即刷新并按键校验，非法值回退快照 |  |
-| lib/live-config.js | crossProviderPlannerModel | L289 | 热读箭头 getter：跨 provider 规划模型开关，取值即刷新配置，失败回退 apply 快照 |  |
-| lib/live-config.js | plannerModel | L290 | 热读箭头 getter：规划者默认模型，取值即刷新并做键值校验，非法值回退 apply 快照 |  |
-| lib/live-config.js | plannerPromptSuffix | L291 | 热读箭头 getter：pre-step 追加的引导后缀，取值即刷新配置，缺失时回退快照值 |  |
-| lib/live-config.js | exploreBudget | L292 | 热读箭头 getter：规划者探查额度，取值即刷新配置，非法或缺失回退到内置默认额度 |  |
-| lib/live-config.js | otherAgentModel | L293 | 热读箭头 getter：其他子代理默认模型，取值即刷新配置，失败时回退 apply 期快照 |  |
-| lib/live-config.js | reviewerUsesPlannerModel | L294 | 热读箭头 getter：验收者是否复用规划模型，取值即刷新配置，失败回退快照布尔值 |  |
+| lib/live-config.js | currentResolved | L170-183 | 按显式路径、环境变量、文档解析器三段取当前配置目标，失败时返回空路径与原因不抛错 |  |
+| lib/live-config.js | currentContext | L185-187 | 取当前调用方的路径上下文并原样透传，供授权校验与目标解析复用，过程中不做任何缓存 |  |
+| lib/live-config.js | readDiskValues | L189-211 | 读盘并解析 settings 行，逐键记录 captured 或 missing 状态，整行缺席时静默回退默认值 |  |
+| lib/live-config.js | refresh | L234-272 | 目标或读盘戳变化时重读配置，失败按键回退快照，歧义与非法只告警一次而不向调用方抛错 |  |
+| lib/live-config.js | read | L274-277 | 取某个热读键的当前值：先按需刷新配置再读缓存，键不存在时返回 undefined 而不抛错 |  |
+| lib/live-config.js | get | L280 | 按键热读配置值，接收 agent 以取得按会话隔离的结果，非法值在读取前已回退默认值 |  |
+| lib/live-config.js | anchoredBootstrap | L281 | 热读箭头 getter：anchored 首轮引导开关，每次取值先刷新磁盘配置，失败回退快照 |  |
+| lib/live-config.js | creativeMode | L282 | 热读箭头 getter：创造模式开关，取值即刷新配置，读盘失败按键回退到 apply 期快照 |  |
+| lib/live-config.js | webFetch | L283 | 热读箭头 getter：web_fetch 免重启开关，取值即刷新配置，读盘失败按键回退 apply 快照 |  |
+| lib/live-config.js | runcodeCatchGate | L284 | 热读箭头 getter：PTC try/catch 闸门开关，取值即刷新并按键校验，非法值回退快照 |  |
+| lib/live-config.js | crossProviderPlannerModel | L285 | 热读箭头 getter：跨 provider 规划模型开关，取值即刷新配置，失败回退 apply 快照 |  |
+| lib/live-config.js | plannerModel | L286 | 热读箭头 getter：规划者默认模型，取值即刷新并做键值校验，非法值回退 apply 快照 |  |
+| lib/live-config.js | plannerPromptSuffix | L287 | 热读箭头 getter：pre-step 追加的引导后缀，取值即刷新配置，缺失时回退快照值 |  |
+| lib/live-config.js | exploreBudget | L288 | 热读箭头 getter：规划者探查额度，取值即刷新配置，非法或缺失回退到内置默认额度 |  |
+| lib/live-config.js | otherAgentModel | L289 | 热读箭头 getter：其他子代理默认模型，取值即刷新配置，失败时回退 apply 期快照 |  |
+| lib/live-config.js | reviewerUsesPlannerModel | L290 | 热读箭头 getter：验收者是否复用规划模型，取值即刷新配置，失败回退快照布尔值 |  |
 | lib/log-retention.js | beijingYesterdayCutoffMs | L18-20 | 把当前时间换算为固定 UTC+8 的北京时间昨日零点毫秒 cutoff，供全部诊断 JSONL（usage ledger 除外）统一保留今天/昨天两个自然日。 |  |
 | lib/log-retention.js | parsedTsOf | L22-32 | 行级 ts 解析：空行、解析失败、非对象、ts 非字符串或非法时间一律返回 null，分界扫描据此把不可解析行留作前缀候选（不作分界） |  |
 | lib/log-retention.js | closeInput | L35-44 | 显式 destroy 读流并等 close 后 resolve：Windows 上 rename 覆盖要求目标文件不再被任何句柄持有 |  |
@@ -659,66 +660,66 @@
 | lib/save-persistence.js | sameFile | L114-117 | （待补充） |  |
 | lib/save-persistence.js | stagePairFile | L119-132 | （待补充） |  |
 | lib/save-persistence.js | atomicReplace | L135-223 | 覆盖语义落盘：成对覆盖先保留原字节或缺席状态；普通失败时只恢复能确认由本轮发布的目标，并分列恢复和清理失败。单文件覆盖语义不变；不承诺崩溃或跨进程原子性 |  |
-| lib/save-plan-validation.js | newFileRecord | L51-53 | 解析期新建文件记录，保存路径、角色与操作和修改点容器，当前修改点初始为空以约束字段顺序。 |  |
-| lib/save-plan-validation.js | newTask | L55-67 | 按任务编号与标题创建任务结构，一次性预置全部字段数组与空文件集合，供解析器逐行填充。 |  |
-| lib/save-plan-validation.js | newClosure | L69-80 | 创建收尾块结构，携带收尾文件、收尾依赖与动作容器及空文件集合，并记录块首行行号。 |  |
-| lib/save-plan-validation.js | newCheck | L83-89 | 创建检查块结构，预置验收组、取证方式、工作目录与覆盖标记，供验收侧校验与汇总复用。 |  |
-| lib/save-plan-validation.js | newGlobal | L91-93 | 创建全局验收块结构，只含期望、禁止与正式验收引用容器，不带任务级文件与修改点字段。 |  |
-| lib/save-plan-validation.js | makeDiagnostic | L95-105 | 组装一条诊断对象，空值统一转为空串，未指定修复模板时按字段名回退到默认模板文案。 |  |
-| lib/save-plan-validation.js | defaultTemplate | L107-141 | 按字段名返回最小修复模板示例文本，遇到未知字段回退为通用填写提示，保证诊断可直接照抄。 |  |
-| lib/save-plan-validation.js | normalizeText | L143-145 | 把输入文本统一成 LF 换行，非字符串一律归一为空串，避免跨平台换行符导致切分错行。 |  |
-| lib/save-plan-validation.js | fieldOf | L147-152 | 按字段前缀表匹配行首标签，命中时返回键名、中文标签与去空白后的值，未命中返回 null。 |  |
-| lib/save-plan-validation.js | isPlaceholderAnchor | L161-163 | 判断锚点是否只是整个文件、待定、占位等空泛占位词，命中即视为不可用伪锚点，不做原文比对。 |  |
-| lib/save-plan-validation.js | isAcceptancePlaceholder | L165-168 | 先剥掉尾部标点，再判断验收定位是否只是同方案、同上或纯 M 编号这类占位写法，命中即视为占位。 |  |
-| lib/save-plan-validation.js | parseLocation | L170-178 | 解析修改位置的行号区间写法，单点或起止区间都认，端点非安全正整数或倒序时返回 null 不抛错。 |  |
-| lib/save-plan-validation.js | pointIdentity | L180-182 | 取修改点编号的文本值，修改点缺失或编号为空时返回空串，避免集合比较与正则校验抛错。 |  |
-| lib/save-plan-validation.js | headingCandidate | L185-197 | 按正则识别任务、检查、收尾与全局验收标题，格式写错的候选标题单独归类，全不匹配返回 null。 |  |
-| lib/save-plan-validation.js | pushEmptyFieldDiagnostic | L199-203 | 仅在字段值为空时生成结构字段不能为空的诊断，非空则返回 undefined 由调用方自行跳过。 |  |
-| lib/save-plan-validation.js | parseTaskDocument | L205-449 | 逐行解析方案或验收正文：跳过围栏代码块，按阶段收敛结构块并收集字段与标题类诊断。 |  |
-| lib/save-plan-validation.js | flush | L218-225 | 把当前结构块按类型归入任务、检查、收尾或全局列表并清空游标，遇到新标题前必先调用。 |  |
-| lib/save-plan-validation.js | wrongHeading | L227-229 | 以空任务编号记录标题错位诊断，只携带文档名与原始行文本，不中断后续逐行解析流程。 |  |
-| lib/save-plan-validation.js | pushField | L231-235 | 把字段值追加到所属结构块的同名数组，值为空时顺带压入一条空字段诊断后继续解析剩余行。 |  |
-| lib/save-plan-validation.js | requireFile | L237-241 | 要求文件级字段紧跟主文件、关联文件或收尾文件之后，否则记诊断并返回 null 表示缺失。 |  |
-| lib/save-plan-validation.js | requirePoint | L243-249 | 要求定位字段之前已声明对应修改点，缺失时报错并返回 null，避免字段挂到错误的层级。 |  |
-| lib/save-plan-validation.js | validateIds | L451-462 | 校验任务或检查编号不重复、从 1 连续且按升序出现，每种违反情形各记一条编号诊断。 |  |
-| lib/save-plan-validation.js | isMarkdownWrapped | L464-475 | 判断路径是否被反引号、括号、引号或加粗标记包裹，用于拒绝 Markdown 化的路径写法。 |  |
-| lib/save-plan-validation.js | pathIssue | L477-490 | 校验工作区相对路径：空值、行号、盘符、绝对路径、反斜杠、点段与包裹写法各返回错误文案。 |  |
-| lib/save-plan-validation.js | workdirIssue | L492-497 | 校验工作目录写法，单独放行点号表示当前目录，其余规则复用路径校验并返回问题文案。 |  |
-| lib/save-plan-validation.js | platformIsCaseInsensitive | L499-503 | 判定路径比较是否忽略大小写，优先取调用方平台或显式开关，缺省时回退到当前进程平台。 |  |
-| lib/save-plan-validation.js | pathKey | L505-508 | 把路径统一为正斜杠，大小写不敏感平台再转小写，作为文件集合去重与跨文档比对的键。 |  |
-| lib/save-plan-validation.js | parseDependencies | L510-519 | 解析依赖字段，写无时得到空依赖列表，其余必须是 [任务N] 列表且不得重复引用同一任务。 |  |
-| lib/save-plan-validation.js | parseResources | L521-529 | 解析独占资源为逗号分隔的稳定标识，允许写无，出现空项或重复项时返回问题文案而不抛错。 |  |
-| lib/save-plan-validation.js | parseCheckRefs | L531-539 | 解析正式验收引用为 [检查N] 列表，空值、非法写法与重复检查编号均返回对应问题文案。 |  |
-| lib/save-plan-validation.js | addPathDiagnostics | L541-546 | 逐条校验路径或工作目录并按需选用目录规则，把每个违反项压成带字段名的一条诊断后继续处理。 |  |
-| lib/save-plan-validation.js | validatePathSet | L548-562 | 校验主文件与关联文件写法并检测同任务内重复，同时把原始集合与归一化键集写回任务对象。 |  |
-| lib/save-plan-validation.js | validateResourceField | L564-572 | 限制独占资源为可选单值字段，重复声明或解析失败时记诊断，并回填解析出的资源标识列表。 |  |
-| lib/save-plan-validation.js | validatePointIds | L574-582 | 校验同一文件内修改点编号形如 M 加非零正整数且互不重复，每种违规各记一条对应诊断。 |  |
-| lib/save-plan-validation.js | validatePlanFileRecord | L584-629 | 校验单个方案文件记录：路径、文件操作唯一性、修改点数量及按操作类型分派的字段要求。 |  |
-| lib/save-plan-validation.js | validatePlanFileRecords | L631-636 | 校验任务或收尾的文件记录数量与主文件、关联文件、收尾文件逐一对应，再逐个下钻校验。 |  |
-| lib/save-plan-validation.js | validateAcceptanceFileRecord | L638-654 | 校验验收侧文件记录：操作唯一、对应修改点齐全，验收定位须是条件描述而非旧行号占位。 |  |
-| lib/save-plan-validation.js | validateAcceptanceFileRecords | L655-660 | 校验验收文件记录数量与文件清单一一对应，缺记录或数量不符即记一条文件记录诊断，再逐项校验。 |  |
-| lib/save-plan-validation.js | validateTaskShape | L662-699 | 校验任务外形：标题、主文件唯一、执行组与依赖理由成对，并按方案或验收分支追加各自要求。 |  |
-| lib/save-plan-validation.js | graphCycles | L701-722 | 用三色标记做深度优先遍历求有向图环，按首次出现去重后返回成环节点序列，无环时得空数组。 |  |
-| lib/save-plan-validation.js | visit | L706-719 | 图遍历的递归访问器，发现指向栈内节点的边即截取成环，回溯时把节点标记为已完成状态。 |  |
-| lib/save-plan-validation.js | groupSort | L724-728 | 按执行组名去掉前缀后数值升序排序，数值相同时退化为字符串比较以保证输出顺序稳定。 |  |
-| lib/save-plan-validation.js | firstTaskForGroup | L730-733 | 返回指定执行组内首个任务的编号，组内没有成员时返回 null 而不是抛出异常中断流程。 |  |
-| lib/save-plan-validation.js | validatePlanRelations | L735-807 | 校验任务依赖存在性、自依赖与依赖环，并核对执行组环、文件独占、分组理由与资源归组。 |  |
-| lib/save-plan-validation.js | fileRecordKey | L809-811 | 生成文件记录比对键：角色加归一化路径，使方案与验收能按同一键配对到同一个文件记录上。 |  |
-| lib/save-plan-validation.js | pointIdSet | L813-815 | 收集某个文件下全部修改点编号组成集合，供方案与验收的修改点集合精确比对，缺失记为内置空串。 |  |
-| lib/save-plan-validation.js | equalStringSets | L817-821 | 比较两个字符串集合是否完全相等，元素数量不同直接返回 false，不会抛出错误。 |  |
-| lib/save-plan-validation.js | validateFileRecordMapping | L823-845 | 按记录键配对方案与验收的同名文件，比对文件操作与修改点编号集合并报出缺失的一侧。 |  |
-| lib/save-plan-validation.js | validateCrossDocument | L847-871 | 跨文档校验任务编号、主文件、文件集合与收尾是否成对一致，并逐任务下钻文件记录映射。 |  |
-| lib/save-plan-validation.js | validateClosure | L873-923 | 校验收尾块：收尾文件不重复、依赖恰好覆盖全部任务且不与任务文件重叠，验收侧另查期望禁止。 |  |
-| lib/save-plan-validation.js | validateGlobal | L925-935 | 校验全局验收的期望与禁止非空、正式验收引用唯一，并把解析结果回填到检查引用列表。 |  |
-| lib/save-plan-validation.js | validateChecks | L937-994 | 校验检查定义的编号、验收组、取证方式、工作目录与证据，并统计覆盖后清出孤儿检查。 |  |
-| lib/save-plan-validation.js | attachRefs | L972-985 | 把任务、收尾或全局的正式验收引用回挂到检查的覆盖统计，引用不存在时报诊断并跳过该条。 |  |
-| lib/save-plan-validation.js | sortIds | L996-998 | 对编号数组先去重再按数值升序排序，返回新数组且不改动入参的原始顺序与长度，空数组原样返回。 |  |
-| lib/save-plan-validation.js | buildInternalOrder | L1000-1024 | 按任务依赖在组内做拓扑排序，成环导致排序不完整时回退为编号升序输出以保持稳定顺序。 |  |
-| lib/save-plan-validation.js | summarizeFileRecord | L1026-1047 | 把文件记录压成摘要：操作、修改点、锚点、动作与生成验收字段，缺项统一用空串占位。 |  |
-| lib/save-plan-validation.js | buildSummary | L1049-1171 | 汇总方案与验收为交付摘要：任务、执行组、检查、覆盖关系与文件计数，供保存结果回显。 |  |
-| lib/save-plan-validation.js | formatDiagnostic | L1173-1179 | 把单条诊断格式化为含文档名、任务号、字段值、原因与最小修复模板的一行可读文本，超长值截断。 |  |
-| lib/save-plan-validation.js | finalizeFailure | L1181-1187 | 把诊断整理成失败结果，只保留前 20 条并统计省略条数，同时给出含总数与省略提示的错误文本。 |  |
-| lib/save-plan-validation.js | validateSavePlanContract | L1189-1222 | 对外校验入口，兼容单参数调用形态，解析方案与验收后串行执行全部结构与跨文档校验。 |  |
+| lib/save-plan-validation.js | newFileRecord | L63-65 | 解析期新建文件记录，保存路径、角色与操作和修改点容器，当前修改点初始为空以约束字段顺序。 |  |
+| lib/save-plan-validation.js | newTask | L67-79 | 按任务编号与标题创建任务结构，一次性预置全部字段数组与空文件集合，供解析器逐行填充。 |  |
+| lib/save-plan-validation.js | newClosure | L81-92 | 创建收尾块结构，携带收尾文件、收尾依赖与动作容器及空文件集合，并记录块首行行号。 |  |
+| lib/save-plan-validation.js | newCheck | L95-101 | 创建检查块结构，预置验收组、取证方式、工作目录与覆盖标记，供验收侧校验与汇总复用。 |  |
+| lib/save-plan-validation.js | newGlobal | L103-105 | 创建全局验收块结构，只含期望、禁止与正式验收引用容器，不带任务级文件与修改点字段。 |  |
+| lib/save-plan-validation.js | makeDiagnostic | L107-117 | 组装一条诊断对象，空值统一转为空串，未指定修复模板时按字段名回退到默认模板文案。 |  |
+| lib/save-plan-validation.js | defaultTemplate | L119-153 | 按字段名返回最小修复模板示例文本，遇到未知字段回退为通用填写提示，保证诊断可直接照抄。 |  |
+| lib/save-plan-validation.js | normalizeText | L155-157 | 把输入文本统一成 LF 换行，非字符串一律归一为空串，避免跨平台换行符导致切分错行。 |  |
+| lib/save-plan-validation.js | fieldOf | L159-164 | 按字段前缀表匹配行首标签，命中时返回键名、中文标签与去空白后的值，未命中返回 null。 |  |
+| lib/save-plan-validation.js | isPlaceholderAnchor | L173-175 | 判断锚点是否只是整个文件、待定、占位等空泛占位词，命中即视为不可用伪锚点，不做原文比对。 |  |
+| lib/save-plan-validation.js | isAcceptancePlaceholder | L177-180 | 先剥掉尾部标点，再判断验收定位是否只是同方案、同上或纯 M 编号这类占位写法，命中即视为占位。 |  |
+| lib/save-plan-validation.js | parseLocation | L182-190 | 解析修改位置的行号区间写法，单点或起止区间都认，端点非安全正整数或倒序时返回 null 不抛错。 |  |
+| lib/save-plan-validation.js | pointIdentity | L192-194 | 取修改点编号的文本值，修改点缺失或编号为空时返回空串，避免集合比较与正则校验抛错。 |  |
+| lib/save-plan-validation.js | headingCandidate | L197-209 | 按正则识别任务、检查、收尾与全局验收标题，格式写错的候选标题单独归类，全不匹配返回 null。 |  |
+| lib/save-plan-validation.js | pushEmptyFieldDiagnostic | L211-215 | 仅在字段值为空时生成结构字段不能为空的诊断，非空则返回 undefined 由调用方自行跳过。 |  |
+| lib/save-plan-validation.js | parseTaskDocument | L217-447 | 逐行解析方案或验收正文：跳过围栏代码块，按阶段收敛结构块并收集字段与标题类诊断。 |  |
+| lib/save-plan-validation.js | flush | L230-237 | 把当前结构块按类型归入任务、检查、收尾或全局列表并清空游标，遇到新标题前必先调用。 |  |
+| lib/save-plan-validation.js | wrongHeading | L239-241 | 以空任务编号记录标题错位诊断，只携带文档名与原始行文本，不中断后续逐行解析流程。 |  |
+| lib/save-plan-validation.js | pushField | L243-247 | 把字段值追加到所属结构块的同名数组，值为空时顺带压入一条空字段诊断后继续解析剩余行。 |  |
+| lib/save-plan-validation.js | requireFile | L249-253 | 要求文件级字段紧跟主文件、关联文件或收尾文件之后，否则记诊断并返回 null 表示缺失。 |  |
+| lib/save-plan-validation.js | requirePoint | L255-261 | 要求定位字段之前已声明对应修改点，缺失时报错并返回 null，避免字段挂到错误的层级。 |  |
+| lib/save-plan-validation.js | validateIds | L449-460 | 校验任务或检查编号不重复、从 1 连续且按升序出现，每种违反情形各记一条编号诊断。 |  |
+| lib/save-plan-validation.js | isMarkdownWrapped | L462-473 | 判断路径是否被反引号、括号、引号或加粗标记包裹，用于拒绝 Markdown 化的路径写法。 |  |
+| lib/save-plan-validation.js | pathIssue | L475-488 | 校验工作区相对路径：空值、行号、盘符、绝对路径、反斜杠、点段与包裹写法各返回错误文案。 |  |
+| lib/save-plan-validation.js | workdirIssue | L490-495 | 校验工作目录写法，单独放行点号表示当前目录，其余规则复用路径校验并返回问题文案。 |  |
+| lib/save-plan-validation.js | platformIsCaseInsensitive | L497-501 | 判定路径比较是否忽略大小写，优先取调用方平台或显式开关，缺省时回退到当前进程平台。 |  |
+| lib/save-plan-validation.js | pathKey | L503-506 | 把路径统一为正斜杠，大小写不敏感平台再转小写，作为文件集合去重与跨文档比对的键。 |  |
+| lib/save-plan-validation.js | parseDependencies | L508-517 | 解析依赖字段，写无时得到空依赖列表，其余必须是 [任务N] 列表且不得重复引用同一任务。 |  |
+| lib/save-plan-validation.js | parseResources | L519-527 | 解析独占资源为逗号分隔的稳定标识，允许写无，出现空项或重复项时返回问题文案而不抛错。 |  |
+| lib/save-plan-validation.js | parseCheckRefs | L529-537 | 解析正式验收引用为 [检查N] 列表，空值、非法写法与重复检查编号均返回对应问题文案。 |  |
+| lib/save-plan-validation.js | addPathDiagnostics | L539-544 | 逐条校验路径或工作目录并按需选用目录规则，把每个违反项压成带字段名的一条诊断后继续处理。 |  |
+| lib/save-plan-validation.js | validatePathSet | L546-560 | 校验主文件与关联文件写法并检测同任务内重复，同时把原始集合与归一化键集写回任务对象。 |  |
+| lib/save-plan-validation.js | validateResourceField | L562-570 | 限制独占资源为可选单值字段，重复声明或解析失败时记诊断，并回填解析出的资源标识列表。 |  |
+| lib/save-plan-validation.js | validatePointIds | L572-580 | 校验同一文件内修改点编号形如 M 加非零正整数且互不重复，每种违规各记一条对应诊断。 |  |
+| lib/save-plan-validation.js | validatePlanFileRecord | L582-627 | 校验单个方案文件记录：路径、文件操作唯一性、修改点数量及按操作类型分派的字段要求。 |  |
+| lib/save-plan-validation.js | validatePlanFileRecords | L629-634 | 校验任务或收尾的文件记录数量与主文件、关联文件、收尾文件逐一对应，再逐个下钻校验。 |  |
+| lib/save-plan-validation.js | validateAcceptanceFileRecord | L636-652 | 校验验收侧文件记录：操作唯一、对应修改点齐全，验收定位须是条件描述而非旧行号占位。 |  |
+| lib/save-plan-validation.js | validateAcceptanceFileRecords | L653-658 | 校验验收文件记录数量与文件清单一一对应，缺记录或数量不符即记一条文件记录诊断，再逐项校验。 |  |
+| lib/save-plan-validation.js | validateTaskShape | L660-697 | 校验任务外形：标题、主文件唯一、执行组与依赖理由成对，并按方案或验收分支追加各自要求。 |  |
+| lib/save-plan-validation.js | graphCycles | L699-720 | 用三色标记做深度优先遍历求有向图环，按首次出现去重后返回成环节点序列，无环时得空数组。 |  |
+| lib/save-plan-validation.js | visit | L704-717 | 图遍历的递归访问器，发现指向栈内节点的边即截取成环，回溯时把节点标记为已完成状态。 |  |
+| lib/save-plan-validation.js | groupSort | L722-726 | 按执行组名去掉前缀后数值升序排序，数值相同时退化为字符串比较以保证输出顺序稳定。 |  |
+| lib/save-plan-validation.js | firstTaskForGroup | L728-731 | 返回指定执行组内首个任务的编号，组内没有成员时返回 null 而不是抛出异常中断流程。 |  |
+| lib/save-plan-validation.js | validatePlanRelations | L733-805 | 校验任务依赖存在性、自依赖与依赖环，并核对执行组环、文件独占、分组理由与资源归组。 |  |
+| lib/save-plan-validation.js | fileRecordKey | L807-809 | 生成文件记录比对键：角色加归一化路径，使方案与验收能按同一键配对到同一个文件记录上。 |  |
+| lib/save-plan-validation.js | pointIdSet | L811-813 | 收集某个文件下全部修改点编号组成集合，供方案与验收的修改点集合精确比对，缺失记为内置空串。 |  |
+| lib/save-plan-validation.js | equalStringSets | L815-819 | 比较两个字符串集合是否完全相等，元素数量不同直接返回 false，不会抛出错误。 |  |
+| lib/save-plan-validation.js | validateFileRecordMapping | L821-843 | 按记录键配对方案与验收的同名文件，比对文件操作与修改点编号集合并报出缺失的一侧。 |  |
+| lib/save-plan-validation.js | validateCrossDocument | L845-869 | 跨文档校验任务编号、主文件、文件集合与收尾是否成对一致，并逐任务下钻文件记录映射。 |  |
+| lib/save-plan-validation.js | validateClosure | L871-921 | 校验收尾块：收尾文件不重复、依赖恰好覆盖全部任务且不与任务文件重叠，验收侧另查期望禁止。 |  |
+| lib/save-plan-validation.js | validateGlobal | L923-933 | 校验全局验收的期望与禁止非空、正式验收引用唯一，并把解析结果回填到检查引用列表。 |  |
+| lib/save-plan-validation.js | validateChecks | L935-992 | 校验检查定义的编号、验收组、取证方式、工作目录与证据，并统计覆盖后清出孤儿检查。 |  |
+| lib/save-plan-validation.js | attachRefs | L970-983 | 把任务、收尾或全局的正式验收引用回挂到检查的覆盖统计，引用不存在时报诊断并跳过该条。 |  |
+| lib/save-plan-validation.js | sortIds | L994-996 | 对编号数组先去重再按数值升序排序，返回新数组且不改动入参的原始顺序与长度，空数组原样返回。 |  |
+| lib/save-plan-validation.js | buildInternalOrder | L998-1022 | 按任务依赖在组内做拓扑排序，成环导致排序不完整时回退为编号升序输出以保持稳定顺序。 |  |
+| lib/save-plan-validation.js | summarizeFileRecord | L1024-1045 | 把文件记录压成摘要：操作、修改点、锚点、动作与生成验收字段，缺项统一用空串占位。 |  |
+| lib/save-plan-validation.js | buildSummary | L1047-1169 | 汇总方案与验收为交付摘要：任务、执行组、检查、覆盖关系与文件计数，供保存结果回显。 |  |
+| lib/save-plan-validation.js | formatDiagnostic | L1171-1177 | 把单条诊断格式化为含文档名、任务号、字段值、原因与最小修复模板的一行可读文本，超长值截断。 |  |
+| lib/save-plan-validation.js | finalizeFailure | L1179-1185 | 把诊断整理成失败结果，只保留前 20 条并统计省略条数，同时给出含总数与省略提示的错误文本。 |  |
+| lib/save-plan-validation.js | validateSavePlanContract | L1187-1220 | 对外校验入口，兼容单参数调用形态，解析方案与验收后串行执行全部结构与跨文档校验。 |  |
 | lib/save-probe-validation.js | contextOf | L8-12 | 优先用传入的路径上下文，否则以当前目录建工作区上下文；两者都缺时返回 null 不抛错。 |  |
 | lib/save-probe-validation.js | resolveAbsoluteProbeTarget | L14-39 | 绝对探查路径先试工作区根，再试宿主根与已注册能力，全部失败才抛错，不试探其它根。 |  |
 | lib/save-probe-validation.js | resolveProbeTarget | L41-47 | 解析探查目标：缺上下文或非字符串即抛错，相对路径按工作区解析，绝对路径走多根匹配。 |  |
@@ -886,32 +887,32 @@
 | lib/usage-ledger.js | parseStrictLedgerText | L816-850 | 严格解析既有 archive：坏 JSON、说明行位置、non-v2 与 15 键合法性逐行校验，不合法即拒绝发布。 |  |
 | lib/usage-ledger.js | identityOf | L852-856 | 按 IDENTITY_KEYS 从行抽出九字段身份对象 |  |
 | lib/usage-ledger.js | identityKeyOfRow | L858-861 | 把行身份的九字段序列化成 JSON 键，作为合并分组键 |  |
-| lib/usage-ledger.js | emptyGroupOf | L863-875 | 按九字段身份建立聚合组：四桶归零、maxSeq/_latestSeq 为 null、latestTs 为空串。 |  |
-| lib/usage-ledger.js | groupFromArchiveRow | L877-887 | 账本行转合并组：四桶取行内值，seq 有效时记 maxSeq 并落到 latestTs |  |
-| lib/usage-ledger.js | groupFromScanRow | L890-901 | 扫描行转合并组：四桶与 calls 取扫描行值，seq 有效时保存水位并复制扫描行 ts；日志扫描行的 ts 为成功解析文件的 ISO 毫秒 mtime。 |  |
-| lib/usage-ledger.js | tokenTotalOf | L903-907 | 合并组四桶求和，用于单调性比较 |  |
-| lib/usage-ledger.js | mergedArchiveGroups | L912-956 | archive 现有行与本次扫描行按身份合并：覆盖式更新 + 单调性保护（小于现状保留旧值并记告警）。 |  |
-| lib/usage-ledger.js | finalizedGroups | L958-964 | 合并组按 groupSort 排序并逐组复制，剔除内部字段 _latestSeq |  |
-| lib/usage-ledger.js | assertUniqueArchiveRows | L966-974 | 同一完整身份出现多条累计行即报 duplicate-archive，发布前拒绝。 |  |
-| lib/usage-ledger.js | archiveRowOf | L976-994 | 把聚合身份投影为固定 15 键数据行（`ts` 取成功解析 session 文件的 ISO 毫秒 mtime、`seq` 取会话内事件序号且不作主键）。 |  |
-| lib/usage-ledger.js | archiveTextOf | L996-1005 | 说明行（首行唯一）+ 数据行的序列化，归档文本唯一来源。 |  |
-| lib/usage-ledger.js | ensureLedgerDirectory | L1007-1014 | 上下文缺失直接返回；否则先授权再递归建账本目录，随后按目录类型回读校验，失败即抛错。 |  |
-| lib/usage-ledger.js | authorizeWriteTarget | L1016-1018 | 写目标 H/W 双根授权（prepareWriteTarget，含用途与期望类型）。 |  |
-| lib/usage-ledger.js | authorizeReadIfPresent | L1020-1026 | 读目标存在时做只读授权复核，缺失不报错。 |  |
-| lib/usage-ledger.js | optionalRead | L1028-1036 | 容错读：ENOENT 视为不存在，其它错误转 read-failed。 |  |
-| lib/usage-ledger.js | recordDiagnostic | L1038-1050 | 仅在原调用需要留痕时向 Host `logs/dsh-extra-plan/extra-plan-usage-errors.jsonl` 按需追加一行 JSONL；字段恰为字符串 `ts`、`reason`、`message`，`ts` 为诊断发生时间；写失败静默忽略，不阻断启动。 |  |
-| lib/usage-ledger.js | reportFailure | L1052-1062 | 失败统一出口：warn + 写诊断行 + 返回 { status:'failed', reason, error }。 |  |
-| lib/usage-ledger.js | publishArchive | L1066-1083 | 单目标原子发布：写同目录临时文件 → 预算检查 → rename 覆盖 archive；失败清理临时文件、既有账本原样保留。 |  |
-| lib/usage-ledger.js | acquireArchiveLock | L1088-1105 | 一次 O_EXCL 创建 <archive>.lock 的简易互斥；拿不到即返回未获取，不等待、不接管死锁、不删他人锁。 |  |
-| lib/usage-ledger.js | releaseArchiveLock | L1108-1110 | 仅 unlink 本次 O_EXCL 创建的锁文件，失败只在 try/finally 内忽略，不抛给启动路径。 |  |
-| lib/usage-ledger.js | archiveLedger | L1118-1195 | 直调入口：给定 archive 路径的「聚合 + 覆盖式更新 + 原子发布」，不承担进程互斥。 |  |
-| lib/usage-ledger.js | checkBudget | L1139-1147 | 预算与 onCheck 阶段探针：超时抛 budget-timeout，阶段名供 step-00 M6 断言。 |  |
-| lib/usage-ledger.js | skipWithDiagnostic | L1198-1206 | 可预期跳过（无 host 根/锁忙/扫描失败）时返回 skipped，并仅在原 `recordDiagnostic` 需要留痕时按需写 usage 错误 JSONL；取消不记失败。 |  |
-| lib/usage-ledger.js | upToDateArchiveResult | L1211-1225 | 构造日志 mtime 与账本 ts 无变化的健康终态，报告 archive 现有行/字节并标记零完整用量扫描。 |  |
-| lib/usage-ledger.js | startupArchiveUnsafe | L1227-1366 | 启动路径主体：host 根判定 → 路径解析与双根授权 → 枚举会话日志只做 statSync → 读旧账本建 sessionId 到 ts 索引并判 changed（目录名命中即跳过，查不到才用首帧 sessionId 兜底）→ 只对 changed 读首帧判白名单 → 命中才解析用量 → 简易锁 → 调 archiveLedger；失败转结构化结果，取消按 archive rename 提交边界处理。 |  |
-| lib/usage-ledger.js | identityOf | L1280-1285 | 按日志路径缓存首帧身份，同一轮扫描不重复读同一文件头。 |  |
-| lib/usage-ledger.js | ledgerHasTimestamp | L1286-1289 | 账本中该会话是否已有与文件 mtime 相等的 ts，用于跳过未变化文件。 |  |
-| lib/usage-ledger.js | startupArchive | L1370-1386 | 同步启动归档入口：捕获可处理异常并返回结构化状态，正常由 settings Worker 调用；不作无条件绝不阻断保证。 |  |
+| lib/usage-ledger.js | emptyGroupOf | L863-874 | 按九字段身份建立聚合组：四桶归零、maxSeq 为 null、latestTs 为空串。 |  |
+| lib/usage-ledger.js | groupFromArchiveRow | L876-885 | 账本行转合并组：四桶取行内值，seq 有效时记 maxSeq 并落到 latestTs |  |
+| lib/usage-ledger.js | groupFromScanRow | L888-898 | 扫描行转合并组：四桶与 calls 取扫描行值，seq 有效时保存水位并复制扫描行 ts；日志扫描行的 ts 为成功解析文件的 ISO 毫秒 mtime。 |  |
+| lib/usage-ledger.js | tokenTotalOf | L900-904 | 合并组四桶求和，用于单调性比较 |  |
+| lib/usage-ledger.js | mergedArchiveGroups | L909-952 | archive 现有行与本次扫描行按身份合并：覆盖式更新 + 单调性保护（小于现状保留旧值并记告警）。 |  |
+| lib/usage-ledger.js | finalizedGroups | L954-956 | 合并组按 groupSort 排序，供归档序列化读取。 |  |
+| lib/usage-ledger.js | assertUniqueArchiveRows | L958-966 | 同一完整身份出现多条累计行即报 duplicate-archive，发布前拒绝。 |  |
+| lib/usage-ledger.js | archiveRowOf | L968-986 | 把聚合身份投影为固定 15 键数据行（`ts` 取成功解析 session 文件的 ISO 毫秒 mtime、`seq` 取会话内事件序号且不作主键）。 |  |
+| lib/usage-ledger.js | archiveTextOf | L988-997 | 说明行（首行唯一）+ 数据行的序列化，归档文本唯一来源。 |  |
+| lib/usage-ledger.js | ensureLedgerDirectory | L999-1006 | 上下文缺失直接返回；否则先授权再递归建账本目录，随后按目录类型回读校验，失败即抛错。 |  |
+| lib/usage-ledger.js | authorizeWriteTarget | L1008-1010 | 写目标 H/W 双根授权（prepareWriteTarget，含用途与期望类型）。 |  |
+| lib/usage-ledger.js | authorizeReadIfPresent | L1012-1018 | 读目标存在时做只读授权复核，缺失不报错。 |  |
+| lib/usage-ledger.js | optionalRead | L1020-1028 | 容错读：ENOENT 视为不存在，其它错误转 read-failed。 |  |
+| lib/usage-ledger.js | recordDiagnostic | L1030-1042 | 仅在原调用需要留痕时向 Host `logs/dsh-extra-plan/extra-plan-usage-errors.jsonl` 按需追加一行 JSONL；字段恰为字符串 `ts`、`reason`、`message`，`ts` 为诊断发生时间；写失败静默忽略，不阻断启动。 |  |
+| lib/usage-ledger.js | reportFailure | L1044-1054 | 失败统一出口：warn + 写诊断行 + 返回 { status:'failed', reason, error }。 |  |
+| lib/usage-ledger.js | publishArchive | L1058-1075 | 单目标原子发布：写同目录临时文件 → 预算检查 → rename 覆盖 archive；失败清理临时文件、既有账本原样保留。 |  |
+| lib/usage-ledger.js | acquireArchiveLock | L1080-1097 | 一次 O_EXCL 创建 <archive>.lock 的简易互斥；拿不到即返回未获取，不等待、不接管死锁、不删他人锁。 |  |
+| lib/usage-ledger.js | releaseArchiveLock | L1100-1102 | 仅 unlink 本次 O_EXCL 创建的锁文件，失败只在 try/finally 内忽略，不抛给启动路径。 |  |
+| lib/usage-ledger.js | archiveLedger | L1110-1187 | 直调入口：给定 archive 路径的「聚合 + 覆盖式更新 + 原子发布」，不承担进程互斥。 |  |
+| lib/usage-ledger.js | checkBudget | L1131-1139 | 预算与 onCheck 阶段探针：超时抛 budget-timeout，阶段名供 step-00 M6 断言。 |  |
+| lib/usage-ledger.js | skipWithDiagnostic | L1190-1198 | 可预期跳过（无 host 根/锁忙/扫描失败）时返回 skipped，并仅在原 `recordDiagnostic` 需要留痕时按需写 usage 错误 JSONL；取消不记失败。 |  |
+| lib/usage-ledger.js | upToDateArchiveResult | L1203-1217 | 构造日志 mtime 与账本 ts 无变化的健康终态，报告 archive 现有行/字节并标记零完整用量扫描。 |  |
+| lib/usage-ledger.js | startupArchiveUnsafe | L1219-1358 | 启动路径主体：host 根判定 → 路径解析与双根授权 → 枚举会话日志只做 statSync → 读旧账本建 sessionId 到 ts 索引并判 changed（目录名命中即跳过，查不到才用首帧 sessionId 兜底）→ 只对 changed 读首帧判白名单 → 命中才解析用量 → 简易锁 → 调 archiveLedger；失败转结构化结果，取消按 archive rename 提交边界处理。 |  |
+| lib/usage-ledger.js | identityOf | L1272-1277 | 按日志路径缓存首帧身份，同一轮扫描不重复读同一文件头。 |  |
+| lib/usage-ledger.js | ledgerHasTimestamp | L1278-1281 | 账本中该会话是否已有与文件 mtime 相等的 ts，用于跳过未变化文件。 |  |
+| lib/usage-ledger.js | startupArchive | L1362-1378 | 同步启动归档入口：捕获可处理异常并返回结构化状态，正常由 settings Worker 调用；不作无条件绝不阻断保证。 |  |
 | pe-test/_shared/host-deps.mjs | samePath | L15-17 | 测试侧：以 relative 结果为空判定两条路径同指一处，不做大小写归一与真实路径解析。 |  |
 | pe-test/_shared/host-deps.mjs | isWithinRoot | L19-23 | 测试侧：判定候选绝对路径是否位于根内（可等于根），非绝对或越界返回假，只做词法比较。 |  |
 | pe-test/_shared/host-deps.mjs | explicitPath | L25-31 | 测试侧：以显式安装根构造路径上下文并返回规范化根，失败转成带标签的说明性错误文本。 |  |
