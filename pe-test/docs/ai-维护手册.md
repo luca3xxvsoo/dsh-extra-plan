@@ -34,7 +34,7 @@
 - 统一实现位为 `pe-test/_shared/test-output.mjs`：默认 `compact`，`--verbose` 只增加成功断言名称，`--full` 优先于 `--verbose` 并恢复成功 `expected/actual` 与查看器原始事件；三种模式不得改变断言集合、状态分类、计数、退出码或执行顺序。
 - compact 成功断言不逐条输出，只保留最终统计和必要结构化索引；失败、validator 原文、deny reason、首错/阶段/cause、清理残留永不压缩。设置矩阵成功行只保留 case/status/计数/索引/差异摘要；失败或 `--full` 才展示完整配置/trace。
 - `step-07-子代理模型与引导取证.mjs` 默认输出 A42/A43 索引：SESSION_ID、父 `subagent_plan` 关联、父子行号、attempted route、actual provenance、首个 planner 文本块摘要、suffix 等级与 exact match；`--full` 才输出 prompt/event/text 原文。`step-04-工具清单查看.mjs` 默认保留精确工具名、消息 ID/角色/source/行号和 `REQUEST_EXACT`，INBOX_ONLY 只引用已输出 MESSAGE；`step-05-会话解码.mjs` 默认保留 plan/mode 行号与计数摘要。
-- `一键step测试.mjs` 主报告只做索引；人眼工具按能力传参：step-04/05/07 追加 `--full`，`step-06-08-v4取证回归` 保持原参数合同（`pe-test/tools` 下已无独立 step-08 脚本，该脚本已列入 AUTO、不再属人眼项；人眼项脚本自身非零退出码会判为失败并反映到摘要状态栏与第五节索引行）。完整 stdout/stderr 写入独立 raw 文件，摘要登记相对路径、bytes、lines、SHA-256 与有限结构化行；step-07 完整前置为显式 `--session`+`--sessions-dir`（会话在宿主数据根加 `--host-root`，取直接 child 加 `--discover-children`）与显式存在的 `PLANNER_PROMPT_SUFFIX`（空串也算）；无会话选择记 `NOT-RUN`（exit 0），选择非法/不完整或选择后缺 suffix 记输入错误（exit 1），均保留 raw 原因；`SESSION_ID` 只作报告/输出字段。`pe-test/reports/` 的 raw/Markdown 是临时证据，不纳入源改动；报告中的 HUMAN、SKIP、NOT-RUN、INCOMPLETE 均不计 AUTO PASS。
+- `一键step测试.mjs` 主报告只做索引；人眼工具按能力传参：step-04/05/07 追加 `--full`，人眼 step-06 真实会话查看不加 `--full`；`step-06-08-v4取证回归` 使用 W 内隔离夹具作为 AUTO，覆盖 v4 与旧名负例，不接收真实会话。完整 stdout/stderr 写入独立 raw 文件，摘要登记相对路径、bytes、lines、SHA-256 与有限结构化行；step-07 完整前置为显式 `--session`+`--sessions-dir`（会话在宿主数据根加 `--host-root`，取直接 child 加 `--discover-children`）与显式存在的 `PLANNER_PROMPT_SUFFIX`（空串也算）；独立 step-07 无选择时记 `NOT-RUN`（exit 0），已选择而缺 suffix 时输入错误（exit 1）。一键预检无选择或缺少 step-07 的 suffix 时，相关人眼项记 `NOT-RUN`，子进程未启动（状态为 null）。一键公共参数在初始化失败（如只给 `--session`）时运行器将参数错误写入 stderr 并退出 1，不生成该次人眼 raw；仅报告流程已生成的 raw 由索引引用。`SESSION_ID` 只作报告/输出字段。`pe-test/reports/` 的 raw/Markdown 是临时证据，不纳入源改动；报告中的 HUMAN、SKIP、NOT-RUN、INCOMPLETE 均不计 AUTO PASS。
 - 一键脚本正常生成报告时，进程退出码只取决于 AUTO 失败数；人眼脚本的非零退出只计入该人眼项和 raw 索引。退出 0 不证明全部执行；目录不完整时仍须看未执行状态，运行器自身异常可另行非零。
 - 回看 raw 时按摘要中的相对路径逐字读取，并用 SHA-256、字节数、行数三项核对；摘要或 hash 不能替代原文，也不能把真实宿主、GUI、生产 profile 或会话结论改写为 PASS。
 
@@ -168,7 +168,7 @@
 - **`toolSdkSchemasOf` 与 `sdkSchemasForRendering` 双重投影**：是什么——同一份 schema 存在两条投影路径。为什么不修——合并会改取数口语义，风险高于收益。如何判断不是新 bug——两条投影的输出结构一致即正常；某一侧字段缺失或结构不同才是新 bug。
 - **agent-session 未传 `projectionMode` 选项**：是什么——会话侧未显式传投影模式，走默认路径。为什么不修——需真实宿主验证 events 完整性，静态改可能把性能问题换成功能问题。如何判断不是新 bug——只有真实宿主观察到 events 缺失或重复才算新 bug，静态审计命中不算。
 - **`index.js` 个别注释内嵌宿主固定行号**：是什么——注释里写了宿主固定行号。为什么不修——宿主升级后行号会漂移，这些注释只作定位提示、不参与判定。如何判断不是新 bug——行号对不上属已知漂移；若代码用行号驱动行为才是新 bug。
-- **step-04 的 `matrixAgent` 保留未使用的 `mode` 形参**：是什么——该形参未被使用。为什么不修——保留签名兼容，删除属无收益改动。如何判断不是新 bug——形参未使用不是缺陷；调用方依赖该形参语义却拿不到值才是新 bug。
+
 - **step-06-08 若干标签覆盖面不足与硬编码数量**：是什么——部分标签只覆盖部分分支，断言数量与夹具硬绑定。为什么不修——补全覆盖需新增独立真值来源，硬编码数量与当前夹具绑定，改动风险高于收益。如何判断不是新 bug——夹具变更导致数量不符属已知耦合；出现假 PASS 才是新 bug。
 - **step-05 在 tools 服务缺失时抛错并导致后续组覆盖塌陷**：是什么——缺依赖时直接抛错，后续组覆盖跟着塌。为什么不修——需要有宿主环境才跑得通，改成降级会把「缺依赖」伪装成「通过」。如何判断不是新 bug——无宿主时该组报错或覆盖塌陷是预期；此时反而出现 PASS 才要查。
 - **`host-deps` 的 `DSH_HOST_DEPS_QUIET` 未在其他文档登记**：是什么——该静默开关只写在 host-deps 源码里。为什么不修——开关口径唯一写在源码，重复登记会制造第二真源。如何判断不是新 bug——文档未提不是回归；开关行为与源码不一致才是新 bug。

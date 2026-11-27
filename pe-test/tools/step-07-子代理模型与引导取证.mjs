@@ -543,10 +543,7 @@ function printParentEvidence(parentBundle, parent) {
 function printRouteEvidence(route) {
   if (output.mode !== 'full') {
     console.log('A42 attempted route index headers=' + route.headers.length + ' contexts=' + route.contexts.length + ' selections=' + route.selections.length)
-    for (const record of route.headers) {
-      const config = isObject(record.event?.data?.header?.config) ? record.event.data.header.config : {}
-      console.log('L' + record.line + ' REQUEST/HEADER attempted route provider=' + valueText(config.provider) + ' model=' + valueText(config.model))
-    }
+    for (const record of route.headers) console.log('L' + record.line + ' REQUEST/HEADER attempted route provider=' + valueText(record.provider) + ' model=' + valueText(record.model))
     for (const record of route.contexts) console.log('L' + record.line + ' REQUEST/CONTEXT attempted route provider=' + valueText(record.provider) + ' model=' + valueText(record.model) + ' contextWindow=' + valueText(record.contextWindow))
     for (const record of route.selections) console.log('L' + record.line + ' MODEL/SELECTION attempted route fields=' + jsonText(Object.keys(record.data).sort()))
     return
@@ -554,10 +551,7 @@ function printRouteEvidence(route) {
   console.log('--- 请求/路由证据（attempted route；逐条保留） ---')
   if (route.headers.length === 0 && route.contexts.length === 0 && route.selections.length === 0) console.log('(无 request/header、request/context、model/selection)')
   for (const record of route.headers) {
-    const data = dataOf(record.event)
-    const header = isObject(data.header) ? data.header : data
-    const config = isObject(header.config) ? header.config : {}
-    console.log('L' + record.line + ' REQUEST/HEADER attempted route request/header.data.header.config.provider=' + valueText(config.provider) + ' request/header.data.header.config.model=' + valueText(config.model))
+    console.log('L' + record.line + ' REQUEST/HEADER attempted route request/header.data.header.config.provider=' + valueText(record.provider) + ' request/header.data.header.config.model=' + valueText(record.model))
     console.log('request/header event（完整）=' + jsonText(record.event))
   }
   for (const record of route.contexts) {
@@ -719,7 +713,7 @@ for (const session of sessions) {
 }
 
 // S07-3 两条 check：把 suffixLevel 的判定与独立证据交叉核对。
-// ①注入档的互斥判定**不**复用 suffixLevel 分支的判定输入（parentPromptSuffixMatch 与其同表达式、恒真）：
+// ①注入档的互斥检查不重读 suffixLevel 使用的已解析父 prompt 判据：
 //   改为「子会话原始 messages 全文含 suffix」+「父 subagent_plan 原始 arguments 原文不含 suffix」两条原始证据，
 //   verified-injection 档必须同时成立，否则记违例。
 // ②可定档 child 的 content-only 与父含 suffix 互为充要（该条检测力来自「关联不完整」与「父含 suffix」两性质分离，保留）。

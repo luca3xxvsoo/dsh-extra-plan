@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-11-27 13:35:17（脚本自动更新时间戳行）
+> 上次同步：2026-11-27 16:11:28（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -130,16 +130,16 @@
 | lib/usage-ledger-background.js | 214 | 后台账本调度 controller：只快照可信 pathContext，按 owner 单飞与 hostDataRoot 串行创建固定 Worker，处理协议、协作取消和 exit 后终态；不复制扫描算法。 |
 | lib/usage-ledger-worker.js | 116 | 真实 Worker 入口：重建 pathContext 并复用同步 startupArchive 完成扫描、解析与发布，传递小型终态结果，响应共享取消位后关闭 port。 |
 | lib/usage-ledger.js | 1386 | 账本唯一实现：默认 Host 目标为 `logs/dsh-extra-plan/extra-plan-usage-ledger.jsonl`，诊断按需写 `logs/dsh-extra-plan/extra-plan-usage-errors.jsonl`；扫描聚合 + 覆盖式更新 + 启动入口（常量与身份键 → 扫描 %DSH_HOME%/sessions 下 v4 会话日志并按九字段身份聚合 → 按日志 mtime 与账本 ts 判定 changed、只对变化文件按递进窗口读首帧并判白名单才解析 → 读现有 archive 后覆盖式更新、单调性保护、说明行、单 archive temp→rename 原子发布 → startupArchive 启动入口）；固定15键（rootSessionId/agentPreset 可空）、四桶口径、严格白名单、一次 `O_EXCL` 简易互斥（拿不到即跳过、不接管不删他人锁），失败按需留痕，可处理异常返回结构化状态，正常由 settings Worker 调用；直调 API 仍同步，真实启动及内存风险需另行验证；共享目录中的其他日志不由本模块接管。 |
-| pe-test/_shared/host-deps.mjs | 413 | 解析宿主依赖候选并注册隔离加载钩子 |
+| pe-test/_shared/host-deps.mjs | 409 | 解析宿主依赖候选并注册隔离加载钩子 |
 | pe-test/_shared/host-preload.mjs | 52 | 测试侧预加载：从显式安装根环境变量解析真实宿主根并导出，缺失或非法即抛错、不回退 profile。 |
 | pe-test/_shared/plan-text.mjs | 27 | 测试侧：plan/checklist 渲染文本共享实现，step-00 与 step-06 共用同一份拼装逻辑。 |
 | pe-test/_shared/session-finder.mjs | 280 | 按会话ID或目录扫描定位日志并兼容三代命名 |
 | pe-test/_shared/session-fixture.mjs | 76 | step-06-08-v4取证回归专用夹具：session/request-header/tool-call/tool-result 事件构造、session.v4.jsonl.zstd 落盘、zstd 帧与多帧/可跳过帧构造；11 项导出（canonicalResultMessage 私有未导出） |
-| pe-test/_shared/test-output.mjs | 176 | 统一compact、verbose、full输出合同与raw证据哈希 |
+| pe-test/_shared/test-output.mjs | 180 | 统一compact、verbose、full输出合同与raw证据哈希 |
 | pe-test/_shared/v4-tool-result.mjs | 36 | 识别v4会话日志并提取tool result |
 | pe-test/_shared/workspace-paths.mjs | 667 | 测试侧工作区路径合同：结构锚定维护根、夹具与隔离环境构造、维护参数解析与目标授权视图。 |
-| pe-test/_shared/zstd-frames.mjs | 107 | 解析zstd帧并解码会话文本 |
-| scripts/generate-runtime-defaults.mjs | 795 | 从 agent.cordis.yml 校验并生成 runtime 默认常量、纯主/角色 definition 与 client 标记区块（顶层结构逐字平移并保留 group/isolate/!!js）；默认仓库七输出，自定义 client 默认关闭；支持 --check 且坏源不覆盖 last-known-good（上次已知良好版本） |
+| pe-test/_shared/zstd-frames.mjs | 105 | 解析zstd帧并解码会话文本 |
+| scripts/generate-runtime-defaults.mjs | 796 | 从 agent.cordis.yml 校验并生成 runtime 默认常量、纯主/角色 definition 与 client 标记区块（顶层结构逐字平移并保留 group/isolate/!!js）；默认仓库七输出，自定义 client 默认关闭；支持 --check 且坏源不覆盖 last-known-good（上次已知良好版本） |
 
 ## 函数索引
 
@@ -927,7 +927,7 @@
 | pe-test/_shared/host-deps.mjs | findHostAnchor | L177-198 | 选择可用宿主包锚点并报告候选来源 |  |
 | pe-test/_shared/host-deps.mjs | scopedEntryOf | L200-210 | 解析scoped包的本地入口路径 |  |
 | pe-test/_shared/host-deps.mjs | buildAsyncHookSource | L212-345 | 构造异步import钩子源码供隔离宿主依赖 |  |
-| pe-test/_shared/host-deps.mjs | registerHostDeps | L349-413 | 注册测试所需宿主依赖并校验实际版本 |  |
+| pe-test/_shared/host-deps.mjs | registerHostDeps | L349-409 | 注册测试所需宿主依赖并校验实际版本 |  |
 | pe-test/_shared/host-deps.mjs | resolveScoped | L364-370 | 解析scoped宿主包候选路径 |  |
 | pe-test/_shared/host-deps.mjs | resolveBare | L371-377 | 解析非scoped宿主包候选路径 |  |
 | pe-test/_shared/host-deps.mjs | resolveOne | L379-391 | 按包名统一尝试scoped与bare解析 |  |
@@ -982,25 +982,25 @@
 | pe-test/_shared/session-fixture.mjs | g5MultiFrame | L58-67 | 入参 raw Buffer 与切点数组，按切点分帧压缩拼接，返回单 Buffer |  |
 | pe-test/_shared/session-fixture.mjs | skippable | L68-74 | 入参 payload，写 0x184d2a50 魔数与长度，返回可跳过帧 Buffer |  |
 | pe-test/_shared/test-output.mjs | digest | L13-15 | 计算UTF-8文本SHA-256摘要 |  |
-| pe-test/_shared/test-output.mjs | normalize | L17-33 | 递归稳定化值并处理循环引用与特殊类型 |  |
-| pe-test/_shared/test-output.mjs | stableStringify | L35-39 | 按键排序序列化断言值 |  |
-| pe-test/_shared/test-output.mjs | parseOutputMode | L41-60 | 解析compact、verbose、full模式及优先级 |  |
-| pe-test/_shared/test-output.mjs | summarizeValue | L62-73 | 将成功大对象压缩为类型、键数和预览摘要 |  |
-| pe-test/_shared/test-output.mjs | assertionLine | L75-80 | 按模式渲染断言并始终保留失败差异 |  |
-| pe-test/_shared/test-output.mjs | createOutput | L82-112 | 创建统一断言、结构化输出与统计接口 |  |
-| pe-test/_shared/test-output.mjs | emit | L86-89 | 将普通行或错误行写入对应通道 |  |
-| pe-test/_shared/test-output.mjs | assertion | L90-93 | 输出断言行并返回布尔结果 |  |
-| pe-test/_shared/test-output.mjs | structured | L94-99 | 按模式输出完整值或稳定摘要 |  |
-| pe-test/_shared/test-output.mjs | detail | L100-102 | 仅在full或强制条件下输出细节 |  |
-| pe-test/_shared/test-output.mjs | marker | L103 | 输出SKIP、HUMAN等结构化状态标记 |  |
-| pe-test/_shared/test-output.mjs | summary | L104-110 | 输出统一通过失败及扩展状态统计 |  |
-| pe-test/_shared/test-output.mjs | workspaceTarget | L116-119 | 测试侧：把输出相对路径按工作区策略解析为受控目标，空串或非字符串直接抛错，不做兜底。 |  |
-| pe-test/_shared/test-output.mjs | workspacePathOf | L121-123 | 测试侧：返回工作区受控目标的绝对路径字符串，供证据读取与写盘复用，越界时直接抛错。 |  |
-| pe-test/_shared/test-output.mjs | prepareOutputDirectory | L125-133 | 测试侧：准备输出目录，目标缺失时按文件语义重试准备，仅吞目标缺失一类错误，其余抛出。 |  |
-| pe-test/_shared/test-output.mjs | prepareOutputFile | L135-138 | 测试侧：在工作区策略下准备输出文件目标，路径越界或非法即抛错，不做静默回退或兜底。 |  |
-| pe-test/_shared/test-output.mjs | fileEvidence | L140-150 | 读取文件并计算bytes、lines、SHA-256 |  |
-| pe-test/_shared/test-output.mjs | writeRawEvidence | L152-172 | 保存stdout、stderr并返回合并证据统计 |  |
-| pe-test/_shared/test-output.mjs | sha256Text | L174-176 | 对文本返回SHA-256用于raw复核 |  |
+| pe-test/_shared/test-output.mjs | normalize | L17-37 | 递归稳定化值并处理循环引用与特殊类型 |  |
+| pe-test/_shared/test-output.mjs | stableStringify | L39-43 | 按键排序序列化断言值 |  |
+| pe-test/_shared/test-output.mjs | parseOutputMode | L45-64 | 解析compact、verbose、full模式及优先级 |  |
+| pe-test/_shared/test-output.mjs | summarizeValue | L66-77 | 将成功大对象压缩为类型、键数和预览摘要 |  |
+| pe-test/_shared/test-output.mjs | assertionLine | L79-84 | 按模式渲染断言并始终保留失败差异 |  |
+| pe-test/_shared/test-output.mjs | createOutput | L86-116 | 创建统一断言、结构化输出与统计接口 |  |
+| pe-test/_shared/test-output.mjs | emit | L90-93 | 将普通行或错误行写入对应通道 |  |
+| pe-test/_shared/test-output.mjs | assertion | L94-97 | 输出断言行并返回布尔结果 |  |
+| pe-test/_shared/test-output.mjs | structured | L98-103 | 按模式输出完整值或稳定摘要 |  |
+| pe-test/_shared/test-output.mjs | detail | L104-106 | 仅在full或强制条件下输出细节 |  |
+| pe-test/_shared/test-output.mjs | marker | L107 | 输出SKIP、HUMAN等结构化状态标记 |  |
+| pe-test/_shared/test-output.mjs | summary | L108-114 | 输出统一通过失败及扩展状态统计 |  |
+| pe-test/_shared/test-output.mjs | workspaceTarget | L120-123 | 测试侧：把输出相对路径按工作区策略解析为受控目标，空串或非字符串直接抛错，不做兜底。 |  |
+| pe-test/_shared/test-output.mjs | workspacePathOf | L125-127 | 测试侧：返回工作区受控目标的绝对路径字符串，供证据读取与写盘复用，越界时直接抛错。 |  |
+| pe-test/_shared/test-output.mjs | prepareOutputDirectory | L129-137 | 测试侧：准备输出目录，目标缺失时按文件语义重试准备，仅吞目标缺失一类错误，其余抛出。 |  |
+| pe-test/_shared/test-output.mjs | prepareOutputFile | L139-142 | 测试侧：在工作区策略下准备输出文件目标，路径越界或非法即抛错，不做静默回退或兜底。 |  |
+| pe-test/_shared/test-output.mjs | fileEvidence | L144-154 | 读取文件并计算bytes、lines、SHA-256 |  |
+| pe-test/_shared/test-output.mjs | writeRawEvidence | L156-176 | 保存stdout、stderr并返回合并证据统计 |  |
+| pe-test/_shared/test-output.mjs | sha256Text | L178-180 | 对文本返回SHA-256用于raw复核 |  |
 | pe-test/_shared/v4-tool-result.mjs | isObject | L6 | 判定非空普通对象 |  |
 | pe-test/_shared/v4-tool-result.mjs | isToolResultType | L8-10 | 判定事件是否为tool/result类型 |  |
 | pe-test/_shared/v4-tool-result.mjs | isV4SessionFile | L12-14 | 判定路径是否为v4会话日志文件 |  |
@@ -1042,11 +1042,11 @@
 | pe-test/_shared/workspace-paths.mjs | targetView | L517-534 | 把策略目标封装为只读视图，标注可写性与物理证明方式，其中写权限只授予工作区目标。 |  |
 | pe-test/_shared/workspace-paths.mjs | targetForInput | L536-555 | 按绝对性与根归属选择工作区或宿主目标，越界、缺宿主根或落在双根之外时都抛出错误。 |  |
 | pe-test/_shared/workspace-paths.mjs | createMaintenanceContext | L557-667 | 组装维护上下文：归一全部选项、定位会话与账本目标，最后输出授权矩阵与各用途能力表。 |  |
-| pe-test/_shared/zstd-frames.mjs | frameEndAt | L6-34 | 在已验证 magic 的帧起点解析 FCS/字典/checksum 与 raw/RLE/compressed 块，只返回当前帧结束位置；不完整或非法块边界返回 null。 | 私有边界算法由 framesOf 与严格逐帧解码复用，不扫描后续帧。 |
-| pe-test/_shared/zstd-frames.mjs | framesOf | L36-48 | 解析完整zstd帧及块边界 |  |
-| pe-test/_shared/zstd-frames.mjs | decodeText | L50-52 | 解压单帧并转为UTF-8文本 |  |
-| pe-test/_shared/zstd-frames.mjs | decompressedFrameBytes | L58-85 | 逐帧计算一次边界并解压，边界解析次数随帧数线性增长；按长度跳过 skippable 载荷，产出每帧 Buffer，截断/非法 magic/无完整帧抛出不完整错误。 | skippable 载荷内的 zstd magic 不作为真实帧。 |
-| pe-test/_shared/zstd-frames.mjs | decodedJsonlLines | L87-107 | 以 fatal UTF-8 TextDecoder 跨帧累积并按物理换行 yield { lineNo, line }，保留 CR/空行/末行无换行；帧截断、非法 UTF-8 和无完整帧由调用方归类 INCOMPLETE。 |  |
+| pe-test/_shared/zstd-frames.mjs | frameEndAt | L5-33 | 在已验证 magic 的帧起点解析 FCS/字典/checksum 与 raw/RLE/compressed 块，只返回当前帧结束位置；不完整或非法块边界返回 null。 | 私有边界算法由 framesOf 与严格逐帧解码复用，不扫描后续帧。 |
+| pe-test/_shared/zstd-frames.mjs | framesOf | L35-46 | 解析完整zstd帧及块边界 |  |
+| pe-test/_shared/zstd-frames.mjs | decodeText | L48-50 | 解压单帧并转为UTF-8文本 |  |
+| pe-test/_shared/zstd-frames.mjs | decompressedFrameBytes | L56-83 | 逐帧计算一次边界并解压，边界解析次数随帧数线性增长；按长度跳过 skippable 载荷，产出每帧 Buffer，截断/非法 magic/无完整帧抛出不完整错误。 | skippable 载荷内的 zstd magic 不作为真实帧。 |
+| pe-test/_shared/zstd-frames.mjs | decodedJsonlLines | L85-105 | 以 fatal UTF-8 TextDecoder 跨帧累积并按物理换行 yield { lineNo, line }，保留 CR/空行/末行无换行；帧截断、非法 UTF-8 和无完整帧由调用方归类 INCOMPLETE。 |  |
 | scripts/generate-runtime-defaults.mjs | repositoryRootFromKnownLayout | L18-32 | 从脚本位置向上推导仓库根，package.json、index.js 与 cordis.patch.yml 缺任一或包名不符即返回 null 不抛错。 |  |
 | scripts/generate-runtime-defaults.mjs | roleDefinitionFile | L58-60 | 按角色 id 拼出角色 definition 产出文件名，只做路径拼接不校验目录是否存在。 |  |
 | scripts/generate-runtime-defaults.mjs | runtimeDefaultsFromTemplate | L62-67 | 按设置合同逐键从模板文本解析默认值并组成键值对象，不校验模板是否缺键，也不校验形状。 |  |
@@ -1093,8 +1093,8 @@
 | scripts/generate-runtime-defaults.mjs | outputEntryTarget | L648-658 | 按条目类别与用途解析单条产出目标路径，补齐缺省值后再走宿主或工作区的路径解析分支。 |  |
 | scripts/generate-runtime-defaults.mjs | authorizeOutputEntries | L660-673 | 逐条授权产出目标：check 只做只读校验，否则强制工作区并预建父目录后再次复验。 |  |
 | scripts/generate-runtime-defaults.mjs | outputMetadata | L675-683 | 汇总产出目标的类别、能力与用途三项元数据，空目标返回空对象而不抛错，也不补默认值。 |  |
-| scripts/generate-runtime-defaults.mjs | generateRuntimeDefaults | L694-776 | 读模板渲染全部产物：check 只比对不写，否则原子发布；坏模板或缺失输入不触碰产物。 |  |
-| scripts/generate-runtime-defaults.mjs | invokedAsMain | L778-781 | 判断本脚本是否被直接执行，进程参数缺失时返回假，只做路径比较，不去改变进程状态。 |  |
+| scripts/generate-runtime-defaults.mjs | generateRuntimeDefaults | L694-777 | 读模板渲染全部产物：check 只比对不写，否则原子发布；坏模板或缺失输入不触碰产物。 |  |
+| scripts/generate-runtime-defaults.mjs | invokedAsMain | L779-782 | 判断本脚本是否被直接执行，进程参数缺失时返回假，只做路径比较，不去改变进程状态。 |  |
 
 ---
 

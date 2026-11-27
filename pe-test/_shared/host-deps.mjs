@@ -389,25 +389,21 @@ export async function registerHostDeps() {
     }
     return nextResolve(specifier, context)
   }
-  try {
-    if (typeof module.registerHooks === 'function') {
-      module.registerHooks({ resolve(specifier, context, nextResolve) { return resolveOne(specifier, nextResolve, context) } })
-    } else if (typeof module.register === 'function') {
-      const hookSource = buildAsyncHookSource({
-        target: TARGET,
-        anchor: pathToFileURL(anchor.entry).href,
-        yaml: yamlEntry === null ? null : pathToFileURL(yamlEntry).href,
-        roots: scopedNodeModules,
-        strictRoot,
-      })
-      module.register('data:text/javascript;base64,' + Buffer.from(hookSource, 'utf8').toString('base64'), import.meta.url)
-    } else {
-      throw new Error('[host-deps] 当前 Node 既无 module.registerHooks 也无 module.register（需 Node >= 20.6），无法注册宿主解析钩子')
-    }
-    registeredRoots.add(strictRoot)
-    // 需要纯净 stdout 的子进程探针（如 step-06-08 exit7 探针）可设 DSH_HOST_DEPS_QUIET=1 抑制横幅；默认打印行为不变量。
-    if (process.env.DSH_HOST_DEPS_QUIET !== '1') { console.log('[host-deps] 实际宿主版本: ' + anchor.version + '（' + anchor.manifest + '）') }
-  } catch (error) {
-    throw error
+  if (typeof module.registerHooks === 'function') {
+    module.registerHooks({ resolve(specifier, context, nextResolve) { return resolveOne(specifier, nextResolve, context) } })
+  } else if (typeof module.register === 'function') {
+    const hookSource = buildAsyncHookSource({
+      target: TARGET,
+      anchor: pathToFileURL(anchor.entry).href,
+      yaml: yamlEntry === null ? null : pathToFileURL(yamlEntry).href,
+      roots: scopedNodeModules,
+      strictRoot,
+    })
+    module.register('data:text/javascript;base64,' + Buffer.from(hookSource, 'utf8').toString('base64'), import.meta.url)
+  } else {
+    throw new Error('[host-deps] 当前 Node 既无 module.registerHooks 也无 module.register（需 Node >= 20.6），无法注册宿主解析钩子')
   }
+  registeredRoots.add(strictRoot)
+  // 需要纯净 stdout 的子进程探针（如 step-06-08 exit7 探针）可设 DSH_HOST_DEPS_QUIET=1 抑制横幅；默认打印行为不变量。
+  if (process.env.DSH_HOST_DEPS_QUIET !== '1') { console.log('[host-deps] 实际宿主版本: ' + anchor.version + '（' + anchor.manifest + '）') }
 }

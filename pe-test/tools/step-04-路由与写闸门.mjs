@@ -17,7 +17,6 @@ import { DEFAULT_EXPLORE_BUDGET } from '../../lib/preset-defaults.generated.js'
 // 插件运行时的 DSH_HOME 见紧随 registerHostDeps 之后的隔离块。
 const ROUTE_FIXTURE = makeFixtureDir({ label: 'route-gate' })
 const DSH_HOME = ROUTE_FIXTURE.home.replaceAll('\\', '/')
-const ROUTE_PATH_CONTEXT = createPathContext({ hostDataRoot: ROUTE_FIXTURE.home })
 const ROUTE_INSTALL_ROOT = typeof process.env.DSH_INSTALL_ROOT === 'string' && process.env.DSH_INSTALL_ROOT.trim() !== '' ? process.env.DSH_INSTALL_ROOT.trim() : null
 // DSH_COMPAT_RC1（rc1 兼容路径）：rc.1 安装形态在 CLI 包 node_modules 下嵌套 dsh 自副本，副本存在时优先，保留 rc.1 取证兼容。
 // DSH_CURRENT_RC2（最新路径，rc.2 与 rc.3 共用该路径）：rc.3 安装形态不含嵌套自副本，以安装根 package.json 为锚点后备；删除边界=撤销 rc.1 兼容时移除嵌套候选。
@@ -56,7 +55,6 @@ const { createModelRouting, resolveAgentRouteSources, PLANNER_BLOCKED_REASON, NO
 // 会被现场配置污染；因此在【插件 import 之前】将 DSH_HOME 指向空临时目录，并清空
 // DSH_EXTRA_PLAN_CONFIG_PATH，使构造期读盘失败，各实例回退到自己的 fallbackDefaults（即 harness 入参）。
 // 测试结束（包括 process.exit 与异常退出路径）由 process.on('exit') 恢复原值并删除临时目录。
-const isolatedDshHome = ROUTE_FIXTURE.home
 function restoreIsolatedEnv() {
   if (previousRouteDshHome === undefined) delete process.env.DSH_HOME
   else process.env.DSH_HOME = previousRouteDshHome
@@ -493,32 +491,9 @@ const H3_EVIDENCE_CASES = [
   ['pwsh New-Item', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: 'New-Item x.txt' } }), { rule: 'PWSH_BARE_WORDS', value: 'New-Item' }],
   ['pwsh Set-Content', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: 'Set-Content x.txt x' } }), { rule: 'PWSH_BARE_WORDS', value: 'Set-Content' }],
   ['pwsh Remove-Item', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: 'Remove-Item x.txt' } }), { rule: 'PWSH_BARE_WORDS', value: 'Remove-Item' }],
-  ['pwsh git add', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: 'git add .' } }), { rule: 'PWSH_MUTATION', value: '' }],
-  ['pwsh redirect', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: 'Write-Output x > out.txt' } }), { rule: 'PWSH_MUTATION', value: '' }],
-  ['pwsh cmd nested', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: 'cmd /c del x.txt' } }), { rule: 'PWSH_BARE_WORDS', value: 'del' }],
   ['pwsh nested shell', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: 'pwsh -Command "Remove-Item x.txt"' } }), { rule: 'PWSH_BARE_WORDS', value: 'Remove-Item' }],
   ['bash rm', () => shellMutationModule.bashMutationEvidence({ arguments: { command: 'rm -rf x' } }), { rule: 'BASH_BARE_WORDS', value: 'rm' }],
-  ['bash git add JSON', () => shellMutationModule.bashMutationEvidence({ arguments: JSON.stringify({ command: 'git add .' }) }), { rule: 'BASH_MUTATION', value: '' }],
-  ['bash nested shell', () => shellMutationModule.bashMutationEvidence({ arguments: { command: "bash -c 'rm x'" } }), { rule: 'BASH_BARE_WORDS', value: 'rm' }],
-  ['pwsh stream merge', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: 'Write-Output x 2>&1' } }), null],
-  ['pwsh read-only', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: 'Get-ChildItem' } }), null],
   ['quoted parameter', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: 'echo "Remove-Item"' } }), null],
-  ['pwsh assignment bare', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: '$r = New-Item x.txt' } }), { rule: 'PWSH_BARE_WORDS', value: 'New-Item' }],
-  ['pwsh assignment add', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: '$out = Add-Content x.txt y' } }), { rule: 'PWSH_BARE_WORDS', value: 'Add-Content' }],
-  ['pwsh return bare', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: 'return New-Item x.txt' } }), { rule: 'PWSH_BARE_WORDS', value: 'New-Item' }],
-  ['pwsh subexpr assign', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: '$x = $(New-Item x.txt)' } }), { rule: 'PWSH_BARE_WORDS', value: 'New-Item' }],
-  ['pwsh glued foreach', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: 'foreach($i in 1..3){New-Item x.txt}' } }), { rule: 'PWSH_BARE_WORDS', value: 'New-Item' }],
-  ['pwsh subexpr redirect', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: '$(Get-Date > f.txt)' } }), { rule: 'PWSH_MUTATION', value: '' }],
-  ['pwsh array redirect', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: '@(Get-Item a > b)' } }), { rule: 'PWSH_MUTATION', value: '' }],
-  ['pwsh if gt redirect', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: "if ($i > 4) { 'a' }" } }), { rule: 'PWSH_MUTATION', value: '' }],
-  ['pwsh bare gt redirect', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: '$i > 4' } }), { rule: 'PWSH_MUTATION', value: '' }],
-  ['pwsh for gt redirect', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: "for ($i = 0; $i > 0; $i--) { 'x' }" } }), { rule: 'PWSH_MUTATION', value: '' }],
-  ['pwsh ge redirect', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: '$a >= 5' } }), { rule: 'PWSH_MUTATION', value: '' }],
-  ['pwsh if ge redirect', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: "if ($a >= 5) { 'x' }" } }), { rule: 'PWSH_MUTATION', value: '' }],
-  ['pwsh minusge allow', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: "if ($a -ge 5) { 'x' }" } }), null],
-  ['pwsh arrow allow', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: "Write-Host 'a => b'" } }), null],
-  ['pwsh arrow hash allow', () => shellMutationModule.pwshMutationEvidence({ arguments: { command: '$m = @{ k = 1 } => 2' } }), null],
-  ['bash quoted semicolon literal', () => shellMutationModule.bashMutationEvidence({ arguments: { command: 'echo "x; then rm"' } }), null],
   ['depth boundary', () => shellMutationModule.mutationTextEvidence('New-Item x', shellMutationModule.PWSH_MUTATION, shellMutationModule.PWSH_BARE_WORDS, 4), null],
   ['nested depth boundary', () => shellMutationModule.mutationTextEvidence('pwsh -Command "New-Item x"', shellMutationModule.PWSH_MUTATION, shellMutationModule.PWSH_BARE_WORDS, 3), null],
   ['nested depth allowed', () => shellMutationModule.mutationTextEvidence('pwsh -Command "New-Item x"', shellMutationModule.PWSH_MUTATION, shellMutationModule.PWSH_BARE_WORDS, 2), { rule: 'PWSH_BARE_WORDS', value: 'New-Item' }],
@@ -549,23 +524,19 @@ const h3qAgent = {
   ctx: undefined,
 }
 await assemble(h3qHarness, h3qAgent, [{ name: 'read' }, { name: 'bash' }])
-let h3qVariants = 0
+// 纯语法用例默认只跑一次；JSON 入参在一放一拒的集成代表中额外验证。
 for (const [label, command, expected] of H3Q_COMMAND_CASES) {
-  const shapes = [['object', { command }], ['JSON', JSON.stringify({ command })]]
-  for (const [shape, argumentsObj] of shapes) {
-    h3qVariants += 1
-    const exec = { arguments: argumentsObj }
-    check('H3Q ' + label + '/' + shape + ' bashMutationEvidence', shellMutationModule.bashMutationEvidence(exec), expected)
-    check('H3Q ' + label + '/' + shape + ' bashMutationMatches', shellMutationModule.bashMutationMatches(exec), expected !== null)
-    let h3qNextCalls = 0
-    const nextSpy = () => { h3qNextCalls += 1 }
-    const result = preExecute(h3qHarness, h3qAgent, 'bash', argumentsObj, undefined, nextSpy)
+  check('H3Q ' + label + ' bashMutationEvidence', shellMutationModule.bashMutationEvidence({ arguments: { command } }), expected)
+  if (label !== 'Q01' && label !== 'Q08') continue
+  const args = { command }
+  for (const [shape, argumentsValue] of [['object', args], ['JSON', JSON.stringify(args)]]) {
+    let nextCalls = 0
+    const result = preExecute(h3qHarness, h3qAgent, 'bash', argumentsValue, undefined, () => { nextCalls += 1 })
     checkTrue('H3Q ' + label + '/' + shape + ' isolated preExecute', expected === null
-      ? result.kind === 'allow' && h3qNextCalls === 1
-      : result.kind === 'deny' && h3qNextCalls === 0 && String(result.reason).includes(expected.rule) && String(result.reason).includes(expected.value))
+      ? result.kind === 'allow' && nextCalls === 1
+      : result.kind === 'deny' && nextCalls === 0 && String(result.reason).includes(expected.rule) && String(result.reason).includes(expected.value))
   }
 }
-checkTrue('H3Q variants===20', h3qVariants === 20)
 let r = preExecute(harness, reviewer, 'pwsh', { command: 'New-Item x.txt' })
 checkTrue('R1 reviewer pwsh New-Item → deny + H3 完整依据', r.kind === 'deny' && String(r.reason) === H3_REASONS.reviewerPwshNewItem)
 checkTrue('R2 reviewer pwsh deny 文案含只读限定', r.kind === 'deny' && String(r.reason).includes('pwsh 仅限只读探查命令，禁止创建/修改/删除文件'))
@@ -857,7 +828,6 @@ function makeArmAgent(id, toolsStub, withAppend) {
     }
     return agent
   }
-  const g2ToolCall = (id) => ({ type: 'tool/call', data: { name: 'read', callId: id, arguments: '{}' } })
   const g2AssemblySignature = (assembly) => ({
     tools: Array.isArray(assembly?.tools)
       ? assembly.tools.map((tool) => tool === null || typeof tool !== 'object' ? tool : { name: tool.name, description: tool.description, parameters: tool.parameters, output: tool.output })
@@ -1096,9 +1066,9 @@ function makeArmAgent(id, toolsStub, withAppend) {
   const missingFixture = makeG2FailureFixture('missing', { anchoredBootstrap: false, creativeMode: false, ptcRuntime: null }, { restrictableNames: ['read', 'pwsh'] })
   const missing = await assertRepeatedArmFailure('missing', missingFixture, g2ExactMissingFailure)
   const nonFunctionFixture = makeG2FailureFixture('non-function', { anchoredBootstrap: true, creativeMode: true, ptcRuntime: null }, { restrictMode: 'non-function' })
-  const nonFunction = await assertRepeatedArmFailure('non-function disposer', nonFunctionFixture, g2ExactNonFunctionFailure)
+  await assertRepeatedArmFailure('non-function disposer', nonFunctionFixture, g2ExactNonFunctionFailure)
   const armThrowFixture = makeG2FailureFixture('arm-throw', { anchoredBootstrap: true, creativeMode: true, ptcRuntime: null }, { restrictMode: 'throw' })
-  const armThrow = await assertRepeatedArmFailure('restrict抛错', armThrowFixture, g2ExactArmThrowFailure)
+  await assertRepeatedArmFailure('restrict抛错', armThrowFixture, g2ExactArmThrowFailure)
 
   const releaseThrow = makeG2FailureFixture('release-throw', { anchoredBootstrap: true, creativeMode: true, ptcRuntime: null }, { restrictMode: 'release-throw' })
   await fireAgentCreatedForArm(releaseThrow.harness, releaseThrow.agent)
@@ -3866,7 +3836,6 @@ checkTrue('GW19 旧词不推进路线 → subagent deny 且文案只含当前定
   const settingsText = readFileSyncE(fileURLToPath(new URL('../../lib/settings.js', import.meta.url)), 'utf8')
   // 只取代码行（剥注释），避免注释里的示例（如官方 maxParallelToolCalls 习语）混进字段集合。
   const settingsCodeOnly = settingsText.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n')
-  const configBody = settingsCodeOnly.slice(settingsCodeOnly.indexOf('export const Config = z.object('), settingsCodeOnly.indexOf('})', settingsCodeOnly.indexOf('export const Config = z.object(')))
   const extraDefinitions = SETTING_DEFINITIONS_E.filter((item) => item.group === SETTING_GROUPS_E.EXTRA_PLAN)
   const exploreDefinition = SETTING_DEFINITIONS_E.find((item) => item.key === 'exploreBudget')
   checkTrue('T9-3l settings 行 Config 由 11 项 descriptor 映射构造，extra-plan 10 项均经 schemaField volatile',

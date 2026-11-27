@@ -9,7 +9,7 @@
 |---|---|---|
 | **逻辑检查**（step-00） | 插件「脑子里的规矩」对不对（写命令该拦的拦不拦、预算算得对不对） | 每次改完插件后 |
 | **安装检查**（step-01，含设置页/预设完整性） | 文件、唯一 settings owner、当前规范行补齐与新默认 | 装完插件后第一次 |
-| **痕迹检查**（step-04/05/06/07/08/99） | 跑完一次真实流程后，看日志：AI 这轮干了什么、有没有违规 | 每次试完流程后 |
+| **痕迹检查**（step-04/05/06/07/99） | 跑完一次真实流程后，看日志：AI 这轮干了什么、有没有违规 | 每次试完流程后 |
 
 ## 设置管理路径
 设置表单仅经 `plugins.detail.section` 渲染于当前 bundle 详情页行列表之后（自绘标题）；本包不注册 `plugins.bundle.config`、`plugins.row.config`、`settings.plugins.tab` 或 `plugins.item`。若 bundle.config 槽出现本包条目，detail.section 让位，避免重复表单。ConfigForms 使用稳定 namespace，一次提交十一项字段与 revision。
@@ -39,7 +39,7 @@ $env:PLANNER_PROMPT_SUFFIX='<同一部署快照的精确 suffix>'
 $env:DSH_INSTALL_ROOT='<本次真实代码根>'
 node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-07-子代理模型与引导取证.mjs --session <顶层主会话ID> --sessions-dir <会话根> --discover-children --full
 ```
-共享 `session-finder/logPath` 按顺序兼容定位三代候选日志：`session.v4.jsonl.zstd` / `session.v3.jsonl.zstd` / `session.jsonl.zstd`；step-06/07/08 只接受 `session.v4.jsonl.zstd`。脚本分开报告 request/header（attempted route，尝试路由）和 assistant/message.data.message.source（actual provenance，实际产出），只区分 pro规划/非pro规划；完整 planner 文本、budgetNotice、宿主 guidance、header.system 与 suffix 等级照实输出（对应 C11/C12）。会话在宿主数据根（H）时另加 `--host-root <H 数据根>`；无会话选择 = `NOT-RUN`（exit 0）；会话选择非法/不完整、或选择后缺 `PLANNER_PROMPT_SUFFIX` = 输入错误（exit 1）。
+共享 `session-finder/logPath` 按顺序兼容定位三代候选日志：`session.v4.jsonl.zstd` / `session.v3.jsonl.zstd` / `session.jsonl.zstd`；step-06/07 两个独立查看器只接受 `session.v4.jsonl.zstd`。`step-06-08-v4取证回归` 使用 W 内隔离夹具进入 AUTO，覆盖 v4 与旧名负例，不接收真实会话。脚本分开报告 request/header（attempted route，尝试路由）和 assistant/message.data.message.source（actual provenance，实际产出），只区分 pro规划/非pro规划；完整 planner 文本、budgetNotice、宿主 guidance、header.system 与 suffix 等级照实输出（对应 C11/C12）。会话在宿主数据根（H）时另加 `--host-root <H 数据根>`；无会话选择 = `NOT-RUN`（exit 0）；会话选择非法/不完整、或选择后缺 `PLANNER_PROMPT_SUFFIX` = 输入错误（exit 1）。
 
 单文件涉及 Host 代码或 Host 版本核验时，也须先显式设置 `DSH_INSTALL_ROOT=<本次真实代码根>`，并用 `node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-01-预设完整性.mjs` 运行；完整原文应使用 `--full` 或分流文件捕获，这些输出方式不能解决 `MODULE_NOT_FOUND`。纯 W 工具仍可直接 `node`，保留该既有边界。
 
@@ -64,7 +64,7 @@ node --import ./pe-test/_shared/host-preload.mjs pe-test/tools/step-07-子代理
 
 **限制口径**：`PROBE_LIMITS` 与 `exploreBudget=18` 均以源码合同/作者 YAML 为唯一口径；本文不复制全量限制值，避免与历史批次数字漂移。报告中的源改动、删除文件、backup、reports 与 context fixture 分开统计；AUTO/HUMAN/SKIP 以报告字段为准，历史批次数字不作为当前通过数。
 
-**工具包目录说明**：pe-test/_shared/ 是取证脚本共用的解码/定位模块（workspace-paths / session-finder / test-output / zstd-frames / host-deps / host-preload / v4-tool-result / session-fixture.mjs）；其中 workspace-paths 是多数脚本共用的坐标地基，host-deps 与 host-preload 是宿主依赖解析边界，均不可删；session-fixture.mjs 是 step-06-08 专用的会话夹具，事件构造与 zstd 帧/会话落盘只服务该步的取证回归。HUMAN 项报告沿用 `测试报告-<时间>.md` 命名，独立运行不覆盖一键体检主报告。
+**工具包目录说明**：pe-test/_shared/ 是取证脚本共用的解码/定位模块（workspace-paths / session-finder / test-output / zstd-frames / host-deps / host-preload / v4-tool-result / plan-text / session-fixture.mjs）；其中 workspace-paths 是多数脚本共用的坐标地基，host-deps 与 host-preload 是宿主依赖解析边界，均不可删；session-fixture.mjs 是 step-06-08 专用的会话夹具，事件构造与 zstd 帧/会话落盘只服务该步的取证回归。HUMAN 项报告沿用 `测试报告-<时间>.md` 命名，独立运行不覆盖一键体检主报告。
 
 ## 两个注意事项
 

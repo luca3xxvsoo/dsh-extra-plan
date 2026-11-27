@@ -23,13 +23,17 @@ function normalize(value, seen = new WeakSet()) {
   if (typeof value !== 'object') return String(value)
   if (seen.has(value)) return '[Circular]'
   seen.add(value)
-  if (Array.isArray(value)) return value.map((item) => normalize(item, seen))
-  const out = {}
-  for (const key of Object.keys(value).sort()) {
-    const item = normalize(value[key], seen)
-    if (item !== undefined) out[key] = item
+  try {
+    if (Array.isArray(value)) return value.map((item) => normalize(item, seen))
+    const out = {}
+    for (const key of Object.keys(value).sort()) {
+      const item = normalize(value[key], seen)
+      if (item !== undefined) out[key] = item
+    }
+    return out
+  } finally {
+    seen.delete(value)
   }
-  return out
 }
 
 export function stableStringify(value) {

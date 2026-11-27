@@ -11,6 +11,7 @@ import { toolResultOf } from '../_shared/v4-tool-result.mjs'
 
 const maintenanceArgs = parseMaintenanceArgs(process.argv.slice(2))
 const maintenanceContext = createMaintenanceContext(maintenanceArgs)
+const CALL_TOOL_NAMES = new Set(['subagent_plan', 'ask_user_question', 'send_message', 'subagent', 'subagent_review', 'subagent_probe'])
 const explicit = maintenanceArgs.domainArgv.find((value) => !String(value).startsWith('--'))
 const found = findSession(explicit, { maintenanceContext })
 if (found.kind === 'none') { console.log('NOT-RUN：未显式选择会话；未读取会话日志'); process.exit(0) }
@@ -71,7 +72,7 @@ for (const dir of found.dirs) {
             let cmd = ''
             try { cmd = JSON.parse(data.arguments || '{}').command ?? '' } catch { cmd = String(data.arguments) }
             console.log('L' + lineNo + ' PWSH-CALL ' + trunc(cmd, 220))
-          } else if (data.name === 'subagent_plan' || data.name === 'ask_user_question' || data.name === 'send_message' || data.name === 'subagent' || data.name === 'subagent_review' || data.name === 'subagent_probe') {
+          } else if (CALL_TOOL_NAMES.has(data.name)) {
             console.log('L' + lineNo + ' CALL ' + data.name + ' ' + trunc(data.arguments, 220))
           }
         } else {
@@ -85,7 +86,7 @@ for (const dir of found.dirs) {
               } catch {}
             }
             if (cmd.length > 0) console.log('L' + lineNo + ' PWSH-CALL ' + trunc(cmd, 220))
-          } else if ((data.name === 'subagent_plan' || data.name === 'ask_user_question' || data.name === 'send_message' || data.name === 'subagent' || data.name === 'subagent_review' || data.name === 'subagent_probe') && argumentsText !== null && argumentsText.length > 0) {
+          } else if (CALL_TOOL_NAMES.has(data.name) && argumentsText !== null && argumentsText.length > 0) {
             console.log('L' + lineNo + ' CALL ' + data.name + ' ' + trunc(argumentsText, 220))
           }
         }

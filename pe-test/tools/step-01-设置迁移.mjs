@@ -27,8 +27,6 @@ const {
 } = presetSyncModule
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url))
-const migrationFixture = makeFixtureDir({ label: 'settings-migration' })
-const MIGRATION_PATH_CONTEXT = createPathContext({ hostDataRoot: migrationFixture.root })
 const ASSET = join(ROOT, 'assets/presets/extra-plan/agent.cordis.yml')
 
 function findTemplateGateWords(value) {
@@ -50,6 +48,8 @@ function findTemplateGateWords(value) {
 
 const gate = findTemplateGateWords(parsePresetYaml(readFileSync(ASSET, 'utf8')))
 if (gate === undefined) throw new Error('模板缺少 extra-plan gateWords')
+const migrationFixture = makeFixtureDir({ label: 'settings-migration' })
+const MIGRATION_PATH_CONTEXT = createPathContext({ hostDataRoot: migrationFixture.root })
 const frozenDefaults = Object.freeze({ ...DEFAULT_SETTINGS })
 const descriptorKeys = SETTING_DEFINITIONS.map((item) => item.key)
 const expectedKeys = 'anchoredBootstrap|creativeMode|webFetch|toolPresentationMode|runcodeCatchGate|crossProviderPlannerModel|plannerModel|plannerPromptSuffix|exploreBudget|otherAgentModel|reviewerUsesPlannerModel'

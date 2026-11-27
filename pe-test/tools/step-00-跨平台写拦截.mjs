@@ -1,26 +1,8 @@
 #!/usr/bin/env node
-// step-00-跨平台写拦截.mjs —— 跨平台只读防线测试（纯 Node，三平台通用）
-// ============================================================================
-// 用途：验证 extra-plan 的 bash/pwsh 写命令拦截逻辑（decisions 纯函数）在
-//       Windows / Linux / macOS 上行为一致。deny 决策完全由 decisions 导出的
-//       纯函数决定（平台无关），因此本脚本通过即锁定「Linux/macOS 上 bash
-//       分支会正确拦截/放行」的全部逻辑层。
-//
-// 用法（三平台一致）：
-//   node step-00-跨平台写拦截.mjs
-//   全部通过退出码 0；任一失败退出码 1（可接入 CI）。
-//
-// 在 GitHub Actions 中（.github/workflows）跑三平台矩阵：
-//   strategy: { matrix: { os: [ubuntu-latest, macos-latest, windows-latest] } }
-//   runs-on: ${{ matrix.os }}
-//   steps: checkout → node-version 20 → run: node step-00-跨平台写拦截.mjs
-//   （可追加真实 shell 冒烟：bash 平台跑 bash -c "..."、Windows 跑 pwsh -c "..."）
-//
-// 在 WSL2 中跑（本地真 Linux）：
-//   wsl -e bash -lc "cd <工作区>/extra-plan && node step-00-跨平台写拦截.mjs"
-//
-// 说明：本脚本只依赖 Node 标准库与 decisions 导出，不做任何文件写操作。
-// ============================================================================
+// step-00-跨平台写拦截.mjs — Bash/PowerShell 写意图识别的纯函数回归。
+// 输入都是字符串，不执行 shell；通过不等于在 Linux/macOS/Windows 实测了宿主派发。
+// 从工作区根使用本次 DSH_INSTALL_ROOT 和 --import ./pe-test/_shared/host-preload.mjs，
+// 再传入本脚本路径；宿主入口虽被导入，本脚本只调用解析和判定函数。
 
 import { registerHostDeps } from '../_shared/host-deps.mjs'
 await registerHostDeps()

@@ -700,7 +700,6 @@ export function generateRuntimeDefaults(options = {}) {
   const source = readGeneratorInput(pathContext, sourcePath, options, 'source')
   const outputTarget = generatorOutputTarget(pathContext, outputPath, options, 'output', check)
   const output = outputTarget.path
-  const metaSource = readGeneratorInput(pathContext, metaSourcePath, options, 'metaSource')
   const usesRepositoryDefaults = source === DEFAULT_SOURCE && output === DEFAULT_OUTPUT
   const definitionOutputValue = options.definitionOutputPath === undefined
     ? (usesRepositoryDefaults ? DEFAULT_DEFINITION_OUTPUT : null)
@@ -737,9 +736,11 @@ export function generateRuntimeDefaults(options = {}) {
   // 先读、解析、校验并渲染，再接触输出；坏模板/缺失输入保留 last-known-good 字节。
   const sourceText = readFileSync(source, 'utf8')
   const rendered = renderRuntimeDefaults(sourceText)
+  let metaSource = null
   let renderedDefinition = null
   let renderedRoles = []
   if (definitionOutput !== null) {
+    metaSource = readGeneratorInput(pathContext, metaSourcePath, options, 'metaSource')
     const metaText = readFileSync(metaSource, 'utf8')
     assertParses(metaText, 'preset.yml')
     renderedDefinition = renderPresetDefinition(sourceText, metaText)

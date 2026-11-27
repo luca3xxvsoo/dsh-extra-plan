@@ -65,7 +65,7 @@ const AUTO = [
 const HUMAN = [
   ['step-04-工具清单查看.mjs', '完整模式必须显式传入单会话目录，并可附 --messages 与 --request-trace <工作区trace>'],
   ['step-05-会话解码.mjs', '必须显式传入 <会话目录名> 或公共 --session + --sessions-dir；不自动查找最新会话，看事件统计/plan模式（澄清问题问到没）'],
-  ['step-06-真实会话查看.mjs', '仅支持 v4 会话日志（session.v4.jsonl.zstd）；参数可选: <sessions-dir>，查看拒绝记录（TOOL-ERROR）'],
+  ['step-06-真实会话查看.mjs', '仅支持 v4 会话日志（session.v4.jsonl.zstd）；会话通过显式单会话目录路径（位置参数，如 ./会话目录）、--session-dir <单会话目录>，或 --session <ID> --sessions-dir <会话根> 选择；宿主数据根另加 --host-root <H>；查看拒绝记录（TOOL-ERROR）'],
   ['step-07-子代理模型与引导取证.mjs', '仅支持 v4 会话日志（session.v4.jsonl.zstd）；必须通过一键参数 --session <顶层主会话ID> + --sessions-dir 精确选择，并继承调用者显式提供的 PLANNER_PROMPT_SUFFIX，查看 pro规划/非pro规划 child 的 route/provenance/suffix 分栏'],
 ]
 
@@ -153,7 +153,7 @@ export function forensicCommand(file, args = []) {
 
 // 需参数项
 const NEED_ARG = [
-  ['step-99-用量统计.mjs', '参数: <extra-plan-usage-ledger.jsonl>；默认Host落点为 logs/dsh-extra-plan/extra-plan-usage-ledger.jsonl，按需诊断追加 logs/dsh-extra-plan/extra-plan-usage-errors.jsonl（JSONL每行仅有字符串ts/reason/message），与共享目录中的其他日志共存；普通相对输入固定为W目标（只读统计）；只读统计单一账本 extra-plan-usage-ledger.jsonl；启动模式/血缘识别仅保留在内存，首帧按 512、8192、65536、整份递进窗口读取，未变化文件零字节读取；按日志当前mtime与账本ts以统一ISO毫秒精度比较，相同跳过完整用量重扫，不同（含mtime回退）或未入账才解析，成功记文件mtime，失败不推进；无持久session-presets读写/修复/自愈，不向说明行增加检查点，也不以全量重扫替代；单archive temp→rename原子发布；保留真实Worker、同步scanUsageRows/archiveLedger/startupArchive API、只读两次compare、显式Host只读边界及全部runner逻辑，不承诺零IO或启动绝不卡顿；取消不记失败，错误文件仅在需要诊断留痕时生成；--compare只读对拍；--archive报usage-removed；V1与坏JSON仅计数跳过'],
+  ['step-99-用量统计.mjs', '参数: <extra-plan-usage-ledger.jsonl>；普通统计可读 W 路径或带显式 --host-root <H> 授权的 H 内绝对账本；--compare 必须显式 --host-root <H> 加一个精确账本路径（只读对拍）；--archive 已移除；V1 与坏 JSON 仅计数跳过'],
 ]
 
 function reportIncompleteDirectory() {
@@ -460,7 +460,7 @@ function runForensic(file, sessionArg) {
   const stderrFd = openSync(stderrPath, 'w')
   let r
   try {
-    // 仅支持输出模式的查看器以 --full 取证；step-06/08 保持原参数合同。
+    // 仅支持输出模式的查看器以 --full 取证；step-06-真实会话查看保持原参数合同。
     const nodeArgs = nodeArgsForChild(join(HERE, file), argv, env)
     r = spawnSync(process.execPath, nodeArgs, {
       timeout: 120000, stdio: ['ignore', stdoutFd, stderrFd], env,

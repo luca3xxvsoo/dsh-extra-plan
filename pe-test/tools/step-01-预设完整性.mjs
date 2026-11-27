@@ -94,7 +94,7 @@ function check(label, condition) {
   else { fail += 1; console.log('FAIL  ' + label) }
 }
 
-// S-宿主真值：优先读取显式 DSH_INSTALL_ROOT 的 dsh-tool-cordis，提取 name 注册集；
+// S-静态安装包入口：显式读取 DSH_INSTALL_ROOT 下 dsh-tool-cordis 已安装包入口，提取工具名静态集合；
 // 未设置目标根时不伪造 0.2.2-rc.1 单版本宿主结论。
 const hostCordisManifestPath = targetManifestPath('dsh-tool-cordis')
 const hostCordisEntry = hostCordisManifestPath === null ? null : join(dirname(hostCordisManifestPath), 'lib', 'index.js')
@@ -102,9 +102,9 @@ if (hostCordisEntry !== null && existsSync(hostCordisEntry)) {
   const registeredCordis = [...readFileSync(hostCordisEntry, 'utf8').matchAll(/name:\s*["'](cordis_[a-z_]+)["']/g)].map((m) => m[1])
   const truth = [...HOST_CORDIS_TOOLS].sort().join(',')
   const actual = [...new Set(registeredCordis)].sort().join(',')
-  check('S-宿主真值：dsh-tool-cordis 注册集 = HOST_CORDIS_TOOLS（' + actual + '）', actual === truth)
+  check('S-静态安装包入口工具名集合 = HOST_CORDIS_TOOLS（' + actual + '）', actual === truth)
 } else {
-  console.log('SKIP  {"scope":"HOST-CORDIS","reason":"本机未安装宿主 dsh-tool-cordis，未进行注册集对拍"}')
+  console.log('SKIP  {"scope":"HOST-CORDIS","reason":"本机未安装 dsh-tool-cordis 已安装包，未进行静态安装包入口工具名核对"}')
 }
 
 function flatten(list) {
@@ -712,7 +712,7 @@ const toolCordisRowStructural = toolCordisRow !== undefined && toolCordisRow.con
 if (cordisTools.length === 2 && cordisTools.includes('cordis_run') === false
   && toolCordisRowStructural && denyHasCordisRun === false) {
   pass += 1
-  console.log('PASS  Cordis 静态集合恰有 2 项只读工具、不含执行口，且 deny 清单未列 cordis_run（宿主实际注册集）')
+  console.log('PASS  Cordis 静态集合恰有 2 项只读工具、不含执行口，且 deny 清单未列 cordis_run')
 } else {
   fail += 1
   console.log('FAIL  Cordis 静态集合不是 2 项、形状不符或 deny 列了执行口')

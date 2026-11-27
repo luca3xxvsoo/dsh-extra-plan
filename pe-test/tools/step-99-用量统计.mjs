@@ -8,9 +8,9 @@
 // 原子发布，读者要么看到完整旧版本要么看到完整新版本。
 // --compare 模式除统计外额外调用 lib/usage-ledger.js 的 scanUsageRows({ hostRoot }) 取现场扫描
 // 结果，与账本按 role→model 两维汇总逐项对拍，输出四张表与三条自检结论；全程只读、零写盘。
-import { createHash, randomUUID } from 'node:crypto'
-import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { basename, isAbsolute, join, relative, resolve } from 'node:path'
+import { createHash } from 'node:crypto'
+import { readFileSync, statSync } from 'node:fs'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { ALLOWED_PRESETS, isSchemaDocRow, scanUsageRows, validationIssue } from '../../lib/usage-ledger.js'
 import { prepareWriteTarget, resolveHostPath, resolveWorkspacePath, validateReadTarget } from '../../lib/path-policy.js'
@@ -34,7 +34,7 @@ const TOKEN_KEYS = Object.freeze([
   'cacheWriteTokens',
   'outputTokens',
 ])
-const DEFAULT_FS_OPS = Object.freeze({ mkdirSync, readFileSync, rmSync, statSync, writeFileSync })
+const DEFAULT_FS_OPS = Object.freeze({ readFileSync, statSync })
 const CLI_PURPOSE = 'usage-ledger-cli'
 const LEDGER_READ_PURPOSE = 'ledger-read'
 const LEDGER_ARCHIVE_PURPOSE = 'ledger-archive'
@@ -210,8 +210,7 @@ function validDedupeKey(row) {
     && row.seq >= 0
 }
 
-// 去重键与账本侧 identityKeyOfRow 同口径（九字段序列化）；seq 在账本侧可能被兜底写成 0
-// （usage-ledger 扫描行 seq 缺失即落 0），不能当主键。
+// 去重键与账本侧 identityKeyOfRow 同口径：满足资格的行使用九身份字段序列化；seq 不参与键。
 function dedupeKeyOf(row) {
   return identityKeyOf(row)
 }
@@ -365,8 +364,8 @@ export function summarizeRows(rows, options = {}) {
   }
 }
 
-// 单一账本口径：各来源行合并后按身份键（IDENTITY_KEYS 九维）分组求和，
-// 同 sessionId+seq 的重复行只计一次；不存在「水位覆盖重放」的覆盖口径。
+// 单一账本口径：各来源行合并后按身份键（IDENTITY_KEYS 九维）分组求和；
+// 满足资格的行使用九身份字段去重，seq 不参与键。
 export function summarizeSnapshotTexts(sources, options = {}) {
   let skippedNonV2Objects = 0
   let badJsonLines = 0
@@ -410,7 +409,7 @@ export function renderStats(summary, paths = {}) {
   lines.push('坏JSON行（已跳过，未计入V1/非V2）: ' + summary.badJsonLines)
   lines.push('字段非法V2行（已跳过，不计入统计）: ' + (summary.invalidV2Lines || 0))
   for (const [issue, count] of Object.entries(summary.invalidV2Reasons || {})) lines.push('  ' + issue + ': ' + count)
-  if (summary.duplicateV2Rows > 0) lines.push('重复V2记录（按非空sessionId+非负整数seq去重）: ' + summary.duplicateV2Rows + '（已跳过）')
+  if (summary.duplicateV2Rows > 0) lines.push('重复V2记录（按九字段身份键去重）: ' + summary.duplicateV2Rows + '（已跳过）')
   if (paths.archivePath !== undefined) lines.push('统计来源（单一账本）: ' + paths.archivePath)
   return lines.join('\n')
 }
@@ -419,7 +418,7 @@ function readSnapshots(archivePath, options) {
   const fsOps = mergedFsOps(options && options.fsOps)
   authorizeOptionalReadPath(archivePath, options)
   const archive = optionalRead(fsOps, archivePath)
-  return { fsOps, archive }
+  return { archive }
 }
 
 function metadataValueOf(stat, primary, fallback) {

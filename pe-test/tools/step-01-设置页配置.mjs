@@ -95,7 +95,7 @@ try {
 let patch
 const presetSettings = await import('../../lib/preset-settings.js')
 const { parsePresetYaml, SETTING_DEFINITIONS } = presetSettings
-try { patch = parsePresetYaml(patchText) } catch (error) { console.error('FAIL  patch YAML parse: ' + String(error)); process.exit(1) }
+try { patch = parsePresetYaml(patchText) } catch (error) { console.error('FAIL  patch YAML parse: ' + String(error)); settingsBootstrapFixture.cleanup(); process.exit(1) }
 const { Config } = await import('../../lib/settings.js')
 const { createLiveConfig } = await import('../../lib/live-config.js')
 const { createGateRuntime, GATE_WORD_FIELDS } = await import('../../lib/gate-words.js')
@@ -155,8 +155,8 @@ if (TARGET_INSTALL_ROOT === undefined) {
   } else {
     const slotText = targetSlotMap.value
     const configFormText = targetConfigForms.value
-    check('F04 HOST 实际 SlotMap 提供 keyed plugins.bundle.config 与 list plugins.detail.section', slotHasKind(slotText, 'plugins.bundle.config', 'keyed') && slotHasKind(slotText, 'plugins.detail.section', 'list'))
-    check('F04 HOST 实际 ConfigForms 提供 get 与 whileServed', configFormText.includes('get<T>(entryId: string)') && configFormText.includes('whileServed(namespaces: readonly string[]'))
+    check('F04 已安装包静态 d.ts SlotMap 声明提供 keyed plugins.bundle.config 与 list plugins.detail.section', slotHasKind(slotText, 'plugins.bundle.config', 'keyed') && slotHasKind(slotText, 'plugins.detail.section', 'list'))
+    check('F04 已安装包静态 d.ts ConfigForms 声明提供 get 与 whileServed', configFormText.includes('get<T>(entryId: string)') && configFormText.includes('whileServed(namespaces: readonly string[]'))
   }
 }
 
@@ -479,15 +479,15 @@ const hotKeys = ['anchoredBootstrap', 'creativeMode', 'webFetch', 'runcodeCatchG
 const hotGetters = { anchoredBootstrap: 'anchoredBootstrap', creativeMode: 'creativeMode', webFetch: 'webFetch', runcodeCatchGate: 'runcodeCatchGate', crossProviderPlannerModel: 'crossProviderPlannerModel', plannerModel: 'plannerModel', plannerPromptSuffix: 'plannerPromptSuffix', exploreBudget: 'exploreBudget', otherAgentModel: 'otherAgentModel', reviewerUsesPlannerModel: 'reviewerUsesPlannerModel' }
 const hotNext = { anchoredBootstrap: true, creativeMode: false, webFetch: false, runcodeCatchGate: false, crossProviderPlannerModel: false, plannerModel: 'hot-model', plannerPromptSuffix: 'hot-suffix', exploreBudget: 47, otherAgentModel: 'hot-other', reviewerUsesPlannerModel: false }
 const liveMatrixRoot = makeWRoot('settings-live-config-matrix')
-const liveMatrixDir = join(liveMatrixRoot, 'profiles', 'web')
-mkdirSync(liveMatrixDir, { recursive: true })
-let liveMatrixPath = join(liveMatrixDir, 'cordis.patch.yml')
-const liveMatrixPathContext = createPathContext({ workspaceRoot: liveMatrixRoot })
-writeFileSync(liveMatrixPath, JSON.stringify([{ id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: { ...syncValues } }]), 'utf8')
 const liveMatrixWarnings = []
 const liveMatrixWarn = console.warn
-console.warn = (...args) => liveMatrixWarnings.push(args.map(String).join(' '))
 try {
+  const liveMatrixDir = join(liveMatrixRoot, 'profiles', 'web')
+  mkdirSync(liveMatrixDir, { recursive: true })
+  let liveMatrixPath = join(liveMatrixDir, 'cordis.patch.yml')
+  const liveMatrixPathContext = createPathContext({ workspaceRoot: liveMatrixRoot })
+  writeFileSync(liveMatrixPath, JSON.stringify([{ id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: { ...syncValues } }]), 'utf8')
+  console.warn = (...args) => liveMatrixWarnings.push(args.map(String).join(' '))
   const liveMatrixConfig = createLiveConfig({ resolveDocumentTarget: () => ({ kind: 'workspace', path: liveMatrixPath }), getPathContext: () => liveMatrixPathContext, fallbackDefaults: syncValues })
   let matrixHotReadOk = true
   for (const key of hotKeys) {
@@ -507,6 +507,7 @@ try {
   check('G5 A可读→B缺失→B可读：10项回退/恢复且缺失最多一次告警', matrixHotReadOk && matrixFallbackOk && matrixRecoveredOk && matrixWarningsAfterMissing === 1 && liveMatrixWarnings.length === 1)
 } finally {
   console.warn = liveMatrixWarn
+  rmSync(liveMatrixRoot, { recursive: true, force: true })
 }
 const liveValues = { ...syncValues, ...hotNext }
 writeFileSync(livePath, JSON.stringify([{ id: 'dsh-extra-plan-settings', name: 'dsh-extra-plan/settings', config: liveValues }]), 'utf8')

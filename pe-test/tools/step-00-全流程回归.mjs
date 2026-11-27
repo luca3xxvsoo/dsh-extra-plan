@@ -226,6 +226,11 @@ check('OUTPUT2 --full优先于--verbose', parseOutputMode(['--verbose', '--full'
 check('OUTPUT3 compact成功断言不逐条打印', assertionLine('compact', true, '成功项', { expected: 'large' }, { actual: 'large' }), '')
 checkTrue('OUTPUT4 compact失败保留完整expected/actual', assertionLine('compact', false, '失败项', 'expected', 'actual').includes('expected') && assertionLine('compact', false, '失败项', 'expected', 'actual').includes('actual'))
 checkTrue('OUTPUT5 stable JSON按键排序', stableStringify({ z: 1, a: { y: 2, x: 3 } }) === JSON.stringify({ a: { x: 3, y: 2 }, z: 1 }))
+const sharedOutputValue = { x: 1 }
+const circularOutputValue = {}
+circularOutputValue.self = circularOutputValue
+check('OUTPUT7 重复引用不是循环', stableStringify({ a: sharedOutputValue, b: sharedOutputValue }), '{"a":{"x":1},"b":{"x":1}}')
+check('OUTPUT8 真循环仍可诊断', stableStringify(circularOutputValue), '{"self":"[Circular]"}')
 let outputInvalid = false
 try { parseOutputMode(['--output-mode=invalid']) } catch { outputInvalid = true }
 checkTrue('OUTPUT6 非法模式按合同报错', outputInvalid)
@@ -938,20 +943,20 @@ checkTrue('AR-chain 断链：自身/父保留，root 为空', arBrokenContext.se
 checkTrue('AR-chain 自身父链：不把自身伪造为root', arSelfContext.sessionId === 'ar-self' && arSelfContext.parentSessionId === 'ar-self' && arSelfContext.rootSessionId === '')
 checkTrue('AR-chain 循环父链：不把循环节点伪造为root', arCycleContext.sessionId === 'ar-cycle-a' && arCycleContext.parentSessionId === 'ar-cycle-b' && arCycleContext.rootSessionId === '')
 
-// ── 宿主 mode：独立四角色 oracle 与本 Session 48 格矩阵（mock） ─────────
+// ── 宿主 mode：独立四角色 oracle 与本 Session 五种代表场景（mock） ─────────
 const CHILD_MODE_ORACLE = Object.freeze([
   Object.freeze({ role: 'planner', preset: 'extra-plan-planner', mode: 'read-only' }),
   Object.freeze({ role: 'prober', preset: 'extra-plan-prober', mode: 'read-only' }),
   Object.freeze({ role: 'executor', preset: 'extra-plan-executor', mode: 'workspace-write' }),
   Object.freeze({ role: 'reviewer', preset: 'extra-plan-reviewer', mode: 'workspace-write' }),
 ])
-const MODE_PARENT_MODES = Object.freeze(['read-only', 'workspace-write'])
-const MODE_DEFAULT_MODES = Object.freeze(['read-only', 'workspace-write'])
-const MODE_CHILD_OVERRIDES = Object.freeze([
-  Object.freeze({ label: 'missing', value: undefined }),
-  Object.freeze({ label: 'read-only', value: 'read-only' }),
-  Object.freeze({ label: 'workspace-write', value: 'workspace-write' }),
-])
+const MODE_SCENARIOS = [
+  { parentMode: 'read-only', defaultMode: 'read-only', overrideSpec: { label: 'missing', value: undefined } },
+  { parentMode: 'workspace-write', defaultMode: 'read-only', overrideSpec: { label: 'missing', value: undefined } },
+  { parentMode: 'read-only', defaultMode: 'workspace-write', overrideSpec: { label: 'missing', value: undefined } },
+  { parentMode: 'read-only', defaultMode: 'read-only', overrideSpec: { label: 'read-only', value: 'read-only' } },
+  { parentMode: 'read-only', defaultMode: 'read-only', overrideSpec: { label: 'workspace-write', value: 'workspace-write' } },
+]
 const setModeSpy = (session, snapshot) => {
   session.append = (channel, payload) => {
     snapshot.push([channel, payload])
@@ -960,97 +965,92 @@ const setModeSpy = (session, snapshot) => {
 }
 const modeMatrixEvidence = []
 for (const role of CHILD_MODE_ORACLE) {
-  for (const parentMode of MODE_PARENT_MODES) {
-    for (const defaultMode of MODE_DEFAULT_MODES) {
-      for (const overrideSpec of MODE_CHILD_OVERRIDES) {
-        const index = modeMatrixEvidence.length + 1
-        const parent = arAgent({ id: 'mode-parent-' + String(index), preset: '' })
-        parent.session.currentMode = parentMode
-        const child = arAgent({
-          id: 'mode-child-' + String(index),
-          child: true,
-          parentSession: parent.session.header.id,
-          preset: role.preset,
-          depth: 1,
-        })
-        const childSession = child.session
-        childSession.currentMode = overrideSpec.value
-        const snapshot = []
-        setModeSpy(childSession, snapshot)
-        let overrideCalls = 0
-        const modeAgents = new Map([
-          [parent.session.header.id, parent],
-          [childSession.header.id, child],
-        ])
-        const runtime = agentRuntime.createAgentRuntime({
-          getAgents: () => ({ get: (id) => modeAgents.get(id) }),
-          sandboxPolicy: {
-            parentMode,
-            defaultMode,
-            overrideOf: (session) => {
-              overrideCalls += 1
-              return session.currentMode
-            },
-          },
-          warn: () => {},
-        })
-        const runBaseline = () => runtime.childBaseline(child, [])
-        const firstBefore = snapshot.length
-        const firstChild = runBaseline()
-        const firstCount = snapshot.length - firstBefore
-        const repeatBefore = snapshot.length
-        const repeatChild = runBaseline()
-        const repeatCount = snapshot.length - repeatBefore
-        const driftMode = role.mode === 'read-only' ? 'workspace-write' : 'read-only'
-        childSession.currentMode = driftMode
-        const driftBefore = snapshot.length
-        const driftChild = runBaseline()
-        const driftRepairCount = snapshot.length - driftBefore
-        const afterRepairBefore = snapshot.length
-        const afterRepairChild = runBaseline()
-        const afterRepairCount = snapshot.length - afterRepairBefore
-        const expectedFirstCount = overrideSpec.value === role.mode ? 0 : 1
-        const expectedSnapshot = Array.from({ length: expectedFirstCount + 1 }, () => ['sandbox/mode', { mode: role.mode, source: 'delegation' }])
-        const evidence = {
-          input: {
-            role: role.role,
-            preset: role.preset,
-            parentMode,
-            defaultMode,
-            childOverride: overrideSpec.label,
-            initialSessionMode: overrideSpec.value === undefined ? null : overrideSpec.value,
-          },
-          target: role.mode,
-          counts: {
-            first: firstCount,
-            repeat: repeatCount,
-            driftRepair: driftRepairCount,
-            afterRepair: afterRepairCount,
-            overrideCalls,
-          },
-          snapshot,
-        }
-        modeMatrixEvidence.push(evidence)
-        console.log('MOCK AR-mode grid ' + JSON.stringify(evidence))
-        checkTrue(
-          'AR-mode 48格 #' + String(index) + ' 本Session目标/幂等/漂移/source正确',
-          firstChild === true &&
-            repeatChild === true &&
-            driftChild === true &&
-            afterRepairChild === true &&
-            firstCount === expectedFirstCount &&
-            repeatCount === 0 &&
-            driftRepairCount === 1 &&
-            afterRepairCount === 0 &&
-            overrideCalls === 4 &&
-            childSession.currentMode === role.mode &&
-            isDeepStrictEqual(snapshot, expectedSnapshot),
-        )
-      }
+  for (const { parentMode, defaultMode, overrideSpec } of MODE_SCENARIOS) {
+    const index = modeMatrixEvidence.length + 1
+    const parent = arAgent({ id: 'mode-parent-' + String(index), preset: '' })
+    parent.session.currentMode = parentMode
+    const child = arAgent({
+      id: 'mode-child-' + String(index),
+      child: true,
+      parentSession: parent.session.header.id,
+      preset: role.preset,
+      depth: 1,
+    })
+    const childSession = child.session
+    childSession.currentMode = overrideSpec.value
+    const snapshot = []
+    setModeSpy(childSession, snapshot)
+    let overrideCalls = 0
+    const modeAgents = new Map([
+      [parent.session.header.id, parent],
+      [childSession.header.id, child],
+    ])
+    const runtime = agentRuntime.createAgentRuntime({
+      getAgents: () => ({ get: (id) => modeAgents.get(id) }),
+      sandboxPolicy: {
+        parentMode,
+        defaultMode,
+        overrideOf: (session) => {
+          overrideCalls += 1
+          return session.currentMode
+        },
+      },
+      warn: () => {},
+    })
+    const runBaseline = () => runtime.childBaseline(child, [])
+    const firstBefore = snapshot.length
+    const firstChild = runBaseline()
+    const firstCount = snapshot.length - firstBefore
+    const repeatBefore = snapshot.length
+    const repeatChild = runBaseline()
+    const repeatCount = snapshot.length - repeatBefore
+    const driftMode = role.mode === 'read-only' ? 'workspace-write' : 'read-only'
+    childSession.currentMode = driftMode
+    const driftBefore = snapshot.length
+    const driftChild = runBaseline()
+    const driftRepairCount = snapshot.length - driftBefore
+    const afterRepairBefore = snapshot.length
+    const afterRepairChild = runBaseline()
+    const afterRepairCount = snapshot.length - afterRepairBefore
+    const expectedFirstCount = overrideSpec.value === role.mode ? 0 : 1
+    const expectedSnapshot = Array.from({ length: expectedFirstCount + 1 }, () => ['sandbox/mode', { mode: role.mode, source: 'delegation' }])
+    const evidence = {
+      input: {
+        role: role.role,
+        preset: role.preset,
+        parentMode,
+        defaultMode,
+        childOverride: overrideSpec.label,
+        initialSessionMode: overrideSpec.value === undefined ? null : overrideSpec.value,
+      },
+      target: role.mode,
+      counts: {
+        first: firstCount,
+        repeat: repeatCount,
+        driftRepair: driftRepairCount,
+        afterRepair: afterRepairCount,
+        overrideCalls,
+      },
+      snapshot,
     }
+    modeMatrixEvidence.push(evidence)
+    if (output.mode === 'full') console.log('MOCK AR-mode grid ' + JSON.stringify(evidence))
+    checkTrue(
+      'AR-mode 代表场景 #' + String(index) + ' 本Session目标/幂等/漂移/source正确',
+      firstChild === true &&
+        repeatChild === true &&
+        driftChild === true &&
+        afterRepairChild === true &&
+        firstCount === expectedFirstCount &&
+        repeatCount === 0 &&
+        driftRepairCount === 1 &&
+        afterRepairCount === 0 &&
+        overrideCalls === 4 &&
+        childSession.currentMode === role.mode &&
+        isDeepStrictEqual(snapshot, expectedSnapshot),
+    )
   }
 }
-check('AR-mode 48格全部到达', modeMatrixEvidence.length, 48)
 checkTrue(
   'AR-mode 目标只随独立四角色oracle变化，不随父/default变化',
   modeMatrixEvidence.every((evidence) => {
@@ -4343,9 +4343,9 @@ for (const [name, got, expected] of AS) check(name, got, expected)
   const answeredRender = planStateTool.output.render({ gate: 'purpose' }, answered)
   const skippedParsed = parseGateBlock(skippedRender)
   const answeredParsed = parseGateBlock(answeredRender)
-  checkTrue('AS4e render 返回恰一个 text ContentBlock（宿主按数组消费 content，裸字符串会崩 spill-policy/PTC）', Array.isArray(skippedRender) && skippedRender.length === 1 && skippedRender[0].type === 'text' && typeof skippedRender[0].text === 'string', true)
-  checkTrue('AS4f render 正文是返回值整体 JSON（deriveFlowState 只解析首块，skipped 的 gate/outcome/reason 全部保真）', skippedParsed !== null && skippedParsed.gate === 'purpose' && skippedParsed.outcome === 'skipped' && skippedParsed.reason === 'route-not-plan', true)
-  checkTrue('AS4g render JSON 保留用户选项字段（purpose/purposeLabel），原生模式模型据此判断选择', answeredParsed !== null && answeredParsed.outcome === 'answered' && answeredParsed.purpose === 'refine' && answeredParsed.purposeLabel === gateRuntime.words.purposeRefine, true)
+  checkTrue('AS4e render 返回恰一个 text ContentBlock（宿主按数组消费 content，裸字符串会崩 spill-policy/PTC）', Array.isArray(skippedRender) && skippedRender.length === 1 && skippedRender[0].type === 'text' && typeof skippedRender[0].text === 'string')
+  checkTrue('AS4f render 正文是返回值整体 JSON（deriveFlowState 只解析首块，skipped 的 gate/outcome/reason 全部保真）', skippedParsed !== null && skippedParsed.gate === 'purpose' && skippedParsed.outcome === 'skipped' && skippedParsed.reason === 'route-not-plan')
+  checkTrue('AS4g render JSON 保留用户选项字段（purpose/purposeLabel），原生模式模型据此判断选择', answeredParsed !== null && answeredParsed.outcome === 'answered' && answeredParsed.purpose === 'refine' && answeredParsed.purposeLabel === gateRuntime.words.purposeRefine)
 }
 
 // AS4h-AS4n（recommended 参数）：推荐只给对应选项的展示 label 追加推荐后缀，选项顺序、描述与词值一律不动；

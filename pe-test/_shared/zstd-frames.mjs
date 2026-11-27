@@ -1,5 +1,4 @@
-// _shared/zstd-frames.mjs — 会话日志 zstd 帧解析（step-04/05/06 取证工具共用）
-// step-04/05/06 取证工具共用 frame parser；调用方依赖 frame boundary。
+// _shared/zstd-frames.mjs — 会话日志 zstd 帧解析，共享帧边界与严格文本解码。
 import { zstdDecompressSync } from 'node:zlib'
 
 // 起点 magic 已由调用方验证；只解析这一帧，缺损/非法块边界返回 null。
@@ -34,11 +33,10 @@ function frameEndAt(buf, start) {
 }
 
 export function framesOf(buf) {
-  const MAGIC = 0xfd2fb528
   const frames = []
   let pos = 0
   while (pos + 4 <= buf.length) {
-    if (buf.readUInt32LE(pos) !== MAGIC) { pos++; continue }
+    if (buf.readUInt32LE(pos) !== ZSTD_MAGIC) { pos++; continue }
     const end = frameEndAt(buf, pos)
     if (end === null) break
     frames.push({ start: pos, end })

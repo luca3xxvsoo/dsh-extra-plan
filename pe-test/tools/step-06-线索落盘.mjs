@@ -18,7 +18,6 @@ import { createOutput } from '../_shared/test-output.mjs'
 // host-deps 先于隔离完成解析（它按候选① DSH_HOME/profiles/web 锚定宿主真包）。
 const clueFixture = makeFixtureDir({ label: 'clue' })
 const isolatedDshHome = clueFixture.home
-const CLUE_PATH_CONTEXT = createPathContext({ hostDataRoot: isolatedDshHome })
 const CLUE_INSTALL_ROOT = typeof process.env.DSH_INSTALL_ROOT === 'string' && process.env.DSH_INSTALL_ROOT.trim() !== '' ? process.env.DSH_INSTALL_ROOT.trim() : null
 const CLUE_INSTALL_ANCHOR = CLUE_INSTALL_ROOT === null ? null : join(CLUE_INSTALL_ROOT, 'node_modules', '@deepseek-ai', 'dsh', 'package.json')
 const makeWTemp = (label) => { const safe = String(label).replace(/[^A-Za-z0-9_-]+/g, '-'); const dir = join(isolatedDshHome, 'tmp', safe); mkdirSync(dir, { recursive: true }); return dir }
@@ -193,9 +192,6 @@ const registered = mainRegistry.definitions
 const toolsMock = mainRegistry
 const agentCtx = makeAgentContext(mainRegistry)
 const plannerCtx = makeAgentContext(plannerRegistry)
-const proberCtx = makeAgentContext(proberRegistry)
-const executorCtx = makeAgentContext(executorRegistry)
-const reviewerCtx = makeAgentContext(reviewerRegistry)
 const harness = makeHarness({ anchoredBootstrap: false }, toolsMock)
 
 const mainAgent = makeAgent({ id: 'main-1', cwd: 'C:/work' }, [], mainRegistry)
@@ -587,7 +583,6 @@ fireAgentCreated(harness, smokePlanner)
 const savePlanDef = plannerRegistry.definitions.find((t) => t.name === 'save_plan')
 const smokePlannerPlanDef = savePlanDef
 const g3EvidenceRoot = null
-const g3ResumeRoot = null
 const g3TmpRoot = makeWTemp('extra-plan-g3-fixture')
 rmSync(g3TmpRoot, { recursive: true, force: true })
 const work = join(g3TmpRoot, 'work')
@@ -1340,10 +1335,14 @@ try {
     atomicCommit: () => { invalidEffects.atomic += 1 },
     getPathContext: () => pathContextForDir(work),
   }).defineSaveProbe()
-  for (const badArgs of [null, undefined, {}]) {
-    try { await invalidProbe.execute(badArgs, execFake(work, 'prober')) } catch {}
+  const invalidWork = join(tmpRoot, 'invalid-probe-work')
+  mkdirSync(invalidWork)
+  for (const [name, badArgs, expected] of [['null', null, '参数必须是对象'], ['undefined', undefined, '参数必须是对象'], ['空对象', {}, 'fileMap 必须是数组']]) {
+    let errorMessage = ''
+    try { await invalidProbe.execute(badArgs, execFake(invalidWork, 'prober')) } catch (error) { errorMessage = error instanceof Error ? error.message : '' }
+    checkTrue('S20a 非法 ' + name + ' 按预期拒绝', errorMessage.startsWith('save_probe:') && errorMessage.includes(expected))
+    check('S20a 非法 ' + name + ' 无提交及落盘', [invalidEffects.atomic, readdirSync(invalidWork)], [0, []])
   }
-  checkTrue('S20a 非法 args 先校验且零副作用（atomic/rename/unlink 均为 0）', invalidEffects.atomic === 0)
   const RealDate = globalThis.Date
   const fixedMillis = 1893456000123
   class FixedDate extends RealDate {
@@ -1433,7 +1432,6 @@ try {
 // 每个场景使用独立临时目录，finally 清理；失败断言保留首错、阶段和本次清理结果。
 const isTmpName = (name) => name.indexOf('.tmp-') >= 0
 const leftovers = (dir) => readdirSync(dir).filter(isTmpName).sort()
-const tmpBaseNames = (dir) => readdirSync(dir).filter(isTmpName).map((name) => name.replace(/\.tmp-\d+-\d+$/, '')).sort()
 const contentsOf = (dir, names) => names.map((name) => readFileSync(join(dir, name), 'utf8'))
 const pairOf = (base) => [{ name: '方案-' + base + '.md', content: 'PLAN-' + base }, { name: '验收-' + base + '.md', content: 'CHECK-' + base }]
 const crossedAt = (dir, base) => [existsSync(join(dir, '方案-' + base + '.md')), existsSync(join(dir, '验收-' + base + '.md'))]

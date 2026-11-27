@@ -4,7 +4,7 @@
 // 无显式位置目标或公共会话选项时 NOT-RUN，不探测会话目录。
 import fs from 'node:fs'
 import path from 'node:path'
-import { framesOf, decodeText } from '../_shared/zstd-frames.mjs'
+import { decodedJsonlLines } from '../_shared/zstd-frames.mjs'
 import { authorizedSessionLogPath, findSession } from '../_shared/session-finder.mjs'
 import { parseMaintenanceArgs, createMaintenanceContext } from '../_shared/workspace-paths.mjs'
 import { validateReadTarget } from '../../lib/path-policy.js'
@@ -65,11 +65,9 @@ function headerOf(event) {
 function eventTypes(event) {
   return Array.isArray(event?.type) ? event.type.map((type) => String(type)) : [String(event?.type)]
 }
-function parseRecordsStrict(logicalText) {
+function parseRecordsStrict(bytes) {
   const records = []
-  let line = 0
-  for (const raw of logicalText.split(NL)) {
-    line += 1
+  for (const { lineNo: line, line: raw } of decodedJsonlLines(bytes)) {
     if (raw.trim() === '') continue
     let event
     try { event = JSON.parse(raw) } catch (error) { throw new Error('坏JSON行 line=' + line + ': ' + (error instanceof Error ? error.message : String(error))) }
@@ -223,10 +221,7 @@ function strictSessionDir(value, context) {
 }
 function readStrictSession(value, context) {
   const found = strictSessionDir(value, context)
-  const bytes = fs.readFileSync(found.log)
-  let logicalText
-  try { logicalText = framesOf(bytes).map((frame) => decodeText(bytes, frame)).join('') } catch (error) { throw new Error('frame/尾部不完整或不支持: ' + (error instanceof Error ? error.message : String(error))) }
-  const records = parseRecordsStrict(logicalText)
+  const records = parseRecordsStrict(fs.readFileSync(found.log))
   const meta = physicalMeta(records, found.dir)
   return { ...found, records, meta }
 }
@@ -259,9 +254,12 @@ function defaultSummary(args, context) {
     console.log(NL + '===== 会话 ' + dir + ' =====')
     const lp = authorizedSessionLogPath(path.join(found.base, dir), found.pathContext, { kind: found.pathKind })
     if (lp === null) { console.error('会话日志文件不存在（三代候选名均未命中）：', path.join(found.base, dir)); process.exitCode = 1; continue }
-    const buf = fs.readFileSync(lp.realPath)
-    const logicalText = framesOf(buf).map((frame) => decodeText(buf, frame)).join('')
-    const records = parseRecordsStrict(logicalText)
+    let records
+    try { records = parseRecordsStrict(fs.readFileSync(lp.realPath)) } catch (error) {
+      console.error('INCOMPLETE ' + (error instanceof Error ? error.message : String(error)))
+      process.exitCode = 1
+      continue
+    }
     const systemMessages = systemMessagesOf(records)
     const headerSnapshots = []
     {

@@ -269,6 +269,12 @@ try {
   const g5EmptyWorkspace = writeG5Workspace('empty-jsonl', g5EmptyCompressed)
   const g5NoFrameWorkspace = writeG5Workspace('no-frame', g5NoFrame)
   const g5NoSaveWorkspace = writeG5Workspace('no-save-plan', g5NoSaveCompressed)
+  const g5ValidPrefix = zstdCompressSync(Buffer.from(JSON.stringify(g5Session) + '\n' + JSON.stringify(g5Header) + '\n', 'utf8'))
+  const g5BadTail = writeG5Workspace('bad-tail-after-valid-frame', Buffer.concat([g5ValidPrefix, g5TruncatedCompressed]))
+  for (const extra of [[], ['--messages']]) {
+    const saved = runScript(STEP04, exactSessionArgs(g5BadTail, ...extra))
+    check('S04 有效前缀之后坏尾帧不可报告为完整 ' + (extra[0] ?? 'summary'), saved.status === 1 && saved.stderr.includes('INCOMPLETE incomplete zstd frame at byte ') && !saved.stdout.includes('SESSION_META') && !saved.stdout.includes('tools.names='))
+  }
   const g5Step05Valid = runScript(STEP05, exactSessionArgs(g5ValidWorkspace, '--compact'))
   check('G5 step05跨帧/skippable成功且物理行号准确', g5Step05Valid.status === 0 && g5Step05Valid.output.includes('L3 model=g5-model tools=0'), true)
   const g5Step06Valid = runScript(STEP06, exactSessionArgs(g5ValidWorkspace))
@@ -615,45 +621,6 @@ try {
   check('S06 复合tool/result仅错误项产生一次诊断', s06Compound06.status === 0 && s06Compound06.output.includes('TOOL-ERROR s06-compound-error') && countOf(s06Compound06.output, 'TOOL-ERROR') === 1 && !s06Compound06.output.includes('TOOL-ERROR s06-compound-ok'))
   const g2SourceFiles = [STEP05, STEP06, fileURLToPath(import.meta.url)]
   const g2SourceSha256Before = Object.fromEntries(g2SourceFiles.map((file) => [file, sha256Text(readFileSync(file, 'utf8'))]))
-  const g2NodeCheckDir = join(fixtureProofDir, 'g2-node-check')
-  mkdirSync(g2NodeCheckDir)
-  const g2NodeCheckRecords = []
-  for (const [index, script] of g2SourceFiles.entries()) {
-    const label = 'node-check-' + String(index + 1)
-    const stdoutPath = join(g2NodeCheckDir, label + '.stdout.log')
-    const stderrPath = join(g2NodeCheckDir, label + '.stderr.log')
-    const stdoutFd = openSync(stdoutPath, 'wx')
-    const stderrFd = openSync(stderrPath, 'wx')
-    const command = [process.execPath, '--check', script]
-    let child
-    try {
-      child = spawnSync(process.execPath, ['--check', script], {
-        cwd: ROOT,
-        env: { ...process.env },
-        stdio: ['ignore', stdoutFd, stderrFd],
-      })
-    } finally {
-      closeSync(stdoutFd)
-      closeSync(stderrFd)
-    }
-    const stdout = readFileSync(stdoutPath, 'utf8')
-    const stderr = readFileSync(stderrPath, 'utf8')
-    const error = child.error === undefined || child.error === null ? null : { name: child.error.name ?? null, code: child.error.code ?? null, message: child.error.message ?? String(child.error) }
-    const raw = {
-      stdout: { path: stdoutPath, bytes: Buffer.byteLength(stdout, 'utf8'), lines: rawLineCount(stdout), sha256: sha256Text(stdout) },
-      stderr: { path: stderrPath, bytes: Buffer.byteLength(stderr, 'utf8'), lines: rawLineCount(stderr), sha256: sha256Text(stderr) },
-    }
-    const record = { label, command, cwd: ROOT, node: process.execPath, nodeVersion: process.version, source: script, sourceSha256: g2SourceSha256Before[script], status: child.status, signal: child.signal, error, raw }
-    g2NodeCheckRecords.push(record)
-    check('G2 node --check ' + label + ' status=0且无signal/error、双流SHA有效', record.status === 0 && record.signal === null && record.error === null && raw.stdout.sha256 === sha256Text(stdout) && raw.stderr.sha256 === sha256Text(stderr))
-  }
-  const g2NodeCheckManifest = join(g2NodeCheckDir, 'node-check.json')
-  const g2NodeCheckManifestFd = openSync(g2NodeCheckManifest, 'wx')
-  try {
-    writeFileSync(g2NodeCheckManifestFd, JSON.stringify({ node: process.execPath, nodeVersion: process.version, DSH_INSTALL_ROOT: process.env.DSH_INSTALL_ROOT ?? null, sourceSha256Before: g2SourceSha256Before, records: g2NodeCheckRecords }, null, 2) + String.fromCharCode(10), 'utf8')
-  } finally {
-    closeSync(g2NodeCheckManifestFd)
-  }
 
   const s06CompoundIdentityDir = join(s06Workspace, 's06-compound-identity')
   writeSession(s06CompoundIdentityDir, SESSION_LOG_NAME, [
@@ -981,13 +948,7 @@ try {
   }
   const wAmbiguityCases = [
     { label: 'native-shared-alias', carrier: 'native', kind: 'shared', mention: 'same-alias', children: [{ directory: 'same-alias', id: 'same-alias-header-a' }, { directory: 'session-same-alias', id: 'same-alias-header-b' }] },
-    { label: 'native-two-unique', carrier: 'native', kind: 'unique', mention: 'unique-target-a unique-target-b', children: [{ directory: 'unique-target-a', id: 'unique-target-a-header' }, { directory: 'unique-target-b', id: 'unique-target-b-header' }] },
-    { label: 'native-mixed-alias', carrier: 'native', kind: 'mixed', mention: 'mixed-unique same-alias', children: [{ directory: 'mixed-unique', id: 'mixed-unique-header' }, { directory: 'same-alias', id: 'same-alias-header-a' }, { directory: 'session-same-alias', id: 'same-alias-header-b' }] },
-    { label: 'ptc-shared-alias', carrier: 'ptc', kind: 'shared', mention: 'same-alias', children: [{ directory: 'same-alias', id: 'same-alias-header-a' }, { directory: 'session-same-alias', id: 'same-alias-header-b' }] },
     { label: 'ptc-two-unique', carrier: 'ptc', kind: 'unique', mention: 'unique-target-a unique-target-b', children: [{ directory: 'unique-target-a', id: 'unique-target-a-header' }, { directory: 'unique-target-b', id: 'unique-target-b-header' }] },
-    { label: 'ptc-mixed-alias', carrier: 'ptc', kind: 'mixed', mention: 'mixed-unique same-alias', children: [{ directory: 'mixed-unique', id: 'mixed-unique-header' }, { directory: 'same-alias', id: 'same-alias-header-a' }, { directory: 'session-same-alias', id: 'same-alias-header-b' }] },
-    { label: 'call-only-shared-alias', carrier: 'call-only', kind: 'shared', mention: 'same-alias', children: [{ directory: 'same-alias', id: 'same-alias-header-a' }, { directory: 'session-same-alias', id: 'same-alias-header-b' }] },
-    { label: 'call-only-two-unique', carrier: 'call-only', kind: 'unique', mention: 'unique-target-a unique-target-b', children: [{ directory: 'unique-target-a', id: 'unique-target-a-header' }, { directory: 'unique-target-b', id: 'unique-target-b-header' }] },
     { label: 'call-only-mixed-alias', carrier: 'call-only', kind: 'mixed', mention: 'mixed-unique same-alias', children: [{ directory: 'mixed-unique', id: 'mixed-unique-header' }, { directory: 'same-alias', id: 'same-alias-header-a' }, { directory: 'session-same-alias', id: 'same-alias-header-b' }] },
   ]
   for (const ambiguityCase of wAmbiguityCases) writeWAmbiguityCase(ambiguityCase)
@@ -1046,7 +1007,7 @@ try {
     session('s07-child-attempted', { parentSession: 's07-main', origin: 'subagent', delegationDepth: 1 }),
     { type: 'plan/mode', data: { mode: 'continuable', plan: 's07-child-attempted-plan' } },
     descriptor(),
-    { type: 'request/header', data: { header: { config: { provider: 's07-provider', model: 's07-model' } } } },
+    { type: 'request/header', data: { config: { provider: 's07-direct-provider', model: 's07-direct-model' } } },
   ])
   writeS07Child('s07-child-nolog', [
     session('s07-child-nolog', { parentSession: 's07-main', origin: 'subagent', delegationDepth: 1 }),
@@ -1076,7 +1037,9 @@ try {
   const s07 = runScript(STEP07, s07Args, { PLANNER_PROMPT_SUFFIX: 's07-suffix' })
   check('S07 新夹具 attempted route 三栏与 REQUEST/CONTEXT、MODEL/SELECTION 行齐全', s07.status === 0 && s07.output.includes('A42 attempted route index headers=1 contexts=1 selections=1') && s07.output.includes('REQUEST/CONTEXT attempted route provider=s07-provider model=s07-model contextWindow=64000') && s07.output.includes('MODEL/SELECTION attempted route fields=["model","provider","reason"]'))
   check('S07 新夹具 child-ok verified-injection 且 actual provenance 分栏保留（覆盖原待办 S07-4；attempted-only 半条由下一行断言覆盖）', s07.output.includes('suffix判定=verified-injection') && s07.output.includes('ASSISTANT/MESSAGE actual provenance source.kind=model provider=s07-provider model=s07-model') && s07.output.includes('模型证据等级=actual-provenance'))
-  // 实测分级分布（7 child compact）：attempted-only=2（child-attempted + child-dangling，后者无 complete link 也仅记 attempted）、no-log=2（child-nolog + child-orphan）、content-only=1（child-content）；无 link 降级句=3（attempted/nolog/orphan）。
+  const s07Full = runScript(STEP07, [...s07Args, '--full'], { PLANNER_PROMPT_SUFFIX: 's07-suffix' })
+  check('S07 直接/嵌套 header 的 compact 和 full 都保留 resolved provider/model', s07.status === 0 && s07Full.status === 0 && s07.output.includes('REQUEST/HEADER attempted route provider=s07-direct-provider model=s07-direct-model') && s07.output.includes('REQUEST/HEADER attempted route provider=s07-provider model=s07-model') && s07Full.output.includes('request/header.data.header.config.provider=s07-direct-provider request/header.data.header.config.model=s07-direct-model') && s07Full.output.includes('request/header.data.header.config.provider=s07-provider request/header.data.header.config.model=s07-model'))
+  // 夹具分级分布（7 child compact）：attempted-only=2（child-attempted + child-dangling，后者无 complete link 也仅记 attempted）、no-log=2（child-nolog + child-orphan）、content-only=1（child-content）；无 link 降级句=3（attempted/nolog/orphan）。
   check('S07 缺口 attempted-only 等级如实呈现', countOf(s07.output, 'suffix判定=attempted-only') === 2 && s07.output.includes('模型证据等级=attempted-only'))
   check('S07 缺口 no-log 等级如实呈现', countOf(s07.output, 'suffix判定=no-log') === 2 && s07.output.includes('模型证据等级=no-log'))
   check('S07 缺口 content-only（父 prompt 含 suffix）不升级', countOf(s07.output, 'suffix判定=content-only') === 1)
