@@ -14,7 +14,7 @@
 
 - 续跑先沿用对应任务的既有增量备份目录；原始镜像及 manifest 不覆盖。失败修复另建独立 checkpoint，不能把失败版本写回原镜像，也不能用回滚删除此前已存在的 validator 或保留的未提交实现。
 - `SAVE_PLAN_LIMITS` 的唯一限制真源是 [save-contract.js](../../lib/save-contract.js)；本文只引用真源，不复制运行时限值。方案/验收工件自身携带模式、任务/组、检查与交接约定，某次任务的任务、检查、文件数量不作为未来模板。
-- 正文格式和字段关系以 [save-plan-validation.js](../../lib/save-plan-validation.js) 为真源，保存时真实源文件核实以 [save-tool-factories.js](../../lib/save-tool-factories.js) 为准；这里不复制另一张硬限制数值表。
+- 正文格式和字段关系以 [save-plan-validation.js](../../lib/save-plan-validation.js) 为真源，保存与草稿修复共用的源文件和证据核实以 [save-source-verification.js](../../lib/save-source-verification.js) 为准；这里不复制另一张硬限制数值表。
 - **新 save_plan 合同**：主文件、关联文件和带文件收尾都必须逐项声明文件操作与 `M` 修改点；既有文本修改的每个点写修改前范围、唯一原文锚点和具体动作，新建、删除、生成按受控例外填写。新调用强制新合同，旧工件只作历史，不自动补行。
 - 验收按同文件、同操作、对应 `M` 点、修改后新定位和客观期望核对，不要求改后行号等于改前；取证写当前真实行号，原方案不回写追坐标。
 - **字段示意（仅示意，不是当前仓库可直接保存的完整输入）**：真实使用须先读当前文件并替换路径、范围、锚点，同时保留卷首、组、依赖、自检、检查定义、200 字符等完整合同；行号仅作为字段值，不拼入路径或新顶层 JSON 参数。
@@ -157,7 +157,7 @@
 
 ## 单一来源提醒
 
-`gateWords` 只改 YAML；`SAVE_PLAN_LIMITS` 与 save_plan 限制数值只读 [lib/save-contract.js](../../lib/save-contract.js)，正文格式与字段关系以 [lib/save-plan-validation.js](../../lib/save-plan-validation.js) 为真源，真实源核实以 [lib/save-tool-factories.js](../../lib/save-tool-factories.js) 为准；`PROBE_LIMITS` 同样只读 save-contract 源码，文档不维护第二份运行时限值表。模型/usage/投影细节分别以对应 lib 与 step 脚本为准；历史故障、旧宿主面、77/217/209 等历史统计读[归档](ai-宿主耦合历史归档.md)，不作为当前值。
+`gateWords` 只改 YAML；`SAVE_PLAN_LIMITS` 与 save_plan 限制数值只读 [lib/save-contract.js](../../lib/save-contract.js)，正文格式与字段关系以 [lib/save-plan-validation.js](../../lib/save-plan-validation.js) 为真源，真实源和证据核实以 [lib/save-source-verification.js](../../lib/save-source-verification.js) 为准；`PROBE_LIMITS` 同样只读 save-contract 源码，文档不维护第二份运行时限值表。模型/usage/投影细节分别以对应 lib 与 step 脚本为准；历史故障、旧宿主面、77/217/209 等历史统计读[归档](ai-宿主耦合历史归档.md)，不作为当前值。
 
 ## 已知限制与遗留项
 

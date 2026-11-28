@@ -44,7 +44,7 @@ main 保留 `send_message`、`list_agents`，通过官方开关不注册 `interr
 | 角色标识与顺序 | `lib/role-contract.js`、`lib/agent-runtime.js`、`lib/runtime-lifecycle.js`、`lib/preset-sync.js` | `ROLE_IDS`/`ROLE_ORDERS` 是冻结身份与顺序合同，`PLANNER_PRESET_ID`/`REVIEWER_PRESET_ID`/`PROBER_PRESET_ID` 从同一数组派生；只描述身份与装配顺序，不承载权限策略。 |
 | gateWords | `assets/presets/extra-plan/agent.cordis.yml` + `lib/gate-words.js` | YAML 六键是唯一值源，apply 先整组校验，再注册六个变量；选项文案由闸门工具消费，旧词不推进状态。详见 [机制设计](ai-机制设计.md)。 |
 | run_code 组判定 | `lib/run-code-static.js` + 根入口 | 成员逐点判定、组拒零副作用；安全静态 literal 子集覆盖对象/数组/尾逗号，动态参数保留 argsText 走运行时瀑布；多调用需独立容错，planner 单实例受预算上限。 |
-| save_plan/save_probe | `lib/save-contract.js`、`lib/save-probe-validation.js`、`lib/save-persistence.js`、`lib/save-tool-factories.js` | 合同、校验、单次临时写入/顺序发布与有限清理、工具工厂分层；失败明确报错，由 AI 主动重试，不跨调用恢复旧事务。限制值以源码为准，详见机制设计与 step-06。 |
+| save_plan/save_probe | `lib/save-contract.js`、`lib/save-probe-validation.js`、`lib/save-source-verification.js`、`lib/save-persistence.js`、`lib/save-tool-factories.js` | 合同、校验、与草稿工具共享的源/证据核实、单次临时写入/顺序发布与有限清理、工具工厂分层；失败明确报错，由 AI 主动重试，不跨调用恢复旧事务。限制值以源码为准，详见机制设计与 step-06。 |
 | planner 预算 | `lib/planner-budget.js` | 按锚点计数，提醒/耗尽后申请继续探查；`exploreBudget` 不等于历史 evidence 数。 |
 | 模型路由 | `lib/model-routing.js` | planner 与非 planner 分离；legacy（兼容）/strict（严格）由开关分流，strict 必须完成真实 probe 或已验证父 fallback（回退）。唯一流程细节见 [流程备查](ai-流程备查.md#⑩-规划子代理)。 |
 | A/C/M 投影 | `lib/assembly-presentation.js` + 根入口 | 只改模型可见 assembly/schema/catalog，不替代 runtime deny；PTC 首轮手写 `tool:read`，L 段回宿主原文。A 验收保留合法 raw/history，只抑制新增发布重复，不以清历史达标。 |

@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-11-28 12:57:47（脚本自动更新时间戳行）
+> 上次同步：2026-11-28 18:44:16（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -36,12 +36,13 @@
 | 同步 usage 扫描/聚合/覆盖式更新／路径授权（同步入口 `scanUsageRows`/`archiveLedger`/`startupArchive`；扫描白名单、v4 多帧解压、九字段身份合并、单调性保护与单 archive temp→rename；`startupArchive` 先以日志 `mtime`→账本 `ts` 做增量判定裁定 changed，当轮内存模式/血缘识别由 `scanSessionPresets` 只对 changed 文件按递进窗口读首帧，白名单由 `startupArchiveUnsafe` 过滤后才解析，不读写持久 `session-presets`；默认 Host 账本为 `logs/dsh-extra-plan/extra-plan-usage-ledger.jsonl`，错误诊断按需写 `logs/dsh-extra-plan/extra-plan-usage-errors.jsonl`（`ts`/`reason`/`message` 均为字符串），共享目录中的其他日志由各自功能独立管理，统计只读快照不负责归档事务） | lib/usage-ledger.js | enumerateSessionLogs、scanUsageRows、scanUsageRowsOf、scanSessionPresets、ensureLedgerDirectory、publishArchive |
 | 会话状态生命周期／disposed 收尾／同步扫描聚合与单调性保护／root 与自身 session 血缘（断链/循环仍以空 root 合法落账；rootSessionId/agentPreset 可空，非法 context 拒绝）／四桶字段（provider、input/cacheRead/cacheWrite/output）／账本按九字段身份恒等一行、重复扫描结果恒等、本次扫描小于现状保留旧值并告警一次、`archiveRowOf` 的 `ts` 取成功解析 session 文件 ISO 毫秒 mtime／后台 controller owner 单飞与同根串行、取消提交边界 | index.js、lib/agent-runtime.js、lib/usage-ledger.js、lib/usage-ledger-background.js、lib/usage-ledger-worker.js | usageContextOf、usageRootOf、mergedArchiveGroups、archiveRowOf、noteRunCodeSubCall、childBaseline、startUsageLedgerBackground、createWorkerHandle、settleAfterExit、validateAndRebuild |
 | 启动归档／插件内置自动归档／H 默认账本唯一严格归档（默认账本为 `logs/dsh-extra-plan/extra-plan-usage-ledger.jsonl`；诊断仅按需写 `logs/dsh-extra-plan/extra-plan-usage-errors.jsonl`，每行仅有字符串 `ts`/`reason`/`message`；共享目录可含其他日志，本模块只管理本人两目标与 temp/lock；settings 行 apply 期只注册调度，存在 appReady 时在单层 root `ctx.effect` 内 `onReady` 之后经 `setImmediate` 发起固定 Worker，缺失或无 `onReady` 时回落 apply 内直接发起；主线程只传 pathContext 快照，Worker 复用 `startupArchive` 完成扫描/解压/聚合/严格解析/序列化/发布，失败只 `failed`/warn 不回退；`archiveLedger`/`startupArchive` 仍可同步直调；先按日志当前 `mtime` 与账本 `ts` 做统一 ISO 毫秒增量比较裁定 changed（相同跳过完整用量重扫，变化/回退/未入账才解析），只对 changed 文件按 512、8192、65536、整份递进窗口读首帧并判白名单、命中才解析；模式/血缘结果仅当轮内存，成功记文件 mtime，失败批次不推进 archive 水位并重试；不读写持久 `session-presets`，健康 up-to-date 零锁零写；首次 archive rename 前可协作取消并清本人 temp/lock，提交后返回真实 archived；单 archive temp→rename，不是双文件事务；预算 STARTUP_ARCHIVE_BUDGET_MS=3000ms 只在 archive 阶段检查点生效，不是扫描期限；可捕获的后台错误只报告失败/跳过并按需诊断留痕，apply 不等待归档、不会回退主线程同步扫描；账本路径由启动归档固定拼接，配置项 usageLedger.path 已退役；首行说明行位置与固定15键校验由本实现负责，options.onCheck 仅测试探针） | lib/usage-ledger.js、lib/usage-ledger-background.js、lib/usage-ledger-worker.js | archiveLedger、startupArchive、startupArchiveUnsafe、parseStrictLedgerText、assertUniqueArchiveRows、archiveTextOf、publishArchive、reportFailure、recordDiagnostic、acquireArchiveLock、startUsageLedgerBackground、createWorkerHandle |
-| 方案与验收落盘／save_plan 双写（逐文件操作与 M 点合同；修改前范围/唯一原文锚点→未来验收定位；真实源核实与行漂移取证；主会话侧任意路由态放行的受限规划工件，仅写 cwd/.extra-plan；工具不自动调度） | lib/save-tool-factories.js、lib/save-contract.js、index.js | defineSavePlan、registerSavePlan、saveArtifactBase |
+| 方案与验收落盘／save_plan 双写（逐文件操作与 M 点合同；修改前范围/唯一原文锚点→未来验收定位；真实源核实与行漂移取证；主会话侧任意路由态放行的受限规划工件，仅写 cwd/.extra-plan；工具不自动调度） | lib/save-tool-factories.js、lib/save-source-verification.js、lib/save-contract.js、index.js | defineSavePlan、verifyPlanSources、registerSavePlan、saveArtifactBase |
 | 落盘单次提交／有限清理（atomic/commit） | lib/save-persistence.js、index.js | atomicCommit |
 | 线索落盘／save_probe／证据报告（probe/evidence；限制值唯一来自 `save-contract.js#PROBE_LIMITS`；step-00 PR23/PR34/PR35 回归；主会话侧放行条件保持现状——route=plan + 目的已定 + 澄清完成；extractProbeEvidenceRefs 顺序固定：整体成对剥除（循环）→ 按顿号/分号/竖线拆分 → 逐段成对剥除 + trim → 过滤空串 → 去重；拆分符与剥除集均不含空格、半角逗号、`.`、`/`，单侧一律不剥） | lib/save-contract.js、lib/save-probe-validation.js、lib/save-tool-factories.js、index.js | validateProbe、renderProbeMarkdown、extractProbeEvidenceRefs |
 | save_plan 限制值／内部确定性 summary／双路径 ContentBlock 投影（SAVE_PLAN_LIMITS；formatSavePlanSummary 保留内部摘要口径，renderSavePlan 只把 paths 投影为唯一 text ContentBlock；并保留 save_probe 合同） | lib/save-contract.js | sanitizeTaskName、timestamp、sessionTagOf、saveArtifactBase、formatSavePlanSummary、renderSavePlan、renderProbeMarkdown、renderSaveProbe、extractProbeEvidenceRefs |
 | save_probe 校验／路径存在性与聚合拒绝 | lib/save-probe-validation.js | validateProbe、probePathOf |
-| save 工具工厂／严格校验顺序／paths-only／真实源核实 owner／W pathContext | lib/save-tool-factories.js | pathContextOf、resolveWorkspaceEntry、createSaveToolFactories、defineSavePlan、resolveSaveContext、verifyPlanSources、defineSaveProbe |
+| save 工具工厂／严格校验顺序／paths-only | lib/save-tool-factories.js | createSaveToolFactories、defineSavePlan、resolveSaveContext、defineSaveProbe |
+| 保存与草稿共用核实／会话工作区上下文／源文件、证据引用、未探查标记 | lib/save-source-verification.js | cwdOf、pathContextOf、resolveWorkspaceEntry、verifyPlanSources、verifyProbeEvidenceRef、unexploredMarkerOf |
 | edit_plan_draft／草稿修复／草稿回写重跑／.md_mid 行级编辑／转正（失败草稿就地修复后重跑与 save_plan 同源的合同/源/证据校验，通过即转正为成对正式 .md 并删草稿） | lib/plan-draft-tool.js | createPlanDraftToolFactories、defineEditPlanDraft、applyEdits、draftBaseOf |
 | save_plan 模式／任务块／卷首职责与块边界／逐文件与修改点解析 | lib/save-plan-validation.js | parseTaskDocument、validateIds、validateTaskShape |
 | save_plan 路径／资源／文件所有权与组 DAG（initialState 仅静态资格）／文件点与定位摘要 | lib/save-plan-validation.js | pathIssue、parseResources、validatePlanRelations、buildInternalOrder、buildSummary |
@@ -122,7 +123,8 @@
 | lib/save-persistence.js | 223 | 单次调用阶段感知提交：mkdir→临时文件逐项写入→逐项检查并顺序发布；失败保留首错/阶段，仅清理本次临时与已发布半套工件，清理失败附残留路径与原因，预存目标不覆盖；不创建/扫描/恢复跨调用 journal；末位 fs 依赖可注入。 |
 | lib/save-plan-validation.js | 1222 | save_plan 文本合同校验：模式/任务/路径所有权/依赖与执行组 DAG/资源/检查引用与验收组/收尾全局/摘要早拒；不启动代理或执行命令。 |
 | lib/save-probe-validation.js | 173 | save_probe 参数校验：数组/条目/长度/总量/path 存在性/range/evidence 聚合拒绝 |
-| lib/save-tool-factories.js | 459 | 显式依赖工厂：save_plan 执行顺序固定——参数校验（plan/checklist 均为字符串且各 ≥200 字）→ 取一次 cwd → 容错解析上下文（目录/base/会话标识，解析失败只记原错误继续走、绝不替换合同诊断）→ 未探查标记 → 合同校验 → 源核实 → 证据核实 → 用 context 单次 atomicCommit 落盘；未探查标记、合同校验（派遣摘要超限除外，只能改写更短的方案，不落草稿）、源核实、证据核实四处失败出口统一先落成对 .md_mid 草稿再抛错，草稿提示追加在原报错末尾、上下文不可用或草稿写失败只降级为一句提示；合法正文逐字保存、structured output 仅 paths、render 仅将两个 paths 投影为唯一 text ContentBlock；save_probe 保留既有证据诊断与落盘；不缓存 ctx/agent/会话状态。 |
+| lib/save-source-verification.js | 195 | 保存与草稿共用的会话路径上下文、源文件/证据核实与未探查标记；只负责核实，不装配工具或落盘。 |
+| lib/save-tool-factories.js | 270 | 显式依赖工厂：save_plan 执行顺序固定——参数校验（plan/checklist 均为字符串且各 ≥200 字）→ 取一次 cwd → 容错解析上下文（目录/base/会话标识，解析失败只记原错误继续走、绝不替换合同诊断）→ 未探查标记 → 合同校验 → 源核实 → 证据核实 → 用 context 单次 atomicCommit 落盘；未探查标记、合同校验（派遣摘要超限除外，只能改写更短的方案，不落草稿）、源核实、证据核实四处失败出口统一先落成对 .md_mid 草稿再抛错，草稿提示追加在原报错末尾、上下文不可用或草稿写失败只降级为一句提示；合法正文逐字保存、structured output 仅 paths、render 仅将两个 paths 投影为唯一 text ContentBlock；save_probe 保留既有证据诊断与落盘；不缓存 ctx/agent/会话状态。 |
 | lib/sdk-text-cache.js | 161 | apply 级 agent-keyed WeakMap SDK 文本缓存：完整 renderer 输入保守指纹、language/renderer 身份比较、并发 Promise 合并、reject/过期 Promise 不回写、dispose 回收；不持有 sessionId 或 PromptAssembly |
 | lib/settings-contract.js | 191 | 服务端设置 descriptor 单一合同：11 项的类型/生成默认引用/校验/UI metadata 与权威-投影双定位器，并导出 `createDefaultSettings`、分组与投影遍历源 |
 | lib/settings.js | 369 | 11 字段 volatile Config 与宿主行投影；settings apply 同时作为诊断日志清理与用量归档的唯一 owner，按 root 与 hostDataRoot 去重调度且两者分离；启动即执行 startupPrune 与 startupArchive；设置读写与权威行落盘由宿主 ConfigForms 与 preset-sync 的 mountPresetSync 承担，本入口不自建 HTTP 端点。 |
@@ -726,31 +728,31 @@
 | lib/save-probe-validation.js | pathViolation | L49-63 | 把探查路径解析与读校验的失败归为未授权、不存在或不可读三类文本，成功返回 null。 |  |
 | lib/save-probe-validation.js | validateProbe | L65-166 | 先校验四字段结构、条目、长度、总量与 range，再校验各路径可读；超限一律拒绝、不静默截断。 |  |
 | lib/save-probe-validation.js | probePathOf | L169-173 | 兼容旧调用：无上下文只做词法拼接返回路径，有上下文则走受控解析并校验授权与归属。 |  |
-| lib/save-tool-factories.js | probeRefDecorationHint | L16-18 | 证据引用疑似含 Markdown 装饰时的附加提示，裸路径引用返回空串不阻断校验 |  |
-| lib/save-tool-factories.js | cwdOf | L21-25 | 只读会话头部的 cwd 字符串，缺失或非字符串一律返回空串，不计算目录、短名与工件基准 |  |
-| lib/save-tool-factories.js | pathContextOf | L27-33 | 优先使用外部注入的路径上下文工厂，未提供或返回空时按会话 cwd 新建工作区上下文 |  |
-| lib/save-tool-factories.js | resolveSaveContext | L36-48 | 为两个保存工具统一构造会话标识、产出目录与工件基准名，任一步失败只影响本次调用不重试 |  |
-| lib/save-tool-factories.js | sourceCacheKey | L52-55 | 源文件缓存键归一：反斜杠转正斜杠，Windows 下再转小写，避免同一文件大小写重复读取 |  |
-| lib/save-tool-factories.js | resolveMissingWorkspaceIdentity | L57-72 | 目标缺失时逐级上溯已存在的父目录，拼出规范化的身份路径供存在性判定，不创建任何文件 |  |
-| lib/save-tool-factories.js | resolveWorkspaceEntry | L74-98 | 解析并缓存工作区文件条目，目标缺失时仍返回存在标记为假的身份条目，由调用方决定是否抛错 |  |
-| lib/save-tool-factories.js | strictTextEntry | L100-112 | 把缓存字节严格解码为文本：拒非法 UTF-8 与 NUL，去 BOM 并归一换行后切行 |  |
-| lib/save-tool-factories.js | literalCount | L114-123 | 统计单行内锚点原文出现次数，匹配后按针长度推进游标，空串按长度一下限推进以防死循环 |  |
-| lib/save-tool-factories.js | verifyModificationPoint | L125-142 | 校验修改点行号区间与定位锚点：锚点须在区间内恰好命中一次，越界或多次命中均抛出错误 |  |
-| lib/save-tool-factories.js | verifyPlanSources | L145-179 | 逐个文件记录校验存在性与操作合法性，并拦下多个记录指向同一真实目标，返回共享读缓存 |  |
-| lib/save-tool-factories.js | verifyFile | L148-175 | 单文件记录校验分支：新建要求目标不存在，修改则严格解码文本并逐点校验锚点，删除只查存在 |  |
-| lib/save-tool-factories.js | verifyProbeEvidenceRef | L181-202 | 校验探查证据引用真实可读且自带证据报告标题，缺失或非探查者落盘时抛出带装饰提示的错误 |  |
-| lib/save-tool-factories.js | unexploredMarkerOf | L208-212 | 方括号包裹的未探查/待确认标记判定：非字符串返回 null，命中返回匹配文本；save_plan 与 edit_plan_draft 共用同一判定与同一时机（合同校验之前），否则草稿工具会旁路未探查拒绝 |  |
-| lib/save-tool-factories.js | createSaveToolFactories | L215-459 | 按显式目录与持久化依赖构造两个保存工具定义，不持有宿主会话状态，失败只抛错不落盘 |  |
-| lib/save-tool-factories.js | replaceFiles | L218-221 | 草稿写盘的依赖选择：有 atomicReplace 走其覆盖语义，缺省回落 atomicCommit；两者签名不同，按各自形状调用 |  |
-| lib/save-tool-factories.js | dumpDrafts | L226-243 | 失败草稿落盘：仅在上下文可用时写 <context.dir>/draft 下 方案-/验收- 两份 .md_mid 供 edit_plan_draft 就地修复，否则只降级为一句提示；写失败也只降级说明，绝不掩盖调用方原本的报错 |  |
-| lib/save-tool-factories.js | relativeOf | L238 | 草稿提示用的展示路径：把 <savePlanDir>/draft/<name> 拼成反斜杠转正斜杠的串，只出现在提示文案里，不参与白名单或落盘判定 |  |
-| lib/save-tool-factories.js | defineSavePlan | L245-342 | 组装保存方案工具定义：参数合同、路径数组输出渲染与严格落盘执行体，成功只回传文件路径 |  |
-| lib/save-tool-factories.js | render | L266-268 | 方案工具结果渲染：把落盘路径数组交给方案渲染器输出可读文本，不改动结果值与调用参数 |  |
-| lib/save-tool-factories.js | execute | L271-340 | 方案工具执行体：校验参数与合同、核实源文件与证据后原子双写，成功只回传两个落盘路径 |  |
-| lib/save-tool-factories.js | failWithDraft | L296-298 | save_plan 的失败出口包装：先落失败草稿，再把草稿提示后缀追加到原报错文本末尾后抛出，绝不替换原报错 |  |
-| lib/save-tool-factories.js | defineSaveProbe | L344-456 | 组装保存探查工具定义：线索与证据数组参数、路径输出渲染与落盘执行体，不执行用户命令 |  |
-| lib/save-tool-factories.js | render | L432-434 | 探查工具结果渲染：按是否带证据选择证据报告或线索形态，只影响正文不影响文件名前缀 |  |
-| lib/save-tool-factories.js | execute | L437-454 | 探查工具执行体：先校验参数与路径再落盘线索文件，避免非法调用消耗工件基准序号与目录 |  |
+| lib/save-source-verification.js | probeRefDecorationHint | L14-16 | 证据引用疑似含 Markdown 装饰时的附加提示，裸路径引用返回空串不阻断校验 |  |
+| lib/save-source-verification.js | cwdOf | L19-23 | 只读会话头部的 cwd 字符串，缺失或非字符串一律返回空串，不计算目录、短名与工件基准 |  |
+| lib/save-source-verification.js | pathContextOf | L25-31 | 优先使用外部注入的路径上下文工厂，未提供或返回空时按会话 cwd 新建工作区上下文 |  |
+| lib/save-source-verification.js | sourceCacheKey | L35-38 | 源文件缓存键归一：反斜杠转正斜杠，Windows 下再转小写，避免同一文件大小写重复读取 |  |
+| lib/save-source-verification.js | resolveMissingWorkspaceIdentity | L40-55 | 目标缺失时逐级上溯已存在的父目录，拼出规范化的身份路径供存在性判定，不创建任何文件 |  |
+| lib/save-source-verification.js | resolveWorkspaceEntry | L57-81 | 解析并缓存工作区文件条目，目标缺失时仍返回存在标记为假的身份条目，由调用方决定是否抛错 |  |
+| lib/save-source-verification.js | strictTextEntry | L83-95 | 把缓存字节严格解码为文本：拒非法 UTF-8 与 NUL，去 BOM 并归一换行后切行 |  |
+| lib/save-source-verification.js | literalCount | L97-106 | 统计单行内锚点原文出现次数，匹配后按针长度推进游标，空串按长度一下限推进以防死循环 |  |
+| lib/save-source-verification.js | verifyModificationPoint | L108-125 | 校验修改点行号区间与定位锚点：锚点须在区间内恰好命中一次，越界或多次命中均抛出错误 |  |
+| lib/save-source-verification.js | verifyPlanSources | L128-162 | 逐个文件记录校验存在性与操作合法性，并拦下多个记录指向同一真实目标，返回共享读缓存 |  |
+| lib/save-source-verification.js | verifyFile | L131-158 | 单文件记录校验分支：新建要求目标不存在，修改则严格解码文本并逐点校验锚点，删除只查存在 |  |
+| lib/save-source-verification.js | verifyProbeEvidenceRef | L164-185 | 校验探查证据引用真实可读且自带证据报告标题，缺失或非探查者落盘时抛出带装饰提示的错误 |  |
+| lib/save-source-verification.js | unexploredMarkerOf | L191-195 | 方括号包裹的未探查/待确认标记判定：非字符串返回 null，命中返回匹配文本；save_plan 与 edit_plan_draft 共用同一判定与同一时机（合同校验之前），否则草稿工具会旁路未探查拒绝 |  |
+| lib/save-tool-factories.js | resolveSaveContext | L11-23 | 为两个保存工具统一构造会话标识、产出目录与工件基准名，任一步失败只影响本次调用不重试 |  |
+| lib/save-tool-factories.js | createSaveToolFactories | L26-270 | 按显式目录与持久化依赖构造两个保存工具定义，不持有宿主会话状态，失败只抛错不落盘 |  |
+| lib/save-tool-factories.js | replaceFiles | L29-32 | 草稿写盘的依赖选择：有 atomicReplace 走其覆盖语义，缺省回落 atomicCommit；两者签名不同，按各自形状调用 |  |
+| lib/save-tool-factories.js | dumpDrafts | L37-54 | 失败草稿落盘：仅在上下文可用时写 <context.dir>/draft 下 方案-/验收- 两份 .md_mid 供 edit_plan_draft 就地修复，否则只降级为一句提示；写失败也只降级说明，绝不掩盖调用方原本的报错 |  |
+| lib/save-tool-factories.js | relativeOf | L49 | 草稿提示用的展示路径：把 <savePlanDir>/draft/<name> 拼成反斜杠转正斜杠的串，只出现在提示文案里，不参与白名单或落盘判定 |  |
+| lib/save-tool-factories.js | defineSavePlan | L56-153 | 组装保存方案工具定义：参数合同、路径数组输出渲染与严格落盘执行体，成功只回传文件路径 |  |
+| lib/save-tool-factories.js | render | L77-79 | 方案工具结果渲染：把落盘路径数组交给方案渲染器输出可读文本，不改动结果值与调用参数 |  |
+| lib/save-tool-factories.js | execute | L82-151 | 方案工具执行体：校验参数与合同、核实源文件与证据后原子双写，成功只回传两个落盘路径 |  |
+| lib/save-tool-factories.js | failWithDraft | L107-109 | save_plan 的失败出口包装：先落失败草稿，再把草稿提示后缀追加到原报错文本末尾后抛出，绝不替换原报错 |  |
+| lib/save-tool-factories.js | defineSaveProbe | L155-267 | 组装保存探查工具定义：线索与证据数组参数、路径输出渲染与落盘执行体，不执行用户命令 |  |
+| lib/save-tool-factories.js | render | L243-245 | 探查工具结果渲染：按是否带证据选择证据报告或线索形态，只影响正文不影响文件名前缀 |  |
+| lib/save-tool-factories.js | execute | L248-265 | 探查工具执行体：先校验参数与路径再落盘线索文件，避免非法调用消耗工件基准序号与目录 |  |
 | lib/sdk-text-cache.js | isWeakKey | L7-9 | 判定值能否作为 WeakMap 键：非空对象或函数为真，原始值与 null 一律为假。 |  |
 | lib/sdk-text-cache.js | numberTag | L11-17 | 为数值生成稳定标签，区分 NaN、正负无穷与负零，避免指纹把不同数值混成同一份。 |  |
 | lib/sdk-text-cache.js | isArrayIndexKey | L19-23 | 判定字符串是否为合法数组下标键：非负整数、小于 4294967295 且字符串形式与原值一致。 |  |

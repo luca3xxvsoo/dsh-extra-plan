@@ -38,7 +38,7 @@
 
 - `save_plan` 必须成对写入方案与验收文件，主会话侧是任意路由态可用的受限规划工件；内容、目录和文件名合同不因路由放宽。`save_probe` 只在主会话/已认领探查者层可用，规划子代理不得委派探查者。
 - [save-persistence.js](../../lib/save-persistence.js) 只处理单次调用：mkdir → 临时文件逐项写入 → 逐项检查并顺序发布。失败保留首错与阶段，仅有限清理本次临时文件/已发布半套工件；清理失败附残留路径与原因，预存文件不覆盖，下一次调用不扫描、不恢复旧 journal，由 AI 主动重试。
-- 双写、单写共用阶段感知提交；不承诺跨进程 fsync。工具 schema/输出/渲染/execute 在 [save-tool-factories.js](../../lib/save-tool-factories.js)，路径基准取会话 cwd；限制与证据引用合同不能由入口文档另写第二份。
+- 双写、单写共用阶段感知提交；不承诺跨进程 fsync。工具 schema/输出/渲染/execute 在 [save-tool-factories.js](../../lib/save-tool-factories.js)，路径基准取会话 cwd；保存与草稿工厂从 [save-source-verification.js](../../lib/save-source-verification.js) 共用路径上下文辅助、源/证据核实和未探查标记检查；限制与证据引用合同不能由入口文档另写第二份。
 - `save_plan` 的摘要边界与预算影响以 [save-contract.js](../../lib/save-contract.js) 为唯一真源；本节只导航该源码，并说明摘要按每个修改点的锚点、验收定位与期望逐点展开，过长会阻止保存，调整合同后须同步 step-00 的 G2-F 边界用例复验；不在本文复制限制数值或比例表。
 - `save_plan` 一次通过仍直接写正式 `.md`；合同、源或证据核实失败时，除派遣摘要超限外，把两份正文落到 `.extra-plan/draft/` 下的 `方案-<base>.md_mid` 与 `验收-<base>.md_mid`，并在原报错文本末尾追加「可用 edit_plan_draft 修改」提示与两份草稿的工作区相对路径（超限不落草稿，只要求改写更短方案）。`edit_plan_draft`（[plan-draft-tool.js](../../lib/plan-draft-tool.js)）只接受位于 `.extra-plan`/`draft` 目录下、后缀恰为 `.md_mid` 的草稿，`.extra-plan` 根下的 `.md`、其它目录与其它后缀一律拒绝；文中 `.extra-plan` 与 `draft` 目录的表述均按 `savePlanDir` 默认值理解（默认 `'.extra-plan'`），该白名单实际由可配置的 `savePlanDir` 推导，不做硬编码；它按草稿原行号提供替换、真删行（drop）与行前插入三种行操作，同一批按行号倒序应用，任一编辑非法或越界则整批不生效。每次写盘后跑与 `save_plan` 相同的全套检测（复用同一 `verifyPlanSources` 与 `verifyProbeEvidenceRef`，不另写第二份校验）：通过即用 `atomicCommit` 双文件转正到 `.extra-plan` 根并删除两份草稿，不通过则保留本次修改并返回带行号诊断供继续修。唯一例外是方括号未探查/待确认标记：`save_plan` 命中该标记时仍落草稿（走 `failWithDraft`，与合同失败同款，草稿路径追加在原报错末尾）；`edit_plan_draft` 命中同一标记时整批拒绝且不写回草稿，这是唯一在校验阶段不写回的出口，因此「不通过则保留本次修改」对该分支不成立。该标记分支返回的 `lineCount` 是磁盘当前行数（与 schema 里「写回后草稿的行数」一致：本次未写回，磁盘内容即调用前内容），而 `diagnostics` 里「位置：第 N 行」指方案文本中标记所在行，两者语义不同。权限与 `FREE_TOOLS` 口径与 `save_plan` 一致（不新增路由态限制，白名单共两项）；`atomicCommit` 保持只创建不覆盖，草稿覆盖写走新增的 `atomicReplace`。两工具共用同一 `saveBootstrapWhen`，引导期同时隐藏、首个 `tool/call` 之后同时可见，不存在先后窗口。上下文不可用（缺 cwd/会话标识或目录授权失败）时两工具不同：`save_plan` 跳过源与证据核实，其余校验全部通过后以已记下的原错误拒绝、不落草稿也不落正式工件（零落盘）；`edit_plan_draft` 的缺 cwd 拒绝在 execute 最前面（plan-draft-tool.js 的 `cwdOf` 后立即判空，未解析路径、未写盘），走不到「全部核实通过」，不存在抛原错误这一步。step-06 的失败路径断言已同步为新契约。
 - 已知边界：草稿不自动清理，校验失败重试会按每次 `save_plan` 的 base 在 `draft/` 下累积新的 `.md_mid`，需手动清理，报错里会给出草稿的工作区相对路径；转正采用「新建正式工件 + 删除草稿」两步，两步之间异常可能残留草稿（返回值 `error` 会说明残留、可手动删除），未采用 rename 是为了复用既有持久化原语；方括号未探查/待确认标记对方案全文一律拦截、不识别代码围栏，属有意设计（宁可误拒不可漏放），可用 `drop` 删掉含标记的那一行后重试；同一份草稿被两个 agent 并发编辑时，校验通过到转正之间存在毫秒级竞态，实践不可达（每份草稿的 base 由单次 `save_plan` 生成，通常只有一位规划子代理在改）。
@@ -83,7 +83,7 @@
 |:--|:--|
 | 拒绝不能造成状态残留清除；取消必须清 route/purpose/clarified 三字段 | `gate-decisions.js`（`applyGateOutcome`）；step-04 DZ 对照 |
 | 组拒绝无工具副作用；参数不可解析不能绕过状态闸门 | `run-code-static.js`；step-00/04 |
-| 方案/验收必须成对、失败按本次有限清理并主动重试；校验失败另落双草稿（派遣摘要超限除外）、草稿保留可继续修 | save 六模块（`save-contract.js`/`save-persistence.js`/`save-plan-validation.js`/`save-probe-validation.js`/`save-tool-factories.js`/`plan-draft-tool.js`）；step-06 |
+| 方案/验收必须成对、失败按本次有限清理并主动重试；校验失败另落双草稿（派遣摘要超限除外）、草稿保留可继续修 | 保存模块（`save-contract.js`/`save-persistence.js`/`save-plan-validation.js`/`save-probe-validation.js`/`save-source-verification.js`/`save-tool-factories.js`/`plan-draft-tool.js`）；step-06 |
 | 模型路由必须真实验证或可靠 fallback（回退） | `model-routing.js`；流程 ⑩/step-00 |
 | 展示隐藏不是 runtime 安全隔离；P2-2 cache 不跨 Agent | `assembly-presentation.js`、`sdk-text-cache.js`；step-04 |
 | usage 账本由启动扫描覆盖式更新，按身份隔离且单调 | `lib/usage-ledger.js`；step-00 M6 |

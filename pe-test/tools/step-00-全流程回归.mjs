@@ -5213,6 +5213,19 @@ for (const [label, code, expected] of J_LITERAL) {
 }
 
 // ── RC 系列:拆分后静态模块边界与静态 helper 直接回归 ─────────────────
+{
+  const draftSource = readFileSync(new URL('../../lib/plan-draft-tool.js', import.meta.url), 'utf8')
+  const sharedSource = readFileSync(new URL('../../lib/save-source-verification.js', import.meta.url), 'utf8')
+  checkTrue('RC-SAVE1 草稿直接依赖共享核实模块；无工厂依赖及反向入口',
+    draftSource.includes('./save-source-verification.js') && !draftSource.includes('./save-tool-factories.js')
+      && !['save-tool-factories.js', 'plan-draft-tool.js', 'save-persistence.js', '../index.js'].some(path => sharedSource.includes(path)))
+  const legacy = await import('../../lib/save-tool-factories.js')
+  const shared = await import('../../lib/save-source-verification.js')
+  const names = ['cwdOf', 'pathContextOf', 'unexploredMarkerOf', 'verifyPlanSources', 'verifyProbeEvidenceRef']
+  checkTrue('RC-SAVE2 保存工厂兼容导出五个同源函数',
+    names.every(name => typeof shared[name] === 'function' && legacy[name] === shared[name]))
+}
+
 const rcL1Code = [
   "const one = 'tools.write({ path: " + String.fromCharCode(92) + "'x" + String.fromCharCode(92) + "' })';",
   "const two = " + JSON.stringify('tools.edit({ file_path: "x" })') + ";",
