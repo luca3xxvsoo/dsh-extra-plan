@@ -1517,22 +1517,44 @@ checkTrue(
   })
   g4CheckCase('G4 月界/闰年北京昨日零点与边界1ms', g4MonthBoundary)
 
-  const g4PrefixFirstValid = await g4RunCase({
-    label: 'g4-prefix-first-valid',
-    now: g4MatrixNow,
-    observeWrites: true,
-    files: {
-      'extra-plan-agent-errors.jsonl': g4RowsText(
-        JSON.stringify({ id: 'prefix-first-valid-head', ts: '2026-11-16T01:00:00.000Z' }),
-        JSON.stringify({ id: 'prefix-first-valid-expired', ts: '2026-11-14T00:59:59.999Z' }),
-        JSON.stringify({ id: 'prefix-first-valid-tail', ts: '2026-11-15T00:00:00.000Z' })
-      ),
-      [g4AnchoredName]: g4RowsText(
-        JSON.stringify({ id: 'prefix-first-valid-anchored-head', ts: '2026-11-15T23:00:00.000Z' }),
-        JSON.stringify({ id: 'prefix-first-valid-anchored-expired', ts: '2026-11-14T15:59:59.999Z' })
-      )
+  const g4LargeLog = 'extra-plan-agent-errors.jsonl'
+  const g4ReadFs = (await import('node:fs')).default
+  const { syncBuiltinESMExports: syncG4ReadExports } = await import('node:module')
+  const g4OpenRead = g4ReadFs.createReadStream
+  const g4Reads = []
+  let g4PrefixFirstValid
+  try {
+    g4ReadFs.createReadStream = function (file, ...args) {
+      const stream = g4OpenRead.call(this, file, ...args)
+      if (typeof file === 'string' && file.endsWith(g4LargeLog)) g4Reads.push(stream)
+      return stream
     }
-  })
+    syncG4ReadExports()
+    g4PrefixFirstValid = await g4RunCase({
+      label: 'g4-prefix-first-valid',
+      now: g4MatrixNow,
+      observeWrites: true,
+      files: {
+        [g4LargeLog]: g4RowsText(
+          JSON.stringify({ id: 'prefix-first-valid-head', ts: '2026-11-16T01:00:00.000Z' }),
+          JSON.stringify({ id: 'prefix-first-valid-expired', ts: '2026-11-14T00:59:59.999Z' }),
+          JSON.stringify({ id: 'prefix-first-valid-tail', ts: '2026-11-15T00:00:00.000Z' }),
+          ...Array(4096).fill(JSON.stringify({ id: 'repeat-tail', ts: '2026-11-14T00:00:00.000Z' }))
+        ),
+        [g4AnchoredName]: g4RowsText(
+          JSON.stringify({ id: 'prefix-first-valid-anchored-head', ts: '2026-11-15T23:00:00.000Z' }),
+          JSON.stringify({ id: 'prefix-first-valid-anchored-expired', ts: '2026-11-14T15:59:59.999Z' })
+        )
+      }
+    })
+  } finally {
+    g4ReadFs.createReadStream = g4OpenRead
+    syncG4ReadExports()
+  }
+  const g4ReadSize = g4PrefixFirstValid.before.get(g4LargeLog).bytes.length
+  const g4FirstScan = g4Reads[0]
+  checkTrue('G4 首行有效的大日志只读前段并关闭读流', g4Reads.length === 1 && g4FirstScan.closed && g4FirstScan.bytesRead > 0 && g4FirstScan.bytesRead < g4ReadSize)
+  console.log('MARKER G4 prefix early stop ' + JSON.stringify({ bytesRead: g4FirstScan?.bytesRead, fileBytes: g4ReadSize, closed: g4FirstScan?.closed }))
   g4CheckCase('G4 前缀首行有效未过期零写整文件保留', g4PrefixFirstValid)
   checkTrue('G4 前缀首行有效写观测全0', g4PrefixFirstValid.writeObservation !== null && Object.values(g4PrefixFirstValid.writeObservation).every((calls) => calls.length === 0))
   checkTrue('G4 前缀首行有效后续过期行原样保留', g4PrefixFirstValid.after.get('extra-plan-agent-errors.jsonl').text.includes('prefix-first-valid-expired') && g4PrefixFirstValid.after.get(g4AnchoredName).text.includes('prefix-first-valid-anchored-expired'))

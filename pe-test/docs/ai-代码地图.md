@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-11-27 21:40:33（脚本自动更新时间戳行）
+> 上次同步：2026-11-28 12:57:47（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -94,7 +94,7 @@
 
 | 文件 | 行数 | 说明 |
 |:--|--:|:--|
-| index.js | 1744 | 核心入口：闸门状态与 extra_plan_gate 工具注册、预算、save 工具注册与生命周期；接线 planner/非 planner 路由、A/C/M 投影、P2-2 cache、usage 启动扫描账本（覆盖式幂等更新）、v4 MALFORMED 自愈。gateWords 只来自 YAML，apply 先校验再副作用；tools/pre-execute 先用原始 `isSubagentChild` 预审 child 控制工具，再进入角色/root 闸门，main 控制与自动最终结果保持；不再负责诊断日志启动清理。 |
+| index.js | 1743 | 核心入口：闸门状态与 extra_plan_gate 工具注册、预算、save 工具注册与生命周期；接线 planner/非 planner 路由、A/C/M 投影、P2-2 cache、usage 启动扫描账本（覆盖式幂等更新）、v4 MALFORMED 自愈。gateWords 只来自 YAML，apply 先校验再副作用；tools/pre-execute 先用原始 `isSubagentChild` 预审 child 控制工具，再进入角色/root 闸门，main 控制与自动最终结果保持；不再负责诊断日志启动清理。 |
 | lib/agent-runtime.js | 172 | 每次 apply 的角色识别、descriptor/工具 schema 缓存、usage 血缘上下文与 role baseline、四角色宿主 mode 与显式 override 幂等；不 import index.js |
 | lib/agent-session.js | 65 | 会话事件与子代理识别的唯一来源：sessionEvents/isSubagentChild 零依赖纯函数，被 index.js 与 lib/model-routing.js 共用（无镜像副本；不 import index.js） |
 | lib/assembly-presentation.js | 267 | A/C/M 与 skill catalog 模型可见投影；从 scoped tools 读 schema/模式，SDK renderer 按 language 整体重建；F/PTC 的 tool:read 由 index.js 手写，L 段回宿主原文。 |
@@ -104,14 +104,14 @@
 | lib/gate-decisions.js | 749 | 闸门状态推导（唯一推进源是 extra_plan_gate 事件）与角色分流判定纯函数集 |
 | lib/gate-words.js | 108 | 闸门关键词共享契约（唯一值源是 YAML 的 config.gateWords）：字段规格 GATE_WORD_FIELDS/GATE_WORDS_GROUP_DEFINITION（6 键整组）+ 整组严格校验 validateGateWords（错误一律以 extra-plan: config.gateWords 开头）+ 运行时词表 createGateRuntime（显式入参严格校验，无默认词表）；纯模块：不含任何出厂词值、不读文件与环境变量，被 index.js（运行时）与 lib/preset-sync.js（启动自愈）共享（迁移叶 locator 已随跨版本搬迁链删除）；本函数只判定单次入参，持久值缺失/非法的回落补齐在 preset-sync |
 | lib/live-config.js | 293 | 配置热读：10 项运行时 getter（含 webFetch）；1 项装载期权威设置（toolPresentationMode）只读并派生到内存 definition，不暴露为 getter；构造期读盘一次，后续按增强 stamp（dev/ino/size/mtimeNs/ctimeNs，兼容 ino/size/mtimeMs/ctimeMs）重读；失败整组回退并告警，不读 DSH_HOME 旧目录 |
-| lib/log-retention.js | 123 | 诊断日志保留期裁剪：只处理 <host 根>/logs/dsh-extra-plan 下 .jsonl 普通文件并排除 usage-ledger；全部诊断 JSONL 统一按固定 UTC+8 北京时间昨日零点保留今天/昨天两个自然日；前缀边界算法两遍式（分界扫描+自分界起无解析复制）经临时文件原子替换，分界线=首个可解析且 cutoff<=ts<=now 的行，坏行/空行/未来行随前缀删除，分界后原样保留（含乱序过期行，随保留窗口自然收敛），零写=文件0行或分界为0，全前缀候选清空为空文件；不 import index.js。 |
+| lib/log-retention.js | 120 | 诊断日志保留期裁剪：只处理 <host 根>/logs/dsh-extra-plan 下 .jsonl 普通文件并排除 usage-ledger；全部诊断 JSONL 统一按固定 UTC+8 北京时间昨日零点保留今天/昨天两个自然日；前缀边界算法两遍式（分界扫描+自分界起无解析复制）经临时文件原子替换，分界线=首个可解析且 cutoff<=ts<=now 的行，坏行/空行/未来行随前缀删除，分界后原样保留（含乱序过期行，随保留窗口自然收敛），零写=文件0行或分界为0，全前缀候选清空为空文件；不 import index.js。 |
 | lib/model-routing.js | 648 | planner/非 planner 子代理模型路由：顶层纯判定函数 + createModelRouting per-apply 工厂（per-instance WeakMap、惰性 llm/agents getter；不 import index.js） |
 | lib/path-policy.js | 464 | 核心包双根路径策略入口：H/W 用途判定、变量与链接边界、只读能力与写入预检，供各工具复用 |
 | lib/plan-draft-tool.js | 294 | edit_plan_draft 工具工厂：只接受 save_plan 报错给出的 <savePlanDir>/draft 下 方案-/验收- 前缀 .md_mid（按归一化 target.path 判白名单，其它路径一律拒绝且不创建草稿）；对草稿做行级增删改后先写回再重跑与 save_plan 同源的合同/源/证据校验，通过即转正为成对正式 .md 并删草稿；唯一不写回的入口是命中未探查/待确认标记 |
 | lib/planner-budget.js | 136 | planner 工具计数、消息后缀/预算提示/耗尽文案；**预算提醒消息经宿主 createUserMessage 构造，source 用生产者自有 kind `plugin:dsh-extra-plan`（v4 行准入禁旧包裹 `plugin`，违者会话当场终止）**；默认预算由生成模块提供，FREE_TOOLS 定义在 lib/gate-decisions.js |
 | lib/preset-defaults.generated.js | 17 | 由 YAML 模板生成的十一键 `DEFAULT_SETTINGS` 与兼容别名 runtime fallback（回退）常量；generated（生成）/do not edit（勿手改） |
 | lib/preset-settings.js | 3 | 11 项设置描述与 YAML 定位；settings 行是权威值，声明行只投影 1 项装载期项（toolPresentationMode，靠 executor 行身份）；capture/投影读取、plugins 行整体重述。 |
-| lib/preset-sync.js | 789 | 读取并严格校验纯 definition；只按当前 settings 行补齐缺失/非法普通项与词表（非法词表回落资产默认）并派生当前 definition，顺序挂载官方 AgentPreset adapter；新写入仅经唯一全局行 configEditor.edit；mountPresetSync 以 settled 回调交付最终十一项/gateWords。 |
+| lib/preset-sync.js | 797 | 读取并严格校验纯 definition；只按当前 settings 行补齐缺失/非法普通项与词表（非法词表回落资产默认）并派生当前 definition，顺序挂载官方 AgentPreset adapter；新写入仅经唯一全局行 configEditor.edit；mountPresetSync 以 settled 回调交付最终十一项/gateWords。 |
 | lib/preset-yaml.js | 438 | 预设 YAML 纯职责模块：解析、当前行定位与歧义分类、权威设置捕获、canonical settings 行规划与规范文本定位。 |
 | lib/role-contract.js | 11 | 冻结角色 ID/order 数组，并由同一 ROLE_IDS 数组派生 planner/reviewer/prober preset ID；只提供身份与装配顺序，不承载权限、沙箱或生命周期策略。 |
 | lib/run-code-scanner.js | 360 | run_code 无宿主状态词法扫描器：字符串/注释遮蔽、括号配平、tools 调用点收集与动态访问判定。 |
@@ -125,7 +125,7 @@
 | lib/save-tool-factories.js | 459 | 显式依赖工厂：save_plan 执行顺序固定——参数校验（plan/checklist 均为字符串且各 ≥200 字）→ 取一次 cwd → 容错解析上下文（目录/base/会话标识，解析失败只记原错误继续走、绝不替换合同诊断）→ 未探查标记 → 合同校验 → 源核实 → 证据核实 → 用 context 单次 atomicCommit 落盘；未探查标记、合同校验（派遣摘要超限除外，只能改写更短的方案，不落草稿）、源核实、证据核实四处失败出口统一先落成对 .md_mid 草稿再抛错，草稿提示追加在原报错末尾、上下文不可用或草稿写失败只降级为一句提示；合法正文逐字保存、structured output 仅 paths、render 仅将两个 paths 投影为唯一 text ContentBlock；save_probe 保留既有证据诊断与落盘；不缓存 ctx/agent/会话状态。 |
 | lib/sdk-text-cache.js | 161 | apply 级 agent-keyed WeakMap SDK 文本缓存：完整 renderer 输入保守指纹、language/renderer 身份比较、并发 Promise 合并、reject/过期 Promise 不回写、dispose 回收；不持有 sessionId 或 PromptAssembly |
 | lib/settings-contract.js | 191 | 服务端设置 descriptor 单一合同：11 项的类型/生成默认引用/校验/UI metadata 与权威-投影双定位器，并导出 `createDefaultSettings`、分组与投影遍历源 |
-| lib/settings.js | 361 | 11 字段 volatile Config 与宿主行投影；settings apply 同时作为诊断日志清理与用量归档的唯一 owner，按 root 与 hostDataRoot 去重调度且两者分离；启动即执行 startupPrune 与 startupArchive；设置读写与权威行落盘由宿主 ConfigForms 与 preset-sync 的 mountPresetSync 承担，本入口不自建 HTTP 端点。 |
+| lib/settings.js | 369 | 11 字段 volatile Config 与宿主行投影；settings apply 同时作为诊断日志清理与用量归档的唯一 owner，按 root 与 hostDataRoot 去重调度且两者分离；启动即执行 startupPrune 与 startupArchive；设置读写与权威行落盘由宿主 ConfigForms 与 preset-sync 的 mountPresetSync 承担，本入口不自建 HTTP 端点。 |
 | lib/shell-mutation.js | 484 | 跨平台命令文本解码与 pwsh/bash 写形态判定；纯函数、不持有 apply 状态 |
 | lib/usage-ledger-background.js | 214 | 后台账本调度 controller：只快照可信 pathContext，按 owner 单飞与 hostDataRoot 串行创建固定 Worker，处理协议、协作取消和 exit 后终态；不复制扫描算法。 |
 | lib/usage-ledger-worker.js | 116 | 真实 Worker 入口：重建 pathContext 并复用同步 startupArchive 完成扫描、解析与发布，传递小型终态结果，响应共享取消位后关闭 port。 |
@@ -145,78 +145,78 @@
 
 | 文件 | 函数 | 行号 | 功能描述 | 备注 |
 |:--|:--|:--|:--|:--|
-| index.js | malformedRecovery | L196-230 | MALFORMED_RESPONSE 同回合限次自愈：注入失败或坐标缺失仍返回 retry，其余回退原 action。 |  |
-| index.js | safeContextGet | L243-249 | 通过 ctx.get 取宿主服务，取不到或抛错时返回 undefined，不向上传播异常 |  |
-| index.js | absoluteRoot | L251-258 | 把候选根路径归一成绝对工作区根，空串、非字符串或非法输入一律返回 null 而不抛错 |  |
-| index.js | rootFact | L260-264 | 把带存在标记的根路径归一为 missing、invalid 或 valid 三态事实对象 |  |
-| index.js | sameRoot | L266-271 | 两个根路径都非空时按平台归一后比较是否同一根，Windows 下转小写，任一侧为空即判否 |  |
-| index.js | configEditorServiceOf | L273-276 | 取 configEditor 服务并校验具备读取与编辑方法，不合格返回 null |  |
-| index.js | documentFact | L278-282 | 把配置文档路径归一为 missing、invalid 或 valid 事实，空值按缺失处理 |  |
-| index.js | profileFactsOf | L284-334 | 汇总 profile、宿主根与配置文档的可信事实，并标注 valid、conflict 或 invalid 状态 |  |
-| index.js | has | L286 | 判断 profile 对象是否为对象且自身带有某键，用于区分字段缺失与显式空值，不抛错 |  |
-| index.js | installAnchorOf | L336-338 | 从 profile 事实里取出安装锚点路径，缺失或非法时返回 null，不抛错，供锚点钩子判空 |  |
-| index.js | pathRootsOverlap | L342-350 | 判定两个路径根是否重叠：规范化后互为前缀即视为重叠，供 H/W 重叠分类使用 |  |
-| index.js | pathContextFor | L352-373 | 用可信 profile 事实装配路径上下文与写入口径能力，全部为空时返回 null 而不抛错 |  |
-| index.js | resolveDocumentTargetFor | L375-383 | 按配置文档事实解析精确宿主目标路径，事实非法或矛盾时抛错拒绝热读，缺路径返回空串 |  |
-| index.js | sessionCwdOf | L385-389 | 从 agent 的会话头里取工作目录，缺失或非字符串时返回空串，供路径上下文现算使用 |  |
-| index.js | resolveAbsoluteLogTarget | L391-397 | 绝对诊断路径的两级解析：先按宿主根解析再按工作区根解析，两者皆失败时抛出首个错误 |  |
-| index.js | diagnosticTargetOf | L399-414 | 决定诊断文件落点：裸文件名按宿主、工作区、缺根三态分派，不可用时返回 null 不抛错 |  |
-| index.js | prepareDiagnosticPath | L416-432 | 先建父目录再校验写入目标，成功返回可写诊断路径，任一步失败都一律返回空串且不抛错 |  |
-| index.js | appendDiagnostic | L434-439 | 以 UTF-8 追加一行 JSON 诊断记录，路径不可得时返回假而不抛错，供调用方判空 |  |
-| index.js | recordAgentError | L441-458 | agent/error 回合错误取证：错误链逐字追加到诊断目录（落点见 getDiagPath），整体吞错不阻断。 | 与 recordRequestError 同诊断模式 |
-| index.js | apply | L462-1744 | 插件主入口：闸门词表先校验，再接线投影、路由与 save 工具注册（顺序以机制设计为准）；静态可解析 run_code 组在 next 前预审，动态或未解析成员交由实际 pre-execute 重入重新判定；不再接管诊断日志启动清理。 |  |
-| index.js | getPathContext | L486 | 传给保存类工具工厂的取上下文回调：按 cwd 现算路径上下文，属宿主接线且不缓存 |  |
-| index.js | getPathContext | L493 | 传给草稿修复工具工厂的取上下文回调：按 cwd 现算路径上下文，属宿主接线且不缓存 |  |
-| index.js | resolveDocumentTarget | L503 | 传给配置热读器的文档目标回调：按 agent 现算精确宿主目标，属宿主接线不缓存 |  |
-| index.js | getPathContext | L504 | 传给配置热读器的取上下文回调：按 agent 的会话工作目录现算路径上下文，属宿主接线 |  |
-| index.js | plannerModel | L519 | 热读箭头 getter：规划者默认模型（liveConfig.plannerModel；消费点=model-routing 的 getPlannerModel） |  |
-| index.js | otherAgentModel | L520 | 热读箭头 getter：其他子代理默认模型（消费点=model-routing 的 getOtherAgentModel） |  |
-| index.js | reviewerUsesPlannerModel | L521 | 热读箭头 getter：验收者是否复用规划模型，按 agent 现取并回退 apply 快照 |  |
-| index.js | exploreBudget | L522 | 热读箭头 getter：规划者探查额度/单实例子调用上限（消费点=预算文案、noteRunCodeSubCall、plannerGateReason 与组判定） |  |
-| index.js | plannerPromptSuffix | L523 | 热读箭头 getter：pre-step 拼接的额外引导后缀 |  |
-| index.js | bootstrapOn | L524 | 热读箭头 getter：anchored 首轮引导开关；A/F gate 优先由 isAnchoredContextGate 与 pre-step 按当前 agent/events 判定，不把 C catalog 隐藏混入本 getter |  |
-| index.js | runcodeCatchGateOn | L525 | 热读箭头 getter：PTC try/catch 闸门开关（消费点=planner/只读 child/主会话三处组判定传参） |  |
-| index.js | crossProviderPlannerModel | L526 | 热读箭头 getter：跨 provider 规划模型开关，按 agent 现取配置值 |  |
-| index.js | creativeModeOn | L529 | 热读箭头 getter：C creativeMode 开关；C=0 时 shouldHideCreativeCatalog 供投影视图暂隐创造 skill，展示隐藏不改变 registry binding |  |
-| index.js | webFetchOn | L531 | 热读箭头 getter：web_fetch 免重启开关，供 web_fetch 裁剪的 arm/release 与 pre-step 判据共用 |  |
-| index.js | getAgents | L548 | 惰性返回 ctx.get('agents') 服务；注入 createAgentRuntime，供判定子会话是否为其父代理下的活跃派发。 |  |
-| index.js | warn | L550 | 把告警参数原样转发到 console.warn；注入 createAgentRuntime，作为缺父代理等异常情况的告警出口。 |  |
-| index.js | getPlannerModel | L558 | 返回热读配置 plannerModel（planner 子代理所用模型名）；注入 createModelRouting 供 planner 模型路由决议。 |  |
-| index.js | getOtherAgentModel | L559 | 返回热读配置 otherAgentModel（非 planner 子代理所用模型名，空串表示不覆盖）；供非 planner 路由决议。 |  |
-| index.js | getCrossProviderPlannerModel | L560 | 返回热读布尔开关 crossProviderPlannerModel；决定 planner 路由走跨 provider 严格探针还是旧单 provider 路径。 |  |
-| index.js | getLlm | L561 | 返回 ctx.get('llm') 服务；供 model-routing 查 provider 模型目录（listModels）与真实探针调用。 |  |
-| index.js | getAgents | L562 | 返回 ctx.get('agents') 服务（同名第 2 处，消费方为 model-routing）；供经 agents.get 回溯父会话链的 provider/model/maxTokens。 |  |
-| index.js | getDiagPath | L563 | 返回诊断路径：诊断目录 host logs/dsh-extra-plan/ 或 W .extra-plan/logs/；供 planner 降级诊断。 |  |
-| index.js | noteRunCodeSubCall | L591 | 单实例子调用上限（planner）：按 sessionId→rootCallId 桶读计数、未超限则 +1；返回拒绝文案或 null；空 rootCallId 与 exploreBudget 文案保持 |  |
-| index.js | consumeToolJobsNotice | L592-625 | tool-jobs 通知按 message.id 判重：首次有效通知解锁 job_output 与 pollGuard。 | 消费与双解锁语义见 ai-机制设计.md 六「session 生命周期与 usage 账本」的通知消费合同条。 |
-| index.js | userQuestionsServiceOf | L633-650 | 取宿主 userQuestions 的 ask 能力：先按 agent 作用域 ctx 取，失败回落到 apply 级 ctx，取不到返回 undefined。 |  |
-| index.js | askGateUser | L653-672 | 闸门提问通道：缺 id 的提问补齐稳定 id 后交 userQuestions.ask；服务缺失抛 NO_PROVIDER，由工具层转 channel-error。 |  |
-| index.js | registerGateTool | L679-698 | 按 apply 幂等注册 extra_plan_gate（WeakSet 记录）：tools 服务缺失只 warn，重复注册保留既有工具，不向 agent/created 抛出。 |  |
-| index.js | selectChildModelOnCreate | L708-759 | 子代理创建时按角色选模型：验收者按 reviewerUsesPlannerModel 走 planner 路由，其余走 otherAgentModel，失败普通回退 |  |
-| index.js | toolsServiceOf | L780-793 | 取 agent 作用域 tools 服务：优先 ctx.tools，其次 ctx.get('tools')，异常一律返回 undefined |  |
-| index.js | restrictableNamesOf | L796-806 | 取可收窄名集合：仅取 view(agent).restrictableNames，缺失或异常一律返回 null（schemas 兜底在 anchoredAllowNamesOf 内） |  |
-| index.js | restrictableSnapshotOf | L807-810 | 把可收窄名集合转成排序数组供诊断落盘，null 原样透传 |  |
-| index.js | toolRestrictionSlotOf | L812-819 | 取/建 per-agent 的 Map<source,{disposer,filter}> 槽位，供多路裁剪共存 |  |
-| index.js | anchoredDiagStateOf | L823-839 | 按 agent 惰性建立 anchored 诊断状态，保存 first/later 装配标记与三路 source（anchored-bootstrap／cordis-presentation／web-fetch）最近的 arm/release/skip 快照，供内存摘要与即时失败落盘共用。 |  |
-| index.js | toolRestrictionDiag | L841-872 | 三路裁剪共用诊断出口：按 agent/source 更新最近 arm/release/skip 快照；仅 arm-failed/release-failed 立即追加 extra-plan-anchored.jsonl，诊断写失败吞掉且不影响主流程。 |  |
-| index.js | restrictionsSnapshotOf | L874-888 | 汇总三路裁剪的当前与最近诊断：active 是当前槽位保存的 filter 对象或 null（不是布尔标志），并带 arm/release/skip 最近快照。 |  |
-| index.js | anchoredAllowNamesOf | L894-922 | 算引导期 allow：bootstrapShellTools ∪ bootstrapCommonTools ∩ 可收窄名，空集返回 [] 由调用方跳过 |  |
-| index.js | armToolRestriction | L926-978 | 通用裁剪入口：校验 allow/deny filter、跳过/幂等/可收窄名后调用 tools.restrict；非法、空、缺名、非函数 disposer 或异常均落 arm-failed 并即时诊断。 |  |
-| index.js | releaseToolRestriction | L981-994 | 通用释放入口：只释放槽位保存的 disposer；成功落 release-ok，disposer 异常落 release-failed 并即时诊断，不调用空 filter restrict。 |  |
-| index.js | anchoredBootstrapArmOptionsOf | L997-1036 | 算引导期 arm 选项：判定相位/角色等跳过条件并生成 allow filter 与诊断字段 |  |
-| index.js | armAnchoredToolRestriction | L1037-1039 | 引导期 arm 薄适配：算 allow 后转调 armToolRestriction |  |
-| index.js | releaseAnchoredToolRestriction | L1040-1042 | 引导期 release 薄适配：转调 releaseToolRestriction |  |
-| index.js | armCordisPresentationRestriction | L1046-1049 | C=0 cordis deny 薄适配：算 deny 后转调 armToolRestriction |  |
-| index.js | releaseCordisPresentationRestriction | L1051-1053 | C=0 cordis release 薄适配：转调 releaseToolRestriction |  |
-| index.js | armWebFetchRestriction | L1059-1069 | web_fetch deny 薄适配：webFetch 关闭时逐会话 arm 只 deny 单名 web_fetch 的 restrict，开启时跳过 |  |
-| index.js | releaseWebFetchRestriction | L1071-1073 | web_fetch release 薄适配：webFetch 开启时释放该会话的 web_fetch deny |  |
-| index.js | armWaitAgentRestriction | L1076-1079 | 按代理作用域拒绝继承的 `wait_agent`，保留其他控制工具 |  |
-| index.js | shouldHideCreativeCatalog | L1115-1117 | C 热读判定：仅 creativeMode=false（C=0）返回 true，供调用方在 A/F 优先的投影视图隐藏创造 skill；本函数不检查 A/F、角色或 M，也不改变 registry binding |  |
-| index.js | isAnchoredContextGate | L1121-1126 | 判定当前 agent 是否满足 anchored context gate：bootstrap 开启、Session 仍处 F，且角色为 main 或 planner（非 live child） | 只读 payload.agent；角色沿现有 isPlannerChild/isChild 语义，不使用 selfAgent 或父 Session 相位 |
-| index.js | warnPreStepFailure | L1128-1132 | pre-step 可降级 C 投影/去重异常的一次性告警 helper；返回路径仍保留已经完成的 source 过滤副本，并保证 next 只调用一次 | 不得在关键 source gate/phase 失败时吞错后发送未过滤 decision |
-| index.js | recordRequestError | L1248-1268 | agent/request-error：按 diagPath 追加 jsonl，含 ts、role 与错误链，整体吞错。 |  |
-| index.js | messageTargetIdOf | L1678-1687 | send_message 目标回调：只读本轮名称或路径引用的已解析 Session ID；未命中即登记本轮 Set 供 resolveName 逐个补齐，非字符串 agent 回退旧 agent_id，不跨调用缓存且不调用宿主。 | 最新路径 agent 与 resolveName 适配（rc.2 与 rc.3 共用）；旧 agent_id 仅 rc.1 兼容，删除边界均须另行授权。 |
-| index.js | finish | L1690-1702 | 本轮 apply 闸门唯一一次性收尾：拒绝先记 run_code deny；最终放行才记 job_output 与轮询计数并 next 一次；解析名称的匿名异步闭包复用此收尾，解析异常或取消原样传播。 | 同一 apply 内防重复调用，不把 resolveName 异常吞为 allow 或 deny。 |
+| index.js | malformedRecovery | L195-229 | MALFORMED_RESPONSE 同回合限次自愈：注入失败或坐标缺失仍返回 retry，其余回退原 action。 |  |
+| index.js | safeContextGet | L242-248 | 通过 ctx.get 取宿主服务，取不到或抛错时返回 undefined，不向上传播异常 |  |
+| index.js | absoluteRoot | L250-257 | 把候选根路径归一成绝对工作区根，空串、非字符串或非法输入一律返回 null 而不抛错 |  |
+| index.js | rootFact | L259-263 | 把带存在标记的根路径归一为 missing、invalid 或 valid 三态事实对象 |  |
+| index.js | sameRoot | L265-270 | 两个根路径都非空时按平台归一后比较是否同一根，Windows 下转小写，任一侧为空即判否 |  |
+| index.js | configEditorServiceOf | L272-275 | 取 configEditor 服务并校验具备读取与编辑方法，不合格返回 null |  |
+| index.js | documentFact | L277-281 | 把配置文档路径归一为 missing、invalid 或 valid 事实，空值按缺失处理 |  |
+| index.js | profileFactsOf | L283-333 | 汇总 profile、宿主根与配置文档的可信事实，并标注 valid、conflict 或 invalid 状态 |  |
+| index.js | has | L285 | 判断 profile 对象是否为对象且自身带有某键，用于区分字段缺失与显式空值，不抛错 |  |
+| index.js | installAnchorOf | L335-337 | 从 profile 事实里取出安装锚点路径，缺失或非法时返回 null，不抛错，供锚点钩子判空 |  |
+| index.js | pathRootsOverlap | L341-349 | 判定两个路径根是否重叠：规范化后互为前缀即视为重叠，供 H/W 重叠分类使用 |  |
+| index.js | pathContextFor | L351-372 | 用可信 profile 事实装配路径上下文与写入口径能力，全部为空时返回 null 而不抛错 |  |
+| index.js | resolveDocumentTargetFor | L374-382 | 按配置文档事实解析精确宿主目标路径，事实非法或矛盾时抛错拒绝热读，缺路径返回空串 |  |
+| index.js | sessionCwdOf | L384-388 | 从 agent 的会话头里取工作目录，缺失或非字符串时返回空串，供路径上下文现算使用 |  |
+| index.js | resolveAbsoluteLogTarget | L390-396 | 绝对诊断路径的两级解析：先按宿主根解析再按工作区根解析，两者皆失败时抛出首个错误 |  |
+| index.js | diagnosticTargetOf | L398-413 | 决定诊断文件落点：裸文件名按宿主、工作区、缺根三态分派，不可用时返回 null 不抛错 |  |
+| index.js | prepareDiagnosticPath | L415-431 | 先建父目录再校验写入目标，成功返回可写诊断路径，任一步失败都一律返回空串且不抛错 |  |
+| index.js | appendDiagnostic | L433-438 | 以 UTF-8 追加一行 JSON 诊断记录，路径不可得时返回假而不抛错，供调用方判空 |  |
+| index.js | recordAgentError | L440-457 | agent/error 回合错误取证：错误链逐字追加到诊断目录（落点见 getDiagPath），整体吞错不阻断。 | 与 recordRequestError 同诊断模式 |
+| index.js | apply | L461-1743 | 插件主入口：闸门词表先校验，再接线投影、路由与 save 工具注册（顺序以机制设计为准）；静态可解析 run_code 组在 next 前预审，动态或未解析成员交由实际 pre-execute 重入重新判定；不再接管诊断日志启动清理。 |  |
+| index.js | getPathContext | L485 | 传给保存类工具工厂的取上下文回调：按 cwd 现算路径上下文，属宿主接线且不缓存 |  |
+| index.js | getPathContext | L492 | 传给草稿修复工具工厂的取上下文回调：按 cwd 现算路径上下文，属宿主接线且不缓存 |  |
+| index.js | resolveDocumentTarget | L502 | 传给配置热读器的文档目标回调：按 agent 现算精确宿主目标，属宿主接线不缓存 |  |
+| index.js | getPathContext | L503 | 传给配置热读器的取上下文回调：按 agent 的会话工作目录现算路径上下文，属宿主接线 |  |
+| index.js | plannerModel | L518 | 热读箭头 getter：规划者默认模型（liveConfig.plannerModel；消费点=model-routing 的 getPlannerModel） |  |
+| index.js | otherAgentModel | L519 | 热读箭头 getter：其他子代理默认模型（消费点=model-routing 的 getOtherAgentModel） |  |
+| index.js | reviewerUsesPlannerModel | L520 | 热读箭头 getter：验收者是否复用规划模型，按 agent 现取并回退 apply 快照 |  |
+| index.js | exploreBudget | L521 | 热读箭头 getter：规划者探查额度/单实例子调用上限（消费点=预算文案、noteRunCodeSubCall、plannerGateReason 与组判定） |  |
+| index.js | plannerPromptSuffix | L522 | 热读箭头 getter：pre-step 拼接的额外引导后缀 |  |
+| index.js | bootstrapOn | L523 | 热读箭头 getter：anchored 首轮引导开关；A/F gate 优先由 isAnchoredContextGate 与 pre-step 按当前 agent/events 判定，不把 C catalog 隐藏混入本 getter |  |
+| index.js | runcodeCatchGateOn | L524 | 热读箭头 getter：PTC try/catch 闸门开关（消费点=planner/只读 child/主会话三处组判定传参） |  |
+| index.js | crossProviderPlannerModel | L525 | 热读箭头 getter：跨 provider 规划模型开关，按 agent 现取配置值 |  |
+| index.js | creativeModeOn | L528 | 热读箭头 getter：C creativeMode 开关；C=0 时 shouldHideCreativeCatalog 供投影视图暂隐创造 skill，展示隐藏不改变 registry binding |  |
+| index.js | webFetchOn | L530 | 热读箭头 getter：web_fetch 免重启开关，供 web_fetch 裁剪的 arm/release 与 pre-step 判据共用 |  |
+| index.js | getAgents | L547 | 惰性返回 ctx.get('agents') 服务；注入 createAgentRuntime，供判定子会话是否为其父代理下的活跃派发。 |  |
+| index.js | warn | L549 | 把告警参数原样转发到 console.warn；注入 createAgentRuntime，作为缺父代理等异常情况的告警出口。 |  |
+| index.js | getPlannerModel | L557 | 返回热读配置 plannerModel（planner 子代理所用模型名）；注入 createModelRouting 供 planner 模型路由决议。 |  |
+| index.js | getOtherAgentModel | L558 | 返回热读配置 otherAgentModel（非 planner 子代理所用模型名，空串表示不覆盖）；供非 planner 路由决议。 |  |
+| index.js | getCrossProviderPlannerModel | L559 | 返回热读布尔开关 crossProviderPlannerModel；决定 planner 路由走跨 provider 严格探针还是旧单 provider 路径。 |  |
+| index.js | getLlm | L560 | 返回 ctx.get('llm') 服务；供 model-routing 查 provider 模型目录（listModels）与真实探针调用。 |  |
+| index.js | getAgents | L561 | 返回 ctx.get('agents') 服务（同名第 2 处，消费方为 model-routing）；供经 agents.get 回溯父会话链的 provider/model/maxTokens。 |  |
+| index.js | getDiagPath | L562 | 返回诊断路径：诊断目录 host logs/dsh-extra-plan/ 或 W .extra-plan/logs/；供 planner 降级诊断。 |  |
+| index.js | noteRunCodeSubCall | L590 | 单实例子调用上限（planner）：按 sessionId→rootCallId 桶读计数、未超限则 +1；返回拒绝文案或 null；空 rootCallId 与 exploreBudget 文案保持 |  |
+| index.js | consumeToolJobsNotice | L591-624 | tool-jobs 通知按 message.id 判重：首次有效通知解锁 job_output 与 pollGuard。 | 消费与双解锁语义见 ai-机制设计.md 六「session 生命周期与 usage 账本」的通知消费合同条。 |
+| index.js | userQuestionsServiceOf | L632-649 | 取宿主 userQuestions 的 ask 能力：先按 agent 作用域 ctx 取，失败回落到 apply 级 ctx，取不到返回 undefined。 |  |
+| index.js | askGateUser | L652-671 | 闸门提问通道：缺 id 的提问补齐稳定 id 后交 userQuestions.ask；服务缺失抛 NO_PROVIDER，由工具层转 channel-error。 |  |
+| index.js | registerGateTool | L678-697 | 按 apply 幂等注册 extra_plan_gate（WeakSet 记录）：tools 服务缺失只 warn，重复注册保留既有工具，不向 agent/created 抛出。 |  |
+| index.js | selectChildModelOnCreate | L707-758 | 子代理创建时按角色选模型：验收者按 reviewerUsesPlannerModel 走 planner 路由，其余走 otherAgentModel，失败普通回退 |  |
+| index.js | toolsServiceOf | L779-792 | 取 agent 作用域 tools 服务：优先 ctx.tools，其次 ctx.get('tools')，异常一律返回 undefined |  |
+| index.js | restrictableNamesOf | L795-805 | 取可收窄名集合：仅取 view(agent).restrictableNames，缺失或异常一律返回 null（schemas 兜底在 anchoredAllowNamesOf 内） |  |
+| index.js | restrictableSnapshotOf | L806-809 | 把可收窄名集合转成排序数组供诊断落盘，null 原样透传 |  |
+| index.js | toolRestrictionSlotOf | L811-818 | 取/建 per-agent 的 Map<source,{disposer,filter}> 槽位，供多路裁剪共存 |  |
+| index.js | anchoredDiagStateOf | L822-838 | 按 agent 惰性建立 anchored 诊断状态，保存 first/later 装配标记与三路 source（anchored-bootstrap／cordis-presentation／web-fetch）最近的 arm/release/skip 快照，供内存摘要与即时失败落盘共用。 |  |
+| index.js | toolRestrictionDiag | L840-871 | 三路裁剪共用诊断出口：按 agent/source 更新最近 arm/release/skip 快照；仅 arm-failed/release-failed 立即追加 extra-plan-anchored.jsonl，诊断写失败吞掉且不影响主流程。 |  |
+| index.js | restrictionsSnapshotOf | L873-887 | 汇总三路裁剪的当前与最近诊断：active 是当前槽位保存的 filter 对象或 null（不是布尔标志），并带 arm/release/skip 最近快照。 |  |
+| index.js | anchoredAllowNamesOf | L893-921 | 算引导期 allow：bootstrapShellTools ∪ bootstrapCommonTools ∩ 可收窄名，空集返回 [] 由调用方跳过 |  |
+| index.js | armToolRestriction | L925-977 | 通用裁剪入口：校验 allow/deny filter、跳过/幂等/可收窄名后调用 tools.restrict；非法、空、缺名、非函数 disposer 或异常均落 arm-failed 并即时诊断。 |  |
+| index.js | releaseToolRestriction | L980-993 | 通用释放入口：只释放槽位保存的 disposer；成功落 release-ok，disposer 异常落 release-failed 并即时诊断，不调用空 filter restrict。 |  |
+| index.js | anchoredBootstrapArmOptionsOf | L996-1035 | 算引导期 arm 选项：判定相位/角色等跳过条件并生成 allow filter 与诊断字段 |  |
+| index.js | armAnchoredToolRestriction | L1036-1038 | 引导期 arm 薄适配：算 allow 后转调 armToolRestriction |  |
+| index.js | releaseAnchoredToolRestriction | L1039-1041 | 引导期 release 薄适配：转调 releaseToolRestriction |  |
+| index.js | armCordisPresentationRestriction | L1045-1048 | C=0 cordis deny 薄适配：算 deny 后转调 armToolRestriction |  |
+| index.js | releaseCordisPresentationRestriction | L1050-1052 | C=0 cordis release 薄适配：转调 releaseToolRestriction |  |
+| index.js | armWebFetchRestriction | L1058-1068 | web_fetch deny 薄适配：webFetch 关闭时逐会话 arm 只 deny 单名 web_fetch 的 restrict，开启时跳过 |  |
+| index.js | releaseWebFetchRestriction | L1070-1072 | web_fetch release 薄适配：webFetch 开启时释放该会话的 web_fetch deny |  |
+| index.js | armWaitAgentRestriction | L1075-1078 | 按代理作用域拒绝继承的 `wait_agent`，保留其他控制工具 |  |
+| index.js | shouldHideCreativeCatalog | L1114-1116 | C 热读判定：仅 creativeMode=false（C=0）返回 true，供调用方在 A/F 优先的投影视图隐藏创造 skill；本函数不检查 A/F、角色或 M，也不改变 registry binding |  |
+| index.js | isAnchoredContextGate | L1120-1125 | 判定当前 agent 是否满足 anchored context gate：bootstrap 开启、Session 仍处 F，且角色为 main 或 planner（非 live child） | 只读 payload.agent；角色沿现有 isPlannerChild/isChild 语义，不使用 selfAgent 或父 Session 相位 |
+| index.js | warnPreStepFailure | L1127-1131 | pre-step 可降级 C 投影/去重异常的一次性告警 helper；返回路径仍保留已经完成的 source 过滤副本，并保证 next 只调用一次 | 不得在关键 source gate/phase 失败时吞错后发送未过滤 decision |
+| index.js | recordRequestError | L1247-1267 | agent/request-error：按 diagPath 追加 jsonl，含 ts、role 与错误链，整体吞错。 |  |
+| index.js | messageTargetIdOf | L1677-1686 | send_message 目标回调：只读本轮名称或路径引用的已解析 Session ID；未命中即登记本轮 Set 供 resolveName 逐个补齐，非字符串 agent 回退旧 agent_id，不跨调用缓存且不调用宿主。 | 最新路径 agent 与 resolveName 适配（rc.2 与 rc.3 共用）；旧 agent_id 仅 rc.1 兼容，删除边界均须另行授权。 |
+| index.js | finish | L1689-1701 | 本轮 apply 闸门唯一一次性收尾：拒绝先记 run_code deny；最终放行才记 job_output 与轮询计数并 next 一次；解析名称的匿名异步闭包复用此收尾，解析异常或取消原样传播。 | 同一 apply 内防重复调用，不把 resolveName 异常吞为 allow 或 deny。 |
 | lib/agent-runtime.js | isLiveDelegation | L17-28 | 按父会话 registry 存活状态判定委托是否仍有效 |  |
 | lib/agent-runtime.js | createAgentRuntime | L30-172 | 创建 per-apply 角色/缓存/usage baseline 工厂 |  |
 | lib/agent-runtime.js | isChild | L37-45 | 按显式 events 判定 live child 并发出恢复为 root 警示 |  |
@@ -371,9 +371,9 @@
 | lib/log-retention.js | beijingYesterdayCutoffMs | L18-20 | 把当前时间换算为固定 UTC+8 的北京时间昨日零点毫秒 cutoff，供全部诊断 JSONL（usage ledger 除外）统一保留今天/昨天两个自然日。 |  |
 | lib/log-retention.js | parsedTsOf | L22-32 | 行级 ts 解析：空行、解析失败、非对象、ts 非字符串或非法时间一律返回 null，分界扫描据此把不可解析行留作前缀候选（不作分界） |  |
 | lib/log-retention.js | closeInput | L35-44 | 显式 destroy 读流并等 close 后 resolve：Windows 上 rename 覆盖要求目标文件不再被任何句柄持有 |  |
-| lib/log-retention.js | findPrefixBoundary | L46-64 | 前缀分界扫描：流式逐行返回首个可解析且 cutoff<=ts<=now 的行号（0基），命中即停；不可解析行与 ts>now 的未来行不作分界、继续扫描作为前缀候选；未找到返回 null；lines=总行数（0行文件 lines=0）；finally 关闭 reader/input。 |  |
-| lib/log-retention.js | copyFromBoundary | L66-95 | 自分界起无解析复制：授权并 prepare 同目录临时文件后流式逐行跳过前 skipCount 行（不做任何 JSON 解析），其余行原样写出；skipCount>=总行数时产出空临时文件；writer error/close 等待、closeInput 后 renameSync 原子替换，失败清理临时文件并重抛。 |  |
-| lib/log-retention.js | pruneDiagnosticLogs | L97-123 | 诊断裁剪入口：枚举并排除 usage-ledger；全部诊断 JSONL 统一用 UTC+8 北京昨日零点 cutoff 保留今天/昨天两个自然日；每文件先 findPrefixBoundary 分界扫描，0行或分界为0 零写零临时跳过，否则 copyFromBoundary 自分界起无解析复制原样保留（含坏行/乱序过期行，随保留窗口自然收敛），removedRows=分界或全行数，经临时文件原子替换，返回 skipped/up-to-date/pruned 与计数。 |  |
+| lib/log-retention.js | findPrefixBoundary | L46-61 | 前缀分界扫描：流式逐行返回首个可解析且 cutoff<=ts<=now 的行号（0基），命中即停；不可解析行与 ts>now 的未来行不作分界、继续扫描作为前缀候选；未找到返回 null；lines=总行数（0行文件 lines=0）；finally 关闭 reader/input。 |  |
+| lib/log-retention.js | copyFromBoundary | L63-92 | 自分界起无解析复制：授权并 prepare 同目录临时文件后流式逐行跳过前 skipCount 行（不做任何 JSON 解析），其余行原样写出；skipCount>=总行数时产出空临时文件；writer error/close 等待、closeInput 后 renameSync 原子替换，失败清理临时文件并重抛。 |  |
+| lib/log-retention.js | pruneDiagnosticLogs | L94-120 | 诊断裁剪入口：枚举并排除 usage-ledger；全部诊断 JSONL 统一用 UTC+8 北京昨日零点 cutoff 保留今天/昨天两个自然日；每文件先 findPrefixBoundary 分界扫描，0行或分界为0 零写零临时跳过，否则 copyFromBoundary 自分界起无解析复制原样保留（含坏行/乱序过期行，随保留窗口自然收敛），removedRows=分界或全行数，经临时文件原子替换，返回 skipped/up-to-date/pruned 与计数。 |  |
 | lib/model-routing.js | isExplicitRoute | L11-17 | 显式路由判定：子级 provider 或 model 任一与父值不同即算显式，空串视为无选择 |  |
 | lib/model-routing.js | isExplicitEffort | L21-23 | 显式 effort 判定：仅非空字符串且与父值不同才算显式，空串与 undefined 一律不算 |  |
 | lib/model-routing.js | requestConfigSnapshot | L31-44 | 请求配置快照：从会话 header 取 provider、model 与 maxTokens，取不到即返回 null |  |
@@ -499,35 +499,35 @@
 | lib/preset-sync.js | definitionWithProjection | L440-442 | 以资产 definition 为底克隆并套用给定投影，返回新的 definition 副本 |  |
 | lib/preset-sync.js | publicConfigOf | L444-447 | 取行或配置对象的公开 config，取值非对象或取不到时一律返回空对象而不抛错，不做克隆 |  |
 | lib/preset-sync.js | assertTemplateGateWords | L451-455 | 校验厂商模板文本里的 gateWords 能被解析且合法，任何不符情形都立即抛错 |  |
-| lib/preset-sync.js | syncPreset | L460-480 | 核对模板 gateWords 与当前资产 definition，按 settings 行补齐 patch 并派生投影；patch 为空返回 idle，否则交给 apply 写唯一全局行。 |  |
-| lib/preset-sync.js | findEntry | L482-485 | 在行数组里按 entry 选项中的 id 找唯一一项并返回其 entry，多命中返回 undefined |  |
-| lib/preset-sync.js | editSettingsConfig | L487-499 | （待补充） |  |
-| lib/preset-sync.js | applyPlan | L501-509 | 只把计划中的设置值经 editor.edit 重述到全局行，设置行缺失即抛错且不写入 |  |
-| lib/preset-sync.js | trustedProfileContextOf | L511-518 | 优先取 ctx.profileContext，缺失时退回 ctx.get 读取，两者都不可得返回 undefined |  |
-| lib/preset-sync.js | settingsValuesFromRows | L522-525 | 从行数组取全局设置行唯一的生效配置，该行不存在或出现多行时返回 undefined |  |
-| lib/preset-sync.js | projectedAssetDefinition | L530-536 | 只按当前 settings 行值解析并投影 definition，不读取 raw patch 或历史声明。 |  |
-| lib/preset-sync.js | structuralValue | L538-549 | 把值归一成可比对结构，函数转标记、环转占位并跳过 fiber 与 entry 键 |  |
-| lib/preset-sync.js | rowStructureRecord | L551-570 | 把一行归一成 id、name、disabled 与 config 结构记录，设置行返回 undefined |  |
-| lib/preset-sync.js | structuralFingerprint | L573-591 | 遍历行生成不含 settings 行配置的通用结构指纹，跳过 fiber/entry，不附旧 owner，用于结构交接判定。 |  |
-| lib/preset-sync.js | visit | L575-588 | structuralFingerprint 内部函数：展开嵌套 config 行收集结构记录，跳过非数组与无效行。 |  |
-| lib/preset-sync.js | installAnchorOf | L593-596 | 取 profileContext 的 installAnchor，缺失时回退到 options 里传入的取值 |  |
-| lib/preset-sync.js | mountPresetSync | L598-786 | 挂载预设同步：首次收敛设置、投影并顺序挂载官方 adapter，返回幂等的释放函数 |  |
-| lib/preset-sync.js | disposeFiber | L612-615 | 调用 fiber 的 dispose 释放已挂载项，fiber 无效或无 dispose 方法时返回 undefined |  |
-| lib/preset-sync.js | reportSettledError | L616-623 | 上报落定设置回调的错误，上报回调自身再失败时只打印控制台告警，不阻断流程也不重抛 |  |
-| lib/preset-sync.js | reportAdapterError | L624-632 | 组装 phase 与消息成诊断对象并转交错误回调，上报器自身抛错时降级为控制台告警 |  |
-| lib/preset-sync.js | readState | L633-641 | 读取 configEditor 当前 rows 并计算非 settings 通用结构指纹，不读取 raw patch 或历史行。 |  |
-| lib/preset-sync.js | snapshotOf | L642-650 | 从当前 rows 的 settings 行解析十一项与 gateWords，深拷贝快照交给 settled 回调，不做写入。 |  |
-| lib/preset-sync.js | enqueueSettled | L651-662 | 把落定回调串进串行队列按序执行，回调异常转给错误上报且队列继续向下推进，不丢后续更新 |  |
-| lib/preset-sync.js | settledSettingsUpdate | L663-671 | 先取当前设置快照再入队上报，取快照失败时只上报错误而不阻断后续更新，并返回上报结果 |  |
-| lib/preset-sync.js | enqueueStructural | L672-680 | 把结构任务串进结构队列串行执行并吞掉失败，只打印告警不阻断设置同步流程，返回安全 promise |  |
-| lib/preset-sync.js | mountOfficialAdapter | L685-710 | 按顺序挂载主与角色 definition，任一失败即回滚已挂载 fiber 并抛错 |  |
-| lib/preset-sync.js | disposeCurrentAdapter | L711-715 | 倒序释放当前已挂载的全部 adapter fiber，随后清空本地引用，供重新挂载使用 |  |
-| lib/preset-sync.js | structuralHandoff | L716-733 | 结构变化后重算同步计划、按需写设置并重新挂载官方 adapter，已失活时静默返回 |  |
-| lib/preset-sync.js | apply | L724 | 结构交接阶段应用设置计划的回调，已失活时由写入层内部自行跳过，不抛错也不重试写入 |  |
-| lib/preset-sync.js | initialMount | L734-758 | 首次读取状态、收敛设置并按序挂载 definition，整体失败只上报诊断不阻断后续同步 |  |
-| lib/preset-sync.js | apply | L742 | 首次挂载时应用设置计划的回调，绑定初始 editor 与当前活性判定，失活即跳过 |  |
-| lib/preset-sync.js | settledOnlyUpdate | L759 | 只处理落定设置更新的轻量入口，不触发结构重挂与 adapter 交接，避免多余挂载 |  |
-| lib/preset-sync.js | dispose | L775-783 | 关闭更新订阅、等待两个队列收敛并释放 adapter，重复调用直接返回不再重复执行 |  |
+| lib/preset-sync.js | syncPreset | L460-488 | 核对模板 gateWords 与当前资产 definition，按 settings 行补齐 patch 并派生投影；patch 为空返回 idle，否则交给 apply 写唯一全局行。 |  |
+| lib/preset-sync.js | findEntry | L490-493 | 在行数组里按 entry 选项中的 id 找唯一一项并返回其 entry，多命中返回 undefined |  |
+| lib/preset-sync.js | editSettingsConfig | L495-507 | （待补充） |  |
+| lib/preset-sync.js | applyPlan | L509-517 | 只把计划中的设置值经 editor.edit 重述到全局行，设置行缺失即抛错且不写入 |  |
+| lib/preset-sync.js | trustedProfileContextOf | L519-526 | 优先取 ctx.profileContext，缺失时退回 ctx.get 读取，两者都不可得返回 undefined |  |
+| lib/preset-sync.js | settingsValuesFromRows | L530-533 | 从行数组取全局设置行唯一的生效配置，该行不存在或出现多行时返回 undefined |  |
+| lib/preset-sync.js | projectedAssetDefinition | L538-544 | 只按当前 settings 行值解析并投影 definition，不读取 raw patch 或历史声明。 |  |
+| lib/preset-sync.js | structuralValue | L546-557 | 把值归一成可比对结构，函数转标记、环转占位并跳过 fiber 与 entry 键 |  |
+| lib/preset-sync.js | rowStructureRecord | L559-578 | 把一行归一成 id、name、disabled 与 config 结构记录，设置行返回 undefined |  |
+| lib/preset-sync.js | structuralFingerprint | L581-599 | 遍历行生成不含 settings 行配置的通用结构指纹，跳过 fiber/entry，不附旧 owner，用于结构交接判定。 |  |
+| lib/preset-sync.js | visit | L583-596 | structuralFingerprint 内部函数：展开嵌套 config 行收集结构记录，跳过非数组与无效行。 |  |
+| lib/preset-sync.js | installAnchorOf | L601-604 | 取 profileContext 的 installAnchor，缺失时回退到 options 里传入的取值 |  |
+| lib/preset-sync.js | mountPresetSync | L606-794 | 挂载预设同步：首次收敛设置、投影并顺序挂载官方 adapter，返回幂等的释放函数 |  |
+| lib/preset-sync.js | disposeFiber | L620-623 | 调用 fiber 的 dispose 释放已挂载项，fiber 无效或无 dispose 方法时返回 undefined |  |
+| lib/preset-sync.js | reportSettledError | L624-631 | 上报落定设置回调的错误，上报回调自身再失败时只打印控制台告警，不阻断流程也不重抛 |  |
+| lib/preset-sync.js | reportAdapterError | L632-640 | 组装 phase 与消息成诊断对象并转交错误回调，上报器自身抛错时降级为控制台告警 |  |
+| lib/preset-sync.js | readState | L641-649 | 读取 configEditor 当前 rows 并计算非 settings 通用结构指纹，不读取 raw patch 或历史行。 |  |
+| lib/preset-sync.js | snapshotOf | L650-658 | 从当前 rows 的 settings 行解析十一项与 gateWords，深拷贝快照交给 settled 回调，不做写入。 |  |
+| lib/preset-sync.js | enqueueSettled | L659-670 | 把落定回调串进串行队列按序执行，回调异常转给错误上报且队列继续向下推进，不丢后续更新 |  |
+| lib/preset-sync.js | settledSettingsUpdate | L671-679 | 先取当前设置快照再入队上报，取快照失败时只上报错误而不阻断后续更新，并返回上报结果 |  |
+| lib/preset-sync.js | enqueueStructural | L680-688 | 把结构任务串进结构队列串行执行并吞掉失败，只打印告警不阻断设置同步流程，返回安全 promise |  |
+| lib/preset-sync.js | mountOfficialAdapter | L693-718 | 按顺序挂载主与角色 definition，任一失败即回滚已挂载 fiber 并抛错 |  |
+| lib/preset-sync.js | disposeCurrentAdapter | L719-723 | 倒序释放当前已挂载的全部 adapter fiber，随后清空本地引用，供重新挂载使用 |  |
+| lib/preset-sync.js | structuralHandoff | L724-741 | 结构变化后重算同步计划、按需写设置并重新挂载官方 adapter，已失活时静默返回 |  |
+| lib/preset-sync.js | apply | L732 | 结构交接阶段应用设置计划的回调，已失活时由写入层内部自行跳过，不抛错也不重试写入 |  |
+| lib/preset-sync.js | initialMount | L742-766 | 首次读取状态、收敛设置并按序挂载 definition，整体失败只上报诊断不阻断后续同步 |  |
+| lib/preset-sync.js | apply | L750 | 首次挂载时应用设置计划的回调，绑定初始 editor 与当前活性判定，失活即跳过 |  |
+| lib/preset-sync.js | settledOnlyUpdate | L767 | 只处理落定设置更新的轻量入口，不触发结构重挂与 adapter 交接，避免多余挂载 |  |
+| lib/preset-sync.js | dispose | L783-791 | 关闭更新订阅、等待两个队列收敛并释放 adapter，重复调用直接返回不再重复执行 |  |
 | lib/preset-yaml.js | loadYaml | L5-8 | 按本模块地址创建 require 并加载 js-yaml，只在模块初始化时调用一次。 |  |
 | lib/preset-yaml.js | resolve | L13 | 作为 !!js 标量类型的 resolve 回调，只判断解析值是否为字符串，不做其它校验。 |  |
 | lib/preset-yaml.js | construct | L14 | 作为 !!js 标量类型的构造回调，把原文包成带 __jsExpr 的对象而不执行。 |  |
@@ -786,12 +786,14 @@
 | lib/settings.js | diagnosticPruneRootOf | L161-169 | 从上下文取 root 或把上下文自身作为 root，仅接受对象/函数；缺失、非法或取值异常返回 null。 |  |
 | lib/settings.js | diagnosticPruneStateOf | L171-189 | 在 root 的 Symbol.for 私有槽位惰性创建/复用诊断清理 Map；已有非 Map 或定义失败返回 null，不向 apply 抛错。 |  |
 | lib/settings.js | diagnosticPruneKey | L191-194 | 将 hostDataRoot 规范化为 root 去重键，Windows 转小写，供同一 root 的 settings owner 共享一次清理调度。 |  |
-| lib/settings.js | startupPruneDiagnosticLogsForApply | L196-282 | settings 唯一诊断清理 owner：按 root/hostDataRoot 注册单层 effect，owner 共享一次异步裁剪；未配置 host root、effect、状态或 root 无效只告警跳过，定时/裁剪失败不阻断启动，卸载前后按状态复用或取消。 |  |
-| lib/settings.js | run | L232-247 | 诊断清理的定时执行闭包：仅在同 root 仍有存活 owner 时把状态置为 running 并复用 promise，完成后记录 done；无存活 owner 或记录已替换则直接返回。 |  |
-| lib/settings.js | startupArchiveForApply | L284-351 | 独立的启动用量归档入口：按 appReady 时序调度后台账本 Worker，缺少宿主根或 effect、取消与归档异常只告警并不阻断插件启动；不负责诊断日志裁剪。 |  |
-| lib/settings.js | startBackground | L296-318 | 创建账本后台句柄并返回可取消的 dispose，异常只告警不阻断启动。 |  |
-| lib/settings.js | dispose | L300-307 | root effect disposer：请求后台账本任务协作取消并等待 done，卸载不强杀或提前释放活 Worker。 |  |
-| lib/settings.js | apply | L353-359 | 设置插件入口：先注册诊断日志清理唯一 owner，再启动独立用量归档，随后挂载客户端载体、设置接口与预设同步并注入生命周期。 |  |
+| lib/settings.js | startupPruneDiagnosticLogsForApply | L196-290 | settings 唯一诊断清理 owner：按 root/hostDataRoot 注册单层 effect，owner 共享一次异步裁剪；未配置 host root、effect、状态或 root 无效只告警跳过，定时/裁剪失败不阻断启动，卸载前后按状态复用或取消。 |  |
+| lib/settings.js | run | L232-246 | 诊断清理的定时执行闭包：仅在同 root 仍有存活 owner 时把状态置为 running 并复用 promise，完成后记录 done；无存活 owner 或记录已替换则直接返回。 |  |
+| lib/settings.js | scheduleFailed | L247-252 | （待补充） |  |
+| lib/settings.js | schedule | L253-260 | （待补充） |  |
+| lib/settings.js | startupArchiveForApply | L292-359 | 独立的启动用量归档入口：按 appReady 时序调度后台账本 Worker，缺少宿主根或 effect、取消与归档异常只告警并不阻断插件启动；不负责诊断日志裁剪。 |  |
+| lib/settings.js | startBackground | L304-326 | 创建账本后台句柄并返回可取消的 dispose，异常只告警不阻断启动。 |  |
+| lib/settings.js | dispose | L308-315 | root effect disposer：请求后台账本任务协作取消并等待 done，卸载不强杀或提前释放活 Worker。 |  |
+| lib/settings.js | apply | L361-367 | 设置插件入口：先注册诊断日志清理唯一 owner，再启动独立用量归档，随后挂载客户端载体、设置接口与预设同步并注入生命周期。 |  |
 | lib/shell-mutation.js | commandTextOf | L39-51 | 从执行参数里取命令文本：兼容 JSON 字符串与对象两种形态，缺失或非法返回空串 |  |
 | lib/shell-mutation.js | pwshCommandOf | L53 | PowerShell 侧的命令取文本入口，直接复用通用取文本逻辑，不额外解析也不做参数校验 |  |
 | lib/shell-mutation.js | bashCommandOf | L54 | bash 侧的命令取文本入口，与 PowerShell 侧共用同一取文本实现不另设规则 |  |

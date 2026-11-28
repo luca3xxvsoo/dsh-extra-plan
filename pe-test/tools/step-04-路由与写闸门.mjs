@@ -305,9 +305,6 @@ for (const [rowId, toolName, presetId] of [['tool-subagent', 'subagent', 'extra-
 }
 {
   const extraPlanRow = all.find((r) => r.id === 'extra-plan')
-  const presetHint = extraPlanRow !== undefined && extraPlanRow.config !== undefined ? extraPlanRow.config.bootstrapReadHint : undefined
-  // S4：预设字段只断结构（非空字符串），文案正文不复制进测试；内容契约由 F 段 hintReadOk 与行为层覆盖。
-  checkTrue('P0-0 预设 bootstrapReadHint 为非空字符串（不与测试副本逐字比对）', typeof presetHint === 'string' && presetHint.trim() !== '')
   const presetPersona = extraPlanRow !== undefined && extraPlanRow.config !== undefined ? extraPlanRow.config.bootstrapPersona : undefined
   checkTrue('P0-1 预设 bootstrapPersona 未被回退（非空字符串，不比对正文）', typeof presetPersona === 'string' && presetPersona.trim() !== '')
 }

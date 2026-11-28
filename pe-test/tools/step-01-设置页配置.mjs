@@ -1317,6 +1317,7 @@ check('G5-R5 root cleanupError统一进入最终FAIL计数', rootCleanupErrors.l
   const observedRuns = []
   const fsProbe = createFsAccessProbe([
     { name: 'cleanup', root: cleanupFixture.root },
+    { name: 'cleanup-diagnostic', root: cleanupLogDir },
     { name: 'error', root: errorFixture.root },
   ])
   const renameCounts = { cleanup: 0, error: 0 }
@@ -1371,7 +1372,8 @@ check('G5-R5 root cleanupError统一进入最终FAIL计数', rootCleanupErrors.l
         for (const listener of [...state.listeners]) listener()
       },
     }
-    return { service, state }
+    // 首个 owner 先注册共享裁剪，再注册自己的归档。G3 单独触发裁剪，G5 测真实 commit 扇出。
+    return { service, state, signalPrune: () => state.listeners[0]?.() }
   }
   try {
     console.warn = (...args) => { warningLines.push(args.map(String).join(' ')) }
@@ -1437,10 +1439,10 @@ check('G5-R5 root cleanupError统一进入最终FAIL计数', rootCleanupErrors.l
       }
       corePluginModule.apply(ctx, { gateWords: syncGateWords })
     }
-    const openCleanupRun = async (fixture, rootIdentity, settingsModule = cleanupSettingsModule, mount = false) => {
+    const openCleanupRun = async (fixture, rootIdentity, settingsModule = cleanupSettingsModule, withReady = true) => {
       const editor = makeEditor({ ...syncValues, gateWords: syncGateWords, webFetch: false }, fixture.webPatch, { persistDocument: true, profileContext: fixture.webProfileContext })
       const ready = createCleanupAppReady()
-      const run = await start(editor, { mount, appReady: ready.service, rootIdentity, settingsModule })
+      const run = await start(editor, { appReady: withReady ? ready.service : undefined, rootIdentity, settingsModule })
       const opened = { run, ready, fixture, closed: false }
       activeRuns.add(opened)
       observedRuns.push(opened)
@@ -1462,6 +1464,9 @@ check('G5-R5 root cleanupError统一进入最终FAIL计数', rootCleanupErrors.l
     const sharedRuns = []
     sharedRuns.push(await openCleanupRun(cleanupFixture, sharedRoot))
     for (let index = 0; index < 5; index += 1) sharedRuns.push(await openCleanupRun(cleanupFixture, sharedRoot))
+    check('G3 就绪前零裁剪timer与零隔离目录I/O', timerStats.scheduled === 0 && fsProbe.count('cleanup-diagnostic') === 0 && renameCounts.cleanup === 0)
+    sharedRuns[0].ready.signalPrune()
+    sharedRuns[0].ready.signalPrune()
     const sharedTimer = nextPendingTimer()
     check('G3 同root六次settings owner只安排一次0ms清理', timerStats.scheduled === 1 && sharedTimer !== undefined)
     const coreScheduleBefore = timerStats.scheduled
@@ -1485,7 +1490,7 @@ check('G5-R5 root cleanupError统一进入最终FAIL计数', rootCleanupErrors.l
     await closeCleanupRun(hmrRunningRun)
     await closeCleanupRun(hmrPendingRun)
     for (const opened of sharedRuns) await closeCleanupRun(opened)
-    check('G3 未commit fake appReady隔离账本', sharedRuns.every((opened) => opened.ready.state.commits === 0 && opened.ready.state.listeners.length === 1) && hmrPendingRun.ready.state.commits === 0 && hmrRunningRun.ready.state.commits === 0)
+    check('G3 未commit fake appReady隔离账本', sharedRuns.every((opened, index) => opened.ready.state.commits === 0 && opened.ready.state.listeners.length === (index === 0 ? 2 : 1)) && hmrPendingRun.ready.state.commits === 0 && hmrRunningRun.ready.state.commits === 0)
     const hmrScheduleBefore = timerStats.scheduled
     const hmrRun = await openCleanupRun(cleanupFixture, sharedRoot, hmrSettingsModule)
     check('G3 完成后同root模块HMR不再重复调度', timerStats.scheduled === hmrScheduleBefore && nextPendingTimer() === undefined)
@@ -1493,6 +1498,7 @@ check('G5-R5 root cleanupError统一进入最终FAIL计数', rootCleanupErrors.l
     writeFileSync(cleanupLogPath, expiredRow, 'utf8')
     const newRoot = {}
     const newRootRun = await openCleanupRun(cleanupFixture, newRoot)
+    newRootRun.ready.signalPrune()
     const newRootTimer = nextPendingTimer()
     check('G3 新root允许新一轮调度', timerStats.scheduled === hmrScheduleBefore + 1 && newRootTimer !== undefined)
     const renameBeforeInFlightDispose = renameCounts.cleanup
@@ -1508,13 +1514,21 @@ check('G5-R5 root cleanupError统一进入最终FAIL计数', rootCleanupErrors.l
     await closeCleanupRun(newRootRun)
     writeFileSync(cleanupLogPath, expiredRow, 'utf8')
     const cancelRoot = {}
+    const preReady = await openCleanupRun(cleanupFixture, cancelRoot)
+    const beforeLateReadySchedule = timerStats.scheduled
+    const beforeLateReadyFs = fsProbe.count('cleanup-diagnostic')
+    await closeCleanupRun(preReady)
     const cancelRun = await openCleanupRun(cleanupFixture, cancelRoot)
+    preReady.ready.signalPrune()
+    check('G3 最后owner就绪前卸载注销订阅，迟到回调不能调度或触盘', preReady.ready.state.cancels === 2 && timerStats.scheduled === beforeLateReadySchedule && fsProbe.count('cleanup-diagnostic') === beforeLateReadyFs)
+    cancelRun.ready.signalPrune()
     const cancelTimer = nextPendingTimer()
     const renameBeforeCancel = renameCounts.cleanup
     await cancelRun.run.disposeRoot()
     check('G3 所有owner在timer前卸载则取消且零实际清理', cancelTimer !== undefined && timerStats.cleared >= 1 && renameCounts.cleanup === renameBeforeCancel)
     const reOwnerScheduleBefore = timerStats.scheduled
     const reOwnerRun = await openCleanupRun(cleanupFixture, cancelRoot)
+    reOwnerRun.ready.signalPrune()
     const reOwnerTimer = nextPendingTimer()
     check('G3 取消后同root新owner可重新安排新timer', reOwnerTimer !== undefined && reOwnerTimer !== cancelTimer && timerStats.scheduled === reOwnerScheduleBefore + 1)
     const fsBeforeLateCancel = fsProbe.count('cleanup')
@@ -1538,8 +1552,10 @@ check('G5-R5 root cleanupError统一进入最终FAIL计数', rootCleanupErrors.l
     await closeCleanupRun(noRootOpened)
     errorReaddir = true
     const errorRoot = {}
-    const errorRun = await openCleanupRun(errorFixture, errorRoot, cleanupSettingsModule)
+    const beforeFallbackSchedule = timerStats.scheduled
+    const errorRun = await openCleanupRun(errorFixture, errorRoot, cleanupSettingsModule, false)
     const errorTimer = nextPendingTimer()
+    check('G3 没有appReady时兼容原0ms调度', errorTimer !== undefined && timerStats.scheduled === beforeFallbackSchedule + 1)
     if (errorTimer !== undefined) fireTimer(errorTimer)
     const errorBarrier = await waitForCleanupRecord(errorRoot, errorFixture)
     check('G3 清理错误只warn且清理链可继续', errorTimer !== undefined && errorBarrier.done && warningLines.some((line) => line.includes('diagnostic log prune failed') && line.includes('g3-forced-prune-error')) && renameCounts.error === 0)
@@ -1646,7 +1662,7 @@ check('G5-R5 root cleanupError统一进入最终FAIL计数', rootCleanupErrors.l
       constructedAfterStart = constructionLog.length
       listenerCountAfterStart = opened.ready.listenerCount()
       check('G5-R7 appReady启动后Worker构造数为0', constructedAfterStart === 0)
-      check('G5-R7 appReady启动后onReady listener数为1', listenerCountAfterStart === 1)
+      check('G5-R7 appReady等待诊断裁剪和账本各一个listener', listenerCountAfterStart === 2)
       opened.ready.service.commit()
       constructedAfterCommitStack = constructionLog.length
       check('G5-R7 commit同一同步栈内Worker构造数仍为0', constructedAfterCommitStack === 0)
@@ -1690,7 +1706,7 @@ check('G5-R5 root cleanupError统一进入最终FAIL计数', rootCleanupErrors.l
     syncBuiltinESMExports()
     rmSync(readyFixture.root, { recursive: true, force: true })
   }
-  console.log('MARKER G5-R7 appReady后置扫描 ' + JSON.stringify({ constructedAfterStart, listenerCountAfterStart, constructedAfterCommitStack, constructedAfterImmediate, clearImmediatePathConstructed, disposeFirstPathConstructed, cleanupErrors: cleanupErrors.length, checks: ['G5-R7 appReady启动后Worker构造数为0', 'G5-R7 appReady启动后onReady listener数为1', 'G5-R7 commit同一同步栈内Worker构造数仍为0', 'G5-R7 commit后一拍setImmediate Worker构造数为1', 'G5-R7 commit后同栈dispose经clearImmediate使Worker构造数不增', 'G5-R7 commit前dispose则commit后Worker构造数不增'] }))
+  console.log('MARKER G5-R7 appReady后置扫描 ' + JSON.stringify({ constructedAfterStart, listenerCountAfterStart, constructedAfterCommitStack, constructedAfterImmediate, clearImmediatePathConstructed, disposeFirstPathConstructed, cleanupErrors: cleanupErrors.length, checks: ['G5-R7 appReady启动后Worker构造数为0', 'G5-R7 appReady等待诊断裁剪和账本各一个listener', 'G5-R7 commit同一同步栈内Worker构造数仍为0', 'G5-R7 commit后一拍setImmediate Worker构造数为1', 'G5-R7 commit后同栈dispose经clearImmediate使Worker构造数不增', 'G5-R7 commit前dispose则commit后Worker构造数不增'] }))
 }
 
 restoreEnvironment(testEnvironment)

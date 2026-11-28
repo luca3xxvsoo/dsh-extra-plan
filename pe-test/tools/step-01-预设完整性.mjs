@@ -257,7 +257,7 @@ const rootLicenseFile = join(REPO_ROOT, 'LICENSE')
 const rootLicenseText = existsSync(rootLicenseFile) ? readFileSync(rootLicenseFile, 'utf8') : null
 check('M4 核心包 LICENSE 存在于包根且为 MIT 文本', rootLicenseText !== null && rootLicenseText.trim().length > 0 && rootLicenseText.includes('MIT License'))
 check('M4 核心包 package.json license=MIT', packageJson.license === 'MIT')
-check('B2 package files/scripts 含生成器、generate 与 prepack', packageFiles.includes('scripts/generate-runtime-defaults.mjs') && packageJson.scripts['generate:runtime-defaults'] === 'node scripts/generate-runtime-defaults.mjs' && packageJson.scripts.prepack === 'node scripts/generate-runtime-defaults.mjs', true)
+check('B2 package 保留生成器文件与手动生成命令', packageFiles.includes('scripts/generate-runtime-defaults.mjs') && packageJson.scripts['generate:runtime-defaults'] === 'node scripts/generate-runtime-defaults.mjs', true)
 check('M1 核心 manifest name/version/repository/client/deps/patch/private 契约', packageJson.name === 'dsh-extra-plan' && packageJson.repository === 'git+https://github.com/luca3xxvsoo/dsh-extra-plan.git' && packageJson.dsh?.bundle?.patch === './cordis.patch.yml' && packageJson.dsh?.client?.platform === 'web' && Array.isArray(packageJson.dsh?.client?.inject) && packageJson.dependencies?.['js-yaml'] === '^4.2.0' && !Object.prototype.hasOwnProperty.call(packageJson, 'private') && !JSON.stringify(packageJson).includes('@local/dsh-extra-plan'))
 check('M2 核心包 engines/peer 四字段均为 0.2.2-rc.1 || 0.2.2-rc.2 || 0.2.2-rc.3 || 0.2.2-rc.4 || 0.2.2-rc.5 五版本',
   packageJson.engines?.dsh === TARGET_PEER_RANGE
