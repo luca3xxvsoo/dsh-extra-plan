@@ -2,7 +2,7 @@
 
 > **维护分工**：行号区间/增删行由脚本 node pe-test/tools/代码地图生成.mjs 增量同步；**功能描述、备注、以及「意图速查」整节由 AI/人维护**（脚本刷新不会覆盖）。
 > **用法**：先看「意图速查」按意图词找函数名 → 再到「函数索引」按函数名取行号区间 → read 该区间。
-> 上次同步：2026-11-28 18:44:16（脚本自动更新时间戳行）
+> 上次同步：2026-11-28 19:51:17（脚本自动更新时间戳行）
 
 ## 意图速查（人工维护：意图词 → 函数名；行号请到下方「函数索引」按函数名取）
 
@@ -44,7 +44,9 @@
 | save 工具工厂／严格校验顺序／paths-only | lib/save-tool-factories.js | createSaveToolFactories、defineSavePlan、resolveSaveContext、defineSaveProbe |
 | 保存与草稿共用核实／会话工作区上下文／源文件、证据引用、未探查标记 | lib/save-source-verification.js | cwdOf、pathContextOf、resolveWorkspaceEntry、verifyPlanSources、verifyProbeEvidenceRef、unexploredMarkerOf |
 | edit_plan_draft／草稿修复／草稿回写重跑／.md_mid 行级编辑／转正（失败草稿就地修复后重跑与 save_plan 同源的合同/源/证据校验，通过即转正为成对正式 .md 并删草稿） | lib/plan-draft-tool.js | createPlanDraftToolFactories、defineEditPlanDraft、applyEdits、draftBaseOf |
-| save_plan 模式／任务块／卷首职责与块边界／逐文件与修改点解析 | lib/save-plan-validation.js | parseTaskDocument、validateIds、validateTaskShape |
+| save_plan Markdown 解析／卷首、任务块、逐文件与修改点结构 | lib/save-plan-markdown-parser.js | parseTaskDocument、headingCandidate、fieldOf |
+| save_plan 解析与校验共用诊断／默认修复模板 | lib/save-plan-validation-diagnostics.js | makeDiagnostic、defaultTemplate |
+| save_plan 模式／任务块编号、字段与文件规则校验 | lib/save-plan-validation.js | validateIds、validateTaskShape |
 | save_plan 路径／资源／文件所有权与组 DAG（initialState 仅静态资格）／文件点与定位摘要 | lib/save-plan-validation.js | pathIssue、parseResources、validatePlanRelations、buildInternalOrder、buildSummary |
 | save_plan 检查引用／验收组／收尾全局／早拒／双文档文件点映射 | lib/save-plan-validation.js | parseCheckRefs、validateChecks、validateClosure、validateGlobal、validateSavePlanContract |
 | step-00／step-06 save_plan 通用合同回归覆盖（模式、任务/组 DAG、资源/检查引用、收尾/全局、摘要/早拒、paths-only 与零副作用） | pe-test/tools/step-00-全流程回归.mjs、pe-test/tools/step-06-线索落盘.mjs |  |
@@ -121,7 +123,9 @@
 | lib/runtime-static.js | 23 | 显式参数纯 helper：causeChainOf 解析 cause 链；不持有宿主状态 |
 | lib/save-contract.js | 263 | save 合同唯一真源：任务名/sessionTag/base、SAVE_PLAN_LIMITS 与内部确定性 summary、paths-only ContentBlock 投影、PROBE_LIMITS、Markdown 渲染与证据引用清洗；无宿主状态，运行时限制只在本文件维护。 |
 | lib/save-persistence.js | 223 | 单次调用阶段感知提交：mkdir→临时文件逐项写入→逐项检查并顺序发布；失败保留首错/阶段，仅清理本次临时与已发布半套工件，清理失败附残留路径与原因，预存目标不覆盖；不创建/扫描/恢复跨调用 journal；末位 fs 依赖可注入。 |
-| lib/save-plan-validation.js | 1222 | save_plan 文本合同校验：模式/任务/路径所有权/依赖与执行组 DAG/资源/检查引用与验收组/收尾全局/摘要早拒；不启动代理或执行命令。 |
+| lib/save-plan-markdown-parser.js | 369 | 逐行解析方案与验收 Markdown：识别标题、卷首与字段，构建结构记录并返回解析期诊断；不做合同语义校验。 |
+| lib/save-plan-validation-diagnostics.js | 49 | 解析器与校验器共享的诊断对象构造与默认修复模板；不控制输出顺序、截断或格式化。 |
+| lib/save-plan-validation.js | 812 | save_plan 文本合同校验与统一编排：模式/任务/路径所有权/依赖与执行组 DAG/资源/检查引用与验收组/收尾全局/摘要早拒；调用共享 Markdown 解析器，并兼容转发原解析导出；不启动代理或执行命令。 |
 | lib/save-probe-validation.js | 173 | save_probe 参数校验：数组/条目/长度/总量/path 存在性/range/evidence 聚合拒绝 |
 | lib/save-source-verification.js | 195 | 保存与草稿共用的会话路径上下文、源文件/证据核实与未探查标记；只负责核实，不装配工具或落盘。 |
 | lib/save-tool-factories.js | 270 | 显式依赖工厂：save_plan 执行顺序固定——参数校验（plan/checklist 均为字符串且各 ≥200 字）→ 取一次 cwd → 容错解析上下文（目录/base/会话标识，解析失败只记原错误继续走、绝不替换合同诊断）→ 未探查标记 → 合同校验 → 源核实 → 证据核实 → 用 context 单次 atomicCommit 落盘；未探查标记、合同校验（派遣摘要超限除外，只能改写更短的方案，不落草稿）、源核实、证据核实四处失败出口统一先落成对 .md_mid 草稿再抛错，草稿提示追加在原报错末尾、上下文不可用或草稿写失败只降级为一句提示；合法正文逐字保存、structured output 仅 paths、render 仅将两个 paths 投影为唯一 text ContentBlock；save_probe 保留既有证据诊断与落盘；不缓存 ctx/agent/会话状态。 |
@@ -662,66 +666,66 @@
 | lib/save-persistence.js | sameFile | L114-117 | （待补充） |  |
 | lib/save-persistence.js | stagePairFile | L119-132 | （待补充） |  |
 | lib/save-persistence.js | atomicReplace | L135-223 | 覆盖语义落盘：成对覆盖先保留原字节或缺席状态；普通失败时只恢复能确认由本轮发布的目标，并分列恢复和清理失败。单文件覆盖语义不变；不承诺崩溃或跨进程原子性 |  |
-| lib/save-plan-validation.js | newFileRecord | L63-65 | 解析期新建文件记录，保存路径、角色与操作和修改点容器，当前修改点初始为空以约束字段顺序。 |  |
-| lib/save-plan-validation.js | newTask | L67-79 | 按任务编号与标题创建任务结构，一次性预置全部字段数组与空文件集合，供解析器逐行填充。 |  |
-| lib/save-plan-validation.js | newClosure | L81-92 | 创建收尾块结构，携带收尾文件、收尾依赖与动作容器及空文件集合，并记录块首行行号。 |  |
-| lib/save-plan-validation.js | newCheck | L95-101 | 创建检查块结构，预置验收组、取证方式、工作目录与覆盖标记，供验收侧校验与汇总复用。 |  |
-| lib/save-plan-validation.js | newGlobal | L103-105 | 创建全局验收块结构，只含期望、禁止与正式验收引用容器，不带任务级文件与修改点字段。 |  |
-| lib/save-plan-validation.js | makeDiagnostic | L107-117 | 组装一条诊断对象，空值统一转为空串，未指定修复模板时按字段名回退到默认模板文案。 |  |
-| lib/save-plan-validation.js | defaultTemplate | L119-153 | 按字段名返回最小修复模板示例文本，遇到未知字段回退为通用填写提示，保证诊断可直接照抄。 |  |
-| lib/save-plan-validation.js | normalizeText | L155-157 | 把输入文本统一成 LF 换行，非字符串一律归一为空串，避免跨平台换行符导致切分错行。 |  |
-| lib/save-plan-validation.js | fieldOf | L159-164 | 按字段前缀表匹配行首标签，命中时返回键名、中文标签与去空白后的值，未命中返回 null。 |  |
-| lib/save-plan-validation.js | isPlaceholderAnchor | L173-175 | 判断锚点是否只是整个文件、待定、占位等空泛占位词，命中即视为不可用伪锚点，不做原文比对。 |  |
-| lib/save-plan-validation.js | isAcceptancePlaceholder | L177-180 | 先剥掉尾部标点，再判断验收定位是否只是同方案、同上或纯 M 编号这类占位写法，命中即视为占位。 |  |
-| lib/save-plan-validation.js | parseLocation | L182-190 | 解析修改位置的行号区间写法，单点或起止区间都认，端点非安全正整数或倒序时返回 null 不抛错。 |  |
-| lib/save-plan-validation.js | pointIdentity | L192-194 | 取修改点编号的文本值，修改点缺失或编号为空时返回空串，避免集合比较与正则校验抛错。 |  |
-| lib/save-plan-validation.js | headingCandidate | L197-209 | 按正则识别任务、检查、收尾与全局验收标题，格式写错的候选标题单独归类，全不匹配返回 null。 |  |
-| lib/save-plan-validation.js | pushEmptyFieldDiagnostic | L211-215 | 仅在字段值为空时生成结构字段不能为空的诊断，非空则返回 undefined 由调用方自行跳过。 |  |
-| lib/save-plan-validation.js | parseTaskDocument | L217-447 | 逐行解析方案或验收正文：跳过围栏代码块，按阶段收敛结构块并收集字段与标题类诊断。 |  |
-| lib/save-plan-validation.js | flush | L230-237 | 把当前结构块按类型归入任务、检查、收尾或全局列表并清空游标，遇到新标题前必先调用。 |  |
-| lib/save-plan-validation.js | wrongHeading | L239-241 | 以空任务编号记录标题错位诊断，只携带文档名与原始行文本，不中断后续逐行解析流程。 |  |
-| lib/save-plan-validation.js | pushField | L243-247 | 把字段值追加到所属结构块的同名数组，值为空时顺带压入一条空字段诊断后继续解析剩余行。 |  |
-| lib/save-plan-validation.js | requireFile | L249-253 | 要求文件级字段紧跟主文件、关联文件或收尾文件之后，否则记诊断并返回 null 表示缺失。 |  |
-| lib/save-plan-validation.js | requirePoint | L255-261 | 要求定位字段之前已声明对应修改点，缺失时报错并返回 null，避免字段挂到错误的层级。 |  |
-| lib/save-plan-validation.js | validateIds | L449-460 | 校验任务或检查编号不重复、从 1 连续且按升序出现，每种违反情形各记一条编号诊断。 |  |
-| lib/save-plan-validation.js | isMarkdownWrapped | L462-473 | 判断路径是否被反引号、括号、引号或加粗标记包裹，用于拒绝 Markdown 化的路径写法。 |  |
-| lib/save-plan-validation.js | pathIssue | L475-488 | 校验工作区相对路径：空值、行号、盘符、绝对路径、反斜杠、点段与包裹写法各返回错误文案。 |  |
-| lib/save-plan-validation.js | workdirIssue | L490-495 | 校验工作目录写法，单独放行点号表示当前目录，其余规则复用路径校验并返回问题文案。 |  |
-| lib/save-plan-validation.js | platformIsCaseInsensitive | L497-501 | 判定路径比较是否忽略大小写，优先取调用方平台或显式开关，缺省时回退到当前进程平台。 |  |
-| lib/save-plan-validation.js | pathKey | L503-506 | 把路径统一为正斜杠，大小写不敏感平台再转小写，作为文件集合去重与跨文档比对的键。 |  |
-| lib/save-plan-validation.js | parseDependencies | L508-517 | 解析依赖字段，写无时得到空依赖列表，其余必须是 [任务N] 列表且不得重复引用同一任务。 |  |
-| lib/save-plan-validation.js | parseResources | L519-527 | 解析独占资源为逗号分隔的稳定标识，允许写无，出现空项或重复项时返回问题文案而不抛错。 |  |
-| lib/save-plan-validation.js | parseCheckRefs | L529-537 | 解析正式验收引用为 [检查N] 列表，空值、非法写法与重复检查编号均返回对应问题文案。 |  |
-| lib/save-plan-validation.js | addPathDiagnostics | L539-544 | 逐条校验路径或工作目录并按需选用目录规则，把每个违反项压成带字段名的一条诊断后继续处理。 |  |
-| lib/save-plan-validation.js | validatePathSet | L546-560 | 校验主文件与关联文件写法并检测同任务内重复，同时把原始集合与归一化键集写回任务对象。 |  |
-| lib/save-plan-validation.js | validateResourceField | L562-570 | 限制独占资源为可选单值字段，重复声明或解析失败时记诊断，并回填解析出的资源标识列表。 |  |
-| lib/save-plan-validation.js | validatePointIds | L572-580 | 校验同一文件内修改点编号形如 M 加非零正整数且互不重复，每种违规各记一条对应诊断。 |  |
-| lib/save-plan-validation.js | validatePlanFileRecord | L582-627 | 校验单个方案文件记录：路径、文件操作唯一性、修改点数量及按操作类型分派的字段要求。 |  |
-| lib/save-plan-validation.js | validatePlanFileRecords | L629-634 | 校验任务或收尾的文件记录数量与主文件、关联文件、收尾文件逐一对应，再逐个下钻校验。 |  |
-| lib/save-plan-validation.js | validateAcceptanceFileRecord | L636-652 | 校验验收侧文件记录：操作唯一、对应修改点齐全，验收定位须是条件描述而非旧行号占位。 |  |
-| lib/save-plan-validation.js | validateAcceptanceFileRecords | L653-658 | 校验验收文件记录数量与文件清单一一对应，缺记录或数量不符即记一条文件记录诊断，再逐项校验。 |  |
-| lib/save-plan-validation.js | validateTaskShape | L660-697 | 校验任务外形：标题、主文件唯一、执行组与依赖理由成对，并按方案或验收分支追加各自要求。 |  |
-| lib/save-plan-validation.js | graphCycles | L699-720 | 用三色标记做深度优先遍历求有向图环，按首次出现去重后返回成环节点序列，无环时得空数组。 |  |
-| lib/save-plan-validation.js | visit | L704-717 | 图遍历的递归访问器，发现指向栈内节点的边即截取成环，回溯时把节点标记为已完成状态。 |  |
-| lib/save-plan-validation.js | groupSort | L722-726 | 按执行组名去掉前缀后数值升序排序，数值相同时退化为字符串比较以保证输出顺序稳定。 |  |
-| lib/save-plan-validation.js | firstTaskForGroup | L728-731 | 返回指定执行组内首个任务的编号，组内没有成员时返回 null 而不是抛出异常中断流程。 |  |
-| lib/save-plan-validation.js | validatePlanRelations | L733-805 | 校验任务依赖存在性、自依赖与依赖环，并核对执行组环、文件独占、分组理由与资源归组。 |  |
-| lib/save-plan-validation.js | fileRecordKey | L807-809 | 生成文件记录比对键：角色加归一化路径，使方案与验收能按同一键配对到同一个文件记录上。 |  |
-| lib/save-plan-validation.js | pointIdSet | L811-813 | 收集某个文件下全部修改点编号组成集合，供方案与验收的修改点集合精确比对，缺失记为内置空串。 |  |
-| lib/save-plan-validation.js | equalStringSets | L815-819 | 比较两个字符串集合是否完全相等，元素数量不同直接返回 false，不会抛出错误。 |  |
-| lib/save-plan-validation.js | validateFileRecordMapping | L821-843 | 按记录键配对方案与验收的同名文件，比对文件操作与修改点编号集合并报出缺失的一侧。 |  |
-| lib/save-plan-validation.js | validateCrossDocument | L845-869 | 跨文档校验任务编号、主文件、文件集合与收尾是否成对一致，并逐任务下钻文件记录映射。 |  |
-| lib/save-plan-validation.js | validateClosure | L871-921 | 校验收尾块：收尾文件不重复、依赖恰好覆盖全部任务且不与任务文件重叠，验收侧另查期望禁止。 |  |
-| lib/save-plan-validation.js | validateGlobal | L923-933 | 校验全局验收的期望与禁止非空、正式验收引用唯一，并把解析结果回填到检查引用列表。 |  |
-| lib/save-plan-validation.js | validateChecks | L935-992 | 校验检查定义的编号、验收组、取证方式、工作目录与证据，并统计覆盖后清出孤儿检查。 |  |
-| lib/save-plan-validation.js | attachRefs | L970-983 | 把任务、收尾或全局的正式验收引用回挂到检查的覆盖统计，引用不存在时报诊断并跳过该条。 |  |
-| lib/save-plan-validation.js | sortIds | L994-996 | 对编号数组先去重再按数值升序排序，返回新数组且不改动入参的原始顺序与长度，空数组原样返回。 |  |
-| lib/save-plan-validation.js | buildInternalOrder | L998-1022 | 按任务依赖在组内做拓扑排序，成环导致排序不完整时回退为编号升序输出以保持稳定顺序。 |  |
-| lib/save-plan-validation.js | summarizeFileRecord | L1024-1045 | 把文件记录压成摘要：操作、修改点、锚点、动作与生成验收字段，缺项统一用空串占位。 |  |
-| lib/save-plan-validation.js | buildSummary | L1047-1169 | 汇总方案与验收为交付摘要：任务、执行组、检查、覆盖关系与文件计数，供保存结果回显。 |  |
-| lib/save-plan-validation.js | formatDiagnostic | L1171-1177 | 把单条诊断格式化为含文档名、任务号、字段值、原因与最小修复模板的一行可读文本，超长值截断。 |  |
-| lib/save-plan-validation.js | finalizeFailure | L1179-1185 | 把诊断整理成失败结果，只保留前 20 条并统计省略条数，同时给出含总数与省略提示的错误文本。 |  |
-| lib/save-plan-validation.js | validateSavePlanContract | L1187-1220 | 对外校验入口，兼容单参数调用形态，解析方案与验收后串行执行全部结构与跨文档校验。 |  |
+| lib/save-plan-markdown-parser.js | newFileRecord | L59-61 | 解析期新建文件记录，保存路径、角色与操作和修改点容器，当前修改点初始为空以约束字段顺序。 |  |
+| lib/save-plan-markdown-parser.js | newTask | L63-75 | 按任务编号与标题创建任务结构，一次性预置全部字段数组与空文件集合，供解析器逐行填充。 |  |
+| lib/save-plan-markdown-parser.js | newClosure | L77-88 | 创建收尾块结构，携带收尾文件、收尾依赖与动作容器及空文件集合，并记录块首行行号。 |  |
+| lib/save-plan-markdown-parser.js | newCheck | L91-97 | 创建检查块结构，预置验收组、取证方式、工作目录与覆盖标记，供验收侧校验与汇总复用。 |  |
+| lib/save-plan-markdown-parser.js | newGlobal | L99-101 | 创建全局验收块结构，只含期望、禁止与正式验收引用容器，不带任务级文件与修改点字段。 |  |
+| lib/save-plan-markdown-parser.js | normalizeText | L103-105 | 把输入文本统一成 LF 换行，非字符串一律归一为空串，避免跨平台换行符导致切分错行。 |  |
+| lib/save-plan-markdown-parser.js | fieldOf | L107-112 | 按字段前缀表匹配行首标签，命中时返回键名、中文标签与去空白后的值，未命中返回 null。 |  |
+| lib/save-plan-markdown-parser.js | headingCandidate | L117-129 | 按正则识别任务、检查、收尾与全局验收标题，格式写错的候选标题单独归类，全不匹配返回 null。 |  |
+| lib/save-plan-markdown-parser.js | pushEmptyFieldDiagnostic | L131-135 | 仅在字段值为空时生成结构字段不能为空的诊断，非空则返回 undefined 由调用方自行跳过。 |  |
+| lib/save-plan-markdown-parser.js | parseTaskDocument | L137-367 | 逐行解析方案或验收正文：跳过围栏代码块，按阶段收敛结构块并收集字段与标题类诊断。 |  |
+| lib/save-plan-markdown-parser.js | flush | L150-157 | 把当前结构块按类型归入任务、检查、收尾或全局列表并清空游标，遇到新标题前必先调用。 |  |
+| lib/save-plan-markdown-parser.js | wrongHeading | L159-161 | 以空任务编号记录标题错位诊断，只携带文档名与原始行文本，不中断后续逐行解析流程。 |  |
+| lib/save-plan-markdown-parser.js | pushField | L163-167 | 把字段值追加到所属结构块的同名数组，值为空时顺带压入一条空字段诊断后继续解析剩余行。 |  |
+| lib/save-plan-markdown-parser.js | requireFile | L169-173 | 要求文件级字段紧跟主文件、关联文件或收尾文件之后，否则记诊断并返回 null 表示缺失。 |  |
+| lib/save-plan-markdown-parser.js | requirePoint | L175-181 | 要求定位字段之前已声明对应修改点，缺失时报错并返回 null，避免字段挂到错误的层级。 |  |
+| lib/save-plan-validation-diagnostics.js | makeDiagnostic | L1-11 | 组装一条诊断对象，空值统一转为空串，未指定修复模板时按字段名回退到默认模板文案。 |  |
+| lib/save-plan-validation-diagnostics.js | defaultTemplate | L13-47 | 按字段名返回最小修复模板示例文本，遇到未知字段回退为通用填写提示，保证诊断可直接照抄。 |  |
+| lib/save-plan-validation.js | isPlaceholderAnchor | L16-18 | 判断锚点是否只是整个文件、待定、占位等空泛占位词，命中即视为不可用伪锚点，不做原文比对。 |  |
+| lib/save-plan-validation.js | isAcceptancePlaceholder | L20-23 | 先剥掉尾部标点，再判断验收定位是否只是同方案、同上或纯 M 编号这类占位写法，命中即视为占位。 |  |
+| lib/save-plan-validation.js | parseLocation | L25-33 | 解析修改位置的行号区间写法，单点或起止区间都认，端点非安全正整数或倒序时返回 null 不抛错。 |  |
+| lib/save-plan-validation.js | pointIdentity | L35-37 | 取修改点编号的文本值，修改点缺失或编号为空时返回空串，避免集合比较与正则校验抛错。 |  |
+| lib/save-plan-validation.js | validateIds | L39-50 | 校验任务或检查编号不重复、从 1 连续且按升序出现，每种违反情形各记一条编号诊断。 |  |
+| lib/save-plan-validation.js | isMarkdownWrapped | L52-63 | 判断路径是否被反引号、括号、引号或加粗标记包裹，用于拒绝 Markdown 化的路径写法。 |  |
+| lib/save-plan-validation.js | pathIssue | L65-78 | 校验工作区相对路径：空值、行号、盘符、绝对路径、反斜杠、点段与包裹写法各返回错误文案。 |  |
+| lib/save-plan-validation.js | workdirIssue | L80-85 | 校验工作目录写法，单独放行点号表示当前目录，其余规则复用路径校验并返回问题文案。 |  |
+| lib/save-plan-validation.js | platformIsCaseInsensitive | L87-91 | 判定路径比较是否忽略大小写，优先取调用方平台或显式开关，缺省时回退到当前进程平台。 |  |
+| lib/save-plan-validation.js | pathKey | L93-96 | 把路径统一为正斜杠，大小写不敏感平台再转小写，作为文件集合去重与跨文档比对的键。 |  |
+| lib/save-plan-validation.js | parseDependencies | L98-107 | 解析依赖字段，写无时得到空依赖列表，其余必须是 [任务N] 列表且不得重复引用同一任务。 |  |
+| lib/save-plan-validation.js | parseResources | L109-117 | 解析独占资源为逗号分隔的稳定标识，允许写无，出现空项或重复项时返回问题文案而不抛错。 |  |
+| lib/save-plan-validation.js | parseCheckRefs | L119-127 | 解析正式验收引用为 [检查N] 列表，空值、非法写法与重复检查编号均返回对应问题文案。 |  |
+| lib/save-plan-validation.js | addPathDiagnostics | L129-134 | 逐条校验路径或工作目录并按需选用目录规则，把每个违反项压成带字段名的一条诊断后继续处理。 |  |
+| lib/save-plan-validation.js | validatePathSet | L136-150 | 校验主文件与关联文件写法并检测同任务内重复，同时把原始集合与归一化键集写回任务对象。 |  |
+| lib/save-plan-validation.js | validateResourceField | L152-160 | 限制独占资源为可选单值字段，重复声明或解析失败时记诊断，并回填解析出的资源标识列表。 |  |
+| lib/save-plan-validation.js | validatePointIds | L162-170 | 校验同一文件内修改点编号形如 M 加非零正整数且互不重复，每种违规各记一条对应诊断。 |  |
+| lib/save-plan-validation.js | validatePlanFileRecord | L172-217 | 校验单个方案文件记录：路径、文件操作唯一性、修改点数量及按操作类型分派的字段要求。 |  |
+| lib/save-plan-validation.js | validatePlanFileRecords | L219-224 | 校验任务或收尾的文件记录数量与主文件、关联文件、收尾文件逐一对应，再逐个下钻校验。 |  |
+| lib/save-plan-validation.js | validateAcceptanceFileRecord | L226-242 | 校验验收侧文件记录：操作唯一、对应修改点齐全，验收定位须是条件描述而非旧行号占位。 |  |
+| lib/save-plan-validation.js | validateAcceptanceFileRecords | L243-248 | 校验验收文件记录数量与文件清单一一对应，缺记录或数量不符即记一条文件记录诊断，再逐项校验。 |  |
+| lib/save-plan-validation.js | validateTaskShape | L250-287 | 校验任务外形：标题、主文件唯一、执行组与依赖理由成对，并按方案或验收分支追加各自要求。 |  |
+| lib/save-plan-validation.js | graphCycles | L289-310 | 用三色标记做深度优先遍历求有向图环，按首次出现去重后返回成环节点序列，无环时得空数组。 |  |
+| lib/save-plan-validation.js | visit | L294-307 | 图遍历的递归访问器，发现指向栈内节点的边即截取成环，回溯时把节点标记为已完成状态。 |  |
+| lib/save-plan-validation.js | groupSort | L312-316 | 按执行组名去掉前缀后数值升序排序，数值相同时退化为字符串比较以保证输出顺序稳定。 |  |
+| lib/save-plan-validation.js | firstTaskForGroup | L318-321 | 返回指定执行组内首个任务的编号，组内没有成员时返回 null 而不是抛出异常中断流程。 |  |
+| lib/save-plan-validation.js | validatePlanRelations | L323-395 | 校验任务依赖存在性、自依赖与依赖环，并核对执行组环、文件独占、分组理由与资源归组。 |  |
+| lib/save-plan-validation.js | fileRecordKey | L397-399 | 生成文件记录比对键：角色加归一化路径，使方案与验收能按同一键配对到同一个文件记录上。 |  |
+| lib/save-plan-validation.js | pointIdSet | L401-403 | 收集某个文件下全部修改点编号组成集合，供方案与验收的修改点集合精确比对，缺失记为内置空串。 |  |
+| lib/save-plan-validation.js | equalStringSets | L405-409 | 比较两个字符串集合是否完全相等，元素数量不同直接返回 false，不会抛出错误。 |  |
+| lib/save-plan-validation.js | validateFileRecordMapping | L411-433 | 按记录键配对方案与验收的同名文件，比对文件操作与修改点编号集合并报出缺失的一侧。 |  |
+| lib/save-plan-validation.js | validateCrossDocument | L435-459 | 跨文档校验任务编号、主文件、文件集合与收尾是否成对一致，并逐任务下钻文件记录映射。 |  |
+| lib/save-plan-validation.js | validateClosure | L461-511 | 校验收尾块：收尾文件不重复、依赖恰好覆盖全部任务且不与任务文件重叠，验收侧另查期望禁止。 |  |
+| lib/save-plan-validation.js | validateGlobal | L513-523 | 校验全局验收的期望与禁止非空、正式验收引用唯一，并把解析结果回填到检查引用列表。 |  |
+| lib/save-plan-validation.js | validateChecks | L525-582 | 校验检查定义的编号、验收组、取证方式、工作目录与证据，并统计覆盖后清出孤儿检查。 |  |
+| lib/save-plan-validation.js | attachRefs | L560-573 | 把任务、收尾或全局的正式验收引用回挂到检查的覆盖统计，引用不存在时报诊断并跳过该条。 |  |
+| lib/save-plan-validation.js | sortIds | L584-586 | 对编号数组先去重再按数值升序排序，返回新数组且不改动入参的原始顺序与长度，空数组原样返回。 |  |
+| lib/save-plan-validation.js | buildInternalOrder | L588-612 | 按任务依赖在组内做拓扑排序，成环导致排序不完整时回退为编号升序输出以保持稳定顺序。 |  |
+| lib/save-plan-validation.js | summarizeFileRecord | L614-635 | 把文件记录压成摘要：操作、修改点、锚点、动作与生成验收字段，缺项统一用空串占位。 |  |
+| lib/save-plan-validation.js | buildSummary | L637-759 | 汇总方案与验收为交付摘要：任务、执行组、检查、覆盖关系与文件计数，供保存结果回显。 |  |
+| lib/save-plan-validation.js | formatDiagnostic | L761-767 | 把单条诊断格式化为含文档名、任务号、字段值、原因与最小修复模板的一行可读文本，超长值截断。 |  |
+| lib/save-plan-validation.js | finalizeFailure | L769-775 | 把诊断整理成失败结果，只保留前 20 条并统计省略条数，同时给出含总数与省略提示的错误文本。 |  |
+| lib/save-plan-validation.js | validateSavePlanContract | L777-810 | 对外校验入口，兼容单参数调用形态，解析方案与验收后串行执行全部结构与跨文档校验。 |  |
 | lib/save-probe-validation.js | contextOf | L8-12 | 优先用传入的路径上下文，否则以当前目录建工作区上下文；两者都缺时返回 null 不抛错。 |  |
 | lib/save-probe-validation.js | resolveAbsoluteProbeTarget | L14-39 | 绝对探查路径先试工作区根，再试宿主根与已注册能力，全部失败才抛错，不试探其它根。 |  |
 | lib/save-probe-validation.js | resolveProbeTarget | L41-47 | 解析探查目标：缺上下文或非字符串即抛错，相对路径按工作区解析，绝对路径走多根匹配。 |  |

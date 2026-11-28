@@ -32,7 +32,7 @@
 
 - gateWords 唯一人工值源：[agent.cordis.yml](assets/presets/extra-plan/agent.cordis.yml) 的 `config.gateWords`；`lib/gate-words.js` 只负责字段、校验和运行时派生。
 - save_probe 限制与渲染合同：[save-contract.js](lib/save-contract.js)；验证：[save-probe-validation.js](lib/save-probe-validation.js)。文档不维护第二份限制值表。
-- save_plan 结构合同、校验与工具接线：[save-plan-validation.js](lib/save-plan-validation.js)、[save-contract.js](lib/save-contract.js)、[save-tool-factories.js](lib/save-tool-factories.js)；源文件、证据引用和未探查标记共用核实：[save-source-verification.js](lib/save-source-verification.js)；草稿修复工具 `edit_plan_draft` 的定义处：[plan-draft-tool.js](lib/plan-draft-tool.js)；两份方案/验收工件自包含模式、任务/组、检查与交接约定。此处只做一跳导航，不复述完整语法、限制值或某次任务规模。
+- save_plan Markdown 解析：[save-plan-markdown-parser.js](lib/save-plan-markdown-parser.js)；结构合同、校验与工具接线：[save-plan-validation.js](lib/save-plan-validation.js)、[save-contract.js](lib/save-contract.js)、[save-tool-factories.js](lib/save-tool-factories.js)；源文件、证据引用和未探查标记共用核实：[save-source-verification.js](lib/save-source-verification.js)；草稿修复工具 `edit_plan_draft` 的定义处：[plan-draft-tool.js](lib/plan-draft-tool.js)；两份方案/验收工件自包含模式、任务/组、检查与交接约定。此处只做一跳导航，不复述完整语法、限制值或某次任务规模。
 - 默认值与预设声明产物：[generate-runtime-defaults.mjs](scripts/generate-runtime-defaults.mjs)；生成物只读、不得手改。
 - 函数路径/行号/结构：[代码地图生成.mjs](pe-test/tools/代码地图生成.mjs) 与 [ai-代码地图](pe-test/docs/ai-代码地图.md)；人工描述与机器索引分工不同。
 - 当前宿主状态：[ai-宿主耦合台账](pe-test/docs/ai-宿主耦合台账.md)；历史数字与已删除耦合只在[历史归档](pe-test/docs/ai-宿主耦合历史归档.md)中追溯。

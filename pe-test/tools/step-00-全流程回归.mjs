@@ -5226,6 +5226,21 @@ for (const [label, code, expected] of J_LITERAL) {
     names.every(name => typeof shared[name] === 'function' && legacy[name] === shared[name]))
 }
 
+{
+  const validation = await import('../../lib/save-plan-validation.js')
+  const parser = await import('../../lib/save-plan-markdown-parser.js')
+  const names = ['CONTRACT_ERROR_PREFIX', 'parseCheckRefs', 'parseDependencies', 'parseResources', 'parseTaskDocument', 'pathIssue', 'validateSavePlanContract']
+  checkTrue('RC-PLAN1 校验入口保留七项导出并兼容转发同一个解析函数',
+    isDeepStrictEqual(Object.keys(validation), names) && typeof parser.parseTaskDocument === 'function'
+      && validation.parseTaskDocument === parser.parseTaskDocument)
+  const parserSource = readFileSync(new URL('../../lib/save-plan-markdown-parser.js', import.meta.url), 'utf8')
+  const diagnosticSource = readFileSync(new URL('../../lib/save-plan-validation-diagnostics.js', import.meta.url), 'utf8')
+  const importsOf = source => source.split('\n').map(line => line.trim()).filter(line => line.startsWith('import '))
+  checkTrue('RC-PLAN2 解析器只依赖共享诊断，诊断无反向依赖',
+    isDeepStrictEqual(importsOf(parserSource), ["import { makeDiagnostic } from './save-plan-validation-diagnostics.js'"])
+      && importsOf(diagnosticSource).length === 0 && !parserSource.includes('import(') && !diagnosticSource.includes('import('))
+}
+
 const rcL1Code = [
   "const one = 'tools.write({ path: " + String.fromCharCode(92) + "'x" + String.fromCharCode(92) + "' })';",
   "const two = " + JSON.stringify('tools.edit({ file_path: "x" })') + ";",
