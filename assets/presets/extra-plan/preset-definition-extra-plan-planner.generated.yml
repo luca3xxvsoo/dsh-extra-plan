@@ -38,10 +38,6 @@ plugins:
       # 除代码外用中文；要点保留：工具名 read 与程序内 tools.read(...) 调用形态、file_path 必填。
       # 参数默认值与返回形状由宿主 read 契约（dsh-tool-fs）单独承载，不写进本文案。
       # 文案不再由官方 renderer 生成，与宿主 read 契约（dsh-tool-fs）的人工核对见 pe-test/docs/ai-宿主耦合台账.md HS26。
-      bootstrapReadHint: |-
-        run_code 调用 read 示例：
-        const r = await tools.read({ file_path: 'README.md' })
-        return r
       # 闸门关键词：唯一人工编辑位置（6 个字段集中于此；改后普通重启即生效，
       # 旧词不再推进状态机）。persona 正文只引用 {{extra_plan_*}} 变量，不维护第二份词值。
       # 校验（JS 侧只有 schema 没有默认值）：单次入参整组严格——插件 apply 对本行 config 同步校验，

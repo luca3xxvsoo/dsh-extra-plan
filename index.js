@@ -12,8 +12,7 @@
 // 与宿主 read 契约的人工核对见台账 HS26。
 const BOOTSTRAP_READ_HINT_FALLBACK = [
   'run_code 调用 read 示例：',
-  "const r = await tools.read({ file_path: 'README.md' })",
-  'return r',
+  "try {return await tools.read({file_path:'README.md'})} catch (e) {console.log(String(e))}"
 ].join('\n')
 
 // 路由/目的 ask 的关键词唯一真源是 YAML（config.gateWords，见 agent.cordis.yml）：

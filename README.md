@@ -23,7 +23,7 @@
 
 ### 安装步骤
 
-1. dsh web - 插件 - 添加插件 - https://github.com/luca3xxvsoo/dsh-extra-plan 或 [解压路径]/dsh-extra-plan-main - 允许脚本并重试 - 立即启用
+1. dsh web - 插件 - 添加插件 - https://github.com/luca3xxvsoo/dsh-extra-plan 或 [解压路径]/dsh-extra-plan-main - 立即启用
 2. **重启 DSH 进程**使插件生效
 3. 新建会话，在预设列表中选择「按需规划模式」
 
