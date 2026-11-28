@@ -86,24 +86,28 @@ dsh-extra-plan/
 │   ├── gate-decisions.js                                     # 闸门纯决策：路由/目的/澄清与只读判定
 │   ├── gate-words.js                                         # 闸门词契约：字段规格/整组校验/运行时派生
 │   ├── live-config.js                                        # 热修改支持模块
-│   ├── log-retention.js                                      # 日志裁剪：除账本外的日志只保留48小时
+│   ├── log-retention.js                                      # 日志裁剪：除账本外的日志2天前数据删除
 │   ├── model-routing.js                                      # 子代理模型选择：planner/非 planner 路由解析
 │   ├── path-policy.js                                        # 路径安全策略闸门
-│   ├── plan-draft-tool.js                                    # save_plan：中间态文档修改
+│   ├── plan-draft-tool.js                                    # edit_plan_draft：修改草稿、复验并转正
 │   ├── planner-budget.js                                     # 探查预算：用量计数与提醒/耗尽文案
 │   ├── preset-defaults.generated.js                          # 构建期生成：11 项 DEFAULT_SETTINGS 默认值（含 exploreBudget）
 │   ├── preset-settings.js                                    # 设置项 descriptor 与 YAML 处理 facade（供迁移复用）
-│   ├── preset-sync.js                                        # settings owner 内部同步/adapter 与 raw 旧值迁移
+│   ├── preset-sync.js                                        # 设置补齐、预设投影与官方适配器挂载
 │   ├── preset-yaml.js                                        # 预设 YAML 解析、定位与保格式改写纯模块
 │   ├── role-contract.js                                      # 角色身份常量表
 │   ├── run-code-scanner.js                                   # run_code 无宿主状态词法与调用点扫描
 │   ├── run-code-static.js                                    # run_code：静态解析与理由函数
+│   ├── runtime-diagnostics.js                                # 诊断路径解析、同步 JSONL 追加与回合错误记录
 │   ├── runtime-lifecycle.js                                  # session 生命周期与计数状态工厂
 │   ├── runtime-static.js                                     # 静态纯函数：显式参数 helper
 │   ├── save-contract.js                                      # save_plan/save_probe：合同常量与 Markdown 渲染
-│   ├── save-persistence.js                                   # save_plan/save_probe：原子落盘内核与 journal 自愈
-│   ├── save-plan-validation.js                               # save_plan：文档解析校验
+│   ├── save-persistence.js                                   # save_plan/save_probe：原子提交与替换
+│   ├── save-plan-markdown-parser.js                          # save_plan：Markdown 卷首、任务块与字段解析
+│   ├── save-plan-validation-diagnostics.js                   # save_plan：解析与校验共用的诊断构造
+│   ├── save-plan-validation.js                               # save_plan：方案与验收合同校验、诊断汇总与派遣摘要
 │   ├── save-probe-validation.js                              # save_probe：参数与路径/range/evidence 校验
+│   ├── save-source-verification.js                           # 保存与草稿共用：源文件与证据引用核实
 │   ├── save-tool-factories.js                                # save_plan/save_probe：工具定义
 │   ├── sdk-text-cache.js                                     # tools:sdk缓存复用
 │   ├── settings-contract.js                                  # 设置项单一合同：键、默认值、校验与元数据

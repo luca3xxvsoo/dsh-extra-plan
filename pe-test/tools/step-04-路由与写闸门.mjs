@@ -720,6 +720,129 @@ function makeArmAgent(id, toolsStub, withAppend) {
   checkTrue('R18 无 session.append 的夹具不 arm（路线 A）', noAppendRecorder.calls.restrict.length === 0)
 }
 
+// ── RC-LOG：使用真实入口回调对拍两类 JSONL 与路径降级 ──
+{
+  const w = join(ROUTE_FIXTURE.root, 'diagnostics-w')
+  const h = ROUTE_FIXTURE.home
+  const reqName = 'extra-plan-request-errors.jsonl'
+  const agentName = 'extra-plan-agent-errors.jsonl'
+  const hLogs = join(h, 'logs', 'dsh-extra-plan')
+  const wLogs = join(w, '.extra-plan', 'logs')
+  const outside = join(ROUTE_FIXTURE.root, 'diagnostics-outside')
+  const directoryLeaf = join(w, 'logs', 'directory.jsonl')
+  mkdirSync(directoryLeaf, { recursive: true })
+  const expectedHooks = [
+    ['agent/inbox/claimed', false], ['agent/created', false], ['agent/pre-step', true], ['agent/pre-step', false],
+    ['agent/request-error', false], ['agent/error', false], ['agent/disposed', false], ['system-prompt/assemble', false],
+    ['agent/request', false], ['tools/pre-execute', false], ['tools/post-execute', false],
+  ]
+  function diagnosticHarness(diagFile, home, homeProvider) {
+    const hookOrder = []
+    const listeners = {}
+    const ctx = {
+      get: (name) => name === 'profileContext' && home !== undefined ? { home }
+        : name === 'dshHomePath' && homeProvider !== undefined ? () => homeProvider : undefined,
+      systemPrompt: { variable: () => () => {} },
+      effect: (fn) => fn(),
+      on(name, fn, options) {
+        hookOrder.push([name, options?.prepend === true])
+        ;(listeners[name] ??= []).push(fn)
+      },
+    }
+    plugin.apply(ctx, withGateWords({ diagFile }))
+    return { listeners, hookOrder }
+  }
+  const readRows = (path) => readFileSync(path, 'utf8').trimEnd().split(/\r?\n/).map((line) => JSON.parse(line))
+  const withoutTs = ({ ts, ...row }) => row
+  const validTs = ({ ts }) => typeof ts === 'string' && Number.isFinite(Date.parse(ts)) && new Date(ts).toISOString() === ts
+  const warnings = []
+  const originalWarn = console.warn
+  const previousHome = process.env.DSH_HOME
+  const sessionId = 'rc-log-fixture'
+  const agent = { session: { header: { id: sessionId, cwd: w } } }
+  let error
+  for (let i = 9; i >= 0; i -= 1) {
+    error = Object.assign(new Error(i === 0 ? 'x'.repeat(450) : 'cause-' + i, { cause: error }), { code: i })
+  }
+  const chain = Array.from({ length: 8 }, (_, i) => ({ name: 'Error', message: i === 0 ? 'x'.repeat(400) : 'cause-' + i, code: String(i) }))
+  const request = { agent, turn: 3, step: 1, provider: 'fixture-provider', failure: error }
+  const retry = { kind: 'retry' }
+  const rejection = new Error('RC-LOG terminal sentinel')
+  const requestAt = (listeners, payload, next) => runWaterfall(listeners, 'agent/request-error', payload, next)
+  try {
+    delete process.env.DSH_HOME
+    console.warn = (...args) => {
+      if (/^extra-plan: (agent-error|request-error) diagnostics write failed: /.test(String(args[0]))) warnings.push(args[0])
+      else originalWarn(...args)
+    }
+    const { listeners, hookOrder } = diagnosticHarness(undefined, h)
+    check('RC-LOG1 入口导出', Object.keys(plugin), ['Config', 'PROBE_LIMITS', 'apply', 'decisions', 'extractProbeEvidenceRefs', 'inject', 'malformedRecovery', 'name', 'recordAgentError'])
+    check('RC-LOG2 全部 Hook 注册顺序与 prepend', hookOrder, expectedHooks)
+    const hReq = join(hLogs, reqName)
+    const hAgent = join(hLogs, agentName)
+    let nextCalls = 0
+    const nextSawNoLog = []
+    const action = await requestAt(listeners, request, () => { nextCalls += 1; nextSawNoLog.push(!existsSync(hReq)); return retry })
+    let rejected
+    try {
+      await requestAt(listeners, { ...request, step: 2, failure: new Error('no code') }, () => {
+        nextCalls += 1
+        nextSawNoLog.push(readRows(hReq).length === 1)
+        throw rejection
+      })
+    } catch (error) { rejected = error }
+    checkTrue('RC-LOG3 next 各恰一次且在落盘前、retry 与拒因保持引用', nextCalls === 2 && nextSawNoLog.every(Boolean) && action === retry && rejected === rejection)
+    const hRequestRows = readRows(hReq)
+    check('RC-LOG4 request-error H 裸名两行按序、字段和 cause 截断', hRequestRows.map(withoutTs), [
+      { sessionId, role: 'main', turn: 3, step: 1, provider: 'fixture-provider', message: 'x'.repeat(400), code: '0', causeChain: chain },
+      { sessionId, role: 'main', turn: 3, step: 2, provider: 'fixture-provider', message: 'no code', causeChain: [{ name: 'Error', message: 'no code' }] },
+    ])
+    const emitResult = listeners['agent/error'][0]({ agent, turn: 3, step: 2, error })
+    const hAgentRows = readRows(hAgent)
+    checkTrue('RC-LOG5 agent/error 返回 void 且回调返回前已落盘', emitResult === undefined && hAgentRows.length === 1)
+    check('RC-LOG6 agent/error payload 与 cause 截断', hAgentRows.map(withoutTs), [{ sessionId, turn: 3, step: 2, chain }])
+    checkTrue('RC-LOG7 H 两类 JSONL 均保留 ISO 时间戳', [...hRequestRows, ...hAgentRows].every(validTs))
+
+    for (const [label, configured, target, home] of [
+      ['W 裸名', undefined, join(wLogs, reqName), undefined],
+      ['W 相对', 'logs/relative.jsonl', join(w, 'logs', 'relative.jsonl'), h],
+      ['W 绝对', join(w, 'logs', 'absolute.jsonl'), join(w, 'logs', 'absolute.jsonl'), h],
+      ['H 绝对', join(hLogs, 'absolute.jsonl'), join(hLogs, 'absolute.jsonl'), h],
+    ]) {
+      const { listeners: hooks } = diagnosticHarness(configured, home)
+      await requestAt(hooks, request, () => undefined)
+      const rows = readRows(target)
+      check('RC-LOG8 ' + label + ' 命中预期路径、行数及去 ts 字段', rows.map(withoutTs), hRequestRows.slice(0, 1).map(withoutTs))
+      checkTrue('RC-LOG9 ' + label + ' ISO 时间戳', rows.length === 1 && rows.every(validTs))
+    }
+    for (const [label, configured, home, provider, untouched] of [
+      ['H 非法裸名', 'invalid.jsonl', 'relative-host', undefined, join(wLogs, 'invalid.jsonl')],
+      ['H 冲突裸名', 'conflict.jsonl', h, w, join(wLogs, 'conflict.jsonl')],
+      ['范围外绝对路径', join(outside, 'diagnostics.jsonl'), h, undefined, outside],
+      ['目录占叶', directoryLeaf, h, undefined, null],
+    ]) {
+      const { listeners: hooks } = diagnosticHarness(configured, home, provider)
+      const start = warnings.length
+      const first = await requestAt(hooks, request, () => retry)
+      const second = await requestAt(hooks, request, () => retry)
+      checkTrue('RC-LOG10 ' + label + ' 无写入且此 apply 只告警一次', first === retry && second === retry && warnings.length - start === 1 &&
+        warnings.at(-1) === 'extra-plan: request-error diagnostics write failed: request diagnostics root unavailable' &&
+        (untouched === null ? readdirSync(directoryLeaf).length === 0 : !existsSync(untouched)))
+    }
+    const badA = diagnosticHarness(undefined, 'relative-host')
+    const badB = diagnosticHarness(undefined, 'relative-host')
+    const start = warnings.length
+    badA.listeners['agent/error'][0]({ agent, error })
+    badB.listeners['agent/error'][0]({ agent, error })
+    plugin.recordAgentError({ error })
+    check('RC-LOG11 回合诊断告警跨 apply 与公开直呼只一次', warnings.slice(start), ['extra-plan: agent-error diagnostics write failed: agent diagnostics root unavailable'])
+  } finally {
+    console.warn = originalWarn
+    if (previousHome === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previousHome
+  }
+}
+
 // ── M10：真实 fixture JSONL 的 F/L 配额、隔离、失败细节与业务等价取证 ──
 {
   const G2_DIAG_FILE = join(ROUTE_FIXTURE.home, 'logs', 'dsh-extra-plan', 'extra-plan-anchored.jsonl')
